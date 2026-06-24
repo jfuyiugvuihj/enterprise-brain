@@ -1,0 +1,119 @@
+# MYBI部署手册 V2.0
+
+**文档版本：** V2.0（当前版本）  
+**发布日期：** 2025年7月  
+**适用环境：** 生产环境（不适用于PoC环境）  
+**集群规模：** 5台服务器，独立角色  
+
+---
+
+## 1. 版本概述
+
+V2.0采用Kubernetes集群部署架构，通过RKE2自动化工具实现快速部署。相比V1.0，本版本在组件高可用、资源弹性、监控能力和部署效率方面进行了全面升级。
+
+### 1.1 关键变更
+
+| 对比项 | V1.0 | V2.0 |
+|--------|------|------|
+| Doris FE HA | 单节点 | 3节点集群（多数派选举） |
+| Spark部署模式 | 固定资源 | K8s模式（按需弹性伸缩） |
+| 监控能力 | 无 | Prometheus + 告警 |
+| 部署平均时间 | 4小时 | 45分钟（RKE2自动化） |
+
+### 1.2 环境要求
+
+- Kubernetes版本 ≥ 1.27
+- 操作系统：CentOS 7.9+ / Ubuntu 20.04+
+- 硬件规格：每台服务器CPU ≥ 8核，内存 ≥ 32GB，磁盘 ≥ 500GB SSD
+
+---
+
+## 2. 集群架构
+
+5台服务器角色分配如下：
+
+| 角色 | 数量 | 说明 |
+|------|------|------|
+| Control Plane | 1 | RKE2 Server，管理K8s控制面 |
+| Worker + Doris FE | 2 | 运行业务Pod及Doris FE 3节点集群（含1个Leader） |
+| Worker + Doris BE | 2 | 运行业务Pod及Doris BE节点 |
+
+---
+
+## 3. 部署流程
+
+### 3.1 环境准备
+
+1. 所有节点安装Docker（版本≥20.10）
+2. 配置主机名解析及SSH免密登录
+3. 关闭防火墙和SELinux
+4. 安装RKE2工具（版本≥1.27）
+
+### 3.2 集群初始化
+
+```bash
+# Control Plane节点
+rke2 server --token mybi-token --node-name cp-01
+
+# Worker节点加入集群
+rke2 agent --server https://cp-01:9345 --token mybi-token --node-name worker-fe-01
+rke2 agent --server https://cp-01:9345 --token mybi-token --node-name worker-fe-02
+rke2 agent --server https://cp-01:9345 --token mybi-token --node-name worker-be-01
+rke2 agent --server https://cp-01:9345 --token mybi-token --node-name worker-be-02
+```
+
+### 3.3 组件部署
+
+- **Doris FE集群**：3节点StatefulSet，配置Readiness探针和AntiAffinity确保跨节点分布
+- **Doris BE集群**：2节点StatefulSet，通过PVC持久化数据
+- **Spark Operator**：部署Spark-on-K8s Operator，按需自动扩缩容
+- **监控组件**：Prometheus Operator + Alertmanager，配置默认告警规则（CPU/内存/磁盘阈值）
+
+---
+
+## 4. 用户迁移指南（V1.0 → V2.0）
+
+### 4.1 迁移步骤
+
+1. **导出数据**：在V1.0集群执行全量导出
+   ```sql
+   EXPORT TABLE mybi_db.* TO "hdfs:///export_dir"
+   ```
+2. **重建集群**：按照第3章流程部署V2.0集群
+3. **导入数据**：在V2.0集群执行导入
+   ```sql
+   LOAD DATA INPATH "hdfs:///export_dir" INTO TABLE mybi_db.*
+   ```
+
+### 4.2 注意事项
+
+- 迁移期间需停止V1.0写入操作，确保数据一致性
+- 建议在业务低峰期执行迁移，预留2小时停机窗口
+- 迁移完成后验证数据完整性，包括行数校验和抽样查询
+
+---
+
+## 5. 运维说明
+
+### 5.1 监控与告警
+
+- 访问Prometheus UI：`http://<任意Worker节点IP>:9090`
+- 默认告警通道：企业微信Webhook（需在部署时配置）
+
+### 5.2 日志查看
+
+```bash
+# 查看Doris FE日志
+kubectl logs -n mybi doris-fe-0
+
+# 查看Spark任务日志
+kubectl logs -n spark spark-driver-xxx
+```
+
+---
+
+## 6. 附录
+
+- **RKE2官方文档**：https://docs.rke2.io
+- **Doris官方文档**：https://doris.apache.org
+- **联系支持**：mybi-support@company.com

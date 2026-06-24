@@ -1,0 +1,218 @@
+# MYBI私有化部署手册
+
+## 1. 部署环境要求
+
+### 1.1 硬件最低配置
+| 节点类型 | 数量 | 配置 | 用途 |
+|---------|------|------|------|
+| 调度节点 | 1台 | 32核128GB+2TB SSD | DolphinScheduler |
+| 计算节点 | 2台 | 32核128GB+2TB SSD | Spark on K8s |
+| 存储节点 | 2台 | 32核128GB+2TB SSD | Doris FE+BE混部 |
+
+### 1.2 软件预装
+- JDK 17（所有节点）
+- Python 3.11（所有节点）
+- Docker 24+（计算节点）
+- Kubernetes 1.28+（计算节点）
+
+---
+
+## 2. 部署步骤
+
+### 2.1 部署Doris集群
+
+**步骤1：安装FE（存储节点1）**
+```bash
+# 下载并解压Doris 2.1.0
+wget https://apache-doris-releases.oss-cn-hangzhou.aliyuncs.com/apache-doris-2.1.0-bin-x86_64.tar.gz
+tar zxf apache-doris-2.1.0-bin-x86_64.tar.gz -C /opt/
+
+# 配置FE
+cd /opt/apache-doris-2.1.0/fe
+vim conf/fe.conf
+# 关键配置：
+# priority_networks = 192.168.0.0/24
+# meta_dir = /data/doris/meta
+
+# 启动FE
+bin/start_fe.sh --daemon
+```
+
+**步骤2：安装BE（存储节点1、2）**
+```bash
+# 在存储节点2上重复以下操作
+cd /opt/apache-doris-2.1.0/be
+vim conf/be.conf
+# 关键配置：
+# priority_networks = 192.168.0.0/24
+# storage_root_path = /data/doris/ssd0/be,medium:ssd;/data/doris/ssd1/be,medium:ssd
+
+# 格式化并挂载SSD数据目录
+mkfs.ext4 /dev/nvme0n1
+mkdir -p /data/doris/ssd0
+mount /dev/nvme0n1 /data/doris/ssd0
+
+# 启动BE
+bin/start_be.sh --daemon
+
+# 在FE节点添加BE
+mysql -h 192.168.0.1 -P 9030 -uroot
+ALTER SYSTEM ADD BACKEND "192.168.0.2:9050";
+ALTER SYSTEM ADD BACKEND "192.168.0.3:9050";
+```
+
+### 2.2 部署Spark on K8s
+
+**步骤1：配置Kubernetes集群（计算节点）**
+```bash
+# 初始化K8s集群（主节点）
+kubeadm init --pod-network-cidr=10.244.0.0/16
+
+# 安装Calico网络插件
+kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.26/manifests/calico.yaml
+
+# 安装Spark Operator
+helm repo add spark-operator https://googlecloudplatform.github.io/spark-on-k8s-operator
+helm install spark-operator spark-operator/spark-operator --namespace spark-operator --create-namespace
+```
+
+**步骤2：部署Spark服务**
+```yaml
+# spark-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-master
+  namespace: mybi
+spec:
+  selector:
+    app: spark-master
+  ports:
+  - port: 7077
+    targetPort: 7077
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-master
+  namespace: mybi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-master
+  template:
+    metadata:
+      labels:
+        app: spark-master
+    spec:
+      containers:
+      - name: master
+        image: spark:3.5.0
+        command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+        ports:
+        - containerPort: 7077
+```
+
+```bash
+kubectl apply -f spark-service.yaml
+```
+
+### 2.3 部署DolphinScheduler
+
+**步骤1：安装调度节点**
+```bash
+# 下载DolphinScheduler 3.2.0
+wget https://dlcdn.apache.org/dolphinscheduler/3.2.0/apache-dolphinscheduler-3.2.0-bin.tar.gz
+tar zxf apache-dolphinscheduler-3.2.0-bin.tar.gz -C /opt/
+
+# 配置数据库（使用Doris或MySQL）
+cd /opt/apache-dolphinscheduler-3.2.0
+vim conf/application.yaml
+# 配置Doris JDBC连接
+
+# 初始化数据库
+bin/create-dolphinscheduler.sh
+```
+
+**步骤2：启动服务**
+```bash
+# 启动Master服务
+bin/start.sh
+
+# 验证状态
+bin/status.sh
+```
+
+---
+
+## 3. 初始化配置
+
+### 3.1 导入内置大屏模板
+```sql
+-- 连接Doris
+mysql -h 192.168.0.1 -P 9030 -uroot
+
+-- 创建BI数据库
+CREATE DATABASE mybi_dashboard;
+USE mybi_dashboard;
+
+-- 导入模板数据
+SOURCE /opt/mybi/init/dashboard_template.sql;
+```
+
+### 3.2 部署AI模型
+
+**NL2SQL模型部署**
+```bash
+# 下载模型文件
+wget https://models.mybi.com/nl2sql/v1.0/model.tar.gz -O /opt/mybi/models/nl2sql.tar.gz
+tar zxf /opt/mybi/models/nl2sql.tar.gz -C /opt/mybi/models/nl2sql/
+
+# 启动模型服务
+python3 /opt/mybi/models/nl2sql/serve.py --port 8501 --model-path /opt/mybi/models/nl2sql
+```
+
+**异常检测模型部署**
+```bash
+# 下载异常检测模型
+wget https://models.mybi.com/anomaly/v1.0/model.tar.gz -O /opt/mybi/models/anomaly.tar.gz
+tar zxf /opt/mybi/models/anomaly.tar.gz -C /opt/mybi/models/anomaly/
+
+# 启动服务
+python3 /opt/mybi/models/anomaly/serve.py --port 8502 --model-path /opt/mybi/models/anomaly
+```
+
+### 3.3 验证部署
+```bash
+# 检查Doris集群
+mysql -h 192.168.0.1 -P 9030 -uroot -e "SHOW PROC '/backends';"
+
+# 检查Spark集群
+kubectl get pods -n mybi
+
+# 检查DolphinScheduler
+curl http://192.168.0.1:12345/dolphinscheduler
+
+# 检查AI服务
+curl http://192.168.0.1:8501/health
+curl http://192.168.0.1:8502/health
+```
+
+---
+
+## 4. 配置总结
+
+| 组件 | 节点 | 端口 | 状态 |
+|------|------|------|------|
+| Doris FE | 存储节点1 | 9030/8030 | 运行中 |
+| Doris BE | 存储节点1、2 | 9050/9060 | 运行中 |
+| Spark Master | 计算节点1 | 7077 | 运行中 |
+| DolphinScheduler | 调度节点 | 12345 | 运行中 |
+| NL2SQL | 调度节点 | 8501 | 运行中 |
+| 异常检测 | 调度节点 | 8502 | 运行中 |
+
+**注意事项：**
+- BE数据目录必须挂载SSD，否则影响查询性能
+- 所有节点需配置ntp时间同步
+- 建议部署监控组件（Prometheus+Grafana）

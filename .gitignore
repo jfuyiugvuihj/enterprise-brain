@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+data/*.db
+data/*.db-*
+data/pgdata/
+models/
+node_modules/
+frontend/dist/
+.env
+*.zip
+/tmp/

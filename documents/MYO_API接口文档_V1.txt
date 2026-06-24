@@ -1,0 +1,203 @@
+# MYO平台API接口文档
+
+## 1. 概述
+本文档描述MYO平台对外提供的RESTful API接口。所有接口均需通过OAuth2.0+JWT进行身份认证。API基础路径为：`https://api.myo.com/v1`。
+
+## 2. 认证方式
+### 2.1 OAuth2.0 + JWT
+- **Access Token**：有效期2小时，用于请求头认证。
+- **Refresh Token**：有效期7天，用于获取新的Access Token。
+
+### 2.2 认证请求头
+```
+Authorization: Bearer <access_token>
+```
+
+### 2.3 获取Token
+**请求**：`POST /api/v1/auth/token`
+**参数**：`grant_type=password&username=<user>&password=<pass>&client_id=<id>&client_secret=<secret>`
+**响应**：
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "refresh_token": "dGhpcyBpcyBhIHJlZnJl...",
+  "expires_in": 7200,
+  "token_type": "Bearer"
+}
+```
+
+### 2.4 刷新Token
+**请求**：`POST /api/v1/auth/refresh`
+**参数**：`grant_type=refresh_token&refresh_token=<refresh_token>`
+**响应**：同获取Token。
+
+## 3. 接口列表
+
+### 3.1 用户登录
+**接口**：`POST /api/v1/auth/login`
+
+**描述**：用户登录并获取JWT Token。
+
+**请求头**：无（无需Bearer Token）
+
+**请求体**：
+```json
+{
+  "username": "user@myo.com",
+  "password": "your_password"
+}
+```
+
+**响应**（200 OK）：
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIs...",
+  "refresh_token": "dGhpcyBpcyBhIHJlZnJl...",
+  "expires_in": 7200,
+  "token_type": "Bearer"
+}
+```
+
+**错误码**：
+- 401：用户名或密码错误
+
+---
+
+### 3.2 发送消息
+**接口**：`POST /api/v1/message/send`
+
+**描述**：发送即时消息给指定用户或群组。
+
+**请求头**：`Authorization: Bearer <access_token>`
+
+**请求体**：
+```json
+{
+  "receiver_id": "user_12345",
+  "receiver_type": "user", // 可选值：user, group
+  "content": "Hello, this is a test message.",
+  "content_type": "text" // 可选值：text, image, file
+}
+```
+
+**响应**（200 OK）：
+```json
+{
+  "message_id": "msg_67890",
+  "status": "sent",
+  "timestamp": "2025-04-11T10:30:00Z"
+}
+```
+
+**错误码**：
+- 400：请求参数错误
+- 401：Token无效或过期
+- 403：无权限发送
+
+---
+
+### 3.3 获取协作文档
+**接口**：`GET /api/v1/doc/{id}/collaborate`
+
+**描述**：获取指定文档的协作信息，包括协作者列表和版本号。
+
+**请求头**：`Authorization: Bearer <access_token>`
+
+**路径参数**：
+- `id`：文档唯一标识符（字符串）
+
+**响应**（200 OK）：
+```json
+{
+  "doc_id": "doc_abcdef",
+  "title": "项目计划书",
+  "version": 3,
+  "collaborators": [
+    {"user_id": "user_001", "role": "editor"},
+    {"user_id": "user_002", "role": "viewer"}
+  ],
+  "last_modified": "2025-04-11T09:00:00Z"
+}
+```
+
+**错误码**：
+- 401：Token无效
+- 403：无权访问该文档
+- 404：文档不存在
+
+---
+
+### 3.4 提交审批
+**接口**：`POST /api/v1/workflow/approve`
+
+**描述**：提交审批请求。
+
+**请求头**：`Authorization: Bearer <access_token>`
+
+**请求体**：
+```json
+{
+  "workflow_id": "wf_12345",
+  "action": "approve", // 可选值：approve, reject
+  "comment": "同意此申请"
+}
+```
+
+**响应**（200 OK）：
+```json
+{
+  "approval_id": "ap_67890",
+  "status": "approved",
+  "timestamp": "2025-04-11T12:00:00Z"
+}
+```
+
+**错误码**：
+- 400：参数错误
+- 401：Token无效
+- 403：无权审批
+
+---
+
+### 3.5 加入视频会议
+**接口**：`GET /api/v1/meeting/join/{roomId}`
+
+**描述**：获取加入视频会议的链接或凭证。
+
+**请求头**：`Authorization: Bearer <access_token>`
+
+**路径参数**：
+- `roomId`：会议室ID（字符串）
+
+**响应**（200 OK）：
+```json
+{
+  "room_id": "room_xyz",
+  "join_url": "https://meet.myo.com/room_xyz?token=abc123",
+  "expires_in": 3600,
+  "participant_count": 5
+}
+```
+
+**错误码**：
+- 401：Token无效
+- 403：无权加入此会议
+- 404：会议室不存在
+
+## 4. 限流策略
+- **限制**：每IP每秒最多100次请求。
+- **响应头**：`X-RateLimit-Limit: 100`、`X-RateLimit-Remaining: 99`、`X-RateLimit-Reset: 1618142400`
+- **超出限制**：返回429 Too Many Requests。
+
+## 5. 通用错误响应
+```json
+{
+  "error": "invalid_token",
+  "error_description": "The access token provided is expired or invalid.",
+  "status": 401
+}
+```
+
+## 6. 版本说明
+- 当前版本：v1
+- 变更历史：初始版本，2025-04-11发布。

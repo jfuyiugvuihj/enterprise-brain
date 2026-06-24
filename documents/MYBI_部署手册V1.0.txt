@@ -1,0 +1,77 @@
+# MYBI部署手册 V1.0（旧版/已废弃）
+
+## 1. 文档状态
+- **版本号**：V1.0（已废弃）
+- **状态**：仅适用于PoC环境，已被V2.0 K8s版取代
+- **废弃原因**：单点故障、资源争抢、扩展性差
+
+## 2. 部署架构
+采用虚拟机单体部署方式，所有组件部署在同一台物理服务器上：
+
+| 组件 | 说明 |
+|------|------|
+| 物理服务器 | 32核CPU、128GB内存 |
+| DolphinScheduler | 任务调度 |
+| Spark | 数据处理引擎 |
+| Doris | 数据库/分析引擎 |
+| 应用服务 | BI前端及后端服务 |
+
+## 3. 部署步骤
+
+### 3.1 环境准备
+- 操作系统：CentOS 7.9+ 或 Ubuntu 20.04+
+- Docker版本：20.10+
+- Docker Compose版本：1.29+
+
+### 3.2 安装Docker
+```bash
+# 安装Docker
+curl -fsSL https://get.docker.com | sh
+systemctl start docker
+systemctl enable docker
+```
+
+### 3.3 拉取镜像
+```bash
+# 拉取各组件镜像
+docker pull apache/dolphinscheduler:3.1.1
+docker pull bitnami/spark:3.3.1
+docker pull apache/doris:1.2.3
+docker pull mybi/app:1.0.0
+```
+
+### 3.4 启动服务
+```bash
+# 使用docker-compose启动所有服务
+docker-compose up -d
+```
+
+docker-compose.yml示例（简化）：
+```yaml
+version: '3'
+services:
+  dolphinscheduler:
+    image: apache/dolphinscheduler:3.1.1
+    ports:
+      - "12345:12345"
+  spark:
+    image: bitnami/spark:3.3.1
+    ports:
+      - "8080:8080"
+  doris:
+    image: apache/doris:1.2.3
+    ports:
+      - "8030:8030"
+  mybi-app:
+    image: mybi/app:1.0.0
+    ports:
+      - "80:80"
+```
+
+## 4. 版本缺点
+- **单点故障**：所有服务集中在单台物理机，一旦宕机，整个系统不可用
+- **资源争抢**：各组件共享CPU/内存/网络资源，高负载时性能下降严重
+- **扩展性差**：无法独立扩展某一组件，只能整体迁移或扩容
+
+## 5. 迁移建议
+请升级至 **V2.0 K8s版**，采用Kubernetes集群部署，支持高可用、弹性伸缩与资源隔离。

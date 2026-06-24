@@ -1,0 +1,197 @@
+# MYO私有化部署手册
+
+## 1. 概述
+
+本文档指导用户在三台物理服务器上完成MYO产品的私有化部署。部署环境基于Kubernetes集群（RKE2），依赖PostgreSQL 16、Redis 7.2集群及MinIO集群。最低硬件配置要求：每台服务器16核CPU、64GB内存、1TB SSD硬盘。
+
+---
+
+## 2. 环境准备
+
+### 2.1 硬件要求
+- 服务器数量：3台（物理机或虚拟机）
+- 单机配置：16核CPU / 64GB RAM / 1TB SSD
+- 网络：所有节点间内网互通，开放必要端口（如6443、2379、10250等）
+
+### 2.2 操作系统
+- 推荐：CentOS 7.9+ / Ubuntu 20.04+ / RHEL 8+
+- 确保所有节点时间同步（NTP）
+
+---
+
+## 3. 部署步骤
+
+### 3.1 安装RKE2
+
+在**第一台服务器**（作为Master节点）执行：
+
+```bash
+curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=server sh -
+systemctl enable rke2-server.service
+systemctl start rke2-server.service
+```
+
+在**其余两台服务器**（作为Worker节点）执行：
+
+```bash
+curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=agent sh -
+```
+
+获取Master节点的token（在Master节点执行）：
+
+```bash
+cat /var/lib/rancher/rke2/server/node-token
+```
+
+在Worker节点加入集群：
+
+```bash
+export RKE2_URL=https://<MASTER_IP>:9345
+export RKE2_TOKEN=<TOKEN>
+mkdir -p /etc/rancher/rke2/
+cat > /etc/rancher/rke2/config.yaml <<EOF
+server: $RKE2_URL
+token: $RKE2_TOKEN
+EOF
+systemctl enable rke2-agent.service
+systemctl start rke2-agent.service
+```
+
+验证集群状态：
+
+```bash
+kubectl get nodes
+```
+
+### 3.2 部署基础组件
+
+#### 3.2.1 PostgreSQL 16
+
+使用Helm部署高可用PostgreSQL：
+
+```bash
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm install myo-postgresql bitnami/postgresql \
+  --set postgresqlVersion=16 \
+  --set global.postgresql.auth.database=myo \
+  --set global.postgresql.auth.username=myo \
+  --set global.postgresql.auth.password=MyoPassword123 \
+  --set architecture=replication \
+  --set primary.persistence.size=200Gi \
+  --set readReplicas.replicaCount=2
+```
+
+#### 3.2.2 Redis 7.2集群
+
+```bash
+helm install myo-redis bitnami/redis-cluster \
+  --set cluster.nodes=6 \
+  --set cluster.replicas=1 \
+  --set image.tag=7.2
+```
+
+#### 3.2.3 MinIO集群
+
+```bash
+helm install myo-minio bitnami/minio \
+  --set mode=distributed \
+  --set statefulset.replicaCount=4 \
+  --set persistence.size=500Gi \
+  --set accessKey=myoadmin \
+  --set secretKey=MinioSecret123
+```
+
+### 3.3 导入Docker镜像
+
+将离线镜像包（约8GB）上传至所有节点，执行：
+
+```bash
+tar -xzf myo-images-<version>.tar.gz
+docker load -i myo-images-<version>.tar
+```
+
+将镜像推送至本地仓库（可选）：
+
+```bash
+docker tag <image> localhost:5000/<image>
+docker push localhost:5000/<image>
+```
+
+### 3.4 执行初始化脚本
+
+上传`deploy.sh`至Master节点，执行：
+
+```bash
+chmod +x deploy.sh
+./deploy.sh --namespace myo-system \
+  --postgres-host <PG_HOST> \
+  --postgres-port 5432 \
+  --redis-host <REDIS_HOST> \
+  --redis-port 6379 \
+  --minio-endpoint <MINIO_ENDPOINT>
+```
+
+脚本将自动创建命名空间、配置Secret、部署MYO服务及Ingress。
+
+### 3.5 配置域名与SSL证书
+
+配置DNS解析，将域名指向任意Worker节点公网IP。上传SSL证书文件（cert.pem和key.pem）至Master节点，执行：
+
+```bash
+kubectl create secret tls myo-tls -n myo-system \
+  --cert=cert.pem \
+  --key=key.pem
+```
+
+更新Ingress配置：
+
+```bash
+kubectl annotate ingress myo-ingress -n myo-system \
+  kubernetes.io/ingress.class=nginx
+kubectl patch ingress myo-ingress -n myo-system -p '{
+  "spec": {
+    "tls": [{
+      "hosts": ["<YOUR_DOMAIN>"],
+      "secretName": "myo-tls"
+    }]
+  }
+}'
+```
+
+### 3.6 创建管理员账号
+
+使用CLI工具创建初始管理员：
+
+```bash
+kubectl exec -n myo-system deploy/myo-api -- \
+  myo-cli admin create \
+  --username admin \
+  --password Admin123! \
+  --email admin@example.com
+```
+
+---
+
+## 4. 验证部署
+
+通过浏览器或curl访问：
+
+```bash
+curl -k https://<YOUR_DOMAIN>/health
+```
+
+预期返回HTTP 200状态码及健康检查信息。
+
+---
+
+## 5. 常见问题
+
+| 问题 | 解决方法 |
+|------|---------|
+| RKE2节点NotReady | 检查CNI插件状态：`kubectl get pods -n kube-system` |
+| PostgreSQL连接失败 | 确认Secret中密码一致：`kubectl get secret -n myo-system` |
+| 镜像拉取失败 | 检查本地仓库或离线镜像是否正确加载 |
+
+---
+
+*文档版本：v1.0 | 更新日期：2025-03-15*

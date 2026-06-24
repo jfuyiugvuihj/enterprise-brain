@@ -1,0 +1,83 @@
+# MYBI 数据模型设计文档
+
+## 1. 模型概述
+
+MYBI数据模型采用Doris聚合模型设计，基于星型架构构建，支持OLAP多维分析。模型核心包含3张事实表和4张维度表，通过日期、客户、产品、组织四个核心维度实现销售、库存、财务三大业务域的交叉分析。
+
+## 2. 维度表设计
+
+### 2.1 dim_date（日期维度）
+- 主键：date_key (INT)
+- 字段：full_date, year, quarter, month, day, week_of_year, is_weekend
+- 会计期间：fiscal_year, fiscal_period, fiscal_quarter
+- 聚合类型：REPLACE（所有字段）
+
+### 2.2 dim_customer（客户维度）
+- 主键：customer_key (INT)
+- 字段：customer_id, customer_name, region, city, industry
+- 客户分级：tier_level (VIP/普通/潜在), tier_score, credit_rating
+- 聚合类型：REPLACE（客户分级字段采用MAX聚合，其余REPLACE）
+
+### 2.3 dim_product（产品维度）
+- 主键：product_key (INT)
+- 字段：product_id, product_name, brand, unit
+- 品类树：category_l1, category_l2, category_l3, category_path
+- 聚合类型：REPLACE（品类树字段采用MIN聚合，其余REPLACE）
+
+### 2.4 dim_org（组织维度）
+- 主键：org_key (INT)
+- 字段：org_id, org_name, org_type, region
+- 部门树：dept_l1, dept_l2, dept_l3, dept_path
+- 聚合类型：REPLACE（部门树字段采用MAX聚合，其余REPLACE）
+
+## 3. 事实表设计
+
+### 3.1 fact_sales（销售明细）
+- 外键：date_key, customer_key, product_key, org_key
+- 度量：quantity(SUM), amount(SUM), cost(SUM), profit(SUM)
+- 其他：discount(MAX), return_flag(REPLACE)
+- 分区：按date_key RANGE分区，保留13个月
+
+### 3.2 fact_inventory（库存变动）
+- 外键：date_key, product_key, org_key
+- 度量：begin_qty(SUM), in_qty(SUM), out_qty(SUM), end_qty(REPLACE)
+- 其他：warehouse_id(REPLACE), batch_no(REPLACE)
+- 分区：按date_key RANGE分区，保留13个月
+
+### 3.3 fact_finance（财务凭证）
+- 外键：date_key, customer_key, product_key, org_key
+- 度量：debit_amount(SUM), credit_amount(SUM), balance(REPLACE)
+- 其他：voucher_type(REPLACE), status(REPLACE)
+- 分区：按date_key RANGE分区，保留13个月
+
+## 4. 聚合模型配置
+
+### 4.1 SUM聚合
+- 应用场景：销售数量、金额、成本、出入库数量、借贷金额
+- 特性：支持增量累加，适合滚动汇总
+
+### 4.2 MAX聚合
+- 应用场景：折扣率、客户评分、部门层级
+- 特性：保留最大值，适用于需要最新或最高值的场景
+
+### 4.3 MIN聚合
+- 应用场景：产品品类编码、最小折扣
+- 特性：保留最小值，适用于需要最早或最低值的场景
+
+### 4.4 REPLACE聚合
+- 应用场景：期末库存、凭证状态、客户名称
+- 特性：保留最新数据，适用于维度属性或状态字段
+
+## 5. 分区策略
+
+- 分区字段：date_key（维度表）/ 日期字段（事实表）
+- 分区方式：RANGE分区，按月划分
+- 保留周期：最近13个月数据
+- 维护策略：每月初自动删除13个月前分区，创建下月分区
+
+## 6. 数据模型优势
+
+- **多维分析**：支持按日期、客户、产品、组织任意维度钻取、上卷、切片
+- **增量更新**：聚合模型支持数据增量导入，降低ETL复杂度
+- **存储优化**：分区裁剪减少扫描数据量，聚合模型压缩存储空间
+- **业务覆盖**：销售、库存、财务三大业务域数据关联分析，支持全面经营洞察

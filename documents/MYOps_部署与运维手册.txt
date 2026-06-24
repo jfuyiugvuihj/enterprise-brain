@@ -1,0 +1,77 @@
+# MYOps部署与运维手册
+
+## 一、环境要求
+- **最低配置**：2台物理服务器，每台8核CPU、32GB内存、500GB SSD，操作系统为CentOS 7.9+或Ubuntu 20.04+。
+- **网络要求**：服务器间内网互通，可访问外网下载组件；防火墙开放必要端口（如Prometheus 9090、Loki 3100、Jaeger 16686、Alertmanager 9093）。
+
+## 二、核心组件部署
+1. **Prometheus**  
+   - 下载最新版二进制包，解压至`/opt/prometheus`。  
+   - 编辑`prometheus.yml`，配置全局抓取间隔（15s）及告警规则路径。  
+   - 使用systemd管理，启用开机自启。
+
+2. **Loki**  
+   - 下载Loki二进制及配置文件`loki-local-config.yaml`，存放于`/opt/loki`。  
+   - 配置数据存储目录（如`/data/loki`），设置日志保留7天。  
+   - 启动服务，默认监听3100端口。
+
+3. **Jaeger**  
+   - 使用Docker运行Jaeger All-in-One镜像：  
+     ```bash
+     docker run -d --name jaeger -p 16686:16686 -p 4317:4317 jaegertracing/all-in-one:latest
+     ```  
+   - 或下载二进制部署，配置存储后端（建议Elasticsearch）。
+
+4. **Alertmanager**  
+   - 下载并安装至`/opt/alertmanager`，配置`alertmanager.yml`定义告警接收器。  
+   - 与Prometheus集成，在`prometheus.yml`的`alerting`段指定Alertmanager地址。
+
+## 三、部署后配置
+1. **接入被监控集群**  
+   - 在目标主机安装Node Exporter（二进制或Docker），暴露9100端口。  
+   - 在Prometheus中添加抓取目标：  
+     ```yaml
+     scrape_configs:
+       - job_name: 'node'
+         static_configs:
+           - targets: ['<node_ip>:9100']
+     ```  
+   - 对Java应用，启动时添加Java Agent：`-javaagent:/path/to/opentelemetry-javaagent.jar`，配置导出至Jaeger。
+
+2. **配置告警通道**  
+   - 推荐使用飞书机器人：在飞书群添加Webhook机器人，获取URL。  
+   - 在Alertmanager的`receivers`中配置：  
+     ```yaml
+     receivers:
+       - name: 'feishu'
+         webhook_configs:
+           - url: 'https://open.feishu.cn/open-apis/bot/v2/hook/xxx'
+     ```
+
+3. **设置备份策略**  
+   - 每天凌晨2点，使用`rsync`或`scp`将Prometheus、Loki数据目录及配置文件备份至NAS（如`/backup/myops`）。  
+   - 备份脚本示例：  
+     ```bash
+     #!/bin/bash
+     rsync -avz /data/prometheus/ user@nas:/backup/prometheus/
+     rsync -avz /data/loki/ user@nas:/backup/loki/
+     rsync -avz /opt/myops/config/ user@nas:/backup/config/
+     ```  
+   - 设置crontab：`0 2 * * * /opt/scripts/backup.sh`
+
+## 四、日常运维
+1. **每周检查**  
+   - 登录每台服务器，执行`df -h`检查磁盘使用率，确保<80%。  
+   - 查看Prometheus目标状态：`http://<prometheus_ip>:9090/targets`，确认所有目标UP。  
+   - 检查Loki日志写入是否正常：`curl http://<loki_ip>:3100/ready`。
+
+2. **每月更新**  
+   - 根据业务变化，调整Prometheus告警规则文件（如`rules.yml`），添加新指标或修改阈值。  
+   - 重启Prometheus生效：`systemctl restart prometheus`。  
+   - 更新Alertmanager路由规则，优化告警分组与抑制策略。  
+   - 定期清理过期数据：Loki可配置保留天数，Prometheus使用`--storage.tsdb.retention.time`参数。
+
+## 五、故障处理
+- **磁盘满**：扩容SSD或清理历史数据（如删除Loki旧日志目录）。  
+- **组件崩溃**：检查systemd日志`journalctl -u <service>`，修复后重启。  
+- **告警未触发**：验证Prometheus规则语法，检查Alertmanager配置。
