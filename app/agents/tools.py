@@ -107,15 +107,26 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
 # ==================== Doc Tool ====================
 
 # 全局单例，避免每次搜索都重建 pipeline（BM25索引/CrossEncoder/Embedding）
+# threading.Lock 防止并发请求同时初始化（竞态条件导致多个 BM25 索引重复构建）
+import threading
 _search_pipeline = None
+_pipeline_lock = threading.Lock()
 
 
 def _get_pipeline():
     global _search_pipeline
     if _search_pipeline is None:
-        from app.rag.retrieval_pipeline import RetrievalPipeline
-        _search_pipeline = RetrievalPipeline()
+        with _pipeline_lock:
+            if _search_pipeline is None:  # double-check
+                from app.rag.retrieval_pipeline import RetrievalPipeline
+                _search_pipeline = RetrievalPipeline()
     return _search_pipeline
+
+
+def preload_pipeline():
+    """启动时预加载 RAG pipeline（BM25索引 + CrossEncoder），避免首个请求等待 10s+"""
+    p = _get_pipeline()
+    p.preload()
 
 
 @tool

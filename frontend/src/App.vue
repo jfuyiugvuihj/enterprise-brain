@@ -56,8 +56,13 @@ async function doLogin() {
 }
 
 function doLogout() {
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(USER_KEY)
+  // 清除所有 eb_ 前缀的 localStorage（token、用户、会话、消息缓存）
+  const toRemove = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (key && key.startsWith('eb_')) toRemove.push(key)
+  }
+  toRemove.forEach(k => localStorage.removeItem(k))
   delete window._authToken
   isLoggedIn.value = false
   username.value = ''

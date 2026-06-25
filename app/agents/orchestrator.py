@@ -34,7 +34,7 @@ from app.common.logger import logger
 
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://fengx@localhost:5432/enterprise_brain")
 
-_pool = psycopg_pool.ConnectionPool(_PG_URL, max_size=20, open=True)
+_pool = psycopg_pool.ConnectionPool(_PG_URL, max_size=50, min_size=5, open=True)
 _checkpointer = PostgresSaver(_pool)
 try:
     _checkpointer.setup()

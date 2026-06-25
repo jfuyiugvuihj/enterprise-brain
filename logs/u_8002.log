@@ -1,0 +1,21 @@
+2026-06-25 20:13:19,748 [INFO] enterprise_brain: 使用中文字体: Microsoft YaHei
+2026-06-25 20:13:20,101 [INFO] enterprise_brain: [启动] 预加载 RAG pipeline (BM25/CrossEncoder)...
+2026-06-25 20:13:20,434 [INFO] enterprise_brain: [预加载] 构建 BM25 索引...
+C:\Users\fengx\PycharmProjects\企业智脑\.venv\Lib\site-packages\jieba\_compat.py:18: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+Building prefix dict from the default dictionary ...
+2026-06-25 20:13:20,521 [DEBUG] jieba: Building prefix dict from the default dictionary ...
+Loading model from cache C:\Users\fengx\AppData\Local\Temp\claude\jieba.cache
+2026-06-25 20:13:20,523 [DEBUG] jieba: Loading model from cache C:\Users\fengx\AppData\Local\Temp\claude\jieba.cache
+Loading model cost 0.344 seconds.
+2026-06-25 20:13:20,866 [DEBUG] jieba: Loading model cost 0.344 seconds.
+Prefix dict has been built successfully.
+2026-06-25 20:13:20,866 [DEBUG] jieba: Prefix dict has been built successfully.
+2026-06-25 20:13:21,073 [INFO] enterprise_brain: BM25 索引构建完成: 401 篇
+2026-06-25 20:13:21,073 [INFO] enterprise_brain: [预加载] 预热 Cross-Encoder...
+2026-06-25 20:13:21,073 [INFO] enterprise_brain: 加载 Cross-Encoder: C:\Users\fengx\PycharmProjects\企业智脑\app\rag\..\..\models\BAAI\bge-reranker-base ...
+2026-06-25 20:13:21,074 [INFO] sentence_transformers.base.model: No modules.json found for C:\Users\fengx\PycharmProjects\企业智脑\app\rag\..\..\models\BAAI\bge-reranker-base, initializing a new CrossEncoder model.
+Loading weights:   0%|          | 0/201 [00:00<?, ?it/s]Loading weights: 100%|██████████| 201/201 [00:00<00:00, 10752.43it/s]
+2026-06-25 20:13:22,426 [INFO] enterprise_brain: Cross-Encoder 加载完成
+2026-06-25 20:13:22,426 [INFO] enterprise_brain: [预加载] Pipeline 就绪
+2026-06-25 20:13:22,426 [INFO] enterprise_brain: [启动] 预加载完成

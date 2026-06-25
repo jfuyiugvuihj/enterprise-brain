@@ -8,6 +8,10 @@ import time
 import uuid
 import queue as qmod
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+# 显式线程池 — 支持 1000+ 并发（每个 uvicorn 实例）
+_executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="ezn_")
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, UploadFile, File, Request as FastAPIRequest
@@ -242,7 +246,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 result_queue.put(("error", str(e)))
 
         loop = asyncio.get_running_loop()
-        loop.run_in_executor(None, _run)
+        loop.run_in_executor(_executor, _run)
 
         yield f"event: status\ndata: {json.dumps({'type': 'status', 'content': '🔍 正在分析您的问题...'}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
@@ -405,7 +409,7 @@ async def approve(request: ApproveRequest):
                 result_queue.put(("error", str(e)))
 
         loop = asyncio.get_running_loop()
-        loop.run_in_executor(None, _run)
+        loop.run_in_executor(_executor, _run)
 
         ai_reply: list[str] = []
         initial_count = -1

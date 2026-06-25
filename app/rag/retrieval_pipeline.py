@@ -187,6 +187,14 @@ class RetrievalPipeline:
         self.reranker = CrossEncoderReranker()
         self.rewriter = QueryRewriter()
 
+    def preload(self):
+        """预加载：构建 BM25 索引 + 预热 CrossEncoder（避免首个请求等待 10s+）"""
+        logger.info("[预加载] 构建 BM25 索引...")
+        self.bm25.build_index()
+        logger.info("[预加载] 预热 Cross-Encoder...")
+        self.reranker._load_model()
+        logger.info("[预加载] Pipeline 就绪")
+
     def search(self, query: str, top_k: int = 5) -> tuple[list[dict], list[str]]:
         """
         执行完整检索管线。

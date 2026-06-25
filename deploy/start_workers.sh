@@ -4,7 +4,7 @@
 # 用法: bash deploy/start_workers.sh [实例数] [起始端口]
 # ============================================================
 
-WORKERS=${1:-3}
+WORKERS=${1:-8}
 BASE_PORT=${2:-8001}
 APP="app.main:app"
 

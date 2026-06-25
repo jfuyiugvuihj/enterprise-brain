@@ -1,0 +1,63 @@
+2026-06-25 20:08:31,564 [INFO] enterprise_brain: 使用中文字体: Microsoft YaHei
+2026-06-25 20:08:32,073 [INFO] enterprise_brain: [启动] 预加载 RAG pipeline (BM25/CrossEncoder)...
+2026-06-25 20:08:32,523 [INFO] enterprise_brain: [预加载] 构建 BM25 索引...
+C:\Users\fengx\PycharmProjects\企业智脑\.venv\Lib\site-packages\jieba\_compat.py:18: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  import pkg_resources
+Building prefix dict from the default dictionary ...
+2026-06-25 20:08:32,632 [DEBUG] jieba: Building prefix dict from the default dictionary ...
+Loading model from cache C:\Users\fengx\AppData\Local\Temp\claude\jieba.cache
+2026-06-25 20:08:32,632 [DEBUG] jieba: Loading model from cache C:\Users\fengx\AppData\Local\Temp\claude\jieba.cache
+Loading model cost 0.389 seconds.
+2026-06-25 20:08:33,021 [DEBUG] jieba: Loading model cost 0.389 seconds.
+Prefix dict has been built successfully.
+2026-06-25 20:08:33,021 [DEBUG] jieba: Prefix dict has been built successfully.
+2026-06-25 20:08:33,261 [INFO] enterprise_brain: BM25 索引构建完成: 401 篇
+2026-06-25 20:08:33,261 [INFO] enterprise_brain: [预加载] 预热 Cross-Encoder...
+2026-06-25 20:08:33,261 [INFO] enterprise_brain: 加载 Cross-Encoder: C:\Users\fengx\PycharmProjects\企业智脑\app\rag\..\..\models\BAAI\bge-reranker-base ...
+2026-06-25 20:08:33,263 [INFO] sentence_transformers.base.model: No modules.json found for C:\Users\fengx\PycharmProjects\企业智脑\app\rag\..\..\models\BAAI\bge-reranker-base, initializing a new CrossEncoder model.
+Loading weights:   0%|          | 0/201 [00:00<?, ?it/s]Loading weights: 100%|██████████| 201/201 [00:00<00:00, 7020.02it/s]
+2026-06-25 20:08:34,826 [INFO] enterprise_brain: Cross-Encoder 加载完成
+2026-06-25 20:08:34,826 [INFO] enterprise_brain: [预加载] Pipeline 就绪
+2026-06-25 20:08:34,826 [INFO] enterprise_brain: [启动] 预加载完成
+2026-06-25 20:10:23,510 [INFO] enterprise_brain: 使用 fakeredis（本地模拟）
+2026-06-25 20:10:27,562 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:27,614 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:27,614 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:28,234 [INFO] enterprise_brain: [MainAgent] → dispatch(['doc'])
+2026-06-25 20:10:28,234 [INFO] enterprise_brain: [Route] 用户问题: 入职流程是什么, LLM派发: ['doc']
+2026-06-25 20:10:28,234 [INFO] enterprise_brain: [Route] dispatch → ['doc']
+2026-06-25 20:10:28,236 [INFO] enterprise_brain: [doc] 开始执行...
+2026-06-25 20:10:28,351 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:28,352 [INFO] enterprise_brain: [MainAgent] → dispatch(['data'])
+2026-06-25 20:10:28,352 [INFO] enterprise_brain: [Route] 用户问题: 各门店利润排名, LLM派发: ['data']
+2026-06-25 20:10:28,352 [INFO] enterprise_brain: [Route] dispatch → ['data']
+2026-06-25 20:10:28,353 [INFO] enterprise_brain: [data] 开始执行...
+2026-06-25 20:10:28,489 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:28,676 [INFO] enterprise_brain: [MainAgent] → dispatch(['data'])
+2026-06-25 20:10:28,676 [INFO] enterprise_brain: [Route] 用户问题: 哪个门店利润最高, LLM派发: ['data']
+2026-06-25 20:10:28,676 [INFO] enterprise_brain: [Route] dispatch → ['data']
+2026-06-25 20:10:28,677 [INFO] enterprise_brain: [data] 开始执行...
+2026-06-25 20:10:28,859 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:29,760 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:29,878 [INFO] enterprise_brain: 使用 DeepSeek API
+2026-06-25 20:10:29,880 [INFO] enterprise_brain: 使用 DeepSeek API
+2026-06-25 20:10:29,881 [INFO] enterprise_brain: 使用 DeepSeek API
+2026-06-25 20:10:30,117 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:30,117 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:30,117 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:30,117 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:31,328 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:31,412 [INFO] enterprise_brain: 查询改写: 3 个版本, 3 个子问题
+2026-06-25 20:10:31,546 [INFO] enterprise_brain: 查询改写: 3 个版本, 3 个子问题
+2026-06-25 20:10:32,126 [INFO] enterprise_brain: 查询改写: 3 个版本, 3 个子问题
+2026-06-25 20:10:36,596 [INFO] enterprise_brain: [data] 完成, 结果 1198 字
+2026-06-25 20:10:36,748 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:39,011 [INFO] enterprise_brain: [data] 完成, 结果 1726 字
+2026-06-25 20:10:39,145 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:10:39,746 [INFO] enterprise_brain: [MainAgent] → 最终回答 (503字)
+2026-06-25 20:10:39,849 [INFO] enterprise_brain: [ASK] session=load_0_1... 12.6s | steps=1
+Batches:   0%|          | 0/2 [00:00<?, ?it/s]
+Batches:   0%|          | 0/2 [00:00<?, ?it/s][A2026-06-25 20:10:44,741 [INFO] enterprise_brain: [MainAgent] → 最终回答 (1234字)
+
+
+Batches:   0%|          | 0/2 [00:00<?, ?it/s][A[A

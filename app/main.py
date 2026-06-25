@@ -64,6 +64,23 @@ app.add_middleware(AuthMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+@app.on_event("startup")
+async def startup_preload():
+    """预加载 RAG pipeline（BM25索引/CrossEncoder），避免首个请求等待 10s+"""
+    import asyncio
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _preload_sync)
+
+
+def _preload_sync():
+    """同步预加载：耗时操作放线程池避免阻塞 event loop"""
+    from app.agents.tools import preload_pipeline
+    from app.common.logger import logger
+    logger.info("[启动] 预加载 RAG pipeline (BM25/CrossEncoder)...")
+    preload_pipeline()
+    logger.info("[启动] 预加载完成")
+
+
 @app.get("/")
 async def root():
     return {"status": "ok", "service": "企业智脑"}
