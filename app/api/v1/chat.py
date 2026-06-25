@@ -199,15 +199,20 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     original_msg = request.message
     rewritten_msg = _rewrite_followup(thread_id, original_msg)
 
-    # ——— 限流检查 ———
+    # ——— 限流检查 (Layer 5: 超限入队而非拒绝) ———
     from app.common.cache import check_rate_limit
+    from app.common.queue import enqueue_request, is_overloaded
     username = getattr(http_request.state if http_request else None, "username", None) or "anonymous"
     allowed, remaining = check_rate_limit(username, max_per_minute=10)
     if not allowed:
-        async def rate_limited():
-            yield f"event: error\ndata: {json.dumps({'type': 'error', 'content': '请求太频繁，请稍后再试（每分钟最多10次）'}, ensure_ascii=False)}\n\n"
+        # 系统过载时入队等待
+        queued = enqueue_request(rewritten_msg, thread_id, username)
+        async def queued_response():
+            yield f"event: queued\ndata: {json.dumps(queued, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)
-        return StreamingResponse(rate_limited(), media_type="text/event-stream")
+            yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0)
+        return StreamingResponse(queued_response(), media_type="text/event-stream")
 
     # ——— 答案缓存 ———
     from app.common.cache import get_cached_answer
@@ -508,3 +513,25 @@ async def delete_document(filename: str):
     if os.path.exists(file_path):
         os.remove(file_path)
     return {"status": "ok", "filename": filename}
+
+
+# ==================== Layer 5: 队列削峰 API ====================
+
+@router.get("/queue/status/{request_id}")
+async def queue_status(request_id: str):
+    """轮询队列请求的处理状态。前端每 3s 调用一次，直到 status=done"""
+    from app.common.queue import get_queue_status
+    status = get_queue_status(request_id)
+    if status is None:
+        return {"status": "expired", "message": "请求已过期，请重新提交"}
+    return status
+
+
+@router.get("/queue/stats")
+async def queue_stats():
+    """队列监控：当前排队数、处理中数"""
+    from app.common.queue import queue_length, processing_count
+    return {
+        "queue_length": queue_length(),
+        "processing": processing_count(),
+    }

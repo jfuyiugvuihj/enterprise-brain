@@ -80,7 +80,7 @@ class TestUserCRUD:
         # delete_user 需要知道 user_id
         from app.common.auth import _get_conn
         conn = _get_conn()
-        row = conn.execute("SELECT id FROM users WHERE username = ?", ("test_del",)).fetchone()
+        row = conn.execute("SELECT id FROM users WHERE username = %s", ("test_del",)).fetchone()
         conn.close()
         if row:
             assert delete_user(row["id"]) is True
