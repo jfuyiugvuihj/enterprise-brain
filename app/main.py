@@ -41,7 +41,7 @@ from fastapi import Request
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # S3: 注册(/users)不再公开，必须登录后才能管理用户；仅 login 等公开
-        if request.url.path in ("/api/v1/login", "/", "/docs", "/openapi.json"):
+        if request.url.path in ("/api/v1/login", "/api/v1/sso/login", "/", "/docs", "/openapi.json"):
             return await call_next(request)
         if request.url.path.startswith("/static/"):
             return await call_next(request)

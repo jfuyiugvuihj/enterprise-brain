@@ -173,14 +173,17 @@ def search_docs(query: str, config=None) -> str:
 # ==================== Data Tool ====================
 
 @tool
-def analyze_data(query: str) -> str:
+def analyze_data(query: str, config=None) -> str:
     """
     分析企业经营数据。用于所有数据相关问题：统计数字、计算指标、对比业绩、
     排名、增长率、利润、营收等。调用此工具会自动检测已上传的 Excel/CSV 文件并进行分析。
     如果用户提到具体数字指标，优先使用此工具而不是 search_docs。
     """
-    import pandas as pd
+    from app.common.rbac import filter_dataframe_rows
     from app.tools.excel import load_excel, profile_dataframe
+    conf = (config or {}).get("configurable", {}) or {}
+    role = conf.get("role") or "admin"
+    dept = conf.get("department") or ""
 
     data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "data")
     os.makedirs(data_dir, exist_ok=True)
@@ -193,6 +196,10 @@ def analyze_data(query: str) -> str:
     for fname in files:
         try:
             df = load_excel(os.path.join(data_dir, fname))
+            df = filter_dataframe_rows(df, role=role, department=dept)
+            if df.empty:
+                parts.append(f"📧 {fname}: 当前账号没有可见数据行")
+                continue
             profile = profile_dataframe(df)
             cols_info = [f"{c['name']}({c['dtype']})" if isinstance(c, dict) else str(c) for c in profile["columns"]]
             parts.append(f"📁 {fname}: {profile['rows']}行 × {len(cols_info)}列 — 列: {', '.join(cols_info)}")
@@ -251,7 +258,11 @@ def query_data(query: str, config=None) -> str:
     适合 analyze_data 固定模板答不了的组合条件问题，如
     "利润率超过20%且营收环比增长的门店有哪些"。
     """
+    from app.common.rbac import filter_dataframe_rows
     from app.tools.excel import load_excel, safe_query
+    conf = (config or {}).get("configurable", {}) or {}
+    role = conf.get("role") or "admin"
+    dept = conf.get("department") or ""
 
     data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "data")
     files = [f for f in os.listdir(data_dir) if f.endswith((".xlsx", ".xls", ".csv"))]
@@ -261,6 +272,9 @@ def query_data(query: str, config=None) -> str:
     for fname in files:
         try:
             df = load_excel(os.path.join(data_dir, fname))
+            df = filter_dataframe_rows(df, role=role, department=dept)
+            if df.empty:
+                continue
         except Exception:
             continue
         code = _llm_pandas_code(df, query)

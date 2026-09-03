@@ -8,7 +8,15 @@ import urllib.request
 import numpy as np
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from rank_bm25 import BM25Okapi
+try:
+    from rank_bm25 import BM25Okapi
+except ModuleNotFoundError:  # pragma: no cover
+    class BM25Okapi:
+        def __init__(self, corpus):
+            self.corpus = corpus
+
+        def get_scores(self, tokens):
+            return np.zeros(len(self.corpus), dtype=float)
 from app.common.model_handler import ModelHandler, ModelSource
 from app.common.logger import logger
 

@@ -12,6 +12,8 @@ admin 直接放行（不设过滤）。
 """
 
 ROLE_CLEARANCE = {"staff": 1, "manager": 2, "admin": 3}
+ROW_DEPARTMENT_COLUMNS = ("department", "dept", "部门", "所属部门")
+ROW_CLASSIFICATION_COLUMNS = ("classification", "密级", "security_level")
 
 
 def clearance_for(role: str) -> int:
@@ -57,3 +59,25 @@ def make_pred(role: str, department: str):
         (d.get("classification", 1) in levels)
         and (d.get("department", "") in ("", dept))
     )
+
+
+def filter_dataframe_rows(df, role: str, department: str):
+    """Apply row-level department/classification filtering to tabular data."""
+    if role == "admin":
+        return df
+
+    scoped = df
+    levels = set(allowed_levels(role))
+    dept = department or ""
+
+    class_col = next((col for col in ROW_CLASSIFICATION_COLUMNS if col in scoped.columns), None)
+    if class_col:
+        mask = scoped[class_col].fillna(1).astype(int).isin(levels)
+        scoped = scoped[mask]
+
+    dept_col = next((col for col in ROW_DEPARTMENT_COLUMNS if col in scoped.columns), None)
+    if dept_col:
+        values = scoped[dept_col].fillna("").astype(str).str.strip()
+        scoped = scoped[values.isin(("", dept))]
+
+    return scoped.reset_index(drop=True)

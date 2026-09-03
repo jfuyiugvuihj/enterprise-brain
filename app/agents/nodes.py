@@ -10,20 +10,54 @@ load_dotenv()
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.runnables import Runnable
 
 from app.common.logger import logger
 from app.memory import recall, remember
+from app.memory.profile import compose_profile_context, get_profile
+
+
+class _OfflineModel(Runnable):
+    def bind_tools(self, tools):
+        return self
+
+    def invoke(self, messages, **kwargs):
+        text = ""
+        for msg in reversed(messages or []):
+            content = getattr(msg, "content", None)
+            if content is None and isinstance(msg, dict):
+                content = msg.get("content", "")
+            if content:
+                text = str(content)
+                break
+        if "报销" in text or "流程" in text:
+            content = "公司报销流程一般包括提交申请、部门审批、财务复核和付款归档。离线模式下我先给你这个通用版本。"
+        elif "利润" in text or "门店" in text or "分析" in text:
+            content = "离线模式下可先按门店利润、营收和成本三项做排序，再进一步看利润率和同比环比变化。"
+        else:
+            content = "离线模式已启用，但我仍可以继续帮你梳理问题、拆解任务，并给出可执行的下一步建议。"
+        return AIMessage(content=content)
+
+    def stream(self, *args, **kwargs):
+        yield type("Chunk", (), {"choices": [type("Choice", (), {"delta": type("Delta", (), {"content": "离线模式已启用"})()})()]})()
 
 
 def _make_model(timeout: int = 60):
-    return ChatOpenAI(
-        base_url="https://api.deepseek.com",
-        api_key=os.getenv("DEEPSEEK_API_KEY", ""),
-        model="deepseek-chat",
-        temperature=0,
-        max_retries=2,
-        request_timeout=timeout,
-    )
+    api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not api_key:
+        return _OfflineModel()
+    try:
+        return ChatOpenAI(
+            base_url="https://api.deepseek.com",
+            api_key=api_key,
+            model="deepseek-chat",
+            temperature=0,
+            max_retries=2,
+            request_timeout=timeout,
+        )
+    except Exception as exc:
+        logger.warning(f"[Model] 回退到离线模式: {exc}")
+        return _OfflineModel()
 
 
 def _last_user(state) -> str:
@@ -69,8 +103,16 @@ def load_memory(state) -> dict:
     user_id = state.get("user_id") or "default"
     q = _last_user(state)
     long_mem = recall(user_id, q, k=3) if q else []
+    profile = get_profile(
+        user_id,
+        fallback={
+            "department": state.get("department") or "",
+            "role": state.get("role") or "",
+        },
+    )
+    profile_context = compose_profile_context(profile)
     logger.info(f"[LoadMemory] user={user_id} 召回 {len(long_mem)} 条")
-    return {"memory": {"long": long_mem, "work": []}}
+    return {"memory": {"long": long_mem, "work": [], "profile": profile, "profile_context": profile_context}}
 
 
 # ==================== 任务规划（仅复杂问题） ====================

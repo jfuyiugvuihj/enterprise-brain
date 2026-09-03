@@ -57,13 +57,13 @@ def create_mcp_server():
     def analyze_data(query: str) -> str:
         """分析企业经营数据（排名/统计/对比）。"""
         from app.agents.tools import analyze_data
-        return analyze_data.invoke({"query": query})
+        return analyze_data.invoke({"query": query}, config={"configurable": {"role": _ROLE, "department": _DEPT}})
 
     @mcp.tool()
     def query_data(query: str) -> str:
         """自然语言查询经营数据（LLM 生成 pandas + 沙箱执行）。"""
         from app.agents.tools import query_data
-        return query_data.invoke({"query": query})
+        return query_data.invoke({"query": query}, config={"configurable": {"role": _ROLE, "department": _DEPT}})
 
     @mcp.tool()
     def generate_chart(chart_type: str, labels: list, values: list, title: str = "图表") -> str:

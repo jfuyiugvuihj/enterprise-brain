@@ -22,6 +22,13 @@ from app.rag.loader import load_document
 from app.rag.retriever import DocumentRetriever
 from app.common.model_handler import ModelHandler, ModelSource
 from app.common.logger import logger
+from app.documents.catalog import (
+    build_storage_name,
+    current_documents,
+    list_document_versions,
+    peek_next_document_version,
+    record_document_version,
+)
 
 router = APIRouter()
 retriever = DocumentRetriever()
@@ -541,7 +548,9 @@ async def delete_session(session_id: str):
 async def upload_document(file: UploadFile = File(...),
                           classification: int = Form(1),
                           department: str = Form("")):
-    file_path = os.path.join(DOCUMENTS_DIR, file.filename)
+    next_version = peek_next_document_version(file.filename)
+    stored_name = build_storage_name(file.filename, next_version)
+    file_path = os.path.join(DOCUMENTS_DIR, stored_name)
     with open(file_path, "wb") as f:
         f.write(await file.read())
     content = load_document(file_path)
@@ -550,15 +559,41 @@ async def upload_document(file: UploadFile = File(...),
                                      department=department or None)
     if ok:
         _upsert_document(file.filename, classification, department)
+        version_meta = record_document_version(
+            file.filename,
+            classification=classification,
+            department=department,
+            storage_path=file_path,
+            version=next_version,
+        )
         from app.agents.tools import rebuild_bm25
         rebuild_bm25()  # C1: 新文档立即进入关键词检索
-    return {"filename": file.filename, "status": "ok" if ok else "skipped", "message": msg}
+        return {
+            "filename": file.filename,
+            "stored_name": stored_name,
+            "version": version_meta["version"],
+            "status": "ok",
+            "message": msg,
+        }
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    return {"filename": file.filename, "status": "skipped", "message": msg}
 
 
 @router.get("/documents")
 async def list_documents():
     docs = retriever.list_documents()
     return {"documents": docs}
+
+
+@router.get("/documents/catalog")
+async def list_document_catalog():
+    return {"documents": current_documents()}
+
+
+@router.get("/documents/{filename}/versions")
+async def document_version_history(filename: str):
+    return {"filename": filename, "versions": list_document_versions(filename)}
 
 
 @router.delete("/documents/{filename}")

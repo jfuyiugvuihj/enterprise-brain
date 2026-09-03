@@ -11,9 +11,14 @@ import json
 from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import psycopg
-from psycopg.rows import dict_row
 from app.common.logger import logger
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ModuleNotFoundError:  # pragma: no cover
+    psycopg = None
+    dict_row = None
+from app.common.notifications import send_im_notification
 
 router = APIRouter()
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
@@ -130,6 +135,12 @@ def evaluate_all() -> list[dict]:
                     )
                     conn.commit()
                 triggered.append({"message": msg, "ai_analysis": analysis})
+                send_im_notification(
+                    "企业智脑告警",
+                    f"{msg}\n{analysis}".strip(),
+                    source="alerts",
+                    severity="warning",
+                )
                 logger.warning(f"[Alert] 触发: {msg}")
     return triggered
 
@@ -150,6 +161,7 @@ def daily_report() -> str:
                 for c in list(nums)[:5]:
                     lines.append(f"  · {f} / {c}: 合计 {df[c].sum():.1f} 均值 {df[c].mean():.1f}")
     text = "\n".join(lines)
+    send_im_notification("企业智脑日报", text, source="scheduler", severity="info")
     logger.info(f"[DailyReport]\n{text}")
     return text
 

@@ -1,7 +1,9 @@
 """Day 19: 登录 + 用户管理 API"""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from app.common import auth
+from app.common.sso import extract_sso_identity, validate_sso_headers
+from app.memory.profile import get_profile, upsert_profile
 
 router = APIRouter()
 
@@ -14,12 +16,20 @@ class LoginRequest(BaseModel):
 class CreateUserRequest(BaseModel):
     username: str
     password: str
+    role: str = "staff"
+    department: str = ""
 
 
 class ChangePasswordRequest(BaseModel):
     username: str
     old_password: str
     new_password: str
+
+
+class UpdateProfileRequest(BaseModel):
+    department: str = ""
+    position: str = ""
+    preferences: list[str] | None = None
 
 
 # ==================== 登录 ====================
@@ -54,7 +64,12 @@ async def list_users():
 @router.post("/users")
 async def create_user(data: CreateUserRequest):
     """创建新用户"""
-    ok, msg = auth.create_user(data.username, data.password)
+    ok, msg = auth.create_user(
+        data.username,
+        data.password,
+        role=data.role,
+        department=data.department or None,
+    )
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"status": "ok", "message": msg}
@@ -76,3 +91,51 @@ async def change_password(data: ChangePasswordRequest):
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"status": "ok", "message": msg}
+
+
+@router.post("/sso/login")
+async def sso_login(request: Request):
+    headers = dict(request.headers)
+    if not validate_sso_headers(headers):
+        raise HTTPException(status_code=401, detail="SSO 未启用或请求未通过验证")
+    identity = extract_sso_identity(headers)
+    if not identity:
+        raise HTTPException(status_code=401, detail="缺少 SSO 身份头")
+    ok, msg = auth.upsert_sso_user(
+        identity["username"],
+        role=identity["role"],
+        department=identity["department"] or None,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail=msg)
+    token = auth.create_token(identity["username"])
+    return {
+        "token": token,
+        "username": identity["username"],
+        "role": identity["role"],
+        "department": identity["department"],
+        "display_name": identity["display_name"],
+        "expires_in": auth._EXPIRE_HOURS * 3600,
+    }
+
+
+@router.get("/profile")
+async def get_my_profile(request: Request):
+    username = getattr(request.state, "username", "")
+    base = auth.get_user(username) or {"username": username}
+    profile = get_profile(username, fallback=base)
+    return {"profile": profile}
+
+
+@router.put("/profile")
+async def update_my_profile(data: UpdateProfileRequest, request: Request):
+    username = getattr(request.state, "username", "")
+    ok = upsert_profile(
+        username,
+        department=data.department,
+        position=data.position,
+        preferences=data.preferences or [],
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="画像保存失败")
+    return {"status": "ok"}

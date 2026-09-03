@@ -19,12 +19,15 @@ load_dotenv()
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import create_react_agent, ToolNode
-from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Send, Command
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
-import psycopg
-import psycopg_pool
+try:
+    import psycopg
+    import psycopg_pool
+except ModuleNotFoundError:  # pragma: no cover
+    psycopg = None
+    psycopg_pool = None
 
 from app.agents.state import AgentState, _merge_dicts
 from app.agents.tools import search_docs, analyze_data, query_data, generate_chart, export_report
@@ -46,7 +49,8 @@ def _make_checkpointer():
     try:
         psycopg.connect(_PG_URL, connect_timeout=2).close()
         pool = psycopg_pool.ConnectionPool(_PG_URL, max_size=50, min_size=5, open=True)
-        cp = PostgresSaver(pool)
+        from langgraph.checkpoint.postgres import PostgresSaver as _PostgresSaver
+        cp = _PostgresSaver(pool)
         cp.setup()
         logger.info("[Orchestrator] 使用 PostgresSaver 持久化")
         return cp
@@ -121,9 +125,12 @@ def main_agent_node(state: AgentState) -> dict:
     # 长期记忆注入
     mem = state.get("memory") or {}
     long_mem = mem.get("long") or []
+    profile_ctx = mem.get("profile_context") or ""
     mem_ctx = ""
     if long_mem:
         mem_ctx = "\n\n【用户历史记忆】\n" + "\n".join(f"- {m}" for m in long_mem)
+    if profile_ctx:
+        mem_ctx += "\n\n【用户画像】\n" + profile_ctx
 
     last_user_idx = -1
     for i in range(len(all_msgs) - 1, -1, -1):
