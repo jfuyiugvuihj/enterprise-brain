@@ -8,7 +8,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="https://api.deepseek.com",
-    api_key=os.getenv("DEEPSEEK_API_KEY", "sk-f04ced7796bc4c62903ab334d9f89934")
+    api_key=os.getenv("DEEPSEEK_API_KEY")  # S4: 不再硬编码密钥，只从环境变量读
 )
 
 OUT_DIR = "documents"

@@ -81,7 +81,8 @@ class DocumentRetriever:
         """计算文本 MD5，判断文档是否更新"""
         return hashlib.md5(content.encode()).hexdigest()
 
-    def add_document(self, filename: str, content: str) -> tuple[bool, str]:
+    def add_document(self, filename: str, content: str,
+                     classification: int = 1, department: str | None = None) -> tuple[bool, str]:
         """
         添加文档到向量库。
         返回 (是否成功, 消息)
@@ -115,8 +116,10 @@ class DocumentRetriever:
 
         # 存入 Chroma
         ids = [f"{filename}_{i}" for i in range(len(chunks))]
+        # 阶段 2：每个 chunk 带密级/部门元数据，供检索层过滤
         metadatas = [
-            {"filename": filename, "chunk_index": i, "hash": new_hash}
+            {"filename": filename, "chunk_index": i, "hash": new_hash,
+             "classification": int(classification), "department": department or ""}
             for i in range(len(chunks))
         ]
         self.collection.add(
@@ -128,10 +131,13 @@ class DocumentRetriever:
 
     # ==================== 检索 ====================
 
-    def search(self, query: str, k: int = 5) -> list[dict]:
-        """语义检索，返回最相关的 k 个片段"""
+    def search(self, query: str, k: int = 5, where: dict | None = None) -> list[dict]:
+        """语义检索。where 为权限过滤（下推到向量库），None 不过滤"""
         query_embedding = self.embedding.embed_query(query)
-        results = self.collection.query(query_embeddings=[query_embedding], n_results=k)
+        kwargs = {"query_embeddings": [query_embedding], "n_results": k}
+        if where:
+            kwargs["where"] = where
+        results = self.collection.query(**kwargs)
 
         documents = results.get("documents", [[]])[0]
         metadatas = results.get("metadatas", [[]])[0]
@@ -141,6 +147,8 @@ class DocumentRetriever:
                 "content": doc,
                 "source": meta.get("filename", "unknown"),
                 "chunk_index": meta.get("chunk_index", 0),
+                "classification": meta.get("classification", 1),
+                "department": meta.get("department", ""),
             }
             for doc, meta in zip(documents, metadatas)
         ]

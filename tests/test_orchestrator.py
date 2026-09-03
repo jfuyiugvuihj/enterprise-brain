@@ -15,7 +15,8 @@ class TestGraphImport:
         assert hasattr(multi_agent_graph, 'get_graph')
         info = multi_agent_graph.get_graph()
         nodes = list(info.nodes.keys())
-        for n in ["main_agent", "main_tools", "doc", "data", "chart", "export"]:
+        for n in ["classify_intent", "supervisor", "main_tools", "reflect", "synthesize",
+                  "doc", "data", "chart", "export"]:
             assert n in nodes, f"缺少节点: {n}"
 
 

@@ -54,8 +54,8 @@ class SemanticSearcher:
         from app.rag.retriever import DocumentRetriever
         self.retriever = DocumentRetriever()
 
-    def search(self, query: str, k: int = 10) -> list[dict]:
-        return self.retriever.search(query, k=k)
+    def search(self, query: str, k: int = 10, where: dict | None = None) -> list[dict]:
+        return self.retriever.search(query, k=k, where=where)
 
 
 # ==================== BM25 关键词检索 ====================
@@ -91,12 +91,14 @@ class BM25Searcher:
                 "content": doc,
                 "source": meta.get("filename", "unknown"),
                 "chunk_index": meta.get("chunk_index", 0),
+                "classification": meta.get("classification", 1),
+                "department": meta.get("department", ""),
             })
 
         self.bm25 = BM25Okapi(self.corpus)
         logger.info(f"BM25 索引构建完成: {len(self.corpus)} 篇")
 
-    def search(self, query: str, k: int = 10) -> list[dict]:
+    def search(self, query: str, k: int = 10, pred=None) -> list[dict]:
         if not self.bm25:
             self.build_index()
         if not self.bm25:
@@ -107,7 +109,10 @@ class BM25Searcher:
         scores = self.bm25.get_scores(tokens)
         top_indices = np.argsort(scores)[::-1][:k]
 
-        return [self.documents[i] for i in top_indices if scores[i] > 0]
+        hits = [self.documents[i] for i in top_indices if scores[i] > 0]
+        if pred:
+            hits = [d for d in hits if pred(d)]  # 权限过滤
+        return hits
 
 
 # ==================== RRF 融合 ====================
@@ -195,7 +200,8 @@ class RetrievalPipeline:
         self.reranker._load_model()
         logger.info("[预加载] Pipeline 就绪")
 
-    def search(self, query: str, top_k: int = 5) -> tuple[list[dict], list[str]]:
+    def search(self, query: str, top_k: int = 5,
+               where: dict | None = None, pred=None) -> tuple[list[dict], list[str]]:
         """
         执行完整检索管线。
         返回 (重排后的文档列表, 改写版本列表)
@@ -211,8 +217,8 @@ class RetrievalPipeline:
         with ThreadPoolExecutor(max_workers=len(queries)) as ex:
             futures = {}
             for q in queries:
-                futures[ex.submit(self.semantic.search, q, 8)] = ("sem", q)
-                futures[ex.submit(self.bm25.search, q, 8)] = ("bm25", q)
+                futures[ex.submit(self.semantic.search, q, 8, where)] = ("sem", q)
+                futures[ex.submit(self.bm25.search, q, 8, pred)] = ("bm25", q)
             for f in as_completed(futures):
                 kind, q = futures[f]
                 try:

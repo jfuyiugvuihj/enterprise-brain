@@ -2,5 +2,7 @@
 # JWT 签名密钥（部署时改为随机字符串: python -c "import secrets; print(secrets.token_hex(32))"）
 
 auth:
-  jwt_secret: "11a06d21b6b410b5396df4260a23bfc35e1b7688fe3e97c7c3c6ee682fb77fbd"
+  # S1: 真实密钥已移到 .env (JWT_SECRET_KEY)，此处仅留占位符。
+  # 生成新密钥: python -c "import secrets; print(secrets.token_hex(32))"
+  jwt_secret: "CHANGE_ME"
   token_expire_hours: 24

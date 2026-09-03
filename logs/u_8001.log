@@ -19,3 +19,73 @@ Prefix dict has been built successfully.
 2026-06-25 20:13:17,571 [INFO] enterprise_brain: Cross-Encoder 加载完成
 2026-06-25 20:13:17,571 [INFO] enterprise_brain: [预加载] Pipeline 就绪
 2026-06-25 20:13:17,571 [INFO] enterprise_brain: [启动] 预加载完成
+2026-06-25 20:15:03,112 [INFO] enterprise_brain: 使用 fakeredis（本地模拟）
+2026-06-25 20:15:06,527 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:06,527 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:06,527 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:06,663 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:07,394 [INFO] enterprise_brain: [MainAgent] → dispatch(['doc'])
+2026-06-25 20:15:07,395 [INFO] enterprise_brain: [Route] 用户问题: 帮我搜索绩效考核, LLM派发: ['doc']
+2026-06-25 20:15:07,395 [INFO] enterprise_brain: [Route] dispatch → ['doc']
+2026-06-25 20:15:07,396 [INFO] enterprise_brain: [doc] 开始执行...
+2026-06-25 20:15:07,496 [INFO] enterprise_brain: [MainAgent] → dispatch(['data'])
+2026-06-25 20:15:07,496 [INFO] enterprise_brain: [Route] 用户问题: 各门店利润排名, LLM派发: ['data']
+2026-06-25 20:15:07,496 [INFO] enterprise_brain: [Route] dispatch → ['data']
+2026-06-25 20:15:07,497 [INFO] enterprise_brain: [data] 开始执行...
+2026-06-25 20:15:07,538 [INFO] enterprise_brain: [MainAgent] → dispatch(['data'])
+2026-06-25 20:15:07,539 [INFO] enterprise_brain: [Route] 用户问题: 哪个门店利润最高, LLM派发: ['data']
+2026-06-25 20:15:07,539 [INFO] enterprise_brain: [Route] dispatch → ['data']
+2026-06-25 20:15:07,539 [INFO] enterprise_brain: [data] 开始执行...
+2026-06-25 20:15:07,595 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:07,664 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:07,681 [INFO] enterprise_brain: [MainAgent] → dispatch(['data'])
+2026-06-25 20:15:07,681 [INFO] enterprise_brain: [Route] 用户问题: 毛利率最高的是哪个, LLM派发: ['data']
+2026-06-25 20:15:07,681 [INFO] enterprise_brain: [Route] dispatch → ['data']
+2026-06-25 20:15:07,681 [INFO] enterprise_brain: [data] 开始执行...
+2026-06-25 20:15:07,721 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:07,838 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:08,872 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:08,974 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:09,018 [INFO] enterprise_brain: 使用 DeepSeek API
+2026-06-25 20:15:09,019 [INFO] enterprise_brain: 使用 DeepSeek API
+2026-06-25 20:15:09,020 [INFO] enterprise_brain: 使用 DeepSeek API
+2026-06-25 20:15:09,318 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:09,318 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:09,318 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:09,484 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:10,766 [INFO] enterprise_brain: 查询改写: 3 个版本, 3 个子问题
+2026-06-25 20:15:11,119 [INFO] enterprise_brain: 查询改写: 3 个版本, 3 个子问题
+2026-06-25 20:15:11,120 [INFO] enterprise_brain: 查询改写: 3 个版本, 3 个子问题
+2026-06-25 20:15:11,312 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:13,334 [INFO] enterprise_brain: [data] 完成, 结果 766 字
+2026-06-25 20:15:13,489 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:14,607 [INFO] enterprise_brain: [data] 完成, 结果 1091 字
+Batches:   0%|          | 0/2 [00:00<?, ?it/s]
+Batches:   0%|          | 0/2 [00:00<?, ?it/s][A2026-06-25 20:15:14,742 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+
+
+Batches:   0%|          | 0/2 [00:00<?, ?it/s][A[A2026-06-25 20:15:15,865 [INFO] enterprise_brain: [MainAgent] → 最终回答 (381字)
+2026-06-25 20:15:15,955 [INFO] enterprise_brain: [ASK] session=ld3_3... 9.7s | steps=1
+2026-06-25 20:15:17,372 [INFO] enterprise_brain: [MainAgent] → 最终回答 (508字)
+2026-06-25 20:15:17,492 [INFO] enterprise_brain: [ASK] session=ld3_0... 11.2s | steps=1
+2026-06-25 20:15:20,158 [INFO] enterprise_brain: [data] 完成, 结果 1784 字
+2026-06-25 20:15:20,449 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:24,729 [INFO] enterprise_brain: [MainAgent] → 最终回答 (829字)
+2026-06-25 20:15:24,871 [INFO] enterprise_brain: [ASK] session=ld3_6... 18.6s | steps=1
+
+Batches:  50%|█████     | 1/2 [00:15<00:15, 15.28s/it][A
+
+Batches:  50%|█████     | 1/2 [00:16<00:16, 16.77s/it][A[ABatches:  50%|█████     | 1/2 [00:17<00:17, 17.25s/it]
+Batches: 100%|██████████| 2/2 [00:19<00:00,  8.62s/it][ABatches: 100%|██████████| 2/2 [00:19<00:00,  9.62s/it]
+2026-06-25 20:15:33,926 [INFO] enterprise_brain: 检索完成: 语义31 + BM2532 → RRF56 → Top5
+
+
+Batches: 100%|██████████| 2/2 [00:19<00:00,  8.27s/it][A[ABatches: 100%|██████████| 2/2 [00:19<00:00,  9.55s/it]
+2026-06-25 20:15:34,083 [INFO] enterprise_brain: 检索完成: 语义25 + BM2525 → RRF48 → Top5
+Batches: 100%|██████████| 2/2 [00:20<00:00,  8.77s/it]Batches: 100%|██████████| 2/2 [00:20<00:00, 10.04s/it]
+2026-06-25 20:15:34,721 [INFO] enterprise_brain: 检索完成: 语义32 + BM2527 → RRF58 → Top5
+2026-06-25 20:15:35,078 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:41,625 [INFO] enterprise_brain: [doc] 完成, 结果 1428 字
+2026-06-25 20:15:41,806 [INFO] httpx: HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-06-25 20:15:42,917 [INFO] enterprise_brain: [MainAgent] → 最终回答 (93字)
+2026-06-25 20:15:42,942 [INFO] enterprise_brain: [ASK] session=ld3_9... 36.7s | steps=1

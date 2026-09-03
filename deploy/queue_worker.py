@@ -51,9 +51,10 @@ def process_one():
     logger.info(f"[QueueWorker] 处理中 request_id={request_id}: {user_message[:60]}")
 
     try:
-        from app.agents.orchestrator import run_orchestrator
+        # C2: 队列走无 interrupt 的图，chart/export 自动执行不卡审批
+        from app.agents.orchestrator import run_orchestrator_queue
 
-        result = run_orchestrator(user_message, thread_id=session_id)
+        result = run_orchestrator_queue(user_message, thread_id=session_id)
         store_result(request_id, result if isinstance(result, str) else str(result))
         logger.info(f"[QueueWorker] 完成 request_id={request_id} ({len(result)}字)")
 

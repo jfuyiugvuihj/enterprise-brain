@@ -20,6 +20,8 @@ dependencies = [
     "langchain-tavily",
     "langgraph",
     "langgraph-checkpoint-sqlite",
+    "langgraph-checkpoint-postgres",
+    "mcp",
     "matplotlib",
     "modelscope>=1.37.1",
     "olefile>=0.47",

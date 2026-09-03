@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 _executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="ezn_")
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, UploadFile, File, Request as FastAPIRequest
+from fastapi import APIRouter, UploadFile, File, Form, Request as FastAPIRequest
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -37,7 +37,7 @@ _tz = timezone(timedelta(hours=8))
 import psycopg
 from psycopg.rows import dict_row
 
-_PG_URL = os.getenv("DATABASE_URL", "postgresql://fengx@localhost:5432/enterprise_brain")
+_PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
 
 
 def _sess_conn():
@@ -104,6 +104,38 @@ def _get_session_messages(session_id: str) -> list[dict]:
 def _delete_session(session_id: str):
     with _sess_conn() as conn:
         conn.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
+        conn.commit()
+
+
+# ==================== 阶段 2：文档密级表 ====================
+
+def _ensure_documents_table():
+    with _sess_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS documents (
+                id SERIAL PRIMARY KEY,
+                filename TEXT UNIQUE NOT NULL,
+                classification INT NOT NULL DEFAULT 1,
+                department TEXT
+            )
+        """)
+        conn.commit()
+
+
+try:
+    _ensure_documents_table()
+except Exception:
+    pass  # 导入不硬依赖库；上传时再懒建表
+
+
+def _upsert_document(filename: str, classification: int, department: str):
+    _ensure_documents_table()
+    with _sess_conn() as conn:
+        conn.execute(
+            "INSERT INTO documents (filename, classification, department) VALUES (%s, %s, %s) "
+            "ON CONFLICT (filename) DO UPDATE SET classification = EXCLUDED.classification, department = EXCLUDED.department",
+            (filename, int(classification), department or None),
+        )
         conn.commit()
 
 
@@ -208,6 +240,17 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     from app.common.queue import enqueue_request, is_overloaded
     username = getattr(http_request.state if http_request else None, "username", None) or "anonymous"
     allowed, remaining = check_rate_limit(username, max_per_minute=10)
+
+    # 阶段 2：解析调用者角色/部门，随 config 下发做检索权限过滤
+    user_ctx = None
+    try:
+        from app.common import auth as _auth
+        u = _auth.get_user(username)
+        if u:
+            user_ctx = {"username": username, "role": u.get("role") or "staff",
+                        "department": u.get("department") or ""}
+    except Exception:
+        user_ctx = None
     if not allowed:
         # 系统过载时入队等待
         queued = enqueue_request(rewritten_msg, thread_id, username)
@@ -239,7 +282,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
 
         def _run():
             try:
-                for event in run_with_stream(rewritten_msg, thread_id=thread_id):
+                for event in run_with_stream(rewritten_msg, thread_id=thread_id, user=user_ctx):
                     result_queue.put(("event", event))
                 result_queue.put(("done", None))
             except Exception as e:
@@ -495,12 +538,20 @@ async def delete_session(session_id: str):
 # ==================== 文档管理 ====================
 
 @router.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...),
+                          classification: int = Form(1),
+                          department: str = Form("")):
     file_path = os.path.join(DOCUMENTS_DIR, file.filename)
     with open(file_path, "wb") as f:
         f.write(await file.read())
     content = load_document(file_path)
-    ok, msg = retriever.add_document(file.filename, content)
+    ok, msg = retriever.add_document(file.filename, content,
+                                     classification=classification,
+                                     department=department or None)
+    if ok:
+        _upsert_document(file.filename, classification, department)
+        from app.agents.tools import rebuild_bm25
+        rebuild_bm25()  # C1: 新文档立即进入关键词检索
     return {"filename": file.filename, "status": "ok" if ok else "skipped", "message": msg}
 
 
@@ -513,6 +564,8 @@ async def list_documents():
 @router.delete("/documents/{filename}")
 async def delete_document(filename: str):
     retriever.delete_document(filename)
+    from app.agents.tools import rebuild_bm25
+    rebuild_bm25()  # C1: 删除后同步更新索引
     file_path = os.path.join(DOCUMENTS_DIR, filename)
     if os.path.exists(file_path):
         os.remove(file_path)

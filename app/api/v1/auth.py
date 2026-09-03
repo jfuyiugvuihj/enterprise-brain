@@ -31,7 +31,14 @@ async def login(data: LoginRequest):
     if not auth.verify_password(data.username, data.password):
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     token = auth.create_token(data.username)
-    return {"token": token, "username": data.username, "expires_in": auth._EXPIRE_HOURS * 3600}
+    u = auth.get_user(data.username) or {}
+    return {
+        "token": token,
+        "username": data.username,
+        "role": u.get("role") or "staff",          # 阶段 2
+        "department": u.get("department") or "",   # 阶段 2
+        "expires_in": auth._EXPIRE_HOURS * 3600,
+    }
 
 
 # ==================== 用户管理 ====================
