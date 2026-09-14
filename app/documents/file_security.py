@@ -21,6 +21,10 @@ class UploadInspection:
     media_type: str
 
 
+# Knowledge-base upload whitelist: every extension here must be handled by
+# app.rag.loader.load_document(), otherwise a stored file is deleted and the
+# upload route fails with a 500 parse error. Spreadsheets are datasets, not
+# knowledge-base documents, and belong to POST /api/v1/upload-excel.
 _ALLOWED_TYPES = {
     ".pdf": ("application/pdf", (b"%PDF-",)),
     ".txt": ("text/plain", ()),
@@ -29,11 +33,6 @@ _ALLOWED_TYPES = {
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         (b"PK\x03\x04",),
     ),
-    ".xlsx": (
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        (b"PK\x03\x04",),
-    ),
-    ".csv": ("text/csv", ()),
 }
 _RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$")
 

@@ -248,3 +248,15 @@ r3 明确主文档同时包含：
 3. 部署配置的“存在”不等于“可用”：`postgres:16-alpine` 不含 pgvector、整份 `http{}` 被塞进 `conf.d`、健康检查返回常量 `200`，三者都能通过肉眼审阅但都会在真实 `docker compose up` 上失败。
 4. 配置文件“能被解析”也不等于“语义正确”：`docker compose config` 对 root 与叠加层都返回 0，但同一条命令暴露出 `.env` 中的 bcrypt 哈希会被 Compose 变量替换吞掉，属于静默改坏凭据。为此把容器环境文件与开发环境文件分家，并新增 `scripts/check_deployment_env.py` 预检。
 5. 仍未通过 Docker 运行门和浏览器端到端，因此 r4 不把项目标为生产试运行就绪。
+## 10. r5（2026-09-14）S5 契约与解析器一致性订正
+
+- 修订性质：契约文档、上传白名单与解析器三者口径对齐，外加第 19 章一处事实性纠错。
+- 主文档变更：第 19 章把“未发现 PGVector 扩展 / PGVector 向量表”订正为“schema 骨架已入库、无维度、无 HNSW/IVFFlat 索引、无写入方，向量读写 100% 走 Chroma”，并新增 5 条取证要点与 1099 行表格状态；第 6.2 节文件能力表更新 Markdown 行与 Excel/CSV 进入知识库行两处口径。其余章节未重写，第 39 章收尾未触碰。
+- 本轮修改代码：是。`app/rag/loader.py` 新增 `load_md()` 并在 `load_document()` 增加 `.md` 分支；`app/documents/file_security.py` 知识库上传白名单由 `pdf/txt/md/docx/xlsx/csv` 收窄为 `pdf/txt/md/docx`。
+- 本轮修改契约：`docs/api/contract-v1.md` 删除仓库中并不存在的“独立入队端点”，改为“`POST /api/v1/ask` 超限自动入队，SSE `queued` 事件返回 `request_id`”；另追加 2026-09-14 兼容性说明，未改写主 thread 已写的 2026-09-14 段落。
+- 本轮修改测试：`tests/test_file_upload_security.py` 由 7 个用例增至 29 个（含参数化）。新增白名单与 `load_document()` 分支一致性的防漂移用例、`.xlsx`/`.csv` 拒绝用例、以及 `TestClient` 走 `POST /api/v1/upload` 的路由层用例。原路径穿越、双扩展、伪造文件头断言全部保留。
+- 路由层错误体口径（与主 thread 同日收口一致）：不支持的扩展名返回 `400`，`detail` 恰为稳定码 `unsupported_file`；人类可读原因只进服务器日志，不进响应体，测试不得断言日志文本。同级码还有 `413 upload_too_large`、`500 document_parse_failed`、`500 document_index_failed`、`415 unsupported_preview`。
+- 本轮运行测试：`python -m pytest tests/test_file_upload_security.py -q` -> `29 passed`。未运行全量套件，因并行 Worker 正在改动其它文件。
+- 事实依据：`migrations/0001_core_resource_versions.sql:4`、`migrations/0002_execution_data_lineage.sql:235`、`migrations/0002_execution_data_lineage.sql:243`、`app/rag/retriever.py:190`、`docker-compose.yml:48`、`app/common/monitoring.py:56`；`git grep "INSERT INTO chunks"` 零命中，全仓无 HNSW/IVFFlat。
+- 本轮未做：未启动服务、未连 5432/6379/11434、未跑 `scripts/migrate.py`、未改 `frontend/`、未改 `app/api/v1/chat.py`。
+- 遗留与需主 thread 决策：`.md` 预览返回 `415 unsupported_preview`（`app/documents/preview.py` 不在本切片写集）；`frontend/src/components/DocPanel.vue:351` 的 accept 列表仍含 `.doc`（后端会 400）且缺 `.md`；文档上传那批稳定码尚未纳入 `REST Error Envelope` 列表。

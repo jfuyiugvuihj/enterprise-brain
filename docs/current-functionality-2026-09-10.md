@@ -281,11 +281,11 @@ XLSX / XLS / CSV
 | DOCX 表格 | 不完整 | 没有形成稳定的表格结构化解析 |
 | DOC | 基础兼容 | 使用 `olefile` 做粗略文本提取，复杂格式可靠性有限 |
 | TXT | 已实现基础能力 | 尝试 UTF-8、GBK、GB2312 |
-| Markdown | 未实现 | 当前 `load_document()` 没有 Markdown 专用处理分支 |
+| Markdown | 已实现基础能力（2026-09-14） | `load_document()` 直读 Markdown 源文本，沿用 TXT 的编码探测；不渲染、不解析标题与表格结构 |
 | XLSX | 已实现数据分析读取 | 进入 pandas 分析链路，不等于进入知识库 |
 | XLS | 代码尝试支持 | 使用 `xlrd`，但当前依赖声明不完整，部署时存在风险 |
 | CSV | 已实现数据分析读取 | 支持多种编码尝试，主要服务经营数据分析 |
-| Excel/CSV 进入知识库 | 未实现 | 没有按工作表、表头、行列关系和业务语义建立 RAG 索引 |
+| Excel/CSV 进入知识库 | 不支持，已从知识库白名单移除（2026-09-14） | 知识库上传只接受 pdf/txt/md/docx，表格文件在写盘前即以 `400 unsupported_file` 拒绝；也没有按工作表、表头、行列关系和业务语义建立 RAG 索引 |
 | 页码、表格、段落定位 | 不完整 | 当前检索结果主要保存文件名和 chunk 索引 |
 
 因此，“当前支持 Excel”只能表述为“支持 Excel/CSV 经营数据读取和分析”，不能表述为“已经具备完整 Excel 知识库解析能力”。
@@ -1068,9 +1068,16 @@ Redis
 
 - MySQL 驱动或 MySQL 业务库；
 - Tortoise ORM；
-- PGVector 扩展；
-- PGVector 向量表或 LangChain PGVector 集成；
-- 将 Chroma 中现有向量自动同步到 PostgreSQL 的机制。
+- 将 Chroma 中现有向量自动同步到 PostgreSQL 的机制；
+- PGVector 的 LangChain 集成，以及任何走向量数据库的检索调用。
+
+PGVector 的准确口径（2026-09-14 订正：上一版把“PGVector 扩展”和“PGVector 向量表”一并列为未发现，与仓库内的迁移文件矛盾）：
+
+- `migrations/0001_core_resource_versions.sql:4` 已包含 `CREATE EXTENSION IF NOT EXISTS vector;`；
+- `migrations/0002_execution_data_lineage.sql:235` 已建立 `chunks` 表，其中 `embedding vector`（第 243 行）是未指定维度的裸列；
+- `docker-compose.yml:48` 使用 `pgvector/pgvector:pg16` 镜像，`app/common/monitoring.py:56` 会探测 `pg_extension` 中是否存在 `vector`，这只说明扩展可用；
+- 运行时没有任何 `INSERT INTO chunks`，全仓也没有 HNSW 或 IVFFlat 向量索引；
+- 因此准确表述是：schema 骨架已入库，无维度、无向量索引、无写入方；向量读写 100% 走 Chroma（`app/rag/retriever.py:190` 构造 `chromadb.PersistentClient`，依赖缺失时退化为 JSON 兜底）。PGVector 仍是生产目标，不是当前能力。
 
 `PostgresSaver` 只表示 LangGraph 检查点可以使用 PostgreSQL 持久化，不表示系统已经使用 PGVector。Chroma 和 PGVector 都可以保存向量，但它们是两种不同的向量存储实现。
 
@@ -1096,7 +1103,7 @@ Redis
 |---|---|---|
 | PostgreSQL | 已使用 | 继续作为业务主库，统一资源元数据、权限、版本、任务和审计 |
 | Chroma | 已使用 | 作为当前过渡向量库；迁移完成后不再作为生产主向量库 |
-| PGVector | 当前未实现 | 作为 PostgreSQL 内的生产向量存储，与文档权限和版本在同一数据边界内 |
+| PGVector | 仅有 schema 骨架，运行时未接线 | 作为 PostgreSQL 内的生产向量存储，与文档权限和版本在同一数据边界内 |
 | 本地文件存储 | 已使用 | 保存原始文件和大体积产物，不把原始文件直接塞入数据库 |
 | Redis | 已使用或按部署启用 | 承担异步任务、队列、缓存和任务协调，不作为业务事实数据库 |
 | MySQL | 当前未实现 | 不是单企业私有化部署的必需组件；只有接入客户既有 MySQL 业务系统时才单独引入 |

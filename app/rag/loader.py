@@ -1,5 +1,5 @@
 """
-Unified document loader for PDF / DOCX / DOC / TXT.
+Unified document loader for PDF / DOCX / DOC / TXT / Markdown.
 """
 from pathlib import Path
 
@@ -56,6 +56,11 @@ def load_txt(file_path: str) -> str:
     raise ValueError(f"Unable to detect text encoding: {file_path}")
 
 
+def load_md(file_path: str) -> str:
+    """Read Markdown as plain source text, reusing TXT encoding detection."""
+    return load_txt(file_path)
+
+
 def load_document(file_path: str) -> str:
     """Auto-detect file type and return plain text."""
     ext = Path(file_path).suffix.lower()
@@ -69,4 +74,6 @@ def load_document(file_path: str) -> str:
         return load_doc(file_path)
     if ext == ".txt":
         return load_txt(file_path)
+    if ext == ".md":
+        return load_md(file_path)
     raise ValueError(f"Unsupported file format: {ext}")
