@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 
 def test_deployment_files_use_private_model_and_local_services_only():
@@ -446,7 +446,9 @@ def test_startup_hooks_refuse_production_traffic_before_the_scheduler():
     assert "startup_storage_guard" in handler_names, handler_names
     assert handler_names.index("startup_storage_guard") < handler_names.index("startup_scheduler")
     assert "enforce_production_storage_guard" in source
-    assert "/api/v1/apps" in {route.path for route in app.routes}
+    # 路由存在性以 OpenAPI 表徵为准：新版 Starlette 把子路由收进 _IncludedRouter，
+    # 它既没有 .path 也不再暴露 .routes，直接遍历 app.routes 会漏掉已挂载的路由。
+    assert "/api/v1/apps" in app.openapi()["paths"]
 
 
 def test_image_ships_a_cjk_font_that_the_code_actually_looks_for():

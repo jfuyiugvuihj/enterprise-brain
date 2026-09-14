@@ -82,7 +82,9 @@ class SemanticSearcher:
 def _tokenize_text(text: str) -> list[str]:
     try:
         import jieba
-    except ModuleNotFoundError:
+    except ImportError:
+        # 不只是 ModuleNotFoundError：jieba 装不上、装坏、或被 sys.modules 占位时
+        # 抛的是父类 ImportError，回退分支必须同样生效，否则关键词检索直接返回空。
         if any("\u4e00" <= char <= "\u9fff" for char in text):
             return [char for char in text if not char.isspace()]
         return text.split()
