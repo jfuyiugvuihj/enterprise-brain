@@ -64,17 +64,39 @@ def _hash(question: str) -> str:
     return hashlib.md5(question.strip().encode()).hexdigest()[:12]
 
 
-def cache_dispatch(question: str, workers: list[str]) -> None:
+def answer_cache_scope(principal=None, username: str = "") -> str:
+    """缓存作用域标识：只有作用域完全相同的调用者才允许回读同一条缓存。
+
+    答案和调度决策的内容取决于调用者的授权输入（可读文档、可读数据集、密级），
+    所以缓存键必须带上调用者身份。此前键里只有问题文本，一次带权限的检索结果会
+    被回读给没有同等权限的人。作用域按用户隔离，不做跨用户共享：共享要求“两人
+    授权输入完全等价”，而文档归属（owner_id）无法由角色或部门推断出来。
+    """
+    if principal is not None:
+        identity = str(getattr(principal, "user_id", "") or getattr(principal, "username", "") or "")
+    else:
+        identity = str(username or "")
+    return f"user:{identity}" if identity else "user:anonymous"
+
+
+def _scope_part(scope: str) -> str:
+    """作用域为空时沿用历史键，未升级的调用方不会落到另一份键空间。"""
+    if not scope:
+        return ""
+    return f"{hashlib.md5(scope.encode()).hexdigest()[:12]}:"
+
+
+def cache_dispatch(question: str, workers: list[str], scope: str = "") -> None:
     """缓存 dispatch 决策：问题 → 该派哪些 worker"""
     r = get_redis()
-    key = f"dispatch:{_hash(question)}"
+    key = f"dispatch:{_scope_part(scope)}{_hash(question)}"
     r.setex(key, 3600, json.dumps(workers))  # 1 小时过期
 
 
-def get_cached_dispatch(question: str) -> list[str] | None:
+def get_cached_dispatch(question: str, scope: str = "") -> list[str] | None:
     """获取缓存的 dispatch 决策，命中返回 workers 列表，未命中返回 None"""
     r = get_redis()
-    key = f"dispatch:{_hash(question)}"
+    key = f"dispatch:{_scope_part(scope)}{_hash(question)}"
     val = r.get(key)
     if val:
         workers = json.loads(val)
@@ -83,17 +105,17 @@ def get_cached_dispatch(question: str) -> list[str] | None:
     return None
 
 
-def cache_answer(question: str, answer: str) -> None:
+def cache_answer(question: str, answer: str, scope: str = "") -> None:
     """缓存最终回答"""
     r = get_redis()
-    key = f"answer:{_hash(question)}"
+    key = f"answer:{_scope_part(scope)}{_hash(question)}"
     r.setex(key, 1800, answer)  # 30 分钟
 
 
-def get_cached_answer(question: str) -> str | None:
+def get_cached_answer(question: str, scope: str = "") -> str | None:
     """获取缓存的回答"""
     r = get_redis()
-    key = f"answer:{_hash(question)}"
+    key = f"answer:{_scope_part(scope)}{_hash(question)}"
     val = r.get(key)
     if val:
         logger.info("[Cache] answer 命中: %s", question[:30])

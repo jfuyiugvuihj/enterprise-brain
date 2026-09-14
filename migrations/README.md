@@ -38,3 +38,14 @@ additive and repeatable and does not import historical JSON registry records.
 the current authentication, session, document-version, alert, memory, and profile
 adapters. It makes their production schema explicit without changing the offline
 memory fallback behavior.
+
+`0004_legacy_runtime_compatibility.sql` closes the gap between the 0003 compatibility tables and
+the columns the current authenticated chat adapter actually reads: `sessions.title`,
+`sessions.updated_at`, `session_messages.steps`, and the `documents` table behind
+`app/documents/catalog.py`. It is additive so historical session rows stay available.
+
+`0005_audit_events.sql` adds the durable security-audit journal that `app/common/audit.py` now
+writes through `app/storage/persistence.py`. Before it, the judgment chain for a denied request
+lived only in a process-local list and disappeared on restart, so a wave of 403s left no
+traceable history. Each row keeps `request_id`, actor, action, resource, the resource scope as
+JSONB, outcome, `reason_code` and `policy_version`.

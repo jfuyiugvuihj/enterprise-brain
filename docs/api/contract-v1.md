@@ -298,6 +298,45 @@ Two consequences for clients and for the `frontend/` owner:
   is rejected by `POST /api/v1/upload` with `400 unsupported_file`, and `.md` is not
   selectable. Both are frontend-owned fixes, not backend behaviour.
 
+### Wave 1 consolidated fixes (2026-09-14): headers, catalog shape, health and admin surfaces
+
+Landed in `d67987a..5db955c`. Everything below is additive or narrowing; no route was renamed
+or removed, and no legacy SSE event changed.
+
+- **`Cache-Control: no-store` on every authorised body.** `app/common/no_store.py` is the single
+  helper. It now covers artifact content and download, document preview and download, data-file
+  download and the dataset preview. A permission-checked 200 must not replay from a shared cache;
+  clients must not add their own longer-lived caching on top.
+- **`GET /api/v1/documents/catalog` rows no longer echo a server path.** `storage_path` is
+  rewritten relative to the process working directory with forward slashes, or reduced to the bare
+  file name when no relative form exists (for example across Windows drives). The absolute path
+  stays in the catalog table and the server log. Treat `storage_path` as an opaque reference, never
+  as a path to join.
+- **`.md` preview works.** `app/documents/preview.py` treats `.md` as text next to `.txt`, `.doc`
+  and `.docx`, so `415 unsupported_preview` now means "not a previewable type at all" instead of
+  "markdown was never wired up".
+- **`POST /api/v1/alerts/check` reports what it actually scanned.** The sweep evaluates the tenant
+  `DATA_DIR` under the caller's Principal instead of the repository `data/` directory, and the
+  response carries `scan_scope` (`data_dir_configured`, `reason`, `evaluated_files`). One sweep
+  records a given rule at most once, so re-running the check cannot duplicate alerts.
+- **`/health/details` names every storage mode.** Each subsystem reports `storage_mode`
+  (`postgres`, `redis`, `json_file`, `memory` or `unavailable`), `durable`,
+  `shared_across_processes`, `protection` and a `detail` string, and the report gains
+  `degraded` status plus a `problems` code list (`users_store_not_persistent`,
+  `<name>_read_only`, `queue_unavailable`, `postgres_<status>`, ...). A durable backend missing in
+  production puts the subsystem into read-only protection, answered as `503 storage_read_only`,
+  instead of pretending to be healthy. Read `problems`; do not infer health from `status` alone.
+- **Four admin observability routes exist** (`app/api/v1/observability.py`, mounted under
+  `/api/v1`): `POST /retrieval/debug`, `GET /traces/{trace_id}`, `GET /evaluations`,
+  `GET /audit/events`. They sit on already-authenticated paths - the `AuthMiddleware` allow-list
+  was not widened - and an anonymous call gets `401 authentication_required` rather than an admin
+  fallback. `POST /api/v1/apps` (open-platform registration) is now a route too: admin-only and
+  audited.
+- **Answer-cache keys are gaining a caller scope.** `app/common/cache.py` now accepts a `scope`
+  argument (`answer_cache_scope(principal)`) so a permission-shaped answer cannot be replayed to a
+  different user. Until the `/ask` call sites pass it, the legacy question-only key still applies;
+  clients must not assume two users share a cached answer.
+
 ## SSE Event Deprecation Policy (2026-09-14)
 
 Snapshot basis: `app/api/v1/chat.py` as read on 2026-09-14 13:50 (+08:00). Event names and function names are the durable identifiers in this section; line numbers are deliberately not quoted because the backend is being edited concurrently. Frontend-side evidence and impact are recorded in `docs/frontend-workspace-audit-2026-09-14.md`.

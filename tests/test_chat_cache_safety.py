@@ -67,3 +67,35 @@ def test_ask_does_not_return_stale_global_answer_cache(monkeypatch, tmp_path):
 
     assert fresh_answer in body
     assert stale_answer not in body
+
+
+def test_answer_cache_is_not_shared_between_users(monkeypatch):
+    """同部门同角色的两个用户也不能共用一条答案缓存。
+
+    缓存内容取决于调用者可检索到的文档（含 owner_id 与密级），而这些授权输入无法
+    由“角色 + 部门”等价推断，所以作用域按用户隔离。这里直接测键空间，不依赖 /ask
+    的接线；接线后调用方必须显式传 scope。
+    """
+    from app.common import cache
+    from app.common.identity import Principal
+
+    # 本机未安装 fakeredis，get_redis() 会退回进程内实现；这里直接用同一形状替换单例。
+    monkeypatch.setattr(cache, "_redis", cache._MemoryRedis())
+
+    alice = Principal.from_user(
+        {"id": "alice", "username": "alice", "role": "admin", "department": "finance"}
+    )
+    carol = Principal.from_user(
+        {"id": "carol", "username": "carol", "role": "admin", "department": "finance"}
+    )
+    question = "本项目预算明细是多少？"
+    answer = "只有 Alice 可读到的那份答案"
+
+    cache.cache_answer(question, answer, scope=cache.answer_cache_scope(alice))
+
+    assert cache.get_cached_answer(question, scope=cache.answer_cache_scope(carol)) is None
+    assert cache.get_cached_answer(question, scope=cache.answer_cache_scope(alice)) == answer
+    # 作用域缺失时落在历史键上，不会被任何带作用域的写入污染
+    assert cache.get_cached_answer(question) is None
+    assert cache.answer_cache_scope(alice) != cache.answer_cache_scope(carol)
+    assert cache.answer_cache_scope(None, "anonymous") == "user:anonymous"
