@@ -21,7 +21,7 @@ from app.dashboard.service import build_dashboard
 from app.insights.rules import detect_insights
 from app.knowledge_graph.service import KnowledgeGraph
 from app.quality.provenance import build_answer_provenance
-from app.semantics.registry import match_metric_context
+from app.semantics.registry import match_metric_definition, metric_catalog
 
 router = APIRouter()
 _graph = KnowledgeGraph()
@@ -160,6 +160,28 @@ async def provenance_summary(data: ProvenanceRequest, request: Request):
 
 @router.post("/semantics/match")
 async def semantics_match(data: SemanticRequest, request: Request):
-    _authorized(request, ACTION_VIEW, "semantics")
-    context = match_metric_context(data.question)
-    return {"context": context.model_dump() if context else None}
+    principal = _authorized(request, ACTION_VIEW, "semantics")
+    match = match_metric_definition(data.question, owner_id=str(principal.user_id))
+    if match is None:
+        return {"context": None, "definition_source": None, "provenance": None}
+    provenance = match["definition"]["provenance"]
+    return {
+        "context": match["context"].model_dump(),
+        # The context already carries definition_version and the warning; the source is
+        # repeated at the top level so a caller can tell a curated metric_definitions row
+        # from the code fallback without reading the warning text.
+        "definition_source": provenance["source"],
+        "provenance": provenance,
+    }
+
+
+@router.get("/semantics/metrics")
+async def semantics_metrics(request: Request):
+    """Every metric definition a question can be answered from, with its provenance.
+
+    Read-only (request 2 / B-5). Each entry states its ``definition_version`` and where
+    the definition came from, and ``verified_against_documents`` stays false because no
+    definition here has been reconciled with an uploaded policy document.
+    """
+    principal = _authorized(request, ACTION_VIEW, "semantics")
+    return metric_catalog(owner_id=str(principal.user_id))
