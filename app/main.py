@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from app.api.v1 import artifacts, chat, data, auth, alerts, intelligence, open_platform
+from app.api.v1 import artifacts, chat, data, auth, alerts, intelligence, open_platform, observability
 
 
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
@@ -65,6 +65,8 @@ app.include_router(artifacts.router, prefix="/api/v1", dependencies=[])
 app.include_router(alerts.router, prefix="/api/v1")  # 闃舵 4 鍛婅
 app.include_router(intelligence.router, prefix="/api/v1")
 app.include_router(open_platform.router, prefix="/api/v1")
+app.include_router(observability.router, prefix="/api/v1")
+app.include_router(open_platform.apps_router, prefix="/api/v1")
 
 # 瀵规墍鏈?/api/v1/ 璺緞娣诲姞閴存潈涓棿浠讹紙login 闄ゅ锛?
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -146,6 +148,16 @@ def _preload_sync():
     logger.info("[鍚姩] 棰勫姞杞?RAG pipeline (BM25/CrossEncoder)...")
     preload_pipeline()
     logger.info("[启动] 预加载完成")
+
+
+@app.on_event("startup")
+async def startup_storage_guard():
+    """Refuse to serve production traffic on a non-durable user store."""
+    from app.common.logger import logger
+    from app.common.monitoring import enforce_production_storage_guard
+
+    enforce_production_storage_guard()
+    logger.info("[startup] production storage guard passed")
 
 
 @app.on_event("startup")
