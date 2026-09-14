@@ -63,15 +63,28 @@ _SCHEMA = {
 
 
 class _Cursor:
-    def __init__(self, rows=(), rowcount=0):
+    """psycopg3's cursor: execute, executemany, fetch, and usable as a context manager."""
+
+    def __init__(self, rows=(), rowcount=0, database=None):
         self._rows = list(rows)
         self.rowcount = rowcount
+        self.database = database
 
     def fetchall(self):
         return list(self._rows)
 
     def fetchone(self):
         return self._rows[0] if self._rows else None
+
+    def executemany(self, sql, parameters_seq):
+        for parameters in parameters_seq:
+            self.database.execute(sql, parameters)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
 
 
 class _Connection:
@@ -84,9 +97,11 @@ class _Connection:
     def execute(self, sql, params=()):
         return self.database.execute(sql, params)
 
-    def executemany(self, sql, parameters_seq):
-        for parameters in parameters_seq:
-            self.execute(sql, parameters)
+    def cursor(self):
+        # Deliberately not a shortcut for execute(): psycopg3 owns executemany on the
+        # cursor, so a connection here must not answer to it. Code that reaches for
+        # connection.executemany has to fail here exactly as it fails on a real server.
+        return _Cursor(database=self.database)
 
     def commit(self):
         self.database.commits += 1

@@ -489,7 +489,13 @@ class IndexMirrorSession:
         return int(value or 0)
 
     def _execute_many(self, sql, parameters):
-        self._connection.executemany(sql, parameters)
+        # psycopg3 keeps executemany on the cursor. The connection object has execute() but
+        # no executemany(), so calling it there raises AttributeError the moment a real
+        # server answers -- and a fake connection that mirrors this file instead of the
+        # driver hides it. The chunk insert is the whole point of the slice, so it has to
+        # go through the object that actually owns the method.
+        with self._connection.cursor() as cursor:
+            cursor.executemany(sql, parameters)
 
     def register_index(self, publication: DocumentIndexPublication, version: IndexVersion) -> None:
         self._execute(
@@ -714,7 +720,12 @@ class PostgresIndexStore:
 
     @staticmethod
     def _read_schema(connection) -> set[tuple[str, str]]:
-        tables = tuple(sorted(set(_MIRROR_TABLES) | set(_COUNTER_TABLES)))
+        # A list, never a tuple: psycopg3 adapts a Python tuple to a row constructor, and
+        # ``table_name = ANY(ROW(...))`` fails with InvalidTextRepresentation on a real
+        # server. A fake connection that only looks at the SQL text cannot see the
+        # difference, so the mirror would degrade on every real deployment while every
+        # test stayed green.
+        tables = sorted(set(_MIRROR_TABLES) | set(_COUNTER_TABLES))
         rows = connection.execute(_SCHEMA_SQL, (tables,)).fetchall()
         present: set[tuple[str, str]] = set()
         for row in rows:
