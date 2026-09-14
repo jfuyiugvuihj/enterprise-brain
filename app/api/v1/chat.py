@@ -31,6 +31,14 @@ from app.rag.loader import load_document
 from app.documents.preview import build_document_preview
 from app.rag.retriever import DocumentRetriever
 from app.rag.filters import RetrievalScopeError, build_document_retrieval_filter
+from app.rag.indexing import (
+    DocumentIndexPublication,
+    IndexPublicationError,
+    IndexPublisher,
+    IndexRegistry,
+    PostgresIndexStore,
+    default_metadata_path,
+)
 from app.common.model_handler import ModelHandler, ModelSource
 from app.common.logger import logger
 from app.common.performance import PerformanceStats, RequestBudget
@@ -1371,6 +1379,142 @@ def _record_uploaded_version(
         return metadata
 
 
+# ==================== Index publication (S4) ====================
+
+_INDEX_PUBLISHER: IndexPublisher | None = None
+_INDEX_MIRROR: PostgresIndexStore | None = None
+_INDEX_LOCK = threading.Lock()
+
+
+def index_mirror_store() -> PostgresIndexStore:
+    """The PostgreSQL mirror follows the catalog's own database health signal."""
+    global _INDEX_MIRROR
+    if _INDEX_MIRROR is None:
+        _INDEX_MIRROR = PostgresIndexStore(available=lambda: catalog_database_available())
+    return _INDEX_MIRROR
+
+
+def index_publisher() -> IndexPublisher:
+    """One versioned index registry per process, stored at INDEX_METADATA_PATH."""
+    global _INDEX_PUBLISHER
+    with _INDEX_LOCK:
+        if _INDEX_PUBLISHER is None:
+            _INDEX_PUBLISHER = IndexPublisher(
+                IndexRegistry(default_metadata_path()),
+                store=index_mirror_store(),
+            )
+        return _INDEX_PUBLISHER
+
+
+def _document_chunk_rows(filename: str) -> list[dict]:
+    """Read back what the vector store really holds for one document.
+
+    The published count comes from the store rather than from a fresh split: a record of
+    chunks that were never written is exactly the kind of claim this slice removes.
+    """
+    reader = getattr(retriever, "document_chunks", None)
+    if reader is None:
+        return []
+    try:
+        return list(reader(filename))
+    except Exception as exc:
+        raise IndexPublicationError(
+            "chunks", f"the vector chunks of {filename} could not be read", exc
+        ) from exc
+
+
+def _document_publication(
+    *,
+    filename: str,
+    version: int,
+    owner_id: str | None,
+    classification: int,
+    department: str,
+    scope: dict | None = None,
+    retirement: bool = False,
+) -> DocumentIndexPublication:
+    """Describe one document version's index state in catalog coordinates.
+
+    ``scope`` is the same projection an authorization decision reads, so the resource
+    version row the mirror writes can never disagree with the attributes the request was
+    actually decided on. It defaults to the catalog coordinates already passed in rather
+    than to an open scope: a publication built without a scope stays private.
+    """
+    declared = scope or {}
+    shared = {
+        "visibility": str(declared.get("visibility") or "private"),
+        "department_ids": tuple(
+            str(value).strip()
+            for value in (declared.get("department_ids") or ())
+            if str(value).strip()
+        ),
+        "resource_status": str(declared.get("status") or "active"),
+    }
+    if retirement:
+        return DocumentIndexPublication(
+            filename=filename,
+            version=int(version),
+            owner_id=owner_id,
+            classification=classification,
+            department=department,
+            retirement=True,
+            **shared,
+        )
+    rows = _document_chunk_rows(filename)
+    return DocumentIndexPublication(
+        filename=filename,
+        version=int(version),
+        owner_id=owner_id,
+        classification=classification,
+        department=department,
+        chunks=tuple(str(row.get("content") or "") for row in rows),
+        vector_ids=tuple(str(row.get("vector_id") or "") for row in rows),
+        content_hash=str((rows[0] if rows else {}).get("hash") or ""),
+        **shared,
+    )
+
+
+def _publish_document_index(publication: DocumentIndexPublication) -> dict:
+    """Publish one index version, or report that there was nothing to publish.
+
+    A version with no chunks has no index, and a retirement has none by definition; both
+    answer with what actually happened instead of dressing it up as a publication. The
+    registry and the mirror raise ``IndexPublicationError`` with the stage that failed,
+    and the caller turns that into a 500 that does not claim success.
+    """
+    outcome = index_publisher().apply(publication)
+    if outcome is None:
+        reason = "no_published_index" if publication.retirement else "no_indexed_chunks"
+        logger.warning(
+            f"[Index] {publication.resource_version_id}: {reason}; no index version was published"
+        )
+        return {
+            "status": "skipped",
+            "reason": reason,
+            "index_id": publication.index_id,
+            "source_version_id": publication.resource_version_id,
+            "chunk_count": 0,
+            "mirrored": False,
+            "warnings": [],
+        }
+    return outcome.as_dict()
+
+
+def _document_index_error(
+    filename: str, stage: str, message: str, *, code: str = "index_publish_failed"
+):
+    """One honest error body for an index publication that did not finish."""
+    return HTTPException(
+        status_code=500,
+        detail=ErrorEnvelope(
+            code=code,
+            message=message,
+            retryable=True,
+            details={"filename": filename, "stage": stage},
+        ).model_dump(),
+    )
+
+
 @router.post("/upload")
 async def upload_document(file: UploadFile = File(...),
                           classification: int = Form(1),
@@ -1476,6 +1620,27 @@ async def upload_document(file: UploadFile = File(...),
             size_bytes=written,
             parse_status="ready",
         )
+        def _publish_upload_index():
+            return _publish_document_index(
+                _document_publication(
+                    filename=inspection.display_filename,
+                    version=version_meta["version"],
+                    owner_id=owner_id,
+                    classification=classification,
+                    department=department,
+                    scope=_document_resource_scope(inspection.display_filename, version_meta),
+                )
+            )
+
+        try:
+            index_publication = await asyncio.to_thread(_publish_upload_index)
+        except IndexPublicationError as exc:
+            logger.exception(f"[Docs] index publication failed: {inspection.display_filename}")
+            raise _document_index_error(
+                inspection.display_filename,
+                exc.stage,
+                "index publication failed; the stored file and its catalog row remain",
+            ) from exc
         from app.agents.tools import rebuild_bm25
         rebuild_future = _executor.submit(rebuild_bm25)
         rebuild_future.add_done_callback(
@@ -1491,6 +1656,8 @@ async def upload_document(file: UploadFile = File(...),
             "size_bytes": version_meta.get("size_bytes"),
             "parse_status": version_meta.get("parse_status", "ready"),
             "owner_id": owner_id,
+            "chunk_count": index_publication.get("chunk_count", 0),
+            "index_publication": index_publication,
             "status": "ok",
             "message": msg,
         }
@@ -1586,15 +1753,7 @@ def _document_delete_before(stored_versions: list[dict]) -> dict:
 
 def _document_delete_error(filename: str, stage: str, message: str, *, code: str = "index_publish_failed"):
     """One honest error body for a delete that did not finish."""
-    return HTTPException(
-        status_code=500,
-        detail=ErrorEnvelope(
-            code=code,
-            message=message,
-            retryable=True,
-            details={"filename": filename, "stage": stage},
-        ).model_dump(),
-    )
+    return _document_index_error(filename, stage, message, code=code)
 
 
 @router.delete("/documents/{filename}")
@@ -1656,6 +1815,31 @@ async def delete_document(filename: str, request: FastAPIRequest):
             filename, "keyword_index", "keyword index rollback failed; the document is still stored"
         ) from exc
 
+    newest = stored_versions[0] if stored_versions else (version or {})
+    retirement = _document_publication(
+        filename=filename,
+        version=int(newest.get("version") or 1),
+        owner_id=newest.get("owner_id"),
+        classification=int(newest.get("classification") or 1),
+        department=str(newest.get("department") or ""),
+        scope=_document_resource_scope(filename, newest),
+        retirement=True,
+    )
+    try:
+        index_retirement = await asyncio.to_thread(_publish_document_index, retirement)
+    except IndexPublicationError as exc:
+        logger.exception(f"[Docs] index retirement failed: {filename}")
+        _audit(
+            "failed",
+            "index_retire_failed",
+            {"deleted": False, "stage": exc.stage, "error": exc.cause_name},
+        )
+        raise _document_delete_error(
+            filename,
+            exc.stage,
+            "index retirement failed; the document is still catalogued",
+        ) from exc
+
     removed: list[str] = []
     unremoved: list[str] = []
     for item in [*stored_versions, version]:
@@ -1692,6 +1876,7 @@ async def delete_document(filename: str, request: FastAPIRequest):
         "files_removed": len(removed),
         "versions_before": len(stored_versions),
         "catalog_rows_remaining": len(remaining),
+        "index_retirement": index_retirement["status"],
     }
     _audit("allowed" if not remaining else "partial", decision.reason_code, after)
     return {
@@ -1699,6 +1884,7 @@ async def delete_document(filename: str, request: FastAPIRequest):
         "filename": filename,
         "files_removed": len(removed),
         "catalog_rows_remaining": len(remaining),
+        "index_retirement": index_retirement,
     }
 
 

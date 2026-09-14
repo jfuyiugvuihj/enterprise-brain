@@ -383,3 +383,61 @@ def test_stored_file_that_cannot_be_removed_keeps_the_catalog_row(monkeypatch, t
     assert blocker.exists()
     assert store.deleted == []
     assert store.list("policy.txt")
+
+
+def test_the_index_record_is_retired_after_the_indexes_and_before_the_file(monkeypatch, tmp_path):
+    """The order of the delete chain is part of the contract.
+
+    A document that still answers from an index may not be recorded as retired, and a
+    document whose file is already gone has nothing left to roll back. The published record
+    therefore moves last among the index stages and first among the destructive ones.
+    """
+    from types import SimpleNamespace
+
+    from app.agents import tools
+    from app.api.v1 import chat
+    from app.common import auth
+    from app.main import app
+
+    store = _VersionStore(
+        [
+            {
+                "filename": "policy.txt",
+                "version": 1,
+                "classification": 1,
+                "department": "finance",
+                "owner_id": "alice",
+            }
+        ]
+    )
+    _, stored = _wire_document(monkeypatch, chat, store, tmp_path)
+    monkeypatch.setattr(auth, "get_user", lambda username: _account(username, "finance", "admin"))
+    order: list = []
+
+    class _Publisher:
+        def apply(self, publication):
+            order.append(("index_record", publication.resource_version_id, stored.exists()))
+            return SimpleNamespace(
+                as_dict=lambda: {
+                    "status": "retired",
+                    "index_id": publication.index_id,
+                    "source_version_id": publication.resource_version_id,
+                    "chunk_count": 0,
+                    "mirrored": True,
+                    "warnings": [],
+                }
+            )
+
+    monkeypatch.setattr(chat.retriever, "delete_document", lambda name: order.append(("vector_index", name)))
+    monkeypatch.setattr(tools, "rebuild_bm25", lambda: order.append(("keyword_index", "bm25")))
+    monkeypatch.setattr(chat, "index_publisher", lambda: _Publisher())
+
+    response = _delete(app)
+
+    assert response.status_code == 200, response.text
+    assert [entry[0] for entry in order] == ["vector_index", "keyword_index", "index_record"]
+    assert order[2][1] == "policy.txt|v1"
+    assert order[2][2] is True, "the stored file was already gone when the record was retired"
+    assert not stored.exists()
+    assert response.json()["index_retirement"]["status"] == "retired"
+    assert store.deleted == [(  "policy.txt", (str(stored),))]

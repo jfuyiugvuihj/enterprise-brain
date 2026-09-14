@@ -4,5 +4,6 @@
   "0003_legacy_runtime_tables.sql": "2f91c3fda64b0b669bd126cb8d2c1e3dc95104f0a40424504f9d476246986733",
   "0004_legacy_runtime_compatibility.sql": "a4f0001d0a55417e7613f8b8b7971e859be242db1ad1338493b92f36e36bb606",
   "0005_audit_events.sql": "3779a2687417652d3ac11a621789320eb3d3ad357de8aacdb295d8ada9182d47",
-  "0006_document_ownership.sql": "afc49b07a4597d21fbacbe579aebed60a7e5c5ba4c43bf7757d4c86275525ac1"
+  "0006_document_ownership.sql": "afc49b07a4597d21fbacbe579aebed60a7e5c5ba4c43bf7757d4c86275525ac1",
+  "0007_document_chunk_count.sql": "fdb9c6981e8396c567cb56dee7e8305436f2dbd764b1e392ebceb69475d51d8f"
 }

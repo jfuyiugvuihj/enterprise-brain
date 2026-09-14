@@ -301,6 +301,34 @@ class DocumentRetriever:
                 seen.add(fname)
         return sorted(seen)
 
+    def document_chunks(self, filename: str) -> list[dict]:
+        """Enumerate the chunks the vector store actually holds for one document.
+
+        Read-back, not a re-split: the published record has to describe the index that
+        exists. Rows come back ordered by the stored chunk index and carry the vector
+        store id, which is the only link from a chunk row to its embeddings. This slice
+        never reads or writes embeddings here; Chroma stays the retrieval path.
+        """
+        stored = self.collection.get(where={"filename": filename}) or {}
+        documents = stored.get("documents") or []
+        metadatas = stored.get("metadatas") or []
+        ids = stored.get("ids") or []
+        rows = []
+        for position, document in enumerate(documents):
+            metadata = metadatas[position] if position < len(metadatas) and metadatas[position] else {}
+            rows.append(
+                {
+                    "vector_id": str(ids[position]) if position < len(ids) else "",
+                    "content": str(document),
+                    "chunk_index": int(metadata.get("chunk_index", position) or 0),
+                    "classification": metadata.get("classification", 1),
+                    "department": metadata.get("department", ""),
+                    "hash": str(metadata.get("hash", "")),
+                }
+            )
+        rows.sort(key=lambda row: row["chunk_index"])
+        return rows
+
     def delete_document(self, filename: str):
         """删除指定文档的所有向量"""
         existing = self.collection.get(where={"filename": filename})
