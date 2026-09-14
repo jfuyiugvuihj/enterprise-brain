@@ -23,7 +23,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from app.common.no_store import NO_STORE_HEADERS
 from pydantic import BaseModel
 
+from app.agents.contracts import AuthorizationDecision, ErrorEnvelope
 from app.common import auth
+from app.common.audit import record_audit
 from app.common.authorization import principal_from_request
 from app.rag.loader import load_document
 from app.documents.preview import build_document_preview
@@ -37,11 +39,13 @@ from app.common.policy import authorization_decision
 from app.documents.catalog import (
     build_storage_name,
     current_documents,
+    public_document_row,
     _database_available as catalog_database_available,
     delete_document_versions,
     list_document_versions,
     peek_next_document_version,
     record_document_version,
+    record_local_document_version,
 )
 from app.documents.file_security import (
     UploadSecurityError,
@@ -145,20 +149,36 @@ def _latest_document_version(filename: str) -> dict | None:
     return None
 
 
+def _document_resource_scope(filename: str, version: dict) -> dict:
+    """Build the authorization attributes one stored document version carries.
+
+    ``owner_id`` used to be read out of a catalog row that never had the column, so
+    every decision fell through to the department intersection. The catalog now
+    records the uploader, and this projection is the single place where a document
+    row becomes a resource scope, which also puts the same attributes into the audit
+    journal as the decision itself.
+    """
+    return {
+        "resource_type": "document",
+        "resource_id": version.get("resource_id") or version.get("id") or filename,
+        "owner_id": version.get("owner_id"),
+        "department": version.get("department"),
+        "department_ids": version.get("department_ids"),
+        "classification": version.get("classification"),
+        "visibility": version.get("visibility", "private"),
+        "version_id": version.get("version_id") or str(version.get("version", "")),
+        "status": version.get("status", "active"),
+    }
+
+
+def _document_storage_path(version: dict) -> str:
+    return str(version.get("storage_path") or "")
+
+
 def _document_authorization_decision(principal, filename: str, version: dict, action: str):
     return authorization_decision(
         principal,
-        {
-            "resource_type": "document",
-            "resource_id": version.get("resource_id") or version.get("id") or filename,
-            "owner_id": version.get("owner_id"),
-            "department": version.get("department"),
-            "department_ids": version.get("department_ids"),
-            "classification": version.get("classification"),
-            "visibility": version.get("visibility", "private"),
-            "version_id": version.get("version_id") or str(version.get("version", "")),
-            "status": version.get("status", "active"),
-        },
+        _document_resource_scope(filename, version),
         action=action,
         require_resource_scope=True,
     )
@@ -187,8 +207,11 @@ def _authorize_session_request(request: FastAPIRequest, session_id: str):
 
 def _visible_document_rows(request: FastAPIRequest, rows: list[dict]) -> list[dict]:
     principal = _document_principal_or_error(request)
+    # The row is shaped after it has been filtered: an authorization decision must
+    # read what the store recorded, and a response must carry the ownership and parse
+    # state of that same row rather than whatever shape the caller handed over.
     return [
-        row
+        public_document_row(row)
         for row in rows
         if _document_authorization_decision(
             principal,
@@ -203,17 +226,33 @@ def _authorize_document_request(
     request: FastAPIRequest,
     filename: str,
     action: str,
-) -> tuple[dict, str]:
+) -> tuple[dict, AuthorizationDecision]:
+    """Authorize a document operation and put the whole judgment in the audit journal.
+
+    The decision travels back with the stored version because the caller has to
+    record which rule allowed the change it is about to perform, and a denial has to
+    stay traceable after the response is gone.
+    """
+    principal = _document_principal_or_error(request)
     version = _latest_document_version(filename)
     if not version:
         raise HTTPException(status_code=404, detail="resource_not_found")
 
-    principal = _document_principal_or_error(request)
     decision = _document_authorization_decision(principal, filename, version, action)
+    record_audit(
+        principal,
+        action,
+        "allowed" if decision.allowed else "denied",
+        filename,
+        decision.reason_code,
+        request_id=principal.request_id or None,
+        resource_scope=_document_resource_scope(filename, version),
+        policy_version=decision.policy_version,
+    )
     if not decision.allowed:
         status_code = 401 if decision.reason_code == "authentication_required" else 403
         raise HTTPException(status_code=status_code, detail=decision.reason_code)
-    return version, str(version["storage_path"])
+    return version, decision
 
 
 def _resolve_document_path(filename: str) -> str | None:
@@ -401,7 +440,10 @@ def _ensure_documents_table():
                 id SERIAL PRIMARY KEY,
                 filename TEXT UNIQUE NOT NULL,
                 classification INT NOT NULL DEFAULT 1,
-                department TEXT
+                department TEXT,
+                owner_id TEXT,
+                size_bytes BIGINT,
+                parse_status TEXT NOT NULL DEFAULT 'pending'
             )
         """)
         conn.commit()
@@ -414,13 +456,40 @@ if catalog_database_available():
         pass  # 导入不硬依赖库；上传时再懒建表
 
 
-def _upsert_document(filename: str, classification: int, department: str):
+def _upsert_document(
+    filename: str,
+    classification: int,
+    department: str,
+    owner_id: str | None = None,
+    *,
+    size_bytes: int | None = None,
+    parse_status: str = "pending",
+):
+    """Keep the logical document row aligned with the version just stored.
+
+    Ownership is written here too: the documents row is what an operator inspects when
+    a version has to be reassigned, and an owner that only ever reached the version
+    table would leave the logical row permanently unattributed.
+    """
     _ensure_documents_table()
     with _sess_conn() as conn:
         conn.execute(
-            "INSERT INTO documents (filename, classification, department) VALUES (%s, %s, %s) "
-            "ON CONFLICT (filename) DO UPDATE SET classification = EXCLUDED.classification, department = EXCLUDED.department",
-            (filename, int(classification), department or None),
+            "INSERT INTO documents (filename, classification, department, owner_id, size_bytes, parse_status) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (filename) DO UPDATE SET "
+            "classification = EXCLUDED.classification, "
+            "department = EXCLUDED.department, "
+            "owner_id = COALESCE(documents.owner_id, EXCLUDED.owner_id), "
+            "size_bytes = COALESCE(EXCLUDED.size_bytes, documents.size_bytes), "
+            "parse_status = EXCLUDED.parse_status",
+            (
+                filename,
+                int(classification),
+                department or None,
+                owner_id or None,
+                size_bytes,
+                parse_status,
+            ),
         )
         conn.commit()
 
@@ -1234,10 +1303,84 @@ async def delete_session(session_id: str, request: FastAPIRequest):
 
 # ==================== 文档管理 ====================
 
+def _record_uploaded_version(
+    *,
+    principal,
+    owner_id: str | None,
+    filename: str,
+    classification: int,
+    department: str,
+    storage_path: str,
+    version: int,
+    size_bytes: int | None,
+    parse_status: str,
+) -> dict:
+    """Persist a stored version on whichever catalog path this deployment has.
+
+    Both persistence paths get the owner. A failure here stays a warning: the file is
+    already on disk and indexed, and dropping an upload because a metadata table is
+    unreachable would lose a document the caller can no longer address. What is lost
+    instead is attribution, and an unattributed row is treated as legacy -- visible to
+    the management level only -- rather than as public.
+    """
+    metadata = {"version": version, "size_bytes": size_bytes, "parse_status": parse_status}
+    if catalog_database_available():
+        try:
+            _upsert_document(
+                filename,
+                classification,
+                department,
+                owner_id,
+                size_bytes=size_bytes,
+                parse_status=parse_status,
+            )
+        except Exception as exc:
+            logger.warning(f"[Docs] metadata sync failed: {exc}")
+        try:
+            return record_document_version(
+                filename,
+                classification=classification,
+                department=department,
+                storage_path=storage_path,
+                version=version,
+                principal=principal,
+                owner_id=owner_id,
+                size_bytes=size_bytes,
+                parse_status=parse_status,
+            )
+        except Exception as exc:
+            logger.warning(f"[Docs] version record failed: {exc}")
+            return metadata
+    try:
+        return record_local_document_version(
+            filename,
+            classification=classification,
+            department=department,
+            storage_path=storage_path,
+            version=version,
+            principal=principal,
+            owner_id=owner_id,
+            size_bytes=size_bytes,
+            parse_status=parse_status,
+        )
+    except Exception as exc:
+        logger.warning(f"[Docs] local version record failed: {exc}")
+        return metadata
+
+
 @router.post("/upload")
 async def upload_document(file: UploadFile = File(...),
                           classification: int = Form(1),
-                          department: str = Form("")):
+                          department: str = Form(""),
+                          request: FastAPIRequest = None):
+    """Ingest one knowledge-base document and record who uploaded it.
+
+    ``request`` stays optional so the in-process callers that predate the principal
+    remain valid. Without a request there is no subject, and the version is recorded
+    as an unowned (legacy) row rather than owned by a guessed user.
+    """
+    principal = principal_from_request(request) if request is not None else None
+    owner_id = str(getattr(principal, "user_id", "") or "") or None
     header = await file.read(8192)
     try:
         inspection = inspect_upload_header(file.filename, header)
@@ -1287,8 +1430,21 @@ async def upload_document(file: UploadFile = File(...),
         content = await asyncio.to_thread(load_document, file_path)
     except Exception as exc:
         logger.exception(f"[Docs] parse failed: {file.filename}")
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        # The stored file and its catalog row are kept on purpose. A version that
+        # cannot be parsed has to stay visible as failed so its owner or an
+        # administrator can remove it; deleting the file and answering 500 made a
+        # failed upload indistinguishable from one that never happened.
+        _record_uploaded_version(
+            principal=principal,
+            owner_id=owner_id,
+            filename=inspection.display_filename,
+            classification=classification,
+            department=department,
+            storage_path=file_path,
+            version=next_version,
+            size_bytes=written,
+            parse_status="failed",
+        )
         raise HTTPException(status_code=500, detail="document_parse_failed") from exc
 
     try:
@@ -1306,22 +1462,17 @@ async def upload_document(file: UploadFile = File(...),
         raise HTTPException(status_code=500, detail="document_index_failed") from exc
 
     if ok:
-        version_meta = {"version": next_version}
-        if catalog_database_available():
-            try:
-                _upsert_document(inspection.display_filename, classification, department)
-            except Exception as exc:
-                logger.warning(f"[Docs] metadata sync failed: {exc}")
-            try:
-                version_meta = record_document_version(
-                    inspection.display_filename,
-                    classification=classification,
-                    department=department,
-                    storage_path=file_path,
-                    version=next_version,
-                )
-            except Exception as exc:
-                logger.warning(f"[Docs] version record failed: {exc}")
+        version_meta = _record_uploaded_version(
+            principal=principal,
+            owner_id=owner_id,
+            filename=inspection.display_filename,
+            classification=classification,
+            department=department,
+            storage_path=file_path,
+            version=next_version,
+            size_bytes=written,
+            parse_status="ready",
+        )
         from app.agents.tools import rebuild_bm25
         rebuild_future = _executor.submit(rebuild_bm25)
         rebuild_future.add_done_callback(
@@ -1334,6 +1485,9 @@ async def upload_document(file: UploadFile = File(...),
             "stored_name": stored_name,
             "resource_id": resource_id,
             "version": version_meta["version"],
+            "size_bytes": version_meta.get("size_bytes"),
+            "parse_status": version_meta.get("parse_status", "ready"),
+            "owner_id": owner_id,
             "status": "ok",
             "message": msg,
         }
@@ -1362,10 +1516,10 @@ async def list_document_catalog(request: FastAPIRequest):
 
 @router.get("/documents/{filename}/versions")
 async def document_version_history(filename: str, request: FastAPIRequest):
+    principal = _document_principal_or_error(request)
     versions = list_document_versions(filename)
     if not versions:
         raise HTTPException(status_code=404, detail="resource_not_found")
-    principal = _document_principal_or_error(request)
     decision = _document_authorization_decision(principal, filename, versions[0], ACTION_VIEW)
     if not decision.allowed:
         raise HTTPException(status_code=403, detail=decision.reason_code)
@@ -1381,7 +1535,8 @@ async def get_document_file(
     request: FastAPIRequest,
     inline: bool = False,
 ):
-    _, file_path = _authorize_document_request(request, filename, ACTION_DOWNLOAD)
+    version, _decision = _authorize_document_request(request, filename, ACTION_DOWNLOAD)
+    file_path = _document_storage_path(version)
 
     media_type, _ = mimetypes.guess_type(file_path)
     media_type = media_type or "application/octet-stream"
@@ -1401,7 +1556,8 @@ async def get_document_preview(
     request: FastAPIRequest,
     response: FastAPIResponse,
 ):
-    _, file_path = _authorize_document_request(request, filename, ACTION_VIEW)
+    version, _decision = _authorize_document_request(request, filename, ACTION_VIEW)
+    file_path = _document_storage_path(version)
     try:
         payload = await asyncio.to_thread(build_document_preview, file_path, filename)
     except ValueError as exc:
@@ -1413,20 +1569,134 @@ async def get_document_preview(
     return payload
 
 
+def _document_delete_before(stored_versions: list[dict]) -> dict:
+    """Summarize what a document holds before anything is removed."""
+    newest = stored_versions[0] if stored_versions else {}
+    return {
+        "versions": len(stored_versions),
+        "classification": newest.get("classification"),
+        "department": newest.get("department"),
+        "owner_id": newest.get("owner_id"),
+        "parse_status": newest.get("parse_status"),
+    }
+
+
+def _document_delete_error(filename: str, stage: str, message: str, *, code: str = "index_publish_failed"):
+    """One honest error body for a delete that did not finish."""
+    return HTTPException(
+        status_code=500,
+        detail=ErrorEnvelope(
+            code=code,
+            message=message,
+            retryable=True,
+            details={"filename": filename, "stage": stage},
+        ).model_dump(),
+    )
+
+
 @router.delete("/documents/{filename}")
 async def delete_document(filename: str, request: FastAPIRequest):
-    _, file_path = _authorize_document_request(request, filename, ACTION_DELETE)
-    retriever.delete_document(filename)
+    """Retire a document: authorize, roll the index back, clean the disk, audit.
+
+    Each stage reports what it actually did. An index that could not be rolled back
+    leaves the document stored and answers ``index_publish_failed``: saying ok while
+    the knowledge base still retrieves the file would claim a result this process did
+    not produce. Catalog rows go last, so a document that was only partly cleaned
+    stays visible and retryable instead of becoming an orphan file.
+    """
+    version, decision = _authorize_document_request(request, filename, ACTION_DELETE)
+    principal = _document_principal_or_error(request)
+    scope = _document_resource_scope(filename, version)
+    request_id = principal.request_id or None
+    stored_versions = list_document_versions(filename)
+    before = _document_delete_before(stored_versions)
+
+    def _audit(outcome: str, reason: str, after: dict) -> None:
+        record_audit(
+            principal,
+            ACTION_DELETE,
+            outcome,
+            filename,
+            reason,
+            request_id=request_id,
+            resource_scope=scope,
+            policy_version=decision.policy_version,
+            before_summary=before,
+            after_summary=after,
+        )
+
+    try:
+        retriever.delete_document(filename)
+    except Exception as exc:
+        logger.exception(f"[Docs] vector index rollback failed: {filename}")
+        _audit(
+            "failed",
+            "index_rollback_failed",
+            {"deleted": False, "stage": "index_rollback", "error": type(exc).__name__},
+        )
+        raise _document_delete_error(
+            filename, "index_rollback", "document index rollback failed; the document is still stored"
+        ) from exc
+
     from app.agents.tools import rebuild_bm25
-    rebuild_bm25()  # C1: ?????????
-    for item in list_document_versions(filename):
-        storage_path = item.get("storage_path")
-        if storage_path and os.path.exists(storage_path):
+
+    try:
+        rebuild_bm25()
+    except Exception as exc:
+        logger.exception(f"[Docs] keyword index rollback failed: {filename}")
+        _audit(
+            "failed",
+            "index_rollback_failed",
+            {"deleted": False, "stage": "keyword_index", "error": type(exc).__name__},
+        )
+        raise _document_delete_error(
+            filename, "keyword_index", "keyword index rollback failed; the document is still stored"
+        ) from exc
+
+    removed: list[str] = []
+    unremoved: list[str] = []
+    for item in [*stored_versions, version]:
+        storage_path = str(item.get("storage_path") or "")
+        if not storage_path or not os.path.exists(storage_path):
+            continue
+        if storage_path in removed or storage_path in unremoved:
+            continue
+        try:
             os.remove(storage_path)
-    if os.path.exists(file_path):
-        os.remove(file_path)
-    delete_document_versions(filename)
-    return {"status": "ok", "filename": filename}
+            removed.append(storage_path)
+        except OSError:
+            logger.exception(f"[Docs] stored file could not be removed: {storage_path}")
+            unremoved.append(storage_path)
+
+    if unremoved:
+        _audit(
+            "failed",
+            "document_cleanup_incomplete",
+            {"deleted": False, "stage": "physical_cleanup", "removed": len(removed), "unremoved": len(unremoved)},
+        )
+        raise _document_delete_error(
+            filename,
+            "physical_cleanup",
+            "stored files could not be removed; the document is still catalogued",
+            code="internal_error",
+        )
+
+    delete_document_versions(filename, storage_paths=tuple(removed))
+    remaining = list_document_versions(filename)
+    after = {
+        "deleted": not remaining,
+        "stage": "completed",
+        "files_removed": len(removed),
+        "versions_before": len(stored_versions),
+        "catalog_rows_remaining": len(remaining),
+    }
+    _audit("allowed" if not remaining else "partial", decision.reason_code, after)
+    return {
+        "status": "ok" if not remaining else "partial",
+        "filename": filename,
+        "files_removed": len(removed),
+        "catalog_rows_remaining": len(remaining),
+    }
 
 
 # ==================== Layer 5: 队列削峰 API ====================
