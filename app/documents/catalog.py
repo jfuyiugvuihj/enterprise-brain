@@ -24,6 +24,40 @@ def build_storage_name(filename: str, version: int) -> str:
     return f"{stem}__v{version}{ext}"
 
 
+def _public_storage_path(value) -> str:
+    """Express a stored file for API responses without echoing a server path.
+
+    Catalog rows are also consumed inside the process (preview, download and
+    delete resolve the physical file), so the value must stay resolvable: an
+    absolute path is rewritten relative to the working directory the service
+    runs from, and only the bare file name is kept when no relative form can be
+    expressed at all (for example across Windows drives). The absolute path
+    remains in the catalog table and in the server log, never in a response.
+    """
+    if value is None or value == "":
+        return ""
+    raw = str(value)
+    if not os.path.isabs(raw):
+        return raw.replace(os.sep, "/")
+    try:
+        relative = os.path.relpath(raw, os.getcwd())
+    except ValueError:
+        logger.warning(f"[Docs] storage path leaves the working directory tree: {raw}")
+        return os.path.basename(raw).replace(os.sep, "/")
+    return relative.replace(os.sep, "/")
+
+
+def _public_rows(rows: list[dict]) -> list[dict]:
+    """Return catalog rows with every server-side storage path de-identified."""
+    public_rows = []
+    for row in rows:
+        public = dict(row)
+        if "storage_path" in public:
+            public["storage_path"] = _public_storage_path(public["storage_path"])
+        public_rows.append(public)
+    return public_rows
+
+
 def _database_available() -> bool:
     """Reuse the application's database health state to avoid repeated slow retries."""
     auth_module = sys.modules.get("app.common.auth")
@@ -72,7 +106,7 @@ def _local_version_rows(filename: str | None = None) -> list[dict]:
                 "version": int(match.group("version")),
                 "classification": 1,
                 "department": "",
-                "storage_path": str(path),
+                "storage_path": _public_storage_path(path),
                 "created_at": datetime.fromtimestamp(path.stat().st_mtime, _tz).isoformat(),
             }
         )
@@ -185,12 +219,15 @@ def current_documents() -> list[dict]:
     latest = {}
     for row in rows:
         latest.setdefault(row["filename"], row)
-    return sorted(latest.values(), key=lambda item: item["created_at"], reverse=True)
+    ordered = sorted(latest.values(), key=lambda item: item["created_at"], reverse=True)
+    return _public_rows(ordered)
 
 
 def list_document_versions(filename: str) -> list[dict]:
     if not _database_available():
-        return sorted(_local_version_rows(filename), key=lambda item: item["version"], reverse=True)
+        return _public_rows(
+            sorted(_local_version_rows(filename), key=lambda item: item["version"], reverse=True)
+        )
     try:
         _ensure()
         with _conn() as conn:
@@ -203,10 +240,12 @@ def list_document_versions(filename: str) -> list[dict]:
                 """,
                 (filename,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return _public_rows([dict(row) for row in rows])
     except Exception as exc:
         logger.warning(f"[Docs] history fallback: {exc}")
-        return sorted(_local_version_rows(filename), key=lambda item: item["version"], reverse=True)
+        return _public_rows(
+            sorted(_local_version_rows(filename), key=lambda item: item["version"], reverse=True)
+        )
 
 
 def delete_document_versions(filename: str) -> None:

@@ -10,6 +10,16 @@ from app.storage import artifacts as artifact_storage
 
 router = APIRouter(prefix="/artifacts", tags=["artifacts"])
 
+# Artifact bodies are authorized per Principal, so they must never be reused
+# from a browser or proxy cache: a cached 200 answered to an anonymous or
+# cross-department request reads as an authorization bypass. Pragma and
+# Expires only cover HTTP/1.0 intermediaries and agree with no-store.
+_NO_STORE_HEADERS = {
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
 
 def _authorized_artifact(request: Request, artifact_id: str, action: str):
     principal = principal_from_request(request)
@@ -45,6 +55,7 @@ async def get_artifact_content(artifact_id: str, request: Request):
         filename=artifact.filename,
         media_type=artifact.media_type,
         content_disposition_type="inline",
+        headers=dict(_NO_STORE_HEADERS),
     )
 
 
@@ -56,4 +67,5 @@ async def download_artifact(artifact_id: str, request: Request):
         filename=artifact.filename,
         media_type=artifact.media_type,
         content_disposition_type="attachment",
+        headers=dict(_NO_STORE_HEADERS),
     )

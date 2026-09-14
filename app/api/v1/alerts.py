@@ -10,6 +10,7 @@ import os
 import json
 import sys
 from datetime import datetime
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from app.common.logger import logger
@@ -140,7 +141,108 @@ def _ai_analysis(rule: dict, value: float) -> str:
         return ""
 
 
-def evaluate_all() -> list[dict]:
+def _data_api_module():
+    """Reuse the Data API module: it owns the tenant DATA_DIR contract."""
+    from app.api.v1 import data as data_api
+
+    return data_api
+
+
+def _tenant_data_root() -> Path | None:
+    """Resolve the tenant DATA_DIR, or None when there is nothing to scan.
+
+    The sweep used to join "../../../data" from this module, which ignored
+    DATA_DIR entirely: the tenant's own directory was never evaluated while
+    leftover files inside the repository folder were analyzed as if they were
+    that tenant's business data. A missing or unconfigured directory now means
+    "no data"; it never falls back to a directory inside the source tree.
+    """
+    data_api = _data_api_module()
+    configured = str(getattr(data_api, "DATA_DIR", "") or os.getenv("DATA_DIR", "") or "").strip()
+    if not configured:
+        return None
+    root = Path(configured).expanduser()
+    if not root.is_dir():
+        return None
+    return root.resolve()
+
+
+def _data_file_extensions() -> set[str]:
+    extensions = getattr(_data_api_module(), "DATA_FILE_EXTENSIONS", None)
+    return {str(ext).lower() for ext in (extensions or {".csv", ".xlsx", ".xls"})}
+
+
+def _directory_data_files(root: Path) -> list[Path]:
+    """系统巡检（无 Principal）：租户 DATA_DIR 内的数据文件。"""
+    return [
+        path
+        for path in sorted(root.iterdir())
+        if path.is_file()
+        and not path.name.startswith(".")
+        and path.suffix.lower() in _data_file_extensions()
+    ]
+
+
+def _permitted_dataset_files(principal, root: Path) -> list[Path]:
+    """带 Principal 的巡检：限定在该 Principal 有权 analyze 的 Dataset 集合内。"""
+    from app.common.permissions import ACTION_ANALYZE
+    from app.storage.datasets import dataset_registry
+
+    try:
+        records = list(dataset_registry.active_records())
+    except Exception as exc:
+        logger.warning(f"[Alert] 数据集登记表不可用，本次巡检不评估任何文件: {exc}")
+        return []
+
+    paths: list[Path] = []
+    for record in records:
+        decision = authorization_decision(
+            principal,
+            record.resource_scope,
+            action=ACTION_ANALYZE,
+            require_resource_scope=True,
+        )
+        if not decision.allowed:
+            continue
+        try:
+            path = Path(str(record.storage_path)).expanduser().resolve()
+        except OSError:
+            continue
+        if not path.is_file():
+            continue
+        if not path.is_relative_to(root):
+            logger.warning(f"[Alert] 数据集 {record.dataset_id} 不在租户 DATA_DIR 内，跳过")
+            continue
+        paths.append(path)
+    return paths
+
+
+def _scan_data_files(principal) -> tuple[list[Path], dict]:
+    """解析本次巡检的数据范围，并返回不含服务端路径的扫描摘要。"""
+    summary: dict = {
+        "data_dir_configured": False,
+        "scoped_to_principal": principal is not None,
+        "evaluated_files": [],
+        "reason": "",
+    }
+    root = _tenant_data_root()
+    if root is None:
+        summary["reason"] = "tenant_data_dir_unavailable"
+        logger.warning("[Alert] 无可用租户 DATA_DIR，本次巡检按无数据处理（不回落仓库 data/）")
+        return [], summary
+    summary["data_dir_configured"] = True
+    paths = (
+        _directory_data_files(root)
+        if principal is None
+        else _permitted_dataset_files(principal, root)
+    )
+    summary["evaluated_files"] = [path.name for path in paths]
+    if not paths:
+        summary["reason"] = "no_data_files" if principal is None else "no_permitted_datasets"
+    return paths, summary
+
+
+def evaluate_all(principal=None, scan_summary: dict | None = None) -> list[dict]:
     """读数据逐规则判定，触发则写告警+AI归因。返回本次触发的告警。"""
     from app.tools.excel import load_excel
     if _database_available():
@@ -149,15 +251,15 @@ def evaluate_all() -> list[dict]:
         except Exception as e:
             logger.warning(f"[Alert] Postgres 不可用，切换内存规则: {e}")
 
-    data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data")
-    dfs = []
-    if os.path.isdir(data_dir):
-        for f in os.listdir(data_dir):
-            if f.endswith((".xlsx", ".xls", ".csv")):
-                try:
-                    dfs.append(load_excel(os.path.join(data_dir, f)))
-                except Exception:
-                    continue
+    data_paths, files_summary = _scan_data_files(principal)
+    if scan_summary is not None:
+        scan_summary.update(files_summary)
+    dfs: list[tuple[str, object]] = []
+    for data_path in data_paths:
+        try:
+            dfs.append((data_path.name, load_excel(str(data_path))))
+        except Exception:
+            continue
 
     if _database_available():
         with _conn() as conn:
@@ -166,14 +268,23 @@ def evaluate_all() -> list[dict]:
         rules = [rule for rule in _MEM_RULES if rule["enabled"]]
 
     triggered = []
+    recorded_findings: set[tuple] = set()
     for rule in rules:
-        for df in dfs:
+        for dataset_name, df in dfs:
             value = _metric_value(df, rule["metric"])
             if value is None:
                 continue
             if hit(value, rule["op"], rule["threshold"]):
-                analysis = _ai_analysis(dict(rule), value)
                 msg = f"{rule['name']}: {rule['metric']}={value:.1f} ({rule['op']} {rule['threshold']})"
+                finding = (rule["id"], msg)
+                if finding in recorded_findings:
+                    # E1-11：同一次巡检内，同一规则 + 同一计算窗口只入库一次
+                    logger.info(
+                        f"[Alert] 同一巡检重复命中已去重: rule_id={rule['id']} dataset={dataset_name}"
+                    )
+                    continue
+                recorded_findings.add(finding)
+                analysis = _ai_analysis(dict(rule), value)
                 if _database_available():
                     with _conn() as conn:
                         conn.execute(
@@ -206,18 +317,19 @@ def evaluate_all() -> list[dict]:
 def daily_report() -> str:
     """汇总关键指标生成日报文本"""
     from app.tools.excel import load_excel
-    data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data")
+    report_root = _tenant_data_root()
+    data_paths = [] if report_root is None else _directory_data_files(report_root)
     lines = [f"【企业智脑日报】{datetime.now().strftime('%Y-%m-%d')}"]
-    if os.path.isdir(data_dir):
-        for f in os.listdir(data_dir):
-            if f.endswith((".xlsx", ".xls", ".csv")):
-                try:
-                    df = load_excel(os.path.join(data_dir, f))
-                except Exception:
-                    continue
-                nums = df.select_dtypes(include=["number"]).columns
-                for c in list(nums)[:5]:
-                    lines.append(f"  · {f} / {c}: 合计 {df[c].sum():.1f} 均值 {df[c].mean():.1f}")
+    if not data_paths:
+        lines.append("  · 未配置可用的租户 DATA_DIR，本期日报无经营数据")
+    for data_path in data_paths:
+        try:
+            df = load_excel(str(data_path))
+        except Exception:
+            continue
+        numeric_columns = df.select_dtypes(include=["number"]).columns
+        for metric_column in list(numeric_columns)[:5]:
+            lines.append(f"  · {data_path.name} / {metric_column}: 合计 {df[metric_column].sum():.1f} 均值 {df[metric_column].mean():.1f}")
     text = "\n".join(lines)
     send_im_notification("企业智脑日报", text, source="scheduler", severity="info")
     logger.info(f"[DailyReport]\n{text}")
@@ -294,5 +406,7 @@ async def list_alerts(request: Request):
 @router.post("/alerts/check")
 async def check_now(request: Request):
     """手动触发一次巡检"""
-    _require_alert_management(request)
-    return {"triggered": evaluate_all()}
+    principal = _require_alert_management(request)
+    scan_scope: dict = {}
+    triggered = evaluate_all(principal=principal, scan_summary=scan_scope)
+    return {"triggered": triggered, "scan_scope": scan_scope}
