@@ -5,6 +5,16 @@ from app.agents.orchestrator import dispatch
 
 
 class TestSearchDocs:
+    def test_formats_string_scores_without_crashing(self, monkeypatch):
+        class FakePipeline:
+            def search_for_principal(self, query, principal, top_k):
+                return ([{"source": "policy.txt", "_score": "0.75", "content": "住宿费标准为500元"}], [])
+
+        monkeypatch.setattr("app.agents.tools._get_pipeline", lambda: FakePipeline())
+        result = search_docs.invoke("住宿费标准", config={"configurable": {"username": "test-user", "role": "staff", "department": ""}})
+        assert "0.75" in result
+        assert "住宿费标准为500元" in result
+
     def test_returns_string(self):
         result = search_docs.invoke("公司报销流程")
         assert isinstance(result, str)
@@ -55,7 +65,7 @@ class TestChartExport:
             "title": "测试图表",
         })
         assert isinstance(result, str)
-        assert "图表" in result or "错误" in result or "生成" in result
+        assert "authorization_required" in result
 
     def test_export_report(self):
         result = export_report.invoke({
@@ -63,3 +73,4 @@ class TestChartExport:
             "sections_json": '[{"type":"heading","content":"测试标题"},{"type":"text","content":"测试内容"}]',
         })
         assert isinstance(result, str)
+        assert "authorization_required" in result

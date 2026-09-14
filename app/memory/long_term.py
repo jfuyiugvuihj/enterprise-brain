@@ -1,6 +1,7 @@
 """Long-term memory with PostgreSQL fallback."""
 import json
 import os
+from functools import lru_cache
 
 import numpy as np
 
@@ -16,6 +17,7 @@ except ModuleNotFoundError:  # pragma: no cover
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
 _initialized = False
 _MEMORY: dict[str, list[dict]] = {}
+_PRODUCTION_ENVIRONMENTS = {"production", "prod"}
 
 
 class _FakeResult:
@@ -53,10 +55,19 @@ def _conn():
     return psycopg.connect(_PG_URL, row_factory=dict_row)
 
 
+def _is_production_environment() -> bool:
+    return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
+
+
 def _init():
     if psycopg is None:
         return
     with _conn() as conn:
+        if _is_production_environment():
+            row = conn.execute("SELECT to_regclass('public.memories') AS table_name").fetchone()
+            if not row or row["table_name"] is None:
+                raise RuntimeError("memories table is required in production; run migrations first")
+            return
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS memories (
@@ -81,10 +92,15 @@ def _ensure():
     _initialized = True
 
 
+@lru_cache(maxsize=1)
+def _get_embedder():
+    from app.rag.retriever import OllamaEmbeddings
+    return OllamaEmbeddings()
+
+
 def _embed(texts):
     try:
-        from app.rag.retriever import OllamaEmbeddings
-        emb = OllamaEmbeddings()
+        emb = _get_embedder()
         return emb.embed_documents(texts)
     except Exception as exc:
         logger.warning(f"[Memory] embedding fallback: {exc}")
@@ -96,6 +112,15 @@ def _cosine(a, b):
     b = np.asarray(b, dtype=float)
     denom = (np.linalg.norm(a) * np.linalg.norm(b))
     return float(np.dot(a, b) / denom) if denom else 0.0
+
+
+def _has_embedding(vector) -> bool:
+    if vector is None:
+        return False
+    try:
+        return bool(np.linalg.norm(np.asarray(vector, dtype=float)))
+    except (TypeError, ValueError):
+        return False
 
 
 def remember(user_id: str, content: str) -> bool:
@@ -147,7 +172,7 @@ def recall(user_id: str, query: str, k: int = 3) -> list[str]:
     for r in rows:
         content = r["content"]
         score = 0.0
-        if qvec and r.get("embedding"):
+        if _has_embedding(qvec) and _has_embedding(r.get("embedding")):
             try:
                 score = _cosine(qvec, r["embedding"])
             except Exception:

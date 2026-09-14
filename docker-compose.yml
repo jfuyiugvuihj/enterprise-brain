@@ -1,0 +1,228 @@
+# Private single-machine deployment for 企业智脑.
+# One command: docker compose up --build -d   (configure .env first)
+#
+# Storage topology: PostgreSQL + PGVector, Redis, local file volumes. Chroma remains a
+# transitional vector store only. Customer uploads never enter the image.
+#
+# Containers read deploy/.env.server, never the development .env. Compose substitutes
+# variables inside env files, so a deployment file must write a literal $ as $$ -- which
+# python-dotenv would then hand to the application verbatim. Keeping the two files apart
+# is what makes one credential usable by both the container and a local `uv run`.
+#
+#   docker compose --env-file deploy/.env.server -f docker-compose.yml up -d --build
+name: enterprise-brain
+
+x-runtime: &runtime
+  env_file:
+    - deploy/.env.server
+  restart: unless-stopped
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+x-storage-env: &storage-env
+  APP_ENV: ${APP_ENV:-production}
+  DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER in deploy/.env.server}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env.server}@postgres:5432/${POSTGRES_DB:-enterprise_brain}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in deploy/.env.server}@redis:6379/0
+  PERSISTENCE_BACKEND: postgres
+  DOCUMENTS_DIR: /app/documents
+  DATA_DIR: /app/data
+  TRACE_STORE_PATH: /app/data/traces/events.jsonl
+  SESSION_REGISTRY_PATH: /app/data/sessions.json
+  PERSISTENCE_FALLBACK_PATH: /app/data/.persistence.json
+  TZ: ${APP_TIMEZONE:-Asia/Shanghai}
+
+x-persistent-paths: &persistent-paths
+  - documents:/app/documents
+  - appdata:/app/data
+  - generated:/app/static
+  - applogs:/app/logs
+  - vectordb:/app/chroma_db
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-enterprise_brain}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in deploy/.env.server}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env.server}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # The password stays in the container environment instead of an inspectable
+    # command line or healthcheck string.
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in deploy/.env.server}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$${REDIS_PASSWORD}\""]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  ollama:
+    # Version 1 manages the host-classified local model registry. Pin the tag
+    # per delivery; the default follows the upstream rolling tag.
+    image: ollama/ollama:${OLLAMA_IMAGE_TAG:-latest}
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  # Migrations are a deployment step, not runtime DDL, and they run exactly once.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+    image: enterprise-brain:local
+    env_file:
+      - deploy/.env.server
+    environment:
+      <<: *storage-env
+    command: ["python", "scripts/migrate.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    # The healthcheck baked into the image probes the API port, which this command
+    # never opens, and a container that exits cannot report health anyway.
+    healthcheck:
+      disable: true
+
+  backend:
+    <<: *runtime
+    image: enterprise-brain:local
+    environment:
+      <<: *storage-env
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:?set CORS_ALLOW_ORIGINS in deploy/.env.server to the exact browser origin}
+      # The API must not own scheduled side effects while workers are scaled.
+      SCHEDULER_ENABLED: "false"
+      LOCAL_MODEL_BASE_URL: http://ollama:11434/v1
+      OLLAMA_BASE_URL: http://ollama:11434
+      MODEL_MAX_CONCURRENCY: ${MODEL_MAX_CONCURRENCY:-1}
+    volumes: *persistent-paths
+    ports:
+      # The container side stays 8001 (the image healthcheck and nginx upstream both
+      # use it); only the host side is overridable so an acceptance stack can coexist
+      # with an API that is already running as a host process on 8001.
+      - "127.0.0.1:${BACKEND_HOST_PORT:-8001}:8001"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+  worker:
+    <<: *runtime
+    image: enterprise-brain:local
+    command: ["python", "deploy/queue_worker.py"]
+    # This service never opens the API port, so the healthcheck inherited from the
+    # image can never pass and would keep the container unhealthy forever. Liveness of
+    # the declared main process is the honest check here; queue ACK/retry/lease health
+    # is covered by the Redis queue tests, not by this container probe.
+    healthcheck:
+      test: ["CMD", "python", "-c",
+        "import sys;sys.exit(0 if b'queue_worker.py' in open('/proc/1/cmdline','rb').read() else 1)"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    environment:
+      <<: *storage-env
+      SCHEDULER_ENABLED: "false"
+      LOCAL_MODEL_BASE_URL: http://ollama:11434/v1
+      OLLAMA_BASE_URL: http://ollama:11434
+      MODEL_MAX_CONCURRENCY: ${MODEL_MAX_CONCURRENCY:-1}
+    volumes: *persistent-paths
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+
+  scheduler:
+    <<: *runtime
+    image: enterprise-brain:local
+    command: ["python", "deploy/scheduler.py"]
+    # This service never opens the API port, so the healthcheck inherited from the
+    # image can never pass and would keep the container unhealthy forever. Liveness of
+    # the declared main process is the honest check here; queue ACK/retry/lease health
+    # is covered by the Redis queue tests, not by this container probe.
+    healthcheck:
+      test: ["CMD", "python", "-c",
+        "import sys;sys.exit(0 if b'scheduler.py' in open('/proc/1/cmdline','rb').read() else 1)"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    environment:
+      <<: *storage-env
+      LOCAL_MODEL_BASE_URL: http://ollama:11434/v1
+      OLLAMA_BASE_URL: http://ollama:11434
+    volumes: *persistent-paths
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  # Nginx serves the SPA and proxies /api only. Generated charts and reports are
+  # delivered through the authorized Artifact routes, never a public static path.
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+    # The tag is written out so a gate that had to build the images with plain
+    # ``docker build`` can still start the stack with ``--no-build`` and resolve the
+    # same name offline instead of an implicit local build.
+    image: enterprise-brain-frontend:local
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  ollama:
+  documents:
+  appdata:
+  generated:
+  applogs:
+  vectordb:

@@ -2,6 +2,8 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from app.common import auth
+from app.common.authorization import authorize_request, principal_from_request
+from app.common.permissions import ACTION_MANAGE_USERS
 from app.common.sso import extract_sso_identity, validate_sso_headers
 from app.memory.profile import get_profile, upsert_profile
 
@@ -32,6 +34,19 @@ class UpdateProfileRequest(BaseModel):
     preferences: list[str] | None = None
 
 
+@router.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
+
+@router.get("/health/details")
+async def health_details():
+    from app.api.v1.chat import _ASK_STATS
+    from app.common.monitoring import build_health_snapshot
+
+    return build_health_snapshot(_ASK_STATS.report())
+
+
 # ==================== 登录 ====================
 
 
@@ -55,15 +70,17 @@ async def login(data: LoginRequest):
 
 
 @router.get("/users")
-async def list_users():
+async def list_users(request: Request):
     """列出所有用户"""
+    authorize_request(request, ACTION_MANAGE_USERS, resource_name="users")
     users = auth.list_users()
     return {"users": users}
 
 
 @router.post("/users")
-async def create_user(data: CreateUserRequest):
+async def create_user(data: CreateUserRequest, request: Request):
     """创建新用户"""
+    authorize_request(request, ACTION_MANAGE_USERS, resource_name="users")
     ok, msg = auth.create_user(
         data.username,
         data.password,
@@ -76,8 +93,9 @@ async def create_user(data: CreateUserRequest):
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: int):
+async def delete_user(user_id: int, request: Request):
     """删除用户"""
+    authorize_request(request, ACTION_MANAGE_USERS, resource_name="users")
     ok = auth.delete_user(user_id)
     if not ok:
         raise HTTPException(status_code=404, detail="用户不存在")
@@ -85,8 +103,13 @@ async def delete_user(user_id: int):
 
 
 @router.put("/users/password")
-async def change_password(data: ChangePasswordRequest):
+async def change_password(data: ChangePasswordRequest, request: Request):
     """修改密码"""
+    principal = principal_from_request(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="请先登录")
+    if data.username != principal.username and ACTION_MANAGE_USERS not in principal.permissions:
+        raise HTTPException(status_code=403, detail="权限不足: users:manage")
     ok, msg = auth.change_password(data.username, data.old_password, data.new_password)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)

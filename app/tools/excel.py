@@ -2,6 +2,7 @@
 Day 7-8: Excel 数据处理
 优化 #4 CSV编码, #5 大文件, #6 合并单元格, #1 Excel画像, #2 pandas纠错, #22 沙箱
 """
+import ast
 import os
 import io
 import pandas as pd
@@ -107,6 +108,7 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, Any]:
     profile = {
         "rows": len(df),
         "columns": len(df.columns),
+        "column_count": len(df.columns),
     }
 
     cols_info = []
@@ -167,41 +169,108 @@ FORBIDDEN_IMPORTS = {"os", "sys", "subprocess", "shutil", "importlib",
                       "__import__", "eval", "exec", "open", "compile"}
 
 
-def safe_query(df: pd.DataFrame, code: str, max_retries: int = 3) -> dict[str, Any]:
-    """
-    在沙箱中执行 pandas 查询代码，自动纠错重试。
-    返回 {"result": ..., "error": ...} 结构。
+_ALLOWED_QUERY_NAMES = {
+    "df",
+    "pd",
+    "abs",
+    "all",
+    "any",
+    "bool",
+    "dict",
+    "enumerate",
+    "filter",
+    "float",
+    "int",
+    "len",
+    "list",
+    "map",
+    "max",
+    "min",
+    "range",
+    "round",
+    "set",
+    "sorted",
+    "str",
+    "sum",
+    "tuple",
+    "type",
+    "zip",
+    "True",
+    "False",
+    "None",
+}
+_ALLOWED_METHODS = {
+    "abs", "all", "any", "astype", "between", "count", "describe", "dropna",
+    "fillna", "head", "idxmax", "idxmin", "isna", "max", "mean", "median",
+    "min", "nunique", "notna", "reset_index", "round", "sort_values", "std",
+    "sum", "tail", "to_dict", "var", "groupby", "agg", "items", "value_counts",
+}
+_ALLOWED_PD_ATTRS = {"isna", "notna", "to_datetime", "to_numeric", "Series", "DataFrame"}
 
-    沙箱规则 (#22)：
-    - 只能使用 df 变量
-    - import os/sys/subprocess 被拦截
-    - eval/exec/open 被拦截
-    """
-    # 安全检测
+
+def _validate_query_ast(code: str) -> str | None:
+    try:
+        tree = ast.parse(code, mode="eval")
+    except SyntaxError as exc:
+        return f"查询表达式语法错误: {exc.msg}"
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id not in _ALLOWED_QUERY_NAMES:
+            return f"禁止使用名称: {node.id}"
+        if isinstance(node, ast.Attribute):
+            if node.attr.startswith("_"):
+                return "禁止访问私有或内部属性"
+            if isinstance(node.value, ast.Name) and node.value.id == "pd":
+                if node.attr not in _ALLOWED_PD_ATTRS:
+                    return f"禁止使用 pandas 属性: {node.attr}"
+            elif node.attr not in _ALLOWED_METHODS and node.attr not in {"loc", "iloc", "columns", "index", "shape", "values", "dtypes"}:
+                return f"禁止使用 DataFrame 属性或方法: {node.attr}"
+        if isinstance(node, ast.Call):
+            function = node.func
+            if isinstance(function, ast.Name) and function.id not in _ALLOWED_QUERY_NAMES:
+                return f"禁止调用名称: {function.id}"
+            if isinstance(function, ast.Attribute) and function.attr not in _ALLOWED_METHODS and function.attr not in _ALLOWED_PD_ATTRS:
+                return f"禁止调用方法: {function.attr}"
+        if isinstance(node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef, ast.Import, ast.ImportFrom,
+                             ast.Assign, ast.NamedExpr, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp,
+                             ast.Await, ast.Yield, ast.YieldFrom)):
+            return f"禁止使用表达式类型: {type(node).__name__}"
+    return None
+
+
+def safe_query(df: pd.DataFrame, code: str, max_retries: int = 3) -> dict[str, Any]:
+    """Execute a single pandas expression after AST allow-list validation."""
+    if not isinstance(code, str) or not code.strip():
+        return {"error": "查询表达式不能为空", "result": None}
+
     for forbidden in FORBIDDEN_IMPORTS:
         if forbidden in code:
             return {"error": f"禁止使用 {forbidden}，仅允许 pandas 操作", "result": None}
 
+    last_error = _validate_query_ast(code)
+    if last_error:
+        return {"error": last_error, "result": None}
+
     local_vars = {"df": df, "pd": pd}
     last_error = None
-
     for attempt in range(max_retries):
         try:
             result = eval(code, {"__builtins__": _safe_builtins()}, local_vars)
-            # 如果结果是 DataFrame，转为 dict 列表
             if isinstance(result, pd.DataFrame):
                 result = result.head(50).to_dict(orient="records")
             elif isinstance(result, pd.Series):
                 result = result.to_dict()
             return {"result": result, "error": None}
-        except Exception as e:
-            last_error = str(e)
+        except Exception as exc:
+            last_error = str(exc)
             logger.warning(f"pandas 查询失败 (第 {attempt + 1}/{max_retries} 次): {last_error}")
             if attempt < max_retries - 1:
                 code = _add_hint(code, last_error)
+                validation_error = _validate_query_ast(code)
+                if validation_error:
+                    return {"error": validation_error, "result": None}
 
     return {"error": f"执行失败 (重试 {max_retries} 次): {last_error}", "result": None}
-
 
 def _safe_builtins() -> dict:
     """受限的 builtins"""

@@ -4,6 +4,7 @@ Agentic RAG 检索管线：
 """
 import json
 import os
+import threading
 import urllib.request
 import numpy as np
 from typing import Optional
@@ -16,9 +17,19 @@ except ModuleNotFoundError:  # pragma: no cover
             self.corpus = corpus
 
         def get_scores(self, tokens):
-            return np.zeros(len(self.corpus), dtype=float)
+            query_tokens = set(tokens)
+            return np.array(
+                [sum(token in query_tokens for token in document) for document in self.corpus],
+                dtype=float,
+            )
+try:
+    from sentence_transformers import CrossEncoder
+except ModuleNotFoundError:  # pragma: no cover
+    CrossEncoder = None
 from app.common.model_handler import ModelHandler, ModelSource
 from app.common.logger import logger
+from app.common.identity import Principal
+from app.rag.filters import build_document_retrieval_filter
 
 model = ModelHandler()
 
@@ -42,7 +53,7 @@ class QueryRewriter:
         try:
             resp = model.chat(
                 messages=[{"role": "user", "content": prompt}],
-                source=ModelSource.DEEPSEEK,
+                source=ModelSource.LOCAL,
                 stream=False
             )
             result = json.loads(str(resp).strip().removeprefix("```json").removesuffix("```"))
@@ -68,59 +79,70 @@ class SemanticSearcher:
 
 # ==================== BM25 关键词检索 ====================
 
+def _tokenize_text(text: str) -> list[str]:
+    try:
+        import jieba
+    except ModuleNotFoundError:
+        if any("\u4e00" <= char <= "\u9fff" for char in text):
+            return [char for char in text if not char.isspace()]
+        return text.split()
+    return list(jieba.cut(text))
+
 class BM25Searcher:
-    """BM25 关键词检索，jieba 中文分词"""
+    """BM25 关键词检索，优先使用 jieba，缺失时回退到基础分词。"""
 
     def __init__(self):
         self.corpus = []          # token 列表
         self.documents = []       # 原始文档
         self.bm25: Optional[BM25Okapi] = None
+        self._lock = threading.RLock()
 
     def build_index(self):
         """从 Chroma 读取所有文档构建 BM25 索引"""
-        from app.rag.retriever import DocumentRetriever
-        import jieba
+        with self._lock:
+            from app.rag.retriever import DocumentRetriever
+            r = DocumentRetriever()
+            all_data = r.collection.get()
+            docs = all_data.get("documents", [])
+            metadatas = all_data.get("metadatas", [])
 
-        r = DocumentRetriever()
-        all_data = r.collection.get()
-        docs = all_data.get("documents", [])
-        metadatas = all_data.get("metadatas", [])
+            if not docs:
+                logger.warning("BM25: 知识库为空")
+                return
 
-        if not docs:
-            logger.warning("BM25: 知识库为空")
-            return
+            corpus = []
+            documents = []
+            for doc, meta in zip(docs, metadatas):
+                tokens = _tokenize_text(doc)
+                corpus.append(tokens)
+                documents.append({
+                    "content": doc,
+                    "source": meta.get("filename", "unknown"),
+                    "chunk_index": meta.get("chunk_index", 0),
+                    "classification": meta.get("classification", 1),
+                    "department": meta.get("department", ""),
+                })
 
-        self.corpus = []
-        self.documents = []
-        for doc, meta in zip(docs, metadatas):
-            tokens = list(jieba.cut(doc))
-            self.corpus.append(tokens)
-            self.documents.append({
-                "content": doc,
-                "source": meta.get("filename", "unknown"),
-                "chunk_index": meta.get("chunk_index", 0),
-                "classification": meta.get("classification", 1),
-                "department": meta.get("department", ""),
-            })
-
-        self.bm25 = BM25Okapi(self.corpus)
-        logger.info(f"BM25 索引构建完成: {len(self.corpus)} 篇")
+            self.corpus = corpus
+            self.documents = documents
+            self.bm25 = BM25Okapi(corpus)
+            logger.info(f"BM25 索引构建完成: {len(corpus)} 篇")
 
     def search(self, query: str, k: int = 10, pred=None) -> list[dict]:
-        if not self.bm25:
-            self.build_index()
-        if not self.bm25:
-            return []
+        with self._lock:
+            if not self.bm25:
+                self.build_index()
+            if not self.bm25:
+                return []
 
-        import jieba
-        tokens = list(jieba.cut(query))
-        scores = self.bm25.get_scores(tokens)
-        top_indices = np.argsort(scores)[::-1][:k]
+            tokens = _tokenize_text(query)
+            scores = self.bm25.get_scores(tokens)
+            top_indices = np.argsort(scores)[::-1][:k]
 
-        hits = [self.documents[i] for i in top_indices if scores[i] > 0]
-        if pred:
-            hits = [d for d in hits if pred(d)]  # 权限过滤
-        return hits
+            hits = [self.documents[i] for i in top_indices if scores[i] > 0]
+            if pred:
+                hits = [d for d in hits if pred(d)]  # 权限过滤
+            return hits
 
 
 # ==================== RRF 融合 ====================
@@ -163,7 +185,9 @@ class CrossEncoderReranker:
 
     def _load_model(self):
         if self._model is None:
-            from sentence_transformers import CrossEncoder
+            if CrossEncoder is None:
+                logger.warning("CrossEncoder 不可用，跳过预加载并回退到 RRF")
+                return
             logger.info(f"加载 Cross-Encoder: {self.model_path} ...")
             self._model = CrossEncoder(self.model_path, device="cpu")
             logger.info("Cross-Encoder 加载完成")
@@ -173,10 +197,8 @@ class CrossEncoderReranker:
         if not docs:
             return docs
 
-        try:
-            self._load_model()
-        except Exception as e:
-            logger.warning(f"CrossEncoder 加载失败，退回 RRF 结果: {e}")
+        self._load_model()
+        if self._model is None:
             return docs[:top_k]
 
         pairs = [(query, d["content"]) for d in docs]
@@ -251,6 +273,29 @@ class RetrievalPipeline:
 
         logger.info(f"检索完成: 语义{len(all_semantic)} + BM25{len(all_bm25)} → RRF{len(fused)} → Top{len(ranked)}")
         return ranked, rewritten.get("rewrites", [])
+
+    def search_for_principal(
+        self,
+        query: str,
+        principal: Principal | None,
+        top_k: int = 5,
+    ) -> tuple[list[dict], list[str]]:
+        """Retrieve only chunks permitted for the supplied Principal."""
+        where = build_document_retrieval_filter(principal)
+        classification_values = set(where["$and"][0]["classification"]["$in"])
+        department_values = set(where["$and"][1]["department"]["$in"])
+
+        def is_permitted(document: dict) -> bool:
+            try:
+                classification = int(document.get("classification"))
+            except (TypeError, ValueError):
+                return False
+            return (
+                classification in classification_values
+                and str(document.get("department") or "") in department_values
+            )
+
+        return self.search(query, top_k=top_k, where=where, pred=is_permitted)
 
 
 def _deduplicate(docs: list[dict]) -> list[dict]:

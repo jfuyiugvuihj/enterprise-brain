@@ -1,68 +1,72 @@
 """
-Day 1: 统一文档加载器
-支持 PDF / Word / TXT → 返回纯文本
+Unified document loader for PDF / DOCX / DOC / TXT.
 """
 from pathlib import Path
+
+from pypdf import PdfReader
+
 from app.common.logger import logger
 
 
 def load_pdf(file_path: str) -> str:
-    """PDF → Markdown → 纯文本"""
-    from langchain_mineru import MinerULoader
-    loader = MinerULoader(source=file_path, mode="flash")
-    docs = loader.load()
-    return "\n\n".join(d.page_content for d in docs)
+    """Extract PDF text locally with pypdf."""
+    reader = PdfReader(file_path)
+    parts: list[str] = []
+    for page in reader.pages:
+        page_text = page.extract_text() or ""
+        if page_text.strip():
+            parts.append(page_text.strip())
+    text = "\n\n".join(parts).strip()
+    logger.info(f"Loaded PDF with pypdf: {file_path} ({len(text)} chars)")
+    return text
 
 
 def load_docx(file_path: str) -> str:
-    """.docx → 纯文本"""
+    """Extract plain text from .docx."""
     from docx import Document
+
     doc = Document(file_path)
     return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
 
 
 def load_doc(file_path: str) -> str:
-    """.doc (旧版二进制) → 纯文本"""
+    """Best-effort extraction for old .doc files."""
     import olefile
+
     ole = olefile.OleFileIO(file_path)
-    # .doc 的文字存在 WordDocument 流中
     if ole.exists("WordDocument"):
         stream = ole.openstream("WordDocument")
         raw = stream.read()
-        # 提取可打印字符（跳过二进制包头）
         text = "".join(chr(b) for b in raw if 31 < b < 127 or b in (10, 13))
-        # 过滤太短的片段，保留文字内容
-        lines = [l.strip() for l in text.split("\n") if len(l.strip()) > 2]
+        lines = [line.strip() for line in text.split("\n") if len(line.strip()) > 2]
         ole.close()
         return "\n".join(lines)
     ole.close()
-    # 备用：读摘要信息
     return ""
 
 
 def load_txt(file_path: str) -> str:
-    """TXT → 文本（自动检测编码 GBK/UTF-8）"""
+    """Read TXT with automatic encoding detection."""
     for encoding in ["utf-8", "gbk", "gb2312"]:
         try:
             with open(file_path, "r", encoding=encoding) as f:
                 return f.read()
         except UnicodeDecodeError:
             continue
-    raise ValueError(f"无法识别文件编码: {file_path}")
+    raise ValueError(f"Unable to detect text encoding: {file_path}")
 
 
 def load_document(file_path: str) -> str:
-    """统一入口：自动识别格式 → 返回文本"""
+    """Auto-detect file type and return plain text."""
     ext = Path(file_path).suffix.lower()
     logger.info(f"Loading document: {file_path} ({ext})")
 
     if ext == ".pdf":
         return load_pdf(file_path)
-    elif ext == ".docx":
+    if ext == ".docx":
         return load_docx(file_path)
-    elif ext == ".doc":
+    if ext == ".doc":
         return load_doc(file_path)
-    elif ext == ".txt":
+    if ext == ".txt":
         return load_txt(file_path)
-    else:
-        raise ValueError(f"不支持的文件格式: {ext}")
+    raise ValueError(f"Unsupported file format: {ext}")

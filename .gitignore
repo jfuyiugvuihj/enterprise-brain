@@ -8,5 +8,6 @@ models/
 node_modules/
 frontend/dist/
 .env
+deploy/.env.server
 *.zip
 /tmp/

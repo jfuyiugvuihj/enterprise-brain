@@ -8,10 +8,14 @@
 """
 import os
 import json
+import sys
 from datetime import datetime
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from app.common.logger import logger
+from app.common.authorization import principal_from_request
+from app.common.permissions import ACTION_MANAGE_ALERTS
+from app.common.policy import authorization_decision
 try:
     import psycopg
     from psycopg.rows import dict_row
@@ -22,6 +26,11 @@ from app.common.notifications import send_im_notification
 
 router = APIRouter()
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
+_MEM_RULES: list[dict] = []
+_MEM_ALERTS: list[dict] = []
+_MEM_NEXT_RULE_ID = 1
+_initialized = False
+_PRODUCTION_ENVIRONMENTS = {"production", "prod"}
 
 OPS = {"gt": lambda a, b: a > b, "lt": lambda a, b: a < b,
        "gte": lambda a, b: a >= b, "lte": lambda a, b: a <= b}
@@ -31,8 +40,27 @@ def _conn():
     return psycopg.connect(_PG_URL, row_factory=dict_row)
 
 
+def _database_available() -> bool:
+    auth_module = sys.modules.get("app.common.auth")
+    return bool(auth_module and getattr(auth_module, "_db_ready", False))
+
+
+def _is_production_environment() -> bool:
+    return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
+
+
 def _ensure():
+    global _initialized
+    if _initialized:
+        return
     with _conn() as conn:
+        if _is_production_environment():
+            for table_name in ("alert_rules", "alerts"):
+                row = conn.execute(f"SELECT to_regclass('public.{table_name}') AS table_name").fetchone()
+                if not row or row["table_name"] is None:
+                    raise RuntimeError(f"{table_name} table is required in production; run migrations first")
+            _initialized = True
+            return
         conn.execute("""
             CREATE TABLE IF NOT EXISTS alert_rules (
                 id SERIAL PRIMARY KEY,
@@ -54,6 +82,7 @@ def _ensure():
             )
         """)
         conn.commit()
+    _initialized = True
 
 
 class RuleCreate(BaseModel):
@@ -61,6 +90,20 @@ class RuleCreate(BaseModel):
     metric: str
     op: str = "lt"
     threshold: float
+
+
+def _require_alert_management(request: Request | None):
+    # Direct calls are reserved for offline/internal execution; HTTP routes always
+    # receive a Request and therefore remain protected by the authorization check.
+    if request is None:
+        return None
+    principal = principal_from_request(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="authentication_required")
+    decision = authorization_decision(principal, None, action=ACTION_MANAGE_ALERTS)
+    if not decision.allowed:
+        raise HTTPException(status_code=403, detail=decision.reason_code)
+    return principal
 
 
 # ==================== 纯判定（可单测） ====================
@@ -100,11 +143,11 @@ def _ai_analysis(rule: dict, value: float) -> str:
 def evaluate_all() -> list[dict]:
     """读数据逐规则判定，触发则写告警+AI归因。返回本次触发的告警。"""
     from app.tools.excel import load_excel
-    try:
-        _ensure()
-    except Exception as e:
-        logger.warning(f"[Alert] Postgres 不可用，跳过巡检: {e}")
-        return []
+    if _database_available():
+        try:
+            _ensure()
+        except Exception as e:
+            logger.warning(f"[Alert] Postgres 不可用，切换内存规则: {e}")
 
     data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data")
     dfs = []
@@ -116,8 +159,11 @@ def evaluate_all() -> list[dict]:
                 except Exception:
                     continue
 
-    with _conn() as conn:
-        rules = conn.execute("SELECT * FROM alert_rules WHERE enabled = TRUE").fetchall()
+    if _database_available():
+        with _conn() as conn:
+            rules = conn.execute("SELECT * FROM alert_rules WHERE enabled = TRUE").fetchall()
+    else:
+        rules = [rule for rule in _MEM_RULES if rule["enabled"]]
 
     triggered = []
     for rule in rules:
@@ -128,12 +174,24 @@ def evaluate_all() -> list[dict]:
             if hit(value, rule["op"], rule["threshold"]):
                 analysis = _ai_analysis(dict(rule), value)
                 msg = f"{rule['name']}: {rule['metric']}={value:.1f} ({rule['op']} {rule['threshold']})"
-                with _conn() as conn:
-                    conn.execute(
-                        "INSERT INTO alerts (rule_id, message, ai_analysis) VALUES (%s, %s, %s)",
-                        (rule["id"], msg, analysis),
+                if _database_available():
+                    with _conn() as conn:
+                        conn.execute(
+                            "INSERT INTO alerts (rule_id, message, ai_analysis) VALUES (%s, %s, %s)",
+                            (rule["id"], msg, analysis),
+                        )
+                        conn.commit()
+                else:
+                    _MEM_ALERTS.append(
+                        {
+                            "id": len(_MEM_ALERTS) + 1,
+                            "rule_id": rule["id"],
+                            "message": msg,
+                            "ai_analysis": analysis,
+                            "read": False,
+                            "created_at": datetime.now().isoformat(),
+                        }
                     )
-                    conn.commit()
                 triggered.append({"message": msg, "ai_analysis": analysis})
                 send_im_notification(
                     "企业智脑告警",
@@ -169,9 +227,23 @@ def daily_report() -> str:
 # ==================== API ====================
 
 @router.post("/alerts/rules")
-async def create_rule(data: RuleCreate):
+async def create_rule(data: RuleCreate, request: Request = None):
+    _require_alert_management(request)
     if data.op not in OPS:
         raise HTTPException(status_code=400, detail=f"非法操作符: {data.op}")
+    if not _database_available():
+        global _MEM_NEXT_RULE_ID
+        rule = {
+            "id": _MEM_NEXT_RULE_ID,
+            "name": data.name,
+            "metric": data.metric,
+            "op": data.op,
+            "threshold": data.threshold,
+            "enabled": True,
+        }
+        _MEM_NEXT_RULE_ID += 1
+        _MEM_RULES.append(rule)
+        return {"id": rule["id"], "status": "ok"}
     _ensure()
     with _conn() as conn:
         cur = conn.execute(
@@ -184,7 +256,10 @@ async def create_rule(data: RuleCreate):
 
 
 @router.get("/alerts/rules")
-async def list_rules():
+async def list_rules(request: Request = None):
+    _require_alert_management(request)
+    if not _database_available():
+        return {"rules": [dict(rule) for rule in _MEM_RULES]}
     _ensure()
     with _conn() as conn:
         rows = conn.execute("SELECT * FROM alert_rules ORDER BY id").fetchall()
@@ -192,7 +267,12 @@ async def list_rules():
 
 
 @router.delete("/alerts/rules/{rule_id}")
-async def delete_rule(rule_id: int):
+async def delete_rule(rule_id: int, request: Request = None):
+    _require_alert_management(request)
+    if not _database_available():
+        before = len(_MEM_RULES)
+        _MEM_RULES[:] = [rule for rule in _MEM_RULES if rule["id"] != rule_id]
+        return {"status": "ok" if len(_MEM_RULES) < before else "not_found"}
     _ensure()
     with _conn() as conn:
         cur = conn.execute("DELETE FROM alert_rules WHERE id = %s", (rule_id,))
@@ -201,7 +281,10 @@ async def delete_rule(rule_id: int):
 
 
 @router.get("/alerts")
-async def list_alerts():
+async def list_alerts(request: Request):
+    _require_alert_management(request)
+    if not _database_available():
+        return {"alerts": [dict(alert) for alert in reversed(_MEM_ALERTS[-100:])]}
     _ensure()
     with _conn() as conn:
         rows = conn.execute("SELECT * FROM alerts ORDER BY id DESC LIMIT 100").fetchall()
@@ -209,6 +292,7 @@ async def list_alerts():
 
 
 @router.post("/alerts/check")
-async def check_now():
+async def check_now(request: Request):
     """手动触发一次巡检"""
+    _require_alert_management(request)
     return {"triggered": evaluate_all()}

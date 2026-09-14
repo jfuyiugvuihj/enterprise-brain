@@ -52,3 +52,10 @@ class TestQueryDataTool:
         result = tools.query_data.invoke({"query": "哪个门店营收最高"})
         assert isinstance(result, str)
         assert len(result) > 0
+
+    def test_ast_blocks_object_escape_and_unsafe_method(self):
+        from app.tools.excel import safe_query
+
+        for code in ["df.__class__", "().__class__.__mro__", "df.to_pickle('x')"]:
+            res = safe_query(_df(), code)
+            assert res["error"] is not None

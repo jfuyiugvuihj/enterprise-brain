@@ -1,35 +1,222 @@
 """
 Day 11: Data API — Excel 画像 / 图表生成 / 报表导出
 """
+import asyncio
+import mimetypes
 import os
-from fastapi import APIRouter, UploadFile, File
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from app.tools.excel import load_excel, profile_dataframe
 from app.tools.chart import bar_chart, line_chart, pie_chart, radar_chart
 from app.tools.visualize import gantt_chart, mindmap
 from app.tools.export import generate_pdf_report, export_to_excel
 from app.common.logger import logger
+from app.common.audit import record_audit
+from app.common.authorization import principal_from_request
+from app.common.permissions import (
+    ACTION_ANALYZE,
+    ACTION_DOWNLOAD,
+    ACTION_EXPORT,
+    ACTION_UPLOAD,
+    ACTION_VIEW,
+)
+from app.common.policy import authorization_decision
+from app.storage import artifacts as artifact_storage
+from app.storage.datasets import dataset_registry
 
 router = APIRouter()
 DATA_DIR = os.getenv("DATA_DIR", "./data")
 os.makedirs(DATA_DIR, exist_ok=True)
+DATA_FILE_EXTENSIONS = {".xlsx", ".xls", ".csv"}
+
+
+def _format_data_file_size(size: int) -> str:
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _safe_data_filename(filename: str) -> str:
+    safe_name = Path(filename or "").name
+    if not safe_name or safe_name in {".", ".."}:
+        raise HTTPException(status_code=400, detail="文件名无效")
+    return safe_name
+
+
+def _resolve_data_path(filename: str) -> Path:
+    safe_name = _safe_data_filename(filename)
+    path = Path(DATA_DIR) / safe_name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="数据文件不存在")
+    return path
+
+
+def _authorized_dataset(request: Request, filename: str, action: str):
+    principal = principal_from_request(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="authentication_required")
+    record = dataset_registry.get_active_by_filename(_safe_data_filename(filename))
+    if record is None:
+        raise HTTPException(status_code=404, detail="resource_not_found")
+    decision = authorization_decision(
+        principal,
+        record.resource_scope,
+        action=action,
+        require_resource_scope=True,
+    )
+    record_audit(
+        principal,
+        action,
+        "allowed" if decision.allowed else "denied",
+        record.dataset_id,
+        decision.reason_code,
+    )
+    if not decision.allowed:
+        raise HTTPException(status_code=403, detail=decision.reason_code)
+    return record
+
+
+def _json_value(value):
+    if pd.isna(value):
+        return None
+    if hasattr(value, "item"):
+        value = value.item()
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
+def build_dataframe_preview(df: pd.DataFrame, filename: str, limit: int = 100) -> dict:
+    sample = df.head(limit)
+    rows = [
+        {str(key): _json_value(value) for key, value in row.items()}
+        for row in sample.to_dict(orient="records")
+    ]
+    return {
+        "filename": filename,
+        "columns": [str(column) for column in df.columns],
+        "rows": rows,
+        "profile": profile_dataframe(df),
+        "truncated": len(df) > limit,
+    }
+
 
 # ==================== Excel 上传 + 画像 ====================
 
+@router.get("/data-files")
+async def list_data_files(request: Request = None):
+    directory = Path(DATA_DIR)
+    directory.mkdir(parents=True, exist_ok=True)
+    files = []
+    principal = principal_from_request(request) if request is not None else None
+    for path in directory.iterdir():
+        if not path.is_file() or path.suffix.lower() not in DATA_FILE_EXTENSIONS:
+            continue
+        record = dataset_registry.get_active_by_filename(path.name)
+        if request is not None:
+            if record is None:
+                continue
+            decision = authorization_decision(
+                principal,
+                record.resource_scope,
+                action=ACTION_VIEW,
+                require_resource_scope=True,
+            )
+            if not decision.allowed:
+                continue
+        stat = path.stat()
+        item = {
+            "filename": path.name,
+            "size": stat.st_size,
+            "size_label": _format_data_file_size(stat.st_size),
+            "modified_at": datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds"),
+            "extension": path.suffix.lower(),
+            "_modified_timestamp": stat.st_mtime,
+        }
+        if record is not None:
+            item.update(
+                {
+                    "dataset_id": record.dataset_id,
+                    "version_id": record.version_id,
+                    "classification": record.classification,
+                }
+            )
+        files.append(item)
+    files.sort(key=lambda item: item["_modified_timestamp"], reverse=True)
+    for item in files:
+        item.pop("_modified_timestamp")
+    return {"files": files}
+
+
 @router.post("/upload-excel")
-async def upload_excel(file: UploadFile = File(...)):
+async def upload_excel(request: Request, file: UploadFile = File(...)):
     """上传 Excel/CSV → 解析 → 返回数据画像"""
-    file_path = os.path.join(DATA_DIR, file.filename)
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
+    filename = _safe_data_filename(file.filename)
+    principal = _authorized_principal(request, ACTION_UPLOAD)
+    if dataset_registry.get_active_by_filename(filename) is not None:
+        raise HTTPException(status_code=409, detail="dataset_filename_conflict")
+    file_path = Path(DATA_DIR) / filename
+    content = await file.read()
+    temp_path = file_path.with_name(f".{file_path.name}.upload")
+    with open(temp_path, "wb") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_path, file_path)
 
-    df = load_excel(file_path)
-    profile = profile_dataframe(df)
+    try:
+        df = await asyncio.to_thread(load_excel, str(file_path))
+        dataset = dataset_registry.register(file_path, principal=principal, filename=filename)
+    except Exception:
+        if file_path.exists() and dataset_registry.get_active_by_filename(filename) is None:
+            file_path.unlink()
+        raise
+    preview = build_dataframe_preview(df, filename)
+    preview.update(
+        {
+            "dataset_id": dataset.dataset_id,
+            "version_id": dataset.version_id,
+            "classification": dataset.classification,
+        }
+    )
 
-    return {
-        "filename": file.filename,
-        "profile": profile
-    }
+    return preview
+
+
+@router.get("/data-files/{filename}/preview")
+async def preview_data_file(filename: str, request: Request):
+    record = _authorized_dataset(request, filename, ACTION_VIEW)
+    path = Path(record.storage_path)
+    try:
+        df = await asyncio.to_thread(load_excel, str(path))
+        preview = build_dataframe_preview(df, record.filename)
+        preview.update({"dataset_id": record.dataset_id, "version_id": record.version_id})
+        return preview
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(f"[Data] preview failed: {filename}")
+        raise HTTPException(status_code=500, detail=f"数据预览失败: {exc}") from exc
+
+
+@router.get("/data-files/{filename}/file")
+async def get_data_file(filename: str, request: Request, inline: bool = False):
+    record = _authorized_dataset(request, filename, ACTION_DOWNLOAD)
+    path = Path(record.storage_path)
+    media_type, _ = mimetypes.guess_type(record.filename)
+    return FileResponse(
+        path,
+        filename=record.filename,
+        media_type=media_type or "application/octet-stream",
+        content_disposition_type="inline" if inline else "attachment",
+    )
 
 # ==================== 图表生成 ====================
 
@@ -45,10 +232,35 @@ class ChartRequest(BaseModel):
     branches: dict[str, list[str]] | None = None  # mindmap 分支
 
 
+def _authorized_principal(request: Request, action: str):
+    principal = principal_from_request(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="authentication_required")
+    decision = authorization_decision(principal, None, action=action)
+    if not decision.allowed:
+        raise HTTPException(status_code=403, detail=decision.reason_code)
+    return principal
+
+
+def _artifact_response(path: str, artifact_type: str, principal) -> dict:
+    artifact = artifact_storage.register_artifact(
+        path,
+        artifact_type=artifact_type,
+        principal=principal,
+    )
+    return {
+        "path": artifact.content_url,
+        "download_url": artifact.download_url,
+        "artifact": artifact.public_payload(),
+        "error": None,
+    }
+
+
 @router.post("/chart")
-async def generate_chart(req: ChartRequest):
+async def generate_chart(req: ChartRequest, request: Request):
     """根据参数生成图表，返回图片路径"""
     try:
+        principal = _authorized_principal(request, ACTION_ANALYZE)
         if req.type == "bar":
             path = bar_chart(req.labels, req.values, title=req.title)
         elif req.type == "line":
@@ -65,8 +277,9 @@ async def generate_chart(req: ChartRequest):
             return {"error": f"不支持的图表类型: {req.type}", "path": None}
 
         # 转成相对 URL
-        url = f"/static/charts/{os.path.basename(path)}" if path else None
-        return {"path": url, "error": None}
+        return _artifact_response(path, "chart", principal)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"图表生成失败: {e}")
         return {"error": str(e), "path": None}
@@ -81,25 +294,26 @@ class ExportRequest(BaseModel):
 
 
 @router.post("/export")
-async def export_report(req: ExportRequest):
+async def export_report(req: ExportRequest, request: Request):
     """生成 PDF 或 Excel 报告，返回下载链接"""
     try:
+        principal = _authorized_principal(request, ACTION_EXPORT)
         if req.format == "pdf":
             path = generate_pdf_report(
                 title=req.title,
                 sections=req.sections or []
             )
-            url = f"/static/exports/{os.path.basename(path)}"
         elif req.format == "excel":
             path = export_to_excel(
                 title=req.title,
                 sheets=req.sheets or {}
             )
-            url = f"/static/exports/{os.path.basename(path)}"
         else:
             return {"error": f"不支持格式: {req.format}", "path": None}
 
-        return {"path": url, "error": None}
+        return _artifact_response(path, "report", principal)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"导出失败: {e}")
         return {"error": str(e), "path": None}

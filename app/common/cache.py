@@ -5,8 +5,10 @@ import json
 import time
 from app.common.logger import logger
 
-# fakeredis 是 Redis 的纯 Python 实现，API 完全兼容
-import fakeredis
+try:
+    import fakeredis
+except ModuleNotFoundError:  # pragma: no cover
+    fakeredis = None
 
 _REDIS_URL = os.getenv("REDIS_URL", "")
 _redis = None
@@ -21,9 +23,39 @@ def get_redis():
             _redis = redis.from_url(_REDIS_URL)
             logger.info("使用外部 Redis: %s", _REDIS_URL)
         else:
-            _redis = fakeredis.FakeRedis()
+            if fakeredis is not None:
+                _redis = fakeredis.FakeRedis()
+            else:
+                _redis = _MemoryRedis()
             logger.info("使用 fakeredis（本地模拟）")
     return _redis
+
+
+class _MemoryRedis:
+    def __init__(self):
+        self._kv = {}
+        self._z = {}
+
+    def setex(self, key, _ttl, value):
+        self._kv[key] = value
+
+    def get(self, key):
+        return self._kv.get(key)
+
+    def zremrangebyscore(self, key, _min, _max):
+        items = self._z.get(key, [])
+        self._z[key] = [(m, s) for m, s in items if s > _max]
+
+    def zcard(self, key):
+        return len(self._z.get(key, []))
+
+    def zadd(self, key, mapping):
+        self._z.setdefault(key, [])
+        for member, score in mapping.items():
+            self._z[key].append((member, score))
+
+    def expire(self, key, _ttl):
+        return None
 
 
 # ==================== 缓存 ====================
@@ -91,3 +123,33 @@ def check_rate_limit(username: str, max_per_minute: int = 10) -> tuple[bool, int
     r.zadd(key, {str(now): now})
     r.expire(key, 120)  # key 2 分钟后自动清理
     return True, remaining - 1
+
+
+_SEMANTIC_CACHE = {}
+
+
+def _semantic_key(question: str) -> str:
+    return "".join(sorted(question.strip()))
+
+
+def cache_semantic_answer(question: str, answer: str) -> None:
+    _SEMANTIC_CACHE[_semantic_key(question)] = answer
+
+
+def get_semantic_cached_answer(question: str) -> str | None:
+    if not question:
+        return None
+    qset = set(question.strip())
+    best_score = 0.0
+    best_answer = None
+    for key, answer in _SEMANTIC_CACHE.items():
+        kset = set(key)
+        score = len(qset & kset) / max(len(qset | kset), 1)
+        if score > best_score:
+            best_score = score
+            best_answer = answer
+    return best_answer if best_score >= 0.35 else None
+
+
+def clear_semantic_cache() -> None:
+    _SEMANTIC_CACHE.clear()

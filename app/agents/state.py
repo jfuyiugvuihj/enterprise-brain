@@ -1,50 +1,52 @@
-"""
-阶段 1 · LangGraph 强类型状态定义
+﻿"""
+Stage 0 public execution state.
 
-把旧版弱类型 `AgentState(dict)` 升级为 TypedDict：
-- 每个字段含义明确
-- 需要并行合并的字段用 reducer（add_messages / _merge_dicts）
-- 普通字段默认"后者覆盖"
+The state keeps the authenticated principal, resource scope, request identifiers,
+and structured worker results in one shared shape for all Agent domains.
 """
 from typing import Annotated, TypedDict
 
 from langgraph.graph.message import add_messages
 
+from app.agents.contracts import AgentContext, AgentResult, ModelBudget, Principal, ResourceScope
+
 
 def _merge_dicts(a: dict, b: dict) -> dict:
-    """并行 worker 写 worker_results 时的合并 reducer"""
+    """Merge parallel worker maps while allowing an explicit reset."""
+    if "__reset__" in b:
+        return dict(b["__reset__"] or {})
     return {**a, **b}
 
 
 def _last_wins(a, b):
-    """普通字段：后写覆盖"""
+    """Ordinary state fields use last-write-wins semantics."""
     return b
 
 
 class AgentState(TypedDict, total=False):
-    # 短期记忆：当前对话（LangGraph 消息流，自动追加）
     messages: Annotated[list, add_messages]
-
-    # classify_intent 输出：chat(闲聊) / task(任务)
     intent: str
-
-    # 当前用户（长期记忆按 user 隔离）
     user_id: str
 
-    # load_memory 注入：{"long": [...], "work": [...]}
+    principal: Principal
+    request_id: str
+    trace_id: str
+    task_id: str
+    session_id: str
+    allowed_actions: list[str]
+    allowed_resource_scope: list[ResourceScope]
+    cancellation_token: str
+    model_budget: ModelBudget
+    agent_context: AgentContext
+
     memory: dict
-
-    # plan 节点拆解出的子任务列表（仅复杂问题）
+    memory_error: str
     plan: list
-
-    # 并行 worker 的结果：{worker_name: result_text}，用 _merge_dicts 合并
+    agent_results: Annotated[dict[str, AgentResult], _merge_dicts]
     worker_results: Annotated[dict, _merge_dicts]
-
-    # reflect 已重派次数（最多 1 次，防死循环）
+    review_result: dict
+    retry_count: int
+    trace_events: list
     reflect_count: int
-
-    # reflect 判定：是否需要重派（True→回 supervisor，False→synthesize）
     redo: bool
-
-    # synthesize 产出的最终回答
     final_answer: str

@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 
 from app.common.logger import logger
@@ -7,6 +8,8 @@ from app.common.logger import logger
 _tz = timezone(timedelta(hours=8))
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
 _initialized = False
+_MEM_PROFILES: dict[str, dict] = {}
+_PRODUCTION_ENVIRONMENTS = {"production", "prod"}
 
 
 def compose_profile_context(profile: dict | None) -> str:
@@ -33,11 +36,26 @@ def _conn():
     return psycopg.connect(_PG_URL, row_factory=dict_row)
 
 
+def _database_available() -> bool:
+    auth_module = sys.modules.get("app.common.auth")
+    return bool(auth_module and getattr(auth_module, "_db_ready", False))
+
+
+def _is_production_environment() -> bool:
+    return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
+
+
 def _ensure():
     global _initialized
     if _initialized:
         return
     with _conn() as conn:
+        if _is_production_environment():
+            row = conn.execute("SELECT to_regclass('public.user_profiles') AS table_name").fetchone()
+            if not row or row["table_name"] is None:
+                raise RuntimeError("user_profiles table is required in production; run migrations first")
+            _initialized = True
+            return
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS user_profiles (
@@ -55,6 +73,9 @@ def _ensure():
 
 def get_profile(user_id: str, fallback: dict | None = None) -> dict:
     profile = dict(fallback or {})
+    if not _database_available():
+        profile.update(_MEM_PROFILES.get(user_id, {}))
+        return profile
     try:
         _ensure()
         with _conn() as conn:
@@ -73,6 +94,14 @@ def get_profile(user_id: str, fallback: dict | None = None) -> dict:
 
 
 def upsert_profile(user_id: str, department: str = "", position: str = "", preferences: list | None = None) -> bool:
+    if not _database_available():
+        _MEM_PROFILES[user_id] = {
+            "department": department,
+            "position": position,
+            "preferences": list(preferences or []),
+            "updated_at": datetime.now(_tz).isoformat(),
+        }
+        return True
     try:
         _ensure()
         now = datetime.now(_tz).isoformat()
