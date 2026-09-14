@@ -22,7 +22,11 @@ RUN set -eux; \
         done; \
     fi; \
     apt-get update $opts; \
-    apt-get install -y --no-install-recommends $opts build-essential git tzdata; \
+# fonts-wqy-microhei is not decoration: the image had no font at all, so every generated
+# chart rendered Chinese as boxes and the PDF exporter had nothing to embed. Its path is the
+# one candidate app/tools/export.py looks for on Linux, and its family name is already in the
+# app/tools/chart.py preference list, so one package covers both surfaces.
+    apt-get install -y --no-install-recommends $opts build-essential git tzdata fonts-wqy-microhei; \
     rm -rf /var/lib/apt/lists/*
 
 # PIP_INDEX_URL is the same switch as APT_MIRROR for a customer intranet: one build

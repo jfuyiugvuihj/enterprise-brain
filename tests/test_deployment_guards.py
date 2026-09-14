@@ -447,3 +447,35 @@ def test_startup_hooks_refuse_production_traffic_before_the_scheduler():
     assert handler_names.index("startup_storage_guard") < handler_names.index("startup_scheduler")
     assert "enforce_production_storage_guard" in source
     assert "/api/v1/apps" in {route.path for route in app.routes}
+
+
+def test_image_ships_a_cjk_font_that_the_code_actually_looks_for():
+    """容器里曾经一个字体都没有，图表中文全是方框、PDF 无法嵌入字体。
+
+    断言的不是"装了某个包"，而是装的包正好被两处消费方认出来：chart.py 的偏好列表
+    与 export.py 在 Linux 上唯一探测的路径。
+    """
+    from pathlib import Path
+
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    chart_source = Path("app/tools/chart.py").read_text(encoding="utf-8")
+    export_source = Path("app/tools/export.py").read_text(encoding="utf-8")
+
+    assert "fonts-wqy-microhei" in dockerfile, "镜像必须自带中文字体"
+    assert "WenQuanYi Micro Hei" in chart_source, "chart.py 的字体偏好要包含镜像里的字体族"
+    assert "wqy-microhei.ttc" in export_source, "export.py 必须探测镜像安装的字体路径"
+
+
+def test_rag_preload_cannot_abort_the_application_startup(monkeypatch):
+    """预加载是优化，不是启动前提：缺模型/缺外网时服务仍要能起来。
+
+    容器门第一次实跑就是因为这里抛错，uvicorn 直接 "Application startup failed"。
+    """
+    import app.main as main_module
+    import app.agents.tools as tools_module
+
+    def _boom():
+        raise OSError("huggingface.co unreachable")
+
+    monkeypatch.setattr(tools_module, "preload_pipeline", _boom)
+    main_module._preload_sync()  # 不得抛出

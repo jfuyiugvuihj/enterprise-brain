@@ -170,27 +170,56 @@ def rrf_fusion(ranked_lists: list[list[dict]], k: int = 60) -> list[dict]:
 # ==================== Cross-Encoder 重排序 ====================
 
 class CrossEncoderReranker:
-    """BAAI/bge-reranker-base 本地重排序"""
+    """BAAI/bge-reranker-base 本地重排序。
+
+    客户机器通常没有外网：默认只用本地模型，缺了就退回 RRF，绝不为了预热去访问
+    huggingface.co。确实需要在线拉取时必须显式开启 ``RERANKER_ALLOW_DOWNLOAD``，
+    与"远程回退默认关闭"的部署约定一致。模型目录可用 ``RERANKER_MODEL_DIR`` 指到
+    挂载卷上。
+    """
 
     def __init__(self, model_path: str = None):
-        # 优先用本地 ModelScope 下载的模型
+        configured = os.getenv("RERANKER_MODEL_DIR", "").strip()
         if model_path is None:
-            local = os.path.join(os.path.dirname(__file__), "..", "..", "models", "BAAI", "bge-reranker-base")
-            if os.path.isdir(local):
-                model_path = local
-            else:
-                model_path = "BAAI/bge-reranker-base"
+            local = configured or os.path.join(
+                os.path.dirname(__file__), "..", "..", "models", "BAAI", "bge-reranker-base"
+            )
+            model_path = local if os.path.isdir(local) else configured or "BAAI/bge-reranker-base"
         self.model_path = model_path
         self._model = None
+        self.unavailable_reason = ""
+
+    @property
+    def is_local_model(self) -> bool:
+        return os.path.isdir(self.model_path)
+
+    @staticmethod
+    def _download_allowed() -> bool:
+        return os.getenv("RERANKER_ALLOW_DOWNLOAD", "").strip().lower() in {"1", "true", "yes", "on"}
 
     def _load_model(self):
-        if self._model is None:
-            if CrossEncoder is None:
-                logger.warning("CrossEncoder 不可用，跳过预加载并回退到 RRF")
-                return
+        """加载失败只降级、不抛错：重排序是可选增强，不能让它决定服务能否启动。"""
+        if self._model is not None or self.unavailable_reason:
+            return
+        if CrossEncoder is None:
+            self.unavailable_reason = "sentence_transformers_not_installed"
+            logger.warning("CrossEncoder 不可用，跳过预加载并回退到 RRF")
+            return
+        if not self.is_local_model and not self._download_allowed():
+            self.unavailable_reason = "reranker_model_not_local"
+            logger.warning(
+                "本地找不到重排序模型目录 %s，回退到 RRF 排序；离线部署不要开启 RERANKER_ALLOW_DOWNLOAD",
+                self.model_path,
+            )
+            return
+        try:
             logger.info(f"加载 Cross-Encoder: {self.model_path} ...")
             self._model = CrossEncoder(self.model_path, device="cpu")
             logger.info("Cross-Encoder 加载完成")
+        except Exception as exc:  # noqa: BLE001 - 预加载与请求路径都必须降级而不是崩溃
+            self._model = None
+            self.unavailable_reason = f"reranker_load_failed:{type(exc).__name__}"
+            logger.warning("Cross-Encoder 加载失败，本次进程回退到 RRF 排序: %s", exc)
 
     def rerank(self, query: str, docs: list[dict], top_k: int = 5) -> list[dict]:
         """对检索结果重排序，返回 top_k。模型未就绪时直接返回 RRF 结果。"""

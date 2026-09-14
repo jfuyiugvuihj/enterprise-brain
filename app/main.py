@@ -146,8 +146,11 @@ def _preload_sync():
     from app.agents.tools import preload_pipeline
     from app.common.logger import logger
     logger.info("[启动] 预加载 RAG pipeline (BM25/CrossEncoder)...")
-    preload_pipeline()
-    logger.info("[启动] 预加载完成")
+    try:
+        preload_pipeline()
+        logger.info("[启动] 预加载完成")
+    except Exception as e:  # noqa: BLE001 - 预加载是优化，缺依赖时降级而不是拒绝启动
+        logger.warning(f"[启动] RAG 预加载失败，检索按需降级: {e}")
 
 
 @app.on_event("startup")
