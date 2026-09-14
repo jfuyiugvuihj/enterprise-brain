@@ -1,6 +1,12 @@
 import asyncio
+import importlib.util
 import json
+from pathlib import Path
 from types import SimpleNamespace
+
+from fastapi import HTTPException
+
+from app.common.identity import Principal
 
 
 def _response_body(response) -> str:
@@ -13,22 +19,14 @@ def _response_body(response) -> str:
     return asyncio.run(collect())
 
 
-def test_overloaded_ask_uses_reliable_queue_with_idempotency_key(monkeypatch):
+def _ask_over_limit(monkeypatch, queue_factory):
+    """Drive /ask through the overload branch and return whatever it produced."""
     from app.api.v1 import chat
-    from app.common import queue as legacy_queue
     from app.common import reliable_queue
-    from app.common.identity import Principal
 
-    captured = {}
     principal = Principal.from_user(
         {"id": "queue-user", "username": "queue-user", "role": "staff", "department": "ops"}
     )
-
-    class FakeQueue:
-        def enqueue(self, payload, idempotency_key):
-            captured["payload"] = payload
-            captured["idempotency_key"] = idempotency_key
-            return SimpleNamespace(request_id="reliable-request")
 
     monkeypatch.setattr(chat, "_ensure_sessions_table", lambda: None)
     monkeypatch.setattr(chat, "_ensure_session", lambda *args: None)
@@ -36,16 +34,9 @@ def test_overloaded_ask_uses_reliable_queue_with_idempotency_key(monkeypatch):
     monkeypatch.setattr(chat, "_rewrite_followup", lambda session_id, message: message)
     monkeypatch.setattr(chat.auth, "get_user", lambda username: None)
     monkeypatch.setattr("app.common.cache.check_rate_limit", lambda *args, **kwargs: (False, 0))
-    monkeypatch.setattr(reliable_queue, "connect_reliable_queue", lambda: FakeQueue())
-    monkeypatch.setattr(
-        legacy_queue,
-        "enqueue_request",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("legacy queue must not receive overloaded asks")
-        ),
-    )
+    monkeypatch.setattr(reliable_queue, "connect_reliable_queue", queue_factory)
 
-    response = asyncio.run(
+    return asyncio.run(
         chat.ask(
             chat.AskRequest(
                 message="queue this",
@@ -59,6 +50,25 @@ def test_overloaded_ask_uses_reliable_queue_with_idempotency_key(monkeypatch):
         )
     )
 
+
+def test_legacy_blpop_queue_module_is_deleted():
+    """The BLPOP helper was dead code whose only caller proved it must not be used."""
+    assert importlib.util.find_spec("app.common.queue") is None
+    assert not Path("app/common/queue.py").exists()
+
+
+def test_overloaded_ask_uses_reliable_queue_with_idempotency_key(monkeypatch):
+    from app.common import reliable_queue
+
+    captured = {}
+
+    class FakeQueue:
+        def enqueue(self, payload, idempotency_key):
+            captured["payload"] = payload
+            captured["idempotency_key"] = idempotency_key
+            return SimpleNamespace(request_id="reliable-request")
+
+    response = _ask_over_limit(monkeypatch, lambda: FakeQueue())
     body = _response_body(response)
 
     assert captured["idempotency_key"] == "retry-key"
@@ -70,3 +80,19 @@ def test_overloaded_ask_uses_reliable_queue_with_idempotency_key(monkeypatch):
         "request_id": "reliable-request",
         "status": "queued",
     }
+
+
+def test_overloaded_ask_fails_closed_without_redis(monkeypatch):
+    """No Redis means no queue: the request is refused instead of parked in memory."""
+    from app.common.reliable_queue import QueueConnectionError
+
+    def refuse():
+        raise QueueConnectionError("REDIS_URL is required for the reliable queue")
+
+    try:
+        _ask_over_limit(monkeypatch, refuse)
+    except HTTPException as exc:
+        assert exc.status_code == 503
+        assert exc.detail["code"] == QueueConnectionError.code
+    else:
+        raise AssertionError("expected a 503 when the reliable queue is unavailable")

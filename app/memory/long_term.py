@@ -87,9 +87,42 @@ def _ensure():
     global _initialized
     if _initialized:
         return
-    if psycopg is not None:
-        _init()
+    if psycopg is None:
+        if _is_production_environment():
+            raise RuntimeError(
+                "psycopg is required in production; the in-process memory table is disabled"
+            )
+        _initialized = True
+        return
+    _init()
     _initialized = True
+
+
+def memory_storage_state() -> dict:
+    """Report whether recalled memories are durable or this process only."""
+    if psycopg is not None:
+        return {
+            "storage_mode": "postgres",
+            "durable": True,
+            "shared_across_processes": True,
+            "protection": "none",
+            "detail": "memories table served by PostgreSQL",
+        }
+    if _is_production_environment():
+        return {
+            "storage_mode": "unavailable",
+            "durable": False,
+            "shared_across_processes": False,
+            "protection": "read_only",
+            "detail": "psycopg driver is unavailable; memory writes are refused",
+        }
+    return {
+        "storage_mode": "memory",
+        "durable": False,
+        "shared_across_processes": False,
+        "protection": "none",
+        "detail": "development in-process dictionary",
+    }
 
 
 @lru_cache(maxsize=1)

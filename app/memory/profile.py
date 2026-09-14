@@ -45,6 +45,33 @@ def _is_production_environment() -> bool:
     return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
 
 
+def profile_storage_state() -> dict:
+    """Report where user profiles are actually stored."""
+    if _database_available():
+        return {
+            "storage_mode": "postgres",
+            "durable": True,
+            "shared_across_processes": True,
+            "protection": "none",
+            "detail": "user_profiles table served by PostgreSQL",
+        }
+    if _is_production_environment():
+        return {
+            "storage_mode": "unavailable",
+            "durable": False,
+            "shared_across_processes": False,
+            "protection": "read_only",
+            "detail": "user database is unavailable; profile writes are refused",
+        }
+    return {
+        "storage_mode": "memory",
+        "durable": False,
+        "shared_across_processes": False,
+        "protection": "none",
+        "detail": "development in-process dictionary",
+    }
+
+
 def _ensure():
     global _initialized
     if _initialized:
@@ -94,6 +121,12 @@ def get_profile(user_id: str, fallback: dict | None = None) -> dict:
 
 
 def upsert_profile(user_id: str, department: str = "", position: str = "", preferences: list | None = None) -> bool:
+    if not _database_available() and _is_production_environment():
+        logger.error(
+            "[Profile] production profile store is not durable; write refused "
+            "(set DATABASE_URL and run migrations)"
+        )
+        return False
     if not _database_available():
         _MEM_PROFILES[user_id] = {
             "department": department,

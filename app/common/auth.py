@@ -130,6 +130,46 @@ def _using_memory_store() -> bool:
     return psycopg is None or not _db_ready
 
 
+def user_storage_state() -> dict:
+    """Name the user store this process authenticates against."""
+    if psycopg is not None and _db_ready:
+        return {
+            "storage_mode": "postgres",
+            "durable": True,
+            "shared_across_processes": True,
+            "protection": "none",
+            "detail": "users table served by PostgreSQL",
+        }
+    reason = (
+        "psycopg driver is unavailable"
+        if psycopg is None
+        else "PostgreSQL is not reachable, users live in the process-local table"
+    )
+    return {
+        "storage_mode": "unavailable" if _is_production_environment() else "memory",
+        "durable": False,
+        "shared_across_processes": False,
+        "protection": "refuse_start" if _is_production_environment() else "none",
+        "detail": reason,
+    }
+
+
+def _memory_store_denied(operation: str) -> bool:
+    """Refuse to authenticate against a process-local user table in production.
+
+    Login is a write path (user creation, SSO sync, password change), so there is no
+    read-only form of this store: two workers would disagree about who exists. Every
+    caller keeps its previous default-deny behaviour when this returns True.
+    """
+    if not (_is_production_environment() and _using_memory_store()):
+        return False
+    logger.error(
+        f"[Auth] production user store is not durable; refused {operation} "
+        "(set DATABASE_URL and run migrations)"
+    )
+    return True
+
+
 def _raw_conn():
     if psycopg is None:
         raise RuntimeError("psycopg unavailable")
@@ -193,6 +233,8 @@ def _get_conn():
 
 
 def verify_password(username: str, password: str) -> bool:
+    if _memory_store_denied("password verification"):
+        return False
     if _using_memory_store():
         row = _MEM_USERS.get(username)
         return bool(row and bcrypt.checkpw(password.encode(), row["password_hash"].encode()))
@@ -227,6 +269,8 @@ def get_token_from_request(request: Request) -> str | None:
 
 
 def list_users() -> list[dict]:
+    if _memory_store_denied("user listing"):
+        return []
     if _using_memory_store():
         return [
             {"id": user["id"], "username": user["username"], "role": user["role"], "department": user["department"], "created_at": ""}
@@ -245,6 +289,8 @@ def create_user(username: str, password: str, role: str = "staff", department: s
     if role not in ("staff", "manager", "admin"):
         return False, f"非法角色: {role}"
 
+    if _memory_store_denied("user creation"):
+        return False, "production_user_store_unavailable"
     if _using_memory_store():
         if username in _MEM_USERS:
             return False, f"用户 '{username}' 已存在"
@@ -271,6 +317,8 @@ def create_user(username: str, password: str, role: str = "staff", department: s
 
 
 def get_user(username: str) -> dict | None:
+    if _memory_store_denied("user lookup"):
+        return None
     if _using_memory_store():
         row = _MEM_USERS.get(username)
         return {"username": row["username"], "role": row["role"], "department": row["department"]} if row else None
@@ -288,6 +336,8 @@ def upsert_sso_user(username: str, role: str = "staff", department: str | None =
     if role not in ("staff", "manager", "admin"):
         role = "staff"
 
+    if _memory_store_denied("SSO user sync"):
+        return False, "production_user_store_unavailable"
     if _using_memory_store():
         if username in _MEM_USERS:
             _MEM_USERS[username]["role"] = role
@@ -323,6 +373,8 @@ def upsert_sso_user(username: str, role: str = "staff", department: str | None =
 
 
 def delete_user(user_id: int) -> bool:
+    if _memory_store_denied("user deletion"):
+        return False
     if _using_memory_store():
         for key, user in list(_MEM_USERS.items()):
             if user["id"] == user_id:
@@ -340,6 +392,8 @@ def change_password(username: str, old_password: str, new_password: str) -> tupl
         return False, "原密码错误"
     if len(new_password) < 6:
         return False, "新密码至少 6 位"
+    if _memory_store_denied("password change"):
+        return False, "production_user_store_unavailable"
     if _using_memory_store():
         _MEM_USERS[username]["password_hash"] = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
         return True, "密码已更新"
