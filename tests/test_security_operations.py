@@ -139,3 +139,107 @@ def test_audit_sanitizer_redacts_nested_secrets():
     assert cleaned["request"]["token"] == "[REDACTED]"
     assert cleaned["request"]["message"] == "safe"
     assert cleaned["items"][0]["password"] == "[REDACTED]"
+def test_denied_authorization_chain_is_replayable_after_a_restart(tmp_path, monkeypatch):
+    """The S1 403 chain must survive a restart, which is the point of P1-5."""
+    import json
+
+    import pytest
+
+    from app.common.audit import AUDIT_COLLECTION, get_audit_events, reset_audit_storage
+    from app.common.authorization import authorize
+    from app.common.identity import Principal
+    from app.common.permissions import ACTION_DELETE
+
+    journal = tmp_path / "persistence.json"
+    monkeypatch.setenv("PERSISTENCE_BACKEND", "json")
+    monkeypatch.setenv("PERSISTENCE_FALLBACK_PATH", str(journal))
+    monkeypatch.delenv("AUDIT_PERSISTENCE", raising=False)
+    reset_audit_storage()
+    try:
+        staff = Principal.from_user(
+            {"id": 9, "username": "probe-staff", "role": "staff", "department": "finance"}
+        )
+        staff.request_id = "req-403-chain"
+
+        with pytest.raises(PermissionError):
+            authorize(staff, ACTION_DELETE)
+
+        assert get_audit_events()[-1]["outcome"] == "denied"
+
+        # A restart starts with an empty process list; the journal must not be empty.
+        reset_audit_storage()
+        replayed = get_audit_events()
+
+        assert [event["outcome"] for event in replayed] == ["denied"]
+        assert replayed[0]["reason"] == "permission_denied"
+        assert replayed[0]["action"] == ACTION_DELETE
+        assert replayed[0]["request_id"] == "req-403-chain"
+        assert replayed[0]["policy_version"] == "resource-policy-v2"
+        assert replayed[0]["persisted"] is True
+        stored = json.loads(journal.read_text(encoding="utf-8"))
+        assert list(stored[AUDIT_COLLECTION])[0] == replayed[0]["event_id"]
+    finally:
+        reset_audit_storage()
+
+
+def test_audit_storage_status_reports_durability_without_faking_it(tmp_path, monkeypatch):
+    from app.common.audit import audit_storage_status, record_audit, reset_audit_storage
+    from app.common.identity import Principal
+
+    monkeypatch.setenv("PERSISTENCE_BACKEND", "json")
+    monkeypatch.setenv("PERSISTENCE_FALLBACK_PATH", str(tmp_path / "persistence.json"))
+    monkeypatch.delenv("AUDIT_PERSISTENCE", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    reset_audit_storage()
+    try:
+        principal = Principal.from_user({"id": 3, "username": "ops", "role": "admin"})
+        record_audit(principal, "resource:view", "allowed", "doc-1", "permission_granted")
+
+        status = audit_storage_status()
+
+        assert status["mode"] == "json"
+        assert status["durable"] is True
+        assert status["degraded"] is False
+        assert status["health"] == "ok"
+        assert status["last_error"] == ""
+        assert status["view_complete"] is True
+        assert status["write_failures"] == 0
+        assert status["collection"] == "audit_events"
+        assert status["migration"] == "0005_audit_events"
+        assert status["in_memory_events"] == 1
+
+        monkeypatch.setenv("PERSISTENCE_BACKEND", "postgres")
+        reset_audit_storage()
+        degraded = audit_storage_status()
+
+        assert degraded["durable"] is False
+        assert degraded["degraded"] is True
+        assert degraded["health"] == "backend_unavailable"
+        assert degraded["mode"] == "memory_only"
+        assert "DATABASE_URL" in degraded["degraded_reason"]
+    finally:
+        reset_audit_storage()
+
+
+def test_audit_events_migration_is_manifest_verified():
+    import hashlib
+    import json
+
+    from app.db.migrations import MIGRATIONS, migration_plan
+
+    directory = Path(__file__).resolve().parents[1] / "migrations"
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    migration = next(item for item in MIGRATIONS if item.name == "audit_events")
+    filename = f"{migration.version}_{migration.name}.sql"
+
+    assert manifest[filename] == migration.checksum
+    assert (
+        hashlib.sha256((directory / filename).read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+        == manifest[filename]
+    )
+    assert "CREATE TABLE IF NOT EXISTS audit_events" in migration.sql
+
+    pending = [item.version for item in migration_plan({})]
+
+    assert "0005" in pending
+    assert pending == sorted(pending)

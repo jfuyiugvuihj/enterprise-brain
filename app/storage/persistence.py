@@ -258,6 +258,29 @@ _TABLES = {
             "created_at",
         ),
     ),
+    "audit_events": _PostgresTable(
+        "audit_events",
+        "event_id",
+        (
+            "event_id",
+            "request_id",
+            "actor_username",
+            "actor_role",
+            "owner_id",
+            "action",
+            "resource",
+            "resource_scope",
+            "outcome",
+            "reason_code",
+            "policy_version",
+            "before_summary",
+            "after_summary",
+            "payload",
+            "retention_days",
+            "expires_at",
+            "created_at",
+        ),
+    ),
 }
 
 
@@ -317,6 +340,9 @@ class PostgresPersistenceAdapter:
                 "arguments",
                 "result_summary",
                 "filter_snapshot",
+                "resource_scope",
+                "before_summary",
+                "after_summary",
             }
             else values.get(column)
             for column in columns

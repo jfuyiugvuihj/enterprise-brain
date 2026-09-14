@@ -32,7 +32,18 @@ def test_migration_catalog_is_versioned_checksums_are_stable_and_lock_key_is_sco
     manifest_path = Path(__file__).parents[1] / "migrations" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    assert [migration.version for migration in migrations] == ["0001", "0002", "0003", "0004"]
+    versions = [migration.version for migration in migrations]
+    # Catalog shape, not a per-wave hard-coded length: versions stay contiguous from 0001,
+    # the manifest lists exactly the discovered files, and every checksum is a sha256 hex digest.
+    assert versions == [f'{number:04d}' for number in range(1, len(versions) + 1)], versions
+    assert len(manifest) == len(migrations)
+    assert all(len(migration.checksum) == 64 for migration in migrations)
+    assert [migration.name for migration in migrations[:4]] == [
+        "core_resource_versions",
+        "execution_data_lineage",
+        "legacy_runtime_tables",
+        "legacy_runtime_compatibility",
+    ]
     assert migrations[0].name == "core_resource_versions"
     assert manifest["0001_core_resource_versions.sql"] == migrations[0].checksum
     assert "CREATE TABLE IF NOT EXISTS schema_migrations" in migrations[0].sql
@@ -68,12 +79,16 @@ def test_migration_catalog_is_versioned_checksums_are_stable_and_lock_key_is_sco
     assert "ADD COLUMN IF NOT EXISTS updated_at TEXT" in migrations[3].sql
     assert "ADD COLUMN IF NOT EXISTS steps TEXT" in migrations[3].sql
     assert "CREATE TABLE IF NOT EXISTS documents" in migrations[3].sql
+    assert migrations[4].name == "audit_events"
+    assert "CREATE TABLE IF NOT EXISTS audit_events" in migrations[4].sql
+    assert "request_id TEXT NOT NULL DEFAULT ''" in migrations[4].sql
+    assert "expires_at TIMESTAMPTZ" in migrations[4].sql
 
     assert migration_plan({}, migrations=migrations) == list(migrations)
     assert migration_plan(
         {migrations[0].version: migrations[0].checksum},
         migrations=migrations,
-    ) == [migrations[1], migrations[2], migrations[3]]
+    ) == list(migrations[1:]), "every migration after the applied one must be pending"
     with pytest.raises(ValueError, match="checksum mismatch"):
         migration_plan({migrations[0].version: "incorrect"}, migrations=migrations)
     with pytest.raises(TypeError, match="checksums must be a mapping"):
