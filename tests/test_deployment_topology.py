@@ -164,8 +164,15 @@ def test_nginx_is_a_conf_d_fragment_without_a_public_runtime_path() -> None:
     text = _nginx_directives()
     for forbidden in ("worker_processes", "events {", "http {"):
         assert forbidden not in text, forbidden + " belongs to the image nginx.conf, not conf.d"
-    assert "server backend:8001" in text, "the upstream must name the compose service, not a loopback port"
-    assert "proxy_pass http://enterprise_brain_api" in text
+    assert "http://backend:8001" in text, "the proxy must name the compose service, not a loopback port"
+    assert "proxy_pass $enterprise_brain_api" in text
+    # nginx resolves an upstream block only when the configuration is loaded, so a backend
+    # that is recreated with a new address leaves every proxied request at 502. The gate hit
+    # this for real: the health probe through the proxy failed while the same request direct
+    # to the backend answered 200. A variable target plus the embedded DNS resolver is what
+    # makes the proxy follow the container, so pin that shape here.
+    assert "resolver 127.0.0.11" in text, "the backend address must be re-resolved at runtime"
+    assert "upstream enterprise_brain_api" not in text, "a static upstream freezes a stale backend address"
     assert "proxy_buffering off" in text, "SSE must not be buffered"
     assert "return 200" not in text, "health must be answered by the backend, not the proxy"
     assert "/path/to/" not in text
