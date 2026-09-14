@@ -429,3 +429,21 @@ def test_legacy_blpop_queue_is_not_referenced_by_production_code():
         if "common.queue" in path.read_text(encoding="utf-8-sig", errors="ignore")
     ]
     assert hits == []
+
+
+def test_startup_hooks_refuse_production_traffic_before_the_scheduler():
+    """S6 的守卫只有真挂在启动链上才算数，且必须排在调度器前面。"""
+    import io
+    from pathlib import Path
+
+    from app.main import app
+
+    source = io.open(
+        str(Path(__file__).resolve().parents[1] / "app" / "main.py"), encoding="utf-8-sig"
+    ).read()
+    handler_names = [handler.__name__ for handler in app.router.on_startup]
+
+    assert "startup_storage_guard" in handler_names, handler_names
+    assert handler_names.index("startup_storage_guard") < handler_names.index("startup_scheduler")
+    assert "enforce_production_storage_guard" in source
+    assert "/api/v1/apps" in {route.path for route in app.routes}

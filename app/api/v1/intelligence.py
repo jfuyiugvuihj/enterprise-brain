@@ -12,9 +12,11 @@ from pydantic import BaseModel, Field
 from app.agents.contracts import AgentResult
 from app.approval.assistant import build_precheck, precheck_payload, to_decimal
 from app.common.audit import record_audit
+from app.common.monitoring import ProductionReadOnlyProtection
 from app.common.authorization import principal_from_request
 from app.common.permissions import ACTION_ANALYZE, ACTION_UPLOAD, ACTION_VIEW
 from app.common.policy import authorization_decision
+from app.common.logger import logger
 from app.dashboard.service import build_dashboard
 from app.insights.rules import detect_insights
 from app.knowledge_graph.service import KnowledgeGraph
@@ -95,7 +97,9 @@ async def approval_precheck(data: ApprovalRequest, request: Request):
             data.evidence,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400, detail={"code": "validation_error", "message": str(exc)}
+        ) from exc
     return precheck_payload(result, requested_by=str(principal.user_id))
 
 
@@ -114,10 +118,15 @@ async def add_relation(data: RelationRequest, request: Request):
             # the author and by higher clearance in the same department only.
             classification=str(principal.clearance),
         )
+    except ProductionReadOnlyProtection as exc:
+        logger.warning(f"[Intelligence] relation write refused: {exc}")
+        record_audit(principal, "resource:upload", "denied", "knowledge_graph_relation", "storage_read_only")
+        raise HTTPException(status_code=503, detail="storage_read_only") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="relation_source_required") from exc
     except PermissionError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        logger.warning(f"[Intelligence] relation refused: {exc}")
+        raise HTTPException(status_code=403, detail="permission_denied") from exc
     return record.to_dict()
 
 
@@ -138,7 +147,8 @@ async def provenance_summary(data: ProvenanceRequest, request: Request):
         try:
             normalized.append(AgentResult.model_validate(payload))
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"invalid_agent_result: {type(exc).__name__}") from exc
+            logger.warning(f"[Intelligence] invalid agent result: {type(exc).__name__}: {exc}")
+            raise HTTPException(status_code=400, detail="invalid_agent_result") from exc
     summary = build_answer_provenance(normalized)
     # These results arrive from the caller; the server has no verified run to compare
     # them against yet, so the summary must not claim otherwise.

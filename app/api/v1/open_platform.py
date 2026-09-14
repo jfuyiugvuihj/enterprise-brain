@@ -170,7 +170,7 @@ async def register_open_application(data: ApplicationRegisterRequest, request: R
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ProductionReadOnlyProtection as exc:
         record_audit(principal, "open_platform:app_register", "denied", str(data.app_name or ""), str(exc))
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=503, detail="storage_read_only") from exc
     record_audit(principal, "open_platform:app_register", "allowed", issued["app_id"])
     return {**issued, "storage_mode": app_registry_storage_state()["storage_mode"]}
 

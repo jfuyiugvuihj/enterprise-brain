@@ -18,8 +18,9 @@ from pathlib import Path
 _executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="ezn_")
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, UploadFile, File, Form, Request as FastAPIRequest, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Request as FastAPIRequest, Response as FastAPIResponse, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
+from app.common.no_store import NO_STORE_HEADERS
 from pydantic import BaseModel
 
 from app.common import auth
@@ -1390,19 +1391,26 @@ async def get_document_file(
         filename=os.path.basename(file_path),
         media_type=media_type,
         content_disposition_type=disposition,
+        headers=dict(NO_STORE_HEADERS),
     )
 
 
 @router.get("/documents/{filename}/preview")
-async def get_document_preview(filename: str, request: FastAPIRequest):
+async def get_document_preview(
+    filename: str,
+    request: FastAPIRequest,
+    response: FastAPIResponse,
+):
     _, file_path = _authorize_document_request(request, filename, ACTION_VIEW)
     try:
-        return await asyncio.to_thread(build_document_preview, file_path, filename)
+        payload = await asyncio.to_thread(build_document_preview, file_path, filename)
     except ValueError as exc:
         raise HTTPException(status_code=415, detail="unsupported_preview") from exc
     except Exception as exc:
         logger.exception(f"[Docs] preview failed: {filename}")
         raise HTTPException(status_code=500, detail="document_preview_failed") from exc
+    response.headers.update(NO_STORE_HEADERS)
+    return payload
 
 
 @router.delete("/documents/{filename}")

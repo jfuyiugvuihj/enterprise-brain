@@ -267,33 +267,44 @@ def test_upload_returns_clear_error_when_pdf_parse_fails(tmp_path, monkeypatch):
     assert exc_info.value.detail == "document_parse_failed"
     assert "\\" not in exc_info.value.detail and ":" not in exc_info.value.detail
 
-def test_document_routes_never_leak_human_readable_error_details():
-    """P2-8 防漂移：chat.py 的 HTTPException.detail 只能是稳定 code。
+def test_api_error_details_are_stable_codes():
+    """P2-8 防漂移：主 thread 负责的路由只能返回稳定 code。
 
-    例外只有显式的 `{"code": ..., "message": ...}` 结构体（队列 503），
-    以及来自授权决策/作用域错误的动态 reason_code 变量。
+    允许三种形式：
+    1. `detail="snake_case_ascii_code"`；
+    2. `detail={"code": ..., "message": ...}` 结构体（必须显式带 code 键）；
+    3. 来自授权决策/作用域错误的变量表达式（reason_code、scope_error.code 等）。
+    禁止 f-string 拼接与任何含中文/空格的句子。
     """
     import ast
     import io
     import re
-    from pathlib import Path
-
-    from app.api.v1 import chat
 
     code_pattern = re.compile(r"^[a-z][a-z0-9_]*$")
-    source = io.open(str(Path(chat.__file__)), encoding="utf-8-sig").read()
     offenders = []
 
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-        if name != "HTTPException":
-            continue
-        detail = next((kw.value for kw in node.keywords if kw.arg == "detail"), None)
-        if isinstance(detail, ast.Constant) and isinstance(detail.value, str):
-            if not code_pattern.match(detail.value) or not detail.value.isascii():
-                offenders.append((node.lineno, detail.value))
+    for module in ("app/api/v1/chat.py", "app/api/v1/intelligence.py"):
+        source = io.open(module, encoding="utf-8-sig").read()
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name != "HTTPException":
+                continue
+            detail = next((kw.value for kw in node.keywords if kw.arg == "detail"), None)
+            location = f"{module}:{node.lineno}"
+            if isinstance(detail, ast.JoinedStr):
+                offenders.append((location, "interpolated detail string"))
+                continue
+            if isinstance(detail, ast.Dict):
+                keys = [key.value for key in detail.keys if isinstance(key, ast.Constant)]
+                if "code" not in keys:
+                    offenders.append((location, "envelope without code"))
+                continue
+            if isinstance(detail, ast.Constant):
+                value = detail.value
+                if not isinstance(value, str) or not code_pattern.match(value) or not value.isascii():
+                    offenders.append((location, value))
 
     assert offenders == []

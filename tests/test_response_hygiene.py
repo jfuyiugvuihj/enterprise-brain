@@ -210,6 +210,11 @@ def test_document_catalog_and_file_route_never_echo_absolute_paths(monkeypatch, 
     assert download.status_code == 200
     assert download.text == "policy body"
     assert preview.status_code == 200
+    # Authorised bodies must not survive in a browser cache either (P2-2).
+    for response in (download, preview):
+        assert response.headers["cache-control"] == "no-store", response.url
+        assert response.headers["pragma"] == "no-cache", response.url
+        assert response.headers["expires"] == "0", response.url
 
 
 def test_local_catalog_rows_also_hide_the_documents_root(monkeypatch, workdir_dir):
@@ -271,3 +276,108 @@ def test_public_rows_rewrite_only_existing_storage_paths():
     assert "storage_path" not in public[0]
     assert public[1]["storage_path"] == "documents/b.txt"
     assert rows[1]["storage_path"] == absolute, "the caller's row must not be mutated"
+
+
+def test_dataset_file_and_preview_are_not_cacheable(monkeypatch, tmp_path):
+    """P2-2 同款口径：数据集文件体与预览逐请求授权，因此一律不得进缓存。
+
+    这里直接调用路由函数：Dataset 注册表与租户 DATA_DIR 的真实形态由其它切片负责，
+    本例只锁定响应头与失败时的稳定 code。
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    import pandas
+    from fastapi import HTTPException, Response
+
+    from app.api.v1 import data
+
+    stored = tmp_path / "sales.csv"
+    stored.write_text("部门,销售额\n研发,3\n", encoding="utf-8")
+    record = SimpleNamespace(
+        dataset_id="ds-1",
+        version_id="dv-1",
+        filename="sales.csv",
+        storage_path=str(stored),
+        classification=1,
+    )
+    monkeypatch.setattr(data, "_authorized_dataset", lambda request, filename, action: record)
+    monkeypatch.setattr(data, "load_excel", lambda path: pandas.read_csv(path))
+
+    response = Response()
+    body = asyncio.run(data.preview_data_file("sales.csv", request=None, response=response))
+
+    assert body["dataset_id"] == "ds-1"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["expires"] == "0"
+
+    file_response = asyncio.run(data.get_data_file("sales.csv", request=None, inline=False))
+
+    assert file_response.headers["cache-control"] == "no-store"
+    assert file_response.headers["pragma"] == "no-cache"
+
+
+def test_dataset_preview_failure_reports_a_stable_code(monkeypatch):
+    """P2-8：预览失败不得把异常文本回显给客户端。"""
+    import asyncio
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException, Response
+
+    from app.api.v1 import data
+
+    record = SimpleNamespace(dataset_id="ds-1", version_id="dv-1", filename="broken.xlsx", storage_path="broken.xlsx", classification=1)
+    monkeypatch.setattr(data, "_authorized_dataset", lambda request, filename, action: record)
+
+    def refuse(path):
+        raise RuntimeError("third-party parser exploded at C:\\parsers\\stack")
+
+    monkeypatch.setattr(data, "load_excel", refuse)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(data.preview_data_file("broken.xlsx", request=None, response=Response()))
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "dataset_preview_failed"
+
+
+def test_read_only_storage_answers_with_a_stable_code(monkeypatch):
+    """只读保护触发时只能暴露 `storage_read_only`，环境变量名与路径留在日志里。"""
+    import asyncio
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from app.api.v1 import intelligence
+    from app.common.monitoring import ProductionReadOnlyProtection
+
+    principal = SimpleNamespace(user_id="u1", department="finance", clearance=1, department_ids=[])
+    captured = {}
+    monkeypatch.setattr(intelligence, "_authorized", lambda request, action, name: principal)
+    monkeypatch.setattr(
+        intelligence,
+        "record_audit",
+        lambda *args, **kwargs: captured.setdefault("audit", args),
+    )
+
+    def refuse(*args, **kwargs):
+        raise ProductionReadOnlyProtection(
+            "knowledge_graph_read_only: KNOWLEDGE_GRAPH_STORE_PATH is required in production"
+        )
+
+    monkeypatch.setattr(intelligence._graph, "add_relation", refuse)
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            intelligence.add_relation(
+                intelligence.RelationRequest(
+                    source_entity="制度", relation="规定", target="住宿费", source="制度.pdf"
+                ),
+                request=None,
+            )
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "storage_read_only"
+    assert captured["audit"][1:5] == ("resource:upload", "denied", "knowledge_graph_relation", "storage_read_only")

@@ -8,8 +8,9 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Response
 from fastapi.responses import FileResponse
+from app.common.no_store import NO_STORE_HEADERS
 from pydantic import BaseModel
 from app.tools.excel import load_excel, profile_dataframe
 from app.tools.chart import bar_chart, line_chart, pie_chart, radar_chart
@@ -46,7 +47,7 @@ def _format_data_file_size(size: int) -> str:
 def _safe_data_filename(filename: str) -> str:
     safe_name = Path(filename or "").name
     if not safe_name or safe_name in {".", ".."}:
-        raise HTTPException(status_code=400, detail="文件名无效")
+        raise HTTPException(status_code=400, detail="invalid_filename")
     return safe_name
 
 
@@ -54,7 +55,7 @@ def _resolve_data_path(filename: str) -> Path:
     safe_name = _safe_data_filename(filename)
     path = Path(DATA_DIR) / safe_name
     if not path.is_file():
-        raise HTTPException(status_code=404, detail="数据文件不存在")
+        raise HTTPException(status_code=404, detail="resource_not_found")
     return path
 
 
@@ -191,9 +192,10 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
 
 
 @router.get("/data-files/{filename}/preview")
-async def preview_data_file(filename: str, request: Request):
+async def preview_data_file(filename: str, request: Request, response: Response):
     record = _authorized_dataset(request, filename, ACTION_VIEW)
     path = Path(record.storage_path)
+    response.headers.update(NO_STORE_HEADERS)
     try:
         df = await asyncio.to_thread(load_excel, str(path))
         preview = build_dataframe_preview(df, record.filename)
@@ -203,7 +205,7 @@ async def preview_data_file(filename: str, request: Request):
         raise
     except Exception as exc:
         logger.exception(f"[Data] preview failed: {filename}")
-        raise HTTPException(status_code=500, detail=f"数据预览失败: {exc}") from exc
+        raise HTTPException(status_code=500, detail="dataset_preview_failed") from exc
 
 
 @router.get("/data-files/{filename}/file")
@@ -216,6 +218,7 @@ async def get_data_file(filename: str, request: Request, inline: bool = False):
         filename=record.filename,
         media_type=media_type or "application/octet-stream",
         content_disposition_type="inline" if inline else "attachment",
+        headers=dict(NO_STORE_HEADERS),
     )
 
 # ==================== 图表生成 ====================

@@ -501,7 +501,7 @@ classify_intent
 14. 查询取消主要是线程事件，不能保证停止模型调用、文件生成、数据库写入或其他后台副作用；
 15. 查询缓存没有统一绑定用户权限、知识库版本、数据集版本、Prompt、模型和查询模式；
 16. `ThreadPoolExecutor(max_workers=50)` 与本地 14B 模型能力没有形成统一预算，线程数不等于模型并发能力；
-17. Redis 队列使用 `BLPOP`，缺少 ACK、租约、重试、死信和幂等，不能作为可靠生产任务系统。
+17. Redis 队列已改用 `ReliableQueue`（reserve/ack、租约、重试、死信、幂等、取消），旧的 `BLPOP` 适配器 `app/common/queue.py` 已删除且全仓无引用；但真实 Redis 故障与恢复只在可选验收测试中覆盖（`tests/test_redis_worker_recovery.py` 需要 `EB_REDIS_ACCEPTANCE_BIN`，本轮未运行），并且取消只在队列边界生效，不能中断已在途的模型调用。
 
 ### 7.6 当前问答对用户的真实承诺
 
@@ -1215,9 +1215,9 @@ PGVector 迁移必须和模型版本绑定设计。不同 Embedding 模型的向
 | 开放平台 | 部分实现 | 有外部调用接口 | 密钥、数据范围、审计和限流需继续完善 |
 | 私有化部署 | 基础能力 | 支持本地模型和客户本机存储 | 远程回退、备份、监控和多实例边界需明确 |
 | 数据库与向量存储 | 过渡架构 | PostgreSQL、Chroma、Redis 和本地文件能够支撑当前开发 | 尚未形成统一的 PostgreSQL + PGVector 生产存储方案，也没有 MySQL 实现 |
-| Redis 任务队列 | 基础实现 | 可以入队、出队和保存结果 | `BLPOP` 无 ACK、租约、重试、死信和幂等，任务丢失风险高 |
+| Redis 任务队列 | 已实现，待真实环境验收 | `app/common/reliable_queue.py` 提供 reserve/ack、租约、重试、死信、幂等、取消与显式状态；`deploy/queue_worker.py` 走该实现，旧 `BLPOP` 适配器已删除 | 真实 Redis 故障恢复、多 Worker 竞争与租约令牌围栏尚未验证；取消不中断在途模型调用 |
 | 审计日志 | 基础实现 | 有内存事件记录接口 | 未持久化，缺少 request_id、资源范围、变更前后摘要、保留期和完整脱敏 |
-| 健康检查 | 基础实现 | 可以返回磁盘、模型和队列摘要 | 当前状态可能固定为 `ok`，未真实检查关键依赖和 Worker |
+| 健康检查 | 已实现，待真实环境验收 | `app/common/monitoring.py:build_health_snapshot()` 逐依赖探测，并按子系统上报 `storage_mode`（`postgres|json|redis|memory|unavailable`）、`durable`、`shared_across_processes`、`protection`；生产缺持久用户表时 `enforce_production_storage_guard()` 拒绝启动 | 生产环境可能如实返回 `degraded`，需要监控面板按 `problems` 而非 `status==ok` 判读；容器与真实依赖探针尚未跑过 |
 | 数据库迁移 | 不完整 | 多个模块可在运行时尝试建表或加列 | 没有统一版本、迁移锁、失败阻断和回滚 |
 | 备份恢复 | 基础实现 | 可以压缩部分本地目录并校验文件哈希 | 未自动纳入 PostgreSQL/PGVector、权限、Trace、评测和完整恢复流程 |
 | 资源生命周期 | 未闭环 | 文件、图表和报告可以生成 | 所有权、TTL、删除、级联清理和访问记录不统一 |
@@ -2254,7 +2254,7 @@ PostgreSQL + PGVector
 | P0-07 | `safe_query()` 使用 eval | `app/tools/excel.py` 的 `eval()` 和字符串黑名单 | 可绕过检查、拖垮宿主进程 | 已写入第 9.5 节 | 否 | 阶段 3/4 | 仅允许结构化查询或严格 AST，超时可强制终止 | 是，需隔离进程、超时和攻击样例验证 |
 | P0-08 | 文档和表格内容没有 Prompt Injection 隔离 | 检索片段直接进入 Agent 上下文和工具结果 | 恶意文档可能诱导越权工具调用和数据泄露 | 已写入第 7、37 节 | 否 | 阶段 5/6 | 文档内容不能改变权限、工具集合或系统指令 | 是，需真实模型和恶意文档验证 |
 | P0-09 | 运行时建表和加列，没有统一迁移 | `auth.py`、`chat.py` 等模块运行时执行 DDL | 并发启动竞态、结构不一致、无法回滚 | 已写入第 19、22 节 | 否 | 阶段 2 | 空库、旧库和并发启动均可通过版本化迁移 | 是，需空库、旧库和并发启动验证 |
-| P0-10 | Redis 使用 BLPOP，没有 ACK、租约、重试和死信 | `app/common/queue.py` | Worker 崩溃后任务丢失 | 已写入第 7、12、22 节 | 否 | 阶段 4 | Worker 被杀后任务重新可见，重复提交有幂等保护 | 是，需真实 Redis 故障和恢复验证 |
+| P0-10 | Redis 队列曾用 BLPOP，没有 ACK、租约、重试和死信 | `app/common/reliable_queue.py`（`app/common/queue.py` 已于 2026-09-14 删除，`tests/test_deployment_guards.py` 守护其不被生产代码引用） | Worker 崩溃后任务丢失 | 已写入第 7.5、22、37.2 节（2026-09-14 更新） | 否 | 阶段 4 | Worker 被杀后任务重新可见，重复提交有幂等保护，取消后不得发布结果 | 是，需真实 Redis 故障和恢复验证（`tests/test_redis_worker_recovery.py` 本轮未运行） |
 | P0-11 | 模型不可用时存在固定或通用回退文本 | `model_handler.py`、`orchestrator.py` | 用户把演示结果误认为真实业务结论 | 已写入第 34 节及审批章节 | 否 | 阶段 4/7 | 无证据、无模型或无制度时只能返回明确失败状态 | 是，需停止 Ollama 和缺证据场景验证 |
 | P0-12 | JWT 和初始管理员存在默认值或日志泄露风险 | `app/common/auth.py` 的默认密钥、默认管理员和初始密码日志 | 弱密钥、默认密码和日志泄露导致接管 | 本轮新增，见第 37.3 节 | 否 | 阶段 1/9 | 生产缺少密钥直接阻断启动，日志不输出密码 | 是，需生产配置和日志验证 |
 | P0-13 | `/api/v1/open/` 整体绕过认证中间件 | `app/main.py` 对 open 前缀整体放行 | 未授权或重放调用开放平台 | 已写入第 21 节 | 否 | 阶段 1/7 | 每个开放接口独立验证凭证、Scope、范围、过期和幂等 | 是，需真实重放、撤销和限流验证 |
