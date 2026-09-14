@@ -332,10 +332,56 @@ or removed, and no legacy SSE event changed.
   was not widened - and an anonymous call gets `401 authentication_required` rather than an admin
   fallback. `POST /api/v1/apps` (open-platform registration) is now a route too: admin-only and
   audited.
-- **Answer-cache keys are gaining a caller scope.** `app/common/cache.py` now accepts a `scope`
-  argument (`answer_cache_scope(principal)`) so a permission-shaped answer cannot be replayed to a
-  different user. Until the `/ask` call sites pass it, the legacy question-only key still applies;
-  clients must not assume two users share a cached answer.
+- **Answer-cache keys carry a caller scope.** `app/common/cache.py` accepts a `scope` argument
+  (`answer_cache_scope(principal, username=...)`) and `/ask` now passes it on both the read and the
+  write, so a permission-shaped answer cannot be replayed to a different user. An empty scope keeps
+  the historical question-only key, which is what an unauthenticated or legacy caller still gets;
+  clients must never assume two users share a cached answer.
+
+### Wave 3 consolidated fixes (2026-09-14): index publication, resource versions, metric semantics
+
+Landed in `b9a0d6b` and `c0fdd21`. Additive only: no route was renamed or removed, no existing
+response field changed meaning, and the retrieval read path is untouched.
+
+- **A document upload now publishes an index version it can be audited against.**
+  `POST /api/v1/upload` gained `index_publication` and `DELETE /api/v1/documents/{filename}` gained
+  `index_retirement`, each `{status, index_id, source_version_id, chunk_count, mirrored, warnings[]}`
+  plus `reason` when skipped. `status` is `published`, `retired` or `skipped`; `skipped` is not an
+  error and carries `reason` of `no_indexed_chunks` (the version produced no chunks) or
+  `no_published_index` (a delete of something that never published, or was already retired). Do not
+  render a skip as a failure.
+- **A failed publication says which stage failed and leaves nothing behind.** It answers
+  `500 index_publish_failed` with `details.stage`. The PostgreSQL mirror is one transaction that
+  aborts on any stage, and the local registry rolls its pointer back, so a half-published version
+  cannot survive. `retryable` is true.
+- **`chunk_count` distinguishes "never indexed" from "indexed and empty".** It appears on
+  `documents` and `document_versions` (migration `0007`). `NULL` means no index version has ever
+  been published for that row; `0` means a version was published and it holds no chunks. Clients
+  must not read `NULL` as `0`.
+- **Four control-plane tables stop being write-only in name.** `chunks`, `index_registry`,
+  `index_versions` and `resource_versions` are written by the same transaction. `owner_id` became
+  optional on all four: `NULL` means a legacy row with no recorded owner, and legacy is not public.
+  `resource_versions` and the chunk rows carry the same scope projection the authorization decision
+  used, so they cannot disagree.
+- **Retrieval is unchanged.** Chroma remains the only read path; `chunks.embedding` is never
+  written by this work, and classification and department live in `chunks.metadata`.
+- **`GET /api/v1/semantics/metrics` is new** and returns
+  `{metrics[], definition_sources, definition_versions, database_available,
+  verified_against_documents}`. Each metric carries `definition_version` and a `provenance` block.
+  The catalog is scoped to the caller.
+- **`POST /api/v1/semantics/match` is additive**: `{context, definition_source, provenance}`.
+  `context` keeps its previous shape, and it already carried `definition_version`; the source is
+  repeated at the top level so a caller can tell a curated row from a code fallback without parsing
+  the warning text. Matching is scoped to the caller's `user_id`.
+- **Definition provenance is three-valued and is never upgraded silently.** A definition comes from
+  `metric_definitions` as an operator row, from `metric_definitions` seeded from code, or from the
+  `code_registry` fallback when the table, its schema or the connection is missing.
+  `verified_against_documents` is `false` on every server path and cannot be set by stored JSON, so
+  a row cannot claim a policy review that never happened.
+- **Do not assume the metric table is populated.** Nothing in the running application calls
+  `sync_code_definitions()` or `register_metric_definition()` yet, so `metric_definitions` may
+  legitimately be empty and every answer will come from the code fallback. The write path exists
+  and is tested; invoking it is a deployment decision.
 
 ## SSE Event Deprecation Policy (2026-09-14)
 
