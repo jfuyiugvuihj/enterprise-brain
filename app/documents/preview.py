@@ -3,7 +3,7 @@ from pathlib import Path
 from app.rag.loader import load_document
 
 
-TEXT_EXTENSIONS = {".txt", ".doc", ".docx"}
+TEXT_EXTENSIONS = {".txt", ".md", ".doc", ".docx"}
 PDF_EXTENSIONS = {".pdf"}
 MAX_PREVIEW_CHARS = 200_000
 

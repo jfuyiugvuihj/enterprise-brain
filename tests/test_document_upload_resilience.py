@@ -264,4 +264,36 @@ def test_upload_returns_clear_error_when_pdf_parse_fails(tmp_path, monkeypatch):
         asyncio.run(chat.upload_document(upload))
 
     assert exc_info.value.status_code == 500
-    assert "文档解析失败" in exc_info.value.detail
+    assert exc_info.value.detail == "document_parse_failed"
+    assert "\\" not in exc_info.value.detail and ":" not in exc_info.value.detail
+
+def test_document_routes_never_leak_human_readable_error_details():
+    """P2-8 防漂移：chat.py 的 HTTPException.detail 只能是稳定 code。
+
+    例外只有显式的 `{"code": ..., "message": ...}` 结构体（队列 503），
+    以及来自授权决策/作用域错误的动态 reason_code 变量。
+    """
+    import ast
+    import io
+    import re
+    from pathlib import Path
+
+    from app.api.v1 import chat
+
+    code_pattern = re.compile(r"^[a-z][a-z0-9_]*$")
+    source = io.open(str(Path(chat.__file__)), encoding="utf-8-sig").read()
+    offenders = []
+
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+        if name != "HTTPException":
+            continue
+        detail = next((kw.value for kw in node.keywords if kw.arg == "detail"), None)
+        if isinstance(detail, ast.Constant) and isinstance(detail.value, str):
+            if not code_pattern.match(detail.value) or not detail.value.isascii():
+                offenders.append((node.lineno, detail.value))
+
+    assert offenders == []

@@ -132,16 +132,39 @@ class ReliableQueue:
         self.redis.set(self._lease_key(request_id), "1", ex=self.lease_seconds)
         return QueueMessage(request_id, data["payload"], attempts)
 
+    def _lease_lost(self, request_id: str) -> bool:
+        """True when this worker no longer holds the processing lease.
+
+        租约按 request_id 记账而非按持有者记账，因此这里只能判断“租约是否还在”，
+        无法区分持有者；跨持有者的令牌围栏仍是已知限制。
+        """
+        return not bool(self.redis.exists(self._lease_key(request_id)))
+
     def ack(self, request_id: str) -> bool:
         removed = self.redis.lrem(self.processing_key, 1, request_id)
+        if removed:
+            # 只有在处理队列里确实取走了这条消息才允许释放租约，
+            # 否则可能误删重试持有者刚写入的新租约。
+            self.redis.delete(self._lease_key(request_id))
+        if self.is_cancelled(request_id):
+            self.redis.delete(self._result_key(request_id))
+            self.redis.set(self._status_key(request_id), "cancelled")
+            return False
         if not removed:
             return False
-        self.redis.delete(self._lease_key(request_id))
         self.redis.set(self._status_key(request_id), "done")
         return True
 
     def complete(self, request_id: str, result: str) -> bool:
-        """Persist the result before acknowledging the processing lease."""
+        """Persist the result before acknowledging the processing lease.
+
+        取消优先且所有权优先：运行途中被取消、或租约已过期被回收时，本 worker
+        已不再拥有这条消息，必须丢弃结果，既不得发布答案也不得谎报 done。
+        """
+        if self.is_cancelled(request_id) or self._lease_lost(request_id):
+            self.redis.delete(self._result_key(request_id))
+            self.ack(request_id)
+            return False
         self.redis.set(self._result_key(request_id), result, ex=self.result_ttl)
         return self.ack(request_id)
 

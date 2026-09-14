@@ -107,8 +107,11 @@ and request mode.
 
 ## Long Task Status
 
-`POST /api/v1/ask-queue` returns a `request_id`; the client polls
-`GET /api/v1/queue/status/{request_id}` and may `POST /api/v1/queue/{request_id}/cancel`.
+There is no separate queue-submission endpoint. `POST /api/v1/ask` runs inline until the
+per-user rate limit is exceeded; an over-limit request is enqueued by that same route and
+answers an SSE `queued` event whose payload carries `request_id` and `status`. The client
+then polls `GET /api/v1/queue/status/{request_id}` and may
+`POST /api/v1/queue/{request_id}/cancel`.
 
 ```json
 {
@@ -231,3 +234,105 @@ had a run in flight for that session, `false` when nothing was running (the canc
 marker is still armed, and queued-task cancellation remains a separate concern under
 `/api/v1/queue/{request_id}/cancel`). A client that shows a "已取消" confirmation should key it
 on the terminal SSE event rather than on this flag.
+
+### Compatibility note 2026-09-14 (S5: queue submission and knowledge-base upload whitelist)
+
+The `Long Task Status` section previously named a dedicated enqueue endpoint, which does not
+exist anywhere in the source tree; no client may call it. Enqueueing is a behaviour of
+`POST /api/v1/ask`, which returns `400` with detail `idempotency_key_required` when an
+over-limit request carries no idempotency key, and `503` with code `queue_unavailable` when
+Redis cannot be reached. `GET /api/v1/queue/status/{request_id}`,
+`POST /api/v1/queue/{request_id}/cancel` and `GET /api/v1/queue/stats` are the only queue
+routes.
+
+`POST /api/v1/upload` now accepts exactly the four extensions that the parser can read:
+`pdf`, `txt`, `md`, `docx`. `.xlsx` and `.csv` were removed from the knowledge-base whitelist
+because they passed the header check, were written to storage, were deleted again by the
+parse-failure handler, and surfaced as an HTTP 500. Spreadsheets are datasets and keep using
+`POST /api/v1/upload-excel`, which has its own filename, permission and conflict rules (see
+`Dataset File Delivery`) and does not share the document whitelist. An unsupported extension
+is now rejected before any byte is written, as `400` whose `detail` is exactly the stable code
+`unsupported_file` (`app/api/v1/chat.py:1245`). The human-readable reason - an unsupported
+extension, a double extension, a path separator, or a magic-byte mismatch - stays in the
+server log and is no longer a response body, so clients must branch on `detail` and never on
+the message text.
+
+`.md` documents are indexed as plain source text using the TXT encoding detection: no
+Markdown rendering, no heading or table structure, no page locator. Preview is aligned with
+that whitelist: `app/documents/preview.py` treats `.md` as readable text, so a Markdown file
+that uploads and indexes also previews (`tests/test_file_preview.py` covers both the UTF-8 and
+the legacy-encoding case, and asserts that the upload whitelist never drifts ahead of the
+preview whitelist).
+
+### Stable error codes on the document routes (2026-09-14, P2-8)
+
+The upload, preview and document-lookup routes answer with the HTTP status plus a bare
+`detail` string. The `detail` is always one of the codes below - never a sentence, never an
+exception message - so clients can branch on it. The human-readable reason stays in the server
+log (`[Docs] parse failed: ...`).
+
+| Route | Status | `detail` |
+| --- | --- | --- |
+| `POST /api/v1/upload` | 400 | `unsupported_file` (unsupported extension, double extension, path separator, magic-byte mismatch) |
+| `POST /api/v1/upload` | 413 | `upload_too_large` |
+| `POST /api/v1/upload` | 500 | `document_parse_failed` |
+| `POST /api/v1/upload` | 500 | `document_index_failed` |
+| `GET /api/v1/documents/{filename}/preview` | 404 | `resource_not_found` |
+| `GET /api/v1/documents/{filename}/preview` | 415 | `unsupported_preview` |
+| `GET /api/v1/documents/{filename}/preview` | 500 | `document_preview_failed` |
+| `GET /api/v1/documents/{filename}/versions` | 404 | `resource_not_found` |
+| `POST /api/v1/ask` | 400 | `idempotency_key_required` |
+| queue routes | 503 | `{"code": "queue_unavailable", "message": ...}` |
+
+Two consequences for clients and for the `frontend/` owner:
+
+- These codes are deliberately kept out of the `REST Error Envelope` list above, because that
+  list describes the enveloped payload shape (`{"code", "message", "retryable", "details"}`)
+  and these routes still answer with a bare string. Wrapping them is an open item, not a
+  silent change; nothing may assume the envelope here until that work lands.
+- `frontend/src/components/DocPanel.vue:120` and `DataPanel.vue:101,114` render
+  `err.response?.data?.detail` as the user-visible message, which now shows a code instead of
+  a sentence. The frontend must map these codes to localized text; a code-only fallback is
+  not acceptable for an operator-facing UI. The document picker `accept` list
+  (`frontend/src/components/DocPanel.vue:351`) is also still `.pdf,.docx,.doc,.txt`: `.doc`
+  is rejected by `POST /api/v1/upload` with `400 unsupported_file`, and `.md` is not
+  selectable. Both are frontend-owned fixes, not backend behaviour.
+
+## SSE Event Deprecation Policy (2026-09-14)
+
+Snapshot basis: `app/api/v1/chat.py` as read on 2026-09-14 13:50 (+08:00). Event names and function names are the durable identifiers in this section; line numbers are deliberately not quoted because the backend is being edited concurrently. Frontend-side evidence and impact are recorded in `docs/frontend-workspace-audit-2026-09-14.md`.
+
+### What `POST /api/v1/ask` actually emits
+
+| Emitter | Event names | Carries answer content | Status |
+|---|---|---|---|
+| `canonical_sse_event()` | `request.started`, `request.completed`, `request.failed`, `request.cancelled` | no | emitted |
+| `sse_event()` | `cancelled`, `error`, `heartbeat` | only `error` | emitted |
+| inline `event: <name>` yields inside the ask generator | `queued`, `status`, `text`, `step`, `hitl`, `done`, `error`, `cancelled`, `heartbeat` | yes: `text` and `hitl` | emitted |
+| canonical content events listed in the SSE Events section above | `step.started`, `step.progress`, `tool.started`, `tool.completed`, `model.started`, `model.completed`, `retrieval.completed`, `evidence.available`, `approval.required`, `result.partial` | - | documented but NOT emitted by any route today |
+
+Consequence: the canonical envelope is currently a lifecycle wrapper only. Streamed answer text, worker step progress and HITL prompts exist solely on the legacy channel. There is no `sources` event on either channel; retrieval sources are assembled only inside the non-streaming `POST /api/v1/chat` response, so a client cannot obtain them from `/ask` at all.
+
+### Freeze rules
+
+1. During the freeze no event name in the second and third row may be removed or renamed, and the legacy payload keys `type` and `content` must keep their current meaning. A silent rename on that channel blanks the chat page without producing any client-visible error.
+2. Canonical events are introduced additively. A backend change must not replace a legacy emission in the same commit: both channels run side by side for at least one review cycle.
+3. Terminal state is canonical-first from now on. Exactly one of `request.completed`, `request.failed` or `request.cancelled` closes a request. Clients treat the canonical terminal event as authoritative and the legacy `done` event as the compatibility fallback.
+4. Clients must ignore unknown event names, and must reset the generating state on any terminal event, including a cancellation or a failure that carries no text at all.
+5. Add `protocol_version` to the canonical envelope before any retirement begins, so a client can fail loudly instead of rendering an empty answer.
+
+### Preconditions for retiring the legacy channel
+
+- A canonical event carries streamed text (named `result.partial` in the list above).
+- `step.started` plus a matching completion event carry worker progress.
+- `approval.required` carries the HITL pending payload and its labels.
+- A sources event exists on `/ask` and is documented with its payload shape.
+- The frontend parser is switched to canonical-first with a legacy fallback and verified in a browser.
+- Both owners sign a dated entry in the migration log below.
+
+Until all six hold, the legacy rows above are the only supported content channel, and any backend cleanup that deletes them counts as a breaking change.
+
+### Migration log
+
+- 2026-09-14: section added after the frontend workspace audit. No event was removed, renamed or reordered by this change. Backend line-number references elsewhere in the repository are treated as a dated snapshot, not as contract.
+

@@ -96,7 +96,14 @@ def process_one():
             queue.fail_or_retry(request_id, code)
             return True
 
-        queue.complete(request_id, str(record.get("answer") or ""))
+        if not queue.complete(request_id, str(record.get("answer") or "")):
+            logger.info(
+                "request_id={rid} 结果已丢弃：运行途中被取消或租约已丢失 terminal_status={state}".format(
+                    rid=request_id,
+                    state=queue.status(request_id),
+                )
+            )
+            return True
         logger.info(
             "request_id={rid} 完成 status={status} evidence={ev}".format(
                 rid=request_id,

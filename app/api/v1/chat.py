@@ -205,7 +205,7 @@ def _authorize_document_request(
 ) -> tuple[dict, str]:
     version = _latest_document_version(filename)
     if not version:
-        raise HTTPException(status_code=404, detail="文件不存在")
+        raise HTTPException(status_code=404, detail="resource_not_found")
 
     principal = _document_principal_or_error(request)
     decision = _document_authorization_decision(principal, filename, version, action)
@@ -1241,7 +1241,9 @@ async def upload_document(file: UploadFile = File(...),
     try:
         inspection = inspect_upload_header(file.filename, header)
     except UploadSecurityError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400, detail=getattr(exc, "code", None) or "unsupported_file"
+        ) from exc
 
     next_version = peek_next_document_version(inspection.display_filename)
     resource_id = uuid.uuid4().hex
@@ -1269,7 +1271,7 @@ async def upload_document(file: UploadFile = File(...),
             temp_path.unlink()
         if storage_path.exists():
             storage_path.unlink()
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
+        raise HTTPException(status_code=413, detail="upload_too_large") from exc
     except Exception:
         if temp_path.exists():
             temp_path.unlink()
@@ -1286,7 +1288,7 @@ async def upload_document(file: UploadFile = File(...),
         logger.exception(f"[Docs] parse failed: {file.filename}")
         if os.path.exists(file_path):
             os.remove(file_path)
-        raise HTTPException(status_code=500, detail=f"文档解析失败: {exc}") from exc
+        raise HTTPException(status_code=500, detail="document_parse_failed") from exc
 
     try:
         ok, msg = await asyncio.to_thread(
@@ -1300,7 +1302,7 @@ async def upload_document(file: UploadFile = File(...),
         logger.exception(f"[Docs] index failed: {file.filename}")
         if os.path.exists(file_path):
             os.remove(file_path)
-        raise HTTPException(status_code=500, detail=f"文档入库失败: {exc}") from exc
+        raise HTTPException(status_code=500, detail="document_index_failed") from exc
 
     if ok:
         version_meta = {"version": next_version}
@@ -1361,7 +1363,7 @@ async def list_document_catalog(request: FastAPIRequest):
 async def document_version_history(filename: str, request: FastAPIRequest):
     versions = list_document_versions(filename)
     if not versions:
-        raise HTTPException(status_code=404, detail="文件不存在")
+        raise HTTPException(status_code=404, detail="resource_not_found")
     principal = _document_principal_or_error(request)
     decision = _document_authorization_decision(principal, filename, versions[0], ACTION_VIEW)
     if not decision.allowed:
@@ -1397,10 +1399,10 @@ async def get_document_preview(filename: str, request: FastAPIRequest):
     try:
         return await asyncio.to_thread(build_document_preview, file_path, filename)
     except ValueError as exc:
-        raise HTTPException(status_code=415, detail=str(exc)) from exc
+        raise HTTPException(status_code=415, detail="unsupported_preview") from exc
     except Exception as exc:
         logger.exception(f"[Docs] preview failed: {filename}")
-        raise HTTPException(status_code=500, detail=f"文件预览失败: {exc}") from exc
+        raise HTTPException(status_code=500, detail="document_preview_failed") from exc
 
 
 @router.delete("/documents/{filename}")
