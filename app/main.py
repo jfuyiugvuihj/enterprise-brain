@@ -44,12 +44,12 @@ def _scheduler_enabled() -> bool:
 
 
 app = FastAPI(
-    title="浼佷笟鏅鸿剳",
-    description="绉佹湁鍖栭儴缃茬殑浼佷笟 AI 鏅鸿兘鍒嗘瀽骞冲彴",
+    title="企业智脑",
+    description="私有化部署的企业 AI 智能分析平台",
     version="0.1.0",
 )
 
-# D4: 鍓嶇鐢?Bearer token锛堥潪 cookie锛夛紝涓嶉渶瑕?credentials锛?+True 鏄潪娉曠粍鍚?
+# D4: 前端用 Bearer token（非 cookie），不需要 credentials；*+True 是非法组合
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
@@ -62,13 +62,13 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1", dependencies=[])
 app.include_router(data.router, prefix="/api/v1", dependencies=[])
 app.include_router(artifacts.router, prefix="/api/v1", dependencies=[])
-app.include_router(alerts.router, prefix="/api/v1")  # 闃舵 4 鍛婅
+app.include_router(alerts.router, prefix="/api/v1")  # 阶段 4 告警
 app.include_router(intelligence.router, prefix="/api/v1")
 app.include_router(open_platform.router, prefix="/api/v1")
 app.include_router(observability.router, prefix="/api/v1")
 app.include_router(open_platform.apps_router, prefix="/api/v1")
 
-# 瀵规墍鏈?/api/v1/ 璺緞娣诲姞閴存潈涓棿浠讹紙login 闄ゅ锛?
+# 对所有 /api/v1/ 路径添加鉴权中间件（login 除外）
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import Request
 
@@ -135,17 +135,17 @@ app.mount("/static", StaticFilesWithoutGeneratedArtifacts(directory="static"), n
 
 @app.on_event("startup")
 async def startup_preload():
-    """棰勫姞杞?RAG pipeline锛圔M25绱㈠紩/CrossEncoder锛夛紝閬垮厤棣栦釜璇锋眰绛夊緟 10s+"""
+    """预加载 RAG pipeline（BM25索引/CrossEncoder），避免首个请求等待 10s+"""
     import asyncio
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, _preload_sync)
 
 
 def _preload_sync():
-    """鍚屾棰勫姞杞斤細鑰楁椂鎿嶄綔鏀剧嚎绋嬫睜閬垮厤闃诲 event loop"""
+    """同步预加载：耗时操作放线程池避免阻塞 event loop"""
     from app.agents.tools import preload_pipeline
     from app.common.logger import logger
-    logger.info("[鍚姩] 棰勫姞杞?RAG pipeline (BM25/CrossEncoder)...")
+    logger.info("[启动] 预加载 RAG pipeline (BM25/CrossEncoder)...")
     preload_pipeline()
     logger.info("[启动] 预加载完成")
 
@@ -162,7 +162,7 @@ async def startup_storage_guard():
 
 @app.on_event("startup")
 async def startup_scheduler():
-    """闃舵 4锛氬惎鍔ㄥ畾鏃跺贰妫€ + 鏃ユ姤"""
+    """阶段 4：启动定时巡检 + 日报"""
     from app.common.logger import logger
     if not _scheduler_enabled():
         logger.info("[启动] 进程内调度器已关闭，定时任务由独立 scheduler 进程负责")
@@ -171,12 +171,12 @@ async def startup_scheduler():
         from app.scheduler.jobs import start_scheduler
         start_scheduler()
     except Exception as e:
-        logger.warning(f"[鍚姩] 璋冨害鍣ㄥ惎鍔ㄥけ璐? {e}")
+        logger.warning(f"[启动] 调度器启动失败: {e}")
 
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "浼佷笟鏅鸿剳"}
+    return {"status": "ok", "service": "企业智脑"}
 
 
 if __name__ == "__main__":
