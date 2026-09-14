@@ -260,3 +260,20 @@ r3 明确主文档同时包含：
 - 事实依据：`migrations/0001_core_resource_versions.sql:4`、`migrations/0002_execution_data_lineage.sql:235`、`migrations/0002_execution_data_lineage.sql:243`、`app/rag/retriever.py:190`、`docker-compose.yml:48`、`app/common/monitoring.py:56`；`git grep "INSERT INTO chunks"` 零命中，全仓无 HNSW/IVFFlat。
 - 本轮未做：未启动服务、未连 5432/6379/11434、未跑 `scripts/migrate.py`、未改 `frontend/`、未改 `app/api/v1/chat.py`。
 - 遗留与需主 thread 决策：`.md` 预览返回 `415 unsupported_preview`（`app/documents/preview.py` 不在本切片写集）；`frontend/src/components/DocPanel.vue:351` 的 accept 列表仍含 `.doc`（后端会 400）且缺 `.md`；文档上传那批稳定码尚未纳入 `REST Error Envelope` 列表。
+
+## 11. r6（2026-09-14）Wave 1 四片并行收口与主 thread 同源修复
+
+- 修订性质：按 `docs/handoff/2026-09-14-consolidated-fix-plan.md` 的三波依赖关系派发子 Agent，Wave 1 的 S5/S2/S3/S6 四片并行完成并合树；主 thread 同期的 `chat.py` 收口、缓存 scope 与容器门实证修复一并登记。
+- 派发前置（§0）：先落 checkpoint 提交 `de13e90`，四片 write set 严格不重叠；Wave 2 的 S1 与 Wave 3 的 S4 需要写 `app/api/v1/chat.py`，等到主 thread 收口提交 `5db955c` 之后才放行；`frontend/` 全程零改动。
+- S5 契约与解析器一致性（`d67987a`）：内容见第 10 章 r5，本轮无补充。
+- S2 审计持久化（`ab19199`）：`app/common/audit.py` 由模块级 `_events` 列表 + `Lock` 改为走 `app/storage/persistence.py` 的 `build_persistence_adapter()`，未新造平行存储；新增 `migrations/0005_audit_events.sql` 并同步 `migrations/manifest.json` 校验和；事件补 `request_id`、`resource_scope`、`policy_version`、变更前后摘要与保留期，脱敏复用 `app/common/tracing.py:sanitize_trace_event()`；写失败显式可观测，不再静默丢弃后返回成功。
+- S3 管理面只读 HTTP（`df9ba13`）：新增 `app/api/v1/observability.py` 与 `tests/test_observability_routes.py`，`app/main.py` 只增加挂载一行；四条路由为 `POST /api/v1/retrieval/debug`、`GET /api/v1/traces/{trace_id}`、`GET /api/v1/evaluations`、`GET /api/v1/audit/events`；匿名一律 `401 authentication_required`，不降级为 admin；`AuthMiddleware` 白名单未扩大。
+- S6 内存回退与多实例边界（`1cd8827`）：`/health/details` 逐子系统如实报告 `storage_mode` 与 `problems`；生产环境缺少依赖时启动失败或进入只读保护，不再伪装正常；删除 BLPOP 版死代码 `app/common/queue.py` 并把 `tests/test_reliable_queue_request_path.py` 改为只测 `ReliableQueue`；开放平台补 `POST /api/v1/apps` 注册面（admin + 强制审计）。
+- 主 thread 同期收口：`5db955c` 把 no-store 与稳定错误码覆盖到其余已鉴权响应体（新增 `app/common/no_store.py`）；`7962c30` 丢弃 worker 已不再持有的结果并稳定文档错误码；`508abbc` 把告警扫描限定在租户数据目录、目录与产物响应不再回显服务器路径；`cc3cd99` 给答案缓存与调度缓存键加入调用方 scope（**加性改动，`chat.py` 尚未接线，默认空 scope 沿用历史键**）；`1a9b97b` 复原被一次 UTF-8/GBK 往返损坏的中文串；`9c27421` 是容器门实证修复。
+- 容器门实证（run1）：daemon、env 预检、`docker compose config`（基座 + 叠加）、frontend 构建、migrate 全部通过，`postgres`/`redis`/`ollama`/`worker`/`scheduler` healthy；唯 backend 启动失败——镜像内无 `models/`，reranker 联网下载 `Connection refused` 重试数分钟后异常逃出 FastAPI startup，进入重启循环。根因在 `9c27421` 修复：reranker 只用 `RERANKER_MODEL_DIR` 本地目录，联网下载必须显式 `RERANKER_ALLOW_DOWNLOAD`，加载失败锁存 `unavailable_reason` 且不抛错，`_preload_sync` 改为 best-effort。顺带发现镜像内无任何字体，图表中文全为方框、PDF 无法嵌字体，故补 `fonts-wqy-microhei`。修复后的复验尚未通过（run2 因 `APT_MIRROR` 镜像源 502 在 apt 层构建失败，未取到有效证据）。
+- 契约文档（`docs/api/contract-v1.md`）：登记 no-store 覆盖范围、catalog `storage_path` 去路径化、`.md` 预览、`/alerts/check` 的 `scan_scope`、逐子系统 `storage_mode`/`problems`、四条 observability 只读路由与 `POST /api/v1/apps`。`migrations/README.md` 补 0004/0005。
+- 本轮运行测试：Wave 1 合树后的全量 `python -m pytest -q` -> `558 passed, 25 skipped`（r4 时基线为 `443 passed, 3 skipped`）。逐片自证：`tests/test_retrieval_pipeline_fallback.py` 5 例、`tests/test_deployment_guards.py` 22 例。`9c27421`/`cc3cd99` 之后的全量重跑在 S1 合树后统一执行，见第 12 章。
+- 本机环境事实（影响验收口径）：未安装 `fakeredis`，`get_redis()` 在无 `REDIS_URL` 时实际走进程内 `_MemoryRedis`；宿主机 `5432/6379/11434` 均有进程监听，compose 只发布 `127.0.0.1:8001` 与 `:80`，不构成端口冲突。
+- 本轮未做：未改 `frontend/`；未连生产库执行业务写入；未跑 `scripts/migrate.py` 实跑；`tmp/e2e/REPORT.md` 的 P0-1 结论订正另行登记。
+- 遗留与需主 thread 决策：`_is_production_environment()` 在 chat/alerts/auth/monitoring 重复实现；`tests/conftest.py` 未隔离 `PERSISTENCE_FALLBACK_PATH`，跑测试会写真实 `./data/.persistence.json`；`app/scheduler/jobs.py:17` 裸调 `evaluate_all()` 无 Principal；`DATA_DIR` 权威定义两处；`app/tools/excel.py:258` 白名单 `eval()`；审计 `request_id` 仍普遍为空；reranker 不可用目前只进日志与 `unavailable_reason`，未进 health。计划 §4 四项（Dashboard rows 由客户端提供、会话三份状态、checkpointer 降级 `MemorySaver`、alerts 与 insights/rules 双实现）仍是决策未执行。
+- 口径：容器门与浏览器端到端均未通过，r6 不把项目标为生产可用。
