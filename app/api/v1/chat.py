@@ -830,11 +830,14 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         )
 
     # ——— 答案缓存 ———
-    from app.common.cache import get_cached_answer
+    from app.common.cache import answer_cache_scope, get_cached_answer
     # 会话问答必须保留当前会话语境，不能命中跨会话的全局答案缓存。
     # 无 session_id 的兼容调用仍可使用问题级缓存。
     use_answer_cache = not bool(request.session_id)
-    cached = get_cached_answer(rewritten_msg) if use_answer_cache else None
+    # 缓存内容取决于调用者可检索的文档（归属、密级、部门），所以键必须带上调用者
+    # 作用域：一次带权限的检索结果不能被另一个人用同样的问题文本读回去。
+    answer_scope = answer_cache_scope(request_principal, username=username)
+    cached = get_cached_answer(rewritten_msg, scope=answer_scope) if use_answer_cache else None
     if cached:
         _save_message(thread_id, "assistant", cached)
         async def cached_response():
@@ -1002,7 +1005,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     from app.common.cache import cache_answer
                     # 等待确认的状态说明不是一个问题的答案，不允许进全局答案缓存。
                     if use_answer_cache and not intr:
-                        cache_answer(rewritten_msg, full_text)
+                        cache_answer(rewritten_msg, full_text, scope=answer_scope)
                     yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': full_text}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
                 logger.info(f"[ASK] session={thread_id[:8]}... {elapsed_total}s | steps={len(steps_log)}")
