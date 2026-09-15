@@ -102,8 +102,27 @@ function onChatAsk(e) {
 }
 
 
+// 面板被 v-show 常驻，切工作区不会触发卸载钩子，所以「切走时写回 scrollTop」这条路
+// 以前是断的：整页刷新后位置就丢。改成滚动本身去抖写回，与切页时机解耦。
+let scrollSaveTimer = null
+
+function flushScroll() {
+  if (scrollSaveTimer) {
+    clearTimeout(scrollSaveTimer)
+    scrollSaveTimer = null
+  }
+  rememberScroll()
+}
+
 function onScroll(e) {
   scrollOffset.value = e.target.scrollTop
+  if (scrollSaveTimer) return // 一串滚动只在停手后落一次盘
+  scrollSaveTimer = setTimeout(flushScroll, 400)
+}
+
+// 刷新或关掉页面前，浏览器会先给一次 hidden，用它把最后一次滚动落盘。
+function onVisibilityChange() {
+  if (document.visibilityState === 'hidden') flushScroll()
 }
 
 async function scrollBottom() {
@@ -119,6 +138,7 @@ async function restoreScroll() {
 
 onMounted(() => {
   window.addEventListener('chat-ask', onChatAsk)
+  document.addEventListener('visibilitychange', onVisibilityChange)
   if (!sessions.value.length) {
     const storedActive = loadSessions()
     if (!activeId.value && storedActive) activeId.value = storedActive
@@ -132,7 +152,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('chat-ask', onChatAsk)
-  rememberScroll()
+  document.removeEventListener('visibilitychange', onVisibilityChange)
+  flushScroll()
 })
 
 async function send(dataFilename = activeDataFilename.value) {

@@ -7,6 +7,7 @@ import DashboardPanel from './components/DashboardPanel.vue'
 import InsightPanel from './components/InsightPanel.vue'
 import GraphPanel from './components/GraphPanel.vue'
 import ApprovalPanel from './components/ApprovalPanel.vue'
+import { resetSessions } from './lib/sessions'
 import {
   clearSession,
   errorDetail,
@@ -89,7 +90,8 @@ function showToast(message, tone = 'error', holdMs = 6000) {
   toastTimer = setTimeout(() => { toast.value = null }, holdMs)
 }
 
-// 401 与到期的收尾都从 lib/http.js 发出来：清会话、提示、回登录，不再用原生弹窗。
+// lib/http.js 只有一条失效收尾：真过期与 401 共用同一个 unauthorized 事件（令牌已经不再
+// 可信，留着只会让界面继续拿它发请求）；expiring 只是「快到期」的提醒，只弹提示不动会话。
 function onAuthEvent(event) {
   if (!event) return
   if (event.type === 'expiring') {
@@ -142,7 +144,9 @@ function closeForgotPassword() {
   showForgotDialog.value = false
 }
 
+// 手动登出与 401/过期都收口到这里，所以会话清理只写这一处；两个分支各写一遍迟早会漏。
 function goToLogin() {
+  resetSessions()
   stopExpiryWatch?.()
   stopExpiryWatch = null
   isLoggedIn.value = false

@@ -142,6 +142,9 @@ export async function authedFetch(path, { headers, ...options } = {}) {
 }
 
 // 错误文案只认服务端 detail / 稳定码，不再用问号占位串。
+// TODO(B 线 / G2 合并后)：文案映射应由 lib/errcodes.js 提供，此处只留一条取原始 detail 的通道。
+// 已知短板：responseType:'blob' 的错误体（文档/数据下载）读不到 detail，只能落回兜底文案；
+// artifacts.js 里有 readBlobError() 的先例，是否通用化由总控定，A 线不动 errcodes.js。
 export function errorDetail(err, fallback = '请求失败') {
   const detail = err?.response?.data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail

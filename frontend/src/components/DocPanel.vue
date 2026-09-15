@@ -141,52 +141,6 @@ async function downloadDocument(filename) {
   }
 }
 
-async function uploadFiles(files) {
-  for (const file of files) {
-    const item = reactive({
-      name: file.name,
-      status: 'uploading',
-      phase: 'uploading',
-      progress: 0,
-      progressTimer: null,
-      msg: '正在上传...'
-    })
-    uploads.value.unshift(item)
-    startProgressTimer(item)
-    const form = new FormData()
-    form.append('file', file)
-    try {
-      const res = await http.post('/upload', form, {
-        onUploadProgress: (event) => {
-          if (event.total) {
-            const uploaded = event.loaded / event.total
-            item.progress = Math.max(item.progress, Math.min(70, Math.round(uploaded * 70)))
-          }
-          if (!event.total || event.loaded >= event.total) {
-            item.phase = 'processing'
-            item.msg = '正在解析并入库...'
-          }
-        }
-      })
-      stopProgressTimer(item)
-      item.progress = Math.max(item.progress, 70)
-      item.status = res.data.status === 'ok' ? 'done' : 'skipped'
-      if (item.status === 'done') {
-        item.progress = 100
-        item.phase = 'done'
-      }
-      item.msg = res.data.message || '上传完成'
-      await loadDocs()
-    } catch (err) {
-      stopProgressTimer(item)
-      item.status = 'error'
-      item.phase = 'error'
-      item.msg = errorDetail(err, '上传失败')
-    }
-  }
-  await loadDocs()
-}
-
 async function uploadFilesParallel(files) {
   const tasks = files.map(file => uploadSingleFile(file))
   await Promise.allSettled(tasks)

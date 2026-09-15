@@ -4,7 +4,8 @@ import { http } from './http'
 // 会话状态放在模块级 shallowRef，面板卸载也不会丢：切走再回来还是同一份会话。
 // 等 V3 上了 router，这份 store 直接交给路由上下文接管。
 export const SESSIONS_KEY = 'eb_sessions_v2'
-const MESSAGE_KEY = id => `eb_msg_${id}`
+const MESSAGE_KEY_PREFIX = 'eb_msg_'
+const MESSAGE_KEY = id => `${MESSAGE_KEY_PREFIX}${id}`
 
 export const sessions = shallowRef([])
 export const activeId = shallowRef('')
@@ -132,11 +133,43 @@ export function switchSession(id) {
 }
 
 export function rememberScroll() {
-  // 由面板在卸载/切页前写入，回来时按同一偏移恢复。
+  // 由面板在滚动、卸载或切页前写入，回来时按同一偏移恢复。
   const entry = sessions.value.find(s => s.id === activeId.value)
   if (!entry) return
+  if (entry.scrollTop === scrollOffset.value) return // 值没变就别白落一次盘
   entry.scrollTop = scrollOffset.value
   syncActive()
+}
+
+// 会话正文按会话拆在 eb_msg_<id> 里，只清 SESSIONS_KEY 会留下一整包别人问过的话。
+export function clearStoredSessions() {
+  try {
+    const keys = []
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (key === SESSIONS_KEY || key?.startsWith(MESSAGE_KEY_PREFIX)) keys.push(key)
+    }
+    keys.forEach(key => localStorage.removeItem(key))
+  } catch (_) { /* 隐私模式下没有本地态可清 */ }
+}
+
+// 换人使用的收口：上一位用户的会话不能出现在下一位用户的界面里。
+// 登出与 401/过期都走 App.vue 的 goToLogin()，那条链只有一处出口，所以这里只被调用一次。
+export function resetSessions() {
+  // 先断流：不中止的话，在跑的回答会继续往 messages 里追加，等于清完又漏回去。
+  abortStream()
+  if (flushTimer) {
+    clearTimeout(flushTimer)
+    flushTimer = null
+  }
+  activeId.value = ''
+  sessions.value = []
+  messages.value = []
+  activeDataFilename.value = ''
+  hitl.value = null
+  scrollOffset.value = 0
+  loading.value = false
+  clearStoredSessions()
 }
 
 export async function removeSession(id) {
@@ -336,6 +369,8 @@ export function createStreamReducer(msg, state) {
   }
 }
 
+// TODO(B 线 / G2 合并后)：这张错误字典归 lib/errcodes.js 独占，届时这里改成查它，
+// 别再维护第二份。总控已记账，A 线不自行实现。
 export function friendlyErrorText(state, fallback = '本轮回答未能完成') {
   const codes = {
     no_answer_produced: '本轮未产出任何结论（no_answer_produced），请重试或补充数据范围。',
