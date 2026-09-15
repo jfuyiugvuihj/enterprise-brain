@@ -45,6 +45,10 @@ const DATA_CODES = [
   'dataset_preview_failed',
   'chart_generation_failed',
 ]
+/** SSE 流内错误码：chat.py:1001 的 request.failed data.error_code，两份后端枚举都还没有它 */
+const STREAM_CODES = ['no_answer_produced']
+
+const ALL_CODES = [...BLUEPRINT, ...DATA_CODES, ...STREAM_CODES, ...FRONTEND_ONLY_CODES]
 
 const ENUM = Object.keys(ERROR_CODES)
 
@@ -65,7 +69,7 @@ const axiosError = (status, detail) => ({
 
 describe('码表蓝本', () => {
   it('只收录 contracts.py 17 码 + data.py 7 码，一个不自扩', () => {
-    expect(Object.keys(ERROR_CODES).sort()).toEqual([...BLUEPRINT, ...DATA_CODES, ...FRONTEND_ONLY_CODES].sort())
+    expect(Object.keys(ERROR_CODES).sort()).toEqual([...BLUEPRINT, ...DATA_CODES, ...STREAM_CODES, ...FRONTEND_ONLY_CODES].sort())
   })
 
   it('前端自扩码绊线为空：account_unavailable 已被后端追认，不许留残名', () => {
@@ -87,7 +91,7 @@ describe('码表蓝本', () => {
   })
 
   it('穷举：每个枚举码 / 别名码 / 散文码喂进去都收敛到自己', () => {
-    BLUEPRINT.concat(DATA_CODES, FRONTEND_ONLY_CODES).forEach((code) => {
+    ALL_CODES.forEach((code) => {
       const result = normalizeError({ response: { data: { detail: code } } })
       inEnum(result, code)
       expect(result.code, code).toBe(code)

@@ -20,7 +20,12 @@
 export const ERROR_CODES = {
   authentication_required: { message: '登录状态已失效，请重新登录后再试。', retryable: false },
   permission_denied: { message: '当前账号没有这项权限，请联系管理员开通。', retryable: false },
-  authorization_unavailable: { message: '暂时无法确认你的数据权限，请稍后重试。', retryable: true },
+  // 部门授权范围取不到。原 lib/sessions.js:379 那句把「换带部门的账号或联系管理员」说清了，
+  // 这里收下这层语义，只把裸码名摘掉（文案政策：句子说人话，码名走 errorCodeOf 独立通道）。
+  authorization_unavailable: {
+    message: '暂时确认不了你的数据权限范围，请稍后重试；仍不行的话请换带部门授权的账号或联系管理员。',
+    retryable: true,
+  },
   // 账号被停用：既不是 permission_denied（不是权限不够，重新登录也没用），也不该退化成兜底句。
   account_unavailable: { message: '这个账号已被停用，请联系管理员恢复后再使用。', retryable: false },
   resource_not_found: { message: '要找的内容不存在或已被移除。', retryable: false },
@@ -44,6 +49,10 @@ export const ERROR_CODES = {
   dataset_filename_conflict: { message: '已存在同名数据文件，请重命名或先删除旧的。', retryable: false },
   dataset_preview_failed: { message: '数据文件预览没能打开，请稍后重试。', retryable: true },
   chart_generation_failed: { message: '图表没能生成，请稍后重试。', retryable: true },
+
+  // 流式回答跑完既没正文也没待确认步骤。出处 app/api/v1/chat.py:986-1001（SSE request.failed 的 data.error_code）。
+  // 原先只活在 lib/sessions.js:376 的私有字典里，句子内嵌了裸码名，这里按文案政策重写成纯人话 + 下一步。
+  no_answer_produced: { message: '本轮未产出任何结论，请重试，或把数据范围缩小一点再问。', retryable: true },
 }
 
 /**
@@ -53,6 +62,23 @@ export const ERROR_CODES = {
  * （前端先登记 → 主树 fa35a04 追认 → 摘掉标记），别再开新的。
  */
 export const FRONTEND_ONLY_CODES = []
+
+/**
+ * 后端实测会发、但两份契约枚举（app/agents/contracts.py::ErrorEnvelope.code 与
+ * app/agents/evidence.py::_ERROR_CODES）都还没登记的码名。与 FRONTEND_ONLY_CODES 不同：
+ * 这张表里的每一个都能在 app/api/v1 下指到出处，前端没有凭空发明，只是契约欠账。
+ * 由总控派 C 追认；追认一条就从这里删一条，单测会盯着名单与「枚举 − 蓝本」是否相等。
+ */
+export const UNRATIFIED_CODES = [
+  'invalid_filename', // app/api/v1/data.py:57
+  'unsupported_chart_type', // app/api/v1/data.py:376
+  'unsupported_export_format', // app/api/v1/data.py:412
+  'department_scope_required', // app/api/v1/data.py:43
+  'dataset_filename_conflict', // app/api/v1/data.py:172
+  'dataset_preview_failed', // app/api/v1/data.py:217
+  'chart_generation_failed', // app/api/v1/data.py:384
+  'no_answer_produced', // app/api/v1/chat.py:1001
+]
 
 /**
  * 后端实际会返回、但不在封闭枚举里的**码名** → 归一到枚举码（按码名索引）。
@@ -69,6 +95,15 @@ export const LEGACY_ALIASES = {
   storage_read_only: { code: 'internal_error', message: '当前存储处于只读状态，写入没有生效，请联系管理员。', retryable: true },
   relation_source_required: { code: 'validation_error', message: '请先选择关系的起始对象。' },
   invalid_agent_result: { code: 'internal_error', message: '分析结果格式异常，本次未采信，请重试。', retryable: true },
+
+  // 下面五条是 app/common/policy.py 的拒绝原因码，经 HTTPException(detail=decision.reason_code) 原样落到 403 body：
+  // alerts.py:106 / artifacts.py:50 / chat.py:278,318,766,1708 / data.py:90,328,354 / intelligence.py:69。
+  // 下载与预览走 responseType:blob，这些码读不出来就会被误判成「坏了」，所以必须有人话 + 下一步。
+  principal_inactive: { code: 'account_unavailable', message: '这个账号已被停用，请联系管理员恢复后再使用。', retryable: false }, // policy.py:136
+  department_scope_denied: { code: 'permission_denied', message: '这份资料属于其他部门的数据范围，当前账号看不到，请联系管理员授权。', retryable: false }, // policy.py:210
+  clearance_insufficient: { code: 'permission_denied', message: '这份资料的安全等级高于你的可见级别，不能打开，请联系管理员。', retryable: false }, // policy.py:189
+  resource_scope_missing: { code: 'authorization_unavailable', message: '这份资料没有登记所属部门或密级，系统判断不了你能不能看，请联系管理员补齐登记。', retryable: false }, // policy.py:181,207
+  resource_scope_invalid: { code: 'authorization_unavailable', message: '这份资料登记的部门或密级格式有误，系统判断不了你能不能看，请联系管理员。', retryable: false }, // policy.py:187
 }
 
 /**
