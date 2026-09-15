@@ -134,9 +134,15 @@ function formatTime(ts) {
 
 // ==================== 图表解析 ====================
 
+// 图表以 ![标题](/api/v1/artifacts/<id>/content) 的形式出现在回答里，该地址需要携带 Bearer
+// 头才能取回，所以匹配范围必须覆盖 artifact 相对地址；/static/ 保留给历史会话。
+const CHART_IMAGE_PATTERN = /!\[([^\]]*)\]\(((?:\/(?:static|api\/v1)\/|v1\/artifacts\/|artifacts\/)[^)]+)\)/g
+
+
 function parseCharts(content) {
   const charts = []
-  const re = /!\[([^\]]*)\]\((\/static\/[^)]+)\)/g
+  if (!content) return charts
+  const re = new RegExp(CHART_IMAGE_PATTERN.source, 'g')
   let m
   while ((m = re.exec(content)) !== null) {
     charts.push({ caption: m[1], src: m[2] })
@@ -145,7 +151,8 @@ function parseCharts(content) {
 }
 
 function stripChartMarkers(content) {
-  return content.replace(/!\[([^\]]*)\]\((\/static\/[^)]+)\)/g, '')
+  if (!content) return content
+  return content.replace(new RegExp(CHART_IMAGE_PATTERN.source, 'g'), '')
 }
 
 // ==================== 聊天 ====================
