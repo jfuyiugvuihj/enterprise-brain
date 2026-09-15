@@ -134,3 +134,56 @@ def test_export_worker_fallback_replaces_static_url_with_controlled_artifact(mon
 
     assert "/api/v1/artifacts/artifact-1/download" in result
     assert observed["config"]["configurable"]["username"] == "finance-manager"
+def test_a_declined_action_is_recorded_so_it_cannot_run_again(monkeypatch):
+    """Rejecting a parked action must not let supervisor dispatch that node again.
+
+    Skipping the node alone left it in the plan, so the action the user declined ran
+    anyway and the session parked a second time.
+    """
+    from app.agents import orchestrator
+
+    captured = {}
+
+    class FakeGraph:
+        def update_state(self, config, values):
+            captured["update"] = values
+
+        def stream(self, payload, config, **kwargs):
+            captured["payload"] = payload
+            yield {"messages": []}
+
+    monkeypatch.setattr(orchestrator, "multi_agent_graph", FakeGraph())
+    monkeypatch.setattr(
+        orchestrator, "check_interrupt", lambda thread_id: {"pending": ["chart"], "labels": ["📈 生成图表"]}
+    )
+
+    list(orchestrator.run_interrupt_stream("thread-2", False, {"username": "tester"}))
+
+    update = captured["update"]
+    assert update["worker_results"]["chart"] == "已取消，未执行：📈 生成图表"
+    assert str(update["messages"][0].content) == "已取消，未执行：📈 生成图表"
+    assert captured["payload"].goto == "supervisor"
+
+
+def test_an_approved_action_is_not_marked_cancelled(monkeypatch):
+    from app.agents import orchestrator
+
+    captured = {}
+
+    class FakeGraph:
+        def update_state(self, config, values):
+            captured["update"] = values
+
+        def stream(self, payload, config, **kwargs):
+            captured["payload"] = payload
+            yield {"messages": []}
+
+    monkeypatch.setattr(orchestrator, "multi_agent_graph", FakeGraph())
+    monkeypatch.setattr(
+        orchestrator, "check_interrupt", lambda thread_id: {"pending": ["chart"], "labels": ["📈 生成图表"]}
+    )
+
+    list(orchestrator.run_interrupt_stream("thread-3", True, {"username": "tester"}))
+
+    assert "update" not in captured
+    assert captured["payload"].resume == {"approved": True}

@@ -422,7 +422,10 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
             parts.append(f"📁 {fname}: 读取失败 - {e}")
 
     result = "\n".join(parts)
-    return f"数据分析结果:\n{result}\n\n用户查询: {query}\n图表生成时直接使用上述数据样本中的字段名和数值。"
+    # The answer a caller sees is built from this string when the model is unavailable,
+    # so it carries data only: an echoed 用户查询 and an instruction addressed to the
+    # model both leaked into the reply.
+    return f"数据分析结果:\n{result}"
 
 
 # ==================== 真·自然语言数据查询（阶段 3 · P0） ====================

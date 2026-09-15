@@ -222,6 +222,8 @@ _UPSTREAM = {
 # check_interrupt 共用同一个常量，避免三处定义各自漂移。
 _HITL_PARKED = ("chart", "export")
 
+_HITL_LABELS = {"chart": "📈 生成图表", "export": "📋 导出报告"}
+
 # 用户问题里的《xxx.pdf》、report.xlsx 描述的是被提问的对象，不是“导出 PDF”这个
 # 动作。旧版本正是被文件名里的 .pdf 触发了 export 关键词分支。
 _DOC_REFERENCE = re.compile(
@@ -979,10 +981,19 @@ def run_interrupt_stream(
         ):
             yield event
     else:
-        multi_agent_graph.update_state(
-            config,
-            {"messages": [AIMessage(content="用户取消了此操作。")]},
+        # A refusal has to be recorded as that worker's result. Skipping the node alone
+        # left it in the plan, so supervisor dispatched it again: the action the user
+        # just declined ran anyway, and the turn parked a second time.
+        declined = [node for node in (check_interrupt(thread_id) or {}).get("pending") or []]
+        note = (
+            "已取消，未执行：" + "、".join(_HITL_LABELS.get(node, node) for node in declined)
+            if declined
+            else "用户取消了此操作。"
         )
+        update: dict = {"messages": [AIMessage(content=note)]}
+        if declined:
+            update["worker_results"] = {node: note for node in declined}
+        multi_agent_graph.update_state(config, update)
         for event in multi_agent_graph.stream(
             Command(goto="supervisor"),
             config,
@@ -1009,9 +1020,8 @@ def check_interrupt(thread_id: str) -> dict | None:
     if state.next:
         pending = [n for n in state.next if n in _HITL_PARKED]
         if pending:
-            labels = {"chart": "📈 生成图表", "export": "📋 导出报告"}
             return {
                 "pending": pending,
-                "labels": [labels.get(p, p) for p in pending],
+                "labels": [_HITL_LABELS.get(p, p) for p in pending],
             }
     return None
