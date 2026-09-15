@@ -1,3 +1,5 @@
+import json
+
 from pathlib import Path
 
 
@@ -144,6 +146,88 @@ def test_production_with_persistent_stores_reports_ok(monkeypatch):
 
     assert snapshot["problems"] == []
     assert snapshot["status"] == "ok"
+
+
+class _TagsResponse:
+    def __init__(self, models):
+        self.status = 200
+        self._body = json.dumps({"models": models}).encode("utf-8")
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def _probe_local_models(monkeypatch, models):
+    """Serve a fixed Ollama registry to the probe without opening a socket."""
+    from app.common import monitoring
+
+    monkeypatch.setattr(
+        monitoring, "urlopen", lambda url, timeout=None: _TagsResponse(models)
+    )
+
+
+def test_a_pinned_model_that_was_never_pulled_is_reported_as_a_fault(monkeypatch):
+    from app.common.monitoring import build_health_snapshot
+
+    _persistent_production(monkeypatch)
+    monkeypatch.setattr(
+        "app.common.monitoring._probe_postgres",
+        lambda: {"status": "ok", "pgvector": True, "migration_ledger": True},
+    )
+    monkeypatch.setattr("app.common.monitoring._probe_redis", lambda: {"status": "ok"})
+    _probe_local_models(monkeypatch, [{"name": "nomic-embed-text:latest"}])
+    monkeypatch.setenv("LOCAL_MODEL_NAME", "qwen2.5:14b")
+
+    snapshot = build_health_snapshot()
+
+    assert snapshot["dependencies"]["ollama"]["status"] == "ok"
+    assert snapshot["dependencies"]["ollama"]["model_present"] is False
+    assert "model_not_available" in snapshot["problems"]
+    assert snapshot["status"] == "degraded"
+
+
+def test_a_pinned_model_that_is_present_keeps_the_health_report_clean(monkeypatch):
+    from app.common.monitoring import build_health_snapshot
+
+    _persistent_production(monkeypatch)
+    monkeypatch.setattr(
+        "app.common.monitoring._probe_postgres",
+        lambda: {"status": "ok", "pgvector": True, "migration_ledger": True},
+    )
+    monkeypatch.setattr("app.common.monitoring._probe_redis", lambda: {"status": "ok"})
+    _probe_local_models(monkeypatch, [{"name": "qwen2.5:14b"}])
+    monkeypatch.setenv("LOCAL_MODEL_NAME", "qwen2.5")
+
+    snapshot = build_health_snapshot()
+
+    assert snapshot["dependencies"]["ollama"]["model_present"] is True
+    assert snapshot["problems"] == []
+    assert snapshot["status"] == "ok"
+
+
+def test_an_unpinned_model_choice_is_not_claimed_missing(monkeypatch):
+    from app.common.monitoring import build_health_snapshot
+
+    _persistent_production(monkeypatch)
+    monkeypatch.setattr(
+        "app.common.monitoring._probe_postgres",
+        lambda: {"status": "ok", "pgvector": True, "migration_ledger": True},
+    )
+    monkeypatch.setattr("app.common.monitoring._probe_redis", lambda: {"status": "ok"})
+    _probe_local_models(monkeypatch, [])
+    monkeypatch.delenv("LOCAL_MODEL_NAME", raising=False)
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+
+    snapshot = build_health_snapshot()
+
+    assert "model_present" not in snapshot["dependencies"]["ollama"]
+    assert "model_not_available" not in snapshot["problems"]
 
 
 def test_development_memory_fallback_stays_available_but_is_labelled_as_memory(monkeypatch):

@@ -3,6 +3,7 @@
 Each durable subsystem reports the store it is *actually* using, so an operator never
 sees a green health check while enterprise state lives in a process-local dictionary.
 """
+import json
 import os
 import shutil
 import time
@@ -104,6 +105,8 @@ def _health_problems(environment: str, dependencies: dict, storage: dict) -> lis
         status = str(dependencies.get(name, {}).get("status") or "unavailable")
         if status != "ok":
             problems.append(f"{name}_{status}")
+    if dependencies.get("ollama", {}).get("model_present") is False:
+        problems.append("model_not_available")
     return problems
 
 
@@ -193,11 +196,49 @@ def build_health_snapshot(performance: dict | None = None) -> dict:
     }
 
 
+def _model_tags_match(configured: str, registered: str) -> bool:
+    """Compare a pinned model name with a tag the local server reports."""
+    def trim(value: str) -> str:
+        value = value.strip().lower()
+        return value[: -len(":latest")] if value.endswith(":latest") else value
+
+    left, right = trim(configured), trim(registered)
+    if not left or not right:
+        return False
+    return left == right or left.startswith(right + ":") or right.startswith(left + ":")
+
+
+def _registered_local_models(payload: dict) -> list[str]:
+    return [str(item.get("name") or "") for item in (payload or {}).get("models") or []]
+
+
 def _probe_ollama() -> dict:
+    """Probe the model server, and separately probe whether the pinned model is on it.
+
+    These are two different facts, and only the second one decides whether a request can
+    be answered. A server with nothing pulled still answers ``/api/tags`` with 200, while
+    every generation request fails and the platform falls back to its offline reply, so
+    reporting the endpoint as merely reachable produced a green light over an unusable
+    installation.
+    """
     base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
     try:
         with urlopen(f"{base_url}/api/tags", timeout=1) as response:
-            return {"status": "ok" if response.status == 200 else "unavailable"}
+            if response.status != 200:
+                return {"status": "unavailable"}
+            try:
+                registered = _registered_local_models(json.loads(response.read().decode("utf-8")))
+            except Exception:
+                return {"status": "ok"}
+            probe = {"status": "ok", "model_count": len(registered)}
+            configured = (
+                os.getenv("LOCAL_MODEL_NAME") or os.getenv("OLLAMA_MODEL") or ""
+            ).strip()
+            if configured:
+                probe["model_present"] = any(
+                    _model_tags_match(configured, name) for name in registered
+                )
+            return probe
     except Exception as exc:
         return {"status": "unavailable", "reason": type(exc).__name__}
 
