@@ -34,6 +34,12 @@ router = APIRouter()
 DATA_DIR = os.getenv("DATA_DIR", "./data")
 os.makedirs(DATA_DIR, exist_ok=True)
 DATA_FILE_EXTENSIONS = {".xlsx", ".xls", ".csv"}
+# A dataset is owned by the account that uploaded it, and the registry derives that
+# ownership from a department scope. An account without one - the first administrator
+# of a fresh install, unless AUTH_DEPARTMENT named its department - can sign in and
+# manage users but cannot own data, which is a refusal, not a server fault.
+_OWNER_SCOPE_ERROR = "dataset owner must have a department scope"
+OWNER_SCOPE_REQUIRED = "department_scope_required"
 
 
 def _format_data_file_size(size: int) -> str:
@@ -175,9 +181,11 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
     try:
         df = await asyncio.to_thread(load_excel, str(file_path))
         dataset = dataset_registry.register(file_path, principal=principal, filename=filename)
-    except Exception:
+    except Exception as exc:
         if file_path.exists() and dataset_registry.get_active_by_filename(filename) is None:
             file_path.unlink()
+        if str(exc) == _OWNER_SCOPE_ERROR:
+            raise HTTPException(status_code=403, detail=OWNER_SCOPE_REQUIRED) from exc
         raise
     preview = build_dataframe_preview(df, filename)
     preview.update(

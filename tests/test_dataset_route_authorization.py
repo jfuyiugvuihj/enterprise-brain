@@ -122,6 +122,26 @@ def test_failed_dataset_upload_does_not_publish_metadata(monkeypatch, tmp_path):
     assert not (tmp_path / "bad.csv").exists()
 
 
+def test_upload_excel_refuses_a_departmentless_owner_with_a_stable_code(
+    monkeypatch, tmp_path
+):
+    from app.common import auth
+    from app.main import app
+
+    _registry(monkeypatch, tmp_path)
+    monkeypatch.setattr(auth, "get_user", lambda username: _user(username, ""))
+
+    response = TestClient(app).post(
+        "/api/v1/upload-excel",
+        headers=_headers("nobody-admin"),
+        files={"file": ("solo.csv", b"a,b\n1,2\n", "text/csv")},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "department_scope_required"
+    assert not (tmp_path / "solo.csv").exists()
+
+
 def test_data_agent_tools_only_read_authorized_registered_datasets(monkeypatch, tmp_path):
     from app.agents.contracts import Principal
     from app.agents.tools import analyze_data, query_data
