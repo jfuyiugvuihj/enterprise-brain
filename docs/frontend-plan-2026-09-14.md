@@ -479,7 +479,7 @@ e2 带出两个前端必须处理的洞（零后端）：**D-5** 无部门账号
 
 五档固定视口：`1440×900`、`1920×1080`、`3440×1440`、`1280×720`、`768×1024`。
 
-- **前置（r8 新增）**：验收账号必须**带部门**。默认 `admin` 无部门会被 `app/rag/filters.py` 硬拒（403 `authorization_unavailable`），用它做端到端会把后端语义问题误判成前端缺陷。见 §9 R-11。（2026-09-15 admin 语义已裁定 e2，但**后端未落地**，本前置继续有效。）
+- **前置（2026-09-15 修订，e2 已落码）**：验收账号**仍建议带部门**，但理由变了。admin 无部门被检索链硬拒已按 **e2** 裁定并落码（`719f29c`：`app/rag/filters.py` 复用 `policy.is_administrator`，管理员走 `administrator_scope`、`classification in [1,2,3]`；全量 `713 passed / 22 skipped / 0 failed`）。**只剩真机没证**：跑着的是 r8 那版镜像，未重建前线上仍会 403。所以重建镜像前继续用带部门账号做端到端，别把「镜像旧」误判成前端缺陷；重建后本前置作废，改断言为「admin 无部门也问得出答案」。
 - **不起真实服务器**：用 `context.route("**/*", …)` 从磁盘 fulfill，MIME 覆盖 html/js/css/png/svg/webp/woff2。
 - **必须 abort 掉 `fonts.googleapis.com` / `fonts.gstatic.com` / CDN**，模拟客户内网；否则"字体缺失"这类缺陷会被测不出来。
 - `/api/*` fulfill 401 JSON，用于验证 F3 的鉴权分支。
@@ -517,7 +517,7 @@ e2 带出两个前端必须处理的洞（零后端）：**D-5** 无部门账号
 | R-8 | 两条线对 P1-5 开不同药方（后端主张签名 URL / cookie，前端主张带 Bearer 取 blob） | 后端可能顺手放宽鉴权面，扩大爆炸半径 | 已回论据（`handoff/2026-09-15-backend-followup-requests.md` §5）；**动鉴权前须等前端确认** |
 | R-9 | 契约文档描述了未在 `app/main.py` 挂载的端点（`/apps`） | 前端接了直接 404 | 接入前先探挂载；见 §6.6 ① |
 | R-10 | ~~缺陷归属被写错~~ **已关闭**（r8 §13.5 已采纳 P1-4 / P2-2 归属与三页冻结） | — | 归属继续以 §6.5 / §6.6 为准 |
-| R-11 | 开箱 `admin` **无部门 → 问不了知识库**：`app/common/rbac.py`（空部门 = 全部门可见，死代码）与 `app/rag/filters.py`（无部门 = 硬拒）两套相反语义并存 | **演示级 P0**：老板用默认账号现场提问即失败，且端到端验收会误判 | **已裁定 e2**（检索链认 `administrator_scope`，要求见 handoff §6.2）；后端落地前验收一律用带部门账号（§8.1 前置）；`authorization_unavailable` 进 F7 字典 |
+| R-11 | 开箱 `admin` **无部门 → 问不了知识库**：`app/common/rbac.py`（空部门 = 全部门可见，死代码）与 `app/rag/filters.py`（无部门 = 硬拒）两套相反语义并存 | **演示级 P0**：老板用默认账号现场提问即失败，且端到端验收会误判 | **代码已修**（e2 `719f29c`，`713/22` 全绿）；**真机未证**——运行中是 r8 旧镜像，重建待用户点头。`rbac.py` 死代码与其测试一并退役排 C-4，见 `handoff/2026-09-15-orchestration-board.md` §4C |
 
 **正被其他对话改动的后端文件**（引用时只用符号名 / 路由 / 事件名）：`app/api/v1/chat.py`、`app/api/v1/alerts.py`、`app/api/v1/artifacts.py`、`app/documents/catalog.py`、`app/common/auth.py`、`app/common/audit.py`、`app/main.py`、`app/storage/persistence.py`、`app/knowledge_graph/service.py`。
 

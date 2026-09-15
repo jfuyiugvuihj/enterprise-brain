@@ -65,6 +65,7 @@ A 走到 V5(接线) 之前必须等到 G2，否则停下等，不要自己造原
 | G-A-2 (F2) | 🟡 **代码绿，真机未验** | `2bee141` + 补漏 `c5a61b1`：`lib/sessions.js` 模块级 store + canonical(`request.*`/`request_id`+`sequence` 信封) 优先、legacy 兜底、未知丢弃，`default:` 由 0 → 3；取消读 `body.cancelled`：`true`/`false`/缺字段三条文案各不相同 | 2026-09-15T16:13:43 | 总控 |
 | G-A-3 (F3) | 🟡 **代码绿，真机未验** | `a07294f` + 补漏 `bd38c00`：单实例 + 请求/响应拦截 + 3s 去重 + `expiring`/真过期共用收尾；`DocPanel`、`DataPanel` **两份**重复全局拦截器都删；`rg '\?{4}' src` 0 命中、`rg 'window.alert' src` 0 命中 | 2026-09-15T16:13:43 | 总控 |
 | **G-INT** | 🟢 **两线合并可用** | `c12b698`（`fe-prims` merge `codex/fe-trunk`，**零冲突**，写入集确实不相交）→ `07ff441`。合并树三门全绿：`npm run build` 276ms、`npx vitest run` 93 passed、`npm run lint` exit 0 | 2026-09-15T16:13:43 | 总控 |
+| **G5** (lockfile 同步) | 🟢 **闸门可用** | `scripts/check_lockfile_sync.mjs`：直接依赖范围 vs lockfile 已锁版本，离线确定性。实证：主树 `frontend/` exit 0（6 个）；`fe-trunk` HEAD exit 2 精确命中 `postcss-html 2.0.0 vs ^1.8.1`；A 对齐后 exit 0（14 个）。由 `scripts/run_frontend_tests.ps1` 默认前置调用，`-SkipLockCheck` 可跳，主树端到端跑通（gate + `vite build` 231ms，工作树未变脏）| 2026-09-15T16:4x | 总控 |
 
 ---
 
@@ -112,6 +113,38 @@ B 自报：中途 `cd` 进尚不存在的 `ui/` 失败，PowerShell 停在默认
 
 无路径过滤地看主树：**377 行**未提交条目。除已知的 `tests/browser_*`（约 70）、`static/exports/*.pdf`（约 100）、根级 `kb_*.{csv,txt}`、`logs/*`、`data/*`、`documents/*` 之外，最要紧的是
 **`chroma_db/` 处于「已被 git 跟踪 + 运行时写脏」状态**（`data_level0.bin`、`header.bin`、`index_metadata.pickle`、`chroma.sqlite3` 全为 ` M`）——向量库二进制进了版本控制，任何一次问答都会污染工作树 diff。见 §5 待拍板 ③。
+
+### 4A.7 前端镜像**构建是断的**（我造成的缺陷；A 已自行判对方向，尚未提交）
+
+`07ff441` 我装 `postcss-html` 时用的是 `npm install`，结果 `package.json` 留着 `^1.8.1`、lockfile 进去的却是 `2.0.0`。在**任何一份已提交状态**上实测：
+
+```
+$ npm ci --dry-run          # HEAD 的 package.json + package-lock.json，干净临时目录
+npm error code EUSAGE
+npm error `npm ci` can only install packages when your package.json and package-lock.json are in sync.
+npm error Invalid: lock file's postcss-html@2.0.0 does not satisfy postcss-html@1.8.1
+npm error Invalid: lock file's htmlparser2@9.1.0 does not satisfy htmlparser2@8.0.2
+npm error Missing: postcss-safe-parser@6.0.0 from lock file
+```
+
+影响链逐条核实（不是推断）：`frontend/Dockerfile:6` = `RUN npm ci` → `docker-compose.yml:205` `dockerfile: frontend/Dockerfile` → `deploy/README.server.md:13` 与 `:159`，生产安装第 4 步就是 `docker compose --env-file deploy/.env.server build frontend`。**照 README 装机会在前端镜像这一步失败。** 此前所有真机验收用的都是旧镜像，所以一次都没撞上。
+
+第二层难看：我自己写的 `parallel-tracks.md:45`、`:66`、`work-checklist.md:15`、`startup-prompts.md:85` 全部要求「开工第一件事 `cd frontend; npm ci`，别用 `npm i`（会改 lockfile）」——**照我这句话干活，第一件事就会卡死两个前端 Agent**。A 撞上后自行把 `package.json` 对齐为 `^2.0.0`，方向正确（对齐声明迁就已锁版本，而不是回退 lockfile 把闸门眼睛换掉）。
+
+
+**订正我自己上一条断言（重要，别照抄错的口径）**：我一开始跑 `npm ci --dry-run` 看主树 `frontend/` 也报 EUSAGE（`Invalid: lock file's @emnapi/wasi-threads@1.2.1 does not satisfy @emnapi/wasi-threads@1.2.3`、`Missing: @emnapi/core@1.10.0`），差点把结论写成「全仓镜像都构建不了」。**这是错的**：
+
+- 用确定性检查（只比对 `package.json` 直接依赖范围 vs lockfile 已锁版本，零网络、零平台差异）复测：主树 `frontend/` **6 个直接依赖全部满足 → exit 0**；`fe-trunk` 当前工作树（A 已对齐 `^2.0.0`）**14 个全满足 → exit 0**；`fe-trunk` 的 **HEAD 两份文件 → exit 2，精确命中 `postcss-html: lock file's 2.0.0 does not satisfy ^1.8.1`**。
+- 也就是说：**真正断的只有 `07ff441`/`f8703f7` 这一条，根因是我用 `npm install` 装依赖却只提交了 lockfile**。主树那串 `@emnapi/*` 是传递性平台可选依赖（wasm32）在不同 OS/镜像源下的解析差异，`node:20-alpine` 里的解析图与本机不同，**我没有证据说它在 Docker 构建里也会失败**，不许当成缺陷转给别人。
+- 因此 G5 闸门**故意不用 `npm ci`**——一个会因为环境而红、且红得指错人的闸门，最后只会被所有人 `-SkipLockCheck` 绕过，等于没有。改成 `scripts/check_lockfile_sync.mjs`（确定性、离线、直接依赖），由 `scripts/run_frontend_tests.ps1` 默认调用。
+
+处置三条：① 已要求 A 单独 commit，提交前复验 `npm ci --dry-run` = exit 0；② 因为 postcss-html 1.x→2.x 是**解析器大版本**、正是我锁色闸门的眼睛，同时要求它复报 `lint:colors` 计数是否仍为 **351**（锚一动必须我记账）；③ 新增闸门 **G5**，落在 `scripts/run_frontend_tests.ps1`，同类问题以后在脚本层就红，不等人去撞。
+
+### 4A.8 总控自己的流程失误（记我账）
+
+- **同一份派单给 A 发了两次**（`01a0a42d-caa9`、`01a0a42e-2aa4`，target 同为 `01a0a357-…`，正文完全一致）。上一轮我犯过同一形状的错误并写进交接摘要，本轮仍复犯——原因是我把「补发」当「重试」，没有先确认第一次已经投递成功。B 的派单只发一次，无补救。影响限于我自身的派发记录污染，指令本身幂等（要求的是「把这个已有改动单独提交」），不会让 A 重复劳动。
+- **给 A 的「部署断了」断言，发出时只有间接证据**（我读到 `Dockerfile:6` 就下了结论）。补核之后结论成立，但顺序应是先核实 `docker-compose.yml:205` 与 `deploy/README.server.md:13` 再断言。
+- 主树 `app/**`、`migrations/**` 本轮**零未提交改动**，`git status --porcelain -- app migrations` 已自证；375 行脏项全是运行时产物，归属见 §5 待拍板 ③。
 
 ---
 
