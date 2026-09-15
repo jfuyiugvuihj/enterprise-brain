@@ -1,142 +1,81 @@
 <script setup>
-import { ref, nextTick, onMounted, onUnmounted, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
 import ChartViewer from './ChartViewer.vue'
+import {
+  abortStream,
+  activeDataFilename,
+  activeId,
+  beginStream,
+  consumeSseStream,
+  endStream,
+  ensureSession,
+  flush,
+  friendlyErrorText,
+  genId,
+  hitl,
+  loadSessions,
+  loading,
+  messages,
+  newSession,
+  persist,
+  rememberScroll,
+  removeSession,
+  restoreActive,
+  scrollOffset,
+  scrollTo,
+  sessions,
+  switchSession,
+  syncActive,
+} from '../lib/sessions'
+import { authedFetch } from '../lib/http'
 
-const API = '/api/v1'
-const STORAGE_KEY = 'eb_sessions_v2'
-const messages = ref([])
 const input = ref('')
-const loading = ref(false)
 const chatEl = ref(null)
-const sessionId = ref('')
-const sessions = ref([])  // [{id, title, msgCount, updatedAt, messages: [...]}]
-const activeDataFilename = ref('')
 const sidebarOpen = ref(true)
-const hitl = ref(null)  // { pending: [...], labels: [...] } — HITL 待确认
-let activeController = null
+const cancelPhase = ref('idle')
+const streamNote = ref('')
+const noteTone = ref('info')
+
+// 会话与消息存在模块级 store 里：面板卸载或切走再回来都不会丢，生成中的流也不会断。
+const sessionId = activeId
+
+
+function note(text, tone = 'info') {
+  streamNote.value = text
+  noteTone.value = tone
+}
 
 // ==================== 会话管理 ====================
 
-function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8) }
-
-function persist() {
-  const data = { activeId: sessionId.value, sessions: sessions.value }
-  // 消息体较大，存到单独的 key
-  const slim = sessions.value.map(s => {
-    const { messages: _, ...rest } = s
-    localStorage.setItem('eb_msg_' + s.id, JSON.stringify(s.messages))
-    return rest
-  })
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ activeId: sessionId.value, sessions: slim }))
-}
-
-function load() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return
-    const data = JSON.parse(raw)
-    // 恢复消息
-    const full = (data.sessions || []).map(s => {
-      let msgs = []
-      try {
-        const mr = localStorage.getItem('eb_msg_' + s.id)
-        if (mr) msgs = JSON.parse(mr)
-      } catch (_) {}
-      return { ...s, messages: msgs }
-    })
-    sessions.value = full
-    return data.activeId || ''
-  } catch (_) { return '' }
-}
-
-function syncSession() {
-  // 将当前 messages 同步到 sessions 数组中
-  const sid = sessionId.value
-  if (!sid) return
-  const exists = sessions.value.find(s => s.id === sid)
-  const userMsgs = messages.value.filter(m => m.role === 'user')
-  const title = userMsgs.length ? (userMsgs[0].content || '').slice(0, 30) : ''
-  const entry = {
-    id: sid,
-    title,
-    msgCount: userMsgs.length,
-    updatedAt: Date.now(),
-    dataFilename: activeDataFilename.value,
-    messages: [...messages.value]
-  }
-  if (exists) {
-    Object.assign(exists, entry)
-  } else {
-    sessions.value.unshift(entry)
-  }
-  persist()
-}
-
-function newSession() {
-  syncSession()
-  const sid = genId()
-  sessionId.value = sid
-  messages.value = []
-  activeDataFilename.value = ''
-  // 总是创建新条目
-  sessions.value.unshift({
-    id: sid,
-    title: '',
-    msgCount: 0,
-    updatedAt: Date.now(),
-    dataFilename: '',
-    messages: []
-  })
-  persist()
-}
-
-function switchSession(id) {
-  if (id === sessionId.value) return
-  syncSession()
-  sessionId.value = id
-  const s = sessions.value.find(s => s.id === id)
-  messages.value = s ? [...s.messages] : []
-  activeDataFilename.value = s?.dataFilename || ''
-  persist()
-  nextTick(() => scrollBottom())
-}
-
-function deleteSession(id) {
-  if (!confirm('删除此会话？')) return
-  sessions.value = sessions.value.filter(s => s.id !== id)
-  try { localStorage.removeItem('eb_msg_' + id) } catch (_) {}
-  if (id === sessionId.value) {
-    if (sessions.value.length) {
-      sessionId.value = sessions.value[0].id
-      messages.value = [...sessions.value[0].messages]
-      activeDataFilename.value = sessions.value[0].dataFilename || ''
-    } else {
-      const sid = genId()
-      sessionId.value = sid
-      messages.value = []
-      activeDataFilename.value = ''
-      sessions.value = [{ id: sid, title: '', msgCount: 0, updatedAt: Date.now(), dataFilename: '', messages: [] }]
-    }
-  }
-  persist()
-  fetch(`${API}/sessions/${id}`, { method: 'DELETE' }).catch(() => {})
-}
-
 function formatTime(ts) {
   const d = new Date(ts)
-  const now = new Date()
-  const diff = now - d
+  const diff = Date.now() - d
   if (diff < 60000) return '刚刚'
   if (diff < 3600000) return Math.floor(diff / 60000) + '分钟前'
   if (diff < 86400000) return Math.floor(diff / 3600000) + '小时前'
   return (d.getMonth() + 1) + '/' + d.getDate()
 }
 
+async function deleteSession(id) {
+  if (!confirm('删除此会话？')) return
+  try {
+    await removeSession(id)
+  } catch (err) {
+    note(`会话未能从服务端删除：${err.message || err}`, 'error')
+  }
+  await scrollBottom()
+}
+
 // ==================== 图表解析 ====================
+
+// 图表以 ![标题](/api/v1/artifacts/<id>/content) 的形式出现在回答里，该地址需要携带 Bearer
+// 头才能取回，所以匹配范围必须覆盖 artifact 相对地址；/static/ 保留给历史会话。
+const CHART_IMAGE_PATTERN = /!\[([^\]]*)\]\(((?:\/(?:static|api\/v1)\/|v1\/artifacts\/|artifacts\/)[^)]+)\)/g
 
 function parseCharts(content) {
   const charts = []
-  const re = /!\[([^\]]*)\]\((\/static\/[^)]+)\)/g
+  if (!content) return charts
+  const re = new RegExp(CHART_IMAGE_PATTERN.source, 'g')
   let m
   while ((m = re.exec(content)) !== null) {
     charts.push({ caption: m[1], src: m[2] })
@@ -145,7 +84,8 @@ function parseCharts(content) {
 }
 
 function stripChartMarkers(content) {
-  return content.replace(/!\[([^\]]*)\]\((\/static\/[^)]+)\)/g, '')
+  if (!content) return content
+  return content.replace(new RegExp(CHART_IMAGE_PATTERN.source, 'g'), '')
 }
 
 // ==================== 聊天 ====================
@@ -161,232 +101,224 @@ function onChatAsk(e) {
   send(activeDataFilename.value)
 }
 
+
+function onScroll(e) {
+  scrollOffset.value = e.target.scrollTop
+}
+
+async function scrollBottom() {
+  await scrollTo(chatEl.value)
+}
+
+async function restoreScroll() {
+  await nextTick()
+  if (!chatEl.value) return
+  if (scrollOffset.value > 0) chatEl.value.scrollTop = scrollOffset.value
+  else await scrollTo(chatEl.value, 'auto')
+}
+
 onMounted(() => {
   window.addEventListener('chat-ask', onChatAsk)
-  const activeId = load()
-  if (activeId) {
-    sessionId.value = activeId
-    const s = sessions.value.find(s => s.id === activeId)
-    if (s) {
-      messages.value = [...s.messages]
-      activeDataFilename.value = s.dataFilename || ''
-    }
-  } else {
-    sessionId.value = genId()
-    messages.value = []
+  if (!sessions.value.length) {
+    const storedActive = loadSessions()
+    if (!activeId.value && storedActive) activeId.value = storedActive
   }
-  // 确保至少有一个当前会话条目
-  if (!sessions.value.find(s => s.id === sessionId.value)) {
-    sessions.value.unshift({
-      id: sessionId.value,
-      title: '',
-      msgCount: 0,
-      updatedAt: Date.now(),
-      dataFilename: activeDataFilename.value,
-      messages: []
-    })
-  }
+  if (!activeId.value) activeId.value = genId()
+  // 只在 store 里还没有这份会话时回填，避免把正在写入的流替换掉。
+  if (!messages.value.length) restoreActive(activeId.value)
+  ensureSession()
+  restoreScroll()
 })
-onUnmounted(() => window.removeEventListener('chat-ask', onChatAsk))
 
-// 消息变化时自动持久化
-watch(messages, () => syncSession(), { deep: true })
+onUnmounted(() => {
+  window.removeEventListener('chat-ask', onChatAsk)
+  rememberScroll()
+})
 
 async function send(dataFilename = activeDataFilename.value) {
   const text = input.value.trim()
   if (!text || loading.value) return
+  if (hitl.value) {
+    note('请先处理待确认动作，再发起新一轮提问。', 'warn')
+    return
+  }
   if (dataFilename) activeDataFilename.value = dataFilename
 
   messages.value.push({ role: 'user', content: text, sources: null })
   input.value = ''
-
   messages.value.push({ role: 'assistant', content: '', steps: [], sources: null })
-  const aiIdx = messages.value.length - 1
-  const aiMsg = messages.value[aiIdx]
-  loading.value = true
-  activeController = new AbortController()
+  const aiMsg = messages.value[messages.value.length - 1]
+  note('')
+  cancelPhase.value = 'idle'
+  syncActive()
 
+  const signal = beginStream()
   await scrollBottom()
 
   try {
-    const response = await fetch(`${API}/ask`, {
+    const response = await authedFetch('/ask', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(window._authToken ? { Authorization: `Bearer ${window._authToken}` } : {}),
-      },
-      signal: activeController.signal,
+      headers: { 'Content-Type': 'application/json' },
+      signal,
       body: JSON.stringify({
         message: text,
-        session_id: sessionId.value,
+        session_id: activeId.value,
         data_filename: dataFilename,
-      })
+      }),
     })
 
-    if (!response.ok) {
-      let detail = `HTTP ${response.status}`
-      try {
-        const payload = await response.json()
-        detail = payload?.detail || detail
-      } catch (_) {}
-      aiMsg.content = `[请求错误] ${detail}`
-      return
+    const result = await consumeSseStream(response, aiMsg, {
+      signal,
+      onHitl: ({ pending, labels }) => {
+        // 挂起期间仍可中断，所以先结束 loading 再展示待确认卡。
+        hitl.value = { pending, labels, interrupted: false }
+        endStream()
+      },
+      onText: flush,
+      onBatch: flush,
+    })
+
+    if (!result.ok) {
+      aiMsg.content = `[请求错误] ${result.error}`
+      note(`本轮请求未成功（HTTP ${result.status}）。`, 'error')
+    } else if (result.state.terminal === 'failed') {
+      const text2 = friendlyErrorText(result.state)
+      aiMsg.content = aiMsg.content ? `${aiMsg.content}\n${text2}` : text2
+      note('本轮未能完成，服务已返回失败状态。', 'error')
+    } else if (result.state.terminal === 'cancelled') {
+      if (!aiMsg.content) aiMsg.content = '本轮生成已中断。'
+    } else if (result.stopped !== 'hitl' && !aiMsg.content) {
+      aiMsg.content = '本轮没有返回内容。'
     }
-    if (!response.body) {
-      aiMsg.content = '[请求错误] 服务未返回可读取的回答流'
-      return
-    }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() || ''
-
-      for (const part of parts) {
-        if (!part.trim()) continue
-        let eventType = ''
-        let dataStr = ''
-
-        for (const line of part.split('\n')) {
-          if (line.startsWith('event: ')) eventType = line.slice(7).trim()
-          else if (line.startsWith('data: ')) dataStr = line.slice(6)
-        }
-
-        if (!dataStr) continue
-        try {
-          const payload = JSON.parse(dataStr)
-
-          if (eventType === 'step') {
-            const existing = aiMsg.steps.find(s => s.tool === payload.tool && s.status === 'running')
-            if (existing && payload.status === 'done') {
-              existing.status = 'done'
-              existing.elapsed = payload.elapsed
-            } else if (payload.status === 'running') {
-              if (aiMsg.content) aiMsg._correcting = true
-              aiMsg.steps.push({
-                tool: payload.tool,
-                label: payload.label,
-                status: 'running',
-                elapsed: null
-              })
-            }
-          } else if (eventType === 'hitl') {
-            // 人工确认中断：暂停，等用户确认后再继续
-            hitl.value = { pending: payload.pending, labels: payload.labels }
-            loading.value = false
-            break  // 跳出 SSE 读取，等待 /approve 调用
-          } else if (eventType === 'text') {
-            if (aiMsg._correcting) {
-              aiMsg.content = payload.content
-              aiMsg._correcting = false
-            } else {
-              aiMsg.content += payload.content
-            }
-          } else if (eventType === 'error') {
-            aiMsg.content = `[错误] ${payload.content}`
-          }
-        } catch (_) {}
-      }
-
-      await scrollBottom()
-    }
+    syncActive()
+    await scrollBottom()
   } catch (err) {
-    if (err.name !== 'AbortError') {
+    if (err?.name !== 'AbortError' && !signal.aborted) {
       aiMsg.content = `[网络错误] ${err.message}`
+      note('与服务器的连接中断，未能完成本轮回答。', 'error')
     }
+    syncActive()
   } finally {
-    loading.value = false
-    activeController = null
+    endStream()
+    persist()
   }
 }
 
-async function cancelGeneration() {
-  if (!activeController) return
-  activeController.abort()
+function requestCancel() {
+  if (cancelPhase.value === 'confirm') return
+  cancelPhase.value = 'confirm'
+}
+
+async function confirmCancel() {
+  cancelPhase.value = 'idle'
+  const awaitingHitl = !!hitl.value
+  abortStream()
+  endStream()
+
+  let cancelled = null
+  let ok = false
+  let status = 0
   try {
-    await fetch(`${API}/ask/${sessionId.value}/cancel`, {
-      method: 'POST',
-      headers: window._authToken ? { Authorization: `Bearer ${window._authToken}` } : {},
-    })
-  } catch (_) {}
-  const aiMsg = messages.value[messages.value.length - 1]
-  if (aiMsg?.role === 'assistant' && !aiMsg.content) {
-    aiMsg.content = '已取消本次生成。'
+    const response = await authedFetch(`/ask/${activeId.value}/cancel`, { method: 'POST' })
+    status = response.status
+    ok = response.ok
+    if (ok) {
+      let body = null
+      try {
+        body = await response.json()
+      } catch (_) {
+        body = null
+      }
+      cancelled = body?.cancelled
+    }
+  } catch (err) {
+    note(`中断请求未能送达：${err.message || err}`, 'error')
   }
-  loading.value = false
+
+  if (ok && cancelled === true) {
+    note('已中断本轮生成。', 'info')
+    const last = messages.value[messages.value.length - 1]
+    if (last?.role === 'assistant' && !last.content) {
+      last.content = '本轮生成已中断，未产出结论。'
+    }
+  } else if (ok && cancelled === false) {
+    // HTTP 200 只说明请求被受理，不代表真的停掉了什么。
+    note('当前没有正在生成的内容。', 'warn')
+  } else if (ok) {
+    note('服务未返回中断结果，无法确认是否已停止。', 'warn')
+  } else if (status) {
+    note(`中断请求未被受理（HTTP ${status}）。`, 'error')
+  }
+
+  if (awaitingHitl) {
+    // 显式保留待确认卡并标注已中断：中断不等于拒绝挂起动作（该语义仍待后端裁定）。
+    hitl.value = { ...hitl.value, interrupted: true }
+    note(`${streamNote.value} 待确认动作仍保留，请明确选择执行或取消。`, 'warn')
+  }
+  syncActive()
+  persist()
 }
 
 async function approve(approved) {
-  // 用户确认/取消 HITL 操作
-  const confirmMsg = hitl.value
+  const pending = hitl.value
+  if (!pending) return
+  // 用户已经做出选择：待确认卡显式清除，不留残影。
   hitl.value = null
-  loading.value = true
+  note('')
 
   const aiMsg = messages.value[messages.value.length - 1]
-  if (!aiMsg || aiMsg.role !== 'assistant') return
+  if (!aiMsg || aiMsg.role !== 'assistant') {
+    loading.value = false
+    syncActive()
+    return
+  }
 
+  loading.value = true
+  const signal = beginStream()
   try {
-    const response = await fetch(`${API}/approve`, {
+    const response = await authedFetch('/approve', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(window._authToken ? { Authorization: `Bearer ${window._authToken}` } : {}),
-      },
-      body: JSON.stringify({ session_id: sessionId.value, approved })
+      headers: { 'Content-Type': 'application/json' },
+      signal,
+      body: JSON.stringify({ session_id: activeId.value, approved }),
     })
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
+    const result = await consumeSseStream(response, aiMsg, {
+      signal,
+      onHitl: ({ pending: nextPending, labels }) => {
+        hitl.value = { pending: nextPending, labels, interrupted: false }
+        endStream()
+      },
+      onText: flush,
+      onBatch: flush,
+    })
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-
-      const parts = buffer.split('\n\n')
-      buffer = parts.pop() || ''
-
-      for (const part of parts) {
-        if (!part.trim()) continue
-        let eventType = ''
-        let dataStr = ''
-
-        for (const line of part.split('\n')) {
-          if (line.startsWith('event: ')) eventType = line.slice(7).trim()
-          else if (line.startsWith('data: ')) dataStr = line.slice(6)
-        }
-
-        if (!dataStr) continue
-        try {
-          const payload = JSON.parse(dataStr)
-          if (eventType === 'text') {
-            aiMsg.content += payload.content
-          } else if (eventType === 'error') {
-            aiMsg.content += `\n[错误] ${payload.content}`
-          }
-        } catch (_) {}
-      }
-      await scrollBottom()
+    if (!result.ok) {
+      aiMsg.content = aiMsg.content
+        ? `${aiMsg.content}\n[请求错误] ${result.error}`
+        : `[请求错误] ${result.error}`
+      note(`确认结果未被受理（HTTP ${result.status}）。`, 'error')
+    } else if (result.state.terminal === 'failed') {
+      const failure = friendlyErrorText(result.state, '待确认动作执行失败')
+      aiMsg.content = aiMsg.content ? `${aiMsg.content}\n${failure}` : failure
+    } else if (result.state.terminal === 'cancelled') {
+      if (!aiMsg.content) aiMsg.content = '待确认动作已中断。'
+    } else if (!aiMsg.content) {
+      aiMsg.content = approved ? '已确认，但本轮没有返回内容。' : '已取消该动作。'
     }
+    syncActive()
+    await scrollBottom()
   } catch (err) {
-    aiMsg.content += `\n[网络错误] ${err.message}`
+    if (err?.name !== 'AbortError' && !signal.aborted) {
+      aiMsg.content = `${aiMsg.content}\n[网络错误] ${err.message}`
+      note('与服务器的连接中断，待确认动作状态未知。', 'error')
+    }
+    syncActive()
   } finally {
-    loading.value = false
-  }
-}
-
-async function scrollBottom() {
-  await nextTick()
-  if (chatEl.value) {
-    chatEl.value.scrollTo({ top: chatEl.value.scrollHeight, behavior: 'smooth' })
+    // 无论走到哪条分支都必须复位，否则界面会永远停在「处理中」。
+    endStream()
+    cancelPhase.value = 'idle'
+    persist()
   }
 }
 
@@ -421,7 +353,6 @@ function renderMd(raw) {
   return html
 }
 </script>
-
 <template>
   <div class="chat-layout" data-testid="chat-panel">
     <!-- ===== 会话侧边栏 ===== -->
@@ -467,7 +398,7 @@ function renderMd(raw) {
       </div>
 
       <!-- 消息区 -->
-      <div class="chat-messages" ref="chatEl">
+      <div class="chat-messages" ref="chatEl" @scroll.passive="onScroll">
         <div v-if="messages.length === 0" class="welcome-screen">
           <div class="welcome-glow"></div>
           <div class="welcome-card">
@@ -527,10 +458,11 @@ function renderMd(raw) {
 
             <!-- HITL 确认弹窗 -->
             <div v-if="hitl && i === messages.length - 1" class="hitl-bar">
-              <div class="hitl-card">
+              <div :class="['hitl-card', { interrupted: hitl.interrupted }]">
                 <div class="hitl-icon">⏸️</div>
                 <div class="hitl-text">
-                  <b>需要确认</b>
+                  <b>{{ hitl.interrupted ? '已中断，仍待确认' : '需要确认' }}</b>
+                  <span v-if="hitl.interrupted" class="hitl-note">中断不等于拒绝该动作，请明确选择执行或取消。</span>
                   <span v-for="(lbl, li) in hitl.labels" :key="li">{{ lbl }}</span>
                 </div>
                 <div class="hitl-actions">
@@ -547,18 +479,22 @@ function renderMd(raw) {
 
       <!-- 输入区 -->
       <div class="chat-input-bar">
+        <p v-if="streamNote" :class="['stream-note', noteTone]" role="status" data-testid="chat-note">{{ streamNote }}</p>
         <div class="input-wrapper">
         <textarea
             data-testid="chat-input"
             v-model="input"
             placeholder="输入您的问题… (Enter 发送, Shift+Enter 换行)"
             @keydown="handleKeydown"
-            :disabled="loading"
+            :disabled="loading || !!hitl"
             rows="1"
           />
-          <button v-if="loading" class="send-pill cancel-generation" @click="cancelGeneration()">
-            取消生成
-          </button>
+          <div v-if="cancelPhase === 'confirm'" class="cancel-confirm" data-testid="chat-cancel-confirm">
+            <span class="cancel-confirm-text">中断后本轮不再产出内容，也不会替你决定是否执行待确认动作。</span>
+            <button class="send-pill danger" type="button" @click="confirmCancel">确认中断</button>
+            <button class="send-pill ghost" type="button" @click="cancelPhase = 'idle'">返回</button>
+          </div>
+          <button v-else-if="loading || hitl" class="send-pill cancel-generation" type="button" data-testid="chat-cancel" @click="requestCancel">中断生成</button>
           <button v-else class="send-pill" data-testid="chat-send" @click="send()"
                   :disabled="!input.trim()">
             <svg v-if="!loading" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
@@ -1234,5 +1170,41 @@ function renderMd(raw) {
   background: rgba(255, 255, 255, .04);
   color: var(--muted);
   border-color: var(--line);
+}
+
+/* 中断生成的二次确认与结果提示：文字按钮不能沿用 40x40 图标胶囊 */
+.stream-note {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9eacc1;
+}
+.stream-note.warn { color: #e6a23c; }
+.stream-note.error { color: #f56c6c; }
+.hitl-card.interrupted { border-color: rgba(230, 162, 60, .55); }
+.hitl-note { color: #e6a23c; font-size: 12px; }
+.cancel-confirm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cancel-confirm-text { font-size: 12px; color: #e6a23c; line-height: 1.5; }
+.send-pill.cancel-generation,
+.send-pill.danger,
+.send-pill.ghost {
+  width: auto;
+  min-width: 40px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.send-pill.cancel-generation { background: #f56c6c; }
+.send-pill.danger { background: #f56c6c; }
+.send-pill.danger:hover { background: #f78c8c; }
+.send-pill.ghost {
+  background: transparent;
+  border: 1px solid rgba(157, 178, 207, .34);
+  color: #9eacc1;
+}
+.send-pill.ghost:hover {
+  background: rgba(157, 178, 207, .12);
+  transform: none;
 }
 </style>
