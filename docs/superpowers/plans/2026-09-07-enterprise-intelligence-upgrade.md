@@ -1,5 +1,8 @@
 # 企业智脑智能化升级实施计划
 
+> **⚠️ 状态（2026-09-15 标注）**：本文件的**设计目标仍有效**，它是 `docs/frontend-workspace-audit-2026-09-14.md` §4.4 差距总表引用的「证据 D」；但**完成度一律不得按本文件的“已完成”表述判断**，以 `docs/current-functionality-2026-09-10.md` 及其修订记录为准。
+> 前端部分（阶段 8）已被 `docs/frontend-plan-2026-09-14.md` 取代：洞察 / 图谱 / 审批三页已裁定改名、撤入口、降级为子视图，**不得按本文件就地补界面**。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在现有企业智脑的知识库、数据分析、图表、告警和多 Agent 基础上，构建一个具备多 Agent 协作闭环、答案溯源与可信度标注、主动洞察和业务语义层的企业智能决策与审批平台。

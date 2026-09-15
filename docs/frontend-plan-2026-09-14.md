@@ -514,3 +514,18 @@ main.login
 - [ ] 顶栏无死控件；退出按钮有可及名称
 - [ ] `storage_read_only` 不再原样出现在界面上
 - [ ] 全局 axios 拦截器只剩 1 处
+
+---
+
+## 12. 附：被本计划取代或限定的旧计划
+
+四份旧文档已在开头加标注，后续 Agent **不得按它们开工**：
+
+| 旧计划 | 处置 |
+|---|---|
+| `docs/superpowers/plans/2026-09-09-enterprise-brain-frontend-visual-upgrade.md` | **整体作废**，由本计划 §5/§6 与 `frontend-visual-quality-2026-09-14.md` 取代 |
+| `docs/superpowers/plans/2026-09-10-enterprise-brain-reference-ui-alignment.md` | 视觉部分作废；「业务数字均来自现有 API 或空态」一条**仍有效**，由 F5a 承接 |
+| `docs/superpowers/plans/2026-09-07-enterprise-intelligence-upgrade.md` | 设计目标仍有效（审计的「证据 D」）；完成度不得按其自述判断；阶段 8 前端部分被本计划取代 |
+| `docs/superpowers/plans/2026-09-10-enterprise-brain-multi-agent-development-plan.md` | 完成度未核实，不得作为现状依据；仅作为设计意图存档 |
+
+原则：判断完成度只用当前源码、测试与 `docs/current-functionality-2026-09-10.md`，不用历史计划里的“已完成”列表。

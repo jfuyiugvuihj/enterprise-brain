@@ -1,5 +1,9 @@
 # 企业智脑多智能体并行开发实施计划
 
+> **⚠️ 状态（2026-09-15 标注）**：**完成度未核实**。本文件不含任何进度标记，且 1323 行中的多数条目已被后续实现与验收覆盖或改写。
+> **不得作为“功能是否已完成”的判断依据**（AGENTS.md 同此要求）。现状以 `docs/current-functionality-2026-09-10.md` + 其修订记录为准；前端以 `docs/frontend-plan-2026-09-14.md` 为准；跨端缺陷收口以 `docs/handoff/2026-09-14-consolidated-fix-plan.md` 为准。
+> 保留理由：其中的多 Agent 拆分方式与身份/权限约束仍是设计意图记录。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在不覆盖现有未提交修改、不修改其他 Agent 所有文件、不过度占用本机 Ollama 资源的前提下，把“企业智脑”拆成可独立交付、可测试、可合并的多智能体开发项目。

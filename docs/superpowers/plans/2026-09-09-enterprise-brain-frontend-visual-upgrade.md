@@ -1,5 +1,9 @@
 # Enterprise Brain Frontend Visual Upgrade Implementation Plan
 
+> **⚠️ 已被取代（2026-09-15 标注）**：本计划整体作废，**不要照此开工**。
+> 取代者：`docs/frontend-visual-quality-2026-09-14.md`（视觉规范与令牌）+ `docs/frontend-plan-2026-09-14.md` §5/§6（登录页与实施顺序）。
+> 本文件无任何完成度标记，其布局假设已被 7 入口 → 5 主视图 + 1 管理视图的重排推翻。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Replace the broken default-block layout with a coherent responsive enterprise workbench while preserving existing authentication and module behavior.

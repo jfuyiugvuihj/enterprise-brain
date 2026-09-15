@@ -1,5 +1,8 @@
 # 企业智脑参考图对齐改版说明
 
+> **⚠️ 状态（2026-09-15 标注）**：视觉与登录页部分已被取代（见 `docs/frontend-plan-2026-09-14.md` §5）。本文件产出的 `frontend/src/assets/login-reference.png` 已确认零引用，将在 V2 阶段删除。
+> **仍然有效、但当前被违反的一条**：下方「参考图中的示例数字不直接写入业务状态」——现状 `DashboardPanel.vue` 硬编码 `demoRows`，并经 `POST /api/v1/dashboard` 回显成趋势线与异常（审计 P0-5；后端 r8 §13.5 P1-1）。该要求由 `docs/frontend-plan-2026-09-14.md` F5a 承接。
+
 日期：2026-09-10
 
 ## 目标
