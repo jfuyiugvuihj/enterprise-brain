@@ -7,7 +7,7 @@
  *                         来源 app/api/v1/observability.py 全部、chat.py::_document_index_error
  *   形状 3 FastAPI 422    err.response.data.detail === [{ loc, msg, type }, ...]
  *
- * 码名蓝本：app/agents/contracts.py::ErrorEnvelope.code（封闭枚举 16 码）
+ * 码名蓝本：app/agents/contracts.py::ErrorEnvelope.code（封闭枚举 17 码，含主树 fa35a04 追认的 account_unavailable）
  * 追加 data.py 系列 7 码；线上出现的其它历史码名走 LEGACY_ALIASES 归一。
  * 鉴权中间件返的是**中文散文**（app/main.py:104/109 的 401「请先登录」、
  * app/main.py:113 的 403「账号不可用」），那不是码，走 PROSE_ALIASES 按原文索引。
@@ -16,11 +16,13 @@
  * 后端原样回来的码名/散文一律放进 .rawCode，只供排查与「错误码：xxx」小字使用。
  */
 
-/** 蓝本 16 码 + data.py 7 码 + 1 个前端侧扩展码（见 FRONTEND_ONLY_CODES）。 */
+/** 蓝本 17 码 + data.py 7 码。这 24 个键名就是 normalizeError().code 的全部合法取值。 */
 export const ERROR_CODES = {
   authentication_required: { message: '登录状态已失效，请重新登录后再试。', retryable: false },
   permission_denied: { message: '当前账号没有这项权限，请联系管理员开通。', retryable: false },
   authorization_unavailable: { message: '暂时无法确认你的数据权限，请稍后重试。', retryable: true },
+  // 账号被停用：既不是 permission_denied（不是权限不够，重新登录也没用），也不该退化成兜底句。
+  account_unavailable: { message: '这个账号已被停用，请联系管理员恢复后再使用。', retryable: false },
   resource_not_found: { message: '要找的内容不存在或已被移除。', retryable: false },
   validation_error: { message: '提交的内容有不合规之处，请检查后重试。', retryable: false },
   conflict: { message: '这条记录已被他人更新，请刷新后重试。', retryable: false },
@@ -42,15 +44,15 @@ export const ERROR_CODES = {
   dataset_filename_conflict: { message: '已存在同名数据文件，请重命名或先删除旧的。', retryable: false },
   dataset_preview_failed: { message: '数据文件预览没能打开，请稍后重试。', retryable: true },
   chart_generation_failed: { message: '图表没能生成，请稍后重试。', retryable: true },
-
-  // 前端侧扩展码：账号被停用。contracts.py 的封闭枚举里还没有这一档，
-  // 而 app/main.py:113 的 403「账号不可用」既不是 permission_denied（不是权限问题，
-  // 重新登录也没用），也不该退化成兜底句。待后端追认进枚举后可原样保留。
-  account_unavailable: { message: '这个账号已被停用，请联系管理员恢复后再使用。', retryable: false },
 }
 
-/** 不在 app/agents/contracts.py 封闭枚举里的前端侧扩展码，单测据此区分「蓝本」与「自扩」。 */
-export const FRONTEND_ONLY_CODES = ['account_unavailable']
+/**
+ * 前端自己加、后端契约里还没有的码 —— 必须是空数组。
+ * 这是一条绊线：谁往 ERROR_CODES 里塞未追认的码名，就得在这里登记，单测随即转红，
+ * 直到后端把它并入 contracts.py 的封闭枚举。account_unavailable 走过这条路
+ * （前端先登记 → 主树 fa35a04 追认 → 摘掉标记），别再开新的。
+ */
+export const FRONTEND_ONLY_CODES = []
 
 /**
  * 后端实际会返回、但不在封闭枚举里的**码名** → 归一到枚举码（按码名索引）。
