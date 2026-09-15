@@ -13,6 +13,7 @@
 
 ```
 身份：前端主干线 Agent。工作目录 C:\Users\fengx\PycharmProjects\fe-trunk，分支 codex/fe-trunk，基线 13e808d。
+第 0 步（不可跳）：读 docs/handoff/2026-09-15-orchestration-board.md，回报你那一行的前置闸门当前颜色（你的前置：G0）。不绿就只做只读准备，并把你缺哪个闸、为什么写进看板 §5。跑 git log --oneline -1 与 pwd 自证你在对的目录和分支上。
 用户已授权你修改 frontend/**。app/** 一律禁止修改。
 不要 git checkout / git switch 换分支：codex/fe-trunk 已被本目录独占，换分支会报 "already used by worktree"。就在当前分支上提交。
 
@@ -66,6 +67,7 @@ Step 2 起按工单顺序串行执行：F1 → F2 → F3 → V1 → V2 → V5(�
 
 ```
 身份：前端叶子线 Agent。工作目录 C:\Users\fengx\PycharmProjects\fe-prims，分支 codex/fe-prims，基线 13e808d。
+第 0 步（不可跳）：读 docs/handoff/2026-09-15-orchestration-board.md，回报你那一行的前置闸门当前颜色（你的前置：G1）。不绿就只做只读准备，并把你缺哪个闸、为什么写进看板 §5。跑 git log --oneline -1 与 pwd 自证你在对的目录和分支上。
 用户已授权你修改 frontend/**。app/** 一律禁止修改。
 不要 git checkout / git switch 换分支：codex/fe-prims 已被本目录独占。就在当前分支上提交，也不要另建新分支（两条线的合并假设会失效）。
 
@@ -114,6 +116,7 @@ components/ui/**、lib/errcodes.js、tests/visual/**、playwright.config.js、.s
 
 ```
 身份：后端执行线。工作目录 C:\Users\fengx\PycharmProjects\企业智脑，分支 codex/data-file-catalog。
+第 0 步（不可跳）：读 docs/handoff/2026-09-15-orchestration-board.md，回报你那一行的前置闸门当前颜色（你的前置：无（你是 G3/G4 的翻闸人））。不绿就只做只读准备，并把你缺哪个闸、为什么写进看板 §5。跑 git log --oneline -1 与 pwd 自证你在对的目录和分支上。
 不要修改 frontend/**（前端两条线正在写）。
 先读 docs/handoff/2026-09-15-backend-followup-requests.md 全文，按里面登记的顺序做：
 1) e2 检索裁定（§6.2，六条要求）—— 用户 2026-09-15 已拍板，ROLE_CLEARANCE 使密级上限对 admin 失效这件事要写进 docstring；
@@ -131,6 +134,7 @@ components/ui/**、lib/errcodes.js、tests/visual/**、playwright.config.js、.s
 
 ```
 身份：独立验收 Agent，不写业务代码。工作目录 C:\Users\fengx\PycharmProjects\fe-trunk。
+第 0 步（不可跳）：读 docs/handoff/2026-09-15-orchestration-board.md，回报你那一行的前置闸门当前颜色（你的前置：G-A-3 + G2）。不绿就只做只读准备，并把你缺哪个闸、为什么写进看板 §5。跑 git log --oneline -1 与 pwd 自证你在对的目录和分支上。
 只允许新建/修改 tests/**、docs/handoff/2026-09-15-acceptance-report.md。
 任务：把工单 §6 的每条"完成度证据"重新实测一遍，并核对 A/B 两条线的提交是否真的兑现了完成定义。
 手段：npm run build、npx vitest run、npx stylelint 必跑；Playwright 五档视觉基线用**磁盘 fulfill**（基线不能依赖真库数据，否则会漂）；功能验收**可以**打真容器栈（dev 5173 → 代理 localhost:8001），但必须先确认后端镜像不旧于源码，且用完删掉自己建的数据，不许起后端进程或跑迁移。
