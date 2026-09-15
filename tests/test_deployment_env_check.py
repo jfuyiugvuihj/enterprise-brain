@@ -85,3 +85,62 @@ def test_comments_and_malformed_lines_are_ignored(tmp_path, line) -> None:
     path = tmp_path / "odd.env"
     path.write_text(line + "\n", encoding="utf-8")
     assert checker.check_env_file(path, require_keys=False)["hazards"] == []
+
+
+COMPOSE_KEYS = [
+    ("POSTGRES_USER", "brain"),
+    ("POSTGRES_PASSWORD", "secret"),
+    ("REDIS_PASSWORD", "secret"),
+    ("CORS_ALLOW_ORIGINS", "http://localhost"),
+    ("JWT_SECRET", "value"),
+]
+
+
+def _env_file(tmp_path, name, entries):
+    path = tmp_path / name
+    path.write_text("\n".join(f"{key}={value}" for key, value in entries) + "\n", encoding="utf-8")
+    return path
+
+
+def test_a_production_file_needs_the_admin_bootstrap_pair(tmp_path) -> None:
+    entries = [("APP_ENV", "production")] + COMPOSE_KEYS + [("AUTH_USERNAME", ""), ("AUTH_PASSWORD_HASH", "")]
+
+    missing = checker.check_env_file(_env_file(tmp_path, "prod.env", entries))["missing"]
+
+    assert "AUTH_USERNAME" in missing
+    assert "AUTH_PASSWORD_HASH" in missing
+
+
+def test_a_production_file_with_the_bootstrap_pair_is_complete(tmp_path) -> None:
+    entries = [
+        ("APP_ENV", "production"),
+        ("AUTH_USERNAME", "operator"),
+        ("AUTH_PASSWORD_HASH", BCRYPT_LIKE.replace("$", "$$")),
+    ] + COMPOSE_KEYS
+
+    assert checker.check_env_file(_env_file(tmp_path, "prod.env", entries))["missing"] == []
+
+
+def test_a_development_file_may_leave_the_bootstrap_empty(tmp_path) -> None:
+    entries = [
+        ("APP_ENV", "development"),
+        ("AUTH_USERNAME", ""),
+        ("AUTH_PASSWORD_HASH", ""),
+    ] + COMPOSE_KEYS
+
+    assert checker.check_env_file(_env_file(tmp_path, "dev.env", entries))["missing"] == []
+
+
+def test_the_shipped_example_is_incomplete_until_an_operator_fills_it_in() -> None:
+    result = checker.check_env_file(ROOT / "deploy" / ".env.server.example")
+
+    assert {"AUTH_USERNAME", "AUTH_PASSWORD_HASH"}.issubset(set(result["missing"]))
+
+
+def test_the_bootstrap_hint_points_at_the_runbook_without_leaking_the_hash(tmp_path, capsys) -> None:
+    entries = [("APP_ENV", "prod")] + COMPOSE_KEYS
+
+    assert checker.main([str(_env_file(tmp_path, "prod.env", entries))]) == 1
+    printed = capsys.readouterr().out
+    assert "deploy/README.server.md" in printed
+    assert "abcdefghijklmnopqrstuv" not in printed

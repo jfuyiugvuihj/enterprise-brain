@@ -25,6 +25,30 @@ non-printable ASCII characters`，在任何一层被读取之前就失败。这�
 会被两个 `build:` 块读取（默认留空 = 走上游源）。应用镜像的 `uv sync` 已挂
 `--mount=type=cache,target=/root/.cache/uv`，改代码重建不会重下依赖。
 
+### 首个管理员账号
+
+平台不内置任何账号。生产拓扑下 `migrations/0003` 建出的 `users` 表是空的，而后端在
+**首次连接**时用 `AUTH_USERNAME` + `AUTH_PASSWORD_HASH` 播种首个管理员：只在表为空时
+写入，表非空即不再触碰（因此被运维删除的账号不会被复活），三个常驻进程同时探测也只会有
+一行落地。两者必须成对给出，缺任何一个都拒绝建号；上面的预检会在构建之前就把缺项报出来，
+否则现象是「部署完成但没有任何人登录得进去，且只报 401」。
+
+生成 bcrypt 哈希（明文口令不要落进文件、命令历史或日志）：
+
+```bash
+python -c "import bcrypt; print(bcrypt.hashpw(b'<你的口令>', bcrypt.gensalt()).decode())"
+```
+
+输出里的每一个 `$` 都要写成 `$$` 再填进 `deploy/.env.server`：
+
+```
+AUTH_USERNAME=<管理员用户名>
+AUTH_PASSWORD_HASH=$$2b$$12$$<哈希正文>
+```
+
+用这个口令登录之后，应立刻通过 `PUT /api/v1/users/password` 改密，再按需为它补部门或
+改建为日常运维账号。
+
 任何必需的密钥缺失时 Compose 会直接拒绝启动，不会退回默认口令。
 
 **`deploy/.env.server` 是唯一被容器读取的环境文件**，仓库根的 `.env` 只用于本地直跑。

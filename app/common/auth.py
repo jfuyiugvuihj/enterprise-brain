@@ -101,9 +101,14 @@ def _bootstrap_admin_credentials() -> tuple[str, str]:
     password_hash = os.getenv("AUTH_PASSWORD_HASH", "").strip()
     if _is_production_environment():
         if not username:
-            raise RuntimeError("AUTH_USERNAME is required for production memory fallback")
+            raise RuntimeError(
+                "AUTH_USERNAME is required in production: it names the first administrator account"
+            )
         if not password_hash:
-            raise RuntimeError("AUTH_PASSWORD_HASH is required for production memory fallback")
+            raise RuntimeError(
+                "AUTH_PASSWORD_HASH is required in production: it is the credential of the first "
+                "administrator account (see deploy/README.server.md)"
+            )
     if not username:
         username = "admin"
     if not password_hash:

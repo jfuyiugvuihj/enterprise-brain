@@ -11,6 +11,16 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+# The container refuses to start a production instance without a durable user store,
+# and ``app.common.auth`` creates the first administrator from exactly this pair, so an
+# environment file that leaves them empty installs a system nobody can sign in to.
+ADMIN_BOOTSTRAP_KEYS: tuple[tuple[str, ...], ...] = (
+    ("AUTH_USERNAME",),
+    ("AUTH_PASSWORD_HASH",),
+)
+
+PRODUCTION_ENVIRONMENTS = {"production", "prod"}
+
 REQUIRED_KEYS: tuple[tuple[str, ...], ...] = (
     ("POSTGRES_USER",),
     ("POSTGRES_PASSWORD",),
@@ -64,12 +74,23 @@ def missing_required_keys(
     return [group[0] for group in required if not present.intersection(group)]
 
 
+def needs_admin_bootstrap(entries: list[tuple[str, str]]) -> bool:
+    """True when this file drives a production instance, which has no other first user."""
+    app_env = dict(entries).get("APP_ENV", "").strip().lower()
+    return app_env in PRODUCTION_ENVIRONMENTS
+
+
 def check_env_file(path: str | Path, *, require_keys: bool = True) -> dict:
     entries = parse_env_file(path)
+    missing: list[str] = []
+    if require_keys:
+        missing = missing_required_keys(entries)
+        if needs_admin_bootstrap(entries):
+            missing += missing_required_keys(entries, required=ADMIN_BOOTSTRAP_KEYS)
     return {
         "path": str(path),
         "hazards": find_interpolation_hazards(entries),
-        "missing": missing_required_keys(entries) if require_keys else [],
+        "missing": missing,
     }
 
 
@@ -82,7 +103,12 @@ def format_report(result: dict) -> str:
             "Compose will substitute it. Write every literal $ as $$."
         )
     for key in result["missing"]:
-        lines.append(f"  missing {key}: required by docker-compose.yml")
+        origin = (
+            "required to create the first administrator (see deploy/README.server.md)"
+            if key.startswith("AUTH_")
+            else "required by docker-compose.yml"
+        )
+        lines.append(f"  missing {key}: {origin}")
     if not result["hazards"] and not result["missing"]:
         lines.append("  ok      no interpolation hazards, all required keys present")
     return "\n".join(lines)
