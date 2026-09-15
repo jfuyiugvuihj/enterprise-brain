@@ -319,6 +319,7 @@ main.login
 ### 6.1 串行约束（不可违反）
 
 - F2 / F3 / F4 / F6 都要改 `frontend/src/App.vue`；F4 与 F5 都要动 `InsightPanel.vue`。
+- **F7（见 §6.6）与 F4 / F5 共用 `InsightPanel`、`ApprovalPanel`、`GraphPanel`、`DashboardPanel`、`DataPanel`，必须排在它们之后。**
 - **按 F1 → F2 → F3 → F4 → F5 → F6 串行合入，不得并行开分支改同一文件。**
 - 只允许改 `frontend/src/**` 与 `frontend/vite.config.js`、`frontend/package.json`；**不修改 `app/**` 下任何文件**。需要后端配合的项只登记不实现。
 - 不得回退或覆盖他人改动，遇到冲突停下来报告，不要强解。
@@ -341,7 +342,7 @@ main.login
 | 12 | F6 | 历史会话上后端 | `components/ChatPanel.vue`、`lib/sessions.js`(新) | 历史读 `/sessions*`；**退出登录不再清空历史**；标题用后端 `title` 不自行推导 | 部分（重命名需 `PATCH /sessions/{id}`，可选） | V3 | 本地 `localStorage` 迁移 / 一次性导入后清除 |
 | 13 | V6 | 视觉回归与锁色值 | `playwright.config.js`、`tests/visual/`、`.stylelintrc` | 五档基线入库；CI 阻断裸色值与裸间距 | 否 | V2、V4 | 基线抖动 / 固定字体与动画关闭 |
 
-**推荐执行顺序**：`F1 → F2 → F3 → V1 → V2 → V5 → F4 → V3 → V4 → F5a → F6 → V6`，F5b 与 B-1/B-2/B-3 等后端项**并行等待**，不阻塞前端交付。
+**推荐执行顺序**：`F1 → F2 → F3 → V1 → V2 → V5 → F4 → V3 → V4 → F5a → F7 → F6 → V6`，F5b 与 B-1/B-2/B-3 等后端项**并行等待**，不阻塞前端交付。
 
 ### 6.3 后端需求登记（只登记，不实现）
 
@@ -376,12 +377,58 @@ main.login
 |---|---|---|---|
 | P1-5 | `content_url` 是 header-only 相对 URL，`<img src>` 带不了 Bearer → 图表界面上不可能显示 | **F1** | 前端带 Bearer 取 blob。**不需要后端改鉴权**，论据见 `handoff/2026-09-15-backend-followup-requests.md` §5 |
 | P1-1 | `DashboardPanel.vue` 硬编码 `demoRows` 被 `POST /api/v1/dashboard` **回显**成趋势线与 3 条异常 | **F5a** | 先剪断「前端造数据 → POST → 回显」这条回路，再谈真实计数 |
-| P1-4 | 界面把 `storage_read_only` 原样渲染给用户 | **V4** | 走 `UiToast` + 语义色，文案改成人话 |
+| P1-4 | **机制已复核纠正**：与 health 无关。前端全量搜 `read_only` / `degraded` / `健康` = **0 命中**；真因是 7 处 `{{ error }}` 把后端字段原样插值 | **F7**（新增，见 §6.6） | 建 `lib/errcodes.js` 稳定码→文案字典 + `UiToast`；**不再挂 V4** |
 | P2-2 | `DocPanel.vue` 源码乱码（实测 `澶辫触` 1 处、连续 `?` 4 处） | **F4** | UTF-8 精确读取后重写文案；与确认弹窗乱码同源 |
 | P2-4 | 顶栏搜索/通知是无处理函数的死控件；退出按钮无可及名称 | **V3** | 要么接上要么删除，**不留死控件**；补 `aria-label` |
 | 新发现 | 全局 axios 拦截器装了两份（`DocPanel.vue:7`、`lib/api.js`） | **F3** | 收敛为 1 处，零后端 |
 
 一条口径修正：**图谱持久化代码已具备，但本次部署未配置 `KNOWLEDGE_GRAPH_STORE_PATH`，写入返回 503**。§1.4 与 §2 中「持久化已补齐」的表述限定为**代码层**，不构成生产承诺。
+
+### 6.6 复核改判（2026-09-15，逐项实测）
+
+**① `/health/details` 契约：改判为「阻塞于 C-3，非欠账」**
+
+- 前端全量搜 `health` 字符串 **0 命中**，不存在漏接。
+- 唯一消费面是「管系统」视图，而该视图被 **C-3**（`isAdmin` 只来自 localStorage）阻塞，上线前对所有人隐藏。
+- 契约 §4 自述「路由需在 `app/main.py` 挂载后才生效」，即 `/apps` 可能尚未上线 → **文档描述了一个当前不存在的消费面**。
+- 契约 §5 的两条「必改项」**无对象**：前端没有健康仪表盘（不存在把 `status == "ok"` 当一切正常的代码），也没有 `queue.backend == "memory"` 分支可删。
+- 处置：待「管系统」开工时一并接入，接入前先确认 `/apps` 挂载状态。
+
+**② SSE canonical：真欠账，已排 F2，风险机制已确认**
+
+| 实测项 | 结果 |
+|---|---|
+| `ChatPanel.vue` 事件分派 | 只认 legacy：`step`(`:266`)、`hitl`(`:280`)、`text`(`:285`/`:370`)、`error`(`:292`/`:372`) |
+| canonical 关键字 `request_id` / `trace_id` / `sequence` / `protocol_version` | **各 0 次命中** |
+| `default` 分支 | **0 个**，未知事件静默 fall-through |
+
+这正是「后端一下线 legacy，对话页**瞬间空白且不报错**」的机械原因。反过来说，契约要求的「未知事件丢弃而非崩溃」**已意外满足**，F2 只需补「以 canonical envelope 为主、legacy 兜底」这一半。
+
+**③ P1-4 归属纠正**（已同步改 §6.5 表）
+
+真因是 7 处把后端错误字段原样插值：`ApprovalPanel.vue:59`、`GraphPanel.vue:59`、`InsightPanel.vue:81`、`DashboardPanel.vue:177`、`DataPanel.vue:188`、`DataPanel.vue:208`、`DocumentPreviewModal.vue:59`。修法是建 `frontend/src/lib/errcodes.js`（稳定码 → 人话）并统一走 `UiToast`，**与 health 接口无关**。后端 r8 §13.5 的归属描述需同步订正，否则前端会去接一个不相干的接口。
+
+**④ P2-2 定位精确化**
+
+`frontend/src/components/DocPanel.vue:287`：`window.alert(err.response?.data?.detail || err.message || '????')`
+后端量到的「连续 `?` 4 处」是**源码里字面的 `'????'` 兜底文案**，不是编码转换损坏；同一行还把后端 `detail` 原样塞进原生 `alert()`。一处代码同时解释 P2-2 与 P1-4 各一半。
+
+**⑤ 新增步骤 F7：错误码字典与告警面收敛**
+
+| 字段 | 内容 |
+|---|---|
+| 目标 | 消灭「后端稳定码直接给用户看」和原生 `alert()` |
+| 涉及文件 | `lib/errcodes.js`(新)、`ApprovalPanel.vue`、`GraphPanel.vue`、`InsightPanel.vue`、`DashboardPanel.vue`、`DataPanel.vue`、`DocumentPreviewModal.vue`、`DocPanel.vue` |
+| 完成定义 | 7 处 `{{ error }}` 全部改走字典；`window.alert` 与字面 `'????'` 在源码中为 **0**；未知码有兜底句且不显示裸码 |
+| 需后端 | 否（R9 / B-11 落地后可一并覆盖 `/chart`、`/export` 的假成功） |
+| 前置 | F4、F5a（共用同一批面板，**必须串行在其后**） |
+| 风险 / 回滚 | 字典漏码会让用户只看到兜底句 → 兜底句附「错误码：xxx」小字，保留可报告性 |
+
+**⑥ 总括：前端 0 进度的性质是「没人开工」，不是「在等后端」**
+
+前端实际调用面仅 **17 处**：`login`、`upload`、`upload-excel`、`documents/catalog` + `file` + `preview` + delete、`data-files` + `preview` + `file`、`dashboard`、`semantics/match`、`insights/detect`、`approval/precheck`、`knowledge-graph/relations`。
+**未调用**：`/health*`、`/alerts*`、`/sessions*`、`/artifacts*`、`/users*`、`/apps`。
+即 F1 / F5 / F6 与 R1 / R2 全部属于**「后端已有、前端未接」**，不能用作前端停工的正当理由。
 
 ---
 
@@ -441,6 +488,8 @@ main.login
 | R-6 | 与后端 Agent 同时改 `App.vue` 邻接逻辑 | 合并冲突 | 前端只碰 `frontend/src/**`；`App.vue` 改动串行；冲突即停并报告 |
 | R-7 | 文档中的行号过期 | 误导实施 | 后端引用一律符号名/路由/事件名；前端行号视为上午快照 |
 | R-8 | 两条线对 P1-5 开不同药方（后端主张签名 URL / cookie，前端主张带 Bearer 取 blob） | 后端可能顺手放宽鉴权面，扩大爆炸半径 | 已回论据（`handoff/2026-09-15-backend-followup-requests.md` §5）；**动鉴权前须等前端确认** |
+| R-9 | 契约文档描述了未在 `app/main.py` 挂载的端点（`/apps`） | 前端接了直接 404 | 接入前先探挂载；见 §6.6 ① |
+| R-10 | 缺陷归属被写错（P1-4 曾被记成 health 渲染问题） | 前端白跑一趟不相干的接口 | 归属以 §6.5 / §6.6 复核结论为准；后端 r8 §13.5 需同步订正 |
 
 **正被其他对话改动的后端文件**（引用时只用符号名 / 路由 / 事件名）：`app/api/v1/chat.py`、`app/api/v1/alerts.py`、`app/api/v1/artifacts.py`、`app/documents/catalog.py`、`app/common/auth.py`、`app/common/audit.py`、`app/main.py`、`app/storage/persistence.py`、`app/knowledge_graph/service.py`。
 
@@ -514,6 +563,10 @@ main.login
 - [ ] 顶栏无死控件；退出按钮有可及名称
 - [ ] `storage_read_only` 不再原样出现在界面上
 - [ ] 全局 axios 拦截器只剩 1 处
+- [ ] 7 处 `{{ error }}` 原样插值全部改走错误码字典，界面上不再出现裸稳定码
+- [ ] `window.alert` 与字面 `'????'` 在 `frontend/src/**` 中均为 0
+- [ ] `ChatPanel.vue` 中出现 `request_id` / `sequence` 引用（当前各 0 次），且未知事件仍静默丢弃
+- [ ] 前端不再声称「需要 `/health/details` 才能修图表」——两者无关
 
 ---
 
