@@ -100,6 +100,14 @@ R1 落地前，前端不会用假数据填充员工视图，会显示「暂无�
 - `upload_document` 现在把作用域取 `principal.department`、丢弃表单 `department`。因此**无部门账号上传的文档 `department=""`**，而 `filters.py` 是 `department ∈ 提问者的部门列表` → 空串不在任何人列表里 → **谁都检索不到**，上传界面却显示成功。后端 docstring 自己写了"a document that lands without one can never be found by anyone"。前端会在上传后回显归属并对空部门**当场警告**，但**根因在你们那一侧**：要么拒绝无部门账号上传，要么给这类行一个明确的 `unscoped` 状态。
 - 数据链 `filter_dataframe_rows` 对 admin 是 `return df`（部门 + 密级全不滤），比 e2 还宽。既然裁定口径是"跨部门可以、跨密级不行"，这条链的 admin 分支建议一并收紧到按 clearance 过滤，否则"问答查不到机密、数据表却能算出来"会成为新裂缝。
 
+### 6.5 e2 已落地（`719f29c`），但留下三笔新账
+
+| # | 事项 | 事实 | 需要谁 |
+|---|---|---|---|
+| 1 | 死代码清理要一次授权 | 实现 e2 的那份 diff 顺手删了 `rbac.py` 的 `doc_visible` / `build_where` / `make_pred`，但 `tests/test_phase2_rbac.py` 与 `tests/test_phase7_mcp.py` 还在测它们 → 10 条红。我已把该文件**回退**保持绿灯；"删函数"和"退役它的测试"必须来自同一份授权，不能分两次做 | 用户点头后由后端线一次做完 |
+| 2 | `Principal.from_user` 会把 0 级静默抬成 3 级 | `int(user.get("clearance") or clearance_for(role))`——admin 若被配成 `clearance=0/NULL`，`or` 判假 → 落到 `clearance_for("admin")=3`。即"给管理员降级"在配置层无效，且它**不是 e2 引入的**（e2 之后更要紧，因为管理员现在跨密级全库可读） | 后端线：改成 `is not None` 判定 + 一条回归用例 |
+| 3 | G3 真机那半缺证据 | 代码与测试都在，但运行中的后端容器是 r8 那版镜像，"开箱 admin 问得出答案"无法在当前栈上证明。重建 `enterprise-brain-backend-1`（上轮 build 因缓存被 GC 花过 ~28 分钟）属于改变环境的重操作，我**没擅自做** | 用户点头 |
+
 ### 6.4 仍需你拍板：「停止 = 拒绝挂起动作？」
 
 前端不阻塞：取消按钮已按「如实读 `cancelled` + 二次确认」排进 F2。但 cancel 是否顺带把挂起的 HITL 动作判为拒绝并写审计，只有你们能定。
