@@ -136,8 +136,26 @@ B 自报：中途 `cd` 进尚不存在的 `ui/` 失败，PowerShell 停在默认
 | 加 `jsdom` + `@vue/test-utils` | **暂不加** | B 已用 `@vue/server-renderer` 出真 HTML + 纯函数单测 + Playwright 真按键，行为覆盖已有；再加是把同一件事测第三遍 |
 | 加 `stylelint-declaration-strict-value` | **暂不加** | 内置 `declaration-property-value-allowed-list` 已能拦裸 hex/字号/间距/圆角/阴影，实测有效（`4A.1`） |
 | token 文件名 `tokens.css` vs `theme.css` | **定 `theme.css`**，`tokens.css` 这个引用作废 | `theme.css` 已在主干存在且含 91 处 `var(--*)`；为一个名字去重命名文件是纯 churn |
+| `rbac.py` 死代码 + 它的测试一起退役 | **自授，做**（C-4） | 删源码与删测它的断言必须同一份授权、同一个 commit；纯源码改动，git 可回退，不属破坏性操作 |
+| `data.py:278` 字面量换常量 | **自授，做**（并入 C-2） | 零行为差异，但要多花 28 分钟重建镜像才能证真机，故与 C-2 同批，不为它单独重建 |
 | 存量 351 处色债怎么还 | **单向棘轮**（`lint:colors --max-warnings`），不许一次改完也不许长期关闸 | 一次改完会淹没 V1/V2 的真改动；关闸等于没有闸门 |
 
 **写入集变更（重要）**：`frontend/package.json`、`frontend/package-lock.json`、`frontend/.stylelintrc.json` 在 `07ff441`（`codex/fe-prims`）里被我改过——加 `postcss-html`、加 `lint:colors`、`.vue` 纳入解析。A 线若要动依赖，**必须先把 `codex/fe-prims` 合回 `codex/fe-trunk` 再改**，别在旧 lockfile 上叠。集成方向已定：`prims` 含 `trunk`，最终 `trunk` 可直接 ff 到 `prims`。
 
 - 一个分支只属于一个工作树：不许 `git checkout` 别人那条线的分支，要开工就换目录。
+
+
+---
+
+## 4C. C 线（后端）排期——总控直派，**串行**
+
+**为什么后端不能并行开多个对话**：C-1..C-5 全都要写 `app/api/v1/*` 与 `tests/`，而一个分支只能被一个工作树 checkout（主树 `codex/data-file-catalog` 是唯一持有 `app/**` 的树）。两个 Agent 同写一棵树 = 必然撞车 + 未提交工作互相看不见（本轮 e2 就是这么差一天被埋掉的）。故 C 线一次只跑一个 Agent、一次只放 1–2 项。
+
+| 批次 | 内容 | 为什么这个顺序 | 边界 |
+|---|---|---|---|
+| **C-1** | 鉴权 401/403 改吐稳定码（见跟进单 §8） | 唯一卡住 B 线「封闭枚举」的一条；状态码零变化、全仓无测试断言中文原文 → 零红口 | 只改 `detail` 值 + 登记契约 + 新增断言；不许碰白名单与 `/open*` |
+| **C-2** | R2 `GET /artifacts` 列表 + R8 数据集/artifact DELETE + 级联清理（含 PG `documents` 幽灵表）；顺带 `data.py:278` 字面量换 `OWNER_SCOPE_REQUIRED` | 前端「交成果」视图与误传清理同时解锁；纯增量，不改权限语义 | 禁删真实数据、禁跑迁移、禁连真库写 |
+| **C-3** | R1 员工级告警读取 = 闸门 **G4** | 唯一改权限语义的接口项 → **先交评审，评审通过前只读不写** | `alerts.py` 单文件 |
+| **C-4** | `Principal.from_user` 的 `or` 抬级 + `rbac.py` 死代码**与其测试**一并退役 | 两笔已记账的账，小且独立 | 见 §4B 新增行：总控已自授，须同一个 commit 交付 |
+| **C-5** | R3 SSE canonical `sources` 事件 + B-7 趋势聚合端点 | 契约冻结规则下只准增量，放最后 | 不得下线/改名任何 legacy 事件 |
+

@@ -21,6 +21,7 @@
 | B-6 | 日报路由 | `daily_report()` 仍是函数（`app/api/v1/alerts.py`），该文件路由只有 rules / alerts / check | 先拆推送副作用，再挂只读路由 | 无（可延后） |
 | B-7 | 趋势聚合 | `/dashboard` 无时间序列输入，前端才被迫手写乘数线 | 一个最小聚合端点 | 总览趋势线。未落地前前端**不画趋势线**，画空态 |
 | **R8 / B-10** | 数据集 / artifact 删除 API | 全仓 `router.delete` 只有 `alerts/rules/{id}`、`users/{id}`、`sessions/{id}`、`documents/{filename}`——**没有** `data-files` 与 `artifacts` 的删除。r8 两轮验收累积残留：5 个 `browser-e2e-*.csv` 数据集 + 4 条 artifact + 33 孤儿会话，另有 PG `documents` 表 5 行指向已删文件而 `document_versions` = 0 | 两个 DELETE 路由 + 级联清理（含 PG 行与磁盘文件）；顺带把只插不删的 `documents` 表接进同一条清理路径 | 「交成果」视图、误传数据清理 |
+| **R10 / A 线实测** | 鉴权 401/403 吐稳定码 | `app/main.py:104,109,113`、`app/common/authorization.py:53`、`app/api/v1/auth.py:110` 吐中文散文 → `artifacts.py`/`chat.py`/`alerts.py` 里的 `authentication_required` 在主路上**永不可达** | 见 §8 裁定，状态码不许动 | B 线封闭枚举 / 全站错误文案 |
 
 ## 2. 已完成、无需再动
 
@@ -117,3 +118,19 @@ R1 落地前，前端不会用假数据填充员工视图，会显示「暂无�
 
 - 错误响应体 `detail` 目前有**三种形状**并存：字符串稳定码（`data.py` / `documents.py` / `auth.py`）、`ErrorEnvelope` 对象（`observability.py`、`chat.py::_document_index_error`）、FastAPI 422 数组。前端 F7 会自己归一化，**不占用你们排期**；只是若将来统一到 envelope，请把它写进 `docs/api/contract-v1.md` 而不是靠默契。
 - 我们**不需要**后端为 D-1（属主删不掉文档）做任何事：`documents/catalog` 已回 `owner_id` 与 `ownership`，判据齐了，改的是前端按钮的门控。
+
+---
+
+## 8. 总控裁定：鉴权 401/403 改吐稳定码（跟进单 **R10**，C 线批次 C-1）
+
+**为什么要做**：A 线在活栈实测到的是 `请先登录`，不是契约里的 `authentication_required`。根因在 `app/main.py` 的鉴权中间件是**全路径兜底**，先于所有路由返回，所以 `artifacts.py`/`chat.py`/`alerts.py` 里那几处稳定码在「没登录 / token 失效」这条主路上**永远不可达**。B 线的 `frontend/src/lib/errcodes.js` 只认封闭枚举，散文会让 `resolveCode` 把中文原样当 code 吐回界面。
+
+**硬约束（越界即返工）**：
+
+1. **HTTP 状态码一个都不许改**：缺 token / 坏签名 / 过期 / 用户不存在 = 401；账号停用 = 403。白名单路径与 `/open*` 的行为一字不动。
+2. **只改 `detail` 的值**：`请先登录` → `authentication_required`（4 个表达式：`app/main.py:104`、`app/main.py:109`、`app/common/authorization.py:53`、`app/api/v1/auth.py:110`）；`账号不可用` → `account_unavailable`（`app/main.py:113`）。
+3. **两个码都要登记进 `docs/api/contract-v1.md`**，`account_unavailable` 是新码，必须写明 canonical 与触发条件。
+4. **可选、允许、不许扩散**：把「token 过期/坏签名」从 `authentication_required` 里拆出 `token_expired`，让前端能显示「登录已过期，请重新登录」。前提仍是 401 不变、一次改完、不顺手动别的分支。
+5. 全仓 `git grep` 复核：**没有任何测试断言中文原文**，所以这是一次零红口改动；但**要新增**断言每个站点各吐自己的码。
+6. 前端 `LEGACY_ALIASES` 里的 `请先登录 → authentication_required` **不许删**——它是用来对接「尚未重建镜像的旧栈」的，旧栈仍会吐中文。
+7. 真机验证仍受「重建后端镜像」那条待拍板事项约束：不重建则这条只能停在代码绿。
