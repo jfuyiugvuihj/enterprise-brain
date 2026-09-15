@@ -47,10 +47,12 @@ AUTH_PASSWORD_HASH=$$2b$$12$$<哈希正文>
 AUTH_DEPARTMENT=<可选：该账号的部门>
 ```
 
-`AUTH_DEPARTMENT` 可以留空，但留空的账号只能登录与管用户：数据集和分析成果都按部门确定
-归属（`app/storage/datasets.py`、`app/storage/artifacts.py`），所以无部门的账号上传数据会
-被拒 `403 department_scope_required`、生成图表会回 `artifact owner must have a department
-scope`。要么在这里给出部门，要么登录后用 `POST /api/v1/users` 建一个带部门的账号做日常使用。
+`AUTH_DEPARTMENT` **建议必填**。留空的账号只能登录与管用户，其余三条主链全部按部门确定作用
+域，都会被拒：检索（`app/rag/filters.py`，报 `authorization_unavailable`）、数据集归属
+（`app/storage/datasets.py`，报 `403 department_scope_required`）、成果归属
+（`app/storage/artifacts.py`，`/chart` 以 HTTP 200 回
+`artifact owner must have a department scope`）。留空时预检会打一行 `warn`（不阻断启动），
+因为另一条合法路线是登录后用 `POST /api/v1/users` 建一个带部门的账号做日常使用。
 部门不能事后修改（`PUT /api/v1/profile` 写的是用户画像，不是 `users.department`），换部门
 只能重建账号。
 

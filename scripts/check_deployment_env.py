@@ -80,17 +80,41 @@ def needs_admin_bootstrap(entries: list[tuple[str, str]]) -> bool:
     return app_env in PRODUCTION_ENVIRONMENTS
 
 
+def department_scope_warnings(entries: list[tuple[str, str]]) -> list[str]:
+    """Warn about the one administrator who can sign in but can do nothing with data.
+
+    Retrieval, dataset ownership and artifact ownership all resolve their scope from the
+    caller's department, so a production install whose first administrator has none can
+    log in, manage accounts, and then be refused by every one of those three paths. It is
+    not a missing required key because an operator may legitimately create a
+    department-scoped account for daily use instead.
+    """
+    if not needs_admin_bootstrap(entries):
+        return []
+    if any(key.strip() == "AUTH_DEPARTMENT" and value.strip() for key, value in entries):
+        return []
+    return [
+        "AUTH_DEPARTMENT is empty: the first administrator will be able to sign in and "
+        "manage accounts, but not to upload data, generate a chart, or retrieve any "
+        "document, because all three take their scope from its department "
+        "(see deploy/README.server.md)"
+    ]
+
+
 def check_env_file(path: str | Path, *, require_keys: bool = True) -> dict:
     entries = parse_env_file(path)
     missing: list[str] = []
+    warnings: list[str] = []
     if require_keys:
         missing = missing_required_keys(entries)
         if needs_admin_bootstrap(entries):
             missing += missing_required_keys(entries, required=ADMIN_BOOTSTRAP_KEYS)
+        warnings = department_scope_warnings(entries)
     return {
         "path": str(path),
         "hazards": find_interpolation_hazards(entries),
         "missing": missing,
+        "warnings": warnings,
     }
 
 
@@ -109,7 +133,9 @@ def format_report(result: dict) -> str:
             else "required by docker-compose.yml"
         )
         lines.append(f"  missing {key}: {origin}")
-    if not result["hazards"] and not result["missing"]:
+    for warning in result.get("warnings", []):
+        lines.append(f"  warn    {warning}")
+    if not result["hazards"] and not result["missing"] and not result.get("warnings"):
         lines.append("  ok      no interpolation hazards, all required keys present")
     return "\n".join(lines)
 

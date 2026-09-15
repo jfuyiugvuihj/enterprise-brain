@@ -121,6 +121,46 @@ def test_a_production_file_with_the_bootstrap_pair_is_complete(tmp_path) -> None
     assert checker.check_env_file(_env_file(tmp_path, "prod.env", entries))["missing"] == []
 
 
+def test_an_administrator_without_a_department_is_warned_about(tmp_path) -> None:
+    entries = [
+        ("APP_ENV", "production"),
+        ("AUTH_USERNAME", "operator"),
+        ("AUTH_PASSWORD_HASH", BCRYPT_LIKE.replace("$", "$$")),
+        ("AUTH_DEPARTMENT", ""),
+    ] + COMPOSE_KEYS
+
+    result = checker.check_env_file(_env_file(tmp_path, "prod.env", entries))
+
+    assert result["missing"] == []
+    assert any("AUTH_DEPARTMENT" in warning for warning in result["warnings"])
+    assert "warn" in checker.format_report(result)
+
+
+def test_a_department_scoped_administrator_produces_no_warning(tmp_path) -> None:
+    entries = [
+        ("APP_ENV", "production"),
+        ("AUTH_USERNAME", "operator"),
+        ("AUTH_PASSWORD_HASH", BCRYPT_LIKE.replace("$", "$$")),
+        ("AUTH_DEPARTMENT", "head-office"),
+    ] + COMPOSE_KEYS
+
+    result = checker.check_env_file(_env_file(tmp_path, "prod.env", entries))
+
+    assert result["warnings"] == []
+    assert "ok      no interpolation hazards" in checker.format_report(result)
+
+
+def test_development_is_not_warned_about_a_departmentless_administrator(tmp_path) -> None:
+    entries = [
+        ("APP_ENV", "development"),
+        ("AUTH_USERNAME", ""),
+        ("AUTH_PASSWORD_HASH", ""),
+        ("AUTH_DEPARTMENT", ""),
+    ] + COMPOSE_KEYS
+
+    assert checker.check_env_file(_env_file(tmp_path, "dev.env", entries))["warnings"] == []
+
+
 def test_a_development_file_may_leave_the_bootstrap_empty(tmp_path) -> None:
     entries = [
         ("APP_ENV", "development"),
