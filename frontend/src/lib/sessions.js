@@ -133,9 +133,10 @@ export function switchSession(id) {
 }
 
 export function rememberScroll() {
-  // 由面板在卸载/切页前写入，回来时按同一偏移恢复。
+  // 由面板在滚动、卸载或切页前写入，回来时按同一偏移恢复。
   const entry = sessions.value.find(s => s.id === activeId.value)
   if (!entry) return
+  if (entry.scrollTop === scrollOffset.value) return // 值没变就别白落一次盘
   entry.scrollTop = scrollOffset.value
   syncActive()
 }
