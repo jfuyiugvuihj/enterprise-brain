@@ -1,0 +1,114 @@
+/* UiDialog —— 遮罩用 color-mix 而不是写死 rgba，色值单一来源 */
+
+.ui-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-5, 24px);
+  background: color-mix(in srgb, var(--surface-0) 72%, transparent);
+}
+
+.ui-dialog__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5, 24px);
+  width: 100%;
+  max-width: var(--dialog-w, 560px);
+  max-height: 100%;
+  padding: var(--s-6, 32px);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-lg, 16px);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-3);
+  font-family: var(--font-body);
+  overflow: hidden;
+}
+
+.ui-dialog__panel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ui-dialog__panel--sm {
+  max-width: calc(var(--dialog-w, 560px) * 0.66);
+}
+
+.ui-dialog__panel--lg {
+  max-width: calc(var(--dialog-w, 560px) * 1.4);
+}
+
+.ui-dialog__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4, 16px);
+}
+
+.ui-dialog__titles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2, 8px);
+}
+
+.ui-dialog__title {
+  margin: 0;
+  color: var(--text-1);
+  font-size: var(--t-xl, 20px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+
+.ui-dialog__desc {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-md, 14px);
+  line-height: 1.65;
+}
+
+.ui-dialog__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-sm, 32px);
+  height: var(--control-h-sm, 32px);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm, 8px);
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.ui-dialog__close:hover {
+  background: color-mix(in srgb, var(--text-1) 8%, transparent);
+  color: var(--text-1);
+}
+
+.ui-dialog__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ui-dialog__body {
+  overflow: auto;
+  color: var(--text-1);
+  font-size: var(--t-md, 14px);
+  line-height: 1.65;
+}
+
+.ui-dialog__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-3, 12px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-dialog__close {
+    transition: none;
+  }
+}

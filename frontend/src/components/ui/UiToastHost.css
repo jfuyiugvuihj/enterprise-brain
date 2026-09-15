@@ -1,0 +1,33 @@
+/* UiToastHost —— 只负责定位，卡片样式在 UiToast.css */
+
+.ui-toast-host {
+  position: fixed;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3, 12px);
+  pointer-events: none;
+}
+
+.ui-toast-host > :deep(.ui-toast),
+.ui-toast-host > .ui-toast {
+  pointer-events: auto;
+}
+
+.ui-toast-host--br {
+  right: var(--s-5, 24px);
+  bottom: var(--s-5, 24px);
+  align-items: flex-end;
+}
+
+.ui-toast-host--tr {
+  top: var(--s-5, 24px);
+  right: var(--s-5, 24px);
+  align-items: flex-end;
+}
+
+.ui-toast-host--tc {
+  top: var(--s-5, 24px);
+  left: 50%;
+  align-items: center;
+}

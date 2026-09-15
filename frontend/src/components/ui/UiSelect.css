@@ -1,0 +1,152 @@
+/* UiSelect —— 下拉面板走 --surface-3 + --shadow-2，不加彩色描边 */
+
+.ui-select {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2, 8px);
+}
+
+.ui-select--block {
+  width: 100%;
+}
+
+.ui-select__label {
+  color: var(--text-2);
+  font-size: var(--t-sm, 13px);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.ui-select__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2, 8px);
+  width: 100%;
+  min-height: var(--control-h, 40px);
+  padding: 0 var(--s-3, 12px);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md, 12px);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font-family: var(--font-body);
+  font-size: var(--t-md, 14px);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast),
+    background-color var(--motion-fast);
+}
+
+.ui-select__trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ui-select__trigger:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.ui-select--sm .ui-select__trigger {
+  min-height: var(--control-h-sm, 32px);
+  font-size: var(--t-sm, 13px);
+}
+
+.ui-select--disabled .ui-select__trigger {
+  background: var(--surface-0);
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.ui-select--invalid .ui-select__trigger {
+  border-color: var(--danger);
+}
+
+.ui-select__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-select__value--muted {
+  color: var(--text-3);
+}
+
+.ui-select__chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+
+.ui-select__list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1, 4px);
+  overflow: auto;
+  width: 100%;
+  max-height: var(--select-max-h, 264px);
+  margin: 0;
+  padding: var(--s-2, 8px);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md, 12px);
+  background: var(--surface-3);
+  box-shadow: var(--shadow-2);
+  list-style: none;
+}
+
+.ui-select__option {
+  padding: var(--s-2, 8px) var(--s-3, 12px);
+  border-radius: var(--r-sm, 8px);
+  color: var(--text-1);
+  font-size: var(--t-md, 14px);
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.ui-select__option--active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text-1);
+}
+
+.ui-select__option--selected {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ui-select__option--disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.ui-select__empty {
+  padding: var(--s-3, 12px);
+  color: var(--text-3);
+  font-size: var(--t-sm, 13px);
+  text-align: center;
+}
+
+.ui-select__error {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1, 4px);
+  color: var(--danger);
+  font-size: var(--t-sm, 13px);
+  line-height: 1.5;
+}
+
+.ui-select__code {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs, 12px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-select__trigger {
+    transition: none;
+  }
+}
