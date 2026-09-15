@@ -18,6 +18,7 @@
 - 9. 风险登记表与冲突面
 - 10. 不做清单
 - 11. 验收清单
+- 12. 附：被本计划取代或限定的旧计划
 
 ---
 
@@ -36,7 +37,7 @@
 - 三页"不知道干嘛的"根因：它们是 2026-09-07 升级计划里三个阶段的最小接口占位，被镀层后留在了侧栏。
 - 视觉"廉价"根因：文案被烙进位图，`theme.css` 里三轮 `.reference-login` 覆盖与位图对抗，最终把 DOM 文案整段 `display:none`。
 
-**几阶段**：F1→F6（工作区修复）与 V1→V6（视觉与工程）两条线，合成 12 个可验收步骤，见 §6。
+**几阶段**：F1→F7（工作区修复）与 V1→V6（视觉与工程）两条线，合成 **14 个可验收步骤**，见 §6.2。逐文件勾选版：`handoff/2026-09-15-frontend-work-checklist.md`。
 
 **后端影响**：F1–F5a、F6、V1–V6 **全部零后端**。需要后端配合的一律只登记不实现，编号 R1–R6 / B-1…B-9 / C-1…C-3。
 
@@ -349,7 +350,7 @@ main.login
 | 顺序 | 编号 | 需求 | 阻塞的前端项 | 规模 |
 |---|---|---|---|---|
 | 1 | R1 / B-9 | 员工级告警读取（`GET /alerts` 等现走 `_require_alert_management()`） | F5b、总览真实化 | 迁移 + 两个路由 + 写入点；**唯一改变权限语义的项，优先评审** |
-| 2 | R4 / B-3 | catalog 补 `size`、`parse_status`、`chunk_count`、`uploader` | 真实上传进度 | 增列 + `record_document_version` |
+| 2 | ~~R4 / B-3~~ **已落地** | catalog 已回 `owner_id`、`size_bytes`、`parse_status`、`ownership`（`app/documents/catalog.py::public_document_row`）+ `migrations/0007_document_chunk_count.sql` | — | 剩余在前端：F4 用它判属主、F5a 用真实字节数 |
 | 3 | R6 / B-5 | `GET /metrics` 只读指标目录 | 洞察去手填阈值后的口径来源 | 一个只读路由（表已在 migrations 建好） |
 | 4 | R2 / B-1 | `GET /artifacts` 分页列表 | 「交成果」视图 | 查询方法 + 路由 |
 | 5 | R3 / B-2 | `/ask` 的 `sources` 事件 | 对话引用条 | 一个加性事件 |
@@ -357,7 +358,7 @@ main.login
 | 7 | B-6 | 日报路由 | 无 | 需先拆分推送副作用 |
 | 8 | B-7 | 趋势最小聚合接口 | 总览趋势线 | 未落地前**不画趋势线** |
 | 9 | R8 / B-10 | 数据集删除 API | 误传的数据集永久留存（其首轮验收自建 3 个 `browser-e2e-*` 数据集就删不掉） | 一个 DELETE 路由 + 级联清理 |
-| 10 | R9 / B-11 | `/chart`、`/export` 以 HTTP 200 返回业务失败 | F2 的 `response.ok` 抓不到假成功 | 改状态码与 `ErrorEnvelope`，**属契约变更** |
+| 10 | ~~R9 / B-11~~ **已落地** | `3e35481`：`/chart`、`/export` 不再以 200 返回业务失败，改真状态码 | — | 剩余工作转入前端：F2 的 `response.ok` 自此有效，F7 字典收录其稳定码 |
 
 ### 6.4 SSE 双轨（唯一必须跨端签字的点）
 
@@ -430,6 +431,22 @@ main.login
 **未调用**：`/health*`、`/alerts*`、`/sessions*`、`/artifacts*`、`/users*`、`/apps`。
 即 F1 / F5 / F6 与 R1 / R2 全部属于**「后端已有、前端未接」**，不能用作前端停工的正当理由。
 
+
+**⑦ 并入后端 r8 收口（2026-09-15 二轮，逐项复核）**
+
+后端线 r8 交回 5 个修复（`c21c342` 上传作用域按上传者定 / `70792ce` 统计摘要不假 `N/A` / `84af113` 拒绝真的拒绝 / `3e35481` 真状态码 / `9c89ee4` 修订日志 §13）。对本计划的净影响：
+
+| 类别 | 内容 | 落到哪 |
+|---|---|---|
+| 改判 | R9 / B-11 **已落地**（§6.3 第 10 行）；R-10 **关闭**（后端 §13.5 已采纳 P1-4 / P2-2 归属与三页冻结） | §6.3、§9 |
+| 新缺陷 D-1 | **属主删不掉自己的文档**：`app/common/policy.py` 的 `_OWNER_CONTROLLED_ACTIONS` 含 `ACTION_DELETE`、`DELETE /documents/{filename}` 按属主授权；而 `DocPanel.vue` 的删除按钮 / 批量条 / 勾选框 / 页脚全部 `v-if="isAdmin"`，`isAdmin` 只等于 `userRole` 为 `admin` → 员工误传文件在界面上无入口。**修法零后端**：catalog 每行已带 `owner_id` 与 `ownership` | **F4** |
+| 新缺陷 D-2 | **`detail` 三种形状并存**：字符串稳定码（`data.py` / `documents.py` / `auth.py`）／`ErrorEnvelope` 对象（`observability.py`、`chat.py::_document_index_error`）／FastAPI 422 数组。前端原样插值 → 上传解析失败弹 `[object Object]` | **F7** |
+| 新契约 D-3 | **「停止」≠ 取消**：`POST /ask/{session_id}/cancel` 无在飞运行时回 `cancelled: false`，且不清 Graph 的 HITL 挂起（后端 run12 实测）。前端不得把 200 当「已停止」，取消按钮需二次确认并如实读 `cancelled` | **F2**、§6.4 |
+| 新事实 D-4 | `ErrorEnvelope.code` 是**封闭 16 码枚举**（`app/agents/contracts.py`）→ F7 字典按它建，不许自己发明码名 | **F7** |
+
+不进本计划的（后端线自己的账）：PG `documents` 表成只插不删的幽灵表（5 行全指向已删文件、`document_versions` = 0、全仓无读点）；数据集 / artifact 删除 API（R8 / B-10，残留已升到 5 数据集 + 4 artifact + 33 孤儿会话）；`0008` 缺列草稿。**前端不做「本地假装删除」。**
+
+同时确认一件省事的**不是**后端需求：`documents/catalog` 响应已含 `owner_id` / `ownership` / `size_bytes` / `parse_status`（`public_document_row`），故 R4 / B-3 一并按已落地处理，D-1 与 F5a 都不必再等后端。
 ---
 
 ## 7. 资产与构建卫生
@@ -453,6 +470,7 @@ main.login
 
 五档固定视口：`1440×900`、`1920×1080`、`3440×1440`、`1280×720`、`768×1024`。
 
+- **前置（r8 新增）**：验收账号必须**带部门**。默认 `admin` 无部门会被 `app/rag/filters.py` 硬拒（403 `authorization_unavailable`），用它做端到端会把后端语义问题误判成前端缺陷。见 §9 R-11。
 - **不起真实服务器**：用 `context.route("**/*", …)` 从磁盘 fulfill，MIME 覆盖 html/js/css/png/svg/webp/woff2。
 - **必须 abort 掉 `fonts.googleapis.com` / `fonts.gstatic.com` / CDN**，模拟客户内网；否则"字体缺失"这类缺陷会被测不出来。
 - `/api/*` fulfill 401 JSON，用于验证 F3 的鉴权分支。
@@ -489,7 +507,8 @@ main.login
 | R-7 | 文档中的行号过期 | 误导实施 | 后端引用一律符号名/路由/事件名；前端行号视为上午快照 |
 | R-8 | 两条线对 P1-5 开不同药方（后端主张签名 URL / cookie，前端主张带 Bearer 取 blob） | 后端可能顺手放宽鉴权面，扩大爆炸半径 | 已回论据（`handoff/2026-09-15-backend-followup-requests.md` §5）；**动鉴权前须等前端确认** |
 | R-9 | 契约文档描述了未在 `app/main.py` 挂载的端点（`/apps`） | 前端接了直接 404 | 接入前先探挂载；见 §6.6 ① |
-| R-10 | 缺陷归属被写错（P1-4 曾被记成 health 渲染问题） | 前端白跑一趟不相干的接口 | 归属以 §6.5 / §6.6 复核结论为准；后端 r8 §13.5 需同步订正 |
+| R-10 | ~~缺陷归属被写错~~ **已关闭**（r8 §13.5 已采纳 P1-4 / P2-2 归属与三页冻结） | — | 归属继续以 §6.5 / §6.6 为准 |
+| R-11 | 开箱 `admin` **无部门 → 问不了知识库**：`app/common/rbac.py`（空部门 = 全部门可见）与 `app/rag/filters.py`（无部门 = 硬拒）两套相反语义并存 | **演示级 P0**：老板用默认账号现场提问即失败，且端到端验收会误判 | 验收一律用带部门账号（§8.1 前置）；`authorization_unavailable` 进 F7 字典；等后端在 (e1) 强制 `AUTH_DEPARTMENT` / (e2) `administrator_scope` 间拍板 |
 
 **正被其他对话改动的后端文件**（引用时只用符号名 / 路由 / 事件名）：`app/api/v1/chat.py`、`app/api/v1/alerts.py`、`app/api/v1/artifacts.py`、`app/documents/catalog.py`、`app/common/auth.py`、`app/common/audit.py`、`app/main.py`、`app/storage/persistence.py`、`app/knowledge_graph/service.py`。
 
@@ -499,6 +518,7 @@ main.login
 2. 「办待办」是否在本版预留入口 → 默认不预留（C-1 未建模）。
 3. 登录页是否保留三张装饰数据卡 → 默认保留（已定"看看就行"）。
 4. 管理视图对谁的可见性 → 默认等 C-3 前全员隐藏。
+5. 「停止」是否等于拒绝挂起动作（D-3，后端语义）→ 默认按钮改「中断生成」+ 二次确认 + 如实读 `cancelled`。
 
 ---
 

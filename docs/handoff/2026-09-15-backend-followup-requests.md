@@ -20,11 +20,13 @@
 | R5 / B-8 | 预审自动取标准 | `standard_source` 全仓 0 命中；`department` 仍由前端传入并被服务端接受 | `ApprovalRequest` 增 `standard_source: auto`，复用 `_approval_worker_node` 的检索与抽取路径；**服务端忽略或拒绝前端传的 `department`**（现可冒任意部门出结论） | 「报销自查」可信度与权限边界 |
 | B-6 | 日报路由 | `daily_report()` 仍是函数（`app/api/v1/alerts.py`），该文件路由只有 rules / alerts / check | 先拆推送副作用，再挂只读路由 | 无（可延后） |
 | B-7 | 趋势聚合 | `/dashboard` 无时间序列输入，前端才被迫手写乘数线 | 一个最小聚合端点 | 总览趋势线。未落地前前端**不画趋势线**，画空态 |
+| **R8 / B-10** | 数据集 / artifact 删除 API | 全仓 `router.delete` 只有 `alerts/rules/{id}`、`users/{id}`、`sessions/{id}`、`documents/{filename}`——**没有** `data-files` 与 `artifacts` 的删除。r8 两轮验收累积残留：5 个 `browser-e2e-*.csv` 数据集 + 4 条 artifact + 33 孤儿会话，另有 PG `documents` 表 5 行指向已删文件而 `document_versions` = 0 | 两个 DELETE 路由 + 级联清理（含 PG 行与磁盘文件）；顺带把只插不删的 `documents` 表接进同一条清理路径 | 「交成果」视图、误传数据清理 |
 
 ## 2. 已完成、无需再动
 
 - **R4 / B-3** catalog 解析状态：`parse_status` 全仓 31 处命中 + `migrations/0007_document_chunk_count.sql`。
 - **R6 / B-5** 指标目录：`GET /semantics/metrics` 已存在且表驱动。
+- **R9 / B-11** `/chart`、`/export` 真状态码：r8 `3e35481` 已落地（400 / 403 / 409 / 422 / 500），前端 F2 的 `response.ok` 检查自此有效，稳定码由 F7 字典接管。
 - **S1–S7** 全部合并（`docs/handoff/2026-09-14-consolidated-fix-plan.md`）。
 
 ## 3. 明确不要求（防范围蔓延）
@@ -63,3 +65,18 @@ R1 落地前，前端不会用假数据填充员工视图，会显示「暂无�
 
 **顺带一条同源发现**：全局 axios 拦截器现在有**两份**（`DocPanel.vue:7` 与 `frontend/src/lib/api.js`）。
 这就是审计里「4 套鉴权」中已被量化的两套，F3 会收敛为 1 处，**不需要后端配合**。
+
+
+---
+
+## 6. r8 收口后新提出的两条语义问题（要拍板，不要默默选一个）
+
+| # | 问题 | 前端已核实的事实 | 前端立场 |
+|---|---|---|---|
+| 1 | **「停止」是否等于拒绝挂起动作** | `POST /ask/{session_id}/cancel` 返回 `{cancelled, session_id}`：无在飞运行时 `cancelled` 为 `false`，且 Graph 的 HITL 挂起**不清**（你们 run12 实测：按停止后再批准，被停止的动作照样执行） | 前端不需要后端先改就能诚实：按钮改文案「中断生成」+ 二次确认 + 按 `cancelled` 如实播报。但**语义本身请你们定**：若「停止 = 拒绝」，需要 cancel 路径真的把挂起动作判为拒绝 |
+| 2 | **开箱 admin 问不了知识库** | `app/common/rbac.py` 空部门 = 全部门可见，`app/rag/filters.py` 无部门 = 硬拒 `RetrievalScopeError` → 403 `authorization_unavailable`。默认 `admin` 无部门，因此**登录后第一句话就失败**，也不能上传数据集 / 出图 | 前端已把它记成演示级 P0（计划 §9 R-11），验收一律改用带部门账号。但这是开箱体验问题，请在 (e1) 强制 `AUTH_DEPARTMENT` 与 (e2) admin 走 `administrator_scope` 之间挑一个；定了我才好在「问一句」空态里写正确的提示语 |
+
+## 7. 一条不要求你们改的反馈
+
+- 错误响应体 `detail` 目前有**三种形状**并存：字符串稳定码（`data.py` / `documents.py` / `auth.py`）、`ErrorEnvelope` 对象（`observability.py`、`chat.py::_document_index_error`）、FastAPI 422 数组。前端 F7 会自己归一化，**不占用你们排期**；只是若将来统一到 envelope，请把它写进 `docs/api/contract-v1.md` 而不是靠默契。
+- 我们**不需要**后端为 D-1（属主删不掉文档）做任何事：`documents/catalog` 已回 `owner_id` 与 `ownership`，判据齐了，改的是前端按钮的门控。
