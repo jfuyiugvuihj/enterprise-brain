@@ -172,6 +172,30 @@ def _document_upload_client(monkeypatch, tmp_path):
     return TestClient(probe), retriever
 
 
+def _upload_client_as(monkeypatch, tmp_path, username: str, department: str):
+    """Serve the document router with one authenticated subject, no middleware."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.v1 import chat
+    from app.common.identity import Principal
+
+    client, retriever = _document_upload_client(monkeypatch, tmp_path)
+    principal = Principal.from_user(
+        {"id": username, "username": username, "role": "staff", "department": department}
+    )
+
+    probe = FastAPI()
+
+    @probe.middleware("http")
+    async def _authenticate(request, call_next):
+        request.state.principal = principal
+        return await call_next(request)
+
+    probe.include_router(chat.router, prefix="/api/v1")
+    return TestClient(probe), retriever
+
+
 def test_upload_route_rejects_a_spreadsheet_before_writing_files(tmp_path, monkeypatch):
     import asyncio
     import io
@@ -236,6 +260,36 @@ def test_http_upload_ingests_a_markdown_document(tmp_path, monkeypatch):
     assert retriever.indexed["content"] == body
     assert retriever.indexed["classification"] == 2
     assert (tmp_path / payload["stored_name"]).read_text(encoding="utf-8") == body
+
+
+def test_upload_inherits_the_uploader_department_and_not_the_form_one(
+    tmp_path, monkeypatch
+):
+    client, retriever = _upload_client_as(monkeypatch, tmp_path, "warehouse-clerk", "仓储部")
+
+    response = client.post(
+        "/api/v1/upload",
+        files={"file": ("stock.txt", "库存周转 32 天。".encode("utf-8"), "text/plain")},
+        data={"classification": "1", "department": "财务部"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert retriever.indexed["department"] == "仓储部"
+    assert response.json()["department"] == "仓储部"
+
+
+def test_an_upload_with_no_subject_stays_unscoped(tmp_path, monkeypatch):
+    client, retriever = _document_upload_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/v1/upload",
+        files={"file": ("orphan.txt", "无主文档".encode("utf-8"), "text/plain")},
+        data={"classification": "1", "department": "随便填"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["department"] == ""
+    assert retriever.indexed["department"] is None
 
 
 def test_http_upload_rejects_a_spreadsheet_with_a_stable_error_code(tmp_path, monkeypatch):

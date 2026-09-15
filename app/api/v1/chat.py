@@ -1542,9 +1542,16 @@ async def upload_document(file: UploadFile = File(...),
     ``request`` stays optional so the in-process callers that predate the principal
     remain valid. Without a request there is no subject, and the version is recorded
     as an unowned (legacy) row rather than owned by a guessed user.
+
+    The document scope is decided here rather than accepted from the form: retrieval
+    matches a document against the departments of the caller asking, so a document that
+    lands without one can never be found by anyone, and a department chosen by the
+    client would let a caller publish into somebody else\u2019s results. The uploader''s own
+    department is what the datasets and artifacts registries already use.
     """
     principal = principal_from_request(request) if request is not None else None
     owner_id = str(getattr(principal, "user_id", "") or "") or None
+    department = str(getattr(principal, "department", "") or "")
     header = await file.read(8192)
     try:
         inspection = inspect_upload_header(file.filename, header)
@@ -1673,6 +1680,7 @@ async def upload_document(file: UploadFile = File(...),
             "size_bytes": version_meta.get("size_bytes"),
             "parse_status": version_meta.get("parse_status", "ready"),
             "owner_id": owner_id,
+            "department": department,
             "chunk_count": index_publication.get("chunk_count", 0),
             "index_publication": index_publication,
             "status": "ok",
