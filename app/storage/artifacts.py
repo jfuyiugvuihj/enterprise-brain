@@ -234,6 +234,38 @@ class ArtifactRegistry:
             return None
         return record
 
+    def list_active(
+        self,
+        *,
+        artifact_type: str | None = None,
+        owner_id: str | None = None,
+    ) -> list[ArtifactRecord]:
+        """Every record that could actually be delivered right now, newest first.
+
+        ``get`` answers for any id and ``get_active`` for one id; a list needs the same
+        two liveliness checks ``get_active`` already makes - the record has not been
+        retired, has not expired, and its bytes are still on disk - because a catalogue
+        that advertises an artifact which 404s on open has described a state this process
+        did not produce. Deciding *who* may see a record stays out of here on purpose:
+        that is the policy's job, and a second copy of the access rule in the registry is
+        how two chains start disagreeing.
+        """
+        with self._lock:
+            candidates = [
+                record
+                for record in self._records.values()
+                if record.status == "active"
+                and (artifact_type is None or record.artifact_type == artifact_type)
+                and (owner_id is None or record.owner_id == str(owner_id))
+            ]
+        deliverable = [
+            record
+            for record in candidates
+            if record.is_active()
+            and self._contained_path(record.storage_path, must_exist=False).is_file()
+        ]
+        return sorted(deliverable, key=lambda item: (item.created_at, item.artifact_id), reverse=True)
+
     def soft_delete(self, artifact_id: str) -> bool:
         with self._lock:
             record = self._records.get(artifact_id)

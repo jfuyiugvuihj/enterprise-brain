@@ -69,3 +69,69 @@ async def download_artifact(artifact_id: str, request: Request):
         content_disposition_type="attachment",
         headers=dict(_NO_STORE_HEADERS),
     )
+
+
+# The collection route is declared after the two single-artifact routes so the path
+# grammar of ``/artifacts/{artifact_id}/...`` keeps precedence over the bare list.
+DEFAULT_LIST_LIMIT = 20
+MAX_LIST_LIMIT = 100
+
+
+def _artifact_row(record) -> dict:
+    """One artifact as the list reports it: delivery URLs plus the scope it belongs to."""
+    row = record.public_payload()
+    row.update(
+        {
+            "filename": record.filename,
+            "owner_id": record.owner_id,
+            "department_ids": list(record.department_ids),
+            "classification": record.classification,
+            "visibility": record.visibility,
+            "created_at": record.created_at,
+            "source_version_id": record.source_version_id,
+        }
+    )
+    return row
+
+
+@router.get("")
+async def list_artifacts(
+    request: Request,
+    artifact_type: str | None = None,
+    limit: int = DEFAULT_LIST_LIMIT,
+    offset: int = 0,
+):
+    """Page through the artifacts this caller may open, newest first (R2).
+
+    Membership is decided by ``authorization_decision`` with ``ACTION_VIEW`` - the very
+    call ``_authorized_artifact`` makes before it serves a body - so an artifact is listed
+    exactly when it can be fetched, and no row in this list is a promise the content route
+    would break. Nothing about the access rule is invented here, which is the point: a
+    listing with its own narrower or wider judgment is how a second permission chain
+    starts. Anonymous callers are refused the same way the delivery routes refuse them.
+    """
+    principal = principal_from_request(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="authentication_required")
+    applied_limit = max(1, min(int(limit), MAX_LIST_LIMIT))
+    applied_offset = max(0, int(offset))
+    visible = [
+        record
+        for record in artifact_storage.artifact_registry.list_active(artifact_type=artifact_type)
+        if authorization_decision(
+            principal,
+            record.resource_scope,
+            action=ACTION_VIEW,
+            require_resource_scope=True,
+        ).allowed
+    ]
+    page = visible[applied_offset : applied_offset + applied_limit]
+    return {
+        "artifacts": [_artifact_row(record) for record in page],
+        "total": len(visible),
+        "returned": len(page),
+        "limit": applied_limit,
+        "offset": applied_offset,
+        "has_more": applied_offset + len(page) < len(visible),
+        "artifact_type": artifact_type,
+    }
