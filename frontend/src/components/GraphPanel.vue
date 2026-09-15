@@ -1,7 +1,8 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { api } from '../lib/api'
-import { errorDetail } from '../lib/http'
+import { errorDetail, isPermissionDenied } from '../lib/http'
+import { UiEmptyState, UiErrorState } from './ui'
 
 // 表单不再预填示例关系：写死的「差旅费 / 属于 / 费用科目 / 差旅费报销制度.pdf」
 // 会和真数据混在同一屏里，老板分不出哪条是库里来的。
@@ -15,6 +16,9 @@ const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
 const loadError = ref('')
+// 无权限与「服务坏了 / 空列表」是三种不同的脸（R1c）：判据只认稳定码 permission_denied。
+const loadDenied = ref(false)
+const saveDenied = ref(false)
 
 // 关系列表的唯一来源是 GET /api/v1/knowledge-graph/relations；后端按 Principal
 // 收窄部门与密级（app/api/v1/intelligence.py:133）。取不到就摆失败态，
@@ -22,6 +26,7 @@ const loadError = ref('')
 async function loadRelations() {
   loading.value = true
   loadError.value = ''
+  loadDenied.value = false
   try {
     const response = await api.get('/knowledge-graph/relations')
     const list = response.data?.relations
@@ -32,7 +37,11 @@ async function loadRelations() {
     }
     relations.value = list
   } catch (err) {
-    loadError.value = errorDetail(err, '关系列表加载失败')
+    // 失败就是失败，绝不在这里回落到任何常量（V7-1 的不变量）。
+    loadDenied.value = isPermissionDenied(err)
+    loadError.value = loadDenied.value
+      ? '当前账号没有查看知识图谱的权限，请联系管理员开通。'
+      : errorDetail(err, '关系列表加载失败')
     relations.value = []
   } finally {
     loading.value = false
@@ -42,12 +51,16 @@ async function loadRelations() {
 async function saveRelation() {
   saving.value = true
   error.value = ''
+  saveDenied.value = false
   try {
     await api.post('/knowledge-graph/relations', form.value)
     form.value = emptyForm()
     await loadRelations()
   } catch (err) {
-    error.value = errorDetail(err, '关系保存失败')
+    saveDenied.value = isPermissionDenied(err)
+    error.value = saveDenied.value
+      ? '当前账号没有登记关系的权限，请联系管理员开通。'
+      : errorDetail(err, '关系保存失败')
   } finally {
     saving.value = false
   }
@@ -90,11 +103,20 @@ onMounted(loadRelations)
             {{ loading ? '加载中' : '刷新' }}
           </button>
         </div>
-        <div v-if="loadError" class="panel-state error" data-testid="graph-load-error">
-          {{ loadError }}
-          <button class="ghost-btn" type="button" @click="loadRelations">重新加载</button>
-        </div>
-        <div v-else-if="!relations.length" class="empty-state" data-testid="graph-empty">知识库里还没有已登记的关系</div>
+        <UiErrorState
+          v-if="loadError"
+          :title="loadDenied ? '没有权限查看关系列表' : '关系列表没加载出来'"
+          :description="loadError"
+          :retryable="!loadDenied"
+          retry-text="重新加载"
+          :busy="loading"
+          @retry="loadRelations"
+        />
+        <UiEmptyState
+          v-else-if="!relations.length"
+          title="知识库里还没有已登记的关系"
+          description="关系是从已登记的制度与指标里长出来的，先有一条就能看到连线。"
+        />
         <div v-else class="relation-list">
           <article v-for="item in relations" :key="item.relation_id" class="relation-item">
             <div class="relation-main">
