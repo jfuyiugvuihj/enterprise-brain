@@ -238,11 +238,18 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
     if any(kw in q_lower for kw in ["统计", "汇总", "平均", "合计", "总计", "概括", "概览"]):
         if num_cols:
             desc = df[num_cols].describe().to_dict()
+            # describe() has no sum row, so 合计 printed N/A for a frame whose upload
+            # profile had already reported that same total correctly.
+            totals = {column: float(df[column].sum()) for column in num_cols}
             lines = [f"📈 数值统计 ({len(num_cols)}个指标):"]
             for stat in ["mean", "min", "max", "sum"]:
                 stat_name = {"mean": "均值", "min": "最小", "max": "最大", "sum": "合计"}
-                stat_line = ", ".join(f"{c}: {desc[c][stat]:.1f}" if stat in desc.get(c, {}) else f"{c}: N/A" for c in num_cols[:5])
-                lines.append(f"  {stat_name[stat]}: {stat_line}")
+                parts = []
+                for column in num_cols[:5]:
+                    value = totals[column] if stat == "sum" else desc.get(column, {}).get(stat)
+                    usable = isinstance(value, (int, float)) and value == value
+                    parts.append(f"{column}: {value:.1f}" if usable else f"{column}: N/A")
+                lines.append(f"  {stat_name[stat]}: " + ", ".join(parts))
             results.append("\n".join(lines))
 
     # "对比/比较" → groupby
