@@ -27,6 +27,87 @@
   --radius-sm: 9px;
   --font-body: Manrope, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-mono: "DM Mono", "Cascadia Code", Consolas, monospace;
+
+  /* =====================================================================
+     语义 token 层（视觉文档 §5.1 原名 · 落地顺序表 V1/V2 的地基）
+     名称是契约：components/ui/** 的 9 个原语按这些名字取色，一个都不许改。
+     上面 31 个旧名先留着——3394 行历史样式还在引用它们，收敛属于 V4 删死代码那一步。
+     ===================================================================== */
+
+  /* 表面：只用这 4 档，靠色差分层，不靠边框线（§5.1） */
+  --surface-0: #05080f;   /* 页面底 */
+  --surface-1: #0a1119;   /* 面板 */
+  --surface-2: #111b26;   /* 卡片：正文区一律纯色，不许渐变（§5.3） */
+  --surface-3: #18242f;   /* 悬浮 / 下拉 */
+
+  /* 文本：3 档正文 + 1 档反白。text-3 已按 §5.2 从 旧名 ink-faint 提到 #7c8896 以过 AA */
+  --text-1: #e8eef6;
+  --text-2: #a9b6c6;
+  --text-3: #7c8896;
+  --text-invert: #05080f;
+
+  /* 描边：2 档，弱到几乎看不见，只用于分隔不用于装饰（§5.1） */
+  --border-1: rgba(232, 238, 246, .07);
+  --border-2: rgba(232, 238, 246, .14);
+
+  /*
+     单一强调色。这里与 §5.1 的示例值不同，是有意为之：
+     §5.1 写的是 #2f9bff，但硬裁定（2026-09-15 开工提示 §1）、工单 V1 完成定义 L165、
+     以及计划 §4.1 色板三处都钉死 #2ea8e6，且参考实现 docs/reference/login-v2.html:34 也是它。
+     取"更新的、且被点名为准出"的那组，强调色 = #2ea8e6。
+     accent-hover 用计划 §4.1 已批的提亮档（旧名 accent-hi）；
+     accent-press 不新造色相，直接由强调色与 surface-0 混合派生（等效 #278bbf）。
+  */
+  --accent: #2ea8e6;
+  --accent-hover: #57c4f5;
+  --accent-press: color-mix(in srgb, var(--accent) 82%, var(--surface-0));
+
+  /* 语义色：只表达状态，禁止当装饰描边（§5.3） */
+  --success: #35b47f;
+  --warning: #cf9a35;
+  --danger: #e0596b;
+
+  /* 尺度：8pt 栅格（§5.1；计划 §4.2 的 96 档暂不引入，等真有用到再加） */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+  --t-xs: 12px;
+  --t-sm: 13px;
+  --t-md: 14px;
+  --t-lg: 16px;
+  --t-xl: 20px;
+  --t-2xl: 28px;
+
+  /* 阴影：3 档（卡片 / 浮层 / 弹层） */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, .45);
+  --shadow-3: 0 20px 50px rgba(0, 0, 0, .5);
+
+  /* 动效：只用于状态反馈（§4.5 禁用清单）；曲线取 §5.1 */
+  --motion-fast: 120ms cubic-bezier(.2, .8, .28, 1);
+  --motion-slow: 200ms cubic-bezier(.2, .8, .28, 1);
+
+  /* 控件尺寸：值等于 ui 原语里各自 fallback 的字面值，落地后 fallback 永不生效 */
+  --control-h: 40px;
+  --control-h-sm: 32px;
+  --dialog-w: 560px;
+  --toast-w: 380px;
+  --upload-h: 104px;
+  --select-max-h: 264px;
+
+  /* 层级：收掉 ui 里现在裸写的 30 / 60 / 70（UiSelect / UiDialog / UiToastHost） */
+  --z-dropdown: 30;
+  --z-dialog: 60;
+  --z-toast: 70;
 }
 
 *,
