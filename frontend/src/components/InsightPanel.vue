@@ -1,12 +1,11 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
+import { demoRows } from '../devFixtures/insights-demo'
 
-const rows = ref([
-  { department: '市场部', metric: '差旅费', current: 12600, previous: 7200, threshold: 10000 },
-  { department: '财务部', metric: '报销金额', current: 9800, previous: 6100, threshold: 9000 },
-  { department: '运营部', metric: '物料费', current: 4200, previous: 4600, threshold: 5000 },
-])
+// 表格里每行都被 v-model 直接改写，所以逐行浅拷贝：
+// 共享模块级数组会让第二次挂载带着上一次被删改过的数据。
+const rows = ref(demoRows.map(row => ({ ...row })))
 const loading = ref(false)
 const insights = ref([])
 const error = ref('')

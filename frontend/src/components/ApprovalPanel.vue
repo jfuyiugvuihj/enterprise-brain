@@ -1,14 +1,10 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { api } from '../lib/api'
+import { demoForm } from '../devFixtures/approval-demo'
 
-const form = ref({
-  amount: 680,
-  standard: 500,
-  department: '市场部',
-  expense_type: '住宿费',
-  evidence: ['差旅费报销制度.pdf'],
-})
+// 同理，表单会改写这些值；evidence 虽整条替换，仍拷一份，避免面板把模块常量改掉。
+const form = ref({ ...demoForm, evidence: [...demoForm.evidence] })
 const result = ref(null)
 const loading = ref(false)
 const error = ref('')

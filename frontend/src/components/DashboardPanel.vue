@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
+import { demoInsights, demoRows, demoTrendShape } from '../devFixtures/dashboard-demo'
 
 const emit = defineEmits(['goto'])
 const loading = ref(true)
@@ -10,15 +11,6 @@ const metricQuery = ref('住宿费标准')
 const metricContext = ref(null)
 const documents = ref([])
 const dataFiles = ref([])
-
-const demoRows = [
-  { department: '市场部', metric: '差旅费', value: 18600 },
-  { department: '市场部', metric: '差旅费', value: 9200 },
-  { department: '财务部', metric: '报销金额', value: 14200 },
-  { department: '运营部', metric: '差旅费', value: 7600 },
-  { department: '人事部', metric: '培训费', value: 4200 },
-  { department: '行政部', metric: '住宿费', value: 5400 },
-]
 
 const quickActions = [
   { id: 'docs', icon: 'M12 4v11M7 9l5-5 5 5M5 20h14', label: '上传文档' },
@@ -80,25 +72,14 @@ const kpis = computed(() => [
 const trendLines = computed(() => {
   const base = Math.max(totalAmount.value, 1)
   const insightBase = Math.max(latestInsights.value.length * 100, 1)
+  const scales = { total: base, insights: insightBase }
   return {
-    labels: ['一', '二', '三', '四', '五', '六', '日'],
-    series: [
-      {
-        label: '文档',
-        color: '#1bcfe6',
-        values: [0.30, 0.40, 0.52, 0.46, 0.65, 0.72, 0.88].map(value => Math.round(base * value)),
-      },
-      {
-        label: '数据',
-        color: '#766cff',
-        values: [0.15, 0.25, 0.38, 0.30, 0.56, 0.66, 0.76].map(value => Math.round(base * value)),
-      },
-      {
-        label: '洞察',
-        color: '#45d7a2',
-        values: [0.22, 0.28, 0.36, 0.34, 0.48, 0.63, 0.70].map(value => Math.round(insightBase * value)),
-      },
-    ],
+    labels: demoTrendShape.labels,
+    series: demoTrendShape.series.map(series => ({
+      label: series.label,
+      color: series.color,
+      values: series.weights.map(weight => Math.round(scales[series.scale] * weight)),
+    })),
   }
 })
 
@@ -137,11 +118,7 @@ async function loadDashboard() {
     const [dashboardResponse, docsResponse, dataResponse] = await Promise.all([
       api.post('/dashboard', {
         rows: demoRows,
-        insights: [
-          { title: '市场部差旅费异常', severity: 'warning', department: '市场部', metric: '差旅费' },
-          { title: '财务部报销波动', severity: 'critical', department: '财务部', metric: '报销金额' },
-          { title: '行政部住宿费上升', severity: 'warning', department: '行政部', metric: '住宿费' },
-        ],
+        insights: demoInsights,
       }),
       api.get('/documents/catalog'),
       api.get('/data-files'),
