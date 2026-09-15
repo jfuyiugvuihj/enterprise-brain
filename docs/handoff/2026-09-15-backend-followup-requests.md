@@ -109,7 +109,7 @@ R1 落地前，前端不会用假数据填充员工视图，会显示「暂无�
 | 2 | `Principal.from_user` 会把 0 级静默抬成 3 级 | `int(user.get("clearance") or clearance_for(role))`——admin 若被配成 `clearance=0/NULL`，`or` 判假 → 落到 `clearance_for("admin")=3`。即"给管理员降级"在配置层无效，且它**不是 e2 引入的**（e2 之后更要紧，因为管理员现在跨密级全库可读） | 后端线：改成 `is not None` 判定 + 一条回归用例 |
 | 3 | G3 真机那半缺证据 | 代码与测试都在，但运行中的后端容器是 r8 那版镜像，"开箱 admin 问得出答案"无法在当前栈上证明。重建 `enterprise-brain-backend-1`（上轮 build 因缓存被 GC 花过 ~28 分钟）属于改变环境的重操作，我**没擅自做** | 用户点头 |
 
-### 6.4 仍需你拍板：「停止 = 拒绝挂起动作？」
+### 6.4 ~~仍需你拍板：「停止 = 拒绝挂起动作？」~~（2026-09-15 已裁定：**甲**，见 §9）
 
 前端不阻塞：取消按钮已按「如实读 `cancelled` + 二次确认」排进 F2。但 cancel 是否顺带把挂起的 HITL 动作判为拒绝并写审计，只有你们能定。
 
@@ -134,3 +134,31 @@ R1 落地前，前端不会用假数据填充员工视图，会显示「暂无�
 5. 全仓 `git grep` 复核：**没有任何测试断言中文原文**，所以这是一次零红口改动；但**要新增**断言每个站点各吐自己的码。
 6. 前端 `LEGACY_ALIASES` 里的 `请先登录 → authentication_required` **不许删**——它是用来对接「尚未重建镜像的旧栈」的，旧栈仍会吐中文。
 7. 真机验证仍受「重建后端镜像」那条待拍板事项约束：不重建则这条只能停在代码绿。
+
+## 9. 用户已拍板（2026-09-15 下午）：「停止」按甲裁定；同时新增跟进单 **R12**
+
+**裁定（④甲）**：`cancel` 只管流，`approve` 只管动作。契约写在 `docs/api/contract-v1.md` 新增小节
+`R11: cancellation detaches the stream, it does not stop the work`。后端**不改语义**、前端**不改代码**，两条线都不返工。
+`docs/handoff/2026-09-15-orchestration-board.md` §5 的这条待拍板项已闭合。
+
+### 9.1 我核这条时顺手查出的真缺陷（不属于任何一份报告，已实测）
+
+`/ask` 与 `/approve` 都把 agent 图跑在 executor 线程里，主循环只在排空队列时检查 `cancel_event.is_set()`；
+命中就发一个 `cancelled` 事件然后 `break` —— **工作线程照旧跑到完**，把结果写进一个再没人读的队列。
+`is_request_cancelled` 全仓只有 `app/api/v1/chat.py` 引用，`run_interrupt_stream`（`app/agents/orchestrator.py:949`）
+与任何 worker 都不看取消标记。
+
+用户可触发的形状：点「批准」之后前端会重新置 `loading = true`（`frontend/src/components/ChatPanel.vue:330`），
+停止药丸再次出现；此时按「停止」→ 界面显示已取消，而**被批准的动作仍在执行并落库**。
+
+### 9.2 跟进单 R12：让执行真正可取消（P1，建议排进 C 线批次）
+
+1. 取消标记要能被 worker 侧读到（给 `run_interrupt_stream` 传 `should_cancel` 回调或等价物），
+   在**每个 worker 边界**协作式检查，不是硬杀线程。
+2. 检查点必须落在"有副作用的动作之前"：导出、写文件、删除类动作一旦已批准，要么跑完要么显式拒绝，
+   不允许"半执行"。
+3. 事件口径要能区分「动作未执行的真取消」与「只断流的取消」，前者不落库、后者只断流；
+   落库口径变化必须同步 `docs/api/contract-v1.md` 与 `docs/current-functionality-2026-09-10.md`。
+4. 不许顺手改 `/cancel` 的响应形状：`{"cancelled": bool}` 已是事实值（那一条是本轮定的，别回退）。
+5. 测试要求：批准流中途取消 → 断言动作是否落库与第 3 条选定方向一致，
+   并断言队列里遗留的无人读取的执行结果不会被后续请求误用。

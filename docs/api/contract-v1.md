@@ -424,6 +424,40 @@ response field changed meaning, and the retrieval read path is untouched.
   legitimately be empty and every answer will come from the code fallback. The write path exists
   and is tested; invoking it is a deployment decision.
 
+### Compatibility note 2026-09-15 (R11: cancellation detaches the stream, it does not stop the work)
+
+Ruled by the coordinator after the r8 finding "pressing stop while a session is parked on HITL
+returns 200, and the parked action still executes after a later approve". Every statement below was
+re-read from the source in this revision, not taken from the report.
+
+- `POST /api/v1/ask/{session_id}/cancel` arms one streaming cancellation marker
+  (`app/api/v1/chat.py::cancel_request`). It does not read, clear or resolve the graph's parked
+  interrupt. `POST /api/v1/approve` then calls `register_request`, which installs a **fresh** event,
+  so a stale marker cannot leak into the resumed run either.
+- The parked action has exactly one resolver: `POST /api/v1/approve` with `approved` true or false.
+  A rejected action is genuinely not executed (`84af113`), and that is the behaviour clients may
+  rely on.
+- Cancellation is cooperative only in the SSE loop. Both `/ask` and `/approve` run the agent graph in
+  an executor thread and check `cancel_event.is_set()` solely while draining the queue; on a hit they
+  emit `cancelled` and `break`, while the worker thread keeps running to completion and writes into a
+  queue nobody reads any more. `is_request_cancelled` is referenced only inside `app/api/v1/chat.py` -
+  neither `run_interrupt_stream` nor any worker consults a cancellation marker. **So "stop" means
+  "detach me from this answer", not "the analysis is aborted".** A follow-up request to make execution
+  honour cancellation is recorded as R12 in `docs/handoff/2026-09-15-backend-followup-requests.md`;
+  until it lands, no client may claim that a cancelled run produced no side effects.
+- The parked state offers no stop control in the product: `ChatPanel.vue` sets `loading = false` when
+  the `hitl` event lands, and the stop pill renders under `v-if="loading"`, so the only control is the
+  card's own cancel button, which sends `approved: false`. The r8 scenario is therefore reachable by
+  calling the cancel route directly while a turn is parked, not by clicking through the UI. Note that
+  during the *resumed* stream the stop pill is visible again, and pressing it there is the case in the
+  previous bullet: the approved action finishes, the user only loses the answer text.
+
+Contract, as ruled: **cancellation governs the stream, approval governs the action.** A client that
+means "stop everything" must send `POST /api/v1/approve` with `approved: false` for the parked turn,
+and may additionally call the cancel route to tear down an in-flight stream. Making cancel implicitly
+reject a parked action was considered and rejected: it turns one mistap on a stop button into the loss
+of an analysis that has already been running, and the user cannot undo it.
+
 ## SSE Event Deprecation Policy (2026-09-14)
 
 Snapshot basis: `app/api/v1/chat.py` as read on 2026-09-14 13:50 (+08:00). Event names and function names are the durable identifiers in this section; line numbers are deliberately not quoted because the backend is being edited concurrently. Frontend-side evidence and impact are recorded in `docs/frontend-workspace-audit-2026-09-14.md`.

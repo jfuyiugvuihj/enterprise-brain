@@ -11,3 +11,29 @@ frontend/dist/
 deploy/.env.server
 *.zip
 /tmp/
+
+# ── 2026-09-15 仓库卫生（用户裁定：甲 —— 只加忽略规则，不改版本控制范围）──
+# 浏览器验收/探针的一次性证据，跑完就该消失，不该进库
+tests/browser_*
+documents/browser_*
+frontend/browser_*.js
+.playwright-cli/
+.superpowers/
+
+# 运行期产物：日志、生成的图表与导出报告、过渡向量库目录
+logs/*.log
+static/charts/
+static/exports/
+chroma_db/
+/browser_*
+/kb_*
+data/*.csv
+data/*.xlsx
+data/.persistence.json
+data/.session-metadata.json
+data/traces/
+documents/*
+!documents/.gitkeep
+static/*
+tmp_*.log
+/enterprise_brain
