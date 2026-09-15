@@ -30,7 +30,8 @@ export function moveActiveIndex(current, total, key, options = {}) {
   else if (key === BACKWARD[orientation]) delta = -1
 
   if (delta) {
-    let index = hasCurrent ? current : delta > 0 ? 0 : total - 1
+    // 无活动项时把起点放在边界外一格，第一下正好落在首/末项
+    let index = hasCurrent ? current : delta > 0 ? -1 : total
     for (let guard = 0; guard <= total; guard += 1) {
       index = (index + delta + total) % total
       if (usable(index)) return index

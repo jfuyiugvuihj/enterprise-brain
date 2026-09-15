@@ -86,6 +86,9 @@ function cleanText(value) {
   if (typeof value === 'string') {
     const text = value.trim()
     if (!text || text === '[object Object]' || text === '[object Array]') return ''
+    // 网关/静态页会把整段 HTML 塞进 detail，不能当成人话抛给界面
+    if (text.startsWith('<') || /<!doctype\s+html|<html/i.test(text)) return ''
+    if (/^request failed with status code \d+$/i.test(text)) return ''
     return text.slice(0, 300)
   }
   if (typeof value === 'number') return String(value)
@@ -143,7 +146,16 @@ function pickPayload(err) {
   if (typeof err === 'string' || typeof err === 'number') return { detail: err }
   if (typeof err !== 'object') return null
   if ('detail' in err && !err.response) return err
-  if ('code' in err && 'message' in err && !err.response) return { detail: err }
+  // 裸 ErrorEnvelope 对象：小写稳定码 + message，且不带 axios 的 request/response 痕迹
+  if (
+    !err.response &&
+    !err.request &&
+    !err.isAxiosError &&
+    isCodeShape(err.code) &&
+    typeof err.message === 'string'
+  ) {
+    return { detail: err }
+  }
   const data = err.response?.data ?? err.data ?? null
   if (data == null) return { detail: undefined }
   if (typeof data === 'string' || Array.isArray(data)) return { detail: data }
@@ -174,8 +186,10 @@ export function normalizeError(err) {
   const detail = payload?.detail
 
   if (Array.isArray(detail)) {
-    if (detail.length) return fromValidation(detail, status)
-  } else if (detail && typeof detail === 'object') {
+    // 空数组：等于没有错误体，退到状态码归类，不把 axios 的英文原句抛给用户
+    return detail.length ? fromValidation(detail, status) : resolveCode('', status)
+  }
+  if (detail && typeof detail === 'object') {
     return fromEnvelope(detail, status)
   } else {
     const text = cleanText(detail)

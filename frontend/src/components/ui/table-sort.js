@@ -26,9 +26,6 @@ function isEmpty(value) {
 }
 
 function compare(left, right) {
-  if (isEmpty(left) && isEmpty(right)) return 0
-  if (isEmpty(left)) return 1
-  if (isEmpty(right)) return -1
   const leftNumber = typeof left === 'number' || (typeof left === 'string' && left.trim() !== '' && Number.isFinite(Number(left)))
   const rightNumber = typeof right === 'number' || (typeof right === 'string' && right.trim() !== '' && Number.isFinite(Number(right)))
   if (leftNumber && rightNumber) return Number(left) - Number(right)
@@ -51,5 +48,14 @@ export function sortRows(rows, sort, columns = []) {
     return row?.[sort.key]
   }
   const direction = sort.order === SORT_DESC ? -1 : 1
-  return list.sort((left, right) => compare(pick(left), pick(right)) * direction)
+  return list.sort((left, right) => {
+    const valueLeft = pick(left)
+    const valueRight = pick(right)
+    // 空值固定沉底，不参与升降序翻转，否则 desc 时空行跑到最前
+    if (isEmpty(valueLeft) || isEmpty(valueRight)) {
+      if (isEmpty(valueLeft) && isEmpty(valueRight)) return 0
+      return isEmpty(valueLeft) ? 1 : -1
+    }
+    return compare(valueLeft, valueRight) * direction
+  })
 }
