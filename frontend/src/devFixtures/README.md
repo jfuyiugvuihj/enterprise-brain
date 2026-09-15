@@ -16,6 +16,7 @@
 | `dashboard-demo.js` | `DashboardPanel.vue` 的趋势卡、异常卡、`审批任务` KPI | R14：`/dashboard` 与 `/insights/detect` 目前都是客户端喂 rows 的算法端点，不查库 |
 | `insights-demo.js` | `InsightPanel.vue` → `POST /insights/detect` 的入参 | R14：同上 |
 | `approval-demo.js` | `ApprovalPanel.vue` → `POST /approval/precheck` 的入参 | R13：列挂起 HITL 待办的端点尚不存在 |
+| `login-demo.js` | `App.vue` 登录页的三张装饰数据卡 | 不等端点：总控已裁定「保留、不必管真实性」，所以**不挂**「演示数据」徽标，但仍计入本清单 |
 
 > 注：`GraphPanel.vue` 里那组写死的关系表单值不属于本目录——图谱的列表数据是
 > `GET /api/v1/knowledge-graph/relations` 真读库并按 Principal 收窄的（`app/api/v1/intelligence.py:133`），
