@@ -101,16 +101,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
         payload = verify_token(token) if token else None
         if not token or not payload:
             from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=401, content={"detail": "请先登录"})
+            return JSONResponse(status_code=401, content={"detail": "authentication_required"})
         username = payload.get("sub", "")
         user = get_user(username) if username else None
         if not user:
             from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=401, content={"detail": "请先登录"})
+            return JSONResponse(status_code=401, content={"detail": "authentication_required"})
         principal = Principal.from_user(user)
         if principal.status != "active":
             from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=403, content={"detail": "账号不可用"})
+            return JSONResponse(status_code=403, content={"detail": "account_unavailable"})
         request.state.username = principal.username
         request.state.principal = principal
         return await call_next(request)

@@ -107,7 +107,7 @@ async def change_password(data: ChangePasswordRequest, request: Request):
     """修改密码"""
     principal = principal_from_request(request)
     if principal is None:
-        raise HTTPException(status_code=401, detail="请先登录")
+        raise HTTPException(status_code=401, detail="authentication_required")
     if data.username != principal.username and ACTION_MANAGE_USERS not in principal.permissions:
         raise HTTPException(status_code=403, detail="权限不足: users:manage")
     ok, msg = auth.change_password(data.username, data.old_password, data.new_password)

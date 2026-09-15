@@ -31,6 +31,7 @@ Error responses use a stable `code` from:
 - `authentication_required`
 - `permission_denied`
 - `authorization_unavailable`
+- `account_unavailable`
 - `resource_not_found`
 - `validation_error`
 - `conflict`
@@ -55,6 +56,39 @@ The payload is compatible with:
   "details": {}
 }
 ```
+
+### Authentication surface codes (2026-09-15, R10 / backend batch C-1)
+
+The authentication middleware in `app/main.py` guards every non-public path before any
+router runs, so these are the codes a client actually receives for "not signed in" and for
+"signed in with an account that cannot be used". No HTTP status changed; only the `detail`
+value stopped being prose. Like the document-route codes below, these travel in a bare
+`{"detail": "<code>"}` body rather than in the enveloped payload shape above.
+
+| Status | `detail` | Trigger | Expression |
+| --- | --- | --- | --- |
+| 401 | `authentication_required` | No `Authorization: Bearer` header, a non-Bearer scheme, a token that fails signature or expiry validation, a valid token whose account no longer exists, or a route-side guard with no Principal on the request | `app/main.py:104`, `app/main.py:109`, `app/common/authorization.py:53`, `app/api/v1/auth.py:110` |
+| 403 | `account_unavailable` | The token resolved to an account whose `status` is not `active` (disabled or deleted) | `app/main.py:113` |
+
+`account_unavailable` is not `permission_denied`: `permission_denied` says the subject is
+usable but lacks this action, while `account_unavailable` says the subject may not act at
+all until an operator re-enables the account. A client must not read it as
+"try again with another role" and must not force a re-login prompt, because the
+credentials themselves are valid.
+
+Deliberately not taken, although the ruling allowed it: a separate `token_expired` code.
+`verify_token` collapses `ExpiredSignatureError` and `InvalidTokenError` into a single
+`None`, so the middleware cannot distinguish an expired token from a forged one or a
+vanished account without a new return contract in `app/common/auth.py`. An expired token
+therefore reports `authentication_required`, and
+`tests/test_auth_stable_codes.py::test_an_expired_token_is_not_yet_distinguishable_from_a_forged_one`
+pins that so a future split is a decision with a test to update.
+
+The public path whitelist (`/api/v1/login`, `/api/v1/health`, `/api/v1/sso/login`,
+`/api/v1/open*`, `/`, `/docs`, `/openapi.json`) is unchanged, and
+`tests/test_auth_stable_codes.py` holds both the statuses and the whitelist in place. The
+frontend keeps its prose-alias table for stacks built before this change, which still answer
+`请先登录` and `账号不可用`.
 
 ## SSE Events
 

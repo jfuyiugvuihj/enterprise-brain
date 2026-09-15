@@ -50,7 +50,7 @@ def principal_from_request(request) -> Principal | None:
 def authorize_request(request, action: str, resource: dict | None = None, resource_name: str = "") -> bool:
     principal = principal_from_request(request)
     if principal is None:
-        raise HTTPException(status_code=401, detail="请先登录")
+        raise HTTPException(status_code=401, detail="authentication_required")
     try:
         return authorize(principal, action, resource, resource_name)
     except PermissionError as exc:
