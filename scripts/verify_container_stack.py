@@ -192,12 +192,20 @@ def check_migrations(gate: Gate) -> None:
         "psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -Atc "
         "\"select 'vector='||(select count(*) from pg_extension where extname='vector')||"
         "' ledger='||(select count(*) from schema_migrations)||"
-        "' tables='||(select count(*) from information_schema.tables where table_schema='public')\""
+        "' tables='||(select count(*) from information_schema.tables where table_schema='public')||"
+        "' accounts='||(select count(*) from users)\""
     )
     code, text = gate.compose("exec", "-T", "postgres", "sh", "-c", script, timeout=180)
-    numbers = re.search(r"vector=(\d+) ledger=(\d+) tables=(\d+)", text)
+    numbers = re.search(r"vector=(\d+) ledger=(\d+) tables=(\d+) accounts=(\d+)", text)
     ok = code == 0 and bool(numbers) and numbers.group(1) == "1" and int(numbers.group(2)) >= 4 and int(numbers.group(3)) >= 25
     gate.record("pgvector + migration ledger + table count in the container database", ok, text)
+    accounts = numbers.group(4) if numbers else "unread"
+    gate.record(
+        "the user table can authenticate someone",
+        code == 0 and bool(numbers) and int(accounts) >= 1,
+        f"accounts={accounts}; an empty users table means nobody can ever sign in, "
+        "see the first-administrator section of deploy/README.server.md",
+    )
 
 
 def check_nginx(gate: Gate) -> None:
