@@ -34,16 +34,26 @@ A 与 B 的交集 = **空**。合并顺序固定：**B 先合入 A**（纯新增
 
 ---
 
-## 3. Step 0：并行开始前的三件事（必须串行做完）
+## 3. Step 0：并行开始前的三件事（① ③ 已完成，② 待做）
 
-1. **归零 19 处未提交**（`git status --porcelain -- frontend`）。逐文件判定「保留 / 废弃」：保留就 `git add frontend/<显式路径>` + 一次提交，废弃就先 `git stash push -- frontend`（**不要** `stash -u` 扫到别人目录）。谁都不确认就开并行 = 三个 Agent 在同一堆未定归属的改动上分头写。
-2. **依赖一次装完，只此一次**（A 线执行，B 线不再 `npm i`）：
+> **2026-09-15 已执行**：worktree 与快照基线已建好，事实如下，后续 Agent 不要重复做，也不要怀疑它们不存在。
+>
+> - `C:\Users\fengx\PycharmProjects\fe-trunk` → 分支 `codex/fe-trunk`；`C:\Users\fengx\PycharmProjects\fe-prims` → `codex/fe-prims`；两者基线同为 **`13e808d`**。
+> - **建 worktree 时发现的真问题**：`codex/data-file-catalog` 的 HEAD 里 `frontend/src` 只有 9 个文件——7 个面板中的 5 个（`InsightPanel` `ApprovalPanel` `GraphPanel` `DashboardPanel` `DocumentPreviewModal`）、`assets/theme.css`、`lib/api.js`、`frontend/Dockerfile` **全是未跟踪文件**，只活在工作目录里。也就是说任何一次 clone 或 `git clean -fd` 都会拿到一个**三面板的旧应用**，而我此前所有文档描述的都是那七面板的现状。
+> - 处置：先整目录备份到 `C:\Users\fengx\PycharmProjects\frontend-wip-backup-2026-09-15`（35 文件 / 4.60 MB），再用一次**不改任何文件内容**的快照提交把它们纳入版本控制（`13e808d`，17 个文件）。刻意排除两项：`src/assets/login-reference.png`（2.06 MB、源码 0 引用）与 `browser_data_quick.js`（一次性 Playwright 探针，硬编码 `C:/tmp/pwtest`），两者都只在备份目录里。
+> - 构建实证（主树 `npm run build`）：`vite 8.0.16` / **82 modules / 314 ms** / `index.js` 185.30 kB（gzip 66.91）/ `index.css` 83.08 kB（gzip 16.78）；**两张登录页 PNG 共 2.37 MB 进了产物**（V2 换成 `login-earth.webp` 后可回收，见 §7 资产卫生）；产物里没有 `element-plus`，再次印证它是死依赖。
+> - **两条线各自开工前的第一件事**：worktree 里**没有** `node_modules`，也**没有** `.env`（未跟踪文件不随 worktree 复制）。所以各线先 `cd frontend; npm ci`（**别用 `npm i`**，会改 lockfile），并且**不要**在 worktree 里连真后端跑 `npm run dev`——没有 `.env` 就没有后端配置，验收一律按工单 §8.1 用 Playwright 从磁盘 fulfill。
+> - 主树的 `git status --porcelain -- frontend` 由 **19 → 2**（就是上面刻意排除的两个文件）。
+> - 授权：用户 2026-09-15 已授权 A / B 两条线修改 `frontend/**`；`app/**` 仍然禁止。
+
+1. ✅ **归零未提交**（已完成，见上面的快照 `13e808d`）。若将来再出现"多条线各自未提交"的局面，规矩不变：**先提交再并行**，因为未跟踪文件既不可 diff 也不可合并。
+2. ⬜ **依赖一次装完，只此一次**（**待做**，A 线在 `fe-trunk` 里执行；B 线等它合过来）：
    - 运行期：`vue-router@4` `@fontsource-variable/manrope` `@fontsource-variable/jetbrains-mono` `lucide-vue-next` `dompurify`（`markdown-it` 已在依赖里，**不用装，要用起来**）
    - 开发期：`stylelint` `@playwright/test` `vitest`
    - 卸载：`element-plus`（死依赖，`main.js` 未注册、源码零引用、dist 产物零命中）
    - 顺手补 script 入口（当前 `scripts` 只有 `dev` / `build` / `preview`）：`lint`→stylelint、`test`→vitest、`test:e2e`→playwright。**没有这三条，§7 的护栏跑不起来。**
    - 装完立刻提交 `package.json` + lockfile，B 线 rebase 取用。**B 线若发现缺包，交清单给 A，不许自己装。**
-3. **每线独立 worktree**（同目录多 Agent = 互相覆盖，且 `node_modules` 争用）：
+3. ✅ **每线独立 worktree**（已建，见顶部）。旧闲置 worktree `C:\Users\fengx\.codex\worktrees\c99b\企业智脑`（detached 在 `765aeca`，工作树干净）**未动**，要回收由你确认后再 `git worktree remove`。
 
 ```powershell
 cd C:\Users\fengx\PycharmProjects\企业智脑

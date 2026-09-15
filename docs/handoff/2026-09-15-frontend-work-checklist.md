@@ -11,9 +11,10 @@
 
 ### 0.1 工作树闸门
 
-- [ ] `git status --porcelain -- frontend` 当前有 **19 处未提交**，面板文件 mtime 全停在 09-10。开工前先确认这 19 处属于谁、是否保留。**禁止** `git add -A`、`git reset --hard`、`git checkout .`。
-- [ ] 建一条自己的分支或 worktree，基线记在 commit 里；每步一提交，提交信息带步骤号（`F1`…`V6`）。
+- [x] ~~19 处未提交待归零~~ **已处理（快照 `13e808d`）**：其中 12 处原本是**未跟踪文件**（含 5 个面板与 `theme.css`），已整目录备份后纳入版本控制；主树 `frontend` 现只剩 2 处刻意排除项（`login-reference.png`、`browser_data_quick.js`，均在备份里）。**基线 = `13e808d`**，备份 = `C:\Users\fengx\PycharmProjects\frontend-wip-backup-2026-09-15`。
+- [x] 分支与 worktree 已建好：`..\fe-trunk`（主干 `codex/fe-trunk`）、`..\fe-prims`（叶子 `codex/fe-prims`），基线同为 `13e808d`。每步一提交，message 带步骤号（`F1`…`V6`）。**开工第一件事：`cd frontend; npm ci`**（worktree 里没有 `node_modules`，也没有 `.env` → 别在 worktree 里连真后端跑 `dev`）。
 - 理由：另一个 Agent 的未提交工作一旦被覆盖，无法从 git 恢复。
+- **已获授权**：用户 2026-09-15 允许两条前端线修改 `frontend/**`；`app/**` 仍然禁止。
 - 要开多条对话 / 多条子 Agent 并行：**先读 `handoff/2026-09-15-frontend-parallel-tracks.md`**（三条线的独占文件集、step 0、合并协议、派发提示词）。
 
 ### 0.2 演示账号闸门（r8 带来，阻断全部端到端验收）
