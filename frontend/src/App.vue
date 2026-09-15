@@ -186,185 +186,129 @@ onUnmounted(() => {
 
 <template>
   <div class="app-root">
-    <main v-if="!isLoggedIn" class="auth-shell reference-login" data-testid="login-page">
-      <div class="login-visual-backdrop" aria-hidden="true"></div>
-      <div class="auth-atmosphere" aria-hidden="true">
-        <span class="orbit orbit-one"></span>
-        <span class="orbit orbit-two"></span>
-        <span class="orbit orbit-three"></span>
-        <svg class="globe-visual" viewBox="0 0 760 600" role="presentation">
-          <defs>
-            <radialGradient id="globe-fill" cx="38%" cy="30%" r="72%">
-              <stop offset="0%" stop-color="#175a8d" stop-opacity=".72" />
-              <stop offset="54%" stop-color="#082d54" stop-opacity=".68" />
-              <stop offset="100%" stop-color="#031328" stop-opacity=".08" />
-            </radialGradient>
-            <radialGradient id="globe-halo" cx="42%" cy="42%" r="58%">
-              <stop offset="0%" stop-color="#3cdfff" stop-opacity=".18" />
-              <stop offset="68%" stop-color="#1d9bd7" stop-opacity=".05" />
-              <stop offset="100%" stop-color="#1d9bd7" stop-opacity="0" />
-            </radialGradient>
-            <pattern id="globe-dots" width="15" height="15" patternUnits="userSpaceOnUse">
-              <circle cx="2.2" cy="2.2" r="1.25" fill="#5cddff" fill-opacity=".78" />
-              <circle cx="9.5" cy="8" r=".75" fill="#65d8ff" fill-opacity=".38" />
-            </pattern>
-            <clipPath id="globe-clip">
-              <circle cx="372" cy="288" r="236" />
-            </clipPath>
-            <filter id="globe-glow" x="-40%" y="-40%" width="180%" height="180%">
-              <feGaussianBlur stdDeviation="8" result="blur" />
-              <feMerge>
-                <feMergeNode in="blur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-          <circle cx="372" cy="288" r="260" fill="url(#globe-halo)" />
-          <circle cx="372" cy="288" r="236" fill="url(#globe-fill)" stroke="#2494cc" stroke-opacity=".5" />
-          <g clip-path="url(#globe-clip)">
-            <ellipse cx="372" cy="288" rx="222" ry="232" fill="none" stroke="#39c8f4" stroke-opacity=".20" />
-            <ellipse cx="372" cy="288" rx="180" ry="232" fill="none" stroke="#39c8f4" stroke-opacity=".18" />
-            <ellipse cx="372" cy="288" rx="104" ry="232" fill="none" stroke="#39c8f4" stroke-opacity=".14" />
-            <ellipse cx="372" cy="288" rx="232" ry="76" fill="none" stroke="#39c8f4" stroke-opacity=".24" transform="rotate(-18 372 288)" />
-            <ellipse cx="372" cy="288" rx="232" ry="142" fill="none" stroke="#39c8f4" stroke-opacity=".18" transform="rotate(-18 372 288)" />
-            <path d="M145 270 C231 229 295 216 377 224 C466 233 533 273 603 337" fill="none" stroke="#50dcff" stroke-opacity=".32" />
-            <path d="M160 360 C244 309 321 300 405 310 C485 319 540 348 582 394" fill="none" stroke="#50dcff" stroke-opacity=".20" />
-            <path d="M252 130 C319 184 350 244 348 318 C346 382 324 435 288 470" fill="none" stroke="#50dcff" stroke-opacity=".19" />
-            <path d="M456 124 C397 188 389 252 408 320 C426 379 456 428 492 456" fill="none" stroke="#50dcff" stroke-opacity=".16" />
-            <rect x="126" y="62" width="500" height="460" fill="url(#globe-dots)" opacity=".88" />
-          </g>
-          <path d="M116 359 C238 198 405 115 629 153" fill="none" stroke="#39e1ff" stroke-opacity=".66" stroke-width="1.2" />
-          <path d="M139 435 C278 352 441 337 630 396" fill="none" stroke="#39e1ff" stroke-opacity=".32" stroke-width="1" />
-          <g filter="url(#globe-glow)">
-            <circle cx="464" cy="201" r="4.5" fill="#5cf4ff" />
-            <circle cx="536" cy="345" r="4" fill="#5cf4ff" />
-            <circle cx="300" cy="283" r="3.5" fill="#5cf4ff" />
-          </g>
-          <circle cx="464" cy="201" r="11" fill="none" stroke="#5cf4ff" stroke-opacity=".18" />
-          <circle cx="536" cy="345" r="11" fill="none" stroke="#5cf4ff" stroke-opacity=".15" />
-        </svg>
-        <span class="globe-node node-a"></span>
-        <span class="globe-node node-b"></span>
-        <span class="globe-node node-c"></span>
-        <span class="floating-stat stat-data">
-          <span class="stat-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 5 5" /></svg>
-          </span>
-          <span><b>数据</b><strong>1.2M+</strong></span>
-        </span>
-        <span class="floating-stat stat-insight">
-          <span class="stat-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="m12 4 2 4 4 .6-3 3 1 4.4-4-2.2-4 2.2 1-4.4-3-3L10 8z" /></svg>
-          </span>
-          <span><b>洞察</b><strong>+42%</strong></span>
-        </span>
-        <span class="floating-stat stat-knowledge">
-          <span class="stat-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M12 3a6.5 6.5 0 0 0-3.8 11.8V18h7.6v-3.2A6.5 6.5 0 0 0 12 3Z" /><path d="M9.5 21h5M10 18h4" /></svg>
-          </span>
-          <span><b>知识</b><strong>300K+</strong></span>
-        </span>
+    <main v-if="!isLoggedIn" class="login-v2" data-testid="login-page">
+      <div class="login-bg" aria-hidden="true">
+        <span class="login-bg__base"></span>
+        <span class="login-bg__art"></span>
+        <span class="login-bg__grid"></span>
+        <span class="login-bg__noise"></span>
+        <span class="login-bg__scrim"></span>
       </div>
 
-      <header class="auth-brandbar">
-        <div class="brand-lockup">
-          <span class="brand-mark reference-brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 48 48">
-              <path d="m24 3 17 10v22L24 45 7 35V13z" />
-              <path d="m24 12 9 5.3v10.4L24 33l-9-5.3V17.3z" />
-              <path d="m24 19 4 2.3v4.4L24 28l-4-2.3v-4.4z" />
-              <path d="m15 17.3 9 5.2 9-5.2M15 27.7l9-5.2 9 5.2" />
-            </svg>
-          </span>
-          <span class="brand-copy">
-            <strong>企业智脑</strong>
-            <small>ENTERPRISE BRAIN</small>
-          </span>
-        </div>
-        <p>数据 × 知识 × AI，驱动更聪明的企业</p>
+      <header class="login-brand">
+        <svg class="login-brand__mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+          <path d="M16 2.6 27.4 9.3v13.4L16 29.4 4.6 22.7V9.3z" stroke-linejoin="round" />
+          <path d="M16 10.4 21.4 13.5v6.2L16 22.8l-5.4-3.1v-6.2z" stroke-linejoin="round" opacity=".55" />
+          <circle cx="16" cy="16.6" r="1.9" fill="currentColor" stroke="none" />
+        </svg>
+        <span class="login-brand__name">企业智脑</span>
+        <span class="login-brand__rule" aria-hidden="true"></span>
+        <span class="login-brand__latin">Enterprise Brain</span>
       </header>
 
-      <section class="auth-hero" aria-labelledby="auth-title" data-testid="login-hero">
-        <h1 id="auth-title">私有化企业智能<br />分析平台</h1>
-        <p class="auth-lead">让企业数据，成为生产力</p>
-        <div class="auth-capabilities" aria-label="平台能力">
-          <article>
-            <span>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5c0 4.6-2.8 8-7 10-4.2-2-7-5.4-7-10V6z" /></svg>
-            </span>
-            <strong>数据安全</strong>
-          </article>
-          <article>
-            <span>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4-8 4-8-4zM4 12l8 4 8-4M4 17l8 4 8-4" /></svg>
-            </span>
-            <strong>知识沉淀</strong>
-          </article>
-          <article>
-            <span>
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7" /></svg>
-            </span>
-            <strong>智能分析</strong>
-          </article>
-        </div>
-        <div class="auth-track">
-          <span class="track-active"></span>
-          <span></span>
-          <span></span>
-          <b>ENTERPRISE BRAIN</b>
-        </div>
-      </section>
+      <div class="login-stage">
+        <section class="login-pitch" aria-labelledby="login-hero-title" data-testid="login-hero">
+          <span class="login-pitch__rule" aria-hidden="true"></span>
+          <h1 id="login-hero-title">私有化企业智能分析平台</h1>
+          <p class="login-pitch__lead">让企业数据，成为生产力</p>
 
-      <section class="auth-panel" aria-labelledby="login-title" data-testid="login-panel">
-        <h2 id="login-title">欢迎回来</h2>
-        <p class="panel-lead">登录进入企业智能分析平台</p>
-        <form class="login-form" data-testid="login-form" @submit.prevent="doLogin">
-          <label class="field">
-            <span class="field-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.2" /><path d="M5.5 20c.6-3.6 2.7-5.3 6.5-5.3s5.9 1.7 6.5 5.3" /></svg>
-            </span>
-            <input v-model="loginUser" data-testid="login-username" placeholder="输入用户名" autocomplete="username" required />
-          </label>
-          <label class="field">
-            <span class="field-icon">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
-            </span>
-            <input v-model="loginPass" data-testid="login-password" :type="showPassword ? 'text' : 'password'" placeholder="输入密码" autocomplete="current-password" required />
-            <button class="field-icon trailing field-action" type="button" :aria-label="showPassword ? '隐藏密码' : '显示密码'" @click="showPassword = !showPassword">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12s3.2-5 8.5-5 8.5 5 8.5 5-3.2 5-8.5 5-8.5-5-8.5-5Z" /><circle cx="12" cy="12" r="2" /></svg>
-            </button>
-          </label>
-          <div v-if="loginError" class="notice error" data-testid="login-error" role="alert">{{ loginError }}</div>
-          <button class="primary-btn login-submit" data-testid="login-submit" type="submit">
-            <span>进入工作台</span>
-            <span aria-hidden="true">→</span>
-          </button>
-          <div class="login-options">
-            <label class="remember-me">
-              <input v-model="rememberMe" data-testid="login-remember" type="checkbox" />
-              <span>记住我</span>
-            </label>
-            <button data-testid="login-forgot" type="button" @click="openForgotPassword">忘记密码？</button>
+          <div class="login-capabilities" aria-label="平台能力">
+            <div>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 19 6v5c0 4.6-2.8 8-7 10-4.2-2-7-5.4-7-10V6z" /></svg>
+              <span>数据安全</span>
+            </div>
+            <div>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 4-8 4-8-4zM4 12l8 4 8-4M4 17l8 4 8-4" /></svg>
+              <span>知识沉淀</span>
+            </div>
+            <div>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7" /></svg>
+              <span>智能分析</span>
+            </div>
           </div>
-          <p class="login-hint">没有账号？联系管理员开通</p>
-        </form>
-      </section>
-      <div v-if="showForgotDialog" class="forgot-dialog-backdrop" data-testid="login-forgot-dialog">
-        <section class="forgot-dialog" role="dialog" aria-modal="true" aria-labelledby="forgot-title">
-          <button class="forgot-dialog-close" data-testid="login-forgot-close" type="button" aria-label="关闭" @click="closeForgotPassword">×</button>
-          <span class="forgot-dialog-kicker">ACCOUNT RECOVERY</span>
+        </section>
+
+        <section class="login-card" aria-labelledby="login-title" data-testid="login-panel">
+          <h2 id="login-title">欢迎回来</h2>
+          <p class="login-card__lead">使用企业账号登录工作台</p>
+
+          <div v-if="loginError" class="login-alert" data-testid="login-error" role="alert">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" /><path d="M12 8v5" stroke-linecap="round" /><path d="M12 16.2h.01" stroke-linecap="round" />
+            </svg>
+            <span>{{ loginError }}</span>
+          </div>
+
+          <form data-testid="login-form" autocomplete="on" @submit.prevent="doLogin">
+            <label class="login-field">
+              <span class="login-field__label">用户名</span>
+              <span class="login-control">
+                <span class="login-control__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                </span>
+                <input v-model="loginUser" data-testid="login-username" type="text" placeholder="请输入用户名" autocomplete="username" required />
+              </span>
+            </label>
+
+            <label class="login-field">
+              <span class="login-field__label">密码</span>
+              <span class="login-control">
+                <span class="login-control__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="10.5" width="17" height="10.5" rx="2.5" /><path d="M7.5 10.5V7a4.5 4.5 0 0 1 9 0v3.5" /></svg>
+                </span>
+                <input v-model="loginPass" data-testid="login-password" :type="showPassword ? 'text' : 'password'" placeholder="请输入密码" autocomplete="current-password" required />
+                <button class="login-control__ghost" type="button" :aria-label="showPassword ? '隐藏密码' : '显示密码'" @click="showPassword = !showPassword">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" /><circle cx="12" cy="12" r="3" /></svg>
+                </button>
+              </span>
+            </label>
+
+            <div class="login-row">
+              <label class="login-check">
+                <input v-model="rememberMe" data-testid="login-remember" type="checkbox" />
+                <span class="login-check__box" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                </span>
+                <span>记住我</span>
+              </label>
+              <button class="login-link" type="button" data-testid="login-forgot" @click="openForgotPassword">忘记密码？</button>
+            </div>
+
+            <button class="login-submit" type="submit" data-testid="login-submit">
+              进入工作台
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg>
+            </button>
+          </form>
+
+          <p class="login-card__foot">没有账号？联系管理员在工作台内开通</p>
+        </section>
+      </div>
+
+      <footer class="login-foot">
+        <div class="login-foot__meta">
+          <span class="login-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.7 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1 1 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z" /><path d="m9 12 2 2 4-4" /></svg>
+            <span>本机部署 · 数据不出内网</span>
+          </span>
+          <span class="login-foot__dot" aria-hidden="true"></span>
+          <span>企业内网专用</span>
+        </div>
+      </footer>
+
+      <div v-if="showForgotDialog" class="login-dialog-backdrop" data-testid="login-forgot-dialog">
+        <section class="login-dialog" role="dialog" aria-modal="true" aria-labelledby="forgot-title">
+          <button class="login-dialog__close" data-testid="login-forgot-close" type="button" aria-label="关闭" @click="closeForgotPassword">×</button>
           <h2 id="forgot-title">忘记密码？</h2>
           <p>这是私有化部署系统，密码由企业管理员统一管理。</p>
-          <label class="forgot-account">
+          <label class="login-dialog__account">
             <span>账号</span>
             <input v-model="forgotUsername" autocomplete="username" placeholder="请输入需要找回的账号" />
           </label>
-          <p class="forgot-dialog-note">请联系管理员在用户管理中重置该账号密码，重置后即可返回此页面登录。</p>
-          <button class="primary-btn forgot-dialog-action" type="button" @click="closeForgotPassword">返回登录</button>
+          <p class="login-dialog__note">请联系管理员在用户管理中重置该账号密码，重置后即可返回此页面登录。</p>
+          <button class="login-dialog__action" type="button" @click="closeForgotPassword">返回登录</button>
         </section>
       </div>
     </main>
-
     <div v-else class="workbench-shell reference-workbench" data-testid="workbench">
       <aside class="sidebar" aria-label="工作区导航" data-testid="sidebar">
         <div class="sidebar-brand">
