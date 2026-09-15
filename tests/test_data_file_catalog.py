@@ -68,7 +68,12 @@ def test_chat_request_forwards_selected_data_filename():
     assert "nextTick(() =>" in app_source
     assert "window.dispatchEvent(new CustomEvent('chat-ask', { detail: query }))" in app_source
     assert "data_filename: dataFilename" in chat_source
-    assert "if (!response.ok)" in chat_source
+    # 重指向：SSE 读流已收进 lib/sessions.js，非 2xx 判定在那里。
+    #   ChatPanel.vue:187  data_filename: dataFilename
+    #   lib/sessions.js:402  if (!response.ok) {
+    sessions_source = (ROOT / "frontend" / "src" / "lib" / "sessions.js").read_text(encoding="utf-8")
+    assert "data_filename: dataFilename" in chat_source
+    assert "if (!response.ok) {" in sessions_source
 
 
 def test_ask_initializes_session_schema_before_writing_messages():

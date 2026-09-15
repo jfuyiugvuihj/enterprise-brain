@@ -9,7 +9,16 @@ def test_document_upload_recovers_token_from_local_storage():
         encoding="utf-8"
     )
 
-    assert 'localStorage.getItem("eb_token")' in source
+    # 重指向（2026-09-15 集成后）：面板不再自己读 localStorage，token 统一由全站唯一
+    # 的 HTTP 入口提供——行为没丢，位置变了。
+    #   frontend/src/lib/http.js:7   export const TOKEN_KEY = 'eb_token'
+    #   frontend/src/lib/http.js:34  return localStorage.getItem(TOKEN_KEY) || ''
+    http_source = (ROOT / "frontend" / "src" / "lib" / "http.js").read_text(encoding="utf-8")
+
+    assert "import { http, errorDetail } from '../lib/http'" in source
+    assert "await http.post('/upload'" in source
+    assert "export const TOKEN_KEY = 'eb_token'" in http_source
+    assert "localStorage.getItem(TOKEN_KEY)" in http_source
 
 
 def test_document_upload_shows_an_animated_progress_indicator():
@@ -43,7 +52,11 @@ def test_document_upload_has_progress_fallback_when_browser_hides_total_size():
     )
 
     assert "import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'" in source
-    assert "const item = reactive({" in source
+    # 重指向：队列项改由工厂产出，但仍是 reactive（进度定时器依赖它的响应式）
+    #   DocPanel.vue:50 function createUploadItem(file) / :51 return reactive({ / :151 调用点
+    assert "function createUploadItem(file) {" in source
+    assert "return reactive({" in source
+    assert "const item = createUploadItem(file)" in source
     assert "startProgressTimer(item)" in source
     assert "if (event.total)" in source
     assert "if (!event.total || event.loaded >= event.total)" in source
@@ -70,7 +83,18 @@ def test_document_upload_refreshes_the_list_after_each_successful_response():
     )
 
     assert "item.msg = res.data.message || '上传完成'" in source
-    assert source.count("await loadDocs()") >= 4
+    # 原先钉「await loadDocs() 至少出现 4 次」。loadDocuments→loadDocs 改名后真实值是 3
+    # （DocPanel.vue:147 批量收尾 / :177 单文件成功分支 / :230 删除之后）。
+    # 次数本身不是不变量，「刷新发生在成功分支内、且不发生在失败分支内」才是，
+    # 故改成位置检查，另保留下限 3 钉住三处刷新都还在。
+    upload_fn = source.split("async function uploadSingleFile(file) {", 1)[1]
+    upload_fn = upload_fn.split("\nfunction onFileInput", 1)[0]
+    success_path, sep, failure_path = upload_fn.partition("  } catch (err) {")
+    assert sep, "uploadSingleFile 的 catch 分支不见了"
+    assert "await loadDocs()" in success_path
+    assert success_path.index("item.msg = res.data.message") < success_path.rindex("await loadDocs()")
+    assert "await loadDocs()" not in failure_path
+    assert source.count("await loadDocs()") >= 3
     assert "params: { _ts: Date.now() }" in source
 
 
