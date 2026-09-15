@@ -30,7 +30,11 @@ from app.common.authorization import principal_from_request
 from app.rag.loader import load_document
 from app.documents.preview import build_document_preview
 from app.rag.retriever import DocumentRetriever
-from app.rag.filters import RetrievalScopeError, build_document_retrieval_filter
+from app.rag.filters import (
+    RetrievalScopeError,
+    record_retrieval_scope,
+    resolve_document_retrieval_scope,
+)
 from app.rag.indexing import (
     DocumentIndexPublication,
     IndexPublicationError,
@@ -651,38 +655,22 @@ def _ensure_sessions_table():
 
 # ==================== 旧版 Chat（保留兼容） ====================
 
-def _source_in_scope(source: dict, allowed_levels: set[int], allowed_departments: set[str]) -> bool:
-    """本地复核下推过滤的结果；缺元数据的 chunk 一律视为不可见。"""
-    try:
-        level = int(source.get("classification"))
-    except (TypeError, ValueError):
-        return False
-    return (
-        level in allowed_levels
-        and str(source.get("department") or "") in allowed_departments
-    )
-
-
 @router.post("/chat")
 async def chat(request: ChatRequest, http_request: FastAPIRequest):
     """旧版纯文本问答：检索同样必须落在 Principal 的权限范围内。"""
     principal = _document_principal_or_error(http_request)
     try:
-        retrieval_filter = build_document_retrieval_filter(principal)
+        scope = resolve_document_retrieval_scope(principal)
     except RetrievalScopeError as scope_error:
         status_code = 401 if scope_error.code == "authentication_required" else 403
         logger.warning(f"[CHAT] 拒绝无范围检索: user={principal.username} code={scope_error.code}")
         raise HTTPException(status_code=status_code, detail=scope_error.code)
-    allowed_levels = set(retrieval_filter["$and"][0]["classification"]["$in"])
-    allowed_departments = set(retrieval_filter["$and"][1]["department"]["$in"])
+    retrieval_filter = scope.filters
 
     async def generate():
         try:
-            sources = [
-                source
-                for source in retriever.search(request.message, k=5, where=retrieval_filter)
-                if _source_in_scope(source, allowed_levels, allowed_departments)
-            ]
+            sources = [source for source in retriever.search(request.message, k=5, where=retrieval_filter) if scope.allows(source)]
+            record_retrieval_scope(principal, scope, hit_count=len(sources))
             context = "\n\n".join(
                 f"[来源: {s['source']}]\n{s['content']}" for s in sources
             ) if sources else "暂无相关文档"

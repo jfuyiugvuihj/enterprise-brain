@@ -4,7 +4,7 @@ from time import perf_counter
 from typing import Any
 
 from app.common.identity import Principal
-from app.rag.filters import build_document_retrieval_filter
+from app.rag.filters import resolve_document_retrieval_scope
 from app.rag.retrieval_pipeline import RetrievalPipeline
 from app.trace.store import TraceStore
 
@@ -34,7 +34,8 @@ def run_retrieval_debug(
     top_k: int = 5,
 ) -> dict[str, Any]:
     """Run an authorized retrieval and return a bounded, replayable debug report."""
-    permission_filter = build_document_retrieval_filter(principal)
+    scope = resolve_document_retrieval_scope(principal)
+    permission_filter = scope.filters
     started = perf_counter()
     documents, rewrites = pipeline.search_for_principal(
         query,
@@ -47,6 +48,9 @@ def run_retrieval_debug(
         "index_version_id": index_version_id,
         "strategy_version": strategy_version,
         "permission_filter": permission_filter,
+        # A report that shows the filter but not the rule that widened it is how an
+        # administrator override disappears from a review of somebody's question.
+        "scope_reason": scope.reason_code,
         "rewrites": rewrites,
         "stages": [
             {
@@ -71,6 +75,7 @@ def run_retrieval_debug(
                 "index_version_id": index_version_id,
                 "strategy_version": strategy_version,
                 "permission_filter": permission_filter,
+                "scope_reason": scope.reason_code,
                 "candidate_count": len(results),
                 "duration_ms": duration_ms,
                 "sources": [result["source"] for result in results],

@@ -95,6 +95,18 @@ def _is_administrator(principal: Principal, permissions: set[str]) -> bool:
     return ACTION_MANAGE_USERS in permissions or bool(_roles_of(principal) & _ADMINISTRATOR_ROLES)
 
 
+def is_administrator(principal: Principal) -> bool:
+    """The platform''s one administrator test, for callers outside this module.
+
+    Retrieval used to keep its own rule (an account without a department was refused,
+    whatever it was), which is how the same document became readable through the
+    resource chain and unfindable through a question. Any chain that has to ask
+    "does this subject act for the whole tenant" calls this and nothing else, so a
+    fourth definition cannot drift in.
+    """
+    return _is_administrator(principal, set(principal.permissions or ()))
+
+
 def _is_management_principal(principal: Principal, permissions: set[str]) -> bool:
     """Management level: an administrator, or an account holding a manage grant."""
     return (

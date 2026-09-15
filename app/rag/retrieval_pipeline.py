@@ -29,7 +29,7 @@ except ModuleNotFoundError:  # pragma: no cover
 from app.common.model_handler import ModelHandler, ModelSource
 from app.common.logger import logger
 from app.common.identity import Principal
-from app.rag.filters import build_document_retrieval_filter
+from app.rag.filters import record_retrieval_scope, resolve_document_retrieval_scope
 
 model = ModelHandler()
 
@@ -311,22 +311,17 @@ class RetrievalPipeline:
         principal: Principal | None,
         top_k: int = 5,
     ) -> tuple[list[dict], list[str]]:
-        """Retrieve only chunks permitted for the supplied Principal."""
-        where = build_document_retrieval_filter(principal)
-        classification_values = set(where["$and"][0]["classification"]["$in"])
-        department_values = set(where["$and"][1]["department"]["$in"])
+        """Retrieve only chunks permitted for the supplied Principal.
 
-        def is_permitted(document: dict) -> bool:
-            try:
-                classification = int(document.get("classification"))
-            except (TypeError, ValueError):
-                return False
-            return (
-                classification in classification_values
-                and str(document.get("department") or "") in department_values
-            )
-
-        return self.search(query, top_k=top_k, where=where, pred=is_permitted)
+        The pushed-down ``where`` and this local predicate are the same decision
+        expressed twice, because a recall path can hand back a chunk the store did not
+        filter; both now come from one scope object so they cannot disagree about what
+        an administrator may see.
+        """
+        scope = resolve_document_retrieval_scope(principal)
+        found = self.search(query, top_k=top_k, where=scope.filters, pred=scope.allows)
+        record_retrieval_scope(principal, scope, hit_count=len(found[0]))
+        return found
 
 
 def format_relevance(hit: dict) -> str:

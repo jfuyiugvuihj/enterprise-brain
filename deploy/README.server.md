@@ -47,12 +47,14 @@ AUTH_PASSWORD_HASH=$$2b$$12$$<哈希正文>
 AUTH_DEPARTMENT=<可选：该账号的部门>
 ```
 
-`AUTH_DEPARTMENT` **建议必填**。留空的账号只能登录与管用户，其余三条主链全部按部门确定作用
-域，都会被拒：检索（`app/rag/filters.py`，报 `authorization_unavailable`）、数据集归属
-（`app/storage/datasets.py`，报 `403 department_scope_required`）、成果归属
-（`app/storage/artifacts.py`，`/chart` 以 HTTP 200 回
-`artifact owner must have a department scope`）。留空时预检会打一行 `warn`（不阻断启动），
-因为另一条合法路线是登录后用 `POST /api/v1/users` 建一个带部门的账号做日常使用。
+`AUTH_DEPARTMENT` **建议必填**。留空的账号仍能登录、管用户，并能检索**任意部门**的文档——
+检索链对管理员不设部门条件（`app/rag/filters.py` 的 e2 裁定，跨部门检索在审计里单独记
+`administrator_scope`，不记成普通部门命中）。它仍会被拒的两条是数据集归属与成果归属
+（`app/storage/datasets.py`、`app/api/v1/data.py`，都是 `403 department_scope_required`；
+`3e35481` 起 `/chart`、`/export` 不再以 HTTP 200 回错误串）。还有一条更疼的：它上传的文档
+部门为空，而检索谓词要求部门精确匹配，所以**除管理员外任何人都找不到它**，界面却会显示上传
+成功。留空时预检会打一行 `warn`（不阻断启动），因为另一条合法路线是登录后用
+`POST /api/v1/users` 建一个带部门的账号做日常使用。
 部门不能事后修改（`PUT /api/v1/profile` 写的是用户画像，不是 `users.department`），换部门
 只能重建账号。
 

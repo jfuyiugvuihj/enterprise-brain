@@ -81,22 +81,26 @@ def needs_admin_bootstrap(entries: list[tuple[str, str]]) -> bool:
 
 
 def department_scope_warnings(entries: list[tuple[str, str]]) -> list[str]:
-    """Warn about the one administrator who can sign in but can do nothing with data.
+    """Warn about the administrator that can ask questions but cannot produce anything.
 
-    Retrieval, dataset ownership and artifact ownership all resolve their scope from the
-    caller's department, so a production install whose first administrator has none can
-    log in, manage accounts, and then be refused by every one of those three paths. It is
-    not a missing required key because an operator may legitimately create a
-    department-scoped account for daily use instead.
+    Dataset and artifact ownership resolve from the caller's department, so a production
+    install whose first administrator has none can log in, manage accounts and retrieve
+    any document -- an administrator is not department-scoped since the e2 ruling -- yet
+    be refused when uploading a dataset or generating a chart. Its own uploads are the
+    sharper edge: a document without a department can only ever be found by an
+    administrator, never by the departments it was meant for. It is not a missing
+    required key because an operator may legitimately create a department-scoped account
+    for daily use instead.
     """
     if not needs_admin_bootstrap(entries):
         return []
     if any(key.strip() == "AUTH_DEPARTMENT" and value.strip() for key, value in entries):
         return []
     return [
-        "AUTH_DEPARTMENT is empty: the first administrator will be able to sign in and "
-        "manage accounts, but not to upload data, generate a chart, or retrieve any "
-        "document, because all three take their scope from its department "
+        "AUTH_DEPARTMENT is empty: the first administrator can sign in, manage accounts "
+        "and retrieve any document, but cannot upload a dataset or generate a chart "
+        "(both take their scope from its department), and a document it uploads belongs "
+        "to no department, so no department account will ever find it again "
         "(see deploy/README.server.md)"
     ]
 

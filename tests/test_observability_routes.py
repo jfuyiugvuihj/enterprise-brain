@@ -262,20 +262,43 @@ def test_a_denied_read_is_recorded_through_the_existing_audit_signature(
     ]
 
 
-def test_an_admin_without_a_department_scope_is_never_promoted_past_retrieval(
-    app_client, users, audit_recorder, trace_store
+def test_an_administrator_without_a_department_is_admitted_by_retrieval(
+    app_client, users, monkeypatch, trace_store, audit_recorder
 ):
+    """e2: an administrator loses the department clause, not the right to ask.
+    This case asserted 403 authorization_unavailable until the 2026-09-15 ruling in
+    docs/handoff/2026-09-15-backend-followup-requests.md 6.2 replaced that behavior, so
+    what it now pins is the shape of the widened scope: classification kept, the override
+    named in the report and the trace, and a department-less manager still refused.
+    """
     username = users("s3-orphan-admin", "admin", department="")
+    pipeline = _FakePipeline(document_count=2)
+    monkeypatch.setattr(observability, "_pipeline", lambda: pipeline)
 
     response = app_client.post(
         DEBUG_PATH, json={"query": "住宿费标准"}, headers=_headers(username)
     )
 
-    assert response.status_code == 403
-    envelope = _envelope(response)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["permission_filter"] == {"classification": {"$in": [1, 2, 3]}}
+    assert "department" not in str(body["permission_filter"])
+    assert body["scope_reason"] == "administrator_scope"
+    replayed = trace_store.replay(body["trace_id"])
+    assert replayed[0]["payload"]["scope_reason"] == "administrator_scope"
+    assert replayed[0]["payload"]["permission_filter"] == {
+        "classification": {"$in": [1, 2, 3]}
+    }
+
+    manager = users("s3-orphan-manager", "manager", department="")
+    refused = app_client.post(
+        DEBUG_PATH, json={"query": "住宿费标准"}, headers=_headers(manager)
+    )
+
+    assert refused.status_code == 403
+    envelope = _envelope(refused)
     assert envelope["code"] == "authorization_unavailable"
     assert envelope["details"]["stage"] == "retrieval_scope"
-
 
 # ------------------------------------------------------------------ ③ bounds
 
