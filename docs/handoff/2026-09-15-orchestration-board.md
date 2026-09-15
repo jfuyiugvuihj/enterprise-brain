@@ -276,3 +276,57 @@ C 的 R10 让 `app/main.py:113` 开始吐 `account_unavailable`，`contract-v1.m
 - 新增 `scripts/frontend_gates.ps1`（`3685fc8`）：lockfile / test / lint / colors / build 五闸一条命令，`-RepoDir` 可指向任一工作树。自测 fe-prims：lockfile ok(14 deps) / 134 / 351 / 351 / built 232ms。此前各线手跑五条命令，是数字漂移的直接来源。
 - 注：`scripts/check_lockfile_sync.mjs` 只在主树（`c333211` 引入），fe-trunk/fe-prims 里没有；因此 G5 必须由主树的 `frontend_gates.ps1 -RepoDir <tree>` 跑，别在前端树里找它。
 - **我的 `send_input` 重复派发故障本轮又复发 4 次（累计第 7–10 次）**：同一条消息在一次工具块里发两遍，B 第二批、C 问询、C 放行、A 订正各中一次。均**未补发订正**，按「以最终 commit 为准」处理，A/B/C 手里同一任务最多两份重复指令。**新硬规**：本轮之后**每条助手消息只发一个工具调用**，禁止任何并行工具块——这是唯一能阻断该复发的写法。
+
+---
+
+## 4F. 集成完成 + C-3 复核通过（2026-09-15 晚 18:4x，总控亲验）
+
+### 4F.1 三线合并**已经发生**，不是计划
+- `fe-prims(e1eb091) → fe-trunk`：合并 `92bb557`，**零冲突**（合并前 `git merge-tree --write-tree` 预检 exit 0）。
+- `fe-trunk(92bb557) → 主树(codex/data-file-catalog)`：合并 `94cccba`。并集范围实测**只含 `frontend/`**（`git diff --name-only HEAD...92bb557` 去重后唯一顶层目录 = `frontend`），与 C 在途的 `app/**`、`tests/**` 不相交，故未打扰 C-3。
+- **B-4 已收**：`8e7cd94`（UiEmptyState/UiErrorState）+ `e1eb091`（面板态测试与长文案换行量测）。写集实测越界 **0 处**——`git diff --name-only d875f7c..e1eb091` 除 `components/ui/**`、`tests/visual/**` 外为空；未碰 `package.json`/lockfile/`vite.config.js`/任何面板。
+
+### 4F.2 集成树五闸（我亲跑，非转述）
+| 树 | lockfile | test | lint | colors | build |
+|---|---|---|---|---|---|
+| fe-trunk `8993d93`（V2-b 后） | 0 | 0 | 0 | 0 | 0 |
+| fe-prims `e1eb091`（B-4 后） | 0 | 0 | 0 | 0（351） | 0 |
+| **合并后 fe-trunk `92bb557`** | 0 | 0 | 0 | **0（351，未升）** | 0 |
+- 测试数：fe-trunk 127/7 → 合并后 **156/9**（A 的 V7 系列**一条单测都没加**，156 全部来自 B）。
+- **色值棘轮没被 A 的删除引爆**：A 从 `theme.css` 删掉 1446 行（3911→2465 行，精确口径 `-join` 计数），B 的 V6「未定义 `var()` 即判红」棘轮测试在合并树上仍 156 全绿 ⇒ 删除未留下悬空 token 引用。这是 `git` 说"无冲突"也测不出的一类语义风险，只能靠棘轮兜住。
+- dist 实测 **0.28 MB / 0 张 PNG**（V2-b 前 2.56 MB，其中 2.32 MB 是两张烤进假数字的位图）。
+
+### 4F.3 ⚠️ 一条环境事实（别误读成"主树门禁挂了"）
+主树 `frontend/node_modules` 只有 76 个运行时包，**没有 vitest/stylelint/@vue/test-utils/playwright**，所以在主树跑五闸会得到 `test/lint/colors = 1`（`'stylelint' is not recognized...`）。这是**缺 devDependencies**，不是代码缺陷；全线禁 `npm install`，我不装。
+**替代证明（更强）**：`git rev-parse 92bb557:frontend` == `git rev-parse HEAD:frontend` == **`cd2f94233d7ea0e4eb3798dd8a7dd16f0cfdf6b2`** ——主树前端与跑绿五闸的集成树**逐字节同一**。五闸权威口径 = fe-trunk 工作树。
+
+### 4F.4 合并债清偿：不是 6 条，是 7 条 + 3 条连锁
+集成后复跑，红由 6 变 **7**——A 的 V2-a 改文案又撞倒一条（`test_login_policy:12` 钉「联系管理员开通」，实为「联系管理员**在工作台内**开通」，`App.vue:283`）。
+**本轮查出的一条方法性事实**（值得所有线记住）：**pytest 在每个测试函数的第一条失败断言处即停**，所以"6 条红"低估了受损面。我逐条手核未执行到的断言，另揪出 3 条修完 `:7` 就会立刻炸的：`sessionId.value`（已改名 `activeId.value`）、`取消生成`（V7-4 已删）、`_ts`（仍在）。
+处置（`d6dc911`）：**一条断言都没删**，只把指向改到真实代码路径并逐处附 `file:line`；断言净增 73−9 行。三条改法值得点明：
+- `upload_auth:73` 的「`await loadDocs()` ≥ 4 次」换成**位置检查**：刷新必须在成功分支内、且不得出现在 catch 分支内，另留下限 3 钉住三处真实调用点（`:147/:177/:230`）。计数从来不是不变量，"成功后才刷新"才是。
+- `login_policy:12` 从钉文案改成**钉政策**：`注册` 在 `App.vue` 全页必须 0 命中（实测 0），`没有账号？`/`联系管理员`/`开通` 三要素齐备。改标点不再假红，真要加回自助注册一定判红——比原断言更严。
+- `request_cancel:9` **故意反转方向**：`取消生成` 现在是必须**不出现**的字样（它承诺了按钮做不到的事），`中断本次回答` 必须在，且二次确认须写明"不会撤销任何动作"（`ChatPanel.vue:515/:519`）。
+**全量 `pytest -q -p no:warnings`：760 passed / 22 skipped / 0 failed**（此前 6 failed / 754 passed；754+6=760 精确对上，无测试丢失）。
+
+### 4F.5 C-3 设计评审件：复核通过，按下列口径批准
+件：`docs/handoff/2026-09-15-alert-and-hitl-design.md`（208 行）。C 自证零代码改动（`git diff --stat -- app migrations` 为空），并主动把总控正在改的 4 个 `tests/` 脏文件划在 itself 之外。
+我独立抽查 8 处吃重证据：**7 处逐字节命中**，1 处 `alerts.py:103`→**`:104`** 行号偏移，已就地订正并在件首留痕。抽查命中清单（可直接引用）：`alerts` 六列 DDL **确无归属列**、`INSERT` 只写三列（`:291`）、`SELECT *` **`LIMIT 100`**（`:402`）、staff 权限集**无** `alerts:manage`（`permissions.py:13`）而 manager **有**（`:14`）、`visibility` 在 `policy.py` 唯一命中＝`:70`（实测 1 次）、`chat.py:888/:1192` 两处 `run_in_executor` **确实丢弃 future**、`orchestrator.py` 全文 `cancel` **0 命中**、`manifest.json` 只列 `0001`–`0007`。
+**批准结论**：
+| 项 | 裁定 | 归属 |
+|---|---|---|
+| R1 | 走 **(c)**：后端**零改动**，403 保持；前端把「无权限」与「空列表」分开渲染 | A 线 |
+| R12 | **单独成批**（协同退出：工作线程侧要能观察取消）。它是 R13 的前置 | C 线 |
+| R13 | R12 之后两批：`0008_pending_approvals.sql`＋写入/复核 → 再 `GET /hitl/pending`。**列端点必须自带 `check_interrupt` 复核**，否则面板列出的是仍在跑的假挂起 | C 线 |
+| R14 | 走 **A1**：`GET /dashboard/summary` 只读聚合；告警计数**再过一次** `_require_alert_management` 判据，不过则**整个省略字段**（回 0 也是假数据） | C 线 |
+| Q4 | `visibility` 与 `permission_denied`/`department_scope_denied` 的码分工**合并一次语义评审**，排在 R1/R14 之后，本轮不改码 | 待排 |
+C 件里三条我原先不知道、且必须约束排期的硬事实：①**`manager` 不 403**（我派单写"员工 403"过宽，缺口只是 staff 连只读都没有）；② `/queue/*` 那组端点里的 `pending` **是 Redis 排队队列，与 HITL 挂起无关**——审批面板误接它就等于"合法地造假"；③ 调度器 5 分钟自动巡检 `principal=None`，**绕过登记表与策略扫 `DATA_DIR` 每个文件**，与手动 `/alerts/check`（走 `_permitted_dataset_files`）覆盖集不同，所以"先给 staff 开读权限、后补归属列"的顺序会把这条不对称暴露成事故。
+另外 C **订正了我的派单前提**：e2（`719f29c`）之后无部门 admin **已经能问知识库**（`rag/filters.py:86-95`，`reason_code="administrator_scope"`），仍拒绝它的是**写入侧**（`storage/datasets.py:135-136`、`storage/artifacts.py:175-176`、`api/v1/data.py:346-354`）。用户此前拍板的那条「admin 问不了知识库」已不再是现状。
+
+### 4F.6 本轮新照出的两条缺陷（登记，已回派）
+- **D-3 原语悬空**：`UiEmptyState`/`UiErrorState` 已进主干但**引用面板 0 处**（B 按写集禁令不能碰面板）。B 交付的是能力，不是用户可见的改进——必须由 A 接线才算完成，否则重演"写了没人用"。
+- **D-4 V7 五条零单测**：A 的 V7-1～V7-5（图谱接真关系、三面板打演示徽标、停止控件说真话、删假数字）在合并树里**没有一条新增断言保护**。V7-4 的文案方向反转已被我钉进 `test_frontend_request_cancel.py`，其余四条仍裸奔。
+- 顺带清掉一条陈年赘肉：主树 `frontend/src/assets/login-reference.png`（2.1 MB、源码 0 引用、三份计划文档早已判"V2 删除"）——**先比对 SHA-256 与备份目录一致**（`8EF0A876BD03F033…`，两侧同值）**再删**，备份 `frontend-wip-backup-2026-09-15/src/assets/` 原样保留。
+
+### 4F.7 §4E.5 那条硬规的实测收敛
+本轮总控**未向任何子 Agent 发指令**（全程以磁盘/`git log` 判进度，绕开了 `wait_agent` 的 `expected a sequence` 解析故障），重复派发 **0 次**。规则据实测收敛为：**每条助手消息最多一个 `send_input`/`wait_agent`**；不同类型工具的并行块本轮实测无重复副作用，但仍不在子 Agent 派发上使用。
