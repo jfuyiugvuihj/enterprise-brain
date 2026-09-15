@@ -1,377 +1,377 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, nextTick, onMounted, shallowRef } from 'vue'
 import DocPanel from './components/DocPanel.vue'
 import DataPanel from './components/DataPanel.vue'
 import ChatPanel from './components/ChatPanel.vue'
+import DashboardPanel from './components/DashboardPanel.vue'
+import InsightPanel from './components/InsightPanel.vue'
+import GraphPanel from './components/GraphPanel.vue'
+import ApprovalPanel from './components/ApprovalPanel.vue'
 
-const sidebarOpen = ref(true)
-const activeTab = ref('docs')
-const isLoggedIn = ref(false)
-const username = ref('')
-const loginUser = ref('')
-const loginPass = ref('')
-const loginError = ref('')
-const isRegistering = ref(false)
+const activeTab = shallowRef('overview')
+const isLoggedIn = shallowRef(false)
+const username = shallowRef('')
+const userRole = shallowRef('staff')
+const loginUser = shallowRef('')
+const loginPass = shallowRef('')
+const loginError = shallowRef('')
+const rememberMe = shallowRef(false)
+const showPassword = shallowRef(false)
+const showForgotDialog = shallowRef(false)
+const forgotUsername = shallowRef('')
 
-function handleAsk(q) {
-  window.dispatchEvent(new CustomEvent('chat-ask', { detail: q }))
-}
-
-// ===== 登录 =====
 const TOKEN_KEY = 'eb_token'
 const USER_KEY = 'eb_user'
+const ROLE_KEY = 'eb_role'
+const REMEMBER_KEY = 'eb_remember_username'
+
+const navigation = [
+  { id: 'overview', label: '总览', icon: 'M4 11.5 12 4l8 7.5v8.5a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z' },
+  { id: 'docs', label: '文档', icon: 'M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6' },
+  { id: 'data', label: '数据', icon: 'M5 5h14v14H5zM8 16V9M12 16V7M16 16v-4' },
+  { id: 'insights', label: '洞察', icon: 'M4 17l5-5 4 3 7-8M17 7h3v3' },
+  { id: 'graph', label: '图谱', icon: 'M7 7a3 3 0 1 0 0 .01M17 5a3 3 0 1 0 0 .01M17 17a3 3 0 1 0 0 .01M7 19a3 3 0 1 0 0 .01M9.5 8l5-1.5M9.5 17l5-1.5M7 10v6' },
+  { id: 'approval', label: '审批', icon: 'M6 4h12v16H6zM9 9h6M9 13h6M9 17h3M5 12l3 3 6-7' },
+  { id: 'chat', label: '对话', icon: 'M5 6h14v10H9l-4 4zM8 10h8M8 13h5' },
+]
+
+const workspaceMap = {
+  overview: DashboardPanel,
+  insights: InsightPanel,
+  graph: GraphPanel,
+  approval: ApprovalPanel,
+}
+
+const activeMeta = computed(() => navigation.find(item => item.id === activeTab.value) || navigation[0])
+const roleLabel = computed(() => userRole.value === 'admin' ? '管理员' : '普通用户')
+
+function handleAsk(query) {
+  activeTab.value = 'chat'
+  nextTick(() => window.dispatchEvent(new CustomEvent('chat-ask', { detail: query })))
+}
 
 function checkAuth() {
+  const rememberedUsername = localStorage.getItem(REMEMBER_KEY)
+  if (rememberedUsername) {
+    loginUser.value = rememberedUsername
+    rememberMe.value = true
+  }
   const token = localStorage.getItem(TOKEN_KEY)
-  if (token) {
-    isLoggedIn.value = true
-    username.value = localStorage.getItem(USER_KEY) || ''
-    // 设置 axios/fetch 默认头
-    window._authToken = token
+  if (!token) return
+  isLoggedIn.value = true
+  username.value = localStorage.getItem(USER_KEY) || ''
+  userRole.value = localStorage.getItem(ROLE_KEY) || 'staff'
+  window._authToken = token
+}
+
+async function readJsonSafe(response) {
+  try {
+    return await response.json()
+  } catch {
+    return null
+  }
+}
+
+function persistRememberedUsername() {
+  const normalizedUsername = loginUser.value.trim()
+  if (rememberMe.value && normalizedUsername) {
+    localStorage.setItem(REMEMBER_KEY, normalizedUsername)
+  } else {
+    localStorage.removeItem(REMEMBER_KEY)
   }
 }
 
 async function doLogin() {
   loginError.value = ''
+  persistRememberedUsername()
   try {
-    const resp = await fetch('/api/v1/login', {
+    const response = await fetch('/api/v1/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: loginUser.value, password: loginPass.value })
+      body: JSON.stringify({ username: loginUser.value.trim(), password: loginPass.value }),
     })
-    if (!resp.ok) {
-      const err = await resp.json()
-      loginError.value = err.detail || '登录失败'
+    if (!response.ok) {
+      const error = await readJsonSafe(response)
+      loginError.value = error?.detail || '登录服务暂时不可用'
       return
     }
-    const data = await resp.json()
+    const data = await response.json()
     localStorage.setItem(TOKEN_KEY, data.token)
     localStorage.setItem(USER_KEY, data.username)
+    localStorage.setItem(ROLE_KEY, data.role || 'staff')
     window._authToken = data.token
     isLoggedIn.value = true
     username.value = data.username
-  } catch (e) {
-    loginError.value = '网络错误: ' + e.message
+    userRole.value = data.role || 'staff'
+    activeTab.value = 'overview'
+  } catch (error) {
+    loginError.value = `网络错误：${error.message}`
   }
+}
+
+function openForgotPassword() {
+  forgotUsername.value = loginUser.value.trim()
+  showForgotDialog.value = true
+}
+
+function closeForgotPassword() {
+  showForgotDialog.value = false
 }
 
 function doLogout() {
-  // 清除所有 eb_ 前缀的 localStorage（token、用户、会话、消息缓存）
-  const toRemove = []
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i)
-    if (key && key.startsWith('eb_')) toRemove.push(key)
+  const keys = []
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index)
+    if (key?.startsWith('eb_') && key !== REMEMBER_KEY) keys.push(key)
   }
-  toRemove.forEach(k => localStorage.removeItem(k))
+  keys.forEach(key => localStorage.removeItem(key))
   delete window._authToken
   isLoggedIn.value = false
   username.value = ''
-}
-
-function onLoginKeydown(e) {
-  if (e.key === 'Enter') doLogin()
-}
-
-async function doRegister() {
-  loginError.value = ''
-  if (!loginUser.value || !loginPass.value) { loginError.value = '请填写用户名和密码'; return }
-  if (loginPass.value.length < 6) { loginError.value = '密码至少 6 位'; return }
-  try {
-    const resp = await fetch('/api/v1/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: loginUser.value, password: loginPass.value })
-    })
-    if (!resp.ok) {
-      const err = await resp.json()
-      loginError.value = err.detail || '注册失败'
-      return
-    }
-    // 注册成功，自动登录
-    await doLogin()
-  } catch (e) {
-    loginError.value = '网络错误: ' + e.message
-  }
+  userRole.value = 'staff'
+  loginPass.value = ''
+  activeTab.value = 'overview'
 }
 
 onMounted(checkAuth)
 </script>
 
 <template>
-  <!-- ===== 登录页 ===== -->
-  <div v-if="!isLoggedIn" class="login-screen">
-    <div class="login-card">
-      <div class="login-icon">🧠</div>
-      <h1>企业智脑</h1>
-      <p class="login-sub">私有化 AI 智能分析平台</p>
-
-      <div class="login-form">
-        <input v-model="loginUser" placeholder="用户名" class="login-input"
-               @keydown="onLoginKeydown" autocomplete="username" />
-        <input v-model="loginPass" type="password" placeholder="密码" class="login-input"
-               @keydown="onLoginKeydown" autocomplete="current-password" />
-        <div v-if="loginError" class="login-error">{{ loginError }}</div>
-        <button v-if="!isRegistering" class="login-btn" @click="doLogin">登 录</button>
-        <button v-else class="login-btn" @click="doRegister">注 册</button>
+  <div class="app-root">
+    <main v-if="!isLoggedIn" class="auth-shell reference-login" data-testid="login-page">
+      <div class="login-visual-backdrop" aria-hidden="true"></div>
+      <div class="auth-atmosphere" aria-hidden="true">
+        <span class="orbit orbit-one"></span>
+        <span class="orbit orbit-two"></span>
+        <span class="orbit orbit-three"></span>
+        <svg class="globe-visual" viewBox="0 0 760 600" role="presentation">
+          <defs>
+            <radialGradient id="globe-fill" cx="38%" cy="30%" r="72%">
+              <stop offset="0%" stop-color="#175a8d" stop-opacity=".72" />
+              <stop offset="54%" stop-color="#082d54" stop-opacity=".68" />
+              <stop offset="100%" stop-color="#031328" stop-opacity=".08" />
+            </radialGradient>
+            <radialGradient id="globe-halo" cx="42%" cy="42%" r="58%">
+              <stop offset="0%" stop-color="#3cdfff" stop-opacity=".18" />
+              <stop offset="68%" stop-color="#1d9bd7" stop-opacity=".05" />
+              <stop offset="100%" stop-color="#1d9bd7" stop-opacity="0" />
+            </radialGradient>
+            <pattern id="globe-dots" width="15" height="15" patternUnits="userSpaceOnUse">
+              <circle cx="2.2" cy="2.2" r="1.25" fill="#5cddff" fill-opacity=".78" />
+              <circle cx="9.5" cy="8" r=".75" fill="#65d8ff" fill-opacity=".38" />
+            </pattern>
+            <clipPath id="globe-clip">
+              <circle cx="372" cy="288" r="236" />
+            </clipPath>
+            <filter id="globe-glow" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="8" result="blur" />
+              <feMerge>
+                <feMergeNode in="blur" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+          </defs>
+          <circle cx="372" cy="288" r="260" fill="url(#globe-halo)" />
+          <circle cx="372" cy="288" r="236" fill="url(#globe-fill)" stroke="#2494cc" stroke-opacity=".5" />
+          <g clip-path="url(#globe-clip)">
+            <ellipse cx="372" cy="288" rx="222" ry="232" fill="none" stroke="#39c8f4" stroke-opacity=".20" />
+            <ellipse cx="372" cy="288" rx="180" ry="232" fill="none" stroke="#39c8f4" stroke-opacity=".18" />
+            <ellipse cx="372" cy="288" rx="104" ry="232" fill="none" stroke="#39c8f4" stroke-opacity=".14" />
+            <ellipse cx="372" cy="288" rx="232" ry="76" fill="none" stroke="#39c8f4" stroke-opacity=".24" transform="rotate(-18 372 288)" />
+            <ellipse cx="372" cy="288" rx="232" ry="142" fill="none" stroke="#39c8f4" stroke-opacity=".18" transform="rotate(-18 372 288)" />
+            <path d="M145 270 C231 229 295 216 377 224 C466 233 533 273 603 337" fill="none" stroke="#50dcff" stroke-opacity=".32" />
+            <path d="M160 360 C244 309 321 300 405 310 C485 319 540 348 582 394" fill="none" stroke="#50dcff" stroke-opacity=".20" />
+            <path d="M252 130 C319 184 350 244 348 318 C346 382 324 435 288 470" fill="none" stroke="#50dcff" stroke-opacity=".19" />
+            <path d="M456 124 C397 188 389 252 408 320 C426 379 456 428 492 456" fill="none" stroke="#50dcff" stroke-opacity=".16" />
+            <rect x="126" y="62" width="500" height="460" fill="url(#globe-dots)" opacity=".88" />
+          </g>
+          <path d="M116 359 C238 198 405 115 629 153" fill="none" stroke="#39e1ff" stroke-opacity=".66" stroke-width="1.2" />
+          <path d="M139 435 C278 352 441 337 630 396" fill="none" stroke="#39e1ff" stroke-opacity=".32" stroke-width="1" />
+          <g filter="url(#globe-glow)">
+            <circle cx="464" cy="201" r="4.5" fill="#5cf4ff" />
+            <circle cx="536" cy="345" r="4" fill="#5cf4ff" />
+            <circle cx="300" cy="283" r="3.5" fill="#5cf4ff" />
+          </g>
+          <circle cx="464" cy="201" r="11" fill="none" stroke="#5cf4ff" stroke-opacity=".18" />
+          <circle cx="536" cy="345" r="11" fill="none" stroke="#5cf4ff" stroke-opacity=".15" />
+        </svg>
+        <span class="globe-node node-a"></span>
+        <span class="globe-node node-b"></span>
+        <span class="globe-node node-c"></span>
+        <span class="floating-stat stat-data">
+          <span class="stat-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5" /><path d="m15 15 5 5" /></svg>
+          </span>
+          <span><b>数据</b><strong>1.2M+</strong></span>
+        </span>
+        <span class="floating-stat stat-insight">
+          <span class="stat-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="m12 4 2 4 4 .6-3 3 1 4.4-4-2.2-4 2.2 1-4.4-3-3L10 8z" /></svg>
+          </span>
+          <span><b>洞察</b><strong>+42%</strong></span>
+        </span>
+        <span class="floating-stat stat-knowledge">
+          <span class="stat-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 3a6.5 6.5 0 0 0-3.8 11.8V18h7.6v-3.2A6.5 6.5 0 0 0 12 3Z" /><path d="M9.5 21h5M10 18h4" /></svg>
+          </span>
+          <span><b>知识</b><strong>300K+</strong></span>
+        </span>
       </div>
-      <p class="login-switch">
-        <template v-if="!isRegistering">
-          没有账号？<a href="#" @click.prevent="isRegistering = true; loginError = ''">注册一个</a>
-        </template>
-        <template v-else>
-          已有账号？<a href="#" @click.prevent="isRegistering = false; loginError = ''">返回登录</a>
-        </template>
-      </p>
 
-    </div>
-  </div>
-
-  <!-- ===== 主应用 ===== -->
-  <div v-else class="app-shell">
-    <!-- 顶栏 -->
-    <header class="topbar">
-      <div class="topbar-brand" @click="sidebarOpen = !sidebarOpen">
-        <span class="brand-icon">🧠</span>
-        <span class="brand-text">企业智脑</span>
-        <span class="brand-sub">Enterprise Brain</span>
-      </div>
-      <div class="topbar-right">
-        <span class="topbar-user">👤 {{ username }}</span>
-        <button class="logout-btn" @click="doLogout">退出</button>
-        <span class="status-dot online"></span>
-        <span class="status-label">系统就绪</span>
-      </div>
-    </header>
-
-    <div class="app-body">
-      <aside class="sidebar" :class="{ collapsed: !sidebarOpen }">
-        <div v-show="sidebarOpen" class="sidebar-tabs">
-          <button :class="['tab-btn', { active: activeTab === 'docs' }]"
-                  @click="activeTab = 'docs'">📁 知识库</button>
-          <button :class="['tab-btn', { active: activeTab === 'data' }]"
-                  @click="activeTab = 'data'">📊 数据分析</button>
+      <header class="auth-brandbar">
+        <div class="brand-lockup">
+          <span class="brand-mark reference-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 48 48">
+              <path d="m24 3 17 10v22L24 45 7 35V13z" />
+              <path d="m24 12 9 5.3v10.4L24 33l-9-5.3V17.3z" />
+              <path d="m24 19 4 2.3v4.4L24 28l-4-2.3v-4.4z" />
+              <path d="m15 17.3 9 5.2 9-5.2M15 27.7l9-5.2 9 5.2" />
+            </svg>
+          </span>
+          <span class="brand-copy">
+            <strong>企业智脑</strong>
+            <small>ENTERPRISE BRAIN</small>
+          </span>
         </div>
-        <DocPanel v-show="sidebarOpen && activeTab === 'docs'" />
-        <DataPanel v-show="sidebarOpen && activeTab === 'data'" @ask="handleAsk" />
+        <p>数据 × 知识 × AI，驱动更聪明的企业</p>
+      </header>
+
+      <section class="auth-hero" aria-labelledby="auth-title" data-testid="login-hero">
+        <h1 id="auth-title">私有化企业智能<br />分析平台</h1>
+        <p class="auth-lead">让企业数据，成为生产力</p>
+        <div class="auth-capabilities" aria-label="平台能力">
+          <article>
+            <span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5c0 4.6-2.8 8-7 10-4.2-2-7-5.4-7-10V6z" /></svg>
+            </span>
+            <strong>数据安全</strong>
+          </article>
+          <article>
+            <span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4-8 4-8-4zM4 12l8 4 8-4M4 17l8 4 8-4" /></svg>
+            </span>
+            <strong>知识沉淀</strong>
+          </article>
+          <article>
+            <span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7" /></svg>
+            </span>
+            <strong>智能分析</strong>
+          </article>
+        </div>
+        <div class="auth-track">
+          <span class="track-active"></span>
+          <span></span>
+          <span></span>
+          <b>ENTERPRISE BRAIN</b>
+        </div>
+      </section>
+
+      <section class="auth-panel" aria-labelledby="login-title" data-testid="login-panel">
+        <h2 id="login-title">欢迎回来</h2>
+        <p class="panel-lead">登录进入企业智能分析平台</p>
+        <form class="login-form" data-testid="login-form" @submit.prevent="doLogin">
+          <label class="field">
+            <span class="field-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.2" /><path d="M5.5 20c.6-3.6 2.7-5.3 6.5-5.3s5.9 1.7 6.5 5.3" /></svg>
+            </span>
+            <input v-model="loginUser" data-testid="login-username" placeholder="输入用户名" autocomplete="username" required />
+          </label>
+          <label class="field">
+            <span class="field-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
+            </span>
+            <input v-model="loginPass" data-testid="login-password" :type="showPassword ? 'text' : 'password'" placeholder="输入密码" autocomplete="current-password" required />
+            <button class="field-icon trailing field-action" type="button" :aria-label="showPassword ? '隐藏密码' : '显示密码'" @click="showPassword = !showPassword">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12s3.2-5 8.5-5 8.5 5 8.5 5-3.2 5-8.5 5-8.5-5-8.5-5Z" /><circle cx="12" cy="12" r="2" /></svg>
+            </button>
+          </label>
+          <div v-if="loginError" class="notice error" data-testid="login-error" role="alert">{{ loginError }}</div>
+          <button class="primary-btn login-submit" data-testid="login-submit" type="submit">
+            <span>进入工作台</span>
+            <span aria-hidden="true">→</span>
+          </button>
+          <div class="login-options">
+            <label class="remember-me">
+              <input v-model="rememberMe" data-testid="login-remember" type="checkbox" />
+              <span>记住我</span>
+            </label>
+            <button data-testid="login-forgot" type="button" @click="openForgotPassword">忘记密码？</button>
+          </div>
+          <p class="login-hint">没有账号？联系管理员开通</p>
+        </form>
+      </section>
+      <div v-if="showForgotDialog" class="forgot-dialog-backdrop" data-testid="login-forgot-dialog">
+        <section class="forgot-dialog" role="dialog" aria-modal="true" aria-labelledby="forgot-title">
+          <button class="forgot-dialog-close" data-testid="login-forgot-close" type="button" aria-label="关闭" @click="closeForgotPassword">×</button>
+          <span class="forgot-dialog-kicker">ACCOUNT RECOVERY</span>
+          <h2 id="forgot-title">忘记密码？</h2>
+          <p>这是私有化部署系统，密码由企业管理员统一管理。</p>
+          <label class="forgot-account">
+            <span>账号</span>
+            <input v-model="forgotUsername" autocomplete="username" placeholder="请输入需要找回的账号" />
+          </label>
+          <p class="forgot-dialog-note">请联系管理员在用户管理中重置该账号密码，重置后即可返回此页面登录。</p>
+          <button class="primary-btn forgot-dialog-action" type="button" @click="closeForgotPassword">返回登录</button>
+        </section>
+      </div>
+    </main>
+
+    <div v-else class="workbench-shell reference-workbench" data-testid="workbench">
+      <aside class="sidebar" aria-label="工作区导航" data-testid="sidebar">
+        <div class="sidebar-brand">
+          <span class="brand-mark"><span></span></span>
+          <span>
+            <strong>企业智脑</strong>
+            <small>ENTERPRISE BRAIN</small>
+          </span>
+        </div>
+        <nav class="nav-list" data-testid="navigation">
+          <button
+            v-for="item in navigation"
+            :key="item.id"
+            type="button"
+            :class="['nav-item', { active: activeTab === item.id }]"
+            :data-testid="`nav-${item.id}`"
+            :aria-current="activeTab === item.id ? 'page' : undefined"
+            :aria-label="item.label"
+            @click="activeTab = item.id"
+          >
+            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path :d="item.icon" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span class="nav-label">{{ item.label }}</span>
+          </button>
+        </nav>
       </aside>
 
-      <main class="main-area">
-        <ChatPanel ref="chatPanel" />
+      <main class="workspace" data-testid="workspace">
+        <header class="workspace-head" data-testid="topbar">
+          <h1>{{ activeMeta.label }}</h1>
+          <div class="workspace-tools">
+            <button type="button" aria-label="搜索">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8" /><path d="m15.2 15.2 5 5" /></svg>
+            </button>
+            <button type="button" aria-label="通知" class="bell">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" /></svg>
+            </button>
+            <span class="user-avatar">{{ username.slice(0, 1).toUpperCase() || 'A' }}</span>
+            <span class="identity"><strong>{{ username }}</strong><span>{{ roleLabel }}</span></span>
+            <button class="logout-link" type="button" @click="doLogout">⌄</button>
+          </div>
+        </header>
+
+        <section class="panel-slot" data-testid="panel-slot">
+          <component
+            :is="workspaceMap[activeTab]"
+            v-if="workspaceMap[activeTab]"
+            @goto="activeTab = $event"
+          />
+          <DocPanel v-else-if="activeTab === 'docs'" :user-role="userRole" />
+          <DataPanel v-else-if="activeTab === 'data'" @ask="handleAsk" />
+          <ChatPanel v-else />
+        </section>
       </main>
     </div>
   </div>
 </template>
-
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-html, body, #app {
-  height: 100%;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #f0f2f5;
-  color: #1a1a2e;
-}
-
-/* ===== 外壳 ===== */
-.app-shell {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  background: linear-gradient(135deg, #f5f7fa 0%, #e8ecf1 100%);
-}
-
-/* ===== 顶栏 ===== */
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  height: 56px;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-  color: #fff;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
-  z-index: 100;
-  flex-shrink: 0;
-}
-
-.topbar-brand {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.brand-icon { font-size: 22px; }
-.brand-text { font-size: 18px; font-weight: 700; letter-spacing: 1px; }
-.brand-sub {
-  font-size: 11px; font-weight: 400; opacity: 0.55;
-  letter-spacing: 2px; text-transform: uppercase;
-}
-
-.topbar-right {
-  display: flex; align-items: center; gap: 12px;
-  font-size: 13px; opacity: 0.85;
-}
-.topbar-user { color: rgba(255,255,255,0.9); }
-.logout-btn {
-  padding: 4px 12px;
-  border: 1px solid rgba(255,255,255,0.3);
-  border-radius: 4px;
-  background: none;
-  color: rgba(255,255,255,0.7);
-  cursor: pointer;
-  font-size: 11px;
-  font-family: inherit;
-}
-.logout-btn:hover { border-color: #f56c6c; color: #f56c6c; }
-
-.topbar-status {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 13px; opacity: 0.85;
-}
-
-.status-dot {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: #67c23a; box-shadow: 0 0 8px rgba(103,194,58,0.5);
-  animation: pulse-dot 2s infinite;
-}
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-/* ===== 主体 ===== */
-.app-body {
-  flex: 1; display: flex; overflow: hidden;
-}
-
-/* ===== 侧边栏 ===== */
-.sidebar {
-  width: 340px;
-  background: rgba(255,255,255,0.85);
-  backdrop-filter: blur(12px);
-  border-right: 1px solid rgba(0,0,0,0.06);
-  display: flex; flex-direction: column;
-  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  overflow: hidden; flex-shrink: 0;
-  box-shadow: 2px 0 20px rgba(0,0,0,0.04);
-}
-
-.sidebar.collapsed {
-  width: 0; border-right: none; box-shadow: none;
-}
-
-/* ===== Tab 切换 ===== */
-.sidebar-tabs {
-  display: flex; gap: 4px; padding: 12px 14px 0;
-}
-
-.tab-btn {
-  flex: 1; padding: 8px 0; border: none; border-radius: 8px;
-  background: transparent; cursor: pointer; font-size: 13px;
-  font-weight: 500; color: #909399; font-family: inherit;
-  transition: all 0.2s;
-}
-
-.tab-btn:hover { color: #303133; background: rgba(0,0,0,0.03); }
-
-.tab-btn.active {
-  color: #fff; background: linear-gradient(135deg, #409eff, #3a8ee6);
-  box-shadow: 0 2px 8px rgba(64,158,255,0.25);
-}
-
-/* ===== 主区域 ===== */
-.main-area {
-  flex: 1; display: flex; flex-direction: column; min-width: 0;
-  background: radial-gradient(ellipse at top, rgba(64,158,255,0.03) 0%, transparent 60%);
-}
-
-/* ===== 登录页 ===== */
-.login-screen {
-  height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-}
-.login-card {
-  text-align: center;
-  background: rgba(255,255,255,0.06);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 20px;
-  padding: 48px 40px;
-  width: 380px;
-  max-width: 90vw;
-}
-.login-icon { font-size: 52px; margin-bottom: 12px; }
-.login-card h1 { color: #fff; font-size: 26px; margin-bottom: 4px; }
-.login-sub { color: rgba(255,255,255,0.45); font-size: 13px; margin-bottom: 32px; }
-
-.login-form { display: flex; flex-direction: column; gap: 14px; }
-.login-input {
-  width: 100%;
-  padding: 12px 16px;
-  border: 1px solid rgba(255,255,255,0.15);
-  border-radius: 10px;
-  background: rgba(255,255,255,0.06);
-  color: #fff;
-  font-size: 14px;
-  font-family: inherit;
-  outline: none;
-  transition: border-color 0.2s;
-}
-.login-input::placeholder { color: rgba(255,255,255,0.3); }
-.login-input:focus { border-color: #409eff; }
-
-.login-error {
-  color: #f56c6c;
-  font-size: 12px;
-  text-align: center;
-  padding: 6px;
-  background: rgba(245,108,108,0.1);
-  border-radius: 6px;
-}
-
-.login-btn {
-  width: 100%;
-  padding: 12px;
-  border: none;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #409eff, #3a8ee6);
-  color: #fff;
-  font-size: 15px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.login-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(64,158,255,0.3); }
-
-.login-hint {
-  margin-top: 20px;
-  color: rgba(255,255,255,0.25);
-  font-size: 11px;
-}
-
-.login-switch {
-  margin-top: 16px;
-  text-align: center;
-  font-size: 13px;
-  color: rgba(255,255,255,0.4);
-}
-.login-switch a {
-  color: #409eff;
-  text-decoration: none;
-  cursor: pointer;
-}
-.login-switch a:hover { text-decoration: underline; }
-</style>

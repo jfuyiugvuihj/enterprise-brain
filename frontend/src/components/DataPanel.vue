@@ -1,6 +1,7 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import axios from 'axios'
+import DocumentPreviewModal from './DocumentPreviewModal.vue'
 
 // axios 拦截器：自动带上 JWT
 axios.interceptors.request.use(config => {
@@ -11,7 +12,18 @@ axios.interceptors.request.use(config => {
 
 const API = '/api/v1'
 const profile = ref(null)
+const dataFile = ref('')
+const tableColumns = ref([])
+const tableRows = ref([])
+const tableTruncated = ref(false)
+const previewOpen = ref(false)
+const previewLoading = ref(false)
+const previewError = ref('')
 const uploading = ref(false)
+const dataFiles = ref([])
+const filesLoading = ref(false)
+const filesError = ref('')
+const selectingFile = ref(false)
 
 const quickActions = [
   { label: '📊 各列对比', query: '对比各列数据的最大最小值' },
@@ -34,17 +46,103 @@ async function uploadExcel(e) {
   uploading.value = true
   try {
     const res = await axios.post(`${API}/upload-excel`, form)
-    profile.value = res.data.profile  // 取 profile 字段
+    applyDataPreview(res.data)
+    await loadDataFiles(file.name)
   } catch (err) {
-    console.error('上传失败', err)
+    filesError.value = err.response?.data?.detail || err.message || '数据上传失败'
   } finally {
     uploading.value = false
     e.target.value = ''
   }
 }
 
+function applyDataPreview(data) {
+  dataFile.value = data.filename || ''
+  profile.value = data.profile || null
+  tableColumns.value = data.columns || []
+  tableRows.value = data.rows || []
+  tableTruncated.value = Boolean(data.truncated)
+}
+
+async function loadDataFiles(preferredFilename = '') {
+  filesLoading.value = true
+  filesError.value = ''
+  try {
+    const res = await axios.get(`${API}/data-files`, { params: { _ts: Date.now() } })
+    dataFiles.value = res.data.files || []
+    const currentExists = dataFiles.value.some(file => file.filename === dataFile.value)
+    const preferredExists = dataFiles.value.some(file => file.filename === preferredFilename)
+    const nextFilename = preferredExists
+      ? preferredFilename
+      : currentExists
+        ? dataFile.value
+        : dataFiles.value[0]?.filename
+    if (nextFilename && (nextFilename !== dataFile.value || !profile.value)) {
+      await selectDataFile(nextFilename)
+    }
+  } catch (err) {
+    filesError.value = err.response?.data?.detail || err.message || '数据文件列表加载失败'
+  } finally {
+    filesLoading.value = false
+  }
+}
+
+async function selectDataFile(filename) {
+  dataFile.value = filename
+  selectingFile.value = true
+  previewError.value = ''
+  try {
+    const res = await axios.get(
+      `${API}/data-files/${encodeURIComponent(filename)}/preview`,
+      { params: { _ts: Date.now() } }
+    )
+    applyDataPreview(res.data)
+  } catch (err) {
+    previewError.value = err.response?.data?.detail || err.message || '数据文件预览失败'
+  } finally {
+    selectingFile.value = false
+  }
+}
+
+async function openDataFile() {
+  if (!dataFile.value) return
+  previewOpen.value = true
+  previewLoading.value = true
+  try {
+    await selectDataFile(dataFile.value)
+  } catch (err) {
+    previewError.value = err.response?.data?.detail || err.message || '数据预览失败'
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+async function downloadDataFile() {
+  if (!dataFile.value) return
+  try {
+    const res = await axios.get(
+      `${API}/data-files/${encodeURIComponent(dataFile.value)}/file`,
+      { responseType: 'blob', params: { inline: false, _ts: Date.now() } }
+    )
+    const url = URL.createObjectURL(res.data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = dataFile.value
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch (err) {
+    previewError.value = err.response?.data?.detail || err.message || '数据文件下载失败'
+  }
+}
+
+function closeDataPreview() {
+  previewOpen.value = false
+  previewError.value = ''
+}
+
 function askQuestion(q) {
-  emit('ask', q)
+  if (!dataFile.value) return
+  emit('ask', { query: q, filename: dataFile.value })
 }
 
 function typeIcon(dtype) {
@@ -60,27 +158,68 @@ function missingClass(pct) {
   if (pct < 10) return 'warn'
   return 'bad'
 }
+
+function formatModifiedAt(value) {
+  return value ? value.replace('T', ' ').replace(/([+-]\d{2}:\d{2})$/, '') : ''
+}
+
+onMounted(loadDataFiles)
 </script>
 
 <template>
-  <div class="data-panel">
+  <div class="data-panel" data-testid="data-panel">
     <!-- 上传区 -->
     <div class="upload-section">
       <label class="upload-btn" :class="{ loading: uploading }">
         {{ uploading ? '⏳ 解析中...' : '📊 上传 Excel' }}
-        <input type="file" hidden accept=".xlsx,.xls,.csv"
+        <input data-testid="data-upload-input" type="file" hidden accept=".xlsx,.xls,.csv"
                @change="uploadExcel" :disabled="uploading" />
       </label>
       <p class="upload-hint">上传经营数据开始分析</p>
     </div>
 
+    <section class="data-files-section">
+      <div class="section-heading">
+        <span>数据文件</span>
+        <span v-if="dataFiles.length" class="file-count">{{ dataFiles.length }}</span>
+      </div>
+
+      <p v-if="filesLoading" class="data-state">正在读取数据文件...</p>
+      <p v-else-if="filesError" class="data-state error">{{ filesError }}</p>
+      <p v-else-if="!dataFiles.length" class="data-state empty">暂无数据文件，上传 Excel 或 CSV 开始分析。</p>
+
+      <div v-else class="data-file-list">
+        <button
+          v-for="file in dataFiles"
+          :key="file.filename"
+          type="button"
+          :class="['data-file-item', { active: file.filename === dataFile, loading: selectingFile && file.filename === dataFile }]"
+          @click="selectDataFile(file.filename)"
+        >
+          <span class="data-file-icon">{{ file.extension === '.csv' ? 'CSV' : 'XLS' }}</span>
+          <span class="data-file-main">
+            <span class="data-file-name">{{ file.filename }}</span>
+            <span class="data-file-meta">{{ file.size_label }} · {{ formatModifiedAt(file.modified_at) }}</span>
+          </span>
+        </button>
+      </div>
+    </section>
+
+    <p v-if="previewError && !previewOpen" class="data-state error preview-error">{{ previewError }}</p>
+
     <!-- 数据画像 -->
     <div v-if="profile" class="profile-card">
       <div class="profile-header">
-        <span class="profile-title">📋 数据画像</span>
-        <span class="profile-stats">
-          {{ profile.rows }} 行 × {{ profile.columns }} 列
-        </span>
+        <div class="profile-heading">
+          <span class="profile-title">📋 数据画像</span>
+          <span class="profile-stats">
+            {{ profile.rows }} 行 × {{ profile.column_count || profile.columns.length }} 列
+          </span>
+        </div>
+        <div class="data-file-actions">
+          <button type="button" class="data-action-btn" @click="openDataFile">打开</button>
+          <button type="button" class="data-action-btn" @click="downloadDataFile">下载</button>
+        </div>
       </div>
 
       <!-- 列信息 -->
@@ -105,13 +244,26 @@ function missingClass(pct) {
     </div>
 
     <!-- 快捷提问 -->
-    <div class="quick-actions">
+    <div class="quick-actions" data-testid="data-quick-actions">
       <h4>💡 快捷提问</h4>
       <button v-for="act in quickActions" :key="act.label"
               class="quick-chip" @click="askQuestion(act.query)">
         {{ act.label }}
       </button>
     </div>
+
+    <DocumentPreviewModal
+      :open="previewOpen"
+      :filename="dataFile"
+      kind="table"
+      :columns="tableColumns"
+      :rows="tableRows"
+      :loading="previewLoading"
+      :error="previewError"
+      :truncated="tableTruncated"
+      @close="closeDataPreview"
+      @download="downloadDataFile"
+    />
   </div>
 </template>
 
@@ -166,6 +318,129 @@ function missingClass(pct) {
   color: #909399;
 }
 
+.data-files-section {
+  padding: 16px 0 2px;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 9px;
+  color: #303133;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.file-count {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: rgba(16,185,129,0.12);
+  color: #047857;
+  font-size: 11px;
+  text-align: center;
+}
+
+.data-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 210px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.data-file-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid #edf0f2;
+  border-radius: 8px;
+  background: #fff;
+  color: #303133;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+
+.data-file-item:hover {
+  border-color: #6ee7b7;
+  background: #f0fdf4;
+  transform: translateX(2px);
+}
+
+.data-file-item.active {
+  border-color: #10b981;
+  background: linear-gradient(135deg, #ecfdf5, #f0fdf4);
+  box-shadow: 0 2px 8px rgba(16,185,129,0.1);
+}
+
+.data-file-item.loading {
+  opacity: 0.65;
+}
+
+.data-file-icon {
+  flex: 0 0 auto;
+  min-width: 30px;
+  padding: 4px 3px;
+  border-radius: 5px;
+  background: #dcfce7;
+  color: #047857;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-align: center;
+}
+
+.data-file-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.data-file-name {
+  overflow: hidden;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-file-meta {
+  color: #9ca3af;
+  font-size: 10px;
+}
+
+.data-state {
+  margin: 4px 0 10px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.data-state.error {
+  color: #dc2626;
+}
+
+.data-state.empty {
+  padding: 10px;
+  border: 1px dashed #d1d5db;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.preview-error {
+  margin-top: 12px;
+}
+
 /* 数据画像 */
 .profile-card {
   margin-top: 16px;
@@ -184,6 +459,13 @@ function missingClass(pct) {
   border-bottom: 1px solid rgba(0,0,0,0.04);
 }
 
+.profile-heading {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .profile-title {
   font-size: 13px;
   font-weight: 600;
@@ -192,6 +474,28 @@ function missingClass(pct) {
 .profile-stats {
   font-size: 11px;
   color: #909399;
+}
+
+.data-file-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.data-action-btn {
+  padding: 4px 9px;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  background: #fff;
+  color: #4b5563;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.data-action-btn:hover {
+  border-color: #10b981;
+  color: #047857;
 }
 
 .col-list {
@@ -281,5 +585,98 @@ function missingClass(pct) {
   color: #409eff;
   background: rgba(64,158,255,0.03);
   transform: translateX(3px);
+}
+
+.data-panel {
+  color: var(--text);
+  padding: 0 18px 18px;
+}
+
+.data-panel::-webkit-scrollbar-thumb {
+  background: rgba(157, 178, 207, .25);
+}
+
+.upload-section,
+.data-files-section {
+  border-bottom-color: var(--line);
+}
+
+.upload-btn {
+  background: linear-gradient(135deg, var(--cyan), #1a9f9a);
+  color: #061016;
+  box-shadow: 0 10px 24px rgba(53, 211, 200, .14);
+}
+
+.upload-btn.loading {
+  background: rgba(53, 211, 200, .25);
+  color: var(--ink-soft);
+}
+
+.upload-hint,
+.data-state,
+.data-file-meta,
+.col-type,
+.col-stats {
+  color: var(--muted);
+}
+
+.section-heading,
+.quick-actions h4,
+.col-name {
+  color: var(--text);
+}
+
+.file-count,
+.col-type {
+  background: rgba(53, 211, 200, .1);
+  color: var(--cyan);
+}
+
+.data-file-item,
+.profile-card,
+.col-item,
+.quick-chip {
+  background: rgba(255, 255, 255, .035);
+  border-color: var(--line);
+}
+
+.data-file-item:hover,
+.data-file-item.active,
+.quick-chip:hover {
+  border-color: rgba(53, 211, 200, .42);
+  background: rgba(53, 211, 200, .08);
+  color: var(--cyan);
+}
+
+.data-file-name,
+.profile-title,
+.profile-stats {
+  color: var(--text);
+}
+
+.data-action-btn {
+  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, .04);
+  color: var(--ink-soft);
+}
+
+.data-action-btn:hover {
+  border-color: var(--blue);
+  color: #b5c4ff;
+}
+
+.col-missing.ok {
+  color: var(--green);
+  background: rgba(101, 212, 154, .1);
+}
+
+.col-missing.warn {
+  color: var(--amber);
+  background: rgba(228, 162, 74, .1);
+}
+
+.col-missing.bad {
+  color: #ff9da5;
+  background: rgba(238, 109, 120, .1);
 }
 </style>

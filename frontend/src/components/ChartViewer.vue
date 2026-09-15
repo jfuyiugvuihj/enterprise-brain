@@ -75,16 +75,16 @@ function closePreview() {
 <style scoped>
 .chart-card {
   margin: 12px 0;
-  background: #fff;
+  background: rgba(17, 27, 44, .92);
   border-radius: 12px;
-  border: 1px solid rgba(0,0,0,0.05);
+  border: 1px solid rgba(157, 178, 207, .16);
   overflow: hidden;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .18);
   transition: box-shadow 0.2s;
 }
 
 .chart-card:hover {
-  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, .28);
 }
 
 .chart-header {
@@ -92,13 +92,13 @@ function closePreview() {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid #f5f5f5;
+  border-bottom: 1px solid rgba(157, 178, 207, .12);
 }
 
 .chart-caption {
   font-size: 13px;
   font-weight: 500;
-  color: #303133;
+  color: #f0f4fb;
 }
 
 .chart-actions {
@@ -116,14 +116,14 @@ function closePreview() {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #909399;
+  color: #9eacc1;
   text-decoration: none;
   transition: all 0.15s;
 }
 
 .chart-btn:hover {
-  background: #f0f2f5;
-  color: #409eff;
+  background: rgba(106, 140, 255, .14);
+  color: #8ea8ff;
 }
 
 .chart-img-wrap {
@@ -137,6 +137,7 @@ function closePreview() {
   max-width: 100%;
   max-height: 360px;
   border-radius: 6px;
+  background: #fff;
   transition: transform 0.2s;
 }
 
@@ -148,7 +149,7 @@ function closePreview() {
 .preview-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.75);
+  background: rgba(3, 7, 16, .82);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -175,7 +176,7 @@ function closePreview() {
   border: 1px solid rgba(255,255,255,0.25);
   border-radius: 8px;
   background: rgba(255,255,255,0.1);
-  color: #fff;
+  color: #f0f4fb;
   cursor: pointer;
   font-size: 13px;
   font-family: inherit;

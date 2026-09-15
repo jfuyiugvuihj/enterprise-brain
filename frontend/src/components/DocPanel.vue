@@ -1,10 +1,11 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import axios from 'axios'
+import DocumentPreviewModal from './DocumentPreviewModal.vue'
 
 // axios 拦截器：自动带上 JWT
 axios.interceptors.request.use(config => {
-  const token = window._authToken
+  const token = localStorage.getItem("eb_token") || window._authToken
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
@@ -13,8 +14,56 @@ const API = '/api/v1'
 const docs = ref([])
 const uploads = ref([])
 const dragOver = ref(false)
-const isAdmin = ref(false)
+const props = defineProps({
+  userRole: {
+    type: String,
+    default: 'staff'
+  }
+})
+const isAdmin = computed(() => props.userRole === 'admin')
 const searchQuery = ref('')
+const preview = reactive({
+  open: false,
+  filename: '',
+  kind: 'text',
+  text: '',
+  blobUrl: '',
+  loading: false,
+  error: '',
+  truncated: false
+})
+
+function startProgressTimer(item) {
+  item.progress = Math.max(item.progress, 5)
+  item.progressTimer = setInterval(() => {
+    if (item.status !== 'uploading') {
+      stopProgressTimer(item)
+      return
+    }
+    const limit = item.phase === 'processing' ? 99 : 60
+    if (item.progress < limit) {
+      item.progress += Math.max(1, Math.ceil((limit - item.progress) * 0.12))
+    }
+  }, 400)
+}
+
+function stopProgressTimer(item) {
+  if (!item.progressTimer) return
+  clearInterval(item.progressTimer)
+  item.progressTimer = null
+}
+
+function createUploadItem(file) {
+  return reactive({
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    name: file.name,
+    status: 'uploading',
+    phase: 'uploading',
+    progress: 0,
+    progressTimer: null,
+    msg: '正在上传...'
+  })
+}
 
 // 过滤后的文档列表
 const filteredDocs = computed(() => {
@@ -25,43 +74,186 @@ const filteredDocs = computed(() => {
 
 async function loadDocs() {
   try {
-    const res = await axios.get(`${API}/documents`)
-    docs.value = res.data.documents || []
+    const res = await axios.get(`${API}/documents/catalog`, {
+      params: { _ts: Date.now() }
+    })
+    docs.value = (res.data.documents || [])
+      .map(item => (typeof item === 'string' ? item : item.filename))
+      .filter(Boolean)
   } catch (e) {
-    console.error('加载失败', e)
+    console.error('??????', e)
+  }
+}
+
+async function fetchDocumentBlob(filename, inline = false) {
+  const res = await axios.get(`${API}/documents/${encodeURIComponent(filename)}/file`, {
+    responseType: 'blob',
+    params: { inline, _ts: Date.now() }
+  })
+  return res.data
+}
+
+async function openDocument(filename) {
+  if (preview.blobUrl) {
+    URL.revokeObjectURL(preview.blobUrl)
+    preview.blobUrl = ''
+  }
+  preview.open = true
+  preview.filename = filename
+  preview.kind = 'text'
+  preview.text = ''
+  preview.loading = true
+  preview.error = ''
+  preview.truncated = false
+  try {
+    const res = await axios.get(`${API}/documents/${encodeURIComponent(filename)}/preview`, {
+      params: { _ts: Date.now() }
+    })
+    preview.kind = res.data.kind || 'text'
+    preview.text = res.data.text || ''
+    preview.truncated = Boolean(res.data.truncated)
+    if (preview.kind === 'pdf') {
+      const blob = await fetchDocumentBlob(filename, true)
+      preview.blobUrl = URL.createObjectURL(blob)
+    }
+  } catch (err) {
+    preview.error = err.response?.data?.detail || err.message || '文件预览失败'
+  } finally {
+    preview.loading = false
+  }
+}
+
+function closeDocumentPreview() {
+  preview.open = false
+  if (preview.blobUrl) {
+    URL.revokeObjectURL(preview.blobUrl)
+    preview.blobUrl = ''
+  }
+}
+
+async function downloadDocument(filename) {
+  try {
+    const blob = await fetchDocumentBlob(filename, false)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch (err) {
+    console.error('????', err)
   }
 }
 
 async function uploadFiles(files) {
   for (const file of files) {
-    const item = { name: file.name, status: 'uploading', msg: '解析中...' }
+    const item = reactive({
+      name: file.name,
+      status: 'uploading',
+      phase: 'uploading',
+      progress: 0,
+      progressTimer: null,
+      msg: '正在上传...'
+    })
     uploads.value.unshift(item)
+    startProgressTimer(item)
     const form = new FormData()
     form.append('file', file)
     try {
-      const res = await axios.post(`${API}/upload`, form)
+      const res = await axios.post(`${API}/upload`, form, {
+        onUploadProgress: (event) => {
+          if (event.total) {
+            const uploaded = event.loaded / event.total
+            item.progress = Math.max(item.progress, Math.min(70, Math.round(uploaded * 70)))
+          }
+          if (!event.total || event.loaded >= event.total) {
+            item.phase = 'processing'
+            item.msg = '正在解析并入库...'
+          }
+        }
+      })
+      stopProgressTimer(item)
+      item.progress = Math.max(item.progress, 70)
       item.status = res.data.status === 'ok' ? 'done' : 'skipped'
-      item.msg = res.data.message
+      if (item.status === 'done') {
+        item.progress = 100
+        item.phase = 'done'
+      }
+      item.msg = res.data.message || '上传完成'
+      await loadDocs()
     } catch (err) {
+      stopProgressTimer(item)
       item.status = 'error'
+      item.phase = 'error'
+      if (err.response?.status === 401) {
+        item.msg = '登录状态已失效，请退出后重新登录'
+        continue
+      }
       item.msg = `失败: ${err.message}`
     }
   }
   await loadDocs()
 }
 
+async function uploadFilesParallel(files) {
+  const tasks = files.map(file => uploadSingleFile(file))
+  await Promise.allSettled(tasks)
+  await loadDocs()
+}
+
+async function uploadSingleFile(file) {
+  const item = createUploadItem(file)
+  uploads.value.unshift(item)
+  startProgressTimer(item)
+  const form = new FormData()
+  form.append('file', file)
+  try {
+    const res = await axios.post(`${API}/upload`, form, {
+      onUploadProgress: (event) => {
+        if (event.total) {
+          const uploaded = event.loaded / event.total
+          item.progress = Math.max(item.progress, Math.min(70, Math.round(uploaded * 70)))
+        }
+        if (!event.total || event.loaded >= event.total) {
+          item.phase = 'processing'
+          item.msg = '正在解析并入库...'
+        }
+      }
+    })
+    stopProgressTimer(item)
+    item.progress = Math.max(item.progress, 70)
+    item.status = res.data.status === 'ok' ? 'done' : 'skipped'
+    if (item.status === 'done') {
+      item.progress = 100
+      item.phase = 'done'
+    }
+    item.msg = res.data.message || '上传完成'
+    await loadDocs()
+  } catch (err) {
+    stopProgressTimer(item)
+    item.status = 'error'
+    item.phase = 'error'
+    if (err.response?.status === 401) {
+      item.msg = '登录状态已失效，请退出后重新登录'
+      return
+    }
+    item.msg = `澶辫触: ${err.message}`
+  }
+}
+
 function onFileInput(e) {
-  if (e.target.files.length) uploadFiles([...e.target.files])
+  if (e.target.files.length) uploadFilesParallel([...e.target.files])
   e.target.value = ''
 }
 
 function onDrop(e) {
   dragOver.value = false
-  if (e.dataTransfer?.files.length) uploadFiles([...e.dataTransfer.files])
+  if (e.dataTransfer?.files.length) uploadFilesParallel([...e.dataTransfer.files])
 }
 
 // 批量删除
 const selectedFiles = ref(new Set())
+const deleting = ref(false)
 
 function toggleSelect(filename) {
   if (!isAdmin.value) return
@@ -80,25 +272,30 @@ function toggleAll() {
   }
 }
 
-async function deleteSelected() {
-  const files = [...selectedFiles.value]
-  if (!files.length) return
-  if (!confirm(`确定删除 ${files.length} 个文件？`)) return
-  for (const f of files) {
-    try {
-      await axios.delete(`${API}/documents/${encodeURIComponent(f)}`)
-    } catch (e) { console.error('删除失败', e) }
+async function deleteDocuments(files) {
+  if (!files.length || deleting.value) return
+  if (!confirm(`?????? ${files.length} ??????`)) return
+  deleting.value = true
+  try {
+    await Promise.allSettled(
+      files.map(filename => axios.delete(`${API}/documents/${encodeURIComponent(filename)}`))
+    )
+    selectedFiles.value.clear()
+    await loadDocs()
+  } catch (err) {
+    console.error('??????', err)
+    window.alert(err.response?.data?.detail || err.message || '????')
+  } finally {
+    deleting.value = false
   }
-  selectedFiles.value.clear()
-  await loadDocs()
+}
+
+async function deleteSelected() {
+  await deleteDocuments([...selectedFiles.value])
 }
 
 async function deleteOne(filename) {
-  if (!confirm(`删除 "${filename}"？`)) return
-  try {
-    await axios.delete(`${API}/documents/${encodeURIComponent(filename)}`)
-    await loadDocs()
-  } catch (err) { console.error('删除失败', err) }
+  await deleteDocuments([filename])
 }
 
 function fileIcon(name) {
@@ -118,10 +315,11 @@ function clearUploads() {
 }
 
 onMounted(loadDocs)
+onUnmounted(() => uploads.value.forEach(stopProgressTimer))
 </script>
 
 <template>
-  <div class="doc-panel">
+  <div class="doc-panel" data-testid="documents-panel">
     <!-- 面板标题 -->
     <div class="panel-hd">
       <div class="panel-hd-left">
@@ -131,11 +329,6 @@ onMounted(loadDocs)
       </div>
 
       <!-- 管理员开关 -->
-      <label class="admin-toggle" title="切换管理员模式">
-        <span class="admin-label">🔑</span>
-        <input type="checkbox" v-model="isAdmin" />
-        <span class="toggle-slider"></span>
-      </label>
     </div>
 
     <!-- 搜索 -->
@@ -148,23 +341,60 @@ onMounted(loadDocs)
     </div>
 
     <!-- 上传区（紧凑） -->
-    <div class="drop-zone" :class="{ drag: dragOver }"
+    <div class="drop-zone" data-testid="document-drop-zone" :class="{ drag: dragOver }"
          @dragover.prevent="dragOver = true"
          @dragleave.prevent="dragOver = false"
          @drop.prevent="onDrop">
       <label class="upload-label">
         <span class="upload-icon">☁️</span>
         <span>拖拽或点击上传 · 支持多选</span>
-        <input type="file" hidden multiple accept=".pdf,.docx,.doc,.txt" @change="onFileInput" />
+        <input data-testid="document-upload-input" type="file" hidden multiple accept=".pdf,.docx,.doc,.txt" @change="onFileInput" />
       </label>
     </div>
 
     <!-- 上传队列 -->
     <TransitionGroup name="queue">
-      <div v-for="item in uploads" :key="item.name" :class="['upload-item', item.status]">
-        <span>{{ item.status === 'uploading' ? '⏳' : item.status === 'done' ? '✅' : item.status === 'skipped' ? '⏭️' : '❌' }}</span>
-        <span class="up-name">{{ item.name }}</span>
-        <span class="up-msg">{{ item.msg }}</span>
+      <div v-for="item in uploads" :key="item.id" :class="['upload-item', item.status]">
+        <span v-if="item.status === 'uploading'" class="sr-only" role="status">正在解析入库</span>
+        <svg
+          v-if="item.status === 'uploading'"
+          class="upload-progress-ring"
+          aria-hidden="true"
+          viewBox="0 0 24 24"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r="9"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-dasharray="42 14"
+          />
+        </svg>
+        <span v-else>{{ item.status === 'done' ? '✅' : item.status === 'skipped' ? '⏭️' : '❌' }}</span>
+        <div class="up-body">
+          <div class="up-line">
+            <span class="up-name">{{ item.name }}</span>
+            <span class="up-msg">{{ item.status === 'uploading' ? (item.phase === 'processing' ? '解析入库中...' : '上传中...') : item.msg }}</span>
+          </div>
+          <div
+            v-if="item.status === 'uploading' || item.status === 'done'"
+            class="upload-progress-track"
+            role="progressbar"
+            aria-label="文件上传进度"
+            :aria-valuenow="item.progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+          >
+            <div class="upload-progress-bar" :style="{ width: `${item.progress}%` }"></div>
+          </div>
+          <div v-if="item.status === 'uploading' || item.status === 'done'" class="upload-progress-meta">
+            <span>{{ item.phase === 'done' ? '上传完成' : item.phase === 'processing' ? '解析入库中...' : '上传中...' }}</span>
+            <span>{{ item.progress }}%</span>
+          </div>
+        </div>
       </div>
     </TransitionGroup>
 
@@ -184,7 +414,7 @@ onMounted(loadDocs)
     </div>
 
     <!-- 文档列表 -->
-    <div class="doc-list">
+    <div class="doc-list" data-testid="document-list">
       <div v-if="docs.length === 0" class="empty">
         <span class="empty-icon">📭</span>
         <p>知识库是空的</p>
@@ -206,9 +436,13 @@ onMounted(loadDocs)
 
           <span class="doc-icon">{{ fileIcon(doc) }}</span>
           <span class="doc-name" :title="doc">{{ doc }}</span>
+          <div class="doc-actions">
+            <button class="doc-open-btn" @click.stop="openDocument(doc)">打开</button>
+            <button class="doc-open-btn" @click.stop="downloadDocument(doc)">下载</button>
 
           <!-- 删除按钮（管理员） -->
-          <button v-if="isAdmin" class="del-btn" @click.stop="deleteOne(doc)" title="删除">✕</button>
+            <button v-if="isAdmin" class="del-btn" @click.stop="deleteOne(doc)" title="删除">删除</button>
+          </div>
         </div>
       </TransitionGroup>
     </div>
@@ -218,6 +452,19 @@ onMounted(loadDocs)
       <span>共 {{ docs.length }} 个文档</span>
       <span v-if="isAdmin" class="footer-hint">点击选择 · 批量删除</span>
     </div>
+
+    <DocumentPreviewModal
+      :open="preview.open"
+      :filename="preview.filename"
+      :kind="preview.kind"
+      :text="preview.text"
+      :blob-url="preview.blobUrl"
+      :loading="preview.loading"
+      :error="preview.error"
+      :truncated="preview.truncated"
+      @close="closeDocumentPreview"
+      @download="downloadDocument(preview.filename)"
+    />
   </div>
 </template>
 
@@ -278,6 +525,48 @@ onMounted(loadDocs)
 }
 .upload-item.done { background: rgba(103,194,58,0.04); border-color: #b3e19d; }
 .upload-item.error { background: rgba(245,108,108,0.04); border-color: #fab6b6; }
+.up-body { flex: 1; min-width: 0; }
+.up-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.upload-progress-ring {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: #409eff;
+  animation: upload-progress-spin 0.85s linear infinite;
+  transform-origin: 50% 50%;
+}
+.upload-progress-track {
+  height: 4px;
+  margin-top: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf2f7;
+}
+.upload-progress-bar {
+  height: 100%;
+  min-width: 2px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #409eff, #67c23a);
+  transition: width 0.2s ease;
+}
+.upload-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  color: #909399;
+  font-size: 10px;
+}
 .up-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .up-msg { color: #67c23a; flex-shrink: 0; }
 .upload-item.error .up-msg { color: #f56c6c; }
@@ -329,6 +618,17 @@ onMounted(loadDocs)
 
 .doc-icon { font-size: 13px; flex-shrink: 0; }
 .doc-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #303133; }
+.doc-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.doc-open-btn {
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  color: #606266;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.doc-open-btn:hover { background: #f5f7fa; color: #409eff; }
 
 .del-btn {
   background: none; border: none; color: #c0c4cc; cursor: pointer;
@@ -355,4 +655,104 @@ onMounted(loadDocs)
 .queue-leave-active { transition: all 0.15s ease; }
 .queue-enter-from { opacity: 0; transform: translateY(-6px); }
 .queue-leave-to { opacity: 0; }
+
+@keyframes upload-progress-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.doc-panel {
+  color: var(--text);
+  padding: 0 18px 18px;
+}
+
+.panel-hd {
+  border-bottom-color: var(--line);
+  color: var(--text);
+}
+
+.badge,
+.search-bar,
+.upload-item,
+.doc-row,
+.batch-bar {
+  background: rgba(255, 255, 255, .035);
+  border-color: var(--line);
+}
+
+.badge {
+  color: var(--cyan);
+  background: rgba(53, 211, 200, .1);
+}
+
+.search-bar {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .02);
+}
+
+.search-input,
+.doc-name,
+.up-name,
+.panel-hd strong {
+  color: var(--text);
+}
+
+.search-input::placeholder,
+.search-result,
+.upload-hint,
+.empty-sub,
+.footer-hint,
+.up-msg,
+.panel-footer {
+  color: var(--muted);
+}
+
+.drop-zone {
+  border-color: rgba(53, 211, 200, .28);
+  background: rgba(53, 211, 200, .035);
+}
+
+.drop-zone.drag {
+  border-color: var(--cyan);
+  background: rgba(53, 211, 200, .1);
+}
+
+.upload-label {
+  color: var(--ink-soft);
+}
+
+.doc-row:hover,
+.doc-row.selected {
+  background: rgba(106, 140, 255, .1);
+  border-color: rgba(106, 140, 255, .28);
+}
+
+.doc-open-btn,
+.del-btn,
+.batch-del,
+.clear-btn {
+  border-color: var(--line-strong);
+  background: rgba(255, 255, 255, .04);
+  color: var(--ink-soft);
+}
+
+.doc-open-btn:hover {
+  border-color: var(--blue);
+  color: #b5c4ff;
+  background: rgba(106, 140, 255, .12);
+}
+
+.del-btn:hover,
+.batch-del:hover {
+  border-color: var(--red);
+  color: #ffabb2;
+  background: rgba(238, 109, 120, .12);
+}
+
+.empty {
+  color: var(--ink-soft);
+}
+
+.panel-footer {
+  border-top-color: var(--line);
+}
 </style>

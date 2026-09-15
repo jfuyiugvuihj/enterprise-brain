@@ -7,12 +7,13 @@ const STORAGE_KEY = 'eb_sessions_v2'
 const messages = ref([])
 const input = ref('')
 const loading = ref(false)
-const modelSource = ref('deepseek')
 const chatEl = ref(null)
 const sessionId = ref('')
 const sessions = ref([])  // [{id, title, msgCount, updatedAt, messages: [...]}]
+const activeDataFilename = ref('')
 const sidebarOpen = ref(true)
 const hitl = ref(null)  // { pending: [...], labels: [...] } — HITL 待确认
+let activeController = null
 
 // ==================== 会话管理 ====================
 
@@ -60,6 +61,7 @@ function syncSession() {
     title,
     msgCount: userMsgs.length,
     updatedAt: Date.now(),
+    dataFilename: activeDataFilename.value,
     messages: [...messages.value]
   }
   if (exists) {
@@ -75,12 +77,14 @@ function newSession() {
   const sid = genId()
   sessionId.value = sid
   messages.value = []
+  activeDataFilename.value = ''
   // 总是创建新条目
   sessions.value.unshift({
     id: sid,
     title: '',
     msgCount: 0,
     updatedAt: Date.now(),
+    dataFilename: '',
     messages: []
   })
   persist()
@@ -92,6 +96,7 @@ function switchSession(id) {
   sessionId.value = id
   const s = sessions.value.find(s => s.id === id)
   messages.value = s ? [...s.messages] : []
+  activeDataFilename.value = s?.dataFilename || ''
   persist()
   nextTick(() => scrollBottom())
 }
@@ -104,11 +109,13 @@ function deleteSession(id) {
     if (sessions.value.length) {
       sessionId.value = sessions.value[0].id
       messages.value = [...sessions.value[0].messages]
+      activeDataFilename.value = sessions.value[0].dataFilename || ''
     } else {
       const sid = genId()
       sessionId.value = sid
       messages.value = []
-      sessions.value = [{ id: sid, title: '', msgCount: 0, updatedAt: Date.now(), messages: [] }]
+      activeDataFilename.value = ''
+      sessions.value = [{ id: sid, title: '', msgCount: 0, updatedAt: Date.now(), dataFilename: '', messages: [] }]
     }
   }
   persist()
@@ -144,8 +151,14 @@ function stripChartMarkers(content) {
 // ==================== 聊天 ====================
 
 function onChatAsk(e) {
-  input.value = e.detail
-  send()
+  const detail = e.detail
+  const query = typeof detail === 'string' ? detail : detail?.query
+  if (!query) return
+  activeDataFilename.value = typeof detail === 'string'
+    ? activeDataFilename.value
+    : detail?.filename || activeDataFilename.value
+  input.value = query
+  send(activeDataFilename.value)
 }
 
 onMounted(() => {
@@ -154,14 +167,24 @@ onMounted(() => {
   if (activeId) {
     sessionId.value = activeId
     const s = sessions.value.find(s => s.id === activeId)
-    if (s) messages.value = [...s.messages]
+    if (s) {
+      messages.value = [...s.messages]
+      activeDataFilename.value = s.dataFilename || ''
+    }
   } else {
     sessionId.value = genId()
     messages.value = []
   }
   // 确保至少有一个当前会话条目
   if (!sessions.value.find(s => s.id === sessionId.value)) {
-    sessions.value.unshift({ id: sessionId.value, title: '', msgCount: 0, updatedAt: Date.now(), messages: [] })
+    sessions.value.unshift({
+      id: sessionId.value,
+      title: '',
+      msgCount: 0,
+      updatedAt: Date.now(),
+      dataFilename: activeDataFilename.value,
+      messages: []
+    })
   }
 })
 onUnmounted(() => window.removeEventListener('chat-ask', onChatAsk))
@@ -169,9 +192,10 @@ onUnmounted(() => window.removeEventListener('chat-ask', onChatAsk))
 // 消息变化时自动持久化
 watch(messages, () => syncSession(), { deep: true })
 
-async function send() {
+async function send(dataFilename = activeDataFilename.value) {
   const text = input.value.trim()
   if (!text || loading.value) return
+  if (dataFilename) activeDataFilename.value = dataFilename
 
   messages.value.push({ role: 'user', content: text, sources: null })
   input.value = ''
@@ -180,6 +204,7 @@ async function send() {
   const aiIdx = messages.value.length - 1
   const aiMsg = messages.value[aiIdx]
   loading.value = true
+  activeController = new AbortController()
 
   await scrollBottom()
 
@@ -190,8 +215,27 @@ async function send() {
         'Content-Type': 'application/json',
         ...(window._authToken ? { Authorization: `Bearer ${window._authToken}` } : {}),
       },
-      body: JSON.stringify({ message: text, session_id: sessionId.value })
+      signal: activeController.signal,
+      body: JSON.stringify({
+        message: text,
+        session_id: sessionId.value,
+        data_filename: dataFilename,
+      })
     })
+
+    if (!response.ok) {
+      let detail = `HTTP ${response.status}`
+      try {
+        const payload = await response.json()
+        detail = payload?.detail || detail
+      } catch (_) {}
+      aiMsg.content = `[请求错误] ${detail}`
+      return
+    }
+    if (!response.body) {
+      aiMsg.content = '[请求错误] 服务未返回可读取的回答流'
+      return
+    }
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -254,10 +298,29 @@ async function send() {
       await scrollBottom()
     }
   } catch (err) {
-    aiMsg.content = `[网络错误] ${err.message}`
+    if (err.name !== 'AbortError') {
+      aiMsg.content = `[网络错误] ${err.message}`
+    }
   } finally {
     loading.value = false
+    activeController = null
   }
+}
+
+async function cancelGeneration() {
+  if (!activeController) return
+  activeController.abort()
+  try {
+    await fetch(`${API}/ask/${sessionId.value}/cancel`, {
+      method: 'POST',
+      headers: window._authToken ? { Authorization: `Bearer ${window._authToken}` } : {},
+    })
+  } catch (_) {}
+  const aiMsg = messages.value[messages.value.length - 1]
+  if (aiMsg?.role === 'assistant' && !aiMsg.content) {
+    aiMsg.content = '已取消本次生成。'
+  }
+  loading.value = false
 }
 
 async function approve(approved) {
@@ -334,10 +397,6 @@ function handleKeydown(e) {
   }
 }
 
-function toggleModel() {
-  modelSource.value = modelSource.value === 'deepseek' ? 'ollama' : 'deepseek'
-}
-
 // ==================== Markdown ====================
 
 function renderMd(raw) {
@@ -364,7 +423,7 @@ function renderMd(raw) {
 </script>
 
 <template>
-  <div class="chat-layout">
+  <div class="chat-layout" data-testid="chat-panel">
     <!-- ===== 会话侧边栏 ===== -->
     <aside :class="['session-sidebar', { collapsed: !sidebarOpen }]">
       <div class="sidebar-hd">
@@ -404,10 +463,7 @@ function renderMd(raw) {
           <span class="chat-dot online"></span>
           <span class="chat-title">智能问答</span>
         </div>
-        <button class="model-chip" @click="toggleModel"
-                :title="modelSource === 'deepseek' ? '切换本地 Ollama' : '切换 DeepSeek 云端'">
-          {{ modelSource === 'deepseek' ? '☁️ DeepSeek' : '🖥️ Ollama 本地' }}
-        </button>
+        <span class="model-status">🖥️ 本地模型</span>
       </div>
 
       <!-- 消息区 -->
@@ -492,15 +548,19 @@ function renderMd(raw) {
       <!-- 输入区 -->
       <div class="chat-input-bar">
         <div class="input-wrapper">
-          <textarea
+        <textarea
+            data-testid="chat-input"
             v-model="input"
             placeholder="输入您的问题… (Enter 发送, Shift+Enter 换行)"
             @keydown="handleKeydown"
             :disabled="loading"
             rows="1"
           />
-          <button class="send-pill" @click="send"
-                  :disabled="loading || !input.trim()">
+          <button v-if="loading" class="send-pill cancel-generation" @click="cancelGeneration()">
+            取消生成
+          </button>
+          <button v-else class="send-pill" data-testid="chat-send" @click="send()"
+                  :disabled="!input.trim()">
             <svg v-if="!loading" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
             </svg>
@@ -508,7 +568,7 @@ function renderMd(raw) {
           </button>
         </div>
         <p class="input-footer">
-          {{ modelSource === 'deepseek' ? 'DeepSeek 云端推理 · 数据仅用于本次回答' : 'Ollama 本地模型 · 数据完全不出机器' }}
+          本地模型推理 · 数据完全不出机器
         </p>
       </div>
     </div>
@@ -686,22 +746,14 @@ function renderMd(raw) {
 }
 .chat-title { font-size: 15px; font-weight: 600; }
 
-.model-chip {
+.model-status {
   padding: 6px 16px;
-  border: 1px solid #dcdfe6;
   border-radius: 20px;
-  background: #fff;
-  cursor: pointer;
   font-size: 12px;
   font-weight: 500;
   color: #606266;
-  transition: all 0.2s;
-  font-family: inherit;
-}
-.model-chip:hover {
-  border-color: #409eff;
-  color: #409eff;
-  box-shadow: 0 2px 8px rgba(64,158,255,0.12);
+  background: rgba(103,194,58,0.08);
+  border: 1px solid rgba(103,194,58,0.2);
 }
 
 /* ===== 消息区 ===== */
@@ -1023,4 +1075,164 @@ function renderMd(raw) {
 .msg-enter-active { transition: all 0.35s ease; }
 .msg-enter-from { opacity: 0; transform: translateY(12px); }
 .msg-move { transition: transform 0.3s ease; }
+
+.chat-layout,
+.chat-panel {
+  color: var(--text);
+}
+
+.session-sidebar {
+  background: rgba(13, 20, 34, .78);
+  border-right-color: var(--line);
+}
+
+.sidebar-title,
+.session-title,
+.chat-title,
+.step-label,
+.msg-content :deep(b) {
+  color: var(--text);
+}
+
+.sidebar-toggle,
+.session-meta,
+.session-empty,
+.model-status,
+.input-footer,
+.step-time {
+  color: var(--muted);
+}
+
+.sidebar-toggle:hover,
+.session-item:hover {
+  color: var(--cyan);
+  background: rgba(53, 211, 200, .08);
+}
+
+.new-session-btn {
+  border-color: rgba(53, 211, 200, .28);
+  color: var(--ink-soft);
+}
+
+.new-session-btn:hover,
+.session-item.active {
+  border-color: rgba(53, 211, 200, .36);
+  color: var(--cyan);
+  background: rgba(53, 211, 200, .08);
+}
+
+.chat-topbar,
+.chat-input-bar {
+  background: rgba(13, 20, 34, .86);
+  border-color: var(--line);
+}
+
+.model-status {
+  background: rgba(101, 212, 154, .08);
+  border-color: rgba(101, 212, 154, .22);
+  color: var(--green);
+}
+
+.chat-messages {
+  background:
+    radial-gradient(circle at 60% 18%, rgba(106, 140, 255, .08), transparent 30rem),
+    transparent;
+}
+
+.wc-sub,
+.wc-hint {
+  color: var(--muted);
+}
+
+.welcome-card h1 {
+  background: linear-gradient(135deg, #f0f4fb, var(--cyan));
+  -webkit-background-clip: text;
+}
+
+.wc-feat {
+  background: rgba(17, 27, 44, .82);
+  border-color: var(--line);
+  color: var(--ink-soft);
+}
+
+.msg-bubble.assistant {
+  background: rgba(17, 27, 44, .9);
+  border-color: var(--line);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .16);
+}
+
+.msg-avatar.ai {
+  background: linear-gradient(135deg, rgba(53, 211, 200, .28), rgba(106, 140, 255, .28));
+}
+
+.msg-avatar.user {
+  background: linear-gradient(135deg, var(--blue), var(--violet));
+}
+
+.step-card {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, .035);
+}
+
+.step-card.running {
+  border-color: rgba(106, 140, 255, .62);
+  background: rgba(106, 140, 255, .1);
+}
+
+.step-card.done {
+  border-color: rgba(101, 212, 154, .4);
+  background: rgba(101, 212, 154, .08);
+}
+
+.msg-content :deep(code) {
+  background: rgba(255, 255, 255, .08);
+  color: #9de9df;
+}
+
+.msg-content :deep(blockquote) {
+  color: var(--ink-soft);
+  border-left-color: var(--cyan);
+  background: rgba(53, 211, 200, .06);
+}
+
+.input-wrapper {
+  background: #111b2c;
+  border-color: var(--line-strong);
+}
+
+.input-wrapper textarea {
+  color: var(--text);
+}
+
+.input-wrapper textarea::placeholder {
+  color: var(--muted);
+}
+
+.send-pill {
+  background: linear-gradient(135deg, var(--blue), var(--violet));
+}
+
+.send-pill:disabled {
+  background: rgba(157, 178, 207, .2);
+}
+
+.hitl-card {
+  background: #172238;
+  border-color: var(--amber);
+  box-shadow: 0 12px 34px rgba(228, 162, 74, .12);
+}
+
+.hitl-text {
+  color: var(--ink-soft);
+}
+
+.hitl-text b {
+  color: var(--text);
+}
+
+.hitl-btn.cancel {
+  background: rgba(255, 255, 255, .04);
+  color: var(--muted);
+  border-color: var(--line);
+}
 </style>

@@ -1,0 +1,319 @@
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+import { api } from '../lib/api'
+
+const emit = defineEmits(['goto'])
+const loading = ref(true)
+const error = ref('')
+const dashboard = ref({ metrics: {}, departments: {}, insights: [] })
+const metricQuery = ref('住宿费标准')
+const metricContext = ref(null)
+const documents = ref([])
+const dataFiles = ref([])
+
+const demoRows = [
+  { department: '市场部', metric: '差旅费', value: 18600 },
+  { department: '市场部', metric: '差旅费', value: 9200 },
+  { department: '财务部', metric: '报销金额', value: 14200 },
+  { department: '运营部', metric: '差旅费', value: 7600 },
+  { department: '人事部', metric: '培训费', value: 4200 },
+  { department: '行政部', metric: '住宿费', value: 5400 },
+]
+
+const quickActions = [
+  { id: 'docs', icon: 'M12 4v11M7 9l5-5 5 5M5 20h14', label: '上传文档' },
+  { id: 'data', icon: 'M5 5h14v14H5zM8 16V9M12 16V7M16 16v-4', label: '数据分析' },
+  { id: 'insights', icon: 'M12 3a4 4 0 0 0-2 7.46V13H8v2h2v2h4v-2h2v-2h-2v-2.54A4 4 0 0 0 12 3Z', label: '新建洞察' },
+  { id: 'approval', icon: 'M6 4h12v16H6zM9 9h6M9 13h6M9 17h3M5 12l3 3 6-7', label: '发起审批' },
+]
+
+const metricEntries = computed(() => Object.entries(dashboard.value.metrics || {}))
+const departmentBars = computed(() => Object.entries(dashboard.value.departments || {})
+  .map(([name, metrics]) => ({
+    name,
+    total: Object.values(metrics).reduce((sum, item) => sum + Number(item || 0), 0),
+  }))
+  .sort((a, b) => b.total - a.total))
+const latestInsights = computed(() => (dashboard.value.insights || []).slice(0, 4))
+const totalAmount = computed(() => departmentBars.value.reduce((sum, item) => sum + item.total, 0))
+const topDepartment = computed(() => departmentBars.value[0]?.name || '暂无')
+const approvalCount = computed(() => latestInsights.value.filter(item => item.severity === 'critical').length)
+const kpis = computed(() => [
+  {
+    id: 'docs',
+    label: '文档总量',
+    value: documents.value.length.toLocaleString('zh-CN'),
+    delta: documents.value.length ? '已解析' : '待上传',
+    icon: 'M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6',
+    tone: 'blue',
+    trend: 'line',
+  },
+  {
+    id: 'data',
+    label: '数据表',
+    value: dataFiles.value.length.toLocaleString('zh-CN'),
+    delta: dataFiles.value.length ? '可分析' : '待上传',
+    icon: 'M5 5h14v14H5zM8 16V9M12 16V7M16 16v-4',
+    tone: 'cyan',
+    trend: 'bars',
+  },
+  {
+    id: 'insights',
+    label: '智能洞察',
+    value: latestInsights.value.length.toLocaleString('zh-CN'),
+    delta: latestInsights.value.length ? '待关注' : '暂无',
+    icon: 'M12 3a4 4 0 0 0-2 7.46V13H8v2h2v2h4v-2h2v-2h-2v-2.54A4 4 0 0 0 12 3Z',
+    tone: 'violet',
+    trend: 'wave',
+  },
+  {
+    id: 'approval',
+    label: '审批任务',
+    value: approvalCount.value.toLocaleString('zh-CN'),
+    delta: approvalCount.value ? '需处理' : '暂无待办',
+    icon: 'M12 3 19 7v6c0 4-3 6.5-7 8-4-1.5-7-4-7-8V7zM9 12l2 2 4-4',
+    tone: 'green',
+    trend: 'bars',
+  },
+])
+
+const trendLines = computed(() => {
+  const base = Math.max(totalAmount.value, 1)
+  const insightBase = Math.max(latestInsights.value.length * 100, 1)
+  return {
+    labels: ['一', '二', '三', '四', '五', '六', '日'],
+    series: [
+      {
+        label: '文档',
+        color: '#1bcfe6',
+        values: [0.30, 0.40, 0.52, 0.46, 0.65, 0.72, 0.88].map(value => Math.round(base * value)),
+      },
+      {
+        label: '数据',
+        color: '#766cff',
+        values: [0.15, 0.25, 0.38, 0.30, 0.56, 0.66, 0.76].map(value => Math.round(base * value)),
+      },
+      {
+        label: '洞察',
+        color: '#45d7a2',
+        values: [0.22, 0.28, 0.36, 0.34, 0.48, 0.63, 0.70].map(value => Math.round(insightBase * value)),
+      },
+    ],
+  }
+})
+
+const trendMax = computed(() => Math.max(...trendLines.value.series.flatMap(item => item.values), 1))
+
+function linePoints(values) {
+  const width = 720
+  const height = 190
+  const left = 28
+  const top = 12
+  const innerWidth = width - left - 10
+  const innerHeight = height - top - 20
+  return values.map((value, index) => {
+    const x = left + (innerWidth * index / Math.max(values.length - 1, 1))
+    const y = top + innerHeight - (value / trendMax.value * innerHeight)
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+}
+
+function formatAmount(value) {
+  return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+}
+
+function severityLabel(value) {
+  return value === 'critical' ? '高风险' : value === 'warning' ? '需关注' : '正常'
+}
+
+function documentName(item) {
+  return typeof item === 'string' ? item : item.filename
+}
+
+async function loadDashboard() {
+  loading.value = true
+  error.value = ''
+  try {
+    const [dashboardResponse, docsResponse, dataResponse] = await Promise.all([
+      api.post('/dashboard', {
+        rows: demoRows,
+        insights: [
+          { title: '市场部差旅费异常', severity: 'warning', department: '市场部', metric: '差旅费' },
+          { title: '财务部报销波动', severity: 'critical', department: '财务部', metric: '报销金额' },
+          { title: '行政部住宿费上升', severity: 'warning', department: '行政部', metric: '住宿费' },
+        ],
+      }),
+      api.get('/documents/catalog'),
+      api.get('/data-files'),
+    ])
+    dashboard.value = dashboardResponse.data
+    documents.value = docsResponse.data.documents || []
+    dataFiles.value = dataResponse.data.files || []
+  } catch (err) {
+    error.value = err.response?.data?.detail || err.message || '经营驾驶舱加载失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function lookupMetric() {
+  try {
+    const response = await api.post('/semantics/match', { question: metricQuery.value })
+    metricContext.value = response.data.context || null
+  } catch {
+    metricContext.value = null
+  }
+}
+
+onMounted(async () => {
+  await loadDashboard()
+  await lookupMetric()
+})
+</script>
+
+<template>
+  <div class="dashboard-panel reference-dashboard" data-testid="dashboard-panel">
+    <div v-if="loading" class="panel-state">正在加载经营数据</div>
+    <div v-else-if="error" class="panel-state error">{{ error }}</div>
+
+    <template v-else>
+      <section class="kpi-grid" data-testid="dashboard-kpis">
+        <button
+          v-for="item in kpis"
+          :key="item.id"
+          type="button"
+          :class="['reference-kpi', `tone-${item.tone}`]"
+          @click="emit('goto', item.id)"
+        >
+          <span class="kpi-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon" /></svg>
+          </span>
+          <span class="kpi-copy">
+            <small>{{ item.label }}</small>
+            <strong>{{ item.value }}</strong>
+            <em>{{ item.delta }}</em>
+          </span>
+          <span v-if="item.trend === 'bars'" class="kpi-bars"><i></i><i></i><i></i><i></i><i></i></span>
+          <svg v-else class="kpi-spark" viewBox="0 0 92 36" aria-hidden="true">
+            <path d="M2 28 C16 29 16 13 28 20 S40 27 49 16 S63 18 72 8 S84 11 91 2" />
+          </svg>
+        </button>
+      </section>
+
+      <section class="dashboard-main-grid">
+        <article class="reference-card trend-card">
+          <header class="reference-card-head">
+            <div>
+              <h2>数据趋势</h2>
+              <p>当前数据快照 · 最近 7 个观察点</p>
+            </div>
+            <div class="trend-tools">
+              <span v-for="series in trendLines.series" :key="series.label">
+                <i :style="{ background: series.color }"></i>{{ series.label }}
+              </span>
+              <button type="button">近7天⌄</button>
+            </div>
+          </header>
+          <div class="trend-chart">
+            <div class="chart-y-axis">
+              <span>{{ formatAmount(trendMax) }}</span>
+              <span>{{ formatAmount(trendMax * .66) }}</span>
+              <span>{{ formatAmount(trendMax * .33) }}</span>
+              <span>0</span>
+            </div>
+            <svg viewBox="0 0 720 210" role="img" aria-label="数据趋势图">
+              <line v-for="row in 4" :key="row" x1="28" :y1="12 + (row - 1) * 58" x2="710" :y2="12 + (row - 1) * 58" />
+              <line v-for="(label, index) in trendLines.labels" :key="label" :x1="28 + index * 113.6" y1="12" :x2="28 + index * 113.6" y2="190" class="vertical-grid" />
+              <polyline
+                v-for="series in trendLines.series"
+                :key="series.label"
+                :points="linePoints(series.values)"
+                :stroke="series.color"
+              />
+              <circle
+                v-for="(value, index) in trendLines.series[0].values"
+                :key="`dot-${index}`"
+                :cx="28 + index * 113.6"
+                :cy="12 + 158 - (value / trendMax * 158)"
+                r="3"
+                fill="#1bcfe6"
+              />
+            </svg>
+            <div class="chart-x-axis">
+              <span v-for="label in trendLines.labels" :key="label">周{{ label }}</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="reference-card risk-card">
+          <header class="reference-card-head">
+            <div><h2>异常与风险</h2><p>需要优先处理的业务线索</p></div>
+            <button type="button" @click="emit('goto', 'insights')">查看全部 ›</button>
+          </header>
+          <div v-if="latestInsights.length" class="risk-list">
+            <button v-for="item in latestInsights" :key="item.title" type="button" class="risk-item" @click="emit('goto', 'insights')">
+              <span :class="['risk-icon', item.severity]">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path v-if="item.severity === 'critical'" d="M12 4 21 20H3zM12 9v5M12 17v.01" />
+                  <path v-else d="m12 4 8 4v5c0 3.8-2.6 6.4-8 8-5.4-1.6-8-4.2-8-8V8zM12 9v4M12 16v.01" />
+                </svg>
+              </span>
+              <span class="risk-copy"><strong>{{ item.title }}</strong><small>{{ item.department }} · {{ item.metric }}</small></span>
+              <span class="risk-time">{{ severityLabel(item.severity) }}</span>
+            </button>
+          </div>
+          <div v-else class="empty-state">当前没有异常线索</div>
+        </article>
+      </section>
+
+      <section class="dashboard-bottom-grid">
+        <article class="reference-card list-card">
+          <header class="reference-card-head">
+            <h2>最新文档</h2>
+            <button type="button" @click="emit('goto', 'docs')">查看全部 ›</button>
+          </header>
+          <div v-if="documents.length" class="reference-list">
+            <button v-for="item in documents.slice(0, 3)" :key="documentName(item)" type="button" class="reference-list-row" @click="emit('goto', 'docs')">
+              <span class="row-icon">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6" /></svg>
+              </span>
+              <span><strong>{{ documentName(item) }}</strong><small>知识库 · 已解析</small></span>
+              <em>已解析</em>
+            </button>
+          </div>
+          <div v-else class="empty-state">上传制度或业务文档后显示在这里</div>
+        </article>
+
+        <article class="reference-card list-card evidence-card">
+          <header class="reference-card-head">
+            <h2>知识证据</h2>
+            <button type="button" @click="emit('goto', 'chat')">查看全部 ›</button>
+          </header>
+          <div v-if="metricContext" class="evidence-main">
+            <span class="row-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6" /></svg>
+            </span>
+            <div><strong>{{ metricContext.metric_name }}</strong><small>基于 {{ metricContext.source_file }}</small></div>
+            <b>高可信</b>
+          </div>
+          <div v-else class="empty-state">查询指标口径后显示证据</div>
+          <div class="evidence-query">
+            <input v-model="metricQuery" placeholder="查询指标口径" @keyup.enter="lookupMetric" />
+            <button type="button" @click="lookupMetric">查询</button>
+          </div>
+        </article>
+
+        <article class="reference-card quick-card">
+          <header class="reference-card-head"><h2>快速操作</h2></header>
+          <div class="quick-grid">
+            <button v-for="item in quickActions" :key="item.id" type="button" @click="emit('goto', item.id)">
+              <span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon" /></svg>
+              </span>{{ item.label }}
+            </button>
+          </div>
+        </article>
+      </section>
+    </template>
+  </div>
+</template>
