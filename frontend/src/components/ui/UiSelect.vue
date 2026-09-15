@@ -10,6 +10,7 @@
  *   emptyText   String  无选项时的空态文案，默认「没有可选项」
  *   error / codeLabel / disabled / size('md'|'sm') / block
  *   optionEmptyText 保留位（无选项时的动作提示）
+ * props 追加 expanded(Boolean) 受控展开
  * emits: update:modelValue, change(value), open, close
  * 键盘：ArrowDown/Up 移动（禁用项跳过、首尾循环）、Home/End 跳两端、
  *      Enter/Space 选中并收起、Esc/Tab 收起、列表内再按 Tab 交还焦点。
@@ -34,6 +35,8 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
   size: { type: String, default: 'md' },
   block: { type: Boolean, default: true },
+  /** 受控展开：供程序化打开与单测断言下拉面板（不传时由组件自己管） */
+  expanded: { type: Boolean, default: false },
   ariaLabel: { type: String, default: '' },
 })
 
@@ -44,7 +47,8 @@ const rootId = `ui-select-${autoId}`
 const listId = `${rootId}-list`
 const triggerId = `${rootId}-trigger`
 
-const open = ref(false)
+const innerOpen = ref(false)
+const open = computed(() => props.expanded || innerOpen.value)
 const active = ref(-1)
 const root = ref(null)
 const trigger = ref(null)
@@ -70,14 +74,14 @@ const hasOptions = computed(() => items.value.length > 0)
 
 function openList() {
   if (props.disabled || open.value) return
-  open.value = true
+  innerOpen.value = true
   active.value = selectedIndex.value >= 0 ? selectedIndex.value : Math.max(items.value.findIndex((item) => !item.disabled), 0)
   emit('open')
 }
 
 function closeList(refocus = false) {
   if (!open.value) return
-  open.value = false
+  innerOpen.value = false
   active.value = -1
   emit('close')
   if (refocus) nextTick(() => trigger.value?.focus?.())

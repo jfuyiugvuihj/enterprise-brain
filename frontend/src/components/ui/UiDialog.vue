@@ -13,13 +13,14 @@
  *   ariaLabel       String   无可见标题时的无障碍名
  * emits: update:modelValue, open, close
  * slots: default（正文）、footer（操作区）
+ * 叠层：首帧与 SSR 内联渲染，挂载后搬到 body 下，避开面板上的 transform 叠层上下文。
  * 键盘：Esc 关闭；Tab 在弹层内循环，不会逃到背景页面；关闭后焦点回到打开前的元素。
  */
 export default { name: 'UiDialog' }
 </script>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FOCUSABLE_SELECTOR, nextFocusableIndex, shouldCloseOnKey } from './focus-trap.js'
 import './UiDialog.css'
 
@@ -37,6 +38,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'open', 'close'])
 
 const panel = ref(null)
+const canTeleport = ref(false)
 const titleId = 'ui-dialog-title'
 const descId = 'ui-dialog-description'
 const sizeClass = computed(() => (['sm', 'md', 'lg'].includes(props.size) ? props.size : 'md'))
@@ -102,11 +104,15 @@ function close() {
   openNext(false)
 }
 
+onMounted(() => {
+  canTeleport.value = true
+})
+
 defineExpose({ close, panel })
 </script>
 
 <template>
-  <Teleport to="body">
+  <Teleport to="body" :disabled="!canTeleport">
     <div
       v-if="modelValue"
       class="ui-dialog"

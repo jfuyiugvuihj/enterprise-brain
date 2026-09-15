@@ -111,6 +111,7 @@ defineExpose({ select, activeIndex, tabList })
         :aria-selected="index === activeIndex ? 'true' : 'false'"
         :aria-controls="panelId(index)"
         :tabindex="index === activeIndex ? 0 : -1"
+        :aria-disabled="item.disabled ? 'true' : undefined"
         :disabled="item.disabled"
         :data-testid="`ui-tabs-tab-${item.id}`"
         @click="select(index)"
