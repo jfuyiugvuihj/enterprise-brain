@@ -1,14 +1,10 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { api } from '../lib/api'
+import { demoForm } from '../devFixtures/approval-demo'
 
-const form = ref({
-  amount: 680,
-  standard: 500,
-  department: '市场部',
-  expense_type: '住宿费',
-  evidence: ['差旅费报销制度.pdf'],
-})
+// 同理，表单会改写这些值；evidence 虽整条替换，仍拷一份，避免面板把模块常量改掉。
+const form = ref({ ...demoForm, evidence: [...demoForm.evidence] })
 const result = ref(null)
 const loading = ref(false)
 const error = ref('')
@@ -30,7 +26,7 @@ onMounted(submitCheck)
 </script>
 
 <template>
-  <div class="panel-shell" data-testid="approval-panel">
+  <div class="panel-shell" data-testid="approval-panel" data-demo="fixtures">
     <header class="panel-head">
       <div>
         <div class="eyebrow">Approval</div>
@@ -38,6 +34,12 @@ onMounted(submitCheck)
         <p>快速判断金额是否超出标准，并给出下一步建议。</p>
       </div>
     </header>
+
+    <!-- 真正的"挂起待办"要等后端 R13；这块是一台用假参数预演的计算器。 -->
+    <aside class="demo-flag-row" data-testid="approval-demo-flag">
+      <span class="demo-flag">演示数据</span>
+      <span class="demo-note">预审参数（金额 680 / 标准 500 / 市场部 住宿费）来自前端常量 src/devFixtures/approval-demo.js，不是任何人的真单据；结论只是阈值算术。列挂起 HITL 待办的端点尚未实现（后端 R13），所以这里既不是待办列表，也不构成审批记录。</span>
+    </aside>
 
     <div class="panel-grid">
       <section class="panel-card">
@@ -66,7 +68,7 @@ onMounted(submitCheck)
         <div v-else class="result-card">
           <div class="result-top">
             <strong>{{ result.status }}</strong>
-            <span :class="['badge', result.risk_level]">{{ result.risk_level }}</span>
+            <span class="badge">演示</span>
           </div>
           <div class="result-grid">
             <span>金额：{{ result.amount }}</span>

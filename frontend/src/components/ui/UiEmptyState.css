@@ -1,0 +1,84 @@
+/* UiEmptyState —— 面板级空态：一句人话 + 一个主操作（视觉文档 §8.5）。全部走 token，无裸色值、无动效。 */
+
+.ui-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-3, 12px);
+  padding: var(--s-6, 32px) var(--s-5, 24px);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--r-lg, 16px);
+  background: var(--surface-1);
+  color: var(--text-2);
+  font-family: var(--font-body);
+  font-size: var(--t-md, 14px);
+  line-height: 1.65;
+}
+
+/* 图标底：中性色派生，不占彩色预算 */
+.ui-empty-state__mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--s-7, 48px);
+  height: var(--s-7, 48px);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-1) 6%, transparent);
+  color: var(--text-3);
+}
+
+/* 56ch ≈ 中文 30-38 字一行（视觉文档 §6）；min-width: 0 让 flex 子项真的能收缩换行 */
+.ui-empty-state__body {
+  display: flex;
+  min-width: 0;
+  max-width: 56ch;
+  flex-direction: column;
+  gap: var(--s-1, 4px);
+}
+
+.ui-empty-state__title {
+  margin: 0;
+  color: var(--text-1);
+  font-size: var(--t-md, 14px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.ui-empty-state__desc {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm, 13px);
+  letter-spacing: 0.01em;
+  overflow-wrap: anywhere;
+}
+
+.ui-empty-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s-2, 8px);
+}
+
+/* 紧凑档：面板/卡片里那种「这块还没有数据」的横条，不抢版面高度 */
+.ui-empty-state--dense {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s-2, 8px);
+  padding: var(--s-3, 12px) var(--s-4, 16px);
+  text-align: left;
+}
+
+.ui-empty-state--dense .ui-empty-state__mark {
+  width: var(--s-6, 32px);
+  height: var(--s-6, 32px);
+}
+
+.ui-empty-state--dense .ui-empty-state__body {
+  flex: 1;
+}
+
+.ui-empty-state--dense .ui-empty-state__actions {
+  flex: none;
+}

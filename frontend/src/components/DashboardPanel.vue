@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
+import { demoInsights, demoRows, demoTrendShape } from '../devFixtures/dashboard-demo'
 
 const emit = defineEmits(['goto'])
 const loading = ref(true)
@@ -10,15 +11,6 @@ const metricQuery = ref('住宿费标准')
 const metricContext = ref(null)
 const documents = ref([])
 const dataFiles = ref([])
-
-const demoRows = [
-  { department: '市场部', metric: '差旅费', value: 18600 },
-  { department: '市场部', metric: '差旅费', value: 9200 },
-  { department: '财务部', metric: '报销金额', value: 14200 },
-  { department: '运营部', metric: '差旅费', value: 7600 },
-  { department: '人事部', metric: '培训费', value: 4200 },
-  { department: '行政部', metric: '住宿费', value: 5400 },
-]
 
 const quickActions = [
   { id: 'docs', icon: 'M12 4v11M7 9l5-5 5 5M5 20h14', label: '上传文档' },
@@ -80,25 +72,14 @@ const kpis = computed(() => [
 const trendLines = computed(() => {
   const base = Math.max(totalAmount.value, 1)
   const insightBase = Math.max(latestInsights.value.length * 100, 1)
+  const scales = { total: base, insights: insightBase }
   return {
-    labels: ['一', '二', '三', '四', '五', '六', '日'],
-    series: [
-      {
-        label: '文档',
-        color: '#1bcfe6',
-        values: [0.30, 0.40, 0.52, 0.46, 0.65, 0.72, 0.88].map(value => Math.round(base * value)),
-      },
-      {
-        label: '数据',
-        color: '#766cff',
-        values: [0.15, 0.25, 0.38, 0.30, 0.56, 0.66, 0.76].map(value => Math.round(base * value)),
-      },
-      {
-        label: '洞察',
-        color: '#45d7a2',
-        values: [0.22, 0.28, 0.36, 0.34, 0.48, 0.63, 0.70].map(value => Math.round(insightBase * value)),
-      },
-    ],
+    labels: demoTrendShape.labels,
+    series: demoTrendShape.series.map(series => ({
+      label: series.label,
+      color: series.color,
+      values: series.weights.map(weight => Math.round(scales[series.scale] * weight)),
+    })),
   }
 })
 
@@ -122,10 +103,6 @@ function formatAmount(value) {
   return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
 }
 
-function severityLabel(value) {
-  return value === 'critical' ? '高风险' : value === 'warning' ? '需关注' : '正常'
-}
-
 function documentName(item) {
   return typeof item === 'string' ? item : item.filename
 }
@@ -137,11 +114,7 @@ async function loadDashboard() {
     const [dashboardResponse, docsResponse, dataResponse] = await Promise.all([
       api.post('/dashboard', {
         rows: demoRows,
-        insights: [
-          { title: '市场部差旅费异常', severity: 'warning', department: '市场部', metric: '差旅费' },
-          { title: '财务部报销波动', severity: 'critical', department: '财务部', metric: '报销金额' },
-          { title: '行政部住宿费上升', severity: 'warning', department: '行政部', metric: '住宿费' },
-        ],
+        insights: demoInsights,
       }),
       api.get('/documents/catalog'),
       api.get('/data-files'),
@@ -172,11 +145,16 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="dashboard-panel reference-dashboard" data-testid="dashboard-panel">
+  <div class="dashboard-panel reference-dashboard" data-testid="dashboard-panel" data-demo="fixtures">
     <div v-if="loading" class="panel-state">正在加载经营数据</div>
     <div v-else-if="error" class="panel-state error">{{ error }}</div>
 
     <template v-else>
+      <!-- 见 src/devFixtures/README.md：R14 落地前，趋势与异常两块的输入是编造的。 -->
+      <aside class="demo-flag-row" data-testid="dashboard-demo-flag">
+        <span class="demo-flag">演示数据</span>
+        <span class="demo-note">「数据趋势」「异常与风险」以及由它们算出的「智能洞察」「审批任务」两个数字，全部来自前端常量 src/devFixtures/dashboard-demo.js，不来自任何接口；只有「文档总量」「数据表」是真实条数。</span>
+      </aside>
       <section class="kpi-grid" data-testid="dashboard-kpis">
         <button
           v-for="item in kpis"
@@ -205,7 +183,7 @@ onMounted(async () => {
           <header class="reference-card-head">
             <div>
               <h2>数据趋势</h2>
-              <p>当前数据快照 · 最近 7 个观察点</p>
+              <p>演示形状 · 最近 7 个观察点 <span class="demo-flag">演示数据</span></p>
             </div>
             <div class="trend-tools">
               <span v-for="series in trendLines.series" :key="series.label">
@@ -247,19 +225,18 @@ onMounted(async () => {
 
         <article class="reference-card risk-card">
           <header class="reference-card-head">
-            <div><h2>异常与风险</h2><p>需要优先处理的业务线索</p></div>
+            <div><h2>异常与风险</h2><p>需要优先处理的业务线索 <span class="demo-flag">演示数据</span></p></div>
             <button type="button" @click="emit('goto', 'insights')">查看全部 ›</button>
           </header>
           <div v-if="latestInsights.length" class="risk-list">
             <button v-for="item in latestInsights" :key="item.title" type="button" class="risk-item" @click="emit('goto', 'insights')">
-              <span :class="['risk-icon', item.severity]">
+              <span class="risk-icon">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path v-if="item.severity === 'critical'" d="M12 4 21 20H3zM12 9v5M12 17v.01" />
-                  <path v-else d="m12 4 8 4v5c0 3.8-2.6 6.4-8 8-5.4-1.6-8-4.2-8-8V8zM12 9v4M12 16v.01" />
+                  <path d="m12 4 8 4v5c0 3.8-2.6 6.4-8 8-5.4-1.6-8-4.2-8-8V8zM12 9v4M12 16v.01" />
                 </svg>
               </span>
               <span class="risk-copy"><strong>{{ item.title }}</strong><small>{{ item.department }} · {{ item.metric }}</small></span>
-              <span class="risk-time">{{ severityLabel(item.severity) }}</span>
+              <span class="risk-time">演示</span>
             </button>
           </div>
           <div v-else class="empty-state">当前没有异常线索</div>

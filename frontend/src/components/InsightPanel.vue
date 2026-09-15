@@ -1,12 +1,11 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
+import { demoRows } from '../devFixtures/insights-demo'
 
-const rows = ref([
-  { department: '市场部', metric: '差旅费', current: 12600, previous: 7200, threshold: 10000 },
-  { department: '财务部', metric: '报销金额', current: 9800, previous: 6100, threshold: 9000 },
-  { department: '运营部', metric: '物料费', current: 4200, previous: 4600, threshold: 5000 },
-])
+// 表格里每行都被 v-model 直接改写，所以逐行浅拷贝：
+// 共享模块级数组会让第二次挂载带着上一次被删改过的数据。
+const rows = ref(demoRows.map(row => ({ ...row })))
 const loading = ref(false)
 const insights = ref([])
 const error = ref('')
@@ -41,7 +40,7 @@ onMounted(runDetection)
 </script>
 
 <template>
-  <div class="panel-shell" data-testid="insights-panel">
+  <div class="panel-shell" data-testid="insights-panel" data-demo="fixtures">
     <header class="panel-head">
       <div>
         <div class="eyebrow">Active Insight</div>
@@ -55,6 +54,12 @@ onMounted(runDetection)
         </div>
       </div>
     </header>
+
+    <!-- 表里的行会被 v-model 改写，所以是"可以拿来试算法的样例"，不是待办告警。 -->
+    <aside class="demo-flag-row" data-testid="insights-demo-flag">
+      <span class="demo-flag">演示数据</span>
+      <span class="demo-note">下面三行的部门与金额是前端常量（src/devFixtures/insights-demo.js）。/insights/detect 只对客户端送来的行做阈值与环比判定，不查库（后端 R14 未落地），所以这里的"待关注"不代表任何真实异常。</span>
+    </aside>
 
     <div class="panel-grid">
       <section class="panel-card">
@@ -92,7 +97,7 @@ onMounted(runDetection)
               <p>{{ item.department }} · {{ item.metric }}</p>
               <small>{{ (item.reasons || []).join(' / ') }}</small>
             </div>
-            <span :class="['severity', item.severity]">{{ item.severity }}</span>
+            <span class="severity">演示</span>
           </article>
         </div>
       </section>
