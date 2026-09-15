@@ -1,22 +1,35 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { api } from '../lib/api'
+import { errorDetail, isPermissionDenied } from '../lib/http'
 import { demoForm } from '../devFixtures/approval-demo'
+import { UiEmptyState, UiErrorState } from './ui'
 
 // 同理，表单会改写这些值；evidence 虽整条替换，仍拷一份，避免面板把模块常量改掉。
 const form = ref({ ...demoForm, evidence: [...demoForm.evidence] })
 const result = ref(null)
 const loading = ref(false)
 const error = ref('')
+// 面板 onMounted 就自己发一次预审，所以「等待分析」在失败时是句假话：
+// 它把「跑失败了」说成「还没跑」。failed 用来把这两件事分开（R1c 同一判据）。
+const failed = ref(false)
+const denied = ref(false)
 
 async function submitCheck() {
   loading.value = true
   error.value = ''
+  failed.value = false
+  denied.value = false
   try {
     const response = await api.post('/approval/precheck', form.value)
     result.value = response.data
   } catch (err) {
-    error.value = err.response?.data?.detail || err.message || '审批预审失败'
+    denied.value = isPermissionDenied(err)
+    failed.value = true
+    result.value = null
+    error.value = denied.value
+      ? '当前账号没有做预审的权限，请联系管理员开通。'
+      : errorDetail(err, '审批预审失败')
   } finally {
     loading.value = false
   }
@@ -58,13 +71,22 @@ onMounted(submitCheck)
           <button class="primary-btn" data-testid="run-approval" :disabled="loading" @click="submitCheck">
             {{ loading ? '分析中' : '生成预审建议' }}
           </button>
-          <span v-if="error" class="inline-error">{{ error }}</span>
         </div>
       </section>
 
       <section class="panel-card">
         <div class="section-head"><h4>预审结论</h4></div>
-        <div v-if="!result" class="empty-state">等待分析</div>
+        <UiErrorState
+          v-if="failed"
+          :title="denied ? '没有权限做审批预审' : '预审没有跑完'"
+          :description="error"
+          :retryable="!denied"
+          retry-text="重新预审"
+          :busy="loading"
+          dense
+          @retry="submitCheck"
+        />
+        <UiEmptyState v-else-if="!result" title="等待分析" dense />
         <div v-else class="result-card">
           <div class="result-top">
             <strong>{{ result.status }}</strong>

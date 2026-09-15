@@ -145,3 +145,27 @@ describe('InsightPanel · 失败不许说成「暂时没有异常」', () => {
     expect(s).toMatch(/:busy="loading"/)
   })
 })
+
+describe('ApprovalPanel · 自动预审失败不许说成「等待分析」', () => {
+  it('SSR 首屏渲染原语空态，保留「等待分析」四个字', async () => {
+    const html = await render(ApprovalPanel)
+    expect(html).toContain('data-testid="ui-empty-state"')
+    expect(html).toContain('等待分析')
+  })
+
+  it('onMounted 会自己发请求，所以失败必须能被区分出来', () => {
+    const s = source('ApprovalPanel.vue')
+    expect(s).toContain('onMounted(submitCheck)')
+    expect(s).toMatch(/<UiErrorState\s+v-if="failed"/)
+    expect(s).toMatch(/<UiEmptyState v-else-if="!result" title="等待分析"/)
+    expect(s).toContain('result.value = null')
+  })
+
+  it('错误文案走 errorDetail，无权限不给重试', () => {
+    const s = source('ApprovalPanel.vue')
+    expect(s).not.toMatch(/err\.response\?\.data\?\.detail \|\|/)
+    expect(s).toContain('isPermissionDenied(err)')
+    expect(s).toMatch(/:retryable="!denied"/)
+    expect(s).toContain('retry-text="重新预审"')
+  })
+})
