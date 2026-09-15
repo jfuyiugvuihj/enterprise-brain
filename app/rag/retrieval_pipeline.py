@@ -329,6 +329,19 @@ class RetrievalPipeline:
         return self.search(query, top_k=top_k, where=where, pred=is_permitted)
 
 
+def format_relevance(hit: dict) -> str:
+    """Relevance text for one hit, or an explicit not-scored when nothing ranked it.
+
+    A missing ``_score`` used to render as ``?`` in the chat answer and as ``0.00`` in
+    the MCP answer. Neither is true: the first says nothing, the second invents a
+    relevance of zero for a document that was just retrieved.
+    """
+    try:
+        return f"{float(hit.get('_score')):.2f}"
+    except (TypeError, ValueError):
+        return "未评分"
+
+
 def _deduplicate(docs: list[dict]) -> list[dict]:
     """去重（按内容前 120 字符）"""
     seen = set()

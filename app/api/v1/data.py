@@ -267,11 +267,23 @@ def _artifact_response(path: str, artifact_type: str, principal) -> dict:
     }
 
 
+def _require_artifact_scope(principal) -> None:
+    """Refuse an artifact an owner could not be recorded for, before doing the work.
+
+    The registry rejects an owner without a department, and until now that arrived as
+    HTTP 200 with ``{"error": ...}``, so a caller could not tell a failure from a
+    result. ``upload_excel`` already answers 403 with this code.
+    """
+    if not str(getattr(principal, "department", "") or ""):
+        raise HTTPException(status_code=403, detail="department_scope_required")
+
+
 @router.post("/chart")
 async def generate_chart(req: ChartRequest, request: Request):
     """根据参数生成图表，返回图片路径"""
     try:
         principal = _authorized_principal(request, ACTION_ANALYZE)
+        _require_artifact_scope(principal)
         if req.type == "bar":
             path = bar_chart(req.labels, req.values, title=req.title)
         elif req.type == "line":
@@ -285,7 +297,7 @@ async def generate_chart(req: ChartRequest, request: Request):
         elif req.type == "mindmap":
             path = mindmap(req.root, req.branches, title=req.title)
         else:
-            return {"error": f"不支持的图表类型: {req.type}", "path": None}
+            raise HTTPException(status_code=400, detail="unsupported_chart_type")
 
         # 转成相对 URL
         return _artifact_response(path, "chart", principal)
@@ -293,7 +305,7 @@ async def generate_chart(req: ChartRequest, request: Request):
         raise
     except Exception as e:
         logger.error(f"图表生成失败: {e}")
-        return {"error": str(e), "path": None}
+        raise HTTPException(status_code=500, detail="chart_generation_failed") from e
 
 # ==================== 报告导出 ====================
 
@@ -309,6 +321,7 @@ async def export_report(req: ExportRequest, request: Request):
     """生成 PDF 或 Excel 报告，返回下载链接"""
     try:
         principal = _authorized_principal(request, ACTION_EXPORT)
+        _require_artifact_scope(principal)
         if req.format == "pdf":
             path = generate_pdf_report(
                 title=req.title,
@@ -320,11 +333,11 @@ async def export_report(req: ExportRequest, request: Request):
                 sheets=req.sheets or {}
             )
         else:
-            return {"error": f"不支持格式: {req.format}", "path": None}
+            raise HTTPException(status_code=400, detail="unsupported_export_format")
 
         return _artifact_response(path, "report", principal)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"导出失败: {e}")
-        return {"error": str(e), "path": None}
+        raise HTTPException(status_code=500, detail="export_failed") from e

@@ -38,6 +38,7 @@ def _search_docs_text(query: str) -> str:
     """Knowledge-base search with the caller's retrieval scope, shared by every transport."""
     from app.agents.tools import _get_pipeline
     from app.rag.filters import RetrievalScopeError
+    from app.rag.retrieval_pipeline import format_relevance
 
     principal = _mcp_principal()
     if principal is None:
@@ -51,7 +52,7 @@ def _search_docs_text(query: str) -> str:
     if not docs:
         return f"未找到与'{query}'相关的文档信息。"
     return "\n\n---\n\n".join(
-        f"[{i}] 来源:{d.get('source')} 相关度:{d.get('_score', 0):.2f}\n{d['content'][:500]}"
+        f"[{i}] 来源:{d.get('source')} 相关度:{format_relevance(d)}\n{d['content'][:500]}"
         for i, d in enumerate(docs, 1)
     )
 

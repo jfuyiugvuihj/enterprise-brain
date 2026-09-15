@@ -354,14 +354,12 @@ def search_docs(query: str, config: RunnableConfig) -> str:
         record_document_hits(bag_from_config(config), query=query, hits=docs)
         span.finish("completed", summary={"hit_count": len(docs), "rewrite_count": len(rewrites or [])})
 
+    from app.rag.retrieval_pipeline import format_relevance
+
     result_parts = []
     for i, d in enumerate(docs, 1):
         source = d.get("source", "unknown")
-        raw_score = d.get("_score", "?")
-        try:
-            score = f"{float(raw_score):.2f}"
-        except (TypeError, ValueError):
-            score = str(raw_score)
+        score = format_relevance(d)
         content = d["content"][:500]
         result_parts.append(f"[{i}] 来源:{source} 相关度:{score}\n{content}")
 
