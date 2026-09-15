@@ -213,6 +213,18 @@ def _authorize_session_request(request: FastAPIRequest, session_id: str):
     return principal
 
 
+def _agent_user_context(principal) -> dict | None:
+    """Build the Agent runtime context that grants a request its authorization scope."""
+    if principal is None:
+        return None
+    return {
+        "username": principal.username,
+        "role": principal.role,
+        "department": principal.department or "",
+        "principal": principal,
+    }
+
+
 def _visible_document_rows(request: FastAPIRequest, rows: list[dict]) -> list[dict]:
     principal = _document_principal_or_error(request)
     # The row is shaped after it has been filtered: an authorization decision must
@@ -1165,7 +1177,8 @@ class ApproveRequest(BaseModel):
 async def approve(request: ApproveRequest, http_request: FastAPIRequest):
     # /approve 会接管该会话的挂起轮次并把会话内容流式回传给调用方，
     # 因此它和读取会话必须是同一套归属判定，不能只校验"已登录"。
-    _authorize_session_request(http_request, request.session_id)
+    principal = _authorize_session_request(http_request, request.session_id)
+    user_ctx = _agent_user_context(principal)
 
     async def generate():
         from app.agents.orchestrator import run_interrupt_stream
@@ -1177,7 +1190,11 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
 
         def _run():
             try:
-                for event in run_interrupt_stream(request.session_id, approved=request.approved):
+                for event in run_interrupt_stream(
+                    request.session_id,
+                    approved=request.approved,
+                    user=user_ctx,
+                ):
                     result_queue.put(("event", event))
                 result_queue.put(("done", None))
             except Exception as e:

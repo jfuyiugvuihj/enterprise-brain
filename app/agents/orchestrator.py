@@ -944,8 +944,32 @@ def run_with_stream(
             return
 
 
-def run_interrupt_stream(thread_id: str, approved: bool):
-    config = {"configurable": {"thread_id": thread_id}}
+def run_interrupt_stream(
+    thread_id: str,
+    approved: bool,
+    user: dict | None = None,
+    *,
+    request_id: str | None = None,
+    trace_id: str | None = None,
+    task_id: str | None = None,
+):
+    """Resume a parked thread as the caller who owns it.
+
+    A resumed turn executes the same tools as the original one, and those tools take
+    their scope from ``configurable``. Resuming with only a thread id made every
+    approved action fail closed with ``authorization_required``, so the graph kept
+    running with no subject at all.
+    """
+    request_id, trace_id, task_id = _execution_ids(request_id, trace_id, task_id)
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            **(user or {}),
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "task_id": task_id,
+        }
+    }
     if approved:
         for event in multi_agent_graph.stream(
             Command(resume={"approved": True}),

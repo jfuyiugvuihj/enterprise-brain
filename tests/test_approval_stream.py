@@ -37,7 +37,11 @@ def test_approve_stream_emits_worker_result_when_no_plain_ai_message(monkeypatch
         chat_module, monkeypatch, tmp_path, "approval-worker-result-test", "admin"
     )
 
-    def fake_run_interrupt_stream(thread_id: str, approved: bool):
+    seen = {}
+
+    def fake_run_interrupt_stream(thread_id: str, approved: bool, user=None):
+        seen["thread_id"] = thread_id
+        seen["user"] = user
         yield {"messages": [AIMessage(content="需要确认后生成图表")]}
         yield {
             "messages": [AIMessage(content="【chart Agent 返回】\n图表已生成：/static/chart.png")],
@@ -62,6 +66,42 @@ def test_approve_stream_emits_worker_result_when_no_plain_ai_message(monkeypatch
     assert [event["content"] for event in text_events] == [
         "图表已生成：/static/chart.png"
     ]
+
+
+    # Resuming without the caller principal runs the approved action as nobody, and
+    # every tool then refuses with authorization_required.
+    assert seen["thread_id"] == "approval-worker-result-test"
+    principal = seen["user"]["principal"]
+    assert principal.username == "admin"
+    assert principal.user_id
+
+
+def test_run_interrupt_stream_config_carries_the_caller_principal(monkeypatch):
+    from app.agents import orchestrator
+    from app.common.identity import Principal
+
+    captured = {}
+
+    class FakeGraph:
+        def stream(self, payload, config, **kwargs):
+            captured["config"] = config
+            yield {"messages": []}
+
+    monkeypatch.setattr(orchestrator, "multi_agent_graph", FakeGraph())
+    principal = Principal(
+        user_id="7", username="tester", roles=["staff"], department="finance"
+    )
+    list(
+        orchestrator.run_interrupt_stream(
+            "thread-1", True, {"username": "tester", "principal": principal}
+        )
+    )
+
+    configurable = captured["config"]["configurable"]
+    assert configurable["thread_id"] == "thread-1"
+    assert configurable["principal"] is principal
+    assert configurable["request_id"].startswith("req-")
+    assert configurable["trace_id"].startswith("trace-")
 
 
 def test_export_worker_fallback_replaces_static_url_with_controlled_artifact(monkeypatch):
