@@ -165,11 +165,7 @@ C 的 R10 让 `app/main.py:113` 开始吐 `account_unavailable`，`contract-v1.m
 ## 5. 冲突仲裁与全局停写
 
 - 需要别人范围内改动：**在 §4 加一行「请求：…」，不代写**。谁的文件谁改。
-- 需要用户拍板（**只有这 4 条**，其余总控已自行裁定并记在 §4B）：
-  1. **探针账号**：谁能建、建几个、跑完谁清。缺它只卡两类验收——G3 真机那半、A 线 F1/F3 的真机点击链（`4A.3`）。B 线那套 serverless 视觉套件证明**不需要后端**也能拦白屏与弹对象，所以卡住的面没有想象大。
-  2. **重建后端镜像**（约 28 分钟）以证 G3 真机那半。不重建则 G3 永久停在 🟡。
-  3. **仓库卫生**：`chroma_db/` 已被跟踪且每次问答都写脏（`4A.6`），另有 377 行 `tests/browser_*`、`static/exports/*.pdf`、根级 `kb_*` 等产物。要不要 `.gitignore` + `git rm --cached chroma_db`？这会改版本控制范围，属破坏性，必须点头。
-  4. **「停止」是否等于拒绝 HITL 挂起动作**（后端语义）。前端已按"不等于"实现成**显式保留待确认卡 + 标注已中断**（`ChatPanel.vue`），两种裁定都不会白做，但裁定相反时要翻成显式清除。
+- ~~需要用户拍板（只有这 4 条）~~ → **2026-09-15 傍晚已全部拍定并执行：①甲 ②甲 ③甲 ④甲**，逐条证据见 §4D。本轮新产生、仍需用户点头的两条：⑤ 要不要重建**后端**镜像以证 G3 真机那半（约 6→28 分钟）；⑥ `.env.server` 里 `$`→`$$` 的写法要不要写进部署文档并加冒烟比对（§4D.5，属环境文件，我没擅动）。
 - **全局停写条件**：主树 `app/**` 或任一 worktree `frontend/**` 出现未提交改动（除主树那 2 个刻意保留项）→ 全线停手先归属。本轮真实教训：e2 早在后端线工作树里写完却**未提交**，且 `chat.py` 缺 import 使成功路径抛 `NameError`——差一天就没人知道。
 ## 4B. 总控已自行裁定（不必再问用户）
 
@@ -205,4 +201,44 @@ C 的 R10 让 `app/main.py:113` 开始吐 `account_unavailable`，`contract-v1.m
 | **C-3** | R1 员工级告警读取 = 闸门 **G4** | 唯一改权限语义的接口项 → **先交评审，评审通过前只读不写** | `alerts.py` 单文件 |
 | **C-4** | `Principal.from_user` 的 `or` 抬级 + `rbac.py` 死代码**与其测试**一并退役 | 两笔已记账的账，小且独立 | 见 §4B 新增行：总控已自授，须同一个 commit 交付 |
 | **C-5** | R3 SSE canonical `sources` 事件 + B-7 趋势聚合端点 | 契约冻结规则下只准增量，放最后 | 不得下线/改名任何 legacy 事件 |
+
+## 4D. 用户四条裁定已执行（2026-09-15 傍晚）+ 本轮总控亲验
+
+| 裁定 | 执行 | 证据（我自己在部署栈上取的） |
+|---|---|---|
+| ①甲 探针账号 | 建 3 个（`probe_r9_a/R9甲部`、`probe_r9_b/R9乙部`、`probe_r9_admin/admin`），走完验收当场删 | 容器内 SQL：`deleted_rows=3`、`users_left=1 [('admin','admin')]` |
+| ②甲 并回主树 + 重建前端镜像 | merge `097f2bb`、`bdf0828`；`docker compose --env-file deploy/.env.server build frontend` 建成；`up -d --no-build frontend` 换容器 | 容器内 `/usr/share/nginx/html/assets/index-DoG6MS-z.css` 87567 B，8 个 V1 token 逐个 `grep -F` 命中 |
+| ③甲 只补 `.gitignore`（不动历史） | 未跟踪项 **391 → 2** | 剩两项是 A 的 `login-reference.png` 与 C 在途新测试，都是该被看见的 |
+| ④甲 只登记契约 | `77b7cdf` 写进 `docs/api/contract-v1.md` R11 小节 | 见 §4D.2 |
+
+### 4D.1 集成已经发生（不是计划）
+- 合并前 `git merge-tree --write-tree` 试跑零冲突。A 的 V1 我按**已提交树**交叉核对：9 个原语 css 引用 43 个 `var()` 名、`theme.css` 定义 79 个、**缺失 0**。
+- 合并树 `41c3a25` 我亲跑：`npx vitest run` **127 passed / 7 files**、`npm run lint` **exit 0**、色值 **351 (0 errors)**、`npm run build` **259ms**、G5 **exit 0 / 14 个直接依赖**。
+- 并进主树的范围证明：merge-base `49bc26c` → trunk 侧改动顶层目录**只有 `frontend/`**（54 文件），`app/`、`migrations/`、`tests/test_` 零命中，与 C 在途 5 个文件天然不相交；合并后复验 C 的脏项**仍只在工作树**。
+
+### 4D.2 「停止」的真语义（比 r8 那条更严重，已立 R12）
+- `/ask` 与 `/approve` 都把 agent 图跑在 executor 线程，主循环只在排空队列时看 `cancel_event`，命中就发 `cancelled` 然后 break；**工作线程照旧跑到完**。`is_request_cancelled` 全仓只有 `app/api/v1/chat.py` 引用，`run_interrupt_stream`（`app/agents/orchestrator.py:949`）与 worker 都不看取消标记。
+- 用户真能触发：点「批准」后前端重新置 `loading=true`（`frontend/src/components/ChatPanel.vue:330`），停止药丸再次出现；此时按停止 → 界面显示已取消，而**被批准的动作仍在执行并落库**。
+- 处理：契约按「cancel 只管流、approve 只管动作」写死（甲裁定），协作式取消另立 **R12**（`docs/handoff/2026-09-15-backend-followup-requests.md` §9）。
+
+### 4D.3 前端镜像先前**根本建不起来**，本轮修掉（在 ②甲 授权范围内）
+- 现象：`RUN npm ci`（`frontend/Dockerfile:6`）EUSAGE，缺 `@emnapi/core@1.11.3`、`@emnapi/runtime@1.11.3`。
+- 根因（实测非推理）：宿主 npm **11.6.2** 写锁文件，`node:20-alpine` 内是 npm **10.8.2**，老客户端把 `@rolldown/binding-wasm32-wasi` 的可选平台绑定重解到锁里没有的版本。
+- **订正我自己上一轮的判断**：我说过「`@emnapi/*` 环境敏感、没证据说它在 Docker 里也红、不许当缺陷转给别人」——错了，它在 Docker 里就是红的，红在生产安装文档第 4 步；G5 按设计只查直接依赖，看不见这层。
+- 修：`cfecbf2` 在 Dockerfile 里把 npm 钉到锁文件作者版本，随后官方 compose 命令一次建成。
+- 新增闸门 **G5b**：重建前端镜像前，在 `node:20-alpine` 里跑 `npm ci --dry-run`（约 30 秒）。平台相关的真相只能在平台上取。
+
+### 4D.4 真机走查（两身份 × 7 工作区，脚本 `scripts/live_acceptance.cjs`，图在 `docs/screenshots/live-2026-09-15/`）
+- **控制台报错 0、失败请求 0**。staff 与 admin 各把 7 个面板点完一轮，无白屏、无裸对象、无 4xx。
+- 但**四个面板是写死的假数据，且一次接口都不调**：`git grep -c 'http\.'` 对 `DashboardPanel.vue`／`InsightPanel.vue`／`GraphPanel.vue`／`ApprovalPanel.vue` → 零命中。假数据常量位置：`frontend/src/components/DashboardPanel.vue:15-18`、`:141-142`；`frontend/src/components/InsightPanel.vue:6-7`；`frontend/src/components/GraphPanel.vue:6-9`；`frontend/src/components/ApprovalPanel.vue:8-10`。
+- 使用者视角的严重性：探针账号在 `R9甲部`，页面却报「市场部差旅费异常」「财务部报销波动 · critical」，而 PG `alerts` 表 **0 行**。看着像权威结论，其实是道具。
+- 后端到底有没有真东西（逐个读实现，不看路由名）：
+  - `GET /api/v1/knowledge-graph/relations`（`app/api/v1/intelligence.py:133`）**读库且按 Principal 收窄** → 图谱可立刻接真，纯前端。
+  - `POST /dashboard`、`POST /insights/detect` 是**由客户端喂 rows 的算法端点**，不查库 → 要真数据还缺「服务端按部门出聚合行」，立 **R14**。
+  - `GET /api/v1/alerts` 真读库，但 `_require_alert_management` 让 staff 得 403（本轮实测）→ 就是 G4／R1。
+  - **没有任何端点列得出挂起的 HITL 待办** → 审批页要接真必须先加只读端点，立 **R13**。
+- 总控裁定（不再问用户）：图谱 = A 直接接真；总览/洞察/审批 = 在数据源就绪前**必须显式标「演示数据」**，禁止以权威结论样式呈现。
+
+### 4D.5 一条 compose 隐患（不阻塞）
+`build frontend` 会打 `The "T2s4UfscQoRgZghD38IZY" variable is not set. Defaulting to a blank string.`。逐值扫 `deploy/.env.server`：唯一含 `$` 的是 `AUTH_PASSWORD_HASH`，宿主 63 字符/6 个 `$`，容器内实测 **60 字符/3 个 `$`、以 `$2b$` 开头 = 合法 bcrypt，登录可用**。即转义当前正确，但 compose 确实对 `$` 段做了插值：少打一个 `$$` 就会**静默变空**。建议（属环境文件，未擅动）：`deploy/README.server.md` 写明「`$` 必须写 `$$`」＋ `scripts/` 加一条 `compose config` 冒烟比对。
 
