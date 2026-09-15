@@ -100,6 +100,7 @@ F1、F2、F6、V1、V2、V4 的**关键路径性质**决定单 Agent 串行最�
 
 ## 5. 跨对话通用禁止事项
 
+- **一个分支只能被一个工作树 checkout**。`codex/fe-trunk` / `codex/fe-prims` 分别被 `..\fe-trunk` / `..\fe-prims` 独占：在主树里切这两个分支必报错。想看另一条线用 `git log <branch>` / `git diff <a>..<b>`，不要 checkout；要开工就把对话的**目录**换成那个 worktree。
 - 不 `git add -A`、`git reset --hard`、`git checkout .`、`git clean -fd`（会毁掉别的 Agent 的未提交工作，git 不可恢复）。
 - A/B 线不写 `app/**`；C 线不写 `frontend/**`。需对方配合的项**只登记不实现**，写进 `docs/handoff/`。
 - 引用后端只用**路由 / 符号名 / 稳定码**，不写行号（后端实时提交，行号必过期）。

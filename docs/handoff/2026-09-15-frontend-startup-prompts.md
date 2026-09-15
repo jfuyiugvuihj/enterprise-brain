@@ -8,9 +8,13 @@
 
 ## 1. 对话 A —— 前端主干线（接线）
 
+**先确认那条对话的项目目录就是 worktree 本身**（`fe-trunk` / `fe-prims`），不是主树 `企业智脑`。
+在主树里 `git checkout codex/fe-trunk` 必然报 "already used by worktree"——分支与工作树一对一，这是 git 的规则，不是故障。
+
 ```
 身份：前端主干线 Agent。工作目录 C:\Users\fengx\PycharmProjects\fe-trunk，分支 codex/fe-trunk，基线 13e808d。
 用户已授权你修改 frontend/**。app/** 一律禁止修改。
+不要 git checkout / git switch 换分支：codex/fe-trunk 已被本目录独占，换分支会报 "already used by worktree"。就在当前分支上提交。
 
 开工前先读（按序，只读这三份 + 一份并行协议）：
 1) docs/handoff/2026-09-15-frontend-work-checklist.md   （逐文件工单，你的任务清单与完成定义）
@@ -63,6 +67,7 @@ Step 2 起按工单顺序串行执行：F1 → F2 → F3 → V1 → V2 → V5(�
 ```
 身份：前端叶子线 Agent。工作目录 C:\Users\fengx\PycharmProjects\fe-prims，分支 codex/fe-prims，基线 13e808d。
 用户已授权你修改 frontend/**。app/** 一律禁止修改。
+不要 git checkout / git switch 换分支：codex/fe-prims 已被本目录独占。就在当前分支上提交，也不要另建新分支（两条线的合并假设会失效）。
 
 开工前只读这三份：
 1) docs/handoff/2026-09-15-frontend-parallel-tracks.md  §2 §4 §5 §7
