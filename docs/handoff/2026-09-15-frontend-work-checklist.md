@@ -20,7 +20,8 @@
 - 事实：`app/rag/filters.py` 对**无部门**的检索**硬拒**（`RetrievalScopeError`）；`app/common/rbac.py` 又把**空部门**解释为「全部门可见」。两套相反语义 → 开箱 `admin` 无部门 → **对知识库提问返回 403 `authorization_unavailable`**，也不能上传数据集/出图（403）。
 - [ ] 所有需要「问出答案」的验收（F1、F2、F4、F5a、F6）必须用**带部门**的账号，不能用默认 `admin`。
 - [ ] 准备至少两个部门账号（甲部 / 乙部）+ 一个 `admin`，用于验作用域不泄露（后端 `c21c342` 已改为按上传者定作用域）。
-- [ ] 后端在 (e1) 强制 `AUTH_DEPARTMENT` 与 (e2) `admin` 走 `administrator_scope` 之间拍板前，本工单按「用带部门账号」执行。
+- [ ] **2026-09-15 已裁定 e2**：检索链将承认 `policy.py::_is_administrator`，只放开部门。**但后端尚未落地**，因此本工单继续按「用带部门账号」验收，直到 admin 提问真的能出答案；落地后 admin 可直接演示。
+- [ ] e2 落地后新增的前端义务（**不是后端需求**）：管理员是**全部门视角**，界面必须明示当前视角并可收窄到单部门。归 V3 顶栏上下文。
 - 这是**演示级 P0**：老板现场登录默认 `admin` 问一句话就失败。见计划 §9 R-11。
 
 ### 0.3 证据规则（沿用后端 §13.5 的教训）
@@ -50,6 +51,8 @@
 | **D-2** | **错误响应体 `detail` 三种形状并存**：① 字符串稳定码（`data.py`、`documents.py`、`auth.py`、多数 `chat.py`）；② 对象 `ErrorEnvelope`（`observability.py` 全部、`chat.py::_document_index_error`）；③ 数组（FastAPI 422 校验）。前端把 `err.response.data.detail` 原样插值 → 上传解析失败会弹 **`[object Object]`** | **F7** |
 | **D-3** | **「停止」≠ 取消**。`POST /ask/{session_id}/cancel` 返回 `{cancelled, session_id}`，无在飞运行时 `cancelled` 为 **false**，且 Graph 的 HITL 挂起**不清**（后端 run12 实测：按停止后再批准，被停止的动作照样执行）。前端把 200 当「已停止」是撒谎 | **F2** |
 | **D-4** | `ErrorEnvelope.code` 已成**封闭枚举 16 码**（`app/agents/contracts.py`）：`authentication_required`、`permission_denied`、`authorization_unavailable`、`resource_not_found`、`validation_error`、`conflict`、`rate_limited`、`queue_unavailable`、`model_unavailable`、`retrieval_unavailable`、`task_timeout`、`task_cancelled`、`unsupported_file`、`parse_failed`、`index_publish_failed`、`internal_error` | **F7** |
+| **D-5** | **无部门账号上传 = 造死文档**：`upload_document` 取 `principal.department`、丢弃表单 `department`；上传者无部门时入库 `department=""`，而 `filters.py` 按「文档部门 ∈ 提问者部门列表」匹配 → 空串不在任何人列表里 → **谁都检索不到**，界面却显示上传成功（后端 docstring 自认） | **F4** |
+| **D-6** | **密级没有入口**：`classification` 由表单接受且照用，但 `DocPanel.vue` 的 `FormData` 只 `append('file')` → 永远走后端默认 `classification=1`（公开）。员工上传内部 / 机密文件时界面上无法指定，全部按公开入库 | **F4** |
 
 ### 1.3 不进本工单（后端线自己的账，勿在前端排期内解决）
 
@@ -108,6 +111,9 @@
 - [ ] 三页**去掉自动提交**（进页面不发请求）
 - [ ] **D-1**：`DocPanel.vue` 删除入口从 `isAdmin` 改为「属主或管理员」——判据现成：`documents/catalog` 每行已带 `owner_id` 与 `ownership`（`legacy` 行只允许管理级删），**零后端**；但权限判定不许来自 localStorage（C-3）
 - [ ] 顶栏死控件（搜索 / 通知无处理函数）要么接上要么删除；退出按钮补 `aria-label`（P2-4，与 V3 共担，先删）
+- [ ] 上传成功后**回显归属**：读 catalog 行的 `department` / `owner_id`；`department` 为空 → 当场警告「该文档不会被任何员工检索到，请先为账号配置部门」，不许静默成功（D-5）
+- [ ] 上传表单补**密级选择**（1 公开 / 2 内部 / 3 机密）并随 `FormData` 发出；不提供选择就等于默认公开（D-6）
+- [ ] 界面上**不放部门选择控件**：后端会丢弃表单 `department` 改用上传者部门，放了就是撒谎；改为只读文案「归属：你的部门」
 - 验收：员工账号看「异常与告警」显示「暂无可见异常」而非空表；非管理员能删自己上传的文档
 - 回滚：入口用路由重定向兜住，不产生 404
 
@@ -175,6 +181,7 @@
 
 - [ ] 每个视图有 URL；刷新保持；浏览器后退可用；未登录统一跳登录
 - [ ] **当前数据上下文显示在顶栏且可改**（这是本项目最容易出事故的地方：问错部门 / 错数据集）
+- [ ] **e2 落地后**：管理员顶栏显示「当前：全部门」且可收窄到单个部门，检索结果里标明每条命中的部门归属（D-5 的另一半）
 - 验收：深链 `/{视图}` 未登录时跳登录后能回到原目标
 
 ### V4 清 `theme.css` 覆盖债｜前置 V2
@@ -225,7 +232,7 @@
 | # | 事项 | 影响哪步 | 前端默认执行值 |
 |---|---|---|---|
 | 1 | 「停止」是否等于拒绝挂起动作（后端语义） | F2 | 按钮文案改「中断生成」+ 二次确认 + 如实读 `cancelled` |
-| 2 | admin 检索语义统一（(e1) 强制部门 / (e2) administrator_scope） | 0.2 闸门、F1/F2/F4/F5/F6 全部验收 | 用带部门账号验收；字典含 `authorization_unavailable` |
+| 2 | ~~admin 检索语义统一~~ **已裁定 e2**（后端待落地，要求见 `handoff/2026-09-15-backend-followup-requests.md` §6.2） | 0.2 闸门、V3、F1/F2/F4/F5/F6 全部验收 | 落地前仍用带部门账号；落地后 V3 必须显示「全部门」视角 |
 | 3 | Element Plus：自研 8 原语 vs 按需保留 Table + DatePicker | V5 | **自研** |
 | 4 | 「办待办」是否预留入口（依赖 C-1 未建模） | F4 | **不预留** |
 | 5 | 管理视图可见性（C-3 假权限未解） | F5a | 上线前对所有人隐藏 |

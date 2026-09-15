@@ -447,6 +447,10 @@ main.login
 不进本计划的（后端线自己的账）：PG `documents` 表成只插不删的幽灵表（5 行全指向已删文件、`document_versions` = 0、全仓无读点）；数据集 / artifact 删除 API（R8 / B-10，残留已升到 5 数据集 + 4 artifact + 33 孤儿会话）；`0008` 缺列草稿。**前端不做「本地假装删除」。**
 
 同时确认一件省事的**不是**后端需求：`documents/catalog` 响应已含 `owner_id` / `ownership` / `size_bytes` / `parse_status`（`public_document_row`），故 R4 / B-3 一并按已落地处理，D-1 与 F5a 都不必再等后端。
+
+**裁定（2026-09-15）**：admin 检索语义取 **e2**——`filters.py` 复用 `policy.py::_is_administrator`，只放开部门、保留密级条件。但 `ROLE_CLEARANCE["admin"] = 3` 已是最高密级，故"保留密级上限"当前是**空操作**，e2 的真实效果 = 全库可读；这条事实要求写进 docstring。三链对照与 6 条落地要求在 `handoff/2026-09-15-backend-followup-requests.md` §6.2。
+
+e2 带出两个前端必须处理的洞（零后端）：**D-5** 无部门账号上传的文档 `department=""`，谁都检索不到而界面显示成功；**D-6** `classification` 后端照用表单值，但 `DocPanel.vue` 从不发送 → 一切上传默认公开密级。两条均已落进 F4。
 ---
 
 ## 7. 资产与构建卫生
@@ -470,7 +474,7 @@ main.login
 
 五档固定视口：`1440×900`、`1920×1080`、`3440×1440`、`1280×720`、`768×1024`。
 
-- **前置（r8 新增）**：验收账号必须**带部门**。默认 `admin` 无部门会被 `app/rag/filters.py` 硬拒（403 `authorization_unavailable`），用它做端到端会把后端语义问题误判成前端缺陷。见 §9 R-11。
+- **前置（r8 新增）**：验收账号必须**带部门**。默认 `admin` 无部门会被 `app/rag/filters.py` 硬拒（403 `authorization_unavailable`），用它做端到端会把后端语义问题误判成前端缺陷。见 §9 R-11。（2026-09-15 admin 语义已裁定 e2，但**后端未落地**，本前置继续有效。）
 - **不起真实服务器**：用 `context.route("**/*", …)` 从磁盘 fulfill，MIME 覆盖 html/js/css/png/svg/webp/woff2。
 - **必须 abort 掉 `fonts.googleapis.com` / `fonts.gstatic.com` / CDN**，模拟客户内网；否则"字体缺失"这类缺陷会被测不出来。
 - `/api/*` fulfill 401 JSON，用于验证 F3 的鉴权分支。
@@ -508,7 +512,7 @@ main.login
 | R-8 | 两条线对 P1-5 开不同药方（后端主张签名 URL / cookie，前端主张带 Bearer 取 blob） | 后端可能顺手放宽鉴权面，扩大爆炸半径 | 已回论据（`handoff/2026-09-15-backend-followup-requests.md` §5）；**动鉴权前须等前端确认** |
 | R-9 | 契约文档描述了未在 `app/main.py` 挂载的端点（`/apps`） | 前端接了直接 404 | 接入前先探挂载；见 §6.6 ① |
 | R-10 | ~~缺陷归属被写错~~ **已关闭**（r8 §13.5 已采纳 P1-4 / P2-2 归属与三页冻结） | — | 归属继续以 §6.5 / §6.6 为准 |
-| R-11 | 开箱 `admin` **无部门 → 问不了知识库**：`app/common/rbac.py`（空部门 = 全部门可见）与 `app/rag/filters.py`（无部门 = 硬拒）两套相反语义并存 | **演示级 P0**：老板用默认账号现场提问即失败，且端到端验收会误判 | 验收一律用带部门账号（§8.1 前置）；`authorization_unavailable` 进 F7 字典；等后端在 (e1) 强制 `AUTH_DEPARTMENT` / (e2) `administrator_scope` 间拍板 |
+| R-11 | 开箱 `admin` **无部门 → 问不了知识库**：`app/common/rbac.py`（空部门 = 全部门可见，死代码）与 `app/rag/filters.py`（无部门 = 硬拒）两套相反语义并存 | **演示级 P0**：老板用默认账号现场提问即失败，且端到端验收会误判 | **已裁定 e2**（检索链认 `administrator_scope`，要求见 handoff §6.2）；后端落地前验收一律用带部门账号（§8.1 前置）；`authorization_unavailable` 进 F7 字典 |
 
 **正被其他对话改动的后端文件**（引用时只用符号名 / 路由 / 事件名）：`app/api/v1/chat.py`、`app/api/v1/alerts.py`、`app/api/v1/artifacts.py`、`app/documents/catalog.py`、`app/common/auth.py`、`app/common/audit.py`、`app/main.py`、`app/storage/persistence.py`、`app/knowledge_graph/service.py`。
 

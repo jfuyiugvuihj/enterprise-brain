@@ -69,12 +69,41 @@ R1 落地前，前端不会用假数据填充员工视图，会显示「暂无�
 
 ---
 
-## 6. r8 收口后新提出的两条语义问题（要拍板，不要默默选一个）
+## 6. 语义裁定：admin 检索已定 e2；「停止」仍待决
 
-| # | 问题 | 前端已核实的事实 | 前端立场 |
-|---|---|---|---|
-| 1 | **「停止」是否等于拒绝挂起动作** | `POST /ask/{session_id}/cancel` 返回 `{cancelled, session_id}`：无在飞运行时 `cancelled` 为 `false`，且 Graph 的 HITL 挂起**不清**（你们 run12 实测：按停止后再批准，被停止的动作照样执行） | 前端不需要后端先改就能诚实：按钮改文案「中断生成」+ 二次确认 + 按 `cancelled` 如实播报。但**语义本身请你们定**：若「停止 = 拒绝」，需要 cancel 路径真的把挂起动作判为拒绝 |
-| 2 | **开箱 admin 问不了知识库** | `app/common/rbac.py` 空部门 = 全部门可见，`app/rag/filters.py` 无部门 = 硬拒 `RetrievalScopeError` → 403 `authorization_unavailable`。默认 `admin` 无部门，因此**登录后第一句话就失败**，也不能上传数据集 / 出图 | 前端已把它记成演示级 P0（计划 §9 R-11），验收一律改用带部门账号。但这是开箱体验问题，请在 (e1) 强制 `AUTH_DEPARTMENT` 与 (e2) admin 走 `administrator_scope` 之间挑一个；定了我才好在「问一句」空态里写正确的提示语 |
+### 6.1 三条链现在的 admin 语义（本轮逐调用点核实）
+
+| 调用链 | 判据 | admin（无部门）的结果 |
+|---|---|---|
+| 数据链 `app/agents/tools.py` → `rbac.filter_dataframe_rows` | `role == "admin"` → 返回整个 df，部门与密级**都不滤** | 看得到全公司数据 |
+| 资源链 `app/common/policy.py` → `administrator_scope` | admin 不要求同部门，clearance 仍适用 | 全库目录 / 预览 / 下载都可读 |
+| 检索链 `app/rag/filters.py` | 只看有没有部门，**不看 role** | **403 `authorization_unavailable`，问不出任何东西** |
+| `rbac.build_where` / `make_pred` / `doc_visible` | admin 放行、空部门 = 公开 | **0 调用者**（死代码；文档里"空部门=公开"那句就来自它） |
+
+「目录看得见、问答查不到」的机械原因：三条活链里只有检索链没接 administrator。
+
+### 6.2 裁定：e2 —— 检索链承认 `administrator_scope`
+
+2026-09-15 用户选定 e2，e1（强制 `AUTH_DEPARTMENT`）不采纳。落地要求 6 条：
+
+1. **判据同源**：复用 `policy.py::_is_administrator`（需要的话提升为公开符号或抽到公共模块），**不要**在 `filters.py` 里再写一遍 `"admin"` 字面量——那会变成第四套判据。
+2. **只放开部门**：`classification in range(1, principal.clearance + 1)` 照抄保留，即使当前对 admin 是空操作（见下一条）。
+3. **一句话必须写进 docstring**：`Principal.clearance` 取自 `clearance_for(role)`，而 `ROLE_CLEARANCE["admin"] = 3` = 最高密级 → **"保留密级上限"对 admin 当前不产生任何限制**，e2 的真实效果是跨部门 + 跨密级全库可读。日后客户若要"老板不得读机密"，要改的是 `ROLE_CLEARANCE` 映射（或给 admin 单配 clearance），**不是**部门规则。别留给下一个人重新发现。
+4. **独立审计**：管理员跨部门检索记 `administrator_scope`（与资源链同名同义），不得记成普通部门命中——`policy.py` 注释里"override 不能被记成 ordinary department match"就是这个意思，检索链要照办。
+5. **`AUTH_DEPARTMENT` 保持可选**、预检**继续 warn**：e2 之后"无部门的 admin"是合法状态，把 warn 升 error 会与裁定直接冲突（`0e34a41` 那条需要重新评估）。
+6. **配套清理（不阻塞）**：`rbac.py` 里 0 调用者的 `build_where` / `make_pred` / `doc_visible` 标 retired 或删除。
+
+边际风险论据：admin 现在已能通过资源链打开任意部门文档原文、通过数据链算出全公司表数据。**e2 只是让"问答"与这两条已存在的权限对齐**，没有新增特权类别。
+
+### 6.3 e2 不解决的两个洞（前端自己补，零后端，但你们得知道）
+
+- `upload_document` 现在把作用域取 `principal.department`、丢弃表单 `department`。因此**无部门账号上传的文档 `department=""`**，而 `filters.py` 是 `department ∈ 提问者的部门列表` → 空串不在任何人列表里 → **谁都检索不到**，上传界面却显示成功。后端 docstring 自己写了"a document that lands without one can never be found by anyone"。前端会在上传后回显归属并对空部门**当场警告**，但**根因在你们那一侧**：要么拒绝无部门账号上传，要么给这类行一个明确的 `unscoped` 状态。
+- 数据链 `filter_dataframe_rows` 对 admin 是 `return df`（部门 + 密级全不滤），比 e2 还宽。既然裁定口径是"跨部门可以、跨密级不行"，这条链的 admin 分支建议一并收紧到按 clearance 过滤，否则"问答查不到机密、数据表却能算出来"会成为新裂缝。
+
+### 6.4 仍需你拍板：「停止 = 拒绝挂起动作？」
+
+前端不阻塞：取消按钮已按「如实读 `cancelled` + 二次确认」排进 F2。但 cancel 是否顺带把挂起的 HITL 动作判为拒绝并写审计，只有你们能定。
+
 
 ## 7. 一条不要求你们改的反馈
 
