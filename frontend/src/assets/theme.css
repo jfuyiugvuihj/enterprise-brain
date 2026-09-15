@@ -2582,32 +2582,6 @@ textarea:focus-visible {
 }
 .login-pitch__lead { margin: 0; color: var(--text-2); font-size: var(--t-lg); letter-spacing: .01em; }
 
-/* 三张装饰数据卡：文案来自 DOM（数值见 src/devFixtures/login-demo.js） */
-.login-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-3);
-  margin-top: var(--s-7);
-}
-.login-stats > div {
-  display: grid;
-  gap: 2px;
-  min-width: 128px;
-  padding: var(--s-3) var(--s-4);
-  background: var(--login-glass);
-  border: 1px solid var(--border-1);
-  border-radius: var(--r-md);
-}
-.login-stats dt { color: var(--text-3); font-size: var(--t-xs); }
-.login-stats dd {
-  margin: 0;
-  color: var(--text-1);
-  font-family: var(--font-mono);
-  font-size: var(--t-xl);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
 .login-capabilities {
   display: flex;
   flex-wrap: wrap;

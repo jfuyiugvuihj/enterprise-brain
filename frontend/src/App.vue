@@ -8,7 +8,6 @@ import InsightPanel from './components/InsightPanel.vue'
 import GraphPanel from './components/GraphPanel.vue'
 import ApprovalPanel from './components/ApprovalPanel.vue'
 import { resetSessions } from './lib/sessions'
-import { loginStats } from './devFixtures/login-demo'
 import {
   clearSession,
   errorDetail,
@@ -212,13 +211,6 @@ onUnmounted(() => {
           <span class="login-pitch__rule" aria-hidden="true"></span>
           <h1 id="login-hero-title">私有化企业智能分析平台</h1>
           <p class="login-pitch__lead">让企业数据，成为生产力</p>
-
-          <dl class="login-stats">
-            <div v-for="item in loginStats" :key="item.label">
-              <dt>{{ item.label }}</dt>
-              <dd>{{ item.value }}</dd>
-            </div>
-          </dl>
 
           <div class="login-capabilities" aria-label="平台能力">
             <div>
