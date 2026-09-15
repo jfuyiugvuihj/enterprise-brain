@@ -112,7 +112,7 @@
 - J1 / J2 / J3 / J5 / J6 / J8 / J9：**支持**既有裁定，无推翻。
 - J4：**补漏**——数据上下文跨视图共享纳入 V3。
 - J7：**补一条硬约束**——B-7 未落地前总览不得出现任何趋势线（含空图占位）。
-- 需修正的旧表述：图谱持久化本轮已由其他 Agent 补齐（`JsonPersistenceAdapter` + `KNOWLEDGE_GRAPH_STORE_PATH`），**"重启即清空"已失效**；撤下入口的理由收敛为三条：无图形界面、无自动抽取（关系仍需人录）、`confirm()` 无路由无按钮。
+- 需修正的旧表述：图谱持久化本轮已由其他 Agent 补齐（`JsonPersistenceAdapter` + `KNOWLEDGE_GRAPH_STORE_PATH`），**"重启即清空"已失效**；撤下入口的理由收敛为三条：无图形界面、无自动抽取（关系仍需人录）、`confirm()` 无路由无按钮。 **注意限定**：持久化仅在代码层成立，本次部署未配置 `KNOWLEDGE_GRAPH_STORE_PATH`，写入仍返回 503。
 
 ---
 
@@ -355,6 +355,8 @@ main.login
 | 6 | R5 / B-8 | precheck 自动取标准 + 禁止前端传 `department` | 报销自查 | 参数 + 复用 `_approval_worker_node` 路径 |
 | 7 | B-6 | 日报路由 | 无 | 需先拆分推送副作用 |
 | 8 | B-7 | 趋势最小聚合接口 | 总览趋势线 | 未落地前**不画趋势线** |
+| 9 | R8 / B-10 | 数据集删除 API | 误传的数据集永久留存（其首轮验收自建 3 个 `browser-e2e-*` 数据集就删不掉） | 一个 DELETE 路由 + 级联清理 |
+| 10 | R9 / B-11 | `/chart`、`/export` 以 HTTP 200 返回业务失败 | F2 的 `response.ok` 抓不到假成功 | 改状态码与 `ErrorEnvelope`，**属契约变更** |
 
 ### 6.4 SSE 双轨（唯一必须跨端签字的点）
 
@@ -365,6 +367,21 @@ main.login
 1. 冻结期后端不下线 legacy 事件名，或显式声明 `protocol_version` 并同时发两个字段。
 2. 前端解析器改为「canonical envelope 为主、legacy 兜底、未知事件丢弃不崩溃」——归入 F2。
 3. 禁止单边改动事件名。
+
+### 6.5 并入项（2026-09-15，来自后端首轮浏览器端到端验收）
+
+后端线在 `docs/current-functionality-2026-09-10-revision-log.md` §13（r8）登记了首轮**经 nginx** 的 Playwright 验收：45 项 → 通过 24 / 失败 12 / 未覆盖 4 / 部分 1 / 事实 2。判给前端的项并入本计划，**保留其 P 号以便对账**：
+
+| 来源 | 缺陷 | 归属 | 处置 |
+|---|---|---|---|
+| P1-5 | `content_url` 是 header-only 相对 URL，`<img src>` 带不了 Bearer → 图表界面上不可能显示 | **F1** | 前端带 Bearer 取 blob。**不需要后端改鉴权**，论据见 `handoff/2026-09-15-backend-followup-requests.md` §5 |
+| P1-1 | `DashboardPanel.vue` 硬编码 `demoRows` 被 `POST /api/v1/dashboard` **回显**成趋势线与 3 条异常 | **F5a** | 先剪断「前端造数据 → POST → 回显」这条回路，再谈真实计数 |
+| P1-4 | 界面把 `storage_read_only` 原样渲染给用户 | **V4** | 走 `UiToast` + 语义色，文案改成人话 |
+| P2-2 | `DocPanel.vue` 源码乱码（实测 `澶辫触` 1 处、连续 `?` 4 处） | **F4** | UTF-8 精确读取后重写文案；与确认弹窗乱码同源 |
+| P2-4 | 顶栏搜索/通知是无处理函数的死控件；退出按钮无可及名称 | **V3** | 要么接上要么删除，**不留死控件**；补 `aria-label` |
+| 新发现 | 全局 axios 拦截器装了两份（`DocPanel.vue:7`、`lib/api.js`） | **F3** | 收敛为 1 处，零后端 |
+
+一条口径修正：**图谱持久化代码已具备，但本次部署未配置 `KNOWLEDGE_GRAPH_STORE_PATH`，写入返回 503**。§1.4 与 §2 中「持久化已补齐」的表述限定为**代码层**，不构成生产承诺。
 
 ---
 
@@ -423,6 +440,7 @@ main.login
 | R-5 | `mix-blend-mode: screen` 在旧浏览器不支持 | 登录页背景异常 | 纯色 `--surface-0` 回退 + `@supports` 渐进增强 |
 | R-6 | 与后端 Agent 同时改 `App.vue` 邻接逻辑 | 合并冲突 | 前端只碰 `frontend/src/**`；`App.vue` 改动串行；冲突即停并报告 |
 | R-7 | 文档中的行号过期 | 误导实施 | 后端引用一律符号名/路由/事件名；前端行号视为上午快照 |
+| R-8 | 两条线对 P1-5 开不同药方（后端主张签名 URL / cookie，前端主张带 Bearer 取 blob） | 后端可能顺手放宽鉴权面，扩大爆炸半径 | 已回论据（`handoff/2026-09-15-backend-followup-requests.md` §5）；**动鉴权前须等前端确认** |
 
 **正被其他对话改动的后端文件**（引用时只用符号名 / 路由 / 事件名）：`app/api/v1/chat.py`、`app/api/v1/alerts.py`、`app/api/v1/artifacts.py`、`app/documents/catalog.py`、`app/common/auth.py`、`app/common/audit.py`、`app/main.py`、`app/storage/persistence.py`、`app/knowledge_graph/service.py`。
 
@@ -486,3 +504,13 @@ main.login
 
 - [ ] SSE 事件废弃策略在 `api/contract-v1.md` 中由双方签字
 - [ ] R1（员工级告警读取）进入后端评审队列
+
+**2026-09-15 并入项**
+
+- [ ] `DashboardPanel.vue` 不再向 `POST /api/v1/dashboard` 提交任何前端构造的行
+- [ ] 图表经 `Authorization` 头取 blob 渲染，且**后端未因此改动鉴权中间件**
+- [ ] `ChatPanel.vue` 的图表正则同时接受 `/static/` 与 `/api/v1/artifacts/` 两种前缀
+- [ ] `DocPanel.vue` 无 GBK 乱码残留（`澶辫触`、连续 `?` 均为 0）
+- [ ] 顶栏无死控件；退出按钮有可及名称
+- [ ] `storage_read_only` 不再原样出现在界面上
+- [ ] 全局 axios 拦截器只剩 1 处

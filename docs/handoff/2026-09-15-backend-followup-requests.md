@@ -32,8 +32,34 @@
 - 审批工单模型（C-1）——另立设计，不混在本单。
 - insights 与 alerts 两套异常逻辑的合并——`consolidated-fix-plan` §4 已定「合并前不要单边改动」。
 - 任何 legacy SSE 事件清理——契约 `SSE Event Deprecation Policy` 冻结规则。
-- 改鉴权中间件让图片走 cookie 或签名 query token——前端带 token 取 blob 已可解决。
+- 改鉴权中间件让图片走 cookie 或签名 query token——前端带 token 取 blob 已可解决。（论据见 §5）
 
 ## 4. 前端侧的对等承诺
 
 R1 落地前，前端不会用假数据填充员工视图，会显示「暂无可见异常」；R2 落地前不做「交成果」视图；C-1 落地前不做「办待办」视图。**前端不会替后端把占位页镀第二层**，详见 `docs/handoff/2026-09-15-frontend-hold-notice.md`。
+
+---
+
+## 5. P1-5 反驳：图表不显示不需要后端改鉴权
+
+你在 `docs/current-functionality-2026-09-10-revision-log.md` §13.5 把 P1-5 记为「要动的是签名 URL 或 cookie 作用域，属契约变更」。**这条我不同意**，论据全部实测于 `c6c6009`：
+
+1. **主断点在前端的正则，不在鉴权。** `frontend/src/components/ChatPanel.vue:139` 是
+   `const re = /!\[([^\]]*)\]\((\/static\/[^)]+)\)/g` —— 它**只匹配 `/static/` 前缀**，
+   所以 `/api/v1/artifacts/.../content` 从来没被解析成图表对象。`content_url` 长什么样根本没机会参与。
+2. `<img>` 直接绑 `props.src` 确实带不了 Bearer（`ChartViewer.vue:14-15` 与 `:49`），
+   但这是**渲染方式**问题，不是**服务端鉴权**问题。
+3. **正确范式本仓库已有**：`DocPanel.vue:88-94` 用 `responseType: 'blob'` 取文件，
+   而 `DocPanel.vue:7-9` 装了**全局** `axios.interceptors.request.use` 给每个请求加 `Bearer`。
+   前端只要把 `ChartViewer` 的 `<img :src>` 换成「带 Bearer 取 blob → `URL.createObjectURL` → 绑 objectURL」，
+   约 8 行，**零后端改动**。这正是 `docs/frontend-plan-2026-09-14.md` F1 的既有范围。
+
+**请求**：不要为 P1-5 动鉴权中间件、不要引入签名 URL。理由三条——
+(a) 私有化单机场景下 header-only 是更严的默认，为 `<img>` 开 cookie 作用域等于放宽鉴权面；
+(b) 签名 URL 会把 token 泄进浏览器历史与 `Referer`；
+(c) 它要解决的场景前端已经能自己解决。
+
+**如果你已经按签名 URL 动手**：先停，把改了哪些文件贴出来。不要既保留 header-only 又新增签名分支——那会变成两套可互相绕过的读路径。
+
+**顺带一条同源发现**：全局 axios 拦截器现在有**两份**（`DocPanel.vue:7` 与 `frontend/src/lib/api.js`）。
+这就是审计里「4 套鉴权」中已被量化的两套，F3 会收敛为 1 处，**不需要后端配合**。
