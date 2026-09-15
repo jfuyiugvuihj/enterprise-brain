@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest'
 import { h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import GraphPanel from '../GraphPanel.vue'
+import DataPanel from '../DataPanel.vue'
 import { UiEmptyState, UiErrorState } from '../ui'
 
 const source = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
@@ -61,5 +62,52 @@ describe('GraphPanel · V7-1 不变量 + A-3-1 接线', () => {
     expect(err).toContain('data-testid="ui-error-state"')
     // retryable=false => 整条操作区不渲染
     expect(err).not.toContain('data-testid="ui-error-retry"')
+  })
+})
+
+describe('DataPanel · 文件列表三张脸 + 色债随接线一起掉', () => {
+  it('SSR 首屏：没有数据文件 => 原语空态，且文案一字不少', async () => {
+    const html = await render(DataPanel)
+    expect(html).toContain('data-testid="ui-empty-state"')
+    expect(html).toContain('暂无数据文件')
+    expect(html).toContain('上传 Excel 或 CSV 开始分析。')
+    expect(html).not.toContain('class="data-state empty"')
+  })
+
+  // R1(c) 的顺序即语义：失败必须先于「空」被判掉，否则读不到列表会说成「没有文件」。
+  it('失败分支排在空态分支之前，两者互斥', () => {
+    const s = source('DataPanel.vue')
+    const errAt = s.indexOf('<UiErrorState')
+    const emptyAt = s.indexOf('<UiEmptyState')
+    expect(errAt).toBeGreaterThan(-1)
+    expect(emptyAt).toBeGreaterThan(errAt)
+    expect(s).toMatch(/v-else-if="filesError"[\s\S]*?v-else-if="!dataFiles\.length"/)
+  })
+
+  it('无权限不给重试；普通失败给「重新加载」并挡住重复点击', () => {
+    const s = source('DataPanel.vue')
+    expect(s).toContain('isPermissionDenied(err)')
+    expect(s).toMatch(/:retryable="!filesDenied"/)
+    expect(s).toMatch(/:retryable="!previewDenied"/)
+    expect(s).toMatch(/:busy="filesLoading"/)
+    expect(s).toContain('retry-text="重新加载"')
+  })
+
+  it('预览失败也不许画成空态：别人的数据集是「打不开」不是「没有数据」', () => {
+    const s = source('DataPanel.vue')
+    expect(s).toContain('这份数据文件不属于你的可见范围，当前账号打不开它。')
+    expect(s).toMatch(/@retry="selectDataFile\(dataFile\)"/)
+  })
+
+  it('手搓状态样式与它那 3 个裸色值一起消失（棘轮 351 -> 348 的出处）', () => {
+    const s = source('DataPanel.vue')
+    expect(s).not.toContain('#dc2626')
+    expect(s).not.toContain('#fafafa')
+    // #d1d5db 还剩 1 处，那是 .data-file-item 的描边，跟状态块无关，属 V1 色债，别混进这次接线。
+    expect(s.match(/#d1d5db/g)).toHaveLength(1)
+    expect(s).not.toContain('.data-state.error')
+    expect(s).not.toContain('.data-state.empty')
+    // 摘掉分支后没人用的 .preview-error 也一起清了，不留死样式
+    expect(s).not.toMatch(/\.preview-error\s*\{/)
   })
 })

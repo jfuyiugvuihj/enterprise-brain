@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import { http, errorDetail } from '../lib/http'
+import { errorDetail, http, isPermissionDenied } from '../lib/http'
+import { UiEmptyState, UiErrorState } from './ui'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
 
 const profile = ref(null)
@@ -11,10 +12,13 @@ const tableTruncated = ref(false)
 const previewOpen = ref(false)
 const previewLoading = ref(false)
 const previewError = ref('')
+const previewDenied = ref(false)
 const uploading = ref(false)
 const dataFiles = ref([])
 const filesLoading = ref(false)
 const filesError = ref('')
+// 无权限 / 坏了 / 空列表是三张脸（R1c），文件列表与预览各自判一次。
+const filesDenied = ref(false)
 const selectingFile = ref(false)
 
 const quickActions = [
@@ -73,7 +77,10 @@ async function loadDataFiles(preferredFilename = '') {
       await selectDataFile(nextFilename)
     }
   } catch (err) {
-        filesError.value = errorDetail(err, '数据文件列表加载失败')
+        filesDenied.value = isPermissionDenied(err)
+        filesError.value = filesDenied.value
+          ? '当前账号没有查看数据文件列表的权限，请联系管理员开通。'
+          : errorDetail(err, '数据文件列表加载失败')
   } finally {
     filesLoading.value = false
   }
@@ -83,6 +90,7 @@ async function selectDataFile(filename) {
   dataFile.value = filename
   selectingFile.value = true
   previewError.value = ''
+  previewDenied.value = false
   try {
     const res = await http.get(
       `/data-files/${encodeURIComponent(filename)}/preview`,
@@ -90,7 +98,11 @@ async function selectDataFile(filename) {
     )
     applyDataPreview(res.data)
   } catch (err) {
-        previewError.value = errorDetail(err, '数据文件预览失败')
+        // 别人的数据集会走到这里：data.py:89-90 用 policy 的 reason code 回 403。
+        previewDenied.value = isPermissionDenied(err)
+        previewError.value = previewDenied.value
+          ? '这份数据文件不属于你的可见范围，当前账号打不开它。'
+          : errorDetail(err, '数据文件预览失败')
   } finally {
     selectingFile.value = false
   }
@@ -177,8 +189,22 @@ onMounted(loadDataFiles)
       </div>
 
       <p v-if="filesLoading" class="data-state">正在读取数据文件...</p>
-      <p v-else-if="filesError" class="data-state error">{{ filesError }}</p>
-      <p v-else-if="!dataFiles.length" class="data-state empty">暂无数据文件，上传 Excel 或 CSV 开始分析。</p>
+      <UiErrorState
+        v-else-if="filesError"
+        title="数据文件列表没读到"
+        :description="filesError"
+        :retryable="!filesDenied"
+        retry-text="重新加载"
+        :busy="filesLoading"
+        dense
+        @retry="loadDataFiles"
+      />
+      <UiEmptyState
+        v-else-if="!dataFiles.length"
+        title="暂无数据文件"
+        description="上传 Excel 或 CSV 开始分析。"
+        dense
+      />
 
       <div v-else class="data-file-list">
         <button
@@ -197,7 +223,16 @@ onMounted(loadDataFiles)
       </div>
     </section>
 
-    <p v-if="previewError && !previewOpen" class="data-state error preview-error">{{ previewError }}</p>
+    <UiErrorState
+      v-if="previewError && !previewOpen"
+      title="数据预览没打开"
+      :description="previewError"
+      :retryable="!previewDenied"
+      retry-text="重试"
+      :busy="selectingFile"
+      dense
+      @retry="selectDataFile(dataFile)"
+    />
 
     <!-- 数据画像 -->
     <div v-if="profile" class="profile-card">
@@ -416,21 +451,6 @@ onMounted(loadDataFiles)
   color: #909399;
   font-size: 12px;
   line-height: 1.5;
-}
-
-.data-state.error {
-  color: #dc2626;
-}
-
-.data-state.empty {
-  padding: 10px;
-  border: 1px dashed #d1d5db;
-  border-radius: 8px;
-  background: #fafafa;
-}
-
-.preview-error {
-  margin-top: 12px;
 }
 
 /* 数据画像 */
