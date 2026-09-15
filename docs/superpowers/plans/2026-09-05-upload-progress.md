@@ -1,5 +1,8 @@
 # Knowledge Base Upload Progress Implementation Plan
 
+> **⚠️ 状态（2026-09-15 标注）**：与 `2026-09-04-upload-progress-indicator.md` 是同一目标的两份计划，**均已交付且同样是假百分比**。
+> 存档一份即可。真实进度由 `docs/frontend-plan-2026-09-14.md` §2「喂料」承接（后端 `parse_status` 已就绪）。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Show upload percentage and processing state for knowledge-base files.

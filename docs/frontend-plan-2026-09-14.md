@@ -519,7 +519,7 @@ main.login
 
 ## 12. 附：被本计划取代或限定的旧计划
 
-四份旧文档已在开头加标注，后续 Agent **不得按它们开工**：
+九份旧计划已在开头加标注，后续 Agent **不得按它们开工**：
 
 | 旧计划 | 处置 |
 |---|---|
@@ -527,5 +527,10 @@ main.login
 | `docs/superpowers/plans/2026-09-10-enterprise-brain-reference-ui-alignment.md` | 视觉部分作废；「业务数字均来自现有 API 或空态」一条**仍有效**，由 F5a 承接 |
 | `docs/superpowers/plans/2026-09-07-enterprise-intelligence-upgrade.md` | 设计目标仍有效（审计的「证据 D」）；完成度不得按其自述判断；阶段 8 前端部分被本计划取代 |
 | `docs/superpowers/plans/2026-09-10-enterprise-brain-multi-agent-development-plan.md` | 完成度未核实，不得作为现状依据；仅作为设计意图存档 |
+| `docs/superpowers/plans/2026-09-08-enterprise-brain-complete-upgrade-plan.md` | **自述「总方案草案」，从未定稿**，不得作为实现或完成度依据 |
+| `docs/superpowers/plans/2026-09-07-parallel-development-plan.md` | 流程性计划，使命已完成；派发方式已被 consolidated-fix-plan 取代 |
+| `docs/superpowers/plans/2026-09-06-data-file-catalog.md` | **已实现并交付**，入口已并入「喂料」，仅存档 |
+| `docs/superpowers/plans/2026-09-05-upload-progress.md` | 已交付但是**假百分比**；真实进度由 §2「喂料」承接 |
+| `docs/superpowers/plans/2026-09-04-upload-progress-indicator.md` | 与上一份同源、同样已交付，仅存档 |
 
 原则：判断完成度只用当前源码、测试与 `docs/current-functionality-2026-09-10.md`，不用历史计划里的“已完成”列表。

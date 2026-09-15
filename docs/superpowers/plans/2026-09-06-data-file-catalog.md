@@ -1,5 +1,8 @@
 # 数据分析文件列表 Implementation Plan
 
+> **⚠️ 状态（2026-09-15 标注）**：**已实现并交付**——`DataPanel.vue` 的上传、列表、预览、下载链路真实，后端有 `/data-files` 目录接口。
+> 本文件仅作历史切片存档。其产出的「数据文件列表」入口已在 2026-09-14 的裁定中与文档合并为**「喂料」**视图，见 `docs/frontend-plan-2026-09-14.md` §2。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 为数据分析模块增加可持久查看、选择、预览和下载的 Excel/CSV 文件列表。

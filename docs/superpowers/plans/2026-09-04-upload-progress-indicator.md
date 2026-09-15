@@ -1,5 +1,8 @@
 # 上传进度图标 Implementation Plan
 
+> **⚠️ 状态（2026-09-15 标注）**：**目标已交付，但交付的是假进度**。`frontend/src/components/DocPanel.vue:36-52` 的 `startProgressTimer()` 用 `setInterval` 自行累加并封顶，数值不来自服务端。
+> 后端现已具备真数据源（`parse_status`，即 R4 / B-3，已落地）。真实进度改造归 `docs/frontend-plan-2026-09-14.md` §2 的「喂料」视图，**不要在本计划下另开一轮**。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在知识库上传队列中显示动态进度图标和清晰的上传阶段文案。

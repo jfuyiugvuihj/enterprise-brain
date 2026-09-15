@@ -1,5 +1,8 @@
 # 企业智脑并行开发实施计划
 
+> **⚠️ 状态（2026-09-15 标注）**：**流程性计划，使命已完成**。它规定的 worktree 与检查点前提，后来由 `docs/handoff/2026-09-14-consolidated-fix-plan.md` 的 Wave 1/2/3 实际派发方式取代。
+> 不得据本文件判断功能完成度。它点名的主动洞察 / 驾驶舱 / 知识图谱 / 审批助手四项，现状见 `docs/frontend-workspace-audit-2026-09-14.md` §4.4 差距总表。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在不互相覆盖代码、不重复设计接口、不同时压垮本地 Ollama 的前提下，并行完成企业智脑的多 Agent 协作闭环、答案溯源、主动洞察、业务语义层、驾驶舱、知识图谱和审批助手。
