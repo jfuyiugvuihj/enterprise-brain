@@ -14,6 +14,7 @@
 - [ ] `git status --porcelain -- frontend` 当前有 **19 处未提交**，面板文件 mtime 全停在 09-10。开工前先确认这 19 处属于谁、是否保留。**禁止** `git add -A`、`git reset --hard`、`git checkout .`。
 - [ ] 建一条自己的分支或 worktree，基线记在 commit 里；每步一提交，提交信息带步骤号（`F1`…`V6`）。
 - 理由：另一个 Agent 的未提交工作一旦被覆盖，无法从 git 恢复。
+- 要开多条对话 / 多条子 Agent 并行：**先读 `handoff/2026-09-15-frontend-parallel-tracks.md`**（三条线的独占文件集、step 0、合并协议、派发提示词）。
 
 ### 0.2 演示账号闸门（r8 带来，阻断全部端到端验收）
 

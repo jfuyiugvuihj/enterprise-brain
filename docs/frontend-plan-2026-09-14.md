@@ -42,6 +42,7 @@
 **后端影响**：F1–F5a、F6、V1–V6 **全部零后端**。需要后端配合的一律只登记不实现，编号 R1–R6 / B-1…B-9 / C-1…C-3。
 
 **不做什么**：见 §10。
+**并行分工**：三条对话线（前端主干 / 前端叶子 / 后端）的独占文件集与对话内子 Agent 拆分规则见 `handoff/2026-09-15-frontend-parallel-tracks.md`；净收益约 2–3 天，只有 V5 原语 + V6 基建那块值得并行。
 
 ---
 
@@ -150,7 +151,7 @@
 | `vue-router@4` | 新增 | 现在 7 个工作区靠 `shallowRef` 手切，**没有 URL**：刷新回总览、无法把某个会话或告警发给同事、浏览器后退键失效 |
 | `@fontsource-variable/manrope`、`@fontsource-variable/jetbrains-mono` | 新增 | 约 95KB 自托管，替换远程 `@import`（见 J9） |
 | `lucide-vue-next` | 新增 | 现在图标来源混杂：emoji、手写 SVG、硬编码函数（DocPanel 里还有按公司文件名分支的图标函数） |
-| `markdown-it` + `dompurify` | 新增 | 替换 `ChatPanel.vue` 手写的 `renderMd`。现状虽已转义 `&<>`，但 `[x](javascript:alert(1))` 仍是洞 |
+| `markdown-it`（**已装 14.2.0 但 `frontend/src` 全量 0 引用**）+ `dompurify`（新增） | **启用已装的那个** + 补 sanitize | 替换 `ChatPanel.vue::renderMd` 手写解析。现状虽已转义 `&<>`，但 `[x](javascript:alert(1))` 仍是洞，且 `:520` 用 `v-html` 直接吃它的输出 |
 | Tailwind / CSS-in-JS / SCSS | **不引入** | §4 的 token 体系已够；引入等于把样式真源从 `theme.css` 搬走，与"清覆盖债"目标相反 |
 | Pinia | **不引入** | 单 store 场景是额外抽象层。用模块级 `shallowRef` store + router query 即可承载"当前数据上下文"（J4） |
 | `stylelint` / `@playwright/test` / `vitest` | 新增 | 见 §8 |
@@ -162,6 +163,9 @@
 2. `frontend/src/**` 内对 `element-plus` / `El*` 组件的引用：**0 命中**。此前统计到的 9 个 `el-*` 是 `panel-grid`、`panel-footer`、`panel-status` 等类名的正则误伤。
 3. `frontend/dist/assets/*.js` 中 `element-plus|ElMessageBox|el-button`：**0 命中** → 它从未进入产物。
 4. 结论：它唯一的作用是挂在 `package.json` 依赖里，让 Docker 的 `node:20-alpine` 阶段 `npm ci` 多装几十 MB、拉长构建。
+
+
+> **同类死依赖还有一例**：`markdown-it@14.2.0` 在 `dependencies` 与 lockfile 里，但源码 **0 引用**。它不是移除对象，而是**启用**——区别只在于别误以为 Markdown 渲染已经在工作。
 
 ### 3.3 替代方案：8 个自研 token 化原语
 
@@ -324,6 +328,7 @@ main.login
 - **按 F1 → F2 → F3 → F4 → F5 → F6 串行合入，不得并行开分支改同一文件。**
 - 只允许改 `frontend/src/**` 与 `frontend/vite.config.js`、`frontend/package.json`；**不修改 `app/**` 下任何文件**。需要后端配合的项只登记不实现。
 - 不得回退或覆盖他人改动，遇到冲突停下来报告，不要强解。
+- 要多对话 / 多子 Agent 并行的边界、独占文件集与合并协议：见 `handoff/2026-09-15-frontend-parallel-tracks.md`。**判据只有一个：写入文件集不相交且合并后无人需要改接口。**
 
 ### 6.2 合并工单表（F 线 = 工作区修复，V 线 = 视觉与工程）
 
