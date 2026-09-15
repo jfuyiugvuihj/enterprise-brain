@@ -287,6 +287,35 @@ def check_model_honesty(gate: Gate) -> None:
     )
 
 
+def check_storage_write_access(gate: Gate) -> None:
+    """Write and remove a probe file in every path a volume is mounted on.
+
+    Volume ownership is invisible to a health endpoint: an upload route that cannot write
+    its temporary file answers 500 while the container stays healthy, so the gate has to
+    attempt the write as the user the API actually runs as.
+    """
+    probe = "\n".join([
+        "import os, tempfile",
+        "paths = ['/app/documents', '/app/data', '/app/static', '/app/logs', '/app/chroma_db']",
+        "refused = []",
+        "for path in paths:",
+        "    try:",
+        "        handle, name = tempfile.mkstemp(dir=path, prefix='.gate-write-probe')",
+        "        os.close(handle)",
+        "        os.unlink(name)",
+        "    except OSError as exc:",
+        "        refused.append(path + '=' + exc.__class__.__name__)",
+        "print('uid=' + str(os.getuid()) + ' refused=' + (','.join(refused) or 'none'))",
+    ])
+    code, text = gate.compose("exec", "-T", "backend", "python", "-c", probe, timeout=180)
+    line = text.strip().splitlines()[-1] if text.strip() else ""
+    gate.record(
+        "the API process can write into every mounted volume",
+        code == 0 and line.endswith("refused=none"),
+        line or text,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--down", action="store_true", help="stop the stack and exit")
@@ -341,6 +370,7 @@ def main(argv: list[str] | None = None) -> int:
     check_nginx(gate)
     check_http_boundaries(gate)
     check_process_ownership(gate)
+    check_storage_write_access(gate)
     check_model_honesty(gate)
 
     failed = [name for name, passed, _ in gate.results if not passed]

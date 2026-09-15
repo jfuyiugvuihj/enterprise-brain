@@ -44,10 +44,17 @@ python -c "import bcrypt; print(bcrypt.hashpw(b'<你的口令>', bcrypt.gensalt(
 ```
 AUTH_USERNAME=<管理员用户名>
 AUTH_PASSWORD_HASH=$$2b$$12$$<哈希正文>
+AUTH_DEPARTMENT=<可选：该账号的部门>
 ```
 
-用这个口令登录之后，应立刻通过 `PUT /api/v1/users/password` 改密，再按需为它补部门或
-改建为日常运维账号。
+`AUTH_DEPARTMENT` 可以留空，但留空的账号只能登录与管用户：数据集和分析成果都按部门确定
+归属（`app/storage/datasets.py`、`app/storage/artifacts.py`），所以无部门的账号上传数据会
+被拒 `403 department_scope_required`、生成图表会回 `artifact owner must have a department
+scope`。要么在这里给出部门，要么登录后用 `POST /api/v1/users` 建一个带部门的账号做日常使用。
+部门不能事后修改（`PUT /api/v1/profile` 写的是用户画像，不是 `users.department`），换部门
+只能重建账号。
+
+用这个口令登录之后，应立刻通过 `PUT /api/v1/users/password` 改密。
 
 任何必需的密钥缺失时 Compose 会直接拒绝启动，不会退回默认口令。
 
@@ -55,6 +62,22 @@ AUTH_PASSWORD_HASH=$$2b$$12$$<哈希正文>
 两者的转义规则不同：Compose 会对 env 文件做变量替换，所以这里的字面 `$` 必须写成 `$$`
 （例如 bcrypt 的 `AUTH_PASSWORD_HASH`）；而 python-dotenv 会把 `$$` 原样交给应用。
 写错不会报错，只会让登录静默失效，因此启动前必须跑一次上面的预检命令。
+
+### 上传目录的卷属主（老卷升级）
+
+命名卷只在**创建时**从镜像里的同名目录继承属主。若 `documents` 卷是在旧镜像时期建好的，
+它是 `root:root`，而容器以 uid 10001 运行，于是每一次 `POST /api/v1/upload` 都返回 500
+（写临时文件 `PermissionError`），而健康检查全绿。新装不受影响（`Dockerfile` 已创建并 chown
+`/app/documents`）；已有环境升级时执行一次：
+
+```bash
+docker run --rm --user root --entrypoint chown -v enterprise-brain_documents:/d \
+  enterprise-brain:local -R 10001:10001 /d
+```
+
+验证不必登录：跑 `python scripts/verify_container_stack.py`，看
+「the API process can write into every mounted volume」一项——它以应用真实的 uid 在每个卷
+里写入并删除一个探针文件。
 
 ## 服务器加固层（可选）
 

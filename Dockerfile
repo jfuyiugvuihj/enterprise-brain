@@ -57,9 +57,14 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Customer uploads and generated files are never baked into the image: they live on
 # mounted volumes so a rebuild cannot lose or leak them.
+# Every path a named volume gets mounted on has to exist here with the application
+# owner already set, /app/documents included: Docker initializes a volume from the
+# image directory it mounts, ownership included, and a path the image never creates
+# becomes a root-owned mount point. This image then runs as uid 10001, so the first
+# POST /api/v1/upload on a fresh install failed with EACCES on its temporary file.
 RUN groupadd --system --gid 10001 brain \
     && useradd --system --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin brain \
-    && mkdir -p /app/data /app/logs /app/chroma_db /app/static/charts /app/static/exports \
+    && mkdir -p /app/data /app/logs /app/chroma_db /app/documents /app/static/charts /app/static/exports \
     && chown -R 10001:10001 /app
 USER 10001:10001
 

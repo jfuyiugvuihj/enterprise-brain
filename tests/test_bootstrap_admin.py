@@ -33,13 +33,18 @@ class _SchemaDatabase:
         if normalized.startswith("select count(*) as c from users"):
             return _Cursor(row={"c": len(self.users)})
         if normalized.startswith("insert into users"):
-            username, password_hash, role = params
+            username, password_hash, role, department = params
             if any(existing["username"] == username for existing in self.users):
                 if "on conflict" not in normalized:
                     raise RuntimeError("duplicate key value violates unique constraint")
                 return _Cursor()
             self.users.append(
-                {"username": username, "password_hash": password_hash, "role": role}
+                {
+                    "username": username,
+                    "password_hash": password_hash,
+                    "role": role,
+                    "department": department,
+                }
             )
             return _Cursor()
         if normalized.startswith(("create table", "alter table")):
@@ -110,6 +115,26 @@ def test_services_seeding_the_same_database_do_not_clash(production_auth):
     production_auth._create_schema(database)
 
     assert len(database.users) == 1
+
+
+def test_the_seed_can_give_the_administrator_a_department(production_auth, monkeypatch):
+    monkeypatch.setenv("AUTH_DEPARTMENT", "finance")
+
+    database = _SchemaDatabase()
+    production_auth._create_schema(database)
+
+    assert database.users[0]["department"] == "finance"
+
+
+def test_the_seed_leaves_the_department_unset_when_the_operator_gives_none(
+    production_auth, monkeypatch
+):
+    monkeypatch.delenv("AUTH_DEPARTMENT", raising=False)
+
+    database = _SchemaDatabase()
+    production_auth._create_schema(database)
+
+    assert database.users[0]["department"] is None
 
 
 def test_the_seed_does_not_log_the_password_hash(production_auth):

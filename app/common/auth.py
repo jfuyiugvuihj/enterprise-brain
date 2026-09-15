@@ -127,7 +127,7 @@ def _load_memory_admin():
         "username": username,
         "password_hash": password_hash,
         "role": "admin",
-        "department": "",
+        "department": _bootstrap_admin_department(),
     }
 
 
@@ -205,6 +205,17 @@ def _create_schema(conn):
     _seed_bootstrap_admin(conn)
 
 
+def _bootstrap_admin_department() -> str:
+    """The department the first administrator owns, when the operator names one.
+
+    Signing in and managing users works without a department, but a writer has to own
+    one: both the dataset and the artifact registry refuse a principal with no
+    department scope, so a departmentless administrator cannot upload data or produce
+    a chart. Naming it here is what makes the account usable on a fresh install.
+    """
+    return os.getenv("AUTH_DEPARTMENT", "").strip()
+
+
 def _seed_bootstrap_admin(conn) -> None:
     """Give an empty user table the administrator named in the environment.
 
@@ -219,9 +230,9 @@ def _seed_bootstrap_admin(conn) -> None:
         return
     username, password_hash = _bootstrap_admin_credentials()
     conn.execute(
-        "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s) "
-        "ON CONFLICT (username) DO NOTHING",
-        (username, password_hash, "admin"),
+        "INSERT INTO users (username, password_hash, role, department) "
+        "VALUES (%s, %s, %s, %s) ON CONFLICT (username) DO NOTHING",
+        (username, password_hash, "admin", _bootstrap_admin_department() or None),
     )
     conn.commit()
     logger.info("[Security] Initial admin account created from configured bootstrap credentials")
