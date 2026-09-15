@@ -110,45 +110,10 @@ F1、F2、F6、V1、V2、V4 的**关键路径性质**决定单 Agent 串行最�
 
 ---
 
-## 6. 可直接粘贴的开场提示词
+## 6. 开场提示词（已外置，避免两份真源）
 
-### 6.1 对话 A（主干 / 接线）
-
-```
-你是前端主干线。工作目录 C:\Users\fengx\PycharmProjects\fe-trunk，分支 codex/fe-trunk。
-只读这三份再动手：docs/frontend-plan-2026-09-14.md、docs/handoff/2026-09-15-frontend-work-checklist.md、docs/handoff/2026-09-15-frontend-parallel-tracks.md。
-你独占：App.vue、既有 *.vue 面板、assets/theme.css、package.json、vite.config.js、lib/api.js、router/、views/。
-禁止碰 app/**、components/ui/**、tests/visual/**（那是 B 线的）。
-基线 13e808d。开工先 cd frontend; npm ci。按工单顺序执行：F1 → F2 → F3 → V1 → V2 → V5(接线) → F4 → V3 → V4 → F5a → F7 → F6 → V6。
-每完成一步一次提交，message 带步骤号；每步完成后把工单文档 §6 的对应证据改成"已消除"+commit 号。
-端到端验收必须用带部门的账号（开箱 admin 问不了知识库，e2 后端未落地）。
-遇到需要后端配合的项：只登记到 docs/handoff/2026-09-15-backend-followup-requests.md，不改后端。
-```
-
-### 6.2 对话 B（叶子 / 只新建）
-
-```
-你是前端叶子线。工作目录 C:\Users\fengx\PycharmProjects\fe-prims，分支 codex/fe-prims。
-只读 docs/handoff/2026-09-15-frontend-parallel-tracks.md §2、docs/frontend-visual-quality-2026-09-14.md 的 token 表、工单 §3。
-你独占：components/ui/**、lib/errcodes.js、tests/visual/**、playwright.config.js、.stylelintrc.json、assets/fonts/**。
-禁止碰 App.vue、任何既有 *.vue、theme.css、package.json、lockfile（缺依赖就列清单给我，我去装）。
-基线 13e808d。开工先 cd frontend; npm ci（不许 npm i）。产出：8 个原语（UiSelect / UiUpload 需要图标，先用内联 SVG 占位，等我这边 lucide 落地后一行替换）、16+7 码字典、五档视觉基线、字体子集与 @font-face。
-每个原语至少 1 条 vitest；组件内禁止裸 hex（color-no-hex），字号/间距/圆角/阴影必须走 var(--*)。
-不许 npm i、不许 commit 到主干。完成后交回一份"待接线清单"：哪个组件挂在哪个面板的哪一处、props 怎么传。
-```
-
-### 6.3 子 Agent 派发模板（对话内，父 Agent 用）
-
-```
-任务：<一句话，含目标文件路径>
-你只能写这些文件：<绝对路径列表，与其他子 Agent 不相交>
-只读参考：<路径列表>
-硬约束：不 git commit、不 npm i、不改上表以外的任何文件、不删除他人代码、不新增依赖。
-完成后返回：改了哪些文件、每处改动的一句话理由、你没能验证的点。
-自证要求：任何"我发现 X 缺陷"的说法，必须同时给出文件路径 + 可 Test-Path 的原始产物 + 实取的 Get-Date，否则不要写进结论。
-```
-
----
+四条对话线（A 主干 / B 叶子 / C 后端交接 / D 独立验收）与子 Agent 派发模板全部在 `handoff/2026-09-15-frontend-startup-prompts.md`，路径与基线 commit 已填成实值，复制即用。
+本文件只负责"谁能写哪些文件"；提示词只负责"怎么开工"。两边都改时，以本文件的独占集为准。
 
 ## 7. 合并协议（B → A → 主干）
 
