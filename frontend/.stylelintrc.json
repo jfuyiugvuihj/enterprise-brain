@@ -3,15 +3,14 @@
   "ignoreFiles": [
     "**/node_modules/**",
     "dist/**",
-    "src/assets/theme.css",
-    "**/*.vue"
+    "src/assets/theme.css"
   ],
   "reportNeedlessDisables": true,
   "rules": {
     "color-no-hex": [
       true,
       {
-        "message": "色值只能来自 tokens.css 的 var(--*)（视觉文档 §5.1）"
+        "message": "色值只能来自 theme.css 的 var(--*)（视觉文档 §5.1）"
       }
     ],
     "block-no-empty": [
@@ -68,7 +67,35 @@
   "overrides": [
     {
       "files": [
-        "src/assets/tokens.css",
+        "**/*.vue"
+      ],
+      "customSyntax": "postcss-html",
+      "rules": {
+        "color-no-hex": [
+          true,
+          {
+            "message": "色值只能来自 theme.css 的 var(--*)（视觉文档 §5.1）",
+            "severity": "warning"
+          }
+        ],
+        "declaration-property-value-disallowed-list": [
+          {
+            "/^(?:color|caret-color|background|background-color|border(?:-(?:top|right|bottom|left))?(?:-color)?|outline-color|fill|stroke|text-shadow|box-shadow)$/": [
+              "/rgba?\\(/",
+              "/hsla?\\(/",
+              "/\\b(?:red|blue|green|white|black|gray|grey|silver|navy|teal)\\b/"
+            ]
+          },
+          {
+            "severity": "warning",
+            "message": "颜色只能引用 var(--*) 或由 token 派生，裸 rgba/hex/颜色关键字一律拦下（V6 锁色值）"
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "src/assets/theme.css",
         "src/assets/fonts/*.css"
       ],
       "rules": {
