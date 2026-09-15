@@ -88,6 +88,7 @@ class ErrorEnvelope(BaseModel):
         "authentication_required",
         "permission_denied",
         "authorization_unavailable",
+        "account_unavailable",
         "resource_not_found",
         "validation_error",
         "conflict",

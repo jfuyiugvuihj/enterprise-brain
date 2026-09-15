@@ -70,6 +70,13 @@ value stopped being prose. Like the document-route codes below, these travel in 
 | 401 | `authentication_required` | No `Authorization: Bearer` header, a non-Bearer scheme, a token that fails signature or expiry validation, a valid token whose account no longer exists, or a route-side guard with no Principal on the request | `app/main.py:104`, `app/main.py:109`, `app/common/authorization.py:53`, `app/api/v1/auth.py:110` |
 | 403 | `account_unavailable` | The token resolved to an account whose `status` is not `active` (disabled or deleted) | `app/main.py:113` |
 
+The three authentication codes above are members of the canonical list at the head of
+this section, and `account_unavailable` is in `ErrorEnvelope.code`
+(`app/agents/contracts.py`) as well, so an enveloped body may carry it. The agent-worker
+copy of the list (`app/agents/evidence.py::_ERROR_CODES`) is deliberately not widened: it
+only rewrites codes that reach it from a worker status, and the authentication surface
+never travels that path.
+
 `account_unavailable` is not `permission_denied`: `permission_denied` says the subject is
 usable but lacks this action, while `account_unavailable` says the subject may not act at
 all until an operator re-enables the account. A client must not read it as

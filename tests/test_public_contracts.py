@@ -91,6 +91,23 @@ def test_error_envelope_distinguishes_model_failure_from_business_answer():
     assert result.status != "success"
 
 
+def test_the_envelope_enum_names_the_authentication_surface_codes():
+    """A code a live response already emits must be in the closed list that describes it.
+
+    ``account_unavailable`` joined the enum after the other two: the middleware answers
+    403 with it (R10), and an enum that omits a value the server really sends stops being
+    the contract and becomes one more copy of it. This asserts membership instead of a
+    length, so adding a code here can never break an unrelated response.
+    """
+    from typing import get_args
+
+    codes = set(get_args(ErrorEnvelope.model_fields["code"].annotation))
+
+    assert {"authentication_required", "permission_denied", "authorization_unavailable"} <= codes
+    assert "account_unavailable" in codes
+    assert ErrorEnvelope(code="account_unavailable", message="account is not active").code == "account_unavailable"
+
+
 def test_error_envelope_supports_queue_unavailability():
     error = ErrorEnvelope(
         code="queue_unavailable",
