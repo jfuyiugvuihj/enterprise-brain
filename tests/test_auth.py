@@ -121,8 +121,11 @@ class TestPassword:
         from app.common import auth
 
         class Result:
+            def __init__(self, row):
+                self.row = row
+
             def fetchone(self):
-                return {"table_name": "users"}
+                return self.row
 
         class Connection:
             def __init__(self):
@@ -130,7 +133,11 @@ class TestPassword:
 
             def execute(self, statement, params=None):
                 self.statements.append(statement)
-                return Result()
+                if statement.lstrip().upper().startswith("SELECT COUNT"):
+                    # A live deployment already has accounts, so the bootstrap seed
+                    # short-circuits; this test is about the DDL guardrail only.
+                    return Result({"c": 1})
+                return Result({"table_name": "users"})
 
         monkeypatch.setenv("APP_ENV", "production")
         connection = Connection()

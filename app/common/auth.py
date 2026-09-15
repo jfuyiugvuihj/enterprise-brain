@@ -181,6 +181,7 @@ def _create_schema(conn):
         row = conn.execute("SELECT to_regclass('public.users') AS table_name").fetchone()
         if not row or row["table_name"] is None:
             raise RuntimeError("users table is required in production; run migrations first")
+        _seed_bootstrap_admin(conn)
         return
 
     conn.execute(
@@ -196,12 +197,29 @@ def _create_schema(conn):
     conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT")
     conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'staff'")
     conn.commit()
-    cur = conn.execute("SELECT COUNT(*) as c FROM users")
-    if cur.fetchone()["c"] == 0:
-        username, hsh = _bootstrap_admin_credentials()
-        conn.execute("INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)", (username, hsh, "admin"))
-        conn.commit()
-        logger.info("[Security] Initial admin account created from configured bootstrap credentials")
+    _seed_bootstrap_admin(conn)
+
+
+def _seed_bootstrap_admin(conn) -> None:
+    """Give an empty user table the administrator named in the environment.
+
+    ``migrations/0003`` creates ``users`` with no rows, and every route that can add a
+    user already requires a session, so a production deployment started against a fresh
+    database had no account to sign in with and no way to create one. The seed only runs
+    while the table is empty, and ``ON CONFLICT`` stops the backend, worker and scheduler
+    - which each probe the database at import time - from losing a race against each
+    other. A deleted operator account is therefore never resurrected.
+    """
+    if conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]:
+        return
+    username, password_hash = _bootstrap_admin_credentials()
+    conn.execute(
+        "INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s) "
+        "ON CONFLICT (username) DO NOTHING",
+        (username, password_hash, "admin"),
+    )
+    conn.commit()
+    logger.info("[Security] Initial admin account created from configured bootstrap credentials")
 
 
 _db_ready = False
