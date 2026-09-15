@@ -1,0 +1,76 @@
+/* UiErrorState —— 面板级失败态：原因 + 错误码小字 + 重试。全部走 token，无裸色值、无动效。 */
+
+.ui-error-state {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3, 12px);
+  padding: var(--s-4, 16px) var(--s-5, 24px);
+  border: 1px solid var(--border-2);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-md, 12px);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: var(--font-body);
+  font-size: var(--t-md, 14px);
+  line-height: 1.65;
+}
+
+/* 全站唯一一处语义色（--danger）：描边 + 图标同一色，不叠加发光与底色 */
+.ui-error-state__mark {
+  display: inline-flex;
+  flex: none;
+  margin-top: var(--s-1, 4px);
+  color: var(--danger);
+}
+
+/* 56ch ≈ 中文 30-38 字一行；min-width: 0 + overflow-wrap 是「长文案不溢出」的机制，
+   像素级证据在 tests/visual/ui-states.spec.js 里量。 */
+.ui-error-state__body {
+  display: flex;
+  min-width: 0;
+  max-width: 56ch;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--s-1, 4px);
+}
+
+.ui-error-state__title {
+  margin: 0;
+  color: var(--text-1);
+  font-size: var(--t-md, 14px);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.ui-error-state__desc {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm, 13px);
+  letter-spacing: 0.01em;
+  overflow-wrap: anywhere;
+}
+
+/* 未知码小字：等宽、降一档色，能贴给后端排查，但不进标题朗读 */
+.ui-error-state__code {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs, 12px);
+  overflow-wrap: anywhere;
+}
+
+.ui-error-state__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2, 8px);
+}
+
+.ui-error-state--dense {
+  gap: var(--s-2, 8px);
+  padding: var(--s-3, 12px) var(--s-4, 16px);
+}
+
+.ui-error-state--dense .ui-error-state__mark {
+  margin-top: 0;
+}

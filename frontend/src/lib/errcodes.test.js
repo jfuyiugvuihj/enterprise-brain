@@ -13,11 +13,13 @@ import {
   normalizeError,
 } from './errcodes.js'
 
-/** app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举 16 码 */
+/** app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举 17 码（含主树 fa35a04 追认的 account_unavailable） */
 const BLUEPRINT = [
   'authentication_required',
   'permission_denied',
   'authorization_unavailable',
+  // 派单 B-1：C 已把该码并入 contracts.py 的 ErrorEnvelope.code 闭枚举，故归蓝本而非前端自扩。
+  'account_unavailable',
   'resource_not_found',
   'validation_error',
   'conflict',
@@ -62,13 +64,13 @@ const axiosError = (status, detail) => ({
 })
 
 describe('码表蓝本', () => {
-  it('只收录 contracts.py 16 码 + data.py 7 码 + 登记在册的前端扩展码', () => {
+  it('只收录 contracts.py 17 码 + data.py 7 码，一个不自扩', () => {
     expect(Object.keys(ERROR_CODES).sort()).toEqual([...BLUEPRINT, ...DATA_CODES, ...FRONTEND_ONLY_CODES].sort())
   })
 
-  it('前端自扩的码必须显式登记，且每个都写清是哪一个', () => {
-    expect(FRONTEND_ONLY_CODES).toEqual(['account_unavailable'])
-    expect(BLUEPRINT).not.toContain('account_unavailable')
+  it('前端自扩码绊线为空：account_unavailable 已被后端追认，不许留残名', () => {
+    expect(FRONTEND_ONLY_CODES).toEqual([])
+    expect(BLUEPRINT).toContain('account_unavailable')
   })
 
   it('每个码都有一句人话与明确的 retryable', () => {
@@ -80,7 +82,7 @@ describe('码表蓝本', () => {
   })
 
   it('别名与散文表只指向枚举内的码名，不发明新码', () => {
-    Object.entries(LEGACY_ALIASES).forEach(([legacy, alias]) => expect(BLUEPRINT, legacy).toContain(alias.code))
+    Object.entries(LEGACY_ALIASES).forEach(([legacy, alias]) => expect(BLUEPRINT.concat(DATA_CODES), legacy).toContain(alias.code))
     Object.entries(PROSE_ALIASES).forEach(([prose, entry]) => expect(ENUM, prose).toContain(entry.code))
   })
 
