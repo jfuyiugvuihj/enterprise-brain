@@ -1,17 +1,11 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
-import axios from 'axios'
+import { http, errorDetail } from '../lib/http'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
 
-// axios 拦截器：自动带上 JWT
-axios.interceptors.request.use(config => {
-  const token = localStorage.getItem("eb_token") || window._authToken
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
-
-const API = '/api/v1'
 const docs = ref([])
+// 本面板自己的失败提示；401 不在这里判，统一交给 lib/http.js 的响应拦截。
+const notice = ref('')
 const uploads = ref([])
 const dragOver = ref(false)
 const props = defineProps({
@@ -73,20 +67,22 @@ const filteredDocs = computed(() => {
 })
 
 async function loadDocs() {
+  notice.value = ''
   try {
-    const res = await axios.get(`${API}/documents/catalog`, {
+    const res = await http.get('/documents/catalog', {
       params: { _ts: Date.now() }
     })
     docs.value = (res.data.documents || [])
       .map(item => (typeof item === 'string' ? item : item.filename))
       .filter(Boolean)
-  } catch (e) {
-    console.error('??????', e)
+  } catch (err) {
+    console.error('文档列表加载失败', err)
+    notice.value = errorDetail(err, '文档列表加载失败')
   }
 }
 
 async function fetchDocumentBlob(filename, inline = false) {
-  const res = await axios.get(`${API}/documents/${encodeURIComponent(filename)}/file`, {
+  const res = await http.get(`/documents/${encodeURIComponent(filename)}/file`, {
     responseType: 'blob',
     params: { inline, _ts: Date.now() }
   })
@@ -106,7 +102,7 @@ async function openDocument(filename) {
   preview.error = ''
   preview.truncated = false
   try {
-    const res = await axios.get(`${API}/documents/${encodeURIComponent(filename)}/preview`, {
+    const res = await http.get(`/documents/${encodeURIComponent(filename)}/preview`, {
       params: { _ts: Date.now() }
     })
     preview.kind = res.data.kind || 'text'
@@ -117,7 +113,7 @@ async function openDocument(filename) {
       preview.blobUrl = URL.createObjectURL(blob)
     }
   } catch (err) {
-    preview.error = err.response?.data?.detail || err.message || '文件预览失败'
+    preview.error = errorDetail(err, '文件预览失败')
   } finally {
     preview.loading = false
   }
@@ -141,58 +137,8 @@ async function downloadDocument(filename) {
     link.click()
     setTimeout(() => URL.revokeObjectURL(url), 60000)
   } catch (err) {
-    console.error('????', err)
+    notice.value = errorDetail(err, '文件下载失败')
   }
-}
-
-async function uploadFiles(files) {
-  for (const file of files) {
-    const item = reactive({
-      name: file.name,
-      status: 'uploading',
-      phase: 'uploading',
-      progress: 0,
-      progressTimer: null,
-      msg: '正在上传...'
-    })
-    uploads.value.unshift(item)
-    startProgressTimer(item)
-    const form = new FormData()
-    form.append('file', file)
-    try {
-      const res = await axios.post(`${API}/upload`, form, {
-        onUploadProgress: (event) => {
-          if (event.total) {
-            const uploaded = event.loaded / event.total
-            item.progress = Math.max(item.progress, Math.min(70, Math.round(uploaded * 70)))
-          }
-          if (!event.total || event.loaded >= event.total) {
-            item.phase = 'processing'
-            item.msg = '正在解析并入库...'
-          }
-        }
-      })
-      stopProgressTimer(item)
-      item.progress = Math.max(item.progress, 70)
-      item.status = res.data.status === 'ok' ? 'done' : 'skipped'
-      if (item.status === 'done') {
-        item.progress = 100
-        item.phase = 'done'
-      }
-      item.msg = res.data.message || '上传完成'
-      await loadDocs()
-    } catch (err) {
-      stopProgressTimer(item)
-      item.status = 'error'
-      item.phase = 'error'
-      if (err.response?.status === 401) {
-        item.msg = '登录状态已失效，请退出后重新登录'
-        continue
-      }
-      item.msg = `失败: ${err.message}`
-    }
-  }
-  await loadDocs()
 }
 
 async function uploadFilesParallel(files) {
@@ -208,7 +154,7 @@ async function uploadSingleFile(file) {
   const form = new FormData()
   form.append('file', file)
   try {
-    const res = await axios.post(`${API}/upload`, form, {
+    const res = await http.post('/upload', form, {
       onUploadProgress: (event) => {
         if (event.total) {
           const uploaded = event.loaded / event.total
@@ -233,11 +179,7 @@ async function uploadSingleFile(file) {
     stopProgressTimer(item)
     item.status = 'error'
     item.phase = 'error'
-    if (err.response?.status === 401) {
-      item.msg = '登录状态已失效，请退出后重新登录'
-      return
-    }
-    item.msg = `澶辫触: ${err.message}`
+    item.msg = errorDetail(err, '上传失败')
   }
 }
 
@@ -274,17 +216,21 @@ function toggleAll() {
 
 async function deleteDocuments(files) {
   if (!files.length || deleting.value) return
-  if (!confirm(`?????? ${files.length} ??????`)) return
+  if (!confirm(`确定删除选中的 ${files.length} 个文档？删除后无法恢复。`)) return
   deleting.value = true
   try {
-    await Promise.allSettled(
-      files.map(filename => axios.delete(`${API}/documents/${encodeURIComponent(filename)}`))
+    const results = await Promise.allSettled(
+      files.map(filename => http.delete(`/documents/${encodeURIComponent(filename)}`))
     )
+    const failed = results
+      .filter(r => r.status === 'rejected')
+      .map(r => errorDetail(r.reason, ''))
+      .filter(Boolean)
     selectedFiles.value.clear()
     await loadDocs()
+    if (failed.length) notice.value = `有 ${failed.length} 个文档未能删除：${failed.join('、')}`
   } catch (err) {
-    console.error('??????', err)
-    window.alert(err.response?.data?.detail || err.message || '????')
+    notice.value = errorDetail(err, '删除失败')
   } finally {
     deleting.value = false
   }
@@ -329,6 +275,13 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
       </div>
 
       <!-- 管理员开关 -->
+    </div>
+
+    <!-- 面板级失败提示：可重试，不用原生弹窗 -->
+    <div v-if="notice" class="doc-notice" role="alert" data-testid="documents-notice">
+      <span class="doc-notice-text">{{ notice }}</span>
+      <button class="doc-notice-retry" type="button" @click="loadDocs">重新加载</button>
+      <button class="doc-notice-close" type="button" aria-label="关闭提示" @click="notice = ''">×</button>
     </div>
 
     <!-- 搜索 -->
@@ -754,5 +707,44 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
 
 .panel-footer {
   border-top-color: var(--line);
+}
+
+.doc-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--red);
+  border-radius: var(--radius-sm);
+  background: rgba(238, 109, 120, .08);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.doc-notice-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.doc-notice-retry {
+  padding: 3px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.doc-notice-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
 }
 </style>

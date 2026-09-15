@@ -1,13 +1,2 @@
-import axios from 'axios'
-
-export const api = axios.create({
-  baseURL: '/api/v1',
-})
-
-api.interceptors.request.use(config => {
-  const token = localStorage.getItem('eb_token') || window._authToken
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
+// 保留这个名字给既有面板用；实例本身在 lib/http.js，全站只有那一个。
+export { http as api } from './http'

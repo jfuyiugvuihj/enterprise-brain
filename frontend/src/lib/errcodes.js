@@ -1,0 +1,362 @@
+/**
+ * 错误码字典（V5 / F7 叶子线产出）
+ *
+ * 后端错误体三种形状并存（工单 D-2），本模块统一成 { code, message, retryable, rawCode }：
+ *   形状 1 字符串稳定码   err.response.data.detail === "unsupported_file"
+ *   形状 2 ErrorEnvelope  err.response.data.detail === { code, message, retryable, details }
+ *                         来源 app/api/v1/observability.py 全部、chat.py::_document_index_error
+ *   形状 3 FastAPI 422    err.response.data.detail === [{ loc, msg, type }, ...]
+ *
+ * 码名蓝本：app/agents/contracts.py::ErrorEnvelope.code（封闭枚举 16 码）
+ * 追加 data.py 系列 7 码；线上出现的其它历史码名走 LEGACY_ALIASES 归一。
+ * 鉴权中间件返的是**中文散文**（app/main.py:104/109 的 401「请先登录」、
+ * app/main.py:113 的 403「账号不可用」），那不是码，走 PROSE_ALIASES 按原文索引。
+ *
+ * 硬不变量：normalizeError() 的 .code 一定 ∈ Object.keys(ERROR_CODES) ∪ {''}。
+ * 后端原样回来的码名/散文一律放进 .rawCode，只供排查与「错误码：xxx」小字使用。
+ */
+
+/** 蓝本 16 码 + data.py 7 码 + 1 个前端侧扩展码（见 FRONTEND_ONLY_CODES）。 */
+export const ERROR_CODES = {
+  authentication_required: { message: '登录状态已失效，请重新登录后再试。', retryable: false },
+  permission_denied: { message: '当前账号没有这项权限，请联系管理员开通。', retryable: false },
+  authorization_unavailable: { message: '暂时无法确认你的数据权限，请稍后重试。', retryable: true },
+  resource_not_found: { message: '要找的内容不存在或已被移除。', retryable: false },
+  validation_error: { message: '提交的内容有不合规之处，请检查后重试。', retryable: false },
+  conflict: { message: '这条记录已被他人更新，请刷新后重试。', retryable: false },
+  rate_limited: { message: '操作太频繁了，请稍等一会儿再试。', retryable: true },
+  queue_unavailable: { message: '后台任务暂时排不上队，请稍后重试。', retryable: true },
+  model_unavailable: { message: '分析模型当前不可用，请稍后重试或联系管理员。', retryable: true },
+  retrieval_unavailable: { message: '知识库检索暂不可用，回答可能缺少资料依据。', retryable: true },
+  task_timeout: { message: '这次分析耗时过长已中断，请缩小范围后重试。', retryable: true },
+  task_cancelled: { message: '已按你的要求中止本次操作。', retryable: false },
+  unsupported_file: { message: '这个文件类型系统暂不支持，请换一种格式再传。', retryable: false },
+  parse_failed: { message: '文件内容没能解析成功，请检查文件是否损坏或受保护。', retryable: false },
+  index_publish_failed: { message: '文件已收到，但没能进入知识库，请稍后重试。', retryable: true },
+  internal_error: { message: '系统内部出现异常，请稍后重试。', retryable: false },
+
+  invalid_filename: { message: '文件名不合法，请重命名后再试。', retryable: false },
+  unsupported_chart_type: { message: '这种图表类型暂不支持，请换一种图表。', retryable: false },
+  unsupported_export_format: { message: '这种导出格式暂不支持，请换一种格式。', retryable: false },
+  department_scope_required: { message: '请先选择部门范围，再生成这项结果。', retryable: false },
+  dataset_filename_conflict: { message: '已存在同名数据文件，请重命名或先删除旧的。', retryable: false },
+  dataset_preview_failed: { message: '数据文件预览没能打开，请稍后重试。', retryable: true },
+  chart_generation_failed: { message: '图表没能生成，请稍后重试。', retryable: true },
+
+  // 前端侧扩展码：账号被停用。contracts.py 的封闭枚举里还没有这一档，
+  // 而 app/main.py:113 的 403「账号不可用」既不是 permission_denied（不是权限问题，
+  // 重新登录也没用），也不该退化成兜底句。待后端追认进枚举后可原样保留。
+  account_unavailable: { message: '这个账号已被停用，请联系管理员恢复后再使用。', retryable: false },
+}
+
+/** 不在 app/agents/contracts.py 封闭枚举里的前端侧扩展码，单测据此区分「蓝本」与「自扩」。 */
+export const FRONTEND_ONLY_CODES = ['account_unavailable']
+
+/**
+ * 后端实际会返回、但不在封闭枚举里的**码名** → 归一到枚举码（按码名索引）。
+ * 每条都有 app/api/v1 下的实测出处，不发明码名；message 可按语境覆盖。
+ */
+export const LEGACY_ALIASES = {
+  upload_too_large: { code: 'unsupported_file', message: '文件太大，上传没有成功，请压缩或拆分后再传。' },
+  document_parse_failed: { code: 'parse_failed' },
+  document_index_failed: { code: 'index_publish_failed', retryable: true },
+  document_preview_failed: { code: 'internal_error', message: '文件预览没能生成，请稍后重试。', retryable: true },
+  unsupported_preview: { code: 'unsupported_file', message: '这种文件类型不支持在线预览，可下载后在本地打开。' },
+  idempotency_key_required: { code: 'validation_error', message: '这次请求缺少重复提交标识，请重新提交。' },
+  export_failed: { code: 'internal_error', message: '文件导出没能完成，请稍后重试。', retryable: true },
+  storage_read_only: { code: 'internal_error', message: '当前存储处于只读状态，写入没有生效，请联系管理员。', retryable: true },
+  relation_source_required: { code: 'validation_error', message: '请先选择关系的起始对象。' },
+  invalid_agent_result: { code: 'internal_error', message: '分析结果格式异常，本次未采信，请重试。', retryable: true },
+}
+
+/**
+ * 鉴权中间件的**中文散文** → 枚举码（按 detail 原文索引，与 LEGACY_ALIASES 分开）。
+ * 出处：app/main.py:104（缺 token / token 验不过）、app/main.py:109（token 指向的用户已不存在）
+ *      均 401 {"detail":"请先登录"}；app/main.py:113（principal.status !== 'active'）
+ *      403 {"detail":"账号不可用"}。白名单见 app/main.py:86-95。
+ * 匹配规则刻意保守：**规范化后全等**才认，宁可漏判走兜底句。
+ * 误判成 authentication_required 的代价是把正在干活的员工踢回登录页，比漏判重得多。
+ */
+export const PROSE_ALIASES = {
+  请先登录: { code: 'authentication_required' },
+  账号不可用: { code: 'account_unavailable' },
+}
+
+/** 拿不到 detail 时按 HTTP 状态兜底，取值全部落在封闭枚举内 */
+export const STATUS_CODES = {
+  400: 'validation_error',
+  401: 'authentication_required',
+  403: 'permission_denied',
+  404: 'resource_not_found',
+  409: 'conflict',
+  413: 'unsupported_file',
+  415: 'unsupported_file',
+  422: 'validation_error',
+  429: 'rate_limited',
+  500: 'internal_error',
+  502: 'model_unavailable',
+  503: 'model_unavailable',
+  504: 'task_timeout',
+}
+
+/** 完全无法归类时的兜底句；未知码由 formatError 在句尾附上「错误码：xxx」小字 */
+export const FALLBACK_MESSAGE = '操作没有完成，请稍后重试。'
+
+const CODE_PATTERN = /^[a-z][a-z0-9_]*$/
+
+/** 稳定码的形状：小写字母开头的 snake_case。中文散文一律不算码 */
+function isCodeShape(value) {
+  return typeof value === 'string' && CODE_PATTERN.test(value.trim())
+}
+
+function cleanText(value) {
+  if (typeof value === 'string') {
+    const text = value.trim()
+    if (!text || text === '[object Object]' || text === '[object Array]') return ''
+    // 网关/静态页会把整段 HTML 塞进 detail，不能当成人话抛给界面
+    if (text.startsWith('<') || /<!doctype\s+html|<html/i.test(text)) return ''
+    if (/^request failed with status code \d+$/i.test(text)) return ''
+    return text.slice(0, 300)
+  }
+  if (typeof value === 'number') return String(value)
+  return ''
+}
+
+/** 散文规范化：去首尾空白 + 去尾部句读，仅此而已（不做包含式模糊匹配） */
+function normalizeProseKey(value) {
+  return cleanText(value).replace(/[\s。．.！!？?；;：,，、]+$/g, '').trim()
+}
+
+function isEnumCode(code) {
+  return Object.prototype.hasOwnProperty.call(ERROR_CODES, code)
+}
+
+/** 按原文查散文表 */
+function resolveProse(token) {
+  const key = normalizeProseKey(token)
+  if (!key) return null
+  const entry = PROSE_ALIASES[key]
+  return entry ? { ...entry, matched: key } : null
+}
+
+/**
+ * 唯一的收口处：任何分支产出的 code 都过这里，非枚举值一律降级为 ''。
+ * @returns {{ code: string, rawCode: string, message: string, retryable: boolean }}
+ */
+function clampResult({ code = '', rawCode = '', message = '', retryable = false }) {
+  const known = isEnumCode(code)
+  return {
+    code: known ? code : '',
+    rawCode: cleanText(rawCode) || (known ? '' : cleanText(code)),
+    message: cleanText(message) || FALLBACK_MESSAGE,
+    retryable: Boolean(retryable),
+  }
+}
+
+/**
+ * 码名/散文 → { code, rawCode, message, retryable }。
+ * 查不到即兜底句；枚举外的原样串只进 rawCode，绝不进 code。
+ */
+function resolveCode(raw, status) {
+  const token = cleanText(raw)
+
+  if (isEnumCode(token)) {
+    return clampResult({ code: token, message: ERROR_CODES[token].message, retryable: ERROR_CODES[token].retryable })
+  }
+
+  const alias = token && isCodeShape(token) ? LEGACY_ALIASES[token] : null
+  if (alias) {
+    const target = ERROR_CODES[alias.code] || {}
+    return clampResult({
+      code: alias.code,
+      rawCode: token,
+      message: cleanText(alias.message) || target.message,
+      retryable: typeof alias.retryable === 'boolean' ? alias.retryable : target.retryable,
+    })
+  }
+
+  const prose = token && !isCodeShape(token) ? resolveProse(token) : null
+  if (prose) {
+    const target = ERROR_CODES[prose.code] || {}
+    return clampResult({
+      code: prose.code,
+      rawCode: token,
+      message: cleanText(prose.message) || target.message,
+      retryable: typeof prose.retryable === 'boolean' ? prose.retryable : target.retryable,
+    })
+  }
+
+  const statusKey = STATUS_CODES[status]
+  if (token && isCodeShape(token)) {
+    // 未知稳定码：走兜底句，码名留在 rawCode（界面小字仍可按「错误码：xxx」报出来）
+    return clampResult({
+      code: statusKey || '',
+      rawCode: token,
+      message: FALLBACK_MESSAGE,
+      retryable: Boolean(statusKey && ERROR_CODES[statusKey].retryable),
+    })
+  }
+  if (statusKey) {
+    // 有状态码可归类：散文原样就是人话，直接当 message 用（如 auth.py「用户名或密码错误」）
+    return clampResult({
+      code: statusKey,
+      rawCode: token,
+      message: token || ERROR_CODES[statusKey].message,
+      retryable: Boolean(ERROR_CODES[statusKey].retryable),
+    })
+  }
+  // 既不认识又没有状态码可归类：散文原样留着当人话，但没有码可报；未知码才回兜底句
+  return clampResult({ code: '', rawCode: token, message: token && !isCodeShape(token) ? token : FALLBACK_MESSAGE, retryable: false })
+}
+
+/** 形状 2：ErrorEnvelope / 任意 { code, message, retryable } 对象，后端给的 message 优先级最高 */
+function fromEnvelope(envelope, status) {
+  const resolved = resolveCode(envelope.code, status)
+  const message = cleanText(envelope.message)
+  return clampResult({
+    code: resolved.code,
+    rawCode: cleanText(envelope.code) || resolved.rawCode,
+    message: message || resolved.message,
+    retryable: typeof envelope.retryable === 'boolean' ? envelope.retryable : resolved.retryable,
+  })
+}
+
+/** 形状 3：FastAPI 422 数组，取第一个问题字段说人话 */
+function fromValidation(items, status) {
+  const first = items.find((item) => item && typeof item === 'object')
+  if (!first) return clampResult({ code: 'validation_error', message: ERROR_CODES.validation_error.message })
+  const trail = Array.isArray(first.loc) ? first.loc.filter((part) => part !== 'body' && part !== 'query' && part !== 'path') : []
+  const field = cleanText(String(trail[trail.length - 1] ?? ''))
+  const problem = cleanText(first.msg)
+  const type = cleanText(first.type)
+  let message = ERROR_CODES.validation_error.message
+  if (field && type === 'missing') message = `「${field}」为必填项，请补充后再提交。`
+  else if (field && problem) message = `「${field}」填写有误：${problem}`
+  else if (field) message = `「${field}」填写有误，请检查后重试。`
+  else if (problem) message = problem
+  // 校验错误的人话里已经点名了字段，不再另塞 rawCode
+  return clampResult({ code: STATUS_CODES[status] || 'validation_error', message })
+}
+
+/** 把任意入参收敛成 { detail } 形状；payload 为 null 表示什么都没有 */
+function pickPayload(err) {
+  if (err == null) return null
+  if (typeof err === 'string' || typeof err === 'number') return { detail: err }
+  if (typeof err !== 'object') return null
+  if ('detail' in err && !err.response) return err
+  // 裸 ErrorEnvelope 对象：小写稳定码 + message，且不带 axios 的 request/response 痕迹
+  if (
+    !err.response &&
+    !err.request &&
+    !err.isAxiosError &&
+    isCodeShape(err.code) &&
+    typeof err.message === 'string'
+  ) {
+    return { detail: err }
+  }
+  const data = err.response?.data ?? err.data ?? null
+  if (data == null) return { detail: undefined }
+  if (typeof data === 'string' || Array.isArray(data)) return { detail: data }
+  if (typeof data === 'object') {
+    if ('detail' in data) return data
+    if ('code' in data || 'message' in data) return { detail: data }
+    const topMessage = cleanText(data.message) || cleanText(data.error)
+    if (topMessage) return { detail: topMessage }
+  }
+  return { detail: undefined }
+}
+
+function isNormalized(value) {
+  return Boolean(
+    value && typeof value === 'object' && !Array.isArray(value) &&
+      typeof value.code === 'string' && typeof value.message === 'string' &&
+      typeof value.retryable === 'boolean' && typeof value.rawCode === 'string',
+  )
+}
+
+/** 传输层能确定的两类：超时与断网，用枚举码表达 */
+function resolveTransport(err, status) {
+  const transport = cleanText(err?.code)
+  if (transport === 'ECONNABORTED' || transport === 'ETIMEDOUT') {
+    return clampResult({ code: 'task_timeout', message: ERROR_CODES.task_timeout.message, retryable: true })
+  }
+  if (transport === 'ERR_NETWORK' || (err && err.request && !err.response)) {
+    return clampResult({ code: '', rawCode: transport, message: '连不上服务，请确认网络或稍后重试。', retryable: true })
+  }
+  const message = cleanText(err?.message)
+  if (message && !isCodeShape(message)) {
+    // 人话直出 + 状态码归类，绝不把中文塞进 code
+    const statusKey = STATUS_CODES[status]
+    return clampResult({
+      code: statusKey || '',
+      rawCode: transport,
+      message,
+      retryable: Boolean(statusKey && ERROR_CODES[statusKey].retryable),
+    })
+  }
+  if (message) return resolveCode(message, status)
+  return resolveCode('', status)
+}
+
+/**
+ * 统一入口：axios 错误、Error、裸字符串、ErrorEnvelope、中文散文都能喂。
+ * @param {unknown} err
+ * @returns {{ code: string, message: string, retryable: boolean, rawCode: string }}
+ *   code 一定在 ERROR_CODES 里或为空串；后端原样回来的串放 rawCode。
+ */
+export function normalizeError(err) {
+  const status = Number(err?.response?.status ?? err?.status ?? 0) || 0
+  const payload = pickPayload(err)
+  const detail = payload?.detail
+
+  if (Array.isArray(detail)) {
+    // 空数组：等于没有错误体，退到状态码归类，不把 axios 的英文原句抛给界面
+    return detail.length ? fromValidation(detail, status) : resolveCode('', status)
+  }
+  if (detail && typeof detail === 'object') {
+    return fromEnvelope(detail, status)
+  }
+
+  const text = cleanText(detail)
+  if (text) return resolveCode(text, status)
+  return resolveTransport(err, status)
+}
+
+/**
+ * 可报告小字：只有「后端给了一个我们不认识的码」时才出现。
+ * 已知码、别名码、中文散文都不加，免得把界面搞脏；未知码走兜底句 + 这条小字，
+ * 保证还能贴给后端排查。
+ */
+function toResult(input) {
+  return isNormalized(input) ? input : normalizeError(input)
+}
+
+export function errorCodeLabel(errOrResult) {
+  const result = toResult(errOrResult)
+  const raw = cleanText(result.rawCode)
+  if (!raw || isMappedRaw(raw)) return ''
+  return isCodeShape(raw) ? `错误码：${raw}` : ''
+}
+
+/** 这个原始串是否已经被某张表收编过 */
+function isMappedRaw(raw) {
+  if (isEnumCode(raw) || LEGACY_ALIASES[raw]) return true
+  const prose = resolveProse(raw)
+  return Boolean(prose)
+}
+/** 单条 `{{ error }}` 插值位的成品句：未知码在句尾保留码名 */
+export function formatError(err) {
+  const result = toResult(err)
+  const label = errorCodeLabel(result)
+  return label ? `${result.message}（${label}）` : result.message
+}
+
+/** 展示层据此决定是否挂「重试」按钮 */
+export function isRetryable(err) {
+  return Boolean(toResult(err).retryable)
+}
+
+/** 码表查询：已知码返回原文案，未知返回兜底句 */
+export function errorText(code) {
+  return resolveCode(cleanText(code), 0).message
+}

@@ -1,16 +1,8 @@
 <script setup>
 import { onMounted, ref } from 'vue'
-import axios from 'axios'
+import { http, errorDetail } from '../lib/http'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
 
-// axios 拦截器：自动带上 JWT
-axios.interceptors.request.use(config => {
-  const token = window._authToken
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
-
-const API = '/api/v1'
 const profile = ref(null)
 const dataFile = ref('')
 const tableColumns = ref([])
@@ -45,11 +37,11 @@ async function uploadExcel(e) {
 
   uploading.value = true
   try {
-    const res = await axios.post(`${API}/upload-excel`, form)
+    const res = await http.post('/upload-excel', form)
     applyDataPreview(res.data)
     await loadDataFiles(file.name)
   } catch (err) {
-    filesError.value = err.response?.data?.detail || err.message || '数据上传失败'
+        filesError.value = errorDetail(err, '数据上传失败')
   } finally {
     uploading.value = false
     e.target.value = ''
@@ -68,7 +60,7 @@ async function loadDataFiles(preferredFilename = '') {
   filesLoading.value = true
   filesError.value = ''
   try {
-    const res = await axios.get(`${API}/data-files`, { params: { _ts: Date.now() } })
+    const res = await http.get('/data-files', { params: { _ts: Date.now() } })
     dataFiles.value = res.data.files || []
     const currentExists = dataFiles.value.some(file => file.filename === dataFile.value)
     const preferredExists = dataFiles.value.some(file => file.filename === preferredFilename)
@@ -81,7 +73,7 @@ async function loadDataFiles(preferredFilename = '') {
       await selectDataFile(nextFilename)
     }
   } catch (err) {
-    filesError.value = err.response?.data?.detail || err.message || '数据文件列表加载失败'
+        filesError.value = errorDetail(err, '数据文件列表加载失败')
   } finally {
     filesLoading.value = false
   }
@@ -92,13 +84,13 @@ async function selectDataFile(filename) {
   selectingFile.value = true
   previewError.value = ''
   try {
-    const res = await axios.get(
-      `${API}/data-files/${encodeURIComponent(filename)}/preview`,
+    const res = await http.get(
+      `/data-files/${encodeURIComponent(filename)}/preview`,
       { params: { _ts: Date.now() } }
     )
     applyDataPreview(res.data)
   } catch (err) {
-    previewError.value = err.response?.data?.detail || err.message || '数据文件预览失败'
+        previewError.value = errorDetail(err, '数据文件预览失败')
   } finally {
     selectingFile.value = false
   }
@@ -111,7 +103,7 @@ async function openDataFile() {
   try {
     await selectDataFile(dataFile.value)
   } catch (err) {
-    previewError.value = err.response?.data?.detail || err.message || '数据预览失败'
+        previewError.value = errorDetail(err, '数据预览失败')
   } finally {
     previewLoading.value = false
   }
@@ -120,8 +112,8 @@ async function openDataFile() {
 async function downloadDataFile() {
   if (!dataFile.value) return
   try {
-    const res = await axios.get(
-      `${API}/data-files/${encodeURIComponent(dataFile.value)}/file`,
+    const res = await http.get(
+      `/data-files/${encodeURIComponent(dataFile.value)}/file`,
       { responseType: 'blob', params: { inline: false, _ts: Date.now() } }
     )
     const url = URL.createObjectURL(res.data)
@@ -131,7 +123,7 @@ async function downloadDataFile() {
     link.click()
     setTimeout(() => URL.revokeObjectURL(url), 60000)
   } catch (err) {
-    previewError.value = err.response?.data?.detail || err.message || '数据文件下载失败'
+        previewError.value = errorDetail(err, '数据文件下载失败')
   }
 }
 

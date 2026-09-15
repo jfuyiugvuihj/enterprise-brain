@@ -1,5 +1,6 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import { fetchArtifactBlob, isArtifactRequest } from '../lib/artifacts'
 
 const props = defineProps({
   src: String,
@@ -7,13 +8,56 @@ const props = defineProps({
   downloadName: String,
 })
 
+// props.src is the artifact address (e.g. /api/v1/artifacts/<id>/content). It is never
+// bound to an <img>: that request would go out without a Bearer token. The bytes are
+// fetched through the shared axios instance and shown from an object URL instead.
+const loadState = ref('idle') // idle | loading | ready | error
+const objectUrl = ref('')
+const errorText = ref('')
 const previewOpen = ref(false)
 const previewRotate = ref(0)
 
-const downloadUrl = computed(() => {
-  if (props.src?.startsWith('http')) return props.src
-  return `${props.src}`
-})
+let loadToken = 0
+let activeHandle = null
+
+const displayUrl = computed(() => objectUrl.value)
+const downloadUrl = computed(() => objectUrl.value || '')
+
+function releaseBlob() {
+  if (activeHandle) activeHandle.revoke()
+  activeHandle = null
+  objectUrl.value = ''
+}
+
+async function load() {
+  const token = ++loadToken
+  releaseBlob()
+  errorText.value = ''
+  if (!props.src) {
+    loadState.value = 'idle'
+    return
+  }
+  loadState.value = 'loading'
+  if (!isArtifactRequest(props.src)) {
+    objectUrl.value = props.src
+    loadState.value = 'ready'
+    return
+  }
+  try {
+    const handle = await fetchArtifactBlob(props.src)
+    if (token !== loadToken) {
+      handle.revoke()
+      return
+    }
+    activeHandle = handle
+    objectUrl.value = handle.objectUrl
+    loadState.value = 'ready'
+  } catch (err) {
+    if (token !== loadToken || err?.code === 'aborted') return
+    errorText.value = err?.message || '图表内容获取失败'
+    loadState.value = 'error'
+  }
+}
 
 function rotate() {
   previewRotate.value = (previewRotate.value + 90) % 360
@@ -23,6 +67,12 @@ function closePreview() {
   previewOpen.value = false
   previewRotate.value = 0
 }
+
+watch(() => props.src, load, { immediate: true })
+onUnmounted(() => {
+  loadToken += 1
+  releaseBlob()
+})
 </script>
 
 <template>
@@ -31,12 +81,12 @@ function closePreview() {
     <div class="chart-header">
       <span class="chart-caption">{{ caption || '图表' }}</span>
       <div class="chart-actions">
-        <button class="chart-btn" title="放大查看" @click="previewOpen = true">
+        <button class="chart-btn" title="放大查看" :disabled="loadState !== 'ready'" @click="previewOpen = true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6M8 11h6"/>
           </svg>
         </button>
-        <a class="chart-btn" title="下载" :href="downloadUrl" :download="downloadName || 'chart.png'">
+        <a v-if="loadState === 'ready'" class="chart-btn" title="下载" :href="downloadUrl" :download="downloadName || 'chart.png'">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
           </svg>
@@ -44,15 +94,33 @@ function closePreview() {
       </div>
     </div>
 
-    <!-- 图表图片 -->
-    <div class="chart-img-wrap" @click="previewOpen = true">
-      <img :src="downloadUrl" :alt="caption" class="chart-img" loading="lazy" />
+    <!-- 图表图片：只绑定取回后的本地地址 -->
+    <div v-if="loadState === 'ready'" class="chart-img-wrap" @click="previewOpen = true">
+      <img :src="displayUrl" :alt="caption || '图表'" class="chart-img" />
+    </div>
+
+    <div v-else-if="loadState === 'loading'" class="chart-state" role="status">
+      <span class="chart-state-spinner" aria-hidden="true"></span>
+      <span class="chart-state-text">正在获取图表…</span>
+    </div>
+
+    <div v-else-if="loadState === 'error'" class="chart-state chart-state-error" role="status">
+      <span class="chart-state-icon" aria-hidden="true">⚠️</span>
+      <div class="chart-state-body">
+        <strong class="chart-state-title">图表未能显示</strong>
+        <span class="chart-state-text">{{ errorText }}</span>
+      </div>
+      <button class="chart-retry" type="button" @click="load">重新取图</button>
+    </div>
+
+    <div v-else class="chart-state">
+      <span class="chart-state-text">该轮回答没有返回图表</span>
     </div>
 
     <!-- 放大预览弹窗 -->
     <Teleport to="body">
       <Transition name="modal">
-        <div v-if="previewOpen" class="preview-overlay" @click.self="closePreview">
+        <div v-if="previewOpen && loadState === 'ready'" class="preview-overlay" @click.self="closePreview">
           <div class="preview-container">
             <div class="preview-toolbar">
               <button class="tb-btn" @click="rotate" title="旋转 90°">
@@ -63,7 +131,7 @@ function closePreview() {
               </a>
               <button class="tb-btn tb-close" @click="closePreview" title="关闭">✕</button>
             </div>
-            <img :src="downloadUrl" :alt="caption" class="preview-img"
+            <img :src="displayUrl" :alt="caption || '图表'" class="preview-img"
                  :style="{ transform: `rotate(${previewRotate}deg)` }" />
           </div>
         </div>
@@ -71,7 +139,6 @@ function closePreview() {
     </Teleport>
   </div>
 </template>
-
 <style scoped>
 .chart-card {
   margin: 12px 0;
@@ -215,5 +282,77 @@ function closePreview() {
 }
 .modal-enter-from .preview-container {
   transform: scale(0.92);
+}
+
+/* ===== 取图状态：加载 / 失败占位卡 ===== */
+.chart-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 26px 16px;
+  color: #9eacc1;
+}
+
+.chart-state-error {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.chart-state-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chart-state-title {
+  font-size: 13px;
+  color: #f0f4fb;
+}
+
+.chart-state-text {
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.chart-state-icon {
+  font-size: 18px;
+}
+
+.chart-state-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(157, 178, 207, .28);
+  border-top-color: #8ea8ff;
+  border-radius: 50%;
+  animation: chart-spin 0.9s linear infinite;
+}
+
+.chart-retry {
+  flex: none;
+  padding: 6px 14px;
+  border: 1px solid rgba(142, 168, 255, .45);
+  border-radius: 6px;
+  background: rgba(106, 140, 255, .14);
+  color: #8ea8ff;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.chart-retry:hover {
+  background: rgba(106, 140, 255, .26);
+  color: #f0f4fb;
+}
+
+.chart-btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+@keyframes chart-spin {
+  to { transform: rotate(360deg); }
 }
 </style>
