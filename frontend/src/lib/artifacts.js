@@ -1,4 +1,4 @@
-import { api } from './api'
+import { http } from './http'
 
 // Artifact bodies live behind authenticated routes (GET /api/v1/artifacts/{id}/content),
 // so an <img src> cannot load them: the browser sends no Authorization header on image
@@ -51,7 +51,7 @@ export async function fetchArtifactBlob(url, { signal } = {}) {
   let response
   try {
     // baseURL:'' keeps /static/... and absolute URLs from being rewritten under /api/v1.
-    response = await api.get(target, { baseURL: '', responseType: 'blob', timeout: 30000, signal })
+    response = await http.get(target, { baseURL: '', responseType: 'blob', timeout: 30000, signal })
   } catch (err) {
     const status = err?.response?.status
     const blob = err?.response?.data

@@ -27,8 +27,7 @@ import {
   switchSession,
   syncActive,
 } from '../lib/sessions'
-
-const API = '/api/v1'
+import { authedFetch } from '../lib/http'
 
 const input = ref('')
 const chatEl = ref(null)
@@ -40,14 +39,6 @@ const noteTone = ref('info')
 // 会话与消息存在模块级 store 里：面板卸载或切走再回来都不会丢，生成中的流也不会断。
 const sessionId = activeId
 
-function authHeaders() {
-  const token = localStorage.getItem('eb_token') || window._authToken
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
-
-async function chatFetch(path, { headers, ...options } = {}) {
-  return fetch(`${API}${path}`, { ...options, headers: { ...authHeaders(), ...(headers || {}) } })
-}
 
 function note(text, tone = 'info') {
   streamNote.value = text
@@ -165,7 +156,7 @@ async function send(dataFilename = activeDataFilename.value) {
   await scrollBottom()
 
   try {
-    const response = await chatFetch('/ask', {
+    const response = await authedFetch('/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal,
@@ -228,7 +219,7 @@ async function confirmCancel() {
   let ok = false
   let status = 0
   try {
-    const response = await chatFetch(`/ask/${activeId.value}/cancel`, { method: 'POST' })
+    const response = await authedFetch(`/ask/${activeId.value}/cancel`, { method: 'POST' })
     status = response.status
     ok = response.ok
     if (ok) {
@@ -285,7 +276,7 @@ async function approve(approved) {
   loading.value = true
   const signal = beginStream()
   try {
-    const response = await chatFetch('/approve', {
+    const response = await authedFetch('/approve', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal,

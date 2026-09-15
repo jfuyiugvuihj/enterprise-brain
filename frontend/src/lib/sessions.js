@@ -1,5 +1,5 @@
 import { nextTick, shallowRef } from 'vue'
-import { api } from './api'
+import { http } from './http'
 
 // 会话状态放在模块级 shallowRef，面板卸载也不会丢：切走再回来还是同一份会话。
 // 等 V3 上了 router，这份 store 直接交给路由上下文接管。
@@ -150,7 +150,7 @@ export async function removeSession(id) {
   }
   persist()
   // 后端删除结果必须显式判定，不能只吞异常。
-  const response = await api.delete(`/sessions/${id}`)
+  const response = await http.delete(`/sessions/${id}`)
   return response.status >= 200 && response.status < 300
 }
 

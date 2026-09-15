@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, shallowRef } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, shallowRef } from 'vue'
 import DocPanel from './components/DocPanel.vue'
 import DataPanel from './components/DataPanel.vue'
 import ChatPanel from './components/ChatPanel.vue'
@@ -7,6 +7,17 @@ import DashboardPanel from './components/DashboardPanel.vue'
 import InsightPanel from './components/InsightPanel.vue'
 import GraphPanel from './components/GraphPanel.vue'
 import ApprovalPanel from './components/ApprovalPanel.vue'
+import {
+  clearSession,
+  errorDetail,
+  hasSession,
+  http,
+  ROLE_KEY,
+  saveSession,
+  startExpiryWatch,
+  subscribeAuth,
+  USER_KEY,
+} from './lib/http'
 
 const activeTab = shallowRef('overview')
 const isLoggedIn = shallowRef(false)
@@ -20,10 +31,13 @@ const showPassword = shallowRef(false)
 const showForgotDialog = shallowRef(false)
 const forgotUsername = shallowRef('')
 
-const TOKEN_KEY = 'eb_token'
-const USER_KEY = 'eb_user'
-const ROLE_KEY = 'eb_role'
 const REMEMBER_KEY = 'eb_remember_username'
+
+// 全站唯一的鉴权状态来自 lib/http.js；这里只留界面态。
+let stopExpiryWatch = null
+let unsubscribeAuth = null
+let toastTimer = null
+const toast = shallowRef(null)
 
 const navigation = [
   { id: 'overview', label: '总览', icon: 'M4 11.5 12 4l8 7.5v8.5a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z' },
@@ -56,20 +70,36 @@ function checkAuth() {
     loginUser.value = rememberedUsername
     rememberMe.value = true
   }
-  const token = localStorage.getItem(TOKEN_KEY)
-  if (!token) return
-  isLoggedIn.value = true
+  if (!hasSession()) return
   username.value = localStorage.getItem(USER_KEY) || ''
   userRole.value = localStorage.getItem(ROLE_KEY) || 'staff'
-  window._authToken = token
+  enterWorkspace()
 }
 
-async function readJsonSafe(response) {
-  try {
-    return await response.json()
-  } catch {
-    return null
+function enterWorkspace() {
+  isLoggedIn.value = true
+  activeTab.value = 'overview'
+  stopExpiryWatch?.()
+  stopExpiryWatch = startExpiryWatch()
+}
+
+function showToast(message, tone = 'error', holdMs = 6000) {
+  toast.value = { message, tone }
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => { toast.value = null }, holdMs)
+}
+
+// 401 与到期的收尾都从 lib/http.js 发出来：清会话、提示、回登录，不再用原生弹窗。
+function onAuthEvent(event) {
+  if (!event) return
+  if (event.type === 'expiring') {
+    showToast(event.message, 'warn', 12000)
+    return
   }
+  clearSession()
+  goToLogin()
+  loginError.value = event.message
+  showToast(event.message, 'error', 6000)
 }
 
 function persistRememberedUsername() {
@@ -85,27 +115,21 @@ async function doLogin() {
   loginError.value = ''
   persistRememberedUsername()
   try {
-    const response = await fetch('/api/v1/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: loginUser.value.trim(), password: loginPass.value }),
+    const res = await http.post('/login', {
+      username: loginUser.value.trim(),
+      password: loginPass.value,
     })
-    if (!response.ok) {
-      const error = await readJsonSafe(response)
-      loginError.value = error?.detail || '登录服务暂时不可用'
+    const data = res.data || {}
+    if (!data.token) {
+      loginError.value = '登录响应缺少令牌，请重试或联系管理员。'
       return
     }
-    const data = await response.json()
-    localStorage.setItem(TOKEN_KEY, data.token)
-    localStorage.setItem(USER_KEY, data.username)
-    localStorage.setItem(ROLE_KEY, data.role || 'staff')
-    window._authToken = data.token
-    isLoggedIn.value = true
-    username.value = data.username
+    saveSession(data)
+    username.value = data.username || loginUser.value.trim()
     userRole.value = data.role || 'staff'
-    activeTab.value = 'overview'
-  } catch (error) {
-    loginError.value = `网络错误：${error.message}`
+    enterWorkspace()
+  } catch (err) {
+    loginError.value = errorDetail(err, '登录服务暂时不可用')
   }
 }
 
@@ -118,14 +142,9 @@ function closeForgotPassword() {
   showForgotDialog.value = false
 }
 
-function doLogout() {
-  const keys = []
-  for (let index = 0; index < localStorage.length; index += 1) {
-    const key = localStorage.key(index)
-    if (key?.startsWith('eb_') && key !== REMEMBER_KEY) keys.push(key)
-  }
-  keys.forEach(key => localStorage.removeItem(key))
-  delete window._authToken
+function goToLogin() {
+  stopExpiryWatch?.()
+  stopExpiryWatch = null
   isLoggedIn.value = false
   username.value = ''
   userRole.value = 'staff'
@@ -133,7 +152,32 @@ function doLogout() {
   activeTab.value = 'overview'
 }
 
-onMounted(checkAuth)
+function doLogout() {
+  // 退出清掉所有 eb_* 本地态（含会话缓存），只保留「记住我」的账号名。
+  clearSession()
+  try {
+    const keys = []
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (key?.startsWith('eb_') && key !== REMEMBER_KEY) keys.push(key)
+    }
+    keys.forEach(key => localStorage.removeItem(key))
+  } catch {
+    /* 隐私模式下没有本地态可清 */
+  }
+  goToLogin()
+}
+
+onMounted(() => {
+  unsubscribeAuth = subscribeAuth(onAuthEvent)
+  checkAuth()
+})
+
+onUnmounted(() => {
+  unsubscribeAuth?.()
+  stopExpiryWatch?.()
+  clearTimeout(toastTimer)
+})
 </script>
 
 <template>
@@ -374,5 +418,79 @@ onMounted(checkAuth)
         </section>
       </main>
     </div>
+
+    <!-- 鉴权提示：401 失效与临期提醒共用这一条，替代原生 alert -->
+    <Transition name="auth-toast">
+      <div
+        v-if="toast"
+        class="auth-toast"
+        :class="toast.tone"
+        role="status"
+        aria-live="polite"
+        data-testid="auth-toast"
+      >
+        <span class="auth-toast-icon" aria-hidden="true">{{ toast.tone === 'warn' ? '⏰' : '🔒' }}</span>
+        <span class="auth-toast-text">{{ toast.message }}</span>
+        <button
+          type="button"
+          class="auth-toast-close"
+          aria-label="关闭提示"
+          @click="toast = null"
+        >
+          ×
+        </button>
+      </div>
+    </Transition>
   </div>
 </template>
+
+<style scoped>
+.auth-toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 48px));
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--red);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel-2);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: var(--shadow-sm);
+}
+
+.auth-toast.warn {
+  border-left-color: var(--amber);
+}
+
+.auth-toast-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.auth-toast-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.auth-toast-enter-active,
+.auth-toast-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.auth-toast-enter-from,
+.auth-toast-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+</style>
