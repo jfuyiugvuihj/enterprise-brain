@@ -369,7 +369,8 @@ onMounted(checkAuth)
           />
           <DocPanel v-else-if="activeTab === 'docs'" :user-role="userRole" />
           <DataPanel v-else-if="activeTab === 'data'" @ask="handleAsk" />
-          <ChatPanel v-else />
+          <!-- 对话面板常驻（v-show 而非 v-if）：切走再回来会话、滚动与进行中的回答流都不丢 -->
+          <ChatPanel v-show="activeTab === 'chat'" />
         </section>
       </main>
     </div>
