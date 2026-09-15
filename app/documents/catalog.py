@@ -561,8 +561,46 @@ def list_document_versions(filename: str) -> list[dict]:
         )
 
 
+def _logical_documents_table_exists(conn) -> bool:
+    """Ask whether the lazy logical table is there, without ever poisoning the transaction.
+
+    ``to_regclass`` is the only safe probe: a ``DELETE`` against a missing table would abort
+    the surrounding transaction and take the version rows down with it. Any surprise in the
+    cursor answer (a shape this function does not recognise, a driver that refuses the
+    statement) is reported as "absent", which costs a skipped row and not the whole delete.
+
+    Known unknown: the shapes read here - a ``dict_row`` mapping, a NULL, and a probe that
+    raises - are the three the tests reproduce against a fake connection. Real psycopg3
+    returns a plain ``dict`` for ``row_factory=dict_row``, which is what the first branch
+    expects, but no test in this repository has been run against a live database, so the
+    probe has not been observed on one. Verification belongs to the next backend-image
+    acceptance run.
+    """
+    try:
+        row = conn.execute("SELECT to_regclass('public.documents') AS documents_table").fetchone()
+        if row is None:
+            return False
+        if isinstance(row, dict):
+            return bool(row.get("documents_table"))
+        try:
+            return bool(dict(row).get("documents_table"))
+        except (TypeError, ValueError):
+            return bool(row[0])
+    except Exception as exc:
+        logger.warning(f"[Docs] logical table probe failed: {exc}")
+        return False
+
+
 def delete_document_versions(filename: str, storage_paths=()) -> None:
-    """Remove every catalog row of a logical document from both persistence paths."""
+    """Remove every catalog row of a logical document from both persistence paths.
+
+    The ``documents`` row goes in the same transaction as its versions. The upload path
+    UPSERTS it (``_upsert_document`` in app/api/v1/chat.py) and nothing else in the
+    repository ever removed it, which is how a deployment ends up with logical rows that
+    point at files no longer on disk while ``document_versions`` reads clean. Cleaning it
+    here - rather than in one more caller - is why this function is the one the delete
+    route already trusts.
+    """
     _drop_local_versions(filename, storage_paths)
     if not _database_available():
         return
@@ -573,6 +611,11 @@ def delete_document_versions(filename: str, storage_paths=()) -> None:
                 "DELETE FROM document_versions WHERE filename = %s",
                 (filename,),
             )
+            if _logical_documents_table_exists(conn):
+                conn.execute(
+                    "DELETE FROM documents WHERE filename = %s",
+                    (filename,),
+                )
             conn.commit()
     except Exception as exc:
         logger.warning(f"[Docs] version deletion fallback: {exc}")

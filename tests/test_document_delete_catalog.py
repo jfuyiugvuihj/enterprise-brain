@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+_UNSET = object()
+
 
 def _token(username: str) -> dict[str, str]:
     from app.common.auth import create_token
@@ -36,10 +38,22 @@ class _VersionStore:
         self.rows = [row for row in self.rows if row["filename"] != filename]
 
 
+class _FakeResult:
+    def __init__(self, row):
+        self._row = row
+
+    def fetchone(self):
+        return self._row
+
+
 class _FakeConnection:
-    def __init__(self):
+    """Hands back what psycopg3 with ``dict_row`` would, including the probe''s one row."""
+
+    def __init__(self, regclass_row=_UNSET, refuse_probe=False):
         self.executed = []
         self.committed = False
+        self._regclass_row = {"documents_table": "documents"} if regclass_row is _UNSET else regclass_row
+        self._refuse_probe = refuse_probe
 
     def __enter__(self):
         return self
@@ -49,9 +63,17 @@ class _FakeConnection:
 
     def execute(self, sql, params=None):
         self.executed.append((sql, params))
+        if "to_regclass" in sql:
+            if self._refuse_probe:
+                raise OSError("probe refused")
+            return _FakeResult(self._regclass_row)
+        return _FakeResult(None)
 
     def commit(self):
         self.committed = True
+
+    def deletes(self):
+        return [sql for sql, _ in self.executed if "delete from" in sql.lower()]
 
 
 @pytest.fixture
@@ -93,6 +115,13 @@ def _delete(app, filename="policy.txt", username="alice"):
 
 
 def test_delete_document_versions_removes_all_rows_for_filename(monkeypatch):
+    """Every catalog row of one logical document, in a single transaction (R8).
+
+    This case used to assert "exactly one statement", which was the defect rather than a
+    guarantee: ``_upsert_document`` writes the logical ``documents`` row on upload and
+    nothing removed it, so a completed delete left a row naming a file that no longer
+    existed. It now asserts both rows go and that one commit covers them.
+    """
     from app.documents import catalog
 
     connection = _FakeConnection()
@@ -104,11 +133,70 @@ def test_delete_document_versions_removes_all_rows_for_filename(monkeypatch):
     catalog.delete_document_versions("policy.txt")
 
     assert connection.committed is True
-    assert len(connection.executed) == 1
-    sql, params = connection.executed[0]
-    assert "delete from document_versions" in sql.lower()
-    assert "where filename = %s" in sql.lower()
-    assert params == ("policy.txt",)
+    assert [params for _, params in connection.executed if "delete from" in _.lower()] == [("policy.txt",)] * 2
+    assert [sql.lower() for sql, _ in connection.executed if "delete from" in sql.lower()] == [
+        "delete from document_versions where filename = %s",
+        "delete from documents where filename = %s",
+    ]
+
+
+def test_a_missing_logical_table_still_lets_the_version_rows_go(monkeypatch):
+    """The table is created lazily, so its absence may not veto the cascade that does exist.
+
+    ``to_regclass`` answers NULL there; an unconditional DELETE would abort the
+    transaction and take the version rows with it - the opposite of a cascade.
+    """
+    from app.documents import catalog
+
+    connection = _FakeConnection(regclass_row={"documents_table": None})
+    monkeypatch.setattr(catalog, "_database_available", lambda: True)
+    monkeypatch.setattr(catalog, "_ensure", lambda: None)
+    monkeypatch.setattr(catalog, "_conn", lambda: connection)
+    monkeypatch.setattr(catalog, "_drop_local_versions", lambda *args, **kwargs: None)
+
+    catalog.delete_document_versions("policy.txt")
+
+    assert connection.deletes() == ["DELETE FROM document_versions WHERE filename = %s"]
+    assert connection.committed is True
+
+
+def test_a_refused_probe_cannot_take_the_version_deletion_down(monkeypatch):
+    """A probe that cannot be answered is reported as absent, never as a failed delete."""
+    from app.documents import catalog
+
+    connection = _FakeConnection(refuse_probe=True)
+    monkeypatch.setattr(catalog, "_database_available", lambda: True)
+    monkeypatch.setattr(catalog, "_ensure", lambda: None)
+    monkeypatch.setattr(catalog, "_conn", lambda: connection)
+    monkeypatch.setattr(catalog, "_drop_local_versions", lambda *args, **kwargs: None)
+
+    catalog.delete_document_versions("policy.txt")
+
+    assert connection.deletes() == ["DELETE FROM document_versions WHERE filename = %s"]
+    assert connection.committed is True
+
+
+def test_the_sidecar_path_needs_no_database_to_forget_a_document(monkeypatch, tmp_path):
+    """The offline catalogue is the other half of the two persistence paths."""
+    from app.documents import catalog
+
+    stored = tmp_path / "resource-9001.txt"
+    stored.write_text("policy", encoding="utf-8")
+    monkeypatch.setattr(catalog, "DOCUMENTS_DIR", str(tmp_path))
+    monkeypatch.setattr(catalog, "_database_available", lambda: False)
+    catalog.record_local_document_version(
+        "policy.txt",
+        classification=1,
+        department="finance",
+        storage_path=str(stored),
+        version=1,
+        owner_id="alice",
+        parse_status="ready",
+    )
+
+    catalog.delete_document_versions("policy.txt")
+
+    assert catalog.current_documents() == []
 
 
 def test_delete_document_versions_prunes_the_local_sidecar(tmp_path, monkeypatch):
