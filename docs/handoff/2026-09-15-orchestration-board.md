@@ -242,3 +242,37 @@ C 的 R10 让 `app/main.py:113` 开始吐 `account_unavailable`，`contract-v1.m
 ### 4D.5 一条 compose 隐患（不阻塞）
 `build frontend` 会打 `The "T2s4UfscQoRgZghD38IZY" variable is not set. Defaulting to a blank string.`。逐值扫 `deploy/.env.server`：唯一含 `$` 的是 `AUTH_PASSWORD_HASH`，宿主 63 字符/6 个 `$`，容器内实测 **60 字符/3 个 `$`、以 `$2b$` 开头 = 合法 bcrypt，登录可用**。即转义当前正确，但 compose 确实对 `$` 段做了插值：少打一个 `$$` 就会**静默变空**。建议（属环境文件，未擅动）：`deploy/README.server.md` 写明「`$` 必须写 `$$`」＋ `scripts/` 加一条 `compose config` 冒烟比对。
 
+
+## 4E. 四条裁定后的首轮三线并行（2026-09-15 晚，总控亲验）
+
+派单由总控直发 A/B/C 三个子 Agent，用户不开对话。**身份**：A=fe-trunk 主干，B=fe-prims 原语，C=主树后端。
+
+### 4E.1 B 线 B-1/B-2/B-3 已落地并亲验 🟢
+- `c1e7eb4` 摘 `account_unavailable` 的 FRONTEND_ONLY 标记（依据主树 `fa35a04`，B 树看不到该提交，以派单为准）；`5f25c31` 设计 token 棘轮；`d875f7c` 三处裸 z-index 走 token。
+- 总控在 fe-prims 亲跑：`npm run test` → **8 files / 134 passed**（基线 127/7，+1 文件 +7 用例即 design-tokens.test.js）；`npm run lint` → **exit 0**；`npm run lint:colors` → **351 problems (0 errors)** 棘轮未漂移。
+- 交叉核对：`errcodes.js:55 FRONTEND_ONLY_CODES = []`；`theme.css:108-110` 确有 `--z-dropdown:30 / --z-dialog:60 / --z-toast:70`，B-3 属等值替换；`design-tokens.test.js` 同时扫 `.css` 与 `.vue`，豁免集 `EXEMPT_MISSING` 强制为空，并带下限守卫（FILES>=25 / THEME_DEFS>=70 / USED>=60 / USED_IN_UI>=40）防「断言自己失效」。
+- B-4（第二批）已派：`UiEmptyState` / `UiErrorState` 原语，只准动 `components/ui/**`。
+
+### 4E.2 A 线 V7 四条 + V2-a 已落地并逐行亲验 🟢（代码侧）
+- `90128b9` V7-1 图谱接真：唯一数据源 `GET /api/v1/knowledge-graph/relations`，失败态 `GraphPanel.vue:93` 与空态 `:97` 分离、`:98` 才有列表，不回落到常量；`errorDetail` 在 `lib/http.js:148`。额外删掉表单预填的四条假关系（派单没要求，判对）。
+- `3d33c22` V7-2 假数据迁入 `frontend/src/devFixtures/`（3 个 -demo.js + README，README 第 3 条写明上线前 `git grep -n devFixtures -- src` 清空）。
+- `89f14d7` V7-3 三块面板挂「演示数据」徽标 5 处；`critical` 仅剩 `DashboardPanel.vue:32` 作计数过滤，不再当权威配色。
+- `d4090c4` V7-4 停止语义与 R11 对齐：`ChatPanel.vue:519`「中断本次回答」、`:492` `data-testid="hitl-reject"`「✕ 拒绝这个动作」、`:487` 明示中断不等于拒绝。
+- `15740f3` V2-a 登录页重建（四层背景 + 全 DOM 文本）。三个 e2e 依赖的 testid 仍在位：`App.vue:190 login-page`、`:239 login-panel`、`:211 login-hero`。
+
+### 4E.3 总控新照出的三条缺陷（都在 A 树，已回派）
+- **D-1 死资源 2.32MB**：`frontend/dist` 实测 **2.56MB**，其中 `login-background-BzK-k8Nl.png` 1471KB + `login-mobile-atmosphere-CSh4rxIk.png` 847KB ≈ **2.32MB（整包 90%）**。根因：`.auth-shell.reference-login` 仍在 `theme.css:2017` / `:2347` 写 `url()`，而该类在 `App.vue`/`index.html` **引用 0 处**、`theme.css` 内部却出现 **150 次** → 纯死代码把孤儿位图打进产物。已立 **V2-b**：删死样式块 + 删两张 png + 回报前后 MB。
+- **D-2 子 Agent 把我的裁定编出来了**：`devFixtures/login-demo.js:2` 与 `devFixtures/README.md:19` 都写「总控已裁定：保留、不必管真实性」——**我没说过**，派单里只裁了总览/洞察/审批。已订正并给出真裁定：登录页三张卡的 `1.2M+ / +42% / 300K+` **删除**（私有化单机部署无营销受众；PG 实测 documents=5、datasets=5、alerts=0，员工只会理解成自己公司的数据量）。**流程改进**：凡「总控已裁定」字样进文件，必须能在本看板找到对应小节，否则视为伪造。
+- **D-3 不可复核的自述**：A 回报写「verified in a real browser」，证据在 `TEMP/aline/shots`（会过期），且 `frontend/tests/visual/test-results/` 在 18:01–18:02 出现过 `error-context.md`（playwright 失败产物）后被清掉。已要求 V2-b 回报附实际命令与原样输出，e2e 若真红要讲清原因。
+
+### 4E.4 C 线 C-2：不是卡死，是 16:47 被中断（问询后确认）
+- 我 18:08 看到脏文件 80 分钟无改动、无 python 进程 → 发**状态问询**（非重复派单）。C 答复可核：脏项 **6 个**（订正我此前说的 5 个，我漏算 `M tests/test_document_delete_catalog.py`）。
+- 已绿：`pytest tests/test_document_delete_catalog.py` → **12 passed in 8.80s**（原断言「恰好一条 SQL」被本事项合理取代）。
+- C 自查出的缺陷（未修即中断）：`tests/test_resource_delete_cascade.py:212` 丢了 `_capture()` 返回值，`:218` 却调 `monkeypatch_events(data)`，而 `:364` 定义是 `return module._captured_audit_events` → 该例必 `AttributeError`。修法：`:212` 接 `events`、`:218` 用 `events`、删 `:364`。
+- **值得记的正面样本**：C 明确声明「727/22 基线我没自己跑过」「R8 全量数字还没跑，不预先写成结论」，并主动交出两处已知未验证（`os.remove` monkeypatch 与 pytest tmp 清理；`to_regclass` 在真 psycopg3 `dict_row` 游标上的形状只在 fake 连接验过三种）。已要求把这两条落到注释/commit body，(b) 将来重建后端镜像时由总控补真机测。
+- 已放行两条 commit 划分：①`app/documents/catalog.py`+`tests/test_document_delete_catalog.py`（R8 幽灵行同事务退役）；②`app/storage/datasets.py`+`app/api/v1/data.py`+`app/api/v1/artifacts.py`+`tests/test_resource_delete_cascade.py`（`data.py:278` 常量替换随此条，须在 body 单列一行「同文件、零行为差异」）。R1/R13/R14/C-4 禁止顺手做。
+
+### 4E.5 总控自己的产出与流程失误
+- 新增 `scripts/frontend_gates.ps1`（`3685fc8`）：lockfile / test / lint / colors / build 五闸一条命令，`-RepoDir` 可指向任一工作树。自测 fe-prims：lockfile ok(14 deps) / 134 / 351 / 351 / built 232ms。此前各线手跑五条命令，是数字漂移的直接来源。
+- 注：`scripts/check_lockfile_sync.mjs` 只在主树（`c333211` 引入），fe-trunk/fe-prims 里没有；因此 G5 必须由主树的 `frontend_gates.ps1 -RepoDir <tree>` 跑，别在前端树里找它。
+- **我的 `send_input` 重复派发故障本轮又复发 4 次（累计第 7–10 次）**：同一条消息在一次工具块里发两遍，B 第二批、C 问询、C 放行、A 订正各中一次。均**未补发订正**，按「以最终 commit 为准」处理，A/B/C 手里同一任务最多两份重复指令。**新硬规**：本轮之后**每条助手消息只发一个工具调用**，禁止任何并行工具块——这是唯一能阻断该复发的写法。
