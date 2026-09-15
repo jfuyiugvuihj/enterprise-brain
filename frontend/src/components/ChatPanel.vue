@@ -207,7 +207,7 @@ async function send(dataFilename = activeDataFilename.value) {
       aiMsg.content = aiMsg.content ? `${aiMsg.content}\n${text2}` : text2
       note('本轮未能完成，服务已返回失败状态。', 'error')
     } else if (result.state.terminal === 'cancelled') {
-      if (!aiMsg.content) aiMsg.content = '本轮生成已中断。'
+      if (!aiMsg.content) aiMsg.content = '本次回答已中断。'
     } else if (result.stopped !== 'hitl' && !aiMsg.content) {
       aiMsg.content = '本轮没有返回内容。'
     }
@@ -257,22 +257,23 @@ async function confirmCancel() {
   }
 
   if (ok && cancelled === true) {
-    note('已中断本轮生成。', 'info')
+    note('已脱离本次回答，界面不再接收后续内容。', 'info')
     const last = messages.value[messages.value.length - 1]
     if (last?.role === 'assistant' && !last.content) {
-      last.content = '本轮生成已中断，未产出结论。'
+      last.content = '本次回答已中断，未产出结论。'
     }
   } else if (ok && cancelled === false) {
     // HTTP 200 只说明请求被受理，不代表真的停掉了什么。
     note('当前没有正在生成的内容。', 'warn')
   } else if (ok) {
-    note('服务未返回中断结果，无法确认是否已停止。', 'warn')
+    note('服务未返回中断结果，无法确认本轮回答是否已停止产出。', 'warn')
   } else if (status) {
     note(`中断请求未被受理（HTTP ${status}）。`, 'error')
   }
 
   if (awaitingHitl) {
-    // 显式保留待确认卡并标注已中断：中断不等于拒绝挂起动作（该语义仍待后端裁定）。
+    // 显式保留待确认卡并标注已中断。R11 裁定：停止只脱离本次回答流，
+    // 不构成对挂起动作的拒绝；拒绝必须在审批卡上显式点「拒绝这个动作」。
     hitl.value = { ...hitl.value, interrupted: true }
     note(`${streamNote.value} 待确认动作仍保留，请明确选择执行或取消。`, 'warn')
   }
@@ -323,9 +324,9 @@ async function approve(approved) {
       const failure = friendlyErrorText(result.state, '待确认动作执行失败')
       aiMsg.content = aiMsg.content ? `${aiMsg.content}\n${failure}` : failure
     } else if (result.state.terminal === 'cancelled') {
-      if (!aiMsg.content) aiMsg.content = '待确认动作已中断。'
+      if (!aiMsg.content) aiMsg.content = '本次回答已中断，未回传动作结果。'
     } else if (!aiMsg.content) {
-      aiMsg.content = approved ? '已确认，但本轮没有返回内容。' : '已取消该动作。'
+      aiMsg.content = approved ? '已确认，但本轮没有返回内容。' : '已拒绝该动作。'
     }
     syncActive()
     await scrollBottom()
@@ -483,12 +484,12 @@ function renderMd(raw) {
                 <div class="hitl-icon">⏸️</div>
                 <div class="hitl-text">
                   <b>{{ hitl.interrupted ? '已中断，仍待确认' : '需要确认' }}</b>
-                  <span v-if="hitl.interrupted" class="hitl-note">中断不等于拒绝该动作，请明确选择执行或取消。</span>
+                  <span v-if="hitl.interrupted" class="hitl-note">中断只停止了回答的显示，没有拒绝这个动作，请明确选择执行或拒绝。</span>
                   <span v-for="(lbl, li) in hitl.labels" :key="li">{{ lbl }}</span>
                 </div>
                 <div class="hitl-actions">
                   <button class="hitl-btn approve" @click="approve(true)">✅ 确认执行</button>
-                  <button class="hitl-btn cancel" @click="approve(false)">✕ 取消</button>
+                  <button class="hitl-btn cancel" type="button" data-testid="hitl-reject" @click="approve(false)">✕ 拒绝这个动作</button>
                 </div>
               </div>
             </div>
@@ -511,11 +512,11 @@ function renderMd(raw) {
             rows="1"
           />
           <div v-if="cancelPhase === 'confirm'" class="cancel-confirm" data-testid="chat-cancel-confirm">
-            <span class="cancel-confirm-text">中断后本轮不再产出内容，也不会替你决定是否执行待确认动作。</span>
+            <span class="cancel-confirm-text">中断只是不再接收本轮回答，不会撤销任何动作：待确认的动作仍挂在卡片上，已经批准的动作后端仍会继续执行完。</span>
             <button class="send-pill danger" type="button" @click="confirmCancel">确认中断</button>
             <button class="send-pill ghost" type="button" @click="cancelPhase = 'idle'">返回</button>
           </div>
-          <button v-else-if="loading || hitl" class="send-pill cancel-generation" type="button" data-testid="chat-cancel" @click="requestCancel">中断生成</button>
+          <button v-else-if="loading || hitl" class="send-pill cancel-generation" type="button" data-testid="chat-cancel" @click="requestCancel">中断本次回答</button>
           <button v-else class="send-pill" data-testid="chat-send" @click="send()"
                   :disabled="!input.trim()">
             <svg v-if="!loading" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
@@ -1193,7 +1194,7 @@ function renderMd(raw) {
   border-color: var(--line);
 }
 
-/* 中断生成的二次确认与结果提示：文字按钮不能沿用 40x40 图标胶囊 */
+/* 中断本次回答的二次确认与结果提示：文字按钮不能沿用 40x40 图标胶囊 */
 .stream-note {
   margin: 0 0 6px;
   font-size: 12px;
