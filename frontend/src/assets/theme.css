@@ -931,6 +931,39 @@ textarea:focus-visible {
   font-size: 14px;
 }
 
+/*
+   演示数据徽标（V7-3）。三块假数据面板必须挂上它，且不许借用下面的告警配色：
+   红色三角 + 琥珀条是"已经出事了"的语言，而数据来自 src/devFixtures，
+   部门主管扫一眼就会当成真事故。真实端点（R13/R14）落地后，等级配色要按 §5.2 的
+   对比度要求重做，不要回来把下面删掉的几条改回去。
+*/
+.demo-flag-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  background: rgba(129, 164, 219, .07);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+}
+
+.demo-flag {
+  padding: 3px 8px;
+  color: var(--ink-soft);
+  background: rgba(129, 164, 219, .16);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.demo-note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .chip,
 .badge {
   display: inline-flex;
@@ -1137,30 +1170,11 @@ textarea:focus-visible {
 
 .severity {
   padding: 5px 8px;
-  color: var(--amber);
-  background: rgba(228, 162, 74, .12);
-  border: 1px solid rgba(228, 162, 74, .20);
+  color: var(--muted);
+  background: rgba(129, 164, 219, .10);
+  border: 1px solid var(--line);
   border-radius: 999px;
   font-size: 10px;
-}
-
-.severity.critical,
-.badge.high {
-  color: #ffadb4;
-  background: rgba(238, 109, 120, .12);
-  border-color: rgba(238, 109, 120, .24);
-}
-
-.badge.warning {
-  color: #ffd28c;
-  background: rgba(228, 162, 74, .12);
-  border-color: rgba(228, 162, 74, .24);
-}
-
-.badge.low {
-  color: #93edc1;
-  background: rgba(101, 212, 154, .12);
-  border-color: rgba(101, 212, 154, .24);
 }
 
 .empty-state,
@@ -3030,16 +3044,11 @@ textarea:focus-visible {
   place-items: center;
   width: 22px;
   height: 22px;
-  color: #ffd067;
-  background: rgba(224, 163, 46, .17);
+  color: var(--muted);
+  background: rgba(129, 164, 219, .14);
   border-radius: 5px;
   font-size: 12px;
   font-weight: 800;
-}
-
-.risk-icon.critical {
-  color: #ff9b9b;
-  background: rgba(223, 73, 88, .18);
 }
 
 .risk-copy {

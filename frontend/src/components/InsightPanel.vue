@@ -40,7 +40,7 @@ onMounted(runDetection)
 </script>
 
 <template>
-  <div class="panel-shell" data-testid="insights-panel">
+  <div class="panel-shell" data-testid="insights-panel" data-demo="fixtures">
     <header class="panel-head">
       <div>
         <div class="eyebrow">Active Insight</div>
@@ -54,6 +54,12 @@ onMounted(runDetection)
         </div>
       </div>
     </header>
+
+    <!-- 表里的行会被 v-model 改写，所以是"可以拿来试算法的样例"，不是待办告警。 -->
+    <aside class="demo-flag-row" data-testid="insights-demo-flag">
+      <span class="demo-flag">演示数据</span>
+      <span class="demo-note">下面三行的部门与金额是前端常量（src/devFixtures/insights-demo.js）。/insights/detect 只对客户端送来的行做阈值与环比判定，不查库（后端 R14 未落地），所以这里的"待关注"不代表任何真实异常。</span>
+    </aside>
 
     <div class="panel-grid">
       <section class="panel-card">
@@ -91,7 +97,7 @@ onMounted(runDetection)
               <p>{{ item.department }} · {{ item.metric }}</p>
               <small>{{ (item.reasons || []).join(' / ') }}</small>
             </div>
-            <span :class="['severity', item.severity]">{{ item.severity }}</span>
+            <span class="severity">演示</span>
           </article>
         </div>
       </section>
