@@ -15,6 +15,8 @@ import { h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import GraphPanel from '../GraphPanel.vue'
 import DataPanel from '../DataPanel.vue'
+import InsightPanel from '../InsightPanel.vue'
+import ApprovalPanel from '../ApprovalPanel.vue'
 import { UiEmptyState, UiErrorState } from '../ui'
 
 const source = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
@@ -109,5 +111,37 @@ describe('DataPanel · 文件列表三张脸 + 色债随接线一起掉', () => 
     expect(s).not.toContain('.data-state.empty')
     // 摘掉分支后没人用的 .preview-error 也一起清了，不留死样式
     expect(s).not.toMatch(/\.preview-error\s*\{/)
+  })
+})
+
+describe('InsightPanel · 失败不许说成「暂时没有异常」', () => {
+  it('SSR 首屏（还没发过请求）才是空态，文案原样保留', async () => {
+    const html = await render(InsightPanel)
+    expect(html).toContain('data-testid="ui-empty-state"')
+    expect(html).toContain('暂时没有异常')
+    expect(html).not.toContain('class="empty-state"')
+  })
+
+  // 这就是修案的实质：failed 与 length===0 是两条分支，且失败优先。
+  it('失败分支独立于空态分支，且排在它前面', () => {
+    const s = source('InsightPanel.vue')
+    expect(s).toMatch(/<UiErrorState\s+v-if="failed"/)
+    expect(s).toMatch(/<UiEmptyState v-else-if="!insights\.length" title="暂时没有异常"/)
+    expect(s).toContain('failed.value = true')
+    expect(s).toContain('insights.value = []')
+  })
+
+  it('不再把 err.response.data.detail 原样插值到界面上', () => {
+    expect(source('InsightPanel.vue')).not.toMatch(/err\.response\?\.data\?\.detail \|\|/)
+    expect(source('InsightPanel.vue')).toContain('errorDetail(err,')
+  })
+
+  it('无权限 => 没有重试按钮；普通失败 => 重新分析并挡重复点击', () => {
+    const s = source('InsightPanel.vue')
+    expect(s).toContain('isPermissionDenied(err)')
+    expect(s).toMatch(/:title="denied \? '没有权限运行洞察分析' : '洞察分析没有跑完'"/)
+    expect(s).toMatch(/:retryable="!denied"/)
+    expect(s).toContain('retry-text="重新分析"')
+    expect(s).toMatch(/:busy="loading"/)
   })
 })
