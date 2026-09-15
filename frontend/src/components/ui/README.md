@@ -7,7 +7,7 @@
 | --- | --- | --- | --- | --- |
 | `UiButton` | `variant` primary/secondary/ghost/danger · `size` md/sm · `loading` `disabled` `block` `type` `label` | default · `icon` | 原生 `click` | `loading` 时静态细环 + `aria-busy`，不加旋转动画 |
 | `UiField` | `modelValue` `label` `hint` `error` `codeLabel` `type` `multiline` `rows` `required` `disabled` `readonly` `size` | `label` `hint` | `update:modelValue` `change` `blur` `focus` | `useId()` 绑 label/aria-describedby，错误位 `role="alert"` |
-| `UiSelect` | `modelValue` `options` `label` `placeholder` `emptyText` `error` `codeLabel` `disabled` `size` `block` | — | `update:modelValue` `change` `open` `close` | listbox 语义；方向键/Home/End/Enter/Esc 见 `list-nav.js` |
+| `UiSelect` | `modelValue` `options` `label` `placeholder` `emptyText` `error` `codeLabel` `disabled` `size` `block` `expanded` | — | `update:modelValue` `change` `open` `close` | listbox 语义；方向键/Home/End/Enter/Esc 见 `list-nav.js` |
 | `UiTable` | `columns` `rows` `sort`(v-model:sort) `rowKey` `emptyText` `loading` `stickyHeader` `zebra` `dense` `ariaLabel` | `cell-<key>` `empty` `footer` | `update:sort` `sort-change` `row-click` | 真 `<table>`；排序在 `table-sort.js`，空行沉底、中文按 zh-CN |
 | `UiDialog` | `modelValue`(v-model) `title` `description` `size` `closeOnBackdrop` `closeOnEsc` `busy` `ariaLabel` | default · `description` · `footer({close})` | `update:modelValue` `open` `close` | 焦点锁在弹层内，关闭后焦点归还原元素 |
 | `UiToast` | `tone` info/success/warning/danger · `message` `codeLabel` `retryable` `sticky` `dismissible` | default | `close` `retry` | 单条卡片；danger/warning=`role="alert"` |
