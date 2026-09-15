@@ -115,11 +115,11 @@ F1、F2、F6、V1、V2、V4 的**关键路径性质**决定单 Agent 串行最�
 ### 6.1 对话 A（主干 / 接线）
 
 ```
-你是前端主干线。工作目录 <fe-trunk worktree 绝对路径>，分支 codex/fe-trunk。
+你是前端主干线。工作目录 C:\Users\fengx\PycharmProjects\fe-trunk，分支 codex/fe-trunk。
 只读这三份再动手：docs/frontend-plan-2026-09-14.md、docs/handoff/2026-09-15-frontend-work-checklist.md、docs/handoff/2026-09-15-frontend-parallel-tracks.md。
 你独占：App.vue、既有 *.vue 面板、assets/theme.css、package.json、vite.config.js、lib/api.js、router/、views/。
 禁止碰 app/**、components/ui/**、tests/visual/**（那是 B 线的）。
-按工单顺序执行：F1 → F2 → F3 → V1 → V2 → V5(接线) → F4 → V3 → V4 → F5a → F7 → F6 → V6。
+基线 13e808d。开工先 cd frontend; npm ci。按工单顺序执行：F1 → F2 → F3 → V1 → V2 → V5(接线) → F4 → V3 → V4 → F5a → F7 → F6 → V6。
 每完成一步一次提交，message 带步骤号；每步完成后把工单文档 §6 的对应证据改成"已消除"+commit 号。
 端到端验收必须用带部门的账号（开箱 admin 问不了知识库，e2 后端未落地）。
 遇到需要后端配合的项：只登记到 docs/handoff/2026-09-15-backend-followup-requests.md，不改后端。
@@ -128,11 +128,11 @@ F1、F2、F6、V1、V2、V4 的**关键路径性质**决定单 Agent 串行最�
 ### 6.2 对话 B（叶子 / 只新建）
 
 ```
-你是前端叶子线。工作目录 <fe-prims worktree 绝对路径>，分支 codex/fe-prims。
+你是前端叶子线。工作目录 C:\Users\fengx\PycharmProjects\fe-prims，分支 codex/fe-prims。
 只读 docs/handoff/2026-09-15-frontend-parallel-tracks.md §2、docs/frontend-visual-quality-2026-09-14.md 的 token 表、工单 §3。
 你独占：components/ui/**、lib/errcodes.js、tests/visual/**、playwright.config.js、.stylelintrc.json、assets/fonts/**。
 禁止碰 App.vue、任何既有 *.vue、theme.css、package.json、lockfile（缺依赖就列清单给我，我去装）。
-产出：8 个原语（UiSelect / UiUpload 需要图标，先用内联 SVG 占位，等我这边 lucide 落地后一行替换）、16+7 码字典、五档视觉基线、字体子集与 @font-face。
+基线 13e808d。开工先 cd frontend; npm ci（不许 npm i）。产出：8 个原语（UiSelect / UiUpload 需要图标，先用内联 SVG 占位，等我这边 lucide 落地后一行替换）、16+7 码字典、五档视觉基线、字体子集与 @font-face。
 每个原语至少 1 条 vitest；组件内禁止裸 hex（color-no-hex），字号/间距/圆角/阴影必须走 var(--*)。
 不许 npm i、不许 commit 到主干。完成后交回一份"待接线清单"：哪个组件挂在哪个面板的哪一处、props 怎么传。
 ```
