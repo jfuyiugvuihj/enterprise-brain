@@ -155,25 +155,51 @@ class DatasetRegistry:
             self._records[dataset_id] = record
             self._save()
             if self.persistence is not None:
-                self.persistence.upsert(
-                    "datasets",
-                    record.dataset_id,
-                    {
-                        "dataset_id": record.dataset_id,
-                        "owner_id": record.owner_id,
-                        "filename": record.filename,
-                        "department_ids": record.department_ids,
-                        "classification": record.classification,
-                        "visibility": record.visibility,
-                        "storage_key": record.storage_path,
-                        "content_sha256": record.content_sha256,
-                        "status": record.status,
-                        "current_version_id": record.version_id,
-                        "created_at": record.created_at,
-                        "metadata": {"version_id": record.version_id},
-                    },
-                )
+                self.persistence.upsert("datasets", record.dataset_id, self._persistence_row(record))
             return record
+
+    def _persistence_row(self, record: DatasetRecord) -> dict:
+        """One row as the durable mirror wants it, so retiring cannot resay the shape.
+
+        ``register`` wrote this mapping inline; a second literal for the same row is how a
+        tombstone ends up with a different shape than the row it replaces.
+        """
+        return {
+            "dataset_id": record.dataset_id,
+            "owner_id": record.owner_id,
+            "filename": record.filename,
+            "department_ids": record.department_ids,
+            "classification": record.classification,
+            "visibility": record.visibility,
+            "storage_key": record.storage_path,
+            "content_sha256": record.content_sha256,
+            "status": record.status,
+            "current_version_id": record.version_id,
+            "created_at": record.created_at,
+            "metadata": {"version_id": record.version_id},
+        }
+
+    def get(self, dataset_id: str) -> DatasetRecord | None:
+        with self._lock:
+            return self._records.get(dataset_id)
+
+    def soft_delete(self, dataset_id: str) -> bool:
+        """Retire a dataset row, mirroring ArtifactRegistry.soft_delete.
+
+        The row is kept with status ``deleted`` rather than erased: the durable mirror is
+        what an operator reconstructs an audit trail from, and ``get_active_by_filename``
+        already ignores retired rows, so the filename becomes reusable without the
+        history disappearing with it.
+        """
+        with self._lock:
+            record = self._records.get(dataset_id)
+            if record is None or record.status != "active":
+                return False
+            record.status = "deleted"
+            self._save()
+            if self.persistence is not None:
+                self.persistence.upsert("datasets", record.dataset_id, self._persistence_row(record))
+            return True
 
     def get_active_by_filename(self, filename: str) -> DatasetRecord | None:
         candidates = [

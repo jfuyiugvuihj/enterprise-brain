@@ -1,10 +1,14 @@
 """Authenticated Artifact content and download routes."""
+import os
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from app.common.audit import record_audit
 from app.common.authorization import principal_from_request
-from app.common.permissions import ACTION_DOWNLOAD, ACTION_VIEW
+from app.common.logger import logger
+from app.common.permissions import ACTION_DELETE, ACTION_DOWNLOAD, ACTION_VIEW
 from app.common.policy import authorization_decision
 from app.storage import artifacts as artifact_storage
 
@@ -69,6 +73,73 @@ async def download_artifact(artifact_id: str, request: Request):
         content_disposition_type="attachment",
         headers=dict(_NO_STORE_HEADERS),
     )
+
+
+@router.delete("/{artifact_id}")
+async def delete_artifact(artifact_id: str, request: Request):
+    """Retire one artifact: authorize for delete, remove the bytes, tombstone, audit (R8).
+
+    Same order as the dataset and document routes - file first, registry last - so a
+    half-finished cleanup leaves a visible, retryable record instead of an orphan on the
+    disk. A same-department peer without ``resource:delete`` is refused ``permission_denied``
+    because deleting is a controlling action, and the account that generated the artifact
+    reaches it through ``owner_match``: no grant here is new or widened. The row survives as
+    ``deleted`` rather than vanishing, because the audit trail is reconstructed from it;
+    a chat answer quoting this artifact keeps its text but its image stops resolving,
+    which is the honest consequence of removing the bytes, not a silent rewrite.
+    """
+    artifact = _authorized_artifact(request, artifact_id, ACTION_DELETE)
+    principal = principal_from_request(request)
+    path = Path(artifact.storage_path)
+    before = {
+        "filename": artifact.filename,
+        "owner_id": artifact.owner_id,
+        "artifact_type": artifact.artifact_type,
+        "classification": artifact.classification,
+        "size_bytes": path.stat().st_size if path.is_file() else None,
+    }
+
+    def _audit(outcome: str, reason: str, after: dict) -> None:
+        record_audit(
+            principal,
+            ACTION_DELETE,
+            outcome,
+            artifact.artifact_id,
+            reason,
+            request_id=principal.request_id or None,
+            resource_scope=artifact.resource_scope,
+            before_summary=before,
+            after_summary=after,
+        )
+
+    try:
+        os.remove(path)
+    except OSError as exc:
+        logger.exception(f"[Artifacts] stored file could not be removed: {artifact.filename}")
+        _audit("failed", "artifact_cleanup_incomplete", {"deleted": False, "stage": "physical_cleanup"})
+        raise HTTPException(status_code=500, detail="internal_error") from exc
+
+    if not artifact_storage.artifact_registry.soft_delete(artifact_id):
+        logger.error(f"[Artifacts] record could not be retired: {artifact_id}")
+        _audit(
+            "failed",
+            "artifact_cleanup_incomplete",
+            {"deleted": False, "stage": "registry", "file_removed": True},
+        )
+        raise HTTPException(status_code=500, detail="internal_error")
+
+    _audit(
+        "allowed",
+        "artifact_deleted",
+        {"deleted": True, "stage": "completed", "file_removed": True, "record_status": "deleted"},
+    )
+    return {
+        "status": "ok",
+        "artifact_id": artifact.artifact_id,
+        "filename": artifact.filename,
+        "file_removed": True,
+        "record_status": "deleted",
+    }
 
 
 # The collection route is declared after the two single-artifact routes so the path

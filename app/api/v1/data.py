@@ -21,6 +21,7 @@ from app.common.audit import record_audit
 from app.common.authorization import principal_from_request
 from app.common.permissions import (
     ACTION_ANALYZE,
+    ACTION_DELETE,
     ACTION_DOWNLOAD,
     ACTION_EXPORT,
     ACTION_UPLOAD,
@@ -229,6 +230,81 @@ async def get_data_file(filename: str, request: Request, inline: bool = False):
         headers=dict(NO_STORE_HEADERS),
     )
 
+
+@router.delete("/data-files/{filename}")
+async def delete_data_file(filename: str, request: Request):
+    """Retire a dataset: authorize, remove the file, tombstone the row, audit (R8).
+
+    The order is the one ``DELETE /api/v1/documents/{filename}`` already uses - bytes
+    first, catalogue last - so a cleanup that stops halfway leaves the record active and
+    the request retryable rather than forgetting a file still sitting on the disk. A
+    dataset owned by somebody else is answered with the policy's own reason at 403, not
+    hidden behind a 404: that is what ``_authorized_dataset`` has always done for every
+    other dataset route, and its owner reaches the deletion through ``owner_match``
+    without any new grant. What is *not* touched on purpose: artifacts generated from a
+    dataset, the dataframe cache, and anything in the knowledge-base index. Only the
+    uploaded file and its own registry row are this route's subject.
+    """
+    record = _authorized_dataset(request, filename, ACTION_DELETE)
+    principal = principal_from_request(request)
+    path = Path(record.storage_path)
+    size_before = path.stat().st_size if path.is_file() else None
+    before = {
+        "filename": record.filename,
+        "owner_id": record.owner_id,
+        "department_ids": list(record.department_ids),
+        "classification": record.classification,
+        "size_bytes": size_before,
+    }
+
+    def _audit(outcome: str, reason: str, after: dict) -> None:
+        # The authorization decision was already audited by _authorized_dataset; this is
+        # the completion record, named for its stage like the document route does.
+        record_audit(
+            principal,
+            ACTION_DELETE,
+            outcome,
+            record.dataset_id,
+            reason,
+            request_id=principal.request_id or None,
+            resource_scope=record.resource_scope,
+            before_summary=before,
+            after_summary=after,
+        )
+
+    try:
+        os.remove(path)
+    except OSError as exc:
+        logger.exception(f"[Data] dataset file could not be removed: {record.filename}")
+        _audit("failed", "dataset_cleanup_incomplete", {"deleted": False, "stage": "physical_cleanup"})
+        raise HTTPException(status_code=500, detail="internal_error") from exc
+
+    if not dataset_registry.soft_delete(record.dataset_id):
+        # The bytes are gone and the row refused to retire, which leaves exactly the
+        # residue this route exists to prevent. Reported as a failure rather than
+        # smoothed over: a retry now answers 404 because the active lookup needs a file.
+        logger.error(f"[Data] dataset row could not be retired: {record.dataset_id}")
+        _audit(
+            "failed",
+            "dataset_cleanup_incomplete",
+            {"deleted": False, "stage": "catalog", "file_removed": True},
+        )
+        raise HTTPException(status_code=500, detail="internal_error")
+
+    _audit(
+        "allowed",
+        "dataset_deleted",
+        {"deleted": True, "stage": "completed", "file_removed": True, "record_status": "deleted"},
+    )
+    return {
+        "status": "ok",
+        "filename": record.filename,
+        "dataset_id": record.dataset_id,
+        "file_removed": True,
+        "record_status": "deleted",
+    }
+
+
 # ==================== 图表生成 ====================
 
 class ChartRequest(BaseModel):
@@ -275,7 +351,7 @@ def _require_artifact_scope(principal) -> None:
     result. ``upload_excel`` already answers 403 with this code.
     """
     if not str(getattr(principal, "department", "") or ""):
-        raise HTTPException(status_code=403, detail="department_scope_required")
+        raise HTTPException(status_code=403, detail=OWNER_SCOPE_REQUIRED)
 
 
 @router.post("/chart")
