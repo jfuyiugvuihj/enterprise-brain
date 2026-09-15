@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>企业智脑 — 登录（参考稿）</title>
+<style>
+/* ============================================================
+   LOGIN REFERENCE — 企业智脑
+   证明「同一套美术 + 同一句文案」在 4 档分辨率下都不拉伸、不溢出。
+   美术层是去文字后的 plate（make_plate.py 生成），文字全部是真实 DOM。
+   所有色 / 尺 / 字阶只允许来自 :root 的 token。
+   ============================================================ */
+
+:root {
+  color-scheme: dark;
+
+  /* 表面 4 档 */
+  --surface-0: #05080f;
+  --surface-1: #0a1120;
+  --surface-2: rgba(13, 30, 54, .60);
+  --surface-3: rgba(255, 255, 255, .045);
+
+  /* 文字 3 档 */
+  --text-hi: #eef3fb;
+  --text: #a8b7cc;
+  --text-mute: #8494ab;
+
+  /* 描边 2 档 */
+  --line: rgba(150, 174, 208, .14);
+  --line-strong: rgba(150, 174, 208, .26);
+
+  /* 单强调色 + 语义色；一屏只允许 1 个发光元素 = 主按钮 */
+  --accent: #2ea8e6;
+  --accent-hi: #57c4f5;
+  --accent-ink: #02121e;
+  --accent-ring: rgba(46, 168, 230, .20);
+  --ok: #37c08c;
+  --warn: #d9a33c;
+  --danger: #f0687c;
+
+  /* 8pt 间距 */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
+  --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 64px; --s-9: 96px;
+
+  /* 圆角 4 档 */
+  --r-1: 6px; --r-2: 10px; --r-3: 16px; --r-4: 999px;
+
+  /* 字阶 6 档（最小 12px，禁止 <=10px） */
+  --fs-display: clamp(30px, 2.6vw, 44px);
+  --fs-title: 20px;
+  --fs-body: 14px;
+  --fs-label: 13px;
+  --fs-meta: 12px;
+  --lh-body: 1.65;
+
+  /* 阴影 3 档 */
+  --sh-1: 0 1px 2px rgba(0, 0, 0, .40);
+  --sh-2: 0 8px 24px rgba(0, 0, 0, .38);
+  --sh-3: 0 24px 60px rgba(0, 0, 0, .50);
+
+  --ff-sans: "Manrope", "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --ff-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+
+  --t-1: 120ms cubic-bezier(.2, .7, .3, 1);
+  --t-2: 200ms cubic-bezier(.2, .7, .3, 1);
+}
+
+/* 自托管字体（替代 theme.css:1 的远程 @import） */
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("./art/fonts/manrope-latin-wght.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./art/fonts/jetbrainsmono-latin-wght.woff2") format("woff2");
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--surface-0);
+  color: var(--text);
+  font-family: var(--ff-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button, input { font: inherit; color: inherit; }
+::selection { background: rgba(46, 168, 230, .28); }
+:focus-visible { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
+
+/* 背景四层：L0 CSS 基底 / L1 地球(screen 叠加) / L2 网格+噪点 / L3 可读性遮罩 */
+.login {
+  position: relative;
+  min-height: 100dvh;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+.bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; isolation: isolate; pointer-events: none; }
+.bg > * { position: absolute; inset: 0; }
+
+/* L0 纯 CSS，分辨率无关，任何屏幕都不会糊 */
+.bg__base {
+  background:
+    radial-gradient(64% 78% at 66% 44%, rgba(30, 96, 152, .40) 0%, rgba(16, 52, 92, .18) 42%, transparent 68%),
+    radial-gradient(48% 60% at 12% 108%, rgba(14, 46, 82, .30) 0%, transparent 62%),
+    linear-gradient(178deg, #070d18 0%, var(--surface-0) 52%, #02040a 100%);
+}
+/* L1 位图只负责地球：screen 会吃掉黑色，所以不需要抠图 */
+.bg__art {
+  background-image: url("./art/login-earth.webp");
+  background-repeat: no-repeat;
+  background-size: auto 104%;
+  background-position: 63% 50%;
+  mix-blend-mode: screen;
+}
+/* L2a 细网格只落在文字侧，给版面一点工程感骨架 */
+.bg__grid {
+  background-image:
+    linear-gradient(90deg, rgba(150, 174, 208, .055) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(150, 174, 208, .055) 1px, transparent 1px);
+  background-size: 88px 88px;
+  -webkit-mask-image: radial-gradient(112% 96% at 8% 50%, #000 0%, rgba(0, 0, 0, .35) 42%, transparent 66%);
+  mask-image: radial-gradient(112% 96% at 8% 50%, #000 0%, rgba(0, 0, 0, .35) 42%, transparent 66%);
+}
+/* L2b 噪点打散渐变色带，暗色大面积不显廉价的关键一步 */
+.bg__noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: .05;
+  mix-blend-mode: overlay;
+}
+/* L3 只负责文字对比度，不再负责藏图 */
+.bg__scrim {
+  background:
+    linear-gradient(90deg, rgba(4, 7, 13, .92) 0%, rgba(4, 7, 13, .66) 24%, rgba(4, 7, 13, .16) 44%, transparent 58%),
+    radial-gradient(126% 108% at 64% 46%, transparent 46%, rgba(3, 5, 11, .62) 100%);
+}
+.brand, .stage, .foot { position: relative; z-index: 1; }
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-6) var(--s-8);
+}
+.brand__mark { width: 30px; height: 30px; color: var(--accent-hi); flex: none; }
+.brand__name { color: var(--text-hi); font-size: 16px; font-weight: 700; letter-spacing: .01em; }
+.brand__rule { width: 1px; height: 18px; background: var(--line-strong); }
+.brand__latin {
+  font-family: var(--ff-mono);
+  font-size: var(--fs-meta);
+  letter-spacing: .18em;
+  color: var(--text-mute);
+  text-transform: uppercase;
+}
+
+.foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-5) var(--s-8);
+  font-size: var(--fs-meta);
+  color: var(--text-mute);
+}
+.foot__meta { display: flex; align-items: center; gap: var(--s-3); }
+.foot__dot { width: 3px; height: 3px; border-radius: var(--r-4); background: var(--line-strong); }
+.foot code { font-family: var(--ff-mono); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
+.badge {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-4);
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: var(--fs-meta);
+}
+.badge svg { width: 13px; height: 13px; color: var(--ok); }
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-8);
+  padding: var(--s-6) var(--s-8) var(--s-8);
+  max-width: 1560px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.pitch { max-width: 30ch; }
+.pitch__rule {
+  display: block;
+  width: 44px; height: 2px; margin-bottom: var(--s-5);
+  background: var(--accent);
+  opacity: .8;
+}
+.pitch h1 {
+  margin: 0 0 var(--s-4);
+  font-size: var(--fs-display);
+  line-height: 1.16;
+  font-weight: 700;
+  letter-spacing: -.018em;
+  color: var(--text-hi);
+  text-wrap: balance;
+}
+.pitch p { margin: 0; font-size: 16px; color: var(--text); letter-spacing: .01em; }
+
+.card {
+  width: 384px;
+  padding: var(--s-7) var(--s-6);
+  border-radius: var(--r-3);
+  border: 1px solid rgba(0, 200, 255, .20);
+  background: var(--surface-2);
+  box-shadow: var(--sh-3), inset 0 0 20px rgba(0, 200, 255, .05);
+  backdrop-filter: blur(20px) saturate(120%);
+  -webkit-backdrop-filter: blur(20px) saturate(120%);
+}
+.card h2 { margin: 0; font-size: var(--fs-title); font-weight: 700; letter-spacing: -.01em; color: var(--text-hi); }
+.card__lead { margin: var(--s-2) 0 var(--s-6); font-size: var(--fs-label); color: var(--text-mute); }
+
+.field { display: block; margin-bottom: var(--s-4); }
+.field__label {
+  display: block;
+  margin-bottom: var(--s-2);
+  font-size: var(--fs-label); font-weight: 500; color: var(--text);
+}
+.control {
+  position: relative;
+  display: flex; align-items: center;
+  height: 48px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: rgba(255, 255, 255, .035);
+  transition: border-color var(--t-1), background-color var(--t-1), box-shadow var(--t-1);
+}
+.control:hover { border-color: var(--line-strong); }
+.control:focus-within {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, .055);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.control__icon {
+  display: grid; place-items: center;
+  width: 44px; height: 100%; flex: none;
+  color: var(--text-mute);
+}
+.control__icon svg { width: 17px; height: 17px; }
+.control input {
+  flex: 1 1 auto; min-width: 0;
+  height: 100%; padding: 0;
+  border: 0; background: none;
+  color: var(--text-hi);
+  font-size: var(--fs-body);
+}
+.control input::placeholder { color: var(--text-mute); opacity: .8; }
+.control input:focus-visible { outline: none; }
+.control__ghost {
+  width: 44px; height: 100%; flex: none;
+  border: 0; background: none; cursor: pointer;
+  color: var(--text-mute);
+  display: grid; place-items: center;
+  transition: color var(--t-1);
+}
+.control__ghost:hover { color: var(--text-hi); }
+
+.row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--s-3);
+  margin: var(--s-2) 0 var(--s-6);
+  font-size: var(--fs-label);
+}
+.check { position: relative; display: inline-flex; align-items: center; gap: var(--s-2); cursor: pointer; color: var(--text); }
+.check input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.check__box {
+  width: 16px; height: 16px; flex: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, .04);
+  display: grid; place-items: center;
+  transition: border-color var(--t-1), background-color var(--t-1);
+}
+.check__box svg { width: 11px; height: 11px; color: var(--accent-ink); opacity: 0; }
+.check input:checked + .check__box { border-color: var(--accent); background: var(--accent); }
+.check input:checked + .check__box svg { opacity: 1; }
+.check input:focus-visible + .check__box { outline: 2px solid var(--accent-hi); outline-offset: 2px; }
+.link { color: var(--text-mute); text-decoration: none; transition: color var(--t-1); }
+.link:hover { color: var(--accent-hi); }
+
+.submit {
+  width: 100%; height: 48px;
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--s-2);
+  border: 0; border-radius: var(--r-2);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 15px; font-weight: 700; letter-spacing: .01em;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), var(--sh-2);
+  transition: background-color var(--t-1), transform var(--t-1), box-shadow var(--t-1);
+}
+.submit:hover { background: var(--accent-hi); }
+.submit:active { transform: translateY(1px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), var(--sh-1); }
+.submit svg { width: 16px; height: 16px; }
+
+.alert {
+  display: flex; align-items: flex-start; gap: var(--s-2);
+  margin-bottom: var(--s-4);
+  padding: 10px var(--s-3);
+  border: 1px solid rgba(240, 104, 124, .34);
+  border-left: 2px solid var(--danger);
+  border-radius: var(--r-1);
+  background: rgba(240, 104, 124, .09);
+  color: #ffd9e0;
+  font-size: var(--fs-label);
+}
+.alert svg { width: 15px; height: 15px; flex: none; margin-top: 2px; color: var(--danger); }
+.card__foot {
+  margin: var(--s-5) 0 0;
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-meta);
+  color: var(--text-mute);
+}
+
+@media (max-width: 1180px) {
+  .brand, .foot, .stage { padding-left: var(--s-6); padding-right: var(--s-6); }
+  .pitch { max-width: 26ch; }
+}
+@media (max-width: 960px) {
+  .stage { grid-template-columns: minmax(0, 1fr); gap: var(--s-7); }
+  .pitch { max-width: none; }
+  .card { width: 100%; max-width: 420px; }
+  .bg__art { background-size: auto 92%; background-position: 50% 6%; }
+}
+@media (max-width: 640px) {
+  .bg__art { background-size: 172% auto; background-position: 50% 2%; }
+  .bg__scrim {
+    background:
+      linear-gradient(180deg, rgba(4, 7, 13, .30) 0%, rgba(4, 7, 13, .86) 42%, var(--surface-0) 100%),
+      radial-gradient(120% 70% at 50% 18%, transparent 26%, rgba(3, 5, 11, .72) 100%);
+  }
+  .brand { padding: var(--s-5) var(--s-5) 0; }
+  .brand__rule, .brand__latin { display: none; }
+  .stage { padding: var(--s-6) var(--s-5) var(--s-7); }
+  .card { padding: var(--s-6) var(--s-5); }
+  .foot { padding: var(--s-4) var(--s-5) var(--s-5); flex-direction: column; align-items: flex-start; }
+}
+@media (max-height: 720px) {
+  .stage { padding-top: var(--s-4); padding-bottom: var(--s-5); }
+  .card { padding: var(--s-5); }
+  .field { margin-bottom: var(--s-3); }
+  .row { margin-bottom: var(--s-4); }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; }
+}
+</style>
+</head>
+<body>
+<main class="login" data-testid="login-page">
+  <div class="bg" aria-hidden="true">
+    <span class="bg__base"></span>
+    <span class="bg__art"></span>
+    <span class="bg__grid"></span>
+    <span class="bg__noise"></span>
+    <span class="bg__scrim"></span>
+  </div>
+  <header class="brand">
+    <svg class="brand__mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <path d="M16 2.6 27.4 9.3v13.4L16 29.4 4.6 22.7V9.3z" stroke-linejoin="round" />
+      <path d="M16 10.4 21.4 13.5v6.2L16 22.8l-5.4-3.1v-6.2z" stroke-linejoin="round" opacity=".55" />
+      <circle cx="16" cy="16.6" r="1.9" fill="currentColor" stroke="none" />
+    </svg>
+    <span class="brand__name">企业智脑</span>
+    <span class="brand__rule" aria-hidden="true"></span>
+    <span class="brand__latin">Enterprise Brain</span>
+  </header>
+
+  <div class="stage">
+    <section class="pitch">
+      <span class="pitch__rule" aria-hidden="true"></span>
+      <h1>私有化企业智能分析平台</h1>
+      <p>让企业数据，成为生产力</p>
+    </section>
+
+    <section class="card" aria-labelledby="login-title" data-testid="login-panel">
+      <h2 id="login-title">欢迎回来</h2>
+      <p class="card__lead">使用企业账号登录工作台</p>
+
+      <div class="alert" role="alert" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" /><path d="M12 8v5" stroke-linecap="round" /><path d="M12 16.2h.01" stroke-linecap="round" />
+        </svg>
+        <span>用户名或密码不正确</span>
+      </div>
+
+      <form data-testid="login-form" autocomplete="on">
+        <label class="field">
+          <span class="field__label">用户名</span>
+          <span class="control">
+            <span class="control__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
+              </svg>
+            </span>
+            <input type="text" name="username" placeholder="请输入用户名" autocomplete="username" />
+          </span>
+        </label>
+
+        <label class="field">
+          <span class="field__label">密码</span>
+          <span class="control">
+            <span class="control__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3.5" y="10.5" width="17" height="10.5" rx="2.5" /><path d="M7.5 10.5V7a4.5 4.5 0 0 1 9 0v3.5" />
+              </svg>
+            </span>
+            <input type="password" name="password" placeholder="请输入密码" autocomplete="current-password" />
+            <button class="control__ghost" type="button" aria-label="显示密码">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" /><circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          </span>
+        </label>
+
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" name="remember" />
+            <span class="check__box" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+            </span>
+            <span>记住我</span>
+          </label>
+          <a class="link" href="#forgot">忘记密码？</a>
+        </div>
+
+        <button class="submit" type="submit" data-testid="login-submit">
+          进入工作台
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14" /><path d="m12 5 7 7-7 7" />
+          </svg>
+        </button>
+      </form>
+
+      <p class="card__foot">没有账号？联系管理员在工作台内开通</p>
+    </section>
+  </div>
+
+  <footer class="foot">
+    <div class="foot__meta">
+      <span class="badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.7 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1 1 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z" /><path d="m9 12 2 2 4-4" />
+        </svg>
+        本机部署 · 数据不出内网
+      </span>
+      <span class="foot__dot" aria-hidden="true"></span>
+      <span>企业内网专用</span>
+    </div>
+    <div class="foot__meta">
+      <code>v0.9.3</code>
+      <span class="foot__dot" aria-hidden="true"></span>
+      <span>节点 <code>EB-01</code></span>
+    </div>
+  </footer>
+</main>
+</body>
+</html>
