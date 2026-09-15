@@ -1,0 +1,41 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stylelint/stylelint/main/packages/stylelint/config.schema.json",
+  "ignoreFiles": ["**/node_modules/**", "dist/**", "src/assets/theme.css", "**/*.vue"],
+  "reportNeedlessDisables": true,
+  "rules": {
+    "color-no-hex": [true, { "message": "色值只能来自 tokens.css 的 var(--*)（视觉文档 §5.1）" }],
+    "block-no-empty": [true, { "message": "空的规则块或 @media 块属于死代码，直接删（视觉文档 §1 空 @media 5 处）" }],
+    "function-no-unknown": [true, { "ignoreFunctions": ["v-bind", "deep", "color-mix"] }],
+    "unit-allowed-list": ["px", "em", "rem", "%", "s", "ms", "deg", "fr", "vh", "vw", "ch"],
+    "declaration-property-value-disallowed-list": [
+      {
+        "/^(?:color|caret-color|background|background-color|border(?:-(?:top|right|bottom|left))?(?:-color)?|outline-color|fill|stroke|text-shadow|box-shadow)$/": ["/rgba?\\(/", "/hsla?\\(/", "/\\b(?:red|blue|green|white|black|gray|grey|silver|navy|teal)\\b/"]
+      },
+      { "severity": "error", "message": "颜色只能引用 var(--*) 或由 token 派生，裸 rgba/hex/颜色关键字一律拦下（V6 锁色值）" }
+    ],
+    "declaration-no-important": true,
+    "time-min-milliseconds": [100, { "severity": "warning", "message": "动效短于 100ms 是抖动，不是利落" }]
+  },
+  "overrides": [
+    {
+      "files": ["src/components/ui/**/*.css", "src/assets/tokens.css"],
+      "rules": {
+        "declaration-property-value-allowed-list": [
+          {
+            "font-size": ["/var\\(--/", "/^(?:0|inherit|medium|large|x-large|xx-large|small)$/", "/^calc\\(/"],
+            "/^margin/": ["/var\\(--/", "/^(?:0|auto|inherit|normal)(?: (?:0|auto|inherit|normal))*$/"],
+            "/^padding/": ["/var\\(--/", "/^(?:0|auto|inherit|normal)(?: (?:0|auto|inherit|normal))*$/"],
+            "/^(row-|column-)?gap$/": ["/var\\(--/", "/^(?:0|normal|inherit)(?: (?:0|normal|inherit))*$/"],
+            "border-radius": ["/var\\(--/", "/^(?:0|50%|100%)(?: (?:0|50%|100%))*$/"],
+            "box-shadow": ["/var\\(--/", "/^none$/", "/^inset var\\(--/"],
+            "transition-duration": ["/var\\(--/", "/^0s$/"]
+          },
+          {
+            "severity": "error",
+            "message": "尺度属性必须走 var(--*)，裸字号/裸间距/裸圆角/裸阴影不允许（V6 锁色值与锁间距）"
+          }
+        ]
+      }
+    }
+  ]
+}
