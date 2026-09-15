@@ -298,3 +298,80 @@ r3 明确主文档同时包含：
 - S1 遗留仍未动（本轮无授权范围变更）：`policy_version` 仍为 `resource-policy-v2`；`POST /upload` 只记录 principal 未强制 `resource:upload`；`/api/v1/*` 无 token 时 401 报文仍是中文 `请先登录` 而非 `authentication_required`（容器门本轮实测复现）；未实现“认领无主文档”的写操作。
 - 本轮未做：未改 `frontend/`；未在宿主库跑 `scripts/migrate.py`（宿主 PG 里 `metric_definitions` 表尚未建立）；`tmp/e2e/REPORT.md` 的 P0-1 结论订正仍未做；浏览器端到端未做。
 - 口径：容器门已首次全绿，但浏览器端到端、Dataset/Artifact/会话历史落 PG、Chroma→PGVector、配置中心草稿-校验-发布-回滚、镜像 digest 锁定仍未完成，**r7 不把项目标为生产可用**。
+
+## 13. r8（2026-09-15）浏览器端到端首轮、复验轮与五个真实缺陷收口
+
+- 修订性质：本轮做四件事——① 首轮**经 nginx 边缘**的浏览器端到端验收（子 Agent 执行，主 thread 逐条复核原始日志）；② 对它报出的每个 P0/P1 独立定位并修复；③ 第二轮定点复验 + 镜像重建后端到端复验；④ 处置子 Agent 的两轮**不实发现**。`docs/handoff/2026-09-14-consolidated-fix-plan.md` 三波仍是唯一权威计划，Wave 1/2/3 已全部合树，本轮属计划外缺陷收口，未新增波次。
+- 测试基线：`.venv\Scripts\python.exe -m pytest -q` -> **690 passed, 22 skipped**，约 31 秒。轨迹 665（r7 收口）→ 679（`e216e5b`，09:46 实测）→ 682（`84af113` +3）→ 690（`3e35481` +8）。口径必须是该 venv 的 python，裸 `python` 是 anaconda3，会静默 skip 掉整套依赖真实库的用例。
+- 容器门：run8 **23/0**、run9 **24/0**、run10 **24/0**（树 `c6c6009`）、run11 **24/0**（树 `84af113`）、run12 **24/0**（树 `3e35481`，10:45 完成；本轮构建因 buildkit 缓存被 GC 而重装整套依赖，耗时约 28 分钟，run11 同一门 6 分钟），日志 `tmp/container_gate_run{8..12}.log`。run11/run12 的镜像内容用容器内 grep 直接核对（例：`grep -c '已取消，未执行' /app/app/agents/orchestrator.py`=1、`grep -c '图表生成时直接使用' /app/app/agents/tools.py`=0），不靠"应该已经重建"推断。
+
+### 13.1 首轮浏览器端到端（45 项）与逐条复核
+
+- 路径：`http://localhost/`（nginx 1.27.5）同源反代 `/api/v1`，**未直连 8001**；Playwright + Chromium headless。报告与 121 份证据在 `tmp/browser_e2e/`（`tmp/` 被 `.gitignore:13` 忽略）。
+- 结果：B1–B6 共 45 项 -> 通过 24 / 失败 12 / 未覆盖 4 / 部分 1 / 事实 2；P0×3、P1×6、P2×5，另按 `docs/frontend-plan-2026-09-14.md` §2 单列 4 条迁移注意事项（洞察→「异常与告警」、审批→「报销自查」、图谱撤入口，三页不就地镀层）。
+- 我独立接受并修的：P0-1 卷属主（`Dockerfile` 未建 `/app/documents`，命名卷继承 root:root，每次 `POST /upload` 死在写临时文件而健康检查全绿）、P0-3 恢复流丢主体（`app/agents/orchestrator.py:947` 只带 `thread_id`）、P1-3 健康检查假绿灯（`app/common/monitoring.py:196` 只看 HTTP 状态）。
+- 我订正的：P0-2 原引用 `logs/B4_chart_response.json` 作"admin 出图失败"证据，但该文件是**成功**响应（25823 字节 PNG）。真实缺陷是 `/chart`、`/export` 把失败兜成 **HTTP 200 + `{"error": …}`**（见 13.4）。
+- 我撤回的（均为我自己的判断失误）：① 指控子 Agent"删引导 admin 并重启 backend"——`docker inspect` 显示 `Created=9/14 14:41Z`、`StartedAt=9/15 00:08:44Z`，那次是**我**为 `docker cp` 做的**重启**而非重建，`users.id=1` 正是那次播种产生的，访问日志里 `DELETE /api/v1/users/1` 是 **403**；② 同一凭据的 401 是 PowerShell `Invoke-RestMethod` 的 body 编码副作用；③ 由②派生的 r7「`AUTH_PASSWORD_HASH` 非默认口令」推断作废，它就是 `bcrypt("admin123")`。
+
+### 13.2 复验轮（09:29–09:56，树 `c6c6009` 运行栈）新增并成立的四条
+
+- **R-新1（P0，已修）** 文档检索结构性不可达：无部门账号提问 → `authorization_unavailable`；带部门账号上传成功后提问 → `未找到`。根因不是检索侧而是**写入侧**：作用域取自前端表单（`department: str = Form("")`），全仓又没有事后改元数据的接口（只有 `/users/password` 与 `/profile`，后者写用户画像不是 `users.department`），于是每个文档都以空部门入库、任何谓词都滤掉它。实证：`tmp/browser_e2e/logs/RV_B3_chroma_filter_proof.txt` 三段对照（原谓词 0 命中 / 放宽空部门 2 命中 / 只留密级 2 命中），存储元数据实测 `department: ''`。修复见 13.3。
+- **R-新2（P1，已修）** 内部提示脚手架进用户可见回答：`app/agents/tools.py` 把 `用户查询: {query}` 和一句写给模型的「图表生成时直接使用上述数据样本中的字段名和数值」拼进工具返回值，而模型不可达时该返回值**就是**答案。源头修，不在展示层打补丁。
+- **R-新3（P1，已修）** 「取消」不产生任何差别：批准与取消两条流的 `text` 事件**逐字相同**，且被拒动作照样执行。定位与实测见 13.3。
+- **R-新4（P2，已修）** `/chart`、`/export` 以 HTTP 200 返回业务失败，与 `/upload-excel` 已改 403 的口径不一致。实测（run11 镜像，经 nginx）：admin `POST /chart` → `200 {"error":"artifact owner must have a department scope","path":null}`；`POST /export {"format":"docx"}` → `200 {"error":"不支持格式: docx"}`。见 13.4。
+- 同时被复验确认为**已修**的：P0-1 上传→列表→解析→预览→删除五步在容器里全通（`POST /api/v1/upload` 200、`parse_status:ready`、`index_publication:published`、预览出正文、删除后 catalog 归零且 Chroma 0 chunk）；P0-3 恢复流不再报鉴权错且执行并产出与分析一致的数字；`a38faf5` 的新错误码 `403 department_scope_required` 与「失败不留孤儿文件」；`c6c6009` 的 `degraded` 上报（`{"status":"ok","model_count":0,"model_present":false}` + `problems=["knowledge_graph_read_only","open_platform_apps_read_only","model_not_available"]`）。
+- 复验轮另一条**运维事实**：`/health/details` 在边缘不是裸路径——nginx 只反代 `/api/` 与 `/api/v1/health`（`deploy/nginx.conf:50`、`deploy/nginx.conf:68`），`http://localhost/health/details` 落到 SPA 兜底返回 `200 text/html`；看详情必须走 `/api/v1/health/details` 且带 Bearer（不带 → 401，正确）。
+
+### 13.3 本轮修复（五处，逐处给判据）
+
+- **`c21c342` 上传文档的作用域由上传者决定**：`app/api/v1/chat.py:1554` 从认证主体派生 `department`，并在响应里回显（`:1683`），不再取前端表单。这同时堵住另一半问题——原先前端能把文档"投"进任意部门的结果集。无主体的历史调用仍记为无主（legacy）行，不猜归属。
+- **`0e34a41` 预检要说实话**：`scripts/check_deployment_env.py` 在 `AUTH_DEPARTMENT` 为空时打 `warn`（不阻断，rc 仍 0），因为无部门的首管理员登录得进来却上传不了数据、出不了图、也检索不了文档。README 同时列全三条被拒路径，并撤掉我上一轮写错的"事后再补部门"指引。
+- **`70792ce` 统计摘要不再假 N/A**：`_answer_query` 向 `describe()` 要 `sum`，而 `describe()` 根本不产 sum 行，于是每次回答都是「合计: 金额: N/A」，而同一次上传的 profile 早就报了真合计。合计改为直接从帧取（`app/agents/tools.py:243`）；`describe()` 给不出的其它统计仍如实 N/A，不编数。
+- **`84af113` 拒绝必须真的拒绝**：恢复流的取消分支只做 `update_state(消息)` + `Command(goto="supervisor")`，而被挂起的 worker 从没被标记完成，于是 supervisor 把它**重新派发并执行**，会话还**再次挂起**。我隔离复现（`tmp/probe_hitl_paths.py`，强制 MemorySaver、不连宿主 PG）：修复前 `workers=['chart']` 且 `check_interrupt` 在取消后仍返回 `pending=['chart']`；修复后取消分支为每个被拒节点写入结果（`app/agents/orchestrator.py:987-996`），`workers=['chart']` 的内容变成「已取消，未执行：📈 生成图表」且不再挂起。
+- **`3e35481` 失败要有状态码、没评分不许编**：`/chart`、`/export` 先查归属前置条件（`app/api/v1/data.py:270`，与 `/upload-excel` 同一个 `department_scope_required`），不支持的类型/格式给 400 稳定码，意外失败记日志并回 500 码而非把异常串吐给客户端（全仓无调用方读那个 200 body：前端两处路由零引用，实测 `rg 'v1/chart|v1/export' frontend/src` 无命中）。同时 `相关度` 两处编造被收：聊天侧 `d.get("_score", "?")` 让无评分命中显示成 `相关度:?`，MCP 侧 `d.get('_score', 0)` 把同一件事报成"相关度 0.00"，统一走 `app/rag/retrieval_pipeline.py:332` `format_relevance()` → 无评分显示「未评分」。
+
+### 13.4 run11 与 run12 上的端到端实证（我自己打的，非转述）
+
+- **run11（树 `84af113`，10:10–10:12，脚本 `tmp/probe_r8_e2e.py`，输出 `tmp/r8_e2e_out2.txt`）** —— 经 nginx `http://localhost/api/v1`，建两个同权限不同部门的临时账号：
+  - 作用域实证（`c21c342` 的唯一缺证据项）：甲部账号上传 → `POST /upload` 200，`GET /documents/catalog` 返回 **`department='R8甲部'`、`owner_id='r8-probe-a'`**（此前恒为 `null`）。
+  - 检索实证（R-新1 闭环）：同部门提问「打车报销上限是多少元？」→ **命中 473**，带来源 `[1] 来源:r8-scope-….txt`；乙部同问 → `未找到`（不跨部门泄露）；admin → `authorization_unavailable`（13.6 第一条）。
+  - HITL 实证（`84af113` 闭环）：批准流文本 = 「暂无数据文件…」（节点真执行），取消流文本 = 「已取消，未执行：📈 生成图表」，**两条不再逐字相同**；取消后再批准不会重复挂起。
+  - 当轮回答里仍显示 `相关度:?`，这正是 13.3 里 `3e35481` 要收的那个默认值。
+- **run12（树 `3e35481`，10:49，脚本 `tmp/probe_r8_e2e2.py`，输出 `tmp/r8_e2e2_out.txt`）** —— 上面四项全部复现，另有：
+  - `相关度:未评分`（不再是 `?`）；批准/取消两条流里既无 `【…Agent 返回】` 前缀也无内部提示串。
+  - `POST /chart`：无部门主体 → **403 `department_scope_required`**；不支持类型 → **400 `unsupported_chart_type`**；`POST /export` 不支持格式 → **400 `unsupported_export_format`**（同轮 run11 上这三例实测仍是 200 带 `error`）。
+  - **新测出的遗留（不是推断）**：会话停在 HITL 挂起时按停止键 `POST /ask/{sid}/cancel` → 200 `{"cancelled":true}`，但**挂起没被清**；随后 `POST /approve {"approved":true}` → 被"停止"的动作照样执行。待定语义见 13.6。
+  - 收尾：我建的 2 个账号与 3 个文档全部删除，复验 `GET /users` 仅剩 `admin`、`GET /documents/catalog` 为 `[]`。
+- 容器内只读清点（`docker exec … /app/.venv/bin/python`，跑 `SELECT count(*)`，不写）：`users` **1**、`documents` 5、`document_versions` **0**、`datasets` 5、`sessions` 33、`session_messages` 86、`artifacts` 4、`index_registry` 5、`trace_events` 791、`retrieval_traces` **0**、`metric_definitions` **0**。两个 0 各是一条真实遗留：`retrieval_traces` 的写入方只在 `app/rag/debug.py:68`，未接进 `/ask` 主链路；`metric_definitions` 空因 S7 写入方至今无生产调用点。`documents` 5 而 `document_versions` 0 说明**删除只清了版本表，PG `documents` 表没有 DELETE 语句**（全仓该表只有一处 INSERT UPSERT，`app/api/v1/chat.py:497`，无人读），留下一批引用已删文件的幽灵行。
+- 运维事实：run12 的 `docker compose build migrate` 因 buildkit 缓存被 GC（`docker system df` 显示 36GB 缓存 / 23.45GB 可回收）而重装依赖，耗时约 28 分钟（run11 同一门 6 分钟）。门本身不受影响，但重建时间不能按 6 分钟预估。
+
+### 13.5 子 Agent 后期不实内容的四轮处置（一律不采信，附我实测）
+
+- **图谱 503 泄露宿主机信息**：不成立。`app/api/v1/graph.py` 不存在、`git grep KG_EXTRA_PATH` 无命中；图谱路由在 `app/api/v1/intelligence.py:106/133`，写失败抛的是常量 `detail="storage_read_only"`（`app/api/v1/intelligence.py:124`）。我实测经 nginx：匿名 `POST` → **401 `请先登录`**，admin `POST` → **503 `{"detail":"storage_read_only"}`**。响应体不含 IP/端口/用户目录。它引用的 `logs/GRAPH_503_detail_leak.txt`、`data/admin_token.json` 全盘不存在。
+- **空部门文档跨部门泄露**：不成立为"检索泄露"。`app/rag/filters.py` 在 `c6c6009..HEAD` 零改动，部门谓词 `{department: {$in: departments}}` 的 `departments` 明确剔除空值（`app/rag/filters.py:27-34`），空部门调用方直接 `authorization_unavailable`。它引用的 `logs/B3_cross_department_leak.txt`、`logs/B3_delete_permission.txt` 不存在，`chat.py:1688 can_manage` 这个函数全仓没有。我在 run11/run12 上实测：甲部文档 473 命中，乙部同问 `未找到`（见 13.4）。**但**它指向的语义冲突是真的：`app/common/rbac.py:34` `doc_visible` 把 `department == ""` 视为公开，与检索侧相反——登记为未决（见 13.6 问 (e)），不按 P1 记。
+- **「admin `/chart` 返回 503 `chart_generation_failed`」与「`【chart Agent 返回】` 前缀仍可见」**：不成立且不可能成立。`chart_generation_failed` 是我 10:12 才写进 `data.py` 的字符串，而容器内 `grep -c chart_generation_failed /app/app/api/v1/data.py` = **0**；它给的捕获时间（10:01–10:04、10:25–10:27）当时宿主时钟分别是 09:56 与 10:24。它引用的 `tmp/bug_1026_chart_text.txt`、容器 `/tmp/bug*`、`/tmp/rv_chart_latest.py` 在我两次实取（10:23:28、10:24:24）均为"不存在"。`用户查询` 现在全仓只出现在一句注释里（`app/agents/tools.py:424`），`nodes.py` 命中 0。前缀 `【…Agent 返回】` 由 `orchestrator.py:428` 写进图消息，但两条 SSE 出口都显式跳过它（`app/api/v1/chat.py:1158`、`app/api/v1/chat.py:1276`），我的探针输出里也确实没有。
+- 它还把我 10:12 的 `3e35481`（已提交）三个文件说成"另一个 Agent 的未提交改动"，并称在自己"停手"期间跑了主机 pytest。**该子 Agent 自 10:0x 起的追加报告一律不采信**，我只采信其 09:30 与 09:51 两轮中我逐条读过原始日志的部分（那些原始文件确实存在且内容与结论一致）。
+- 同轮它报的「残留」也对不上：browser-e2e-rv-237.txt（82 字节）、3 个 r8-e2e-*.csv、11 个 artifact、9 个孤儿会话——我实测 catalog 为空、数据集 5 个、artifacts 表 4 行（13.4 末段）。它唯一可信的计数是 users 仅剩 admin。
+- 我自己的流程失误：把第一轮结果交给它复验时，没有先要求"证据文件必须 `Test-Path` 通过 + 实取时钟"，导致两轮假发现进入我的待整合队列（各消耗一轮复核）。已在 13.6 的遗留里记下方法约束：任何新发现必须先给出可 `Test-Path` 的原始文件与实际 `Get-Date` 时间戳，否则不进入计划。
+
+### 13.6 仍存缺陷与遗留（登记，未顺手修）
+
+- **需你决策的语义（唯一阻断"开箱可用"的一条）**：默认 `admin` 没有部门，因此**不能对知识库提问**（`app/rag/filters.py:34-38` 硬拒 → 界面显示 `文档检索不可用（error_code=authorization_unavailable）`），也不能上传数据、出图（403）。两条路：(e1) 引导管理员必须配 `AUTH_DEPARTMENT`（预检已 warn，但生产上仍可能是空）；(e2) `role=admin` 在检索侧走 `policy.py` 的 `administrator_scope` 全部门可见。现在 `rbac.py:34`（空=公开）与 `filters.py`（空=拒绝）是**两套相反语义**，不统一就会一直出现"目录里看得见、问答里查不到"。
+- 后端：数据集与 artifact **没有删除 API**（P1-6），验收残留已经攒到 5 个数据集、4 条 artifact、33 个会话 / 86 条消息、PG 「documents」表 5 行幽灵行（见 13.4 末段实测）；`data.py` 里两处 200-带-error 已收（实测全仓再无 HTTP 路由返回 `{"error": str(e)}`），同族写法只剩流内与工具内两处：`app/agents/orchestrator.py:945` 仍把异常串 `yield {"error": str(e)}` 给上层、`app/tools/visualize.py:152` 以 `{"error": str(e), "path": None}` 记失败；HITL 挂起时按停止键 `POST /ask/{sid}/cancel` 只翻转在跑流的取消位，**不清 Graph 挂起**——实测见 13.4「停止后再批准」一行，已在 run12 上实测（13.4），语义待定：「停止」到底等于「拒绝该动作」还是只停当前流；`app/scheduler/jobs.py` 无 Principal；`DATA_DIR` 双份 import 期解析；`app/tools/excel.py:258` 白名单 `eval()`；无 `X-Request-ID` 中间件 → `Principal.request_id` 恒空；S1 遗留（`policy_version=resource-policy-v2`、`POST /upload` 未强制 `resource:upload`、401 报文中文）；`app/common/cache.py` 四函数零调用方；`_is_production_environment()` 8 份副本；`data/0008_…sql` 草稿仍在你手上。
+- 跨端契约：P1-5 artifact 内容 URL 只认 Bearer 头，`<img src>` 带不了，故界面永远看不到图（`app/storage/artifacts.py:56-62`）——要动的是签名 URL 或 cookie 作用域，属契约变更，未动。
+- 前端线（未经授权不改）：`DocPanel.vue:444` 删除按钮 `v-if="isAdmin"` 而后端允许 owner 删（`app/common/policy.py:36` 列了 `ACTION_DELETE`）→ 非管理员上传的文档在界面上删不掉，只能走 API；`DocPanel.vue` 乱码 `澶辫触` 1 处（另 4 处 `?` 经前端线核实是字面量兜底串），以及 `app/agents/tools.py` 之外的 `??????` 已由前端计划 F7 的错误码字典接管——三页按 §2 裁定不镀层。
+- 环境事实：本机 Ollama **零模型**（`model_count:0`、`model_present:false`），任何需要 LLM 生成/归因/`_ai_analysis()` 的路径未经受控验证，本轮所有"回答"都是确定性工具输出；宿主 PG 未跑 `scripts/migrate.py`（故 `metric_definitions` 缺表），这是我有意没做。
+
+- 两条我自己查出来的新遗留（不属任何报告）：**「停止」不清 HITL 挂起**（13.4 run12 实测）；**PG「documents」表被写成只插不删的幽灵表**（5 行指向已删文件，删除路径清的是 document_versions，全仓该表无任何读点，app/api/v1/chat.py:497）。
+
+### 13.7 本轮环境扰动（如实）
+
+- 我（主 thread）的写操作：提交 `c21c342`/`0e34a41`/`70792ce`/`84af113`/`3e35481` 五个修复与 8 个新用例；跑 run11、run12 两次容器门（各重建镜像并 `up -d`）；两次端到端探针建的 2 个临时账号 + 3 个临时文档**已全部删除并复验**；容器内只跑 `SELECT count(*)` 与 `grep/md5sum` 只读命令。未改 `frontend/` 任何文件。
+- 未能清掉的残留（都是"没有删除面"导致，即 P1-6）：5 个 `browser-e2e-*.csv` 数据集、4 条 artifact 记录、33 个会话与 86 条消息（含已删账号的孤儿会话，`GET /sessions` 只认本人，我无法从 API 清）、PG `documents` 表 5 行幽灵行。
+- 子 Agent 的写集仅 `tmp/browser_e2e/**`；它自 10:0x 之后报告的三处"新发现"、三处"残留"（`browser-e2e-rv-237.txt` 82 字节、3 个 `r8-e2e-*.csv`、11 个 artifact、9 个孤儿会话）**我实测均不存在或与计数不符**（catalog 为 `[]`、数据集 5 个、artifacts 4 条），一律未采信、未写入结论。
+- 我自己的失误（如实）：① 首轮把"复验"整体外包给子 Agent 且未要求"证据文件必须 `Test-Path` 通过 + 实取 `Get-Date`"，导致三轮不实发现进入我的待整合队列，各花掉一轮复核；② `4427231` 首次提交信息写了未实证结论，已 `--amend` 撤下；③ 一次 `io.open(p,"w",newline=...)` 参数错误在抛异常前已截断 `tests/test_file_upload_security.py`，用 `git checkout --` 恢复后重放补丁，净损失为零但属真实事故；④ 一次 docker 输出把含口令的 `DATABASE_URL` 打进终端，后续脚本已加脱敏；⑤ 给同一子 Agent 重复发送过同一条纠偏消息。
+- 工作树噪音（非本轮制造，未处置）：`tests/` 下 60+ 个未跟踪的 `browser_*.png/.cjs/.json` 是历史浏览器验收产物落在跟踪目录里；`chroma_db/*` 是被宿主侧跑测试/探针弄脏的跟踪二进制。两者都建议由你决定是 `git rm --cached` + 忽略，还是提交，我没有动。
+
+### 13.8 口径
+
+- 容器门 24/0 + 两轮浏览器端到端 + run11/run12 定点实证 = **「装得上、登得进、传得上、查得到、拒绝算拒绝」在部署栈上被验证过**；不等于生产可用：仍缺真实模型链路、Dataset/Artifact/会话历史落 PG、Chroma→PGVector、配置中心草稿-校验-发布-回滚、镜像 digest 锁定，且 13.6 第一条（管理员检索语义）未决时，开箱唯一账号的知识问答仍不可用。
