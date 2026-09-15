@@ -66,6 +66,8 @@ A 走到 V5(接线) 之前必须等到 G2，否则停下等，不要自己造原
 | G-A-3 (F3) | 🟡 **代码绿，真机未验** | `a07294f` + 补漏 `bd38c00`：单实例 + 请求/响应拦截 + 3s 去重 + `expiring`/真过期共用收尾；`DocPanel`、`DataPanel` **两份**重复全局拦截器都删；`rg '\?{4}' src` 0 命中、`rg 'window.alert' src` 0 命中 | 2026-09-15T16:13:43 | 总控 |
 | **G-INT** | 🟢 **两线合并可用** | `c12b698`（`fe-prims` merge `codex/fe-trunk`，**零冲突**，写入集确实不相交）→ `07ff441`。合并树三门全绿：`npm run build` 276ms、`npx vitest run` 93 passed、`npm run lint` exit 0 | 2026-09-15T16:13:43 | 总控 |
 | **G5** (lockfile 同步) | 🟢 **闸门可用** | `scripts/check_lockfile_sync.mjs`：直接依赖范围 vs lockfile 已锁版本，离线确定性。实证：主树 `frontend/` exit 0（6 个）；`fe-trunk` HEAD exit 2 精确命中 `postcss-html 2.0.0 vs ^1.8.1`；A 对齐后 exit 0（14 个）。由 `scripts/run_frontend_tests.ps1` 默认前置调用，`-SkipLockCheck` 可跳，主树端到端跑通（gate + `vite build` 231ms，工作树未变脏）| 2026-09-15T16:4x | 总控 |
+| **G-C-1** (R10 鉴权稳定码) | 🟡 **代码绿，真机未验** | `895ee18`：五站点只改 `detail` 值（`app/main.py:104/109`、`app/common/authorization.py:53`、`app/api/v1/auth.py:110` → `authentication_required`；`app/main.py:113` → `account_unavailable`），状态码与白名单未动；`contract-v1.md:31/:34/:70/:71/:73-74` 已登记含两码区别；`tests/test_auth_stable_codes.py` 195 行钉死。**`token_expired` 拆分主动不做**（`verify_token` 把过期与伪造都折成 `None`，判不准就不猜）——我认可并记账。总控亲跑主树 HEAD 全量 **727 passed / 22 skipped / 0 failed**（36.73s）。缺真机：旧镜像仍吐中文 | 2026-09-15T16:3x | C 线 + 总控 |
+| **G-B-2** (散文别名 + 枚举收口) | 🟢 | `14a7ff8`：`PROSE_ALIASES`（`errcodes.js:81-82`）+ `clampResult`（`:146-150`，`code: known ? code : ""`，原文降级进 `rawCode`）+ `isCodeShape`/`normalizeProseKey`（标点尾巴也能归一，如 `账号不可用！`）。总控亲跑 `npx vitest run` → **127 passed / 7 files**（491ms），较上轮 93 **增 34 条** | 2026-09-15T16:2x | B 线 + 总控 |
 
 ---
 
@@ -145,6 +147,18 @@ npm error Missing: postcss-safe-parser@6.0.0 from lock file
 - **同一份派单给 A 发了两次**（`01a0a42d-caa9`、`01a0a42e-2aa4`，target 同为 `01a0a357-…`，正文完全一致）。上一轮我犯过同一形状的错误并写进交接摘要，本轮仍复犯——原因是我把「补发」当「重试」，没有先确认第一次已经投递成功。B 的派单只发一次，无补救。影响限于我自身的派发记录污染，指令本身幂等（要求的是「把这个已有改动单独提交」），不会让 A 重复劳动。
 - **给 A 的「部署断了」断言，发出时只有间接证据**（我读到 `Dockerfile:6` 就下了结论）。补核之后结论成立，但顺序应是先核实 `docker-compose.yml:205` 与 `deploy/README.server.md:13` 再断言。
 - 主树 `app/**`、`migrations/**` 本轮**零未提交改动**，`git status --porcelain -- app migrations` 已自证；375 行脏项全是运行时产物，归属见 §5 待拍板 ③。
+
+### 4A.9 我查出的一条真跨线缝：`account_unavailable` 进了线、没进枚举
+
+C 的 R10 让 `app/main.py:113` 开始吐 `account_unavailable`，`contract-v1.md` 也登记为 canonical，但 `app/agents/contracts.py:87` 的 `ErrorEnvelope.code` 那个 16 档 `Literal[...]`（`:88 authentication_required` … `:103 internal_error`）**不含它**——`git grep -rn account_unavailable -- app` 只有 `main.py:113` 一处。后果是 B 线被迫把它标成 `FRONTEND_ONLY_CODES`（`errcodes.js:53`，测试 `:70/:71` 钉着"前端自扩、蓝本不含"）：B 16:25 提交时 C 的码还没落（16:31），**它当时标得没错，是两条线各自正确、合起来是假话**。
+
+处置：① 已派 C 把该码补进 Literal（单独 commit，加前先查有无测试钉死枚举成员集/长度；发现"未知码即拒绝"的对偶逻辑会被影响就停手报我）；② **记账待办**：C 落地后派 B 把 `account_unavailable` 从 `FRONTEND_ONLY_CODES` 移进蓝本列表并同步 `:66/:70/:71` 三条断言——**在 C 落地前不要让 B 动**，否则它是照着未落地的状态改，白改一遍。
+
+### 4A.10 集成时机：三线都有 commit，但我**故意不合**
+
+`fe-trunk` = `f39ab53`（A 的 V0，只动 `package.json` 一行）、`fe-prims` = `14a7ff8`（B 的 V5，只动 `errcodes.js` + 其测试）——两边都从 `f8703f7` 分叉，**改动文件集天然不相交**，合并零冲突。但 A 此刻工作树里有**未提交的 `frontend/src/assets/theme.css`**（V1 进行中）。在带未提交改动的树里做 merge commit，等于把别人没写完的东西卷进我的提交——这正是我记账过的 e2 事故形状。
+
+裁定：**等 A 的 V1 落一个 commit 之后**，在集成树一次合完，再跑 `build` / `vitest` / `lint` / `lint:colors` / `playwright` 五闸（第五闸现在是 G5 lockfile 检查，`scripts/run_frontend_tests.ps1` 默认前置）。附带利好：A 的 `f39ab53` 落地后，我那几份文档里「开工第一件事 `npm ci`」的指令**重新可用**，不用再打补丁。
 
 ---
 
