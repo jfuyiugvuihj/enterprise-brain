@@ -369,6 +369,8 @@ export function createStreamReducer(msg, state) {
   }
 }
 
+// TODO(B 线 / G2 合并后)：这张错误字典归 lib/errcodes.js 独占，届时这里改成查它，
+// 别再维护第二份。总控已记账，A 线不自行实现。
 export function friendlyErrorText(state, fallback = '本轮回答未能完成') {
   const codes = {
     no_answer_produced: '本轮未产出任何结论（no_answer_produced），请重试或补充数据范围。',
