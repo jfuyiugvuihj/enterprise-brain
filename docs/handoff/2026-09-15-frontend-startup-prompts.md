@@ -38,7 +38,7 @@ Step 2 起按工单顺序串行执行：F1 → F2 → F3 → V1 → V2 → V5(�
 - 每步完成后，把工单 §6 完成度快照里对应的那条证据改成"已消除"+ 本步 commit 号，不要只打勾。
 - 每步开工前 git merge codex/data-file-catalog（拿后端最新事实）；冲突即停并报告，不强解、不覆盖对方改动。
 - 不许 git add -A / reset --hard / checkout . / clean -fd。仓库根还有别人未提交的东西，路径必须写全。
-- worktree 里没有 .env，跑不了真后端：验收一律按工单 §8.1 用 Playwright 从磁盘 fulfill；不要试图起后端服务或跑迁移。
+- worktree 里没有 .env，但**不需要**：`vite.config.js` 把 /api 与 /static 代理到 http://localhost:8001，而容器栈常驻（backend healthy、worker、redis、postgres、nginx :80）。所以 `cd frontend; npm run dev` 就能做**真机端到端**验收。两条铁律：(a) 验收前先确认后端镜像比源码新——改过 app/** 未重建镜像 = 你测的是旧行为；(b) 只用指定探针账号，且验收后删掉自己建的数据（库里 5 数据集 / 4 artifact / 33 孤儿会话的残留就是没人清账攒出来的，R8/B-10 落地前只会更多）。禁止在 worktree 里起后端进程或跑迁移。
 - 需要后端配合的项（R1 员工告警、R2 artifacts 列表、R3 sources 事件、R5 预审自动取标准、R8 删除 API、e2 admin 检索）
   只登记到 docs/handoff/2026-09-15-backend-followup-requests.md，禁止顺手改后端代码来"解除阻塞"。
 - 权限判定不许来自 localStorage（eb_role 是假权限，C-3）；没有真权限下发前管理视图对所有人隐藏。
@@ -128,7 +128,7 @@ components/ui/**、lib/errcodes.js、tests/visual/**、playwright.config.js、.s
 身份：独立验收 Agent，不写业务代码。工作目录 C:\Users\fengx\PycharmProjects\fe-trunk。
 只允许新建/修改 tests/**、docs/handoff/2026-09-15-acceptance-report.md。
 任务：把工单 §6 的每条"完成度证据"重新实测一遍，并核对 A/B 两条线的提交是否真的兑现了完成定义。
-手段：npm run build、npx vitest run、npx stylelint、Playwright 五档截图（磁盘 fulfill，不起后端、不连真库）。
+手段：npm run build、npx vitest run、npx stylelint 必跑；Playwright 五档视觉基线用**磁盘 fulfill**（基线不能依赖真库数据，否则会漂）；功能验收**可以**打真容器栈（dev 5173 → 代理 localhost:8001），但必须先确认后端镜像不旧于源码，且用完删掉自己建的数据，不许起后端进程或跑迁移。
 每条结论都要有：命令原文、退出码、关键输出片段、产物文件路径与实取时间戳。
 不许：改 src/**、改 app/**、为了通过测试放宽断言、把"应该已完成"当成"已验证"。
 ```

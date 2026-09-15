@@ -42,7 +42,7 @@ A 与 B 的交集 = **空**。合并顺序固定：**B 先合入 A**（纯新增
 > - **建 worktree 时发现的真问题**：`codex/data-file-catalog` 的 HEAD 里 `frontend/src` 只有 9 个文件——7 个面板中的 5 个（`InsightPanel` `ApprovalPanel` `GraphPanel` `DashboardPanel` `DocumentPreviewModal`）、`assets/theme.css`、`lib/api.js`、`frontend/Dockerfile` **全是未跟踪文件**，只活在工作目录里。也就是说任何一次 clone 或 `git clean -fd` 都会拿到一个**三面板的旧应用**，而我此前所有文档描述的都是那七面板的现状。
 > - 处置：先整目录备份到 `C:\Users\fengx\PycharmProjects\frontend-wip-backup-2026-09-15`（35 文件 / 4.60 MB），再用一次**不改任何文件内容**的快照提交把它们纳入版本控制（`13e808d`，17 个文件）。刻意排除两项：`src/assets/login-reference.png`（2.06 MB、源码 0 引用）与 `browser_data_quick.js`（一次性 Playwright 探针，硬编码 `C:/tmp/pwtest`），两者都只在备份目录里。
 > - 构建实证（主树 `npm run build`）：`vite 8.0.16` / **82 modules / 314 ms** / `index.js` 185.30 kB（gzip 66.91）/ `index.css` 83.08 kB（gzip 16.78）；**两张登录页 PNG 共 2.37 MB 进了产物**（V2 换成 `login-earth.webp` 后可回收，见 §7 资产卫生）；产物里没有 `element-plus`，再次印证它是死依赖。
-> - **两条线各自开工前的第一件事**：worktree 里**没有** `node_modules`，也**没有** `.env`（未跟踪文件不随 worktree 复制）。所以各线先 `cd frontend; npm ci`（**别用 `npm i`**，会改 lockfile），并且**不要**在 worktree 里连真后端跑 `npm run dev`——没有 `.env` 就没有后端配置，验收一律按工单 §8.1 用 Playwright 从磁盘 fulfill。
+> - **两条线各自开工前的第一件事**：worktree 里**没有** `node_modules`，也**没有** `.env`（未跟踪文件不随 worktree 复制）。各线先 `cd frontend; npm ci`（**别用 `npm i`**，会改 lockfile）。但 `.env` 不是障碍：`vite.config.js` 的 /api 与 /static 代理指向 `http://localhost:8001`，容器栈常驻，所以 `npm run dev` 就能做真机端到端验收——**前提**是先确认后端镜像不旧于源码，且用完清掉自己建的数据。
 > - 主树的 `git status --porcelain -- frontend` 由 **19 → 2**（就是上面刻意排除的两个文件）。
 > - 授权：用户 2026-09-15 已授权 A / B 两条线修改 `frontend/**`；`app/**` 仍然禁止。
 
