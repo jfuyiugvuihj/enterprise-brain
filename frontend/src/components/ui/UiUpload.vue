@@ -195,7 +195,7 @@ defineExpose({ openPicker, take, rejected })
 
     <div v-if="error || codeLabel" class="ui-upload__error" role="alert">
       <span v-if="error">{{ error }}</span>
-      <span v-if="codeLabel" class="ui-upload__code">{{ codeLabel }}</span>
+      <span v-if="codeLabel" class="ui-upload__code" data-testid="ui-upload-code">{{ codeLabel }}</span>
     </div>
   </div>
 </template>
