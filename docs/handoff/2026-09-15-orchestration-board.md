@@ -788,3 +788,60 @@ A-5-④ 只收了"本次接线产生的孤儿"，没回头看全局表——这�
 - 工单包 docs/handoff/2026-09-16-batch2-worker-tickets.md（f3b368f），四棵树自 f3b368f 切出：be-r18=R18 取消代际、be-r15=R15-a/b 图谱定位与晋升、fe-dash=总览接 R14 聚合（该端点今天部署实测 200 但前端 0 命中，是新的悬空未接）、fe-alerts=洞察接真告警链 + 审批页定位（R1 裁定 (c) 的前端半边）。
 - 共同边界里**写死禁止一切 Docker 操作**，就是因为总控正在用这套栈做演示链路验收；合并权归总控，固定顺序 W6 → W7 → W4 → W5。
 - 环境三条硬事实（下次别再踩）：① 新工作树没有 .venv / node_modules（都被 gitignore），用**目录联接**复用主树与 fe-trunk 的，实测 be-r18 里 pytest 32 passed 且 import 的是本树 app/；② 建联接的命令**必须在工具层直接执行**，写进 PowerShell 脚本文件再用 powershell -File 读，会把非 ASCII 路径变成 mojibake（我建出的第一个 .venv 联接指向 浼佷笟鏅鸿剳\.venv，已 rmdir 摘链重建）；③ 目标不存在时 Test-Path 对联接根目录返回 False，别据此判定联接失败，要比子路径。
+
+
+## 4S. 第二批四单全部收口、部署栈追平，演示头号根因现形（2026-09-16 21:2x，总控亲测）
+
+### 4S.1 四单收取（合并权在总控，顺序仍是 W6 → W7 → W4 → W5；每条数字都是我自己重跑的）
+
+| 单 | 树 / worker 提交 | 我在该树独立跑到的 | 落主树后的实测 |
+|---|---|---|---|
+| W6 总览接聚合 | `fe-dash` `2161d1f` | 五闸全 0：421 tests / 色值 339 | merge 后主树五闸 432 tests / 337==锚 |
+| W7 洞察接告警链 | `fe-alerts` `9d327d8` | 五闸全 0：463 tests / 色值 336 | merge `0d57886` → 主树五闸 **496 tests**，实测色值 **334** → 棘轮 337→334（`4b5a7cb`） |
+| W4 R18 取消按代 | `be-r18` `eac2d80` | 该树全量 **867 passed / 22 skipped**（与其自述一致） | merge 后主树全量 **867 / 22** |
+| W5 R15-a/b + 0009 | `be-r15` `f2f9ab7`/`ea1eac5`/`82a3a36` | 首跑全量 1 红（`test_audit_persistence`）、单文件 20 passed、复跑 **890 全绿** | merge 后主树全量 **903 passed / 22 skipped**（867+36，账对得上） |
+
+R18 的 13 条用例里 `test_a_stop_while_parked_prevents_the_approve_from_running_the_action` 正是我
+记账的那条遗留（停在 HITL 挂起时按「停止」，之后再批准 → 被停的动作照样执行），现已钉死；
+契约 `cancel` 一节补上「不带 epoch 的 cancel 取消哪一代」，并明文推翻 R11 那句被证伪的话。
+
+### 4S.2 一处**我**造出来的假口径（教训，别再犯）
+
+工单随包给 W5 的那句「真机 = `unavailable` / `read_only`」是我在补 `KNOWLEDGE_GRAPH_STORE_PATH`
+**之前**取的快照。它被如实写进了 `docs/design/knowledge-graph-positioning.md`，成为一条过期断言。
+已在 `1c32361` 换成 20:56 实测（`storage_mode=json` / `durable=true` / `protection=none`，
+`problems` 只剩 `model_not_available`）并写清成立条件。**规则：给 worker 的"真机口径"必须带时点，
+且配置一动就要重取**——否则并行开发会把旧快照当现状传下去。
+
+### 4S.3 前后端镜像都已追平主树，`0009` 在真机回放成功
+
+- `docker compose --env-file deploy/.env.server build migrate` → 新 `enterprise-brain:local`；
+  `up -d` 后 migrate 日志 **`applied=1`**；psql 复核 `metric_definitions` 的 **11 个新列全部落地**
+  （是真列，不再是 `filters` JSONB 里的走私键）。
+- 镜像内容直接 grep 核对：`chat.py` 的 `release_request` 3 处、`app/knowledge_graph/promotion.py` 存在、
+  `state.py` 的 `cancellation_token` **0 处**（删净）。
+- 前端：新镜像 `94e6ae899800`（21:22:57），容器入口 `index-K4n7WuJu.js`，实测含
+  `dashboard/summary`、`alerts/rules`、`health/details` ⇒ W6/W7 界面已真上线。
+- 容器门 **22 passed / 0 failed**（新后端镜像，`--skip-build`）。
+- **易错清单 +1**：alpine 里的 busybox `grep` 传**多个 `-e`** 会漏报（我据此一度判定「新代码没上线」），
+  改单串逐个 grep 才对；`grep -c` 对压缩成一行的 bundle 恒等于 1，不能当次数用。
+
+### 4S.4 🔴 演示头号根因：不在代码，在这台机器的容器资源
+
+- `.wslconfig` 写死 `memory=8GB`（宿主 31.6GB），Docker VM 内 `MemTotal=8131204 kB` ⇒
+  `qwen2.5:14b` 的 9.0GB 权重装不下。实测：一个**与文档无关**的开放式提问，**301 秒后
+  `request.failed` + `error`，零字符输出**（SSE 序列里 22 个 heartbeat，一个 text 都没有）。
+- dockerd 里 `nvidia` runtime 已注册、宿主确有 RTX 4060 Laptop 8GB，但 compose 的 `ollama` 服务
+  **没有任何 GPU 声明** ⇒ 纯 CPU 推理。
+- `nomic-embed-text` 从未拉取 ⇒ 见 R21，向量侧一直在跑哈希假向量。
+- 三条都要动环境（改 `.wslconfig` 必须 `wsl --shutdown`，会重启 Docker 引擎），**未获你点头我不动**。
+  可选的止血：改用 `qwen2.5:7b`（4.7GB，能整卡进 8GB 显存；按当前 180–400KB/s 需整夜下载）。
+
+### 4S.5 记账与遗留
+
+- 新立 **R20**（`tests/test_auth.py` 直连宿主 PG 并在清理里 `DELETE`，跑全量=写库）、
+  **R21**（embedding 缺失静默降级成哈希假向量）。
+- 待你点头的琐碎项照旧：`app/api/v1/data.py:278` 换同文件常量；`docs/screenshots/` 是否入历史；
+  根目录 `bundle.js` / `idx.html` 探针产物（我删时被沙箱拦下，未强推）。
+- `frontend/dist/` 里堆着 **70+ 个历史 `index-*.js`**（只有 251229 字节那个是本次产物）——
+  §D-1 那条「死资源 2.32MB」的具体形态；它被 `.dockerignore` 排除，不影响镜像，但会污染工作树。

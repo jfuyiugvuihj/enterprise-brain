@@ -355,3 +355,40 @@ R12 已经把「停止 = 拒绝挂起动作」这条语义定了（§9 甲裁定
 **判据**：一条测试（或一段可粘贴的实测记录）证明「带外改文件之后，GET 的返回与文件一致」
 或「字段名/文档已经不再承诺这个能力」；两种收敛都算完成，**维持现状不算**。
 **优先级**：与 R15 同批讨论（R15-b 若把关系晋升做成 DB 表，这条会顺带消解）。
+
+---
+
+## 16. 跟进单 **R20**（2026-09-16 总控实测）：跑全量 pytest 会写宿主数据库，还在清理里 `DELETE`
+
+**事实（W5 报出，总控复述其判据并认可）**：`tests/test_auth.py:163` 的 `TestUserCRUD` 直连宿主
+PostgreSQL（`.env` 里 `DATABASE_URL=postgresql://fengx:***@localhost:5432/enterprise_brain` 实测存在），
+用例收尾执行 `DELETE FROM users WHERE username LIKE 'test_%'`。可复现的红：20:50:51 全量
+`test_duplicate_user` 失败（期望 `ok`，实为 `True`），20:51:22 同一份代码全量绿。未证实的机制猜测
+（不在本单结论里）：`app/common/auth.py::create_user` 逐调用决定走 PG 还是内存，同名用户可能在两个
+后端各建一份，唯一性只在单个后端成立。
+
+**为什么不能留**：AGENTS.md 明令「未经用户明确要求，不运行会修改数据库或改变外部环境的操作」。
+这条让「跑一次验收」本身变成写操作——每次我报 `N passed` 都顺带改了这台机器的库。
+
+**判据**：该文件不再触达任何真实 `DATABASE_URL`（显式跳过并写明条件，或注入临时库），并且全量
+连跑两遍结果一致。**只加一句「偶发，忽略」不算完成**。
+
+**优先级**：P1。不阻塞演示，但污染每一次回归数字的可信度。
+
+---
+
+## 17. 跟进单 **R21**（2026-09-16 总控实测）：embedding 模型缺失时静默降级成哈希假向量
+
+**事实**：`app/rag/retriever.py:23` 写死 `EMBED_MODEL = "nomic-embed-text"`；`app/rag/retriever.py:76`
+在失败时 `embeddings.append(self._fallback_embedding())`。这台机器的 ollama 里该模型**从未被拉取**，
+`docker logs` 实测 21:13:16 / 21:16:19 / 21:18:24 三次 `Ollama embedding fallback: HTTP Error 404`。
+`GET /api/v1/health/details` 的 `problems` 里没有任何 embedding 项，所以界面与探针都看不出向量在假跑。
+
+**后果**：向量检索长期"看起来在用"。此前 G3「admin 问得出知识库答案」那次命中，向量侧是哈希假向量，
+排序实际由 BM25 / 关键词支撑。任何一台没预置该模型的客户机开箱都是这个形态，而文档口径写的是向量检索。
+
+**判据**：① `/health/details` 增加 embedding 探测，缺失时 `problems` 给出稳定码（如
+`embedding_model_missing`）；② fallback 生效时答案侧带可区分的降级提示，不许静默；③ 一条测试钉住
+「404 不得被当成正常路径」。三条缺一不算完成；**先把模型装上**是运维动作，不替代本单。
+
+**优先级**：P0（演示前至少要做到「看得见」，否则我们讲的检索质量与机器上跑的检索不是一回事）。
