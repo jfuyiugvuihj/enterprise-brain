@@ -467,3 +467,52 @@ export function isRetryable(err) {
 export function errorText(code) {
   return resolveCode(cleanText(code), 0).message
 }
+/**
+ * 下载与预览走 responseType:'blob'，服务端 4xx/5xx 的 JSON 错误体也会以 Blob 形态回到手里。
+ * 读不出来就被降级成「文件下载失败」，把「没权限」误报成「坏了」—— 与 R1 同族的一条缝。
+ * 这里是纯函数：不做 IO、不依赖 axios 与 DOM，body 接受 文本 / 已解析对象 / 标量。
+ *
+ * 刻意**不采信非 JSON 正文**：健康链路上 blob 错误体一定是 JSON，HTML 与纯文本都是网关或
+ * 静态层塞进来的（nginx 的 Forbidden、502 页面），把它们当人话抛给界面比不抛更坏。
+ * 非 JSON 或空 body 时只按 HTTP 状态归类，句子仍出自 ERROR_CODES 字典。
+ *
+ * @returns {{ code: string, rawCode: string, message: string, retryable: boolean }} 与 normalizeError 同形状
+ */
+export function blobErrorText(body, status = 0) {
+  const effStatus = Number(status) || 0
+  let payload = null
+  if (typeof body === 'string') {
+    const text = body.trim()
+    if (text) {
+      try {
+        payload = JSON.parse(text)
+      } catch (_) {
+        payload = null
+      }
+    }
+  } else if (body && typeof body === 'object' && typeof body.text !== 'function') {
+    payload = body
+  }
+  if (payload === null || payload === undefined) {
+    return normalizeError({ response: { status: effStatus, data: {} } })
+  }
+  const data = typeof payload === 'object' ? payload : { detail: payload }
+  const codeStatus = effStatus || Number(data.status) || 0
+  return normalizeError({ response: { status: codeStatus, data } })
+}
+
+/**
+ * blobErrorText 的异步外壳：调用方手里是 Blob 时用这个，形状不变。
+ * 读不出文本（Blob 已失效 / 对象不对）一律降级为「只按状态归类」，不抛错，因为这条路径
+ * 本来就跑在 catch 里，二次抛错会把提示吞掉。
+ */
+export async function readBlobError(blob, status = 0) {
+  let text = ''
+  try {
+    if (typeof blob === 'string') text = blob
+    else if (blob && typeof blob.text === 'function') text = await blob.text()
+  } catch (_) {
+    text = ''
+  }
+  return blobErrorText(text, status)
+}

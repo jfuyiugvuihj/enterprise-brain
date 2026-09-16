@@ -8,8 +8,10 @@ import {
   STATUS_CODES,
   errorCodeLabel,
   errorCodeOf,
+  blobErrorText,
   errorText,
   formatError,
+  readBlobError,
   isRetryable,
   normalizeError,
 } from './errcodes.js'
@@ -471,5 +473,101 @@ describe('文案政策②：正文夹带裸码名（B-5-2）', () => {
       expect(BARE.test(entry.message || '')).toBe(false)
     })
     expect(BARE.test(FALLBACK_MESSAGE)).toBe(false)
+  })
+})
+describe('blob 错误体解析（B-5 ③，下载与预览的 403 不再被说成「坏了」）', () => {
+  it('403 的 JSON 错误体：读得出权限码，句子是人话且不含裸码名', () => {
+    const result = blobErrorText('{"detail":"permission_denied"}', 403)
+    inEnum(result, '403 权限')
+    expect(result.code).toBe('permission_denied')
+    expect(result.message).toBe(ERROR_CODES.permission_denied.message)
+    expect(result.retryable).toBe(false)
+    expect(result.message).not.toMatch(/[a-z][a-z0-9]*(_[a-z0-9]+)+/)
+  })
+
+  it('400 的 JSON 错误体：data.py 的部门范围码也认得', () => {
+    const result = blobErrorText('{"detail":"department_scope_required"}', 400)
+    inEnum(result, '400 部门范围')
+    expect(result.code).toBe('department_scope_required')
+    expect(result.message).toContain('部门')
+  })
+
+  it('非 JSON 一律不采信正文：HTML 网关页与纯文本都不许当人话', () => {
+    const html = blobErrorText('<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>', 502)
+    inEnum(html, '502 HTML')
+    expect(html.code).toBe('model_unavailable')
+    expect(html.message).toBe(ERROR_CODES.model_unavailable.message)
+    expect(html.retryable).toBe(true)
+    for (const leak of ['Bad Gateway', 'nginx', '<', 'html']) expect(html.message).not.toContain(leak)
+
+    const plain = blobErrorText('Forbidden', 0)
+    expect(plain.code).toBe('')
+    expect(plain.message).toBe(FALLBACK_MESSAGE)
+
+    const broken = blobErrorText('{not json at all', 400)
+    expect(broken.code).toBe('validation_error')
+    expect(broken.message).toBe(ERROR_CODES.validation_error.message)
+  })
+
+  it('空 body：有状态按状态归类，没状态走兜底句，四种空值都一样', () => {
+    for (const empty of ['', '   ', null, undefined]) {
+      const result = blobErrorText(empty, 403)
+      inEnum(result, '空 body 403')
+      expect(result.code, String(empty)).toBe('permission_denied')
+      expect(result.message).toBe(ERROR_CODES.permission_denied.message)
+    }
+    expect(blobErrorText('', 0).message).toBe(FALLBACK_MESSAGE)
+    expect(blobErrorText('', 0).code).toBe('')
+    expect(blobErrorText(undefined, 404).code).toBe('resource_not_found')
+  })
+
+  it('野外两种码字段形状都吃：顶层 error_code 与 detail.error_code（含 policy.py 别名）', () => {
+    expect(blobErrorText('{"error_code":"unsupported_file"}', 415).code).toBe('unsupported_file')
+    expect(blobErrorText('{"message":"model_unavailable"}', 503).code).toBe('model_unavailable')
+    const nested = blobErrorText('{"detail":{"error_code":"principal_inactive"}}', 403)
+    expect(nested.code).toBe('account_unavailable')
+    expect(nested.rawCode).toBe('principal_inactive')
+    expect(errorCodeLabel(nested)).toBe('')
+    const envelope = blobErrorText('{"detail":{"code":"index_publish_failed","message":"文件已收到，但没能进入知识库。","retryable":true}}', 500)
+    expect(envelope.code).toBe('index_publish_failed')
+    expect(envelope.message).toBe('文件已收到，但没能进入知识库。')
+    expect(envelope.retryable).toBe(true)
+  })
+
+  it('422 校验数组走 blob 也能归位，不退化成英文原句', () => {
+    const result = blobErrorText('{"detail":[{"loc":["body","rows"],"msg":"Field required","type":"missing"}]}', 422)
+    inEnum(result, 'blob 422')
+    expect(result.code).toBe('validation_error')
+    expect(result.message).toContain('rows')
+    expect(result.message).not.toContain('Field required')
+  })
+
+  it('中文散文 detail 走同一条路：鉴权中间件的「请先登录」照样收口', () => {
+    expect(blobErrorText('{"detail":"请先登录"}', 401).code).toBe('authentication_required')
+    expect(blobErrorText('{"detail":"账号不可用"}', 403).code).toBe('account_unavailable')
+    expect(blobErrorText('"请先登录"', 401).code).toBe('authentication_required')
+  })
+
+  it('readBlobError：手里是 Blob 时 await 一下，读不出来只按状态降级不抛错', async () => {
+    const fake = { text: async () => '{"detail":"permission_denied"}' }
+    expect(await readBlobError(fake, 403)).toEqual(blobErrorText('{"detail":"permission_denied"}', 403))
+    const gone = { text: async () => { throw new Error('Blob is detached') } }
+    const result = await readBlobError(gone, 404)
+    inEnum(result, 'Blob 失效')
+    expect(result.code).toBe('resource_not_found')
+    expect(result.message).toBe(ERROR_CODES.resource_not_found.message)
+    expect((await readBlobError('{"detail":"rate_limited"}', 429)).code).toBe('rate_limited')
+    expect((await readBlobError(null, 0)).message).toBe(FALLBACK_MESSAGE)
+  })
+
+  it('产物与 normalizeError 同形状，可直接喂 formatError / errorCodeOf / isRetryable', () => {
+    const result = blobErrorText('{"detail":"odd_download_code"}', 200)
+    inEnum(result, '未知下载码')
+    expect(result.code).toBe('')
+    expect(result.rawCode).toBe('odd_download_code')
+    expect(formatError(result)).toBe(FALLBACK_MESSAGE + '（错误码：odd_download_code）')
+    expect(errorCodeOf(result)).toBe('')
+    expect(isRetryable(result)).toBe(false)
+    expect(isRetryable(blobErrorText('{"detail":"model_unavailable"}', 502))).toBe(true)
   })
 })
