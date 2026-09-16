@@ -1,8 +1,10 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { errorDetail, http, isPermissionDenied } from '../lib/http'
-import { UiEmptyState, UiErrorState, UiLoadingState } from './ui'
+import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
+// 产物列表（W2-2 挂载）与两步删除状态机共用一份实现：两处删除入口的确认行为不许各写一遍
+import ArtifactList, { advanceDelete, deleteButtonLabel, deleteErrorView, isPendingDelete } from './ArtifactList.vue'
 
 const profile = ref(null)
 const dataFile = ref('')
@@ -20,6 +22,11 @@ const filesError = ref('')
 // 无权限 / 坏了 / 空列表是三张脸（R1c），文件列表与预览各自判一次。
 const filesDenied = ref(false)
 const selectingFile = ref(false)
+// 删除所选数据文件（W2-3）：只对当前选中的那一个发 DELETE，两步内联确认，不用 window.confirm
+const pendingFileDelete = ref('')
+const deletingFile = ref(false)
+const fileDeleteError = ref('')
+const fileDeleteDenied = ref(false)
 
 const quickActions = [
   { label: '📊 各列对比', query: '对比各列数据的最大最小值' },
@@ -139,6 +146,62 @@ async function downloadDataFile() {
   }
 }
 
+/**
+ * 删完不留残影（W2-3）：后端 R8 把数据文件与它自己的登记行一起 tombstone，
+ * 界面这边要同步清掉画像、表头与行，否则「已删除的文件」还在屏幕上带着完整预览，
+ * 下一次点开会让人以为它还在。dataFile 清空后 loadDataFiles 会自己挑剩下第一个补位。
+ */
+function clearTableState() {
+  profile.value = null
+  tableColumns.value = []
+  tableRows.value = []
+  tableTruncated.value = false
+  dataFile.value = ''
+  pendingFileDelete.value = ''
+}
+
+const fileDeleteView = computed(() => deleteErrorView({
+  denied: fileDeleteDenied.value,
+  detail: fileDeleteError.value,
+  subject: '这个数据文件',
+}))
+
+async function removeDataFile(filename) {
+  if (!filename || deletingFile.value) return
+  deletingFile.value = true
+  fileDeleteError.value = ''
+  fileDeleteDenied.value = false
+  try {
+    await http.delete('/data-files/' + encodeURIComponent(filename))
+    clearTableState()
+    await loadDataFiles()
+  } catch (err) {
+    // 别人的数据集删不掉是「没权限」，不是「删完了」：两张脸分开，且不给重试按钮（两步确认不许被压缩）。
+    fileDeleteDenied.value = isPermissionDenied(err)
+    fileDeleteError.value = errorDetail(err, '数据文件没能删除')
+  } finally {
+    deletingFile.value = false
+  }
+}
+
+function requestFileDelete() {
+  if (!dataFile.value || deletingFile.value) return
+  const step = advanceDelete(pendingFileDelete.value, dataFile.value)
+  if (step === 'arm') {
+    pendingFileDelete.value = dataFile.value
+    fileDeleteError.value = ''
+    fileDeleteDenied.value = false
+    return
+  }
+  if (step !== 'execute') return
+  pendingFileDelete.value = ''
+  removeDataFile(dataFile.value)
+}
+
+function cancelFileDelete() {
+  pendingFileDelete.value = ''
+}
+
 function closeDataPreview() {
   previewOpen.value = false
   previewError.value = ''
@@ -223,6 +286,9 @@ onMounted(loadDataFiles)
       </div>
     </section>
 
+    <!-- 分析产物（W2-2）：接 GET /artifacts 分页列表，挂在「数据文件」区之后 -->
+    <ArtifactList />
+
     <UiErrorState
       v-if="previewError && !previewOpen"
       title="数据预览没打开"
@@ -246,8 +312,34 @@ onMounted(loadDataFiles)
         <div class="data-file-actions">
           <button type="button" class="data-action-btn" @click="openDataFile">打开</button>
           <button type="button" class="data-action-btn" @click="downloadDataFile">下载</button>
+          <button
+            type="button"
+            class="data-action-btn data-action-btn--danger"
+            :disabled="deletingFile"
+            data-testid="data-file-delete"
+            @click="requestFileDelete"
+          >
+            {{ deleteButtonLabel({ pending: isPendingDelete(pendingFileDelete, dataFile), busy: deletingFile, label: '删除所选数据文件' }) }}
+          </button>
+          <UiButton
+            v-if="isPendingDelete(pendingFileDelete, dataFile)"
+            variant="ghost"
+            size="sm"
+            label="取消"
+            data-testid="data-file-delete-cancel"
+            @click="cancelFileDelete"
+          />
         </div>
       </div>
+
+      <UiErrorState
+        v-if="fileDeleteError"
+        :title="fileDeleteView.title"
+        :description="fileDeleteView.description"
+        :retryable="false"
+        data-testid="data-file-delete-error"
+        dense
+      />
 
       <!-- 列信息 -->
       <div class="col-list">
@@ -667,6 +759,16 @@ onMounted(loadDataFiles)
 .data-action-btn:hover {
   border-color: var(--blue);
   color: #b5c4ff;
+}
+
+/* 删除入口（W2-3）：只借 --danger 一个语义色，不给它加底色渐变（视觉文档 §5.3 彩色预算） */
+.data-action-btn--danger {
+  border-color: var(--border-2);
+  color: var(--danger);
+}
+
+.data-action-btn--danger:hover {
+  border-color: var(--danger);
 }
 
 .col-missing.ok {
