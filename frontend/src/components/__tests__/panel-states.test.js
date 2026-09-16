@@ -19,6 +19,7 @@ import InsightPanel from '../InsightPanel.vue'
 import ApprovalPanel from '../ApprovalPanel.vue'
 import DashboardPanel from '../DashboardPanel.vue'
 import DocPanel from '../DocPanel.vue'
+import DocumentPreviewModal from '../DocumentPreviewModal.vue'
 import ChatPanel from '../ChatPanel.vue'
 import { UiEmptyState, UiErrorState, UiLoadingState } from '../ui'
 
@@ -248,6 +249,48 @@ describe('DashboardPanel · 总览的四处状态 + 被吞掉的证据查询失�
     expect(s).toContain('retry-text="重新查询"')
   })
 })
+
+describe('DocumentPreviewModal · 预览进行态吃原语（A-5-4）', () => {
+  // 这个弹窗的根节点是 <Teleport to="body">：SSR 把内容写进 teleport 缓冲区，
+  // renderToString 只留下两枚注释标记。先把这件事本身钉住，免得下一轮有人误以为
+  // 「SSR 断言没写是因为漏了」，或者反过来删用例凑绿。
+  it('SSR 只留 teleport 标记：这一支的证据只能来自源码形状 + 原语实测', async () => {
+    const html = await renderToString(h({
+      render: () => h(DocumentPreviewModal, { open: true, loading: true, filename: '制度汇编.pdf', kind: 'pdf' }),
+    }))
+    expect(html).toContain('<!--teleport start-->')
+    expect(html).not.toContain('data-testid="ui-loading-state"')
+  })
+
+  it('loading 那一支只认 UiLoadingState：位置、参数、旧裸文本零留痕', () => {
+    const s = source('DocumentPreviewModal.vue')
+    const loadingAt = s.indexOf('<UiLoadingState v-if="loading"')
+    const errorAt = s.indexOf('<div v-else-if="error" class="preview-state')
+    expect(loadingAt).toBeGreaterThan(-1)
+    expect(loadingAt).toBeLessThan(errorAt)
+    expect(s).toContain('label="正在加载预览..."')
+    expect(s).toContain('variant="block"')
+    expect(s).not.toMatch(/class="preview-state"[^>]*>正在加载预览/)
+  })
+
+  // 面板里不手写 role（写了就是第二套形状），所以 role=status 这件事由原语那一侧实测。
+  it('block 档真产物带 role=status + aria-busy + 骨架块', async () => {
+    const html = await renderToString(h(UiLoadingState, { label: '正在加载预览...', variant: 'block' }))
+    expect(html).toContain('data-testid="ui-loading-block"')
+    expect(html).toMatch(/<div class="ui-loading-state[^"]*" role="status" aria-busy="true"/)
+    expect(html).toContain('正在加载预览...')
+  })
+
+  // 本批只换「进行中」这一支：失败脸与空脸仍是手搓 .preview-state（这个弹窗不在 A-3 的
+  // 七个面板名单里，接线要另起一批），所以反向钉住它们的定义不许被顺手删掉。
+  it('失败与空两支仍用 .preview-state，类定义必须留在文件里', () => {
+    const s = source('DocumentPreviewModal.vue')
+    expect(s).toMatch(/<div v-else-if="error" class="preview-state preview-error"/)
+    expect(s).toMatch(/class="preview-state">暂无数据<\/div>/)
+    expect(s).toContain('.preview-state {')
+  })
+})
+
 
 describe('DocPanel · 一条提示条拆成「哪种事没成」+ 两处空态', () => {
   it('SSR 首屏：空知识库画原语，两句话一字不改，emoji 图标交给原语的内置图标', async () => {
