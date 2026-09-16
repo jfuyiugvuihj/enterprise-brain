@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { fetchArtifactBlob, isArtifactRequest } from '../lib/artifacts'
+import { UiLoadingState } from './ui'
 
 const props = defineProps({
   src: String,
@@ -99,10 +100,7 @@ onUnmounted(() => {
       <img :src="displayUrl" :alt="caption || '图表'" class="chart-img" />
     </div>
 
-    <div v-else-if="loadState === 'loading'" class="chart-state" role="status">
-      <span class="chart-state-spinner" aria-hidden="true"></span>
-      <span class="chart-state-text">正在获取图表…</span>
-    </div>
+    <UiLoadingState v-else-if="loadState === 'loading'" label="正在获取图表…" variant="block" dense />
 
     <div v-else-if="loadState === 'error'" class="chart-state chart-state-error" role="status">
       <span class="chart-state-icon" aria-hidden="true">⚠️</span>

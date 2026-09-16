@@ -365,3 +365,41 @@ describe('ChatPanel · 会话空态 + 一次性失败提示（本面板不适用
     expect(s).not.toMatch(/\berrorCode\b/)
   })
 })
+
+
+describe('ChartViewer · 取图进行态吃原语（A-5-5）', () => {
+  // loadState 初值是 idle，SSR 只能拿到「该轮回答没有返回图表」那张脸；进行态要请求打到一半
+  // 才出现，node 里没有网络层可打 —— 所以这一支钉源码形状，role 那一截由原语实测。
+  it('三张脸顺序为 就绪 -> 进行 -> 失败，进行态只认 UiLoadingState', () => {
+    const s = source('ChartViewer.vue')
+    const at = (needle) => {
+      const i = s.indexOf(needle)
+      expect(i, needle).toBeGreaterThan(-1)
+      return i
+    }
+    const ready = at(`v-if="loadState === 'ready'"`)
+    const loading = at(`<UiLoadingState v-else-if="loadState === 'loading'"`)
+    const failed = at(`v-else-if="loadState === 'error'"`)
+    expect(ready).toBeLessThan(loading)
+    expect(loading).toBeLessThan(failed)
+    expect(s).toContain('label="正在获取图表…"')
+    expect(s).toContain('variant="block"')
+    // 旧进行态是自转 spinner，视觉文档 §8.4 第 5 条点名要骨架屏而不是转圈
+    expect(s).not.toMatch(/class="chart-state-spinner"/)
+    expect(s).not.toMatch(/<div v-else-if="loadState === 'loading'"[^>]*role="status"/)
+  })
+
+  it('dense 档真产物：role + aria-busy 由原语发，文案一字不差', async () => {
+    const html = await renderToString(h(UiLoadingState, { label: '正在获取图表…', variant: 'block', dense: true }))
+    expect(html).toMatch(/<div class="ui-loading-state[^"]*" role="status" aria-busy="true"/)
+    expect(html).toContain('ui-loading-state--dense')
+    expect(html).toContain('正在获取图表…')
+  })
+
+  // dense 不是审美选择而是等值：图表卡在 ChatPanel.vue:478 的消息气泡里，旧文案
+  // .chart-state-text 是 12px，dense 档文案走 --t-xs(12px)；不带 dense 会变 --t-sm(13px)。
+  it('字号等值有据：旧 .chart-state-text=12px，dense 走 --t-xs(12px)', () => {
+    expect(source(`../assets/theme.css`)).toContain(`--t-xs: 12px`)
+  })
+})
+
