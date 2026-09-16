@@ -664,3 +664,23 @@ A-5-④ 只收了"本次接线产生的孤儿"，没回头看全局表——这�
 ⇒ 总控现在**既读不到 A/B/C 的自述、也发不出新单、也无法另起执行者**。A 已交完 A-5 且工作树干净 = **无单可做的空转状态**。
 ⇒ 应对：A-6 全文落盘到 `docs/handoff/2026-09-15-frontend-startup-prompts.md` §7（`4fe7e01`），执行者改由**用户新开对话粘贴**接手；提示词里已写死工作树、分支、HEAD、禁改边界与自证要求。
 ⇒ 这条也解释了本节起总控节奏的变化：**能我做的（数字、审计、合并、契约、看板）我继续做；需要另一个执行者的单子一律先落盘再转人工**。
+
+## 4O. 状态板订正：三条过期判据 + 两条新「悬空未接」（2026-09-16 11:5x，用户问「还剩什么」时实测）
+
+### 4O.1 三条过期判据（别再照旧状态排期）
+
+- **C-2（R2 `GET /artifacts` + R8 删除级联）实际已落地**，看板仍挂「⚪ 中断（09-15 16:47）」⇒ 作废。证据：`app/api/v1/artifacts.py:168` 的 `@router.get("")` 分页列表（`DEFAULT_LIST_LIMIT`/`MAX_LIST_LIMIT`，且**复用 `authorization_decision(ACTION_VIEW)`——与 `_authorized_artifact` 同一个判断，没新造第二套权限链**，这点做对了）；`app/api/v1/artifacts.py:78` `DELETE /{artifact_id}`、`app/api/v1/data.py:234` `DELETE /data-files/{filename}` 均在。
+- 跟进单 §1 那张表：**R2 / R8 / R10 三行该标已交付**；**R3（canonical `sources` 事件）与 R5（`standard_source`）实测 `app/**` 0 命中，仍未落地**；B-6 日报路由、B-7 趋势聚合同样未落地。R1 按 §4F.5 裁定 (c) 后端零改动、403 保持。
+- 「停止 = 拒绝挂起动作」的甲裁定已随 R12 落地，但 §9.1 那三件配套真缺陷**未修**：`register_request` 无条件覆盖 `_REQUESTS[session_id]`、`_REQUESTS` 永不清理、`cancellation_token` 是死字段（`app/agents/contracts.py:121`、`app/agents/state.py:38`）。要修得先有 epoch／代际设计，**我判定是真缺陷但没擅自批准排期**。
+
+### 4O.2 两条新的「悬空未接」（写了没人用）
+
+- **`GET /artifacts` 列表在前端 0 消费者**：`git grep -n "/artifacts" -- frontend/src` 只有 per-id content 三类出现（`frontend/src/components/ChartViewer.vue:3`、`frontend/src/components/ChatPanel.vue:72`、`frontend/src/lib/artifacts.js:4`），**没有一处拉列表** ⇒ R2 只交付了「交成果」视图的后端半边。
+- **前端没有任何 dataset/artifact 删除入口**：全 `frontend/src` 的 delete 调用只有两处——`frontend/src/components/DocPanel.vue:243`（`/documents/{filename}`）与 `frontend/src/lib/sessions.js:187`（`/sessions/{id}`）⇒ **R8 的两个新 DELETE 前端未接**，误传的数据与图表在界面上删不掉，存量清理目前只能走脚本。
+- 连同原有 `docs/deployment/health-details-frontend-contract.md`（前端 0 引用），悬空清单现为 **3 条**。
+
+### 4O.3 仓库卫生：两条判据更新（旧数作废）
+
+- `tests/browser_*` 那批**已被 `.gitignore:17-19`、`:28` 收**：`git ls-files --others --exclude-standard` = **21 条**、其中 `browser_` **0 条** ⇒ 「未跟踪产物污染 status」在**状态层面已不成立**；磁盘上仍躺 78 个（tests/documents/frontend）+ 根目录 17 个，属随手可删的本地产物，不是仓库债。
+- 现在未跟踪只剩两类，都等你点头：`docs/screenshots/`（20 文件 = `live-2026-09-15/` 下 admin/staff 各 9 张 + `report.json`，外加 `chatpanel-error-face.png`）与 `docs/system-design-2026-09-16.md`。
+- `chroma_db/` 实测：`.gitignore:27` 有它，但 `git ls-files` 显示**仍跟踪 6 条**、工作树 **191.0 MB** ⇒ ignore 与 index 长期背离，所以它**永远脏**（跑一次全量 pytest 就又脏一轮）。§4G.5 的禁反跟踪令在三批在途期间继续有效。
