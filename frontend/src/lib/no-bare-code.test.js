@@ -18,7 +18,9 @@
  *
  * 棘轮语义（与色值 351、design-tokens 的 EXEMPT_MISSING 同一条规矩）：ALLOWLIST 只准缩短
  * 不准新增，且每一条必须至今仍命中；A-4 把 sessions.js 换成查 errcodes.js 之后还赖在名单里
- * 就是红。今天的账恰好 6 条 = 5 literal + 1 interp，全在 lib/sessions.js（A 的写入集，我不碰）。
+ * 就是红。2026-09-16 A-4-4 结清：六条欠账随 d42fb77 消失，名单与天花板同时归零；
+ * 判据本身与四组夹具一行未动，「名单空了」不等于「闸门空了」——「现存违规恰好等于名单」
+ * 那条仍要求真实树扫出零条，漏一条就点名一条。
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
@@ -35,17 +37,13 @@ const DIAGNOSTIC = /错误码|技术信息|诊断/
 /** 「插值出去的值就是码本身」：剥掉下标段与 String() 之后以码变量名结尾 */
 const CODE_TAIL = /(?:^|[.\s(])(?:errorCode|rawCode|error_code|code)$/
 
-const ALLOWLIST = [
-  { file: 'lib/sessions.js', line: 376, rule: 'literal', code: 'no_answer_produced', owedBy: 'A 线 A-4：friendlyErrorText 改吃 errcodes.errorText' },
-  { file: 'lib/sessions.js', line: 377, rule: 'literal', code: 'task_timeout', owedBy: 'A 线 A-4' },
-  { file: 'lib/sessions.js', line: 378, rule: 'literal', code: 'internal_error', owedBy: 'A 线 A-4' },
-  { file: 'lib/sessions.js', line: 379, rule: 'literal', code: 'authorization_unavailable', owedBy: 'A 线 A-4' },
-  { file: 'lib/sessions.js', line: 380, rule: 'literal', code: 'authentication_required', owedBy: 'A 线 A-4' },
-  { file: 'lib/sessions.js', line: 384, rule: 'interp', code: 'state.errorCode', owedBy: 'A 线 A-4：未知码走 errorCodeOf + 详情折叠区，别拼进 [错误] 前缀直出' },
-]
+// A-4-4 交割：下面六条欠账已在 d42fb77 清完，名单归零。名单为空不等于闸门为空——
+// 上面「现存违规恰好等于名单」那条要求真实树扫出零条，下面四组夹具继续反向证明
+// literal / interp / mustache / html-text 四条判据本身会红。
+const ALLOWLIST = []
 
 /** 只准降不准升：清掉一条就得同时把这个数改小，逼着有人对账 */
-const ALLOWLIST_CEILING = 6
+const ALLOWLIST_CEILING = 0
 
 /** 测试断言与夹具不是发给用户的文案，不进扫描范围 */
 const isScanTarget = (name) => /\.(js|vue|css)$/.test(name) && !/\.(test|spec)\.js$/.test(name)
@@ -379,12 +377,10 @@ describe('裸码名禁令 · 真实树棘轮（只准缩短）', () => {
     expect(ALLOWLIST.length).toBeLessThanOrEqual(ALLOWLIST_CEILING)
   })
 
-  it('正交控制：lib/sessions.js 单独扫恰好 6 条（5 literal + 1 interp）', () => {
+  it('正交控制：lib/sessions.js 单独扫零条（A-4-3 已删私有码表与码名直出）', () => {
     const hits = violationsOf('lib/sessions.js', readFileSync(join(SRC_ROOT, 'lib', 'sessions.js'), 'utf8'))
-    expect(hits.length).toBe(6)
-    expect(hits.filter((h) => h.rule === 'literal').length).toBe(5)
-    expect(hits.filter((h) => h.rule === 'interp').length).toBe(1)
-    expect(hits.filter((h) => h.rule === 'interp')[0].line).toBe(384)
+    // 空数组比对而不是数长度：以后真漏一条，输出直接点名是哪条判据、第几行
+    expect(hits.map((h) => h.rule + ':' + h.line)).toEqual([])
   })
 
   it('B 自己的写入集零违规：components/ui/** 与 errcodes.js 不占名单', () => {
@@ -392,13 +388,13 @@ describe('裸码名禁令 · 真实树棘轮（只准缩短）', () => {
     expect(mine.map((v) => keyOf(v))).toEqual([])
   })
 
-  it('四条判据在真实树里的分布记账（防某条判据被静默改废）', () => {
+  it('四条判据在真实树里的分布记账（账已归零；判据会红由下面的夹具证明）', () => {
     const byRule = FOUND.reduce((acc, v) => {
       acc[v.rule] = (acc[v.rule] || 0) + 1
       return acc
     }, {})
-    expect(byRule.literal).toBe(5)
-    expect(byRule.interp).toBe(1)
+    expect(byRule.literal || 0).toBe(0)
+    expect(byRule.interp || 0).toBe(0)
     expect(byRule.mustache || 0).toBe(0)
     expect(byRule['html-text'] || 0).toBe(0)
   })
