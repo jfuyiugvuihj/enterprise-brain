@@ -997,12 +997,6 @@ textarea:focus-visible {
   font-size: 10px;
 }
 
-.empty-state {
-  padding: 24px;
-  color: var(--muted);
-  text-align: center;
-}
-
 .error,
 .inline-error {
   color: #ffadb4;
