@@ -643,3 +643,24 @@ A-5-④ 只收了"本次接线产生的孤儿"，没回头看全局表——这�
 
 本会话 `wait_agent` 与其余 `multi_agent_v1__*` 一律返回 **unsupported call** ⇒ 总控**读不到子 Agent 的自述与交割报告**，只能靠 `git log` + 工作树干净度 + 亲跑闸门判断进度与验收。
 ⇒ 结论：以后所有验收结论一律标注"总控亲验"，**任何自述都不进看板**（§13.5 那条子 Agent 教训在本会话以另一种形式复现：我压根没收到它）。
+
+## 4N. A-5 并回主树 + 紧跟全量 pytest（这次是绿的）+ 一条影响排期的环境事实（2026-09-16 11:4x）
+
+### 4N.1 合并与等价证明
+
+`caf92c9` = merge `codex/fe-trunk`(A-5 六手 `033a11e`) 入主树。**并前**先证 `git status --porcelain -- app tests migrations frontend` = **0 行**（与 C 无在途脏文件相交）。
+新树哈希 **`HEAD:frontend` = `8e88b579bbf4bdc8e62152aca02ba916b874b0fe` = `033a11e:frontend`**，`git diff --stat 033a11e HEAD -- frontend` 空 ⇒ 逐字节相等。
+⇒ **§4L.1 那个 `254aab88…` 就此作废**，等价证明改用 `8e88b579…`。
+
+### 4N.2 §4L.2 的规矩当场兑现：合并后立刻全量 pytest
+
+`.venv\Scripts\python.exe -m pytest -q` @ `caf92c9` → **831 passed / 22 skipped / 0 failed（37.20s）**。
+这次没红，因为 A-5 只动 `theme.css`/`package.json`/4 个 `.vue`/`UiLoadingState.css`/`panel-states.test.js`，没碰被后端测试钉过文本的 `http.js`、`errcodes.js`。**规矩不是白立的**：上一轮同类合并（`232c39f`）就红了一条（§4L.2），差别只在改了哪个文件——不跑就不知道。
+
+### 4N.3 环境事实（影响后续所有派单）：子 Agent 命名空间在本会话**整体不可用**
+
+实测三条调用全部被运行时拒绝，错误串一律 `unsupported call`：
+`mcp__multi_agent_v1__send_input`、`mcp__multi_agent_v1__wait_agent`、`mcp__multi_agent_v1__spawn_agent`。
+⇒ 总控现在**既读不到 A/B/C 的自述、也发不出新单、也无法另起执行者**。A 已交完 A-5 且工作树干净 = **无单可做的空转状态**。
+⇒ 应对：A-6 全文落盘到 `docs/handoff/2026-09-15-frontend-startup-prompts.md` §7（`4fe7e01`），执行者改由**用户新开对话粘贴**接手；提示词里已写死工作树、分支、HEAD、禁改边界与自证要求。
+⇒ 这条也解释了本节起总控节奏的变化：**能我做的（数字、审计、合并、契约、看板）我继续做；需要另一个执行者的单子一律先落盘再转人工**。
