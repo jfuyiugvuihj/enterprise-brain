@@ -181,15 +181,21 @@ defineExpose({ openPicker, take, rejected })
     <p v-else class="ui-upload__empty" data-testid="ui-upload-empty">{{ emptyText }}</p>
 
     <ul v-if="rejected.length" class="ui-upload__rejected" role="alert" data-testid="ui-upload-rejected">
-      <li v-for="entry in rejected" :key="entry.name" class="ui-upload__rejected-item">
+      <!-- 码名走 data-code 通道供排查，不进正文（B-5 ② 政策；句子本身已是人话） -->
+      <li
+        v-for="entry in rejected"
+        :key="entry.name"
+        class="ui-upload__rejected-item"
+        data-testid="ui-upload-rejected-item"
+        :data-code="entry.code"
+      >
         {{ entry.name }}：{{ entry.message }}
-        <span class="ui-upload__code">{{ entry.code }}</span>
       </li>
     </ul>
 
     <div v-if="error || codeLabel" class="ui-upload__error" role="alert">
       <span v-if="error">{{ error }}</span>
-      <span v-if="codeLabel" class="ui-upload__code">{{ codeLabel }}</span>
+      <span v-if="codeLabel" class="ui-upload__code" data-testid="ui-upload-code">{{ codeLabel }}</span>
     </div>
   </div>
 </template>

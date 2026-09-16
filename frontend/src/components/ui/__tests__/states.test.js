@@ -247,3 +247,55 @@ describe('导出面', () => {
     expect(typeof primitives.isRetryable).toBe('function')
   })
 })
+
+/**
+ * 诊断区小字的形状约束（B-5-3b，总控纠偏）：data-testid 只能挂在标签上。
+ * 上一版我把属性拼进了文本节点内部，浏览器会把 data-testid="..." 当正文渲染出来 —— 那不是
+ * 诊断区，那是把 HTML 源码吐给用户。两条判据都要，缺第一条就是「能过但挡不住这个 bug」的空闸门：
+ *   判据 1  该元素的 textContent（浏览器真正显示的字）不含 data-testid 字样，且正好等于小字本身
+ *   判据 2  该元素的开标签属性里有 data-testid，值与约定一致
+ */
+const ELEMENT_RE = /<(p|span|div|small|code)(\s[^>]*?)?>([^<]*)<\/\1>/g
+
+function pickElementByShape(html, text) {
+  ELEMENT_RE.lastIndex = 0
+  let match = ELEMENT_RE.exec(html)
+  while (match) {
+    if (match[3].includes(text)) return { tag: match[1], attrs: match[2] || '', text: match[3], raw: match[0] }
+    match = ELEMENT_RE.exec(html)
+  }
+  return null
+}
+
+describe('错误码小字的诊断区标记（B-5-3b）', () => {
+  const LABEL = '错误码：department_scope_required'
+  const SITES = [
+    ['UiErrorState', 'ui-error-state-code'],
+    ['UiField', 'ui-field-code'],
+    ['UiSelect', 'ui-select-code'],
+    ['UiToast', 'ui-toast-code'],
+    ['UiUpload', 'ui-upload-code'],
+  ]
+
+  SITES.forEach(([name, testid]) => {
+    it(name + '：小字只以属性形式承载标记，绝不漏进正文', async () => {
+      const html = await render(primitives[name], { codeLabel: LABEL })
+      const el = pickElementByShape(html, LABEL)
+      expect(el, name + ' 没渲染出承载 codeLabel 的元素').not.toBeNull()
+      expect(el.text, name + ' 的正文里混进了属性源码').not.toContain('data-testid')
+      expect(el.text, name + ' 的正文应当正好是这句小字').toBe(LABEL)
+      expect(el.attrs, name + ' 缺诊断区标记').toContain('data-testid="' + testid + '"')
+    })
+  })
+
+  it('判据自证：把属性写进文本节点的那种形态一定被拦下', () => {
+    const broken = '<p class="ui-x__code"> data-testid="ui-x-code"' + LABEL + '</p>'
+    const fixed = '<p class="ui-x__code" data-testid="ui-x-code">' + LABEL + '</p>'
+    const brokenEl = pickElementByShape(broken, LABEL)
+    const fixedEl = pickElementByShape(fixed, LABEL)
+    expect(brokenEl.text.includes('data-testid')).toBe(true)
+    expect(brokenEl.attrs.includes('data-testid')).toBe(false)
+    expect(fixedEl.text.includes('data-testid')).toBe(false)
+    expect(fixedEl.attrs.includes('data-testid="ui-x-code"')).toBe(true)
+  })
+})

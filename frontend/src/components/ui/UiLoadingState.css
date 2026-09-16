@@ -1,0 +1,86 @@
+/* UiLoadingState —— 骨架屏。视觉文档 §8.4 第 5 条钉的是「--surface-3 微光扫过，而不是转圈」，
+   所以扫动只借两档表面色（--surface-3 → --surface-2）做明暗，不描边、不发光、不用渐变强调色。
+   动效属于状态反馈（theme.css:95 的口径），并在 prefers-reduced-motion 下整段关掉。 */
+
+.ui-loading-state {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3, 12px);
+  min-width: 0;
+}
+
+.ui-loading-state--dense {
+  gap: var(--s-2, 8px);
+}
+
+.ui-loading-state__label {
+  margin: 0;
+  max-width: 56ch;
+  color: var(--text-3);
+  font-size: var(--t-sm, 13px);
+  overflow-wrap: anywhere;
+}
+
+.ui-loading-state--dense .ui-loading-state__label {
+  font-size: var(--t-xs, 12px);
+}
+
+.ui-loading-state__bars {
+  display: grid;
+  gap: var(--s-2, 8px);
+  width: 100%;
+}
+
+.ui-loading-state__bar,
+.ui-loading-state__block {
+  display: block;
+  background-color: var(--surface-3);
+  background-image: linear-gradient(90deg, var(--surface-3) 0%, var(--surface-2) 45%, var(--surface-3) 90%);
+  background-size: 220% 100%;
+  animation: ui-loading-sweep 1.4s ease-in-out infinite;
+}
+
+.ui-loading-state__bar {
+  width: 100%;
+  height: var(--s-3, 12px);
+  border-radius: var(--r-sm, 8px);
+}
+
+.ui-loading-state__bar:nth-child(2n) {
+  width: 82%;
+}
+
+.ui-loading-state__bar:nth-child(3n) {
+  width: 64%;
+}
+
+.ui-loading-state--sm .ui-loading-state__bar {
+  height: var(--s-2, 8px);
+}
+
+.ui-loading-state--lg .ui-loading-state__bar {
+  height: var(--s-4, 16px);
+}
+
+.ui-loading-state__block {
+  width: 100%;
+  min-height: calc(var(--s-8, 64px) * 4);
+  border-radius: var(--r-md, 12px);
+}
+
+@keyframes ui-loading-sweep {
+  from {
+    background-position: 110% 0;
+  }
+
+  to {
+    background-position: -110% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-loading-state__bar,
+  .ui-loading-state__block {
+    animation: none;
+  }
+}

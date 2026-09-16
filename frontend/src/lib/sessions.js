@@ -1,5 +1,6 @@
 import { nextTick, shallowRef } from 'vue'
 import { http } from './http'
+import { formatError } from './errcodes'
 
 // 会话状态放在模块级 shallowRef，面板卸载也不会丢：切走再回来还是同一份会话。
 // 等 V3 上了 router，这份 store 直接交给路由上下文接管。
@@ -369,19 +370,21 @@ export function createStreamReducer(msg, state) {
   }
 }
 
-// TODO(B 线 / G2 合并后)：这张错误字典归 lib/errcodes.js 独占，届时这里改成查它，
-// 别再维护第二份。总控已记账，A 线不自行实现。
+/**
+ * SSE 失败帧 → 界面上一句人话。字典在 lib/errcodes.js（A-4-3 收口，这里不再有第二份码表）。
+ * 前缀 [错误] 保留：后端把失败也写成 "[错误] ..." 塞进同一条回答里
+ * （app/api/v1/chat.py:729、:1101），气泡要跟它同一形状，也才对着上 tests/
+ * test_legacy_chat_retrieval_scope.py:124 那条断言。
+ * 未知码不再把码本身当句子直出：走字典兜底句 + formatError 的「错误码：xxx」诊断小字，
+ * 与 UiErrorState 的 codeLabel 同一条通道；气泡里没有可折叠区，只能inline带出来。
+ * 顺序从"后端文本优先"改成"机器字段优先"：errorText 是自由文本，会夹裸码名，
+ * 现在也一律先过字典（摘码名、清 HTML 与 axios 英文原句、截 300 字）再上屏。
+ */
 export function friendlyErrorText(state, fallback = '本轮回答未能完成') {
-  const codes = {
-    no_answer_produced: '本轮未产出任何结论（no_answer_produced），请重试或补充数据范围。',
-    task_timeout: '请求超过系统处理时限（task_timeout）。',
-    internal_error: '服务内部错误（internal_error）。',
-    authorization_unavailable: '当前账号缺少部门授权范围（authorization_unavailable），请换带部门的账号或联系管理员。',
-    authentication_required: '登录状态已失效（authentication_required），请重新登录。',
-  }
-  if (state.errorText) return `[错误] ${state.errorText}`
-  if (state.errorCode && codes[state.errorCode]) return `[错误] ${codes[state.errorCode]}`
-  if (state.errorCode) return `[错误] ${state.errorCode}`
+  const code = String(state.errorCode || '').trim()
+  if (code) return `[错误] ${formatError({ detail: code })}`
+  const backendText = String(state.errorText || '').trim()
+  if (backendText) return `[错误] ${formatError({ detail: backendText })}`
   return `[错误] ${fallback}`
 }
 

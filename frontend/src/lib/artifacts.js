@@ -1,4 +1,5 @@
 import { http } from './http'
+import { readBlobError } from './errcodes'
 
 // Artifact bodies live behind authenticated routes (GET /api/v1/artifacts/{id}/content),
 // so an <img src> cannot load them: the browser sends no Authorization header on image
@@ -28,18 +29,6 @@ function createObjectUrl(blob) {
   return URL.createObjectURL(blob)
 }
 
-function readBlobError(blob) {
-  // A 4xx/5xx body is JSON, but responseType:'blob' hands it back as a Blob.
-  return blob.text().then(text => {
-    try {
-      const parsed = JSON.parse(text)
-      return parsed?.detail || parsed?.error_code || text.slice(0, 120) || ''
-    } catch (_) {
-      return ''
-    }
-  }).catch(() => '')
-}
-
 export async function fetchArtifactBlob(url, { signal } = {}) {
   const target = resolveArtifactUrl(url)
   if (!target) {
@@ -56,10 +45,14 @@ export async function fetchArtifactBlob(url, { signal } = {}) {
     const status = err?.response?.status
     const blob = err?.response?.data
     if (blob instanceof Blob && status) {
-      const detail = await readBlobError(blob)
-      const error = new Error(detail || `取图失败（HTTP ${status}）`)
+      // errcodes 的通用解析器接手（A-4-1）。私拷那份只回一个字符串，既不接 status，
+      // 又会把后端原串（常常就是裸码名 permission_denied）当文案抛给界面；
+      // 这里把 status 传进去，非 JSON / 空 body 也能按 HTTP 状态归类成一句人话。
+      const result = await readBlobError(blob, status)
+      const error = new Error(result.message)
       error.status = status
-      error.code = detail || `http_${status}`
+      error.code = result.code || `http_${status}`
+      error.retryable = result.retryable
       throw error
     }
     if (err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {

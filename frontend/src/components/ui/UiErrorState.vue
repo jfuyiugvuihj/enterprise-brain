@@ -60,7 +60,7 @@ const buttonSize = computed(() => (props.dense ? 'sm' : 'md'))
         <slot name="description">{{ description }}</slot>
       </p>
       <slot />
-      <p v-if="codeLabel" class="ui-error-state__code">{{ codeLabel }}</p>
+      <p v-if="codeLabel" class="ui-error-state__code" data-testid="ui-error-state-code">{{ codeLabel }}</p>
     </div>
 
     <div v-if="retryable || $slots.actions" class="ui-error-state__actions">

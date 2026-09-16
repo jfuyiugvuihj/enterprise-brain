@@ -128,7 +128,7 @@ function onChange(event) {
     </p>
     <div v-if="error || codeLabel" class="ui-field__error" :id="errorId" role="alert">
       <span v-if="error">{{ error }}</span>
-      <span v-if="codeLabel" class="ui-field__code">{{ codeLabel }}</span>
+      <span v-if="codeLabel" class="ui-field__code" data-testid="ui-field-code">{{ codeLabel }}</span>
     </div>
   </div>
 </template>

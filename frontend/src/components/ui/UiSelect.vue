@@ -216,7 +216,7 @@ defineExpose({ openList, closeList, choose, active, open, items })
 
     <div v-if="error || codeLabel" class="ui-select__error" role="alert">
       <span v-if="error">{{ error }}</span>
-      <span v-if="codeLabel" class="ui-select__code">{{ codeLabel }}</span>
+      <span v-if="codeLabel" class="ui-select__code" data-testid="ui-select-code">{{ codeLabel }}</span>
     </div>
   </div>
 </template>

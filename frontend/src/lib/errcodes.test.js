@@ -1,16 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
+  blobErrorText,
+  errorCodeLabel,
+  errorCodeOf,
+  errorText,
   ERROR_CODES,
   FALLBACK_MESSAGE,
-  FRONTEND_ONLY_CODES,
-  LEGACY_ALIASES,
-  PROSE_ALIASES,
-  STATUS_CODES,
-  errorCodeLabel,
-  errorText,
   formatError,
+  FRONTEND_ONLY_CODES,
   isRetryable,
+  LEGACY_ALIASES,
   normalizeError,
+  PROSE_ALIASES,
+  readBlobError,
+  STATUS_CODES,
+  UNRATIFIED_CODES,
 } from './errcodes.js'
 
 /** app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举 17 码（含主树 fa35a04 追认的 account_unavailable） */
@@ -45,6 +49,10 @@ const DATA_CODES = [
   'dataset_preview_failed',
   'chart_generation_failed',
 ]
+/** SSE 流内错误码：chat.py:1001 的 request.failed data.error_code，两份后端枚举都还没有它 */
+const STREAM_CODES = ['no_answer_produced']
+
+const ALL_CODES = [...BLUEPRINT, ...DATA_CODES, ...STREAM_CODES, ...FRONTEND_ONLY_CODES]
 
 const ENUM = Object.keys(ERROR_CODES)
 
@@ -65,7 +73,7 @@ const axiosError = (status, detail) => ({
 
 describe('码表蓝本', () => {
   it('只收录 contracts.py 17 码 + data.py 7 码，一个不自扩', () => {
-    expect(Object.keys(ERROR_CODES).sort()).toEqual([...BLUEPRINT, ...DATA_CODES, ...FRONTEND_ONLY_CODES].sort())
+    expect(Object.keys(ERROR_CODES).sort()).toEqual([...BLUEPRINT, ...DATA_CODES, ...STREAM_CODES, ...FRONTEND_ONLY_CODES].sort())
   })
 
   it('前端自扩码绊线为空：account_unavailable 已被后端追认，不许留残名', () => {
@@ -87,7 +95,7 @@ describe('码表蓝本', () => {
   })
 
   it('穷举：每个枚举码 / 别名码 / 散文码喂进去都收敛到自己', () => {
-    BLUEPRINT.concat(DATA_CODES, FRONTEND_ONLY_CODES).forEach((code) => {
+    ALL_CODES.forEach((code) => {
       const result = normalizeError({ response: { data: { detail: code } } })
       inEnum(result, code)
       expect(result.code, code).toBe(code)
@@ -385,5 +393,264 @@ describe('isRetryable / errorText / formatError', () => {
     const result = normalizeError(axiosError(500, 'odd_code'))
     expect(errorCodeLabel(result)).toBe('错误码：odd_code')
     expect(formatError(result)).toBe(`${FALLBACK_MESSAGE}（错误码：odd_code）`)
+  })
+})
+
+/**
+ * 文案政策（B-5 ②）的字面量侧：后端/sessions.js 有句子把码名夹在正文里直出，
+ * 这里断言 normalizeError 会摘掉码名再收口，且政策判据本身可机器验证。
+ */
+describe('文案政策②：正文夹带裸码名（B-5-2）', () => {
+  const BARE = /\b[a-z][a-z0-9]*(_[a-z0-9]+)+\b/
+
+  it('app/api/v1/chat.py:998 的原句认得出码，且吐出去掉码名的字典句', () => {
+    const raw = '本轮未产出任何结论（error_code=no_answer_produced），请重试或补充数据范围。'
+    const result = normalizeError(axiosError(200, raw))
+    inEnum(result, 'chat.py:998')
+    expect(result.code).toBe('no_answer_produced')
+    expect(result.message).toBe(ERROR_CODES.no_answer_produced.message)
+    expect(BARE.test(result.message)).toBe(false)
+    expect(errorCodeLabel(result)).toBe('')
+  })
+
+  it('lib/sessions.js:376 的中文括号裸码同样收口到字典句', () => {
+    const result = normalizeError(axiosError(200, '本轮未产出任何结论（no_answer_produced），请重试或补充数据范围。'))
+    expect(result.code).toBe('no_answer_produced')
+    expect(result.message).toBe(ERROR_CODES.no_answer_produced.message)
+    expect(BARE.test(result.message)).toBe(false)
+  })
+
+  it('半角括号 + 英文标点混排也能摘干净', () => {
+    const result = normalizeError(axiosError(504, '请求超过系统处理时限(task_timeout)。'))
+    expect(result.code).toBe('task_timeout')
+    expect(result.message).toBe(ERROR_CODES.task_timeout.message)
+  })
+
+  it('内嵌未知码：码名摘出进 rawCode，正文读得通，小字仍可报告', () => {
+    const raw = '工作簿没能解析（error_code=workbook_lock_failed），请另存为 xlsx 再传一次。'
+    const result = normalizeError(axiosError(400, raw))
+    inEnum(result, 'workbook_lock_failed')
+    expect(result.code).toBe('validation_error')
+    expect(result.rawCode).toBe('workbook_lock_failed')
+    expect(BARE.test(result.message)).toBe(false)
+    expect(result.message).toContain('请另存为 xlsx 再传一次')
+    expect(formatError(result)).toContain('错误码：workbook_lock_failed')
+  })
+
+  it('括号里是普通词时一口都不吃：宁可漏判也不改坏句子', () => {
+    const result = normalizeError(axiosError(400, '字段（id）不能为空，请补齐后再提交。'))
+    expect(result.code).toBe('validation_error')
+    expect(result.message).toBe('字段（id）不能为空，请补齐后再提交。')
+    expect(result.rawCode).toBe('字段（id）不能为空，请补齐后再提交。')
+  })
+
+  it('errorCodeOf 独立通道：只回枚举码或空串，永不回散文', () => {
+    ALL_CODES.forEach((code) => {
+      expect(errorCodeOf({ response: { status: 200, data: { detail: code } } }), code).toBe(code)
+    })
+    expect(errorCodeOf(axiosError(401, '请先登录'))).toBe('authentication_required')
+    expect(errorCodeOf(axiosError(200, '本轮未产出任何结论（no_answer_produced），请重试或补充数据范围。'))).toBe('no_answer_produced')
+    // 状态可归类时按状态给枚举码，状态也给不出时才回空串
+    expect(errorCodeOf(axiosError(500, 'odd_new_code'))).toBe('internal_error')
+    expect(errorCodeOf(axiosError(200, 'odd_new_code'))).toBe('')
+    expect(errorCodeOf(axiosError(500, '完全看不懂的一句话'))).toBe('internal_error')
+    expect(errorCodeOf(axiosError(200, '完全看不懂的一句话'))).toBe('')
+    expect(errorCodeOf(undefined)).toBe('')
+    Object.keys(ERROR_CODES).concat(Object.keys(LEGACY_ALIASES), Object.keys(PROSE_ALIASES)).forEach((input) => {
+      const value = errorCodeOf({ response: { status: 200, data: { detail: input } } })
+      expect(value === '' || ENUM.includes(value), input).toBe(true)
+      expect(/[\u4e00-\u9fff]/.test(value), input).toBe(false)
+    })
+  })
+
+  it('字典里的每一条用户可见文案自己先过政策：不含裸码名', () => {
+    Object.entries(ERROR_CODES).forEach(([code, entry]) => {
+      expect(BARE.test(entry.message), code).toBe(false)
+    })
+    Object.entries(LEGACY_ALIASES).forEach(([legacy, entry]) => {
+      expect(BARE.test(entry.message), legacy).toBe(false)
+    })
+    Object.values(PROSE_ALIASES).forEach((entry) => {
+      expect(BARE.test(entry.message || '')).toBe(false)
+    })
+    expect(BARE.test(FALLBACK_MESSAGE)).toBe(false)
+  })
+})
+describe('blob 错误体解析（B-5 ③，下载与预览的 403 不再被说成「坏了」）', () => {
+  it('403 的 JSON 错误体：读得出权限码，句子是人话且不含裸码名', () => {
+    const result = blobErrorText('{"detail":"permission_denied"}', 403)
+    inEnum(result, '403 权限')
+    expect(result.code).toBe('permission_denied')
+    expect(result.message).toBe(ERROR_CODES.permission_denied.message)
+    expect(result.retryable).toBe(false)
+    expect(result.message).not.toMatch(/[a-z][a-z0-9]*(_[a-z0-9]+)+/)
+  })
+
+  it('400 的 JSON 错误体：data.py 的部门范围码也认得', () => {
+    const result = blobErrorText('{"detail":"department_scope_required"}', 400)
+    inEnum(result, '400 部门范围')
+    expect(result.code).toBe('department_scope_required')
+    expect(result.message).toContain('部门')
+  })
+
+  it('非 JSON 一律不采信正文：HTML 网关页与纯文本都不许当人话', () => {
+    const html = blobErrorText('<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>', 502)
+    inEnum(html, '502 HTML')
+    expect(html.code).toBe('model_unavailable')
+    expect(html.message).toBe(ERROR_CODES.model_unavailable.message)
+    expect(html.retryable).toBe(true)
+    for (const leak of ['Bad Gateway', 'nginx', '<', 'html']) expect(html.message).not.toContain(leak)
+
+    const plain = blobErrorText('Forbidden', 0)
+    expect(plain.code).toBe('')
+    expect(plain.message).toBe(FALLBACK_MESSAGE)
+
+    const broken = blobErrorText('{not json at all', 400)
+    expect(broken.code).toBe('validation_error')
+    expect(broken.message).toBe(ERROR_CODES.validation_error.message)
+  })
+
+  it('空 body：有状态按状态归类，没状态走兜底句，四种空值都一样', () => {
+    for (const empty of ['', '   ', null, undefined]) {
+      const result = blobErrorText(empty, 403)
+      inEnum(result, '空 body 403')
+      expect(result.code, String(empty)).toBe('permission_denied')
+      expect(result.message).toBe(ERROR_CODES.permission_denied.message)
+    }
+    expect(blobErrorText('', 0).message).toBe(FALLBACK_MESSAGE)
+    expect(blobErrorText('', 0).code).toBe('')
+    expect(blobErrorText(undefined, 404).code).toBe('resource_not_found')
+  })
+
+  it('野外两种码字段形状都吃：顶层 error_code 与 detail.error_code（含 policy.py 别名）', () => {
+    expect(blobErrorText('{"error_code":"unsupported_file"}', 415).code).toBe('unsupported_file')
+    expect(blobErrorText('{"message":"model_unavailable"}', 503).code).toBe('model_unavailable')
+    const nested = blobErrorText('{"detail":{"error_code":"principal_inactive"}}', 403)
+    expect(nested.code).toBe('account_unavailable')
+    expect(nested.rawCode).toBe('principal_inactive')
+    expect(errorCodeLabel(nested)).toBe('')
+    const envelope = blobErrorText('{"detail":{"code":"index_publish_failed","message":"文件已收到，但没能进入知识库。","retryable":true}}', 500)
+    expect(envelope.code).toBe('index_publish_failed')
+    expect(envelope.message).toBe('文件已收到，但没能进入知识库。')
+    expect(envelope.retryable).toBe(true)
+  })
+
+  it('422 校验数组走 blob 也能归位，不退化成英文原句', () => {
+    const result = blobErrorText('{"detail":[{"loc":["body","rows"],"msg":"Field required","type":"missing"}]}', 422)
+    inEnum(result, 'blob 422')
+    expect(result.code).toBe('validation_error')
+    expect(result.message).toContain('rows')
+    expect(result.message).not.toContain('Field required')
+  })
+
+  it('中文散文 detail 走同一条路：鉴权中间件的「请先登录」照样收口', () => {
+    expect(blobErrorText('{"detail":"请先登录"}', 401).code).toBe('authentication_required')
+    expect(blobErrorText('{"detail":"账号不可用"}', 403).code).toBe('account_unavailable')
+    expect(blobErrorText('"请先登录"', 401).code).toBe('authentication_required')
+  })
+
+  it('readBlobError：手里是 Blob 时 await 一下，读不出来只按状态降级不抛错', async () => {
+    const fake = { text: async () => '{"detail":"permission_denied"}' }
+    expect(await readBlobError(fake, 403)).toEqual(blobErrorText('{"detail":"permission_denied"}', 403))
+    const gone = { text: async () => { throw new Error('Blob is detached') } }
+    const result = await readBlobError(gone, 404)
+    inEnum(result, 'Blob 失效')
+    expect(result.code).toBe('resource_not_found')
+    expect(result.message).toBe(ERROR_CODES.resource_not_found.message)
+    expect((await readBlobError('{"detail":"rate_limited"}', 429)).code).toBe('rate_limited')
+    expect((await readBlobError(null, 0)).message).toBe(FALLBACK_MESSAGE)
+  })
+
+  it('产物与 normalizeError 同形状，可直接喂 formatError / errorCodeOf / isRetryable', () => {
+    const result = blobErrorText('{"detail":"odd_download_code"}', 200)
+    inEnum(result, '未知下载码')
+    expect(result.code).toBe('')
+    expect(result.rawCode).toBe('odd_download_code')
+    expect(formatError(result)).toBe(FALLBACK_MESSAGE + '（错误码：odd_download_code）')
+    expect(errorCodeOf(result)).toBe('')
+    expect(isRetryable(result)).toBe(false)
+    expect(isRetryable(blobErrorText('{"detail":"model_unavailable"}', 502))).toBe(true)
+  })
+})
+
+/**
+ * 列 B：app/agents/evidence.py::_ERROR_CODES（:19-36 实量 16 码）。
+ * 与列 A（本文件的 BLUEPRINT，17 码）的差集就是后端两份拷贝之间的漂移，只此一条。
+ */
+const EVIDENCE_CODES = [
+  'authentication_required',
+  'permission_denied',
+  'authorization_unavailable',
+  'resource_not_found',
+  'validation_error',
+  'conflict',
+  'rate_limited',
+  'queue_unavailable',
+  'model_unavailable',
+  'retrieval_unavailable',
+  'task_timeout',
+  'task_cancelled',
+  'unsupported_file',
+  'parse_failed',
+  'index_publish_failed',
+  'internal_error',
+]
+
+describe('码表三列对账（B-5 ④）', () => {
+  it('三个数钉住：契约 17 / evidence 16 / 前端 25', () => {
+    expect(BLUEPRINT.length).toBe(17)
+    expect(new Set(BLUEPRINT).size).toBe(17)
+    expect(EVIDENCE_CODES.length).toBe(16)
+    expect(new Set(EVIDENCE_CODES).size).toBe(16)
+    expect(Object.keys(ERROR_CODES).length).toBe(25)
+  })
+
+  it('A − C = 空：后端每个 canonical 码都有一句人话，没有一条落到兜底句', () => {
+    BLUEPRINT.forEach((code) => {
+      expect(Object.prototype.hasOwnProperty.call(ERROR_CODES, code), code).toBe(true)
+      const result = normalizeError({ response: { data: { detail: code } } })
+      expect(result.code, code).toBe(code)
+      expect(result.message, code).toBe(ERROR_CODES[code].message)
+      expect(result.message, code).not.toBe(FALLBACK_MESSAGE)
+      expect(result.message, code).not.toMatch(/[a-z][a-z0-9]*(_[a-z0-9]+)+/)
+    })
+  })
+
+  it('C − A = 8：前端有话、契约没登记的那批，逐条指名且与 UNRATIFIED_CODES 完全相等', () => {
+    const extra = ENUM.filter((code) => !BLUEPRINT.includes(code))
+    expect(extra.slice().sort()).toEqual([...DATA_CODES, ...STREAM_CODES].sort())
+    expect(extra.slice().sort()).toEqual([...UNRATIFIED_CODES].sort())
+    expect(extra.length).toBe(8)
+    UNRATIFIED_CODES.forEach((code) => {
+      expect(BLUEPRINT.includes(code), code).toBe(false)
+      expect(EVIDENCE_CODES.includes(code), code).toBe(false)
+      expect(FRONTEND_ONLY_CODES.includes(code), code).toBe(false)
+    })
+    expect(FRONTEND_ONLY_CODES).toEqual([])
+  })
+
+  it('A − B 只有 account_unavailable，B − A 为空：两份后端拷贝的漂移不扩大到第二条', () => {
+    expect(BLUEPRINT.filter((code) => !EVIDENCE_CODES.includes(code))).toEqual(['account_unavailable'])
+    expect(EVIDENCE_CODES.filter((code) => !BLUEPRINT.includes(code))).toEqual([])
+  })
+
+  it('别名表与散文表也各有话，不靠兜底句糊过去', () => {
+    Object.keys(LEGACY_ALIASES).forEach((legacy) => {
+      const result = normalizeError({ response: { data: { detail: legacy } } })
+      expect(result.code, legacy).toBe(LEGACY_ALIASES[legacy].code)
+      expect(result.message, legacy).not.toBe(FALLBACK_MESSAGE)
+      expect(result.message, legacy).not.toMatch(/[a-z][a-z0-9]*(_[a-z0-9]+)+/)
+    })
+    Object.keys(PROSE_ALIASES).forEach((prose) => {
+      const result = normalizeError({ response: { data: { detail: prose } } })
+      expect(result.code, prose).toBe(PROSE_ALIASES[prose].code)
+      expect(result.message, prose).not.toBe(FALLBACK_MESSAGE)
+    })
+  })
+
+  it('状态码表 STATUS_CODES 的取值也全在枚举内（对账时别漏这条通道）', () => {
+    Object.entries(STATUS_CODES).forEach(([status, code]) => {
+      expect(ENUM, status).toContain(code)
+    })
   })
 })

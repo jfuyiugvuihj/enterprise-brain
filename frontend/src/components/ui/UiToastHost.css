@@ -9,7 +9,6 @@
   pointer-events: none;
 }
 
-.ui-toast-host > :deep(.ui-toast),
 .ui-toast-host > .ui-toast {
   pointer-events: auto;
 }

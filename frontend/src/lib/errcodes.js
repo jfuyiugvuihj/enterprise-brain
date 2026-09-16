@@ -14,13 +14,43 @@
  *
  * 硬不变量：normalizeError() 的 .code 一定 ∈ Object.keys(ERROR_CODES) ∪ {''}。
  * 后端原样回来的码名/散文一律放进 .rawCode，只供排查与「错误码：xxx」小字使用。
+ *
+ * 文案政策（B-5 ②）：给人看的句子只说人话 + 下一步，不内嵌裸 snake_case 码名。
+ * 码名走独立通道 errorCodeOf()，由界面放进 data-code / 「详情」折叠区；未知码才由
+ * formatError() 在句尾附「错误码：xxx」小字。后端直出的句子若夹带码名，由 extractEmbeddedCode()
+ * 在归类前摘掉，摘不干净的宁可走兜底句也不把码名留在正文里。
+ *
+ * 三列对账（B-5 ④，2026-09-16 实量；errcodes.test.js 里有一条单测钉住 17 / 16 / 25 三个数）：
+ *   列 A  app/agents/contracts.py::ErrorEnvelope.code ................. 17 码
+ *         本工作树 :87-104 只有 16 码，第 17 码 account_unavailable 来自主树 fa35a04
+ *         （C 的追认提交在 codex/data-file-catalog，不在本树），按总控派单登记为事实。
+ *   列 B  app/agents/evidence.py::_ERROR_CODES :19-36 ................. 16 码
+ *         与列 A 的旧 16 码同集合，没有被 fa35a04 一起改到 —— 这是后端两份拷贝之间的漂移。
+ *   列 C  前端 ERROR_CODES ............................................ 25 键
+ *         = 蓝本 17（列 A）+ data.py 7 + SSE 流内 1。
+ *   差集（逐条指名）：
+ *     A − C = 空        后端每个 canonical 码前端都有一句人话，没有一条落到兜底句（单测断言）。
+ *     C − A = 8         = UNRATIFIED_CODES：后端发得出、契约没登记。
+ *                       invalid_filename / unsupported_chart_type / unsupported_export_format /
+ *                       department_scope_required / dataset_filename_conflict /
+ *                       dataset_preview_failed / chart_generation_failed（app/api/v1/data.py）
+ *                       + no_answer_produced（app/api/v1/chat.py:1013）。
+ *     A − B = {account_unavailable}   两份后端拷贝不一致，后端对齐由总控派 C，我不动 app/**。
+ *     B − A = 空
+ *   还有第四类账不在这三列里：LEGACY_ALIASES 的 15 个历史码名与 PROSE_ALIASES 的 2 条中文散文，
+ *   同样是「后端确实发得出、封闭枚举里没有」的输入，前端已归一，契约侧仍欠登记。
  */
 
-/** 蓝本 17 码 + data.py 7 码。这 24 个键名就是 normalizeError().code 的全部合法取值。 */
+/** 蓝本 17 码 + data.py 7 码 + 流式 1 码 = 25 个键，这 25 个就是 normalizeError().code 的全部合法取值。 */
 export const ERROR_CODES = {
   authentication_required: { message: '登录状态已失效，请重新登录后再试。', retryable: false },
   permission_denied: { message: '当前账号没有这项权限，请联系管理员开通。', retryable: false },
-  authorization_unavailable: { message: '暂时无法确认你的数据权限，请稍后重试。', retryable: true },
+  // 部门授权范围取不到。原 lib/sessions.js:379 那句把「换带部门的账号或联系管理员」说清了，
+  // 这里收下这层语义，只把裸码名摘掉（文案政策：句子说人话，码名走 errorCodeOf 独立通道）。
+  authorization_unavailable: {
+    message: '暂时确认不了你的数据权限范围，请稍后重试；仍不行的话请换带部门授权的账号或联系管理员。',
+    retryable: true,
+  },
   // 账号被停用：既不是 permission_denied（不是权限不够，重新登录也没用），也不该退化成兜底句。
   account_unavailable: { message: '这个账号已被停用，请联系管理员恢复后再使用。', retryable: false },
   resource_not_found: { message: '要找的内容不存在或已被移除。', retryable: false },
@@ -44,6 +74,10 @@ export const ERROR_CODES = {
   dataset_filename_conflict: { message: '已存在同名数据文件，请重命名或先删除旧的。', retryable: false },
   dataset_preview_failed: { message: '数据文件预览没能打开，请稍后重试。', retryable: true },
   chart_generation_failed: { message: '图表没能生成，请稍后重试。', retryable: true },
+
+  // 流式回答跑完既没正文也没待确认步骤。出处 app/api/v1/chat.py:997-1013（SSE request.failed 的 data.error_code）。
+  // 原先只活在 lib/sessions.js:376 的私有字典里，句子内嵌了裸码名，这里按文案政策重写成纯人话 + 下一步。
+  no_answer_produced: { message: '本轮未产出任何结论，请重试，或把数据范围缩小一点再问。', retryable: true },
 }
 
 /**
@@ -53,6 +87,23 @@ export const ERROR_CODES = {
  * （前端先登记 → 主树 fa35a04 追认 → 摘掉标记），别再开新的。
  */
 export const FRONTEND_ONLY_CODES = []
+
+/**
+ * 后端实测会发、但两份契约枚举（app/agents/contracts.py::ErrorEnvelope.code 与
+ * app/agents/evidence.py::_ERROR_CODES）都还没登记的码名。与 FRONTEND_ONLY_CODES 不同：
+ * 这张表里的每一个都能在 app/api/v1 下指到出处，前端没有凭空发明，只是契约欠账。
+ * 由总控派 C 追认；追认一条就从这里删一条，单测会盯着名单与「枚举 − 蓝本」是否相等。
+ */
+export const UNRATIFIED_CODES = [
+  'invalid_filename', // app/api/v1/data.py:57
+  'unsupported_chart_type', // app/api/v1/data.py:376
+  'unsupported_export_format', // app/api/v1/data.py:412
+  'department_scope_required', // app/api/v1/data.py:43
+  'dataset_filename_conflict', // app/api/v1/data.py:172
+  'dataset_preview_failed', // app/api/v1/data.py:217
+  'chart_generation_failed', // app/api/v1/data.py:384
+  'no_answer_produced', // app/api/v1/chat.py:1001
+]
 
 /**
  * 后端实际会返回、但不在封闭枚举里的**码名** → 归一到枚举码（按码名索引）。
@@ -69,6 +120,15 @@ export const LEGACY_ALIASES = {
   storage_read_only: { code: 'internal_error', message: '当前存储处于只读状态，写入没有生效，请联系管理员。', retryable: true },
   relation_source_required: { code: 'validation_error', message: '请先选择关系的起始对象。' },
   invalid_agent_result: { code: 'internal_error', message: '分析结果格式异常，本次未采信，请重试。', retryable: true },
+
+  // 下面五条是 app/common/policy.py 的拒绝原因码，经 HTTPException(detail=decision.reason_code) 原样落到 403 body：
+  // alerts.py:106 / artifacts.py:50 / chat.py:278,318,766,1708 / data.py:90,328,354 / intelligence.py:69。
+  // 下载与预览走 responseType:blob，这些码读不出来就会被误判成「坏了」，所以必须有人话 + 下一步。
+  principal_inactive: { code: 'account_unavailable', message: '这个账号已被停用，请联系管理员恢复后再使用。', retryable: false }, // policy.py:136
+  department_scope_denied: { code: 'permission_denied', message: '这份资料属于其他部门的数据范围，当前账号看不到，请联系管理员授权。', retryable: false }, // policy.py:210
+  clearance_insufficient: { code: 'permission_denied', message: '这份资料的安全等级高于你的可见级别，不能打开，请联系管理员。', retryable: false }, // policy.py:189
+  resource_scope_missing: { code: 'authorization_unavailable', message: '这份资料没有登记所属部门或密级，系统判断不了你能不能看，请联系管理员补齐登记。', retryable: false }, // policy.py:181,207
+  resource_scope_invalid: { code: 'authorization_unavailable', message: '这份资料登记的部门或密级格式有误，系统判断不了你能不能看，请联系管理员。', retryable: false }, // policy.py:187
 }
 
 /**
@@ -106,6 +166,9 @@ export const FALLBACK_MESSAGE = '操作没有完成，请稍后重试。'
 
 const CODE_PATTERN = /^[a-z][a-z0-9_]*$/
 
+/** 夹带码名的三种野外形状：error_code=X（app/api/v1/chat.py:998）与括号里的 X（lib/sessions.js:376-380 那批） */
+const EMBED_CODE = /error_code=([a-z][a-z0-9_]+)|（([a-z][a-z0-9_]+)）|[(]([a-z][a-z0-9_]+)[)]/g
+
 /** 稳定码的形状：小写字母开头的 snake_case。中文散文一律不算码 */
 function isCodeShape(value) {
   return typeof value === 'string' && CODE_PATTERN.test(value.trim())
@@ -127,6 +190,39 @@ function cleanText(value) {
 /** 散文规范化：去首尾空白 + 去尾部句读，仅此而已（不做包含式模糊匹配） */
 function normalizeProseKey(value) {
   return cleanText(value).replace(/[\s。．.！!？?；;：,，、]+$/g, '').trim()
+}
+
+/**
+ * 后端有句子把码名直接夹在正文里，例如 app/api/v1/chat.py:998 写的
+ * 「本轮未产出任何结论（error_code=no_answer_produced），请重试或补充数据范围。」
+ * 这类串既不是码、也不在散文表里，必须先做保守摘除再归类：只动 error_code=X、（X）、(X)
+ * 三种形状，且 X 必须含下划线并符合码名形态；纯小写单词（id、api 之类）一概不动 ——
+ * 宁可漏判走兜底句，也不许把正常词吃掉。
+ * @returns {{ code: string, text: string } | null} text 是摘掉码名、收拾完残标点之后的句子
+ */
+function extractEmbeddedCode(text) {
+  if (!text) return null
+  EMBED_CODE.lastIndex = 0
+  let match = EMBED_CODE.exec(text)
+  let code = ''
+  while (match) {
+    const token = match[1] || match[2] || match[3] || ''
+    if (!code && token.includes('_') && isCodeShape(token)) code = token
+    match = EMBED_CODE.exec(text)
+  }
+  if (!code) return null
+  return { code, text: tidyProse(text.replace(EMBED_CODE, '')) }
+}
+
+/** 摘掉码名之后收拾残标点：先清空括号，再并重复标点，最后压多余空格，顺序不能反 */
+function tidyProse(text) {
+  return text
+    .replace(/（[ ]*）|[(][ ]*[)]/g, '')
+    .replace(/([，、；：])[，、；：]+/g, '$1')
+    .replace(/。[，、；：]+/g, '。')
+    .replace(/^[，、；：。.]+/, '')
+    .replace(/[ ]{2,}/g, ' ')
+    .trim()
 }
 
 function isEnumCode(code) {
@@ -188,6 +284,23 @@ function resolveCode(raw, status) {
     })
   }
 
+  // 后端把码名夹在正文里直出的句子：先摘码名再归类，摘完认得就用字典句（唯一真相源），
+  // 认不下就把摘干净的句子当人话、码名留进 rawCode 供「错误码：xxx」小字排查。
+  const embedded = token && !isCodeShape(token) ? extractEmbeddedCode(token) : null
+  if (embedded) {
+    if (isEnumCode(embedded.code)) {
+      const known = ERROR_CODES[embedded.code]
+      return clampResult({ code: embedded.code, rawCode: embedded.code, message: known.message, retryable: known.retryable })
+    }
+    const fallbackStatus = STATUS_CODES[status]
+    return clampResult({
+      code: fallbackStatus || '',
+      rawCode: embedded.code,
+      message: embedded.text,
+      retryable: Boolean(fallbackStatus && ERROR_CODES[fallbackStatus].retryable),
+    })
+  }
+
   const statusKey = STATUS_CODES[status]
   if (token && isCodeShape(token)) {
     // 未知稳定码：走兜底句，码名留在 rawCode（界面小字仍可按「错误码：xxx」报出来）
@@ -213,11 +326,13 @@ function resolveCode(raw, status) {
 
 /** 形状 2：ErrorEnvelope / 任意 { code, message, retryable } 对象，后端给的 message 优先级最高 */
 function fromEnvelope(envelope, status) {
-  const resolved = resolveCode(envelope.code, status)
+  // 后端在 SSE 与下载错误体里用的是 error_code，不是 code（chat.py:1013、artifacts 的 blob 体），两个都要认
+  const wireCode = envelope.code ?? envelope.error_code
+  const resolved = resolveCode(wireCode, status)
   const message = cleanText(envelope.message)
   return clampResult({
     code: resolved.code,
-    rawCode: cleanText(envelope.code) || resolved.rawCode,
+    rawCode: cleanText(wireCode) || resolved.rawCode,
     message: message || resolved.message,
     retryable: typeof envelope.retryable === 'boolean' ? envelope.retryable : resolved.retryable,
   })
@@ -261,6 +376,7 @@ function pickPayload(err) {
   if (typeof data === 'string' || Array.isArray(data)) return { detail: data }
   if (typeof data === 'object') {
     if ('detail' in data) return data
+    if ('error_code' in data && !('detail' in data)) return { detail: data }
     if ('code' in data || 'message' in data) return { detail: data }
     const topMessage = cleanText(data.message) || cleanText(data.error)
     if (topMessage) return { detail: topMessage }
@@ -333,6 +449,15 @@ function toResult(input) {
   return isNormalized(input) ? input : normalizeError(input)
 }
 
+/**
+ * 独立通道：界面要展示/埋点码名时只准用它，拿到的一定是封闭枚举内的码名或空串。
+ * 用法是塞进 data-code / 「详情」折叠区，或 console.debug；不许拼进给人看的句子。
+ * 未知码与中文散文在这里都回空串（那些走 errorCodeLabel 的「错误码：xxx」小字）。
+ */
+export function errorCodeOf(errOrResult) {
+  return toResult(errOrResult).code
+}
+
 export function errorCodeLabel(errOrResult) {
   const result = toResult(errOrResult)
   const raw = cleanText(result.rawCode)
@@ -361,4 +486,53 @@ export function isRetryable(err) {
 /** 码表查询：已知码返回原文案，未知返回兜底句 */
 export function errorText(code) {
   return resolveCode(cleanText(code), 0).message
+}
+/**
+ * 下载与预览走 responseType:'blob'，服务端 4xx/5xx 的 JSON 错误体也会以 Blob 形态回到手里。
+ * 读不出来就被降级成「文件下载失败」，把「没权限」误报成「坏了」—— 与 R1 同族的一条缝。
+ * 这里是纯函数：不做 IO、不依赖 axios 与 DOM，body 接受 文本 / 已解析对象 / 标量。
+ *
+ * 刻意**不采信非 JSON 正文**：健康链路上 blob 错误体一定是 JSON，HTML 与纯文本都是网关或
+ * 静态层塞进来的（nginx 的 Forbidden、502 页面），把它们当人话抛给界面比不抛更坏。
+ * 非 JSON 或空 body 时只按 HTTP 状态归类，句子仍出自 ERROR_CODES 字典。
+ *
+ * @returns {{ code: string, rawCode: string, message: string, retryable: boolean }} 与 normalizeError 同形状
+ */
+export function blobErrorText(body, status = 0) {
+  const effStatus = Number(status) || 0
+  let payload = null
+  if (typeof body === 'string') {
+    const text = body.trim()
+    if (text) {
+      try {
+        payload = JSON.parse(text)
+      } catch (_) {
+        payload = null
+      }
+    }
+  } else if (body && typeof body === 'object' && typeof body.text !== 'function') {
+    payload = body
+  }
+  if (payload === null || payload === undefined) {
+    return normalizeError({ response: { status: effStatus, data: {} } })
+  }
+  const data = typeof payload === 'object' ? payload : { detail: payload }
+  const codeStatus = effStatus || Number(data.status) || 0
+  return normalizeError({ response: { status: codeStatus, data } })
+}
+
+/**
+ * blobErrorText 的异步外壳：调用方手里是 Blob 时用这个，形状不变。
+ * 读不出文本（Blob 已失效 / 对象不对）一律降级为「只按状态归类」，不抛错，因为这条路径
+ * 本来就跑在 catch 里，二次抛错会把提示吞掉。
+ */
+export async function readBlobError(blob, status = 0) {
+  let text = ''
+  try {
+    if (typeof blob === 'string') text = blob
+    else if (blob && typeof blob.text === 'function') text = await blob.text()
+  } catch (_) {
+    text = ''
+  }
+  return blobErrorText(text, status)
 }
