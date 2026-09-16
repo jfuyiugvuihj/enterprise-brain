@@ -188,6 +188,10 @@ describe('DashboardPanel · 总览的四处状态 + 被吞掉的证据查询失�
   it('SSR 首屏是加载行；三张空脸与失败脸都还没出现', async () => {
     const html = await render(DashboardPanel)
     expect(html).toContain('正在加载经营数据')
+    // A-5-2：进行态改吃 UiLoadingState，断言打在 SSR 真产物上而不是源码字符串
+    expect(html).toContain('data-testid="ui-loading-state"')
+    expect(html).toMatch(/<div class="ui-loading-state[^"]*" role="status" aria-busy="true"/)
+    expect(html).not.toContain('class="panel-state"')
     expect(html).not.toContain('data-testid="ui-error-state"')
     expect(html).not.toContain('data-testid="ui-empty-state"')
     expect(html).not.toContain('class="empty-state"')

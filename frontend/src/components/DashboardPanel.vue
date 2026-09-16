@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
 import { errorDetail, isPermissionDenied } from '../lib/http'
 import { demoInsights, demoRows, demoTrendShape } from '../devFixtures/dashboard-demo'
-import { UiEmptyState, UiErrorState } from './ui'
+import { UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 
 const emit = defineEmits(['goto'])
 const loading = ref(true)
@@ -164,7 +164,7 @@ onMounted(async () => {
 
 <template>
   <div class="dashboard-panel reference-dashboard" data-testid="dashboard-panel" data-demo="fixtures">
-    <div v-if="loading" class="panel-state">正在加载经营数据</div>
+    <UiLoadingState v-if="loading" label="正在加载经营数据" />
     <UiErrorState
       v-else-if="error"
       :title="denied ? '没有权限查看经营总览' : '经营总览没加载出来'"
