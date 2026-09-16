@@ -67,6 +67,21 @@ def memory_ledger(monkeypatch):
     monkeypatch.setattr(store, "_database_available", lambda: False)
 
 
+@pytest.fixture(autouse=True)
+def memory_alerts(monkeypatch):
+    """Pin the alert store to its offline list unless a case opts into PostgreSQL.
+
+    The branch is otherwise chosen by ``app.common.auth._db_ready``, so this file passes
+    on a machine with no reachable PostgreSQL and fails on one that has it: the summary
+    would count the real ``alerts`` table while the seed went into ``_MEM_ALERTS``. The
+    one case that exercises the SQL branch re-enables it inside its own body.
+    """
+    from app.api.v1 import alerts
+
+    monkeypatch.setattr(alerts, "_MEM_ALERTS", [])
+    monkeypatch.setattr(alerts, "_database_available", lambda: False)
+
+
 @pytest.fixture()
 def client():
     from app.main import app
