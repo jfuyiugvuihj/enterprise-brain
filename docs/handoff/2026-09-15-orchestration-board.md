@@ -492,3 +492,69 @@ A-4 在途（`fe-trunk@834ec04` 起步）：删 `artifacts.js:31` 私拷改吃 `
 B-6 在途：`6feac7c` 已消 `:deep()` 警告；`UiLoadingState.vue/.css` 正在写（本批只做原语+测试，接线留给 A）。
 C 的 R13③ 在途：新文件 `app/storage/pending_approvals.py`、`tests/test_hitl_pending.py`（未跟踪，属正常在途）。
 Docker Desktop 仍未运行 ⇒ 后端镜像重建与所有真机验收继续挂起，需用户手动开一次。
+
+## 4K. 设计文档「目标态当现状」专项审计（只核不改）＋ A-4 前三单静态复核（2026-09-16 10:2x）
+
+### 4K.1 权威数字与在途位置
+
+- 后端 pytest 基线 **800 passed / 22 skipped / 0 failed**（我亲跑 @ `1672841`）。当前 HEAD `86d7be3` 与它只差 `docs/api/contract-v1.md` **+47 行、零代码**
+  （`git diff --stat 1672841..86d7be3` = 1 file changed）⇒ **800 就是当前 HEAD 的数**；在没有新代码提交前「复跑全量回归」不产生信息，我不占 C 的写窗口重跑。
+- fe-trunk A-4 已交 3/5：`bea216a`(1) `06bd2e2`(2) `d42fb77`(3)；工作区正在改 `no-bare-code.test.js`（任务 4：清 allowlist + `ALLOWLIST_CEILING` 6→0，HEAD 仍是 6、工作树已见 0）。
+  五闸我**刻意留到 5/5 交齐再跑**：现在跑必然读到在途脏文件，且 `d42fb77` 的 commit message 自己声明它会把 B-5 棘轮转红 4 条、收账在下一单。
+- B-6 **已结案**（`fe-prims@ef72a2a`：212 测 / 11 文件、五闸全 0），等 A-4 落笔后并入 fe-trunk。§4J.5 里「B-6 在途」那句以本节作废。
+- C 的续单（`/hitl/pending` limit / 缺表 503 / R13④ 码源收敛 / R16）在途，主树 `app|tests|migrations` 此刻**零脏、零新提交**，无可验收对象。
+
+### 4K.2 A-4 任务 2：我核的点是「删掉第二套取码器之后不许有悬空引用」
+
+- `06bd2e2` 删 `http.js` 的 `errorCode()`，`isPermissionDenied` / `errorDetail` 改吃 `errcodes.js` 的 `errorCodeOf` / `normalizeError`。
+- 悬空引用 = **0**：全 `frontend/src` 里 `errorCode` 只剩三类合法出现——① 「禁止复活」负例断言 `lib/http.test.js:23`、`components/__tests__/panel-states.test.js:294`；
+  ② `lib/sessions.js` 的状态字段名；③ B-5 的判红夹具。7 个面板 import 的是 `errorDetail`/`isPermissionDenied`/`http`/`authedFetch`，**没有一个 import 被删的那个符号**。
+- 未碰 `frontend/src/components/ui/**`（`git show --name-only` 里 0 条）⇒ 与 B 写集不相交，我给的边界守住了。
+- 老实现两条真漏（FastAPI 422 列表、只有 `data.error_code` 的裸体）现在统一由 `toResult`→`normalizeError` 吃；A 另写负例钉住 `resource_scope_missing` 不被误判成「没权限」。
+- **一条语义放宽要记账**：403 且响应体的码没登记（或压根没响应体）时，`lib/errcodes.js` 的 `resolveCode`（`:258`，兜底在 `:295`/`:304` 的 `STATUS_CODES[status]`）归成 `permission_denied`，
+  而老那份回空串。方向上对 G4 有利（判「没权限」更稳），但它是**新增判定路径**，我收单时必须看到它自己的测试，不能只靠注释。
+  （A 的注释写作 `errcodes.js:151`，那是 `STATUS_CODES` 表本身所在行，实际生效点在 `resolveCode`——措辞偏一格，不构成缺陷。）
+
+### 4K.3 A-4 任务 3：我核的点是「私有码表删掉后五句语义不许降级」
+
+逐条对字典核过（`git show HEAD:frontend/src/lib/errcodes.js`），五句**一条没降级**，而且句子里不再烤码名：
+`authentication_required:46`、`authorization_unavailable:50`、`task_timeout:63`、`internal_error:68`、`no_answer_produced:80`。
+
+- `[错误] ` 前缀保留是**对的**，三处证据：后端自己往同一条回答里写 `[错误] ...`（`app/api/v1/chat.py:729`、`:1101`），且 `tests/test_legacy_chat_retrieval_scope.py:124` 断言该前缀在响应文本里。
+  气泡形状要跟后端一致，删前缀会打穿后端既有契约。
+- 「码优先于文本」的改序合理：`errorText` 是自由文本、会夹裸码名，机器字段不会。
+- **这条顺手把 R16 的前端半边提前做掉了**：后端 `chat.py:1027` 烤进历史文本的 `（error_code=…）`，现在在渲染期被 `cleanText`/`extractEmbeddedCode`（`errcodes.js:177`/`:203`）摘掉。
+  我收 R16 时按「渲染期清洗已由 A-4-3 承担、后端侧仍要删冗余」登记，**不重复立项**。
+
+### 4K.4 设计文档审计结论：2 条真硬伤 + 3 处数字过期 + 1 处自相矛盾 + 2 处措辞 + 2 条我核后为它平反
+
+被核文件 `docs/system-design-2026-09-16.md`（46KB）是**他人未跟踪在制品**，我全程只读；要不要我改或转交那条线，仍是待你点头的第 ④ 项。
+
+- **真硬伤 ①｜§10.4 `:428`**「第一版存储用 PostgreSQL（邻接表）」 ←→ 代码 `app/knowledge_graph/service.py:79` 是 `JsonPersistenceAdapter`。
+  全文其余目标态都带「（目标态）」字样，**唯独这句没带**——答辩时一问就塌的就是这种。判据已写进跟进单 §11 R15-a。
+- **真硬伤 ②｜§18 追踪表 `:700-721` 20 行里没有图谱行**。于是上一条没有任何机制会纠正它：**图谱是唯一一个「设计里算核心能力、交付追踪里不存在」的子系统**。
+- **过期 ①｜§18 `:705`**「迁移门禁 已落地（0001–0007）」：今晨 `4540220` 已进 `migrations/0008_pending_approvals.sql`，`migrations/manifest.json` 现 **8 条**（8 个 SHA-256 我逐条对过 8/8 MATCH）。
+  这条漂移是**我们这条线今天自己造成的**，谁改文档都要顺手带上。
+- **过期 ②③｜§5.4 `:245` 与 §18 `:704`**「隔离环境验收 443 passed」：权威口径现为 **800 passed / 22 skipped**；且 443 那次的「隔离环境」不等于容器真机（真机门仍被 Docker 卡着）。
+- **自相矛盾｜§18 `:712` ↔ §14.1 `:554`**：§18 写「Trace 读取/回放 API … **目标态**（读 API 待暴露）」，但 `app/api/v1/observability.py:531` 的 `GET /traces/{trace_id}` 是**真实现**——
+  `_require_action(request, ACTION_AUDIT, …)` 鉴权 + `_clamped(limit, MAX_TRACE_EVENTS)` + `_trace_store().replay()`；同文件 `:443/:586/:622` 另有 `/retrieval/debug`、`/evaluations`、`/audit/events`。
+  这是**反方向硬伤**（把已交付写成未交付），塌法同样致命：评审会直接问「你到底有没有 trace 回放」。改法：该行改成「已落地（读 API 已暴露，回放完整度/批量对比待收）」。
+- **措辞 ①｜§9.3 `:392`**「无公开 `/static` 路径」：`app/main.py:151` **仍挂载** `/static`（类 `StaticFilesWithoutGeneratedArtifacts`），准确说法是「仍挂载，但 `:144` 对 `charts/`、`exports/` 一律 404」。
+  我核了 `static/` 顶层**只有这两个目录**（150 + 73 文件）⇒ 实际无任何可达文件，属**措辞问题、不属安全缺陷**；但这句话现在会让任何人 `curl /static/` 拿到 200 而当场质疑整篇文档。
+- **措辞 ②｜§14.1 `:551/:552`**：chat.py 行未列今日新增的 `GET /hitl/pending`（`app/api/v1/chat.py:1257`）；
+  intelligence 行列了「图谱 relations」（`app/api/v1/intelligence.py:106/:133`）**却没说生产必 503 `storage_read_only`**——`KNOWLEDGE_GRAPH_STORE_PATH` 在 `.env`、`.env.example`、`docker-compose.yml`、`deploy/.env.server` 四处
+  **0 命中**（§11.1 实测），`intelligence.py:121-124` 直接 503 + `record_audit(denied)`。读者会把「有写接口」读成「写得进去」。
+- **平反 ①｜§12.1 `:477`**「PostgresPersistenceAdapter 真实落库（已落地）」**站得住**：工厂 `app/storage/persistence.py:417/:424` 真构造，且 `docker-compose.yml:31 PERSISTENCE_BACKEND: postgres`。
+  要补的只有半句：宿主裸跑不设该变量时默认 `json`（`.env.example` 里无此键）。
+- **平反 ②｜§18 其余 12 行的态标注逐条抽核无误**：Chroma→PGVector、结构化 DSL 取代 eval、Prompt Injection 分层、Artifact/Dataset 仍 JSON 注册表、检索调试台、评测 30 条集、配置治理、
+  Ollama 自动发现、开放平台 HMAC、前端 V 系列、容器端到端门、升级中心。
+  ⇒ 那份报告暗示的「整篇把目标态当现状」**不成立**；真问题**集中在图谱一节 + 三处数字过期 + 一处方向性自相矛盾**。
+- 另记一笔防误清理：`documents` 幽灵表由 `migrations/0004:30` **正式建立**，不是运行期野生表——将来做存量清理要走「迁移承认的表」这条路，不能直接 `DROP`。
+
+**净结论**：修该文档只需 **6 处编辑**（§10.4:428 / §18 补图谱行 / §18:705 迁移编号 / §5.4:245+§18:704 测试数 / §18:712 trace 读 API / §9.3:392+§14.1 措辞），纯 docs、零行为差异，你点头我一次做完。
+
+### 4K.5 下一步（顺序不变，只把「Docker」这一门单独拎出来）
+
+收 A-4 4/5 → 我亲跑五闸 → 并 `codex/fe-prims`(B-6) → 合并树再跑五闸（色值只准降、测数重数）→ fe-trunk 并回主树（先证明与 C 在途 `app|tests|migrations` 不相交 + 重算 `HEAD:frontend` 树哈希）
+→ 派 A 接线小批（`UiLoadingState` 三处 + `--skeleton-loop` token）→ 收 C 续单并亲跑 pytest 对账 → 我登记契约。
+**代码这条腿不依赖 Docker**；真机那半（后端镜像重建、G3/G-C-1/G4/R8 真机、D 验收线、容器门）**全部**等用户手动开一次 Docker Desktop，我不会擅自启动它。
