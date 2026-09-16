@@ -1,4 +1,4 @@
-﻿# Enterprise Brain API and SSE Contract
+# Enterprise Brain API and SSE Contract
 
 Version: 2026-09-12-contract-v1
 Status: Frozen for domain-agent implementation
@@ -458,6 +458,27 @@ and may additionally call the cancel route to tear down an in-flight stream. Mak
 reject a parked action was considered and rejected: it turns one mistap on a stop button into the loss
 of an analysis that has already been running, and the user cannot undo it.
 
+### Compatibility note 2026-09-16 (R13-1: `/approve` emits a canonical terminal event)
+
+Registered by the coordinator after reading the code, not from the backend agent's report.
+Source read at `521913f`: `app/api/v1/chat.py:1204` (`POST /api/v1/approve`), ids generated at
+`:1213-1215` the same way `/ask` generates them at `:784-786`, sequence counter at `:1249`,
+cancellation branch at `:1256-1276`.
+
+- Before this change the whole `/approve` stream carried **legacy events only** and had no
+  `request_id` / `trace_id` / `task_id` at all, so a client had to keep two parsers to resume a
+  HITL turn. It now emits exactly **one** canonical event:
+  `request.cancelled` with `status="cancelled"` and `data.session_id`, emitted **before** the
+  legacy `cancelled` event, matching the `/ask` cancellation shape at `:958-973` field for field.
+- Scope of this registration, stated narrowly: `/approve` does **not** emit `request.started`,
+  `request.completed` or `request.failed`. Those remain `/ask`-only. The freeze rule 2
+  (canonical introduced additively, legacy kept) is satisfied: the legacy `cancelled` event was
+  retained, and it was kept on purpose, not left over from a migration.
+- No status code changed, no legacy payload key changed meaning, no event was removed, renamed or
+  reordered. Full suite at this commit: **772 passed / 22 skipped** (backend agent), coordinator
+  baseline before the merge was **771 / 22 / 0** at `826d318`. No live-stack verification: Docker
+  Desktop is not running (board §4H.3), so this entry is code-green only.
+
 ## SSE Event Deprecation Policy (2026-09-14)
 
 Snapshot basis: `app/api/v1/chat.py` as read on 2026-09-14 13:50 (+08:00). Event names and function names are the durable identifiers in this section; line numbers are deliberately not quoted because the backend is being edited concurrently. Frontend-side evidence and impact are recorded in `docs/frontend-workspace-audit-2026-09-14.md`.
@@ -494,5 +515,6 @@ Until all six hold, the legacy rows above are the only supported content channel
 
 ### Migration log
 
+- 2026-09-16 (R13-1): `/approve` gained one additive canonical event, `request.cancelled`, after the cancellation shape was re-read from `app/api/v1/chat.py:1256-1276` against `/ask` at `:958-973`. No legacy event removed, renamed or reordered; `/approve` still carries no canonical content events, so the six retirement preconditions below are unchanged and the frontend parser work (F2) is still the blocker.
 - 2026-09-14: section added after the frontend workspace audit. No event was removed, renamed or reordered by this change. Backend line-number references elsewhere in the repository are treated as a dated snapshot, not as contract.
 
