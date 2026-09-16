@@ -264,3 +264,28 @@ R15 不动权限语义、不改契约错误码、不碰 `frontend/**`，冲突�
    - `git grep -n "error_code=" -- app/api/v1/chat.py` 只允许出现在**结构化字段赋值**处，不允许出现在中文字符串字面量内；
    - 全量 pytest 基线不得倒退（当前权威 **771 passed / 22 skipped @ `826d318`**；R13 采用红底先行，中间 HEAD 可能故意红，不算倒退）。
 5. 排期：R13 收完之后再做，**不并进 R13**（R13 已含接口变更登记，混进来会让契约账目对不上单）。
+
+## 13. 跟进单 **R17**（做 C-4 时新查出）：数据行仍用「部门为空＝人人可见」，与文档链相反（P1，待业务裁定）
+
+C-4 的实测结论先记在这里，防止有人重提「统一两套文档规则」：**文档链其实只有一套**。
+`app/common/rbac.py` 的 `doc_visible` / `build_where` / `make_pred` 在删除时**零生产调用点**，
+只被 `tests/test_phase2_rbac.py` 与 `tests/test_phase7_mcp.py` 养着；线上唯一判定是
+`app/rag/filters.py::resolve_document_retrieval_scope`，它一次产出下推 `filters` 与本地 `allows`，
+二者同源（`app/rag/retrieval_pipeline.py` 的 `search_for_principal` 只调一次），不可能各说各话。
+这条已按 e2 收口（提交 `6589bbc`），守卫在 `tests/test_rbac_single_scoping_source.py`。
+
+**但同一个模块里还活着一条反向规则**：`filter_dataframe_rows`（被 `app/agents/tools.py:372`、`:453` 调用）
+判定数据行是否可见时用的是 `values.isin(("", dept))` —— **部门列为空的行，对任何同密级账号都可见**。
+文档链现在恰好相反：`{"department": {"$in": [...]}}` 不含空串，所以部门为空的文档对普通账号不可见（fail-closed）。
+
+于是同一个用户问同一份材料，会得到两种口径：文档查不到、数据行查得到。
+这不是实现疏忽能一句话定性的，它是**产品规则**：企业里「没标部门的表」到底是公开还是私有，只有业务能答。
+
+要求（二选一，不许继续悬空）：
+
+- **甲（与文档链对齐）**：`filter_dataframe_rows` 改成只认本部门，空部门行仅 `administrator_scope` 可见。
+  代价：现场演示/客户历史数据里那些没填部门列的表会突然看不见，必须配一条迁移期提示与灰度开关。
+- **乙（承认数据行更宽）**：把这条差异写进 §12 与前端空态文案，并补一条测试钉住「空部门数据行对同密级可见」是有意的，
+  防止将来有人"顺手统一"把它改成 fail-closed。
+
+判据：`git grep -n 'isin(("", dept))' -- app` 的结果与所选口径一致，且存在一条命名自解释的测试。
