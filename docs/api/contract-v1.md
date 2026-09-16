@@ -39,12 +39,33 @@ Error responses use a stable `code` from:
 - `queue_unavailable`
 - `model_unavailable`
 - `retrieval_unavailable`
+- `storage_unavailable`
 - `task_timeout`
 - `task_cancelled`
 - `unsupported_file`
 - `parse_failed`
 - `index_publish_failed`
+- `invalid_filename`
+- `dataset_filename_conflict`
+- `dataset_preview_failed`
+- `unsupported_chart_type`
+- `chart_generation_failed`
+- `unsupported_export_format`
+- `department_scope_required`
+- `no_answer_produced`
 - `internal_error`
+
+> `storage_unavailable` was added on 2026-09-16 (`35ee27e`) for "the schema this build requires
+> is not applied" - see the HITL section below. The eight names after it were **ratified, not
+> invented**: `tests/test_error_code_vocabulary.py` maps each one to the emitter in `app/**` (7 in
+> `app/api/v1/data.py`, `no_answer_produced` in `app/api/v1/chat.py`) and fails if an emitter is removed
+> while the name stays in the enum, so the list cannot quietly accumulate fossils.
+> `app/rag/evidence.py` used to keep its own copy of the retryable vocabulary; it now derives from the
+> same Literal and a test asserts the two sets cannot drift (R13-4).
+> Note the deliberate exception: `503 storage_read_only` (knowledge graph, `intelligence.py:124`, and
+> `open_platform.py:173`) is **not** an `ErrorEnvelope.code` member. It is a bare detail string on a
+> legacy-shaped response. Ratifying it was explicitly declined in this batch: "read-only protection" and
+> "schema missing" are two different failures, and merging them would make an operator fix the wrong one.
 
 The payload is compatible with:
 
@@ -133,17 +154,20 @@ Example:
 
 ## HITL Pending Listing (2026-09-16, R13)
 
-`GET /api/v1/hitl/pending` (optionally `?session_id=<id>`) is the read side of the parked-turn ledger
-added by `migrations/0008_pending_approvals.sql`. Registered by the coordinator after reading
-`app/api/v1/chat.py:1257-1314`, `app/storage/pending_approvals.py:252-285` and the 12 tests in
-`tests/test_hitl_pending.py`; suite at registration time: **800 passed / 22 skipped** at `1672841`.
+`GET /api/v1/hitl/pending` is the read side of the parked-turn ledger added by
+`migrations/0008_pending_approvals.sql`. Query params: `session_id` (optional filter), `limit`
+(default 50, clamped to at least 1 and at most 200, `chat.py:1257-1258` and `:1290`), `offset`
+(default 0). First registered by the coordinator at `1672841` (**800 passed / 22 skipped**);
+re-registered on 2026-09-16 after `5ea8dee` (paging), `35ee27e` (missing-table 503) and `6606f59`
+(code ratification), against the suite at **831 passed / 22 skipped / 0 failed**.
 
 Shape (as implemented, not as aspirational):
 
 ```
 { "items": [ { "session_id", "owner_user_id", "parked_steps": [node...], "labels": [..],
                "status", "created_at", "expires_at", "request_id", "trace_id", "task_id" } ],
-  "count": <== items.length, after filtering > }
+  "count": <== items.length, after filtering>, "limit": <applied>, "offset": <applied>,
+  "has_more": <bool> }
 ```
 
 - `parked_steps` values come from the compile-time constant `_HITL_PARKED`
@@ -168,15 +192,25 @@ Shape (as implemented, not as aspirational):
   cooperative cancellation a "stopped" run still finished, so that label would have asserted
   something the process had not done.
 
-Known gaps, recorded so nobody reads them as guarantees:
+Closed on 2026-09-16 (both were recorded above as "not guarantees", not discovered later):
 
-1. **No pagination or limit.** The result is bounded only by "awaiting and not expired", and the
-   per-row `check_interrupt()` recheck makes the request O(number of open rows). A panel must not be
-   pointed at an account with a large backlog until a `limit` exists.
-2. **Missing table raises `RuntimeError`, not a stable code.** If the image is newer than the
-   database (`pending_approvals.py:102-108`), the caller gets a 500 that the frontend degrades to
-   `internal_error`; the true condition is "migrations not applied". Filed against C as part of R13
-   follow-up, not silently accepted.
+1. **Paging (`5ea8dee`).** `limit`/`offset` are pushed into SQL - the store is not asked for the whole
+   table and sliced in Python, because that would only make "bounded" half true. The endpoint
+   over-fetches `limit + 1` rows (`chat.py:1297`) to answer `has_more` without a second query.
+   **The rule that matters:** a row beyond the page is *not rechecked against the graph this call*, so
+   it must **not** be marked `stale` - silently expiring rows the caller never looked at would be a
+   second lie on top of the first. `tests/test_hitl_pending.py:471` pins "the list endpoint never
+   rechecks more rows than the limit", `:492` pins the truncation-must-not-mark-stale rule, `:505`
+   pins that `offset` moves to the next ledger rows. `has_more` means "the ledger has more rows", not
+   "more rows you are allowed to see".
+2. **Missing table is now `503 storage_unavailable` (`35ee27e`).** The store raises the named
+   subclass `PendingApprovalStoreMissing` (`pending_approvals.py:102`, raised at `:114`) instead of a
+   bare `RuntimeError`, and only that exception maps to 503 - other `RuntimeError`s still propagate.
+   Deliberate: if a missing *driver* were also reported as "try again later", this endpoint would be
+   back to lying. The shape is `HTTPException(503, detail="storage_unavailable")`, i.e. a legacy
+   string detail, not an `ErrorEnvelope` - matching this file's local convention (`chat.py:1303`).
+   A subclass was required because `tests/test_hitl_pending.py:395` pinned the `RuntimeError` base
+   class from the write side; naming the error must not turn an old assertion red.
 
 ## Structured Agent Result
 
