@@ -95,3 +95,25 @@ def test_a_ratified_code_is_no_longer_downgraded_to_internal_error():
     assert result.error is not None
     assert result.error.code == "chart_generation_failed"
     assert result.error.retryable is False
+
+
+def test_no_bare_error_code_lives_inside_a_string_literal_in_chat_py():
+    """跟进单 §12.1 的机器判据：``error_code=`` 只许出现在结构化赋值处。
+
+    钉整份 chat.py 而不是某一行：往用户看得见的文本里塞码名是一条政策，不是一个人的
+    笔误，而这条政策目前是被后端自己违反的（`chat.py:1027`）。
+    """
+    import ast
+
+    source = (_REPOSITORY / "app" / "api" / "v1" / "chat.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    offenders = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and "error_code=" in node.value
+    ]
+
+    assert offenders == [], offenders

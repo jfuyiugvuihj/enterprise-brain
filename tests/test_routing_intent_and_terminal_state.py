@@ -111,6 +111,35 @@ def test_parked_turn_states_what_is_awaiting_confirmation(monkeypatch):
     assert saved, "the streamed text and the stored session message must match"
 
 
+def test_an_unproductive_turn_keeps_the_code_out_of_every_string_a_user_can_keep(monkeypatch):
+    """R16：码走结构化字段，散文里不许再夹一遍。
+
+    同一条失败要落到三个地方（跟进单 §12 的取证）：`_save_message` 的会话历史、legacy
+    ``error`` 事件的 content、canonical ``request.failed.data.error_code``。前两个是
+    "人会留下来反复看"的文本，第三个才是机器判据该待的地方。散文里那个
+    ``（error_code=no_answer_produced）`` 与 canonical 字段完全重复，而它一旦入库就
+    再也洗不掉——前端渲染期清洗救得了新消息，救不了历史行。
+    """
+    events, saved = _ask(
+        monkeypatch,
+        [{"worker_results": {}, "final_answer": ""}],
+        None,
+    )
+
+    failed = next(data for name, data in events if name == "request.failed")
+    assert failed["data"]["error_code"] == "no_answer_produced", "删冗余不许丢信息"
+
+    stored = [str(args[2]) for args in saved]
+    assert stored, "本轮失败仍要留下一条助手消息"
+    joined = "\n".join(stored)
+    assert "error_code=" not in joined
+    assert "no_answer_produced" not in joined
+
+    legacy = next(data for name, data in events if name == "error")
+    assert legacy["content"] in stored, "legacy 事件与会话历史必须是同一句人话"
+    assert "no_answer_produced" not in legacy["content"]
+
+
 def test_unproductive_turn_fails_instead_of_completing(monkeypatch):
     events, _saved = _ask(
         monkeypatch,
