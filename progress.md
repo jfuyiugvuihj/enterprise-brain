@@ -1,5 +1,14 @@
 # 验收进度
 
+> **⚠️ 总控横幅（2026-09-16）**：本文件停在 09-13/09-14，**不能用来判断当前完成度**。
+> 权威口径依次是：`docs/handoff/2026-09-15-orchestration-board.md`（三线派发与总控亲验，含 §4I 基线）
+> → `docs/current-functionality-2026-09-10.md` + `docs/current-functionality-2026-09-10-revision-log.md`
+> → `docs/api/contract-v1.md` → `docs/handoff/2026-09-15-backend-followup-requests.md`（R1–R15）。
+> 总控亲跑的最近全绿基线 **771 passed / 22 skipped / 0 failed @ `826d318`**（33.74s，跑前后 `app|tests|migrations` 零脏）。
+> 注意 R13 在途采用「红底先行」提交（`ad5ebbf`、`4136e8c`），**中间 HEAD 可能故意是红的**，那不是回归，别据此判定失败。
+> 下文按原样保留，仅作历史归档。
+
+
 ## 2026-09-05
 
 - 建立全量功能验收计划。
