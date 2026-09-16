@@ -37,7 +37,7 @@
   background-color: var(--surface-3);
   background-image: linear-gradient(90deg, var(--surface-3) 0%, var(--surface-2) 45%, var(--surface-3) 90%);
   background-size: 220% 100%;
-  animation: ui-loading-sweep 1.4s ease-in-out infinite;
+  animation: ui-loading-sweep var(--skeleton-loop) ease-in-out infinite;
 }
 
 .ui-loading-state__bar {
