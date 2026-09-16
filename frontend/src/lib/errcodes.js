@@ -19,6 +19,26 @@
  * 码名走独立通道 errorCodeOf()，由界面放进 data-code / 「详情」折叠区；未知码才由
  * formatError() 在句尾附「错误码：xxx」小字。后端直出的句子若夹带码名，由 extractEmbeddedCode()
  * 在归类前摘掉，摘不干净的宁可走兜底句也不把码名留在正文里。
+ *
+ * 三列对账（B-5 ④，2026-09-16 实量；errcodes.test.js 里有一条单测钉住 17 / 16 / 25 三个数）：
+ *   列 A  app/agents/contracts.py::ErrorEnvelope.code ................. 17 码
+ *         本工作树 :87-104 只有 16 码，第 17 码 account_unavailable 来自主树 fa35a04
+ *         （C 的追认提交在 codex/data-file-catalog，不在本树），按总控派单登记为事实。
+ *   列 B  app/agents/evidence.py::_ERROR_CODES :19-36 ................. 16 码
+ *         与列 A 的旧 16 码同集合，没有被 fa35a04 一起改到 —— 这是后端两份拷贝之间的漂移。
+ *   列 C  前端 ERROR_CODES ............................................ 25 键
+ *         = 蓝本 17（列 A）+ data.py 7 + SSE 流内 1。
+ *   差集（逐条指名）：
+ *     A − C = 空        后端每个 canonical 码前端都有一句人话，没有一条落到兜底句（单测断言）。
+ *     C − A = 8         = UNRATIFIED_CODES：后端发得出、契约没登记。
+ *                       invalid_filename / unsupported_chart_type / unsupported_export_format /
+ *                       department_scope_required / dataset_filename_conflict /
+ *                       dataset_preview_failed / chart_generation_failed（app/api/v1/data.py）
+ *                       + no_answer_produced（app/api/v1/chat.py:1013）。
+ *     A − B = {account_unavailable}   两份后端拷贝不一致，后端对齐由总控派 C，我不动 app/**。
+ *     B − A = 空
+ *   还有第四类账不在这三列里：LEGACY_ALIASES 的 15 个历史码名与 PROSE_ALIASES 的 2 条中文散文，
+ *   同样是「后端确实发得出、封闭枚举里没有」的输入，前端已归一，契约侧仍欠登记。
  */
 
 /** 蓝本 17 码 + data.py 7 码 + 流式 1 码 = 25 个键，这 25 个就是 normalizeError().code 的全部合法取值。 */

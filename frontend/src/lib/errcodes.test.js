@@ -1,19 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ERROR_CODES,
-  FALLBACK_MESSAGE,
-  FRONTEND_ONLY_CODES,
-  LEGACY_ALIASES,
-  PROSE_ALIASES,
-  STATUS_CODES,
+  blobErrorText,
   errorCodeLabel,
   errorCodeOf,
-  blobErrorText,
   errorText,
+  ERROR_CODES,
+  FALLBACK_MESSAGE,
   formatError,
-  readBlobError,
+  FRONTEND_ONLY_CODES,
   isRetryable,
+  LEGACY_ALIASES,
   normalizeError,
+  PROSE_ALIASES,
+  readBlobError,
+  STATUS_CODES,
+  UNRATIFIED_CODES,
 } from './errcodes.js'
 
 /** app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举 17 码（含主树 fa35a04 追认的 account_unavailable） */
@@ -569,5 +570,87 @@ describe('blob 错误体解析（B-5 ③，下载与预览的 403 不再被说�
     expect(errorCodeOf(result)).toBe('')
     expect(isRetryable(result)).toBe(false)
     expect(isRetryable(blobErrorText('{"detail":"model_unavailable"}', 502))).toBe(true)
+  })
+})
+
+/**
+ * 列 B：app/agents/evidence.py::_ERROR_CODES（:19-36 实量 16 码）。
+ * 与列 A（本文件的 BLUEPRINT，17 码）的差集就是后端两份拷贝之间的漂移，只此一条。
+ */
+const EVIDENCE_CODES = [
+  'authentication_required',
+  'permission_denied',
+  'authorization_unavailable',
+  'resource_not_found',
+  'validation_error',
+  'conflict',
+  'rate_limited',
+  'queue_unavailable',
+  'model_unavailable',
+  'retrieval_unavailable',
+  'task_timeout',
+  'task_cancelled',
+  'unsupported_file',
+  'parse_failed',
+  'index_publish_failed',
+  'internal_error',
+]
+
+describe('码表三列对账（B-5 ④）', () => {
+  it('三个数钉住：契约 17 / evidence 16 / 前端 25', () => {
+    expect(BLUEPRINT.length).toBe(17)
+    expect(new Set(BLUEPRINT).size).toBe(17)
+    expect(EVIDENCE_CODES.length).toBe(16)
+    expect(new Set(EVIDENCE_CODES).size).toBe(16)
+    expect(Object.keys(ERROR_CODES).length).toBe(25)
+  })
+
+  it('A − C = 空：后端每个 canonical 码都有一句人话，没有一条落到兜底句', () => {
+    BLUEPRINT.forEach((code) => {
+      expect(Object.prototype.hasOwnProperty.call(ERROR_CODES, code), code).toBe(true)
+      const result = normalizeError({ response: { data: { detail: code } } })
+      expect(result.code, code).toBe(code)
+      expect(result.message, code).toBe(ERROR_CODES[code].message)
+      expect(result.message, code).not.toBe(FALLBACK_MESSAGE)
+      expect(result.message, code).not.toMatch(/[a-z][a-z0-9]*(_[a-z0-9]+)+/)
+    })
+  })
+
+  it('C − A = 8：前端有话、契约没登记的那批，逐条指名且与 UNRATIFIED_CODES 完全相等', () => {
+    const extra = ENUM.filter((code) => !BLUEPRINT.includes(code))
+    expect(extra.slice().sort()).toEqual([...DATA_CODES, ...STREAM_CODES].sort())
+    expect(extra.slice().sort()).toEqual([...UNRATIFIED_CODES].sort())
+    expect(extra.length).toBe(8)
+    UNRATIFIED_CODES.forEach((code) => {
+      expect(BLUEPRINT.includes(code), code).toBe(false)
+      expect(EVIDENCE_CODES.includes(code), code).toBe(false)
+      expect(FRONTEND_ONLY_CODES.includes(code), code).toBe(false)
+    })
+    expect(FRONTEND_ONLY_CODES).toEqual([])
+  })
+
+  it('A − B 只有 account_unavailable，B − A 为空：两份后端拷贝的漂移不扩大到第二条', () => {
+    expect(BLUEPRINT.filter((code) => !EVIDENCE_CODES.includes(code))).toEqual(['account_unavailable'])
+    expect(EVIDENCE_CODES.filter((code) => !BLUEPRINT.includes(code))).toEqual([])
+  })
+
+  it('别名表与散文表也各有话，不靠兜底句糊过去', () => {
+    Object.keys(LEGACY_ALIASES).forEach((legacy) => {
+      const result = normalizeError({ response: { data: { detail: legacy } } })
+      expect(result.code, legacy).toBe(LEGACY_ALIASES[legacy].code)
+      expect(result.message, legacy).not.toBe(FALLBACK_MESSAGE)
+      expect(result.message, legacy).not.toMatch(/[a-z][a-z0-9]*(_[a-z0-9]+)+/)
+    })
+    Object.keys(PROSE_ALIASES).forEach((prose) => {
+      const result = normalizeError({ response: { data: { detail: prose } } })
+      expect(result.code, prose).toBe(PROSE_ALIASES[prose].code)
+      expect(result.message, prose).not.toBe(FALLBACK_MESSAGE)
+    })
+  })
+
+  it('状态码表 STATUS_CODES 的取值也全在枚举内（对账时别漏这条通道）', () => {
+    Object.entries(STATUS_CODES).forEach(([status, code]) => {
+      expect(ENUM, status).toContain(code)
+    })
   })
 })
