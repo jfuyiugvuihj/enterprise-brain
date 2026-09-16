@@ -479,7 +479,7 @@ e2 带出两个前端必须处理的洞（零后端）：**D-5** 无部门账号
 
 五档固定视口：`1440×900`、`1920×1080`、`3440×1440`、`1280×720`、`768×1024`。
 
-- **前置（2026-09-15 修订，e2 已落码）**：验收账号**仍建议带部门**，但理由变了。admin 无部门被检索链硬拒已按 **e2** 裁定并落码（`719f29c`：`app/rag/filters.py` 复用 `policy.is_administrator`，管理员走 `administrator_scope`、`classification in [1,2,3]`；全量 `713 passed / 22 skipped / 0 failed`）。**只剩真机没证**：跑着的是 r8 那版镜像，未重建前线上仍会 403。所以重建镜像前继续用带部门账号做端到端，别把「镜像旧」误判成前端缺陷；重建后本前置作废，改断言为「admin 无部门也问得出答案」。
+- **前置（2026-09-16 再修订：admin 开箱可用，真机实测）**：验收账号**仍建议带部门**，但理由变了。admin 无部门被检索链硬拒已按 **e2** 裁定并落码（`719f29c`：`app/rag/filters.py` 复用 `policy.is_administrator`，管理员走 `administrator_scope`、`classification in [1,2,3]`；全量 `713 passed / 22 skipped / 0 failed`）。**只剩真机没证**：跑着的是 r8 那版镜像，未重建前线上仍会 403。所以重建镜像前继续用带部门账号做端到端，别把「镜像旧」误判成前端缺陷；重建后本前置作废，改断言为「admin 无部门也问得出答案」。
 - **不起真实服务器**：用 `context.route("**/*", …)` 从磁盘 fulfill，MIME 覆盖 html/js/css/png/svg/webp/woff2。
 - **必须 abort 掉 `fonts.googleapis.com` / `fonts.gstatic.com` / CDN**，模拟客户内网；否则"字体缺失"这类缺陷会被测不出来。
 - `/api/*` fulfill 401 JSON，用于验证 F3 的鉴权分支。
