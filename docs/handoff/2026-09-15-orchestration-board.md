@@ -845,3 +845,65 @@ R18 的 13 条用例里 `test_a_stop_while_parked_prevents_the_approve_from_runn
   根目录 `bundle.js` / `idx.html` 探针产物（我删时被沙箱拦下，未强推）。
 - `frontend/dist/` 里堆着 **70+ 个历史 `index-*.js`**（只有 251229 字节那个是本次产物）——
   §D-1 那条「死资源 2.32MB」的具体形态；它被 `.dockerignore` 排除，不影响镜像，但会污染工作树。
+
+
+## 4T. 模型第一次真跑通、延迟根因量化、以及我犯的第二个方法论错误（2026-09-16 22:2x，总控实测）
+
+### 4T.1 模型上真机的全过程（今天最亏的一课）
+
+- 这台机器**早就有** `qwen2.5:14b`（8.37 GB blob，2026-06-16）与 `nomic-embed-text`，在宿主
+  `C:\Users\fengx\.ollama`；但 compose 里 ollama 用**命名卷** `enterprise-brain_ollama`，看不见宿主那份
+  ⇒ 今天我重下了 9.0 GB。教训：容器与宿主的模型库是两个地方，先看 `OLLAMA_MODELS` / 卷挂载再说"没下过"。
+- 检索用的 embedding 模型是 `app/rag/retriever.py:23` 的模块常量 `EMBED_MODEL = "nomic-embed-text"`（不是可配置项），从未拉取 ⇒ 向量整条腿
+  在跑**全零向量**（详见 R21 订正）。`nomic-embed-text:latest` 已于 21:33 落地。
+- 14b 装不进容器：`.wslconfig` 写死 `memory=8GB`，Docker VM 内 `MemTotal=8131204 kB`。
+- 出路：把 LM Studio 现成的 `Qwen3.5-9B-Q4_K_M.gguf`（5.24 GB，`C:\Users\fengx\.lmstudio\models`）
+  用 `docker cp` + `ollama create qwen3.5:9b -f Modelfile` 导入，**零下载**；`deploy/.env.server` 的
+  `LOCAL_MODEL_NAME` 改为 `qwen3.5:9b`。真机 `/health/details` 实测 `problems=[]`、
+  `model.name=qwen3.5:9b`、`source=configured`。
+
+### 4T.2 那两次「301 秒 request.failed」怎么结的案（含我自己造成的假证据）
+
+- **第二次（21:45→21:50，9B）作废**：`docker logs worker` 只有一行 `[QueueWorker] 启动` 于 21:49:38
+  —— 我在请求在飞的时候 `up -d backend worker scheduler` 把 worker 重建了，失败是**我自己打断的**。
+- **第一次（21:13→21:18，14b）未结案**：核对过 21:18 前后我没有容器动作，且 `probe` 未打印 `error`
+  事件正文，所以拿不到根因；当时 14b 在 8 GB VM 里放不下是最可能的解释，但**这是推测不是证据**。
+- 立规矩：**端到端计时期间禁止对部署栈做任何 up/down/restart**；探针必须打印 `error`/`request.failed`
+  的完整 payload，否则失败无法归因。
+
+### 4T.3 真向量已经在跑（硬证据）
+
+走产品自己的链路删除重传同一份文件（`DELETE /api/v1/documents/demo-policy.md` → `POST /api/v1/upload`）：
+删除返回 `index_retirement.status=retired`（链路本身正确：先回滚索引，回滚失败就不删文档）；重传后
+`size_bytes=252` 与原文件字节级一致、`chunk_count=1`、`index_publication=published`。读库核对
+`chroma://enterprise_docs` → `demo-policy.md_0`：**dim=768 / 768 个分量全非零 / norm=20.144491**，
+库内只剩这一条（无新旧双份）。检索本体耗时 **0.3 秒**。
+
+### 4T.4 延迟根因：慢的不是知识库，是每次往返都要重新读题
+
+- 容器内直连 `http://ollama:11434/api/chat` 实测 `qwen3.5:9b`（纯 CPU）：**prefill 35.2 token/s**
+  （2199 token 输入 → `prompt_eval_duration` 62.5 s，单发总耗时 69.8 s）、**decode 8.18 token/s**
+  （400 token 输出 → 48.9 s）、冷加载 6.4 s。
+- 端到端 160.6 s 拆账（日志时间戳，加总 160.1 s）：Supervisor 27.8 + 改写第1发 24.1（撞墙退回）
+  + 检索 0.3 + 改写成功 41.4 + 生成 50.6 + 反思 15.9。其中 **67.8 s 是零产出往返**（`deterministic tasks=1`
+  之后又问了一次模型；那发改写直接失败；`redo=False count=0`）。
+- 两条默认值因此从"参数"变成"缺陷"：`MODEL_MAX_CONCURRENCY=1` ⇒ 立 **R23**；
+  `MODEL_REQUEST_TIMEOUT=60` 与 35 token/s 的 prefill 冲突（上下文 >2000 token 必超时），且全仓
+  对 GPU/显存/最低配置零命中 ⇒ 立 **R24（P0）**。
+- 顺带：`--gpus all` 在本机 Docker 引擎上实测拿不到 `/dev/nvidia*` ⇒ 容器内 GPU 目前不可用，
+  宿主虽有 RTX 4060 8 GB。
+
+### 4T.5 派工：W8（`codex/perf-lab`）
+
+任务是**只测不改**：复核速率、用只读探针量真实链路每步的 prompt token、产出
+`docs/perf/latency-budget-2026-09-16.md`（现状预算表 + 改造 A/B/C/D 的总时长与**首字时间** +
+超时阈值反解）。红线：禁改 `app/**`、`frontend/**`、`tests/**`、`docs/handoff/**`；禁任何 Docker
+写操作；禁跑全量 pytest。数字必须分标实测/算术/推算。
+
+### 4T.6 我犯的第二个方法论错误（写下来免得再犯）
+
+我把 160 秒归因成"CPU 慢"，然后所有建议都指向硬件——**这是把架构成本说成物理成本**。证据一直在
+我抄过的日志里（`deterministic tasks=1` 紧跟同一个 `[Route]`、`查询改写失败，返回原始问题`、
+`redo=False count=0`），我没有当场把它们换算成"这一步值多少秒、有没有产出"。
+**规则：任何端到端耗时数字，第一件事是拆"该花/不该花"，拆完才允许谈硬件。**
+另：我此前把"减少往返"当成不能碰的禁忌（怕伤多 Agent 卖点），那是我自己加的约束，用户从没说过。
