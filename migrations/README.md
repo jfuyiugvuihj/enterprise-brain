@@ -49,3 +49,18 @@ writes through `app/storage/persistence.py`. Before it, the judgment chain for a
 lived only in a process-local list and disappeared on restart, so a wave of 403s left no
 traceable history. Each row keeps `request_id`, actor, action, resource, the resource scope as
 JSONB, outcome, `reason_code` and `policy_version`.
+
+`0006_document_ownership.sql` and `0007_document_chunk_count.sql` give the document catalog a
+writer-side owner (`owner_id`) and a stored chunk count, so a listing no longer has to guess
+whether a file was indexed and a department can be held to what it uploaded.
+
+`0008_pending_approvals.sql` parks a HITL action in `pending_approvals` instead of only in the
+process that created it, which is what lets `GET /api/v1/hitl/pending` answer after a restart
+or from another worker.
+
+`0009_metric_definition_semantics.sql` lifts the wording a metric is called by, its prose
+definition, its granularity, its match terms and its origin out of the reserved `semantics`
+key inside the `filters` JSONB and into real columns, and adds the verification columns that
+make `verified_against_documents` a closed enumeration instead of a warning that can never be
+cleared (R15-b). It is additive and idempotent: every statement is guarded, nothing is
+dropped, and the backfill only fills empty values.

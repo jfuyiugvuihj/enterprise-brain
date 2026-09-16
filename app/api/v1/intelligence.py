@@ -180,8 +180,10 @@ async def semantics_metrics(request: Request):
     """Every metric definition a question can be answered from, with its provenance.
 
     Read-only (request 2 / B-5). Each entry states its ``definition_version`` and where
-    the definition came from, and ``verified_against_documents`` stays false because no
-    definition here has been reconciled with an uploaded policy document.
+    the definition came from. ``verified_against_documents`` is decided per row, not for
+    the whole table: it is true only once a human has reconciled the wording against a
+    named document and section (request R15-b), and the unreconciled warning stays on the
+    rest, so the flag can be cleared without pretending it was never set.
     """
     principal = _authorized(request, ACTION_VIEW, "semantics")
     return metric_catalog(owner_id=str(principal.user_id))

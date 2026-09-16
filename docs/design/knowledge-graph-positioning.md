@@ -28,11 +28,17 @@
 | 只读落到 HTTP 是 503 `storage_read_only` | `app/api/v1/intelligence.py` 的 `add_relation` 捕获 `ProductionReadOnlyProtection` | `python -m pytest -q tests/test_response_hygiene.py` |
 | Agent 侧零消费 | `git grep -n "KnowledgeGraph" -- app/agents` → 0 命中 | 直接执行该命令 |
 
-容器真机口径（总控 2026-09-16 部署栈实测，随第二批工单下达）：`GET /api/v1/health/details` 的
-`storage.subsystems.knowledge_graph` 为 `{"storage_mode":"unavailable","protection":"read_only","detail":
-"KNOWLEDGE_GRAPH_STORE_PATH is not configured; relation writes are refused"}`，`problems` 含
-`knowledge_graph_read_only`。**本单未做任何 Docker/compose 操作**：上表最后一列是在同一判据分支上的离线复现，
-不等价于真机证据，真机复验仍归总控。
+容器真机口径（订正 2026-09-16 20:56，总控实跑，替掉工单里那条过期快照）：工单随包下达的那句
+「真机 = `unavailable` / `read_only`」是**配置变更之前**的读数，已不成立。总控随后在
+`deploy/.env.server` 补上 `KNOWLEDGE_GRAPH_STORE_PATH=/app/data/knowledge_graph.json`，此后经 nginx
+`GET /api/v1/health/details` 实测 `storage.subsystems.knowledge_graph` 为
+`{"storage_mode":"json","durable":true,"protection":"none","detail":"relations persisted to collection
+knowledge_graph_relations"}`，`problems` 只剩 `["model_not_available"]`（`knowledge_graph_read_only` 已消失）；
+`POST /api/v1/knowledge-graph/relations` 实测 200 且 `status=candidate`，UTF-8 中文往返无损。
+所以本节表格要读准成立条件：**未配置该变量的客户环境**才是只读并返 503 `storage_read_only`，
+配置了才是可写的候选断言采集表——两种形态都由用例钉住，不存在「文档说一套、代码留一半」。
+本单未做任何 Docker/compose 操作，上表最后一列是同一判据分支上的离线复现；真机证据由总控补齐在本段。
+`shared_across_processes` 在带外改文件时不可信，见跟进单 R19。
 
 ## 3. 晋升链路（R15-b）：状态、权限、稳定码
 

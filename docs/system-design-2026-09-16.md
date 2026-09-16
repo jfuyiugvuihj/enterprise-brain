@@ -709,7 +709,7 @@ App.vue
 | Principal/契约冻结/ErrorEnvelope | §4/§7/§14 | **已落地**（contracts.py + test_public_contracts） |
 | RBAC+ABAC、资源级授权、审计三段式 | §4 | **核心已落地**，全路由覆盖按计划收口 |
 | 可靠队列（租约/死信/幂等/取消） | §5.4 | **已落地**（当时隔离环境验收 443 passed；当前基线 830 passed / 22 skipped） |
-| 迁移门禁（manifest/advisory lock） | §5.3 | **已落地**（0001–0008，manifest 8 条） |
+| 迁移门禁（manifest/advisory lock） | §5.3 | **已落地**（0001–0009，manifest 9 条） |
 | 多 Agent 图/Send 并行/依赖分层/Reflect | §7 | **已落地** |
 | 证据袋与 AgentResult | §7.2 | **已落地** |
 | HITL interrupt_before=[chart,export] | §8 | **已落地** |
