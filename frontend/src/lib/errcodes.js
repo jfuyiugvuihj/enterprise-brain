@@ -14,9 +14,14 @@
  *
  * 硬不变量：normalizeError() 的 .code 一定 ∈ Object.keys(ERROR_CODES) ∪ {''}。
  * 后端原样回来的码名/散文一律放进 .rawCode，只供排查与「错误码：xxx」小字使用。
+ *
+ * 文案政策（B-5 ②）：给人看的句子只说人话 + 下一步，不内嵌裸 snake_case 码名。
+ * 码名走独立通道 errorCodeOf()，由界面放进 data-code / 「详情」折叠区；未知码才由
+ * formatError() 在句尾附「错误码：xxx」小字。后端直出的句子若夹带码名，由 extractEmbeddedCode()
+ * 在归类前摘掉，摘不干净的宁可走兜底句也不把码名留在正文里。
  */
 
-/** 蓝本 17 码 + data.py 7 码。这 24 个键名就是 normalizeError().code 的全部合法取值。 */
+/** 蓝本 17 码 + data.py 7 码 + 流式 1 码 = 25 个键，这 25 个就是 normalizeError().code 的全部合法取值。 */
 export const ERROR_CODES = {
   authentication_required: { message: '登录状态已失效，请重新登录后再试。', retryable: false },
   permission_denied: { message: '当前账号没有这项权限，请联系管理员开通。', retryable: false },
@@ -50,7 +55,7 @@ export const ERROR_CODES = {
   dataset_preview_failed: { message: '数据文件预览没能打开，请稍后重试。', retryable: true },
   chart_generation_failed: { message: '图表没能生成，请稍后重试。', retryable: true },
 
-  // 流式回答跑完既没正文也没待确认步骤。出处 app/api/v1/chat.py:986-1001（SSE request.failed 的 data.error_code）。
+  // 流式回答跑完既没正文也没待确认步骤。出处 app/api/v1/chat.py:997-1013（SSE request.failed 的 data.error_code）。
   // 原先只活在 lib/sessions.js:376 的私有字典里，句子内嵌了裸码名，这里按文案政策重写成纯人话 + 下一步。
   no_answer_produced: { message: '本轮未产出任何结论，请重试，或把数据范围缩小一点再问。', retryable: true },
 }
@@ -141,6 +146,9 @@ export const FALLBACK_MESSAGE = '操作没有完成，请稍后重试。'
 
 const CODE_PATTERN = /^[a-z][a-z0-9_]*$/
 
+/** 夹带码名的三种野外形状：error_code=X（app/api/v1/chat.py:998）与括号里的 X（lib/sessions.js:376-380 那批） */
+const EMBED_CODE = /error_code=([a-z][a-z0-9_]+)|（([a-z][a-z0-9_]+)）|[(]([a-z][a-z0-9_]+)[)]/g
+
 /** 稳定码的形状：小写字母开头的 snake_case。中文散文一律不算码 */
 function isCodeShape(value) {
   return typeof value === 'string' && CODE_PATTERN.test(value.trim())
@@ -162,6 +170,39 @@ function cleanText(value) {
 /** 散文规范化：去首尾空白 + 去尾部句读，仅此而已（不做包含式模糊匹配） */
 function normalizeProseKey(value) {
   return cleanText(value).replace(/[\s。．.！!？?；;：,，、]+$/g, '').trim()
+}
+
+/**
+ * 后端有句子把码名直接夹在正文里，例如 app/api/v1/chat.py:998 写的
+ * 「本轮未产出任何结论（error_code=no_answer_produced），请重试或补充数据范围。」
+ * 这类串既不是码、也不在散文表里，必须先做保守摘除再归类：只动 error_code=X、（X）、(X)
+ * 三种形状，且 X 必须含下划线并符合码名形态；纯小写单词（id、api 之类）一概不动 ——
+ * 宁可漏判走兜底句，也不许把正常词吃掉。
+ * @returns {{ code: string, text: string } | null} text 是摘掉码名、收拾完残标点之后的句子
+ */
+function extractEmbeddedCode(text) {
+  if (!text) return null
+  EMBED_CODE.lastIndex = 0
+  let match = EMBED_CODE.exec(text)
+  let code = ''
+  while (match) {
+    const token = match[1] || match[2] || match[3] || ''
+    if (!code && token.includes('_') && isCodeShape(token)) code = token
+    match = EMBED_CODE.exec(text)
+  }
+  if (!code) return null
+  return { code, text: tidyProse(text.replace(EMBED_CODE, '')) }
+}
+
+/** 摘掉码名之后收拾残标点：先清空括号，再并重复标点，最后压多余空格，顺序不能反 */
+function tidyProse(text) {
+  return text
+    .replace(/（[ ]*）|[(][ ]*[)]/g, '')
+    .replace(/([，、；：])[，、；：]+/g, '$1')
+    .replace(/。[，、；：]+/g, '。')
+    .replace(/^[，、；：。.]+/, '')
+    .replace(/[ ]{2,}/g, ' ')
+    .trim()
 }
 
 function isEnumCode(code) {
@@ -223,6 +264,23 @@ function resolveCode(raw, status) {
     })
   }
 
+  // 后端把码名夹在正文里直出的句子：先摘码名再归类，摘完认得就用字典句（唯一真相源），
+  // 认不下就把摘干净的句子当人话、码名留进 rawCode 供「错误码：xxx」小字排查。
+  const embedded = token && !isCodeShape(token) ? extractEmbeddedCode(token) : null
+  if (embedded) {
+    if (isEnumCode(embedded.code)) {
+      const known = ERROR_CODES[embedded.code]
+      return clampResult({ code: embedded.code, rawCode: embedded.code, message: known.message, retryable: known.retryable })
+    }
+    const fallbackStatus = STATUS_CODES[status]
+    return clampResult({
+      code: fallbackStatus || '',
+      rawCode: embedded.code,
+      message: embedded.text,
+      retryable: Boolean(fallbackStatus && ERROR_CODES[fallbackStatus].retryable),
+    })
+  }
+
   const statusKey = STATUS_CODES[status]
   if (token && isCodeShape(token)) {
     // 未知稳定码：走兜底句，码名留在 rawCode（界面小字仍可按「错误码：xxx」报出来）
@@ -248,11 +306,13 @@ function resolveCode(raw, status) {
 
 /** 形状 2：ErrorEnvelope / 任意 { code, message, retryable } 对象，后端给的 message 优先级最高 */
 function fromEnvelope(envelope, status) {
-  const resolved = resolveCode(envelope.code, status)
+  // 后端在 SSE 与下载错误体里用的是 error_code，不是 code（chat.py:1013、artifacts 的 blob 体），两个都要认
+  const wireCode = envelope.code ?? envelope.error_code
+  const resolved = resolveCode(wireCode, status)
   const message = cleanText(envelope.message)
   return clampResult({
     code: resolved.code,
-    rawCode: cleanText(envelope.code) || resolved.rawCode,
+    rawCode: cleanText(wireCode) || resolved.rawCode,
     message: message || resolved.message,
     retryable: typeof envelope.retryable === 'boolean' ? envelope.retryable : resolved.retryable,
   })
@@ -296,6 +356,7 @@ function pickPayload(err) {
   if (typeof data === 'string' || Array.isArray(data)) return { detail: data }
   if (typeof data === 'object') {
     if ('detail' in data) return data
+    if ('error_code' in data && !('detail' in data)) return { detail: data }
     if ('code' in data || 'message' in data) return { detail: data }
     const topMessage = cleanText(data.message) || cleanText(data.error)
     if (topMessage) return { detail: topMessage }
@@ -366,6 +427,15 @@ export function normalizeError(err) {
  */
 function toResult(input) {
   return isNormalized(input) ? input : normalizeError(input)
+}
+
+/**
+ * 独立通道：界面要展示/埋点码名时只准用它，拿到的一定是封闭枚举内的码名或空串。
+ * 用法是塞进 data-code / 「详情」折叠区，或 console.debug；不许拼进给人看的句子。
+ * 未知码与中文散文在这里都回空串（那些走 errorCodeLabel 的「错误码：xxx」小字）。
+ */
+export function errorCodeOf(errOrResult) {
+  return toResult(errOrResult).code
 }
 
 export function errorCodeLabel(errOrResult) {

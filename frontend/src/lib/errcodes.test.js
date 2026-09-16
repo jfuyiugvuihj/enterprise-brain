@@ -7,6 +7,7 @@ import {
   PROSE_ALIASES,
   STATUS_CODES,
   errorCodeLabel,
+  errorCodeOf,
   errorText,
   formatError,
   isRetryable,
@@ -389,5 +390,86 @@ describe('isRetryable / errorText / formatError', () => {
     const result = normalizeError(axiosError(500, 'odd_code'))
     expect(errorCodeLabel(result)).toBe('错误码：odd_code')
     expect(formatError(result)).toBe(`${FALLBACK_MESSAGE}（错误码：odd_code）`)
+  })
+})
+
+/**
+ * 文案政策（B-5 ②）的字面量侧：后端/sessions.js 有句子把码名夹在正文里直出，
+ * 这里断言 normalizeError 会摘掉码名再收口，且政策判据本身可机器验证。
+ */
+describe('文案政策②：正文夹带裸码名（B-5-2）', () => {
+  const BARE = /\b[a-z][a-z0-9]*(_[a-z0-9]+)+\b/
+
+  it('app/api/v1/chat.py:998 的原句认得出码，且吐出去掉码名的字典句', () => {
+    const raw = '本轮未产出任何结论（error_code=no_answer_produced），请重试或补充数据范围。'
+    const result = normalizeError(axiosError(200, raw))
+    inEnum(result, 'chat.py:998')
+    expect(result.code).toBe('no_answer_produced')
+    expect(result.message).toBe(ERROR_CODES.no_answer_produced.message)
+    expect(BARE.test(result.message)).toBe(false)
+    expect(errorCodeLabel(result)).toBe('')
+  })
+
+  it('lib/sessions.js:376 的中文括号裸码同样收口到字典句', () => {
+    const result = normalizeError(axiosError(200, '本轮未产出任何结论（no_answer_produced），请重试或补充数据范围。'))
+    expect(result.code).toBe('no_answer_produced')
+    expect(result.message).toBe(ERROR_CODES.no_answer_produced.message)
+    expect(BARE.test(result.message)).toBe(false)
+  })
+
+  it('半角括号 + 英文标点混排也能摘干净', () => {
+    const result = normalizeError(axiosError(504, '请求超过系统处理时限(task_timeout)。'))
+    expect(result.code).toBe('task_timeout')
+    expect(result.message).toBe(ERROR_CODES.task_timeout.message)
+  })
+
+  it('内嵌未知码：码名摘出进 rawCode，正文读得通，小字仍可报告', () => {
+    const raw = '工作簿没能解析（error_code=workbook_lock_failed），请另存为 xlsx 再传一次。'
+    const result = normalizeError(axiosError(400, raw))
+    inEnum(result, 'workbook_lock_failed')
+    expect(result.code).toBe('validation_error')
+    expect(result.rawCode).toBe('workbook_lock_failed')
+    expect(BARE.test(result.message)).toBe(false)
+    expect(result.message).toContain('请另存为 xlsx 再传一次')
+    expect(formatError(result)).toContain('错误码：workbook_lock_failed')
+  })
+
+  it('括号里是普通词时一口都不吃：宁可漏判也不改坏句子', () => {
+    const result = normalizeError(axiosError(400, '字段（id）不能为空，请补齐后再提交。'))
+    expect(result.code).toBe('validation_error')
+    expect(result.message).toBe('字段（id）不能为空，请补齐后再提交。')
+    expect(result.rawCode).toBe('字段（id）不能为空，请补齐后再提交。')
+  })
+
+  it('errorCodeOf 独立通道：只回枚举码或空串，永不回散文', () => {
+    ALL_CODES.forEach((code) => {
+      expect(errorCodeOf({ response: { status: 200, data: { detail: code } } }), code).toBe(code)
+    })
+    expect(errorCodeOf(axiosError(401, '请先登录'))).toBe('authentication_required')
+    expect(errorCodeOf(axiosError(200, '本轮未产出任何结论（no_answer_produced），请重试或补充数据范围。'))).toBe('no_answer_produced')
+    // 状态可归类时按状态给枚举码，状态也给不出时才回空串
+    expect(errorCodeOf(axiosError(500, 'odd_new_code'))).toBe('internal_error')
+    expect(errorCodeOf(axiosError(200, 'odd_new_code'))).toBe('')
+    expect(errorCodeOf(axiosError(500, '完全看不懂的一句话'))).toBe('internal_error')
+    expect(errorCodeOf(axiosError(200, '完全看不懂的一句话'))).toBe('')
+    expect(errorCodeOf(undefined)).toBe('')
+    Object.keys(ERROR_CODES).concat(Object.keys(LEGACY_ALIASES), Object.keys(PROSE_ALIASES)).forEach((input) => {
+      const value = errorCodeOf({ response: { status: 200, data: { detail: input } } })
+      expect(value === '' || ENUM.includes(value), input).toBe(true)
+      expect(/[\u4e00-\u9fff]/.test(value), input).toBe(false)
+    })
+  })
+
+  it('字典里的每一条用户可见文案自己先过政策：不含裸码名', () => {
+    Object.entries(ERROR_CODES).forEach(([code, entry]) => {
+      expect(BARE.test(entry.message), code).toBe(false)
+    })
+    Object.entries(LEGACY_ALIASES).forEach(([legacy, entry]) => {
+      expect(BARE.test(entry.message), legacy).toBe(false)
+    })
+    Object.values(PROSE_ALIASES).forEach((entry) => {
+      expect(BARE.test(entry.message || '')).toBe(false)
+    })
+    expect(BARE.test(FALLBACK_MESSAGE)).toBe(false)
   })
 })
