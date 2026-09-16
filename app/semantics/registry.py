@@ -8,22 +8,29 @@ catalog has no row yet, and they stay deliberately small.
 
 Two invariants are kept on purpose:
 
-* Provenance never overstates itself. The table has no column that records a
-  reconciliation against an uploaded policy document, so every definition - table row
-  or code fallback - carries an "未与已上传制度文件核对" warning. Storing a flag inside a
-  row's JSONB does not remove it, because a self-declared flag is not evidence.
+* Provenance never overstates itself. A definition reports
+  ``verification_state = "unverified"`` until a named approver has reconciled it with an
+  uploaded document, and only the ``verified`` state removes the
+  "未与已上传制度文件核对" warning. That state is not a free-form flag: migration 0009
+  makes it a closed enumeration whose satisfied side needs verified_document,
+  verified_section, verified_by and verified_at, and this module re-checks the evidence
+  instead of trusting the state word, because a self-declared flag is not evidence.
 * Nothing connects at import time. ``_database_available`` and ``_conn`` follow the
   lazy pattern of app/documents/catalog.py but stay closed until the application itself
   reports a ready PostgreSQL, and writes happen only when a caller asks
   (``sync_code_definitions`` / ``register_metric_definition``), never while a question
   is being answered.
 
-The table carries the calculation contract (formula, unit, period, currency, timezone,
-source scope, filters, status) but has no column for the display label, the prose
-definition, or the business wording a question is matched against. Those travel inside the
-``filters`` JSONB under the reserved ``semantics`` key and are stripped from the filters a
-caller sees. Promoting them into real columns needs a migration, which this slice does not
-own: the draft is left for whoever numbers migrations next.
+The display label, the prose definition, the business wording a question is matched
+against, the granularity and the provenance origin used to travel inside the ``filters``
+JSONB under the reserved ``semantics`` key, which was the debt this module admitted here.
+Migration 0009 (migrations/0009_metric_definition_semantics.sql) gives them real columns,
+so ``metric_definitions`` is now read from those columns and the JSONB key is a compat
+mirror only: it is still written, because an application rollback does not come with a
+schema rollback, and it is read only when the real column is still NULL, which is how a
+row written before 0009 keeps answering. The mirror never carries verification, so a row
+cannot certify itself by pasting a flag into a JSON blob. Stripping the reserved key from
+the filters a caller sees is unchanged.
 """
 from __future__ import annotations
 
@@ -32,6 +39,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -48,6 +56,18 @@ ACTIVE_STATUSES = frozenset({"active", "published", "current"})
 
 # Reserved key inside the ``filters`` JSONB; see the module docstring.
 SEMANTICS_KEY = "semantics"
+
+# The closed enumeration migration 0009 constrains verification_state to. There is no
+# "rejected" member on purpose: a candidate relation that failed review keeps the rejection
+# in the graph (app/knowledge_graph/service.py), and a catalog row that answers questions
+# must not be able to sit in a state meaning "nobody checked this, and somebody said no".
+UNVERIFIED_STATE = "unverified"
+VERIFIED_STATE = "verified"
+VERIFICATION_STATES = (UNVERIFIED_STATE, VERIFIED_STATE)
+
+# The evidence a ``verified`` row cannot be without, mirrored from the CHECK that
+# metric_definitions_verified_evidence_check enforces in the database.
+VERIFICATION_EVIDENCE = ("verified_document", "verified_section", "verified_by", "verified_at")
 
 _CODE_WARNING = "定义来自代码语义注册表，未与已上传制度文件核对"
 _TABLE_WARNING = "定义来自指标定义表 metric_definitions，未与已上传制度文件核对"
@@ -72,12 +92,28 @@ _SELECT_COLUMNS = (
     "source_scope",
     "filters",
     "status",
+    # Added by migration 0009: the wording that used to be smuggled through the reserved
+    # JSONB key, and the reconciliation evidence that makes the warning removable.
+    "metric_name",
+    "definition_text",
+    "time_granularity",
+    "origin",
+    "match_terms",
+    "verification_state",
+    "verified_document",
+    "verified_section",
+    "verified_by",
+    "verified_at",
+    "source_relation_id",
 )
 
-# The table is written with exactly the columns migration 0002 declares; no new
-# column, no new migration.
+# Written with exactly the columns 0002 plus 0009 declare, and nothing else. Reading or
+# writing this catalog therefore requires 0009 to have been applied: like every other
+# additive migration here, scripts/migrate.py runs before the service starts
+# (docs/system-design-2026-09-16.md §16.1), and a half-migrated database fails the
+# migration gate rather than silently losing the catalog.
 _INSERT_COLUMNS = _SELECT_COLUMNS
-_JSON_COLUMNS = frozenset({"source_scope", "filters"})
+_JSON_COLUMNS = frozenset({"source_scope", "filters", "match_terms"})
 _UNIQUE_COLUMNS = ("owner_id", "metric_id", "definition_version")
 _IMMUTABLE_COLUMNS = frozenset({"metric_definition_id", *_UNIQUE_COLUMNS})
 
@@ -109,11 +145,23 @@ class MetricDefinition:
     origin: str = ""
     source_scope: tuple[str, ...] = ()
     filters: dict[str, Any] = field(default_factory=dict)
+    verification_state: str = UNVERIFIED_STATE
+    verified_document: str = ""
+    verified_section: str = ""
+    verified_by: str = ""
+    verified_at: str = ""
+    source_relation_id: str = ""
 
     @property
     def verified_against_documents(self) -> bool:
-        """False for every definition: the table cannot record such a check."""
-        return False
+        """True only for a row whose reconciliation names a document and a section.
+
+        The state word alone is not enough: an incomplete row is read as unverified by
+        _verification_from_row, and this property is where that decision surfaces.
+        """
+        return self.verification_state == VERIFIED_STATE and bool(
+            self.verified_document and self.verified_section and self.verified_by and self.verified_at
+        )
 
     def to_context(self) -> MetricContext:
         return MetricContext(
@@ -141,7 +189,13 @@ class MetricDefinition:
             "owner_id": self.owner_id,
             "definition_version": self.definition_version,
             "status": self.status,
+            "verification_state": VERIFIED_STATE if self.verified_against_documents else UNVERIFIED_STATE,
             "verified_against_documents": self.verified_against_documents,
+            "verified_document": self.verified_document,
+            "verified_section": self.verified_section,
+            "verified_by": self.verified_by,
+            "verified_at": self.verified_at,
+            "source_relation_id": self.source_relation_id,
             "warnings": list(self.warnings),
         }
 
@@ -191,6 +245,99 @@ def _json_list(value: Any) -> list[Any]:
 
 def _dump_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _text_or_none(value: Any) -> str | None:
+    """A stripped string, or None, so an unknown field is stored as an honest NULL."""
+    text = str(value if value is not None else "").strip()
+    return text or None
+
+
+def _first_text(*values: Any) -> str:
+    """The first value that says something, which is how a real column beats its mirror."""
+    for value in values:
+        text = str(value if value is not None else "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _now_iso() -> str:
+    """The moment this process recorded something, in UTC ISO-8601.
+
+    A helper because register_metric_definition takes a ``timezone`` argument that
+    shadows the imported name inside its own body.
+    """
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _timestamp_text(value: Any) -> str:
+    """A TIMESTAMPTZ read back as a datetime or as text, normalised to ISO-8601."""
+    if value is None:
+        return ""
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return str(isoformat()).strip()
+    return str(value).strip()
+
+
+def _timestamp_param(value: Any) -> datetime | None:
+    """A TIMESTAMPTZ parameter.
+
+    psycopg sends a Python str as text and PostgreSQL will not assign text to a
+    timestamptz column, so the moment has to arrive as a datetime. An unparseable value
+    is refused rather than quietly stored as NULL, which would leave a ``verified`` row
+    without the evidence its CHECK demands.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(f"verified_at is not an ISO-8601 timestamp: {text!r}") from exc
+
+
+def _verification_from_row(row: dict[str, Any]) -> dict[str, str]:
+    """Read the reconciliation, from the real columns and from nothing else.
+
+    A row that claims ``verified`` without complete evidence is reported as unverified:
+    migration 0009 makes that combination unrepresentable in PostgreSQL, so seeing it
+    means the row predates the CHECK or the database is not the one this module writes,
+    and either way an incomplete claim must not silence the warning. Stale evidence on an
+    unverified row is dropped here for the same reason.
+    """
+    evidence = {
+        "verification_state": _first_text(row.get("verification_state")).lower() or UNVERIFIED_STATE,
+        "verified_document": _first_text(row.get("verified_document")),
+        "verified_section": _first_text(row.get("verified_section")),
+        "verified_by": _first_text(row.get("verified_by")),
+        "verified_at": _timestamp_text(row.get("verified_at")),
+    }
+    if evidence["verification_state"] != VERIFIED_STATE:
+        return {"verification_state": UNVERIFIED_STATE}
+    missing = [key for key in VERIFICATION_EVIDENCE if not evidence.get(key)]
+    if missing:
+        logger.warning(
+            "[Semantics] metric_definitions row {} claims {} without {}; reporting it as unverified".format(
+                row.get("metric_definition_id") or row.get("metric_id") or "?",
+                VERIFIED_STATE,
+                ", ".join(missing),
+            )
+        )
+        return {"verification_state": UNVERIFIED_STATE}
+    return evidence
+
+
+def _catalog_warnings(origin: str, verification_state: str) -> tuple[str, ...]:
+    """The provenance message a catalog row carries, and the one that verified rows drop."""
+    if verification_state == VERIFIED_STATE:
+        return ()
+    return (_SEEDED_WARNING,) if origin == SOURCE_CODE else (_TABLE_WARNING,)
 
 
 def _dedupe(terms: Any) -> tuple[str, ...]:
@@ -297,14 +444,20 @@ def _definition_from_row(row: dict[str, Any]) -> MetricDefinition | None:
         logger.warning("[Semantics] ignoring a metric_definitions row without metric_id")
         return None
     stored_filters = _json_object(row.get("filters"))
+    # The compat mirror: read only where the real column stayed NULL, so a row written
+    # before migration 0009 keeps answering without the JSONB ever outranking a column.
     semantics = _json_object(stored_filters.get(SEMANTICS_KEY))
     filters = {key: value for key, value in stored_filters.items() if key != SEMANTICS_KEY}
-    metric_name = str(semantics.get("metric_name") or "").strip() or _display_name(metric_id)
     formula = str(row.get("formula") or "").strip()
-    definition_text = str(semantics.get("definition_text") or "").strip() or formula
-    explicit_terms = _dedupe(_json_list(semantics.get("match_terms")))
-    origin = str(semantics.get("origin") or "").strip()
-    warnings = (_SEEDED_WARNING,) if origin == SOURCE_CODE else (_TABLE_WARNING,)
+    metric_name = _first_text(row.get("metric_name"), semantics.get("metric_name")) or _display_name(metric_id)
+    definition_text = _first_text(row.get("definition_text"), semantics.get("definition_text")) or formula
+    time_granularity = _first_text(row.get("time_granularity"), semantics.get("time_granularity"))
+    origin = _first_text(row.get("origin"), semantics.get("origin"))
+    explicit_terms = _dedupe(_json_list(row.get("match_terms"))) or _dedupe(
+        _json_list(semantics.get("match_terms"))
+    )
+    verification = _verification_from_row(row)
+    warnings = _catalog_warnings(origin, verification["verification_state"])
     return MetricDefinition(
         metric_id=metric_id,
         metric_name=metric_name,
@@ -315,7 +468,7 @@ def _definition_from_row(row: dict[str, Any]) -> MetricDefinition | None:
         currency=str(row.get("currency") or "").strip() or default_currency(),
         period_type=str(row.get("period_type") or "").strip(),
         timezone=str(row.get("timezone") or "").strip() or default_timezone(),
-        time_granularity=str(semantics.get("time_granularity") or "").strip(),
+        time_granularity=time_granularity,
         match_terms=explicit_terms or _derived_terms(metric_id, metric_name, definition_text, formula),
         source=SOURCE_TABLE,
         warnings=warnings,
@@ -325,6 +478,12 @@ def _definition_from_row(row: dict[str, Any]) -> MetricDefinition | None:
         origin=origin or SOURCE_TABLE,
         source_scope=tuple(str(item) for item in _json_list(row.get("source_scope")) if str(item).strip()),
         filters=filters,
+        verification_state=verification["verification_state"],
+        verified_document=verification.get("verified_document", ""),
+        verified_section=verification.get("verified_section", ""),
+        verified_by=verification.get("verified_by", ""),
+        verified_at=verification.get("verified_at", ""),
+        source_relation_id=_first_text(row.get("source_relation_id")),
     )
 
 
@@ -517,14 +676,27 @@ def metric_catalog(owner_id: str | None = None) -> dict[str, Any]:
             {item.definition_version for item in definitions if item.definition_version}
         ),
         "database_available": _database_available(),
-        # metric_definitions has no column that records a reconciliation with an
-        # uploaded policy document, so no catalog can honestly claim one.
-        "verified_against_documents": False,
+        # Computed, not hardcoded: migration 0009 gives the table a reconciliation column
+        # set, so a catalog may now honestly claim it. The claim holds only when every
+        # definition in it was actually reconciled, and the count beside it is what a
+        # reviewer uses to see how far from that the catalog still is.
+        "verified_against_documents": bool(definitions)
+        and all(item.verified_against_documents for item in definitions),
+        "definition_verification": {
+            VERIFIED_STATE: sum(1 for item in definitions if item.verified_against_documents),
+            UNVERIFIED_STATE: sum(1 for item in definitions if not item.verified_against_documents),
+        },
         "warnings": sorted({warning for item in definitions for warning in item.warnings}),
     }
 
 
 def _row_values(definition: MetricDefinition, owner_id: str, definition_id: str) -> dict[str, Any]:
+    verified = definition.verified_against_documents
+    # The mirror this module used to read from. It is written for one release only so that
+    # an application rolled back to pre-0009 code still finds its labels; 0009 backfilled
+    # the columns from it, and the read path consults it only when a column is NULL. It
+    # deliberately holds no verification fields: reconciliation evidence must live in the
+    # columns that constrain it.
     semantics = {
         "metric_name": definition.metric_name,
         "definition_text": definition.definition,
@@ -545,6 +717,17 @@ def _row_values(definition: MetricDefinition, owner_id: str, definition_id: str)
         "source_scope": list(definition.source_scope),
         "filters": {**definition.filters, SEMANTICS_KEY: semantics},
         "status": definition.status,
+        "metric_name": _text_or_none(definition.metric_name),
+        "definition_text": _text_or_none(definition.definition),
+        "time_granularity": _text_or_none(definition.time_granularity),
+        "origin": _text_or_none(definition.origin or definition.source),
+        "match_terms": list(definition.match_terms),
+        "verification_state": VERIFIED_STATE if verified else UNVERIFIED_STATE,
+        "verified_document": _text_or_none(definition.verified_document) if verified else None,
+        "verified_section": _text_or_none(definition.verified_section) if verified else None,
+        "verified_by": _text_or_none(definition.verified_by) if verified else None,
+        "verified_at": _timestamp_param(definition.verified_at) if verified else None,
+        "source_relation_id": _text_or_none(definition.source_relation_id),
     }
 
 
@@ -648,11 +831,25 @@ def register_metric_definition(
     status: str = "active",
     owner_id: str | None = None,
     overwrite: bool = True,
+    verified_document: str = "",
+    verified_section: str = "",
+    verified_by: str = "",
+    verified_at: str = "",
+    source_relation_id: str = "",
 ) -> dict[str, Any]:
     """Add or revise one catalog row: the no-code path for a new metric.
 
     The row is written with ``origin=operator``, which is what distinguishes a curated
     definition from one this module seeded from its own fallback rules.
+
+    Reconciliation is optional and all-or-nothing: pass ``verified_document``,
+    ``verified_section`` and ``verified_by`` together and the row lands as
+    ``verification_state=verified`` with no warning; pass some of them and the call is
+    refused, because half an evidence trail is how an uncheckable claim gets filed.
+    ``verified_at`` defaults to now, since the moment is what the machine saw rather than
+    something a caller should be allowed to assert about the past. Revising a row that was
+    verified reopens the warning unless the evidence is supplied again: the reconciliation
+    was about the wording that used to be there.
     """
     metric = str(metric_id or "").strip()
     if not metric:
@@ -660,6 +857,20 @@ def register_metric_definition(
     owner = (owner_id or system_owner_id()).strip() or system_owner_id()
     version = str(definition_version or "").strip()
     terms = _dedupe(match_terms)
+    evidence = {
+        "verified_document": str(verified_document or "").strip(),
+        "verified_section": str(verified_section or "").strip(),
+        "verified_by": str(verified_by or "").strip(),
+    }
+    missing = [key for key, value in evidence.items() if not value]
+    if any(evidence.values()) and missing:
+        raise ValueError("verification evidence incomplete, missing: " + ", ".join(missing))
+    state = UNVERIFIED_STATE if missing else VERIFIED_STATE
+    moment = str(verified_at or "").strip()
+    if moment:
+        moment = _timestamp_param(moment).isoformat()
+    elif state == VERIFIED_STATE:
+        moment = _now_iso()
     definition = MetricDefinition(
         metric_id=metric,
         metric_name=str(metric_name or "").strip() or _display_name(metric),
@@ -673,12 +884,18 @@ def register_metric_definition(
         time_granularity=str(time_granularity or "").strip(),
         match_terms=terms or _derived_terms(metric, metric_name, definition_text, formula),
         source=SOURCE_TABLE,
-        warnings=(_TABLE_WARNING,),
+        warnings=_catalog_warnings("operator", state),
         status=str(status or "active").strip() or "active",
         owner_id=owner,
         origin="operator",
         source_scope=tuple(str(item) for item in _json_list(source_scope) if str(item).strip()),
         filters={key: value for key, value in _json_object(filters).items() if key != SEMANTICS_KEY},
+        verification_state=state,
+        verified_document=evidence["verified_document"] if state == VERIFIED_STATE else "",
+        verified_section=evidence["verified_section"] if state == VERIFIED_STATE else "",
+        verified_by=evidence["verified_by"] if state == VERIFIED_STATE else "",
+        verified_at=moment if state == VERIFIED_STATE else "",
+        source_relation_id=str(source_relation_id or "").strip(),
     )
     candidate_id = f"md:{uuid4().hex}"
     outcome, stored_id = _store_row(_row_values(definition, owner, candidate_id), overwrite=overwrite)

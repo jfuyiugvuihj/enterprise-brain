@@ -1,7 +1,22 @@
-"""Owner-scoped business entity relations.
+"""Owner-scoped business entity relations: a candidate-assertion ledger, not an engine.
 
 A relation is a claim about real sources, so every record keeps the Principal that
 submitted it, the scope that may read it, and the source locator that justifies it.
+
+What this subsystem is allowed to be, stated so that no reader has to infer it from the
+absence of a consumer:
+
+* It collects assertions that a human has to check. Nothing here reasons over a graph,
+  and no Agent reads it when answering a question - that is a decided positioning
+  (docs/design/knowledge-graph-positioning.md), not a missing feature.
+* Its only productive exit is promotion: a relation that somebody with approval
+  permission has verified against an uploaded document becomes a formal metric
+  definition (app/knowledge_graph/promotion.py, migrations/0009_metric_definition_semantics.sql).
+  Verification is what the ledger is for, so an author may never certify their own claim:
+  a self-declared flag is not evidence.
+* Without ``KNOWLEDGE_GRAPH_STORE_PATH`` a production process has no durable store, and
+  every write - relation or verification - is refused rather than kept in a dictionary
+  that dies with the worker.
 """
 import os
 from dataclasses import asdict, dataclass, field, fields
@@ -20,6 +35,21 @@ _STORE_PATH_ENV = "KNOWLEDGE_GRAPH_STORE_PATH"
 _STORE_COLLECTION = "knowledge_graph_relations"
 _STORE_ERRORS: dict[str, str] = {}
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
+
+# Where a relation got to. ``status`` is the record's own life; ``verification_state`` is
+# the separate answer to "has a human checked the source", and only that second answer
+# gates promotion, so confirming a record (a scope/typo decision by its author) can never
+# masquerade as a reconciliation.
+STATUS_CANDIDATE = "candidate"
+STATUS_CONFIRMED = "confirmed"
+STATUS_PROMOTED = "promoted"
+STATUS_REJECTED = "rejected"
+RELATION_STATUSES = (STATUS_CANDIDATE, STATUS_CONFIRMED, STATUS_PROMOTED, STATUS_REJECTED)
+
+UNVERIFIED = "unverified"
+VERIFIED = "verified"
+REJECTED = "rejected"
+VERIFICATION_OUTCOMES = (VERIFIED, REJECTED)
 
 
 def _is_production_environment() -> bool:
@@ -42,9 +72,25 @@ class Relation:
     department_ids: list[str] = field(default_factory=list)
     classification: str = "internal"
     visibility: str = "private"
-    status: str = "candidate"
+    status: str = STATUS_CANDIDATE
     version: int = 1
     created_at: str = ""
+    # Review bookkeeping. Every default is the untouched state, so records written before
+    # this existed load unchanged out of a JSON store that has no such keys.
+    verification_state: str = UNVERIFIED
+    verified_document: str = ""
+    verified_section: str = ""
+    verified_by: str = ""
+    verified_at: str = ""
+    verification_note: str = ""
+    promoted_definition_id: str = ""
+
+    @property
+    def verified(self) -> bool:
+        """True only for a relation whose certification names a document and a section."""
+        return self.verification_state == VERIFIED and bool(
+            self.verified_document and self.verified_section and self.verified_by
+        )
 
     @property
     def resource_scope(self) -> ResourceScope:
@@ -221,7 +267,17 @@ class KnowledgeGraph:
             self._persist(record)
         return record
 
+    def get(self, relation_id: str, *, principal: Principal | None = None) -> Relation | None:
+        """One readable relation, or None. An unreadable id and an unknown id look alike."""
+        with self._lock:
+            self._sync_from_store()
+            record = self._relations.get(str(relation_id or ""))
+            if record is None or not self.can_read(record, principal):
+                return None
+            return record
+
     def confirm(self, relation_id: str, *, principal: Principal) -> bool:
+        """Author-side tidying of a record: it says the claim is well-formed, not checked."""
         with self._lock:
             self._sync_from_store()
             record = self._relations.get(str(relation_id or ""))
@@ -230,10 +286,140 @@ class KnowledgeGraph:
             if not self.can_read(record, principal):
                 return False
             self._reject_in_memory_write()
-            record.status = "confirmed"
+            record.status = STATUS_CONFIRMED
             record.version += 1
             self._persist(record)
             return True
+
+    # --------------------------------------------------------------- review and promotion
+    @staticmethod
+    def _require_approval(principal: Principal | None) -> str:
+        """The reviewer identity behind an approval action, or the refusal that says why."""
+        from app.common.permissions import ACTION_APPROVE
+
+        verifier = str(getattr(principal, "user_id", "") or "").strip()
+        if not verifier:
+            raise PermissionError("authentication_required")
+        if ACTION_APPROVE not in set(getattr(principal, "permissions", None) or ()):
+            raise PermissionError("approval_permission_required")
+        return verifier
+
+    def _look_up(self, relation_id: str) -> Relation:
+        self._sync_from_store()
+        record = self._relations.get(str(relation_id or ""))
+        if record is None:
+            raise LookupError("relation_not_found")
+        return record
+
+    def reviewable(self, relation_id: str, *, principal: Principal) -> Relation:
+        """One verified relation this principal is allowed to act on.
+
+        Promotion has to write the definition row before it can close the ledger, so the
+        three questions (does it exist, may you read it, may you approve) must be answered
+        before any write happens. record_verification and record_promotion ask them again
+        rather than trusting this answer, because the lock is not held between calls.
+        """
+        with self._lock:
+            record = self._look_up(relation_id)
+            self._require_approval(principal)
+            if not self.can_read(record, principal):
+                raise PermissionError("permission_denied")
+            if not record.verified:
+                raise ValueError("relation_not_verified")
+            return record
+
+    def record_verification(
+        self,
+        relation_id: str,
+        *,
+        principal: Principal,
+        outcome: str = VERIFIED,
+        document: str = "",
+        section: str = "",
+        note: str = "",
+    ) -> Relation:
+        """Record what a reviewer concluded about one relation's source.
+
+        The reviewer needs ``resource:approve`` and must be able to read the relation, so
+        a cross-department certification is refused by the same rule that hides it. The
+        author may not review their own record: the point of this ledger is that a claim
+        gets checked by somebody else, and a self-declared flag is not evidence.
+
+        A verification names the document and the section it was checked against, because
+        "verified" without a locator is what the semantic layer already had and could not
+        remove. A rejection records who said no and when, and deliberately keeps the
+        verified_document/verified_section pair empty: nothing was certified.
+
+        Stable codes: relation_not_found, authentication_required,
+        approval_permission_required, permission_denied, self_verification_refused,
+        relation_verification_evidence_required, relation_verification_outcome.
+        """
+        if outcome not in VERIFICATION_OUTCOMES:
+            raise ValueError("relation_verification_outcome")
+        with self._lock:
+            record = self._look_up(relation_id)
+            # Authenticate and authorise the action first, then the data scope: an
+            # anonymous or unauthorised caller learns about the permission they lack, and
+            # only a legitimate reviewer learns whether this record is out of scope.
+            verifier = self._require_approval(principal)
+            if not self.can_read(record, principal):
+                raise PermissionError("permission_denied")
+            if record.owner_id and record.owner_id == verifier:
+                raise PermissionError("self_verification_refused")
+            checked_document = str(document or "").strip()
+            checked_section = str(section or "").strip()
+            if outcome == VERIFIED and not (checked_document and checked_section):
+                raise ValueError("relation_verification_evidence_required")
+            self._reject_in_memory_write()
+            record.verification_state = outcome
+            record.verified_by = verifier
+            record.verified_at = datetime.now(timezone.utc).isoformat()
+            record.verified_document = checked_document if outcome == VERIFIED else ""
+            record.verified_section = checked_section if outcome == VERIFIED else ""
+            record.verification_note = str(note or "").strip()
+            if outcome == REJECTED:
+                record.status = STATUS_REJECTED
+            elif record.status != STATUS_PROMOTED:
+                # Already-promoted records keep their status: the definition they became is
+                # the fact, and a later re-check does not undo the lineage link.
+                record.status = STATUS_CONFIRMED
+            record.version += 1
+            self._persist(record)
+            return record
+
+    def record_promotion(
+        self,
+        relation_id: str,
+        *,
+        principal: Principal,
+        definition_id: str,
+    ) -> Relation:
+        """Close the loop: this relation is now a formal definition with this key.
+
+        Promotion is only ever recorded after the definition row exists, and only for a
+        relation a reviewer verified, so the ledger and the catalog cannot disagree about
+        what became what.
+        """
+        definition = str(definition_id or "").strip()
+        if not definition:
+            raise ValueError("relation_definition_id_required")
+        with self._lock:
+            record = self._look_up(relation_id)
+            self._require_approval(principal)
+            if not self.can_read(record, principal):
+                raise PermissionError("permission_denied")
+            if not record.verified:
+                raise ValueError("relation_not_verified")
+            # Re-promotion is allowed and keeps the latest key: a definition revised under a
+            # new definition_version is a new row, and metric_definitions carries
+            # source_relation_id on every one of them, so the table - not this single
+            # pointer - is the authority on "which definitions came from this relation".
+            self._reject_in_memory_write()
+            record.status = STATUS_PROMOTED
+            record.promoted_definition_id = definition
+            record.version += 1
+            self._persist(record)
+            return record
 
     @staticmethod
     def can_read(record: Relation, principal: Principal | None) -> bool:
