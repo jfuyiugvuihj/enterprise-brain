@@ -31,6 +31,9 @@ const BLUEPRINT = [
   'queue_unavailable',
   'model_unavailable',
   'retrieval_unavailable',
+  // A-6 ①：真源 contracts.py:99 早就有这一档，是这份手抄漏了（本工作树的 contracts.py 停在
+  // 分支点只有 16 码，读它会假绿）。A-6 ③ 起本数组改为从 git 真源解析，手抄随即作废。
+  'storage_unavailable',
   'task_timeout',
   'task_cancelled',
   'unsupported_file',
@@ -72,7 +75,7 @@ const axiosError = (status, detail) => ({
 })
 
 describe('码表蓝本', () => {
-  it('只收录 contracts.py 17 码 + data.py 7 码，一个不自扩', () => {
+  it('只收录 contracts.py 18 码 + data.py 7 码，一个不自扩', () => {
     expect(Object.keys(ERROR_CODES).sort()).toEqual([...BLUEPRINT, ...DATA_CODES, ...STREAM_CODES, ...FRONTEND_ONLY_CODES].sort())
   })
 
@@ -187,6 +190,23 @@ describe('形状 1：detail 是字符串稳定码', () => {
   it('data.py 的部门范围缺失与同名冲突也走字典', () => {
     expect(normalizeError(axiosError(403, 'department_scope_required')).message).toBe('请先选择部门范围，再生成这项结果。')
     expect(normalizeError(axiosError(409, 'dataset_filename_conflict')).code).toBe('dataset_filename_conflict')
+  })
+
+  it('A-6 ①：storage_unavailable 有独立人话，不与只读降级共用，也不被 503 吞成 model_unavailable', () => {
+    const result = normalizeError({ response: { status: 503, data: { detail: 'storage_unavailable' } } })
+    inEnum(result, 'storage_unavailable')
+    expect(result.code).toBe('storage_unavailable')
+    expect(result.message).not.toBe(FALLBACK_MESSAGE)
+    expect(result.message).not.toMatch(/[a-z][a-z0-9]*(_[a-z0-9]+)+/)
+    expect(result.retryable).toBe(false)
+    // 表不存在 ≠ 只读降级：两句必须不同，只读那条仍按别名归到 internal_error，不许顺手合并
+    const readOnly = normalizeError({ response: { status: 503, data: { detail: 'storage_read_only' } } })
+    expect(readOnly.code).toBe('internal_error')
+    expect(result.message).not.toBe(readOnly.message)
+    expect(result.message).not.toBe(ERROR_CODES.internal_error.message)
+    // 显式 detail 必须赢过状态码兜底表
+    expect(result.code).not.toBe(STATUS_CODES[503])
+    expect(errorCodeLabel(result)).toBe('')
   })
 
   it('历史别名归一到枚举码，原码留在 rawCode', () => {
@@ -597,12 +617,12 @@ const EVIDENCE_CODES = [
 ]
 
 describe('码表三列对账（B-5 ④）', () => {
-  it('三个数钉住：契约 17 / evidence 16 / 前端 25', () => {
-    expect(BLUEPRINT.length).toBe(17)
-    expect(new Set(BLUEPRINT).size).toBe(17)
+  it('三个数钉住：契约 18 / evidence 16 / 前端 26', () => {
+    expect(BLUEPRINT.length).toBe(18)
+    expect(new Set(BLUEPRINT).size).toBe(18)
     expect(EVIDENCE_CODES.length).toBe(16)
     expect(new Set(EVIDENCE_CODES).size).toBe(16)
-    expect(Object.keys(ERROR_CODES).length).toBe(25)
+    expect(Object.keys(ERROR_CODES).length).toBe(26)
   })
 
   it('A − C = 空：后端每个 canonical 码都有一句人话，没有一条落到兜底句', () => {
@@ -629,8 +649,12 @@ describe('码表三列对账（B-5 ④）', () => {
     expect(FRONTEND_ONLY_CODES).toEqual([])
   })
 
-  it('A − B 只有 account_unavailable，B − A 为空：两份后端拷贝的漂移不扩大到第二条', () => {
-    expect(BLUEPRINT.filter((code) => !EVIDENCE_CODES.includes(code))).toEqual(['account_unavailable'])
+  it('A − B 只剩两份手抄之间的落后（account_unavailable / storage_unavailable），B − A 为空', () => {
+  // 临时账（A-6 ①）：这条比的只是两份手抄。真源里 app/agents/evidence.py 已由 _enum_error_codes()
+  // 从 ErrorEnvelope.code 派生，所以真实的 A − B 恒为空，不可能再「扩大到第二条」。
+  // storage_unavailable 补进 BLUEPRINT 后差集从 1 条变 2 条，是手抄的那份 B 落后，不是后端又漂了一条；
+  // A-6 ③ 把对账改成读 git 真源时，EVIDENCE_CODES 与本条一起删除。
+    expect(BLUEPRINT.filter((code) => !EVIDENCE_CODES.includes(code))).toEqual(['account_unavailable', 'storage_unavailable'])
     expect(EVIDENCE_CODES.filter((code) => !BLUEPRINT.includes(code))).toEqual([])
   })
 

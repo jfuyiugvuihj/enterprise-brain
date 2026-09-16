@@ -21,13 +21,15 @@
  * 在归类前摘掉，摘不干净的宁可走兜底句也不把码名留在正文里。
  *
  * 三列对账（B-5 ④，2026-09-16 实量；errcodes.test.js 里有一条单测钉住 17 / 16 / 25 三个数）：
+ *   ⚠️ 下面列 A / 列 B 的两个数是 B-5 ④ 当时手抄的量，已过期：真源实量为 26 码，
+ *   手抄那份永远看不见后端新增的码（看板 §4L.5）。A-6 ③ 把对账改成读 git 真源，本节随之重写。
  *   列 A  app/agents/contracts.py::ErrorEnvelope.code ................. 17 码
  *         本工作树 :87-104 只有 16 码，第 17 码 account_unavailable 来自主树 fa35a04
  *         （C 的追认提交在 codex/data-file-catalog，不在本树），按总控派单登记为事实。
  *   列 B  app/agents/evidence.py::_ERROR_CODES :19-36 ................. 16 码
  *         与列 A 的旧 16 码同集合，没有被 fa35a04 一起改到 —— 这是后端两份拷贝之间的漂移。
- *   列 C  前端 ERROR_CODES ............................................ 25 键
- *         = 蓝本 17（列 A）+ data.py 7 + SSE 流内 1。
+ *   列 C  前端 ERROR_CODES ............................................ 26 键
+ *         = 蓝本 18（列 A，A-6 ① 补入 storage_unavailable）+ data.py 7 + SSE 流内 1。
  *   差集（逐条指名）：
  *     A − C = 空        后端每个 canonical 码前端都有一句人话，没有一条落到兜底句（单测断言）。
  *     C − A = 8         = UNRATIFIED_CODES：后端发得出、契约没登记。
@@ -60,6 +62,20 @@ export const ERROR_CODES = {
   queue_unavailable: { message: '后台任务暂时排不上队，请稍后重试。', retryable: true },
   model_unavailable: { message: '分析模型当前不可用，请稍后重试或联系管理员。', retryable: true },
   retrieval_unavailable: { message: '知识库检索暂不可用，回答可能缺少资料依据。', retryable: true },
+  // 唯一出处 app/api/v1/chat.py:1303：/hitl/pending 取待确认列表时抛 PendingApprovalStoreMissing，
+  // 也就是那张表还不存在（迁移没跑），503 的 detail 原样就是这个码。刻意不与下面 LEGACY_ALIASES 里
+  // storage_read_only → internal_error 那句共用：「表不存在」要有人去跑迁移，「存储被切成只读」是
+  // 另一回事，运维修的不是同一个故障，合并成一句就会把两条排查路都指错。
+  // retryable 判 false，三条理由：
+  //   ① 它是部署缺陷，前端重试同一个请求必然同样失败，直到有人把迁移跑完；
+  //   ② 后端自己也没把它当可重试错 —— app/agents/evidence.py:16 的 _RETRIABLE_CODES 收了
+  //      model_unavailable / retrieval_unavailable / task_timeout / rate_limited / queue_unavailable
+  //      五档，刻意没有这一档；
+  //   ③ isRetryable 决定界面挂不挂「重试」按钮，给一个必须运维介入的故障挂重试只会让人反复点。
+  storage_unavailable: {
+    message: '服务需要的数据表还没有就绪，这项内容暂时取不到，请联系管理员确认数据库迁移是否已经执行。',
+    retryable: false,
+  },
   task_timeout: { message: '这次分析耗时过长已中断，请缩小范围后重试。', retryable: true },
   task_cancelled: { message: '已按你的要求中止本次操作。', retryable: false },
   unsupported_file: { message: '这个文件类型系统暂不支持，请换一种格式再传。', retryable: false },
