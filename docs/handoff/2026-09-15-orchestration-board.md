@@ -25,7 +25,7 @@
 | **G1** | `fe-trunk` 出现含 `chore(deps)` 的提交，且 `package.json` 有 `lint` / `test` / `test:e2e` 三个入口、无 `element-plus` | `npm pkg get scripts dependencies --prefix frontend` |
 | **G2** | `components/ui/` ≥ 6 个组件 + `lib/errcodes.js` 存在 + `npx vitest run` 全绿 | `npx vitest run` |
 | **G3** | `app/rag/filters.py` 出现 administrator 判据，且**真机** admin 能问出知识库答案 | `git grep -c "administrator" -- app/rag/filters.py` ≥ 1 |
-| **G4** | `GET /alerts` 对 staff 返回 200 而非 403 | 用 staff 探针账号打一次，记状态码 |
+| **G4**（2026-09-16 重定义） | staff 打 `GET /alerts` 得 **403 `permission_denied`，后端零改动**；判据改为**前端渲染口径**：同一 403 必须渲染成「无权限」而非「暂无告警」，且不得与真空列表共用同一状态 | `frontend_gates.ps1` 的 `http.test.js` 断言 + 探针真机看渲染结果 |
 | **G-A-n** | A 线第 n 步（F1/F2/F3/V1…）的 commit，且工单 §6 对应证据已改 | `git log --oneline -1` + 工单 diff |
 
 **G3 一翻绿，立刻做两件事**：① 撤掉工单 §0.2 与计划 §8.1 的「必须带部门账号」前置；② 让 D 补一条 admin 开箱用例。G4 一翻绿，F5b 从"阻塞"变"可做"。
@@ -60,7 +60,7 @@ A 走到 V5(接线) 之前必须等到 G2，否则停下等，不要自己造原
 | G1 | 🟢 | `e000bef`（`fe-trunk`：deps + `lint`/`test`/`test:e2e` 入口，`element-plus` 已摘；`npm run build` 286ms 通过；`fe-prims` 已 ff 到同 commit） | 2026-09-15T12:32:53 | 总控 |
 | G2 | 🟢 | `978ce6a`（`lib/errcodes.js`：16 蓝本码 + 7 个 `data.py` 码 + 10 条历史别名 + HTML/`[object Object]` 防线）、`3c46e66`（**9 个**原语，超 ≥6 要求）、`d451a2c`+`0a2a214`+`c028837`。总控亲验：`npx vitest run` → **93 passed / 0 failed**（475ms）；`npx playwright test` → **30 passed / 15 skipped**（27.6s，跑在 `dist` 上，**不需要后端**）；`git ls-files frontend/src/components/ui` → 9 个 `.vue` | 2026-09-15T16:13:43 | 总控 |
 | G3 | 🟡 **代码绿，真机待验** | `719f29c`：`app/rag/filters.py` 复用 `policy.is_administrator`；全量 `713 passed / 22 skipped / 0 failed`。**缺口**：运行中的容器是旧镜像，"开箱 admin 问得出答案"必须重建后端镜像才能证（约 28 分钟，待用户点头） | 2026-09-15T12:52:02 | 总控 |
-| G4 | ⚪ | | | |
+| G4 | 🟡 **定义已改，旧口径作废** | 旧定义「staff 返回 200」永远不会绿——§4F.5 已裁定 R1 走 (c)：**后端零改动、403 保持**。新判据落在前端：A 线 `lib/http.js` 的 `isPermissionDenied` 已在 6 个面板被真调用（A-3 亲验见 §4I），但 staff 探针真机渲染未看 → 仍属 🟡，D 验收线补 | 2026-09-16T09:5x | 总控 |
 | G-A-1 (F1) | 🟡 **代码绿，真机未验** | `d9b1dcc`：新增 `lib/artifacts.js`（走统一实例取 blob + `baseURL:''` 防 `/static/` 被改写 + 4xx JSON 错误体解码 + `revoke()` 幂等），`ChartViewer.vue` 四态含失败占位卡与「重新取图」。总控亲验：全仓 `import axios` 只剩 `lib/http.js:1`。**缺**：要一张真图 100% 可见 + Network 带 `Authorization` → 无探针账号 | 2026-09-15T16:13:43 | 总控 |
 | G-A-2 (F2) | 🟡 **代码绿，真机未验** | `2bee141` + 补漏 `c5a61b1`：`lib/sessions.js` 模块级 store + canonical(`request.*`/`request_id`+`sequence` 信封) 优先、legacy 兜底、未知丢弃，`default:` 由 0 → 3；取消读 `body.cancelled`：`true`/`false`/缺字段三条文案各不相同 | 2026-09-15T16:13:43 | 总控 |
 | G-A-3 (F3) | 🟡 **代码绿，真机未验** | `a07294f` + 补漏 `bd38c00`：单实例 + 请求/响应拦截 + 3s 去重 + `expiring`/真过期共用收尾；`DocPanel`、`DataPanel` **两份**重复全局拦截器都删；`rg '\?{4}' src` 0 命中、`rg 'window.alert' src` 0 命中 | 2026-09-15T16:13:43 | 总控 |
@@ -397,3 +397,52 @@ A 在 `lib/http.js` 新增 `errorCode()` + `isPermissionDenied()`，**没动**�
 2. 只有工具结果**真的**含 `error`/无 `submission_id` 才算失败；**严禁凭印象写"刚才那条没送达"**。
 3. 严禁为第二次调用虚构理由。写不出理由就不该有第二次。
 4. 已发出的重复件不补发订正，以最终 commit 为准（本轮照此执行）。
+
+## 4I. A-3 结案（总控亲验）+ 另一条工作线报告的核查订正（2026-09-16 上午 09:4x–09:5x）
+
+### 4I.1 A 线 A-3：结案
+
+`fe-trunk` HEAD `dc25eb3`，工作树干净、scratch 探针（`zz-scratch.test.js`/`zz-scratch2.test.js`）已删并 `Test-Path` 复验。
+`92bb557..dc25eb3` = **11 files, +759/−121**，`git diff --name-only` 过滤 `^frontend/` 后**剩 0 行** ⇒ A 全程没越界碰后端。
+
+**闸门我自己跑**（`scripts/frontend_gates.ps1 -RepoDir fe-trunk`，09:46:02 起）：`lockfile/test/lint/colors/build` 五闸 **exit 全 0**；
+`Test Files 12 passed (12)` / `Tests 224 passed (224)`；build 276ms，css 97.67 kB / js 207.45 kB。
+**基线更新**：测试数 156 → **224**（A 的 68 + B 的 156）；色值 **351 → 342**（−9：Chat −2、Doc −4、Data −3，`components/ui/**` 全 0）。
+A 另做了一次**闸门有效性**回归注入：5 个不变量各注入一次，全部判红（RED 2/1/1/1/2），随后按字节还原、`git diff --stat` 空 —— 这是"闸门真能拦"的实证，不是"应该能拦"。
+
+**裁定**：① 棘轮锚 `package.json` `--max-warnings=351` → `342` **批准**，V2-b 的 `package.json` 冻结为**单个数字令牌**开一次例外（不动依赖、不动 lockfile），A 一个 commit 收掉；
+② `ChatPanel.vue:395` 那个会话空态**运行态不可达**（`sessions.js:74-83` `ensureSession()` 无条件插一条会话，`sessions.length` 恒 ≥1；真机 `emptyStateInDom=false`）——A 是 1:1 等值替换，未引入也未修复，**记账不派单**，治它要先裁"无会话时该不该自动建会话"，属产品语义；
+③ `ui/UiToastHost.css:12` 在普通 `.css` 里写 `:deep()`，build 每次报 lightningcss 警告，`:13` 有兜底选择器、无行为影响 → **派 B**（B 写集内）；
+④ 缺 `UiLoadingState` 原语，三处 loading 仍手搓（`DashboardPanel.vue:167`、`DataPanel.vue:191`、`DocumentPreviewModal.vue:58`）→ B 先做原语+测试，A 再接线，**两批分开**；
+⑤ 证据截图已归档 `docs/screenshots/chatpanel-error-face.png`（377,807 B，`/api/v1/ask` 打 500 后的 ChatPanel 真机错误态）。
+
+### 4I.2 "树对象哈希"基线作废重算
+
+v6 记的 `cd2f94233d7ea0e4eb3798dd8a7dd16f0cfdf6b2` = `92bb557:frontend` = **主树当前** HEAD:frontend。
+A 又交 10 个 commit 后，`dc25eb3:frontend` = **`52c2ed3e2a4e92e666111676535926b91e4e3d28`**。
+⇒ 集成后的等价证明必须用后者；任何拿旧哈希做的"主树前端 ≡ 集成树"结论都已失效。
+
+### 4I.3 另一条工作线交来的"图谱这条线没排"报告：四条属实、一条报错、两处它自己漏了
+
+**属实（我逐条实读）**：`service.py:77/79` = `JsonPersistenceAdapter`；`:104-111` 生产未配置 → `protection=read_only`；
+`app/api/v1/intelligence.py:121-124` → **`503 storage_read_only`** + `record_audit(... "denied")`；
+`.env`/`.env.example`/`docker-compose.yml`/`deploy/.env.server` 搜 `KNOWLEDGE_GRAPH` **0 命中**；
+`git grep -n KnowledgeGraph -- app/agents` **0 命中**；`migrations/0001–0007` 建的 30 张表里**无 relations/entities**；
+设计文档 §18（`:702-721`，20 行）**没有知识图谱这一行**；阈值硬编码 `app/insights/rules.py:9/11/15`（0.2 / 0.5）、`app/approval/assistant.py:69`（`Decimal("0.2")`）。
+处置：**跟进单 §11 R15**（R15-a 定位收口 / R15-b candidate→正式口径晋升 + `0009` 提列 / R15-c 阈值并给 §12.4 不单开 / R15-d 不引入 Neo4j），排 R13、R14 之后、C-5 之前。
+
+**报错的一条（别再引用 727）**：它称"R12 之后没复跑，权威是 `895ee18` 时点 727 passed"。我在 `826d318` 跑过两次，
+**`771 passed / 22 skipped / 0 failed`（33.74s，09:47:52 起）**，跑前跑后 `git status --porcelain -- app tests migrations` 均 0 行，可归因。
+
+**它漏了的两条（同类问题，性质更差）**：`docs/system-design-2026-09-16.md:392` 写"无公开 `/static` 路径"，而 `app/main.py:133` **仍 mount 了 `/static`**
+（`main.py:126-127` 只对 `charts/`、`exports/` 一律 404）；`:245` 与 §18 `:704` 仍挂"**443 passed**"这条过期基线。
+另记：`documents` 幽灵表**由 `migrations/0004:30` 正式建立**，不是运行期野生的。
+
+**它没说、我要替自己记的**：该文档 `:5` 自称"目标态设计文档"，多数目标态条目**是标了"目标态/部分落地"的**（`:222`、`:393`、`:481`、§18 全表），
+`L477` 那句"PostgresPersistenceAdapter 真实落库（**已落地**）"我也查了——`app/storage/persistence.py:292` 类存在、`:418-426` 工厂在 `PERSISTENCE_BACKEND=postgres` 时真构造，
+虚报指控不成立。真正的硬伤只有 §10.4 `:428` 那一句"第一版存储用 PostgreSQL（邻接表）"：**没标目标态、且与 `service.py:79` 直接矛盾**。
+
+### 4I.4 环境与纪律（不变）
+
+Docker Desktop **仍未运行**（`dockerDesktopLinuxEngine` 管道不存在，宿主 `:80`/`:8001` 拒连）⇒ 后端镜像重建、G3/G-C-1/G4 真机、D 验收线**全线卡住**，需用户手动开一次。
+三批在途期间 `chroma_db/` **禁止反跟踪**（会删掉 `fe-trunk`/`fe-prims` 两份工作副本）；全线禁 `git add -A`；本批无任何真机验证。

@@ -172,3 +172,69 @@ R1 落地前，前端不会用假数据填充员工视图，会显示「暂无�
 - **R14（P2）**：`POST /dashboard`、`POST /insights/detect` 是**由客户端喂 rows 的算法端点**（`intelligence.py:73`、`:82`），既不查库也不取数据集。真实使用中前端拿不到"按部门聚合的经营行"，只能继续造假或把整表上传给浏览器算。需求：服务端出聚合行的只读端点（来源＝已登记的 datasets / catalog），或者明确写进契约「这两条就是客户端自备 rows 的纯计算端点，不适合做总览数据源」。
 - 顺带一条已实测的现状：`GET /api/v1/alerts` 真读库，但 `_require_alert_management` 使 staff 得 `403 permission_denied` —— 就是跟进单 R1／看板 G4，你们已在排期内，无需重开。
 - 前端侧承诺：R13/R14 落地前，这三块**必须显式标「演示数据」**，不许以权威结论样式呈现；图谱接真。总控已把这条裁定写进看板 §4D.4。
+
+## 11. 排期外的一条线：跟进单 **R15**（知识即程序 / 图谱），排在 R13、R14 之后、C-5 之前
+
+来源：另一条工作线交来一份"图谱这条线在批准计划里一条都没排"的判断。我逐条核过，**四条全部属实**，
+但它同时报错了一条（见 §11.4），并漏了两条文档硬伤（§11.5）。以下所有行号我都实读过，非转述。
+
+### 11.1 已实测的现状（这条线为什么"计划做完也不会变好"）
+
+| 事实 | 证据 |
+|---|---|
+| 运行时存储是 JSON，不是 PG | `app/knowledge_graph/service.py:77` 导入、`:79` 构造 `JsonPersistenceAdapter` |
+| 生产环境未配置即**拒写** | `:29-30` 只认 `KNOWLEDGE_GRAPH_STORE_PATH`；`:104-111` 无路径 + `_is_production_environment()` → `storage_mode=unavailable`／`protection=read_only`／detail `relation writes are refused` |
+| 拒写落到 HTTP | `app/api/v1/intelligence.py:121-124` 捕获 `ProductionReadOnlyProtection` → **`503 storage_read_only`**，并 `record_audit(... "denied")` |
+| 四处配置全缺 | `.env`／`.env.example`／`docker-compose.yml`／`deploy/.env.server` 搜 `KNOWLEDGE_GRAPH` **均 0 命中** |
+| Agent 侧零消费 | `git grep -n "KnowledgeGraph" -- app/agents` → **0 命中** |
+| 无落库位置 | `migrations/0001`–`0007` 建了 30 张表，**无 relations / entities 任何一张**；语义层占了 `0002:72` `metric_definitions` |
+| 图谱在交付追踪里不存在 | 设计文档 §18 表 `docs/system-design-2026-09-16.md:702-721` 共 20 行，**没有知识图谱这一行** |
+
+⇒ 收口后的真实形态：**人肉录关系 + `GraphPanel.vue` 一个列表 + Agent 不读 + 生产只读**。
+"图谱提升了问答质量"这句话在答辩时不能说：没有 Agent 侧消费、没有 A/B、评测平台 §12.3 自标"部分落地（30 条集）"。
+
+### 11.2 R15-a｜图谱定位收口（P2，最便宜，二选一，不许悬空）
+
+- **甲**：在 `app/agents/` 建立一处**真实读取**（worker 或 synthesize 阶段按实体查已核对关系注入上下文），
+  并加一条测试钉死"问题里含该关系时，回答的依据必须引用该关系"。判据：`git grep -n "KnowledgeGraph" -- app/agents` 有结果 **且**该测试存在。
+- **乙**：承认它是"候选断言采集表、不是推理引擎"。则 `docs/system-design-2026-09-16.md:428` 那句
+  "第一版存储用 PostgreSQL（邻接表）"**必须删**，改为与 `service.py:79` 一致的表述，并在 §18 补一行 `知识图谱存储与消费 | §10.4 | 目标态（现为 JSON，生产未配置即只读）`。
+- **禁改边界**：不得只改文档不改代码来"对齐"，也不得为凑判据写一个没人调用的读取点。选甲就必须有测试证明 Agent 真读。
+
+### 11.3 R15-b｜candidate → 正式口径的晋升路径（P2，这条才是护城河）
+
+现状：`Relation.status=candidate` 由作者 clearance 定级（`intelligence.py:116-119`），但**没有任何一条路**把
+被人工核对过的候选关系变成正式指标口径。语义层这边 `app/semantics/registry.py:22-24` 模块文档**自陈欠账**：
+`metric_definitions` 没有 display label 与 prose definition 的列，二者被塞进 `filters` JSONB 的保留键
+`semantics`（`:49-50` `SEMANTICS_KEY`），读取时再剥出来。
+
+要求（一条 `0009` 迁移办两件事，按 `migrations/README.md:7-8` 登记 `manifest.json` + SHA-256，fail-closed）：
+
+1. 把 display label／prose definition 从保留键**提成真列**，`registry.py` 停止"偷渡"读法，保留一次向后兼容读；
+2. 给候选关系加"已核对：<文档> <段落>"字段，使未核对状态成为**可消除的枚举**而非永久 warning。
+
+判据：一条测试跑完整链路"写入 candidate 关系 → 人工核对 → 落成正式 metric definition → warning 消失"。
+不得引入新向量库、不得改 `Principal`/RBAC 语义（那是 C-4 的地盘）。
+
+### 11.4 我核下来发现的**报告报错的一条**
+
+报告称"看板记录的是 `895ee18` 时点 727 passed，R12 之后还没复跑"。**不成立**：我在 `826d318`（R12 已合入的当前 HEAD）
+跑过两次，`771 passed / 22 skipped / 0 failed`，最近一次 2026-09-16 09:47:52 起、33.74s 结束，
+跑前跑后 `git status --porcelain -- app tests migrations` 均为 0 行（可归因于该提交）。
+权威口径请以 **771@`826d318`** 为准，别再用 727。
+
+### 11.5 报告没抓到、我另外核出的两处文档口径问题
+
+- `docs/system-design-2026-09-16.md:392` 写"无公开 `/static` 路径"，但 `app/main.py:133` **仍然 mount 了 `/static`**；
+  准确表述是：`main.py:126-127` 对 `charts/`、`exports/` 一律回 404，生成物只能走 Artifact 路由，其余非生成物仍由该 mount 提供。
+  这是"安全边界写严了"，答辩时容易被一句"那 /static 是什么"问塌。
+- `:245` 与 §18 `:704` 两处仍写"隔离环境验收 **443 passed**"。该数字在它记录的时点是真的，但已被 `771@826d318` 取代；
+  一份自称完成度对照的文档里挂着过期基线，就是下一个"我以为只有 443 条测试"的来源。
+- 补一条与 R15 无关但同属迁移现状的事实：幽灵表 `documents` 由 `migrations/0004_legacy_runtime_compatibility.sql:30` 建立，
+  不是运行期野生的，收口时要连迁移一起记账。
+
+### 11.6 排期与前置
+
+R15 不动权限语义、不改契约错误码、不碰 `frontend/**`，冲突面最小，可插队；但**仍排在 R13、R14 之后**，
+且 R15-a 选甲之前必须先有 C-4 的检索授权口径落定，否则"Agent 读图谱"又要踩一次"空部门算不算公开"。
+本批一律不做真机验证（Docker Desktop 未运行，见看板 §4H.3）。
