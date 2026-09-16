@@ -7,8 +7,9 @@
  *                         来源 app/api/v1/observability.py 全部、chat.py::_document_index_error
  *   形状 3 FastAPI 422    err.response.data.detail === [{ loc, msg, type }, ...]
  *
- * 码名蓝本：app/agents/contracts.py::ErrorEnvelope.code（封闭枚举 17 码，含主树 fa35a04 追认的 account_unavailable）
- * 追加 data.py 系列 7 码；线上出现的其它历史码名走 LEGACY_ALIASES 归一。
+ * 码名蓝本：app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举。本字典的键与它一一对应，
+ * 不多不少（errcodes.test.js 双向对账钉死，见下面的「码表对账」）。线上出现的其它历史码名走
+ * LEGACY_ALIASES 归一。
  * 鉴权中间件返的是**中文散文**（app/main.py:104/109 的 401「请先登录」、
  * app/main.py:113 的 403「账号不可用」），那不是码，走 PROSE_ALIASES 按原文索引。
  *
@@ -20,28 +21,25 @@
  * formatError() 在句尾附「错误码：xxx」小字。后端直出的句子若夹带码名，由 extractEmbeddedCode()
  * 在归类前摘掉，摘不干净的宁可走兜底句也不把码名留在正文里。
  *
- * 三列对账（B-5 ④，2026-09-16 实量；errcodes.test.js 里有一条单测钉住 17 / 16 / 25 三个数）：
- *   列 A  app/agents/contracts.py::ErrorEnvelope.code ................. 17 码
- *         本工作树 :87-104 只有 16 码，第 17 码 account_unavailable 来自主树 fa35a04
- *         （C 的追认提交在 codex/data-file-catalog，不在本树），按总控派单登记为事实。
- *   列 B  app/agents/evidence.py::_ERROR_CODES :19-36 ................. 16 码
- *         与列 A 的旧 16 码同集合，没有被 fa35a04 一起改到 —— 这是后端两份拷贝之间的漂移。
- *   列 C  前端 ERROR_CODES ............................................ 25 键
- *         = 蓝本 17（列 A）+ data.py 7 + SSE 流内 1。
- *   差集（逐条指名）：
- *     A − C = 空        后端每个 canonical 码前端都有一句人话，没有一条落到兜底句（单测断言）。
- *     C − A = 8         = UNRATIFIED_CODES：后端发得出、契约没登记。
- *                       invalid_filename / unsupported_chart_type / unsupported_export_format /
- *                       department_scope_required / dataset_filename_conflict /
- *                       dataset_preview_failed / chart_generation_failed（app/api/v1/data.py）
- *                       + no_answer_produced（app/api/v1/chat.py:1013）。
- *     A − B = {account_unavailable}   两份后端拷贝不一致，后端对齐由总控派 C，我不动 app/**。
- *     B − A = 空
- *   还有第四类账不在这三列里：LEGACY_ALIASES 的 15 个历史码名与 PROSE_ALIASES 的 2 条中文散文，
- *   同样是「后端确实发得出、封闭枚举里没有」的输入，前端已归一，契约侧仍欠登记。
+ * 码表对账（A-6 ③ 起读真源；B-5 ④ 那三列手抄账整体作废，缘由见看板 §4L.5）：
+ *   列 A  真源 = app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举。errcodes.test.js 用
+ *         execFileSync("git", ["show", "<ref>:<path>"]) 读 git 对象，绝不 readFileSync 工作树：
+ *         fe-trunk 的 app/** 停在分支点，那里 contracts.py 只有 16 码，读它就是「永远绿」的假绿。
+ *         三个 worktree 共享同一 object DB，git show 与工作树新鲜度无关。
+ *   列 C  前端 ERROR_CODES。
+ *   不变量两条，单测双向钉死并逐条指名：A − C = 空 且 C − A = 空。
+ *         A − C 非空 ⇒ 后端发得出、界面只能说兜底句；C − A 非空 ⇒ 前端自扩了契约没有的码。
+ *         旧版只钉 A − C 且拿手抄的 17 码去钉，所以后端 26 vs 前端 25 的漂移无人报警。
+ *   列 B 不再单列：app/agents/evidence.py 的 _ERROR_CODES 现由 _enum_error_codes() 从
+ *         ErrorEnvelope.code 派生（:21-34）。第二份手抄码表本身就是当年那个把线上真码洗成
+ *         internal_error 的缺陷，后端已删掉它，所以 A − B 恒为空，没有可钉的账。
+ *   UNRATIFIED_CODES 概念随 6606f59 追认而作废：data.py 7 码与 no_answer_produced 现在都在
+ *         列 A 里，「前端有话、契约没登记」恒为空，由 C − A 一条直接钉住，不留永远该是空的名单。
+ *   还有一类账不在上面两列里：LEGACY_ALIASES 的 15 个历史码名与 PROSE_ALIASES 的 2 条中文散文
+ *   仍是「后端确实发得出、封闭枚举里没有」的输入，前端已归一，契约侧仍欠登记（派单给后端时带上）。
  */
 
-/** 蓝本 17 码 + data.py 7 码 + 流式 1 码 = 25 个键，这 25 个就是 normalizeError().code 的全部合法取值。 */
+/** 与后端封闭枚举一一对应的键（A-6 ③ 实量 26 个）：它们就是 normalizeError().code 的全部合法取值。 */
 export const ERROR_CODES = {
   authentication_required: { message: '登录状态已失效，请重新登录后再试。', retryable: false },
   permission_denied: { message: '当前账号没有这项权限，请联系管理员开通。', retryable: false },
@@ -60,6 +58,20 @@ export const ERROR_CODES = {
   queue_unavailable: { message: '后台任务暂时排不上队，请稍后重试。', retryable: true },
   model_unavailable: { message: '分析模型当前不可用，请稍后重试或联系管理员。', retryable: true },
   retrieval_unavailable: { message: '知识库检索暂不可用，回答可能缺少资料依据。', retryable: true },
+  // 唯一出处 app/api/v1/chat.py:1303：/hitl/pending 取待确认列表时抛 PendingApprovalStoreMissing，
+  // 也就是那张表还不存在（迁移没跑），503 的 detail 原样就是这个码。刻意不与下面 LEGACY_ALIASES 里
+  // storage_read_only → internal_error 那句共用：「表不存在」要有人去跑迁移，「存储被切成只读」是
+  // 另一回事，运维修的不是同一个故障，合并成一句就会把两条排查路都指错。
+  // retryable 判 false，三条理由：
+  //   ① 它是部署缺陷，前端重试同一个请求必然同样失败，直到有人把迁移跑完；
+  //   ② 后端自己也没把它当可重试错 —— app/agents/evidence.py:16 的 _RETRIABLE_CODES 收了
+  //      model_unavailable / retrieval_unavailable / task_timeout / rate_limited / queue_unavailable
+  //      五档，刻意没有这一档；
+  //   ③ isRetryable 决定界面挂不挂「重试」按钮，给一个必须运维介入的故障挂重试只会让人反复点。
+  storage_unavailable: {
+    message: '服务需要的数据表还没有就绪，这项内容暂时取不到，请联系管理员确认数据库迁移是否已经执行。',
+    retryable: false,
+  },
   task_timeout: { message: '这次分析耗时过长已中断，请缩小范围后重试。', retryable: true },
   task_cancelled: { message: '已按你的要求中止本次操作。', retryable: false },
   unsupported_file: { message: '这个文件类型系统暂不支持，请换一种格式再传。', retryable: false },
@@ -89,24 +101,7 @@ export const ERROR_CODES = {
 export const FRONTEND_ONLY_CODES = []
 
 /**
- * 后端实测会发、但两份契约枚举（app/agents/contracts.py::ErrorEnvelope.code 与
- * app/agents/evidence.py::_ERROR_CODES）都还没登记的码名。与 FRONTEND_ONLY_CODES 不同：
- * 这张表里的每一个都能在 app/api/v1 下指到出处，前端没有凭空发明，只是契约欠账。
- * 由总控派 C 追认；追认一条就从这里删一条，单测会盯着名单与「枚举 − 蓝本」是否相等。
- */
-export const UNRATIFIED_CODES = [
-  'invalid_filename', // app/api/v1/data.py:57
-  'unsupported_chart_type', // app/api/v1/data.py:376
-  'unsupported_export_format', // app/api/v1/data.py:412
-  'department_scope_required', // app/api/v1/data.py:43
-  'dataset_filename_conflict', // app/api/v1/data.py:172
-  'dataset_preview_failed', // app/api/v1/data.py:217
-  'chart_generation_failed', // app/api/v1/data.py:384
-  'no_answer_produced', // app/api/v1/chat.py:1001
-]
-
-/**
- * 后端实际会返回、但不在封闭枚举里的**码名** → 归一到枚举码（按码名索引）。
+ * 后端实际会返回、但不在封闭枚举里的**码名**
  * 每条都有 app/api/v1 下的实测出处，不发明码名；message 可按语境覆盖。
  */
 export const LEGACY_ALIASES = {
