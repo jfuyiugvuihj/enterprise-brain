@@ -102,6 +102,19 @@ class ErrorEnvelope(BaseModel):
         "unsupported_file",
         "parse_failed",
         "index_publish_failed",
+        # 以下 8 档不是新发明的码：它们在 R13(4) 之前就已由 app/api/v1 真实吐出，
+        # 只是从没进过封闭枚举。逐条出处与被哪个函数抛，钉在
+        # tests/test_error_code_vocabulary.py::RATIFIED —— 那里还有一条"删了 emit 点
+        # 却忘了把码摘掉就响"的护栏，所以这份清单不会慢慢烂成无主字符串。
+        # 放在 internal_error 之前：兜底码留在最后，读的人一眼能看出谁是兜底。
+        "invalid_filename",
+        "dataset_filename_conflict",
+        "dataset_preview_failed",
+        "unsupported_chart_type",
+        "chart_generation_failed",
+        "unsupported_export_format",
+        "department_scope_required",
+        "no_answer_produced",
         "internal_error",
     ]
     message: str

@@ -8,7 +8,7 @@ the answer text afterwards.
 from __future__ import annotations
 
 import hashlib
-from typing import Any
+from typing import Any, get_args
 
 from app.agents.contracts import AgentResult, ArtifactRef, ErrorEnvelope, Evidence, MetricContext
 
@@ -16,24 +16,22 @@ BAG_KEY = "evidence_bag"
 _EXCERPT_LIMIT = 400
 
 _RETRIABLE_CODES = {"model_unavailable", "retrieval_unavailable", "task_timeout", "rate_limited", "queue_unavailable"}
-_ERROR_CODES = {
-    "authentication_required",
-    "permission_denied",
-    "authorization_unavailable",
-    "resource_not_found",
-    "validation_error",
-    "conflict",
-    "rate_limited",
-    "queue_unavailable",
-    "model_unavailable",
-    "retrieval_unavailable",
-    "task_timeout",
-    "task_cancelled",
-    "unsupported_file",
-    "parse_failed",
-    "index_publish_failed",
-    "internal_error",
-}
+
+
+def _enum_error_codes(model=ErrorEnvelope) -> frozenset[str]:
+    """错误码词表的唯一来源：``ErrorEnvelope.code``。
+
+    这里原本手抄了一份 16 码字面量集合，而枚举当时已有 18 码。抄漏的那两档
+    （``account_unavailable``、``storage_unavailable``）会撞上
+    ``code=error_code if error_code in _ERROR_CODES else "internal_error"``：
+    一个线上真在吐的稳定码，在证据边界上被洗成了通用内部错。所以第二份手抄码表
+    本身就是缺陷，不是风格问题——``tests/test_error_code_vocabulary.py`` 同时钉
+    "两份相等"与"它是从枚举派生的"（换合成模型码表要跟着变）。
+    """
+    return frozenset(get_args(model.model_fields["code"].annotation))
+
+
+_ERROR_CODES = _enum_error_codes()
 
 
 def new_evidence_bag() -> dict[str, list[Any]]:
