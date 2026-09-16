@@ -735,3 +735,56 @@ A-5-④ 只收了"本次接线产生的孤儿"，没回头看全局表——这�
 - 实测宿主 PG 的 `documents` 列只有 `id, classification, filename, department`——**缺 `owner_id`**，而 `migrations/0006_document_ownership.sql:21` 就是加它的；容器 PG 实测列为 `id, filename, classification, department, owner_id, size_bytes, parse_status, chunk_count`（**迁移齐全**）⇒ 生产/演示链路正确，**只有开发者本机那份库落后 0006/0007/0008**。
 - 因此 `[Docs] current listing fallback: 字段 "owner_id" 不存在` 属**宿主环境漂移**，不是代码缺陷，也不是 §4H 那类幽灵表问题。我没有擅自动宿主库（跑 `scripts/migrate.py` 会改本机数据库，属需点头的操作）。
 
+## 4R. 部署栈追上主树 + G3 实测通过 + 演示阻塞项现形（2026-09-16 20:1x，机器 15:40 重启后）
+
+### 4R.1 重启没有丢任何东西（实测，非推断）
+
+- 宿主 boot 时间 2026-09-16 15:40:14；本节后所有时间戳均为现场实取。
+- 五个树全部干净：主树受控路径仅 docs/screenshots/ 未跟踪（等你点头），fe-trunk / fe-artifacts / be-r14 / fe-prims 零脏。
+  第一批 W1/W2/W3 的交付全部已在历史里，重启**没有**丢未提交工作。
+- 四个旧工作进程随重启消失（查 codex exec 命中 0），它们各自的活在重启前已收工。
+
+### 4R.2 部署栈第一次与主树内容一致（本轮最实质的推进）
+
+- enterprise-brain:local = 12ed1c4b5cb5，容器内实测 app/api/v1/dashboard.py 存在（R14）且 app/common/rbac.py 内 doc_visible 命中 0（C-4）。
+- enterprise-brain-frontend:local 服务的产物是 index-C5IFZuSP.css / index-CaeqYUzU.js，**与我本地合并后 npm run build 的产物字节数逐字节相符**（100429 / 227143），包内含 artifact 串。
+  也就是说 A-5 原语化、A-6 文案与对账、W2 的 ArtifactList 与删除入口，**从今天起才在真机界面上存在**。
+- 线上实测 GET /api/v1/dashboard/summary 返回 200：generated_for=admin、pending_approvals=0、documents=0、datasets=5、alerts={total:0,unread:0}。
+- 容器门 scripts/verify_container_stack.py --skip-build 在配置变更前后各跑一次：**22 passed / 0 failed** 两次。
+  少掉的 2 项是 --skip-build 主动跳过的构建检查，不是降级通过。另记一条易错处：**不带 --skip-build 时它会自己 compose build（一次两个镜像，正好撞 §4P.4 那条本机 BuildKit 缺陷），并把总控正在使用的部署栈抢着重建**——我第一次的门禁 FAIL 就是这么来的，差点误判成门禁红。
+
+### 4R.3 G3「开箱 admin 问得出知识库答案」实测通过（但演示数据是我刚建的）
+
+- 以 admin 上传 demo-policy.md（含「回款周期 47 天 / 超期 15 天 / 折扣上限 12%」）→ POST /upload 200，chunk_count=1，index_publication.status=published，department=""（按 c21c342，作用域跟上传者走）。
+- 以 admin 提问 → SSE 全序 status / request.started / step(doc running→done) / text / request.completed / done，答案带「[1] 来源:demo-policy.md 相关度:未评分」，相关度这一路不再有编造的 0.00 或 ?。
+- 结论：**e2 的管理员检索语义在部署栈上是真的**（app/rag/filters.py 有 administrator_scope 分支），「开箱 admin 问不了知识库」这条旧账可以销。
+
+### 4R.4 真正的演示阻塞：本机一个模型都没有，所以「回答」是原文粘贴
+
+- 我拿一个**与知识库内容无关**的问题（「不用查文档，解释毛利率」）复测：0.8 秒返回**同一篇渠道政策的原文**。这说明 ① 检索没按语义过滤，② **没有任何模型合成**。
+- 根因不是我推测的检索缺陷，而是 GET /api/v1/health/details：ollama={status:ok, model_count:0, model_present:false}、model={name:qwen2.5:14b, source:configured}、problems 含 model_not_available、status=degraded。
+  即 **Ollama 容器里一个权重都没拉过**。应用行为本身是诚实的（不臆造模型名、把问题列进 problems、退化成给原文），但演示效果就是「老板问一句、屏幕贴一段政策」。
+- 处置：在 ollama 容器内 pull qwen2.5:14b（9.0 GB）。20:15:08 实测 40%、4.0 MB/s、ETA 约 20:37。宿内存 31.6GB/可用 14.5GB，ollama 容器无内存上限，磁盘余 982GB。
+- 拉完必须复验两件事：model_present=true 且 problems 为空；以及**重跑 §4R.3 那个「与文档无关的问题」应当不再回吐政策原文**。
+
+### 4R.5 图谱与开放平台的两条只读降级已解除，并查出一条新限制
+
+- 起因：health/details 里 knowledge_graph 与 open_platform_apps 长期 storage_mode=unavailable / protection=read_only，因为 KNOWLEDGE_GRAPH_STORE_PATH 与 OPEN_PLATFORM_APP_STORE_PATH 在 .env、.env.example、docker-compose.yml、deploy/.env.server **四处零配置**（R15-a 与 §4I 都点到过）。
+- 处置：往 gitignored 的 deploy/.env.server 加两行指到 /app/data/*.json（appdata 卷，容器门已证三个进程可写），重启栈。
+- 结果：两个子系统变 storage_mode=json / protection=none，并进入 durable 列表；problems 从 3 条降到 1 条（只剩 model）。
+  真机写读实测：POST /api/v1/knowledge-graph/relations → 200，status=candidate、classification="3"（继承作者密级，与 intelligence.py 注释一致）；GET 读得回；UTF-8 中文往返无损。
+- **查出一条新限制（我自己制造场景时撞出来的）**：我按 shared_across_processes=true 的说法，直接在容器内改 knowledge_graph.json 删掉一条脏记录，文件层面成功，**但 GET 仍返回 2 条**——API 进程内有缓存，且下一次写会把脏记录**写回文件**。必须重启进程才认文件。
+  ⇒ health/details 报的 shared_across_processes: true 只对「读得到别人写过的文件」成立，**不成立于带外改文件或多方并发写**。这条要么并进 R15-b 判据，要么单立 **R19**。我先记账，不改口径也不改代码。
+- 顺带记我自己的两个错：① 第一版探针 body 用 Set-Content -Encoding ASCII 写，中文变成 ????? 进了库，我差点判成后端 mojibake 缺陷——**是我自己写坏了请求体**，改 UTF-8 后即正确，脏记录已按上面方式清掉；② 我把重启后一瞬间读到的 15:53 当「现在」用了几轮，实际现场 Get-Date 是 20:11。时间戳一律现取，不沿用上一轮读数。
+
+### 4R.6 演示数据现状（要清就一句话）
+
+- 知识库：demo-policy.md（admin 所有，无部门）。
+- 图谱：1 条关系「渠道经销商 —回款周期→ 47天」（candidate，来源 demo-policy.md#回款周期）。
+- 数据集：仍有 r8 记过的 **5 个 browser-e2e-*.csv** 残留（P1-6 缺删除级联那批；前端删除入口已由 W2 补上，合完可以在界面上点掉）。
+
+### 4R.7 第二批并行已开工：W4/W5/W6/W7（重启后按你的要求重开进程）
+
+- 工单包 docs/handoff/2026-09-16-batch2-worker-tickets.md（f3b368f），四棵树自 f3b368f 切出：be-r18=R18 取消代际、be-r15=R15-a/b 图谱定位与晋升、fe-dash=总览接 R14 聚合（该端点今天部署实测 200 但前端 0 命中，是新的悬空未接）、fe-alerts=洞察接真告警链 + 审批页定位（R1 裁定 (c) 的前端半边）。
+- 共同边界里**写死禁止一切 Docker 操作**，就是因为总控正在用这套栈做演示链路验收；合并权归总控，固定顺序 W6 → W7 → W4 → W5。
+- 环境三条硬事实（下次别再踩）：① 新工作树没有 .venv / node_modules（都被 gitignore），用**目录联接**复用主树与 fe-trunk 的，实测 be-r18 里 pytest 32 passed 且 import 的是本树 app/；② 建联接的命令**必须在工具层直接执行**，写进 PowerShell 脚本文件再用 powershell -File 读，会把非 ASCII 路径变成 mojibake（我建出的第一个 .venv 联接指向 浼佷笟鏅鸿剳\.venv，已 rmdir 摘链重建）；③ 目标不存在时 Test-Path 对联接根目录返回 False，别据此判定联接失败，要比子路径。
