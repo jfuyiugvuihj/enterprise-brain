@@ -133,11 +133,16 @@ def _request_for(user_id, username):
     )(), principal
 
 
-def _hitl_pending(http_request, session_id=""):
+def _hitl_pending(http_request, session_id="", limit=None, offset=None):
     from app.api.v1 import chat
 
+    kwargs = {}
+    if limit is not None:
+        kwargs["limit"] = limit
+    if offset is not None:
+        kwargs["offset"] = offset
     return asyncio.run(
-        chat.hitl_pending(http_request=http_request, session_id=session_id)
+        chat.hitl_pending(http_request=http_request, session_id=session_id, **kwargs)
     )
 
 
@@ -431,3 +436,144 @@ def test_the_insert_binds_the_columns_0008_declares(monkeypatch):
         assert column in lowered, column
     assert "jsonb" in lowered or "%s" in insert[0]
     assert "to_regclass" in " ".join(sql.lower() for sql, _ in conn.statements)
+
+
+# --------------------------------------------------- 分页上限（新账 a）
+
+# ``check_interrupt()`` 每行问一次图，所以请求代价 == 行数：没上限就是没上限。
+# 页大小写死成字面量而不是从实现里 import 常量——从实现取值读不出"这个数字被钉过"。
+
+class _FixedClock:
+    """可控的账本时钟：挂起之间推进，``ORDER BY created_at DESC`` 才有稳定次序。"""
+
+    def __init__(self, start, step=None):
+        self.value = start
+        self.step = step or timedelta(minutes=1)
+
+    def __call__(self):
+        return self.value
+
+    def advance(self):
+        self.value += self.step
+
+
+def _three_parked_rows(monkeypatch):
+    clock = _FixedClock(datetime(2026, 9, 16, 9, 0, tzinfo=timezone.utc))
+    monkeypatch.setattr(store, "_NOW", clock)
+    _park(session_id="oldest", owner="u-1", steps=("chart",))
+    clock.advance()
+    _park(session_id="middle", owner="u-1", steps=("export",))
+    clock.advance()
+    _park(session_id="newest", owner="u-1", steps=("chart",))
+    return clock
+
+
+def test_the_list_endpoint_never_rechecks_more_rows_than_the_limit(monkeypatch):
+    _three_parked_rows(monkeypatch)
+    asked = []
+
+    def fake_check(thread_id):
+        asked.append(thread_id)
+        return {"pending": ["chart", "export"], "labels": ["甲", "乙"]}
+
+    monkeypatch.setattr("app.agents.orchestrator.check_interrupt", fake_check)
+    http_request, _principal = _request_for("u-1", "tester")
+    payload = _hitl_pending(http_request, limit=2)
+
+    assert asked == ["newest", "middle"], "复核只许发生在返回的这一页上"
+    assert [item["session_id"] for item in payload["items"]] == ["newest", "middle"]
+    assert payload["count"] == 2
+    assert payload["has_more"] is True
+    assert payload["limit"] == 2
+    assert payload["offset"] == 0
+
+
+def test_rows_beyond_the_page_are_not_judged_stale_by_the_recheck(monkeypatch):
+    """截断之后的行这一轮压根没问过图，被顺手标 stale 就是第二条假话。"""
+    _three_parked_rows(monkeypatch)
+    monkeypatch.setattr("app.agents.orchestrator.check_interrupt", lambda thread_id: None)
+    http_request, _principal = _request_for("u-1", "tester")
+    payload = _hitl_pending(http_request, limit=2)
+
+    assert payload["count"] == len(payload["items"]) == 0
+    assert store.get_row("newest").status == "stale"
+    assert store.get_row("middle").status == "stale"
+    assert store.get_row("oldest").status == "awaiting"
+    assert [row.session_id for row in store.open_items(owner_user_id="u-1")] == ["oldest"]
+
+
+def test_offset_pages_to_the_next_ledger_rows(monkeypatch):
+    _three_parked_rows(monkeypatch)
+    monkeypatch.setattr(
+        "app.agents.orchestrator.check_interrupt",
+        lambda thread_id: {"pending": ["chart"], "labels": ["甲"]},
+    )
+    http_request, _principal = _request_for("u-1", "tester")
+
+    second = _hitl_pending(http_request, limit=2, offset=2)
+
+    assert [item["session_id"] for item in second["items"]] == ["oldest"]
+    assert second["offset"] == 2
+    assert second["has_more"] is False
+
+
+def test_the_default_page_size_and_the_hard_cap_are_both_readable(monkeypatch):
+    _three_parked_rows(monkeypatch)
+    monkeypatch.setattr(
+        "app.agents.orchestrator.check_interrupt",
+        lambda thread_id: {"pending": ["chart"], "labels": ["甲"]},
+    )
+    http_request, _principal = _request_for("u-1", "tester")
+
+    assert _hitl_pending(http_request)["limit"] == 50, "默认页大小是接口契约的一部分"
+    assert _hitl_pending(http_request, limit=10_000)["limit"] == 200, "超限钳住而不是 422"
+    assert _hitl_pending(http_request, limit=0)["limit"] == 1, "0 要能干活，别凭空造一个空页"
+
+
+def test_the_page_bounds_are_pushed_into_the_ledger_query(monkeypatch):
+    """上限要落在 SQL 里：只在内存切片 = 库照样被全表扫，"有上限"就是半句真话。"""
+    monkeypatch.setattr(store, "_database_available", lambda: True)
+
+    class FakeConnection:
+        def __init__(self):
+            self.statements = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def execute(self, sql, params=None):
+            self.statements.append((sql, tuple(params or ())))
+            if "to_regclass" in sql.lower():
+                return _Result({"table_name": "pending_approvals"})
+            return _Result(rows=[])
+
+        def close(self):
+            pass
+
+    conn = FakeConnection()
+    monkeypatch.setattr(store, "_conn", lambda: conn)
+
+    store.open_items(owner_user_id="u-1", limit=7, offset=14)
+
+    select = next(
+        (sql, params)
+        for sql, params in conn.statements
+        if sql.strip().lower().startswith("select session_id")
+    )
+    assert "limit %s" in select[0].lower()
+    assert "offset %s" in select[0].lower()
+    assert select[1][-2:] == (7, 14), select[1]
+
+
+def test_an_unbounded_call_still_returns_everything(monkeypatch):
+    """不传 limit 的调用（内部读侧）语义不许变：账本层默认不设限。"""
+    _three_parked_rows(monkeypatch)
+
+    assert [row.session_id for row in store.open_items(owner_user_id="u-1")] == [
+        "newest",
+        "middle",
+        "oldest",
+    ]
