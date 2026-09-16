@@ -59,6 +59,17 @@ describe('GraphPanel · V7-1 不变量 + A-3-1 接线', () => {
     expect(s).toMatch(/:retryable="!loadDenied"/)
   })
 
+  // 总控原要求：GraphPanel 不留第二套错误呈现。写路径以前是裸 <span class="inline-error">。
+  it('整个面板只剩 UiErrorState 一条错误出口，没有第二套手搓错误样式', () => {
+    const s = source('GraphPanel.vue')
+    expect(s).not.toContain('inline-error')
+    expect(s.match(/<UiErrorState/g)).toHaveLength(2)
+    expect(s).toMatch(/:title="saveDenied \? '没有权限登记关系' : '这条关系没能保存'"/)
+    expect(s).toMatch(/:retryable="!saveDenied"/)
+    expect(s).toContain('retry-text="再试一次"')
+    expect(s).toMatch(/:busy="saving"/)
+  })
+
   it('原语本身带 aria 语义（role 由组件自己长出来，不靠面板补）', async () => {
     const err = await renderToString(h(UiErrorState, { title: '关系列表没加载出来', description: 'x', retryable: false }))
     expect(err).toContain('role="alert"')

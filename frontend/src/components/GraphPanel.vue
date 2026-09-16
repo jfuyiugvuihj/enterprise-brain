@@ -92,8 +92,18 @@ onMounted(loadRelations)
           <button class="primary-btn" data-testid="save-relation" :disabled="saving" @click="saveRelation">
             {{ saving ? '保存中' : '保存关系' }}
           </button>
-          <span v-if="error" class="inline-error">{{ error }}</span>
         </div>
+        <!-- 写路径的失败也只经 UiErrorState 出口：这个面板不再留第二套错误呈现。 -->
+        <UiErrorState
+          v-if="error"
+          :title="saveDenied ? '没有权限登记关系' : '这条关系没能保存'"
+          :description="error"
+          :retryable="!saveDenied"
+          retry-text="再试一次"
+          :busy="saving"
+          dense
+          @retry="saveRelation"
+        />
       </section>
 
       <section class="panel-card">
