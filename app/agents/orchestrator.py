@@ -336,6 +336,10 @@ def route_main(state: AgentState):
 def _make_worker_wrapper(graph, name: str):
     def node(state: AgentState, config) -> dict:
         parent_conf = (config or {}).get("configurable", {}) or {}
+        # 取消检查点 2（即将开工）：并行 worker 可能共享同一次流边界，边界检查只
+        # 拦得住第一个，故逐节点再查一遍。放在 trace 与 invoke 之前，取消时不会留下
+        # 半截 step.started。
+        _raise_if_cancelled(parent_conf.get("cancel_event"))
         parent = parent_conf.get("thread_id", "default")
         request_id = str(parent_conf.get("request_id") or "")
         trace_id = str(parent_conf.get("trace_id") or "")
@@ -353,6 +357,9 @@ def _make_worker_wrapper(graph, name: str):
             "request_id",
             "trace_id",
             "task_id",
+            # 取消标记必须一路传到子图：工具（chart/export）在子图里执行，只改父层的
+            # 话子图看不到标记，检查点 2/3 就等于恒不触发。
+            "cancel_event",
         ):
             if k in parent_conf:
                 child_conf[k] = parent_conf[k]
@@ -397,6 +404,9 @@ def _make_worker_wrapper(graph, name: str):
                 final = m.content
                 break
         if name == "export":
+            # 取消检查点 3（即将落盘）：_fallback_export_result 自己会生成 PDF，所以
+            # 即使图已经跑到这里，仍然拦得住最后一个副作用。
+            _raise_if_cancelled(parent_conf.get("cancel_event"))
             final = _fallback_export_result(user_msg.content, final, config=child_cfg)
 
         duration_ms = int((time.monotonic() - started) * 1000)
@@ -428,6 +438,66 @@ def _make_worker_wrapper(graph, name: str):
             "messages": [AIMessage(content=f"【{name} Agent 返回】\n{agent_result.answer}")],
         }
     return node
+
+
+# ==================== 取消协同退出（R12） ====================
+
+
+class RequestCancelled(RuntimeError):
+    """调用方已不再接收本轮结果——注意它**不是**拒绝。
+
+    用户按「停止」只表示"这一轮我不看了"。它既不该把挂起的 HITL 动作判成 refused
+    （那是 ``approved=False`` 分支的语义，r8 修过"拒绝必须真的拒绝"，不许回退），
+    也不该让被停掉的动作继续跑完并落盘。所以本异常只在三个"即将产生新副作用"的
+    检查点抛出：
+
+    1. 每次准备向 langgraph 拉下一个 superstep 之前（``_cancellable_stream``）；
+    2. 每个 worker 节点准备开工之前（``_make_worker_wrapper.node``）；
+    3. export 兜底准备写 PDF 之前。
+
+    抛出时不写 ``worker_results``、不调 ``update_state``，checkpoint 里的 ``next``
+    原样留着：会话仍是挂起态，等 R13 的待办端点把它列出来。
+    """
+
+
+def _is_cancelled(cancel_event) -> bool:
+    """把 ``cancel_event`` 当"可选取消标记"读：None / 无 is_set 一律算未取消。
+
+    标记走 ``config["configurable"]``，和 ``principal`` 同一条通道，不引入进程级可变
+    全局——线程池里并发跑多个请求时，全局标记会互相误伤。
+    """
+    checker = getattr(cancel_event, "is_set", None)
+    return bool(checker()) if callable(checker) else False
+
+
+def _raise_if_cancelled(cancel_event) -> None:
+    if _is_cancelled(cancel_event):
+        raise RequestCancelled("request cancelled by the caller")
+
+
+def _cancellable_stream(graph, payload, config, *, cancel_event=None):
+    """``graph.stream(...)`` 的协同退出包装：每次 pull 之前复查取消标记。
+
+    langgraph 的 generator 是惰性的——下一个 superstep 只在 ``next()`` 被调用时才
+    执行，所以"pull 之前检查"能保证未开工的节点永不开工，包括即将写盘的
+    chart/export。已经在执行的那一个节点不能被中断（Python 线程无法安全强杀），
+    这条限制写进了未验证清单。
+
+    ``finally`` 关的是内层 generator：调用方提前 break 时也要把图关掉，不能等 GC。
+    """
+    stream = graph.stream(payload, config, stream_mode="values", subgraphs=True)
+    try:
+        while True:
+            _raise_if_cancelled(cancel_event)
+            try:
+                event = next(stream)
+            except StopIteration:
+                return
+            yield event
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
 
 
 def _owner_id_from(configurable: dict) -> str:
@@ -820,7 +890,14 @@ def run_with_stream(
     trace_id: str | None = None,
     task_id: str | None = None,
     trace_store: TraceStore | None = None,
+    cancel_event=None,
 ):
+    """流式跑一轮编排。
+
+    ``cancel_event`` 是调用方（SSE 生成器）持有的 ``threading.Event``，语义上只表示
+    "我不再接收本轮回答"，**不等于拒绝**（详见 ``RequestCancelled``）。不传时为 None，
+    排队任务与全部既有调用点行为逐字节不变。
+    """
     request_id, trace_id, task_id = _execution_ids(request_id, trace_id, task_id)
     trace_store = trace_store or _trace_store
     # The live chat path puts a Principal model into ``user`` while a queued task puts a
@@ -844,6 +921,11 @@ def run_with_stream(
             "task_id": task_id,
         }
     }
+    if cancel_event is not None:
+        # 取消标记的写入点。它进 configurable 而不是 state：state 要被 checkpointer
+        # 序列化（PG 路径下 threading.Event 不可 JSON 化），configurable 才是本次运行
+        # 的只读上下文——principal 走的就是同一条通道。
+        config["configurable"]["cancel_event"] = cancel_event
     initial_state = _initial_execution_state(
         user_message,
         thread_id=thread_id,
@@ -867,11 +949,11 @@ def run_with_stream(
     )
     for attempt in range(1, max_attempts + 1):
         try:
-            for event in multi_agent_graph.stream(
+            for event in _cancellable_stream(
+                multi_agent_graph,
                 initial_state,
                 config,
-                stream_mode="values",
-                subgraphs=True,
+                cancel_event=cancel_event,
             ):
                 state = _stream_state(event)
                 if state is not None:
@@ -922,7 +1004,39 @@ def run_with_stream(
                 owner_id=owner_id,
             )
             return
+        except RequestCancelled:
+            # 「停止」是业务动作，既不是 failed 也不是 refused，所以走 request.cancelled
+            # 而不是 request.failed。app/trace/store.py:96 早就把它列为终态事件，但全仓
+            # 从来没有人 emit 过——补上的正是这个空位。不写 worker_results、不
+            # update_state，checkpoint 里的 next 原样保留，parked 会话仍是挂起态。
+            _record_trace(
+                trace_store,
+                trace_id=trace_id,
+                request_id=request_id,
+                task_id=task_id,
+                event_type="request.cancelled",
+                status="cancelled",
+                payload={"session_id": thread_id, "stage": "step_boundary"},
+                owner_id=owner_id,
+            )
+            logger.info(f"[Orchestrator] 本轮按调用方要求停止 session={thread_id}")
+            return
         except Exception as e:
+            if _is_cancelled(cancel_event):
+                # langgraph 可能把节点抛出的 RequestCancelled 再包一层，marker 才是真相。
+                # 不先判它，一次「停止」会被下面的关键词分支当成模型故障去重试。
+                _record_trace(
+                    trace_store,
+                    trace_id=trace_id,
+                    request_id=request_id,
+                    task_id=task_id,
+                    event_type="request.cancelled",
+                    status="cancelled",
+                    payload={"session_id": thread_id, "stage": "worker_node"},
+                    owner_id=owner_id,
+                )
+                logger.info(f"[Orchestrator] 本轮已停止（节点内取消）session={thread_id}")
+                return
             err = str(e).lower()
             if attempt < max_attempts and any(kw in err for kw in (
                 "timeout", "connection", "rate limit", "server error"
@@ -954,6 +1068,7 @@ def run_interrupt_stream(
     request_id: str | None = None,
     trace_id: str | None = None,
     task_id: str | None = None,
+    cancel_event=None,
 ):
     """Resume a parked thread as the caller who owns it.
 
@@ -972,14 +1087,27 @@ def run_interrupt_stream(
             "task_id": task_id,
         }
     }
+    if cancel_event is not None:
+        # 同上：标记只进本次运行的 configurable，不进要被 checkpoint 序列化的 state。
+        config["configurable"]["cancel_event"] = cancel_event
     if approved:
-        for event in multi_agent_graph.stream(
-            Command(resume={"approved": True}),
-            config,
-            stream_mode="values",
-            subgraphs=True,
-        ):
-            yield event
+        if _is_cancelled(cancel_event):
+            # 连 resume 都不发起：被批准的节点从未获得开工授权，checkpoint 里的 next
+            # 原样保留，会话仍是挂起态。停止 ≠ 拒绝，所以这里绝不能落到下面的 else
+            # 分支去把动作记成 refused。
+            logger.info(f"[Orchestrator] 已停止，未发起 resume session={thread_id}")
+            return
+        try:
+            for event in _cancellable_stream(
+                multi_agent_graph,
+                Command(resume={"approved": True}),
+                config,
+                cancel_event=cancel_event,
+            ):
+                yield event
+        except RequestCancelled:
+            logger.info(f"[Orchestrator] resume 中途按调用方要求停止 session={thread_id}")
+            return
     else:
         # A refusal has to be recorded as that worker's result. Skipping the node alone
         # left it in the plan, so supervisor dispatched it again: the action the user
@@ -994,13 +1122,20 @@ def run_interrupt_stream(
         if declined:
             update["worker_results"] = {node: note for node in declined}
         multi_agent_graph.update_state(config, update)
-        for event in multi_agent_graph.stream(
-            Command(goto="supervisor"),
-            config,
-            stream_mode="values",
-            subgraphs=True,
-        ):
-            yield event
+        # 顺序不能反：refused 必须先落账（84af113 "拒绝必须真的拒绝"），此后的收尾流才
+        # 允许被停止打断。把 update_state 挪到流后面，一次取消就会把 refused 变成
+        # "什么都没发生"，supervisor 会把刚被拒绝的动作再派一次。
+        try:
+            for event in _cancellable_stream(
+                multi_agent_graph,
+                Command(goto="supervisor"),
+                config,
+                cancel_event=cancel_event,
+            ):
+                yield event
+        except RequestCancelled:
+            logger.info(f"[Orchestrator] 拒绝收尾流已停止 session={thread_id}")
+            return
 
 
 def clear_session(thread_id: str):

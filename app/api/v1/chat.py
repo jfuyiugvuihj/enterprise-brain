@@ -83,6 +83,9 @@ _ASK_STATS = PerformanceStats()
 
 
 def register_request(session_id: str) -> threading.Event:
+    # 已知缺口（本批不修，属 R13 状态机）：这里无条件覆盖 _REQUESTS[session_id]，所以
+    # 在 ask() 返回之后、generate() 首行执行之前到达的取消会被丢掉。cancel_request 的
+    # docstring 承诺的"不会漏"只覆盖了反向窗口，别据此推断这里也安全。
     event = threading.Event()
     with _REQUESTS_LOCK:
         _REQUESTS[session_id] = event
@@ -111,6 +114,31 @@ def is_request_cancelled(session_id: str) -> bool:
     with _REQUESTS_LOCK:
         event = _REQUESTS.get(session_id)
         return bool(event and event.is_set())
+
+
+def _reap_agent_worker(future, *, session_id: str, stage: str) -> None:
+    """给 executor 里的工作线程装上可见的收尾。
+
+    两处 ``loop.run_in_executor(_executor, _run)`` 原先把返回的 future 直接丢掉：没有
+    人持有它，CPython 只在 GC 时嘟囔一句，而工作线程里逃出的异常（``_run`` 的 try 覆盖
+    不到的那部分，例如 put 本身失败、生成器 finally 里再抛）就此无声消失。线上表现是
+    "流断了，日志里什么都没有"。回调只记日志，不改变任何流的语义。
+    """
+
+    def _done(fut) -> None:
+        try:
+            exc = fut.exception()
+        except BaseException:
+            # asyncio Future 在被取消后 exception() 会抛 CancelledError；回调本身
+            # 跑在事件循环里，绝不能把异常再抛回循环。
+            return
+        if exc is not None:
+            logger.error(
+                f"[{stage}] agent worker raised for session={session_id}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    future.add_done_callback(_done)
 
 
 def sse_event(event_name: str, payload: dict) -> str:
@@ -878,14 +906,23 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     request_id=request_id,
                     trace_id=trace_id,
                     task_id=task_id,
+                    # 这一行是 R12 的正题：标记不传下去，编排里的取消检查点就恒等于
+                    # _raise_if_cancelled(None)，用户按了停止图照样跑完。
+                    cancel_event=cancel_event,
                 ):
+                    if cancel_event.is_set():
+                        # 停止之后不再往没人读的流里塞事件；已经落盘的不回滚，那不是
+                        # 本轮语义。
+                        return
                     result_queue.put(("event", event))
                 result_queue.put(("done", None))
             except Exception as e:
+                logger.exception(f"[ask] agent worker raised for session={thread_id}")
                 result_queue.put(("error", str(e)))
 
         loop = asyncio.get_running_loop()
-        loop.run_in_executor(_executor, _run)
+        agent_future = loop.run_in_executor(_executor, _run)
+        _reap_agent_worker(agent_future, session_id=thread_id, stage="ask")
 
         yield f"event: status\ndata: {json.dumps({'type': 'status', 'content': '🔍 正在分析您的问题...'}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
@@ -919,6 +956,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
 
         while True:
             if cancel_event.is_set():
+                # 还没开工的 _run 直接取消；已经在跑的 cancel() 返回 False，由编排里的
+                # 检查点协同退出——线程不能强杀，这里不假装能。
+                agent_future.cancel()
                 _ASK_STATS.observe((time.time() - start_time) * 1000)
                 yield canonical_sse_event(
                     "request.cancelled",
@@ -1182,14 +1222,21 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     request.session_id,
                     approved=request.approved,
                     user=user_ctx,
+                    cancel_event=cancel_event,
                 ):
+                    if cancel_event.is_set():
+                        return
                     result_queue.put(("event", event))
                 result_queue.put(("done", None))
             except Exception as e:
+                logger.exception(
+                    f"[approve] agent worker raised for session={request.session_id}"
+                )
                 result_queue.put(("error", str(e)))
 
         loop = asyncio.get_running_loop()
-        loop.run_in_executor(_executor, _run)
+        agent_future = loop.run_in_executor(_executor, _run)
+        _reap_agent_worker(agent_future, session_id=request.session_id, stage="approve")
 
         start_time = time.time()
         last_emit = time.monotonic()
@@ -1201,6 +1248,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
 
         while True:
             if cancel_event.is_set():
+                agent_future.cancel()
                 yield sse_event(
                     "cancelled",
                     {"type": "cancelled", "session_id": request.session_id},

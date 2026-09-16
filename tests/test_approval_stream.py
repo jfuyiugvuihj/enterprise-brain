@@ -1,4 +1,5 @@
 import json
+import threading
 
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
@@ -39,9 +40,13 @@ def test_approve_stream_emits_worker_result_when_no_plain_ai_message(monkeypatch
 
     seen = {}
 
-    def fake_run_interrupt_stream(thread_id: str, approved: bool, user=None):
+    def fake_run_interrupt_stream(
+        thread_id: str, approved: bool, user=None, cancel_event=None
+    ):
         seen["thread_id"] = thread_id
         seen["user"] = user
+        # /approve 必须把取消标记交给编排，否则工作线程永远停不下来（R12）。
+        seen["cancel_event"] = cancel_event
         yield {"messages": [AIMessage(content="需要确认后生成图表")]}
         yield {
             "messages": [AIMessage(content="【chart Agent 返回】\n图表已生成：/static/chart.png")],
@@ -71,6 +76,7 @@ def test_approve_stream_emits_worker_result_when_no_plain_ai_message(monkeypatch
     # Resuming without the caller principal runs the approved action as nobody, and
     # every tool then refuses with authorization_required.
     assert seen["thread_id"] == "approval-worker-result-test"
+    assert isinstance(seen["cancel_event"], threading.Event)
     principal = seen["user"]["principal"]
     assert principal.username == "admin"
     assert principal.user_id
