@@ -163,3 +163,49 @@ components/ui/**、lib/errcodes.js、tests/visual/**、playwright.config.js、.s
 - 每条线只在自己的 worktree 提交；主树 `codex/data-file-catalog` 由后端线与计划线使用。
 - 合并方向固定：**B → A**（纯新增文件，预期零冲突），A 做完接线再谈是否合回主树，且合回主树要用户点头。
 - 任何一条线发现"独占文件集不够用"，先停下报告，不要靠多写一个文件解决。
+
+---
+
+## 7. 跟进单 A-6（2026-09-16 11:1x 落单，总控亲验依据见看板 §4L.5 与 §4M）
+
+> 落单原因：本会话 `multi_agent_v1__send_input` / `wait_agent` 均返回 unsupported call，总控**无法**把单派给原对话 A。
+> 谁接手都行（新开对话或在 A 的会话里粘贴本节），但**必须在 `fe-trunk` 工作树**（`C:/Users/fengx/PycharmProjects/fe-trunk`，分支 `codex/fe-trunk`，HEAD 应为 `033a11e`）。
+> 主树 `C:/Users/fengx/PycharmProjects/企业智脑` 由后端线占用，**本单不许碰主树**。
+
+**先读**：`docs/handoff/2026-09-15-orchestration-board.md` §4L.5（为什么那条对账测试是装饰）、§4M（A-5 结案边界 + 死规则遗留）。
+
+### 任务 ①｜补唯一真缺口码 `storage_unavailable`
+
+- 实测口径（总控逐码 diff，别二次估计）：后端枚举 **26 档**／前端 `ERROR_CODES` **25 键**；`A − C = {storage_unavailable}`，`C − A = ∅`；`git grep -n storage_unavailable -- frontend` → **0 命中**。
+- 出处：`app/api/v1/chat.py:1303` 抛 `503 detail="storage_unavailable"`（`/hitl/pending` 缺表）。
+- 要求：给人话 + 下一步。**不得**与 `frontend/src/lib/errcodes.js:120` 的 `storage_read_only → internal_error` 共用句子——「表不存在」与「只读降级」运维修的不是同一个东西，这是总控刻意不追认合并的，别顺手合回去。`retryable` 自己判断并写理由。
+- 判据：`normalizeError({response:{status:503,data:{detail:'storage_unavailable'}}})` 的 `.code === 'storage_unavailable'`、`.message !== FALLBACK_MESSAGE`、正文不含裸 snake_case 码名。
+
+### 任务 ②｜删全局死规则 `.empty-state`
+
+- `frontend/src/assets/theme.css:1000` 仍有一条全局 `.empty-state { … }`；全 `frontend/src` 里该名字只剩负例断言（`components/__tests__/panel-states.test.js:34`、`:161`、`:222`、`:231`）与 B 原语自己的 `ui-empty-state*` ⇒ 无模板在用。
+- 删前自证（词边界，别拿子串糊弄）：`git grep -nE 'class="[^"]*\bempty-state\b' -- frontend/src` 必须 **0 命中**。
+- 同 commit 把 `frontend/package.json` 的 `--max-warnings` 降到实测值（**只准降，锚必须等于新实测值**）。
+- **判据不满足（存在真引用）就停下报告，禁止改测试凑绿。**
+
+### 任务 ③（本单重点）｜「码表三列对账」改成读真源
+
+- 现状定性：`frontend/src/lib/errcodes.test.js:600` 起的三条断言里，`BLUEPRINT`（17 码）与 `EVIDENCE_CODES`（16 码）都是**测试文件内手抄数组，两边都不读真源**。后果三条全要修掉：
+  1. `A − C = 空` 只证明手抄那 17 个有话说，永远看不见后端新增的 9 码 ⇒ 正是它让 26 vs 25 无人报警；
+  2. `C − A = 8`（`UNRATIFIED_CODES`）语义已被主树 `6606f59` **反转**（那 8 码现已登记进枚举）；
+  3. `evidence 16` 已失效：`app/agents/evidence.py` 现由 `_enum_error_codes()` 从枚举派生。
+- **硬要求：用 git 对象取源，禁止 `readFileSync` 工作树文件。** fe-trunk 的 `app/**` 停在分支点，那里 `contracts.py` **仍是 17 码**，读工作树会**假绿**。三个 worktree 共享同一 object DB：
+  `git show codex/data-file-catalog:app/agents/contracts.py`（`node:child_process` 的 `execFileSync`；解析 `code: Literal[ … ]` 内的双引号字符串）。**取不到 ref／解析失败必须显式 fail 并给可读原因，禁止 skip**（skip 等于回到装饰）。
+- 新不变量：`A − C = ∅` **且** `C − A = ∅`。`UNRATIFIED_CODES` 概念作废后怎么处置你定，但 `frontend/src/lib/errcodes.js:20-47` 那张三列账头注释**必须同步改写**，不许留过期数字。
+- 注入自证（必做、不许提交注入）：临时往 `contracts.py` 枚举加假码 `"zzz_injected_probe"` → 该测试必红；`git checkout -- app/agents/contracts.py` → dirty=0、回绿。三条命令原始输出全贴。
+
+### 禁改边界（越界即回滚）
+
+- `app/**`、`migrations/**`、`docs/**` 一行不许动（含注入还原后的任何残留）；
+- `frontend/src` 下本单只允许动：`lib/errcodes.js`、`lib/errcodes.test.js`、`assets/theme.css`、`../package.json`；`components/**` **只读**（A-5 刚结案）；
+- 不许为了让 `C − A = ∅` 成立而删掉前端已有文案——那是降级不是收口；
+- 记账断言里的数字（`expect(...).toBe(25)` 这类）**必然**要随收口改动，**预先授权**你动；但判据函数与四组夹具逐字不许动。
+
+### 交割要求
+
+逐 commit 独立，前缀 `fix(frontend/A-6-n)` / `test(frontend/A-6-n)`。每 commit 附：五闸退出码（`cd frontend && npm run test`；**在仓库根裸跑 `npx vitest run` 必假红**——不读 `frontend/vite.config.js`，还会把 `frontend/tests/visual/*.spec.js` 的 Playwright spec 喂给 vitest）、测数、色值「实测值／锚值」两个数、注入自证输出、末尾 `git status --porcelain` 还原证明。
