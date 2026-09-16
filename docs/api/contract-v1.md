@@ -131,6 +131,53 @@ Example:
 }
 ```
 
+## HITL Pending Listing (2026-09-16, R13)
+
+`GET /api/v1/hitl/pending` (optionally `?session_id=<id>`) is the read side of the parked-turn ledger
+added by `migrations/0008_pending_approvals.sql`. Registered by the coordinator after reading
+`app/api/v1/chat.py:1257-1314`, `app/storage/pending_approvals.py:252-285` and the 12 tests in
+`tests/test_hitl_pending.py`; suite at registration time: **800 passed / 22 skipped** at `1672841`.
+
+Shape (as implemented, not as aspirational):
+
+```
+{ "items": [ { "session_id", "owner_user_id", "parked_steps": [node...], "labels": [..],
+               "status", "created_at", "expires_at", "request_id", "trace_id", "task_id" } ],
+  "count": <== items.length, after filtering > }
+```
+
+- `parked_steps` values come from the compile-time constant `_HITL_PARKED`
+  (`app/agents/orchestrator.py:223`) and nothing else.
+- `count` is the post-filter length, so it is not a total of open approvals and must not be used as one.
+- **The table is an event log, the graph is the authority.** Every row is reconfirmed with
+  `check_interrupt(session_id)` before it is listed; a row whose steps no longer match is marked
+  `stale` in place and excluded. If the recheck itself raises, the row is omitted **without** being
+  judged stale - a transient graph failure must not destroy a real pending decision
+  (`chat.py:1285-1293`).
+- Ownership reuses the existing predicate, no new permission tier: anonymous -> `401
+  authentication_required`; another user's session -> **`404 resource_not_found`, explicitly not 403**
+  (`chat.py:242-246`, `tests/test_hitl_pending.py:175-197`), matching the `__init__` convention that
+  an unreadable resource does not exist. The owner filter is fail-closed: `open_items` is always
+  called with a string, never `None`, so a principal without a user id queries nothing rather than
+  everything (`chat.py:1277`, `pending_approvals.py:263-276`).
+- A second park on the same session supersedes the previous open row by marking it `stale`, which is
+  what keeps the partial unique index `WHERE status = 'awaiting'` satisfiable
+  (`tests/test_hitl_pending.py:69`).
+- A row nobody decided within the approval TTL is reported as stale rather than deleted, so the audit
+  trail survives (`0008` header). `abandoned` is only meaningful since R12 (`826d318`): before
+  cooperative cancellation a "stopped" run still finished, so that label would have asserted
+  something the process had not done.
+
+Known gaps, recorded so nobody reads them as guarantees:
+
+1. **No pagination or limit.** The result is bounded only by "awaiting and not expired", and the
+   per-row `check_interrupt()` recheck makes the request O(number of open rows). A panel must not be
+   pointed at an account with a large backlog until a `limit` exists.
+2. **Missing table raises `RuntimeError`, not a stable code.** If the image is newer than the
+   database (`pending_approvals.py:102-108`), the caller gets a 500 that the frontend degrades to
+   `internal_error`; the true condition is "migrations not applied". Filed against C as part of R13
+   follow-up, not silently accepted.
+
 ## Structured Agent Result
 
 `AgentResult.status` distinguishes `success`, `partial`, `failed`, `rejected`,
