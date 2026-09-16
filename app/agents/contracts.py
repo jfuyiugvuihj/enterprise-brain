@@ -96,6 +96,7 @@ class ErrorEnvelope(BaseModel):
         "queue_unavailable",
         "model_unavailable",
         "retrieval_unavailable",
+        "storage_unavailable",
         "task_timeout",
         "task_cancelled",
         "unsupported_file",

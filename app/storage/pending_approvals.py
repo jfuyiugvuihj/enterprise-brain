@@ -99,10 +99,19 @@ def _is_open(record: PendingApprovalRecord, at: datetime) -> bool:
     return expires > at
 
 
+class PendingApprovalStoreMissing(RuntimeError):
+    """账本表不在——镜像比库新、``0008`` 没跑时唯一诚实的说法。
+
+    故意做成 ``RuntimeError`` 的子类而不是替换它：写侧既有断言钉的是基类，具名化只许
+    加一层，不许把旧断言弄红。存在的意义是让**读端点**能只接这一种错：把任何
+    RuntimeError 都翻成 503，等于替真正的 bug 打掩护（驱动缺失也会走这条路）。
+    """
+
+
 def _require_table(conn) -> None:
     row = conn.execute("SELECT to_regclass('public.pending_approvals') AS table_name").fetchone()
     if not row or row["table_name"] is None:
-        raise RuntimeError(
+        raise PendingApprovalStoreMissing(
             "pending_approvals table is required; run migrations first "
             "(migrations/0008_pending_approvals.sql)"
         )

@@ -1289,13 +1289,18 @@ async def hitl_pending(
 
     applied_limit = max(1, min(int(limit), MAX_PENDING_LIMIT))
     applied_offset = max(0, int(offset))
-    # 多问一行只为知道还有没有：这一行不参与下面的复核。
-    rows = pending_approvals.open_items(
-        owner_user_id=str(principal.user_id or ""),
-        session_id=session_id or None,
-        limit=applied_limit + 1,
-        offset=applied_offset,
-    )
+    try:
+        # 多问一行只为知道还有没有：这一行不参与下面的复核。
+        rows = pending_approvals.open_items(
+            owner_user_id=str(principal.user_id or ""),
+            session_id=session_id or None,
+            limit=applied_limit + 1,
+            offset=applied_offset,
+        )
+    except pending_approvals.PendingApprovalStoreMissing as exc:
+        # 只接这一种错。吞成 200 空列表是造假（R13 整单就是为了消灭它），翻成
+        # internal_error 又等于把"跑迁移"这条运维可执行的诊断洗成通用故障。
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
     has_more = len(rows) > applied_limit
     page = rows[:applied_limit]
 
