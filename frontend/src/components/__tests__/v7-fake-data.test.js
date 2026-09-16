@@ -64,9 +64,19 @@ describe('V7-2 · 编造的常量只住在 src/devFixtures/，面板源码里一
   const FAKE_VALUES = ['18600', '9200', '14200', '7600', '4200', '5400', '12600', '7200', '9800', '6100', '4600']
   const FAKE_TITLES = ['市场部差旅费异常', '财务部报销波动', '行政部住宿费上升']
 
-  it('七块面板里只有等 R13/R14 的三块引用 devFixtures，图谱与聊天明确不引用', () => {
+  // W7 起洞察页改接真告警链，devFixtures 那三行假数据整块摘掉，引用面从三块缩到两块。
+  // 给总控的提醒：W6 若把 DashboardPanel 也接上真端点，下面这份名单要跟着缩成
+  // ['ApprovalPanel.vue']。审批页的假参数是 F4 裁定保留的「自查计算器」输入，不在这条摘牌范围内。
+  it('七块面板里只剩等 R13 的审批页与还没接线的总览引用 devFixtures，图谱、聊天与洞察明确不引用', () => {
     const users = PANELS.filter(f => source(f).includes('devFixtures')).sort()
-    expect(users).toEqual(['ApprovalPanel.vue', 'DashboardPanel.vue', 'InsightPanel.vue'])
+    expect(users).toEqual(['ApprovalPanel.vue', 'DashboardPanel.vue'])
+  })
+
+  it('W7 反向钉：洞察页源码不再引用 devFixtures，SSR 首屏也不再挂演示徽标', async () => {
+    expect(source('InsightPanel.vue')).not.toMatch(/devFixtures|demo-flag|data-demo/)
+    const html = await render(InsightPanel)
+    expect(html).not.toContain('data-demo="fixtures"')
+    expect(html).not.toContain('演示数据')
   })
 
   it.each([...FAKE_VALUES, ...FAKE_TITLES])('演示常量 %s 不许出现在任何面板源码里', fake => {
@@ -81,13 +91,11 @@ describe('V7-2 · 编造的常量只住在 src/devFixtures/，面板源码里一
 })
 
 describe('V7-3 · 演示面板必须挂牌，且不许借用告警语言', () => {
-  it('洞察 / 审批首屏就带「演示数据」徽标与 data-demo 标记', async () => {
-    for (const C of [InsightPanel, ApprovalPanel]) {
-      const html = await render(C)
-      expect(html).toContain('data-demo="fixtures"')
-      expect(html).toContain('demo-flag')
-      expect(html).toContain('演示数据')
-    }
+  it('审批页首屏仍带「演示数据」徽标与 data-demo 标记（W7 只改定位措辞，没摘这块牌）', async () => {
+    const html = await render(ApprovalPanel)
+    expect(html).toContain('data-demo="fixtures"')
+    expect(html).toContain('demo-flag')
+    expect(html).toContain('演示数据')
   })
 
   it('总览面板的徽标在位（它首屏是 loading，所以这条只能钉源码），三处子卡各挂一个', () => {

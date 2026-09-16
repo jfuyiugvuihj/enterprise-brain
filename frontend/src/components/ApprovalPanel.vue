@@ -43,8 +43,8 @@ onMounted(submitCheck)
     <header class="panel-head">
       <div>
         <div class="eyebrow">Approval</div>
-        <h3>智能审批</h3>
-        <p>快速判断金额是否超出标准，并给出下一步建议。</p>
+        <h3>报销自查</h3>
+        <p>这是一台报销政策自查工具：填一组参数，看金额按标准算是否超标，并拿到下一步建议。它不办理审批。</p>
       </div>
     </header>
 
@@ -54,9 +54,18 @@ onMounted(submitCheck)
       <span class="demo-note">预审参数（金额 680 / 标准 500 / 市场部 住宿费）来自前端常量 src/devFixtures/approval-demo.js，不是任何人的真单据；结论只是阈值算术。列挂起 HITL 待办的端点尚未实现（后端 R13），所以这里既不是待办列表，也不构成审批记录。</span>
     </aside>
 
+    <!-- F4（checklist L111）裁定：这一页只做「自查」。工单模型 C-1 没建，所以这里既没有工单列表，
+         也不许出现批准与驳回按钮——放了就是假审批。人工确认只有一个入口，在对话页的 HITL 卡片上。 -->
+    <aside class="scope-note" data-testid="approval-scope-note">
+      <strong>自查工具，不是审批</strong>
+      <p>它回答的只有一个问题：这组费用参数按标准算超没超标。查完不会生成工单，不会记在任何人名下，也不会改变任何单据的状态。</p>
+      <p>需要人工确认时，入口在对话页：智能体在提交前停下来问你，你在那张卡片上同意或否决。这一页不放第二个判定，免得两处结论互相打架。</p>
+      <p>「挂起待办」列表要等后端的工单模型建起来（C-1）。在那之前这一屏不会摆出任何「待审批 N 条」的数字，因为那个数字目前无处可取。</p>
+    </aside>
+
     <div class="panel-grid">
       <section class="panel-card">
-        <div class="section-head"><h4>审批参数</h4></div>
+        <div class="section-head"><h4>自查参数</h4></div>
         <div class="form-grid">
           <label><span>金额</span><input v-model.number="form.amount" type="number" /></label>
           <label><span>标准</span><input v-model.number="form.standard" type="number" /></label>
@@ -69,13 +78,13 @@ onMounted(submitCheck)
         </label>
         <div class="actions">
           <button class="primary-btn" data-testid="run-approval" :disabled="loading" @click="submitCheck">
-            {{ loading ? '分析中' : '生成预审建议' }}
+            {{ loading ? '正在自查' : '重新自查' }}
           </button>
         </div>
       </section>
 
       <section class="panel-card">
-        <div class="section-head"><h4>预审结论</h4></div>
+        <div class="section-head"><h4>自查结论</h4></div>
         <UiErrorState
           v-if="failed"
           :title="denied ? '没有权限做审批预审' : '预审没有跑完'"
@@ -109,6 +118,30 @@ onMounted(submitCheck)
 </template>
 
 <style scoped>
+
+.scope-note {
+  display: grid;
+  gap: var(--s-1);
+  margin-top: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--cyan);
+  border-radius: var(--radius-sm);
+}
+
+.scope-note strong {
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.scope-note p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--t-xs);
+  line-height: 1.6;
+}
+
 .panel-grid {
   display: grid;
   grid-template-columns: .95fr 1.05fr;
