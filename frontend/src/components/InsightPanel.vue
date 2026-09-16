@@ -1,7 +1,9 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
+import { errorDetail, isPermissionDenied } from '../lib/http'
 import { demoRows } from '../devFixtures/insights-demo'
+import { UiEmptyState, UiErrorState } from './ui'
 
 // 表格里每行都被 v-model 直接改写，所以逐行浅拷贝：
 // 共享模块级数组会让第二次挂载带着上一次被删改过的数据。
@@ -9,6 +11,12 @@ const rows = ref(demoRows.map(row => ({ ...row })))
 const loading = ref(false)
 const insights = ref([])
 const error = ref('')
+// failed 与 insights.length 是两件事：分析没跑成，结果区不许说「暂时没有异常」。
+// 这一条就是 R1(c) 要拆的「失败与空态同一张脸」，InsightPanel 是当场能复现的那个：
+// auditor 没有 resource:analyze（permissions.py:16），POST /insights/detect 要的正是它
+// （intelligence.py:84），于是 403 permission_denied 回来、insights 仍是空。
+const failed = ref(false)
+const denied = ref(false)
 
 const summary = computed(() => [
   { label: '输入行数', value: rows.value.length },
@@ -26,11 +34,18 @@ function removeRow(index) {
 async function runDetection() {
   loading.value = true
   error.value = ''
+  failed.value = false
+  denied.value = false
   try {
     const response = await api.post('/insights/detect', { rows: rows.value })
     insights.value = response.data.insights || []
   } catch (err) {
-    error.value = err.response?.data?.detail || err.message || '洞察分析失败'
+    denied.value = isPermissionDenied(err)
+    failed.value = true
+    insights.value = []
+    error.value = denied.value
+      ? '当前账号没有运行洞察分析的权限，请联系管理员开通。'
+      : errorDetail(err, '洞察分析失败')
   } finally {
     loading.value = false
   }
@@ -83,13 +98,22 @@ onMounted(runDetection)
           <button class="primary-btn" data-testid="run-insights" :disabled="loading" @click="runDetection">
             {{ loading ? '分析中' : '生成洞察' }}
           </button>
-          <span v-if="error" class="inline-error">{{ error }}</span>
         </div>
       </section>
 
       <section class="panel-card">
         <div class="section-head"><h4>洞察结果</h4></div>
-        <div v-if="!insights.length" class="empty-state">暂时没有异常</div>
+        <UiErrorState
+          v-if="failed"
+          :title="denied ? '没有权限运行洞察分析' : '洞察分析没有跑完'"
+          :description="error"
+          :retryable="!denied"
+          retry-text="重新分析"
+          :busy="loading"
+          dense
+          @retry="runDetection"
+        />
+        <UiEmptyState v-else-if="!insights.length" title="暂时没有异常" dense />
         <div v-else class="insight-list">
           <article v-for="item in insights" :key="item.title" class="insight-item">
             <div>

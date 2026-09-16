@@ -145,6 +145,31 @@ export async function authedFetch(path, { headers, ...options } = {}) {
 // TODO(B 线 / G2 合并后)：文案映射应由 lib/errcodes.js 提供，此处只留一条取原始 detail 的通道。
 // 已知短板：responseType:'blob' 的错误体（文档/数据下载）读不到 detail，只能落回兜底文案；
 // artifacts.js 里有 readBlobError() 的先例，是否通用化由总控定，A 线不动 errcodes.js。
+/**
+ * 从后端三种错误形状里只取「稳定码」本身，不做任何文案映射 ——
+ * 文案映射表本体归 lib/errcodes.js（见上面那条 TODO 与 B-5），在这里多写一句人话都会撞车。
+ * 用途只有一个：面板要判断「这一步该画哪张脸」。R1(c) 裁定 403 与空列表必须分开渲染，
+ * 判据是 detail 等于 canonical 稳定码 permission_denied（app/common/policy.py:157-158 产出），
+ * 不是 HTTP 状态码本身。
+ * 形状 1 字符串码 / 形状 2 ErrorEnvelope / 形状 3 FastAPI 422 列表 / 无响应（断网）。
+ */
+export function errorCode(err) {
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string') return detail.trim()
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    const code = detail.error_code || detail.code
+    if (code) return String(code).trim()
+  }
+  return ''
+}
+
+export const PERMISSION_DENIED = 'permission_denied'
+
+/** true = 这一步是「没权限」，不是「没数据」，也不是「服务坏了」：给无权限卡，且不给重试按钮。 */
+export function isPermissionDenied(err) {
+  return errorCode(err) === PERMISSION_DENIED
+}
+
 export function errorDetail(err, fallback = '请求失败') {
   const detail = err?.response?.data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
