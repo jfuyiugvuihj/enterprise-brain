@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { fetchArtifactBlob, isArtifactRequest } from '../lib/artifacts'
+import { UiLoadingState } from './ui'
 
 const props = defineProps({
   src: String,
@@ -99,10 +100,7 @@ onUnmounted(() => {
       <img :src="displayUrl" :alt="caption || '图表'" class="chart-img" />
     </div>
 
-    <div v-else-if="loadState === 'loading'" class="chart-state" role="status">
-      <span class="chart-state-spinner" aria-hidden="true"></span>
-      <span class="chart-state-text">正在获取图表…</span>
-    </div>
+    <UiLoadingState v-else-if="loadState === 'loading'" label="正在获取图表…" variant="block" dense />
 
     <div v-else-if="loadState === 'error'" class="chart-state chart-state-error" role="status">
       <span class="chart-state-icon" aria-hidden="true">⚠️</span>
@@ -320,15 +318,6 @@ onUnmounted(() => {
   font-size: 18px;
 }
 
-.chart-state-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(157, 178, 207, .28);
-  border-top-color: #8ea8ff;
-  border-radius: 50%;
-  animation: chart-spin 0.9s linear infinite;
-}
-
 .chart-retry {
   flex: none;
   padding: 6px 14px;
@@ -350,9 +339,5 @@ onUnmounted(() => {
 .chart-btn:disabled {
   opacity: .45;
   cursor: not-allowed;
-}
-
-@keyframes chart-spin {
-  to { transform: rotate(360deg); }
 }
 </style>

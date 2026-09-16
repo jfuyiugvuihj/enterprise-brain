@@ -19,8 +19,9 @@ import InsightPanel from '../InsightPanel.vue'
 import ApprovalPanel from '../ApprovalPanel.vue'
 import DashboardPanel from '../DashboardPanel.vue'
 import DocPanel from '../DocPanel.vue'
+import DocumentPreviewModal from '../DocumentPreviewModal.vue'
 import ChatPanel from '../ChatPanel.vue'
-import { UiEmptyState, UiErrorState } from '../ui'
+import { UiEmptyState, UiErrorState, UiLoadingState } from '../ui'
 
 const source = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const render = component => renderToString(h({ render: () => h(component) }))
@@ -88,6 +89,30 @@ describe('DataPanel · 文件列表三张脸 + 色债随接线一起掉', () => 
     expect(html).toContain('暂无数据文件')
     expect(html).toContain('上传 Excel 或 CSV 开始分析。')
     expect(html).not.toContain('class="data-state empty"')
+  })
+
+  // A-5-3 filesLoading 初值是 false，SSR 拿不到这一支，所以钉分支形状而不是渲染结果：
+  // 三张脸的顺序即语义（进行中 -> 失败 -> 空），失败不许被说成「没有文件」，
+  // 而旧的手搓 <p class="data-state"> 一支留痕都不许有。
+  it('进行态这一支只认 UiLoadingState，且排在失败与空态之前', () => {
+    const s = source('DataPanel.vue')
+    const loadingAt = s.indexOf('<UiLoadingState v-if="filesLoading"')
+    const errorAt = s.indexOf('v-else-if="filesError"')
+    const emptyAt = s.indexOf('v-else-if="!dataFiles.length"')
+    expect(loadingAt).toBeGreaterThan(-1)
+    expect(loadingAt).toBeLessThan(errorAt)
+    expect(errorAt).toBeLessThan(emptyAt)
+    expect(s).not.toContain('class="data-state"')
+    expect(s).toContain('label="正在读取数据文件..."')
+  })
+
+  // role="status" 不在面板里手写（写了就是第二套形状），所以链路两截都要实测：
+  // ① 那一支用的确实是 UiLoadingState；② 该原语渲染出来确实带 role + aria-busy。
+  it('新位的 role=status 由原语发出：链路两截都是真产物', async () => {
+    expect(source('DataPanel.vue')).toMatch(/<UiLoadingState v-if="filesLoading" label="正在读取[^"]*" dense/)
+    const html = await renderToString(h(UiLoadingState, { label: '正在读取数据文件...', dense: true }))
+    expect(html).toMatch(/<div class="ui-loading-state[^"]*" role="status" aria-busy="true"/)
+    expect(html).toContain('正在读取数据文件...')
   })
 
   // R1(c) 的顺序即语义：失败必须先于「空」被判掉，否则读不到列表会说成「没有文件」。
@@ -188,6 +213,10 @@ describe('DashboardPanel · 总览的四处状态 + 被吞掉的证据查询失�
   it('SSR 首屏是加载行；三张空脸与失败脸都还没出现', async () => {
     const html = await render(DashboardPanel)
     expect(html).toContain('正在加载经营数据')
+    // A-5-2：进行态改吃 UiLoadingState，断言打在 SSR 真产物上而不是源码字符串
+    expect(html).toContain('data-testid="ui-loading-state"')
+    expect(html).toMatch(/<div class="ui-loading-state[^"]*" role="status" aria-busy="true"/)
+    expect(html).not.toContain('class="panel-state"')
     expect(html).not.toContain('data-testid="ui-error-state"')
     expect(html).not.toContain('data-testid="ui-empty-state"')
     expect(html).not.toContain('class="empty-state"')
@@ -220,6 +249,48 @@ describe('DashboardPanel · 总览的四处状态 + 被吞掉的证据查询失�
     expect(s).toContain('retry-text="重新查询"')
   })
 })
+
+describe('DocumentPreviewModal · 预览进行态吃原语（A-5-4）', () => {
+  // 这个弹窗的根节点是 <Teleport to="body">：SSR 把内容写进 teleport 缓冲区，
+  // renderToString 只留下两枚注释标记。先把这件事本身钉住，免得下一轮有人误以为
+  // 「SSR 断言没写是因为漏了」，或者反过来删用例凑绿。
+  it('SSR 只留 teleport 标记：这一支的证据只能来自源码形状 + 原语实测', async () => {
+    const html = await renderToString(h({
+      render: () => h(DocumentPreviewModal, { open: true, loading: true, filename: '制度汇编.pdf', kind: 'pdf' }),
+    }))
+    expect(html).toContain('<!--teleport start-->')
+    expect(html).not.toContain('data-testid="ui-loading-state"')
+  })
+
+  it('loading 那一支只认 UiLoadingState：位置、参数、旧裸文本零留痕', () => {
+    const s = source('DocumentPreviewModal.vue')
+    const loadingAt = s.indexOf('<UiLoadingState v-if="loading"')
+    const errorAt = s.indexOf('<div v-else-if="error" class="preview-state')
+    expect(loadingAt).toBeGreaterThan(-1)
+    expect(loadingAt).toBeLessThan(errorAt)
+    expect(s).toContain('label="正在加载预览..."')
+    expect(s).toContain('variant="block"')
+    expect(s).not.toMatch(/class="preview-state"[^>]*>正在加载预览/)
+  })
+
+  // 面板里不手写 role（写了就是第二套形状），所以 role=status 这件事由原语那一侧实测。
+  it('block 档真产物带 role=status + aria-busy + 骨架块', async () => {
+    const html = await renderToString(h(UiLoadingState, { label: '正在加载预览...', variant: 'block' }))
+    expect(html).toContain('data-testid="ui-loading-block"')
+    expect(html).toMatch(/<div class="ui-loading-state[^"]*" role="status" aria-busy="true"/)
+    expect(html).toContain('正在加载预览...')
+  })
+
+  // 本批只换「进行中」这一支：失败脸与空脸仍是手搓 .preview-state（这个弹窗不在 A-3 的
+  // 七个面板名单里，接线要另起一批），所以反向钉住它们的定义不许被顺手删掉。
+  it('失败与空两支仍用 .preview-state，类定义必须留在文件里', () => {
+    const s = source('DocumentPreviewModal.vue')
+    expect(s).toMatch(/<div v-else-if="error" class="preview-state preview-error"/)
+    expect(s).toMatch(/class="preview-state">暂无数据<\/div>/)
+    expect(s).toContain('.preview-state {')
+  })
+})
+
 
 describe('DocPanel · 一条提示条拆成「哪种事没成」+ 两处空态', () => {
   it('SSR 首屏：空知识库画原语，两句话一字不改，emoji 图标交给原语的内置图标', async () => {
@@ -292,5 +363,77 @@ describe('ChatPanel · 会话空态 + 一次性失败提示（本面板不适用
     const s = source('ChatPanel.vue')
     expect(s).not.toContain('isPermissionDenied')
     expect(s).not.toMatch(/\berrorCode\b/)
+  })
+})
+
+
+describe('ChartViewer · 取图进行态吃原语（A-5-5）', () => {
+  // loadState 初值是 idle，SSR 只能拿到「该轮回答没有返回图表」那张脸；进行态要请求打到一半
+  // 才出现，node 里没有网络层可打 —— 所以这一支钉源码形状，role 那一截由原语实测。
+  it('三张脸顺序为 就绪 -> 进行 -> 失败，进行态只认 UiLoadingState', () => {
+    const s = source('ChartViewer.vue')
+    const at = (needle) => {
+      const i = s.indexOf(needle)
+      expect(i, needle).toBeGreaterThan(-1)
+      return i
+    }
+    const ready = at(`v-if="loadState === 'ready'"`)
+    const loading = at(`<UiLoadingState v-else-if="loadState === 'loading'"`)
+    const failed = at(`v-else-if="loadState === 'error'"`)
+    expect(ready).toBeLessThan(loading)
+    expect(loading).toBeLessThan(failed)
+    expect(s).toContain('label="正在获取图表…"')
+    expect(s).toContain('variant="block"')
+    // 旧进行态是自转 spinner，视觉文档 §8.4 第 5 条点名要骨架屏而不是转圈
+    expect(s).not.toMatch(/class="chart-state-spinner"/)
+    expect(s).not.toMatch(/<div v-else-if="loadState === 'loading'"[^>]*role="status"/)
+  })
+
+  it('dense 档真产物：role + aria-busy 由原语发，文案一字不差', async () => {
+    const html = await renderToString(h(UiLoadingState, { label: '正在获取图表…', variant: 'block', dense: true }))
+    expect(html).toMatch(/<div class="ui-loading-state[^"]*" role="status" aria-busy="true"/)
+    expect(html).toContain('ui-loading-state--dense')
+    expect(html).toContain('正在获取图表…')
+  })
+
+  // dense 不是审美选择而是等值：图表卡在 ChatPanel.vue:478 的消息气泡里，旧文案
+  // .chart-state-text 是 12px，dense 档文案走 --t-xs(12px)；不带 dense 会变 --t-sm(13px)。
+  it('字号等值有据：旧 .chart-state-text 仍是 12px，dense 走 --t-xs(12px)', () => {
+    expect(source('ChartViewer.vue')).toMatch(/[.]chart-state-text \{[\s\S]*?font-size: 12px;/)
+    expect(source('../assets/theme.css')).toContain('--t-xs: 12px')
+    expect(source('../assets/theme.css')).toContain('--t-sm: 13px')
+  })
+})
+
+
+describe('死 CSS 收口（A-5-6）：零引用的删掉，仍在用的不许顺手带走', () => {
+  // 判据打在「定义还在不在」上，四条零引用规则各钉一条，删没删一眼可判。
+  it('进行态换原语后零引用的规则已删：.panel-state / .data-state / spinner / chart-spin', () => {
+    expect(source('../assets/theme.css')).not.toMatch(/[.]panel-state/)
+    expect(source('DashboardPanel.vue')).not.toMatch(/[.]panel-state/)
+    expect(source('DataPanel.vue')).not.toMatch(/[.]data-state/)
+    expect(source('ChartViewer.vue')).not.toMatch(/[.]chart-state-spinner/)
+    expect(source('ChartViewer.vue')).not.toMatch(/@keyframes chart-spin/)
+  })
+
+  // 反面断言：.preview-state 的失败/空两支与 .chart-state 家族都还有引用，
+  // 删过头会让剩下的脸变成无样式裸文本。这条防的就是「为了凑棘轮数字乱删」。
+  it('仍在服役的规则一条不少', () => {
+    const theme = source('../assets/theme.css')
+    expect(theme).toMatch(/[.]empty-state \{/)
+    const chart = source('ChartViewer.vue')
+    expect(chart).toMatch(/[.]chart-state \{/)
+    expect(chart).toMatch(/[.]chart-state-error \{/)
+    const preview = source('DocumentPreviewModal.vue')
+    expect(preview).toMatch(/[.]preview-state \{/)
+    expect(preview).toMatch(/[.]preview-error \{/)
+  })
+
+  // 卡片表面那组规则里被摘掉的只有 .panel-state 一个选择器，同伴不许被牵连。
+  it('theme.css 卡片组只摘掉 .panel-state 一个选择器，同伴还在原处', () => {
+    const theme = source('../assets/theme.css')
+    for (const keep of ['.panel-card,', '.hero-card,', '.mini-stat,', '.row-card,', '.insight-item,', '.metric-card,']) {
+      expect(theme, keep).toContain(keep)
+    }
   })
 })

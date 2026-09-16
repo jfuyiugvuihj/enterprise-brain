@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { errorDetail, http, isPermissionDenied } from '../lib/http'
-import { UiEmptyState, UiErrorState } from './ui'
+import { UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
 
 const profile = ref(null)
@@ -188,7 +188,7 @@ onMounted(loadDataFiles)
         <span v-if="dataFiles.length" class="file-count">{{ dataFiles.length }}</span>
       </div>
 
-      <p v-if="filesLoading" class="data-state">正在读取数据文件...</p>
+      <UiLoadingState v-if="filesLoading" label="正在读取数据文件..." dense />
       <UiErrorState
         v-else-if="filesError"
         title="数据文件列表没读到"
@@ -446,13 +446,6 @@ onMounted(loadDataFiles)
   font-size: 10px;
 }
 
-.data-state {
-  margin: 4px 0 10px;
-  color: #909399;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 /* 数据画像 */
 .profile-card {
   margin-top: 16px;
@@ -625,7 +618,6 @@ onMounted(loadDataFiles)
 }
 
 .upload-hint,
-.data-state,
 .data-file-meta,
 .col-type,
 .col-stats {

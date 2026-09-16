@@ -96,6 +96,10 @@
   --motion-fast: 120ms cubic-bezier(.2, .8, .28, 1);
   --motion-slow: 200ms cubic-bezier(.2, .8, .28, 1);
 
+  /* 骨架屏的循环周期。刻意与 --motion-* 分家：那是过渡时长（120/200ms），
+     拿去当循环周期就是频闪。只放时长，ease-in-out infinite 留在组件里。 */
+  --skeleton-loop: 1.4s;
+
   /* 控件尺寸：值等于 ui 原语里各自 fallback 的字面值，落地后 fallback 永不生效 */
   --control-h: 40px;
   --control-h-sm: 32px;
@@ -716,7 +720,6 @@ textarea:focus-visible {
 
 .panel-card,
 .hero-card,
-.panel-state,
 .mini-stat,
 .row-card,
 .insight-item,
@@ -994,8 +997,7 @@ textarea:focus-visible {
   font-size: 10px;
 }
 
-.empty-state,
-.panel-state {
+.empty-state {
   padding: 24px;
   color: var(--muted);
   text-align: center;

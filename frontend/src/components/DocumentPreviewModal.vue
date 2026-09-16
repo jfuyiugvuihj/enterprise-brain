@@ -1,4 +1,6 @@
 <script setup>
+import { UiLoadingState } from './ui'
+
 defineProps({
   open: Boolean,
   filename: {
@@ -55,7 +57,7 @@ const emit = defineEmits(['close', 'download'])
           </header>
 
           <div class="preview-body">
-            <div v-if="loading" class="preview-state">正在加载预览...</div>
+            <UiLoadingState v-if="loading" label="正在加载预览..." variant="block" />
             <div v-else-if="error" class="preview-state preview-error">{{ error }}</div>
             <iframe
               v-else-if="kind === 'pdf' && blobUrl"
