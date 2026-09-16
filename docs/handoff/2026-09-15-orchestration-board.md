@@ -558,3 +558,58 @@ Docker Desktop 仍未运行 ⇒ 后端镜像重建与所有真机验收继续挂
 收 A-4 4/5 → 我亲跑五闸 → 并 `codex/fe-prims`(B-6) → 合并树再跑五闸（色值只准降、测数重数）→ fe-trunk 并回主树（先证明与 C 在途 `app|tests|migrations` 不相交 + 重算 `HEAD:frontend` 树哈希）
 → 派 A 接线小批（`UiLoadingState` 三处 + `--skeleton-loop` token）→ 收 C 续单并亲跑 pytest 对账 → 我登记契约。
 **代码这条腿不依赖 Docker**；真机那半（后端镜像重建、G3/G-C-1/G4/R8 真机、D 验收线、容器门）**全部**等用户手动开一次 Docker Desktop，我不会擅自启动它。
+
+## 4L. 数字刷新到当前 HEAD + 修回我自己造成的一条回归 + 查出"前端码表对账测试是装饰"（2026-09-16 10:5x–11:1x）
+
+### 4L.1 权威数字（全部我亲跑，不是转述）
+
+- 后端 pytest **831 passed / 22 skipped / 0 failed / 35.07s** @ `5fc4616`（当前 HEAD）。跑前 `git status --porcelain -- app tests migrations` = **0 行**，可归因。
+  过期链记死，别再引用前面的：`727@895ee18`（他人报告，**不成立**，见 §4I.3/§11.4）→ `771@826d318`（§4I.3）→ `800@1672841`（§4K.1）→ **831@5fc4616**。
+- `5fc4616` 相对 `a23fbaa` 只差 `docs/api/contract-v1.md`（+48/−14），`git diff --name-only a23fbaa 5fc4616 -- app tests migrations scripts frontend` = **空** ⇒ 831 同时是代码树 `a23fbaa` 与当前 HEAD 的数。
+- `HEAD:frontend` 树对象哈希 **`254aab885ea9545c695432eafe7a5f51e9447908`** @ `232c39f`（§4I.2 那个旧哈希**作废**）。合并树五闸（A-4 + B-6）全 0：**309 测 / 16 文件**、色值锚 **342**、`:deep()` lightningcss 警告 **0 命中** @ `bf1bd38`。
+- 契约 `5fc4616`：文档 bullets **26** == 冻结枚举 **26**，双向差集空。
+
+### 4L.2 我自己造成并修回的一条回归（类别教训，写死在流程里）
+
+`232c39f` 把前端并进主树之后，后端 pytest 红 **1** 条：`tests/test_frontend_login_policy.py:36` 把旧 `http.js` 的实现文本 `^Request failed with status code \d+$` 烤进断言，而 A-4-2 已把该过滤器搬进 `errcodes.js` 的 `cleanText`（且更宽，带 `i` 标志）。
+修法按该文件既有的"重指向"惯例做**第三次重指向**（改读 `errcodes.js`，断言 `/^request failed with status code \d+$/i`），**不删断言**；注入自证会红、`git checkout` 还原后 dirty=0。提交 `a23fbaa`。
+⇒ **前端重构会打穿"后端树里钉前端源码文本"的测试：五闸抓不到，只有主树全量 pytest 抓得着。以后每并一次前端进主树，必须紧跟一次全量 pytest**（已并入 §4L.8 顺序）。同类风险目前还有 `no-bare-code.test.js` / `panel-states.test.js`，但它们在 `frontend/` 内、由五闸覆盖。
+
+### 4L.3 C 续单 4/4 已交并亲验（主树）
+
+- (a) `/hitl/pending` limit/offset **`5ea8dee`**：SQL 下推，`app/api/v1/chat.py:1297` over-fetch `limit+1` 算 `has_more`；"截断行本轮不复核就不得标 stale"有专测（`:471/:492/:505`）。
+- (b) 缺表 → **503 `storage_unavailable`** `35ee27e`：只接具名子类 `PendingApprovalStoreMissing`，别的 `RuntimeError` 照旧上冒（子类化是为了不弄红 `test_hitl_pending.py:395`）。
+- (c) R13④ 追认 8 个线上裸码 **`6606f59`**（红底 `f4a32c7` 自报 10 failed → 转绿）。
+- (d) R16 **`d0fed71`**：AST 扫 `chat.py` 字面量 offenders 改前 `[1027]` → 改后 `[]`，并钉 legacy 文本 == 落库文本。
+- 新码裁定：`tests/test_public_contracts.py:104` 是**成员制**断言（docstring 自陈"加一个码不会弄红别的响应"），C 未碰它 ⇒ `storage_unavailable` 属干净扩展，已登记。`storage_read_only` **刻意不追认**：只读降级 ≠ 表不存在，合并两者会让运维修错对象。
+
+### 4L.4 A-4 五单全部接受；一处越权记的是我的账
+
+`bea216a / 06bd2e2 / d42fb77 / 556ad8a / acf406d` 逐单亲验（悬空引用 0、五句语义逐条对字典、色值 351→342）。越权项：A 另改了 2 个 `it()` 里的记账数字（5→0、1→0），并把「正交控制」从数长度改成 `toEqual([])`（更强）。这是"清零"的机械后果，判据函数与四组夹具逐字未动，A 自己标了「【超出授权、请复核】」。
+⇒ **派单模板缺陷（记我账）**：凡要求"清零/归零"，必然同步要动记账断言里的数字。以后派单必须**预先写明**这一点，否则每单都要事后追认一次。
+
+### 4L.5 新查出：前端的"码表三列对账"测试是装饰（真缺陷，比缺一个码严重）
+
+逐码 diff（只读脚本实测）：**后端枚举 26 / 前端 `ERROR_CODES` 25**，`A − C = {storage_unavailable}`，`C − A = ∅`；`git grep -n storage_unavailable -- frontend` **0 命中**。
+其余 8 个追认码**都在**前端字典里——`no_answer_produced` 是 A-4-3（`d42fb77`）补进去的，C 在 `6606f59` 里写"前端没有它"抄的是更早的前端树，**不成立**。
+真问题在 `frontend/src/lib/errcodes.test.js:600` 起的三条断言：`契约 17 / evidence 16 / 前端 25` 中，**BLUEPRINT 与 EVIDENCE_CODES 都是测试文件内手抄的数组，两边都不读真源**。后果：
+1. `A − C = 空` 只证明"我手抄那 17 个有话说"，永远看不见后端新增的 9 码 ⇒ 就是它让 26 vs 25 的漂移无人报警；
+2. `C − A = 8`（`UNRATIFIED_CODES`）的语义今晨已被 `6606f59` **反转**——那 8 码现在是"契约已登记"，标题与断言方向都错；
+3. `evidence 16` 也已失效：`app/agents/evidence.py` 现由 `_enum_error_codes()` 从枚举派生（C 修的是真 bug：手抄少 2 码，会把真码洗成 `internal_error`）。
+⇒ 立项 **A-6**：补 `storage_unavailable` 一句人话（**不得**与 `LEGACY_ALIASES` 里 `storage_read_only → internal_error` 共用文案）+ 三列账改读真源 + 改写 `C−A` 不变量为「A−C = ∅ 且 C−A = ∅」+ 注入自证（往枚举加一个假码 ⇒ 必红，还原 ⇒ 0 红）。
+**环境事实（写下来防别人踩）**：fe-trunk 的 `app/**` 停在分支点，那里 `contracts.py` 仍是 **17 码**；在 fe-trunk 里 `readFileSync("app/agents/contracts.py")` 做对账会**假绿**。正解：`git show codex/data-file-catalog:app/agents/contracts.py`——三个 worktree 共享同一 object DB，与工作树新鲜度无关。
+
+### 4L.6 用户贴来的"图谱这条线没排"报告：处置状态
+
+同一份报告即 §4I.3 已逐条实读核查过的：**四条属实**（已落成跟进单 §11 **R15-a/b/c/d**，含判据与禁改边界、排 R13/R14 之后 C-5 之前）、**一条报错**（727，§11.4）、**两处它自己漏了**（`/static` mount、443 过期基线，§11.5）。
+"设计文档还有哪些目标态当现状" = §4K.4 已给全量清单（2 真硬伤 + 3 数字过期 + 1 反向自相矛盾 + 2 措辞 + 2 条为它平反），修它 = **6 处纯 docs 编辑**，仍是他人未跟踪件，等你点头。
+⇒ 你给的三个选项状态：R15 已立项 ✔ ／ 回归已复跑取当前 HEAD 数 ✔（831）／ 设计文档审计已完成 ✔（§4K.4）。
+
+### 4L.7 我的流程失误（记账不辩解）
+
+**同一条助手消息的工具块里写出两个一模一样的 `send_input`**（派 A-5），返回两个不同 id ⇒ A 收到 **2 份** A-5 单。规矩重申并且这次写进文件：`send_input` **单独占一条助手消息，块内不许有任何其他调用**；发出前数调用条数，>1 就删到 1。重复件不补发订正，以最终 commit 为准。A-5 各任务幂等（token 只有一行可换、四处裸文本改完再改无从改起），实际损害限于 A 可能重跑一次闸门。
+
+### 4L.8 下一步（顺序）
+
+收 A-5（已见 `6340e01` / `7507fb9` / `1b7084d`，工作树正在改 `DocumentPreviewModal.vue`；剩 `ChartViewer.vue` + 死 CSS + 交割）→ 我亲跑五闸（色值**只准降**，降完锚必须同步落到新数）→ 派 **A-6** → A 接线落定后另开视觉 fixture 小批（`tests/visual/ui-states.spec.js`，行号取 fe-trunk）→ fe-trunk 再并回主树（先证与 C 无在途脏文件相交）+ **紧跟全量 pytest** + 重算 `HEAD:frontend` 树哈希 → 前端补码收口 → C-4（`app/common/rbac.py:34` 空部门=公开 ↔ `app/rag/filters.py` 无部门=硬拒；含 `Principal.from_user` 的 `or` 抬级）→ C-5 / R14 / R15。
+**Docker Desktop 仍未运行** ⇒ 后端镜像重建、G3 / G-C-1 / G4 / R8 真机、D 验收线、容器门**全部**继续停摆，我不擅自启动。
