@@ -289,3 +289,41 @@ C-4 的实测结论先记在这里，防止有人重提「统一两套文档规�
   防止将来有人"顺手统一"把它改成 fail-closed。
 
 判据：`git grep -n 'isin(("", dept))' -- app` 的结果与所选口径一致，且存在一条命名自解释的测试。
+
+## 14. 跟进单 **R18**（2026-09-16 总控实测）：取消标记按「代」生效，别再跨请求泄漏，也别留死字段
+
+R12 已经把「停止 = 拒绝挂起动作」这条语义定了（§9 甲裁定），业务面不再悬空。但它底下的**实现**还缺三件，
+今天逐条实测过，都不是推断：
+
+1. **覆盖即丢取消**。`app/api/v1/chat.py:86-93` 的 `register_request` 无条件 `_REQUESTS[session_id] = threading.Event()`，
+   于是先到的 `cancel_request` 把旧 Event `set()` 之后，新一轮 `register_request` 换上一个**干净的** Event，
+   那次取消就被抹掉。这里的注释（`:87-89`）自己写着「本批不修，属 R13 状态机」——那就是它欠着的账。
+2. **跨代泄漏**。`app/api/v1/chat.py:96-111` 的 `cancel_request` 在**没有**在飞运行时也会新建一个 Event、`set()` 后留在表里。
+   下一次同会话的运行在 `register_request` 之前被 `is_request_cancelled`（`:114-117`）读到，就会被判成"已取消"。
+   这条与 r8 记的「会话停在 HITL 挂起时按停止返回 200 但不清挂起」同因：**标记的生命周期不跟着一次运行走**。
+3. **表只涨不消**。`git grep -n "_REQUESTS.pop\|del _REQUESTS\|_REQUESTS.clear" -- app` **零命中**（本轮实测 exit=1）。
+   每个会话号永久占一个 `threading.Event`，只有重启才清——单租户长进程下是慢泄漏，不是理论问题。
+4. **`cancellation_token` 是死字段**。全仓只有两处：`app/agents/contracts.py:135`（`= None`）与 `app/agents/state.py:38`（类型声明），
+   `app/**` 与 `tests/**` 再无第三处引用，即**既不写也不读**。它给人「取消已经有代际标识」的错觉，比没有更坏。
+   订正交接件里的行号：是 `contracts.py:135`，不是 `:121`。
+
+**要做的事**（一次做完，别拆成两次改语义）：
+
+- 取消状态以 **(session_id, epoch)** 为键。`register_request` 递增/生成 epoch 并返回句柄；
+  `is_request_cancelled` 与 orchestrator 每步的取消检查都按**本代**判断。
+  不带 epoch 的 `cancel_request` 允许保留"取消当前这一代"的语义，但**不得**把标记留给下一代。
+- 一次运行结束（正常 / 异常 / 取消）必须在 `finally` 里弹出本代条目，使 `_REQUESTS` 只反映在飞的运行。
+- `cancellation_token` 二选一：真当 epoch 载体用起来（写入 = 本代标识，读取 = 每步比对），或者删字段。
+  **不许保留既存在又没人读的名字。**
+
+**判据**（每条都要能机器复验）：
+
+- 新增一条测试钉住窗口：`cancel_request(sid)` → `register_request(sid)` → 该次运行必须能观察到这次取消；
+  或者反过来明确"取消只对本代有效"并把它写进 `docs/api/contract-v1.md` 的 cancel 一节。**不许继续两头都不认。**
+- 新增一条测试：跑完 N 个完整问答后 `len(_REQUESTS) == 0`。
+- `git grep -n "cancellation_token" -- app` 命中数要么 ≥3（有读有写）要么 0（删净），中间态算未完成。
+- 业务面复验（真机）：会话停在 HITL 挂起时按「停止」→ 随后点批准 → **被停的动作不得执行**（这是甲裁定的落地判据，不是新功能）。
+
+**禁改边界**：不动 SSE 事件枚举与 `docs/api/contract-v1.md` 已冻结的 26 条码表；不碰 `frontend/**`；
+不改 R12 已定的「停止 = 拒绝挂起动作」语义，只补它缺的实现。**优先级**：排在 R13/R14 之后、C-5 之前（与 R15 同级）。
+

@@ -691,3 +691,47 @@ A-5-④ 只收了"本次接线产生的孤儿"，没回头看全局表——这�
 - **并行开发的执行载体**：子 Agent API 在本会话全灭 ⇒ 改起 3 个本地 `codex exec` 工作进程，各占一棵树、写集互斥（W1=A-6 在 `fe-trunk`；W2=两条悬空接线在 `fe-artifacts`；W3=R14-A1 在 `be-r14`）。环境事实：提示词必须走 `cmd /c codex exec ... - < 工单` 注入 stdin，对 `codex.cmd` 直接用 `-RedirectStandardInput` 会得到`No prompt provided via stdin.`。`node_modules` 用**目录联接**在两棵前端树之间共享（省 191MB 级别的复制，且禁止 `npm install`）。
 - **镜像构建（G3/R13/R16 真机那半的前置）**：第一次 `docker compose build migrate` **失败**，根因是 buildkit 内 DNS 抖动（`nvidia-cufft` 拉取 `failed to lookup address information`，且此前 numpy/onnxruntime 已下载成功），**不是**代码或 lockfile 问题；另注意必须带 `--env-file deploy/.env.server`，否则 compose 插值直接报缺 `POSTGRES_USER`/`REDIS_PASSWORD`。重试自 11:2x 起在跑，`11:34` 之后日志静默 12 分钟（wheel 构建期无输出属正常，但要复查是否卡住）。顺带记一条待查缺陷：构建时报 `The "T2s4UfscQoRgZghD38IZY" variable is not set` —— 像是 `deploy/.env.server` 里的口令含 `$` 被 compose 当变量插值了，这正是 §9 第 5 条（渲染值冒烟比对）要抓的东西，等 W3 交完由我实测。
 - **记我账第 26 次（与第 24 次同形）**：又在同一条消息里发出**两个重复的 `exec_command`**（第二条被判 unsupported call）。规矩同样适用于普通工具调用：**一个消息里对同一工具只发一条，除非它们确实互不相同**。
+
+## 4Q. 主树回绿 + 演示链路四条实测订正（2026-09-16 14:3x，用户令「你看他们是否真的在跑，然后你继续做你的」）
+
+### 4Q.1 三条红结案：是测试少钉一个分支，不是端点错，也不是环境运气（`c2a19f7`）
+
+- 三条红只在主树出现、`be-r14` 树内全绿，我之前只写下「那棵树没有 .env」就当结论，**这轮查到了机制**：`app/api/v1/alerts.py:44` 的 `_database_available()` 读的是 `app.common.auth._db_ready`，主树 `.env:17` 指向宿主 Postgres 且**可达**⇒ `app/api/v1/dashboard.py:85` 走真 `alerts` 表（实测 `COUNT=0`），而用例只把种子写进 `_MEM_ALERTS`⇒ 断言 `{total:1}` 对上 `{total:0}`。同一文件里 `tests/test_dashboard_summary.py:318` 那条要验 SQL 分支的用例是自己在函数体内 `monkeypatch` 回 `True` 的，所以那一条一直绿——**分支选择权落在了开发者机器上**，这是它真正的缺陷。
+- 修法按根因：加 autouse `memory_alerts` fixture 把离线分支钉进用例（并顺带把 `_MEM_ALERTS` 每例清零，防跨例泄漏），SQL 分支仍由那条用例自己开。`app/**` 零改动。
+- 数字：`tests/test_dashboard_summary.py` 单跑 **24 passed**；主树全量两次复跑 **854 passed / 22 skipped**（红前 3 failed / 851 passed；两次分别在前端 A-6-2 并树前后各跑一遍，前端改动未打穿后端）。
+
+### 4Q.2 演示口令 401 悬案结案：探针打错了 URL（不是旧镜像中间件的锅）
+
+- 交接件里「容器内 `verify_password=True` 但 `POST /api/v1/auth/login` 回 401『请先登录』」⇒ 我怀疑旧镜像白名单。**实测证伪**：`app/api/v1/auth.py:10` 的 `router = APIRouter()` **无 prefix**，`app/main.py:79` 以 `prefix="/api/v1"` 挂载，`@router.post("/login")` 在 `app/api/v1/auth.py:53` ⇒ 真实路径是 **`/api/v1/login`**，仓库里根本不存在 `/api/v1/auth/login` 这条路由，401 是中间件对未知路径的正常兜底。前端 `frontend/src/App.vue:120` 调 `http.post('/login')` 本来就是对的。
+- 经 nginx 实测：`POST /api/v1/login` + `{"username":"admin","password":"DemohWCiuHj8f!"}` ⇒ **HTTP 200 且返回 JWT**。演示凭据可用，**不必再等新镜像**。
+- 顺带订正一条易错处：`app/main.py:107` 白名单写的是 `/api/v1/login`，与路由一致；`/api/v1/health`、`/api/v1/sso/login` 同理。谁再写登录探针，先 `git grep -n '@router.post("/login")'`，别照抄接口文档里的直觉命名。
+
+### 4Q.3 `deploy/.env.server` 两处卫生问题已修（§4P.4 那条「待查」就地结案）
+
+- **告警根因**：`AUTH_PASSWORD_HASH_BACKUP_OLD` 那行写成裸 `$2b$12$...`（未转义），compose 插值时把 `$T2s4UfscQoRgZghD38IZY` 当变量 ⇒ 那 4 条 `variable is not set` 全部来自它。**与镜像构建成败无关**（构建成功，18.4GB）。
+- 危害实测：容器内 `printenv AUTH_PASSWORD_HASH_BACKUP_OLD` 拿到的是**被搅坏的值**（`$2b$12.2bpiJIaKfgB3R...`，中段变量被替换成空）⇒ 将来「还原原口令」若从容器 env 抄会拿到坏 hash。已改为 `$$` 转义，与在用的 `AUTH_PASSWORD_HASH` 同规则；**还原动作请读文件，别读容器环境变量**。
+- 在用键无问题：容器内 `AUTH_PASSWORD_HASH` 长度 60、前缀 `$2b$12$ouIZH.Z`，与文件一致。
+- 另去掉 `DEMO_ADMIN_PASSWORD` 的重复行（同值两行，现余 1 行）。`.env.server` 是 gitignored，不入历史。
+
+### 4Q.4 演示前必须重建**前端**镜像（本轮最要紧的演示风险）
+
+- `docker-compose.yml:202-218` 的 `frontend` 服务**没有挂载卷**，`frontend/Dockerfile` 在镜像内 `npm ci && npm run build` 后把 `dist` `COPY` 进 nginx ⇒ 容器里跑的是**烤死的静态产物**。
+- 实测现状：`enterprise-brain-frontend:local` 是 **21 小时前**建的 ⇒ 界面上看不到 A-5 原语化、A-6 文案/对账、W2 的 `ArtifactList` 与删除入口，**也看不到登录页改造**。也就是说「代码收口了但演示看不见」。
+- 结论：前端线与后端线一样，**并树之后必须重建前端镜像**才进得了真机。`package*.json` 自 21 小时那次以来未变（W2 禁碰 `package.json` 的边界守住了）⇒ `npm ci` 层应命中缓存，只有 `COPY frontend/` + `vite build` 两层重跑，成本是分钟级。
+
+### 4Q.5 另一条易错处：`docker compose build backend` 是空跑
+
+- 实测 `build backend` 只回 `No services to build` 且**不报错**（我差点把它当成一次成功构建）。`build:` 只挂在 `docker-compose.yml:93` 的 **`migrate`** 服务上，`backend/worker/scheduler` 都是 `image: enterprise-brain:local` 复用 ⇒ 正确命令 `docker compose --env-file deploy/.env.server -f docker-compose.yml build migrate`。
+
+### 4Q.6 W2/A-6-2 收口与合并链（三闸各自实测，不采信自述）
+
+- **A-6-2（`8f3523d`）**：删 `frontend/src/assets/theme.css:1000` 全局 `.empty-state`（`git grep` 实证 `frontend/src` 内生产零消费者，只剩测试里「不许出现 `class="empty-state"`」的反向断言）。同时把 `panel-states.test.js:421-427` 那条「仍在服役」断言搬到「已删」侧并做成**双向钉**：红底实测＝全局规则若在则 `^\.empty-state \{` 由 false→true 用例转红，作用域那条 `.reference-dashboard .empty-state` 必须在，防下一个人当同一条删。
+- **工单里「同 commit 把锚降到实测值」这条假设不成立**：实测删前删后 `lint:colors` 都是 **339/339**，被删的块里只有 `var(--muted)`，不含色值字面量 ⇒ `--max-warnings` 不动。
+- **W2（`45845b3`→`1dc2037`→`1253e00`）**：新建 `frontend/src/components/ArtifactList.vue`（597 行）+ `DataPanel.vue` 数据文件删除入口（+106 行）+ `artifact-list.test.js`（1002 行/77 条）。我在 `fe-artifacts` 独立复跑：**vitest 398 passed / lint:colors 339 / vite build ok**，与其自述一致。两条悬空接线（§4O.2 前两条）就此闭合，**悬空清单由 3 条降为 1 条**（只剩 `docs/deployment/health-details-frontend-contract.md`）。
+- 合并链：`d946a5d`（fe-artifacts→fe-trunk，合并后 fe-trunk 实测 lockfile ok / vitest **399**＝322+77 / colors 339 / build ok）→ `d139f69`（fe-trunk→主树，`HEAD:frontend` = **`34c199e6c28c954241debd86529c5f91706f6b9f`**，旧等价证明 `8e88b579…`/`8a216c5e…` 一并作废）。写集互斥守住：theme.css/panel-states 与 ArtifactList/DataPanel/artifact-list 无交集，合并零冲突。
+
+### 4Q.7 `catalog.py:529` 那条 fallback 警告：宿主库漂移，容器库没问题
+
+- 实测宿主 PG 的 `documents` 列只有 `id, classification, filename, department`——**缺 `owner_id`**，而 `migrations/0006_document_ownership.sql:21` 就是加它的；容器 PG 实测列为 `id, filename, classification, department, owner_id, size_bytes, parse_status, chunk_count`（**迁移齐全**）⇒ 生产/演示链路正确，**只有开发者本机那份库落后 0006/0007/0008**。
+- 因此 `[Docs] current listing fallback: 字段 "owner_id" 不存在` 属**宿主环境漂移**，不是代码缺陷，也不是 §4H 那类幽灵表问题。我没有擅自动宿主库（跑 `scripts/migrate.py` 会改本机数据库，属需点头的操作）。
+
