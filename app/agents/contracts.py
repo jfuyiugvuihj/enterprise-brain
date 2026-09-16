@@ -132,7 +132,6 @@ class AgentContext(BaseModel):
     session_id: str | None = None
     allowed_actions: list[str] = Field(default_factory=list)
     allowed_resource_scope: list[ResourceScope] = Field(default_factory=list)
-    cancellation_token: str | None = None
     model_budget: ModelBudget = Field(default_factory=ModelBudget)
 
 
