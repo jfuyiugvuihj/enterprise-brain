@@ -35,7 +35,6 @@ class AgentState(TypedDict, total=False):
     session_id: str
     allowed_actions: list[str]
     allowed_resource_scope: list[ResourceScope]
-    cancellation_token: str
     model_budget: ModelBudget
     agent_context: AgentContext
 

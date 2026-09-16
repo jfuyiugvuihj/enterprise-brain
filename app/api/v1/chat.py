@@ -11,7 +11,9 @@ import queue as qmod
 import asyncio
 import sys
 import threading
+import itertools
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import aclosing
 from pathlib import Path
 
 # 显式线程池 — 支持 1000+ 并发（每个 uvicorn 实例）
@@ -78,43 +80,104 @@ MAX_DOCUMENT_UPLOAD_BYTES = int(
 )
 
 _tz = timezone(timedelta(hours=8))
-_REQUESTS: dict[str, threading.Event] = {}
+
+
+class CancelGeneration(threading.Event):
+    """一次运行的取消标记，它本身就是"这一代"的标识。
+
+    标记按 ``(session_id, epoch)`` 登记，``epoch`` 取自进程内单调计数器，所以同一个会话
+    的两代永不复用同一个标识：读的人能指名要哪一代，不会借到别人的取消状态。继承
+    ``Event`` 是有意的——它要原样穿过 ``config["configurable"]`` 交给编排与工作线程，
+    那边每步 ``is_set()`` 读的天然就是"我这一代有没有被停掉"，不必回头查任何登记表。
+    """
+
+    def __init__(self, session_id: str, epoch: int) -> None:
+        super().__init__()
+        self.session_id = session_id
+        self.epoch = epoch
+
+
+# 只反映在飞的运行：register 放入本代，运行收尾（正常/异常/取消/客户端断连）在 finally 里弹出。
+_REQUESTS: dict[tuple[str, int], CancelGeneration] = {}
+# 取消落在"没有在飞运行"上时的一次性标记，由下一代 register_request 消费掉。
+_PENDING_CANCELLATIONS: set[str] = set()
 _REQUESTS_LOCK = threading.Lock()
+_GENERATION_SEQUENCE = itertools.count(1)
 _ASK_STATS = PerformanceStats()
 
 
-def register_request(session_id: str) -> threading.Event:
-    # 已知缺口（本批不修，属 R13 状态机）：这里无条件覆盖 _REQUESTS[session_id]，所以
-    # 在 ask() 返回之后、generate() 首行执行之前到达的取消会被丢掉。cancel_request 的
-    # docstring 承诺的"不会漏"只覆盖了反向窗口，别据此推断这里也安全。
-    event = threading.Event()
+def _newest_generation(session_id: str) -> CancelGeneration | None:
+    """该会话最新的一代（调用方必须已持有 ``_REQUESTS_LOCK``）。"""
+    epochs = [epoch for (owner, epoch) in _REQUESTS if owner == session_id]
+    if not epochs:
+        return None
+    return _REQUESTS[(session_id, max(epochs))]
+
+
+def register_request(session_id: str) -> CancelGeneration:
+    """开一代：按 (session_id, epoch) 登记并返回本代的取消标记。
+
+    先到的取消在这里一次性消费掉。老实现无条件换上一个干净的 Event，于是
+    ``ask()`` 返回之后、本行执行之前到达的停止会被抹掉；现在它归这一代读。
+    """
     with _REQUESTS_LOCK:
-        _REQUESTS[session_id] = event
-    return event
+        generation = CancelGeneration(session_id, next(_GENERATION_SEQUENCE))
+        _REQUESTS[(session_id, generation.epoch)] = generation
+        if session_id in _PENDING_CANCELLATIONS:
+            _PENDING_CANCELLATIONS.discard(session_id)
+            generation.set()
+        return generation
+
+
+def release_request(generation: CancelGeneration | None) -> None:
+    """一次运行结束时弹出本代条目；只弹自己那一代，不带走并存的新一代。"""
+    if generation is None:
+        return
+    with _REQUESTS_LOCK:
+        key = (generation.session_id, generation.epoch)
+        if _REQUESTS.get(key) is generation:
+            _REQUESTS.pop(key, None)
+
+
+def current_marker(session_id: str) -> CancelGeneration | None:
+    """该会话当前在飞那一代的标记；没有在飞运行时返回 ``None``。"""
+    with _REQUESTS_LOCK:
+        return _newest_generation(session_id)
 
 
 def cancel_request(session_id: str) -> bool:
-    """Arm the cancellation marker and report whether a run was actually in flight.
+    """取消该会话**当前这一代**，并报告这里是否真有在飞的运行。
 
-    The marker is armed either way, so a request that starts between the ownership
-    check and this call cannot slip through. The return value is only `True` when this
-    process really had a running request for that session; claiming success for a no-op
-    would make the API report a business outcome it did not produce.
+    没有在飞运行时不假装成功，但标记必须留下，并且是留给**下一代一次性消费**：
+    否则"归属校验之后、``register_request`` 之前"到达的停止，以及"会话停在 HITL 挂起时
+    按停止、随后点批准"这两条都会静默丢失。已经结束的代不再受任何取消影响，标记也
+    就无处跨代泄漏。返回值只在真的有在飞运行时为 ``True``——为空操作报成功会让 API
+    宣称一个它没有造成的业务结果。
     """
     with _REQUESTS_LOCK:
-        event = _REQUESTS.get(session_id)
-        in_flight = event is not None and not event.is_set()
-        if event is None:
-            event = threading.Event()
-            _REQUESTS[session_id] = event
-        event.set()
-        return in_flight
+        generation = _newest_generation(session_id)
+        if generation is None:
+            _PENDING_CANCELLATIONS.add(session_id)
+            return False
+        generation.set()
+        return True
 
 
-def is_request_cancelled(session_id: str) -> bool:
+def is_request_cancelled(session_id: str, epoch: int | None = None) -> bool:
+    """按**代**读取消状态。
+
+    带 ``epoch`` 时只认那一代：已结束或从未存在即视为未取消，绝不把别人的取消算到它头上。
+    不带 ``epoch`` 时读当前在飞那一代；没有在飞运行时，报告"取消正武装给下一代"，
+    与 ``cancel_request`` 的口径一致。
+    """
     with _REQUESTS_LOCK:
-        event = _REQUESTS.get(session_id)
-        return bool(event and event.is_set())
+        if epoch is not None:
+            generation = _REQUESTS.get((session_id, epoch))
+            return bool(generation and generation.is_set())
+        generation = _newest_generation(session_id)
+        if generation is not None:
+            return generation.is_set()
+        return session_id in _PENDING_CANCELLATIONS
 
 
 def _reap_agent_worker(future, *, session_id: str, stage: str) -> None:
@@ -891,9 +954,20 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         )
 
     async def generate():
+        # 注册与 finally 弹出必须在同一个帧里：generate() 一行都没跑就被 aclose() 时
+        # 根本不会注册，注册过则无论正常收尾、抛异常、被取消还是客户端走人都走得到
+        # 这个 finally，登记表才真的只反映在飞的运行。
+        cancel_event = register_request(thread_id)
+        try:
+            async with aclosing(_ask_stream(cancel_event)) as stream:
+                async for chunk in stream:
+                    yield chunk
+        finally:
+            release_request(cancel_event)
+
+    async def _ask_stream(cancel_event: CancelGeneration):
         from app.agents.orchestrator import run_with_stream
 
-        cancel_event = register_request(thread_id)
         budget = RequestBudget(float(os.getenv("CHAT_REQUEST_TIMEOUT", "300")))
         heartbeat_interval = float(os.getenv("SSE_HEARTBEAT_INTERVAL", "15"))
         result_queue: qmod.Queue = qmod.Queue()
@@ -956,7 +1030,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         sequence += 1
 
         while True:
-            if cancel_event.is_set():
+            # 每步按**本代**比对，而不是"这个会话有没有被停过"：同会话并存的另一代
+            # 被停，不该让这一轮误判已取消。
+            if is_request_cancelled(thread_id, epoch=cancel_event.epoch):
                 # 还没开工的 _run 直接取消；已经在跑的 cancel() 返回 False，由编排里的
                 # 检查点协同退出——线程不能强杀，这里不假装能。
                 agent_future.cancel()
@@ -1362,9 +1438,20 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
     task_id = f"task-{uuid.uuid4().hex}"
 
     async def generate():
+        # 同 /ask：注册与本代弹出留在同一个帧里。resume 起来的那一代才是取消唯一能打击
+        # 的对象，所以停在 HITL 的会话被按过停止之后，随后的批准会拿到一个生来就置位的
+        # 标记，编排的第一个检查点连 resume 都不发起（甲裁定的落地判据）。
+        cancel_event = register_request(request.session_id)
+        try:
+            async with aclosing(_approve_stream(cancel_event)) as stream:
+                async for chunk in stream:
+                    yield chunk
+        finally:
+            release_request(cancel_event)
+
+    async def _approve_stream(cancel_event: CancelGeneration):
         from app.agents.orchestrator import run_interrupt_stream
 
-        cancel_event = register_request(request.session_id)
         budget = RequestBudget(float(os.getenv("CHAT_REQUEST_TIMEOUT", "300")))
         heartbeat_interval = float(os.getenv("SSE_HEARTBEAT_INTERVAL", "15"))
         result_queue: qmod.Queue = qmod.Queue()
@@ -1401,7 +1488,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         initial_count = -1
 
         while True:
-            if cancel_event.is_set():
+            # 与 /ask 同口径：按本代比对。上一代留下的取消判不到这一轮头上。
+            if is_request_cancelled(request.session_id, epoch=cancel_event.epoch):
                 agent_future.cancel()
                 # 停止 != 拒绝（裁定 ④甲）：账面写 abandoned，绝不写 refused。
                 # 这一行在 R12（826d318）之前是不敢写的——那时"停止"的会话其实跑完了。

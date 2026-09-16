@@ -116,6 +116,11 @@ def test_ask_passes_the_same_marker_the_cancel_endpoint_arms(monkeypatch, tmp_pa
 
     def fake_stream(*_args, **kwargs):
         captured["cancel_event"] = kwargs.get("cancel_event")
+        # 在飞窗口里就地取证：R18 之后一代标记随运行结束就弹出，出流之后再查表只能查到
+        # "没有在飞运行"，那时再断言"是不是同一个对象"已经没有对象可比。
+        captured["in_flight_marker"] = chat.current_marker(session_id)
+        captured["cancel_reports"] = chat.cancel_request(session_id)
+        captured["set_after_cancel"] = kwargs["cancel_event"].is_set()
         yield {"messages": [], "worker_results": {"doc": "答案"}, "final_answer": "答案"}
 
     principal = Principal.from_user(
@@ -159,10 +164,11 @@ def test_ask_passes_the_same_marker_the_cancel_endpoint_arms(monkeypatch, tmp_pa
 
     marker = captured["cancel_event"]
     assert isinstance(marker, threading.Event), "/ask 没有把取消标记交给编排"
-    assert marker is chat._REQUESTS[session_id]
     # /cancel 走的就是这个函数：置位后编排看到的必须是同一个对象
-    assert chat.cancel_request(session_id) is True
-    assert marker.is_set()
+    assert captured["in_flight_marker"] is marker, "/ask 交给编排的标记不是 /cancel 会置位的那一代"
+    assert captured["cancel_reports"] is True
+    assert captured["set_after_cancel"] is True
+    assert chat.current_marker(session_id) is None, "R18 ②：一轮结束后本代条目必须从登记表弹出"
 
 
 def test_a_stop_during_the_stream_ends_the_stream_without_done(monkeypatch, tmp_path):

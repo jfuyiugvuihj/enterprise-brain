@@ -464,7 +464,10 @@ def _is_cancelled(cancel_event) -> bool:
     """把 ``cancel_event`` 当"可选取消标记"读：None / 无 is_set 一律算未取消。
 
     标记走 ``config["configurable"]``，和 ``principal`` 同一条通道，不引入进程级可变
-    全局——线程池里并发跑多个请求时，全局标记会互相误伤。
+    全局——线程池里并发跑多个请求时，全局标记会互相误伤。R18 之后调用方给的是
+    ``chat.CancelGeneration``（``Event`` 的子类，自带 ``(session_id, epoch)`` 身份），
+    所以这里每个检查点读到的对象就是"本次运行那一代"本身：标记不可共享、不可复用，
+    跨代泄漏在传参这一步就已经堵死，比按会话名回查登记表更强。
     """
     checker = getattr(cancel_event, "is_set", None)
     return bool(checker()) if callable(checker) else False

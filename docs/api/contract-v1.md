@@ -513,8 +513,11 @@ re-read from the source in this revision, not taken from the report.
 
 - `POST /api/v1/ask/{session_id}/cancel` arms one streaming cancellation marker
   (`app/api/v1/chat.py::cancel_request`). It does not read, clear or resolve the graph's parked
-  interrupt. `POST /api/v1/approve` then calls `register_request`, which installs a **fresh** event,
-  so a stale marker cannot leak into the resumed run either.
+  interrupt. Superseded on this point by R18 below: the marker used to be replaced by a **fresh**
+  event on every `register_request`, which silently wiped a stop that had already landed; it is now
+  bound to one generation, and a stop that lands while nothing is in flight is armed for the next
+  generation instead. So "stop while parked, then press approve" no longer executes the stopped
+  action — it stays parked, and it is still not a refusal.
 - The parked action has exactly one resolver: `POST /api/v1/approve` with `approved` true or false.
   A rejected action is genuinely not executed (`84af113`), and that is the behaviour clients may
   rely on.
@@ -538,6 +541,38 @@ means "stop everything" must send `POST /api/v1/approve` with `approved: false` 
 and may additionally call the cancel route to tear down an in-flight stream. Making cancel implicitly
 reject a parked action was considered and rejected: it turns one mistap on a stop button into the loss
 of an analysis that has already been running, and the user cannot undo it.
+
+### Compatibility note 2026-09-16 (R18: cancellation is per-generation, and the table only holds runs in flight)
+
+Landed by the backend worker on `codex/be-r18` from `docs/handoff/2026-09-15-backend-followup-requests.md`
+§14. Every statement below was re-read from the source in this revision.
+
+- Cancellation state is keyed by `(session_id, epoch)`. `app/api/v1/chat.py::register_request` opens
+  a generation and returns its marker (`CancelGeneration`, a `threading.Event` subclass carrying
+  `session_id` and `epoch`); `epoch` is a monotonic in-process counter, so two generations of one
+  session never reuse an identity.
+- **The sentence the R11 note owed:** a `POST /api/v1/ask/{session_id}/cancel` with no epoch cancels
+  **the session's current generation**, i.e. the newest one still in flight. When nothing is in
+  flight, the route still answers `{"cancelled": false}` (R12 item 4, response shape frozen) and
+  arms a **one-shot** marker that the *next* `register_request` for that session consumes. That
+  covers the two windows R11 could not: a stop arriving between the ownership check and
+  `register_request`, and a stop arriving while the turn is parked on HITL.
+- A marker never outlives its generation. Both `/ask` and `/approve` register inside the response
+  generator and pop their own entry in a `finally` (`release_request`), so a completed round, a
+  worker-thread exception, a cancellation and a client that disconnects mid-stream all retire it.
+  `_REQUESTS` therefore reflects only runs in flight and returns to empty; a stop bound to a closed
+  generation cannot make a later turn start cancelled.
+- Per-step checks are generation-exact: the two SSE drain loops call
+  `is_request_cancelled(session_id, epoch=...)`, and every orchestrator checkpoint
+  (`app/agents/orchestrator.py::_is_cancelled`) tests the marker object handed to *that* run through
+  `config["configurable"]` — object identity is the generation, so no cross-request lookup is
+  involved and no process-global marker can be borrowed by another run.
+- `cancellation_token` is **deleted** from `AgentState` (`app/agents/state.py`) and `AgentContext`
+  (`app/agents/contracts.py`). It had no writer and no reader anywhere in `app/` or `tests/`; a field
+  advertising a generation identity that nobody honours is worse than none. The generation identity
+  now lives in the marker object itself.
+- No SSE event name, status or error code changed. `request.cancelled` / legacy `cancelled` keep
+  their R12 and R13-1 shapes, and `request_id` / `trace_id` / `task_id` / `sequence` are untouched.
 
 ### Compatibility note 2026-09-16 (R13-1: `/approve` emits a canonical terminal event)
 
