@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { FALLBACK_MESSAGE, errorCodeOf, normalizeError } from './errcodes'
 
 // 全站唯一的 HTTP 入口：一个 axios 实例、一个 token 来源、一条 401 处理路径。
 // 需要流式读取的地方（SSE）走 authedFetch，但它取的是同一个 token。
@@ -141,45 +142,33 @@ export async function authedFetch(path, { headers, ...options } = {}) {
   return response
 }
 
-// 错误文案只认服务端 detail / 稳定码，不再用问号占位串。
-// TODO(B 线 / G2 合并后)：文案映射应由 lib/errcodes.js 提供，此处只留一条取原始 detail 的通道。
-// 已知短板：responseType:'blob' 的错误体（文档/数据下载）读不到 detail，只能落回兜底文案；
-// artifacts.js 里有 readBlobError() 的先例，是否通用化由总控定，A 线不动 errcodes.js。
-/**
- * 从后端三种错误形状里只取「稳定码」本身，不做任何文案映射 ——
- * 文案映射表本体归 lib/errcodes.js（见上面那条 TODO 与 B-5），在这里多写一句人话都会撞车。
- * 用途只有一个：面板要判断「这一步该画哪张脸」。R1(c) 裁定 403 与空列表必须分开渲染，
- * 判据是 detail 等于 canonical 稳定码 permission_denied（app/common/policy.py:157-158 产出），
- * 不是 HTTP 状态码本身。
- * 形状 1 字符串码 / 形状 2 ErrorEnvelope / 形状 3 FastAPI 422 列表 / 无响应（断网）。
- */
-export function errorCode(err) {
-  const detail = err?.response?.data?.detail
-  if (typeof detail === 'string') return detail.trim()
-  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
-    const code = detail.error_code || detail.code
-    if (code) return String(code).trim()
-  }
-  return ''
-}
-
+// 取码与文案映射只有一份实现：lib/errcodes.js（A-4-2 在此收口，原先这个文件里另有两套）。
+// 请求层只留两条薄通道：errorCodeOf 判脸、normalizeError 取句子。
 export const PERMISSION_DENIED = 'permission_denied'
 
-/** true = 这一步是「没权限」，不是「没数据」，也不是「服务坏了」：给无权限卡，且不给重试按钮。 */
+/**
+ * true = 这一步是「没权限」，不是「没数据」，也不是「服务坏了」：给无权限卡，且不给重试按钮。
+ * 判据仍是 canonical 稳定码（app/common/policy.py:157-158 产出 permission_denied）；
+ * 空列表是 200 响应、压根走不到这里，所以「403 与空列表分开渲染」两条路径天然成立。
+ * 比合并前多认两种形状：FastAPI 422 列表、以及只有 data.error_code 的裸体（老那份会漏）。
+ * 同时放宽一种：403 且响应体里的码没登记进字典（或没有响应体）时，errcodes 按
+ * STATUS_CODES[403] 归成 permission_denied（errcodes.js:151），老那份回空串。
+ * 已登记的码不受影响：resource_scope_missing 经 LEGACY_ALIASES 归 authorization_unavailable，
+ * 不会被误判成没权限——负例钉在 http.test.js 里。
+ */
 export function isPermissionDenied(err) {
-  return errorCode(err) === PERMISSION_DENIED
+  return errorCodeOf(err) === PERMISSION_DENIED
 }
 
+/**
+ * 面板失败态要的一句人话：句子一律出自 errcodes 字典，本函数只决定「字典没话说时退回场景文案」。
+ * 英文原句与 HTML 错误体不用在这儿防：errcodes 的 cleanText(:182-183) 已经把它们清了。
+ * 合并前这里是自己映射的，还会把形状 2 的码名原样 return（面板把它直插进 UiErrorState 的
+ * description，等于把 permission_denied 当人话画上屏）——那条运行时漏码一并收掉。
+ */
 export function errorDetail(err, fallback = '请求失败') {
-  const detail = err?.response?.data?.detail
-  if (typeof detail === 'string' && detail.trim()) return detail
-  if (detail && typeof detail === 'object') {
-    const code = detail.error_code || detail.code
-    if (code) return String(code)
-  }
-  const message = err?.message
-  if (typeof message === 'string' && message.trim() && !/^Request failed with status code \d+$/.test(message)) return message
-  return fallback
+  const message = normalizeError(err).message
+  return message === FALLBACK_MESSAGE ? (fallback || FALLBACK_MESSAGE) : message
 }
 
 export default http
