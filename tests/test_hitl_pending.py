@@ -577,3 +577,84 @@ def test_an_unbounded_call_still_returns_everything(monkeypatch):
         "middle",
         "oldest",
     ]
+
+
+# ------------------------------------------------- 缺表的稳定码（新账 b）
+
+# 真实触发条件不是"用户做错了什么"，而是镜像比库新、0008 还没跑——我们正处在这个
+# 错位窗口里。所以它得是可判读的码，而不是一个 500 让前端降级成 internal_error。
+
+
+class _AbsentTableConnection:
+    """``to_regclass`` 回 NULL = 表不存在；除此之外什么都不许干。"""
+
+    def __init__(self):
+        self.statements = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.statements.append(sql)
+        return _Result({"table_name": None})
+
+    def close(self):
+        pass
+
+
+def _no_table(monkeypatch):
+    monkeypatch.setattr(store, "_database_available", lambda: True)
+    conn = _AbsentTableConnection()
+    monkeypatch.setattr(store, "_conn", lambda: conn)
+    return conn
+
+
+def test_a_missing_ledger_table_raises_a_typed_error(monkeypatch):
+    """端点只许接这一种错：把裸 RuntimeError 一并翻成 503 会替真正的 bug 打掩护。"""
+    _no_table(monkeypatch)
+
+    with pytest.raises(store.PendingApprovalStoreMissing):
+        store.open_items(owner_user_id="u-1")
+
+
+def test_the_typed_error_is_still_a_runtime_error(monkeypatch):
+    """0008 缺表在写侧的旧断言（test_production_without_the_table_fails_loudly...）
+    钉的是 RuntimeError——具名化必须是**加一层子类**，不是换掉基类。"""
+    _no_table(monkeypatch)
+
+    assert issubclass(store.PendingApprovalStoreMissing, RuntimeError)
+
+
+def test_a_missing_ledger_table_answers_503_with_a_stable_code(monkeypatch):
+    from fastapi import HTTPException
+    from app.api.v1 import chat
+
+    _park(session_id="s-1", owner="u-1")
+    _no_table(monkeypatch)
+    monkeypatch.setattr(
+        "app.agents.orchestrator.check_interrupt",
+        lambda thread_id: {"pending": ["chart"], "labels": ["甲"]},
+    )
+    http_request, _principal = _request_for("u-1", "tester")
+
+    with pytest.raises(HTTPException) as caught:
+        _hitl_pending(http_request)
+
+    assert caught.value.status_code == 503
+    assert caught.value.detail == "storage_unavailable"
+    assert caught.value.detail != "internal_error", "把缺表说成通用内部错就是本次要修的东西"
+    assert "items" not in str(caught.value.detail), "不许吞成 200 + 空列表"
+
+
+def test_the_missing_table_code_is_a_ratified_enum_member():
+    """端点吐的裸串必须是契约枚举里的码，否则它只是又一个未登记码名。"""
+    from typing import get_args
+
+    from app.agents.contracts import ErrorEnvelope
+
+    codes = set(get_args(ErrorEnvelope.model_fields["code"].annotation))
+
+    assert "storage_unavailable" in codes
