@@ -499,3 +499,44 @@ describe('裸码名禁令 · 判红夹具（证明判据本身会红，不只是
     expect(hits[0].code).toBe('department_scope_required')
   })
 })
+
+/**
+ * 「例外必须有标记」的机器化：诊断区是裸码名禁令唯一的放行口子，没有标记就等于后门。
+ * codeLabel 的值是运行时拼出来的（错误码：xxx），静态判据看不见，所以这里退一步钉渲染位：
+ * 凡是往正文里插 codeLabel 的标签，必须自带 data-testid="...code..." 或「错误码/技术信息」字样，
+ * e2e 与走查脚本据此才能把它和成人话的说明文字区分开。
+ */
+const CODE_LABEL_RENDER_RE = /\{\{\s*codeLabel\s*\}\}/
+const CODE_TESTID_RE = /data-testid="[\w-]*code[\w-]*"/i
+
+const isMarkedDiagnostic = (line) => CODE_TESTID_RE.test(line) || DIAGNOSTIC.test(line)
+
+describe('诊断区例外必须自带标记（否则例外就是后门）', () => {
+  const sites = []
+  for (const rel of SHIPPED) {
+    if (!rel.endsWith('.vue')) continue
+    readFileSync(join(SRC_ROOT, rel), 'utf8')
+      .split('\n')
+      .forEach((line, index) => {
+        if (CODE_LABEL_RENDER_RE.test(line)) sites.push({ file: rel, line: index + 1, text: line.trim() })
+      })
+  }
+
+  it('扫描真的覆盖了 codeLabel 渲染位（不是空名单自嗨）', () => {
+    expect(sites.length).toBeGreaterThanOrEqual(5)
+    for (const want of ['UiErrorState.vue', 'UiField.vue', 'UiSelect.vue', 'UiToast.vue', 'UiUpload.vue']) {
+      expect(sites.some((s) => s.file.endsWith(want)), want).toBe(true)
+    }
+  })
+
+  it('每一处都带诊断标记，一处不带就红', () => {
+    const unmarked = sites.filter((s) => !isMarkedDiagnostic(s.text))
+    expect(unmarked.map((s) => s.file + ':' + s.line)).toEqual([])
+  })
+
+  it('判据自证：去掉标记的渲染位会被同一条断言拦下', () => {
+    expect(isMarkedDiagnostic('  <span v-if="codeLabel" class="ui-x__code" data-testid="ui-x-code">{{ codeLabel }}</span>')).toBe(true)
+    expect(isMarkedDiagnostic('  <span v-if="codeLabel" class="ui-x__code">{{ codeLabel }}</span>')).toBe(false)
+    expect(isMarkedDiagnostic('  <small>技术信息：{{ codeLabel }}</small>')).toBe(true)
+  })
+})
