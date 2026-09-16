@@ -19,6 +19,7 @@ import InsightPanel from '../InsightPanel.vue'
 import ApprovalPanel from '../ApprovalPanel.vue'
 import DashboardPanel from '../DashboardPanel.vue'
 import DocPanel from '../DocPanel.vue'
+import ChatPanel from '../ChatPanel.vue'
 import { UiEmptyState, UiErrorState } from '../ui'
 
 const source = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
@@ -256,5 +257,40 @@ describe('DocPanel · 一条提示条拆成「哪种事没成」+ 两处空态',
     const s = source('DocPanel.vue')
     expect(s).toMatch(/<UiErrorState\s+v-if="notice"/)
     expect(s).not.toContain('role="alert"')
+  })
+})
+
+
+describe('ChatPanel · 会话空态 + 一次性失败提示（本面板不适用 R1(c) 判据，理由见注释）', () => {
+  // 会话列表来自 lib/sessions.js 的模块级 store + localStorage，全程不发请求，
+  // 所以「无权限 / 空列表」这个分叉在这里没有输入：没有 403 可判，也没有权限可缺。
+  // SSE 三条腿（/ask、/ask/{id}/cancel、/approve）的鉴权失败由 sessions.js 流层负责，
+  // 落到面板已是「这一次没成」的一次性结果，不是一条能重试的面板加载，故 retryable=false。
+  it('SSR 首屏：无会话时画原语空态，文案一字不变，手搓的 .session-empty 不再出现', async () => {
+    const html = await render(ChatPanel)
+    expect(html).toContain('data-testid="ui-empty-state"')
+    expect(html).toContain('暂无历史会话')
+    expect(html).not.toContain('session-empty')
+  })
+
+  it('error 一条经 UiErrorState（role=alert 由原语给），warn/info 仍是原来的行内提示', () => {
+    const s = source('ChatPanel.vue')
+    expect(s).toMatch(/<UiErrorState v-if="streamNote && noteTone === 'error'" :title="streamNote" :retryable="false" dense \/>/)
+    expect(s).toMatch(/<p v-else-if="streamNote"[^>]*role="status" data-testid="chat-note"/)
+    expect(s).not.toContain('role="alert"')
+  })
+
+  it('被删分支的样式与两处色债一起清掉，warn 仍留在面板内', () => {
+    const s = source('ChatPanel.vue')
+    expect(s).not.toContain('.session-empty')
+    expect(s).not.toContain('.stream-note.error')
+    // 这两处字面量在别的规则里还有用，删除量由 lint:colors 棘轮记账，不在这里钉数
+    expect(s).toContain('.stream-note.warn { color: #e6a23c; }')
+  })
+
+  it('面板不引入第二套取码器，也不把权限判据硬塞进本地态', () => {
+    const s = source('ChatPanel.vue')
+    expect(s).not.toContain('isPermissionDenied')
+    expect(s).not.toMatch(/\berrorCode\b/)
   })
 })

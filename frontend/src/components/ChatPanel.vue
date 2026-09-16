@@ -28,6 +28,7 @@ import {
   syncActive,
 } from '../lib/sessions'
 import { authedFetch } from '../lib/http'
+import { UiEmptyState, UiErrorState } from './ui'
 
 const input = ref('')
 const chatEl = ref(null)
@@ -390,7 +391,8 @@ function renderMd(raw) {
         <button class="new-session-btn" @click="newSession">＋ 新建会话</button>
 
         <div class="session-list">
-          <div v-if="sessions.length === 0" class="session-empty">暂无历史会话</div>
+          <!-- 会话列表读的是本地 store（lib/sessions.js），不发请求，所以这里不需要「无权限」那张脸。 -->
+          <UiEmptyState v-if="sessions.length === 0" title="暂无历史会话" dense />
           <div v-for="s in sessions" :key="s.id"
                :class="['session-item', { active: s.id === sessionId }]"
                @click="switchSession(s.id)">
@@ -501,7 +503,10 @@ function renderMd(raw) {
 
       <!-- 输入区 -->
       <div class="chat-input-bar">
-        <p v-if="streamNote" :class="['stream-note', noteTone]" role="status" data-testid="chat-note">{{ streamNote }}</p>
+        <!-- 失败提示原先只是换行色的 <p role="status">：读屏不会打断，等于把错误当通知。
+             这些句子都是一次性结果，不是一条能重试的面板加载，所以 retryable=false。 -->
+        <UiErrorState v-if="streamNote && noteTone === 'error'" :title="streamNote" :retryable="false" dense />
+        <p v-else-if="streamNote" :class="['stream-note', noteTone]" role="status" data-testid="chat-note">{{ streamNote }}</p>
         <div class="input-wrapper">
         <textarea
             data-testid="chat-input"
@@ -618,13 +623,6 @@ function renderMd(raw) {
 
 .session-list::-webkit-scrollbar { width: 3px; }
 .session-list::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 3px; }
-
-.session-empty {
-  text-align: center;
-  padding: 20px 8px;
-  font-size: 12px;
-  color: #c0c4cc;
-}
 
 .session-item {
   display: flex;
@@ -1054,7 +1052,6 @@ function renderMd(raw) {
 
 .sidebar-toggle,
 .session-meta,
-.session-empty,
 .model-status,
 .input-footer,
 .step-time {
@@ -1202,7 +1199,6 @@ function renderMd(raw) {
   color: #9eacc1;
 }
 .stream-note.warn { color: #e6a23c; }
-.stream-note.error { color: #f56c6c; }
 .hitl-card.interrupted { border-color: rgba(230, 162, 60, .55); }
 .hitl-note { color: #e6a23c; font-size: 12px; }
 .cancel-confirm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
