@@ -330,3 +330,42 @@ C 件里三条我原先不知道、且必须约束排期的硬事实：①**`man
 
 ### 4F.7 §4E.5 那条硬规的实测收敛
 本轮总控**未向任何子 Agent 发指令**（全程以磁盘/`git log` 判进度，绕开了 `wait_agent` 的 `expected a sequence` 解析故障），重复派发 **0 次**。规则据实测收敛为：**每条助手消息最多一个 `send_input`/`wait_agent`**；不同类型工具的并行块本轮实测无重复副作用，但仍不在子 Agent 派发上使用。
+
+
+## 4G. 跨夜停摆与第二轮续单（2026-09-16 上午，总控亲验）
+
+### 4G.1 三批全部**跨夜停摆**，不是"在途"
+- 全盘 mtime 实测：`fe-trunk`、`fe-prims` 在 09-15 19:00 之后**零文件改动**（排除 `node_modules`/`.git`/`dist`/`chroma_db`/`__pycache__`）。子 Agent 会话随应用关闭，`resume_agent` 三个均返回 `pending_init`。
+- 停摆瞬间的取证（我逐个查完才派单，不靠记忆）：
+
+| 线 | HEAD | 工作树 | 已落地 | 还欠 |
+|---|---|---|---|---|
+| A `fe-trunk` | `fefb0db`（5 个 A-3 commit） | `DashboardPanel.vue` 脏 **+42/−7** | Graph/Data/Insight/Approval 接线 + R1(c) 判据 | Dashboard 收尾、DocPanel、ChatPanel 理由、GraphPanel 裸 span、V7 四条单测（D-4） |
+| B `fe-prims` | `18883f2` | 干净 | B-5-1 吸收 5 码 + `UNRATIFIED_CODES` 8 码带出处 | 裸码名禁令+棘轮、`readBlobError` 通用化、三列码表对账 |
+| C 主树 | `fca1c2a` | `app/agents/orchestrator.py` 脏 **+67** | `RequestCancelled`/`_cancellable_stream`/检查点 2、3 | **穿透链**、两处 future、MemorySaver、四类测试 |
+
+### 4G.2 我代 A 做掉的一条（③）
+`git grep -n 'queue' -- frontend/src/components/*.vue frontend/src/lib/api.js` 实测：面板**没有任何一处误接 `/queue/*`**。`DocPanel.vue:309/:607-610` 的 `queue` 只是 `TransitionGroup` 的 CSS 过渡名。审批面板"合法造假"这条风险**排除**。
+
+### 4G.3 总控新查出的**一条真缺陷**（C 还没写完的那半）
+`git grep -n 'cancel_event' -- app` 全仓只有两类命中：读端 `orchestrator.py:342`/`:406`，和 `chat.py:867/921/1174/1203` 的**局部变量**。即 **`cancel_event` 从未被写进任何 `config["configurable"]`** ⇒ C 的检查点 2/3 今日恒等于 `_raise_if_cancelled(None)`，**死代码，用户按「停止」后 worker 照样跑到完并落盘**。
+写入点候选（实测行号）：`orchestrator.py:906`、`:1034` 两处 configurable 构造块，加 `:367`/`:529` 的 `child_conf` 继承链。
+**验收口径已写进 C 续单**：必须有一条测试走真调用链证明标记穿透到 `parent_conf`，**禁止用手工拼的 config 自证**——那恰好测不到断链。
+
+### 4G.4 对 A 一处"擦边"的裁定
+A 在 `lib/http.js` 新增 `errorCode()` + `isPermissionDenied()`，**没动**我划走的 `:145-147` TODO ⇒ 判"新增不过界"。代价：它和 B 的 `errcodes.js:249/:284` 形状 2 解析构成**第二套取码器**。处置：冻结其逻辑增长，**并入 A-4 统一**（A-4 原目标是消灭两套文案字典，现在多一套取码器要一起收）。
+
+### 4G.5 一条本批**禁止**的卫生动作（陷阱，别再碰）
+`git rm -r --cached chroma_db` 看着无害（不动历史、主树文件留在盘上），但 `chroma_db/` 是**被跟踪的实体目录**：`fe-trunk`、`fe-prims` 两棵树里各有 `Test-Path` 为真的副本，主树实测 7 文件 **191.04 MB**。一旦反跟踪的 commit 并进前端树，合并会**删除那两个工作副本**。⇒ 三批在途期间绝不做；将来要做也得先单独确认两树副本可弃。
+
+### 4G.6 主树出现了**他人**的未跟踪产物
+`docs/system-design-2026-09-16.md`（46,715 B，09-16 08:58 创建）与 `tmp/render/*.png`（09:08）不是本三线所写。⇒ **全线禁 `git add -A`**，提交一律显式列路径，否则会把别人的在制品卷进我的 commit。
+
+### 4G.7 「第二条甲」= 重建后端镜像：我**排在 C-R12 之后**，理由写死在这里
+`docker images` 实测 `enterprise-brain:local` 建于 **09-15 10:41**，`backend/worker/scheduler` 三容器 `Up 8 hours`，而源码已前进到 `fca1c2a`（含 R8 删除 API、`84af113`、`719f29c`）。
+不立刻重建的两条理由：① 主树工作树此刻有 C 未提交的 `+67` 行，现在打包会把**半成品烤进镜像**；② R13/R14 还要再动 `app/**`，每次重建 6→28 分钟。
+⇒ 执行点：**C-R12 提交后、且 `app/` 干净时**一次重建，随后才跑 D 验收线（否则"开箱 admin 问得出知识库""staff `/alerts` 403 形状"这两条只能停在代码绿）。
+
+### 4G.8 总控流程失误（记我账，第 12、13 次）
+本轮我给 **A 和 C 各发了两份完全相同的续单**。成因不是"重发探针"，而是**我在同一条助手消息的工具块里写了两个一模一样的 `send_input` 调用**，两个都返回了 `submission_id`——`send_input` 这个短名在本会话是可用的，我却为"重发"编了一条"工具名解析失败"的理由。
+订正规矩：**一条助手消息只允许出现一次 `send_input`；发之前先数工具块里的调用条数**；返回 `submission_id` 即成功，**任何情况下不重发**。两份重复指令按硬规不补发订正，以最终 commit 为准。
