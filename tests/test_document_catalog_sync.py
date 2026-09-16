@@ -120,10 +120,17 @@ def test_0007_lets_the_owner_be_absent_in_every_mirrored_table():
     )
 
 
-def test_the_offline_migration_plan_accepts_0007():
+def test_the_offline_migration_plan_loads_every_version_through_0008():
+    """被 C-R13 更新：原来这条叫 ..._accepts_0007，钉的是"0007 是最新一版"。
+
+    0008 落地后那个字面量必然过期，所以断言换成一串仍然成立的性质，并且**继续显式钉住
+    目录尾号**：将来谁加 0009，必须像这次一样主动改这条，而不是让它静默失去意义。
+    """
     from app.db.migrations import MIGRATIONS, discover_migrations, migration_plan
 
-    assert [migration.version for migration in MIGRATIONS][-1] == "0007"
+    versions = [migration.version for migration in MIGRATIONS]
+    assert versions == sorted(versions) and len(set(versions)) == len(versions)
+    assert versions[-1] == "0008"
     assert [migration.version for migration in migration_plan({})] == [
         migration.version for migration in MIGRATIONS
     ]

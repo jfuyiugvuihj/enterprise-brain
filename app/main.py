@@ -43,6 +43,24 @@ def _scheduler_enabled() -> bool:
     return not _is_production()
 
 
+def _verify_migration_catalog(directory=None) -> int:
+    """启动期校验迁移清单：校验不过就不许起应用（fail closed）。
+
+    此前只有 scripts/migrate.py:16 会导入 app.db.migrations，也就是说 SQL 与
+    manifest.json 一旦脱节（漏登记、改内容不更新 digest、空文件、改名），应用照样起来，
+    要等运维跑迁移才炸——而那时线上请求已经在打了。app/db/migrations.py 的校验本身早就
+    是 fail-closed 的，缺的只是"应用也走一遍"。纯本地读文件，不开数据库连接，所以
+    离线开发和测试不受影响。
+    """
+    from app.db.migrations import discover_migrations
+
+    found = discover_migrations(directory) if directory else discover_migrations()
+    return len(found)
+
+
+_verify_migration_catalog()
+
+
 app = FastAPI(
     title="企业智脑",
     description="私有化部署的企业 AI 智能分析平台",
