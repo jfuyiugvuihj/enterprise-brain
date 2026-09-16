@@ -20,7 +20,7 @@ import ApprovalPanel from '../ApprovalPanel.vue'
 import DashboardPanel from '../DashboardPanel.vue'
 import DocPanel from '../DocPanel.vue'
 import ChatPanel from '../ChatPanel.vue'
-import { UiEmptyState, UiErrorState } from '../ui'
+import { UiEmptyState, UiErrorState, UiLoadingState } from '../ui'
 
 const source = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const render = component => renderToString(h({ render: () => h(component) }))
@@ -88,6 +88,30 @@ describe('DataPanel · 文件列表三张脸 + 色债随接线一起掉', () => 
     expect(html).toContain('暂无数据文件')
     expect(html).toContain('上传 Excel 或 CSV 开始分析。')
     expect(html).not.toContain('class="data-state empty"')
+  })
+
+  // A-5-3 filesLoading 初值是 false，SSR 拿不到这一支，所以钉分支形状而不是渲染结果：
+  // 三张脸的顺序即语义（进行中 -> 失败 -> 空），失败不许被说成「没有文件」，
+  // 而旧的手搓 <p class="data-state"> 一支留痕都不许有。
+  it('进行态这一支只认 UiLoadingState，且排在失败与空态之前', () => {
+    const s = source('DataPanel.vue')
+    const loadingAt = s.indexOf('<UiLoadingState v-if="filesLoading"')
+    const errorAt = s.indexOf('v-else-if="filesError"')
+    const emptyAt = s.indexOf('v-else-if="!dataFiles.length"')
+    expect(loadingAt).toBeGreaterThan(-1)
+    expect(loadingAt).toBeLessThan(errorAt)
+    expect(errorAt).toBeLessThan(emptyAt)
+    expect(s).not.toContain('class="data-state"')
+    expect(s).toContain('label="正在读取数据文件..."')
+  })
+
+  // role="status" 不在面板里手写（写了就是第二套形状），所以链路两截都要实测：
+  // ① 那一支用的确实是 UiLoadingState；② 该原语渲染出来确实带 role + aria-busy。
+  it('新位的 role=status 由原语发出：链路两截都是真产物', async () => {
+    expect(source('DataPanel.vue')).toMatch(/<UiLoadingState v-if="filesLoading" label="正在读取[^"]*" dense/)
+    const html = await renderToString(h(UiLoadingState, { label: '正在读取数据文件...', dense: true }))
+    expect(html).toMatch(/<div class="ui-loading-state[^"]*" role="status" aria-busy="true"/)
+    expect(html).toContain('正在读取数据文件...')
   })
 
   // R1(c) 的顺序即语义：失败必须先于「空」被判掉，否则读不到列表会说成「没有文件」。
