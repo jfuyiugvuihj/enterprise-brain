@@ -1254,8 +1254,17 @@ def _decide_pending_approval(session_id: str, status: str) -> None:
         )
 
 
+DEFAULT_PENDING_LIMIT = 50
+MAX_PENDING_LIMIT = 200
+
+
 @router.get("/hitl/pending")
-async def hitl_pending(http_request: FastAPIRequest, session_id: str = ""):
+async def hitl_pending(
+    http_request: FastAPIRequest,
+    session_id: str = "",
+    limit: int = DEFAULT_PENDING_LIMIT,
+    offset: int = 0,
+):
     """列出调用方自己的 HITL 挂起待办，并对每一行向图复核。
 
     这张表是"事件记录"，图才是"当前状态"的权威，所以列表前逐行问一次
@@ -1266,6 +1275,11 @@ async def hitl_pending(http_request: FastAPIRequest, session_id: str = ""):
 
     权限不新增语义：归属沿用 _authorize_session_request 的同一个谓词，别人的会话像
     不存在一样（404 resource_not_found），不是 403。
+
+    分页：``limit`` 默认 50、硬上限 200，按 ``created_at DESC`` 截断，``offset`` 翻页。
+    代价来自复核而不是取行，所以上限既要下推进 SQL（``open_items``），也要限定复核循环
+    ——多取的那一行只用来回答 ``has_more``，绝不进复核循环，否则截断掉的待办会被误判
+    stale（那是把"没看过"写成"已作废"）。
     """
     principal = _session_principal_or_error(http_request)
     if session_id:
@@ -1273,13 +1287,20 @@ async def hitl_pending(http_request: FastAPIRequest, session_id: str = ""):
 
     from app.agents.orchestrator import check_interrupt
 
+    applied_limit = max(1, min(int(limit), MAX_PENDING_LIMIT))
+    applied_offset = max(0, int(offset))
+    # 多问一行只为知道还有没有：这一行不参与下面的复核。
     rows = pending_approvals.open_items(
         owner_user_id=str(principal.user_id or ""),
         session_id=session_id or None,
+        limit=applied_limit + 1,
+        offset=applied_offset,
     )
+    has_more = len(rows) > applied_limit
+    page = rows[:applied_limit]
 
     items: list[dict] = []
-    for row in rows:
+    for row in page:
         if not row.parked_steps:
             continue
         try:
@@ -1311,7 +1332,15 @@ async def hitl_pending(http_request: FastAPIRequest, session_id: str = ""):
                 "task_id": row.task_id,
             }
         )
-    return {"items": items, "count": len(items)}
+    # count 仍是"过滤后长度"（契约已明写它不得当总数用）；has_more 说的是账本还有行，
+    # 不是"还有多少条能看"。
+    return {
+        "items": items,
+        "count": len(items),
+        "limit": applied_limit,
+        "offset": applied_offset,
+        "has_more": has_more,
+    }
 
 
 @router.post("/approve")

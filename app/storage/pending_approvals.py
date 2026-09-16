@@ -250,9 +250,22 @@ def _latest_open_in_memory(session_id: str) -> PendingApprovalRecord | None:
 
 
 def open_items(
-    *, owner_user_id: str | None = None, session_id: str | None = None
+    *,
+    owner_user_id: str | None = None,
+    session_id: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[PendingApprovalRecord]:
-    """未闭合（awaiting 且未过期）的行，按挂起时间从新到旧。"""
+    """未闭合（awaiting 且未过期）的行，按挂起时间从新到旧。
+
+    ``limit`` 默认**不设限**：分页是读端点的代价策略（`GET /hitl/pending` 每列一行就要向图
+    复核一次 ``check_interrupt``），账本层自己不需要页。传了就把页边界**下推进 SQL 的
+    LIMIT/OFFSET**，而不是把整表读回来再切片——后者只是把"有上限"说成半句真话。
+    不传时 SQL 一字不变，免得内部读侧被这次的接口改动带着漂移。
+    """
+    bounded = None if limit is None else max(0, int(limit))
+    start = max(0, int(offset))
+
     if not _database_available():
         now = _NOW()
         with _LOCK:
@@ -263,7 +276,8 @@ def open_items(
                 and (owner_user_id is None or record.owner_user_id == str(owner_user_id))
                 and (session_id is None or record.session_id == str(session_id))
             ]
-        return sorted(records, key=lambda record: record.created_at, reverse=True)
+        ordered = sorted(records, key=lambda record: record.created_at, reverse=True)
+        return ordered[start : (start + bounded) if bounded is not None else None]
 
     sql = (
         "SELECT session_id, owner_user_id, parked_steps, status, request_id, trace_id, "
@@ -278,6 +292,12 @@ def open_items(
         sql += " AND session_id = %s"
         params.append(str(session_id))
     sql += " ORDER BY created_at DESC"
+    if bounded is not None:
+        sql += " LIMIT %s"
+        params.append(bounded)
+    if start:
+        sql += " OFFSET %s"
+        params.append(start)
 
     with _conn() as conn:
         _require_table(conn)
