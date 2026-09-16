@@ -15,6 +15,7 @@ export { default as UiTabs } from './UiTabs.vue'
 export { default as UiUpload } from './UiUpload.vue'
 export { default as UiEmptyState } from './UiEmptyState.vue'
 export { default as UiErrorState } from './UiErrorState.vue'
+export { default as UiLoadingState } from './UiLoadingState.vue'
 
 export { useToasts, pushToast, notifyError, notifySuccess, dismissToast, clearToasts } from './toasts.js'
 export { normalizeError, formatError, errorCodeLabel, errorCodeOf, errorText, blobErrorText, readBlobError, isRetryable, ERROR_CODES } from '../../lib/errcodes.js'
