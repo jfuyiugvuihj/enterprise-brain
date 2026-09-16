@@ -17,6 +17,7 @@ import GraphPanel from '../GraphPanel.vue'
 import DataPanel from '../DataPanel.vue'
 import InsightPanel from '../InsightPanel.vue'
 import ApprovalPanel from '../ApprovalPanel.vue'
+import DashboardPanel from '../DashboardPanel.vue'
 import { UiEmptyState, UiErrorState } from '../ui'
 
 const source = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
@@ -167,5 +168,42 @@ describe('ApprovalPanel · 自动预审失败不许说成「等待分析」', ()
     expect(s).toContain('isPermissionDenied(err)')
     expect(s).toMatch(/:retryable="!denied"/)
     expect(s).toContain('retry-text="重新预审"')
+  })
+})
+
+describe('DashboardPanel · 总览的四处状态 + 被吞掉的证据查询失败', () => {
+  it('SSR 首屏是加载行；三张空脸与失败脸都还没出现', async () => {
+    const html = await render(DashboardPanel)
+    expect(html).toContain('正在加载经营数据')
+    expect(html).not.toContain('data-testid="ui-error-state"')
+    expect(html).not.toContain('data-testid="ui-empty-state"')
+    expect(html).not.toContain('class="empty-state"')
+    expect(html).not.toContain('class="panel-state error"')
+  })
+
+  it('三处「没有内容」全部改吃原语，且原文案一字不改地保留', () => {
+    const s = source('DashboardPanel.vue')
+    for (const copy of ['当前没有异常线索', '上传制度或业务文档后显示在这里', '查询指标口径后显示证据']) {
+      expect(s).toContain(`title="${copy}"`)
+    }
+    expect(s).not.toContain('class="empty-state"')
+    expect(s.match(/<UiEmptyState/g)).toHaveLength(3)
+  })
+
+  // D-4 之外的本批要点：证据卡的 catch 原先什么都不做，失败被吞成一句空话。
+  it('lookupMetric 不再空吞异常，失败脸排在正文与空态之前', () => {
+    const s = source('DashboardPanel.vue')
+    expect(s).not.toMatch(/\}\s*catch\s*\{/)
+    expect(s).toMatch(/\} catch \(err\) \{[\s\S]*?evidenceError\.value = [\s\S]*?\}/)
+    expect(s).toMatch(/v-if="evidenceError"[\s\S]*?v-else-if="metricContext"[\s\S]*?v-else title="查询指标口径后显示证据"/)
+  })
+
+  it('无权限与真失败分两张脸，且都不把 detail 原样插值上屏', () => {
+    const s = source('DashboardPanel.vue')
+    expect(s).not.toMatch(/err\.response\?\.data\?\.detail \|\|/)
+    expect(s.match(/isPermissionDenied\(err\)/g)).toHaveLength(2)
+    expect(s).toMatch(/:retryable="!denied"/)
+    expect(s).toMatch(/:retryable="!evidenceDenied"/)
+    expect(s).toContain('retry-text="重新查询"')
   })
 })

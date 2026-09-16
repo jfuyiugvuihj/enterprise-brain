@@ -1,11 +1,17 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
+import { errorDetail, isPermissionDenied } from '../lib/http'
 import { demoInsights, demoRows, demoTrendShape } from '../devFixtures/dashboard-demo'
+import { UiEmptyState, UiErrorState } from './ui'
 
 const emit = defineEmits(['goto'])
 const loading = ref(true)
 const error = ref('')
+// 驾驶舱整体取不到 vs 取到了但没权限，是两件事；证据卡自己也可能单独失败（R1c）。
+const denied = ref(false)
+const evidenceError = ref('')
+const evidenceDenied = ref(false)
 const dashboard = ref({ metrics: {}, departments: {}, insights: [] })
 const metricQuery = ref('住宿费标准')
 const metricContext = ref(null)
@@ -110,6 +116,7 @@ function documentName(item) {
 async function loadDashboard() {
   loading.value = true
   error.value = ''
+  denied.value = false
   try {
     const [dashboardResponse, docsResponse, dataResponse] = await Promise.all([
       api.post('/dashboard', {
@@ -123,18 +130,29 @@ async function loadDashboard() {
     documents.value = docsResponse.data.documents || []
     dataFiles.value = dataResponse.data.files || []
   } catch (err) {
-    error.value = err.response?.data?.detail || err.message || '经营驾驶舱加载失败'
+    denied.value = isPermissionDenied(err)
+    error.value = denied.value
+      ? '当前账号没有查看经营总览的权限，请联系管理员开通。'
+      : errorDetail(err, '经营驾驶舱加载失败')
   } finally {
     loading.value = false
   }
 }
 
 async function lookupMetric() {
+  // 这个 catch 原先把错误整个吞掉，于是「查失败了」和「还没查」都长成
+  // 「查询指标口径后显示证据」那一句空话——R1(c) 要拆的就是这种同脸。
+  evidenceError.value = ''
+  evidenceDenied.value = false
   try {
     const response = await api.post('/semantics/match', { question: metricQuery.value })
     metricContext.value = response.data.context || null
-  } catch {
+  } catch (err) {
     metricContext.value = null
+    evidenceDenied.value = isPermissionDenied(err)
+    evidenceError.value = evidenceDenied.value
+      ? '当前账号没有查询指标口径的权限，请联系管理员开通。'
+      : errorDetail(err, '指标口径查询失败')
   }
 }
 
@@ -147,7 +165,15 @@ onMounted(async () => {
 <template>
   <div class="dashboard-panel reference-dashboard" data-testid="dashboard-panel" data-demo="fixtures">
     <div v-if="loading" class="panel-state">正在加载经营数据</div>
-    <div v-else-if="error" class="panel-state error">{{ error }}</div>
+    <UiErrorState
+      v-else-if="error"
+      :title="denied ? '没有权限查看经营总览' : '经营总览没加载出来'"
+      :description="error"
+      :retryable="!denied"
+      retry-text="重新加载"
+      :busy="loading"
+      @retry="loadDashboard"
+    />
 
     <template v-else>
       <!-- 见 src/devFixtures/README.md：R14 落地前，趋势与异常两块的输入是编造的。 -->
@@ -239,7 +265,7 @@ onMounted(async () => {
               <span class="risk-time">演示</span>
             </button>
           </div>
-          <div v-else class="empty-state">当前没有异常线索</div>
+          <UiEmptyState v-else title="当前没有异常线索" dense />
         </article>
       </section>
 
@@ -258,7 +284,7 @@ onMounted(async () => {
               <em>已解析</em>
             </button>
           </div>
-          <div v-else class="empty-state">上传制度或业务文档后显示在这里</div>
+          <UiEmptyState v-else title="上传制度或业务文档后显示在这里" dense />
         </article>
 
         <article class="reference-card list-card evidence-card">
@@ -266,14 +292,23 @@ onMounted(async () => {
             <h2>知识证据</h2>
             <button type="button" @click="emit('goto', 'chat')">查看全部 ›</button>
           </header>
-          <div v-if="metricContext" class="evidence-main">
+          <UiErrorState
+            v-if="evidenceError"
+            :title="evidenceDenied ? '没有权限查询指标口径' : '指标口径没查到'"
+            :description="evidenceError"
+            :retryable="!evidenceDenied"
+            retry-text="重新查询"
+            dense
+            @retry="lookupMetric"
+          />
+          <div v-else-if="metricContext" class="evidence-main">
             <span class="row-icon">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6" /></svg>
             </span>
             <div><strong>{{ metricContext.metric_name }}</strong><small>基于 {{ metricContext.source_file }}</small></div>
             <b>高可信</b>
           </div>
-          <div v-else class="empty-state">查询指标口径后显示证据</div>
+          <UiEmptyState v-else title="查询指标口径后显示证据" dense />
           <div class="evidence-query">
             <input v-model="metricQuery" placeholder="查询指标口径" @keyup.enter="lookupMetric" />
             <button type="button" @click="lookupMetric">查询</button>
