@@ -17,7 +17,7 @@ export { default as UiEmptyState } from './UiEmptyState.vue'
 export { default as UiErrorState } from './UiErrorState.vue'
 
 export { useToasts, pushToast, notifyError, notifySuccess, dismissToast, clearToasts } from './toasts.js'
-export { normalizeError, formatError, errorCodeLabel, isRetryable, ERROR_CODES } from '../../lib/errcodes.js'
+export { normalizeError, formatError, errorCodeLabel, errorCodeOf, errorText, blobErrorText, readBlobError, isRetryable, ERROR_CODES } from '../../lib/errcodes.js'
 export { moveActiveIndex, findIndexByPrefix } from './list-nav.js'
 export { nextSortState, sortRows, ariaSortFor } from './table-sort.js'
 export { validateFiles, formatBytes } from './upload-rules.js'

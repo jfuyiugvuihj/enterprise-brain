@@ -58,7 +58,7 @@ const role = computed(() => (props.tone === 'danger' || props.tone === 'warning'
 
     <span class="ui-toast__text">
       <slot>{{ message }}</slot>
-      <span v-if="codeLabel" class="ui-toast__code">{{ codeLabel }}</span>
+      <span v-if="codeLabel" class="ui-toast__code" data-testid="ui-toast-code">{{ codeLabel }}</span>
     </span>
 
     <span class="ui-toast__actions">
