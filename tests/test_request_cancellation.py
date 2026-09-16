@@ -238,6 +238,77 @@ def test_a_stop_during_the_stream_ends_the_stream_without_done(monkeypatch, tmp_
     assert "refused" not in body
 
 
+def test_approve_cancellation_emits_the_canonical_event_too(monkeypatch, tmp_path):
+    """/approve 的取消必须和 /ask 一样先发 canonical request.cancelled，再发 legacy。
+
+    形状对齐 /ask 的 chat.py:958-972：同一个事件名、同样带 request_id/trace_id/task_id
+    与 sequence，legacy ``cancelled`` 保留不删。状态码不变（仍是 200 的 SSE）。
+    """
+    import json as _json
+
+    from app.api.v1 import chat
+    from app.common.identity import Principal
+    from app.storage.sessions import SessionRegistry
+
+    session_id = "r13-approve-cancel"
+    registry = SessionRegistry(tmp_path / "session-registry.json")
+    principal = Principal.from_user(
+        {"id": "staff1", "username": "staff1", "role": "staff", "department": "R&D"}
+    )
+    registry.bind(session_id, principal)
+
+    def fake_stream(*_args, **kwargs):
+        yield {"messages": [], "worker_results": {}}
+        assert chat.cancel_request(session_id) is True
+        while True:
+            if kwargs["cancel_event"].is_set():
+                return
+            yield {"messages": [], "worker_results": {"chart": "不该送达"}}
+
+    monkeypatch.setattr(chat, "session_registry", registry)
+    monkeypatch.setattr(chat, "_save_message", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(orchestrator, "run_interrupt_stream", fake_stream)
+
+    http_request = type(
+        "Request",
+        (),
+        {"state": type("State", (), {"principal": principal, "username": "staff1"})()},
+    )()
+    response = asyncio.run(
+        chat.approve(
+            chat.ApproveRequest(session_id=session_id, approved=True),
+            http_request=http_request,
+        )
+    )
+
+    async def consume():
+        chunks = []
+        async for item in response.body_iterator:
+            chunks.append(item.decode("utf-8") if isinstance(item, bytes) else item)
+        return "".join(chunks)
+
+    body = asyncio.run(consume())
+
+    assert "event: request.cancelled" in body, "/approve 只发 legacy cancelled"
+    assert "event: cancelled" in body
+    assert "event: done" not in body
+    assert "不该送达" not in body
+
+    canonical = [
+        block.splitlines()[1].removeprefix("data: ")
+        for block in body.split("\n\n")
+        if block.startswith("event: request.cancelled")
+    ]
+    assert len(canonical) == 1, "同一次取消只应发一对事件"
+    payload = _json.loads(canonical[0])
+    assert payload["status"] == "cancelled"
+    assert payload["data"] == {"session_id": session_id}
+    assert payload["request_id"].startswith("req-")
+    assert payload["trace_id"].startswith("trace-")
+    assert payload["task_id"].startswith("task-")
+    assert isinstance(payload["sequence"], int)
+
+
 # ---------------------------------------------------------------- 停止不落盘
 
 
