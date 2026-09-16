@@ -1207,6 +1207,12 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
     # 因此它和读取会话必须是同一套归属判定，不能只校验"已登录"。
     principal = _authorize_session_request(http_request, request.session_id)
     user_ctx = _agent_user_context(principal)
+    # canonical 事件必须带 request_id/trace_id/task_id，而 /approve 此前整条流只有
+    # legacy 事件、从来没有过这三个 id。生成方式与 /ask (:784-786) 逐字相同，客户端
+    # 不必为两个端点写两套解析。
+    request_id = f"req-{uuid.uuid4().hex}"
+    trace_id = f"trace-{uuid.uuid4().hex}"
+    task_id = f"task-{uuid.uuid4().hex}"
 
     async def generate():
         from app.agents.orchestrator import run_interrupt_stream
@@ -1240,6 +1246,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
 
         start_time = time.time()
         last_emit = time.monotonic()
+        sequence = 1
         ai_reply: list[str] = []
         latest_worker_results: dict = {}
         latest_final_answer = ""
@@ -1249,6 +1256,19 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         while True:
             if cancel_event.is_set():
                 agent_future.cancel()
+                # 先发 canonical、再发 legacy，与 /ask 的取消形状 (:958-973) 一致：
+                # 事件名、status="cancelled"、data.session_id 全同。legacy 保留是给
+                # 还没接 canonical 的旧客户端的，不是过渡期垃圾。
+                yield canonical_sse_event(
+                    "request.cancelled",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="cancelled",
+                    data={"session_id": request.session_id},
+                )
+                sequence += 1
                 yield sse_event(
                     "cancelled",
                     {"type": "cancelled", "session_id": request.session_id},
