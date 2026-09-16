@@ -1023,10 +1023,10 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 if not full_text:
                     # 图跑完了，既没有正文也没有等待确认的步骤：这是内部失败。
                     # 把它报成 request.completed 就是把“什么都没产出”伪装成“已回答”。
-                    failure_text = (
-                        "本轮未产出任何结论（error_code=no_answer_produced），"
-                        "请重试或补充数据范围。"
-                    )
+                    # 码只走下面 canonical 的 data.error_code 字段：这句要经
+                    # _save_message 落进会话历史，散文里再夹一遍码名就永久洗不掉了
+                    # （R16；前端渲染期的清洗救得了新消息，救不了历史行）。
+                    failure_text = "本轮未产出任何结论，请重试或补充数据范围。"
                     _save_message(thread_id, "assistant", failure_text, steps_log)
                     saved = True
                     yield sse_event("error", {"type": "error", "content": failure_text})
