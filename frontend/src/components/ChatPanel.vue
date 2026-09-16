@@ -1,6 +1,7 @@
 <script setup>
-import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import ChartViewer from './ChartViewer.vue'
+import { fetchRuntimeHealth, modelState, modelStatusText } from '../lib/health.js'
 import {
   abortStream,
   activeDataFilename,
@@ -137,7 +138,19 @@ async function restoreScroll() {
   else await scrollTo(chatEl.value, 'auto')
 }
 
+// 顶栏那个绿点以前是写死的：不管机器上有没有模型，它都显示「本地模型」。
+// 现在改成读 /health/details 的 problems，读不到就显示「状态未知」——不确定不是坏消息，
+// 把不确定画成健康才是。
+const runtimeHealth = ref(null)
+const modelStateValue = computed(() => modelState(runtimeHealth.value))
+const modelStateText = computed(() => modelStatusText(runtimeHealth.value))
+
+async function refreshRuntimeHealth() {
+  runtimeHealth.value = await fetchRuntimeHealth({ force: true })
+}
+
 onMounted(() => {
+  refreshRuntimeHealth()
   window.addEventListener('chat-ask', onChatAsk)
   document.addEventListener('visibilitychange', onVisibilityChange)
   if (!sessions.value.length) {
@@ -415,10 +428,18 @@ function renderMd(raw) {
       <!-- 顶栏 -->
       <div class="chat-topbar">
         <div class="chat-topbar-left">
-          <span class="chat-dot online"></span>
+          <span class="chat-dot" :class="`chat-dot--${modelStateValue}`" data-testid="model-dot"></span>
           <span class="chat-title">智能问答</span>
         </div>
-        <span class="model-status">🖥️ 本地模型</span>
+        <span class="model-status" :class="`model-status--${modelStateValue}`" data-testid="model-status">
+          🖥️ {{ modelStateText }}
+        </span>
+      </div>
+
+      <!-- 模型没就绪时，答案只是检索原文：这句话必须由系统说，不能等老板自己发现。 -->
+      <div v-if="modelStateValue === 'down'" class="model-degraded-notice" role="status" data-testid="model-degraded-notice">
+        本机还没有可用的模型权重，下面的回答只是**检索到的原文片段**，不是模型给出的结论。
+        先在服务器上拉取模型（或在本机模型设置里选一个已存在的），再回来提问。
       </div>
 
       <!-- 消息区 -->
@@ -697,9 +718,13 @@ function renderMd(raw) {
 .chat-topbar-left { display: flex; align-items: center; gap: 8px; }
 .chat-dot {
   width: 8px; height: 8px; border-radius: 50%;
-  background: #67c23a;
-  box-shadow: 0 0 6px rgba(103,194,58,0.4);
+  background: var(--muted);
 }
+.chat-dot--ready {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+}
+.chat-dot--down { background: var(--amber); }
 .chat-title { font-size: 15px; font-weight: 600; }
 
 .model-status {
@@ -707,9 +732,22 @@ function renderMd(raw) {
   border-radius: 20px;
   font-size: 12px;
   font-weight: 500;
-  color: #606266;
-  background: rgba(103,194,58,0.08);
-  border: 1px solid rgba(103,194,58,0.2);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.model-status--ready { color: var(--green); }
+.model-status--down {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+
+.model-degraded-notice {
+  padding: 8px 24px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--amber);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 /* ===== 消息区 ===== */

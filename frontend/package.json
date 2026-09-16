@@ -10,7 +10,7 @@
     "lint": "stylelint \"src/**/*.{css,vue}\"",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "lint:colors": "stylelint \"src/**/*.{css,vue}\" --max-warnings=339"
+    "lint:colors": "stylelint \"src/**/*.{css,vue}\" --max-warnings=337"
   },
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
