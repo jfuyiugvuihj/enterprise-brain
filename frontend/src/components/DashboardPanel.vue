@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
+import { loadDashboardSummary, SUMMARY_DENIED_TITLE, SUMMARY_FAILED_TITLE, summaryScopeNote, summaryTiles } from '../lib/dashboard'
 import { errorDetail, isPermissionDenied } from '../lib/http'
 import { demoInsights, demoRows, demoTrendShape } from '../devFixtures/dashboard-demo'
 import { UiEmptyState, UiErrorState, UiLoadingState } from './ui'
@@ -8,15 +9,17 @@ import { UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 const emit = defineEmits(['goto'])
 const loading = ref(true)
 const error = ref('')
+const errorTitle = ref('')
 // 驾驶舱整体取不到 vs 取到了但没权限，是两件事；证据卡自己也可能单独失败（R1c）。
 const denied = ref(false)
 const evidenceError = ref('')
 const evidenceDenied = ref(false)
 const dashboard = ref({ metrics: {}, departments: {}, insights: [] })
+// R14-A1：总览四个数字的唯一来源。null 是「还没拿到」，拿到之后也不会再退回去数列表的行。
+const summary = ref(null)
 const metricQuery = ref('住宿费标准')
 const metricContext = ref(null)
 const documents = ref([])
-const dataFiles = ref([])
 
 const quickActions = [
   { id: 'docs', icon: 'M12 4v11M7 9l5-5 5 5M5 20h14', label: '上传文档' },
@@ -32,48 +35,24 @@ const departmentBars = computed(() => Object.entries(dashboard.value.departments
     total: Object.values(metrics).reduce((sum, item) => sum + Number(item || 0), 0),
   }))
   .sort((a, b) => b.total - a.total))
-const latestInsights = computed(() => (dashboard.value.insights || []).slice(0, 4))
+const isTopPriority = item => item.severity === 'critical'
+// 异常卡只有演示输入：这里按等级排序，不数行、不产数字（数字一律走下面的服务端聚合）。
+const latestInsights = computed(() => (dashboard.value.insights || [])
+  .slice()
+  .sort((a, b) => Number(isTopPriority(b)) - Number(isTopPriority(a)))
+  .slice(0, 4))
 const totalAmount = computed(() => departmentBars.value.reduce((sum, item) => sum + item.total, 0))
 const topDepartment = computed(() => departmentBars.value[0]?.name || '暂无')
-const approvalCount = computed(() => latestInsights.value.filter(item => item.severity === 'critical').length)
-const kpis = computed(() => [
-  {
-    id: 'docs',
-    label: '文档总量',
-    value: documents.value.length.toLocaleString('zh-CN'),
-    delta: documents.value.length ? '已解析' : '待上传',
-    icon: 'M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6',
-    tone: 'blue',
-    trend: 'line',
-  },
-  {
-    id: 'data',
-    label: '数据表',
-    value: dataFiles.value.length.toLocaleString('zh-CN'),
-    delta: dataFiles.value.length ? '可分析' : '待上传',
-    icon: 'M5 5h14v14H5zM8 16V9M12 16V7M16 16v-4',
-    tone: 'cyan',
-    trend: 'bars',
-  },
-  {
-    id: 'insights',
-    label: '智能洞察',
-    value: latestInsights.value.length.toLocaleString('zh-CN'),
-    delta: latestInsights.value.length ? '待关注' : '暂无',
-    icon: 'M12 3a4 4 0 0 0-2 7.46V13H8v2h2v2h4v-2h2v-2h-2v-2.54A4 4 0 0 0 12 3Z',
-    tone: 'violet',
-    trend: 'wave',
-  },
-  {
-    id: 'approval',
-    label: '审批任务',
-    value: approvalCount.value.toLocaleString('zh-CN'),
-    delta: approvalCount.value ? '需处理' : '暂无待办',
-    icon: 'M12 3 19 7v6c0 4-3 6.5-7 8-4-1.5-7-4-7-8V7zM9 12l2 2 4-4',
-    tone: 'green',
-    trend: 'bars',
-  },
-])
+const scopeNote = computed(() => summaryScopeNote(summary.value?.generatedFor))
+// R14-A1：标签、数值、副文案与口径提示全部来自聚合响应，这里只补视觉档（图标/配色）与点击落点。
+const tileLooks = {
+  documents: { icon: 'M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6', tone: 'blue', trend: 'line', target: 'docs' },
+  datasets: { icon: 'M5 5h14v14H5zM8 16V9M12 16V7M16 16v-4', tone: 'cyan', trend: 'bars', target: 'data' },
+  pendingApprovals: { icon: 'M12 3 19 7v6c0 4-3 6.5-7 8-4-1.5-7-4-7-8V7zM9 12l2 2 4-4', tone: 'green', trend: 'bars', target: 'approval' },
+  alerts: { icon: 'M12 3a4 4 0 0 0-2 7.46V13H8v2h2v2h4v-2h2v-2h-2v-2.54A4 4 0 0 0 12 3Z', tone: 'violet', trend: 'wave', target: 'insights' },
+}
+const kpis = computed(() => summaryTiles(summary.value)
+  .map(tile => ({ ...tileLooks[tile.id], ...tile })))
 
 const trendLines = computed(() => {
   const base = Math.max(totalAmount.value, 1)
@@ -116,27 +95,41 @@ function documentName(item) {
 async function loadDashboard() {
   loading.value = true
   error.value = ''
+  errorTitle.value = ''
   denied.value = false
   try {
-    const [dashboardResponse, docsResponse, dataResponse] = await Promise.all([
-      api.post('/dashboard', {
-        rows: demoRows,
-        insights: demoInsights,
-      }),
-      api.get('/documents/catalog'),
-      api.get('/data-files'),
-    ])
-    dashboard.value = dashboardResponse.data
-    documents.value = docsResponse.data.documents || []
-    dataFiles.value = dataResponse.data.files || []
+    // 四个数字先落地：聚合取不到就整块报错，不拿列表长度补一个「看起来对」的数（R14）。
+    const result = await loadDashboardSummary()
+    if (!result.ok) {
+      summary.value = null
+      denied.value = result.denied
+      errorTitle.value = result.title
+      error.value = result.description
+      return
+    }
+    summary.value = result.metrics
+    await loadOverviewCards()
   } catch (err) {
     denied.value = isPermissionDenied(err)
-    error.value = denied.value
-      ? '当前账号没有查看经营总览的权限，请联系管理员开通。'
-      : errorDetail(err, '经营驾驶舱加载失败')
+    errorTitle.value = denied.value ? SUMMARY_DENIED_TITLE : SUMMARY_FAILED_TITLE
+    error.value = errorDetail(err, '经营驾驶舱加载失败')
   } finally {
     loading.value = false
   }
+}
+
+// 趋势/异常两张演示卡的输入，加上「最新文档」卡要显示的那几行。
+// 列表在这里只用于展示行本身，不再参与任何数字：页长一截断就静默变小的那种数就是错的。
+async function loadOverviewCards() {
+  const [dashboardResponse, docsResponse] = await Promise.all([
+    api.post('/dashboard', {
+      rows: demoRows,
+      insights: demoInsights,
+    }),
+    api.get('/documents/catalog'),
+  ])
+  dashboard.value = dashboardResponse.data
+  documents.value = docsResponse.data.documents || []
 }
 
 async function lookupMetric() {
@@ -167,7 +160,7 @@ onMounted(async () => {
     <UiLoadingState v-if="loading" label="正在加载经营数据" />
     <UiErrorState
       v-else-if="error"
-      :title="denied ? '没有权限查看经营总览' : '经营总览没加载出来'"
+      :title="errorTitle"
       :description="error"
       :retryable="!denied"
       retry-text="重新加载"
@@ -179,15 +172,19 @@ onMounted(async () => {
       <!-- 见 src/devFixtures/README.md：R14 落地前，趋势与异常两块的输入是编造的。 -->
       <aside class="demo-flag-row" data-testid="dashboard-demo-flag">
         <span class="demo-flag">演示数据</span>
-        <span class="demo-note">「数据趋势」「异常与风险」以及由它们算出的「智能洞察」「审批任务」两个数字，全部来自前端常量 src/devFixtures/dashboard-demo.js，不来自任何接口；只有「文档总量」「数据表」是真实条数。</span>
+        <span class="demo-note">「数据趋势」「异常与风险」两张卡的输入仍是前端常量 src/devFixtures/dashboard-demo.js，不来自任何接口。上面四个数字改为读服务端聚合 GET /api/v1/dashboard/summary，按登录者可见范围计算。</span>
       </aside>
-      <section class="kpi-grid" data-testid="dashboard-kpis">
+      <section class="kpi-grid" data-testid="dashboard-kpis" aria-describedby="dashboard-scope-note">
         <button
           v-for="item in kpis"
           :key="item.id"
           type="button"
           :class="['reference-kpi', `tone-${item.tone}`]"
-          @click="emit('goto', item.id)"
+          :data-testid="`dashboard-kpi-${item.id}`"
+          :data-alert-state="item.state"
+          :data-target="item.target"
+          :title="item.hint"
+          @click="emit('goto', item.target)"
         >
           <span class="kpi-icon">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon" /></svg>
@@ -203,6 +200,7 @@ onMounted(async () => {
           </svg>
         </button>
       </section>
+      <p id="dashboard-scope-note" class="demo-note kpi-scope" data-testid="dashboard-scope-note">{{ scopeNote }}</p>
 
       <section class="dashboard-main-grid">
         <article class="reference-card trend-card">
@@ -329,3 +327,16 @@ onMounted(async () => {
     </template>
   </div>
 </template>
+
+<style scoped>
+/* 口径提示贴在数字下面：只看数字的人也要看得见它是按谁的范围算出来的。 */
+.kpi-scope {
+  margin-top: -8px;
+}
+
+/* 告警位没有数字（没权限 / 读不出来）时，副文案不许借用「一切正常」的那盏绿灯。 */
+.reference-kpi[data-alert-state='denied'] .kpi-copy em,
+.reference-kpi[data-alert-state='unreadable'] .kpi-copy em {
+  color: var(--ink-soft);
+}
+</style>
