@@ -424,8 +424,15 @@ Evidence Bag（每次 worker 运行一个，随 config 传递）
 
 ### 10.4 知识图谱
 
-- `app/knowledge_graph/service.py`：owner 归属的实体关系存储，每条记录带提交者 Principal 与来源定位（文档/位置）；
-- 运行时存储是 JSON 文件（`app/knowledge_graph/service.py` 的 `JsonPersistenceAdapter`）；生产未配置 `KNOWLEDGE_GRAPH_STORE_PATH` 即进入只读保护、写入直接 503 `storage_read_only`。PG 邻接表是目标态，不引入 Neo4j；
+**定位（R15-a 已裁定为「乙」，写死在此，不再留悬空目标态）**：知识图谱是**候选断言采集表**，不是推理引擎。
+判定与理由见 `docs/design/knowledge-graph-positioning.md`。
+
+- `app/knowledge_graph/service.py`：owner 归属的实体关系存储，每条记录带提交者 Principal、可读作用域与来源定位（文档/段落）；`status` 走 `candidate → confirmed → promoted / rejected`；
+- **存储介质就是 JSON 文件**（`app/storage/persistence.py` 的 `JsonPersistenceAdapter`，集合 `knowledge_graph_relations`）。没有 PG 邻接表，`migrations/0001`–`0009` 未建 `relations`/`entities` 任何一张表，也不引入图数据库（R15-d 已裁定）；
+- 生产未配置 `KNOWLEDGE_GRAPH_STORE_PATH` 即进入只读保护：`GET /api/v1/health/details` 报 `storage_mode=unavailable`、`protection=read_only`、problem `knowledge_graph_read_only`，写入返回 503 `storage_read_only`（2026-09-16 部署栈实测一致）；
+- **Agent 侧零消费是定位，不是缺口**：问答链路不读这张表，因此"图谱提升了问答质量"这句话不许说；
+- 它的唯一出口是**晋升为正式口径**（R15-b）：`candidate` 关系经持有 `resource:approve` 且**非作者**的复核人按「文档 + 段落」核对（`record_verification`）→ `app/knowledge_graph/promotion.py` 落成 `metric_definitions` 真列口径（`migrations/0009_metric_definition_semantics.sql`）→ 未核对 warning 因证据存在而消失，关系回写 `status=promoted`。晋升只在定义行真的写进表之后才记账；
+- 未做项：核对与晋升目前只有 service 层 API，**尚无 HTTP 入口**（`app/api/v1/**` 不在本单改动范围）；
 - 前端 GraphPanel 只消费真实 relations API（前端计划 V7-1），无演示假数据。
 
 ### 10.5 审批助手
@@ -711,7 +718,7 @@ App.vue
 | Prompt Injection 分层防护 | §13.2 | **目标态**（P0-08） |
 | Artifact/Dataset PostgreSQL 持久化 + DatasetVersion 血缘 + TTL 清理 | §9.1/§9.3 | **目标态**（现为 JSON 过渡注册表） |
 | Trace 读取/回放 API（资源级授权） | §12.2 | **已落地**（读 API 已暴露：`GET /traces/{trace_id}` 带资源级鉴权与条数钳制；回放完整度与批量对比待收） |
-| 知识图谱存储与消费 | §10.4 | **目标态**（运行时为 JSON 文件，生产未配置即只读拒写；Agent 侧零消费、无 relations/entities 表，见跟进单 R15） |
+| 知识图谱存储与消费 | §10.4 | **定位已裁定（R15-a 选乙：候选断言采集表，非推理引擎）**。运行时 JSON、生产未配置即只读拒写（实测 503 `storage_read_only`）；出口已落地：candidate→人工核对→`metric_definitions` 真列口径（R15-b，migrations/0009 + `app/knowledge_graph/promotion.py`）；Agent 侧零消费与图数据库属**不做项**（R15-d），核对/晋升的 HTTP 入口待排 |
 | 检索调试台完整版 | §6.3 | **部分落地**（有界调试报告已实现） |
 | 评测平台（50 条集/批量对比/五元组可复现） | §12.3 | **部分落地**（30 条集与分类报告已建） |
 | 配置治理（草稿→发布→回滚 + 运营视图） | §12.4 | **目标态** |
