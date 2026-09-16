@@ -377,18 +377,52 @@ PostgreSQL（`.env` 里 `DATABASE_URL=postgresql://fengx:***@localhost:5432/ente
 
 ---
 
-## 17. 跟进单 **R21**（2026-09-16 总控实测）：embedding 模型缺失时静默降级成哈希假向量
+## 17. 跟进单 **R21**（2026-09-16 总控实测）：embedding 失败被静默换成**全零向量**，向量检索整条腿空转
 
-**事实**：`app/rag/retriever.py:23` 写死 `EMBED_MODEL = "nomic-embed-text"`；`app/rag/retriever.py:76`
-在失败时 `embeddings.append(self._fallback_embedding())`。这台机器的 ollama 里该模型**从未被拉取**，
-`docker logs` 实测 21:13:16 / 21:16:19 / 21:18:24 三次 `Ollama embedding fallback: HTTP Error 404`。
-`GET /api/v1/health/details` 的 `problems` 里没有任何 embedding 项，所以界面与探针都看不出向量在假跑。
+**事实（逐条读码，含我上一版写错的地方）**：`_fallback_embedding()` 返回的是
+`[0.0] * 768`（`app/rag/retriever.py:46-47`）——**全零向量**，不是哈希伪向量；我前一份记录里写的
+「哈希假向量」是凭印象，特此订正。触发面比 404 更宽：`_call_api` 的 `except Exception` 什么异常都吞
+（`retriever.py:64-67`），并且默认 `OLLAMA_EMBED_TIMEOUT=1` 秒（`retriever.py:42`）——模型正在被加载、
+机器正忙时 1 秒很容易不够，同样静默变零向量；一旦失败还会 `self._disabled_until = now + 30s`，
+冷却期内**连 API 都不再尝试**，直接批量发零向量（`retriever.py:49-51`）。
+维度恰好也是 768，所以零向量能顺利写进 Chroma 而不报任何形状错误。
+本机 ollama 里 `nomic-embed-text` 从未被拉取，`docker logs` 实测 21:13:16 / 21:16:19 / 21:18:24
+三次 `Ollama embedding fallback: HTTP Error 404`。`/api/v1/health/details` 的 `problems` 里没有
+任何 embedding 项（21:49 实测 `problems=[]` 而当时向量全是零），界面与探针都看不出。
 
-**后果**：向量检索长期"看起来在用"。此前 G3「admin 问得出知识库答案」那次命中，向量侧是哈希假向量，
-排序实际由 BM25 / 关键词支撑。任何一台没预置该模型的客户机开箱都是这个形态，而文档口径写的是向量检索。
+**后果**：所有降级 chunk 的向量**彼此完全相同**（零向量夹角无定义），向量这一路不再提供任何排序信息——
+不是提供劣质排序，而是**根本不在场上**。此前 G3「admin 问得出知识库答案」那次命中，是检索管线里
+BM25 / 关键词那条腿在干活。任何一台没预置该模型的客户机开箱都是这个形态，而文档口径写的是向量检索。
+**已实测的对照**（2026-09-16 21:55，删除重传同一份 252 字节文件后读库）：
+`chroma://enterprise_docs` 里 `demo-policy.md_0` 为 `dim=768 / nonzero=768 / norm=20.144491`，
+即模型就位后向量确实是真向量——问题不在检索代码，在**失败时不许静默换零**。
 
 **判据**：① `/health/details` 增加 embedding 探测，缺失时 `problems` 给出稳定码（如
 `embedding_model_missing`）；② fallback 生效时答案侧带可区分的降级提示，不许静默；③ 一条测试钉住
 「404 不得被当成正常路径」。三条缺一不算完成；**先把模型装上**是运维动作，不替代本单。
 
 **优先级**：P0（演示前至少要做到「看得见」，否则我们讲的检索质量与机器上跑的检索不是一回事）。
+
+---
+
+## 18. 跟进单 **R22**（2026-09-16 总控实测）：换了 embedding 之后，库里的旧向量没有任何重建路径
+
+**事实**：`EMBED_MODEL` 是一个模块级常量（`app/rag/retriever.py:23`），改它或换模型之后，已经写进
+Chroma 的向量**不会重算，也没有任何入口让它重算**——全仓 `app/` 与 `scripts/` 对 `reindex`、
+`rebuild_index`、`reset_index` 一律 0 命中（2026-09-16 实跑）。系统也不会提示口径已经变了：
+`/health/details` 里没有「向量与当前 embedding 模型不一致」这类判据。
+
+**今天怎么绕过去的**：靠 `DELETE /api/v1/documents/{filename}` 再重新上传。这条链路本身是对的——
+它先 `retriever.delete_document(filename)` 回滚索引，回滚失败就**不删文档**并答 `index_rollback_failed`，
+不会假装删干净（`app/api/v1/chat.py:2087` 起）。实测删除返回 `index_retirement.status=retired`，
+重传后库内只剩 1 条真向量，没有留下新旧双份。但这是人工兜底，不是能力。
+
+**为什么不能留**：私有化交付一定会遇到「客户换了模型 / 我们升级了 embedding」。届时知识库会拿
+旧模型算的向量去配新模型算的查询向量，检索质量**静默塌陷**，而界面显示一切正常——这是比 404 更难的坑。
+
+**判据**：① 向量集合里记录并可比对「产生该向量的模型标识」；② 模型标识与当前配置不一致时，
+`/health/details` 出稳定码（如 `embedding_model_drift`）并在回答侧可见；③ 提供一条真正的重建入口
+（接口或 `scripts/` 命令，带可验证的完成判据），且重建期间旧向量不会被当成新口径的结果使用。
+三条缺一不算完成；**只在文档里写一句「请删库重传」不算**。
+
+**优先级**：P1（演示不阻塞；上生产前必须至少有 ①②）。
