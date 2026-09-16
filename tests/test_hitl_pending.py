@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.agents import orchestrator
 from app.storage import pending_approvals as store
 
 
@@ -23,6 +24,21 @@ def memory_backend(monkeypatch):
     monkeypatch.setattr(store, "_MEM_ROWS", {})
     monkeypatch.setattr(store, "_database_available", lambda: False)
     return None
+
+
+class _Result:
+    """psycopg 的 Result 替身。写成类而不是 ``type(...)` + lambda``：类字典里的
+    lambda 会被当方法绑定，多接一个 self。"""
+
+    def __init__(self, row=None, rows=None):
+        self._row = row
+        self._rows = rows if rows is not None else []
+
+    def fetchone(self):
+        return self._row
+
+    def fetchall(self):
+        return self._rows
 
 
 def _park(session_id="s-1", owner="u-1", steps=("chart",), **kw):
@@ -212,6 +228,141 @@ def test_the_endpoint_payload_carries_the_labels_the_panel_shows(monkeypatch):
     assert json.dumps(item, ensure_ascii=False)
 
 
+# ------------------------------------------------- 写入侧接线（真调用链）
+
+
+def _offline_ask_stubs(monkeypatch, chat, tmp_path):
+    from app.storage.sessions import SessionRegistry
+
+    monkeypatch.setattr(chat, "_ensure_sessions_table", lambda: None)
+    monkeypatch.setattr(chat, "_ensure_session", lambda *_args: {})
+    monkeypatch.setattr(chat, "_save_message", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat, "_rewrite_followup", lambda _session_id, message: message)
+    monkeypatch.setattr(chat, "_session_database_available", lambda: False)
+    monkeypatch.setattr(
+        chat, "auth", type("AuthStub", (), {"get_user": staticmethod(lambda _u: None)})
+    )
+    monkeypatch.setattr("app.common.cache.check_rate_limit", lambda *_a, **_k: (True, 9))
+    monkeypatch.setattr("app.common.cache.get_cached_answer", lambda _q, scope="": None)
+    monkeypatch.setattr("app.common.cache.cache_answer", lambda *_a, **_k: None)
+    monkeypatch.setattr(chat, "session_registry", SessionRegistry(tmp_path / "sessions.json"))
+
+
+def _request_for_user(principal):
+    return type(
+        "Request",
+        (),
+        {
+            "state": type(
+                "State", (), {"principal": principal, "username": principal.username}
+            )()
+        },
+    )()
+
+
+def test_asking_a_turn_that_parks_writes_the_awaiting_row(monkeypatch, tmp_path):
+    """真调用链：/ask -> 图停在 HITL 前 -> 账本里必须出现一行 awaiting。
+
+    与 R12 同一类缺陷的形状：读端和写端各写各的，中间没人接线，功能就恒等于不生效。
+    这条走 chat.ask，不手工拼任何记录。
+    """
+    from app.api.v1 import chat
+    from app.common.identity import Principal
+
+    session_id = "hitl-wire-ask"
+    principal = Principal.from_user(
+        {"id": "u-9", "username": "wire", "role": "staff", "department": "R&D"}
+    )
+    _offline_ask_stubs(monkeypatch, chat, tmp_path)
+
+    def fake_stream(*_args, **_kwargs):
+        yield {
+            "messages": [],
+            "worker_results": {},
+            "final_answer": "",
+        }
+
+    monkeypatch.setattr(orchestrator, "run_with_stream", fake_stream)
+    monkeypatch.setattr(
+        orchestrator,
+        "check_interrupt",
+        lambda thread_id: {"pending": ["chart"], "labels": ["生成图表"]},
+    )
+
+    response = asyncio.run(
+        chat.ask(
+            chat.AskRequest(message="把销量画成图并导出", session_id=session_id),
+            http_request=_request_for_user(principal),
+        )
+    )
+
+    async def consume():
+        chunks = []
+        async for item in response.body_iterator:
+            chunks.append(item.decode("utf-8") if isinstance(item, bytes) else item)
+        return "".join(chunks)
+
+    body = asyncio.run(consume())
+
+    assert "event: hitl" in body, "本轮没有挂起事件，这条测试就没有意义"
+    row = store.get_row(session_id)
+    assert row is not None, "/ask 发了 hitl 事件却没写账，面板永远列不到它"
+    assert row.status == store.AWAITING
+    assert row.owner_user_id == "u-9"
+    assert row.parked_steps == ["chart"]
+
+
+def test_approving_and_refusing_close_the_row(monkeypatch, tmp_path):
+    """真调用链：/approve 收尾必须把 awaiting 闭合，批准与拒绝分落两个终态。"""
+    from app.api.v1 import chat
+    from app.common.identity import Principal
+    from app.storage.sessions import SessionRegistry
+
+    registry = SessionRegistry(tmp_path / "session-registry.json")
+    monkeypatch.setattr(chat, "session_registry", registry)
+    monkeypatch.setattr(chat, "_save_message", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        orchestrator,
+        "check_interrupt",
+        lambda thread_id: {"pending": ["chart"], "labels": ["生成图表"]},
+    )
+
+    def fake_stream(*_args, **_kwargs):
+        yield {
+            "messages": [],
+            "worker_results": {"chart": "图已生成"},
+            "final_answer": "图已生成",
+        }
+
+    monkeypatch.setattr(orchestrator, "run_interrupt_stream", fake_stream)
+
+    for approved, expected in ((True, store.RESUMED), (False, store.REFUSED)):
+        session_id = f"hitl-wire-approve-{approved}"
+        principal = Principal.from_user(
+            {"id": "u-9", "username": "wire", "role": "staff", "department": "R&D"}
+        )
+        registry.bind(session_id, principal)
+        store.record_awaiting(session_id, "u-9", ["chart"])
+
+        response = asyncio.run(
+            chat.approve(
+                chat.ApproveRequest(session_id=session_id, approved=approved),
+                http_request=_request_for_user(principal),
+            )
+        )
+
+        async def consume():
+            chunks = []
+            async for item in response.body_iterator:
+                chunks.append(item.decode("utf-8") if isinstance(item, bytes) else item)
+            return "".join(chunks)
+
+        asyncio.run(consume())
+
+        assert store.get_row(session_id).status == expected, session_id
+        assert store.open_items(owner_user_id="u-9") == [], session_id
+
+
 # ---------------------------------------------------------------- PG 路径
 
 
@@ -233,7 +384,7 @@ def test_production_without_the_table_fails_loudly_instead_of_using_memory(monke
 
         def execute(self, sql, params=None):
             self.statements.append(sql)
-            return type("Result", (), {"fetchone": lambda: {"table_name": None}, "fetchall": lambda: []})()
+            return _Result({"table_name": None})
 
         def close(self):
             pass
@@ -263,8 +414,8 @@ def test_the_insert_binds_the_columns_0008_declares(monkeypatch):
             self.statements.append((sql, params))
             if "to_regclass" in sql.lower():
                 # 假库里表是在的：这条测试要钉的是 INSERT 的列，不是缺表分支
-                return type("Result", (), {"fetchone": lambda: {"table_name": "pending_approvals"}, "fetchall": lambda: []})()
-            return type("Result", (), {"fetchone": lambda: {"id": 1}, "fetchall": lambda: []})()
+                return _Result({"table_name": "pending_approvals"})
+            return _Result({"id": 1})
 
         def close(self):
             pass

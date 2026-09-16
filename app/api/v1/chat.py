@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from app.agents.contracts import AuthorizationDecision, ErrorEnvelope
 from app.common import auth
 from app.common.audit import record_audit
+from app.storage import pending_approvals
 from app.common.authorization import principal_from_request
 from app.rag.loader import load_document
 from app.documents.preview import build_document_preview
@@ -1059,6 +1060,16 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 logger.info(f"[ASK] session={thread_id[:8]}... {elapsed_total}s | steps={len(steps_log)}")
 
                 if intr:
+                    # 与 SSE event: hitl 同一个地方写库：分了两处就会出现"事件发了、
+                    # 表里没写"或反之，面板与流各说一套。
+                    _record_pending_approval(
+                        thread_id,
+                        request_principal,
+                        intr,
+                        request_id=request_id,
+                        trace_id=trace_id,
+                        task_id=task_id,
+                    )
                     yield f"event: hitl\ndata: {json.dumps({'type': 'hitl', 'pending': intr['pending'], 'labels': intr['labels']}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
 
@@ -1201,6 +1212,108 @@ class ApproveRequest(BaseModel):
     approved: bool = True
 
 
+def _record_pending_approval(
+    session_id: str,
+    principal,
+    intr: dict | None,
+    *,
+    request_id: str = "",
+    trace_id: str = "",
+    task_id: str = "",
+) -> None:
+    """把一次挂起写成一行 awaiting。
+
+    记账失败不许打断用户已经等到的回答流，所以这里吞异常；但也不许静默——面板少一条
+    待办和面板说"没有待办"是两件不同的事，因此留 exception 级痕迹。
+    """
+    owner_user_id = str(getattr(principal, "user_id", "") or "")
+    if not owner_user_id or not intr:
+        return
+    try:
+        pending_approvals.record_awaiting(
+            session_id,
+            owner_user_id,
+            list(intr.get("pending") or []),
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+        )
+    except Exception:
+        logger.exception(
+            f"[HITL] 挂起待办没能写入 session={session_id}，审批面板可能少一条待办"
+        )
+
+
+def _decide_pending_approval(session_id: str, status: str) -> None:
+    """把挂起行改成终态；同上，不许因为记账坏了而打断回答。"""
+    try:
+        pending_approvals.mark_status(session_id, status)
+    except Exception:
+        logger.exception(
+            f"[HITL] 挂起待办没能改成 {status} session={session_id}，面板可能仍显示待批"
+        )
+
+
+@router.get("/hitl/pending")
+async def hitl_pending(http_request: FastAPIRequest, session_id: str = ""):
+    """列出调用方自己的 HITL 挂起待办，并对每一行向图复核。
+
+    这张表是"事件记录"，图才是"当前状态"的权威，所以列表前逐行问一次
+    check_interrupt(session_id)：对不上就地标 stale 并排除。少了这一步，面板列出的就是
+    已经跑完或已经被放弃的假待办（设计件 §3.2 点名的陷阱）。
+
+    复核本身抛错时**不列**该行，但也**不改判**：一次图的临时故障不该把真待办判死。
+
+    权限不新增语义：归属沿用 _authorize_session_request 的同一个谓词，别人的会话像
+    不存在一样（404 resource_not_found），不是 403。
+    """
+    principal = _session_principal_or_error(http_request)
+    if session_id:
+        _authorize_session_request(http_request, session_id)
+
+    from app.agents.orchestrator import check_interrupt
+
+    rows = pending_approvals.open_items(
+        owner_user_id=str(principal.user_id or ""),
+        session_id=session_id or None,
+    )
+
+    items: list[dict] = []
+    for row in rows:
+        if not row.parked_steps:
+            continue
+        try:
+            confirmed = check_interrupt(row.session_id)
+        except Exception:
+            logger.exception(f"[HITL] 复核挂起态失败，本次不列出 session={row.session_id}")
+            continue
+        pending = [str(step) for step in ((confirmed or {}).get("pending") or [])]
+        if not pending or not set(row.parked_steps) <= set(pending):
+            _decide_pending_approval(row.session_id, pending_approvals.STALE)
+            continue
+        graph_labels = [str(label) for label in ((confirmed or {}).get("labels") or [])]
+        if len(graph_labels) == len(pending):
+            wanted = set(row.parked_steps)
+            labels = [label for step, label in zip(pending, graph_labels) if step in wanted]
+        else:
+            labels = graph_labels
+        items.append(
+            {
+                "session_id": row.session_id,
+                "owner_user_id": row.owner_user_id,
+                "parked_steps": list(row.parked_steps),
+                "labels": labels,
+                "status": row.status,
+                "created_at": row.created_at,
+                "expires_at": row.expires_at,
+                "request_id": row.request_id,
+                "trace_id": row.trace_id,
+                "task_id": row.task_id,
+            }
+        )
+    return {"items": items, "count": len(items)}
+
+
 @router.post("/approve")
 async def approve(request: ApproveRequest, http_request: FastAPIRequest):
     # /approve 会接管该会话的挂起轮次并把会话内容流式回传给调用方，
@@ -1256,6 +1369,9 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         while True:
             if cancel_event.is_set():
                 agent_future.cancel()
+                # 停止 != 拒绝（裁定 ④甲）：账面写 abandoned，绝不写 refused。
+                # 这一行在 R12（826d318）之前是不敢写的——那时"停止"的会话其实跑完了。
+                _decide_pending_approval(request.session_id, pending_approvals.ABANDONED)
                 # 先发 canonical、再发 legacy，与 /ask 的取消形状 (:958-973) 一致：
                 # 事件名、status="cancelled"、data.session_id 全同。legacy 保留是给
                 # 还没接 canonical 的旧客户端的，不是过渡期垃圾。
@@ -1293,6 +1409,15 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     candidates=answer_candidates + ai_reply,
                 )
                 _save_message(request.session_id, "assistant", full_text)
+                # 批准与拒绝都要闭合账面，否则面板会一直显示一条其实已经处理过的待办。
+                # refused 这一支对应 84af113「拒绝必须真的拒绝」的账面部分。
+                # 已知缺口（本批有意不补）：批准后若图又停在下一个 HITL 节点，/approve
+                # 并不发 event: hitl，因此这轮新挂起不会被记成新的 awaiting 行。补它要先
+                # 给 /approve 加 SSE 事件，属接口变更，等总控单独批。
+                _decide_pending_approval(
+                    request.session_id,
+                    pending_approvals.RESUMED if request.approved else pending_approvals.REFUSED,
+                )
                 if full_text and full_text not in ai_reply:
                     yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': full_text}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
