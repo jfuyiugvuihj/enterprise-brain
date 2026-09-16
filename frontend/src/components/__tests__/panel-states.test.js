@@ -418,9 +418,13 @@ describe('死 CSS 收口（A-5-6）：零引用的删掉，仍在用的不许顺
 
   // 反面断言：.preview-state 的失败/空两支与 .chart-state 家族都还有引用，
   // 删过头会让剩下的脸变成无样式裸文本。这条防的就是「为了凑棘轮数字乱删」。
+  // A-6-2 改的就是这里：面板全部改接 UiEmptyState 之后，全局 `.empty-state` 落到零引用，
+  // 于是它从「一条不少」那侧搬到「已删」这侧；参考稿作用域内那条仍在用，留作反证，
+  // 免得下一次有人把它当同一条一起删。
   it('仍在服役的规则一条不少', () => {
     const theme = source('../assets/theme.css')
-    expect(theme).toMatch(/[.]empty-state \{/)
+    expect(theme).not.toMatch(/^\.empty-state \{/m)
+    expect(theme).toMatch(/[.]reference-dashboard \.empty-state \{/)
     const chart = source('ChartViewer.vue')
     expect(chart).toMatch(/[.]chart-state \{/)
     expect(chart).toMatch(/[.]chart-state-error \{/)
