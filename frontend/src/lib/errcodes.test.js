@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import {
   blobErrorText,
@@ -14,50 +15,70 @@ import {
   PROSE_ALIASES,
   readBlobError,
   STATUS_CODES,
-  UNRATIFIED_CODES,
 } from './errcodes.js'
 
-/** app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举 17 码（含主树 fa35a04 追认的 account_unavailable） */
-const BLUEPRINT = [
-  'authentication_required',
-  'permission_denied',
-  'authorization_unavailable',
-  // 派单 B-1：C 已把该码并入 contracts.py 的 ErrorEnvelope.code 闭枚举，故归蓝本而非前端自扩。
-  'account_unavailable',
-  'resource_not_found',
-  'validation_error',
-  'conflict',
-  'rate_limited',
-  'queue_unavailable',
-  'model_unavailable',
-  'retrieval_unavailable',
-  // A-6 ①：真源 contracts.py:99 早就有这一档，是这份手抄漏了（本工作树的 contracts.py 停在
-  // 分支点只有 16 码，读它会假绿）。A-6 ③ 起本数组改为从 git 真源解析，手抄随即作废。
-  'storage_unavailable',
-  'task_timeout',
-  'task_cancelled',
-  'unsupported_file',
-  'parse_failed',
-  'index_publish_failed',
-  'internal_error',
-]
+/**
+ * 列 A —— 错误码词表的真源（A-6 ③）。
+ *
+ * 这里以前是两个手抄数组：BLUEPRINT 17 码、EVIDENCE_CODES 16 码，两边都不读真源。后果是
+ * 「A − C = 空」只证明手抄那 17 码有话说，后端涨到 26 码也永远看不见 —— 26 vs 25 的漂移
+ * 就是这么静下来的（看板 §4L.5）。所以现在只剩一个来源：git 对象里的 contracts.py。
+ *
+ * 为什么不许 readFileSync 工作树：fe-trunk 的 app/** 停在分支点，那里的 app/agents/contracts.py
+ * 只有 16 码，拿它对账等于拿过期副本对账，会稳定假绿。三个 worktree 共享同一个 object DB，
+ * `git show <ref>:<path>` 读到什么与工作树新旧无关。
+ *
+ * 取不到 ref / 解析不出来一律抛错让测试红。禁止 skip：skip 等于把这条对账退回成装饰。
+ */
+const CONTRACT_REF = 'codex/data-file-catalog'
+const CONTRACT_SOURCE = 'app/agents/contracts.py'
+/** A-6 ③ 实量 26 码。这里取下限而不是等号：真源再加码应由 A − C 去催前端补话，不该由一个魔数拦。 */
+const CONTRACT_MIN_CODES = 26
 
-/** data.py 系列 7 码 */
-const DATA_CODES = [
-  'invalid_filename',
-  'unsupported_chart_type',
-  'unsupported_export_format',
-  'department_scope_required',
-  'dataset_filename_conflict',
-  'dataset_preview_failed',
-  'chart_generation_failed',
-]
-/** SSE 流内错误码：chat.py:1001 的 request.failed data.error_code，两份后端枚举都还没有它 */
-const STREAM_CODES = ['no_answer_produced']
+function showAtRef(path) {
+  let text
+  try {
+    text = execFileSync('git', ['show', `${CONTRACT_REF}:${path}`], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+  } catch (cause) {
+    throw new Error(
+      `读不到真源 ${CONTRACT_REF}:${path}（git show 失败：${cause.message}）。` +
+        '码表对账不许降级：这里必须红，skip 等于回到装饰。',
+    )
+  }
+  if (typeof text !== 'string' || !text.trim()) {
+    throw new Error(`git show ${CONTRACT_REF}:${path} 返回空内容，无法对账。`)
+  }
+  return text
+}
 
-const ALL_CODES = [...BLUEPRINT, ...DATA_CODES, ...STREAM_CODES, ...FRONTEND_ONLY_CODES]
+/** 解析 ErrorEnvelope.code 的 `code: Literal[ ... ]` 块；解析不出来必须抛，不许静默回空数组 */
+function parseCodeLiteral(src, label) {
+  const block = /code:\s*Literal\[([\s\S]*?)\]/.exec(src)
+  if (!block) {
+    throw new Error(
+      `${label} 里解析不到 ErrorEnvelope.code 的 Literal[...] 块：后端枚举形状变了，` +
+        '要同步改这里的解析，不能让它退化成空对账。',
+    )
+  }
+  const codes = [...block[1].matchAll(/"([a-z][a-z0-9_]*)"/g)].map((match) => match[1])
+  if (codes.length < CONTRACT_MIN_CODES) {
+    throw new Error(
+      `${label} 只解析出 ${codes.length} 个码，少于 A-6 ③ 实量的 ${CONTRACT_MIN_CODES} 个：` +
+        '疑似解析被截断，不拿残缺的名单去对账。',
+    )
+  }
+  const dupes = codes.filter((code, index) => codes.indexOf(code) !== index)
+  if (dupes.length) {
+    throw new Error(`${label} 的枚举里有重码：${dupes.join(', ')}`)
+  }
+  return codes
+}
+
+const CONTRACT = parseCodeLiteral(showAtRef(CONTRACT_SOURCE), CONTRACT_SOURCE)
 
 const ENUM = Object.keys(ERROR_CODES)
+/** 前端合法码就是 ERROR_CODES 的键；是否覆盖真源由 A − C / C − A 两条不变量钉，不再靠手抄数组拼 */
+const ALL_CODES = ENUM
 
 /** 硬不变量：.code 只能是枚举值或空串，中文散文/未知码一律赶去 rawCode */
 const inEnum = (result, label) => {
@@ -75,13 +96,13 @@ const axiosError = (status, detail) => ({
 })
 
 describe('码表蓝本', () => {
-  it('只收录 contracts.py 18 码 + data.py 7 码，一个不自扩', () => {
-    expect(Object.keys(ERROR_CODES).sort()).toEqual([...BLUEPRINT, ...DATA_CODES, ...STREAM_CODES, ...FRONTEND_ONLY_CODES].sort())
+  it('前端键集合恰好等于真源枚举：一个不自扩，一个不漏', () => {
+    expect(ENUM.slice().sort()).toEqual(CONTRACT.slice().sort())
   })
 
   it('前端自扩码绊线为空：account_unavailable 已被后端追认，不许留残名', () => {
     expect(FRONTEND_ONLY_CODES).toEqual([])
-    expect(BLUEPRINT).toContain('account_unavailable')
+    expect(CONTRACT).toContain('account_unavailable')
   })
 
   it('每个码都有一句人话与明确的 retryable', () => {
@@ -93,7 +114,7 @@ describe('码表蓝本', () => {
   })
 
   it('别名与散文表只指向枚举内的码名，不发明新码', () => {
-    Object.entries(LEGACY_ALIASES).forEach(([legacy, alias]) => expect(BLUEPRINT.concat(DATA_CODES), legacy).toContain(alias.code))
+    Object.entries(LEGACY_ALIASES).forEach(([legacy, alias]) => expect(CONTRACT, legacy).toContain(alias.code))
     Object.entries(PROSE_ALIASES).forEach(([prose, entry]) => expect(ENUM, prose).toContain(entry.code))
   })
 
@@ -593,41 +614,21 @@ describe('blob 错误体解析（B-5 ③，下载与预览的 403 不再被说�
   })
 })
 
-/**
- * 列 B：app/agents/evidence.py::_ERROR_CODES（:19-36 实量 16 码）。
- * 与列 A（本文件的 BLUEPRINT，17 码）的差集就是后端两份拷贝之间的漂移，只此一条。
- */
-const EVIDENCE_CODES = [
-  'authentication_required',
-  'permission_denied',
-  'authorization_unavailable',
-  'resource_not_found',
-  'validation_error',
-  'conflict',
-  'rate_limited',
-  'queue_unavailable',
-  'model_unavailable',
-  'retrieval_unavailable',
-  'task_timeout',
-  'task_cancelled',
-  'unsupported_file',
-  'parse_failed',
-  'index_publish_failed',
-  'internal_error',
-]
 
-describe('码表三列对账（B-5 ④）', () => {
-  it('三个数钉住：契约 18 / evidence 16 / 前端 26', () => {
-    expect(BLUEPRINT.length).toBe(18)
-    expect(new Set(BLUEPRINT).size).toBe(18)
-    expect(EVIDENCE_CODES.length).toBe(16)
-    expect(new Set(EVIDENCE_CODES).size).toBe(16)
-    expect(Object.keys(ERROR_CODES).length).toBe(26)
+describe('码表对账（A-6 ③：读真源，不读手抄）', () => {
+  it('真源读得到也解析得出来：这是下面两条不变量的地基', () => {
+    expect(CONTRACT.length).toBeGreaterThanOrEqual(CONTRACT_MIN_CODES)
+    expect(new Set(CONTRACT).size).toBe(CONTRACT.length)
+    // 兜底码留在枚举最后，读的人一眼能看出谁是兜底（contracts.py 里也是这么排的）
+    expect(CONTRACT[CONTRACT.length - 1]).toBe('internal_error')
+    // A-6 ① 补的那一档必须真的在真源里，否则 ① 就成了前端自扩
+    expect(CONTRACT).toContain('storage_unavailable')
   })
 
   it('A − C = 空：后端每个 canonical 码都有一句人话，没有一条落到兜底句', () => {
-    BLUEPRINT.forEach((code) => {
-      expect(Object.prototype.hasOwnProperty.call(ERROR_CODES, code), code).toBe(true)
+    const missing = CONTRACT.filter((code) => !Object.prototype.hasOwnProperty.call(ERROR_CODES, code))
+    expect(missing, '后端发得出、前端只能说兜底句的码').toEqual([])
+    CONTRACT.forEach((code) => {
       const result = normalizeError({ response: { data: { detail: code } } })
       expect(result.code, code).toBe(code)
       expect(result.message, code).toBe(ERROR_CODES[code].message)
@@ -636,26 +637,18 @@ describe('码表三列对账（B-5 ④）', () => {
     })
   })
 
-  it('C − A = 8：前端有话、契约没登记的那批，逐条指名且与 UNRATIFIED_CODES 完全相等', () => {
-    const extra = ENUM.filter((code) => !BLUEPRINT.includes(code))
-    expect(extra.slice().sort()).toEqual([...DATA_CODES, ...STREAM_CODES].sort())
-    expect(extra.slice().sort()).toEqual([...UNRATIFIED_CODES].sort())
-    expect(extra.length).toBe(8)
-    UNRATIFIED_CODES.forEach((code) => {
-      expect(BLUEPRINT.includes(code), code).toBe(false)
-      expect(EVIDENCE_CODES.includes(code), code).toBe(false)
-      expect(FRONTEND_ONLY_CODES.includes(code), code).toBe(false)
-    })
+  it('C − A = 空：前端不许有契约没登记的码名（旧账 C − A = 8 已随 6606f59 收口）', () => {
+    const extra = ENUM.filter((code) => !CONTRACT.includes(code))
+    expect(extra, '前端有话、契约没登记的码名').toEqual([])
     expect(FRONTEND_ONLY_CODES).toEqual([])
   })
 
-  it('A − B 只剩两份手抄之间的落后（account_unavailable / storage_unavailable），B − A 为空', () => {
-  // 临时账（A-6 ①）：这条比的只是两份手抄。真源里 app/agents/evidence.py 已由 _enum_error_codes()
-  // 从 ErrorEnvelope.code 派生，所以真实的 A − B 恒为空，不可能再「扩大到第二条」。
-  // storage_unavailable 补进 BLUEPRINT 后差集从 1 条变 2 条，是手抄的那份 B 落后，不是后端又漂了一条；
-  // A-6 ③ 把对账改成读 git 真源时，EVIDENCE_CODES 与本条一起删除。
-    expect(BLUEPRINT.filter((code) => !EVIDENCE_CODES.includes(code))).toEqual(['account_unavailable', 'storage_unavailable'])
-    expect(EVIDENCE_CODES.filter((code) => !BLUEPRINT.includes(code))).toEqual([])
+  it('列 B 不再是第二份手抄：evidence.py 由枚举派生，所以 A − B 恒为空', () => {
+    const src = showAtRef('app/agents/evidence.py')
+    expect(src).toMatch(/_ERROR_CODES\s*=\s*_enum_error_codes\(\)/)
+    expect(src).toMatch(/frozenset\(get_args\(model\.model_fields\["code"\]\.annotation\)\)/)
+    // 手抄码表一旦回来，A − B 才有非空的可能；先在这里响，别等它把真码洗成 internal_error
+    expect(src).not.toMatch(/_ERROR_CODES\s*=\s*[[{]/)
   })
 
   it('别名表与散文表也各有话，不靠兜底句糊过去', () => {
