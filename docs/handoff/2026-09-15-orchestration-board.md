@@ -615,3 +615,31 @@ Docker Desktop 仍未运行 ⇒ 后端镜像重建与所有真机验收继续挂
 
 收 A-5（已见 `6340e01` / `7507fb9` / `1b7084d`，工作树正在改 `DocumentPreviewModal.vue`；剩 `ChartViewer.vue` + 死 CSS + 交割）→ 我亲跑五闸（色值**只准降**，降完锚必须同步落到新数）→ 派 **A-6** → A 接线落定后另开视觉 fixture 小批（`tests/visual/ui-states.spec.js`，行号取 fe-trunk）→ fe-trunk 再并回主树（先证与 C 无在途脏文件相交）+ **紧跟全量 pytest** + 重算 `HEAD:frontend` 树哈希 → 前端补码收口 → C-4（`app/common/rbac.py:34` 空部门=公开 ↔ `app/rag/filters.py` 无部门=硬拒；含 `Principal.from_user` 的 `or` 抬级）→ C-5 / R14 / R15。
 **Docker Desktop 仍未运行** ⇒ 后端镜像重建、G3 / G-C-1 / G4 / R8 真机、D 验收线、容器门**全部**继续停摆，我不擅自启动。
+
+## 4M. A-5 结案（总控亲验，未采信任何自述）+ 又查出一条死规则遗留（2026-09-16 11:2x）
+
+### 4M.1 五闸与数字
+
+`scripts/frontend_gates.ps1 -RepoDir fe-trunk` @ `033a11e`：**lockfile / test / lint / colors / build 全 0**。
+**321 测 / 16 文件**（合并树 309 → +12）；色值锚 **342 → 339**（`frontend/package.json` 的 `--max-warnings=339`，实测 `339 problems (0 errors)`）⇒ **只降不升** ✔，且降了必须同步落锚 ✔。
+
+### 4M.2 六手与写集
+
+`6340e01`(①token) → `7507fb9`(②Dashboard) → `1b7084d`(③Data) → `a84e34e`(④PreviewModal) → `b658a76`(⑤ChartViewer) → `033a11e`(⑥死 CSS 收口)。
+写集 = 8 文件，**`frontend/src/lib/**` 零改动**（A-4 的红线守住，`git diff --name-only bf1bd38..033a11e -- frontend/src/lib` = 空）；`components/ui/**` 只碰授权内的 `UiLoadingState.css`；另 `theme.css` +1 行 token、`package.json` 降锚、`panel-states.test.js` 补判据。
+
+### 4M.3 我逐条实核到的东西（不看 A 的交割报告）
+
+- `frontend/src/assets/theme.css:101` `--skeleton-loop: 1.4s` ↔ `frontend/src/components/ui/UiLoadingState.css:40` 改吃 `var(--skeleton-loop)` ✔。
+- 四处旧裸时长 / 旧类名 grep **0 残留** ✔；四处已换成 `UiLoadingState` 且**中文 label 一支未丢**：`components/ChartViewer.vue:103`、`components/DashboardPanel.vue:167`、`components/DataPanel.vue:191`、`components/DocumentPreviewModal.vue:60`。
+- 判据确实落地：`components/__tests__/panel-states.test.js:411` 一条专测钉「进行态换原语后零引用的规则已删」。
+
+### 4M.4 我另查出的一条遗留（在 A 的授权范围外，不算它失守）
+
+`frontend/src/assets/theme.css:1000` 仍有一条**全局** `.empty-state {`。全 `frontend/src` 里这个名字现在只剩两类出现：负例断言（`components/__tests__/panel-states.test.js:34`、`:161`、`:222`、`:231`）与 B 原语自己的 `ui-empty-state*` ⇒ **没有任何模板在用**，是一条真死规则。
+A-5-④ 只收了"本次接线产生的孤儿"，没回头看全局表——这也说明"死 CSS"不是一次性动作，每并一次原语就要重扫一遍全局。已并入 **A-6 任务 ②**。
+
+### 4M.5 环境记账
+
+本会话 `wait_agent` 与其余 `multi_agent_v1__*` 一律返回 **unsupported call** ⇒ 总控**读不到子 Agent 的自述与交割报告**，只能靠 `git log` + 工作树干净度 + 亲跑闸门判断进度与验收。
+⇒ 结论：以后所有验收结论一律标注"总控亲验"，**任何自述都不进看板**（§13.5 那条子 Agent 教训在本会话以另一种形式复现：我压根没收到它）。
