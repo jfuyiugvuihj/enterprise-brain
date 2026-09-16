@@ -18,6 +18,7 @@ import DataPanel from '../DataPanel.vue'
 import InsightPanel from '../InsightPanel.vue'
 import ApprovalPanel from '../ApprovalPanel.vue'
 import DashboardPanel from '../DashboardPanel.vue'
+import DocPanel from '../DocPanel.vue'
 import { UiEmptyState, UiErrorState } from '../ui'
 
 const source = f => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
@@ -216,5 +217,44 @@ describe('DashboardPanel · 总览的四处状态 + 被吞掉的证据查询失�
     expect(s).toMatch(/:retryable="!denied"/)
     expect(s).toMatch(/:retryable="!evidenceDenied"/)
     expect(s).toContain('retry-text="重新查询"')
+  })
+})
+
+describe('DocPanel · 一条提示条拆成「哪种事没成」+ 两处空态', () => {
+  it('SSR 首屏：空知识库画原语，两句话一字不改，emoji 图标交给原语的内置图标', async () => {
+    const html = await render(DocPanel)
+    expect(html).toContain('data-testid="ui-empty-state"')
+    expect(html).toContain('知识库是空的')
+    expect(html).toContain('上传公司制度、手册或数据开始')
+    expect(html).not.toContain('class="empty"')
+    expect(html).not.toContain('📭')
+  })
+
+  // 以前不论上传、下载还是删除失败，按钮永远写着「重新加载」并去重拉列表。
+  it('只有列表本身没拿到时才提供「重新加载」，下载/删除失败不提供假补救', () => {
+    const s = source('DocPanel.vue')
+    expect(s).toContain("raiseNotice('文档列表没加载出来', errorDetail(err, '文档列表加载失败'), true)")
+    expect(s).toContain("raiseNotice('文件没能下载', errorDetail(err, '文件下载失败'), false)")
+    expect(s).toContain("raiseNotice('删除没有完成', errorDetail(err, '删除失败'), false)")
+    expect(s).toContain("raiseNotice('部分文档没能删除'")
+    expect(s).toMatch(/<UiButton v-if="noticeRetry"[^>]*label="重新加载"/)
+  })
+
+  it('手搓提示条与空态样式（含 4 处色债）随分支一起删除', () => {
+    const s = source('DocPanel.vue')
+    for (const gone of ['.doc-notice', '.doc-notice-text', '.doc-notice-retry', '.doc-notice-close', '.empty-icon']) {
+      expect(s).not.toContain(gone)
+    }
+    expect(s).not.toContain('rgba(238, 109, 120, .08)')
+    expect(s).not.toMatch(/^\.empty \{/m)
+    expect(s).not.toMatch(/^\.empty-sub \{/m)
+    // 关闭 × 换成带文字的 UiButton，仍可撤下提示
+    expect(s).toContain('label="关闭"')
+  })
+
+  it('提示条仍走 role="alert"，但由原语负责，不再由面板自己写', () => {
+    const s = source('DocPanel.vue')
+    expect(s).toMatch(/<UiErrorState\s+v-if="notice"/)
+    expect(s).not.toContain('role="alert"')
   })
 })

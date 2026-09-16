@@ -2,10 +2,26 @@
 import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
 import { http, errorDetail } from '../lib/http'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
+import { UiButton, UiEmptyState, UiErrorState } from './ui'
 
 const docs = ref([])
 // 本面板自己的失败提示；401 不在这里判，统一交给 lib/http.js 的响应拦截。
 const notice = ref('')
+// notice 以前是一句话，外加一个不管发生什么都「重新加载列表」的按钮。
+// 现在把「哪一种事没成」和「重载列表是不是真的补救动作」分开带，交给 UiErrorState 呈现。
+const noticeTitle = ref('知识库这一步没有完成')
+const noticeRetry = ref(false)
+
+function raiseNotice(title, detail, retryable) {
+  noticeTitle.value = title
+  notice.value = detail
+  noticeRetry.value = Boolean(retryable)
+}
+
+function dismissNotice() {
+  notice.value = ''
+  noticeRetry.value = false
+}
 const uploads = ref([])
 const dragOver = ref(false)
 const props = defineProps({
@@ -60,6 +76,10 @@ function createUploadItem(file) {
 }
 
 // 过滤后的文档列表
+// 搜索无结果的那句话里带双引号，放进模板属性字面量会撞 Vue 的无引号属性限制，
+// 所以在 script 里拼；文案与接线前逐字相同。
+const noMatchTitle = computed(() => `没有匹配 "${searchQuery.value}" 的文档`)
+
 const filteredDocs = computed(() => {
   if (!searchQuery.value) return docs.value
   const q = searchQuery.value.toLowerCase()
@@ -67,7 +87,7 @@ const filteredDocs = computed(() => {
 })
 
 async function loadDocs() {
-  notice.value = ''
+  dismissNotice()
   try {
     const res = await http.get('/documents/catalog', {
       params: { _ts: Date.now() }
@@ -77,7 +97,7 @@ async function loadDocs() {
       .filter(Boolean)
   } catch (err) {
     console.error('文档列表加载失败', err)
-    notice.value = errorDetail(err, '文档列表加载失败')
+    raiseNotice('文档列表没加载出来', errorDetail(err, '文档列表加载失败'), true)
   }
 }
 
@@ -137,7 +157,7 @@ async function downloadDocument(filename) {
     link.click()
     setTimeout(() => URL.revokeObjectURL(url), 60000)
   } catch (err) {
-    notice.value = errorDetail(err, '文件下载失败')
+    raiseNotice('文件没能下载', errorDetail(err, '文件下载失败'), false)
   }
 }
 
@@ -228,9 +248,9 @@ async function deleteDocuments(files) {
       .filter(Boolean)
     selectedFiles.value.clear()
     await loadDocs()
-    if (failed.length) notice.value = `有 ${failed.length} 个文档未能删除：${failed.join('、')}`
+    if (failed.length) raiseNotice('部分文档没能删除', `有 ${failed.length} 个文档未能删除：${failed.join('、')}`, false)
   } catch (err) {
-    notice.value = errorDetail(err, '删除失败')
+    raiseNotice('删除没有完成', errorDetail(err, '删除失败'), false)
   } finally {
     deleting.value = false
   }
@@ -278,11 +298,18 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
     </div>
 
     <!-- 面板级失败提示：可重试，不用原生弹窗 -->
-    <div v-if="notice" class="doc-notice" role="alert" data-testid="documents-notice">
-      <span class="doc-notice-text">{{ notice }}</span>
-      <button class="doc-notice-retry" type="button" @click="loadDocs">重新加载</button>
-      <button class="doc-notice-close" type="button" aria-label="关闭提示" @click="notice = ''">×</button>
-    </div>
+    <UiErrorState
+      v-if="notice"
+      :title="noticeTitle"
+      :description="notice"
+      :retryable="false"
+      dense
+    >
+      <template #actions>
+        <UiButton v-if="noticeRetry" variant="secondary" size="sm" label="重新加载" data-testid="documents-notice-retry" @click="loadDocs" />
+        <UiButton variant="ghost" size="sm" label="关闭" data-testid="documents-notice-close" @click="dismissNotice" />
+      </template>
+    </UiErrorState>
 
     <!-- 搜索 -->
     <div class="search-bar">
@@ -368,15 +395,8 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
 
     <!-- 文档列表 -->
     <div class="doc-list" data-testid="document-list">
-      <div v-if="docs.length === 0" class="empty">
-        <span class="empty-icon">📭</span>
-        <p>知识库是空的</p>
-        <p class="empty-sub">上传公司制度、手册或数据开始</p>
-      </div>
-
-      <div v-else-if="filteredDocs.length === 0" class="empty">
-        <p>没有匹配 "{{ searchQuery }}" 的文档</p>
-      </div>
+      <UiEmptyState v-if="docs.length === 0" title="知识库是空的" description="上传公司制度、手册或数据开始" />
+      <UiEmptyState v-else-if="filteredDocs.length === 0" :title="noMatchTitle" dense />
 
       <TransitionGroup name="list" tag="div">
         <div v-for="doc in filteredDocs" :key="doc"
@@ -551,10 +571,6 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
 .doc-list::-webkit-scrollbar { width: 3px; }
 .doc-list::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 3px; }
 
-.empty { text-align: center; padding: 30px 10px; font-size: 13px; color: #909399; }
-.empty-icon { font-size: 30px; display: block; margin-bottom: 8px; opacity: 0.4; }
-.empty-sub { font-size: 11px; color: #c0c4cc; margin-top: 4px; }
-
 /* ===== 文档行 ===== */
 .doc-row {
   display: flex; align-items: center; gap: 8px;
@@ -652,7 +668,6 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
 .search-input::placeholder,
 .search-result,
 .upload-hint,
-.empty-sub,
 .footer-hint,
 .up-msg,
 .panel-footer {
@@ -701,50 +716,7 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
   background: rgba(238, 109, 120, .12);
 }
 
-.empty {
-  color: var(--ink-soft);
-}
-
 .panel-footer {
   border-top-color: var(--line);
-}
-
-.doc-notice {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--red);
-  border-radius: var(--radius-sm);
-  background: rgba(238, 109, 120, .08);
-  color: var(--text);
-  font-size: 13px;
-}
-
-.doc-notice-text {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.doc-notice-retry {
-  padding: 3px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.doc-notice-close {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
 }
 </style>
