@@ -720,7 +720,6 @@ textarea:focus-visible {
 
 .panel-card,
 .hero-card,
-.panel-state,
 .mini-stat,
 .row-card,
 .insight-item,
@@ -998,8 +997,7 @@ textarea:focus-visible {
   font-size: 10px;
 }
 
-.empty-state,
-.panel-state {
+.empty-state {
   padding: 24px;
   color: var(--muted);
   text-align: center;

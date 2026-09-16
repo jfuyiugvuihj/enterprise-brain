@@ -398,8 +398,42 @@ describe('ChartViewer · 取图进行态吃原语（A-5-5）', () => {
 
   // dense 不是审美选择而是等值：图表卡在 ChatPanel.vue:478 的消息气泡里，旧文案
   // .chart-state-text 是 12px，dense 档文案走 --t-xs(12px)；不带 dense 会变 --t-sm(13px)。
-  it('字号等值有据：旧 .chart-state-text=12px，dense 走 --t-xs(12px)', () => {
-    expect(source(`../assets/theme.css`)).toContain(`--t-xs: 12px`)
+  it('字号等值有据：旧 .chart-state-text 仍是 12px，dense 走 --t-xs(12px)', () => {
+    expect(source('ChartViewer.vue')).toMatch(/[.]chart-state-text \{[\s\S]*?font-size: 12px;/)
+    expect(source('../assets/theme.css')).toContain('--t-xs: 12px')
+    expect(source('../assets/theme.css')).toContain('--t-sm: 13px')
   })
 })
 
+
+describe('死 CSS 收口（A-5-6）：零引用的删掉，仍在用的不许顺手带走', () => {
+  // 判据打在「定义还在不在」上，四条零引用规则各钉一条，删没删一眼可判。
+  it('进行态换原语后零引用的规则已删：.panel-state / .data-state / spinner / chart-spin', () => {
+    expect(source('../assets/theme.css')).not.toMatch(/[.]panel-state/)
+    expect(source('DashboardPanel.vue')).not.toMatch(/[.]panel-state/)
+    expect(source('DataPanel.vue')).not.toMatch(/[.]data-state/)
+    expect(source('ChartViewer.vue')).not.toMatch(/[.]chart-state-spinner/)
+    expect(source('ChartViewer.vue')).not.toMatch(/@keyframes chart-spin/)
+  })
+
+  // 反面断言：.preview-state 的失败/空两支与 .chart-state 家族都还有引用，
+  // 删过头会让剩下的脸变成无样式裸文本。这条防的就是「为了凑棘轮数字乱删」。
+  it('仍在服役的规则一条不少', () => {
+    const theme = source('../assets/theme.css')
+    expect(theme).toMatch(/[.]empty-state \{/)
+    const chart = source('ChartViewer.vue')
+    expect(chart).toMatch(/[.]chart-state \{/)
+    expect(chart).toMatch(/[.]chart-state-error \{/)
+    const preview = source('DocumentPreviewModal.vue')
+    expect(preview).toMatch(/[.]preview-state \{/)
+    expect(preview).toMatch(/[.]preview-error \{/)
+  })
+
+  // 卡片表面那组规则里被摘掉的只有 .panel-state 一个选择器，同伴不许被牵连。
+  it('theme.css 卡片组只摘掉 .panel-state 一个选择器，同伴还在原处', () => {
+    const theme = source('../assets/theme.css')
+    for (const keep of ['.panel-card,', '.hero-card,', '.mini-stat,', '.row-card,', '.insight-item,', '.metric-card,']) {
+      expect(theme, keep).toContain(keep)
+    }
+  })
+})

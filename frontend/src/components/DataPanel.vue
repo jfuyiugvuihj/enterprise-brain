@@ -446,13 +446,6 @@ onMounted(loadDataFiles)
   font-size: 10px;
 }
 
-.data-state {
-  margin: 4px 0 10px;
-  color: #909399;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
 /* 数据画像 */
 .profile-card {
   margin-top: 16px;
@@ -625,7 +618,6 @@ onMounted(loadDataFiles)
 }
 
 .upload-hint,
-.data-state,
 .data-file-meta,
 .col-type,
 .col-stats {

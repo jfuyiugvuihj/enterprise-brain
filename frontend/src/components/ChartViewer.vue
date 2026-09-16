@@ -318,15 +318,6 @@ onUnmounted(() => {
   font-size: 18px;
 }
 
-.chart-state-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(157, 178, 207, .28);
-  border-top-color: #8ea8ff;
-  border-radius: 50%;
-  animation: chart-spin 0.9s linear infinite;
-}
-
 .chart-retry {
   flex: none;
   padding: 6px 14px;
@@ -348,9 +339,5 @@ onUnmounted(() => {
 .chart-btn:disabled {
   opacity: .45;
   cursor: not-allowed;
-}
-
-@keyframes chart-spin {
-  to { transform: rotate(360deg); }
 }
 </style>
