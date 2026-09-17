@@ -483,7 +483,7 @@ GPU/显存/最低配置**零命中**（2026-09-16 实搜），即"客户这台�
 **为什么要移到这里**：性能改造的**登记处**是本文，**论据与编排**在
 `docs/handoff/2026-09-17-perf-architecture-plan.md`（下称《计划书》）。人日、分层、依赖链看《计划书》§5；
 每单的**判据与禁改边界**以本节为准。**R39 不建，沿用 R17**（裁定=甲）。
-**共同判据**：合并前跑全量 pytest 并记录**当前 HEAD** 的数字（**禁止再引用 `895ee18` 时点的 727/903**）；
+**共同判据（2026-09-17 09:45 订正，根因见看板 §4V.3）**：R20 未修之前**任何腿禁止跑全量 pytest**——实测它会 `DELETE` 宿主原生 PG 的 `users` 行（`tests/test_auth.py:163`、`tests/test_phase2_rbac.py:45`），属未授权的数据写操作；合并前只跑**本单指定单文件**并记**当前 HEAD** 的数字，全量回归由用户另开的独立对话在 R20 修完后统一复跑。**任何历史 HEAD 的 passed 数字一律不得当现状引用**（`895ee18` 的 727/903 与 `826d318` 的 771/22 均已过期）。
 端到端计时期间禁止 `up/down/restart`；GPU 档必须先在容器内 `nvidia-smi` 自证，否则整轮作废。
 
 | 单号 | 内容与落点 | 判据（机器可验） | 禁改边界 |
@@ -531,3 +531,21 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 （`0d57886` / `9d327d8`，`frontend/package.json` 已无 `element-plus`）。性能线对前端**只新增两条要求**：
 ① **图谱撤一级入口**（`frontend/src/App.vue:48`、`:56`），降为文档预览的"依据 / 相关制度"子视图；
 ② R32 的**档位选择器**与 R35/R26 的**降级第四张脸**。**除此之外本线不得改 `frontend/**`。**
+
+---
+
+## 21.4 本轮（09-17 上午）执行状态：R25 / R27 前置 / R36 已合并，R20 在途
+
+| 单号 | 状态 | 落点 | 总控独立复核结论（不采信自述） |
+|---|---|---|---|
+| **R25** | ✅ 已合并 `b17b4dd` | 新增 `docker-compose.dev.yml` + `README.md` 一节 | 挂载点 `/app/app` 经容器内 `import app.main` 实测；`verify_container_stack.py:105` 确认一律显式 `-f` ⇒ 容器门仍验镜像语义；`git status --porcelain -- docker-compose.yml deploy app frontend` 为空 |
+| **R25 命名裁定** | ✅ 采纳，**偏离原单默认名** | 故意**不叫** `docker-compose.override.yml` | 原单默认名有缺陷：`README.md:13` 的客户命令不带 `-f`，自动合并会让私有化栈绑定挂载运维机代码树；实测临时改名后 `config` 出现 `bind entries auto-merged: 3` |
+| **R25 真机生效** | ⏸ **待用户独立对话** | 双 `-f` `up -d` + 改一行看 `WatchFiles ... Reloading` | 会重建在跑的 3 个容器（与验收栈同名、已 healthy 12 h），属端到端门禁 |
+| **R27 前置测试** | ✅ 已合并 `29665da` | 新增 `tests/test_route_fallback_correction.py`（13 例） | 总控亲跑 `13 passed in 2.40s` [实测 09:52]；变异验证后 `orchestrator.py` 工作文件 blob 哈希 == HEAD（`cdec7d2`）无残留；跑后 `chroma_db` 未被写 |
+| **R36** | 🟡 **部分完成**，已合并 `ac44d00` | `tests/fixtures/business_evaluation_100.jsonl`（105 条）+ `test_evaluation_report.py`（+216 行） | 判据①达成：总控独立统计 105 条 / id 唯一 105 / 问答 50·分析 35·报告 20 / 成对冲突 8 对 16 条 / **沿用原 30 条 question·answer·must_contain 零漂移**（`DRIFT_COUNT=0`）；亲跑 `8 passed` [实测 09:58]，三单合并后复跑 `21 passed` [实测 09:59] |
+| **R36 判据②③** | ⏸ **待用户独立对话** | 基线分数落盘供 R29/R33/R35 对比 | 跑分必须打 Ollama（`n_ctx=4096` 单点红线），本轮零模型调用。**未落真机分数不算 R36 完成**，R29/R33/R35 的"质量基线已建立"前置**仍未满足** |
+
+**顺带钉出的两条既有缺陷（不计入 R36 完成度）**：
+
+1. `insight-02` 期望值 `上升`，金标答案却是「返回趋势异常」⇒ **它过不了自己的 `must_contain`**。本轮为保持与历史 30 条可比而未改，已锁进 `KNOWN_INCONSISTENT_INHERITED_IDS`（扩大即红），基线落盘后再收紧。
+2. **R20 范围必须再扩一条**：任何导入 `app.agents.orchestrator` 的测试，若解释器装有 `psycopg_pool`，会在 **import 期**连宿主 PG 并执行 `PostgresSaver.setup()` 建表。当前 `C:\Users\fengx\anaconda3\python.exe` 实测 `ModuleNotFoundError: psycopg_pool` [实测 09:52] 才幸免 ⇒ **这是环境巧合，不是设计保证**，R20 的隔离必须同时覆盖 `app.common.auth` 与 `PostgresSaver` 两条 import 期路径。
