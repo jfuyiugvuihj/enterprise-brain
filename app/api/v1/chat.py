@@ -233,6 +233,68 @@ def canonical_sse_event(
     )
 
 
+def _document_source_row(worker: str, evidence: dict) -> dict | None:
+    """还原一条文档 Evidence 成 ``DocumentRetrievalScope.allows`` 认得的命中形状。
+
+    旧 ``/chat`` 端点把 ``retriever.search`` 的返回字典直接喂给 ``scope.allows``；Agent 路径里
+    同一份命中先被 ``app/agents/evidence.py::record_document_hits`` 记进证据袋，密级与部门
+    落在 ``metadata`` 下。这里只做搬运，**不新增任何放行分支**：判据还是那个 ``scope.allows``，
+    缺可用元数据的命中一律不可见。
+    """
+    if not isinstance(evidence, dict) or evidence.get("source_type") != "document":
+        return None
+    source = str(evidence.get("source_name") or "").strip()
+    if not source:
+        return None
+    metadata = evidence.get("metadata") if isinstance(evidence.get("metadata"), dict) else {}
+    locator = evidence.get("locator") if isinstance(evidence.get("locator"), dict) else {}
+    return {
+        "worker": worker,
+        "source": source,
+        "source_id": str(evidence.get("source_id") or source),
+        "chunk_index": locator.get("chunk_index"),
+        "score": evidence.get("score"),
+        "score_type": evidence.get("score_type"),
+        "document_version_id": evidence.get("document_version_id"),
+        "index_version_id": evidence.get("index_version_id"),
+        "content_sha256": metadata.get("content_sha256"),
+        # 这两项就是 ``scope.allows`` 的判据，留在事件里是为了"这条为什么能看"可复核。
+        "classification": metadata.get("classification"),
+        "department": metadata.get("department"),
+        "permission_checked": bool(evidence.get("permission_checked")),
+        "provenance_status": evidence.get("provenance_status"),
+    }
+
+
+def _collect_document_sources(agent_results: dict, sink: dict) -> None:
+    """把一次流式回报里所有 worker 的文档证据汇进 sink，按 ``source_id`` 去重。
+
+    取证自工具边界实际检到的东西，不从正文里反推——那是 ``app/agents/evidence.py`` 开篇
+    已经写死的纪律：本轮没有检索过的文档不允许凭着答案文本出现在来源里。
+    """
+    for worker, record in (agent_results or {}).items():
+        if not isinstance(record, dict):
+            continue
+        for evidence in record.get("evidence") or []:
+            row = _document_source_row(str(worker), evidence)
+            if row is not None:
+                sink.setdefault(row["source_id"], row)
+
+
+def _authorized_source_rows(rows: dict, principal) -> tuple[list[dict], str]:
+    """用与旧 ``/chat`` 同一个 ``scope.allows`` 复核每条来源，返回可见行与理由码。
+
+    ``search_for_principal`` 已经把 ``scope.allows`` 当作 pred 过滤过一次，这里是新出口上
+    的第二道防线：来源事件是本单新开的泄露面，不能默认上游永远没漏。
+    """
+    try:
+        scope = resolve_document_retrieval_scope(principal)
+    except RetrievalScopeError as scope_error:
+        logger.warning(f"[ASK] 来源事件缺少可用检索范围: code={scope_error.code}")
+        return [], scope_error.code
+    return [row for row in rows.values() if scope.allows(row)], scope.reason_code
+
+
 def _latest_document_version(filename: str) -> dict | None:
     for item in list_document_versions(filename):
         storage_path = item.get("storage_path")
@@ -1016,6 +1078,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         latest_worker_results: dict = {}
         latest_final_answer = ""
         answer_candidates: list[str] = []
+        source_rows: dict[str, dict] = {}
         sequence = 1
 
         yield canonical_sse_event(
@@ -1166,6 +1229,27 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     },
                 )
                 sequence += 1
+                # R41：sources 提升为 canonical 事件。位置在 request.completed 之后、legacy
+                # done 之前：done 仍是"流结束"的唯一信号，旧客户端遇到认不得的事件名也
+                # 不会丢正文；request.started/completed 的 sequence 也不因本单漂移。
+                visible_rows, scope_reason_code = _authorized_source_rows(source_rows, request_principal)
+                yield canonical_sse_event(
+                    "sources",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="completed",
+                    data={
+                        "session_id": thread_id,
+                        "sources": visible_rows,
+                        "hit_count": len(visible_rows),
+                        # 缺了这个数字，"0 条来源"就分不清"没检索到"与"检索到了但不给你看"。
+                        "unauthorized_count": len(source_rows) - len(visible_rows),
+                        "scope_reason_code": scope_reason_code,
+                    },
+                )
+                sequence += 1
                 yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0)
                 break
@@ -1204,6 +1288,11 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 latest_worker_results = dict(worker_results)
             if data.get("final_answer"):
                 latest_final_answer = str(data["final_answer"])
+            # R41：边跑边收证据，不在收尾时反推。取消/失败分支不会读到这个字典，
+            # 所以"没有产出可见答案的一轮"也绝不会发出来源事件。
+            agent_results = data.get("agent_results")
+            if isinstance(agent_results, dict):
+                _collect_document_sources(agent_results, source_rows)
 
             dispatched: list[str] = []
             for msg in msgs:
