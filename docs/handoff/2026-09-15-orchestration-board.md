@@ -1193,9 +1193,11 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Planck` | `01a0ae99-0576-7490-94fc-1366eb8bc5ad` | R55 | `be-r20` | **已结案（非该线自证）**：同上断线；本班亲验 90 passed / 12 skipped + HEAD 反证 41 FAILED，子提交 `6663a40` 并入 `5984696`（§4AI.2）；`probe.txt`(0 字节) 未入库 | 21:08:20 |
 | `Jason` | `01a0ae99-89de-7e10-aab8-ac138c9a276e` | （Planck 的重复体） | `be-r20` | **已结案**：shutdown 回执已到，经查从未落盘 | 17:11:38 |
 | `Goodall` | `01a0aef7-3590-7001-a031-0187447ddea2` | R17 | `be-leg2` | **失效**：18:43:58 派出后随总控死亡，`be-leg2` 至 20:5x 仍**零落盘**（等于未动工）；本班 21:11 原样重派为 `Curie` | 20:52:10 |
-| `Curie` | `01a0af7e-23bc-7b71-96e9-e2288069cffa` | **R17** 数据行部门 fail-closed | `be-leg2`（基线 `5984696`，**独占**） | **运行中**（21:11:14 单次投递）；写域仅 `app/common/rbac.py`；坑1 封堵＝禁 `values == dept`，须证「非管理员且账号无部门 ⇒ 一行都不可见」；`rbac.py:45 fillna(1)` 属 H13 **不许碰** | 21:17:30 |
-| `Banach` | `01a0af7f-0a94-76b2-95d9-138066536a4e` | **R56** 测试期真打宿主 Ollama | `be-r14`（基线 `5984696`，**独占**） | **运行中**：21:12:26 自 `497bef5` ff 到位；21:16 冻结核查**零写盘**；21:18 复工令已投；写域仅 `tests/**`，`chroma_db/chroma.sqlite3` 脏（09-16 遗留）禁 add/restore | 21:18:05 |
+| `Curie` | `01a0af7e-23bc-7b71-96e9-e2288069cffa` | R17 | `be-leg2` | **已结案**：子提交 `17f45a4` 并入主树 `dd2a244`；总控亲验 110 passed + 18 例行为探针（详 §4AJ.2）；交回 3 条待裁项另立单（§4AJ.5） | 21:53:32 |
+| `Banach` | `01a0af7f-0a94-76b2-95d9-138066536a4e` | **R56** 测试期真打宿主 Ollama | `be-r14`（基线 `5984696`，**独占**） | **运行中**：`+365/−0` 进 `tests/conftest.py`（sticky 模块闸门 + autouse 逐用例兜底 + `pytest_collection_finish` 记 session error），新文件 `tests/test_no_host_model_endpoint_during_tests.py`(7936B, 21:44:03)；**注释内已自证用 `.venv`/py3.11.7/chromadb 1.5.9** ⇒ 订正令已采纳；⚠ 根目录 `r56_stack.txt`(21:25，anaconda 时代产物) **不许入库** | 21:53:32 |
 | `Peirce` | `01a0af7f-4f09-7062-9cdc-0a397cf0e816` | R56（**重复体**） | 与 `Banach` 同为 `be-r14` | **本班 21:17:20 关停**（事故 #15，同类第六次）；关停前零落盘 ⇒ 无产物损失 | 21:17:20 |
+| `Meitner` | `01a0af9c-9f38-7130-91fe-d2b6349f310c` | R35（**重复体**） | 与 `Poincare` 同为 `be-r15` | **本班 21:4x 关停**（事故 #16，同类第七次）；关停前零落盘 ⇒ 无产物损失；**其遗留情报已被采纳**（§4AJ.4） | 21:53:32 |
+| `Poincare` | `01a0af9c-5047-77b1-a460-682786e3cac9` | **R35** 答案缓存门槛与四座孤岛 | `be-r15`（基线 `dd2a244`，**独占**） | **运行中**：21:4x 冻结→复工（`send_input` 单次，submission `01a0afa3`）；写域 `app/common/cache.py` + `chat.py` 缓存段 + `tests/`；**禁碰** `conftest.py`(R56 在途)/`rbac.py`(已结案)/`approve()` 区间(R55)/`frontend/**`/评测集 | 21:53:32 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -1740,3 +1742,47 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 - 划界：属**架构线**，不占腿①/腿③串行位，不计入 8–11 人日；**不得**借迁移之名改 embedding 模型（计划书 §7 L246 原条款仍有效）。
 - 本班**未派工**：开工需业主点头；R58 起必须真机（H12 的 `docker compose build migrate` + 备份演练），Agent 一律不跑改数据/建库/起服务的命令。
 - 顺带实测登记：`chroma_db/**` **仍被 git 跟踪**，主树与 `be-r14`/`be-r53`/`be-r20` 均有 `M chroma_db/chroma.sqlite3` 脏项（主树最近一次被写 = 09-17 16:35 一轮主树测试，**这正是 R56 的现实依据**）；反跟踪与删除属业主本人（H4/H5/H8）。
+
+## 4AJ 本班（09-17 21:0x–21:5x）：PGVector 计划落库确认 / R17 结案 / 事故 #16 / R35 裁定
+
+### 4AJ.1 业主令「把 pgvector 的**添加**计划加进去」——**已满足，落库 `0831df6`**
+
+- 落点三处齐：跟进单 **§22**（L738–773，含事实基线 / 三条硬阻塞 / 排期写域判据表 / 派工边界）、
+  计划书 **§5.2 L203–205**（R58/R59/R60 三行）+ **§7 L253**（划界：换存储省不出一秒）+ **§8 L262**（依赖链 `R21/R22 → R58 → R59 → R60`）与 **L271**（风险条款 6：双读召回全绿 + 一次可回滚演练才算切换门禁）、本节所在看板 **§4AI.9**。
+- 一句话答业主「为什么现在还是 chroma」：**PG 侧只有骨架没有血管**——`migrations/0002_execution_data_lineage.sql:243` 的 `embedding vector` 无维度、全仓迁移对 `hnsw|ivfflat` 零命中、`app/**` 运行时零写入方（只有 `indexing.py:203` 取值校验与 `monitoring.py:272` 存在性探测），向量读写 100% 走 `app/rag/retriever.py:190` 的 Chroma `PersistentClient`。`docker-compose.yml:48` 挂的是 `pgvector/pgvector:pg16`，**扩展在位而闲置**。
+- 状态：**未派工**。开工需业主点头，且 R58 起必须真机（H12 + 备份演练）。
+
+### 4AJ.2 R17 结案（主树 `dd2a244`，子提交 `17f45a4`）
+
+- `app/common/rbac.py` 53→213 行、新 `tests/test_rbac_department_fail_closed.py` 431 行 / 78 例、`tests/test_phase13_private_enterprise.py` 旧断言 `["a","c"]`→`["a"]` 并钉住 legacy 侧。
+- **总控亲验**（不采信自述）：复跑 **110 passed**；**18 例行为探针**实测——staff+sales→`['a']`；staff+无部门→`[]`（reason `authorization_unavailable`）；admin→原帧且**不塞 attrs**；`legacy|LEGACY|off|0`→`['a','c']`；拼错/空/未设→新口径；无部门列+无部门账号→`[]`。
+- 两条硬约束未被越权：`rbac.py:45` 的 `fillna(1).astype(int)` **仍在**（属 H13，执行层未碰）；`isin(("", dept))` 全仓仅剩 1 处 = 灰度回退支 ⇒ 判据裁定**与甲案一致**结案（§13 甲本身强制要求灰度开关）。
+- **主树新基线 = 237 passed / 12 skipped**（9 文件，`21:53:32` 亲跑，`.venv`）。旧口径「151/4」「159/12」「110」全部作废。
+
+### 4AJ.3 事故 #16（同类第七次）：R35 双投递到同一棵树
+
+- 现象：`Poincare` 与 `Meitner` 同时持有 R35、同占 `be-r15`。取证两执行体**均零落盘**（HEAD `dd2a244`，脏项仅 09-16 遗留的 `M chroma_db/chroma.sqlite3`）⇒ 无产物损失，关 `Meitner` 留 `Poincare`。
+- **根因订正（记我账，也记 §4W.9 的账）**：本节写作过程中我**再次**在同一条消息里并列了两个 `close_agent`（第二次报 `not found` 而空转），另有一次双 `send_input`。三次实测的共同点不是"忘了规则"，而是**同一 block 内的重复调用会被机械序列化** ⇒ 「一次只发一个」作为自律承诺已被证伪七次，**只认结构约束**。
+- 有效对策（自本行起执行）：① **任何有副作用的调用（spawn / send_input / commit / merge / 写文件）单独占一个 block，block 内不并列任何第二个函数调用**；② spawn 后**下一个动作必须是磁盘核查**；③ 投递报错时**先查是否已生效再决定**，禁止无脑补投；④ 只读取证可与思考同 block。
+
+### 4AJ.4 R35 三条裁定（复工令已投，submission `01a0afa3-a754-7ff3-add0-e4e3bf6f4568`）
+
+- **裁定 1**：`tests/test_chat_cache_safety.py::test_ask_does_not_return_stale_global_answer_cache` 确与判据① 正面冲突（我亲读 `chat.py:998/1002` + 该测试 `:46-49` 桩恒返 `stale_answer`、`:68-69` 两条断言）。**授权改桩、禁改断言**：桩须按 `(question, scope)` 双匹配才返值（对齐真实键语义 `cache.py:115-123`），三条 `assert` 一字不动；改完桩若变红 = 实现错，禁止删断言 / 改期望 / 加 skip 凑绿。同文件其余用例不许碰。
+- **裁定 2**：门槛放开到"会话内也查缓存"后，`answer_cache_scope` 只到 `user:{identity}`（`cache.py:67-79`）**不含部门与密级维度** ⇒ 判据②「跨部门/跨密级命中 0 条(P0)」必须由执行层自己补证据，含「同一 user 换部门后旧缓存能否读回」这条 P0 论证，不许以"scope 已足够"糊过。
+- **裁定 3**：`_MemoryRedis.setex` 忽略 TTL（`cache.py:39`）、`expire` 空操作（`:57`）⇒ 无 Redis 环境缓存**永不过期、无上限增长**；判据③「淘汰策略可测」不接受只写文档。
+
+### 4AJ.5 R17 交出的三条待裁项（本单未含，**待业主点头另立单号**）
+
+1. **无部门列的表整表跨部门仍可见**（`reason=department_column_missing`，甲案未覆盖此形态）。
+2. **`app/agents/tools.py` 空结果文案不诚实**：`_query_data` 把"被权限隐藏"说成"代码执行未通过"，`_analyze_data` 未区分缺部门 / 别部门。接口已备好（`filter_dataframe_rows_with_scope` + `df.attrs["rbac_row_scope"]`），属**改文案不改判定**的低风险单。
+3. **部门匹配大小写与空格敏感**：`" sales "` / `"Sales"` ⇒ 零行。方向安全（fail-closed）但需裁定是否归一化。
+- 另记一条读法风险：灰度开关把 `off/0/false/no` 解释为**放宽**，存在"以为是关、其实是开"。
+
+### 4AJ.6 名册快照与三腿现状（实取 21:53:32，主树 HEAD `dd2a244`）
+
+- 在途：**R35**(`Poincare`/`be-r15`)、**R56**(`Banach`/`be-r14`)，一 agent 一树，无交叠。R17/R55/R57 已结案并入主树。
+- 腿①(`app/agents/**`)：队头 **R29**（R27 已结案），R30/R31/R33/R42/R38 在 `orchestrator.py` 上串行排队。
+- 腿③(`app/rag/**`、`chat.py`、`cache.py`)：R28/R41/R45/R57/R55 已结案；**`chat.py` 现由 R35 持有**、`retrieval_pipeline.py` 归已结案的 R57 ⇒ R35 落地前**不再派碰 `chat.py` 的单**。
+- 零提交单：R29 R30 R31 R32 R33 R34 R37 R38 R40 R42 R43 R44 R46 R47 R48 R49 R50 R51 R52（R39 不建）。
+- 等业主：H6（分支**从未 push**，本机唯一副本，`dd2a244` 之后又多 5 个提交，风险递增）/ H12（`docker compose build migrate`）/ H11（重启容器才真拿到 GPU）/ H13（`chat.py` 的 `Form(1)` 与 `rbac.py:45 fillna(1)` 口径）/ H4·H5·H8（卫生删除权，垃圾清单见 §4AI.9 末行）。
+- **心跳**：`automation-2` 实测 `status = "PAUSED"`（仍指向已死线程，故不再空撞报错）。**本班按业主指令不新建、不恢复任何心跳**；H10 的"接管后自建心跳"条款与已证实的死因冲突，**建议改为"不建心跳 + 每轮开头自查 H3/H6/H12"**，等业主点头再改文档。
