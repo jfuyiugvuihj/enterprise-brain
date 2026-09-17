@@ -1,4 +1,4 @@
-# 前端并行开工看板（2026-09-15）
+﻿# 前端并行开工看板（2026-09-15）
 
 **规则**：每条对话 / 每个子 Agent 开工前只读 §1 找自己那一行 + §4 看闸门颜色。**闸门不绿就不许做任何写操作**，只许只读准备。
 **翻绿的唯一凭据是 commit**：翻闸人自己提交、自己把 commit 号写进 §4，并在自己 worktree 里 `git merge --ff-only codex/data-file-catalog` 让全树看到。**不靠记忆、不靠默契、不靠"我觉得做完了"。**
@@ -1080,3 +1080,36 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 
 **派工事故补充**：三条 R20 重复线在停写前做的只读定位，其中两条（`test_phase2_rbac.py:45` 第二条 DELETE、
 容器 PG 未发布宿主端口）我已独立复核为真并据此改写门禁 —— 记为「事故未遂但产出可用」，不作为对重复派工的辩护。
+
+### 4V.8 🔴 GPU 根因：容器在纯 CPU 推理，缺的是**声明**不是硬件（09-17 10:16 两级复验）
+- **触发**：W8 §:515 留的前置「宿主 4060 能否透传进容器」一直未验，而阶段 A 判据里
+  「容器内 `nvidia-smi` 可见卡且拿不到卡必须报错」正是 R26 的验收项 ⇒ 决定先摸清真实现状再派工。
+- **结论**：容器当前**纯 CPU 推理**；宿主与 WSL2 侧的 GPU 软件栈前提**本机已具备**，
+  缺的只是 `docker-compose.yml` 里那一行设备声明。**但最后一环仍未验证**（见下方限定）。
+| 层 | 事实 | 判据命令 | 时点 |
+|---|---|---|---|
+| 宿主 | RTX 4060 Laptop **8188 MiB** / driver **566.07**，`nvidia-smi` exit=0 `[实测]` | `nvidia-smi --query-gpu=name,memory.total,driver_version` | 10:16:13 |
+| WSL2 VM | `/dev/dxg` 存在（`crw-rw-rw- 10,258`）、`/usr/lib/wsl/lib/libcuda.so*` 齐全 `[实测]` | `wsl -d docker-desktop -- sh -c 'ls -l /dev/dxg'` | 10:16:13 |
+| Docker | `nvidia` runtime **已注册**：`io.containerd.runc.v2  nvidia  runc` `[实测]` | `docker info --format '{{range $k,$v := .Runtimes}}{{$k}} {{end}}'` | 10:16:13 |
+| 容器 | **无** `/dev/dxg`（exit=2）、**无** `/usr/lib/wsl/lib`、`nvidia-smi` exit=127 `[实测]` | `docker exec enterprise-brain-ollama-1 sh -c '...'` | 10:15:55 |
+| 声明 | `docker-compose.yml:78` 的 ollama 服务 `device_requests` **0 命中** `[实测]` | `Select-String docker-compose.yml -Pattern 'device_requests'` | 10:15:49 |
+| 运行期 | serve 日志 `inference compute id=cpu library=cpu total="7.8 GiB"`；`ollama ps` 无驻留模型 `[实测]` | `docker logs enterprise-brain-ollama-1` | 10:15:55 |
+- **⚠️ 层级混用踩坑（记总控账，本会话第 3 次同类错误）**：交接摘要记「`docker-desktop` 内 `/dev/dxg` 存在」**为真**，
+  我第一次复验却是在**容器内**执行同一条 `ls /dev/dxg` 得到「不存在」。**两个数不矛盾，是两个隔离层。**
+  教训与 §4V.7 第 1 条同源：**同一条命令在不同隔离层测出的不是同一个事实，报数必须先报层。**
+- **我纠正上一轮的过强表述**：摘要原写「透传前置**已在本机验通**」不准确。准确的说是
+  「**软件栈前提已具备**」。**尚未验证的最后一环**＝加上设备声明后 ollama 容器内能否真出 `id=cuda`，
+  它要求重启容器 ⇒ 立 **H11，仅用户本人**。
+  另注：VM 层 `nvidia-smi` not found 是**预期行为**（WSL2 GPU 走 `/dev/dxg`+`libcuda`，`nvidia-smi` 不进 docker-desktop VM），
+  **不得**据此反判「无 GPU」——我自己差一点又犯一次镜像版的同一个错。
+- **一个必须一起看的硬约束（别把好消息说过头）**：`.wslconfig` 为 `memory=8GB / processors=12 / swap=8GB` `[实测 10:16]`，
+  与 ollama 自报 `total="7.8 GiB"` 吻合 ⇒ **VM 内存只有 8 GB，且这是整个栈共用**（后端+worker+scheduler+frontend+redis+postgres+ollama）。
+  即使 GPU 声明打通，7B/8B 量化档（约 4.5–5 GB 权重 `[推算]`，未在本机验过）仍要与后端抢这 8 GB ⇒
+  **D 档收益的量化结论仍须 H11 真机验完才可写进承诺**，现在只能说「前提具备」，不能说「已提速」。
+- **对排期的裁定影响**：D 档（L5 硬件）**不必先租 GPU** ⇒ **H1 暂缓触发**，R26 不再假设「一定拿不到卡」。
+  R26 判据收窄为「**声明 + 诚实降级 + 稳定错误码**」三件，真机 `id=cuda` 那一步交 H11 由用户做。
+- **顺带订正计划书 L5 的一条错误判据**（`docs/handoff/2026-09-17-perf-architecture-plan.md:158`）：
+  原文「本机 `--gpus all` 实测拿不到 `/dev/nvidia*`」——**WSL2 + Docker Desktop 的 GPU 通道是 `/dev/dxg`，不是 `/dev/nvidia*`**，
+  拿后者当探针必然得负结论，属**用错探针**而非硬件不通。已在 L5 就地补订正注记（不改写原句，保留可追溯）。
+- **本次未做的事（划清边界）**：没有 `docker run`、没有重启任何容器、没有改 `docker-compose.yml`、
+  没有打 Ollama 做任何计时。全部为只读检视，符合并发红线。
