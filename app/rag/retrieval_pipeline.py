@@ -43,6 +43,74 @@ REWRITE_PROMPT = """你是检索专家。对用户问题生成 3 个不同角度
 {{"rewrites":["改写1","改写2","改写3"],"sub_questions":["子问题1","子问题2","子问题3"]}}"""
 
 
+# ==================== 查询改写档位 ====================
+
+TIER_ENV = "RETRIEVAL_TIER"
+TIER_FAST = "fast"
+TIER_ADAPTIVE = "adaptive"
+TIER_FULL = "full"
+DEFAULT_TIER = TIER_FULL
+REWRITE_TIERS = (TIER_FAST, TIER_ADAPTIVE, TIER_FULL)
+
+# 现场只会写档位名，因此容错少量同义写法；其余拼法一律当作"不认识"处理。
+TIER_ALIASES = {
+    "off": TIER_FAST,
+    "lean": TIER_FAST,
+    "on": TIER_FULL,
+    "standard": TIER_FULL,
+    "default": TIER_FULL,
+}
+
+
+# adaptive 档的触发门槛：问题看得出含多个意图，才值得为改写付一次阻塞往返。
+ADAPTIVE_REWRITE_MIN_CHARS = 24
+ADAPTIVE_REWRITE_MIN_CLAUSES = 2
+_CLAUSE_SEPARATORS = "，,；;、？?"
+
+
+def resolve_rewrite_tier(tier: str | None = None) -> str:
+    """把显式档位或环境变量归一化成 fast / adaptive / full。
+
+    默认档必须是"保持现状"：环境变量未设、值为空、拼写写错、值本身连字符串都读不出来，
+    全部落到 ``full``。少做一次改写是检索质量上的行为变化，不能被一个打错的配置值静默
+    开启。
+    """
+    raw = tier if tier is not None else os.getenv(TIER_ENV, "")
+    try:
+        normalized = str(raw or "").strip().lower().replace("_", "-")
+    except Exception:  # pragma: no cover - 防御 __str__ 自己抛错的对象
+        normalized = ""
+    if not normalized:
+        return DEFAULT_TIER
+    if normalized in REWRITE_TIERS:
+        return normalized
+    aliased = TIER_ALIASES.get(normalized)
+    if aliased:
+        return aliased
+    logger.warning(f"未知检索档位 {raw!r}：回退到 {DEFAULT_TIER}（保持改写）")
+    return DEFAULT_TIER
+
+
+def should_rewrite_query(query: str, tier: str | None = None) -> bool:
+    """本次检索要不要付出一次阻塞的查询改写往返。"""
+    resolved = resolve_rewrite_tier(tier)
+    if resolved == TIER_FAST:
+        return False
+    if resolved == TIER_ADAPTIVE:
+        return _looks_multi_intent(query)
+    return True
+
+
+def _looks_multi_intent(query: str) -> bool:
+    """粗略判断问题是否含多个意图：够长，或带两个以上子句/问号分隔符。"""
+    text = str(query or "").strip()
+    if not text:
+        return False
+    if len(text) >= ADAPTIVE_REWRITE_MIN_CHARS:
+        return True
+    return sum(text.count(ch) for ch in _CLAUSE_SEPARATORS) >= ADAPTIVE_REWRITE_MIN_CLAUSES
+
+
 class QueryRewriter:
     """查询改写 + 子问题拆分"""
 
@@ -262,13 +330,24 @@ class RetrievalPipeline:
         logger.info("[预加载] Pipeline 就绪")
 
     def search(self, query: str, top_k: int = 5,
-               where: dict | None = None, pred=None) -> tuple[list[dict], list[str]]:
+               where: dict | None = None, pred=None,
+               tier: str | None = None) -> tuple[list[dict], list[str]]:
         """
         执行完整检索管线。
         返回 (重排后的文档列表, 改写版本列表)
+
+        档位只作用在第 1 步：显式传入 ``tier`` 优先，否则读环境变量
+        ``RETRIEVAL_TIER``，两者都没给就是 ``full``，与改动前完全一致。Embedding
+        召回与本地 Cross-Encoder 重排都不受档位影响。
         """
         # ① 查询改写 + 拆分
-        rewritten = self.rewriter.rewrite(query)
+        tier = resolve_rewrite_tier(tier)
+        if should_rewrite_query(query, tier):
+            rewritten = self.rewriter.rewrite(query)
+        else:
+            # 省掉的就是这一发阻塞的 chat 往返：它曾是整条检索链路里最慢的一步。
+            rewritten = {}
+            logger.info(f"检索档位 {tier}: 跳过查询改写，本次检索 0 次大模型往返")
         all_queries = [query] + rewritten.get("rewrites", []) + rewritten.get("sub_questions", [])
 
         # ② 多路并行召回（语义+BM25 对每个 query 同时跑）
@@ -310,6 +389,7 @@ class RetrievalPipeline:
         query: str,
         principal: Principal | None,
         top_k: int = 5,
+        tier: str | None = None,
     ) -> tuple[list[dict], list[str]]:
         """Retrieve only chunks permitted for the supplied Principal.
 
@@ -319,7 +399,10 @@ class RetrievalPipeline:
         an administrator may see.
         """
         scope = resolve_document_retrieval_scope(principal)
-        found = self.search(query, top_k=top_k, where=scope.filters, pred=scope.allows)
+        # tier 不传时由 search() 读环境变量决定：调用方一行不改也能整条链路分档。
+        found = self.search(
+            query, top_k=top_k, where=scope.filters, pred=scope.allows, tier=tier
+        )
         record_retrieval_scope(principal, scope, hit_count=len(found[0]))
         return found
 
