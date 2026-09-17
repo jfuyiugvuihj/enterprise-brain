@@ -35,6 +35,7 @@ except ModuleNotFoundError:  # pragma: no cover
 from app.agents.state import AgentState, _merge_dicts
 from app.approval.assistant import build_precheck
 from app.agents.tools import search_docs, analyze_data, query_data, generate_chart, export_report
+from app.agents.planner import build_task_plan
 from app.agents.nodes import (
     _make_model, classify_intent, respond, load_memory, plan,
     reflect_node, route_reflect, synthesize,
@@ -151,6 +152,59 @@ MAIN_SYSTEM = HumanMessage(content="""你是企业智脑调度中心。你只有
 - 不重复对话历史中的旧回答""")
 
 
+# ==================== R27 · 确定性计划命中不再发第二发 ====================
+#
+# 判据①：第二发是图结构必然结果，不是模型选择。route_main 在 :332 返回
+# ["main_tools", Send(worker)...]，而 _builder 上 main_tools 与每个 worker 都挂着无条件
+# 回到 supervisor 的硬边（:688-:693），所以本轮只要派发过就必然再进一次
+# main_agent_node；:201 那一发的 prompt 只有 [sys_msg, current_user_msg]，worker 结果
+# 一个字都不进上下文，temperature=0 之下第 2 发只能把第 1 发的决策原样复读一遍，
+# route_main 再按 worker_results 把它判成 remaining=[] → reflect。实测 15.931 s 买了
+# 一个被代码丢掉的决策（docs/perf/latency-budget-2026-09-16.md §3.3）。
+#
+# 短路三条件缺一不可：① 本轮 plan 逐 worker 等于确定性计划器的输出；② 本轮已经有
+# dispatch 决策可复读；③ reflect 没有判 redo（复审回炉是模型唯一的二次纠正面）。
+# 未命中时一行都不多走，路径与今天逐字一致；route_main 的关键词/计划兜底
+# （:285-305）原样保留，仍是命中轮次的实际决策者。
+
+
+def _current_turn(state: AgentState) -> tuple[str, list]:
+    """本轮的用户问题，以及这条问题之后新增的消息（第 1 发进 supervisor 时为空）。"""
+    msgs = state.get("messages") or []
+    for i in range(len(msgs) - 1, -1, -1):
+        if type(msgs[i]).__name__ == "HumanMessage":
+            return str(msgs[i].content or ""), msgs[i + 1:]
+    return "", list(msgs)
+
+
+def _deterministic_plan_hit(state: AgentState, question: str) -> bool:
+    """state["plan"] 是否就是 planner.build_task_plan 的确定性输出。"""
+    planned = [
+        task.get("worker")
+        for task in (state.get("plan") or [])
+        if isinstance(task, dict)
+    ]
+    if not planned:
+        return False
+    try:
+        expected = [task["worker"] for task in build_task_plan(question)]
+    except Exception as exc:  # pragma: no cover - 纯规则函数，异常一律按未命中处理
+        logger.warning(f"[Supervisor] 确定性计划比对失败，按未命中处理: {exc}")
+        return False
+    return planned == expected
+
+
+def _prior_dispatch_decision(turn_messages: list):
+    """本轮 supervisor 已经做出的那次 dispatch 决策，没有则 None。"""
+    for msg in reversed(turn_messages):
+        if type(msg).__name__ != "AIMessage":
+            continue
+        for call in getattr(msg, "tool_calls", None) or []:
+            if call.get("name") == "dispatch":
+                return msg
+    return None
+
+
 def main_agent_node(state: AgentState) -> dict:
     all_msgs = state.get("messages", [])
 
@@ -197,6 +251,18 @@ def main_agent_node(state: AgentState) -> dict:
     sys_msg = MAIN_SYSTEM
     if mem_ctx:
         sys_msg = HumanMessage(content=MAIN_SYSTEM.content + mem_ctx)
+
+    # R27：确定性计划命中时把第 1 发的决策原样补回消息尾部（换一个新 id，让
+    # add_messages 是追加而不是就地覆盖），交给同一条 route_main 收敛：分层派发、
+    # HITL 挂起、已完成 worker 的过滤全部不变，与"模型再复读一遍决策"逐字同形，
+    # 只是不再花一次模型往返。
+    if not state.get("redo"):
+        turn_question, turn_messages = _current_turn(state)
+        prior = _prior_dispatch_decision(turn_messages)
+        if prior is not None and _deterministic_plan_hit(state, turn_question):
+            replay = prior.model_copy(update={"id": f"supervisor-replay-{uuid4().hex}"})
+            logger.info("[Supervisor] 确定性计划命中 → 复读第 1 发 dispatch，跳过第二发模型往返")
+            return {"messages": [replay]}
 
     resp = main_model.invoke([sys_msg, current_user_msg])
 
