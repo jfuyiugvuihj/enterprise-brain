@@ -28,6 +28,29 @@ docker compose --env-file deploy/.env.server up --build -d
 docker compose --env-file deploy/.env.server -f docker-compose.yml -f deploy/docker-compose.server.yml up -d --build
 ```
 
+## 开发期热挂载（改 `app/**` 不必重建镜像）
+
+`docker-compose.dev.yml` 是只在开发用的叠加层：把宿主的 `app/` 挂进容器的 `/app/app`
+（镜像是 `WORKDIR /app` + `COPY app ./app`，`app.main` 实际就在 `/app/app/main.py`），
+并把 backend 的启动命令换成带 `--reload --reload-dir /app/app` 的 uvicorn。改一行 Python
+即生效，不必每轮验证都付一次镜像重建（正常单线构建分钟级；buildkit 缓存被并发挤爆时曾拖到 28 分钟）：
+
+```bash
+docker compose --env-file deploy/.env.server -f docker-compose.yml -f docker-compose.dev.yml up -d
+```
+
+- 这个叠加层必须**显式 `-f`** 才生效，文件故意不叫 `docker-compose.override.yml`：上面那条
+  客户部署命令不带 `-f`，自动合并会让私有化栈悄悄绑定挂载运维机器的代码树。容器门
+  `scripts/verify_container_stack.py` 同样一律显式 `-f`，它验的因此仍是镜像语义。
+- 只热 `app/**`。`pyproject.toml`/`uv.lock`、`migrations/**`、`scripts/**` 以及 `deploy/` 里的
+  worker、scheduler 入口脚本仍来自镜像，改了必须重建；要重建的服务是 `build migrate`——
+  `build backend` 没有 build 段，会静默空跑。
+- `worker` 与 `scheduler` 挂同一份 `app/`，免得队列和定时任务跑旧代码；它们没有重载循环，
+  改完 `app/**` 后需 `up -d --force-recreate worker scheduler`（端到端计时期间不许这类操作）。
+- 首次启用会重建这三个服务的容器（不构建镜像，秒级完成），五个命名卷（documents/appdata/generated/applogs/vectordb）不动，数据不丢。
+- 不改生产语义：叠加层只加 `volumes` 和 backend 的 `command`，没有 `deploy:`/`replicas:`/`scale:`，
+  端口、环境、健康检查与命名卷全部沿用基座。
+
 ## 交付物
 
 - `Dockerfile`

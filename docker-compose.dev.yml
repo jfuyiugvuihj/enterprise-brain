@@ -1,0 +1,60 @@
+# Development overlay for 企业智脑 — R25. NOT part of the delivered stack.
+#
+# What it does: hot-mounts the working tree's app package over /app/app, which is exactly
+# where the image keeps it. Verified inside the running container, not assumed:
+#   docker exec enterprise-brain-backend-1 python -c \
+#     "import app.main, os; print(os.path.dirname(app.main.__file__))"   ->  /app/app
+# (Dockerfile: WORKDIR /app + COPY app ./app, CMD uvicorn app.main:app).
+#
+# Why this file is NOT called docker-compose.override.yml: that name is merged by Compose
+# into every invocation that passes no -f, and the documented customer command is exactly
+# one of those (README.md:13 `docker compose --env-file deploy/.env.server up --build -d`,
+# same for the air-gap packaging steps in deploy/README.server.md). A private deployment
+# would then silently boot on a bind mount of the operator checkout instead of on the
+# image. On a customer machine that tree is either absent, where Docker creates an
+# empty host directory that then shadows /app/app, or it is a branch nobody reviewed.
+# This overlay therefore takes effect only when it is named explicitly:
+#
+#   docker compose --env-file deploy/.env.server -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# The container gate is unaffected by the same mechanism: it always passes
+# `-f docker-compose.yml` (plus the server overlay when asked), see
+# scripts/verify_container_stack.py:105, so what it certifies stays image-based.
+# Production semantics are untouched in every other way too: no deploy:, no replicas:,
+# no scale:, no port or env changes — volumes and the backend command only.
+#
+# What becomes hot is `app/**` and nothing else. pyproject.toml / uv.lock (dependencies),
+# migrations/**, scripts/**, and the deploy/queue_worker.py and deploy/scheduler.py entry
+# scripts are still read from the image and still need a rebuild. When you do rebuild, the
+# service to build is `migrate`: it is the only backend-image builder in docker-compose.yml,
+# while `build backend` has no build section and does nothing at all.
+
+services:
+  backend:
+    volumes:
+      - ./app:/app/app
+    # The mounted source is only read at import time, so plain uvicorn would keep serving
+    # the old module until the process restarts. --reload closes that gap and --reload-dir
+    # keeps the watcher on the package instead of every volume under /app.
+    command:
+      [
+        "uvicorn", "app.main:app",
+        "--host", "0.0.0.0", "--port", "8001",
+        "--reload", "--reload-dir", "/app/app",
+      ]
+    # If an edit stops triggering a reload, Docker Desktop file sharing is not forwarding
+    # the change event for this bind mount. Uncomment to fall back to polling:
+    # environment:
+    #   WATCHFILES_FORCE_POLLING: "true"
+
+  worker:
+    # Same package, so the queue path cannot run code the API has already moved past.
+    # There is no reload loop here (the entry script is a plain long-running process):
+    # after changing app/**, recreate this service, e.g.
+    #   docker compose --env-file deploy/.env.server -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate worker scheduler
+    volumes:
+      - ./app:/app/app
+
+  scheduler:
+    volumes:
+      - ./app:/app/app
