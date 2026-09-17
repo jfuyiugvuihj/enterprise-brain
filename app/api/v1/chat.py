@@ -1575,6 +1575,21 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         latest_final_answer = ""
         answer_candidates: list[str] = []
         initial_count = -1
+        # R55：来源取证复用 /ask 那一个收集器与同一种 sink，收尾时只读不反推。
+        source_rows: dict[str, dict] = {}
+
+        # canonical 信封事件从这一条起与 /ask (:1084-1093) 同构：同一个构造器、同一套
+        # 三个 id、sequence 从 1 连续。legacy 事件全部照旧保留，canonical 是加在旁边。
+        yield canonical_sse_event(
+            "request.started",
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+            sequence=sequence,
+            status="running",
+            data={"session_id": request.session_id},
+        )
+        sequence += 1
 
         while True:
             # 与 /ask 同口径：按本代比对。上一代留下的取消判不到这一轮头上。
@@ -1602,6 +1617,18 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 )
                 break
             if budget.expired():
+                # error_code 与 /ask (:1117-1126) 同名同形状：同一个"超过处理时限"在两条
+                # 流里必须是同一个码，客户端不必按端点分支。legacy error 原文照发。
+                yield canonical_sse_event(
+                    "request.failed",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="failed",
+                    data={"error_code": "task_timeout"},
+                )
+                sequence += 1
                 yield sse_event("error", {"type": "error", "content": "请求超过系统处理时限"})
                 break
             try:
@@ -1622,9 +1649,6 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 _save_message(request.session_id, "assistant", full_text)
                 # 批准与拒绝都要闭合账面，否则面板会一直显示一条其实已经处理过的待办。
                 # refused 这一支对应 84af113「拒绝必须真的拒绝」的账面部分。
-                # 已知缺口（本批有意不补）：批准后若图又停在下一个 HITL 节点，/approve
-                # 并不发 event: hitl，因此这轮新挂起不会被记成新的 awaiting 行。补它要先
-                # 给 /approve 加 SSE 事件，属接口变更，等总控单独批。
                 _decide_pending_approval(
                     request.session_id,
                     pending_approvals.RESUMED if request.approved else pending_approvals.REFUSED,
@@ -1632,11 +1656,106 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 if full_text and full_text not in ai_reply:
                     yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': full_text}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
+                # R55 判据④：批准后图可能又停在下一个 HITL 节点。先问真实的挂起状态，再
+                # 决定这一轮算"完成（含新挂起）"还是"什么都没产出"——与 /ask (:1149-1156)
+                # 用同一个 check_interrupt，不凭正文猜。
+                try:
+                    from app.agents.orchestrator import check_interrupt
+                    intr = check_interrupt(request.session_id)
+                except Exception:
+                    intr = None
+                if not full_text and not intr:
+                    # 图跑完了，既没有正文也没有新的等待确认：这是内部失败。报成
+                    # request.completed 就是把"什么都没产出"伪装成"已回答"
+                    # （/ask :1162-1188 同一裁定）。legacy 这一支只发 done，不新增 error：
+                    # 本单对 legacy 只加不减，旧客户端收到 done 才是既有契约。
+                    yield canonical_sse_event(
+                        "request.failed",
+                        request_id=request_id,
+                        trace_id=trace_id,
+                        task_id=task_id,
+                        sequence=sequence,
+                        status="failed",
+                        data={
+                            "session_id": request.session_id,
+                            "error_code": "no_answer_produced",
+                            "worker_count": len(latest_worker_results),
+                        },
+                    )
+                    sequence += 1
+                    yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0)
+                    break
+                if intr:
+                    # 原注释登记的那条长期缺口在本单补上：新挂起既当场发给客户端（legacy
+                    # hitl 与 /ask :1212 同一个 payload 形状），也记成新的 awaiting 行。写账
+                    # 必须排在上面的 _decide_pending_approval 之后，否则 mark_status 会去
+                    # 闭合刚写入的新行、把旧行留在待批里。
+                    _record_pending_approval(
+                        request.session_id,
+                        principal,
+                        intr,
+                        request_id=request_id,
+                        trace_id=trace_id,
+                        task_id=task_id,
+                    )
+                    yield f"event: hitl\ndata: {json.dumps({'type': 'hitl', 'pending': intr['pending'], 'labels': intr['labels']}, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0)
+                yield canonical_sse_event(
+                    "request.completed",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="completed",
+                    data={
+                        "session_id": request.session_id,
+                        "worker_count": len(latest_worker_results),
+                        "elapsed": round(time.time() - start_time, 1),
+                        "answer_length": len(full_text),
+                        "awaiting_hitl": bool(intr),
+                        "awaiting_steps": list(intr["pending"]) if intr else [],
+                    },
+                )
+                sequence += 1
+                # R41 新立的 sources 事件在 /approve 这个出口上此前是缺失的。判定入口逐字
+                # 复用 /ask (:1235) 的 _authorized_source_rows -> app/rag/filters.py 的
+                # scope.allows，不另写一套过滤；本轮没检索过就是 0 条，不伪造。
+                visible_rows, scope_reason_code = _authorized_source_rows(source_rows, principal)
+                yield canonical_sse_event(
+                    "sources",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="completed",
+                    data={
+                        "session_id": request.session_id,
+                        "sources": visible_rows,
+                        "hit_count": len(visible_rows),
+                        # 缺了这个数字，"0 条来源"就分不清"没检索到"与"检索到了但不给你看"。
+                        "unauthorized_count": len(source_rows) - len(visible_rows),
+                        "scope_reason_code": scope_reason_code,
+                    },
+                )
+                sequence += 1
                 yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0)
                 break
 
             if kind == "error":
+                # 编排线程抛错 = 这一轮失败。legacy error 只带人读的文字，机器读的码走
+                # canonical（/ask :1262-1271 同一口径），legacy 原文照发不吞。
+                yield canonical_sse_event(
+                    "request.failed",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="failed",
+                    data={"error_code": "internal_error"},
+                )
+                sequence += 1
                 yield f"event: error\ndata: {json.dumps({'type': 'error', 'content': data}, ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0)
                 break
@@ -1656,6 +1775,11 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 latest_worker_results = dict(worker_results)
             if data.get("final_answer"):
                 latest_final_answer = str(data["final_answer"])
+            # R41/R55：边跑边收证据，不在收尾时反推。取消/超时/抛错三条分支都走不到发
+            # sources 的那一段，所以"没有产出可见答案的一轮"绝不会发出来源事件。
+            agent_results = data.get("agent_results")
+            if isinstance(agent_results, dict):
+                _collect_document_sources(agent_results, source_rows)
             if initial_count < 0:
                 initial_count = len(msgs)
 

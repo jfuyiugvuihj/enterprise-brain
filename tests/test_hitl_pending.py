@@ -326,11 +326,12 @@ def test_approving_and_refusing_close_the_row(monkeypatch, tmp_path):
     registry = SessionRegistry(tmp_path / "session-registry.json")
     monkeypatch.setattr(chat, "session_registry", registry)
     monkeypatch.setattr(chat, "_save_message", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        orchestrator,
-        "check_interrupt",
-        lambda thread_id: {"pending": ["chart"], "labels": ["生成图表"]},
-    )
+    # 本用例只验「/approve 收尾必须把 awaiting 闭合」，而下面的 fake_stream 已经产出终答，
+    # 所以桩必须回答「图没有再挂起」。它此前恒返回 {"pending": ["chart"]}，等于一边模拟批准
+    # 后图又停在下一个 HITL 节点、一边断言账面必须闭合，桩与断言从来就不自洽；R55 补上
+    # chat.py 那条「新挂起不记账」的缺口之后，这个矛盾必然把它逼红。新挂起的账面另由
+    # test_approve_records_a_new_awaiting_row_when_the_graph_parks_again 专钉。
+    monkeypatch.setattr(orchestrator, "check_interrupt", lambda thread_id: None)
 
     def fake_stream(*_args, **_kwargs):
         yield {
@@ -366,6 +367,94 @@ def test_approving_and_refusing_close_the_row(monkeypatch, tmp_path):
 
         assert store.get_row(session_id).status == expected, session_id
         assert store.open_items(owner_user_id="u-9") == [], session_id
+
+
+def test_approve_records_a_new_awaiting_row_when_the_graph_parks_again(monkeypatch, tmp_path):
+    """R55 认领 chat.py 注释自述的缺口：批准后图又挂起，账面必须记成新的 awaiting。
+
+    钉三件事：旧行终态 resumed、新行 awaiting 且其 request_id 等于本轮流事件的 request_id、
+    open_items 只含这一条新行。挂起节点刻意沿用旧行同名的 chart——orchestrator 的
+    _HITL_PARKED 只有 chart/export 两个节点，同名再挂起是真实可能，「同名就不记」不算修法。
+    """
+    from app.api.v1 import chat
+    from app.common.identity import Principal
+    from app.storage.sessions import SessionRegistry
+
+    registry = SessionRegistry(tmp_path / "session-registry.json")
+    monkeypatch.setattr(chat, "session_registry", registry)
+    monkeypatch.setattr(chat, "_save_message", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        orchestrator,
+        "check_interrupt",
+        lambda thread_id: {"pending": ["chart"], "labels": ["生成图表"]},
+    )
+
+    def fake_stream(*_args, **_kwargs):
+        yield {
+            "messages": [],
+            "worker_results": {"chart": "图已生成"},
+            "final_answer": "图已生成",
+        }
+
+    monkeypatch.setattr(orchestrator, "run_interrupt_stream", fake_stream)
+
+    session_id = "hitl-wire-repark"
+    principal = Principal.from_user(
+        {"id": "u-9", "username": "wire", "role": "staff", "department": "R&D"}
+    )
+    registry.bind(session_id, principal)
+    old = store.record_awaiting(
+        session_id,
+        "u-9",
+        ["chart"],
+        request_id="req-old",
+        trace_id="trace-old",
+        task_id="task-old",
+    )
+
+    response = asyncio.run(
+        chat.approve(
+            chat.ApproveRequest(session_id=session_id, approved=True),
+            http_request=_request_for_user(principal),
+        )
+    )
+
+    async def consume():
+        chunks = []
+        async for item in response.body_iterator:
+            chunks.append(item.decode("utf-8") if isinstance(item, bytes) else item)
+        return "".join(chunks)
+
+    body = asyncio.run(consume())
+
+    # 先钉账面：HEAD 的 /approve 在这一步就红，红的正是「新挂起没记成 awaiting」这条缺陷。
+    rows = [row for row in store._all_rows() if row.session_id == session_id]
+    fresh = [row for row in rows if row is not old]
+    assert len(fresh) == 1, (
+        "批准后图又停在 chart，账面必须新记一行 awaiting；本轮该会话的全部行="
+        + str([(row.status, row.request_id) for row in rows])
+    )
+    assert old.status == store.RESUMED, "旧行必须先闭合，否则同一会话会留下两条 open"
+    assert fresh[0].status == store.AWAITING
+    assert fresh[0].parked_steps == ["chart"]
+    assert fresh[0].owner_user_id == "u-9"
+    assert "event: hitl" in body, "新挂起没发给客户端，审批面板与回答流各说各话"
+
+    completed_ids = []
+    event_lines = body.splitlines()
+    for idx, line in enumerate(event_lines):
+        if line.strip() == "event: request.completed":
+            for nxt in event_lines[idx + 1:]:
+                if nxt.startswith("data: "):
+                    completed_ids.append(str(json.loads(nxt[len("data: "):])["request_id"]))
+                    break
+    assert completed_ids, "本轮流里没有 request.completed 事件，账面比对失去意义"
+    assert fresh[0].request_id == completed_ids[0], (
+        "新挂起行的 request_id 必须是本轮续跑那一个，否则排障时账面对不上流"
+    )
+    assert store.open_items(owner_user_id="u-9") == fresh, (
+        "待批列表只许有本轮新挂起的一条：先闭合不等于漏记，也不许同时留两条 open"
+    )
 
 
 # ---------------------------------------------------------------- PG 路径
