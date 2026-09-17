@@ -79,6 +79,22 @@ services:
     # Version 1 manages the host-classified local model registry. Pin the tag
     # per delivery; the default follows the upstream rolling tag.
     image: ollama/ollama:${OLLAMA_IMAGE_TAG:-latest}
+    # GPU honesty: the container must ask for the compute device out loud. Without a
+    # device reservation Ollama silently runs "inference compute id=cpu", and every
+    # throughput number in the delivery notes is then a lie about the hardware. A
+    # CPU-only customer removes this block in a deployment override, see README.md.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      # The NVIDIA runtime needs the request spelled twice: the device reservation
+      # selects the card, these two tell the toolkit to expose compute interfaces.
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes:
       - ollama:/root/.ollama
     healthcheck:
