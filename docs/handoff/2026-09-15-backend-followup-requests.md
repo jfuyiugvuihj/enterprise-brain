@@ -578,3 +578,50 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
   并加一条守卫测试：**跑完全量后仓库内 `./chroma_db` 的 mtime 与哈希不得变化**。
 - **在 R53 落地前的临时纪律**：全量回归只许在**独立工作树**里跑（写脏的是该树的 `chroma_db` 副本，不是运行期数据），
   且提交严禁带上 `chroma_db/**`；**容器在跑时禁止在主树跑全量**。
+
+## 21.6 本轮（09-17 下午）执行状态：R53 结案 / R26 拆单 / R28 口径纠偏（基线 `1b1426f`）
+
+### R53 结案（合并 `fba6586`，实现 `659382a`，分支 `codex/be-r53`）
+
+- **落法**：`tests/conftest.py` 在导入期改写 `DocumentRetriever.__init__.__defaults__` 的
+  `chroma_dir`，钉进 `%TEMP%` 沙箱；改写不成立即抛 `RuntimeError`，不静默跳过。
+  钉死点在 `tests/conftest.py:164`（函数体 `tests/conftest.py:106`）。
+- **总控独立复核证据**（子 agent 自述一律不采信，以下均为总控亲跑）：
+  - `253 passed in 14.46s` [实测 2026-09-17 15:55:43–15:56:05]，解释器为主树 `.venv`（py3.11.7 / chromadb 1.5.9），cwd 在 `be-r53`。
+  - 跑前跑后 `be-r53/chroma_db` 快照哈希同为 `423F42A5…`（6 文件 / 8,300,742 B）[实测]，`git status -- chroma_db` 0 行 ⇒ 判据「跑完全量哈希不得变化」成立。
+  - **变异实验（总控亲做）**：字节级钝化改写点（`init.__defaults__ = tuple(pinned)` 失效 + 回读校验跳过），
+    守卫当场红 2 ERROR + 1 FAILED，报错文案直接点名「pytest 会直接写工作树的 ./chroma_db」；`chroma_db` 脏行数 **0** [实测 16:02:08]。
+    变异时须 `-k "not constructing"`，否则 `test_constructing_a_retriever_writes_only_into_the_sandbox` 会真写工作树。
+  - 还原后 `tests/conftest.py` SHA256 == `568DBB67…`（与变异前逐字节相同），`5 passed` [实测 16:02:29–16:02:41]。
+- **新证据（本单必要性再+1）**：在**未含 R53 修复**的 `be-leg2` 跑 41 个部署/路由相关用例，
+  跑后 `chroma_db/chroma.sqlite3` 立刻变脏 [实测 15:59:26]，而该树 `tests/conftest.py` 对 `chroma` 的 grep 命中为 **0**。
+  污染已由总控 `git checkout -- chroma_db/chroma.sqlite3` 撤销（跑前该树 chroma 与 HEAD 一致，零信息损失）[实测 15:59:54]。
+- **门禁换轨**：合并后「容器在跑时禁止在主树跑全量」这条**因 chroma 而设**的禁令解除——
+  主树实测 `66 passed`、`chroma_db` 脏行数 6→6 不增 [实测 16:03:56–16:04:04]（那 6 个 M 仍是运行中容器写的，与本单无关）。
+  **仍然有效**的红线：同刻只许一条线写 `chroma_db/`、只许一条线 `docker build`、只许一条线打 Ollama 计时。
+### R26 拆单：R26a 已合并 `11f9b1f`，新立 **R26b**（不另占主编号）
+
+- **R26a（已完成并合并，分支 `codex/be-leg2`，实现 `118801e`）**：
+  ollama 服务加 `deploy.resources.reservations.devices`（`driver: nvidia` / `count: all` / `capabilities: [gpu]`）
+  \+ `NVIDIA_VISIBLE_DEVICES` / `NVIDIA_DRIVER_CAPABILITIES`；`app/common/model_capabilities.py` 新增
+  `InferenceCompute` **三分**（`gpu` / `cpu` / `unknown`）与 `classify` / `detect` / `annotate`；README 补硬件基线与纯 CPU 客户机覆盖法；新增 15 例离线单测。
+  **语法选型**：`gpus: all` 会被 compose 渲染成 `{"count":-1}`，输出里不含 `nvidia` 字样，不满足判据①的可 grep 性，故改用 reservations.devices。
+  **现网零行为变更**：`OLLAMA_REQUIRE_GPU` 未设即 fail-open；探测未接入调用路径（`compute_fetch` 不传时仍只发一次 `/api/tags`）。
+- **R26b（新立，0.5–1 人日）**：把算力探测接进 `app/common/model_config.py` 的模型发现路径，
+  并在 `/health/details`（R20 已合并的实现）暴露 `gpu`/`cpu`/`unknown` 三态，
+  使 R26 原判据 **②「拿不到卡必须显式报错 + 稳定码」③「/health/details 能区分模型太慢 vs 机器没 GPU/内存不足」** 真正可验收。
+  仍不得新增错误码（沿用 `model_unavailable`）；`unknown` 不得定罪为 CPU，也不得洗成有卡。
+- **R26 原判据①「容器内 `nvidia-smi` 有卡」= H11**，业主本人执行，总控与子 agent 一律不做。
+- **H1 核对命令已订正**：判据是 `git grep -n "reservations" -- docker-compose.yml`，**不是** `device_requests`
+  （依据官方 compose GPU 文档 + 本机 Compose v5.5.1 实测 `config` 原样保留 `deploy.resources.reservations.devices`、`count: all`→`-1`；`capabilities` 必填，`count` 与 `device_ids` 互斥）。已落 `docs/handoff/2026-09-17-human-gates.md`。
+- **总控独立复核**（`be-leg2`，[实测 15:58:59–15:59:26]）：新单+相邻 `42 passed`；
+  **Rawls 未跑的 compose 拓扑/部署回归由总控补验 `41 passed`**（改 `docker-compose.yml` 必验项）；
+  `git diff -- app/agents/contracts.py` 0 字节；`from __future__ import annotations` 在 `app/common/model_capabilities.py:2`，前向注解安全；
+  基线 `docker-compose.yml` 的 ollama 段原本无 `environment:`，新增块不构成重复键。
+- Rawls 自述的行数（286/64）与其回报时点后的最后一次整理不符，**以合并实测为准**（README +64/-1、capabilities +286/-2、compose +16/-0）。
+
+### R28 结案口径纠偏（合并 `1c0b08b`，实现 `d2566e1`）
+
+- **新增闸门（硬）**：`RETRIEVAL_TIER=fast` 在 **30 题评测对比跑完之前**不得进入任何验收/演示配置；默认保持 `full`。本次合并对现网行为零改变。
+- **数字口径**：`41.581 s` 是**旧 trace 的 [实测] 历史值，本轮未重测**。现状只能表述为
+  「fast 档省一次阻塞往返，[推算] ≈40 s，待复测」。判据③「单跳省 ≥30 s」未跑 ⇒ **R28 不作完全结案**。

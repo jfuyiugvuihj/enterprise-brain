@@ -17,8 +17,12 @@
 - **当前**：未做。成本已算死 **<200 元**（明细见 `docs/perf/enterprise-env-matrix.md` §5）。
 - **触发条件**：腿②完成 **R25 + R26**（GPU 诚实声明）之后 —— 早于 R26 租卡等于白花钱，
   因为现在 compose 里没有设备声明，装了卡也用不上。
-- **核对命令**：`git grep -n "device_requests" -- docker-compose.yml`（有输出＝R26 已落，可叫人）；
-  `git grep -n "deploy:" -- docker-compose.yml`。
+- **核对命令**（09-17 11:15 订正：原先写的 device_requests 字面量是错的，按它核对会把已落地误判成未落地）：
+  git grep -n "reservations" -- docker-compose.yml 有输出＝R26 设备申请已落，可叫人。
+  依据：官方 docs.docker.com/compose/how-tos/gpu-support/ 把 deploy.resources.reservations.devices
+  （driver: nvidia + count + capabilities: [gpu]）列为 docker compose up（非 Swarm）的受支持写法；
+  本机 Compose v5.5.1 实测 config 原样保留该块、count: all 规范化为 count: -1，不会改写成 device_requests。
+  两个硬约束：capabilities 必填（否则部署报错）、count 与 device_ids 互斥。
 - **不做的代价**：拿不到 GPU 档实测数字 ⇒ 计划书 §3.2 的"不可承诺"永远摘不掉，
   对外只能停在"任意问题 5–10 s 不成立"这一侧。
 
