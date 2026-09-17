@@ -31,7 +31,7 @@
 `docs/handoff/2026-09-15-orchestration-board.md` §4T.4 把"零产出往返"记成 67.8 s，并把 24.046 s 归给
 "撞并发墙失败的改写第 1 发"。**两处都不成立**：W8 §3.2 复核出 24.046 s 是 **doc worker 的第 1 个 ReAct
 往返且是成功的**；真正因 `MODEL_MAX_CONCURRENCY=1` 退回的改写是另外两发，各 **0.06 s**
-（`app/common/model_handler.py:100` 用 `acquire(wait_seconds=0)`：不排队、立刻放弃）。
+（`app/common/model_handler.py:93` 用 `acquire(wait_seconds=0)`：不排队、立刻放弃）。
 正确数字：**43.728 + 41.581 = 85.328 s = 160.552 s 的 53.15%**。`[算术]`（数值 `[实测]`）
 
 ### 2.2 行号一律改锚文本，不写"某区间"

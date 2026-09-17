@@ -924,7 +924,7 @@ R18 的 13 条用例里 `test_a_stop_while_parked_prevents_the_approve_from_runn
 `[实测]` 端到端 **160.552 s**、五发模型往返 **159.803 s = 99.53%**、非模型 **0.749 s**（检索本体 **0.242 s**）。
 零产出往返 = **P-1 43.728 s**（Supervisor 两发 27.797 + 15.931）+ **P-2 41.581 s**（多路改写那发）= **85.3 s = 53.15%**。
 我在 §4T.4 记的 67.8 s 与"改写第 1 发 24.046 s 撞并发墙"两处**都不成立**：24.046 s 是 **doc worker 成功的第 1 个
-ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:100` 的 `acquire(wait_seconds=0)` 不排队立即放弃）。
+ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93` 的 `acquire(wait_seconds=0)` 不排队立即放弃）。
 **W8 报告 §3.2 昨晚就已推翻它，我今天上午仍把它抄进计划** ⇒ 见 §4U.6 记账第 1 条。
 
 ### 4U.3 阶段编排改令：三腿，不是六条并行
@@ -992,3 +992,73 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:10
   它是 09-16 跨夜停摆的真实根因，故列入"每次都查"。
 **新查出的最高风险项 H6**：`codex/data-file-catalog` **无 upstream、从未 push**，而 `origin`(github)
 与 `gitee` 两个远端都已配置 ⇒ 全部历史只在本机一块盘上。此项优先级排在第一（2 分钟 vs 全丢）。
+
+---
+
+## 4V. 接管核对：文档 vs 仓库 5 处不一致 + R20 升为 P0 合并门禁 + 派工事故（2026-09-17 上午，总控第二线）
+
+### 4V.1 接管动作与仓库事实（全部 `Get-Date` 实取）
+- 五份必读文档已读完。**第 1 份实际路径 = `docs/handoff/2026-09-17-perf-architecture-plan.md`（298 行）**；
+  交接提示词里的 `docs/perf-architecture-plan-2026-09-17.md` 不存在，用户已确认是笔误，本条为路径订正。
+- **合并 W8**：`ab2b7bb` Merge `codex/perf-lab`，13 文件 +1584 行；主树 HEAD = `ab2b7bb` [实测 09:43:41]。
+- **工作树 10 → 14**：新建 `codex/be-r20` / `codex/be-r27t` / `codex/be-r36` / `codex/be-leg2`，基线均 `ab2b7bb`。
+
+### 4V.2 接管核对：5 处「文档说 A、仓库是 B」，一律以仓库为准
+1. **W8 仲裁文件断链（已修）**：计划书 §10 把 `docs/perf/latency-budget-2026-09-16.md` 定为「数字分歧以 W8 `[实测]` 为准」，
+   但它 09-16 23:21 提交后一直只存在于 `codex/perf-lab`，主树 `Test-Path` = False ⇒ 整个仲裁依据在主树读不到。
+   已由 4V.1 的合并解决。**教训：引用路径必须 `Test-Path` 过再写。**
+2. **行号错（就地订正）**：计划书 §2.1 与本表 §4U.2 都写 `app/common/model_handler.py:100` 用 `acquire(wait_seconds=0)`；
+   实测该调用在 **`:93`**，`:100` 是 `client.chat.completions.create` [实测 09:43]。实质论断（不排队、立即放弃）成立，仅行号需订正。
+   讽刺的是计划书 §2.2 自己刚裁定过「行号一律改锚文本」——写盘的人没执行自己立的规矩。
+3. **口径歧义（须防下一个 Agent 误判）**：`context_length: 4096` 是 **Ollama 运行时 `/api/ps` 实测值**
+   （W8 报告 `:69/:191/:594`，raw jsonl `"context_length": 4096, "size_vram": 0`），**不是仓库配置项**——
+   `git grep context_length -- .env.example docker-compose.yml` = 0 命中。已在 W8 侧保持运行时口径，本节加注。
+4. **§21 合并门禁与 R20 互斥**：见 4V.3，本表最高价值发现。
+5. **H4 新增产物**：`be-r18` 有未跟踪 `r18-evidence/`（6 个 txt：`full-after` / `full-final` / `INDEX` /
+   `red-baseline-13` / `red-baseline-final` / `red-baseline`）。不删、不代裁定，已补进 H4。
+
+### 4V.3 🔴 裁定：R20 升为**所有腿合并门禁的 P0 前置**
+§21 共同判据原文要求「每单合并前跑全量 pytest 并记当前 HEAD 数字」，但 R20 未修 ⇒ **跑全量 pytest 就是未授权的宿主 PG 写操作**，
+直接撞 AGENTS.md「未经要求不改数据」红线。根因链逐条实测（09:45）：
+- `tests/test_auth.py:163` 执行 `DELETE FROM users WHERE username LIKE 'test_%'`；
+- `tests/test_phase2_rbac.py:45` 同样有 `DELETE FROM users WHERE username = %s`，且 `:20 _pg_ok()` 会真实建连
+  ⇒ **R20 范围不止 test_auth.py 一个文件**，原单写漏了；
+- `tests/conftest.py` 只把 `PERSISTENCE_BACKEND=json` 重定向到临时目录，**完全没隔离 PostgreSQL**；
+- `app/common/auth.py:241-247` 在 **import 期**就 `_raw_conn()` ⇒ 光改 fixture 不够，隔离必须做在 import `app.common.auth` 之前，
+  即**必须落在 `tests/conftest.py` 层**；
+- **被写的库是宿主原生 PG，不是容器库**：`docker ps` 显示 `enterprise-brain-postgres-1` 端口只有 `5432/tcp` **未发布宿主**，
+  而宿主 5432 LISTEN 者 = 原生 `postgres.exe`（PID 8436）[实测 09:45:21]；
+  主树 `.env` 的 `DATABASE_URL` 指向 `localhost:5432`，`be-r20` 等无 `.env` 的工作树则走 `auth.py:23` 默认
+  `postgresql://postgres@localhost:5432/enterprise_brain` —— **同一个宿主实例**。
+  ⇒ 我原先给的验收命令 `docker exec ... psql -U postgres` **验错了库**（且该容器内无 `postgres` role），此判据作废重开。
+
+**裁定与执行口径（后续派工一律引用本条，不再各自数）**：
+1. R20 未完成前，**任何工作树禁止跑全量 pytest**，只允许 `python -m pytest tests/<指定单文件> -q`。
+2. §21 门禁改为：合并前跑**本单指定单文件**；**全量回归**由用户另开的独立对话在 R20 修完后统一复跑并记 HEAD 数字。
+3. R20 判据改写：范围 = `tests/conftest.py` 全局隔离（覆盖 `test_auth.py` 与 `test_phase2_rbac.py` 两条 DELETE 路径）；
+   验收 SQL 必须打**宿主原生 PG**（`psql "postgresql://fengx:...@localhost:5432/enterprise_brain"`，凭据取主树 `.env`），
+   不是 `docker exec`。
+4. 复用的仓内已有范式：`tests/test_auth_database.py:85-91` 以 `monkeypatch` 注入内存假库跑通全逻辑（此条来自重复派工的只读回报，已复核为真）。
+
+### 4V.4 派工事故（记我账，不甩给执行层）
+**事实**：本轮把 R20 的提示词误发给 Sartre（本应只做 R27 前置测试）**两次**，且 R20 被重复 `spawn` **三次**，
+四条线共用同一工作树 `be-r20`——违反我自己写进模板的「一个子 agent 独占一个工作树、写域必须 disjoint」。
+**处置与核对**：09:44 起对重复线发停机指令、对 Sartre 发中文更正并令其回滚越界改动；
+`git -C be-r20/be-r27t/be-r36/be-leg2 status --short` **四棵全空** [实测 09:44:07、09:45:21]，
+两条重复线独立回报**零写入**（只跑过只读命令）⇒ **无互相覆盖造成的实际损失**，事故止于未遂。
+**意外收益**：两条重复线在停写前做的只读定位，恰好查出 4V.3 的两条关键事实（`test_phase2_rbac.py:45` 第二条 DELETE、
+容器 PG 未发布宿主端口），二者我已独立复核为真并据此改了门禁——但**这不构成对重复派工的辩护**，
+它们本来就该在派工单里由我写清楚。
+**规矩（以后照办）**：① `spawn` 前先列「在途 agent × 工作树 × 任务」对照表；② 派工模板增一行「本任务唯一 agent id」；
+③ 同一任务发现重复，立刻 interrupt 停写而不是等它做完；④ 重复线的自述同样不采信，其结论只作线索、按 4V.3 那样逐条复核。
+
+### 4V.5 心跳 H10 状态（**未完**）
+- 新心跳 `automation-2` 已建：ACTIVE / HOURLY / `targetThreadId=01a0acfb-c674-7bc1-a875-0bde2366912b`（本线程），每次必查 H3、H6。
+- 按 H10「先建新、后删旧」，旧线心跳（target `01a09dda-71ba-71d2-92e4-5b21d0d1f18e`）仍 ACTIVE，
+  **只能由旧线自己删**，而只有用户能到那个线程说一句话 ⇒ H10 保持未结案，不得由本线越权删除。
+- 工具坑补记：`automation_update` 需 `mode` 判别字段与 **camelCase `targetThreadId`**；`view` 需 `id`；同线程重复建心跳会被正确拒绝。
+
+### 4V.6 下一步
+1. 收 4 单（R20 / R27 前置测试 / R36 评测集 / R25 dev 挂载）证据，逐条独立复核后才合并；**只有总控可以 merge**。
+2. 每完成一次合并就提示用户一次 **H6 push**（本线已合并 `ab2b7bb` 一次，已提示）。
+3. 需用户另开独立对话：重建后端镜像、容器端到端门禁、**R20 修完后的全量回归复跑**、租 GPU、浏览器端到端验收。

@@ -39,6 +39,8 @@
 ## H4 仓库卫生裁定（4 项未跟踪产物入不入历史） —— 仅用户本人
 - **当前**：全部**仍未跟踪**：`docs/screenshots/`（19 文件 / 8.24 MB）、`bundle.js`、`idx.html`、
   `frontend/node_modules.stub/`（`git status --porcelain` 09-17 实测）。
+- **09-17 接管新增第 5 项**：`be-r18/r18-evidence/`（未跟踪，6 个 txt：`full-after` / `full-final` / `INDEX` /
+  `red-baseline-13` / `red-baseline-final` / `red-baseline`）。同属「不删、不代裁定」，依据见看板 §4V.2 第 5 条。
 - **为什么不能我定**：入历史会永久增大仓库；加 `.gitignore` 改变全仓忽略语义。两者都是仓库级决定。
 - **触发条件**：任一未来时点——① 有人需要 `docs/screenshots/` 作为答辩材料（则须入历史）；
   ② 新 Agent 因 `git add -A` 全线禁用而反复漏提交产物（则须改忽略规则）。
@@ -48,7 +50,7 @@
 
 ## H5 `chroma_db/` 191 MB 反跟踪 —— 仅用户本人，且**必须等**
 - **当前**：已跟踪且运行期写脏（09-17 实测 6 个二进制文件 `M`＋`chroma.sqlite3` `M`）。
-- **硬前置**：**10 个工作树全部合完并回收之后**。看板 §4G.5 已论证：现在反跟踪会
+- **硬前置**：**14 个工作树全部合完并回收之后**（09-17 接管时 10→14）。看板 §4G.5 已论证：现在反跟踪会
   连带删掉 `fe-trunk` / `fe-prims` 工作副本 ⇒ **三批在途期间绝对别碰**。
 - **触发条件（可叫人）**：`git worktree list | Measure-Object -Line` 只剩 1 行，且 `git status` 里 `chroma_db/**` 仍为 `M`。
 - **不做的代价**：每次 `git status` 长期脏 ⇒ 真实未提交改动被埋在里面，误提交 191 MB 二进制只是一次手滑。
@@ -85,11 +87,12 @@
 ## H10 心跳归属：两条总控线交接时的提醒责任 —— **交接项（Agent 可做，但必须让用户知情）**
 - **性质**：本清单里唯一一条 Agent 能自己完成、却仍需用户点头确认的项。加它的原因是硬事实：
   heartbeat automation 的 `target_thread_id` 绑定单条线程，**换对话不会跟过去**。
-- **当前**：唯一在跑的心跳是「人工闸门提醒 · 企业智脑」，其 `target_thread_id` =
-  `01a09dda-71ba-71d2-92e4-5b21d0d1f18e`（**旧总控线，也就是写下本清单的这一条**），
-- **当前**：唯一在跑的心跳是「人工闸门提醒 · 企业智脑」，`target_thread_id =
-  01a09dda-71ba-71d2-92e4-5b21d0d1f18e`（**旧总控线，也就是写下本清单的这一条**），
-  `FREQ=HOURLY;INTERVAL=1`，`status=ACTIVE`。新主控线程此刻**没有心跳**。
+- **当前（09-17 09:40 更新，新总控线）**：**新心跳已建** `automation-2`，`status=ACTIVE`、`FREQ=HOURLY`、
+  `targetThreadId=01a0acfb-c674-7bc1-a875-0bde2366912b`。旧线心跳（`01a09dda-71ba-71d2-92e4-5b21d0d1f18e`）**仍 ACTIVE 未删**
+  ⇒ **H10 未完**：处于「双心跳」期，这是先建新后删旧的预期代价，但**不能长期停在双心跳**（每小时报两遍 ⇒ 用户一烦整体关掉 ⇒ H6 永久失守）。
+  只有用户能到旧线程说一句「接管完成」由旧线自行删除；新线不得越权删别人的心跳。
+- **旧线口径存档**：交接前唯一在跑的心跳是「人工闸门提醒 · 企业智脑」，`FREQ=HOURLY;INTERVAL=1`，`status=ACTIVE`，
+  新主控线程当时**没有心跳**（本节原有两行重复的「- **当前**」已合并，系旧线写盘手误）。
 - **最短路径**：新主控读完五份文档、跑完自校命令后自建一条心跳指向自己；建成回旧线说一句
   「接管完成」，旧线随即删除自己的心跳。**顺序不能反**——先删后建会出现无人盯守的空窗。
 - **核对命令**：`Get-ChildItem "$env:USERPROFILE\.codex\automations" -Recurse -File -Filter automation.toml`
