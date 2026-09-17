@@ -283,7 +283,15 @@ class DocumentRetriever:
                 "content": doc,
                 "source": meta.get("filename", "unknown"),
                 "chunk_index": meta.get("chunk_index", 0),
-                "classification": meta.get("classification", 1),
+                # R57 fail-closed。此行原为 meta.get("classification", 1)。本方法的命中字典
+                # 会被直接喂进权限判定：app/api/v1/chat.py 的 scope.allows(source)，以及
+                # app/rag/retrieval_pipeline.py 语义腿上的 _retain_permitted(pred=
+                # DocumentRetrievalScope.allows)。缺键行在这里被补成 1 级，等于在判定的输入
+                # 端伪造密级。定性：Chroma 主路径下 where 已在向量计算之前排除缺键行，本行
+                # 今天裁不到东西；_retain_permitted 存在的理由正是"召回实现可能不执行 where"，
+                # 那时这里是最后一道伪造点，故与 BM25 腿一并按纵深防御收紧。缺键 ⇒ None ⇒
+                # allows 走 except TypeError 返回 False；本模块不写密级规则。
+                "classification": meta.get("classification"),
                 "department": meta.get("department", ""),
             }
             for doc, meta in zip(documents, metadatas)
@@ -321,6 +329,12 @@ class DocumentRetriever:
                     "vector_id": str(ids[position]) if position < len(ids) else "",
                     "content": str(document),
                     "chunk_index": int(metadata.get("chunk_index", position) or 0),
+                    # R57 §1 判定：此处**不改**。document_chunks 是读回（见本函数 docstring），
+                    # 唯一消费方 app/api/v1/chat.py 的 _document_publication 只取 content /
+                    # vector_id / hash 三个键，发布记录的密级来自函数入参 classification
+                    # （→ app/rag/indexing.py 的 resource_version 写入与 scope_metadata），
+                    # 不来自本行；全仓再无其它调用方。因此这个默认值不到达任何权限判定，
+                    # 按判据「不到达的一律只报告不改」原样保留，论证见 R57 报告站点③。
                     "classification": metadata.get("classification", 1),
                     "department": metadata.get("department", ""),
                     "hash": str(metadata.get("hash", "")),

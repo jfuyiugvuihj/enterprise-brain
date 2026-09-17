@@ -260,6 +260,22 @@ def _local_row(filename: str, version: int, storage_path, stored: dict) -> dict:
     return {
         "filename": filename,
         "version": int(version),
+        # R57 §1 判定：此处**到达**权限判定，但本单不改，理由如下（三点都有实测支撑）。
+        # (1) 缺陷是真的：缺 classification 键的 sidecar 行会沿 current_documents()/
+        # list_document_versions() → app/api/v1/chat.py 的 _visible_document_rows →
+        # _document_resource_scope → app/common/policy.py 的 authorization_decision 走进去，
+        # 而判定在 policy.py:180 之后把这里的值当真实密级读。补 1 让缺键行以"1 级"身份通过
+        # classification > clearance 的比较，正好违背 policy.py:178-179 已成文的口径
+        # "密级缺失不视为公开、管理员也不得猜测"——它因此永远等不到 None。
+        # (2) "改了会造成库可用/库不可用下不一致"这个理由不成立，已实测否证：两侧同向补 1
+        # （_local_row(stored={}) 给 1；DB 侧本文件 :359 与 chat.py:620 同为
+        # classification INT NOT NULL DEFAULT 1，NOT NULL 连显式 NULL 都拒），故不作为理由。
+        # (3) 不改的真实理由是这个键一词两用：它既是判定输入，又逐字出现在
+        # /documents/catalog 的响应体里（_visible_document_rows 用 public_document_row 原样
+        # 透出整行，dashboard 概览就调这个端点）。把兜底直接换成 None 会让缺 sidecar 密级的
+        # 行既不可见、目录列同时变空，一次改动跨两个关注点，还顺带替业主裁掉 H13（未标密级
+        # 的上传算公开还是算不可见）。正解是把"参与判定的值"与"用于展示的值"拆开，需要单独
+        # 设计：已按 R57 订正令另立新单（拟号 R58）交总控，本单不实现。论证见 R57 报告站点④。
         "classification": stored.get("classification", 1),
         "department": stored.get("department") or "",
         "owner_id": stored.get("owner_id"),
