@@ -77,3 +77,65 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8001
 uv run python deploy/queue_worker.py
 uv run python deploy/scheduler.py     # 生产 APP_ENV 下 API 不再内嵌调度器，需要单独起一个
 ```
+
+## GPU 与算力诚实
+
+交付前先对一眼本机硬件实况，别把 CPU 的数字当成有卡的数字：
+
+| 项 | 值 | 口径 |
+| --- | --- | --- |
+| 宿主 GPU | NVIDIA GeForce RTX 4060 Laptop GPU，8188 MiB | [实测] 驱动 566.07，2026-09-17 采集 |
+| WSL2 VM 上限 | memory=8GB、processors=12、swap=8GB（`.wslconfig`） | [实测] 同一时点 |
+| ollama 当前算力 | `inference compute id=cpu library=cpu total="7.8 GiB"` | [实测] 同一时点，即那张卡没被用上 |
+
+那 8 GB 是整个栈共用的（backend、worker、scheduler、frontend、redis、postgres、ollama 全在
+同一个 WSL2 VM 里），所以显存之外还要跟数据库和队列抢内存。结论：这台机器上跑出来的任何
+吞吐与延迟数字都是 CPU 数字。真机验卡另立 H11，由业主本人执行，不属于本文档的验证范围。
+
+### 容器侧声明
+
+`docker-compose.yml` 的 `ollama` 服务显式申请计算设备，不靠"应该会自动用上"：
+
+```yaml
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+```
+
+同时带上 `NVIDIA_VISIBLE_DEVICES: all` 与 `NVIDIA_DRIVER_CAPABILITIES: compute,utility`：
+前者让容器 toolkit 看见卡，后者才把 CUDA 计算接口暴露给进程。宿主需自装驱动与
+nvidia-container-toolkit，这两样都不在镜像里。
+
+- 只读渲染验证：`docker compose --env-file deploy/.env.server -f docker-compose.yml config --format json`
+  的输出里，ollama 服务应出现 `devices[].driver == "nvidia"` 与 `capabilities: ["gpu"]`。
+- 纯 CPU 客户机：把这段 `deploy:` 块放进客户自己的部署叠加层里删掉，否则
+  `docker compose up` 会在设备选择阶段直接失败。这是有意的——宁可启动失败并说清缺什么，
+  也不要静默落回 CPU 推理、再把结果当成"有卡"的交付数字。
+
+### 运行期探测：三分，不许合并成两分
+
+`app/common/model_capabilities.py` 用注入式 transport 问 Ollama 的 `/api/ps` 与
+`/api/version`，结论只有三种，且 `unknown` 是一等答案：
+
+| 结论 | 判定依据 | 是否带 error_code |
+| --- | --- | --- |
+| `gpu` | 常驻模型 `size_vram > 0`，或设备字段出现 cuda/gpu/nvidia/metal/rocm/vulkan | 否 |
+| `cpu` | 常驻模型 `size_vram == 0`，或运行时报 `library=cpu`/`device_id=cpu` | 是：`model_unavailable` |
+| `unknown` | 两个端点都探不到，或返回里没有可用字段 | 否，且既不算有卡也不算降级 |
+
+开关（默认关，默认行为与今天完全一致）：
+
+- `OLLAMA_REQUIRE_GPU=false`（默认 / 未设置）：确证的 CPU 降级只写一条 warning 并记在
+  `result.compute` 上，`result.available` 不变，服务继续跑。
+- `OLLAMA_REQUIRE_GPU=true`：确证的 CPU 降级把发现结果变成 `available=false` +
+  `error_code=model_unavailable`；`unknown` 既不定罪也不放行，只留 warning。
+- 复用 `model_unavailable` 而不是新增码：它本来就在 `app/agents/contracts.py` 的封闭枚举里，
+  `app/agents/evidence.py` 也已把它列为可重试。本单不往码表里塞新码。
+- 调用方式：`discover_ollama_models(fetch, base_url, compute_fetch=<同一个注入 transport>)`。
+  不传 `compute_fetch` 时仍只发一次 `/api/tags`，现有调用方（`app/common/model_config.py`）
+  行为不变；把探测接进线上模型列表接口是后续单，本单只交付探测与静态声明。
+- 机器判据：`python -m pytest tests/test_gpu_compute_honesty.py -q`（15 项，全离线，不碰真 Ollama）。
