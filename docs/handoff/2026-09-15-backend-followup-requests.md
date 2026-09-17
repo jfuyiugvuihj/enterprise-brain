@@ -10,6 +10,13 @@
 
 - ~~S7 缺 `migrations/0007_metric_definition_sync.sql`~~ —— **不是缺陷**。`metric_definitions` 自 `migrations/0002_execution_data_lineage.sql:72` 就存在，S7 复用现表，不需要新迁移。`definition_version` 已在 `app/semantics/contracts.py` 与 `/semantics/metrics` 暴露，provenance 告警语义也保留了（`app/semantics/registry.py` 的 `_TABLE_WARNING` / `_SEEDED_WARNING`，未伪装成已核对）。**S7 判为完成。**
 
+
+> **🔴 本表基线为 09-15 的 `c6c6009`，部分行已过期。2026-09-17 在 `ec0f40b` 上复核实测订正如下，勿据此表重复派工**：
+> **R2 已完成**（`GET /artifacts` = `app/api/v1/artifacts.py:168`）；**R8 已完成**（artifact DELETE = `artifacts.py:78`、数据集 DELETE = `app/api/v1/data.py:234`、幽灵表清理 = `app/documents/catalog.py:614-618`）；
+> **R10 已完成**（`895ee18`）；**R13 已完成**（`GET /hitl/pending` = `app/api/v1/chat.py:1337`，`migrations/0008_pending_approvals.sql` 已存在）；**R1 按裁定 (c) 收口**（后端零改动、403 保持，前端 W7 `9d327d8` 已把「无权限」与「空列表」分开渲染 ⇒ 看板 §2 的 G4「staff 返回 200」这条判据本身作废）。
+> **仍未落地**：R3 / R5（`standard_source` 在 `app/**` 0 命中）、R14（`app/api/v1/dashboard.py` 对 `department` 0 命中）、B-6、B-7。
+> 性能与架构新单见本文 **§21（R25–R52）**，论据在 `docs/handoff/2026-09-17-perf-architecture-plan.md`。
+
 ## 1. 仍未落地的需求（按对前端的阻塞程度排序）
 
 | # | 需求 | 现状证据 | 最小做法 | 阻塞的前端项 |
@@ -468,3 +475,59 @@ GPU/显存/最低配置**零命中**（2026-09-16 实搜），即"客户这台�
 **关联**：W8（`codex/perf-lab`）正在出量化预算表，本单的 ②③ 应引用它的实测行，不得各写一套数。
 
 **优先级**：P0（交付能力问题，不是体验问题）。
+
+---
+
+## 21. 性能与架构线正式立单 **R25–R52**（2026-09-17 总控，基线 `ec0f40b`）
+
+**为什么要移到这里**：性能改造的**登记处**是本文，**论据与编排**在
+`docs/handoff/2026-09-17-perf-architecture-plan.md`（下称《计划书》）。人日、分层、依赖链看《计划书》§5；
+每单的**判据与禁改边界**以本节为准。**R39 不建，沿用 R17**（裁定=甲）。
+**共同判据**：合并前跑全量 pytest 并记录**当前 HEAD** 的数字（**禁止再引用 `895ee18` 时点的 727/903**）；
+端到端计时期间禁止 `up/down/restart`；GPU 档必须先在容器内 `nvidia-smi` 自证，否则整轮作废。
+
+| 单号 | 内容与落点 | 判据（机器可验） | 禁改边界 |
+|---|---|---|---|
+| **R25** | 开发期把 `app/**` 挂进容器，免每轮 28 min 重建。`docker-compose.yml` | 改一行 `app/**` 后不 build 即生效；`verify_container_stack.py --skip-build` 仍能过 | 不改生产 compose 的副本语义；挂载只加在 dev override 文件 |
+| **R26** | GPU 诚实声明。`docker-compose.yml:78`（ollama 现无设备声明）、`README`、`deploy/*.md` | ① 容器内 `nvidia-smi` 有卡；② **拿不到卡必须显式报错 + 稳定码**，不得静默 CPU；③ `/health/details` 能区分"模型太慢"与"机器没 GPU/内存不足"；④ 硬件基线（GPU/显存/最低配置）入文档，与 **R24 ②③ 合并验收** | 不许为了"绿"把 healthcheck 改成无条件 ok |
+| **R27** | 确定性计划命中即跳过 Supervisor **两发**（现白花 43.728 s）。`app/agents/orchestrator.py:201` | ① 第 2 发不再发生（日志计数）；② 先加测试钉住 `orchestrator.py:285-305` 兜底仍能纠正错派；③ 端到端 −≥35 s | **不得删**兜底路径；不得改 worker 结果结构 |
+| **R28** | 多路改写改条件触发 + fast/thorough 分档（现白花 41.581 s）。`app/rag/retrieval_pipeline.py:271`（无任何前置条件）、`:50 rewrite` | ① 单跳问题走 fast 时**模型往返数为 0**；② 多块召回时 thorough 行为不变；③ 30 题评测不退化 | 不得动 `:59 json.loads` 的失败语义（那是 R23）；不得顺手改检索权重 |
+| **R29** | 思考税。**重定义**：`/v1` 上 5 种关思考写法全无效（W8 §5.4 `[实测]`）⇒ 迁原生 `/api/chat`，或做 `PARAMETER think false` 派生模型 | ① `thinking` 字段实测为 0 字；② 生成轮 30.6 s → ≤22 s；③ **前置：R36 质量基线已建立**，制度题准确率不得下降；④ `tool_calls` 报文重做后权限/超时语义全复验 | 不许只在 `/v1` 加参数就当完成；不许在无线上端点证据前宣布关掉了思考 |
+| **R30** | `max_tokens` / 超时按档。`app/agents/contracts.py:72`（字段存在但**全仓零赋值**）；三处硬编 `timeout=30`：`nodes.py:304`、`nodes.py:370`、`tools.py:443`；`model_handler.py:50` 默认 60 vs `.env.example:38` 的 120 | ① 每档有显式 `max_tokens`；② 超时与 prompt 规模相关（按预算或 prefill/decode 分计）；③ 默认值与 `.env.example` 一致；④ `n_ctx=4096` 撞顶有稳定码 | 不改并发语义（R23）；不改默认模型名 |
+| **R31** | 生成轮流式透传。改 **HTTP 出口 2 处**：`nodes.py:174` / `:193`；graph 级 `orchestrator.py:709`（`stream_mode="values"` 在 `:491`）。**前端零改动** | ① `text` 事件数 >1；② **片段时间戳不重叠、逐字比对无缺字**；③ 后端每片 **≥20 字或 100 ms 合并，禁单字碎片**（原因见《计划书》§2.7 两个静默陷阱）；④ 与 legacy 全量重发共存不冲突 | **禁改 `frontend/**`**；禁在 `sessions.js` 里去动 `segments` 语义（那是前端线的）；必须排在 R27/R29/R30 之后 |
+| **R32** | 问答/分析/报告三档进契约 + 前端选择器，默认问答档 | ① 契约写出三档 SLO；② 档位不改变权限判定；③ `/ask` 非法档 → 400 | 不得借分档放宽 scope；legacy 事件名一个不许下线 |
+| **R33** | 输入瘦身：每发 prompt token 上限 + 无模型裁剪（现 `compress_messages` 自己要多发一模型，`orchestrator.py:158`） | ① 每发 prompt token 有硬上限且日志可见；② 裁剪过程**零模型调用**；③ **与 R36 同批合并**（会改答案内容） | 不许裁掉权限谓词与来源定位串 |
+| **R34** | `keep_alive` 常驻（现**全仓 0 命中**；冷加载 6.4–6.9 s/发） | ① 连续 5 问无重复冷启动；② 空闲后内存回收策略写进文档；③ 原生端点上生效（`/v1` 传参无效） | 不得设成永不卸载（客户机内存有限） |
+| **R35** | 真缓存两件事：① 门槛 `chat.py:936 use_answer_cache = not bool(request.session_id)` 改成 scope 相等即可命中；② 死代码 `cache.py:150-176`（字符集合 Jaccard、进程内 dict、无 TTL/淘汰/scope，**`app/**` 零调用者**）删除或按 Redis+向量+scope 重建 | ① 多轮对话内重复问题命中且**标注"缓存结果·生成于"**；② **跨部门/跨密级命中 0 条**（P0）；③ 淘汰策略可测 | 不许无 scope 上线；不许伪装成实时答案；命中必须是 UI 第四张脸 |
+| **R36** | 三屏 SLO + 评测集 **30 → ≥100 条** | ① 每档有可跑的分层评测集（含**同指标两部门口径冲突**成对题）；② P95 计算样本 ≥100；③ 基线分数落盘供 R29/R33/R35 对比 | 不得用演示语料充当评测集 |
+| **R37** | report 档进可靠队列（通道现成：`app/common/reliable_queue.py` + `deploy/queue_worker.py` 已跑 `run_orchestrator_result` 并 `queue.complete`） | ① 关页面后任务继续；② 结果可查回；③ 队列失败有终态与原因码 | 不改 `/ask` 现有同步档行为；不得丢 HITL 语义 |
+| **R38** | 核实 `usage` 真值（计量列在 `migrations/0002:147`：`input_tokens/output_tokens/duration_ms/first_token_at/queue_wait_ms`；链路 `app/trace/spans.py` → `app/trace/store.py:171`；现 `cached_tokens=0`） | 抽查一问，`input_tokens/output_tokens` 非零且与 Ollama 自报一致 | 不得估算冒充实测 token 数 |
+| **R40** | `standard_source` 自动取标准（承接 R5，现 `app/**` **0 命中**）；服务端**拒绝**前端传入的 `department` | ① 不传部门也能出结论；② 传错部门被拒且是稳定码；③ 不再出现前端 `standard: 500` 硬编 | 不改审批动作的权限判定 |
+| **R41** | SSE canonical `sources` 事件（承接 R3/B-2；现 `sources` 只在 `chat.py:764-768` 非流式路径拼装） | ① 流里出现 `sources`；② legacy 全保留；③ 前端引用条可点回原文 | **一个 legacy 事件名都不许下线**（契约冻结规则） |
+| **R42** | 快慢判别器（规则优先，学 Glean 的 Waldo 但**不再花一发模型**）。落点 `orchestrator.py:285-305` 兜底 + `nodes.py:304` 分类结果 | ① 判别零模型调用；② 判错时兜底仍能升档；③ 问答档占比 ≥60%（对齐 70:25:5） | 不许引入新的模型往返来做路由 |
+| **R43** | system prompt 前缀复用、可变内容后置（配合前缀缓存；外部锚 llm-d TTFT p90 0.542 s vs 94.865 s） | ① 同一前缀字节级稳定（无时间戳/无随机顺序）；② E3 档实测 `cached_tokens > 0` | 不许把权限信息塞进可复用前缀 |
+| **R44** | 热集进程内检索索引（外部锚：进程内 HNSW ≈0.0015 ms vs 外部库 1–5 ms） | ① 覆盖 95% 查询的热集常驻；② 与 Chroma 结果一致性有测试 | **不许**因提速牺牲部门/密级过滤（pre-filter 先于热集） |
+| **R45** | Pre-filtering：权限与部门谓词先缩小候选集再算向量 | ① 过滤在向量计算**之前**；② 严格权限下召回不为空（对比 post-filter 退化用例）；③ 检索 P95 不升 | 不得复用 `cache.py` 那套无 scope 逻辑 |
+| **R46** | 活动信号回填排序（采纳/驳回/点击 → 相关度先验；对齐 `contracts.py:157 score_type` 已备枚举） | ① 有信号后排序变化可测；② **无信号时与现状一致**；③ 隐私：只存计数不存内容 | 不得把用户问题原文写进新表 |
+| **R47** | 术语/同义词接进改写（`metric_definitions.match_terms` 已有） | ① 同义词题命中改进；② 改写仍走规则不新增模型往返 | 不改 `metric_definitions` 语义（R15-b 刚收口） |
+| **R48** | 首屏结论卡片 + 来源，正文后台补齐 | ① 首屏 ≤1 s 有可用结论；② 后台补齐失败有明确标注 | 不得先渲染结论再"纠正"成不同答案（前端 `_correcting` 路径要避开） |
+| **R49** | 索引瘦身：草稿/模板/超小文档不入索 | ① 有排除规则且上传时给出原因；② 被排除文档在 UI 可见为"未索引" | 不得静默丢弃用户上传 |
+| **R50** | 增量索引 + 低峰全量重建 | ① 单文档增量 <2 s；② 全量重建可中断续跑 | 重建期间不得出现"检索结果忽有忽无" |
+| **R51** | 阶段化 P95 观测（每步耗时进 trace 与 `/health/details`） | ① 分类/改写/检索/生成/反思各段 P50/P95 可查；② 端到端与分段加总误差 <1%（对齐 `docs/perf/latency-budget-2026-09-16.md` 的 0.03%） | 观测不得改变行为 |
+| **R52** | 断外网自检 + 内网证书（私有化形态，非性能） | ① 断网可装可跑；② 内网域名 + HTTPS 通过；③ 批量建 50 账号可登录且权限正确 | 不得为过检临时放宽 TLS 校验 |
+
+### 21.1 优先级（不按优先级排期会出事的地方只有一处）
+- **P0（阻塞交付能力）**：R25、R26（含 R24 ②③）、R36、R42/R45 中的权限侧、R52。
+- **P1（决定"能不能用"）**：R27、R28、R29、R30、R31、R33、R34、R35。
+- **P2（体验与规模上限）**：R32、R37、R38、R40、R41、R43、R44、R46–R51。
+- **唯一"顺序错了就白干"**：R36 必须早于 R29/R33/R35；R27/R29/R30 必须早于 R31；R25 必须最早。
+
+### 21.2 本节明确不要求（防蔓延）
+Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE 清理、换 embedding 或上 reranker 来提速
+（检索本体只占 **0.242 s**，见《计划书》§7）。**宣称"知识图谱提升问答质量"同样禁止。**
+
+### 21.3 与前端线的接口
+《计划书》§6.1 已核对：洞察→「异常与告警」、审批→「报销自查」、四张脸分开、Element Plus 移除 —— **均已完成**
+（`0d57886` / `9d327d8`，`frontend/package.json` 已无 `element-plus`）。性能线对前端**只新增两条要求**：
+① **图谱撤一级入口**（`frontend/src/App.vue:48`、`:56`），降为文档预览的"依据 / 相关制度"子视图；
+② R32 的**档位选择器**与 R35/R26 的**降级第四张脸**。**除此之外本线不得改 `frontend/**`。**

@@ -907,3 +907,76 @@ R18 的 13 条用例里 `test_a_stop_while_parked_prevents_the_approve_from_runn
 `redo=False count=0`），我没有当场把它们换算成"这一步值多少秒、有没有产出"。
 **规则：任何端到端耗时数字，第一件事是拆"该花/不该花"，拆完才允许谈硬件。**
 另：我此前把"减少往返"当成不能碰的禁忌（怕伤多 Agent 卖点），那是我自己加的约束，用户从没说过。
+
+---
+
+## 4U. 性能线立案与拆账口径订正 + 并行编排改三腿 + 再记我账（2026-09-17 上午，总控）
+
+### 4U.1 发生了什么
+用户授权「全部按照你觉得怎样能使项目更好的方向来，然后写入文档」。本轮**只落文档，未动 `app/**` 与
+`frontend/**` 一行代码**。产出四件：
+- 新建 `docs/handoff/2026-09-17-perf-architecture-plan.md`（性能与架构计划书，R25–R52 编排与分层论据）；
+- 新建 `docs/perf/enterprise-env-matrix.md`（企业环境仿真矩阵与 Go/No-Go 判据）；
+- 跟进单新增 **§21（R25–R52 正式立单）**，并在 §1 那张 09-15 的表顶部插入**过期订正注记**；
+- 把 `docs/system-architecture-2026-09-17.md`（v2.0）**首次入历史**——它一直是未跟踪文件，机器一清就没了。
+
+### 4U.2 拆账口径订正：85.3 s，不是 67.8 s（本表 §4T.4 就地作废）
+`[实测]` 端到端 **160.552 s**、五发模型往返 **159.803 s = 99.53%**、非模型 **0.749 s**（检索本体 **0.242 s**）。
+零产出往返 = **P-1 43.728 s**（Supervisor 两发 27.797 + 15.931）+ **P-2 41.581 s**（多路改写那发）= **85.3 s = 53.15%**。
+我在 §4T.4 记的 67.8 s 与"改写第 1 发 24.046 s 撞并发墙"两处**都不成立**：24.046 s 是 **doc worker 成功的第 1 个
+ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:100` 的 `acquire(wait_seconds=0)` 不排队立即放弃）。
+**W8 报告 §3.2 昨晚就已推翻它，我今天上午仍把它抄进计划** ⇒ 见 §4U.6 记账第 1 条。
+
+### 4U.3 阶段编排改令：三腿，不是六条并行
+| 腿 | 文件所有权 | 顺序 |
+|---|---|---|
+| ① agents 簇 | `app/agents/**`、`model_handler.py`、`model_budget.py` | **R27 → R29 → R30 → R31 → R32 → R38 严格串行** |
+| ② 部署簇 | `docker-compose.yml`、`deploy/**`、README 硬件基线 | **R25 最先 → R26 → R34（与 R29 会师）→ R52** |
+| ③ rag-api 簇 | `app/rag/**`、`app/api/v1/chat.py`、`app/common/cache.py` | **R28 → R33 → R35 → R37 → R41 → R42–R51**（腿内可并行） |
+| 质量簇 | `tests/`、评测集 | **R36 必须先于 R29/R33/R35 的合并** |
+
+**为什么是三条不是六条**：腿①六单全改同一批函数；腿①与腿③在 `chat.py`、`nodes.py:304` 交叠 ⇒
+**串行合并、禁同文件并行**。派六个人等于派六个冲突。
+
+### 4U.4 状态板就地订正（以下四行覆盖前文，不再另表）
+| 前文条目 | 订正 |
+|---|---|
+| ⚪未开始 R13（`0008` → `GET /hitl/pending`） | **已完成**：`app/api/v1/chat.py:1337` + `migrations/0008_pending_approvals.sql` 均在 `ec0f40b` `[实测]` |
+| R8 数据集/artifact 删除 API | **已完成**：`app/api/v1/artifacts.py:78`、`:168`、`app/api/v1/data.py:234`；幽灵表清理 `app/documents/catalog.py:614-618` |
+| 📌G4「`GET /alerts` 对 staff 返回 200」 | **判据作废**：R1 按裁定 (c) 收口（后端零改动、403 保持），前端 W7 `9d327d8` 已把"无权限"与"空列表"分开渲染 ⇒ G4 改写成前端渲染口径或直接划掉 |
+| 待决：「停止」是否等于拒绝挂起动作 / admin 检索语义 | **均已结案**：④甲已落地（R12 `826d318`、R18）、e2 已落地（`719f29c`、`6589bbc`）。**不得再列入待点头清单** |
+
+### 4U.5 新立的事实（后续派工必须引用，别再各自数一遍）
+- **模型往返是分层的**：HTTP 出口只有 **2 处**（`app/agents/nodes.py:174` fallback / `:193` primary），
+  业务发起点 **6 处**（`orchestrator.py:201`、`nodes.py:304`、`nodes.py:370`、`tools.py:443`、
+  `api/v1/alerts.py:137`、`memory/summarizer.py:30`，其中 **3 处硬编 `timeout=30`**），
+  ReAct 子图 **4 个**（`orchestrator.py:85-88`），graph 级 invoke **4 处**（`:110/:399/:709/:756`）。`[实测]`
+- **`app/common/cache.py:150-176` 的"语义缓存"是生产死代码**（`app/**` 零调用者，唯一引用
+  `tests/test_phase7_signal_line.py:47-50`）；在跑的是精确哈希缓存，而它被
+  `chat.py:936 use_answer_cache = not bool(request.session_id)` 限死 ⇒ **对话内永不命中** `[实测]`。
+- **`/v1` 上关思考无效**（5 种写法全试过，W8 §5.4）⇒ R29 重定义为端点迁移，且**必须先有质量基线**，不许当快赢卖。
+- **`context_length: 4096` 是硬顶** + `keep_alive` **全仓 0 命中** + GPU 声明**全仓 0 命中** `[实测]`。
+- **图谱生产必 503**：`app/api/v1/intelligence.py:124` 抛 `storage_read_only`，而
+  `KNOWLEDGE_GRAPH_STORE_PATH` 只在 `app/knowledge_graph/service.py:34` 出现，`.env.example`/
+  `docker-compose.yml`/`deploy/**` **0 配置命中** `[实测]` ⇒ 支撑 V 线"撤一级入口"的裁定。
+- **仍未落地**（防漏）：R14（`app/api/v1/dashboard.py` 对 `department` **0 命中**）、R5/`standard_source`
+  （`app/**` **0 命中**）、R3/R41（`sources` 只在 `chat.py:764-768` 非流式路径拼装）。
+
+### 4U.6 记我账（本轮新增，全部我自己查出）
+1. 沿用被推翻的 67.8 s 口径 ⇒ **引用数字前先查后续实测有没有推翻它，不要信自己的摘要**。
+2. "5.6 GB 权重把 24 GB 显存填满"是错表述（混淆权重体积与带宽）⇒ 正确理由：4090 带宽 1008 GB/s、
+   每 token 重读 ≈5.6 ms ⇒ 上限 ≈180 t/s、常见 60–120；A100 带宽约 2×、价格约 5× ⇒ **贵卡买并发与显存，不买单请求速率**。
+3. "每问 token 计量零写入"不准：列与链路都在（`migrations/0002:147`、`app/trace/spans.py` → `store.py:171`），只是没核实取值 ⇒ 降级为 R38。
+4. "改一处 invoke" 与我随后改口的"五处"**都错**：正解是分层的 2/6/4/4。用正则计数代替分层清点是方法错误。
+5. 把已裁定的「停止」语义与已落地的 admin e2 又列成"待你点头"；看板也把 R13 记成未开始 ⇒
+   **"待决清单"写盘前必须回查登记处与 `git log`**。
+6. 上一版说"语义缓存无 scope 正在跑"，差一点据此立出一条**不存在的 P0 泄漏单**（实为死代码）⇒
+   立单前先 `git grep` 调用者。
+
+### 4U.7 下一步（无需用户点头的都已排除，剩下的只有两件需要人）
+1. **需要用户本人**：优云智算下单/充值/实名（<200 元，明细见 `docs/perf/enterprise-env-matrix.md` §5），
+   以及 E2 虚机手装 Nvidia 驱动后**立刻做私有镜像**。
+2. **等 R25 之后可全自动**：腿①②③按 §4U.3 派工，每单合并前跑全量 pytest 并记**当前 HEAD** 数字。
+3. 三批在途期间**绝对别碰 `chroma_db/` 反跟踪**（§4G.5 已论证会删掉 `fe-trunk`/`fe-prims` 两个工作副本）。
+4. `docs/screenshots/`（8.24 MB）与根目录 `bundle.js`/`idx.html`/`frontend/node_modules.stub/`
+   **仍不入历史**，等用户点头。
