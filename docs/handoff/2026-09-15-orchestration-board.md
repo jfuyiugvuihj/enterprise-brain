@@ -1113,3 +1113,54 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
   拿后者当探针必然得负结论，属**用错探针**而非硬件不通。已在 L5 就地补订正注记（不改写原句，保留可追溯）。
 - **本次未做的事（划清边界）**：没有 `docker run`、没有重启任何容器、没有改 `docker-compose.yml`、
   没有打 Ollama 做任何计时。全部为只读检视，符合并发红线。
+
+### 4V.9 🔴 派工事故**第三次**（记总控账）+ be-r36 混合写入自查（09-17 10:26）
+
+- **事实**：同一份 R28 任务我在同一个工具块里 spawn 了**两遍**——
+  `Pascal`（`01a0ad2c-…5e94`，任务有效）与 `Erdos`（`01a0ad2d-…0930`，重复）。
+  两者被指向**同一个工作树** `be-r36`，这直接违反「一个子 agent 独占一个工作树」。
+- **与 §4V.4 同源**：错误模式都是「同类动作在同一个块里并行发，发完不核对数量」。
+- **处置**：`Erdos` 已 `close_agent` 关停（首次返回 `previous_status: running`，二次返回 `not found` ⇒ 确认已死），
+  09-17 10:24 收到 `{"status":"shutdown"}` 通知。关停后它已**无法回答**「你是否写过文件」，
+  所以自述路线彻底作废，只能靠磁盘事实判定。
+
+**be-r36 自查（09-17 10:26:00 实取，全部我本人跑的命令）**
+
+| 检查项 | 命令 | 结果 | 判读 |
+|---|---|---|---|
+| HEAD | `git rev-parse --short HEAD` | `ef3d193` | 仍在派工基线，**无人提交** |
+| 受版本控制文件 | `git status --porcelain` | **空输出** | `Erdos` 未改动任何已跟踪文件 |
+| 含未跟踪 | `git status --porcelain -uall` | **空输出** | 未新建任何文件 |
+| 忽略项 | `--ignored` | 仅 `.pytest_cache/`、`__pycache__/` | 测试运行痕迹，非源码 |
+- **mtime 交叉验证**：`app/rag/retrieval_pipeline.py` 与 `.env.example` 均为 `09-17 9:39:49`
+  —— 与工作树 checkout 时刻（`be-leg2` 全文件 9:39:50）一致 ⇒ **源码自 checkout 起未被任何一侧改写过**；
+  `tests/test_retrieval_rewrite_tier.py` **不存在**；`.pytest_cache/v/cache/lastfailed` 长 2 字节（= `{}`）@ 9:57:00 ⇒ 有一次**零失败**的 pytest 运行；
+  `app/rag/__pycache__/*.pyc` @ **10:25:16**（距实取仅 44 s）⇒ `Pascal` 正在实时导入 `app.rag`，**活着**。
+- **裁定**：**混合写入未发生**，`be-r36` **无需重置到 `ef3d193`**，`Pascal` 的独占权有效。
+  这是运气（`Erdos` 停在只读阶段），**不是流程保护住了**——下一次未必这么幸运。
+- **新增硬纪律（我自己以后必须遵守）**：
+  ① `spawn_agent` **一次只发一个**，禁止与第二个 spawn 或任何其他动作同块；
+  ② 发出后**立刻**核对返回的 `agent_id` 是否为新 id、且工作树未被别的活跃 agent 占用；
+  ③ 派工前先跑 `git status --porcelain -uall` 确认目标工作树干净；
+  ④ 一旦误派，**先关停重复体、再立即自查磁盘**，不采信任何自述。
+
+### 4V.10 两条在跑线的实况（09-17 10:26 实取）
+
+- `**Darwin` / R26 / `be-leg2`：判定卡死**。二次 `wait_agent` 均 `{"status":{},"timed_out":true}`；
+  `git status --porcelain -uall` **空**，HEAD 停在 `ad85821`（= 已合并的 R25 提交），
+  全树文件 mtime 齐刷停在 9:39:50 checkout 时刻 ⇒ **零落盘**。
+  且它的任务书早于 §4V.8 的 H11 收窄，判据已过期 ⇒ **关闭并按新口径重派**。
+- `**Einstein` / R20 / `be-r20`：在推进**。`M tests/conftest.py`(+32)、`M tests/test_auth.py`(+247/−32)，
+  较上一轮（+23 / +242−32）有增量 ⇒ 落盘正常，继续等它的 PG 前后行数证据。
+- **环境订正（记上一线交接摘要的账）**：交接摘要称这几份 handoff 文档「无 BOM」——
+  **实测本看板首三字节 = `239,187,191`（EF BB BF），即 UTF-8 **带 BOM****。
+  因此追加一律用 `[System.IO.File]::AppendAllText`（不触碰首字节，UTF8Encoding($false) 只在追加段落无 BOM），
+  **严禁** ReadAllText+WriteAllText 整文件回写，那会改掉文件头、制造一整篇假 diff。
+  另记：`.NET` API 的 CWD 不跟随 `Set-Location`，路径必须给绝对值。
+
+### 4V.11 待办（本节为唯一有效排程，覆盖 §4V.6）
+
+1. 关闭 `Darwin`，按 §4V.8 新判据重派 R26（静态可验证：compose 有 GPU 声明 + 诚实降级 + 稳定错误码；真机 `id=cuda` 归 H11）。
+2. 盯 `Pascal`(R28) → 独立复核（亲跑指定单文件 / 亲验变异实验已恢复 / 亲验 `chroma_db` 未被写）→ 合并。
+3. 盯 `Einstein`(R20) → 必须拿到「宿主原生 PG 前后行数不变 + rbac `N skipped`」原始输出才复核合并。
+4. 全量 pytest 门禁在 R20 合并前**继续生效**。
