@@ -2,8 +2,13 @@ import pandas as pd
 
 
 class TestRowLevelFiltering:
-    def test_filters_rows_by_department(self):
-        from app.common.rbac import filter_dataframe_rows
+    def test_filters_rows_by_department(self, monkeypatch):
+        """R17 裁定＝甲：部门列为空的行不再对同密级账号放行，只剩本部门那一行。
+
+        旧口径（空部门行也可见）现在只许用灰度开关 ``RBAC_ROW_DEPARTMENT_SCOPE=legacy`` 拿回来；
+        两侧的逐行对照用例在 ``tests/test_rbac_department_fail_closed.py``。
+        """
+        from app.common.rbac import ROW_DEPARTMENT_SCOPE_ENV, filter_dataframe_rows
 
         df = pd.DataFrame(
             {
@@ -13,9 +18,15 @@ class TestRowLevelFiltering:
             }
         )
 
+        monkeypatch.delenv(ROW_DEPARTMENT_SCOPE_ENV, raising=False)
         filtered = filter_dataframe_rows(df, role="staff", department="sales")
 
-        assert list(filtered["name"]) == ["a", "c"]
+        assert list(filtered["name"]) == ["a"]
+
+        monkeypatch.setenv(ROW_DEPARTMENT_SCOPE_ENV, "legacy")
+        legacy = filter_dataframe_rows(df, role="staff", department="sales")
+
+        assert list(legacy["name"]) == ["a", "c"]
 
 
 class TestImNotifications:
