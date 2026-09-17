@@ -162,13 +162,23 @@ def enforce_production_storage_guard() -> dict:
 
 def _model_snapshot() -> dict:
     """Report the model the routing boundary will actually use, or none."""
-    from app.common.model_config import get_local_model_settings
+    from app.common.model_config import get_local_model_settings, inference_compute_state
 
     settings = get_local_model_settings()
+    # R26b: the compute verdict rides with the model so /health/details can tell "the
+    # model is slow" apart from "this machine never used its GPU". It is read from the
+    # last observation the production discovery path recorded -- no probe is issued here,
+    # because a health poll must not stampede the local model server. ``unknown`` covers
+    # both "nobody has probed yet" and "the probe could not see the device".
+    compute = inference_compute_state()
     return {
         "base_url": settings.base_url,
         "name": settings.model_name or None,
         "source": settings.model_source,
+        "inference_compute": compute["kind"],
+        "inference_compute_detail": compute["detail"],
+        "inference_compute_error_code": compute["error_code"],
+        "inference_compute_age_seconds": compute["age_seconds"],
     }
 
 
