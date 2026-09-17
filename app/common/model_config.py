@@ -15,6 +15,9 @@ from urllib.request import urlopen
 
 _DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 _DISCOVERY_CACHE: tuple[float, str, str] | None = None
+#: The last inference-compute verdict a probe produced, as a plain dict. Reading it back
+#: never opens a socket, so /health/details can answer "gpu | cpu | unknown" cheaply.
+_COMPUTE_CACHE: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -54,11 +57,28 @@ def _fetch_registry(url: str) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
-def discover_chat_model(base_url: str, *, fetch: Callable[[str], dict] | None = None) -> str:
-    """Return the first chat-capable model registered locally, or an empty string."""
+def discover_chat_model(
+    base_url: str,
+    *,
+    fetch: Callable[[str], dict] | None = None,
+    compute_fetch: Callable[[str], dict] | None = None,
+) -> str:
+    """Return the first chat-capable model registered locally, or an empty string.
+
+    ``compute_fetch`` opts this call into the R26 inference-compute probe. Left as
+    ``None`` the request set stays exactly ``/api/tags``, which is what the discovery
+    tests pin; production passes the same registry transport (see ``_cached_discovery``)
+    so a machine that is not using its GPU becomes observable. ``OLLAMA_REQUIRE_GPU``
+    decides whether a *confirmed* CPU fallback refuses to serve; unset keeps today.
+    """
     from app.common.model_capabilities import discover_ollama_models
 
-    result = discover_ollama_models(fetch or _fetch_registry, base_url)
+    result = discover_ollama_models(
+        fetch or _fetch_registry,
+        base_url,
+        compute_fetch=compute_fetch,
+    )
+    _record_inference_compute(base_url, result)
     if not result.available:
         return ""
     try:
@@ -76,7 +96,7 @@ def _cached_discovery(base_url: str) -> str:
     cache = _DISCOVERY_CACHE
     if cache is not None and cache[2] == base_url and now - cache[0] < ttl:
         return cache[1]
-    discovered = discover_chat_model(base_url)
+    discovered = discover_chat_model(base_url, compute_fetch=_fetch_registry)
     _DISCOVERY_CACHE = (now, discovered, base_url)
     return discovered
 
@@ -84,6 +104,52 @@ def _cached_discovery(base_url: str) -> str:
 def reset_model_discovery_cache() -> None:
     global _DISCOVERY_CACHE
     _DISCOVERY_CACHE = None
+
+
+def _record_inference_compute(base_url: str, result) -> None:
+    """Remember the verdict a probe produced; a call without a probe records nothing."""
+    global _COMPUTE_CACHE
+    compute = result.inference
+    if compute is None:
+        return
+    _COMPUTE_CACHE = {
+        "kind": compute.kind,
+        "detail": compute.detail,
+        "error_code": compute.error_code,
+        "observed_at": time.time(),
+        "observed_from": base_url,
+    }
+
+
+def reset_inference_compute_cache() -> None:
+    global _COMPUTE_CACHE
+    _COMPUTE_CACHE = None
+
+
+def inference_compute_state(now: float | None = None) -> dict:
+    """The last observed verdict, or ``unknown`` when nobody has looked yet.
+
+    Reading never opens a socket, and "not probed" is reported as ``unknown`` instead of
+    either end of the GPU/CPU claim.
+    """
+    from app.common.model_capabilities import COMPUTE_UNKNOWN
+
+    if _COMPUTE_CACHE is None:
+        return {
+            "kind": COMPUTE_UNKNOWN,
+            "detail": "not_probed",
+            "error_code": None,
+            "observed_at": None,
+            "age_seconds": None,
+        }
+    state = dict(_COMPUTE_CACHE)
+    observed = state.get("observed_at")
+    state["age_seconds"] = (
+        round(max(0.0, (time.time() if now is None else now) - float(observed)), 3)
+        if observed
+        else None
+    )
+    return state
 
 
 def get_local_model_settings(
