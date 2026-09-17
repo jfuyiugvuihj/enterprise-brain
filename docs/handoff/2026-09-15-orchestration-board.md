@@ -1486,3 +1486,44 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 - 本班至今 **0 次合并**；线程累计仍 4 次（R27 `6a4f02b` / R41 `571e0d6` / R54 `7b8dab3` / R26b `6ee2f79`），文档 commit 另计。
 - **H6 未结**：分支从未 push，本机是唯一副本。每次合并后必须再次提示业主自行安排 push/备份，Agent 不代做。
 - H10 已结案（全局仅 `automation-2` ACTIVE/HOURLY 指向本线程，无双心跳）；H5 未到触发点（从树仍有未合完项，`.gitignore` 不许碰）；H3 无新卡点；H9 已结案，不得拿演示日期催业主。
+## 4AD. R45 危害机理订正 + 修法顺序改判（09-17 17:26，总控纯函数实验）
+
+### 4AD.1 我上一班记的三条危害，两条不成立
+
+- **实验**：17:24:00 用 `.venv` 解释器直接 import 主树 `app/rag/retrieval_pipeline.py` 的
+  `rrf_fusion`(:220-237) 与 `_deduplicate`，喂构造候选跑纯函数比较（无 Ollama、无 `chroma_db`、不落数据）：
+  语义腿 10 条含重复 → 去重后 7 条；`fused` 长度 **9 == 9**；`fused` 元素**集合相同**；**顺序不同**
+  （不去重 `[A,B,H,I,...]` vs 去重 `[A,H,B,I,...]`）。
+- **作废**「`fused` 变长 ⇒ Cross-Encoder 多算候选」：`rrf_fusion` 以 `content[:120]` 为键写入 `scores`/`docs_map`
+  两个 dict，返回键序列，输出长度恒等于不同键个数，与列表内重复次数无关。[实测 17:24:00 + 算术（读 :229-234 结构）]
+- **作废**「`top_k` 被重复挤占 ⇒ 不同来源数下降」：同理 `fused` 内不存在重复条目，无名额可挤占。[实测 17:24:00]
+- **成立的唯一危害 = 融合排序偏移**，机理两条：(a) **不当提权**，同一 chunk 在 `all_semantic` 内出现 n 次就累加
+  n 个 `1/(k+rank)`；(b) **名次污染**，重复条目照占 `rank` 序号，其后唯一条目 `rank` 变大被系统性压低。
+  排序一偏，紧随其后的 `top_k` 截断选出的就是另一批文档。[实测 17:24:00]
+- **由此派生的禁止事项（已下发 Arendt）**：测试**不许**断言「`fused` 变短」或「来源数变多」，两条永不成立，
+  写了就是假绿/假红。结构断言改用 monkeypatch 捕获传入 `rrf_fusion` 的实参，直接证明语义腿列表内无重复键。
+
+### 4AD.2 修法顺序改判：先过滤、后去重
+
+- 上一班给 Arendt 的 `all_semantic = _retain_permitted(_deduplicate(all_semantic), pred)`（先去重）**改判**为
+  `all_semantic = _deduplicate(_retain_permitted(all_semantic, pred))`（先过滤）。
+- 理由：`_deduplicate` 保留**首次出现**的那一份。若同一 `content[:120]` 的多份拷贝中第一份恰好缺
+  `classification` 等元数据键、后一份齐且合法，则"先去重"会连同合法份一起丢掉，剩下缺键份再被 `pred`
+  按 fail-closed 裁掉 ⇒ **误拒（false denial）**，合法文档凭空消失。"先过滤"无此问题，且与 BM25 腿既有顺序
+  （腿内过 `pred` → `:396` 去重）对称。`pred is None` 时 `_retain_permitted` 原样返回同一列表对象，
+  整体逐字等价主树 `:375`。[算术（读 `_deduplicate` 首现保留逻辑 + §21.9 fail-closed 实测）]
+- 要求执行层独立复核该理由后再施工，不认同就带证据回驳。
+
+### 4AD.3 本班投递与主树动作
+
+- 主树提交 `5e0bd1c`（仅 `docs/handoff/2026-09-15-orchestration-board.md` +42/−7 与
+  `docs/handoff/2026-09-15-backend-followup-requests.md` +13/−1，显式列路径，无 `git add -A`）。
+  被删 6 行经逐行核对全部是 §0 名册旧行；看板 BOM 复查仍为 `EF BB BF`，跟进单仍无 BOM。[实测 17:22:1x]
+- **上一班遗留的投递事故已处置**：Planck（`01a0ae99-0576-7490-94fc-1366eb8bc5ad`）补投本班正式指令成功
+  `submission_id=01a0aeab-d773-…`；Arendt 更正令成功 `submission_id=01a0aeaf-6b6a-…`。
+  两条各占一个 block、发前逐字核对 `target`。上一班三条重复投递未造成污染（幂等措辞生效）。
+- 磁盘实测（17:20:46 / 17:21:42）：`be-r53` 仍 `app/rag/retrieval_pipeline.py` +41/−7、mtime 17:15:53、
+  **新测试文件不存在**（§21.9 判据① 的 `tests/test_prefiltering.py` 尚未落盘）；
+  `be-r20` `chat.py` 未改，`tests/test_approve_canonical_events.py` 17:19:44 已增至 24982B，
+  `pyc` 17:18:18 说明已实跑收集；另有未跟踪 `probe.txt`；`perf-lab` 的 runbook 新文件尚未出现。
+- 本线合并计数仍为 4 次，本班 0 次。**H6 仍未结**（分支从未 push，本机是唯一副本）。

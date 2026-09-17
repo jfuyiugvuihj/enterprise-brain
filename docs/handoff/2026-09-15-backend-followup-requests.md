@@ -715,3 +715,22 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 - 交付判据（派工已按此下发，全部须用 `C:\Users\fengx\PycharmProjects\企业智脑\.venv\Scripts\python.exe`）：① 新增 `tests/test_prefiltering.py` 全绿；② **反证**：把 D1 改回原样必须看到失败；③ **回归对比**：`pred=None` 时行为逐字不变；④ D2 用「故意忽略 `where` 的 fail-open 假 store」证明拦截，禁止断言现行漏权。
 - 写域：只 `app/rag/retrieval_pipeline.py` + 新测试；**禁改** `app/rag/retriever.py`、`app/rag/filters.py`。
 - 顺带记一条工具纪律给所有后续班次：本文件**不带 BOM**，看板 `docs/handoff/2026-09-15-orchestration-board.md` **带 BOM**；整行替换必须按此选编码参数，否则会静默抹 BOM 并在第 1 行制造假 diff（详见看板 §4AC.5）。
+## 21.10 R45 验收发现：去重被替换 + 危害机理订正 + 修法顺序改判（09-17 17:27，总控独立复核）
+
+- **发现的回归（成立）**：`be-r53` 的 `app/rag/retrieval_pipeline.py:395` 把主树 `:375` 的
+  `all_semantic = _deduplicate(all_semantic)` **替换**成 `_retain_permitted(all_semantic, pred)`，
+  语义腿去重消失（该树内 `_deduplicate` 仅剩 `:396` BM25 一处）。去重必须恢复。
+  [实测 17:21:42：`git diff --numstat` = +41/−7，mtime 17:15:53，`tests/test_prefiltering.py` 不存在]
+- **机理订正（推翻本线上班记录）**：危害**不是**「`fused` 变长致 Cross-Encoder 多算」也**不是**
+  「`top_k` 被重复挤占致来源数下降」——`rrf_fusion`(:220-237) 返回 dict 键序列，长度与成员恒等于不同
+  `content[:120]` 个数，与重复次数无关。唯一真实危害是**融合排序偏移**（重复份数累加 `1/(k+rank)` 造成不当
+  提权 + 重复条目占 `rank` 造成名次污染），后果是 `top_k` 截断选出另一批文档。
+  [实测 17:24:00，`.venv` 纯函数实验；脚本 `$env:TEMP\r45_rrf_probe.py`]
+- **判据调整**：新增用例**禁止**断言 `fused` 长度或来源数量变化（永不成立）；语义腿去重改用 monkeypatch
+  捕获传入 `rrf_fusion` 的实参做结构断言。
+- **修法顺序改判**：`all_semantic = _deduplicate(_retain_permitted(all_semantic, pred))`（**先过滤后去重**），
+  取代上一班下发的「先去重后过滤」。原因：`_deduplicate` 保留首次出现份，若首份恰缺 `classification` 键
+  而次份合法，先去重会丢掉合法份、再由 fail-closed 的 `pred` 全裁 ⇒ **误拒**；先过滤无此问题且与 BM25 腿顺序对称。
+  `pred is None` 时逐字等价主树 `:375`。
+- 已通过项不变：D1 先筛后取、`score<=0` 处 `break` 与旧逐条 `>0` 等价、`k<=0` 早退守卫、判定复用
+  `app/rag/filters.py` 的 `allows`。判据③ P95 仍**禁止实测**（`app/rag/retriever.py:56-65` 打 Ollama 属并发红线）。
