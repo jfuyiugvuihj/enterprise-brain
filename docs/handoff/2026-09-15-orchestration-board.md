@@ -1668,3 +1668,20 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 - H13 已按上述订正**追加**一段「事实链订正」（`20/1`，前缀证明 `PREFIX_OK=True`，human-gates 仍无 BOM `23 20 E4`）。业主只需就 **F（`Form(1)`）** 与 **E（`rbac.py:45 fillna(1)`）** 两处定口径，其余都是纵深防御。
 - 主树新增提交 `497bef5`（§4AF + §0 名册刷新 + H13 + R36③ runbook 并入，显式列三路径，无 `git add -A`）。名册更新用**行 splice**，写回带 BOM，实测 `first3=EF BB BF` 未丢。
 - 本班合并计数仍 **6**（R45 第 5、R36③ 第 6）。H6 **仍未结**（从未 push，本机唯一副本）。
+## 4AH. 总控独立复核：R57 的「纵深防御」定性**成立**（09-17 18:49，我自己追的调用链，未采信 Banach 自述）
+
+我本来准备质疑 Banach 这句「今天裁不到东西」，追完调用链后**反过来越验了它的结论**。链路（全部 `[实测]` 18:48:32–18:49:00，只读主树 `df0b03a`）：
+
+1. `app/rag/retriever.py:271` `def search(self, query, k=5, where: dict | None = None)` —— `where` **是可选参数**，`:275-276` 只在真值时下推 ⇒ 光看签名，"不传 where 就完全不过滤"是成立的担心。
+2. 但**全部生产调用点都带 where**（`git grep '\.search('` 去噪后只有 4 个活点）：
+   - `app/api/v1/chat.py:826` → `where=retrieval_filter` **并且**再套一层 `if scope.allows(source)`；
+   - `app/rag/retrieval_pipeline.py:145` `SemanticSearcher.search` 原样转发 where；
+   - `app/rag/retrieval_pipeline.py:375` → `ex.submit(self.semantic.search, q, 8, where)`（位置参数）；
+   - `app/rag/retrieval_pipeline.py:430` → `where=scope.filters, pred=scope.allows`。
+3. `scope.filters` **永不为 None/空**：`app/rag/filters.py:84-93` 即使是 administrator 也保留 classification 子句（该文件 docstring 明写「The classification clause is kept for an administrator」）。⇒ 缺 `classification` 键的行**在向量计算之前就被 Chroma 挡掉**。
+4. 双保险已经由 **R45** 建成：`retrieval_pipeline.py:402` `_retain_permitted(all_semantic, pred)` 会在本地再复核一次，缺键行届时 `int(None)` ⇒ `allows` 返回 False。
+⇒ **结论**：`retriever.py:286` / `retrieval_pipeline.py:192` 这两处 `, 1)` 属**纵深防御**，不是现行漏权。R57 把默认值改成 `None` 是「把第二道闸的假数据拿掉」，方向正确但**不得写成"正在泄漏"**。
+⇒ 顺带否证我自己的一条误判：`retriever.py:216` `add_document(classification: int = 1)` 看着像活的写入侧 fail-open，实测 `chat.py:2013-2018` 是**显式传参**调用 ⇒ 默认值不生效。**教训已回灌派工：默认值是否可达，必须查调用点，不能只看签名。**
+
+**唯一真正"可达且天天发生"的两处**（已并入 H13 请业主定口径，Agent 一律不改）：
+`app/api/v1/chat.py:1929` `classification: int = Form(1)`（API 契约层默认公开，端点零校验）与 `app/common/rbac.py:45` `fillna(1)`（数据行密级列为空 ⇒ 按 1 级放行）。
