@@ -1185,12 +1185,13 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 
 | Agent | agent_id | 单号 | 独占工作树 | 状态 | 最后核实（实取） |
 |---|---|---|---|---|---|
-| `Rawls` | `01a0ad34-4083-7722-9977-1453ab75316b` | R26b | `be-leg2` | **已结案**：`af027ce` 经复核并入主树 `6ee2f79`，四判据逐条达成（见 §4AB.2）；venv 复跑 136 passed, 4 skipped [实测 16:55:02] | 16:55:02 |
-| `Fermat` | `01a0ae6a-d3b6-70f3-911b-57db8d2496f8` | 上一班遗留 | — | 本班未探测（不无脑 spawn，复用一律先 `send_input`） | — |
-| `Carson` | `01a0ae6d-044c-7760-9b13-158dc6d905df` | 真机 105 题跑分 runbook（待派） | 写域仅 `docs/handoff/` 新文件 | 本班未探测。这是解 R36 判据③ 的唯一锁，派工稿已定稿待发 | — |
-| `Arendt` | `01a0ae97-b977-7483-9edb-561c05768e06` | R45（判据已重定义，见 §4AC.3） | `be-r53`（基线 `6ee2f79`） | 运行中；17:06:06 / 17:07:31 / 17:09:20 三次实测树 CLEAN 零落盘；已投窄化裁定 + fail-closed 更正 | 17:11:38 |
-| `Planck` | `01a0ae99-0576-7490-94fc-1366eb8bc5ad` | R55 | `be-r20`（基线 `6ee2f79`） | 运行中；业务代码零落盘，17:11:38 见未跟踪 `apply_test.patch`（自用产物，**不提交、本班不删**） | 17:11:38 |
-| `Jason` | `01a0ae99-89de-7e10-aab8-ac138c9a276e` | （Planck 的重复体） | `be-r20` | **已结案**：shutdown 回执已到（上一班悬着的"关闭未确认"解除）；经查其从未落盘 | 17:11:38 |
+| `Rawls` | `01a0ad34-4083-7722-9977-1453ab75316b` | R26b | `be-leg2` | **已结案**：`af027ce` 并入主树 `6ee2f79`，venv 复跑 136 passed / 4 skipped | 16:55:02 |
+| `Arendt` | `01a0ae97-b977-7483-9edb-561c05768e06` | R45 | `be-r53` | **已结案**：子提交 `0276f78` 并入主树 `640ef08`（§4AF.1）；总控主树复跑 **151 passed / 4 skipped** | 18:28:24 |
+| `Carson` | `01a0ae6d-044c-7760-9b13-158dc6d905df` | R36③ 跑分 runbook | `perf-lab` | **已结案**：runbook 含 P-8 已并入主树（§4AF.5）；该线**不得再提交同一文件** | 18:39:38 |
+| `Fermat` | `01a0ae6a-d3b6-70f3-911b-57db8d2496f8` | R57（**重复体**） | 与 `Banach` 同为 `be-r53` | **本班 18:32:56 关停**（事故 #14，关闭前 `running`）；关停前 `be-r53` 零落盘 ⇒ 无产物损失 | 18:32:56 |
+| `Banach` | `01a0aeea-6725-7ef2-80ab-fdd6c4f30471` | **R57** classification fail-open | `be-r53`（基线 `640ef08`，**独占**） | **运行中**；18:37:22 已改 `retrieval_pipeline.py:204`+`retriever.py:294`；订正令 `01a0aef3…` 已投（`policy.py:180` 用反 + 漏扫 `or 1` 形态） | 18:39:00 |
+| `Planck` | `01a0ae99-0576-7490-94fc-1366eb8bc5ad` | **R55** `/approve` canonical | `be-r20`（基线 `6ee2f79`） | **运行中**：判据①②③④⑥ 总控已验收；判据⑤ 扩域令 `01a0aef1…`（仅 `tests/test_hitl_pending.py`） | 18:37:00 |
+| `Jason` | `01a0ae99-89de-7e10-aab8-ac138c9a276e` | （Planck 的重复体） | `be-r20` | **已结案**：shutdown 回执已到，经查从未落盘 | 17:11:38 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -1588,3 +1589,48 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 - H3 无新卡点（Docker Desktop 在跑，7 容器 healthy）；H5 未到触发点（从树仍有未合项，`.gitignore` 冻结）；
   H8 第 2 项（根目录 0 字节游离 `2026-09-15-orchestration-board.md`）仍在册未清；H9 已结案不得催；
   **新立 H12**（镜像过期，见 §4AE.1）。
+## 4AF. 本班（09-17 18:30–，第五班）：R45 合并结案 + R57 双指派事故 + R55 判据⑤ 裁定（基线 `99a2a64` → `640ef08`）
+
+### 4AF.1 R45（Arendt）已合并 —— 本班第 5 次合并
+
+- 执行层禁止 commit，故**由总控代提交**子树 `0276f78`，再并入主树 `640ef08`。改动面：`app/rag/retrieval_pipeline.py` +48/−7、新增 `tests/test_prefiltering.py`（798 行 / 21 函数 / **32 条参数化用例**）。
+- 最终形态 = `:402` `all_semantic = _deduplicate(_retain_permitted(all_semantic, pred))`（**先过滤后去重**）+ BM25 先筛后取 + 新私有函数 `_retain_permitted`。与 §4AD.2 改判一致。
+- **总控独立复跑（未采信自述）**：本文件 32 passed（2.68 s ⇒ 反证未打模型）；14 个权限/检索套件 119 passed / 4 skipped；**合并后回主树复跑 151 passed / 4 skipped** `[实测 18:28:24]`。
+- 基线无并行改动证明：`git log --name-only 6ee2f79..HEAD -- app/rag/{retrieval_pipeline,filters,retriever}.py` 输出为空；合并前主树该文件 SHA == `6ee2f79` 版本。
+
+### 4AF.2 🔴 事故 #14：我给同一个 R57 派了两个 Agent（记总控账，第五次同类）
+
+- **成因**：上一班在**同一个 block 内**既 `spawn_agent` 新建 `Banach`，又 `send_input` 复用 `Fermat`，两条内容相同 ⇒ 两个执行体**同时以 `be-r53` 为独占树**。
+- **比 #11–#13 更严重**：§4V.12 定下的缓解是「重复体绑同一棵树，代价退化为白跑」，而这次是**两个不同 agent 被指派同一棵树**，直接违反「一个子 agent 独占一树」，属**真写域冲突**而非幂等浪费。
+- **处置**（`[实测]` 18:32:28 取证 → 18:32:56 执行）：先查 `be-r53` `git status --porcelain` **为空**，确认双方均未落盘 ⇒ 关 `Fermat`（`previous_status="running"`，回执已到），保留无 R54 旧上下文的 `Banach` 独占。零产物损失。
+- **防复发（硬规，覆盖 §4AA.3 ②）**：**派工 = 一个 block 内只允许一次投递调用**，且 `spawn_agent` 与 `send_input` **二选一**，绝不允许对同一单号同时用两种。需要"保险"时，正解是**下一个 block 先 `git status` 核查磁盘**，确认没有执行体在跑才补投。
+
+### 4AF.3 R55（Planck）判据⑤ 的裁定：既有测试自身不自洽，不是新单的回归
+
+- 我实跑 `be-r20` 的 `tests/test_hitl_pending.py` → **1 failed / 25 passed** `[实测 18:35:26]`，失败点 `:367`（expected `resumed`，实得 `awaiting`），与其自述一致。
+- **我亲读 `app/storage/pending_approvals.py` 得出定罪依据**：`record_awaiting` docstring `:147-150` 明写"同一会话未闭合的旧行先判 stale"，且 0008 上有 partial unique 索引保证**一个会话同时只允许一条 awaiting**。⇒ Planck「先闭合再新记」的写账顺序与存储层不变式一致，**判据④ 成立**。
+- **该用例原本就不自洽**：docstring 声称只验"闭合"，桩却把 `check_interrupt` 打成恒 `{"pending": ["chart"]}`（= 批准后图又挂起），而 `fake_stream` 又同时给出终答。它此前能绿，**唯一原因是实现正好缺了 `chat.py:1625-1627` 那条记账** ⇒ 一直在为已知缺陷背书。
+- **裁定**：授权扩域**仅** `tests/test_hitl_pending.py`；桩改回 `None` 使自洽、**原三条断言一字不改**；另**新增**一条用例钉「旧行 resumed + 新 awaiting 行带本轮 request_id + `open_items` 恰含一条」，并要求"实现未改时红、改动后绿"。禁止用"同名挂起就不记"绕过。投递成功 `01a0aef1…`。
+- **它报的两条残余风险我当场否证/结案**：① "`/approve` 新增 legacy `hitl` 前端可能不认" —— 主树 `frontend/src/lib/sessions.js:223` `LEGACY_EVENTS` 已含 `hitl`、`:345` 有 `case 'hitl'` 分支，`ChatPanel.vue:324` 在 approve 流上已挂 `onHitl` ⇒ 风险不成立，反而是判据④ 想要的效果；② "拒绝且无正文报 `request.failed/no_answer_produced`" —— 裁定**维持与 `/ask` 同构**，不单独分叉。
+
+### 4AF.4 🔴 R57 订正令：`policy.py:180` 这条证据被执行层用反了
+
+- Banach 已改 `retrieval_pipeline.py:204`、`retriever.py:294`（`meta.get("classification", 1)` → 缺键即 `None`），方向**正确、保留**；对另两处它选"只报告不改"。
+- **但它把 `policy.py:178-181` 的既有语义当成了"维持现状"的理由**：`_decision(False, "resource_scope_missing")` 的注释原文是 **"Missing scope is not treated as public or globally visible, and an administrator does not get to guess what an undocumented resource holds."** ⇒ 仓储**早有成文口径：缺密级 ≠ 公开**。而 `catalog.py:273` 的 `, 1)` 恰好让这道闸**永远等不到 None**，遗留 sidecar 行以"1 级公开"过了 `classification > clearance`。它说"改了就是替业主裁定"是**反的**。
+- **我不采纳它的"不改"措辞，但同意暂不改代码**，理由是另一条：`_local_row` 的 `classification` **同时服务权限判定与目录展示**，单点改 None 会让该行既不可见、展示列又同时变空，一次改动跨两个关注点 ⇒ 已令其**立新单**（拆分"判定值/展示值"），并要求它先实测 `chat.py:620` 建表 `DEFAULT 1` 与 `catalog.py:359` 是否两侧同向（若同向，它原来的"不一致"理由自我否证）。
+- **我另外扫出它漏报的站点**：`app/api/v1/chat.py:2240` `int(newest.get("classification") or 1)` —— **`or 1` 形态**，与 `, 1)` 不同，按 `, 1)` grep 必然漏。已令全仓重扫三种形态（`, 1)` / `or 1` / `default=1` / DDL `DEFAULT 1`）并出"是否到达权限判定"结论表。
+- 它报的 `retriever.py:294`「纵深防御」目前**缺实证**（where 是否真的先挡住），已下令用去 where 的假 collection 证明可达性。
+
+### 4AF.5 R36③（Carson）结案 + P-8 已补，runbook 并入主树
+
+- runbook 终稿 35741 B / 332→行，写域干净（`perf-lab` 仅一个新文件）。P-8「被测镜像同源」已按要求补入，且质量超出要求：**标记级为主判据**（容器内外 `_authorized_source_rows` 计数必须相等）+ **时间级为辅**（明确提醒 `image Created` 是 **UTC**，须 +8 换算再与 `git log -1 --format=%cI` 比）+ 反例留档 + 唯一正解 `docker compose build migrate` + "重建属 H12 业主侧，Agent 不得代做"。
+- 我的引用抽查：`docker-compose.yml:141` = `MODEL_MAX_CONCURRENCY: ${MODEL_MAX_CONCURRENCY:-1}` **命中**；`app/common/model_budget.py:53` `configured = max_concurrency …` **命中**；`chat.py` 标记计数 = **2** 命中（行数 2383/2384 属末行换行计数口径差，非错误）；`model_budget.py:101` 实取在 `:100`，**1 行漂移，待订正**。
+- 合并方式：**纯新增文档，总控直接把文件字节级复制进主树提交**（SHA256 两侧一致 `02722F2F…5A52`），不产生无意义 merge commit。**`perf-lab` 线此后不得重复提交该文件。**
+
+### 4AF.6 心跳与 H 门禁
+
+- **H10 已按要求完成**：`automation-2`（心跳）prompt 从「H1–H11」扩到 **H1–H13**，并把 **H12 升级为每轮必查三项之一**（H3 / H6 / H12），同时写明重建正解是 `docker compose build migrate`。`[实测 18:37:20]` 回验 toml：`status=ACTIVE`、`rrule=FREQ=HOURLY;INTERVAL=1`、**`target_thread_id` 仍为本线程 `01a0acfb…`**（更新未清空归属）。
+- 工具层新破解：`automation_update` 的真实判别字段是 **`mode`**（不是 `action`），且 `update` 时**不接受** `target_thread_id`，要传 **`targetThreadId`**（camelCase）。
+- H13（未标注密级上传 = 1 级是否有意）已入册，**需业主定口径**；选 (B) 须配套存量密级回填，Agent 不代做。
+- H6 **仍未结**（分支从未 push，本机唯一副本）；H3 无新卡点；H5 未到触发点（从树 14 个）；H8 第 2 项仍在册；H9 已结案不得催。
+- 本班合并计数：**第 6 次**（R36③ runbook）+ 第 5 次（R45）。

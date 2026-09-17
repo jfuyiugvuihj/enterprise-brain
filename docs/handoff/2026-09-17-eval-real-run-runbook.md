@@ -1,0 +1,344 @@
+# R36 判据③ 前置：真机 105 题跑分 runbook
+
+> 采集时点：2026-09-17 17:17 +08:00（`Get-Date` 实取）。工作树 `C:\Users\fengx\PycharmProjects\perf-lab`，分支 `codex/perf-lab`，HEAD `6ee2f79`，`git status --porcelain -uall` 开工时 0 行。
+> 本文自指一律用「§N = 第 N 节」。派工判据映射：1)→§3、2)→§4、3)→§5、4)→§6、5)→§7+§8、6)→§9、7)→§2、8)→§11。
+> 本文只写文档，不改代码。所有行号引用均在本文撰写时点从源码复核；性能/规模数字一律带 `[实测]/[算术]/[推算]/[外部基准]` 标注。
+
+## 1. 结论
+
+- **能跑了**：采集器 `scripts/collect_evaluation_answers.py` 已具备仓内缺失的答案采集链路，真机跑分只差一个 transport 适配器（§3 给了可编译骨架）+ 一次串行执行（§7）。
+- **三条硬红线**：① 跑分窗口内不得有任何并行的 Ollama 计时/其他 agent 打模型（§9）；② `RETRIEVAL_TIER=fast` 在 30 题对比跑完前禁入验收与演示，真基线必须跑在 `full`（§2 前置检查 P-4）；③ 每题必须带独立 `session_id`，否则 `/ask` 的全局答案缓存会直接返回旧答案、一次模型都不打（`app/api/v1/chat.py:998`、`:1002-1016`）——那量出来的 P95 是缓存，不是 Ollama。
+- **自证假基线的量级**：拿 `--dry-run` 桩（直接抄金标）评分 = **104/105 = correctness 0.9905 / evidence_coverage 1.0000** `[实测]` 2026-09-17 18:21:21 +08:00（同一形状在 16:25:42 也复现过一次），机理 `app/quality/eval.py:63-66`。§10 给 5 条机械拦截，其中 4 条不需要人读报告就能判死。
+- **正式落盘物是报告，不是 answers**：answers 落仓外（`--output` 指 `$env:TEMP` 或用采集器默认，默认本身就在 `tempfile.gettempdir()`，`scripts/collect_evaluation_answers.py:45`），报告落 `docs/testing/evaluation-report.json`（与 `scripts/run_quality_evaluation.py:17` 既有默认一致）。
+- **`--dry-run` 已经打不到正式路径**：必须 `--allow-sample` + 显式 `--output` 双开关才写，且永远写不到 `DEFAULT_OUTPUT`（`scripts/collect_evaluation_answers.py:302-313`）。
+- **先证明容器里就是那棵树**：P-1 只保证工作树干净，不保证被测镜像同源。已实测到的现状是后端镜像比被测 commit 早约 20 h、容器内代码缺 R41/R54/R26b（见 §2 P-8），照现状开跑量到的是旧产品。
+- **题数是 105，不是 100**：`tests/fixtures/business_evaluation_100.jsonl` 实测 105 行（文件名是历史名）；`business_evaluation_30.jsonl` 30 行。
+- **单题超时上限 300 s，nginx 读超时 900 s** `[实测]` 源码值：`app/api/v1/chat.py:1033`（`CHAT_REQUEST_TIMEOUT` 默认 300）、`deploy/nginx.conf:63`（`proxy_read_timeout 900s`）。整轮 `[推算]` 105 × 41.6 s ≈ 73 min 串行（41.581 s 是旧 trace 历史 `[实测]` 值，见 §11 口径表，本轮未重测）。
+
+## 2. 开工前置检查（一条不过就别开跑）
+
+| # | 检查 | 命令 | 通过条件 |
+|---|---|---|---|
+| P-1 | 树与 HEAD | `git rev-parse --short HEAD`; `git status --porcelain -uall` | HEAD 是业主认可的被测版本；跑分树必须 CLEAN（脏项会改变被测量） |
+| P-2 | 解释器 | `C:\Users\fengx\PycharmProjects\企业智脑\.venv\Scripts\python.exe -c "import sys;print(sys.version.split()[0], sys.executable)"` | 必须是这个 venv。系统 `python` 是 anaconda 且**无 chromadb**，用它跑出的失败是**假失败** |
+| P-3 | 题数 | 跑 §11.1 的计数命令，两个 fixture 各自出数 | 105 行；跑分脚本 `--fixture` 必须显式指 `tests/fixtures/business_evaluation_100.jsonl`（`scripts/run_quality_evaluation.py:14` 的默认仍是 30 题集） |
+| P-4 | 检索档位 | `docker exec enterprise-brain-backend-1 printenv RETRIEVAL_TIER`；宿主跑法看 `$env:RETRIEVAL_TIER` | 输出为空或 `full` 才算过。**`fast` 未过 30 题对比前禁入验收/演示**（闸门原文 `docs/handoff/2026-09-15-backend-followup-requests.md:625`；档位实现 `app/rag/retrieval_pipeline.py:48`，`.env.example:54` 默认 `full`）。不通过 ⇒ 整轮分数作废，不得落基线 |
+| P-5 | 模型并发 | `docker exec enterprise-brain-backend-1 printenv MODEL_MAX_CONCURRENCY` | `1`（`docker-compose.yml:141` 默认，`app/common/model_budget.py:53`、`:101` 实现）。不为 1 ⇒ 计时红线破防，整轮作废 |
+| P-6 | 计时窗口独占 | 与其它 agent/对话约定：本窗口内禁止任何并行打模型的行为，包括 perf_probe、看板复测、演示点击 | 窗口内只有这一条链路在跑（`docs/handoff/2026-09-15-backend-followup-requests.md:487`：端到端计时期间禁止 `up/down/restart`） |
+| P-7 | 结构预检（零模型） | §7 步骤 A 的 dry-run | 采集器 exit 0、产物在仓外、`collected=105 of 105` ⇒ 环境可用，再去打真机 |
+| P-8 | **被测镜像同源**（容器内跑法是硬闸） | 标记级（主判据）：`docker exec enterprise-brain-backend-1 python -c 's=open("/app/app/api/v1/chat.py",encoding="utf-8").read(); print(s.count("_authorized_source_rows"))'`；树内同符号计数：`(Select-String -Path app/api/v1/chat.py -Pattern '_authorized_source_rows' -AllMatches | ForEach-Object { $_.Matches.Count } | Measure-Object -Sum).Sum`。时间级（辅判据）：`docker image inspect enterprise-brain:local --format '{{.Created}}'` 对比 `git log -1 --format=%cI <被测 rev>` | 标记级**必须相等**（本树现值 `2` `[实测]` 2026-09-17 18:21:21 +08:00），不等即判死；时间级要求镜像 `Created` **晚于**被测 commit 的 committer date——注意 `Created` 是 **UTC**（带纳秒），北京时间 = UTC+8，先换算再比，别让人自己猜。反例即本次实测：镜像 `2026-09-16T12:59:16Z` = 北京 `09-16 20:59:16`，被测 `6ee2f79` committer `2026-09-17T16:54:20+08:00`，早约 20 h；容器内 `chat.py` 2294 行 / 标记 `0` 次，树内 2383 行 / `2` 次 ⇒ 不含 R41（16:37）/R54（16:40）/R26b（16:54） |
+
+- 判据取哪个符号：任选一个**只存在于被测版本**里的符号即可，本次用的是 `_authorized_source_rows`（R41 引入，`app/api/v1/chat.py:284`）。树内计数命令与容器内计数命令必须指向**同一个文件相对路径**（容器内是 `/app/app/api/v1/chat.py`）。
+- **P-8 不过的唯一正解是重建后端镜像，且必须 `docker compose build migrate`**：直接 build `backend` 会**静默空跑**，跑完还以为更新了。重建属**业主侧长任务（已挂 H12）**，Agent 不得代做。
+- 这与 §9「跑分窗口内禁部署」不冲突：P-8 要求**开窗前**镜像已到位，§9 要求**开窗后**不许动。宿主直连跑法（§5 的 B′，宿主进程读宿主工作树）可把 P-8 退化为"确认该进程工作树 = 被测 HEAD 且启动时刻晚于该 commit"；容器跑法没有这条退路。
+
+## 3. transport 适配器：写什么、采集器读什么
+
+### 3.1 采集器读取键（逐个从源码取证，非凭印象）
+
+`--transport` 只接受 `module:callable` 形式（`scripts/collect_evaluation_answers.py:252-268`，`load_transport`），callable 收到的是**整条 fixture row 字典**（`scripts/collect_evaluation_answers.py:188`）。它返回的字典按键被读：
+
+| payload 键 | 读取处 | 缺失/非法时 | 建议来源 |
+|---|---|---|---|
+| `answer` | `:144` `str(payload.get("answer", ""))` | 缺失 ⇒ 空串 ⇒ **被判为缺口**（`:198-202`） | `/ask` 的 `text` 事件 `content`（`app/api/v1/chat.py:1197`） |
+| `evidence` | `:94-99`（`:145` 调用） | 缺失 ⇒ `[]`；非 list ⇒ 抛 `CollectionError` | `sources` canonical 事件 `data.sources`（`app/api/v1/chat.py:1236-1251`） |
+| `latency_ms` | `:114-121`（`:146` 调用） | **缺失即由采集器用 `time.perf_counter` 实测补齐**（`:186`/`:192`/`:116`）；非数值或负数 ⇒ 抛错 | 建议**不要自报**，让采集器测：服务端 `elapsed_total` 只有 0.1 s 分辨率（`app/api/v1/chat.py:1139`） |
+| `first_token_at` | `:125-130`（`:147` 调用） | 缺失 ⇒ `null`；类型非 number/str ⇒ 抛错 | 客户端收到第一个 `text` 事件的本地墙钟（骨架里是 `arrival`）。**别拿 `request.started.timestamp` 冒充**（`app/api/v1/chat.py:229` 那是请求起点，不是首字） |
+| `thinking_chars` | `:103-110`（`:148` 调用，`_counter`） | 缺失 ⇒ `null`；bool/非 int/负数 ⇒ 抛错 | HTTP 侧观测不到隐藏思维链 ⇒ 老老实实 `null`（R29 要它，宁缺不假） |
+| `tool_calls` | 同上 `_counter`（`:149`） | 同上 | `step` 事件条数（`app/api/v1/chat.py:1142`、`:1332`、`:1347`） |
+| `claims` / `confidence` / `confidence_label` | `:154-156` 原样透传 | 不给就没有该键 | 评分端消费见 `app/quality/eval.py:35-51` |
+| 返回 str 而非 dict | `:136-137` 自动包成 `{"answer": <str>}` | 返回其它类型 ⇒ `:138-141` 抛错 | 不建议：会丢掉全部 trace 字段 |
+
+另有两条**采集器自己加**的键，transport 不用管：`id`（取自 row，`:143`）与 `answer_source`（取自 `--transport` 字面量，`:324`）。整行四键与三个 trace 键的存在性由 `assert_line_contract`（`:161-172`）硬校验，写完还要过覆盖闸门 `assert_coverage`（`:206-217`）才落盘（`:326` → `:340`）：**缺题 ⇒ exit 1 + 列出缺失 id + 一个字节都不写**。
+
+### 3.2 最小可运行骨架（存到**仓外**，例如 `$env:TEMP\evalrun\eval_transport_ask.py`）
+
+只依赖标准库。原则：**任何异常都往上抛**，让采集器把该题记成缺口——绝不用空串/占位答案冒充实采。
+```python
+"""R36 真机 105 题采集适配器骨架：POST /api/v1/ask 单题一问，交回采集器要的字典。
+
+跑法（base_url / 账号都走环境变量，代码里没有硬编凭据）：
+    $env:EVAL_BASE_URL = "http://127.0.0.1:8001"      # 容器内直连；宿主经 nginx 用 http://localhost
+    $env:EVAL_USERNAME = "<业主提供>";  $env:EVAL_PASSWORD = "<业主提供>"
+    $env:PYTHONPATH  = "$env:TEMP\evalrun"            # 本文件所在目录
+    & "<venv 绝对路径>" scripts/collect_evaluation_answers.py --transport eval_transport_ask:transport
+"""
+import json
+import os
+import time
+import urllib.request
+import uuid
+
+BASE_URL = os.getenv("EVAL_BASE_URL", "http://127.0.0.1:8001").rstrip("/")
+TIMEOUT = float(os.getenv("EVAL_HTTP_TIMEOUT", "900"))
+PROXIES = {}  # 空 dict = 无视 http_proxy/https_proxy，等价 curl --noproxy "*"（§6）
+_TOKEN = ""
+
+
+def _open(path, payload):
+    headers = {"Content-Type": "application/json"}
+    if _TOKEN:
+        headers["Authorization"] = "Bearer " + _TOKEN  # app/common/auth.py:298-302
+    request = urllib.request.Request(
+        BASE_URL + path,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers=headers,
+    )
+    return urllib.request.urlopen(request, timeout=TIMEOUT, proxies=PROXIES)
+
+
+def login():
+    """/api/v1/login 免鉴权（app/common/auth.py:36 PUBLIC_PATHS），响应体取 token 键。"""
+    global _TOKEN
+    if _TOKEN:
+        return _TOKEN
+    body = json.loads(_open("/api/v1/login", {
+        "username": os.getenv("EVAL_USERNAME", ""),
+        "password": os.getenv("EVAL_PASSWORD", ""),
+    }).read().decode("utf-8"))
+    _TOKEN = body.get("token") or ""  # app/api/v1/auth.py:60-66
+    if not _TOKEN:
+        raise RuntimeError("login 响应里没有 token 键")
+    return _TOKEN
+
+
+def iter_events(response):
+    """逐行解 SSE：yield (事件名, payload, 到达墙钟)。
+
+    服务端每事件写成 event: <name> + data: <单行 JSON> + 空行（app/api/v1/chat.py:208-209），
+    所以按空行切块即可；到达墙钟用 time.time()，是给 first_token_at 用的真实观测值。
+    """
+    name, data, arrival = None, None, None
+    for raw in response:
+        line = raw.decode("utf-8", "replace").rstrip("\r\n")
+        if line.startswith("event: "):
+            name = line[7:].strip()
+        elif line.startswith("data: "):
+            data, arrival = json.loads(line[6:]), time.time()
+        elif not line and name:
+            yield name, (data or {}), arrival
+            name, data, arrival = None, None, None
+
+
+def transport(row):
+    """采集器对每题调一次：入参是 fixture row，出参是 §3.1 那张表里的 payload。"""
+    login()
+    session_id = uuid.uuid4().hex  # 每题新会话 ⇒ use_answer_cache=False（chat.py:998）
+    answer, evidence, first_token_at, steps = "", [], None, 0
+    with _open("/api/v1/ask", {"message": row["question"], "session_id": session_id}) as resp:
+        for name, data, arrival in iter_events(resp):
+            if name == "queued":  # 被限流转排队，拿不到本轮答案（chat.py:978-992）
+                raise RuntimeError("被限流入队，本轮不计：把节奏放慢成严格串行")
+            if name == "status" and "缓存命中" in str(data.get("content", "")):
+                raise RuntimeError("命中答案缓存（chat.py:1006），时点是假的")  # chat.py:1002-1016
+            if name == "step":
+                steps += 1  # chat.py:1142 / :1332 / :1347
+            if name == "text" and data.get("content"):
+                if first_token_at is None:
+                    first_token_at = arrival  # 首字到达：客户端实测，不用服务端 elapsed 折算
+                answer = data["content"]  # /ask 只发一条整段 text（chat.py:1197）
+            if name == "sources":
+                # canonical 事件外面还有一层信封（app/api/v1/chat.py:222-232），
+                # 所以来源列表在 data["data"]["sources"]，不是 data["sources"]。
+                evidence = list((data.get("data") or {}).get("sources", []))  # chat.py:1236-1251
+            if name == "hitl":
+                raise RuntimeError("触发了 HITL 确认，该题未产出终答（chat.py:1212）")
+            if name == "error":
+                raise RuntimeError("ask 错误事件：" + str(data.get("content", "")))
+    if not answer.strip():
+        raise RuntimeError("空答案")  # 采集器 :198-202 同样会判缺口，这里只是早报因
+    return {
+        "answer": answer,
+        "evidence": evidence,
+        "first_token_at": first_token_at,
+        "thinking_chars": None,  # HTTP 侧看不见隐藏思维链 ⇒ null，禁止估算
+        "tool_calls": steps,
+        # 故意不自报 latency_ms：交给采集器 perf_counter 实测（:116/:186/:192）
+    }
+```
+
+**证据键名提醒**：`sources` 事件里每行的字段是 `source` / `score` / `worker` / `chunk_index` / …（`app/api/v1/chat.py:251-266`），**不是** `source_name`。评分端只判 `evidence` 真伪与条数（`app/quality/eval.py:36`、`:44`、`:86-89`），所以原样透传就能过 `requires_evidence`；但要给 R38 的溯源链留可读名，建议在 transport 里做一次搬运：`{"source_name": row["source"], "locator": {"chunk_index": row["chunk_index"]}, "score": row["score"], "worker": row["worker"]}`。
+## 4. 认证
+
+- 登录：`POST /api/v1/login`，请求体 `{"username": "...", "password": "..."}`（字段定义 `app/api/v1/auth.py:13-15`）。该路径**免鉴权**（`app/common/auth.py:36` 的 `PUBLIC_PATHS`）。
+- 取 token：**响应体顶层键 `token`**（`app/api/v1/auth.py:60-66`），同时会回 `username` / `role` / `department` / `expires_in`。`expires_in = token_expire_hours * 3600`（默认 24 h，`app/common/auth.py:34`）——105 题一轮 `[推算]` ≈ 73 min，**一轮内不会过期**，但别把 token 存盘复用到下一天。
+- 后续请求带法：请求头 `Authorization: Bearer <token>`（读取处 `app/common/auth.py:298-302`，`startswith("Bearer ")`，**前缀后有一个空格**）。没有 token 调 `/ask` 会 401 `authentication_required`（`app/api/v1/chat.py:914-915`）。
+- 探活免登录：`GET /api/v1/health`（`app/api/v1/auth.py:37`、`app/common/auth.py:36`）。用它先确认链路通，再谈跑分。
+
+```bash
+# 容器内跑法（§5 情形 A）。注意 --noproxy（§6）
+curl -sS --noproxy '*' -X POST http://127.0.0.1:8001/api/v1/health
+TOKEN=$(curl -sS --noproxy '*' -X POST http://127.0.0.1:8001/api/v1/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"<业主提供>","password":"<业主提供>"}' | python -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+curl -sS --noproxy '*' -X POST http://127.0.0.1:8001/api/v1/ask \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"message":"住宿费标准是多少？","session_id":"probe-0001"}'
+```
+凭据来源：首个管理员由 `AUTH_USERNAME` / `AUTH_PASSWORD_HASH` 播种（`app/common/auth.py:99-116`；生产环境二者必填，非生产回退 `admin/admin123` 见 `:112-115`）。**业主侧提供，runbook 不记录明文口令**；`/ask` 的检索范围随 Principal 收敛，所以**跑分账号必须用最终验收要用的那个角色/部门**，换账号=换分数口径。
+
+## 5. 端口口径（容器内 :8001 / 宿主经 nginx :80）
+
+| 情形 | 在哪执行 | `EVAL_BASE_URL` / curl 目标 | 依据 |
+|---|---|---|---|
+| **A 容器内**（推荐，链路最短） | `docker exec -it enterprise-brain-backend-1 bash` | `http://127.0.0.1:8001` | 镜像内 uvicorn 监听 `0.0.0.0:8001`（`Dockerfile:78`、`EXPOSE 8001` `:73`），健康检查就是打 `http://127.0.0.1:8001/api/v1/health`（`Dockerfile:76`） |
+| A′ 容器内（同网别的服务） | 任一 compose 服务内 | `http://backend:8001` | nginx 上游即此写法：`set $enterprise_brain_api http://backend:8001;`（`deploy/nginx.conf:38`）；拓扑测试也钉死了它（`tests/test_deployment_topology.py:167`） |
+| **B 宿主经 nginx** | Windows 宿主（`curl.exe` / venv 解释器） | `http://localhost`（等价 `http://localhost:80`） | 前端容器发布 `${HTTP_PORT:-80}:80`（`docker-compose.yml:233`），nginx `listen 80`（`deploy/nginx.conf:30`）+ `location /api/ { proxy_pass $enterprise_brain_api; }`（`:50`、`:53`） |
+| B′ 宿主直连后端（绕过 nginx） | Windows 宿主 | `http://127.0.0.1:8001` | 后端也发布到宿主：`127.0.0.1:${BACKEND_HOST_PORT:-8001}:8001`（`docker-compose.yml:147`，注释说明容器侧固定 8001、只有宿主侧可移）；`scripts/verify_container_stack.py:223` 同一口径 |
+
+两种跑法的**选择规则**：要"量产品实际付的时延" ⇒ 走 B（经 nginx，含代理开销与 900 s 读超时）；要"排除代理噪声、单测模型腿" ⇒ 走 A。同一轮基线**只允许一种**，并在报告里写明；A/B 混跑得到的 P95 不可比。
+经宿主 nginx 时注意：`proxy_read_timeout 900s`（`deploy/nginx.conf:63`）> 单题预算 `CHAT_REQUEST_TIMEOUT=300s`（`app/api/v1/chat.py:1033`），所以**先撞 300 s 应用超时、不会被 nginx 掐** `[算术]`（数值取自源码默认，非实测）。
+
+## 6. Clash 对 localhost 生效：所有 curl 必须 `--noproxy '*'`
+
+- **命令纪律**：`curl -sS --noproxy '*' ...`（Git-Bash / WSL 用引号包 `*`；PowerShell 里 `curl` 是 `Invoke-WebRequest` 别名，请用 `curl.exe --noproxy '*'`，或干脆用 §7 的 venv 解释器跑采集器）。
+- **为什么**：本机 Clash 会接管 `localhost`，代理对 `127.0.0.1` 的 CONNECT/转发**不一定回源**，于是"服务明明健康但 curl 打不通"。
+- **漏掉的症状（照着对号入座，别去重启服务）**：
+  1. 连接层立刻失败：`curl: (7) Failed to connect` / `Curl error 000`，而 `docker exec ... printenv` 一切正常；
+  2. 走 SSE 时**首字节之后断流**或整体 502/504（代理吞流、按 HTTP/1.1 缓冲）；
+  3. 时延被代理加料：`latency_ms` 莫名抬高且抖动大 —— 对 R36 基线是**污染数据**，比失败更糟；
+  4. `python` 侧 `urllib` 同样会被 `HTTP_PROXY`/`HTTPS_PROXY` 环境变量影响 —— 骨架里用 `PROXIES = {}` 显式屏蔽（`_open()`），否则等价于漏写 `--noproxy`。
+- **自检**：`curl.exe -sS --noproxy '*' http://127.0.0.1:8001/api/v1/health` 与不带 `--noproxy` 各跑一次，若只有前者通 ⇒ 本机代理确实在拦，后续所有命令必须带 `--noproxy '*'`。
+## 7. 执行序列（三步，一条一个退出码）
+
+```powershell
+cd C:\Users\fengx\PycharmProjects\perf-lab
+$py = 'C:\Users\fengx\PycharmProjects\企业智脑\.venv\Scripts\python.exe'   # 只用这个解释器（P-2）
+New-Item -ItemType Directory -Force -Path "$env:TEMP\evalrun" | Out-Null
+Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'   # 记录跑分窗口起点（时点戳）
+
+# A. 结构预检：零模型、零凭据，先证明链路和闸门能用（产物只进 TEMP）
+& $py scripts/collect_evaluation_answers.py --dry-run --allow-sample `
+  --fixture tests/fixtures/business_evaluation_100.jsonl `
+  --output "$env:TEMP\evalrun\sample-answers.jsonl"
+
+# B. 真采集：串行 105 题（此时才打模型；--allow-sample 属 dry-run 专用，别带）
+$env:PYTHONPATH = "$env:TEMP\evalrun"
+& $py scripts/collect_evaluation_answers.py --transport eval_transport_ask:transport `
+  --fixture tests/fixtures/business_evaluation_100.jsonl `
+  --output "$env:TEMP\evalrun\answers-real.jsonl"
+
+# C. 评分：正式落盘物是报告，进 docs/testing/
+& $py scripts/run_quality_evaluation.py `
+  --fixture tests/fixtures/business_evaluation_100.jsonl `
+  --answers "$env:TEMP\evalrun\answers-real.jsonl" `
+  --output docs/testing/evaluation-report.json
+Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'   # 窗口终点
+```
+
+- **退出码口径**：`0` 成功；`1` = 覆盖闸门/fixture 失败（`scripts/collect_evaluation_answers.py:327-338`，会打 `GATE FAILED: missing N fixture id(s): ...` 且**不写任何字节**）；`2` = 用法被拒（`:302-313` 的 dry-run fail-closed、`:295-301` 的 transport 二选一）。
+- **A 步期望输出**：`collected=105 of 105 wrote=<仓外路径>` + `dry-run sample answers: structure only, NOT a quality baseline`。A 步产物**绝不进 C 步**（它就是 §10 要拦的那个假基线）。
+- **B 步期望输出**：同样 `collected=105 of 105`。**中途不要 Ctrl+C**：采一半的产物会被闸门判失败（缺 id），已打模型的时点也就废了；确实要中断就整轮重来。
+- **C 步期望输出**：`evaluated=105 correctness=... evidence=... p95_ms=...`（`scripts/run_quality_evaluation.py:20-25`）。`evaluated=` 必须是 105，少了就是 fixture 指错（默认值仍指 30 题集，`scripts/run_quality_evaluation.py:14`）。
+- **失败重试的正确姿势**：某题因模型超时/报错缺失 ⇒ 修因后**整轮重跑**。不要手工把缺的题补进 answers 文件：`assert_coverage`（`scripts/collect_evaluation_answers.py:206-217`）按 fixture 全集判，补进去的行必须与真机同口径，否则 §10 的时点/延迟检查会露馅。
+
+## 8. 产物落点纪律
+
+| 产物 | 落点 | 是否进 git | 依据 |
+|---|---|---|---|
+| answers JSONL（含 dry-run 样例） | 仓外：`$env:TEMP\evalrun\*.jsonl`，或采集器默认 `tempfile.gettempdir()\enterprise-brain-evaluation-answers.jsonl` | **不进** | `scripts/collect_evaluation_answers.py:43-45` 的注释就是这条纪律：仓内 `artifacts/` 未被忽略、`.gitignore` 在 H5 结案前冻结 |
+| 评测报告 JSON | `docs/testing/evaluation-report.json` | 进（唯一该动的跟踪文件） | `scripts/run_quality_evaluation.py:17` 既有默认 |
+| 跑分窗口/环境快照（可选） | 仓外，或写进报告旁边的人读文档时**只贴摘要** | 视情况 | 别把 105 条全文塞进跟踪文档 |
+- 跑完自查：`git status --porcelain -uall` 只应出现 ` M docs/testing/evaluation-report.json`（+ 业主批准的文档）。**出现 `artifacts/`、`*.jsonl`、`chroma_db/` 任意一项 = 越界**，先清回仓外再回报。
+- 采集器不会自己建 `artifacts/`（默认已在 TEMP），但**别顺手 `--output artifacts/...`**：那会在每个 worktree 长期挂脏，并有被误 `git add` 的风险。
+
+## 9. 计时红线
+
+- **模型是单点**：`n_ctx=4096` 的共享红线 ⇒ 跑分窗口内**只允许这一条链路打 Ollama**。其他 agent 的 perf_probe、看板复测、演示点击、并发的 pytest 模型用例，全部让路（并发即作废，`docs/handoff/2026-09-15-orchestration-board.md:1293`：复测须打 Ollama ⇒ 命中并发红线，只能排队、由用户另开独立对话做）。
+- **并发闸门不许动**：`MODEL_MAX_CONCURRENCY` 必须为 `1`（`docker-compose.yml:141` 默认；实现 `app/common/model_budget.py:53`、`:101`）。调高它跑出来的 P95 不是产品时延，是排队时延。另需注意：闸门与 `n_ctx` 都是**镜像里**的配置，改了 `.env` 不重建镜像等于没改（与 §2 P-8 同源）。
+- **窗口内禁部署动作**：不得 `docker compose up/down/restart`、不得重建镜像、不得改 `.env` 后重启服务（`docs/handoff/2026-09-15-backend-followup-requests.md:487`）。
+- **缓存不算实测**：`/ask` 在无 `session_id` 时会命中全局答案缓存并**一次模型都不打**（`app/api/v1/chat.py:998`、`:1002-1016`）。骨架里靠两条防线拦：每题新 `session_id`（关缓存）+ 见到 `status` 含"缓存命中"就抛错（`:1006`）。
+- **限速不算失败重试**：`/ask` 有每用户 10 次/分钟的限制（`app/api/v1/chat.py:936`），超限会**入队**并只回 `event: queued`（`:978-992`），此时既没有 `text` 也没有 `sources`。串行跑 `[推算]` ≈ 1.5 次/分钟（按 41.6 s/题），不会触发；一旦触发说明链路异常快 ⇒ 当轮作废查因。
+- **别在跑分窗口内跑仓库测试**：pytest 会把 Chroma 写进沙箱（R53 已钉），但也可能拉起模型用例，与 P95 抢同一个单点。测试与跑分分窗口。
+## 10. 真跑分 vs 自证假基线：一眼分辨 + 机械拦截
+
+先给结论：**只看分数无法分辨**。`--dry-run` 桩把 fixture 金标原文当答案回声（`scripts/collect_evaluation_answers.py:227-238` 的 `build_dry_run_transport`），而评分端 `app/quality/eval.py:63-66` 判的是"`must_contain` 全含 / 无则 `row["answer"] in text`" ⇒ 桩必然刷到 **104/105 = 0.9905、evidence 1.0000** `[实测]` 2026-09-17 16:25:42。而 `app/quality/runner.py` 与 `app/quality/eval.py` **都不读 `answer_source`**，所以报告里不会留任何"这是桩"的痕迹。拦截只能靠下面 5 条外部特征。
+
+| # | 拦截 | 判据 | 硬度 |
+|---|---|---|---|
+| I-1 | transport 标记字段 | answers 每行的 `answer_source`（采集器 `:152` 写入，取值 `:321` 的 `"dry-run"` 或 `:324` 的 `--transport` 字面量）。出现 `dry-run` ⇒ 判死；真跑分应等于你传给 `--transport` 的那个 `module:callable` 串 | 硬，零误判 |
+| I-2 | 文件落点 | answers 若落在仓内（`git status --porcelain -uall -- *.jsonl` 非空）⇒ 违规，按 §8 挪出仓外再判 | 硬 |
+| I-3 | 时延量级 | `latency_ms` 最大值 < 1000 ms ⇒ 判死（桩 `[实测]` max 0.003 ms（p95 0.001 ms）；真机单题 `[推算]` ~4.2e4 ms，取历史 41.581 s）。阈值取 1 s `[推算]`：宁可错杀一个数量级，也不放缓存命中/桩混进基线 | 硬 |
+| I-4 | 金标逐字率 | 答案与 fixture 金标**逐字相等**的行占比 > 50% ⇒ 起疑人工复核（短答案天然容易撞，所以只做软判） | 软 |
+| I-5 | trace 覆盖率 | `first_token_at` / `tool_calls` / `thinking_chars` 的**非 null 计数**。全 null 不代表假，但**R29 思考税与 R38 usage 核实对这份文件无据可用**；`thinking_chars` 恒 null 是 HTTP 侧观测不到，不是漏采（见 §3.1） | 可用性判据 |
+
+机械检查（把下面存到**仓外** `$env:TEMP\evalrun\eval_selfcheck.py`，只读、不改任何文件）：
+
+```python
+"""eval_selfcheck.py <fixture.jsonl> <answers.jsonl>：非零退出 = 判死或起疑。"""
+import json, statistics, sys
+
+rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8-sig") if l.strip()]
+got = [json.loads(l) for l in open(sys.argv[2], encoding="utf-8-sig") if l.strip()]
+gold = {str(r["id"]): str(r.get("answer", "")).strip() for r in rows}
+ids = {str(a.get("id")) for a in got}
+flags = []
+stubs = sum(1 for a in got if str(a.get("answer_source", "")).startswith("dry-run"))
+if stubs:
+    flags.append(f"I-1 answer_source=dry-run 共 {stubs} 行（自证桩）")
+missing = [str(r["id"]) for r in rows if str(r["id"]) not in ids]
+if missing:
+    flags.append(f"I-1b 缺题 {len(missing)} 行：{missing[:5]}")
+exact = sum(1 for a in got if gold.get(str(a.get("id")), "__no_gold__") == str(a.get("answer", "")).strip())
+lat = [float(a["latency_ms"]) for a in got if a.get("latency_ms") is not None]
+if not lat:
+    flags.append("I-3 latency_ms 全空，P95 无从谈起")
+elif max(lat) < 1000.0:
+    flags.append(f"I-3 latency_ms 最大 {max(lat):.3f} ms，不可能是真机问答")
+sources = sorted({str(a.get("answer_source")) for a in got})
+print(json.dumps({
+    "rows": len(got), "fixture": len(rows), "missing": len(missing),
+    "gold_exact_matches": exact, "gold_exact_ratio": round(exact / len(got), 4) if got else None,
+    "latency_ms": {"count": len(lat), "min": min(lat) if lat else None,
+                   "median": round(statistics.median(lat), 3) if lat else None, "max": max(lat) if lat else None},
+    "first_token_at_non_null": sum(1 for a in got if a.get("first_token_at") is not None),
+    "thinking_chars_non_null": sum(1 for a in got if isinstance(a.get("thinking_chars"), int)),
+    "tool_calls_non_null": sum(1 for a in got if isinstance(a.get("tool_calls"), int)),
+    "answer_sources": sources,
+}, ensure_ascii=False, indent=2))
+if got and exact / len(got) > 0.5:
+    flags.append(f"I-4 金标逐字相等 {exact}/{len(got)}，超过 50%，需人工复核")
+for flag in flags:
+    print("FLAG " + flag)
+sys.exit(1 if flags else 0)
+```
+
+- 跑法：`& $py "$env:TEMP\evalrun\eval_selfcheck.py" tests/fixtures/business_evaluation_100.jsonl "$env:TEMP\evalrun\answers-real.jsonl"`；exit 0 才算干净，exit 1 时 stdout 的 `FLAG` 行就是理由。
+- 时点戳（人读的一眼分辨）：answers 与报告的写入时刻都应落在 §7 记录的跑分窗口之内；`docs/testing/evaluation-report.json` 必须比 answers **新**（先采集后评分）。桩文件的时间戳与任何跑分窗口无关，这也是它自己的破绽。
+## 11. 数字口径与已知 nit 备案
+
+### 11.1 数字口径（每条带标注 + 采集时点）
+
+| 数字 | 标注 | 采集时点 / 依据 |
+|---|---|---|
+| 105 题 | `[实测]` | 2026-09-17 18:17:54 +08:00 本树计数（文件名里的 100 是历史名，别照文件名写题数）：`& $py -c "import json;print(sum(1 for l in open(r'tests/fixtures/business_evaluation_100.jsonl',encoding='utf-8-sig') if l.strip()))"` → `105`；把路径换成 `business_evaluation_30.jsonl` → `30` |
+| 桩分数 correctness **0.9905** / evidence **1.0000** / p95 **0.001 ms** | `[实测]` | 2026-09-17 18:18:05 +08:00，本树跑 §7 的 A 步产物 → 再评分（`--output` 指 TEMP，不进仓）：`evaluated=105 correctness=0.9905 evidence=1.0000 p95_ms=0.001`；同一份桩文件被 §10 的自检脚本判死：`gold_exact_ratio=1.0`、`latency_ms.max=0.003`、`answer_sources=["dry-run"]`、exit 1 |
+| 104/105 = 0.9905 | `[算术]` | `round(104/105, 4)`：105 题里只有 `insight-02` 失分（§11.2） |
+| 单题 41.581 s | `[实测]` **历史值，本轮未重测** | `docs/handoff/2026-09-15-backend-followup-requests.md:626` 明确"旧 trace 的历史 `[实测]` 值"；`docs/handoff/2026-09-15-orchestration-board.md:925` 同值。**只能当量级参考，不得写成本轮结果** |
+| 整轮 ≈ 72.8 min | `[推算]` | 105 × 41.581 s = 4365.99 s ÷ 60，基于上一行历史值 + 严格串行（P-5/P-6） |
+| ≈ 1.44 次/分钟 | `[推算]` | 60 ÷ 41.581，用于对照下一条限额 |
+| 限额 10 次/分钟 | `[实测]` 源码常量 | `app/api/v1/chat.py:936`（`check_rate_limit(username, max_per_minute=10)`）；超限入队 `:954-992` |
+| 单题预算 300 s | `[实测]` 源码默认 | `app/api/v1/chat.py:1033`（`CHAT_REQUEST_TIMEOUT`，未设即 300） |
+| nginx 读超时 900 s | `[实测]` 源码值 | `deploy/nginx.conf:63`；`300 < 900` 为 `[算术]` ⇒ 走宿主 nginx 时先撞应用超时，不会被代理掐 |
+| 后端镜像 `Created = 2026-09-16T12:59:16Z`（北京 09-16 20:59:16） | `[实测]` | 2026-09-17 18:18:40 +08:00 由总控取证，**只读查看，未启动、未重启任何容器**；被测 `6ee2f79` committer `2026-09-17T16:54:20+08:00`，差约 20 h `[算术]`（UTC+8 换算后相减） |
+| 容器内 `chat.py` 2294 行 / `_authorized_source_rows` 0 次 vs 树内 2383 行 / 2 次 | `[实测]` | 容器侧同上取证；树侧本树 `6ee2f79` 复核 2026-09-17 18:21:21 +08:00：行数 2383、标记 2 次 ⇒ 结论：现役容器不含 R41/R54/R26b，**P-8 判死** |
+| I-3 判死阈 1000 ms | `[推算]` | 取"真机 `[推算]` 4.2e4 ms"与"桩 `[实测]` 1e-3 ms"之间留一个数量级余量，纯拦截用，不进任何统计 |
+
+### 11.2 已知 nit 备案（**只备案，业主未点头前不得改评测集业务语义**）
+
+- `insight-02`（`tests/fixtures/business_evaluation_100.jsonl`）：`must_contain = ["上升"]`，金标 `answer = "返回趋势异常"` ⇒ 金标自身不含 `must_contain`，任何真跑分**上限 104/105**。取证命令：
+  `Select-String -Path tests/fixtures/business_evaluation_100.jsonl -Pattern insight-02 -SimpleMatch` → 第 64 行原样打出 `"answer":"返回趋势异常","must_contain":["上升"]`
+- 影响口径：`answer_correctness` 的天花板 0.9905（`[算术]`）。**不许**为了让分数好看去改金标/`must_contain`/判分逻辑；要动得先拿到业主点头。
+- 该行缺陷已被既有测试钉死为"已知集合"（`tests/test_evaluation_report.py` 的 `KNOWN_INCONSISTENT_*` 常量），所以修它属于评测集语义变更，不属于跑分动作。
+
+## 12. 交付前自查清单（缺一即视为基线不成立）
+
+- [ ] P-1…P-8 全过，尤其 `RETRIEVAL_TIER` 非 `fast`（P-4）、`MODEL_MAX_CONCURRENCY=1`（P-5）与镜像同源（P-8）。
+- [ ] P-8 标记级实测：容器内 `_authorized_source_rows` 计数 = 树内计数（不等就找业主走 `docker compose build migrate` 重建（H12），**Agent 不得代做**，也别在跑分窗口内做）。
+- [ ] §7-B 采集 exit 0 且 stdout `collected=105 of 105`；中途无 `GATE FAILED`。
+- [ ] §7-C 评分 exit 0 且 stdout 以 `evaluated=105` 开头。
+- [ ] `eval_selfcheck.py` 对真 answers  exit 0，`answer_sources` 等于你传的 `--transport` 串，`latency_ms.max` 在秒级（I-1…I-4）。
+- [ ] `first_token_at` 非 null 计数 > 0（R29 才有据；全 null 时本单只支持质量基线，不支持思考税结论，须在报告里写明）。
+- [ ] `git status --porcelain -uall` 只有 ` M docs/testing/evaluation-report.json`（+ 业主批准写入的文档），**没有** `artifacts/`、`*.jsonl`、`chroma_db/`。
+- [ ] 跑分窗口起止时间戳（`Get-Date`）与产物 mtime 自洽，且窗口内无其他 agent 打模型。
+- [ ] 基线分数落盘后，才允许解锁 R29 / R33 / R35 的"质量基线已建立"前置（`docs/handoff/2026-09-15-backend-followup-requests.md:546`）。
