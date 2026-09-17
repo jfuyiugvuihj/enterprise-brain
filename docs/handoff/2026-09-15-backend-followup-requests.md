@@ -549,3 +549,32 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 
 1. `insight-02` 期望值 `上升`，金标答案却是「返回趋势异常」⇒ **它过不了自己的 `must_contain`**。本轮为保持与历史 30 条可比而未改，已锁进 `KNOWN_INCONSISTENT_INHERITED_IDS`（扩大即红），基线落盘后再收紧。
 2. **R20 范围必须再扩一条**：任何导入 `app.agents.orchestrator` 的测试，若解释器装有 `psycopg_pool`，会在 **import 期**连宿主 PG 并执行 `PostgresSaver.setup()` 建表。当前 `C:\Users\fengx\anaconda3\python.exe` 实测 `ModuleNotFoundError: psycopg_pool` [实测 09:52] 才幸免 ⇒ **这是环境巧合，不是设计保证**，R20 的隔离必须同时覆盖 `app.common.auth` 与 `PostgresSaver` 两条 import 期路径。
+
+### 21.5 R20 结案（09-17 10:38 合并 `660ee03`）+ 新立 **R53**
+
+- **R20 ✅ 已完成并经总控独立复核**。落点 `tests/conftest.py`（钉 `DATABASE_URL` 到 `127.0.0.1:1` 保留端口 + 4 条自检断言）
+  与 `tests/test_auth.py`（`TestUserCRUD` 改跑进程内临时 users 表，删掉直连与扫荡语句）。
+- **上面第 2 条"R20 范围必须再扩"已被同一条 pin 覆盖**：`app.common.auth` 与 `app.agents.orchestrator` 读的是**同一个**
+  `DATABASE_URL`（`auth.py:23`、`orchestrator.py:54`），钉一次即两条 import 期路径同时断。
+  实测 `23 passed in 12.40s` [10:36:29]，宿主库跑前跑后 `total/test_%/t_%/users_id_seq.last_value/max_id`
+  = `8/0/0/839/106` **逐字段全等** [10:36:07 → 10:36:41]。
+- **判据订正（记总控账）**：我原要求 `test_phase2_rbac.py` 出 `N skipped` —— **该判据不成立**，
+  因为它的 `_pg_ok()` 守卫在 R20 之前就恒为 True。现改用「**没写**」而非「**没测**」的证据（seq 未前进 + TCP 打 5432 次数为 0）。
+
+- **本文件编码提醒**：本跟进单**无 BOM**（首三字节 `35,32,229`），而看板 `2026-09-15-orchestration-board.md` **带 BOM**
+  （`239,187,191`）。两份相反 ⇒ 追加一律 `AppendAllText` + `UTF8Encoding($false)`，**禁止**整文件回写；
+  只有确需改中部时，才按该文件自身 BOM 状态选 `UTF8Encoding($true/$false)` 全量写回。
+
+#### 新立 **R53**：测试期 chroma 目录未重定向，全量 pytest 会写运行期向量库
+
+- **现象（总控实测，非转述）**：`app/rag/retriever.py:89` `DocumentRetriever.__init__(self, chroma_dir="./chroma_db")`
+  用的是**相对路径**，`:90` 立刻 `os.makedirs(chroma_dir, exist_ok=True)`、`:191` 就地打开 PersistentClient；
+  `git grep -l retriever -- tests/` 命中 **8 个测试文件**。而 `tests/conftest.py` 只重定向了
+  `PERSISTENCE_BACKEND` / `PERSISTENCE_FALLBACK_PATH` / `DATABASE_URL`，**没有任何一条管 chroma 目录**。
+- **后果**：在**主工作树**跑全量 pytest ⇒ 直接开写 `./chroma_db/`；而主树的 `chroma_db/` 正被**运行中的容器**写
+  （`git status` 中 6 个 `M chroma_db/**` 即指纹）⇒ 撞「多进程并发损坏运行期数据」这条红线。
+- **要求（0.5 人日）**：照 `PERSISTENCE_*` 的既有范式，在 `tests/conftest.py` **导入 app 之前**
+  把 chroma 目录也钉进 `_PERSISTENCE_SANDBOX`（走环境变量或显式参数，二选一，须让 `DocumentRetriever()` 默认构造即落临时目录），
+  并加一条守卫测试：**跑完全量后仓库内 `./chroma_db` 的 mtime 与哈希不得变化**。
+- **在 R53 落地前的临时纪律**：全量回归只许在**独立工作树**里跑（写脏的是该树的 `chroma_db` 副本，不是运行期数据），
+  且提交严禁带上 `chroma_db/**`；**容器在跑时禁止在主树跑全量**。
