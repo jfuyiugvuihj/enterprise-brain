@@ -1,6 +1,6 @@
 """
 Agentic RAG 检索管线：
-查询改写 → 多路召回(语义+BM25+子问题) → RRF 融合 → Cross-Encoder 重排
+查询改写 → 多路召回(语义+BM25+子问题) → 权限预过滤 → RRF 融合 → Cross-Encoder 重排
 """
 import json
 import os
@@ -204,14 +204,29 @@ class BM25Searcher:
                 self.build_index()
             if not self.bm25:
                 return []
+            if k <= 0:  # 与旧实现的 [:0] 切片逐字一致
+                return []
 
             tokens = _tokenize_text(query)
             scores = self.bm25.get_scores(tokens)
-            top_indices = np.argsort(scores)[::-1][:k]
-
-            hits = [self.documents[i] for i in top_indices if scores[i] > 0]
-            if pred:
-                hits = [d for d in hits if pred(d)]  # 权限过滤
+            # R45 缺陷①：权限判定必须发生在 Top-k 截断之前（先筛后取）。
+            # 旧写法先按全局分数取前 k 条、再套 pred，于是无权限的 chunk 只要挤进全局
+            # 前 k 就白吃一个名额：受限部门的用户可能一条都召回不到（召回饥饿）——被丢掉的
+            # 名额数取决于被拦下的候选数，与合法候选数无关。现在按分数降序遍历，
+            # pred 不认的条目直接跳过、不占名额，截断只作用在合法候选上。
+            # pred 为 None 时与旧实现逐字一致：降序遍历遇到非正分即停（旧实现是截断后
+            # 用 > 0 丢掉尾部的非正分），取满 k 条即停。
+            # 判定复用 app/rag/filters.py 的 scope.allows，本模块不另写部门/密级规则。
+            hits = []
+            for index in np.argsort(scores)[::-1]:
+                if scores[index] <= 0:
+                    break
+                document = self.documents[index]
+                if pred and not pred(document):
+                    continue
+                hits.append(document)
+                if len(hits) >= k:
+                    break
             return hits
 
 
@@ -372,7 +387,19 @@ class RetrievalPipeline:
                     all_bm25.extend(results)
 
         # 去重
-        all_semantic = _deduplicate(all_semantic)
+        # R45 缺陷②（纵深防御 + 两腿契约对称）：语义腿只有 where 下推，BM25 腿则一直在
+        # 本地过 pred。search_for_principal 的注释本就写明"召回路径可能交回 store 没有
+        # 过滤掉的 chunk"，所以两条腿都要在进 RRF 与重排之前用同一个 scope.allows 复核。
+        # Chroma 主路径下这一步裁不掉任何东西（下推已在向量计算之前生效），它挡的是不执行
+        # where 的召回实现；pred 为 None 时原样返回同一个列表，整步逐字等价于去重本身。
+        #
+        # 顺序必须是"先过滤、后去重"：_deduplicate 保留首次出现的那一份，若同一
+        # content[:120] 的多份拷贝里第一份恰好缺 classification，先去重会把合法那份的键
+        # 一起丢掉、剩下的缺键份再被 allows 按 fail-closed 裁掉，等于凭空误拒一条合法
+        # 文档。而去重本身也不能丢：重复命中会在 rrf_fusion 里反复累加 reciprocal-rank，
+        # 把只被单腿召回的来源压到后面（融合输出长度与重复无关，偏的是名次）。
+        # 这个顺序也与 BM25 腿既有顺序一致：search 内部过 pred，这里再去重。
+        all_semantic = _deduplicate(_retain_permitted(all_semantic, pred))
         all_bm25 = _deduplicate(all_bm25)
 
         # ③ RRF 融合
@@ -430,3 +457,17 @@ def _deduplicate(docs: list[dict]) -> list[dict]:
             seen.add(key)
             result.append(d)
     return result
+
+
+def _retain_permitted(hits: list[dict], pred) -> list[dict]:
+    """丢掉谓词不认的召回候选；没有谓词时原样返回同一个列表对象，不改任何行为。
+
+    pred 就是 app/rag/filters.py 里的 DocumentRetrievalScope.allows：一条候选能不能进
+    融合与重排只由那一处判定决定，本模块不复制部门/密级规则。
+    """
+    if not pred:
+        return hits
+    permitted = [hit for hit in hits if pred(hit)]
+    if len(permitted) != len(hits):
+        logger.info(f"权限预过滤: 召回 {len(hits)} 条 → 保留 {len(permitted)} 条")
+    return permitted
