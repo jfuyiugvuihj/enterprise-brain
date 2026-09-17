@@ -1198,6 +1198,8 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Peirce` | `01a0af7f-4f09-7062-9cdc-0a397cf0e816` | R56（**重复体**） | 与 `Banach` 同为 `be-r14` | **本班 21:17:20 关停**（事故 #15，同类第六次）；关停前零落盘 ⇒ 无产物损失 | 21:17:20 |
 | `Meitner` | `01a0af9c-9f38-7130-91fe-d2b6349f310c` | R35（**重复体**） | 与 `Poincare` 同为 `be-r15` | **本班 21:4x 关停**（事故 #16，同类第七次）；关停前零落盘 ⇒ 无产物损失；**其遗留情报已被采纳**（§4AJ.4） | 21:53:32 |
 | `Poincare` | `01a0af9c-5047-77b1-a460-682786e3cac9` | **R35** 答案缓存门槛与四座孤岛 | `be-r15`（基线 `dd2a244`，**独占**） | **运行中**：21:4x 冻结→复工（`send_input` 单次，submission `01a0afa3`）；写域 `app/common/cache.py` + `chat.py` 缓存段 + `tests/`；**禁碰** `conftest.py`(R56 在途)/`rbac.py`(已结案)/`approve()` 区间(R55)/`frontend/**`/评测集 | 21:53:32 |
+| `Hegel` | `01a0afb2-5221-7942-97c1-b4939d25d304` | R62（**重复体**） | 与 `Euler` 同为 `be-leg2` | **本班 22:18 关闭**（事故 #17，同类第八次）；派工时带 model override，**自行 errored 于同款 `at_` 消息 id 污染**；关停前 `be-leg2` 零落盘 ⇒ 无产物损失 | 22:18:42 |
+| `Euler` | `01a0afb2-bff5-7e02-a0ad-fe5a3f4bfb78` | **R62** 被权限隐藏的行不得说成「代码执行未通过」 | `be-leg2`（基线 `ae7283b`，**独占**） | **运行中**（22:18:42 `wait_agent` 15s 无终态）；裸投递继承本线模型；判据 ①–⑤ 见跟进单 §23 表 a 行；**禁碰** `chat.py`(R35 在途)/`retriever.py`(R57 已结案)/`tests/conftest.py`(R56) | 22:18:42 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -1786,3 +1788,31 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 - 零提交单：R29 R30 R31 R32 R33 R34 R37 R38 R40 R42 R43 R44 R46 R47 R48 R49 R50 R51 R52（R39 不建）。
 - 等业主：H6（分支**从未 push**，本机唯一副本，`dd2a244` 之后又多 5 个提交，风险递增）/ H12（`docker compose build migrate`）/ H11（重启容器才真拿到 GPU）/ H13（`chat.py` 的 `Form(1)` 与 `rbac.py:45 fillna(1)` 口径）/ H4·H5·H8（卫生删除权，垃圾清单见 §4AI.9 末行）。
 - **心跳**：`automation-2` 实测 `status = "PAUSED"`（仍指向已死线程，故不再空撞报错）。**本班按业主指令不新建、不恢复任何心跳**；H10 的"接管后自建心跳"条款与已证实的死因冲突，**建议改为"不建心跳 + 每轮开头自查 H3/H6/H12"**，等业主点头再改文档。
+
+## 4AK 本班（09-17 22:1x–，总控第七班）：事故 #17 零损失解除 / PGVector「**添加方案**」独立成文 / 🔴R59×R35 写域冲突首次登记
+
+### 4AK.1 事故 #17（重复投递第八次）——**未造成任何后果，但真因这次抓到了**
+
+- **现象**：上一 block 我并列发两次 `spawn_agent`（同单 R62、同树 `be-leg2`），落成 `Hegel 01a0afb2-5221…`（**带 model override** = gpt-5.6-terra）与 `Euler 01a0afb2-bff5…`（裸投递）⇒ 两执行体同占一棵树。
+- **处置**（逐步单调用取证）：`be-leg2` HEAD `ae7283b` + `status --porcelain` **空** ⇒ **两者零落盘**；`Hegel` 在取证瞬间**自行 errored**，报错正是本线主树的死因原文 `Invalid 'id': message id must be a string starting with 'msg_', got 'at_…'` ⇒ `close_agent` 已确认 `previous_status=errored`；`Euler` 15s `wait_agent` 无终态＝**仍在跑**，现独占 `be-leg2`。
+- 🔴 **真因升级（订正 L1202–1206 那条旧结论，别再记成"自律不足"）**：本班在同 block 并列 `wait_agent` 时再次实测到 **参数序列化错乱**——一次报 `invalid type string "[\"01a0afb2-…\"]", expected a sequence`、一次正常返回。⇒ 同 block 并列调用**不仅会复制投递，还会把数组/标量参数打成字符串**。
+- **据此收紧的规矩（覆盖 §4V.9 与 L1209 的"幂等即可"）**：**`spawn_agent` / `send_input` / `close_agent` / `wait_agent` / `commit` / `merge` / 写文件——每个 block 只允许一个函数调用，无例外，连"顺手读一下"都不许并列**；投递后下一动作必须是查 HEAD + 查名册。
+- 补一条应验的旧令：**别覆盖 model**——死掉的那个正是带 model override 的投递，裸投递的活着。
+
+### 4AK.2 PGVector：业主要的是「**添加方案**」，不是「不能切的理由」
+
+- 本班新写 **`docs/handoff/2026-09-17-pgvector-adoption-plan.md`**（11475B）：§0 两问直答 / §1 实测事实基线 / §2 终态口径与 AGENTS.md 禁令的解绑条件 / §3 六阶段 P0–P5 / §4 阶段↔单号↔执行人↔回滚点 / §5 未决项 U1–U5 / §6 红线。跟进单 §22 与计划书 §5.2 已各加指路行。
+- **本轮新增实测**（§22 未记）：迁移体系是 **fail-closed** 的（`migrations/README.md:1-27` + `manifest.json` 9 条 SHA-256 + `app/db/migrations.py` + `scripts/migrate.py`）⇒ 新迁移**必须同步登记 manifest** 否则 loader 直接拒；**PG 驱动依赖早已在树**（`psycopg[binary]>=3.2.0`、`psycopg-pool>=3.2.0`）P1/P2 无需新增包；**全仓唯一的维度声明是兜底常量** `[0.0]*768`（`app/rag/retriever.py:46`，模型 `nomic-embed-text` `:23`）且无人校验返回长度 ⇒ R22 要绑的 `dimension` 概念**今天在代码里根本不存在**，R22 的第一动作是"引进这个概念"而不是"改索引"。
+- **已决**：索引选型定 `hnsw`（语料 96 篇量级小、插入即建、免训练；`ivfflat` 未训练时召回不稳）。**未决**：U1 距离算符（**必须先实测 Chroma distance function**，算符不一致则 P3 全部对比作废）、U3 存量全零向量普查、U4 dimension 注册落点、**U5 = H13 密级缺省口径未裁 ⇒ P4 的 `classification` 下推分支今天写不出来（硬阻塞）**。
+- **状态不变**：R58–R60 **仍未派工**，开工需业主点头 + 真机（H12）。
+
+### 4AK.3 🔴 排期冲突首次登记（此前所有班次都没记过）
+
+- **R59 写域含 `app/api/v1/chat.py`，而在途 R35 正在写 `chat.py` 缓存段** ⇒ **R59 严禁先派，必须等 R35 结案并主树复跑后再排**。已写进新方案 §3 P4 与 §4 表。
+- **R58 的写域含 `app/rag/retriever.py`，与前置 R21 同文件** ⇒ P0 未结前派 R58 = 双 Agent 同写一文件。执行层若收到"顺手把 R58 也做了"，按 §22 口径退回。
+
+### 4AK.4 名册与待办
+
+- 移出在途：`Hegel`（errored + closed）。加入在途：`Euler`（R62 / `be-leg2` 独占）。`Banach`(R56 / `be-r14`)、`Poincare`(R35 / `be-r15`) 状态不变，本班 22:1x 未复跑其测试。
+- 本班**未提交任何代码**，只动文档四份（新 1 改 3）。基线仍 **237 passed / 12 skipped**（主树，未受本次文档改动影响）。
+- 下一步（按序）：① 收 `Euler` 的 R62；② 收 R56（**改了 `tests/conftest.py` ⇒ 必复跑 `tests/test_test_isolation_guards.py`**）；③ 收 R35（**必补 §4AJ.4 那条 `answer_cache_scope` 恒真与注释矛盾**）；④ 三单合并后刷基线并新开 §4AL。

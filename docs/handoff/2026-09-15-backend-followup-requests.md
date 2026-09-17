@@ -736,6 +736,7 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
   `app/rag/filters.py` 的 `allows`。判据③ P95 仍**禁止实测**（`app/rag/retriever.py:56-65` 打 Ollama 属并发红线）。
 
 ## 22. 跟进单 **R58 / R59 / R60**（2026-09-17 21:4x，业主令"把 PGVector 的添加计划加进去"后总控立案，基线 `21602b9`）：Chroma → PGVector 三步退役
+> **展开版（「怎么加」）见 `docs/handoff/2026-09-17-pgvector-adoption-plan.md`**（09-17 22:2x 业主二次令后本班新写）：§22 只留立案与判据，新文档写六阶段 P0–P5 的**落点文件 / 关键选型 / 执行人 / 回滚点 / 未决项**。两者不一致以新文档为准。
 
 > **口径先钉死**：这三单的理由**只能是**"消除 Chroma/PG 双写窗口 + 权限与检索同引擎"，**不是提速**。
 > 计划书 §7 L246 已把"换 embedding / 上 reranker 来提速"列入明确不做；凡借迁移之名改 embedding 模型的派工单，一律退回。
