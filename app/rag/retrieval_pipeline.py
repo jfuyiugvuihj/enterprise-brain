@@ -189,7 +189,19 @@ class BM25Searcher:
                     "content": doc,
                     "source": meta.get("filename", "unknown"),
                     "chunk_index": meta.get("chunk_index", 0),
-                    "classification": meta.get("classification", 1),
+                    # R57 fail-closed。此行原为 meta.get("classification", 1)：build_index 在
+                    # :175 用的是不带 where 的 collection.get()，全库行都进这个本地索引，于是
+                    # 缺 classification 键的遗留行被凭空补成 1 级，随后 BM25Searcher.search 用
+                    # pred（app/rag/filters.py 的 DocumentRetrievalScope.allows）本地复核时，
+                    # int(1) 命中密级档位表 —— 造出来的密级骗过了唯一的权限判定。
+                    # 修法取「缺键即显式 None」：allows 的 int(None) 落到它自己的 except
+                    # TypeError 返回 False，与 allows docstring「没有可用元数据的 chunk 永远
+                    # 不可见」同义，本模块不另写任何密级/部门规则。保留键而不是删键，是为了
+                    # 命中字典形状稳定，也为了让 meta.get("classification", 1) 这类写法
+                    # （正是本缺陷的成因）无法再把缺键行洗回 1 级。
+                    # 定性：现行入库路径 app/rag/indexing.py 的 scope_metadata 对每条 chunk 都
+                    # 写入具体密级，所以本缺陷只影响遗留/外部直写的行，属纵深防御，不是现行漏权。
+                    "classification": meta.get("classification"),
                     "department": meta.get("department", ""),
                 })
 
