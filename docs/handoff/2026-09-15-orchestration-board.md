@@ -1192,6 +1192,7 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Banach` | `01a0aeea-6725-7ef2-80ab-fdd6c4f30471` | **R57** classification fail-open | `be-r53`（基线 `640ef08`，**独占**） | **运行中**；18:37:22 已改 `retrieval_pipeline.py:204`+`retriever.py:294`；订正令 `01a0aef3…` 已投（`policy.py:180` 用反 + 漏扫 `or 1` 形态） | 18:39:00 |
 | `Planck` | `01a0ae99-0576-7490-94fc-1366eb8bc5ad` | **R55** `/approve` canonical | `be-r20`（基线 `6ee2f79`） | **运行中**：判据①②③④⑥ 总控已验收；判据⑤ 扩域令 `01a0aef1…`（仅 `tests/test_hitl_pending.py`） | 18:37:00 |
 | `Jason` | `01a0ae99-89de-7e10-aab8-ac138c9a276e` | （Planck 的重复体） | `be-r20` | **已结案**：shutdown 回执已到，经查从未落盘 | 17:11:38 |
+| `Goodall` | `01a0aef7-3590-7001-a031-0187447ddea2` | **R17** 数据行部门 fail-closed | `be-leg2`（基线 `497bef5`，**独占**） | **运行中**（18:43:58 派出，单次投递成功）；判据含"无部门⇒零可见"陷阱封堵 + 灰度开关默认新行为 | 18:43:58 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -1634,3 +1635,36 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 - H13（未标注密级上传 = 1 级是否有意）已入册，**需业主定口径**；选 (B) 须配套存量密级回填，Agent 不代做。
 - H6 **仍未结**（分支从未 push，本机唯一副本）；H3 无新卡点；H5 未到触发点（从树 14 个）；H8 第 2 项仍在册；H9 已结案不得催。
 - 本班合并计数：**第 6 次**（R36③ runbook）+ 第 5 次（R45）。
+
+## 4AG. 本班第二段（09-17 18:43–18:47）：R17 派出 + 🔴「密级默认公开」的第一现场被我自己的 grep 形态漏掉了
+
+### 4AG.1 三腿文件冲突图：为什么下一单派 R17 而不是 R42/R44/R47
+
+当前三条线同时在写 `app/**`（R57=`be-r53` 的 rag 两文件、R55=`be-r20` 的 `chat.py`、R17=`be-leg2`），我再加第四条只会核不动。按落点做不相交分析（实测 `git grep`，非推测）：
+
+- `app/agents/orchestrator.py` ← R30 / R31 / R33 / R42 / R38 全要改它 ⇒ 腿① 未解锁前**一条都不能派**；
+- `app/rag/retrieval_pipeline.py` ← R44 / R47 要改，而 **Banach 此刻正在改** ⇒ 撞；
+- `app/api/v1/chat.py` ← R37 要改，而 **Planck 此刻正在改** ⇒ 撞；
+- `app/common/rbac.py`（53 行，全仓仅 2 个调用点 `tools.py:393/:473`）← **谁都不碰**，且 R17 的业务口径早裁完（甲 = fail-closed）⇒ **只有这条现在能派**。
+
+已 ff `be-leg2` / `be-r36` / `be-r14` 到 `497bef5`（`be-r14` 有 `chroma_db/chroma.sqlite3` 脏项，弃用）。
+
+### 4AG.2 🔴 第六种形态：`Form(1)` —— 上一班的「4 处」和我本班的「10 处」都漏了它
+
+- 我 18:39 刚批评 Banach 漏扫 `or 1`，18:45:58 才发现**我自己给的五族 grep（`", 1)` / `or 1` / `= 1\b` / `DEFAULT 1` / `fillna(1)`）也漏了最重要的一处**：`app/api/v1/chat.py:1929` 的 `classification: int = Form(1)`。**`", 1)` 抓不到 `Form(1)`，`= 1\b` 也抓不到**（`=` 后面是 `Form` 不是 `1`）。
+- **这条同时订正了 H13 的事实链**：上一班把成因归到 `indexing.py:114-124` 的 `_scope_int(value, default=1)`，那只是把已经是 1 的值再抄一遍；**真正的第一现场在 API 契约层**——客户端不填密级即以 1 级（公开）入库，且端点对它**零校验**。
+- **我顺手否证了一条可能的误判**：`retriever.py:216` 的 `classification: int = 1` 参数默认在生产路径**不生效**，因为 `chat.py:2013-2018` 是**显式传参**调用（我原担心它是活的写入侧 fail-open）。教训：**默认值是否可达，必须查调用点，不能只看签名**——这正是 §4AE.2 里 Arendt 犯过的同类错误的镜像（它把不可达的 `build_index` 说成现行漏权）。
+- **最有价值的一条对照（我此前没注意）**：同一个 `upload_document` 签名里，`department` 被**故意忽略表单值**并强制改写为上传者本部门（docstring 自己论证："a department chosen by the client would let a caller publish into somebody else's results"），而 `classification` 却允许客户端缺省成公开。**部门 fail-closed 与密级 fail-open 并排在同一个函数里。** 这句是业主定 H13 时最需要的抓手，已写进 H13 订正段。
+- 已据此给 Banach 下**第 2 条追加令**（`01a0aef9…`）：把"穷尽清单"从**字面 grep 改成按语义枚举**（所有 classification 入口 × 三问：缺省变什么 / 到不到 `filters.py:44 allows` 或 `policy.py:180` / 改成不可见会断哪条链），并列出 10 处已知站点（A `, 1)` 4 处｜B `or 1` 1 处｜C 参数默认 2 处｜D DDL DEFAULT 2 处｜E `fillna` 1 处｜F `Form(1)` 1 处）要它逐条复核我有没有报错；F 与 E **只报告不改**，且明令它**不得编辑 `chat.py`**（Planck 在改）。
+
+### 4AG.3 R17 派工里预先堵住的两个坑
+
+- **坑 1（我读代码时发现的，写进判据②）**：把 `values.isin(("", dept))` 天真改成 `values == dept` 之后，**账号自己没有部门**（`dept=""`）时会两边都是空串 ⇒ 反而**放行全部空部门行**，比原缺陷更宽。正确口径必须与文档链同构：非管理员且无部门 ⇒ **一行都不可见**。
+- **坑 2**：`tests/test_phase13_private_enterprise.py:16` 编码的正是旧口径，改完必红。我**预先授权**执行层只改该用例（而不是让它红着交回来，也不是让它去改 `app/agents/tools.py` 绕开）。
+- 灰度开关默认值我定成**新行为生效 + 可回退**，理由写进判据④：默认宽松等于把已知缺陷当默认产品形态交付客户；回退开关是给客户现场兜底，不是用来推迟决策。
+
+### 4AG.4 H13 与主树动作
+
+- H13 已按上述订正**追加**一段「事实链订正」（`20/1`，前缀证明 `PREFIX_OK=True`，human-gates 仍无 BOM `23 20 E4`）。业主只需就 **F（`Form(1)`）** 与 **E（`rbac.py:45 fillna(1)`）** 两处定口径，其余都是纵深防御。
+- 主树新增提交 `497bef5`（§4AF + §0 名册刷新 + H13 + R36③ runbook 并入，显式列三路径，无 `git add -A`）。名册更新用**行 splice**，写回带 BOM，实测 `first3=EF BB BF` 未丢。
+- 本班合并计数仍 **6**（R45 第 5、R36③ 第 6）。H6 **仍未结**（从未 push，本机唯一副本）。
