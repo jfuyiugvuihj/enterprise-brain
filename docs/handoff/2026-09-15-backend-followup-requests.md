@@ -734,3 +734,40 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
   `pred is None` 时逐字等价主树 `:375`。
 - 已通过项不变：D1 先筛后取、`score<=0` 处 `break` 与旧逐条 `>0` 等价、`k<=0` 早退守卫、判定复用
   `app/rag/filters.py` 的 `allows`。判据③ P95 仍**禁止实测**（`app/rag/retriever.py:56-65` 打 Ollama 属并发红线）。
+
+## 22. 跟进单 **R58 / R59 / R60**（2026-09-17 21:4x，业主令"把 PGVector 的添加计划加进去"后总控立案，基线 `21602b9`）：Chroma → PGVector 三步退役
+
+> **口径先钉死**：这三单的理由**只能是**"消除 Chroma/PG 双写窗口 + 权限与检索同引擎"，**不是提速**。
+> 计划书 §7 L246 已把"换 embedding / 上 reranker 来提速"列入明确不做；凡借迁移之名改 embedding 模型的派工单，一律退回。
+
+### 22.0 事实基线（本班实测，全部只读；`[实测]` 标出的是我自己跑出来的）
+
+- **PG 侧只有骨架，无一处可写**：`migrations/0001_core_resource_versions.sql:4` 仅 `CREATE EXTENSION IF NOT EXISTS vector`；`migrations/0002_execution_data_lineage.sql:243` 的 `embedding vector` 是**无维度声明**；`[实测]` 全仓 `migrations/*.sql` 对 `hnsw|ivfflat` **零命中** ⇒ 没有任何向量索引；`migrations/0003_legacy_runtime_tables.sql:77` 存的是 `embedding JSONB`（不是向量类型）；`migrations/0007_document_chunk_count.sql:41` 自己写着 "vectors still belong to Chroma alone"。
+- **`[实测]` 运行时零写入方**：`app/**` 扫 `pgvector` 只有两处元数据级用法——`app/rag/indexing.py:203` 的 `backend not in {"chroma", "pgvector"}` 取值校验（不开 PG 连接）、`app/common/monitoring.py:272` 的 `"pgvector": bool(vector)` 存在性探测。向量读写 100% 走 `app/rag/retriever.py:190` 的 `chromadb.PersistentClient`，依赖缺失时退化 `_JsonCollection`（`app/rag/retriever.py:93-116`）。
+- **扩展在位而闲置**：`docker-compose.yml:48` = `pgvector/pgvector:pg16`。
+- **前置两单零代码**：`[实测] git log --all --grep` 只有 `6c5ccd9` / `497b500` 两条 **docs** 提交提到 R21/R22，**没有任何代码提交**（判据见本文 §17 / §18）。
+- **历史上无此单**：计划书 R25–R52 二十七单（含 R53–R57 加单）**没有一单**是 Chroma→PGVector ⇒ 属"未排期"，不属"已遗忘"。
+
+### 22.1 为什么今天不能直接切（三条硬阻塞，缺一律不许开工）
+
+1. **向量本身不可信（R21 未结）**：embedding 失败被静默换成**全零向量**，向量检索整条腿空转 ⇒ 迁过去只是把脏数据换个更贵的地方存。
+2. **没有索引重建路径（R22 未结）**：`docs/system-architecture-2026-09-17.md:245` 把迁移门禁写死为「`embedding_model + dimension` 绑定 + 禁混维度共存 + 换模型＝新索引版本＋全量重建＋原子切换」，同一条款自标"已知缺口 R22" ⇒ 前置不成立。
+3. **验收证据跑不出来**：业主与前班报告 105 题里 **55 条 `must_contain` 在 96 篇语料无出处**（**本班未独立复跑**，列为 R58 判据①的前置动作），而 §5.2 第⑤条要求"双读召回对比进评测平台"作为切换门禁；又因备份恢复未纳入 PGVector（`docs/current-functionality-2026-09-10.md:1217` 至今把存储组合定为"过渡架构"）⇒ 现在切换＝不可回滚，直接违背私有化底线。
+
+### 22.2 排期、写域与判据（**顺序不可交换，不可并行**；全部用 `.venv` 解释器，禁 anaconda）
+
+| 序 | 单号 | 一句话 | 写域 | 验收判据（逐条亲验，不采信自述） |
+|---|---|---|---|---|
+| 前置 | **R21** | embedding 失败不得静默降级为全零向量 | `app/rag/retriever.py` | ① 失败即抛并留可观测原因；② 写入侧拒收全零向量；③ **反证**：把 raise 改回 pass 必须红 |
+| 前置 | **R22** | 索引版本绑定 `embedding_model + dimension` | `app/rag/indexing.py` | ① 维度/模型变即产生新 index version；② 禁混维度共存（同库查询 0 命中跨维度）；③ 给出全量重建 CLI，**只许人工触发，禁止自动执行** |
+| ① | **R58** | 双读镜像：Chroma 与 PGVector 同事务双写 | 新 `app/rag/pg_store.py`、`app/rag/retriever.py`、新迁移 `migrations/0010_pgvector_chunks.sql` | ① 迁移给 `chunks.embedding` 补 `vector(<dim>)` 并建 `hnsw`（或 `ivfflat`）索引，按 `migrations/README.md` 登记 manifest SHA-256；② 双写任一失败即整体回滚（fail-closed，不留"元数据可见⇔向量不可检索"窗口）；③ 逐题召回对比脚本产出差异表，**55 条无出处条目清零在先**；④ 备份恢复演练覆盖 PG 向量列 |
+| ② | **R59** | 切读：读路径按开关选引擎 | `app/rag/retrieval_pipeline.py`、`app/api/v1/chat.py` | ① 开关默认仍走 Chroma，切读必须显式赋值；② 权限过滤下推 PG `WHERE`（`owner/department/classification`）后，**R45 / R57 全套越权用例逐条平移且全绿**，禁改断言迁就实现；③ 以 R36 的 105 题基线证明召回不退化 |
+| ③ | **R60** | 停写与退役 | `app/rag/retriever.py`、`docker-compose.yml`、`deploy/**`、`docs/**` | ① 停 Chroma 写；② `chroma_db` 归档/下线路径写进部署文档与升级手册；③ 一键回滚到上一索引版本演练一次并留证 |
+
+### 22.3 派工边界与人工闸门（越界即退回）
+
+- **R58 起必须真机**：建索引要连 PG、双写要跑迁移 ⇒ 属业主侧动作，含 `docker compose build migrate`（**H12**）与备份演练。**总控与执行层一律不跑改数据 / 起服务 / 建库 / 重建镜像的命令。**
+- `chroma_db/**` **至今仍被 git 跟踪** `[实测]`：主树与 `be-r14`、`be-r53`、`be-r20` 均有 `M chroma_db/chroma.sqlite3` 脏项（主树 `.bin` 系 09-05 遗留，`chroma.sqlite3` 最近一次被写是 09-17 16:35 的一轮主树测试）。**反跟踪、删除、`.gitignore` 改动一律业主本人**（H4/H5/H8），Agent 不碰、不 add、不 restore。
+- 评测集不许动（被 `tests/test_evaluation_report.py` 钉着）；迁移期间**禁止**为凑绿改 `must_contain`。
+- 这三单**不进性能三腿队列**（不占腿①/腿③串行位），与在途 R17/R56 无文件交叠；**开工仍需业主另行点头**，本班未派。
+
