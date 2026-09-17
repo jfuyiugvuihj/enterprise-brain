@@ -1185,12 +1185,12 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 
 | Agent | agent_id | 单号 | 独占工作树 | 状态 | 最后核实（实取） |
 |---|---|---|---|---|---|
-| `Rawls` | `01a0ad34-4083-7722-9977-1453ab75316b` | R26 | `be-leg2` | 运行中，四文件已落盘：README 63/1、model_capabilities 285/2、docker-compose 16/0（deploy 设备申请+NVIDIA_*）、新测试 250 行；回报未到 | 11:08:05 |
-| `Pascal` | `01a0ad2c-e508-7f30-adb7-fd4d203d5e94` | R28 | `be-r36` | **已结案**：`d2566e1` 经我复核并亲自重做变异实验后并入主树 `1c0b08b`，Agent 已关闭 | 10:49:25 |
-| `Einstein` | `01a0ad06-77d1-7c40-89f3-ccdcdacbe931` | R20 | `be-r20` | **已结案**：`e1f0260` 经我复核后并入主树 `660ee03`，Agent 已关闭 | 10:40:45 |
-| `Pasteur` | `01a0ad47-b96b-7b40-ae7f-5a1afc91f237` | R53 | `be-r53`（基线 `1a46c6d`） | 运行中，`tests/conftest.py` 132/1 已落（钉 chroma 默认值+沙箱 fixture+抛错优先）；遗留未跟踪 `__p1.patch`（192 B，不提交） | 11:05:40 |
-| `Ohm` | `01a0ad48-00b8-7833-85a9-d1ee85c40df6` | （R53 重复体） | — | **启动即 API 报错终止，零落盘**，已不存在 | 10:53:16 |
-| `Peirce` | `01a0ad57-e0b0-73a0-831f-0afe464bd17b` | R27 | `be-r27t`（基线 `9318718`，已全并入主树） | **11:12 新派**，腿① 第一单；写域仅 `app/agents/orchestrator.py` + 一个新测试文件 | 11:12:00 |
+| `Rawls` | `01a0ad34-4083-7722-9977-1453ab75316b` | R26b | `be-leg2` | **已结案**：`af027ce` 经复核并入主树 `6ee2f79`，四判据逐条达成（见 §4AB.2）；venv 复跑 136 passed, 4 skipped [实测 16:55:02] | 16:55:02 |
+| `Fermat` | `01a0ae6a-d3b6-70f3-911b-57db8d2496f8` | 上一班遗留 | — | 本班未探测（不无脑 spawn，复用一律先 `send_input`） | — |
+| `Carson` | `01a0ae6d-044c-7760-9b13-158dc6d905df` | 真机 105 题跑分 runbook（待派） | 写域仅 `docs/handoff/` 新文件 | 本班未探测。这是解 R36 判据③ 的唯一锁，派工稿已定稿待发 | — |
+| `Arendt` | `01a0ae97-b977-7483-9edb-561c05768e06` | R45（判据已重定义，见 §4AC.3） | `be-r53`（基线 `6ee2f79`） | 运行中；17:06:06 / 17:07:31 / 17:09:20 三次实测树 CLEAN 零落盘；已投窄化裁定 + fail-closed 更正 | 17:11:38 |
+| `Planck` | `01a0ae99-0576-7490-94fc-1366eb8bc5ad` | R55 | `be-r20`（基线 `6ee2f79`） | 运行中；业务代码零落盘，17:11:38 见未跟踪 `apply_test.patch`（自用产物，**不提交、本班不删**） | 17:11:38 |
+| `Jason` | `01a0ae99-89de-7e10-aab8-ac138c9a276e` | （Planck 的重复体） | `be-r20` | **已结案**：shutdown 回执已到（上一班悬着的"关闭未确认"解除）；经查其从未落盘 | 17:11:38 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -1451,3 +1451,38 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 - 投递类调用会被**整体复制**（历史上 `close_agent` 意图 1 实发 3、`send_input` 意图 1 实发 2）⇒ "一 block 一投递"不足以自保，**指令正文必须写明"本指令可能重复送达，按一次执行，产物不得出现重复用例/段落"**。
 - 曾出现 `close_agent` 报 `unsupported call` 而同 block 内 `exec_command` 正常：**遇到时不要盲目重试投递**，先用 shell 做能做的事。
 - `exec_command` 的 `timeout_ms` 若被序列化成字符串会报 `invalid type: string, expected u64` ⇒ 用 `yield_time_ms` + `write_stdin` 轮询代替。
+
+## 4AC 本班（09-17 17:04–，第四班）：双写警报解除 + R45 判据重定义 + 探针四首次有效（基线 `c87e1df`）
+
+### 4AC.1 接管核对：文档 vs 仓库（两处不一致，均以仓库为准）
+- 主树 HEAD 实测 `c87e1df`；本班链 `7b8dab3`→`af027ce`→`6ee2f79`→`c87e1df` 与 §4AB 一致。`git branch --no-merged HEAD` 为空 ⇒ 所有树分支均已在 HEAD 内。
+- **不一致 1（工作树数量）**：用户交接词说 10 个，`git worktree list` 实测 **15 个**：主树 + `be-leg2` `be-r14` `be-r15` `be-r18` `be-r20` `be-r27t` `be-r36` `be-r53` + `fe-alerts` `fe-artifacts` `fe-dash` `fe-prims` `fe-trunk` + `perf-lab`。
+- **不一致 2（基线与计划书路径）**：用户交接词里的 `73144be` 与 `docs/perf-architecture-plan-2026-09-17.md` 均已作废；计划书实际在 `docs/handoff/2026-09-17-perf-architecture-plan.md`。
+- 主树脏仅 `chroma_db/**`（运行中容器所写，禁提交禁删除）；`git diff --cached` 为空。
+
+### 4AC.2 `Jason` 双写警报解除（上一班遗留的最高风险结案）
+- shutdown 回执到达。`be-r20` 于 17:06:06 / 17:07:31 / 17:09:20 三次实测 `git status --porcelain -uall` 均 CLEAN；`app/api/v1/chat.py` mtime 仍为 16:59:01（= 快进 checkout 的时刻，不是编辑时刻）；`tests/test_approve_canonical_events.py` 不存在 ⇒ **重复体从未落盘**。
+- 17:11:38 实测 `be-r20` 出现未跟踪 `apply_test.patch`（Planck 自用产物，非业务代码）：**不提交、本班不删**，沿用 §0 旧行 `__p1.patch` 的先例处理。
+
+### 4AC.3 R45 判据重定义（总控亲读代码得出，取代 §21 表中 R45 行的三判据写法）
+- **判据① 早已满足，禁止改动**：`app/rag/retriever.py:270-276` 把 `where` 下传给 `collection.query`；降级 JSON 库 `app/rag/retriever.py:165-168` 同样是先筛再打分。原单「过滤在向量计算之前」这句容易诱导执行层去重写已经对的东西。
+- **真缺陷①（唯一必改）= 召回饥饿**：`app/rag/retrieval_pipeline.py:201-215` —— `:210` 先 `np.argsort(scores)[::-1][:k]` 取**全局** top-k，`:213-214` 才套 `pred`。越权 chunk 占满名额后被丢弃，受限部门用户的召回被凭空饿死。该结论由代码结构直接推定 [算术]，不依赖任何"正在漏权"的假设。
+- **真缺陷②（降级为纵深防御 + 两腿契约对称）**：`app/rag/retrieval_pipeline.py:360` 语义腿只传 `where`、从不传 `pred`，与 `:361` 的 BM25 腿谓词不对称；依据是 `app/rag/retrieval_pipeline.py:396-399` 作者自注「recall path can hand back a chunk the store did not filter」。
+- **判据③ 改为不实测**：`app/rag/retriever.py:56-65` 的 `embed_query` 打 Ollama，属并发红线。改为结构性论证（不增加向量往返次数）+ 候选集 [算术] 复杂度说明，墙上时间 P95 待串行复测。
+- 硬约束：只改 `app/rag/retrieval_pipeline.py` + 新增 `tests/test_prefiltering.py`；禁改 `app/rag/retriever.py`；`pred=None` 时行为须逐字不变并配回归对比。
+
+### 4AC.4 探针四：本班第一次「先验证再定罪」
+- 手法：`$env:TEMP` 下建临时 `PersistentClient`（**未碰 `chroma_db`**），显式传 embeddings（**未打 Ollama**），只测 `where` 语义。[实测 2026-09-17 17:10:59，`.venv` py3.11.7 / chromadb 1.5.9]
+- 结果：缺 `classification` 键的记录被 `$in` **排除**；`$and` 完整 scope 只返回授权记录；空 metadata 字典在 `add()` 阶段即被拒（`chromadb/api/types.py:1071`）。
+- ⇒ **Chroma 的 `where` 对缺失键 fail-closed**。我据 `app/rag/retriever.py:286` 的 `meta.get("classification", 1)` 推来的「语义腿正在漏权」是错的，已向 Arendt 发更正作废该前提，并禁止其写「不修就把越权 chunk 送进 prompt」类断言。对比 §4AB.3 的三次无效探针，这次是正例。
+- 两条新环境事实（复用价值）：collection 名必须 3–512 字符且首尾为字母数字（`"p"` 被拒）；Chroma 不接受空 metadata 字典。
+
+### 4AC.5 工具层两条新故障（按此自保）
+- **多 Agent 工具名整批翻转**：`wait_agent` / `spawn_agent` / `send_input` / `close_agent` 在相邻调用间交替报 `unsupported call` 或 `tool not found`，同 block 的 `exec_command` 始终正常；`wait_agent` 的 `targets`、`send_input` 的 `items` 还会被整体序列化成字符串导致 parse 失败 ⇒ 报错时先判断**这次到底有没有投递**（无 `submission_id` 即未投递）再决定重试，禁止盲目重试（会叠加复制）；投递优先用单字段 `message` 而非 `items` 数组，更抗故障。
+- **文档 BOM 陷阱（会每轮制造假 diff）**：本看板文件**带 BOM**（`EF BB BF`），而跟进单**不带**。本班第一次用 `ReadAllLines` + `WriteAllLines(UTF8Encoding($false))` 静默抹掉 BOM ⇒ `--numstat` 从预期 6/6 变 8/8（第 1 行也被拖进 diff），且 `WriteAllLines` 会补上原文件没有的末尾换行。
+  ⇒ 正确手法：**原地整行替换**用 `ReadAllLines` + `-join "`r`n"` + `WriteAllText`，编码参数按文件而定（本看板 `$true` 带 BOM、跟进单 `$false` 不带）；只在**尾部追加**时才用 `AppendAllText`。改后必查 `git diff --numstat` 是否等于预期行数，不等即误伤，立刻回滚重来。
+
+### 4AC.6 本班合并计数与 H 门禁
+- 本班至今 **0 次合并**；线程累计仍 4 次（R27 `6a4f02b` / R41 `571e0d6` / R54 `7b8dab3` / R26b `6ee2f79`），文档 commit 另计。
+- **H6 未结**：分支从未 push，本机是唯一副本。每次合并后必须再次提示业主自行安排 push/备份，Agent 不代做。
+- H10 已结案（全局仅 `automation-2` ACTIVE/HOURLY 指向本线程，无双心跳）；H5 未到触发点（从树仍有未合完项，`.gitignore` 不许碰）；H3 无新卡点；H9 已结案，不得拿演示日期催业主。

@@ -703,3 +703,15 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 
 - **系统 `python` 是 anaconda，没有 chromadb**；一切验证必须用 `C:\Users\fengx\PycharmProjects\企业智脑\.venv\Scripts\python.exe`（实测 py **3.11.7** / chromadb **1.5.9**[实测 16:44]）。
 - 这条同时**订正了 R53 的一桩误报**：执行层报 `test_constructing_a_retriever_writes_only_into_the_sandbox` 失败，总控用 venv 跑主树 = **5 passed**[实测 16:32:11]，改用 anaconda python 跑 = **1 failed, 4 passed**，红在 `tests/test_test_isolation_guards.py:106`[实测 16:32:42]。根因是解释器缺依赖，**代码无缺陷**，R53 无需返工。
+
+## 21.9 R45 判据重定义（09-17 17:1x，总控亲读代码 + 真库实测）——**本节取代 §21 表中 R45 行（L510）**
+
+- 原三判据里 **①「过滤在向量计算之前」早已满足、不许再动**：`app/rag/retriever.py:270-276` 将 `where` 下传给 `collection.query`；降级 JSON 库 `app/rag/retriever.py:165-168` 亦是先筛再打分。保留这条只会诱导执行层重写已正确的代码。
+- 收窄后剩两个缺陷，且只有一个是必改：
+  - **D1 召回饥饿（必改）**：`app/rag/retrieval_pipeline.py:201-215` —— `:210` 取**全局** top-k，`:213-214` 才套 `pred`。越权 chunk 占额后丢弃 ⇒ 严格权限下召回被凭空饿死。修法是谓词必须在截断**之前**作用于候选集。[算术]（结构直接推定，无需实测）
+  - **D2 两腿谓词不对称（纵深防御，非现行漏权）**：`app/rag/retrieval_pipeline.py:360` 语义腿只传 `where` 不传 `pred`，与 `:361` 不对称；依据 `app/rag/retrieval_pipeline.py:396-399` 作者自注。语义腿须在进入 `rrf_fusion`（`:379`）与 Cross-Encoder（`:382`）之前过 `allows`，否则未授权正文有进 prompt 的结构性通道。
+- **实测否证了一个更吓人的说法**：Chroma 的 `where` 对**缺失元数据键是 fail-closed** [实测 2026-09-17 17:10:59，`.venv` py3.11.7 / chromadb 1.5.9，临时库 + 显式 embeddings，未碰 `chroma_db`、未打 Ollama]；空 metadata 字典在 `add()` 阶段即被拒（`chromadb/api/types.py:1071`）。故 `app/rag/retriever.py:286` 的 `meta.get("classification", 1)` 默认值**不构成漏权**，D2 只能按纵深防御立项。
+- **判据③「检索 P95 不升」改为不实测**：`app/rag/retriever.py:56-65` `embed_query` 走 Ollama，打 Ollama 计时属并发红线。改交结构性论证（不增加向量往返次数）+ 候选集 [算术] 复杂度说明；墙上时间 P95 另立串行复测，属业主侧动作。
+- 交付判据（派工已按此下发，全部须用 `C:\Users\fengx\PycharmProjects\企业智脑\.venv\Scripts\python.exe`）：① 新增 `tests/test_prefiltering.py` 全绿；② **反证**：把 D1 改回原样必须看到失败；③ **回归对比**：`pred=None` 时行为逐字不变；④ D2 用「故意忽略 `where` 的 fail-open 假 store」证明拦截，禁止断言现行漏权。
+- 写域：只 `app/rag/retrieval_pipeline.py` + 新测试；**禁改** `app/rag/retriever.py`、`app/rag/filters.py`。
+- 顺带记一条工具纪律给所有后续班次：本文件**不带 BOM**，看板 `docs/handoff/2026-09-15-orchestration-board.md` **带 BOM**；整行替换必须按此选编码参数，否则会静默抹 BOM 并在第 1 行制造假 diff（详见看板 §4AC.5）。
