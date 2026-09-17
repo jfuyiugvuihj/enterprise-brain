@@ -1186,7 +1186,7 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | Agent | agent_id | 单号 | 独占工作树 | 状态 | 最后核实（实取） |
 |---|---|---|---|---|---|
 | `Rawls` | `01a0ad34-4083-7722-9977-1453ab75316b` | R26 | `be-leg2` | 运行中，已落盘 `docker-compose.yml`+17/−1（在允许清单内） | 10:40:45 |
-| `Pascal` | `01a0ad2c-e508-7f30-adb7-fd4d203d5e94` | R28 | `be-r36` | 运行中，已落盘 `app/rag/retrieval_pipeline.py`+89/−4、`.env.example`+10、新建 `tests/test_retrieval_rewrite_tier.py`（**全部在允许清单内**） | 10:40:45 |
+| `Pascal` | `01a0ad2c-e508-7f30-adb7-fd4d203d5e94` | R28 | `be-r36` | **已结案**：`d2566e1` 经我复核并亲自重做变异实验后并入主树 `1c0b08b`，Agent 已关闭 | 10:49:25 |
 | `Einstein` | `01a0ad06-77d1-7c40-89f3-ccdcdacbe931` | R20 | `be-r20` | **已结案**：`e1f0260` 经我复核后并入主树 `660ee03`，Agent 已关闭 | 10:40:45 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -1262,3 +1262,33 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
   且 10:02 起所有取数 `test_%/t_%` 恒为 0 ⇒ 未见损害指纹。**此风险已随 pin 进主树而关闭**，不再追。
 - **它的越界自曝（只读，已核实无害）**：用 `.NET ReadAllLines("tests/test_auth.py")` 时因 CWD 解析到主树，
   **读了一次主树该文件**；我已实测主树 `git status --porcelain -- tests/` 为空 ⇒ 确认只读未写。
+
+
+### 4X.1 R28 结案（09-17 10:47，总控独立复核，未采信自述）
+
+- **合并链**：`be-r36` 上 `d2566e1`（3 files, +335/−4）→ 主树 `1c0b08b`（--no-ff）。
+- **判据①我自己重跑**：`cd be-r36; python -m pytest tests/test_retrieval_rewrite_tier.py -q`
+  → `29 passed in 1.96s` [实测 10:45:34–10:45:37]。连跑三个检索相关单文件 → `36 passed in 2.06s` [实测 10:46:50]。
+- **判据④变异实验由我重做**（不采信 Pascal 的版本）：把条件改回强制改写
+  （`if should_rewrite_query(query, tier) or True:`），结果 **`5 failed, 24 passed in 2.20s`** [实测 10:46:22–10:46:25]，
+  失败的正是 4 条 fast 档 + 1 条 adaptive 档用例 ⇒ 测试非空转。
+  还原后 SHA256 = `646DBA5C…33B07`，与变异前**逐字节相同**，文件内 `or True:` 残留计数 0 [实测 10:46:43]。
+- **判据⑤范围**：`git status --porcelain -uall` 恰 3 项（`.env.example` / `app/rag/retrieval_pipeline.py` / 新测试），
+  `git status --porcelain -uall -- chroma_db` **0 行** [实测 10:45:16 与 10:46:50 两次一致]。
+  全仓 `git grep RETRIEVAL_TIER` 仅 3 处命中，无第二个新开关。
+- **设计裁定（认可，不改）**：默认档 = `full` 保持现状；未设/空/拼错/值不可读**四类全部回退 full**，
+  理由写在代码里——「少做一次改写属检索质量变化，不能被打错的配置值静默开启」。与 R17 fail-closed 同向。
+
+- **Pascal 自报 3 条遗留，我逐条亲验**：
+  1. **属实**：fast 档下 `search()` 第二返回值变 `[]`，`app/agents/tools.py:352` 的
+     「建议尝试以下改写角度的关键词：」会输出半截话（仅 `docs` 为空时可达）。
+  2. **属实**：档位未接入 trace / `app/rag/debug.py:40` 的 `rewrites` 展示，P-2 现场对比须手动 `RETRIEVAL_TIER=fast`。
+  3. **属实且是关键约束**：fast 档召回路数 5 → 1，命中率影响**未经评测集验证**。
+
+- **性能口径（必须带标注，别糊）**：fast 档省掉的 P-2 = **41.581 s** 是**旧 trace 的 [实测] 历史值**，
+  本轮**未重测**（子 agent 全程打桩、未碰 Ollama）。⇒ 现状只能写「**省一次阻塞往返，量级 [推算] ≈40 s，待复测**」。
+  复测须打 Ollama 计时 ⇒ 命中并发红线（`n_ctx=4096` 单点），**只能排队，由用户另开独立对话做**。
+- **裁定（新增闸门，写给后面每一轮看）**：在评测集上跑出 fast vs full 命中率对比之前，
+  **`RETRIEVAL_TIER=fast` 不得进任何验收/演示配置**；阶段 A 若要用它省时间，必须先过 R36 的 30 题不退化判据。
+  默认 `full` 已合并 ⇒ 本轮合并对现网行为**零改变**，这条闸门只管"要不要开"。
+- **H6 提示（本转第 2 次）**：主树本会话新增 `b767bfb`、`d2566e1`→merge `1c0b08b`，分支仍**从未 push**。
