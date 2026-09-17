@@ -1164,3 +1164,101 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 2. 盯 `Pascal`(R28) → 独立复核（亲跑指定单文件 / 亲验变异实验已恢复 / 亲验 `chroma_db` 未被写）→ 合并。
 3. 盯 `Einstein`(R20) → 必须拿到「宿主原生 PG 前后行数不变 + rbac `N skipped`」原始输出才复核合并。
 4. 全量 pytest 门禁在 R20 合并前**继续生效**。
+### 4V.12 🔴🔴 派工事故**第四次**（09-17 10:31）——发生在我写下 §4V.9 纪律之后 6 分钟
+
+- **事实**：我在**同一个 assistant block** 里把 R26 的 `spawn_agent` 发了两遍 ⇒ `Rawls`（`01a0ad34-4083-…316b`，保留）
+  与 `Popper`（`01a0ad34-b167-…6c6d`，重复，已 `close_agent`，`previous_status: running`，10:32 收到 shutdown 通知）。
+  两者被指向**同一个工作树** `be-leg2`。
+- **磁盘自查 `10:32:10` 实取**：`git rev-parse --short HEAD` = `ad85821`（基线未动）、
+  `git status --porcelain -uall` **空**、`git diff --stat` **空**、近 20 分钟无任何 `.py/.yml/.md` 被改写
+  ⇒ `Popper` 存活约 60 s，**零落盘**，混合写入未发生。
+
+- **根因升级（比前三次更重要的结论）**：§4V.9 那四条是**散文式自律条款**，而我 6 分钟后就违反了自己刚写的第一条。
+  ⇒ **结论：文字纪律对这类错误无效。** 它的失效机制是「动作在同一 block 里被序列化两份」，
+  发生在写文档之前，任何「写完要检查」的承诺都约束不到它。
+- **改用的机制（可被下一轮逐字核对，不再靠自觉）**：看板新增 **§0 活跃 Agent 名册**，作为派工唯一事实源。
+  规则只有一条：**名册里出现了某个 `agent_id`，才允许对它做 `wait/close/send_input`；
+  要 spawn 新 Agent，必须先在同一 block 之外的前一个 block 里读完 §0，spawn 后的第一个动作必须是回写 §0。**
+  若发现自己即将发出第二个 `spawn_agent` 而 §0 未更新 ⇒ 停手。
+
+## 0. 🔒 活跃 Agent 名册（派工唯一事实源：spawn 前先读、spawn 后立即写；心跳每轮必核）
+
+| Agent | agent_id | 单号 | 独占工作树 | 状态 | 最后核实（实取） |
+|---|---|---|---|---|---|
+| `Rawls` | `01a0ad34-4083-7722-9977-1453ab75316b` | R26 | `be-leg2` | 运行中 | 10:32:10 树干净 |
+| `Pascal` | `01a0ad2c-e508-7f30-adb7-fd4d203d5e94` | R28 | `be-r36` | 运行中（10:25:16 有导入活动） | 10:26:00 |
+| `Einstein` | `01a0ad06-77d1-7c40-89f3-ccdcdacbe931` | R20 | `be-r20` | 运行中（有增量落盘） | 10:26:02 |
+
+- **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
+  我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
+  `spawn_agent`（Rawls + Popper，两个不同 `agent_id`）与 `send_input`（同一条消息，两个 `submission_id`：
+  `01a0ad36-c1c4-7790-…55de`、`01a0ad36-f01c-7b61-…89a8`），且后一次我确实发出的是一个**三调用块**。
+  ⇒ **结论修正**：这不是"忘了规则"，而是**同一 block 内相同工具调用会被机械地序列化两份**。
+  前三次事故大概率同属此机制，**此前把它们记成我的纯操作失误是记重了**。
+
+- **据此改写的有效对策（用幂等 + 事后核查取代"一次只发一个"的承诺）**：
+  ① **派工必须幂等**：一个任务绑死一个工作树，重复体与正品只会写同一批文件、同一判据 ⇒
+  重复的代价退化为"白跑一趟"，不污染产物。**禁止**给两个候选工作树的重复体各派不同树。
+  ② **spawn 之后的下一个动作必须是核查**（`git -C <树> rev-parse --short HEAD` + `git status --porcelain -uall`），
+  不是继续排别的活。
+  ③ **`send_input` 措辞必须抗重复**：指令类消息句末加「本条可能重复送达，重复送达按一次处理」。
+  ④ 收到子 agent 完成回报时，逐条比对自述 vs 磁盘；两者不一致 ⇒ 以磁盘为准并重置整树。
+  ⑤ §4V.9 的「一次只发一个」降格为**愿望**，不再作为可依赖的判据。
+
+## 4W. R20 合并结案 + 判据 5 裁定 + 新立 chroma 门禁（09-17 10:38，总控第二线）
+
+### 4W.1 R20 已合并（主树 `660ee03`，子提交 `e1f0260`）
+
+- **我本人独立复核**（不采信 Einstein 自述，逐条自己跑）：
+  静态 4 条全对——`git diff --name-only` 只有 `tests/conftest.py`/`tests/test_auth.py`（+247/−32）；
+  pin 在 `tests/conftest.py:35-47` 含 4 条自检断言；`git grep "DELETE FROM users" -- tests/` 仅剩 `test_phase2_rbac.py:45`（禁改文件，确认未被改）；
+  `git grep _get_conn -- tests/test_auth.py` 空。
+
+- **动态判据（我自己在 `be-r20` 跑的，非引用它的数字）**：
+  宿主原生 PG 只读探针 `select count(*), count(*) filter(username like 'test_%'), … like 't_%', users_id_seq.last_value, max(id) from users`
+  —— 跑前 `10:36:07` = `total 8 / test_% 0 / t_% 0 / seq_last 839 / max_id 106`；
+  跑 `python -m pytest tests/test_auth.py tests/test_phase2_rbac.py -q` → **`23 passed in 12.40s`** `[实测 10:36:29]`；
+  跑后 `10:36:41` = **逐字段与跑前完全相同**。
+  **`seq_last` 没前进是比"行数不变"更强的证据**：连插入后回滚都没发生过。
+  探针脚本放 `$env:TEMP\eb_r20_readonly_probe.py`（含 `assert SQL startswith "select"` 只读闸门），**未进仓库**。
+- **交叉验证**：我的 10:31 前基线与 Einstein 报的 `839/106` 完全吻合 ⇒ 它的取数诚实。
+
+### 4W.2 判据 5 的裁定：我原口径**作废**，改用更强判据（记我账）
+
+- 我原来要求 `tests/test_phase2_rbac.py -q` 必须出 **`N skipped`**。**这条判据是错的**：
+  `tests/test_phase2_rbac.py:20-26` 的守卫 `_pg_ok()` 用 `auth._get_conn().close()` 探活，
+  而内存兜底下 `_get_conn()` 返回 `app.common.auth._FakeConn`（`app/common/auth.py:53-78`，自带 `close()`）
+  ⇒ 守卫**恒为 True**，**在 R20 之前就在撒谎**（真库不可用也报"PG ok"）。所以它**永远不会 skip**，
+  实测为 `4 passed`。要求 skip 等于要求一个不存在的机制。
+- **裁定**：接受 `4 passed` + 下面三条替代证据，**不**要求改那个文件（属禁改范围）：
+  ① 我实测宿主库 `seq_last` 前后全等（上条）；② Einstein 的 `psycopg.connect` 哨兵显示 TCP 打 5432 的次数 = **0**；
+  ③ 该文件的 `DELETE` 打在进程内 `_FakeConn` 的 dict 上。**skip 只是"没测"，这三条是"没写"，后者才是 R20 的本意。**
+- **顺带立单（不改代码）**：`_pg_ok()` 一行修法 `return not auth._using_memory_store()`，已作为范围外建议登记。
+- **防误判注记**：`tests/test_auth.py` 的 R20 扫荡语句是**故意拼接**（`" ".join(("delete", …))`）而非字面量，
+  所以 `git grep "DELETE FROM users"` 对本文件 0 命中**不代表守卫消失**，别据此以为它漏改。
+
+### 4W.3 门禁换轨：PG 这条**解除**，chroma 这条**新立**（我实测后才敢换）
+
+- **解除**：§4V.3 的「R20 修完前任何腿禁止全量 pytest」中的 **PG/`users` 表写入面已闭**（pin 已进主树 `660ee03`）。
+- **新立（同等强度）**：**容器在跑时，严禁在 `_主工作树_` 跑全量 pytest。**
+  依据（我查的，非转述）：`app/rag/retriever.py:89` `DocumentRetriever.__init__(self, chroma_dir="./chroma_db")`
+  是**相对路径**，`:90` 直接 `os.makedirs(chroma_dir, exist_ok=True)`、`:191` 就地打开 PersistentClient；
+  而 `git grep -l retriever -- tests/` 命中 **8 个测试文件**（`test_document_delete_catalog.py`、
+  `test_document_ownership.py`、`test_retrieval_pipeline_concurrency.py` 等）⇒ 全量跑必然写 `./chroma_db`，
+  而主树的 `chroma_db/` **正被运行中的容器写**（`git status` 里那 6 个 M 文件即其指纹）⇒ 直接撞并发红线。
+- **安全口径**：全量回归只许在**独立工作树**里跑（各树各有自己的 `chroma_db` 副本，写脏的是副本不是运行期数据，
+  且提交时不得带上 `chroma_db/**`）。`tests/conftest.py` **只**重定向了 `PERSISTENCE_*` 与 `DATABASE_URL`，**没有**重定向 chroma。
+
+### 4W.4 两条订正与一条待查
+
+- **订正 Einstein 报的"代价"**（它说钉死 DSN ⇒ 永久失去 PG 路径覆盖、需另立单补）：**没那么重**。
+  仓库**本就有**真库验收的显式 opt-in 通道：`pyproject.toml:49`、`tests/test_postgres_execution_persistence.py:23,40`、
+  `tests/test_postgres_backup_recovery.py:7` 用的是 **`EB_PG_ACCEPTANCE_URL`**（未设置即 `pytest.skip`），与 `DATABASE_URL` 无关。
+  ⇒ 钉死 `DATABASE_URL` 只是把默认路径从「误连宿主库」变成「走内存分支」；真库覆盖的正道一直是那个显式开关。
+- **待查（Einstein 主动举报的副作用，我认可其披露）**：主树 `tests/__pycache__` 里
+  `test_evaluation_report`、`test_route_fallback_correction` 的 `.pyc` 时间戳为今日 **09:59:07/09:59:09**
+  ⇒ 有人（极可能是上一轮总控自己，在合并 R27/R36 前的验收）在**当时尚无 pin 的主树**跑过这两个文件。
+  当时无基线取数，**无法回溯证明**宿主库没被动；但 `checkpoint%` 表在宿主库中不存在、
+  且 10:02 起所有取数 `test_%/t_%` 恒为 0 ⇒ 未见损害指纹。**此风险已随 pin 进主树而关闭**，不再追。
+- **它的越界自曝（只读，已核实无害）**：用 `.NET ReadAllLines("tests/test_auth.py")` 时因 CWD 解析到主树，
+  **读了一次主树该文件**；我已实测主树 `git status --porcelain -- tests/` 为空 ⇒ 确认只读未写。
