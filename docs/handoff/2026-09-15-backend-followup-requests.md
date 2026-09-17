@@ -625,3 +625,81 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 - **新增闸门（硬）**：`RETRIEVAL_TIER=fast` 在 **30 题评测对比跑完之前**不得进入任何验收/演示配置；默认保持 `full`。本次合并对现网行为零改变。
 - **数字口径**：`41.581 s` 是**旧 trace 的 [实测] 历史值，本轮未重测**。现状只能表述为
   「fast 档省一次阻塞往返，[推算] ≈40 s，待复测」。判据③「单跳省 ≥30 s」未跑 ⇒ **R28 不作完全结案**。
+---
+
+## 21.7 本轮（09-17 下午·第二班）执行状态：R27 结案 / R54 入册 / 全量 pytest 禁令换轨（基线 `6a4f02b`）
+
+### R27 结案（合并 `6a4f02b`，实现 `ce0b041`，分支 `codex/be-r27t`）
+
+- **实现只加不改**：`git diff --numstat` = `66 0 app/agents/orchestrator.py`。短路三条件：`not redo` ∧ 本轮 plan 逐 worker 等于 `planner.build_task_plan` 的输出 ∧ 本轮已有 dispatch 决策 ⇒ 以新 id 复读第 1 发 dispatch 直接 return，不打模型。首进 supervisor 时「最后一条 HumanMessage 之后没有消息」，`_prior_dispatch_decision` 返回 None ⇒ 天然不误短路，也天然把判定限在本轮。
+- **总控独立复核**（子 agent 自述一律不采信）：
+  - 图边位置换算一致：主树 `:688-693` 对应改后 `:754-759`，Peirce 的定位成立。
+  - `route_main` 读 `messages[-1]` 的 tool_calls，再按 `worker_results` 过滤已完成 worker（`app/agents/orchestrator.py:381-393`），故复读保留的是**完整 worker 列表**：分层派发（data→chart）与 HITL 被拒步骤不重派都不丢；`:351` 的多步计划分支本来就用 `planned_workers` 覆盖模型输出，所以省掉的这一发在命中轮次里**不携带任何独有信息**。
+  - **反证亲跑**：把 `tests/test_supervisor_roundtrip.py` 拷到 `%TEMP%`，在**未打补丁的主树 `fd8ae7c`** 上跑 ⇒ `3 failed, 5 passed`，三处全红在 `assert 2 == 1` [实测 16:19:50] ⇒ 「今天的原值就是 2 发」由总控复现，非猜。
+  - 打补丁的 `be-r27t` 亲跑 8+13+4 = **25 passed** [实测 16:20:18]；合并后主树亲跑 8+13+4+20 = **45 passed** [实测 16:21:45]；两次 `chroma_db` 脏行数均 6→6 未增。
+- **判据①②达成；判据③「端到端省 ≥35 s」归业主**：打 Ollama 的计时属并发红线，总控与子 agent 一律不跑。
+- **备案一处残留风险**：复读只换消息 id，若 R31 流式按消息 id 去重，这里是全链唯一的重复来源（执行层已主动招呼）。
+
+### 新立 **R54**：评测答案采集器 —— R36 判据③ 的前置，腿① 的真咽喉
+
+- **立单依据（总控实测 16:16:01）**：`Get-ChildItem -Recurse -Filter '*answers*'` 全仓 **0 命中**，`scripts/` 下只有 `run_quality_evaluation.py` 这一个**只读**入口 ⇒ **105 题基线分数当前根本不可能落盘**。`scripts/run_quality_evaluation.py:16` 的 `--answers` 虽是 `required=True`（不传会报错），但**不校验覆盖率**。
+- **这条链上最危险的洞是静默回退**：`app/quality/runner.py:23-27` 对没采到的 id 直接给 `{"answer": "", "evidence": [], "latency_ms": None}` ⇒ 把「没采到」伪装成「模型答得差」。故采集器必须自带「覆盖全部 id，缺口非零退出并逐条列出缺失 id」的完整性闸门，否则宁可不落盘。
+- **判据①② 已在仓内机器验证，不再重复立单**：`tests/fixtures/business_evaluation_100.jsonl` 105 行 / 24,346 B [实测 16:16:01]，tier 问答 50 / 分析 35 / 报告 20，`category` 含口径冲突 19、跨部门权限 6；`tests/test_evaluation_report.py:201`（每档 ≥20）、`:210`（冲突成对题可区分）、`:247`（P95 样本 ≥100）三例已在主树。**R36 只剩判据③**，而判据③ 只剩「R54 落地 + 业主真机跑 105 题」。
+- **依赖链后果**：计划书 L170 与 L255/L258-259 规定 `R36 → R29/R33/R35 的合并`，故 **R54 优先级高于 R41**；腿① 在 R27 之后**因外部依赖而合法空转**，不是无人可派。
+
+### 总控复核 R54 产物时追加的两条硬判据（16:25–16:27 实测，已回灌执行层）
+
+- **① dry-run 必须无法命中默认输出路径（fail-closed）**。依据：`app/quality/eval.py:63-66` 在某行没有 `must_contain` 时退化为 `row["answer"] in text`，而 dry-run 桩直接取金标 `row["answer"]` 当答案 ⇒ 拿 dry-run 文件去评分**必然刷近满分**；且 `app/quality/runner.py` 与 `app/quality/eval.py` **完全不读 `answer_source`**，采集器那句 stdout 警告留不下任何可验痕迹。假基线的后果是给 R29/R33/R35 放行一条没人验过的改动，故要求：dry-run 且未显式 `--output` ⇒ 非零退出。
+- **② 默认产物不得落在仓内未被忽略的新目录**。依据：`artifacts/` 当前不存在，`git check-ignore -v artifacts/evaluation-answers.jsonl` 退出码 1（**未被忽略**），而 `.gitignore` 在 H5 结案前禁改；默认往仓内写会让每个 worktree 的 `git status` 长期挂脏并有误 add 风险。要求默认输出挪到仓外临时目录，正式落盘物是 `docs/testing/` 下的**报告**（与 `scripts/run_quality_evaluation.py:17` 既有约定一致）。
+
+### 换轨订正：§21 顶部「共同判据」里禁止跑全量 pytest 的那条已过期
+
+- 原文（L486，2026-09-17 09:45 订正）禁全量的根因是 R20 未修（全量会 `DELETE` 宿主 PG 的 `users` 行）；**R20 已于 `660ee03` 合并结案**，R53 又把测试期 chroma 目录钉进沙箱，故**「容器在跑时禁在主树跑全量 pytest」这条禁令解除**：主树实测 `66 passed`、`chroma_db` 脏行数 6→6 未增 [实测 16:03:56–16:04:04]。
+- **仍然有效的同刻红线只有三条**：同一时刻只许一条线写 `chroma_db/`、只许一条线 `docker build`、只许一条线打 Ollama 计时。历史数字（`895ee18` 的 727/903、`826d318` 的 771/22）依旧不得当现状引用。
+### 21.8 R41 / R54 / R26b 三单结案 + 新立 R55、R56 + 一条解释器铁规（总控本班，全部亲验）
+
+#### 结案：R41 SSE canonical `sources`（实现 `e8d3200` / 合并 `571e0d6`）
+
+- 改动面 `git show --numstat` 实测 **89/0 `app/api/v1/chat.py` + 363/0 `tests/test_sse_sources.py`**，纯新增零删除，故 legacy 事件面不可能被削减。
+- **总控独立取"改动前"基线**（不采信执行层内联常量）：在未含 R41 的主树上用 `SSE_EVENT_INVENTORY_OUT` 重新取证，4 个场景的事件名与测试内基线**逐字一致**[实测 16:35:45] ⇒ "legacy 是基线超集"这条判据不是靠把基线改小刷绿的。
+- venv 解释器复跑邻接回归 **139 passed, 4 skipped**[实测 16:36:51]，`chroma_db` 脏行数未增。
+- 遗留缺口不属本单：**`/approve` 未被覆盖** ⇒ 转 **R55**（下条）。
+
+#### 结案：R54 评测答案采集器（实现 `9470892` / 合并 `7b8dab3`）
+
+- 实测 `scripts/collect_evaluation_answers.py` **348 行**、`tests/test_collect_evaluation_answers.py` **311 行 / 12 例**，判据要求的覆盖率闸门（缺 id ⇒ 非零退出并逐条列出）与"金标不得当答案"防串题都在。
+- **总控亲验 fail-closed 五组合**[实测 16:39:30–16:39:49]：`--dry-run`／`--dry-run + --allow-sample`／`+ --output`／`--allow-sample` 单用 ⇒ 四种全部 `exit=2` 且**默认路径 never created**；只有双开关 + 显式 `--output` 才 `exit=0` 写出 105 行。`artifacts/` 全程未被创建，默认输出已挪仓外。
+- **为什么值得这么狠**：`app/quality/eval.py:63-66` 有 `must_contain` 即全含算对、无则退化为 `row["answer"] in text`；105 行**全部自带 must_contain**（0 行缺）[总控 Python 实测 16:38:50] ⇒ 拿 dry-run 桩（直接抄金标）评分可刷 **104/105 = 0.9905**，与 Carson dry-run 报出的 `correctness=0.9905 / evidence=1.0000` **完全吻合**。这种假基线除 latency≈0 外与真基线**无法分辨**，所以只能靠"文件是否存在"做机械拦截。
+- **R36 判据③ 现在的唯一锁在业主手上**：R54 已就位、链路已通，缺的只是"业主真机跑 105 题"。腿① 仍按计划书 L170/L255 空转等这个结果。
+
+#### 结案：R26b 算力探测接线（实现 `af027ce` / 合并 `6ee2f79`）
+
+- 四判据逐条复核：① 未设 `OLLAMA_REQUIRE_GPU` 保持今日行为（`discover_chat_model` 不传 `compute_fetch` 时请求集仍只有 `/api/tags`，`app/common/model_capabilities.py:101` 短路）；② `unknown` 既不洗成有卡也不定罪 CPU（`inference_compute_state()` 未探测返回 `unknown/not_probed`，`annotate_inference_compute` 对 `undetermined` 只 warn 不改 `available`）；③ 错误码沿用 `model_unavailable` 未新增（`tests/test_error_code_vocabulary.py` 在批内绿）；④ `app/agents/contracts.py` **零字节差异**、`docker-compose.yml` 未碰（故 compose 回归不需要）。
+- **总控用 venv 解释器复跑 Rawls 的 8 文件 = 94 passed**[实测 16:46:58]；合并后主树 12 文件 = **136 passed, 4 skipped**[实测 16:55:02]，两次 `chroma_db` 脏行数 6→6 / 0→0 未增。
+- **执行层自述的数字一律不采信**：Rawls 报"94 passed"用的是**系统 `python`（anaconda）**，恰好这批测试不 import chromadb 才没暴露问题；它那条 P2 的两处表述（"health 测试从 1 次变 3 次"）我也一度据 socket 计数判其证伪，**该撤回**——三次探针全部无效（详见看板 §4AB.4），最终依 `model_capabilities.py:319` 的代码事实定论：**正常路径下冷发现由 1 个请求增至 3 个（`/api/tags` + `/api/ps` + `/api/version`），受 `OLLAMA_DISCOVERY_TTL_SECONDS=60` 节流，异常/离线时不探测**。风险可接受，但其修复（`tests/conftest.py` 注入假 transport）越出本单写域 ⇒ 转 **R56**。
+
+#### 新立 R55：`/approve` 的 canonical 信封缺口（订正执行层上报的错误描述）
+
+- 执行层原话"该路径至今无 canonical 终态事件"**不准确**，总控逐行核 `app/api/v1/chat.py` 后订正为下表。**立单仍成立，但范围必须按订正后的事实写**：
+
+| 事件 | `/ask` | `/approve` |
+|---|---|---|
+| `request.started` | 有（`:1084`） | **缺** |
+| `request.cancelled` | 有（`:1103`） | **有**（`:1589`，仅取消分支） |
+| `request.completed` | 有（`:1215`） | **缺**（`:1633/:1635` 只发 legacy `text`+`done`） |
+| `request.failed` | 有（`:1117/:1172/:1262`） | **缺**（超时限 `:1605` 与 worker 抛错 `:1640` 只发 legacy `error`） |
+| `sources`（R41 新立） | 有（`:1236`） | **缺** |
+
+- **附带一条代码里早就躺着、没人认领的缺口**（`app/api/v1/chat.py:1625-1627` 注释原文）：批准后若图又停在下一个 HITL 节点，`/approve` 不发 `event: hitl`，因此这轮新挂起**不会被记成新的 awaiting 行**，注释明写"属接口变更，等总控单独批"⇒ 本单正式认领它，一并入 R55 范围，别再让它烂在注释里。
+- 判据（机器可验）：`/approve` 五条流分支的 canonical 事件名清单与上表 `/ask` 同构；`sources` 越权 0 条；既有 `tests/test_sse_sources.py` 与 `tests/test_hitl_*.py` 全绿。写域 `app/api/v1/chat.py` + 新测试文件。
+
+#### 新立 R56：测试期发现路径会真打宿主 Ollama（存量缺陷，非 R26b 引入）
+
+- 实测 `tests/conftest.py` 里 `LOCAL_MODEL` / `OLLAMA` / `_fetch_registry` **在主树与 be-leg2 两棵树上都是 0 命中**[实测 16:45]，即**没有任何一处桩化模型发现**。
+- 后果：`get_local_model_settings()`（`app/common/model_config.py:166-176`）在 `LOCAL_MODEL_NAME` 与 `OLLAMA_MODEL` 都为空时直接走 `_cached_discovery` ⇒ 测试期真开 socket 打 `127.0.0.1:11434`。这**违反"打 Ollama 属并发红线"**：任何一条线在跑计时时，另一条线跑测试就会让那些数字作废。
+- 修法（越出各单写域故单列）：`tests/conftest.py` 加 autouse 桩，把 `_fetch_registry` / `discover_chat_model` 固定为离线假 transport，并显式设 `LOCAL_MODEL_NAME` 哨兵值。判据：`-p` 插件统计全量 pytest 期间对 `11434` 的连接数必须为 **0**。
+
+#### 解释器铁规（本班新查明的硬事实，今后写进每张派工单）
+
+- **系统 `python` 是 anaconda，没有 chromadb**；一切验证必须用 `C:\Users\fengx\PycharmProjects\企业智脑\.venv\Scripts\python.exe`（实测 py **3.11.7** / chromadb **1.5.9**[实测 16:44]）。
+- 这条同时**订正了 R53 的一桩误报**：执行层报 `test_constructing_a_retriever_writes_only_into_the_sandbox` 失败，总控用 venv 跑主树 = **5 passed**[实测 16:32:11]，改用 anaconda python 跑 = **1 failed, 4 passed**，红在 `tests/test_test_isolation_guards.py:106`[实测 16:32:42]。根因是解释器缺依赖，**代码无缺陷**，R53 无需返工。

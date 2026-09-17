@@ -1362,3 +1362,92 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 - **`$env:TEMP` 已积 12 个 `enterprise-brain-tests-chroma-*` 残留目录**：Windows 下 chromadb 攥住 `chroma.sqlite3` 句柄，`atexit` 只能尽力删。
   属 H8 类垃圾，**总控不删**（用户红线），已报业主自行清理。
 - **H1 核对命令订正**：查 `reservations` 而非 `device_requests`（详见跟进单 §21.6）。
+---
+
+## 4AA 本轮（09-17 16:15–16:30 第三班）：R27 合并入主树 + 三 Agent 挤同树收敛 + 投递复制机制订正（基线 `fd8ae7c` → `6a4f02b`）
+
+### 4AA.1 合并与结案（总控亲验，子 agent 自述不采信）
+
+- **R27 已合并**：`git merge --no-ff ce0b041` → 主树 `6a4f02b`，只含 `app/agents/orchestrator.py` +66/-0 与新增 `tests/test_supervisor_roundtrip.py` +234/-0，merge-base 恰为 `9318718`（即 R27 前置那笔已入树的老提交），`fd8ae7c..ce0b041` 只有 1 个待入提交 ⇒ 无夹带。
+- **反证由总控亲手做**（这是 §4X.1 立的规矩）：把新测试拷到 `%TEMP%`，在**未打补丁的主树 `fd8ae7c`** 上跑 → `3 failed, 5 passed`，三处全红在 `assert 2 == 1` [实测 16:19:50]；打补丁后 `be-r27t` 25 passed [实测 16:20:18]；合并后主树 45 passed [实测 16:21:45]。"今天原值 = 2 发"从此是实测而非推断。
+- **`be-r27t` 无 R53 沙箱仍跑测未污染**：`git status --porcelain -uall -- chroma_db` = 0 行 [实测 16:20:32，即跑测之后]。原因：R27 的两个测试全程离线、不构造检索器。⇒ §4Z.4 那条"未含 R53 的树测试产物一律不得提交"**只约束会碰 chroma 的用例**，不是整树禁测。
+- **R54 追加两条硬判据**（细则见跟进单 §21.7）：dry-run 不得能命中默认输出路径；默认产物不得落在仓内未被忽略的目录。
+
+### 4AA.2 事故 #11 收敛：三个子 Agent 挤同一个工作树（已解除）
+
+- 上一班 R54 派工时一次响应里出现三条 `spawn_agent`，`Carson`/`Boyle`/`McClintock` 三个 Agent 全被建起来并指向**同一个** `perf-lab` 工作树，直接违反"一 Agent 独占一树、写域 disjoint"。
+- 本班处置：`close_agent` 关 `Boyle`（返回 `previous_status:running`→shutdown）[实测 16:15:16]，关后 `perf-lab` `git status --porcelain -uall` 为空；再关 `McClintock` [实测 16:15:35]，关后仍为空。**两树均零污染**，与 §4Z 里 `Bacon` 的结论一致：关掉重复 Agent 后树通常仍干净，但**每次都要实测**。
+- 现 `perf-lab` 由 `Carson` 独占，R54 正常在途。
+
+### 4AA.3 事故 #12 / #13 与**机制订正**（覆盖 §4V.12、§4Y 的防护写法）
+
+- **#12**：意图关闭 `McClintock` 一次，实际产生 **3 条** `close_agent`（1 条成功 + 2 条 `agent not found`）。**#13**：意图给 `Carson` 发 1 条补充判据，实际产生 **2 个不同 `submission_id`**。
+- **机制结论（重要，别再看错方向）**：复制发生在**投递动作本身**，不是"我在一个 block 里并列写了几条"——同一份参数会被整体复制 2–3 次，且各自拿到独立回执。⇒ **"一 block 一投递"不足以自保**，它只能防止我主动并列。
+- **新防护（照此执行）**：① 派工/收口指令一律写成**幂等**的，并在正文里显式声明"本指令可能重复送达，按一次执行，产物不得出现重复用例或重复段落"；② 关闭类操作按幂等语义处理（`not found` 即视为已达成，不再重试）；③ **验收时专门检查重复段落/重复用例**，这是重复投递唯一会留下的实据；④ 只有磁盘落没落盘 + `git status` 才是可信回执。
+- **`wait_agent` 可用性订正**：上一班记的是"数组参数会报 `expected a sequence`，不可用"——本班 `targets` 传**单元素数组** + `timeout_ms=10000` **正常返回** `completed` 与完整产物 [实测 16:17 前后]。⇒ 探活优先用 `wait_agent`（只读、零投递风险），`send_input` 只用于真的要给新指令时。
+
+### 4AA.4 名册快照（`Get-Date` 实取 **2026-09-17 16:30:15**，主树 HEAD `6a4f02b`）
+
+| Agent | 单 | 工作树 | 磁盘实况（`git status --porcelain -uall` / chroma 脏行数） | 状态 |
+|---|---|---|---|---|
+| `Peirce` | R27 | `be-r27t` | 已提交 `ce0b041`，工作树空 | **结案并合并**，可关闭 |
+| `Rawls` | R26b | `be-leg2` | 3 项改动：`model_config.py`、`monitoring.py`、新 `test_compute_wiring.py`；chroma 脏 0 | 在途，未 commit |
+| `Fermat` | R41 | `be-r53` | 2 项：`app/api/v1/chat.py`、新 `test_sse_sources.py`；chroma 脏 0 | 在途，未 commit |
+| `Carson` | R54 | `perf-lab` | 2 项：`scripts/collect_evaluation_answers.py`(316 行)、`tests/test_collect_evaluation_answers.py`(265 行/10 例)；chroma 脏 0 | 在途，已追加 2 条硬判据 |
+
+- **腿① 本班起合法空转**（不是无人可派）：R27 之后下一单是 R29，而计划书 L170/L255 硬规定 `R36 → R29/R33/R35 的合并`，R36 判据③ 又只剩 R54 + 业主真机跑分 ⇒ **R29 不可先合**。
+- **两单经核实"不可派子 agent"**，记录以免下一个人误派：**R52** 判据①②③ 分别是断网可装可跑、内网 HTTPS、批量建 50 账号登录，全是环境端到端动作（业主独立对话）；**R29** 判据②③④ 要真端点 `thinking=0` 与生成轮计时，且计划书禁"无线上端点证据前宣布关掉思考" ⇒ 需 GPU/Ollama，属并发红线。
+- 空闲工作树（可立即接手）：`be-r14`/`be-r15`/`be-r18`/`be-r20`/`be-r36` 与前端四树；`be-r27t` 即将释放。
+
+### 4AA.5 新查明的事实（影响所有线，都实测过）
+
+- **R36 判据①② 早已在仓内机器验证**：`tests/test_evaluation_report.py:201/:210/:247` 三例分别钉"每档 ≥20 行""口径冲突成对题可区分""P95 样本 ≥100 且逐档跑"，`business_evaluation_100.jsonl` tier 实测问答 50 / 分析 35 / 报告 20 [实测 16:24:09]。⇒ **任何人再提"给报告加 tier 分层"都是重复劳动**，本人本班差点误派，靠先核后派拦下。
+- **评分是子串判定且会退化成抄金标**：`app/quality/eval.py:63-66` —— 有 `must_contain` 就全含即算对，**没有就直接判 `row["answer"] in text`**；105 题集每行都自带 `answer` 金标字段 ⇒ 采集器若把金标当答案写回，基线必然刷近满分。这条是 R54 验收的第一号陷阱。
+- **`artifacts/` 未被忽略**：`git check-ignore -v artifacts/evaluation-answers.jsonl` 退出码 1，且 `.gitignore` 里只有 `chroma_db/` 一条与向量库相关 [实测 16:25]；H5 结案前禁改 `.gitignore`，所以任何新产物目录都必须在**仓外**。
+- **主树 `app/` 与 `tests/` 干净**：`git diff --name-only` 只剩 6 个运行中容器写的 `chroma_db/**` 文件 [实测 16:20:18]，确证主树未被任何在途单污染。
+## 4AB 本班：三次合并结案、探针实验三次无效的教训、名册重取
+
+### 4AB.1 合并记录（只有总控可合并；本线程链累计 4 次）
+
+| 单 | 实现 commit | 合并 commit | 改动面 | 合并后主树复跑 |
+|---|---|---|---|---|
+| R27 跳过第二发 Supervisor | `ce0b041` | `6a4f02b` | `orchestrator.py` +66/−0 | 45 passed[实测 16:21:45] |
+| R41 SSE canonical sources | `e8d3200` | `571e0d6` | `chat.py` +89/−0、新测试 363 行 | 139 passed, 4 skipped[实测 16:36:51] |
+| R54 评测答案采集器 | `9470892` | `7b8dab3` | 新 `scripts/` 348 行、测试 311 行/12 例 | 20 passed[实测 16:39:5x] |
+| R26b 算力探测接线 | `af027ce` | `6ee2f79` | `model_config.py` +74、`monitoring.py` +12、新测试 191 行 | **136 passed, 4 skipped**[实测 16:55:02] |
+
+- 主树 HEAD 现为 **`6ee2f79`**[实测 2026-09-17 16:57:01]。**H6 提示（第 4 次）**：`codex/data-file-catalog` 至今从未 push，`git rev-parse --abbrev-ref --symbolic-full-name '@{u}'` 仍 fatal ⇒ 本机是唯一副本，磁盘故障即全丢，**请用户自行安排 push/备份**，Agent 一律代做不得。
+- 四次合并 `chroma_db` 脏行数 6→6、工作树未跟踪项未被任何在途单污染（10,840 项全是既有禁提交垃圾类）。
+
+### 4AB.2 结案与两章新单
+
+- **R41 / R54 / R26b 全部结案**，判据逐条见跟进单 §21.8。三单共同的复核要点：改动面必须是**纯新增**（`--numstat` 删除数为 0），否则"legacy 零削减""默认零行为变更"这类判据就不成立。
+- **新立 R55**：`/approve` 缺 canonical `request.started` / `request.completed` / `request.failed` / `sources` 四类（`request.cancelled` 已有，在 `:1589`），并认领 `chat.py:1625-1627` 注释里那条"批准后新挂起不发 hitl ⇒ awaiting 账面漏记"的长期搁置缺口。**执行层原报"该路径无 canonical 终态事件"描述有误，已按逐行核对订正**——再次说明子 agent 自述不采信是有效的。
+- **新立 R56**：`tests/conftest.py` 完全没桩化模型发现（主树与 be-leg2 双树 `LOCAL_MODEL|OLLAMA|_fetch_registry` **0 命中**[实测 16:45]）⇒ 测试期 `get_local_model_settings()` 会真开 socket 打 `127.0.0.1:11434`，与"打 Ollama 属并发红线"直接冲突。判据：全量 pytest 期间对 11434 的连接数必须为 0。
+
+### 4AB.3 方法论教训：为验证 R26b 做的三次探针**全部无效**，记录以免重蹈
+
+1. **socket connect 计数**（`be-leg2` 1 次 vs 主树 0 次）：那 1 次来自与被测路径无关的来源，且差异实际由**该 worktree 有没有 `.env`** 造成（主树 `.env` 含 `OLLAMA_MODEL=qwen2.5:14b`，`be-leg2` 根本没有 `.env`）——不是代码差异。
+2. **`urlopen` 计数 @ 死端口 `127.0.0.1:9`**：两树都 total=1，因为 `/api/tags` 抛异常后 `model_capabilities.py:96-100` 提前 return，探测路径根本没走到 ⇒ 死端口**测不出正常路径**。
+3. **`urlopen` 计数 @ 真 Ollama**：两树仍 total=1 且 `discovered=''` ⇒ **本机宿主侧 `urlopen` 打 `11434` 本身就失败**（与"任何 curl 必须 `--noproxy '*'`"同源的 Clash 对 localhost 生效问题），这条本身是**新查明的环境事实**，值得单独立刻：容器内的后端不受影响，但在宿主上直接跑 Python 做发现探测会得到假阴性。
+- **教训**：测"网络请求数增量"必须同时满足 (a) 目标 worktree 的 `.env` 与被比树一致、(b) 测试未被 `_offline_probes` 这类局部桩化、(c) 真机依赖在此机器上可用。三条当时都不满足，最后**依代码事实 `model_capabilities.py:319` 定论**：正常路径冷发现 1→3 请求（`/api/tags`+`/api/ps`+`/api/version`），受 60 s TTL 节流。
+- **不要据此再派一次同类验证**；要拿真数字，正确位置是容器内或业主独立对话。
+
+### 4AB.4 名册（实取时点 2026-09-17 16:57:01，本表过期即重取）
+
+| Agent | 单 | 工作树 | 状态 |
+|---|---|---|---|
+| `Rawls` | R26b | `be-leg2` | **结案并已合并 `6ee2f79`**，可关闭并释放工作树 |
+| `Peirce` | R27 | `be-r27t` | 结案已合并 `6a4f02b`；**上一班 `close_agent` 未确认成功，本班须重关并核实** |
+| `Fermat` | R41 | `be-r53` | 结案已合并 `571e0d6`；本班接 **R45** Pre-filtering（`app/rag/filters.py` + `retrieval_pipeline.py`） |
+| `Carson` | R54 | `perf-lab` | 结案已合并 `7b8dab3`；本班接**真机 105 题跑分 runbook**（仅 `docs/handoff/` 新文件） |
+
+- 空闲工作树：`be-r14`/`be-r15`/`be-r18`/`be-r20`/`be-r36` 与前端四树；`be-leg2`/`be-r27t`/`be-r53`/`perf-lab` 结案后陆续可释放（**释放要等 H5，反跟踪 chroma_db 前一个都不许删**）。
+- 腿① 仍合法空转：下一单 R29 被计划书 L170/L255 的 `R36 → R29/R33/R35 合并` 卡住，而 R36 判据③ 只等业主真机跑分。
+
+### 4AB.5 工具层新故障形态（接手者按此自保）
+
+- `wait_agent` **可用**：`targets` 传单元素数组 + `timeout_ms`，返回完整产物，只读零投递风险 ⇒ 探活优先用它（本班实测 16:44 用一次即取回 Rawls 全文）。
+- 投递类调用会被**整体复制**（历史上 `close_agent` 意图 1 实发 3、`send_input` 意图 1 实发 2）⇒ "一 block 一投递"不足以自保，**指令正文必须写明"本指令可能重复送达，按一次执行，产物不得出现重复用例/段落"**。
+- 曾出现 `close_agent` 报 `unsupported call` 而同 block 内 `exec_command` 正常：**遇到时不要盲目重试投递**，先用 shell 做能做的事。
+- `exec_command` 的 `timeout_ms` 若被序列化成字符串会报 `invalid type: string, expected u64` ⇒ 用 `yield_time_ms` + `write_stdin` 轮询代替。
