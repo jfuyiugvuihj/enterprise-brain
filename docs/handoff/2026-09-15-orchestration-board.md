@@ -1188,11 +1188,14 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Rawls` | `01a0ad34-4083-7722-9977-1453ab75316b` | R26b | `be-leg2` | **已结案**：`af027ce` 并入主树 `6ee2f79`，venv 复跑 136 passed / 4 skipped | 16:55:02 |
 | `Arendt` | `01a0ae97-b977-7483-9edb-561c05768e06` | R45 | `be-r53` | **已结案**：子提交 `0276f78` 并入主树 `640ef08`（§4AF.1）；总控主树复跑 **151 passed / 4 skipped** | 18:28:24 |
 | `Carson` | `01a0ae6d-044c-7760-9b13-158dc6d905df` | R36③ 跑分 runbook | `perf-lab` | **已结案**：runbook 含 P-8 已并入主树（§4AF.5）；该线**不得再提交同一文件** | 18:39:38 |
-| `Fermat` | `01a0ae6a-d3b6-70f3-911b-57db8d2496f8` | R57（**重复体**） | 与 `Banach` 同为 `be-r53` | **本班 18:32:56 关停**（事故 #14，关闭前 `running`）；关停前 `be-r53` 零落盘 ⇒ 无产物损失 | 18:32:56 |
-| `Banach` | `01a0aeea-6725-7ef2-80ab-fdd6c4f30471` | **R57** classification fail-open | `be-r53`（基线 `640ef08`，**独占**） | **运行中**；18:37:22 已改 `retrieval_pipeline.py:204`+`retriever.py:294`；订正令 `01a0aef3…` 已投（`policy.py:180` 用反 + 漏扫 `or 1` 形态） | 18:39:00 |
-| `Planck` | `01a0ae99-0576-7490-94fc-1366eb8bc5ad` | **R55** `/approve` canonical | `be-r20`（基线 `6ee2f79`） | **运行中**：判据①②③④⑥ 总控已验收；判据⑤ 扩域令 `01a0aef1…`（仅 `tests/test_hitl_pending.py`） | 18:37:00 |
+| `Fermat` | `01a0ae6a-d3b6-70f3-911b-57db8d2496f8` | R57（**重复体**） | 与 `Banach` 同为 `be-r53` | **18:32:56 关停**（事故 #14）；关停前 `be-r53` 零落盘 ⇒ 无产物损失 | 18:32:56 |
+| `Banach` | `01a0aeea-6725-7ef2-80ab-fdd6c4f30471` | R57 | `be-r53` | **已结案（非该线自证）**：18:50:29 后随总控 `01a0acfb` 一同断线无回执；本班 21:0x 从 `app/rag/*.py.r57bak` 复原 2 行并亲验 45 passed + 反证，子提交 `ee11ca1` 并入主树 `5984696`（§4AI.1） | 21:06:40 |
+| `Planck` | `01a0ae99-0576-7490-94fc-1366eb8bc5ad` | R55 | `be-r20` | **已结案（非该线自证）**：同上断线；本班亲验 90 passed / 12 skipped + HEAD 反证 41 FAILED，子提交 `6663a40` 并入 `5984696`（§4AI.2）；`probe.txt`(0 字节) 未入库 | 21:08:20 |
 | `Jason` | `01a0ae99-89de-7e10-aab8-ac138c9a276e` | （Planck 的重复体） | `be-r20` | **已结案**：shutdown 回执已到，经查从未落盘 | 17:11:38 |
-| `Goodall` | `01a0aef7-3590-7001-a031-0187447ddea2` | **R17** 数据行部门 fail-closed | `be-leg2`（基线 `497bef5`，**独占**） | **运行中**（18:43:58 派出，单次投递成功）；判据含"无部门⇒零可见"陷阱封堵 + 灰度开关默认新行为 | 18:43:58 |
+| `Goodall` | `01a0aef7-3590-7001-a031-0187447ddea2` | R17 | `be-leg2` | **失效**：18:43:58 派出后随总控死亡，`be-leg2` 至 20:5x 仍**零落盘**（等于未动工）；本班 21:11 原样重派为 `Curie` | 20:52:10 |
+| `Curie` | `01a0af7e-23bc-7b71-96e9-e2288069cffa` | **R17** 数据行部门 fail-closed | `be-leg2`（基线 `5984696`，**独占**） | **运行中**（21:11:14 单次投递）；写域仅 `app/common/rbac.py`；坑1 封堵＝禁 `values == dept`，须证「非管理员且账号无部门 ⇒ 一行都不可见」；`rbac.py:45 fillna(1)` 属 H13 **不许碰** | 21:17:30 |
+| `Banach` | `01a0af7f-0a94-76b2-95d9-138066536a4e` | **R56** 测试期真打宿主 Ollama | `be-r14`（基线 `5984696`，**独占**） | **运行中**：21:12:26 自 `497bef5` ff 到位；21:16 冻结核查**零写盘**；21:18 复工令已投；写域仅 `tests/**`，`chroma_db/chroma.sqlite3` 脏（09-16 遗留）禁 add/restore | 21:18:05 |
+| `Peirce` | `01a0af7f-4f09-7062-9cdc-0a397cf0e816` | R56（**重复体**） | 与 `Banach` 同为 `be-r14` | **本班 21:17:20 关停**（事故 #15，同类第六次）；关停前零落盘 ⇒ 无产物损失 | 21:17:20 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -1685,3 +1688,47 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 
 **唯一真正"可达且天天发生"的两处**（已并入 H13 请业主定口径，Agent 一律不改）：
 `app/api/v1/chat.py:1929` `classification: int = Form(1)`（API 契约层默认公开，端点零校验）与 `app/common/rbac.py:45` `fillna(1)`（数据行密级列为空 ⇒ 按 1 级放行）。
+## 4AI. 本班（09-17 20:50–，总控第六班，接管死线 `01a0acfb`）：R57 复原结案 + R55 验收结案 + 合并 `5984696` + 🔴事故 #15 + 心跳真因订正
+
+### 4AI.1 R57（`be-r53`）：实现根本没写完，本班从 `.r57bak` 复原 2 行后结案
+
+- 取证 `git -C be-r53 diff`：`retriever.py`/`catalog.py` 只有注释新增，**`classification` 默认值一行都没改**；真正要改的 2 行只存在于 `app/rag/retriever.py.r57bak`、`app/rag/retrieval_pipeline.py.r57bak`（各差 `meta.get("classification", 1)` → `meta.get("classification")`）。三文件 mtime 全部 **18:50:29** = 心跳杀死总控那一秒，改动断在"换回原状"的中间步。
+- 本班照 bak 复原 2 行；另把 `retrieval_pipeline.py:196` 注释里的 `classification_levels` 字面量去掉——守卫 `tests/test_prefiltering.py:684-696` 用 `inspect.getsource` 扫全文，**注释也算命中**，不改就假红。
+- 验收（`.venv` py3.11.7，`LOCAL_MODEL_NAME` 哨兵，`-p no:cacheprovider`）：**45 passed**；反证（默认值改回 `1`）⇒ `assert 1 is None` **1 failed**；SHA 复原与 bak 一致。子提交 `ee11ca1`，**显式列路径**，两个 `.r57bak` 不入库。
+
+### 4AI.2 R55（`be-r20`）：判据全过，HEAD 反证 41 条 FAILED
+
+- `app/api/v1/chat.py` +130 全部落在 `approve()` 区间，canonical 五分支齐，`sources` 复用 `_authorized_source_rows`；`_record_pending_approval` 的 `request_id/trace_id/task_id` 是 HEAD 既有形参（`chat.py:1380-1388`），非新增越界。
+- 判据⑤ 按 §4AF.3 裁定执行（桩改回 `None`，原三条断言一字未改）。验收实跑 **90 passed / 12 skipped**；反证（换回 HEAD 版 `chat.py`）⇒ **41 条 FAILED**；恢复后 76 passed。子提交 `6663a40`，`probe.txt`(0 字节) 不入库。
+
+### 4AI.3 主树动作与新基线
+
+- `5f61bc7` → **`5984696`**：两次 `--no-ff` 合并（`6d03788` R55、`5984696` R57），只带进 7 个预期路径，`chroma_db` 未被碰。合并前基线漂移检查两单均为空。
+- 合并后主树复跑（8 文件：`test_approve_canonical_events`/`test_hitl_pending`/`test_sse_sources`/`test_classification_fail_closed`/`test_prefiltering`/`test_test_isolation_guards`/`test_phase13_private_enterprise`/`test_auth`）= **159 passed / 12 skipped**。新基线以此为准，旧"151/4"作废。
+- 勘误：名册旧版"10 棵树"已过期，实测 **15 棵工作树全部已合并**（无领先提交）。
+
+### 4AI.4 🔴 事故 #15：本班第二个 block 内一次发出两条 `spawn_agent`，R56 又被派了两遍（同类第六次）
+
+- 后果：`Banach`(…0a94) 与 `Peirce`(…4f09) **同占 `be-r14`**，直接违反 §4AF.2「一个 block 只允许一次投递」与「一 agent 独占一树」。
+- 处置：21:15/21:16 分别下冻结令 → 两者均回报**零写盘**（`be-r14` 上 21:12:26 的 7 个 mtime 系 Banach 那次 `ff` 落位，非代码改动）→ 21:17:20 `close_agent` 关停 `Peirce`，保留 `Banach` 复工。
+- **对策改写（今后所有班次照此执行）**：派工调用必须**独占一个 block**，该 block 内不得并列任何其他工具调用；`spawn_agent` 之后本班内不得再对该单号发第二次投递，无论第一次是否报错。
+
+### 4AI.5 心跳真因（**推翻本班开场拿到的那份"换模型混 id"诊断**）
+
+- `~/.codex/automations/automation-2/automation.toml`（`kind=heartbeat` HOURLY，target `01a0acfb`）每次触发：①把线程模型刷成内置 `gpt-6-astra`/`low` 并注入 `<model_switch>`；②以**无 `call_id` 的 `function_call_output`** 投递心跳正文（桌面端版本门控 `turnToolOutput ≥ 0.151.0-alpha.4`；关掉则退化为普通 user 文本）。百炼/DeepSeek/讯飞对整段历史强制校验 ⇒ 之后每次请求必 400。**不是**"来回换模型混进别家 id"。
+- 全库 155 份 rollout 严格扫描：孤儿条目**只**出现在被心跳挂过的 2 条线程（`01a0acfb` 行 6299/6308，18:50:28 与 19:50:38；`01a09dda`），`thread_items` 26036 行里 `functionCallOutput` **0 条** ⇒ 毒只存在于 rollout 与 app-server 内存。20:30 那次"继续"的 fork 已生成干净 11 行新 rollout 并改写 `rollout_path`，但内存历史仍脏，故仍失败。
+- **已停并验证**：TOML 与 `~/.codex/sqlite/codex-dev.db` 双 `status=PAUSED`、`next_run_at=NULL`，`last_run_at=19:50:38`；20:50 那一跳实测未投毒（孤儿条目仍只 2 条）。
+- 🔴 **绝不可把心跳改挂到本线程**：本线程 `bailian/qwen3.8-flash/xhigh` 且会 spawn 子 agent，天然含 `at_` 条目，挂来一小时同样死。复发源头仍在文档里——`docs/handoff/2026-09-17-human-gates.md:96-112`（H10）与前任开场令都写着"接管后自建 heartbeat 指向你的线程"，**建议改为"不建心跳，每轮开头自查 H3/H6/H12"，改文档待业主点头**。
+- 护栏：`C:\Users\fengx\.codex\tooling\codex_thread_health.py`（默认只读 / `--orphans` / `--pause-heartbeats` / `--repair --rollout`，后者须先完全退出桌面端）。plan B（每供应商独立 provider id）备份在 `C:\Users\fengx\.codex-backups\provider-isolation-20260917-*`。
+
+### 4AI.6 业主提问「为什么还是 Chroma 不上 PGVector」——本班实测结论
+
+- **不是遗漏，是缺前置 + 本期未排期**。四条事实：① PG 侧只有骨架——`migrations/0001_core_resource_versions.sql:4` 仅建扩展，`migrations/0002_execution_data_lineage.sql:243` 的 `embedding vector` **无维度**，全仓 `migrations/*.sql` 对 `hnsw|ivfflat` **零命中**，`migrations/0007_document_chunk_count.sql:41` 自注 "vectors still belong to Chroma alone"；② **无写入方**——`app/**` 扫 `pgvector` 只有取值校验 `app/rag/indexing.py:203` 与探测 `app/common/monitoring.py:272`，运行时读写 100% 走 `app/rag/retriever.py`；③ 前置两单**零代码**（`git log --all --grep` 实测 R21/R22 只有 `6c5ccd9`/`497b500` 两条 docs），R21 全零向量、R22 无索引重建路径；④ `docs/system-architecture-2026-09-17.md:240-248` §5.2 把迁移门禁写死为 model+dimension 绑定/禁混维度/权限下推/原子回滚/双读召回对比，`:245` 自标 R22 缺口 ⇒ 前置不成立；计划书 `:246` §7 又把"动 embedding 提速"列入明确不做。R25–R57 **二十七单无一是 Chroma→PGVector**。
+- 另两条未入文档的现实阻力：105 题里 **55 条 `must_contain` 在 96 篇语料无出处** ⇒ §5.2 第⑤条双读召回门禁跑出来仍是未知数；备份恢复未纳入 PGVector ⇒ 切换不可回滚，违背私有化底线。
+- 建议排期（**须业主点头另立单号，本班未派**）：R21 → R22 → 新 **R58** 双读镜像（评测门禁）→ R59 切读 → R60 停写退役；R58 起需业主侧 `docker compose build migrate`（H12）与真机备份演练。
+
+### 4AI.7 派工面现状
+
+- 腿①（`app/agents/**`）：§5.1 严格串行 R27→**R29**→R30→R31→R32→R38；R27 已结案，**队头是 R29（零提交）**，R30/R31/R33/R42/R38 在其后排队，一次只许一单。
+- 腿③（`app/rag/**`、`chat.py`、`cache.py`）：R28/R41/R45/R57/R55 已结案，队头 **R33**（与腿①在 `orchestrator.py` 交叠 ⇒ 合并串行）；R35 可并行（写域 `cache.py`，与在途两单无交叠）。
+- 在途：R17(`Curie`/`be-leg2`)、R56(`Banach`/`be-r14`)。**在 R56 落地前不再加第三条线**（事故 #15 刚发生，先证对策有效）。
