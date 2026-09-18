@@ -90,11 +90,23 @@ notes = {}
 
 
 def publish(name, **payload):
-    temporary = os.path.join(markers, name + ".tmp")
+    # Harness telemetry only; the judged marker names are unchanged. The scratch name has
+    # to be unique per process and the rename retried: six children publish "W.enter" before
+    # any lock exists, and on Windows replacing onto a file another child still has open
+    # fails outright, which would be a false red about the harness, not about the adapter.
+    temporary = os.path.join(markers, name + "." + str(os.getpid()) + ".tmp")
     final = os.path.join(markers, name)
     with open(temporary, "w", encoding="utf-8") as handle:
         json.dump({"name": name, "at": time.time(), **payload}, handle)
-    os.replace(temporary, final)
+    deadline = time.time() + 10.0
+    while True:
+        try:
+            os.replace(temporary, final)
+            return
+        except OSError:
+            if time.time() >= deadline:
+                raise
+            time.sleep(0.02)
 
 
 def observe(name, budget):
