@@ -42,6 +42,12 @@ async def health_check():
 # R51: the ``performance`` block of this answer carries the stage ledger (P50/P95 per
 # segment, plus how well the segments add up to one request). Everything the block used
 # to say still reads the same; the stage numbers are added next to it.
+#
+# R79 criterion 1: the same answer grew a "hot_index" block -- switch state, hit / miss /
+# invalidation counters, the resident chunk count, and the last bypass reason code. It is
+# added inside build_health_snapshot rather than in this body on purpose: the shape of
+# this route is pinned by a source-regex test (tests/test_compute_wiring.py), and the
+# block belongs to the snapshot so every other reader of it sees the same numbers.
 @router.get("/health/details")
 async def health_details():
     from app.api.v1.chat import _ASK_STATS

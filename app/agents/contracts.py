@@ -127,7 +127,6 @@ class ModelBudget(BaseModel):
     """
 
     tier: ModelTier = DEFAULT_MODEL_TIER
-    max_calls: int | None = None
     #: Explicit output cap; resolved from the configured tier when unset.
     max_tokens: int | None = None
     #: Wall-clock allowance for one request at this tier's largest permitted prompt.

@@ -291,3 +291,13 @@ index reached = 0
 - **花名册纪律（本班新增）**：名册只记 `spawn_agent` **返回**的 nickname，不记简报里自定的代号；Tesla / Curie / Fermat / Banach / Meitner 各被复用过多轮，靠自定代号对账必然认错人。名册行「运行中」只允许出现在**真在途**的行上（本班一次性把 15 行过期状态改为「终态补记（第十三班）」，只改状态词、不动叙述内容，对账见看板 §4AP.2）。
 - **写域订正**：R75 真实写域是 `app/api/v1/intelligence.py` + `app/api/v1/open_platform.py`；跟进单与看板曾误记 `app/common/open_platform.py`（实测该文件 `standard_source` 零命中）。**注意**：`app/common/open_platform.py` 现在的合法占用者是 R80（app_id 撞号），派工别把两单混成一单。
 - **R78 三条改判的驳回权**并入 **H15** 同批：① 密级"只存不判"用自白而不是发明规则（待 H13）；② 未 earned 的部门收敛声明撤回；③ 说谎的 503 只钉用例不改行为（待 H18）。
+
+
+---
+
+## 状态更新（09-18 20:5x，总控第十八班，基线 `dad72fb`）：**H11 🟢 · H12 🟢 · H19 业主裁定不处理**
+
+- **H11 → 🟢 结案（总控亲做，不再等业主）**：本班在宿主拉起 Docker Desktop（引擎 29.7.2），compose 栈按 `restart` 策略自恢复 ⇒「必须重启容器才真拿到 GPU」这条已满足。凭据 = `docker exec enterprise-brain-ollama-1 ollama ps` 实取 `qwen3.5:9b` **5.3 GB / 100% GPU / ctx 4096**、`nomic-embed-text` **100% GPU**。红线：模型卷 `enterprise-brain_ollama`（14 GB）**不许重建**。
+- **H12 → 🟢 结案（总控亲做）**：`docker compose --env-file deploy/.env.server build migrate`（≈12 分钟）+ `up -d backend worker scheduler`。**新坑两条**（原来会让人白跑）：① `backend` 的 `build.dockerfile` 指向 `frontend/Dockerfile` ⇒ 单 `build backend` 静默空转，正解 build `migrate`；② 不带 `--env-file deploy/.env.server` 时 compose 因 `POSTGRES_USER` / `REDIS_PASSWORD` 插值失败直接拒不启动。**P-8 凭据改用内容指纹**：容器内 `audit.py` `9df140a411`、`hot_index.py` `0d0e70d8d3`、`chat.py` `b10629d652` 与主树逐字节相同。
+- **H19 → 按业主 20:2x 裁定「不管了」**：automation-2 每小时仍撞一次死线程（`target_thread_id` 指向已废的 `01a0acfb`），只要不影响代码就不再改；**"本线程只用一个模型、中途不换"这条自律仍然生效**（前两条总控线都死在换模型上）。
+- **仍等业主的闸门**（本班一个都没代做）：**H13**（未标密级上传按 1 级入库是否有意）、**H14 / H16**（`documents/` 双用目录与 `.gitignore`，H16 建议改裁「丙」）、**H15**（两笔总控改判据，可一句话驳回）、**H17**（R71 三件已裁，可驳回）、**H18**（错误码说谎要不要现在修）、**R85**（被静默覆盖那批应用密钥重发）、**R88**（审计 `seq` 要动 migrations）、**R90b**（0010 提示串要动 migrations）。

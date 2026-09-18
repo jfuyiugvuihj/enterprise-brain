@@ -1158,3 +1158,119 @@ PROBE index reached = 0
 - ⑦ 不改出厂默认：本单**只加互斥**，不改 `PERSISTENCE_BACKEND=json`，也不在本单里劝迁 Postgres（那是 R59/R60 的退役路线，别混做）。
 
 **给执行层的提醒**：交工必须自带①的红→绿两份输出（命令 + passed/failed 数 + 时点），并列出你实际套锁的位置行号与超时取值。回报里若出现"应该不会再丢了"这类无实测措辞，退回。
+
+### 31.3 🔴 新立 R87 详细判据（可离线派，前置无；写域 `tests/test_r51_observation_is_passive.py`）
+
+- **缺陷（本班实测坐实，双向）**：`tests/test_r51_observation_is_passive.py:520` 的用例 `:525` 跑 `git diff --name-only HEAD`（工作树 vs HEAD），`:534` forbidden 前缀含 `("pyproject.toml","uv.lock","migrations/","frontend/","app/rag/","docs/","tests/conftest.py")`，`:535` 断言差分里没有一个路径命中前缀。
+  - **过界（假红）**：它审计的是**整个工作树的未提交态**，不是 R51 自己的改动 ⇒ 任何别的工单未提交地改 `app/rag/**` 或 `docs/**`，R51 这条就红。R79 实测命中一次（回执申报 `1 failed`，总控提交后复跑自绿，两数都对上）。**副作用**：把"跑全量前必须先提交"变成隐式硬约束，总控只要看板未提交跑全量就红——这个坑第十三班到本班都踩过，不该靠记性绕。
+  - **漏防（假绿）**：`git diff` 不覆盖未跟踪文件。本班在主树实取：`docs/` 下**现有 21 个未跟踪文件**（`docs/screenshots/**`），而 `git diff --name-only HEAD` 只报出 `chroma_db/**` 6 项，**一个 docs 路径都没有** ⇒ "不许往 docs/ 加东西"这句自缚**从未生效过**。
+- **判据**：
+  - ① 审计范围改为**本工单自己的提交集**：以分支点为基线（`git merge-base HEAD <主干>` 求 base，再 `git diff --name-only $base HEAD`）。⇒ 在**主树**上（base 即 HEAD）该用例应**恒绿**；在**工单分支**上应能**咬住**本单自己引入的越界路径。
+  - ② 未跟踪文件必须**纳入可见**：另加 `git ls-files --others --exclude-standard`（不许用 `--no-*` 绕过 `.gitignore` 语义，也不许把 `-uall` 的目录展开当成新规则）。
+  - ③ **两个方向各一条用例**：假红方向（存在**别的工单**的未提交 forbidden 路径改动 ⇒ 本用例必须绿）、假绿方向（本单自己**新增**一个未跟踪的 `docs/` 或 `app/rag/` 文件 ⇒ 必须红）。🔴 探针一律落 `%TEMP%` 或 `tmp_path`，不许往仓库真放文件。
+  - ④ 🔴 **不许直接删掉这条用例**、不许给它加 `skip`、不许把 forbidden 前缀清空来"解决"假红——那是把守卫拆了当修好。缩范围只能按①②的语义缩（范围=本单提交集，可见面=含未跟踪）。
+  - ⑤ 零回归：`migrations/`、`frontend/`、`pyproject.toml`、`uv.lock`、`tests/conftest.py` 五个前缀的**约束强度不得下降**（这三样是 R51 交工时真被验收过的边界）；`app/rag/`、`docs/` 两条**保留在表里**，只是改由①②正确的作用域去判。既有用例 `:520` 的函数名与语义若变，需在回执里点名并给反证。
+  - ⑥ 基线：主树全量当前为 **2084 passed / 35 skipped / 0 failed**（`c4ebfb5` 实测，主树 `20cc109` 同树恒等），你的改动**净增用例数必须逐条对得上**，不许出现"少了几条也全绿"。
+- **为什么派单不总控亲做**：它要新增用例与两向反证，属测试卫生之外还带行为定义；且本班并发已满 3（事故 #22）。槽位一空即派。
+
+### 31.4 🔴 新立 R88（**待业主放行**，R83 Newton 建议 + 本班复核）：审计回放要跨进程有序，必须让**存储发号**
+
+- 边界（先把话说清，免得下班以为 R83 没修完）：**R83 已达标**——单进程内"回放顺序＝写入顺序"由分配器保证，跨进程那一档 Newton 已按判据⑦如实写进 `app/common/audit.py:212-216` 与测试文件 docstring，**不是遗漏，是本单范围外的下一层**。本班另核一处同形缺陷：`app/storage/persistence.py:401` 的 `PostgresPersistenceAdapter.list()` 是 `ORDER BY created_at DESC`，**没有第二排序键** ⇒ PG 侧同 tick 仍不确定。
+- 修法：`audit_events` 增存储侧单调 `seq`（BIGSERIAL / 独立 SEQUENCE），写入即发号；读回排序键改 `(created_at, seq)`（PG）与 JSON 侧等价的追加序；两处排序必须同一口径。
+- 🔴 为什么先裁后派：① 要动 `migrations/**` ⇒ 私有化部署要在客户机跑迁移，出问题回滚代价在业主侧；② 要改列集合钉子 `tests/test_audit_persistence.py:643-656`（业主写下的断言一族，按 H15 口径改它要先报备）；③ 发布节奏与 H12（重建镜像 + `docker compose build migrate`）撞在同一次变更里更划算。
+- 若批准，判据我会按 §31.2 的规格写全（含"迁移必须向前兼容旧行：`seq` 回填不得改变既存事件的相对顺序"与"回滚脚本"两条硬要求）。
+### 31.5 R83 结案账（第十七班总控亲验，全链见看板 §4AS.1）
+- 判据七条逐条对完：①同 tick 严格 +1 µs、②时钟回拨不外抛、③hydrate 读盘后播种下界、④memory-only 路径同序、⑤不改 schema、⑥published 字段集合与顺序不动、⑦跨进程残余限制如实写进 docstring —— **全达标**。
+- 数字：追平 `6efe744` 主树解释器全量 **2100 passed / 35 skipped / 0 failed（84.87 s）**，算术 `2084 + 16 = 2100` ✓；并树 **`1de9b88`**，**tree `47860b08` 恒等**证明通过。
+- 总控复核新发现（不采信执行层自述的部分）：`record_audit` 的三个空串占位在任何返回路径之前必然被锁内取戳覆盖（`_ensure_storage` 与 `_build_storage_locked` 把后端异常全包成降级，不外抛）⇒ 无"空戳外流"风险，这条上班没验。
+- 遗留：跨进程同一 tick 仍需存储发号 ⇒ 单列 **R88（§31.4）** 等业主裁；R83 本身不留尾巴。
+- **R87 状态订正**：第十六班那次 `spawn_agent` **未落地**（三重 canary：树内最新 mtime＝建树时刻、`status` 全空、19:14:56 后无新 rollout）⇒ 按事故 #14 不补投，改由业主手动开线，判据用本节同级的 §31.3。
+## 32. 本班（09-18 19:4x，总控第十七班续）：前端线首次实盘 · 🔴新立 R89（后端 29 码 vs 前端 26 句人话）· 已派 `Noether`
+
+### 32.1 前端线实盘（只读取证）
+- 五支前端分支（`codex/fe-trunk`/`fe-prims`/`fe-alerts`/`fe-artifacts`/`fe-dash`）对主分支 **ahead 全 = 0** ⇒ 已完成的活儿都在主树里，不存在"派了没人收"的悬账。
+- 今天（09-18）**零**前端提交，最后一笔 `4b5a7cb`（09-16 21:20）⇒ 前端线停摆两天，全部产能被后端吸走。
+- 体量：22 个 `.vue` 组件 + 22 个测试文件；`vitest run` **408/410**（17 文件绿、1 文件红）。
+- 🔴 `docs/handoff/2026-09-15-frontend-work-checklist.md` 的 **3 勾/62 未勾** 与代码不符：鉴权收敛那条已完成（全局 `axios.create` 1 处、拦截器只在 `frontend/src/lib/http.js:98/:104`）。⇒ 与前几班对 `task_plan.md`/`progress.md`/`findings.md` 的处置同口径：**不许据勾选清单判断前端进度**。
+
+### 32.2 R89 详细判据（可离线派，前置无；写域 `frontend/src/lib/errcodes.js` 一个文件）
+- 缺陷：`ERROR_CODES` **26** 键，后端真源 `ErrorEnvelope.code: Literal[...]`（`app/agents/contracts.py`）**29** 码 ⇒ 缺 `context_limit_exceeded`、`row_scope_denied`、`no_visible_rows` 三句人话。
+- 后果：这三码一来界面只能说兜底句，而行作用域两码的分寸恰恰是"**不是没有数据，也不等于没权限看这个数据集**"——兜底句会把权限事实洗成系统故障，正是 R64/R65 一路在防的那类撒谎。
+- 钉子已现红（不是我推断）：`src/lib/errcodes.test.js`「前端键集合恰好等于真源枚举：一个不自扩，一个不漏」与「A − C = 空：后端每个 canonical 码都有一句人话，没有一条落到兜底句」两条 2 红。它对账走 `git show <ref>:<path>` 读**对象库** ⇒ 与工作树新旧无关，红是真的；不许改成 `readFileSync`、不许加 skip。
+- 判据：① 键集合 == 29，一码不多一码不少，`FRONTEND_ONLY_CODES` 保持 `[]`；② `message` 非空、不含 `{}`/URL/`/api/`、不含任何 snake_case 码名（同一文件里有 `not.toMatch(/[a-z][a-z0-9]*(_[a-z0-9]+)+/)` 这一刀）；③ `retryable` 必须给出处：行作用域两码倾向 False（拒绝重试不变），`context_limit_exceeded` 要对齐 `CONTEXT_LIMIT_CODE` 的处置路径与 `tests/test_r30_context_limit_guard.py` 后再定；④ `vitest run` **410/410**；⑤ `npm run lint` 无错、`lint:colors` 棘轮不得变差（改前改后各跑一次留数）；⑥ 不许动测试、不许动别的文件、不许 commit。
+- 语义锚（后端 contracts.py 注释口径，文案要与之相符）：`row_scope_denied`＝行存在但在当前账号行级可见范围之外；`no_visible_rows`＝本轮一行可分析的都没有、**原因不下结论**；`context_limit_exceeded`＝上下文装不下。
+- 为什么总控这条能自己派：不碰 `app/**`、不碰 `orchestrator.py`、与在途两单写域零相交，且前端五树 09-16 后无人占用 ⇒ 独占性天然成立。
+
+
+---
+
+## 33. 本班（09-18 20:2x–，总控第十八班）：🟢 H11 + H12 由总控亲做结案 · 🔴 新立 **R90**（pgvector 0010 首装必停 + 它给的指引指错库）· R87 总控亲做结案 · 事故 #29 按业主裁定降级 · 🔴 事故 #30 两条执行层线程蒸发
+
+### 33.1 结案账（只记总控实取，任何执行层自述不作数）
+- **H11 → 🟢**：Docker Desktop 起来后栈按 restart 策略自恢复，`ollama ps` 实取 `qwen3.5:9b` 5.3 GB **100% GPU** ctx 4096 + `nomic-embed-text` **100% GPU**。
+- **H12 → 🟢**：`docker compose --env-file deploy/.env.server build migrate`（≈12 分钟）+ `up -d backend worker scheduler`；P-8 以**内容指纹**证死（`audit.py` `9df140a411` / `hot_index.py` `0d0e70d8d3` / `chat.py` `b10629d652` 与主树逐字节相同，`contracts.py` 的 `max_calls` 计数 0）。两条新坑（`backend` 的 build 指向 `frontend/Dockerfile`、必须带 `--env-file`）已入看板 §4AV.4。
+- **R87 → 🟢 总控亲做结案**：主树 `fcd8ef0`，用例 16 → **20**，全量亲跑 **2104 passed / 35 skipped / 0 failed / 81.61 s**；副产品口径＝**脏工作树跑全量不必先 commit**。
+- **事故 #29 → 降级**：业主裁定语料与评测集是编造 / 公开来源的演示数据 ⇒ 公网可见**不构成数据泄露**；但「两远端确为公开库、`chroma_db` 今天被放大到 75.5 MB / 向量目录 124 MB、`master` 停在 `450e5aa` 未动」三条事实保留，「push 前查可见性」纪律保留。
+- **事故 #30（新类）→ 🔴**：`Helmholtz`(R84) 与 `Gauss`(R37) 经 `wait_agent` 实取 **`not_found`**（线程蒸发、无结案回执）。`be-r37` 盘上留活 `chat.py` +182/−41 + 2 新用例；`be-r84` 只有 21 KB 红用例，`persistence.py` 未动。**不补投**；由总控对 §21 判据验收后决定代提交 / 退回，`chat.py` 在 R37 结案前仍不许再派。
+- **删除清单 → 不急**（业主裁定）：`_quarantine` 零引用脚本与主树 `_board_*.py` / `bundle.js` / `idx.html` 全部挂账，本机任何删除动作本身也被策略硬拒（§4AT.2）。
+
+### 33.2 🔴 **R90** 判据（可机器验证，禁止口头达标）
+> 一句话：pgvector 那条 0010 迁移在**干净环境首次部署必停**，而且它 printed 的补救指引会让运维去改一个**不存在的库名**。两处缺陷耦合，必须一起修。
+
+- **① 零人工前置（核心达标线）**：在一台只起了 `postgres`（外加 `redis`）的环境上，`docker compose --env-file deploy/.env.server run --rm migrate python scripts/migrate.py` 退出码 **0** 且 `applied=` 覆盖到 `0010_pgvector_chunks`；操作者**不需要**手工 `ALTER DATABASE`。当前反例已由本班实测：不手工设 GUC 就停在 `0010 needs an explicit vector width and will not guess one.`
+- **② 宽度只从显式配置来，不许猜**：`EMBEDDING_DIMENSION` 未声明时**必须**继续 fail-closed（报"未声明宽度"并停），**禁止**回落到 `app/rag/indexing.py:46` 的 `DEFAULT_EMBEDDING_DIMENSION = 768`。R22 的「一个库不许两套宽度」全靠这条，改判需业主裁。
+- **③ 下发点唯一且成对**：修 `app/db/migrations.py`（`scripts/migrate.py:31` 调的 `apply_migrations`），在应用 0010 **之前**按运行时值下发 `ALTER DATABASE <db> SET app.embedding_dimension = ...`，并把 `app.embedding_model` 一起绑上；两者必须取自同一个 `configured_embedding_scope()`，不许一处读 env 一处读默认。
+- **④ 指引必须可粘贴**：`migrations/0010_pgvector_chunks.sql:216` 里的 `%I` 改回 `%`，并加一条钉：该 `RAISE` 渲染出的库名 `== current_database()`，不得带 `I` / `s` 尾巴。复现证据（本班容器内一行 `DO`，全仓 `RAISE` 里 `%I`/`%s` **仅此一处**）：`%I` → `enterprise_brainI`、`%s` → `enterprise_brains`、`%` → `enterprise_brain` ⇒ **PL/pgSQL 的 `RAISE` 不认 `%I`/`%s`（那是 `format()` 的语法）**，用例注释里要把这条写死免得再犯。
+- **⑤ compose / 示例 env 同步**：`docker-compose.yml` 现全文 `EMBEDDING_DIMENSION` **零出现**（`.env.example` 亦无）⇒ 修完须在 `migrate` / `backend` / `worker` / `scheduler` 四处 env 里**成对**出现 `EMBEDDING_DIMENSION` 与 `EMBEDDING_MODEL`，`.env.example` 补两行并写明「换 embedding 模型必须同时改宽度」。
+- **⑥ 不许回退**：`migrations/0001..0009` 一字不动；`migrations/0010` 除提示串那一行外不改语义；与迁移相关的既有用例全绿；主树全量相对 **2104 / 35 / 0** 只增不减；执行层不 commit（由总控显式列路径代提交）。
+- **⑦ 业主侧不可代做**：`migrations/**` 与生产库 GUC 属业主（同 R88 / H12 口径），本班已用手工 `ALTER DATABASE enterprise_brain SET app.embedding_dimension = 768;` 打通真机（现值实取 **768**），**这条临时打通不算结案**——判据 ① 必须在不靠手工的情况下复现。
+
+### 33.3 真机评测状态（细节在看板 §4AV.7）
+- A 步结构性前置 `collected=105 of 105` ✓；runbook §3.2 骨架的 `urlopen(..., proxies=)` 缺陷已修（该函数无此参数 ⇒ 步骤 B 此前从未跑过一步）。
+- B 步全 105 题串行采集 20:31:00 起跑（模式 **B′** 宿主直连 8001，须在报告里声明；窗口非完全独占 ⇒ P95 标"含并发噪声"）。
+- 单题探针 `doc-01` 已暴露 R79 那条热集 / 外集排序嫌疑：语料确有《企业管理制度手册》，模型仍答"未找到"。
+
+
+---
+
+## 34. 本班（09-18 20:5x，总控第十八班）：**R90 拆两半**——R90a 可立刻派（不碰 `migrations/**`）· R90b 等业主放行
+
+### 34.1 为什么拆
+`migrations/**` 属业主写域（R88 / H12 同口径），但 §33.2 判据 ①③⑤ 的修复点其实全在**应用侧**：`app/db/migrations.py` 与 `docker-compose.yml` / `.env.example`。把它拆出来，业主一句放行都不必等，R90 的"首装必停"就能真修掉；剩下的 `%I` 提示串（判据 ④）留给 R90b。
+
+### 34.2 **R90a**（可立刻派，前置：真机评测窗口关窗）
+- **写域**：`app/db/migrations.py`、`docker-compose.yml`、`.env.example`、新 `tests/test_r90a_embedding_guc_provisioning.py`。**禁碰** `migrations/**`、`app/api/v1/chat.py`（R37 持有）、`app/storage/persistence.py`（R84 持有）、`frontend/**`。
+- **判据**（逐条可机器验）：
+  ① `apply_migrations()` 在**应用 0010 之前**，把运行时 `EMBEDDING_DIMENSION` / `EMBEDDING_MODEL`（取自 `app/rag/indexing.py:configured_embedding_scope`，不许另起一套读法）以 `ALTER DATABASE <current_database()> SET app.embedding_dimension = ...` 下发；库名必须来自 `current_database()`，**不许字符串拼接**。
+  ② 二者缺一即 **fail-closed**：未声明宽度 / 未声明模型时，报错文案必须点名"哪个变量没设"，**禁止**回落 `DEFAULT_EMBEDDING_DIMENSION = 768` 猜（R22 承重）。
+  ③ 幂等：同一库连跑两次 `apply_migrations` 第二次不得报错、不得改值；库已被别的宽度占用时（`chunks.embedding` 已有异宽向量）**必须**让 0010 自己那道 `RAISE` 说话，不许偷偷 `RESET` 或改库级值绕过。
+  ④ `docker-compose.yml` 的 `migrate` / `backend` / `worker` / `scheduler` 四处 env **成对**出现 `EMBEDDING_DIMENSION` 与 `EMBEDDING_MODEL`（现值 **0 处**）；`.env.example` 补两行 + 注明"换 embedding 模型必须同时改宽度"。
+  ⑤ **测试不得碰真机库**：用例只准在 `tmp_path` 或自建的一次性库上跑，且必须能被"没有 `DATABASE_URL` 就整条 skip"的既有惯例兜住（同 `tests/test_r58_*` 口径）；🔴 严禁对 `enterprise_brain` 主库执行 `ALTER DATABASE` / `RESET`。
+  ⑥ 全量亲跑相对主树基线（当前 **2104 / 35 / 0**，`dad72fb`）只增不减；执行层不 commit，总控显式列路径代提交。
+- **真机侧验收（关窗后由总控亲跑，不放给执行层）**：新建一次性库 → `docker compose ... run --rm migrate python scripts/migrate.py --database-url <新库>` 退出码 0 且 `applied=` 含 0010，全程**零手工 `ALTER DATABASE`**；老库 `app.embedding_dimension` 现值 **768** 不变。
+
+### 34.3 **R90b**（🔴 等业主放行）
+`migrations/0010_pgvector_chunks.sql:216` 提示串里的 `%I` 改 `%`（PL/pgSQL 的 `RAISE` 只认 `%`，`%I` 会渲染成 `enterprise_brainI`），并加一条"渲染出的库名 == `current_database()`"的钉。**只改文案不改语义**，但要动 `migrations/**` ⇒ 业主口径。
+
+---
+
+## 35. 本班续（09-18 20:5x，总控第十八班续）：**R37 / R84 两笔蒸发单的接续判据**（盘上活已由总控 wip 提交保住）
+
+### 35.1 **R37 接续**（第二棒；第一棒棒次 `Gauss` 已蒸发，保活提交 `9e50e60` @ `codex/be-r37`）
+- **已完成半程**（不许重做、不许推翻）：`AskRequest.lane`、`_queue_lane()`、`_report_lane_via_queue_enabled()`（默认关）、`_enqueue_ask_turn()`（回执带 `lane` / `reason`，无 lane 时与旧行为逐字节相同）、共用件 `hitl_park_text` / `save_session_turn` / `record_hitl_awaiting`、28 条用例。
+- **缺的半程 = 全部在 worker 侧**，写域：`deploy/queue_worker.py`（+ 必要时 `app/common/reliable_queue.py` 的读侧，🔴 不许改队列内核语义）。
+- **判据（逐条可机器验，用例已在树里钉好，不许改断言迁就实现）**：
+  ① `queue_worker.REPORT_LANE == chat.LANE_REPORT`（:340-341 钉死，两侧只能有一个真相源）；
+  ② `queue_worker._report_lane_requested(payload)` 是**载荷的纯读**（:325），零模型往返、不碰会话；
+  ③ 带 report lane 的载荷 ⇒ 走**能挂起的 graph**；一旦 park，**export 节点一步都不许执行**；
+  ④ park ⇒ 恰好开**一条** `pending_approvals` 待办行，归属人取 payload 解析出的 user_id（不是共享身份）；挂起措辞必须调 `chat.hitl_park_text`，**不许在 worker 里再写第二份文案**；
+  ⑤ 后台跑完 ⇒ 答案写回会话历史（`save_session_turn` 返回 False 时必须留 warning，禁止静默）；**重试用中的任务一个字都不许写**；**最终拒绝不烧重试额度且仍留一行历史**；**被取消的任务不发布不写**；
+  ⑥ 队列失败要有**终态 + 原因码**（原 §21 判据 ③），dead 态可查；
+  ⑦ 不带 lane 的载荷 ⇒ 走原入口 `run_orchestrator_result`，行为与今天**逐字节相同**；
+  ⑧ 🔴 前置：先 `git -C be-r37 merge codex/data-file-catalog` 追平主干（保活提交基线 `9e50e60` ← 树基线 `8a46bfb`，主干现 `c39b806`），追平后亲跑全量对 **2104 passed / 35 skipped / 0 failed** 只增不减；23 条红必须**全部转绿**，若判某条红是测试自身写错，逐条披露 + 反证，禁止悄悄删用例。
+  ⑨ `_baseline_r37.txt` / `_r37_before_red.txt` 是上一棒的取证日志，**不许入库**（本机也删不掉，就留在树里）。
+- **红线**：`/ask` 同步档行为不变；HITL 语义不许丢；不得新增强制打开的默认值。
+
+### 35.2 **R84 接续**（第一棒 `Helmholtz` 蒸发，只留红用例，保活提交 `6d75edd` @ `codex/be-r84`）
+- **写域**：`app/storage/persistence.py`（JSON 后端的读-改-写整段加跨进程锁；缺陷在存储层，不在 `open_platform.py`——第十六班已订正落点）+ 既在库的 `tests/test_r84_persistence_cross_process_lock.py`。
+- **判据**：① 用**真子进程**复现丢失更新（现成红用例已是这个形态，不许改成线程 / 不许 mock 掉锁）；② **不加新依赖**；③ 锁粒度不得把单进程内既有路径拖慢到既有钉的阈值以下；④ NFS / SMB 上 `flock` 语义受限这条**如实写进 docstring**，不许声称跨机安全；⑤ 追平主干后全量相对 **2104 / 35 / 0** 只增不减；⑥ 执行层不 commit。
