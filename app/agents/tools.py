@@ -9,6 +9,7 @@ from langchain_core.runnables import RunnableConfig
 from app.common.logger import logger
 from app.common.permissions import ACTION_ANALYZE, ACTION_EXPORT
 from app.agents.evidence import (
+    _enum_error_codes,
     bag_from_config,
     record_artifact,
     record_dataset,
@@ -77,6 +78,74 @@ def _tool_context(config) -> dict | None:
         return None
 
 
+# 错误码词表的唯一来源是 ErrorEnvelope.code，这里派生一份集合、不抄第二份手抄码表
+# （抄两份的代价写在 app/agents/evidence.py 的 _enum_error_codes docstring 里）。
+_PUBLIC_ERROR_CODES = _enum_error_codes()
+
+# 行级终态的两枚稳定码（R64 判据①）。成员资格由枚举钉，出处由
+# tests/test_error_code_vocabulary.py::RATIFIED 钉；两者都不是 rbac 内部 reason 名的别名。
+_ROW_SCOPE_DENIED_CODE = "row_scope_denied"
+_NO_VISIBLE_ROWS_CODE = "no_visible_rows"
+
+# 数据集准入闸（app/common/policy.py::authorization_decision）的内部 reason → 公开码。
+# 全仓只此一份，放在翻译层：policy/rbac 的判定一个字都不改，内部词表改名也不许破坏公开契约。
+# 没进这张表的 reason（含 clearance_insufficient）一律说成 permission_denied：那只是
+# 「这份资源对你没有授权」这个事实本身，不含更细的判断。密级口径属 H13（业主未裁），
+# 本单不许借映射表替它下结论，也不为它新增枚举成员。
+_POLICY_DENIAL_CODES = {
+    "authentication_required": "authentication_required",
+    "principal_inactive": "account_unavailable",
+    "department_scope_denied": "department_scope_required",
+}
+_POLICY_DENIAL_FALLBACK_CODE = "permission_denied"
+
+
+def _public_error_code(code: object, fallback: str) -> str:
+    """不在封闭枚举里的码名不许外泄：先回落成枚举内的码，再谈文案与状态。
+
+    上游的 code 由 getattr(exc, "code", ...) 读出来，任何异常都能塞一个自己的名字进来。
+    让它原样进正文＝把内部词表当公开契约卖出去，正是 R64 判据⑤要拦的那件事。
+    """
+    text = str(code or "")
+    return text if text in _PUBLIC_ERROR_CODES else fallback
+
+
+def _policy_denial_code(reason: object) -> str:
+    """policy 的 reason → 公开码：翻译只在这一处发生，判定仍然只在 policy 里。"""
+    mapped = _POLICY_DENIAL_CODES.get(str(reason or ""), _POLICY_DENIAL_FALLBACK_CODE)
+    return _public_error_code(mapped, _POLICY_DENIAL_FALLBACK_CODE)
+
+
+def _record_denial(config, *, tool: str, code: str, status: str = "failed") -> None:
+    """结构化出口的唯一写法：把稳定码交给本轮的执行证据袋。
+
+    状态默认报 failed 而不是 rejected：evidence._terminal_status 会把任何 rejected 折成
+    permission_denied（R13 之前的老账，本单写域外），只有 failed 才把这一层的码原样带到
+    AgentResult.error 上。缺授权主体那几条沿用既有的 rejected 写法，一字不动。
+
+    空码直接不写：一条 error_code 为空串的 failed 状态会凭空造出一个失败终态，
+    把「本层说不出因由」错报成「执行边界报了失败」。
+    """
+    if not code:
+        return
+    record_tool_status(bag_from_config(config), tool=tool, status=status, error_code=code)
+
+
+def _denial_text(config, *, tool: str, code: str, head: str) -> str:
+    """两路一起走：码进证据袋，人话进返回值，两条路共用同一个 code 变量。
+
+    正文格式沿用 R16 已定的那一条（search_docs 的「人话（error_code=码）」），不发明第二套。
+    行级终态**不走这里**：R62 钉过那两句人话里不许出现裸码名，见 _row_scope_denial_text。
+    """
+    _record_denial(config, tool=tool, code=code)
+    return f"{head}（error_code={code}）"
+
+
+# 数据集准入闸由 analyze_data / query_data 共用，它不是任何一个工具的名字。拒绝发生在闸上，
+# 取证标签就写闸名，不冒充工具名：码才是契约，标签只说明这条状态是从哪儿来的。
+_DATASET_GATE = "dataset_access"
+
+
 def _authorization_error() -> str:
     return "未找到：当前请求缺少有效授权主体（error_code=authorization_required）"
 
@@ -126,6 +195,9 @@ def _authorized_dataset_files(config) -> tuple[list[tuple[str, str]], str | None
     """Resolve registered datasets after applying the same scope policy as API routes."""
     principal = _artifact_principal(config, ACTION_ANALYZE)
     if principal is None:
+        _record_denial(
+            config, tool=_DATASET_GATE, code="authorization_required", status="rejected"
+        )
         return [], _authorization_error()
 
     from app.common.policy import authorization_decision
@@ -136,7 +208,12 @@ def _authorized_dataset_files(config) -> tuple[list[tuple[str, str]], str | None
     if selected_filename:
         record = dataset_storage.dataset_registry.get_active_by_filename(selected_filename)
         if record is None:
-            return [], f"未找到选中的数据文件：{selected_filename}（error_code=resource_not_found）"
+            return [], _denial_text(
+                config,
+                tool=_DATASET_GATE,
+                code="resource_not_found",
+                head=f"未找到选中的数据文件：{selected_filename}",
+            )
         decision = authorization_decision(
             principal,
             record.resource_scope,
@@ -144,6 +221,15 @@ def _authorized_dataset_files(config) -> tuple[list[tuple[str, str]], str | None
             require_resource_scope=True,
         )
         if not decision.allowed:
+            # 两路各走各的（R65 判据①「人话保留」的字面形态）：正文沿用 policy 的 reason，
+            # 因为 tests/test_dataset_route_authorization.py:188 把这句钉在了可见文案上，改它
+            # 要动的是别人写域里的文件（已登记为待裁残留）；而**契约字段只认映射表翻出来的
+            # 枚举码**——判据⑤要防的正是把内部词表当公开码发出去。
+            _record_denial(
+                config,
+                tool=_DATASET_GATE,
+                code=_policy_denial_code(decision.reason_code),
+            )
             return [], f"暂无可访问的数据文件（error_code={decision.reason_code}）"
         return [(record.filename, record.storage_path)], None
 
@@ -342,7 +428,8 @@ def search_docs(query: str, config: RunnableConfig) -> str:
                 top_k=5,
             )
         except Exception as exc:
-            code = getattr(exc, "code", "retrieval_unavailable")
+            # 上游异常能塞任意 code：先过枚举，落到枚举内才开始说话（R65 判据②）。
+            code = _public_error_code(getattr(exc, "code", ""), "retrieval_unavailable")
             logger.warning("[Tool] document retrieval unavailable: %s", exc)
             span.finish("retrieval_unavailable", error_code=code)
             return f"文档检索不可用（error_code={code}）"
@@ -437,6 +524,57 @@ def _row_scope_line(filename: str, info: dict | None) -> str:
     return f"📧 {filename}: {_NO_VISIBLE_ROWS}"
 
 
+# ---- R64：行级终态的结构化码层（紧挨着上面的文案层，共用同一条判据源）------------
+# 上面那张表把「为什么看不见」翻译给人看，这里把同一件事翻译成给机器看的码。两边都只读
+# rbac 的 reason_code，且都必须先过 _row_scope_reason：文案空手回去的那一支（表本来就是
+# 空的、因由根本不在部门维度上），码也一律落到 no_visible_rows——只说「本轮没有可见行」
+# 这个事实，不替没裁的维度下结论。判据源只有一个，码与人话不可能各说各话。
+_ROW_SCOPE_PUBLIC_CODES = {
+    "department_scope": _ROW_SCOPE_DENIED_CODE,
+    "authorization_unavailable": _ROW_SCOPE_DENIED_CODE,
+    "legacy_open_department_scope": _ROW_SCOPE_DENIED_CODE,
+}
+
+
+def _row_scope_code(info: dict | None) -> str:
+    """一帧被行级口径清空之后的稳定码；与 _row_scope_reason 共用同一个判据。"""
+    if not _row_scope_reason(info):
+        return _NO_VISIBLE_ROWS_CODE
+    reason = str((info or {}).get("reason_code") or "")
+    return _ROW_SCOPE_PUBLIC_CODES.get(reason, _NO_VISIBLE_ROWS_CODE)
+
+
+def _row_scope_terminal_code(codes: list[str]) -> str:
+    """多张表混合时取哪一个码：口径拒绝优先于「没有可见行」。
+
+    至少有一张表是被行级口径挡掉的，就没有任何一条断言比这句更该报出去；全是「没有可见
+    行」时才报 no_visible_rows。一张表都没走到行级过滤（读都读不出来）时不给码——那种
+    终态的因由不在本层，硬编一个就是瞎猜。
+    """
+    if _ROW_SCOPE_DENIED_CODE in codes:
+        return _ROW_SCOPE_DENIED_CODE
+    return _NO_VISIBLE_ROWS_CODE if codes else ""
+
+
+def _row_scope_denial_text(
+    config,
+    *,
+    tool: str,
+    head: str,
+    reasons: list[str],
+    codes: list[str],
+    tail: str = "",
+) -> str:
+    """把若干文件的行级因由拼成终态，同时把这一轮的码交给结构化那一路。
+
+    人话（reasons/tail）由调用方原样给——R62 那两段成品句子在这里逐字复用，一个字都不改；
+    码（codes）是逐文件算出来的稳定码，取哪一个由 _row_scope_terminal_code 说。两条路
+    共用同一批输入，所以这个函数存在的唯一意义就是：让终态多一条机器读得懂的路。
+    """
+    _record_denial(config, tool=tool, code=_row_scope_terminal_code(codes))
+    return "\n".join([head, *reasons, tail] if tail else [head, *reasons])
+
+
 def _analyze_data(query: str, config: RunnableConfig) -> str:
     from app.common.rbac import filter_dataframe_rows_with_scope
     from app.tools.excel import load_excel, profile_dataframe
@@ -456,13 +594,18 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
         return "暂无数据文件。请先在数据分析面板上传 Excel/CSV 文件。"
 
     parts = []
+    scope_codes: list[str] = []
+    produced = 0
     for fname, file_path in files:
         try:
             df = load_excel(file_path)
             df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
+                # 码与文案同判据源：一个给机器，一个给人看，同一条 reason_code。
+                scope_codes.append(_row_scope_code(scope_info))
                 parts.append(_row_scope_line(fname, scope_info))
                 continue
+            produced += 1
             _record_dataset_evidence(config, fname, df)
             profile = profile_dataframe(df)
             cols_info = [f"{c['name']}({c['dtype']})" if isinstance(c, dict) else str(c) for c in profile["columns"]]
@@ -487,6 +630,15 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 pass
         except Exception as e:
             parts.append(f"📁 {fname}: 读取失败 - {e}")
+
+    if not produced:
+        # 没有任何一帧进到分析里，这一轮才谈得上行级终态；逐文件的因由仍然只在文案里。
+        # 一张表都没走到行级过滤（全读不出来）时 scope_codes 是空的，本层不下结论。
+        _record_denial(
+            config,
+            tool="analyze_data",
+            code=_row_scope_terminal_code(scope_codes),
+        )
 
     result = "\n".join(parts)
     # The answer a caller sees is built from this string when the model is unavailable,
@@ -538,7 +690,8 @@ def _query_data(query: str, config: RunnableConfig) -> str:
         return "暂无数据文件。请先在数据分析面板上传 Excel/CSV 文件。"
 
     attempted = 0
-    denied_rows = []
+    denied_rows: list[str] = []
+    denied_codes: list[str] = []
     unreadable = 0
     empty_files = 0
     for fname, file_path in files:
@@ -548,6 +701,7 @@ def _query_data(query: str, config: RunnableConfig) -> str:
             if df.empty:
                 reason = _row_scope_reason(scope_info)
                 if reason:
+                    denied_codes.append(_row_scope_code(scope_info))
                     denied_rows.append(f"· {fname}: {reason}")
                 elif int(scope_info.get("rows_in") or 0) <= 0:
                     empty_files += 1
@@ -568,10 +722,26 @@ def _query_data(query: str, config: RunnableConfig) -> str:
     if attempted:
         return "查询失败：LLM 生成的代码在沙箱中多次执行未通过，请换个问法。"
     if denied_rows:
-        return "\n".join([_QUERY_DENIED_HEAD, *denied_rows, _QUERY_DENIED_HINT])
+        # 终态的码：R62 的三句人话逐字不动，只是旁边多了一条机器读得懂的路。
+        return _row_scope_denial_text(
+            config,
+            tool="query_data",
+            head=_QUERY_DENIED_HEAD,
+            reasons=denied_rows,
+            codes=denied_codes,
+            tail=_QUERY_DENIED_HINT,
+        )
+    # 读不出来的那些文件不是行级口径的账，本层不替它编码（说不清因由就不说）。
     if unreadable and not empty_files:
         return "查询未完成：这些数据文件载入失败，本轮没有取到任何数据行。"
-    return "查询未完成：本次可用的数据文件里没有可分析的数据行。"
+    # 没有可见行（表本来就是空的、或因由不在本层能说话的那个维度上）：码在这条路上。
+    return _row_scope_denial_text(
+        config,
+        tool="query_data",
+        head="查询未完成：本次可用的数据文件里没有可分析的数据行。",
+        reasons=[],  # 这条终态没有可归因的文件，那一句中性文案本身就是能说的全部
+        codes=[_NO_VISIBLE_ROWS_CODE],
+    )
 
 
 # ==================== Chart Tool v2 ====================
@@ -615,6 +785,9 @@ def _generate_chart(
 
     urls = _artifact_urls(path, "chart", config)
     if urls is None:
+        _record_denial(
+            config, tool="generate_chart", code="authorization_required", status="rejected"
+        )
         return _authorization_error()
     url, _ = urls
     if path.lower().endswith(".html"):
@@ -640,6 +813,9 @@ def _export_report(report_title: str, sections_json: str,
 
         urls = _artifact_urls(path, "report", config)
         if urls is None:
+            _record_denial(
+                config, tool="export_report", code="authorization_required", status="rejected"
+            )
             return _authorization_error()
         _, url = urls
         return f"报告已生成: [📋 下载报告]({url})"
