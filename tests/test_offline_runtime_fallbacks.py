@@ -183,7 +183,11 @@ def test_offline_model_returns_tool_output_without_replanning():
     assert "500" in result.content
 
 
-def test_document_retriever_persists_documents_without_chromadb(tmp_path, monkeypatch):
+def test_document_retriever_persists_documents_without_chromadb(
+    tmp_path, monkeypatch, offline_ollama_embeddings
+):
+    # R56：add_document/search 各会打一次 localhost:11434 的 embedding API；本用例断的是
+    # 无 chromadb 时的 JSON 落盘与关键词召回，向量本来就走的零向量兜底，钉成离线不开 socket。
     from app.rag import retriever
 
     monkeypatch.setattr(retriever, "chromadb", None)

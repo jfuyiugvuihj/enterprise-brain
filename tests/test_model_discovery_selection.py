@@ -89,9 +89,13 @@ def test_nothing_is_invented_when_the_registry_is_unreachable() -> None:
     assert settings.model_source == "none"
 
 
-def test_health_snapshot_reports_the_resolved_model_source() -> None:
+def test_health_snapshot_reports_the_resolved_model_source(monkeypatch) -> None:
     from app.common import model_config, monitoring
 
+    # R56：本用例只看 snapshot["model"]，但 build_health_snapshot 还会顺手探一次
+    # Ollama（app/common/monitoring.py:236 自己 urlopen /api/tags，不经过 model_config）。
+    # 按 test_deployment_guards.py:142 的既有惯例把探针换成离线值，测试期不开 socket。
+    monkeypatch.setattr(monitoring, "_probe_ollama", lambda: {"status": "ok"})
     model_config.reset_model_discovery_cache()
     monkey = model_config
     original = monkey._cached_discovery
