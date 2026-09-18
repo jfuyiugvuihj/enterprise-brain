@@ -1257,7 +1257,7 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Gauss` | 同上 `01a0b3ff-…` | **R37**（保活） | `be-r37`（分支 `codex/be-r37`） | **已保活**：总控 wip 提交 **`9e50e60`**（chat.py +182/−41 + 两个用例文件共 28 例）；机器一崩不再白干。静态复核定性＝**只做了一半**：入队侧完整，worker 侧 `queue_worker.REPORT_LANE` / `_report_lane_requested` **不存在**（`git grep lane -- deploy` = **0 命中**），其自证日志 `_r37_before_red.txt` 19:18:30 实取 **23 failed / 5 passed**。接续判据 → 跟进单 §35.1 | 20:5x |
 | `Helmholtz` | 同上 `01a0b42f-…` | **R84**（保活） | `be-r84`（分支 `codex/be-r84`） | **已保活**：总控 wip 提交 **`6d75edd`**（21 KB 真子进程红用例设计）。实现半程未开始 ⇒ 接续判据 → 跟进单 §35.2 | 20:5x |
 | `Noether` | 同上 `01a0b454-…` | **R89**（结案） | `fe-trunk` | **✅ 已结案并树（第十九班）**：总控验收 = 写域只 `frontend/src/lib/errcodes.js`(+48/−2，**零测试改动**)、`ERROR_CODES` 26→**29**、三枚新码逐条对到主干封闭枚举 `app/agents/contracts.py:102/226/248-256`、`retryable` 全 false 且注释给的是可核依据（不是感觉）、`FRONTEND_ONLY_CODES` 仍 `[]`（`errcodes.js:147`，被 `errcodes.test.js:104/:643` 钉住）；总控**亲跑** vitest **496/496** + `npm run lint` **0 errors** + 跨端钉 `tests/test_frontend_login_policy.py` **2 passed**；保活提交 `3305591` + 追平 `5160494` ⇒ 并主干 `7c66397`，**tree 恒等 `6cd5b20`**，主干全量 **2104 passed / 35 skipped / 0 failed**；origin + gitee 已同步 | 21:16 |
-| `Mendel` | `01a0b4a0-9ed6-7782-8b96-81281a5bde2f` | **R37**（第二棒，接续保活提交 `9e50e60`） | `be-r37`（分支 `codex/be-r37`，**独占**） | **运行中**：21:07 单投（本 block 只此一次投递；canary = `rollout-2026-09-18T21-07-00-01a0b4a0…jsonl` 已生成 758 KB）；写域**锁死 `deploy/queue_worker.py`**，禁 `orchestrator.py`/`reliable_queue.py`/`persistence.py`/改 chat.py/迁移/前端；判据 ①–⑧ = 跟进单 §35.1；投前总控实取 **13 failed / 15 passed / 62.6 s**（订正上一班记的 14/14），且 `git grep lane -- deploy` 仍 **0 命中** ⇒ worker 侧确实从未落地 | 21:07 |
+| `Mendel` | `01a0b4a0-9ed6-7782-8b96-81281a5bde2f` | **R37**（第二棒，接续保活提交 `9e50e60`） | `be-r37`（分支 `codex/be-r37`，**独占**） | **运行中**：21:07 单投（本 block 只此一次投递；canary = `rollout-2026-09-18T21-07-00-01a0b4a0…jsonl` 已生成 758 KB）；写域**锁死 `deploy/queue_worker.py`**，禁 `orchestrator.py`/`reliable_queue.py`/`persistence.py`/改 chat.py/迁移/前端；判据 ①–⑧ = 跟进单 §35.1；总控 21:19 实取 **13 failed / 15 passed / 62.6 s**（订正上一班记的 14/14：那是 `Gauss` 19:18 在**落后主干**的树上自取的），且 `git grep lane -- deploy` 仍 **0 命中** ⇒ worker 侧确实从未落地 | 21:07 |
 | `Faraday` | `01a0b4a4-ae08-7910-a7f8-cb7af6115cda` | **R84**（第二棒，接续保活提交 `6d75edd`） | `be-r84`（分支 `codex/be-r84`，**独占**；投放前由总控追平主干 → 合并点 `249aedf`） | **运行中**：21:11 单投（canary = `rollout-2026-09-18T21-11-26-01a0b4a4…jsonl` 112 KB 已生成、投后 `be-r84` `dirty=0`）；写域**锁死 `app/storage/persistence.py` + 既在库 `tests/test_r84_persistence_cross_process_lock.py`**；投前总控实取 **9 failed / 1 passed / 3.75 s**；判据 ①–⑥ = 跟进单 §35.2 | 21:11 |
 | `Gibbs` | `01a0b4b2-02f3-7a70-8a6c-265644225ea2` | **R90a** embedding GUC 改由应用侧下发（判据 跟进单 §34.2 ①–⑥） | `be-r90a`（总控自主干 `0a5c0b7` 新建 `codex/be-r90a`，**独占**） | **运行中**：21:26 单投（canary = `rollout-2026-09-18T21-26-00-01a0b4b2…jsonl` 124 KB 已生成 + 投后 `be-r90a` `dirty=0` ⇒ 无重复体）；写域锁 `app/db/migrations.py` + `docker-compose.yml` + `.env.example` + 新用例文件，**禁 `migrations/**`（`%I` 归 R90b 等业主）/ `chat.py`(R37) / `persistence.py`(R84)**；硬红线：不得对 `enterprise_brain` 主库 `ALTER DATABASE`/`RESET`、不得连 5432、不得碰 Docker、不得改 `tests/conftest.py:41-53` 那颗把 `DATABASE_URL` 钉到 `127.0.0.1:1` 的死端口钉子——**这颗钉子就是本单允许在评测窗口内派工的依据**（业主 21:0x 改令「不必为测试卡着」⇒ §34.2 原写的「前置：评测窗口关窗」据此撤销）；**并发已满 3（Mendel/Faraday/Gibbs），落地前不再派工** | 21:26 |
 
@@ -2449,7 +2449,7 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - **R37 → `Mendel`（21:07）**：只允许改 `deploy/queue_worker.py`。为什么够——能停 HITL 的图是 `orchestrator.multi_agent_graph`
   （`app/agents/orchestrator.py:783`），入队侧 `9e50e60` 已经把 `lane`/`hitl_park_text`/`save_session_turn`/`record_hitl_awaiting` 备好，
   **不需要碰 `orchestrator.py`**（那文件被 R30/R31/R33/R42/R38 五单共占，能绕开就绕开）。
-  投前基线我实测 **13 failed / 15 passed**（订正上一班在册的 14/14——那是 Gauss 19:18 在**落后主干**的树上自取的数）。
+  取数时机说明：这份红基线是我在 **21:19**（投放之后、`Mendel` 动 worker 之前）实测的，**13 failed / 15 passed**，订正上一班在册的 14/14——那是 `Gauss` 19:18 在**落后主干**的树上自取的数。
 - **R84 → `Faraday`（21:11）**：投放前我先把 `be-r84` 追平主干（`249aedf`，`persistence.py` 主干自 `2100185` 起零改动 ⇒ 无冲突），
   这样第二棒跑出来的全量才能直接和 2104 对齐；投前红基线我实测 **9 failed / 1 passed / 3.75 s**。
 - `spawn_agent` 传 `model: ""` 被校验器直接拒（`Must be a non-empty string`），**未进入子系统、未生成执行体**
@@ -2475,7 +2475,7 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 等业主：H13–H18、R85、R88、R90b（`migrations/0010:216` 的 `%I`）、删除清单（不急）、远端 `master` 可见性、孤儿卷 `enterprise-brain_ollama_data`、临时令牌文件。
 - R90 现状补记：库级 GUC `app.embedding_dimension` 是我手工设成 768 才解封的，**根因未修**，R90a/R90b 不结案。
 
-### 4AY.1 R29 前置实测（总控亲跑，21:47–21:53，真机 qwen3.5:9b 100% GPU）
+### 4AY.1 R29 前置实测（总控亲跑，21:31–21:35，真机 qwen3.5:9b 100% GPU；三腿合计 113 s）
 三腿对照，同一个提示词「用一句话说明：住宿费标准在哪里查？」，非流式：
 
 | 腿 | 端点 / 参数 | thinking 字数 | 正文字数 | 墙钟 |
