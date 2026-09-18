@@ -107,6 +107,13 @@ def _health_problems(environment: str, dependencies: dict, storage: dict) -> lis
             problems.append(f"{name}_{status}")
     if dependencies.get("ollama", {}).get("model_present") is False:
         problems.append("model_not_available")
+    # R21: the embedding model is a second, separately pinned model, and its absence is
+    # invisible to every other check here -- a registry that never served nomic-embed-text
+    # still answers /api/tags with 200. ``is False`` only fires when the registry was
+    # actually read and the model was not in it; "nobody looked" stays silent, because an
+    # unprobed registry is not evidence of a missing model.
+    if dependencies.get("ollama", {}).get("embedding_model_present") is False:
+        problems.append("embedding_model_missing")
     return problems
 
 
@@ -202,8 +209,26 @@ def build_health_snapshot(performance: dict | None = None) -> dict:
         "dependencies": dependencies,
         "performance": performance or {},
         "storage": storage,
+        "embedding": _embedding_state(),
         "problems": problems,
     }
+
+
+def _embedding_state() -> dict:
+    """Last embedding failure cause and counters, read from the retriever in process.
+
+    This answers "why is the vector leg down" for /health/details without opening a
+    socket -- a health poll must never reach the model server to explain itself. It is
+    deliberately NOT folded into ``problems``: a failure from earlier in the process
+    lifetime is not a current outage, and the code that belongs in ``problems``
+    (embedding_model_missing) comes from the registry probe instead.
+    """
+    try:
+        from app.rag.retriever import embedding_diagnostics
+
+        return dict(embedding_diagnostics() or {})
+    except Exception:  # noqa: BLE001 - a broken retriever must not break the report
+        return {}
 
 
 def _model_tags_match(configured: str, registered: str) -> bool:
@@ -220,6 +245,21 @@ def _model_tags_match(configured: str, registered: str) -> bool:
 
 def _registered_local_models(payload: dict) -> list[str]:
     return [str(item.get("name") or "") for item in (payload or {}).get("models") or []]
+
+
+def _embedding_model_name() -> str:
+    """The embedding model the vector leg will actually call, or "" when unknowable.
+
+    ``app/rag/retriever.py`` owns that name, so it is read from there rather than copied
+    into this file: a second literal would keep reporting green after somebody re-points
+    the model. The import is lazy and failure-tolerant -- an unreadable constant means
+    "unknown", never "missing" -- and it opens no socket.
+    """
+    try:
+        from app.rag.retriever import EMBED_MODEL
+    except Exception:  # noqa: BLE001 - a broken import must not break the health report
+        return ""
+    return str(EMBED_MODEL or "").strip()
 
 
 def _probe_ollama() -> dict:
@@ -247,6 +287,15 @@ def _probe_ollama() -> dict:
             if configured:
                 probe["model_present"] = any(
                     _model_tags_match(configured, name) for name in registered
+                )
+            # R21: the embedding model is answered from the registry this probe already
+            # read, so the check costs no extra request -- a health poll must not
+            # stampede the local model server, and must not open a socket for a name.
+            embedding_model = _embedding_model_name()
+            if embedding_model:
+                probe["embedding_model"] = embedding_model
+                probe["embedding_model_present"] = any(
+                    _model_tags_match(embedding_model, name) for name in registered
                 )
             return probe
     except Exception as exc:
