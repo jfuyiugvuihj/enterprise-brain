@@ -368,8 +368,77 @@ def search_docs(query: str, config: RunnableConfig) -> str:
 
 # ==================== Data Tool ====================
 
+# ---- R62：行级口径「为什么看不见」的文案层 ------------------------------------
+# 判定的唯一出处是 app/common/rbac.py::filter_dataframe_rows，本层一行都不重判：
+# reason_code 与计数字段全部来自 rbac.filter_dataframe_rows_with_scope 的元数据
+# （键名 rbac.ROW_SCOPE_ATTR）。密级维度属 H13（业主未裁口径），这里既不动它、也不对它下结论。
+_NO_VISIBLE_ROWS = "当前账号没有可见数据行"
+_QUERY_DENIED_HEAD = "查询未完成：这些数据文件的行不在当前账号的可见范围内，本轮没有向你展示任何一行。"
+_QUERY_DENIED_HINT = "若这些数据本该对你可见，请让管理员核对你的部门归属，以及这些文件的部门标注。"
+
+
+def _row_scope_reason(info: dict | None) -> str:
+    """把「这一帧为什么一行不剩」翻译成人话；翻译不出因由就返回空串。
+
+    空串＝本层拒绝猜因由（表本来就是空的、管理员、部门维度根本没藏过行），调用方必须退回
+    中性文案。本单的全部风险都在这句话上：没有依据的因由不能说成权限，反之也不能把权限
+    说成「查询没通过」。
+    """
+    if not info:
+        return ""
+    reason = str(info.get("reason_code") or "")
+    rows_in = int(info.get("rows_in") or 0)
+    if rows_in <= 0 or reason == "administrator_scope":
+        return ""
+    if reason == "department_column_missing":
+        # 这一支必须空手回去。``rows_hidden_by_department`` 在 ``department_column_missing`` 下**恒为 0**
+        # （rbac 只在「表有部门列」的路径上记部门维度的隐藏行），也就是部门维度一行都没藏过，
+        # 这帧是被另一个维度清空的——而那个维度的口径属 H13（业主未裁），本单明文不许对它下结论。
+        # 判据①的正解＝说不清因由就不说：写成「本表没有部门列……过滤后一行不剩」是把别的维度的账
+        # 挂到部门列上（张冠李戴），且 ``rows_in`` 还是那道过滤**之前**的计数，连数都不对。
+        # 本层自己在 department_scope 分支立的同一规矩（部门维度没藏过就不下结论）不许在这里绕过。
+        return ""
+
+    blank = int(info.get("rows_hidden_blank_department") or 0)
+    accountless = int(info.get("rows_hidden_account_department") or 0)
+    department_hidden = int(info.get("rows_hidden_by_department") or 0)
+    foreign = max(0, department_hidden - blank - accountless)
+
+    if reason == "authorization_unavailable":
+        return f"当前账号没有部门归属，本表 {rows_in} 行全部不可见"
+    if reason == "department_scope":
+        bits = []
+        if blank:
+            bits.append(f"{blank} 行未标注部门")
+        if foreign:
+            bits.append(f"{foreign} 行属于其他部门")
+        if not bits:
+            # 部门维度一行都没藏过：这帧是被别的维度清空的，本单不许对它下结论。
+            return ""
+        account_department = str(info.get("account_department") or "")
+        who = f"（部门「{account_department}」）" if account_department else ""
+        all_marker = "都" if len(bits) > 1 else ""
+        return f"本表 {'、'.join(bits)}，{all_marker}不在当前账号{who}的可见范围内"
+    if reason == "legacy_open_department_scope":
+        hidden = foreign or department_hidden
+        if not hidden:
+            return ""
+        return f"本表 {hidden} 行属于其他部门，不在当前账号的可见范围内（行级口径已回退为放宽档）"
+    return ""
+
+
+def _row_scope_line(filename: str, info: dict | None) -> str:
+    """``_analyze_data`` 逐文件那一行：能报因由就报因由，报不出就退回中性文案。"""
+    reason = _row_scope_reason(info)
+    if reason:
+        return f"📧 {filename}: {reason}"
+    if int((info or {}).get("rows_in") or 0) <= 0:
+        return f"📧 {filename}: 文件里没有数据行"
+    return f"📧 {filename}: {_NO_VISIBLE_ROWS}"
+
+
 def _analyze_data(query: str, config: RunnableConfig) -> str:
-    from app.common.rbac import filter_dataframe_rows
+    from app.common.rbac import filter_dataframe_rows_with_scope
     from app.tools.excel import load_excel, profile_dataframe
     context = _tool_context(config)
     if context is None:
@@ -390,9 +459,9 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
     for fname, file_path in files:
         try:
             df = load_excel(file_path)
-            df = filter_dataframe_rows(df, role=role, department=dept)
+            df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
-                parts.append(f"📧 {fname}: 当前账号没有可见数据行")
+                parts.append(_row_scope_line(fname, scope_info))
                 continue
             _record_dataset_evidence(config, fname, df)
             profile = profile_dataframe(df)
@@ -450,7 +519,7 @@ def _llm_pandas_code(df, query: str) -> str:
 
 
 def _query_data(query: str, config: RunnableConfig) -> str:
-    from app.common.rbac import filter_dataframe_rows
+    from app.common.rbac import filter_dataframe_rows_with_scope
     from app.tools.excel import load_excel, safe_query
     context = _tool_context(config)
     if context is None:
@@ -467,15 +536,26 @@ def _query_data(query: str, config: RunnableConfig) -> str:
     if not files:
         return "暂无数据文件。请先在数据分析面板上传 Excel/CSV 文件。"
 
+    attempted = 0
+    denied_rows = []
+    unreadable = 0
+    empty_files = 0
     for fname, file_path in files:
         try:
             df = load_excel(file_path)
-            df = filter_dataframe_rows(df, role=role, department=dept)
+            df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
+                reason = _row_scope_reason(scope_info)
+                if reason:
+                    denied_rows.append(f"· {fname}: {reason}")
+                elif int(scope_info.get("rows_in") or 0) <= 0:
+                    empty_files += 1
                 continue
         except Exception:
+            unreadable += 1
             continue
         _record_dataset_evidence(config, fname, df)
+        attempted += 1
         code = _llm_pandas_code(df, query)
         res = safe_query(df, code)
         if res.get("error") is None:
@@ -483,7 +563,14 @@ def _query_data(query: str, config: RunnableConfig) -> str:
             if not isinstance(result, str):
                 result = json.dumps(result, ensure_ascii=False, default=str)
             return f"📊 {fname} 查询结果:\n{result}"
-    return "查询失败：LLM 生成的代码在沙箱中多次执行未通过，请换个问法。"
+    # 三种终态各说各话（R62 判据①②）：查询确实没过 ≠ 无权看到行 ≠ 压根没有行可读。
+    if attempted:
+        return "查询失败：LLM 生成的代码在沙箱中多次执行未通过，请换个问法。"
+    if denied_rows:
+        return "\n".join([_QUERY_DENIED_HEAD, *denied_rows, _QUERY_DENIED_HINT])
+    if unreadable and not empty_files:
+        return "查询未完成：这些数据文件载入失败，本轮没有取到任何数据行。"
+    return "查询未完成：本次可用的数据文件里没有可分析的数据行。"
 
 
 # ==================== Chart Tool v2 ====================
