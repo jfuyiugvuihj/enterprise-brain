@@ -67,6 +67,16 @@ from app.documents.file_security import (
     build_storage_path,
     inspect_upload_header,
 )
+from app.documents.index_policy import (
+    INDEX_STATUS_EXCLUDED,
+    INDEX_STATUS_INDEXED,
+    INDEX_STATUS_UNKNOWN,
+    REASON_NO_TEXT,
+    classify_index_refusal,
+    droppable_upload,
+    evaluate_index_eligibility,
+    index_notice,
+)
 from app.storage.sessions import session_registry
 
 router = APIRouter()
@@ -1874,6 +1884,8 @@ def _record_uploaded_version(
     version: int,
     size_bytes: int | None,
     parse_status: str,
+    index_status: str = INDEX_STATUS_UNKNOWN,
+    index_reason: str = "",
 ) -> dict:
     """Persist a stored version on whichever catalog path this deployment has.
 
@@ -1883,7 +1895,13 @@ def _record_uploaded_version(
     instead is attribution, and an unattributed row is treated as legacy -- visible to
     the management level only -- rather than as public.
     """
-    metadata = {"version": version, "size_bytes": size_bytes, "parse_status": parse_status}
+    metadata = {
+        "version": version,
+        "size_bytes": size_bytes,
+        "parse_status": parse_status,
+        "index_status": index_status,
+        "index_reason": index_reason,
+    }
     if catalog_database_available():
         try:
             _upsert_document(
@@ -1907,6 +1925,8 @@ def _record_uploaded_version(
                 owner_id=owner_id,
                 size_bytes=size_bytes,
                 parse_status=parse_status,
+                index_status=index_status,
+                index_reason=index_reason,
             )
         except Exception as exc:
             logger.warning(f"[Docs] version record failed: {exc}")
@@ -1922,6 +1942,8 @@ def _record_uploaded_version(
             owner_id=owner_id,
             size_bytes=size_bytes,
             parse_status=parse_status,
+            index_status=index_status,
+            index_reason=index_reason,
         )
     except Exception as exc:
         logger.warning(f"[Docs] local version record failed: {exc}")
@@ -2064,6 +2086,73 @@ def _document_index_error(
     )
 
 
+def _unpublished_index_outcome(filename: str, version: int, reason: str) -> dict:
+    """The skip envelope of a version that never reached the publisher at all.
+
+    Same shape as the ``{"status": "skipped", "reason": ...}`` a publication returns when
+    there is nothing to publish, so a client reads one field set for every outcome of an
+    upload. Building it names the index stream only: no vector store read, no publisher
+    write, no embedding call -- an excluded document must cost nothing.
+    """
+    publication = DocumentIndexPublication(filename=filename, version=int(version))
+    return {
+        "status": "skipped",
+        "reason": reason,
+        "index_id": publication.index_id,
+        "source_version_id": publication.resource_version_id,
+        "chunk_count": 0,
+        "mirrored": False,
+        "warnings": [],
+    }
+
+
+def _document_upload_result(
+    *,
+    filename: str,
+    stored_name: str | None,
+    resource_id: str,
+    version_meta: dict,
+    owner_id: str | None,
+    department: str,
+    index_status: str,
+    index_reason: str,
+    index_message: str,
+    index_publication: dict,
+    status: str,
+    message: str,
+    chunk_count: int | None = None,
+    index_metrics: dict | None = None,
+) -> dict:
+    """One response shape for every outcome of ``POST /upload``, indexed or not.
+
+    R49 gives a skipped upload the same fields as an indexed one on purpose: the caller
+    must be able to tell "searchable" from "deliberately not indexed" by reading
+    ``index_status``, and must never have to infer it from a field that went missing.
+    """
+    receipt = {
+        "filename": filename,
+        "stored_name": stored_name,
+        "resource_id": resource_id,
+        "version": version_meta.get("version"),
+        "size_bytes": version_meta.get("size_bytes"),
+        "parse_status": version_meta.get("parse_status"),
+        "owner_id": owner_id,
+        "department": department,
+        "chunk_count": (
+            index_publication.get("chunk_count", 0) if chunk_count is None else int(chunk_count)
+        ),
+        "index_status": index_status,
+        "index_reason": index_reason,
+        "index_message": index_message,
+        "index_publication": index_publication,
+        "status": status,
+        "message": message,
+    }
+    if index_metrics is not None:
+        receipt["index_metrics"] = index_metrics
+    return receipt
+
+
 @router.post("/upload")
 async def upload_document(file: UploadFile = File(...),
                           classification: int = Form(1),
@@ -2150,6 +2239,49 @@ async def upload_document(file: UploadFile = File(...),
         )
         raise HTTPException(status_code=500, detail="document_parse_failed") from exc
 
+    # R49 索引瘦身：值不值得入索引，在这里判、在花钱之前判。判定只看正文特征，不看文件名
+    # （理由与阈值见 app/documents/index_policy.py）。被排除的版本一律保留文件、保留目录行、
+    # 把稳定码同时回给调用方并写进日志——一份没进索引的上传必须能回答"为什么没进"。
+    eligibility = evaluate_index_eligibility(content, size_bytes=written)
+    if not eligibility.eligible:
+        logger.warning(
+            f"[Docs] index excluded: {inspection.display_filename} v{next_version} "
+            f"reason={eligibility.reason} metrics={eligibility.metrics}"
+        )
+        version_meta = _record_uploaded_version(
+            principal=principal,
+            owner_id=owner_id,
+            filename=inspection.display_filename,
+            classification=classification,
+            department=department,
+            storage_path=file_path,
+            version=next_version,
+            size_bytes=written,
+            # 解析一步的结论照实写：一个字符都没解析出来的，parse_status 就是 failed；
+            # 解析出内容但按策略不入索引的，它仍然是 ready —— "不入索引"由 index_status 说。
+            parse_status="failed" if eligibility.reason == REASON_NO_TEXT else "ready",
+            index_status=INDEX_STATUS_EXCLUDED,
+            index_reason=eligibility.reason,
+        )
+        return _document_upload_result(
+            filename=inspection.display_filename,
+            stored_name=stored_name,
+            resource_id=resource_id,
+            version_meta=version_meta,
+            owner_id=owner_id,
+            department=department,
+            index_status=INDEX_STATUS_EXCLUDED,
+            index_reason=eligibility.reason,
+            index_message=eligibility.message,
+            index_publication=_unpublished_index_outcome(
+                inspection.display_filename, version_meta["version"], eligibility.reason
+            ),
+            status="skipped",
+            message=eligibility.message,
+            chunk_count=0,
+            index_metrics=eligibility.metrics,
+        )
+
     try:
         ok, msg = await asyncio.to_thread(
             retriever.add_document,
@@ -2175,6 +2307,7 @@ async def upload_document(file: UploadFile = File(...),
             version=next_version,
             size_bytes=written,
             parse_status="ready",
+            index_status=INDEX_STATUS_INDEXED,
         )
         def _publish_upload_index():
             return _publish_document_index(
@@ -2204,23 +2337,83 @@ async def upload_document(file: UploadFile = File(...),
             if future.exception()
             else None
         )
-        return {
-            "filename": inspection.display_filename,
-            "stored_name": stored_name,
-            "resource_id": resource_id,
-            "version": version_meta["version"],
-            "size_bytes": version_meta.get("size_bytes"),
-            "parse_status": version_meta.get("parse_status", "ready"),
-            "owner_id": owner_id,
-            "department": department,
-            "chunk_count": index_publication.get("chunk_count", 0),
-            "index_publication": index_publication,
-            "status": "ok",
-            "message": msg,
-        }
-    if os.path.exists(file_path):
-        os.remove(file_path)
-    return {"filename": inspection.display_filename, "status": "skipped", "message": msg}
+        return _document_upload_result(
+            filename=inspection.display_filename,
+            stored_name=stored_name,
+            resource_id=resource_id,
+            version_meta=version_meta,
+            owner_id=owner_id,
+            department=department,
+            index_status=version_meta.get("index_status") or INDEX_STATUS_INDEXED,
+            index_reason="",
+            index_message="",
+            index_publication=index_publication,
+            status="ok",
+            message=msg,
+            chunk_count=index_publication.get("chunk_count", 0),
+        )
+
+    # 索引层自己没收下这份正文。归成稳定码，再决定留不留文件：只有"内容一字未改的重复上传"
+    # 可以不复制第二份物理文件，其余一律保留文件与目录行。过去的写法是先 os.remove 再回一句
+    # skipped —— 用户上传的东西就此消失，既不在索引里也不在列表里，只有日志记得它。
+    refusal = classify_index_refusal(msg)
+    notice = index_notice(refusal)
+    logger.warning(
+        f"[Docs] index refused: {inspection.display_filename} v{next_version} "
+        f"reason={refusal} detail={msg}"
+    )
+    if droppable_upload(refusal):
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        # 这份正文已经在索引里（同名的上一个版本），所以状态是 indexed 而不是 excluded；
+        # 没有新增可检索内容这件事由 index_publication.reason 说清楚。
+        return _document_upload_result(
+            filename=inspection.display_filename,
+            stored_name=None,
+            resource_id=resource_id,
+            version_meta={"version": next_version, "size_bytes": written, "parse_status": "ready"},
+            owner_id=owner_id,
+            department=department,
+            index_status=INDEX_STATUS_INDEXED,
+            index_reason="",
+            index_message=notice,
+            index_publication=_unpublished_index_outcome(
+                inspection.display_filename, next_version, refusal
+            ),
+            status="skipped",
+            message=notice,
+            chunk_count=0,
+        )
+    version_meta = _record_uploaded_version(
+        principal=principal,
+        owner_id=owner_id,
+        filename=inspection.display_filename,
+        classification=classification,
+        department=department,
+        storage_path=file_path,
+        version=next_version,
+        size_bytes=written,
+        parse_status="ready",
+        index_status=INDEX_STATUS_EXCLUDED,
+        index_reason=refusal,
+    )
+    return _document_upload_result(
+        filename=inspection.display_filename,
+        stored_name=stored_name,
+        resource_id=resource_id,
+        version_meta=version_meta,
+        owner_id=owner_id,
+        department=department,
+        index_status=INDEX_STATUS_EXCLUDED,
+        index_reason=refusal,
+        index_message=notice,
+        index_publication=_unpublished_index_outcome(
+            inspection.display_filename, version_meta["version"], refusal
+        ),
+        status="skipped",
+        message=notice,
+        chunk_count=0,
+    )
 
 
 @router.get("/documents")
