@@ -19,6 +19,11 @@
 
 默认关闭（HOT_INDEX_ENABLED 未设置即关，不认识的值也算关），关闭时本模块一个字节的状态都
 不留、一次 embedding 请求都不多发。
+
+R79 在这层补了两样不改变检索语义的东西：常驻向量下沉成 float32 缓冲（判据③，省内存而
+名次逐位不变），以及 hot_index_snapshot() 这个独立观测出口（判据①）。后者不是重复造轮子：
+hot_index_diagnostics() 的形状被 tests/test_r44_hot_index_chroma.py 用精确相等钉成五个键，
+配置态与实例态塞不进去，只能另开一个出口给 /health/details 读。
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from array import array
 from dataclasses import dataclass
 
 try:  # numpy 缺席时退回纯 python 距离：热集只是加速器，装不上就整体不用，绝不影响主路径
@@ -85,6 +91,10 @@ def hot_index_diagnostics() -> dict:
     """进程内只记账的观测出口，形状对齐 embedding_diagnostics / vector_mirror_diagnostics。
 
     只读内存计数，不发请求、不读文件、不改变任何检索行为（判据⑥）。
+
+    ⚠️ 这五个键的形状是钉死的：tests/test_r44_hot_index_chroma.py 既断言"读一眼前后
+    全等"，又断言全等字典就是这五项，加键必红。要往运维面上添东西请走
+    hot_index_snapshot()（R79 判据①），别改这里。
     """
     with _DIAGNOSTICS_LOCK:
         return {
@@ -171,13 +181,29 @@ class HotChunk:
 
     scope_key 是 R22 门禁的缓存版：条目自报它是在哪一套（backend, 模型, 维度, 索引版本）下
     算出来的，与当前口径不一致的条目既不会被检索，也不算有效。
+
+    vector 是 R79 判据③下沉出来的紧凑形态：array('f')，每维 4 字节。原先这里是
+    tuple(float, ...)，768 维就是 768 个 24 字节的 Python float 对象挂在 6 字节的
+    指针数组上 —— 语料到了 37 483 chunk 量级，这笔差额才是热集真正的大头。存进来的
+    向量本来就源于向量库落盘的那份 float32，换成 float32 缓冲不丢分量；距离照旧在
+    float64 上累加（_squared_l2），名次与下沉前逐位一致。
     """
 
     chunk_id: str
     document: str
     metadata: dict
-    vector: tuple
+    vector: array
     scope_key: tuple
+
+
+def _compact_vector(values) -> array:
+    """把一条向量落成 float32 缓冲（R79 判据③）。
+
+    这里只做一次窄化：float64 → float32 最近舍入。落进向量库的那一份同样是 float32，
+    所以这一舍让热集与外部库更同源，不是更远；形状与取值仍然不在这里检查 ——
+    不合格向量在 _write_batch 就进不了库，本模块不抄第二份校验。
+    """
+    return array("f", values)
 
 
 def _matches_metadata(metadata: dict, where) -> bool:
@@ -190,8 +216,25 @@ def _matches_metadata(metadata: dict, where) -> bool:
     return metadata_matches(metadata, where)
 
 
+def _float64_view(values):
+    """按需把一条向量摊成 float64 缓冲；numpy 缺席时原样交回，纯 python 路径自己逐项 float()。
+
+    查询向量在 rank() 里过一次这里（每个候选都重新转换一遍查询是白干的活），常驻向量每个
+    候选过一次。float32 → float64 是精确升位，所以下沉存储之后这里得到的数与下沉前
+    从 tuple 转换出来的逐位相同。
+    """
+    if _NP is None:
+        return values
+    return _NP.asarray(values, dtype="float64")
+
+
 def _squared_l2(vector, query_vector) -> float:
-    """与 Chroma 默认 l2 距离同序的平方欧氏距离（开方单调，不影响名次）。"""
+    """与 Chroma 默认 l2 距离同序的平方欧氏距离（开方单调，不影响名次）。
+
+    累加精度是 R79 判据③的硬约束：常驻侧存 float32，这一句照样升到 float64 再算，
+    所以下沉存储只改了内存账，没改任何一个距离数值。想改成 float32 累加之前，
+    先想想 tests/test_r79_vector_store.py 那批对照用例。
+    """
     if _NP is not None:
         diff = _NP.asarray(vector, dtype="float64") - _NP.asarray(query_vector, dtype="float64")
         return float(diff @ diff)
@@ -333,6 +376,31 @@ class HotSetIndex:
         with self._lock:
             return self._fresh_locked()
 
+    def state(self) -> dict:
+        """只读实例态（R79 判据①）：不发请求、不读库、不改任何检索行为。
+
+        这里给的是"这一本索引现在到底是什么样子"：预算、TTL、页大小是构造时按环境变量
+        解析出来的那一份，花名册新鲜度与冷却态是当下时刻的那一份。运维要靠它们区分
+        "预算装不下语料"与"刚暖机失败在冷却"，光看 bypass 原因码分不出来。
+        """
+        with self._lock:
+            now = self._clock()
+            return {
+                "max_chunks": self._max_chunks,
+                "roster_ttl_seconds": self._roster_ttl,
+                "roster_page": self._roster_page,
+                "warm_retry_seconds": self._warm_retry_seconds,
+                "resident_chunks": len(self._entries),
+                "cold_chunks": len(self._cold),
+                "roster_built": self._populated,
+                "roster_fresh": self._fresh_locked(),
+                "roster_age_seconds": (round(now - self._built_at, 3)
+                                       if self._populated else None),
+                "warm_retry_blocked": self._warm_retry_after > now,
+                "last_reset_reason": self._last_reset_reason,
+                "scope_key": (list(self._scope_key) if self._scope_key else None),
+            }
+
     # ---------- 维护：只被写路径告知，永不主动写库 ----------
 
     def populate(self, rows, *, scope_key: tuple) -> dict:
@@ -361,7 +429,7 @@ class HotSetIndex:
                     continue
                 self._entries[chunk_id] = HotChunk(
                     chunk_id=chunk_id, document=str(document), metadata=metadata,
-                    vector=tuple(vector), scope_key=scope_key)
+                    vector=_compact_vector(vector), scope_key=scope_key)
                 self._order.append(chunk_id)
                 self._heat.setdefault(_doc_key(chunk_id, metadata), self._clock())
                 admitted += 1
@@ -404,7 +472,7 @@ class HotSetIndex:
                     continue
                 self._entries[chunk_id] = HotChunk(
                     chunk_id=chunk_id, document=str(document), metadata=metadata,
-                    vector=tuple(vector), scope_key=scope_key)
+                    vector=_compact_vector(vector), scope_key=scope_key)
                 self._order.append(chunk_id)
                 # 刚写进库的文档就是当下最热的：不登记 heat 的话它排在淘汰序最前，
                 # 一次上传换来的是"马上被挤出去"，热集就白暖了。
@@ -517,6 +585,9 @@ class HotSetIndex:
                 _note_bypass(reason)
                 return None
             scored = []
+            #: 查询向量每个查询只升位一次：逐候选再转一遍是白干的活（R79 判据③）。
+            #: _float64_view 交回的值与在 _squared_l2 里就地转换完全同值，名次不受影响。
+            query = _float64_view(query_vector)
             for chunk_id, entry in self._entries.items():
                 if not _matches_metadata(entry.metadata, where):
                     continue
@@ -524,7 +595,7 @@ class HotSetIndex:
                         "classification": entry.metadata.get("classification"),
                         "department": entry.metadata.get("department")})):
                     continue
-                scored.append((_squared_l2(entry.vector, query_vector), chunk_id, entry))
+                scored.append((_squared_l2(entry.vector, query), chunk_id, entry))
             scored.sort(key=lambda item: (item[0], item[1]))
             picked = scored[:k] if k > 0 else []
             now = self._clock()
@@ -548,6 +619,48 @@ def get_hot_index() -> HotSetIndex:
 def reset_hot_index(*, reason: str = "") -> int:
     """测试与口径切换用的全量作废；返回丢掉的常驻条目数。"""
     return _HOT_INDEX.reset(reason=reason)
+
+
+def hot_index_config() -> dict:
+    """配置态：把 HOT_INDEX_* 按真实解析口径过一遍，与实例无关。
+
+    这里读的是 `_int_env` / `_ttl_env` / `_float_env` 本身，不是抄一份默认值，所以
+    "环境变量没生效"和"出厂默认值被改了"在这一块里都会照实显形。
+    """
+    return {
+        "enabled": hot_index_enabled(),
+        "max_chunks": _int_env(HOT_INDEX_MAX_CHUNKS_ENV, DEFAULT_MAX_CHUNKS),
+        "roster_ttl_seconds": _ttl_env(),
+        "roster_page": _int_env(HOT_INDEX_ROSTER_PAGE_ENV, DEFAULT_ROSTER_PAGE),
+        "warm_retry_seconds": _float_env(HOT_INDEX_WARM_RETRY_SECONDS_ENV,
+                                         DEFAULT_WARM_RETRY_SECONDS),
+    }
+
+
+def hot_index_snapshot() -> dict:
+    """R79 判据①：给 /health/details 用的完整观测出口。
+
+    与 hot_index_diagnostics() 分家是逼出来的，也是该的：那份账的形状被 R44 用例用
+    精确相等钉死（五个键），本出口则一次给全"关没关、按什么配置在跑、常驻多少、
+    上一次为什么绕行"。三块拼出来的顺序有意义：
+
+    * 先取那本五个键的旧账，保证 hits / misses / invalidations / last_bypass_reason
+      与进程内计数器同源同名；
+    * 再盖实例态：resident_chunks 以 len(entries) 为准（旧账里那个数是写路径登记的副本，
+      两者必须相等 —— 相等这件事由用例钉，不在这里自我修饰），max_chunks /
+      roster_ttl_seconds 这些也是**实例真正在用的那一份**，运维要看的就是它；
+    * 最后并列一份 env_config：环境变量此刻解析成什么。单例是 import 时建的，那之后
+      改环境变量不会回头改它，两个数并排放才看得出"改了没生效"。enabled 单独提到顶层，
+      因为它只有"此刻"这个口径 —— 没有一个开关态会随实例定格在半路。
+
+    开关关闭时本函数照样返回完整一块并如实标 enabled=False：运维要分得清"没装这层"
+    与"装了但关了"，靠的就是这一块在场而 enabled 为假。
+    """
+    snapshot = hot_index_diagnostics()
+    snapshot.update(_HOT_INDEX.state())
+    snapshot["env_config"] = hot_index_config()
+    snapshot["enabled"] = hot_index_enabled()
+    return snapshot
 
 
 def current_scope_key(*, index_version_id: str = "") -> tuple:

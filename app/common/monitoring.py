@@ -210,8 +210,27 @@ def build_health_snapshot(performance: dict | None = None) -> dict:
         "performance": performance or {},
         "storage": storage,
         "embedding": _embedding_state(),
+        "hot_index": _hot_index_state(),
         "problems": problems,
     }
+
+
+def _hot_index_state() -> dict:
+    """R44 热集的进程内观测块（R79 判据①）：关没关、命中多少、为什么绕行。
+
+    读的是 app/rag/hot_index.py 的 hot_index_snapshot()，不是那份被 R44 用例钉成
+    五个键精确相等的 hot_index_diagnostics() —— 配置态与实例态塞不进被钉死的形状。
+    与 _embedding_state() 同两条纪律：一，只读内存计数，为了解释自己绝不开 socket、
+    绝不读向量库；二，刻意不并进 problems —— 上一轮绕行原因码不是当下故障，
+    一次健康巡检因为"热集在冷却"就变红是假警报。
+    """
+    try:
+        from app.rag.hot_index import hot_index_snapshot
+
+        return dict(hot_index_snapshot() or {})
+    except Exception:  # noqa: BLE001 - 一层加速缓存读不到，不许把健康报告问出异常
+        # 分不清"没装"还是"关了"的时候，宁可报读不到，也不替运维猜一个 False。
+        return {"enabled": None, "state_error": "unavailable"}
 
 
 def _embedding_state() -> dict:

@@ -1235,9 +1235,17 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Dirac` | `01a0b333-e8ea-7283-a78d-88e0ecbdb271` | **R75** `/open` 与 session 两份标准来源校验去重 | `be-r36`（新建分支 `codex/be-r75` @ **`8813ad0`**，**独占**） | **终态补记（第十三班）**：14:28:38 裸投（rollout 唯一）。判据：判定收敛成一处、**沉默默认值分叉（session→explicit / open→auto）是唯一合法差异且不许抹平**、R40/R67/R71 三件既存用例一个字不许改也不许红、稳定码词表不扩、结案必含全量 | 14:35 |
 | `Boyle` | `01a0b353-710b-7862-b5a8-854221ede5c5` | **R64+R65** 行级/权限两路同码 | `be-r64`（分支 `codex/be-r64` @ `5f61bc7`，**独占**） | **终态补记（第十三班）**：交工 `089436a` → 并入主树 `63dc76e`；总控四把刀 M1–M4（M1 8 红 / M2 M3 M4 首下各 0 红 ⇒ 自写 5 条补牙后 M2=1 红 M3=1 红）；本班已 `close_agent`，树干净 | 15:1x |
 | `Parfit` | `01a0b360-6056-7fd3-be3a-edb995f0b337` | **R78** 开放平台撤未 earned 声明 | `be-r78`（分支 `codex/be-r78` @ `cef08bf`，**独占**） | **终态补记（第十三班）**：交工 `7bd6eac` → 并入主树 `6d5f5ab`；总控把 R78 的持有者扫描由裸串改 **AST 口径**（披露：改在执行层写域，见 §4AP.4）；本班已 `close_agent`，树干净 | 15:1x |
-| `Lagrange` | `01a0b3d1-3f13-7f30-89b5-792b84d0cf05` | **R79** 热集观测 + 两个零覆盖默认值 + float32 + 真机规模复测 | `be-r79`（新建分支 `codex/be-r79` @ **`6d5f5ab`**，**独占**） | **运行中**：15:2x 投递（返回 `01a0b3d1…`，nickname **Lagrange**）；写域 `app/rag/hot_index.py`+`app/rag/retriever.py`+`app/api/v1/auth.py`+`app/common/monitoring.py`；已明写 `tests/test_r44_hot_index_chroma.py:409` 五键精确相等这颗钉子 | 15:2x |
-| `Meitner` | `01a0b3d4-1490-7291-8f2a-ea6bbba02c1b` | **R80** 开放平台 app_id/secret 由 `time_ns()` 派生致撞号静默覆盖 | `be-r80`（新建分支 `codex/be-r80` @ **`6d5f5ab`**，**独占**） | **运行中**：15:2x 投递（首投因参数格式被上游拒、**未生成执行体**，canary 后重投一次，不算补投）；写域 `app/common/open_platform.py`；缺陷由本班亲手复现（4 次注册 ⇒ 2 个 id） | 15:2x |
-| `Noether` | `01a0b3d4-e430-7310-9fcd-cc71a23bb17c` | **R81** 队列不消费 `error.retryable` ⇒ 权限拒绝盲重试到 dead | `be-r81`（新建分支 `codex/be-r81` @ **`6d5f5ab`**，**独占**） | **运行中**：15:2x 投递；写域 `deploy/queue_worker.py`（`reliable_queue.py` 仅为可测性可碰，须报理由）；判据③钉死 success/partial 路径逐字节不变 | 15:2x |
+| `Lagrange` | `01a0b3d1-3f13-7f30-89b5-792b84d0cf05` | **R79** 热集观测 + 两个零覆盖默认值 + float32 + 真机规模复测 | `be-r79`（分支 `codex/be-r79` @ **`6d5f5ab`**，**独占**） | **运行中（第十五班 18:33 实取）**：`dirty=8` —— M `app/api/v1/auth.py` / M `app/common/monitoring.py` / M `app/rag/hot_index.py` / 🔴 **M `tests/test_r44_hot_index_chroma.py`（既存 R44 测试被动过，验收必须逐行审这一处）** + 新 `tests/test_r79_{hot_index_defaults,hot_index_observability,vector_store,warm_backoff}.py`。判据见跟进单 §29.3 | 18:33 |
+| `Meitner` | `01a0b3d4-1490-7291-8f2a-ea6bbba02c1b` | **R80** 开放平台 app_id/secret 由 `time_ns()` 派生致撞号静默覆盖 | `be-r80`（分支 `codex/be-r80` @ **`6d5f5ab`**，**独占**） | **已结案（第十四班 **总控亲验**）**：子提交 `e99bad0` → 追平 `b89272a` → 主树 **`8a46bfb`**；总控亲跑全量 **2022 passed / 35 skipped / 0 failed** + 五把刀（G1 退回 `time_ns` 10 红 / G2 摘持久化查重恰 1 红 / G3 摘撞号护栏 4 红 / G4-prime 回滚扩成 `clear()` 3 红 / **G5 反反向刀**：摘掉测试里的时钟 patch ⇒ 16 仍全绿，证明绿不依赖 patch 时钟），逐把 sha256 恒等还原；教训：第一把 G4（`if ... is record:` → `if True:`）**不咬**，因 pop 的仍是自己那条，变异与原判据逻辑等价 ⇒ **刀不咬先怀疑是刀的问题**。已 `close_agent`**，本节行由第十五班补写** | 18:35 |
+| `Noether` | `01a0b3d4-e430-7310-9fcd-cc71a23bb17c` | **R81** 队列不消费 `error.retryable` ⇒ 权限拒绝盲重试到 dead | `be-r81`（分支 `codex/be-r81` @ **`6d5f5ab`**，**独占**） | **已结案（第十四班总控亲验）**：`76683d0` → 追平 `b4020b5` → 主树 **`fca75dc`**；六把刀 K1–K6 全咬（K1 判定恒 False 7 红 / K2 放宽成 `is not True` 7 红 / K3 partial 掉闸门 1 红 / K4 队列层忽略 retryable 5 红 / **K5 默认翻 False 18 红（含既存队列用例）** / K6 两种 dead 混同 3 红），逐把 sha256 恒等还原（`714c5387` / `879ced6b`）；并后主树亲跑 2006/35/0。已 `close_agent` | 18:35 |
+| `Turing` | `01a0b3f9-...`（本班未留 id，见 §4AQ.5） | R74（**重复体**，与 `Jason` 同树） | 与 `Jason` 同为 `be-r74` | **第十四班 18:1x 关停**（事故 #26，**同类第六次**）：派工时在同一 block 里发了两次 `spawn_agent`；关停前后实取 `be-r74` `dirty=0` 且无任何 `.py` 被写 ⇒ **未造成串写污染** | 18:35 |
+| `Jason` | `01a0b3f8-9d4d-7862-9364-88b38a8b10f1` | **R74** `AgentState`/`AgentContext` 上 `model_budget` 零写入零读取 | `be-r74`（新建分支 `codex/be-r74` @ **`f99a2d8`**，**独占**） | **已结案（第十五班总控亲验）**：走 **甲＝删净**；总控下 **三把隔离刀**（K1 只塞回 `AgentState` ⇒ 3 红 / K2 只塞回 `AgentContext` ⇒ 5 红 / K3 只恢复 unused import ⇒ 恰 1 红），还原 sha256 恒等（`state.py 523761AE` / `contracts.py 3761CB11`）；树内 2031/35/0 → 主树 **`b2d9f34`**。已 `close_agent`。其自报同形缺陷另立 **R86** | 18:35 |
+| `Gauss` | `01a0b3ff-4bb3-7ea2-809e-891180c7ff14` | **R37** 异步任务：关页后继续跑、结果可查回、失败有终态 | `be-r37`（分支 **实测 `codex/be-r37` @ `8a46bfb`**；派工时树是陈旧的 `codex/be-r46`@`0ae3b1e`，简报已下 reset 令且已执行） | **运行中（第十五班 18:33 实取）**：`dirty=1` 仅 `_baseline_r37.txt`，除 reset 带动的 checkout 时间戳外 **零落盘**（距派工约 23 分钟）。🔴 合并时取真实分支名，别写死 | 18:33 |
+| `Newton` | `01a0b410-e930-7a40-b63c-88e232b8073e` | **R83** 审计日志回放顺序不确定（本班新立） | `be-r83`（新建分支 `codex/be-r83` @ **`82d1c17`**，**独占**） | **运行中**：18:29 投放（本 block **只此一次投递**；canary 实测 `be-r84` 不存在、`be-r83` `dirty=0`）；写域 `app/common/audit.py` + 新 `tests/test_r83_audit_order.py`；判据见跟进单 §30.3 | 18:33 |
+| `Lagrange` | `01a0b3d1-3f13-7f30-89b5-792b84d0cf05` | **R79** 热集观测+两默认值长牙+float32+规模复测 | `be-r79`（`codex/be-r79` @ `6d5f5ab`） | **已结案**：`a704387` → 追平 `c4ebfb5` → 主树 **`20cc109`**；总控亲跑全量 **2084/35/0**，并以 **tree `7ca7b0b9` 恒等**证明"测过的树＝主树"（补齐 R74 那类"只在分支测"缺口） | 19:05:20 |
+| `Helmholtz` | `01a0b42f-2031-7991-8ca7-33db590c8280` | **R84** JSON 持久层跨进程丢失更新（简报里自称 `Bohr`，**真实昵称是 Helmholtz**，下班按本行找） | `be-r84`（新建分支 `codex/be-r84` @ **`2100185`**，**独占**） | **运行中**：19:03:02 单投（一 block 一次投递，投后 canary 实取 rollout 只多出这一个 id、`be-r84` 当时 `dirty=0` ⇒ 无重复体）；写域锁死 `app/storage/persistence.py` + 一个新用例文件 | 19:03:19 |
+| `Gauss` | 同上 `01a0b3ff-…` | **R37**（续） | `be-r37` | **🔴 上班"35 分钟零活动"的判断被本班推翻**：`test_r37_report_lane_enqueue.py` 18:48:56、`test_r37_report_lane_worker.py` 18:54:59、`_r37_before_red.txt` 18:58:53（先红取证）⇒ **一直在活**，别再按"静默"关它 | 19:01:28 |
+| `Newton` | 同上 `01a0b410-…` | **R83**（续） | `be-r83` | **运行中**：`audit.py` 18:59:30 仍在改；本班 19:0x 预审过（分配器在锁内取时戳、hydrate 播种、跨进程限制已写进 docstring、AST 源守卫齐全、用例不靠 sleep 碰运气） | 19:01:28 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -2087,7 +2095,7 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 | `63dc76e`（+R64/R65） | 1959 / 35 / 0 | 同上 |
 | `6d5f5ab`（+R78） | **1981 passed / 35 skipped / 0 failed / 60.63 s** | ✅ **本班 15:1x 主树亲测**（`.venv` 解释器，`-p no:cacheprovider`，`LOCAL_MODEL_NAME` 置禁用哨兵） |
 
-- 已登记 flake：`tests/test_audit_persistence.py::test_events_survive_a_restart_and_replay_in_order`（满 CPU 时子进程不稳）。**红了不许改、不许跳、不许算"既存红"**，如实记账。
+- 已登记 flake：`tests/test_audit_persistence.py::test_events_survive_a_restart_and_replay_in_order`（原记归因"满 CPU 时子进程不稳"🔴 **已被 §4AQ.3 证伪并改写**：该用例根本不 spawn 子进程，真因是 `app/common/audit.py:424` 排序键 `(created_at, event_id)` 在同 ~1 ms tick 内交给随机 `event_id`；修复单 R83 已派 Newton）。**红了不许改、不许跳、不许算"既存红"**，如实记账。
 - 本仓库**未装** `pytest-timeout`：命令行加 `--timeout=300` 会当场 `error: unrecognized arguments`（本班踩过一次，浪费一轮）。
 
 ### 4AP.6 三条腿与写权图（实取 15:2x，主树 HEAD `6d5f5ab`，在途 3）
@@ -2127,3 +2135,127 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - R61 甲/乙、R63 归一化、A 桶金标矛盾裁决。
 - 🔴 **H6：分支 `codex/data-file-catalog` 至今从未 `git push`，本机是唯一副本**。第十二班又并 4 单，今日提交数已到 **77**，一次磁盘故障即全丢。
 - 删文件 / 改 `.gitignore` / `chroma_db/**` 反跟踪 / `~/.codex/config.toml` 提供方清理 / `automation-2` 改指本线程 ⇒ 全属业主本人（`approval=Never` 下我连 `Remove-Item` 都执行不了）。
+## 4AQ 本班（09-18 18:1x–，总控第十五班）：R74 验收并树 **2031/35/0** · 接手基线坐实 2022 无需订正 · 审计日志顺序缺陷根因坐实并立 **R83** 派出 · 名册补写上班三行 · 新立 R84/R85/R86
+
+### 4AQ.1 接手核对（只读，未读死亡线程对话）
+
+- 上班（第十四班）收工时后台跑的全量只读到 28%，本班读到汇总行：**2022 passed / 35 skipped / 0 failed in 61.85 s**（日志 `%TEMP%\main_after_r80.out`）⇒ 与其写进 R37 简报的基线一致，**不用订正、不用通知 Gauss**。
+- 两笔未提交的活已在早班保住：R55 = `be-r20@6663a40`、R57 = `be-r53@ee11ca1`，两树现在只剩垃圾文件（`probe.txt`、`app/rag/*.r57bak`），删除属业主。
+- 名册欠账：上班把 R80/R81 两单已验收并树并 `close_agent`，但 **§0 名册三行至今写着"运行中"**，且未登 Jason/Turing ⇒ 本节连名册一起补齐（行 splice，BOM 与纯 CRLF 已逐字节复核，`git diff --numstat` = 7/3）。
+
+### 4AQ.2 R74 全链账（总控亲验，未采信执行层自述）
+
+- 交工 diff：`app/agents/contracts.py` +20/−2、`app/agents/state.py` +5/−2、新 `tests/test_r74_dead_budget_field.py`（9 例）。走 **甲＝删净**，不骑墙。
+- 总控独立复核"零读取"：`app/**` 与 `frontend/**` 内 **无** `.model_budget` 属性读取、**无** `model_budget=` 赋值、**无** `"model_budget"` 键字面量，剩下的全部是 `default_model_budget()` 与模块路径 import ⇒ 删除安全。邻域回归 90 passed / 1 skipped。
+- 总控自下 **三把隔离刀**（比执行层那把"两处同时塞回"更挑刺，逐条证明每一钉独立有效）：**K1** 只把字段塞回 `AgentState` ⇒ 3 红（含两条负向钉 + unused-import 钉）；**K2** 只塞回 `AgentContext` ⇒ 5 红；**K3** 只恢复那行 unused import（字段不动）⇒ **恰 1 红**。每把 anchor `assert count == 1`，还原后 sha256 与下刀前逐字节恒等（`state.py 523761AE` / `contracts.py 3761CB11`，与执行层自报值一致 ⇒ 双方独立确认）。
+- 提交链：树内 `2ddc603` → 追平 `2c67938`（合并后树内全量 **2031/35/0**）→ 主树 **`b2d9f34`**。无夹带（执行层已自己清掉 `.r74_baseline.txt`/`.r74scratch/`，本班未提交任何垃圾）。
+
+### 4AQ.3 流水账：已登记的 flake 根因坐实，且 **旧归因被证伪**
+
+- 看板 L2090 原写"满 CPU 时**子进程**不稳"：但 `test_events_survive_a_restart_and_replay_in_order` **根本不 spawn 子进程**（有子进程的是隔壁 `test_judgment_chain_replays_across_two_processes`）⇒ **归因不成立**，本节改写。
+- 真因（本班亲手复现，机制链完整）：`app/common/audit.py:424-427` 排序键 = `(created_at, event_id)`；`created_at` 来自 `:479 datetime.now()`，本机粒度约 **1 ms**；`event_id` = `aud-{uuid4().hex}` 随机 ⇒ **同一 tick 内两条事件的回放顺序由随机串决定**。探针（仓库外，未改产品码）实测 300 对：**撞 tick 12 对（4%）、翻序 4 次（1.3%）**。存储侧救不了：`app/storage/persistence.py:68` JSON 落盘 `sort_keys=True` ⇒ 盘上按 event_id 字典序（随机序）；`PostgresPersistenceAdapter.list()` 是 `ORDER BY created_at DESC`（`:401`）同样不确定。
+- **证据边界（不夸大）**：把该用例单独连跑 **30 次 0 红**（pytest 节奏下两次写之间夹了整个文件写 + `fsync`，撞 tick 概率远低于探针的 4%）。所以"机制"是实测坐实，"满套红过一次"（L802）是历史观测，两者分开写。
+- 结论：这不是测试卫生（不适用 R68/R70 先例由总控亲做），是 **产品缺陷** ⇒ 立 **R83** 并已派 `Newton`。修复方向总控已定：**进程内单调时间戳分配器（撞 tick / 回拨则 +1 µs，hydrate 时按库内 max 播种）**，不改 schema；精度可达性已核（`migrations/0005_audit_events.sql:22` 是 `TIMESTAMPTZ`，Postgres 微秒粒度）。🔴 残余限制写死要求如实声明：分配器是进程内的，**多 worker 跨进程同 tick 仍掷硬币**。
+
+### 4AQ.4 本班新立单与可派池
+
+- **R83**（已派 Newton，判据见跟进单 §30.3）。
+- **R84**（可离线派，前置无）：R80 只把撞号窗口降到 2⁻⁶⁴，**没有跨进程锁 / `O_EXCL`** ⇒ 多 worker 并发注册仍可能各自写穿。
+- **R85**（🔴 待业主，不是代码单）：R80 修复前被静默覆盖的那批应用行，其 secret 应视为**已泄露**并重发（对外通告 / 运维动作）。
+- **R86**（可离线派，出自 Jason 自报；**本班实测后口径已收窄**——见跟进单 §30.2 订正条与 §30.7）：只删 `app/agents/contracts.py:130 ModelBudget.max_calls`（全仓只出现一次＝纯幻影）；🔴 **`max_concurrency` 不删**（`:124-126` 写明故意不填 + 真身在 `model_budget.py:100-108` + `test_r74_dead_budget_field.py` 正引用）。两份架构文档里那句"整机预算（**max_calls**/…）"由**本班已代摘**（docs 归总控）。附带清 `tests/test_r30_model_tiers.py:69` docstring；带日期的历史计划文档**不改**。
+- 可派池现状：R83/R84/R86 三张离线可派；其余计划单卡真机或业主裁决。orchestrator.py 五单（R30/R31/R33/R42/R38）照旧串行且卡真机；`retrieval_pipeline.py` 归 R57（已结）、`chat.py` 归 R55（已结），两写域现已解锁。
+
+### 4AQ.5 投递纪律（事故 #26 补记 + 本班 canary 实测）
+
+- 上班派 R74 时在同一 block 发了两次 `spawn_agent`（误以为第一次工具名写错不会生成执行体）⇒ Jason 与 Turing 同时落到 `be-r74`。当场关 Turing，事后实取当时 `dirty=0` 且无任何 `.py` 被写 ⇒ **未造成串写污染**，但账要如实记。
+- 本班派 R83 时**严格一 block 一投递**，且投后立刻 canary 实测：`git worktree list` 里 **不存在 `be-r84`**、`be-r83` `dirty=0`、树根无新落盘 ⇒ 确认只生了一个执行体（本玭曾考虑顺手派 R84，因并发已满（第 4 投必撞 429，事故 #22）而**改为只登单不派**）。
+
+### 4AQ.6 基线链（总控亲跑，均 35 skipped / 0 failed）
+
+`6d5f5ab` **1981** → 并 R81 `fca75dc` **2006** → 并 R80 `8a46bfb` **2022** → 并 R74 `b2d9f34` **2031**。🔴 上班报的"1828 全绿"已被证伪作废，不得再引用。
+- 🔴→🟢 **上表缺口已补（第十六班 18:5x，总控亲跑）**：2031 原先是在 `be-r74@2c67938` 树内测的，并树后主树未复跑。本班在主树 **`9ebddad`** 实测 **2031 passed / 35 skipped / 0 failed / 63.43 s**（`.venv` 解释器、`-p no:cacheprovider`、`LOCAL_MODEL_NAME=__eb_test_disabled__`、打宿主模型端口连接数 **0**）⇒ 基线链 1981/2006/2022/**2031** 至此**全部落在主树**，不再有"只在分支测过"的数。
+
+### 4AQ.7 机器层事实补账（本班新增，下班照做别重试错）
+
+- 🔴 **`exec_command` 每次都是新 shell，上一条命令的 `cd` 不保留**：本班换了一条没带 `cd` 的命令、又用 `Get-Location` 拼路径，把跟进单 §30 写成了**仓库根的游离新文件**（已按字节数原样迁回正确文件并删除游离件：147956 + 8728 = 156684，对得上）。⇒ **凡落盘一律写绝对路径**。
+- **写给 `powershell.exe -File` 的脚本必须带 BOM**：`Set-Content -Encoding utf8NoBOM` 生成的 .ps1 里的非 ASCII 路径（企业智脑）会被读成乱码 ⇒ `CommandNotFoundException`，而日志只留空行、看起来像"跑完了"。
+- **循环里"只在失败时打印"的探针会被误读为卡死**：后续写循环一律每轮打印一行。
+- `Select-String` 没有 `-Recurse` 参数（会报 parameter not found）；递归搜索用 `rg` 。
+
+### 4AQ.8 本班待业主（全清单见跟进单 §29.6 + §30.6，一条都不代做）
+
+- H11 / H12（阶段 A 四条验收仍 **0 条通过**，全卡真机）· H13 密级缺省 · H14/H16 · H15（含 R82：收口文案要改业主本人写下的断言 `tests/test_dataset_route_authorization.py:188`，blame 到 `de13e90` 2026-09-14）· H17 · **H18（说谎的 503 未裁不许改）** · H19 单一模型 / 摘 `bailian`+`qwen3.8-flash` 提供方 / 心跳 `automation-2` 改指本线程 · R61 甲乙 · R63 归一化 · A 桶金标矛盾 · **R85 已泄露密钥重发通告** · 🔴 **H6 分支从未 push，本机唯一副本（今日已 79 个提交）** · 垃圾删除清单（含本班新增 `%TEMP%\r74_knives.py`、`board_edit.py`、`ts_probe.py`、`flake_batch.ps1/.out/.err`、`msg_r74.txt`、`mmsg_r74.txt`、`msg_docs30.txt`、`main_after_r80.*` 与两树遗留 `probe.txt`/`*.r57bak`）。
+### 4AQ.9 计划书 R25–R52 落码实盘（第十五班 18:5x，逐号反查 `git log` 主树历史，含误命中剔除）
+
+- 方法：对每个单号在主树全部提交标题里做词边界匹配，再**逐条看命中内容**——只出现在文档提交 / 分支名 / 别的单号正文里的，一律不算落码。R37 的 3 次命中全是 `Merge branch ... into codex/be-r37` 与 R44 正文提及；R52/R60/R61/R63/R73/R82 的命中全是立案文档本身。
+- **结案 15 单**：R25 R26(a/b) R27 R28 R30 R35 R36 R40 R41 R42 R44 R45 R47 R49 R51（R39 业主令不建）。
+- **在途 1 单**：R37（`be-r37`/Gauss，判据见跟进单 §21）。
+- 🔴 **仍零代码 11 单**：**R29 R31 R32 R33 R34 R38 R43 R46 R48 R50 R52**。分三类：
+  - **卡 `orchestrator.py` 串行 + 真机**：R29 R31 R32 R33 R38 R43（六单同文件，一次只能一张；且判据要真机回读）；
+  - **卡真机 / 前端**：R34 R46 R48 R50 R52；
+  - ⇒ 结论不变：**这批一张都不能在离线环境派**，硬派只会产出测不到的代码。开新闸要靠 R83/R84/R86 这类实测坐实的缺陷单。
+- 计划书之外今日另立的：R53 R54 R55 R56 R57 R58(离线部分并树，③④ 属真机) R62 R64+R65 R66 R67 R68 R70 R71 R72 R74 R75 R78 R80 R81 已结案；R79/R83 在途；R59/R60 属 pgvector 退役阶段计划（P0 已清、P1 起卡真机）；R61/R63/R77/R82/R85 待业主裁；R73 前置未清；R84/R86 待派。
+
+
+---
+
+## 4AR 本班（09-18 18:5x–19:0x，总控第十六班）：主树基线缺口补测坐实 · 🔴R79 验收并树 **2084/35/0** 且证树恒等 · R86 总控亲做结案 · R84 派 Helmholtz · 新立 R87（越界守卫双向漏防已证）
+
+### 4AR.1 接手核对（全部本班实取，未读死线对话、未采信上班自述）
+
+- 接手 HEAD `141f52a`，脏项只有 `chroma_db/**`（6 项）+ §29.6 垃圾清单 ⇒ **没有任何一笔产品代码游离在未提交态**。业主开场点名的 be-r20/be-r53 两笔经核**早已并树结案**（`6d03788` / `5984696`），盘上只剩未跟踪垃圾 `probe.txt`、`*.r57bak`×2 ⇒ 无需抢救。
+- 上班欠的两笔已补：看板 §4AQ.9 在盘未提交 ⇒ 代提交 `9ebddad`；L2094 flake 旧归因 + §4AQ.6"只在分支测过"的缺口 ⇒ 随 `2100185` 一并改写。
+- 🔴 **事故 #27（上班 18:5x 自报，本班核实零副作用）**：把 `send_input` 误写成 `automation_update`，参数校验当场拒。实取 `%USERPROFILE%\.codexutomationsutomation-2utomation.toml` mtime 仍为 **09-17 20:23:22**、`target_thread_id` 仍指死线 `01a0acfb` ⇒ **心跳没被碰过**，业主"别执行心跳"的口令未被违反。
+
+### 4AR.2 基线：主树缺口补测（这条是本班的先决条件）
+
+- 主树 `9ebddad` 亲跑 **2031 passed / 35 skipped / 0 failed / 63.43 s**（`.venv`、`-p no:cacheprovider`、`LOCAL_MODEL_NAME=__eb_test_disabled__`、宿主模型端口连接数 0）⇒ 上班那条"🔴 R74 的 2031 只在 `be-r74@2c67938` 测过、并树后主树未复跑"的欠账**结清**。
+- 并 R79 后主树 `7fe116f` 再跑全量（见 4AR.3/4AR.4 末尾）：**2085 → 2084**，逐条对得上的账见下。
+
+### 4AR.3 R79（Lagrange）验收全链——**总控亲跑，不采信回执**
+
+- 回执申报的树态与 numstat 实取一致（`M` 4 + `??` 4，无越界、无探针落仓、`chroma_db` 在本单树跑测后仍干净）。
+- 逐条对 §29.3 判据：① 走**独立出口** `hot_index_snapshot()`，被钉死的五键 `hot_index_diagnostics()` 一字未动（我亲读 `git diff tests/test_r44_hot_index_chroma.py`：只有 `:315/:317` 两行由**比容器**改成**比元素**，`:398/:408/:409` 三颗钉全在原地）；②/③/④/⑤ 各有新用例文件承载。
+- 🔴 **我自己复核的两处真风险**（不是走流程）：(a) `array("f", …)` 对脏值抛 `TypeError` 而 `tuple()` 不抛 ⇒ 顺调用链查到 `retriever.py:_hot_hits` 把 `_warm_hot_index`+`rank` 整个裹在 `except Exception` 里退回外部库并记 `REASON_ERROR`，**异常出不到主路径** ⇒ 不构成阻塞；(b) 我 grep 全仓确认无用例钉 `build_health_snapshot()` 顶层键集合（`set(...) ==` 只出现在嵌套的 `subsystems`/`dependencies`）⇒ 新增 `hot_index` 块安全。
+- 真机规模那条判据③/④的数（37 483 chunk、-64% RSS、-76% 扫描、名次 0 翻转）由回执给脚本与日志出处；**本树 tracked 库只有 401 条，不能用它冒充规模**，Lagrange 已在 `%TEMP%\r79scale\chroma` 重建，属可弃物（进业主清理清单）。
+- 动作：`a704387`（分支代提交，显式列 8 条路径）→ `c4ebfb5`（追平主树 `2100185`，零冲突）→ **总控亲跑全量 2084 passed / 35 skipped / 0 failed / 84.74 s** → 并树主树 **`20cc109`**。
+- 🔴 **下班不许重犯的口癖**：`1981 + 53 = 2034` 是回执树的数，主树当时已 `2031` ⇒ 预期 **2031 + 53 = 2084**，实测逐字对上才算验收。且我用 `git rev-parse ^{tree}` 证明 **`20cc109` 的 tree == `c4ebfb5` 的 tree == `7ca7b0b9fe1f21c0b6d4967a18b5e37db5a0a8fe`**、`git diff --quiet c4ebfb5 HEAD` 退出码 0 ⇒ "测过的树"与"主树"字节恒等，**R74 那种"内容相同但没实测"的缺口这次不留**。
+- 回执 ⑤ 待裁三条已消化：第①条成立且比回执更宽 ⇒ **另立 R87**（见 4AR.6）；第②条（出厂预算 20 000 < 真机 37 483 ⇒ 热集在真语料上一次都不服务）与第③条（**默认生产腿外部 Chroma 在含重复向量的语料上召回塌方**，首名距离差 100×）都**不是代码单**，进 §4AR.8 待业主，其中第③条我判定为**问答质量的头号嫌疑**，建议优先。
+
+### 4AR.4 R86（总控亲做，0.2 人日的删幻影，派工反而更慢）
+
+- 派工前我自己复跑计数：`git grep -i max.call -- .` 全仓**仅 1 处**＝`app/agents/contracts.py:130` 声明本身（docs/跟进单里的转述除外）；`tests/` 零命中；`test_r74_dead_budget_field.py`/`test_r30_model_tiers.py` 均无 `fields()`/`asdict` 形状钉子；`ModelBudget` 无 `model_config`（pydantic 默认 `extra=ignore`）⇒ 删了不会让任何调用点变红。
+- 🔴 **订正上班判据③**：所谓"清 `tests/test_r30_model_tiers.py:69` 陈旧 docstring"**不成立**——`:69` 写的是 `ModelBudget()` 未赋值不等于无限制，与 `max_calls` 无关；该文件里的 `self.calls`（`:32/:36/:90`）是假 transport 的调用日志，另一个词。**⇒ R86 实际范围只剩"删一行"**（②两份架构文档上班已代摘）。**判据本身也要被复核**，不能因为是我上班写的就当事实。
+- 动作：删 `:130` 一行（CRLF/BOM 保持）→ 邻域亲跑 **61 passed / 0 failed** → 主树 **`7fe116f`**。`max_concurrency` 按上班订正**保留不删**。
+
+### 4AR.5 R84 派工（一 block 一投递）
+
+- 判据在跟进单 **§31.2**（含对 §30.4 落点错误的公开订正：真缺陷是**丢失更新**不是撞号，修复点在 `app/storage/persistence.py:78` 的 `upsert()`，`O_EXCL` 不解决它）。
+- 19:03 单投 `Helmholtz` ⇒ 并发满 3（Newton/Gauss/Helmholtz），**第 4 投不许发**（事故 #22）。简报里我写自称 `Bohr`、系统给的真实昵称是 **Helmholtz**，已在名册行注明，免得下班按错名字找。
+
+### 4AR.6 🔴 新立 R87：既存用例 `test_r51_observation_is_passive.py:520-535` **双向漏防**（本班实测坐实）
+
+- 机制：`:525` 跑 `git diff --name-only HEAD`（**工作树 vs HEAD**），`:534` forbidden 前缀含 `app/rag/`、`docs/`、`tests/conftest.py`。⇒ ① **过界**：任何**别的**工单未提交的 `app/rag/**` 改动都会让 R51 这条用例红（R79 实测红 1 次，提交后自绿，回执与本班复跑都对上）；② **漏防**：`git diff` 根本看不见未跟踪文件 ⇒ 本班实取主树 `docs/` 下**当前就有 21 个未跟踪文件**（`docs/screenshots/**`），这条守卫**一个都没报**，也就是说"谁都不许往 docs/ 加东西"这句自缚**从来没生效过**。
+- 影响面：它把"跑测前必须先提交"变成了**隐式硬约束**——总控只要看板处于未提交态跑全量，这条就红。这正是上班和我都踩过的坑，不该继续靠记性绕。
+- 判据要点（详见跟进单 §31.3）：审计范围改成**本单自己的提交集**（`git merge-base` 求分支点后 diff），并把未跟踪文件纳入可见（`ls-files --others --exclude-standard`）；主树上（base==HEAD）应当**恒绿**、在工单分支上应当**能咬**；两条方向都要有用例（假绿方向 + 漏防方向）。**不许直接删掉这条用例**了事。
+
+### 4AR.7 三条腿与写权图（实取 19:0x）
+
+- 在途：**R83**=`be-r83`(Newton) / **R37**=`be-r37`(Gauss) / **R84**=`be-r84`(Helmholtz)，写域互不相交（`audit.py` / report-lane / `storage/persistence.py`）。
+- 可派池：**R87**（离线，判据待写全）；R85 待业主；计划书剩余 11 单照旧卡 `orchestrator.py` 串行或真机 ⇒ **离线无可派**（§4AQ.9）。
+- `app/rag/**` 与 `app/common/monitoring.py` 在 R79 结案后解锁；`app/agents/contracts.py` 在 R86 结案后解锁。
+
+### 4AR.8 本班新增待业主（其余全清单见 §29.6 + §30.6，一条都不代做）
+
+- 🔴 **新·最高优先**：R79 结案暴露出**默认生产检索腿（外部 Chroma/HNSW）在含重复向量的真语料上名次与热集精确扫描 12/12 不同序、首名平方 L2 差约 100×**（外部库首名 ≈2 978–3 037 vs 热集 ≈22.9–35.4），命中里能直接看到 `must_contain` 证据的只有 **4/105**。这条影响的是**答对答错**，不是代码洁癖，建议批准我下一步专独立项查（先只读取证，不改产品码）。
+- 出厂 `HOT_INDEX_MAX_CHUNKS=20 000` < 真机 37 483 chunk ⇒ 热集在真语料上**一次都不服务**，只付 4.56 s 暖机；要么改口径（全量常驻或别开），要么换进程内 ANN。属**产品取向**，我不替你定。
+- H6 依旧未结：`codex/data-file-catalog` 从未 push，**本机唯一副本**（今日已 **98** 个提交）。
+- `%TEMP%` 可弃物新增待清：`r79verify\clone`、`r79base\clone`、`r79scale\chroma`、`r79tools\*`、`main_full_9ebddad.*`、`r79_accept.out`、`r86_full.out`、`board_fix16.py`、`followup_s31.py`、`plan_fix_r84.py`、`r86_cut.py`。
+- 心跳 `automation-2` 仍指死线（本班**未动、未执行**）；本线程 id = **`01a0b295-67ae-7d32-b2b8-89dd66d68146`**，你要改就填这个。﻿
+### 4AR.9 🔴 事故 #28（新账，同类第一次，**总控自己写的**）：PowerShell here-string 里的反斜杠转义吃掉一个字节，把 2 200 行看板变成"全文件重写"
+
+- 经过：本班用 here-string 落 Python 脚本来写 §4AR。正文里有一处 Windows 临时目录路径（反斜杠 + `r79scale`），**Python 单引号字符串把反斜杠 r 解释成回车**，于是写进看板的不是那两个可见字符，而是一个游离 CR。
+- 后果（差点）：含游离 CR 之后 git 把这份工作树文件判成"不做行尾转换"，工作树 CRLF 对上索引 LF ⇒ `git diff` 报 **2254 insertions / 2193 deletions**，也就是**整份看板看起来被我重写过**。若当时闭眼 `git add` 提交，`blame` 与以后所有 diff 都会被这一次假改写污染，下班将无法从历史里读出谁改了哪行。
+- 发现方式（不是靠运气的流程）：提交前先看 `git diff --numstat`，**申报的改动量与实测数字对不上就停手**。先用 `--ignore-cr-at-eol` 复算得 **61/0**（真实改动只有新增 61 行），再用 `git ls-files --eol` 看到 `w/-text`（另外两份 md 是 `w/crlf`），最后逐字节定位：索引里游离 CR＝0、工作树＝1，命中在第 315117 字节。
+- 修法：把那个字节还原成"反斜杠 + r"两个字符（不是删掉换行），复扫三份文档：看板 1 处已修、跟进单 0、计划书 0；修完 `w/crlf` 恢复、`git diff --numstat` 恢复 **61/0**，内容一字未动。
+- **纪律（写死，下次我自己也必须守）**：① 往 here-string / 脚本正文里写**任何 Windows 路径**时，一律改用**正斜杠**，或先 `chr(92)` 拼接，绝不裸写反斜杠；② 任何 docs 提交前，除 `--stat` 外还要看 `--numstat` 的**删除数**——纯追加的章节删除数必须是 **0**，不是 0 就说明行尾或编码被动过；③ 提交前跑 `git ls-files --eol` 对比同目录其它文件，出现 `w/-text` 或 `mixed` 立即停手查字节。
