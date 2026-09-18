@@ -273,3 +273,21 @@ index reached = 0
 **要你定的只有一件事**：这条要不要**插队**（修法很小：`app/api/v1/open_platform.py` 把 `RetrievalScopeError` 从兜底 `except Exception` 里单独摘出来 → 403 `department_scope_required`，其余仍 503，约 5 行 + 3 条用例）。
 - **不插队（总控默认）**：已转 **R78 判据⑤**，排在 R75 之后。风险 = 这段期间对接客户如果报「503 一直重试」，我们会往索引方向查。
 - **插队**：说一声，我立刻单独开一单做掉（写域 `app/api/v1/open_platform.py`，与在途 R75 同文件 ⇒ 实际要等 Dirac 交工，最快也是 R75 之后）。
+## H19 总控线**只能用一个模型跑到底**——这条纪律要靠业主自律，Agent 无法自救（09-18 15:4x，总控第十三班，基线 `6d5f5ab`）
+
+- **代价已经付过三次**：`01a09dda`、`01a0acfb`、`01a0af5c` 三条总控线死于同一症状，全部在**同一条线程里中途换过模型**（gpt-6-astra / gpt-5.6-sol / 百炼 qwen3.8-flash）之后：
+  - `Invalid 'id': message id must be a string starting with 'msg_', got 'at_…'`
+  - `Invalid 'call_id': call_id is required for function_call_output.`
+  - 报错发生在 1 秒内、**换回原模型也修不好**（污染在历史里，不在请求参数里），只能开新线程接手。
+- **为什么必须你出手**：切模型这个动作在 Codex 客户端，Agent 自己关不掉，也无法在死前"清理历史"。`01a0acfb` 死后 18:50 / 19:50 / 20:04 / 20:30 四次投递（含两次心跳）全部撞同一堵墙，等于那段时间**没有总控在验收**，两笔在途改动只躺在磁盘上。
+- **配套两件（同样只能你做）**：
+  1. `~/.codex/config.toml` 里的 `bailian` / `qwen3.8-flash` 提供方会**连杀子 agent**（带 model override 的投递历史上死于事故 #17 Hegel、#21 Franklin）⇒ 建议保留但**永不用于总控线与子 agent**，或直接摘掉。
+  2. 心跳 `automation-2` 每小时一次，`targetThreadId` 仍指向已死的 `01a0acfb` ⇒ 每小时空撞报错。改指向本线程即可（该工具真实判别字段是 `mode`，更新传 `targetThreadId` 驼峰，**不接受** `target_thread_id`）。业主已明令「别执行心跳了会出问题」，本班起**不执行任何心跳**。
+
+## 本班（第十三班）卫生账追加
+
+- **flake 登记（唯一一条）**：`tests/test_audit_persistence.py::test_events_survive_a_restart_and_replay_in_order`——满 CPU 时子进程不稳。执行层撞到**只许如实报**：不许改它、不许 skip、不许申报成"既存红"来骗过验收。
+- **测试卫生铁规（本班新增，源自 R44b 实测）**：任何依赖语料/文件清单的用例必须钉**版本化清单**（`git ls-files -z -- documents`），**禁止**吃 ambient 目录。宿主 `documents/` 按设计兼作上传落地区（H16），实测 115 个 txt 里只有 95 个入库、热集覆盖用例在 379 chunk 与 37 483 chunk 两种规模下会让**同一份代码**在干净树全绿、主树当场红。上班那条"1828 全绿"就是这么来的。
+- **花名册纪律（本班新增）**：名册只记 `spawn_agent` **返回**的 nickname，不记简报里自定的代号；Tesla / Curie / Fermat / Banach / Meitner 各被复用过多轮，靠自定代号对账必然认错人。名册行「运行中」只允许出现在**真在途**的行上（本班一次性把 15 行过期状态改为「终态补记（第十三班）」，只改状态词、不动叙述内容，对账见看板 §4AP.2）。
+- **写域订正**：R75 真实写域是 `app/api/v1/intelligence.py` + `app/api/v1/open_platform.py`；跟进单与看板曾误记 `app/common/open_platform.py`（实测该文件 `standard_source` 零命中）。**注意**：`app/common/open_platform.py` 现在的合法占用者是 R80（app_id 撞号），派工别把两单混成一单。
+- **R78 三条改判的驳回权**并入 **H15** 同批：① 密级"只存不判"用自白而不是发明规则（待 H13）；② 未 earned 的部门收敛声明撤回；③ 说谎的 503 只钉用例不改行为（待 H18）。

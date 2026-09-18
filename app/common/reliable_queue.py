@@ -174,7 +174,16 @@ class ReliableQueue:
             return None
         return value.decode() if isinstance(value, bytes) else str(value)
 
-    def fail_or_retry(self, request_id: str, error: str) -> str:
+    def fail_or_retry(self, request_id: str, error: str, *, retryable: bool = True) -> str:
+        """Retry a failed task, or park it in the dead-letter list.
+
+        ``retryable=False`` is a caller-supplied verdict that another attempt cannot
+        change the outcome — an authorization denial is the case that motivated it.
+        Such a task goes straight to the dead list and its attempt counter is left
+        exactly where it was, so the retry budget stays intact for real faults.
+        Every existing caller keeps its previous behaviour because the default is
+        ``True``, which makes the condition below identical to the old one.
+        """
         if self.is_cancelled(request_id):
             self.redis.lrem(self.processing_key, 1, request_id)
             self.redis.lrem(self.pending_key, 1, request_id)
@@ -190,7 +199,7 @@ class ReliableQueue:
             self.redis.set(self._message_key(request_id), json.dumps(data, ensure_ascii=False, separators=(",", ":")))
         self.redis.lrem(self.processing_key, 1, request_id)
         self.redis.delete(self._lease_key(request_id))
-        if attempts >= self.max_attempts:
+        if not retryable or attempts >= self.max_attempts:
             self.redis.rpush(self.dead_key, request_id)
             self.redis.set(self._status_key(request_id), "dead")
             return "dead"

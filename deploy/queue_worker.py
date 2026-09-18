@@ -54,6 +54,32 @@ def _owner_from(payload: dict) -> str:
     return str(principal.get("user_id") or "").strip()
 
 
+NON_RETRYABLE_DEAD_REASON = "non_retryable_terminal"
+
+
+def is_non_retryable_error(record: object) -> bool:
+    """True 只在记录自己声明了"重试也不会变"的时候成立。
+
+    判定收成一个不碰 Redis 的纯函数，是为了能被单独钉住（deploy/ 不在包里，
+    本文件此前也不在任何用例覆盖内）。它刻意只认 error["retryable"] is False
+    这一种形状：状态闸门不在这里，success/partial 由下面那条一字未改的判断挡住，
+    所以"partial 带一枚不可重试错误"仍旧照常发布；error 不是 dict、缺 retryable
+    字段、字段值不是 False（None/0/"False"/"false" 等异形）一律 False，
+    调用方仍旧照改前的路走 fail_or_retry。
+
+    字段缺失为什么默认重试：ErrorEnvelope.retryable 的出厂值是 False，而
+    AgentResult.model_dump() 一定带这个字段，所以看不见它只可能是这条记录压根
+    没走过契约。队列层没资格替契约宣布终局，更不能把一次形状异常升级成不重投的
+    dead —— 那是把"还能救"变成"必然丢"，而盲重试的代价本来有 max_attempts 兜着。
+    """
+    if not isinstance(record, dict):
+        return False
+    error = record.get("error")
+    if not isinstance(error, dict):
+        return False
+    return error.get("retryable") is False
+
+
 def process_one():
     """处理一个队列请求，并把结果收敛为一条 canonical AgentResult 记录"""
     queue = _get_queue()
@@ -92,6 +118,18 @@ def process_one():
 
         if record.get("status") not in {"success", "partial"}:
             code = str((record.get("error") or {}).get("code") or record.get("status") or "internal_error")
+            if is_non_retryable_error(record):
+                # R81：契约已经判定"重试也不会变"的终态（R64/R65 的两枚授权拒绝码）
+                # 不再占用重试名额，直接落 dead。原因码单独进日志：前者是授权设计的正常
+                # 后果，后者是故障，混在一行里运维会查错地方。
+                terminal_status = queue.fail_or_retry(request_id, code, retryable=False)
+                bookkeeping = queue.failure(request_id)
+                logger.error(
+                    f"[QueueWorker] request_id={request_id} 终态不可重试，不再重投 -> {terminal_status}: {code} "
+                    f"(reason={NON_RETRYABLE_DEAD_REASON} "
+                    f"attempts={bookkeeping.get('attempts')} max_attempts={bookkeeping.get('max_attempts')})"
+                )
+                return True
             logger.error(f"[QueueWorker] request_id={request_id} 未产生业务结论: {code}")
             queue.fail_or_retry(request_id, code)
             return True
