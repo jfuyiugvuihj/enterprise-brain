@@ -163,7 +163,92 @@ class ExecutionSpan:
             "summary": dict(summary or {}),
         }
         self.record(self.finished_event, status, payload)
+        self._observe_stage(payload)
         return payload
+
+    def _observe_stage(self, payload: dict[str, Any]) -> None:
+        """Hand the finished duration to the R51 stage ledger.
+
+        This is a consumer of what ``finish`` had already produced, not another step in
+        the request: it sees the same ``duration_ms`` the event carries, and only for a
+        span the store would accept (no owner, no record -- the rule that already guards
+        ``record``). Anything it raises is swallowed and logged, because a collector that
+        can fail a business answer is the failure judgement 3 forbids.
+        """
+        if not self.active:
+            return
+        try:
+            from app.common.stage_timing import record_stage_sample, stage_timing_enabled
+
+            if not stage_timing_enabled():
+                return
+            base = self.base_payload
+            record_stage_sample(
+                stage=str(base.get("stage") or ""),
+                tool_name=str(base.get("tool_name") or ""),
+                tier=str(base.get("model_tier") or ""),
+                worker=str(base.get("worker") or ""),
+                duration_ms=payload.get("duration_ms"),
+                trace_id=self.identity.get("trace_id", ""),
+                request_id=self.identity.get("request_id", ""),
+                task_id=self.identity.get("task_id", ""),
+                status=str(payload.get("status") or ""),
+                source=self.record_kind,
+                label=str(base.get("stage") or base.get("tool_name") or base.get("model_tier") or self.record_kind),
+                started_at=payload.get("started_at"),
+                completed_at=payload.get("completed_at"),
+            )
+        except Exception as exc:  # noqa: BLE001 - telemetry stays invisible
+            logger.warning("[Trace] stage observation failed: %s", exc)
+
+
+def record_stage_event(
+    config: Any,
+    *,
+    stage: str,
+    duration_ms: float,
+    status: str = "completed",
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    tier: str = "",
+    summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist one segment that is neither a model call nor a tool call.
+
+    Not every segment R51 names has a span to inherit: ``reflect`` is a rule pass, and
+    the query rewriter lives behind a file this ticket may not touch. This is the additive
+    entry point those call sites can adopt with one line, and it goes through the same
+    ``ExecutionSpan`` primitives so the "no owner, no record" rule still applies. It
+    deliberately does not touch the evidence bag: writing a duration must not change what
+    the answer cites.
+    """
+    identity = span_identity(config)
+    span = ExecutionSpan(
+        record_kind="stage_windows",
+        record_id=f"{identity.get('trace_id') or 'trace'}:stage:{uuid4().hex}",
+        identity=identity,
+        started_event="stage.started",
+        finished_event="stage.finished",
+        base_payload={
+            "stage": stage,
+            "agent_run_id": identity["agent_run_id"],
+            "agent_step_id": identity["agent_step_id"],
+            "worker": identity["worker"],
+            "model_tier": tier,
+        },
+    )
+    payload = {
+        "record_id": span.record_id,
+        "record_kind": span.record_kind,
+        "status": status,
+        "started_at": started_at or span.started_at,
+        "completed_at": completed_at or _utc_now(),
+        "duration_ms": int(duration_ms),
+        "summary": dict(summary or {}),
+    }
+    span.record(span.finished_event, status, payload)
+    span._observe_stage(payload)
+    return payload
 
 
 def model_token_counts(response: Any) -> dict[str, Any]:
@@ -184,8 +269,29 @@ def start_model_call(
     provider: str,
     model_name: str,
     queue_wait_ms: int | None = None,
+    stage: str = "",
+    model_tier: str = "",
 ) -> ExecutionSpan:
+    """Open the span for one model call.
+
+    R51 added ``stage`` and ``model_tier``. Both are optional and both are written
+    only when the caller passes them: an event written by a call site that says
+    nothing keeps the exact bytes it kept before, which is what lets judgement 3
+    ("observation must not change behaviour") be tested against the old shape.
+    """
     identity = span_identity(config)
+    base_payload = {
+        "provider": provider,
+        "model_name": model_name,
+        "agent_run_id": identity["agent_run_id"],
+        "agent_step_id": identity["agent_step_id"],
+        "worker": identity["worker"],
+        "queue_wait_ms": queue_wait_ms,
+    }
+    if stage:
+        base_payload["stage"] = stage
+    if model_tier:
+        base_payload["model_tier"] = model_tier
     span = ExecutionSpan(
         bag=bag_from_config(config),
         record_kind="model_calls",
@@ -193,14 +299,7 @@ def start_model_call(
         identity=identity,
         started_event="model.started",
         finished_event="model.finished",
-        base_payload={
-            "provider": provider,
-            "model_name": model_name,
-            "agent_run_id": identity["agent_run_id"],
-            "agent_step_id": identity["agent_step_id"],
-            "worker": identity["worker"],
-            "queue_wait_ms": queue_wait_ms,
-        },
+        base_payload=base_payload,
     )
     return span.begin()
 
@@ -256,6 +355,7 @@ def error_code_for(exc: BaseException) -> str:
 
 __all__ = [
     "ExecutionSpan",
+    "record_stage_event",
     "model_token_counts",
     "error_code_for",
     "span_identity",
