@@ -2474,3 +2474,38 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 由此**撤销** §34.2 原文的前置「评测窗口关窗」：依据是 `tests/conftest.py:41-53` 把测试期 `DATABASE_URL` 钉死在保留端口 `127.0.0.1:1`（并自带「必须含 `connect_timeout=1`」「不得含 `:5432`/`localhost`」两条断言），执行层物理上连不到宿主真库 ⇒ 数据风险为零，只剩墙钟噪声。
 - 等业主：H13–H18、R85、R88、R90b（`migrations/0010:216` 的 `%I`）、删除清单（不急）、远端 `master` 可见性、孤儿卷 `enterprise-brain_ollama_data`、临时令牌文件。
 - R90 现状补记：库级 GUC `app.embedding_dimension` 是我手工设成 768 才解封的，**根因未修**，R90a/R90b 不结案。
+
+### 4AY.1 R29 前置实测（总控亲跑，21:47–21:53，真机 qwen3.5:9b 100% GPU）
+三腿对照，同一个提示词「用一句话说明：住宿费标准在哪里查？」，非流式：
+
+| 腿 | 端点 / 参数 | thinking 字数 | 正文字数 | 墙钟 |
+|---|---|---|---|---|
+| A | 原生 `/api/chat` + `"think": false` | **0** | 73 | **1.86 s** |
+| B | 原生 `/api/chat` 不带 think（对照） | **7 214** | 39 | 64.93 s |
+| C | `/v1/chat/completions` + 顶层 `think:false` | 0（**取不到**，不是没有） | 47 | 46.48 s |
+
+- **判据① 达标形式已成立**：A 腿 `thinking` 实测 0 字 ⇒ 关思考在**原生端点**上做得到；
+- **判据「不许只在 `/v1` 加参数就当完成」被实测坐实**：C 腿接受了同一个参数、`reasoning_content` 恒为 0（OpenAI 兼容层根本不吐这个字段），却照样烧掉 46 s ⇒ **W8 §5.4「`/v1` 上五种写法全无效」到今天仍然成立**，模型没换（`qwen3.5:9b`，2 天前拉的）；
+- ⇒ **路线裁定：R29 走 A（迁原生 `/api/chat`）**，不必造 `PARAMETER think false` 派生模型（省一次真机改模型动作，那本来是要业主点头的）；代价是 A 腿正文与 B/C 不同（73 vs 39/47 字），**这正是判据③ 要盯的质量漂移**，所以必须等 105 题基线落盘才好派。
+- 🔴 **踩坑记录（下班别再犯）**：宿主 `127.0.0.1:11434` 是**另一个空 Ollama**（`/api/tags` 返回 `[]`），栈里的模型只在 docker 网络内 `http://ollama:11434`（`OLLAMA_BASE_URL`/`LOCAL_MODEL_BASE_URL` 都是这个服务名）。在宿主端口上测会得到 `model 'qwen3.5:9b' not found`，那不是"模型没了"，是**测错了层**。正解：把脚本从 stdin 灌进 `docker compose --env-file deploy/.env.server exec -T backend python -`。
+- ⚠️ 三腿数字含并发噪声（同机评测在跑，判据②的 before 数**不用这里的**，用评测集里逐题 `latency_ms`）。
+
+### 4AY.2 本轮评测同时就是 R29 的 before 基线
+`scripts/collect_evaluation_answers.py:49-51` 的 `TRACE_KEYS = (first_token_at, thinking_chars, tool_calls)` 明写「ride along for the R29 thinking tax」⇒
+B′ 落盘的 `answers-real.jsonl` 逐题带 `latency_ms` 与 `thinking_chars`：**判据②（30.6 s → ≤22 s）与判据① 的 before 侧不用另跑一轮**，
+报告一出就把"生成轮平均思考字数"钉死。而 §4AY.1 的 B 腿 7 214 字思考 ≈ 一题 60 s+ 的去向，也解释了探针里 `doc-01` 为什么花 96.3 s。
+
+### 4AY.3 R90 真机验收夹具已验证可用（免得上班 §3.2 那种"命令从没跑过"的重演）
+- 一次性库 `eb_r90a_probe`（**不是**主库，主库 `enterprise_brain` 未受任何影响）：
+  ① **不设 GUC** 直接跑 `docker compose --env-file deploy/.env.server run --rm --no-deps migrate sh -c '... migrate.py --database-url <一次性库>'`
+     ⇒ `MIGRATE_EXIT=1`，文案 `0010 needs an explicit vector width and will not guess one. Declare it for this database before migrating: ALTER DATABASE **eb_r90a_probeI** SET app.embedding_dimension = <EMBEDDING_DIMENSION>`，事务已回滚；
+  ② 手工 `ALTER DATABASE ... SET app.embedding_dimension = 768` 之后同一条命令 ⇒ `applied=10 database=eb_r90a_probe`，`MIGRATE_EXIT=0`。
+- **意义两条**：(a) R90「干净环境首装必停」从静态推断升级为**端到端实测**；(b) **R90b 的 `%I` 缺陷第一次在真库上留下现场证据**——提示串让操作者去改一个叫 `eb_r90a_probeI` 的库（**不存在的库名**），照做就白折腾，这条比原来的容器内 `DO` 复现硬得多，报给业主时按"已实测"说。
+- 验收口径已备好：`Gibbs` 交付后，同一夹具**不做任何手工 `ALTER`** 必须直接 `applied=10 / exit 0`，否则 R90a 不算结案。一次性库用完由总控 DROP（不属主库，业主可随时收回处置权）。
+
+### 4AY.4 进度账订正（引用数字前先查有没有被后续实测推翻）
+- 上一班在册「20 单在全部历史里零提交」**已过期**：逐号数主干提交后 = **12 单零提交**：`R29 R31 R32 R33 R34 R37 R38 R43 R46 R48 R50 R52`
+  （`R30 50aff1a`、`R42`、`R35 63651f1`、`R44 39006b8`、`R49`、`R51`、`R40 dc31a44`、`R47 95a1cd9`、`R45 0276f78` 都已经在树上）。
+- **腿① 的锁变松了**：`R27 → R29 → R30 → R31 → R32 → R38` 严格串行，R27/R30 已并 ⇒ **队头是 R29**，只差 §4AY.1 的路线裁定 + R36 判据③ 的基线。
+  R36 判据③ 至今仍是 R29/R33/R35 三单的共同闸门（跟进单 §21 原话："未落真机分数不算 R36 完成"），**这就是本班死守这轮评测的原因**，不是无人可派。
+- `chat.py`(R55 `6663a40`→并树 `6d03788`) 与 `retrieval_pipeline.py`(R57 `ee11ca1`→并树 `5984696`) **确实已并** ⇒ 两文件写域开放，本班名册里"未结案前不许再派碰这两个文件"的限制同时解除。
