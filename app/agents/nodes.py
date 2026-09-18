@@ -17,6 +17,8 @@ from app.common.logger import logger
 from app.common.model_config import get_local_model_settings
 from app.agents.contracts import AgentResult, DEFAULT_MODEL_TIER, ModelTier
 from app.common.model_budget import (
+    ModelContextLimitExceeded,
+    authorize_call,
     budget_signal,
     context_error_code,
     detect_output_truncation,
@@ -146,8 +148,8 @@ class _ResilientModel(Runnable):
         self.provider = provider or "local"
         self.recorded_model_name = model_name or str(getattr(primary, "model_name", "") or "")
         self.capacity_wait_seconds = capacity_wait_seconds
-        #: This call's token and clock budget; ``None`` means "an un-typed hand-built model",
-#: which is only ever constructed by tests, never by ``_make_model``.
+        #: This call's token and clock budget; ``None`` means "an un-typed
+        #: hand-built model", which only tests construct, never ``_make_model``.
         self.budget = budget
 
     @property
@@ -191,17 +193,20 @@ class _ResilientModel(Runnable):
         span.finish("model_unavailable", error_code="model_unavailable", summary=model_token_counts(response))
         return response
 
-    def _budget_kwargs(self, messages, *, stream: bool) -> dict:
+    def _budget_kwargs(self, prompt_tokens: int | None, *, stream: bool) -> dict:
         """Size this exact call: its own output cap and a clock proportional to its prompt.
 
         The per-request values override the client defaults, which are only the worst case
         for the tier. A provider that has never heard of ``extra_body`` still gets a valid
         request: the OpenAI-compatible wire format carries ``max_tokens`` there.
+
+        ``authorize_call`` is what makes judgement (4) real: when the measured prompt plus
+        this cap cannot fit ``n_ctx``, it raises here, before the request is put on the
+        wire, instead of letting the server answer with a truncated completion.
         """
         if self.budget is None:
             return {}
-        prompt_tokens = estimate_prompt_tokens(messages)
-        report_budget(self.budget, prompt_tokens, stream=stream)
+        authorize_call(self.budget, prompt_tokens, stream=stream)
         return {
             "timeout": http_timeout(self.budget, prompt_tokens, stream=stream),
             "extra_body": {"max_tokens": self.budget.max_tokens},
@@ -219,7 +224,18 @@ class _ResilientModel(Runnable):
             return self._offline_fallback(messages, config=config, **kwargs)
 
         span = self._span(config, queue_wait_ms=slot.wait_ms)
-        call_kwargs = {**self._budget_kwargs(messages, stream=False), **kwargs}
+        prompt_tokens = estimate_prompt_tokens(messages)
+        try:
+            call_kwargs = {**self._budget_kwargs(prompt_tokens, stream=False), **kwargs}
+        except ModelContextLimitExceeded as exc:
+            # Refused before the provider saw it. The offline reply is deliberately not
+            # used here: it would record model_unavailable, and evidence._terminal_status
+            # reports model_unavailable ahead of a failure, so the customer would read a
+            # canned greeting while the real verdict -- this prompt does not fit n_ctx --
+            # stayed in a log line.
+            slot.release()
+            span.finish("failed", error_code=exc.code)
+            raise
         try:
             response = self.primary.invoke(messages, config=config, **call_kwargs)
         except Exception as exc:
@@ -228,11 +244,17 @@ class _ResilientModel(Runnable):
                 logger.warning(
                     budget_signal(
                         getattr(self.budget, "tier", None) or "analysis",
-                        prompt_tokens=estimate_prompt_tokens(messages),
+                        prompt_tokens=prompt_tokens,
                         read_seconds=float(getattr(self.budget, "timeout_seconds", 0.0) or 0.0),
                         code=provider_code,
                     )
                 )
+                if self.budget is not None:
+                    # Same code as the pre-flight verdict: one collision, one answer,
+                    # whether the window was measured here or refused by the server.
+                    slot.release()
+                    span.finish("failed", error_code=provider_code)
+                    raise ModelContextLimitExceeded(self.budget, prompt_tokens or 0) from exc
             from app.trace.spans import error_code_for
 
             span.finish("failed", error_code=error_code_for(exc))
@@ -251,7 +273,7 @@ class _ResilientModel(Runnable):
                 logger.warning(
                     budget_signal(
                         self.budget.tier,
-                        prompt_tokens=estimate_prompt_tokens(messages),
+                        prompt_tokens=prompt_tokens,
                         read_seconds=self.budget.timeout_seconds,
                         code=truncated,
                     )
@@ -263,8 +285,10 @@ class _ResilientModel(Runnable):
         from app.common.model_budget import ModelBudgetExhausted, default_model_budget
 
         config = kwargs.get("config")
-        if args:
-            kwargs = {**self._budget_kwargs(args[0], stream=True), **kwargs}
+        # A stream may be started positionally (LangGraph) or by keyword, so the prompt is
+        # read either way: sizing it only when it arrived positionally would leave every
+        # keyword-started stream unsized, which is the same blind spot as no budget at all.
+        messages = args[0] if args else kwargs.get("messages")
         try:
             slot = default_model_budget().acquire(wait_seconds=self.capacity_wait_seconds)
         except ModelBudgetExhausted as exc:
@@ -281,11 +305,32 @@ class _ResilientModel(Runnable):
             return
 
         span = self._span(config, queue_wait_ms=slot.wait_ms)
+        prompt_tokens = estimate_prompt_tokens(messages)
+        try:
+            kwargs = {**self._budget_kwargs(prompt_tokens, stream=True), **kwargs}
+        except ModelContextLimitExceeded as exc:
+            slot.release()
+            span.finish("failed", error_code=exc.code)
+            raise
         try:
             for chunk in self.primary.stream(*args, **kwargs):
                 span.mark_first_token()
                 yield chunk
         except Exception as exc:
+            provider_code = context_error_code(exc)
+            if provider_code and self.budget is not None:
+                logger.warning(
+                    budget_signal(
+                        self.budget.tier,
+                        prompt_tokens=prompt_tokens,
+                        read_seconds=self.budget.timeout_seconds,
+                        code=provider_code,
+                        stream=True,
+                    )
+                )
+                slot.release()
+                span.finish("failed", error_code=provider_code)
+                raise ModelContextLimitExceeded(self.budget, prompt_tokens or 0) from exc
             from app.trace.spans import error_code_for
 
             span.finish("failed", error_code=error_code_for(exc))
@@ -311,6 +356,11 @@ def _make_model(tier: ModelTier | str = DEFAULT_MODEL_TIER, *, prompt=None):
     the call site already knows it; when nobody passes it, the budget is sized for the
     tier's largest permitted prompt and every call is re-sized again in
     :meth:`_ResilientModel.invoke` from the messages actually on the wire.
+
+    Building a model never refuses a request -- ``report_budget`` records the verdict for
+    the prompt known here and :func:`authorize_call` is what declines to send, at the
+    moment the real message list exists. A factory that threw because a *caller* asked for
+    too much would turn one oversized question into a dead worker graph.
     """
     budget = model_tier_budget(tier)
     prompt_tokens = estimate_prompt_tokens(prompt)

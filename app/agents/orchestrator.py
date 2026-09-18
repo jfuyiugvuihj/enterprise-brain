@@ -32,6 +32,7 @@ except ModuleNotFoundError:  # pragma: no cover
     psycopg = None
     psycopg_pool = None
 
+from app.agents.contracts import ModelTier
 from app.agents.state import AgentState, _merge_dicts
 from app.approval.assistant import build_precheck
 from app.agents.tools import search_docs, analyze_data, query_data, generate_chart, export_report
@@ -83,10 +84,13 @@ DATA_PROMPT = """你是数据分析专家。分析经营数据回答问题。一
 CHART_PROMPT = """你是图表生成专家。用户要画图时，如果数据不明确，先用 analyze_data 取真实数据，再调用 generate_chart。labels 和 values 必须来自实际数据。"""
 EXPORT_PROMPT = """你是报告导出专家。确认内容后直接调用 export_report。"""
 
-doc_graph = create_react_agent(_make_model(), [search_docs], prompt=DOC_PROMPT, checkpointer=_checkpointer)
-data_graph = create_react_agent(_make_model(), [analyze_data, query_data], prompt=DATA_PROMPT, checkpointer=_checkpointer)
-chart_graph = create_react_agent(_make_model(), [analyze_data, generate_chart], prompt=CHART_PROMPT, checkpointer=_checkpointer)
-export_graph = create_react_agent(_make_model(), [export_report], prompt=EXPORT_PROMPT, checkpointer=_checkpointer)
+# The four worker graphs write prose answers, so they are the analysis tier: the largest
+# output cap and the longest clock. Named explicitly, because a bare _make_model() reads
+# as "the default" and the whole point of the tier is that it is a decision.
+doc_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [search_docs], prompt=DOC_PROMPT, checkpointer=_checkpointer)
+data_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [analyze_data, query_data], prompt=DATA_PROMPT, checkpointer=_checkpointer)
+chart_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [analyze_data, generate_chart], prompt=CHART_PROMPT, checkpointer=_checkpointer)
+export_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [export_report], prompt=EXPORT_PROMPT, checkpointer=_checkpointer)
 
 
 def _fallback_export_result(user_message: str, model_result: str, config=None) -> str:
@@ -130,7 +134,7 @@ def dispatch(workers: list[str]) -> str:
     """
     return f"已派发 {len(workers)} 个子Agent: {', '.join(workers)}"
 
-main_model = _make_model().bind_tools([dispatch])
+main_model = _make_model(ModelTier.ANALYSIS).bind_tools([dispatch])
 
 # ==================== supervisor 节点 ====================
 
@@ -209,7 +213,11 @@ def main_agent_node(state: AgentState) -> dict:
     all_msgs = state.get("messages", [])
 
     # 短期记忆：超阈值自动压缩
-    all_msgs = compress_messages(all_msgs, _make_model(timeout=30))
+    # Compression has the longest prompt of any call here -- it carries the whole history --
+    # and a short output, which is exactly the combination the old flat 30 s punished. The
+    # prompt is built inside summarize(), so no text is passed: the tier is sized for its
+    # largest permitted prompt, which is the honest worst case from this distance.
+    all_msgs = compress_messages(all_msgs, _make_model(ModelTier.COMPRESS))
 
     # 长期记忆注入
     mem = state.get("memory") or {}

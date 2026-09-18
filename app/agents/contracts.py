@@ -219,6 +219,12 @@ class ErrorEnvelope(BaseModel):
         "rate_limited",
         "queue_unavailable",
         "model_unavailable",
+        # R30：本机 n_ctx 装不下「这条 prompt + 本档声明的输出」时吐的码。它不是可重试的错
+        # （同一个提示词永远装不下），所以不进 evidence._RETRIABLE_CODES。出处有两条，都在
+        # app/common/model_budget.py：authorize_call 在发请求前拦下，provider 自己拒了之后翻成
+        # 同一个码；两条都由 tests/test_r30_context_limit_guard.py 钉住。缺的是
+        # tests/test_error_code_vocabulary.py::RATIFIED 里同一行出处——那个文件不在本单写域内。
+        "context_limit_exceeded",
         "retrieval_unavailable",
         "storage_unavailable",
         "task_timeout",

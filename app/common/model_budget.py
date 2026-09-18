@@ -31,6 +31,12 @@ from app.agents.contracts import (
 
 from app.common.logger import logger
 
+#: Slots on the one local model server. It was spelled twice in this file and once in
+#: each shipped env sample; the number lives here now so ``tests/test_r30_config_defaults.py``
+#: can check the documentation against it instead of against a copy. Same value, same
+#: variable, same ``_env_int``: the concurrency semantics are untouched.
+DEFAULT_MAX_CONCURRENCY = 1
+
 
 class ModelBudgetExhausted(RuntimeError):
     """The local model is busy and no slot became available in time."""
@@ -43,6 +49,30 @@ class ModelBudgetExhausted(RuntimeError):
             f"(error_code={self.code}); no business conclusion was generated."
         )
         self.wait_ms = wait_ms
+
+
+class ModelContextLimitExceeded(RuntimeError):
+    """The prompt plus this tier's declared output cannot fit the local ``n_ctx``.
+
+    Before this existed the collision had two outcomes, neither of which left a code
+    behind: the server refused the request and the caller saw a bare provider error, or
+    the server answered with a completion cut off mid-sentence. Both are refused here,
+    in favour of not sending a request the window demonstrably cannot hold.
+    """
+
+    code = CONTEXT_LIMIT_CODE
+
+    def __init__(self, budget, prompt_tokens: int):
+        super().__init__(
+            "Local model context window cannot hold this request "
+            f"(error_code={self.code}): prompt_tokens={prompt_tokens} and "
+            f"max_tokens={budget.max_tokens} do not fit n_ctx={budget.context_limit_tokens}; "
+            "no business conclusion was generated."
+        )
+        self.prompt_tokens = int(prompt_tokens)
+        self.max_tokens = int(budget.max_tokens)
+        self.context_limit_tokens = int(budget.context_limit_tokens)
+        self.tier = budget.tier
 
 
 @dataclass
@@ -69,7 +99,7 @@ class _ModelSlot:
 class LocalModelBudget:
     def __init__(self, max_concurrency: int | None = None, wait_seconds: float | None = None):
         configured = max_concurrency if max_concurrency is not None else _env_int(
-            "MODEL_MAX_CONCURRENCY", 1
+            "MODEL_MAX_CONCURRENCY", DEFAULT_MAX_CONCURRENCY
         )
         self.max_concurrency = max(1, configured)
         self.default_wait_seconds = (
@@ -117,7 +147,7 @@ _default_lock = threading.Lock()
 def default_model_budget() -> LocalModelBudget:
     """Process-wide budget shared by every model boundary."""
     global _default, _default_size
-    configured = _env_int("MODEL_MAX_CONCURRENCY", 1)
+    configured = _env_int("MODEL_MAX_CONCURRENCY", DEFAULT_MAX_CONCURRENCY)
     with _default_lock:
         if _default is None or _default_size != max(1, configured):
             _default = LocalModelBudget(max_concurrency=configured)
@@ -205,11 +235,14 @@ def context_limit_tokens() -> int:
     return int(_env_float("MODEL_CONTEXT_TOKENS", float(DEFAULT_CONTEXT_TOKENS)))
 
 
+def tier_max_tokens_env_name(tier: ModelTier | str) -> str:
+    """The one spelling of a tier's override variable: ``MODEL_TIER_<TIER>_MAX_TOKENS``."""
+    return f"MODEL_TIER_{ModelTier(tier).value.upper()}_MAX_TOKENS"
+
+
 def tier_max_tokens(tier: ModelTier | str) -> int:
     resolved = ModelTier(tier)
-    configured = _env_int(
-        f"MODEL_TIER_{resolved.value.upper()}_MAX_TOKENS", TIER_MAX_TOKEN_DEFAULTS[resolved]
-    )
+    configured = _env_int(tier_max_tokens_env_name(resolved), TIER_MAX_TOKEN_DEFAULTS[resolved])
     return max(1, min(int(configured), context_limit_tokens() - 1))
 
 
@@ -233,6 +266,33 @@ def tier_profile(tier: ModelTier | str) -> dict[str, float | int]:
         "timeout_ceiling_seconds": request_timeout_ceiling_seconds(),
         "connect_timeout_seconds": _env_float("MODEL_CONNECT_TIMEOUT_SECONDS", DEFAULT_CONNECT_TIMEOUT_SECONDS),
     }
+
+
+def budget_env_defaults() -> dict[str, float | int]:
+    """Every model-budget variable the code reads, with the default it uses when unset.
+
+    Slots, caps, rates and the window: one mapping for the whole budget, because a
+    documented number that is not in here is a number nothing checks.
+
+    Criterion (3) of this ticket is "the code default and ``.env.example`` agree", which is
+    only checkable if one object holds both sides of the claim. This is that object: the
+    reader above produces these numbers and ``tests/test_r30_config_defaults.py`` compares
+    them against the two shipped env files, so neither file can drift again the way
+    ``MODEL_REQUEST_TIMEOUT`` did (60 in code, 120 documented).
+    """
+    defaults: dict[str, float | int] = {
+        "MODEL_MAX_CONCURRENCY": DEFAULT_MAX_CONCURRENCY,
+        "MODEL_REQUEST_TIMEOUT": DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        "MODEL_CONTEXT_TOKENS": DEFAULT_CONTEXT_TOKENS,
+        "MODEL_PREFILL_TOKENS_PER_SECOND": DEFAULT_PREFILL_TOKENS_PER_SECOND,
+        "MODEL_DECODE_TOKENS_PER_SECOND": DEFAULT_DECODE_TOKENS_PER_SECOND,
+        "MODEL_TIMEOUT_MARGIN": DEFAULT_TIMEOUT_MARGIN,
+        "MODEL_TIMEOUT_FLOOR_SECONDS": DEFAULT_TIMEOUT_FLOOR_SECONDS,
+        "MODEL_CONNECT_TIMEOUT_SECONDS": DEFAULT_CONNECT_TIMEOUT_SECONDS,
+    }
+    for tier, tokens in TIER_MAX_TOKEN_DEFAULTS.items():
+        defaults[tier_max_tokens_env_name(tier)] = tokens
+    return defaults
 
 
 def model_tier_budget(tier: ModelTier | str) -> ModelBudget:
@@ -375,7 +435,14 @@ def report_budget(budget: ModelBudget, prompt_tokens: int | None, *, stream: boo
     the machine is too slow for the tier as configured, which is an operator finding.
     """
     code = budget.context_window_code(prompt_tokens)
-    clamped = not budget.fits_within_timeout(prompt_tokens, stream=stream)
+    # ``prompt_tokens is None`` means nobody measured it, which is a fact about the call
+    # site, not about the machine: the clock for an unknown prompt is deliberately the
+    # tier's worst case, so declaring it clamped on every construction would warn five
+    # times at import and tell an operator nothing. Only a measured prompt can prove the
+    # ceiling is what binds.
+    clamped = prompt_tokens is not None and not budget.fits_within_timeout(
+        prompt_tokens, stream=stream
+    )
     if code or clamped:
         logger.warning(
             budget_signal(
@@ -388,3 +455,17 @@ def report_budget(budget: ModelBudget, prompt_tokens: int | None, *, stream: boo
             )
         )
     return code
+
+
+def authorize_call(budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False) -> float:
+    """Log this call's budget verdict, then refuse it when ``n_ctx`` cannot hold it.
+
+    Returning the read budget rather than a bool keeps the call sites honest: they get the
+    number they are about to spend and nothing else. The refusal happens before the request
+    leaves the machine, which is the difference between a stable code and a completion that
+    stops in the middle of a sentence and is still presented as an answer.
+    """
+    code = report_budget(budget, prompt_tokens, stream=stream)
+    if code:
+        raise ModelContextLimitExceeded(budget, prompt_tokens or 0)
+    return budget.read_timeout_seconds(prompt_tokens, stream=stream)
