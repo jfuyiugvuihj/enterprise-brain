@@ -929,3 +929,60 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 - 评测集无出处：**29**（A 12 + C 16 + 交叉 1），**不是 55**；B 桶 27 已由 R66 清 23 + 顺带 3。
 - `app/agents/intelligence.py` **不存在**，正确路径 `app/api/v1/intelligence.py`。
 - R58 之后**迁移末号 = 0010**；R49 的 `index_status/index_reason` 若入库必须用 **0011**，且必须同步改 `test_document_catalog_sync.py:123` 的尾号引信。
+
+
+## 28. R71 结案账（09-18 14:2x–14:3x，总控第十一班）· 执行层归因一次证伪 · 三件待裁已裁 · 新立 **R78** · 🔴事故 #24（基线 `89965d5` → 主树 **`8813ad0`**）
+
+### 28.1 结案：R71 `/open` 调用方部门收敛（`Chandrasekhar`，`be-leg2` 分支 `codex/be-r67`）
+
+- **链**：交工 `ce0e754` → 总控收口 `226b670` → 追平主树 `114376b`（`--no-ff` **零冲突**）→ 主树并树 **`8813ad0`**（5 文件 +570/-8）。
+- **它做了什么（总控复核，不采信自述）**：`app/common/open_platform.py:258 _granted_departments` + `:265 _resolve_open_department`（只读注册表：无授权⇒空部门且**根本不看头**；单授权⇒头可选；多授权⇒头是唯一选择器，**沉默不猜**；越权⇒403），`verify_open_request` 不再从 `normalized["x-open-department"]` 造身份；拒时落审计 `open:<action> / denied / <app_name> / department_override_denied`；`/insights`、`/dashboard/summary` 两处同形洞一起收；**签名基串未碰**；新增 29 条用例；**零新错误码**（复用 `DEPARTMENT_SELF_REPORT_DENIED`）。
+- **总控亲跑**：三文件合批（r67 23 + r71 29 + open_platform 5 + r40 25 = 82）修前 **16 failed**、修后 **82 passed**；be-leg2 追平 `89965d5` 后**全量 `1695 passed / 35 skipped / 0 failed`**（48.45 s）；并树后主树**全量再跑一次同数**（50.11 s）。
+- **总控自下三刀（都在 Chandrasekhar 的 K1/K2/K3 之外）**，每把都按字节还原（`a85badcad6aea5c15e46…037f` 前后恒等）：
+  - K-Ctrl-1 把 `X-Open-Department` 纳入签名基串 ⇒ **恰 1 红**：`test_the_signature_base_string_still_covers_app_timestamp_and_body_only`。证明判据④「覆盖面不移动」不是空话——将来谁「顺手把头签进去」，当场红，而不是等第三方集成在生产上 401 才发现。
+  - K-Ctrl-2 无授权时反而采信头 ⇒ **3 红**（`test_one_invented_header_no_longer_buys_a_department_the_application_was_never_granted`、`test_a_forged_department_header_on_an_ungranted_application_answers_with_one_stable_code`、`test_a_registry_entry_that_grants_no_department_ignores_the_header`）。⇒ 「无授权=空部门」这条分支承重。
+  - K-Ctrl-3 多授权沉默时猜第一个 ⇒ **恰 1 红**：`test_several_grants_and_no_header_do_not_default_to_the_first_one`。红得干净、无连带。
+
+### 28.2 🔴 执行层归因证伪：**「38 条与本单无关既存红」不存在**
+
+- Chandrasekhar 在交工报告里列：`test_retrieval_synonym_expansion` 12、`test_prefiltering` 10、`test_classification_fail_closed` 5、`test_r21_answer_side_degradation` 5、`test_r21_embedding_fail_closed` 5、`test_test_isolation_guards` 1，共 38，理由「涉 `app/rag/**` 与嵌入闸门，非我写域」。
+- **总控实测两条都推翻它**：① be-leg2 全量只 **16 红**，且这 16 条正是它自己写在「欠总控」那一节里的（R67 15 + `test_open_platform.py::test_registered_app_can_sign_and_verify_query_request` 1）；② 它点名的那 5 个文件在 be-leg2 上**单跑 90 passed 全绿**。
+- **结论**：它把「我没跑过全量 / 我跑全量时基线本来就是这样」说成了「既存红」。这是**归因**假绿而非结果假绿——它的 29 条用例、三刀、sha 都是真的，只有那 38 条的定性是编的。
+- **入机器层账（累计第 28 条）**：执行层报的「既存红 / 与本单无关 / 属他人写域」**一律总控自己复现后才写进台账**；照抄的后果 = 下一班把它当合法基线，从此永不处理。R58 的「mirror 未就绪」空分支、R42 的「占比 60%」都是同一形状：**上一层写的数字，下一层不敢动，于是假数字活了很久**。
+
+### 28.3 它交给总控裁的三件事 —— 裁定与依据（**并入 H15 同批，业主可一句话驳回**）
+
+| # | 事项 | 裁定 | 依据 |
+|---|---|---|---|
+| ① | 无授权 + 挂假头：它取「空部门、不在边界硬拒」；要硬拒只需 `_resolve_open_department` 首行加一句 | **维持「空部门不边界拒」** | 决定性证据是它自己登记的第四条：`/query`、`/analyze`、`/provenance/summary` **完全不使用部门**。在边界硬拒会把这三个端点对所有未配部门的应用直接打死（现网 401/403 变常态），属误伤；而「想挂到某个部门名下」这条路已被判据②③ 的用例钉死。K-Ctrl-2 证明该分支承重，不靠默契兜底 |
+| ② | 两处 GET 的守卫提到 `if params.get("metric")` 之前，自认「越界半格」 | **接受** | 判据③ 原文是「两处同形洞一起收」。「未参与拼行的谎报也拒」属于同形洞本身：否则同一句谎话，带 metric 时 403、不带 metric 时被静默接受，那是**看运气拒**。它给这条单独立了 `test_a_department_outside_the_grant_is_refused_even_when_it_would_not_be_used`，且 K2/K3 各咬 3 红 ⇒ 有专属用例，不属假绿。若业主要「只改取值不改控制流」，回退是 4 行，总控落笔 |
+| ③ | 四条「只登记不动手」 | **转立 R78** | 见 §28.4 |
+
+### 28.4 新立 **R78**：开放平台的应用身份「声称了它并没有的能力」（四条，R71 交工登记 + 总控逐条复核）
+
+总控复核后的现状（**逐条亲查调用点，不只看签名**）：
+
+1. **`max_clearance` 全仓只存不投用**。`register_application` 收 `max_clearance=3` 并写进 `OpenApplication`，`asdict(record)` 原样回给调用方，但 `verify_open_request` 造 `Principal` 时**从未带密级**，检索层的密级判定也不读它 ⇒ 管理端在注册应用时设的「密级上限」是一个**看起来存在、实际零接线**的字段（与 R74 的 `AgentState.model_budget` 同形）。要么落到 principal 上并被检索/文档链真的读，要么从注册表单里摘掉，**不留半张脸**。
+2. **`X-Open-User` 不在签名覆盖内 ⇒ 审计行的 `username` 可被任意已注册应用冒名**。签名只覆盖 `app_id.timestamp.body`（`build_request_signature`），所以任何应用可以给任意用户名签发审计行。缓解事实（**别夸大也别忽略**）：`precheck_payload(requested_by=…)` 用的是 `app_id` 而非该头，所以**审批结论本身没被污染**，脏的是审计归因。修法只有两条：把身份头纳入签名基串（= 破坏既有集成，无版本协商 ⇒ R71 判据④ 明令禁止），或在 `OPEN_PLATFORM_APP_STORE_PATH` 侧登记「应用可代表哪些 username」。
+3. **未配 `OPEN_PLATFORM_APP_STORE_PATH` 时注册表在进程内存**：重启后授权集蒸发，`_resolve_open_department` 于是返回空部门 ⇒ **静默**退化为「无部门」而不是「配置缺失就拒绝启动」。R71 之前这条退化看不出来（当时头说了算），现在它是**唯一**能让一个已配置应用突然失去部门的路径。要求：非生产可容忍但**必须可观测**（首次命中未注册/空授权时打一条明确日志或指标），生产维持现有 `ProductionReadOnlyProtection`。
+4. **`/query`、`/analyze`、`/provenance/summary` 不使用部门**：这三个端点上「按部门收敛」是装饰性的。要么按 R17 的口径真正参与过滤，要么在文档/管理端界面上撤掉这个观感（前端 `docs/handoff/2026-09-15-frontend-work-checklist.md` 需同步）。
+
+**判据**：四条各自要么**真接线**、要么**显式撤除**，禁止「字段存在但零读取」的第三种状态；每条必须有用例钉；`/open` 的既存 59 条用例（open_platform + r67 + r71）不许红。**前置**：R75（同文件 `app/common/open_platform.py` 在途，串行）。**写域**：`app/common/open_platform.py`、`app/api/v1/open_platform.py`、`app/api/v1/intelligence.py`（若要落 principal 密级）、`docs/handoff/2026-09-15-frontend-work-checklist.md` 由前端线自己改。**不许**动签名基串（判据④ 已钉）。
+
+### 28.5 顺带收掉的两笔旧欠账
+
+- Herschel（R67 交工）欠总控的三件事：① `_standard_source` 提公共口 → **已转 R75，14:28 已派 `Dirac`**；② `frontend-work-checklist.md:260`「R67 结案前不要接进员工界面」可撤 → **R67 已结案 `571ffd7`、R71 已结案 `8813ad0`**，该前置**可撤**，但 `docs/handoff/2026-09-15-frontend-work-checklist.md` 属前端线写域，总控不代改，**转业主转达或等前端线自己收**；③ `X-Open-Department` 入签名单独立一张 → **裁定不做**（见 §28.3 ①、§28.4 ②，R71 判据④ 已用例外加文本锚钉死「覆盖面不移动」）。
+- R58 补漏（`12255c2` + `b3eb3d4`）：上一班 §4AN 里写的「21 passed」当时**只在子树工作区成立**，主树并过去只有 18 条；现主树 `tests/test_r58_pgvector_dual_write.py` 确为 **21 条**，已在本班 `89965d5`/`8813ad0` 两次全量里覆盖。
+- R42 并树账（`89965d5`）：五件合批 86 passed 与自述逐字吻合、两把独立刀（⑤ 规则降级到最后 ⇒ 12 红；⑤ 由 AND 改 OR ⇒ 5 红）、追平后全量 1663/35/0 —— 上一班只写在对话里没入库，本节补齐。
+
+### 28.6 🔴 事故 #24（同类第一次，机器层）：执行层把新文件写进了主树
+
+- 详情与对策见看板 **§4AO.5**。一句话：`Darwin`(R51) 14:22:25 在主树建 `tests/test_r51_stage_latency.py`、14:22:47 在自己树建同名同 sha 的一份，主树全量 pytest 当场 collection error；总控 `send_input` 纠偏 + 主树副本 **Move-Item 隔离未删除** + 隔离后复跑 0 红。
+- **对策回灌**：此后所有派工简报固定含 §0.5「写域铁规」（每命令块 `Set-Location` 绝对路径 + `git rev-parse --abbrev-ref HEAD` 自证；跑测试 rootdir 由 cwd 决定；`cd` 失败会**静默停在原地继续执行**）。`R75` 的简报（14:28 派出）已带此条。
+
+### 28.7 本班数字订正（下班引用前以此为准）
+
+- 全量基线：1580 → 1663（R42 并树后，子树实测）→ **`1695 passed / 35 skipped / 0 failed / 0 error`**（`[实测] @主树 8813ad0`，50.11 s）。
+- 用例增量归因：R71 新增 29 条 ⇒ 1663 + 29 = 1692，与 1695 差 3 条；差的是**总控在 R58 补漏里那 3 条承重用例**（`12255c2` 之后才进对象库，`b3eb3d4` 才并进主树，1663 那次跑在 `8d69ee6` 追平树上、尚未含补漏）。**不是丢数**。
+- 计划书 27 单 → 现 **29 单**（+R78 本班立；R68–R77 上一班已入 §5.2）。结案数：**R30、R42、R49、R58、R67、R71 六单**在 09-18 本班与上一班并树，另有总控亲做 R70/R68/R72/R66。
+- **`orchestrator.py` 占用状态**：R51 半占（只许 span 创建路径）⇒ R31/R32/R33 挂起。R42 已结案出域。

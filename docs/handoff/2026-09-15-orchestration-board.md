@@ -1229,6 +1229,10 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `总控亲做` | —— | **R70** 宿主 `.env` 测试期隔离 | 主树直改 | **已结案** `c2c7dad`：5 个模块 import 期 `load_dotenv()` 把真机模型名灌进「擦干净环境」的用例 ⇒ 全天「某条红只在主树存在」的总根源；`tests/conftest.py` 换只记账桩 + 3 条守卫 | 13:28 |
 | `总控亲做` | —— | **R68** 测试污染泄漏（套件顺序地雷） | 主树直改 | **已结案** `e33727e`：`test_offline_runtime_fallbacks.py` 开头 `clear()`、结尾不还原 ⇒ 漏红 `test_deployment_guards.py:494`；守卫是**被测语义本身不许放宽** ⇒ 修泄漏方，autouse 快照/还原 **5 个**进程内存储，三向复跑 38+38+50 | 13:28 |
 | `总控亲做` | —— | **R72** R49 标定改用版本化清单 | 主树直改 | **已结案** `f396866`：`documents/` **双用目录**（兼上传落地区），iterdir 把 `.zip` 顶进 `load_document` ⇒ 主树 7 条用例当场 ERROR 而子树全绿；改 `git ls-files -z`，修后 97 篇 / 排除 0 / 10 passed 与原值一致。**撞出 H16** | 13:28 |
+| `Chandrasekhar` | `01a0b302-0a9e-7491-b3c1-e409fe93c814` | **R71** `/open` 身份与部门归属收敛 | `be-leg2`（分支 `codex/be-r67`） | **已结案**：交工 `ce0e754` + 总控收口 `226b670` + 追平 `114376b` → 主树 **`8813ad0`**；总控亲跑 三文件 59 passed / **全量 1695 passed 35 skipped 0 failed** / 自下 3 刀（签名基串纳入头 => 1 红·覆盖面 pin；无授权反采信头 => 3 红·判据②；多授权沉默猜第一个 => 1 红·沉默不猜）全按字节还原 `a85badca…037f`；**其自述「38 条与本单无关既存红」经总控实测证伪**（详 §4AO.2）；14:2x `close_agent` 已关 | 14:35 |
+| `Tesla` | `01a0b311-9ebd-7cf3-90ce-7dd04c8cf17a` | **R44** 热集进程内检索索引 | `be-r37`（分支 `codex/be-r46` @ `5ae7e45`，**独占**） | **运行中**：14:2x 实取盘上 `M app/rag/retriever.py`(+192/-18) · 新 `app/rag/hot_index.py`(22,635 B, 14:23:01) · 新 `tests/test_r44_hot_index_unit.py` · 新 `tests/test_r44_hot_index_chroma.py`；**落后主树 6 提交**，交工后必须先追平再验收；硬门「pre-filter 先于热集」与「禁碰 `migrations/**`」仍生效 | 14:23 |
+| `Darwin` | `01a0b32c-c9b0-70a1-8a17-924f846164d4` | **R51** 阶段化 P95 观测 | `be-r34`（新建分支 `codex/be-r51` @ `89965d5`，**独占**） | **运行中**：14:20:52 裸投（rollout 唯一，无重复体）。🔴 **14:22 事故 #24**：把 `tests/test_r51_stage_latency.py` 同时写进**主树**（sha256 与自己树逐字节相同），主树全量 pytest 当场 collection error；总控已 `send_input` 下写域纠偏令（`01a0b331-4782-7dd2-…`），主树副本**Move-Item 隔离未删除**，隔离后主树复跑 **0 红**。写域含 `nodes.py`/`orchestrator.py` 的 span 创建路径 ⇒ **R31/R32/R33 挂起至本单结案** | 14:35 |
+| `Dirac` | `01a0b333-e8ea-7283-a78d-88e0ecbdb271` | **R75** `/open` 与 session 两份标准来源校验去重 | `be-r36`（新建分支 `codex/be-r75` @ **`8813ad0`**，**独占**） | **运行中**：14:28:38 裸投（rollout 唯一）。判据：判定收敛成一处、**沉默默认值分叉（session→explicit / open→auto）是唯一合法差异且不许抹平**、R40/R67/R71 三件既存用例一个字不许改也不许红、稳定码词表不扩、结案必含全量 | 14:35 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -1969,3 +1973,61 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | R44 | Tesla | `be-r37` | 刚起步 | 判据①–⑧；**pre-filter 先于热集**为不可放宽硬门；不碰 `migrations/**` |
 ### 4AN.6 待业主（**一条都不代做**，全清单见跟进单 §27 与 H15/H16）
 H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13（密级缺省口径）· H14（新语料被 `.gitignore` 挡）· **H15（本班两笔总控改判，可一句话驳回）** · **H16（`documents/` 双用：原建议「甲」作废，改推「丙」）** · R61 甲/乙与 R63 归一化 · A 桶 3 组金标矛盾裁决 · `git push`（**H6：`codex/data-file-catalog` 至今从未 push，本机是唯一副本**）· 删各树垃圾 · R58 真机三件（migrate / 备份演练 / 双读差异表）+ 重建索引 + 105 题真机基线。
+
+## 4AO 本班（09-18 14:2x–，总控第十一班）：R71 结案并树 · 全量新基线 **1695 / 35 / 0** · 🔴事故 #24（执行层写进主树）· 三件待裁已裁
+
+### 4AO.1 主树链（全部总控代提交 / 代并树，逐路径显式列，禁 `git add -A`）
+
+- `8813ad0` = **R71 并树**（`--no-ff` 自 `114376b`），改动 5 文件 +570/-8：`app/common/open_platform.py`、`app/api/v1/open_platform.py`、`tests/test_r71_open_department_convergence.py`(新 473 行)、`tests/test_open_platform.py`、`tests/test_r67_department_self_report.py`。
+- 并树前主树 HEAD 是 `89965d5`（R42）。上一班留的「R58 补漏 + R42 并树后主树未重跑全量」这笔欠账，本班在 `89965d5` 与 `8813ad0` 上各补跑一次全量，**两次都 0 红**。
+- `be-leg2` 追平 `89965d5` 时 `git merge --no-ff` **零冲突**（`114376b`），`git status` 干净 ⇒ R71 与 R42/R58/R67 无写域重叠。
+
+### 4AO.2 总控落笔的两处既存测试 + 对执行层归因的一次证伪（**披露：写域在 Chandrasekhar 之外**）
+
+- 🔴 **它报的「38 条与本单无关既存红」是假的**。它点名 `test_retrieval_synonym_expansion`(12) / `test_prefiltering`(10) / `test_classification_fail_closed`(5) / `test_r21_answer_side_degradation`(5) / `test_r21_embedding_fail_closed`(5) / `test_test_isolation_guards`(1) 涉 `app/rag/**` 与嵌入闸门「非我写域」。总控实测：① be-leg2 **全量只 16 红**，且这 16 条 = 它自己写在「欠总控」那一节里的（R67 15 + `test_open_platform.py::test_registered_app_can_sign_and_verify_query_request` 1）；② 它点名的那 5 个文件在 be-leg2 上**单跑 90 passed 全绿**。⇒ 它是把「自己没跑过全量」说成了「既存红」。
+- **机器层教训（累计第 28 条）**：执行层报的「既存红 / 与本单无关 / 他人写域」**一律由总控自己复现**，不许照抄进台账；照抄的后果是这些红会被下一班当成合法基线，从此永不处理。
+- 修法是它自己用**不改仓库的外挂探针**验证过的，总控只落笔不发明：`test_r67_department_self_report.py:59` 的 `_register()` 默认授 `CALLER_DEPARTMENT`；零授权语义由 `test_a_caller_without_a_department_may_not_borrow_one` 显式 `_register(departments=())` 保留（它的语义依赖「无授权」，不能跟着默认值走）；`test_open_platform.py:30` 注册补 `allowed_departments=["market"]`。合批（r67+r71+open+r40）16 红 → **82 passed**。
+- 这两处**都在断言漏洞本身**（R67 骨架零授权却默认发 `rnd` 头；`test_open_platform` 直接断言「未获任何授权的应用，其 principal 部门 == 调用方发来的 market」），所以 R71 收敛后必红，属**必须一起收**而非回归。
+- 🔴 **提交纪律**：本次并树前总控做了「两树 `--collect-only` 差集」检查（R58 补漏事故的对策），差集为空。
+
+### 4AO.3 它交给总控裁的三件事 —— 已裁（**业主可一句话驳回**，并入 H15 同批）
+
+| 项 | 它的做法 | 总控裁定 | 依据 |
+|---|---|---|---|
+| ① 无授权 + 挂假头 | 取「空部门，不在边界硬拒」，交给 R17 检索层 fail-closed 兜底 | **维持现状** | 它自己登记的第四条说清了新事实：`/query`、`/analyze`、`/provenance/summary` **完全不使用部门**。在边界硬拒会把这三个端点对所有未配部门的应用直接打死，属误伤；而一旦哪个调用方真想把结论挂到某个部门名下，判据②/③ 的用例已经钉住它拿不到。K-Ctrl-2（无授权反采信头 => 恰 3 红）证明这条分支是承重的，不是装饰 |
+| ② 两处 GET 的守卫提到 `if params.get("metric")` 之前 | 自认「超出『改用收敛后部门』半格」 | **接受** | 判据③ 的原话是「两处同形洞一起收」；「未参与拼行的谎报也拒」正是同形洞的一部分——否则同一句谎话在带 metric 时被拒、不带时被静默接受。它给这条单独立了用例（`test_a_department_outside_the_grant_is_refused_even_when_it_would_not_be_used`，K2/K3 各咬 3 红），不属假绿。若业主要「只改取值不改控制流」，回退是 4 行 |
+| ③ 四条「只登记不动手」 | `max_clearance` 全仓只存不投用 / `X-Open-User` 不在签名覆盖内可冒名 / 未配 `OPEN_PLATFORM_APP_STORE_PATH` 时重启后授权蒸发静默退化为无部门 / 三个端点不用部门 | **转立 R78**（见跟进单 §28.2） | 四条同属「开放平台的应用身份声称了它并没有的能力」，与 R71 的洞同源但写域不同，塞进 R71 会让本单失焦 |
+
+### 4AO.4 基线刷新（**写死，下班别再照抄上班的数**）
+
+- 主树 `8813ad0`：**`1695 passed / 35 skipped / 0 failed / 0 error`**，50.11 s。`[实测 @8813ad0]`
+- be-leg2 `114376b`（并树前同内容）：**`1695 passed / 35 skipped / 0 failed`**，48.45 s。`[实测]`
+- 上一班写死的 1580、以及 §4AN.2 的「1663 passed」均**已过期**。
+- 主树脏项仍是业主侧 8 项（`chroma_db/**` 6 项 + 根 0 字节看板副本 + `_board_4al_a.py`/`_reg64_65.py`/`_board_4al7.py`/`bundle.js`/`idx.html`/`docs/screenshots/`/`frontend/node_modules.stub/`），本班**未新增未删除**任何业主侧文件；唯一新增是隔离区 `C:\Users\fengx\PycharmProjects\_quarantine\2026-09-18-darwin-main-tree-leak\`（见 §4AO.5）与总控探针残留 `be-leg2\_k2.txt`，两者都进业主删除清单。
+
+### 4AO.5 🔴 事故 #24（**新账，同类第一次，机器层**）：执行层把文件写进了主树
+
+- **现象**：14:2x 主树全量 pytest 报 `Interrupted: 1 error during collection` → `ERROR tests/test_r51_stage_latency.py`。该文件在主树是**未跟踪**状态，而它属于 Darwin 的 R51。
+- **取证**：主树副本 CreationTime `14:22:25`，be-r34 副本 `14:22:47`，两份 **2753 字节、sha256 完全相同**（`A646848DB00F9CA8269719BF018186916B3AF223052FEA1AB1873220AD864E25`）⇒ 不是有人在主树独立开发，是**同一个 Agent 写了两遍**，先写了主树。
+- **真因（推断，未证实）**：子 Agent 的 shell 默认 cwd 是主树；`cd <其它树>` 若失败，PowerShell 会**静默停在原地继续执行**。总控简报里只写了工作区路径，没写「每个命令块自证 cwd」。
+- **已做**：① `send_input` 纠偏令（submission `01a0b331-4782-7dd2-8c84-2234130a41e0`），要求每块 `Set-Location` + `git rev-parse --abbrev-ref HEAD` 自证，并明确「主树那份不许你删，删除属业主本人权限」；② 主树副本 `Move-Item -LiteralPath` 到仓外隔离区，**没有删除**；③ 隔离后主树 `git status --porcelain` 回到业主侧 8 项，全量复跑 **1695/35/0**。
+- **对策（已回灌后续所有派工简报）**：简报新增 §0.5「写域铁规」——只能在自己的树里写、每命令块第一行 `Set-Location` + 自证分支、跑测试时 rootdir 由 cwd 决定（venv 在主树但 cwd 必须在本树）、`cd` 失败会静默原地继续这一条机器事实。**派工时同时给绝对路径与分支名，且要求 Agent 回执里贴 `Get-Location`。**
+
+### 4AO.6 三条腿与写权图（实取 14:35，主树 HEAD `8813ad0`）
+
+| 腿 | 状态 | 在途 | 谁能派 |
+|---|---|---|---|
+| 腿① 真机（性能/评测基线） | 🔴 全卡业主 | — | **一条都派不出去**：R34/R38/R48/R50/R52/R29 判据要真机；H11/H12 未翻；105 题真机基线未跑 |
+| 腿② 后端代码 | 🟢 三班并发 | R44 `Tesla`/`be-r37`、R51 `Darwin`/`be-r34`、R75 `Dirac`/`be-r36` | **已满 3 并发**（§4AM.2 事故 #22：5 并发直接撞上游 429），要派第 4 单必须等一个交工 |
+| 腿③ 收口与文档 | 🟡 总控独占 | 本节 + 跟进单 §28 + 计划书 §5.2 R78 | 不派工 |
+
+- **`orchestrator.py` 现在被 R51 半占**（Darwin 只许动 span 创建路径）⇒ **R31 / R32 / R33 挂起**至 R51 结案，这是「五单共占一文件必须串行」的既有规矩，不是新裁。
+- `app/rag/**` 归 Tesla（R44）；`app/common/open_platform.py` + `app/api/v1/open_platform.py` 归 Dirac（R75）⇒ **R78 在 R75 结案前不派**（R78 的三条落点都在 `open_platform.py`）。
+- **可派清单**（并发满，排队用）：R31/R32/R33（串行等 R51）、R73（supervisor 降档，禁改 `tests/test_supervisor_roundtrip.py`）、R74（`AgentState.model_budget` 零赋值零读取）、R37（report 档进可靠队列，通道现成）、R64/R65（§24 立案后一直没人做）。
+
+### 4AO.7 待业主（**一条都不代做**）
+
+- H11（重启容器真拿 GPU）· H12（`docker compose build migrate`，后端镜像落后主树）· H13（密级缺省口径）· H14（新语料被 `.gitignore` 挡）· **H15**（R42③ / R58③ 两笔总控改判）· **H16**（`documents/` 双用目录裁决）· **本班新增并入 H15 同批**：§4AO.3 三件 R71 待裁。
+- R61 甲/乙、R63 归一化、A 桶 3 组金标矛盾裁决。
+- 🔴 **H6：分支 `codex/data-file-catalog` 至今从未 `git push`，本机是唯一副本**。本班又并了 1 个单（R71），风险敞口继续加。46→**52** 个提交的量级，一次磁盘故障即全丢。
+- 删除清单（本班 +2）：`C:\Users\fengx\PycharmProjects\_quarantine\`、`be-leg2\_k2.txt`；旧账 12 项见跟进单 §27 与上board。
