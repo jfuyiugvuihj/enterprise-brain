@@ -1217,6 +1217,18 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Fermat` | `01a0b2a5-3931-7881-b9f7-566b59ff972f` | **R49** 索引瘦身（草稿/模板/超小文档不入索） | `be-r36`（基线 `f972d3c`，**独占**） | **运行中**：11:52 裸投；12:09-12:12 实测新建 `app/documents/index_policy.py` + 改 `catalog.py`；**已加第④判据：排除规则不得误伤 `documents/` 语料，命中排除篇数须=0** | 12:12 |
 | `Curie` | `01a0b2ad-ef0d-7cf2-8951-d23ed93b909e` | **R58** Chroma/PGVector 同事务双写 | `be-r27t`（分支 `codex/be-r58` @ `cac751b`，**独占**） | **运行中**：11:59 裸投；已建分支并读 §22/§25，12:12 仍未落盘（大单，先读后写属正常）；写域只限 `pg_store.py`/`retriever.py`/`migrations/0010` + manifest | 12:12 |
 | `总控亲做` | —— | **R66** 补两篇从未落盘的缺失语料 | 借用空闲 `be-r34`（仅 `r36q/` 在册工件，无其他 Agent） | **已结案**：`9f2f869` → 主树 `cc50e05`；无出处 **55→29**、B 桶清 23、446 项邻域零回归；**顺带撞出新闸门 H14** | 12:2x |
+| `Sartre` | `01a0b2a4-6a7b-7850-a7be-e5f29bb872f5` | **R30** `max_tokens`/超时按档（接续棒） | `be-r37`（分支 `codex/be-r30`） | **已结案**：子提交 `3cb563b`→`fd546f4`→`d563007` 并入主树 **`50aff1a`**；总控追平后亲跑 **111**、邻域 **194 passed / 7 skipped**、自下 1 刀（流中断计费 ⇒ 2 红）；`ErrorEnvelope.code` 缺 `context_limit_exceeded` 由总控追认落笔（写域在执行层之外） | 12:56 |
+| `Fermat` | `01a0b2a5-3931-7881-b9f7-566b59ff972f` | **R49** 索引瘦身（按内容特征决定进不进化物索引） | `be-r36`（分支 `codex/be-r49`） | **已结案**：子提交 `8680f43`→`31d6612` 并入主树 **`c26afda`**；总控亲跑 10+24+14=**48** / 邻域 **245** / 真机 97 篇语料命中排除 **0** + 自下 1 刀（标题标点逃逸 ⇒ 比率 0.5→0.6471 标定当场红，逐字节还原）。**判据④ 的可复跑性由 R72 修复** | 12:45 |
+| `Halley` | R67 首棒（上游报错即死，rollout 未成档） | R67（**第一棒**） | `be-leg2` | **中断（`Unsupported model: qwen3.8`）**：死前只落下第一个用例文件，总控 `69f1ca9` 保活提交保住 ⇒ 原样接续给 `Herschel` | 13:03 |
+| `Herschel` | `01a0b2e3-8f62-7c70-b4f1-40a6f5251a65` | **R67** `/open/approval/preview` 不再采信调用方自报 | `be-leg2`（分支 `codex/be-r67`） | **已结案**：子提交 `8b41961`→`60a2b70` 并入主树 **`571ffd7`**；总控追平后亲跑 **23** / 邻域 9 文件 **98 passed** 与自述逐字吻合 + 自下 1 刀（把 `_open_standard_source` 缺省 AUTO→EXPLICIT ⇒ 恰好红「什么都没要求要和知识库比」那一条，逐字节还原 sha `3ABB2EA3…6108`） | 13:32 |
+| `Curie` | `01a0b2ad-ef0d-7cf2-8951-d23ed93b909e` | **R58** Chroma ⇄ PGVector 同事务双写镜像 | `be-r27t`（分支 `codex/be-r58` @ `571ffd7`） | **已结案**：`370a9e7`(a) + `79a8c8e` + 保活 `537c0db` + `a896cf6`(b–e) + 总控代改 `19d5811` ⇒ 并入主树 **`5ae7e45`**；总控追平后亲跑 **21** / 邻域 15 文件 **176** / **全量 1580 passed · 35 skipped · 0 failed** + 自下 **5 刀**（其中 1 刀首跑 0 红 ⇒ 暴露「读不出旧向量」这条 fail-closed **零覆盖**，总控补 3 条承重用例后 2 红）。真机三件转业主（H12→migrate→备份演练+双读差异表） | 13:48 |
+| `Planck` | `01a0b2e1-e65f-7793-af4e-65502ec295cc` | **R42** 快慢双道判别器 | `be-r34`（分支 `codex/be-r42` @ `50aff1a`，**独占**） | **运行中**：12:58 裸投；13:2x 交第一版（65 命中 / 61.90%）；**13:44 总控当场改判 ③ 并新加 ⑤⑥ 两道硬门**（跟进单 §27.2 与 H15）；13:53 实测已按 ⑤ 新建 `tests/test_r42_numeric_questions.py` 正在复跑。写域 `orchestrator.py`/`nodes.py` **未出域 ⇒ R31/R32/R33/R38 全串行等待** | 13:53 |
+| `Chandrasekhar` | `01a0b302-0a9e-7491-b3c1-e409fe93c814` | **R71** `/open` 身份与部门归属收敛 | `be-leg2`（分支 `codex/be-r67` @ `60a2b70`，**独占**） | **运行中**：13:34:10 投。13:53 实测已落 `app/common/open_platform.py` + `app/api/v1/open_platform.py` + 新 `tests/test_r71_open_department_convergence.py`。硬约束：**禁改签名基串 `{app_id}.{timestamp}.{body}`**；空 allowed_departments = 无部门 ⇒ 沿用 R17 fail-closed | 13:53 |
+| `Wegener` | `01a0b302-8d69-7af2-a872-68034b42d285` | R71（**重复体**） | 与 `Chandrasekhar` 同为 `be-leg2` | **本班 13:36:5x 关停**（**事故 #23，同类第十次**：一个 block 内连发两次 `spawn_agent` 且同树）；关停前实测 `be-leg2 status --porcelain --untracked-files=all` **为空 = 零落盘** ⇒ 无产物损失、无交叉写脏 | 13:36:50 |
+| `Tesla` | `01a0b311-9ebd-7cf3-90ce-7dd04c8cf17a` | **R44** 热集进程内检索索引 | `be-r37`（新建分支 `codex/be-r46` @ **`5ae7e45`**，**独占**） | **运行中**：13:51:11 投（返回 `Missing required argument: message` 是**假报错**；按硬规矩先查 rollout 确认唯一落地，**未补投**）。写域 `app/rag/hot_index.py`(新)/`retriever.py`/`retrieval_pipeline.py`；硬门 = **pre-filter 必须先于热集**、热集条目必须带 scope/index 版本、关闭时行为逐条一致、**禁碰 `migrations/**`（0011 留给 R49 入库列）** | 13:51 |
+| `总控亲做` | —— | **R70** 宿主 `.env` 测试期隔离 | 主树直改 | **已结案** `c2c7dad`：5 个模块 import 期 `load_dotenv()` 把真机模型名灌进「擦干净环境」的用例 ⇒ 全天「某条红只在主树存在」的总根源；`tests/conftest.py` 换只记账桩 + 3 条守卫 | 13:28 |
+| `总控亲做` | —— | **R68** 测试污染泄漏（套件顺序地雷） | 主树直改 | **已结案** `e33727e`：`test_offline_runtime_fallbacks.py` 开头 `clear()`、结尾不还原 ⇒ 漏红 `test_deployment_guards.py:494`；守卫是**被测语义本身不许放宽** ⇒ 修泄漏方，autouse 快照/还原 **5 个**进程内存储，三向复跑 38+38+50 | 13:28 |
+| `总控亲做` | —— | **R72** R49 标定改用版本化清单 | 主树直改 | **已结案** `f396866`：`documents/` **双用目录**（兼上传落地区），iterdir 把 `.zip` 顶进 `load_document` ⇒ 主树 7 条用例当场 ERROR 而子树全绿；改 `git ls-files -z`，修后 97 篇 / 排除 0 / 10 passed 与原值一致。**撞出 H16** | 13:28 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -1930,3 +1942,30 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 - 主树 HEAD 链：`85ada61`(R22) → `8585315`(R40) → `006c613`(R47) → `f972d3c`(R21) → `cac751b`(R66 立案) → `cc50e05`(R66 并树) → `b6e951f`(R66 结案账)。
 - **全量基线仍欠一次刷新**：看板在用的 334 passed / 12 skipped 是 R22 之前的数，R22 +40、R40 +25、R47 +22、R21 +46 例已落地（R66 不新增用例）。收工前必须跑一次全量并回填本行。
 - 主树脏项全部属业主侧：`chroma_db/**`（**本班已核实不是我跑测试写的** —— 主树 `chroma.sqlite3` mtime 停在 09-17 16:35:42，`tests/conftest.py:304` 把 Chroma 沙箱化到 `%TEMP%`）、根目录 0 字节看板副本、`bundle.js`、`idx.html`、`docs/screenshots/`、`frontend/node_modules.stub/`，加总控自己的三个临时脚本 `_board_4al_a.py`/`_reg64_65.py`/`_board_4al7.py`（删除属业主专属，已列入待清清单）。
+
+---
+## 4AN 本班（09-18 12:2x–13:5x，总控第十班）：R30/R49/R58 三单并树 · R67 结案 · **全量首次零红 1580/35/0** · R42 判据当场改判 · 🔴事故 #23（同类第十次）· 新立 R73–R77
+### 4AN.1 主树链（全部总控代提交 / 代并树，逐路径显式列，禁 `git add -A`）
+`b6e951f`(上班末) → `cac751b`/`cc50e05`/见 §4AM → **`704b7f2`** R21 自纠（全量抓到 1 红）→ **`c26afda`** R49 并树 → `370a9e7`/`79a8c8e`/`120d05b` R58 期间 → **`50aff1a`** R30 并树 → `d8b31f0`/`69f1ca9` R67 保活 → `537c0db` R58 保活 → **`c2c7dad` R70（总控亲做）** → **`e33727e` R68（总控亲做）** → **`f396866` R72（总控亲做）** → `8b41961`/`60a2b70` → **`571ffd7`** R67 并树 → `a896cf6`/`67a9a99`/`19d5811` → **`5ae7e45`** R58 并树。
+### 4AN.2 基线刷新（**写死，下班别再照抄上班的数**）
+- `[实测]` 全量 `@5ae7e45`（主树 venv + `LOCAL_MODEL_NAME=__eb_test_disabled__`，46.99s）：**1580 passed / 35 skipped / 0 failed / 0 error**。
+- 上班在用的 `1371/35/1红`、§4AM.4 的「基线仍欠一次刷新」、更早的 `334/12` ⇒ **一律以本行为准**。
+- 主树脏项全部业主侧未动：`chroma_db/**`（`M`）、根 0 字节看板副本、`_board_4al_a.py`/`_reg64_65.py`/`_board_4al7.py`、`bundle.js`、`idx.html`、`docs/screenshots/`、`frontend/node_modules.stub/`。
+### 4AN.3 三条腿与文件冲突图（**本班实测状态**）
+- **腿③ rag-api 簇**：`retriever.py` 随 R58 出域 ⇒ 现由 **Tesla(R44)** 独占；`retrieval_pipeline.py` 同单借走；`chat.py` 空闲；`orchestrator.py`/`nodes.py`/`contracts.py` 由 **Planck(R42)** 占住未出域 ⇒ **R31/R32/R33/R38 全串行等待**；`open_platform.py`（common + v1 两处）由 **Chandrasekhar(R71)** 占住 ⇒ **R75 等它结案**。
+- **迁移编号**：末号 **0010**（R58 pgvector）。R49 的 `index_status/index_reason` 若入库必须用 **0011**，且必须同步改 `tests/test_document_catalog_sync.py:123` 的尾号引信（本班已按该用例自身要求把 0009→0010，写域在 Curie 之外，`19d5811` 披露）。
+- **质量欠账现状**：评测集无出处 **29**（A12/C16，**不是 55**）；A 桶 3 组金标与语料互相矛盾**待业裁**（§25.2）；真机跑分前还需 ①重建索引 ②H11 ③H12。
+### 4AN.4 机器层新增教训（累计 +4）
+1. **`~/.codex/config.toml` = `model_provider="bailian"` / `qwen3.8-flash`**：子 Agent 间歇死于上游 `Unsupported model: 'qwen3.8'` / 429。**抗崩溃派工令有效**（简报第 0 条：5 分钟内先落第一个文件、每落一个停一次）。本班 `Halley` 死于此，靠保活提交救回。
+2. **`git ls-files` 默认把非 ASCII 名八进制转义并加引号** ⇒ 中文语料名必须 `-z` 再按 NUL 切分（R72 实测 95 个中文名）。
+3. **`spawn_agent` 假报错稳定复现**（本班两次：R71 建成却报 `does not exists`、R44 建成却报 `Missing required argument: message`）。**处置只有一种：先查 rollout，绝不补投**。事故 #23 恰恰是「没等回执就连发第二个 block」。
+4. **执行层的「邻域全绿」不构成回归证据**：R58 自述 10 文件 182 passed 全绿，而全量 1 红（尾号引信不在邻域里）。⇒ **结案复跑清单必须含一次全量**（R21 的 `704b7f2` 是同一条教训第二次付学费：结案时 235 passed 未含 `test_deployment_guards`）。
+5. **只有全量能抓到的红，多半是「写域之外那条主动改口义务」**：R58 与 R21 两次的红都在测试文件里，且都是「谁加了新东西谁必须来改我」的引信。⇒ 以后凡是加迁移/加速层，简报里必须点名那条引信（已写进 R44 简报禁写域与 R49 入库列备注）。
+### 4AN.5 在途三单当前写权图
+| 单 | Agent | 树 | 已落盘（实测） | 结案前必须满足 |
+|---|---|---|---|---|
+| R42 | Planck | `be-r34` | `M nodes.py`、`M orchestrator.py`、`?? tests/test_r42_*`（5 个，含按 ⑤ 新建的 `numeric_questions`） | ⑤⑥ 两道新门 + 混淆矩阵原样打印；`r36q/` 不入库 |
+| R71 | Chandrasekhar | `be-leg2` | `M common/open_platform.py`、`M api/v1/open_platform.py`、`?? tests/test_r71_open_department_convergence.py` | 签名基串一字未改（用既有签名用例反证）；`/insights`、`/dashboard/summary` 同形洞一起收 |
+| R44 | Tesla | `be-r37` | 刚起步 | 判据①–⑧；**pre-filter 先于热集**为不可放宽硬门；不碰 `migrations/**` |
+### 4AN.6 待业主（**一条都不代做**，全清单见跟进单 §27 与 H15/H16）
+H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13（密级缺省口径）· H14（新语料被 `.gitignore` 挡）· **H15（本班两笔总控改判，可一句话驳回）** · **H16（`documents/` 双用：原建议「甲」作废，改推「丙」）** · R61 甲/乙与 R63 归一化 · A 桶 3 组金标矛盾裁决 · `git push`（**H6：`codex/data-file-catalog` 至今从未 push，本机是唯一副本**）· 删各树垃圾 · R58 真机三件（migrate / 备份演练 / 双读差异表）+ 重建索引 + 105 题真机基线。
