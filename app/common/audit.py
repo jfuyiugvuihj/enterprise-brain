@@ -15,6 +15,14 @@ Degradation is explicit rather than silent:
 ``AUDIT_PERSISTENCE=disabled`` or an unreachable configured backend therefore reports a
 degraded audit journal instead of pretending that events were stored durably, so a
 production deployment without a reachable database is honest about the difference.
+
+Replay order is carried by the stamp, not by luck. The merge in ``_hydrate_view_locked`` sorts
+by ``(created_at, event_id)``, while ``created_at`` came from a wall clock that only moves in
+~1 ms steps on Windows, so two events written inside one tick came back in whichever order
+their random ids happened to sort. ``_allocate_timestamp_locked`` now hands out strictly
+increasing stamps inside the journal lock, seeded on hydrate from the newest record already
+written. That covers one writing process and no more: worker processes share no allocator, so
+a same-tick pair written by two of them is still ordered by ``event_id``.
 """
 from __future__ import annotations
 
@@ -40,6 +48,9 @@ MAX_SUMMARY_FIELDS = 12
 MAX_SUMMARY_DEPTH = 3
 MAX_VIEW_EVENTS = 20000
 MEMORY_ONLY = "memory_only"
+#: Smallest gap the allocator can put between two events. TIMESTAMPTZ and the ISO text the
+#: JSON journal stores both keep a microsecond, so a lift of this size survives storage.
+_STAMP_STEP = timedelta(microseconds=1)
 
 _SCOPE_KEYS = (
     "resource_type",
@@ -64,6 +75,8 @@ _storage: dict[str, Any] = {}
 _storage_ready = False
 _view_ready = False
 _error_counts: dict[str, int] = {}
+#: Newest stamp this process has handed out; guarded by ``_lock`` like the view itself.
+_last_issued_at: datetime | None = None
 
 
 class AuditPersistenceError(RuntimeError):
@@ -186,6 +199,45 @@ def _parse_iso(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _allocate_timestamp_locked() -> datetime:
+    """Issue the next event timestamp; the caller holds ``_lock``.
+
+    ``datetime.now`` is coarse, so two back-to-back events can read the same instant, and the
+    ``(created_at, event_id)`` merge in ``_hydrate_view_locked`` would then replay them in
+    whichever order random ids come out in. A reading that is not newer than the last one
+    issued is lifted by one microsecond instead, which covers both ways that happens: a clock
+    that has not ticked yet, and a clock that has stepped backwards.
+
+    This allocator is process-local and there is no shared form of it. Two worker processes can
+    still write the same tick, and their relative order is still decided by ``event_id``;
+    closing that needs a sequence the storage itself hands out, which the audit schema does not
+    have. Order is guaranteed here, wall-clock accuracy is not: after seeding, stamps can run
+    ahead of a clock that is behind its own journal history.
+    """
+    global _last_issued_at
+    now = datetime.now(timezone.utc)
+    previous = _last_issued_at
+    if previous is not None and now <= previous:
+        now = previous + _STAMP_STEP
+    _last_issued_at = now
+    return now
+
+
+def _seed_timestamp_floor_locked(events: list[dict[str, Any]]) -> None:
+    """Raise the allocator floor to the newest stamp the journal already holds.
+
+    Hydrating calls this so a process that starts inside the tick its predecessor was still
+    writing cannot hand out a stamp that sorts before a record already on disk.
+    """
+    global _last_issued_at
+    newest = _last_issued_at
+    for event in events:
+        stamp = _parse_iso(event.get("created_at"))
+        if stamp is not None and (newest is None or stamp > newest):
+            newest = stamp
+    _last_issued_at = newest
 
 
 def _resolve_retention_days(explicit: int | None) -> int:
@@ -425,6 +477,7 @@ def _hydrate_view_locked(force: bool) -> int:
         [*loaded, *retained],
         key=lambda event: (str(event.get("created_at") or ""), str(event.get("event_id") or "")),
     )
+    _seed_timestamp_floor_locked(merged)
     _events[:] = merged[-MAX_VIEW_EVENTS:]
     _view_ready = True
     _storage["view_complete"] = True
@@ -476,7 +529,6 @@ def record_audit(
     The five positional parameters keep the historical signature so every existing
     call site remains valid. The keyword parameters are optional additions.
     """
-    now = datetime.now(timezone.utc)
     resolved_retention = _resolve_retention_days(retention_days)
     scope_projection, scope_source = _project_scope(resource_scope, resource)
     version, version_source = _resolve_policy_version(policy_version)
@@ -484,8 +536,8 @@ def record_audit(
     departments.update(str(value) for value in (getattr(principal, "department_ids", None) or []))
     event: dict[str, Any] = {
         "event_id": f"aud-{uuid4().hex}",
-        "timestamp": _iso(now),
-        "created_at": _iso(now),
+        "timestamp": "",
+        "created_at": "",
         "username": str(getattr(principal, "username", "") or "anonymous"),
         "role": str(getattr(principal, "role", "") or "unknown"),
         "owner_id": str(getattr(principal, "user_id", "") or ""),
@@ -504,7 +556,7 @@ def record_audit(
         "before_summary": _summarize(before_summary),
         "after_summary": _summarize(after_summary),
         "retention_days": resolved_retention,
-        "expires_at": _iso(now + timedelta(days=resolved_retention)),
+        "expires_at": "",
         "persisted": False,
         "storage_mode": MEMORY_ONLY,
     }
@@ -513,6 +565,12 @@ def record_audit(
         _ensure_storage()
         if not _view_ready:
             _hydrate_view()
+        # The stamp is taken in the same critical section that appends the event, so the order
+        # the journal replays cannot disagree with the order the events were issued in.
+        issued_at = _allocate_timestamp_locked()
+        event["timestamp"] = _iso(issued_at)
+        event["created_at"] = _iso(issued_at)
+        event["expires_at"] = _iso(issued_at + timedelta(days=resolved_retention))
         _events.append(event)
         if len(_events) > MAX_VIEW_EVENTS:
             del _events[: len(_events) - MAX_VIEW_EVENTS]
