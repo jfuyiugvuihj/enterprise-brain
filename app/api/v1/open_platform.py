@@ -3,9 +3,18 @@
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from app.approval.assistant import build_precheck
+from app.approval.assistant import (
+    STANDARD_SOURCES,
+    STANDARD_SOURCE_AUTO,
+    build_precheck,
+    match_expense_type,
+    precheck_payload,
+    resolve_standard_from_knowledge_base,
+    to_decimal,
+)
 from app.common.audit import record_audit
-from app.common.authorization import authorize_request, principal_from_request
+from app.common.authorization import authorize_request, principal_from_request, verify_department_self_report
+from app.common.logger import logger
 from app.common.monitoring import ProductionReadOnlyProtection
 from app.common.open_platform import (
     app_registry_storage_state,
@@ -13,7 +22,7 @@ from app.common.open_platform import (
     register_application,
     verify_open_request,
 )
-from app.common.permissions import ACTION_MANAGE_USERS
+from app.common.permissions import ACTION_MANAGE_USERS, ACTION_VIEW
 from app.dashboard.service import build_dashboard
 from app.insights.rules import detect_insights
 from app.quality.provenance import build_answer_provenance
@@ -37,11 +46,21 @@ class AnalyzeRequest(BaseModel):
 
 
 class ApprovalPreviewRequest(BaseModel):
+    """One expense pre-check asked for by a signed application.
+
+    The two fields R40 refuses to take on trust are not inputs here: ``department`` is
+    optional and never ends up as the label on the answer, and ``standard`` is only read
+    when the caller asks for ``explicit`` and states where the figure came from. Left
+    unsaid, ``standard_source`` is ``auto_from_knowledge_base`` -- an application that
+    bothers to sign a request is not one this server presumes has a policy number handy.
+    """
+
     amount: float
-    standard: float
-    department: str
+    standard: float | None = None
+    department: str = ""
     expense_type: str
     evidence: list[str] = []
+    standard_source: str = STANDARD_SOURCE_AUTO
 
 
 class ProvenanceRequest(BaseModel):
@@ -53,6 +72,30 @@ async def _load_json_body(request: Request) -> dict:
     if not raw:
         return {}
     return json.loads(raw.decode("utf-8"))
+
+
+def _open_standard_source(value) -> str:
+    """Resolve where this preview may get its standard, refusing a spelling that is not the contract.
+
+    One vocabulary with the session transport -- the same ``STANDARD_SOURCES`` and the
+    same ``invalid_standard_source`` code -- and one deliberate difference: silence means
+    ``auto_from_knowledge_base`` here. The session route keeps ``explicit`` as its silent
+    default only because clients written before that field existed send a number and
+    expect it used; an open-platform application has no such history, so a body number
+    that was never asked for is a caller bug, not a policy.
+    """
+    requested = str(value or "").strip().lower()
+    if not requested:
+        return STANDARD_SOURCE_AUTO
+    if requested not in STANDARD_SOURCES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_standard_source",
+                "message": "standard_source must be explicit or auto_from_knowledge_base",
+            },
+        )
+    return requested
 
 
 @router.post("/query")
@@ -99,17 +142,78 @@ async def open_insights(request: Request):
 
 @router.post("/approval/preview")
 async def open_approval_preview(request: Request):
+    """Pre-check one expense for a signed application without letting that application state the terms.
+
+    The signature says which application is asking and which action it was granted; it
+    says nothing about whose department a conclusion belongs to or what the policy limit
+    is. Both of those were taken from the body, so one ``approval`` token could file a
+    conclusion against any department and grade it against a number of its own invention
+    -- with provenance it wrote itself. Now the department resolves through the same
+    ``verify_department_self_report`` the session transport uses, and the standard is
+    retrieved unless the caller asks for ``explicit`` and names its origin.
+    """
     body = await request.body()
     body_text = body.decode("utf-8") if body else "{}"
-    verify_open_request(dict(request.headers), body_text, required_action="approval")
+    principal, _record = verify_open_request(dict(request.headers), body_text, required_action="approval")
     data = json.loads(body_text or "{}")
-    return build_precheck(
-        data.get("amount", 0),
-        data.get("standard", 0),
-        data.get("department", ""),
-        data.get("expense_type", ""),
-        data.get("evidence", []),
+    department = verify_department_self_report(
+        principal,
+        str(data.get("department") or ""),
+        action=ACTION_VIEW,
+        resource_name="open_approval_preview",
     )
+    requested_source = _open_standard_source(data.get("standard_source"))
+    expense_type = str(data.get("expense_type") or "")
+
+    standard = data.get("standard")
+    evidence = data.get("evidence") or []
+    standard_evidence: list[str] = []
+    if requested_source == STANDARD_SOURCE_AUTO:
+        # Retrieved or nothing: both the figure and its provenance are overwritten from
+        # the search result, so a number still sitting in the body is not a fallback and
+        # an index that cannot be asked answers 503 rather than continuing with a guess.
+        try:
+            resolved = resolve_standard_from_knowledge_base(expense_type, principal)
+        except Exception as exc:
+            logger.warning(f"[OpenPlatform] approval standard retrieval failed: {type(exc).__name__}: {exc}")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "retrieval_unavailable",
+                    "message": "the policy standard could not be retrieved",
+                },
+            ) from exc
+        standard = resolved["standard"]
+        evidence = standard_evidence = resolved["evidence"]
+    elif not [item for item in evidence if str(item).strip()]:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "validation_error",
+                "message": "standard_source=explicit requires evidence naming where the standard comes from",
+            },
+        )
+
+    try:
+        result = build_precheck(
+            to_decimal(data.get("amount"), field="amount"),
+            None if standard is None else to_decimal(standard, field="standard"),
+            department,
+            expense_type,
+            evidence,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail={"code": "validation_error", "message": str(exc)}
+        ) from exc
+
+    payload = precheck_payload(result, requested_by=str(principal.user_id))
+    payload["standard_source"] = requested_source
+    # Provenance this server verified, never the caller's own text: the list stays empty
+    # in explicit mode because no retrieved passage stood behind that number.
+    payload["standard_evidence"] = standard_evidence
+    payload["matched_expense_type"] = match_expense_type(expense_type)
+    return payload
 
 
 @router.get("/dashboard/summary")
