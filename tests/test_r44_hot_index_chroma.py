@@ -312,9 +312,11 @@ def test_reupload_same_name_replaces_the_resident_vector(harness):
     harness.add("policy.txt", "旧版本：住宿费上限300元", vector=_unit(0, dim, 1.0))
     harness.on()
     harness.search("query", k=1)
-    assert harness.index._entries["policy.txt_0"].vector == (1.0,) + (0.0,) * (dim - 1)
+    #: R79 判据③把常驻向量下沉成 float32 缓冲（array('f')）。这两行原来比的是容器本身，
+    #: 用例意图钉的是"驻的是哪一份向量"，所以按元素比，意图一字未改。
+    assert list(harness.index._entries["policy.txt_0"].vector) == [1.0] + [0.0] * (dim - 1)
     harness.add("policy.txt", "新版本：住宿费上限900元", vector=_unit(1, dim, 1.0))
-    assert harness.index._entries["policy.txt_0"].vector == (0.0, 1.0) + (0.0,) * (dim - 2)
+    assert list(harness.index._entries["policy.txt_0"].vector) == [0.0, 1.0] + [0.0] * (dim - 2)
     hits, _ = harness.search("query", k=1)
     assert "900" in hits[0]["content"], hits
     external, _ = harness.search("query", k=1, hot=False)
