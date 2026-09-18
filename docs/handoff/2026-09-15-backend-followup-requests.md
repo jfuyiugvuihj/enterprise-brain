@@ -1158,3 +1158,24 @@ PROBE index reached = 0
 - ⑦ 不改出厂默认：本单**只加互斥**，不改 `PERSISTENCE_BACKEND=json`，也不在本单里劝迁 Postgres（那是 R59/R60 的退役路线，别混做）。
 
 **给执行层的提醒**：交工必须自带①的红→绿两份输出（命令 + passed/failed 数 + 时点），并列出你实际套锁的位置行号与超时取值。回报里若出现"应该不会再丢了"这类无实测措辞，退回。
+
+### 31.3 🔴 新立 R87 详细判据（可离线派，前置无；写域 `tests/test_r51_observation_is_passive.py`）
+
+- **缺陷（本班实测坐实，双向）**：`tests/test_r51_observation_is_passive.py:520` 的用例 `:525` 跑 `git diff --name-only HEAD`（工作树 vs HEAD），`:534` forbidden 前缀含 `("pyproject.toml","uv.lock","migrations/","frontend/","app/rag/","docs/","tests/conftest.py")`，`:535` 断言差分里没有一个路径命中前缀。
+  - **过界（假红）**：它审计的是**整个工作树的未提交态**，不是 R51 自己的改动 ⇒ 任何别的工单未提交地改 `app/rag/**` 或 `docs/**`，R51 这条就红。R79 实测命中一次（回执申报 `1 failed`，总控提交后复跑自绿，两数都对上）。**副作用**：把"跑全量前必须先提交"变成隐式硬约束，总控只要看板未提交跑全量就红——这个坑第十三班到本班都踩过，不该靠记性绕。
+  - **漏防（假绿）**：`git diff` 不覆盖未跟踪文件。本班在主树实取：`docs/` 下**现有 21 个未跟踪文件**（`docs/screenshots/**`），而 `git diff --name-only HEAD` 只报出 `chroma_db/**` 6 项，**一个 docs 路径都没有** ⇒ "不许往 docs/ 加东西"这句自缚**从未生效过**。
+- **判据**：
+  - ① 审计范围改为**本工单自己的提交集**：以分支点为基线（`git merge-base HEAD <主干>` 求 base，再 `git diff --name-only $base HEAD`）。⇒ 在**主树**上（base 即 HEAD）该用例应**恒绿**；在**工单分支**上应能**咬住**本单自己引入的越界路径。
+  - ② 未跟踪文件必须**纳入可见**：另加 `git ls-files --others --exclude-standard`（不许用 `--no-*` 绕过 `.gitignore` 语义，也不许把 `-uall` 的目录展开当成新规则）。
+  - ③ **两个方向各一条用例**：假红方向（存在**别的工单**的未提交 forbidden 路径改动 ⇒ 本用例必须绿）、假绿方向（本单自己**新增**一个未跟踪的 `docs/` 或 `app/rag/` 文件 ⇒ 必须红）。🔴 探针一律落 `%TEMP%` 或 `tmp_path`，不许往仓库真放文件。
+  - ④ 🔴 **不许直接删掉这条用例**、不许给它加 `skip`、不许把 forbidden 前缀清空来"解决"假红——那是把守卫拆了当修好。缩范围只能按①②的语义缩（范围=本单提交集，可见面=含未跟踪）。
+  - ⑤ 零回归：`migrations/`、`frontend/`、`pyproject.toml`、`uv.lock`、`tests/conftest.py` 五个前缀的**约束强度不得下降**（这三样是 R51 交工时真被验收过的边界）；`app/rag/`、`docs/` 两条**保留在表里**，只是改由①②正确的作用域去判。既有用例 `:520` 的函数名与语义若变，需在回执里点名并给反证。
+  - ⑥ 基线：主树全量当前为 **2084 passed / 35 skipped / 0 failed**（`c4ebfb5` 实测，主树 `20cc109` 同树恒等），你的改动**净增用例数必须逐条对得上**，不许出现"少了几条也全绿"。
+- **为什么派单不总控亲做**：它要新增用例与两向反证，属测试卫生之外还带行为定义；且本班并发已满 3（事故 #22）。槽位一空即派。
+
+### 31.4 🔴 新立 R88（**待业主放行**，R83 Newton 建议 + 本班复核）：审计回放要跨进程有序，必须让**存储发号**
+
+- 边界（先把话说清，免得下班以为 R83 没修完）：**R83 已达标**——单进程内"回放顺序＝写入顺序"由分配器保证，跨进程那一档 Newton 已按判据⑦如实写进 `app/common/audit.py:212-216` 与测试文件 docstring，**不是遗漏，是本单范围外的下一层**。本班另核一处同形缺陷：`app/storage/persistence.py:401` 的 `PostgresPersistenceAdapter.list()` 是 `ORDER BY created_at DESC`，**没有第二排序键** ⇒ PG 侧同 tick 仍不确定。
+- 修法：`audit_events` 增存储侧单调 `seq`（BIGSERIAL / 独立 SEQUENCE），写入即发号；读回排序键改 `(created_at, seq)`（PG）与 JSON 侧等价的追加序；两处排序必须同一口径。
+- 🔴 为什么先裁后派：① 要动 `migrations/**` ⇒ 私有化部署要在客户机跑迁移，出问题回滚代价在业主侧；② 要改列集合钉子 `tests/test_audit_persistence.py:643-656`（业主写下的断言一族，按 H15 口径改它要先报备）；③ 发布节奏与 H12（重建镜像 + `docker compose build migrate`）撞在同一次变更里更划算。
+- 若批准，判据我会按 §31.2 的规格写全（含"迁移必须向前兼容旧行：`seq` 回填不得改变既存事件的相对顺序"与"回滚脚本"两条硬要求）。
