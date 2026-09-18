@@ -346,6 +346,35 @@ class OllamaEmbeddings:
         return self._call_api(text)
 
 
+# ==================== 元数据过滤匹配（全库唯一一份） ====================
+
+def metadata_matches(metadata, where) -> bool:
+    """一条 chunk 的元数据是否满足向量库的 where 子句。
+
+    原先这份判定长在离线 _JsonCollection 里，只有降级态用得到。R44 的热集要在进程内回答同
+    一个问题（"没常驻的那条 chunk 会不会被向量库召回"），两边各抄一份迟早分叉，所以抽成模块
+    级函数，离线态与热集共用，判定逻辑一个字都没改。
+    """
+    metadata = metadata or {}
+    if not where:
+        return True
+    if "$and" in where:
+        return all(metadata_matches(metadata, item) for item in where["$and"])
+    if "$or" in where:
+        return any(metadata_matches(metadata, item) for item in where["$or"])
+    for key, condition in where.items():
+        value = metadata.get(key)
+        if isinstance(condition, dict) and "$in" in condition:
+            if value not in condition["$in"]:
+                return False
+        elif isinstance(condition, dict) and "$eq" in condition:
+            if value != condition["$eq"]:
+                return False
+        elif value != condition:
+            return False
+    return True
+
+
 # ==================== 文档检索器 ====================
 
 class DocumentRetriever:
@@ -386,23 +415,8 @@ class DocumentRetriever:
 
                 @staticmethod
                 def _matches(metadata, where):
-                    if not where:
-                        return True
-                    if "$and" in where:
-                        return all(_JsonCollection._matches(metadata, item) for item in where["$and"])
-                    if "$or" in where:
-                        return any(_JsonCollection._matches(metadata, item) for item in where["$or"])
-                    for key, condition in where.items():
-                        value = metadata.get(key)
-                        if isinstance(condition, dict) and "$in" in condition:
-                            if value not in condition["$in"]:
-                                return False
-                        elif isinstance(condition, dict) and "$eq" in condition:
-                            if value != condition["$eq"]:
-                                return False
-                        elif value != condition:
-                            return False
-                    return True
+                    # R44：判定本体已抽到模块级 metadata_matches，离线态与热集共用一份。
+                    return metadata_matches(metadata, where)
 
                 def get(self, where=None):
                     records = [
@@ -519,6 +533,147 @@ class DocumentRetriever:
         """
         return (getattr(self.embedding, "last_error", None) or {}).get("reason", "")
 
+    # ==================== R44 热集钩子（默认关；一层可丢弃的加速缓存，不是第二事实源） ====================
+
+    def _hot_scope_key(self) -> tuple:
+        """本次读写所属的索引口径：backend + 模型 + 维度（R22 的同一个口径源）。
+
+        app.rag.hot_index 一律在函数内 import：它反过来要用本模块的 metadata_matches，模块级
+        互引会成循环 import —— 与 R58 的 _open_vector_mirror 同一个处理方式。
+        """
+        from app.rag import hot_index
+
+        return hot_index.current_scope_key()
+
+    def _note_hot_write(self, ids, documents, metadatas, embeddings) -> None:
+        """向量已经落库之后被告知一次热集（判据④的失效来源）。开关关闭时直接返回。"""
+        if not ids:
+            return
+        from app.rag import hot_index
+
+        if not hot_index.hot_index_enabled():
+            return
+        hot_index.get_hot_index().note_write(
+            ids=ids, documents=documents, metadatas=metadatas,
+            embeddings=embeddings, scope_key=self._hot_scope_key(),
+        )
+
+    def _note_hot_delete(self, ids) -> None:
+        """文档删除、同名重传的删旧：热集对应条目必须跟着走（判据④）。"""
+        if not ids:
+            return
+        from app.rag import hot_index
+
+        if not hot_index.hot_index_enabled():
+            return
+        hot_index.get_hot_index().note_delete(ids, scope_key=self._hot_scope_key())
+
+    def _note_hot_reset(self, reason: str) -> None:
+        """双写补偿回滚之后整体作废：库里被逆序放回了旧向量，内存那本账就不敢再信。"""
+        from app.rag import hot_index
+
+        if not hot_index.hot_index_enabled():
+            return
+        hot_index.get_hot_index().reset(reason=reason)
+
+    def _warm_hot_index(self, index, scope_key: tuple) -> str:
+        """读一次向量库，把花名册与常驻子集建起来。返回空串表示建成，否则是原因码。
+
+        只读不写，而且一次 embedding 都不多发：读回来的向量就是库里那一份。花名册一次
+        get(ids+metadatas)，热子集再一次带 embeddings 的 get，且只读预算内的那批 —— 语料超出
+        内存预算时宁可整体不用，也不返回一个"少了冷条目"的结果集。
+        """
+        from app.rag import hot_index
+
+        if not self.stores_vectors:
+            return hot_index.REASON_NO_VECTORS
+        try:
+            roster = self.collection.get(include=["metadatas"]) or {}
+        except Exception as exc:
+            logger.warning(f"热集读不到向量库花名册，本次退回外部检索: {exc}")
+            return hot_index.REASON_COLD
+        ids = [str(item) for item in (roster.get("ids") or [])]
+        roster_metadatas = list(roster.get("metadatas") or [])
+        cold_metadata = {
+            chunk_id: (roster_metadatas[position]
+                       if position < len(roster_metadatas) and roster_metadatas[position] else {})
+            for position, chunk_id in enumerate(ids)
+        }
+        budget = index.max_chunks
+        hot_ids = ids[-budget:] if len(ids) > budget else list(ids)
+        resident = {}
+        if hot_ids:
+            try:
+                loaded = self.collection.get(
+                    ids=hot_ids, include=["documents", "metadatas", "embeddings"]) or {}
+            except Exception as exc:
+                logger.warning(f"热集读不到向量，本次退回外部检索: {exc}")
+                return hot_index.REASON_COLD
+            loaded_ids = [str(item) for item in (loaded.get("ids") or [])]
+            documents = list(loaded.get("documents") or [])
+            metadatas = list(loaded.get("metadatas") or [])
+            embeddings = loaded.get("embeddings")
+            for position, chunk_id in enumerate(loaded_ids):
+                vector = (embeddings[position]
+                          if embeddings is not None and position < len(embeddings) else None)
+                resident[chunk_id] = (
+                    documents[position] if position < len(documents) else None,
+                    metadatas[position] if position < len(metadatas) else None,
+                    list(vector) if vector is not None else None,
+                )
+        rows = []
+        for chunk_id in ids:
+            if chunk_id in resident:
+                document, metadata, vector = resident[chunk_id]
+                rows.append((chunk_id, document,
+                             metadata if metadata else (cold_metadata.get(chunk_id) or {}),
+                             vector))
+            else:
+                rows.append((chunk_id, None, cold_metadata.get(chunk_id) or {}, None))
+        index.populate(rows, scope_key=scope_key)
+        return ""
+
+    def _hot_hits(self, query_embedding, k: int, where: dict | None, pred):
+        """热集那一腿：能服务就交回命中字典，不能服务返回 None，调用方原路走外部向量库。
+
+        pre-filter 在这里、并且只在截断之前生效（判据③）：命中的字典仍由 _hit_dicts 生成，与
+        向量腿同一个形状定义，检索模式也仍是 semantic —— 热集命中不是降级，它给的就是语义腿
+        本该给的那份结果。本方法不发任何新日志：日志语义与 R44 之前逐字一致（判据⑤⑥），观测
+        走 hot_index_diagnostics()。
+        """
+        from app.rag import hot_index
+
+        if not hot_index.hot_index_enabled():
+            return None
+        if k <= 0:
+            # k<=0 的既有语义不归本单改，原样交给外部向量库。
+            return None
+        try:
+            index = hot_index.get_hot_index()
+            scope_key = self._hot_scope_key()
+            index.adopt_scope(scope_key)
+            if not index.populated:
+                self._warm_hot_index(index, scope_key)
+            ranked = index.rank(query_embedding, k, where=where, pred=pred,
+                                scope_key=scope_key, stores_vectors=self.stores_vectors)
+        except Exception as exc:
+            # 一层可丢弃的加速缓存不许把检索问出异常：这里整体退回外部向量库，
+            # 结果与不开热集逐条一致，只多一条 warning 与一个稳定原因码（判据⑤的回滚面）。
+            logger.warning(f"热集检索异常，本次退回外部向量库: {exc}")
+            hot_index.note_bypass(hot_index.REASON_ERROR)
+            return None
+        if ranked is None:
+            return None
+        # 热集命中不是降级：检索腿标注与外部向量库那条完全同值（R21 判据④的口径），
+        # 所以这里照样过一遍 _note_search，last_search_mode/reason 不会停在上一问的关键词腿。
+        self._note_search(self.MODE_SEMANTIC, "")
+        return self._hit_dicts(
+            [item[2] for item in ranked],
+            [item[3] for item in ranked],
+            self.MODE_SEMANTIC,
+            "",
+        )
+
     def _write_batch(self, ids, documents, metadatas, embeddings, *, mirror=None):
         """全库唯一允许把向量交给向量库的入口（R21 判据②）。
 
@@ -619,6 +774,8 @@ class DocumentRetriever:
                 )
         except Exception as exc:
             logger.error(f"Chroma 腿补偿回滚未完成，需人工核对双写状态: {exc}")
+        # R44：无论补偿成没成，这次写入都不算数了，热集整体作废，下一次检索重读向量库。
+        self._note_hot_reset("vector_write_rolled_back")
 
     def add_document(self, filename: str, content: str,
                      classification: int = 1, department: str | None = None) -> tuple[bool, str]:
@@ -697,6 +854,8 @@ class DocumentRetriever:
                 self.collection.delete(ids=stale_ids)
                 stale_deleted = True
                 logger.info(f"已删除旧版本: {filename}")
+                # R44：删掉的旧向量在热集里也不能留下（判据④同名重传那一半）。
+                self._note_hot_delete(stale_ids)
 
             batch_size = 2000
             for start, end in self._batch_ranges(len(chunks), batch_size):
@@ -719,6 +878,10 @@ class DocumentRetriever:
         finally:
             if mirror is not None:
                 mirror.close()
+
+        # R44：两腿都写完、mirror 也已 close 之后才告知热集，用的就是刚写进库的那批向量，
+        # 所以热集与库同源，不会再算一遍 embedding。开关关闭时这个调用一个字节都不写。
+        self._note_hot_write(written_ids, chunks, metadatas, embeddings)
 
         logger.info(f"入库完成: {filename} → {len(chunks)} 块")
         return True, f"已添加 {len(chunks)} 个文本块"
@@ -756,12 +919,18 @@ class DocumentRetriever:
             for doc, meta in zip(documents, metadatas)
         ]
 
-    def search(self, query: str, k: int = 5, where: dict | None = None) -> list[dict]:
+    def search(self, query: str, k: int = 5, where: dict | None = None,
+               pred=None) -> list[dict]:
         """语义检索。where 为权限过滤（下推到向量库），None 不过滤
 
         R21：embedding 不可用时不再拿占位零向量去问向量库（那等于问不出任何排序信息，
         却装作问过），而是把这一路退化成关键词召回，并把原因码写进命中与
         last_search_reason。两条腿的权限过滤都发生在截断之前。
+
+        R44：新增的 pred 只被热集那一腿消费（不传就是 None，热集仍按 where 逐条预过滤），
+        外部向量库那条路径的调用序列与本单之前逐字一致。把同一个权限谓词在热集截断之前再过
+        一遍，是因为热集是进程内的本地扫描：它没有"下推"这回事，不显式过滤就会把别人的高分
+        chunk 排进名次里再丢掉，那正是 R45 裁掉的召回饥饿形态。
         """
         if self.stores_vectors:
             try:
@@ -769,6 +938,9 @@ class DocumentRetriever:
             except EmbeddingError as exc:
                 logger.error(f"向量腿下线，本次检索退化为关键词召回: {exc}")
                 return self._keyword_hits(query, k, where, exc.reason)
+            hot_hits = self._hot_hits(query_embedding, k, where, pred)
+            if hot_hits is not None:
+                return hot_hits
             kwargs = {"query_embeddings": [query_embedding], "n_results": k}
             if where:
                 kwargs["where"] = where
@@ -897,6 +1069,8 @@ class DocumentRetriever:
                 mirror.delete(ids=list(existing["ids"]))
             self.collection.delete(ids=existing["ids"])
             stale_deleted = True
+            # R44：文档删除 ⇒ 热集对应条目必须失效（判据④）。
+            self._note_hot_delete(existing["ids"])
             if mirror is not None:
                 mirror.commit()
         except Exception:
