@@ -2307,3 +2307,24 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 🔴 又一份过期清单坐实：`docs/handoff/2026-09-15-frontend-work-checklist.md` 写着 **3 勾 / 62 未勾**，可"4 套鉴权收敛为 1 个 axios 实例 + 删 `DocPanel.vue` 重复拦截器 + 加 401 响应拦截"这条**代码里早已完成**（实取全局 `axios.create` **1** 处，拦截器注册只有 `frontend/src/lib/http.js:98` request 与 `:104` response）⇒ 与计划书 §10 处置 `task_plan.md`/`progress.md` 同性质：**勾选清单不作进度事实源**。
 - **R89（新立，已派）**：2 条红全在 `frontend/src/lib/errcodes.test.js` 的码表对账钉子上——后端 canonical 枚举 **29** 码 vs 前端 `ERROR_CODES` **26** 键，缺 `context_limit_exceeded`、`row_scope_denied`、`no_visible_rows`。该测试用 `git show codex/data-file-catalog:app/agents/contracts.py` 读对象库 ⇒ **不受检出陈旧影响，是真红不是假红**。详细判据、语义锚与 retryable 依据要求见跟进单 **§32.2**。
 - 派工实况：`Noether`（`01a0b454-57a3-76c3-a69e-41bc598e56a1`，与第十四班 R81 那位同号不同人，**按 id 对账**）19:43:41 单投，canary＝rollout 文件已生成 433 KB；写域**只** `frontend/src/lib/errcodes.js`，与在途 `Helmholtz`（`app/storage/persistence.py`）、`Gauss`（`app/api/v1/chat.py`）零相交 ⇒ 并发 3/3 满席。派前已把 `fe-trunk` 由 `deb8ade` **纯快进**到 `de51f1f`（五支全 ahead=0，无冲突、无未提交活儿）。
+## 4AT 本班续（09-18 19:5x–20:0x，总控第十七班）：🟢 **H6 结案（383 提交已双远端）** · 删除清单**预演完成但执行被本机策略拒** · 真机窗口口径
+
+### 4AT.1 🟢 H6 结案（业主授权后本班实做，不再是挂账）
+- 业主 19:5x 明确授权 push ⇒ 本班把 `codex/data-file-catalog` 推到**两个**远端做异地双副本：
+  - `origin`（github `jfuyiugvuihj/enterprise-brain`）：`* [new branch]`，回读 `refs/heads/codex/data-file-catalog = 48167fa0b9228e534ccb6daad482211e41c2d63b` ＝ 本机 HEAD ✓
+  - `gitee`（`fx2006/langchain`）：同样 `* [new branch]`，退出码 0 ✓
+- 只推分支，**未动 `master`**（`origin/master` 仍 `450e5aa`、`gitee/master` 仍 `72c4038`），CI/部署口径由业主另裁。
+- 前置事实：`git ls-remote` 退出 0（凭据可用）；`for-each-ref` 逐支比对确认**没有任何本地分支领先主树**（执行层从不 commit）⇒ 推这一条分支就覆盖了全部已提交工作，383 个提交不再只存于本机。
+- 遗留（同性质但不同层次）：`chroma_db/**` 仍在版本控制里，随着历史推上了公网仓库 ⇒ 是否反跟踪/是否要清史，属业主决定（原口径未变：反跟踪 `chroma_db` 一律业主本人）。
+
+### 4AT.2 删除清单：预演做完了，**刀落不下去**
+- 逐项实取（大小 + 是否被 git 跟踪）：主树根 `2026-09-15-orchestration-board.md` **0 B / untracked**、`be-r20/probe.txt` **0 B / untracked**、`be-r53/app/rag/retrieval_pipeline.py.r57bak` **21 384 B / untracked**、`_board_4al7.py`/`_board_4al_a.py`/`_reg64_65.py`/`bundle.js`(228 KB)/`idx.html`(485 B) 全部 **untracked**；`%TEMP%` 命中 60 项、合计 **287 MB**（`r79scale` 一项就 227 MB）。`fe-trunk/frontend/.vitest` 实测**已不存在**，无需删。
+- 🔴 **执行被拒**：`Remove-Item`（哪怕单条、单文件、带 `-LiteralPath`）一律返回 `rejected: blocked by policy` ⇒ 删除在本环境的沙盒策略层就过不去，与业主授权无关。已把预演结论写成一条可跑脚本：**`$env:TEMP\eb_cleanup_r17.ps1`**（1 185 B，只做上面这些路径，逐项 `Test-Path` 后再删，脚本自身也在清单里）。业主跑 `pwsh -File $env:TEMP\eb_cleanup_r17.ps1` 即可，主树工作区会立刻从 14 条脏项缩回只剩 `chroma_db` 的 6 条。
+- 本班**决定不删**的三项（怕误伤，理由入档）：`docs/screenshots/`（9 MB，含 `chatpanel-error-face.png` ＝ 浏览器验收证据）、`frontend/node_modules.stub/`（**11 967** 个文件的刻意桩，前端线工具链要用）、`be-r37/_baseline_r37.txt`＋`_r37_before_red.txt`（Gauss 的红取证，结案提交前不动）。
+- 另：`%TEMP%` 里那批 `r17_c*.patch`/`r17_t*.patch`/`r17_delivered_rbac.py` 已查明身份＝**R17 的已落地草稿**（`tests/test_rbac_department_fail_closed.py` 与 `app/common/rbac.py` 的新版都在树里，历史可复现）⇒ 归入可删，脚本已含。
+
+### 4AT.3 真机窗口口径（业主要的一句话答复）
+- **需要，但先决条件在业主手上**：runbook `docs/handoff/2026-09-17-eval-real-run-runbook.md` §2 的 P-8 是硬闸——后端镜像比被测 commit 早约 20 h、容器内缺 R41/R54/R26b，照现状开跑**量到的是旧产品**。正解只有 `docker compose build migrate`（H12，直接 build `backend` 会静默空跑）+ 重启容器让 GPU 真到位（H11）。
+- **不必租卡**：跑分打的是本机 Ollama（`n_ctx=4096`、`MODEL_MAX_CONCURRENCY` 必须为 1），瓶颈是"独占窗口 + 镜像同源"，不是算力。要租只有一种情形：想验 PG+pgvector 那条腿（`docs/handoff/2026-09-17-pgvector-adoption-plan.md`），那属另一档需求。
+- **窗口长度**：单题实测均值 41.581 s ⇒ 105 题串行约 **73 分钟**，加 §7-A 结构预检（零模型）与 C 步评分，请给 **2 小时**。
+- **窗口纪律（P-6/§9）**：开窗期间**我这条线必须全停**——三棵工作树的 agent 一个都不许跑 pytest（R53 已钉住它们会写 Chroma，且可能拉起模型用例抢同一个单点），也不许任何 `docker compose up/down/restart`。所以顺序是：业主先做 H11+H12（约 20–40 分钟长任务）→ 本班把在途三单验完并静默 → 再开窗。
