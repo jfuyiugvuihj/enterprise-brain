@@ -1871,3 +1871,10 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 - 本班新增欠账已立案并写进跟进单 **§24**：**R64**（权限终态缺结构化 `error_code`，需动 `contracts.py` 的 `ErrorEnvelope` 封闭枚举 + `tests/test_error_code_vocabulary.py`）、**R65**（`app/agents/tools.py:441` 存量裸 `（error_code=...）` 文案，R16 债），另记卫生账（`_analyze_data` 两处 `except Exception: pass`、`conf` 死变量）。
 - 欠 `Curie` 一笔：它建议把 `RBAC_ROW_DEPARTMENT_SCOPE=fail_closed` 补进 `.env.example` 与 `deploy/.env.server.example`。**本班未落地，原因是 .env.example 此刻在 Descartes（R30 判据③）写域内** => 等 R30 结案后由总控补，不派工、不撞文件。
 - 下一步（按序，全部总控自主完成）：① 验 R21/R22（**先在各子树 `merge --ff-only codex/data-file-catalog` 追平 `781afd0`**，再逐条对 §22 判据，再自己复跑）；② 验 R40/R47/R30；③ 收 R36-Q 的清单后决定评测集是否需要向业主申请特批改动；④ 收工前交业主"必须你出手"清单（H11/H12/H13/R61/R63/H6/push/垃圾删除/`automation-2` 改指向）。
+
+### 4AL.7 补裁定：R17 老判据「不得把空部门当作对任意账号可见」的**字面残留**（总控亲读，非执行层自述）
+
+- **待裁点**：`git grep -n isin -- app/common/rbac.py` 命中两行 —— `:148`（密级 `fillna(1).isin(levels)`，属 **H13**，本单不动）与 **`:162` `scoped = scoped[values.isin(("", dept))]`**。老判据字面上说"任何地方都不许把空部门行放行"，`:162` 正是放行空串行，故此前一直挂着"未结"。
+- **总控裁定 = 结案**：亲读 `:157-173` 确认 `:162` 位于 **`:160 if scope == ROW_DEPARTMENT_SCOPE_LEGACY:`** 分支内，注释逐字写明"灰度回退：这一行就是改动前的 `:51`，逐字保留，给现场留一条退路"，且该分支同时把 `reason_code` 打成 **`legacy_open_department_scope`**（可观测、可被用例钉）。默认路径（`:170-173`）是 `values == dept`，账号无部门在 `:164-169` 提前判掉并返 `authorization_unavailable`。
+- ⇒ 判据的实质是"**默认口径不得放行空部门行**"，显式灰度回退口是**设计的一部分**不是漏网。R17 按此结案；`legacy` 档的存在与拼错不放宽（`:35-39`/`:55`）已由 `tests/test_rbac_department_fail_closed.py` 钉住。
+- **仍欠一笔（已登记不静默）**：`Curie` 建议把 `RBAC_ROW_DEPARTMENT_SCOPE=fail_closed` 明写进 `.env.example` 与 `deploy/.env.server.example`，防运维以为"不设就是安全档"。**`.env.example` 此刻在 `Descartes`（R30 判据③）写域内 ⇒ 本班不改，等 R30 结案后总控顺手补两行**，不另派工。
