@@ -419,6 +419,12 @@ Chroma 的向量**不会重算，也没有任何入口让它重算**——全仓
 `rebuild_index`、`reset_index` 一律 0 命中（2026-09-16 实跑）。系统也不会提示口径已经变了：
 `/health/details` 里没有「向量与当前 embedding 模型不一致」这类判据。
 
+> **[订正 09-18，总控第九班实测]** 本节上面两段里的三条事实**已被 R22 结案推翻**，保留原文只为留痕，引用时以本订正为准：
+> ① "全仓 `app/` 与 `scripts/` 对 `reindex`/`rebuild_index`/`reset_index` 一律 0 命中" —— 现已有 **`scripts/rebuild_index.py`**（`:29-30` 用法：`--status` 只看不动，`--apply --confirm-scope "nomic-embed-text/768"` 才重建；`:502` 明确拒绝被自动触发），`app/rag/indexing.py:15` 把它称作 manual rebuild command。
+> ② "系统不会提示口径已经变了" —— 现已有稳定码 `embedding_model_drift` / `embedding_dimension_drift`（`app/rag/indexing.py:53-54`），且 `/health/details` 已带 embedding 段（`app/common/monitoring.py:212`、`_embedding_state()` 在 `:217`）。
+> ③ "`EMBED_MODEL` 是 `app/rag/retriever.py:23` 的模块级常量" —— 行号已过期，R21/R22 改造后该文件的现形状见 §4AM.1（`retriever.py:30 EMBEDDING_DIM`、`:485 stores_vectors`、`:510 _write_batch`）。
+> **本节仍然成立的部分**：真正的全量重算**必须人工触发**（H 闸门级动作），私有化机器上没有"偷偷重建"这条路，这正是设计意图。
+
 **今天怎么绕过去的**：靠 `DELETE /api/v1/documents/{filename}` 再重新上传。这条链路本身是对的——
 它先 `retriever.delete_document(filename)` 回滚索引，回滚失败就**不删文档**并答 `index_rollback_failed`，
 不会假装删干净（`app/api/v1/chat.py:2087` 起）。实测删除返回 `index_retirement.status=retired`，
@@ -850,3 +856,17 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 - **新发现的闸门 H14（登记在 `docs/handoff/2026-09-17-human-gates.md`）**：`[实测] git check-ignore -v` 显示 `.gitignore:30 data/*.csv`、`.gitignore:35 documents/*`（仅 `!documents/.gitkeep`）**挡住一切新增语料/数据文件**——既有 96 篇是在 09-15 仓库卫生裁定之前入库的。⇒ 本单用 `git add -f` 强制入库（**不改 `.gitignore`**，那是业主专属动作）。不裁的后果：以后每补一篇语料都会静悄悄漏提交，客户机上镜像里没有这篇料，评测与问答都对不上。
 - 口径钉死：本次补料**只**清"语料从未落盘"这一类，**不等于**真机分数会涨到 100/105。跑分前仍需业主：①重建索引（新语料要进向量库，R22 的人工 CLI）②H11/H12 容器与镜像。
 
+
+## 26. 验收 R40 时同形质外溢 -> 立单 **R67**（09-18 12:1x，总控亲读源码后立案，基线 `b6e951f`）
+
+> R40 把"前端自报部门"这条路堵住了（`authorization.py:75 verify_department_self_report` + `:62 DEPARTMENT_SELF_REPORT_DENIED`，管理员豁免在 `:91-92`）。**同一天，另一条传输路径上原封不动地开着第二个洞。**
+
+**事实** `[实测]`：`app/api/v1/open_platform.py:100-112` 的 `POST /open/approval/preview` 把 `department`、`standard`、`expense_type`、`evidence` **四项全部直接从请求体取用**：
+
+- `:107` `data.get("amount", 0)`、`:108` `data.get("standard", 0)` —— **标准金额由调用方给**，等于"你自己说上限是多少就是多少"；
+- `:109` `data.get("department", "")`、`:110` `data.get("expense_type", "")`、`:111` `data.get("evidence", [])` —— **部门与证据同样由调用方给**；
+- 上面唯一的把关是 `:104 verify_open_request(headers, body_text, required_action="approval")`，它验的是**开放平台签名/令牌**，不是"这个人有没有权限代表这个部门"。⇒ 一个只有 `approval` 动作权限的 token，可以为**任意部门、任意标准**生成预审结论，且结论里带的 `standard_source`/`standard_evidence` 是它自己填的。
+
+**判据**：① 该端点的 `department` 必须由服务端按调用方身份推导（与 R40 同一个 `verify_department_self_report` 口径），不接受自报值，或自报值不等即拒并回稳定码；② `standard` 不得由调用方指定数值 —— 要么走 R40 已交付的 `auto_from_knowledge_base` 自动取数，要么显式 `explicit` 且带可追溯来源；③ 越权/自报用例覆盖，**必须与 R40 那 32 条参数化用例同形**（沿用 `test_prefiltering` / R45 的"先过滤后去重"式写法，不发明第二套）；④ **反证**：把服务端推导改回 `data.get("department", "")` 必须红。
+
+**边界**：不改 `authorization.py` 的判定逻辑（R40 已定，管理员豁免保留）；不动开放平台的签名校验本身；`ErrorEnvelope.code` 的扩枚举与 R40 暂不追认的两个码**一起做**，且必须等 `contracts.py` 出 R30 写域之后。写域 `app/api/v1/open_platform.py`（可能与 R55 的 `chat.py` 相邻但不同文件）⇒ **可即刻派，不占三腿串行位**。
