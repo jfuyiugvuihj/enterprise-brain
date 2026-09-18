@@ -727,6 +727,34 @@ class AskRequest(BaseModel):
     session_id: str = ""
     data_filename: str = ""
     idempotency_key: str = ""
+    lane: str = ""
+
+
+# R37：档位名的第二处落地。真相在 app/agents/nodes.py 的 LANE_REPORT，但那是
+# 并发同事的写域，本单不 import 它的私有名，也不为了判别新增一次模型往返
+# （判据二）。后端只认调用方显式写进请求里的字符串，markers 由调用方自己判。
+LANE_REPORT = "report"
+REPORT_LANE_QUEUE_ENV = "REPORT_LANE_VIA_QUEUE"
+REPORT_LANE_ON_VALUES = {"1", "true", "yes", "on"}
+REPORT_LANE_REASON = "report_lane"
+
+
+def _report_lane_via_queue_enabled() -> bool:
+    """默认关：没配环境变量的现网，不会因为本单多走一条道。"""
+    return os.getenv(REPORT_LANE_QUEUE_ENV, "").strip().lower() in REPORT_LANE_ON_VALUES
+
+
+def _queue_lane(request) -> str:
+    """档位判别：只读请求字段，纯规则，零模型往返。
+
+    故意不做大小写模糊匹配——REPORT 不是任何人声明过的档位，认它等于把判别
+    变成猜心思。空档位一律回空串，交给调用方走原来的同步路径。
+    """
+    lane = getattr(request, "lane", "")
+    if not isinstance(lane, str):
+        return ""
+    lane = lane.strip()
+    return lane if lane == LANE_REPORT else ""
 
 
 def _should_use_data_context(message: str, filename: str) -> bool:
@@ -902,6 +930,133 @@ def _select_final_answer(
     return ""
 
 
+select_final_answer = _select_final_answer
+
+
+def hitl_park_text(intr: dict) -> str:
+    """挂起时给用户的那句话：同步路径与后台 worker 必须逐字同一份。
+
+    两处各写一遍迟早漂移。队列路径下用户在会话历史里读到的措辞，必须和在场流
+    里看到的完全一致，否则关页面不丢就只剩不丢但换了个说法。
+    """
+    return (
+        "本轮在「" + "、".join(intr["labels"]) + "」前等待你确认，"
+        "确认后才会执行，目前尚未产出回答内容。"
+    )
+
+
+def save_session_turn(session_id: str, content, *, role: str = "assistant") -> bool:
+    """把后台跑完的一轮补写进会话历史（判据三：历史里不许留空洞）。
+
+    只在会话库真在的时候写。内存会话是每个进程私有的：worker 往自己的内存里补
+    一行，用户在 API 进程的历史中一个字也看不见。写与不写效果相同，但假装写了
+    会让人以为空洞已经堵上，所以这里明着返回 False 并留一条 warning。
+    """
+    if not _session_database_available():
+        logger.warning(
+            f"[R37] 会话库不可用，后台轮次没能写回 session={session_id}"
+        )
+        return False
+    _save_message(session_id, role, str(content))
+    return True
+
+
+def record_hitl_awaiting(
+    session_id: str,
+    owner_user_id: str,
+    intr: dict | None,
+    *,
+    request_id: str = "",
+    trace_id: str = "",
+    task_id: str = "",
+) -> bool:
+    """队列 worker 用的挂起记账，语义与同步路径的 _record_pending_approval 同源。
+
+    差别只有两处：归属人已由 worker 解析成 user_id 传进来；成败要回给调用方——
+    后台没有打断用户流这回事，但待办没开成必须能被终态看见。
+    """
+    if not owner_user_id or not intr:
+        return False
+    try:
+        pending_approvals.record_awaiting(
+            session_id,
+            owner_user_id,
+            list(intr.get("pending") or []),
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+        )
+    except Exception:
+        logger.exception(
+            f"[R37][HITL] 后台挂起待办没能写入 session={session_id}，审批面板可能少一条待办"
+        )
+        return False
+    return True
+
+
+def _enqueue_ask_turn(
+    *,
+    request,
+    http_request,
+    thread_id: str,
+    rewritten_msg: str,
+    username: str,
+    principal,
+    lane: str,
+) -> StreamingResponse:
+    """把一轮问答收进可靠队列，回一条只含回执的 SSE。
+
+    两条道（超限、报告档）共用一个出口，是为了让该不该后台跑只有一份解释。
+    lane 为空串时，载荷与 queued 事件的字段和 R37 之前逐字节相同。
+    """
+    idempotency_key = request.idempotency_key.strip()
+    if not idempotency_key and http_request is not None:
+        idempotency_key = str(http_request.headers.get("Idempotency-Key", "")).strip()
+    if not idempotency_key:
+        raise HTTPException(status_code=400, detail="idempotency_key_required")
+
+    from app.common.reliable_queue import QueueConnectionError, connect_reliable_queue
+
+    payload = {
+        "task_type": "ask",
+        "message": rewritten_msg,
+        "session_id": thread_id,
+        "username": username,
+        "principal": principal.model_dump(mode="json") if principal is not None else None,
+    }
+    if lane:
+        # worker 靠这两个字段决定走能挂起的图，以及跑完要不要补写会话历史。
+        payload["lane"] = lane
+        payload["write_back_session"] = True
+    try:
+        queue = connect_reliable_queue()
+        message = queue.enqueue(payload, idempotency_key)
+    except QueueConnectionError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    queued = {
+        "type": "queued",
+        "request_id": message.request_id,
+        "status": "queued",
+    }
+    if lane:
+        # 事件要能自证这一轮因报告档而后台化：不是限流，也不是缓存命中。
+        queued["lane"] = lane
+        queued["reason"] = REPORT_LANE_REASON
+    async def queued_response():
+        yield f"event: queued\ndata: {json.dumps(queued, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0)
+        yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0)
+    return StreamingResponse(
+        queued_response(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post("/ask/{session_id}/cancel")
 async def cancel_ask(session_id: str, http_request: FastAPIRequest):
     # 取消是对他人会话的破坏性动作，先证明归属再动手。
@@ -962,43 +1117,32 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     except Exception:
         user_ctx = None
     if not allowed:
-        idempotency_key = request.idempotency_key.strip()
-        if not idempotency_key and http_request is not None:
-            idempotency_key = str(http_request.headers.get("Idempotency-Key", "")).strip()
-        if not idempotency_key:
-            raise HTTPException(status_code=400, detail="idempotency_key_required")
+        # R37：超限这条道和报告档共用同一个入队出口。对没声明档位的调用方，
+        # 载荷与 queued 事件的字段一个不多一个不少，见用例里的逐字段断言。
+        return _enqueue_ask_turn(
+            request=request,
+            http_request=http_request,
+            thread_id=thread_id,
+            rewritten_msg=rewritten_msg,
+            username=username,
+            principal=request_principal,
+            lane="",
+        )
 
-        from app.common.reliable_queue import QueueConnectionError, connect_reliable_queue
 
-        payload = {
-            "task_type": "ask",
-            "message": rewritten_msg,
-            "session_id": thread_id,
-            "username": username,
-            "principal": request_principal.model_dump(mode="json") if request_principal is not None else None,
-        }
-        try:
-            queue = connect_reliable_queue()
-            message = queue.enqueue(payload, idempotency_key)
-        except QueueConnectionError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={"code": exc.code, "message": str(exc)},
-            ) from exc
-        queued = {
-            "type": "queued",
-            "request_id": message.request_id,
-            "status": "queued",
-        }
-        async def queued_response():
-            yield f"event: queued\ndata: {json.dumps(queued, ensure_ascii=False)}\n\n"
-            await asyncio.sleep(0)
-            yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
-            await asyncio.sleep(0)
-        return StreamingResponse(
-            queued_response(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    lane = _queue_lane(request)
+    if lane == LANE_REPORT and _report_lane_via_queue_enabled():
+        # R37：报告档显式后台化。判别只看请求字段加一道默认关的开关，不碰模型、
+        # 不碰图，也就不许被答案缓存就地短路成在场回答——用户点名要后台跑，
+        # 缓存当场给一个答复就是把交代丢了。
+        return _enqueue_ask_turn(
+            request=request,
+            http_request=http_request,
+            thread_id=thread_id,
+            rewritten_msg=rewritten_msg,
+            username=username,
+            principal=request_principal,
+            lane=lane,
         )
 
     # ——— 答案缓存 ———
@@ -1181,10 +1325,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 except Exception:
                     intr = None
                 if not full_text and intr:
-                    full_text = (
-                        "本轮在「" + "、".join(intr["labels"]) + "」前等待你确认，"
-                        "确认后才会执行，目前尚未产出回答内容。"
-                    )
+                    full_text = hitl_park_text(intr)
                 if not full_text:
                     # 图跑完了，既没有正文也没有等待确认的步骤：这是内部失败。
                     # 把它报成 request.completed 就是把“什么都没产出”伪装成“已回答”。
