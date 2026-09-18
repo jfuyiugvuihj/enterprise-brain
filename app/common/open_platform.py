@@ -37,6 +37,41 @@ _UNCONFIGURED = object()
 _STORE: dict[str, Any] = {"path": _UNCONFIGURED, "store": None, "error": "", "mtime": None, "loaded": False}
 
 
+#: ``max_clearance`` is recorded and consulted by nothing. No path in this application
+#: compares it with a document's classification, and no Principal receives it. Whether a
+#: level 2 caller may read a level 3 chunk is the owner's ruling to make -- open
+#: decision H13, undecided -- and inventing one here would install a second,
+#: unpublished clearance policy in the place that is supposed to be honest about not
+#: having one. What is ours to fix is the appearance: a number sitting in a registry
+#: reads like a control, so every surface that shows it now says that it decides
+#: nothing until the owner rules.
+MAX_CLEARANCE_ENFORCED = False
+MAX_CLEARANCE_EFFECT = "registered_only"
+MAX_CLEARANCE_NOTE = (
+    "registered value only: no retrieval, no preview, and no Principal reads this "
+    "field. The clearance comparison rule is pending the owner's ruling (open decision "
+    "H13); until it lands, a higher value buys nothing and a lower one blocks nothing."
+)
+
+
+def clearance_registration(max_clearance: Any) -> dict[str, Any]:
+    """Report one registered clearance together with the fact that it decides nothing.
+
+    Written once so the registration response, the application list, and the request
+    model cannot give three different answers about the same field.
+    """
+    try:
+        value = max(1, int(max_clearance))
+    except (TypeError, ValueError):
+        value = 1
+    return {
+        "max_clearance": value,
+        "max_clearance_effect": MAX_CLEARANCE_EFFECT,
+        "max_clearance_enforced": MAX_CLEARANCE_ENFORCED,
+        "max_clearance_note": MAX_CLEARANCE_NOTE,
+    }
+
+
 def _is_production_environment() -> bool:
     return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
 
@@ -182,7 +217,7 @@ def list_applications() -> list[dict]:
                 "app_name": record.app_name,
                 "allowed_actions": list(record.allowed_actions),
                 "allowed_departments": list(record.allowed_departments),
-                "max_clearance": record.max_clearance,
+                **clearance_registration(record.max_clearance),
                 "enabled": record.enabled,
                 "description": record.description,
             }
@@ -204,6 +239,9 @@ def register_application(app_name: str, *, allowed_actions: list[str], allowed_d
     Production requires a durable store: a registration that only lives in this
     process disappears on restart and is invisible to the other workers, which would
     silently break every signed request that another instance issued.
+
+    ``max_clearance`` is stored and consulted by nothing: see
+    ``clearance_registration``, which the registration and list responses carry.
     """
     name = str(app_name or "").strip()
     actions = [str(item).strip() for item in (allowed_actions or []) if str(item).strip()]
@@ -299,7 +337,63 @@ def _resolve_open_department(record: OpenApplication, claimed: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------- caller claims
+#: Header an application uses to name the person it says it is acting for. Nothing
+#: signs it: ``build_request_signature`` covers ``app_id.timestamp.body``, exactly like
+#: the department header R71 had to stop trusting. A gateway legitimately wants its own
+#: operator in the log, so the value is kept -- kept as what it is, a claim the caller
+#: made about itself, and never as the actor of an audit row. A row filed under
+#: "alice" joins alice's history in every audit view that filters by username, and
+#: that is the whole of what an unsigned header must not be allowed to do.
+OPEN_USER_CLAIM_HEADER = "x-open-user"
+OPEN_USER_CLAIM_KEY = "open_user_claimed"
+OPEN_USER_CLAIM_SIGNED_KEY = "open_user_signed"
+
+#: Actor marker for a call made by an application: built from the app id the signature
+#: authenticated, so it cannot be forged, and prefixed, so it cannot be mistaken for a
+#: person's login name.
+OPEN_ACTOR_PREFIX = "open-app:"
+
+
+def open_actor_username(app_id: str) -> str:
+    """The only username this transport may blame for a call: an application, not a person."""
+    return f"{OPEN_ACTOR_PREFIX}{app_id}"
+
+
+def open_user_claim_fields(claim: str) -> dict[str, Any]:
+    """The audit shape of that claim: preserved, attributed, and marked as unsigned."""
+    return {
+        OPEN_USER_CLAIM_KEY: str(claim or ""),
+        OPEN_USER_CLAIM_SIGNED_KEY: False,
+    }
+
+
+def open_audit_principal(principal: Principal, app_record: dict[str, Any]) -> Principal:
+    """The subject to write in the journal for one verified open-platform call.
+
+    Same id, same role, same department, one different username: ``actor`` comes from
+    the registry row the signature authenticated, so no header decides who is blamed.
+    The Principal ``verify_open_request`` hands back deliberately keeps the claimed
+    name, because two transports read it today -- ``tests/test_open_platform.py`` and
+    R67's pinned "the index is asked as the verified caller" -- and nothing behind it
+    decides a scope. The department comes from the grant, the id from the signature,
+    the clearance from the role, and never from a header. Attribution is the one thing
+    the claim could reach, so attribution is what changes.
+    """
+    actor = str((app_record or {}).get("actor") or "")
+    if not actor:
+        return principal
+    return principal.model_copy(update={"username": actor})
+
+
 def verify_open_request(headers: dict[str, Any], body: str, required_action: str) -> tuple[Principal, dict]:
+    """Authenticate one signed call, and keep the signed part apart from the asserted part.
+
+    The answer is the request subject plus the registry row it was authenticated
+    against, with two additions a row cannot make about a call: ``actor``, the name the
+    journal blames, and ``open_user_claimed``, the name the caller typed for it. Both
+    the refusal and the success row are filed under ``actor``.
+    """
     normalized = _normalize_headers(headers)
     app_id = normalized.get("x-open-app-id", "").strip()
     timestamp = normalized.get("x-open-timestamp", "").strip()
@@ -325,13 +419,17 @@ def verify_open_request(headers: dict[str, Any], body: str, required_action: str
     if abs(time.time() - ts) > 300:
         raise HTTPException(status_code=401, detail="请求已过期")
 
-    # The department starts empty on purpose: it is resolved from the registry below, never
-    # read out of the headers, so the subject on the denial row is the same application that
-    # asked, minus a claim it is not entitled to make.
+    # The department starts empty on purpose: it is resolved from the registry below,
+    # never read out of the headers, so the subject on the denial row is the same
+    # application that asked, minus a claim it is not entitled to make.
+    claim = normalized.get(OPEN_USER_CLAIM_HEADER, "").strip()
     principal = Principal.from_user(
         {
             "id": app_id,
-            "username": normalized.get("x-open-user", record.app_name),
+            # A label the caller chose, not a name this server verified: clients already
+            # read it, and nothing behind it decides a scope. The journal blames the
+            # application instead -- see ``open_audit_principal``.
+            "username": claim or record.app_name,
             "role": "staff",
             "department": "",
             "permissions": set(),
@@ -339,13 +437,27 @@ def verify_open_request(headers: dict[str, Any], body: str, required_action: str
         },
         auth_source="open_platform",
     )
+    app_record = asdict(record)
+    app_record["actor"] = open_actor_username(app_id)
+    app_record[OPEN_USER_CLAIM_KEY] = claim
     try:
         department = _resolve_open_department(record, normalized.get("x-open-department", ""))
     except HTTPException:
         record_audit(
-            principal, f"open:{required_action}", "denied", record.app_name, DEPARTMENT_SELF_REPORT_DENIED
+            open_audit_principal(principal, app_record),
+            f"open:{required_action}",
+            "denied",
+            record.app_name,
+            DEPARTMENT_SELF_REPORT_DENIED,
+            after_summary=open_user_claim_fields(claim),
         )
         raise
     principal = principal.model_copy(update={"department": department})
-    record_audit(principal, f"open:{required_action}", "allowed", record.app_name)
-    return principal, asdict(record)
+    record_audit(
+        open_audit_principal(principal, app_record),
+        f"open:{required_action}",
+        "allowed",
+        record.app_name,
+        after_summary=open_user_claim_fields(claim),
+    )
+    return principal, app_record
