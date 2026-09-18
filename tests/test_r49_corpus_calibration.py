@@ -9,6 +9,7 @@
 变红，逼一次重新校准，而不是等到某篇文档在生产上悄悄不入索引才发现。
 """
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -17,7 +18,8 @@ from app.documents.index_policy import evaluate_index_eligibility
 from app.rag.loader import load_document
 
 # 本单核对的是仓库里这份语料，不是部署实例的 DOCUMENTS_DIR：判据④问的就是这 96 篇。
-CORPUS_DIR = Path(__file__).resolve().parents[1] / "documents"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+CORPUS_DIR = REPO_ROOT / "documents"
 
 #: 断言余量倍数：语料实测值与阈值之间至少要差这么多倍。
 MARGIN = 1.5
@@ -26,11 +28,28 @@ KEYWORD_NAMED = ("草稿", "模板", "试行", "临时", "初稿", "告别信")
 
 
 def _corpus_files():
-    return sorted(
-        path
-        for path in CORPUS_DIR.iterdir()
-        if path.is_file() and not path.name.startswith(".")
+    """版本化语料清单 —— 不是 documents/ 的目录列表。
+
+    documents/ 按设计兼作上传落地区：app/api/v1/chat.py:2222 在解析失败时仍保留文件与目录行
+    （parse_status=failed），所以任何接过上传的机器，这个目录里都混着客户文件和运行时产物。
+    主树实测 121 个文件里只有 97 个是语料，其余 24 个是上传产物，其中的
+    安全生产管理制度汇编.zip 会把 load_document 顶到 ValueError: Unsupported file format: .zip，
+    本文件 7 条用例当场 ERROR；没接过上传的干净树里则全绿 —— 判据④因此在开发机上根本不可跑。
+    取 git 清单而不是目录列表，正是本文件开头写的"仓库里这份语料"。
+    """
+    listing = subprocess.run(
+        ["git", "ls-files", "-z", "--", "documents"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        check=False,
     )
+    assert listing.returncode == 0, f"git ls-files 未能列出语料：{listing.stderr!r}"
+    names = sorted(item.decode("utf-8") for item in listing.stdout.split(b"\0") if item)
+    files = [REPO_ROOT / name for name in names]
+    assert files, "版本化语料清单为空，这个核对没有意义"
+    missing = [str(path) for path in files if not path.is_file()]
+    assert not missing, f"git 认为已入库、盘上却不在：{missing}"
+    return files
 
 
 @pytest.fixture(scope="session")

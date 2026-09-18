@@ -53,6 +53,45 @@ assert "connect_timeout=1" in TEST_DATABASE_URL, "the failed probe must fail fas
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 
+# ==================== 跟进单 R70：宿主的 .env 在测试期一个字都不许进进程 ====================
+# 缺陷链（实测 09-18 13:2x，主树 @50aff1a，解释器 .venv\Scripts\python.exe；探针脚本在仓库外，未改 app/**）：
+# R20 只钉了上面的 DATABASE_URL，依据是"load_dotenv() 不覆盖已存在的键"。那条依据只对 conftest
+# 抢在 import 之前赋过值的键成立。app 侧有 5 个模块在 import 期调 load_dotenv()
+# （nodes.py:10 / orchestrator.py:21 / auth.py:13 / model_handler.py:28 / retriever.py:19），
+# 而 app/common/monitoring.py 的 build_health_snapshot() 要到**调用期**才懒加载 auth 与 retriever。
+# 于是"先把模型变量擦干净、再打一次健康快照"的用例，会在打快照这一刻被宿主 .env 重新灌回真机模型名。
+# 探针实测：delenv 四个模型变量 -> build_health_snapshot() -> os.environ["OLLAMA_MODEL"]
+# == 'qwen2.5:14b'（主树 .env 的原值），调用栈记到 auth.py:13 与 retriever.py:19。
+# 症状：test_model_discovery_selection.py::test_health_snapshot_reports_the_resolved_model_source
+# 在主树稳定红（单独跑也红，与顺序无关），而 .env 不入版本库、子树里没有它，所以这条红**只在业主
+# 机器上存在**，每个 Agent 在自己的树里复跑都是绿的 —— 全量基线长期对不上，它有份。
+# 污染还是粘性的：一旦灌进来，OLLAMA_MODEL 常驻进程到会话结束，后面任何"干净环境"用例都能被带偏。
+# 修法：把 load_dotenv 换成"只记账、不读文件"的桩。app 侧写的是 from dotenv import load_dotenv，
+# 绑定发生在各自的 import 期，而 conftest 早于任何测试模块导入 app（本文件无顶层 app 导入），桩一定先装上。
+# 真机验收入口 tests/_live_model.py 不靠 .env：它要操作方在 shell 里显式给 EB_OLLAMA_ACCEPTANCE，
+# 模型名走 discovery 或 shell 变量，所以下面的闸门只在离线态生效，不挡总控自己的计时入口。
+_LIVE_ACCEPTANCE_REQUESTED = (os.getenv("EB_OLLAMA_ACCEPTANCE") or "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+#: 测试期被拦下的 .env 读取企图，形如 ["auth.py:13", "retriever.py:19"]，供守卫用例取证。
+DOTENV_BLOCKED: list[str] = []
+
+
+def _block_dotenv_load(*args, **kwargs):
+    """记录每一次 .env 读取企图，但一个字都不写进 os.environ。"""
+    frame = inspect.stack()[1]
+    DOTENV_BLOCKED.append(f"{os.path.basename(frame.filename)}:{frame.lineno}")
+    return False
+
+
+if not _LIVE_ACCEPTANCE_REQUESTED:
+    import dotenv as _dotenv_module
+
+    _dotenv_module.load_dotenv = _block_dotenv_load
+
 # ==================== 跟进单 R56：测试期禁止真打宿主模型端口 ====================
 # 缺陷链（实测 09-17 21:35，be-r14@5984696，解释器 C:\Users\fengx\PycharmProjects\企业智脑\
 # .venv\Scripts\python.exe = py3.11.7 / chromadb 1.5.9；探针插件放在仓库外，未改 app/**）：
@@ -614,6 +653,17 @@ def offline_ollama_embeddings(monkeypatch):
         lambda self, text: self._fallback_embedding(),
     )
     return OllamaEmbeddings
+
+
+@pytest.fixture
+def dotenv_guard():
+    """把 R70 的桩与账本交给守卫用例，用例不必去 import conftest。"""
+    return SimpleNamespace(
+        stub=_block_dotenv_load,
+        blocked=DOTENV_BLOCKED,
+        live=_LIVE_ACCEPTANCE_REQUESTED,
+        flag="EB_OLLAMA_ACCEPTANCE",
+    )
 
 
 @pytest.fixture
