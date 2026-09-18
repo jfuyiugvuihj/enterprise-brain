@@ -1250,6 +1250,13 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Helmholtz` | 同上 `01a0b42f-…` | **R84**（续） | `be-r84` | **运行中**：19:18:33 建 `tests/test_r84_persistence_cross_process_lock.py`、19:23:50 仍在改，`app/storage/persistence.py` 未动 ⇒ 它先写红用例，路子对，写域未越界 | 19:35:00 |
 | `Gauss` | 同上 `01a0b3ff-…` | **R37**（续） | `be-r37` | **运行中**：19:14:59 改 `app/api/v1/chat.py`、19:17:16 改 `tests/test_r37_report_lane_enqueue.py`；`_baseline_r37.txt`、`_r37_before_red.txt` 是它的取证残留，**结案提交时排除** | 19:35:00 |
 | —（**无 agent**） | 无 rollout | **R87** | `be-r87` @ `3122518` | **🔴 上一班投递未落地**（三重 canary 见 §4AS.2）⇒ 按事故 #14 的规矩**不补投**：判据已写在跟进单 §31.3 + 计划书 §5.2，待业主手动开线；写域只一个测试文件，与在途两单零相交 | 19:35:00 |
+| `Noether` | `01a0b454-57a3-76c3-a69e-41bc598e56a1`（与第十四班 R81 那位**同号不同人**，按 id 对账） | **R89** 前端码表补三条人话（本班新立，判据 §32.2） | `fe-trunk`（由 `deb8ade` **纯快进**至 `de51f1f`，**独占**） | **运行中**：19:43:41 单投（本 block 只此一次投递），canary＝rollout 已生成 433 KB；写域**只** `frontend/src/lib/errcodes.js`，与 `Helmholtz`/`Gauss` 零相交 ⇒ 并发满 3 | 19:44:30 |
+| `总控亲做` | —— | **R87** 越界守卫双向漏防（判据 §31.3） | 主树 `tests/test_r51_observation_is_passive.py`（无子 Agent） | **已结案（第十八班，业主改令「你自己来」）**：主树 `fcd8ef0`；审计基线改 `merge-base(HEAD, trunk)..HEAD` + 非主干分支才纳入 `ls-files --others`，判据用**分支名**不用 `base != head`（尚无提交的分支二者相等）；forbidden 前缀一字未减；**16 → 20** 条四向探针全落 `tmp_path`；全量亲跑 **2104 passed / 35 skipped / 0 failed / 81.61 s**。副产品口径：**脏工作树跑全量不必先 commit** | 20:5x |
+| `Gauss` | 同上 `01a0b3ff-…` | **R37**（续） | `be-r37` | 🔴 **线程蒸发（事故 #30）**：20:3x `wait_agent` 实取 `not_found`，**无结案回执**。盘上留活 `app/api/v1/chat.py` **+182/−41** + 新 `tests/test_r37_report_lane_enqueue.py`/`_worker.py`（19:17 在写）；`_baseline_r37.txt`、`_r37_before_red.txt` 是垃圾**不许入库**。按规矩**不补投**；B 轮结束后总控按 §21 逐条验收再定代提交/退回。结案前 `chat.py` 仍不许再派 | 20:3x |
+| `Helmholtz` | 同上 `01a0b42f-…` | **R84**（续） | `be-r84` | 🔴 **线程蒸发（事故 #30）**：`wait_agent` = `not_found`。盘上只有新 `tests/test_r84_persistence_cross_process_lock.py`（**21 492 B** @19:23:50，此后零动作），`app/storage/persistence.py` **一字未动** ⇒ 停在红用例阶段；未动工部分挂回待派 | 20:3x |
+| `Gauss` | 同上 `01a0b3ff-…` | **R37**（保活） | `be-r37`（分支 `codex/be-r37`） | **已保活**：总控 wip 提交 **`9e50e60`**（chat.py +182/−41 + 两个用例文件共 28 例）；机器一崩不再白干。静态复核定性＝**只做了一半**：入队侧完整，worker 侧 `queue_worker.REPORT_LANE` / `_report_lane_requested` **不存在**（`git grep lane -- deploy` = **0 命中**），其自证日志 `_r37_before_red.txt` 19:18:30 实取 **23 failed / 5 passed**。接续判据 → 跟进单 §35.1 | 20:5x |
+| `Helmholtz` | 同上 `01a0b42f-…` | **R84**（保活） | `be-r84`（分支 `codex/be-r84`） | **已保活**：总控 wip 提交 **`6d75edd`**（21 KB 真子进程红用例设计）。实现半程未开始 ⇒ 接续判据 → 跟进单 §35.2 | 20:5x |
+| `Noether` | 同上 `01a0b454-…` | **R89**（续） | `fe-trunk` | **在册运行中**：`frontend/src/lib/errcodes.js` **19:49:32** 落笔后未再改、rollout 自 19:43:41 未再追加 ⇒ 判为卡在长工具调用（vitest / npm）。验收仍由总控亲跑 `vitest run` **410/410** + `npm run lint` + `lint:colors` 不劣化，**不采信自述** | 20:5x |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -2293,8 +2300,127 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 结案前照旧不许再派碰 `app/api/v1/chat.py`（Gauss 持有）与 `app/storage/persistence.py`（Helmholtz 持有）的单。
 
 ### 4AS.4 待业主（增量；全清单见 §29.6 + §30.6 + §4AR.8，一条都不代做）
-- 🔴 **H6 仍未结**：`codex/data-file-catalog` 至今**零 push**，本机是唯一副本，今天已 47 个提交——一次崩盘全丢。
+- 🔴 **H6 仍未结（本班实测，严重程度超过上班的记账）**：本分支 `codex/data-file-catalog` 至今**零 push**；而 `origin/master` 停在 **09-03 16:17 `450e5aa`**，`gitee/master` 停在 **06-25**，于是 HEAD 相对 `origin/master` 领先 **383 个提交**（全分支累计 389，今天单日 102 个）——**近两周的全部工作只存在于这一台机器**，硬盘一次故障就全部抹掉。推送属业主权限，本班未动。
 - 删除清单新增：主树根 0 字节 `2026-09-15-orchestration-board.md`；`be-r20/probe.txt`；`be-r53/app/rag/retrieval_pipeline.py.r57bak`（R57 早已并树，纯垃圾）。`be-r83` 已并树无残留。
 - **R87 需业主手动开线**（§4AS.2）；R88 仍等放行（动 migrations）；R85（R80 之前被静默覆盖的应用密钥重发）、H11（容器重启才真拿到 GPU）、H12（`docker compose build migrate`，镜像落后主树 21 h+）、H13、H14、H15（含 R82 要改业主本人写的断言）、H16–H19 原样挂账。
 - 心跳 `automation-2` 仍指死线 `01a0acfb`（本班未动、未执行）；要改就填本线程 id **`01a0b295-67ae-7d32-b2b8-89dd66d68146`**（真实判别字段是 `mode`，update 传 camelCase `targetThreadId`）。
 - 产品级两问（§4AR.6 原文，仍待业主口径）：出厂 `HOT_INDEX_MAX_CHUNKS=20000` < 真实语料 37 483 ⇒ 热集在生产**永不服务**只付暖机成本；默认外部 Chroma 腿在重复向量上名次塌陷（热集 vs 外部 12/12 不同序）⇒ 疑为当前答案质量首要嫌疑，本班未动码。
+### 4AS.5 前端线实盘（应业主询问核查，**只读**，本班未改 `frontend/` 一字）＋ 新立 **R89**
+- 版本控制：`codex/fe-trunk`/`fe-prims`/`fe-alerts`/`fe-artifacts`/`fe-dash` 五支对 `codex/data-file-catalog` **全部 ahead=0** ⇒ 前端已做的活儿**都已并进主树**，没有悬在分支上等收口的账。
+- 活动量：`git log --since 2026-09-18 -- frontend` **0 条**，最后一笔 `4b5a7cb`（09-16 21:20 色值棘轮 337→334，随 `0d57886` 并树）⇒ **前端线已停两天**，今天的 47 个提交全在后端。
+- 体量实测：`frontend/src/components` **22** 个 `.vue` + **22** 个测试文件；`package.json` 四入口齐（`lint`/`test`/`test:e2e`/`lint:colors`）；依赖已按计划书 §3.2 摘掉 Element Plus，只剩 `vue`/`vue-router`/`axios`/`dompurify`/`markdown-it`/`lucide` + 自托管字体。
+- 复跑（借 `fe-trunk` 的 `node_modules` 跑 `vitest run`，主树那份是 `node_modules.stub` 跑不了）：**408 passed / 2 failed（410）**，18 个文件 17 绿 1 红。
+- 🔴 又一份过期清单坐实：`docs/handoff/2026-09-15-frontend-work-checklist.md` 写着 **3 勾 / 62 未勾**，可"4 套鉴权收敛为 1 个 axios 实例 + 删 `DocPanel.vue` 重复拦截器 + 加 401 响应拦截"这条**代码里早已完成**（实取全局 `axios.create` **1** 处，拦截器注册只有 `frontend/src/lib/http.js:98` request 与 `:104` response）⇒ 与计划书 §10 处置 `task_plan.md`/`progress.md` 同性质：**勾选清单不作进度事实源**。
+- **R89（新立，已派）**：2 条红全在 `frontend/src/lib/errcodes.test.js` 的码表对账钉子上——后端 canonical 枚举 **29** 码 vs 前端 `ERROR_CODES` **26** 键，缺 `context_limit_exceeded`、`row_scope_denied`、`no_visible_rows`。该测试用 `git show codex/data-file-catalog:app/agents/contracts.py` 读对象库 ⇒ **不受检出陈旧影响，是真红不是假红**。详细判据、语义锚与 retryable 依据要求见跟进单 **§32.2**。
+- 派工实况：`Noether`（`01a0b454-57a3-76c3-a69e-41bc598e56a1`，与第十四班 R81 那位同号不同人，**按 id 对账**）19:43:41 单投，canary＝rollout 文件已生成 433 KB；写域**只** `frontend/src/lib/errcodes.js`，与在途 `Helmholtz`（`app/storage/persistence.py`）、`Gauss`（`app/api/v1/chat.py`）零相交 ⇒ 并发 3/3 满席。派前已把 `fe-trunk` 由 `deb8ade` **纯快进**到 `de51f1f`（五支全 ahead=0，无冲突、无未提交活儿）。
+## 4AT 本班续（09-18 19:5x–20:0x，总控第十七班）：🟢 **H6 结案（383 提交已双远端）** · 删除清单**预演完成但执行被本机策略拒** · 真机窗口口径
+
+### 4AT.1 🟢 H6 结案（业主授权后本班实做，不再是挂账）
+- 业主 19:5x 明确授权 push ⇒ 本班把 `codex/data-file-catalog` 推到**两个**远端做异地双副本：
+  - `origin`（github `jfuyiugvuihj/enterprise-brain`）：`* [new branch]`，回读 `refs/heads/codex/data-file-catalog = 48167fa0b9228e534ccb6daad482211e41c2d63b` ＝ 本机 HEAD ✓
+  - `gitee`（`fx2006/langchain`）：同样 `* [new branch]`，退出码 0 ✓
+- 只推分支，**未动 `master`**（`origin/master` 仍 `450e5aa`、`gitee/master` 仍 `72c4038`），CI/部署口径由业主另裁。
+- 前置事实：`git ls-remote` 退出 0（凭据可用）；`for-each-ref` 逐支比对确认**没有任何本地分支领先主树**（执行层从不 commit）⇒ 推这一条分支就覆盖了全部已提交工作，383 个提交不再只存于本机。
+- 遗留（同性质但不同层次）：`chroma_db/**` 仍在版本控制里，随着历史推上了公网仓库 ⇒ 是否反跟踪/是否要清史，属业主决定（原口径未变：反跟踪 `chroma_db` 一律业主本人）。
+
+### 4AT.2 删除清单：预演做完了，**刀落不下去**
+- 逐项实取（大小 + 是否被 git 跟踪）：主树根 `2026-09-15-orchestration-board.md` **0 B / untracked**、`be-r20/probe.txt` **0 B / untracked**、`be-r53/app/rag/retrieval_pipeline.py.r57bak` **21 384 B / untracked**、`_board_4al7.py`/`_board_4al_a.py`/`_reg64_65.py`/`bundle.js`(228 KB)/`idx.html`(485 B) 全部 **untracked**；`%TEMP%` 命中 60 项、合计 **287 MB**（`r79scale` 一项就 227 MB）。`fe-trunk/frontend/.vitest` 实测**已不存在**，无需删。
+- 🔴 **执行被拒**：`Remove-Item`（哪怕单条、单文件、带 `-LiteralPath`）一律返回 `rejected: blocked by policy` ⇒ 删除在本环境的沙盒策略层就过不去，与业主授权无关。已把预演结论写成一条可跑脚本：**`$env:TEMP\eb_cleanup_r17.ps1`**（1 185 B，只做上面这些路径，逐项 `Test-Path` 后再删，脚本自身也在清单里）。业主跑 `pwsh -File $env:TEMP\eb_cleanup_r17.ps1` 即可，主树工作区会立刻从 14 条脏项缩回只剩 `chroma_db` 的 6 条。
+- 本班**决定不删**的三项（怕误伤，理由入档）：`docs/screenshots/`（9 MB，含 `chatpanel-error-face.png` ＝ 浏览器验收证据）、`frontend/node_modules.stub/`（**11 967** 个文件的刻意桩，前端线工具链要用）、`be-r37/_baseline_r37.txt`＋`_r37_before_red.txt`（Gauss 的红取证，结案提交前不动）。
+- 另：`%TEMP%` 里那批 `r17_c*.patch`/`r17_t*.patch`/`r17_delivered_rbac.py` 已查明身份＝**R17 的已落地草稿**（`tests/test_rbac_department_fail_closed.py` 与 `app/common/rbac.py` 的新版都在树里，历史可复现）⇒ 归入可删，脚本已含。
+
+### 4AT.3 真机窗口口径（业主要的一句话答复）
+- **需要，但先决条件在业主手上**：runbook `docs/handoff/2026-09-17-eval-real-run-runbook.md` §2 的 P-8 是硬闸——后端镜像比被测 commit 早约 20 h、容器内缺 R41/R54/R26b，照现状开跑**量到的是旧产品**。正解只有 `docker compose build migrate`（H12，直接 build `backend` 会静默空跑）+ 重启容器让 GPU 真到位（H11）。
+- **不必租卡**：跑分打的是本机 Ollama（`n_ctx=4096`、`MODEL_MAX_CONCURRENCY` 必须为 1），瓶颈是"独占窗口 + 镜像同源"，不是算力。要租只有一种情形：想验 PG+pgvector 那条腿（`docs/handoff/2026-09-17-pgvector-adoption-plan.md`），那属另一档需求。
+- **窗口长度**：单题实测均值 41.581 s ⇒ 105 题串行约 **73 分钟**，加 §7-A 结构预检（零模型）与 C 步评分，请给 **2 小时**。
+- **窗口纪律（P-6/§9）**：开窗期间**我这条线必须全停**——三棵工作树的 agent 一个都不许跑 pytest（R53 已钉住它们会写 Chroma，且可能拉起模型用例抢同一个单点），也不许任何 `docker compose up/down/restart`。所以顺序是：业主先做 H11+H12（约 20–40 分钟长任务）→ 本班把在途三单验完并静默 → 再开窗。
+## 4AU 🔴 **事故 #29（同类第一次，本班 push 引出的暴露面复核）**：push 之后才查明两个远端是**公开仓库**，而 `chroma_db` + `documents/` 样本语料自 **09-03** 就在公网
+- 触发：业主 19:5x 授权 push ⇒ 本班推 `codex/data-file-catalog` 到 `origin`(github) 与 `gitee`（H6 结案，见 §4AT.1）。**推完才去查远端可见性**，顺序错了。
+- 可见性实取（19:5x，未登录直接请求）：`https://github.com/jfuyiugvuihj/enterprise-brain` **HTTP 200**、`https://gitee.com/fx2006/langchain` **HTTP 200** ⇒ 两个都是**公开库**。
+- 已推上去的东西（逐条实测，不是吓自己）：
+  - `git grep -l 明远科技 origin/master` **命中 9 个跟踪文件** ⇒ 样本语料的**源文本**（`documents/企业管理制度手册.txt`、`年度经营报告2026H1.txt`、`销售策略与客户案例.txt`、`产品技术手册.txt`、`前台接待标准流程.txt`）与 `chroma_db/chroma.sqlite3` **在 09-03 那版 master 里就已经公开**，本次 push **不是起点**。
+  - 但本次 push 把量放大了：`chroma_db/chroma.sqlite3` 由 `6 262 784 B` 增至 `75 501 568 B`；HNSW `data_level0.bin` 由 `1 994 652 B` 增至 `124 214 464 B`；`git log -- chroma_db` 共 4 个版本，新版本的明文块数 `embedding_fulltext_search = 1 007 行`（平均 376 字/行）。
+  - 抽查里出现"华为项目账期 90 天""Q1 新签客户 22 家、续约率 92%""应收账款周转天数 45 天""年假 5 天起步"这类**读起来像真实经营与人事数据**的句子；判断上它们是评测用的**自造样本**（与 105 题金标同源），但仓库公开 ⇒ 外人一并拿到"明远科技"的假想经营数字**与整套金标答案**，`.env` 未进过历史（`git ls-files '*.env'` 空，`--diff-filter=A -- .env` 空）⇒ **密钥没漏**，这是本班唯一确定没坏的消息。
+- 本班**立即止手**：`§4AU` 这个提交起**暂停 push**，等远端改私有再由我补推；`master` 从头到尾没被本班动过（`origin/master` 仍 `450e5aa`）。
+- 给业主的处置顺序（只有你能点）：
+  ① **2 分钟先止血**：GitHub `Settings → General → Danger Zone → Change repository visibility → Make private`；Gitee `仓库 → 管理 → 基本信息 → 私密仓库`。改私有**不追回**已有人克隆的副本，但止住继续扩散。
+  ② 再决定要不要清史：`git filter-repo --invert-paths --path chroma_db --path documents` + 双远端强推 + 请平台删缓存 refs。**代价先说清**：全分支 SHA 重写，20+ 棵 agent 工作树要逐棵重挂（本班可负责），且做之前必须先有一次独立全量备份 ⇒ 这是"H 级"动作，等你点头我再排窗口。
+  ③ 治本两条（属业主权限）：把 `chroma_db/**` 反跟踪并写进 `.gitignore`；`documents/**` 样本语料要么整体挪出仓库，要么在文件头明示"合成数据，与客户无关"，免得下次又被当证据推上线。
+- 纪律新增（写死给下班）：**push 之前必须先查远端可见性**（`Invoke-WebRequest <repo> -Method Head` 不带凭据能 200 就是公开库），公开仓库只许推**确认无数据资产**的路径；私有化项目的默认远端应当是业主自己的内网或私有库。
+
+
+---
+
+## 4AV 本班（09-18 20:2x–，总控第十八班·同一线程换脑续跑）：🟢 H11 + H12 由总控亲做结案 · 真机评测 A 步 105/105 且 B 步在跑 · 新立 **R90**（pgvector 0010 首装必停）· R87 总控亲做结案 · 事故 #29 按业主裁定降级 · 🔴 事故 #30 两条执行层线程蒸发
+
+### 4AV.1 业主本班口径（20:2x，四条改变既有规矩）
+- **H19（automation-2 心跳仍指向死线程）＝不管了**，只要不影响代码就不再处理；心跳一律不跑（承前）。
+- **删除清单＝不急**：`_quarantine` 零引用脚本、主树 `_board_*.py` / `bundle.js` / `idx.html` 全部挂账不动刀（本机任何删除动作本身也被策略硬拒，见 §4AT.2）。
+- **R87 总控自己开**（§4AS.2「待业主手动开线」作废）⇒ 本班亲做，见 4AV.5。
+- **仓库里的语料是「网上找的假数据」** ⇒ 事故 #29 按此重定性（4AV.2）；真机评测就在本机跑，前置由总控做完，只在非业主出手不可处停。
+
+### 4AV.2 事故 #29 重定性（降级，不是撤销）
+- 业主裁定：`documents/` 样本语料与 105 题评测集是**编造 / 公开来源**的演示数据，不是客户资料 ⇒ 「公网可见」**不构成数据泄露**。
+- 不随裁定改变的两条事实：① 两远端确为公开库，今天 `chroma_db` 从 6.3 MB→**75.5 MB**、向量目录 2 MB→**124 MB** 被一并推上公网；② `master` 全程停在 `450e5aa`（09-03），本班没动。
+- 因此**保留**的纪律：push 前先查远端可见性；`.env` / `.env.server` 从未进历史（已核）⇒ 无密钥泄露。改私有与清理均按「不急」挂账。
+
+### 4AV.3 🟢 H11 结案（真机确实持有 GPU，总控亲验）
+- 开工时 Docker Desktop 未运行 ⇒ 本班把宿主上的 Docker Desktop 主程序拉起来（引擎 29.7.2），栈按 `restart` 策略自恢复 ⇒「容器要重启才真拿到 GPU」这条当场满足。
+- `docker exec enterprise-brain-ollama-1 ollama ps` 实取：`qwen3.5:9b` **5.3 GB / 100% GPU / ctx 4096**，`nomic-embed-text` 323 MB **100% GPU** ⇒ 不是 CPU 兜底。
+- 🔴 红线记账：模型住在命名卷 `enterprise-brain_ollama`（14 GB），**任何单不许重建该卷**；本班疑似留下一个空卷 `enterprise-brain_ollama_data`（`docker run -v` 自动建卷所致），要查只用 `docker volume inspect`，处置等业主。
+
+### 4AV.4 🟢 H12 结案（后端镜像与主树同源，总控亲做）
+- `docker compose --env-file deploy/.env.server build migrate` ≈12 分钟成功；随后 `up -d backend worker scheduler`（`migrate` 是 `service_completed_successfully` 前置）。
+- 🔴 两条此前无人写过的坑：① **`backend` 的 `build.dockerfile` 指向 `frontend/Dockerfile`** ⇒ 单独 `build backend` 静默空转，正解是 build `migrate`；② 不带 `--env-file deploy/.env.server` 时 compose 直接因 `POSTGRES_USER` / `REDIS_PASSWORD` 插值失败而拒不启动。
+- P-8 改用**内容指纹**证死（不再看构建时间戳）：容器内 `app/common/audit.py` sha1[:10] `9df140a411`、`app/rag/hot_index.py` `0d0e70d8d3`、`app/api/v1/chat.py` `b10629d652`，与主树同名文件**逐字节相同**；`app/agents/contracts.py` 里 `max_calls` 计数 **0**（R86 已在树内）。P-4 `RETRIEVAL_TIER` 未设 ✓；P-5 `MODEL_MAX_CONCURRENCY=1` ✓。
+- 鉴权口径：POST `http://127.0.0.1:8001/api/v1/login`，凭 `deploy/.env.server` 的 `AUTH_USERNAME` + `DEMO_ADMIN_PASSWORD` ⇒ 200 + admin token（`expires_in=86400`）。**禁止伪造 token**。
+- 顺手撞出的文档缺陷：runbook §3.2 骨架写 `urllib.request.urlopen(..., proxies=PROXIES)`，而该函数**没有 `proxies` 参数** ⇒ `TypeError`，即**步骤 B 此前从未真正跑出过一步**。已改 `build_opener(ProxyHandler(PROXIES))`，提取出的骨架实测可编译、单题可通（改动随本节一起提交）。
+
+### 4AV.5 R87 结案（总控亲做，主树 `fcd8ef0`）
+- 改法＝审计范围从「工作树 vs HEAD」换成「本单提交集 `merge-base(HEAD, trunk)..HEAD`」，并且**仅当当前分支不是主干候选**时纳入 `git ls-files --others --exclude-standard`；「是不是主干候选」用**分支名**判，不能用 `base != head`（还没提交的分支两者相等 ⇒ 会漏）。forbidden 前缀一字未减。
+- 用例 **16 → 20**：假红 / 假绿 / 本单自己的提交仍咬 / 主干不对称，四向探针全部落 `tmp_path` 不污染工作树。
+- 全量亲跑（主树 venv）：**2104 passed / 35 skipped / 0 failed / 81.61 s**。
+
+### 4AV.6 🔴 新立 **R90**：0010 首次真机部署必停，而且它给的指引指错库（判据见跟进单 §33）
+- 实取：`docker-compose.yml` 全文 `EMBEDDING_DIMENSION` **零出现**，`.env.example` 亦无；全仓（`migrations/` 之外）**没有任何一处**下发 `app.embedding_dimension` 或执行 `ALTER DATABASE`。而 `migrations/0010_pgvector_chunks.sql:192` 只认**数据库级 GUC** `current_setting('app.embedding_dimension')`，取不到就 `RAISE`（`:216`）⇒ 干净环境跑 0010 必卡。本班是靠手工 `ALTER DATABASE enterprise_brain SET app.embedding_dimension = 768;` 解的卡，现值实取 **768**。
+- 更坏：`:216` 用了 `%I`，而 **PL/pgSQL 的 `RAISE` 不认 `%I` / `%s`**（那是 `format()` 的语法）。容器内一行 `DO` 复现：`%I`→`enterprise_brainI`、`%s`→`enterprise_brains`、`%`→`enterprise_brain` ⇒ 运维照抄提示会去 `ALTER DATABASE` 一个**不存在的库名**。
+- 归属：`migrations/**` 属业主侧（R88 同口径），总控**不动刀**，只立案 + 把复现证据钉进判据。
+
+### 4AV.7 真机评测（业主问「是不是本机测」——是，全在本机，一步不假手）
+- **A 结构性前置检查**（零模型调用）：`collected=105 of 105`，退出码 0 ✓。
+- **单题活体探针** `doc-01`（住宿费标准是多少？）：96.3 s（冷启动含模型加载），答案 252 字、`evidence=1`、`tool_calls=2`。🔴 模型答「未找到」并称反复检索只回到《2026 年华东区渠道政策要点》，而语料里确有《企业管理制度手册》（`chroma.sqlite3` 内实取其 `1.1.4 请假制度` 分块）⇒ **R79 那条「热集 / 外集排序」嫌疑在真机复现**，等 B 轮量化。
+- **B 全 105 题串行采集**：20:31:00 起跑（宿主 `PID 14052`），模式 **B′＝宿主直连 `127.0.0.1:8001` 绕开 nginx**（与 B 模式不可比，报告必须声明）；实取 20:33–20:48 窗口 **13** 次 `POST /api/v1/ask` ≈ **69 s/题** ⇒ 预计 **22:30–23:00** 收（本班初稿写成 00:30 是加法算错，已订正）；ollama 两模型持续 100% GPU。
+- 已定口径：本窗口**不是**完全独占（Noether 在跑前端工具链 ⇒ CPU 竞争），故 **P95 只作参考值并标注「含并发噪声」**；正确率与证据覆盖率不受影响，也正是本轮真正要的两项（55 个 `must_contain` 未知数、热 / 外排序嫌疑）。官方延迟基线需另开 2 小时静默窗口。
+- 采集器是**一次性写出**（`scripts/collect_evaluation_answers.py:341` 才落盘，`assert_coverage` 不满足就整轮不写）⇒ 中途看不到增量文件属正常，别误判成卡死；缺题只能**整轮重跑**，禁止手补答案。
+- C 步（跑分出报告）只在 B 正常退出后执行：`scripts/run_quality_evaluation.py --fixture tests/fixtures/business_evaluation_100.jsonl --answers <B 产物> --output docs/testing/evaluation-report.json`，且**只允许这一份工件入库**。
+
+### 4AV.8 🔴 事故 #30（新类：不是重复投递，是执行层线程蒸发）
+- 20:3x `wait_agent` 实取 `Helmholtz`(R84) 与 `Gauss`(R37) **均 `not_found`** —— 线程不在册，且**没有**结案回执；在册的只剩 `Noether`(R89) ⇒ 真在途 **1/3**。
+- 盘上活已保：`be-r37` `chat.py` +182/−41 + 2 个新用例；`be-r84` 只有一个 21 KB 的红用例文件，`persistence.py` 未动。
+- 处置（按规矩**不补投、不重开同名单**）：R37 由总控在 B 轮结束后逐条对 §21 判据验收、亲跑全量再决定代提交或退回；R84 未动工部分挂回待派。两树的垃圾（`_baseline_r37.txt`、`_r37_before_red.txt`、`be-r37` 的 `chroma_db/chroma.sqlite3` M）**一律不许入库**。
+
+### 4AV.9 三条腿现状（下班照此派工）
+- **后端腿**：今日全历史**无实现提交**的号共 **11** 个 = R29 R31 R32 R33 R34 R37 R38 R43 R46 R48 R50（R29 / R37 只命中立案与文档 commit，其余 9 号 `git log --all --grep` 零命中）。其中 R37 有盘上活等验收；其余全部卡 `app/agents/orchestrator.py`（今日**零改动**）串行或卡真机 ⇒ **无可安全并行的新单**。R88 / R85 / R90 等业主。
+- **前端腿**：R89 在途，结案前不再向前端派单。
+- **真机腿**：B 轮在跑，跑完立刻做 C 并只提交 `docs/testing/evaluation-report.json`。
+- 等业主（一个都不代做）：H13–H18、R85、R88、R90 的 `migrations` 放行、两远端可见性与 `master`、空卷 `enterprise-brain_ollama_data` 处置、临时目录里 `evalrun-token.txt` 那枚 24 小时 admin token（明晚自行过期，或由业主清理）。
+
+---
+
+## 4AW 本班续（09-18 20:5x，总控第十八班续）：🟢 两笔蒸发线程的盘上活已保活 · R37 静态复核定性「只做了一半」· R90 拆成 R90a/R90b
+
+### 4AW.1 🔒 事故 #30 的止血（不等人、不冒险，零 CPU 动作）
+- `be-r37` → 总控 wip 提交 **`9e50e60`**（显式列三个路径：`app/api/v1/chat.py` + 两个 `tests/test_r37_report_lane_*.py`）；`_baseline_r37.txt` / `_r37_before_red.txt` / `chroma_db/chroma.sqlite3` **未入库**。
+- `be-r84` → 总控 wip 提交 **`6d75edd`**（只提 `tests/test_r84_persistence_cross_process_lock.py`），树现已干净。
+- 两笔都**留在各自分支**，不入主干、不作结案；从此机器崩了不再白干。主干 HEAD 仍是 `c39b806`。
+
+### 4AW.2 R37 静态复核（只读，未跑任何测试——评测窗口内禁止抢 CPU）
+- 入队侧质量：**合格且讲究**。`_queue_lane()` 纯读请求字段、零模型往返、故意不做大小写模糊匹配；`REPORT_LANE_VIA_QUEUE` **默认关**；`_enqueue_ask_turn` 在 `lane` 为空时载荷与回执字段与 R37 之前**逐字节相同**（红线「不改 `/ask` 同步档行为」有测试钉）；`hitl_park_text` / `save_session_turn` / `record_hitl_awaiting` 抽成同步路径与后台路径**共用一份**，且 `save_session_turn` 在会话库不可用时**明着返回 False + warning**，不假装写成功。
+- 🔴 但**只做了一半**：用例要求 `queue_worker.REPORT_LANE` 与 `queue_worker._report_lane_requested`（`test_r37_report_lane_worker.py:325/340-341`），而 `deploy/queue_worker.py` **一字未动**，`git grep -n lane -- deploy` = **0 命中** ⇒ 判据 ② 结果可查回 / ③ 失败有终态在生产路径上**没有承接者**。它自己的取证日志坐实：`_r37_before_red.txt`（19:18:30）**23 failed / 5 passed**。
+- 结论：**不并主干、不结案**。接续判据已写进跟进单 §35.1（含"追平主干 `c39b806` 后全量 ≥ 2104/35/0""不许改断言迁就实现""不带 lane 的载荷行为逐字节不变"三条硬门）。
+
+### 4AW.3 R84 定性
+盘上只有一份红用例设计（真子进程复现丢失更新，无新依赖），实现半程未开始 ⇒ 接续判据 §35.2。`app/storage/persistence.py` 的写域**自本班起重新开放**（持有者已消失，红用例已由总控入库）。
+
+### 4AW.4 R90 拆分（跟进单 §34）
+判据 ①③⑤ 全在应用侧（`app/db/migrations.py` + `docker-compose.yml` + `.env.example`）⇒ 拆出 **R90a（可派，不等业主）**；`migrations/0010:216` 的 `%I` 提示串留给 **R90b（🔴 等业主放行）**。R90a 刻意**不在评测窗口内派**：它要连真库验证，中途 `ALTER DATABASE` 手滑会直接污染正在跑的 105 题。
