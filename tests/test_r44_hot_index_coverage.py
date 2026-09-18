@@ -4,9 +4,12 @@
 
 * **分母**：tests/fixtures/business_evaluation_100.jsonl 与 business_evaluation_30.jsonl
   合并去重后的 **105** 道题（两份文件的 id 交集非空，30 那份是 100 那份的子集）。
-* **语料**：documents/*.txt 全量（.pdf 不参与 —— 本单不许动解析链，也不许为了让数字好看
-  少喂文档）。评测集不带权限标注，所以这一趟跑的是 where=None 的最坏情况：任何一条冷条目
-  都可能被召回，热集必须整批常驻才敢服务。
+* **语料**：**入了版本控制**的 documents/*.txt（.pdf 不参与 —— 本单不许动解析链，也不许为了
+  让数字好看少喂文档）。这里刻意不取目录列表：documents/ 按设计兼作上传落地区（H16），主树实测
+  115 个 txt 里只有 95 个入库，那 20 个上传产物把 chunk 数从 379 顶到 37 483，于是"整批语料
+  都在预算内"这个前提会随这台机器传过什么而漂移 —— 而它正是下面两条判据成立的条件。取 git
+  清单与 R72（f396866）同一口径。评测集不带权限标注，所以这一趟跑的是 where=None 的最坏情况：
+  任何一条冷条目都可能被召回，热集必须整批常驻才敢服务。
 * **"命中热集"**：这一题的检索由热集给出、没有回穿外部向量库（search 全程 0 次 query 调用）。
   不是"热集里有相关文档"，也不是"分数够高"，就是服务/没服务二值。
 
@@ -16,6 +19,7 @@
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -41,6 +45,28 @@ def evaluation_questions() -> list:
             row = json.loads(line)
             by_id[row["id"]] = row
     return [by_id[key] for key in sorted(by_id, key=lambda key: (len(key), key))]
+
+
+def tracked_corpus() -> list:
+    """documents/ 里**入了版本控制**的那批 txt —— 不是目录列表。
+
+    本机实测：目录列表 115 个 / 入库 95 个，喂进向量库是 37 483 个 chunk 对 379 个。用目录
+    列表时同一份代码在干净树上全绿、在接过上传的主树上当场红，而这条红没有信息量：它测的是这
+    台机器传过什么，不是热集能不能覆盖语料。
+    """
+    listing = subprocess.run(
+        ["git", "ls-files", "-z", "--", "documents"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        check=False,
+    )
+    assert listing.returncode == 0, f"git ls-files 未能列出语料：{listing.stderr!r}"
+    names = sorted(item.decode("utf-8") for item in listing.stdout.split(b"\0") if item)
+    files = [REPO_ROOT / name for name in names if name.endswith(".txt")]
+    assert files, "版本化语料清单为空，这个覆盖率没有意义"
+    missing = [str(path) for path in files if not path.is_file()]
+    assert not missing, f"git 认为已入库、盘上却不在：{missing}"
+    return files
 
 
 def _hash_vector(text: str, dim: int) -> list:
@@ -98,8 +124,8 @@ def corpus(tmp_path_factory):
     monkeypatch = pytest.MonkeyPatch()
     store = _Store(tmp_path_factory.mktemp("r44coverage"), monkeypatch,
                    max_chunks=hi.DEFAULT_MAX_CHUNKS)
-    files = sorted(DOCUMENT_ROOT.glob("*.txt"))
-    assert len(files) >= 80, f"语料目录不对，只读到 {len(files)} 个 txt"
+    files = tracked_corpus()
+    assert len(files) >= 80, f"版本化语料清单不对，只读到 {len(files)} 个 txt"
     for path in files:
         content = path.read_text(encoding="utf-8", errors="replace").strip()
         if content:
@@ -131,12 +157,17 @@ def test_hot_index_covers_the_evaluation_question_set(corpus, capsys):
     mismatches = []
     total_reads = 0
     total_queries = 0
+    reads_of_one_warm = None
     for row in questions:
         before = hi.hot_index_diagnostics()["hits"]
         hits = corpus.search(row["question"])
         total_reads += corpus.outer_reads
         total_queries += corpus.outer_queries
         hot_served = hi.hot_index_diagnostics()["hits"] > before and corpus.outer_queries == 0
+        if hot_served and reads_of_one_warm is None:
+            # 第一次由热集服务之后累计下来的读库次数，就是一次完整暖机的开销；后面每一题都必须
+            # 一次都不许多读 —— 钉的是"不是每题重跑整库回读"，与回读分成几页无关。
+            reads_of_one_warm = total_reads
         served += int(hot_served)
         nonempty += int(hot_served and bool(hits))
         same = _keys(hits) == _keys(baselines[row["id"]])
@@ -171,7 +202,10 @@ def test_hot_index_covers_the_evaluation_question_set(corpus, capsys):
     assert identical == len(questions)
     assert served >= 101, f"覆盖率未达 95%: {served}/{len(questions)}"
     assert served == len(questions), "整批语料都在预算内，理论上应当全覆盖"
-    assert total_queries == 0 and total_reads == 2, (total_reads, total_queries)
+    assert total_queries == 0, total_queries
+    # 原先钉的是 total_reads == 2，那个数只在"整库一次就读得完"时成立；回读一分页它就变成
+    # 假判据。换成下面这条，钉的是意图本身：一整批 105 题只付一次暖机的读库代价。
+    assert 0 < total_reads == reads_of_one_warm, (total_reads, reads_of_one_warm)
 
 
 def test_coverage_drops_to_zero_when_the_budget_cannot_hold_the_corpus(tmp_path, monkeypatch):
@@ -182,7 +216,7 @@ def test_coverage_drops_to_zero_when_the_budget_cannot_hold_the_corpus(tmp_path,
     """
     questions = evaluation_questions()
     store = _Store(tmp_path, monkeypatch, max_chunks=3)
-    files = sorted(DOCUMENT_ROOT.glob("*.txt"))
+    files = tracked_corpus()
     for path in files[:12]:
         content = path.read_text(encoding="utf-8", errors="replace").strip()
         if content:

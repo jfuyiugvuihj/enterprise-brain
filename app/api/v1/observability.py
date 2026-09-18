@@ -583,6 +583,72 @@ async def read_trace(trace_id: str, request: Request, limit: int | None = None) 
     }
 
 
+def _stage_report_from_trace(trace_id: str) -> dict[str, Any]:
+    """Fold one persisted trace into the R51 stage ledger, from recorded bytes only.
+
+    The events this reads were written by the execution boundaries that already exist;
+    nothing here re-runs a request, so an operator can audit yesterday's trace.
+    """
+    from app.common.stage_timing import (
+        aggregate_stage_latency,
+        request_windows_from_events,
+        samples_from_events,
+    )
+
+    events = list(_trace_store().replay(trace_id) or [])
+    if not events:
+        _fail(
+            404,
+            "resource_not_found",
+            f"No trace events are recorded for trace_id {trace_id!r}.",
+            details={"trace_id": trace_id},
+        )
+    samples = samples_from_events(events)
+    report = aggregate_stage_latency(
+        samples,
+        end_to_end_by_trace=request_windows_from_events(events),
+    )
+    report["samples"] = [sample.as_dict() for sample in samples]
+    return report
+
+
+@router.get("/stage-latency", responses=_ERROR_RESPONSES)
+async def read_stage_latency(
+    request: Request,
+    trace_id: str | None = None,
+    include_samples: bool = False,
+) -> dict[str, Any]:
+    """Read the stage ledger: P50/P95 per segment, plus the coverage arithmetic.
+
+    With ``trace_id`` the answer comes from that one persisted trace, which is how
+    judgement 2 -- the segments must add up to the request within one percent -- gets
+    checked against real recorded bytes rather than a live process. Without it, the
+    in-process rolling window is reported, the same block ``/health/details`` carries.
+    """
+    principal = _require_action(request, ACTION_AUDIT, "stage-latency")
+    from app.common.stage_timing import stage_latency_readout
+
+    normalized = str(trace_id or "").strip()
+    if normalized and len(normalized) > MAX_TRACE_ID_CHARS:
+        _fail(
+            400,
+            "validation_error",
+            f"trace_id exceeds {MAX_TRACE_ID_CHARS} characters.",
+            details={"field": "trace_id", "max_chars": MAX_TRACE_ID_CHARS},
+        )
+    if normalized:
+        report = _stage_report_from_trace(normalized)
+        report["scope"] = "trace"
+        report["trace_id"] = normalized
+    else:
+        report = stage_latency_readout()
+        report["scope"] = "process"
+        report["requested_by"] = _principal_summary(principal)
+    if not include_samples:
+        report.pop("samples", None)
+    return report
+
+
 @router.get("/evaluations", responses=_ERROR_RESPONSES)
 async def read_evaluations(request: Request, limit: int | None = None) -> dict[str, Any]:
     """List evaluation suites and stored reports without executing the model stack."""

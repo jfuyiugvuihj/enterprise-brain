@@ -245,6 +245,16 @@ class ErrorEnvelope(BaseModel):
         "unsupported_export_format",
         "department_scope_required",
         "no_answer_produced",
+        # R64：数据工具的两枚行级终态码。它们不是 rbac 内部 reason 名的别名，公开读法
+        # 只有一句：row_scope_denied＝这些行存在，但在当前账号的行级可见范围之外；
+        # no_visible_rows＝本轮一行可分析的都没有，至于为什么——这一枚不下结论。
+        # emit 点在 app/agents/tools.py 的行级文案层旁边，逐码出处钉在
+        # tests/test_error_code_vocabulary.py::RATIFIED。
+        # 密级拦截那一枚**不在这里**：密级维度今天没有任何 emit 点（rbac 不判密级，
+        # max_clearance 只存不用），业主口径亦未裁（H13）⇒ 硬加进枚举必然被
+        # test_no_ratified_code_is_invented 判红，或者逼出假 emit 点。登记见同一个测试文件。
+        "row_scope_denied",
+        "no_visible_rows",
         "internal_error",
     ]
     message: str

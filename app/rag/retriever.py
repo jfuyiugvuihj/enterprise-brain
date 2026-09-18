@@ -576,6 +576,45 @@ class DocumentRetriever:
             return
         hot_index.get_hot_index().reset(reason=reason)
 
+    def _read_hot_roster(self, index):
+        """分页读花名册，返回 (chunk_id 列表, 同序元数据列表)，与整库一次读逐条等价。
+
+        整库一次 get 在大库上是直接报错：向量库把 id 逐个绑进 SQL，条数超过 SQLite
+        的 32 766 变量上限就返回 "too many SQL variables"（37 483 chunk 的库实测必炸），
+        热集把它当成"不能服务"，于是每次检索都重跑一遍注定失败的整库回读。
+        """
+        from app.rag import hot_index
+
+        page = index.roster_page
+        ids: list[str] = []
+        metadatas: list = []
+        seen: set[str] = set()
+        offset = 0
+        # 止步用常数上限，不用 collection.count()：为算一个循环边界多发一次读库调用，
+        # 就把"暖机只读两笔"这条既存判据改写成三笔（tests/test_r44_hot_index_chroma.py
+        # 的 test_open_index_reads_the_store_once_then_not_at_all 钉的正是这个次数）。
+        while offset < hot_index.ROSTER_SCAN_ROW_CEILING:
+            batch = self.collection.get(limit=page, offset=offset,
+                                        include=["metadatas"]) or {}
+            page_ids = [str(item) for item in (batch.get("ids") or [])]
+            page_metas = list(batch.get("metadatas") or [])
+            if not page_ids:
+                break
+            fresh = 0
+            for position, chunk_id in enumerate(page_ids):
+                if chunk_id in seen:
+                    continue
+                seen.add(chunk_id)
+                ids.append(chunk_id)
+                metadatas.append(page_metas[position]
+                                 if position < len(page_metas) else None)
+                fresh += 1
+            if fresh == 0 or len(page_ids) < page:
+                # 不满一页 = 已到末尾；一页没带来新 id = 后端忽略了 offset，别再转圈。
+                break
+            offset += page
+        return ids, metadatas
+
     def _warm_hot_index(self, index, scope_key: tuple) -> str:
         """读一次向量库，把花名册与常驻子集建起来。返回空串表示建成，否则是原因码。
 
@@ -588,12 +627,11 @@ class DocumentRetriever:
         if not self.stores_vectors:
             return hot_index.REASON_NO_VECTORS
         try:
-            roster = self.collection.get(include=["metadatas"]) or {}
+            ids, roster_metadatas = self._read_hot_roster(index)
         except Exception as exc:
             logger.warning(f"热集读不到向量库花名册，本次退回外部检索: {exc}")
+            index.note_warm_failure()
             return hot_index.REASON_COLD
-        ids = [str(item) for item in (roster.get("ids") or [])]
-        roster_metadatas = list(roster.get("metadatas") or [])
         cold_metadata = {
             chunk_id: (roster_metadatas[position]
                        if position < len(roster_metadatas) and roster_metadatas[position] else {})
@@ -602,12 +640,14 @@ class DocumentRetriever:
         budget = index.max_chunks
         hot_ids = ids[-budget:] if len(ids) > budget else list(ids)
         resident = {}
-        if hot_ids:
+        for start, end in self._batch_ranges(len(hot_ids), index.roster_page):
             try:
                 loaded = self.collection.get(
-                    ids=hot_ids, include=["documents", "metadatas", "embeddings"]) or {}
+                    ids=hot_ids[start:end],
+                    include=["documents", "metadatas", "embeddings"]) or {}
             except Exception as exc:
                 logger.warning(f"热集读不到向量，本次退回外部检索: {exc}")
+                index.note_warm_failure()
                 return hot_index.REASON_COLD
             loaded_ids = [str(item) for item in (loaded.get("ids") or [])]
             documents = list(loaded.get("documents") or [])
@@ -653,6 +693,11 @@ class DocumentRetriever:
             scope_key = self._hot_scope_key()
             index.adopt_scope(scope_key)
             if not index.populated:
+                if index.warm_retry_blocked():
+                    # 刚失败过：这次直接走外部向量库，不再重跑整库回读。结果与不开
+                    # 热集逐条一致，只是照旧记一个 bypass 原因，运维看得见它在退回。
+                    hot_index.note_bypass(hot_index.REASON_COLD)
+                    return None
                 self._warm_hot_index(index, scope_key)
             ranked = index.rank(query_embedding, k, where=where, pred=pred,
                                 scope_key=scope_key, stores_vectors=self.stores_vectors)

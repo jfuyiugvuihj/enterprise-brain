@@ -45,6 +45,20 @@ DEFAULT_MAX_CHUNKS = 20_000
 HOT_INDEX_MAX_AGE_SECONDS_ENV = "HOT_INDEX_ROSTER_TTL_SECONDS"
 DEFAULT_ROSTER_TTL_SECONDS = 300.0
 
+#: 暖机回读的分页大小。向量库把 id 逐个绑进 SQL，一次取的条数超过 SQLite 的 32 766
+#: 变量上限会直接报错（实测 37 483 chunk 的库整库 get 报 "too many SQL variables"），
+#: 所以花名册与常驻子集只能分页读，任何一次 get 的条数都不超过它。
+HOT_INDEX_ROSTER_PAGE_ENV = "HOT_INDEX_ROSTER_PAGE"
+DEFAULT_ROSTER_PAGE = 1_000
+
+#: 分页扫描的行数上限，只为止步用，不是容量承诺。
+ROSTER_SCAN_ROW_CEILING = 2_000_000
+
+#: 暖机失败之后的重试冷却（秒）。不冷却 = 每一次检索都重跑一遍注定失败的整库回读，
+#: 加速层反过来把检索拖慢；冷却期内直接走外部向量库，结果与不开热集逐条一致。
+HOT_INDEX_WARM_RETRY_SECONDS_ENV = "HOT_INDEX_WARM_RETRY_SECONDS"
+DEFAULT_WARM_RETRY_SECONDS = 60.0
+
 #: 不可服务的稳定原因码。观测只读这些码，不读日志。
 REASON_DISABLED = "hot_index_disabled"
 REASON_COLD = "hot_index_cold"
@@ -135,6 +149,14 @@ def _int_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        value = float(str(os.getenv(name, "") or "").strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
 def _ttl_env() -> float:
     try:
         value = float(str(os.getenv(HOT_INDEX_MAX_AGE_SECONDS_ENV, "") or "").strip())
@@ -190,6 +212,8 @@ class HotSetIndex:
 
     def __init__(self, *, max_chunks: int | None = None,
                  roster_ttl_seconds: float | None = None,
+                 roster_page: int | None = None,
+                 warm_retry_seconds: float | None = None,
                  clock=time.monotonic):
         self._lock = threading.RLock()
         #: 常驻条目（含向量与文本）
@@ -208,6 +232,14 @@ class HotSetIndex:
                            else _int_env(HOT_INDEX_MAX_CHUNKS_ENV, DEFAULT_MAX_CHUNKS))
         self._roster_ttl = (roster_ttl_seconds if roster_ttl_seconds is not None
                            else _ttl_env())
+        self._roster_page = (roster_page if roster_page is not None
+                             else _int_env(HOT_INDEX_ROSTER_PAGE_ENV, DEFAULT_ROSTER_PAGE))
+        self._warm_retry_seconds = (warm_retry_seconds
+                                    if warm_retry_seconds is not None
+                                    else _float_env(HOT_INDEX_WARM_RETRY_SECONDS_ENV,
+                                                    DEFAULT_WARM_RETRY_SECONDS))
+        #: 上一次暖机失败之后，到这个时刻（monotonic）之前不再重试
+        self._warm_retry_after = 0.0
 
     # ---------- 生命周期 ----------
 
@@ -220,6 +252,8 @@ class HotSetIndex:
         self._populated = False
         self._built_at = 0.0
         self._last_reset_reason = reason
+        #: 作废说明库里的内容或口径变了，下一次允许再试一次暖机
+        self._warm_retry_after = 0.0
         _note_invalidations(dropped)
         _note_resident(0)
         return dropped
@@ -270,6 +304,22 @@ class HotSetIndex:
         with self._lock:
             return self._last_reset_reason
 
+    @property
+    def roster_page(self) -> int:
+        """一次从向量库最多回读多少条：调用方必须按它分页，不许整库一次读。"""
+        with self._lock:
+            return self._roster_page
+
+    def warm_retry_blocked(self) -> bool:
+        """暖机刚失败过 ⇒ 冷却期内不再重跑整库回读（每次检索都失败一遍是负收益）。"""
+        with self._lock:
+            return self._warm_retry_after > self._clock()
+
+    def note_warm_failure(self) -> None:
+        """记一次暖机失败：冷却到 _clock() + 退避秒数。成功 populate 会清掉它。"""
+        with self._lock:
+            self._warm_retry_after = self._clock() + self._warm_retry_seconds
+
     def _fresh_locked(self) -> bool:
         """花名册是否可信：只有刚整批读过向量库、且没超过 TTL 时才是。"""
         if not self._populated:
@@ -317,6 +367,7 @@ class HotSetIndex:
                 admitted += 1
             self._populated = True
             self._built_at = self._clock()
+            self._warm_retry_after = 0.0
             _note_resident(len(self._entries))
         return {"resident": admitted, "cold": cold}
 
