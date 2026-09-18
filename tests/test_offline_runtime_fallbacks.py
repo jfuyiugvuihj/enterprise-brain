@@ -1,5 +1,47 @@
 import asyncio
 
+import copy
+
+import pytest
+
+#: 本文件的用例会清写这些模块级进程内存储（跟进单 R68）：三个 dict、两个 list。
+_PROCESS_LOCAL_STORES = (
+    ("app.api.v1.chat", "_MEM_SESSIONS"),
+    ("app.api.v1.chat", "_MEM_SESSION_MESSAGES"),
+    ("app.api.v1.alerts", "_MEM_RULES"),
+    ("app.api.v1.alerts", "_MEM_ALERTS"),
+    ("app.memory.profile", "_MEM_PROFILES"),
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_process_local_stores():
+    """用例开头的 clear() 只清得进来时的脏，还原不了自己留下的脏，所以逐个快照、用例后原样放回。
+
+    不还原的代价（实测 09-18 13:3x，主树 @50aff1a，单独跑本文件 + tests/test_deployment_guards.py）：
+    test_profile_save_and_load_fallback_to_memory_without_postgres 在 :99 清完 :101 写进
+    profile._MEM_PROFILES 一个 offline-user，紧接着 test_deployment_guards.py:494 的
+    assert profile._MEM_PROFILES == {} 当场红。守卫那条 == {} 是被测语义本身（生产必须拒绝进程内表），
+    不许放宽，所以修的是泄漏方；同形隐患还有 :79/:80 的会话表和 :119/:120 的告警表。
+    """
+    import importlib
+
+    saved = [
+        (module, name, copy.deepcopy(getattr(module, name)))
+        for dotted, name in _PROCESS_LOCAL_STORES
+        for module in [importlib.import_module(dotted)]
+    ]
+    try:
+        yield
+    finally:
+        for module, name, snapshot in saved:
+            live = getattr(module, name)
+            if isinstance(live, dict):
+                live.clear()
+                live.update(snapshot)
+            else:
+                live[:] = snapshot
+
 
 def test_model_handler_ignores_invalid_no_proxy_environment(monkeypatch):
     from app.common.model_handler import ModelHandler, _OfflineChatClient
