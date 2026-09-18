@@ -1257,8 +1257,9 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Gauss` | 同上 `01a0b3ff-…` | **R37**（保活） | `be-r37`（分支 `codex/be-r37`） | **已保活**：总控 wip 提交 **`9e50e60`**（chat.py +182/−41 + 两个用例文件共 28 例）；机器一崩不再白干。静态复核定性＝**只做了一半**：入队侧完整，worker 侧 `queue_worker.REPORT_LANE` / `_report_lane_requested` **不存在**（`git grep lane -- deploy` = **0 命中**），其自证日志 `_r37_before_red.txt` 19:18:30 实取 **23 failed / 5 passed**。接续判据 → 跟进单 §35.1 | 20:5x |
 | `Helmholtz` | 同上 `01a0b42f-…` | **R84**（保活） | `be-r84`（分支 `codex/be-r84`） | **已保活**：总控 wip 提交 **`6d75edd`**（21 KB 真子进程红用例设计）。实现半程未开始 ⇒ 接续判据 → 跟进单 §35.2 | 20:5x |
 | `Noether` | 同上 `01a0b454-…` | **R89**（结案） | `fe-trunk` | **✅ 已结案并树（第十九班）**：总控验收 = 写域只 `frontend/src/lib/errcodes.js`(+48/−2，**零测试改动**)、`ERROR_CODES` 26→**29**、三枚新码逐条对到主干封闭枚举 `app/agents/contracts.py:102/226/248-256`、`retryable` 全 false 且注释给的是可核依据（不是感觉）、`FRONTEND_ONLY_CODES` 仍 `[]`（`errcodes.js:147`，被 `errcodes.test.js:104/:643` 钉住）；总控**亲跑** vitest **496/496** + `npm run lint` **0 errors** + 跨端钉 `tests/test_frontend_login_policy.py` **2 passed**；保活提交 `3305591` + 追平 `5160494` ⇒ 并主干 `7c66397`，**tree 恒等 `6cd5b20`**，主干全量 **2104 passed / 35 skipped / 0 failed**；origin + gitee 已同步 | 21:16 |
-| `Mendel` | `01a0b4a0-9ed6-7782-8b96-81281a5bde2f` | **R37**（第二棒，接续保活提交 `9e50e60`） | `be-r37`（分支 `codex/be-r37`，**独占**） | **运行中**：21:07 单投（本 block 只此一次投递；canary = `rollout-2026-09-18T21-07-00-01a0b4a0…jsonl` 已生成 758 KB）；写域**锁死 `deploy/queue_worker.py`**，禁 `orchestrator.py`/`reliable_queue.py`/`persistence.py`/改 chat.py/迁移/前端；判据 ①–⑧ = 跟进单 §35.1；投前总控实取 **13 failed / 15 passed / 62.6 s**（订正上一班记的 14/14），且 `git grep lane -- deploy` 仍 **0 命中** ⇒ worker 侧确实从未落地 | 21:07 |
+| `Mendel` | `01a0b4a0-9ed6-7782-8b96-81281a5bde2f` | **R37**（第二棒，接续保活提交 `9e50e60`） | `be-r37`（分支 `codex/be-r37`，**独占**） | **运行中**：21:07 单投（本 block 只此一次投递；canary = `rollout-2026-09-18T21-07-00-01a0b4a0…jsonl` 已生成 758 KB）；写域**锁死 `deploy/queue_worker.py`**，禁 `orchestrator.py`/`reliable_queue.py`/`persistence.py`/改 chat.py/迁移/前端；判据 ①–⑧ = 跟进单 §35.1；总控 21:19 实取 **13 failed / 15 passed / 62.6 s**（订正上一班记的 14/14：那是 `Gauss` 19:18 在**落后主干**的树上自取的），且 `git grep lane -- deploy` 仍 **0 命中** ⇒ worker 侧确实从未落地 | 21:07 |
 | `Faraday` | `01a0b4a4-ae08-7910-a7f8-cb7af6115cda` | **R84**（第二棒，接续保活提交 `6d75edd`） | `be-r84`（分支 `codex/be-r84`，**独占**；投放前由总控追平主干 → 合并点 `249aedf`） | **运行中**：21:11 单投（canary = `rollout-2026-09-18T21-11-26-01a0b4a4…jsonl` 112 KB 已生成、投后 `be-r84` `dirty=0`）；写域**锁死 `app/storage/persistence.py` + 既在库 `tests/test_r84_persistence_cross_process_lock.py`**；投前总控实取 **9 failed / 1 passed / 3.75 s**；判据 ①–⑥ = 跟进单 §35.2 | 21:11 |
+| `Gibbs` | `01a0b4b2-02f3-7a70-8a6c-265644225ea2` | **R90a** embedding GUC 改由应用侧下发（判据 跟进单 §34.2 ①–⑥） | `be-r90a`（总控自主干 `0a5c0b7` 新建 `codex/be-r90a`，**独占**） | **运行中**：21:26 单投（canary = `rollout-2026-09-18T21-26-00-01a0b4b2…jsonl` 124 KB 已生成 + 投后 `be-r90a` `dirty=0` ⇒ 无重复体）；写域锁 `app/db/migrations.py` + `docker-compose.yml` + `.env.example` + 新用例文件，**禁 `migrations/**`（`%I` 归 R90b 等业主）/ `chat.py`(R37) / `persistence.py`(R84)**；硬红线：不得对 `enterprise_brain` 主库 `ALTER DATABASE`/`RESET`、不得连 5432、不得碰 Docker、不得改 `tests/conftest.py:41-53` 那颗把 `DATABASE_URL` 钉到 `127.0.0.1:1` 的死端口钉子——**这颗钉子就是本单允许在评测窗口内派工的依据**（业主 21:0x 改令「不必为测试卡着」⇒ §34.2 原写的「前置：评测窗口关窗」据此撤销）；**并发已满 3（Mendel/Faraday/Gibbs），落地前不再派工** | 21:26 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -2448,7 +2449,7 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - **R37 → `Mendel`（21:07）**：只允许改 `deploy/queue_worker.py`。为什么够——能停 HITL 的图是 `orchestrator.multi_agent_graph`
   （`app/agents/orchestrator.py:783`），入队侧 `9e50e60` 已经把 `lane`/`hitl_park_text`/`save_session_turn`/`record_hitl_awaiting` 备好，
   **不需要碰 `orchestrator.py`**（那文件被 R30/R31/R33/R42/R38 五单共占，能绕开就绕开）。
-  投前基线我实测 **13 failed / 15 passed**（订正上一班在册的 14/14——那是 Gauss 19:18 在**落后主干**的树上自取的数）。
+  取数时机说明：这份红基线是我在 **21:19**（投放之后、`Mendel` 动 worker 之前）实测的，**13 failed / 15 passed**，订正上一班在册的 14/14——那是 `Gauss` 19:18 在**落后主干**的树上自取的数。
 - **R84 → `Faraday`（21:11）**：投放前我先把 `be-r84` 追平主干（`249aedf`，`persistence.py` 主干自 `2100185` 起零改动 ⇒ 无冲突），
   这样第二棒跑出来的全量才能直接和 2104 对齐；投前红基线我实测 **9 failed / 1 passed / 3.75 s**。
 - `spawn_agent` 传 `model: ""` 被校验器直接拒（`Must be a non-empty string`），**未进入子系统、未生成执行体**
@@ -2469,6 +2470,49 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 ### 4AX.5 本班账
 - 主树 HEAD：`7c66397`（R89 并树），双远端同步。今日提交数 +4（`249aedf`/`3305591`/`5160494` 在票分支，`7c66397` 在主干）。
 - 在途：`Mendel`(R37/`be-r37`)、`Faraday`(R84/`be-r84`) —— 并发 2，未超上限 3；两者写域与 `chat.py`(R55 已并)/`retrieval_pipeline.py`(R57 已并) 零相交。
-- 待投（下一 block）：**R90a**（`app/db/migrations.py` + `docker-compose.yml` + `.env.example` + 新用例；判据跟进单 §34.2，**禁止碰真机 `enterprise_brain` 库**，一次性库或无 `DATABASE_URL` 即跳过）。
+- 已投（**并发满 3**）：**R90a → `Gibbs`**（21:26 单投，树 `be-r90a` @ `0a5c0b7`；判据 ①–⑥ = 跟进单 §34.2，「禁碰真机 `enterprise_brain` 库」写进简报红线）。
+- 由此**撤销** §34.2 原文的前置「评测窗口关窗」：依据是 `tests/conftest.py:41-53` 把测试期 `DATABASE_URL` 钉死在保留端口 `127.0.0.1:1`（并自带「必须含 `connect_timeout=1`」「不得含 `:5432`/`localhost`」两条断言），执行层物理上连不到宿主真库 ⇒ 数据风险为零，只剩墙钟噪声。
 - 等业主：H13–H18、R85、R88、R90b（`migrations/0010:216` 的 `%I`）、删除清单（不急）、远端 `master` 可见性、孤儿卷 `enterprise-brain_ollama_data`、临时令牌文件。
 - R90 现状补记：库级 GUC `app.embedding_dimension` 是我手工设成 768 才解封的，**根因未修**，R90a/R90b 不结案。
+
+### 4AY.1 R29 前置实测（总控亲跑，21:31–21:35，真机 qwen3.5:9b 100% GPU；三腿合计 113 s）
+三腿对照，同一个提示词「用一句话说明：住宿费标准在哪里查？」，非流式：
+
+| 腿 | 端点 / 参数 | thinking 字数 | 正文字数 | 墙钟 |
+|---|---|---|---|---|
+| A | 原生 `/api/chat` + `"think": false` | **0** | 73 | **1.86 s** |
+| B | 原生 `/api/chat` 不带 think（对照） | **7 214** | 39 | 64.93 s |
+| C | `/v1/chat/completions` + 顶层 `think:false` | 0（**取不到**，不是没有） | 47 | 46.48 s |
+
+- **判据① 达标形式已成立**：A 腿 `thinking` 实测 0 字 ⇒ 关思考在**原生端点**上做得到；
+- **判据「不许只在 `/v1` 加参数就当完成」被实测坐实**：C 腿接受了同一个参数、`reasoning_content` 恒为 0（OpenAI 兼容层根本不吐这个字段），却照样烧掉 46 s ⇒ **W8 §5.4「`/v1` 上五种写法全无效」到今天仍然成立**，模型没换（`qwen3.5:9b`，2 天前拉的）；
+- ⇒ **路线裁定：R29 走 A（迁原生 `/api/chat`）**，不必造 `PARAMETER think false` 派生模型（省一次真机改模型动作，那本来是要业主点头的）；代价是 A 腿正文与 B/C 不同（73 vs 39/47 字），**这正是判据③ 要盯的质量漂移**，所以必须等 105 题基线落盘才好派。
+- 🔴 **踩坑记录（下班别再犯）**：宿主 `127.0.0.1:11434` 是**另一个空 Ollama**（`/api/tags` 返回 `[]`），栈里的模型只在 docker 网络内 `http://ollama:11434`（`OLLAMA_BASE_URL`/`LOCAL_MODEL_BASE_URL` 都是这个服务名）。在宿主端口上测会得到 `model 'qwen3.5:9b' not found`，那不是"模型没了"，是**测错了层**。正解：把脚本从 stdin 灌进 `docker compose --env-file deploy/.env.server exec -T backend python -`。
+- ⚠️ 三腿数字含并发噪声（同机评测在跑，判据②的 before 数**不用这里的**，用评测集里逐题 `latency_ms`）。
+
+### 4AY.2 这轮评测能当 R29 的 before 基线吗——**一半能一半不能**（本班初稿写错，就地订正）
+采集器确实为 R29 预留了 `TRACE_KEYS`（`scripts/collect_evaluation_answers.py:49-51`，注释原文 "ride along for the R29 thinking tax"），
+但三条的可得性不一样：
+- `latency_ms`：**采集器 `perf_counter` 实测**（transport 故意不自报，见 `:100`）⇒ **判据②（30.6 s → ≤22 s）的 before 侧就在这轮里，不必另跑一轮**；
+- `first_token_at`：客户端实测首字到达 ⇒ 能把"排队"和"生成"拆开看；
+- `thinking_chars`：**本轮恒为 null**。仓外那份 transport（`$env:TEMP`\evalrun\eval_transport_ask.py，按 runbook §3.2 **就是要求存仓外**，
+  下班别好心搬进仓库）`:98` 写死 `None` 并注明"HTTP 侧看不见隐藏思维链 ⇒ 禁止估算"。
+- 🔴 **由此作废本班早先一句错话**：不能拿评测里的 null 当"思考 0 字"的证据——**那是看不见，不是没有**。
+  判据① 只能来自 §4AY.1 那种**直连 Ollama 原生端点**的探针（A 腿 0 字 / B 腿 7 214 字就是这条证据的正确形态）。
+- 因果接上：单题 7 214 字思考 ≈ 60 s+ ⇒ 解释了探针 `doc-01` 的 96.3 s；也预告 R29 走 A 腿后评测 P95 会明显下降，
+  但**正文也变了**（73 vs 39/47 字）⇒ 判据③"制度题准确率不得下降"必须拿这轮基线**逐题**比，不许看总分。
+
+### 4AY.3 R90 真机验收夹具已验证可用（免得上班 §3.2 那种"命令从没跑过"的重演）
+- 一次性库 `eb_r90a_probe`（**不是**主库，主库 `enterprise_brain` 未受任何影响）：
+  ① **不设 GUC** 直接跑 `docker compose --env-file deploy/.env.server run --rm --no-deps migrate sh -c '... migrate.py --database-url <一次性库>'`
+     ⇒ `MIGRATE_EXIT=1`，文案 `0010 needs an explicit vector width and will not guess one. Declare it for this database before migrating: ALTER DATABASE **eb_r90a_probeI** SET app.embedding_dimension = <EMBEDDING_DIMENSION>`，事务已回滚；
+  ② 手工 `ALTER DATABASE ... SET app.embedding_dimension = 768` 之后同一条命令 ⇒ `applied=10 database=eb_r90a_probe`，`MIGRATE_EXIT=0`。
+- **意义两条**：(a) R90「干净环境首装必停」从静态推断升级为**端到端实测**；(b) **R90b 的 `%I` 缺陷第一次在真库上留下现场证据**——提示串让操作者去改一个叫 `eb_r90a_probeI` 的库（**不存在的库名**），照做就白折腾，这条比原来的容器内 `DO` 复现硬得多，报给业主时按"已实测"说。
+- 验收口径已备好：`Gibbs` 交付后，同一夹具**不做任何手工 `ALTER`** 必须直接 `applied=10 / exit 0`，否则 R90a 不算结案。一次性库用完由总控 DROP（不属主库，业主可随时收回处置权）。
+
+### 4AY.4 进度账订正（引用数字前先查有没有被后续实测推翻）
+- 上一班在册「20 单在全部历史里零提交」**已过期**：逐号数主干提交后 = **12 单零提交**：`R29 R31 R32 R33 R34 R37 R38 R43 R46 R48 R50 R52`
+  （`R30 50aff1a`、`R42`、`R35 63651f1`、`R44 39006b8`、`R49`、`R51`、`R40 dc31a44`、`R47 95a1cd9`、`R45 0276f78` 都已经在树上）。
+- **腿① 的锁变松了**：`R27 → R29 → R30 → R31 → R32 → R38` 严格串行，R27/R30 已并 ⇒ **队头是 R29**，只差 §4AY.1 的路线裁定 + R36 判据③ 的基线。
+  R36 判据③ 至今仍是 R29/R33/R35 三单的共同闸门（跟进单 §21 原话："未落真机分数不算 R36 完成"），**这就是本班死守这轮评测的原因**，不是无人可派。
+- `chat.py`(R55 `6663a40`→并树 `6d03788`) 与 `retrieval_pipeline.py`(R57 `ee11ca1`→并树 `5984696`) **确实已并** ⇒ 两文件写域开放，本班名册里"未结案前不许再派碰这两个文件"的限制同时解除。

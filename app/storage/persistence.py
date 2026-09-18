@@ -4,6 +4,14 @@ The local adapter is intentionally atomic and suitable for offline development. 
 PostgreSQL adapter is selected explicitly through ``PERSISTENCE_BACKEND=postgres`` and
 surfaces write errors instead of silently falling back after a configured database
 fails.
+
+R84 cross-process scope, residual limit included: ``JsonPersistenceAdapter`` wraps its
+whole read-modify-write in a host-local advisory lock, so two API processes on one
+machine can no longer rewrite the document from stale views and silently drop each
+other's records. Advisory locks are unreliable on shared filesystems -- NFS and
+SMB/CIFS servers may hand the same lock to two clients at once -- so this guard is
+host-local and is not cross-machine safe; a journal placed on a network share still
+needs the PostgreSQL backend.
 """
 from __future__ import annotations
 
@@ -16,6 +24,7 @@ import os
 from pathlib import Path
 import tempfile
 from threading import RLock
+import time
 from typing import Any, Callable
 
 
@@ -27,8 +36,165 @@ def _json_value(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 
 
+DEFAULT_LOCK_TIMEOUT_SECONDS = 5.0
+#: One byte is enough for an advisory lock; the region is never read or written.
+_LOCK_REGION_BYTES = 1
+
+try:  # pragma: no cover - the leg chosen by the interpreter's platform
+    import msvcrt
+except ImportError:  # pragma: no cover - POSIX hosts have no msvcrt
+    msvcrt = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - the leg chosen by the interpreter's platform
+    import fcntl
+except ImportError:  # pragma: no cover - Windows hosts have no fcntl
+    fcntl = None  # type: ignore[assignment]
+
+
+def _acquire_region(handle: Any) -> None:
+    """Take an exclusive OS lock on an open lock-file handle, failing fast if held.
+
+    ``OSError`` when somebody else already holds the region, which is exactly what the
+    bounded retry loop in :meth:`_AdvisoryFileLock.acquire` polls on.
+    """
+    handle.seek(0)
+    if msvcrt is not None:  # pragma: no cover - Windows leg
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, _LOCK_REGION_BYTES)
+        return
+    if fcntl is not None:  # pragma: no cover - POSIX leg
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return
+    raise PersistenceWriteError("no supported advisory locking primitive on this platform")
+
+
+def _release_region(handle: Any) -> None:
+    """Undo :func:`_acquire_region` for the same byte region."""
+    handle.seek(0)
+    if msvcrt is not None:  # pragma: no cover - Windows leg
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, _LOCK_REGION_BYTES)
+        return
+    if fcntl is not None:  # pragma: no cover - POSIX leg
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return
+    raise PersistenceWriteError("no supported advisory locking primitive on this platform")
+
+
+class _AdvisoryFileLock:
+    """Host-local exclusive lock on a sidecar file, released by the OS when we die.
+
+    ``msvcrt.locking`` (Windows) and ``fcntl.flock`` with ``LOCK_EX`` (POSIX) are both
+    owned by the process that took them, so a holder that is killed leaves nothing to
+    reap -- the reason this is preferred over an ``O_EXCL`` sentinel file, where every
+    crash site has to be cleaned up by somebody else.
+
+    Honest limits: the lock is advisory, so a writer that never takes it (a hand-edited
+    file, another tool) is not kept out, and advisory locking is unreliable on shared
+    filesystems such as NFS and SMB/CIFS, where the server can grant the same lock to
+    two clients at once. It serializes processes on one host and is not cross-machine
+    safe.
+    """
+
+    def __init__(self, path: str | Path, timeout: float = DEFAULT_LOCK_TIMEOUT_SECONDS):
+        self.path = Path(path)
+        self.timeout = max(0.0, float(timeout))
+        self._handle: Any = None
+
+    @property
+    def locked(self) -> bool:
+        return self._handle is not None
+
+    def acquire(self, timeout: float | None = None) -> None:
+        """Wait at most ``timeout`` seconds, then fail as ``PersistenceWriteError``.
+
+        There is no unbounded silent wait: giving up raises the same error class every
+        other persistence write failure in this module raises.
+        """
+        if self._handle is not None:
+            raise PersistenceWriteError("advisory lock is already held by this instance")
+        if msvcrt is None and fcntl is None:
+            # Fail before opening anything, so an unsupported platform leaks no handle and
+            # does not get the misleading "another process holds it" report below.
+            raise PersistenceWriteError("no supported advisory locking primitive on this platform")
+        budget = self.timeout if timeout is None else max(0.0, float(timeout))
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            handle = open(self.path, "a+b")
+        except OSError as exc:
+            raise PersistenceWriteError(f"cannot open persistence lock file: {exc}") from exc
+        self._handle = handle
+        deadline = time.monotonic() + budget
+        delay = 0.001
+        while True:
+            try:
+                _acquire_region(handle)
+                return
+            except OSError as exc:
+                if time.monotonic() >= deadline:
+                    self.release()
+                    raise PersistenceWriteError(
+                        "cannot lock persistence file for writing: another process holds "
+                        f"the lock for more than {budget:.3f}s ({exc})"
+                    ) from exc
+                time.sleep(delay)
+                delay = min(delay * 2, 0.02)
+
+    def release(self) -> None:
+        """Drop the lock; closing the handle releases it even if the unlock call fails."""
+        handle, self._handle = self._handle, None
+        if handle is None:
+            return
+        try:
+            _release_region(handle)
+        except OSError:  # pragma: no cover - close() below is the backstop
+            pass
+        finally:
+            try:
+                handle.close()
+            except OSError:  # pragma: no cover - nothing left to clean up
+                pass
+
+    def __enter__(self) -> "_AdvisoryFileLock":
+        self.acquire()
+        return self
+
+    def __exit__(self, *_exc_info: Any) -> bool:
+        self.release()
+        return False
+
+
+def _replace_document(source: str, target: Path) -> None:
+    """Swap the finished temp file onto the document with one atomic rename.
+
+    Windows refuses ``os.replace`` with ``PermissionError`` for as long as any other
+    handle still has the target open -- which is ordinary on the shipped multi-process
+    topology (``deploy/start_workers.ps1`` starts ``-Workers 3``), and also what a file
+    scanner does to the document a previous replace just created. The rename either
+    happened or it did not, so a short bounded retry cannot duplicate or interleave a
+    write: the swap stays atomic and the bytes on disk stay exactly as ``_write``
+    produced them. A vanished source means the rename did land, which is success.
+    """
+    delay = 0.005
+    for attempt in range(6):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if not os.path.exists(source):
+                return
+            if attempt == 5:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.05)
+
+
 class JsonPersistenceAdapter:
-    """Atomic JSON persistence used when PostgreSQL is intentionally unavailable."""
+    """Atomic JSON persistence used when PostgreSQL is intentionally unavailable.
+
+    ``upsert`` is the only method that changes the disk, so it is the only method that
+    takes the cross-process advisory lock; ``get`` and ``list`` read one atomic snapshot
+    each and never create the sidecar. The lock is host-local: see the module docstring
+    for the NFS/SMB limit, which this class does not pretend to solve.
+    """
 
     _OWNER_REQUIRED = {
         "datasets",
@@ -41,9 +207,12 @@ class JsonPersistenceAdapter:
         "retrieval_traces",
     }
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, lock_timeout_seconds: float = DEFAULT_LOCK_TIMEOUT_SECONDS):
+        """``lock_timeout_seconds`` bounds how long a writer queues behind another process."""
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_path = self.path.parent / f".{self.path.name}.lock"
+        self.lock_timeout_seconds = max(0.0, float(lock_timeout_seconds))
         self._lock = RLock()
 
     def _read(self) -> dict[str, dict[str, dict[str, Any]]]:
@@ -68,7 +237,7 @@ class JsonPersistenceAdapter:
                 json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(temporary, self.path)
+            _replace_document(temporary, self.path)
         except OSError as exc:
             raise PersistenceWriteError(f"cannot write persistence file: {exc}") from exc
         finally:
@@ -83,12 +252,13 @@ class JsonPersistenceAdapter:
         if collection in self._OWNER_REQUIRED and not str(record.get("owner_id") or "").strip():
             raise ValueError("owner_id is required for protected records")
         with self._lock:
-            payload = self._read()
-            bucket = payload.setdefault(collection, {})
-            if not isinstance(bucket, dict):
-                raise PersistenceWriteError(f"persistence collection is invalid: {collection}")
-            bucket[record_id] = dict(record)
-            self._write(payload)
+            with _AdvisoryFileLock(self.lock_path, self.lock_timeout_seconds):
+                payload = self._read()
+                bucket = payload.setdefault(collection, {})
+                if not isinstance(bucket, dict):
+                    raise PersistenceWriteError(f"persistence collection is invalid: {collection}")
+                bucket[record_id] = dict(record)
+                self._write(payload)
         return dict(record)
 
     def get(self, collection: str, record_id: str) -> dict[str, Any] | None:
