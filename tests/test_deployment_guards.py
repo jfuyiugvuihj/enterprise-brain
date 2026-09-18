@@ -470,7 +470,11 @@ def test_knowledge_graph_refuses_an_in_memory_write_in_production(monkeypatch, t
     }
 
 
-def test_long_term_memory_refuses_the_process_local_table_in_production(monkeypatch):
+def test_long_term_memory_refuses_the_process_local_table_in_production(
+    monkeypatch, offline_ollama_embeddings
+):
+    # R56：long_term.remember() 会经 app/memory/long_term.py:131 构造 OllamaEmbeddings，
+    # 打的是 localhost:11434。fixture 把它钉成同一条零向量兜底，测试期不开 socket。
     from app.common import auth
     from app.memory import long_term, profile
 
@@ -487,7 +491,11 @@ def test_long_term_memory_refuses_the_process_local_table_in_production(monkeypa
     assert profile.profile_storage_state()["protection"] == "read_only"
 
 
-def test_development_long_term_memory_still_uses_its_dictionary(monkeypatch):
+def test_development_long_term_memory_still_uses_its_dictionary(
+    monkeypatch, offline_ollama_embeddings
+):
+    # R56：development 分支同样会经 app/memory/long_term.py:131 打 localhost:11434 要
+    # embedding。fixture 只是把结果钉成它本来在离线机上拿到的零向量，向量内容不变。
     from app.memory import long_term, profile
 
     monkeypatch.setenv("APP_ENV", "development")

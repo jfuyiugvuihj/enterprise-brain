@@ -20,8 +20,13 @@ def test_jwt_secret_rotation_updates_env_file(tmp_path):
 
 
 def test_health_snapshot_reports_disk_and_request_metrics(monkeypatch):
+    from app.common import monitoring
     from app.common.monitoring import build_health_snapshot
 
+    # R56：本用例断的是 performance/disk 与依赖键名，Ollama 探针只是路过就打宿主
+    # 11434。钉成离线值之后结果不再取决于开发机上 Ollama 开没开（开着的机器上
+    # configured 模型名不在注册表里，status 会变 degraded，这条用例会随机红）。
+    monkeypatch.setattr(monitoring, "_probe_ollama", lambda: {"status": "ok"})
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     snapshot = build_health_snapshot({"count": 2, "p95_ms": 120})
 
@@ -46,11 +51,15 @@ def test_health_dependency_probes_fail_closed_without_configuration(monkeypatch)
     assert snapshot["dependencies"]["ollama"]["status"] == "unavailable"
 
 
-def test_detailed_health_requires_authentication():
+def test_detailed_health_requires_authentication(monkeypatch):
     from fastapi.testclient import TestClient
 
     from app.common.auth import create_token
+    from app.common import monitoring
     from app.main import app
+
+    # R56：/health/details 会探一次宿主 Ollama，本用例只关心鉴权与响应结构。
+    monkeypatch.setattr(monitoring, "_probe_ollama", lambda: {"status": "ok"})
 
     client = TestClient(app)
     assert client.get("/api/v1/health/details").status_code == 401
