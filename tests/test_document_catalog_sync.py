@@ -120,17 +120,17 @@ def test_0007_lets_the_owner_be_absent_in_every_mirrored_table():
     )
 
 
-def test_the_offline_migration_plan_loads_every_version_through_0009():
+def test_the_offline_migration_plan_loads_every_version_through_0010():
     """被 C-R13 更新过一轮，R15-b 又更新了一次：钉的是"最新一版是谁"。
 
     那个字面量必然随每一版过期，所以断言换成一串仍然成立的性质，并且**继续显式钉住
-    目录尾号**：将来谁加 0010，必须像这次一样主动改这条，而不是让它静默失去意义。
+    目录尾号**：将来谁加 0011，必须像 0010（R58 pgvector 双写）这次一样主动改这条，而不是让它静默失去意义。
     """
     from app.db.migrations import MIGRATIONS, discover_migrations, migration_plan
 
     versions = [migration.version for migration in MIGRATIONS]
     assert versions == sorted(versions) and len(set(versions)) == len(versions)
-    assert versions[-1] == "0009"
+    assert versions[-1] == "0010"
     assert [migration.version for migration in migration_plan({})] == [
         migration.version for migration in MIGRATIONS
     ]
