@@ -440,6 +440,24 @@ def test_a_working_embedding_keeps_the_semantic_marker():
     assert r.embedding_diagnostics()["degraded_searches"] == 0
 
 
+def test_a_backend_that_stores_no_vectors_asks_the_embedding_model_nothing(tmp_path, monkeypatch):
+    """不存向量的后端：写库路径一个 embedding 请求都不该发（R21 收口的漏网之处）。"""
+    monkeypatch.setattr(r, "chromadb", None)
+    retriever = r.DocumentRetriever(str(tmp_path))
+    asked: list[int] = []
+
+    def refuse(texts):
+        asked.append(len(texts))
+        raise AssertionError("不存向量的后端不该为写库去问 embedding")
+
+    retriever.embedding.embed_documents = refuse
+
+    added, _ = retriever.add_document("policy.txt", "住宿费标准为500元")
+
+    assert added is True
+    assert asked == []
+
+
 def test_the_keyword_only_backend_never_claims_to_hold_vectors(tmp_path, monkeypatch):
     """离线 _JsonCollection 没有向量列：写它就不该带 embeddings，检索按降级标注。"""
     monkeypatch.setattr(r, "chromadb", None)

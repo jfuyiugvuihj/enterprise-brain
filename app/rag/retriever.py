@@ -558,8 +558,11 @@ class DocumentRetriever:
 
         logger.info(f"分块完成: {filename} → {len(chunks)} 块")
 
-        # 向量化
-        embeddings = self.embedding.embed_documents(chunks)
+        # 向量化。后端不存向量时一个向量都不问：过去的无条件 embed_documents 会在离线
+        # _JsonCollection 上为每个 chunk 白付一次注定失败的 embedding 往返（R56 端口闸门
+        # 实测命中），而它的返回值在 _write_batch 里又被整个丢掉。search 与 _write_batch
+        # 都已按 stores_vectors 收口，写库这条是漏网的那一处。
+        embeddings = self.embedding.embed_documents(chunks) if self.stores_vectors else []
 
         # 存入 Chroma
         ids = [f"{filename}_{i}" for i in range(len(chunks))]
