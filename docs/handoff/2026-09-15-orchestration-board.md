@@ -1246,6 +1246,10 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Helmholtz` | `01a0b42f-2031-7991-8ca7-33db590c8280` | **R84** JSON 持久层跨进程丢失更新（简报里自称 `Bohr`，**真实昵称是 Helmholtz**，下班按本行找） | `be-r84`（新建分支 `codex/be-r84` @ **`2100185`**，**独占**） | **运行中**：19:03:02 单投（一 block 一次投递，投后 canary 实取 rollout 只多出这一个 id、`be-r84` 当时 `dirty=0` ⇒ 无重复体）；写域锁死 `app/storage/persistence.py` + 一个新用例文件 | 19:03:19 |
 | `Gauss` | 同上 `01a0b3ff-…` | **R37**（续） | `be-r37` | **🔴 上班"35 分钟零活动"的判断被本班推翻**：`test_r37_report_lane_enqueue.py` 18:48:56、`test_r37_report_lane_worker.py` 18:54:59、`_r37_before_red.txt` 18:58:53（先红取证）⇒ **一直在活**，别再按"静默"关它 | 19:01:28 |
 | `Newton` | 同上 `01a0b410-…` | **R83**（续） | `be-r83` | **运行中**：`audit.py` 18:59:30 仍在改；本班 19:0x 预审过（分配器在锁内取时戳、hydrate 播种、跨进程限制已写进 docstring、AST 源守卫齐全、用例不靠 sleep 碰运气） | 19:01:28 |
+| `Newton` | 同上 `01a0b410-…` | **R83**（结案） | `be-r83` | **已结案（第十七班总控亲验）**：`0b66210` → 追平 **`6efe744`** → 主树 **`1de9b88`**；亲跑全量 **2100/35/0（84.87 s）**，算术 `2084+16=2100` ✓，并证 **tree `47860b08` 恒等**；五条源码复核见 §4AS.1；Newton 问的"契约要不要上 current-functionality"本班裁定**不上**（理由见 §4AS.1 末条） | 19:35:00 |
+| `Helmholtz` | 同上 `01a0b42f-…` | **R84**（续） | `be-r84` | **运行中**：19:18:33 建 `tests/test_r84_persistence_cross_process_lock.py`、19:23:50 仍在改，`app/storage/persistence.py` 未动 ⇒ 它先写红用例，路子对，写域未越界 | 19:35:00 |
+| `Gauss` | 同上 `01a0b3ff-…` | **R37**（续） | `be-r37` | **运行中**：19:14:59 改 `app/api/v1/chat.py`、19:17:16 改 `tests/test_r37_report_lane_enqueue.py`；`_baseline_r37.txt`、`_r37_before_red.txt` 是它的取证残留，**结案提交时排除** | 19:35:00 |
+| —（**无 agent**） | 无 rollout | **R87** | `be-r87` @ `3122518` | **🔴 上一班投递未落地**（三重 canary 见 §4AS.2）⇒ 按事故 #14 的规矩**不补投**：判据已写在跟进单 §31.3 + 计划书 §5.2，待业主手动开线；写域只一个测试文件，与在途两单零相交 | 19:35:00 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -2259,3 +2263,38 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 发现方式（不是靠运气的流程）：提交前先看 `git diff --numstat`，**申报的改动量与实测数字对不上就停手**。先用 `--ignore-cr-at-eol` 复算得 **61/0**（真实改动只有新增 61 行），再用 `git ls-files --eol` 看到 `w/-text`（另外两份 md 是 `w/crlf`），最后逐字节定位：索引里游离 CR＝0、工作树＝1，命中在第 315117 字节。
 - 修法：把那个字节还原成"反斜杠 + r"两个字符（不是删掉换行），复扫三份文档：看板 1 处已修、跟进单 0、计划书 0；修完 `w/crlf` 恢复、`git diff --numstat` 恢复 **61/0**，内容一字未动。
 - **纪律（写死，下次我自己也必须守）**：① 往 here-string / 脚本正文里写**任何 Windows 路径**时，一律改用**正斜杠**，或先 `chr(92)` 拼接，绝不裸写反斜杠；② 任何 docs 提交前，除 `--stat` 外还要看 `--numstat` 的**删除数**——纯追加的章节删除数必须是 **0**，不是 0 就说明行尾或编码被动过；③ 提交前跑 `git ls-files --eol` 对比同目录其它文件，出现 `w/-text` 或 `mixed` 立即停手查字节。
+## 4AS 本班（09-18 19:15–，总控第十七班）：接手只信磁盘不信对话 · **R83 验收并树 2100/35/0 + tree 恒等** · 🔴R87 投递未落地坐实（不补投）· 两条腿实取
+
+### 4AS.0 接手核对
+- 接手时主树 HEAD = `3122518`（第十六班 19:14:55）。`git status` 脏项 14 条：`chroma_db/` 下 6 个**跟踪中**的二进制（M，反跟踪是业主的活，本班一个不动）+ 根目录一个 **0 字节**游离副本 `2026-09-15-orchestration-board.md`（＝事故 #28 的 here-string 残留，进业主删除清单）+ `_board_4al7.py`、`_board_4al_a.py`、`_reg64_65.py`、`bundle.js`、`idx.html`、`docs/screenshots/`、`frontend/node_modules.stub/`（全部未跟踪）。
+- 单模型纪律：本班全程一个模型，`spawn_agent` 未做任何 model 覆盖（H19 教训照办）；心跳本班**未执行**。
+- 前任两条死线（`01a09dda`、`01a0acfb`）的对话一概不读，本节所有数字为实测。
+
+### 4AS.1 R83（Newton）验收＝**达标并树**
+- 取货形态：`be-r83` @ `0b66210`（上班已代提交为 wip，`git status` 干净 ⇒ 活儿在提交里，不是躺在磁盘上）。对 merge-base `82d1c17` 差 **604/4**，只碰 `app/common/audit.py` + 新 `tests/test_r83_audit_order.py`（542 行 / 16 条）。
+- 总控亲验五条（逐条读源码，不采信自述）：
+  ① `_parse_iso`（`app/common/audit.py:191-201`）把 naive 一律补 `tzinfo=UTC` ⇒ hydrate 播种里 `stamp > newest` 不会 naive/aware 相撞抛 `TypeError`；
+  ② `record_audit` 里三个空串占位（`:539`、`:540`、`:559`）**不会外流**：`_ensure_storage`（`:132-139`）与 `_build_storage_locked`（`:161-166`）把后端异常全包成"降级不外抛"，锁内取戳（`:570-573`）位于 `return` 之前的必经路径，memory-only 分支（`_persist_event:491-494`）也在打戳之后 ⇒ 任何返回/落盘的事件都带真实戳；
+  ③ `sanitize_trace_event`（`app/common/tracing.py:6-17`）只按键深拷贝脱敏、不读时间戳 ⇒ "先 sanitize 后打戳"无副作用；
+  ④ `_persist_event` 在打戳之后才写盘 ⇒ 盘上记录带微秒戳，`event_id` 退回纯身份位（原缺陷正是它兼任次序键）；
+  ⑤ 用例构成核过：注入时钟只换 `audit.datetime` 一个名（`timedelta`/`timezone` 是独立导入，不受影响）+ 回拨 + 重启播种 + 强制 rehydrate + 并发 barrier + memory-only + **三条 AST 源守卫**，没有一条靠 sleep 碰运气。
+- 复跑：追平 `6efe744`（主树并分支，**无冲突**）→ 主树解释器全量 **2100 passed / 35 skipped / 0 failed / 84.87 s**；算术 `2084 + 16 = 2100` ✓。
+- 并树 **`1de9b88`**，并证 **tree `47860b0853da1b5770abf4ecf762ae89bf16e9ce` 恒等**（`git rev-parse` 取 `HEAD^{tree}` == 被测 `6efe744`，`git diff --quiet` 退出 0）⇒"测过的树＝主树"老规矩本单继续坐实。
+- **Newton 待决问题裁定**：回放顺序契约**不进** `docs/current-functionality-2026-09-10.md`。理由：那份文档 P1-08 行（`:2268`）至今把"审计持久化"挂在"需真实备份恢复演练"的未完项上，单加一句"回放顺序已保证"会把已闭环项与未验证项混写成同一时期的事实；契约留在模块 docstring（`audit.py:15-23`、`:204-216`）与 16 条钉子测试里，等恢复演练那批（H15 同族）一起收口。
+
+### 4AS.2 🔴 R87 投递未落地（按规矩不补投）
+- 三重 canary 实取：`be-r87` 的 `git status --porcelain` **全空**；树内最新文件 mtime = `19:14:56`，正是 `git worktree add` 的检出时刻（HEAD `3122518` 提交于 19:14:55，只差 1 秒）；会话目录 `.codex/sessions/2026-09-18` 在 19:14:56 之后**没有任何新 rollout 文件**（只有总控线程自己在长）⇒ 上一班那次 `spawn_agent` **没落地**，本机不存在 R87 执行层。
+- 处置：不补投（事故 #14 的硬规矩）。判据已齐（跟进单 §31.3 + 计划书 §5.2 R87 行），业主手动开一条线贴 §31.3 即可；写域只 `tests/test_r51_observation_is_passive.py`，与在途两单零相交。
+
+### 4AS.3 三条腿与在途实取（19:3x）
+- 腿① `app/agents/orchestrator.py`：**今日零改动** ⇒ R30/R31/R33/R42/R38 五单继续被串行锁死（§4AQ.9 结论未变）。
+- 在途 2 席：`Helmholtz`/R84（`be-r84`，19:18:33 建 `tests/test_r84_persistence_cross_process_lock.py`、19:23:50 仍在改，`app/storage/persistence.py` 未动 ⇒ 先写红用例，路子对）；`Gauss`/R37（`be-r37`，19:14:59 改 `app/api/v1/chat.py`、19:17:16 改 `tests/test_r37_report_lane_enqueue.py`，**仍在活**）。
+- 并发 2/3：第 3 席空着，但**离线无可派单**——计划书剩余 11 单全卡 orchestrator 串行或真机（§4AR.7），R87 不可补投，R88 待业主裁 ⇒ 本班不硬凑派工。
+- 结案前照旧不许再派碰 `app/api/v1/chat.py`（Gauss 持有）与 `app/storage/persistence.py`（Helmholtz 持有）的单。
+
+### 4AS.4 待业主（增量；全清单见 §29.6 + §30.6 + §4AR.8，一条都不代做）
+- 🔴 **H6 仍未结**：`codex/data-file-catalog` 至今**零 push**，本机是唯一副本，今天已 47 个提交——一次崩盘全丢。
+- 删除清单新增：主树根 0 字节 `2026-09-15-orchestration-board.md`；`be-r20/probe.txt`；`be-r53/app/rag/retrieval_pipeline.py.r57bak`（R57 早已并树，纯垃圾）。`be-r83` 已并树无残留。
+- **R87 需业主手动开线**（§4AS.2）；R88 仍等放行（动 migrations）；R85（R80 之前被静默覆盖的应用密钥重发）、H11（容器重启才真拿到 GPU）、H12（`docker compose build migrate`，镜像落后主树 21 h+）、H13、H14、H15（含 R82 要改业主本人写的断言）、H16–H19 原样挂账。
+- 心跳 `automation-2` 仍指死线 `01a0acfb`（本班未动、未执行）；要改就填本线程 id **`01a0b295-67ae-7d32-b2b8-89dd66d68146`**（真实判别字段是 `mode`，update 传 camelCase `targetThreadId`）。
+- 产品级两问（§4AR.6 原文，仍待业主口径）：出厂 `HOT_INDEX_MAX_CHUNKS=20000` < 真实语料 37 483 ⇒ 热集在生产**永不服务**只付暖机成本；默认外部 Chroma 腿在重复向量上名次塌陷（热集 vs 外部 12/12 不同序）⇒ 疑为当前答案质量首要嫌疑，本班未动码。
