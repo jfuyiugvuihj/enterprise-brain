@@ -2490,10 +2490,17 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 🔴 **踩坑记录（下班别再犯）**：宿主 `127.0.0.1:11434` 是**另一个空 Ollama**（`/api/tags` 返回 `[]`），栈里的模型只在 docker 网络内 `http://ollama:11434`（`OLLAMA_BASE_URL`/`LOCAL_MODEL_BASE_URL` 都是这个服务名）。在宿主端口上测会得到 `model 'qwen3.5:9b' not found`，那不是"模型没了"，是**测错了层**。正解：把脚本从 stdin 灌进 `docker compose --env-file deploy/.env.server exec -T backend python -`。
 - ⚠️ 三腿数字含并发噪声（同机评测在跑，判据②的 before 数**不用这里的**，用评测集里逐题 `latency_ms`）。
 
-### 4AY.2 本轮评测同时就是 R29 的 before 基线
-`scripts/collect_evaluation_answers.py:49-51` 的 `TRACE_KEYS = (first_token_at, thinking_chars, tool_calls)` 明写「ride along for the R29 thinking tax」⇒
-B′ 落盘的 `answers-real.jsonl` 逐题带 `latency_ms` 与 `thinking_chars`：**判据②（30.6 s → ≤22 s）与判据① 的 before 侧不用另跑一轮**，
-报告一出就把"生成轮平均思考字数"钉死。而 §4AY.1 的 B 腿 7 214 字思考 ≈ 一题 60 s+ 的去向，也解释了探针里 `doc-01` 为什么花 96.3 s。
+### 4AY.2 这轮评测能当 R29 的 before 基线吗——**一半能一半不能**（本班初稿写错，就地订正）
+采集器确实为 R29 预留了 `TRACE_KEYS`（`scripts/collect_evaluation_answers.py:49-51`，注释原文 "ride along for the R29 thinking tax"），
+但三条的可得性不一样：
+- `latency_ms`：**采集器 `perf_counter` 实测**（transport 故意不自报，见 `:100`）⇒ **判据②（30.6 s → ≤22 s）的 before 侧就在这轮里，不必另跑一轮**；
+- `first_token_at`：客户端实测首字到达 ⇒ 能把"排队"和"生成"拆开看；
+- `thinking_chars`：**本轮恒为 null**。仓外那份 transport（`$env:TEMP`\evalrun\eval_transport_ask.py，按 runbook §3.2 **就是要求存仓外**，
+  下班别好心搬进仓库）`:98` 写死 `None` 并注明"HTTP 侧看不见隐藏思维链 ⇒ 禁止估算"。
+- 🔴 **由此作废本班早先一句错话**：不能拿评测里的 null 当"思考 0 字"的证据——**那是看不见，不是没有**。
+  判据① 只能来自 §4AY.1 那种**直连 Ollama 原生端点**的探针（A 腿 0 字 / B 腿 7 214 字就是这条证据的正确形态）。
+- 因果接上：单题 7 214 字思考 ≈ 60 s+ ⇒ 解释了探针 `doc-01` 的 96.3 s；也预告 R29 走 A 腿后评测 P95 会明显下降，
+  但**正文也变了**（73 vs 39/47 字）⇒ 判据③"制度题准确率不得下降"必须拿这轮基线**逐题**比，不许看总分。
 
 ### 4AY.3 R90 真机验收夹具已验证可用（免得上班 §3.2 那种"命令从没跑过"的重演）
 - 一次性库 `eb_r90a_probe`（**不是**主库，主库 `enterprise_brain` 未受任何影响）：
