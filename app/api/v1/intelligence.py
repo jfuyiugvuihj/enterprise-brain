@@ -2,7 +2,8 @@
 
 Every route resolves the canonical Principal from the authenticated request, applies
 the same default-deny policy used by the resource routes, and writes an audit record.
-Nothing here infers an identity from a client-supplied field.
+Nothing here infers an identity from a client-supplied field, and the approval
+pre-check reports the caller's own department rather than a claimed one.
 """
 from decimal import Decimal
 
@@ -10,10 +11,19 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.agents.contracts import AgentResult
-from app.approval.assistant import build_precheck, precheck_payload, to_decimal
+from app.approval.assistant import (
+    STANDARD_SOURCES,
+    STANDARD_SOURCE_AUTO,
+    STANDARD_SOURCE_EXPLICIT,
+    build_precheck,
+    match_expense_type,
+    precheck_payload,
+    resolve_standard_from_knowledge_base,
+    to_decimal,
+)
 from app.common.audit import record_audit
 from app.common.monitoring import ProductionReadOnlyProtection
-from app.common.authorization import principal_from_request
+from app.common.authorization import principal_from_request, verify_department_self_report
 from app.common.permissions import ACTION_ANALYZE, ACTION_UPLOAD, ACTION_VIEW
 from app.common.policy import authorization_decision
 from app.common.logger import logger
@@ -37,11 +47,19 @@ class InsightsRequest(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
+    """One expense pre-check request.
+
+    ``department`` is optional and is not an input to the conclusion: the server answers
+    for the authenticated principal's own department and refuses a claim for another one.
+    ``standard_source`` says where the compared number comes from, and ``standard`` is
+    only consulted in ``explicit`` mode.
+    """
     amount: Decimal
     standard: Decimal | None = None
-    department: str
+    department: str = ""
     expense_type: str
     evidence: list[str] = Field(default_factory=list)
+    standard_source: str = STANDARD_SOURCE_EXPLICIT
 
 
 class RelationRequest(BaseModel):
@@ -70,6 +88,28 @@ def _authorized(request: Request, action: str, resource_name: str):
     return principal
 
 
+def _standard_source(value) -> str:
+    """Resolve the requested standard source, refusing a spelling that is not the contract.
+
+    An empty value keeps the historical default, so a client written before
+    ``standard_source`` existed behaves exactly as it did. Anything else unknown is a
+    caller bug and is answered with a stable code: reading a typo as ``explicit`` would
+    silently keep comparing against a number the caller invented.
+    """
+    requested = str(value or "").strip().lower()
+    if not requested:
+        return STANDARD_SOURCE_EXPLICIT
+    if requested not in STANDARD_SOURCES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "invalid_standard_source",
+                "message": "standard_source must be explicit or auto_from_knowledge_base",
+            },
+        )
+    return requested
+
+
 @router.post("/dashboard")
 async def dashboard(data: DashboardRequest, request: Request):
     principal = _authorized(request, ACTION_ANALYZE, "dashboard")
@@ -87,20 +127,63 @@ async def insights_detect(data: InsightsRequest, request: Request):
 
 @router.post("/approval/precheck")
 async def approval_precheck(data: ApprovalRequest, request: Request):
+    """Pre-check one expense against a standard the server can account for.
+
+    Two inputs are not taken on trust. The department is the caller's own: repeating it
+    is allowed, naming another one is refused with ``department_override_denied``, so a
+    conclusion cannot be filed against a scope the caller has no standing for. The
+    standard either arrives as ``explicit`` -- the caller's own number, the historical
+    behaviour -- or is retrieved and read out of the policy text this principal may see,
+    in which case the request's number is not a fallback and an index that cannot be
+    asked answers 503 rather than continuing with a guess.
+    """
     principal = _authorized(request, ACTION_VIEW, "approval_precheck")
+    requested_source = _standard_source(data.standard_source)
+    department = verify_department_self_report(
+        principal, data.department, action=ACTION_VIEW, resource_name="approval_precheck"
+    )
+
+    standard = data.standard
+    evidence = data.evidence
+    standard_evidence: list[str] = []
+    if requested_source == STANDARD_SOURCE_AUTO:
+        # Retrieved or nothing: both the figure and its provenance are overwritten from
+        # the search result below, unconditionally, so a knowledge base that states no
+        # limit leaves an unverifiable conclusion rather than the number that happened to
+        # be in the request.
+        try:
+            resolved = resolve_standard_from_knowledge_base(data.expense_type, principal)
+        except Exception as exc:
+            logger.warning(f"[Intelligence] approval standard retrieval failed: {type(exc).__name__}: {exc}")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "retrieval_unavailable",
+                    "message": "the policy standard could not be retrieved",
+                },
+            ) from exc
+        standard = resolved["standard"]
+        evidence = standard_evidence = resolved["evidence"]
+
     try:
         result = build_precheck(
             to_decimal(data.amount, field="amount"),
-            None if data.standard is None else to_decimal(data.standard, field="standard"),
-            data.department or principal.department,
+            None if standard is None else to_decimal(standard, field="standard"),
+            department,
             data.expense_type,
-            data.evidence,
+            evidence,
         )
     except ValueError as exc:
         raise HTTPException(
             status_code=400, detail={"code": "validation_error", "message": str(exc)}
         ) from exc
-    return precheck_payload(result, requested_by=str(principal.user_id))
+    payload = precheck_payload(result, requested_by=str(principal.user_id))
+    payload["standard_source"] = requested_source
+    # Provenance this server verified, never the caller's own text: the list stays empty
+    # in explicit mode because no retrieved passage stood behind that number.
+    payload["standard_evidence"] = standard_evidence
+    payload["matched_expense_type"] = match_expense_type(data.expense_type)
+    return payload
 
 
 @router.post("/knowledge-graph/relations")

@@ -2,7 +2,7 @@
 
 from app.common.audit import record_audit
 from app.common.identity import Principal
-from app.common.policy import authorization_decision
+from app.common.policy import authorization_decision, is_administrator
 
 
 def authorize(
@@ -55,3 +55,46 @@ def authorize_request(request, action: str, resource: dict | None = None, resour
         return authorize(principal, action, resource, resource_name)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+# A caller-named department that is not the caller's own is a refused request, not a
+# scope to compute with. Kept as one constant so the audit trail and the response
+# cannot drift apart over the name of the same judgment.
+DEPARTMENT_SELF_REPORT_DENIED = "department_override_denied"
+
+
+def verify_department_self_report(
+    principal: Principal,
+    claimed_department: str,
+    *,
+    action: str,
+    resource_name: str = "",
+) -> str:
+    """Resolve the department a conclusion is reported for from the session, not the body.
+
+    A caller may repeat its own department -- older clients still send one -- but may not
+    name somebody else's: the conclusion would then be filed against a scope the caller
+    has no standing for, which is a forged label even when the arithmetic is right. An
+    administrator acts for the whole tenant, so naming a department is a lookup rather
+    than a claim; that is the platform's one administrator test, the same one the
+    resource policy applies, and no new definition of it is added here.
+
+    Whatever is accepted is answered with the server's own value, so a request never
+    supplies the label that ends up in the answer.
+    """
+    own = {str(principal.department or "")} | {
+        str(value) for value in (principal.department_ids or [])
+    }
+    own.discard("")
+    claimed = str(claimed_department or "").strip()
+    if not claimed or claimed in own:
+        return str(principal.department or "")
+    if is_administrator(principal):
+        return claimed
+    record_audit(principal, action, "denied", resource_name, DEPARTMENT_SELF_REPORT_DENIED)
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": DEPARTMENT_SELF_REPORT_DENIED,
+            "message": "department must match the authenticated principal",
+        },
+    )
