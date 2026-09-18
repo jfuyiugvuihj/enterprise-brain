@@ -1060,3 +1060,53 @@ PROBE index reached = 0
 - 删除清单（本班复核仍为垃圾，全部**未删**）：主树根 `2026-09-15-orchestration-board.md`（看板副本）、`_board_4al7.py`、`_board_4al_a.py`、`_reg64_65.py`、`bundle.js`、`idx.html`、`docs/screenshots/`、`frontend/node_modules.stub/`；`be-r34/r36q/`；`%TEMP%\r44_*.py`、`%TEMP%\r44_bak\`、`%TEMP%\r44_store_a\`（**200 MB 真库副本**）、`%TEMP%\_enc_probe.py`。旧账 14 项见 §27、§28。
 - 质量欠账：105 题评测里 **29 条** `must_contain` 在语料中搜不到出处（R66 由 55 降到 29，剩 A/C 桶非语料可清）；评测集被 `tests/test_evaluation_report.py` 钉着禁改。
 - 阶段 A 四条验收 **0 条通过**，全部卡真机（H11 容器重启 / H12 重建后端镜像）。
+
+## 30. 第十四班（2026-09-18 17:45 起，总控亲测）
+
+### 30.1 接手订正（全部实测，旧账以下述为准，别再引用）
+
+- **R17 早已结案**：`app/common/rbac.py` 已含 fail-closed 行级过滤 + 灰度开关 + `filter_dataframe_rows_with_scope`，4 个用例文件在册。`be-leg2` 的 `dirty=0` 是**空树**，不是"派出去没动工"。
+- **R21/R22 已落码 ⇒ pgvector 的 P0 前置已清**：`app/rag/retriever.py:49/196/204` 拒收全零向量（`assert_writable_embeddings`），`app/rag/indexing.py:10-11` 把 `embedding_model+dimension` 绑进索引。`app/rag/pg_store.py`（551 行，`a896cf6`）已在树上，但 **`VECTOR_DUAL_WRITE` 默认关、Chroma 仍是读路径** ⇒ P1 建索引那一步才卡真机（H11/H12）。
+- **R47/R40 已落地，不得重复派单**：R47 = `app/rag/retrieval_pipeline.py:137-206` 同义词纯规则改写；R40 = `standard_source` 在 `app/**` 27 处命中。
+- **两笔未提交的活已由早班保住**：R55 = `be-r20@6663a40`、R57 = `be-r53@ee11ca1`，两棵树现在只剩垃圾文件（`probe.txt`、`app/rag/*.r57bak`），删除属业主。
+
+### 30.2 本班结案（每单总控亲跑，未采信执行层自述）
+
+- **R81 Noether**（队列认 `error.retryable`）：主树 `fca75dc`。六把刀 K1–K6 全咬（K5 默认翻 `False` ⇒ 18 红，含既存队列用例）。
+- **R80 Meitner**（开放平台身份改 CSPRNG 签发）：主树 `8a46bfb`。G1 退回 `time_ns` 10 红 / G2 摘持久化查重恰 1 红 / G3 摘撞号护栏 4 红 / G4-prime 回滚扩成 `clear()` 3 红 / G5（反反向刀）摘掉测试里的时钟 patch ⇒ 16 仍全绿。
+  - 教训入账：第一把 G4（`if ... is record:` → `if True:`）**不咬**，因为 pop 的仍是自己那条，变异与原判据逻辑等价 ⇒ **刀不咬先怀疑是刀的问题**，重下才定论。
+- **R74 Jason**（接口去伪）：主树 `b2d9f34`。走**甲＝删净**，理由三条（写域内造不出真读取点／`AgentContext(` 在 `app/**` 一次都没被构造／一个请求天然跨档，挂单个预算会压平成 new bug）。三把**隔离刀**各咬不同判据：K1 只把字段塞回 `AgentState` ⇒ 3 红；K2 只塞回 `AgentContext` ⇒ 5 红；K3 只恢复那行 unused import ⇒ 恰 1 红。还原后 sha256 恒等（`state.py 523761AE`／`contracts.py 3761CB11`）。**并树后主树 2031 passed / 35 skipped / 0 failed**（= 2022 + 净增 9）。
+  - Jason 自报一颗同形缺陷未顺手捡（越界，正确）：`app/agents/contracts.py:130 max_calls`、`:135 max_concurrency` 声明后**全仓零读取**，且 `app/common/model_budget.py:255-268 tier_profile()` 压根不填 ⇒ 永远 `None`；而 `docs/system-architecture-2026-09-17.md:533` 写着"整机预算（max_calls/tokens/timeout/max_concurrency）"，**文档替一个不存在的能力背书** ⇒ 立 **R86**。
+
+### 30.3 **R83** 详细判据（本班新立，可离线派；写域 `app/common/audit.py` + 新增 `tests/test_r83_audit_order.py`）
+
+- **缺陷与证据（本班亲手复现，机制链完整）**：审计日志的**回放顺序不保证**。
+  - `app/common/audit.py:424-427` `_hydrate_view_locked` 的排序键是 `(created_at, event_id)`；`created_at` 来自 `:479 datetime.now(timezone.utc)`，本机实测**粒度约 1 ms**（仓库外探针：连续 2000 次 `now()` 平均步进 0.000000 s，即同一 tick 内读数逐字符相同）；`event_id` = `aud-{uuid4().hex}` 随机 ⇒ **同一 tick 内的两条事件，谁先谁后由随机串决定**。探针 300 对：撞 tick **12 对（4%）**，回放**翻序 4 次（1.3%）**。
+  - 存储侧救不了：`app/storage/persistence.py:68` JSON 落盘用 `json.dump(..., sort_keys=True)`，集合桶内按 **event_id 字典序**存 ⇒ 盘上顺序本身就是随机序；`PostgresPersistenceAdapter.list()` 是 `ORDER BY created_at DESC`（`:401`）⇒ 同 tick 同样不确定。
+  - 症状：`tests/test_audit_persistence.py::test_events_survive_a_restart_and_replay_in_order:186` 断言"回放顺序 == 写入顺序"，满套偶发红（看板 L802 有记录）。**证据边界要如实写**：单跑该用例 30 次 **0 红**（pytest 节奏下两次写之间夹了整个文件 + `fsync`，撞 tick 概率远低于探针的 4%）⇒ 机制是实测坐实，"满套红一次"是历史观测，两者都别夸大。
+  - 顺带订正病因记账：看板 L2090 把这条写成"满 CPU 时**子进程**不稳"，但该用例**根本不 spawn 子进程**（有子进程的是隔壁 `test_judgment_chain_replays_across_two_processes`）⇒ 旧归因不成立。
+- **修复方向（总控已定，别自选）**：在 `app/common/audit.py` 内加**单调时间戳分配器**，不改持久化 schema。要求：
+  - ① 先复现后修复：用注入时钟让两次读数相同，证明**修复前翻序、修复后不翻序**。不许靠 `sleep` 规避，不许 patch `uuid4`/`random` 来"造"确定性。
+  - ② 分配器必须持锁取值（`record_audit` 现在是在 `:479` 锁外拿的 `now`，需把取时刻移进 `with _lock`，或给分配器自己的小锁）；注意 `_lock` 非重入，别在持锁路径上再进同一把锁。
+  - ③ 后到的读数 `<=` 上一个已发出的值时，**强制 +1 µs 递增**；覆盖两种成因：**同一 tick**（常态）与**时钟回拨**（NTP step）——回拨要单独给用例。
+  - ④ **重启/续写要播种**：`_hydrate_view_locked` 读完持久化记录后，把分配器下界抬到库内 `max(created_at)`，否则新进程能发出比旧记录更早的时间戳。`tests/test_audit_persistence.py` 的 restart/replay 用例是这条的现成回归。
+  - ⑤ 精度可达性总控已核：`migrations/0005_audit_events.sql:22 created_at TIMESTAMPTZ`（Postgres 微秒精度）、JSON 存 ISO 字符串 ⇒ +1 µs 能过持久化往返。**不许改 `audit_events` 列集合**（`tests/test_audit_persistence.py:643-656` 精确钉住列名，且 DDL 由 `_TABLES` 生成 ⇒ 加列是扩大战线）。若执行层判断非加列不可，**停手报告等裁**。
+  - ⑥ 并发：多线程同时 `record_audit` 不得发出重复 `created_at`；既存 20 条 audit 用例、`app/api/v1/observability.py` 读出侧、`/health/details` 一字不许变红。
+  - ⑦ 🔴 **残余限制必须写进 docstring 并在交工里承认**：分配器是**进程内**的，多 worker 之间没有共享分配器 ⇒ **跨进程同一 tick 仍靠 `event_id` 掷硬币**。不许写成"彻底解决"。要真正闭环得加持久化单调序号列，那是另一单（等裁）。
+- **验收口径**：达标 = ①②③④⑤⑥⑦ 全绿 + 总控自下反证刀（至少摘掉 +1 µs 抬升、摘掉播种、把取时刻放回锁外三把）。
+
+### 30.4 R84 / R85（R80 Meitner 交工时自报，不隐瞒，均属未解决）
+
+- **R84**（可离线派，前置无）：`app/common/open_platform.py` 的 CSPRNG 只把撞号窗口降到 2⁻⁶⁴，**没有跨进程锁 / `O_EXCL`** ⇒ 多 worker 并发注册仍可能读到同一份注册表再各自写穿。判据要点：原子性要么落在文件锁/`O_EXCL`，要么落在 store 的"仅在不存在时写入"（CAS），且**摘掉必红**。
+- **R85**（🔴 待业主，不是代码单）：R80 修复前已被静默覆盖的那批应用行，其 secret 应视为**已泄露**并重发；这是对外通告/运维动作，总控不代做。
+
+### 30.5 事故 #26（同类第六次，本班自己犯的，如实记账）
+
+- 派 R74 时我在**同一个 block 里发了两次 `spawn_agent`**（误判"第一次工具名写错不会生成执行体"，实际两次都成功）⇒ Jason 与 Turing 同时落到同一棵树 `be-r74`。当场 `close_agent` Turing；事后核验 `be-r74` 当时 `dirty=0`、无任何 `.py` 被写 ⇒ **未造成串写污染**。
+- 写死纪律：一次 spawn 的消息体绝不许复制两份；"投出去没反应"不许凭感觉断定失败，**必须用 canary 核实**（本班 R37 投后即以 canary 核实成功）。
+
+### 30.6 本班待业主增量（其余仍见 §29.6，一条都不代做）
+
+- 基线订正入账：上班报的"1828 全绿"**已被证伪作废**；实测链 = `6d5f5ab` 1981 → 并 R81 `fca75dc` **2006** → 并 R80 `8a46bfb` **2022** → 并 R74 `b2d9f34` **2031**（均 35 skipped / 0 failed，总控亲跑）。
+- 质量欠账刷新：105 题评测里 **29 条** `must_contain` 在 96 篇语料中搜不到出处（R66 已由 55 降到 29，剩 A/C 桶非语料可清）；评测集被 `tests/test_evaluation_report.py` 钉着禁改。
+- 阶段 A 四条验收仍 **0 条通过**，全部卡真机（H11 重启容器 / H12 重建后端镜像）。
