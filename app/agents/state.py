@@ -3,12 +3,16 @@ Stage 0 public execution state.
 
 The state keeps the authenticated principal, resource scope, request identifiers,
 and structured worker results in one shared shape for all Agent domains.
+
+No model budget travels through the state (R74): the concurrency gate is the one
+machine-wide semaphore in ``app/common/model_budget.py`` and the token and clock
+limits are resolved per tier at the call site. ``AgentContext`` carries the reasons.
 """
 from typing import Annotated, TypedDict
 
 from langgraph.graph.message import add_messages
 
-from app.agents.contracts import AgentContext, AgentResult, ModelBudget, Principal, ResourceScope
+from app.agents.contracts import AgentContext, AgentResult, Principal, ResourceScope
 
 
 def _merge_dicts(a: dict, b: dict) -> dict:
@@ -35,7 +39,6 @@ class AgentState(TypedDict, total=False):
     session_id: str
     allowed_actions: list[str]
     allowed_resource_scope: list[ResourceScope]
-    model_budget: ModelBudget
     agent_context: AgentContext
 
     memory: dict

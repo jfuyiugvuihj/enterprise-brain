@@ -263,7 +263,26 @@ class ErrorEnvelope(BaseModel):
 
 
 class AgentContext(BaseModel):
-    """Shared execution context. No worker may invent a second identity model."""
+    """Shared execution context. No worker may invent a second identity model.
+
+    Identity, scope and trace only -- there is deliberately no model budget on this
+    object, and none on ``AgentState`` either (R74). Two reasons, both structural:
+
+    * Concurrency is machine-wide. The one semaphore that keeps a 14B model from being
+      stampeded is ``app/common/model_budget.py:default_model_budget()``, because a
+      private deployment runs exactly one model server shared by every request and
+      every worker. A per-request object cannot arbitrate slots it does not own, so a
+      caller that filled a budget in here would have throttled nothing.
+    * Tokens and clock are per tier, not per request.
+      ``app/agents/nodes.py:_make_model`` resolves them through ``model_tier_budget``
+      and one request legitimately spans tiers: a query rewrite and the analysis
+      answer that follows it do not share a cap. One budget object riding along the
+      context would flatten all of them to whichever tier the entry point picked.
+
+    Both fields used to exist, assigned by nothing and read by nothing, which is worse
+    than absent: it read like a switch. ``tests/test_r74_dead_budget_field.py`` pins
+    the published field set, so re-introducing one fails where it stands.
+    """
 
     principal: Principal
     request_id: str
@@ -272,7 +291,6 @@ class AgentContext(BaseModel):
     session_id: str | None = None
     allowed_actions: list[str] = Field(default_factory=list)
     allowed_resource_scope: list[ResourceScope] = Field(default_factory=list)
-    model_budget: ModelBudget = Field(default_factory=ModelBudget)
 
 
 class Evidence(BaseModel):
