@@ -404,7 +404,7 @@ def test_the_background_turn_answers_the_owner_end_to_end(monkeypatch, tmp_path)
     from app.common import auth
     from app.common.auth import create_token
     from app.main import app
-    from tests.test_r37_report_lane_enqueue import _ask, _data_objects, _install as _install_api, _switch
+    from tests.test_r37_report_lane_enqueue import _ask, _data_objects, _install as _install_api, _switch, USERNAME as ENQUEUE_USERNAME
 
     queue = ReliableQueue(FakeRedis(), name="r37-e2e", lease_seconds=30)
     api = _install_api(monkeypatch, tmp_path, queue=queue)
@@ -430,7 +430,7 @@ def test_the_background_turn_answers_the_owner_end_to_end(monkeypatch, tmp_path)
 
     mine = client.get(
         "/api/v1/queue/status/" + request_id,
-        headers={"Authorization": "Bearer " + create_token(USERNAME)},
+        headers={"Authorization": "Bearer " + create_token(ENQUEUE_USERNAME)},
     )
     intruder = client.get(
         "/api/v1/queue/status/" + request_id,
