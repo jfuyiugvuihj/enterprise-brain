@@ -1185,3 +1185,18 @@ PROBE index reached = 0
 - 总控复核新发现（不采信执行层自述的部分）：`record_audit` 的三个空串占位在任何返回路径之前必然被锁内取戳覆盖（`_ensure_storage` 与 `_build_storage_locked` 把后端异常全包成降级，不外抛）⇒ 无"空戳外流"风险，这条上班没验。
 - 遗留：跨进程同一 tick 仍需存储发号 ⇒ 单列 **R88（§31.4）** 等业主裁；R83 本身不留尾巴。
 - **R87 状态订正**：第十六班那次 `spawn_agent` **未落地**（三重 canary：树内最新 mtime＝建树时刻、`status` 全空、19:14:56 后无新 rollout）⇒ 按事故 #14 不补投，改由业主手动开线，判据用本节同级的 §31.3。
+## 32. 本班（09-18 19:4x，总控第十七班续）：前端线首次实盘 · 🔴新立 R89（后端 29 码 vs 前端 26 句人话）· 已派 `Noether`
+
+### 32.1 前端线实盘（只读取证）
+- 五支前端分支（`codex/fe-trunk`/`fe-prims`/`fe-alerts`/`fe-artifacts`/`fe-dash`）对主分支 **ahead 全 = 0** ⇒ 已完成的活儿都在主树里，不存在"派了没人收"的悬账。
+- 今天（09-18）**零**前端提交，最后一笔 `4b5a7cb`（09-16 21:20）⇒ 前端线停摆两天，全部产能被后端吸走。
+- 体量：22 个 `.vue` 组件 + 22 个测试文件；`vitest run` **408/410**（17 文件绿、1 文件红）。
+- 🔴 `docs/handoff/2026-09-15-frontend-work-checklist.md` 的 **3 勾/62 未勾** 与代码不符：鉴权收敛那条已完成（全局 `axios.create` 1 处、拦截器只在 `frontend/src/lib/http.js:98/:104`）。⇒ 与前几班对 `task_plan.md`/`progress.md`/`findings.md` 的处置同口径：**不许据勾选清单判断前端进度**。
+
+### 32.2 R89 详细判据（可离线派，前置无；写域 `frontend/src/lib/errcodes.js` 一个文件）
+- 缺陷：`ERROR_CODES` **26** 键，后端真源 `ErrorEnvelope.code: Literal[...]`（`app/agents/contracts.py`）**29** 码 ⇒ 缺 `context_limit_exceeded`、`row_scope_denied`、`no_visible_rows` 三句人话。
+- 后果：这三码一来界面只能说兜底句，而行作用域两码的分寸恰恰是"**不是没有数据，也不等于没权限看这个数据集**"——兜底句会把权限事实洗成系统故障，正是 R64/R65 一路在防的那类撒谎。
+- 钉子已现红（不是我推断）：`src/lib/errcodes.test.js`「前端键集合恰好等于真源枚举：一个不自扩，一个不漏」与「A − C = 空：后端每个 canonical 码都有一句人话，没有一条落到兜底句」两条 2 红。它对账走 `git show <ref>:<path>` 读**对象库** ⇒ 与工作树新旧无关，红是真的；不许改成 `readFileSync`、不许加 skip。
+- 判据：① 键集合 == 29，一码不多一码不少，`FRONTEND_ONLY_CODES` 保持 `[]`；② `message` 非空、不含 `{}`/URL/`/api/`、不含任何 snake_case 码名（同一文件里有 `not.toMatch(/[a-z][a-z0-9]*(_[a-z0-9]+)+/)` 这一刀）；③ `retryable` 必须给出处：行作用域两码倾向 False（拒绝重试不变），`context_limit_exceeded` 要对齐 `CONTEXT_LIMIT_CODE` 的处置路径与 `tests/test_r30_context_limit_guard.py` 后再定；④ `vitest run` **410/410**；⑤ `npm run lint` 无错、`lint:colors` 棘轮不得变差（改前改后各跑一次留数）；⑥ 不许动测试、不许动别的文件、不许 commit。
+- 语义锚（后端 contracts.py 注释口径，文案要与之相符）：`row_scope_denied`＝行存在但在当前账号行级可见范围之外；`no_visible_rows`＝本轮一行可分析的都没有、**原因不下结论**；`context_limit_exceeded`＝上下文装不下。
+- 为什么总控这条能自己派：不碰 `app/**`、不碰 `orchestrator.py`、与在途两单写域零相交，且前端五树 09-16 后无人占用 ⇒ 独占性天然成立。

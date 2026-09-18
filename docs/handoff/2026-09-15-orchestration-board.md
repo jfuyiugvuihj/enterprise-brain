@@ -1250,6 +1250,7 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Helmholtz` | 同上 `01a0b42f-…` | **R84**（续） | `be-r84` | **运行中**：19:18:33 建 `tests/test_r84_persistence_cross_process_lock.py`、19:23:50 仍在改，`app/storage/persistence.py` 未动 ⇒ 它先写红用例，路子对，写域未越界 | 19:35:00 |
 | `Gauss` | 同上 `01a0b3ff-…` | **R37**（续） | `be-r37` | **运行中**：19:14:59 改 `app/api/v1/chat.py`、19:17:16 改 `tests/test_r37_report_lane_enqueue.py`；`_baseline_r37.txt`、`_r37_before_red.txt` 是它的取证残留，**结案提交时排除** | 19:35:00 |
 | —（**无 agent**） | 无 rollout | **R87** | `be-r87` @ `3122518` | **🔴 上一班投递未落地**（三重 canary 见 §4AS.2）⇒ 按事故 #14 的规矩**不补投**：判据已写在跟进单 §31.3 + 计划书 §5.2，待业主手动开线；写域只一个测试文件，与在途两单零相交 | 19:35:00 |
+| `Noether` | `01a0b454-57a3-76c3-a69e-41bc598e56a1`（与第十四班 R81 那位**同号不同人**，按 id 对账） | **R89** 前端码表补三条人话（本班新立，判据 §32.2） | `fe-trunk`（由 `deb8ade` **纯快进**至 `de51f1f`，**独占**） | **运行中**：19:43:41 单投（本 block 只此一次投递），canary＝rollout 已生成 433 KB；写域**只** `frontend/src/lib/errcodes.js`，与 `Helmholtz`/`Gauss` 零相交 ⇒ 并发满 3 | 19:44:30 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -2298,3 +2299,11 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - **R87 需业主手动开线**（§4AS.2）；R88 仍等放行（动 migrations）；R85（R80 之前被静默覆盖的应用密钥重发）、H11（容器重启才真拿到 GPU）、H12（`docker compose build migrate`，镜像落后主树 21 h+）、H13、H14、H15（含 R82 要改业主本人写的断言）、H16–H19 原样挂账。
 - 心跳 `automation-2` 仍指死线 `01a0acfb`（本班未动、未执行）；要改就填本线程 id **`01a0b295-67ae-7d32-b2b8-89dd66d68146`**（真实判别字段是 `mode`，update 传 camelCase `targetThreadId`）。
 - 产品级两问（§4AR.6 原文，仍待业主口径）：出厂 `HOT_INDEX_MAX_CHUNKS=20000` < 真实语料 37 483 ⇒ 热集在生产**永不服务**只付暖机成本；默认外部 Chroma 腿在重复向量上名次塌陷（热集 vs 外部 12/12 不同序）⇒ 疑为当前答案质量首要嫌疑，本班未动码。
+### 4AS.5 前端线实盘（应业主询问核查，**只读**，本班未改 `frontend/` 一字）＋ 新立 **R89**
+- 版本控制：`codex/fe-trunk`/`fe-prims`/`fe-alerts`/`fe-artifacts`/`fe-dash` 五支对 `codex/data-file-catalog` **全部 ahead=0** ⇒ 前端已做的活儿**都已并进主树**，没有悬在分支上等收口的账。
+- 活动量：`git log --since 2026-09-18 -- frontend` **0 条**，最后一笔 `4b5a7cb`（09-16 21:20 色值棘轮 337→334，随 `0d57886` 并树）⇒ **前端线已停两天**，今天的 47 个提交全在后端。
+- 体量实测：`frontend/src/components` **22** 个 `.vue` + **22** 个测试文件；`package.json` 四入口齐（`lint`/`test`/`test:e2e`/`lint:colors`）；依赖已按计划书 §3.2 摘掉 Element Plus，只剩 `vue`/`vue-router`/`axios`/`dompurify`/`markdown-it`/`lucide` + 自托管字体。
+- 复跑（借 `fe-trunk` 的 `node_modules` 跑 `vitest run`，主树那份是 `node_modules.stub` 跑不了）：**408 passed / 2 failed（410）**，18 个文件 17 绿 1 红。
+- 🔴 又一份过期清单坐实：`docs/handoff/2026-09-15-frontend-work-checklist.md` 写着 **3 勾 / 62 未勾**，可"4 套鉴权收敛为 1 个 axios 实例 + 删 `DocPanel.vue` 重复拦截器 + 加 401 响应拦截"这条**代码里早已完成**（实取全局 `axios.create` **1** 处，拦截器注册只有 `frontend/src/lib/http.js:98` request 与 `:104` response）⇒ 与计划书 §10 处置 `task_plan.md`/`progress.md` 同性质：**勾选清单不作进度事实源**。
+- **R89（新立，已派）**：2 条红全在 `frontend/src/lib/errcodes.test.js` 的码表对账钉子上——后端 canonical 枚举 **29** 码 vs 前端 `ERROR_CODES` **26** 键，缺 `context_limit_exceeded`、`row_scope_denied`、`no_visible_rows`。该测试用 `git show codex/data-file-catalog:app/agents/contracts.py` 读对象库 ⇒ **不受检出陈旧影响，是真红不是假红**。详细判据、语义锚与 retryable 依据要求见跟进单 **§32.2**。
+- 派工实况：`Noether`（`01a0b454-57a3-76c3-a69e-41bc598e56a1`，与第十四班 R81 那位同号不同人，**按 id 对账**）19:43:41 单投，canary＝rollout 文件已生成 433 KB；写域**只** `frontend/src/lib/errcodes.js`，与在途 `Helmholtz`（`app/storage/persistence.py`）、`Gauss`（`app/api/v1/chat.py`）零相交 ⇒ 并发 3/3 满席。派前已把 `fe-trunk` 由 `deb8ade` **纯快进**到 `de51f1f`（五支全 ahead=0，无冲突、无未提交活儿）。
