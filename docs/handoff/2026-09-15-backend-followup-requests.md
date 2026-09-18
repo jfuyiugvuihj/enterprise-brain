@@ -870,3 +870,62 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 **判据**：① 该端点的 `department` 必须由服务端按调用方身份推导（与 R40 同一个 `verify_department_self_report` 口径），不接受自报值，或自报值不等即拒并回稳定码；② `standard` 不得由调用方指定数值 —— 要么走 R40 已交付的 `auto_from_knowledge_base` 自动取数，要么显式 `explicit` 且带可追溯来源；③ 越权/自报用例覆盖，**必须与 R40 那 32 条参数化用例同形**（沿用 `test_prefiltering` / R45 的"先过滤后去重"式写法，不发明第二套）；④ **反证**：把服务端推导改回 `data.get("department", "")` 必须红。
 
 **边界**：不改 `authorization.py` 的判定逻辑（R40 已定，管理员豁免保留）；不动开放平台的签名校验本身；`ErrorEnvelope.code` 的扩枚举与 R40 暂不追认的两个码**一起做**，且必须等 `contracts.py` 出 R30 写域之后。写域 `app/api/v1/open_platform.py`（可能与 R55 的 `chat.py` 相邻但不同文件）⇒ **可即刻派，不占三腿串行位**。
+
+
+## 27. 本班（09-18 12:2x–13:5x，总控第十班）：R30/R49/R58 三单并树 · R42 判据当场改判 · 总控亲做三笔测试层收口 · 🔴事故 #23（同类第十次）· 新立 R73–R77（基线 `b6e951f` → `5ae7e45`）
+
+> **编号声明（防下班 grep 扑空）**：`R69`、`R71`、`R73`、`R74`、`R75`、`R76`、`R77` 全部由本班口头派出或新立，**在并树代码之前 git 里查不到**。以本文件与看板 §4AN 为唯一事实源。
+
+### 27.1 三单结案（一律总控独立复跑 + 自下反证刀，不采信执行层自述）
+
+| 单 | 内容 | 子树 | 并入主树 | 总控复跑（亲测） | 总控反证刀 |
+|---|---|---|---|---|---|
+| **R49** Fermat | 按内容特征决定进不进化物索引；拒收先回稳定原因；`index_status` 作正交 sidecar | `be-r36` `8680f43`→`31d6612` | `c26afda` | 单跑 **10**、影响面 **24+14**、邻域 **245**（真机 97 篇语料，命中排除 **0**） | 标题标点逃逸一刀：比率 0.5→**0.6471** ⇒ 标定当场红，逐字节还原 |
+| **R30** Sartre | 7 档模型各带显式 `max_tokens`；读超时 = `clamp(margin×(prefill+decode))`，httpx 四段拆分；`context_limit_exceeded` 发出前就拒、不洗进离线兜底；两份 `.env` 样例同一来源 | `be-r37` `3cb563b`→`fd546f4` | `50aff1a` | 追平后 **111**、邻域 **194 passed / 7 skipped** | 流中断计费一刀 ⇒ **2 failed**，还原 |
+| **R58** Curie | Chroma ⇄ PGVector **同事务双写镜像**，默认关；`migrations/0010` 给向量列补 `vector(<dim>)` + `hnsw` + `vector_scope` 口径表 | `be-r27t` `370a9e7`→`a896cf6`→`19d5811` | **`5ae7e45`** | 追平 `571ffd7` 后单跑 **21**、邻域 **176**（15 文件）、**全量 1580 passed / 35 skipped / 0 failed** | **5 刀**：never-commit **5 红** / rollback no-op **5 红** / tolerate scope drift **1 红** / launder missing-snapshot **首跑 0 红**（补 3 条用例后 2 红）/ launder read-failure **2 红** |
+
+- **R58 是本机今天第一次出现"只有全量才能抓到执行层漏红"**：`tests/test_document_catalog_sync.py:123` 的 0010 尾号引信（该用例 docstring 自己写着"将来谁加 0010 必须主动改这条"）不在 Curie 的 10 文件邻域里 ⇒ 子树自述"邻域 182 passed 全绿"，而全量 **1 failed**。`19d5811` 由总控按其自身要求改口，写域在 Curie 之外，已披露。
+- **R58 判据② 的 fail-closed 有一整条零覆盖**：把 `_vector_snapshot()` 两处"读不出旧向量 ⇒ 一个字不动地拒写"的 `return None` 洗成空字典，**18 条全绿**。⇒ Curie 的 6 把刀没有一把砍到这条闸门（它自己如实报了 KNIFE-3 是绿的，但那不是这一条）。总控补 **3 条承重用例**（`test_r58_pgvector_dual_write.py` 尾部，18→**21**），补完两把新刀当场 **2 红**。**这是本班最有价值的一笔：不是执行层写错，是"看起来有守卫、其实没测试"。**
+- **R58 真机欠账（业主侧，一条都不能省）**：`docker compose build migrate`(H12) → `python scripts/migrate.py`（0010 落库）→ 含 PG 向量列的**备份恢复演练**（判据④）→ `python scripts/compare_vector_recall.py --k 5 --out …` 出双读差异表（判据③真机侧）→ **重建索引**（新语料 + 向量都要进库）。开关 `EB_PG_VECTOR_DUAL_WRITE` **默认关**，关着时 `retriever` 一条新 SQL 都不发 ⇒ 本单并入不改变任何现网行为，可安全留在树上。
+- **R58 遗留风险（登记不掩盖）**：Chroma `add` 成功与 PG `commit` 之间进程崩溃 ⇒ 只剩 Chroma（= 今天行为），需 **R59 对账兜底**；假件不建模 chromadb 重复 id 行为，KNIFE-3 的绿**不可外推到真库**；`chunk_vectors.index_version_id` 本单故意留 NULL ⇒ 转 **R76**。
+
+### 27.2 **R42 判据③ 当场改判（总控改了业主写在计划书里的判据，业主可一句话驳回，见 H15）**
+
+- 计划书 §21 原文：**"③ 问答档占比 ≥60%（对齐 70:25:5）"**。`[实测]` fixture 标注 = 问答 **50** / 分析 **35** / 报告 **20** = **47.6% : 33.3% : 19.0%** ⇒ **复刻标注的判别器最高只能 47.6%**，③ 在这份题面上永远红。真因 = 总控立案时把两个不同源的东西写成了一条判据：**70:25:5 是生产流量形状，fixture 是难题加权**。
+- 裁定：**③ 降级为报告值、不再判红**；成本占比门**移交 R51**（真机分段观测回读），意图不取消，只换测量时机。`test_question_tier_share_is_at_least_sixty_percent` 改名改义。
+- **不认的一条**：Planck 把 metric-06「按财务部口径**算**本月销售额**是多少**？」判进快道。要算出一个数就不是定义。⇒ 新增 **⑤ 硬门（不可放宽）**：快道不得接任何"要求算出一个数"的题（口径词 + 取值动词闭集：是多少/算/合计/占比/环比/同比/趋势/排名/总额/平均），用 fixture 中含数字结果的条目钉 `lane != qa`。
+- 新增 **⑥**：重算并原样打印混淆矩阵与快道精度/召回；**精度 ≥70%、召回 ≥90% 两个字都不许动**。`[实测]` 现状：metric 命中 61.90%、快道精度 49/65 = **75.4%**、召回 49/50 = **98%**、与标注一致率 88/105 = 83.8%。
+- Planck 四条欠账的答复：① supervisor 那一发降档 ⇒ **另立 R73**，不许改别人的 `tests/test_supervisor_roundtrip.py`；② `AgentState.model_budget` 零赋值零读取 ⇒ **另立 R74**；③ `r36q/` 垃圾进业主删除清单；④ 已裁。
+
+### 27.3 总控亲做三笔测试层收口（不算执行层交付，全部 R-编号自占）
+
+| 单 | 根因（`[实测]`） | 修法 | 落点 |
+|---|---|---|---|
+| **R70** | app 侧 5 个模块 **import 期** `load_dotenv()`（`app/agents/nodes.py:10`、`orchestrator.py:21`、`app/common/auth.py:13`、`app/common/model_handler.py:28`、`app/rag/retriever.py:19`），而 `monitoring.build_health_snapshot()` **调用期**才懒加载 auth/retriever ⇒ "擦干净环境再打快照"的用例被打快照这一刻灌回 `.env` 里的真机模型名（`OLLAMA_MODEL=qwen2.5:14b`），污染粘性到会话结束。**症状 = 主树稳定红而 `.env` 不入库故子树全绿** ⇒ 全天"某条红只在我这出现"的总根源 | `tests/conftest.py` 把 `load_dotenv` 换成**只记账不读文件**的桩 + 3 条守卫；闸门只在离线态装（真机入口 `tests/_live_model.py` 认 `EB_OLLAMA_ACCEPTANCE`，不认 `.env`）；R20 已为 `DATABASE_URL` 立过同机制先例 | `c2c7dad` |
+| **R68** | `tests/test_offline_runtime_fallbacks.py` 在**开头** `clear()` 模块级进程内存储、**结尾不还原** ⇒ 写进去的 `offline-user` 漏给 `tests/test_deployment_guards.py:494` 的 `assert profile._MEM_PROFILES == {}`。实测该文件 + guards = **1 failed / 37 passed**，反向同。守卫那条 `== {}` 是**被测语义本身**（生产必须拒绝进程内表），不许放宽 ⇒ 修泄漏方 | autouse 快照/还原夹具，覆盖它实际写的 **5 个**存储（chat 会话表 ×2、alerts 规则与告警 **list** ×2、profile dict ×1；list 用 `live[:] = snapshot`）；三向复跑 38+38+50 passed | `e33727e` |
+| **R72** | `tests/test_r49_corpus_calibration.py` 用 `documents/`.iterdir()` 枚举语料，而 `documents/` **按设计兼作上传落地区**（`app/api/v1/chat.py:2222` 解析失败仍保留文件与目录行）⇒ 主树 121 个文件只有 **97** 是语料，`安全生产管理制度汇编.zip` 把 `load_document` 顶到 `ValueError: Unsupported file format` ⇒ **本文件 7 条用例当场 ERROR**，**R49 判据④"97 篇零误伤"在业主机上根本复跑不出来**（干净子树全绿） | 改用 `git ls-files -z -- documents` 的版本化清单（`-z` 否则 95 个中文名被八进制转义）。修后实测：语料篇数 **97**、命中排除 **0**、`10 passed`，与结案原值一致 | `f396866` |
+
+### 27.4 🔴 **事故 #23（同类第十次）**：R71 在同一个 block 里连发两次 `spawn_agent` ⇒ 同一单派给两个 Agent **且同树**
+
+- 13:34:10 投 `Chandrasekhar`、13:34:44 投 `Wegener`，两者都指向 `be-leg2`。这是本仓明令禁止的两件事叠加（一 block 一次投递 + 一树一 Agent）。
+- 13:36:5x 处置：`close_agent` 关掉后落的 `Wegener`，保留先起的 `Chandrasekhar`；**`git -C be-leg2 status --porcelain --untracked-files=all` 实测空** ⇒ 关停时机在"仍在读码"阶段，**零交叉写脏、零损失**。
+- 根因还是那条老病：**投递调用报了 `Tool 'spawn_agent' does not exists`，实际已经建成**。本班另一次假报错（`Missing required argument: message` 投 R44）已按先例**先查 rollout 再决定**，确认唯一落地，未补投。
+- ⇒ 硬规矩重申：**任何投递调用返回异常，第一件事是查 `~/.codex/sessions/**/rollout-*.jsonl`，绝不允许直接补投**（事故 #14/#16/#17/#23 全是这条）。
+
+### 27.5 新立单 **R73–R77**
+
+| 单号 | 一句话 | 写域 | 判据要点 | 前置 |
+|---|---|---|---|---|
+| **R73** | supervisor 那一发降档（R42 拆出） | `app/agents/supervisor*`、新建 `tests/test_r73_*.py` | 降档只发生在预算不足且**必须可观测**；**禁止改别人的 `tests/test_supervisor_roundtrip.py`** | R42 结案（`orchestrator.py`/`nodes.py` 出域） |
+| **R74** | `AgentState.model_budget` 零赋值零读取 | `app/agents/contracts.py` + 唯一读取方 | 要么真被读并影响档位，要么删字段；**不许留"看起来有其实没接线"的字段** | 同上 |
+| **R75** | `/open` 与 worker 两份预审标准校验去重（R67 交工同轮暴露） | `app/approval/assistant.py`、`app/common/open_platform.py` | 收敛成一处；**不许为了去重改变已结案的 R40/R67 判定结果** | R71 结案（同文件在途） |
+| **R76** | `chunk_vectors` 接入索引发布/回填链（R58 待裁项转单） | `app/rag/indexing.py`、`app/rag/pg_store.py` | `_MIRROR_TABLES` 增表 + 发布时按 `index_version_id` 回填；**换 embedding 模型必须把镜像一起换掉**，不留半张脸 | R58 真机三件之后 |
+| **R77** | H11/H12 真机复测（旧结论已过期） | **只读数**，`docs/perf/raw/` 落盘 | 重测容器 GPU 是否真到位、后端镜像是否追平主树 | 业主本人 |
+
+### 27.6 本班数字订正（下班引用前以此为准）
+
+- 全量基线：`1371 passed/35 skipped/1 红` → **1580 passed / 35 skipped / 0 failed / 0 error**（`[实测] @5ae7e45`，44.10s→46.99s）。
+- 语料篇数：**97**（95 txt + 2 pdf）；磁盘 txt **115**；主树 `documents/` 文件 **121**（含上传产物）。
+- 评测集无出处：**29**（A 12 + C 16 + 交叉 1），**不是 55**；B 桶 27 已由 R66 清 23 + 顺带 3。
+- `app/agents/intelligence.py` **不存在**，正确路径 `app/api/v1/intelligence.py`。
+- R58 之后**迁移末号 = 0010**；R49 的 `index_status/index_reason` 若入库必须用 **0011**，且必须同步改 `test_document_catalog_sync.py:123` 的尾号引信。
