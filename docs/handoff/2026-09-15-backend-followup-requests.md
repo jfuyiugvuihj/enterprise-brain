@@ -1200,3 +1200,32 @@ PROBE index reached = 0
 - 判据：① 键集合 == 29，一码不多一码不少，`FRONTEND_ONLY_CODES` 保持 `[]`；② `message` 非空、不含 `{}`/URL/`/api/`、不含任何 snake_case 码名（同一文件里有 `not.toMatch(/[a-z][a-z0-9]*(_[a-z0-9]+)+/)` 这一刀）；③ `retryable` 必须给出处：行作用域两码倾向 False（拒绝重试不变），`context_limit_exceeded` 要对齐 `CONTEXT_LIMIT_CODE` 的处置路径与 `tests/test_r30_context_limit_guard.py` 后再定；④ `vitest run` **410/410**；⑤ `npm run lint` 无错、`lint:colors` 棘轮不得变差（改前改后各跑一次留数）；⑥ 不许动测试、不许动别的文件、不许 commit。
 - 语义锚（后端 contracts.py 注释口径，文案要与之相符）：`row_scope_denied`＝行存在但在当前账号行级可见范围之外；`no_visible_rows`＝本轮一行可分析的都没有、**原因不下结论**；`context_limit_exceeded`＝上下文装不下。
 - 为什么总控这条能自己派：不碰 `app/**`、不碰 `orchestrator.py`、与在途两单写域零相交，且前端五树 09-16 后无人占用 ⇒ 独占性天然成立。
+
+
+---
+
+## 33. 本班（09-18 20:2x–，总控第十八班）：🟢 H11 + H12 由总控亲做结案 · 🔴 新立 **R90**（pgvector 0010 首装必停 + 它给的指引指错库）· R87 总控亲做结案 · 事故 #29 按业主裁定降级 · 🔴 事故 #30 两条执行层线程蒸发
+
+### 33.1 结案账（只记总控实取，任何执行层自述不作数）
+- **H11 → 🟢**：Docker Desktop 起来后栈按 restart 策略自恢复，`ollama ps` 实取 `qwen3.5:9b` 5.3 GB **100% GPU** ctx 4096 + `nomic-embed-text` **100% GPU**。
+- **H12 → 🟢**：`docker compose --env-file deploy/.env.server build migrate`（≈12 分钟）+ `up -d backend worker scheduler`；P-8 以**内容指纹**证死（`audit.py` `9df140a411` / `hot_index.py` `0d0e70d8d3` / `chat.py` `b10629d652` 与主树逐字节相同，`contracts.py` 的 `max_calls` 计数 0）。两条新坑（`backend` 的 build 指向 `frontend/Dockerfile`、必须带 `--env-file`）已入看板 §4AV.4。
+- **R87 → 🟢 总控亲做结案**：主树 `fcd8ef0`，用例 16 → **20**，全量亲跑 **2104 passed / 35 skipped / 0 failed / 81.61 s**；副产品口径＝**脏工作树跑全量不必先 commit**。
+- **事故 #29 → 降级**：业主裁定语料与评测集是编造 / 公开来源的演示数据 ⇒ 公网可见**不构成数据泄露**；但「两远端确为公开库、`chroma_db` 今天被放大到 75.5 MB / 向量目录 124 MB、`master` 停在 `450e5aa` 未动」三条事实保留，「push 前查可见性」纪律保留。
+- **事故 #30（新类）→ 🔴**：`Helmholtz`(R84) 与 `Gauss`(R37) 经 `wait_agent` 实取 **`not_found`**（线程蒸发、无结案回执）。`be-r37` 盘上留活 `chat.py` +182/−41 + 2 新用例；`be-r84` 只有 21 KB 红用例，`persistence.py` 未动。**不补投**；由总控对 §21 判据验收后决定代提交 / 退回，`chat.py` 在 R37 结案前仍不许再派。
+- **删除清单 → 不急**（业主裁定）：`_quarantine` 零引用脚本与主树 `_board_*.py` / `bundle.js` / `idx.html` 全部挂账，本机任何删除动作本身也被策略硬拒（§4AT.2）。
+
+### 33.2 🔴 **R90** 判据（可机器验证，禁止口头达标）
+> 一句话：pgvector 那条 0010 迁移在**干净环境首次部署必停**，而且它 printed 的补救指引会让运维去改一个**不存在的库名**。两处缺陷耦合，必须一起修。
+
+- **① 零人工前置（核心达标线）**：在一台只起了 `postgres`（外加 `redis`）的环境上，`docker compose --env-file deploy/.env.server run --rm migrate python scripts/migrate.py` 退出码 **0** 且 `applied=` 覆盖到 `0010_pgvector_chunks`；操作者**不需要**手工 `ALTER DATABASE`。当前反例已由本班实测：不手工设 GUC 就停在 `0010 needs an explicit vector width and will not guess one.`
+- **② 宽度只从显式配置来，不许猜**：`EMBEDDING_DIMENSION` 未声明时**必须**继续 fail-closed（报"未声明宽度"并停），**禁止**回落到 `app/rag/indexing.py:46` 的 `DEFAULT_EMBEDDING_DIMENSION = 768`。R22 的「一个库不许两套宽度」全靠这条，改判需业主裁。
+- **③ 下发点唯一且成对**：修 `app/db/migrations.py`（`scripts/migrate.py:31` 调的 `apply_migrations`），在应用 0010 **之前**按运行时值下发 `ALTER DATABASE <db> SET app.embedding_dimension = ...`，并把 `app.embedding_model` 一起绑上；两者必须取自同一个 `configured_embedding_scope()`，不许一处读 env 一处读默认。
+- **④ 指引必须可粘贴**：`migrations/0010_pgvector_chunks.sql:216` 里的 `%I` 改回 `%`，并加一条钉：该 `RAISE` 渲染出的库名 `== current_database()`，不得带 `I` / `s` 尾巴。复现证据（本班容器内一行 `DO`，全仓 `RAISE` 里 `%I`/`%s` **仅此一处**）：`%I` → `enterprise_brainI`、`%s` → `enterprise_brains`、`%` → `enterprise_brain` ⇒ **PL/pgSQL 的 `RAISE` 不认 `%I`/`%s`（那是 `format()` 的语法）**，用例注释里要把这条写死免得再犯。
+- **⑤ compose / 示例 env 同步**：`docker-compose.yml` 现全文 `EMBEDDING_DIMENSION` **零出现**（`.env.example` 亦无）⇒ 修完须在 `migrate` / `backend` / `worker` / `scheduler` 四处 env 里**成对**出现 `EMBEDDING_DIMENSION` 与 `EMBEDDING_MODEL`，`.env.example` 补两行并写明「换 embedding 模型必须同时改宽度」。
+- **⑥ 不许回退**：`migrations/0001..0009` 一字不动；`migrations/0010` 除提示串那一行外不改语义；与迁移相关的既有用例全绿；主树全量相对 **2104 / 35 / 0** 只增不减；执行层不 commit（由总控显式列路径代提交）。
+- **⑦ 业主侧不可代做**：`migrations/**` 与生产库 GUC 属业主（同 R88 / H12 口径），本班已用手工 `ALTER DATABASE enterprise_brain SET app.embedding_dimension = 768;` 打通真机（现值实取 **768**），**这条临时打通不算结案**——判据 ① 必须在不靠手工的情况下复现。
+
+### 33.3 真机评测状态（细节在看板 §4AV.7）
+- A 步结构性前置 `collected=105 of 105` ✓；runbook §3.2 骨架的 `urlopen(..., proxies=)` 缺陷已修（该函数无此参数 ⇒ 步骤 B 此前从未跑过一步）。
+- B 步全 105 题串行采集 20:31:00 起跑（模式 **B′** 宿主直连 8001，须在报告里声明；窗口非完全独占 ⇒ P95 标"含并发噪声"）。
+- 单题探针 `doc-01` 已暴露 R79 那条热集 / 外集排序嫌疑：语料确有《企业管理制度手册》，模型仍答"未找到"。
