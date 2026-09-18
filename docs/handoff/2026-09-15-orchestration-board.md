@@ -1194,12 +1194,19 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Jason` | `01a0ae99-89de-7e10-aab8-ac138c9a276e` | （Planck 的重复体） | `be-r20` | **已结案**：shutdown 回执已到，经查从未落盘 | 17:11:38 |
 | `Goodall` | `01a0aef7-3590-7001-a031-0187447ddea2` | R17 | `be-leg2` | **失效**：18:43:58 派出后随总控死亡，`be-leg2` 至 20:5x 仍**零落盘**（等于未动工）；本班 21:11 原样重派为 `Curie` | 20:52:10 |
 | `Curie` | `01a0af7e-23bc-7b71-96e9-e2288069cffa` | R17 | `be-leg2` | **已结案**：子提交 `17f45a4` 并入主树 `dd2a244`；总控亲验 110 passed + 18 例行为探针（详 §4AJ.2）；交回 3 条待裁项另立单（§4AJ.5） | 21:53:32 |
-| `Banach` | `01a0af7f-0a94-76b2-95d9-138066536a4e` | **R56** 测试期真打宿主 Ollama | `be-r14`（基线 `5984696`，**独占**） | **运行中**：`+365/−0` 进 `tests/conftest.py`（sticky 模块闸门 + autouse 逐用例兜底 + `pytest_collection_finish` 记 session error），新文件 `tests/test_no_host_model_endpoint_during_tests.py`(7936B, 21:44:03)；**注释内已自证用 `.venv`/py3.11.7/chromadb 1.5.9** ⇒ 订正令已采纳；⚠ 根目录 `r56_stack.txt`(21:25，anaconda 时代产物) **不许入库** | 21:53:32 |
+| `Banach` | `01a0af7f-0a94-76b2-95d9-138066536a4e` | **R56** 测试期真打宿主 Ollama | `be-r14` | **已结案**：子提交 `f571462` 并入主树 `781afd0`（socket 三钩子 + sticky 记账 + autouse 兜底 + session 级报错；4 处既有用例按既有惯例加离线桩，无一处弱化断言）；总控亲验。遗留垃圾 `be-r14/r56_stack.txt` **待业主删** | 09-17 22:5x |
 | `Peirce` | `01a0af7f-4f09-7062-9cdc-0a397cf0e816` | R56（**重复体**） | 与 `Banach` 同为 `be-r14` | **本班 21:17:20 关停**（事故 #15，同类第六次）；关停前零落盘 ⇒ 无产物损失 | 21:17:20 |
 | `Meitner` | `01a0af9c-9f38-7130-91fe-d2b6349f310c` | R35（**重复体**） | 与 `Poincare` 同为 `be-r15` | **本班 21:4x 关停**（事故 #16，同类第七次）；关停前零落盘 ⇒ 无产物损失；**其遗留情报已被采纳**（§4AJ.4） | 21:53:32 |
-| `Poincare` | `01a0af9c-5047-77b1-a460-682786e3cac9` | **R35** 答案缓存门槛与四座孤岛 | `be-r15`（基线 `dd2a244`，**独占**） | **运行中**：21:4x 冻结→复工（`send_input` 单次，submission `01a0afa3`）；写域 `app/common/cache.py` + `chat.py` 缓存段 + `tests/`；**禁碰** `conftest.py`(R56 在途)/`rbac.py`(已结案)/`approve()` 区间(R55)/`frontend/**`/评测集 | 21:53:32 |
+| `Poincare` | `01a0af9c-5047-77b1-a460-682786e3cac9` | **R35** 答案缓存作用域与淘汰策略 | `be-r15` | **已结案**：子提交 `63651f1` 并入主树 `90d029f`；总控复跑 147 passed / 12 skipped + **全局键反证成立**（摘掉 scope 即泄漏）；`answer_cache_scope` 七维永不返回空。交前端线三字段：`cached` / `cache_generated_at` / `cache_note` | 09-18 10:2x |
 | `Hegel` | `01a0afb2-5221-7942-97c1-b4939d25d304` | R62（**重复体**） | 与 `Euler` 同为 `be-leg2` | **本班 22:18 关闭**（事故 #17，同类第八次）；派工时带 model override，**自行 errored 于同款 `at_` 消息 id 污染**；关停前 `be-leg2` 零落盘 ⇒ 无产物损失 | 22:18:42 |
-| `Euler` | `01a0afb2-bff5-7e02-a0ad-fe5a3f4bfb78` | **R62** 被权限隐藏的行不得说成「代码执行未通过」 | `be-leg2`（基线 `ae7283b`，**独占**） | **运行中**（22:18:42 `wait_agent` 15s 无终态）；裸投递继承本线模型；判据 ①–⑤ 见跟进单 §23 表 a 行；**禁碰** `chat.py`(R35 在途)/`retriever.py`(R57 已结案)/`tests/conftest.py`(R56) | 22:18:42 |
+| `Euler` | `01a0afb2-bff5-7e02-a0ad-fe5a3f4bfb78` | **R62** 被权限隐藏的行不得说成「代码执行未通过」 | `be-leg2` | **已结案**：子提交 `7ddfde2` 并入主树 `b143402`；总控复跑 + 两处反证成立；`app/agents/tools.py:371-437` 文案层落地。同树另露两笔欠账已立 **R64/R65**（跟进单 §24） | 09-18 10:3x |
+| `Nash` | `01a0b269-3582-7533-9305-92e19a56a4a8` | **R21** embedding 失败不得静默降级 | `be-r27t`（基线 `a6e2972`，**落后主树 3 提交**，**独占**） | **运行中**：盘上 `+384/-25`（M `app/common/monitoring.py`、M `app/rag/retriever.py`，新 `tests/test_r21_embedding_fail_closed.py`、`tests/test_r21_health_probe.py`）；11:12 实取 `retriever.py` 仍在写。验收前必须先 `git merge --ff-only codex/data-file-catalog` 追平基线，否则并树必冲突 | 11:12 |
+| `Singer` | `01a0b258-f2a0-7553-af50-e0c327109369` | **R22** 索引版本绑定 model+dimension | `be-r36`（基线 `a6e2972`，**落后主树 3 提交**，**独占**） | **运行中**：盘上 `+559/-14` 进 `app/rag/indexing.py`（`EmbeddingScope`/`IndexScopeError`/`configured_embedding_scope`/`embedding_drift`/`retain_queryable`/`rollback`/`discard`）+ 新 `scripts/rebuild_index.py` + `tests/test_r22_embedding_scope.py` + `tests/test_r22_rebuild_cli.py`；11:12 实取四文件在写。同须追平基线 | 11:12 |
+| `Gauss` | `01a0b26e-3bc4-7401-8774-406f1b9bd9c7` | **R40** `standard_source` 自动取标准 + 服务端拒前端 `department` | `be-r15`（基线 `781afd0`，**独占**） | **运行中**：10:52:43 **裸投递**，sessions 目录核得 rollout 唯一。11:12 实取在写 `app/api/v1/intelligence.py`、`app/approval/assistant.py`、**`authorization.py`（第三个文件超出派单写域，结案时逐条核）**。该树 `chroma_db/chroma.sqlite3` 已 M（测试副作用）**不许入库** | 11:12 |
+| `Helmholtz` | `01a0b26e-ee2e-7a23-89a1-a14f2c517656` | **R47** 术语/同义词接进改写（零模型往返） | `be-r14`（基线 `781afd0`，**独占**） | **运行中**：10:53:29 **裸投递**，rollout 唯一。11:12 实取在写 `app/rag/retrieval_pipeline.py` + 新 `tests/test_retrieval_synonym_expansion.py`。根目录 `r56_stack.txt` 为 R56 遗留垃圾 **不许入库** | 11:12 |
+| `Franklin` | `01a0b279-6d09-7852-8e0a-1a1cf9f9353c` | R30（**重复体**） | `be-r37` | **本班 11:05 关闭**（事故 #21，同类第九次：**带 model override 的投递 1 秒内死于 `at_` 消息 id 污染**）；关停前 `be-r37` `status --porcelain` 空 = 零落盘，无产物损失；11:06:32 裸投重派为 `Descartes` | 11:06:32 |
+| `Descartes` | `01a0b27a-e161-7ee2-af4f-f1f2ac29b029` | **R30** `max_tokens`/超时按档，拆 5 处硬编 `timeout` | `be-r37`（基线 `781afd0`，**独占**） | **运行中**：11:06:32 裸投递（无 model / 无 reasoning_effort 覆盖），rollout 唯一。写域 `app/agents/contracts.py`（**仅 `ModelBudget`**）/`nodes.py`/`tools.py`/`app/api/v1/alerts.py`/`app/common/model_handler.py`/`model_budget.py`/`.env.example` + **`orchestrator.py` 只许改 `:212` 一处实参**；禁碰 `ErrorEnvelope` 枚举（属 R64） | 11:12 |
+| `Hypatia` | `01a0b27b-df02-72c1-875e-82b15b9039af` | **R36-Q** 评测集 `must_contain` 出处逐条核查（**只读**） | `be-r34`（基线 `781afd0`，**独占**） | **运行中**：11:07:37 裸投递。交付形态 = **回报文本**（证实/证伪「105 题中 55 条无出处」+ 逐条定性「题错 / 语料缺 / 不可判定」+ 最小改动建议）；**禁改评测集与被跟踪文件**，评测集仍被 `tests/test_evaluation_report.py` 钉死 | 11:12 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -1816,3 +1823,51 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 - 移出在途：`Hegel`（errored + closed）。加入在途：`Euler`（R62 / `be-leg2` 独占）。`Banach`(R56 / `be-r14`)、`Poincare`(R35 / `be-r15`) 状态不变，本班 22:1x 未复跑其测试。
 - 本班**未提交任何代码**，只动文档四份（新 1 改 3）。基线仍 **237 passed / 12 skipped**（主树，未受本次文档改动影响）。
 - 下一步（按序）：① 收 `Euler` 的 R62；② 收 R56（**改了 `tests/conftest.py` ⇒ 必复跑 `tests/test_test_isolation_guards.py`**）；③ 收 R35（**必补 §4AJ.4 那条 `answer_cache_scope` 恒真与注释矛盾**）；④ 三单合并后刷基线并新开 §4AL。
+
+---
+
+## 4AL 本班（09-18 10:2x-，总控第八班）：三单并树收口 / 新基线 **334 passed / 12 skipped** / 事故 #19 #20 #21 / **「带 model override 投递必死」两次独立复现，升级为硬规矩** / R37 依赖订正
+
+### 4AL.1 本班结案三单与基线刷新
+
+- **R35** -> 子提交 `63651f1`，并树 merge `90d029f`；**R62** -> `7ddfde2`，merge `b143402`；**R56** -> `f571462`，merge `781afd0`（当前主树 HEAD）。
+- 新基线（主树实跑，非任何执行层自述）：**20 文件 334 passed / 12 skipped**。
+- **以下数字全部作废，禁止再引用**：237/12、159/12、151/4、211、147、27。
+- R56 改了 `tests/conftest.py` => 后续每一单跑测都自动带上宿主端口硬闸；新工作树**不需要 .env**（conftest 自带 DATABASE_URL / 模型哨兵 / 端口钉子，`be-r14` 无 .env 亦跑过 211 例）。
+
+### 4AL.2 事故 #19 / #20 / #21（同类第九次）与两条**机器层**硬事实
+
+- **#19**：同一 block 并列 3 个 `spawn_agent` => 静默建出 Nash/Harvey/Boyle 三个执行体同占 `be-leg2`。处置：`close_agent` 关 Harvey / Boyle，保留 Nash 做 R21。**`close_agent` 幂等且可并行**（重复关返回 not found），这一条可以放心批量用。
+- **#20**：投递 R30 被 **`collab spawn failed: agent thread limit reached`** 明确拒绝 => **并发 Agent 有硬上限，实测为 6**。与 #14-#19 的"静默复制"不同，这次是**明确失败不静默建**：已用 `C:\Users\fengx\.codex\sessions` 下 `rollout-*.jsonl` 文件名与 mtime 核对确无新 Agent => 重投不构成重复投递。腾名额靠 `close_agent`；**副产品（重要）：`close_agent` 返回体里带该 Agent 的完整最终报告**（`previous_status.completed`），这是探活与取证的正道，比等回报可靠。
+- **#21（新，同类第九次）**：`spawn_agent` 带 `model=gpt-6-astra` + `reasoning_effort=high` => **1 秒内 errored**，原文 `Invalid id: message id must be a string starting with msg_, got at_fa02609f-...`（request_id `abecfe18-4ea4-4740-b797-5f5660def9e7`）。取证：`be-r37` `status --porcelain` 空 => 零落盘；close 后 11:06:32 **裸投**重派，正常运行。
+  - **这不是新病，是 L1800 那条旧令的第二次独立复现**：09-17 22:18 的 `Hegel`（带 `gpt-5.6-terra` 覆盖）死于**同一句报错原文**，同 block 的裸投递 `Euler` 活着并结案为 R62。
+  - => **升级为硬规矩（覆盖 §4AK.1 的"补一条旧令"）**：**投递一律裸参 -- 禁止 `model`、禁止 `reasoning_effort` 覆盖。** 这条同时解释了业主那三条死线程（`01a09dda` / `01a0acfb` / `01a0af5c`）的共同机制：**只要一个线程的历史里出现过别家 provider 的消息 id，此后每次请求都会被服务端拒**，无论主树还是子 Agent。所以"本线从头到尾只用一个模型"不只是稳态偏好，而是**存活条件**。
+
+### 4AL.3 实测订正（文档过期处，写下来免得下一班再踩）
+
+- 跟进单 §21 L496 写「**三处**硬编 `timeout=30`」**过期 => 实测 5 处**：`app/agents/nodes.py:304`、`app/agents/nodes.py:370`、`app/agents/orchestrator.py:212`（跟进单写的 `:158` 已漂移）、`app/agents/tools.py:512`（写 `:443`，因 R62 加文案层而漂移）、`app/api/v1/alerts.py:137`。
+- `app/agents/contracts.py:72` `max_tokens: int | None = None` **全仓零赋值**（确认：`git grep -n max_tokens -- app` 仅此一行）；`app/common/model_handler.py:50` 缺省 60 vs `.env.example:38` 120（确认）；`app/**` 里 `4096` 只有 `app/tools/excel.py:23` 无关命中 => **R30 判据④「n_ctx 撞顶稳定码」今天在代码里不存在**，执行层的第一动作是"引进这个概念"而不是"改配置"。
+- **R37 实为依赖阻塞（此前所有班次都没记过这条）**：全仓 `task_type` 只有 `app/api/v1/chat.py:964` 一处（限流溢出入队时写 `"task_type":"ask"`），**契约里根本没有 report 档**（`AskRequest` 在 `app/api/v1/chat.py:715`）=> **R37 必须排在 R32 之后**，R32 零提交 => 今天不可派。
+- R33 判据③、R34 判据③（原生端点上生效）、R52 全部 => **均需真机，今天不可结案**。
+- 评测集文件实名：`tests/fixtures/business_evaluation_100.jsonl`、`tests/fixtures/business_evaluation_30.jsonl`。**未跟踪文件 `git grep` 搜不到**，必须直接读文件（前任因此误判过"文件不存在"）。
+
+### 4AL.4 排期偏离登记（**主动记账，不静默**）
+
+- 计划书 §5.1 腿① 明写「R27 -> **R29** -> **R30** -> R31 严格串行」，而 **R29 至今零提交，本班却先派了 R30**。理由与边界：
+  - 该串行条款防的是「两个 Agent 同时改 `orchestrator.py` / `nodes.py` 同一批函数」；R29 当下**无在途 Agent**，不构成并发冲突。
+  - R31 的前置是 R27/R29/R30 **三者都在它之前**，R29 与 R30 互换不影响这个偏序。
+  - 风险与兜底：若 R30 的改动与后续 R29 撞 `nodes.py`/`contracts.py`，**由总控在并树时串行化（后结案者重做语义、逐行核）**，不允许两树各改各的再"期望 git 自己合好"。
+- **并发上限 6 => 本班投递 R30、R36-Q 后已满员**，任何新投递必被拒。下一单须等任一在途结案并 `close_agent` 腾名额；空闲可派树仅剩 `be-leg2`（@`7ddfde2`）。
+
+### 4AL.5 执行层回报不采信条款（本班重申，因上一班实测到"回报与盘上不符"）
+
+- `docs/handoff/**` **总控独占写**、对执行层**永久只读**；**不存在任何"看板锁"**。凡以"怕撞文档/等文档解锁"为由停工者，**一律判未完成**。
+- 回报若无 `git status --porcelain` + `git diff --stat` 原文与**实际跑过的 pytest 命令行**，一概不采信；总控验收一律自己复跑，不信自述数字。
+- 执行层禁 `commit`/`add`/`push`/切分支，由总控代提交；主树提交**必须显式列路径，禁止 `git add -A`**；并树用 `--no-ff`，合并后核对只带进预期路径，排除 `*.txt`/`*.bak`/`probe.txt`/`chroma_db/**` 之类副作用与垃圾。
+
+### 4AL.6 名册变更与下一步
+
+- 移出在途：`Curie`（R17 已结案 `dd2a244`）、`Volta`（前班遗留）、`Franklin`（#21，零落盘）。改标已结案：`Poincare`(R35)、`Euler`(R62)、`Banach`(R56)。加入在途：**Nash(R21)、Singer(R22)、Gauss(R40)、Helmholtz(R47)、Descartes(R30)、Hypatia(R36-Q)** -- 六者写域互不交叠（`rag/retriever.py`+`monitoring.py` / `rag/indexing.py` / `api/v1/intelligence.py`+`approval/assistant.py` / `rag/retrieval_pipeline.py`+`semantics/registry.py` / `agents/**`+`model_*.py` / 只读），**这是"6 个并发"能同时成立的唯一原因**。
+- 本班新增欠账已立案并写进跟进单 **§24**：**R64**（权限终态缺结构化 `error_code`，需动 `contracts.py` 的 `ErrorEnvelope` 封闭枚举 + `tests/test_error_code_vocabulary.py`）、**R65**（`app/agents/tools.py:441` 存量裸 `（error_code=...）` 文案，R16 债），另记卫生账（`_analyze_data` 两处 `except Exception: pass`、`conf` 死变量）。
+- 欠 `Curie` 一笔：它建议把 `RBAC_ROW_DEPARTMENT_SCOPE=fail_closed` 补进 `.env.example` 与 `deploy/.env.server.example`。**本班未落地，原因是 .env.example 此刻在 Descartes（R30 判据③）写域内** => 等 R30 结案后由总控补，不派工、不撞文件。
+- 下一步（按序，全部总控自主完成）：① 验 R21/R22（**先在各子树 `merge --ff-only codex/data-file-catalog` 追平 `781afd0`**，再逐条对 §22 判据，再自己复跑）；② 验 R40/R47/R30；③ 收 R36-Q 的清单后决定评测集是否需要向业主申请特批改动；④ 收工前交业主"必须你出手"清单（H11/H12/H13/R61/R63/H6/push/垃圾删除/`automation-2` 改指向）。

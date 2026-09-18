@@ -788,3 +788,14 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 
 `[实测]` `rbac.py:41 _LEGACY_SCOPE_VALUES = {"legacy","old","open","off","0","false","no","disabled"}` ⇒ 运维把 `RBAC_ROW_DEPARTMENT_SCOPE=off` 当成「关闭这个功能」时，实际语义是「**退回放宽口径**」（把空部门行放给所有人），与直觉相反且是**放宽方向**。
 建议裁法（择一，业主定）：① 从集合里剔掉 `off/0/false/no/disabled` 这类否定词，只留 `legacy/old/open`；② 保留但启动时 `logger.warning` 显式播报"你正在放宽权限"。R17 已把 `reason_code` 打进 attrs 与日志，**不改判定**的前提下这是纯文案与取值集合的收窄。
+---
+
+## 24. 总控验收 R62 / R35 时新露的欠账 -> 立单 **R64 / R65** + 卫生账（09-18 11:2x，总控**逐条实测**后立案，基线 `781afd0`）
+
+> 两单都是**结案时顺手露出的老债**，不是 R62/R35 漏做：R62 的判据只管"文案不许张冠李戴"，没管终态结构化；R16 的判据只管 `search_docs` 一处。**未派工，排在权限簇与 R30 之后。**
+
+| 单号 | 现状（全部 `[实测]`，命令与行号可复算） | 判据 | 边界 |
+|---|---|---|---|
+| **R64** 权限/拒答终态缺**结构化** `error_code` | `[实测]` 终态目前只有**裸文本**：`app/agents/tools.py:81`、`:139`、`:147`、`:348`、`:448` 把码拼进人话字符串（`f"...（error_code={decision.reason_code}）"`）；`app/agents/contracts.py:82-108` 的 `ErrorEnvelope.code` 是**封闭枚举**（末段 8 个码由 `tests/test_error_code_vocabulary.py::RATIFIED` 钉出处），今天**没有** `department_scope_required` 之外的行级可见性码 ⇒ 前端与审计只能靠正则读人话 | ① 行级口径拒绝/无可见行/密级拦截三种终态各有一个**枚举内**的稳定码；② 结构化字段与文案**同时**产出，文案不再是唯一载体；③ `tests/test_error_code_vocabulary.py` 的 RATIFIED 表逐码补出处（**删了 emit 点却忘摘码必须响**，沿用该文件既有护栏形态）；④ 反证：把码从枚举里摘掉则用例红 | **必须动 `app/agents/contracts.py` 封闭枚举 + `tests/test_error_code_vocabulary.py`**，二者不一起动就是假结案；不动 `rbac.py` 的判定逻辑；密级维度仍属 H13，只登记码、不下口径结论 |
+| **R65** 存量裸 `（error_code=...）` 文案（R16 债，同类共 5 处） | `[实测]` `git grep -n "error_code" -- app/agents/tools.py` 命中 13 行，其中**拼进用户可见字符串**的是 `:81`/`:139`/`:147`/`:348`/`:448` 五处；`:332`/`:446`/`:527`/`:608`/`:634` 是合法的 `record_tool_status(error_code=...)`，`:347`/`:708`/`:730` 是 `span.finish(...)` ⇒ **别把合法的当债改掉** | ① 五处文案改为**码 + 人话两路**（人话保留，但码走结构化出口）；② 与 R16 已定的 `search_docs` 形态一致，不发明第二套格式；③ 用例覆盖"前端拿得到码"；④ 反证：回退成只拼字符串则用例红 | 与 R64 **同批改才省一次回归**，但两单判据独立：R65 可以只做五处收口而不扩枚举（扩枚举属 R64） |
+| **卫生账（不立单号，登记待裁）** | `[实测]` `app/agents/tools.py:475-479`、`:482-487` 两处 `except Exception: pass` 静默吞异常（`_analyze_data` 里 `_answer_query` 失败与样本序列化失败），用户侧只看到"少了一段"，日志与 trace 里无痕 | 若做：改成**降级但有痕**（记 `span.finish`/`logger.warning` + 稳定码），并补一条"异常不得静默"的用例 | **禁止顺手 `git blame` 式扩大改动面**；登记时订正一条假账：**"`conf` 死变量"不成立** —— `app/agents/tools.py:41` 的 `conf` 在 `:45`/`:51` 被真实使用，此前班次口头记过它，现予以作废，防止执行层去"清理"一个不存在的死变量 |
