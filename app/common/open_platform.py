@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.common.audit import record_audit
+from app.common.authorization import DEPARTMENT_SELF_REPORT_DENIED
 from app.common.identity import Principal
 from app.common.monitoring import ProductionReadOnlyProtection
 
@@ -254,6 +255,50 @@ def _normalize_headers(headers: dict[str, Any]) -> dict[str, str]:
     return {str(key).lower(): str(value) for key, value in (headers or {}).items()}
 
 
+def _granted_departments(record: OpenApplication) -> tuple[str, ...]:
+    """The departments an administrator granted this application, normalized once."""
+    return tuple(
+        str(item or "").strip() for item in (record.allowed_departments or ()) if str(item or "").strip()
+    )
+
+
+def _resolve_open_department(record: OpenApplication, claimed: str) -> str:
+    """Pick the department an application may speak for from the registry, and nothing else.
+
+    The signature proves which application is asking and which action it holds. It proves
+    nothing about whom it is asking for: ``build_request_signature`` covers
+    ``app_id.timestamp.body``, so no identity header is signed and any client can write one.
+    That header used to be the whole story, which is how R67 was bypassed -- a Principal built
+    from an invented ``X-Open-Department`` then satisfied ``verify_department_self_report``,
+    because the department it checks a claim against was the one the caller had just sent.
+
+    The header is therefore only a selector among what an administrator granted:
+
+    - no grant means no department, and the header is not consulted at all. The request then
+      reaches the retrieval layer without a scope, which is R17's fail-closed and stays that way;
+    - one grant needs no selector, so the header remains optional for clients written before it;
+    - several grants make the header the only way to choose, and silence chooses nothing:
+      filing a conclusion under a scope nobody asked for is a forgery of a different shape;
+    - a value outside the grant is refused with the code the session transport already uses,
+      because it is the same judgment -- a department the caller has no standing for.
+    """
+    granted = _granted_departments(record)
+    requested = str(claimed or "").strip()
+    if not granted:
+        return ""
+    if not requested:
+        return granted[0] if len(granted) == 1 else ""
+    if requested in granted:
+        return requested
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": DEPARTMENT_SELF_REPORT_DENIED,
+            "message": "X-Open-Department must name a department granted to this application",
+        },
+    )
+
+
 def verify_open_request(headers: dict[str, Any], body: str, required_action: str) -> tuple[Principal, dict]:
     normalized = _normalize_headers(headers)
     app_id = normalized.get("x-open-app-id", "").strip()
@@ -280,16 +325,27 @@ def verify_open_request(headers: dict[str, Any], body: str, required_action: str
     if abs(time.time() - ts) > 300:
         raise HTTPException(status_code=401, detail="请求已过期")
 
+    # The department starts empty on purpose: it is resolved from the registry below, never
+    # read out of the headers, so the subject on the denial row is the same application that
+    # asked, minus a claim it is not entitled to make.
     principal = Principal.from_user(
         {
             "id": app_id,
             "username": normalized.get("x-open-user", record.app_name),
             "role": "staff",
-            "department": normalized.get("x-open-department", ""),
+            "department": "",
             "permissions": set(),
             "status": "active",
         },
         auth_source="open_platform",
     )
+    try:
+        department = _resolve_open_department(record, normalized.get("x-open-department", ""))
+    except HTTPException:
+        record_audit(
+            principal, f"open:{required_action}", "denied", record.app_name, DEPARTMENT_SELF_REPORT_DENIED
+        )
+        raise
+    principal = principal.model_copy(update={"department": department})
     record_audit(principal, f"open:{required_action}", "allowed", record.app_name)
     return principal, asdict(record)
