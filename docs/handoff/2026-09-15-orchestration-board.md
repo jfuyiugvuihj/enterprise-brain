@@ -2294,7 +2294,7 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 结案前照旧不许再派碰 `app/api/v1/chat.py`（Gauss 持有）与 `app/storage/persistence.py`（Helmholtz 持有）的单。
 
 ### 4AS.4 待业主（增量；全清单见 §29.6 + §30.6 + §4AR.8，一条都不代做）
-- 🔴 **H6 仍未结**：`codex/data-file-catalog` 至今**零 push**，本机是唯一副本，今天已 47 个提交——一次崩盘全丢。
+- 🔴 **H6 仍未结（本班实测，严重程度超过上班的记账）**：本分支 `codex/data-file-catalog` 至今**零 push**；而 `origin/master` 停在 **09-03 16:17 `450e5aa`**，`gitee/master` 停在 **06-25**，于是 HEAD 相对 `origin/master` 领先 **383 个提交**（全分支累计 389，今天单日 102 个）——**近两周的全部工作只存在于这一台机器**，硬盘一次故障就全部抹掉。推送属业主权限，本班未动。
 - 删除清单新增：主树根 0 字节 `2026-09-15-orchestration-board.md`；`be-r20/probe.txt`；`be-r53/app/rag/retrieval_pipeline.py.r57bak`（R57 早已并树，纯垃圾）。`be-r83` 已并树无残留。
 - **R87 需业主手动开线**（§4AS.2）；R88 仍等放行（动 migrations）；R85（R80 之前被静默覆盖的应用密钥重发）、H11（容器重启才真拿到 GPU）、H12（`docker compose build migrate`，镜像落后主树 21 h+）、H13、H14、H15（含 R82 要改业主本人写的断言）、H16–H19 原样挂账。
 - 心跳 `automation-2` 仍指死线 `01a0acfb`（本班未动、未执行）；要改就填本线程 id **`01a0b295-67ae-7d32-b2b8-89dd66d68146`**（真实判别字段是 `mode`，update 传 camelCase `targetThreadId`）。
