@@ -213,13 +213,14 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 | **R68**（总控亲做 `e33727e`）| 测试污染泄漏：`test_offline_runtime_fallbacks.py` 开头 `clear()` 结尾不还原，漏红 `test_deployment_guards.py:494` | 测试卫生 | 0.25 |
 | **R69**（待真机）| `MODEL_REQUEST_TIMEOUT=120` / `ANALYSIS=1536` 两个待校准常数：现值由降级态推得，须用真机分段观测回读校准（前置 H11+H12+重建索引，数须来自 `docs/perf/raw/`）| 观测 | 0.25 |
 | **R70**（总控亲做 `c2c7dad`）| 宿主 `.env` 在测试期灌回真机模型名（5 处 import 期 `load_dotenv()` + `build_health_snapshot()` 调用期懒加载）⇒「某条红只在业主机存在」的总根源；改 `conftest` 只记账桩 + 3 条守卫 | 测试卫生 | 0.25 |
-| **R71**（在途）| `/open` 只验签名不验「能否代表该部门」，`x-open-department` 无签名可任意填 ⇒ R67 守卫可被整体绕过；服务端按 `record.allowed_departments` 收敛，**禁改签名基串** | 权限边界 | 0.5 |
+| **R71**（已结案 `8813ad0`）| `/open` 只验签名不验「能否代表该部门」，`x-open-department` 无签名可任意填 ⇒ R67 守卫可被整体绕过；服务端按 `record.allowed_departments` 收敛（无授权=空部门且不看头 / 单授权头可选 / 多授权头是唯一选择器且沉默不猜 / 越权 403 落审计），**签名基串 `app_id.timestamp.body` 零改动并有用例钉覆盖面不移动**；`/insights` 与 `/dashboard/summary` 两处同形洞一起收 | 权限边界 | 0.5 |
 | **R72**（总控亲做 `f396866`）| R49 标定用 `iterdir()` 枚举 `documents/`，而该目录按设计兼作上传落地区 ⇒ 业主机上 7 条用例当场 ERROR、判据④不可复跑；改版本化清单 `git ls-files -z` | 测试卫生 | 0.25 |
 | **R73**（待派）| supervisor 那一发降档（R42 拆出）：预算不足时降档必须可观测，**禁止改别人的 `tests/test_supervisor_roundtrip.py`** | L1 | 0.25 |
 | **R74**（待派）| `AgentState.model_budget` 零赋值零读取（R30 落地后新露）：要么真被读并影响档位，要么删字段 | 接口 | 0.25 |
 | **R75**（待派，前置 R71）| `/open` 与 worker 两份预审标准校验并存 ⇒ 抽公共校验口去重 | 接口 | 0.25 |
 | **R76**（待派，前置 R58 真机三件）| `chunk_vectors` 接入索引发布/回填链：`indexing._MIRROR_TABLES` 增表 + 发布时回填 `index_version_id`；换 embedding 模型必须连镜像一起换 | 架构 | 0.5 |
 | **R77**（待业主）| H11/H12 真机复测：09-17 那批实测数已过期（容器 GPU、后端镜像落后主树），换件后必须重测 | 观测 | 0.25 |
+| **R78**（待派，前置 R75）| 开放平台「应用身份声称了它并没有的能力」四件（R71 交工登记、总控复核）：① `max_clearance` 全仓只存不投用，管理端设的密级上限从未落到开放 principal；② `X-Open-User` 不在签名覆盖内 ⇒ 审计行 username 可被任意应用冒名；③ 未配 `OPEN_PLATFORM_APP_STORE_PATH` 时重启后授权集蒸发，**静默**退化为「无部门」而不是报错；④ `/query`、`/analyze`、`/provenance/summary` 不使用部门，其「按部门收敛」观感是装饰性的 ⇒ 要么落地要么在文档里撤掉 | 权限边界 | 0.75 |
 
 > **R61–R63 是 09-17 22:0x 由 R17 结案后新露出的边界**（非 R17 漏做），详细判据见跟进单 **§23**。
 > 三条都**不改判定逻辑、不动密级**（密级属 H13）；写域 `app/common/rbac.py` 与 `app/agents/tools.py`，与在途 R35/R56 零交叠。
