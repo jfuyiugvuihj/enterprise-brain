@@ -43,10 +43,20 @@ def test_ask_does_not_return_stale_global_answer_cache(monkeypatch, tmp_path):
         "app.common.cache.check_rate_limit",
         lambda *_args, **_kwargs: (True, 9),
     )
-    monkeypatch.setattr(
-        "app.common.cache.get_cached_answer",
-        lambda _question, scope="": stale_answer,
-    )
+    # 桩必须还原真实的键语义：cache.py 取值用的键是 answer:{scope_part}{question_hash}，
+    # 问题文本与作用域任一不匹配都不会命中。原先无条件返回 stale_answer 的写法等价于假定
+    # "随便一条缓存都会命中本轮"，把实现细节误钉成了不变量，顺带把"带 session_id 就不查缓存"
+    # 这条已被 R35 推翻的旧策略一起钉住了。这里要保的不变量是：不属于本次问答的缓存条目不能
+    # 被当成实时答案返回。那条旧答案躺在"无作用域"的历史全局键上（cache._scope_part("") 沿用
+    # 历史键，见 cache.py:82-86），只有同样不带作用域的调用才会读回它；哪天 /ask 把 scope 从
+    # 查询里摘掉，这条桩就会把旧答案吐出来，本用例立刻变红。
+    # 问题文本与下面 AskRequest.message 逐字一致：那是这条缓存条目当初被写入时的问题。
+    stale_entries = {("单笔报销金额达到5000元和20000元时，分别需要谁审批？", ""): stale_answer}
+
+    def fake_get_cached_answer(question, scope=""):
+        return stale_entries.get((question, scope))
+
+    monkeypatch.setattr("app.common.cache.get_cached_answer", fake_get_cached_answer)
     monkeypatch.setattr(
         "app.common.cache.cache_answer",
         lambda *_args, **_kwargs: None,
