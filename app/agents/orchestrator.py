@@ -38,7 +38,7 @@ from app.approval.assistant import build_precheck
 from app.agents.tools import search_docs, analyze_data, query_data, generate_chart, export_report
 from app.agents.planner import build_task_plan
 from app.agents.nodes import (
-    _make_model, classify_intent, respond, load_memory, plan,
+    _make_model, classify_intent, classify_route, LANE_QA, respond, load_memory, plan,
     reflect_node, route_reflect, synthesize,
 )
 from app.agents.evidence import (
@@ -385,6 +385,18 @@ def route_main(state: AgentState):
             for worker in planned_workers:
                 if worker not in workers and worker not in ("chart", "export"):
                     workers.insert(0, worker)
+
+    # R42 判别器只接管一种局面：supervisor 弃权、计划为空、关键词一条不命中，
+    # 也就是 route_main 收尾那句 `if not workers: return "reflect"`——派发列表为空
+    # 却已经进了 reflect 的死轮。
+    # 今天这一轮以空答案收尾 ⇒ reflect 判 redo ⇒ 再花一发 supervisor 往返。
+    # 判别器在这里只允许**补一次读操作**（doc 检索）：分析/报告道的弃权轮原样交给
+    # reflect，因为 chart/export 是 HITL 挂起的副作用节点，不该由便宜规则代发。
+    # 反过来，命中 chart_kw/export_kw/data_kw 的题早在上面就被兜底升档了，
+    # 这条永远抢不过它——判据②"兜底仍能升档"正是靠这个先后顺序成立。
+    if not workers and abstained and classify_route(intent_text).lane == LANE_QA:
+        workers = ["doc"]
+        logger.info("[R42] 弃权轮判为问答档 → 补派 doc，不再空转一轮")
 
     completed_workers = set((state.get("worker_results") or {}).keys())
     remaining = [worker for worker in workers if worker not in completed_workers]

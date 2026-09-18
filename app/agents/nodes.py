@@ -6,6 +6,7 @@
 """
 import os
 import httpx
+from dataclasses import dataclass
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -419,6 +420,158 @@ def classify_intent(state) -> dict:
     return {"intent": intent}
 
 
+# ==================== R42 快慢判别器（规则优先，零模型调用） ====================
+#
+# 判据出处：docs/handoff/2026-09-15-backend-followup-requests.md §21 R42 —— 学 Glean 的
+# Waldo，但**不再花一发模型**做判别；docs/handoff/2026-09-17-perf-architecture-plan.md
+# §7 明确不做里点名"用模型做快慢判别"。所以这里全是字符串规则：判别路径上没有任何
+# _make_model / .invoke / .stream / chat（判据①由 tests/test_r42_zero_model_calls.py 用
+# 计数桩钉死）。
+#
+# 输出是"走哪条道 / 用哪个档"，不是再问一次模型：
+# - LANE_QA       问答档：单轮检索就能答，不拆题、不进 pandas、不出图表。默认走这条。
+# - LANE_ANALYSIS 分析档：命中算数、对比、趋势、图表或复合连接词 ⇒ 值得付拆题与 worker。
+# - LANE_REPORT   报告档：命中导出/报告产物词 ⇒ 有副作用的一轮（export 走 HITL 挂起）。
+# 档位形状接 R30：ModelTier 的枚举属于 app/agents/contracts.py，本单不修它，只在现有
+# 档位里选道——多造一个没有调用点的档，tests/test_r30_model_tiers.py 会当场红。
+
+#: 问答档：默认道，也是最便宜的道。
+LANE_QA = "qa"
+#: 分析档：需要算数/画图/拆题。
+LANE_ANALYSIS = "analysis"
+#: 报告档：产出文件，带副作用。
+LANE_REPORT = "report"
+
+#: 每条道用 R30 的哪个档出牌。报告档与分析档共用 ANALYSIS：四张 worker 子图在导入期
+#: 就是按 ANALYSIS 装配的（app/agents/orchestrator.py 的 `doc_graph = create_react_agent(...)`
+#: 那一组），本单不动那条装配，也不发明新档。
+LANE_TIERS = {
+    LANE_QA: ModelTier.CHAT,
+    LANE_ANALYSIS: ModelTier.ANALYSIS,
+    LANE_REPORT: ModelTier.ANALYSIS,
+}
+
+#: 产物词优先于一切：命中它就必须付重流程，后面再算都不认。
+_REPORT_MARKERS = (
+    "导出", "下载链接", "pdf", "word", "一页纸", "周报", "月报里", "复盘", "报告",
+    "插进正文",
+)
+
+#: 制图动词：命中它就是"要一张图"，比任何口径词都硬（判据②的反向证据：
+#: chart-04 同时带"统计口径"和"画……对比图"，必须由这条而不是口径条定档）。
+#: 刻意不含裸"图表"——"图表数据来自哪里？"问的是来源，不是要图。
+_ARTIFACT_MARKERS = (
+    "画", "柱状图", "折线图", "饼图", "趋势图", "对比图", "可视化", "生成图",
+)
+
+#: 口径/定义题：问的是"按哪个口径、算哪个月、哪一版"，答案在知识库里，不在表格里。
+#: 这类题不需要 pandas，也不需要拆题，是问答档的主力人群。
+_DEFINITIONAL_MARKERS = (
+    "口径", "是否包含", "是否计入", "按晚还是按天", "分母", "哪一版", "按什么时点",
+    "怎么判定", "归口", "哪个月", "适用于",
+)
+
+#: 强复合连接词：一条问题里塞了两件独立的事 ⇒ 交给 plan 拆。刻意不含裸"和"
+#: ——"餐费和住宿费的票能开在一张上吗"是一件事，为它花一发拆题模型正是 L0 要省的。
+_COMPOUND_MARKERS = ("并且", "同时", "另外", "还有", "以及", "然后", "顺便")
+
+#: 分析触发词：算数、排名、对比、趋势、异常。刻意不收裸"统计"——本语料里它是名词
+#: （"代码量统计""按什么口径统计"）而不是动词，收进来会把定义题拖进分析档；
+#: route_main 的 data_kw 仍带"统计"，真要算的那类题由既有兜底升档（判据②）。
+_ANALYSIS_MARKERS = (
+    "排名", "前五", "汇总", "合计", "总计", "平均", "最高", "最低", "差多少",
+    "环比", "同比", "趋势", "对比", "比较", "相比", "总额", "除以", "异常",
+    "超标率", "连续上升", "为什么涨", "变化", "计算", "哪些部门", "哪个部门",
+    "重复提交", "重复的单据", "分布", "增长率", "占比", "明细表",
+)
+
+
+#: ⑤ 形状规则的两个词集（总控裁定："一句题里同时出现〔口径/归属词〕与〔取值动词〕
+#: ⇒ 判分析档"）。闭集是刻意为窄的：命中一条不等于命中另一条就不算，
+#: 任何一侧放宽都会把"制度里写着一个数"的正当快道题踢出去（doc-01 住宿费标准是多少？
+#: 答案 500 元/晚——那是查出来的，不是算出来的）。
+#:
+#: 归属词闭集不收"哪个月"：metric-10/11「把这笔报销费用算进哪个月」问的是归属口径，
+#: 总控点名这类是 lookup、快道答得对。
+_CALIBER_MARKERS = ("口径", "分母", "时点", "归口")
+
+#: 取值动词闭集：总控点名的十个词一个不少（是多少/算/合计/占比/环比/同比/趋势/
+#: 排名/总额/平均），另补三个同族的硬算数词。刻意不收裸"多少"与"统计"——
+#: "能报多少""按什么口径统计"都是问制度，不是要算。
+_VALUE_VERB_MARKERS = (
+    "是多少", "算", "合计", "占比", "环比", "同比", "趋势", "排名", "总额", "平均",
+    "汇总", "除以", "变化",
+)
+
+
+@dataclass(frozen=True)
+class RouteDecision:
+    """一次判别的完整结果：走哪条道、用哪个档、被哪条规则定的。
+
+    ``rule`` 与 ``matched`` 是判据④的抓手——每条规则都要能被摘掉并让对应用例变红，
+    所以命中必须可指名道姓，不能只给一个 lane 字符串。
+    """
+
+    lane: str
+    tier: ModelTier
+    rule: str
+    matched: tuple[str, ...] = ()
+
+
+def _markers_hit(text: str, markers: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(marker for marker in markers if marker in text)
+
+
+def classify_route(question: str) -> RouteDecision:
+    """规则判别：这条问题该走哪条道、用哪个档。纯函数，零模型调用。
+
+    规则的**先后**就是裁定，摘掉任意一条都有用例变红（判据④）：
+    产物词 > 制图词 > **⑤ 口径×取值动词** > 复合连接词 > 口径定义 > 算数词 > 默认问答档。
+
+    ⑤ 排在口径定义条之前：同一句里"按哪个口径"和"算出多少"同时出现时，
+    取值动词赢——判错方向必须是"多花钱"而不是"答错数"（总控 09-18 裁定）。
+
+    判别的**偏向**是刻意的：宁可把重问题先判到问答档，也不为判别花一发模型。判错的
+    代价有边界——reflect 的"要图没图/要导出没下载链接"与 route_main 的关键词兜底都还
+    能把这一轮升回分析档（判据②：tests/test_r42_fallback_upgrade.py），而判别本身省的
+    那发拆题模型是白赚的。
+    """
+    text = str(question or "").strip()
+    decision = _route_rules(text)
+    logger.info(
+        f"[R42] '{text[:30]}' → lane={decision.lane} tier={decision.tier.value} "
+        f"rule={decision.rule} hit={'/'.join(decision.matched) or '-'}"
+    )
+    return decision
+
+
+def _route_rules(text: str) -> RouteDecision:
+    """classify_route 的规则本体：只做字符串比对，一个字符都不碰模型。"""
+    if not text:
+        return RouteDecision(LANE_QA, LANE_TIERS[LANE_QA], "empty")
+    lowered = text.lower()
+
+    caliber = _markers_hit(text, _CALIBER_MARKERS)
+    if caliber:
+        # ⑤：口径/归属词与取值动词同现 ⇒ 这一题要的是**算出来的数**，不是定义。
+        # 快道不许接（tests/test_r42_numeric_questions.py）。
+        verbs = _markers_hit(text, _VALUE_VERB_MARKERS)
+        if verbs:
+            return RouteDecision(LANE_ANALYSIS, LANE_TIERS[LANE_ANALYSIS], "caliber_value", caliber + verbs)
+
+    for rule, lane, markers in (
+        ("report_marker", LANE_REPORT, _REPORT_MARKERS),
+        ("artifact", LANE_ANALYSIS, _ARTIFACT_MARKERS),
+        ("compound", LANE_ANALYSIS, _COMPOUND_MARKERS),
+        ("definitional", LANE_QA, _DEFINITIONAL_MARKERS),
+        ("analysis_marker", LANE_ANALYSIS, _ANALYSIS_MARKERS),
+    ):
+        matched = _markers_hit(lowered, markers)
+        if matched:
+            return RouteDecision(lane, LANE_TIERS[lane], rule, matched)
+    return RouteDecision(LANE_QA, LANE_TIERS[LANE_QA], "default")
+
+
 def respond(state) -> dict:
     """闲聊直接回答，不走 worker"""
     q = _last_user(state)
@@ -481,6 +634,14 @@ def plan(state) -> dict:
     if deterministic_plan:
         logger.info(f"[Plan] deterministic tasks={len(deterministic_plan)}")
         return {"plan": deterministic_plan}
+    if classify_route(q).lane == LANE_QA:
+        # R42 判别器判到问答档 ⇒ 这一发拆题模型不付。判错了有边界：route_main 的
+        # 关键词兜底与 reflect 的"要图没图/要导出没下载链接"仍能把这一轮升回分析档
+        # （判据②），而省下的这一发是真的会打顶的：docs/perf/latency-budget-2026-09-16.md
+        # 记的同日 21:50 那次冷启动，`[Plan]` 之后连吃 5 发 60 s 超时、整轮 302 s，
+        # 最后只交付一句兜底文案。
+        logger.info("[Plan] 问答档 → 不拆题")
+        return {"plan": []}
     if not any(k in q for k in _COMPLEX):
         return {"plan": []}
     prompt = (

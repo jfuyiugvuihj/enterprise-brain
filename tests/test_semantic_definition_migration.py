@@ -91,7 +91,9 @@ def test_0009_is_the_ninth_version_and_is_registered_with_its_own_digest():
 
     versions = [item.version for item in migration_plan({})]
     assert versions == [f"{index:04d}" for index in range(1, len(versions) + 1)]
-    assert versions[-1] == VERSION, "空账本上它必须排在最后一条，不能插到已发布迁移之前"
+    # [R58] 这里钉的从来不是「0009 是末号」，而是「0009 不得插到已发布迁移之前」；
+    # 加一条 0010 就该红，那不是这条断言想说的话。改成下界。
+    assert versions[-1] >= VERSION, "0009 及之后的版本必须按号排在一起，不能插到已发布迁移之前"
     assert _migration().name == f"{VERSION}_metric_definition_semantics.sql"
 
 
@@ -101,7 +103,8 @@ def test_the_published_migrations_still_match_their_recorded_digests():
     for filename, digest in manifest.items():
         if filename == FILENAME:
             continue
-        assert int(filename[:4]) <= 8
+        # [R58] 0001-0008 不可改；0010 及以后是新登记的迁移，digest 同样要逐字核
+        assert int(filename[:4]) <= 8 or int(filename[:4]) > int(VERSION), filename
         assert digest == hashlib.sha256(_sql(filename).encode("utf-8")).hexdigest(), filename
 
 
