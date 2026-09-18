@@ -2091,7 +2091,7 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 | `63dc76e`（+R64/R65） | 1959 / 35 / 0 | 同上 |
 | `6d5f5ab`（+R78） | **1981 passed / 35 skipped / 0 failed / 60.63 s** | ✅ **本班 15:1x 主树亲测**（`.venv` 解释器，`-p no:cacheprovider`，`LOCAL_MODEL_NAME` 置禁用哨兵） |
 
-- 已登记 flake：`tests/test_audit_persistence.py::test_events_survive_a_restart_and_replay_in_order`（满 CPU 时子进程不稳）。**红了不许改、不许跳、不许算"既存红"**，如实记账。
+- 已登记 flake：`tests/test_audit_persistence.py::test_events_survive_a_restart_and_replay_in_order`（原记归因"满 CPU 时子进程不稳"🔴 **已被 §4AQ.3 证伪并改写**：该用例根本不 spawn 子进程，真因是 `app/common/audit.py:424` 排序键 `(created_at, event_id)` 在同 ~1 ms tick 内交给随机 `event_id`；修复单 R83 已派 Newton）。**红了不许改、不许跳、不许算"既存红"**，如实记账。
 - 本仓库**未装** `pytest-timeout`：命令行加 `--timeout=300` 会当场 `error: unrecognized arguments`（本班踩过一次，浪费一轮）。
 
 ### 4AP.6 三条腿与写权图（实取 15:2x，主树 HEAD `6d5f5ab`，在途 3）
@@ -2169,6 +2169,7 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 ### 4AQ.6 基线链（总控亲跑，均 35 skipped / 0 failed）
 
 `6d5f5ab` **1981** → 并 R81 `fca75dc` **2006** → 并 R80 `8a46bfb` **2022** → 并 R74 `b2d9f34` **2031**。🔴 上班报的"1828 全绿"已被证伪作废，不得再引用。
+- 🔴→🟢 **上表缺口已补（第十六班 18:5x，总控亲跑）**：2031 原先是在 `be-r74@2c67938` 树内测的，并树后主树未复跑。本班在主树 **`9ebddad`** 实测 **2031 passed / 35 skipped / 0 failed / 63.43 s**（`.venv` 解释器、`-p no:cacheprovider`、`LOCAL_MODEL_NAME=__eb_test_disabled__`、打宿主模型端口连接数 **0**）⇒ 基线链 1981/2006/2022/**2031** 至此**全部落在主树**，不再有"只在分支测过"的数。
 
 ### 4AQ.7 机器层事实补账（本班新增，下班照做别重试错）
 
