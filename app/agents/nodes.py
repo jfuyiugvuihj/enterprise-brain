@@ -176,7 +176,14 @@ class _ResilientModel(Runnable):
             budget=self.budget,
         )
 
-    def _span(self, config, *, provider=None, model_name=None, queue_wait_ms=None):
+    def _span(self, config, *, provider=None, model_name=None, queue_wait_ms=None, stage=None):
+        """Open the span for this exact call, stamped with the tier that sized its budget.
+
+        R51: ``model_tier`` is read off the budget this instance already carries, so a
+        duration can be attributed to a pipeline segment without any new judgement here.
+        ``stage`` stays available for a call site that knows better than the tier does.
+        Nothing in this method decides routing, fallback or degradation.
+        """
         from app.trace.spans import start_model_call
 
         return start_model_call(
@@ -184,6 +191,8 @@ class _ResilientModel(Runnable):
             provider=provider or self.provider,
             model_name=model_name or self.recorded_model_name,
             queue_wait_ms=queue_wait_ms,
+            stage=stage or "",
+            model_tier=str(getattr(getattr(self.budget, "tier", None), "value", "") or ""),
         )
 
     def _offline_fallback(self, messages, config=None, **kwargs):

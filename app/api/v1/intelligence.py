@@ -12,13 +12,13 @@ from pydantic import BaseModel, Field
 
 from app.agents.contracts import AgentResult
 from app.approval.assistant import (
-    STANDARD_SOURCES,
     STANDARD_SOURCE_AUTO,
     STANDARD_SOURCE_EXPLICIT,
     build_precheck,
     match_expense_type,
     precheck_payload,
     resolve_standard_from_knowledge_base,
+    resolve_standard_source,
     to_decimal,
 )
 from app.common.audit import record_audit
@@ -88,28 +88,6 @@ def _authorized(request: Request, action: str, resource_name: str):
     return principal
 
 
-def _standard_source(value) -> str:
-    """Resolve the requested standard source, refusing a spelling that is not the contract.
-
-    An empty value keeps the historical default, so a client written before
-    ``standard_source`` existed behaves exactly as it did. Anything else unknown is a
-    caller bug and is answered with a stable code: reading a typo as ``explicit`` would
-    silently keep comparing against a number the caller invented.
-    """
-    requested = str(value or "").strip().lower()
-    if not requested:
-        return STANDARD_SOURCE_EXPLICIT
-    if requested not in STANDARD_SOURCES:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code": "invalid_standard_source",
-                "message": "standard_source must be explicit or auto_from_knowledge_base",
-            },
-        )
-    return requested
-
-
 @router.post("/dashboard")
 async def dashboard(data: DashboardRequest, request: Request):
     principal = _authorized(request, ACTION_ANALYZE, "dashboard")
@@ -138,7 +116,10 @@ async def approval_precheck(data: ApprovalRequest, request: Request):
     asked answers 503 rather than continuing with a guess.
     """
     principal = _authorized(request, ACTION_VIEW, "approval_precheck")
-    requested_source = _standard_source(data.standard_source)
+    # R75: the judgment is made once, in app/approval/assistant.py. What this transport may
+    # decide for itself is only what silence means, and it means the settled R40 default --
+    # a client written before ``standard_source`` existed sends a number and expects it used.
+    requested_source = resolve_standard_source(data.standard_source, silent_default=STANDARD_SOURCE_EXPLICIT)
     department = verify_department_self_report(
         principal, data.department, action=ACTION_VIEW, resource_name="approval_precheck"
     )
