@@ -1200,39 +1200,44 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Poincare` | `01a0af9c-5047-77b1-a460-682786e3cac9` | **R35** 答案缓存作用域与淘汰策略 | `be-r15` | **已结案**：子提交 `63651f1` 并入主树 `90d029f`；总控复跑 147 passed / 12 skipped + **全局键反证成立**（摘掉 scope 即泄漏）；`answer_cache_scope` 七维永不返回空。交前端线三字段：`cached` / `cache_generated_at` / `cache_note` | 09-18 10:2x |
 | `Hegel` | `01a0afb2-5221-7942-97c1-b4939d25d304` | R62（**重复体**） | 与 `Euler` 同为 `be-leg2` | **本班 22:18 关闭**（事故 #17，同类第八次）；派工时带 model override，**自行 errored 于同款 `at_` 消息 id 污染**；关停前 `be-leg2` 零落盘 ⇒ 无产物损失 | 22:18:42 |
 | `Euler` | `01a0afb2-bff5-7e02-a0ad-fe5a3f4bfb78` | **R62** 被权限隐藏的行不得说成「代码执行未通过」 | `be-leg2` | **已结案**：子提交 `7ddfde2` 并入主树 `b143402`；总控复跑 + 两处反证成立；`app/agents/tools.py:371-437` 文案层落地。同树另露两笔欠账已立 **R64/R65**（跟进单 §24） | 09-18 10:3x |
-| `Nash` | `01a0b269-3582-7533-9305-92e19a56a4a8` | **R21** embedding 失败不得静默降级 | `be-r27t`（基线 `a6e2972`，**落后主树 3 提交**，**独占**） | **运行中**：盘上 `+384/-25`（M `app/common/monitoring.py`、M `app/rag/retriever.py`，新 `tests/test_r21_embedding_fail_closed.py`、`tests/test_r21_health_probe.py`）；11:12 实取 `retriever.py` 仍在写。验收前必须先 `git merge --ff-only codex/data-file-catalog` 追平基线，否则并树必冲突 | 11:12 |
-| `Singer` | `01a0b258-f2a0-7553-af50-e0c327109369` | **R22** 索引版本绑定 model+dimension | `be-r36`（基线 `a6e2972`，**落后主树 3 提交**，**独占**） | **运行中**：盘上 `+559/-14` 进 `app/rag/indexing.py`（`EmbeddingScope`/`IndexScopeError`/`configured_embedding_scope`/`embedding_drift`/`retain_queryable`/`rollback`/`discard`）+ 新 `scripts/rebuild_index.py` + `tests/test_r22_embedding_scope.py` + `tests/test_r22_rebuild_cli.py`；11:12 实取四文件在写。同须追平基线 | 11:12 |
-| `Gauss` | `01a0b26e-3bc4-7401-8774-406f1b9bd9c7` | **R40** `standard_source` 自动取标准 + 服务端拒前端 `department` | `be-r15`（基线 `781afd0`，**独占**） | **运行中**：10:52:43 **裸投递**，sessions 目录核得 rollout 唯一。11:12 实取在写 `app/api/v1/intelligence.py`、`app/approval/assistant.py`、**`authorization.py`（第三个文件超出派单写域，结案时逐条核）**。该树 `chroma_db/chroma.sqlite3` 已 M（测试副作用）**不许入库** | 11:12 |
-| `Helmholtz` | `01a0b26e-ee2e-7a23-89a1-a14f2c517656` | **R47** 术语/同义词接进改写（零模型往返） | `be-r14`（基线 `781afd0`，**独占**） | **运行中**：10:53:29 **裸投递**，rollout 唯一。11:12 实取在写 `app/rag/retrieval_pipeline.py` + 新 `tests/test_retrieval_synonym_expansion.py`。根目录 `r56_stack.txt` 为 R56 遗留垃圾 **不许入库** | 11:12 |
+| `Nash` | `01a0b269-3582-7533-9305-92e19a56a4a8` | **R21** embedding 失败不得静默降级 | `be-r27t`（基线 `a6e2972`，**落后主树 3 提交**，**独占**） | **终态补记（第十三班）**：盘上 `+384/-25`（M `app/common/monitoring.py`、M `app/rag/retriever.py`，新 `tests/test_r21_embedding_fail_closed.py`、`tests/test_r21_health_probe.py`）；11:12 实取 `retriever.py` 仍在写。验收前必须先 `git merge --ff-only codex/data-file-catalog` 追平基线，否则并树必冲突 | 11:12 |
+| `Singer` | `01a0b258-f2a0-7553-af50-e0c327109369` | **R22** 索引版本绑定 model+dimension | `be-r36`（基线 `a6e2972`，**落后主树 3 提交**，**独占**） | **终态补记（第十三班）**：盘上 `+559/-14` 进 `app/rag/indexing.py`（`EmbeddingScope`/`IndexScopeError`/`configured_embedding_scope`/`embedding_drift`/`retain_queryable`/`rollback`/`discard`）+ 新 `scripts/rebuild_index.py` + `tests/test_r22_embedding_scope.py` + `tests/test_r22_rebuild_cli.py`；11:12 实取四文件在写。同须追平基线 | 11:12 |
+| `Gauss` | `01a0b26e-3bc4-7401-8774-406f1b9bd9c7` | **R40** `standard_source` 自动取标准 + 服务端拒前端 `department` | `be-r15`（基线 `781afd0`，**独占**） | **终态补记（第十三班）**：10:52:43 **裸投递**，sessions 目录核得 rollout 唯一。11:12 实取在写 `app/api/v1/intelligence.py`、`app/approval/assistant.py`、**`authorization.py`（第三个文件超出派单写域，结案时逐条核）**。该树 `chroma_db/chroma.sqlite3` 已 M（测试副作用）**不许入库** | 11:12 |
+| `Helmholtz` | `01a0b26e-ee2e-7a23-89a1-a14f2c517656` | **R47** 术语/同义词接进改写（零模型往返） | `be-r14`（基线 `781afd0`，**独占**） | **终态补记（第十三班）**：10:53:29 **裸投递**，rollout 唯一。11:12 实取在写 `app/rag/retrieval_pipeline.py` + 新 `tests/test_retrieval_synonym_expansion.py`。根目录 `r56_stack.txt` 为 R56 遗留垃圾 **不许入库** | 11:12 |
 | `Franklin` | `01a0b279-6d09-7852-8e0a-1a1cf9f9353c` | R30（**重复体**） | `be-r37` | **本班 11:05 关闭**（事故 #21，同类第九次：**带 model override 的投递 1 秒内死于 `at_` 消息 id 污染**）；关停前 `be-r37` `status --porcelain` 空 = 零落盘，无产物损失；11:06:32 裸投重派为 `Descartes` | 11:06:32 |
-| `Descartes` | `01a0b27a-e161-7ee2-af4f-f1f2ac29b029` | **R30** `max_tokens`/超时按档，拆 5 处硬编 `timeout` | `be-r37`（基线 `781afd0`，**独占**） | **运行中**：11:06:32 裸投递（无 model / 无 reasoning_effort 覆盖），rollout 唯一。写域 `app/agents/contracts.py`（**仅 `ModelBudget`**）/`nodes.py`/`tools.py`/`app/api/v1/alerts.py`/`app/common/model_handler.py`/`model_budget.py`/`.env.example` + **`orchestrator.py` 只许改 `:212` 一处实参**；禁碰 `ErrorEnvelope` 枚举（属 R64） | 11:12 |
-| `Hypatia` | `01a0b27b-df02-72c1-875e-82b15b9039af` | **R36-Q** 评测集 `must_contain` 出处逐条核查（**只读**） | `be-r34`（基线 `781afd0`，**独占**） | **运行中**：11:07:37 裸投递。交付形态 = **回报文本**（证实/证伪「105 题中 55 条无出处」+ 逐条定性「题错 / 语料缺 / 不可判定」+ 最小改动建议）；**禁改评测集与被跟踪文件**，评测集仍被 `tests/test_evaluation_report.py` 钉死 | 11:12 |
+| `Descartes` | `01a0b27a-e161-7ee2-af4f-f1f2ac29b029` | **R30** `max_tokens`/超时按档，拆 5 处硬编 `timeout` | `be-r37`（基线 `781afd0`，**独占**） | **终态补记（第十三班）**：11:06:32 裸投递（无 model / 无 reasoning_effort 覆盖），rollout 唯一。写域 `app/agents/contracts.py`（**仅 `ModelBudget`**）/`nodes.py`/`tools.py`/`app/api/v1/alerts.py`/`app/common/model_handler.py`/`model_budget.py`/`.env.example` + **`orchestrator.py` 只许改 `:212` 一处实参**；禁碰 `ErrorEnvelope` 枚举（属 R64） | 11:12 |
+| `Hypatia` | `01a0b27b-df02-72c1-875e-82b15b9039af` | **R36-Q** 评测集 `must_contain` 出处逐条核查（**只读**） | `be-r34`（基线 `781afd0`，**独占**） | **终态补记（第十三班）**：11:07:37 裸投递。交付形态 = **回报文本**（证实/证伪「105 题中 55 条无出处」+ 逐条定性「题错 / 语料缺 / 不可判定」+ 最小改动建议）；**禁改评测集与被跟踪文件**，评测集仍被 `tests/test_evaluation_report.py` 钉死 | 11:12 |
 | `Singer` | `01a0b258-f2a0-7553-af50-e0c327109369` | **R22** 索引版本绑定 model+dimension | `be-r36` | **已结案**：并入主树 `85ada61`；遗留 5 件事的最新账见 §4AM.1（#1 monitoring 已被 R21 顺带做掉） | 11:3x |
 | `Gauss` | `01a0b26e-3bc4-7401-8774-406f1b9bd9c7` | **R40** `standard_source` 自动取标准 | `be-r15` | **已结案**：子提交 `dc31a44` 并入 `8585315`；总控复跑 **84 passed** / 闸门 0 + 自下 4 刀反证（4/7/1/1 failed 全咬住）；管理员豁免与两码暂不追认见 §4AM.1 裁定 | 11:4x |
 | `Helmholtz` | `01a0b26e-ee2e-7a23-89a1-a14f2c517656` | **R47** 术语/同义词接入改写 | `be-r14` | **已结案**：子提交 `95a1cd9` 并入 `006c613`；总控复跑检索邻域 **123 passed** + 5 刀反证（9/2/1/7/1）；**长度门槛经两条实测裁定保留** | 11:5x |
 | `Nash` | `01a0b269-3582-7533-9305-92e19a56a4a8` | **R21** embedding 失败不静默降级 | `be-r27t` | **已结案（总控代提交保活）**：11:2x 死于事故 #22 的 429，盘上改动由总控 wip 提交保住 ⇒ `dbd19c2` ⇒ 并入 `f972d3c`；总控另亲写 3 处收口 `2b6fe9f`（§4AM.1 逐条披露） | 11:50 |
 | `Descartes` | `01a0b27a-e161-7ee2-af4f-f1f2ac29b029` | **R30**（第一棒） | `be-r37` | **中断（事故 #22 / 429）**：483 行改动由总控 wip 提交 `1eea673` 保住 ⇒ 原样接续给 `Sartre`；**其盘上三文件当时是 LF，须归一 CRLF** | 11:47 |
 | `Hypatia` | `01a0b27b-df02-72c1-875e-82b15b9039af` | **R36-Q** 评测集出处逐条核查（只读） | `be-r34` | **已结案（只读核查，零改动）**：三桶 A12/B27/C16 成立并直接立案 R66；复算工件留 `be-r34/r36q/`（含 `classify.py`、`final_table.txt`） | 11:3x |
-| `Sartre` | `01a0b2a4-6a7b-7850-a7be-e5f29bb872f5` | **R30** 接续 `max_tokens`/超时按档 | `be-r37`（基线 `1eea673` + merge 主树 `8565122`，**独占**） | **运行中**：11:51 裸投；12:10 实测在写 `contracts.py`/`nodes.py`/`model_budget.py`/`orchestrator.py`/`tools.py`/`alerts.py`/`model_handler.py` + 两个 `.env.example`（含 RBAC 档欠账） | 12:11 |
-| `Fermat` | `01a0b2a5-3931-7881-b9f7-566b59ff972f` | **R49** 索引瘦身（草稿/模板/超小文档不入索） | `be-r36`（基线 `f972d3c`，**独占**） | **运行中**：11:52 裸投；12:09-12:12 实测新建 `app/documents/index_policy.py` + 改 `catalog.py`；**已加第④判据：排除规则不得误伤 `documents/` 语料，命中排除篇数须=0** | 12:12 |
-| `Curie` | `01a0b2ad-ef0d-7cf2-8951-d23ed93b909e` | **R58** Chroma/PGVector 同事务双写 | `be-r27t`（分支 `codex/be-r58` @ `cac751b`，**独占**） | **运行中**：11:59 裸投；已建分支并读 §22/§25，12:12 仍未落盘（大单，先读后写属正常）；写域只限 `pg_store.py`/`retriever.py`/`migrations/0010` + manifest | 12:12 |
+| `Sartre` | `01a0b2a4-6a7b-7850-a7be-e5f29bb872f5` | **R30** 接续 `max_tokens`/超时按档 | `be-r37`（基线 `1eea673` + merge 主树 `8565122`，**独占**） | **终态补记（第十三班）**：11:51 裸投；12:10 实测在写 `contracts.py`/`nodes.py`/`model_budget.py`/`orchestrator.py`/`tools.py`/`alerts.py`/`model_handler.py` + 两个 `.env.example`（含 RBAC 档欠账） | 12:11 |
+| `Fermat` | `01a0b2a5-3931-7881-b9f7-566b59ff972f` | **R49** 索引瘦身（草稿/模板/超小文档不入索） | `be-r36`（基线 `f972d3c`，**独占**） | **终态补记（第十三班）**：11:52 裸投；12:09-12:12 实测新建 `app/documents/index_policy.py` + 改 `catalog.py`；**已加第④判据：排除规则不得误伤 `documents/` 语料，命中排除篇数须=0** | 12:12 |
+| `Curie` | `01a0b2ad-ef0d-7cf2-8951-d23ed93b909e` | **R58** Chroma/PGVector 同事务双写 | `be-r27t`（分支 `codex/be-r58` @ `cac751b`，**独占**） | **终态补记（第十三班）**：11:59 裸投；已建分支并读 §22/§25，12:12 仍未落盘（大单，先读后写属正常）；写域只限 `pg_store.py`/`retriever.py`/`migrations/0010` + manifest | 12:12 |
 | `总控亲做` | —— | **R66** 补两篇从未落盘的缺失语料 | 借用空闲 `be-r34`（仅 `r36q/` 在册工件，无其他 Agent） | **已结案**：`9f2f869` → 主树 `cc50e05`；无出处 **55→29**、B 桶清 23、446 项邻域零回归；**顺带撞出新闸门 H14** | 12:2x |
 | `Sartre` | `01a0b2a4-6a7b-7850-a7be-e5f29bb872f5` | **R30** `max_tokens`/超时按档（接续棒） | `be-r37`（分支 `codex/be-r30`） | **已结案**：子提交 `3cb563b`→`fd546f4`→`d563007` 并入主树 **`50aff1a`**；总控追平后亲跑 **111**、邻域 **194 passed / 7 skipped**、自下 1 刀（流中断计费 ⇒ 2 红）；`ErrorEnvelope.code` 缺 `context_limit_exceeded` 由总控追认落笔（写域在执行层之外） | 12:56 |
 | `Fermat` | `01a0b2a5-3931-7881-b9f7-566b59ff972f` | **R49** 索引瘦身（按内容特征决定进不进化物索引） | `be-r36`（分支 `codex/be-r49`） | **已结案**：子提交 `8680f43`→`31d6612` 并入主树 **`c26afda`**；总控亲跑 10+24+14=**48** / 邻域 **245** / 真机 97 篇语料命中排除 **0** + 自下 1 刀（标题标点逃逸 ⇒ 比率 0.5→0.6471 标定当场红，逐字节还原）。**判据④ 的可复跑性由 R72 修复** | 12:45 |
 | `Halley` | R67 首棒（上游报错即死，rollout 未成档） | R67（**第一棒**） | `be-leg2` | **中断（`Unsupported model: qwen3.8`）**：死前只落下第一个用例文件，总控 `69f1ca9` 保活提交保住 ⇒ 原样接续给 `Herschel` | 13:03 |
 | `Herschel` | `01a0b2e3-8f62-7c70-b4f1-40a6f5251a65` | **R67** `/open/approval/preview` 不再采信调用方自报 | `be-leg2`（分支 `codex/be-r67`） | **已结案**：子提交 `8b41961`→`60a2b70` 并入主树 **`571ffd7`**；总控追平后亲跑 **23** / 邻域 9 文件 **98 passed** 与自述逐字吻合 + 自下 1 刀（把 `_open_standard_source` 缺省 AUTO→EXPLICIT ⇒ 恰好红「什么都没要求要和知识库比」那一条，逐字节还原 sha `3ABB2EA3…6108`） | 13:32 |
 | `Curie` | `01a0b2ad-ef0d-7cf2-8951-d23ed93b909e` | **R58** Chroma ⇄ PGVector 同事务双写镜像 | `be-r27t`（分支 `codex/be-r58` @ `571ffd7`） | **已结案**：`370a9e7`(a) + `79a8c8e` + 保活 `537c0db` + `a896cf6`(b–e) + 总控代改 `19d5811` ⇒ 并入主树 **`5ae7e45`**；总控追平后亲跑 **21** / 邻域 15 文件 **176** / **全量 1580 passed · 35 skipped · 0 failed** + 自下 **5 刀**（其中 1 刀首跑 0 红 ⇒ 暴露「读不出旧向量」这条 fail-closed **零覆盖**，总控补 3 条承重用例后 2 红）。真机三件转业主（H12→migrate→备份演练+双读差异表） | 13:48 |
-| `Planck` | `01a0b2e1-e65f-7793-af4e-65502ec295cc` | **R42** 快慢双道判别器 | `be-r34`（分支 `codex/be-r42` @ `50aff1a`，**独占**） | **运行中**：12:58 裸投；13:2x 交第一版（65 命中 / 61.90%）；**13:44 总控当场改判 ③ 并新加 ⑤⑥ 两道硬门**（跟进单 §27.2 与 H15）；13:53 实测已按 ⑤ 新建 `tests/test_r42_numeric_questions.py` 正在复跑。写域 `orchestrator.py`/`nodes.py` **未出域 ⇒ R31/R32/R33/R38 全串行等待** | 13:53 |
-| `Chandrasekhar` | `01a0b302-0a9e-7491-b3c1-e409fe93c814` | **R71** `/open` 身份与部门归属收敛 | `be-leg2`（分支 `codex/be-r67` @ `60a2b70`，**独占**） | **运行中**：13:34:10 投。13:53 实测已落 `app/common/open_platform.py` + `app/api/v1/open_platform.py` + 新 `tests/test_r71_open_department_convergence.py`。硬约束：**禁改签名基串 `{app_id}.{timestamp}.{body}`**；空 allowed_departments = 无部门 ⇒ 沿用 R17 fail-closed | 13:53 |
+| `Planck` | `01a0b2e1-e65f-7793-af4e-65502ec295cc` | **R42** 快慢双道判别器 | `be-r34`（分支 `codex/be-r42` @ `50aff1a`，**独占**） | **终态补记（第十三班）**：12:58 裸投；13:2x 交第一版（65 命中 / 61.90%）；**13:44 总控当场改判 ③ 并新加 ⑤⑥ 两道硬门**（跟进单 §27.2 与 H15）；13:53 实测已按 ⑤ 新建 `tests/test_r42_numeric_questions.py` 正在复跑。写域 `orchestrator.py`/`nodes.py` **未出域 ⇒ R31/R32/R33/R38 全串行等待** | 13:53 |
+| `Chandrasekhar` | `01a0b302-0a9e-7491-b3c1-e409fe93c814` | **R71** `/open` 身份与部门归属收敛 | `be-leg2`（分支 `codex/be-r67` @ `60a2b70`，**独占**） | **终态补记（第十三班）**：13:34:10 投。13:53 实测已落 `app/common/open_platform.py` + `app/api/v1/open_platform.py` + 新 `tests/test_r71_open_department_convergence.py`。硬约束：**禁改签名基串 `{app_id}.{timestamp}.{body}`**；空 allowed_departments = 无部门 ⇒ 沿用 R17 fail-closed | 13:53 |
 | `Wegener` | `01a0b302-8d69-7af2-a872-68034b42d285` | R71（**重复体**） | 与 `Chandrasekhar` 同为 `be-leg2` | **本班 13:36:5x 关停**（**事故 #23，同类第十次**：一个 block 内连发两次 `spawn_agent` 且同树）；关停前实测 `be-leg2 status --porcelain --untracked-files=all` **为空 = 零落盘** ⇒ 无产物损失、无交叉写脏 | 13:36:50 |
-| `Tesla` | `01a0b311-9ebd-7cf3-90ce-7dd04c8cf17a` | **R44** 热集进程内检索索引 | `be-r37`（新建分支 `codex/be-r46` @ **`5ae7e45`**，**独占**） | **运行中**：13:51:11 投（返回 `Missing required argument: message` 是**假报错**；按硬规矩先查 rollout 确认唯一落地，**未补投**）。写域 `app/rag/hot_index.py`(新)/`retriever.py`/`retrieval_pipeline.py`；硬门 = **pre-filter 必须先于热集**、热集条目必须带 scope/index 版本、关闭时行为逐条一致、**禁碰 `migrations/**`（0011 留给 R49 入库列）** | 13:51 |
+| `Tesla` | `01a0b311-9ebd-7cf3-90ce-7dd04c8cf17a` | **R44** 热集进程内检索索引 | `be-r37`（新建分支 `codex/be-r46` @ **`5ae7e45`**，**独占**） | **终态补记（第十三班）**：13:51:11 投（返回 `Missing required argument: message` 是**假报错**；按硬规矩先查 rollout 确认唯一落地，**未补投**）。写域 `app/rag/hot_index.py`(新)/`retriever.py`/`retrieval_pipeline.py`；硬门 = **pre-filter 必须先于热集**、热集条目必须带 scope/index 版本、关闭时行为逐条一致、**禁碰 `migrations/**`（0011 留给 R49 入库列）** | 13:51 |
 | `总控亲做` | —— | **R70** 宿主 `.env` 测试期隔离 | 主树直改 | **已结案** `c2c7dad`：5 个模块 import 期 `load_dotenv()` 把真机模型名灌进「擦干净环境」的用例 ⇒ 全天「某条红只在主树存在」的总根源；`tests/conftest.py` 换只记账桩 + 3 条守卫 | 13:28 |
 | `总控亲做` | —— | **R68** 测试污染泄漏（套件顺序地雷） | 主树直改 | **已结案** `e33727e`：`test_offline_runtime_fallbacks.py` 开头 `clear()`、结尾不还原 ⇒ 漏红 `test_deployment_guards.py:494`；守卫是**被测语义本身不许放宽** ⇒ 修泄漏方，autouse 快照/还原 **5 个**进程内存储，三向复跑 38+38+50 | 13:28 |
 | `总控亲做` | —— | **R72** R49 标定改用版本化清单 | 主树直改 | **已结案** `f396866`：`documents/` **双用目录**（兼上传落地区），iterdir 把 `.zip` 顶进 `load_document` ⇒ 主树 7 条用例当场 ERROR 而子树全绿；改 `git ls-files -z`，修后 97 篇 / 排除 0 / 10 passed 与原值一致。**撞出 H16** | 13:28 |
 | `Chandrasekhar` | `01a0b302-0a9e-7491-b3c1-e409fe93c814` | **R71** `/open` 身份与部门归属收敛 | `be-leg2`（分支 `codex/be-r67`） | **已结案**：交工 `ce0e754` + 总控收口 `226b670` + 追平 `114376b` → 主树 **`8813ad0`**；总控亲跑 三文件 59 passed / **全量 1695 passed 35 skipped 0 failed** / 自下 3 刀（签名基串纳入头 => 1 红·覆盖面 pin；无授权反采信头 => 3 红·判据②；多授权沉默猜第一个 => 1 红·沉默不猜）全按字节还原 `a85badca…037f`；**其自述「38 条与本单无关既存红」经总控实测证伪**（详 §4AO.2）；14:2x `close_agent` 已关 | 14:35 |
-| `Tesla` | `01a0b311-9ebd-7cf3-90ce-7dd04c8cf17a` | **R44** 热集进程内检索索引 | `be-r37`（分支 `codex/be-r46` @ `5ae7e45`，**独占**） | **运行中**：14:2x 实取盘上 `M app/rag/retriever.py`(+192/-18) · 新 `app/rag/hot_index.py`(22,635 B, 14:23:01) · 新 `tests/test_r44_hot_index_unit.py` · 新 `tests/test_r44_hot_index_chroma.py`；**落后主树 6 提交**，交工后必须先追平再验收；硬门「pre-filter 先于热集」与「禁碰 `migrations/**`」仍生效 | 14:23 |
-| `Darwin` | `01a0b32c-c9b0-70a1-8a17-924f846164d4` | **R51** 阶段化 P95 观测 | `be-r34`（新建分支 `codex/be-r51` @ `89965d5`，**独占**） | **运行中**：14:20:52 裸投（rollout 唯一，无重复体）。🔴 **14:22 事故 #24**：把 `tests/test_r51_stage_latency.py` 同时写进**主树**（sha256 与自己树逐字节相同），主树全量 pytest 当场 collection error；总控已 `send_input` 下写域纠偏令（`01a0b331-4782-7dd2-…`），主树副本**Move-Item 隔离未删除**，隔离后主树复跑 **0 红**。写域含 `nodes.py`/`orchestrator.py` 的 span 创建路径 ⇒ **R31/R32/R33 挂起至本单结案** | 14:35 |
-| `Dirac` | `01a0b333-e8ea-7283-a78d-88e0ecbdb271` | **R75** `/open` 与 session 两份标准来源校验去重 | `be-r36`（新建分支 `codex/be-r75` @ **`8813ad0`**，**独占**） | **运行中**：14:28:38 裸投（rollout 唯一）。判据：判定收敛成一处、**沉默默认值分叉（session→explicit / open→auto）是唯一合法差异且不许抹平**、R40/R67/R71 三件既存用例一个字不许改也不许红、稳定码词表不扩、结案必含全量 | 14:35 |
+| `Tesla` | `01a0b311-9ebd-7cf3-90ce-7dd04c8cf17a` | **R44** 热集进程内检索索引 | `be-r37`（分支 `codex/be-r46` @ `5ae7e45`，**独占**） | **终态补记（第十三班）**：14:2x 实取盘上 `M app/rag/retriever.py`(+192/-18) · 新 `app/rag/hot_index.py`(22,635 B, 14:23:01) · 新 `tests/test_r44_hot_index_unit.py` · 新 `tests/test_r44_hot_index_chroma.py`；**落后主树 6 提交**，交工后必须先追平再验收；硬门「pre-filter 先于热集」与「禁碰 `migrations/**`」仍生效 | 14:23 |
+| `Darwin` | `01a0b32c-c9b0-70a1-8a17-924f846164d4` | **R51** 阶段化 P95 观测 | `be-r34`（新建分支 `codex/be-r51` @ `89965d5`，**独占**） | **终态补记（第十三班）**：14:20:52 裸投（rollout 唯一，无重复体）。🔴 **14:22 事故 #24**：把 `tests/test_r51_stage_latency.py` 同时写进**主树**（sha256 与自己树逐字节相同），主树全量 pytest 当场 collection error；总控已 `send_input` 下写域纠偏令（`01a0b331-4782-7dd2-…`），主树副本**Move-Item 隔离未删除**，隔离后主树复跑 **0 红**。写域含 `nodes.py`/`orchestrator.py` 的 span 创建路径 ⇒ **R31/R32/R33 挂起至本单结案** | 14:35 |
+| `Dirac` | `01a0b333-e8ea-7283-a78d-88e0ecbdb271` | **R75** `/open` 与 session 两份标准来源校验去重 | `be-r36`（新建分支 `codex/be-r75` @ **`8813ad0`**，**独占**） | **终态补记（第十三班）**：14:28:38 裸投（rollout 唯一）。判据：判定收敛成一处、**沉默默认值分叉（session→explicit / open→auto）是唯一合法差异且不许抹平**、R40/R67/R71 三件既存用例一个字不许改也不许红、稳定码词表不扩、结案必含全量 | 14:35 |
+| `Boyle` | `01a0b353-710b-7862-b5a8-854221ede5c5` | **R64+R65** 行级/权限两路同码 | `be-r64`（分支 `codex/be-r64` @ `5f61bc7`，**独占**） | **终态补记（第十三班）**：交工 `089436a` → 并入主树 `63dc76e`；总控四把刀 M1–M4（M1 8 红 / M2 M3 M4 首下各 0 红 ⇒ 自写 5 条补牙后 M2=1 红 M3=1 红）；本班已 `close_agent`，树干净 | 15:1x |
+| `Parfit` | `01a0b360-6056-7fd3-be3a-edb995f0b337` | **R78** 开放平台撤未 earned 声明 | `be-r78`（分支 `codex/be-r78` @ `cef08bf`，**独占**） | **终态补记（第十三班）**：交工 `7bd6eac` → 并入主树 `6d5f5ab`；总控把 R78 的持有者扫描由裸串改 **AST 口径**（披露：改在执行层写域，见 §4AP.4）；本班已 `close_agent`，树干净 | 15:1x |
+| `Lagrange` | `01a0b3d1-3f13-7f30-89b5-792b84d0cf05` | **R79** 热集观测 + 两个零覆盖默认值 + float32 + 真机规模复测 | `be-r79`（新建分支 `codex/be-r79` @ **`6d5f5ab`**，**独占**） | **运行中**：15:2x 投递（返回 `01a0b3d1…`，nickname **Lagrange**）；写域 `app/rag/hot_index.py`+`app/rag/retriever.py`+`app/api/v1/auth.py`+`app/common/monitoring.py`；已明写 `tests/test_r44_hot_index_chroma.py:409` 五键精确相等这颗钉子 | 15:2x |
+| `Meitner` | `01a0b3d4-1490-7291-8f2a-ea6bbba02c1b` | **R80** 开放平台 app_id/secret 由 `time_ns()` 派生致撞号静默覆盖 | `be-r80`（新建分支 `codex/be-r80` @ **`6d5f5ab`**，**独占**） | **运行中**：15:2x 投递（首投因参数格式被上游拒、**未生成执行体**，canary 后重投一次，不算补投）；写域 `app/common/open_platform.py`；缺陷由本班亲手复现（4 次注册 ⇒ 2 个 id） | 15:2x |
+| `Noether` | `01a0b3d4-e430-7310-9fcd-cc71a23bb17c` | **R81** 队列不消费 `error.retryable` ⇒ 权限拒绝盲重试到 dead | `be-r81`（新建分支 `codex/be-r81` @ **`6d5f5ab`**，**独占**） | **运行中**：15:2x 投递；写域 `deploy/queue_worker.py`（`reliable_queue.py` 仅为可测性可碰，须报理由）；判据③钉死 success/partial 路径逐字节不变 | 15:2x |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -2039,3 +2044,86 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - **59 条既存用例无一覆盖**（全量 1695 全绿照样放过它）⇒ 与 R58「读不出旧向量」空分支同形：**闸门在，零覆盖**，只有真打一遍才知道。已转 R78 判据⑤：把 `RetrievalScopeError` 从兜底里单独摘出来 → 403 `department_scope_required`，其余仍 503。
 - 顺带订正 Chandrasekhar 登记的第 ③ 条（我照抄了一半）：未配 store 路径时**整条记录**消失 ⇒ 401「未注册应用」，不是「无部门」；持久化链没漏（`_record_from_payload:128` 原样回读 `allowed_departments`，逐行核过）。
 - 探针本体未入库，已隔离到 `C:\Users\fengx\PycharmProjects\_quarantine\2026-09-18-controller-probes\test_zz_controller_probe_r71.py`（**Move-Item，未删除**），`be-leg2` 工作树复归干净；R78 开工时按本节数字回收成正式用例。
+
+## 4AP 本班（09-18 15:0x–，总控第十三班；第十二班只写了并树信息没写节，**本节连它一起补记**）：四单并树 R44b/R51/R64+R65/R78 · 基线写死 **1981/35/0** · R79/R80/R81 三单派出 · 🔴事故 #25（同线换模型第三次杀死总控）
+
+### 4AP.1 主树链（第十二班，全部总控代提交 / 代并树，逐路径显式列，禁 `git add -A`）
+
+- `39006b8` **merge(R44 Tesla)** 热集进程内检索索引（默认 `HOT_INDEX_ENABLED` 关，未知值一律当关）→ 紧接着 `564340e` **R44b 热修**（总控亲写，见 §4AP.2）。
+- `cef08bf` **merge(R51 Darwin)** 阶段化 P50/P95 账本：`app/common/stage_timing.py` 982 行 + `nodes`/`auth`/`observability`/`performance`/`spans`/`store` 六处**纯加法**；新读口 `GET /observability/stage-latency`。R42/Plan 两条日志锚点逐字节相同（行号偏移恰等于 `_span` 净增 9 行）。
+- `63dc76e` **merge(R64+R65 Boyle)** 错误词表 **27→29** 枚（`row_scope_denied` / `no_visible_rows`）：`tools.py` 翻译层 + 五处拒绝现场两路同码 + chart/export 两处漏记；**密级码按改判不建**，只留 `DEFERRED_CODES` 双向护栏（建了红、不建也红）。
+- `6d5f5ab` **merge(R78 Parfit)** 开放平台撤掉四件它并没有的能力声明（密级只存不判的自白 / 自报用户名归因为应用 / 三端点声明未按部门收敛 / 503 谎报只钉不改待 H18）：**行为零改动，签名基串 `app_id.timestamp.body` 一字未动**。
+
+### 4AP.2 名册状态词批量订正（**事故 #25 之后接手必读**）
+
+- 板上原有 **15** 行仍写着「**运行中**」，实取时全部既非在途也已并树（R21 R22 R40 R47 R30 R49 R58 R42 R71 R44 R51 R75 等，R21 / R22 / R40 / R47 / R30（两棒）/ R36-Q / R49 / R58 / R42 / R71 / R44（两行）/ R51 / R75，共 15 行）。本班把这 15 行的状态词统一改成「**终态补记（第十三班）**」，**只改状态词、一字不动其叙述内容**，避免下班把已死的人当活人排队等回执。
+- 真在途以 §4AP.6 为准；本表当前真「运行中」= **3**（Lagrange / Meitner / Noether）。
+- 纪律补一条：**名册记 `spawn_agent` 返回的 nickname，不记简报里自定的代号**（第十二班 Darwin/Boyle/Parfit 三行的代号与返回值一致，但历史上「Tesla」被复用过两次、「Curie」「Fermat」「Banach」「Meitner」各被复用，靠自定代号对账必然认错人）。
+
+### 4AP.3 R44b 热修账（总控亲写，**三笔缺陷都要在真库规模才露**）
+
+- **D1** 花名册一次整库读撞 SQLite **32 766** 变量上限（真实库 **37 483 chunk**）⇒ 改分页读。
+- **D2** 常驻子集一次绑 20 000 个 id ⇒ 同批复用连接。
+- **D3** 暖机失败不留痕 ⇒ 每次检索都重跑一遍注定失败的整库读（实测两例 **482 s**）⇒ 加冷却 + `REASON_COLD` 绕行。
+- 实测：**482 s → 6.8 s**；全量测试套件 **359 s → 55 s**。新增 `tests/test_r44_hot_index_paging.py`（7 例）。
+- `test_r44_hot_index_coverage.py` 的语料由「吃 ambient `documents/`」改为版本化清单 `git ls-files -z -- documents`（宿主 `documents/` 115 个 txt 里只有 95 个入库）。
+- 🔴 **R44 结案口径订正**：105/105 覆盖是在 **379 chunk** 的小库上测的，真实 `documents/` 语料是 **37 483 chunk** 量级 ⇒ 真机规模复测转 **R79 判据④**。
+- **机器层新教训（要写进派工简报）**：环境相关的 coverage 用例必须钉**版本化语料清单**，否则 379 与 37 483 两种语料规模会让同一份代码在干净树全绿、在主树当场红。
+
+### 4AP.4 总控下刀账（一律不采信执行层自述；每把刀前后 sha256 恒等还原）
+
+- **R51**：N1 聚合 1% 闸门→5% = 首下 **0 红**；N1b 按请求 1%→5% = **0 红**；N2 账本 capacity→10⁹（docstring 自称 bounded）= **0 红**；N3 unknown lane 折成 qa = 2 红；N4 nearest-rank ceil→floor = 1 红。⇒ **前三把无牙** ⇒ 总控自写 4 条承重用例（1.01% 必红 / 0.99% 必绿 ×2 / 账本按 capacity 淘汰最旧并计 `dropped` / 请求窗口同样有界）⇒ 复跑 1 / 1 / 2 红**全部咬住**。
+- **R64+R65**：M1 `_record_denial` 状态 failed→rejected = **8 红**（"拒绝是终态且 retryable=False"有牙）；M2 多表取码优先级改成取第一个 = 首下 **0 红**；M3 摘 `if not code: return` = 首下 **0 红**（空码被 `_terminal_status` 洗成 `internal_error`）；M4 映射表默认值改 `row_scope_denied` = **0 红** ⇒ 查因坐实为**不可达分支**（`_row_scope_reason` 对未知因由返回 `""`，查表前已短路）⇒ **不判缺陷**，改钉「认不出因由就不说」这条真规矩 ⇒ 总控自写 5 条用例（含 3 条 param）⇒ 复跑 M2=1 红、M3=1 红。
+- **R78**：追平后**本单当场 1 红** ⇒ 根因：R64 在 `app/agents/contracts.py` 的**注释**里写了「max_clearance 只存不用」，而 R78 的守卫拿裸串扫 `app/**.py` 全文。⇒ 总控判定守卫意图是拒绝"新模块对密级下判断"而非拒绝散文提及 ⇒ **把持有者扫描改成 AST 口径**（Name/Attribute/字符串常量，dict 键与属性读仍可见）；**披露：这一刀落在执行层写域之外**。复验 K1 第三模块真存字段 = 1 红（没卸牙）、K1b 只在注释里提 = 22 全绿（修的正是误伤）、K2 enforced 翻 True = 2 红、K2b effect 改 enforced = 1 红、K3 `open_user_signed` 翻 True = 1 红、K4 actor 回落自报名 = 7 红。
+- **已裁事项（下班别再重复裁决）**：① R51 的 rewrite/reflect 两处分段埋点在写域外（`app/rag/retrieval_pipeline.py:122` → `app/common/model_handler.py`）⇒ 本轮不下，随 R79 之后另派；② R51 lane/tier 不进 trace 落盘字节 ⇒ 在线读口如实报 unknown、离线靠 `[R42]` 锚点回读，要落 lane 须改 `app/trace/records.py`，**另立单不夹带**；③ R64 文案侧 `tools.py:233` 仍把内部 reason 名插进可见正文 ⇒ 转 **R82**；④ R64 队列侧不认 `retryable=False` ⇒ 转 **R81**；⑤ R78 新露 app_id 撞号 ⇒ 转 **R80**。
+
+### 4AP.5 基线写死（🔴 上班那条"1828 全绿"已被证伪，下班只许引用 **1981**）
+
+| 主树 HEAD | 全量结果 | 备注 |
+|---|---|---|
+| `5f61bc7` | **2 failed / 1826 passed / 35 skipped** | 🔴 第十二班申报的「1828 全绿」是在**干净树**测的，主树当场红 ⇒ 该数作废 |
+| `564340e`（R44b 后） | 1835 / 35 / 0 | 上班申报值（本班未回溯复跑） |
+| `cef08bf`（+R51） | 1894 / 35 / 0 | 同上 |
+| `63dc76e`（+R64/R65） | 1959 / 35 / 0 | 同上 |
+| `6d5f5ab`（+R78） | **1981 passed / 35 skipped / 0 failed / 60.63 s** | ✅ **本班 15:1x 主树亲测**（`.venv` 解释器，`-p no:cacheprovider`，`LOCAL_MODEL_NAME` 置禁用哨兵） |
+
+- 已登记 flake：`tests/test_audit_persistence.py::test_events_survive_a_restart_and_replay_in_order`（满 CPU 时子进程不稳）。**红了不许改、不许跳、不许算"既存红"**，如实记账。
+- 本仓库**未装** `pytest-timeout`：命令行加 `--timeout=300` 会当场 `error: unrecognized arguments`（本班踩过一次，浪费一轮）。
+
+### 4AP.6 三条腿与写权图（实取 15:2x，主树 HEAD `6d5f5ab`，在途 3）
+
+- `app/agents/orchestrator.py`：R30 / R42 已并树 ⇒ 剩 **R31 / R33 / R38** 三单共占同一文件，**严格串行**，一次只许一棒。
+- `app/rag/retrieval_pipeline.py`（R57 已并 `ee11ca1`）、`app/api/v1/chat.py`（R55 已并 `6663a40`）⇒ 两文件解锁；本班三单**都不许碰**（R79 只碰 `retriever.py`/`hot_index.py`）。
+- 本班在途（一子 agent 一棵树，写域互不相交）：**R79**=`be-r79`(Lagrange) / **R80**=`be-r80`(Meitner) / **R81**=`be-r81`(Noether)，全部从 `6d5f5ab` 新建分支。
+- 可回收的空树：`be-r34`(dirty 仅 `r36q/`)、`be-r64`、`be-r78`、`be-r36`、`be-r37` 全部干净；`be-leg2`(R17 曾派出后**从未动工**)。
+- **并发上限 3**：事故 #22 实测 5 个并发执行体直接撞上游 429 ⇒ 第 4 投必等回执，不许抢。
+
+### 4AP.7 新立单 / 转单账（R79–R82 首次入册——第十二班只口头立单，四份文档一行未写）
+
+- **R79（在途）**：① 热集观测挂 `/health/details`（`app/api/v1/auth.py:45-51` 现在只带 R51 的 `performance` 块）；② 钉两个**零用例覆盖**的出厂默认值 `HOT_INDEX_ROSTER_TTL_SECONDS=300.0`(`app/rag/hot_index.py:45-46`)、`HOT_INDEX_MAX_CHUNKS=20 000`(`:40-41`)；③ 向量由 Python float 元组下沉 float32（`:364`/`:193-198`），**硬门：top-k 逐条同序**；④ 真机规模复测 + 订正 R44 结案口径。⚠️ 已把钉子写进简报：**`tests/test_r44_hot_index_chroma.py:409` 用精确相等钉死 diagnostics 五键，加键必红** ⇒ 要求新增独立出口而不是塞键。
+- **R80（在途）**：`app/common/open_platform.py:257-258` 由 `time.time_ns()` 派生 app_id/secret。**本班亲手复现**：同名连续注册 4 次 ⇒ 只落 **2 个 app_id / 2 个 secret / 注册表 2 条**（应 4），且撞号那一对 **secret 逐字符相同**；`:271` `_APP_REGISTRY[app_id] = record` 静默覆盖、`:274` 以同主键 `store.upsert` 写穿持久化 ⇒ 先注册应用的权限集被整条换掉。全仓 `time_ns` 派生身份**只此两处**（已 grep），无用例钉 app_id 长度。
+- **R81（在途）**：`deploy/queue_worker.py:93-96` 对任何非 success/partial 一律 `fail_or_retry`，而 `fail_or_retry`（`app/common/reliable_queue.py:177-199`）在 `attempts < max_attempts` 时无条件重排回 pending ⇒ **不消费** `AgentResult.error.retryable`（`app/agents/contracts.py:261`，出厂 `False`）。R64/R65 刚把"权限拒绝是终态"收口成两枚稳定码，队列不认账就是队列的缺陷。
+- **R82（待派）**：文案侧 `app/agents/tools.py:233` 仍把 policy/rbac 的内部 reason 名插进可见正文，被 `tests/test_dataset_route_authorization.py:188` 钉住 ⇒ 收口前该用例要么改钉法要么由业主裁（并入 H15 同批）。
+- 待排队列：**R74**（`AgentState.model_budget` 零赋值零读取，`contracts.py` 现已空闲）、**R73**（🔴 **禁改** `tests/test_supervisor_roundtrip.py`）、**R37**、**R82**。不可盲派（判据需真机）：R29 R34 R38 R46 R48 R50 R52 R76 R77；等业主裁：R61 甲/乙、R63 归一化、A 桶金标矛盾。
+
+### 4AP.8 🔴 事故 #25（新账，**同类第三次**，机器层）：同线中途换模型第三次杀死总控
+
+- 症状两条（四条心跳/追加指令全部 1 秒内报错）：`Invalid 'id': message id must be a string starting with 'msg_', got 'at_…'`；`Invalid 'call_id': call_id is required for function_call_output.`
+- 死法链：`01a09dda` → `01a0acfb`（最后一次提交 18:49 `5f61bc7`，18:50/19:50/20:04/20:30 四次全死）→ `01a0af5c`。**换模型修不好，只能开新线程接手**（中途换 gpt-6-astra / qwen3.8-flash 均无效）。
+- 根因判断：同一线程内在 **gpt-6-astra / gpt-5.6-sol / 百炼 qwen3.8-flash** 之间来回切换，历史里混进别家 provider 的消息 id ⇒ 之后每次请求都被服务端拒。
+- 对策（写死进本看板与派工简报）：**总控线全程只用一个模型，绝不中途切换**；子 agent 简报**一律不带 model override**（历史上带 override 的投递死过两次：事故 #17 Hegel、事故 #21 Franklin）。`~/.codex/config.toml` 里的 `bailian` / `qwen3.8-flash` 提供方会连杀子 agent，属业主侧。
+- 另：`automation-2` 心跳每小时撞已死线程 `01a0acfb` 报错（本班**未执行心跳**，业主亦已令「别执行心跳了会出问题」）；改指向需业主本人动 `targetThreadId`。
+
+### 4AP.9 机器层事实补账（本班新增，下班照做别重试错）
+
+- **投递调用格式错会被拒且不生成执行体**：本班 R80/R81 首投把 `message` 误包成 `arguments` JSON，返回 `Provide one of: message or items` / `tool does not exists`，**canary 实测**（`%TEMP%\r80tools`、`%TEMP%\r81tools` 不存在 + 两棵树 `dirty=0 newcommits=0`）确认未生出执行体 ⇒ 这类"未进入子系统"的格式错重投**不算补投**（事故 #14 那条规矩只约束"已生成执行体之后的二次投递"）。判据：先看树脏项，再看临时目录，两者都空才算未投递。
+- **PowerShell 里含 ASCII 双引号的中文命令行会劈参数**（本班第二次撞上：`-Pattern "len\(...app_id|app_id\"\)"` 直接 `Unexpected token ')'`）⇒ 一律单引号，或 `Set-Content -Encoding utf8NoBOM` 落文件再执行。
+- `git log --format` 里的 `%(contents:short)` 不被本仓库 git 认，报 `unrecognized %(contents) argument`。
+- `git worktree add` 一次一块，三棵树各自 checkout 约 2 s；工作树**没有**独立 `.venv`，执行层必须用主树解释器 `$PWD\..\.venv\Scripts\python.exe`。
+
+### 4AP.10 待业主（**一条都不代做**，全清单另见跟进单 §29 与计划书 §11）
+
+- H11（容器要重启才真拿到 GPU）· H12（`docker compose build migrate`，后端镜像落后主树）· H13 密级缺省口径 · H14 新语料被 `.gitignore` 挡 · H15（R42③ / R58③ 两笔改判 + R78 三条驳回权）· H16（`documents/` 双用目录，本班已把 115/95 与 379/37 483 钉进测试）· H17（R71 三件已裁）· **H18（说谎的 503 要不要现在修；未裁 ⇒ 任何人不许改）**。
+- R61 甲/乙、R63 归一化、A 桶金标矛盾裁决。
+- 🔴 **H6：分支 `codex/data-file-catalog` 至今从未 `git push`，本机是唯一副本**。第十二班又并 4 单，今日提交数已到 **77**，一次磁盘故障即全丢。
+- 删文件 / 改 `.gitignore` / `chroma_db/**` 反跟踪 / `~/.codex/config.toml` 提供方清理 / `automation-2` 改指本线程 ⇒ 全属业主本人（`approval=Never` 下我连 `Remove-Item` 都执行不了）。
