@@ -964,10 +964,10 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 
 1. **`max_clearance` 全仓只存不投用**。`register_application` 收 `max_clearance=3` 并写进 `OpenApplication`，`asdict(record)` 原样回给调用方，但 `verify_open_request` 造 `Principal` 时**从未带密级**，检索层的密级判定也不读它 ⇒ 管理端在注册应用时设的「密级上限」是一个**看起来存在、实际零接线**的字段（与 R74 的 `AgentState.model_budget` 同形）。要么落到 principal 上并被检索/文档链真的读，要么从注册表单里摘掉，**不留半张脸**。
 2. **`X-Open-User` 不在签名覆盖内 ⇒ 审计行的 `username` 可被任意已注册应用冒名**。签名只覆盖 `app_id.timestamp.body`（`build_request_signature`），所以任何应用可以给任意用户名签发审计行。缓解事实（**别夸大也别忽略**）：`precheck_payload(requested_by=…)` 用的是 `app_id` 而非该头，所以**审批结论本身没被污染**，脏的是审计归因。修法只有两条：把身份头纳入签名基串（= 破坏既有集成，无版本协商 ⇒ R71 判据④ 明令禁止），或在 `OPEN_PLATFORM_APP_STORE_PATH` 侧登记「应用可代表哪些 username」。
-3. **未配 `OPEN_PLATFORM_APP_STORE_PATH` 时注册表在进程内存**：重启后授权集蒸发，`_resolve_open_department` 于是返回空部门 ⇒ **静默**退化为「无部门」而不是「配置缺失就拒绝启动」。R71 之前这条退化看不出来（当时头说了算），现在它是**唯一**能让一个已配置应用突然失去部门的路径。要求：非生产可容忍但**必须可观测**（首次命中未注册/空授权时打一条明确日志或指标），生产维持现有 `ProductionReadOnlyProtection`。
+3. **未配 `OPEN_PLATFORM_APP_STORE_PATH` 时注册表在进程内存**：重启后授权集蒸发，`_resolve_open_department` 于是返回空部门 ⇒ **静默**退化为「无部门」而不是「配置缺失就拒绝启动」。🔴 **该机制经总控 §28.8 实测证伪**：注册表整个消失时调用方拿到的是 401「未注册应用」而不是「无部门」，这条不是 R71 引入的新失效路径。要求：非生产可容忍但**必须可观测**（首次命中未注册/空授权时打一条明确日志或指标），生产维持现有 `ProductionReadOnlyProtection`。
 4. **`/query`、`/analyze`、`/provenance/summary` 不使用部门**：这三个端点上「按部门收敛」是装饰性的。要么按 R17 的口径真正参与过滤，要么在文档/管理端界面上撤掉这个观感（前端 `docs/handoff/2026-09-15-frontend-work-checklist.md` 需同步）。
 
-**判据**：四条各自要么**真接线**、要么**显式撤除**，禁止「字段存在但零读取」的第三种状态；每条必须有用例钉；`/open` 的既存 59 条用例（open_platform + r67 + r71）不许红。**前置**：R75（同文件 `app/common/open_platform.py` 在途，串行）。**写域**：`app/common/open_platform.py`、`app/api/v1/open_platform.py`、`app/api/v1/intelligence.py`（若要落 principal 密级）、`docs/handoff/2026-09-15-frontend-work-checklist.md` 由前端线自己改。**不许**动签名基串（判据④ 已钉）。
+**判据**：五条（①–④ 见上，⑤ 由 §28.8 实测新增）各自要么**真接线**、要么**显式撤除**，禁止「字段存在但零读取」的第三种状态；每条必须有用例钉；⑤「权限缺失不得伪装成可用性故障」同判据；`/open` 的既存 59 条用例（open_platform + r67 + r71）不许红。**前置**：R75（同文件 `app/common/open_platform.py` 在途，串行）。**写域**：`app/common/open_platform.py`、`app/api/v1/open_platform.py`、`app/api/v1/intelligence.py`（若要落 principal 密级）、`docs/handoff/2026-09-15-frontend-work-checklist.md` 由前端线自己改。**不许**动签名基串（判据④ 已钉）。
 
 ### 28.5 顺带收掉的两笔旧欠账
 
@@ -986,3 +986,20 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 - 用例增量归因：R71 新增 29 条 ⇒ 1663 + 29 = 1692，与 1695 差 3 条；差的是**总控在 R58 补漏里那 3 条承重用例**（`12255c2` 之后才进对象库，`b3eb3d4` 才并进主树，1663 那次跑在 `8d69ee6` 追平树上、尚未含补漏）。**不是丢数**。
 - 计划书 27 单 → 现 **29 单**（+R78 本班立；R68–R77 上一班已入 §5.2）。结案数：**R30、R42、R49、R58、R67、R71 六单**在 09-18 本班与上一班并树，另有总控亲做 R70/R68/R72/R66。
 - **`orchestrator.py` 占用状态**：R51 半占（只许 span 创建路径）⇒ R31/R32/R33 挂起。R42 已结案出域。
+
+### 28.8 总控并树后自 probe：R71 让「未授权但诚实」的应用拿到一个**说谎的 503**（实测，`be-leg2`，探针已隔离）
+
+并完树我不放心，就自己写了一个探针打真路由（只把向量桩住，让**真实的 scope 解析**跑起来），结果如下 `[实测]`：
+
+```
+PROBE status = 503
+PROBE body   = {"detail": {"code": "retrieval_unavailable", "message": "the policy standard could not be retrieved"}}
+PROBE index reached = 0
+```
+
+- **先说好消息（这条 probe 的主要目的）**：R71 没有引入崩溃，也没有泄漏。`app/rag/retrieval_pipeline.py:551` 在 `self.search(...)` **之前**就 `resolve_document_retrieval_scope(principal)`，空部门在 `app/rag/filters.py:102-106` 抛 `RetrievalScopeError("authorization_unavailable", "Document retrieval requires a department scope.")`，**索引一次都没被问**（`index reached = 0`）。fail-closed 成立。
+- **坏消息（新增判据 ⑤）**：路由 `app/api/v1/open_platform.py:191` 是 `except Exception` → **503 `retrieval_unavailable`「the policy standard could not be retrieved」**。也就是说，一个「管理员还没给它授过部门」的应用，看到的是**可用性故障**：客户端会按 503 语义无限重试，运维会去查索引，而真正的原因是注册表少一行授权。**权限/配置的缺失被洗成了服务不可用**，这与本单「不采信调用方声称」的立意相反——我们堵住了它说谎，却自己对它撒了个谎。
+- **59 条既存用例无一覆盖这条**（全量 1695 绿仍然放过了它）。⇒ 又是「只有真打一遍才知道」的形状，与 R58「读不出旧向量」空分支同一类：**闸门在，覆盖为零**。
+- **修法（R78 判据⑤，最小面）**：`/approval/preview` 把 `RetrievalScopeError` 从兜底 `except Exception` 里**单独摘出来**，映射成 403 + `department_scope_required`（`tests/test_error_code_vocabulary.py` 的 RATIFIED 表已在等的码之一，R64 也指向它），其余异常仍走 503。**不得**顺手改 `filters.py` 的判定，也不得放宽 R17。
+- **同时订正 §28.4 的第 ③ 条（ Chandrasekhar 的登记，我照抄了一半）**：未配 `OPEN_PLATFORM_APP_STORE_PATH` 时**整条注册记录**都消失，`verify_open_request:312` 直接 401「未注册应用」，**不会**退化成「有应用但无部门」；所以那条不是 R71 之后新增的静默失效路径。真正能让已注册应用突然失去部门的只有一条：**管理员改了/清了 store 里的 `allowed_departments`**（`_record_from_payload:128` 确实会原样回读该字段，所以持久化链没漏，这条我核过）。
+- 探针本体 `tests/test_zz_controller_probe_r71.py` **未入库**，已 `Move-Item` 到 `C:\Users\fengx\PycharmProjects\_quarantine\2026-09-18-controller-probes\`，R78 开工时按本节数字回收成正式用例。

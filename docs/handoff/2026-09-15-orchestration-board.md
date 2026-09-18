@@ -2031,3 +2031,11 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - R61 甲/乙、R63 归一化、A 桶 3 组金标矛盾裁决。
 - 🔴 **H6：分支 `codex/data-file-catalog` 至今从未 `git push`，本机是唯一副本**。本班又并了 1 个单（R71），风险敞口继续加。46→**52** 个提交的量级，一次磁盘故障即全丢。
 - 删除清单（本班 +2）：`C:\Users\fengx\PycharmProjects\_quarantine\`、`be-leg2\_k2.txt`；旧账 12 项见跟进单 §27 与上board。
+
+### 4AO.8 并树后总控自己 probe 出来的一条（**R78 判据⑤**，跟进单 §28.8）
+
+- 并完 R71 我不放心，写了个只桩住向量、跑**真实 scope 解析**的探针打真路由，实测 `[实测 @be-leg2 114376b]`：`status=503` · `code=retrieval_unavailable` · **`index reached = 0`**。
+- 两件事同时成立：**fail-closed 没破**（`retrieval_pipeline.py:551` 在 `self.search` 之前解析 scope，空部门在 `filters.py:102` 抛错，索引一次没被问，没泄漏没崩溃）；**但错误码在说谎**——「管理员没授部门」被路由 `api/v1/open_platform.py:191` 的 `except Exception` 洗成了「策略标准取不到」，客户端会按 503 无限重试、运维会去查索引。**R71 堵住了调用方说谎，却自己对调用方撒了个谎。**
+- **59 条既存用例无一覆盖**（全量 1695 全绿照样放过它）⇒ 与 R58「读不出旧向量」空分支同形：**闸门在，零覆盖**，只有真打一遍才知道。已转 R78 判据⑤：把 `RetrievalScopeError` 从兜底里单独摘出来 → 403 `department_scope_required`，其余仍 503。
+- 顺带订正 Chandrasekhar 登记的第 ③ 条（我照抄了一半）：未配 store 路径时**整条记录**消失 ⇒ 401「未注册应用」，不是「无部门」；持久化链没漏（`_record_from_payload:128` 原样回读 `allowed_departments`，逐行核过）。
+- 探针本体未入库，已隔离到 `C:\Users\fengx\PycharmProjects\_quarantine\2026-09-18-controller-probes\test_zz_controller_probe_r71.py`（**Move-Item，未删除**），`be-leg2` 工作树复归干净；R78 开工时按本节数字回收成正式用例。
