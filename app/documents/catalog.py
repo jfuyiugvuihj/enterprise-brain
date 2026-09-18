@@ -6,6 +6,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.common.logger import logger
+from app.documents.index_policy import (
+    INDEX_STATUSES,
+    INDEX_STATUS_EXCLUDED,
+    INDEX_STATUS_UNKNOWN,
+)
 
 _tz = timezone(timedelta(hours=8))
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
@@ -22,6 +27,9 @@ _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
 # documents root can never write into that root by accident.
 LOCAL_CATALOG_FILENAME = ".document-versions.json"
 PARSE_STATUSES = ("pending", "parsing", "ready", "failed")
+#: 解析状态只有上面四个值：那是 migrations/0006_document_ownership.sql 上的数据库 CHECK
+#: 约束，不是应用约定。"解析成功但按策略不入索引"没有第五个值可写，由 INDEX_STATUSES
+#: （app/documents/index_policy.py，本模块直接透出）表达，两者正交。
 OWNERSHIP_OWNED = "owned"
 OWNERSHIP_LEGACY = "legacy"
 _SELECT_COLUMNS = (
@@ -96,6 +104,21 @@ def _normalise_parse_status(value) -> str:
     return "pending"
 
 
+def _normalise_index_status(value) -> str:
+    """索引状态归一：没有记录就是"未知"，只有认不出的取值才告警。
+
+    与 ``_normalise_parse_status`` 不同，这里空值是一等公民：本列落地之前，库里每一行都
+    没有索引状态，把"没有记录"当成异常会淹掉日志。
+    """
+    status = str(value or "").strip().lower()
+    if not status:
+        return INDEX_STATUS_UNKNOWN
+    if status in INDEX_STATUSES:
+        return status
+    logger.warning(f"[Docs] unknown index status {value!r} recorded as unknown")
+    return INDEX_STATUS_UNKNOWN
+
+
 def _resolved_size(storage_path, size_bytes) -> int | None:
     """Prefer the recorded size and fall back to the file actually on disk."""
     if size_bytes is not None:
@@ -154,6 +177,10 @@ _SIDECAR_FIELDS = (
     "parse_status",
     "created_at",
 )
+#: 索引状态与排除原因也走 sidecar。``document_versions`` 没有这两列（加列需要新迁移，
+#: 不在本单写域内），而 sidecar 在两条持久化路径上都会被 ``_record_local_version`` 写一次，
+#: 所以它是当前唯一不需要迁移就能落地的持久处；读侧用 ``_apply_index_policy`` 补回。
+_SIDECAR_FIELDS = _SIDECAR_FIELDS + ("index_status", "index_reason")
 
 
 def _record_local_version(metadata: dict) -> None:
@@ -209,8 +236,80 @@ def public_document_row(row: dict) -> dict:
     public["owner_id"] = None if _is_unowned(row.get("owner_id")) else str(row.get("owner_id"))
     public["size_bytes"] = _resolved_size(storage_path, row.get("size_bytes"))
     public["parse_status"] = _normalise_parse_status(row.get("parse_status"))
+    # R49: index_status / index_reason answer "will the assistant find this document", and a
+    # row that was excluded has to say so out loud -- that is the whole point of the slice.
+    # A row that recorded no decision at all (everything stored before R49, and any row the
+    # sidecar cannot describe) stays silent instead of being stamped "unknown": absence is
+    # the only honest answer there, and it keeps a client from rendering a historical
+    # document as "deliberately not indexed". Clients must read the three cases as:
+    #   index_status == "excluded"  -> 未索引，index_reason says why
+    #   index_status == "indexed"   -> 已入索引
+    #   key absent                  -> 本单之前入库的历史行，按 parse_status 显示，不得显示未索引
+    recorded_status = row.get("index_status")
+    if recorded_status in (None, ""):
+        public.pop("index_status", None)
+        public.pop("index_reason", None)
+    else:
+        status = _normalise_index_status(recorded_status)
+        public["index_status"] = status
+        public["index_reason"] = (
+            str(row.get("index_reason") or "") if status == INDEX_STATUS_EXCLUDED else ""
+        )
     public["ownership"] = OWNERSHIP_LEGACY if public["owner_id"] is None else OWNERSHIP_OWNED
     return public
+
+
+def _sidecar_records_for(rows: list[dict]) -> dict:
+    """Collect the sidecar records that describe the given rows, keyed by catalog id."""
+    paths = set()
+    for row in rows:
+        sidecar = _sidecar_path(row.get("storage_path"))
+        if sidecar is not None:
+            paths.add(sidecar)
+    records = {}
+    for path in sorted(paths):
+        records.update(_read_sidecar(path))
+    return records
+
+
+def _apply_index_policy(rows: list[dict]) -> list[dict]:
+    """Give every listed row a definite index state, whatever persistence path wrote it.
+
+    A row's own ``index_status`` wins; the sidecar is the fallback for a deployment whose
+    catalog table has no such column. A reason is only ever carried by an excluded row -- a
+    row that is indexed cannot keep an old reason around, because the pair is what an
+    operator reads to decide whether a document can be found by the assistant.
+
+    A row that recorded nothing keeps nothing: ``public_document_row`` then omits the
+    fields, which is how a client tells "no decision was ever made about this version"
+    apart from "this version was indexed".
+    """
+    # Only pay for the sidecar read when a row cannot answer for itself. The offline path
+    # builds its rows out of that very file, so it never needs a second read; the database
+    # path always does, because document_versions has no column for this yet.
+    needs_overlay = any(row.get("index_status") in (None, "") for row in rows)
+    records = _sidecar_records_for(rows) if needs_overlay else {}
+    shaped: list[dict] = []
+    for row in rows:
+        stored = records.get(_sidecar_key(str(row.get("filename") or ""), int(row.get("version") or 0)))
+        stored = stored if isinstance(stored, dict) else {}
+        merged = dict(row)
+        recorded = row.get("index_status")
+        if recorded in (None, ""):
+            recorded = stored.get("index_status")
+        if recorded in (None, ""):
+            merged.pop("index_status", None)
+            merged.pop("index_reason", None)
+        else:
+            status = _normalise_index_status(recorded)
+            merged["index_status"] = status
+            merged["index_reason"] = (
+                str(row.get("index_reason") or stored.get("index_reason") or "")
+                if status == INDEX_STATUS_EXCLUDED
+                else ""
+            )
+        shaped.append(merged)
+    return shaped
 
 
 def _public_rows(rows: list[dict]) -> list[dict]:
@@ -281,6 +380,8 @@ def _local_row(filename: str, version: int, storage_path, stored: dict) -> dict:
         "owner_id": stored.get("owner_id"),
         "size_bytes": stored.get("size_bytes"),
         "parse_status": stored.get("parse_status"),
+        "index_status": stored.get("index_status"),
+        "index_reason": stored.get("index_reason"),
         "storage_path": _public_storage_path(storage_path),
         "created_at": stored.get("created_at")
         or _file_mtime(storage_path),
@@ -404,10 +505,13 @@ def _version_metadata(
     owner_id: str | None,
     size_bytes: int | None,
     parse_status: str,
+    index_status: str = INDEX_STATUS_UNKNOWN,
+    index_reason: str = "",
 ) -> dict:
     """Build the one shape both persistence paths share."""
     version = version or peek_next_document_version(filename)
     owner = _resolve_owner_id(principal, owner_id)
+    status = _normalise_index_status(index_status)
     return {
         "filename": filename,
         "version": version,
@@ -418,6 +522,8 @@ def _version_metadata(
         "owner_id": owner,
         "size_bytes": _resolved_size(storage_path, size_bytes),
         "parse_status": _normalise_parse_status(parse_status),
+        "index_status": status,
+        "index_reason": index_reason if status == INDEX_STATUS_EXCLUDED else "",
     }
 
 
@@ -432,6 +538,8 @@ def record_local_document_version(
     owner_id: str | None = None,
     size_bytes: int | None = None,
     parse_status: str = "pending",
+    index_status: str = INDEX_STATUS_UNKNOWN,
+    index_reason: str = "",
 ) -> dict:
     """Record one version through the local JSON path only.
 
@@ -449,6 +557,8 @@ def record_local_document_version(
         owner_id,
         size_bytes,
         parse_status,
+        index_status=index_status,
+        index_reason=index_reason,
     )
     _record_local_version(metadata)
     return metadata
@@ -465,6 +575,8 @@ def record_document_version(
     owner_id: str | None = None,
     size_bytes: int | None = None,
     parse_status: str = "pending",
+    index_status: str = INDEX_STATUS_UNKNOWN,
+    index_reason: str = "",
 ) -> dict:
     """Register one stored version on both persistence paths, owner included.
 
@@ -472,6 +584,11 @@ def record_document_version(
     The sidecar is written before the table: it is the only durable owner record when
     PostgreSQL is offline, and a version that exists on disk without ownership
     metadata would otherwise stay unattributable forever.
+
+    ``index_status`` / ``index_reason`` only ever reach the sidecar: ``document_versions``
+    has no such column, and inventing one is a migration this slice does not own. The read
+    paths put them back with ``_apply_index_policy``, so a listing answers the same way on
+    both persistence paths.
     """
     metadata = _version_metadata(
         filename,
@@ -483,6 +600,8 @@ def record_document_version(
         owner_id,
         size_bytes,
         parse_status,
+        index_status=index_status,
+        index_reason=index_reason,
     )
 
     _record_local_version(metadata)
@@ -549,13 +668,15 @@ def current_documents() -> list[dict]:
     for row in rows:
         latest.setdefault(row["filename"], row)
     ordered = sorted(latest.values(), key=lambda item: item["created_at"], reverse=True)
-    return _public_rows(ordered)
+    return _public_rows(_apply_index_policy(ordered))
 
 
 def list_document_versions(filename: str) -> list[dict]:
     if not _database_available():
         return _public_rows(
-            sorted(_local_version_rows(filename), key=lambda item: item["version"], reverse=True)
+            _apply_index_policy(
+                sorted(_local_version_rows(filename), key=lambda item: item["version"], reverse=True)
+            )
         )
     try:
         _ensure()
@@ -569,11 +690,13 @@ def list_document_versions(filename: str) -> list[dict]:
                 """,
                 (filename,),
             ).fetchall()
-        return _public_rows([dict(row) for row in rows])
+        return _public_rows(_apply_index_policy([dict(row) for row in rows]))
     except Exception as exc:
         logger.warning(f"[Docs] history fallback: {exc}")
         return _public_rows(
-            sorted(_local_version_rows(filename), key=lambda item: item["version"], reverse=True)
+            _apply_index_policy(
+                sorted(_local_version_rows(filename), key=lambda item: item["version"], reverse=True)
+            )
         )
 
 

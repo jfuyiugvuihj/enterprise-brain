@@ -419,6 +419,12 @@ Chroma 的向量**不会重算，也没有任何入口让它重算**——全仓
 `rebuild_index`、`reset_index` 一律 0 命中（2026-09-16 实跑）。系统也不会提示口径已经变了：
 `/health/details` 里没有「向量与当前 embedding 模型不一致」这类判据。
 
+> **[订正 09-18，总控第九班实测]** 本节上面两段里的三条事实**已被 R22 结案推翻**，保留原文只为留痕，引用时以本订正为准：
+> ① "全仓 `app/` 与 `scripts/` 对 `reindex`/`rebuild_index`/`reset_index` 一律 0 命中" —— 现已有 **`scripts/rebuild_index.py`**（`:29-30` 用法：`--status` 只看不动，`--apply --confirm-scope "nomic-embed-text/768"` 才重建；`:502` 明确拒绝被自动触发），`app/rag/indexing.py:15` 把它称作 manual rebuild command。
+> ② "系统不会提示口径已经变了" —— 现已有稳定码 `embedding_model_drift` / `embedding_dimension_drift`（`app/rag/indexing.py:53-54`），且 `/health/details` 已带 embedding 段（`app/common/monitoring.py:212`、`_embedding_state()` 在 `:217`）。
+> ③ "`EMBED_MODEL` 是 `app/rag/retriever.py:23` 的模块级常量" —— 行号已过期，R21/R22 改造后该文件的现形状见 §4AM.1（`retriever.py:30 EMBEDDING_DIM`、`:485 stores_vectors`、`:510 _write_batch`）。
+> **本节仍然成立的部分**：真正的全量重算**必须人工触发**（H 闸门级动作），私有化机器上没有"偷偷重建"这条路，这正是设计意图。
+
 **今天怎么绕过去的**：靠 `DELETE /api/v1/documents/{filename}` 再重新上传。这条链路本身是对的——
 它先 `retriever.delete_document(filename)` 回滚索引，回滚失败就**不删文档**并答 `index_rollback_failed`，
 不会假装删干净（`app/api/v1/chat.py:2087` 起）。实测删除返回 `index_retirement.status=retired`，
@@ -825,7 +831,7 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 | ① 口径登记 | 17 条口径**逐字包含**金标关键短语（例：`活跃客户按成交客户数`、`销售额不含税`、`退款冲减当期销售额`、`费用以入账月归属`、`人均产值分母为发薪人数`、`库存周转按结转营业成本计算`、`回款以验收单确认`、`里程碑以提交验收视为完成`），按"部门 - 指标 - 口径 - 生效制度版本"四列成表，八组互斥口径必须**同表并列**（这正是题目要考的点） |
 | ② 制度条款 | 6 条缺失条款另立一节补进同一篇（`分开列示`/`退回重开`/`项目主责部门`/`24 小时内补提`/`按费用发生时生效的制度版本执行`/`超标部分不允许拆分成两张单`），措辞不得与既有 96 篇表态冲突 |
 | ③ 明细表可算 | 前五部门、住宿费与餐费分项小计、本季度 vs 上季度变化率三项**用 pandas 实算**并把结果写进交付说明；至少 6 个部门、跨 2 个季度、含 >=3 行"提交日期距今 > 30 天且审批状态仍为待审批" |
-| ④ 复算达标 | `python r36q/classify.py` 重跑：B 桶 **27 -> 0**；A 桶仍 **12**、C 桶仍 **16**（数量变化即视为改动了口径而非补料，退回） |
+| ④ 复算达标 | 用与 `diff55.py` 完全同一口径（`documents/*.txt` + NFKC/去空白/casefold）重算：**B 桶 27 条至少清 23 条**（17 条口径 + 6 条制度条款），且出处必须**唯一**由新文件提供；4 条数据题（`data-07/08/12`、`insight-05`）的"出处"是数据文件不是语料文本，**按定义不可能靠语料清零**，改为判"pandas 能否实算出前五/小计/变化率/长期未处理四组数"。**订正本单立案时的机械表述**："A 桶仍 12、C 桶仍 16" 不可达——`分开列示` 天然包含 A 桶 `doc-18` 的 `分开`、篇名天然包含 `chart-04` 的 `口径` ⇒ 属顺带覆盖、不算成果，实测顺带覆盖 3 条（`doc-18`/`chart-04`/`report-02`），A/C 的真实缺陷（措辞变体、行为断言）一条都没有被修掉 |
 | ⑤ 零回归 | `documents` 96 -> 97、`data` 新增一篇 ⇒ 全部枚举语料/DATA_DIR 的用例逐条复跑零红（至少含 `test_document_catalog_sync`、`test_backup_restore`、`test_alert*`、`test_data_*`、评测相关 `test_evaluation_report`） |
 | ⑥ 反证 | 从登记表删掉任一短语 => `classify.py` B 桶对应条数**必须回升**；明细表任一列改名 => 三项实算必须报错。不许用"加同义词"绕过 |
 | 禁区 | 严禁改 `tests/fixtures/business_evaluation_*.jsonl`、`tests/test_evaluation_report.py`、`app/quality/eval.py` 判分逻辑；严禁改 `documents/` 既有 96 篇；严禁写空洞词凑子串 |
@@ -839,3 +845,28 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 另 `[实测]` 语料自身不一致：`documents/企业管理制度手册.txt:65` "明远科技有限公司" vs `documents/费用报销管理制度V2.1.txt:47` "广州XX科技有限公司"。
 > 这三条落在 A 桶 12 条里，**业裁之后另立单**处理；R66 只清 B 桶。
 > 另记一条部署侧事实：新增语料要进真机评测**必须先重建索引**（R22 已交付的人工 CLI），属业主侧动作。
+
+
+### 25.3 **R66 结案实测**（09-18 12:2x，总控亲自写语料并亲自复算，基线 `cac751b` -> 子树 `9f2f869` -> 主树 `cc50e05`）
+
+- 交付：新建 `documents/制度与口径登记表.txt`（52 行）+ `data/报销明细表.csv`（144 行数据 + 表头）。**未改任何既有文件、未改评测集、未改判分逻辑** `[实测] git show --stat` 只含这两个路径。
+- 复算 `[实测]`（与 `r36q/diff55.py` 同口径，脚本 `be-r34/r36q/verify_r66.py`）：`documents/*.txt` 94 -> **95 篇**；有 `must_contain` 查无出处的题数 **55 -> 29**；B 桶 27 条清 **23** 条，**24 个词条的出处唯一由本篇提供**（去掉本篇即全部回升，反证是程序化对照算出来的，不是改文件算的）。
+- 剩 4 条数据题改由明细表实算 `[实测] pandas`：前五部门 销售部 148800 / 供应链部 109120 / 研发部 79980 / 市场部 66960 / 客服部 37200（最低 行政部 24800，与第四名差 29760 ⇒ 排名无并列歧义）；住宿费小计 215140（均值 5976.11）、餐费小计 126480（均值 3513.33）；Q1 203310 vs Q2 263550 ⇒ **变化率 +29.63%**；提交满 30 天仍未处理的单据 **5 张**（合计 32900 元，最早提交 2026-05-14）。
+- 零回归 `[实测]` 主树 venv、`LOCAL_MODEL_NAME=__eb_test_disabled__`：44 个邻域测试文件分两批 **193 passed + 253 passed = 446 passed / 0 failed**，R56 宿主模型端口闸门命中 **0**。
+- **新发现的闸门 H14（登记在 `docs/handoff/2026-09-17-human-gates.md`）**：`[实测] git check-ignore -v` 显示 `.gitignore:30 data/*.csv`、`.gitignore:35 documents/*`（仅 `!documents/.gitkeep`）**挡住一切新增语料/数据文件**——既有 96 篇是在 09-15 仓库卫生裁定之前入库的。⇒ 本单用 `git add -f` 强制入库（**不改 `.gitignore`**，那是业主专属动作）。不裁的后果：以后每补一篇语料都会静悄悄漏提交，客户机上镜像里没有这篇料，评测与问答都对不上。
+- 口径钉死：本次补料**只**清"语料从未落盘"这一类，**不等于**真机分数会涨到 100/105。跑分前仍需业主：①重建索引（新语料要进向量库，R22 的人工 CLI）②H11/H12 容器与镜像。
+
+
+## 26. 验收 R40 时同形质外溢 -> 立单 **R67**（09-18 12:1x，总控亲读源码后立案，基线 `b6e951f`）
+
+> R40 把"前端自报部门"这条路堵住了（`authorization.py:75 verify_department_self_report` + `:62 DEPARTMENT_SELF_REPORT_DENIED`，管理员豁免在 `:91-92`）。**同一天，另一条传输路径上原封不动地开着第二个洞。**
+
+**事实** `[实测]`：`app/api/v1/open_platform.py:100-112` 的 `POST /open/approval/preview` 把 `department`、`standard`、`expense_type`、`evidence` **四项全部直接从请求体取用**：
+
+- `:107` `data.get("amount", 0)`、`:108` `data.get("standard", 0)` —— **标准金额由调用方给**，等于"你自己说上限是多少就是多少"；
+- `:109` `data.get("department", "")`、`:110` `data.get("expense_type", "")`、`:111` `data.get("evidence", [])` —— **部门与证据同样由调用方给**；
+- 上面唯一的把关是 `:104 verify_open_request(headers, body_text, required_action="approval")`，它验的是**开放平台签名/令牌**，不是"这个人有没有权限代表这个部门"。⇒ 一个只有 `approval` 动作权限的 token，可以为**任意部门、任意标准**生成预审结论，且结论里带的 `standard_source`/`standard_evidence` 是它自己填的。
+
+**判据**：① 该端点的 `department` 必须由服务端按调用方身份推导（与 R40 同一个 `verify_department_self_report` 口径），不接受自报值，或自报值不等即拒并回稳定码；② `standard` 不得由调用方指定数值 —— 要么走 R40 已交付的 `auto_from_knowledge_base` 自动取数，要么显式 `explicit` 且带可追溯来源；③ 越权/自报用例覆盖，**必须与 R40 那 32 条参数化用例同形**（沿用 `test_prefiltering` / R45 的"先过滤后去重"式写法，不发明第二套）；④ **反证**：把服务端推导改回 `data.get("department", "")` 必须红。
+
+**边界**：不改 `authorization.py` 的判定逻辑（R40 已定，管理员豁免保留）；不动开放平台的签名校验本身；`ErrorEnvelope.code` 的扩枚举与 R40 暂不追认的两个码**一起做**，且必须等 `contracts.py` 出 R30 写域之后。写域 `app/api/v1/open_platform.py`（可能与 R55 的 `chat.py` 相邻但不同文件）⇒ **可即刻派，不占三腿串行位**。

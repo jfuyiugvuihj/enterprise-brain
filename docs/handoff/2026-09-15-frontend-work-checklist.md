@@ -247,3 +247,14 @@
 F1–F7、V1–V6 **执行进度 0**。逐项证据：`ChartViewer.vue` 无 `createObjectURL`；`ChatPanel.vue` 仍有 `renderMd`；`lib/api.js` 无 401 响应拦截；侧栏仍是「总览 / 文档 / 数据 / 洞察 / 图谱 / 审批 / 对话」七个；`InsightPanel.vue` 仍手填阈值 + 演示数据；`ApprovalPanel.vue` 仍 `standard: 500`；`ChatPanel.vue` 仍用 `eb_sessions_v2`；`theme.css` 3393 行 / `.reference-login` 149 处；无 `router/`、无 `components/ui/`；`package.json` 仍挂 `element-plus`。
 
 每完成一步，把本节的对应证据改成「已消除」并附 commit 号，不要只改勾。
+
+
+## 附：后端已落地、等前端接的三组契约字段（09-18 总控登记，基线 `b6e951f`；**前端线不需要我改 `frontend/`，只需按此对齐**）
+
+| 来源单 | 字段 | 出处（后端实测行号） | 前端要怎么用 |
+|---|---|---|---|
+| R22/R21 | 上传响应里的 `embedding_model`、`dimension` | `app/rag/indexing.py:43-46` 口径常量 + 上传链路响应体 | 上传成功后把"当前向量口径"显示出来；跨维度时后端会显式拒绝，别把拒绝当成上传失败重试 |
+| R35 | 答案缓存字段 `cached`、`cache_generated_at`、`cache_note` | `tests/test_answer_cache_scope.py` 钉的响应形状 | 命中缓存必须可见（含"为什么命中/没命中"的一句 `cache_note`），不许静默 |
+| R40 | 预审字段 `standard_source`、`standard_evidence`、`matched_expense_type` | `app/api/v1/intelligence.py:181`、`:184`、`:185`（取值枚举 `STANDARD_SOURCES` 见 `assistant.py:171-242`） | 预审结论必须展示**标准是从哪来的**（显式填的 / 知识库自动取的 + 证据条目），否则用户以为上限是系统乱给的 |
+
+> 另记一条给前端线的避坑事实：`/open/approval/preview`（`app/api/v1/open_platform.py:100-112`）目前**仍然接受调用方自报 `department` 与 `standard`**，后端已立 **R67** 收口（跟进单 §26）。在 R67 结案前，**不要**把这个开放端点接进任何面向员工的界面。

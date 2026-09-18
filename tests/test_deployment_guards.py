@@ -201,7 +201,12 @@ def test_a_pinned_model_that_is_present_keeps_the_health_report_clean(monkeypatc
         lambda: {"status": "ok", "pgvector": True, "migration_ledger": True},
     )
     monkeypatch.setattr("app.common.monitoring._probe_redis", lambda: {"status": "ok"})
-    _probe_local_models(monkeypatch, [{"name": "qwen2.5:14b"}])
+    # R21 (dbd19c2) 之后，"报告干净"还要求向量模型本身在位：只桩聊天模型会让
+    # _embedding_state() 如实报 embedding_model_missing。补桩而不放宽任何断言。
+    _probe_local_models(
+        monkeypatch,
+        [{"name": "qwen2.5:14b"}, {"name": "nomic-embed-text:latest"}],
+    )
     monkeypatch.setenv("LOCAL_MODEL_NAME", "qwen2.5")
 
     snapshot = build_health_snapshot()
