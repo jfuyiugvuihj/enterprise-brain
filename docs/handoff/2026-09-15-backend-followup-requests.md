@@ -1251,3 +1251,26 @@ PROBE index reached = 0
 
 ### 34.3 **R90b**（🔴 等业主放行）
 `migrations/0010_pgvector_chunks.sql:216` 提示串里的 `%I` 改 `%`（PL/pgSQL 的 `RAISE` 只认 `%`，`%I` 会渲染成 `enterprise_brainI`），并加一条"渲染出的库名 == `current_database()`"的钉。**只改文案不改语义**，但要动 `migrations/**` ⇒ 业主口径。
+
+---
+
+## 35. 本班续（09-18 20:5x，总控第十八班续）：**R37 / R84 两笔蒸发单的接续判据**（盘上活已由总控 wip 提交保住）
+
+### 35.1 **R37 接续**（第二棒；第一棒棒次 `Gauss` 已蒸发，保活提交 `9e50e60` @ `codex/be-r37`）
+- **已完成半程**（不许重做、不许推翻）：`AskRequest.lane`、`_queue_lane()`、`_report_lane_via_queue_enabled()`（默认关）、`_enqueue_ask_turn()`（回执带 `lane` / `reason`，无 lane 时与旧行为逐字节相同）、共用件 `hitl_park_text` / `save_session_turn` / `record_hitl_awaiting`、28 条用例。
+- **缺的半程 = 全部在 worker 侧**，写域：`deploy/queue_worker.py`（+ 必要时 `app/common/reliable_queue.py` 的读侧，🔴 不许改队列内核语义）。
+- **判据（逐条可机器验，用例已在树里钉好，不许改断言迁就实现）**：
+  ① `queue_worker.REPORT_LANE == chat.LANE_REPORT`（:340-341 钉死，两侧只能有一个真相源）；
+  ② `queue_worker._report_lane_requested(payload)` 是**载荷的纯读**（:325），零模型往返、不碰会话；
+  ③ 带 report lane 的载荷 ⇒ 走**能挂起的 graph**；一旦 park，**export 节点一步都不许执行**；
+  ④ park ⇒ 恰好开**一条** `pending_approvals` 待办行，归属人取 payload 解析出的 user_id（不是共享身份）；挂起措辞必须调 `chat.hitl_park_text`，**不许在 worker 里再写第二份文案**；
+  ⑤ 后台跑完 ⇒ 答案写回会话历史（`save_session_turn` 返回 False 时必须留 warning，禁止静默）；**重试用中的任务一个字都不许写**；**最终拒绝不烧重试额度且仍留一行历史**；**被取消的任务不发布不写**；
+  ⑥ 队列失败要有**终态 + 原因码**（原 §21 判据 ③），dead 态可查；
+  ⑦ 不带 lane 的载荷 ⇒ 走原入口 `run_orchestrator_result`，行为与今天**逐字节相同**；
+  ⑧ 🔴 前置：先 `git -C be-r37 merge codex/data-file-catalog` 追平主干（保活提交基线 `9e50e60` ← 树基线 `8a46bfb`，主干现 `c39b806`），追平后亲跑全量对 **2104 passed / 35 skipped / 0 failed** 只增不减；23 条红必须**全部转绿**，若判某条红是测试自身写错，逐条披露 + 反证，禁止悄悄删用例。
+  ⑨ `_baseline_r37.txt` / `_r37_before_red.txt` 是上一棒的取证日志，**不许入库**（本机也删不掉，就留在树里）。
+- **红线**：`/ask` 同步档行为不变；HITL 语义不许丢；不得新增强制打开的默认值。
+
+### 35.2 **R84 接续**（第一棒 `Helmholtz` 蒸发，只留红用例，保活提交 `6d75edd` @ `codex/be-r84`）
+- **写域**：`app/storage/persistence.py`（JSON 后端的读-改-写整段加跨进程锁；缺陷在存储层，不在 `open_platform.py`——第十六班已订正落点）+ 既在库的 `tests/test_r84_persistence_cross_process_lock.py`。
+- **判据**：① 用**真子进程**复现丢失更新（现成红用例已是这个形态，不许改成线程 / 不许 mock 掉锁）；② **不加新依赖**；③ 锁粒度不得把单进程内既有路径拖慢到既有钉的阈值以下；④ NFS / SMB 上 `flock` 语义受限这条**如实写进 docstring**，不许声称跨机安全；⑤ 追平主干后全量相对 **2104 / 35 / 0** 只增不减；⑥ 执行层不 commit。

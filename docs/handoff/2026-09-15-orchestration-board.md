@@ -1254,6 +1254,8 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `总控亲做` | —— | **R87** 越界守卫双向漏防（判据 §31.3） | 主树 `tests/test_r51_observation_is_passive.py`（无子 Agent） | **已结案（第十八班，业主改令「你自己来」）**：主树 `fcd8ef0`；审计基线改 `merge-base(HEAD, trunk)..HEAD` + 非主干分支才纳入 `ls-files --others`，判据用**分支名**不用 `base != head`（尚无提交的分支二者相等）；forbidden 前缀一字未减；**16 → 20** 条四向探针全落 `tmp_path`；全量亲跑 **2104 passed / 35 skipped / 0 failed / 81.61 s**。副产品口径：**脏工作树跑全量不必先 commit** | 20:5x |
 | `Gauss` | 同上 `01a0b3ff-…` | **R37**（续） | `be-r37` | 🔴 **线程蒸发（事故 #30）**：20:3x `wait_agent` 实取 `not_found`，**无结案回执**。盘上留活 `app/api/v1/chat.py` **+182/−41** + 新 `tests/test_r37_report_lane_enqueue.py`/`_worker.py`（19:17 在写）；`_baseline_r37.txt`、`_r37_before_red.txt` 是垃圾**不许入库**。按规矩**不补投**；B 轮结束后总控按 §21 逐条验收再定代提交/退回。结案前 `chat.py` 仍不许再派 | 20:3x |
 | `Helmholtz` | 同上 `01a0b42f-…` | **R84**（续） | `be-r84` | 🔴 **线程蒸发（事故 #30）**：`wait_agent` = `not_found`。盘上只有新 `tests/test_r84_persistence_cross_process_lock.py`（**21 492 B** @19:23:50，此后零动作），`app/storage/persistence.py` **一字未动** ⇒ 停在红用例阶段；未动工部分挂回待派 | 20:3x |
+| `Gauss` | 同上 `01a0b3ff-…` | **R37**（保活） | `be-r37`（分支 `codex/be-r37`） | **已保活**：总控 wip 提交 **`9e50e60`**（chat.py +182/−41 + 两个用例文件共 28 例）；机器一崩不再白干。静态复核定性＝**只做了一半**：入队侧完整，worker 侧 `queue_worker.REPORT_LANE` / `_report_lane_requested` **不存在**（`git grep lane -- deploy` = **0 命中**），其自证日志 `_r37_before_red.txt` 19:18:30 实取 **23 failed / 5 passed**。接续判据 → 跟进单 §35.1 | 20:5x |
+| `Helmholtz` | 同上 `01a0b42f-…` | **R84**（保活） | `be-r84`（分支 `codex/be-r84`） | **已保活**：总控 wip 提交 **`6d75edd`**（21 KB 真子进程红用例设计）。实现半程未开始 ⇒ 接续判据 → 跟进单 §35.2 | 20:5x |
 | `Noether` | 同上 `01a0b454-…` | **R89**（续） | `fe-trunk` | **在册运行中**：`frontend/src/lib/errcodes.js` **19:49:32** 落笔后未再改、rollout 自 19:43:41 未再追加 ⇒ 判为卡在长工具调用（vitest / npm）。验收仍由总控亲跑 `vitest run` **410/410** + `npm run lint` + `lint:colors` 不劣化，**不采信自述** | 20:5x |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -2402,3 +2404,23 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - **前端腿**：R89 在途，结案前不再向前端派单。
 - **真机腿**：B 轮在跑，跑完立刻做 C 并只提交 `docs/testing/evaluation-report.json`。
 - 等业主（一个都不代做）：H13–H18、R85、R88、R90 的 `migrations` 放行、两远端可见性与 `master`、空卷 `enterprise-brain_ollama_data` 处置、临时目录里 `evalrun-token.txt` 那枚 24 小时 admin token（明晚自行过期，或由业主清理）。
+
+---
+
+## 4AW 本班续（09-18 20:5x，总控第十八班续）：🟢 两笔蒸发线程的盘上活已保活 · R37 静态复核定性「只做了一半」· R90 拆成 R90a/R90b
+
+### 4AW.1 🔒 事故 #30 的止血（不等人、不冒险，零 CPU 动作）
+- `be-r37` → 总控 wip 提交 **`9e50e60`**（显式列三个路径：`app/api/v1/chat.py` + 两个 `tests/test_r37_report_lane_*.py`）；`_baseline_r37.txt` / `_r37_before_red.txt` / `chroma_db/chroma.sqlite3` **未入库**。
+- `be-r84` → 总控 wip 提交 **`6d75edd`**（只提 `tests/test_r84_persistence_cross_process_lock.py`），树现已干净。
+- 两笔都**留在各自分支**，不入主干、不作结案；从此机器崩了不再白干。主干 HEAD 仍是 `c39b806`。
+
+### 4AW.2 R37 静态复核（只读，未跑任何测试——评测窗口内禁止抢 CPU）
+- 入队侧质量：**合格且讲究**。`_queue_lane()` 纯读请求字段、零模型往返、故意不做大小写模糊匹配；`REPORT_LANE_VIA_QUEUE` **默认关**；`_enqueue_ask_turn` 在 `lane` 为空时载荷与回执字段与 R37 之前**逐字节相同**（红线「不改 `/ask` 同步档行为」有测试钉）；`hitl_park_text` / `save_session_turn` / `record_hitl_awaiting` 抽成同步路径与后台路径**共用一份**，且 `save_session_turn` 在会话库不可用时**明着返回 False + warning**，不假装写成功。
+- 🔴 但**只做了一半**：用例要求 `queue_worker.REPORT_LANE` 与 `queue_worker._report_lane_requested`（`test_r37_report_lane_worker.py:325/340-341`），而 `deploy/queue_worker.py` **一字未动**，`git grep -n lane -- deploy` = **0 命中** ⇒ 判据 ② 结果可查回 / ③ 失败有终态在生产路径上**没有承接者**。它自己的取证日志坐实：`_r37_before_red.txt`（19:18:30）**23 failed / 5 passed**。
+- 结论：**不并主干、不结案**。接续判据已写进跟进单 §35.1（含"追平主干 `c39b806` 后全量 ≥ 2104/35/0""不许改断言迁就实现""不带 lane 的载荷行为逐字节不变"三条硬门）。
+
+### 4AW.3 R84 定性
+盘上只有一份红用例设计（真子进程复现丢失更新，无新依赖），实现半程未开始 ⇒ 接续判据 §35.2。`app/storage/persistence.py` 的写域**自本班起重新开放**（持有者已消失，红用例已由总控入库）。
+
+### 4AW.4 R90 拆分（跟进单 §34）
+判据 ①③⑤ 全在应用侧（`app/db/migrations.py` + `docker-compose.yml` + `.env.example`）⇒ 拆出 **R90a（可派，不等业主）**；`migrations/0010:216` 的 `%I` 提示串留给 **R90b（🔴 等业主放行）**。R90a 刻意**不在评测窗口内派**：它要连真库验证，中途 `ALTER DATABASE` 手滑会直接污染正在跑的 105 题。
