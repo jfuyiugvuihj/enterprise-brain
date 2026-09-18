@@ -50,6 +50,15 @@ REASON_ALL_ZERO_VECTOR = "all_zero_vector"
 REASON_NOT_A_VECTOR = "not_a_vector"
 REASON_VECTOR_COUNT_MISMATCH = "vector_count_mismatch"
 
+# ---- R58 双写镜像（Chroma ⇄ PGVector）稳定码 ----
+#: 开关已开但镜像不可用：未跑 0010、连不上、psycopg 缺失。写库直接拒，
+#: 不退化成"只写 Chroma 成功就算过"—— 那正是本单要消灭的半态。
+REASON_VECTOR_MIRROR_UNAVAILABLE = "vector_mirror_unavailable"
+#: 库里登记的维度/模型/距离函数与运行时口径不符（R22 禁止一个库存两套向量）。
+REASON_VECTOR_MIRROR_SCOPE_MISMATCH = "vector_mirror_scope_mismatch"
+#: PG 腿 upsert/delete/commit 执行失败：两腿一起回滚后抛原异常。
+REASON_VECTOR_MIRROR_WRITE_FAILED = "vector_mirror_write_failed"
+
 # ---- 检索腿稳定码（R21 判据④）：命中属于哪条腿、为什么退到那条腿 ----
 RETRIEVAL_MODE_SEMANTIC = "semantic"
 RETRIEVAL_MODE_KEYWORD = "keyword_fallback"
@@ -71,6 +80,9 @@ EMBEDDING_REASON_LABELS = {
     REASON_ALL_ZERO_VECTOR: "候选向量是全零占位向量",
     REASON_NOT_A_VECTOR: "embedding 返回的不是向量",
     REASON_VECTOR_COUNT_MISMATCH: "向量条数与文本块数不符",
+    REASON_VECTOR_MIRROR_UNAVAILABLE: "向量镜像（PostgreSQL）不可用，已拒绝写入",
+    REASON_VECTOR_MIRROR_SCOPE_MISMATCH: "向量镜像的维度或模型口径与运行时不一致，已拒绝写入",
+    REASON_VECTOR_MIRROR_WRITE_FAILED: "向量镜像写入失败，Chroma 与 PostgreSQL 已一并回滚",
     RETRIEVAL_REASON_STORE_OFFLINE: "向量库后端未启用，无语义检索能力",
 }
 
@@ -507,11 +519,16 @@ class DocumentRetriever:
         """
         return (getattr(self.embedding, "last_error", None) or {}).get("reason", "")
 
-    def _write_batch(self, ids, documents, metadatas, embeddings):
+    def _write_batch(self, ids, documents, metadatas, embeddings, *, mirror=None):
         """全库唯一允许把向量交给向量库的入口（R21 判据②）。
 
         不合格向量在这里抛，写不进去就是写不进去，不做任何"悄悄换成别的值"的处理。
         未来的双写/迁移路径也应当走这里，而不是各自再抄一份 collection.add。
+
+        R58：mirror 是 app/rag/pg_store.py 的 VectorMirror，默认 None。传进来时写序是
+        "PG 先、Chroma 次"，commit 由调用方在两腿都写完之后发起 —— 两腿共用调用方那一个
+        PG 事务，任何一侧失败都在那里整体回滚。不传（开关关闭，默认）时本函数发出的语句
+        与 R58 之前逐条一致，一条新 SQL 都没有。
         """
         if not self.stores_vectors:
             logger.warning("向量库后端不存向量：本次只写入文本与元数据，检索按关键词降级")
@@ -520,12 +537,85 @@ class DocumentRetriever:
         assert_writable_embeddings(
             embeddings, len(documents), cause=self._embedding_failure_reason()
         )
+        if mirror is not None:
+            # PG 腿先写：它失败时 Chroma 一个字都没动，调用方回滚一个空事务即可。
+            mirror.add(
+                ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings
+            )
         self.collection.add(
             ids=ids,
             documents=documents,
             embeddings=list(embeddings),
             metadatas=metadatas,
         )
+
+    # ==================== R58 双写镜像钩子 ====================
+
+    def _open_vector_mirror(self):
+        """按开关开一条 PGVector 镜像腿；开关关闭（默认）时返回 None。
+
+        返回 None 就是"不装 pgvector 也能跑"的全部机制：本方法一不建连接、二不发 SQL。
+        app.rag.pg_store 在函数内 import，因为 pg_store 反过来 import 本模块的稳定码与
+        闸门，模块级互引会成循环 import。
+        """
+        if not self.stores_vectors:
+            # 离线 _JsonCollection 后端根本不存向量，没有东西可镜像。
+            return None
+        from app.rag import pg_store
+
+        return pg_store.vector_mirror()
+
+    def _vector_snapshot(self, ids):
+        """删旧向量前把旧行原样读出，供两腿回滚时逐字放回。
+
+        必须带 embeddings 一起读：不带的话放回时 Chroma 会用默认 embedding function 重算，
+        那正是 R22 要挡的"一个库里两套向量"。读不到向量就返回 None，调用方据此放弃这次
+        双写（宁可上传失败，也不留下一个无法忠实还原的中间态）。
+        """
+        try:
+            snapshot = self.collection.get(
+                ids=list(ids), include=["documents", "metadatas", "embeddings"]
+            )
+        except Exception as exc:
+            logger.warning(f"读取旧向量快照失败，双写无法回滚: {exc}")
+            return None
+        existing_ids = list(snapshot.get("ids") or [])
+        if not existing_ids:
+            return {"ids": [], "documents": [], "metadatas": [], "embeddings": []}
+        vectors = snapshot.get("embeddings")
+        if vectors is None or len(vectors) != len(existing_ids):
+            logger.warning(f"旧向量快照缺少 embeddings（{len(existing_ids)} 条），放弃双写")
+            return None
+        return {
+            "ids": existing_ids,
+            "documents": list(snapshot.get("documents") or []),
+            "metadatas": list(snapshot.get("metadatas") or []),
+            "embeddings": [list(vector) for vector in vectors],
+        }
+
+    def _undo_vector_write(self, mirror, written_ids, snapshot):
+        """两腿一起退回本次写入之前：PG 回滚事务，Chroma 撤掉新写、放回旧行。
+
+        mirror.rollback() 是硬要求：PG 侧的失败定义就是"这个事务一个向量都不留"。Chroma
+        侧是 best-effort（撤不动就记日志，业务异常照样往上抛），因为 Chroma 没有事务，能
+        做的只有逆序补偿；补偿失败的窗口写进交付说明的"必须业主真机"清单。
+        """
+        try:
+            mirror.rollback()
+        except Exception as exc:
+            logger.error(f"向量镜像回滚失败，PG 事务状态未知: {exc}")
+        try:
+            if written_ids:
+                self.collection.delete(ids=list(written_ids))
+            if snapshot and snapshot.get("ids"):
+                self.collection.add(
+                    ids=snapshot["ids"],
+                    documents=snapshot["documents"],
+                    metadatas=snapshot["metadatas"],
+                    embeddings=snapshot["embeddings"],
+                )
+        except Exception as exc:
+            logger.error(f"Chroma 腿补偿回滚未完成，需人工核对双写状态: {exc}")
 
     def add_document(self, filename: str, content: str,
                      classification: int = 1, department: str | None = None) -> tuple[bool, str]:
@@ -581,18 +671,48 @@ class DocumentRetriever:
                 embeddings, len(chunks), cause=self._embedding_failure_reason()
             )
 
-        if stale_ids:
-            self.collection.delete(ids=stale_ids)
-            logger.info(f"已删除旧版本: {filename}")
+        # R58：镜像腿在"先验后删"之后才开。开关关闭（默认）时 mirror 是 None，从这里
+        # 往下发出的调用序列与本文件在 R58 之前逐条一致：一次 delete、若干次 add、没有
+        # commit，也没有一条 SQL。
+        mirror = self._open_vector_mirror()
+        snapshot = None
+        written_ids = []
+        try:
+            if mirror is not None and stale_ids:
+                # 删之前先留快照：PG 侧的回滚是事务级的，Chroma 侧只能靠它逆序放回。
+                snapshot = self._vector_snapshot(stale_ids)
+                if snapshot is None:
+                    raise VectorWriteRejectedError(
+                        f"拒绝写入向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: 双写已开启，"
+                        f"但 {filename} 的旧向量读不出快照，删掉就无法忠实还原",
+                        reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
+                    )
+            if stale_ids:
+                if mirror is not None:
+                    mirror.delete(ids=list(stale_ids))
+                self.collection.delete(ids=stale_ids)
+                logger.info(f"已删除旧版本: {filename}")
 
-        batch_size = 2000
-        for start, end in self._batch_ranges(len(chunks), batch_size):
-            self._write_batch(
-                ids=ids[start:end],
-                documents=chunks[start:end],
-                embeddings=embeddings[start:end],
-                metadatas=metadatas[start:end],
-            )
+            batch_size = 2000
+            for start, end in self._batch_ranges(len(chunks), batch_size):
+                self._write_batch(
+                    ids=ids[start:end],
+                    documents=chunks[start:end],
+                    embeddings=embeddings[start:end],
+                    metadatas=metadatas[start:end],
+                    mirror=mirror,
+                )
+                written_ids.extend(ids[start:end])
+            if mirror is not None:
+                # 两腿都写完才 commit：这个 PG 事务里躺着本次全部删与写，提交失败就整体退回。
+                mirror.commit()
+        except Exception:
+            if mirror is not None:
+                self._undo_vector_write(mirror, written_ids, snapshot)
+            raise
+        finally:
+            if mirror is not None:
+                mirror.close()
 
         logger.info(f"入库完成: {filename} → {len(chunks)} 块")
         return True, f"已添加 {len(chunks)} 个文本块"
@@ -746,8 +866,27 @@ class DocumentRetriever:
         return rows
 
     def delete_document(self, filename: str):
-        """删除指定文档的所有向量"""
+        """删除指定文档的所有向量
+
+        R58：开关开启时两腿同事务双删 —— PG 先删、Chroma 后删、最后 commit，任一侧失败
+        就回滚 PG 事务并原样抛出，不留"PG 无向量 ⇔ Chroma 仍可检索"的半态。开关关闭
+        （默认）时这里仍然只有一次 get 与一次 delete，行为与本单之前一致。
+        """
         existing = self.collection.get(where={"filename": filename})
-        if existing["ids"]:
+        if not existing["ids"]:
+            return
+        mirror = self._open_vector_mirror()
+        try:
+            if mirror is not None:
+                mirror.delete(ids=list(existing["ids"]))
             self.collection.delete(ids=existing["ids"])
-            logger.info(f"已删除文档: {filename}")
+            if mirror is not None:
+                mirror.commit()
+        except Exception:
+            if mirror is not None:
+                self._undo_vector_write(mirror, [], None)
+            raise
+        finally:
+            if mirror is not None:
+                mirror.close()
+        logger.info(f"已删除文档: {filename}")

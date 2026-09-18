@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS chunk_vectors (
     filename TEXT NOT NULL,
     chunk_index INTEGER NOT NULL,
     content TEXT NOT NULL,
-    classification TEXT,
+    classification INTEGER,
     department TEXT NOT NULL DEFAULT '',
     content_sha256 TEXT,
     index_version_id TEXT,
@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS chunk_vectors (
 COMMENT ON COLUMN chunk_vectors.content_sha256 IS
     'Chroma carries this as metadata key "hash" (app/rag/retriever.py:573); the SQL column keeps a name a reader can parse.';
 COMMENT ON COLUMN chunk_vectors.classification IS
-    'NULL means the writer supplied no classification, matching an absent metadata key rather than the empty string.';
+    'Integer, not text: authorization compares classifications with <=, and a text column would order 10 before 2. It matches resource_versions.classification, which is the authority. NULL means the writer supplied no classification, matching an absent metadata key rather than the empty string.';
 COMMENT ON COLUMN chunk_vectors.department IS
     'Duplicated from the vector metadata so a filtered search can pre-filter without a join. owner_id is deliberately NOT duplicated: it is a document-level fact owned by the catalog, and a second copy of it here could drift from the authority. department and classification are not separable from the chunk the retriever already holds.';
 
