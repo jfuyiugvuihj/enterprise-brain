@@ -11,6 +11,15 @@ _DEFAULT_CURRENCY_ENV = "APP_DEFAULT_CURRENCY"
 _TWO_PLACES = Decimal("0.01")
 
 
+# Where a pre-check may obtain the standard an amount is compared against.
+# ``explicit`` is the historical behaviour -- the caller states the number;
+# ``auto_from_knowledge_base`` reads it out of the retrieved policy text, so the figure
+# and its provenance both come from the server.
+STANDARD_SOURCE_EXPLICIT = "explicit"
+STANDARD_SOURCE_AUTO = "auto_from_knowledge_base"
+STANDARD_SOURCES = (STANDARD_SOURCE_EXPLICIT, STANDARD_SOURCE_AUTO)
+
+
 def to_decimal(value, *, field: str = "amount") -> Decimal:
     """Convert an input to Decimal without going through binary floating point."""
     if isinstance(value, Decimal):
@@ -159,3 +168,76 @@ def extract_standard(excerpts: list[str]) -> Decimal | None:
     # The strictest stated limit is the binding standard; the values stay visible in
     # the evidence excerpt so a reviewer can confirm the reading.
     return min(candidates)
+
+
+_STANDARD_QUERY_SUFFIX = "标准 上限 限额"
+
+
+def match_expense_type(text: str) -> str:
+    """Canonical expense type for free wording, or "" when the alias table matches nothing.
+
+    The caller names an expense however it likes and the retrieval query passes that
+    wording through, so the conclusion states separately which category was actually
+    recognised. No category is implied for wording the table does not know.
+    """
+    value = str(text or "")
+    return next(
+        (name for name, keywords in _EXPENSE_TYPES.items() if any(keyword in value for keyword in keywords)),
+        "",
+    )
+
+
+def retrieve_expense_hits(query: str, principal, top_k: int) -> list[dict]:
+    """Ask the shared retrieval pipeline for the policy chunks this principal may read.
+
+    Deliberately swallows nothing: the index holding no such rule and the index being
+    unaskable are different answers, and only the first one may turn into an
+    unverifiable conclusion.
+    """
+    from app.agents import tools as agent_tools
+
+    found, _rewritten = agent_tools._get_pipeline().search_for_principal(query, principal, top_k=top_k)
+    return list(found)
+
+
+def resolve_standard_from_knowledge_base(
+    expense_type: str,
+    principal,
+    *,
+    search=None,
+    top_k: int = 3,
+) -> dict:
+    """Read the binding standard out of the knowledge base instead of out of the request.
+
+    One algorithm with the approval worker: retrieve the policy text this principal is
+    allowed to see, then keep the strictest figure a passage actually states. The
+    returned ``standard`` is ``None`` when no passage states one, and the caller reports a
+    missing standard instead of substituting a number, a default, or a value from the
+    request. ``search`` is the retrieval seam a test injects.
+    """
+    reader = search or retrieve_expense_hits
+    query = f"{str(expense_type or '').strip() or '费用'} {_STANDARD_QUERY_SUFFIX}"
+    hits = reader(query, principal, top_k=top_k) or []
+
+    candidates: list[Decimal] = []
+    evidence: list[str] = []
+    for hit in hits:
+        row = hit if isinstance(hit, dict) else {"content": str(hit)}
+        value = extract_standard([str(row.get("content") or "")])
+        if value is None:
+            # A passage that states no figure is not the source of this standard.
+            continue
+        candidates.append(value)
+        source = str(row.get("source") or "unknown")
+        chunk = str(row.get("chunk_index", "")).strip()
+        entry = f"{source} chunk={chunk}" if chunk else source
+        if entry not in evidence:
+            evidence.append(entry)
+
+    return {
+        # The strictest stated limit binds, as in extract_standard: the minimum of each
+        # passage's minimum is the minimum across all of them.
+        "standard": min(candidates) if candidates else None,
+        "evidence": evidence,
+        "matched_expense_type": match_expense_type(expense_type),
+    }
