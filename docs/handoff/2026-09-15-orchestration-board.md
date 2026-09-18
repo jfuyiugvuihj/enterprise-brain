@@ -1256,7 +1256,9 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Helmholtz` | 同上 `01a0b42f-…` | **R84**（续） | `be-r84` | 🔴 **线程蒸发（事故 #30）**：`wait_agent` = `not_found`。盘上只有新 `tests/test_r84_persistence_cross_process_lock.py`（**21 492 B** @19:23:50，此后零动作），`app/storage/persistence.py` **一字未动** ⇒ 停在红用例阶段；未动工部分挂回待派 | 20:3x |
 | `Gauss` | 同上 `01a0b3ff-…` | **R37**（保活） | `be-r37`（分支 `codex/be-r37`） | **已保活**：总控 wip 提交 **`9e50e60`**（chat.py +182/−41 + 两个用例文件共 28 例）；机器一崩不再白干。静态复核定性＝**只做了一半**：入队侧完整，worker 侧 `queue_worker.REPORT_LANE` / `_report_lane_requested` **不存在**（`git grep lane -- deploy` = **0 命中**），其自证日志 `_r37_before_red.txt` 19:18:30 实取 **23 failed / 5 passed**。接续判据 → 跟进单 §35.1 | 20:5x |
 | `Helmholtz` | 同上 `01a0b42f-…` | **R84**（保活） | `be-r84`（分支 `codex/be-r84`） | **已保活**：总控 wip 提交 **`6d75edd`**（21 KB 真子进程红用例设计）。实现半程未开始 ⇒ 接续判据 → 跟进单 §35.2 | 20:5x |
-| `Noether` | 同上 `01a0b454-…` | **R89**（续） | `fe-trunk` | **在册运行中**：`frontend/src/lib/errcodes.js` **19:49:32** 落笔后未再改、rollout 自 19:43:41 未再追加 ⇒ 判为卡在长工具调用（vitest / npm）。验收仍由总控亲跑 `vitest run` **410/410** + `npm run lint` + `lint:colors` 不劣化，**不采信自述** | 20:5x |
+| `Noether` | 同上 `01a0b454-…` | **R89**（结案） | `fe-trunk` | **✅ 已结案并树（第十九班）**：总控验收 = 写域只 `frontend/src/lib/errcodes.js`(+48/−2，**零测试改动**)、`ERROR_CODES` 26→**29**、三枚新码逐条对到主干封闭枚举 `app/agents/contracts.py:102/226/248-256`、`retryable` 全 false 且注释给的是可核依据（不是感觉）、`FRONTEND_ONLY_CODES` 仍 `[]`（`errcodes.js:147`，被 `errcodes.test.js:104/:643` 钉住）；总控**亲跑** vitest **496/496** + `npm run lint` **0 errors** + 跨端钉 `tests/test_frontend_login_policy.py` **2 passed**；保活提交 `3305591` + 追平 `5160494` ⇒ 并主干 `7c66397`，**tree 恒等 `6cd5b20`**，主干全量 **2104 passed / 35 skipped / 0 failed**；origin + gitee 已同步 | 21:16 |
+| `Mendel` | `01a0b4a0-9ed6-7782-8b96-81281a5bde2f` | **R37**（第二棒，接续保活提交 `9e50e60`） | `be-r37`（分支 `codex/be-r37`，**独占**） | **运行中**：21:07 单投（本 block 只此一次投递；canary = `rollout-2026-09-18T21-07-00-01a0b4a0…jsonl` 已生成 758 KB）；写域**锁死 `deploy/queue_worker.py`**，禁 `orchestrator.py`/`reliable_queue.py`/`persistence.py`/改 chat.py/迁移/前端；判据 ①–⑧ = 跟进单 §35.1；投前总控实取 **13 failed / 15 passed / 62.6 s**（订正上一班记的 14/14），且 `git grep lane -- deploy` 仍 **0 命中** ⇒ worker 侧确实从未落地 | 21:07 |
+| `Faraday` | `01a0b4a4-ae08-7910-a7f8-cb7af6115cda` | **R84**（第二棒，接续保活提交 `6d75edd`） | `be-r84`（分支 `codex/be-r84`，**独占**；投放前由总控追平主干 → 合并点 `249aedf`） | **运行中**：21:11 单投（canary = `rollout-2026-09-18T21-11-26-01a0b4a4…jsonl` 112 KB 已生成、投后 `be-r84` `dirty=0`）；写域**锁死 `app/storage/persistence.py` + 既在库 `tests/test_r84_persistence_cross_process_lock.py`**；投前总控实取 **9 failed / 1 passed / 3.75 s**；判据 ①–⑥ = 跟进单 §35.2 | 21:11 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -2424,3 +2426,49 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 
 ### 4AW.4 R90 拆分（跟进单 §34）
 判据 ①③⑤ 全在应用侧（`app/db/migrations.py` + `docker-compose.yml` + `.env.example`）⇒ 拆出 **R90a（可派，不等业主）**；`migrations/0010:216` 的 `%I` 提示串留给 **R90b（🔴 等业主放行）**。R90a 刻意**不在评测窗口内派**：它要连真库验证，中途 `ALTER DATABASE` 手滑会直接污染正在跑的 105 题。
+
+### 4AX.1 业主改令（本班生效，覆盖第十八班的自设红线）
+「**不要一直因为测试卡着，可以派子 agent 测试，你去做更有价值的事**」⇒ 撤销我上一班自设的"评测窗口内不跑 pytest/vitest"红线。
+本班实测代价：评测 B′ 满载的同时跑全量，**仍然 0 失败**，只是墙钟 81.6 s → 141.7 s。结论：**并发是安全的，只是数字要标注负载**——
+凡在评测/真机跑分窗口内测得的耗时，一律标"含并发噪声"，不得当作延迟基线（延迟基线要留一段干净的 2 小时窗口）。
+
+### 4AX.2 R89 结案（前端码表补三枚人话）
+- 交付：`Noether`，只改 `frontend/src/lib/errcodes.js`（+48/−2），`ERROR_CODES` 26→29。
+- 总控独立验收（不采信自述）：
+  ① 三枚新码 **都在**主干封闭枚举里（`app/agents/contracts.py:102/226` 的 `context_limit_exceeded`、`:248-256` 的 `row_scope_denied`/`no_visible_rows`），不是前端自造；
+  ② `FRONTEND_ONLY_CODES` 仍为 `[]`（这条被 `errcodes.test.js:104` 与 `:643` 双向钉，非空即红）；
+  ③ `no_visible_rows` 文案一个字不猜因由，绕开 `tests/test_tools_row_scope_messaging.py::TestNoGuessing` 列为无依据的五个词，且不与 `row_scope_denied` 串味；
+  ④ 我亲跑 vitest **496/496 全绿**（不是上一班在册的 410——差 86 例来自 `deb8ade→de51f1f` 期间主干前端新增的用例，不是这位 Agent 加的）、`npm run lint` **0 errors**（334 条 warning 全是 stylelint 打在 CSS 上的色值规则，改 .js 不可能影响，已核对不劣化）、跨端钉 `tests/test_frontend_login_policy.py` **2 passed**。
+- 并树：保活提交 `3305591`（fe-trunk）→ 追平合并 `5160494`（主干自 `de51f1f` 起未碰 `errcodes.js`，零冲突）→ 并主干 **`7c66397`**，
+  `git rev-parse HEAD^{tree}` 两边同为 **`6cd5b20`**（内容恒等，不是"看着差不多"）；主干全量 **2104/35/0** 相对基线**只增不减**（纯前端单，不加 Python 用例，等号即达标）。
+- **拓扑决策（记成常设规则）**：前端单的写域在 `fe-trunk`，但**测试工具链（`node_modules`，180 个包，vitest + playwright 齐备）只有那棵树里有**，
+  主树 `frontend/node_modules.stub/` 是**故意留的空壳** ⇒ 纯前端验收必须在 `fe-trunk` 跑，再并主干。以后别再为"主树跑不了 vitest"立单。
+
+### 4AX.3 两条腿各续投第二棒（都是单投 + canary 坐实）
+- **R37 → `Mendel`（21:07）**：只允许改 `deploy/queue_worker.py`。为什么够——能停 HITL 的图是 `orchestrator.multi_agent_graph`
+  （`app/agents/orchestrator.py:783`），入队侧 `9e50e60` 已经把 `lane`/`hitl_park_text`/`save_session_turn`/`record_hitl_awaiting` 备好，
+  **不需要碰 `orchestrator.py`**（那文件被 R30/R31/R33/R42/R38 五单共占，能绕开就绕开）。
+  投前基线我实测 **13 failed / 15 passed**（订正上一班在册的 14/14——那是 Gauss 19:18 在**落后主干**的树上自取的数）。
+- **R84 → `Faraday`（21:11）**：投放前我先把 `be-r84` 追平主干（`249aedf`，`persistence.py` 主干自 `2100185` 起零改动 ⇒ 无冲突），
+  这样第二棒跑出来的全量才能直接和 2104 对齐；投前红基线我实测 **9 failed / 1 passed / 3.75 s**。
+- `spawn_agent` 传 `model: ""` 被校验器直接拒（`Must be a non-empty string`），**未进入子系统、未生成执行体**
+  （canary：该时刻没有新 rollout、目标树 `dirty=0`）⇒ 按 §4AL 既有判据这**不算补投**；正解是**整个会话不带 `model` 字段**（继承总控当前模型）。
+
+### 4AX.4 真机评测进度（B′ 仍在跑，无回执前不结案）
+- A 步（结构，零模型往返）：`collected=105/105` ✓。
+- B′ 步：`PID 14052`，20:31:00 起跑，实测 66–75 s/题 ⇒ **ETA ≈22:30**；
+  打到 `127.0.0.1:8001` **绕过 nginx**，所以口径叫 **B′ 不是 B**，与 B 不可直接互比。
+  答案落盘只在整个脚本结束时一次性写（`scripts/collect_evaluation_answers.py:341`），中途看不到进度，**缺题只能整轮重跑，禁止手改文件**。
+- C 步待 B′ 退出后由总控跑：`--fixture tests/fixtures/business_evaluation_100.jsonl --answers … --output docs/testing/evaluation-report.json`，
+  预期 `evaluated=105`；该报告**当前未跟踪、未被忽略、从未入库**，达标后才 `git add` 这一个路径（runbook 认定它是唯一该进库的工件；
+  没有任何测试读它——`tests/test_evaluation_report.py` 用的是 `tmp_path`）。
+- 探针已抓到一个**活的**缺陷（不是评测集问题）：`doc-01`「住宿费标准是多少？」96.3 s，答案说"未找到"，只回了《2026 年华东区渠道政策要点》，
+  而《企业管理制度手册》`1.1.4 请假制度` **确实在 `chroma.sqlite3` 里** ⇒ **R79 热库/外部库排序嫌疑真机复现**，本轮评测会把它量化。
+- 这一轮同时解 55 条 `must_contain` 未知数（语料系业主裁定的编造数据），**评测集本身仍禁止改动**（被 `tests/test_evaluation_report.py` 钉）。
+
+### 4AX.5 本班账
+- 主树 HEAD：`7c66397`（R89 并树），双远端同步。今日提交数 +4（`249aedf`/`3305591`/`5160494` 在票分支，`7c66397` 在主干）。
+- 在途：`Mendel`(R37/`be-r37`)、`Faraday`(R84/`be-r84`) —— 并发 2，未超上限 3；两者写域与 `chat.py`(R55 已并)/`retrieval_pipeline.py`(R57 已并) 零相交。
+- 待投（下一 block）：**R90a**（`app/db/migrations.py` + `docker-compose.yml` + `.env.example` + 新用例；判据跟进单 §34.2，**禁止碰真机 `enterprise_brain` 库**，一次性库或无 `DATABASE_URL` 即跳过）。
+- 等业主：H13–H18、R85、R88、R90b（`migrations/0010:216` 的 `%I`）、删除清单（不急）、远端 `master` 可见性、孤儿卷 `enterprise-brain_ollama_data`、临时令牌文件。
+- R90 现状补记：库级 GUC `app.embedding_dimension` 是我手工设成 768 才解封的，**根因未修**，R90a/R90b 不结案。
