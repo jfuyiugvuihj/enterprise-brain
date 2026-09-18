@@ -67,12 +67,25 @@ def test_embedding_failure_skips_remaining_chunks_during_cooldown(monkeypatch):
     assert all(vector == [0.0] * 768 for vector in result)
 
 
-def test_embedding_uses_a_short_default_timeout(monkeypatch):
+def test_embedding_timeout_default_is_bounded_and_overridable(monkeypatch):
+    """钉住“有界且可覆盖”这个契约本身，而不是某个具体秒数。
+
+    原断言是 `timeout == 1.0`（上传期防止无限挂死钉下的）。R21 把默认值换成有界常量
+    EMBED_TIMEOUT_DEFAULT_SECONDS：模型冷加载时 1 秒必然不够（跟进单 §17 实测点），
+    而“不许无限等”这条原意由“等于导出的常量 + 落在 1~60 秒之间 + 可被环境变量覆盖”
+    三句继续守住，没有放宽。
+    """
+    from app.rag import retriever as rag_retriever
     from app.rag.retriever import OllamaEmbeddings
 
     monkeypatch.delenv("OLLAMA_EMBED_TIMEOUT", raising=False)
+    default = OllamaEmbeddings().timeout
 
-    assert OllamaEmbeddings().timeout == 1.0
+    assert default == rag_retriever.EMBED_TIMEOUT_DEFAULT_SECONDS
+    assert 1.0 < default <= 60.0, "超时必须有界：不许退化成 None 或无限等待"
+
+    monkeypatch.setenv("OLLAMA_EMBED_TIMEOUT", "0.5")
+    assert OllamaEmbeddings().timeout == 0.5
 
 
 def test_upload_keeps_document_when_optional_metadata_store_is_down(tmp_path, monkeypatch):
@@ -196,7 +209,7 @@ def test_upload_skips_optional_metadata_sync_when_postgres_is_offline(tmp_path, 
 
 
 def test_document_retriever_batches_large_collection_writes():
-    from app.rag.retriever import DocumentRetriever
+    from app.rag.retriever import DocumentRetriever, EMBEDDING_DIM
 
     class FakeCollection:
         def __init__(self):
@@ -214,7 +227,10 @@ def test_document_retriever_batches_large_collection_writes():
 
     class FakeEmbedding:
         def embed_documents(self, texts):
-            return [[0.0] * 3 for _ in texts]
+            # 桩必须满足 R21 写库闸门的合法形状（维度 EMBEDDING_DIM、非全零）：这条用例
+            # 测的是分批边界，闸门另有它自己的用例，别让断言变成在测闸门。
+            template = [0.5] + [0.0] * (EMBEDDING_DIM - 1)
+            return [list(template) for _ in texts]
 
     retriever = DocumentRetriever.__new__(DocumentRetriever)
     retriever.collection = FakeCollection()

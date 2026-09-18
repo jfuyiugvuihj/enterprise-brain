@@ -1,6 +1,6 @@
 """
 Agentic RAG 检索管线：
-查询改写 → 多路召回(语义+BM25+子问题) → 权限预过滤 → RRF 融合 → Cross-Encoder 重排
+查询改写/词表扩展 → 多路召回(语义+BM25+子问题) → 权限预过滤 → RRF 融合 → Cross-Encoder 重排
 """
 import json
 import os
@@ -130,6 +130,107 @@ class QueryRewriter:
         except Exception as e:
             logger.warning(f"查询改写失败，返回原始问题: {e}")
             return {"rewrites": [question], "sub_questions": []}
+
+
+# ==================== 术语/同义词扩展（R47，纯规则） ====================
+
+# 一条指标定义通常带 5-6 个 match_terms。全并进检索会把 BM25 与向量两条腿的候选炸开，
+# 还会让 RRF 名次变成"谁的词表长谁赢"，所以扩展条数单独设上限。
+SYNONYM_EXPANSION_MAX_QUERIES = 3
+
+# 问题字面达到这个长度就不做词表扩展；取值 0 表示关掉这道门槛。用的是 R28 判定"多意图"
+# 的同一把尺 ``ADAPTIVE_REWRITE_MIN_CHARS``：写得这么长的问题，字面本身已经带够检索词，
+# 而 R28 早已把这类问题判给模型改写去宽化——规则扩展补的是模型没参与的那一段。
+# 这道门槛同时是对 R28 交付的兼容边界：tests/test_retrieval_rewrite_tier.py:102-110 钉死
+# 了"fast 档两条腿只跑原问题"，而那道题 26 字且命中词表里的 ``住宿``。把本常量改成 0 就
+# 会让那条断言变红；改它的断言不在本单写域内，要动请先由 R28 持有者收口。
+SYNONYM_EXPANSION_MAX_QUERY_CHARS = ADAPTIVE_REWRITE_MIN_CHARS
+
+# 两条腿各自的 query 上限。原本在 search 里是字面量 5，抽成常量只为让扩展看得见"还剩
+# 几个槽位"，取值一字未改。
+MAX_RECALL_QUERIES = 5
+
+# 短于这个词长的词不值得单独发一条检索 query：单字在中文里几乎总是噪声级候选。
+SYNONYM_EXPANSION_MIN_TERM_CHARS = 2
+
+
+def _matched_definition(query: str, owner_id: str | None = None):
+    """问题命中的那个指标定义；命不中、或语义目录读不动时返回 None。
+
+    出口取 ``registry.match_definition`` 而不是 ``match_metric_context``：后者返回的是
+    ``MetricContext``，而 ``MetricDefinition.to_context``（app/semantics/registry.py:166-182）
+    根本没有带出 ``match_terms`` 字段——词表只在 ``MetricDefinition`` 这个 dataclass 出口上。
+    命中口径（最长命中优先、owner 命名空间）整体复用 registry，本模块不自己认词。
+    """
+    try:
+        from app.semantics.registry import match_definition
+
+        return match_definition(query, owner_id)
+    except Exception as exc:  # noqa: BLE001 - 词表读不到时原题照跑，不许把召回带崩
+        logger.warning(f"同义词扩展：术语目录读取失败，本次跳过扩展: {exc}")
+        return None
+
+
+def expand_query_synonyms(query: str, base_queries: list[str] | None = None,
+                          owner_id: str | None = None) -> list[str]:
+    """用命中定义的 ``match_terms`` 给检索追加几条纯规则的改写 query。
+
+    零模型往返、零网络、零新依赖：词表来自本机指标目录，本函数只做筛选与排序。丢掉三类词：
+    与原题同形的（词面本来就是原题的子串，等于把同一条 query 再问一遍）、第 ① 步已经跑过
+    的词形（模型改写可能正好改出了同一个词）、太短的。剩下的按"能给两条腿带来多少原题没
+    见过的字"从多到少排，取前 ``SYNONYM_EXPANSION_MAX_QUERIES`` 条，并且只填
+    ``MAX_RECALL_QUERIES`` 剩下的槽位——槽位已被原题与模型改写占满时直接返回空，连词表都
+    不读，不为一次注定不生效的扩展付目录查询的往返。
+
+    原问题始终是调用方 ``all_queries`` 的第 1 条，扩展词只往后追加，挤不掉它。
+    命不中任何定义时返回 ``[]``：检索行为与扩展落地前一字不差。
+
+    ``owner_id`` 只决定读哪一份术语目录（``registry._owner_ids``：调用者自己的行 + 共享的
+    system 行），不参与权限判定，也不会把别人的租户词表带进来。传 None 即只看共享目录。
+    """
+    text = str(query or "").strip()
+    if not text:
+        return []
+    queued = [str(item or "").strip() for item in (base_queries or [])]
+    slots = MAX_RECALL_QUERIES - len([item for item in queued if item])
+    if slots <= 0:
+        return []
+    if (
+        SYNONYM_EXPANSION_MAX_QUERY_CHARS > 0
+        and len(text) >= SYNONYM_EXPANSION_MAX_QUERY_CHARS
+    ):
+        logger.debug(f"同义词扩展：问题字面已达 {len(text)} 字，跳过扩展")
+        return []
+
+    definition = _matched_definition(text, owner_id)
+    terms = tuple(getattr(definition, "match_terms", ()) or ())
+    if not terms:
+        return []
+
+    haystack = text.lower()
+    haystack_chars = set(haystack)
+    seen = {item.lower() for item in queued if item}
+    candidates: list[tuple[int, int, str]] = []
+    for position, term in enumerate(terms):
+        value = str(term or "").strip()
+        key = value.lower()
+        if not value or key in seen or len(value) < SYNONYM_EXPANSION_MIN_TERM_CHARS:
+            continue
+        if key in haystack:
+            # 词面已经原样出现在问题里，两条腿都在它上头算过分了，再发一条只是重复。
+            continue
+        seen.add(key)
+        novel_chars = len({char for char in key if char not in haystack_chars})
+        candidates.append((-novel_chars, position, value))
+
+    limit = min(slots, SYNONYM_EXPANSION_MAX_QUERIES)
+    expanded = [value for _, _, value in sorted(candidates)[:limit]]
+    if expanded:
+        logger.info(
+            f"同义词扩展: 命中 {getattr(definition, 'metric_id', '')} → "
+            f"追加 {len(expanded)} 条检索 query: {expanded}"
+        )
+    return expanded
 
 
 # ==================== 语义检索（Ollama Embedding + Chroma） ====================
@@ -358,7 +459,8 @@ class RetrievalPipeline:
 
     def search(self, query: str, top_k: int = 5,
                where: dict | None = None, pred=None,
-               tier: str | None = None) -> tuple[list[dict], list[str]]:
+               tier: str | None = None,
+               owner_id: str | None = None) -> tuple[list[dict], list[str]]:
         """
         执行完整检索管线。
         返回 (重排后的文档列表, 改写版本列表)
@@ -366,6 +468,9 @@ class RetrievalPipeline:
         档位只作用在第 1 步：显式传入 ``tier`` 优先，否则读环境变量
         ``RETRIEVAL_TIER``，两者都没给就是 ``full``，与改动前完全一致。Embedding
         召回与本地 Cross-Encoder 重排都不受档位影响。
+
+        ``owner_id`` 只给第 ①' 步的术语扩展当目录命名空间用：它决定读哪一份术语目录，
+        不参与权限判定，也不进返回值。不传就是只看共享的那一份。
         """
         # ① 查询改写 + 拆分
         tier = resolve_rewrite_tier(tier)
@@ -377,8 +482,14 @@ class RetrievalPipeline:
             logger.info(f"检索档位 {tier}: 跳过查询改写，本次检索 0 次大模型往返")
         all_queries = [query] + rewritten.get("rewrites", []) + rewritten.get("sub_questions", [])
 
+        # ①' 术语/同义词扩展：问题命中的指标定义自带词表，把其中与原题不同形的词也拿去
+        # 召回。纯规则，一次模型往返都不加；放在 ① 之后追加，是为了让它只填模型没花掉的
+        # 召回槽位，full 档改写正常返回时扩展会被上限挡在外面，两条腿的候选数一字不变。
+        # 权限口径不受影响：扩展出来的 query 走的还是下面同一个 where/pred。
+        all_queries += expand_query_synonyms(query, all_queries, owner_id=owner_id)
+
         # ② 多路并行召回（语义+BM25 对每个 query 同时跑）
-        queries = all_queries[:5]  # 最多 5 个查询
+        queries = all_queries[:MAX_RECALL_QUERIES]  # 最多 5 个查询
         all_semantic = []
         all_bm25 = []
         with ThreadPoolExecutor(max_workers=len(queries)) as ex:
@@ -439,8 +550,13 @@ class RetrievalPipeline:
         """
         scope = resolve_document_retrieval_scope(principal)
         # tier 不传时由 search() 读环境变量决定：调用方一行不改也能整条链路分档。
+        # owner_id 与 app/agents/orchestrator.py 的 _owner_id_from 同一个口径（principal.user_id），
+        # 决定的是"读哪一份术语目录"，不是"能看哪些文档"：registry 只允许调用者自己的行加
+        # system 的共享行，principal 为 None 时退回只读共享行。
+        owner_id = str(getattr(principal, "user_id", "") or "").strip() or None
         found = self.search(
-            query, top_k=top_k, where=scope.filters, pred=scope.allows, tier=tier
+            query, top_k=top_k, where=scope.filters, pred=scope.allows, tier=tier,
+            owner_id=owner_id,
         )
         record_retrieval_scope(principal, scope, hit_count=len(found[0]))
         return found
