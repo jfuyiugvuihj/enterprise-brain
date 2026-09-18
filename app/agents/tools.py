@@ -500,6 +500,7 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
 def _llm_pandas_code(df, query: str) -> str:
     """让 LLM 根据列结构生成一段只用 df/pd 的 pandas 表达式"""
     from app.agents.nodes import _make_model
+    from app.agents.contracts import ModelTier
     from langchain_core.messages import HumanMessage
     cols = ", ".join(f"{c}({df[c].dtype})" for c in df.columns)
     prompt = (
@@ -509,7 +510,7 @@ def _llm_pandas_code(df, query: str) -> str:
         "只输出代码本身，不要解释、不要 markdown、不要 ```。\n\n"
         "用户问题：" + query
     )
-    resp = _make_model(timeout=30).invoke([HumanMessage(content=prompt)])
+    resp = _make_model(ModelTier.CODE, prompt=prompt).invoke([HumanMessage(content=prompt)])
     code = str(resp.content).strip()
     if code.startswith("```"):
         code = code.strip("`")
