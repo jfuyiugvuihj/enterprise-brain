@@ -1,6 +1,7 @@
 ﻿from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from enum import StrEnum
+from pydantic import BaseModel, Field, model_validator
 
 
 class Principal(BaseModel):
@@ -65,13 +66,136 @@ class AuthorizationDecision(BaseModel):
     audit_required: bool = True
 
 
-class ModelBudget(BaseModel):
-    """Per-request model budget; limits are supplied by configuration."""
+class ModelTier(StrEnum):
+    """Every local-model call belongs to one tier, and every tier carries its own budget.
 
+    The list is the enumeration of the call sites that exist in ``app/**``. A tier with no
+    caller is the same dead contract as an unassigned field, so
+    ``tests/test_r30_model_tiers.py`` fails when one is added without a call site.
+    """
+
+    #: chitchat answer -- app/agents/nodes.py respond
+    CHAT = "chat"
+    #: compound-question split -- app/agents/nodes.py plan
+    PLAN = "plan"
+    #: short-term memory compression -- app/agents/orchestrator.py main_agent_node
+    COMPRESS = "compress"
+    #: retrieval follow-up rewrite -- app/common/model_handler.py chat (non-streaming)
+    REWRITE = "rewrite"
+    #: pandas / SQL expression synthesis -- app/agents/tools.py _llm_pandas_code
+    CODE = "code"
+    #: alert attribution -- app/api/v1/alerts.py _ai_analysis
+    ALERT = "alert"
+    #: analysis prose -- doc/data/chart/export workers plus supervisor routing
+    ANALYSIS = "analysis"
+
+
+DEFAULT_MODEL_TIER = ModelTier.ANALYSIS
+
+#: A stream is not one long read: bytes keep arriving, so its read budget is an inter-chunk
+#: stall allowance. This many tokens of decode is the most a stall may cost before the call
+#: is declared wedged.
+STREAM_STALL_TOKENS = 64
+
+#: Budget verdicts. Deliberately NOT members of ``ErrorEnvelope``: they describe one model
+#: call, not a client-facing failure class, and the public code vocabulary is R64's to grow.
+CONTEXT_LIMIT_CODE = "context_limit_exceeded"
+OUTPUT_TRUNCATED_CODE = "model_output_truncated"
+#: Every line these budgets write is greppable by exactly one marker.
+MODEL_BUDGET_MARKER = "[ModelBudget]"
+
+
+class ModelBudget(BaseModel):
+    """One tier's explicit output cap plus the timeout budget that cap implies.
+
+    This is the contract that used to be hollow: ``max_tokens`` was declared here and
+    assigned nowhere in ``app/**``, while every real call handed one bare scalar to both
+    ``ChatOpenAI(timeout=...)`` and ``httpx.Client(timeout=...)``. That scalar paid for
+    prefill (reading the prompt) and decode (writing the answer) out of a single wall
+    clock, so a longer prompt was more likely to be cut off mid-answer than to be given
+    more time. Everything here is therefore accounted in two halves:
+
+    ``prefill_seconds = prompt_tokens / prefill_tokens_per_second``
+    ``decode_seconds  = max_tokens / decode_tokens_per_second``
+    ``read_timeout    = clamp(margin * (prefill + decode), floor, ceiling)``
+
+    The rates, margin, floor, ceiling and context window come from configuration (see
+    ``app/common/model_budget.py`` and ``.env.example``), so an operator on a slower CPU
+    raises two documented numbers instead of guessing a timeout. ``max_concurrency`` stays
+    unfilled on purpose: slot semantics belong to the machine-wide budget (R23), not to a
+    per-tier profile.
+    """
+
+    tier: ModelTier = DEFAULT_MODEL_TIER
     max_calls: int | None = None
+    #: Explicit output cap; resolved from the configured tier when unset.
     max_tokens: int | None = None
+    #: Wall-clock allowance for one request at this tier's largest permitted prompt.
     timeout_seconds: float | None = None
     max_concurrency: int | None = None
+    #: ``n_ctx`` of the local server: prompt plus declared output must fit inside it.
+    context_limit_tokens: int | None = None
+    prefill_tokens_per_second: float | None = None
+    decode_tokens_per_second: float | None = None
+    timeout_margin: float | None = None
+    timeout_floor_seconds: float | None = None
+    timeout_ceiling_seconds: float | None = None
+    connect_timeout_seconds: float | None = None
+
+    @model_validator(mode="after")
+    def _resolve_unset_limits_from_configuration(self) -> "ModelBudget":
+        """An unset number means "the configured value for this tier", never "unlimited"."""
+        from app.common.model_budget import tier_profile
+
+        for name, value in tier_profile(self.tier).items():
+            if getattr(self, name) is None:
+                setattr(self, name, value)
+        if self.timeout_seconds is None:
+            self.timeout_seconds = self.read_timeout_seconds(self.input_budget_tokens)
+        return self
+
+    @property
+    def input_budget_tokens(self) -> int:
+        """The largest prompt this tier may send and still fit its own output cap."""
+        return max(1, int(self.context_limit_tokens) - int(self.max_tokens))
+
+    def prefill_seconds(self, prompt_tokens: int | None = None) -> float:
+        tokens = self.input_budget_tokens if prompt_tokens is None else max(0, int(prompt_tokens))
+        return tokens / max(0.1, float(self.prefill_tokens_per_second))
+
+    def decode_seconds(self, *, stream: bool = False) -> float:
+        tokens = min(self.max_tokens, STREAM_STALL_TOKENS) if stream else self.max_tokens
+        return tokens / max(0.1, float(self.decode_tokens_per_second))
+
+    def read_timeout_seconds(self, prompt_tokens: int | None = None, *, stream: bool = False) -> float:
+        """The prompt-scaled read budget that replaces the old single scalar.
+
+        Monotonic in ``prompt_tokens`` by construction: a bigger prompt buys a bigger clock,
+        up to the configured ceiling.
+        """
+        needed = (self.prefill_seconds(prompt_tokens) + self.decode_seconds(stream=stream)) * float(
+            self.timeout_margin
+        )
+        return min(max(needed, float(self.timeout_floor_seconds)), float(self.timeout_ceiling_seconds))
+
+    def fits_within_timeout(self, prompt_tokens: int | None = None, *, stream: bool = False) -> bool:
+        """False when the ceiling had to cut this tier's own prefill+decode estimate short."""
+        needed = (self.prefill_seconds(prompt_tokens) + self.decode_seconds(stream=stream)) * float(
+            self.timeout_margin
+        )
+        return needed <= float(self.timeout_ceiling_seconds) + 1e-9
+
+    def context_window_code(self, prompt_tokens: int | None) -> str | None:
+        """Stable code for "this call cannot fit n_ctx", or None when it can.
+
+        ``None`` also means "prompt size unknown", which is why the guard judges a number
+        rather than guessing at a message list.
+        """
+        if prompt_tokens is None:
+            return None
+        if int(prompt_tokens) + int(self.max_tokens) <= int(self.context_limit_tokens):
+            return None
+        return CONTEXT_LIMIT_CODE
 
 
 class ArtifactRef(BaseModel):

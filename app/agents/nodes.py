@@ -15,7 +15,16 @@ from langchain_core.runnables import Runnable
 
 from app.common.logger import logger
 from app.common.model_config import get_local_model_settings
-from app.agents.contracts import AgentResult
+from app.agents.contracts import AgentResult, DEFAULT_MODEL_TIER, ModelTier
+from app.common.model_budget import (
+    budget_signal,
+    context_error_code,
+    detect_output_truncation,
+    estimate_prompt_tokens,
+    http_timeout,
+    model_tier_budget,
+    report_budget,
+)
 from app.agents.critic import review_agent_results
 from app.agents.planner import build_task_plan
 from app.memory import recall, remember
@@ -130,12 +139,16 @@ class _ResilientModel(Runnable):
         provider: str = "local",
         model_name: str = "",
         capacity_wait_seconds: float | None = None,
+        budget=None,
     ):
         self.primary = primary
         self.fallback = fallback if fallback is not None else _OfflineModel()
         self.provider = provider or "local"
         self.recorded_model_name = model_name or str(getattr(primary, "model_name", "") or "")
         self.capacity_wait_seconds = capacity_wait_seconds
+        #: This call's token and clock budget; ``None`` means "an un-typed hand-built model",
+#: which is only ever constructed by tests, never by ``_make_model``.
+        self.budget = budget
 
     @property
     def model_name(self):
@@ -157,6 +170,7 @@ class _ResilientModel(Runnable):
             provider=self.provider,
             model_name=self.model_name,
             capacity_wait_seconds=self.capacity_wait_seconds,
+            budget=self.budget,
         )
 
     def _span(self, config, *, provider=None, model_name=None, queue_wait_ms=None):
@@ -177,6 +191,22 @@ class _ResilientModel(Runnable):
         span.finish("model_unavailable", error_code="model_unavailable", summary=model_token_counts(response))
         return response
 
+    def _budget_kwargs(self, messages, *, stream: bool) -> dict:
+        """Size this exact call: its own output cap and a clock proportional to its prompt.
+
+        The per-request values override the client defaults, which are only the worst case
+        for the tier. A provider that has never heard of ``extra_body`` still gets a valid
+        request: the OpenAI-compatible wire format carries ``max_tokens`` there.
+        """
+        if self.budget is None:
+            return {}
+        prompt_tokens = estimate_prompt_tokens(messages)
+        report_budget(self.budget, prompt_tokens, stream=stream)
+        return {
+            "timeout": http_timeout(self.budget, prompt_tokens, stream=stream),
+            "extra_body": {"max_tokens": self.budget.max_tokens},
+        }
+
     def invoke(self, messages, config=None, **kwargs):
         from app.common.model_budget import ModelBudgetExhausted, default_model_budget
 
@@ -189,9 +219,20 @@ class _ResilientModel(Runnable):
             return self._offline_fallback(messages, config=config, **kwargs)
 
         span = self._span(config, queue_wait_ms=slot.wait_ms)
+        call_kwargs = {**self._budget_kwargs(messages, stream=False), **kwargs}
         try:
-            response = self.primary.invoke(messages, config=config, **kwargs)
+            response = self.primary.invoke(messages, config=config, **call_kwargs)
         except Exception as exc:
+            provider_code = context_error_code(exc)
+            if provider_code:
+                logger.warning(
+                    budget_signal(
+                        getattr(self.budget, "tier", None) or "analysis",
+                        prompt_tokens=estimate_prompt_tokens(messages),
+                        read_seconds=float(getattr(self.budget, "timeout_seconds", 0.0) or 0.0),
+                        code=provider_code,
+                    )
+                )
             from app.trace.spans import error_code_for
 
             span.finish("failed", error_code=error_code_for(exc))
@@ -201,13 +242,29 @@ class _ResilientModel(Runnable):
         slot.release()
         from app.trace.spans import model_token_counts
 
-        span.finish("completed", summary=model_token_counts(response))
+        summary = dict(model_token_counts(response))
+        if self.budget is not None:
+            truncated = detect_output_truncation(response)
+            summary["budget_tier"] = self.budget.tier.value
+            if truncated:
+                summary["truncation_code"] = truncated
+                logger.warning(
+                    budget_signal(
+                        self.budget.tier,
+                        prompt_tokens=estimate_prompt_tokens(messages),
+                        read_seconds=self.budget.timeout_seconds,
+                        code=truncated,
+                    )
+                )
+        span.finish("completed", summary=summary)
         return response
 
     def stream(self, *args, **kwargs):
         from app.common.model_budget import ModelBudgetExhausted, default_model_budget
 
         config = kwargs.get("config")
+        if args:
+            kwargs = {**self._budget_kwargs(args[0], stream=True), **kwargs}
         try:
             slot = default_model_budget().acquire(wait_seconds=self.capacity_wait_seconds)
         except ModelBudgetExhausted as exc:
@@ -244,7 +301,20 @@ class _ResilientModel(Runnable):
         span.finish("completed")
 
 
-def _make_model(timeout: int = 60):
+def _make_model(tier: ModelTier | str = DEFAULT_MODEL_TIER, *, prompt=None):
+    """Build the model for one tier: an explicit output cap and a prompt-scaled clock.
+
+    There is no ``timeout`` parameter any more, and that is the point. A bare scalar used to
+    be handed to both ``ChatOpenAI`` and ``httpx.Client``, which made prefill and decode
+    share one wall clock: the longer the prompt, the more likely the answer was cut off in
+    the middle. ``prompt`` is the text or message list this instance is about to send, where
+    the call site already knows it; when nobody passes it, the budget is sized for the
+    tier's largest permitted prompt and every call is re-sized again in
+    :meth:`_ResilientModel.invoke` from the messages actually on the wire.
+    """
+    budget = model_tier_budget(tier)
+    prompt_tokens = estimate_prompt_tokens(prompt)
+    report_budget(budget, prompt_tokens, stream=False)
     settings = get_local_model_settings()
     if not settings.model_name:
         # No configured and no discovered model: report unavailability instead of
@@ -253,19 +323,21 @@ def _make_model(timeout: int = 60):
         return _OfflineModel()
     provider = "ollama" if ":11434" in settings.base_url else "local-openai-compatible"
     try:
+        client_timeout = http_timeout(budget, prompt_tokens)
         primary = ChatOpenAI(
             base_url=settings.base_url,
             api_key=settings.api_key,
             model=settings.model_name,
             temperature=0,
             max_retries=0,
-            timeout=timeout,
-            http_client=httpx.Client(timeout=timeout, trust_env=False),
+            timeout=client_timeout,
+            http_client=httpx.Client(timeout=client_timeout, trust_env=False),
         )
         return _ResilientModel(
             primary,
             provider=provider,
             model_name=settings.model_name,
+            budget=budget,
         )
     except Exception as exc:
         logger.warning(f"[Model] 回退到离线模式: {exc}")
@@ -301,7 +373,7 @@ def respond(state) -> dict:
     """闲聊直接回答，不走 worker"""
     q = _last_user(state)
     try:
-        resp = _make_model(timeout=30).invoke([HumanMessage(content=q)])
+        resp = _make_model(ModelTier.CHAT, prompt=q).invoke([HumanMessage(content=q)])
         text = resp.content or "你好，我是企业智脑，可以帮你查文档、分析数据、画图、导出报告。"
     except Exception:
         text = "你好，我是企业智脑，可以帮你查文档、分析数据、画图、导出报告。"
@@ -367,7 +439,7 @@ def plan(state) -> dict:
     )
     try:
         import json
-        resp = _make_model(timeout=30).invoke([HumanMessage(content=prompt)])
+        resp = _make_model(ModelTier.PLAN, prompt=prompt).invoke([HumanMessage(content=prompt)])
         arr = json.loads(str(resp.content).strip().removeprefix("```json").removesuffix("```"))
         plan_list = arr if isinstance(arr, list) else []
     except Exception as e:

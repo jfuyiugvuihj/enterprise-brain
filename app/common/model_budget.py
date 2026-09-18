@@ -4,13 +4,32 @@ A private deployment runs one local model on the customer machine. Every boundar
 that invokes that model must share one budget so a 14B model cannot be called
 without limit. ``wait_seconds`` keeps legitimate parallel workers queueing instead
 of stampeding the model; a zero wait preserves the previous non-blocking behavior.
+
+The other half of that budget is tokens and clock, and it is per tier: a greeting, a
+memory summary and a long analysis answer must not share one output cap or one timeout.
+``tier_profile`` / ``model_tier_budget`` below read that configuration, and
+``app/agents/contracts.py:ModelBudget`` is the object they fill in.
 """
 from __future__ import annotations
 
+import math
 import os
 import threading
 import time
 from dataclasses import dataclass
+from typing import Any, Iterable
+
+import httpx
+
+from app.agents.contracts import (
+    CONTEXT_LIMIT_CODE,
+    MODEL_BUDGET_MARKER,
+    OUTPUT_TRUNCATED_CODE,
+    ModelBudget,
+    ModelTier,
+)
+
+from app.common.logger import logger
 
 
 class ModelBudgetExhausted(RuntimeError):
@@ -112,3 +131,260 @@ def reset_default_budget() -> None:
     with _default_lock:
         _default = None
         _default_size = None
+
+
+# ==================== per-tier token and timeout budget ====================
+
+#: Output cap per tier, in tokens. These are the defaults ``.env.example`` documents;
+#: ``MODEL_TIER_<TIER>_MAX_TOKENS`` overrides one of them for a machine that is faster or
+#: slower than the measured baseline.
+TIER_MAX_TOKEN_DEFAULTS: dict[ModelTier, int] = {
+    ModelTier.CHAT: 256,
+    ModelTier.PLAN: 256,
+    ModelTier.REWRITE: 256,
+    ModelTier.ALERT: 384,
+    ModelTier.COMPRESS: 512,
+    ModelTier.CODE: 512,
+    ModelTier.ANALYSIS: 1536,
+}
+
+#: Measured on the delivery baseline (CPU-only qwen3.5:9b through Ollama, 2026-09-16):
+#: prefill 35.2 tok/s, decode 8.18 tok/s. The defaults round down to the pessimistic
+#: integer, because a rate that is too optimistic is exactly the cut-off-mid-answer bug
+#: this section exists to remove.
+DEFAULT_PREFILL_TOKENS_PER_SECOND = 35.0
+DEFAULT_DECODE_TOKENS_PER_SECOND = 8.0
+DEFAULT_TIMEOUT_MARGIN = 1.15
+DEFAULT_TIMEOUT_FLOOR_SECONDS = 10.0
+DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
+#: ``MODEL_REQUEST_TIMEOUT`` is the ceiling for one request. Read it only through
+#: :func:`request_timeout_ceiling_seconds`, so no second module can keep its own default.
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
+DEFAULT_CONTEXT_TOKENS = 4096
+
+#: Framing around each message: the estimate is of a request, not of a bare string.
+MESSAGE_OVERHEAD_TOKENS = 4
+
+_CJK_RANGES = (
+    (0x2E80, 0x2EFF),
+    (0x3000, 0x303F),
+    (0x3400, 0x4DBF),
+    (0x4E00, 0x9FFF),
+    (0xF900, 0xFAFF),
+    (0xFF00, 0xFFEF),
+    (0x20000, 0x2A6DF),
+)
+
+#: Fragments a local server uses when it refuses a request for being too long.
+CONTEXT_ERROR_FRAGMENTS = (
+    "context length",
+    "context_length",
+    "maximum context",
+    "n_ctx",
+    "too many tokens",
+    "prompt is too long",
+)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = str(os.getenv(name, "") or "").strip()
+    try:
+        value = float(raw) if raw else float(default)
+    except ValueError:
+        return float(default)
+    return value if value > 0 else float(default)
+
+
+def request_timeout_ceiling_seconds() -> float:
+    """``MODEL_REQUEST_TIMEOUT``: one variable, one default, read in one place."""
+    return _env_float("MODEL_REQUEST_TIMEOUT", DEFAULT_REQUEST_TIMEOUT_SECONDS)
+
+
+def context_limit_tokens() -> int:
+    """The ``n_ctx`` that every tier's prompt plus output has to fit inside."""
+    return int(_env_float("MODEL_CONTEXT_TOKENS", float(DEFAULT_CONTEXT_TOKENS)))
+
+
+def tier_max_tokens(tier: ModelTier | str) -> int:
+    resolved = ModelTier(tier)
+    configured = _env_int(
+        f"MODEL_TIER_{resolved.value.upper()}_MAX_TOKENS", TIER_MAX_TOKEN_DEFAULTS[resolved]
+    )
+    return max(1, min(int(configured), context_limit_tokens() - 1))
+
+
+def tier_profile(tier: ModelTier | str) -> dict[str, float | int]:
+    """Every configured number behind one tier, keyed by ``ModelBudget`` field name.
+
+    ``max_tokens`` is never ``None`` here: a tier that cannot say how much it is allowed to
+    write is the dead contract this section replaces.
+    """
+    return {
+        "max_tokens": tier_max_tokens(tier),
+        "context_limit_tokens": context_limit_tokens(),
+        "prefill_tokens_per_second": _env_float(
+            "MODEL_PREFILL_TOKENS_PER_SECOND", DEFAULT_PREFILL_TOKENS_PER_SECOND
+        ),
+        "decode_tokens_per_second": _env_float(
+            "MODEL_DECODE_TOKENS_PER_SECOND", DEFAULT_DECODE_TOKENS_PER_SECOND
+        ),
+        "timeout_margin": _env_float("MODEL_TIMEOUT_MARGIN", DEFAULT_TIMEOUT_MARGIN),
+        "timeout_floor_seconds": _env_float("MODEL_TIMEOUT_FLOOR_SECONDS", DEFAULT_TIMEOUT_FLOOR_SECONDS),
+        "timeout_ceiling_seconds": request_timeout_ceiling_seconds(),
+        "connect_timeout_seconds": _env_float("MODEL_CONNECT_TIMEOUT_SECONDS", DEFAULT_CONNECT_TIMEOUT_SECONDS),
+    }
+
+
+def model_tier_budget(tier: ModelTier | str) -> ModelBudget:
+    """Resolve one tier into the budget object every call site consumes."""
+    return ModelBudget(tier=ModelTier(tier))
+
+
+def _text_of(part: Any) -> str:
+    if isinstance(part, str):
+        return part
+    if isinstance(part, dict):
+        return str(part.get("content") or part.get("text") or "")
+    content = getattr(part, "content", None)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, Iterable):
+        return " ".join(_text_of(item) for item in content)
+    return str(content)
+
+
+def estimate_text_tokens(text: str) -> int:
+    """Deterministic estimate: one token per CJK character, one per four latin characters.
+
+    Deliberately not a real tokenizer -- the local server owns the true count, and a
+    private deployment must not spend a model round trip to size a timeout. The rule is
+    pinned by a test, because changing it silently would change every budget at once.
+    """
+    if not text:
+        return 0
+    cjk = sum(1 for char in text if any(low <= ord(char) <= high for low, high in _CJK_RANGES))
+    return int(math.ceil(cjk + (len(text) - cjk) / 4.0))
+
+
+def estimate_prompt_tokens(prompt: Any) -> int | None:
+    """Prompt size in tokens, or ``None`` when the caller has no prompt yet.
+
+    ``None`` is a real answer: it means "size unknown", and the budget then plans against
+    that tier's largest permitted prompt rather than pretending the call is cheap.
+    """
+    if prompt is None:
+        return None
+    if isinstance(prompt, str):
+        return estimate_text_tokens(prompt)
+    if isinstance(prompt, dict):
+        return estimate_text_tokens(_text_of(prompt)) + MESSAGE_OVERHEAD_TOKENS
+    total = 0
+    for message in prompt:
+        total += estimate_text_tokens(_text_of(message)) + MESSAGE_OVERHEAD_TOKENS
+    return total
+
+
+def _finish_reason(response: Any) -> str:
+    metadata = getattr(response, "response_metadata", None)
+    if isinstance(metadata, dict):
+        for key in ("finish_reason", "done_reason"):
+            value = str(metadata.get(key) or "").strip().lower()
+            if value:
+                return value
+    choices = getattr(response, "choices", None)
+    for choice in choices or []:
+        if isinstance(choice, dict):
+            return str(choice.get("finish_reason") or "").strip().lower()
+        return str(getattr(choice, "finish_reason", "") or "").strip().lower()
+    return ""
+
+
+def detect_output_truncation(response: Any) -> str | None:
+    """Stable code for "the answer stopped at its length cap", or None when it did not.
+
+    ``finish_reason == "length"`` is the only honest evidence available without a
+    tokenizer: it says the server stopped writing because of a limit, which is what an
+    ``n_ctx`` collision looks like from the client side.
+    """
+    if _finish_reason(response) == "length":
+        return OUTPUT_TRUNCATED_CODE
+    return None
+
+
+def context_error_code(exc: BaseException) -> str | None:
+    """Stable code when the provider itself refused the request for being too long."""
+    text = str(exc).lower()
+    return CONTEXT_LIMIT_CODE if any(fragment in text for fragment in CONTEXT_ERROR_FRAGMENTS) else None
+
+
+def budget_signal(
+    tier: ModelTier | str,
+    *,
+    prompt_tokens: int | None,
+    read_seconds: float,
+    code: str | None = None,
+    clamped: bool | None = None,
+    stream: bool | None = None,
+) -> str:
+    """The one line format every budget verdict is logged as, marker included.
+
+    One formatter keeps ``[ModelBudget]`` and ``error_code=`` stable, so the guard is
+    findable in a customer log by one grep and assertable in a test by one literal.
+    """
+    parts = [
+        MODEL_BUDGET_MARKER,
+        f"tier={ModelTier(tier).value}",
+        f"prompt_tokens={prompt_tokens if prompt_tokens is not None else 'unknown'}",
+        f"read_seconds={read_seconds:.1f}",
+    ]
+    if stream is not None:
+        parts.append(f"stream={'yes' if stream else 'no'}")
+    if clamped is not None:
+        parts.append(f"clamped={'yes' if clamped else 'no'}")
+    if code:
+        parts.append(f"error_code={code}")
+    return " ".join(parts)
+
+
+def http_timeout(
+    budget: ModelBudget, prompt_tokens: int | None = None, *, stream: bool = False
+) -> httpx.Timeout:
+    """Split the clock into the four things it actually measures.
+
+    Only ``read`` waits for the model; connect/write/pool wait for a socket on a machine
+    that is loopback by definition, so they stay short and constant. Handing httpx a scalar
+    instead is what made every phase share the model's budget, which is the bug.
+    """
+    read = budget.read_timeout_seconds(prompt_tokens, stream=stream)
+    return httpx.Timeout(
+        read,
+        connect=budget.connect_timeout_seconds,
+        write=budget.connect_timeout_seconds,
+        pool=budget.timeout_floor_seconds,
+    )
+
+
+def report_budget(budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False) -> str | None:
+    """Log one verdict line when this call is already outside its own budget, else stay quiet.
+
+    Two separate reasons get the same marker: the window cannot hold the request
+    (``context_limit_exceeded``) and the ceiling had to shorten the tier's own honest
+    estimate (``clamped=yes``). The first is a customer-facing truncation; the second says
+    the machine is too slow for the tier as configured, which is an operator finding.
+    """
+    code = budget.context_window_code(prompt_tokens)
+    clamped = not budget.fits_within_timeout(prompt_tokens, stream=stream)
+    if code or clamped:
+        logger.warning(
+            budget_signal(
+                budget.tier,
+                prompt_tokens=prompt_tokens,
+                read_seconds=budget.read_timeout_seconds(prompt_tokens, stream=stream),
+                code=code,
+                clamped=clamped,
+                stream=stream,
+            )
+        )
+    return code
