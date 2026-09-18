@@ -72,6 +72,7 @@ import uuid
 BASE_URL = os.getenv("EVAL_BASE_URL", "http://127.0.0.1:8001").rstrip("/")
 TIMEOUT = float(os.getenv("EVAL_HTTP_TIMEOUT", "900"))
 PROXIES = {}  # 空 dict = 无视 http_proxy/https_proxy，等价 curl --noproxy "*"（§6）
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler(PROXIES))  # urlopen() 没有 proxies 参数：骨架原文照抄会 TypeError（2026-09-18 实测）
 _TOKEN = ""
 
 
@@ -84,7 +85,7 @@ def _open(path, payload):
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers=headers,
     )
-    return urllib.request.urlopen(request, timeout=TIMEOUT, proxies=PROXIES)
+    return _OPENER.open(request, timeout=TIMEOUT)
 
 
 def login():

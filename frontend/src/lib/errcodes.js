@@ -39,7 +39,7 @@
  *   仍是「后端确实发得出、封闭枚举里没有」的输入，前端已归一，契约侧仍欠登记（派单给后端时带上）。
  */
 
-/** 与后端封闭枚举一一对应的键（A-6 ③ 实量 26 个）：它们就是 normalizeError().code 的全部合法取值。 */
+/** 与后端封闭枚举一一对应的键（R89 实量 29 个）：它们就是 normalizeError().code 的全部合法取值。 */
 export const ERROR_CODES = {
   authentication_required: { message: '登录状态已失效，请重新登录后再试。', retryable: false },
   permission_denied: { message: '当前账号没有这项权限，请联系管理员开通。', retryable: false },
@@ -57,6 +57,15 @@ export const ERROR_CODES = {
   rate_limited: { message: '操作太频繁了，请稍等一会儿再试。', retryable: true },
   queue_unavailable: { message: '后台任务暂时排不上队，请稍后重试。', retryable: true },
   model_unavailable: { message: '分析模型当前不可用，请稍后重试或联系管理员。', retryable: true },
+  // R30：本机 n_ctx 装不下「这一轮的提示词 + 对话历史」。后端注释把话说死了 —— 它不是可重试的
+  // 错，「同一个提示词永远装不下」（app/agents/contracts.py:221-226），而且
+  // tests/test_r30_context_limit_guard.py::test_the_code_reaches_the_client_without_being_downgraded
+  // 当场断言 result.error.retryable is False。前端跟着判 false：点「重试」发出去的是同一个
+  // 超长请求，必然被同一道窗口拦下；真要它变，先变的是问题长度，不是再按一次按钮。
+  context_limit_exceeded: {
+    message: '这一轮的问题连同对话历史太长了，模型的上下文窗口装不下，请缩短问题或另起一轮会话再问。',
+    retryable: false,
+  },
   retrieval_unavailable: { message: '知识库检索暂不可用，回答可能缺少资料依据。', retryable: true },
   // 唯一出处 app/api/v1/chat.py:1303：/hitl/pending 取待确认列表时抛 PendingApprovalStoreMissing，
   // 也就是那张表还不存在（迁移没跑），503 的 detail 原样就是这个码。刻意不与下面 LEGACY_ALIASES 里
@@ -90,6 +99,43 @@ export const ERROR_CODES = {
   // 流式回答跑完既没正文也没待确认步骤。出处 app/api/v1/chat.py:997-1013（SSE request.failed 的 data.error_code）。
   // 原先只活在 lib/sessions.js:376 的私有字典里，句子内嵌了裸码名，这里按文案政策重写成纯人话 + 下一步。
   no_answer_produced: { message: '本轮未产出任何结论，请重试，或把数据范围缩小一点再问。', retryable: true },
+
+  // R64 的两枚行级终态码。语义逐字跟着后端注释走（app/agents/contracts.py:247-256），两枚说的是
+  // 两件不同的事，不许合并成一句模糊话（那是 R62 判据④钉过的老坑）：
+  //   row_scope_denied  行**存在**，只是在当前账号的行级可见范围之外 —— 既不能说成「没有数据」，
+  //                     也不能说成「这个数据集你看不了」（那两句话分别归 resource_not_found 与
+  //                     permission_denied / department_scope_denied，见下面 LEGACY_ALIASES）。
+  //   no_visible_rows   本轮一行可分析的都没有，而**为什么**后端刻意不下结论。
+  // emit 点在 app/agents/tools.py:87-88 与它旁边的行级文案层；配套人话见同文件 _QUERY_DENIED_HEAD
+  // 与 _QUERY_DENIED_HINT —— 下一步同样是「核对部门归属与文件的部门标注」，这里收下这层语义。
+  //
+  // 两枚的 retryable 都判 false，三条依据：
+  //   ① 行级可见范围是 app/common/rbac.py 按账号算出来的确定结果，账号和数据没变时重发同一个请求，
+  //      筛出来的还是同一批行 —— 重试不会变（与上面 storage_unavailable 那条「必须有人介入才变得了
+  //      的故障就别挂重试按钮」同一个判据）；
+  //   ② 后端自己也没把它们当可重试错：两枚都不在 app/agents/evidence.py:18 的 _RETRIABLE_CODES
+  //      （只收 model_unavailable / retrieval_unavailable / task_timeout / rate_limited /
+  //      queue_unavailable 五档）里，走 evidence 出来的 envelope 本身就是 retryable=False。
+  //      字典若写 true，就会分裂成「同一个码，裸码名进来时能重试、envelope 进来时不能」；
+  //   ③ 与本文件既有口径一致：LEGACY_ALIASES 里授权类终态那一族（principal_inactive /
+  //      department_scope_denied / clearance_insufficient / resource_scope_missing /
+  //      resource_scope_invalid）无一例外写死 retryable: false。
+  row_scope_denied: {
+    message: '这些数据行确实存在，只是不在当前账号的可见范围内，本轮没有取出一行来；如果这些数据本该对你可见，请联系管理员核对你的部门归属和文件的部门标注。',
+    retryable: false,
+  },
+  // no_visible_rows 的句子要绕开两个坑，两处都不是前端可以替后端下的结论：
+  //   ① 不许暗示「表是空的」—— 这一枚也用于「行被别的维度清空」的场合，表里本来可能有行；
+  //   ② 不许暗示「你没权限」—— 因由可能压根不在部门维度上。
+  // tests/test_tools_row_scope_messaging.py::TestNoGuessing 把「属于其他部门 / 未标注部门 /
+  // 没有部门归属 / 可见范围 / 权限」逐字列为无依据字样，同文件判据①的边界用例还钉了「表本来是
+  // 空的、文件读不出来，都不许算成权限」。所以这句只说事实 + 换输入再试，一个字都不猜因由，
+  // 形状照后端同码的中性原句（「本次可用的数据文件里没有可分析的数据行」）。
+  // 注意别与上面的 row_scope_denied 串味：「可见范围」那一枚才说，这一枚一个字都不提。
+  no_visible_rows: {
+    message: '本轮没有取到任何可分析的数据行，这次没能给出结果；请换一个数据范围、换一份文件，或换个问法再试一次。',
+    retryable: false,
+  },
 }
 
 /**

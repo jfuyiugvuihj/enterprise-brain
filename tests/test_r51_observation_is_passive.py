@@ -13,8 +13,10 @@ import io
 import json
 import math
 import socket
+import subprocess
 import time as _real_time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -515,21 +517,144 @@ def test_the_readout_opens_no_socket_and_imports_no_engine(monkeypatch) -> None:
 
     assert report["stages"]["generate"]["count"] == 1
     assert block["stages"]["generate"]["count"] == 1
+TRUNK_CANDIDATES = ("codex/data-file-catalog", "origin/codex/data-file-catalog", "master", "origin/master", "trunk")
+FORBIDDEN_PREFIXES = ("pyproject.toml", "uv.lock", "migrations/", "frontend/", "app/rag/", "docs/", "tests/conftest.py")
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=True
+    ).stdout
+
+
+def _head(repo: Path) -> str:
+    return _git(repo, "rev-parse", "HEAD").strip()
+
+
+def _current_branch(repo: Path) -> str:
+    return _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+
+
+def _branch_point(repo: Path) -> str:
+    """Where this branch left the trunk; the only baseline that can attribute a path to a ticket."""
+    for ref in TRUNK_CANDIDATES:
+        try:
+            base = _git(repo, "merge-base", "HEAD", ref).strip()
+        except subprocess.CalledProcessError:
+            continue
+        if base:
+            return base
+    return _head(repo)
+
+
+def _worktree_diff(repo: Path) -> list[str]:
+    """The pre-R87 view: tracked changes only, whole worktree, branch point ignored."""
+    return [line.strip() for line in _git(repo, "diff", "--name-only", "HEAD").splitlines() if line.strip()]
+
+
+def _ticket_scope(repo: Path) -> tuple[list[str], str]:
+    """What the ticket is answerable for: its own commits, plus its own untracked files.
+
+    R87 replaced a worktree-wide ``git diff --name-only HEAD``. That view reds for another
+    ticket's uncommitted work in a shared tree and, worse, is blind to untracked files, so a new
+    ``docs/`` file could sit there invisible. The branch point is the baseline for the committed
+    half, and untracked files count on any non-trunk branch. The trunk is named, not inferred
+    from ``base != head``: a ticket branch that has not committed yet has both equal, and it
+    still owes an accounting for what it dropped into the tree. On the trunk itself the committed
+    scope is empty by construction and the untracked leftovers there belong to no ticket.
+    """
+    base = _branch_point(repo)
+    listing = _git(repo, "diff", "--name-only", base, "HEAD")
+    paths = [line.strip() for line in listing.splitlines() if line.strip()]
+    if _current_branch(repo) not in TRUNK_CANDIDATES:
+        others = _git(repo, "ls-files", "--others", "--exclude-standard")
+        paths += [line.strip() for line in others.splitlines() if line.strip()]
+    return paths, base
+
+
+def _write(repo: Path, rel: str, text: str) -> None:
+    target = repo / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+
+
+def _commit(repo: Path, message: str) -> None:
+    _git(repo, "add", "-A")
+    _git(
+        repo,
+        "-c", "user.name=t",
+        "-c", "user.email=t@example.invalid",
+        "-c", "commit.gpgsign=false",
+        "commit", "-q", "-m", message,
+    )
+
+
+def _ticket_repo(tmp_path: Path) -> Path:
+    """A throwaway repo (never the real tree) with a trunk commit and a ticket branch off it."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet", "-b", "trunk")
+    for rel in ("app/models/x.py", "docs/note.md", "frontend/app.js", "pyproject.toml"):
+        _write(repo, rel, f"{rel}\n")
+    _commit(repo, "trunk")
+    _git(repo, "checkout", "-q", "-b", "ticket")
+    return repo
 
 
 def test_this_ticket_writes_no_dependency_manifest_no_migration_and_no_frontend() -> None:
-    import subprocess
-
+    repo = Path(__file__).resolve().parents[1]
     try:
-        listing = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
+        changed, base = _ticket_scope(repo)
     except Exception:  # no git in the environment is not a judgement failure
         pytest.skip("git is unavailable")
 
-    changed = [line.strip() for line in listing.splitlines() if line.strip()]
-    forbidden = ("pyproject.toml", "uv.lock", "migrations/", "frontend/", "app/rag/", "docs/", "tests/conftest.py")
-    assert not [path for path in changed if path.startswith(forbidden)], changed
+    violations = sorted(path for path in changed if path.startswith(FORBIDDEN_PREFIXES))
+    assert not violations, f"分支点 {base[:7]} 之后本单的提交与未跟踪件里不许出现越界路径：{violations}"
+
+
+def test_another_tickets_uncommitted_change_cannot_turn_this_guard_red(tmp_path) -> None:
+    """False-positive direction: shared-tree noise from someone else must not redden this guard."""
+    repo = _ticket_repo(tmp_path)
+    _write(repo, "tests/test_own.py", "def test_own():\n    assert True\n")
+    _commit(repo, "own work")
+    _write(repo, "docs/note.md", "somebody else's uncommitted work\n")
+
+    assert "docs/note.md" in _worktree_diff(repo), "前提不成立：旧口径根本没被这次改动触发"
+    changed, base = _ticket_scope(repo)
+    assert base and base != _head(repo)
+    assert not [path for path in changed if path.startswith(FORBIDDEN_PREFIXES)], changed
+
+
+def test_this_tickets_own_untracked_file_cannot_hide_from_the_guard(tmp_path) -> None:
+    """False-negative direction: an untracked docs/ file is invisible to git diff, not to this."""
+    repo = _ticket_repo(tmp_path)
+    _write(repo, "docs/sneaky.md", "never committed\n")
+
+    assert _worktree_diff(repo) == [], "前提不成立：旧口径居然看得见未跟踪文件"
+    changed, _ = _ticket_scope(repo)
+    assert [path for path in changed if path.startswith(FORBIDDEN_PREFIXES)] == ["docs/sneaky.md"]
+
+
+def test_a_committed_overreach_still_bites_after_narrowing(tmp_path) -> None:
+    """Narrowing must not cost strength: the ticket's own commit set is still checked."""
+    repo = _ticket_repo(tmp_path)
+    _write(repo, "migrations/0002_extra.py", "def upgrade():\n    pass\n")
+    _write(repo, "app/rag/sneak.py", "x = 1\n")
+    _commit(repo, "overreach")
+
+    changed, _ = _ticket_scope(repo)
+    assert sorted(path for path in changed if path.startswith(FORBIDDEN_PREFIXES)) == [
+        "app/rag/sneak.py",
+        "migrations/0002_extra.py",
+    ]
+
+
+def test_the_trunk_keeps_the_guard_green_over_untracked_leftovers(tmp_path) -> None:
+    """The trunk half of the asymmetry: untracked leftovers on the trunk are not this ticket's."""
+    repo = _ticket_repo(tmp_path)
+    _git(repo, "checkout", "-q", "trunk")
+    _write(repo, "docs/trunk_leftover.md", "nobody owns this yet\n")
+
+    changed, base = _ticket_scope(repo)
+    assert base == _head(repo)
+    assert [path for path in changed if path.startswith(FORBIDDEN_PREFIXES)] == []
