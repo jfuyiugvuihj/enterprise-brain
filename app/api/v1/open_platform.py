@@ -124,13 +124,23 @@ async def open_analyze(request: Request):
 
 @router.get("/insights")
 async def open_insights(request: Request):
-    verify_open_request(dict(request.headers), "", required_action="insights")
+    principal, _record = verify_open_request(dict(request.headers), "", required_action="insights")
     params = request.query_params
+    # Resolved before any row is built. The label on the answer is the caller's own department
+    # as the registry derives it, and a query parameter naming somebody else's is the same
+    # self-report R67 refuses in a body: it is refused with the same code whether or not this
+    # request would have used it, so "no metric given" is not a way to test the guard.
+    department = verify_department_self_report(
+        principal,
+        str(params.get("department") or ""),
+        action=ACTION_VIEW,
+        resource_name="open_insights",
+    )
     rows = []
     if params.get("metric"):
         rows.append(
             {
-                "department": params.get("department", ""),
+                "department": department,
                 "metric": params.get("metric", ""),
                 "current": float(params.get("current", 0) or 0),
                 "previous": float(params.get("previous", 0) or 0),
@@ -151,6 +161,10 @@ async def open_approval_preview(request: Request):
     -- with provenance it wrote itself. Now the department resolves through the same
     ``verify_department_self_report`` the session transport uses, and the standard is
     retrieved unless the caller asks for ``explicit`` and names its origin.
+
+    R71 is what makes that guard mean anything on this transport: the department it verifies
+    a claim against is now granted by an administrator in the application registry, not handed
+    to it by the caller's own ``X-Open-Department`` header, which no signature covers.
     """
     body = await request.body()
     body_text = body.decode("utf-8") if body else "{}"
@@ -218,13 +232,21 @@ async def open_approval_preview(request: Request):
 
 @router.get("/dashboard/summary")
 async def open_dashboard_summary(request: Request):
-    verify_open_request(dict(request.headers), "", required_action="dashboard")
+    principal, _record = verify_open_request(dict(request.headers), "", required_action="dashboard")
     params = request.query_params
+    # Same convergence as ``/insights``, refused the same way: the grouping key is the
+    # server's own, never a department the application typed into a query string.
+    department = verify_department_self_report(
+        principal,
+        str(params.get("department") or ""),
+        action=ACTION_VIEW,
+        resource_name="open_dashboard_summary",
+    )
     rows = []
     if params.get("metric"):
         rows.append(
             {
-                "department": params.get("department", ""),
+                "department": department,
                 "metric": params.get("metric", ""),
                 "value": float(params.get("value", 0) or 0),
             }
