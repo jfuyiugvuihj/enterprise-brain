@@ -1061,7 +1061,7 @@ PROBE index reached = 0
 - 质量欠账：105 题评测里 **29 条** `must_contain` 在语料中搜不到出处（R66 由 55 降到 29，剩 A/C 桶非语料可清）；评测集被 `tests/test_evaluation_report.py` 钉着禁改。
 - 阶段 A 四条验收 **0 条通过**，全部卡真机（H11 容器重启 / H12 重建后端镜像）。
 
-## 30. 第十四班（2026-09-18 17:45 起，总控亲测）
+## 30. 第十四班（09-18 17:45 起）＋第十五班（09-18 18:1x 起）合记，总控亲测
 
 ### 30.1 接手订正（全部实测，旧账以下述为准，别再引用）
 
@@ -1070,15 +1070,15 @@ PROBE index reached = 0
 - **R47/R40 已落地，不得重复派单**：R47 = `app/rag/retrieval_pipeline.py:137-206` 同义词纯规则改写；R40 = `standard_source` 在 `app/**` 27 处命中。
 - **两笔未提交的活已由早班保住**：R55 = `be-r20@6663a40`、R57 = `be-r53@ee11ca1`，两棵树现在只剩垃圾文件（`probe.txt`、`app/rag/*.r57bak`），删除属业主。
 
-### 30.2 本班结案（每单总控亲跑，未采信执行层自述）
+### 30.2 结案账（R81/R80＝第十四班；R74＝第十五班）——每单总控亲跑，未采信执行层自述
 
 - **R81 Noether**（队列认 `error.retryable`）：主树 `fca75dc`。六把刀 K1–K6 全咬（K5 默认翻 `False` ⇒ 18 红，含既存队列用例）。
 - **R80 Meitner**（开放平台身份改 CSPRNG 签发）：主树 `8a46bfb`。G1 退回 `time_ns` 10 红 / G2 摘持久化查重恰 1 红 / G3 摘撞号护栏 4 红 / G4-prime 回滚扩成 `clear()` 3 红 / G5（反反向刀）摘掉测试里的时钟 patch ⇒ 16 仍全绿。
   - 教训入账：第一把 G4（`if ... is record:` → `if True:`）**不咬**，因为 pop 的仍是自己那条，变异与原判据逻辑等价 ⇒ **刀不咬先怀疑是刀的问题**，重下才定论。
-- **R74 Jason**（接口去伪）：主树 `b2d9f34`。走**甲＝删净**，理由三条（写域内造不出真读取点／`AgentContext(` 在 `app/**` 一次都没被构造／一个请求天然跨档，挂单个预算会压平成 new bug）。三把**隔离刀**各咬不同判据：K1 只把字段塞回 `AgentState` ⇒ 3 红；K2 只塞回 `AgentContext` ⇒ 5 红；K3 只恢复那行 unused import ⇒ 恰 1 红。还原后 sha256 恒等（`state.py 523761AE`／`contracts.py 3761CB11`）。**并树后主树 2031 passed / 35 skipped / 0 failed**（= 2022 + 净增 9）。
+- **R74 Jason**（接口去伪，**第十五班 18:2x 验收并树**）：主树 `b2d9f34`。走**甲＝删净**，理由三条（写域内造不出真读取点／`AgentContext(` 在 `app/**` 一次都没被构造／一个请求天然跨档，挂单个预算会压平成 new bug）。三把**隔离刀**各咬不同判据：K1 只把字段塞回 `AgentState` ⇒ 3 红；K2 只塞回 `AgentContext` ⇒ 5 红；K3 只恢复那行 unused import ⇒ 恰 1 红。还原后 sha256 恒等（`state.py 523761AE`／`contracts.py 3761CB11`）。**并树后主树 2031 passed / 35 skipped / 0 failed**（= 2022 + 净增 9）。
   - Jason 自报一颗同形缺陷未顺手捡（越界，正确）：`app/agents/contracts.py:130 max_calls`、`:135 max_concurrency` 声明后**全仓零读取**，且 `app/common/model_budget.py:255-268 tier_profile()` 压根不填 ⇒ 永远 `None`；而 `docs/system-architecture-2026-09-17.md:533` 写着"整机预算（max_calls/tokens/timeout/max_concurrency）"，**文档替一个不存在的能力背书** ⇒ 立 **R86**。
 
-### 30.3 **R83** 详细判据（本班新立，可离线派；写域 `app/common/audit.py` + 新增 `tests/test_r83_audit_order.py`）
+### 30.3 **R83** 详细判据（第十五班新立，18:29 已派 `Newton`；写域 `app/common/audit.py` + 新增 `tests/test_r83_audit_order.py`）
 
 - **缺陷与证据（本班亲手复现，机制链完整）**：审计日志的**回放顺序不保证**。
   - `app/common/audit.py:424-427` `_hydrate_view_locked` 的排序键是 `(created_at, event_id)`；`created_at` 来自 `:479 datetime.now(timezone.utc)`，本机实测**粒度约 1 ms**（仓库外探针：连续 2000 次 `now()` 平均步进 0.000000 s，即同一 tick 内读数逐字符相同）；`event_id` = `aud-{uuid4().hex}` 随机 ⇒ **同一 tick 内的两条事件，谁先谁后由随机串决定**。探针 300 对：撞 tick **12 对（4%）**，回放**翻序 4 次（1.3%）**。
@@ -1100,12 +1100,12 @@ PROBE index reached = 0
 - **R84**（可离线派，前置无）：`app/common/open_platform.py` 的 CSPRNG 只把撞号窗口降到 2⁻⁶⁴，**没有跨进程锁 / `O_EXCL`** ⇒ 多 worker 并发注册仍可能读到同一份注册表再各自写穿。判据要点：原子性要么落在文件锁/`O_EXCL`，要么落在 store 的"仅在不存在时写入"（CAS），且**摘掉必红**。
 - **R85**（🔴 待业主，不是代码单）：R80 修复前已被静默覆盖的那批应用行，其 secret 应视为**已泄露**并重发；这是对外通告/运维动作，总控不代做。
 
-### 30.5 事故 #26（同类第六次，本班自己犯的，如实记账）
+### 30.5 事故 #26（同类第六次，**第十四班**自己犯的，如实记账）
 
 - 派 R74 时我在**同一个 block 里发了两次 `spawn_agent`**（误判"第一次工具名写错不会生成执行体"，实际两次都成功）⇒ Jason 与 Turing 同时落到同一棵树 `be-r74`。当场 `close_agent` Turing；事后核验 `be-r74` 当时 `dirty=0`、无任何 `.py` 被写 ⇒ **未造成串写污染**。
 - 写死纪律：一次 spawn 的消息体绝不许复制两份；"投出去没反应"不许凭感觉断定失败，**必须用 canary 核实**（本班 R37 投后即以 canary 核实成功）。
 
-### 30.6 本班待业主增量（其余仍见 §29.6，一条都不代做）
+### 30.6 第十五班待业主增量（其余仍见 §29.6，一条都不代做）
 
 - 基线订正入账：上班报的"1828 全绿"**已被证伪作废**；实测链 = `6d5f5ab` 1981 → 并 R81 `fca75dc` **2006** → 并 R80 `8a46bfb` **2022** → 并 R74 `b2d9f34` **2031**（均 35 skipped / 0 failed，总控亲跑）。
 - 质量欠账刷新：105 题评测里 **29 条** `must_contain` 在 96 篇语料中搜不到出处（R66 已由 55 降到 29，剩 A/C 桶非语料可清）；评测集被 `tests/test_evaluation_report.py` 钉着禁改。

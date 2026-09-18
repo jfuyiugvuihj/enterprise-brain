@@ -216,16 +216,19 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 | **R71**（已结案 `8813ad0`）| `/open` 只验签名不验「能否代表该部门」，`x-open-department` 无签名可任意填 ⇒ R67 守卫可被整体绕过；服务端按 `record.allowed_departments` 收敛（无授权=空部门且不看头 / 单授权头可选 / 多授权头是唯一选择器且沉默不猜 / 越权 403 落审计），**签名基串 `app_id.timestamp.body` 零改动并有用例钉覆盖面不移动**；`/insights` 与 `/dashboard/summary` 两处同形洞一起收 | 权限边界 | 0.5 |
 | **R72**（总控亲做 `f396866`）| R49 标定用 `iterdir()` 枚举 `documents/`，而该目录按设计兼作上传落地区 ⇒ 业主机上 7 条用例当场 ERROR、判据④不可复跑；改版本化清单 `git ls-files -z` | 测试卫生 | 0.25 |
 | **R73**（待派）| supervisor 那一发降档（R42 拆出）：预算不足时降档必须可观测，**禁止改别人的 `tests/test_supervisor_roundtrip.py`** | L1 | 0.25 |
-| **R74**（待派）| `AgentState.model_budget` 零赋值零读取（R30 落地后新露）：要么真被读并影响档位，要么删字段 | 接口 | 0.25 |
 | **R75**（**已结案** `69b0553`；🔴 **写域订正**：真实写域 `app/api/v1/intelligence.py` + `app/api/v1/open_platform.py`，跟进单/看板曾误记成 `app/common/open_platform.py`——实测该文件 `standard_source` 零命中）| 两份预审标准校验去重成一处 `resolve_standard_source(value, *, silent_default=)` | 接口 | 0.25 |
 | **R76**（待派，前置 R58 真机三件）| `chunk_vectors` 接入索引发布/回填链：`indexing._MIRROR_TABLES` 增表 + 发布时回填 `index_version_id`；换 embedding 模型必须连镜像一起换 | 架构 | 0.5 |
 | **R77**（待业主）| H11/H12 真机复测：09-17 那批实测数已过期（容器 GPU、后端镜像落后主树），换件后必须重测 | 观测 | 0.25 |
 | **R78**（**已结案** `6d5f5ab`）| 开放平台撤掉四件未 earned 的声明（密级只存不判的自白 / 自报用户名归因为应用 / 三端点未按部门收敛 / 503 谎报只钉待 **H18**）：**行为零改动、签名基串一字未动**；总控另把它的持有者扫描由裸串改 **AST 口径** | 权限边界 | 0.75 |
-| **R79**（**在途** `be-r79`/Lagrange，前置 R44b）| R44 收尾四件：① 热集观测挂 `/health/details`（须绕开 `tests/test_r44_hot_index_chroma.py:409` 那把精确相等钉死五键的钉子）；② 两个**零用例覆盖**的出厂默认值（`HOT_INDEX_ROSTER_TTL_SECONDS=300` / `HOT_INDEX_MAX_CHUNKS=20000`）钉成有牙用例；③ 向量 float32 省内存（硬门：top-k 逐条同序）；④ **真机规模（37 483 chunk）复测暖机与查询** | L3 | 0.75 |
-| **R80**（**在途** `be-r80`/Meitner）| `app/common/open_platform.py:257-258` 用 `time.time_ns()` 派生 app_id 与 secret ⇒ **本班实测同名连续注册 4 次只落 2 个 id / 2 个 secret / 注册表 2 条**，撞号那对 secret 逐字符相同，`:271` 静默覆盖、`:274` 同主键写穿持久化 ⇒ 密钥复用 + 授权静默改写 | 权限边界 | 0.25 |
-| **R81**（**在途** `be-r81`/Noether）| `deploy/queue_worker.py:93-96` 不消费 `AgentResult.error.retryable`（`app/agents/contracts.py:261`，出厂 `False`）⇒ R64/R65 刚定的"权限拒绝是终态"被队列盲重试到 dead。判据含 **success/partial 路径逐字节不变** | 权限边界 | 0.25 |
-| **R82**（待派）| 文案侧 `app/agents/tools.py:233` 仍把 policy/rbac 的**内部 reason 名**插进用户可见正文，被 `tests/test_dataset_route_authorization.py:188` 钉住 ⇒ 派工前须确认该断言改法是否并入 **H15** 同批 | 权限边界 | 0.25 |
-| **R74**（待派，前置无）| `AgentState.model_budget` **零赋值零读取**（R30 落地后新露）：要么真被读并影响档位，要么删字段 | 接口 | 0.25 |
+| **R79**（**在途** `be-r79`/Lagrange，前置 R44b；第十五班 18:33 实取 `dirty=8`，🔴 含 **M `tests/test_r44_hot_index_chroma.py`**，验收须逐行审这一处）| R44 收尾四件：① 热集观测挂 `/health/details`（须绕开 `tests/test_r44_hot_index_chroma.py:409` 那把精确相等钉死五键的钉子）；② 两个**零用例覆盖**的出厂默认值（`HOT_INDEX_ROSTER_TTL_SECONDS=300` / `HOT_INDEX_MAX_CHUNKS=20000`）钉成有牙用例；③ 向量 float32 省内存（硬门：top-k 逐条同序）；④ **真机规模（37 483 chunk）复测暖机与查询** | L3 | 0.75 |
+| **R80**（**已结案** 主树 `8a46bfb`）| `app/common/open_platform.py:257-258` 用 `time.time_ns()` 派生 app_id 与 secret ⇒ 同名连续注册 4 次只落 2 个 id / 2 个 secret / 注册表 2 条，撞号那对 secret 逐字符相同。改由 CSPRNG 双独立派生 + 撞号重生成 + 占号即抛 + 回滚只撤自己；总控五把刀（含 G5 反反向刀：摘掉测试里的时钟 patch 仍 16 全绿）
+| **R81**（**已结案** 主树 `fca75dc`）| `deploy/queue_worker.py:93-96` 不消费 `AgentResult.error.retryable` ⇒ R64/R65 刚定的"权限拒绝是终态"被队列盲重试到 dead。现已认账：不可重试终态直落 dead 且**不占 attempt 名额**，两类 dead 日志可分辨；总控六把刀全咬（K5 默认翻 False ⇒ 18 红）
+| **R82**（🔴 **待业主裁，不许派**）| `app/agents/tools.py:233` 仍把 policy/rbac 的**内部 reason 名**插进用户可见正文。收口必须连带改 `tests/test_dataset_route_authorization.py:188` 的断言，该行 blame 到 **`de13e90`（2026-09-14）＝业主本人所写** ⇒ 属"改业主写下的断言"，并入 **H15** 同批 | 权限边界 | 0.25 |
+| **R83**（**在途** `be-r83`/Newton，第十五班新立）| 审计日志**回放顺序不保证**：`app/common/audit.py:424-427` 排序键 `(created_at, event_id)`，本机 `datetime.now()` 粒度约 1 ms ⇒ 同 tick 内两条事件的顺序由随机 `event_id` 决定（探针 300 对：撞 tick 12、翻序 4）。修向＝进程内单调时间戳分配器（+1 µs / 回拨 / hydrate 播种），**不改 schema**；🔴 必须如实声明多 worker 跨进程同 tick 仍不确定 | 正确性 | 0.5 |
+| **R84**（待派，前置无）| R80 只把撞号窗口降到 2⁻⁶⁴，**没有跨进程锁 / `O_EXCL` / store CAS** ⇒ 多 worker 并发注册仍可各自写穿同一份注册表 | 权限边界 | 0.5 |
+| **R85**（🔴 待业主，非代码单）| R80 修复前**已被静默覆盖**的那批开放平台应用行，其 secret 应视为已泄露并重发（对外通告 / 运维动作） | 密钥治理 | 业主 |
+| **R86**（待派，前置无）| `app/agents/contracts.py:130 max_calls`、`:135 max_concurrency` 声明后**全仓零读取**，`tier_profile()` 不填 ⇒ 永远 `None`；而 `docs/system-architecture-2026-09-17.md:533` 写着"整机预算（max_calls/tokens/timeout/max_concurrency）"＝**文档替不存在的能力背书**（与 R78 同类）。连带清两处陈旧文本：`tests/test_r30_model_tiers.py:69` docstring、`docs/superpowers/plans/2026-09-10-...md:178` | 接口 | 0.25 |
+| **R74**（**已结案** 主树 `b2d9f34`）| `AgentState`/`AgentContext` 上的 `model_budget` **零赋值零读取** ⇒ 走甲：删净 + AST/`model_fields` 双向负向钉（新 `tests/test_r74_dead_budget_field.py` 9 例）。并发真身是 `app/common/model_budget.py:default_model_budget()` 进程级单例，token/时钟额度按档在调用点解析，单个预算挂 context 会把跨档请求压平。总控三把隔离刀各咬不同判据 | 接口 | 0.25 |
 
 > **R61–R63 是 09-17 22:0x 由 R17 结案后新露出的边界**（非 R17 漏做），详细判据见跟进单 **§23**。
 > 三条都**不改判定逻辑、不动密级**（密级属 H13）；写域 `app/common/rbac.py` 与 `app/agents/tools.py`，与在途 R35/R56 零交叠。
@@ -244,6 +247,11 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 > ③ **R59 订正两条**：切读 PGVector 必须连热集读源/写钩子一起迁；上班那条"`pred` 未接线"经本班实测**撤销**（三处 `pred` 全部已接线）。
 > ④ **R79–R82 首次入册**（第十二班口头立单后四份文档一行未写）：详细判据见跟进单 **§29.3–§29.5**，全链账见看板 **§4AP**。
 > **🔴 事故 #25（同类第三次，机器层）**：总控线程 `01a09dda`/`01a0acfb`/`01a0af5c` 全部死于**同线中途换模型**（历史混入别家 provider 的消息 id ⇒ `Invalid id ... at_` / `Invalid call_id`），换模型修不好只能开新线。⇒ 写死纪律：**总控线全程单一模型；子 agent 简报一律不带 model override**（带 override 的投递历史上死过两次：事故 #17、#21）。
+
+> **本班（09-18 第十五班）三道刷新（写死，防下班照抄旧数）**：
+> ① **基线链**：`6d5f5ab` 1981 → 并 R81 `fca75dc` **2006** → 并 R80 `8a46bfb` **2022** → 并 R74 `b2d9f34` **2031**（均 35 skipped / 0 failed，总控亲跑全量）。
+> ② **pgvector 现状（既别把 Chroma 写成最终架构，也别以为已经切过去）**：R21/R22 前置已实测落码（`app/rag/retriever.py:49/196/204` 拒收全零向量、`app/rag/indexing.py:10-11` 把 `embedding_model+dimension` 绑进索引）⇒ **P0 已清**；`app/rag/pg_store.py`（551 行，`a896cf6`）已在树上，但 **`VECTOR_DUAL_WRITE` 默认关、Chroma 仍是读路径** ⇒ 要到 P1 建索引那一步才卡真机（H11/H12）。方案见 `docs/handoff/2026-09-17-pgvector-adoption-plan.md` 与跟进单 §22。
+> ③ **R82 由"待派"改判"🔴 待业主裁"**：收口必须改 `tests/test_dataset_route_authorization.py:188` 的断言，而该行 blame 到 **`de13e90`（2026-09-14）＝业主本人所写** ⇒ 并入 **H15** 同批。**R83/R84/R85/R86 四单首次入册**：详细判据见跟进单 **§30.3–§30.4**，全链账见看板 **§4AQ**。
 
 > **R58–R60 是 09-17 21:4x 业主令新立的架构单**：不计入上面 8–11 人日，也不占三腿串行位；
 > 硬前置 = R21 + R22（两单至今**零代码提交**，实测见跟进单 §22.0）。详细判据见跟进单 **§22**。
