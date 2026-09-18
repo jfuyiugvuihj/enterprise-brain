@@ -28,6 +28,8 @@ RATIFIED = {
     "department_scope_required": "app/api/v1/data.py",
     # canonical request.failed.data.error_code。
     "no_answer_produced": "app/api/v1/chat.py",
+    # R30: app/common/model_budget.py 在发请求前拦下装不下的提示词，这是它的稳定码出处。
+    "context_limit_exceeded": "app/common/model_budget.py",
 }
 
 _REPOSITORY = Path(__file__).resolve().parents[1]
