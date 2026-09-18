@@ -4,12 +4,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.approval.assistant import (
-    STANDARD_SOURCES,
     STANDARD_SOURCE_AUTO,
     build_precheck,
     match_expense_type,
     precheck_payload,
     resolve_standard_from_knowledge_base,
+    resolve_standard_source,
     to_decimal,
 )
 from app.common.audit import record_audit
@@ -72,30 +72,6 @@ async def _load_json_body(request: Request) -> dict:
     if not raw:
         return {}
     return json.loads(raw.decode("utf-8"))
-
-
-def _open_standard_source(value) -> str:
-    """Resolve where this preview may get its standard, refusing a spelling that is not the contract.
-
-    One vocabulary with the session transport -- the same ``STANDARD_SOURCES`` and the
-    same ``invalid_standard_source`` code -- and one deliberate difference: silence means
-    ``auto_from_knowledge_base`` here. The session route keeps ``explicit`` as its silent
-    default only because clients written before that field existed send a number and
-    expect it used; an open-platform application has no such history, so a body number
-    that was never asked for is a caller bug, not a policy.
-    """
-    requested = str(value or "").strip().lower()
-    if not requested:
-        return STANDARD_SOURCE_AUTO
-    if requested not in STANDARD_SOURCES:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code": "invalid_standard_source",
-                "message": "standard_source must be explicit or auto_from_knowledge_base",
-            },
-        )
-    return requested
 
 
 @router.post("/query")
@@ -176,7 +152,10 @@ async def open_approval_preview(request: Request):
         action=ACTION_VIEW,
         resource_name="open_approval_preview",
     )
-    requested_source = _open_standard_source(data.get("standard_source"))
+    # R75: the judgment is made once, in app/approval/assistant.py. What this transport decides
+    # for itself is only what silence means, and it means ``auto_from_knowledge_base``: an
+    # application has no pre-field history of sending a number to be used as the standard.
+    requested_source = resolve_standard_source(data.get("standard_source"), silent_default=STANDARD_SOURCE_AUTO)
     expense_type = str(data.get("expense_type") or "")
 
     standard = data.get("standard")
