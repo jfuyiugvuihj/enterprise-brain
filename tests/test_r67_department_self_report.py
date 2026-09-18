@@ -56,7 +56,7 @@ SILENT_CHUNKS = [
 ]
 
 
-def _register(*, actions=("approval",), departments=()):
+def _register(*, actions=("approval",), departments=(CALLER_DEPARTMENT,)):
     clear_app_registry()
     return register_application(
         "r67-caller",
@@ -192,7 +192,14 @@ def test_a_forged_department_is_refused_before_the_index_is_asked(monkeypatch):
 
 
 def test_a_caller_without_a_department_may_not_borrow_one():
-    response = _preview(_body(department=CALLER_DEPARTMENT), department="")
+    # R71: the identity department now comes from the grant, so this case has to ask
+    # for the zero-grant application explicitly rather than inherit the skeleton default.
+    ungranted = _register(departments=())
+    response = _preview(
+        _body(department=CALLER_DEPARTMENT),
+        app_info=ungranted,
+        department="",
+    )
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == DEPARTMENT_SELF_REPORT_DENIED

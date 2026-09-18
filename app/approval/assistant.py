@@ -7,6 +7,8 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import os
 import re
 
+from fastapi import HTTPException
+
 _DEFAULT_CURRENCY_ENV = "APP_DEFAULT_CURRENCY"
 _TWO_PLACES = Decimal("0.01")
 
@@ -18,6 +20,39 @@ _TWO_PLACES = Decimal("0.01")
 STANDARD_SOURCE_EXPLICIT = "explicit"
 STANDARD_SOURCE_AUTO = "auto_from_knowledge_base"
 STANDARD_SOURCES = (STANDARD_SOURCE_EXPLICIT, STANDARD_SOURCE_AUTO)
+
+# Refusing a standard source is part of the answer, not a detail of the transport that
+# asked, so the wording and the code are written once, here.
+INVALID_STANDARD_SOURCE_CODE = "invalid_standard_source"
+INVALID_STANDARD_SOURCE_MESSAGE = "standard_source must be explicit or auto_from_knowledge_base"
+
+
+def resolve_standard_source(value, *, silent_default: str) -> str:
+    """Resolve where a pre-check may get its standard, refusing a spelling that is not the contract.
+
+    R75: this is the only place that answers it. Both transports -- the session route and
+    ``/open`` -- call this, and ``silent_default`` is the only thing either of them may pass
+    differently. Silence keeps a transport's own history: ``explicit`` on the session route,
+    whose clients were written before the field existed and send a number expecting it used;
+    ``auto_from_knowledge_base`` on the open platform, whose applications have no such
+    history, so a body number that was never asked for is a caller bug rather than a policy.
+    Everything else is one code path for both: ``str``, strip, fold case, test membership of
+    ``STANDARD_SOURCES``, refuse a non-member with one stable code and one message. The fold
+    covers spelling, never meaning -- ``auto`` is not ``auto_from_knowledge_base``, and a
+    reading that blurred the two would compare against a figure the caller invented.
+    """
+    requested = str(value or "").strip().lower()
+    if not requested:
+        return silent_default
+    if requested not in STANDARD_SOURCES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": INVALID_STANDARD_SOURCE_CODE,
+                "message": INVALID_STANDARD_SOURCE_MESSAGE,
+            },
+        )
+    return requested
 
 
 def to_decimal(value, *, field: str = "amount") -> Decimal:
