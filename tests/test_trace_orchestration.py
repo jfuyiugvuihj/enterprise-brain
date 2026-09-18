@@ -104,7 +104,7 @@ def test_ask_passes_one_stable_trace_context_to_orchestration(monkeypatch, tmp_p
     )
     monkeypatch.setattr(
         "app.common.cache.get_cached_answer",
-        lambda _question: None,
+        lambda _question, scope="": None,
     )
     monkeypatch.setattr(
         "app.common.cache.cache_answer",
@@ -165,7 +165,7 @@ def test_ask_emits_canonical_start_and_terminal_events(monkeypatch, tmp_path):
     monkeypatch.setattr(chat, "_session_database_available", lambda: False)
     monkeypatch.setattr(chat, "auth", type("AuthStub", (), {"get_user": staticmethod(lambda _u: None)}))
     monkeypatch.setattr("app.common.cache.check_rate_limit", lambda *_args, **_kwargs: (True, 9))
-    monkeypatch.setattr("app.common.cache.get_cached_answer", lambda _question: None)
+    monkeypatch.setattr("app.common.cache.get_cached_answer", lambda _question, scope="": None)
     monkeypatch.setattr("app.common.cache.cache_answer", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("app.agents.orchestrator.run_with_stream", fake_stream)
     monkeypatch.setattr(chat, "session_registry", SessionRegistry(tmp_path / "sessions.json"))

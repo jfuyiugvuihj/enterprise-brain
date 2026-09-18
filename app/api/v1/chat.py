@@ -992,20 +992,36 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         )
 
     # ——— 答案缓存 ———
-    from app.common.cache import answer_cache_scope, get_cached_answer
-    # 会话问答必须保留当前会话语境，不能命中跨会话的全局答案缓存。
-    # 无 session_id 的兼容调用仍可使用问题级缓存。
-    use_answer_cache = not bool(request.session_id)
-    # 缓存内容取决于调用者可检索的文档（归属、密级、部门），所以键必须带上调用者
-    # 作用域：一次带权限的检索结果不能被另一个人用同样的问题文本读回去。
+    from app.common.cache import answer_cache_origin, answer_cache_scope, get_cached_answer
+    # R35：缓存门槛只看作用域，不看有没有会话。重复提问恰恰集中在多轮对话里，之前
+    # "带 session_id 就不查缓存"等于把缓存钉死在最用不上它的那一半流量上。现在能不能命中
+    # 只取决于作用域相等：键里带了用户/部门/密级/角色/权限/账号状态（cache.answer_cache_scope），
+    # 同一个问题换个部门、换个密级、administrator 与 staff 之间都不会互相命中。会话语境也不会
+    # 串味：查缓存用的是 _rewrite_followup 把指代补全之后的问题文本，追问会改写成另一个键。
+    # 这道门槛今天恒为真，是留给未来调用方的闸：principal 为 None 在更早就 401 了，而
+    # answer_cache_scope 任何分支都返回非空（最差是 user:anonymous），所以这里不会出现空作用域。
+    # 真正要盯的是 cache._scope_part：谁要是漏传 scope，条目会落进历史全局键 answer:<hash>，那条键不属于
+    # 任何授权输入；由 tests/test_answer_cache_scope.py 钉住「全局键谁都不许回读，带作用域的也不许被空 scope 读到」。
     answer_scope = answer_cache_scope(request_principal, username=username)
+    use_answer_cache = bool(answer_scope)
     cached = get_cached_answer(rewritten_msg, scope=answer_scope) if use_answer_cache else None
     if cached:
+        # 命中的答案同样落进会话历史，这一步与未命中路径的存档动作保持一致。
         _save_message(thread_id, "assistant", cached)
+        # 命中不是这一轮算出来的：响应体要带得下这个事实，还要说得出它是几点生成的，
+        # 不许伪装成实时答案。UI 用下面三个字段画"缓存结果"那张脸，后端只出字段不做样式。
+        # 出处单独再读一次：get_cached_answer 这个函数名是既有测试的桩位，签名不动。
+        origin = answer_cache_origin(rewritten_msg, scope=answer_scope) or {}
+        cache_fields = {
+            "cached": True,
+            "cache_generated_at": origin.get("generated_at_iso") or "",
+            "cache_note": origin.get("generated_at_text") or "缓存结果 · 生成时间未知",
+        }
         async def cached_response():
             yield f"event: status\ndata: {json.dumps({'type': 'status', 'content': '📋 缓存命中，直接返回'}, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)
-            yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': cached}, ensure_ascii=False)}\n\n"
+            payload = {'type': 'text', 'content': cached, **cache_fields}
+            yield f"event: text\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)
             yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)

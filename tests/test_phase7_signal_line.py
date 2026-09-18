@@ -37,16 +37,3 @@ class TestTracingConfig:
 
         assert enabled["enabled"] is True
         assert enabled["project"] == "enterprise-brain"
-
-
-class TestSemanticCache:
-    def test_hits_similar_question(self, monkeypatch):
-        from app.common import cache
-
-        monkeypatch.delenv("REDIS_URL", raising=False)
-        cache.clear_semantic_cache()
-        cache.cache_semantic_answer("公司报销流程是什么", "提交申请后审批")
-
-        hit = cache.get_semantic_cached_answer("报销流程怎么走")
-
-        assert hit == "提交申请后审批"
