@@ -2328,3 +2328,16 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - **不必租卡**：跑分打的是本机 Ollama（`n_ctx=4096`、`MODEL_MAX_CONCURRENCY` 必须为 1），瓶颈是"独占窗口 + 镜像同源"，不是算力。要租只有一种情形：想验 PG+pgvector 那条腿（`docs/handoff/2026-09-17-pgvector-adoption-plan.md`），那属另一档需求。
 - **窗口长度**：单题实测均值 41.581 s ⇒ 105 题串行约 **73 分钟**，加 §7-A 结构预检（零模型）与 C 步评分，请给 **2 小时**。
 - **窗口纪律（P-6/§9）**：开窗期间**我这条线必须全停**——三棵工作树的 agent 一个都不许跑 pytest（R53 已钉住它们会写 Chroma，且可能拉起模型用例抢同一个单点），也不许任何 `docker compose up/down/restart`。所以顺序是：业主先做 H11+H12（约 20–40 分钟长任务）→ 本班把在途三单验完并静默 → 再开窗。
+## 4AU 🔴 **事故 #29（同类第一次，本班 push 引出的暴露面复核）**：push 之后才查明两个远端是**公开仓库**，而 `chroma_db` + `documents/` 样本语料自 **09-03** 就在公网
+- 触发：业主 19:5x 授权 push ⇒ 本班推 `codex/data-file-catalog` 到 `origin`(github) 与 `gitee`（H6 结案，见 §4AT.1）。**推完才去查远端可见性**，顺序错了。
+- 可见性实取（19:5x，未登录直接请求）：`https://github.com/jfuyiugvuihj/enterprise-brain` **HTTP 200**、`https://gitee.com/fx2006/langchain` **HTTP 200** ⇒ 两个都是**公开库**。
+- 已推上去的东西（逐条实测，不是吓自己）：
+  - `git grep -l 明远科技 origin/master` **命中 9 个跟踪文件** ⇒ 样本语料的**源文本**（`documents/企业管理制度手册.txt`、`年度经营报告2026H1.txt`、`销售策略与客户案例.txt`、`产品技术手册.txt`、`前台接待标准流程.txt`）与 `chroma_db/chroma.sqlite3` **在 09-03 那版 master 里就已经公开**，本次 push **不是起点**。
+  - 但本次 push 把量放大了：`chroma_db/chroma.sqlite3` 由 `6 262 784 B` 增至 `75 501 568 B`；HNSW `data_level0.bin` 由 `1 994 652 B` 增至 `124 214 464 B`；`git log -- chroma_db` 共 4 个版本，新版本的明文块数 `embedding_fulltext_search = 1 007 行`（平均 376 字/行）。
+  - 抽查里出现"华为项目账期 90 天""Q1 新签客户 22 家、续约率 92%""应收账款周转天数 45 天""年假 5 天起步"这类**读起来像真实经营与人事数据**的句子；判断上它们是评测用的**自造样本**（与 105 题金标同源），但仓库公开 ⇒ 外人一并拿到"明远科技"的假想经营数字**与整套金标答案**，`.env` 未进过历史（`git ls-files '*.env'` 空，`--diff-filter=A -- .env` 空）⇒ **密钥没漏**，这是本班唯一确定没坏的消息。
+- 本班**立即止手**：`§4AU` 这个提交起**暂停 push**，等远端改私有再由我补推；`master` 从头到尾没被本班动过（`origin/master` 仍 `450e5aa`）。
+- 给业主的处置顺序（只有你能点）：
+  ① **2 分钟先止血**：GitHub `Settings → General → Danger Zone → Change repository visibility → Make private`；Gitee `仓库 → 管理 → 基本信息 → 私密仓库`。改私有**不追回**已有人克隆的副本，但止住继续扩散。
+  ② 再决定要不要清史：`git filter-repo --invert-paths --path chroma_db --path documents` + 双远端强推 + 请平台删缓存 refs。**代价先说清**：全分支 SHA 重写，20+ 棵 agent 工作树要逐棵重挂（本班可负责），且做之前必须先有一次独立全量备份 ⇒ 这是"H 级"动作，等你点头我再排窗口。
+  ③ 治本两条（属业主权限）：把 `chroma_db/**` 反跟踪并写进 `.gitignore`；`documents/**` 样本语料要么整体挪出仓库，要么在文件头明示"合成数据，与客户无关"，免得下次又被当证据推上线。
+- 纪律新增（写死给下班）：**push 之前必须先查远端可见性**（`Invoke-WebRequest <repo> -Method Head` 不带凭据能 200 就是公开库），公开仓库只许推**确认无数据资产**的路径；私有化项目的默认远端应当是业主自己的内网或私有库。
