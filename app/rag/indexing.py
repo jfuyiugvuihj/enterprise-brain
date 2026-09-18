@@ -6,10 +6,17 @@ published. ``PostgresIndexStore`` mirrors one publication into ``index_registry`
 that fails halfway leaves neither a published version nor a stranded chunk row behind.
 Chroma stays the only retrieval path: this module records chunks, it never embeds them,
 and every row it writes leaves ``chunks.embedding`` NULL.
+
+R22 binds every index version to the embedding profile that produced it: ``embedding_model``
+plus ``dimension``. Those two values are part of the version, they gate validate, publish,
+current, rollback and discard, and a record written before they existed keeps an *unknown*
+scope instead of inheriting whatever model happens to be configured now. Changing either
+axis therefore cannot reuse a version: it takes a new one, and the only thing that creates
+one at scale is the manual rebuild command (``scripts/rebuild_index.py``).
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -26,6 +33,25 @@ RESOURCE_TYPE_DOCUMENT = "document"
 INDEX_BACKEND = "chroma"
 INDEX_METADATA_ENV = "INDEX_METADATA_PATH"
 DEFAULT_INDEX_METADATA_PATH = "./data/index-versions.json"
+
+# The embedding profile a version is bound to. EMBED_MODEL is a module-level constant in
+# app/rag/retriever.py:23, so an operator changes it in code; reading it here -- lazily, and
+# never at import time -- is what makes a model swap visible to the registry instead of
+# silently leaving the old vectors behind. The DEFAULT_* pair below applies only when
+# nothing declares a value at all: it describes the shipped model, it is not a guess about
+# some already-stored record.
+EMBEDDING_MODEL_ENV = "EMBEDDING_MODEL"
+EMBEDDING_DIMENSION_ENV = "EMBEDDING_DIMENSION"
+DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
+DEFAULT_EMBEDDING_DIMENSION = 768
+SCOPE_UNKNOWN = "unknown"
+
+# Stable codes. ``embedding_model_drift`` is the one docs/handoff section 18 criterion 2
+# asks /health/details to report; the others say *why* a version is unusable.
+CODE_SCOPE_UNKNOWN = "embedding_scope_unknown"
+CODE_SCOPE_MISMATCH = "embedding_scope_mismatch"
+CODE_MODEL_DRIFT = "embedding_model_drift"
+CODE_DIMENSION_DRIFT = "embedding_dimension_drift"
 
 # What the mirror needs to be able to write at all. An unmigrated database is a
 # deployment state, not a failed upload: a document that already reached Chroma must not
@@ -132,6 +158,143 @@ def _json_value(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 
 
+def _dimension_value(value) -> int:
+    """Coerce one explicitly supplied dimension, or refuse.
+
+    A caller that names a dimension has to mean it: this is the value the whole
+    cross-dimension gate compares against, so a typo must not degrade into "unknown" and
+    then into a permissive match.
+    """
+    try:
+        dimension = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"embedding dimension must be a positive integer, got {value!r}") from None
+    if dimension <= 0:
+        raise ValueError(f"embedding dimension must be a positive integer, got {dimension}")
+    return dimension
+
+
+@dataclass(frozen=True)
+class EmbeddingScope:
+    """What produced a set of vectors: which model, and how wide its output is.
+
+    Either half may be ``None``, which means *unknown* -- not "assume the current one".
+    Only a fully known scope is publishable or queryable; an unknown scope fails closed.
+    """
+
+    embedding_model: str | None = None
+    dimension: int | None = None
+
+    @classmethod
+    def unknown(cls) -> "EmbeddingScope":
+        return cls()
+
+    @property
+    def known(self) -> bool:
+        return bool(self.embedding_model) and isinstance(self.dimension, int) and self.dimension > 0
+
+    @property
+    def key(self) -> tuple:
+        return (self.embedding_model, self.dimension)
+
+    def disagreement(self, configured: "EmbeddingScope") -> tuple[str, ...]:
+        """Which axes disagree with ``configured``, as stable codes.
+
+        A missing axis reports ``embedding_scope_unknown`` rather than a drift code: a
+        record that never named its model is not evidence the model changed, it is evidence
+        nobody was keeping score. The refusal is the same either way; the reason is not.
+        """
+        codes: list[str] = []
+        if self.embedding_model != configured.embedding_model:
+            codes.append(CODE_MODEL_DRIFT if self.embedding_model else CODE_SCOPE_UNKNOWN)
+        if self.dimension != configured.dimension:
+            codes.append(CODE_DIMENSION_DRIFT if self.dimension else CODE_SCOPE_UNKNOWN)
+        return tuple(dict.fromkeys(codes))
+
+    def as_dict(self) -> dict:
+        return {
+            "embedding_model": self.embedding_model or SCOPE_UNKNOWN,
+            "dimension": self.dimension if self.dimension else SCOPE_UNKNOWN,
+        }
+
+    def __str__(self) -> str:
+        model = self.embedding_model or SCOPE_UNKNOWN
+        dimension = self.dimension if self.dimension else SCOPE_UNKNOWN
+        return f"{model}/{dimension}"
+
+
+def _shipped_embedding_model() -> str:
+    """The model this build embeds with, read from the module that actually calls it.
+
+    Imported lazily and guarded: app/rag/retriever pulls in chromadb and langchain, and an
+    index registry must still open when those are missing. If the retriever cannot be read
+    the shipped constant answers, never "unknown".
+    """
+    try:
+        from app.rag.retriever import EMBED_MODEL
+
+        value = str(EMBED_MODEL or "").strip()
+        if value:
+            return value
+    except Exception as exc:  # pragma: no cover - depends on optional third-party imports
+        logger.warning(f"[Index] the embedding model could not be read from the retriever: {exc}")
+    return DEFAULT_EMBEDDING_MODEL
+
+
+def _configured_dimension() -> int:
+    raw = str(os.getenv(EMBEDDING_DIMENSION_ENV, "") or "").strip()
+    if not raw:
+        return DEFAULT_EMBEDDING_DIMENSION
+    try:
+        return _dimension_value(raw)
+    except ValueError as exc:
+        logger.warning(f"[Index] {EMBEDDING_DIMENSION_ENV} is unusable ({exc}); using {DEFAULT_EMBEDDING_DIMENSION}")
+        return DEFAULT_EMBEDDING_DIMENSION
+
+
+def configured_embedding_scope() -> EmbeddingScope:
+    """The profile new vectors are produced under: env override, else this build's model."""
+    model = str(os.getenv(EMBEDDING_MODEL_ENV, "") or "").strip() or _shipped_embedding_model()
+    return EmbeddingScope(model, _configured_dimension())
+
+
+class IndexScopeError(ValueError):
+    """A version may not be used under the embedding profile that is in effect now.
+
+    ``code`` is stable and safe to surface: it is what /health/details reports and what a
+    caller matches on, so the message can stay human-readable.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        index_id: str = "",
+        index_version_id: str = "",
+        version_scope: EmbeddingScope | None = None,
+        configured_scope: EmbeddingScope | None = None,
+        codes: tuple[str, ...] = (),
+    ):
+        super().__init__(message)
+        self.code = code
+        self.codes = tuple(codes) or (code,)
+        self.index_id = index_id
+        self.index_version_id = index_version_id
+        self.version_scope = version_scope or EmbeddingScope.unknown()
+        self.configured_scope = configured_scope or EmbeddingScope.unknown()
+
+    def as_dict(self) -> dict:
+        return {
+            "code": self.code,
+            "codes": list(self.codes),
+            "index_id": self.index_id,
+            "index_version_id": self.index_version_id,
+            "version_scope": self.version_scope.as_dict(),
+            "configured_scope": self.configured_scope.as_dict(),
+        }
+
+
 @dataclass
 class IndexVersion:
     index_version_id: str
@@ -144,29 +307,126 @@ class IndexVersion:
     created_at: str
     published_at: str | None = None
     retirement: bool = False
+    # Part of the version, not a label on it. A record written before R22 has neither key
+    # and stays unknown; appending them last keeps every existing positional use working.
+    embedding_model: str | None = None
+    dimension: int | None = None
+
+    @property
+    def scope(self) -> EmbeddingScope:
+        return EmbeddingScope(self.embedding_model, self.dimension)
+
+    def matches_scope(self, scope: EmbeddingScope) -> bool:
+        return self.scope == scope
+
+
+# The on-disk shape of one version record. A field list derived from the dataclass itself
+# means the loader cannot fall behind the record: adding a field here needs no second edit.
+_INDEX_VERSION_FIELDS = frozenset(f.name for f in fields(IndexVersion))
+_INDEX_VERSION_REQUIRED = (
+    "index_version_id",
+    "index_id",
+    "source_version_id",
+    "backend",
+    "chunk_count",
+    "checksum",
+    "status",
+    "created_at",
+)
 
 
 class IndexRegistry:
-    def __init__(self, metadata_path: str | Path):
+    def __init__(self, metadata_path: str | Path, *, scope: EmbeddingScope | None = None):
         self.metadata_path = Path(metadata_path).resolve()
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
         self._versions: dict[str, IndexVersion] = {}
         self._current: dict[str, str] = {}
+        # None means "ask the environment every time", which is the point: a process that
+        # picks up a new model has to notice on the next publication, not on the next
+        # restart. A fixed scope exists for tests and for the rebuild command, which names
+        # the profile it is about to write under rather than trusting the ambient value.
+        self._fixed_scope = scope
         self._load()
+
+    @property
+    def scope(self) -> EmbeddingScope:
+        """The embedding profile this process publishes under right now."""
+        if self._fixed_scope is not None:
+            return self._fixed_scope
+        return configured_embedding_scope()
+
+    def _reference_scope(
+        self, embedding_model: str | None, dimension: int | None
+    ) -> EmbeddingScope:
+        """Resolve caller-supplied axes against the configured profile.
+
+        Naming only one axis keeps the other from the configuration, so a query that says
+        "768" still cannot match a version some other model built at 768.
+        """
+        base = self.scope
+        model = base.embedding_model
+        if embedding_model is not None:
+            model = str(embedding_model).strip() or None
+        dimension_value = base.dimension if dimension is None else _dimension_value(dimension)
+        return EmbeddingScope(model, dimension_value)
+
+    def _require_scope(self, version: IndexVersion, reference: EmbeddingScope, *, action: str) -> None:
+        """Refuse to let one index serve two embedding profiles at once."""
+        scope = version.scope
+        if scope == reference:
+            return
+        codes = scope.disagreement(reference)
+        code = CODE_SCOPE_UNKNOWN if CODE_SCOPE_UNKNOWN in codes else CODE_SCOPE_MISMATCH
+        raise IndexScopeError(
+            code,
+            f"cannot {action} {version.index_version_id}: it was embedded as {scope}, "
+            f"but this index is {reference}",
+            index_id=version.index_id,
+            index_version_id=version.index_version_id,
+            version_scope=scope,
+            configured_scope=reference,
+            codes=codes,
+        )
 
     def _load(self) -> None:
         if not self.metadata_path.exists():
             return
         payload = json.loads(self.metadata_path.read_text(encoding="utf-8"))
         self._versions = {
-            raw["index_version_id"]: IndexVersion(**raw)
+            raw["index_version_id"]: self._version_from_record(raw)
             for raw in payload.get("versions", [])
         }
         self._current = {
             str(key): str(value)
             for key, value in (payload.get("current") or {}).items()
         }
+
+    @staticmethod
+    def _version_from_record(raw: dict) -> IndexVersion:
+        """Read one persisted record without inventing a profile for it.
+
+        A record written before R22 carries no ``embedding_model``/``dimension`` key. Those
+        stay ``None`` -- reported as unknown and refused by every scope gate -- rather than
+        taking the currently configured model, which would bless old vectors as though this
+        build's model had produced them. Keys this build does not know are dropped instead
+        of crashing the load, so a file written by a newer build still opens; a key this
+        build *needs* still fails loudly rather than yielding a half-record version.
+        """
+        known = {key: value for key, value in raw.items() if key in _INDEX_VERSION_FIELDS}
+        missing = [name for name in _INDEX_VERSION_REQUIRED if name not in known]
+        if missing:
+            raise ValueError(
+                "index version record is missing required field(s): " + ", ".join(sorted(missing))
+            )
+        version = IndexVersion(**known)
+        # Empty strings and zero are as unknown as an absent key: they say nothing about
+        # which model produced a vector, and treating them as a profile would be a guess.
+        if not version.embedding_model:
+            version.embedding_model = None
+        if not version.dimension:
+            version.dimension = None
+        return version
 
     def _save(self) -> None:
         payload = {
@@ -197,6 +457,8 @@ class IndexRegistry:
         chunk_count: int,
         checksum: str,
         retirement: bool = False,
+        embedding_model: str | None = None,
+        dimension: int | None = None,
     ) -> IndexVersion:
         if not index_id.strip() or not source_version_id.strip():
             raise ValueError("index_id and source_version_id are required")
@@ -206,6 +468,14 @@ class IndexRegistry:
             raise ValueError("index checksum must be a SHA-256 hex digest")
         if retirement and int(chunk_count) != 0:
             raise ValueError("a retirement index version carries zero chunks")
+        # A version that does not name its profile records the one this process embeds with.
+        # It can never record "unknown": unknown arrives only from a legacy file, and that
+        # asymmetry is what makes an unknown current version conspicuous.
+        scope = self._reference_scope(embedding_model, dimension)
+        if not scope.known:
+            raise ValueError(
+                "an index version must record an embedding model and a positive dimension"
+            )
         version = IndexVersion(
             index_version_id=f"{index_id}:v{uuid4().hex}",
             index_id=index_id,
@@ -216,6 +486,8 @@ class IndexRegistry:
             status="building",
             created_at=datetime.now(timezone.utc).isoformat(),
             retirement=bool(retirement),
+            embedding_model=scope.embedding_model,
+            dimension=scope.dimension,
         )
         with self._lock:
             self._versions[version.index_version_id] = version
@@ -231,6 +503,10 @@ class IndexRegistry:
                 raise ValueError("index chunk_count must not be negative")
             if not re.fullmatch(r"[0-9a-f]{64}", version.checksum):
                 raise ValueError("index checksum is invalid")
+            # The profile check runs last but before the status moves: a version built for
+            # another model or width is not "validated", and a validated-but-mismatched
+            # version is one publish() call away from serving wrong vectors.
+            self._require_scope(version, self.scope, action="validate")
             version.status = "validated"
             self._save()
             return version
@@ -247,20 +523,63 @@ class IndexRegistry:
             self._save()
             return version
 
-    def current(self, index_id: str) -> IndexVersion:
+    def current(
+        self,
+        index_id: str,
+        *,
+        embedding_model: str | None = None,
+        dimension: int | None = None,
+        enforce_scope: bool = False,
+    ) -> IndexVersion:
+        """The version an index points at now.
+
+        Unscoped, it answers the bookkeeping question ("what is current") for callers that
+        only trace a publication, including a legacy current whose profile is unknown --
+        chat.py and the publisher read it that way, and refusing there would turn a
+        reporting call into an outage. Pass a profile, or ``enforce_scope``, and it becomes
+        the retrieval question instead: "may a query embedded this way be answered from
+        what is current", with a stable refusal when it may not.
+        """
         with self._lock:
             version_id = self._current.get(index_id)
             if not version_id:
                 raise KeyError(index_id)
-            return self._versions[version_id]
+            version = self._versions[version_id]
+            if enforce_scope or embedding_model is not None or dimension is not None:
+                self._require_scope(
+                    version,
+                    self._reference_scope(embedding_model, dimension),
+                    action="read",
+                )
+            return version
 
-    def rollback(self, index_id: str, index_version_id: str) -> IndexVersion:
+    def rollback(
+        self,
+        index_id: str,
+        index_version_id: str,
+        *,
+        embedding_model: str | None = None,
+        dimension: int | None = None,
+        enforce_scope: bool = True,
+    ) -> IndexVersion:
         with self._lock:
             version = self._versions[index_version_id]
             if version.index_id != index_id:
                 raise ValueError("index version belongs to another index")
             if version.status not in {"published", "superseded"}:
                 raise ValueError("only a published index version can be restored")
+            # Rolling back is a profile switch as much as a version switch: restoring a
+            # 384-wide version while this process embeds queries at 768 would answer new
+            # queries with old vectors, which is the failure this whole gate exists to stop.
+            # The publisher's abort path passes enforce_scope=False because it undoes a
+            # publication that never completed and returns the pointer that was already
+            # live; see IndexPublisher._abort.
+            if enforce_scope:
+                self._require_scope(
+                    version,
+                    self._reference_scope(embedding_model, dimension),
+                    action="roll back to",
+                )
             current_id = self._current.get(index_id)
             if current_id and current_id in self._versions:
                 self._versions[current_id].status = "superseded"
@@ -270,20 +589,130 @@ class IndexRegistry:
             self._save()
             return version
 
-    def discard(self, index_version_id: str) -> None:
+    def discard(
+        self,
+        index_version_id: str,
+        *,
+        embedding_model: str | None = None,
+        dimension: int | None = None,
+        enforce_scope: bool = True,
+    ) -> None:
         """Forget a version that never reached the published state.
 
         A failed publication restores the pointer to the last version that really was
         published; when there was none, the dangling version and its pointer both go, so
         the registry can never report a current version that does not exist.
+
+        ``enforce_scope`` is on by default so a rebuild under a new profile cannot erase the
+        other profile's rollback target. Forgetting a version is the one operation here that
+        pointing somewhere else cannot undo.
         """
         with self._lock:
-            version = self._versions.pop(index_version_id, None)
+            version = self._versions.get(index_version_id)
             if version is None:
                 return
+            if enforce_scope:
+                # Checked before the pop, not after: a refusal has to leave this registry
+                # exactly as it was, current pointer included.
+                self._require_scope(
+                    version,
+                    self._reference_scope(embedding_model, dimension),
+                    action="discard",
+                )
+            del self._versions[index_version_id]
             if self._current.get(version.index_id) == index_version_id:
                 del self._current[version.index_id]
             self._save()
+
+    def queryable_version_ids(
+        self,
+        *,
+        index_id: str | None = None,
+        embedding_model: str | None = None,
+        dimension: int | None = None,
+    ) -> frozenset[str]:
+        """The versions this profile may serve a search from, and nothing else.
+
+        Only versions that really reached the published state count, and only those whose
+        model *and* width both agree. An unknown profile is never queryable, which is why a
+        legacy record cannot leak into a new-profile result set.
+        """
+        reference = self._reference_scope(embedding_model, dimension)
+        with self._lock:
+            return frozenset(
+                version.index_version_id
+                for version in self._versions.values()
+                if version.status in {"published", "superseded"}
+                and version.scope == reference
+                and (index_id is None or version.index_id == index_id)
+            )
+
+    def queryable_version(
+        self,
+        index_id: str,
+        *,
+        embedding_model: str | None = None,
+        dimension: int | None = None,
+    ) -> IndexVersion:
+        """The version a query under this profile may hit, or a stable refusal."""
+        return self.current(
+            index_id,
+            embedding_model=embedding_model,
+            dimension=dimension,
+            enforce_scope=True,
+        )
+
+    def index_ids(self) -> tuple[str, ...]:
+        """Every index this registry has a current version for."""
+        with self._lock:
+            return tuple(sorted(self._current))
+
+    def history(self, index_id: str) -> tuple[IndexVersion, ...]:
+        """Every version of one index, oldest first, whatever its status.
+
+        Superseded versions stay listed on purpose: a rebuild is only auditable -- and only
+        reversible -- while the previous version is still there to be named.
+        """
+        with self._lock:
+            return tuple(
+                sorted(
+                    (
+                        version
+                        for version in self._versions.values()
+                        if version.index_id == index_id
+                    ),
+                    key=lambda version: version.created_at,
+                )
+            )
+
+    def embedding_drift(
+        self, *, index_id: str | None = None, include_history: bool = False
+    ) -> "EmbeddingDrift":
+        """Does what is published disagree with the embedding profile in effect now?
+
+        With no ``index_id`` this surveys the current version of every index, which is what
+        a health check needs; ``include_history`` widens it to superseded versions that may
+        still hold vectors.
+        """
+        reference = self.scope
+        with self._lock:
+            if index_id is not None:
+                candidates = [self._current.get(index_id)]
+            else:
+                candidates = list(self._current.values())
+            versions = [
+                self._versions[version_id]
+                for version_id in candidates
+                if version_id and version_id in self._versions
+            ]
+            if include_history:
+                seen = {version.index_version_id for version in versions}
+                versions.extend(
+                    version
+                    for version in self._versions.values()
+                    if version.status == "superseded" and version.index_version_id not in seen
+                )
+        return EmbeddingDrift.from_versions(versions, configured=reference)
 
 
 class IndexPublicationError(RuntimeError):
@@ -295,6 +724,121 @@ class IndexPublicationError(RuntimeError):
         self.cause_name = type(cause).__name__ if cause is not None else ""
         if cause is not None:
             self.__cause__ = cause
+
+
+@dataclass(frozen=True)
+class EmbeddingDrift:
+    """How far the published index has come apart from the configured embedder.
+
+    A pure report: nothing here mutates a registry, so a health probe can call it as often
+    as it likes. ``codes`` is the set a caller puts in ``problems``; ``affected`` names the
+    versions so an operator can see how wide a rebuild is before running one.
+    """
+
+    drifted: bool = False
+    codes: tuple[str, ...] = ()
+    configured: EmbeddingScope = EmbeddingScope.unknown()
+    affected_index_version_ids: tuple[str, ...] = ()
+    unknown_index_version_ids: tuple[str, ...] = ()
+    checked: int = 0
+
+    @classmethod
+    def from_versions(
+        cls, versions, *, configured: EmbeddingScope
+    ) -> "EmbeddingDrift":
+        codes: list[str] = []
+        affected: list[str] = []
+        unknown: list[str] = []
+        for version in versions:
+            disagreement = version.scope.disagreement(configured)
+            if not disagreement:
+                continue
+            affected.append(version.index_version_id)
+            codes.extend(disagreement)
+            if CODE_SCOPE_UNKNOWN in disagreement:
+                unknown.append(version.index_version_id)
+        return cls(
+            drifted=bool(affected),
+            codes=tuple(dict.fromkeys(codes)),
+            configured=configured,
+            affected_index_version_ids=tuple(affected),
+            unknown_index_version_ids=tuple(unknown),
+            checked=len(versions),
+        )
+
+    def as_dict(self) -> dict:
+        return {
+            "drifted": self.drifted,
+            "codes": list(self.codes),
+            "configured": self.configured.as_dict(),
+            "affected_index_version_ids": list(self.affected_index_version_ids),
+            "unknown_index_version_ids": list(self.unknown_index_version_ids),
+            "checked": self.checked,
+        }
+
+
+def retain_queryable(
+    registry: IndexRegistry,
+    records,
+    *,
+    index_id: str | None = None,
+    embedding_model: str | None = None,
+    dimension: int | None = None,
+    version_key: str = "index_version_id",
+) -> list:
+    """Keep only the records that belong to the asked-for embedding profile.
+
+    A hit whose version is unknown, or belongs to another profile, is not "close enough":
+    it is a vector some other model computed, so it leaves the result set. That is what
+    makes "one knowledge base, two dimensions, no cross-dimension hits" true while a rebuild
+    is still in flight, when both generations of vectors are physically present. Records
+    that carry no version at all fail closed too -- an unattributable hit cannot be shown to
+    be the right width.
+    """
+    allowed = registry.queryable_version_ids(
+        index_id=index_id, embedding_model=embedding_model, dimension=dimension
+    )
+    kept: list = []
+    for record in records or ():
+        if isinstance(record, dict):
+            version_id = str(record.get(version_key) or "")
+        else:
+            version_id = str(getattr(record, version_key, "") or "")
+        if version_id and version_id in allowed:
+            kept.append(record)
+    return kept
+
+
+def read_index_metadata(metadata_path: str | Path | None = None) -> tuple[list[IndexVersion], dict]:
+    """Parse the registry file without opening a registry.
+
+    ``IndexRegistry.__init__`` creates its parent directory, which is right for a publisher
+    and wrong for a health probe: a check that reports on the filesystem must not add to it,
+    and must not be able to write. This reads the same records through the same legacy-safe
+    loader and returns them.
+    """
+    path = Path(metadata_path or default_metadata_path()).expanduser().resolve()
+    if not path.exists():
+        return [], {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    versions = [IndexRegistry._version_from_record(raw) for raw in payload.get("versions", [])]
+    current = {
+        str(key): str(value)
+        for key, value in (payload.get("current") or {}).items()
+    }
+    return versions, current
+
+
+def embedding_drift_from_metadata(
+    metadata_path: str | Path | None = None, *, scope: EmbeddingScope | None = None
+) -> EmbeddingDrift:
+    """The drift answer for a process that has no registry of its own."""
+    versions, current = read_index_metadata(metadata_path)
+    by_id = {version.index_version_id: version for version in versions}
+    referenced = [by_id[version_id] for version_id in current.values() if version_id in by_id]
+    return EmbeddingDrift.from_versions(
+        referenced, configured=scope if scope is not None else configured_embedding_scope()
+    )
 
 
 @dataclass(frozen=True)
@@ -425,6 +969,8 @@ class PublicationOutcome:
     retirement: bool
     previous_index_version_id: str | None = None
     warnings: tuple[str, ...] = ()
+    embedding_model: str | None = None
+    dimension: int | None = None
 
     def as_dict(self) -> dict:
         """The public shape: enough to trace a publication without a server path."""
@@ -438,6 +984,10 @@ class PublicationOutcome:
             "checksum": self.checksum,
             "mirrored": self.mirrored,
             "warnings": list(self.warnings),
+            # Which embedder produced the vectors this version describes. A caller that
+            # cannot see this cannot tell a fresh publication from a stale one.
+            "embedding_model": self.embedding_model or SCOPE_UNKNOWN,
+            "dimension": self.dimension if self.dimension else SCOPE_UNKNOWN,
         }
 
 
@@ -518,6 +1068,9 @@ ON CONFLICT (index_id) DO UPDATE SET
         )
 
     def insert_version(self, publication: DocumentIndexPublication, version: IndexVersion) -> None:
+        # The scope rides in the version row's metadata rather than a new column: the
+        # migration that gives chunks.embedding a real vector(<dim>) belongs to R58, and a
+        # mirror must not start requiring a column no checked-in migration creates.
         self._execute(
             """
 INSERT INTO index_versions
@@ -534,7 +1087,13 @@ ON CONFLICT (index_version_id) DO UPDATE SET status = EXCLUDED.status
                 version.chunk_count,
                 version.checksum,
                 version.status,
-                _json_value(publication.scope_metadata()),
+                _json_value(
+                    {
+                        **publication.scope_metadata(),
+                        "embedding_model": version.scope.embedding_model or SCOPE_UNKNOWN,
+                        "dimension": version.scope.dimension or SCOPE_UNKNOWN,
+                    }
+                ),
             ),
         )
 
@@ -804,6 +1363,10 @@ class IndexPublisher:
 
         index_id = publication.index_id
         previous_id = self._current_id(index_id)
+        # Resolved once and handed down, so create_version, validate and publish cannot
+        # disagree with each other about which profile this publication belongs to if the
+        # environment happens to move while the steps run.
+        scope = self.registry.scope
         version = self._step(
             "create_version",
             lambda: self.registry.create_version(
@@ -813,6 +1376,8 @@ class IndexPublisher:
                 chunk_count=publication.chunk_count,
                 checksum=publication_checksum(publication),
                 retirement=publication.retirement,
+                embedding_model=scope.embedding_model,
+                dimension=scope.dimension,
             ),
         )
         warnings: list[str] = []
@@ -871,6 +1436,8 @@ class IndexPublisher:
             retirement=publication.retirement,
             previous_index_version_id=previous_id,
             warnings=tuple(warnings),
+            embedding_model=version.embedding_model,
+            dimension=version.dimension,
         )
 
     def _current_id(self, index_id: str) -> str | None:
@@ -897,13 +1464,23 @@ class IndexPublisher:
         if session is not None:
             session.abort()
             session.close()
+        # One guard per undo step. Both calls deliberately pass enforce_scope=False: this
+        # path puts back the version that was already live a moment ago and forgets the one
+        # this process just built, so it is not a profile switch. Chaining them the way this
+        # file used to meant a refused rollback skipped the discard, which left the aborted
+        # version in a registry that a caller had already been told had failed.
+        if previous_id:
+            try:
+                self.registry.rollback(publication.index_id, previous_id, enforce_scope=False)
+            except Exception as exc:
+                logger.error(
+                    f"[Index] rollback after a failed {cause.stage} step did not complete: {exc}"
+                )
         try:
-            if previous_id:
-                self.registry.rollback(publication.index_id, previous_id)
-            self.registry.discard(index_version_id)
+            self.registry.discard(index_version_id, enforce_scope=False)
         except Exception as exc:
             logger.error(
-                f"[Index] rollback after a failed {cause.stage} step did not complete: {exc}"
+                f"[Index] discarding the aborted version did not complete: {exc}"
             )
 
     @staticmethod
