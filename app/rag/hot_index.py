@@ -1,0 +1,511 @@
+"""R44 热集进程内检索索引：一层可丢弃的加速缓存，不是第二个事实源。
+
+计划书 §5.2 的立论是"进程内 HNSW ≈0.0015 ms，穿到外部向量库要 1–5 ms"。本模块把覆盖绝大
+多数查询的热集合常驻进程内，省掉那几毫秒的往返。边界钉死成三条：
+
+1. **权威永远在向量库**。向量唯一的入库入口是 DocumentRetriever._write_batch()（R21
+   判据②），本模块不写库、不删库、不做第三条写腿，只在写成功之后*被告知*新增了什么、
+   删掉了什么。热集里不允许存在"只有这里知道"的事实。
+2. **pre-filter 先于热集**（R45/R57 口径）。权限判定发生在热集给出结果之前：候选按分数
+   降序逐条过谓词，不认的条目连名次都不占，截断只作用在合法候选上。任何跨部门/超密级内容
+   不会因为"先在热集里命中"而短暂可见。
+3. **能不能服务是可判定的**。热集只有在"没常驻的那批 chunk 在本次过滤条件下一条都不会被
+   向量库召回"时才允许给出结果；判不定就整体不用，绝不返回一个"少了冷条目"的近似结果集。
+   这条让判据②（同序同 id）在语义上是恒等而不是近似。
+
+缓存条目一律带 R22 的 embedding scope 标识（backend + 模型 + 维度 + 索引版本），跨版本永不
+复用；换模型/换维度等于全量作废。本模块绝不缓存 query → 结果集，否则一次权限口径变化就会
+把上一个 principal 的答案泄漏给下一个。
+
+默认关闭（HOT_INDEX_ENABLED 未设置即关，不认识的值也算关），关闭时本模块一个字节的状态都
+不留、一次 embedding 请求都不多发。
+"""
+
+from __future__ import annotations
+
+import os
+import threading
+import time
+from dataclasses import dataclass
+
+try:  # numpy 缺席时退回纯 python 距离：热集只是加速器，装不上就整体不用，绝不影响主路径
+    import numpy as _NP
+except ImportError:  # pragma: no cover - 取决于环境
+    _NP = None
+
+TRUE_VALUES = {"1", "true", "yes", "on"}
+
+#: 开关与容量。默认关，行为与 R44 之前逐字一致；容量单位是 chunk 数。
+HOT_INDEX_ENV = "HOT_INDEX_ENABLED"
+HOT_INDEX_MAX_CHUNKS_ENV = "HOT_INDEX_MAX_CHUNKS"
+DEFAULT_MAX_CHUNKS = 20_000
+
+#: 花名册可信时长。跨进程写入在本进程内不可见（单机单 worker 时不存在，多 worker 时是已
+#: 知限制），所以超时后强制重读向量库，而不是永远信任内存。
+HOT_INDEX_MAX_AGE_SECONDS_ENV = "HOT_INDEX_ROSTER_TTL_SECONDS"
+DEFAULT_ROSTER_TTL_SECONDS = 300.0
+
+#: 不可服务的稳定原因码。观测只读这些码，不读日志。
+REASON_DISABLED = "hot_index_disabled"
+REASON_COLD = "hot_index_cold"
+REASON_STALE_ROSTER = "hot_index_roster_stale"
+REASON_SCOPE_MISMATCH = "hot_index_scope_mismatch"
+REASON_INCOMPLETE = "hot_index_incomplete"
+REASON_NO_VECTORS = "hot_index_store_without_vectors"
+REASON_NO_QUERY_VECTOR = "hot_index_no_query_vector"
+#: 热集自己出了任何意外（读回的形状不对、谓词抛错……）都算"不能服务"，绝不让一层缓存
+#: 把检索问出异常来。原因码单独一个，运维看得到，不会被误读成"缓存没命中"。
+REASON_ERROR = "hot_index_error"
+
+_DIAGNOSTICS: dict = {
+    "hits": 0,
+    "misses": 0,
+    "invalidations": 0,
+    "resident_chunks": 0,
+    "last_bypass_reason": "",
+}
+_DIAGNOSTICS_LOCK = threading.Lock()
+
+
+def hot_index_diagnostics() -> dict:
+    """进程内只记账的观测出口，形状对齐 embedding_diagnostics / vector_mirror_diagnostics。
+
+    只读内存计数，不发请求、不读文件、不改变任何检索行为（判据⑥）。
+    """
+    with _DIAGNOSTICS_LOCK:
+        return {
+            "hits": _DIAGNOSTICS["hits"],
+            "misses": _DIAGNOSTICS["misses"],
+            "invalidations": _DIAGNOSTICS["invalidations"],
+            "resident_chunks": _DIAGNOSTICS["resident_chunks"],
+            "last_bypass_reason": _DIAGNOSTICS["last_bypass_reason"],
+        }
+
+
+def reset_hot_index_diagnostics() -> None:
+    """测试与进程启动用的计数归零；不触碰索引内容。"""
+    with _DIAGNOSTICS_LOCK:
+        _DIAGNOSTICS["hits"] = 0
+        _DIAGNOSTICS["misses"] = 0
+        _DIAGNOSTICS["invalidations"] = 0
+        _DIAGNOSTICS["resident_chunks"] = 0
+        _DIAGNOSTICS["last_bypass_reason"] = ""
+
+
+def _note_hit() -> None:
+    with _DIAGNOSTICS_LOCK:
+        _DIAGNOSTICS["hits"] += 1
+        _DIAGNOSTICS["last_bypass_reason"] = ""
+
+
+def _note_bypass(reason: str) -> None:
+    with _DIAGNOSTICS_LOCK:
+        _DIAGNOSTICS["misses"] += 1
+        _DIAGNOSTICS["last_bypass_reason"] = reason
+
+
+def note_bypass(reason: str) -> None:
+    """公开的稳定码记账入口：调用方（retriever）自己判定不服务时也走同一个计数器。"""
+    _note_bypass(reason)
+
+
+def _note_invalidations(count: int) -> None:
+    if count <= 0:
+        return
+    with _DIAGNOSTICS_LOCK:
+        _DIAGNOSTICS["invalidations"] += count
+
+
+def _note_resident(count: int) -> None:
+    with _DIAGNOSTICS_LOCK:
+        _DIAGNOSTICS["resident_chunks"] = count
+
+
+def hot_index_enabled() -> bool:
+    """开关：未设置、空、或任何不认识的值都算关闭（与 R58 dual_write_enabled 同一口径）。"""
+    raw = str(os.getenv(HOT_INDEX_ENV, "") or "").strip().lower()
+    return raw in TRUE_VALUES
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        value = int(str(os.getenv(name, "") or "").strip())
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _ttl_env() -> float:
+    try:
+        value = float(str(os.getenv(HOT_INDEX_MAX_AGE_SECONDS_ENV, "") or "").strip())
+    except (TypeError, ValueError):
+        return DEFAULT_ROSTER_TTL_SECONDS
+    return value if value > 0 else DEFAULT_ROSTER_TTL_SECONDS
+
+
+@dataclass(frozen=True)
+class HotChunk:
+    """一条常驻 chunk：文本、元数据、向量，外加它属于哪个索引口径。
+
+    scope_key 是 R22 门禁的缓存版：条目自报它是在哪一套（backend, 模型, 维度, 索引版本）下
+    算出来的，与当前口径不一致的条目既不会被检索，也不算有效。
+    """
+
+    chunk_id: str
+    document: str
+    metadata: dict
+    vector: tuple
+    scope_key: tuple
+
+
+def _matches_metadata(metadata: dict, where) -> bool:
+    """向量库 where 子句在进程内的等价判定，实现只在 app/rag/retriever.py 有一份。
+
+    这里不抄第二份：离线 _JsonCollection 与热集共用同一个匹配器，两处语义不可能分叉。
+    """
+    from app.rag.retriever import metadata_matches  # 延迟导入，避开 retriever 与本模块成环
+
+    return metadata_matches(metadata, where)
+
+
+def _squared_l2(vector, query_vector) -> float:
+    """与 Chroma 默认 l2 距离同序的平方欧氏距离（开方单调，不影响名次）。"""
+    if _NP is not None:
+        diff = _NP.asarray(vector, dtype="float64") - _NP.asarray(query_vector, dtype="float64")
+        return float(diff @ diff)
+    return sum((float(a) - float(b)) ** 2 for a, b in zip(vector, query_vector))
+
+
+def _doc_key(chunk_id: str, metadata: dict) -> str:
+    """一条 chunk 属于哪篇文档：元数据里有 filename 就用它，否则退回 id 的前缀。"""
+    return str((metadata or {}).get("filename") or chunk_id.rsplit("_", 1)[0])
+
+
+class HotSetIndex:
+    """进程内热集：花名册 + 常驻子集 + 逐条 pre-filter 的精确扫描。
+
+    实例不判断"该不该用"，它只回答"这批常驻条目能不能覆盖本次过滤条件"；覆盖不了就返回
+    None，让调用方原路回到向量库。
+    """
+
+    def __init__(self, *, max_chunks: int | None = None,
+                 roster_ttl_seconds: float | None = None,
+                 clock=time.monotonic):
+        self._lock = threading.RLock()
+        #: 常驻条目（含向量与文本）
+        self._entries: dict[str, HotChunk] = {}
+        #: 已知存在于向量库、但没常驻的 chunk id → 元数据（只用于"会不会被召回"判定）
+        self._cold: dict[str, dict] = {}
+        #: 插入序，决定淘汰顺序（写序是热度的近似）
+        self._order: list[str] = []
+        self._heat: dict[str, float] = {}
+        self._scope_key: tuple | None = None
+        self._populated = False
+        self._built_at = 0.0
+        self._last_reset_reason = ""
+        self._clock = clock
+        self._max_chunks = (max_chunks if max_chunks is not None
+                           else _int_env(HOT_INDEX_MAX_CHUNKS_ENV, DEFAULT_MAX_CHUNKS))
+        self._roster_ttl = (roster_ttl_seconds if roster_ttl_seconds is not None
+                           else _ttl_env())
+
+    # ---------- 生命周期 ----------
+
+    def _clear_locked(self, *, reason: str = "") -> int:
+        dropped = len(self._entries)
+        self._entries.clear()
+        self._cold.clear()
+        self._order.clear()
+        self._heat.clear()
+        self._populated = False
+        self._built_at = 0.0
+        self._last_reset_reason = reason
+        _note_invalidations(dropped)
+        _note_resident(0)
+        return dropped
+
+    def reset(self, *, reason: str = "") -> int:
+        """全量作废（索引版本切换、后端不存向量、冷启动）。返回丢掉的常驻条目数。"""
+        with self._lock:
+            return self._clear_locked(reason=reason)
+
+    def adopt_scope(self, scope_key: tuple) -> str:
+        """把当前口径记在索引上；口径变了 ⇒ 旧条目一条都不留（R22 的缓存版）。"""
+        with self._lock:
+            previous = self._scope_key
+            if previous is not None and previous != scope_key:
+                if self._populated or self._entries:
+                    self._clear_locked(reason=REASON_SCOPE_MISMATCH)
+                else:
+                    self._last_reset_reason = REASON_SCOPE_MISMATCH
+                self._scope_key = scope_key
+                return "reset"
+            self._scope_key = scope_key
+            return "kept"
+
+    @property
+    def scope_key(self):
+        with self._lock:
+            return self._scope_key
+
+    @property
+    def resident_chunks(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+    @property
+    def cold_chunks(self) -> int:
+        with self._lock:
+            return len(self._cold)
+
+    @property
+    def max_chunks(self) -> int:
+        """常驻预算（单位 chunk）。暖机按它决定从向量库回读多少条，本方法不改预算。"""
+        with self._lock:
+            return self._max_chunks
+
+    @property
+    def last_reset_reason(self) -> str:
+        """最近一次"整批作废"的原因码，粘住不清：重建本身不该抹掉"上一次为什么全丢"。"""
+        with self._lock:
+            return self._last_reset_reason
+
+    def _fresh_locked(self) -> bool:
+        """花名册是否可信：只有刚整批读过向量库、且没超过 TTL 时才是。"""
+        if not self._populated:
+            return False
+        if self._roster_ttl <= 0:
+            return True
+        return (self._clock() - self._built_at) <= self._roster_ttl
+
+    @property
+    def populated(self) -> bool:
+        with self._lock:
+            return self._fresh_locked()
+
+    # ---------- 维护：只被写路径告知，永不主动写库 ----------
+
+    def populate(self, rows, *, scope_key: tuple) -> dict:
+        """用向量库读回的一批 (chunk_id, document, metadata, vector) 重建热集。
+
+        vector 为 None 的行进冷表：它们确实存在于库里，只是没向量可用，所以只能挡覆盖
+        判定，绝不能被当成"没有这一条"。
+        """
+        admitted = 0
+        cold = 0
+        with self._lock:
+            if self._scope_key is not None and self._scope_key != scope_key:
+                self._clear_locked(reason=REASON_SCOPE_MISMATCH)
+            self._scope_key = scope_key
+            self._entries.clear()
+            self._cold.clear()
+            self._order.clear()
+            self._heat.clear()
+            for chunk_id, document, metadata, vector in rows:
+                chunk_id = str(chunk_id)
+                metadata = dict(metadata or {})
+                if vector is None or document is None or len(self._entries) >= self._max_chunks:
+                    # 预算耗尽时新行进冷表，已常驻的一条都不动：宁可整体不用，不可少给结果。
+                    self._cold[chunk_id] = metadata
+                    cold += 1
+                    continue
+                self._entries[chunk_id] = HotChunk(
+                    chunk_id=chunk_id, document=str(document), metadata=metadata,
+                    vector=tuple(vector), scope_key=scope_key)
+                self._order.append(chunk_id)
+                self._heat.setdefault(_doc_key(chunk_id, metadata), self._clock())
+                admitted += 1
+            self._populated = True
+            self._built_at = self._clock()
+            _note_resident(len(self._entries))
+        return {"resident": admitted, "cold": cold}
+
+    def note_write(self, *, ids, documents, metadatas, embeddings, scope_key: tuple) -> None:
+        """向量已经写进库之后被告知一次：这些行按新向量入热集，旧的同名行作废。
+
+        同名重传由 note_delete(旧 id) + note_write(新 id) 同一条路径覆盖；传进来的向量与
+        库里的完全同源，所以这里一次 embedding 都不多发。
+        """
+        ids = list(ids)
+        metadatas = list(metadatas or [])
+        documents = list(documents or [])
+        embeddings = list(embeddings or [])
+        with self._lock:
+            if not self._populated:
+                return
+            if self._scope_key is not None and self._scope_key != scope_key:
+                self._clear_locked(reason=REASON_SCOPE_MISMATCH)
+                return
+            self._scope_key = scope_key
+            for position, chunk_id in enumerate(ids):
+                chunk_id = str(chunk_id)
+                metadata = (dict(metadatas[position])
+                            if position < len(metadatas) and metadatas[position] else {})
+                self._entries.pop(chunk_id, None)
+                self._cold.pop(chunk_id, None)
+                if chunk_id in self._order:
+                    self._order.remove(chunk_id)
+                vector = (embeddings[position]
+                          if position < len(embeddings) and embeddings[position] is not None else None)
+                document = documents[position] if position < len(documents) else None
+                if vector is None or document is None:
+                    self._cold[chunk_id] = metadata
+                    continue
+                self._entries[chunk_id] = HotChunk(
+                    chunk_id=chunk_id, document=str(document), metadata=metadata,
+                    vector=tuple(vector), scope_key=scope_key)
+                self._order.append(chunk_id)
+                # 刚写进库的文档就是当下最热的：不登记 heat 的话它排在淘汰序最前，
+                # 一次上传换来的是"马上被挤出去"，热集就白暖了。
+                self._heat[_doc_key(chunk_id, metadata)] = self._clock()
+            self._evict_locked()
+            _note_resident(len(self._entries))
+
+    def note_delete(self, ids, *, scope_key: tuple | None = None) -> int:
+        """文档删除：热集条目与冷表条目都必须走，一个都不留。"""
+        ids = [str(chunk_id) for chunk_id in (ids or [])]
+        with self._lock:
+            if not self._populated:
+                return 0
+            if (scope_key is not None and self._scope_key is not None
+                    and scope_key != self._scope_key):
+                self._clear_locked(reason=REASON_SCOPE_MISMATCH)
+                return 0
+            dropped = 0
+            for chunk_id in ids:
+                if self._entries.pop(chunk_id, None) is not None:
+                    dropped += 1
+                    if chunk_id in self._order:
+                        self._order.remove(chunk_id)
+                self._cold.pop(chunk_id, None)
+            _note_invalidations(dropped)
+            _note_resident(len(self._entries))
+            return dropped
+
+    def _evict_locked(self) -> None:
+        """超预算时按"最久没被查到"的整篇文档淘汰到冷表。
+
+        淘汰只搬走向量与文本，元数据留在冷表里，覆盖判定才做得下去；被淘汰的文档只能等
+        下一次 populate() 回来——查询路径上绝不为了召回一条冷条目去读库，那正是本单要省
+        掉的那几毫秒。
+        """
+        overflow = len(self._entries) - self._max_chunks
+        if overflow <= 0:
+            return
+        by_document: dict[str, list[str]] = {}
+        for chunk_id in self._order:
+            entry = self._entries.get(chunk_id)
+            if entry is not None:
+                by_document.setdefault(_doc_key(chunk_id, entry.metadata), []).append(chunk_id)
+        for filename in sorted(by_document, key=lambda name: self._heat.get(name, 0.0)):
+            if overflow <= 0:
+                break
+            for chunk_id in by_document[filename]:
+                entry = self._entries.pop(chunk_id, None)
+                if entry is None:
+                    continue
+                self._cold[chunk_id] = dict(entry.metadata)
+                self._order.remove(chunk_id)
+                overflow -= 1
+            self._heat.pop(filename, None)
+
+    # ---------- 服务判定 ----------
+
+    def _bypass_locked(self, *, scope_key, where, pred, stores_vectors, query_vector) -> str:
+        if not hot_index_enabled():
+            return REASON_DISABLED
+        if not stores_vectors:
+            return REASON_NO_VECTORS
+        if query_vector is None:
+            return REASON_NO_QUERY_VECTOR
+        if scope_key is not None and self._scope_key is not None and scope_key != self._scope_key:
+            return REASON_SCOPE_MISMATCH
+        if not self._populated or not self._entries:
+            return REASON_COLD
+        if not self._fresh_locked():
+            return REASON_STALE_ROSTER
+        for metadata in self._cold.values():
+            if self._could_be_recalled_locked(metadata, where, pred):
+                return REASON_INCOMPLETE
+        return ""
+
+    def bypass_reason(self, *, scope_key: tuple | None = None, where: dict | None = None,
+                      pred=None, stores_vectors: bool = True, query_vector=None) -> str:
+        """本次能不能用热集：空串是能，否则是稳定原因码（判据⑤的回滚面）。"""
+        with self._lock:
+            return self._bypass_locked(scope_key=scope_key, where=where, pred=pred,
+                                        stores_vectors=stores_vectors, query_vector=query_vector)
+
+    def _could_be_recalled_locked(self, metadata: dict, where, pred) -> bool:
+        """冷条目会不会被向量库召回：where 与权限谓词都得过，才算"会"。
+
+        元数据缺键时按 None 交给谓词（fail-closed，与 app/rag/filters.py 的 allows 同义），
+        不补 1 级、不补空串，避免 R57 那类"凭空造密级"。
+        """
+        if not _matches_metadata(metadata, where):
+            return False
+        if pred is None:
+            return True
+        return bool(pred({
+            "classification": metadata.get("classification"),
+            "department": metadata.get("department"),
+        }))
+
+    def rank(self, query_vector, k: int, *, where: dict | None = None, pred=None,
+             scope_key: tuple | None = None, stores_vectors: bool = True):
+        """在常驻条目上按平方 L2 升序取前 k 条；不能服务时返回 None。
+
+        pre-filter 逐条发生在截断之前（判据③，与 R45 的 BM25"先筛后取"同构）：不认的条目
+        连名次都不占，所以受限用户不会因为热集里躺着别人的高分文档而饿死，跨部门内容也不
+        会先被"命中"再被丢掉。
+        """
+        with self._lock:
+            reason = self._bypass_locked(scope_key=scope_key, where=where, pred=pred,
+                                          stores_vectors=stores_vectors, query_vector=query_vector)
+            if reason:
+                _note_bypass(reason)
+                return None
+            scored = []
+            for chunk_id, entry in self._entries.items():
+                if not _matches_metadata(entry.metadata, where):
+                    continue
+                if pred is not None and not bool(pred({
+                        "classification": entry.metadata.get("classification"),
+                        "department": entry.metadata.get("department")})):
+                    continue
+                scored.append((_squared_l2(entry.vector, query_vector), chunk_id, entry))
+            scored.sort(key=lambda item: (item[0], item[1]))
+            picked = scored[:k] if k > 0 else []
+            now = self._clock()
+            for _distance, chunk_id, entry in picked:
+                self._heat[_doc_key(chunk_id, entry.metadata)] = now
+        _note_hit()
+        return [(distance, chunk_id, entry.document, dict(entry.metadata))
+                for distance, chunk_id, entry in picked]
+
+
+#: 进程内唯一实例。DocumentRetriever 每次检索都可能新建，所以状态不能挂在实例上（与
+#: retriever._DIAGNOSTICS / pg_store._DIAGNOSTICS 同一形状：模块级、加锁、只记账）。
+_HOT_INDEX = HotSetIndex()
+
+
+def get_hot_index() -> HotSetIndex:
+    """进程内热集单例。"""
+    return _HOT_INDEX
+
+
+def reset_hot_index(*, reason: str = "") -> int:
+    """测试与口径切换用的全量作废；返回丢掉的常驻条目数。"""
+    return _HOT_INDEX.reset(reason=reason)
+
+
+def current_scope_key(*, index_version_id: str = "") -> tuple:
+    """热集条目所属口径：(backend, 模型, 维度, 索引版本 id)。
+
+    模型与维度直接取 app/rag/indexing.py 的 configured_embedding_scope()，也就是 R22 门禁
+    用的同一个口径源，本模块不自成一套；不缓存，因为测试与运维都会就地改这些值。
+    """
+    from app.rag.indexing import INDEX_BACKEND, configured_embedding_scope
+
+    scope = configured_embedding_scope()
+    return (INDEX_BACKEND, scope.embedding_model, scope.dimension, str(index_version_id or ""))
