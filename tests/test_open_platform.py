@@ -27,7 +27,11 @@ def _signed_headers(app_info: dict[str, str], body: str, action: str, user: str 
 
 def test_registered_app_can_sign_and_verify_query_request():
     clear_app_registry()
-    app_info = register_application("oa-system", allowed_actions=["query", "dashboard"])
+    app_info = register_application(
+        "oa-system",
+        allowed_actions=["query", "dashboard"],
+        allowed_departments=["market"],
+    )
     body = '{"query":"本月差旅费是否超标"}'
     timestamp = str(int(time.time()))
     headers = {
