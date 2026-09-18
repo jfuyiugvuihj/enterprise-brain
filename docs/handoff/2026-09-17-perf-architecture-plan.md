@@ -191,23 +191,23 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 | R41 | SSE canonical `sources` 事件（承接 R3/B-2） | 接口 | 0.25 |
 | R42 | 规则优先的快慢判别器 | L0 | 0.5 |
 | R43 | system prompt 前缀复用、可变内容后置 | L1 | 0.5 |
-| R44 | 热集进程内检索索引 | L3 | 1.0 |
+| **R44**（**已结案** `39006b8` + 总控热修 `564340e`）| 热集进程内检索索引（🔴 **结案口径订正**：105/105 覆盖是在 379 chunk 小库 + 确定性哈希桩上测的，真实 `documents/` 是 **37 483 chunk**；且现实现为精确全量扫描，计划书那句 0.0015 ms 的前提是 HNSW ⇒ 真机延迟收益**无结论**，转 R79④）| L3 | 1.0 |
 | R45 | Pre-filtering：权限/部门先裁再算向量 | L3 | 0.5 |
 | R46 | 活动信号回填排序（采纳/驳回 → 相关度先验） | L3 | 1.5 |
 | R47 | 术语/同义词接进改写（`match_terms` 已有） | L2 | 0.5 |
 | R48 | 首屏结论卡片 + 来源，正文后台补 | L4 | 0.75 |
 | R49 | 索引瘦身：草稿/模板/超小文档不入索 | L3 | 0.5 |
 | R50 | 增量索引 + 低峰全量重建 | L3 | 1.0 |
-| R51 | 阶段化 P95 观测（每步耗时进 trace 与 `/health/details`） | 观测 | 0.75 |
+| **R51**（**已结案** `cef08bf`）| 阶段化 P95 观测：`app/common/stage_timing.py` 五段账本 + `GET /observability/stage-latency`，`/health/details` 的 `performance` 块加段不改行为 | 观测 | 0.75 |
 | R52 | 断外网自检 + 内网证书（私有化形态，非性能） | L5 | 0.5 |
 | **R58** | 双读镜像：Chroma 与 PGVector 同事务双写（**架构线，非本计划工期**）| 架构 | 1.5 |
-| **R59** | 切读 PGVector，权限过滤下推同引擎（同上）| 架构 | 1.0 |
+| **R59** | 切读 PGVector，权限过滤下推同引擎（同上）。🔴 **本班订正两条**：① 切读必须**连热集一起迁**——R44/R44b 的花名册读源、写钩子（`app/rag/retriever.py:548-571`）与 bypass 回落全部长在 Chroma 上，只切语义腿读口会让热集继续读旧库；② **撤销**上班口头账"`app/rag/retrieval_pipeline.py:247` 的 `pred` 未接线"——本班实测该文件三处 `pred`（`:314` BM25 先筛后取 / `:461` / `:558` `pred=scope.allows`）**全部已接线**（R45 已并 `0276f78`），247 行现为空行 | 架构 | 1.0 |
 | **R60** | 停写 Chroma 并归档退役（同上）| 架构 | 0.5 |
 | R61 | 无部门列的表整表跨部门仍可见（**待业主裁甲/乙**，未裁不派）| 权限边界 | 0.5 |
 | R62 | 被权限隐藏的行不能被说成「代码执行未通过」（诚实性）| 权限边界 | 0.5 |
 | R63 | 部门匹配两侧口径不对称（行侧已 strip、账号侧未 strip/lower）| 权限边界 | 0.25 |
-| R64 | 权限/拒答终态缺**结构化** `error_code`（今天只有裸文本）| 权限边界 | 0.5 |
-| R65 | 存量裸 `（error_code=…）` 文案收口（R16 债，实测 5 处）| 权限边界 | 0.25 |
+| **R64**（**已结案** `63dc76e`）| 权限/拒答终态结构化码：枚举 27→**29**（`row_scope_denied`/`no_visible_rows`）+ 五处拒绝现场两路同码；密级码按 H13 未裁**不建**，只留 `DEFERRED_CODES` 双向护栏 | 权限边界 | 0.5 |
+| **R65**（**已结案** `63dc76e`，与 R64 同批）| 存量裸 `（error_code=…）` 文案收口 + chart/export 两处漏记 | 权限边界 | 0.25 |
 | **R66**（本班已结案 `cc50e05`）| 补两篇从未落盘的缺失语料：《制度与口径登记表》+ `data/报销明细表.csv`，评测集无出处 **55→29**（B 桶 27 清 23）| 评测前置 | 0.5 |
 | R67 | `/open/approval/preview` 仍采信调用方自报 `department`/`standard`（R40 的同形质第二个洞）| 权限边界 | 0.5 |
 | **R68**（总控亲做 `e33727e`）| 测试污染泄漏：`test_offline_runtime_fallbacks.py` 开头 `clear()` 结尾不还原，漏红 `test_deployment_guards.py:494` | 测试卫生 | 0.25 |
@@ -216,11 +216,19 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 | **R71**（已结案 `8813ad0`）| `/open` 只验签名不验「能否代表该部门」，`x-open-department` 无签名可任意填 ⇒ R67 守卫可被整体绕过；服务端按 `record.allowed_departments` 收敛（无授权=空部门且不看头 / 单授权头可选 / 多授权头是唯一选择器且沉默不猜 / 越权 403 落审计），**签名基串 `app_id.timestamp.body` 零改动并有用例钉覆盖面不移动**；`/insights` 与 `/dashboard/summary` 两处同形洞一起收 | 权限边界 | 0.5 |
 | **R72**（总控亲做 `f396866`）| R49 标定用 `iterdir()` 枚举 `documents/`，而该目录按设计兼作上传落地区 ⇒ 业主机上 7 条用例当场 ERROR、判据④不可复跑；改版本化清单 `git ls-files -z` | 测试卫生 | 0.25 |
 | **R73**（待派）| supervisor 那一发降档（R42 拆出）：预算不足时降档必须可观测，**禁止改别人的 `tests/test_supervisor_roundtrip.py`** | L1 | 0.25 |
-| **R74**（待派）| `AgentState.model_budget` 零赋值零读取（R30 落地后新露）：要么真被读并影响档位，要么删字段 | 接口 | 0.25 |
-| **R75**（待派，前置 R71）| `/open` 与 worker 两份预审标准校验并存 ⇒ 抽公共校验口去重 | 接口 | 0.25 |
+| **R75**（**已结案** `69b0553`；🔴 **写域订正**：真实写域 `app/api/v1/intelligence.py` + `app/api/v1/open_platform.py`，跟进单/看板曾误记成 `app/common/open_platform.py`——实测该文件 `standard_source` 零命中）| 两份预审标准校验去重成一处 `resolve_standard_source(value, *, silent_default=)` | 接口 | 0.25 |
 | **R76**（待派，前置 R58 真机三件）| `chunk_vectors` 接入索引发布/回填链：`indexing._MIRROR_TABLES` 增表 + 发布时回填 `index_version_id`；换 embedding 模型必须连镜像一起换 | 架构 | 0.5 |
 | **R77**（待业主）| H11/H12 真机复测：09-17 那批实测数已过期（容器 GPU、后端镜像落后主树），换件后必须重测 | 观测 | 0.25 |
-| **R78**（待派，前置 R75）| 开放平台「应用身份声称了它并没有的能力」四件（R71 交工登记、总控复核）：① `max_clearance` 全仓只存不投用，管理端设的密级上限从未落到开放 principal；② `X-Open-User` 不在签名覆盖内 ⇒ 审计行 username 可被任意应用冒名；③ 未配 `OPEN_PLATFORM_APP_STORE_PATH` 时重启后授权集蒸发，**静默**退化为「无部门」而不是报错；④ `/query`、`/analyze`、`/provenance/summary` 不使用部门，其「按部门收敛」观感是装饰性的 ⇒ 要么落地要么在文档里撤掉 | 权限边界 | 0.75 |
+| **R78**（**已结案** `6d5f5ab`）| 开放平台撤掉四件未 earned 的声明（密级只存不判的自白 / 自报用户名归因为应用 / 三端点未按部门收敛 / 503 谎报只钉待 **H18**）：**行为零改动、签名基串一字未动**；总控另把它的持有者扫描由裸串改 **AST 口径** | 权限边界 | 0.75 |
+| **R79**（**在途** `be-r79`/Lagrange，前置 R44b；第十五班 18:33 实取 `dirty=8`，🔴 含 **M `tests/test_r44_hot_index_chroma.py`**，验收须逐行审这一处）| R44 收尾四件：① 热集观测挂 `/health/details`（须绕开 `tests/test_r44_hot_index_chroma.py:409` 那把精确相等钉死五键的钉子）；② 两个**零用例覆盖**的出厂默认值（`HOT_INDEX_ROSTER_TTL_SECONDS=300` / `HOT_INDEX_MAX_CHUNKS=20000`）钉成有牙用例；③ 向量 float32 省内存（硬门：top-k 逐条同序）；④ **真机规模（37 483 chunk）复测暖机与查询** | L3 | 0.75 |
+| **R80**（**已结案** 主树 `8a46bfb`）| `app/common/open_platform.py:257-258` 用 `time.time_ns()` 派生 app_id 与 secret ⇒ 同名连续注册 4 次只落 2 个 id / 2 个 secret / 注册表 2 条，撞号那对 secret 逐字符相同。改由 CSPRNG 双独立派生 + 撞号重生成 + 占号即抛 + 回滚只撤自己；总控五把刀（含 G5 反反向刀：摘掉测试里的时钟 patch 仍 16 全绿）
+| **R81**（**已结案** 主树 `fca75dc`）| `deploy/queue_worker.py:93-96` 不消费 `AgentResult.error.retryable` ⇒ R64/R65 刚定的"权限拒绝是终态"被队列盲重试到 dead。现已认账：不可重试终态直落 dead 且**不占 attempt 名额**，两类 dead 日志可分辨；总控六把刀全咬（K5 默认翻 False ⇒ 18 红）
+| **R82**（🔴 **待业主裁，不许派**）| `app/agents/tools.py:233` 仍把 policy/rbac 的**内部 reason 名**插进用户可见正文。收口必须连带改 `tests/test_dataset_route_authorization.py:188` 的断言，该行 blame 到 **`de13e90`（2026-09-14）＝业主本人所写** ⇒ 属"改业主写下的断言"，并入 **H15** 同批 | 权限边界 | 0.25 |
+| **R83**（**在途** `be-r83`/Newton，第十五班新立）| 审计日志**回放顺序不保证**：`app/common/audit.py:424-427` 排序键 `(created_at, event_id)`，本机 `datetime.now()` 粒度约 1 ms ⇒ 同 tick 内两条事件的顺序由随机 `event_id` 决定（探针 300 对：撞 tick 12、翻序 4）。修向＝进程内单调时间戳分配器（+1 µs / 回拨 / hydrate 播种），**不改 schema**；🔴 必须如实声明多 worker 跨进程同 tick 仍不确定 | 正确性 | 0.5 |
+| **R84**（待派，前置无；🔴**第十六班订正落点**）| 缺陷在**存储层**不在 `open_platform.py`：`JsonPersistenceAdapter.upsert()`（`app/storage/persistence.py:78`）的 read-modify-write（`_read` `:86` → 整份 `_write` `:60`）只有 `RLock()`（`:47`）＝**进程内**互斥 ⇒ 两个 API 进程（`deploy/start_workers.ps1` 出厂用法 `-Workers 3`，`PERSISTENCE_BACKEND` 缺省 `json`）并发写同一文件时，**后写者按自己读到的旧视图整份重写，静默抹掉别人刚落地的那条**（lost update，波及同文件全部 collection）。🔴 不是撞号问题：撞号已由 R80 降到 2⁻⁶⁴，`O_EXCL` 不解决丢失更新。修复＝`fcntl.flock`/`msvcrt.locking` 包住该临界区，禁新依赖。判据见跟进单 **§31.2** | 权限边界 | 0.5 |
+| **R85**（🔴 待业主，非代码单）| R80 修复前**已被静默覆盖**的那批开放平台应用行，其 secret 应视为已泄露并重发（对外通告 / 运维动作） | 密钥治理 | 业主 |
+| **R86**（待派，前置无；**第十五班实测收窄**）| 删 `app/agents/contracts.py:130 ModelBudget.max_calls`——全仓**只出现一次**（声明本身），无 env、无实现、无读取＝纯幻影；`docs/system-architecture-2026-09-17.md:533`、`docs/system-design-2026-09-16.md:456` 里的 `max_calls` 字样**本班已代摘**（跟进单 §30.7）。🔴 **`max_concurrency` 保留**：`contracts.py:124-126` 写明"故意不填，槽位语义归整机预算"，真身在 `model_budget.py:100-108`（`MODEL_MAX_CONCURRENCY` 驱动信号量，`test_model_concurrency.py` 钉着），且 `test_r74_dead_budget_field.py:179/182` 正引用它。附带清 `tests/test_r30_model_tiers.py:69` 陈旧 docstring；历史计划文档不改 | 接口 | 0.2 |
+| **R74**（**已结案** 主树 `b2d9f34`）| `AgentState`/`AgentContext` 上的 `model_budget` **零赋值零读取** ⇒ 走甲：删净 + AST/`model_fields` 双向负向钉（新 `tests/test_r74_dead_budget_field.py` 9 例）。并发真身是 `app/common/model_budget.py:default_model_budget()` 进程级单例，token/时钟额度按档在调用点解析，单个预算挂 context 会把跨档请求压平。总控三把隔离刀各咬不同判据 | 接口 | 0.25 |
 
 > **R61–R63 是 09-17 22:0x 由 R17 结案后新露出的边界**（非 R17 漏做），详细判据见跟进单 **§23**。
 > 三条都**不改判定逻辑、不动密级**（密级属 H13）；写域 `app/common/rbac.py` 与 `app/agents/tools.py`，与在途 R35/R56 零交叠。
@@ -232,6 +240,18 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 > ① **R42** 判据③「问答档占比 ≥60%（对齐 70:25:5）」**降级为报告值**——fixture 自身标注天花板 47.6%，该条把生产流量形状与难题加权写成了同一个数（业主可驳回，见 H15）；成本占比门移交 **R51** 真机回读，并**新加两条更硬的门**：⑤ 快道不得接任何"要求算出一个数"的题、⑥ 精度 ≥70% / 召回 ≥90% 一字不动。
 > ② **R58** 离线可证部分已并树（`5ae7e45`，开关默认关 ⇒ 不改现网行为），判据①②⑤结案、**③④ 属真机**（`migrate` + 备份恢复演练 + 双读差异表），前置"55 条无出处清零"按实测改判为"B 桶已清"（剩 29 = A/C 桶，非语料可清）。
 > ③ **R44**（在途）新增两条不可放宽硬门：**pre-filter 必须先于热集命中**、**热集条目必须携带 scope/index 版本，跨版本不得复用**（R22 那条"一个库两套向量"的缓存版）。
+
+> **本班（09-18 第十三班）四道刷新（写死，防下班照抄旧数）**：
+> ① **基线**：`5f61bc7` 实测 **2 failed / 1826**（上班"1828 全绿"是干净树测的，已作废）→ `564340e` 1835 → `cef08bf` 1894 → `63dc76e` 1959 → **`6d5f5ab` 1981 passed / 35 skipped / 0 failed（本班主树亲测，60.63 s）**。
+> ② **R44 结案口径订正**（见上表该行）：小库 + 哈希桩测出的 105/105 **不构成真机收益结论**，真机规模复测落在 R79④。
+> ③ **R59 订正两条**：切读 PGVector 必须连热集读源/写钩子一起迁；上班那条"`pred` 未接线"经本班实测**撤销**（三处 `pred` 全部已接线）。
+> ④ **R79–R82 首次入册**（第十二班口头立单后四份文档一行未写）：详细判据见跟进单 **§29.3–§29.5**，全链账见看板 **§4AP**。
+> **🔴 事故 #25（同类第三次，机器层）**：总控线程 `01a09dda`/`01a0acfb`/`01a0af5c` 全部死于**同线中途换模型**（历史混入别家 provider 的消息 id ⇒ `Invalid id ... at_` / `Invalid call_id`），换模型修不好只能开新线。⇒ 写死纪律：**总控线全程单一模型；子 agent 简报一律不带 model override**（带 override 的投递历史上死过两次：事故 #17、#21）。
+
+> **本班（09-18 第十五班）三道刷新（写死，防下班照抄旧数）**：
+> ① **基线链**：`6d5f5ab` 1981 → 并 R81 `fca75dc` **2006** → 并 R80 `8a46bfb` **2022** → 并 R74 `b2d9f34` **2031**（均 35 skipped / 0 failed，总控亲跑全量）。
+> ② **pgvector 现状（既别把 Chroma 写成最终架构，也别以为已经切过去）**：R21/R22 前置已实测落码（`app/rag/retriever.py:49/196/204` 拒收全零向量、`app/rag/indexing.py:10-11` 把 `embedding_model+dimension` 绑进索引）⇒ **P0 已清**；`app/rag/pg_store.py`（551 行，`a896cf6`）已在树上，但 **`VECTOR_DUAL_WRITE` 默认关、Chroma 仍是读路径** ⇒ 要到 P1 建索引那一步才卡真机（H11/H12）。方案见 `docs/handoff/2026-09-17-pgvector-adoption-plan.md` 与跟进单 §22。
+> ③ **R82 由"待派"改判"🔴 待业主裁"**：收口必须改 `tests/test_dataset_route_authorization.py:188` 的断言，而该行 blame 到 **`de13e90`（2026-09-14）＝业主本人所写** ⇒ 并入 **H15** 同批。**R83/R84/R85/R86 四单首次入册**：详细判据见跟进单 **§30.3**（R83）与 **§31.2**（R84 判据经第十六班实测改写，§30.4 原口径落点错误已订正），全链账见看板 **§4AQ**。
 
 > **R58–R60 是 09-17 21:4x 业主令新立的架构单**：不计入上面 8–11 人日，也不占三腿串行位；
 > 硬前置 = R21 + R22（两单至今**零代码提交**，实测见跟进单 §22.0）。详细判据见跟进单 **§22**。

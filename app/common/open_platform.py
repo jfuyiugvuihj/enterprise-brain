@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import time
 from threading import RLock
 from typing import Any
@@ -233,6 +234,111 @@ def clear_app_registry() -> None:
         _STORE["mtime"] = None
 
 
+#: ``app_id`` is 16 hex characters and ``secret`` is 64. Both are persisted as strings and
+#: handed to third-party integrations, so the widths are a published shape, not a detail.
+APP_ID_HEX_CHARS = 16
+APP_SECRET_HEX_CHARS = 64
+_APP_ID_BYTES = APP_ID_HEX_CHARS // 2
+_APP_SECRET_BYTES = APP_SECRET_HEX_CHARS // 2
+
+#: How many times one registration redraws an identity that is already taken before it
+#: gives up. Two collisions in a row on a 64-bit id is not a realistic event, but
+#: "not realistic" is exactly what the silent overwrite used to rest on.
+_IDENTITY_ATTEMPTS = 8
+
+#: The refusal when every draw collided. It stays in the family ``app_name_required``
+#: and ``allowed_actions_required`` already use -- a bare ``ValueError`` the admin route
+#: turns into a 400 -- because the ratified error-code vocabulary is closed and this is
+#: not a code worth widening it for.
+APP_ID_COLLISION = "app_id_collision"
+
+
+class _AppIdTaken(ValueError):
+    """Internal signal: this id already belongs to another application."""
+
+
+def _new_app_id() -> str:
+    """Draw an application id from the operating system's CSPRNG.
+
+    This used to be ``sha256(f"{name}:{time.time_ns()}")[:16]``. A wall clock is not a
+    unique-value source: on Windows it advances about 64 times a second, so two adjacent
+    registrations of one name hash the same string into the same id. Measured on this
+    machine, four registrations in a row collapsed into two.
+    """
+    return secrets.token_hex(_APP_ID_BYTES)
+
+
+def _new_app_secret() -> str:
+    """Draw a signing secret on its own, from the same CSPRNG.
+
+    Deliberately not derived from the id it ships beside: ``app_id`` is in the
+    administrator's application list and in every audit row this transport writes, so a
+    secret computed from it is one anybody who can read that list can recompute. The old
+    line hashed ``name:app_id:time_ns``, which was both predictable and -- whenever two
+    registrations collided -- the same secret for two different applications.
+    """
+    return secrets.token_hex(_APP_SECRET_BYTES)
+
+
+def _identity_is_free(app_id: str, store) -> bool:
+    """True only when no application holds this id, in this process or on disk.
+
+    The durable half is not decoration: another worker can hold a row this cache has
+    never seen, and ``upsert`` keys on the id, so a collision only the file can see would
+    still rewrite somebody else's application. A store this process cannot read counts as
+    holding every id, because an id it might be holding is not one this call may claim.
+    """
+    if app_id in _APP_REGISTRY:
+        return False
+    if store is None:
+        return True
+    from app.storage.persistence import PersistenceWriteError
+
+    try:
+        held = store.get(_STORE_COLLECTION, app_id) is not None
+    except (PersistenceWriteError, OSError, ValueError):
+        return False
+    return not held
+
+
+def _install_application(record: OpenApplication, store) -> None:
+    """The only write path into the registry, and it refuses to replace an existing row.
+
+    What sat here before was a bare ``_APP_REGISTRY[app_id] = record``. On a colliding id
+    that swapped one application's actions, departments, clearance and enabled flag for
+    another's while the write-through repeated the swap on disk, and the caller was still
+    handed the secret that had been issued for the first row. Callers hold ``_LOCK``.
+    """
+    if not _identity_is_free(record.app_id, store):
+        raise _AppIdTaken(APP_ID_COLLISION)
+    _APP_REGISTRY[record.app_id] = record
+
+
+def _mint_application(app_name: str, *, actions, departments, max_clearance, description, store) -> OpenApplication:
+    """Draw an identity until a free one is installed, or the draws run out.
+
+    A collision is regenerated, never overwritten; running out of draws refuses the
+    registration in the open rather than leaving one application signed with another
+    one's permissions.
+    """
+    for _attempt in range(_IDENTITY_ATTEMPTS):
+        candidate = OpenApplication(
+            app_id=_new_app_id(),
+            secret=_new_app_secret(),
+            app_name=app_name,
+            allowed_actions=actions,
+            allowed_departments=departments,
+            max_clearance=max_clearance,
+            description=description,
+        )
+        try:
+            _install_application(candidate, store)
+        except _AppIdTaken:
+            continue
+        return candidate
+    raise ValueError(APP_ID_COLLISION)
+
+
 def register_application(app_name: str, *, allowed_actions: list[str], allowed_departments: list[str] | None = None, max_clearance: int = 3, description: str = "") -> dict[str, str]:
     """Register an open-platform application and return its one-time secret.
 
@@ -242,6 +348,16 @@ def register_application(app_name: str, *, allowed_actions: list[str], allowed_d
 
     ``max_clearance`` is stored and consulted by nothing: see
     ``clearance_registration``, which the registration and list responses carry.
+
+    Two applications may share a name, and this is the function that decides what that
+    means: every call registers a new application with its own id and its own secret, and
+    none of them replaces another. Nothing here looks an application up by name, and no
+    caller may start doing that to mean "update that one": the id is the identity, the
+    name is a label. The id is drawn from a CSPRNG instead of derived from the name and
+    the clock, and ``_install_application`` refuses to write over a row even when a drawn
+    id somehow already exists -- see ``test_r80_app_identity_collision.py`` for what the
+    old derivation cost: same-name registrations landing on one id, one shared secret,
+    and the first application's whole grant replaced by the second.
     """
     name = str(app_name or "").strip()
     actions = [str(item).strip() for item in (allowed_actions or []) if str(item).strip()]
@@ -254,26 +370,29 @@ def register_application(app_name: str, *, allowed_actions: list[str], allowed_d
         raise ProductionReadOnlyProtection(
             f"open_platform_registry_read_only: {_STORE_PATH_ENV} is required in production"
         )
-    app_id = hashlib.sha256(f"{name}:{time.time_ns()}".encode("utf-8")).hexdigest()[:16]
-    secret = hashlib.sha256(f"{name}:{app_id}:{time.time_ns()}".encode("utf-8")).hexdigest()
-    record = OpenApplication(
-        app_id=app_id,
-        app_name=name,
-        secret=secret,
-        allowed_actions=tuple(actions),
-        allowed_departments=tuple(str(item).strip() for item in (allowed_departments or ()) if str(item).strip()),
-        max_clearance=max(1, int(max_clearance)),
-        description=str(description or ""),
-    )
     from app.storage.persistence import PersistenceWriteError
 
+    departments = tuple(
+        str(item).strip() for item in (allowed_departments or ()) if str(item).strip()
+    )
     with _LOCK:
-        _APP_REGISTRY[app_id] = record
+        record = _mint_application(
+            name,
+            actions=tuple(actions),
+            departments=departments,
+            max_clearance=max(1, int(max_clearance)),
+            description=str(description or ""),
+            store=store,
+        )
         if store is not None:
             try:
-                store.upsert(_STORE_COLLECTION, app_id, asdict(record))
+                store.upsert(_STORE_COLLECTION, record.app_id, asdict(record))
             except (PersistenceWriteError, OSError, ValueError) as exc:
-                _APP_REGISTRY.pop(app_id, None)
+                # Roll back the row this call added, and only that row: the registry also
+                # holds every other application, and one failed write is no licence to
+                # prune or clear what somebody else registered.
+                if _APP_REGISTRY.get(record.app_id) is record:
+                    _APP_REGISTRY.pop(record.app_id, None)
                 _STORE["error"] = f"application store write failed: {type(exc).__name__}"
                 raise ProductionReadOnlyProtection("open_platform_store_write_failed") from exc
             _STORE["loaded"] = True
@@ -281,7 +400,7 @@ def register_application(app_name: str, *, allowed_actions: list[str], allowed_d
                 _STORE["mtime"] = os.path.getmtime(store.path)
             except OSError:  # pragma: no cover - the file was just written
                 _STORE["mtime"] = None
-    return {"app_id": app_id, "secret": secret, "app_name": name}
+    return {"app_id": record.app_id, "secret": record.secret, "app_name": name}
 
 
 def build_request_signature(app_id: str, secret: str, body: str, timestamp: str) -> str:

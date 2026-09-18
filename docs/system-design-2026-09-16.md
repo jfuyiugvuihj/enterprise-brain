@@ -453,7 +453,7 @@ Evidence Bag（每次 worker 运行一个，随 config 传递）
 - **发现**：启动/定时任务调用 Ollama `/api/tags` 枚举本机模型，写入本地模型注册表；
 - **能力验证**：对每个候选模型跑标准探针（短生成、embedding 维度校验、rerank 打分冒烟），登记能力矩阵 `app/common/model_capabilities.py`；
 - **按用途绑定**：`fast / standard / complex / embedding / rerank` 五类用途分别绑定模型；配置写 `MODEL_*` 环境变量或注册表，禁止代码写死模型名（P1 消解项）；
-- **并发与预算**：`model_budget.py` 整机预算（max_calls/tokens/timeout/max_concurrency）+ 排队等待，防止 14B 级模型并发踩踏（`test_model_concurrency.py`）。
+- **并发与预算**：`model_budget.py` 整机预算（tokens/timeout/max_concurrency，槽位数取 `MODEL_MAX_CONCURRENCY`）+ 排队等待，防止 14B 级模型并发踩踏（`test_model_concurrency.py`）。
 
 ### 11.3 降级策略（诚实降级）
 

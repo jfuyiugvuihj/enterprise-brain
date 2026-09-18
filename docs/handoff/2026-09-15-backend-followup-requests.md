@@ -1003,3 +1003,158 @@ PROBE index reached = 0
 - **修法（R78 判据⑤，最小面）**：`/approval/preview` 把 `RetrievalScopeError` 从兜底 `except Exception` 里**单独摘出来**，映射成 403 + `department_scope_required`（`tests/test_error_code_vocabulary.py` 的 RATIFIED 表已在等的码之一，R64 也指向它），其余异常仍走 503。**不得**顺手改 `filters.py` 的判定，也不得放宽 R17。
 - **同时订正 §28.4 的第 ③ 条（ Chandrasekhar 的登记，我照抄了一半）**：未配 `OPEN_PLATFORM_APP_STORE_PATH` 时**整条注册记录**都消失，`verify_open_request:312` 直接 401「未注册应用」，**不会**退化成「有应用但无部门」；所以那条不是 R71 之后新增的静默失效路径。真正能让已注册应用突然失去部门的只有一条：**管理员改了/清了 store 里的 `allowed_departments`**（`_record_from_payload:128` 确实会原样回读该字段，所以持久化链没漏，这条我核过）。
 - 探针本体 `tests/test_zz_controller_probe_r71.py` **未入库**，已 `Move-Item` 到 `C:\Users\fengx\PycharmProjects\_quarantine\2026-09-18-controller-probes\`，R78 开工时按本节数字回收成正式用例。
+
+---
+
+## 29. 本班（09-18 15:0x–，总控第十三班）：接手核对 · R44b/R51/R64+R65/R78 四单全链补账 · **R79–R82 首次入册写详细判据** · 🔴事故 #25（基线 `8813ad0` → 主树 **`6d5f5ab`**）
+
+> 本节取代「第十二班口头立单但四份文档一行未写」的欠账。**§5.2 计划书与看板 §4AP 与本节同批落盘**，三者对不上时以本节判据文本为准。
+> 禁止依据 `task_plan.md` / `progress.md` / `findings.md` 判断进度（计划书 §10 明令已过期）。
+
+### 29.0 接手核对（全部本班亲测，非照抄上班）
+
+- 主树 `C:\Users\fengx\PycharmProjects\企业智脑`，分支 `codex/data-file-catalog`，HEAD **`6d5f5ab`**；脏项只有 `chroma_db/**`（被跟踪、每次跑测必脏 ⇒ **永不提交**）+ 8 项未跟踪垃圾（清单见 §29.6）。
+- 全量亲测：**1981 passed / 35 skipped / 0 failed / 60.63 s**（哨兵 `LOCAL_MODEL_NAME` 置禁用，`-p no:cacheprovider`）。
+- 上班口头账 R55 / R57 **确认已在树上**：`6663a40`（R55，经 `6d03788` 并入）、`ee11ca1`（R57，经 `5984696` 并入）⇒ `chat.py` 与 `retrieval_pipeline.py` 两个写域解锁，但本班三单都不许碰。
+- `be-r20` / `be-r53` 已无未提交改动（上班抢救完毕）；`be-leg2`（R17）至今 `dirty=0`，即派出去从未动工。
+
+### 29.1 R44b 热修全链（**总控亲写**，非执行层交付）
+
+- 链：`9940c13`(Tesla 交工) → `0ae3b1e`(追平) → **`39006b8`**(并树) → **`564340e`**(R44b 热修) → `cef08bf`(R51) → …
+- 三笔缺陷与修法：D1 整库一次读撞 SQLite **32 766** 变量上限（真实库 37 483 chunk）⇒ 分页；D2 常驻子集一次绑 20 000 id ⇒ 同批复用；D3 暖机失败不留痕 ⇒ 每次检索重跑注定失败的整库读（实测 **482 s** 两例）⇒ 冷却 + `REASON_COLD` 绕行。
+- 实测：暖机 **482 s → 6.8 s**；全量套件 **359 s → 55 s**。新增 `tests/test_r44_hot_index_paging.py`（7 例）。
+- 🔴 **结案口径订正（本单未完全结案的原因）**：所谓「105/105 覆盖」是在 **379 chunk** 小库 + 确定性哈希桩 embedding 上测的，真实 `documents/` 语料 **37 483 chunk**；且现实现是**精确全量扫描 O(常驻条数)**，计划书那句 0.0015 ms 的前提是 HNSW ⇒ **真机延迟收益尚无结论**，转 §29.2 判据④。
+
+### 29.2 R51 / R64+R65 / R78 三单交工链与已裁事项
+
+- **R51**（`6833140` → `cef08bf`）：`app/common/stage_timing.py` 新模块，把 span 折成 classify/rewrite/retrieve/generate/reflect 五段，按 lane/tier 分组，回读 R42 成本占比；开关 `STAGE_TIMING_ENABLED`，**不改行为**。已裁两件（别再重复裁决）：① rewrite/reflect 两处分段埋点落在写域外（`app/rag/retrieval_pipeline.py:122` → `app/common/model_handler.py`）⇒ 本轮不下，随 R79 之后另派；② lane/tier **不进 trace 落盘字节** ⇒ 在线读口如实报 unknown、离线靠 `[R42]` 锚点回读；要落 lane 须改 `app/trace/records.py`，另立单不夹带。
+- **R64+R65**（`089436a` → `63dc76e`）：枚举 27→29（`row_scope_denied` / `no_visible_rows`），`app/agents/tools.py` 翻译层 + 五处拒绝现场两路同码 + chart/export 两处漏记；密级码按 H13 未裁**不建**，只留 `DEFERRED_CODES` 双向护栏。转单两件：文案侧 `tools.py:233` 内部 reason 名外泄 ⇒ **R82**；队列侧不认 `retryable=False` ⇒ **R81**。
+- **R78**（`7bd6eac` → `6d5f5ab`）：`clearance_registration()` 全仓唯一密级声明出处、`open-app:<id>` 归因、三端点 `_UNSCOPED_NOTICE`、503 谎报只钉不改（待 H18）。行为零改动、签名基串一字未动。总控把它的持有者扫描由**裸串改 AST 口径**（`app/agents/contracts.py` 的注释被误伤），**披露：改在执行层写域**。执行层未字面执行「username 不再采信」（被三条禁改护栏钉住），收口落在归因层 ⇒ **总控接受**。
+
+### 29.3 **R79** 详细判据（在途 `be-r79` / Lagrange；前置 R44b，写域 `app/rag/hot_index.py`+`app/rag/retriever.py`+`app/api/v1/auth.py`+`app/common/monitoring.py`）
+
+- ① 热集观测挂 `/health/details`：运维须能在该口读到热集开关态、hits/misses/invalidations/resident_chunks、最近绕行原因码；**关闭态也必须出现该块并如实标 disabled**（分不清"没装"与"关了"即为不合格）。
+  - 🔴 硬钉子（简报里已写死）：`tests/test_r44_hot_index_chroma.py:409` 用**精确相等**钉住 `hot_index_diagnostics()` 五个键 ⇒ 加键必红。**要求走独立出口**（新增 `hot_index_snapshot()` 之类），不改既存断言；动手前先 grep 出钉住 `/health/details` 与 `build_health_snapshot` 形状的既存用例清单并报上来。
+- ② 两个**零用例覆盖**的出厂默认值必须长成有牙的用例：`HOT_INDEX_MAX_CHUNKS = 20_000`（`app/rag/hot_index.py:40-41`）、`HOT_INDEX_ROSTER_TTL_SECONDS = 300.0`（`:45-46`，解析在 `:160-165`）。判据＝改出厂值必红 + 环境变量真实解析分支（空 / 非数字 / `<=0` / 合法值）各有回落，且**必须从行为侧证明默认值真的生效**（不许用"读源码字符串相等"糊）。
+- ③ 向量存储下沉 float32（现 `:364` 存 Python float 元组，`:193-198` 距离走 float64）：判据是**top-k 逐条同序同 id**（开/关两态对照，含并列分与跨部门样例）+ 真库规模 RSS/耗时实测差值。**若实测发现 float32 会翻转任何一条排名 ⇒ 停止本条判据并退回**，不许硬做。
+- ④ 真机规模复测 + 订正结案口径：分页大小/每页耗时/总暖机耗时/峰值 RSS 全部要在真实 37 483 chunk 量级上报数；并加一条用例钉"暖机失败后不重跑注定失败的整库读"（冷却生效）。
+- ⑤ 护栏：不改检索结果语义、不扩错误码词表、`HOT_INDEX_ENABLED` 默认关不变、关闭态"一个字节状态都不多发"（`:398` 那条用例不许变红）。
+
+### 29.4 **R80** 详细判据（在途 `be-r80` / Meitner；写域 `app/common/open_platform.py`）
+
+- 缺陷（**本班亲手复现**）：`app/common/open_platform.py:257-258` 由 `time.time_ns()` 派生 app_id 与 secret；同名连续注册 4 次 ⇒ 实测只有 **2 个 app_id、2 个 secret、注册表 2 条**（应为 4），撞号那一对 **secret 逐字符相同**。`":271"` 静默覆盖内存注册表，`":274"` 以同主键 `store.upsert` 写穿持久化 ⇒ 先注册应用的 actions/departments/clearance/enabled 被整条换掉，而两边管理员手里是同一个"一次性 secret"。**这是密钥复用 + 授权静默改写。**
+- ① 先红后绿复现用例（4 次注册 ⇒ 4 个互不相同 id/secret/4 条在册）；② 改用 CSPRNG（`secrets`），**格式约定不变**（app_id 16 hex / secret 64 hex），且**secret 不得由 app_id 派生**（app_id 出现在列表响应与审计里＝半公开值）；③ 撞号必须重生成而非覆盖，写路径加"已存在即报错"护栏且**摘掉必红**；④ 同名注册策略显式成立（同名可注册成不同应用、互不覆盖），动手前 grep 全仓调用点确认无人依赖"同名再注册＝更新"，有依赖即停手等裁；⑤ 带 store path 时注册→读回→重启 `app_id` 逐字节稳定，写失败的内存回滚不得 pop 掉别人的记录；⑥ 四条既存护栏（`test_open_platform` / `test_r67_department_self_report` / `test_r78_unearned_claims` / `test_deployment_guards`）一字不改；⑦ 不扩 RATIFIED 词表。
+- 附带事实（供执行层与下班复用）：全仓 `time_ns` 派生身份**只 open_platform 这两行**；无用例钉 app_id 长度/格式。
+
+### 29.5 **R81**（在途 `be-r81` / Noether）与 **R82**（待派）详细判据
+
+- **R81**：`deploy/queue_worker.py:93-96` 对任何非 success/partial 一律 `fail_or_retry`，而 `fail_or_retry`（`app/common/reliable_queue.py:177-199`）在 `attempts < max_attempts` 时无条件 `rpush(pending_key)` ⇒ **不消费** `AgentResult.error.retryable`（`app/agents/contracts.py:261`，出厂 `False`）。后果：R64/R65 刚定为终态的两枚权限拒绝码被盲重试到 dead，白烧模型往返、客户端轮询在 queued/processing 振荡。判据：① 先红后绿复现 ② 不可重试终态直接落 dead 且**不消耗 attempt 名额**、`last_error` 仍留码 ③ 🔴 `success`/`partial` 路径逐字节不变（含取消丢弃与日志文案），`retryable is True` 与"字段缺失"形态行为不变——**缺失时默认重试与否要显式表态并给理由** ④ 可测性：不许连真 Redis、不许引入新测试依赖、不许为能 import 而改仓库布局 ⑤ 不扩错误码词表 ⑥ 落 dead 的日志必须能区分"不可重试终态"与"重试耗尽"。
+- **R82**（待派，前置无）：`app/agents/tools.py:233` 把 policy/rbac 的**内部 reason 名**插进用户可见正文（例：把 `department_not_granted` 这类判定口径名字直接印在答复里）。现状被 `tests/test_dataset_route_authorization.py:188` 钉住 ⇒ 收口要连带处理该断言，**属"改业主写下的断言"边缘**，派工前先确认是否并入 H15 同批裁。
+
+### 29.6 待业主（一条都不代做）
+
+- 🔴 **H6**：`codex/data-file-catalog` 至今从未 push，本机唯一副本；今日已 **77** 个提交。
+- **H19（新）**：本线存活前提是**全程单一模型**——事故 #25 已用三条总控线（`01a09dda` / `01a0acfb` / `01a0af5c`）的命换出这条纪律，业主在总控线上切模型＝直接杀死它。心跳 `automation-2` 的 `targetThreadId` 仍指死线程 `01a0acfb`，每小时空撞报错（业主已令「别执行心跳了会出问题」，本班**未执行**）。
+- `~/.codex/config.toml` 里的 `bailian` / `qwen3.8-flash` 提供方会连杀子 agent（历史上带 model override 的投递死过两次：事故 #17、#21）。
+- 主树 `chroma_db/**` **被跟踪**且每次跑测必脏 ⇒ 要不要反跟踪（只能业主做）。
+- 删除清单（本班复核仍为垃圾，全部**未删**）：主树根 `2026-09-15-orchestration-board.md`（看板副本）、`_board_4al7.py`、`_board_4al_a.py`、`_reg64_65.py`、`bundle.js`、`idx.html`、`docs/screenshots/`、`frontend/node_modules.stub/`；`be-r34/r36q/`；`%TEMP%\r44_*.py`、`%TEMP%\r44_bak\`、`%TEMP%\r44_store_a\`（**200 MB 真库副本**）、`%TEMP%\_enc_probe.py`。旧账 14 项见 §27、§28。
+- 质量欠账：105 题评测里 **29 条** `must_contain` 在语料中搜不到出处（R66 由 55 降到 29，剩 A/C 桶非语料可清）；评测集被 `tests/test_evaluation_report.py` 钉着禁改。
+- 阶段 A 四条验收 **0 条通过**，全部卡真机（H11 容器重启 / H12 重建后端镜像）。
+
+## 30. 第十四班（09-18 17:45 起）＋第十五班（09-18 18:1x 起）合记，总控亲测
+
+### 30.1 接手订正（全部实测，旧账以下述为准，别再引用）
+
+- **R17 早已结案**：`app/common/rbac.py` 已含 fail-closed 行级过滤 + 灰度开关 + `filter_dataframe_rows_with_scope`，4 个用例文件在册。`be-leg2` 的 `dirty=0` 是**空树**，不是"派出去没动工"。
+- **R21/R22 已落码 ⇒ pgvector 的 P0 前置已清**：`app/rag/retriever.py:49/196/204` 拒收全零向量（`assert_writable_embeddings`），`app/rag/indexing.py:10-11` 把 `embedding_model+dimension` 绑进索引。`app/rag/pg_store.py`（551 行，`a896cf6`）已在树上，但 **`VECTOR_DUAL_WRITE` 默认关、Chroma 仍是读路径** ⇒ P1 建索引那一步才卡真机（H11/H12）。
+- **R47/R40 已落地，不得重复派单**：R47 = `app/rag/retrieval_pipeline.py:137-206` 同义词纯规则改写；R40 = `standard_source` 在 `app/**` 27 处命中。
+- **两笔未提交的活已由早班保住**：R55 = `be-r20@6663a40`、R57 = `be-r53@ee11ca1`，两棵树现在只剩垃圾文件（`probe.txt`、`app/rag/*.r57bak`），删除属业主。
+
+### 30.2 结案账（R81/R80＝第十四班；R74＝第十五班）——每单总控亲跑，未采信执行层自述
+
+- **R81 Noether**（队列认 `error.retryable`）：主树 `fca75dc`。六把刀 K1–K6 全咬（K5 默认翻 `False` ⇒ 18 红，含既存队列用例）。
+- **R80 Meitner**（开放平台身份改 CSPRNG 签发）：主树 `8a46bfb`。G1 退回 `time_ns` 10 红 / G2 摘持久化查重恰 1 红 / G3 摘撞号护栏 4 红 / G4-prime 回滚扩成 `clear()` 3 红 / G5（反反向刀）摘掉测试里的时钟 patch ⇒ 16 仍全绿。
+  - 教训入账：第一把 G4（`if ... is record:` → `if True:`）**不咬**，因为 pop 的仍是自己那条，变异与原判据逻辑等价 ⇒ **刀不咬先怀疑是刀的问题**，重下才定论。
+- **R74 Jason**（接口去伪，**第十五班 18:2x 验收并树**）：主树 `b2d9f34`。走**甲＝删净**，理由三条（写域内造不出真读取点／`AgentContext(` 在 `app/**` 一次都没被构造／一个请求天然跨档，挂单个预算会压平成 new bug）。三把**隔离刀**各咬不同判据：K1 只把字段塞回 `AgentState` ⇒ 3 红；K2 只塞回 `AgentContext` ⇒ 5 红；K3 只恢复那行 unused import ⇒ 恰 1 红。还原后 sha256 恒等（`state.py 523761AE`／`contracts.py 3761CB11`）。**并树后主树 2031 passed / 35 skipped / 0 failed**（= 2022 + 净增 9）。
+  - Jason 自报一颗同形缺陷未顺手捡（越界，正确）：`app/agents/contracts.py:130 max_calls`、`:135 max_concurrency` 声明后**全仓零读取**，且 `app/common/model_budget.py:255-268 tier_profile()` 压根不填 ⇒ 永远 `None`；而 `docs/system-architecture-2026-09-17.md:533` 写着"整机预算（max_calls/tokens/timeout/max_concurrency）"，**文档替一个不存在的能力背书** ⇒ 立 **R86**。
+  - 🔴 **总控复核订正（第十五班 18:4x，实测后收窄——原口径过宽）**：实测 `max_calls` 全仓**只出现一次**（`contracts.py:130` 声明本身，无 env、无实现、无读取）⇒ 纯幻影，可删；而 `max_concurrency` 是**两回事**：真身在 `app/common/model_budget.py:100-108 LocalModelBudget`（env `MODEL_MAX_CONCURRENCY` 驱动信号量，`tests/test_model_concurrency.py` 两条用例钉着），`ModelBudget` 上那颗由 `contracts.py:124-126` **写明"故意不填：槽位语义归整机预算"**，且 `tests/test_r74_dead_budget_field.py:179/182` 正在引用它 ⇒ **保留不删**。**⇒ R86 收窄为三件**：① 删 `ModelBudget.max_calls`；② 摘两份架构文档里的 `max_calls` 字样（**本班已代改**，见 §30.7）；③ 清 `tests/test_r30_model_tiers.py:69` 陈旧 docstring。历史计划文档（`docs/superpowers/plans/...:178` 的 `└── model_budget: object`）**不改**——带日期的历史件，改了破坏可追溯。
+
+### 30.3 **R83** 详细判据（第十五班新立，18:29 已派 `Newton`；写域 `app/common/audit.py` + 新增 `tests/test_r83_audit_order.py`）
+
+- **缺陷与证据（本班亲手复现，机制链完整）**：审计日志的**回放顺序不保证**。
+  - `app/common/audit.py:424-427` `_hydrate_view_locked` 的排序键是 `(created_at, event_id)`；`created_at` 来自 `:479 datetime.now(timezone.utc)`，本机实测**粒度约 1 ms**（仓库外探针：连续 2000 次 `now()` 平均步进 0.000000 s，即同一 tick 内读数逐字符相同）；`event_id` = `aud-{uuid4().hex}` 随机 ⇒ **同一 tick 内的两条事件，谁先谁后由随机串决定**。探针 300 对：撞 tick **12 对（4%）**，回放**翻序 4 次（1.3%）**。
+  - 存储侧救不了：`app/storage/persistence.py:68` JSON 落盘用 `json.dump(..., sort_keys=True)`，集合桶内按 **event_id 字典序**存 ⇒ 盘上顺序本身就是随机序；`PostgresPersistenceAdapter.list()` 是 `ORDER BY created_at DESC`（`:401`）⇒ 同 tick 同样不确定。
+  - 症状：`tests/test_audit_persistence.py::test_events_survive_a_restart_and_replay_in_order:186` 断言"回放顺序 == 写入顺序"，满套偶发红（看板 L802 有记录）。**证据边界要如实写**：单跑该用例 30 次 **0 红**（pytest 节奏下两次写之间夹了整个文件 + `fsync`，撞 tick 概率远低于探针的 4%）⇒ 机制是实测坐实，"满套红一次"是历史观测，两者都别夸大。
+  - 顺带订正病因记账：看板 L2090 把这条写成"满 CPU 时**子进程**不稳"，但该用例**根本不 spawn 子进程**（有子进程的是隔壁 `test_judgment_chain_replays_across_two_processes`）⇒ 旧归因不成立。
+- **修复方向（总控已定，别自选）**：在 `app/common/audit.py` 内加**单调时间戳分配器**，不改持久化 schema。要求：
+  - ① 先复现后修复：用注入时钟让两次读数相同，证明**修复前翻序、修复后不翻序**。不许靠 `sleep` 规避，不许 patch `uuid4`/`random` 来"造"确定性。
+  - ② 分配器必须持锁取值（`record_audit` 现在是在 `:479` 锁外拿的 `now`，需把取时刻移进 `with _lock`，或给分配器自己的小锁）；注意 `_lock` 非重入，别在持锁路径上再进同一把锁。
+  - ③ 后到的读数 `<=` 上一个已发出的值时，**强制 +1 µs 递增**；覆盖两种成因：**同一 tick**（常态）与**时钟回拨**（NTP step）——回拨要单独给用例。
+  - ④ **重启/续写要播种**：`_hydrate_view_locked` 读完持久化记录后，把分配器下界抬到库内 `max(created_at)`，否则新进程能发出比旧记录更早的时间戳。`tests/test_audit_persistence.py` 的 restart/replay 用例是这条的现成回归。
+  - ⑤ 精度可达性总控已核：`migrations/0005_audit_events.sql:22 created_at TIMESTAMPTZ`（Postgres 微秒精度）、JSON 存 ISO 字符串 ⇒ +1 µs 能过持久化往返。**不许改 `audit_events` 列集合**（`tests/test_audit_persistence.py:643-656` 精确钉住列名，且 DDL 由 `_TABLES` 生成 ⇒ 加列是扩大战线）。若执行层判断非加列不可，**停手报告等裁**。
+  - ⑥ 并发：多线程同时 `record_audit` 不得发出重复 `created_at`；既存 20 条 audit 用例、`app/api/v1/observability.py` 读出侧、`/health/details` 一字不许变红。
+  - ⑦ 🔴 **残余限制必须写进 docstring 并在交工里承认**：分配器是**进程内**的，多 worker 之间没有共享分配器 ⇒ **跨进程同一 tick 仍靠 `event_id` 掷硬币**。不许写成"彻底解决"。要真正闭环得加持久化单调序号列，那是另一单（等裁）。
+- **验收口径**：达标 = ①②③④⑤⑥⑦ 全绿 + 总控自下反证刀（至少摘掉 +1 µs 抬升、摘掉播种、把取时刻放回锁外三把）。
+
+### 30.4 R84 / R85（R80 Meitner 交工时自报，不隐瞒，均属未解决）
+
+- **R84**（可离线派，前置无）：`app/common/open_platform.py` 的 CSPRNG 只把撞号窗口降到 2⁻⁶⁴，**没有跨进程锁 / `O_EXCL`** ⇒ 多 worker 并发注册仍可能读到同一份注册表再各自写穿。判据要点：原子性要么落在文件锁/`O_EXCL`，要么落在 store 的"仅在不存在时写入"（CAS），且**摘掉必红**。
+- **R85**（🔴 待业主，不是代码单）：R80 修复前已被静默覆盖的那批应用行，其 secret 应视为**已泄露**并重发；这是对外通告/运维动作，总控不代做。
+
+### 30.5 事故 #26（同类第六次，**第十四班**自己犯的，如实记账）
+
+- 派 R74 时我在**同一个 block 里发了两次 `spawn_agent`**（误判"第一次工具名写错不会生成执行体"，实际两次都成功）⇒ Jason 与 Turing 同时落到同一棵树 `be-r74`。当场 `close_agent` Turing；事后核验 `be-r74` 当时 `dirty=0`、无任何 `.py` 被写 ⇒ **未造成串写污染**。
+- 写死纪律：一次 spawn 的消息体绝不许复制两份；"投出去没反应"不许凭感觉断定失败，**必须用 canary 核实**（本班 R37 投后即以 canary 核实成功）。
+
+### 30.6 第十五班待业主增量（其余仍见 §29.6，一条都不代做）
+
+- 基线订正入账：上班报的"1828 全绿"**已被证伪作废**；实测链 = `6d5f5ab` 1981 → 并 R81 `fca75dc` **2006** → 并 R80 `8a46bfb` **2022** → 并 R74 `b2d9f34` **2031**（均 35 skipped / 0 failed，总控亲跑）。
+- 质量欠账刷新：105 题评测里 **29 条** `must_contain` 在 96 篇语料中搜不到出处（R66 已由 55 降到 29，剩 A/C 桶非语料可清）；评测集被 `tests/test_evaluation_report.py` 钉着禁改。
+- 阶段 A 四条验收仍 **0 条通过**，全部卡真机（H11 重启容器 / H12 重建后端镜像）。
+
+### 30.7 第十五班代做的文档纠偏（docs 归总控，未占执行层槽位）
+
+- `docs/system-architecture-2026-09-17.md:533` 与 `docs/system-design-2026-09-16.md:456` 同一句话写着"整机预算（**max_calls**/tokens/timeout/max_concurrency）"，而全仓没有任何按调用次数封顶的实现（`max_calls` 只出现在 `app/agents/contracts.py:130` 那行声明里）⇒ 已改为"整机预算（tokens/timeout/max_concurrency，槽位数取 `MODEL_MAX_CONCURRENCY`）"。`tests/test_model_concurrency.py` 存在且钉的是真闸门，那半句保留。
+- 先核再改：确认 `tests/test_r78_unearned_claims.py` **不扫 docs**（无 `docs/` 断言），故本次编辑不会牵动该单的用例；`tests/test_phase8_deployment.py` 命中的是部署件不是这两行。
+- 教训入纪律：**执行层自报的"两颗都零读取"不等于两颗都该删**——我照抄进三份文档后才实测出其中一颗有"故意不填"的显式声明与被引用。⇒ 立单前总控必须自己跑一遍 `rg` 计数与就近注释核对，别把执行层的判断当事实。
+
+---
+
+## 31. 本班（09-18 18:5x–，总控第十六班）：接手抢救核对 · 主树基线缺口补测坐实 2031 · 🔴R84 落详细判据（并订正 §30.4 的落点错误）
+
+### 31.1 接手核对（全部本班实取，不采信上班自述）
+
+- 主树 `C:/Users/fengx/PycharmProjects/企业智脑` @ `codex/data-file-catalog`，接手 HEAD `141f52a`；脏项只有 `chroma_db/**`（6 项，跑测必脏，属已知）+ §29.6 垃圾清单，无第三方写入、无未提交的产物码改动。
+- 🔴 **上班唯一记账缺口已补**：基线 2031 原系在 `be-r74@2c67938` 树内测得，并树后主树未复跑。本班在主树 **`9ebddad`** 亲跑 **2031 passed / 35 skipped / 0 failed / 63.43 s**（`.venv` 解释器 + `-p no:cacheprovider` + `LOCAL_MODEL_NAME=__eb_test_disabled__`；报表"打宿主模型端口连接数 0"）⇒ 基线链 1981/2006/2022/2031 至此**全部落在主树**。
+- 业主开场点名的"两笔没提交的活"**经核早已结案**：R55 ⇒ 合并 `6d03788`、R57 ⇒ 合并 `5984696`，`chat.py` 与 `retrieval_pipeline.py` 两写域均已解锁（看板 §4AQ.4 同记）。两树盘上剩下的只有未跟踪垃圾：`be-r20/probe.txt`、`be-r53/*.r57bak` ×2 ⇒ **无抢救必要**，只进业主删除清单。
+- 上班欠的看板 §4AQ.9（计划书 R25–R52 落码实盘）确已在盘上但**未提交**，本班代提交 `9ebddad` 保住；另两处欠账（L2094 flake 旧归因未订正、基线表未记主树复跑）已随本班一并改写。
+- 三张在途单**全部在活**（本班 18:5x 实取 mtime 打脸上班"Gauss 35 分钟零活动"的判断）：`be-r79`/Lagrange `hot_index.py` 18:45:15、`be-r83`/Newton `audit.py` +62/−4 已成形、`be-r37`/Gauss 18:48:56 刚落 `test_r37_report_lane_enqueue.py` 且新出现 `test_r37_report_lane_worker.py`。⇒ 并发满 3，**本班不派第 4 投**（事故 #22 实测 5 并发撞 429）。
+
+### 31.2 R84 详细判据（可离线派，前置无；写域 `app/storage/persistence.py`，**不是** `open_platform.py`）
+
+**本班实测事实（逐条可复验）**
+
+- `JsonPersistenceAdapter`（`app/storage/persistence.py:30`）的 `self._lock = RLock()`（`:47`）**只在进程内**，跨进程零保护。
+- 全类**只有 `upsert()`（`:78`）会改盘面**：`with self._lock: payload = self._read()`（`:86`）→ 改内存桶 → `self._write(payload)`。`get`（`:94`）/`list`（`:99`）只读，**这个适配器没有 `delete()`** ⇒ 要修的只有一面，不用铺开到全类。
+- `_write()`（`:60`）= `mkstemp` + `json.dump(sort_keys=True)` + `flush` + `fsync` + `os.replace` ⇒ **单次写是原子的，不会撕裂**；但它按"本进程刚读到的整份视图"重写整个文件。
+- ⇒ 真缺陷是**丢失更新（lost update）**：A `os.replace` 落地后，任何在它之前已经 `_read()` 的 B 进程，其整文件重写会**把 A 那条记录静默抹掉**。窗口 = 一次 `_read`→`fsync`→`replace`，毫秒级。
+- 可达性（判"默认值/风险是否真能触发"必须查调用点，不能只看签名）：`deploy/start_workers.ps1:3` 与 `deploy/start_workers.sh:4` 的**出厂用法就是起多个 API 进程**（`-Workers 3`），而 `PERSISTENCE_BACKEND` 缺省 `json`（`app/storage/persistence.py:417`、`app/common/audit.py:133`）⇒ 非 Docker 路径下这是**日常形态**，不是理论风险。🔴 诚实边界：`docker-compose.yml` 未见 API `replicas`/`--workers` 参数，故**不宣称 Docker 部署必现**，本单按多进程脚本立案。
+- 爆炸半径 = 同一份 JSON 文件里的**所有 collection**（开放平台应用、审计、记忆、用户画像、知识图谱…），**不只** `open_platform`。
+
+🔴 **对 §30.4 的订正（上班落点错了，据本节实测改写）**
+
+- (a) 归属错：R84 被写成 `app/common/open_platform.py` 的缺陷。该层改不动这个丢失更新——它只是受害者之一，修复点在存储层 `upsert()`。
+- (b) 机制错：§30.4 说"没有跨进程锁 / `O_EXCL`"，把问题挂在**撞号**上。撞号已由 R80 降到 2⁻⁶⁴，且 `_install_application` 已拒绝覆盖既有行；本缺陷是**两条各不相同的行互相被抹掉**，`O_EXCL` 根本不解决它。
+- (c) 因此判据改为"跨进程互斥包住 read-modify-write"，而不是"给 id 加排他创建"。
+
+**判据（七条，逐条要证据）**
+
+- ① **先红后绿，且必须真跨进程**：两个 `sys.executable` 子进程各 upsert 一条**不同** `record_id` 到同一文件，事后盘上必须 2 条；修复前必须**稳定**丢 1 条。模板抄 `tests/test_audit_persistence.py:5`（本仓库既有的两子进程写法）。🔴 不许用**线程**冒充进程——`RLock` 挡得住线程挡不住进程，线程版用例是假绿。窗口窄 ⇒ 用**确定性注入**（子进程在 `_read()` 与 `_write()` 之间过 barrier 再各自写），不许靠跑一百次碰运气复现。
+- ② 修复落点：`upsert()` 的 read-modify-write **全过程**套跨进程互斥。只允许 stdlib——POSIX `fcntl.flock` / Windows `msvcrt.locking`，锁文件与被锁文件同目录。🔴 **禁止新增第三方依赖**（`pyproject.toml` 不许为本单动）。
+- ③ 拿不到锁**不许无界静默等待**：必须有超时并抛既有 `PersistenceWriteError`（`:22`），与既存写失败同形。🔴 不扩错误码词表。
+- ④ 崩溃不得留下永久锁：进程被 kill 后锁须自动释放（这正是选 `flock`/`msvcrt.locking` 而非 `O_EXCL` 锁文件的理由——后者要自己处理僵尸锁）。加一条"一方被 kill，另一方仍能写成功"的用例。
+- ⑤ 网络盘如实声明：私有化部署的数据目录可能挂 NFS/SMB，`flock` 在 NFS 上语义不可靠 ⇒ 模块 docstring 与看板**必须如实写这条残余限制**，不许宣称"跨进程绝对安全"。口径照抄 R83 的处理（Newton 把单进程限制写进 `_allocate_timestamp_locked` docstring 的先例）。
+- ⑥ 零回归：`_write` 的原子性与 `sort_keys=True` 落盘格式**一字不动**；`PostgresPersistenceAdapter` 不碰；`tests/test_audit_persistence.py`、`tests/test_open_platform.py`、`tests/test_deployment_guards.py` 三邻域不许改红。
+- ⑦ 不改出厂默认：本单**只加互斥**，不改 `PERSISTENCE_BACKEND=json`，也不在本单里劝迁 Postgres（那是 R59/R60 的退役路线，别混做）。
+
+**给执行层的提醒**：交工必须自带①的红→绿两份输出（命令 + passed/failed 数 + 时点），并列出你实际套锁的位置行号与超时取值。回报里若出现"应该不会再丢了"这类无实测措辞，退回。
