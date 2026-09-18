@@ -2158,7 +2158,7 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - **R83**（已派 Newton，判据见跟进单 §30.3）。
 - **R84**（可离线派，前置无）：R80 只把撞号窗口降到 2⁻⁶⁴，**没有跨进程锁 / `O_EXCL`** ⇒ 多 worker 并发注册仍可能各自写穿。
 - **R85**（🔴 待业主，不是代码单）：R80 修复前被静默覆盖的那批应用行，其 secret 应视为**已泄露**并重发（对外通告 / 运维动作）。
-- **R86**（可离线派，出自 Jason 自报且未越界去拾）：`app/agents/contracts.py:130 max_calls`、`:135 max_concurrency` 声明后**全仓零读取**，且 `app/common/model_budget.py:255-268 tier_profile()` 根本不填 ⇒ 永远 `None`；而 `docs/system-architecture-2026-09-17.md:533` 写着"整机预算（max_calls/tokens/timeout/max_concurrency）" —— **文档替不存在的能力背书**（与 R78 同类）。随身两处陈旧文本一并清：`tests/test_r30_model_tiers.py:69` docstring、`docs/superpowers/plans/2026-09-10-...md:178`。
+- **R86**（可离线派，出自 Jason 自报；**本班实测后口径已收窄**——见跟进单 §30.2 订正条与 §30.7）：只删 `app/agents/contracts.py:130 ModelBudget.max_calls`（全仓只出现一次＝纯幻影）；🔴 **`max_concurrency` 不删**（`:124-126` 写明故意不填 + 真身在 `model_budget.py:100-108` + `test_r74_dead_budget_field.py` 正引用）。两份架构文档里那句"整机预算（**max_calls**/…）"由**本班已代摘**（docs 归总控）。附带清 `tests/test_r30_model_tiers.py:69` docstring；带日期的历史计划文档**不改**。
 - 可派池现状：R83/R84/R86 三张离线可派；其余计划单卡真机或业主裁决。orchestrator.py 五单（R30/R31/R33/R42/R38）照旧串行且卡真机；`retrieval_pipeline.py` 归 R57（已结）、`chat.py` 归 R55（已结），两写域现已解锁。
 
 ### 4AQ.5 投递纪律（事故 #26 补记 + 本班 canary 实测）

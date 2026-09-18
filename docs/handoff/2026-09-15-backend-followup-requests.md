@@ -1077,6 +1077,7 @@ PROBE index reached = 0
   - 教训入账：第一把 G4（`if ... is record:` → `if True:`）**不咬**，因为 pop 的仍是自己那条，变异与原判据逻辑等价 ⇒ **刀不咬先怀疑是刀的问题**，重下才定论。
 - **R74 Jason**（接口去伪，**第十五班 18:2x 验收并树**）：主树 `b2d9f34`。走**甲＝删净**，理由三条（写域内造不出真读取点／`AgentContext(` 在 `app/**` 一次都没被构造／一个请求天然跨档，挂单个预算会压平成 new bug）。三把**隔离刀**各咬不同判据：K1 只把字段塞回 `AgentState` ⇒ 3 红；K2 只塞回 `AgentContext` ⇒ 5 红；K3 只恢复那行 unused import ⇒ 恰 1 红。还原后 sha256 恒等（`state.py 523761AE`／`contracts.py 3761CB11`）。**并树后主树 2031 passed / 35 skipped / 0 failed**（= 2022 + 净增 9）。
   - Jason 自报一颗同形缺陷未顺手捡（越界，正确）：`app/agents/contracts.py:130 max_calls`、`:135 max_concurrency` 声明后**全仓零读取**，且 `app/common/model_budget.py:255-268 tier_profile()` 压根不填 ⇒ 永远 `None`；而 `docs/system-architecture-2026-09-17.md:533` 写着"整机预算（max_calls/tokens/timeout/max_concurrency）"，**文档替一个不存在的能力背书** ⇒ 立 **R86**。
+  - 🔴 **总控复核订正（第十五班 18:4x，实测后收窄——原口径过宽）**：实测 `max_calls` 全仓**只出现一次**（`contracts.py:130` 声明本身，无 env、无实现、无读取）⇒ 纯幻影，可删；而 `max_concurrency` 是**两回事**：真身在 `app/common/model_budget.py:100-108 LocalModelBudget`（env `MODEL_MAX_CONCURRENCY` 驱动信号量，`tests/test_model_concurrency.py` 两条用例钉着），`ModelBudget` 上那颗由 `contracts.py:124-126` **写明"故意不填：槽位语义归整机预算"**，且 `tests/test_r74_dead_budget_field.py:179/182` 正在引用它 ⇒ **保留不删**。**⇒ R86 收窄为三件**：① 删 `ModelBudget.max_calls`；② 摘两份架构文档里的 `max_calls` 字样（**本班已代改**，见 §30.7）；③ 清 `tests/test_r30_model_tiers.py:69` 陈旧 docstring。历史计划文档（`docs/superpowers/plans/...:178` 的 `└── model_budget: object`）**不改**——带日期的历史件，改了破坏可追溯。
 
 ### 30.3 **R83** 详细判据（第十五班新立，18:29 已派 `Newton`；写域 `app/common/audit.py` + 新增 `tests/test_r83_audit_order.py`）
 
@@ -1110,3 +1111,9 @@ PROBE index reached = 0
 - 基线订正入账：上班报的"1828 全绿"**已被证伪作废**；实测链 = `6d5f5ab` 1981 → 并 R81 `fca75dc` **2006** → 并 R80 `8a46bfb` **2022** → 并 R74 `b2d9f34` **2031**（均 35 skipped / 0 failed，总控亲跑）。
 - 质量欠账刷新：105 题评测里 **29 条** `must_contain` 在 96 篇语料中搜不到出处（R66 已由 55 降到 29，剩 A/C 桶非语料可清）；评测集被 `tests/test_evaluation_report.py` 钉着禁改。
 - 阶段 A 四条验收仍 **0 条通过**，全部卡真机（H11 重启容器 / H12 重建后端镜像）。
+
+### 30.7 第十五班代做的文档纠偏（docs 归总控，未占执行层槽位）
+
+- `docs/system-architecture-2026-09-17.md:533` 与 `docs/system-design-2026-09-16.md:456` 同一句话写着"整机预算（**max_calls**/tokens/timeout/max_concurrency）"，而全仓没有任何按调用次数封顶的实现（`max_calls` 只出现在 `app/agents/contracts.py:130` 那行声明里）⇒ 已改为"整机预算（tokens/timeout/max_concurrency，槽位数取 `MODEL_MAX_CONCURRENCY`）"。`tests/test_model_concurrency.py` 存在且钉的是真闸门，那半句保留。
+- 先核再改：确认 `tests/test_r78_unearned_claims.py` **不扫 docs**（无 `docs/` 断言），故本次编辑不会牵动该单的用例；`tests/test_phase8_deployment.py` 命中的是部署件不是这两行。
+- 教训入纪律：**执行层自报的"两颗都零读取"不等于两颗都该删**——我照抄进三份文档后才实测出其中一颗有"故意不填"的显式声明与被引用。⇒ 立单前总控必须自己跑一遍 `rg` 计数与就近注释核对，别把执行层的判断当事实。
