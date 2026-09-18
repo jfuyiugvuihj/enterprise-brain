@@ -4,12 +4,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.approval.assistant import (
-    STANDARD_SOURCES,
     STANDARD_SOURCE_AUTO,
     build_precheck,
     match_expense_type,
     precheck_payload,
     resolve_standard_from_knowledge_base,
+    resolve_standard_source,
     to_decimal,
 )
 from app.common.audit import record_audit
@@ -74,30 +74,6 @@ async def _load_json_body(request: Request) -> dict:
     return json.loads(raw.decode("utf-8"))
 
 
-def _open_standard_source(value) -> str:
-    """Resolve where this preview may get its standard, refusing a spelling that is not the contract.
-
-    One vocabulary with the session transport -- the same ``STANDARD_SOURCES`` and the
-    same ``invalid_standard_source`` code -- and one deliberate difference: silence means
-    ``auto_from_knowledge_base`` here. The session route keeps ``explicit`` as its silent
-    default only because clients written before that field existed send a number and
-    expect it used; an open-platform application has no such history, so a body number
-    that was never asked for is a caller bug, not a policy.
-    """
-    requested = str(value or "").strip().lower()
-    if not requested:
-        return STANDARD_SOURCE_AUTO
-    if requested not in STANDARD_SOURCES:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code": "invalid_standard_source",
-                "message": "standard_source must be explicit or auto_from_knowledge_base",
-            },
-        )
-    return requested
-
-
 @router.post("/query")
 async def open_query(request: Request):
     body = await request.body()
@@ -124,13 +100,23 @@ async def open_analyze(request: Request):
 
 @router.get("/insights")
 async def open_insights(request: Request):
-    verify_open_request(dict(request.headers), "", required_action="insights")
+    principal, _record = verify_open_request(dict(request.headers), "", required_action="insights")
     params = request.query_params
+    # Resolved before any row is built. The label on the answer is the caller's own department
+    # as the registry derives it, and a query parameter naming somebody else's is the same
+    # self-report R67 refuses in a body: it is refused with the same code whether or not this
+    # request would have used it, so "no metric given" is not a way to test the guard.
+    department = verify_department_self_report(
+        principal,
+        str(params.get("department") or ""),
+        action=ACTION_VIEW,
+        resource_name="open_insights",
+    )
     rows = []
     if params.get("metric"):
         rows.append(
             {
-                "department": params.get("department", ""),
+                "department": department,
                 "metric": params.get("metric", ""),
                 "current": float(params.get("current", 0) or 0),
                 "previous": float(params.get("previous", 0) or 0),
@@ -151,6 +137,10 @@ async def open_approval_preview(request: Request):
     -- with provenance it wrote itself. Now the department resolves through the same
     ``verify_department_self_report`` the session transport uses, and the standard is
     retrieved unless the caller asks for ``explicit`` and names its origin.
+
+    R71 is what makes that guard mean anything on this transport: the department it verifies
+    a claim against is now granted by an administrator in the application registry, not handed
+    to it by the caller's own ``X-Open-Department`` header, which no signature covers.
     """
     body = await request.body()
     body_text = body.decode("utf-8") if body else "{}"
@@ -162,7 +152,10 @@ async def open_approval_preview(request: Request):
         action=ACTION_VIEW,
         resource_name="open_approval_preview",
     )
-    requested_source = _open_standard_source(data.get("standard_source"))
+    # R75: the judgment is made once, in app/approval/assistant.py. What this transport decides
+    # for itself is only what silence means, and it means ``auto_from_knowledge_base``: an
+    # application has no pre-field history of sending a number to be used as the standard.
+    requested_source = resolve_standard_source(data.get("standard_source"), silent_default=STANDARD_SOURCE_AUTO)
     expense_type = str(data.get("expense_type") or "")
 
     standard = data.get("standard")
@@ -218,13 +211,21 @@ async def open_approval_preview(request: Request):
 
 @router.get("/dashboard/summary")
 async def open_dashboard_summary(request: Request):
-    verify_open_request(dict(request.headers), "", required_action="dashboard")
+    principal, _record = verify_open_request(dict(request.headers), "", required_action="dashboard")
     params = request.query_params
+    # Same convergence as ``/insights``, refused the same way: the grouping key is the
+    # server's own, never a department the application typed into a query string.
+    department = verify_department_self_report(
+        principal,
+        str(params.get("department") or ""),
+        action=ACTION_VIEW,
+        resource_name="open_dashboard_summary",
+    )
     rows = []
     if params.get("metric"):
         rows.append(
             {
-                "department": params.get("department", ""),
+                "department": department,
                 "metric": params.get("metric", ""),
                 "value": float(params.get("value", 0) or 0),
             }

@@ -870,3 +870,136 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 **判据**：① 该端点的 `department` 必须由服务端按调用方身份推导（与 R40 同一个 `verify_department_self_report` 口径），不接受自报值，或自报值不等即拒并回稳定码；② `standard` 不得由调用方指定数值 —— 要么走 R40 已交付的 `auto_from_knowledge_base` 自动取数，要么显式 `explicit` 且带可追溯来源；③ 越权/自报用例覆盖，**必须与 R40 那 32 条参数化用例同形**（沿用 `test_prefiltering` / R45 的"先过滤后去重"式写法，不发明第二套）；④ **反证**：把服务端推导改回 `data.get("department", "")` 必须红。
 
 **边界**：不改 `authorization.py` 的判定逻辑（R40 已定，管理员豁免保留）；不动开放平台的签名校验本身；`ErrorEnvelope.code` 的扩枚举与 R40 暂不追认的两个码**一起做**，且必须等 `contracts.py` 出 R30 写域之后。写域 `app/api/v1/open_platform.py`（可能与 R55 的 `chat.py` 相邻但不同文件）⇒ **可即刻派，不占三腿串行位**。
+
+
+## 27. 本班（09-18 12:2x–13:5x，总控第十班）：R30/R49/R58 三单并树 · R42 判据当场改判 · 总控亲做三笔测试层收口 · 🔴事故 #23（同类第十次）· 新立 R73–R77（基线 `b6e951f` → `5ae7e45`）
+
+> **编号声明（防下班 grep 扑空）**：`R69`、`R71`、`R73`、`R74`、`R75`、`R76`、`R77` 全部由本班口头派出或新立，**在并树代码之前 git 里查不到**。以本文件与看板 §4AN 为唯一事实源。
+
+### 27.1 三单结案（一律总控独立复跑 + 自下反证刀，不采信执行层自述）
+
+| 单 | 内容 | 子树 | 并入主树 | 总控复跑（亲测） | 总控反证刀 |
+|---|---|---|---|---|---|
+| **R49** Fermat | 按内容特征决定进不进化物索引；拒收先回稳定原因；`index_status` 作正交 sidecar | `be-r36` `8680f43`→`31d6612` | `c26afda` | 单跑 **10**、影响面 **24+14**、邻域 **245**（真机 97 篇语料，命中排除 **0**） | 标题标点逃逸一刀：比率 0.5→**0.6471** ⇒ 标定当场红，逐字节还原 |
+| **R30** Sartre | 7 档模型各带显式 `max_tokens`；读超时 = `clamp(margin×(prefill+decode))`，httpx 四段拆分；`context_limit_exceeded` 发出前就拒、不洗进离线兜底；两份 `.env` 样例同一来源 | `be-r37` `3cb563b`→`fd546f4` | `50aff1a` | 追平后 **111**、邻域 **194 passed / 7 skipped** | 流中断计费一刀 ⇒ **2 failed**，还原 |
+| **R58** Curie | Chroma ⇄ PGVector **同事务双写镜像**，默认关；`migrations/0010` 给向量列补 `vector(<dim>)` + `hnsw` + `vector_scope` 口径表 | `be-r27t` `370a9e7`→`a896cf6`→`19d5811` | **`5ae7e45`** | 追平 `571ffd7` 后单跑 **21**、邻域 **176**（15 文件）、**全量 1580 passed / 35 skipped / 0 failed** | **5 刀**：never-commit **5 红** / rollback no-op **5 红** / tolerate scope drift **1 红** / launder missing-snapshot **首跑 0 红**（补 3 条用例后 2 红）/ launder read-failure **2 红** |
+
+- **R58 是本机今天第一次出现"只有全量才能抓到执行层漏红"**：`tests/test_document_catalog_sync.py:123` 的 0010 尾号引信（该用例 docstring 自己写着"将来谁加 0010 必须主动改这条"）不在 Curie 的 10 文件邻域里 ⇒ 子树自述"邻域 182 passed 全绿"，而全量 **1 failed**。`19d5811` 由总控按其自身要求改口，写域在 Curie 之外，已披露。
+- **R58 判据② 的 fail-closed 有一整条零覆盖**：把 `_vector_snapshot()` 两处"读不出旧向量 ⇒ 一个字不动地拒写"的 `return None` 洗成空字典，**18 条全绿**。⇒ Curie 的 6 把刀没有一把砍到这条闸门（它自己如实报了 KNIFE-3 是绿的，但那不是这一条）。总控补 **3 条承重用例**（`test_r58_pgvector_dual_write.py` 尾部，18→**21**），补完两把新刀当场 **2 红**。**这是本班最有价值的一笔：不是执行层写错，是"看起来有守卫、其实没测试"。**
+- **R58 真机欠账（业主侧，一条都不能省）**：`docker compose build migrate`(H12) → `python scripts/migrate.py`（0010 落库）→ 含 PG 向量列的**备份恢复演练**（判据④）→ `python scripts/compare_vector_recall.py --k 5 --out …` 出双读差异表（判据③真机侧）→ **重建索引**（新语料 + 向量都要进库）。开关 `EB_PG_VECTOR_DUAL_WRITE` **默认关**，关着时 `retriever` 一条新 SQL 都不发 ⇒ 本单并入不改变任何现网行为，可安全留在树上。
+- **R58 遗留风险（登记不掩盖）**：Chroma `add` 成功与 PG `commit` 之间进程崩溃 ⇒ 只剩 Chroma（= 今天行为），需 **R59 对账兜底**；假件不建模 chromadb 重复 id 行为，KNIFE-3 的绿**不可外推到真库**；`chunk_vectors.index_version_id` 本单故意留 NULL ⇒ 转 **R76**。
+
+### 27.2 **R42 判据③ 当场改判（总控改了业主写在计划书里的判据，业主可一句话驳回，见 H15）**
+
+- 计划书 §21 原文：**"③ 问答档占比 ≥60%（对齐 70:25:5）"**。`[实测]` fixture 标注 = 问答 **50** / 分析 **35** / 报告 **20** = **47.6% : 33.3% : 19.0%** ⇒ **复刻标注的判别器最高只能 47.6%**，③ 在这份题面上永远红。真因 = 总控立案时把两个不同源的东西写成了一条判据：**70:25:5 是生产流量形状，fixture 是难题加权**。
+- 裁定：**③ 降级为报告值、不再判红**；成本占比门**移交 R51**（真机分段观测回读），意图不取消，只换测量时机。`test_question_tier_share_is_at_least_sixty_percent` 改名改义。
+- **不认的一条**：Planck 把 metric-06「按财务部口径**算**本月销售额**是多少**？」判进快道。要算出一个数就不是定义。⇒ 新增 **⑤ 硬门（不可放宽）**：快道不得接任何"要求算出一个数"的题（口径词 + 取值动词闭集：是多少/算/合计/占比/环比/同比/趋势/排名/总额/平均），用 fixture 中含数字结果的条目钉 `lane != qa`。
+- 新增 **⑥**：重算并原样打印混淆矩阵与快道精度/召回；**精度 ≥70%、召回 ≥90% 两个字都不许动**。`[实测]` 现状：metric 命中 61.90%、快道精度 49/65 = **75.4%**、召回 49/50 = **98%**、与标注一致率 88/105 = 83.8%。
+- Planck 四条欠账的答复：① supervisor 那一发降档 ⇒ **另立 R73**，不许改别人的 `tests/test_supervisor_roundtrip.py`；② `AgentState.model_budget` 零赋值零读取 ⇒ **另立 R74**；③ `r36q/` 垃圾进业主删除清单；④ 已裁。
+
+### 27.3 总控亲做三笔测试层收口（不算执行层交付，全部 R-编号自占）
+
+| 单 | 根因（`[实测]`） | 修法 | 落点 |
+|---|---|---|---|
+| **R70** | app 侧 5 个模块 **import 期** `load_dotenv()`（`app/agents/nodes.py:10`、`orchestrator.py:21`、`app/common/auth.py:13`、`app/common/model_handler.py:28`、`app/rag/retriever.py:19`），而 `monitoring.build_health_snapshot()` **调用期**才懒加载 auth/retriever ⇒ "擦干净环境再打快照"的用例被打快照这一刻灌回 `.env` 里的真机模型名（`OLLAMA_MODEL=qwen2.5:14b`），污染粘性到会话结束。**症状 = 主树稳定红而 `.env` 不入库故子树全绿** ⇒ 全天"某条红只在我这出现"的总根源 | `tests/conftest.py` 把 `load_dotenv` 换成**只记账不读文件**的桩 + 3 条守卫；闸门只在离线态装（真机入口 `tests/_live_model.py` 认 `EB_OLLAMA_ACCEPTANCE`，不认 `.env`）；R20 已为 `DATABASE_URL` 立过同机制先例 | `c2c7dad` |
+| **R68** | `tests/test_offline_runtime_fallbacks.py` 在**开头** `clear()` 模块级进程内存储、**结尾不还原** ⇒ 写进去的 `offline-user` 漏给 `tests/test_deployment_guards.py:494` 的 `assert profile._MEM_PROFILES == {}`。实测该文件 + guards = **1 failed / 37 passed**，反向同。守卫那条 `== {}` 是**被测语义本身**（生产必须拒绝进程内表），不许放宽 ⇒ 修泄漏方 | autouse 快照/还原夹具，覆盖它实际写的 **5 个**存储（chat 会话表 ×2、alerts 规则与告警 **list** ×2、profile dict ×1；list 用 `live[:] = snapshot`）；三向复跑 38+38+50 passed | `e33727e` |
+| **R72** | `tests/test_r49_corpus_calibration.py` 用 `documents/`.iterdir()` 枚举语料，而 `documents/` **按设计兼作上传落地区**（`app/api/v1/chat.py:2222` 解析失败仍保留文件与目录行）⇒ 主树 121 个文件只有 **97** 是语料，`安全生产管理制度汇编.zip` 把 `load_document` 顶到 `ValueError: Unsupported file format` ⇒ **本文件 7 条用例当场 ERROR**，**R49 判据④"97 篇零误伤"在业主机上根本复跑不出来**（干净子树全绿） | 改用 `git ls-files -z -- documents` 的版本化清单（`-z` 否则 95 个中文名被八进制转义）。修后实测：语料篇数 **97**、命中排除 **0**、`10 passed`，与结案原值一致 | `f396866` |
+
+### 27.4 🔴 **事故 #23（同类第十次）**：R71 在同一个 block 里连发两次 `spawn_agent` ⇒ 同一单派给两个 Agent **且同树**
+
+- 13:34:10 投 `Chandrasekhar`、13:34:44 投 `Wegener`，两者都指向 `be-leg2`。这是本仓明令禁止的两件事叠加（一 block 一次投递 + 一树一 Agent）。
+- 13:36:5x 处置：`close_agent` 关掉后落的 `Wegener`，保留先起的 `Chandrasekhar`；**`git -C be-leg2 status --porcelain --untracked-files=all` 实测空** ⇒ 关停时机在"仍在读码"阶段，**零交叉写脏、零损失**。
+- 根因还是那条老病：**投递调用报了 `Tool 'spawn_agent' does not exists`，实际已经建成**。本班另一次假报错（`Missing required argument: message` 投 R44）已按先例**先查 rollout 再决定**，确认唯一落地，未补投。
+- ⇒ 硬规矩重申：**任何投递调用返回异常，第一件事是查 `~/.codex/sessions/**/rollout-*.jsonl`，绝不允许直接补投**（事故 #14/#16/#17/#23 全是这条）。
+
+### 27.5 新立单 **R73–R77**
+
+| 单号 | 一句话 | 写域 | 判据要点 | 前置 |
+|---|---|---|---|---|
+| **R73** | supervisor 那一发降档（R42 拆出） | `app/agents/supervisor*`、新建 `tests/test_r73_*.py` | 降档只发生在预算不足且**必须可观测**；**禁止改别人的 `tests/test_supervisor_roundtrip.py`** | R42 结案（`orchestrator.py`/`nodes.py` 出域） |
+| **R74** | `AgentState.model_budget` 零赋值零读取 | `app/agents/contracts.py` + 唯一读取方 | 要么真被读并影响档位，要么删字段；**不许留"看起来有其实没接线"的字段** | 同上 |
+| **R75** | `/open` 与 worker 两份预审标准校验去重（R67 交工同轮暴露） | `app/approval/assistant.py`、`app/common/open_platform.py` | 收敛成一处；**不许为了去重改变已结案的 R40/R67 判定结果** | R71 结案（同文件在途） |
+| **R76** | `chunk_vectors` 接入索引发布/回填链（R58 待裁项转单） | `app/rag/indexing.py`、`app/rag/pg_store.py` | `_MIRROR_TABLES` 增表 + 发布时按 `index_version_id` 回填；**换 embedding 模型必须把镜像一起换掉**，不留半张脸 | R58 真机三件之后 |
+| **R77** | H11/H12 真机复测（旧结论已过期） | **只读数**，`docs/perf/raw/` 落盘 | 重测容器 GPU 是否真到位、后端镜像是否追平主树 | 业主本人 |
+
+### 27.6 本班数字订正（下班引用前以此为准）
+
+- 全量基线：`1371 passed/35 skipped/1 红` → **1580 passed / 35 skipped / 0 failed / 0 error**（`[实测] @5ae7e45`，44.10s→46.99s）。
+- 语料篇数：**97**（95 txt + 2 pdf）；磁盘 txt **115**；主树 `documents/` 文件 **121**（含上传产物）。
+- 评测集无出处：**29**（A 12 + C 16 + 交叉 1），**不是 55**；B 桶 27 已由 R66 清 23 + 顺带 3。
+- `app/agents/intelligence.py` **不存在**，正确路径 `app/api/v1/intelligence.py`。
+- R58 之后**迁移末号 = 0010**；R49 的 `index_status/index_reason` 若入库必须用 **0011**，且必须同步改 `test_document_catalog_sync.py:123` 的尾号引信。
+
+
+## 28. R71 结案账（09-18 14:2x–14:3x，总控第十一班）· 执行层归因一次证伪 · 三件待裁已裁 · 新立 **R78** · 🔴事故 #24（基线 `89965d5` → 主树 **`8813ad0`**）
+
+### 28.1 结案：R71 `/open` 调用方部门收敛（`Chandrasekhar`，`be-leg2` 分支 `codex/be-r67`）
+
+- **链**：交工 `ce0e754` → 总控收口 `226b670` → 追平主树 `114376b`（`--no-ff` **零冲突**）→ 主树并树 **`8813ad0`**（5 文件 +570/-8）。
+- **它做了什么（总控复核，不采信自述）**：`app/common/open_platform.py:258 _granted_departments` + `:265 _resolve_open_department`（只读注册表：无授权⇒空部门且**根本不看头**；单授权⇒头可选；多授权⇒头是唯一选择器，**沉默不猜**；越权⇒403），`verify_open_request` 不再从 `normalized["x-open-department"]` 造身份；拒时落审计 `open:<action> / denied / <app_name> / department_override_denied`；`/insights`、`/dashboard/summary` 两处同形洞一起收；**签名基串未碰**；新增 29 条用例；**零新错误码**（复用 `DEPARTMENT_SELF_REPORT_DENIED`）。
+- **总控亲跑**：三文件合批（r67 23 + r71 29 + open_platform 5 + r40 25 = 82）修前 **16 failed**、修后 **82 passed**；be-leg2 追平 `89965d5` 后**全量 `1695 passed / 35 skipped / 0 failed`**（48.45 s）；并树后主树**全量再跑一次同数**（50.11 s）。
+- **总控自下三刀（都在 Chandrasekhar 的 K1/K2/K3 之外）**，每把都按字节还原（`a85badcad6aea5c15e46…037f` 前后恒等）：
+  - K-Ctrl-1 把 `X-Open-Department` 纳入签名基串 ⇒ **恰 1 红**：`test_the_signature_base_string_still_covers_app_timestamp_and_body_only`。证明判据④「覆盖面不移动」不是空话——将来谁「顺手把头签进去」，当场红，而不是等第三方集成在生产上 401 才发现。
+  - K-Ctrl-2 无授权时反而采信头 ⇒ **3 红**（`test_one_invented_header_no_longer_buys_a_department_the_application_was_never_granted`、`test_a_forged_department_header_on_an_ungranted_application_answers_with_one_stable_code`、`test_a_registry_entry_that_grants_no_department_ignores_the_header`）。⇒ 「无授权=空部门」这条分支承重。
+  - K-Ctrl-3 多授权沉默时猜第一个 ⇒ **恰 1 红**：`test_several_grants_and_no_header_do_not_default_to_the_first_one`。红得干净、无连带。
+
+### 28.2 🔴 执行层归因证伪：**「38 条与本单无关既存红」不存在**
+
+- Chandrasekhar 在交工报告里列：`test_retrieval_synonym_expansion` 12、`test_prefiltering` 10、`test_classification_fail_closed` 5、`test_r21_answer_side_degradation` 5、`test_r21_embedding_fail_closed` 5、`test_test_isolation_guards` 1，共 38，理由「涉 `app/rag/**` 与嵌入闸门，非我写域」。
+- **总控实测两条都推翻它**：① be-leg2 全量只 **16 红**，且这 16 条正是它自己写在「欠总控」那一节里的（R67 15 + `test_open_platform.py::test_registered_app_can_sign_and_verify_query_request` 1）；② 它点名的那 5 个文件在 be-leg2 上**单跑 90 passed 全绿**。
+- **结论**：它把「我没跑过全量 / 我跑全量时基线本来就是这样」说成了「既存红」。这是**归因**假绿而非结果假绿——它的 29 条用例、三刀、sha 都是真的，只有那 38 条的定性是编的。
+- **入机器层账（累计第 28 条）**：执行层报的「既存红 / 与本单无关 / 属他人写域」**一律总控自己复现后才写进台账**；照抄的后果 = 下一班把它当合法基线，从此永不处理。R58 的「mirror 未就绪」空分支、R42 的「占比 60%」都是同一形状：**上一层写的数字，下一层不敢动，于是假数字活了很久**。
+
+### 28.3 它交给总控裁的三件事 —— 裁定与依据（**并入 H15 同批，业主可一句话驳回**）
+
+| # | 事项 | 裁定 | 依据 |
+|---|---|---|---|
+| ① | 无授权 + 挂假头：它取「空部门、不在边界硬拒」；要硬拒只需 `_resolve_open_department` 首行加一句 | **维持「空部门不边界拒」** | 决定性证据是它自己登记的第四条：`/query`、`/analyze`、`/provenance/summary` **完全不使用部门**。在边界硬拒会把这三个端点对所有未配部门的应用直接打死（现网 401/403 变常态），属误伤；而「想挂到某个部门名下」这条路已被判据②③ 的用例钉死。K-Ctrl-2 证明该分支承重，不靠默契兜底 |
+| ② | 两处 GET 的守卫提到 `if params.get("metric")` 之前，自认「越界半格」 | **接受** | 判据③ 原文是「两处同形洞一起收」。「未参与拼行的谎报也拒」属于同形洞本身：否则同一句谎话，带 metric 时 403、不带 metric 时被静默接受，那是**看运气拒**。它给这条单独立了 `test_a_department_outside_the_grant_is_refused_even_when_it_would_not_be_used`，且 K2/K3 各咬 3 红 ⇒ 有专属用例，不属假绿。若业主要「只改取值不改控制流」，回退是 4 行，总控落笔 |
+| ③ | 四条「只登记不动手」 | **转立 R78** | 见 §28.4 |
+
+### 28.4 新立 **R78**：开放平台的应用身份「声称了它并没有的能力」（四条，R71 交工登记 + 总控逐条复核）
+
+总控复核后的现状（**逐条亲查调用点，不只看签名**）：
+
+1. **`max_clearance` 全仓只存不投用**。`register_application` 收 `max_clearance=3` 并写进 `OpenApplication`，`asdict(record)` 原样回给调用方，但 `verify_open_request` 造 `Principal` 时**从未带密级**，检索层的密级判定也不读它 ⇒ 管理端在注册应用时设的「密级上限」是一个**看起来存在、实际零接线**的字段（与 R74 的 `AgentState.model_budget` 同形）。要么落到 principal 上并被检索/文档链真的读，要么从注册表单里摘掉，**不留半张脸**。
+2. **`X-Open-User` 不在签名覆盖内 ⇒ 审计行的 `username` 可被任意已注册应用冒名**。签名只覆盖 `app_id.timestamp.body`（`build_request_signature`），所以任何应用可以给任意用户名签发审计行。缓解事实（**别夸大也别忽略**）：`precheck_payload(requested_by=…)` 用的是 `app_id` 而非该头，所以**审批结论本身没被污染**，脏的是审计归因。修法只有两条：把身份头纳入签名基串（= 破坏既有集成，无版本协商 ⇒ R71 判据④ 明令禁止），或在 `OPEN_PLATFORM_APP_STORE_PATH` 侧登记「应用可代表哪些 username」。
+3. **未配 `OPEN_PLATFORM_APP_STORE_PATH` 时注册表在进程内存**：重启后授权集蒸发，`_resolve_open_department` 于是返回空部门 ⇒ **静默**退化为「无部门」而不是「配置缺失就拒绝启动」。🔴 **该机制经总控 §28.8 实测证伪**：注册表整个消失时调用方拿到的是 401「未注册应用」而不是「无部门」，这条不是 R71 引入的新失效路径。要求：非生产可容忍但**必须可观测**（首次命中未注册/空授权时打一条明确日志或指标），生产维持现有 `ProductionReadOnlyProtection`。
+4. **`/query`、`/analyze`、`/provenance/summary` 不使用部门**：这三个端点上「按部门收敛」是装饰性的。要么按 R17 的口径真正参与过滤，要么在文档/管理端界面上撤掉这个观感（前端 `docs/handoff/2026-09-15-frontend-work-checklist.md` 需同步）。
+
+**判据**：五条（①–④ 见上，⑤ 由 §28.8 实测新增）各自要么**真接线**、要么**显式撤除**，禁止「字段存在但零读取」的第三种状态；每条必须有用例钉；⑤「权限缺失不得伪装成可用性故障」同判据；`/open` 的既存 59 条用例（open_platform + r67 + r71）不许红。**前置**：R75（同文件 `app/common/open_platform.py` 在途，串行）。**写域**：`app/common/open_platform.py`、`app/api/v1/open_platform.py`、`app/api/v1/intelligence.py`（若要落 principal 密级）、`docs/handoff/2026-09-15-frontend-work-checklist.md` 由前端线自己改。**不许**动签名基串（判据④ 已钉）。
+
+### 28.5 顺带收掉的两笔旧欠账
+
+- Herschel（R67 交工）欠总控的三件事：① `_standard_source` 提公共口 → **已转 R75，14:28 已派 `Dirac`**；② `frontend-work-checklist.md:260`「R67 结案前不要接进员工界面」可撤 → **R67 已结案 `571ffd7`、R71 已结案 `8813ad0`**，该前置**可撤**，但 `docs/handoff/2026-09-15-frontend-work-checklist.md` 属前端线写域，总控不代改，**转业主转达或等前端线自己收**；③ `X-Open-Department` 入签名单独立一张 → **裁定不做**（见 §28.3 ①、§28.4 ②，R71 判据④ 已用例外加文本锚钉死「覆盖面不移动」）。
+- R58 补漏（`12255c2` + `b3eb3d4`）：上一班 §4AN 里写的「21 passed」当时**只在子树工作区成立**，主树并过去只有 18 条；现主树 `tests/test_r58_pgvector_dual_write.py` 确为 **21 条**，已在本班 `89965d5`/`8813ad0` 两次全量里覆盖。
+- R42 并树账（`89965d5`）：五件合批 86 passed 与自述逐字吻合、两把独立刀（⑤ 规则降级到最后 ⇒ 12 红；⑤ 由 AND 改 OR ⇒ 5 红）、追平后全量 1663/35/0 —— 上一班只写在对话里没入库，本节补齐。
+
+### 28.6 🔴 事故 #24（同类第一次，机器层）：执行层把新文件写进了主树
+
+- 详情与对策见看板 **§4AO.5**。一句话：`Darwin`(R51) 14:22:25 在主树建 `tests/test_r51_stage_latency.py`、14:22:47 在自己树建同名同 sha 的一份，主树全量 pytest 当场 collection error；总控 `send_input` 纠偏 + 主树副本 **Move-Item 隔离未删除** + 隔离后复跑 0 红。
+- **对策回灌**：此后所有派工简报固定含 §0.5「写域铁规」（每命令块 `Set-Location` 绝对路径 + `git rev-parse --abbrev-ref HEAD` 自证；跑测试 rootdir 由 cwd 决定；`cd` 失败会**静默停在原地继续执行**）。`R75` 的简报（14:28 派出）已带此条。
+
+### 28.7 本班数字订正（下班引用前以此为准）
+
+- 全量基线：1580 → 1663（R42 并树后，子树实测）→ **`1695 passed / 35 skipped / 0 failed / 0 error`**（`[实测] @主树 8813ad0`，50.11 s）。
+- 用例增量归因：R71 新增 29 条 ⇒ 1663 + 29 = 1692，与 1695 差 3 条；差的是**总控在 R58 补漏里那 3 条承重用例**（`12255c2` 之后才进对象库，`b3eb3d4` 才并进主树，1663 那次跑在 `8d69ee6` 追平树上、尚未含补漏）。**不是丢数**。
+- 计划书 27 单 → 现 **29 单**（+R78 本班立；R68–R77 上一班已入 §5.2）。结案数：**R30、R42、R49、R58、R67、R71 六单**在 09-18 本班与上一班并树，另有总控亲做 R70/R68/R72/R66。
+- **`orchestrator.py` 占用状态**：R51 半占（只许 span 创建路径）⇒ R31/R32/R33 挂起。R42 已结案出域。
+
+### 28.8 总控并树后自 probe：R71 让「未授权但诚实」的应用拿到一个**说谎的 503**（实测，`be-leg2`，探针已隔离）
+
+并完树我不放心，就自己写了一个探针打真路由（只把向量桩住，让**真实的 scope 解析**跑起来），结果如下 `[实测]`：
+
+```
+PROBE status = 503
+PROBE body   = {"detail": {"code": "retrieval_unavailable", "message": "the policy standard could not be retrieved"}}
+PROBE index reached = 0
+```
+
+- **先说好消息（这条 probe 的主要目的）**：R71 没有引入崩溃，也没有泄漏。`app/rag/retrieval_pipeline.py:551` 在 `self.search(...)` **之前**就 `resolve_document_retrieval_scope(principal)`，空部门在 `app/rag/filters.py:102-106` 抛 `RetrievalScopeError("authorization_unavailable", "Document retrieval requires a department scope.")`，**索引一次都没被问**（`index reached = 0`）。fail-closed 成立。
+- **坏消息（新增判据 ⑤）**：路由 `app/api/v1/open_platform.py:191` 是 `except Exception` → **503 `retrieval_unavailable`「the policy standard could not be retrieved」**。也就是说，一个「管理员还没给它授过部门」的应用，看到的是**可用性故障**：客户端会按 503 语义无限重试，运维会去查索引，而真正的原因是注册表少一行授权。**权限/配置的缺失被洗成了服务不可用**，这与本单「不采信调用方声称」的立意相反——我们堵住了它说谎，却自己对它撒了个谎。
+- **59 条既存用例无一覆盖这条**（全量 1695 绿仍然放过了它）。⇒ 又是「只有真打一遍才知道」的形状，与 R58「读不出旧向量」空分支同一类：**闸门在，覆盖为零**。
+- **修法（R78 判据⑤，最小面）**：`/approval/preview` 把 `RetrievalScopeError` 从兜底 `except Exception` 里**单独摘出来**，映射成 403 + `department_scope_required`（`tests/test_error_code_vocabulary.py` 的 RATIFIED 表已在等的码之一，R64 也指向它），其余异常仍走 503。**不得**顺手改 `filters.py` 的判定，也不得放宽 R17。
+- **同时订正 §28.4 的第 ③ 条（ Chandrasekhar 的登记，我照抄了一半）**：未配 `OPEN_PLATFORM_APP_STORE_PATH` 时**整条注册记录**都消失，`verify_open_request:312` 直接 401「未注册应用」，**不会**退化成「有应用但无部门」；所以那条不是 R71 之后新增的静默失效路径。真正能让已注册应用突然失去部门的只有一条：**管理员改了/清了 store 里的 `allowed_departments`**（`_record_from_payload:128` 确实会原样回读该字段，所以持久化链没漏，这条我核过）。
+- 探针本体 `tests/test_zz_controller_probe_r71.py` **未入库**，已 `Move-Item` 到 `C:\Users\fengx\PycharmProjects\_quarantine\2026-09-18-controller-probes\`，R78 开工时按本节数字回收成正式用例。
