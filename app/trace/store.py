@@ -29,6 +29,10 @@ class TraceStore:
         self.path = Path(path)
         self._lock = threading.RLock()
         self.persistence = persistence
+        #: R51: trace_id -> the timestamp of its ``request.started`` event, so the
+        #: health readout can state an end-to-end window without re-reading the log.
+        #: Bounded because an abandoned request must not grow a process forever.
+        self._request_started: dict[str, str] = {}
 
     def record_event(
         self,
@@ -81,7 +85,42 @@ class TraceStore:
                     },
                 )
                 self._persist_execution_records(event, owner_id)
+            self._observe_request_window(event)
             return event
+
+    def _observe_request_window(self, event: dict[str, Any]) -> None:
+        """Note the wall clock of one request for the stage coverage gate.
+
+        Both timestamps are already in the event the store just wrote, so this is not a
+        third clock: it is the same subtraction the latency budget used, done in-process.
+        Nothing persisted depends on it and a failure is invisible to the caller.
+        """
+        try:
+            from app.common.stage_timing import (
+                REQUEST_TERMINAL_EVENTS,
+                default_stage_ledger,
+                stage_timing_enabled,
+                to_epoch_ms,
+            )
+
+            if not stage_timing_enabled():
+                return
+            trace_id = str(event.get("trace_id") or "")
+            event_type = str(event.get("event_type") or "")
+            if not trace_id:
+                return
+            if event_type == "request.started":
+                self._request_started[trace_id] = str(event.get("timestamp") or "")
+                while len(self._request_started) > 512:
+                    self._request_started.pop(next(iter(self._request_started)))
+                return
+            if event_type in REQUEST_TERMINAL_EVENTS:
+                started = to_epoch_ms(self._request_started.pop(trace_id, ""))
+                finished = to_epoch_ms(event.get("timestamp"))
+                if started is not None and finished is not None and finished >= started:
+                    default_stage_ledger().add_request_window(trace_id, finished - started)
+        except Exception as exc:  # noqa: BLE001 - a counter is never a request failure
+            logger.warning("[Trace] request window was not recorded: %s", exc)
 
     def _persist_execution_records(self, event: dict[str, Any], owner_id: str) -> None:
         trace_id = event["trace_id"]

@@ -39,12 +39,16 @@ async def health_check():
     return {"status": "ok"}
 
 
+# R51: the ``performance`` block of this answer carries the stage ledger (P50/P95 per
+# segment, plus how well the segments add up to one request). Everything the block used
+# to say still reads the same; the stage numbers are added next to it.
 @router.get("/health/details")
 async def health_details():
     from app.api.v1.chat import _ASK_STATS
     from app.common.monitoring import build_health_snapshot
+    from app.common.stage_timing import with_stage_latency
 
-    return build_health_snapshot(_ASK_STATS.report())
+    return build_health_snapshot(with_stage_latency(_ASK_STATS.report()))
 
 
 # ==================== 登录 ====================
