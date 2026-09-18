@@ -1260,6 +1260,9 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Mendel` | `01a0b4a0-9ed6-7782-8b96-81281a5bde2f` | **R37**（第二棒，接续保活提交 `9e50e60`） | `be-r37`（分支 `codex/be-r37`，**独占**） | **运行中**：21:07 单投（本 block 只此一次投递；canary = `rollout-2026-09-18T21-07-00-01a0b4a0…jsonl` 已生成 758 KB）；写域**锁死 `deploy/queue_worker.py`**，禁 `orchestrator.py`/`reliable_queue.py`/`persistence.py`/改 chat.py/迁移/前端；判据 ①–⑧ = 跟进单 §35.1；总控 21:19 实取 **13 failed / 15 passed / 62.6 s**（订正上一班记的 14/14：那是 `Gauss` 19:18 在**落后主干**的树上自取的），且 `git grep lane -- deploy` 仍 **0 命中** ⇒ worker 侧确实从未落地 | 21:07 |
 | `Faraday` | `01a0b4a4-ae08-7910-a7f8-cb7af6115cda` | **R84**（第二棒，接续保活提交 `6d75edd`） | `be-r84`（分支 `codex/be-r84`，**独占**；投放前由总控追平主干 → 合并点 `249aedf`） | **运行中**：21:11 单投（canary = `rollout-2026-09-18T21-11-26-01a0b4a4…jsonl` 112 KB 已生成、投后 `be-r84` `dirty=0`）；写域**锁死 `app/storage/persistence.py` + 既在库 `tests/test_r84_persistence_cross_process_lock.py`**；投前总控实取 **9 failed / 1 passed / 3.75 s**；判据 ①–⑥ = 跟进单 §35.2 | 21:11 |
 | `Gibbs` | `01a0b4b2-02f3-7a70-8a6c-265644225ea2` | **R90a** embedding GUC 改由应用侧下发（判据 跟进单 §34.2 ①–⑥） | `be-r90a`（总控自主干 `0a5c0b7` 新建 `codex/be-r90a`，**独占**） | **运行中**：21:26 单投（canary = `rollout-2026-09-18T21-26-00-01a0b4b2…jsonl` 124 KB 已生成 + 投后 `be-r90a` `dirty=0` ⇒ 无重复体）；写域锁 `app/db/migrations.py` + `docker-compose.yml` + `.env.example` + 新用例文件，**禁 `migrations/**`（`%I` 归 R90b 等业主）/ `chat.py`(R37) / `persistence.py`(R84)**；硬红线：不得对 `enterprise_brain` 主库 `ALTER DATABASE`/`RESET`、不得连 5432、不得碰 Docker、不得改 `tests/conftest.py:41-53` 那颗把 `DATABASE_URL` 钉到 `127.0.0.1:1` 的死端口钉子——**这颗钉子就是本单允许在评测窗口内派工的依据**（业主 21:0x 改令「不必为测试卡着」⇒ §34.2 原写的「前置：评测窗口关窗」据此撤销）；**并发已满 3（Mendel/Faraday/Gibbs），落地前不再派工** | 21:26 |
+| `Erdos` | `01a0b4d6-9a3b-7873-90c4-0f18a17ca50c` | **R91** 上传文件名多一个点即被拒（判据 跟进单 §36.1） | `be-r91`（总控自主干 `0c08209` 新建 `codex/be-r91`，**独占**；写域 `app/documents/file_security.py` + 追加 `tests/test_file_upload_security.py`） | **运行中**：22:05:58 单投（canary = `rollout-2026-09-18T22-05-58-01a0b4d6…jsonl` 596 KB）；起因 = 本班 22:03–22:05 实测 11 篇**在仓真语料**被 `sanitize_upload_filename` 以 `unsupported_file` 拒收，容器 KB 因此停在 88/99 | 09-18 22:40 |
+| `Averroes` | `01a0b4e5-6955-71c3-a0be-08ba71fbe5a3` | **R92** 查询改写现网 100% 失效（判据 跟进单 §36.2，本班新立） | `be-r92`（总控自主干 `aa5a14f` 新建 `codex/be-r92`，**独占**；写域 `app/common/model_handler.py` + `app/rag/retrieval_pipeline.py` 的 `QueryRewriter` 段 + 新建 `tests/test_r92_rewrite_thinking.py`） | **运行中**：22:3x 单投（本 block 只此一次投递）；根因已由总控真机三腿实测钉死＝Ollama 兼容腿把隐藏思维链计入 `max_tokens=256` ⇒ `content=""` ⇒ `json.loads("")`，原生 `/api/chat`+`think:false` 同 prompt 2.87 s 出 214 字合法 JSON | 09-18 22:40 |
+| `Galileo` | `01a0b4e9-61e7-75a1-8508-341e54905f26` | **R90a**（**第二棒**，接续上一棒盘上未提交成果；判据 跟进单 §34.2 ①–⑥ + §36.3 退回补条） | `be-r90a`（**沿用上一棒同一棵树** `codex/be-r90a` @ `2866d91`，**独占**；写域仍是 `app/db/migrations.py` + `docker-compose.yml` + `.env.example` + `tests/test_r90a_embedding_guc_provisioning.py` 四个，🔴 盘上那 4 条改动是上一棒的**主体**，必须续改不得推倒；禁碰 `migrations/**`（含 `:216` 的 `%I`，R90b）与 `tests/test_storage_contract.py`） | **运行中**：22:26:29 单投（本 block 只此一次投递）。**换人原因不是能力问题，是真机验收打回**：`Gibbs` 那棒 29 条离线用例全绿、总控亲跑全量 2171/35/0，但总控 22:24 亲跑一次性库夹具 ⇒ 真 PG 当场 `could not determine data type of parameter $2`，什么都没下发（全证据与修法 见 §4AZ.4）；**离线绿真机红的根因 = 假连接自己实现了 `format()`**，把服务端唯一的拒绝理由抹平了，所以本棒要把这条教训补成钉子（判据 ②）。投递方式说明：`send_input` 本线程实取 `unsupported call`，那次失败做过 canary（盘上 mtime 仍停在 22:01–22:03、`previous_status=completed`）⇒ 按事故 #14 **不补投**，走看板既有先例（Goodall→Curie）**关名换名重派同一棵树** | 09-18 23:55 |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -2516,3 +2519,65 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - **腿① 的锁变松了**：`R27 → R29 → R30 → R31 → R32 → R38` 严格串行，R27/R30 已并 ⇒ **队头是 R29**，只差 §4AY.1 的路线裁定 + R36 判据③ 的基线。
   R36 判据③ 至今仍是 R29/R33/R35 三单的共同闸门（跟进单 §21 原话："未落真机分数不算 R36 完成"），**这就是本班死守这轮评测的原因**，不是无人可派。
 - `chat.py`(R55 `6663a40`→并树 `6d03788`) 与 `retrieval_pipeline.py`(R57 `ee11ca1`→并树 `5984696`) **确实已并** ⇒ 两文件写域开放，本班名册里"未结案前不许再派碰这两个文件"的限制同时解除。
+
+## 4AZ. 本班（09-18 22:0x–23:3x，总控第二十班）：**R84 结案并树 · R91 / R92 两单新立 · R90a 真机验收打回重派 · 上一班误删的语料已恢复**
+
+### 4AZ.1 R84 结案（merge **`aa5a14f`** = 本班起 HEAD）
+- 落地：`app/storage/persistence.py` 的 `_AdvisoryFileLock`（`msvcrt` / `fcntl`，**只用标准库**，旁车锁文件 `.<name>.lock`，等待上限 5.0 s，**只在同机内互斥**）+ `tests/test_r84_persistence_cross_process_lock.py`（真子进程，不 mock 锁）。
+- 链路：`f5521c5`（总控显式列路径代提交，`git commit -F` 走文件避坑）→ 追平 `0770f84` → **`aa5a14f` merge --no-ff**；`git diff --quiet f5521c5 HEAD` = **IDENTICAL**（合树没丢东西，这一步是硬流程）。
+- 总控亲跑：**2142 passed / 35 skipped / 0 failed（86.91 s）**，= 基线 2132 + 本单净增 10。
+- 🔎 **一处越界被本班接受**（不是和稀泥，是数据）：实现顺手把 `_write` 的改名改走 `_replace_document`（6 次、≤0.13 s 有界重试）。6 进程并发冲击下，**未加改名的原始版 15 轮 = 14 条丢失记录 + 27 次 `WinError 5`**；带锁 + 有界重试 = 270 次 upsert **0 丢失 / 0 报错**。⇒ Windows 上「锁住再改名」仍会被杀软/索引器瞬时占用，**只加咨询锁不足以闭环**，实测支持这次越界。
+- 残差（下班别当已解决）：POSIX `flock` 内核语义本机未验；NFS / SMB 未验（docstring 已如实写限制，不许声称跨机安全）；**5.0 s 写死无 env 旋钮** ⇒ 可单独立项。
+
+### 4AZ.2 R91（本班新立，`Erdos` 在改）：文件名多一个点 = 永远传不上来
+- 根因本班读源码坐实：`app/documents/file_security.py:49` `if safe.count(".") > 1: raise UploadSecurityError("double extensions are not allowed")` ⇒ **判据是点数，不是后缀**。
+- 现场：**11 份在仓真语料**传 `POST /api/v1/upload` 全 `400 unsupported_file`（`费用报销管理制度V2.1.txt`、`IT安全管理制度V3.1.txt`、`财务管理制度_V2.0.txt`、`员工绩效考核办法V1.0/V2.0.txt`、`MYBI_部署手册V1.0/V2.0.txt`、`MYBI_V3.1_更新日志.txt`、`MYO_V5.3/V5.4_更新日志.txt`、`MYOps_V2.0_更新日志.txt`）。
+- 后果不是洁癖：`费用报销管理制度V2.1.txt` 正是评测题 `doc-01`「住宿费标准是多少？」的答案出处；11/99 ≈ **知识库语料的九分之一**；客户按自己的命名习惯（V1.0 / V2.1 满天飞）建库，制度文档会**成批静默进不来**。
+- 立案来源：`git log -S "double extensions are not allowed"` = **`de13e90`**（`checkpoint: session ownership, legacy chat scope, MCP identity, engine mainline`）——**checkpoint 顺手带进来的，不是一条评审过的安全单**。
+- 边界：既有用例 `policy.pdf.txt` / `policy.md.exe` **必须仍被拒且文案不变** ⇒ 修的是**误伤面**，不是防护面。判据 ①–⑧ 全文已落跟进单 **§36.1**。
+
+### 4AZ.3 🔴 上一班 22:0x 那轮跑分为什么废掉 + 89 → 100 还差什么（含本班抓到的一处上一班回归）
+- **本班抓到并修掉的回归**：`_reconcile.py` 拿**宿主 `chroma_db` 快照（99 个名字）当语料真相源**，而那份快照**早于 R66** ⇒ 第一趟把 R66 特意补的 `documents/制度与口径登记表.txt` **删了**。R66 = **`9f2f869`**（09-18 12:10，盘上 7 065 B / git blob 7 013 B，同一单还 `git add -f` 了 `data/报销明细表.csv` 12 153 B），**不是**简报里写的 `cc50e05`——下班别再引用那个号。
+- 恢复处置：改 `_reconcile.py` 把 R66 那份并入 `target`（带注释说明它为什么必须在位），再用**一次**定向 `POST /api/v1/upload` 传回 ⇒ `HTTP 200 / chunk_count=11 / index_status=indexed / status=published`；`data/报销明细表.csv` 本班核对**盘上仍在、仍在 HEAD**，未被那趟删掉。
+- 本班 23:31 亲测容器知识库：`GET /api/v1/documents` 返回 **89 条**，登记表**在列**；**正确目标 = 100**（99 参考 + 登记表），**缺的 11 篇恰是 §4AZ.2 那 11 个多点号名字** ⇒ 89 + 11 = 100 对得上 ⇒ **R91 落地前不得再跑 `_reconcile.py`**。
+- 口径钉死：8001 是**已发布容器、无源码挂载** ⇒ 主干合树不会扰动在跑的评测；它的 Chroma 是命名卷 `enterprise-brain_vectordb`，**不是**仓内 `./chroma_db`。上一班就是拿仓内快照数语料才走错的层。
+- 🔴 **一条过期旧账就地作废**：「105 题里 55 条 `must_contain` 无出处」是 **R66 之前**的数；`9f2f869` 提交信息自述**复算 55 → 29**（其中 24 个 `must_contain` 词条的出处**唯一**由登记表提供，另 4 条数据题改由明细表 pandas 实算）。本班未独立复算 ⇒ 报给业主时说「按 R66 落盘口径为 29，待真机跑分复核」。
+- runbook 的洞：P-1..P-8 **没有一条检查语料在位**，所以「语料被删了还在跑分」没人拦 ⇒ 本班补 **P-9**。
+- ⚠️ **时点更正**（两份简报里的「22:20 亲跑」「22:5x 实测」都是事后笔误）：本班以盘上取证脚本 mtime 为准 —— `_hostcorpus.py 21:59:40` / `_reconcile.py`+`_fix_reconcile.py 22:16:55` / 恢复上传 22:17:12 / `_r92probe*.py 22:13:36–22:20:39` / `_r90a_accept.py 22:24:04` / `_r90a_sql.py 22:24:49`。**判据内容不受时点影响，下班引用时点请按本板**。
+
+### 4AZ.4 R90a 真机验收打回（`Gibbs` 关棒 → `Galileo` 同树第二棒）
+- 本班亲自跑 §4AY.3 那套一次性库夹具（主库 `enterprise_brain` **未碰**）：
+  - `eb_r90a_before`（镜像旧代码）⇒ `rc=1`，文案指向 **`eb_r90a_beforeI`** 这个**不存在的库名** ⇒ R90b 的 `%I` **第二次**在真库上留下现场（与 §4AY.3 同形，稳定可复现）；
+  - `eb_r90a_after`（`-v be-r90a\app:/app/app:ro`，同一条命令、同样 `EMBEDDING_MODEL=nomic-embed-text` / `EMBEDDING_DIMENSION=768`、**零手工 ALTER**）⇒ `rc=1: could not determine data type of parameter $2`；事后 `show app.embedding_dimension` = **unrecognized** ⇒ **什么都没声明，0010 根本没跑到**。
+- 根因单条复现（同容器真 psycopg）：`SELECT format(%s, current_database(), %s)` → **`IndeterminateDatatype`**；`SELECT format(%s::text, current_database(), %s::text)` → **OK**（`%I` 引标识符、`%L` 引字面量都正常）⇒ 修法 = `be-r90a/app/db/migrations.py:71` 的 `_FORMAT_ALTER_DATABASE_SQL` 两个占位符加 `::text`；`set_config(%s,%s,TRUE)` 不动（形参本就是 text）。
+- 🔴 **别照抄行号到主干**：主干那份 `app/db/migrations.py` 里 `format(` **零命中** —— 这段码是 R90a **盘上未提交**的产物（本班先在主干查了一遍才发现自己走错了层）。
+- **29 条离线用例 + 全量 2171/35/0 为什么没挡住**：`FakeConnection` **自己实现了 `format()`**，把服务端唯一的拒绝理由抹平了 ⇒ 第二棒必须**连假连接一起改**并新增一条形状钉（判据 ②，比 ① 更重要）。通用教训：**假实现必须在真服务上对照过一次，才配当防回归。**
+- 本班对上一棒三项申报的裁定：(1) `current_database()` 答不出 ⇒ warning + 返回 None 的 fail-open **接受**（真库永远答得出；真正防线是 0010 自己那句「宽度没声明就停」，before 腿已证明它会停；再加固要动 `tests/test_storage_contract.py:120`，在写域外）；(2) 库宽不一致时改库级声明 + warning **保持现状**，但 docstring 要写明「向量由 0010 守，GUC 不是那道防线」；(3) `deploy/.env.server.example` 补两行 / `${VAR}` → `${VAR:?}` / `docker-compose.dev.yml` / migrate 角色 owner-superuser 包装 ⇒ **全部并入 R90b**，不在本单顺手改。
+
+### 4AZ.5 R92（本班新立，`Averroes` 在改）：查询改写现网 **100% 失效**
+- 症状：每一次提问都刷 `查询改写失败，返回原始问题: Expecting value: line 1 column 1 (char 0)`（`app/rag/retrieval_pipeline.py:131`）。
+- 链路（**容器内**实测，`docker cp` + `docker exec -w /app -e PYTHONPATH=/app`）：非流式 → `ModelTier.REWRITE` → `max_tokens=256`（`app/common/model_budget.py:174`）→ Ollama 兼容腿把**隐藏思维链计入**该预算 → `response.choices[0].message.content == ""`（`app/common/model_handler.py:181`）→ `json.loads("")`。真实 `model.chat()` 调用 **15.27 s 返回空串**；`app/**` 里 `reasoning_content` / `think` **零命中**（没有任何一处读思维链或请求关闭它）。
+- 三腿对照（同一 rewrite prompt，真机）：
+
+| 腿 | 墙钟 | token | finish/done | content | thinking | 解析 |
+|---|---|---|---|---|---|---|
+| **A** 原生 `/api/chat` + `think:false` | **2.87 s** | eval_count 102 | `stop` | **214 字** | 0 | ✅ `rewrites=3 sub=3` |
+| A 原生但不带 `think`（对照） | 7.34 s | 292 | `stop` | 232（被 ```` ```json ```` 围栏包住） | 319 | ✅ |
+| **C** `/v1/chat/completions` `max_tokens=256`（**现网即此**） | 6.85 s | 256 | **`length`** | **0** | 取不到 | ❌ |
+
+- ⇒ **路线裁定 = A（原生腿 + `think:false`）**；`/v1 + think:false` 已被实测判死（256 预算下照样截断）。🔴 **只把 `max_tokens` 调大 = 不算修好**（拿延迟换掩盖）。与 §4AY.1 对 R29 的裁定**同向、同一条腿**，两单不再各判一遍。
+- 🔴 两个层级坑（本班踩过，写进简报了）：原生 `/api/chat` 的正文在 **`body["message"]["content"]`**，不在顶层 `content`（读错键就会得出「A 腿也没正文」的**错结论**）；宿主 `127.0.0.1:11434` 是**另一个空 Ollama**，栈里的模型只在容器网内 `http://ollama:11434`。
+- 影响面：⇒ **此前所有真机跑分都建立在「改写从来没生效」的系统上**，且每题白烧 ~15 s GPU。R36 判据③（跟进单 L552 原话「未落真机分数不算 R36 完成」）的 before/after 比较**必须注明是哪条改写路线下的数**。
+- 排序裁定：R92 与腿① 队头 **R29 落在同一层**（`model_handler.py` / `model_budget`）⇒ **R29 必须严格在 R92 之后并树**，让 R29 直接继承本单的路线结论。判据 ①–⑥ 全文已落跟进单 **§36.2**。
+
+### 4AZ.6 本线程环境事实（下班别再花时间试）
+- `send_input` 在本线程实取 **`unsupported call`**；`write_file` / `apply_patch` 作为工具同样不可用（改文件一律 `exec_command` + Python 脚本）⇒ **子 Agent 收不到任何追加指令，简报必须一次写全**；本班三份简报都按这个前提写，并在结尾复述了这条。
+- 由此推论：**交付前没有中途纠偏的机会**，所以写域、判据、层级坑、"如实交代未做"三项都得在简报里写死；总控侧的补偿手段是**验收时逐条亲跑**，不是投递时补话。
+
+### 4AZ.7 本班账
+- 并树：**`aa5a14f`**（R84）；主树 HEAD 由 `0c08209` → `aa5a14f`。`aa5a14f` **本班补 push 到 origin + gitee**（之前两班都没推，H6 那笔「本机是唯一副本」的风险按业主「push 你现在就可以提交」的授权收掉）。
+- 在途 3 单 = **满编制**：`Erdos`(R91 / `be-r91`，盘上两文件已改)、`Averroes`(R92 / `be-r92`，已建 `r92_probe\probe_before.py` 走 before 腿)、`Galileo`(R90a 第二棒 / `be-r90a`)。**不开第 4 个**。
+- 主干基线：**2142 / 35 / 0**。R91 简报里写的 2132 是它**拉树时点**的基线，验收按追平后的 2142 起算（本班已把这条差异写进 §36.1 ⑦）。
+- 零提交单仍有 **11 张**：`R29 R31 R32 R33 R34 R38 R43 R46 R48 R50 R52`；腿① 队头 = **R29**（等 R92 并树）。**R46 / R50 要建新表 ⇒ 会与 `app/db/migrations.py` 撞 R90a，按住等 `Galileo` 并树**；R52 等 compose；R33 要与 R36 同批。
+- 待办（总控自己的）：DROP 一次性库 `eb_r90a_before` / `eb_r90a_after` / `eb_r90a_probe`（**都是总控建的，主库未碰**）；R91 并树后重跑 `_reconcile.py` → 期望 100 篇 → 定向 canary 提问 → 再开**独占窗口**跑 105 题真机分。
+- 等业主（一个都不代做）：H13–H18、R85、R88、**R90b**（要改 `migrations/**`）、远端 `master`、游离卷 `enterprise-brain_ollama_data`、临时 token 文件；心跳 `automation-2` 仍指向已死线程 `01a0acfb`（业主已令**不再跑心跳**，本班不动它，只再提醒一次）。
