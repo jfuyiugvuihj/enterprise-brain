@@ -129,12 +129,13 @@ def _metric_value(df, metric: str):
 def _ai_analysis(rule: dict, value: float) -> str:
     try:
         from app.agents.nodes import _make_model
+        from app.agents.contracts import ModelTier
         from langchain_core.messages import HumanMessage
         prompt = (
             f"告警规则「{rule['name']}」被触发：指标 {rule['metric']} 当前值 {value:.1f}，"
             f"条件 {rule['op']} {rule['threshold']}。请用 2-3 句话分析可能原因并给一条建议。只输出分析。"
         )
-        resp = _make_model(timeout=30).invoke([HumanMessage(content=prompt)])
+        resp = _make_model(ModelTier.ALERT, prompt=prompt).invoke([HumanMessage(content=prompt)])
         return resp.content or ""
     except Exception as e:
         logger.warning(f"[Alert] AI 归因失败: {e}")
