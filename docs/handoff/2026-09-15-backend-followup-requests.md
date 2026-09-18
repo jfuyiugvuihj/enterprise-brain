@@ -1229,3 +1229,25 @@ PROBE index reached = 0
 - A 步结构性前置 `collected=105 of 105` ✓；runbook §3.2 骨架的 `urlopen(..., proxies=)` 缺陷已修（该函数无此参数 ⇒ 步骤 B 此前从未跑过一步）。
 - B 步全 105 题串行采集 20:31:00 起跑（模式 **B′** 宿主直连 8001，须在报告里声明；窗口非完全独占 ⇒ P95 标"含并发噪声"）。
 - 单题探针 `doc-01` 已暴露 R79 那条热集 / 外集排序嫌疑：语料确有《企业管理制度手册》，模型仍答"未找到"。
+
+
+---
+
+## 34. 本班（09-18 20:5x，总控第十八班）：**R90 拆两半**——R90a 可立刻派（不碰 `migrations/**`）· R90b 等业主放行
+
+### 34.1 为什么拆
+`migrations/**` 属业主写域（R88 / H12 同口径），但 §33.2 判据 ①③⑤ 的修复点其实全在**应用侧**：`app/db/migrations.py` 与 `docker-compose.yml` / `.env.example`。把它拆出来，业主一句放行都不必等，R90 的"首装必停"就能真修掉；剩下的 `%I` 提示串（判据 ④）留给 R90b。
+
+### 34.2 **R90a**（可立刻派，前置：真机评测窗口关窗）
+- **写域**：`app/db/migrations.py`、`docker-compose.yml`、`.env.example`、新 `tests/test_r90a_embedding_guc_provisioning.py`。**禁碰** `migrations/**`、`app/api/v1/chat.py`（R37 持有）、`app/storage/persistence.py`（R84 持有）、`frontend/**`。
+- **判据**（逐条可机器验）：
+  ① `apply_migrations()` 在**应用 0010 之前**，把运行时 `EMBEDDING_DIMENSION` / `EMBEDDING_MODEL`（取自 `app/rag/indexing.py:configured_embedding_scope`，不许另起一套读法）以 `ALTER DATABASE <current_database()> SET app.embedding_dimension = ...` 下发；库名必须来自 `current_database()`，**不许字符串拼接**。
+  ② 二者缺一即 **fail-closed**：未声明宽度 / 未声明模型时，报错文案必须点名"哪个变量没设"，**禁止**回落 `DEFAULT_EMBEDDING_DIMENSION = 768` 猜（R22 承重）。
+  ③ 幂等：同一库连跑两次 `apply_migrations` 第二次不得报错、不得改值；库已被别的宽度占用时（`chunks.embedding` 已有异宽向量）**必须**让 0010 自己那道 `RAISE` 说话，不许偷偷 `RESET` 或改库级值绕过。
+  ④ `docker-compose.yml` 的 `migrate` / `backend` / `worker` / `scheduler` 四处 env **成对**出现 `EMBEDDING_DIMENSION` 与 `EMBEDDING_MODEL`（现值 **0 处**）；`.env.example` 补两行 + 注明"换 embedding 模型必须同时改宽度"。
+  ⑤ **测试不得碰真机库**：用例只准在 `tmp_path` 或自建的一次性库上跑，且必须能被"没有 `DATABASE_URL` 就整条 skip"的既有惯例兜住（同 `tests/test_r58_*` 口径）；🔴 严禁对 `enterprise_brain` 主库执行 `ALTER DATABASE` / `RESET`。
+  ⑥ 全量亲跑相对主树基线（当前 **2104 / 35 / 0**，`dad72fb`）只增不减；执行层不 commit，总控显式列路径代提交。
+- **真机侧验收（关窗后由总控亲跑，不放给执行层）**：新建一次性库 → `docker compose ... run --rm migrate python scripts/migrate.py --database-url <新库>` 退出码 0 且 `applied=` 含 0010，全程**零手工 `ALTER DATABASE`**；老库 `app.embedding_dimension` 现值 **768** 不变。
+
+### 34.3 **R90b**（🔴 等业主放行）
+`migrations/0010_pgvector_chunks.sql:216` 提示串里的 `%I` 改 `%`（PL/pgSQL 的 `RAISE` 只认 `%`，`%I` 会渲染成 `enterprise_brainI`），并加一条"渲染出的库名 == `current_database()`"的钉。**只改文案不改语义**，但要动 `migrations/**` ⇒ 业主口径。
