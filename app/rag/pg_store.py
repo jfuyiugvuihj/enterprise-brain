@@ -292,7 +292,14 @@ class VectorMirror:
                 f"镜像拒写：向量 {len(vector_list)} 条与 id {len(id_list)} 条不符",
                 model,
             )
-        assert_writable_embeddings(vector_list, len(document_list), cause="vector_mirror")
+        try:
+            # R21's gate, called and not re-implemented. Its refusal is recorded on the
+            # mirror side too, so a mirrored batch rejected by the shared gate still shows
+            # up in vector_mirror_diagnostics(), not only in retriever's counters.
+            assert_writable_embeddings(vector_list, len(document_list), cause="vector_mirror")
+        except VectorWriteRejectedError as exc:
+            _record_failure(exc.reason, str(exc))
+            raise
         if len(document_list) != len(id_list) or len(metadata_list) != len(id_list):
             raise self._refuse(
                 REASON_VECTOR_COUNT_MISMATCH,

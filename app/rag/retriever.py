@@ -593,12 +593,15 @@ class DocumentRetriever:
             "embeddings": [list(vector) for vector in vectors],
         }
 
-    def _undo_vector_write(self, mirror, written_ids, snapshot):
+    def _undo_vector_write(self, mirror, written_ids, snapshot, *, stale_deleted=True):
         """两腿一起退回本次写入之前：PG 回滚事务，Chroma 撤掉新写、放回旧行。
 
         mirror.rollback() 是硬要求：PG 侧的失败定义就是"这个事务一个向量都不留"。Chroma
         侧是 best-effort（撤不动就记日志，业务异常照样往上抛），因为 Chroma 没有事务，能
         做的只有逆序补偿；补偿失败的窗口写进交付说明的"必须业主真机"清单。
+
+        stale_deleted 必须是 Chroma 那一次 delete 真的成功之后才为真：没删过就不能凭空
+        add 一遍，否则"回滚"本身会变成一次写入。
         """
         try:
             mirror.rollback()
@@ -607,7 +610,7 @@ class DocumentRetriever:
         try:
             if written_ids:
                 self.collection.delete(ids=list(written_ids))
-            if snapshot and snapshot.get("ids"):
+            if stale_deleted and snapshot and snapshot.get("ids"):
                 self.collection.add(
                     ids=snapshot["ids"],
                     documents=snapshot["documents"],
@@ -677,6 +680,7 @@ class DocumentRetriever:
         mirror = self._open_vector_mirror()
         snapshot = None
         written_ids = []
+        stale_deleted = False
         try:
             if mirror is not None and stale_ids:
                 # 删之前先留快照：PG 侧的回滚是事务级的，Chroma 侧只能靠它逆序放回。
@@ -691,6 +695,7 @@ class DocumentRetriever:
                 if mirror is not None:
                     mirror.delete(ids=list(stale_ids))
                 self.collection.delete(ids=stale_ids)
+                stale_deleted = True
                 logger.info(f"已删除旧版本: {filename}")
 
             batch_size = 2000
@@ -708,7 +713,8 @@ class DocumentRetriever:
                 mirror.commit()
         except Exception:
             if mirror is not None:
-                self._undo_vector_write(mirror, written_ids, snapshot)
+                self._undo_vector_write(mirror, written_ids, snapshot,
+                                        stale_deleted=stale_deleted)
             raise
         finally:
             if mirror is not None:
@@ -876,15 +882,26 @@ class DocumentRetriever:
         if not existing["ids"]:
             return
         mirror = self._open_vector_mirror()
+        snapshot = None
+        stale_deleted = False
         try:
             if mirror is not None:
+                # 同 add_document：读得出旧向量才敢删，否则回滚时无货可放回。
+                snapshot = self._vector_snapshot(existing["ids"])
+                if snapshot is None:
+                    raise VectorWriteRejectedError(
+                        f"拒绝删除向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: 双写已开启，"
+                        f"但 {filename} 的旧向量读不出快照，删掉就无法忠实还原",
+                        reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
+                    )
                 mirror.delete(ids=list(existing["ids"]))
             self.collection.delete(ids=existing["ids"])
+            stale_deleted = True
             if mirror is not None:
                 mirror.commit()
         except Exception:
             if mirror is not None:
-                self._undo_vector_write(mirror, [], None)
+                self._undo_vector_write(mirror, [], snapshot, stale_deleted=stale_deleted)
             raise
         finally:
             if mirror is not None:
