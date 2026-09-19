@@ -1270,9 +1270,9 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Ohm` | `01a0b7dd-9f7b-7e13-8c3a-632f0d7bb3ff` | **R50** 增量索引 + 低峰可续跑全量重建（本班立案，计划书 §5.2 L3） | `be-r50`（总控自主干 **`43e773e`** 新建 `codex/be-r50`，**独占**；写域 `app/rag/indexing.py` + `scripts/rebuild_index.py` + 两个新用例文件） | **运行中**：12:2x 单投（本 block 只此一次投递）。选它是因为腿③ 内部「互不相干可并行」（计划书 L169），且与在跑的 R92（`retrieval_pipeline.py` / `model_handler.py`）、R93（只读）**零文件交叠**；🔴 给它上了三条硬缰：**不许建新表**（`migrations/**` 是业主写域，要建就停下来申报）、**不许打真模型/容器**（GPU 归 R92，真机耗时那一腿总控补）、**不许出现清空窗口**（判据③ 先建新后切换，钉"重建到一半命中数不得下降"） |
 | `Averroes` | 同上 `01a0b4e5-…` | **R92**（结案） | `be-r92` | **✅ 已结案并树（本班）**：`e84ad84`（三文件，总控显式列路径）→ 追平 `9260f4f` → 并守卫修正 → 主树 **`a804ea7`**，`git diff --quiet 9260f4f HEAD` = IDENTICAL。总控**另写探针独立真机复验**（不复用它留下的脚本）：`POST http://ollama:11434/api/chat` + `thinking_chars=0` + **`rewrites=3 sub=3` / 2.62 s**（改前同题 `/v1` 13.88 s、`finish_reason=length`、正文 0 字 ⇒ 现网那套「改写从来没生效」的现场被当场翻掉）。四项披露当班全裁（§4BC.1）。它按红线**没覆盖容器 `/app`**（收尾 md5 复验过），容器 `/tmp` 里它的探针与几 MB 源码副本下次 `up -d` 自动消失 |
 | `Feynman` | 同上 `01a0b7d4-…` | **R93**（结案） | `be-r93` | **✅ 已结案并树（本班）**：只交付一个新文档 `docs/handoff/2026-09-19-eval-evidence-audit.md`（377 行）；总控亲验 `git status` **0 个 ` M `**（既有文件一字未改），`ebfb1c9` → 主树 **`9626b7d`**，`git diff --numstat a804ea7 HEAD` = `376 0` 仅此一件。**总控独立复算其核心数字**：自写脚本按其 §1 口径跑出 **29 行 / 29 词**、题号前六个逐个相同 ⇒ 数可信（脚本 `_r93_recount.py`，未跟踪）。取证脚本留在 `be-r93\_audit\` 未跟踪、会随树蒸发 ⇒ 已另立 R94 把常驻件补进仓库 |
-| `Ohm` | 同上 `01a0b7dd-…` | **R50**（续） | `be-r50` | **运行中**：盘上 4 条改动（`app/rag/indexing.py`、`scripts/rebuild_index.py` + 两个新用例文件），树基线 `43e773e`。三条硬缰已写进简报：**不建新表 / 不打真模型与容器 / 不许出现清空窗口**（判据③ 先建新后切换） |
-| `Banach` | `01a0b7f3-267b-71e2-8e8a-bf1394793bbd` | **R34** `keep_alive` 常驻、消冷加载 6.4–6.9 s（跟进单 L504，P1 档，0.5 天） | `be-r34b`（总控自主干 **`9626b7d`** 新建 `codex/be-r34b`，**独占**；写域 `app/common/model_handler.py` + 新用例 + 一份新文档） | **运行中**：12:4x 单投。**为什么现在才派**：判据③ 要求「原生端点上生效、`/v1` 传参无效」，原生腿是 **R92 刚并进来的** `_native_chat` ⇒ 本单复用现成请求构造、不另起第三条腿；且 GPU 此刻空闲。🔴 简报明写 `app/agents/nodes.py` / `_make_model` 是 **R29 的边界，一个字不许改**，判定非改不可就停下申报 |
-| `Harvey` | `01a0b7f3-af3f-7501-b546-30e58d2feb3c` | **R94**（本班新立）「29 条无出处」常驻可跑件 + runbook 补 P-10..P-17 | `be-r94`（总控自主干 **`9626b7d`** 新建，**独占**；写域：新 `scripts/check_eval_evidence_coverage.py` + 新用例 + `2026-09-17-eval-real-run-runbook.md` 第 2 节表格） | **运行中**：12:4x 单投（本 block 只此一次投递）。立案很硬：跟进单 §25.3 引用的 `verify_r66.py` **全盘不存在** ⇒「29」这个数字此前**没有可重跑工件**，R93 的脚本又躺在未跟踪目录里会随树蒸发。零模型 / 零容器 / 零连库；🔴 禁碰评测集与语料本体；P-4 那个行号错要求它**先复核再改** |
+| `Ohm` | 同上 `01a0b7dd-…` | **R50**（续） | `be-r50` | **✅ 已并树（本班补记，git 自证）**：子提交 `090c820` → 主树 `94f7fa1`(18:06)。验收账在第二十一/二十二班已经死掉的对话里，本班只按 git 事实补记、不替它复述结论。原状态：盘上 4 条改动（`app/rag/indexing.py`、`scripts/rebuild_index.py` + 两个新用例文件），树基线 `43e773e`。三条硬缰已写进简报：**不建新表 / 不打真模型与容器 / 不许出现清空窗口**（判据③ 先建新后切换） |
+| `Banach` | `01a0b7f3-267b-71e2-8e8a-bf1394793bbd` | **R34** `keep_alive` 常驻、消冷加载 6.4–6.9 s（跟进单 L504，P1 档，0.5 天） | `be-r34b`（总控自主干 **`9626b7d`** 新建 `codex/be-r34b`，**独占**；写域 `app/common/model_handler.py` + 新用例 + 一份新文档） | **✅ 已并树（本班补记，git 自证）**：子提交 `b1d185e` → 主树 `e4d0c1b`(17:49)。R96 之后 `keep_alive` 已在容器里生效（`LOCAL_MODEL_KEEP_ALIVE=15m`，本班实测）。原状态：12:4x 单投。**为什么现在才派**：判据③ 要求「原生端点上生效、`/v1` 传参无效」，原生腿是 **R92 刚并进来的** `_native_chat` ⇒ 本单复用现成请求构造、不另起第三条腿；且 GPU 此刻空闲。🔴 简报明写 `app/agents/nodes.py` / `_make_model` 是 **R29 的边界，一个字不许改**，判定非改不可就停下申报 |
+| `Harvey` | `01a0b7f3-af3f-7501-b546-30e58d2feb3c` | **R94**（本班新立）「29 条无出处」常驻可跑件 + runbook 补 P-10..P-17 | `be-r94`（总控自主干 **`9626b7d`** 新建，**独占**；写域：新 `scripts/check_eval_evidence_coverage.py` + 新用例 + `2026-09-17-eval-real-run-runbook.md` 第 2 节表格） | **✅ 已并树（本班补记，git 自证）**：`b204924` + `9ad584b` → 主树 `09ec562`(17:49)，最后一笔范围订正 `ae6c116`(18:16)。`scripts/check_eval_evidence_coverage.py` 现已在镜像里（本班逐文件 sha256 亲验）。原状态：12:4x 单投（本 block 只此一次投递）。立案很硬：跟进单 §25.3 引用的 `verify_r66.py` **全盘不存在** ⇒「29」这个数字此前**没有可重跑工件**，R93 的脚本又躺在未跟踪目录里会随树蒸发。零模型 / 零容器 / 零连库；🔴 禁碰评测集与语料本体；P-4 那个行号错要求它**先复核再改** |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -2684,3 +2684,32 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 5. `docker compose --env-file deploy/.env.server run --rm --no-deps migrate`（让 R90a 把 `app.embedding_dimension` / `app.embedding_model` 声明进主库。**现状**：主库 `enterprise_brain` 的 `app.embedding_dimension=768` 在、`app.embedding_model` 是 **unrecognized**——当年是旧镜像 migrate 的，这一步跑完才会两个都有）。
 6. **标记级自证（10 秒，比看镜像时间戳可靠）**：`docker exec enterprise-brain-backend-1 grep -c _DOUBLE_EXTENSION_BLOCKLIST /app/app/documents/file_security.py` 与 `grep -c provision_embedding_scope /app/app/db/migrations.py` 都该 ≥1（现在都是 0）；R92 并树后再加一条 `grep -c ollama-native /app/app/common/model_handler.py` ≥1。
 7. **重建之后仍要做两件上传**（镜像**不会**替你带，见 §4BC.3 末条）：**(a)** R91 生效后重传那 **11 篇**带版本号文档，KB 才会 89 → **100**；**(b)** `data/报销明细表.csv` 走 `POST /api/v1/upload-excel`，而这一步**现在实测 403 `department_scope_required`**（见 §4BC.3）⇒ 先解决 eval 账号的部门。**两件都没做成就别开跑分窗口**，那是第三轮废跑的形状。
+
+## 4BD. 本班（09-19 22:2x–23:5x，总控第二十三班）：**H12 结掉并改形态（R96）· R52 落地 · 上一班 6 小时的账补记**（业主改令「后端镜像重建你能做的话就你来」）
+
+### 4BD.0 环境事实（下班别再试）
+- 本线程 `multi_agent_v1` 全族不可用：`spawn_agent` / `wait_agent` / `close_agent` 一律回 `unsupported call`，`list_mcp_resources` 返回空 ⇒ **派不出任何子 Agent**。按事故 #14 铁规不再试第二种投递通道 ⇒ 本班两单（R96 / R52）**全部总控亲做**（先例：R68 / R70 / R72 / R86 / R87）。
+- 心跳 `automation-2` 仍是 `PAUSED` 且指向死线程 `01a0acfb`，业主令「别动」，未动。
+
+### 4BD.1 R96 镜像溯源戳 + 重建成本（**结案**，主树 `ce9630f`）
+- 开工前实测：镜像 `Created 18:11:02` 早于 HEAD `18:16:32` ⇒ P-8 时间级判死；但容器内 `app/` 101 个 py 与主树**逐字节相同**，真差异只有 `scripts/check_eval_evidence_coverage.py` 一个文件（= R94 最后一笔）。⇒ **上一班那次重建没白做**，H12 真正挂的账是"没人敢再建"，不是"从没建过"。
+- 病根量化：`docker image history` 里 `uv sync` 层 **5.77 GB**、`chown -R /app` 层 **5.78 GB**，两层都排在源码 COPY 之后 ⇒ 改一行代码重造两层；镜像虚体积 18.4 GB，第一次重建实测 **210.5 s**（export 137 s + unpack 47 s）。
+- 修法（`ce9630f`）：依赖层提到源码 COPY 之前；源码改 `COPY --chown`；取消 `chown -R /app`，只 chown 五个卷挂载点（卷初始化那条既有理由原样保留并在注释里说明为什么收窄）；末尾 `GIT_SHA` / `BUILT_AT` → OCI 标签 `org.opencontainers.image.revision` + 容器内 `/app/BUILD_INFO`。三枚新用例钉住层序、`--chown`、戳的位置，防下班把 5.8 GB 那层请回来。
+- 效果（同机实测）：改代码后 `build migrate` **1.8 s**（全层 CACHED，只有溯源层重跑）；镜像虚体积 **18.4 GB → 9.6 GB**。⇒ H12 的「跨小时、只能业主做」两条前提**作废**，结案段已写进 human-gates；仍保留的红线是「窗口内不许重建」（runbook §9）。
+- 新闸门：`python scripts/check_image_provenance.py` 取代「拿 UTC 时间戳比本地 committer date」；无戳镜像自动回落到逐文件 sha256。`decide()` 的保守性由 `tests/test_r96_image_provenance.py` 12 枚用例钉住。**「干净戳 + 脏树不可信」这条是本班自己踩出来的**：写完 checker 又改它自己，脚本当场报 `bytes differ`，规则是被这次误报逼出来的，不是设计的。
+- 现网：镜像自称 **`8c888c7`**（= 本班最后一个代码提交），backend / worker / scheduler 在新镜像上 Healthy，migrate exit 0，`app/` 101、`scripts/` 19、`migrations/` 10 与主树逐文件相等；`verify_container_stack.py --skip-build` **22 passed / 0 failed**（`tmp/container_gate_r96.log`）。**开窗前请按 runbook §13 用当时的被测 rev 重盖一次戳（秒级，别再拿这张）**。
+
+### 4BD.2 R52 断外网自检 / 内网 HTTPS / 批量账号（**代码件结案，真机三半挂账**，主树 `8c888c7`）
+- 计划书在册 27 单里最后一张零代码单 ⇒ **R25–R52 全部有码**。三条判据的落法、实测数与「本班没有执行 `--apply`」全部写在跟进单 **§40**，此处不重复。
+- 看板要记的两件：① 「不得为过检放宽 TLS 校验」从一句话变成机器闸（`verify=False` / `CERT_NONE` / `NODE_TLS_REJECT_UNAUTHORIZED=0` / `--insecure` 等六种写法同时红闸门与全量测试）；② 内网 HTTPS 走**叠加层**，默认栈一点不动（base `nginx.conf` 无 443、base compose 不要求证书路径，两件事都有用例钉），example 已在现役 frontend 容器里用一次性自签证书过 `nginx -t`。
+
+### 4BD.3 上一班 6 小时的账补记（§4BC.5 之后看板一行没有）
+- 只按 git 事实补记，**不替上一班复述验收结论**（它们的验收在已经死掉的对话里）：R94 `b204924` + `9ad584b` + `ae6c116` → 主树 `09ec562`(17:49)；R34 `b1d185e` → `e4d0c1b`(17:49)；R50 `090c820` → `94f7fa1`(18:06)；R95 `f79a524`(18:05)。名册里 `Ohm`(R50 续) / `Banach`(R34) / `Harvey`(R94) 三行状态已就地改为「已并树（本班补记）」。
+- 🔴 仍欠两笔：**(a)** R95 / R96 / R97 未进跟进单在册表；**(b)** 上一班的跑分三件（`eval_transport_ask_v2.py` + 3 个分片 jsonl）躺在 `%TEMP%\evalrun95` **未入库**，机器一崩就没 ⇒ 建议并入 `scripts/` + `fixtures/`（属上一班写域，本班未擅动）。
+
+### 4BD.4 本班账
+- 主干：`ae6c116` → **`ce9630f`**（R96）→ **`8c888c7`**（R52）→ 本看板提交。**新基线 2428 passed / 35 skipped / 0 failed（102.5 s，主树亲跑）**；上基线 2396，+32 全是本班新用例（R52 17 + R96 12 + 层序 3）。
+- 🔴 **名册不可信提醒（本班实测）**：§0 里仍有 **15 行写着「运行中」**，它们属于三条已经死掉的总控线派出的 Agent，线程没了但行没翻。在途数以 **git 为准 = 0**，下班**别按名册数并发**，也别去 `wait_agent`（本线程该工具族不可用）。
+- 在途 Agent：**0 / 3 席全空**。可派面（若投递通道恢复）：`R52` 的真机三半、`R77`（H11/H12 后复测，本班已把镜像侧做完）、`R86` 已结、计划书余量只剩 §6 阶段验收与 E 线；**`orchestrator.py` 那四单（R29 R31 R33 R38）照旧串行且 R29 依 §4BC.1 按住**。
+- 待业主：**D1–D14 一张表已落 `docs/handoff/2026-09-17-human-gates.md` 末节**，每条只回一个字母即可。其中 **D14 = 现在开不开跑分窗口**、**D10 = 25 条救不回的题改不改**、**D8 / D9 = 两张要动 `migrations/` 的单放不放行**。
+- push：本看板提交完成后立刻推 origin + gitee 双远端（业主 09-19 已授权），回读结果在对话里报，不写进本文档——写了就等于先记账后做事。
