@@ -118,6 +118,15 @@ services:
       - deploy/.env.server
     environment:
       <<: *storage-env
+      # R90a. Migration 0010 refuses to guess a vector width, and app/db/migrations.py now
+      # declares the runtime profile for the database it migrates. The two lines are one pair:
+      # R22 binds every index version to model + width, so they travel together or not at all.
+      # No value is written here on purpose -- an unset pair makes the migrate step stop with a
+      # message naming the variable that is missing, which is the behaviour a clean install needs.
+      # deploy/.env.server.example is outside this ticket's write domain, so it does not yet
+      # carry the two lines: until it does, an operator copies .env.example or sets them by hand.
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
     command: ["python", "scripts/migrate.py"]
     depends_on:
       postgres:
@@ -134,6 +143,9 @@ services:
     environment:
       <<: *storage-env
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:?set CORS_ALLOW_ORIGINS in deploy/.env.server to the exact browser origin}
+      # The embedding profile the API reads with must be the one the migration declared.
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
       # The API must not own scheduled side effects while workers are scaled.
       SCHEDULER_ENABLED: "false"
       LOCAL_MODEL_BASE_URL: http://ollama:11434/v1
@@ -172,6 +184,9 @@ services:
       start_period: 30s
     environment:
       <<: *storage-env
+      # The worker embeds and mirrors chunks, so it needs the same declared profile.
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
       SCHEDULER_ENABLED: "false"
       LOCAL_MODEL_BASE_URL: http://ollama:11434/v1
       OLLAMA_BASE_URL: http://ollama:11434
@@ -204,6 +219,9 @@ services:
       start_period: 30s
     environment:
       <<: *storage-env
+      # Same profile for the scheduler: an alert job that embeds under another width is drift.
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
       LOCAL_MODEL_BASE_URL: http://ollama:11434/v1
       OLLAMA_BASE_URL: http://ollama:11434
     volumes: *persistent-paths
