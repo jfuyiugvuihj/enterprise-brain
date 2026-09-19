@@ -1268,6 +1268,11 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Feynman` | `01a0b7d4-c563-7ca3-897c-7efa485e4c28` | **R93**（本班新立）无出处题归桶 + 开窗前置取证（判据 跟进单 §37） | `be-r93`（总控自主干 **`b4d2026`** 新建，**独占**；写域**只有一个新文件** `docs/handoff/2026-09-19-eval-evidence-audit.md`） | **运行中**：12:0x 单投（首次投递因本班手滑带 `model="inherit"` 被参数校验挡回、**根本没创建 Agent**，随即改不带 model 重投成功；见 §4BA.3）。**只读取证、零模型调用**（GPU 归 R92 / R90a）；干的是「把 R36 那 29 条未知数算成可裁定的四桶 + 补齐 runbook 没覆盖的开窗前置」 |
 | `Galileo` | 同上 `01a0b4e9-…` | **R90a**（结案） | `be-r90a` | **✅ 已结案并树（本班）**：`8977d32`（总控显式列路径代提交，四文件）→ 追平 `c6cd28d` → 主树 **`43e773e`**，`git diff --quiet c6cd28d HEAD` = IDENTICAL。总控亲跑两腿都过：**离线** 2255/35/0（85.20 s，= 2222 + 本单 33）；**真机**（一次性库、零手工 ALTER）`after` 腿 `rc=0 / applied=10 / 新会话 app.embedding_dimension=768`、`before` 腿仍 `rc=1` 指向 `eb_r90a_beforeI` ⇒ **§34.2 结案口径当场达标，R90「干净首装必停」在真机层被修掉**。判据② 的假连接钉子经本班读源码坐实（`_assert_server_can_type_parameters` 按 PG Parse 规则建模、执行层自测摘掉 `::text` 即 14 红）。三项披露当班裁定，越界零 |
 | `Ohm` | `01a0b7dd-9f7b-7e13-8c3a-632f0d7bb3ff` | **R50** 增量索引 + 低峰可续跑全量重建（本班立案，计划书 §5.2 L3） | `be-r50`（总控自主干 **`43e773e`** 新建 `codex/be-r50`，**独占**；写域 `app/rag/indexing.py` + `scripts/rebuild_index.py` + 两个新用例文件） | **运行中**：12:2x 单投（本 block 只此一次投递）。选它是因为腿③ 内部「互不相干可并行」（计划书 L169），且与在跑的 R92（`retrieval_pipeline.py` / `model_handler.py`）、R93（只读）**零文件交叠**；🔴 给它上了三条硬缰：**不许建新表**（`migrations/**` 是业主写域，要建就停下来申报）、**不许打真模型/容器**（GPU 归 R92，真机耗时那一腿总控补）、**不许出现清空窗口**（判据③ 先建新后切换，钉"重建到一半命中数不得下降"） |
+| `Averroes` | 同上 `01a0b4e5-…` | **R92**（结案） | `be-r92` | **✅ 已结案并树（本班）**：`e84ad84`（三文件，总控显式列路径）→ 追平 `9260f4f` → 并守卫修正 → 主树 **`a804ea7`**，`git diff --quiet 9260f4f HEAD` = IDENTICAL。总控**另写探针独立真机复验**（不复用它留下的脚本）：`POST http://ollama:11434/api/chat` + `thinking_chars=0` + **`rewrites=3 sub=3` / 2.62 s**（改前同题 `/v1` 13.88 s、`finish_reason=length`、正文 0 字 ⇒ 现网那套「改写从来没生效」的现场被当场翻掉）。四项披露当班全裁（§4BC.1）。它按红线**没覆盖容器 `/app`**（收尾 md5 复验过），容器 `/tmp` 里它的探针与几 MB 源码副本下次 `up -d` 自动消失 |
+| `Feynman` | 同上 `01a0b7d4-…` | **R93**（结案） | `be-r93` | **✅ 已结案并树（本班）**：只交付一个新文档 `docs/handoff/2026-09-19-eval-evidence-audit.md`（377 行）；总控亲验 `git status` **0 个 ` M `**（既有文件一字未改），`ebfb1c9` → 主树 **`9626b7d`**，`git diff --numstat a804ea7 HEAD` = `376 0` 仅此一件。**总控独立复算其核心数字**：自写脚本按其 §1 口径跑出 **29 行 / 29 词**、题号前六个逐个相同 ⇒ 数可信（脚本 `_r93_recount.py`，未跟踪）。取证脚本留在 `be-r93\_audit\` 未跟踪、会随树蒸发 ⇒ 已另立 R94 把常驻件补进仓库 |
+| `Ohm` | 同上 `01a0b7dd-…` | **R50**（续） | `be-r50` | **运行中**：盘上 4 条改动（`app/rag/indexing.py`、`scripts/rebuild_index.py` + 两个新用例文件），树基线 `43e773e`。三条硬缰已写进简报：**不建新表 / 不打真模型与容器 / 不许出现清空窗口**（判据③ 先建新后切换） |
+| `Banach` | `01a0b7f3-267b-71e2-8e8a-bf1394793bbd` | **R34** `keep_alive` 常驻、消冷加载 6.4–6.9 s（跟进单 L504，P1 档，0.5 天） | `be-r34b`（总控自主干 **`9626b7d`** 新建 `codex/be-r34b`，**独占**；写域 `app/common/model_handler.py` + 新用例 + 一份新文档） | **运行中**：12:4x 单投。**为什么现在才派**：判据③ 要求「原生端点上生效、`/v1` 传参无效」，原生腿是 **R92 刚并进来的** `_native_chat` ⇒ 本单复用现成请求构造、不另起第三条腿；且 GPU 此刻空闲。🔴 简报明写 `app/agents/nodes.py` / `_make_model` 是 **R29 的边界，一个字不许改**，判定非改不可就停下申报 |
+| `Harvey` | `01a0b7f3-af3f-7501-b546-30e58d2feb3c` | **R94**（本班新立）「29 条无出处」常驻可跑件 + runbook 补 P-10..P-17 | `be-r94`（总控自主干 **`9626b7d`** 新建，**独占**；写域：新 `scripts/check_eval_evidence_coverage.py` + 新用例 + `2026-09-17-eval-real-run-runbook.md` 第 2 节表格） | **运行中**：12:4x 单投（本 block 只此一次投递）。立案很硬：跟进单 §25.3 引用的 `verify_r66.py` **全盘不存在** ⇒「29」这个数字此前**没有可重跑工件**，R93 的脚本又躺在未跟踪目录里会随树蒸发。零模型 / 零容器 / 零连库；🔴 禁碰评测集与语料本体；P-4 那个行号错要求它**先复核再改** |
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
   我在写完上面四条之后的 3 分钟内，**又在两件事上各重复发了一次同一动作**——
@@ -2638,3 +2643,44 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 ### 4BB.3 本班账（再续）
 - 主干：`b4d2026`（R91）→ **`43e773e`**（R90a），两远端同步到位。**今日已结案 2 单（R91 / R90a），都是「总控亲跑两腿 + 显式列路径代提交 + 合树身份证明」的完整流程**。
 - 待业主的一条要紧动作没变：**重建后端镜像**（与 H12 同一扇门）。不重建，R91 的 11 篇补不进 KB、R90a 的声明逻辑在现网也仍是旧码、R92 修完跑的仍是旧改写路径 ⇒ **任何真机分数都不是主干的分数**。
+
+## 4BC. 本班再再续（09-19 12:3x–12:5x，总控第二十班再再续）：**R92 结案（改写真的生效了）· R93 结案 · 一处越界守卫误红的归属修正 · 容器现场两笔实测 · R34/R94 新立**
+
+### 4BC.1 R92 结案（merge **`a804ea7`**）：**新主干基线 2287 passed / 35 skipped / 0 failed（96.28 s，主树亲跑）**
+- 改了什么：非流式的查询改写从 `/v1` 迁到 **Ollama 原生 `/api/chat` + `think:false`**，`num_predict` 沿用 `REWRITE` 档 **256 预算（没调大）**；新增 `ModelReply(str)` 子类，在不破坏「出口只承诺 str」这条既有契约的前提下把 `finish_reason` / `transport` / `output_tokens` / `error_code` 带出来。
+- **三类失败第一次可区分**：`model_output_truncated` / `model_response_empty` 走 **ERROR**（静默回退正是本单缺陷本体），`rewrite_payload_unparseable` 走 WARNING，另有 `model_unavailable` / `rate_limited`；`length` 且正文非空一律**拒用**（宁回退原问题也不吃半截 JSON）。原始问题兜底保留。
+- 总控验证（两腿都自己跑，不采信自述）：离线在追平后的 `9260f4f`+守卫 = **2286 passed / 36 skipped / 0 failed**；**真机独立探针**（我另写的 `_r92_verify.py`，`docker cp` 整棵 `app/` 覆盖导入，没碰镜像 `/app`）⇒ `POST http://ollama:11434/api/chat`、`done_reason=stop`、`thinking_chars=0`、**`rewrites=3 sub=3`、2.62 s / 2.63 s**，两题首条改写都是有意义的改写句（「不同职级的住宿费标准分别是什么？」）。
+- 🔴 **本班探针自己踩的坑值得记**：第一次复现我**从主干拷文件**（那时主干还没有 R92）+ 覆盖层只放了两份 `.py` 没放 `__init__.py` ⇒ Python 仍从 `/app/app` 解析整个包，跑出「改后仍失败」的**假结论**。真相是我测错了对象，不是修复无效。⇒ 覆盖导入必须**整棵包**（含各级 `__init__.py`），且**先打印 `module.__file__` 证明测的是哪份码**。
+- 本班对它四项披露的裁定：(1) 换腿闸门 `isinstance(ollama_client, OpenAI)` ⇒ **接受**：注入的假客户端保持它实现的 `/v1`，`test_model_concurrency` / `test_offline_runtime_fallbacks:74` / `test_private_model_routing:34` 三枚既有钉一字未动，代价为零；(2) `length` + 非空正文拒用 ⇒ **接受**（真机 B 段第一次就回过 86 字半截 JSON，吃了它等于把坏改写喂进检索）；(3) 解析助手顺手断掉 `"rewrites"` 回成字符串时 `[query] + rewrites` 崩整条检索 ⇒ **接受**，在「解析助手」范围内且有钉；(4) 没加运维 kill switch ⇒ **接受为本单边界内**（4xx 才整进程降级一次，429/5xx 明写不算，理由正确：过载一下午就悄悄降级全进程是错的），但**记两张后备单**：`OLLAMA_NATIVE_CHAT=off` 旋钮、`_native_chat` 每次新建 `httpx.Client` 不复用连接池。
+- 残差（别当已解决）：真机只验了 `full` 档与改写口，**`fast` / `adaptive` 档未验**；「老版本 Ollama 不认 `think` 回 400」的真机路径未验（离线钉的是 4xx→整进程退回 `/v1`）；`.env.example` 未记（不在写域）。
+- ⚠️ **基线口径从这里开始变**：主干 **2287 / 35 / 0**；**在单子树（非 R51 分支且无本单产物）上跑全量会是 2286 / 36 / 0** —— 少的那一条是越界守卫主动 skip（见 §4BC.2），属设计内差异，**下班别把它当回归去追**。
+- 🔴 **排序裁定订正（本班上一条错话）**：§4AY/§4BA 说「R29 必须严格在 R92 之后并树」，本班一度据此认为 R92 落地就能派 R29 —— **错**。R92 只解掉了**写域冲突**，没解 **R36 前置**：跟进单 L552 原文「R29/R33/R35 的『质量基线已建立』前置**仍未满足**」，L529 又把「R36 必须早于 R29/R33/R35」列为**唯一『顺序错了就白干』**的约束 ⇒ **R29 继续按住**，等真机分数落盘。
+
+### 4BC.2 越界守卫误红的**归属修正**（commit **`2477522`**，总控亲做，先例 = 第十八班 R87 守卫也是总控亲做）
+- 现场：总控验收 R92 时全量 **1 failed** —— `test_this_ticket_writes_no_dependency_manifest_no_migration_and_no_frontend` 把 `app/rag/retrieval_pipeline.py` 判成越界。
+- **根因不在 R92**：`FORBIDDEN_PREFIXES` 里的 `"app/rag/"`、`"docs/"` 是 **R51 本单的私有写域**（观测单不许动 RAG 层），而树级断言无差别适用于**任何 checkout 出来的分支** ⇒ 任何改 `app/rag/` 或写 `docs/` 的**合规**单，在总控验收当场必红。R92 是第一个，**R50（改 `app/rag/indexing.py`）是第二个**——不修的话它结案时也会白红一次。
+- 处理：加归属判定 `_is_r51_work()` —— 只有「分支名命中 `codex/be-r51`」或「改动集里确有本单产物（`app/common/stage_timing` / 本测试文件）」才适用守卫；**主干照旧跑完为绿**（不把可数的绿变成 skip）。
+- 不削弱强度：`_ticket_scope()` 的可见性一字未动，另加两条合成用例钉住两个方向——**别人分支改 `app/rag/` 不得红**（归属方向）、**本单分支只落一个 `docs/` 文件也必须红**（补漏口）。主树亲跑 **22 passed / 0 skipped**。
+- 顺带说明 R87 那次收窄的 docstring 自己就写了「分支点是唯一的归属基线」——它解决了「同树两单未提交互撞」，但**没解决「守卫管到别人的分支」**，这次补上的是另一半。
+
+### 4BC.3 R93 结案（merge **`9626b7d`**）与**容器现场两笔实测**（本班亲看，R93 因禁 docker 看不到）
+- R93 的三个对业主有用的结论：**(a)** 29 条无出处里**最多只有 4 条**能靠补料/数据在位闭环（`data-07/08/12`、`insight-05`），其余 25 条真值不取决于语料（B 措辞漂移 8 / D 「出处」概念不适用 15 / A 缺条款 1 / 两头都缺 1）⇒ **`answer_correctness` 用 105 当分母时，分不清「检索差」和「模型没自发吐出那个字面词」**，这才是 R36 判据③ 的真实状态，不是「还差 29 篇语料」。**(b)** 真机**只有一条读腿 = Chroma**（`INDEX_BACKEND` 是模块级字面量、三个调用点 `tools.py:425` / `mcp_server.py:48` / `debug.py:40` 全部不传 `tier=`，本班逐个复核）⇒ PG 里 `chunk_vectors=0` **不影响**本轮基线；反向更要紧：**谁把读路径切到 pgvector，这轮基线立刻整体作废**（0 召回 → 全体拒答）。**(c)** 纠正一处账：跟进单 §27.6 写「29 = A12 + C16 + 交叉1」逐条对不上，实际分解 **A10 + B4 + C15**；且 §25.3 引用的 `verify_r66.py` **全盘 0 命中** ⇒「29」之前没有可重跑工件（本班独立复算得到同一个 29，题号逐个相同）。
+- **本班进容器实测两笔（把 R93 的推断换成现场）**：`/app/documents` = **89 篇，其中带版本号的名字 0 个** ⇒ R91 修的 11 篇确实一篇都没进去；`/app/data` 里**根本没有 `报销明细表.csv`**（只有 `.dataset-metadata.json` / `index-versions.json` / `sessions.json` / `knowledge_graph.json` / `traces/`）。
+- 🔴 **P-10 当场踩实**：本班用现成 eval token 走 `POST /api/v1/upload-excel` 传那份 CSV ⇒ **`HTTP 403 {"detail":"department_scope_required"}`**，与 R93 预告**逐字一致**（`app/api/v1/data.py:39-43`：注册表拒绝无部门的 owner，首任管理员除非 `AUTH_DEPARTMENT` 点名部门就没有部门）。⇒ **跑分窗口现在还不满足**：C 桶 5 条数据题会全灭。
+- 本班**故意没有**用 `docker cp` 把 CSV 直接塞进卷里：那会绕过部门权限层造出一个「客户机上复现不出来」的假通过，比已知的缺口更坏。要么给 eval 账号配部门（改 `deploy/.env.server` 的 `AUTH_DEPARTMENT` + 重启，业主侧），要么经 API 建一个带部门的账号再上传（一条 `POST /api/v1/users`，`auth.py:90` 收 `department` 字段）——**两条都改业务语义，本班不替业主选**。
+- 卷的事实顺手钉一颗：`/app/documents` 与 `/app/data` 都挂在同一块 `/dev/sdd` 上（持久卷）⇒ **重建镜像既不会清空它们、也不会带进新文件**（`.dockerignore:11-12` 把它们排除在镜像外）。业主重建后，那 11 篇仍需**重新走一次上传**才会进 KB。
+
+### 4BC.4 本班账（截至 12:5x）
+- 主干链：`84c31fc` → **`2477522`**（守卫归属修正）→ **`a804ea7`**（merge R92）→ **`9626b7d`**（merge R93）；**新基线 2287 / 35 / 0**；**今日结案 4 单：R84 · R91 · R90a · R92**（+ R93 取证单结案）。
+- 在途 3 = 满编制：`Ohm`(R50) / `Banach`(R34) / `Harvey`(R94)。**不派第 4 个**；R29 依 §4BC.1 末条继续按住。
+- 等业主（按要紧程度）：**(1) 重建后端镜像**（命令与两个坑见 §4BC.5，且**建议等 R34 并树后一次做完**，因为 keep_alive 直接改延迟、跑分 P95 与它相关）；**(2) eval 账号部门**（P-10 已实测 403，不解决 C 桶 5 条全灭）；(3) H13–H18 / R85 / R88 / **R90b**（含 `migrations/0010_pgvector_chunks.sql:216` 的 `%I`，本班已第三次留现场）/ 远端 `master` / 游离卷 / 临时 token 文件 / 删除清单（含 `be-r20\probe.txt`、`be-r53\*.r57bak` 两笔垃圾，R55/R57 本体早已在主干）。
+- 心跳：`automation-2` 查到已是 **`status = "PAUSED"`** 且仍指向死线程 `01a0acfb` ⇒ 不会每小时空撞了；本班按业主「别执行心跳」的话没动它，要清或改指向请业主点头。
+
+### 4BC.5 重建后端镜像的**唯一正确姿势**（H12 复用；第十八班结案过一次，本次是**二次重建**：镜像 `Created 09-18 12:12 UTC = 北京 20:12`，主干已前进 16.1 小时，标记级复核容器内 `_DOUBLE_EXTENSION_BLOCKLIST` / `provision_embedding_scope` 命中数**全 0**）
+1. `cd C:\Users\fengx\PycharmProjects\企业智脑`
+2. **先补两行到 `deploy/.env.server`**：`EMBEDDING_MODEL=nomic-embed-text` 与 `EMBEDDING_DIMENSION=768`。**不加会怎样**：R90a 之后 `migrate` 读不到这对变量就 **fail-closed 停下**（这是设计，不是故障），且 compose 每次调用都会刷 `The "EMBEDDING_DIMENSION" variable is not set` 警告八条——`deploy/.env.server.example` 里还没有这两行，那是 **R90b** 的活。
+3. `docker compose --env-file deploy/.env.server build migrate`（**≈12 分钟**）。🔴 **坑①**：单跑 `build backend` 会**静默空转**——`backend` 服务根本没有 `build:` 段，只有 `image: enterprise-brain:local`；带构建定义的是 `migrate`（`docker-compose.yml:110`）。**坑②**：**不带 `--env-file deploy/.env.server` 时 compose 会因 `POSTGRES_USER` / `REDIS_PASSWORD` 的 `:?` 插值失败直接拒不启动**（本机还会顺手去读仓根 `.env`，报出一条以密钥值命名的诡异警告，属同一根因，不必追查）。
+4. `docker compose --env-file deploy/.env.server up -d backend worker scheduler`（`up -d` 会重建这几个容器，**有几秒不可用**，别在有人开着页面或跑分进行中做；`/app/documents`、`/app/data` 是持久卷，数据不丢）。
+5. `docker compose --env-file deploy/.env.server run --rm --no-deps migrate`（让 R90a 把 `app.embedding_dimension` / `app.embedding_model` 声明进主库。**现状**：主库 `enterprise_brain` 的 `app.embedding_dimension=768` 在、`app.embedding_model` 是 **unrecognized**——当年是旧镜像 migrate 的，这一步跑完才会两个都有）。
+6. **标记级自证（10 秒，比看镜像时间戳可靠）**：`docker exec enterprise-brain-backend-1 grep -c _DOUBLE_EXTENSION_BLOCKLIST /app/app/documents/file_security.py` 与 `grep -c provision_embedding_scope /app/app/db/migrations.py` 都该 ≥1（现在都是 0）；R92 并树后再加一条 `grep -c ollama-native /app/app/common/model_handler.py` ≥1。
+7. **重建之后仍要做两件上传**（镜像**不会**替你带，见 §4BC.3 末条）：**(a)** R91 生效后重传那 **11 篇**带版本号文档，KB 才会 89 → **100**；**(b)** `data/报销明细表.csv` 走 `POST /api/v1/upload-excel`，而这一步**现在实测 403 `department_scope_required`**（见 §4BC.3）⇒ 先解决 eval 账号的部门。**两件都没做成就别开跑分窗口**，那是第三轮废跑的形状。
