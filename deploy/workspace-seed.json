@@ -1,6 +1,9 @@
 {
   "_comment": "One deployment bring-up manifest: what a measurement window needs to see on the server. Loaded by scripts/seed_workspace.py through the public API only. Owners need a department because app/storage/datasets.py refuses an owner-less dataset registration; the administrator deliberately stays department-free so that superuser and department-member semantics do not merge.",
   "corpus_directory": "documents",
+  "non_corpus": {
+    "refactor_guide.pdf": "A code-refactoring guide, not enterprise corpus. It is the only thing that appears to source chat-02, whose must_contain term no txt file supplies; docs/handoff/2026-09-19-eval-evidence-audit.md section 3.10 rules that rescue false, and the 29-row no-source count excludes PDFs on purpose. Owner ruling D11 (乙): keep the file tracked, keep it out of the knowledge base."
+  },
   "owners": [
     {
       "username": "dataowner",
