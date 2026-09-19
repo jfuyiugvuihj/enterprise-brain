@@ -2715,3 +2715,44 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 在途 Agent：**0 / 3 席全空**。可派面（若投递通道恢复）：`R52` 的真机三半、`R77`（H11/H12 后复测，本班已把镜像侧做完）、`R86` 已结、计划书余量只剩 §6 阶段验收与 E 线；**`orchestrator.py` 那四单（R29 R31 R33 R38）照旧串行且 R29 依 §4BC.1 按住**。
 - 待业主：**D1–D14 一张表已落 `docs/handoff/2026-09-17-human-gates.md` 末节**，每条只回一个字母即可。其中 **D14 = 现在开不开跑分窗口**、**D10 = 25 条救不回的题改不改**、**D8 / D9 = 两张要动 `migrations/` 的单放不放行**。
 - push：本看板提交完成后立刻推 origin + gitee 双远端（业主 09-19 已授权），回读结果在对话里报，不写进本文档——写了就等于先记账后做事。
+
+## 4BE. 本班（09-19 21:0x–22:4x，总控第二十四班）：**D14甲 开窗准备 · 前置 17 条全过 · 冒烟一题炸出两个 P0（R98/R99）· Docker 搬盘事故 + 一次本班自伤**
+
+### 4BE.0 环境事实（下班别再试，也别再犯本班这个错）
+- 🔴 **业主 21:2x 把 Docker Desktop 与 Ollama 从 C 盘搬到 `E:\Docker` / `E:\Ollama`**，后果链（逐条实测）：① `docker` 立刻从 **Machine PATH** 上消失（PATH 里仍是 `C:\Program Files\Docker\Docker\resources\bin`）；② HKLM `SOFTWARE\Docker Inc.\Docker Desktop` 键丢失 ⇒ `Docker Desktop.exe` 直接退出，日志末行 `getting backend binary path: cannot find registry key`；③ `com.docker.service` 的 `PathName` 仍指已删除的 C 盘路径。**症状是「CLI 找不到 docker」，不是「服务没起」**，别照旧口径重试命令。
+- ✅ 已修（业主授权管理员，22:12 一次性脚本）：`AppPath=E:\Docker\Docker`、`sc config com.docker.service binPath="E:\Docker\Docker\com.docker.service"`、Machine PATH 两条 Docker 项换到 E 盘（`REG_EXPAND_SZ` 类型保留）。
+- 🔴 **本班自伤（事故 #32，性质=未查证就动手）**：我在修复脚本里顺手 `Start-Service com.docker.service`。**这个服务在搬盘之前就是 Stopped/Manual 而引擎照跑 25 小时**（21:5x 我自己取证过）。它以 SYSTEM 身份占住 `%LOCALAPPDATA%\docker-secrets-engine\engine.sock` ⇒ 后端每次 bind 前要把「自己刚看到的」socket 改名成 `.stale` 就必然失败 ⇒ `starting services: initializing Secrets Engine: ... The file cannot be accessed by the system. (1920)` 崩溃循环，每崩一次留下一个**连 `stat` 都拒绝**的 AF_UNIX 占位文件。22:22 已把它改回 `Stopped / startType=Manual`。**下班：这个服务保持 Stopped，不要启动它。**
+- ✅ 绕行法（本机复发 4 次，旁边就有 `run.bak-192551` / `run.dead-*` / `docker-secrets-engine.bak-193141` / `.dead-220526`）：这类损坏 socket 占位符**删不掉也改不了名**（`os.stat` / `os.remove` / `\?\` 前缀全部 WinError 1920），唯一有效动作是**把整个父目录改名挪走再建空目录**（`Docker\run`、`docker-secrets-engine` 各一次）。别去 `Remove-Item`，本机策略也会硬拒。
+- ⚠️ **22:13:06 有人（弹窗上点的，不是脚本）在 Docker Desktop 的错误对话框里选了「Reset to factory defaults」**。本班损害评估：`%LOCALAPPDATA%\Docker\wsl\disk\docker_data.vhdx` **112.5 GB 完好，mtime 21:27:23 早于 reset 时刻** ⇒ 打的是 agent 元数据目录，**VM 数据盘没动**；WSL `docker-desktop` 只是 Stopped 未注销；引擎起来后 8 个容器全部自动回来、`enterprise-brain_documents` / `appdata` / `ollama` 三卷在位、`docker ps` 复跑 **P-9=100 篇 / P-10 明细表在位 / P-16 两项差集为空 / P-11 差集恰为已备案的 5 篇** ⇒ **语料与库零损失**（逐项复测，不采信"应该没事"）。
+- ✅ **本线程 `multi_agent_v1` 可用**：`spawn_agent` 两次投递均成功 ⇒ §4BD.0「全族不可用、派不出子 Agent」**就地作废**。仍守事故 #14 铁规：每单**一次**投递，未试第二通道。
+
+### 4BE.1 本班落盘（主树 `3332ace` → `78b8507` → `9a5aaab` → `6cb81e4` → `bc278f5`，**全部已推 origin + gitee 并回读一致**）
+- `78b8507` **§4BD.3(b) 欠账结清**：`scripts/eval_transport_ask_v2.py` + `docs/testing/fixtures/r97-shard-{1,2,3}.jsonl` 从 `%TEMP%\evalrun95` 保进仓库。**三分片拼接 == `business_evaluation_100.jsonl` 逐字节相等**（sha256 前缀 `2230b2b45be18bfb`，无 BOM，105 唯一 id）。入仓后全量回归 **2428 passed / 35 skipped / 0 failed（99.9 s，主树亲跑）**＝入仓前同数 ⇒ 未撞任何仓库卫生闸门。
+- `9a5aaab` 跟进单 **§41**：立 R98 / R99 两单（含逐条判据、实证日志行、独占写域）+ §41.0 记 P-9…P-18 的只读取证数与 **H11 结案**。
+- `6cb81e4` §0 名册补 R98 / R99 两行（BOM+LF 保住，行 splice 写回）。
+- `bc278f5` runbook **补 P-18**（`scripts/eval_transport_ask_v2.py` 注释一直引用它，但 §2 从来没有这一行）+ **新开 §14**：单题实测 **262.3 s** ⇒ §1/§11 的 `105 × 41.6 s ≈ 73 min` **就地作废**。
+
+### 4BE.2 D14甲 的准备度：前置 17 条**全过**，但本班自己把窗按住了
+- 已过（全部本班亲测，主树 `.venv` 解释器）：P-1 跑分树 `be-eval95` ff 到被测 rev 且 **0 行脏**｜P-2 解释器｜P-3 题数 105｜P-4 `RETRIEVAL_TIER` 未设⇒`full`（`retrieval_pipeline.py:587` 原文背书）｜P-5 `MODEL_MAX_CONCURRENCY=1`｜P-7 dry-run `collected=105 of 105`、产物在仓外、`latency_ms=0.002`（正是 §10 I-3 的桩签名，未进任何正式产物）｜P-8 `check_image_provenance.py` exit 0（先 `MATCH@78b8507`，重启后 `DOCS-ONLY@bc278f5`）｜P-9/P-10/P-11/P-12/P-13(`degraded_searches=0`)/P-16/P-17(快照 `corpus_before.csv` 97 行) ｜P-18 Redis `answer:*` **0 键**｜容器 `SCHEDULER_ENABLED=false` ⇒ 窗口内无后台模型流量。
+- 🔴 **不按原计划开窗的理由（一句话）**：那道**非评测**冒烟题（21:17:28→262.3 s，468 字/5 证据/`tool_calls=2`）里，两发 `tier=analysis` 各精确烧满 `read_seconds=120.0 clamped=yes` 后 `Request timed out.`，最终 `[doc] 完成 status=model_unavailable` —— **产品当时是在拿离线模板冒充答案**。照开只会量到 7.6 小时的坏链路，且 §10 五条机械拦截**一条都不会红**（答案非空、覆盖 105/105、exit 0）。⇒ **R98 / R99 并树前不开窗**，写进 runbook §14 第三条钉住。
+- ✅ 顺带 **结案 H11**：`ollama ps` 实取 `qwen3.5:9b 5653e489098c 5.3 GB 100% GPU CONTEXT 4096`。
+
+### 4BE.3 两个新单的真机定量（22:3x–22:4x，同容器同模型，`37 tok/s`）
+| 链路 | 输出预算 | 墙钟 | 正文 | 终止因 |
+|---|---|---|---|---|
+| compat `/v1/chat/completions` | `max_tokens=1024` | 38.3 s | **0 字** | `length` |
+| compat `/v1/chat/completions` | `max_tokens=4096` | 80.4 s | 439 字 | `stop` |
+| native `/api/chat` | `num_predict=1024` | 28.3 s | **0 字** | `length`（`eval_count=1024`） |
+| native `/api/chat` | `num_predict=1536` | 43.1 s | **0 字** | `length`（`thinking` 字段 0 字） |
+| native，`options.think=False` | `num_predict=1536` | 41.6 s | **0 字** | `length` |
+| native，`options.think=True` | `num_predict=1536` | 40.9 s | **0 字** | `length` |
+- **结论订正（比 §41.2 初稿更准，已发回 R99 追加实测）**：两条链路速度差在一个量级内 ⇒ 候选因「compat 比 native 慢」**不成立**；真凶是 **qwen3.5 的隐藏推理量本身就 >1536 token** ⇒ `TIER_MAX_TOKEN_DEFAULTS[ANALYSIS]=1536` 低于「思考地板」⇒ **拿到 0 字正文**，`nodes.py` 再用离线模板冒充。`options.think=False` 是**错拼法**（新版的 `think` 在请求体顶层），不得据此断言"关不掉"。
+- 推论：判据「夹答案不夹钟」必须**加下限**——把 `max_tokens` 压到思考地板以下只会把答案夹成 0 字，是更坏的失败。R99 已收到这条。
+- CPU 常数（`:185-186`）与 120 s 天花板（`:192`）自相矛盾**仍然为真**，但它解释的是「超时」那一支；两支要分开钉。
+
+### 4BE.4 在途与写域
+- 在途 Agent：**2**（`Boole`@`be-r98` = `app/agents/orchestrator.py` + `app/common/monitoring.py` + 新 `tests/test_r98_checkpointer_backend.py`；`Gibbs`@`be-r99` = `app/common/model_budget.py` + `app/agents/nodes.py` + 新 `scripts/bench_model_throughput.py` + 两枚 r30 测试 + 新 `tests/test_r99_budget_selfconsistency.py` + 两个 `.env*.example`）。两树基线 `9a5aaab`，各占一棵工作树，**写域零交集**。
+- `orchestrator.py` 由 `Boole` 独占中 ⇒ R29 / R31 / R33 / R42 / R38 五单继续按住（它们本来就全卡在"等真机基线"）。
+- 主树 HEAD `bc278f5`，脏项 = 6 个 `chroma_db/**` ` M`（已跟踪，属 D12 反跟踪账）+ `frontend/node_modules.stub/**` 10809 个未跟踪（改名遗留，`node_modules/` 忽略规则不匹配 `.stub`）+ 根目录 `_*.py` 等一次性垃圾 ⇒ **主树不能开窗**（P-1 要求 CLEAN，故用 `be-eval95`）。
+- 待业主：**D1–D13**（`docs/handoff/2026-09-17-human-gates.md` 末节表）——**D14甲 已批但被本班 §4BE.2 自按**。
+- 心跳 `automation-2` 仍 `PAUSED` 指向死线程 `01a0acfb`，业主令「别动」，未动。
