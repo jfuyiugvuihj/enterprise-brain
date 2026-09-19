@@ -352,3 +352,11 @@ sys.exit(1 if flags else 0)
 - [ ] `git status --porcelain -uall` 只有 ` M docs/testing/evaluation-report.json`（+ 业主批准写入的文档），**没有** `artifacts/`、`*.jsonl`、`chroma_db/`。
 - [ ] 跑分窗口起止时间戳（`Get-Date`）与产物 mtime 自洽，且窗口内无其他 agent 打模型。
 - [ ] 基线分数落盘后，才允许解锁 R29 / R33 / R35 的"质量基线已建立"前置（`docs/handoff/2026-09-15-backend-followup-requests.md:546`）。
+
+## 13. P-8 判据升级（09-19 23:0x，总控第二十三班，代码基线 `ce9630f`）
+
+- 🔴 **P-8 的唯一判据改成一条命令**：`python scripts/check_image_provenance.py`，退出码 0 才算过。它读镜像自己的声明（`org.opencontainers.image.revision` 标签 + 容器内 `/app/BUILD_INFO`），不再拿时间戳做算术。§2 表里 P-8 那行的「时间级辅判据」就此作废，留着只为解释 09-17 那次误判是怎么来的。
+- **旧标记级判据的字面数已过期**：`_authorized_source_rows` 在主树现值 **4**（`[实测]` 09-19 20:40：主树 4、容器 4；09-17 记的 2 被后续提交推翻）。⇒ 任何「数某个符号出现几次」的判据，今后只比 **容器 == 树**，别把文档里的常数当闸门。
+- **重建命令补一条硬约束**：`--env-file deploy/.env.server` **不可省**（compose 要从它插值 `POSTGRES_USER` / `REDIS_PASSWORD` 的 `:?`，缺了就拒不启动），且必须 `build migrate` 而非 `build backend`（§4BC.5 已记两个坑）。重建前先 `$env:GIT_SHA = (git rev-parse --short HEAD)`，忘盖戳的镜像自称 `unknown`，P-8 只能退回逐文件 sha256（脚本会自动这么做）。
+- **重建成本已实测，不再是「跨小时」**：改代码后重建 **1.5 s**（全层 CACHED，09-19 20:27）；换 `uv.lock` 才会重造 ~5.8 GB 的依赖层（同机实测 210 s）。镜像虚体积 **18.4 GB → 9.6 GB**。⇒ 「H12 属业主侧长任务」这个前提已经不成立，窗口开窗前总控自己重建即可。
+- **同源证据（本班亲取，不采信任何自述）**：容器内 `app/` 101、`scripts/` 19、`migrations/` 10 个文件与主树**逐文件 sha256 相等**；容器闸门 `scripts/verify_container_stack.py --skip-build` **22 passed / 0 failed**（`tmp/container_gate_r98.log`）。

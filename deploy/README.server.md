@@ -24,6 +24,23 @@ non-printable ASCII characters`，在任何一层被读取之前就失败。这�
 国内网络下构建阶段还需要镜像源，`deploy/.env.server` 里的 `APT_MIRROR` / `PIP_INDEX_URL`
 会被两个 `build:` 块读取（默认留空 = 走上游源）。应用镜像的 `uv sync` 已挂
 `--mount=type=cache,target=/root/.cache/uv`，改代码重建不会重下依赖。
+09-19 起依赖层与源码层已经分开：`uv sync` 排在源码 COPY 之前，并且取消了 `chown -R /app`
+（那一层实测是 5.78 GB 的 copy-up，取消后镜像虚体积从 18.4 GB 降到 9.6 GB）。所以改一行代码
+重建只要秒级——本机实测全层 CACHED 用时 **1.5 s**；换 `uv.lock` 才会重造那 ~5.8 GB 的依赖层。
+
+重建时顺手把「这一版镜像是从哪个 commit 建的」写进镜像，否则事后无法证明容器里跑的是哪版代码：
+
+```powershell
+$env:GIT_SHA  = (git rev-parse --short HEAD)        # 工作树不干净就自己加 "+dirty"
+$env:BUILT_AT = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+docker compose --env-file deploy/.env.server build migrate
+docker compose --env-file deploy/.env.server up -d --wait --no-build backend worker scheduler
+python scripts/check_image_provenance.py            # P-8：镜像自报来源，不等即判死
+```
+
+`check_image_provenance.py` 取代了「拿镜像 `Created`（UTC）去比 commit 时间（本地）」的老办法。
+它只在两种情况下放行：标签等于被测 rev；或 rev 是 HEAD 的祖先、且中间那些提交**只动了镜像不携带的文件**
+（文档、测试）。工作树脏时一律回落到逐文件 sha256 比对，不接受任何 commit id 的说辞。
 
 ### 首个管理员账号
 

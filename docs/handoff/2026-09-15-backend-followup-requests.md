@@ -1332,3 +1332,34 @@ PROBE index reached = 0
 ⑥ **零回归**：全量以 **2255 / 35 / 0** 起算只增不减，既有断言一条不许弱化（`test_r22_*` / `test_r44_*` / `test_r58_*` / `test_r90a_*` 只能更红不能改软）。
 ⑦ 不 commit，留树交总控；**禁 docker / 真模型 / 8001**（GPU 归 R92）；禁碰 `retrieval_pipeline.py`、`model_handler.py`、`app/agents/**`、`chat.py`、`frontend/**`、语料本体。
 
+
+## 39. 本班（09-19 22:3x–23:0x，总控第二十三班）：**R96 镜像溯源戳 + 重建成本**（业主令「后端镜像重建你能做的话就你来」，顺手做成一次性）
+
+### 39.1 为什么立这张单
+- H12 挂了两天，理由是「重建跨小时、会打断健康栈 ⇒ 只能业主本人做」。本班实测真正的成本不在 compose，在 `Dockerfile` 层序：`uv sync` 排在源码 COPY **之后**，而 `chown -R /app` 又把整个 venv copy-up 成第二层（`docker image history` 实测该层 **5.78 GB**，镜像虚体积因此 18.4 GB）。改一行代码 = 重造两层。
+- 另一半是**没法证明**：P-8 要靠镜像 `Created`（UTC）比 commit 时间（本地），本机已因此误判过一次；标记级判据写死的常数（`_authorized_source_rows` = 2）也已被后续提交推翻（现值 **4**）。
+
+### 39.2 判据（可机器验证，禁止口头达标）
+- ① `python -m pytest tests/test_deployment_topology.py tests/test_r96_image_provenance.py` 全绿；其中三枚新用例分别钉：依赖层必须早于源码 COPY、`chown -R /app` 不得复现、溯源戳必须排在重层之后。
+- ② `docker image history enterprise-brain:local` 不得再出现 ~5.8 GB 的 chown 层；`docker images` 的 SIZE 由 18.4 GB 降到 9.6 GB。
+- ③ 带 `$env:GIT_SHA` 重建后 `python scripts/check_image_provenance.py` 退出码 0，且容器内 `/app/BUILD_INFO` 与镜像标签一致。
+- ④ **反证（本班自己踩到的）**：树里改了 `scripts/**` 而不重建 ⇒ 脚本必须 FAIL。「干净戳 + 脏树」不可信这条是被这次误报逼出来的，不是设计的；写进 `decide()` 后有 12 枚用例钉住，含「只动文档/测试才允许 DOCS_ONLY」。
+- ⑤ 成本：纯代码或文档改动后 `build migrate` ≤ 30 s（实测全层 CACHED **1.5 s**）；只有换 `uv.lock` 才允许回到分钟级。
+
+### 39.3 结案账（总控亲验，不采信自述）
+- 落地 commit **`ce9630f`**：`Dockerfile`（层序 + `--chown` + `GIT_SHA`/`BUILT_AT` → OCI 标签与 `/app/BUILD_INFO`）、`docker-compose.yml`（migrate build 段接同名参数，缺省 `unknown`）、`scripts/verify_container_stack.py`（构建时自动盖章）、`tests/test_deployment_topology.py`、新 `scripts/check_image_provenance.py`。
+- 现场：重建两次（过渡 210.5 s → 之后 1.5 s）；`up -d --wait --no-build backend worker scheduler` 三件 Healthy、migrate exit 0；容器内 `app/` 101 / `scripts/` 19 / `migrations/` 10 与主树**逐文件 sha256 相等**；容器闸门 **22 passed / 0 failed**。
+- 残差（别当已解决）：`frontend` 镜像仍无溯源戳（`frontend/Dockerfile` 不在写域，业主授权前不动）；runbook §5 的宿主直连跑法 B′ 仍按旧口径自证；计划书 §5.2/L5 里「重建跨小时」的原文未回改，只在 runbook §13 与 human-gates 结案段就地订正。
+## 40. 本班（09-19 23:2x，总控第二十三班）：**R52 断外网自检 + 内网 HTTPS 配置面 + 批量账号验收件**（计划书在册 27 单里最后一张零代码单，总控亲做）
+
+### 40.1 三条判据各落到哪
+- **① 断网可装可跑** → 新 `scripts/check_airgap_readiness.py`（离线、零 socket；7 条硬闸 + 3 条「只能真机断网证」的 PENDING）：TLS 不许放宽 / `app/**` 不许有未开关的公网字面量 / 遥测默认关 / 云端回退键必须挂显式开关 / 构建期外呼只能走 `APT_MIRROR`+`PIP_INDEX_URL` / lockfile 的 index 必须可改指内网 / 内网 HTTPS 必须有配置面。`[实测]` 本班 **7 passed / 0 failed**：TLS 放宽命中 **0**（135 个跟踪源文件）；`app/**` 外部字面量只有 `127.0.0.1` 与 `localhost`；`LANGSMITH_TRACING` 代码默认 `"false"`；`DASHSCOPE_API_KEY` / `MINERU_API_KEY` 在 `app/**` **零读取**（业主 `.env` 里有值但没人读，属遗留键，不构成外呼）；`uv.lock` 钉的是清华源，靠 `PIP_INDEX_URL` 改指。
+- **② 内网域名 + HTTPS 通过** → 新 `deploy/docker-compose.tls.yml`（叠加层，默认栈一点不动：base `nginx.conf` 里没有 443、base compose 不要求 `TLS_CERT_FILE`，两件事都有用例钉着）+ 新 `deploy/nginx.https.conf.example`（80→301、TLS1.2/1.3、与 `deploy/nginx.conf` **同名安全指令一条不少**）。🔴 **真机自证**：把 example 拷进现役 frontend 容器、用一次性自签证书跑 `nginx -t` ⇒ `syntax is ok` / `test is successful`，退出码 **0**；证书与临时文件当场在容器和宿主两侧删除。**仍未做**：用客户 CA 与内网域名做真实握手（需要业主提供内网信息）。
+- **③ 批量建 50 账号可登录且权限正确** → 新 `scripts/provision_bulk_accounts.py`：默认 **DRY RUN 且不打开任何 socket**，`--apply` 才写库；可重跑（口令落在 credentials 文件里，重跑不重置）；逐号验「能登录 / `/profile` 回显创建时的部门 / `/data-files` 不 5xx」，并先测一次「匿名 `/data-files` 必须 401/403」。**本班没有执行 `--apply`**：它会往库里写 50 个账号，属业主批准的 acceptance 动作，而且紧邻跑分窗口。
+- 用例：新 `tests/test_r52_airgap_readiness.py` **17 passed**，其中三枚专门防"闸门自己说谎"：detector 必须还咬得住 6 种放宽写法、PENDING 清单不许少于三条、dry-run 一旦开 socket 直接 `AssertionError`。
+
+### 40.2 判据约束达标
+「**不得为过检临时放宽 TLS 校验**」从一句话变成机器闸：仓库里任何 `verify=False` / `CERT_NONE` / `check_hostname=False` / `NODE_TLS_REJECT_UNAUTHORIZED=0` / `rejectUnauthorized: false` / `--insecure` 都会同时让这条闸门和全量测试当场红。
+
+### 40.3 残差（别记成已结案）
+三条判据的**真机那半**都还挂着：① 要一次真断网装机（需内网 apt/wheel 镜像 + Ollama 模型 blob）；② 要客户 CA 与内网域名；③ 要业主点头在验收栈上跑 `--apply`。计划书 §6 的 E 线（72 h 长跑 / 备份恢复演练 / 改时钟验 JWT / 双身份越权）不属本单，照旧未做。
