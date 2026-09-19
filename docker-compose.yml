@@ -113,6 +113,11 @@ services:
       args:
         APT_MIRROR: ${APT_MIRROR:-}
         PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        # Provenance for P-8: the image must name the commit it carries. Compose takes
+        # these from the shell, so a build sets GIT_SHA beforehand and a build that
+        # forgot records unknown instead of a hash that would look trustworthy.
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILT_AT: ${BUILT_AT:-unknown}
     image: enterprise-brain:local
     env_file:
       - deploy/.env.server

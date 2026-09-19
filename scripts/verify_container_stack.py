@@ -106,6 +106,27 @@ class Gate:
         return self.run([self.docker, "compose", "--env-file", str(ENV_FILE)] + files + list(args), timeout=timeout)
 
 
+DEF_PREFIX = ("app", "migrations", "scripts", "deploy", "pyproject.toml", "uv.lock",
+              "README.md", "Dockerfile", ".dockerignore")
+
+
+def stamp_provenance(gate: Gate) -> str:
+    """Put the commit and build time where Compose reads build args from.
+
+    P-8 used to be judged by comparing the image Created timestamp (UTC) with a committer
+    date (local), which is how a stale container passed for days. An image built by this
+    gate now names its own source. An unknown revision is written as "unknown" on purpose:
+    a stamp that cannot be read must not look like a stamp that says nothing.
+    """
+    code, head = gate.run(["git", "rev-parse", "--short", "HEAD"], timeout=120)
+    if code != 0 or not head.strip():
+        return ""
+    code, status = gate.run(["git", "status", "--porcelain", "--", *DEF_PREFIX], timeout=120)
+    revision = head.strip() + ("+dirty" if code == 0 and status.strip() else "")
+    os.environ["GIT_SHA"] = revision
+    os.environ["BUILT_AT"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return revision
+
 def buildable_services() -> list[str]:
     """Service names that carry a build section, read from docker-compose.yml itself."""
     import yaml
@@ -347,6 +368,9 @@ def main(argv: list[str] | None = None) -> int:
     code, text = gate.compose("config", "--quiet", overlay=True)
     gate.record("compose config validates (base + overlay)", code == 0, text)
     if not args.skip_build:
+        stamped = stamp_provenance(gate)
+        if stamped:
+            print("stamping built images with revision " + stamped)
         # One compose invocation per image. Building them together is the documented
         # operator command, and on the host above it fails for a reason that has nothing to
         # do with the image, so the gate records one honest result per buildable service.

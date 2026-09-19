@@ -59,8 +59,10 @@ def test_dockerfile_resolves_dependencies_inside_the_venv_on_path() -> None:
 
 def test_dockerfile_ships_migration_and_recovery_tools_but_no_customer_data() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
-    assert "COPY migrations ./migrations" in text, "scripts/migrate.py needs the SQL catalog in the image"
-    assert "COPY scripts ./scripts" in text, "backup and restore scripts must be runnable in the image"
+    # Ownership travels with the COPY (--chown) now, so the assertion tolerates flags.
+    for copied in ("migrations", "scripts"):
+        assert re.search(r"^COPY (?:--\S+\s+)" + copied + " ", text, re.MULTILINE), \
+            copied + " must be in the image (migrate and the backup/restore scripts run from it)"
     for runtime_path in ("documents", "data", "chroma_db"):
         assert f"COPY {runtime_path}" not in text, runtime_path + " is customer data, not image content"
     assert re.search(r"^USER \d+:\d+", text, re.MULTILINE), "the container must not run as root"
@@ -72,7 +74,7 @@ def test_dockerignore_keeps_secrets_and_runtime_data_out_of_the_context() -> Non
     for required in (".env", "data", "documents", "chroma_db", "static/charts", "static/exports", "logs"):
         assert required in entries
     # Anything the Dockerfile copies must survive the ignore list.
-    for copied in re.findall(r"^COPY (\S+) ", DOCKERFILE.read_text(encoding="utf-8"), re.MULTILINE):
+    for copied in re.findall(r"^COPY (?:--\S+\s+)*(\S+) ", DOCKERFILE.read_text(encoding="utf-8"), re.MULTILINE):
         assert copied not in entries and copied.rstrip("./") not in entries, copied + " would never reach the build"
 
 
@@ -248,3 +250,58 @@ def test_the_deployment_documents_give_the_pre_flight_command() -> None:
         assert "--env-file " + DEPLOYMENT_ENV in text, str(document)
         assert "check_deployment_env" in text, str(document)
     assert (ROOT / "scripts" / "check_deployment_env.py").is_file()
+
+
+def test_dockerfile_installs_dependencies_before_copying_application_source() -> None:
+    """Rebuild cost is a delivery property, not a nicety.
+
+    A customer machine rebuilds the image on every upgrade. When `uv sync` sat below the
+    source COPYs, one line of Python invalidated the 5.8 GB dependency layer: measured on
+    2026-09-19, a one-file rebuild spent 217 s exporting and the store carried 18.4 GB for
+    a single tag. Nothing in the repository catches that regression except this pin.
+    """
+    lines = [
+        line for line in DOCKERFILE.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    sync = next((i for i, line in enumerate(lines) if "uv sync" in line), -1)
+    assert sync >= 0, "the dependency install disappeared from the image"
+    sources = [
+        i for i, line in enumerate(lines)
+        if re.match(r"^COPY (?:--\S+\s+)*(?:migrations|scripts|deploy|app) ", line)
+    ]
+    assert len(sources) == 4, "each source directory must still reach the image separately"
+    assert sync < min(sources), "dependencies must install before application source is copied"
+
+
+def test_dockerfile_carries_ownership_on_the_copy_instead_of_a_trailing_chown() -> None:
+    """`chown -R /app` after the fact duplicated the whole venv into a 5.78 GB layer.
+
+    Volume mount points still need the service account as owner, or the first upload of a
+    fresh install fails EACCES (see the note in the Dockerfile); that is what the narrower
+    chown of the mounted directories is for.
+    """
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    assert not re.search(r"chown\s+-R\s+\S+\s+/app(\s|$)", text, re.MULTILINE), \
+        "recursive chown of /app re-introduces the copy-up layer"
+    assert re.search(r"chown -R 10001:10001 /app/data", text), "mounted paths must stay owned by the service account"
+    for directory in ("migrations", "scripts", "deploy", "app"):
+        assert re.search(r"^COPY --chown=\S+ " + directory + " ", text, re.MULTILINE), directory + " must carry ownership at copy time"
+
+
+def test_dockerfile_stamps_the_revision_it_was_built_from() -> None:
+    """P-8 asks "is this image the source under test"; a timestamp comparison answered it in UTC vs local and got it wrong.
+
+    The stamp must be declared after the heavy layers, or a new commit would invalidate
+    the dependency layer and throw the caching above away.
+    """
+    lines = [
+        line for line in DOCKERFILE.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    def index(needle):
+        return next((i for i, line in enumerate(lines) if needle in line), -1)
+    stamp = index("ARG GIT_SHA")
+    assert stamp >= 0 and index("BUILD_INFO") > stamp, "the revision must be written into the image"
+    assert index("org.opencontainers.image.revision") > index("uv sync"), "stamping may not precede the dependency layer"
+    assert index("USER 10001:10001") > stamp, "USER must stay last-but-one so the stamp layer keeps its cache"
