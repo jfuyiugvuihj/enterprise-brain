@@ -13,10 +13,17 @@ current, rollback and discard, and a record written before they existed keeps an
 scope instead of inheriting whatever model happens to be configured now. Changing either
 axis therefore cannot reuse a version: it takes a new one, and the only thing that creates
 one at scale is the manual rebuild command (``scripts/rebuild_index.py``).
+
+R50 adds the other half of that question. ``plan_index_refresh`` answers "which documents
+actually need new vectors" out of the records this registry already holds, so a rebuild no
+longer has to mean "re-embed the whole library": an unchanged document costs no embedding
+call at all, and a run that stopped halfway resumes from the versions it published. It is
+still a reader -- it neither embeds nor writes, and it is the digest a version already
+carries that decides, never a guess about which model produced what.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -1493,6 +1500,281 @@ class IndexPublisher:
             raise IndexPublicationError(
                 stage, f"index publication failed during {stage}", exc
             ) from exc
+
+
+# ---------------------------------------------------------------------------
+# R50: incremental planning -- who actually needs re-embedding, decided for free
+# ---------------------------------------------------------------------------
+#
+# The rebuild command predates this section and answered exactly one question: "re-embed
+# everything under the profile configured now". That is the right answer for an embedder
+# swap and the wrong answer for a document edit. With N documents stored, changing one of
+# them used to cost N re-embedments, because nothing in the system could tell "this version
+# already holds these chunk texts" apart from "these vectors were computed by some other
+# model".
+#
+# The answer turns out to need no new table and no new state: `index_versions.checksum`
+# is already a SHA-256 over the resource-version key plus the chunk texts, in stored order.
+# So read the source, run it through the *same* splitter the write path uses, hash the
+# result, and compare it with the digest of the version that is current for that document.
+# What this costs is file IO and CPU; it costs no embedding calls, because a function that
+# never receives an embedder cannot make one.
+#
+# The same comparison is what makes an interrupted rebuild resumable. A run that stops --
+# the off-peak window closed, an operator interrupted it, the process died -- leaves behind
+# the versions it published, and the next run plans from them. There is no journal to clear
+# and no partial state to recognise, because the checkpoint is the publication record the
+# registry already keeps. That is also why a resumed run and a single uninterrupted run
+# converge on the same chunk texts: both are driven by the same digest comparison, and the
+# digest of a published version does not move once it is written.
+#
+# Scope still comes from R22 and only from R22: the profile is `registry.scope`, which is
+# `configured_embedding_scope()` unless a caller named one, and a current version whose model or
+# width disagrees is *not* comparable to a fresh digest -- those vectors have to go whether
+# or not the text ever moved.
+
+PLAN_REASON_MATCHES = "index_matches_source"
+PLAN_REASON_NEVER_PUBLISHED = "never_published"
+PLAN_REASON_VERSION_MOVED = "catalog_version_moved"
+PLAN_REASON_CONTENT_MOVED = "content_changed"
+PLAN_REASON_INDEX_RETIRED = "index_retired"
+PLAN_REASON_SOURCE_MISSING = "source_missing"
+PLAN_REASON_PARSE_FAILED = "parse_failed"
+PLAN_REASON_EMPTY_SOURCE = "source_empty"
+PLAN_REASON_FORCED = "forced"
+
+#: Reasons that leave a document unplanned: it needs work this build cannot even describe,
+#: because its source cannot be read. Counting them apart from "up to date" is the point --
+#: a plan that reports "nothing to do" while three files are unreadable is a lie.
+PLAN_UNPLANNABLE_REASONS = frozenset(
+    {PLAN_REASON_SOURCE_MISSING, PLAN_REASON_PARSE_FAILED, PLAN_REASON_EMPTY_SOURCE}
+)
+
+
+@dataclass(frozen=True)
+class IndexPlanEntry:
+    """What one catalog row needs done to its index, and what that will cost.
+
+    `embedded_texts` is the number of embedding calls this document will cause -- zero when
+    `rebuild` is False. It is a prediction of cost, not a claim that the work is already right:
+    the caller still re-reads the source and re-verifies the store before publishing.
+    """
+
+    filename: str
+    version: int
+    index_id: str
+    source_version_id: str
+    rebuild: bool
+    reason: str
+    chunk_count: int = 0
+    embedded_texts: int = 0
+    checksum: str = ""
+    current_index_version_id: str = ""
+    current_checksum: str = ""
+    current_scope: str = SCOPE_UNKNOWN
+    error: str = ""
+
+    def as_dict(self) -> dict:
+        return {
+            "filename": self.filename,
+            "version": self.version,
+            "index_id": self.index_id,
+            "source_version_id": self.source_version_id,
+            "rebuild": self.rebuild,
+            "reason": self.reason,
+            "chunk_count": self.chunk_count,
+            "embedded_texts": self.embedded_texts,
+            "checksum": self.checksum,
+            "current_index_version_id": self.current_index_version_id,
+            "current_checksum": self.current_checksum,
+            "current_scope": self.current_scope,
+            "error": self.error,
+        }
+
+
+@dataclass(frozen=True)
+class IndexPlan:
+    """The whole answer of one planning pass, plus the profile it was taken under."""
+
+    scope: EmbeddingScope
+    entries: tuple[IndexPlanEntry, ...] = ()
+
+    @property
+    def documents(self) -> int:
+        return len(self.entries)
+
+    @property
+    def rebuild_entries(self) -> tuple[IndexPlanEntry, ...]:
+        return tuple(entry for entry in self.entries if entry.rebuild)
+
+    @property
+    def rebuild_documents(self) -> int:
+        return len(self.rebuild_entries)
+
+    @property
+    def unchanged_documents(self) -> int:
+        return sum(
+            1 for entry in self.entries if not entry.rebuild and entry.reason == PLAN_REASON_MATCHES
+        )
+
+    @property
+    def unplanned_documents(self) -> int:
+        return sum(
+            1
+            for entry in self.entries
+            if not entry.rebuild and entry.reason in PLAN_UNPLANNABLE_REASONS
+        )
+
+    @property
+    def embedded_texts(self) -> int:
+        """Embedding calls this plan predicts. Zero is the incremental result."""
+        return sum(entry.embedded_texts for entry in self.entries)
+
+    def by_filename(self) -> dict[str, IndexPlanEntry]:
+        return {entry.filename: entry for entry in self.entries}
+
+    def filenames_to_rebuild(self) -> tuple[str, ...]:
+        return tuple(entry.filename for entry in self.rebuild_entries)
+
+    def as_dict(self) -> dict:
+        return {
+            "scope": str(self.scope),
+            "embedding_model": self.scope.embedding_model or SCOPE_UNKNOWN,
+            "dimension": self.scope.dimension if self.scope.dimension else SCOPE_UNKNOWN,
+            "documents": self.documents,
+            "documents_to_rebuild": self.rebuild_documents,
+            "documents_unchanged": self.unchanged_documents,
+            "documents_unreadable": self.unplanned_documents,
+            "embedded_texts": self.embedded_texts,
+            "entries": [entry.as_dict() for entry in self.entries],
+        }
+
+
+def plan_index_refresh(
+    rows,
+    *,
+    registry: IndexRegistry,
+    load_text,
+    chunk_texts,
+    resolve_path=None,
+    documents_dir: str = "",
+    scope: EmbeddingScope | None = None,
+    force: bool = False,
+) -> IndexPlan:
+    """Decide which documents need new vectors, without asking an embedder anything.
+
+    `chunk_texts` has to be the chunker the write path uses -- pass the live retriever's splitter,
+    not a lookalike. Two splitters that disagree produce two digests for one file, and the
+    disagreement shows up as a library that never converges: every run finds "content
+    changed" again. Everything else is injected for the same reason the publisher is: this
+    is used by the rebuild command and by tests against the very same registry file.
+
+    The comparison is deliberately conservative. A document is left alone only when the
+    current version exists, is not a retirement, names this exact profile, describes this
+    exact catalog version, and its stored digest equals the digest of the chunks read from
+    the source right now. Every other combination schedules work -- including a legacy
+    version that never recorded a profile, because an unattributable digest is not evidence
+    of a match.
+    """
+    if not callable(load_text):
+        raise TypeError("plan_index_refresh needs a load_text callable")
+    if not callable(chunk_texts):
+        raise TypeError("plan_index_refresh needs a chunk_texts callable")
+
+    profile = scope if scope is not None else registry.scope
+    if not profile.known:
+        raise ValueError(
+            "an index plan must name a usable embedding profile; the configured one is unknown"
+        )
+
+    entries: list[IndexPlanEntry] = []
+    for row in rows or ():
+        if not isinstance(row, dict):
+            raise TypeError("plan_index_refresh rows must be catalog mappings")
+        filename = str(row.get("filename") or "").strip()
+        if not filename:
+            continue
+        version = _scope_int(row.get("version"), 1)
+        candidate = DocumentIndexPublication(filename=filename, version=version)
+        try:
+            current = registry.current(candidate.index_id)
+        except KeyError:
+            current = None
+
+        entry = {
+            "filename": filename,
+            "version": version,
+            "index_id": candidate.index_id,
+            "source_version_id": candidate.resource_version_id,
+            "current_index_version_id": current.index_version_id if current else "",
+            "current_checksum": current.checksum if current else "",
+            "current_scope": str(current.scope) if current else SCOPE_UNKNOWN,
+        }
+        if callable(resolve_path):
+            path = str(resolve_path(row, documents_dir) or "")
+        else:
+            path = str(row.get("storage_path") or "").strip()
+        if not path:
+            entries.append(IndexPlanEntry(**entry, rebuild=False, reason=PLAN_REASON_SOURCE_MISSING))
+            continue
+        try:
+            content = load_text(path)
+        except Exception as exc:  # an unreadable source is reported, not quietly retried
+            entries.append(
+                IndexPlanEntry(
+                    **entry,
+                    rebuild=False,
+                    reason=PLAN_REASON_PARSE_FAILED,
+                    error=type(exc).__name__,
+                )
+            )
+            continue
+        if not str(content or "").strip():
+            entries.append(IndexPlanEntry(**entry, rebuild=False, reason=PLAN_REASON_EMPTY_SOURCE))
+            continue
+
+        chunks = tuple(str(text) for text in chunk_texts(content))
+        checksum = publication_checksum(replace(candidate, chunks=chunks))
+        if not chunks:
+            entries.append(
+                IndexPlanEntry(
+                    **entry,
+                    rebuild=False,
+                    reason=PLAN_REASON_EMPTY_SOURCE,
+                    checksum=checksum,
+                )
+            )
+            continue
+
+        if force:
+            rebuild, reason = True, PLAN_REASON_FORCED
+        elif current is None:
+            rebuild, reason = True, PLAN_REASON_NEVER_PUBLISHED
+        elif current.retirement:
+            rebuild, reason = True, PLAN_REASON_INDEX_RETIRED
+        elif current.scope != profile:
+            disagreement = current.scope.disagreement(profile)
+            reason = CODE_SCOPE_UNKNOWN if CODE_SCOPE_UNKNOWN in disagreement else CODE_SCOPE_MISMATCH
+            rebuild = True
+        elif current.source_version_id != candidate.resource_version_id:
+            rebuild, reason = True, PLAN_REASON_VERSION_MOVED
+        elif current.checksum == checksum:
+            rebuild, reason = False, PLAN_REASON_MATCHES
+        else:
+            rebuild, reason = True, PLAN_REASON_CONTENT_MOVED
+
+        entries.append(
+            IndexPlanEntry(
+                **entry,
+                rebuild=rebuild,
+                reason=reason,
+                chunk_count=len(chunks),
+                embedded_texts=len(chunks) if rebuild else 0,
+                checksum=checksum,
+            )
+        )
+
+    return IndexPlan(scope=profile, entries=tuple(entries))
 
 
 def _table_is_present(present: set[tuple[str, str]], table: str) -> bool:

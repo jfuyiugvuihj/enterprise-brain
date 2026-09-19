@@ -11,12 +11,24 @@ WHAT THIS COMMAND GUARANTEES
 1. It refuses to write anything until the embedder has actually produced one vector of the
    declared width that is not all zeros. A rebuild that could not embed would otherwise
    delete live vectors and leave an empty knowledge base behind.
-2. It deletes a document's vectors before re-adding them, so at no point do two dimensions
-   coexist for one document. Between the delete and the add the document answers zero hits --
-   zero is honest, a wrong-dimension hit is not.
+2. It never deletes a document's vectors to make room for new ones it has not produced
+   yet. When the text moved, add_document embeds and vets the new vectors before it retires
+   the old ones, so the document keeps answering from its old vectors for the whole
+   re-embedding. When only the embedding profile moved -- the one case where the store would
+   otherwise answer "content unchanged" and write nothing -- the command first asks the
+   embedder for one of that document's own chunks and checks the answer, and only then
+   deletes. An embedder that dies half-way through a library used to leave every document it
+   had reached with no vectors at all; now it leaves them as they were.
 3. It publishes one new index version per rebuilt document, bound to the embedding profile
    that produced the vectors, and it keeps every previous version so the operator can still
    name and roll back to it.
+4. With --incremental it re-embeds only the documents whose stored chunks no longer match
+   their source, which is also what makes an interrupted run resumable: the next run plans
+   from the versions the previous one published, so there is no journal to clear, nothing to
+   delete by hand, and no window in which the library is half-gone. Run it once per off-peak
+   window with --time-budget-seconds until it reports remaining=0.
+
+    python scripts/rebuild_index.py --apply --incremental --time-budget-seconds 1800
 
 WHY IT IS MANUAL ONLY
 
@@ -36,6 +48,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,15 +59,22 @@ from dotenv import load_dotenv
 load_dotenv(ROOT / ".env")
 
 from app.rag.indexing import (
+    CODE_SCOPE_MISMATCH,
     CODE_SCOPE_UNKNOWN,
+    PLAN_REASON_FORCED,
+    PLAN_REASON_INDEX_RETIRED,
+    PLAN_REASON_MATCHES,
     SCOPE_UNKNOWN,
     DocumentIndexPublication,
     EmbeddingScope,
+    IndexPlanEntry,
+    IndexPublicationError,
     IndexPublisher,
     IndexRegistry,
     PostgresIndexStore,
     configured_embedding_scope,
     default_metadata_path,
+    plan_index_refresh,
 )
 
 EXIT_OK = 0
@@ -63,6 +83,28 @@ EXIT_EMBEDDER_UNUSABLE = 3
 EXIT_REBUILD_FAILED = 4
 
 PROBE_TEXT = "enterprise brain index rebuild probe"
+
+# Which physical swap a document's rebuild used, reported per document so the difference is
+# auditable instead of implied: an incremental add, a retire that had to be proven first,
+# or nothing at all.
+SWAP_NONE = "none"
+SWAP_INCREMENTAL = "add-only"
+SWAP_FORCED_RETIRE = "verified-retire-then-add"
+SWAP_PUBLISH_ONLY = "publish-only"
+
+#: The reasons that mean "the stored vectors are not usable under this profile", so the
+#: document has to be re-embedded even when its text never moved. Everything else that
+#: schedules work -- a moved catalog version, changed content, a document that was never
+#: published -- is a case where `add_document` produces the vectors itself before it retires
+#: anything, which is the order that keeps the document readable while the work runs.
+FORCED_RETIRE_REASONS = frozenset(
+    {
+        CODE_SCOPE_MISMATCH,
+        CODE_SCOPE_UNKNOWN,
+        PLAN_REASON_FORCED,
+        PLAN_REASON_INDEX_RETIRED,
+    }
+)
 
 
 class RebuildRefused(RuntimeError):
@@ -191,14 +233,49 @@ def probe_embedder(embeddings, scope: EmbeddingScope) -> str:
     except Exception as exc:
         return f"the embedder raised {type(exc).__name__}: {exc}"
     try:
-        width = len(vector)
+        len(vector)
     except TypeError:
         return "the embedder did not return a sequence"
-    if width != scope.dimension:
-        return f"the embedder returned {width} dimensions, the profile declares {scope.dimension}"
-    if _is_zero_vector(vector):
-        return "the embedder returned an all-zero vector (embedding is not really working)"
+    return verify_embedding_set([vector], scope, 1)
+
+
+def verify_embedding_set(vectors, scope: EmbeddingScope, expected_count: int | None = None) -> str:
+    """Why this set of vectors may not be trusted, or "" when it may.
+
+    One rule, read in two places: the probe that opens a run, and the per-document pre-flight
+    a forced retire runs before it is allowed to delete anything. Count, width and all-zero
+    are the three ways an embedder lies -- a stub that answers nothing, a model that is not
+    the one declared, and R21's silent zero fallback. The wording is part of the contract: it
+    is what an operator reads after ``refusing to rebuild:``.
+    """
+    rows = list(vectors or ())
+    if expected_count is not None and len(rows) != int(expected_count):
+        return f"the embedder returned {len(rows)} vectors for {expected_count} chunks"
+    for position, vector in enumerate(rows):
+        try:
+            width = len(vector)
+        except TypeError:
+            return f"the embedder returned a non-sequence at position {position}"
+        if width != scope.dimension:
+            return f"the embedder returned {width} dimensions, the profile declares {scope.dimension}"
+        if _is_zero_vector(vector):
+            return "the embedder returned an all-zero vector (embedding is not really working)"
+    if not rows:
+        return "the embedder returned no vectors"
     return ""
+
+
+def splitter_chunk_texts(retriever):
+    """The chunker the write path actually uses, or None when this store does not have one.
+
+    An incremental plan is worth as much as its digest, and the digest is computed over chunk
+    texts -- so there is exactly one acceptable source for the split: the splitter the
+    retriever embeds with. A lookalike would report 'content_changed' on every run, which is not a safe
+    failure, it is a full rebuild wearing an incremental flag.
+    """
+    splitter = getattr(retriever, "splitter", None)
+    chunker = getattr(splitter, "split_text", None)
+    return chunker if callable(chunker) else None
 
 
 def documents_to_rebuild(current_documents, *, only_names=None) -> list[dict]:
@@ -211,16 +288,37 @@ def documents_to_rebuild(current_documents, *, only_names=None) -> list[dict]:
 
 
 def rebuild_document(*, row: dict, retriever, publisher, scope: EmbeddingScope,
-                     load_text: Callable[[str], str], documents_dir: str, apply: bool) -> dict:
+                     load_text: Callable[[str], str], documents_dir: str, apply: bool,
+                     planned: IndexPlanEntry | None = None,
+                     chunk_texts: Callable[[str], list] | None = None) -> dict:
     """Re-embed one document and publish the version that describes it.
 
-    Order matters and is not interchangeable: read the source, delete the old vectors, write
-    new ones, verify them, and only then publish. A publication made before the vectors were
-    checked would claim an index the store does not hold.
+    Two jobs used to be run as one, and they want opposite orders.
 
-    With ``apply`` false this is read-only by construction: it resolves the source, counts
-    what is stored today and reports what it would do. It never deletes, never embeds and
-    never publishes, because a rehearsal that damages the library is not a rehearsal.
+    * The text moved, so new vectors are wanted. 'add_document' is the only sanctioned writer
+      and it embeds and vets the new vectors before it retires the old ones, so calling it
+      alone keeps the document answering from its old vectors for the whole re-embedding. The
+      unconditional delete this function used to issue first took that property away and
+      bought nothing: 'add_document' already retires every id the document holds.
+    * Only the embedding profile moved. Then the text has not changed, and 'add_document'
+      would answer the store's own "内容未变化" and write nothing -- published as a version
+      bound to the new profile, that would be a claim this build cannot honour. So the retire
+      stays forced, but only after the embedder has been asked for one of this document's own
+      chunks and the answer has been checked. That costs one extra embedding per rebuilt
+      document, and it is the price of not retiring live vectors on the strength of a probe
+      that ran once, possibly hours earlier.
+
+    An interrupted document is therefore never left with fewer vectors than it started with
+    by anything this function does: the delete is reached only with the replacement verified
+    in hand, and the publish only after the store has been counted. The window this command
+    cannot close from outside 'app/rag/retriever.py' is inside 'add_document' itself: there a
+    chunk id is a pure function of the filename, so two generations of one document cannot
+    coexist, and the retire and the write are two calls rather than one transaction. That
+    window carries no model call, and it is one document wide.
+
+    With 'apply' false this is read-only by construction: it resolves the source, counts what
+    is stored today and reports what it would do. It never deletes, never embeds and never
+    publishes, because a rehearsal that damages the library is not a rehearsal.
     """
     filename = str(row.get("filename") or "").strip()
     result = {
@@ -230,9 +328,24 @@ def rebuild_document(*, row: dict, retriever, publisher, scope: EmbeddingScope,
         "index_version_id": "",
         "previous_index_version_id": "",
         "chunk_count": 0,
+        "embedded_texts": 0,
+        "swap": SWAP_NONE,
         "before": {},
         "after": {},
     }
+    if planned is not None and planned.reason == PLAN_REASON_MATCHES:
+        # The published digest already equals the source. Neither the store nor the embedder
+        # is asked for anything, which is the entire point of planning before acting.
+        result["status"] = "unchanged"
+        result["reason"] = planned.reason
+        result["chunk_count"] = planned.chunk_count
+        result["index_version_id"] = planned.current_index_version_id
+        result["previous_index_version_id"] = planned.current_index_version_id
+        return result
+
+    forced_retire = planned is None or planned.reason in FORCED_RETIRE_REASONS
+    chunker = chunk_texts if callable(chunk_texts) else splitter_chunk_texts(retriever)
+    pre_flight = forced_retire and chunker is not None
     path = resolve_storage_path(row, documents_dir)
     if not path:
         result["reason"] = "source_missing"
@@ -254,22 +367,50 @@ def rebuild_document(*, row: dict, retriever, publisher, scope: EmbeddingScope,
     if not apply:
         # Report the size of the job without starting it.
         rows = list(reader(filename)) if callable(reader) else []
-        result["chunk_count"] = len(rows)
+        predicted = planned.chunk_count if planned is not None else len(rows)
+        result["chunk_count"] = predicted
+        result["embedded_texts"] = predicted + (1 if pre_flight else 0)
         result["after"] = {"measurable": False, "total": 0, "wrong_dimension": 0, "zero_vectors": 0}
         return result
+    if pre_flight:
+        # Prove the embedder is alive and at the declared width for *this* document, while
+        # its vectors are still in the store. One text is enough for that: what is being
+        # checked is not "will all N chunks come out right" -- add_document embeds those
+        # itself and is the only sanctioned writer -- but "am I about to delete a document
+        # I cannot rebuild". Without this, an embedder that dies at document 400 of 900 is
+        # discovered after document 400 has already been deleted, and with the vector mirror
+        # off (the default) there is nothing to put back.
+        try:
+            texts = list(chunker(content))
+        except Exception as exc:
+            result["reason"] = f"chunk_failed ({type(exc).__name__})"
+            return result
+        if not texts:
+            result["reason"] = "chunk_failed (the chunker returned no text)"
+            return result
+        try:
+            vectors = retriever.embedding.embed_documents(texts[:1])
+        except Exception as exc:
+            result["reason"] = f"embed_failed_before_delete ({type(exc).__name__})"
+            return result
+        bad = verify_embedding_set(vectors, scope, 1)
+        if bad:
+            result["reason"] = f"embed_failed_before_delete ({bad})"
+            return result
+        result["embedded_texts"] = 1
 
-    deleter = getattr(retriever, "delete_document", None)
-    if not callable(deleter):
-        result["reason"] = "vector store cannot delete"
-        return result
-    try:
-        deleter(filename)
-    except Exception as exc:
-        # Refuse to continue: adding on top of a dimension this build cannot retire is
-        # exactly the mixed-dimension library the version gate is meant to prevent.
-        result["reason"] = f"delete_failed ({type(exc).__name__})"
-        return result
-
+    if forced_retire:
+        deleter = getattr(retriever, "delete_document", None)
+        if not callable(deleter):
+            result["reason"] = "vector store cannot retire"
+            return result
+        try:
+            deleter(filename)
+        except Exception as exc:
+            # Refuse to continue: adding on top of a dimension this build cannot retire is
+            # exactly the mixed-dimension library the version gate is meant to prevent.
+            result["reason"] = f"delete_failed ({type(exc).__name__})"
+            return result
     try:
         added, message = retriever.add_document(
             filename,
@@ -283,6 +424,11 @@ def rebuild_document(*, row: dict, retriever, publisher, scope: EmbeddingScope,
     if added is False and "未变化" not in str(message):
         result["reason"] = f"add_rejected ({message})"
         return result
+    # The store answered that the content is unchanged: it wrote nothing, so it embedded
+    # nothing. The vectors still in there are the ones that produced that answer, which is
+    # why the publish below may describe them -- and why a profile change must not take this
+    # branch quietly, which is what forced_retire is for.
+    wrote_vectors = not (added is False and "未变化" in str(message))
 
     rows = list(reader(filename)) if callable(reader) else []
     after = vector_census(retriever, filename, scope.dimension)
@@ -298,6 +444,15 @@ def rebuild_document(*, row: dict, retriever, publisher, scope: EmbeddingScope,
     if not rows:
         result["reason"] = "verify_failed (no chunks came back)"
         return result
+    if planned is not None and planned.chunk_count and len(rows) != planned.chunk_count:
+        # The plan counted the source and the store holds something else: a swap that stopped
+        # halfway, or a second writer. Publishing either number would describe an index the
+        # store does not have, so the document is reported and the run stops below.
+        result["reason"] = (
+            "verify_failed (the store holds " + str(len(rows)) + " chunks, the plan read "
+            + str(planned.chunk_count) + ")"
+        )
+        return result
 
     publication = DocumentIndexPublication(
         filename=filename,
@@ -309,7 +464,15 @@ def rebuild_document(*, row: dict, retriever, publisher, scope: EmbeddingScope,
         vector_ids=tuple(str(item.get("vector_id") or "") for item in rows),
         content_hash=str((rows[0] if rows else {}).get("hash") or ""),
     )
-    outcome = publisher.apply(publication)
+    try:
+        outcome = publisher.apply(publication)
+    except IndexPublicationError as exc:
+        # The publication refused, so the pointer never moved: readers are still on the
+        # version that was current before this document was rewritten, and the publisher has
+        # already rolled it back and forgotten the half-built version. Report it as this
+        # document's failure instead of letting a traceback end the run with no report at all.
+        result["reason"] = "publish_failed (stage=" + str(exc.stage) + ")"
+        return result
     if outcome is None:
         result["reason"] = "verify_failed (the vector store holds no chunks)"
         return result
@@ -317,6 +480,14 @@ def rebuild_document(*, row: dict, retriever, publisher, scope: EmbeddingScope,
     result["reason"] = ""
     result["index_version_id"] = outcome.index_version_id
     result["chunk_count"] = outcome.chunk_count
+    if wrote_vectors:
+        result["embedded_texts"] += len(rows)
+    if not wrote_vectors:
+        result["swap"] = SWAP_PUBLISH_ONLY
+    elif forced_retire:
+        result["swap"] = SWAP_FORCED_RETIRE
+    else:
+        result["swap"] = SWAP_INCREMENTAL
     return result
 
 
@@ -329,25 +500,55 @@ def _current_version_id(publisher, filename: str) -> str:
         return ""
 
 
-def run_rebuild(*, targets, retriever, publisher, scope: EmbeddingScope, documents_dir: str,
-                load_text: Callable[[str], str], apply: bool, manual: bool) -> dict:
-    """Drive a rebuild, or refuse. ``manual`` is the human-trigger latch.
+def run_rebuild(*, targets, retriever, publisher, scope: EmbeddingScope,
+                documents_dir: str, load_text: Callable[[str], str], apply: bool, manual: bool,
+                incremental: bool = False, stop_after: int | None = None,
+                time_budget_seconds: float | None = None,
+                clock: Callable[[], float] = time.monotonic,
+                chunk_texts: Callable[[str], list] | None = None) -> dict:
+    """Drive a rebuild, or refuse. 'manual' is the human-trigger latch.
 
-    ``manual=False`` cannot write, whatever else is true of the arguments. That is what keeps
+    'manual=False' cannot write, whatever else is true of the arguments. That is what keeps
     "only a person runs this" checkable in code rather than a comment: an automated caller
     would have to pass the flag, and the only place that passes it is main(), after --apply
     and an exactly matching --confirm-scope were both given.
+
+    Three further arguments exist because a library rebuild is measured in hours, not in one
+    sitting, and every one of them is honoured only *between* documents -- never inside one.
+    A document is the unit an interruption has to leave whole:
+
+    'incremental'
+        Plan from the registry first -- read each source, split it with the live chunker,
+        compare digests -- and leave alone every document whose published digest still equals
+        its source. That is the difference between "one document was edited" costing one
+        document's embeddings and costing the library's. It is also the resume mechanism: the
+        next run plans from what the previous one published, so it picks up at the first
+        document still behind, with no journal file to find and no partial state to clear.
+    'stop_after' / 'time_budget_seconds'
+        Spend at most N documents' worth of work, or S seconds of wall clock, then report how
+        many are left. An off-peak window is a number of seconds, and a rebuild that cannot
+        stop on a boundary is a rebuild somebody has to finish by hand.
+    'clock'
+        Injected so the budget above is testable without waiting for it. Default monotonic.
     """
     report = {
         "scope": str(scope),
         "embedding_model": scope.embedding_model or SCOPE_UNKNOWN,
         "dimension": scope.dimension if scope.dimension else SCOPE_UNKNOWN,
         "apply": bool(apply),
+        "incremental": bool(incremental),
         "planned": 0,
         "rebuilt": 0,
         "skipped": 0,
         "failed": 0,
         "planned_only": 0,
+        "unchanged": 0,
+        "attempted": 0,
+        "remaining": 0,
+        "stopped_at": "",
+        "embedded_texts": 0,
+        "planned_documents": 0,
+        "planned_embeddings": 0,
         "cross_dimension_vectors_before": 0,
         "cross_dimension_vectors_after": 0,
         "zero_vectors_before": 0,
@@ -365,9 +566,62 @@ def run_rebuild(*, targets, retriever, publisher, scope: EmbeddingScope, documen
         reason = probe_embedder(retriever.embedding, scope)
         if reason:
             raise EmbedderUnavailable(f"refusing to rebuild: {reason}")
+        # The probe is one text the embedder really was asked for. Counting it keeps
+        # embedded_texts an answer rather than an estimate: it is what a deterministic
+        # embedder will have been handed by the end of this run, probe included.
+        report["embedded_texts"] += 1
+
+    chunker = chunk_texts if callable(chunk_texts) else splitter_chunk_texts(retriever)
+    entries: dict = {}
+    if incremental:
+        if chunker is None:
+            raise RebuildRefused(
+                "an incremental rebuild needs the chunker the write path uses so its digests "
+                "are comparable, and this vector store exposes none: run it without "
+                "--incremental, which rebuilds everything it is pointed at"
+            )
+        plan = plan_index_refresh(
+            targets,
+            registry=publisher.registry,
+            load_text=load_text,
+            chunk_texts=chunker,
+            resolve_path=resolve_storage_path,
+            documents_dir=documents_dir,
+            scope=scope,
+        )
+        entries = plan.by_filename()
+        report["planned_documents"] = plan.rebuild_documents
+        report["planned_embeddings"] = plan.embedded_texts
 
     report["planned"] = len(targets)
+    started = clock()
     for row in targets:
+        filename = str(row.get("filename") or "")
+        entry = entries.get(filename) if incremental else None
+        if entry is not None and entry.reason == PLAN_REASON_MATCHES:
+            # A document that needs nothing is not allowed to spend the budget either: the
+            # point of planning is that the cheap answer is the common one.
+            planned_result = rebuild_document(
+                row=row,
+                retriever=retriever,
+                publisher=publisher,
+                scope=scope,
+                load_text=load_text,
+                documents_dir=documents_dir,
+                apply=apply,
+                planned=entry,
+                chunk_texts=chunk_texts,
+            )
+            report["documents"].append(planned_result)
+            report["unchanged"] += 1
+            continue
+        if stop_after is not None and report["attempted"] >= int(stop_after):
+            report["stopped_at"] = "stop_after=" + str(stop_after)
+            break
+        if time_budget_seconds is not None and (clock() - started) >= float(time_budget_seconds):
+            report["stopped_at"] = "time_budget_seconds=" + str(time_budget_seconds)
+            break
+        report["attempted"] += 1
         result = rebuild_document(
             row=row,
             retriever=retriever,
@@ -376,8 +630,11 @@ def run_rebuild(*, targets, retriever, publisher, scope: EmbeddingScope, documen
             load_text=load_text,
             documents_dir=documents_dir,
             apply=apply,
+            planned=entry,
+            chunk_texts=chunk_texts,
         )
         report["documents"].append(result)
+        report["embedded_texts"] += int(result.get("embedded_texts") or 0)
         before = result.get("before") or {}
         after = result.get("after") or {}
         report["cross_dimension_vectors_before"] += int(before.get("wrong_dimension") or 0)
@@ -398,8 +655,11 @@ def run_rebuild(*, targets, retriever, publisher, scope: EmbeddingScope, documen
             # rebuild failure. Anything else means the store is now in a state nobody asked
             # for -- usually its vectors deleted and not replaced -- and the run stops there
             # rather than doing the same to the remaining documents.
-            report["aborted"] = f"{result['filename']}: {result['reason']}"
+            report["aborted"] = filename + ": " + result["reason"]
             break
+    # What a resume has to do next. Documents that were planned as unchanged are already
+    # finished, and a document that failed counts as remaining, because it is.
+    report["remaining"] = max(0, len(targets) - report["attempted"] - report["unchanged"])
     filenames = [str(row.get("filename")) for row in targets]
     report["retained"] = retained_versions(publisher.registry, filenames)
     report["codes"] = list(publisher.registry.embedding_drift().codes)
@@ -474,6 +734,25 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--only-stale", action="store_true", help="skip documents whose current version already matches the profile")
     parser.add_argument("--metadata-path", default=None, help="index metadata file (defaults to INDEX_METADATA_PATH)")
     parser.add_argument("--documents-dir", default=None, help="where stored documents live (defaults to DOCUMENTS_DIR)")
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="re-embed only the documents whose stored chunks no longer match their source; "
+        "also how an interrupted rebuild resumes, since the plan reads what is published now",
+    )
+    parser.add_argument(
+        "--max-documents",
+        type=int,
+        default=None,
+        help="stop after this many documents have been started (requires --apply)",
+    )
+    parser.add_argument(
+        "--time-budget-seconds",
+        type=float,
+        default=None,
+        help="stop once this many seconds of work have been spent; the boundary is between "
+        "documents, so the run is never left half-done (requires --apply)",
+    )
     parser.add_argument("--json", action="store_true", help="emit the report as JSON")
     return parser
 
@@ -508,6 +787,18 @@ def main(argv: list[str] | None = None) -> int:
     elif args.confirm_scope:
         print("refusing: --confirm-scope only means anything together with --apply", file=sys.stderr)
         return EXIT_USAGE
+    for name, value in (("--max-documents", args.max_documents),
+                        ("--time-budget-seconds", args.time_budget_seconds)):
+        if value is None:
+            continue
+        # Judged in this order on purpose: a negative budget is a broken invocation whether
+        # or not --apply came with it, and it must never reach a store.
+        if value < 0:
+            print(f"refusing: {name} must not be negative", file=sys.stderr)
+            return EXIT_USAGE
+        if not args.apply:
+            print(f"refusing: {name} only means anything together with --apply", file=sys.stderr)
+            return EXIT_USAGE
 
     metadata_path = args.metadata_path or default_metadata_path()
     registry = IndexRegistry(metadata_path, scope=scope)
@@ -551,6 +842,9 @@ def main(argv: list[str] | None = None) -> int:
             load_text=load_document,
             apply=bool(args.apply),
             manual=manual,
+            incremental=bool(args.incremental),
+            stop_after=args.max_documents,
+            time_budget_seconds=args.time_budget_seconds,
         )
     except RebuildRefused as exc:
         print(f"rebuild refused: {exc}", file=sys.stderr)
@@ -589,7 +883,19 @@ def report_lines(report: dict) -> list[str]:
         f"cross_dimension_vectors before={report.get('cross_dimension_vectors_before', 0)} "
         f"after={report.get('cross_dimension_vectors_after', 0)}",
         f"zero_vectors_before={report.get('zero_vectors_before', 0)}",
+        f"embedded_texts={report.get('embedded_texts', 0)} "
+        f"attempted={report.get('attempted', 0)} remaining={report.get('remaining', 0)} "
+        f"stopped_at={report.get('stopped_at') or 'end'}",
     ]
+    if report.get("incremental"):
+        # The incremental answer is the one an operator needs before starting a long job: how
+        # much of the library this run really re-embeds, and what that will cost in vectors.
+        lines.append(
+            f"incremental=on documents={report.get('planned', 0)} "
+            f"to_rebuild={report.get('planned_documents', 0)} "
+            f"unchanged={report.get('unchanged', 0)} "
+            f"predicted_embeddings={report.get('planned_embeddings', 0)}"
+        )
     if report.get("codes") is not None:
         lines.append(f"drift_codes={','.join(report['codes']) or 'none'}")
     for document in report.get("documents", []):
