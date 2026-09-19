@@ -16,6 +16,8 @@ from app.agents.contracts import ModelBudget, ModelTier
 from app.agents import nodes
 from app.common.model_budget import (
     TIER_MAX_TOKEN_DEFAULTS,
+    estimate_prompt_tokens,
+    max_tokens_verdict,
     model_tier_budget,
     tier_max_tokens,
     tier_max_tokens_env_name,
@@ -80,15 +82,52 @@ def test_a_cap_given_by_the_caller_wins_over_the_configured_one():
     assert budget.max_tokens == 99
 
 
+#: The prompt the test below sends, kept as a value so the expectation is computed from the
+#: same bytes rather than from a number that happens to match today.
+GREETING = [HumanMessage(content="你好")]
+
+
 def test_the_cap_is_declared_on_the_request_not_only_in_the_profile():
-    """Judgement (1) proven at the boundary: max_tokens is on the wire for every tier."""
+    """Judgement (1) proven at the boundary: max_tokens is on the wire for every tier.
+
+    R99 rewrote the right-hand side of the last assertion. It used to read
+    ``{"max_tokens": tier_max_tokens(tier)}``, and under the shipped defaults that is still
+    the number on the wire -- but for a reason this file never claimed: the thinking floor
+    (MODEL_MIN_ANSWER_TOKENS=1537) now forbids shortening an analysis request down to the 811
+    tokens the CPU-only calibration says the clock can pay for, so the declared cap survives
+    untouched and the old assertion passed by coincidence. What holds in every configuration
+    is "the wire carries the cap this call was authorised to", so that is what is asserted
+    now. The test below is the pair that keeps that from being a tautology.
+    """
     for tier in ALL_TIERS:
         model, primary = _resilient(tier)
 
-        model.invoke([HumanMessage(content="你好")], config=None)
+        model.invoke(GREETING, config=None)
 
+        authorised = max_tokens_verdict(model.budget, estimate_prompt_tokens(GREETING))
         assert len(primary.calls) == 1, tier
-        assert primary.calls[0]["extra_body"] == {"max_tokens": tier_max_tokens(tier)}, tier
+        assert primary.calls[0]["extra_body"] == {"max_tokens": authorised.max_tokens}, tier
+        assert authorised.max_tokens <= tier_max_tokens(tier), tier
+
+
+def test_the_wire_carries_the_shortened_cap_when_the_clock_overrules_the_profile(monkeypatch):
+    """Measured rates, a window that makes the request legal, a cap the clock cannot pay for.
+
+    37 tok/s over (120 / 1.15 - 489/105) s writes 3688 tokens, so the request goes out with
+    3688 and not 4096: judgement 3 shortens the answer, never the deadline.
+    """
+    monkeypatch.setenv("MODEL_PREFILL_TOKENS_PER_SECOND", "105")
+    monkeypatch.setenv("MODEL_DECODE_TOKENS_PER_SECOND", "37")
+    monkeypatch.setenv("MODEL_CONTEXT_TOKENS", "8192")
+    monkeypatch.setenv("MODEL_TIER_ANALYSIS_MAX_TOKENS", "4096")
+
+    model, primary = _resilient(ModelTier.ANALYSIS)
+    messages = [HumanMessage(content="数" * 485)]
+
+    model.invoke(messages, config=None)
+
+    assert tier_max_tokens(ModelTier.ANALYSIS) == 4096
+    assert primary.calls[0]["extra_body"] == {"max_tokens": 3688}, primary.calls[0]
 
 
 def test_a_cap_never_exceeds_the_window_it_has_to_share():

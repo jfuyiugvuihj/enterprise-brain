@@ -9,6 +9,15 @@ The other half of that budget is tokens and clock, and it is per tier: a greetin
 memory summary and a long analysis answer must not share one output cap or one timeout.
 ``tier_profile`` / ``model_tier_budget`` below read that configuration, and
 ``app/agents/contracts.py:ModelBudget`` is the object they fill in.
+
+When the two halves contradict each other -- a tier whose declared output cannot be written
+inside ``MODEL_REQUEST_TIMEOUT`` at the calibrated rates -- the rule is to shorten the
+**answer**, never to let the request hang until the client gives up. An expired clock does
+not protect the machine: it hands the caller an offline sentence dressed up as a reply, which
+is the one outcome ``app/agents/nodes.py`` already refuses to produce for a context collision.
+``max_tokens_verdict`` performs that arithmetic, ``authorize`` applies it to one call, and
+every number behind the decision is logged next to the final value, so a clamp can never be
+mistaken for a choice an operator made.
 """
 from __future__ import annotations
 
@@ -178,10 +187,30 @@ TIER_MAX_TOKEN_DEFAULTS: dict[ModelTier, int] = {
     ModelTier.ANALYSIS: 1536,
 }
 
-#: Measured on the delivery baseline (CPU-only qwen3.5:9b through Ollama, 2026-09-16):
-#: prefill 35.2 tok/s, decode 8.18 tok/s. The defaults round down to the pessimistic
-#: integer, because a rate that is too optimistic is exactly the cut-off-mid-answer bug
-#: this section exists to remove.
+#: CALIBRATED MEASUREMENTS, NOT PREFERENCES. Both numbers are the CPU-only floor measured on
+#: the delivery baseline (qwen3.5:9b through Ollama, CPU-only, 2026-09-16): prefill 35.2
+#: tok/s, decode 8.18 tok/s, rounded down to the pessimistic integer, because a rate that is
+#: too optimistic is exactly the cut-off-mid-answer bug this section removes. Re-measure with
+#: ``python scripts/bench_model_throughput.py`` and override the two variables below; never
+#: edit a default to match a wish.
+#:
+#: R99 records the question and the answer the container gave. Three candidates were open on
+#: 2026-09-19 for "the model answered in 4 s while our client spent the whole 120 s ceiling",
+#: and the 22:3x measurement inside the shipping container (image ``78b8507``, 100% GPU,
+#: ~37 tok/s) settles two of them:
+#:
+#:   (a) TRUE, and it is the whole cause of the timeout half: the rates below are a CPU-only
+#:       calibration, so the tier's own worst case is 192 s against a 120 s ceiling.
+#:   (b) TRUE, and it is the cause of the other half, which the clock never explained: the
+#:       same model spends a 1024 or 1536 token cap entirely on hidden reasoning and returns
+#:       zero visible characters (see MODEL_MIN_ANSWER_TOKENS below).
+#:   (c) NOT SUPPORTED: 1024-1536 output tokens cost 28 s on the native ``/api/chat`` leg and
+#:       38 s on the compatible ``/v1/chat/completions`` leg of the same machine -- inside one
+#:       order of magnitude. Nothing here is designed around the transport, and the earlier
+#:       reading that ``/api/chat`` was simply faster is retired.
+#:
+#: These stay the only rates with a recorded provenance, so they remain -- and shortening the
+#: answer, never the deadline, is what makes trusting a pessimistic rate survivable.
 DEFAULT_PREFILL_TOKENS_PER_SECOND = 35.0
 DEFAULT_DECODE_TOKENS_PER_SECOND = 8.0
 DEFAULT_TIMEOUT_MARGIN = 1.15
@@ -191,6 +220,28 @@ DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
 #: :func:`request_timeout_ceiling_seconds`, so no second module can keep its own default.
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
 DEFAULT_CONTEXT_TOKENS = 4096
+
+#: The ``MODEL_MIN_ANSWER_TOKENS`` default: the output cap below which the shipping model has
+#: been measured to return **no visible text at all**, so an answer cap may never be clamped
+#: past it. Measured 2026-09-19 22:3x +08:00 by 总控 inside the live container (image
+#: ``78b8507``, qwen3.5:9b, ``ollama ps`` 100% GPU, ~37 tok/s) -- NOT an output of
+#: ``scripts/bench_model_throughput.py``, which has never run there. Same prompt, native
+#: ``/api/chat``, non-streaming:
+#:
+#:   num_predict 1024           -> eval_count 1024, content 0 chars, done_reason=length
+#:   num_predict 1536           -> eval_count 1536, content 0 chars, done_reason=length
+#:   num_predict 1536 think=False in options -> identical, content 0 chars
+#:   num_predict 1536 think=True  in options -> identical, content 0 chars
+#:   num_predict 4096 (compat leg)-> content 439 chars, finish_reason=stop
+#:
+#: The reasoning chain therefore spends somewhere in (1536, 4096] tokens before a single
+#: visible character appears. This default takes the low end of the bracket plus one: the
+#: smallest cap that is not *already known* to produce nothing. It is not a guess about where
+#: the floor really sits, and it is not padded with hope -- which is also why
+#: ``TIER_MAX_TOKEN_DEFAULTS[ANALYSIS] = 1536`` is documented as being *inside* the dead
+#: zone rather than being quietly raised here. A re-measurement that brackets it tighter
+#: overrides this number through the environment variable, and the clamp below honours it.
+DEFAULT_MIN_ANSWER_TOKENS = 1537
 
 #: Framing around each message: the estimate is of a request, not of a bare string.
 MESSAGE_OVERHEAD_TOKENS = 4
@@ -205,6 +256,34 @@ _CJK_RANGES = (
     (0x20000, 0x2A6DF),
 )
 
+#: The code for "this call ran out of clock". Reused from the closed enum in
+#: app/agents/contracts.py:ErrorEnvelope instead of being invented here, so a timeout is
+#: counted with the same vocabulary that counts every other terminal verdict.
+TIMEOUT_ERROR_CODE = "task_timeout"
+
+#: Exception class names that mean a timeout at this boundary. Matched by name because the
+#: provider layer wraps: what reaches ``app/agents/nodes.py`` is an ``openai`` client error
+#: around an ``httpx`` one, and neither is a builtin ``TimeoutError``, which is exactly why
+#: ``app/trace/spans.py:error_code_for`` files both as ``internal_error``.
+TIMEOUT_ERROR_TYPE_NAMES = (
+    "APITimeoutError",
+    "APIConnectionTimeoutError",
+    "TimeoutException",
+    "ConnectTimeout",
+    "ReadTimeout",
+    "WriteTimeout",
+    "PoolTimeout",
+    "TimeoutError",
+    "ReadTimeoutError",
+    "ConnectTimeoutError",
+)
+
+TIMEOUT_ERROR_FRAGMENTS = (
+    "request timed out",
+    "timed out",
+    "deadline exceeded",
+)
+
 #: Fragments a local server uses when it refuses a request for being too long.
 CONTEXT_ERROR_FRAGMENTS = (
     "context length",
@@ -216,6 +295,11 @@ CONTEXT_ERROR_FRAGMENTS = (
 )
 
 
+def _env_set(name: str) -> bool:
+    """Whether an operator wrote this variable at all, which is a rate's provenance."""
+    return bool(str(os.getenv(name, "") or "").strip())
+
+
 def _env_float(name: str, default: float) -> float:
     raw = str(os.getenv(name, "") or "").strip()
     try:
@@ -223,6 +307,25 @@ def _env_float(name: str, default: float) -> float:
     except ValueError:
         return float(default)
     return value if value > 0 else float(default)
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    """Read a positive integer knob: unset, broken, zero or negative all mean the default.
+
+    ``_env_int`` above is deliberately not reused: it accepts 0, which for the concurrency
+    slots is then floored to 1, and for an answer floor would silently delete the floor.
+    """
+    raw = str(os.getenv(name, "") or "").strip()
+    try:
+        value = int(raw) if raw else int(default)
+    except ValueError:
+        return int(default)
+    return value if value > 0 else int(default)
+
+
+def min_answer_tokens() -> int:
+    """The cap below which this model has been measured to answer with nothing at all."""
+    return _env_positive_int("MODEL_MIN_ANSWER_TOKENS", DEFAULT_MIN_ANSWER_TOKENS)
 
 
 def request_timeout_ceiling_seconds() -> float:
@@ -287,6 +390,7 @@ def budget_env_defaults() -> dict[str, float | int]:
         "MODEL_PREFILL_TOKENS_PER_SECOND": DEFAULT_PREFILL_TOKENS_PER_SECOND,
         "MODEL_DECODE_TOKENS_PER_SECOND": DEFAULT_DECODE_TOKENS_PER_SECOND,
         "MODEL_TIMEOUT_MARGIN": DEFAULT_TIMEOUT_MARGIN,
+        "MODEL_MIN_ANSWER_TOKENS": DEFAULT_MIN_ANSWER_TOKENS,
         "MODEL_TIMEOUT_FLOOR_SECONDS": DEFAULT_TIMEOUT_FLOOR_SECONDS,
         "MODEL_CONNECT_TIMEOUT_SECONDS": DEFAULT_CONNECT_TIMEOUT_SECONDS,
     }
@@ -387,11 +491,28 @@ def budget_signal(
     code: str | None = None,
     clamped: bool | None = None,
     stream: bool | None = None,
+    max_tokens: int | None = None,
+    declared_max_tokens: int | None = None,
+    affordable_max_tokens: int | None = None,
+    min_answer_tokens: int | None = None,
+    clamp_basis: str = "",
+    verdict: str = "",
 ) -> str:
     """The one line format every budget verdict is logged as, marker included.
 
     One formatter keeps ``[ModelBudget]`` and ``error_code=`` stable, so the guard is
     findable in a customer log by one grep and assertable in a test by one literal.
+
+    The four token fields appear only on a clock verdict, and they answer the question an
+    operator actually has after ``clamped=yes``: what was asked, what is being sent, what the
+    clock could pay for, and which configured numbers made that decision. Without them a
+    clamp is indistinguishable from a tier cap someone chose on purpose.
+
+    ``clamped=`` means one thing only: this call is writing less than its tier asked. The
+    companion ``budget_verdict=`` names which finding a line is, because the two families the
+    marker covers used to share the word -- a ceiling that shortened an answer and a ceiling
+    that cannot be honoured at any cap worth answering with are different incidents, and an
+    operator greps ``clamped=yes`` to find the first one.
     """
     parts = [
         MODEL_BUDGET_MARKER,
@@ -403,9 +524,196 @@ def budget_signal(
         parts.append(f"stream={'yes' if stream else 'no'}")
     if clamped is not None:
         parts.append(f"clamped={'yes' if clamped else 'no'}")
+    if verdict:
+        parts.append(f"budget_verdict={verdict}")
+    if declared_max_tokens is not None:
+        parts.append(f"declared_max_tokens={declared_max_tokens}")
+    if max_tokens is not None:
+        parts.append(f"max_tokens={max_tokens}")
+    if affordable_max_tokens is not None:
+        parts.append(f"affordable_max_tokens={affordable_max_tokens}")
+    if min_answer_tokens is not None:
+        parts.append(f"min_answer_tokens={min_answer_tokens}")
+    if clamp_basis:
+        parts.append(f"clamp_basis={clamp_basis}")
     if code:
         parts.append(f"error_code={code}")
     return " ".join(parts)
+
+
+@dataclass(frozen=True)
+class MaxTokensVerdict:
+    """What one call may write, and the arithmetic that says so.
+
+    Carried alongside the effective budget so a shortened answer can never be confused with
+    a configured one: ``declared_max_tokens`` is what the tier asked for, ``max_tokens`` is
+    what this call is actually allowed, and ``basis`` names the variables that decided it.
+    """
+
+    tier: ModelTier
+    prompt_tokens: int | None
+    stream: bool
+    declared_max_tokens: int
+    max_tokens: int
+    affordable_max_tokens: int
+    min_answer_tokens: int
+    basis: str
+
+    @property
+    def clamped(self) -> bool:
+        """True when this call writes less than its tier asked to."""
+        return self.max_tokens < self.declared_max_tokens
+
+    @property
+    def unaffordable(self) -> bool:
+        """True when the only clamp available would go below the floor, so there is none.
+
+        This is the finding R99 was written for: on a machine calibrated to 8 tok/s the
+        analysis tier needs 192 s for its own 1536 tokens, and shortening the answer to fit
+        the 120 s ceiling is not a fix, because every cap under the measured thinking floor
+        returns an empty body. The honest verdict is "this budget cannot hold this tier",
+        said out loud -- not a smaller number that is known to produce nothing.
+        """
+        return (
+            self.affordable_max_tokens < self.declared_max_tokens
+            and self.affordable_max_tokens < self.min_answer_tokens
+        )
+
+    @property
+    def verdict_word(self) -> str:
+        """The one token that says which of the two clock findings this is."""
+        if self.clamped:
+            return "clamped"
+        if self.unaffordable:
+            return "budget_unaffordable"
+        return "fits"
+
+    def apply_to(self, budget: ModelBudget) -> ModelBudget:
+        """Return the budget this call must actually be sized by; the same object if unchanged.
+
+        A copy, never a write-back: ``app/agents/orchestrator.py`` builds one model object per
+        graph at import time and shares it across every request, so a budget mutated in place
+        would carry one question's clamp into the next, and two concurrent requests would
+        clamp each other's baseline.
+        """
+        if self.max_tokens == int(budget.max_tokens):
+            return budget
+        sized = budget.model_copy(
+            update={"max_tokens": self.max_tokens, "timeout_seconds": 0.0}
+        )
+        return sized.model_copy(
+            update={
+                "timeout_seconds": sized.read_timeout_seconds(
+                    self.prompt_tokens, stream=self.stream
+                )
+            }
+        )
+
+
+def clamp_basis(budget: ModelBudget) -> str:
+    """Every knob behind a clamp in one space-free field, with where each one came from.
+
+    ``clamp_basis=MODEL_DECODE_TOKENS_PER_SECOND=8tok/s(calibrated-default)|...`` is what lets
+    an operator tell "this machine is slow" from "someone set a number", which is the
+    difference between recalibrating and arguing.
+    """
+    def part(name: str, value: float, unit: str = "") -> str:
+        origin = "env" if _env_set(name) else "calibrated-default"
+        return f"{name}={value:g}{unit}({origin})"
+
+    return "|".join(
+        [
+            part("MODEL_DECODE_TOKENS_PER_SECOND", budget.decode_tokens_per_second, "tok/s"),
+            part("MODEL_PREFILL_TOKENS_PER_SECOND", budget.prefill_tokens_per_second, "tok/s"),
+            part("MODEL_REQUEST_TIMEOUT", budget.timeout_ceiling_seconds, "s"),
+            part("MODEL_TIMEOUT_MARGIN", budget.timeout_margin),
+            f"MODEL_MIN_ANSWER_TOKENS={min_answer_tokens()}tok"
+            f"({'env' if _env_set('MODEL_MIN_ANSWER_TOKENS') else 'calibrated-default'})",
+        ]
+    )
+
+
+def clock_affordable_tokens(
+    budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False
+) -> int:
+    """How many output tokens the ceiling can pay for, given this prompt and these rates."""
+    ceiling = float(budget.timeout_ceiling_seconds)
+    margin = max(1.0, float(budget.timeout_margin))
+    rate = max(0.1, float(budget.decode_tokens_per_second))
+    if stream or prompt_tokens is None:
+        # A stream is billed for a stall between chunks, not for the whole answer (see
+        # contracts.py:STREAM_STALL_TOKENS), so the ceiling is not what binds it; and an
+        # unmeasured prompt is a fact about the call site, not about the machine, which is
+        # the same reasoning report_budget uses before it dares to say "clamped".
+        return int(budget.max_tokens)
+    spare_seconds = ceiling / margin - budget.prefill_seconds(prompt_tokens)
+    return int(spare_seconds * rate)
+
+
+def max_tokens_verdict(
+    budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False
+) -> MaxTokensVerdict:
+    """Decide this call's output cap: shorten the answer to fit the clock, never below the floor."""
+    declared = int(budget.max_tokens)
+    affordable = clock_affordable_tokens(budget, prompt_tokens, stream=stream)
+    floor = min_answer_tokens()
+    if affordable >= declared:
+        resolved = declared
+    elif affordable < floor:
+        # Refusing to shrink is the correct answer here, and it is not a silent one:
+        # ``unaffordable`` is on the log line, on the span, and in the counter.
+        resolved = declared
+    else:
+        resolved = max(affordable, floor)
+    return MaxTokensVerdict(
+        tier=ModelTier(budget.tier),
+        prompt_tokens=prompt_tokens,
+        stream=stream,
+        declared_max_tokens=declared,
+        max_tokens=int(min(resolved, declared)),
+        affordable_max_tokens=affordable,
+        min_answer_tokens=floor,
+        basis=clamp_basis(budget),
+    )
+
+
+@dataclass(frozen=True)
+class AuthorizedCall:
+    """One call's sized budget plus the verdict that produced it, so a caller spends both."""
+
+    budget: ModelBudget
+    verdict: MaxTokensVerdict
+
+
+def authorize(
+    budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False
+) -> AuthorizedCall:
+    """Size one call: refuse what ``n_ctx`` cannot hold, then shorten what the clock cannot.
+
+    The order is the whole judgement. The context check runs against the tier's *declared*
+    cap, exactly as it always has, so clamping can never rescue a prompt that used to be
+    refused -- the existing limit is not relaxed by one token. Only after that does the
+    clock get its say, and it gets it about the answer, not about the deadline.
+    """
+    code = budget.context_window_code(prompt_tokens)
+    if code:
+        # One line, then the refusal: report_budget is the only formatter of this marker, and
+        # a call that is about to be refused must not also be told to be clamped.
+        report_budget(budget, prompt_tokens, stream=stream)
+        raise ModelContextLimitExceeded(budget, prompt_tokens or 0)
+    verdict = max_tokens_verdict(budget, prompt_tokens, stream=stream)
+    effective = verdict.apply_to(budget)
+    if verdict.clamped or verdict.unaffordable:
+        record_budget_event("max_tokens_clamped" if verdict.clamped else "budget_unaffordable")
+    report_budget(effective, prompt_tokens, stream=stream, verdict=verdict)
+    return AuthorizedCall(budget=effective, verdict=verdict)
+
+
+def authorize_budget(
+    budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False
+) -> ModelBudget:
+    """``authorize`` for a caller that only needs the sized budget."""
+    return authorize(budget, prompt_tokens, stream=stream).budget
 
 
 def http_timeout(
@@ -426,13 +734,25 @@ def http_timeout(
     )
 
 
-def report_budget(budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False) -> str | None:
+def report_budget(
+    budget: ModelBudget,
+    prompt_tokens: int | None,
+    *,
+    stream: bool = False,
+    verdict: MaxTokensVerdict | None = None,
+) -> str | None:
     """Log one verdict line when this call is already outside its own budget, else stay quiet.
 
-    Two separate reasons get the same marker: the window cannot hold the request
-    (``context_limit_exceeded``) and the ceiling had to shorten the tier's own honest
-    estimate (``clamped=yes``). The first is a customer-facing truncation; the second says
-    the machine is too slow for the tier as configured, which is an operator finding.
+    Three separate reasons get the same marker, and each says which one it is. The window
+    cannot hold the request (``error_code=context_limit_exceeded``); the ceiling shortened
+    the tier's own answer (``clamped=yes budget_verdict=clamped``); or the ceiling cannot be
+    honoured at any cap the model would answer with at all (``clamped=no
+    budget_verdict=budget_unaffordable``, with ``max_tokens == declared_max_tokens`` -- the
+    finding this function exists to make visible). The first is a customer-facing
+    truncation, the second is a machine that is too slow for the tier as configured, and the
+    third is a configuration that contradicts itself: analysis on a CPU-calibrated budget is
+    exactly that case, and it announced itself as a clamp on every single call while sending
+    the uncut cap anyway.
     """
     code = budget.context_window_code(prompt_tokens)
     # ``prompt_tokens is None`` means nobody measured it, which is a fact about the call
@@ -440,32 +760,222 @@ def report_budget(budget: ModelBudget, prompt_tokens: int | None, *, stream: boo
     # tier's worst case, so declaring it clamped on every construction would warn five
     # times at import and tell an operator nothing. Only a measured prompt can prove the
     # ceiling is what binds.
-    clamped = prompt_tokens is not None and not budget.fits_within_timeout(
+    ceiling_binds = prompt_tokens is not None and not budget.fits_within_timeout(
         prompt_tokens, stream=stream
     )
-    if code or clamped:
-        logger.warning(
-            budget_signal(
-                budget.tier,
-                prompt_tokens=prompt_tokens,
-                read_seconds=budget.read_timeout_seconds(prompt_tokens, stream=stream),
-                code=code,
-                clamped=clamped,
-                stream=stream,
-            )
+    clamped = bool(verdict.clamped) if verdict is not None else ceiling_binds
+    verdict_word = ""
+    if code:
+        # A refusal on the window is its own finding and carries no clamp verdict: the
+        # request never got as far as being sized, and this line keeps the exact shape it had
+        # before the output cap was ever negotiated.
+        clamped = ceiling_binds
+    elif verdict is not None:
+        if verdict.clamped:
+            verdict_word = "clamped"
+        elif verdict.unaffordable:
+            verdict_word = "budget_unaffordable"
+        elif ceiling_binds:
+            verdict_word = "ceiling_binds"
+    if not (code or clamped or verdict_word):
+        return code
+    logger.warning(
+        budget_signal(
+            budget.tier,
+            prompt_tokens=prompt_tokens,
+            read_seconds=budget.read_timeout_seconds(prompt_tokens, stream=stream),
+            code=code,
+            clamped=clamped,
+            stream=stream,
+            max_tokens=verdict.max_tokens if verdict else None,
+            declared_max_tokens=verdict.declared_max_tokens if verdict else None,
+            affordable_max_tokens=verdict.affordable_max_tokens if verdict else None,
+            min_answer_tokens=verdict.min_answer_tokens if verdict else None,
+            clamp_basis=verdict.basis if verdict else "",
+            verdict=verdict_word,
         )
+    )
     return code
 
 
 def authorize_call(budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False) -> float:
-    """Log this call's budget verdict, then refuse it when ``n_ctx`` cannot hold it.
+    """Log this call's budget verdict, refuse it when ``n_ctx`` cannot hold it, return the clock.
 
     Returning the read budget rather than a bool keeps the call sites honest: they get the
     number they are about to spend and nothing else. The refusal happens before the request
     leaves the machine, which is the difference between a stable code and a completion that
     stops in the middle of a sentence and is still presented as an answer.
+
+    A call site that also spends the *output cap* has to take :func:`authorize` (or
+    :func:`authorize_budget`) instead: the cap this call is allowed may be shorter than the
+    tier's, and reading it off ``budget`` after this function returns would read the
+    un-clamped number.
     """
-    code = report_budget(budget, prompt_tokens, stream=stream)
-    if code:
-        raise ModelContextLimitExceeded(budget, prompt_tokens or 0)
-    return budget.read_timeout_seconds(prompt_tokens, stream=stream)
+    authorized = authorize(budget, prompt_tokens, stream=stream)
+    return authorized.budget.read_timeout_seconds(prompt_tokens, stream=stream)
+
+
+def model_timeout_code(exc: BaseException | None) -> str | None:
+    """``TIMEOUT_ERROR_CODE`` when this exception means the clock ran out, else ``None``.
+
+    The chain is walked because the boundary sees the wrapper, not the cause: what
+    ``app/agents/nodes.py`` catches around a provider call is an openai client error whose
+    message is "Request timed out." around an httpx read timeout. Neither is a builtin
+    ``TimeoutError``, so ``app/trace/spans.py:error_code_for`` files the whole family as
+    ``internal_error`` and a 120-second outage becomes indistinguishable from a typo in a
+    prompt template. Class names are matched over the cause chain; message fragments are
+    matched over the whole chain in one pass, because the useful text is often one up.
+    """
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and len(chain) < 10:
+        if type(current).__name__ in TIMEOUT_ERROR_TYPE_NAMES:
+            return TIMEOUT_ERROR_CODE
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    text = " ".join(str(item).lower() for item in chain)
+    return TIMEOUT_ERROR_CODE if any(fragment in text for fragment in TIMEOUT_ERROR_FRAGMENTS) else None
+
+
+def answer_text(response: Any) -> str:
+    """The visible text of a completion, with no reasoning content and no whitespace padding.
+
+    Deliberately *visible* text only. A thinking model that spent its whole cap on a hidden
+    chain of thought has an answer of zero characters here even though the server counts
+    hundreds of generated tokens, and that is the case this function exists to catch.
+    """
+    content = getattr(response, "content", None)
+    if content is None and isinstance(response, dict):
+        content = response.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        return " ".join(part for part in (_text_of(item) for item in content) if part).strip()
+    return _text_of(content).strip()
+
+
+def produced_a_tool_call(response: Any) -> bool:
+    """True when a response with no visible text still did something: it asked for a tool.
+
+    Without this the emptiness guard would fire on every react-agent dispatch, because a tool
+    call is exactly that -- no characters, plenty of intent -- and a signal that screams at
+    every step of a worker graph is a signal that gets muted.
+    """
+    if getattr(response, "tool_calls", None) or getattr(response, "tool_call_chunks", None):
+        return True
+    content = getattr(response, "content", None)
+    if isinstance(content, list):
+        for block in content:
+            kind = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+            if str(kind or "") in {"tool_use", "server_tool_use", "tool_call", "tool_result"}:
+                return True
+    return False
+
+
+def detect_empty_answer(response: Any) -> str | None:
+    """Stable code for "the model answered, and the answer is nothing", or ``None``.
+
+    ``no_answer_produced`` is the ratified code for exactly this, and it is already what
+    ``app/api/v1/chat.py`` emits when a round produces no text at all -- this only makes the
+    model boundary say it *first*, at the moment it knows, instead of letting an empty
+    completion travel onwards as if it were a reply.
+    """
+    if produced_a_tool_call(response):
+        return None
+    return NO_ANSWER_CODE if not answer_text(response) else None
+
+
+# ==================== what this boundary has had to say about itself ====================
+
+#: Ratified in app/agents/contracts.py:ErrorEnvelope and already emitted by
+#: app/api/v1/chat.py for the same fact one layer up: this round produced no conclusion.
+NO_ANSWER_CODE = "no_answer_produced"
+
+#: Every countable verdict the budget boundary records. The names are the report keys, so a
+#: new one has to be written down here before it can be counted, and cannot be invented at a
+#: call site.
+BUDGET_EVENT_NAMES = (
+    "max_tokens_clamped",
+    "budget_unaffordable",
+    "timeout_offline_reply",
+    "empty_answer_rejected",
+)
+
+_budget_events: dict[str, int] = {name: 0 for name in BUDGET_EVENT_NAMES}
+_budget_event_lock = threading.Lock()
+
+
+def record_budget_event(name: str) -> int:
+    """Count one budget verdict and return the new total for that name.
+
+    Counting is not logging: a warning line proves one call, while a counter is what an
+    operator needs to answer "how many of today's requests were this?". The lock is cheap
+    and unconditional because the process-wide model budget already allows several slots.
+    An unknown name is a programming error and raises, so a typo cannot create a counter
+    nobody declared.
+    """
+    if name not in _budget_events:
+        raise KeyError(f"undeclared budget event: {name}")
+    with _budget_event_lock:
+        _budget_events[name] += 1
+        return _budget_events[name]
+
+
+def budget_event_counts() -> dict[str, int]:
+    """A copy of the counts, so a reader cannot mutate the ledger it is looking at."""
+    with _budget_event_lock:
+        return dict(_budget_events)
+
+
+def reset_budget_events() -> None:
+    """Zero every count. Test seam, and the reason the ledger is a dict of names."""
+    with _budget_event_lock:
+        for name in BUDGET_EVENT_NAMES:
+            _budget_events[name] = 0
+
+
+def model_budget_readout() -> dict[str, Any]:
+    """The budget boundary's own in-process state, ready for a health surface to embed.
+
+    Shaped like ``app/rag/hot_index.py:hot_index_snapshot`` on purpose: read-only, in-memory,
+    opens no socket, never reads the vector store, and returns a dict a caller can embed
+    verbatim. It is *not* wired into ``/api/v1/health/details`` yet, because that answer is
+    built by ``app/common/monitoring.py:build_health_snapshot``, which is outside this
+    ticket's write domain (and conditionally another agent's). The one-line wiring is
+
+        "model_budget": _subsystem_state(
+            "app.common.model_budget", "model_budget_readout"
+        ),
+
+    inside that snapshot builder, next to ``"hot_index"``.
+    """
+    profile = tier_profile(ModelTier.ANALYSIS)
+    return {
+        "events": budget_event_counts(),
+        "throughput_tokens_per_second": {
+            "prefill": profile["prefill_tokens_per_second"],
+            "decode": profile["decode_tokens_per_second"],
+        },
+        "throughput_provenance": {
+            "MODEL_PREFILL_TOKENS_PER_SECOND": "env"
+            if _env_set("MODEL_PREFILL_TOKENS_PER_SECOND")
+            else "calibrated-default",
+            "MODEL_DECODE_TOKENS_PER_SECOND": "env"
+            if _env_set("MODEL_DECODE_TOKENS_PER_SECOND")
+            else "calibrated-default",
+            "MODEL_MIN_ANSWER_TOKENS": "env"
+            if _env_set("MODEL_MIN_ANSWER_TOKENS")
+            else "calibrated-default",
+        },
+        "request_timeout_ceiling_seconds": profile["timeout_ceiling_seconds"],
+        "context_limit_tokens": profile["context_limit_tokens"],
+        "min_answer_tokens": min_answer_tokens(),
+        "tiers": {
+            tier.value: {
+                "declared_max_tokens": int(budget.max_tokens),
+                "fits_ceiling": budget.fits_within_timeout(0, stream=False),
+                "affordable_max_tokens": clock_affordable_tokens(budget, 0),
+            }
+            for tier, budget in ((tier, model_tier_budget(tier)) for tier in ModelTier)
+        },
+    }
