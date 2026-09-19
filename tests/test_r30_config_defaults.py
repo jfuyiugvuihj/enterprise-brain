@@ -7,6 +7,7 @@ and the difference only appeared as a timeout in production. These tests make th
 statements impossible.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -132,3 +133,54 @@ def test_the_code_falls_back_to_what_the_page_promises(monkeypatch):
     monkeypatch.delenv(ROW_DEPARTMENT_SCOPE_ENV, raising=False)
 
     assert resolve_row_department_scope() == ROW_DEPARTMENT_SCOPE_FAIL_CLOSED
+
+
+# ========== R99 judgement (2): a throughput number is a measurement, and says so ===========
+
+#: The only command allowed to produce the rates below, written into both samples.
+CALIBRATION_COMMAND = "scripts/bench_model_throughput.py"
+
+#: Every number that is a measurement of a machine rather than a preference of an operator.
+MEASURED_KNOBS = (
+    "MODEL_PREFILL_TOKENS_PER_SECOND",
+    "MODEL_DECODE_TOKENS_PER_SECOND",
+    "MODEL_MIN_ANSWER_TOKENS",
+)
+
+
+def _comment_text(relative: str) -> str:
+    """The prose of an env sample: comment lines only, so a value cannot satisfy the wording."""
+    return "\n".join(
+        line
+        for line in (_REPOSITORY / relative).read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("#")
+    )
+
+
+@pytest.mark.parametrize("relative", ENV_FILES)
+def test_the_samples_name_the_command_that_measured_a_rate(relative):
+    """Judgement (2): the document has to say these numbers are calibrated, not tuned.
+
+    This is the half of the fix that outlives the code. An operator under pressure reads
+    8 tok/s as a pessimistic guess, doubles it to make a timeout go away, and every budget
+    in the file silently stops meaning anything -- which is the failure this whole boundary
+    exists to prevent, reintroduced through its own configuration. Naming the command that
+    measures the number is what makes "just raise it" an informed decision instead.
+    """
+    comments = _comment_text(relative)
+
+    assert CALIBRATION_COMMAND in comments, relative
+    assert "measurement" in comments.lower(), relative
+    assert "preference" in comments.lower(), relative
+    for name in MEASURED_KNOBS:
+        assert name in comments, (relative, name)
+
+
+@pytest.mark.parametrize("relative", ENV_FILES)
+def test_a_command_written_into_an_env_sample_exists_in_the_repository(relative):
+    """The inverse of the pin above: prose that points at a script nobody wrote is a debt."""
+    named = set(re.findall(r"scripts/[A-Za-z0-9_]+\.py", _comment_text(relative)))
+
+    assert CALIBRATION_COMMAND in named, (relative, sorted(named))
+    for path in sorted(named):
+        assert (_REPOSITORY / path).is_file(), (relative, path)

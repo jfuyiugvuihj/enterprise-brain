@@ -7,6 +7,8 @@
 import os
 import httpx
 from dataclasses import dataclass
+from typing import Any
+
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -18,20 +20,64 @@ from app.common.logger import logger
 from app.common.model_config import get_local_model_settings
 from app.agents.contracts import AgentResult, DEFAULT_MODEL_TIER, ModelTier
 from app.common.model_budget import (
+    NO_ANSWER_CODE,
     ModelContextLimitExceeded,
-    authorize_call,
+    answer_text,
+    authorize,
     budget_signal,
     context_error_code,
+    detect_empty_answer,
     detect_output_truncation,
     estimate_prompt_tokens,
     http_timeout,
     model_tier_budget,
+    model_timeout_code,
+    produced_a_tool_call,
+    record_budget_event,
     report_budget,
 )
 from app.agents.critic import review_agent_results
 from app.agents.planner import build_task_plan
 from app.memory import recall, remember
 from app.memory.profile import compose_profile_context, get_profile
+
+
+#: The sentences this boundary answers with when the model did not answer. They are named
+#: here, next to the code that writes them, because there is a second reader: an answer cache
+#: keyed on the customer's question must not store one of these, or a single timeout keeps
+#: being "answered" long after the model came back (R99 judgement 4, and the shipped cache
+#: TTL is 1800 s). These are the sentences the boundary has always written, verbatim; the
+#: class below now spends these names instead of the literals, so a reworded sentence cannot
+#: drift away from the predicate that is supposed to recognise it.
+OFFLINE_REIMBURSEMENT_ANSWER = '公司报销流程一般包括提交申请、部门审批、财务复核和付款归档。离线模式下我先给你这个通用版本。'
+OFFLINE_ANALYSIS_ANSWER = '离线模式下可先按门店利润、营收和成本三项做排序，再进一步看利润率和同比环比变化。'
+OFFLINE_GENERIC_ANSWER = '离线模式已启用，但我仍可以继续帮你梳理问题、拆解任务，并给出可执行的下一步建议。'
+#: The streaming fallback emits this chunk on its own, so the text a client accumulates is
+#: this sentence and nothing else.
+OFFLINE_STREAM_CHUNK = '离线模式已启用'
+
+OFFLINE_REPLY_TEXTS = frozenset(
+    {
+        OFFLINE_REIMBURSEMENT_ANSWER,
+        OFFLINE_ANALYSIS_ANSWER,
+        OFFLINE_GENERIC_ANSWER,
+        OFFLINE_STREAM_CHUNK,
+    }
+)
+_OFFLINE_REPLY_VARIANTS = frozenset(value.strip() for value in OFFLINE_REPLY_TEXTS)
+
+
+def is_offline_reply_text(text) -> bool:
+    """Whether this text is one of the sentences above rather than something a model wrote.
+
+    Exact match, deliberately: a substring test would flag a real answer that happens to
+    discuss offline mode. The direction of the error is what decided that -- a false positive
+    costs one cache miss, a false negative replays a canned sentence as an answer until the
+    entry expires. Nothing in the delivery path changes today: the caller that has to ask
+    this question is the cache guard in app/api/v1/chat.py, outside this ticket's write
+    domain, and tests/test_r99_budget_selfconsistency.py pins that it does not yet.
+    """
+    return isinstance(text, str) and text.strip() in _OFFLINE_REPLY_VARIANTS
 
 
 class _OfflineModel(Runnable):
@@ -96,11 +142,11 @@ class _OfflineModel(Runnable):
                 }],
             )
         if "报销" in text or "流程" in text:
-            content = "公司报销流程一般包括提交申请、部门审批、财务复核和付款归档。离线模式下我先给你这个通用版本。"
+            content = OFFLINE_REIMBURSEMENT_ANSWER
         elif "利润" in text or "门店" in text or "分析" in text:
-            content = "离线模式下可先按门店利润、营收和成本三项做排序，再进一步看利润率和同比环比变化。"
+            content = OFFLINE_ANALYSIS_ANSWER
         else:
-            content = "离线模式已启用，但我仍可以继续帮你梳理问题、拆解任务，并给出可执行的下一步建议。"
+            content = OFFLINE_GENERIC_ANSWER
         return AIMessage(content=content)
 
     @staticmethod
@@ -123,7 +169,7 @@ class _OfflineModel(Runnable):
         return ["doc"]
 
     def stream(self, *args, **kwargs):
-        yield type("Chunk", (), {"choices": [type("Choice", (), {"delta": type("Delta", (), {"content": "离线模式已启用"})()})()]})()
+        yield type("Chunk", (), {"choices": [type("Choice", (), {"delta": type("Delta", (), {"content": OFFLINE_STREAM_CHUNK})()})()]})()
 
 
 class _ResilientModel(Runnable):
@@ -203,23 +249,53 @@ class _ResilientModel(Runnable):
         span.finish("model_unavailable", error_code="model_unavailable", summary=model_token_counts(response))
         return response
 
-    def _budget_kwargs(self, prompt_tokens: int | None, *, stream: bool) -> dict:
+    def _budget_kwargs(self, prompt_tokens: int | None, *, stream: bool) -> tuple[dict, Any]:
         """Size this exact call: its own output cap and a clock proportional to its prompt.
 
         The per-request values override the client defaults, which are only the worst case
         for the tier. A provider that has never heard of ``extra_body`` still gets a valid
         request: the OpenAI-compatible wire format carries ``max_tokens`` there.
 
-        ``authorize_call`` is what makes judgement (4) real: when the measured prompt plus
-        this cap cannot fit ``n_ctx``, it raises here, before the request is put on the
-        wire, instead of letting the server answer with a truncated completion.
+        ``authorize`` is what makes judgement (4) real twice over. When the measured prompt
+        plus this cap cannot fit ``n_ctx`` it raises here, before the request goes on the
+        wire, instead of letting the server answer with a truncated completion. And when the
+        clock is what binds, it shortens the *answer* to the length the ceiling can pay for
+        and hands that number back -- both the timeout and the ``max_tokens`` on the wire come
+        from the same sized budget, so the request can no longer outlive its own deadline.
+
+        The verdict travels with the kwargs because a clamp that is not written down is a
+        mystery, and ``self.budget`` is deliberately left alone: this instance is built once
+        per graph at import time and shared by every request.
         """
         if self.budget is None:
+            return {}, None
+        authorized = authorize(self.budget, prompt_tokens, stream=stream)
+        sized = authorized.budget
+        return (
+            {
+                "timeout": http_timeout(sized, prompt_tokens, stream=stream),
+                "extra_body": {"max_tokens": sized.max_tokens},
+            },
+            authorized.verdict,
+        )
+
+    def _verdict_fields(self, verdict: Any) -> dict:
+        """The clamp's own numbers, for the log line of whatever happened afterwards.
+
+        Empty when this call has no verdict at all, so an unremarkable call keeps the one line
+        format it always had. ``budget_verdict`` rides along because a truncation or a timeout
+        on a call that was already shortened is one finding, not two: the operator reading
+        "provider timed out" needs to know the clock had already been argued about once.
+        """
+        if verdict is None:
             return {}
-        authorize_call(self.budget, prompt_tokens, stream=stream)
         return {
-            "timeout": http_timeout(self.budget, prompt_tokens, stream=stream),
-            "extra_body": {"max_tokens": self.budget.max_tokens},
+            "verdict": verdict.verdict_word,
+            "max_tokens": verdict.max_tokens,
+            "declared_max_tokens": verdict.declared_max_tokens,
+            "affordable_max_tokens": verdict.affordable_max_tokens,
+            "min_answer_tokens": verdict.min_answer_tokens,
+            "clamp_basis": verdict.basis,
         }
 
     def invoke(self, messages, config=None, **kwargs):
@@ -236,7 +312,8 @@ class _ResilientModel(Runnable):
         span = self._span(config, queue_wait_ms=slot.wait_ms)
         prompt_tokens = estimate_prompt_tokens(messages)
         try:
-            call_kwargs = {**self._budget_kwargs(prompt_tokens, stream=False), **kwargs}
+            budget_kwargs, verdict = self._budget_kwargs(prompt_tokens, stream=False)
+            call_kwargs = {**budget_kwargs, **kwargs}
         except ModelContextLimitExceeded as exc:
             # Refused before the provider saw it. The offline reply is deliberately not
             # used here: it would record model_unavailable, and evidence._terminal_status
@@ -267,14 +344,36 @@ class _ResilientModel(Runnable):
                     raise ModelContextLimitExceeded(self.budget, prompt_tokens or 0) from exc
             from app.trace.spans import error_code_for
 
-            span.finish("failed", error_code=error_code_for(exc))
-            logger.warning(f"[Model] provider invoke 失败，使用离线回复: {exc}")
+            timeout_code = model_timeout_code(exc)
+            span.finish("failed", error_code=timeout_code or error_code_for(exc))
             slot.release()
+            if timeout_code:
+                # R99: the expired clock used to be filed as ``internal_error`` and logged at
+                # warning, which made a machine that is too slow for its own budget look like
+                # a bug in the prompt. It is also the one failure this boundary answers with a
+                # canned sentence, so the count is what tells an operator how many of
+                # today's answers were not answers. The sentence itself stays: judgement 4 asks
+                # for it to be loud, not for it to be gone.
+                record_budget_event("timeout_offline_reply")
+                logger.error(
+                    budget_signal(
+                        getattr(self.budget, "tier", None) or "analysis",
+                        prompt_tokens=prompt_tokens,
+                        read_seconds=float(getattr(self.budget, "timeout_seconds", 0.0) or 0.0),
+                        stream=False,
+                        code=timeout_code,
+                        **self._verdict_fields(verdict),
+                    )
+                    + f" [Model] provider 超时，改用离线回复（该回复不计为业务结论）: {exc}"
+                )
+            else:
+                logger.warning(f"[Model] provider invoke 失败，使用离线回复: {exc}")
             return self._offline_fallback(messages, config=config, **kwargs)
         slot.release()
         from app.trace.spans import model_token_counts
 
         summary = dict(model_token_counts(response))
+        empty_code = None
         if self.budget is not None:
             truncated = detect_output_truncation(response)
             summary["budget_tier"] = self.budget.tier.value
@@ -286,9 +385,36 @@ class _ResilientModel(Runnable):
                         prompt_tokens=prompt_tokens,
                         read_seconds=self.budget.timeout_seconds,
                         code=truncated,
+                        **self._verdict_fields(verdict),
                     )
                 )
-        span.finish("completed", summary=summary)
+            empty_code = detect_empty_answer(response)
+            if empty_code:
+                # Measured, not theorised: on the shipping container qwen3.5:9b spends a
+                # 1024-or-1536 token cap entirely on its hidden reasoning and hands back zero
+                # visible characters with done_reason=length. An empty body that reaches the
+                # client is a silent success, so the boundary records it as a failure with
+                # the ratified code for "this round produced no conclusion" and refuses to
+                # answer for the model. The response object still goes back unchanged -- what
+                # changes is that it is no longer filed as a completed call.
+                summary["empty_answer_code"] = empty_code
+                record_budget_event("empty_answer_rejected")
+                logger.error(
+                    budget_signal(
+                        self.budget.tier,
+                        prompt_tokens=prompt_tokens,
+                        read_seconds=self.budget.timeout_seconds,
+                        stream=False,
+                        code=empty_code,
+                        **self._verdict_fields(verdict),
+                    )
+                    + " [Model] 模型正文为空（思考链吃满输出预算），不作为答案交付"
+                )
+        span.finish(
+            "failed" if empty_code else "completed",
+            error_code=empty_code or "",
+            summary=summary,
+        )
         return response
 
     def stream(self, *args, **kwargs):
@@ -317,14 +443,19 @@ class _ResilientModel(Runnable):
         span = self._span(config, queue_wait_ms=slot.wait_ms)
         prompt_tokens = estimate_prompt_tokens(messages)
         try:
-            kwargs = {**self._budget_kwargs(prompt_tokens, stream=True), **kwargs}
+            budget_kwargs, verdict = self._budget_kwargs(prompt_tokens, stream=True)
+            kwargs = {**budget_kwargs, **kwargs}
         except ModelContextLimitExceeded as exc:
             slot.release()
             span.finish("failed", error_code=exc.code)
             raise
+        visible_total = 0
+        saw_tool_call = False
         try:
             for chunk in self.primary.stream(*args, **kwargs):
                 span.mark_first_token()
+                visible_total += len(answer_text(chunk))
+                saw_tool_call = saw_tool_call or produced_a_tool_call(chunk)
                 yield chunk
         except Exception as exc:
             provider_code = context_error_code(exc)
@@ -343,8 +474,23 @@ class _ResilientModel(Runnable):
                 raise ModelContextLimitExceeded(self.budget, prompt_tokens or 0) from exc
             from app.trace.spans import error_code_for
 
-            span.finish("failed", error_code=error_code_for(exc))
-            logger.warning(f"[Model] provider stream 失败，使用离线流: {exc}")
+            timeout_code = model_timeout_code(exc)
+            span.finish("failed", error_code=timeout_code or error_code_for(exc))
+            if timeout_code:
+                record_budget_event("timeout_offline_reply")
+                logger.error(
+                    budget_signal(
+                        getattr(self.budget, "tier", None) or "analysis",
+                        prompt_tokens=prompt_tokens,
+                        read_seconds=float(getattr(self.budget, "timeout_seconds", 0.0) or 0.0),
+                        stream=True,
+                        code=timeout_code,
+                        **self._verdict_fields(verdict),
+                    )
+                    + f" [Model] provider 流式超时，改用离线流（该回复不计为业务结论）: {exc}"
+                )
+            else:
+                logger.warning(f"[Model] provider stream 失败，使用离线流: {exc}")
             fallback = self._span(config, provider="offline", model_name="offline")
             try:
                 for chunk in self.fallback.stream(*args, **kwargs):
@@ -352,6 +498,24 @@ class _ResilientModel(Runnable):
                     yield chunk
             finally:
                 fallback.finish("model_unavailable", error_code="model_unavailable")
+            return
+        if self.budget is not None and not saw_tool_call and not visible_total:
+            # The same verdict a non-streaming call records, because a thinking model that
+            # spends its cap on hidden tokens does it in both transports, and a stream that
+            # delivered no characters is not an answer either. Nothing the caller received
+            # changes: what changes is that the round is filed as a failure.
+            record_budget_event("empty_answer_rejected")
+            logger.error(
+                budget_signal(
+                    self.budget.tier,
+                    prompt_tokens=prompt_tokens,
+                    read_seconds=float(getattr(self.budget, "timeout_seconds", 0.0) or 0.0),
+                    stream=True,
+                    code=NO_ANSWER_CODE,
+                )
+                + " [Model] 流式正文为空（思考链吃满输出预算），不作为答案交付"
+            )
+            span.finish("failed", error_code=NO_ANSWER_CODE)
             return
         span.finish("completed")
 
