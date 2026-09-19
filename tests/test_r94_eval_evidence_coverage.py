@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import socket
+import subprocess
 import sys
 from pathlib import Path
 
@@ -360,11 +361,20 @@ def test_json_output_matches_the_console_report(checker, capsys, tmp_path, no_ne
 
 
 def test_script_is_a_reader_not_a_business_dependency(checker):
-    """本件是取证件：不许 import app.*、不许碰网络/子进程、不许把向量库当语料源。"""
+    """本件是取证件：不许 import app.*、不许碰网络、不许把向量库当语料源。
+
+    子进程只开一个有边界的例外，就是 corpus_scope 里那一次 git ls-files：human-gates 在
+    09-18 立了测试卫生铁规「任何依赖语料/文件清单的用例必须钉版本化清单，禁止吃 ambient
+    目录」，R49 也是同一读法；而 09-19 主树 115 个 .txt 对 95 篇口径当场让本文件红了 11
+    条，吃的正是 ambient 目录。除这一处之外，本件仍然不得起任何子进程。
+    """
     source = SCRIPT_PATH.read_text(encoding="utf-8")
     assert not re.search(r"^(from|import)\s+app\b", source, re.MULTILINE), "取证件不许依赖 app/"
-    for banned in ("subprocess", "requests", "urllib", "httpx", "socket.", "chromadb"):
+    for banned in ("requests", "urllib", "httpx", "socket.", "chromadb", "subprocess.Popen",
+                    "subprocess.check_output", "os.system", "Popen("):
         assert banned not in source, "取证件不该出现 " + banned
+    assert source.count("subprocess.run(") == 1, "子进程只许 corpus_scope 那一处，多一处就不是只读取证了"
+    assert '["git", "-C"' in source and "ls-files" in source, "唯一那处 subprocess 必须是 git ls-files 清单"
     assert "def main" in source and '__name__ == "__main__"' in source
 
 # ---------------------------------------------------------------------------
@@ -437,31 +447,59 @@ def test_counter_evidence_removed_evidence_turns_the_pin_red(checker, capsys, tm
 
 
 # ---------------------------------------------------------------------------
-# 语料目录的卫生（09-19 并主干后补）—— 本件读的是目录，脏一次就全体红一次
+# 语料范围（09-19 并主干后补）—— 审计读的是版本化清单，不是 ambient 目录
 # ---------------------------------------------------------------------------
 
-def test_the_corpus_directory_holds_no_upload_litter(checker):
-    """documents/ 兼作上传落地区，混进残片之后，95 篇就不是同一个 95 篇了。
+def _git_available():
+    try:
+        return subprocess.run(["git", "--version"], capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
-    09-19 并主干当天主树实测 115 个 .txt（多出的 20 个是 browser_ / codex-upload- /
-    kb_policy_ / qa_ 之流的 __vN 版本副本），data/ 实测 7 个 csv ⇒ 本文件 11 条用例在干净树
-    绿、在这棵树上红。根因不在脚本，在目录。R49 早已在自己文件里写下同一句话（取 git 清单
-    而不是目录列表），本件按主口径就是目录列表，所以这条钉负责让残片别悄悄回来。
+
+@pytest.mark.skipif(not _git_available(), reason="本机没有 git，验不了跟踪集作用域")
+def test_untracked_litter_cannot_move_the_audit_number(checker, tmp_path):
+    """在临时 git 库里重演 09-19 主树的形状：跟踪 1 篇、残片 1 篇，审计只许看见那 1 篇。
+
+    那天并主干当场红 11 条，就是因为口径钉 95 篇而 documents/ 里躺着 115 个 .txt（多出的
+    20 个是上传落地区留下的 __vN 副本）。工作树的脏东西不该有权改变这个数：它既不许替某个
+    词条救出出处，也不许把篇数闸顶到 refuse 出数。
     """
-    txt = sorted(path.name for path in (REPO_ROOT / "documents").glob("*.txt"))
-    assert len(txt) == checker.EXPECTED_CORPUS_TXT_COUNT, (
-        "documents/ 里的 .txt 不再是主口径那 " + str(checker.EXPECTED_CORPUS_TXT_COUNT)
-        + " 篇。多出来的是上传/浏览器测试残片：把它们移出语料目录，别就地删 —— 没进 git 的那几份"
-        "是 KB 里对应行的唯一源字节，移走前先确认那一行还在服务器上。"
+    docs = tmp_path / "documents"
+    docs.mkdir()
+    (docs / "kept.txt").write_text("跟踪中的语料", encoding="utf-8")
+    (docs / "litter.txt").write_text("没跟踪的上传残片", encoding="utf-8")
+    steps = (
+        ["init", "-q"],
+        ["add", "documents/kept.txt"],
+        ["-c", "user.email=seed@invalid", "-c", "user.name=seed", "commit", "-q", "-m", "seed"],
     )
+    for step in steps:
+        run = subprocess.run(["git", "-C", str(tmp_path)] + step, capture_output=True, timeout=60)
+        assert run.returncode == 0, run.stderr.decode("utf-8", "replace")[:200]
 
-    pdf = sorted(path.name for path in (REPO_ROOT / "documents").glob("*.pdf"))
-    assert len(pdf) == 2, (
-        "--include-pdf 那个备选口径钉的是 2 篇 PDF（§3.10 的 " + str(PDF_CALIBER_ROWS)
-        + " 行），多一篇算出来的就不是那个数"
-    )
+    picked = checker.corpus_scope(docs, "*.txt")
 
-    csv = sorted(path.name for path in (REPO_ROOT / "data").glob("*.csv"))
-    assert csv == ["报销明细表.csv"], (
-        "data/ 里只有明细表是语料，其余 csv 是浏览器测试残片 ⇒ --include-csv 口径会被它们动过"
+    assert [path.name for path in picked] == ["kept.txt"], "跟踪集之外的文件混进了审计范围"
+
+
+def test_corpus_scope_falls_back_to_the_disk_glob_without_git(checker, tmp_path):
+    """git 答不上来的树（导出目录、本文件自己造的影子仓库）退回磁盘 glob。
+
+    这条退路是影子树用例能跑的前提：它们造的 tmp 树不在任何仓库里。
+    """
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("y", encoding="utf-8")
+
+    picked = checker.corpus_scope(tmp_path, "*.txt")
+
+    assert [path.name for path in picked] == ["a.txt", "b.txt"]
+
+
+def test_the_repo_corpus_still_measures_the_pinned_ninety_five(checker):
+    """真仓库这一头：读进来的篇数必须正好是钉死的主口径篇数。"""
+    corpus = checker.load_corpus(REPO_ROOT)
+
+    assert len(corpus) == checker.EXPECTED_CORPUS_TXT_COUNT, (
+        "装进来的语料篇数不等于主口径钉死的 " + str(checker.EXPECTED_CORPUS_TXT_COUNT) + " 篇"
     )

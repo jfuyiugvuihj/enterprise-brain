@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import unicodedata
 from pathlib import Path
@@ -184,6 +185,44 @@ def read_pdf_text(pdf_path: Path) -> str:
     return "\n".join(chunks)
 
 
+def corpus_scope(directory: Path, pattern: str) -> list[Path]:
+    """Return the files this audit may read: the corpus git tracks, not the ambient directory.
+
+    A working tree is not a deployment. documents/ doubles as the upload landing area
+    (H16), so a live checkout collects versioned copies of every file anyone ever posted
+    -- the main tree held 115 .txt against 95 tracked ones on 09-19, and 7 csv in data/
+    against 1. Debris is absent on a customer machine, so it must not move this number in
+    either direction: neither rescue a term nor trip the count gate. That is the standing
+    hygiene rule recorded in the human-gates file (钉版本化清单，禁止吃 ambient 目录), and
+    tests/test_r49_corpus_calibration.py already reads the corpus the same way. Where git
+    cannot answer -- an export, or the shadow trees this file's own cases build -- the
+    disk glob is the scope instead.
+    """
+    disk = sorted(directory.glob(pattern))
+    try:
+        listing = subprocess.run(
+            ["git", "-C", str(directory), "ls-files", "-z", "--", pattern],
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return disk
+    if listing.returncode != 0:
+        return disk
+    names = {name.decode("utf-8") for name in listing.stdout.split(b"\0") if name}
+    if not names:
+        return disk
+    on_disk = {path.name for path in disk}
+    vanished = sorted(name for name in names if name not in on_disk)
+    if vanished:
+        raise StructureDrift(
+            "git 跟踪的语料在盘上找不到：{0}。把文件放回去，或者说明它去哪了——跟踪中的语料"
+            "凭空消失，正是本件要防的那件事。".format("、".join(vanished))
+        )
+    return sorted(directory / name for name in names)
+
+
 def load_corpus(
     root: Path,
     *,
@@ -192,7 +231,8 @@ def load_corpus(
 ) -> dict[str, str]:
     """按口径装载语料，返回 {文件标签: 归一化后的文本}。
 
-    主口径（两个开关都不开）只读 documents/*.txt，且必须正好 EXPECTED_CORPUS_TXT_COUNT 篇。
+    主口径（两个开关都不开）只读 documents/*.txt 的 git 跟踪集，且必须正好
+    EXPECTED_CORPUS_TXT_COUNT 篇；工作树里没跟踪的残片不算语料（见 corpus_scope）。
     """
     corpus_dir = root / CORPUS_DIR_REL
     if not corpus_dir.is_dir():
@@ -200,7 +240,7 @@ def load_corpus(
             "语料目录不存在：{0}。本脚本不会退回任何缓存/快照冒充语料——上一轮废跑的根因就是\n"
             "  拿宿主 chroma_db 快照当语料真相源（审计文档 §3.9、runbook P-9）。".format(corpus_dir)
         )
-    txt_files = sorted(corpus_dir.glob(CORPUS_TXT_GLOB))
+    txt_files = corpus_scope(corpus_dir, CORPUS_TXT_GLOB)
     if len(txt_files) != EXPECTED_CORPUS_TXT_COUNT:
         raise StructureDrift(
             "语料 txt 篇数对不上主口径：看到 {0} 篇，期望 {1} 篇（{2}）。\n{3}".format(
@@ -209,10 +249,10 @@ def load_corpus(
         )
     loaded = [(path.name, decode_text_bytes(path.read_bytes())) for path in txt_files]
     if include_pdf:
-        for path in sorted(corpus_dir.glob(PDF_GLOB)):
+        for path in corpus_scope(corpus_dir, PDF_GLOB):
             loaded.append(("{0} [PDF 备选口径]".format(path.name), read_pdf_text(path)))
     if include_csv:
-        for path in sorted((root / DATA_DIR_REL).glob(DATA_CSV_GLOB)):
+        for path in corpus_scope(root / DATA_DIR_REL, DATA_CSV_GLOB):
             loaded.append(
                 ("{0} [CSV 备选口径]".format(path.name), decode_text_bytes(path.read_bytes()))
             )
