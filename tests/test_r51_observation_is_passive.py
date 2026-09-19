@@ -552,6 +552,24 @@ def _worktree_diff(repo: Path) -> list[str]:
     return [line.strip() for line in _git(repo, "diff", "--name-only", "HEAD").splitlines() if line.strip()]
 
 
+#: 本单自己的产物。越界守卫用的是**本单的私有写域**（R51 不许动 app/rag/ 与 docs/），
+#: 所以它只能对「能被归到本单的树」说话。拿它去判别人的分支，就会把 R92（改
+#: retrieval_pipeline.py）与 R50（改 app/rag/indexing.py）这类**完全合规**的单判成越界。
+OWN_DELIVERABLE_PREFIXES = ("app/common/stage_timing", "tests/test_r51_observation_is_passive")
+#: 本单的分支名（看板按 nickname 记账，分支号沿用单号）。命中即无条件适用守卫，
+#: 补住「本单只加了一个 docs/ 文件、产物不在改动集里」这个归属漏口。
+OWN_BRANCH_PREFIX = "codex/be-r51"
+
+
+def _is_r51_work(changed: list[str], branch: str) -> bool:
+    """这棵树的改动能不能归到本单头上。归不到，就不许用本单的私有写域去判它。"""
+    if branch.startswith(OWN_BRANCH_PREFIX) or branch in TRUNK_CANDIDATES:
+        #: 主干上提交范围天然为空，守卫照旧跑完即绿（不把它变成 skip，含义不变，跳过计数也不变）。
+        return True
+    return any(path.startswith(OWN_DELIVERABLE_PREFIXES) for path in changed)
+
+
+
 def _ticket_scope(repo: Path) -> tuple[list[str], str]:
     """What the ticket is answerable for: its own commits, plus its own untracked files.
 
@@ -608,6 +626,13 @@ def test_this_ticket_writes_no_dependency_manifest_no_migration_and_no_frontend(
     except Exception:  # no git in the environment is not a judgement failure
         pytest.skip("git is unavailable")
 
+    branch = _current_branch(repo)
+    if not _is_r51_work(changed, branch):
+        pytest.skip(
+            f"分支 {branch} 的改动里没有本单产物（{OWN_DELIVERABLE_PREFIXES[0]} 等），"
+            "本单的私有写域不适用于它——FORBIDDEN_PREFIXES 是 R51 的边界，不是全仓规矩"
+        )
+
     violations = sorted(path for path in changed if path.startswith(FORBIDDEN_PREFIXES))
     assert not violations, f"分支点 {base[:7]} 之后本单的提交与未跟踪件里不许出现越界路径：{violations}"
 
@@ -633,6 +658,34 @@ def test_this_tickets_own_untracked_file_cannot_hide_from_the_guard(tmp_path) ->
     assert _worktree_diff(repo) == [], "前提不成立：旧口径居然看得见未跟踪文件"
     changed, _ = _ticket_scope(repo)
     assert [path for path in changed if path.startswith(FORBIDDEN_PREFIXES)] == ["docs/sneaky.md"]
+
+
+def test_a_foreign_ticket_branch_that_owns_app_rag_is_not_answered_to(tmp_path) -> None:
+    """归属方向（R92 误红的现场）：别人的分支改了 app/rag/，本单私有写域不得判它越界。
+
+    两半都要成立：改动集**仍然看得见**那个越界路径（说明收窄没削弱机器），
+    但归属判定说这棵树不是 R51 的 ⇒ 树级守卫不许红。
+    """
+    repo = _ticket_repo(tmp_path)
+    _write(repo, "app/rag/retrieval_pipeline.py", "x = 1\n")
+    _commit(repo, "another ticket owns this file")
+
+    changed, _ = _ticket_scope(repo)
+    assert [path for path in changed if path.startswith(FORBIDDEN_PREFIXES)] == [
+        "app/rag/retrieval_pipeline.py"
+    ], "收窄不能把可见性弄丢"
+    assert _is_r51_work(changed, _current_branch(repo)) is False
+
+
+def test_the_guard_still_applies_when_only_a_docs_file_lands_on_our_own_branch(tmp_path) -> None:
+    """归属漏口补条：本单分支上哪怕只多一个 docs/ 文件，守卫也必须照红。"""
+    repo = _ticket_repo(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "codex/be-r51")
+    _write(repo, "docs/own_slip.md", "our own overreach\n")
+
+    changed, _ = _ticket_scope(repo)
+    assert _is_r51_work(changed, _current_branch(repo)) is True
+    assert [path for path in changed if path.startswith(FORBIDDEN_PREFIXES)] == ["docs/own_slip.md"]
 
 
 def test_a_committed_overreach_still_bites_after_narrowing(tmp_path) -> None:
