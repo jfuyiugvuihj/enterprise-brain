@@ -1,4 +1,5 @@
-"""Local model routing configuration.
+"""Local model routing configuration: the endpoint, the model, and how long a
+call asks the model server to hold that model in memory.
 
 The first version only manages a model that lives on the customer's own machine. The
 model name is either configured explicitly or discovered from the local Ollama registry;
@@ -8,6 +9,7 @@ installed.
 from dataclasses import dataclass
 import json
 import os
+import re
 import time
 from typing import Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -18,6 +20,101 @@ _DISCOVERY_CACHE: tuple[float, str, str] | None = None
 #: The last inference-compute verdict a probe produced, as a plain dict. Reading it back
 #: never opens a socket, so /health/details can answer "gpu | cpu | unknown" cheaply.
 _COMPUTE_CACHE: dict | None = None
+
+#: Per-request model residency (R34). A cold load on the delivery machine measures ~6.1 s of
+#: Ollama's own ``load_duration``, so every question that arrives after the model has been
+#: dropped pays it again. This is the client half of the answer: the window a request asks
+#: the server to keep the model warm for. An unset variable is deliberately *not* a feature
+#: switch -- it spells Ollama's own default below, so "nobody said anything" and "the
+#: default" cannot come to mean two different things on the wire.
+KEEP_ALIVE_ENV = "LOCAL_MODEL_KEEP_ALIVE"
+DEFAULT_KEEP_ALIVE_SECONDS = 5 * 60
+#: The most residency this boundary will ask for, however the variable is written. One chat
+#: model here holds ~5.3 GB of the customer's own memory (measured 09-19), and a private
+#: deployment must not be left holding it because somebody typed a big number: a forgotten
+#: browser tab is worth less than the machine. Tuning down is free, tuning up is free up to
+#: this ceiling, and past it the request is clamped and says so out loud. Policy write-up:
+#: docs/handoff/2026-09-19-r34-keep-alive-residency.md.
+KEEP_ALIVE_CEILING_SECONDS = 30 * 60
+#: Every way of saying "never give the memory back". Ollama's own spelling is ``-1``, which
+#: pins the model until the server restarts, and that one request field is the difference
+#: between a warm cache and a laptop out of memory at three in the morning.
+NEVER_UNLOAD_SPELLINGS = frozenset({"infinite", "infinity", "never", "forever", "permanent"})
+_KEEP_ALIVE_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
+#: A duration is either a bare number -- seconds, which is how the server documents it -- or
+#: one or more amount+unit pairs, so ``90s``, ``10m`` and ``1h30m`` all mean what they say.
+#: Anything else is noise, and noise gets the default rather than a guess.
+_KEEP_ALIVE_PART = re.compile(r"(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)")
+
+
+@dataclass(frozen=True)
+class KeepAlivePolicy:
+    """The residency one call asks for, plus an honest note about how it got that number.
+
+    ``note`` exists because a silent clamp is the worst kind of configuration: an operator
+    who writes ``2h`` and gets thirty minutes has to be able to learn that from one log line,
+    and the caller that logs it must not re-derive the reason.
+    """
+
+    seconds: int
+    #: What the server receives: a canonical ``"<n>s"`` duration string, never a number of
+    #: nanoseconds and never ``-1``.
+    wire: str
+    note: str = ""
+
+
+def parse_keep_alive_seconds(value: str) -> float | None:
+    """Seconds in a duration string; ``-1.0`` for a never-unload spelling; ``None`` for noise.
+
+    A negative is not a smaller window, it is a different feature: Ollama reads ``-1`` as
+    "never unload". Mapping every way of saying that onto ``-1.0`` keeps the refusal in one
+    place instead of scattered through each caller's arithmetic.
+    """
+    text = (value or "").strip().lower()
+    if not text:
+        return None
+    if text.startswith("-") or text in NEVER_UNLOAD_SPELLINGS:
+        return -1.0
+    if re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return float(text)
+    compact = text.replace(" ", "")
+    parts = _KEEP_ALIVE_PART.findall(compact)
+    if not parts or "".join(f"{amount}{unit}" for amount, unit in parts) != compact:
+        return None
+    return sum(float(amount) * _KEEP_ALIVE_UNITS[unit] for amount, unit in parts)
+
+
+def resolve_keep_alive(raw: str | None = None) -> KeepAlivePolicy:
+    """The bounded residency window to ask the local model server for, resolved once.
+
+    Three inputs are refused and each one keeps serving instead of failing the request: a
+    value that is not a duration, a value above the ceiling, and any value that means
+    "unload only when the server restarts". The last is a red line rather than a preference
+    -- this is a machine the customer owns, and the memory behind one chat model is not ours
+    to reserve indefinitely.
+
+    ``raw`` is the test seam: with no argument the value comes from the environment. Whatever
+    comes back satisfies ``0 <= seconds <= KEEP_ALIVE_CEILING_SECONDS``.
+    """
+    value = ((os.environ.get(KEEP_ALIVE_ENV) if raw is None else raw) or "").strip()
+    seconds = parse_keep_alive_seconds(value)
+    if seconds is None:
+        note = f"忽略无法识别的 {KEEP_ALIVE_ENV}={value!r}，按默认值常驻" if value else ""
+        return KeepAlivePolicy(DEFAULT_KEEP_ALIVE_SECONDS, f"{DEFAULT_KEEP_ALIVE_SECONDS}s", note)
+    if seconds < 0:
+        return KeepAlivePolicy(
+            KEEP_ALIVE_CEILING_SECONDS,
+            f"{KEEP_ALIVE_CEILING_SECONDS}s",
+            f"拒绝永不卸载的 {KEEP_ALIVE_ENV}={value!r}，按上限 {KEEP_ALIVE_CEILING_SECONDS}s 常驻",
+        )
+    asked = int(seconds)
+    bounded = min(asked, KEEP_ALIVE_CEILING_SECONDS)
+    note = (
+        ""
+        if bounded == asked
+        else f"{KEEP_ALIVE_ENV}={value!r} 超过上限，按 {KEEP_ALIVE_CEILING_SECONDS}s 截断"
+    )
+    return KeepAlivePolicy(bounded, f"{bounded}s", note)
 
 
 @dataclass(frozen=True)

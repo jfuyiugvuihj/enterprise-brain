@@ -33,7 +33,7 @@ from app.common.model_budget import (
     model_tier_budget,
     request_timeout_ceiling_seconds,
 )
-from app.common.model_config import get_local_model_settings
+from app.common.model_config import KeepAlivePolicy, get_local_model_settings, resolve_keep_alive
 
 load_dotenv()
 
@@ -43,6 +43,13 @@ NATIVE_CHAT_SUFFIX = "/api/chat"
 NATIVE_THINK_FIELD = "think"
 #: ``num_predict`` is the native spelling of this tier's ``max_tokens``.
 NATIVE_MAX_TOKENS_FIELD = "num_predict"
+#: The request field that tells the server how long to keep the model loaded after it has
+#: answered. R34 is this one field on two legs: a cold load on the delivery machine costs
+#: ~6.1 s of the server's own ``load_duration`` (measured 09-19), so a question that arrives
+#: after the window closes pays it again. The window and its ceiling are configured in
+#: app/common/model_config.py, which is also where "never unload" is refused -- this boundary
+#: asks, the customer's memory decides, and an 8 GB laptop must be able to get its RAM back.
+KEEP_ALIVE_FIELD = "keep_alive"
 #: Which leg answered a call. A log line that cannot say this is not evidence of anything.
 TRANSPORT_NATIVE = "ollama-native"
 TRANSPORT_COMPAT = "openai-compat"
@@ -54,6 +61,17 @@ NATIVE_REFUSED_STATUSES = frozenset({400, 404, 405, 410})
 #: The offline sentence, spelled once. It was already written twice in this file, and both
 #: legs have to answer with the same words for the same reason.
 MODEL_UNAVAILABLE_REPLY = "离线模式：模型不可用（error_code=model_unavailable），未生成业务结论"
+
+
+def keep_alive_log(policy) -> str:
+    """The residency request as one greppable field, with the clamp note attached.
+
+    A value that was silently clamped is indistinguishable from a value that worked, which
+    is how an operator ends up believing a machine is warm when it is not.
+    """
+    return policy.wire + (f" ({policy.note})" if policy.note else "")
+
+
 #: Verdicts for an answer this boundary cannot use. Deliberately not ``ErrorEnvelope``
 #: members, exactly like the budget codes in app/agents/contracts.py:100-103: they describe
 #: one model call, not a client-facing failure class.
@@ -258,6 +276,20 @@ class ModelHandler:
         return f"{base.rstrip('/')}{NATIVE_CHAT_SUFFIX}" if base else ""
 
     @staticmethod
+    def _keep_alive() -> KeepAlivePolicy:
+        """How long a call on either leg asks the model to stay resident.
+
+        Resolved through the one module that reads configuration, and resolved per call
+        rather than cached on the instance: the clamp notice has to travel with the request
+        it explains, and an operator who edits the variable between two questions should not
+        have to restart the service to learn whether it took. Both legs are asked the same
+        window because the caller who tunes it should not have to know which transport
+        answered -- whether the compatible leg honours it at all is a server fact, measured
+        and written up in docs/handoff/2026-09-19-r34-keep-alive-residency.md.
+        """
+        return resolve_keep_alive()
+
+    @staticmethod
     def _native_chat_request(url: str, payload: dict, *, timeout) -> dict:
         """One POST to the native endpoint, on a client that ignores ambient proxy settings.
 
@@ -295,6 +327,7 @@ class ModelHandler:
             "stream": False,
             NATIVE_THINK_FIELD: False,
             "options": {NATIVE_MAX_TOKENS_FIELD: budget.max_tokens},
+            KEEP_ALIVE_FIELD: self._keep_alive().wire,
         }
         started = time.monotonic()
         try:
@@ -326,8 +359,11 @@ class ModelHandler:
         finish_reason = str(body.get("done_reason") or "")
         output_tokens = body.get("eval_count")
         code = answer_error_code(content, finish_reason)
+        load_seconds = float(body.get("load_duration") or 0) / 1e9
         logger.info(
             f"[Model] {TRANSPORT_NATIVE} 应答: seconds={time.monotonic() - started:.2f} "
+            f"load_seconds={load_seconds:.2f} "
+            f"keep_alive={keep_alive_log(self._keep_alive())} "
             f"done_reason={finish_reason or 'none'} eval_count={output_tokens} "
             f"content_chars={len(content)} thinking_chars={len(thinking)}"
             + (f" error_code={code}" if code else "")
@@ -393,7 +429,8 @@ class ModelHandler:
         except ModelBudgetExhausted:
             logger.warning("[Model] local model concurrency budget exhausted")
             return self._rate_limited_response(stream)
-        logger.info(f"使用内部本地模型: {model}")
+        keep_alive = self._keep_alive()
+        logger.info(f"使用内部本地模型: {model} keep_alive={keep_alive_log(keep_alive)}")
 
         if not stream:
             # A query rewrite is the only non-streaming caller on this boundary, and the
@@ -417,6 +454,10 @@ class ModelHandler:
                 stream=stream,
                 max_tokens=budget.max_tokens,
                 timeout=http_timeout(budget, prompt_tokens, stream=stream),
+                # The compatible leg gets the same request it would make without this line,
+                # plus residency. Whether Ollama honours keep_alive here is a server fact,
+                # measured rather than assumed; a server that ignores it loses nothing.
+                extra_body={KEEP_ALIVE_FIELD: keep_alive.wire},
             )
         except Exception as exc:
             slot.release()
