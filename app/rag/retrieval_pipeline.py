@@ -26,7 +26,8 @@ try:
     from sentence_transformers import CrossEncoder
 except ModuleNotFoundError:  # pragma: no cover
     CrossEncoder = None
-from app.common.model_handler import ModelHandler, ModelSource
+from app.common.model_budget import OUTPUT_TRUNCATED_CODE
+from app.common.model_handler import ModelHandler, ModelSource, RESPONSE_EMPTY_CODE
 from app.common.logger import logger
 from app.common.identity import Principal
 from app.rag.filters import record_retrieval_scope, resolve_document_retrieval_scope
@@ -111,25 +112,142 @@ def _looks_multi_intent(query: str) -> bool:
     return sum(text.count(ch) for ch in _CLAUSE_SEPARATORS) >= ADAPTIVE_REWRITE_MIN_CLAUSES
 
 
+#: 正文里有 JSON 读不出来的稳定码。它必须与下面两枚「没有正文」的码分得开：2026-09-18 晚
+#: 现网每一条提问都刷同一句「查询改写失败，返回原始问题」，而「模型没吐出正文」（思维链
+#: 吃掉预算）与「模型吐了正文但读不懂」（提示词或模型的问题）是两个完全不同的现场。
+REWRITE_PAYLOAD_UNPARSEABLE_CODE = "rewrite_payload_unparseable"
+
+#: 可能裹住 JSON 的外壳。取值顺序就是历史顺序：先按改动前的写法剥一次，所以改动前能解析的
+#: 正文在这里走的还是同一条分支；多出来的只有「围栏没写语言名」这一种。
+REWRITE_PAYLOAD_FENCE_PREFIXES = ("```json", "```")
+
+#: 「没有可用正文」的两枚码，按 ERROR 记账。改前它们是 WARNING 一句带过，于是「改写从来没
+#: 生效过」和「改写被档位关掉」在看板上长得一模一样——这正是本单要断掉的静默。
+REWRITE_EMPTY_ANSWER_CODES = frozenset({OUTPUT_TRUNCATED_CODE, RESPONSE_EMPTY_CODE})
+
+
+def _strip_rewrite_fence(cleaned: str) -> str:
+    """剥掉 markdown 围栏，剥不动就原样返回（改动前的行为）。"""
+    for marker in REWRITE_PAYLOAD_FENCE_PREFIXES:
+        if cleaned.startswith(marker):
+            cleaned = cleaned[len(marker):]
+            break
+    return cleaned.removesuffix("```").strip()
+
+
+def _rewrite_payload_candidates(text: str) -> list[str]:
+    """这份接口见过的全部正文形状，从最字面到最宽容。
+
+    第 1 条就是改动前那一行的结果；第 2 条只放宽「JSON 前后被塞了一句话」这一种，因为本地
+    模型确实会把 JSON 夹在客套话中间回出来，而那不该算一次改写失败。
+    """
+    cleaned = _strip_rewrite_fence(str(text or "").strip())
+    candidates = [cleaned]
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if 0 <= start < end:
+        candidates.append(cleaned[start : end + 1])
+    return [item for item in candidates if item]
+
+
+def _rewrite_string_list(value) -> list[str]:
+    """把 payload 的一个字段读成「非空字符串列表」。
+
+    钉住的是另一条静默链路：模型把 ``"rewrites"`` 回成一个字符串时，原样交给 ``search`` 就是
+    ``[query] + "住宿费"`` 当场抛错——一次看起来成功的改写反而把整条检索拖下水。所以单个字符串
+    按一项收进列表，其它非列表形状（含 dict、数字、None）丢掉，列表里的非字符串与空串丢掉，
+    缺字段变空列表。
+    """
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        items = []
+    terms = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if text:
+            terms.append(text)
+    return terms
+
+
+def _parse_rewrite_payload(text: str) -> dict:
+    """约定契约 {"rewrites", "sub_questions"}；读不出来就抛 ValueError，并带上是哪一种读不出来。
+
+    「为什么」是异常的一部分而不是一个 bool：正文里没有 JSON 与 JSON 不是约定形状，是两个
+    不同的现场，混成一句就没法查。
+    """
+    payload = None
+    for candidate in _rewrite_payload_candidates(text):
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        break
+    if payload is None:
+        raise ValueError("no_json_object")
+    if not isinstance(payload, dict):
+        raise ValueError("payload_not_object")
+    return {
+        "rewrites": _rewrite_string_list(payload.get("rewrites")),
+        "sub_questions": _rewrite_string_list(payload.get("sub_questions")),
+    }
+
+
 class QueryRewriter:
     """查询改写 + 子问题拆分"""
 
     @staticmethod
     def rewrite(question: str) -> dict:
-        """返回 {"rewrites": [...], "sub_questions": [...]}"""
+        """返回 {"rewrites": [...], "sub_questions": [...]}
+
+        失败照旧回退成原始问题：改写挂了不许把检索一起拖崩。但两类失败不再共用一句话——
+        空正文与被长度上限截断走 ``error_code=model_response_empty`` /
+        ``model_output_truncated`` 并以 ERROR 记账（静默回退正是本单的缺陷本体），
+        只有「模型回了正文、我们读不懂」才是 ``error_code=rewrite_payload_unparseable``。
+        """
         prompt = REWRITE_PROMPT.format(question=question)
+        fallback = {"rewrites": [question], "sub_questions": []}
         try:
             resp = model.chat(
                 messages=[{"role": "user", "content": prompt}],
                 source=ModelSource.LOCAL,
                 stream=False
             )
-            result = json.loads(str(resp).strip().removeprefix("```json").removesuffix("```"))
-            logger.info(f"查询改写: {len(result.get('rewrites',[]))} 个版本, {len(result.get('sub_questions',[]))} 个子问题")
-            return result
+            text = str(resp)
+            verdict = str(getattr(resp, "error_code", "") or "")
+            finish_reason = str(getattr(resp, "finish_reason", "") or "")
+            transport = str(getattr(resp, "transport", "") or "")
         except Exception as e:
             logger.warning(f"查询改写失败，返回原始问题: {e}")
-            return {"rewrites": [question], "sub_questions": []}
+            return fallback
+
+        if not verdict and not text.strip():
+            # 出口只承诺 str，桩与旧 handler 就不带判定；缺判定的空正文仍然按「没有正文」记，
+            # 不许因为它少了一个属性而降级成「解析失败」。
+            verdict = RESPONSE_EMPTY_CODE
+        if verdict:
+            report = logger.error if verdict in REWRITE_EMPTY_ANSWER_CODES else logger.warning
+            report(
+                f"查询改写没有可用正文: error_code={verdict} "
+                f"finish_reason={finish_reason or 'none'} transport={transport or 'unknown'} "
+                f"正文字数={len(text)}，已回退为原始问题（本次检索只用原问题）"
+            )
+            return fallback
+
+        try:
+            result = _parse_rewrite_payload(text)
+        except ValueError as reason:
+            logger.warning(
+                f"查询改写正文解析失败: error_code={REWRITE_PAYLOAD_UNPARSEABLE_CODE} "
+                f"reason={reason} 正文字数={len(text)} 前 80 字={text[:80]!r}，"
+                f"已回退为原始问题（本次检索只用原问题）"
+            )
+            return fallback
+        logger.info(f"查询改写: {len(result.get('rewrites',[]))} 个版本, {len(result.get('sub_questions',[]))} 个子问题")
+        return result
 
 
 # ==================== 术语/同义词扩展（R47，纯规则） ====================
