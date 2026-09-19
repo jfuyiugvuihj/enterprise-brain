@@ -36,6 +36,49 @@ _ALLOWED_TYPES = {
 }
 _RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$")
 
+# Disguise guard for the *middle* of an uploaded filename (ticket R91).
+#
+# The rule this replaces refused any name holding two dots, which conflates an
+# attack (`policy.pdf.txt`, `policy.md.exe`) with the way people really name
+# documents. 11 of the 99 knowledge-base files in `documents/` carry a version
+# number — `费用报销管理制度V2.1.txt`, `IT安全管理制度V3.1.txt`,
+# `MYBI_V3.1_更新日志.txt` — and every one of them came back as
+# `unsupported_file`, including the answer source of eval question `doc-01`.
+# Refusing a version number is not protection, it is a hole in the corpus.
+#
+# A disguised type is still caught, just by the layers that actually work:
+#   * the *final* suffix must be in `_ALLOWED_TYPES` (checked by
+#     `inspect_upload_header`), so `report.exe` is out whatever precedes it;
+#   * the file header must match that suffix, so a `policy.docx` full of `%PDF`
+#     bytes is out;
+#   * the bytes on disk are named `uuid + one whitelisted suffix`
+#     (`build_storage_path`), so a double extension never exists on the
+#     filesystem and can never be executed from there.
+# The middle of the name survives only as the *display* filename, which the UI
+# lists and a re-download reuses, and that is exactly where "looks like a
+# document, is an executable" misleads a person. So this check is narrowed to a
+# closed, explainable set: a middle segment that is itself a known document /
+# executable / script / web / archive suffix, the four whitelisted document types
+# included. Anything else between two dots —
+# `V2.1`, `1_更新日志`, `Q3.预算` — is a naming habit, not a file type, and passes.
+_DOUBLE_EXTENSION_BLOCKLIST = frozenset(
+    {
+        # the four knowledge-base types themselves: `policy.md.exe` and
+        # `notes.txt.exe` are precisely the costumes this rule exists to catch
+        ".txt", ".md", ".pdf", ".docx",
+        # other documents and office containers
+        ".doc", ".xls", ".xlsx", ".ppt", ".pptx",
+        # windows executables, libraries and installers
+        ".exe", ".dll", ".com", ".scr", ".msi", ".lnk", ".jar",
+        # scripts
+        ".js", ".vbs", ".bat", ".cmd", ".sh", ".ps1",
+        # web-served content
+        ".php", ".html", ".htm", ".svg",
+        # layered archives: the `payload.tar.gz.exe` chain
+        ".tar", ".gz", ".bz2", ".xz", ".zip", ".rar", ".7z",
+    }
+)
+
 
 def sanitize_upload_filename(filename: str | None) -> str:
     value = (filename or "").strip()
@@ -46,8 +89,14 @@ def sanitize_upload_filename(filename: str | None) -> str:
     safe = Path(value).name
     if safe != value:
         raise UploadSecurityError("upload filename must not contain path segments")
-    if safe.count(".") > 1:
-        raise UploadSecurityError("double extensions are not allowed")
+    if safe.startswith("."):
+        raise UploadSecurityError("upload filename must not start with a dot")
+    stem, _, final_suffix = safe.rpartition(".")
+    for segment in stem.split("."):
+        if f".{segment.lower()}" in _DOUBLE_EXTENSION_BLOCKLIST:
+            raise UploadSecurityError(
+                f"double extensions are not allowed: .{segment}.{final_suffix}"
+            )
     return safe
 
 
