@@ -1274,3 +1274,61 @@ PROBE index reached = 0
 ### 35.2 **R84 接续**（第一棒 `Helmholtz` 蒸发，只留红用例，保活提交 `6d75edd` @ `codex/be-r84`）
 - **写域**：`app/storage/persistence.py`（JSON 后端的读-改-写整段加跨进程锁；缺陷在存储层，不在 `open_platform.py`——第十六班已订正落点）+ 既在库的 `tests/test_r84_persistence_cross_process_lock.py`。
 - **判据**：① 用**真子进程**复现丢失更新（现成红用例已是这个形态，不许改成线程 / 不许 mock 掉锁）；② **不加新依赖**；③ 锁粒度不得把单进程内既有路径拖慢到既有钉的阈值以下；④ NFS / SMB 上 `flock` 语义受限这条**如实写进 docstring**，不许声称跨机安全；⑤ 追平主干后全量相对 **2104 / 35 / 0** 只增不减；⑥ 执行层不 commit。
+## 36. 本班（09-18 23:3x，总控第二十班）：**R91 / R92 判据落盘 + R90a 第二棒退回补条**（这三份判据此前**只活在 Agent 简报里**，简报随线程一起蒸发 ⇒ 必须落盘）
+
+### 36.1 **R91** 上传文件名多点号即被拒（`Erdos` @ `be-r91`；写域 `app/documents/file_security.py` + `tests/test_file_upload_security.py` **只准追加用例**）
+- **现场**（总控实测，非推断）：**11 份在仓真语料**传 `POST /api/v1/upload` 全部 `HTTP 400 {"detail":"unsupported_file"}` —— `IT安全管理制度V3.1.txt`、`MYBI_V3.1_更新日志.txt`、`MYBI_部署手册V1.0.txt`、`MYBI_部署手册V2.0.txt`、`MYO_V5.3_更新日志.txt`、`MYO_V5.4_更新日志.txt`、`MYOps_V2.0_更新日志.txt`、`员工绩效考核办法V1.0.txt`、`员工绩效考核办法V2.0.txt`、`财务管理制度_V2.0.txt`、`费用报销管理制度V2.1.txt`（**最后一份是评测题 `doc-01`「住宿费标准是多少？」的答案出处**）。根因 `app/documents/file_security.py:49` 按**点数**判后缀；立案来源 `de13e90`（checkpoint 顺带，非评审过的安全单）。
+- **判据 ①–⑧（逐条可机器验）**：
+  ① 既有两条攻击用例**一字不改**仍被拒，且 `match="double extensions"` 仍命中（`policy.pdf.txt`、`policy.md.exe`）⇒ 实现必须在「拒绝伪装后缀」这条路径上保留这句话；
+  ② 上面 **11 个真实文件名全部放行**，新用例**逐名列举**，不许只测一个代表；
+  ③ 最终后缀白名单仍是 `{.pdf,.txt,.md,.docx}`；magic-byte 校验不变（`policy.docx` 里塞 `%PDF` 仍拒，那条既有用例别动）；
+  ④ 新判据必须是**可解释的封闭集**，既不是「点数 >1」也不是「点数不限全放行」——按「中间段后缀 ∈ 文档/可执行/脚本/网页 黑名单」判，并在 docstring 写清**为什么这样比数点数更安全**（现规则把 `V2.1.txt` 与 `payload.pdf.txt` 混为一谈，是误伤面不是防护面）；
+  ⑤ 存储侧不变：磁盘名仍是 `uuid + 单一白名单后缀`（`build_storage_path`），display 名只进登记表；路径分隔符 / `..` / 空名 三条检查**一条不许弱化**；
+  ⑥ 新用例至少覆盖：放行类（11 真名 + `报告V10.2.pdf`）、拒绝类（`a.pdf.txt`、`a.tar.gz.exe`、`.hidden.txt` 一类边界、`政策.docx.txt`）；每条**做反证**——把黑名单里任意一项摘掉必须有用例变红，做不到就说明判据是假的；
+  ⑦ 全量相对主干基线只增不减、`0 failed`（简报写的 **2132 是拉树时点**；R84 已并 ⇒ 追平后按 **2142** 起算）；
+  ⑧ 不 commit，改完留在工作树里交总控验收。
+- 🔴 禁碰：`app/api/v1/chat.py`、`app/documents/catalog.py`、`app/rag/**`、`app/storage/persistence.py`、`app/db/migrations.py`、`docker-compose.yml`、`frontend/**`、`.env*`、`documents/**` 本体；**不得往 8001 打请求**（总控在用知识库）。
+
+### 36.2 **R92** 查询改写现网 100% 失效（`Averroes` @ `be-r92`；写域 `app/common/model_handler.py` + `app/rag/retrieval_pipeline.py` 的 `QueryRewriter` 段 + 新建 `tests/test_r92_rewrite_thinking.py`）
+- 根因链与三腿实测表见看板 **§4AZ.5**（**路线已裁定 = 原生 `/api/chat` + `think:false`**；`/v1` 腿在 `max_tokens=256` 下 `finish_reason=length` / content=0）。这里只列判据：
+  ① **真机前后对照**：改前必现空 content；改后在容器里 `QueryRewriter.rewrite("住宿费标准是多少？")` 必须返回 `rewrites>=2` 且 `sub_questions>=1`，且**不再**打 `查询改写失败`。取数 = 探针 `docker cp` 进 `enterprise-brain-backend-1:/tmp` 再 `docker exec -w /app -e PYTHONPATH=/app` 跑；「改后」一腿用 `PYTHONPATH=/tmp/<dir>:/app` 覆盖导入，🔴 **禁止覆盖镜像里的 `/app`**；拿不到就明说，只交离线证据；
+  ② **机制在根上断掉**：非流式这条边界必须真拿到「关闭思维链后的正文」（原生腿 `think:false` 或等价可证方案）。🔴 **只调大 `REWRITE` 的 `max_tokens` 不算修好**；若判断必须调，给前后秒数与 token 数并单独申报。`stream=True` 那条（遗留答案口）行为**逐字节不变**；
+  ③ **空响应与不可解析必须可区分**：两条路径的日志文案与标记不同、各一条用例钉住；`finish_reason`/`done_reason == length` 时**不得静默回退**成「用原始问题」（原始问题兜底本身保留，不能让改写失败拖垮检索）；
+  ④ **零回归**：全量 `>= 2142 + 新增用例数`、`0 failed`，既有断言一条不许弱化或删除；`tests/test_file_upload_security.py`、`tests/test_r90a_*` 不在域内；不得不改既有用例时逐条列出给总控审；
+  ⑤ **边界不变**：不改其它 tier 预算、不动 `ModelTier` 枚举、不改 `PERSISTENCE_BACKEND`、不新增第三方依赖（`httpx` / `openai` 已有可用）、`ModelHandler` 对外签名向后兼容（新增关键字参数可以，改语义不行）；🔴 不许碰 `app/agents/nodes.py` / `_make_model`（**那是 R29 的边界**）；
+  ⑥ **离线测试**：新用例必须在 `LOCAL_MODEL_NAME=__eb_test_disabled__` 下全绿且**不开真 socket**（R56 的桩会记账），报 `passed/failed/skipped` 三个数 + 秒数。
+- ⇒ **排序**：R92 并树之后才允许派 **R29**（同层，R29 直接继承本单路线结论）。
+
+### 36.3 **R90a 第二棒退回补条**（`Galileo` @ `be-r90a`；写域仍是 §34.2 那四个文件，**盘上上一棒 4 条未提交改动是本单主体，必须续改不得推倒**）
+- **退回原因**（总控 22:24 亲跑，见看板 §4AZ.4）：真 PG 上 `provision_embedding_scope()` 第一步就死 —— `could not determine data type of parameter $2`，`show app.embedding_dimension` = unrecognized ⇒ **0010 没跑到、什么都没下发**；而 29 条离线用例 + 全量 2171/35/0 **全绿**，因为 `FakeConnection` 自己实现了 `format()`。
+- ① `be-r90a/app/db/migrations.py:71` `_FORMAT_ALTER_DATABASE_SQL` 的**两个 `%s` 加 `::text`**（同容器真 psycopg 单条对照：不加 → `IndeterminateDatatype`；加 → OK；`%I`/`%L` 本身正常）。**不许**退回 Python 拼装库名（「不经拼装、由服务端引号化」是硬要求，方向没错，只是缺类型）；`set_config(%s,%s,TRUE)` 不动，若判断也要加类型要给理由。
+- ② 🔴 **把假连接按 PG 真实类型规则改**：至少让无类型 `format(%s, ...)` 在 `FakeConnection` 里抛 `IndeterminateDatatype`（或对 SQL 文本断言必带 `::text`），**并新增用例钉住这个形状**——这条是 ① 的防回归本体，**比 ① 更重要**，只改代码不加钉 = 退回。
+- ③ 零回归：29 条既有用例的**判定断言一条不许弱化/删除**（改脚手架可以）；全量以 **2142** 起算（上一棒 2171 = 2142 + 29），新增报净增数，`0 failed`。
+- ④ docstring 补两点（总控已裁）：「库级值与运行时声明不一致时改库级声明并 warning，已有向量由 0010 的类型检查守，GUC 不是那道防线」；以及 fail-open（`current_database()` 答不出 ⇒ warning + 返回 None）**被接受**的理由：真库永远答得出，0010 才是防线。
+- ⑤ **不做**（已并入 R90b，别顺手改）：`deploy/.env.server.example` 补两行、compose 改 `${VAR:?}`、`docker-compose.dev.yml`、migrate 角色 owner/superuser 包装。🔴 禁碰 `migrations/**`（含 `migrations/0010_pgvector_chunks.sql:216` 的 `%I`）、`tests/test_storage_contract.py`、`tests/conftest.py`；**不许跑 docker / 连真库**，真机那一腿由总控亲跑（夹具已验证可复现）。
+- **结案口径**：一次性库夹具**零手工 `ALTER`** 直接 `applied=10 / MIGRATE_EXIT=0`，否则 R90a 不算结案；老库 `app.embedding_dimension` 现值 768 不得改变。
+
+## 37. 本班（09-19 12:1x，总控第二十班续）：**R93 无出处题归桶 + 独占窗口前置**（`Feynman` @ `be-r93`，只读单）
+
+### 37.1 为什么立这张单
+- R36 判据③（L552「未落真机分数不算 R36 完成」）是 **R29 / R33 / R35 三单共同的质量闸门**，而闸门卡在两件业主侧动作上：独占时间窗 + 重建后端镜像。窗口没开的这段时间，能做的就是**把窗口里会被卡住的东西先离线算清楚**，别出现第二轮废跑（§4AZ.3 那轮就是这么废的）。
+- 已核实的账：容器 KB **89 篇** / 目标 **100 篇**；R66 后无出处题数 **55 → 29**（`9f2f869` 提交信息自述 + 跟进单 §25.0 复算口径）。**这 29 条就是真机分前剩下的未知数**。
+
+### 37.2 判据（四步，全部离线可复算，零模型调用）
+① **独立复算**无出处题数（`tests/fixtures/business_evaluation_100.jsonl` 的 `must_contain` × `documents/*.txt` 字符串检索），与 R66 自述的 29 对齐；不一致**以复算为准并解释口径差异**（大小写 / 全半角 / 分词粒度 / 是否把 `data/报销明细表.csv` 当出处 / 是否允许同义改写），并把匹配规则写成一段话。
+② **逐条归四桶**：A 语料缺页（补哪一篇能一次清几条）/ B 措辞漂移（给语料原文行，属评测集语义问题**只能报业主**）/ C 数据题（`data/报销明细表.csv` 能否 pandas 实算）/ D 客户私有永无解（**不该进准确率分母**，口径要业主裁）。每条给 `题号 + 原词 + 一句理由`。
+③ 静态裁定**真机跑的到底是 Chroma 还是 pgvector**（不许连库；查 `retrieval_pipeline.py` / `indexing.py` 的档位开关**与调用点**），并回答「若哪天切成 pgvector，这轮基线是否立刻失效」（背景：R58 实测 PG `chunk_vectors=0`）。
+④ 列出 runbook **P-1..P-9 没覆盖**的开窗前置，每条给「怎么查（具体命令）+ 不查会怎样」。
+🔴 硬约束：写域只有新建的 `docs/handoff/2026-09-19-eval-evidence-audit.md`；**评测集一个字不许改**（`tests/test_evaluation_report.py` 钉着）；**零模型调用**（GPU 归 R92/R90a）；不许 docker / 起服务 / 连库 / 打 8001。
+
+## 38. 本班（09-19 12:2x，总控第二十班续）：**R50 增量索引 + 低峰可续跑全量重建**（`Ohm` @ `be-r50` @ `43e773e`）
+
+### 38.1 判据（计划书 §5.2 只给了两行，细化由总控补，落地时逐条自证）
+① **增量**：库里 N 篇时增/改 1 篇，只允许该篇 chunk 被重嵌入，**不得全库重扫**；用既有确定性 embedding 桩断言「embed 文本条数 == 该篇 chunk 数」，并给旧行为对照数。计划书那句「单文档增量 <2 s」**必须写清分母含不含模型推理**，不含的那一半留总控真机。
+② **可中断续跑**：中途异常中止 ⇒ 再跑必须跳过已完成、继续未完成，最终与一次跑完**逐 chunk 一致**（幂等），不得要求人工清库。给「第一跑到 k / 第二跑剩 N-k / 合计 == 单跑」三行数字。
+③ 🔴 **不闪断**（本单最硬）：重建进行中并发读检索必须始终看到一套**自洽**结果，**禁止先删后建**；必须是先建新、后**单点原子切换**；用例钉「重建到一半时命中数 == 重建前且 > 0」。
+④ **R22 承重**：宽度/模型一律 `configured_embedding_scope()`（`43e773e` 刚由 R90a 接成应用侧声明入口），不许第二套读法、不许回落 `DEFAULT_EMBEDDING_DIMENSION=768`。
+⑤ **不建表**：不许新增 SQL 表/列/迁移文件（`migrations/**` 是业主写域）；判断非建表不可就**停下来申报**，交总控请业主放行。
+⑥ **零回归**：全量以 **2255 / 35 / 0** 起算只增不减，既有断言一条不许弱化（`test_r22_*` / `test_r44_*` / `test_r58_*` / `test_r90a_*` 只能更红不能改软）。
+⑦ 不 commit，留树交总控；**禁 docker / 真模型 / 8001**（GPU 归 R92）；禁碰 `retrieval_pipeline.py`、`model_handler.py`、`app/agents/**`、`chat.py`、`frontend/**`、语料本体。
+
