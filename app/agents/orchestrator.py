@@ -49,6 +49,7 @@ from app.agents.evidence import (
 )
 from app.memory import compress_messages
 from app.common.logger import logger
+from app.common.monitoring import is_production_environment
 from app.trace.store import TraceStore, default_trace_store
 
 # ==================== 持久化 ====================
@@ -56,21 +57,142 @@ from app.trace.store import TraceStore, default_trace_store
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
 
 
+#: 判据 2（跟进单 §41.1）要求"当前 checkpointer 后端"机器可查，所以每次决策都留一份状态，
+#: 由 app/common/monitoring.py 挂到 /api/v1/health/details。形状照 monitoring.queue_storage_state()：
+#: 五个子系统键 + backend。"uninitialised" 是一个真值而不是占位 —— orchestrator 是懒导入的
+#: （app/api/v1/chat.py:1201），第一发请求之前根本没有"决定"可报。
+_CHECKPOINT_STATE_SHAPES = {
+    "postgres": {
+        "storage_mode": "postgres",
+        "durable": True,
+        "shared_across_processes": True,
+        "protection": "none",
+        "backend": "postgres",
+    },
+    "memory": {
+        "storage_mode": "memory",
+        "durable": False,
+        "shared_across_processes": False,
+        "protection": "none",
+        "backend": "memory",
+    },
+    "refused": {
+        # 生产环境拒降级：没有可用的 checkpointer 可报，只能如实写"不可用 + 开机即拒"。
+        "storage_mode": "unavailable",
+        "durable": False,
+        "shared_across_processes": False,
+        "protection": "refuse_start",
+        "backend": "none",
+    },
+    "uninitialised": {
+        "storage_mode": "unavailable",
+        "durable": False,
+        "shared_across_processes": False,
+        "protection": "disabled",
+        "backend": "none",
+    },
+}
+
+#: 图状态到底落在哪。进程刚起来时是 uninitialised，之后由 _make_checkpointer() 整体改写。
+_CHECKPOINT_STATE = {
+    **_CHECKPOINT_STATE_SHAPES["uninitialised"],
+    "detail": "the orchestrator has not built a checkpointer yet",
+}
+
+#: 与 app/api/v1/alerts.py:62、app/api/v1/chat.py:520 同一口径的那句话。生产环境缺持久化
+#: checkpointer 不是"降级一次就好"，是不通过。
+CHECKPOINT_REQUIRED_IN_PRODUCTION = (
+    "PostgresSaver checkpointer is required in production; run migrations first"
+)
+
+
+def checkpointer_storage_state() -> dict:
+    """编译进图的那份状态实际存在哪里。只读内存，不连接、不建池、不开线程。"""
+    return dict(_CHECKPOINT_STATE)
+
+
+def _record_checkpointer(kind: str, detail: str) -> None:
+    global _CHECKPOINT_STATE
+
+    _CHECKPOINT_STATE = {**_CHECKPOINT_STATE_SHAPES[kind], "detail": detail}
+
+
+def _fail_checkpointer_loudly(reason: str, *, database_reachable: bool):
+    """把降级说明白，再按环境决定"退"还是"拒"。
+
+    旧实现把 psycopg 的事务块报错谎报成「Postgres 不可用」（跟进单 §41.1 实证那行 WARNING，
+    同刻 postgres 容器 healthy），所以这里唯一的撒谎豁免是探活真失败：只有它才有资格说数据库
+    不可达。开发态退 MemorySaver；生产态不退，因为 backend / worker / scheduler 是三个进程，
+    各持一份进程内 MemorySaver 等于 HITL 挂起之后没人接得住。
+    """
+    reachable = "数据库可达" if database_reachable else "数据库不可达"
+    logger.error(f"[Orchestrator] checkpointer 未能用上 PostgresSaver（{reachable}）: {reason}")
+    if is_production_environment():
+        logger.error(
+            "[Orchestrator] 生产环境不接受 MemorySaver 降级："
+            f"{CHECKPOINT_REQUIRED_IN_PRODUCTION}（原因见上一行）"
+        )
+        _record_checkpointer(
+            "refused", f"{reason} ({reachable}); {CHECKPOINT_REQUIRED_IN_PRODUCTION}"
+        )
+        raise RuntimeError(f"{CHECKPOINT_REQUIRED_IN_PRODUCTION} ({reason})")
+    logger.error("[Orchestrator] 已降级 MemorySaver：图状态只活在本进程，重启即丢")
+    _record_checkpointer("memory", f"{reason} ({reachable})")
+    from langgraph.checkpoint.memory import MemorySaver
+
+    return MemorySaver()
+
+
 def _make_checkpointer():
-    """Postgres 可用 → PostgresSaver 持久化；不可用 → 降级 MemorySaver。
-    导入时不硬依赖数据库（快速探活 2s），保证无库也能导入/跑逻辑测试。"""
+    """Postgres 可用 → PostgresSaver 持久化；否则开发态降级 MemorySaver、生产态拒绝启动。
+    导入时不硬依赖数据库（快速探活 2s），保证无库也能导入/跑逻辑测试。
+
+    判据 1（跟进单 §41.1）：连接池必须 autocommit。PostgresSaver.setup() 跑的是它自带的
+    MIGRATIONS，其中 checkpoint_*_thread_id_idx 三枚是 CREATE INDEX CONCURRENTLY（实测 .venv 的
+    langgraph/checkpoint/postgres/__init__.py MIGRATIONS[6]/[7]/[8]），而 psycopg 默认把每条语句
+    包进事务块 ⇒ 非 autocommit 的池每次启动都必抛，与数据库在不在线无关。这条不改 migrations/**、
+    也不新增建表 SQL —— 那三枚 CONCURRENTLY 是 langgraph 自己的账。
+    """
+    if psycopg is None or psycopg_pool is None:
+        return _fail_checkpointer_loudly(
+            "psycopg / psycopg_pool 未安装，无法使用 PostgresSaver",
+            database_reachable=False,
+        )
     try:
         psycopg.connect(_PG_URL, connect_timeout=2).close()
-        pool = psycopg_pool.ConnectionPool(_PG_URL, max_size=50, min_size=5, open=True)
+    except Exception as e:  # noqa: BLE001 - 探活失败是唯一可以说"数据库不可达"的分支
+        return _fail_checkpointer_loudly(
+            f"Postgres 探活失败: {type(e).__name__}: {e}", database_reachable=False
+        )
+    pool = None
+    try:
+        pool = psycopg_pool.ConnectionPool(
+            _PG_URL,
+            max_size=50,
+            min_size=5,
+            open=True,
+            # autocommit 是给 setup() 的 CREATE INDEX CONCURRENTLY 让路；prepare_threshold=0
+            # 是 langgraph 对 PostgresSaver + 连接池的既定配置（预编译语句在池里会串味）。
+            kwargs={"autocommit": True, "prepare_threshold": 0},
+        )
         from langgraph.checkpoint.postgres import PostgresSaver as _PostgresSaver
+
         cp = _PostgresSaver(pool)
         cp.setup()
-        logger.info("[Orchestrator] 使用 PostgresSaver 持久化")
-        return cp
-    except Exception as e:
-        logger.warning(f"[Orchestrator] Postgres 不可用，降级 MemorySaver: {e}")
-        from langgraph.checkpoint.memory import MemorySaver
-        return MemorySaver()
+    except Exception as e:  # noqa: BLE001 - 这里绝不能再写成"Postgres 不可用"
+        if pool is not None:
+            try:
+                pool.close()
+            except Exception:  # noqa: BLE001 - 收尾失败不该盖住真正的原因
+                pass
+        return _fail_checkpointer_loudly(
+            "Postgres 可连，但 PostgresSaver.setup() 失败（这不是数据库不可用）: "
+            f"{type(e).__name__}: {e}",
+            database_reachable=True,
+        )
+    _record_checkpointer("postgres", "PostgresSaver 正在持久化图状态（跨进程共享，重启不丢）")
+    logger.info("[Orchestrator] 使用 PostgresSaver 持久化")
+    return cp
 
 
 _checkpointer = _make_checkpointer()

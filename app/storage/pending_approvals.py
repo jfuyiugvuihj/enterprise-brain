@@ -5,8 +5,9 @@ LangGraph checkpoint 里，``check_interrupt`` 必须先知道 thread_id 才能�
 （app/agents/orchestrator.py:1152），全仓没有枚举能力，所以审批面板此前没有真话可读。
 
 列端点仍然要复核：这张表是"事件记录"，不是"当前状态"的权威。读侧对每一行调
-check_interrupt，对不上就地标 stale——这也是 MemorySaver 降级
-（app/agents/orchestrator.py:68-71）重启后图里什么都没有时唯一不至于说谎的办法。
+check_interrupt，对不上就地标 stale——这也是开发态 MemorySaver 降级
+（app/agents/orchestrator.py 的 _fail_checkpointer_loudly，R98）重启后图里什么都没有时唯一不至于说谎的办法。
+注：R98 之后生产环境不再允许这种降级（拒绝启动），所以"重启后图里什么都没有"只在开发态还可能发生。
 
 存储后端与 app/storage/sessions.py 一样是过渡形态：PG 就绪时读写
 ``pending_approvals``（migrations/0008_pending_approvals.sql），否则退到进程内账本。

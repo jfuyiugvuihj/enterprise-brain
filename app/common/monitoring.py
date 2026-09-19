@@ -6,6 +6,7 @@ sees a green health check while enterprise state lives in a process-local dictio
 import json
 import os
 import shutil
+import sys
 import time
 from pathlib import Path
 from urllib.request import urlopen
@@ -65,6 +66,35 @@ def queue_storage_state() -> dict:
         "backend": "redis" if configured else "none",
         "detail": "REDIS_URL configured" if configured else "REDIS_URL is required for the reliable queue",
     }
+
+
+def checkpointer_storage_state() -> dict:
+    """R98: which store the compiled LangGraph is actually persisting thread state to.
+
+    The orchestrator owns the answer -- app/agents/orchestrator.py records every decision
+    its _make_checkpointer() makes, so this cannot drift from the object the graphs were
+    really compiled with. It is read out of sys.modules instead of being imported: the
+    orchestrator is loaded lazily by app/api/v1/chat.py, and importing it from here would
+    build all four worker graphs inside a health poll. "The orchestrator has not built a
+    checkpointer yet" is therefore a value, not a failure -- same discipline as
+    _hot_index_state(), which refuses to guess "off" when it cannot read the switch.
+    """
+    reader = getattr(
+        sys.modules.get("app.agents.orchestrator"), "checkpointer_storage_state", None
+    )
+    if not callable(reader):
+        return {
+            "storage_mode": "unavailable",
+            "durable": False,
+            "shared_across_processes": False,
+            "protection": "disabled",
+            "backend": "none",
+            "detail": "the orchestrator has not built a checkpointer yet",
+        }
+    try:
+        return dict(reader())
+    except Exception as exc:  # pragma: no cover - defensive for a monitoring surface
+        return _unavailable_state(f"checkpointer_probe_failed: {type(exc).__name__}")
 
 
 def storage_snapshot() -> dict:
@@ -206,6 +236,7 @@ def build_health_snapshot(performance: dict | None = None) -> dict:
         },
         "model": _model_snapshot(),
         "queue": dict(storage["subsystems"]["queue"]),
+        "checkpointer": checkpointer_storage_state(),
         "dependencies": dependencies,
         "performance": performance or {},
         "storage": storage,
