@@ -434,3 +434,34 @@ def test_counter_evidence_removed_evidence_turns_the_pin_red(checker, capsys, tm
     assert set(already_missing) < set(got), "新缺口应当严格包住旧的 29 条"
     with pytest.raises(AssertionError, match=TEACHING):
         _assert_matches_pinned_29(got)
+
+
+# ---------------------------------------------------------------------------
+# 语料目录的卫生（09-19 并主干后补）—— 本件读的是目录，脏一次就全体红一次
+# ---------------------------------------------------------------------------
+
+def test_the_corpus_directory_holds_no_upload_litter(checker):
+    """documents/ 兼作上传落地区，混进残片之后，95 篇就不是同一个 95 篇了。
+
+    09-19 并主干当天主树实测 115 个 .txt（多出的 20 个是 browser_ / codex-upload- /
+    kb_policy_ / qa_ 之流的 __vN 版本副本），data/ 实测 7 个 csv ⇒ 本文件 11 条用例在干净树
+    绿、在这棵树上红。根因不在脚本，在目录。R49 早已在自己文件里写下同一句话（取 git 清单
+    而不是目录列表），本件按主口径就是目录列表，所以这条钉负责让残片别悄悄回来。
+    """
+    txt = sorted(path.name for path in (REPO_ROOT / "documents").glob("*.txt"))
+    assert len(txt) == checker.EXPECTED_CORPUS_TXT_COUNT, (
+        "documents/ 里的 .txt 不再是主口径那 " + str(checker.EXPECTED_CORPUS_TXT_COUNT)
+        + " 篇。多出来的是上传/浏览器测试残片：把它们移出语料目录，别就地删 —— 没进 git 的那几份"
+        "是 KB 里对应行的唯一源字节，移走前先确认那一行还在服务器上。"
+    )
+
+    pdf = sorted(path.name for path in (REPO_ROOT / "documents").glob("*.pdf"))
+    assert len(pdf) == 2, (
+        "--include-pdf 那个备选口径钉的是 2 篇 PDF（§3.10 的 " + str(PDF_CALIBER_ROWS)
+        + " 行），多一篇算出来的就不是那个数"
+    )
+
+    csv = sorted(path.name for path in (REPO_ROOT / "data").glob("*.csv"))
+    assert csv == ["报销明细表.csv"], (
+        "data/ 里只有明细表是语料，其余 csv 是浏览器测试残片 ⇒ --include-csv 口径会被它们动过"
+    )
