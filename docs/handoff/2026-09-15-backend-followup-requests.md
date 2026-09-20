@@ -1876,3 +1876,24 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 **三、R125 投递（判据见 §61，本班 22:4x 与 R116 同批、零文件交集）**：写域 `scripts/rebuild_index.py` + 新用例 + `docs/handoff/2026-09-17-pgvector-adoption-plan.md` §8.6 那一段。🔴 禁碰 `migrations/**`、真 `deploy/.env.server`、`app/**`。⚠️ 交班必读：真机 `deploy/.env.server` **已有** `EMBEDDING_MODEL`/`EMBEDDING_DIMENSION` 那一对（本班实测容器内 `EMBEDDING_MODEL=nomic-embed-text`、`/health/details` 报 `scope=nomic-embed-text/768`）⇒ Peirce 交回的"业主必做①"其实已满足，R125 不要再为它设判据。
 
 **四、run5 官方基线变更**：run5 是**第一枚含 R122 装箱诚实**的样本 ⇒ `correctness 0.4762 / evidence 0.6857` 起作新基线（旧：run4 0.4571/0.7524、run3 0.4571/0.7333、run2 0.3524/0.7048）。🔴 引用分数时必须同批说明"证据分下降是 R122 的预期代价"，不许只报 correctness 涨了。`hitl` 仍 18/105 占分母 ⇒ R123 三选一仍等业主。
+### 63. 业主 09-20 22:5x 授权「1、2 你都可以自主推进」⇒ R123 走甲案已派建 · pgvector 双写窗本班自执行（普查已做完，施工排在跑分探针之后）
+
+**一、U3 真实现状（本班只读普查，不依赖 R125 的字段——它还没落地）**：`docker exec -i enterprise-brain-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -f -'` + 从 stdin 喂 SQL（🔴 **别用 `sh -lc` 也别在串里写 `$$vector$$`，那条坑本班又撞了一次：`trailing junk after numeric literal`）：
+- `vector` 扩展 **0.8.6 已装**；向量列两枚：`chunks.embedding`、`chunk_vectors.embedding`。
+- 🔴 **`chunks` 985 行里 `embedding` 非空 = 0 枚；`chunk_vectors` 全表 0 行**；`vector_dims` 分布为空 ⇒ **PG 侧从来没有写过一枚向量**，既不是「全零」也不是「跨维」，是**纯空白**。P3 双读对比从未发生过，与计划书 §5.2/看板记的一致。
+- `schema_migrations` 已应用 **0001..0010**（0011 不需要，R120 结论复核为真）。
+- 运行中容器 `VECTOR_DUAL_WRITE=off`（R120 的透传在镜像里生效了，len=3）；`EMBEDDING_MODEL`/`EMBEDDING_DIMENSION` 均已在真机 `deploy/.env.server` 里（len=16 / len=3）⇒ **Peirce 交回的「业主必做①」确实已满足，别再为它设判据**。
+
+**二、可回退点已建（本班亲做，恢复件全部在仓外 `E:`）**：`E:\eb-backups\pre-vector-20260920-225640\`
+- `enterprise_brain-pre.dump` **16 546 020 B**（`pg_dump -Fc`），本班用 postgres 容器内 `pg_restore --list` 验过：**242 条 TOC**、表条目可见（`agent_runs`/`agent_steps`/`alert_rules`/`alerts`…）⇒ 不是哑件。
+- `chroma_db\` **236 MB / 6 文件**、`data\` **10 MB / 6 文件**（含 `index-versions.json`、`sessions.json`、`traces`、`报销明细表.csv`）、`documents\` **16 MB / 101 文件**——全部 `docker cp` 自运行中的后端容器卷。
+- ⚠️ 恢复演练（R58 判据④）**故意排在写入向量之后做**，因为那条判据要求「演练覆盖 PG 向量列」，现在演练等于没覆盖。
+
+**三、施工顺序（本班与下一班都照这个走；🔴 第 4 步之前必须确认 `be-r123` 的真机探针已完成，因为第 4 步会重建后端容器）**
+1. ✅ 普查（本节一）。2. ✅ 备份+验件（本节二）。
+3. `deploy/.env.server` 追加/改 `VECTOR_DUAL_WRITE=on`（🔴 改前先 `Copy-Item` 留一份 `*.r63bak`；该文件不受 git 跟踪，改了不会有脏项来提醒你）。
+4. `docker compose --env-file deploy/.env.server -f docker-compose.yml up -d --wait --wait-timeout 300` ⇒ 三枚服务重开，回读 `docker exec enterprise-brain-backend-1 printenv VECTOR_DUAL_WRITE` 必须 == `on`。🔴 这一步会**清掉该容器的 `docker compose logs` 历史**：任何要保的日志先 `> file` 取走（本班 run5 日志 1 429 500 B 已在 `%TEMP%\evalrun\backend-run5.log`，UTF-16 LE）。
+5. **金丝雀单题重建**（先小后大，别一上来跑全量）：`docker exec enterprise-brain-backend-1 python scripts/rebuild_index.py --apply --confirm-scope "nomic-embed-text/768" --document <一枚真语料文件名> --json`，然后回 PG 数：`select count(*) filter (where embedding is not null), count(distinct vector_dims(embedding)) from chunks;` 必须从 **0** 变成非 0 且维度=768。🔴 `--confirm-scope` 的值必须逐字等于 `<model>/<dimension>`，写错它按设计拒绝。
+6. 金丝雀过了再放量：`--apply --confirm-scope "nomic-embed-text/768" --incremental`（`--incremental` 是断点续跑的正道，`--time-budget-seconds`/`--max-documents` 可切片，边界落在文档之间不会留半件）。
+7. **R58③ 真跑** `scripts/compare_vector_recall.py`（Chroma vs PG 双读差异表）+ **R58④ 恢复演练**（把本节 2 的 dump .restore 进一次性库 `eb_restore_drill`，验向量列在恢复后仍可查，验完 `DROP DATABASE`——🔴 建库/删库属改数据，本班已获业主授权，下一班若要复用需自己再拿授权）。
+- ⚠️ 双写开着之后**每次上传/重建都会写 PG**，这是维护窗的本意；但 run6 跑分窗口内**不许**同时做重建（P-17 语料快照会漂）。⇒ 窗做完立刻把 `VECTOR_DUAL_WRITE` 留 `on` 没问题，只是**开跑分窗前确认没有正在进行的 `--apply`**。
