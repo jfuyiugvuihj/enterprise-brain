@@ -2815,3 +2815,8 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 一次投递纪律守住了：本班 R100/R101 各**只用 `spawn_agent` 一次**，零补投、零第二通道，事故 #14 类未复发。
 - 「报某物不存在之前先确认自己在哪一层查」这次救了我一次：我先断言那 4 篇在容器里 `find` 不到=没有实体，实际是上传件存**哈希名**，映射在 `.document-versions.json`。**查不到 ≠ 不存在**。
 - 文档字节纪律本班破过一次并当场修复：`read_text()` 会把 CRLF 归一成 LF，再写回就是全文件重写（跟进单一度 2817 增 / 1413 删）。此后所有文档追加一律**字节级**：临时块文件 → `replace(b"\r\n",b"\n").replace(b"\n",b"\r\n")` → `write_bytes`，且每次 `git diff --numstat` 必须只显示新增行。
+
+### 4BF.9 收尾两条（09-20 00:5x，都是执行法，不是新事实）
+
+- **P-18 的正确执行法（差点被我记成假故障）**：Redis 的口令只在容器内可用，**别让它在宿主上拼引号**。我先用 `docker exec -e RP=... sh -lc "redis-cli -a \"$RP\""` 得到 `WRONGPASS`，一度判定「运行中的容器与 `deploy/.env.server` 口令漂移」——**那是我的 shell 引号坏了，不是环境坏了**。正确写法是把整条 `sh -lc` 参数用**单引号**交给 PowerShell，让容器自己展 `$REDIS_PASSWORD`：`docker exec enterprise-brain-redis-1 sh -lc 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning --scan --pattern "answer:*" | wc -l'`。实取：**`answer_keys=0`、`dbsize=0`、容器口令与文件口令同为 32 字符** ⇒ P-18 过（首轮不会被缓存喂）。凡「先报故障再报环境」的判据，都要先怀疑自己那一层的引号。
+- **R103 越域一格，总控批准并在此记账**：`Halley` 为满足判据 4（健康检查与 HTTP 出口必须同词），在 `app/knowledge_graph/service.py` 的 state 里加了 `reason="knowledge_graph_unconfigured"`，因而**必须**同步改 `tests/test_deployment_guards.py:471` 那枚逐键断言的钉子——该文件**不在**我给它的写域里。核对过它的 diff：只加 4 行（新键 + 3 行理由注释），未放宽任何断言。这不是它擅自扩面，是我把写域划小了：`§44.1` 判据 3/4 与那条钉子本就同源。**下次划写域时，凡是「逐键断言整个 dict」的钉子，都要把测试文件一起给进去**，否则执行层只有两条坏路：要么不合规，要么假绿。
