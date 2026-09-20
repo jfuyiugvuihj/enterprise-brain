@@ -4,6 +4,8 @@ LangChain Tools — 封装企业智脑全部能力，供 ReAct Agent 自主调�
 import os
 import json
 import re
+from collections import OrderedDict
+import inspect
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 from app.common.logger import logger
@@ -379,6 +381,216 @@ import threading
 _search_pipeline = None
 _pipeline_lock = threading.Lock()
 
+# ==================== R112 · 返回串装箱：doc 腿与 data 腿共用一层 ====================
+#
+# 容量真源与两枚实测预留都在 ``app/rag/retrieval_pipeline.py`` 的装箱那一节（那里写清了
+# 为什么是 ``input_budget_tokens``、为什么不能在代码里再抄一枚 2560/4096）。本层只做两件
+# 只有本层能做的事：
+#   ① 把真的要塞回模型的字符串装进本轮剩余的 room；
+#   ② 把"丢几条、装进几条、装箱后 prompt 多少 token"打成一行 ``[PromptPack]`` 账。
+#
+# 为什么还要一枚累加的账：同一个 worker 步里模型可以一次并发发好几发工具调用（DOC_PROMPT
+# 自己就写着"一次想好几个搜索方向，同时搜多个关键词"），每一发的返回串都会留在 prompt 里。
+# 只按"单发别超过 room"装，两发各自装满照样撞墙——真机 doc-12 那枚 prompt_tokens=3897
+# 就是这个形状。所以第二发只许用剩下的 room。
+# 账先挂在 ``configurable.thread_id + worker`` 上：worker 子图带 checkpointer，子线程是
+# ``{父会话}:{worker}``，上一轮发给模型的检索串这一轮还在历史里，所以 room 必须跨轮累减；
+# 只有 thread 身份时退回 ``step_id``（同一发里的并发多发调用）；两样都没有（直接调工具的
+# 测试、MCP 单次调用）就按单发装箱、不跨调用累加，也不假装它们是同一条会话。
+
+_pack_lock = threading.Lock()
+#: 装箱账：账本键 → 这一本账上已经吃掉多少 prompt token。见 ``_pack_ledger_key``。
+_pack_ledger: "OrderedDict[str, int]" = OrderedDict()
+#: 账本上限：进程内长跑时旧会话/旧 step 不再回来，超上限就丢最早那些，不留无界字典。
+_STEP_PACK_LEDGER_MAX = 256
+#: ``search_for_principal`` 认不认 ``context_pack``，按实现类缓存一次签名检查。
+_retrieval_pack_support: "OrderedDict[str, bool]" = OrderedDict()
+
+#: 一条都装不下时留给"必须保住的那一条"的截断标记。宁可让模型看到最高分那条的前半段，
+#: 也不要真机那种 evidence_n=0 的整题空手；标记本身也计进 room，不留暗账。
+PACK_TRUNCATION_MARK = "…（上下文装箱截断）"
+
+
+def _pack_ledger_key(config) -> str:
+    """这一发工具调用该记在哪一本装箱账上；认不出身份就返回空串（＝不累加）。"""
+    conf = (config or {}).get("configurable", {}) or {}
+    thread = str(conf.get("thread_id") or "").strip()
+    if thread:
+        return "thread:" + thread + ":" + str(conf.get("worker") or "").strip()
+    step = str(conf.get("step_id") or "").strip()
+    return "step:" + step if step else ""
+
+
+def _fit_unit_to_room(text: str, room_tokens: int) -> str:
+    """整批一条都装不下时的最后一档：按 room 二分裁这一条，裁完贴上可见的截断标记。"""
+    from app.rag.retrieval_pipeline import text_pack_tokens
+
+    if text_pack_tokens(text) <= room_tokens:
+        return text
+    if room_tokens <= text_pack_tokens(PACK_TRUNCATION_MARK):
+        return ""
+    low, high = 0, len(text)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if text_pack_tokens(text[:mid] + PACK_TRUNCATION_MARK) <= room_tokens:
+            low = mid
+        else:
+            high = mid - 1
+    return (text[:low] + PACK_TRUNCATION_MARK) if low > 0 else ""
+
+
+def _pack_dropped_labels(dropped, limit: int = 3) -> str:
+    """被丢单元的前 30 字摘要，最多三枚：账要能指着名字核，但不能把正文再喷回日志。"""
+    dropped = list(dropped)
+    labels = [str(unit).replace("\n", " ")[:30] for unit in dropped[:limit]]
+    if len(dropped) > len(labels):
+        labels.append("…+" + str(len(dropped) - len(labels)))
+    return ",".join(labels) or "-"
+
+
+def context_pack_room_public() -> int:
+    """给文案与测试用的 room 读数：转读真源，不在此处抄数。"""
+    from app.rag.retrieval_pipeline import context_pack_room
+
+    return context_pack_room()
+
+
+def _no_room_text(leg: str, candidates: int) -> str:
+    """裁无可裁时工具自己说的那一句：指名是本题检索料/数据结果超出本机上下文。
+
+    这既是判据 3 要的"与模型坏了分色"，也是判据 2 要的"丢得不静默"：它说清了几条候选、
+    本机 room 是多少，客户与运维都不会把它读成"模型挂了"。
+    """
+    subject = "文档检索料" if leg == "doc" else "数据查询结果"
+    return (
+        f"本轮{subject}共 {candidates} 条，但没有一条装得进本机上下文窗口"
+        f"（装箱后剩余 room={context_pack_room_public()} token）：是本题的{subject}超出本机上下文，"
+        "不是模型故障。请缩小提问范围或换更具体的关键词后重试。"
+    )
+
+
+class _PackedUnits(list):
+    """装进 prompt 的那几段本身，顺手带上这一发的账：``len()`` 即送出的条数。
+
+    ``list`` 语义一个字都不变（判空、``join``、按下标取都一样），所以三条腿的返回串照旧
+    拼；多出来的这几个字段是给调用方把"真送出去的那几条"翻译给证据袋与 span summary 用的，
+    免得那边为了知道丢了几条再算一遍。
+    """
+
+    def __init__(
+        self,
+        units,
+        *,
+        dropped_count: int = 0,
+        truncated_count: int = 0,
+        packed_tokens: int = 0,
+        room_left: int = 0,
+    ) -> None:
+        super().__init__(units)
+        self.dropped_count = int(dropped_count)
+        self.truncated_count = int(truncated_count)
+        self.packed_tokens = int(packed_tokens)
+        self.room_left = int(room_left)
+
+
+def _pack_kept_hits(hits: list, units: list, fitted: list) -> list:
+    """把真送出去的那几段翻译回 hit：装箱只裁尾巴，所以 ``fitted`` 恒为 ``units`` 的前缀。
+
+    被 ``_fit_unit_to_room`` 裁过尾的那一条（只可能是第一条）按**实际送出的正文**交给证据袋，
+    免得 ``excerpt`` 与 ``content_sha256`` 说"模型读过整段"而它其实只读到裁过的那一截。认不出
+    这种前缀关系就退回原条并留一行警告：宁可正文少诚实一点，也不许少记一条模型真读过的来源。
+    """
+    kept: list = []
+    for index, unit in enumerate(fitted):
+        original = units[index]
+        if unit == original:
+            kept.append(hits[index])
+            continue
+        sent = unit[: -len(PACK_TRUNCATION_MARK)] if unit.endswith(PACK_TRUNCATION_MARK) else unit
+        if not original.startswith(sent):
+            logger.warning(
+                "[PromptPack] 装箱前缀不变量被打破（第 %s 段不是裁尾片段）：证据袋按原条记", index + 1
+            )
+            kept.append(hits[index])
+            continue
+        header, _, _ = original.partition("\n")
+        body = sent[len(header) + 1:] if sent.startswith(header + "\n") else ""
+        kept.append({**hits[index], "content": body})
+    return kept
+
+
+def _retrieval_supports_context_pack(pipeline) -> bool:
+    """这条检索腿的实现认不认 ``context_pack`` 这个参数（按类缓存，认一次算一次）。
+
+    认就在最终 top-k 处先裁一刀；不认（旧签名的子类、采集替身）就照旧调用。装箱的第二层
+    在本文件里，无论如何都会装：绝不能因为多传一个参数，把一次正常检索变成
+    ``retrieval_unavailable``——那是把可用性洞换成新的可用性洞。
+    """
+    key = f"{type(pipeline).__module__}.{type(pipeline).__qualname__}"
+    cached = _retrieval_pack_support.get(key)
+    if cached is None:
+        try:
+            cached = "context_pack" in inspect.signature(
+                pipeline.search_for_principal
+            ).parameters
+        except (TypeError, ValueError):  # 内置可调用对象没有可读签名：按不认处理
+            cached = False
+        _retrieval_pack_support[key] = cached
+    return cached
+
+
+def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: bool = False) -> list:
+    """按名次把 ``units`` 装进本轮剩余 room，打一行的账，返回装进去的那几段。
+
+    ``units`` 必须已按优先级从高到低排好（检索腿回来的顺序就是 RRF/重排分数降序，数据腿
+    按文件与结论的既有顺序）：装箱只从尾部裁，不在这里重新发明排序。
+    """
+    from app.rag.retrieval_pipeline import (
+        CONTEXT_HISTORY_RESERVE_TOKENS,
+        CONTEXT_PACK_TIER,
+        CONTEXT_SHELL_RESERVE_TOKENS,
+        PROMPT_PACK_MARKER,
+        context_pack_room,
+        pack_prefix_by_rank,
+        text_pack_tokens,
+    )
+
+    units = list(units)
+    room_total = context_pack_room()
+    key = _pack_ledger_key(config)
+    with _pack_lock:
+        used = _pack_ledger.get(key, 0) if key else 0
+        room = max(0, room_total - used)
+        fitted, dropped, packed_tokens = pack_prefix_by_rank(units, room)
+        truncated = 0
+        if not fitted and units and keep_first_truncated:
+            head = _fit_unit_to_room(str(units[0]), room)
+            if head:
+                fitted, dropped, truncated = [head], units[1:], 1
+                packed_tokens = text_pack_tokens(head)
+        if key and packed_tokens:
+            _pack_ledger[key] = used + packed_tokens
+            _pack_ledger.move_to_end(key)
+            while len(_pack_ledger) > _STEP_PACK_LEDGER_MAX:
+                _pack_ledger.popitem(last=False)
+        billed = used + packed_tokens
+    reserve = CONTEXT_SHELL_RESERVE_TOKENS + CONTEXT_HISTORY_RESERVE_TOKENS
+    ledger_kind = "thread" if key.startswith("thread:") else ("step" if key else "off")
+    logger.info(
+        f"{PROMPT_PACK_MARKER} leg={leg} tier={CONTEXT_PACK_TIER} room_total={room_total} "
+        f"room_left={room} candidates={len(units)} fitted={len(fitted)} dropped={len(dropped)} "
+        f"truncated={truncated} packed_tokens={packed_tokens} ledger_packed_tokens={billed} "
+        f"prompt_estimate_tokens={reserve + billed} ledger={ledger_kind} "
+        f"dropped_labels={_pack_dropped_labels(dropped)}"
+    )
+    return _PackedUnits(
+        fitted,
+        dropped_count=len(dropped),
+        truncated_count=truncated,
+        packed_tokens=packed_tokens,
+        room_left=room,
+    )
+
 
 def _get_pipeline():
     global _search_pipeline
@@ -422,11 +634,13 @@ def search_docs(query: str, config: RunnableConfig) -> str:
     with start_tool_call(config, tool_name="search_docs", arguments={"query": query}) as span:
         pipeline = _get_pipeline()
         try:
-            docs, rewrites = pipeline.search_for_principal(
-                query,
-                principal,
-                top_k=5,
-            )
+            retrieval_kwargs = {
+                "top_k": 5,
+            }
+            if _retrieval_supports_context_pack(pipeline):
+                # R112：这条腿的结果直接拼进 prompt，所以最终 top-k 先按 room 裁一刀。
+                retrieval_kwargs["context_pack"] = True
+            docs, rewrites = pipeline.search_for_principal(query, principal, **retrieval_kwargs)
         except Exception as exc:
             # 上游异常能塞任意 code：先过枚举，落到枚举内才开始说话（R65 判据②）。
             code = _public_error_code(getattr(exc, "code", ""), "retrieval_unavailable")
@@ -438,19 +652,43 @@ def search_docs(query: str, config: RunnableConfig) -> str:
             span.finish("empty", summary={"hit_count": 0, "rewrite_count": len(rewrites or [])})
             return f"未找到与'{query}'相关的文档信息。建议尝试以下改写角度的关键词：{', '.join(rewrites[:3])}"
 
-        record_document_hits(bag_from_config(config), query=query, hits=docs)
-        span.finish("completed", summary={"hit_count": len(docs), "rewrite_count": len(rewrites or [])})
+        from app.rag.retrieval_pipeline import DOC_HIT_CONTENT_CHARS, format_relevance
 
-    from app.rag.retrieval_pipeline import format_relevance
+        result_parts = []
+        for i, d in enumerate(docs, 1):
+            source = d.get("source", "unknown")
+            score = format_relevance(d)
+            content = d["content"][:DOC_HIT_CONTENT_CHARS]
+            result_parts.append(f"[{i}] 来源:{source} 相关度:{score}\n{content}")
 
-    result_parts = []
-    for i, d in enumerate(docs, 1):
-        source = d.get("source", "unknown")
-        score = format_relevance(d)
-        content = d["content"][:500]
-        result_parts.append(f"[{i}] 来源:{source} 相关度:{score}\n{content}")
-
-    return "\n\n---\n\n".join(result_parts)
+        # R112：装箱之后才是发给模型的返回串。装不下丢名次最低的整条；整批都装不下才裁最高分
+        # 那一条的正文尾巴（``keep_first_truncated``），连一帧都装不下时才说人话并留下账。
+        fitted = _pack_into_prompt_room(
+            config, leg="doc", units=result_parts, keep_first_truncated=True
+        )
+        # R112 复验第 2 条：证据袋与这一发 span 只许说"模型真读到过的那几条"。这两件事以前在
+        # 装箱之前结清，于是装进 3 条却对外报 5 条——答案引用一条被丢掉的材料时
+        # evidence_coverage 仍显示它有出处，那是出处撒谎（R36 的诚实性边界）。summary 同时给
+        # 找回/送出/丢掉/裁过四个数：整批判空那一发也读得出 hit_count>0 而 packed_count=0，
+        # 不会被下游误读成"没检索到"（那条路是上面 status="empty" 那一发）。
+        record_document_hits(
+            bag_from_config(config),
+            query=query,
+            hits=_pack_kept_hits(docs, result_parts, fitted),
+        )
+        span.finish(
+            "completed",
+            summary={
+                "hit_count": len(docs),
+                "packed_count": len(fitted),
+                "dropped_count": fitted.dropped_count,
+                "truncated": fitted.truncated_count,
+                "rewrite_count": len(rewrites or []),
+            },
+        )
+        if not fitted:
+            return _no_room_text("doc", len(result_parts))
+        return "\n\n---\n\n".join(fitted)
 
 
 # ==================== Data Tool ====================
@@ -596,6 +834,8 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
     parts = []
     scope_codes: list[str] = []
     produced = 0
+    #: (文件名, 该文件过滤后的帧, 它进 prompt 的第一段下标)：装箱证明送出去了才记证据袋
+    pending_datasets: "list[tuple[str, object, int]]" = []
     for fname, file_path in files:
         try:
             df = load_excel(file_path)
@@ -606,7 +846,7 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 parts.append(_row_scope_line(fname, scope_info))
                 continue
             produced += 1
-            _record_dataset_evidence(config, fname, df)
+            pending_datasets.append((fname, df, len(parts)))
             profile = profile_dataframe(df)
             cols_info = [f"{c['name']}({c['dtype']})" if isinstance(c, dict) else str(c) for c in profile["columns"]]
             parts.append(f"📁 {fname}: {profile['rows']}行 × {len(cols_info)}列 — 列: {', '.join(cols_info)}")
@@ -640,7 +880,24 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
             code=_row_scope_terminal_code(scope_codes),
         )
 
-    result = "\n".join(parts)
+    # R112：这段直接进 prompt，而且多文件时是"每文件 概览 + 结论 + 15 行样本 JSON"顺着
+    # 往后可无限长。装箱按既有顺序从尾部裁——先掉的必然是样本 JSON 那种大块，其次才是
+    # 后一个文件；一条都装不下时说清是本题数据结果超窗，不静默（判据 2/3）。
+    fitted = _pack_into_prompt_room(
+        config, leg="data", units=parts, keep_first_truncated=True
+    )
+    # R112 复验第 2 条（与 doc 腿同一读法）：装箱没送出去的那个文件，证据袋不许说模型读过它。
+    # 存活线就是前缀长度——装箱只裁尾巴，所以"这个文件的第一段还在前缀里"等价于它进了 prompt。
+    for _ds_fname, _ds_df, _ds_index in pending_datasets:
+        if _ds_index < len(fitted):
+            _record_dataset_evidence(config, _ds_fname, _ds_df)
+        else:
+            logger.info(
+                "[PromptPack] leg=data dataset=%s recorded=false（装箱未送出，证据袋不记）", _ds_fname
+            )
+    if not fitted:
+        return _no_room_text("data", len(parts))
+    result = "\n".join(fitted)
     # The answer a caller sees is built from this string when the model is unavailable,
     # so it carries data only: an echoed 用户查询 and an instruction addressed to the
     # model both leaked into the reply.
@@ -709,7 +966,6 @@ def _query_data(query: str, config: RunnableConfig) -> str:
         except Exception:
             unreadable += 1
             continue
-        _record_dataset_evidence(config, fname, df)
         attempted += 1
         code = _llm_pandas_code(df, query)
         res = safe_query(df, code)
@@ -717,7 +973,18 @@ def _query_data(query: str, config: RunnableConfig) -> str:
             result = res["result"]
             if not isinstance(result, str):
                 result = json.dumps(result, ensure_ascii=False, default=str)
-            return f"📊 {fname} 查询结果:\n{result}"
+            # R112：查询结果是一整块，装箱装不下时只能裁这块的尾巴（带可见截断标记），
+            # 连标记都装不下就换那一句指名"本题数据结果超出本机上下文"的话。
+            query_text = f"📊 {fname} 查询结果:\n{result}"
+            fitted = _pack_into_prompt_room(
+                config, leg="query", units=[query_text], keep_first_truncated=True
+            )
+            if not fitted:
+                # R112 复验第 2 条：整块都没送出去 ⇒ 证据袋什么都不记（模型一条都没读到）。
+                return _no_room_text("query", 1)
+            # 同一读法：只有真进 prompt 的那一块，才算模型读过这个数据集。
+            _record_dataset_evidence(config, fname, df)
+            return fitted[0]
     # 三种终态各说各话（R62 判据①②）：查询确实没过 ≠ 无权看到行 ≠ 压根没有行可读。
     if attempted:
         return "查询失败：LLM 生成的代码在沙箱中多次执行未通过，请换个问法。"

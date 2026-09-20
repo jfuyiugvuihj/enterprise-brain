@@ -556,6 +556,110 @@ class CrossEncoderReranker:
         return ranked[:top_k]
 
 
+# ==================== R112 · 上下文装箱：容量取真源，预留取实测 ====================
+#
+# 真机 2026-09-20 那扇窗（跟进单 §52/§53）撞出来的事实：analysis 档在本机
+# （``n_ctx=4096``、该档声明输出 ``max_tokens=1536``）能送进模型的**题面**只有 2560 枚
+# token，而这个数的真源是 ``app/agents/contracts.py`` 里 ``ModelBudget.input_budget_tokens``
+# ——全仓此前只有算超时那一处在读它，没有任何一处组装上下文时读它。检索料不占房就整段拼进
+# prompt，于是 prompt_tokens=3897 / 4610 那两题在 ``context_window_code()`` 当场判拒
+# （``authorize()`` 直接 raise），客户看到的是一枚与"模型坏了"同色的短句，evidence_n=0。
+#
+# 装箱的三条规矩钉在这里，别处不许抄第二份：
+#   ① 总容量 = 该档 ``input_budget_tokens``（= ``n_ctx`` − 该档声明的 ``max_tokens``）。
+#      本模块既不写 2560 也不写 4096：配置一改，装箱自己跟着变。
+#   ② 预留 = 下面两枚**实测**常数（system 段 + 本题题面 + 模型自己写的规划文字 +
+#      tool_calls/ToolMessage 壳，以及最多两轮同会话历史的问答文字），不许拍脑袋。
+#   ③ 装不下丢名次最低的整条，且不静默：丢几条、装进几条、装箱后多少 token 都进
+#      ``[PromptPack]`` 那一行账，能 grep、能事后核。
+PROMPT_PACK_MARKER = "[PromptPack]"
+
+#: 实测预留（不是偏好）。测量口径：四条 worker 腿各自的真 system 段（``DOC_PROMPT`` /
+#: ``DATA_PROMPT`` / ``CHART_PROMPT`` / ``EXPORT_PROMPT``）经真 ``create_react_agent``
+#: 组装，量"最终 ``prompt_tokens`` − 本轮工具串 token"，取 4 条腿 × 题面 ≤400 字 ×
+#: 规划文字 ≤360 字 × 1~3 轮工具调用 那张形态表的最大值（632，最大值出自带两发并发工具
+#: 调用的 data 腿）。复测就是 ``tests/test_r112_prompt_packing.py`` 里那枚
+#: ``test_shell_reserve_covers_the_measured_assembly_shell``——system 段或壳变长，它当场红。
+CONTEXT_SHELL_RESERVE_TOKENS = 632
+#: 同一把尺实测：doc 子图每多压一轮"上一问 + 上一答"（答案按 400 字算）多花 161 枚 token，
+#: 这里按两轮留出 322 枚（复测：
+#: ``test_history_reserve_covers_the_pinned_number_of_turns``）。上一轮**检索串**留在历史里
+#: 那一笔不靠这个数兜：装箱账按 ``thread_id + worker`` 跨轮累加（见
+#: ``app/agents/tools.py`` 的 ``_pack_ledger_key``），所以第二轮起只会少装几条，不会再把
+#: prompt 顶回 ``n_ctx``。再往后的"该裁历史"是组装点的活（``app/agents/orchestrator.py``，
+#: 本单写域外），已连实测数一起交回总控。
+CONTEXT_HISTORY_RESERVE_TOKENS = 322
+
+#: 装箱服务的是哪一档：doc/data/chart/export 四条 worker 腿跑的都是 analysis 档
+#: （``app/agents/orchestrator.py`` 建图那几行），所以容量只问这一档的真源。
+CONTEXT_PACK_TIER = "analysis"
+
+#: 一条命中最多能进 prompt 的正文长度。截断它的工具和计量它的装箱必须是同一个数，否则
+#: 最终 top-k 会按"整条原文多长"决定丢谁，而 prompt 里其实是裁过的那一份——装得下的
+#: 名次被白白丢掉。以前这个数只写在 ``app/agents/tools.py`` 的 ``[:500]`` 上，现在住在
+#: 这里，由那一处引用；``app/mcp_server.py`` 另有一份手抄的 500，不属本单写域。
+DOC_HIT_CONTENT_CHARS = 500
+
+
+def context_pack_capacity(tier: str | None = None) -> int:
+    """装箱总容量：该档 ``input_budget_tokens``。全仓唯一出处，这里不抄第二枚数。"""
+    from app.agents.contracts import ModelTier
+    from app.common.model_budget import model_tier_budget
+
+    return int(model_tier_budget(ModelTier(tier or CONTEXT_PACK_TIER)).input_budget_tokens)
+
+
+def context_pack_room(tier: str | None = None) -> int:
+    """本轮还能给工具串用多少 token：总容量再扣掉两枚实测预留，扣穿了就是 0。"""
+    return max(
+        0,
+        context_pack_capacity(tier) - CONTEXT_SHELL_RESERVE_TOKENS - CONTEXT_HISTORY_RESERVE_TOKENS,
+    )
+
+
+def text_pack_tokens(text: str) -> int:
+    """与窗口守卫同一把尺：装箱按 ``estimate_text_tokens`` 量，判拒也按它量，两边不各说各话。"""
+    from app.common.model_budget import estimate_text_tokens
+
+    return int(estimate_text_tokens(text or ""))
+
+
+def pack_prefix_by_rank(unit_texts: list, room_tokens: int, *, token_of=text_pack_tokens):
+    """按名次装箱：从最高名的开始装，第一枚装不下就把它连同它后面整段丢掉。
+
+    返回 ``(kept, dropped, kept_tokens)``。丢的是后缀，所以编号不会打洞，也不会出现
+    "第 5 名进来了第 3 名反而没进来"。room=0 就是全丢——由调用方把这件事说成人话，不静默。
+    """
+    units = list(unit_texts)
+    room = max(0, int(room_tokens))
+    kept: list = []
+    used = 0
+    for unit in units:
+        cost = int(token_of(unit))
+        if used + cost > room:
+            break
+        kept.append(unit)
+        used += cost
+    return kept, units[len(kept):], used
+
+
+def pack_hit_list(hits: list[dict], room_tokens: int):
+    """检索结果最终 top-k 的装箱：按"真正会进 prompt 的那一份正文"计量，丢名次最低的整条。"""
+    return pack_prefix_by_rank(
+        list(hits),
+        room_tokens,
+        token_of=lambda hit: text_pack_tokens(str(hit.get("content") or "")[:DOC_HIT_CONTENT_CHARS]),
+    )
+
+
+def _pack_source_labels(hits: list[dict], limit: int = 3) -> str:
+    """装箱账里那几条被丢掉的来源名：逐条截到 40 字，最多列 ``limit`` 条，后面折叠计数。"""
+    labels = [str(hit.get("source") or "unknown")[:40] for hit in hits[:limit]]
+    if len(hits) > limit:
+        labels.append("…+" + str(len(hits) - limit))
+    return ",".join(labels) or "-"
+
+
 # ==================== 统一检索入口 ====================
 
 class RetrievalPipeline:
@@ -578,7 +682,8 @@ class RetrievalPipeline:
     def search(self, query: str, top_k: int = 5,
                where: dict | None = None, pred=None,
                tier: str | None = None,
-               owner_id: str | None = None) -> tuple[list[dict], list[str]]:
+               owner_id: str | None = None,
+               context_pack: bool = False) -> tuple[list[dict], list[str]]:
         """
         执行完整检索管线。
         返回 (重排后的文档列表, 改写版本列表)
@@ -589,6 +694,10 @@ class RetrievalPipeline:
 
         ``owner_id`` 只给第 ①' 步的术语扩展当目录命名空间用：它决定读哪一份术语目录，
         不参与权限判定，也不进返回值。不传就是只看共享的那一份。
+
+        ``context_pack``（R112）只作用在最后一步：True 时按本机上下文剩余 room 从尾部裁掉
+        名次最低的整条，并打一行 ``[PromptPack]`` 账。默认 False —— 审批预审与检索调试视图
+        要看的是"检索究竟找回了什么"，不该被装箱遮住。
         """
         # ① 查询改写 + 拆分
         tier = resolve_rewrite_tier(tier)
@@ -649,6 +758,21 @@ class RetrievalPipeline:
         # ④ Cross-Encoder 重排
         ranked = self.reranker.rerank(query, fused, top_k=top_k)
 
+        # ⑤ R112：只有会把结果拼进 prompt 的调用方才装箱。重排回来的顺序就是分数从高到低
+        # （rerank 按 ``_score`` 降序，重排不可用时是 RRF 名次），装箱只从这个顺序的尾部裁，
+        # 不在这里发明第二次排序。
+        if context_pack:
+            room = context_pack_room()
+            packed, dropped, packed_tokens = pack_hit_list(ranked, room)
+            if dropped:
+                logger.info(
+                    f"{PROMPT_PACK_MARKER} leg=retrieval tier={CONTEXT_PACK_TIER} "
+                    f"room={room} candidates={len(ranked)} fitted={len(packed)} "
+                    f"dropped={len(dropped)} packed_tokens={packed_tokens} "
+                    f"dropped_sources={_pack_source_labels(dropped)}"
+                )
+            ranked = packed
+
         logger.info(f"检索完成: 语义{len(all_semantic)} + BM25{len(all_bm25)} → RRF{len(fused)} → Top{len(ranked)}")
         return ranked, rewritten.get("rewrites", [])
 
@@ -658,6 +782,7 @@ class RetrievalPipeline:
         principal: Principal | None,
         top_k: int = 5,
         tier: str | None = None,
+        context_pack: bool = False,
     ) -> tuple[list[dict], list[str]]:
         """Retrieve only chunks permitted for the supplied Principal.
 
@@ -665,6 +790,9 @@ class RetrievalPipeline:
         expressed twice, because a recall path can hand back a chunk the store did not
         filter; both now come from one scope object so they cannot disagree about what
         an administrator may see.
+
+        ``context_pack`` 原样转给 :meth:`search`：装不装箱由调用方（结果会不会进 prompt）
+        决定，本层不替它判断。
         """
         scope = resolve_document_retrieval_scope(principal)
         # tier 不传时由 search() 读环境变量决定：调用方一行不改也能整条链路分档。
@@ -674,7 +802,7 @@ class RetrievalPipeline:
         owner_id = str(getattr(principal, "user_id", "") or "").strip() or None
         found = self.search(
             query, top_k=top_k, where=scope.filters, pred=scope.allows, tier=tier,
-            owner_id=owner_id,
+            owner_id=owner_id, context_pack=context_pack,
         )
         record_retrieval_scope(principal, scope, hit_count=len(found[0]))
         return found
