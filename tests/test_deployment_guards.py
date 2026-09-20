@@ -434,6 +434,10 @@ def test_open_platform_registration_is_persisted_and_shared_across_instances(mon
     monkeypatch.setenv("OPEN_PLATFORM_APP_STORE_PATH", "")
     open_platform.configure_app_store("")
     assert open_platform.app_registry_storage_state()["protection"] == "read_only"
+    # R106: the same state now also carries the word the route answers with and the
+    # health page reports, so this nail follows it key by key -- "read_only" says what
+    # happens to the write, this says this deployment never named a store.
+    assert open_platform.app_registry_storage_state()["reason"] == "open_platform_unconfigured"
     with pytest.raises(ProductionReadOnlyProtection):
         open_platform.register_application("crm", allowed_actions=["query"])
 
