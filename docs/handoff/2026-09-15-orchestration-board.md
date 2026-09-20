@@ -2758,3 +2758,59 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 主树 HEAD `bc278f5`，脏项 = 6 个 `chroma_db/**` ` M`（已跟踪，属 D12 反跟踪账）+ `frontend/node_modules.stub/**` 10809 个未跟踪（改名遗留，`node_modules/` 忽略规则不匹配 `.stub`）+ 根目录 `_*.py` 等一次性垃圾 ⇒ **主树不能开窗**（P-1 要求 CLEAN，故用 `be-eval95`）。
 - 待业主：**D1–D13**（`docs/handoff/2026-09-17-human-gates.md` 末节表）——**D14甲 已批但被本班 §4BE.2 自按**。
 - 心跳 `automation-2` 仍 `PAUSED` 指向死线程 `01a0acfb`，业主令「别动」，未动。
+
+## 4BF. 本班（09-19 21:0x → 09-20 00:2x，总控第二十四班）：**D14甲 开窗准备 · R98/R99/R101 三单结案 · P-11 失明被重写 · Docker 搬盘事故 + 一次本班自伤**
+
+### 4BF.0 一句话
+
+窗口没开，但**开窗所需的事实全部换成了实测**：R98（checkpointer 谎报）与 R99（预算自相矛盾 + 空正文冒充答案）并树，R101 把「native 快 20 倍」这条线查清并**推翻了本班自己写进 §41.2 的一条推论**，P-11 的结构性失明重写成了双向可核的闸门。主树基线 2428/35 → **2507 passed / 35 skipped**，双远端同步中。
+
+### 4BF.1 落树的账（全部总控主树亲跑，不采信执行层自述）
+
+- `78b8507` 欠账结清：`scripts/eval_transport_ask_v2.py`（235 行冻结件）+ 三分片从 TEMP 保进仓库，**拼接逐字节等于夹具**（sha256 前缀 `2230b2b45be18bfb`，24,346 B）。
+- `73fb71e` **R98**（`Boole`）：池走 autocommit、探活与 setup 两段 try、降级升 error 级、生产态拒启动、`checkpointer_storage_state()` 进 `/health/details`。真库代验通过（`backend=postgres durable=true`，三枚 `*_thread_id_idx` 实存，日志无 `CONCURRENTLY`）。主树 2437/35。
+- `352c5f0` **R99**（`Gibbs`，子提交 `b051753`）：`authorize()` 先按声明档过 n_ctx 再让时钟对答案表态、低于地板不缩且改判 `budget_unaffordable`、`clamped=` 语义收紧、空正文不再叫离线回复。be-r99 亲跑 2486/36，主树 **2507/35**（= 2448 + 59）。
+- `e653df4` **R101**（`Kant`，子提交 `c35f377`）：只读调查，唯一产物 58 行文档，其 7 条断言总控主树逐条复验为真。
+- 文档面：跟进单 §41（`9a5aaab`）/ §42（`3c63658`）/ §42.3（`ede64f2`）/ §41.2 订正（`2caa3a8`）/ §43（`486e2a9`）；runbook §15（P-11 重写）+ §16（开窗机械预检与三个坑）；human-gates D1–D13 裁定表（`45f8704`）。
+
+### 4BF.2 本班推翻了自己的三条判断（都留了证据，不是悄悄改口）
+
+1. 🔴 **「模型侧 4 秒就能答完」作废**（R101 查出）：21:21:36 那行 `ollama-native 应答 4.08s/115tok` 出自 `app/common/model_handler.py:364`，而 native 腿只在 `:435` 的 `if not stream:` 内可达、`:436-438` 注释自陈「非流式只有查询改写」、预算恒为 REWRITE/256 ⇒ **那是一发查询改写不是答题**。候选因 (c) 的原始证据同样不可比。compat/native 速度差改以 §42 八变体对照为准。已就地订正 `2caa3a8`。
+2. 🔴 **「compat 不比 native 慢」也作废**（本班自己 22:3x 写的）：真关掉思考后差 20 倍（1.9 s/46 tok vs 37.3 s/1328 tok）。当时两边都在生成思考链，慢是共同的，所以测不出来。`thinking:{type:"disabled"}` 在 compat 上**只把推理搬出 `content`，计费 token 一个没省**。
+3. **D11 按证据推翻了自己给业主的建议**：`refactor_guide.pdf` 原建议立案补齐（甲），实测它在 seed 名单外、105 题对它 0 引用 ⇒ 落乙（declare 非语料），并已机器可读化（`deploy/workspace-seed.json` 新增 `non_corpus` 段 + 三枚钉）。
+
+### 4BF.3 P-11 的结构性失明（本班新发现，已修）
+
+- 旧 P-11 仓库侧是 `glob("*.txt")`。这不是「不够严」，是**结构性看不见**：任何非 txt 语料从定义上就进不了比对，所以 `documents/refactor_guide.pdf` 被 git 跟踪两周、从未进 seed、从未被任何闸门报出；反向也瞎（库里 4 篇在仓库无文件）。
+- 修成 `scripts/check_corpus_parity.py`：仓库侧 = `git ls-files`（全部后缀），live 侧 = `/documents` + `/documents/catalog`（顺手并掉旧 P-16），五桶，`--offline` 时对没有证据的桶打 `n/a` 而不是打空。实测基线 `disk=97 tracked=97 manifest=100 live=100`、`never_seedable=[]`、verdict **PASS**。
+- **那 4 条 `server_only` 不是新故障，是早已钉住的旧账**：`tests/test_seed_workspace.py:24` 的 `SERVER_ONLY_ROWS` 就是它们；出处已查实——`.document-versions.json` 里四条全 `owner_id=admin`、`created_at` 集中在 **2026-09-18 22:00:49~22:01:04** 的浏览器验收批次（含一本 11.3 MB 电子书）。**不许删条目、不许扩名单**，唯一修法是把文件放回盘上。
+- 🔴 **这条改变报告口径**：全新装机只能种出 **96 篇**，本机答的是 **100 篇**。语料数必须写「100（其中 4 篇仅存于本机卷，装机不可重建）」，只写 100 是给客户的假可复现性。
+
+### 4BF.4 Docker 搬盘事故、一次本班自伤、一次业主 reset（损害评估=零损失）
+
+- 业主 21:2x 把 Docker Desktop 与 Ollama 从 C 盘搬到 `E:/`（D 盘符为 E）⇒ `docker` 从 PATH 消失、HKLM `Docker Inc` 键丢失、`com.docker.service` binPath 指旧路。**症状不是「服务没起」而是「CLI 找不到 docker」**，先确认 backend 是否还在跑再动手。恢复：HKLM `AppPath` 指向 `E:/Docker/Docker`、service binPath 改 E 盘、Machine PATH 两项改 E 盘、`~/.docker/config.json` 加 `cliPluginsExtraDirs`（否则 `docker compose` 报 not a docker command）。
+- 🔴 **事故 #32 = 本班自伤**：修复脚本里顺手 `Start-Service com.docker.service`——它搬盘前本就 Stopped/Manual 且引擎照跑 25 小时。它以 SYSTEM 占住 `%LOCALAPPDATA%/docker-secrets-engine/engine.sock` ⇒ 后端 bind 前改名 `.stale` 必失败 ⇒ 崩溃循环 + 留下 **WinError 1920 不可 stat 不可删**的 AF_UNIX 占位符。**该服务现应永久 Stopped/Manual，下班别再启动它。** 复发绕行法（本机 4 次）：这类损坏 socket 删不掉也改不了名，**唯一有效动作是把整个父目录改名挪走再建空目录**（`%LOCALAPPDATA%/Docker/run`、`%LOCALAPPDATA%/docker-secrets-engine` 各一次）。
+- 22:13:06 业主在错误弹窗点了 **Reset to factory defaults**。评估=**零损失**：`docker_data.vhdx` 112.5 GB 的 mtime 21:27:23 早于 reset；8 容器自动回来；重启后逐项复跑 P-9=100 篇（含 `制度与口径登记表.txt`）、P-10 `报销明细表.csv` 在 `/app/data` 且在 `/api/v1/data-files`、P-11 `only_in_repo=[]`、P-16 两差集为空、P-13 `degraded_searches=0`、P-18 Redis `answer:*` 0 键。
+
+### 4BF.5 D12 卫生账（业主授权删，执行为「只搬不删」）
+
+- 79 项 / 240,326 B 移入 `企业智脑-debris/2026-09-19/d12-quarantine/`：主树根 76 个 `_*.py`/`_msg_*.txt`/`_brief_*.txt` + 游离看板根副本 + `be-r20/probe.txt` + `be-r53` 两枚 `.r57bak`。主树脏项 10914 → 10839，`be-r53` 现已 clean。
+- **未动**：`chroma_db/**` 反跟踪、`frontend/node_modules.stub/**`（10809 项改名遗留）、`bundle.js`/`content4av.py`/`idx.html`、`docs/screenshots/**`（22 项，仍等业主处置）。
+
+### 4BF.6 在途与写域（本班结束时）
+
+- 在途 Agent：**1**（`Boyle`@`be-r100` = R100，写域 `nodes.py`+`model_budget.py`+r30×2/r99×1 测试+两份 env example+新 `tests/test_r100_*.py`）。23:5x 一次投递，至 00:2x 已落盘 4 文件（全在写域内）。
+- `nodes.py`/`model_budget.py` 归 `Boyle` ⇒ **R102 不许派**（同占 `nodes.py`）、**§42.3 接线不许做**（要碰 `tests/test_r99_budget_selfconsistency.py` 与 `model_budget.py` 的过期 docstring）。排队不是拖延，是文件冲突图。
+- R101 结案后 `docs/handoff/` 无人在写；`app/common/monitoring.py`、`app/api/v1/chat.py`、`app/common/cache.py` **均无主**，§42.3 一旦解锁就能一次做完。
+
+### 4BF.7 开窗前还差什么（就这三件，都不是机械问题）
+
+1. **R100 并树**：现网 compat 在 1536 下每发必出 0 字正文（§42 表 #5），不开 R100 开窗只会量到 105 个 `no_answer_produced`。
+2. **§42.3 接线**：判据 4 的两半（`/health/details` 计数、罐头句子不得入缓存）——R99 诚实交出料并钉住「未接线」，本班没提前做是因为会撞 Boyle 写域。
+3. **计时预算重估**：按 R101 采纳的 A 方案，105 题排 **3–4 小时**；§1/§11 的 73 min 与 §14 的 7.6 h 全部作废。
+
+### 4BF.8 本班立的规矩（写死给下班）
+
+- 一次投递纪律守住了：本班 R100/R101 各**只用 `spawn_agent` 一次**，零补投、零第二通道，事故 #14 类未复发。
+- 「报某物不存在之前先确认自己在哪一层查」这次救了我一次：我先断言那 4 篇在容器里 `find` 不到=没有实体，实际是上传件存**哈希名**，映射在 `.document-versions.json`。**查不到 ≠ 不存在**。
+- 文档字节纪律本班破过一次并当场修复：`read_text()` 会把 CRLF 归一成 LF，再写回就是全文件重写（跟进单一度 2817 增 / 1413 删）。此后所有文档追加一律**字节级**：临时块文件 → `replace(b"\r\n",b"\n").replace(b"\n",b"\r\n")` → `write_bytes`，且每次 `git diff --numstat` 必须只显示新增行。
