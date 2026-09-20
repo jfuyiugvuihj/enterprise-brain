@@ -207,7 +207,11 @@ TIER_MAX_TOKEN_DEFAULTS: dict[ModelTier, int] = {
 #:   (c) NOT SUPPORTED: 1024-1536 output tokens cost 28 s on the native ``/api/chat`` leg and
 #:       38 s on the compatible ``/v1/chat/completions`` leg of the same machine -- inside one
 #:       order of magnitude. Nothing here is designed around the transport, and the earlier
-#:       reading that ``/api/chat`` was simply faster is retired.
+#:       reading that ``/api/chat`` was simply faster is retired. Its scope, though, is one
+#:       specific configuration: both legs were generating hidden reasoning when it was taken.
+#:       Since R100 the compatible leg asks for ``thinking: {"type": "disabled"}``, so this pair
+#:       of numbers no longer describes the two legs as they run today -- re-measure before
+#:       citing it (R101 audit, 09-20).
 #:
 #: These stay the only rates with a recorded provenance, so they remain -- and shortening the
 #: answer, never the deadline, is what makes trusting a pessimistic rate survivable.

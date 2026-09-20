@@ -1558,3 +1558,26 @@ R100 并树后按这三笔做，逐条已验证过形状：
 4. 已知上限题 `insight-02`（104/105）必须单独一行说明它为什么不可能达成，不许把它算成缺陷。
 
 **硬边界**：🔴 **不许打模型、不许起服务、不许跑评测、不许碰 `deploy/**`、不许动 `docs/testing/fixtures/**`（被 `tests/test_evaluation_report.py` 钉住）、不许改任何既有文件**——本单是只读审计。唯一产物：新文件 `docs/handoff/2026-09-20-eval-window-rehearsal.md`（CRLF 无 BOM），以及可选的一枚只读脚本 `scripts/rehearse_eval_window.py`（LF 无 BOM，只读文件、不写数据、不联网）。工作树 `be-r107`；执行层**不得 commit**。**不占 GPU**（与 `Boyle`@R100 同期，若 R100 在做标定，本单绝不许发真机请求）。
+
+### 47. R108 · 全仓 BOM 清账（**机械单**，总控第二十六班立，09-20 12:4x，主树 `e4f2440`，后端基线 **2557 passed / 35 skipped**）
+
+**事实（本班主树 `git -c core.quotepath=false ls-files -z` 逐文件读前三字节实测，不采信任何转述）**：跟踪文件里 **33 枚带 UTF-8 BOM** = **27 枚 `.py`** + **6 枚 docs/scripts**。
+`.py` 27 枚：`app/agents/contracts.py`、`app/agents/state.py`、`app/api/v1/open_platform.py`、`app/common/audit.py`、`app/common/authorization.py`、`app/common/identity.py`、`app/common/model_capabilities.py`、`app/common/open_platform.py`、`app/common/permissions.py`、`app/common/reliable_queue.py`、`app/dashboard/service.py`、`app/db/__init__.py`、`app/db/connection.py`、`app/insights/rules.py`、`app/main.py`、`app/storage/__init__.py`、`app/storage/local.py`、`tests/test_agent_tool_authorization.py`、`tests/test_approval_assistant.py`、`tests/test_dashboard.py`、`tests/test_insights.py`、`tests/test_model_capabilities.py`、`tests/test_open_platform.py`、`tests/test_public_contracts.py`、`tests/test_quality_platform.py`、`tests/test_rbac_abac.py`、`tests/test_upgrade_baseline.py`。
+docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff/2026-09-14-consolidated-fix-plan.md`、`docs/handoff/2026-09-15-orchestration-board.md`、`docs/superpowers/specs/2026-09-12-public-contract-freeze.md`、`docs/testing/baseline-2026-09-08.md`、`scripts/run_backend_tests.ps1`。
+**为什么这是账而不是风格问题**：任何按 `encoding="utf-8"`（不是 `utf-8-sig`）读这些文件再 `ast.parse` 或以首行为锚做正则的工具，拿到的第一个字符是 U+FEFF；同一仓库里 300+ 枚无 BOM 文件与这 33 枚在 `git diff`、grep 锚定、源码文本断言上的行为不一致，而本仓恰恰有「后端测试按源码文本钉前端」「前端测试 `git show` 读后端源码」两条这样的通道。
+
+🔴 **两枚必须排除，不许顺手清**：
+1. `docs/handoff/2026-09-15-orchestration-board.md` —— 看板那枚 BOM 是**故意的**（派工唯一事实源，总控每轮按「BOM + 纯 LF」写回，去掉即破坏既有写回约定与行 splice 定位）。
+2. `scripts/run_backend_tests.ps1` —— Windows PowerShell 5.1 对**无 BOM** 的 `.ps1` 按 ANSI 解码，该脚本含中文；去 BOM 会让它在客户机上把中文读成乱码，这是**真回归**不是洁癖。保留，并在回报里写出这条理由。
+
+**判据**：
+1. 范围 = 上面 **27 枚 `.py` + 4 枚 docs/scripts**（排除那两枚），**一枚不多、一枚不少**；除 BOM 之外不改任何字节。
+2. **逐枚证明等价**：对每一枚断言 `新文件字节 == 原文件字节[3:]`（去 BOM 后与原文件逐字节相等），回报里给 31 枚的 sha256 前/后对照表。禁止用 `sed -i`、格式化器、编辑器整文件重写 —— 那会连带改掉行尾与末尾空行。
+3. **行尾与末尾换行零变化**：每枚文件改前改后的 CRLF 数、LF 数、lone-CR 数三项必须完全一致，逐枚列进对照表。
+4. 新增一枚只读校验脚本 `scripts/check_no_bom.py`（LF 无 BOM，只读、不改文件、不联网），断言「全仓跟踪 `.py` 与 md/scripts（白名单那两枚除外）无 BOM」；它既是本单产物也是以后的绊线。回报须含它改前红、改后绿的原始输出。
+5. 全量回归：后端 `2557 passed / 35 skipped` 基线不许动，改前改后各跑一遍并附两遍原始末 6 行；前端 `npm test` 与 `npm run build` 各一遍（本单没碰 frontend，跑它是为了证明「没连带损伤」）。
+6. 一条反证：随便挑一枚把 BOM 加回去 ⇒ 判据 4 的校验脚本当场红，且不许是空响（要指名那枚文件）。
+
+- **独占写域**：判据 1 那 31 枚文件 + 新增 `scripts/check_no_bom.py`。**禁碰** `app/agents/nodes.py`（R102 在写）、`frontend/**`、`migrations/**`、`docs/testing/fixtures/**`、`docs/handoff/**` 与 `scripts/run_backend_tests.ps1` 里除 `2026-09-14-consolidated-fix-plan.md` 之外的任何文件。
+- **派工时机**：R106 已并树（`b4c7d86`）⇒ 前置解除，可派；与 R102 **零文件交集**（`nodes.py` 无 BOM，本班实测）。工作树 `be-r108`，分支 `codex/be-r108`，基线 = 本单落笔后的主树 HEAD。执行层**不得 commit**。
+- **并树顺序**：R102 先并、R108 后并（R108 是全文件字节改写，后并只需在新 `nodes.py` 上重跑一次校验；反过来会让 R102 的 diff 基准漂掉）。
