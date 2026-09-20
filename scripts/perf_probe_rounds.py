@@ -100,6 +100,28 @@ def load_templates():
     return tpl
 
 
+def doc_content_cap(root=APP_ROOT):
+    """The per-hit content cap the product itself cuts with, read out of the product
+    source over the same read-only route load_templates() uses for the prompt strings.
+    The probe must size chunks with the ruler the packing site meters with
+    (DOC_HIT_CONTENT_CHARS): a number transcribed in here drifts the moment the
+    product one moves. Importing the module instead would drag
+    sentence-transformers/torch into a latency probe process, so this file's rule
+    stands -- read the source, never copy it. A missing constant is a hard fail:
+    the probe never falls back to a number of its own."""
+    tree = ast.parse((root / "app/rag/retrieval_pipeline.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "DOC_HIT_CONTENT_CHARS"
+            for target in node.targets
+        ):
+            return int(ast.literal_eval(node.value))
+    raise RuntimeError(
+        "DOC_HIT_CONTENT_CHARS is gone from app/rag/retrieval_pipeline.py: "
+        "the probe must not invent its own content cap",
+    )
+
+
 def tool_schema(name, description, properties, required):
     return {"type": "function", "function": {
         "name": name, "description": description,
@@ -159,22 +181,23 @@ def measure(case, messages, tools=None, num_predict=400, note="", nonce=True):
                  "answer_head": (content or json.dumps(tcs, ensure_ascii=False))[:70].replace("\n", "\\n")})
 
 
-def tool_result_text(hits):
-    """Reproduce tools.search_docs' return shape: each chunk capped at 500 chars."""
+def tool_result_text(hits, cap):
+    """Reproduce tools.search_docs' return shape: every chunk is cut with the cap
+    the product meters packing with, passed in from doc_content_cap()."""
     parts = []
     for i, (source, content) in enumerate(hits, 1):
-        parts.append("[%d] 来源:%s 相关度:%s\n%s" % (i, source, "未评分", content[:500]))
+        parts.append("[%d] 来源:%s 相关度:%s\n%s" % (i, source, "未评分", content[:cap]))
     return "\n\n---\n\n".join(parts)
 
 
-def real_chunk_text(max_chars=500):
+def real_chunk_text(cap):
     """Read the chunk text tonight KB actually holds, straight off the read-only
     documents dir. Tonight that is ONE file of 116 chars, which is why a synthetic
     500-char chunk overstates the real generation prompt by ~4x."""
     parts = []
     for path in sorted((APP_ROOT / "documents").glob("*.md")):
         text = path.read_text(encoding="utf-8", errors="replace")
-        parts.append((path.name, text[:max_chars]))
+        parts.append((path.name, text[:cap]))
     return parts or [("demo-policy.md", cn_text(116))]
 
 
@@ -197,6 +220,7 @@ def main():
         return not only or name in only
 
     tpl = load_templates()
+    cap = doc_content_cap()
     emit({"case": "templates", "ok": True, "chars": {k: len(v or "") for k, v in tpl.items()}})
     try:
         emit({"case": "runtime", "ok": True,
@@ -228,23 +252,23 @@ def main():
     if want("query_rewrite"):
         measure("query_rewrite", [{"role": "user", "content": tpl["REWRITE_PROMPT"].format(question=q)}],
                 num_predict=400, note="多路查询改写，产品用 stream=False 但同样占 1 个并发槽")
-    tonight = tool_result_text([("经销商信用政策.pdf", cn_text(500))])
-    customer = tool_result_text([("经销商信用政策.pdf", cn_text(500)) for _ in range(5)])
+    tonight = tool_result_text([("经销商信用政策.pdf", cn_text(cap))], cap)
+    customer = tool_result_text([("经销商信用政策.pdf", cn_text(cap)) for _ in range(5)], cap)
     if want("doc_react_2_kbreal"):
-        real = real_chunk_text()
+        real = real_chunk_text(cap)
         measure("doc_react_2_kbreal", [
             {"role": "system", "content": tpl["DOC_PROMPT"]},
             {"role": "user", "content": q},
             {"role": "assistant", "content": "", "tool_calls": [
                 {"function": {"name": "search_docs", "arguments": {"query": "经销商 回款周期 停发新货"}}}]},
-            {"role": "tool", "content": tool_result_text(real)},
+            {"role": "tool", "content": tool_result_text(real, cap)},
         ], tools=[search_tool], num_predict=800,
-           note="今晚真实口径：直接读 /app/documents 里的 %d 个 md（%d 字），search_docs 截 500 字"
-                % (len(real), sum(len(c) for _, c in real)))
+           note="今晚真实口径：直接读 /app/documents 里的 %d 个 md（%d 字），search_docs 截 %d 字"
+                % (len(real), sum(len(c) for _, c in real), cap))
     if want("doc_react_2"):
         for label, payload, note in (
             ("doc_react_2_kb1", tonight, "今晚口径：知识库 1 篇 1 块，检索返回 1 条"),
-            ("doc_react_2_kb5", customer, "客户规模口径：top_k=5 全部命中，每条 500 字上限"),
+            ("doc_react_2_kb5", customer, "客户规模口径：top_k=5 全部命中，每条 %d 字上限" % cap),
         ):
             if not want(label):
                 continue
