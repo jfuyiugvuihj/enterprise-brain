@@ -706,6 +706,35 @@ def _rewrite_followup(session_id: str, user_msg: str) -> str:
             source=ModelSource.LOCAL,
             stream=False,
         )
+        from app.common.model_handler import MODEL_UNAVAILABLE_CODE, RATE_LIMITED_CODE
+
+        # 改写腿原先认不出"这一趟没真改写"：chat() 失败时不抛异常，只把一枚类型化 error_code
+        # 挂在返回体上。本守卫的集合只收"这句话由 model_handler 自己造、不是模型说的"这两枚 ——
+        #   MODEL_UNAVAILABLE_CODE  provider 挂/超时，正文是"离线模式：模型不可用…"四十字
+        #   RATE_LIMITED_CODE       容量闸住改写预算，正文是 103 字的英文 "Local model capacity
+        #                           is exhausted…"（app/common/model_handler.py:246-253）
+        # 两枚的正文都非空且远超下面 len(rewritten) > 3 那道尺寸检查，会原样取代用户真正的问题
+        # 送进图、送进检索、参与缓存键，而 except 分支在这两条路上都不触发。反过来
+        # RESPONSE_EMPTY_CODE / OUTPUT_TRUNCATED_CODE 是真答案身上带的诊断码 —— 尤其
+        # output_truncated 是一条被长度切短的**真改写** —— 所以这里是一张枚举表，不是
+        # "error_code 非空即失败"的总线判；判别也不看句子文本，不另立第二份词表。
+        canned_reply_reasons = {
+            MODEL_UNAVAILABLE_CODE: "模型不可用，provider 未生成业务结论",
+            RATE_LIMITED_CODE: "改写预算闸住，本机模型容量已满",
+        }
+        result_error_code = getattr(result, "error_code", "")
+        canned_reason = canned_reply_reasons.get(result_error_code)
+        if canned_reason:
+            # 两条回落共用判据 1 那句 stem，把差别写在原因与改写码上：运维 grep
+            # "改写码 rate_limited" 还是 "改写码 model_unavailable"，就分得清"预算太小"和
+            # "模型坏了"。这里刻意不带那串等号前缀 —— 跟进单 §12.1 把"码名只许出现在结构化赋值
+            # 处、不许塞进可读文本"钉成了机器判据（tests/test_error_code_vocabulary.py:122 扫
+            # 整份 chat.py），本行是日志而不是异常载荷，所以用中文键名挂裸码值。
+            logger.warning(
+                f"[REWRITE] 改写腿拿到离线罐头句，已回退原问题：{canned_reason}"
+                f"（改写码 {result_error_code}）｜{user_msg[:60]}"
+            )
+            return user_msg
         rewritten = result.strip() if isinstance(result, str) else result.choices[0].message.content.strip()
         if rewritten and len(rewritten) > 3:
             logger.info(f"[REWRITE] '{user_msg}' → '{rewritten[:60]}'")
