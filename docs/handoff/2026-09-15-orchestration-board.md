@@ -2938,3 +2938,28 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 核过的交集面：R108 的 31 枚名单**不含** `tools.py`/`retrieval_pipeline.py`/`observability.py`/`contract-v1.md`；R108 与 R110 同碰 `app/agents/nodes.py`，但 R108 只改第 1 行 BOM（`numstat` = `1 1`）、R110 改 `:508`/`:590` ⇒ 不同 hunk，可串。
 - 并树顺序不变：**R109 → R110 → R108**，每步主树亲跑全量；R109 并完由本班自己补回 R99 那段英文 caveat；R108 并完重跑 `scripts/check_no_bom.py`（它第一次真实上岗）并摘 `be-r108\frontend\node_modules` junction + `dist`。三树并完再重建镜像 + 复跑 P-8，然后还原 `powercfg`（standby-timeout-ac 原值 1800）。
 
+
+### 4BH.6 第二十七班下格（09-20 16:1x–16:3x，主树 `78548d6` → `767607d`）：🟢 三树并完 · 新基线 **2593/35** · 🔴「欠自己那笔 caveat」查成假账 · P-8 重建 MATCH + 一枚新坑 · powercfg 已还原
+
+**并树账（每步主树亲跑全量，不采信执行层自述）**
+- R109 → `a95aa5c`：主树 **2578 passed / 35 skipped**（2564 + 14 枚新用例，逐枚对上）。
+- R113（总控亲做，`9de5e89`）：`tests/test_observability_routes.py::test_evaluations_reports_an_absent_suite_and_no_reports` 在报告入库后必红——路由 `observability.py:332` 在配置目录之后**无条件追加** `DEFAULT_EVALUATION_REPORT_FILES`，而那份默认件正是本班刚入库的 `docs/testing/evaluation-report.json`。用例意图是「配置为空即无报告」，所以让它在同一台机器上把默认件一起中和（`monkeypatch.setattr`），🔴 **不改路由语义**：运维显式指定报告目录时仓库自带分数仍会被列出，这条要不要算缺陷另立单议（它是「配置未被完全尊重」，与 R111 同族，不是泄漏）。复跑 24 passed。
+- R110 → `9b4154d`：主树 **2593 / 35**（2578 + 15）。本班自己复验：在它树上用主树解释器跑 `15 passed in 1.07 s`；反证本班自己做（不引用它的账）⇒ **5 枚具名红**，非空响；随后逐字节还原，`work == crlfify(blob)` 三枚全 True（nodes `6b885b6d…`、spans `5ba35aa2…`、新用例 `5f978a0a…`，与它交付的 sha256 逐位一致）。它交回的那条实测事实本班复核为真：`cancelled` 不在 `evidence.py:252-265` 六支名单里，今天的 `_terminal_status` 一支都不折——但「不改证据」是靠 `record_evidence=False` 保证的，不是靠词表运气。
+- R108 → `767607d`：32 files / `134 insertions(+), 31 deletions(-)`，**零冲突**（它与 R110 同碰 `nodes.py`，一个只改第 1 行 BOM、一个改 `:508`/`:590`，不同 hunk）；全量 **2593 / 35** 不变。`scripts/check_no_bom.py` 第一次真实上岗：scanned **607** tracked text files，whitelist 2（看板本体 + `run_backend_tests.ps1`），`OK no tracked … BOM`，exit 0。
+- 🔴 **新基线两值就此刷新：主树 2593 passed / 35 skipped；任何非 R51 执行层树 2592 / 36。** 工单一律两值并列，别按枚数追平。
+
+**两枚新坑（都记总控账，因为都是我自己踩的）**
+- `git checkout <commit> -- <path>` **同时改索引和工作区** ⇒ 之后 `git diff --numstat` 是**空的**，而磁盘上的文件已经被换成旧版。反证跑完后判「还原成功」不能看 `git diff`，要看 `git status --porcelain` 为空 + `work == crlfify(git show HEAD:path)`。本次 5 枚反证红就是踩在这条上才差点被误判成「没换成」。
+- 裸 `docker compose build migrate` **不带 `GIT_SHA`** ⇒ 镜像 label 落成 `unknown`（`Dockerfile:92 ARG GIT_SHA=unknown` + `docker-compose.yml:119 GIT_SHA: ${GIT_SHA:-unknown}`），P-8 退化成 UNSTAMPED + 逐文件字节比对（本次 101 tracked modules compared，仍 PASS，但丢了对未来的可审计性）。正解：**先 `$env:GIT_SHA=(git rev-parse --short HEAD)` 再 build**，本班按此重建 ⇒ `tree 767607d / label …=767607d / verdict MATCH / gate PASS`，容器 backend/worker/scheduler/frontend/postgres/ollama 全 Healthy。
+
+**🔴 一笔挂了五班的假账，今天销掉**：§4BH.2 与跟进单 §48 都写「R99 那段 `NOT in this vocabulary` 的英文 caveat 被 `fd604c4` 丢掉，R109 并树后由总控补回」。本班逐条查历史：`git log --all -S "NOT in this vocabulary" -- app/api/v1/chat.py` **零命中**（该串只活在跟进单自己的 §48/§49 里）；`git show fd604c4 -- app/api/v1/chat.py` 实际只删了**一行** `if use_answer_cache and not intr:`；`a9fad8c` 那版 chat.py 里 `is_offline_reply_text` **0 命中**——那枚缓存闸当时根本还不存在。⇒ **没有任何东西被丢，欠账作废，本班不凭空补写注释**。这段是「引用未核实的记忆而不是磁盘」的老毛病，记在总控头上，和「报某物不存在前先确认在哪一层查」是同一条规矩的又一次犯案。
+
+**收尾两件**
+- `be-r108\frontend\node_modules` 确认为 `LinkType=Junction`（Target = 主树 `frontend\node_modules`），`cmd /c rmdir` 摘除 exit 0，主树目标 **181 项完好**；`be-r108\frontend\dist`（构建产物，已被 gitignore）**按「删文件属业主」留在原地未动**，等业主一句话。
+- `powercfg /change standby-timeout-ac 1800` 已还原（16:32:56 实测）；下一扇窗（run3）开窗前再关，收窗后再还原——这条从此按「开窗关、收窗还」两步走，不再挂长期改动。
+- 双远端：主树 + `codex/be-r109`/`be-r110`/`be-r108` 全推，`git log --branches --not --remotes` **0 条**。
+
+**在途（两棵新树，与并树零交集，写域已在名册）**：R112 `01a0bdd2-c42e-7f80-b270-7a0f58d4a1d5`@`be-r112`、R105 甲半 `Aquinas`/`01a0bdd3-aaf7-7811-ade9-f10844138013`@`be-r105a`（两棵树基点 `2957499`，早于三笔并树 ⇒ 交工后先 ff/rebase 到 `767607d` 再验）。
+
+**下一格要做的事（顺序即优先级）**：① 等 R112 交工 → 复验 → 并树 → 重建镜像（记得带 GIT_SHA）→ **run3 真机复跑同一夹具**，目标把 46 枚整题拒打下去，报告里 run2 与 run3 两分数并列作「修前/修后」对照；② R105 甲半复验并树；③ R111 判据补齐再派（它才对应「配置未被完全尊重」那一族）；④ 乙半（往契约里填真数）必须排在 R110 已进树之后——今天已经进树了 ✅。
+
