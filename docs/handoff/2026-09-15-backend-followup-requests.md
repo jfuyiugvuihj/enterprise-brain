@@ -1466,3 +1466,21 @@ R100 并树后按这三笔做，逐条已验证过形状：
 
 - 🔴 附带一笔必须一起改的**过期注释**：`app/common/model_budget.py` 的 `model_budget_readout` docstring 里写着「It is *not* wired into `/api/v1/health/details` yet」。接线之后这句就是假话，必须同步删改；总控不提前改它，因为它在 Boyle 写域内。
 - 判据：`/api/v1/health/details` 的 JSON 里出现 `model_budget.events`，且发一发超时之后 `timeout_offline_reply` 计数增加；缓存侧给一条「离线罐头句子不得成为 `/ask` 命中缓存的 `answer_id`」的行为证据（不是只读源码）。
+
+### 43. R102 · 流式并发槽只借不还（P1，总控亲验为真；主干同形、非 R99 引入）
+
+**事实（本班在 `3c63658` 上逐路径读码亲验，不采信任何转述）**：`app/agents/nodes.py:420 _ResilientModel.stream()` 全方法 `acquire` **1 次**（`:429`），而 `slot.release()` 只出现在**两条拒发路径**上——`:449`（`_budget_kwargs` 抛 `ModelContextLimitExceeded`）与 `:472`（循环内命中上下文错误码）。**成功路径不释放**：`:455-459` 把 chunk 逐个 `yield` 出去之后直接掉出 `for`，方法结束；**通用异常路径也不释放**：`:460` 的 `except` 在非上下文码分支（`:475` 起，超时与一般失败）走进离线流后直接返回，没有 `slot.release()`。另外这还是个生成器：消费方中途丢弃迭代 ⇒ `GeneratorExit` 从 `:459` 的 `yield` 抛出，同样不释放。
+
+**为什么现在还不是 P0**：`app/agents/nodes.py` 与 `app/agents/orchestrator.py` 的**所有生产调用点都用 `.invoke()`**（`nodes.py:250` `self.primary.invoke`、`orchestrator.py:397` `main_model.invoke` 等，本班 grep 全仓 `app/agents/*.py` 的 `.invoke(`/`.stream(` 逐点核对）；`orchestrator.py:699` 那个 `graph.stream(...)` 是 LangGraph 图级流，不会让节点去调模型的 `.stream()`。⇒ 现网走不到这条路径。**但 `DEFAULT_MAX_CONCURRENCY = 1`**（`app/common/model_budget.py:38`，且 `deploy/.env.server` 未覆写 ⇒ 生效值就是 1），一旦任何一条链路上线流式，**第一发成功流式回答就永久吃掉唯一一个槽**，之后每一次模型调用都落到 `本地模型并发预算耗尽，使用离线回复`，且它记的是 `rate_limited`，不是 `model_unavailable`——现场看起来会像"模型坏了"。
+
+**已经咬到人**：R99 执行层在写自己用例时被它真实咬到 3 个用例，只能在夹具里 `reset_default_budget()` 隔离（它自己在回报 §6-⑤ 记了这笔）。也就是说**测试面上这条已经在制造假象**，只是产品面还没上线流式。
+
+**判据**：
+1. `stream()` 三条出口（成功 / 异常 / 消费方提前丢弃）**每一条都恰好释放一次**：把释放放进 `try/finally`，`finally` 覆盖生成器被 `GeneratorExit` 打断的情形；不得出现双重释放（`LocalModelBudget` 的槽是信号量，多释放一次等于凭空多一个并发额度，那是另一种坏法）。
+2. 一条**行为**用例（不许只读源码字符串）：`MODEL_MAX_CONCURRENCY=1` 下，连续两次**成功完成**的 `stream()` 之后第三次仍必须拿到槽并走 provider，而不是落离线流。这条用例就是本单的验收，它现在必红。
+3. 一条对照用例：`invoke()` 的释放不变量（`:323/:342/:349/:372` 四条路径）不许被改动带坏。
+4. 顺手核一件相邻的事但**不要扩大改动面**：`_offline_fallback` 与拒发路径上的 span 终态是否已经能区分 `rate_limited`（预算耗尽）与 `model_unavailable`（provider 失败）——这是 §43 事实段里"现场看起来像模型坏了"的另一半成因；若需要修，另立单，本单不并。
+5. 全量回归绿（当前主树基线 **2507 passed / 35 skipped**，R100 并树后以新基线为准）。
+
+- 独占写域：`app/agents/nodes.py`（`stream` 方法及其夹具）、新增 `tests/test_r102_*.py`。**禁碰** `app/common/model_budget.py`（信号量语义若要改是另一单）、`app/api/v1/chat.py`、`app/common/cache.py`、`frontend/**`、`migrations/**`、评测 fixture。
+- 派工时机：必须等 R100 并树之后（两单同占 `nodes.py`）。R100 未结案前本单**不许派**，这是文件冲突图，不是优先级。
