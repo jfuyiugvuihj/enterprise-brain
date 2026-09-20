@@ -247,7 +247,7 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 | **R102**（**已结案** `b8dbffd` → 并树 `359ef68`；`Heisenberg`）| 流式并发槽只借不还（P1）：`stream()` 三条出口每条**恰好**释放一次，判据 跟进单 §43 | L1 | 0.25 |
 | **R103**（**已结案** `831888f` → 并树 `3ecdcb4`）| 图谱未部署的拒答不再冒名存储故障：`503 storage_read_only` → **`409 knowledge_graph_unconfigured`**（审计理由可分辨三件事）+ 同批撤 `App.vue` 图谱一级入口（D6 甲 + D13①）| 接口 | 0.5 |
 | **R104**（**已结案** `e9657a6` → 并树 `caa4cd1`）| `vue-router` 真路由：「屏 ↔ URL ↔ 面板」收成**一张表**，侧栏改为**派生视图**，`workspaceMap`/`activeTab` 退役，图谱留非一级深链，对话屏 `<keep-alive>` 保会话 | 接口 | 1.0 |
-| **R105**（待派，前置**已成立**：R104 已并树、路由已存在）| 三屏 SLO 契约（跟进单 §44.3；计划书 §6.1 三行「未做」的最后一件）——R104 之前「屏」这个单位在代码里不存在，SLO 无处挂 | 质量 | 0.5 |
+| **R105**（⚪ **立单待派·已拆两半**，判据 跟进单 §51）| 三屏 SLO 契约：甲半=契约与可计算口径（前置已成立：R104 已并树、路由已存在、测量件已在树）；🔴 乙半=填真实分布，**必须等 D14甲 窗口**，且压在 R110 之后（丢弃的调用不进台账会让 P95 偏乐观）| 质量 | 0.5 |
 | **R106**（**已结案** `8ca06a8` → 并树 `b4c7d86`；它交回的两笔账总控代做 `e4f2440`）| 开放平台「生产未配 store」不得冒名 `storage_read_only` ⇒ **`409 open_platform_unconfigured`**，真写失败保持 503；契约与前端码表同步 | 接口 | 0.25 |
 | **R107**（**已结案** `6ded052` → 并树 `1cc1c16`；`Helmholtz`；**只读审计单**）| 跑分窗口离线预演：105 题每题一行 + 四类失败模式 + 窗口内必须人盯的三件事 + 续跑办法，防第二轮废跑 | 评测前置 | 0.5 |
 | **R108**（🟡 **已交付待并树** `be-r108`/`Bernoulli` `01a0bd1f-7b7b-…`；**机械单**）| 全仓 BOM 清账 31 枚 + 常驻校验脚本 `scripts/check_no_bom.py`；🔴 看板那枚与 `scripts/run_backend_tests.ps1` **故意保留**（PowerShell 5.1 读无 BOM 的 .ps1 会按 ANSI 解中文）| 测试卫生 | 0.25 |
@@ -308,9 +308,9 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 | 四张脸分开（无权限/空/降级/错误） | **已完成** | 同上；但**缺 embedding / 无 GPU 两张脸仍未分**，随 R26 补 |
 | Element Plus 移除 | **已完成** | `frontend/package.json` 已无 `element-plus` `[实测]` |
 | 自研 UI 原语 | **进行中** | `codex/fe-trunk:frontend/src/components/ui/`（UiButton/UiDialog/UiEmptyState/UiErrorState/UiField/UiLoadingState…） |
-| **图谱撤一级入口** | **未做** | `frontend/src/App.vue:48` 仍有 `{ id: 'graph', label: '图谱' }`、`:56 graph: GraphPanel`，侧栏仍 7 个工作区 `[实测]` |
-| 前端路由 | **未做** | `vue-router` 已在 `package.json:23`，但 `frontend/src/router/` 不存在 `[实测]` |
-| 三屏 SLO 契约 | **未做** | 随 R36 |
+| **图谱撤一级入口** | **已完成**（R103 `831888f` → 并树 `3ecdcb4`）| 本班 `9626a8e` 直查：`git grep "id: 'graph'" -- frontend/src` **0 命中**；图谱改为一条 `meta.primary:false` 的深链（`frontend/src/router/index.js:83`），组件与用例一律保留 |
+| 前端路由 | **已完成**（R104 `e9657a6` → 并树 `caa4cd1`）| `frontend/src/router/index.js` 存在且是「屏 ↔ URL」唯一真源，侧栏导航改为它的派生视图；`App.vue:382` 用 `<KeepAlive :include="cachedScreens">`，`cachedScreens` 由 `routes` 算出 |
+| 三屏 SLO 契约 | **未做·已拆两半**（R105，判据见跟进单 §51）| 甲半（契约与口径，可即刻派）/ 乙半（填真实分布，必须在 D14甲 窗口之后）。测量件已在树：`app/common/performance.py`、`app/common/stage_timing.py`、`app/api/v1/observability.py:621`——**缺的是样本量，不是代码** |
 
 **图谱裁定（与 R15-a 选乙一致）**：既然图谱已定位为"候选断言采集表、非推理引擎"（`1b45009` 删掉了与代码不符的 PG 邻接表目标态），把它摆在侧栏一级工作区就是**误导使用者**；且生产无 `KNOWLEDGE_GRAPH_STORE_PATH` 时写入必返 `503 storage_read_only`（`app/api/v1/intelligence.py:124` `[实测]`，该变量在 `.env.example`/`docker-compose.yml`/`deploy/**` **0 配置命中**）。
 ⇒ **撤入口，降为文档预览里的"依据 / 相关制度"子视图**。这条同时解决"老板问图谱是干什么的"。

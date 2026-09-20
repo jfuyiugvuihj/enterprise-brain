@@ -1627,3 +1627,16 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 
 **为什么暂不派**：改这处等于改客户可见的 `error_code` 与告警句（`:296`），要同时动 `docs/api/contract-v1.md` 登记 + `frontend/src/lib/errcodes.js` 别名 + 两侧用例，属跨层单，压在跑分窗口之后；且 R102 顺带提的「每次离线作答多写一行 `model_unavailable` span」本身是**正确的**（罐头句确实不是业务结论），别顺手改掉。判据待窗口后补齐再派。
 
+### 51. R105 · 三屏 SLO 契约：本班把它**拆成两半**，并写下测量出处（09-20 15:0x，总控第二十六班下格，主树 `9626a8e`）
+
+**为什么现在整单不能派**（本班实测，不是谨慎话术）：SLO 的"数"必须来自真实样本，而窗口没跑过。仓库里测量件**已经齐了**，缺的是样本量：
+- 分位数骨架 `app/common/performance.py:12` 用的是 `ceil(n * q)`（1-based 排名），`:47` 出 `p95_ms`，R51 起还能出 P50；
+- 分段台账 `app/common/stage_timing.py`（`:443` 一段的 P50/P95 + 合计，`:550` 把 `stages`/`missing_stages` 交给判据 1）；
+- 读出端 `app/api/v1/observability.py:621`（按段读台账 + 覆盖率算术），`_REPORT_LATENCY_KEYS`（`:76`）只有 `count/average/p95` 三键；
+- 答案体里也带：`app/api/v1/auth.py:42` 注释自陈该答案的 `performance` 块携带 R51 分段台账（P50/P95）。
+⇒ **在没有 ≥100 真样本之前把 SLO 写成"800 ms"这类数字，就是发明数据**，正撞 R36 的边界条「不得用演示语料充当评测集」同一族。故本班裁定：
+
+**甲半（窗口后即可派，不依赖真机新件）**：把"三档"这件事**钉成契约与可计算口径**——① 先在 `docs/api/contract-v1.md` 与代码里核清"三档"到底是哪三个单位（计划书 R32 写「问答/分析/报告」，而 `app/agents/contracts.py:69 ModelTier` 是 `chat/plan/compress/rewrite/…` 的**预算档**，两套名字**不是**一件事，谁都不许替对方改名）；② 每档 → 一个可寻址的"屏/端点" → 台账里一组 `stage`，三者要有唯一真源（R104 之后「屏」在 `frontend/src/router/index.js` 的 `routes` 里，`meta.primary` 决定进不进一级导航）；③ P95 的算法**只准引用** `app/common/performance.py` 那一处，禁止在文档或第二处代码里再写一套分位数；④ 契约里每个数字位先填「待真机样本」，并留一条**行为**用例：样本不足 `n < 100` 时读数必须明说不足，**不许**回一个看起来像 SLO 的数（R36 判据 ②）。
+
+**乙半（只能在 D14甲 跑分窗口之后）**：把窗口产出的真实分布填进甲半的位，并落一份基线分数供 R29/R33/R35 对比（R36 判据 ③）。⚠️ 填数那一次要顺带核一件事：窗口里被 `aclose()` 丢弃的调用**不会进台账**（R110 的缺尾），所以 R110 未并树前填出来的 P95 是**偏乐观**的——两半的先后顺序不许倒。
+
