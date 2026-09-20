@@ -1476,7 +1476,7 @@ R100 并树后按这三笔做，逐条已验证过形状：
 **已经咬到人**：R99 执行层在写自己用例时被它真实咬到 3 个用例，只能在夹具里 `reset_default_budget()` 隔离（它自己在回报 §6-⑤ 记了这笔）。也就是说**测试面上这条已经在制造假象**，只是产品面还没上线流式。
 
 **判据**：
-1. `stream()` 三条出口（成功 / 异常 / 消费方提前丢弃）**每一条都恰好释放一次**：把释放放进 `try/finally`，`finally` 覆盖生成器被 `GeneratorExit` 打断的情形；不得出现双重释放（`LocalModelBudget` 的槽是信号量，多释放一次等于凭空多一个并发额度，那是另一种坏法）。
+1. `stream()` 三条出口（成功 / 异常 / 消费方提前丢弃）**每一条都恰好释放一次**：把释放放进 `try/finally`，`finally` 覆盖生成器被 `GeneratorExit` 打断的情形；不得出现双重释放（`LocalModelBudget` 的槽是信号量。⚠️ **本班原文在这里写错了，按 `Heisenberg`@R102 的实测订正**：原来写「多释放一次等于凭空多一个并发额度」不成立——`_ModelSlot.release()`（`app/common/model_budget.py:95-99`）带 `_released` 幂等标志，第二次调用直接 `return`；真·双释放必须绕过 slot 直接 `_budget._semaphore.release()` 才成立。判据本身不变（照样要恰好一次），但**反证得按后者下刀才咬得住**，R102 正是这么跑的：在 `finally` 里补一发绕过标志的释放 ⇒ 5 枚红）。
 2. 一条**行为**用例（不许只读源码字符串）：`MODEL_MAX_CONCURRENCY=1` 下，连续两次**成功完成**的 `stream()` 之后第三次仍必须拿到槽并走 provider，而不是落离线流。这条用例就是本单的验收，它现在必红。
 3. 一条对照用例：`invoke()` 的释放不变量（`:323/:342/:349/:372` 四条路径）不许被改动带坏。
 4. 顺手核一件相邻的事但**不要扩大改动面**：`_offline_fallback` 与拒发路径上的 span 终态是否已经能区分 `rate_limited`（预算耗尽）与 `model_unavailable`（provider 失败）——这是 §43 事实段里"现场看起来像模型坏了"的另一半成因；若需要修，另立单，本单不并。
@@ -1602,3 +1602,28 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 - **独占写域**：`app/api/v1/chat.py` 里 `_rewrite_followup` **这一个函数**（含其 logger 行）+ 新 `tests/test_r109_*.py`。🚫 禁碰 `app/common/model_handler.py`、`app/agents/nodes.py`、`app/common/cache.py`、`app/agents/orchestrator.py`、`frontend/**`、`migrations/**`、`docs/testing/fixtures/**`、`docs/**`。
 - **派工时机**：可即刻派，不占 GPU。与在途两单**零文件交集**：R102 只写 `nodes.py`；R108 那 31 枚 BOM 名单**不含** `chat.py`（本班按 `git ls-files -z` 逐文件读前三字节实测）。工作树 `be-r109`，分支 `codex/be-r109`，基线 = 本单落笔后的主树 HEAD。执行层**不得 commit**。
 - **并树顺序**：R102 → R109 → R108（BOM 批最后，理由见 §47）。
+### 49. R110 · 流被消费方丢弃时 span 不收口：`model.started` 永久停在 running，而且这次调用**根本进不了计时台账**（R102 交回，总控主树 `359ef68` 逐行亲验；09-20 14:4x。基线两值见 §47 上方口径条，已刷新为 主树 2564/35、执行层树 2563/36）
+
+**事实**：`app/trace/spans.py:266 start_model_call()` 的最后一行是 `:304 return span.begin()`，而 `begin()`（`:122-128`）写一枚 `model.started` 事件、状态字面量 "running"（只在 span `active` 时真写，即 `owner_id`+`trace_id` 都在，正是生产形态）。收口只发生在 `finish()`（`:142`）里：`_record_boundary_status` → `record(self.finished_event, ...)`（`:165`）→ **`_observe_stage(payload)`（`:166`）**。R102 并树后 `app/agents/nodes.py` `stream()` 的出口收在一处 `finally: slot.release()`（`:589-590`）：成功出口 `:588 span.finish("completed")` 会收，异常出口在 `except` 里收，**唯独消费方丢弃（`GeneratorExit` 从 `yield` 抛出、穿过 `except Exception` 直达 finally）只还槽、不收 span**。
+
+**后果是两条不是一条**：① trace 里留下一行永不闭合的 `model.started`，任何按 started/finished 配对统计的口径都被污染；② `_observe_stage` 只由 `finish()` 调用 ⇒ **被丢弃的调用压根不写进 R51 阶段计时台账**，而被用户等不及丢掉的那批恰恰通常是最慢的尾部 ⇒ 时长统计**系统性缺尾**，这是偏差，不是"少一行"那么轻。
+
+**一条必须先想清楚的张力（本班实测，别撞上去）**：`finish()` 里 `_record_boundary_status`（`:88-105`）只要 `status != "completed"` 就调 `record_model_status(bag, status, code)`，于是任何新状态都会进 `model_statuses`、被 `evidence._terminal_status` 读到 ⇒ 若它折成 `failed`/`model_unavailable`/`rate_limited`，客户会多看到一句告警（`app/agents/evidence.py:296` 那句 `执行边界报告了失败状态：{error_code}`）；若它谁也不折，也可能把原本 `success` 的判定掉到 `partial`。**所以"收口"和"不改变该轮证据"必须一起做**，只在 finally 里补一句 `span.finish("cancelled")` 是不够的。
+
+**判据**：
+1. `stream()` 的 GeneratorExit 出口必须闭合那枚 span：写 `model.finished`、状态用一个**既不谎报也不报警**的新值（`cancelled` 一族），`record_id` 与 `model.started` 一致。
+2. 闭合**不得改变该轮 `_terminal_status` 的输出**：一条断言用例，同一台机器上「跑完」与「中途 `aclose()` 丢弃」两种收场，`_terminal_status(bag, answer)` 返回元组逐字相同。为此允许在 `app/trace/spans.py` 做**最小加法**（例如给 `finish()` 加一个"只收口、不进证据袋"的可选开关），🚫 但**不许**改 `app/agents/evidence.py` 的任何判定分支。
+3. 台账收到这一条：`stage_timing_enabled()` 打开时，被丢弃的调用要留下一枚该新状态的样本，且不得混进 `completed` 桶。
+4. 行为用例真跑生成器（`aclose()`/`close()`），🚫 不许 grep 源码文本；断言 `model.started` 之后必有配对收口。既有 `tests/test_model_call_spans.py`、`tests/test_r51_observation_is_passive.py` 钉的是事件字节，必须仍绿。
+5. 反证：把 finally 里的收口摘掉 ⇒ 判据 4 那枚当场红且**指名用例全名**（不许空响），随后逐字节还原并给 sha256。
+6. 全量回归 主树 **2564 / 35**、执行层树 **2563 / 36** 不动；`git diff --numstat` 只许出现你改的行。
+
+- **独占写域**：`app/agents/nodes.py` 的 `stream()`（含其 `finally`）+ `app/trace/spans.py` **仅限**判据 2 所需的最小加法 + 新 `tests/test_r110_*.py`。🚫 禁碰 `app/agents/evidence.py`、`app/common/model_budget.py`、`app/api/v1/chat.py`（`Dirac`@R109 在写）、`frontend/**`、`migrations/**`、`docs/testing/fixtures/**`、`docs/**`。
+- **派工**：可即刻派，不占 GPU。工作树 `be-r110` @ `359ef68`（分支 `codex/be-r110`），执行层**不得 commit**。与 R109 零文件交集；与待并的 R108 那 31 枚 BOM 名单零交集（`nodes.py`/`spans.py` 均不在名单内，本班逐枚点名核过）。
+
+### 50. R111 · 「容量不够」与「模型坏了」在证据面同色（R102 交回，总控主树亲验，**立单暂不派**）
+
+**事实**：`app/agents/evidence.py:254` 那一支 `if "model_unavailable" in names or "rate_limited" in codes:` 无条件返回 `("model_unavailable", "model_unavailable")` —— `rate_limited` 被折进 `model_unavailable`。同文件 `:18` 的 `_RETRIABLE_CODES` 里两枚是**分开列的**，说明词表本来认得这个区别，只有这一处折了。span 层其实已经分得清（预算耗尽记 `rate_limited`、provider 坏了记 `failed`/`internal_error`，`tests/test_model_call_spans.py:252-254` 正钉着这组区别），丢区别的是 worker 状态这一层。本班在主树直调 `_terminal_status` 两例：只有一枚 `rate_limited` 状态 ⇒ `model_unavailable`；再叠一枚 `completed`、正文是真业务结论的一例 ⇒ **仍然** `model_unavailable`。
+
+**为什么暂不派**：改这处等于改客户可见的 `error_code` 与告警句（`:296`），要同时动 `docs/api/contract-v1.md` 登记 + `frontend/src/lib/errcodes.js` 别名 + 两侧用例，属跨层单，压在跑分窗口之后；且 R102 顺带提的「每次离线作答多写一行 `model_unavailable` span」本身是**正确的**（罐头句确实不是业务结论），别顺手改掉。判据待窗口后补齐再派。
+
