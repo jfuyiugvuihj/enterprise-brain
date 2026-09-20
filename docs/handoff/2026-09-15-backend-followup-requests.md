@@ -1484,3 +1484,38 @@ R100 并树后按这三笔做，逐条已验证过形状：
 
 - 独占写域：`app/agents/nodes.py`（`stream` 方法及其夹具）、新增 `tests/test_r102_*.py`。**禁碰** `app/common/model_budget.py`（信号量语义若要改是另一单）、`app/api/v1/chat.py`、`app/common/cache.py`、`frontend/**`、`migrations/**`、评测 fixture。
 - 派工时机：必须等 R100 并树之后（两单同占 `nodes.py`）。R100 未结案前本单**不许派**，这是文件冲突图，不是优先级。
+
+### 44. R103 / R104 / R105 · 业主裁定的 D6 + D13 批次（09-20 00:3x，总控第二十四班，主树 `6877435`）
+
+业主 09-19 22:5x 裁定 **D6=甲（改错误码）** 与 **D13=授权动 `frontend/**`**，且原话「与 D13 撤图谱入口同批做最省」；D13 的排队条件是「等 R98/R99 与错误码那族收口」——**R98（`73fb71e`）与 R99（`352c5f0`）本班会话内已结案**，收口条件成立，所以本批开工。三件按依赖拆开，**不许并行走同一棵前端树**（R103 与 R104 都占 `frontend/src/App.vue`）。
+
+#### 44.1 R103 · 图谱未部署不得谎报成存储故障（D6 + D13① 同批）
+
+**事实**：`app/knowledge_graph/service.py:34` 的 `_STORE_PATH_ENV = "KNOWLEDGE_GRAPH_STORE_PATH"` 没配时，生产进程**没有耐久存储**，每一次写都被 `ProductionReadOnlyProtection` 拒（`:17-19` 的注释自己写明「refused rather than kept in a dictionary that dies with the worker」，这是有意的裁定，不是缺陷）。缺陷在出口那一行：`app/api/v1/intelligence.py:188` 把它变成 **`503 storage_read_only`**。503 的语义是「服务暂时不可用，稍后重试」，而真话是「这个部署根本没开启这个功能」⇒ 客户会重试、监控会把它计成 downtime、审计里 `:187` 记的 `denied` 也分不清是权限还是没配。
+
+**判据**：
+1. 该出口改 **`409` + `detail="knowledge_graph_unconfigured"`**（4xx 由业主裁定，选 409 而不是 404 的理由必须写进注释：资源存在、是当前部署的状态与这个写冲突，藏起来比说清楚更坏）。同函数族里 `open_platform.py:354` 那枚同形态的 `503 storage_read_only` **一并核对**：若它表达的是真的存储只读（而不是没配），**保持 503 不动**并给一行理由；若是同一个谎，同样改。**判据是「语义与事实相符」，不是「消灭 503」**。
+2. 审计理由必须能分辨三件事：没配 / 权限不足 / 真只读。`record_audit` 的最后一个参数不得再统一写 `storage_read_only`。
+3. `/api/v1/health/details` 里图谱那一节必须说同一句话（同一个词），**不许**一处 `unconfigured` 一处 `read_only`。若现有节里没有这个位置，就明确写「未接线」并留给下一班，不要为凑判据塞一个假字段。
+4. 一条行为用例（真走 `TestClient`，不许只 grep 源码字符串）：**不设** `KNOWLEDGE_GRAPH_STORE_PATH` 且 `APP_ENV=production` ⇒ 打 `POST /api/v1/knowledge-graph/relations` 必须得 `409` 且 detail 精确等于 `knowledge_graph_unconfigured`；对照用例：`PermissionError` 仍 403 `permission_denied`、`ValueError` 仍 400 `relation_source_required`、开发态（非 production）不得因此变成 409。
+5. 前端同批：`frontend/src/App.vue:48` 那条 `{ id: 'graph', label: '图谱' ... }` 一级入口撤下。⚠️ **撤入口 ≠ 删功能**——`GraphPanel.vue` 与它的组件测试**一律保留**（计划书 §7 明令图谱不删，且它唯一的productive exit 是 promotion，见 `app/knowledge_graph/service.py:12-16`）。撤下之后必须回答「那面板还能不能进」：本单**只撤导航项**，`id` 与组件都留着，下一班（R104 真路由）决定它挂在哪个非一级位置。
+6. 前端自验证据（不是自述）：`npm run build`、`npm run lint` 两条的**原始末 10 行**。node 在 `D:\node.exe`、npm 在 `D:\npm.ps1`；`frontend/node_modules` 已存在，**不许 `npm install`、不许改 `package-lock.json`**。⚠️ 本班实取：`frontend/tests/` **0 个文件**、`src/**` 无 `*.spec.js` ⇒ **前端今天没有测试**，`npm test`（vitest）大概率报 no test files。所以测试这条不作硬闸门，但要求执行层：如实回报前端测试现状，并为本单的导航改动**新增一枚最小 vitest 用例**（放它认为合理的位置）；**严禁为了让 `npm test` 变绿去改 vite/vitest 配置或往 `package.json` 里塞脚本**。
+ode.exe`、npm 在 `D:
+pm.ps1`；`frontend/node_modules` 已存在，**不许 `npm install` 改锁文件**（`package-lock.json` 不许动）。
+7. 全量回归：后端 `2507 passed / 35 skipped`（若 R100 先并树则以并树后的新基线为准，并在回报里写清用的是哪个基线）。
+
+- 独占写域：`app/api/v1/intelligence.py`、`app/api/v1/open_platform.py`（仅限核对上面那枚 503）、`app/knowledge_graph/service.py`（只读优先，需要加导出常量时才动）、`frontend/src/App.vue`、新增后端 `tests/test_r103_*.py`、必要时改前端既有导航快照/用例。**禁碰** `app/api/v1/chat.py`、`app/agents/**`（`Boyle` 在写）、`app/common/monitoring.py`（§42.3 排队要用）、`migrations/**`、评测 fixture、`package-lock.json`。
+- 工作树 `be-r103`；执行层**不得 commit**。
+
+#### 44.2 R104 · `vue-router` 真路由（**排队在 R103 之后**）
+
+- 事实：`frontend/package.json` 里 `vue-router@^4.6.4` **已经是依赖**，但 `src/` 下**没有 `router/` 目录**——导航是 `App.vue:43-58` 手写的 `navigation` 数组 + `workspaceMap`。也就是说装了没接，深链（把某一屏发给同事）今天不可能。
+- 判据（待 R103 并树后细化）：每条一级屏一个路由、`router-view` 挂载、旧 `workspaceMap` 退役、撤入口后的图谱屏有一个非一级落点、以及**每个路由的键盘可达与焦点管理**（`src/components/ui/focus-trap.js`、`list-nav.js` 已存在，复用不重造）。
+
+#### 44.3 R105 · 三屏 SLO 契约（**排队在最后**）
+
+- 计划书 §6.1 那三行「未做」里的最后一件。它依赖 R104 的路由存在，否则「屏」这个单位在代码里不存在，SLO 无处挂。
+
+### 44.4 顺带更正一笔旧账（R101 查出，总控已主树亲验）
+
+- `app/agents/nodes.py` 全文 `keep_alive` **0 次** ⇒ `deploy/.env.server:50` 的 `LOCAL_MODEL_KEEP_ALIVE=15m` **只有改写腿吃到**（native 腿 `app/common/model_handler.py`），答题腿从来没下发过。⇒ **R34「keep_alive 常驻」的完成度要把这一半退回 R29**，不得记成 R34 已结案。看板 §4BF.6 已挂。
