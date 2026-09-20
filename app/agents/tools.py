@@ -393,10 +393,15 @@ _pipeline_lock = threading.Lock()
 # 自己就写着"一次想好几个搜索方向，同时搜多个关键词"），每一发的返回串都会留在 prompt 里。
 # 只按"单发别超过 room"装，两发各自装满照样撞墙——真机 doc-12 那枚 prompt_tokens=3897
 # 就是这个形状。所以第二发只许用剩下的 room。
-# 账先挂在 ``configurable.thread_id + worker`` 上：worker 子图带 checkpointer，子线程是
-# ``{父会话}:{worker}``，上一轮发给模型的检索串这一轮还在历史里，所以 room 必须跨轮累减；
-# 只有 thread 身份时退回 ``step_id``（同一发里的并发多发调用）；两样都没有（直接调工具的
-# 测试、MCP 单次调用）就按单发装箱、不跨调用累加，也不假装它们是同一条会话。
+# 账挂在**轮身份**上（见 ``_pack_ledger_key``），不是会话身份。为什么不能按 thread：R114 复测
+# （跟进单 §55）量出 worker 子图在真装配下**每轮冷启动**——langgraph 给嵌套子图注入的
+# ``checkpoint_ns`` 逐轮换 uuid，``{父会话}:{worker}`` 那份 checkpointer 根本 resume 不回来，
+# 上一轮的检索串这一轮并不在 prompt 里。账按 ``thread + worker`` 跨轮累减，等于为一笔不在上下文
+# 里的料一直占房：room=1606 时同一份料连问四轮就把 room 扣穿，第四起少装、第五起整批发空。
+# 同轮内并发多发仍必须累加：那些串确实同时在一次 prompt 里，真机 doc-12 的 prompt_tokens=3897
+# 就是这个形状防的。取不到轮身份时才退回按 thread 累加（宁可少装，也不许同一轮并发多发各自吃满
+# room）；连 thread 都没有（直接调工具的测试、MCP 单次调用）就按单发装箱、不跨调用累加，也不假
+# 装它们是同一条会话。
 
 _pack_lock = threading.Lock()
 #: 装箱账：账本键 → 这一本账上已经吃掉多少 prompt token。见 ``_pack_ledger_key``。
@@ -411,14 +416,40 @@ _retrieval_pack_support: "OrderedDict[str, bool]" = OrderedDict()
 PACK_TRUNCATION_MARK = "…（上下文装箱截断）"
 
 
+#: 轮身份字段与优先级：全部是请求路径上已有的字段（``orchestrator.py`` 造 configurable 时
+#: 写进来的那一批），本模块不新开 contextvar、不新造全局计数器。键前缀就是身份名，
+#: ``[PromptPack]`` 的 ``ledger`` 字段直接读它，字段名一枚都不动。
+_PACK_TURN_KEYS = (
+    ("step_id", "step"),
+    ("request_id", "request"),
+    ("task_id", "task"),
+    ("trace_id", "trace"),
+)
+
+
 def _pack_ledger_key(config) -> str:
-    """这一发工具调用该记在哪一本装箱账上；认不出身份就返回空串（＝不累加）。"""
+    """这一发工具调用该记在哪一本装箱账上；认不出身份就返回空串（＝不累加）。
+
+    轮身份优先。``step_id`` 由装配点造成 ``{trace_id}:worker:{name}``，本身就是一轮一 worker
+    一枚：同轮并发多发共用它（照旧互相扣房），下一轮 trace_id 一换就是新账（跨轮不累加）。
+    ``request_id``/``task_id``/``trace_id`` 留给 step_id 没造出来的入口（父层没给 trace 的调用、
+    可靠队列道），它们同样逐轮新生成，只是不含 worker，所以键里自己补一枚——同一轮里并行跑的
+    doc 与 data 不许互相扣房。三样都没有才退回 ``thread + worker``：那个顺序是"宁可少装"，
+    不许把同一轮的并发多发放回各自的满 room 上。
+    """
     conf = (config or {}).get("configurable", {}) or {}
+    worker = str(conf.get("worker") or "").strip()
+    for field, kind in _PACK_TURN_KEYS:
+        value = str(conf.get(field) or "").strip()
+        if not value:
+            continue
+        if kind == "step":
+            return "step:" + value
+        return kind + ":" + value + ":" + worker
     thread = str(conf.get("thread_id") or "").strip()
     if thread:
-        return "thread:" + thread + ":" + str(conf.get("worker") or "").strip()
-    step = str(conf.get("step_id") or "").strip()
-    return "step:" + step if step else ""
+        return "thread:" + thread + ":" + worker
+    return ""
 
 
 def _fit_unit_to_room(text: str, room_tokens: int) -> str:
@@ -575,7 +606,8 @@ def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: boo
                 _pack_ledger.popitem(last=False)
         billed = used + packed_tokens
     reserve = CONTEXT_SHELL_RESERVE_TOKENS + CONTEXT_HISTORY_RESERVE_TOKENS
-    ledger_kind = "thread" if key.startswith("thread:") else ("step" if key else "off")
+    #: 账本身份名＝键前缀（step/request/task/thread/off），``[PromptPack]`` 的字段一枚不改名。
+    ledger_kind = key.split(":", 1)[0] if key else "off"
     logger.info(
         f"{PROMPT_PACK_MARKER} leg={leg} tier={CONTEXT_PACK_TIER} room_total={room_total} "
         f"room_left={room} candidates={len(units)} fitted={len(fitted)} dropped={len(dropped)} "
