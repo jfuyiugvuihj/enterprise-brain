@@ -16,6 +16,7 @@ import importlib.util
 import json
 import math
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn
@@ -56,6 +57,8 @@ EVALUATION_READ_ACTION = "evaluation:read"
 AUDIT_EVENT_SOURCE = "app.common.audit.get_audit_events"
 DEFAULT_EVALUATION_REPORT_FILES = ("docs/testing/evaluation-report.json",)
 DEFAULT_EVALUATION_SET_PATHS = ("tests/fixtures/business_evaluation_30.jsonl",)
+REPORT_SOURCE_CONFIGURED = "configured"
+REPORT_SOURCE_SHIPPED_DEFAULT = "shipped_default"
 EVALUATION_COMMAND_TEMPLATE = (
     "python scripts/run_quality_evaluation.py --fixture {fixture} "
     "--answers {answers} --output {output}"
@@ -336,6 +339,40 @@ def _evaluation_report_candidates() -> list[Path]:
     return [path for path in candidates if path.suffix.lower() == ".json"]
 
 
+def _shipped_report_paths() -> set[Path]:
+    """Absolute identities of the report files that ship inside the image.
+
+    Resolved instead of compared as strings: the same bundled score can also arrive through
+    a configured directory (the append at observability.py:333 is unconditional), and "which
+    file is this" has to survive both spellings of it.
+    """
+    resolved: set[Path] = set()
+    for name in DEFAULT_EVALUATION_REPORT_FILES:
+        try:
+            resolved.add(Path(name).resolve())
+        except OSError:
+            continue
+    return resolved
+
+
+def _report_provenance(path: Path) -> str:
+    """Whether an operator asked for this report, or the image came with it.
+
+    Since the first real score was committed, "no configured report dir" no longer means "no
+    reports": the defaults are appended after the configured entries either way. That is only
+    honest if the answer says which part of the list nobody asked for. Provenance is a
+    property of the file, not of the discovery route -- the bundled score stays bundled even
+    when an operator points a report dir at docs/testing.
+    """
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return REPORT_SOURCE_CONFIGURED
+    if resolved in _shipped_report_paths():
+        return REPORT_SOURCE_SHIPPED_DEFAULT
+    return REPORT_SOURCE_CONFIGURED
+
+
 def _suite_paths() -> list[str]:
     configured = os.getenv("EVALUATION_SET_PATHS", "")
     entries = [item.strip() for item in configured.split(os.pathsep) if item.strip()]
@@ -364,10 +401,11 @@ def _report_metrics(payload: dict[str, Any]) -> dict[str, Any]:
     return metrics
 
 
-def _report_summary(path: Path) -> dict[str, Any]:
+def _report_summary(path: Path, *, source: str) -> dict[str, Any]:
     record: dict[str, Any] = {
         "id": path.stem,
         "path": path.as_posix(),
+        "source": source,
         "status": "unreadable",
         "metrics": {},
     }
@@ -649,6 +687,428 @@ async def read_stage_latency(
     return report
 
 
+# ==================== R105 · three-tier SLO contract: shape and arithmetic, no numbers ====
+
+#: R36 judgement 2, restated in 计划书 §3.1 ("P95 且样本 ≥100 条"): a percentile is
+#: reportable only from at least this many samples of the distribution it describes.
+#: Defined once, here. The contract document names this constant instead of carrying a
+#: second copy of the number.
+MIN_SLO_SAMPLES = 100
+
+#: Every target slot in the contract starts empty on purpose. 乙半 fills it from the D14甲
+#: window; nothing else may put a number in it, because no real sample has been drawn yet.
+#: Writing "800 ms" here would be invented data, the same line R36 drew at demo corpora.
+SLO_TARGET_PENDING = "awaiting_real_samples"
+
+#: Readout verdicts. ``insufficient_samples`` exists because the alternative is a lie:
+#: ``PerformanceStats.report()`` answers ``0`` for a distribution it has never seen
+#: (``app/common/performance.py:27-28``), and a ``p95_ms`` of ``0`` is the most convincing
+#: fake SLO this module could emit.
+SLO_INSUFFICIENT = "insufficient_samples"
+SLO_MEASURED = "measured"
+SLO_NOT_MEASURABLE = "not_measurable"
+
+#: Where a slot's distribution comes from. ``stage_ledger`` answers without reading
+#: persisted traces; ``no_measurement_piece`` is a statement about the code, not about a
+#: shortage of samples -- no amount of traffic will fill it.
+SLO_SOURCE_LEDGER = "stage_ledger"
+SLO_SOURCE_TRACE = "persisted_trace_events"
+SLO_SOURCE_NONE = "no_measurement_piece"
+
+#: Judgement 3 of this ticket, as a machine-readable pointer: percentiles come from this
+#: one implementation or nowhere. Nothing in this file computes a rank.
+SLO_PERCENTILE_SOURCE = (
+    "app/common/performance.py::PerformanceStats"
+    " (nearest rank: the value at ceil(n * q), 1-based)"
+)
+
+#: Where "屏" is defined. R104 made the router the only source, so a backend row may name
+#: a route -- it may never invent one. tests/test_r105_slo_contract.py reads that file.
+SLO_SCREEN_SOURCE = "frontend/src/router/index.js"
+
+#: Why a slot cannot be computed even after the window has run, each entry pointing at the
+#: code that proves it. These are the holes 乙半 has to close somewhere else first.
+SLO_BLOCKERS: dict[str, str] = {
+    "lane_attribution_absent": (
+        "app/trace/spans.py:201-215 hands the ledger stage, tool_name, model_tier and worker "
+        "but never a lane, and no request event carries the question, so every live sample "
+        "groups under lanes.unknown and no per-tier population exists to take a P95 of."
+    ),
+    "first_token_not_a_stage_sample": (
+        "first_token_at is recorded on a model span (app/trace/spans.py:174) and persisted "
+        "(app/trace/store.py:259), but app/common/stage_timing.py:330-345 never reads it into "
+        "a sample, so 首屏 is computable per trace and not from the in-process ledger."
+    ),
+    "wire_first_text_not_recorded": (
+        "the plan's 首屏 is the first ``text`` event on the wire (计划书 §3.1). The only "
+        "timestamped first-token evidence is model-side; chat.py:218-243 stamps canonical SSE "
+        "envelopes but does not persist them, so a wire-side number would be a proxy."
+    ),
+    "cache_hits_are_not_traced": (
+        "a cache hit returns its StreamingResponse at app/api/v1/chat.py:1191-1215, before any "
+        "request.started event, so it records no window and no sample. The honest denominator "
+        "for 缓存命中 is therefore zero today, not 'fast'."
+    ),
+    "wire_step_events_are_not_recorded": (
+        "step.progress is persisted per graph superstep (app/agents/orchestrator.py:1173-1185), "
+        "which measures how often the graph advanced, not when a client saw a ``step``/``status`` "
+        "event; the interval the promise is about has no timestamped source."
+    ),
+    "export_leg_has_no_stage": (
+        "app/common/stage_timing.py:71 maps export_report to no segment, so a report tier's file "
+        "writing lands in unattributed. A five-stage sum is not that tier's end-to-end and must "
+        "not be published as one; coverage_error_pct is what says so."
+    ),
+}
+
+
+@dataclass(frozen=True)
+class SloMetric:
+    """One addressable number slot: 乙半 fills ``target``, and nothing else may write it."""
+
+    name: str
+    label_zh: str
+    population: str
+    source: str
+    blockers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SloTier:
+    """One row of the contract: a product lane, the surface it is reachable on, its stages."""
+
+    lane: str
+    label_zh: str
+    screen: str
+    screen_path: str
+    endpoints: tuple[str, ...]
+    stages: tuple[str, ...]
+    metrics: tuple[SloMetric, ...]
+    note: str = ""
+
+
+def slo_units() -> dict[str, Any]:
+    """① : the three units the phrase "三档" collides, read live from their owners.
+
+    计划书 R32 names 问答/分析/报告. ``app/agents/contracts.py:69 ModelTier`` names
+    chat/plan/compress/rewrite/code/alert/analysis. ``app/common/stage_timing.py:48
+    CANONICAL_STAGES`` names classify/rewrite/retrieve/generate/reflect. Three different
+    enumerations over three different things, and no member of one may be renamed to
+    flatter another -- so the bridge is read out of ``LANE_TIERS`` here instead of being
+    retyped, and the document table below is pinned against this by a test.
+    """
+    from app.agents.contracts import ModelTier
+    from app.agents.nodes import LANE_ANALYSIS, LANE_QA, LANE_REPORT, LANE_TIERS
+    from app.common.stage_timing import CANONICAL_STAGES
+
+    lanes = (LANE_QA, LANE_ANALYSIS, LANE_REPORT)
+    return {
+        "product_lane": {
+            "owns_the_name": "app/agents/nodes.py (LANE_QA / LANE_ANALYSIS / LANE_REPORT)",
+            "decided_by": "R42 classify_route, rules only, zero model calls",
+            "members": list(lanes),
+            "this_is_the_unit_of_the_slo": True,
+        },
+        "model_budget_tier": {
+            "owns_the_name": "app/agents/contracts.py:69 ModelTier",
+            "decided_by": "the call site that asks for budget",
+            "members": [tier.value for tier in ModelTier],
+            "this_is_the_unit_of_the_slo": False,
+            "bridge_from_product_lane": {lane: LANE_TIERS[lane].value for lane in lanes},
+            "bridge_note": (
+                "not one-to-one: analysis and report share ModelTier.ANALYSIS, and six of the "
+                "seven budget tiers belong to no lane at all"
+            ),
+        },
+        "ledger_stage": {
+            "owns_the_name": "app/common/stage_timing.py CANONICAL_STAGES",
+            "decided_by": "classify_stage(), from label, tool, tier then worker",
+            "members": list(CANONICAL_STAGES),
+            "this_is_the_unit_of_the_slo": False,
+        },
+    }
+
+
+def slo_tiers() -> tuple[SloTier, ...]:
+    """② : 档 -> 屏/端点 -> stage 组, the only place this mapping is written down.
+
+    Lane ids are imported from R42 and stage names from ``CANONICAL_STAGES``, so this table
+    cannot drift from either. Screens are route names from the router: all three tiers share
+    the ``chat`` screen because ``ChatPanel.vue`` is the only panel that calls ``/ask``
+    (checked against the router source by tests/test_r105_slo_contract.py, which this ticket
+    may not edit). "三屏" is therefore a name for three tiers, not for three screens, and the
+    contract says so rather than inventing two more screens to match the phrase.
+    """
+    from app.agents.nodes import LANE_ANALYSIS, LANE_QA, LANE_REPORT
+    from app.common.stage_timing import CANONICAL_STAGES
+
+    stages = tuple(CANONICAL_STAGES)
+    ask = ("POST /api/v1/ask",)
+    return (
+        SloTier(
+            lane=LANE_QA,
+            label_zh="问答档",
+            screen="chat",
+            screen_path="/chat",
+            endpoints=ask,
+            stages=stages,
+            metrics=(
+                SloMetric(
+                    name="end_to_end_p95_ms",
+                    label_zh="结论完成",
+                    population=(
+                        "one request in this lane that reached a terminal event, including "
+                        "failed and cancelled ones"
+                    ),
+                    source=SLO_SOURCE_LEDGER,
+                    blockers=("lane_attribution_absent",),
+                ),
+                SloMetric(
+                    name="first_text_p95_ms",
+                    label_zh="首屏（第一个 text 事件）",
+                    population=(
+                        "one streamed request in this lane: request.started to the first "
+                        "model span that observed a token"
+                    ),
+                    source=SLO_SOURCE_TRACE,
+                    blockers=(
+                        "lane_attribution_absent",
+                        "first_token_not_a_stage_sample",
+                        "wire_first_text_not_recorded",
+                    ),
+                ),
+                SloMetric(
+                    name="cache_hit_p95_ms",
+                    label_zh="缓存命中",
+                    population="one cache-hit response on the ask path",
+                    source=SLO_SOURCE_NONE,
+                    blockers=("cache_hits_are_not_traced",),
+                ),
+            ),
+            note=(
+                "the default lane: R42 sends an unlabelled question here, so this row is also "
+                "the one that answers 'what happens to a normal question'"
+            ),
+        ),
+        SloTier(
+            lane=LANE_ANALYSIS,
+            label_zh="分析档",
+            screen="chat",
+            screen_path="/chat",
+            endpoints=ask,
+            stages=stages,
+            metrics=(
+                SloMetric(
+                    name="end_to_end_p95_ms",
+                    label_zh="端到端",
+                    population=(
+                        "one request in this lane that reached a terminal event, including "
+                        "failed and cancelled ones"
+                    ),
+                    source=SLO_SOURCE_LEDGER,
+                    blockers=("lane_attribution_absent",),
+                ),
+                SloMetric(
+                    name="progress_interval_p95_ms",
+                    label_zh="相邻进度事件的最大间隔",
+                    population=(
+                        "one gap between consecutive step.progress events inside a single trace"
+                    ),
+                    source=SLO_SOURCE_TRACE,
+                    blockers=("lane_attribution_absent", "wire_step_events_are_not_recorded"),
+                ),
+            ),
+        ),
+        SloTier(
+            lane=LANE_REPORT,
+            label_zh="报告档",
+            screen="chat",
+            screen_path="/chat",
+            endpoints=ask + ("GET /api/v1/queue/status/{request_id}",),
+            stages=stages,
+            metrics=(
+                SloMetric(
+                    name="end_to_end_p95_ms",
+                    label_zh="端到端（含后台化后查回）",
+                    population=(
+                        "one request in this lane that reached a terminal event, queue entry "
+                        "point included"
+                    ),
+                    source=SLO_SOURCE_LEDGER,
+                    blockers=("lane_attribution_absent", "export_leg_has_no_stage"),
+                ),
+            ),
+            note=(
+                "the only tier with a second addressable surface: /ask answers it and "
+                "GET /api/v1/queue/status/{request_id} reads the result back. That route only "
+                "exists once REPORT_LANE_VIA_QUEUE is on (app/api/v1/chat.py:742-757), and its "
+                "export leg is not a ledger stage at all"
+            ),
+        ),
+    )
+
+
+def _slo_stat(values: list[float], floor: int) -> dict[str, Any]:
+    """One gated number. Percentiles come from ``PerformanceStats`` and nowhere else.
+
+    Below ``floor`` samples the slot reports its own shortfall and no number at all. That is
+    the whole job of this function: the skeleton answers ``0`` for an empty distribution, and
+    a zero passed through would read as "p95 is 0 ms" -- a passing SLO manufactured out of
+    nothing, which is exactly what R36 judgement 2 forbids.
+    """
+    from app.common.performance import PerformanceStats
+
+    stats = PerformanceStats()
+    for value in values:
+        stats.observe(float(value))
+    report = stats.report()
+    sufficient = report["count"] >= floor
+    return {
+        "n": report["count"],
+        "required_samples": floor,
+        "shortfall": max(0, floor - report["count"]),
+        "status": SLO_MEASURED if sufficient else SLO_INSUFFICIENT,
+        "p50_ms": report["p50_ms"] if sufficient else None,
+        "p95_ms": report["p95_ms"] if sufficient else None,
+        "percentile_source": SLO_PERCENTILE_SOURCE,
+        "target": None,
+        "target_status": SLO_TARGET_PENDING,
+        "reason": (
+            ""
+            if sufficient
+            else (
+                f"insufficient samples: {report['count']} of {floor} observed, so the "
+                "percentile is withheld rather than reported as a passing number"
+            )
+        ),
+    }
+
+
+def _slo_not_measurable(metric: SloMetric, floor: int) -> dict[str, Any]:
+    """A slot with no distribution to compute: still no number, and a named reason."""
+    return {
+        "n": 0,
+        "required_samples": floor,
+        "shortfall": floor,
+        "status": SLO_NOT_MEASURABLE,
+        "p50_ms": None,
+        "p95_ms": None,
+        "percentile_source": SLO_PERCENTILE_SOURCE,
+        "target": None,
+        "target_status": SLO_TARGET_PENDING,
+        "reason": (
+            f"{metric.label_zh} has no measurement piece to sample from yet: "
+            + "; ".join(metric.blockers)
+        ),
+        "blockers": [
+            {"code": code, "detail": SLO_BLOCKERS[code]} for code in metric.blockers
+        ],
+    }
+
+
+def slo_readout(*, min_samples: int = MIN_SLO_SAMPLES) -> dict[str, Any]:
+    """Read the ledger against the contract. Answers with shortfalls, not with numbers.
+
+    Only two distributions are computed here: a tier's request windows and a tier's per-stage
+    samples. Both are gated by ``min_samples``, which is deliberately not a query parameter --
+    an SLO floor a caller can lower is not a floor.
+    """
+    from app.common.stage_timing import default_stage_ledger
+
+    floor = max(1, int(min_samples))
+    ledger = default_stage_ledger()
+    samples = ledger.samples()
+    windows = ledger.request_windows()
+
+    tiers: list[dict[str, Any]] = []
+    for tier in slo_tiers():
+        lane_samples = [sample for sample in samples if sample.lane == tier.lane]
+        lane_traces = {sample.trace_id for sample in lane_samples if sample.trace_id}
+        end_to_end = [windows[trace] for trace in sorted(lane_traces) if trace in windows]
+        numbers: dict[str, Any] = {}
+        for metric in tier.metrics:
+            # The request-window distribution is the only one the in-process ledger can answer
+            # with, so the branch is spelled against that slot rather than against the source
+            # alone: a second ledger-sourced metric has to be wired deliberately, not inherit.
+            if metric.source == SLO_SOURCE_LEDGER and metric.name == "end_to_end_p95_ms":
+                number = _slo_stat(end_to_end, floor)
+                number["blockers"] = [
+                    {"code": code, "detail": SLO_BLOCKERS[code]} for code in metric.blockers
+                ]
+            else:
+                number = _slo_not_measurable(metric, floor)
+            number["label"] = metric.label_zh
+            number["population"] = metric.population
+            number["measured_from"] = metric.source
+            numbers[metric.name] = number
+        tiers.append(
+            {
+                "lane": tier.lane,
+                "label": tier.label_zh,
+                "note": tier.note,
+                "screen": {"route": tier.screen, "path": tier.screen_path, "source": SLO_SCREEN_SOURCE},
+                "endpoints": list(tier.endpoints),
+                "stages": list(tier.stages),
+                "observed_requests": len(lane_traces),
+                "numbers": numbers,
+                "stage_numbers": {
+                    stage: _slo_stat(
+                        [
+                            sample.duration_ms
+                            for sample in lane_samples
+                            if sample.stage == stage
+                        ],
+                        floor,
+                    )
+                    for stage in tier.stages
+                },
+            }
+        )
+
+    return {
+        "schema": "r105.slo/1",
+        "sample_floor": floor,
+        "target_status": SLO_TARGET_PENDING,
+        "percentile_source": SLO_PERCENTILE_SOURCE,
+        "units": slo_units(),
+        "tiers": tiers,
+        "unattributed_pool": {
+            "what": (
+                "every request window this process recorded, whatever lane it belonged to. "
+                "Not a tier and not publishable as one: it is the only real distribution the "
+                "ledger can answer with while lane attribution is missing"
+            ),
+            "blockers": [
+                {
+                    "code": "lane_attribution_absent",
+                    "detail": SLO_BLOCKERS["lane_attribution_absent"],
+                }
+            ],
+            "end_to_end": _slo_stat([windows[key] for key in sorted(windows)], floor),
+        },
+        "sample_population_note": (
+            "requests are counted whether they completed, failed or were cancelled: dropping "
+            "the slow failures is how a P95 becomes optimistic. Calls discarded before the "
+            "stream body ran never reach the ledger at all (R110), so a window filled before "
+            "that merge is biased the same way and must say so"
+        ),
+    }
+
+
+@router.get("/slo", responses=_ERROR_RESPONSES)
+async def read_slo(request: Request) -> dict[str, Any]:
+    """The three-tier SLO contract, plus what the ledger may honestly say about it now.
+
+    Read-only, and empty on purpose: every target is ``awaiting_real_samples`` until the D14甲
+    window produces the samples 乙半 will write in. ``min_samples`` is not a query parameter
+    for the reason given on :func:`slo_readout`.
+    """
+    principal = _require_action(request, ACTION_AUDIT, "slo")
+    report = slo_readout()
+    report["requested_by"] = _principal_summary(principal)
+    return report
+
+
 @router.get("/evaluations", responses=_ERROR_RESPONSES)
 async def read_evaluations(request: Request, limit: int | None = None) -> dict[str, Any]:
     """List evaluation suites and stored reports without executing the model stack."""
@@ -657,7 +1117,10 @@ async def read_evaluations(request: Request, limit: int | None = None) -> dict[s
         limit, default=MAX_EVALUATION_REPORTS, maximum=MAX_EVALUATION_REPORTS
     )
     candidates = _evaluation_report_candidates()
-    summaries = [_report_summary(path) for path in candidates[:applied_limit]]
+    summaries = [
+        _report_summary(path, source=_report_provenance(path))
+        for path in candidates[:applied_limit]
+    ]
     suites = [_suite_summary(Path(name)) for name in _suite_paths()]
     return {
         "status": "reports_available" if summaries else "no_reports",

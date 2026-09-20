@@ -647,3 +647,197 @@ Until all six hold, the legacy rows above are the only supported content channel
 - 2026-09-16 (R13-1): `/approve` gained one additive canonical event, `request.cancelled`, after the cancellation shape was re-read from `app/api/v1/chat.py:1256-1276` against `/ask` at `:958-973`. No legacy event removed, renamed or reordered; `/approve` still carries no canonical content events, so the six retirement preconditions below are unchanged and the frontend parser work (F2) is still the blocker.
 - 2026-09-14: section added after the frontend workspace audit. No event was removed, renamed or reordered by this change. Backend line-number references elsewhere in the repository are treated as a dated snapshot, not as contract.
 
+---
+
+## Three-Tier SLO Contract (2026-09-20, R105 甲半)
+
+Snapshot basis: `app/api/v1/observability.py` (`slo_units`, `slo_tiers`, `slo_readout`),
+`app/agents/nodes.py`, `app/agents/contracts.py`, `app/common/stage_timing.py`,
+`app/common/performance.py` and `frontend/src/router/index.js`, as read on 2026-09-20 on
+`codex/be-r105a` @ `0066cce` (ff-checked 2026-09-20 16:4x). Identifiers (lane values, route names, stage names, JSON paths)
+are the durable contract in this section; line numbers are a dated snapshot.
+
+🔴 **Nothing in this section is measured.** It fixes the units, the mapping, the arithmetic and
+the addressable slots, and it fills every number slot with 「待真机样本」. A target value arrives
+only with 乙半, from the D14甲 window's real distribution. Publishing an unmeasured figure as an
+SLO is the same breach as R36's boundary rule (不得用演示语料充当评测集), and the seconds in
+`docs/handoff/2026-09-17-perf-architecture-plan.md` §3.1 stay **proposals** until E2/E3 has
+sampling behind them (计划书 §3.2: 任何未经 E2/E3 实测的秒数 = 不可承诺). They are referenced
+here, never copied into a target cell.
+
+### 1. "三档" collides three different units - they are not three names for one thing
+
+| 单位 | 成员 | 名字归谁 | 是 SLO 的单位吗 |
+|---|---|---|---|
+| **product lane** 产品档 | `qa` 问答档 · `analysis` 分析档 · `report` 报告档 | `app/agents/nodes.py` `LANE_QA` / `LANE_ANALYSIS` / `LANE_REPORT`; decided by R42 `classify_route()` (rules only, zero model calls) | **yes** - one row of the contract is one lane |
+| **model budget tier** 预算档 | `chat` `plan` `compress` `rewrite` `code` `alert` `analysis` | `app/agents/contracts.py:69` `ModelTier`; chosen by the call site that asks for a budget | no - it budgets one model call, not one user-perceived wait |
+| **ledger stage** 台账分段 | `classify` `rewrite` `retrieve` `generate` `reflect` | `app/common/stage_timing.py` `CANONICAL_STAGES`; assigned by `classify_stage()` from label → tool → tier → worker | no - it is the inside of a lane's number |
+
+The bridge is read out of `nodes.py` `LANE_TIERS` (`slo_units()["model_budget_tier"]["bridge_from_product_lane"]`),
+never retyped, and it is **not** a bijection:
+
+| product lane | 预算档 (`LANE_TIERS`) |
+|---|---|
+| `qa` | `chat` |
+| `analysis` | `analysis` |
+| `report` | `analysis` |
+
+- `analysis` and `report` share one budget tier, so a "per-tier budget" and a "per-tier SLO" are
+  different groupings and must not be drawn from the same table.
+- Five of the seven budget tiers (`plan` `compress` `rewrite` `code` `alert`) are named by no lane
+  at all: they are work performed *inside* one lane's request, which is why a budget-tier split
+  and a per-tier SLO can never be the same table.
+- 🔴 Neither side renames for the other's convenience. `ModelTier` growing a member must not
+  create a fourth SLO row, and an SLO row must not be renamed to a budget tier that happens to
+  share its spelling (`analysis` is the collision to watch).
+
+### 2. 档 → 屏 / 端点 → stage 组
+
+The single source of truth is `app/api/v1/observability.py::slo_tiers()`. This table is a
+rendering of it; `tests/test_r105_slo_contract.py::test_the_contract_table_and_the_document_cannot_drift`
+reddens if the two disagree, so the mapping is written down once and mirrored, never copied.
+
+| 档 | 屏 route / path | 端点 | 台账 stage 组 |
+|---|---|---|---|
+| `qa` 问答档 | `chat` `/chat` | `POST /api/v1/ask` | `classify` `rewrite` `retrieve` `generate` `reflect` |
+| `analysis` 分析档 | `chat` `/chat` | `POST /api/v1/ask` | `classify` `rewrite` `retrieve` `generate` `reflect` |
+| `report` 报告档 | `chat` `/chat` | `POST /api/v1/ask` · `GET /api/v1/queue/status/{request_id}` | `classify` `rewrite` `retrieve` `generate` `reflect` |
+
+- **"三屏" is a name for three tiers, not a count of screens.** All three lanes are hosted by the
+  one screen today: `frontend/src/router/index.js` has seven screens (`overview` `docs` `data`
+  `insights` `approval` `chat`, plus `graph` with `meta.primary: false`), and `ChatPanel.vue` is
+  the only panel that calls `/ask`. Inventing two more screens to match the phrase would be
+  inventing data of a different kind, so the contract records the shared host instead.
+- Screen names are route names and come from the router (R104). A backend row may name a route;
+  it may not define one, and `frontend/**` is not this ticket's to edit.
+- `report` is the only tier with a second addressable surface, and that route answers only when
+  `REPORT_LANE_VIA_QUEUE` is on (`app/api/v1/chat.py:771-786`); with it off, the tier is served
+  synchronously by `/ask` and the queue path does not exist.
+- What the client sends in `AskRequest.lane` is **not** the tier. `/ask` today recognises only the
+  literal `report` and ignores anything else (`chat.py:776-786`); R32's 非法档 → `400` is not
+  implemented. The tier of a measured request is R42's verdict, so a request cannot choose its own
+  SLO bucket.
+
+### 3. One percentile algorithm
+
+`app/common/performance.py::PerformanceStats` is the only rank rule in the repository: nearest
+rank, the value sitting at `ceil(n * q)`, 1-based (`:26-30`), reported as `p50_ms` / `p95_ms` by
+`report()` (`:44-51`). `stage_timing._stats()` builds on it, `/health/details` and
+`GET /api/v1/stage-latency` read that, and `slo_readout()` imports the same class. No document and
+no second module may define quantiles of its own.
+
+Registered exception, not sanctioned: `app/quality/eval.py:117-120` keeps its own
+`max(1, ceil(n * 0.95))` to produce the `latency_ms.p95` that `observability._REPORT_LATENCY_KEYS`
+reads back. It agrees with the source today, and
+`tests/test_r105_slo_contract.py::test_the_registered_second_quantile_cannot_diverge_from_the_source`
+pins that agreement distribution by distribution so a one-sided edit goes red. Collapsing it into
+`PerformanceStats` needs a write scope this ticket does not have, so it is named here for the
+coordinator instead of being rewritten on the side.
+
+### 4. Number slots: addressable, and every one of them says 「待真机样本」
+
+Each slot is a stable JSON path under `GET /api/v1/slo` → `tiers[]`, keyed by the tier's `lane`.
+乙半 writes into `target`; `value`-side keys (`p50_ms` / `p95_ms`) are always computed, never
+typed. `target_status` is `awaiting_real_samples` until then.
+
+| 档 | 槽位 (`tiers[lane].numbers.<name>`) | 分母 = 一个样本是什么 | 现在能否算 | 目标 |
+|---|---|---|---|---|
+| `qa` | `end_to_end_p95_ms` 结论完成 | one `qa` request that reached a terminal event | gated: needs lane labels | 「待真机样本」 |
+| `qa` | `first_text_p95_ms` 首屏 | one streamed `qa` request, `request.started` → first observed token | no - see §6 | 「待真机样本」 |
+| `qa` | `cache_hit_p95_ms` 缓存命中 | one cache-hit response on the ask path | no - see §6 | 「待真机样本」 |
+| `analysis` | `end_to_end_p95_ms` 端到端 | one `analysis` request that reached a terminal event | gated: needs lane labels | 「待真机样本」 |
+| `analysis` | `progress_interval_p95_ms` 进度间隔 | one gap between consecutive `step.progress` events in one trace | no - see §6 | 「待真机样本」 |
+| `report` | `end_to_end_p95_ms` 端到端 | one `report` request that reached a terminal event, queue entry point included | gated: needs lane labels | 「待真机样本」 |
+
+Plus one pair of slots per stage, `tiers[lane].stage_numbers.<stage>.{p50_ms,p95_ms}`, over the
+samples that carry that lane and that stage. They inherit the same floor and the same
+null-instead-of-zero rule.
+
+### 5. The sample floor: below it, the readout must confess, not answer
+
+- The floor is `app/api/v1/observability.py::MIN_SLO_SAMPLES` = 100 (R36 判据②). The document
+  names the constant rather than keeping its own copy of the number.
+- It gates **each number against the n of the distribution that number describes**: a tier's
+  end-to-end is gated by its request count, a stage percentile by that stage's sample count.
+- The gate is a knife edge: `n = 99` answers `insufficient_samples` with `shortfall = 1` and
+  `p95_ms = null`; `n = 100` answers `measured`.
+- 🔴 **The floor is not a query parameter.** A caller-lowerable threshold is not a threshold.
+- What this prevents, concretely: `PerformanceStats.report()` answers `0` for a distribution it
+  has never seen, so an ungated SLO readout on an empty ledger publishes `p95_ms: 0` - a
+  spectacularly passing SLO manufactured out of nothing. `slo_readout()` answers `null` plus its
+  own shortfall there.
+- Population rule: failed and cancelled requests are counted. Excluding the slow failures is how
+  a P95 turns optimistic. Calls discarded before the stream body ran never reach the ledger at
+  all (R110), so a window filled before that merge is biased and must say so.
+
+### 6. What cannot be computed even after the window runs (甲半 registers, does not fix)
+
+Each code is emitted in-band by `GET /api/v1/slo` under `blockers[]`, with the same detail text.
+
+| code | 事实 |
+|---|---|
+| `lane_attribution_absent` | `app/trace/spans.py:201-215` hands the ledger stage, tool, tier and worker but never a lane, and no persisted request event carries the question ⇒ live samples all group under `lanes.unknown`, so every per-tier population is empty and every gated slot reads `n = 0` |
+| `first_token_not_a_stage_sample` | `first_token_at` is recorded (`spans.py:174`) and persisted (`store.py:259`) but `stage_timing.samples_from_span_payload` (`:330-345`) never reads it ⇒ 首屏 is computable from a persisted trace, not from the ledger |
+| `wire_first_text_not_recorded` | the promised 首屏 is the first `text` event **on the wire**; canonical envelopes are stamped (`chat.py:222-243`) but not persisted ⇒ a model-side first token is a proxy, and must be labelled one |
+| `cache_hits_are_not_traced` | a cache hit returns before any `request.started` (`chat.py:1191-1215`) ⇒ no window, no sample; 缓存命中 has a zero denominator today, not a fast answer |
+| `wire_step_events_are_not_recorded` | `step.progress` is persisted per graph superstep (`orchestrator.py:1173-1185`), which measures graph advancement rather than delivery to the client |
+| `export_leg_has_no_stage` | `TOOL_TO_STAGE["export_report"]` is empty (`stage_timing.py:71`) ⇒ the report tier's file writing lands in `unattributed`, so the five-stage sum is not that tier's end-to-end; `coverage_error_pct` / `gap_ms` are what say so |
+
+Closing `lane_attribution_absent` is one field on one call site; it belongs to the ticket that
+owns `spans.py`, not to this one. Until it closes, 乙半 can fill the pooled distribution
+(`unattributed_pool.end_to_end`) and nothing lane-split.
+
+### 7. Route registration
+
+`GET /api/v1/slo` (`app/api/v1/observability.py::read_slo`) - read-only management plane, same
+gate as `/stage-latency`: an authenticated principal with the audit action, else `401
+authentication_required` as an `ErrorEnvelope`. It opens no engine, runs no request, writes no
+sample. Additive: no existing route, field or event changed by this section. Note that the
+"Four admin observability routes exist" entry under *Wave 1 consolidated fixes (2026-09-14)* is a
+dated snapshot - since then `GET /stage-latency` (R51) and `GET /slo` (R105) joined the router,
+so the live route set is readable from `app.main` and the OpenAPI document, not from that entry.
+
+## Evaluation Report Provenance (2026-09-20, R105 甲案)
+
+`GET /api/v1/evaluations` reads report files from two different places, and the answer did not say
+which was which. `_evaluation_report_candidates` takes the operator's
+`EVALUATION_REPORT_DIRS` / `EVALUATION_REPORT_DIR` first and then **unconditionally** appends
+`DEFAULT_EVALUATION_REPORT_FILES` - the score that ships inside the image. Since the first real
+number was committed to `docs/testing/evaluation-report.json`, 「没配报告目录」 no longer equals
+「没有报告」: a box with no configured directory still answers `reports_available`. This section
+puts that in the payload instead of in a code comment.
+
+### 1. The field
+
+| key | type | values | meaning |
+| --- | --- | --- | --- |
+| `reports[].source` | string | `configured` \| `shipped_default` | what brought this file into the list |
+
+- `configured` (`REPORT_SOURCE_CONFIGURED`): reached through the operator's report dirs.
+- `shipped_default` (`REPORT_SOURCE_SHIPPED_DEFAULT`): the file *is* one of
+  `DEFAULT_EVALUATION_REPORT_FILES`, i.e. the image came with it.
+- Provenance is a property of the file, not of the route that found it. An operator who points
+  `EVALUATION_REPORT_DIRS` at `docs/testing` is still looking at the bundled score, and the answer
+  still says `shipped_default`. The identity test lives in exactly one place,
+  `app/api/v1/observability.py::_shipped_report_paths` (resolved paths, so both spellings match).
+- Every record carries it, including the ones that stop early at `unreadable` / `too_large`: the
+  key is written into the record before anything is read from disk.
+
+### 2. What did not change
+
+甲案 adds one key. Unchanged: the candidate set and its order (configured entries first, defaults
+appended, deduplicated), `status` (`ok` / `unreadable` / `too_large`), `id`, `path`, `size_bytes`,
+`modified_at`, `metrics`, `category_count`, `reports_total`, `truncated`, the
+`MAX_EVALUATION_REPORTS` clamp, and the `no_reports` / `reports_available` decision. No file is
+hidden from the list and no file is invented for it - the shipped score is **not** demoted out of
+the response when a configured directory exists, it is only labelled. Additive field: a client that
+ignores `source` keeps working.
+
+### 3. Registered, not fixed
+
+`tests/test_observability_routes.py::test_evaluations_reports_an_absent_suite_and_no_reports`
+(`9de5e89`) has to neutralise `DEFAULT_EVALUATION_REPORT_FILES` in order to reach `no_reports`. That
+is the behaviour this section documents, not a flaw in the test. Whether the unconditional append
+should become 「显式配置是唯一真源」 is a route-semantics decision held by 总控 - same family as R111
+(配置/诊断未被完全尊重), and its route is decided together, not here.
+
