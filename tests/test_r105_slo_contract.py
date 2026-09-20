@@ -32,7 +32,10 @@ SLO_PATH = "/api/v1/slo"
 CONTRACT_DOC = Path("docs/api/contract-v1.md")
 ROUTER_SOURCE = Path("frontend/src/router/index.js")
 SECTION_TITLE = "## Three-Tier SLO Contract (2026-09-20, R105 甲半)"
+PROVENANCE_TITLE = "## Evaluation Report Provenance (2026-09-20, R105 甲案)"
 PENDING_TEXT = "「待真机样本」"
+REPORTS_PATH = "/api/v1/evaluations"
+SHIPPED_REPORT_PATH = "docs/testing/evaluation-report.json"
 
 
 @pytest.fixture(autouse=True)
@@ -99,10 +102,24 @@ def _values_named(payload, key):
     return found
 
 
-def _contract_section():
+def _top_level_section(title: str) -> str:
+    """Cut out one ``## `` section, stopping at the next one.
+
+    The SLO parses below look for table rows by first cell, so a section appended to the
+    contract after this ticket must not be able to join them by accident.
+    """
     text = CONTRACT_DOC.read_text(encoding="utf-8")
-    start = text.index(SECTION_TITLE)
-    return text[start:]
+    start = text.index(title)
+    following = re.compile(r"^## ", re.MULTILINE).search(text, start + len(title))
+    return text[start : following.start() if following else len(text)]
+
+
+def _contract_section():
+    return _top_level_section(SECTION_TITLE)
+
+
+def _provenance_section():
+    return _top_level_section(PROVENANCE_TITLE)
 
 
 def _table_rows(section, *, lanes, cells):
@@ -436,3 +453,134 @@ def test_the_readout_opens_no_engine(monkeypatch) -> None:
 
     assert [tier["lane"] for tier in report["tiers"]] == [LANE_QA, LANE_ANALYSIS, LANE_REPORT]
     assert json.dumps(report, ensure_ascii=False, default=str)
+
+
+# ==================== 甲案: /evaluations says where each report came from ====================
+
+
+@pytest.fixture()
+def users(monkeypatch):
+    """Back the authentication middleware with an in-memory user table."""
+    from app.common import auth
+
+    registry = {}
+
+    def add(username, role, **fields):
+        registry[username] = {
+            "id": f"u-{username}",
+            "username": username,
+            "role": role,
+            "department": "研发部",
+            **fields,
+        }
+        return username
+
+    monkeypatch.setattr(auth, "get_user", lambda username: registry.get(username))
+    return add
+
+
+def _write_report(directory: Path, name: str, total: int) -> Path:
+    path = directory / name
+    path.write_text(
+        json.dumps(
+            {
+                "total": total,
+                "answer_correctness": 0.8,
+                "latency_ms": {"count": total, "average": 900.0, "p95": 1400.0},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_configured_report_dirs_keep_the_shipped_score_visible_as_shipped_default(
+    client, users, monkeypatch, tmp_path
+) -> None:
+    """Labelling the bundled score is allowed; hiding it is not, and neither changed the list."""
+    admin = users("r105-admin-configured", "admin")
+    _write_report(tmp_path, "run-window-3.json", 12)
+    monkeypatch.delenv("EVALUATION_REPORT_DIRS", raising=False)
+    monkeypatch.delenv("EVALUATION_REPORT_DIR", raising=False)
+    monkeypatch.setenv("EVALUATION_REPORT_DIRS", str(tmp_path))
+
+    body = client.get(REPORTS_PATH, headers=_headers(admin)).json()
+
+    assert body["status"] == "reports_available"
+    assert [item["path"] for item in body["reports"]] == [
+        (tmp_path / "run-window-3.json").as_posix(),
+        SHIPPED_REPORT_PATH,
+    ], body["reports"]
+    assert body["reports_total"] == len(body["reports"]) == 2
+    assert body["truncated"] is False
+    assert [item["source"] for item in body["reports"]] == [
+        observability.REPORT_SOURCE_CONFIGURED,
+        observability.REPORT_SOURCE_SHIPPED_DEFAULT,
+    ]
+    # The label is not a demotion: the shipped record is still the real, readable score.
+    bundled = body["reports"][-1]
+    assert bundled["status"] == "ok" and bundled["id"] == "evaluation-report"
+    assert bundled["metrics"] and bundled["size_bytes"] > 0
+    assert [item["status"] for item in body["reports"]] == ["ok", "ok"]
+    assert set(_values_named(body, "source")) == {
+        observability.REPORT_SOURCE_CONFIGURED,
+        observability.REPORT_SOURCE_SHIPPED_DEFAULT,
+    }
+
+
+def test_a_configured_path_at_the_shipped_score_still_says_shipped_default(
+    client, users, monkeypatch
+) -> None:
+    """Provenance belongs to the file, not to how the operator spelled it.
+
+    Pointing a report dir straight at the bundled score used to make it look operator-owned;
+    the identity test resolves the path, so the answer still says the box came with it. The
+    dedup in the candidate list is checked in the same breath: one record, not two.
+    """
+    admin = users("r105-admin-spelled", "admin")
+    monkeypatch.delenv("EVALUATION_REPORT_DIRS", raising=False)
+    monkeypatch.delenv("EVALUATION_REPORT_DIR", raising=False)
+    monkeypatch.setenv("EVALUATION_REPORT_DIR", SHIPPED_REPORT_PATH)
+
+    body = client.get(REPORTS_PATH, headers=_headers(admin)).json()
+
+    assert [item["path"] for item in body["reports"]] == [SHIPPED_REPORT_PATH]
+    assert body["reports_total"] == 1 and body["truncated"] is False
+    assert [item["source"] for item in body["reports"]] == [
+        observability.REPORT_SOURCE_SHIPPED_DEFAULT
+    ]
+
+
+def test_an_unreadable_report_still_says_where_it_came_from(tmp_path) -> None:
+    """The key is written before anything is read, so no early return can lose it."""
+    missing = observability._report_summary(
+        tmp_path / "gone.json", source=observability.REPORT_SOURCE_SHIPPED_DEFAULT
+    )
+    assert missing["status"] == "unreadable"
+    assert missing["source"] == observability.REPORT_SOURCE_SHIPPED_DEFAULT
+    assert list(missing)[:3] == ["id", "path", "source"]
+
+    huge = tmp_path / "huge.json"
+    huge.write_text("x" * (observability.MAX_EVALUATION_FILE_BYTES + 8), encoding="utf-8")
+    fat = observability._report_summary(huge, source=observability.REPORT_SOURCE_CONFIGURED)
+    assert fat["status"] == "too_large"
+    assert fat["source"] == observability.REPORT_SOURCE_CONFIGURED
+
+
+def test_the_provenance_field_has_two_values_and_the_contract_registers_both() -> None:
+    """The doc fact: one registered key, exactly two spellings, and a promise about the list."""
+    section = _provenance_section()
+    assert section
+    assert observability.REPORT_SOURCE_CONFIGURED == "configured"
+    assert observability.REPORT_SOURCE_SHIPPED_DEFAULT == "shipped_default"
+    for literal in (
+        observability.REPORT_SOURCE_CONFIGURED,
+        observability.REPORT_SOURCE_SHIPPED_DEFAULT,
+    ):
+        assert f"`{literal}`" in section, literal
+    assert "`reports[].source`" in section
+    assert "_shipped_report_paths" in section
+    # 甲案 registers a label, so the section has to say the candidate set itself is untouched.
+    assert "candidate set" in section
+    assert "unconditional" in section

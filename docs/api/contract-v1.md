@@ -797,3 +797,47 @@ sample. Additive: no existing route, field or event changed by this section. Not
 dated snapshot - since then `GET /stage-latency` (R51) and `GET /slo` (R105) joined the router,
 so the live route set is readable from `app.main` and the OpenAPI document, not from that entry.
 
+## Evaluation Report Provenance (2026-09-20, R105 甲案)
+
+`GET /api/v1/evaluations` reads report files from two different places, and the answer did not say
+which was which. `_evaluation_report_candidates` takes the operator's
+`EVALUATION_REPORT_DIRS` / `EVALUATION_REPORT_DIR` first and then **unconditionally** appends
+`DEFAULT_EVALUATION_REPORT_FILES` - the score that ships inside the image. Since the first real
+number was committed to `docs/testing/evaluation-report.json`, 「没配报告目录」 no longer equals
+「没有报告」: a box with no configured directory still answers `reports_available`. This section
+puts that in the payload instead of in a code comment.
+
+### 1. The field
+
+| key | type | values | meaning |
+| --- | --- | --- | --- |
+| `reports[].source` | string | `configured` \| `shipped_default` | what brought this file into the list |
+
+- `configured` (`REPORT_SOURCE_CONFIGURED`): reached through the operator's report dirs.
+- `shipped_default` (`REPORT_SOURCE_SHIPPED_DEFAULT`): the file *is* one of
+  `DEFAULT_EVALUATION_REPORT_FILES`, i.e. the image came with it.
+- Provenance is a property of the file, not of the route that found it. An operator who points
+  `EVALUATION_REPORT_DIRS` at `docs/testing` is still looking at the bundled score, and the answer
+  still says `shipped_default`. The identity test lives in exactly one place,
+  `app/api/v1/observability.py::_shipped_report_paths` (resolved paths, so both spellings match).
+- Every record carries it, including the ones that stop early at `unreadable` / `too_large`: the
+  key is written into the record before anything is read from disk.
+
+### 2. What did not change
+
+甲案 adds one key. Unchanged: the candidate set and its order (configured entries first, defaults
+appended, deduplicated), `status` (`ok` / `unreadable` / `too_large`), `id`, `path`, `size_bytes`,
+`modified_at`, `metrics`, `category_count`, `reports_total`, `truncated`, the
+`MAX_EVALUATION_REPORTS` clamp, and the `no_reports` / `reports_available` decision. No file is
+hidden from the list and no file is invented for it - the shipped score is **not** demoted out of
+the response when a configured directory exists, it is only labelled. Additive field: a client that
+ignores `source` keeps working.
+
+### 3. Registered, not fixed
+
+`tests/test_observability_routes.py::test_evaluations_reports_an_absent_suite_and_no_reports`
+(`9de5e89`) has to neutralise `DEFAULT_EVALUATION_REPORT_FILES` in order to reach `no_reports`. That
+is the behaviour this section documents, not a flaw in the test. Whether the unconditional append
+should become 「显式配置是唯一真源」 is a route-semantics decision held by 总控 - same family as R111
+(配置/诊断未被完全尊重), and its route is decided together, not here.
+

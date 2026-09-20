@@ -57,6 +57,8 @@ EVALUATION_READ_ACTION = "evaluation:read"
 AUDIT_EVENT_SOURCE = "app.common.audit.get_audit_events"
 DEFAULT_EVALUATION_REPORT_FILES = ("docs/testing/evaluation-report.json",)
 DEFAULT_EVALUATION_SET_PATHS = ("tests/fixtures/business_evaluation_30.jsonl",)
+REPORT_SOURCE_CONFIGURED = "configured"
+REPORT_SOURCE_SHIPPED_DEFAULT = "shipped_default"
 EVALUATION_COMMAND_TEMPLATE = (
     "python scripts/run_quality_evaluation.py --fixture {fixture} "
     "--answers {answers} --output {output}"
@@ -337,6 +339,40 @@ def _evaluation_report_candidates() -> list[Path]:
     return [path for path in candidates if path.suffix.lower() == ".json"]
 
 
+def _shipped_report_paths() -> set[Path]:
+    """Absolute identities of the report files that ship inside the image.
+
+    Resolved instead of compared as strings: the same bundled score can also arrive through
+    a configured directory (the append at observability.py:333 is unconditional), and "which
+    file is this" has to survive both spellings of it.
+    """
+    resolved: set[Path] = set()
+    for name in DEFAULT_EVALUATION_REPORT_FILES:
+        try:
+            resolved.add(Path(name).resolve())
+        except OSError:
+            continue
+    return resolved
+
+
+def _report_provenance(path: Path) -> str:
+    """Whether an operator asked for this report, or the image came with it.
+
+    Since the first real score was committed, "no configured report dir" no longer means "no
+    reports": the defaults are appended after the configured entries either way. That is only
+    honest if the answer says which part of the list nobody asked for. Provenance is a
+    property of the file, not of the discovery route -- the bundled score stays bundled even
+    when an operator points a report dir at docs/testing.
+    """
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return REPORT_SOURCE_CONFIGURED
+    if resolved in _shipped_report_paths():
+        return REPORT_SOURCE_SHIPPED_DEFAULT
+    return REPORT_SOURCE_CONFIGURED
+
+
 def _suite_paths() -> list[str]:
     configured = os.getenv("EVALUATION_SET_PATHS", "")
     entries = [item.strip() for item in configured.split(os.pathsep) if item.strip()]
@@ -365,10 +401,11 @@ def _report_metrics(payload: dict[str, Any]) -> dict[str, Any]:
     return metrics
 
 
-def _report_summary(path: Path) -> dict[str, Any]:
+def _report_summary(path: Path, *, source: str) -> dict[str, Any]:
     record: dict[str, Any] = {
         "id": path.stem,
         "path": path.as_posix(),
+        "source": source,
         "status": "unreadable",
         "metrics": {},
     }
@@ -1080,7 +1117,10 @@ async def read_evaluations(request: Request, limit: int | None = None) -> dict[s
         limit, default=MAX_EVALUATION_REPORTS, maximum=MAX_EVALUATION_REPORTS
     )
     candidates = _evaluation_report_candidates()
-    summaries = [_report_summary(path) for path in candidates[:applied_limit]]
+    summaries = [
+        _report_summary(path, source=_report_provenance(path))
+        for path in candidates[:applied_limit]
+    ]
     suites = [_suite_summary(Path(name)) for name in _suite_paths()]
     return {
         "status": "reports_available" if summaries else "no_reports",
