@@ -38,6 +38,24 @@ _UNCONFIGURED = object()
 _STORE: dict[str, Any] = {"path": _UNCONFIGURED, "store": None, "error": "", "mtime": None, "loaded": False}
 
 
+#: The only two facts for which this registry refuses a write, named once here so that
+#: every surface which has to state one of them states the same word.
+#:
+#: ``register_application`` raises ``ProductionReadOnlyProtection`` from two places that
+#: mean opposite things. Either no store was ever asked for, and a production process
+#: keeps applications nowhere, in a dictionary that dies with the worker -- a deployment
+#: which never switched this feature on. Or a store was named and then failed the write,
+#: which is an outage. Carrying both under one word told customers to retry something no
+#: retry can change, let monitoring bill a disabled feature as downtime, and left the
+#: audit trail blaming the disk for what is an operator's unfinished configuration.
+#:
+#: The second word is the one this exit has always answered with. A store that fails
+#: really is read-only from the caller's seat, and a term an operator's runbook already
+#: keys on is not ours to rename here.
+STORAGE_REFUSAL_UNCONFIGURED = "open_platform_unconfigured"
+STORAGE_REFUSAL_WRITE_FAILED = "storage_read_only"
+
+
 #: ``max_clearance`` is recorded and consulted by nothing. No path in this application
 #: compares it with a document's classification, and no Principal receives it. Whether a
 #: level 2 caller may read a level 3 chunk is the owner's ruling to make -- open
@@ -108,7 +126,15 @@ def _current_store():
 
 
 def app_registry_storage_state() -> dict:
-    """Report where application credentials live: durable store, memory, or nowhere."""
+    """Report where application credentials live: durable store, memory, or nowhere.
+
+    A state which refuses writes also says why, under ``reason``. That field is the one
+    answer three surfaces quote: the status and detail of ``POST /api/v1/apps``, the
+    reason written beside it in the audit, and this dict as published by
+    ``/api/v1/health/details``. A durable store and the development dictionary accept
+    writes, so neither carries a reason: an explanation would imply a refusal which
+    never happened.
+    """
     _current_store()
     path = _STORE["path"]
     error = str(_STORE["error"] or "")
@@ -126,6 +152,9 @@ def app_registry_storage_state() -> dict:
             "durable": False,
             "shared_across_processes": False,
             "protection": "read_only",
+            # A store was asked for by name and this process could not open or could not
+            # write it. The disk is the news, so the word stays the one meaning disk.
+            "reason": STORAGE_REFUSAL_WRITE_FAILED,
             "detail": error,
         }
     if _is_production_environment():
@@ -134,6 +163,9 @@ def app_registry_storage_state() -> dict:
             "durable": False,
             "shared_across_processes": False,
             "protection": "read_only",
+            # ``protection`` says what happens to the write; this says why, which is the
+            # half an operator can act on and the half the HTTP exit may answer with.
+            "reason": STORAGE_REFUSAL_UNCONFIGURED,
             "detail": f"{_STORE_PATH_ENV} is not configured; application registration is refused",
         }
     return {

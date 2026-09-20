@@ -18,6 +18,8 @@ from app.common.logger import logger
 from app.common.monitoring import ProductionReadOnlyProtection
 from app.common.open_platform import (
     OPEN_USER_CLAIM_KEY,
+    STORAGE_REFUSAL_UNCONFIGURED,
+    STORAGE_REFUSAL_WRITE_FAILED,
     app_registry_storage_state,
     clearance_registration,
     list_applications,
@@ -329,6 +331,26 @@ def _require_admin(request: Request, resource_name: str):
     return principal
 
 
+def _registration_refusal_reason() -> str:
+    """Quote the registry's own reason for refusing a registration, defaulting to the outage.
+
+    ``ProductionReadOnlyProtection`` arrives for two different facts and only the registry
+    can tell them apart, so the word is read out of ``app_registry_storage_state()`` -- the
+    same object ``/api/v1/health/details`` publishes under
+    ``storage.subsystems.open_platform_apps`` -- rather than worked out again here. The
+    environment is not re-read and the exception text is not parsed: either would plant a
+    second opinion about one fact, and a second opinion is the one which goes stale.
+    A state with no reason at all classified nothing, which is not evidence that the
+    deployment merely left a feature switched off, so that case keeps 503.
+    """
+    try:
+        state = app_registry_storage_state()
+    except Exception as exc:  # pragma: no cover - a failed probe must not hide a refusal
+        logger.warning(f"[OpenPlatform] registration refusal unclassified: {type(exc).__name__}")
+        return STORAGE_REFUSAL_WRITE_FAILED
+    return str(state.get("reason") or STORAGE_REFUSAL_WRITE_FAILED)
+
+
 @apps_router.post("/apps")
 async def register_open_application(data: ApplicationRegisterRequest, request: Request):
     """Register an open-platform application; the secret is returned exactly once.
@@ -350,17 +372,29 @@ async def register_open_application(data: ApplicationRegisterRequest, request: R
         record_audit(principal, "open_platform:app_register", "denied", str(data.app_name or ""), str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ProductionReadOnlyProtection as exc:
-        # Checked for R103 and deliberately left at 503: the refusal that reaches here
-        # with a reason of its own (open_platform_store_write_failed) is a store that was
-        # configured and then could not be written, which is an outage and retryable once
-        # the mount is fixed -- so the code matches the fact and is not the knowledge
-        # graph's 503-for-an-unconfigured-feature (app/api/v1/intelligence.py). The
-        # sibling raise in app/common/open_platform.py that fires when no store path is
-        # set at all shares this handler and is the same lie in miniature; separating the
-        # two needs a reason field on app_registry_storage_state(), which is outside this
-        # ticket's write domain, so it is reported up rather than patched sideways here.
-        record_audit(principal, "open_platform:app_register", "denied", str(data.app_name or ""), str(exc))
-        raise HTTPException(status_code=503, detail="storage_read_only") from exc
+        reason = _registration_refusal_reason()
+        record_audit(principal, "open_platform:app_register", "denied", str(data.app_name or ""), reason)
+        # R103 stopped here and reported up; R106 settles it. Two refusals arrive, and
+        # they are not the same news.
+        #
+        # Nothing was ever configured for this deployment -> 409
+        # open_platform_unconfigured. Not 503: "temporarily unavailable, retry later" is
+        # a promise no client retry can keep, monitoring would bill a feature nobody
+        # switched on as downtime, and an administrator reading the trail would go to the
+        # disk over a decision which is still somebody's to make. Not 404 either: the
+        # route, the collection and the environment variable all exist, so concealing a
+        # live endpoint behind "not found" would send the reader off to fix the wrong
+        # thing, which is worse than stating the conflict. What conflicts is this write
+        # against the state of the deployment, and that is exactly what 409 carries.
+        #
+        # A store which was named and then could not be opened or written keeps its 503
+        # storage_read_only. That one is an outage, and retrying once the mount is fixed
+        # is the right advice, so changing it would be the same mistake wearing the other
+        # hat.
+        raise HTTPException(
+            status_code=409 if reason == STORAGE_REFUSAL_UNCONFIGURED else 503,
+            detail=reason,
+        ) from exc
     record_audit(principal, "open_platform:app_register", "allowed", issued["app_id"])
     return {
         **issued,
