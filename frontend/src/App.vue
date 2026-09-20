@@ -1,12 +1,8 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, shallowRef } from 'vue'
-import DocPanel from './components/DocPanel.vue'
-import DataPanel from './components/DataPanel.vue'
-import ChatPanel from './components/ChatPanel.vue'
-import DashboardPanel from './components/DashboardPanel.vue'
-import InsightPanel from './components/InsightPanel.vue'
-import GraphPanel from './components/GraphPanel.vue'
-import ApprovalPanel from './components/ApprovalPanel.vue'
+import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { DEFAULT_SCREEN, cachedScreens, navigation, screenRouteIds } from './router'
+import { focusScreenMain, navItems, nextNavItem } from './router/nav-focus'
 import { resetSessions } from './lib/sessions'
 import {
   clearSession,
@@ -20,7 +16,10 @@ import {
   USER_KEY,
 } from './lib/http'
 
-const activeTab = shallowRef('overview')
+const route = useRoute()
+const router = useRouter()
+const navEl = shallowRef(null)
+const workspaceEl = shallowRef(null)
 const isLoggedIn = shallowRef(false)
 const username = shallowRef('')
 const userRole = shallowRef('staff')
@@ -40,32 +39,32 @@ let unsubscribeAuth = null
 let toastTimer = null
 const toast = shallowRef(null)
 
-const navigation = [
-  { id: 'overview', label: '总览', icon: 'M4 11.5 12 4l8 7.5v8.5a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z' },
-  { id: 'docs', label: '文档', icon: 'M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6' },
-  { id: 'data', label: '数据', icon: 'M5 5h14v14H5zM8 16V9M12 16V7M16 16v-4' },
-  { id: 'insights', label: '洞察', icon: 'M4 17l5-5 4 3 7-8M17 7h3v3' },
-  // D13裁定（计划书 §6.1）：图谱不再占一级工作区入口。它的定位早已裁定为「候选断言采集表」而非推理引擎
-  // （docs/design/knowledge-graph-positioning.md），摆在侧栏一级就是误导使用者。撤的是入口，不是功能：
-  // 面板组件与下面 workspaceMap 的 graph 映射一字不动，非一级落点由 R104 的真路由决定。
-  { id: 'approval', label: '审批', icon: 'M6 4h12v16H6zM9 9h6M9 13h6M9 17h3M5 12l3 3 6-7' },
-  { id: 'chat', label: '对话', icon: 'M5 6h14v10H9l-4 4zM8 10h8M8 13h5' },
-]
+// R104：侧栏那六项与「点下去渲染谁」都从 src/router 的一张路由表派生，这里不再手写第二份。
+// 图谱的非一级落点（/graph）也在那张表上，D13① 撤的是一级入口而不是功能。
 
-// graph 保留：它是图谱屏唯一的渲染入口，删了就等于删功能。导航项已撤，今天没有任何路径能把
-// activeTab 置为 graph（含其他面板的 @goto），这条映射处于可达但无入口的状态，等 R104。
-const workspaceMap = {
-  overview: DashboardPanel,
-  insights: InsightPanel,
-  graph: GraphPanel,
-  approval: ApprovalPanel,
-}
-
-const activeMeta = computed(() => navigation.find(item => item.id === activeTab.value) || navigation[0])
+// 顶栏标题（面包屑的末级）只认路由元信息：它以前回头查 navigation 数组，等于「现在在哪一屏」
+// 有两份记账，查的那份还可能是过期的。
+const activeMeta = computed(() => route.meta || {})
+// 只有文档面板需要 user-role 这项入参，其余面板不该收到多余属性。
+const screenProps = computed(() => (route.name === 'docs' ? { userRole: userRole.value } : {}))
 const roleLabel = computed(() => userRole.value === 'admin' ? '管理员' : '普通用户')
 
-function handleAsk(query) {
-  activeTab.value = 'chat'
+/**
+ * 跨屏跳转的唯一出口：目标是路由名（屏 id），不再是 tab 字符串。
+ * 认不出的屏什么都不做 —— 面板可以随便加按钮，但按不动一张没有的地址。
+ */
+function openScreen(screen) {
+  const name = String(screen || '')
+  if (!screenRouteIds.includes(name) || route.name === name) return undefined
+  return router.push({ name })
+}
+
+async function handleAsk(query) {
+  // 对话面板改由 /chat 路由决定挂载（改造前是 v-show 常驻），事件早一拍发就没人接，
+  // 所以先等这一屏挂上，再把问题交给它。nextTick 的回调形状留着不要改写成 await：
+  // tests/test_data_file_catalog.py::test_chat_request_forwards_selected_data_filename
+  // 是按源码文本钉这条「切屏之后才派发」的顺序的，后端侧那份账不在本单写域里。
+  await openScreen('chat')
   nextTick(() => window.dispatchEvent(new CustomEvent('chat-ask', { detail: query })))
 }
 
@@ -81,11 +80,13 @@ function checkAuth() {
   enterWorkspace()
 }
 
-function enterWorkspace() {
+async function enterWorkspace() {
   isLoggedIn.value = true
-  activeTab.value = 'overview'
   stopExpiryWatch?.()
   stopExpiryWatch = startExpiryWatch()
+  // 登录不改地址，所以不会触发下面的切屏 watch；焦点由这里自己收尾到工作区主区。
+  await nextTick()
+  focusScreenMain(workspaceEl.value)
 }
 
 function showToast(message, tone = 'error', holdMs = 6000) {
@@ -157,7 +158,7 @@ function goToLogin() {
   username.value = ''
   userRole.value = 'staff'
   loginPass.value = ''
-  activeTab.value = 'overview'
+  if (route.name !== DEFAULT_SCREEN) router.replace({ name: DEFAULT_SCREEN })
 }
 
 function doLogout() {
@@ -175,6 +176,23 @@ function doLogout() {
   }
   goToLogin()
 }
+
+/**
+ * 侧栏方向键走位：下标算绪与下拉、标签页同一份（ui/list-nav.js），可聚焦条目
+ * 的选择器与弹层焦点循环同一份（ui/focus-trap.js）。Tab 与 Enter/Space 一概不拦。
+ */
+function onNavKeydown(event) {
+  const target = nextNavItem(navItems(navEl.value), document.activeElement, event.key)
+  if (!target) return
+  event.preventDefault()
+  target.focus()
+}
+
+// 切屏后把焦点交给新屏主区，否则焦点还留在侧栏，键盘与读屏用户不知道屏幕已经换了。
+watch(() => route.name, async () => {
+  await nextTick()
+  focusScreenMain(workspaceEl.value)
+})
 
 onMounted(() => {
   unsubscribeAuth = subscribeAuth(onAuthEvent)
@@ -322,16 +340,16 @@ onUnmounted(() => {
             <small>ENTERPRISE BRAIN</small>
           </span>
         </div>
-        <nav class="nav-list" data-testid="navigation">
+        <nav ref="navEl" class="nav-list" data-testid="navigation" @keydown="onNavKeydown">
           <button
             v-for="item in navigation"
             :key="item.id"
             type="button"
-            :class="['nav-item', { active: activeTab === item.id }]"
+            :class="['nav-item', { active: route.name === item.id }]"
             :data-testid="`nav-${item.id}`"
-            :aria-current="activeTab === item.id ? 'page' : undefined"
+            :aria-current="route.name === item.id ? 'page' : undefined"
             :aria-label="item.label"
-            @click="activeTab = item.id"
+            @click="openScreen(item.id)"
           >
             <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path :d="item.icon" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
@@ -341,9 +359,9 @@ onUnmounted(() => {
         </nav>
       </aside>
 
-      <main class="workspace" data-testid="workspace">
+      <main ref="workspaceEl" class="workspace" tabindex="-1" data-testid="workspace">
         <header class="workspace-head" data-testid="topbar">
-          <h1>{{ activeMeta.label }}</h1>
+          <h1>{{ activeMeta.title }}</h1>
           <div class="workspace-tools">
             <button type="button" aria-label="搜索">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8" /><path d="m15.2 15.2 5 5" /></svg>
@@ -358,15 +376,13 @@ onUnmounted(() => {
         </header>
 
         <section class="panel-slot" data-testid="panel-slot">
-          <component
-            :is="workspaceMap[activeTab]"
-            v-if="workspaceMap[activeTab]"
-            @goto="activeTab = $event"
-          />
-          <DocPanel v-else-if="activeTab === 'docs'" :user-role="userRole" />
-          <DataPanel v-else-if="activeTab === 'data'" @ask="handleAsk" />
-          <!-- 对话面板常驻（v-show 而非 v-if）：切走再回来会话、滚动与进行中的回答流都不丢 -->
-          <ChatPanel v-show="activeTab === 'chat'" />
+          <RouterView v-slot="{ Component }">
+            <!-- 对话面板切走不卸载：进行中的回答流、输入草稿与滚动位置都得留着（改造前靠 v-show）。
+                 其余六屏照旧每次进来重挂载重取数据，与改造前的 v-if 语义一致。 -->
+            <KeepAlive :include="cachedScreens">
+              <component :is="Component" v-bind="screenProps" @goto="openScreen" @ask="handleAsk" />
+            </KeepAlive>
+          </RouterView>
         </section>
       </main>
     </div>
