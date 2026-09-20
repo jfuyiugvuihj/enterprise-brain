@@ -583,11 +583,11 @@ PROMPT_PACK_MARKER = "[PromptPack]"
 CONTEXT_SHELL_RESERVE_TOKENS = 632
 #: 同一把尺实测：doc 子图每多压一轮"上一问 + 上一答"（答案按 400 字算）多花 161 枚 token，
 #: 这里按两轮留出 322 枚（复测：
-#: ``test_history_reserve_covers_the_pinned_number_of_turns``）。上一轮**检索串**留在历史里
-#: 那一笔不靠这个数兜：装箱账按 ``thread_id + worker`` 跨轮累加（见
-#: ``app/agents/tools.py`` 的 ``_pack_ledger_key``），所以第二轮起只会少装几条，不会再把
-#: prompt 顶回 ``n_ctx``。再往后的"该裁历史"是组装点的活（``app/agents/orchestrator.py``，
-#: 本单写域外），已连实测数一起交回总控。
+#: ``test_history_reserve_covers_the_pinned_number_of_turns``）。上一轮**检索串**这一笔既不靠这个数兜，
+#: 也不再靠跨轮累加兜：R117 实测 worker 子图在真装配下**每轮冷启动**（langgraph 给嵌套子图注入的
+#: ``checkpoint_ns`` 逐轮换 uuid），上一轮的检索串这一轮并不在 prompt 里；装箱账因此改挂**轮身份**
+#: （见 ``app/agents/tools.py`` 的 ``_pack_ledger_key``，跟进单 §55），同轮并发多发仍互相扣房。
+#: 「该不该让子图跨轮 resume」是产品级取舍（已立案 R118，交回总控裁定），不在本单写域。
 CONTEXT_HISTORY_RESERVE_TOKENS = 322
 
 #: 装箱服务的是哪一档：doc/data/chart/export 四条 worker 腿跑的都是 analysis 档
