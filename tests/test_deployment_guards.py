@@ -471,6 +471,10 @@ def test_knowledge_graph_refuses_an_in_memory_write_in_production(monkeypatch, t
         "durable": False,
         "shared_across_processes": False,
         "protection": "read_only",
+        # The word the HTTP exit answers with is reported here too, so an operator
+        # reading health and a client reading the 409 cannot be told two different
+        # stories about the same unconfigured deployment (R103 / D6).
+        "reason": "knowledge_graph_unconfigured",
         "detail": "KNOWLEDGE_GRAPH_STORE_PATH is not configured; relation writes are refused",
     }
 

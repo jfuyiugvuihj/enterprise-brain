@@ -45,11 +45,15 @@ const navigation = [
   { id: 'docs', label: '文档', icon: 'M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6' },
   { id: 'data', label: '数据', icon: 'M5 5h14v14H5zM8 16V9M12 16V7M16 16v-4' },
   { id: 'insights', label: '洞察', icon: 'M4 17l5-5 4 3 7-8M17 7h3v3' },
-  { id: 'graph', label: '图谱', icon: 'M7 7a3 3 0 1 0 0 .01M17 5a3 3 0 1 0 0 .01M17 17a3 3 0 1 0 0 .01M7 19a3 3 0 1 0 0 .01M9.5 8l5-1.5M9.5 17l5-1.5M7 10v6' },
+  // D13裁定（计划书 §6.1）：图谱不再占一级工作区入口。它的定位早已裁定为「候选断言采集表」而非推理引擎
+  // （docs/design/knowledge-graph-positioning.md），摆在侧栏一级就是误导使用者。撤的是入口，不是功能：
+  // 面板组件与下面 workspaceMap 的 graph 映射一字不动，非一级落点由 R104 的真路由决定。
   { id: 'approval', label: '审批', icon: 'M6 4h12v16H6zM9 9h6M9 13h6M9 17h3M5 12l3 3 6-7' },
   { id: 'chat', label: '对话', icon: 'M5 6h14v10H9l-4 4zM8 10h8M8 13h5' },
 ]
 
+// graph 保留：它是图谱屏唯一的渲染入口，删了就等于删功能。导航项已撤，今天没有任何路径能把
+// activeTab 置为 graph（含其他面板的 @goto），这条映射处于可达但无入口的状态，等 R104。
 const workspaceMap = {
   overview: DashboardPanel,
   insights: InsightPanel,
