@@ -62,15 +62,17 @@ Error responses use a stable `code` from:
 > while the name stays in the enum, so the list cannot quietly accumulate fossils.
 > `app/rag/evidence.py` used to keep its own copy of the retryable vocabulary; it now derives from the
 > same Literal and a test asserts the two sets cannot drift (R13-4).
-> Note the deliberate exceptions: `503 storage_read_only` (a durable store that was configured and then
-> could not be opened or written: `app/api/v1/intelligence.py:222`, `app/api/v1/open_platform.py:363`) and
-> `409 knowledge_graph_unconfigured` (R103: a production deployment that never configured a graph store at
-> all, same route) are **not** `ErrorEnvelope.code` members. They are bare detail strings on legacy-shaped
-> responses. Ratifying them was explicitly declined in this batch: "read-only protection", "this
-> deployment never enabled the feature" and "schema missing" are different failures, and merging them
-> would make an operator fix the wrong one. `409` rather than `503` for the unconfigured case is
-> load-bearing: nothing a client retries will configure the graph store, so a `503` would bill a decision
-> the operator still has to make as downtime.
+> Note the deliberate exceptions, which come in pairs. `503 storage_read_only` -- a durable store that was
+> configured and then could not be opened or written -- is what `app/api/v1/intelligence.py:222` (knowledge
+> graph) and `app/api/v1/open_platform.py:395` (application registration) answer when the store the operator
+> did configure refuses them. Each has an `unconfigured` sibling telling different news: a production
+> deployment that never configured such a store at all answers `409 knowledge_graph_unconfigured` (R103) or
+> `409 open_platform_unconfigured` (R106). All four are **not** `ErrorEnvelope.code` members; they are bare
+> detail strings on legacy-shaped responses. Ratifying them was explicitly declined in this batch:
+> "read-only protection", "this deployment never enabled the feature" and "schema missing" are different
+> failures, and merging them would make an operator fix the wrong one. `409` rather than `503` for the
+> unconfigured half is load-bearing: nothing a client retries will configure a store, so a `503` would bill
+> a decision the operator still has to make as downtime.
 
 The payload is compatible with:
 
@@ -452,10 +454,13 @@ or removed, and no legacy SSE event changed.
   `degraded` status plus a `problems` code list (`users_store_not_persistent`,
   `<name>_read_only`, `queue_unavailable`, `postgres_<status>`, ...). A durable backend missing in
   production puts the subsystem into read-only protection instead of pretending to be healthy. For the
-  knowledge graph the refusing state also names its cause in a `reason` field: a store that was
+  knowledge graph and the open-platform registry the refusing state also names its cause in a `reason`
+  field (`app/knowledge_graph/service.py:46-49`, `app/common/open_platform.py:55-56`): a store that was
   configured and then failed keeps `503 storage_read_only`, while a deployment that never enabled one
-  answers `409 knowledge_graph_unconfigured` (R103) - nothing a client retries can configure a store, so
-  the two facts must not leave through one name. Read `problems`; do not infer health from `status` alone.
+  answers `409 knowledge_graph_unconfigured` (R103) or `409 open_platform_unconfigured` (R106) - nothing a
+  client retries can configure a store, so the two facts must not leave through one name. The subsystem
+  keys carrying that `reason` are `knowledge_graph` and `open_platform_apps`
+  (`app/common/monitoring.py:22`). Read `problems`; do not infer health from `status` alone.
 - **Four admin observability routes exist** (`app/api/v1/observability.py`, mounted under
   `/api/v1`): `POST /retrieval/debug`, `GET /traces/{trace_id}`, `GET /evaluations`,
   `GET /audit/events`. They sit on already-authenticated paths - the `AuthMiddleware` allow-list

@@ -35,7 +35,7 @@
  *         internal_error 的缺陷，后端已删掉它，所以 A − B 恒为空，没有可钉的账。
  *   UNRATIFIED_CODES 概念随 6606f59 追认而作废：data.py 7 码与 no_answer_produced 现在都在
  *         列 A 里，「前端有话、契约没登记」恒为空，由 C − A 一条直接钉住，不留永远该是空的名单。
- *   还有一类账不在上面两列里：LEGACY_ALIASES 的 16 个后端实发码名与 PROSE_ALIASES 的 2 条中文散文
+ *   还有一类账不在上面两列里：LEGACY_ALIASES 的 17 个后端实发码名与 PROSE_ALIASES 的 2 条中文散文
  *   仍是「后端确实发得出、封闭枚举里没有」的输入，前端已归一，契约侧仍欠登记（派单给后端时带上）。
  */
 
@@ -170,6 +170,18 @@ export const LEGACY_ALIASES = {
   knowledge_graph_unconfigured: {
     code: 'storage_unavailable',
     message: '这台服务器还没有开启知识图谱的关系存储，所以这条关系没能记下来。请先联系管理员开启该功能，反复提交同一份内容不会让它生效。',
+    retryable: false,
+  },
+  // R106 把图谱那处分家搬到了开放平台的应用注册上：上面 storage_read_only 说的是「存储配好了、这次
+  // 写不进去」，这一条说的是「这台服务器没配 OPEN_PLATFORM_APP_STORE_PATH，注册永远不会生效」。混用会
+  // 把管理员支去查磁盘，而真正欠的是一个还没人做的开关决定；对着没开的功能重试也开不出来，所以
+  // retryable:false（后端同一条理由把状态从 503 改成了 409，见 app/api/v1/open_platform.py:395）。
+  // 出处：app/common/open_platform.py 的 STORAGE_REFUSAL_UNCONFIGURED，同一枚词也会出现在
+  // /api/v1/health/details 的 open_platform_apps 那节的 reason 字段里。
+  // 归档与上面同族：它属部署缺口，不是运行时故障；但句子只说应用登记这一件事。
+  open_platform_unconfigured: {
+    code: 'storage_unavailable',
+    message: '这台服务器还没有为开放平台配置应用登记要用的持久存储，所以这次登记没有生效。请联系管理员配置好存储后再提交，反复提交同一份内容不会让它生效。',
     retryable: false,
   },
   relation_source_required: { code: 'validation_error', message: '请先选择关系的起始对象。' },

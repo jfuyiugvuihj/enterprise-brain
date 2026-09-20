@@ -230,6 +230,22 @@ describe('形状 1：detail 是字符串稳定码', () => {
     expect(errorCodeLabel(result)).toBe('')
   })
 
+  it('R103/R106：图谱与开放平台的「这台服务器没开启」不与「只读降级」共用一句话，也不可重试', () => {
+    const readOnly = normalizeError({ response: { status: 503, data: { detail: 'storage_read_only' } } })
+    const graph = normalizeError({ response: { status: 409, data: { detail: 'knowledge_graph_unconfigured' } } })
+    const openPlatform = normalizeError({ response: { status: 409, data: { detail: 'open_platform_unconfigured' } } })
+    inEnum(graph, 'knowledge_graph_unconfigured')
+    inEnum(openPlatform, 'open_platform_unconfigured')
+    // 三件事三种说法：谁把它们并成一句，排查方向就会被指错一次。这里不认文案细节，只认「不许共用」。
+    expect(new Set([readOnly.message, graph.message, openPlatform.message]).size).toBe(3)
+    // 「重试就能好」只属于只读降级那一族：对着没开的功能重试，永远开不出来。
+    expect(readOnly.retryable).toBe(true)
+    expect(graph.retryable).toBe(false)
+    expect(openPlatform.retryable).toBe(false)
+    expect(graph.code).toBe('storage_unavailable')
+    expect(openPlatform.code).toBe('storage_unavailable')
+  })
+
   it('历史别名归一到枚举码，原码留在 rawCode', () => {
     const big = normalizeError(axiosError(413, 'upload_too_large'))
     expect(big.code).toBe('unsupported_file')
