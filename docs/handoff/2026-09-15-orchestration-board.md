@@ -2988,3 +2988,23 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 
 **在途**：`Banach`@R114（`be-r114`）、`Galileo`@R115（`be-r115`）——两棵树的写域与 run3 被测 rev 无关，窗口内只许跑各自文件。R109/R110/R108/R105甲/R112 五枚线程全部 close，slot 空出两个。
 
+
+
+### 4BH.8 · run3 收窗账：整题拒 46 → 2（R112 生效），但 `p95=108.6 s` 是史上第一份**诚实**延迟，它没过阶段 A 判据①（第二十九班，09-20 18:59，主树 `bcc1ac2`，被测 rev `6a70f73`）
+
+**口径**：采集器 PID 66588 于 17:45:30 起飞、18:59:00 退出，`collected=105 of 105`；cwd=`be-eval95`@`6a70f73`（与镜像 rev 同源），解释器=主树 venv。收窗三步全过：① run2 报告先另存 `%TEMP%\evalrun\report-run2.json`（1482 B，评分会覆盖同名文件，这一步不能跳）；② `documents/` 逐文件 SHA-256 与开窗前 `corpus_before_run3.csv` 比对 **diff count = 0**；③ 重算 `docs/testing/evaluation-report.json`。**窗口内未并树、未改主树代码字节**（`git diff --name-only 6a70f73 HEAD -- app scripts tests` = 0 枚，本班亲量）。
+
+**分数（同一套 105 题、同一枚夹具，只换 `--answers`）**：`correctness 0.2381 → 0.4571`、`evidence_coverage 0.4381 → 0.7333`、**`unsupported_claim_rate 0.0`（两跑皆 0，这一枚从来不是问题）**。十一分类**逐类不退化**：文档问答 0.6316→0.6842（evidence 满分）、多轮对话 0.1667→0.4167、口径冲突 0.1579→0.4211、Excel 计算 0→0.5、主动洞察 0→0.2857、审批判断 0.1667→0.6667、报告生成 0.1667→0.3333。仍钉零的两族：**跨部门权限 0.0（n=6）**、**无证据问题 0.0（n=4）**——后者是「本该拒答」的题，评分器按「没答对」记零，属**夹具口径缺陷**（D10 甲族），不是产品缺陷。
+
+**迁移矩阵（本班从两枚侧车逐题对出来的，比看总分有用）**：`ok→ok` 50 ｜ `error_event→ok` 35 ｜ `error_event→hitl` 9 ｜ `hitl→hitl` 9 ｜ `error_event→error_event` **2**。⇒ R112 的账算清了：**46 枚整题拒里 44 枚不再拒**，剩两枚具名 **`tool-03`（86.9 s）、`report-04`（64.6 s）**，都是 `kind=error_event` 且答案体恰 21 字（与 run2 那 46 枚同签名）。侧车 `sentinel=true` 全程 **0 枚**。
+
+🔴 **`hitl` 从 9 涨到 18 不是退化，是「走得更远了」**：新增的 9 枚恰是 `error_event→hitl`——从前它们在生成阶段就拒，现在能一路走到审批闸。具名 18 枚：`insight-07 chart-01..04 approval-05 scope-02 scope-05 tool-01/02/04 report-02/05/07/09/10/11/12`。**但这条要写进最终汇报**：**18/105 = 17% 的题根本没答完**，它们的分数不是产品能力分而是「卡在审批闸」⇒ 下一份跑分要么评测道显式批准、要么评分器把 hitl 单列，否则 `correctness` 的分母一直在撒谎（拟立 **R123**，与 D10 甲同族，先立案不派）。
+
+🔴 **延迟栏：先订正本班自己的一条猜想，两句话都别信直觉** `average 24.3→41.9 s`、`p95 48.8→108.6 s`。本班最初用「46 枚秒拒把 run2 分位压低了」解释它——**亲测推翻**：run2 那 46 枚 cliff 的墙钟 `avg=23.4 s / p95=61.3 s`，**根本不是秒拒**（跑完 ReAct 才在生成处拒）。控制样本再看：run2 非 cliff 的 59 题 `avg=25 s`，同一批题号在 run3 `avg=33 s` ⇒ **同题慢 +32%** 为真。两个候选因本班**分不开，不许假装分开了**：① 真慢——装箱加工时 + 答案从 21 字变 1600–2900 字（生成长度是墙钟主项）；② 测脏——**窗口期间执行层树跑单文件测试、总控解析 349 枚 `[PromptPack]` 日志**，与采集器抢 CPU。**结论：`p95=108.6 s` 判阶段 A 判据①（端到端 ≤90 s）不过**，但这数不能当定案，run4（含 R115/R117、窗口内零并发活动）才是判据①的合法样本。
+
+**日志保全（在重建镜像之前做完，红字规矩执行成功）**：`docker compose logs --since 2026-09-20T17:44:00 backend` → `%TEMP%\evalrun\backend-run3.log`（821 KB，`[PromptPack]` **349 枚**、`[ModelBudget]` **614 枚**）；worker 道 0 字节（评测走后端直连，符合预期）。⇒ **R116 的前置就此满足**，逐题 `prompt_tokens` 现场在盘上。
+
+⚠️ **本班环境事实（会咬下一班）**：`multi_agent_v1__*` 工具面从 09-20 18:39 起**整体报 `unsupported call`**（`spawn_agent`／`close_agent`／`wait_agent` 三枚全中，回执一致），与上一班 `send_input` 的抖动同族。⇒ R111 首投被拒（硬证据：`sessions\2026\09\20\` 零枚新 rollout + 为其新建的 `be-r111` 树 0 脏项），**按事故 #14 规矩未补投**，已退回跟进单 §56 待业主开线；三枚在途 Agent 因此**无法主动问进度**，只能靠「树的 mtime 不再变」+ 完成通知判读，别把这当已交工。
+
+🔴 **本班自伤一枚（记我账，第五枚同族）**：追加本节时本班用 `readFile(p).toString("binary")` + `writeFile(Buffer.from(s,"utf8"))` 写看板 ⇒ **整份 505 KB 文件被二次 UTF-8 编码**（实测膨胀到 809 KB、BOM 变成 `C3 AF C2 BB C2 BF`）。当时立刻发现并 `git restore` 还原。**新的两条字节纪律**：① 改看板/跟进单**只许 Buffer 对 Buffer**（`readFile`→`Buffer.concat`→`writeFile`），任何 `toString("binary")` 往返都是毁灭性的；② `core.autocrlf=true` 之下 `git restore` 会把这枚**纯 LF** 看板还原成 **CRLF**（实测 `git status` 会显示 ` M ` 而 `git diff --numstat` 为空），所以 restore 之后**必须**再把 `LF-WAS-HERE` 换回 `
+`，否则下一班看到的是一份 2990 枚 CRLF 的假干净文件。
