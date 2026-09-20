@@ -1451,3 +1451,18 @@ PROBE index reached = 0
 - 要回答的四问：① native 客户端**到底存在吗**、被谁调用、`[Model] ollama-native 应答` 那行日志的真实出处（以实读为准，别引用本单的转述）；② 为什么生产走 compat 而 native 只在某些路径出现——是路由裁定、还是遗漏；③ 把 analysis 档切到 native 会破坏什么不变量（工具调用 / 流式 / 计费 token 口径 / `keep_alive` / R51 观测点 / AGENTS.md「第一版只管理本机 Ollama」）；④ 给一页**结论与建议**，二选一并写清代价。
 - 交付物：只一个新文件 `docs/handoff/2026-09-19-native-route-audit.md`。**除该文件外不得写任何路径**，不得 commit，不得跑评测、不得起停服务（`docker exec ... ollama ps` 这类只读可以）。
 - 相关既有裁定必须引用而不是转述：`app/agents/nodes.py` 里「上下文冲突故意不用离线回复」的那段注释（R99 后行号有变，按实读），R56 宿主模型端口闸门，以及跟进单 §41.2 判据 1 里 (b)(c) 两条候选因。
+
+#### 42.3 R99 判据 4 的两半接线（**总控自办单，排队在 R100 并树之后**）
+
+R99 诚实交回：判据 4 的「`/health/details` 计数 +1」与「超时罐头回复不得入答案缓存」两项落在它的写域之外，它只交出了可即插的料并用两枚反向钉子钉住「尚未接线」（`tests/test_r99_budget_selfconsistency.py:753` 与 `:803`，两处的 docstring 都明写「接线时把这条翻成正向断言，不许删」）。
+
+本班**没有立刻做**，理由是这半个改动要碰 `tests/test_r99_budget_selfconsistency.py` 与 `app/common/model_budget.py`，而这两个文件 23:5x 起归 `Boyle`（R100）独占 ⇒ 现在接线 = 亲手造一次写域冲突，本仓为这类事故记过 17 笔。排队不是拖延，是排序。
+
+R100 并树后按这三笔做，逐条已验证过形状：
+
+1. `app/common/monitoring.py`：在 `build_health_snapshot` 的返回值里、`"hot_index"` 旁边加一行 —— `"model_budget": _subsystem_state("app.common.model_budget", "model_budget_readout"),`（`_subsystem_state` 在 `:48`，永不因探针失败而拖垮健康检查）。
+2. `app/api/v1/chat.py:1362`：`if use_answer_cache and not intr:` ⇒ `if use_answer_cache and not intr and not is_offline_reply_text(full_text):`（旁边 `:1361` 已有同形态的 HITL 排除注释，语义一致：等待确认的状态不是答案，罐头句子也不是答案）。
+3. 把 `tests/test_r99_budget_selfconsistency.py:753` / `:803` 两枚钉子翻成**正向**断言（读源码而不是调 `build_health_snapshot`，因为后者会打网络、会撞 R56 宿主模型端口闸门——这一点原 docstring 已经解释过，别改成真去调）。
+
+- 🔴 附带一笔必须一起改的**过期注释**：`app/common/model_budget.py` 的 `model_budget_readout` docstring 里写着「It is *not* wired into `/api/v1/health/details` yet」。接线之后这句就是假话，必须同步删改；总控不提前改它，因为它在 Boyle 写域内。
+- 判据：`/api/v1/health/details` 的 JSON 里出现 `model_budget.events`，且发一发超时之后 `timeout_offline_reply` 计数增加；缓存侧给一条「离线罐头句子不得成为 `/ask` 命中缓存的 `answer_id`」的行为证据（不是只读源码）。
