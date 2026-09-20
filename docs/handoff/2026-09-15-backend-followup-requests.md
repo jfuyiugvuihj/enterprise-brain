@@ -1546,3 +1546,15 @@ R100 并树后按这三笔做，逐条已验证过形状：
 5. 全量回归基线 **2515 / 35**，并写明账目（新增几枚、skipped 有无变化；多出的 skip 必须逐枚比对给出真身，不接受印象式归因）。
 
 **独占写域**：`app/common/open_platform.py`、`app/api/v1/open_platform.py`、`tests/test_deployment_guards.py`（仅逐键钉子）、新 `tests/test_r106_*.py`。**禁碰** `app/common/monitoring.py`（§42.3 排队）、`app/api/v1/intelligence.py`、`app/agents/**`、`frontend/**`（`R104` 在写）、`migrations/**`、评测 fixture。**不占 GPU**。工作树 `be-r106`；执行层**不得 commit**。
+
+### 46. R107 · 跑分窗口离线预演（**只读审计单**，09-20 11:2x，主树 `cb16678`）
+
+**为什么立它**：D14甲 那个窗口要 3–4 小时，是本项目当前唯一的关键路径。§4AZ.3 已经白烧过一轮，跟进单 §29 那条「把窗口里会被卡住的东西先离线算清楚，别出现第二轮废跑」到现在没人执行。本班把它变成一单，让执行层离线算，总控不占机器。
+
+**判据（每条都要给出代码出处或本地离线计算证据，猜的一律打回）**：
+1. 逐题读 `docs/testing/fixtures/r97-shard-{1,2,3}.jsonl`（合计 105 条，已核验逐字节等于夹具、sha256 前缀 `2230b2b45be18bfb`），产出一张**每题一行**的预演表：档位 / 是否要工具腿（data、chart、export、approval）/ 预期走 `doc` 还是 `data` 还是 `mixed` / `must_contain` 金标是否能在语料里找到出处（已知约 29 条找不到，D10乙 记为噪声底，**核对是否正好那一批**，多出来的要单独点名）。
+2. 用**当前树上真实的代码路径**核对四类失败模式各命中哪些题：① R99 的 `is_offline_reply_text` 拒交付（`app/common/offline_replies.py` 与调用点）；② `MODEL_MIN_ANSWER_TOKENS` 地板夹到 `clamped=yes`（读 `app/common/model_budget.py` 的 tier 表与夹取逻辑，**注意 R100 在把地板从 1537 改到 1536，本单只算现值并标注该依赖，不许改这个文件**）；③ `DEFAULT_REQUEST_TIMEOUT_SECONDS=120` 与 `MODEL_MAX_REQUESTS` 会不会在长题上先撞哪个；④ 缓存：`app/common/cache.py:144` 的 `answer_cache_scope()` 含用户/部门/密级/角色而**不含 session_id**（`app/api/v1/chat.py:1160` `use_answer_cache = bool(answer_scope)`），⇒ 同一 scope 连打 105 题会不会自相捂热，给出「窗口内该不该带 `?no_cache` / 该不该换 scope」的明确操作建议。
+3. 交付一份**窗口内必须有人盯的三件事**清单（哪一步只能人眼判定、哪一步失败就必须中止整窗），以及一份「跑挂了怎么只补跑那一题而不污染报告」的续跑办法（`EVAL_SIDECAR` 已在 §16 预检生效，落仓外）。
+4. 已知上限题 `insight-02`（104/105）必须单独一行说明它为什么不可能达成，不许把它算成缺陷。
+
+**硬边界**：🔴 **不许打模型、不许起服务、不许跑评测、不许碰 `deploy/**`、不许动 `docs/testing/fixtures/**`（被 `tests/test_evaluation_report.py` 钉住）、不许改任何既有文件**——本单是只读审计。唯一产物：新文件 `docs/handoff/2026-09-20-eval-window-rehearsal.md`（CRLF 无 BOM），以及可选的一枚只读脚本 `scripts/rehearse_eval_window.py`（LF 无 BOM，只读文件、不写数据、不联网）。工作树 `be-r107`；执行层**不得 commit**。**不占 GPU**（与 `Boyle`@R100 同期，若 R100 在做标定，本单绝不许发真机请求）。
