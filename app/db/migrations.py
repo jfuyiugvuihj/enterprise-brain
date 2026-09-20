@@ -56,6 +56,24 @@ EMBEDDING_PROFILE_MIGRATION_VERSION = "0010"
 EMBEDDING_DIMENSION_GUC = "app.embedding_dimension"
 EMBEDDING_MODEL_GUC = "app.embedding_model"
 
+#: Where an operator sets the two variables, and what they run afterwards. Each string below is
+#: a claim about the shipped deployment layout, so
+#: tests/test_r120_clean_install_first_boot.py checks every one against its truth source rather
+#: than trusting this prose: the file named must be the env_file of the service that runs
+#: scripts/migrate.py, the command must start that service the way the deployment README does,
+#: and the sample named must really carry the pair.
+#:
+#: R90a shipped this guidance pointing at .env.example, which is the *host development* sample.
+#: docker-compose.yml reads deploy/.env.server and nothing else, so an operator who followed the
+#: pointer edited a file no container ever opens -- and a clean install stayed stopped. That is
+#: the same defect class as R90b's wrong database name, which is why it is pinned here.
+MIGRATE_ENV_FILE = "deploy/.env.server"
+MIGRATE_ENV_SAMPLE_FILE = "deploy/.env.server.example"
+HOST_ENV_FILE = ".env"
+MIGRATE_COMPOSE_COMMAND = (
+    f"docker compose --env-file {MIGRATE_ENV_FILE} -f docker-compose.yml run --rm migrate"
+)
+
 #: Who the connection is, and what it already declares. Aliased so a mapping cursor and a
 #: tuple cursor read the same three columns.
 _PROBE_EMBEDDING_PROFILE_SQL = f"""
@@ -240,7 +258,29 @@ def _row_value(row: Any, position: int, key: str) -> str:
     return "" if value is None else str(value)
 
 
-def declared_embedding_profile():
+def _remediation(database_name: str = "") -> str:
+    """Where to set the pair, what to re-run, and which database this refusal is about.
+
+    The database name arrives from ``current_database()`` -- see
+    :func:`provision_embedding_scope`, the only caller that knows it. R90b exists because a
+    PL/pgSQL ``RAISE`` printed ``current_database()`` through ``%I`` and told operators to alter
+    a database called ``enterprise_brainI``; an ``I`` is not a type of database. Nothing here
+    composes a name, and the two paths and the command below are pinned against
+    ``docker-compose.yml`` by tests/test_r120_clean_install_first_boot.py, because R90a's own
+    pointer to ``.env.example`` was a second instance of the same mistake: the Compose stack
+    never opens that file, so the advice was true and useless at once.
+    """
+    named = f"The database this run is on is {database_name!r}. " if database_name else ""
+    return " " + (
+        f"Set both variables in {MIGRATE_ENV_FILE} -- the only env_file the Compose stack reads "
+        f"-- or in {HOST_ENV_FILE} for a run that starts without Docker; "
+        f"{MIGRATE_ENV_SAMPLE_FILE} carries the pair and says why it travels together, since R22 "
+        f"binds every index version to model + width. {named}Then migrate again: "
+        f"{MIGRATE_COMPOSE_COMMAND}."
+    )
+
+
+def declared_embedding_profile(database_name: str = "") -> EmbeddingScope:
     """The profile this process runs under, or a refusal that names the missing variable.
 
     Both halves come out of ``app.rag.indexing.configured_embedding_scope()``, the same reader
@@ -249,6 +289,9 @@ def declared_embedding_profile():
     when nothing declares a value at all, which is precisely the guess 0010 refuses to make, so
     the declaration is checked first: an unset, empty, or unparseable variable stops here rather
     than degrading into ``DEFAULT_EMBEDDING_DIMENSION = 768``.
+
+    ``database_name`` is passed by :func:`provision_embedding_scope`, which has already asked
+    the server who it is. It appears in prose only, and never as part of a statement.
     """
     indexing = _indexing()
     names = (indexing.EMBEDDING_MODEL_ENV, indexing.EMBEDDING_DIMENSION_ENV)
@@ -262,9 +305,8 @@ def declared_embedding_profile():
             f"profile, and {pair} {'is' if len(missing) == 1 else 'are'} not declared. "
             + (f"Declared so far: {', '.join(stated)}. " if stated else "")
             + "This runner will not guess a vector width either, so "
-            "DEFAULT_EMBEDDING_DIMENSION is not substituted for the missing value. Set the "
-            "variable(s) above in the environment that runs scripts/migrate.py -- the pair also "
-            "has to travel together, see .env.example -- then migrate again."
+            "DEFAULT_EMBEDDING_DIMENSION is not substituted for the missing value."
+            + _remediation(database_name)
         )
 
     scope = indexing.configured_embedding_scope()
@@ -283,7 +325,7 @@ def declared_embedding_profile():
             f"{declared[indexing.EMBEDDING_DIMENSION_ENV]!r}, which is not a positive integer. "
             f"Migration {EMBEDDING_PROFILE_MIGRATION_VERSION} stores vectors at exactly the width "
             "it is given, so an unusable value stops here instead of falling back to the "
-            "shipped default."
+            "shipped default." + _remediation(database_name)
         )
     if dimension != scope.dimension:
         raise EmbeddingProfileError(
@@ -373,7 +415,7 @@ def provision_embedding_scope(connection: Any) -> tuple[str, int, str] | None:
             f"to issue for migration {EMBEDDING_PROFILE_MIGRATION_VERSION}"
         )
 
-    scope = declared_embedding_profile()
+    scope = declared_embedding_profile(database_name)
     profile = (
         (EMBEDDING_DIMENSION_GUC, str(scope.dimension), "embedding_dimension"),
         (EMBEDDING_MODEL_GUC, str(scope.embedding_model), "embedding_model"),
