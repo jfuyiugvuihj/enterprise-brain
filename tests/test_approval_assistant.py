@@ -1,4 +1,4 @@
-﻿from app.approval.assistant import build_precheck
+from app.approval.assistant import build_precheck
 
 
 def test_precheck_marks_over_standard_without_auto_approval():

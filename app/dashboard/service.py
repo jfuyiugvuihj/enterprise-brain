@@ -1,4 +1,4 @@
-﻿def build_dashboard(rows: list[dict], insights: list[dict]) -> dict:
+def build_dashboard(rows: list[dict], insights: list[dict]) -> dict:
     metrics: dict[str, dict] = {}
     departments: dict[str, dict] = {}
     for row in rows:

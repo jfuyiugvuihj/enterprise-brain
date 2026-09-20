@@ -1,4 +1,4 @@
-﻿"""Offline-testable Ollama model discovery and conservative capability inference."""
+"""Offline-testable Ollama model discovery and conservative capability inference."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

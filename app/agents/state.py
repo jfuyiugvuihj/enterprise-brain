@@ -1,4 +1,4 @@
-﻿"""
+"""
 Stage 0 public execution state.
 
 The state keeps the authenticated principal, resource scope, request identifiers,

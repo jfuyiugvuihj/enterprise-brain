@@ -1,4 +1,4 @@
-﻿from app.agents.contracts import (
+from app.agents.contracts import (
     AgentContext,
     AgentResult,
     ErrorEnvelope,

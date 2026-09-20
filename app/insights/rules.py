@@ -1,4 +1,4 @@
-﻿def detect_insights(rows: list[dict]) -> list[dict]:
+def detect_insights(rows: list[dict]) -> list[dict]:
     insights = []
     for row in rows:
         current = float(row.get("current", 0) or 0)

@@ -1,4 +1,4 @@
-﻿import json
+import json
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field

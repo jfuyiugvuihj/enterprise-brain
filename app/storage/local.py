@@ -1,4 +1,4 @@
-﻿"""Resource-ID based local file storage with containment and atomic writes."""
+"""Resource-ID based local file storage with containment and atomic writes."""
 from __future__ import annotations
 
 import hashlib

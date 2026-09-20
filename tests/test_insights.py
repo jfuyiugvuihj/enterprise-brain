@@ -1,4 +1,4 @@
-﻿from app.insights.rules import detect_insights
+from app.insights.rules import detect_insights
 
 
 def test_detect_insights_finds_threshold_and_growth_anomalies():

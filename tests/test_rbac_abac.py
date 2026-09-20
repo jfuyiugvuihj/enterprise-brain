@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 
 from app.agents.contracts import AuthorizationDecision, ResourceScope
 from app.common.audit import clear_audit_events, get_audit_events

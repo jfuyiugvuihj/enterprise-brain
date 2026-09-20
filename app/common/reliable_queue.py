@@ -1,4 +1,4 @@
-﻿"""Reliable Redis queue primitives.
+"""Reliable Redis queue primitives.
 
 This module is deliberately separate from the legacy queue adapter until the worker
 integration contract is reviewed. It provides reserve/ack, lease expiry, retry,

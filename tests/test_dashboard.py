@@ -1,4 +1,4 @@
-﻿from app.dashboard.service import build_dashboard
+from app.dashboard.service import build_dashboard
 
 
 def test_dashboard_aggregates_metrics_and_insights():

@@ -1,4 +1,4 @@
-﻿# Public Contract Freeze: 2026-09-12
+# Public Contract Freeze: 2026-09-12
 
 ## Decision
 

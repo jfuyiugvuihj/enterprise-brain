@@ -1,4 +1,4 @@
-﻿# Resource Authorization Matrix
+# Resource Authorization Matrix
 
 Version: 2026-09-12
 Owner: Agent 0 integration contract

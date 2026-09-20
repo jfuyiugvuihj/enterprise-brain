@@ -1,4 +1,4 @@
-﻿"""Durable security-audit journal for every authorization boundary.
+"""Durable security-audit journal for every authorization boundary.
 
 The original implementation appended to a process-local list, so a restart erased the
 whole judgment chain. Every event is now also written through the project's single

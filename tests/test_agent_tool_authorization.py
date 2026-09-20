@@ -1,4 +1,4 @@
-﻿from app.agents.tools import _get_user_context
+from app.agents.tools import _get_user_context
 from app.common.identity import Principal
 from app.common.permissions import ACTION_ANALYZE
 
