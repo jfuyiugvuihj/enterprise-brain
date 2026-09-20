@@ -38,6 +38,7 @@ PACK_FIELDS = (
     "fitted",
     "dropped",
     "truncated",
+    "stub",  # R122 判据 ③：台账唯一的新增枚，插在 truncated 之后，旧字段一枚没动
     "packed_tokens",
     "ledger_packed_tokens",
     "prompt_estimate_tokens",

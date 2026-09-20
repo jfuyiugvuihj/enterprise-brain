@@ -414,6 +414,27 @@ _retrieval_pack_support: "OrderedDict[str, bool]" = OrderedDict()
 #: 一条都装不下时留给"必须保住的那一条"的截断标记。宁可让模型看到最高分那条的前半段，
 #: 也不要真机那种 evidence_n=0 的整题空手；标记本身也计进 room，不留暗账。
 PACK_TRUNCATION_MARK = "…（上下文装箱截断）"
+#: R122 给上面那句"宁可看到前半段"补了一条下限：只有**裁出来的正文够读**才交（见
+#: ``PACK_MIN_STUB_BODY_TOKENS``）。半条命中是好事，只剩几个字的正文不是——那是一条看着
+#: 像证据的空壳，模型会照着它编答案。够不上门槛就改交「本轮检索预算已用尽」那句人话。
+
+#: ``[PromptPack]`` 台账新字段 ``stub=`` 的三枚取值（R122 判据 ③）。🔴 台账既有字段一枚
+#: 不改名、不改相对顺序（run3/run4 的日志口径要连续），这一枚只新增，插在 ``truncated=`` 之后。
+PACK_STUB_NONE = "none"        # 这一发没有"桩"这件事：整批装下了，或连标记都裁不出来
+PACK_STUB_KEPT = "kept"        # 桩达标，交出去了（与 ``truncated=1`` 同现）
+PACK_STUB_REFUSED = "refused"  # 桩低于门槛没交，改说「本轮检索预算已用尽」那句人话
+
+#: 桩的最低可交付**正文**长度（枚＝``text_pack_tokens`` 那把尺；行头与截断标记都不算正文）。
+#: 这个数不是抄跟进单 §55A 的建议值，是本树知识库两枚独立采样框量出来的：
+#:   甲 本树 ``chroma_db`` 在册 401 枚 chunk：整条正文长度 p05=76 / p25=175 / p50=262 / max=459；
+#:   乙 ``documents/*.txt`` 95 份原文按生产 splitter(500/50) 重切 379 枚：p05=88 / p25=186 / p50=276。
+#: 两框同一形状："到第一个完整句尾需要多少枚正文" p50=55 / p75=76 / mean=67；分箱实测正文
+#: <40 枚的桩 0% 含完整句、<60 枚的桩 ≤34.6% 含完整句。§55A 真机那枚 ``packed=31`` 的桩，按
+#: 行头 18 枚＋标记 10 枚算只剩 3 枚正文；同样 room_left=31 拿本树真语料裁，正文中位数 6 枚。
+#: 取 60＝中位那句完整话的下边界，同时压在真料 p05(76) 之下：真料够不着这条线，被拦的只可能是
+#: 残料。复测＝``tests/test_r122_stub_honesty.py`` 的
+#: ``test_stub_threshold_sits_in_the_measured_band``。
+PACK_MIN_STUB_BODY_TOKENS = 60
 
 
 #: 轮身份字段与优先级：全部是请求路径上已有的字段（``orchestrator.py`` 造 configurable 时
@@ -470,6 +491,25 @@ def _fit_unit_to_room(text: str, room_tokens: int) -> str:
     return (text[:low] + PACK_TRUNCATION_MARK) if low > 0 else ""
 
 
+def _stub_body_tokens(stub: str, original: str) -> int:
+    """这一枚桩真正送出去了多少枚**正文**：行头与截断标记都不算。
+
+    判"够不够读"不能拿 ``text_pack_tokens(stub)`` 当尺——§55A 真机那枚 ``packed=31`` 里行头占
+    18 枚、标记占 10 枚，正文只剩 3 枚，账上看着有数、模型读到的是一条空壳。裁到行头之内
+    （连一个字正文都没送出去）按 0 枚算；原条本来就没有换行（没有行头可言）时，裁出来的
+    整段都是正文，照实计。
+    """
+    from app.rag.retrieval_pipeline import text_pack_tokens
+
+    body = stub[: -len(PACK_TRUNCATION_MARK)] if stub.endswith(PACK_TRUNCATION_MARK) else stub
+    header, sep, _ = original.partition("\n")
+    if sep:
+        if not body.startswith(header + "\n"):
+            return 0
+        body = body[len(header) + 1 :]
+    return text_pack_tokens(body)
+
+
 def _pack_dropped_labels(dropped, limit: int = 3) -> str:
     """被丢单元的前 30 字摘要，最多三枚：账要能指着名字核，但不能把正文再喷回日志。"""
     dropped = list(dropped)
@@ -500,6 +540,21 @@ def _no_room_text(leg: str, candidates: int) -> str:
     )
 
 
+def _budget_exhausted_text(ledger_used: int, room_left: int) -> str:
+    """桩低于门槛时工具自己说的那一句人话（R122 判据 ②）：不交假料，改报预算。
+
+    两个数都是这一发账上的真数，不是写死的文案：``ledger_used`` 是本轮装箱已经装进 prompt 的
+    token 数（台账里的 ``ledger_packed_tokens``），``room_left`` 是本轮还剩的 room（台账里的
+    ``room_left``），枚＝token，与 ``[PromptPack]`` 同一把尺。这句话还必须与"没检索到"和
+    "模型坏了"分色：它说的只是**这一发的预算**，前面几发取回的料仍在 prompt 里。
+    """
+    return (
+        f"本轮检索预算已用尽，未取回新料（已装 {int(ledger_used)} 枚 / 剩 {int(room_left)} 枚）："
+        f"剩下的上下文装不下一段满 {PACK_MIN_STUB_BODY_TOKENS} 枚正文的料，交回来只是一条读不出结论的空壳。"
+        "这不是模型故障，也不是没检索到：请基于本轮前面已经取回的材料作答，别再往同一个方向检索。"
+    )
+
+
 class _PackedUnits(list):
     """装进 prompt 的那几段本身，顺手带上这一发的账：``len()`` 即送出的条数。
 
@@ -516,12 +571,30 @@ class _PackedUnits(list):
         truncated_count: int = 0,
         packed_tokens: int = 0,
         room_left: int = 0,
+        stub: str = PACK_STUB_NONE,
+        ledger_used: int = 0,
     ) -> None:
         super().__init__(units)
         self.dropped_count = int(dropped_count)
         self.truncated_count = int(truncated_count)
         self.packed_tokens = int(packed_tokens)
         self.room_left = int(room_left)
+        #: 这一发的桩：发出去了(``kept``)、被门槛拦下(``refused``)、压根没有(``none``)。
+        #: 与 ``[PromptPack]`` 的 ``stub=`` 字段同值，调用方靠它决定该说哪句人话。
+        self.stub: str = stub
+        #: 本轮装箱在这一发之前已经吃掉的 token 数——「已装 N 枚」里的那个 N。
+        self.ledger_used = int(ledger_used)
+
+
+def _empty_pack_text(leg: str, candidates: int, packed: _PackedUnits) -> str:
+    """一发装箱空手时该说哪句人话：桩被门槛拦下说「预算用尽」，其余仍说「本题料超窗」。
+
+    两条路的差别是真数：``room_left`` 已经贴地（room=0 那一发）与本轮已装掉大半、只剩几十枚
+    残料，是两件不同的事，不能共用一句"没有一条装得进上下文窗口"。
+    """
+    if packed.stub == PACK_STUB_REFUSED:
+        return _budget_exhausted_text(packed.ledger_used, packed.room_left)
+    return _no_room_text(leg, candidates)
 
 
 def _pack_kept_hits(hits: list, units: list, fitted: list) -> list:
@@ -575,6 +648,11 @@ def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: boo
 
     ``units`` 必须已按优先级从高到低排好（检索腿回来的顺序就是 RRF/重排分数降序，数据腿
     按文件与结论的既有顺序）：装箱只从尾部裁，不在这里重新发明排序。
+
+    ``keep_first_truncated``（R122 加了门槛）：整批一条都装不下时，本来会裁最高分那一条的
+    尾巴当桩交出去。桩的正文短于 ``PACK_MIN_STUB_BODY_TOKENS`` 就不交了——那一发是空手，
+    ``stub=refused`` 入账，由调用方说「本轮检索预算已用尽」。达标才交，交出去照旧记
+    ``truncated=1 stub=kept``。
     """
     from app.rag.retrieval_pipeline import (
         CONTEXT_HISTORY_RESERVE_TOKENS,
@@ -594,11 +672,19 @@ def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: boo
         room = max(0, room_total - used)
         fitted, dropped, packed_tokens = pack_prefix_by_rank(units, room)
         truncated = 0
+        stub = PACK_STUB_NONE
         if not fitted and units and keep_first_truncated:
             head = _fit_unit_to_room(str(units[0]), room)
             if head:
-                fitted, dropped, truncated = [head], units[1:], 1
-                packed_tokens = text_pack_tokens(head)
+                if _stub_body_tokens(head, str(units[0])) >= PACK_MIN_STUB_BODY_TOKENS:
+                    fitted, dropped, truncated = [head], units[1:], 1
+                    packed_tokens = text_pack_tokens(head)
+                    stub = PACK_STUB_KEPT
+                else:
+                    # R122 判据 ①②：低于门槛的桩不交，宁可这一发空手说人话，也不许把一条看着像
+                    # 证据、其实只剩几个字的空壳当检索结果交出去。没送出去就不记账（不记假消耗）。
+                    stub = PACK_STUB_REFUSED
+            # head 为空＝连截断标记都装不下：照旧空手，由调用方说「本题料超窗」那一句
         if key and packed_tokens:
             _pack_ledger[key] = used + packed_tokens
             _pack_ledger.move_to_end(key)
@@ -611,7 +697,7 @@ def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: boo
     logger.info(
         f"{PROMPT_PACK_MARKER} leg={leg} tier={CONTEXT_PACK_TIER} room_total={room_total} "
         f"room_left={room} candidates={len(units)} fitted={len(fitted)} dropped={len(dropped)} "
-        f"truncated={truncated} packed_tokens={packed_tokens} ledger_packed_tokens={billed} "
+        f"truncated={truncated} stub={stub} packed_tokens={packed_tokens} ledger_packed_tokens={billed} "
         f"prompt_estimate_tokens={reserve + billed} ledger={ledger_kind} "
         f"dropped_labels={_pack_dropped_labels(dropped)}"
     )
@@ -621,6 +707,8 @@ def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: boo
         truncated_count=truncated,
         packed_tokens=packed_tokens,
         room_left=room,
+        stub=stub,
+        ledger_used=used,
     )
 
 
@@ -695,6 +783,8 @@ def search_docs(query: str, config: RunnableConfig) -> str:
 
         # R112：装箱之后才是发给模型的返回串。装不下丢名次最低的整条；整批都装不下才裁最高分
         # 那一条的正文尾巴（``keep_first_truncated``），连一帧都装不下时才说人话并留下账。
+        # R122：那条尾巴短到读不出结论（正文不足 ``PACK_MIN_STUB_BODY_TOKENS``）就不交了，改说
+        # 「本轮检索预算已用尽」——半条命中是证据，六个字不是。三条腿共用这一枚门槛。
         fitted = _pack_into_prompt_room(
             config, leg="doc", units=result_parts, keep_first_truncated=True
         )
@@ -719,7 +809,7 @@ def search_docs(query: str, config: RunnableConfig) -> str:
             },
         )
         if not fitted:
-            return _no_room_text("doc", len(result_parts))
+            return _empty_pack_text("doc", len(result_parts), fitted)
         return "\n\n---\n\n".join(fitted)
 
 
@@ -915,6 +1005,8 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
     # R112：这段直接进 prompt，而且多文件时是"每文件 概览 + 结论 + 15 行样本 JSON"顺着
     # 往后可无限长。装箱按既有顺序从尾部裁——先掉的必然是样本 JSON 那种大块，其次才是
     # 后一个文件；一条都装不下时说清是本题数据结果超窗，不静默（判据 2/3）。
+    # R122：整批装不下时会裁 parts[0] 当桩，桩的正文不够门槛就不交，改说「预算用尽」——
+    # 第一个文件的文件名那一行不是分析结论，模型读不出数。
     fitted = _pack_into_prompt_room(
         config, leg="data", units=parts, keep_first_truncated=True
     )
@@ -928,7 +1020,7 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 "[PromptPack] leg=data dataset=%s recorded=false（装箱未送出，证据袋不记）", _ds_fname
             )
     if not fitted:
-        return _no_room_text("data", len(parts))
+        return _empty_pack_text("data", len(parts), fitted)
     result = "\n".join(fitted)
     # The answer a caller sees is built from this string when the model is unavailable,
     # so it carries data only: an echoed 用户查询 and an instruction addressed to the
@@ -1007,13 +1099,14 @@ def _query_data(query: str, config: RunnableConfig) -> str:
                 result = json.dumps(result, ensure_ascii=False, default=str)
             # R112：查询结果是一整块，装箱装不下时只能裁这块的尾巴（带可见截断标记），
             # 连标记都装不下就换那一句指名"本题数据结果超出本机上下文"的话。
+            # R122：裁出来那一截的正文不够门槛也不交——"📊 x.xlsx 查询结果:"加三个字不是答案。
             query_text = f"📊 {fname} 查询结果:\n{result}"
             fitted = _pack_into_prompt_room(
                 config, leg="query", units=[query_text], keep_first_truncated=True
             )
             if not fitted:
                 # R112 复验第 2 条：整块都没送出去 ⇒ 证据袋什么都不记（模型一条都没读到）。
-                return _no_room_text("query", 1)
+                return _empty_pack_text("query", 1, fitted)
             # 同一读法：只有真进 prompt 的那一块，才算模型读过这个数据集。
             _record_dataset_evidence(config, fname, df)
             return fitted[0]
