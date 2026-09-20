@@ -1809,3 +1809,23 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 - ⚠️ **R111 的禁碰清单本班做了一处实质变更**：§56.h 写「禁碰 `tools.py`（在途 R117）」——R117 已结案，但**此刻 `tools.py` 归 `Cicero`@R122 独占** ⇒ 投递词改指 `Cicero`，禁碰集合不变、理由换了主人。
 
 **三、run4 已开窗**：19:37:46（PID 68364），被测 rev **`6672afb`**（含 R112 装箱 + R115 单一尺 + R117 轮身份账 + 三笔注释订正），镜像同源判据 **PASS（MATCH）**。前置 P-1…P-18 逐条亲量记录在看板 §4BH.10。本班在窗口内只做只读取证与文档，不并树、不跑全量。
+
+### 59. 第三十班立案：R124 · P3 前置动作①「全零向量普查」两侧各一份**具名清单**（09-20 19:5x，主树 `ff8ea69`，run4 窗口内只读立案，🔸 暂不派）
+
+**为什么今天立案**：pgvector 方案 §3 P3 明写「前置动作① 全零向量普查（Chroma 侧与 PG 侧各一份清单）」，而 §5 的 **U3**（存量脏向量）结论直接决定业主要不要给一个含**全量重建**的维护窗。本班实测现状三条：
+
+1. `scripts/compare_vector_recall.py:57-60` 只有四枚 SQL，PG 侧的全零是**计数**（`:220-223`，`WHERE embedding = '<零>'::vector` 精确等值）⇒ 出不了**清单**，也判不出「近零」。
+2. Chroma 侧**根本没有向量普查**：`:219` 只走 `chroma_all_ids(collection)`（`include=[]`，不取 embedding）⇒ 方案 §3 要的「两份清单」今天只有半份，那半份还是数数。
+3. 🔴 **排期事实**：现网 `chunk_vectors` 必然是空/近空 —— `VECTOR_DUAL_WRITE` 既不在 `deploy/.env.server` 也从未被 compose 透传（§55 追加段第一条），双写今天打不开 ⇒ PG 侧普查现在跑出来只会是 0 行。⇒ R124 的 **Chroma 半份今天可跑、可定 U3**；**PG 半份必须等 R120 并树 + 维护窗真开双写之后**再跑一次，两次的产物要能分开命名。
+
+**判据 a–f（执行层照此自证，总控照此验收）**
+
+- a. 新增**只读**脚本 `scripts/census_zero_vectors.py`；🔴 不许改 `scripts/compare_vector_recall.py`（此刻归在途 R120 独占）。两侧各输出：总条数、全零条数 + **具名 id 清单**（排序，stdout 只印前 N 条，全量落 `%TEMP%`，🔴 产物不进仓库）、近零条数 + 清单、维度不符条数 + 清单、`index_version_id IS NULL` 条数。
+- b. 「零」的定义只许出现在脚本里**一处**；用例喂三枚桩（精确零 / 范数 1e-13 / 正常）⇒ 🔴 必须落进三个不同的桶，判据要能被证伪（把阈值改成 `<=1e-6` ⇒ 近零那枚必须换桶并当场红）。
+- c. Chroma 侧取 embedding 必须**分页**（`limit/offset` 或 `after`），🔴 不许一次 `include=["embeddings"]` 把全表拉进内存；写之前先量体量（条数、分页大小、峰值 RSS 写进回执）。
+- d. 任一侧取不到数据时必须**分行明说**「本侧为空（双写未开 / collection 不存在 / 连不上）」并用不同退出码区分：🔴 绝不许把「0 条全零」和「根本没跑成」印成同一行字——`compare_vector_recall.py` 的 `only_in_*` 就吃过这个亏，这也是本单存在的主要理由之一。
+- e. 用例 `tests/test_r124_*.py` ≥5 枚，全部用桩（假 collection / 假 connection），🔴 禁连真库、禁 `docker`、禁打模型。
+- f. 执行层**只交数字与清单路径**：U3 的结论由总控写进 pgvector 方案 §5 ⇒ 🔴 那枚文件此刻也在途 R120 的写域里，R124 不许碰 `docs/handoff/2026-09-17-pgvector-adoption-plan.md`。
+
+**禁碰**：`scripts/compare_vector_recall.py`、`app/db/migrations.py`、`migrations/**`、`docker-compose.yml`、`.env*`、`deploy/**`（以上在途 R120）；`app/agents/tools.py`（在途 R122）、`app/agents/evidence.py`（在途 R111）；`tests/fixtures/**`、`tests/test_evaluation_report.py`、`chroma_db/**`、`frontend/**`。
+**排队**：R124 排在 run4 收窗之后，与 **R116 同批**（两单写域零交集：R116 在 `scripts/perf_probe_*` + room 复算，R124 是一枚新脚本）；基线两值以收窗后的主树为准。
