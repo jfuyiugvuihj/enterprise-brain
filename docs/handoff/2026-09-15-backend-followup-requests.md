@@ -1753,3 +1753,26 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 
 **投递事故记录（诚实账，别学）**：总控把 ①–④ 作为追加判据发往 `Banach` 时，`send_input` 第一次返回 `unsupported call`（未投递），第二次返回 `Tool mcp__multi_agent_v1__send_input does not exists.`——**两次回执互不相同，投递是否成功不可知**。按派工规矩（事故 #14：同单禁止补投）**不再第三次投递**。⇒ 交工时的读法：R117 若只做了跨轮账 = 追加令没送达，R122 照 §55A 另派；若同时做了桩门槛 = 追加令送达，R122 并入 R117 结案。
 
+
+
+### 56. R111 · 补齐判据并解除「暂不派」（第二十九班，09-20 18:4x，主树 `68cc392`，run3 窗口内只读取证）
+
+**本班实测的四条前提（全部亲量，不是转抄 §50）**：
+
+1. `app/agents/contracts.py:339` 的 `AgentResult.status` 是 `Literal[success, partial, failed, rejected, timeout, cancelled, model_unavailable, retrieval_unavailable]` —— 八枚，**没有 `rate_limited` 这一档** ⇒ 想让终态说真话，唯一不动枚举的走法是 **status 照旧 `model_unavailable`、只让 `error_code` 分色**。新增 status 取值要走 D 项，本单不许走。
+2. `evidence.py:21-31` 把错误码词表的唯一来源钉在 `ErrorEnvelope.code` 枚举上，且 `tests/test_error_code_vocabulary.py` 同时钉「两份相等」与「它是从枚举派生的」⇒ `rate_limited` **本来就是合法 code**（`:18` `_RETRIABLE_CODES` 与 `:38/:40` 契约登记都分列两枚），改这一处不会撞词表闸。
+3. 前端 `frontend/src/lib/errcodes.js:57` 与 `:59` **两枚各有一句自己的人话**（`rate_limited`＝「操作太频繁了，请稍等一会儿再试。」retryable:true；`model_unavailable`＝「分析模型当前不可用…」）。⇒ 后端 `:254` 一折，那句「稍等一会儿」**在这套代码里永远不可能被用户看到**。这就是本单的全部理由：不是性能，是说真话。
+4. 全仓 grep `rate_limited`：**没有任何一枚既有用例钉着「折叠」这件事**（`tests/test_model_call_spans.py:252-254` 钉的恰恰是 span 层两枚分开，是本单的依据不是本单的对手）⇒ 不存在要拆的旧钉。
+
+**判据（执行层照此自证，总控照此验收）**
+
+- a. `_terminal_status`：`names` 含 `model_unavailable` ⇒ 返回不变；只在 `codes` 里出现 `rate_limited` ⇒ 返回 `("model_unavailable", "rate_limited")`。🔴 status 一枚不许新增取值，`contracts.py` 本单不许改。
+- b. 优先级不许倒：越权那一支（`:252`）仍在最前——「没权限」永远盖过「容量不够」。两枚同时在场时取 `model_unavailable`（真坏了优先于容量紧）。
+- c. 告警句（`:296`）随 code 自动变，不许为它单独再折一次；`:376` 那一支同一套逻辑要一起看，别只改头一处漏了尾。
+- d. 用例 `tests/test_r111_*.py` ≥4 枚：① 只有一枚 `rate_limited` ⇒ code=`rate_limited`；② `rate_limited` + 一枚 `completed` 且正文是真业务结论 ⇒ 仍 code=`rate_limited`（不许被成功洗掉）；③ 只有 `model_unavailable` ⇒ 逐字不变；④ 两枚都在 ⇒ `model_unavailable`。
+- e. 反证：把 `:254` 改回 §50 那个折叠写法 ⇒ ①当场红并指名用例全名。
+- f. 契约：`docs/api/contract-v1.md` 在错误码表附近补一句「worker 终态：容量耗尽携带 `rate_limited`，模型不可用携带 `model_unavailable`，status 均为 `model_unavailable`」。🔴 不许动 `:61` 那台 emitter 台账闸（删 emitter 会 fail 是设计）。
+- g. 前端（🟢 业主 D13 已授权动 `frontend/**`，条件＝排在错误码族收口之后，本单即此族）：只在 `frontend/src/lib/errcodes.test.js` 补一枚断言「两枚码走不同 message 且都 retryable」，**不改 `errcodes.js` 本体**。若 `frontend/node_modules` 不全跑不动 vitest，就地回报「未跑+缺什么」，🔴 不许拿「应该能过」当结果。
+- h. 禁碰：`app/agents/tools.py`（在途 R117）、`app/agents/orchestrator.py`、`app/rag/retrieval_pipeline.py`、`app/api/v1/chat.py`（R55 已结案的历史写域，且它是 21 字哨兵的另一半）、`tests/fixtures/**`。
+
+**与 §50 的差异**：§50 说的第二件事（「每次离线作答多写一行 `model_unavailable` span」）本班维持「那是正确的」，仍不在本单范围内。R112 交回的 `no_answer_produced` 与 21 字哨兵同色 = 另一族（发射端在 `chat.py:1377/:1883`，被 `tests/test_error_code_vocabulary.py:33` 的 emitter 台账钉着），**本单不做**，窗口后另立。
