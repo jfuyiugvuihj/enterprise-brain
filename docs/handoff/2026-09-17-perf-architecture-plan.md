@@ -233,6 +233,24 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 | **R89**（**✅ 已结案** 第十九班：`Noether` 交付 ⇒ 总控验收 vitest **496/496** + `npm run lint` 0 errors + `FRONTEND_ONLY_CODES` 仍 `[]` + 跨端钉 `tests/test_frontend_login_policy.py` 2 passed ⇒ 保活 `3305591`/追平 `5160494` → **并主干 `7c66397`**，tree 恒等 `6cd5b20`，主干全量 2104/35/0）| 前端错误码表落后后端真源枚举：`frontend/src/lib/errcodes.js` 的 `ERROR_CODES` **26** 键 vs `app/agents/contracts.py` 里 `ErrorEnvelope.code: Literal[...]` **29** 码 ⇒ 缺 `context_limit_exceeded`、`row_scope_denied`、`no_visible_rows` 三句人话，后端一发这三码界面只能落兜底句（把行作用域事实洗成系统故障）。钉子已现红：`frontend/src/lib/errcodes.test.js`「一个不自扩，一个不漏」「A − C = 空」2 红（交付后转绿：总控 21:13 亲跑 496/496；该测试 `git show <ref>:<path>` 读对象库对账，不受检出新旧影响 ⇒ 真红）。判据见跟进单 **§32.2** | 契约一致性 | 0.2 |
 | **R90**（🔴 待业主放行后派；**第十八班新立**；第十九班已**真机端到端复现**——一次性库不设 GUC 直接 migrate ⇒ exit 1，且提示串把库名渲染成 `eb_r90a_probeI` 这种不存在的库，看板 §4AY.3）| pgvector 迁移 **0010 在干净环境首次部署必停**，且它的补救指引**指错库**：① `docker-compose.yml` 全文 `EMBEDDING_DIMENSION` **零出现**（`.env.example` 亦无），全仓除 `migrations/` 外无任何一处下发数据库级 GUC 或执行 `ALTER DATABASE`，而 `migrations/0010_pgvector_chunks.sql:192` 只认 `current_setting('app.embedding_dimension')`，取不到即 `RAISE`（`:216`）——本班真机是靠手工 `ALTER DATABASE enterprise_brain SET app.embedding_dimension = 768;` 才打通；② 该 `RAISE` 用了 `%I`，而 **PL/pgSQL 的 `RAISE` 不认 `%I`/`%s`**（`format()` 才认），容器内一行 `DO` 实测 `%I`→`enterprise_brainI`、`%s`→`enterprise_brains`、`%`→`enterprise_brain` ⇒ 运维照抄会去改一个不存在的库名。修法落点 `app/db/migrations.py`（`scripts/migrate.py` 的 `apply_migrations`）按运行时 `EMBEDDING_DIMENSION` + `EMBEDDING_MODEL` 成对下发 GUC（R22 口径）+ 提示串改 `%`；🔴 要动 `migrations/**` ⇒ 业主侧执行，同 R88 / H12 口径。判据见跟进单 **§33.2** | 部署可用性 | 0.4 |
 | **R74**（**已结案** 主树 `b2d9f34`）| `AgentState`/`AgentContext` 上的 `model_budget` **零赋值零读取** ⇒ 走甲：删净 + AST/`model_fields` 双向负向钉（新 `tests/test_r74_dead_budget_field.py` 9 例）。并发真身是 `app/common/model_budget.py:default_model_budget()` 进程级单例，token/时钟额度按档在调用点解析，单个预算挂 context 会把跨档请求压平。总控三把隔离刀各咬不同判据 | 接口 | 0.25 |
+| **R91**（**已结案** `025d2e9` → 并树 `c47a0a2`）| 上传名判据由「数点」改「中间段命中伪装后缀封闭集」⇒ 11 份带版本号的真语料不再被永久拒收 | 接口 | 0.25 |
+| **R92**（**已结案** `e84ad84`）| 查询改写走 Ollama 原生腿 + `think:false`：现网 100% 失效的静默回退断根 | L2 | 0.5 |
+| **R93**（**已结案** `ebfb1c9` → 并树 `9626b7d`；**只读审计单**）| 29 条无出处题独立复算 + 逐条归桶 + 检索档位取证，产出 8 条开窗前置 | 评测前置 | 0.5 |
+| **R94**（**已结案** `b204924` → 并树 `09ec562`；后续两笔 `9ad584b`、`ae6c116`）| 评测证据覆盖率做成**常驻可跑件**（29 条查无出处从口口相传变成一条命令）；语料范围改读 git 跟踪清单，不吃 ambient 目录（09-18 铁规）| 评测前置 | 0.5 |
+| **R95**（**已结案** `f79a524`）| workspace seed 落成常驻可跑件：语料 / 数据集 / 部门属主一条命令恢复 | 部署 | 0.5 |
+| **R96**（**已结案** `ce9630f`）| 镜像自报来源（`GIT_SHA`/`BUILT_AT`）+ 重建不再重造 5.8 GB 依赖层 ⇒ **H12 的病根是成本，不是流程**；门禁 `scripts/check_image_provenance.py`（P-8）| L5 | 0.5 |
+| **R97**（**已结案** `78b8507`）| 跑分冻结件入仓（三片分片夹具，合计 105 题）⇒ D14甲 窗口的输入自此固定 | 评测前置 | 0.25 |
+| **R98**（**已结案** `73fb71e`，**代码侧**）| checkpointer 谎报降级为 MemorySaver ⇒ 真降级、日志与事实一致。⚠️ 剩下**唯一未取证的一条**：server 进程自述「使用 PostgresSaver 持久化」，随 R104/R106 并树后的那一次镜像重建一起收 | 观测 | 0.25 |
+| **R99**（**已结案** `352c5f0`；判据 4 的两半接线由总控代做 `fd604c4`）| analysis 档的超时预算与它自己的天花板互相矛盾、超时后拿离线回复冒充答案 ⇒ `is_offline_reply_text` 拒交付 + 预算记账进 `/health/details` 的 `model_budget` 子系统 | L1 | 0.75 |
+| **R100**（**已结案** `158259f` → 并树 `82c42b4`；代码腿 `Boyle`、用例腿总控）| 兼容腿**真的**关掉思考（`thinking:{type:"disabled"}` 经 `_with_thinking_field` 两条腿都带、`bind_tools` 重包不丢），答案地板按关思考后重标定 1537 → **1536** | L1/L2 | 0.5 |
+| **R101**（**已结案** `c35f377` → 并树 `e653df4`；**只读调查单**）| native 链路为何在生产用不上：答题腿走 compat 是**双重既有裁定**、不是遗漏；并**推翻**上一班「模型侧 4 秒就能答完」那条推论（那发 4.08 s 是查询改写）| 观测 | 0.25 |
+| **R102**（🟡 **在途** `be-r102`/`Heisenberg` `01a0bd1f-24f1-…`）| 流式并发槽只借不还（P1）：`stream()` 三条出口每条**恰好**释放一次，判据 跟进单 §43 | L1 | 0.25 |
+| **R103**（**已结案** `831888f` → 并树 `3ecdcb4`）| 图谱未部署的拒答不再冒名存储故障：`503 storage_read_only` → **`409 knowledge_graph_unconfigured`**（审计理由可分辨三件事）+ 同批撤 `App.vue` 图谱一级入口（D6 甲 + D13①）| 接口 | 0.5 |
+| **R104**（**已结案** `e9657a6` → 并树 `caa4cd1`）| `vue-router` 真路由：「屏 ↔ URL ↔ 面板」收成**一张表**，侧栏改为**派生视图**，`workspaceMap`/`activeTab` 退役，图谱留非一级深链，对话屏 `<keep-alive>` 保会话 | 接口 | 1.0 |
+| **R105**（待派，前置**已成立**：R104 已并树、路由已存在）| 三屏 SLO 契约（跟进单 §44.3；计划书 §6.1 三行「未做」的最后一件）——R104 之前「屏」这个单位在代码里不存在，SLO 无处挂 | 质量 | 0.5 |
+| **R106**（**已结案** `8ca06a8` → 并树 `b4c7d86`；它交回的两笔账总控代做 `e4f2440`）| 开放平台「生产未配 store」不得冒名 `storage_read_only` ⇒ **`409 open_platform_unconfigured`**，真写失败保持 503；契约与前端码表同步 | 接口 | 0.25 |
+| **R107**（🟡 **在途** `be-r107`/`Helmholtz` `01a0bcd0-…`；**只读审计单**）| 跑分窗口离线预演：105 题每题一行 + 四类失败模式 + 窗口内必须人盯的三件事 + 续跑办法，防第二轮废跑 | 评测前置 | 0.5 |
+| **R108**（🟡 **在途** `be-r108`/`Bernoulli` `01a0bd1f-7b7b-…`；**机械单**）| 全仓 BOM 清账 31 枚 + 常驻校验脚本 `scripts/check_no_bom.py`；🔴 看板那枚与 `scripts/run_backend_tests.ps1` **故意保留**（PowerShell 5.1 读无 BOM 的 .ps1 会按 ANSI 解中文）| 测试卫生 | 0.25 |
 
 > **R61–R63 是 09-17 22:0x 由 R17 结案后新露出的边界**（非 R17 漏做），详细判据见跟进单 **§23**。
 > 三条都**不改判定逻辑、不动密级**（密级属 H13）；写域 `app/common/rbac.py` 与 `app/agents/tools.py`，与在途 R35/R56 零交叠。
@@ -261,6 +279,11 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 > 硬前置 = R21 + R22（两单至今**零代码提交**，实测见跟进单 §22.0）。详细判据见跟进单 **§22**。
 > **09-17 22:2x 二次令「把 pgvector 的添加计划加进去」⇒ 已展开为独立可执行方案**：`docs/handoff/2026-09-17-pgvector-adoption-plan.md`（P0 地基 → P1 定标建索引 → P2 同事务双写 → P3 影子读对比 → P4 切读 → P5 停写退役；含已决 hnsw 选型与 U1–U5 未决项）。**仍未派工**，开工需业主点头 + 真机（H12）。
 
+
+> **R91–R108 十八单首次入册（第二十六班，09-20 13:0x，主树 `27b381b`）**：这十八单自 09-19 起陆续结案或在途，
+> 而本表**一直停在 R90** ⇒ 「还剩多少没做」这件事在册表上是查不到的（§10 已作废 `task_plan.md`/`progress.md`，
+> 更没有第二处记账）。补记口径：**状态一律以 merge commit 为凭据**（每行都带短哈希），一句话描述取自跟进单与
+> 看板 §0 名册，**未做单的判据仍以跟进单原文为准**，本表只是索引。
 ---
 
 ## 6. 阶段编排与验收

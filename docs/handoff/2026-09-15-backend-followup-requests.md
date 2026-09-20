@@ -1559,7 +1559,9 @@ R100 并树后按这三笔做，逐条已验证过形状：
 
 **硬边界**：🔴 **不许打模型、不许起服务、不许跑评测、不许碰 `deploy/**`、不许动 `docs/testing/fixtures/**`（被 `tests/test_evaluation_report.py` 钉住）、不许改任何既有文件**——本单是只读审计。唯一产物：新文件 `docs/handoff/2026-09-20-eval-window-rehearsal.md`（CRLF 无 BOM），以及可选的一枚只读脚本 `scripts/rehearse_eval_window.py`（LF 无 BOM，只读文件、不写数据、不联网）。工作树 `be-r107`；执行层**不得 commit**。**不占 GPU**（与 `Boyle`@R100 同期，若 R100 在做标定，本单绝不许发真机请求）。
 
-### 47. R108 · 全仓 BOM 清账（**机械单**，总控第二十六班立，09-20 12:4x，主树 `e4f2440`，后端基线 **2557 passed / 35 skipped**）
+### 47. R108 · 全仓 BOM 清账（**机械单**，总控第二十六班立，09-20 12:4x，主树 `e4f2440`）
+
+> 🔴 **基线口径（R108 执行层查出、总控两棵树实测为真，写死给所有下班工单）**：**主树 = 2557 passed / 35 skipped**；**任何非 R51 工作树 = 2556 passed / 36 skipped**。差的那一枚不是回归，是 `tests/test_r51_observation_is_passive.py:631` 的 R51 私有写域守卫——分支改动里不含本单产物就自动 skip。实测：`be-r108` 单跑该文件 `21 passed / 1 skipped`，主树同文件 `22 passed / 0 skipped`。⇒ **不许按枚数去「追平」主树**，工单里写基线一律两值并列。
 
 **事实（本班主树 `git -c core.quotepath=false ls-files -z` 逐文件读前三字节实测，不采信任何转述）**：跟踪文件里 **33 枚带 UTF-8 BOM** = **27 枚 `.py`** + **6 枚 docs/scripts**。
 `.py` 27 枚：`app/agents/contracts.py`、`app/agents/state.py`、`app/api/v1/open_platform.py`、`app/common/audit.py`、`app/common/authorization.py`、`app/common/identity.py`、`app/common/model_capabilities.py`、`app/common/open_platform.py`、`app/common/permissions.py`、`app/common/reliable_queue.py`、`app/dashboard/service.py`、`app/db/__init__.py`、`app/db/connection.py`、`app/insights/rules.py`、`app/main.py`、`app/storage/__init__.py`、`app/storage/local.py`、`tests/test_agent_tool_authorization.py`、`tests/test_approval_assistant.py`、`tests/test_dashboard.py`、`tests/test_insights.py`、`tests/test_model_capabilities.py`、`tests/test_open_platform.py`、`tests/test_public_contracts.py`、`tests/test_quality_platform.py`、`tests/test_rbac_abac.py`、`tests/test_upgrade_baseline.py`。
@@ -1581,3 +1583,22 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 - **独占写域**：判据 1 那 31 枚文件 + 新增 `scripts/check_no_bom.py`。**禁碰** `app/agents/nodes.py`（R102 在写）、`frontend/**`、`migrations/**`、`docs/testing/fixtures/**`、`docs/handoff/**` 与 `scripts/run_backend_tests.ps1` 里除 `2026-09-14-consolidated-fix-plan.md` 之外的任何文件。
 - **派工时机**：R106 已并树（`b4c7d86`）⇒ 前置解除，可派；与 R102 **零文件交集**（`nodes.py` 无 BOM，本班实测）。工作树 `be-r108`，分支 `codex/be-r108`，基线 = 本单落笔后的主树 HEAD。执行层**不得 commit**。
 - **并树顺序**：R102 先并、R108 后并（R108 是全文件字节改写，后并只需在新 `nodes.py` 上重跑一次校验；反过来会让 R102 的 diff 基准漂掉）。
+
+### 48. R109 · 追问改写腿没有守卫：provider 失败时「离线模式…」会被当成**本题的问题文本**送进图（R107 查出，总控主树逐行亲验；09-20 13:4x，主树 `1cc1c16`，基线见 §47 上方口径条：主树 2557/35、执行层树 2556/36）
+
+**事实（本班主树实读，行号以 `1cc1c16` 为准）**：`app/api/v1/chat.py:687 _rewrite_followup()` 用 `model_handler.chat(..., stream=False)`（`:704`）做指代补全，但 `chat()` 在 provider 不可用时**不抛异常**：`app/common/model_handler.py:405-412` 直接返回带 `error_code=MODEL_UNAVAILABLE_CODE` 的 `ModelReply(MODEL_UNAVAILABLE_REPLY, ...)`，那枚罐头句在 `:63`（`"离线模式：模型不可用（error_code=model_unavailable），未生成业务结论"`）。回到改写函数，唯一的守卫是 `:710` 的 `if rewritten and len(rewritten) > 3:` ⇒ 罐头句**非空且长 40 余**，于是 `:712 return rewritten` 把它当成立住的改写结果，**取代用户真正的问题**进入图、进入检索、并参与缓存键（`:1096` 产出 `rewritten_msg`；`:1154` 的注释自己写明「查缓存用的是 `_rewrite_followup` 把指代补全之后的问题文本」）。`except` 分支在这条路径上**根本不会触发**，因为不抛。
+
+**命中面（本班 `python` 直查 105 题夹具，命令与结果同批）**：改写只对以 `那 / 它 / 这个 / 那个 / 他们 / 换 / 改成` 开头的题生效（`chat.py:688-689` 的 `triggers` + `startswith`），实取 **5 题** = `chat-02`、`chat-06`、`chat-07`、`chat-12`、`insight-04`。好链路无感；**坏链路（provider 挂 / 超时）时这 5 题的题面会被整句换成罐头句**，于是检索与判分都在答一个不存在的问题，而报告里看不出发生过。这是 R107 预演文档 §5 的 F 条，本班独立复算为真。
+
+**这条缺口以前被写明过、现在不在树上**（本班自查，因为上一版工单在这里引用了一段**主树里已经不存在**的注释——那种错我上一班刚立规罚过，此处按实测重写）：R99 当年在缓存闸上方留过一段英文 caveat，直说 `model_handler` 的离线句子**不在这枚词表里**、以及为什么可以留在闸外（真答案不可能整条等于那句，且它会先被 `park_ask_turn` 按 `hitl_wait` 停住）。本班实测：`is_offline_reply_text(MODEL_UNAVAILABLE_REPLY)` **返回 False**（两枚词表互不相交：`app/agents/nodes.py:59-69` 的 `OFFLINE_REPLY_TEXTS` 只有「离线模式已启用」那一族，`app/common/model_handler.py:63` 的「离线模式：模型不可用…」不在其中）；`git grep -n "NOT in this vocabulary"` 在主树 `1cc1c16` **0 命中**，那段 caveat 只活在 `a9fad8c` 及更早的树里，§42.3 改写这段注释时把它丢了。⇒ 缓存/交付侧那条论证**本单不重开**（它站得住），也不许为「统一词表」去动 `app/agents/nodes.py`（`Heisenberg`@R102 正在写）；改写腿的守卫按判据 1 用**类型化 `error_code`** 判别，不靠字符串比对。**丢失的那段 caveat 由总控在 R109 并树后自己补回**（同一枚文件、同一处注释，不占执行层写域）。
+
+**判据**：
+1. `_rewrite_followup` 必须认得「这一趟没真改写」。🔴 **判别依据用类型化信号而不是字符串**：`chat()` 返回体上带着 `error_code=MODEL_UNAVAILABLE_CODE`（`app/common/model_handler.py:411`，常量 `:63` 同文件），改写函数读这个字段 ⇒ 命中即**视同改写失败**，回落到原用户问题 `user_msg`，并 `logger.warning` 留一条可 grep 的账（句子要指名「改写腿拿到离线罐头句，已回退原问题」）。🚫 **不许**为此改 `app/common/model_handler.py`、**不许**再抄一份词表/正则、**不许**为了『统一词表』去动 `app/agents/nodes.py`（`Heisenberg`@R102 正在写那个文件）。
+2. 一条**行为**用例（真调 `_rewrite_followup`，🚫 不许只 grep 源码文本）：把 `model_handler.chat` 打成返回带 `MODEL_UNAVAILABLE_CODE` 的 `ModelReply` ⇒ `_rewrite_followup` 必须返回**原问题**而不是罐头句；三条对照：① 正常改写仍返回改写结果；② provider 抛异常时既有 `except` 回落不变；③ 不以触发词开头的题**一次都不调** `chat()`（改写腿本来就该沉默，别让它替你把失败放大）。
+3. 缓存侧给一条证据：回落到 `user_msg` 之后，`answer_cache_scope`/键所用的题面与「这轮压根没改写」时**逐字一致**（读真源断言，🚫 不改 `app/common/cache.py`）。这条是防「同一句话在坏链路上打出两个缓存键」的第二个洞。
+4. 全量回归 **2557 passed / 35 skipped** 不动；`git diff --numstat` 只许出现你改的行。
+5. 一条反证：把判据 1 的守卫摘掉 ⇒ 判据 2 那枚用例当场红且**不是空响**（要指名用例全名），随后逐字节还原并给哈希。
+
+- **独占写域**：`app/api/v1/chat.py` 里 `_rewrite_followup` **这一个函数**（含其 logger 行）+ 新 `tests/test_r109_*.py`。🚫 禁碰 `app/common/model_handler.py`、`app/agents/nodes.py`、`app/common/cache.py`、`app/agents/orchestrator.py`、`frontend/**`、`migrations/**`、`docs/testing/fixtures/**`、`docs/**`。
+- **派工时机**：可即刻派，不占 GPU。与在途两单**零文件交集**：R102 只写 `nodes.py`；R108 那 31 枚 BOM 名单**不含** `chat.py`（本班按 `git ls-files -z` 逐文件读前三字节实测）。工作树 `be-r109`，分支 `codex/be-r109`，基线 = 本单落笔后的主树 HEAD。执行层**不得 commit**。
+- **并树顺序**：R102 → R109 → R108（BOM 批最后，理由见 §47）。

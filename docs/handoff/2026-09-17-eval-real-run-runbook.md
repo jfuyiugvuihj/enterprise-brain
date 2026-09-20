@@ -328,8 +328,8 @@ sys.exit(1 if flags else 0)
 | 单题 41.581 s | `[实测]` **历史值，本轮未重测** | `docs/handoff/2026-09-15-backend-followup-requests.md:626` 明确"旧 trace 的历史 `[实测]` 值"；`docs/handoff/2026-09-15-orchestration-board.md:925` 同值。**只能当量级参考，不得写成本轮结果** |
 | 整轮 ≈ 72.8 min | `[推算]` | 105 × 41.581 s = 4365.99 s ÷ 60，基于上一行历史值 + 严格串行（P-5/P-6） |
 | ≈ 1.44 次/分钟 | `[推算]` | 60 ÷ 41.581，用于对照下一条限额 |
-| 限额 10 次/分钟 | `[实测]` 源码常量 | `app/api/v1/chat.py:936`（`check_rate_limit(username, max_per_minute=10)`）；超限入队 `:954-992` |
-| 单题预算 300 s | `[实测]` 源码默认 | `app/api/v1/chat.py:1033`（`CHAT_REQUEST_TIMEOUT`，未设即 300） |
+| 限额 10 次/分钟 | `[实测]` 源码常量 | `app/api/v1/chat.py:1101`（`check_rate_limit(username, max_per_minute=10)`）；超限入队 `:1119-1130`（`if not allowed: return _enqueue_ask_turn(...)`）。🔴 09-20 总控订正（R107 查出、本班 `git grep -n` 复核）：原写的 `:936` / `:954-992` 是 R37/R41 并树前的行号，已漂 |
+| 单题预算 300 s | `[实测]` 源码默认 | `app/api/v1/chat.py:1203`（`CHAT_REQUEST_TIMEOUT`，未设即 300；流式那侧同默认在 `:1717`）。🔴 09-20 订正：原写 `:1033` 已漂 |
 | nginx 读超时 900 s | `[实测]` 源码值 | `deploy/nginx.conf:63`；`300 < 900` 为 `[算术]` ⇒ 走宿主 nginx 时先撞应用超时，不会被代理掐 |
 | 后端镜像 `Created = 2026-09-16T12:59:16Z`（北京 09-16 20:59:16） | `[实测]` | 2026-09-17 18:18:40 +08:00 由总控取证，**只读查看，未启动、未重启任何容器**；被测 `6ee2f79` committer `2026-09-17T16:54:20+08:00`，差约 20 h `[算术]`（UTC+8 换算后相减） |
 | 容器内 `chat.py` 2294 行 / `_authorized_source_rows` 0 次 vs 树内 2383 行 / 2 次 | `[实测]` | 容器侧同上取证；树侧本树 `6ee2f79` 复核 2026-09-17 18:21:21 +08:00：行数 2383、标记 2 次 ⇒ 结论：现役容器不含 R41/R54/R26b，**P-8 判死** |
@@ -337,9 +337,9 @@ sys.exit(1 if flags else 0)
 
 ### 11.2 已知 nit 备案（**只备案，业主未点头前不得改评测集业务语义**）
 
-- `insight-02`（`tests/fixtures/business_evaluation_100.jsonl`）：`must_contain = ["上升"]`，金标 `answer = "返回趋势异常"` ⇒ 金标自身不含 `must_contain`，任何真跑分**上限 104/105**。取证命令：
+- `insight-02`（`tests/fixtures/business_evaluation_100.jsonl:64`）：`must_contain = ["上升"]`，金标 `answer = "返回趋势异常"` ⇒ **金标与 `must_contain` 自相矛盾**。这一条成立、且评测集照旧不许动（被 `tests/test_evaluation_report.py` 钉住）。取证命令：
   `Select-String -Path tests/fixtures/business_evaluation_100.jsonl -Pattern insight-02 -SimpleMatch` → 第 64 行原样打出 `"answer":"返回趋势异常","must_contain":["上升"]`
-- 影响口径：`answer_correctness` 的天花板 0.9905（`[算术]`）。**不许**为了让分数好看去改金标/`must_contain`/判分逻辑；要动得先拿到业主点头。
+- 🔴 **09-20 总控订正（R107 查出，本班主树亲读 `app/quality/eval.py:60-66` 复核）——原写「任何真跑分上限 104/105」是过度断言**：`_is_correct` 在 `must_contain` 非空时**只做逐项子串包含、从不读金标**，所以真跑的判据只是「正文里有没有『上升』」，而题面本身就是「哪些部门连续上升？」⇒ 这一分**结构上拿得到，105/105 可达**。`104/105 = 0.9905` 是 **`--dry-run` 桩那一趟**的分数（桩回声金标，恰好被这条矛盾夹掉一分，见 §10 与 `:326-327`）——它是**假基线的判别特征**，不是真跑的天花板；`:327` 那句在**桩**的语境下仍然成立，别搬到真跑上。**不许**为了让分数好看去改金标/`must_contain`/判分逻辑；要动得先拿到业主点头。
 - 该行缺陷已被既有测试钉死为"已知集合"（`tests/test_evaluation_report.py` 的 `KNOWN_INCONSISTENT_*` 常量），所以修它属于评测集语义变更，不属于跑分动作。
 
 ## 12. 交付前自查清单（缺一即视为基线不成立）
