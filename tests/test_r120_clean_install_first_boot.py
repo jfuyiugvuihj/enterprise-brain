@@ -503,3 +503,29 @@ def test_0010_is_still_right_about_the_refusal_it_only_renders_the_name_wrong():
     assert "current_database()" in following, (
         "the name it renders wrong is the server's own name: " + repr(following)
     )
+
+
+# ------------------------------------------------ 本单自己造的文案漂移：示例补了，注释还在说没补
+
+
+def test_compose_comments_do_not_claim_the_sample_still_lacks_the_pair():
+    """compose 的注释同样是文案：示例带上那对变量之后，"示例还没有"就成了假话。
+
+    这一条是本单自己踩出来的。任务 1 的修法要求 ``deploy/.env.server.example`` 写上
+    ``EMBEDDING_MODEL`` / ``EMBEDDING_DIMENSION``；补完之后，migrate 服务上方那句
+    "it does not yet carry the two lines" 立刻变成假的 —— 操作者照它做就会去翻
+    ``.env.example``，而容器根本不读那一份。守卫只认一件事：注释里说示例文件的时候，
+    不许再声明它"还没带上这两行"，也不许把示例换成别的文件。
+    """
+    declared = _env_documented(DEPLOY_SAMPLE)
+    for name in (indexing.EMBEDDING_MODEL_ENV, indexing.EMBEDDING_DIMENSION_ENV):
+        assert declared.get(name), f"{name} must stay in {DEPLOY_SAMPLE}"
+
+    comments = "\n".join(
+        line.strip().lstrip("#").strip()
+        for line in COMPOSE.read_text(encoding="utf-8-sig").splitlines()
+        if line.strip().startswith("#")
+    )
+    stale = re.search(r"(?is)(example|sample)[^#]{0,160}does not yet[^#]{0,80}carry", comments)
+
+    assert stale is None, "compose 还在说示例没带那两行：" + repr(stale.group(0))

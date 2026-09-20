@@ -128,8 +128,10 @@ services:
       # R22 binds every index version to model + width, so they travel together or not at all.
       # No value is written here on purpose -- an unset pair makes the migrate step stop with a
       # message naming the variable that is missing, which is the behaviour a clean install needs.
-      # deploy/.env.server.example is outside this ticket's write domain, so it does not yet
-      # carry the two lines: until it does, an operator copies .env.example or sets them by hand.
+      # R120 closed the other half: deploy/.env.server.example carries the pair, so an operator
+      # who copies the sample gets a migrate step that finishes. Nothing is substituted here
+      # anyway -- the sample is documentation the operator edits, not a default this file may
+      # invent on their behalf, and an unset pair must still stop migrate by name.
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
     command: ["python", "scripts/migrate.py"]
