@@ -1692,3 +1692,18 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 
 **补一句（同一节，别当成两条判据）**：上面「拒判只有一处」说的是**判据谓词**只有一枚（`context_window_code`），🔴 但 `raise ModelContextLimitExceeded` 有 **5 处**——`model_budget.py:851`（`authorize()` 内）、`app/agents/nodes.py:406`（`invoke()` 出口）、`nodes.py:541`（`stream()` 出口）、`app/common/model_handler.py:345` 与 `:404`。doc 腿走的是 `_ResilientModel` ⇒ 现场抛点在 `nodes.py` 那两枚。执行层只准装箱，🔴 不许顺手改这 5 处任何一枚的抛/不抛语义（R102 刚动过 `nodes.py:stream()` 的出口，R110 又压在同一函数上）。
 
+### 54. R114 / R115 / R116 三单入册（第二十七班，09-20 17:1x，主树 `0066cce`，基线两值 2593/35 与 2592/36；三单全部源自 R112 执行层交回的域外账）
+
+**R114 · 子图 checkpointer 把上一轮的检索整串留在历史里，深会话必然把 room 吃穿**（R112 实测交回，本班未独立复测 ⇒ 派工前先复测）
+- 已知实测数（出自 `Noether`@R112，方法：真 `create_react_agent` 组装 + `estimate_text_tokens` 量）：doc 子图每压一轮「上一问 + 上一答（答案按 400 字）」= **+161 token**；旧检索串留在历史里最坏可再吃掉一整个 room（当前 room = 2560 − 632 − 322 = **1606**）。装箱账已按 `thread_id + worker` 跨轮累减，所以第二起的症状是**少装几条**而不是顶穿 `n_ctx`——但代价是越问越瞎，这不可接受。
+- 落点：`app/agents/orchestrator.py` 的历史裁剪（该文件当前无人在写 ⇒ 可独占）。要求：裁的是**旧 ToolMessage 的正文**（保留"问过什么、答过什么"），不是整段历史；🔴 不许动 checkpointer 本身、不许动 `nodes.py`/`chat.py`/`contracts.py`。
+- 判据要点：① 一条行为用例证明「同一 thread 连问 3 轮，第 3 轮的 room 余额不低于第 1 轮的一半」；② 一条钉「裁掉的旧检索串仍能从 trace 里找到，不许变成失忆」；③ `MODEL_MAX_CONCURRENCY`、超时、SLO 口径一律不变；④ 反证：把裁剪摘掉 ⇒ ① 当场红并指名；⑤ 全量两值并列。
+
+**R115 · 手抄正文上限 500 还活在两处**（R112 查出，本班已核：`app/mcp_server.py:55`、`scripts/perf_probe_rounds.py:166`）
+- 真源已迁到 `app/rag/retrieval_pipeline.py` 的 `DOC_HIT_CONTENT_CHARS`（R112 落），🔴 但计量与截断必须同一把尺：MCP 那条腿手抄一份 500 意味着**装箱按一份、发给模型按另一份**，将来谁调 500 就分叉一次。
+- 判据要点：两处改为引用真源 + 一枚守卫用例钉「全仓除真源外不得再出现 `[:500]` 形态的文档正文截断」（写法照 `test_packing_sites_carry_no_copied_window_numbers` 的样式）。零模型、零容器。可即刻派。
+
+**R116 · run3 之后把 46 枚参数化钉桩升级成「按实测 prompt_tokens 复算 room」**（依赖总控先落逐题 token）
+- 现在那 46 枚只钉「同一题面装箱后不再被整题拒」，用的是**夹具题面 + 桩检索料**，不是真机当时的 prompt 尺寸。真机 run3 会产出逐题 `prompt_tokens`（后端日志 `[ModelBudget]` 行），取到之后：把逐题实测 token 落进采集侧车的新字段（属 `scripts/eval_transport_ask_v2.py` 写域，🔴 不许改评测夹具），再把 `tests/test_r112_prompt_packing.py` 的参数化族升级成「按实测 token 复算 room」。
+- 前置：run3 收窗 + R112 已并树。派工前先确认侧车扩字段不会污染 `docs/testing/evaluation-report.json` 的算分口径（多一个字段不该改变分数，需一枚对照用例证明）。
+
