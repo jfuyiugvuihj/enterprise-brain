@@ -503,85 +503,91 @@ class _ResilientModel(Runnable):
                 fallback.finish("model_unavailable", error_code="model_unavailable")
             return
 
-        span = self._span(config, queue_wait_ms=slot.wait_ms)
-        prompt_tokens = estimate_prompt_tokens(messages)
+        # Every way out of this generator gives the slot back, and there are three: the
+        # answer completed, the provider failed and got the offline answer, and the
+        # consumer stopped reading. That last one is not an exception this body can catch
+        # -- it is GeneratorExit raised at a yield -- so the release is one finally rather
+        # than the call on each refusal path, which is all it used to be.
         try:
-            budget_kwargs, verdict = self._budget_kwargs(prompt_tokens, stream=True)
-            kwargs = _with_thinking_field({**budget_kwargs, **kwargs})
-        except ModelContextLimitExceeded as exc:
-            slot.release()
-            span.finish("failed", error_code=exc.code)
-            raise
-        visible_total = 0
-        saw_tool_call = False
-        try:
-            for chunk in self.primary.stream(*args, **kwargs):
-                span.mark_first_token()
-                visible_total += len(answer_text(chunk))
-                saw_tool_call = saw_tool_call or produced_a_tool_call(chunk)
-                yield chunk
-        except Exception as exc:
-            provider_code = context_error_code(exc)
-            if provider_code and self.budget is not None:
-                logger.warning(
+            span = self._span(config, queue_wait_ms=slot.wait_ms)
+            prompt_tokens = estimate_prompt_tokens(messages)
+            try:
+                budget_kwargs, verdict = self._budget_kwargs(prompt_tokens, stream=True)
+                kwargs = _with_thinking_field({**budget_kwargs, **kwargs})
+            except ModelContextLimitExceeded as exc:
+                span.finish("failed", error_code=exc.code)
+                raise
+            visible_total = 0
+            saw_tool_call = False
+            try:
+                for chunk in self.primary.stream(*args, **kwargs):
+                    span.mark_first_token()
+                    visible_total += len(answer_text(chunk))
+                    saw_tool_call = saw_tool_call or produced_a_tool_call(chunk)
+                    yield chunk
+            except Exception as exc:
+                provider_code = context_error_code(exc)
+                if provider_code and self.budget is not None:
+                    logger.warning(
+                        budget_signal(
+                            self.budget.tier,
+                            prompt_tokens=prompt_tokens,
+                            read_seconds=self.budget.timeout_seconds,
+                            code=provider_code,
+                            stream=True,
+                        )
+                    )
+                    span.finish("failed", error_code=provider_code)
+                    raise ModelContextLimitExceeded(self.budget, prompt_tokens or 0) from exc
+                from app.trace.spans import error_code_for
+
+                timeout_code = model_timeout_code(exc)
+                span.finish("failed", error_code=timeout_code or error_code_for(exc))
+                if timeout_code:
+                    record_budget_event("timeout_offline_reply")
+                    logger.error(
+                        budget_signal(
+                            getattr(self.budget, "tier", None) or "analysis",
+                            prompt_tokens=prompt_tokens,
+                            read_seconds=float(getattr(self.budget, "timeout_seconds", 0.0) or 0.0),
+                            stream=True,
+                            code=timeout_code,
+                            **self._verdict_fields(verdict),
+                        )
+                        + f" [Model] provider 流式超时，改用离线流（该回复不计为业务结论）: {exc}"
+                    )
+                else:
+                    logger.warning(f"[Model] provider stream 失败，使用离线流: {exc}")
+                fallback = self._span(config, provider="offline", model_name="offline")
+                try:
+                    for chunk in self.fallback.stream(*args, **kwargs):
+                        fallback.mark_first_token()
+                        yield chunk
+                finally:
+                    fallback.finish("model_unavailable", error_code="model_unavailable")
+                return
+            if self.budget is not None and not saw_tool_call and not visible_total:
+                # The same verdict a non-streaming call records, because a thinking model that
+                # spends its cap on hidden tokens does it in both transports, and a stream that
+                # delivered no characters is not an answer either. Nothing the caller received
+                # changes: what changes is that the round is filed as a failure.
+                record_budget_event("empty_answer_rejected")
+                logger.error(
                     budget_signal(
                         self.budget.tier,
                         prompt_tokens=prompt_tokens,
-                        read_seconds=self.budget.timeout_seconds,
-                        code=provider_code,
-                        stream=True,
-                    )
-                )
-                slot.release()
-                span.finish("failed", error_code=provider_code)
-                raise ModelContextLimitExceeded(self.budget, prompt_tokens or 0) from exc
-            from app.trace.spans import error_code_for
-
-            timeout_code = model_timeout_code(exc)
-            span.finish("failed", error_code=timeout_code or error_code_for(exc))
-            if timeout_code:
-                record_budget_event("timeout_offline_reply")
-                logger.error(
-                    budget_signal(
-                        getattr(self.budget, "tier", None) or "analysis",
-                        prompt_tokens=prompt_tokens,
                         read_seconds=float(getattr(self.budget, "timeout_seconds", 0.0) or 0.0),
                         stream=True,
-                        code=timeout_code,
-                        **self._verdict_fields(verdict),
+                        code=NO_ANSWER_CODE,
                     )
-                    + f" [Model] provider 流式超时，改用离线流（该回复不计为业务结论）: {exc}"
+                    + " [Model] 流式正文为空，不作为答案交付（同一行的 thinking= 说明这次到底有没有要求"
+                    "关掉思考；思考链吃满预算只是已测过的成因之一）"
                 )
-            else:
-                logger.warning(f"[Model] provider stream 失败，使用离线流: {exc}")
-            fallback = self._span(config, provider="offline", model_name="offline")
-            try:
-                for chunk in self.fallback.stream(*args, **kwargs):
-                    fallback.mark_first_token()
-                    yield chunk
-            finally:
-                fallback.finish("model_unavailable", error_code="model_unavailable")
-            return
-        if self.budget is not None and not saw_tool_call and not visible_total:
-            # The same verdict a non-streaming call records, because a thinking model that
-            # spends its cap on hidden tokens does it in both transports, and a stream that
-            # delivered no characters is not an answer either. Nothing the caller received
-            # changes: what changes is that the round is filed as a failure.
-            record_budget_event("empty_answer_rejected")
-            logger.error(
-                budget_signal(
-                    self.budget.tier,
-                    prompt_tokens=prompt_tokens,
-                    read_seconds=float(getattr(self.budget, "timeout_seconds", 0.0) or 0.0),
-                    stream=True,
-                    code=NO_ANSWER_CODE,
-                )
-                + " [Model] 流式正文为空，不作为答案交付（同一行的 thinking= 说明这次到底有没有要求"
-                "关掉思考；思考链吃满预算只是已测过的成因之一）"
-            )
-            span.finish("failed", error_code=NO_ANSWER_CODE)
-            return
-        span.finish("completed")
+                span.finish("failed", error_code=NO_ANSWER_CODE)
+                return
+            span.finish("completed")
+        finally:
+            slot.release()
 
 
 def _make_model(tier: ModelTier | str = DEFAULT_MODEL_TIER, *, prompt=None):
