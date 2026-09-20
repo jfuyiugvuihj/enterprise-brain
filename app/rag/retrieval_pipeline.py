@@ -597,7 +597,7 @@ CONTEXT_PACK_TIER = "analysis"
 #: 一条命中最多能进 prompt 的正文长度。截断它的工具和计量它的装箱必须是同一个数，否则
 #: 最终 top-k 会按"整条原文多长"决定丢谁，而 prompt 里其实是裁过的那一份——装得下的
 #: 名次被白白丢掉。以前这个数只写在 ``app/agents/tools.py`` 的 ``[:500]`` 上，现在住在
-#: 这里，由那一处引用；``app/mcp_server.py`` 另有一份手抄的 500，不属本单写域。
+#: 这里，由那一处引用；``app/mcp_server.py`` 与 ``scripts/perf_probe_rounds.py`` 两处手抄已由 R115 改成引用本常量，全仓不再有第二把尺。
 DOC_HIT_CONTENT_CHARS = 500
 
 

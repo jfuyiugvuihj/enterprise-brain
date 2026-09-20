@@ -1781,3 +1781,19 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 **投递事故（第二十九班，09-20 18:39，🔴 按规矩未补投）**：判据写完后总控向 `spawn_agent` 投 R111 一次，回执 `unsupported call: mcp__multi_agent_v1__spawn_agent`。**这次有硬证据证明它没落地**（① `C:\Users\fengx\.codex\sessions\2026\09\20\` 在 18:39:56 前零枚新 rollout；② 为其新建的工作树 `be-r111` 到 18:40 仍 `git status --porcelain` 空）。但按派工规矩「投递若报错 ⇒ 退回跟进单 + 业主手动开线，不许补投」，本班**不重试**。
 
 🟢 **业主只需开一条线、把工作目录指过去即可，判据与写域已全部就绪**：工作树 `C:\Users\fengx\PycharmProjects\be-r111`（分支 `codex/be-r111` @ `7b45c07`，0 脏项，判据原文就在它自己树的跟进单 §56），开场令一句「读 `docs/handoff/2026-09-15-backend-followup-requests.md` §56，按 a–h 做 R111，禁 commit/禁跑全量」。
+
+
+### 57. run3 收窗后新立 R123，并给 R116 追加两件判据（第二十九班，09-20 19:1x，主树 `e74330c`）
+
+**R123 · 评测道里 17% 的题根本没答完，`correctness` 的分母在撒谎（立案，暂不派）**
+
+- 实测（本班从两枚侧车逐题对出来的迁移矩阵）：`ok→ok` 50 ｜ `error_event→ok` 35 ｜ `error_event→hitl` 9 ｜ `hitl→hitl` 9 ｜ `error_event→error_event` 2。run2 `hitl` 9 枚、**run3 `hitl` 18 枚**，具名：`insight-07 chart-01..04 approval-05 scope-02 scope-05 tool-01/02/04 report-02/05/07/09/10/11/12`。
+- 定性：`hitl` 变多**本身是进步**（那 9 枚从前在生成阶段就整题拒，现在能一路走到审批闸），但**分数口径是错的**——这 18 题从没产生终答，却仍占 `correctness` 的分母 105。⇒ 报告里 0.4571 这个数被 18 道「未答完」往下拽，**分不清是产品不行还是闸没开**。
+- 要求（三选一，不许含混）：① 评测道对 `requires_approval` 的题目按契约显式批准（走 `/chat/approve` 正道，不许绕过鉴权），② 或评分器把 `hitl` 单列成一档、分母改 87 并在报告里同时印两个数，③ 或夹具把「本就该走审批」的题标注为不可终答、从 `correctness` 分母里移出。**甲案最贴生产真相**，但要先确认采集器有权批准（它是业主侧账号，属 D 项）。
+- 🔴 不许改 `tests/fixtures/**` 与 `tests/test_evaluation_report.py`（改分母就是改钉，须另开 D 项）。写域候选：`scripts/eval_transport_ask_v2.py`＋`app/quality/**`＋新用例。
+
+**R116 追加两件判据（原 §54 那单，前置已于本班 18:59 满足：`[ModelBudget]` 614 枚 + `[PromptPack]` 349 枚已保全在 `%TEMP%\evalrun\backend-run3.log`）**
+
+- 追加 1：`scripts/perf_probe_prodpath.py:124` 的 `cn_text(500)` 是同一族手抄（R115 交回，它的识别式按设计不响，因为那是合成料尺寸不是截断动作）。R116 既然要动 `scripts/`，顺手复用 `perf_probe_rounds.doc_content_cap()` 的**只读 ast 取真源**路子，读不到必须硬失败。
+- 追加 2：`scripts/perf_probe_rounds.py:196` docstring 里「synthetic 500-char chunk overstates … ~4x」是**带日期的历史实测**，不是尺。R116 复核实测后：过期就改成「标注为 09-19 当晚口径」，不许悄悄删。
+- 追加 3（本班新量，重要）：同题对照 `avg 25 s → 33 s`（+32%）**发生在 run2→run3 之间**，而 run3 被测 rev 含 R112 装箱 ⇒ R116 复算 room 的同时**要给出装箱自身开销的实测拆账**（打包耗时 vs 生成长度），否则「装箱让系统变慢」这句话永远没有数。
