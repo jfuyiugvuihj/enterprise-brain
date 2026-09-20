@@ -35,7 +35,7 @@
  *         internal_error 的缺陷，后端已删掉它，所以 A − B 恒为空，没有可钉的账。
  *   UNRATIFIED_CODES 概念随 6606f59 追认而作废：data.py 7 码与 no_answer_produced 现在都在
  *         列 A 里，「前端有话、契约没登记」恒为空，由 C − A 一条直接钉住，不留永远该是空的名单。
- *   还有一类账不在上面两列里：LEGACY_ALIASES 的 15 个历史码名与 PROSE_ALIASES 的 2 条中文散文
+ *   还有一类账不在上面两列里：LEGACY_ALIASES 的 16 个后端实发码名与 PROSE_ALIASES 的 2 条中文散文
  *   仍是「后端确实发得出、封闭枚举里没有」的输入，前端已归一，契约侧仍欠登记（派单给后端时带上）。
  */
 
@@ -159,6 +159,19 @@ export const LEGACY_ALIASES = {
   idempotency_key_required: { code: 'validation_error', message: '这次请求缺少重复提交标识，请重新提交。' },
   export_failed: { code: 'internal_error', message: '文件导出没能完成，请稍后重试。', retryable: true },
   storage_read_only: { code: 'internal_error', message: '当前存储处于只读状态，写入没有生效，请联系管理员。', retryable: true },
+  // R103 之后图谱的拒答分成两件事，前端必须跟着分：上面那条 storage_read_only 说的是
+  // 「存储配好了、这次写不进去」，这一条说的是「这台服务器压根没开图谱」。共用一句就会把
+  // 排查方向整个指错 —— 前者要修存储，后者要管理员去开启关系存储，而且对着没开的功能点
+  // 「重试」永远不会把它开出来，所以 retryable:false（后端同一条理由把状态从 503 改成了 409，
+  // 见 app/api/v1/intelligence.py:222）。出处：app/knowledge_graph/service.py 的 REASON_UNCONFIGURED，
+  // 同一枚词也会出现在 /api/v1/health/details 的 knowledge_graph 那节里。
+  // 归档到 storage_unavailable 这一族而不是 internal_error：它与「数据表还没就绪」同属部署缺口，
+  // 不是运行时故障；但句子只说图谱这一件事，不套用那一族的「跑迁移」指引。
+  knowledge_graph_unconfigured: {
+    code: 'storage_unavailable',
+    message: '这台服务器还没有开启知识图谱的关系存储，所以这条关系没能记下来。请先联系管理员开启该功能，反复提交同一份内容不会让它生效。',
+    retryable: false,
+  },
   relation_source_required: { code: 'validation_error', message: '请先选择关系的起始对象。' },
   invalid_agent_result: { code: 'internal_error', message: '分析结果格式异常，本次未采信，请重试。', retryable: true },
 

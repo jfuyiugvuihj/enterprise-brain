@@ -62,10 +62,15 @@ Error responses use a stable `code` from:
 > while the name stays in the enum, so the list cannot quietly accumulate fossils.
 > `app/rag/evidence.py` used to keep its own copy of the retryable vocabulary; it now derives from the
 > same Literal and a test asserts the two sets cannot drift (R13-4).
-> Note the deliberate exception: `503 storage_read_only` (knowledge graph, `intelligence.py:124`, and
-> `open_platform.py:173`) is **not** an `ErrorEnvelope.code` member. It is a bare detail string on a
-> legacy-shaped response. Ratifying it was explicitly declined in this batch: "read-only protection" and
-> "schema missing" are two different failures, and merging them would make an operator fix the wrong one.
+> Note the deliberate exceptions: `503 storage_read_only` (a durable store that was configured and then
+> could not be opened or written: `app/api/v1/intelligence.py:222`, `app/api/v1/open_platform.py:363`) and
+> `409 knowledge_graph_unconfigured` (R103: a production deployment that never configured a graph store at
+> all, same route) are **not** `ErrorEnvelope.code` members. They are bare detail strings on legacy-shaped
+> responses. Ratifying them was explicitly declined in this batch: "read-only protection", "this
+> deployment never enabled the feature" and "schema missing" are different failures, and merging them
+> would make an operator fix the wrong one. `409` rather than `503` for the unconfigured case is
+> load-bearing: nothing a client retries will configure the graph store, so a `503` would bill a decision
+> the operator still has to make as downtime.
 
 The payload is compatible with:
 
@@ -446,8 +451,11 @@ or removed, and no legacy SSE event changed.
   `shared_across_processes`, `protection` and a `detail` string, and the report gains
   `degraded` status plus a `problems` code list (`users_store_not_persistent`,
   `<name>_read_only`, `queue_unavailable`, `postgres_<status>`, ...). A durable backend missing in
-  production puts the subsystem into read-only protection, answered as `503 storage_read_only`,
-  instead of pretending to be healthy. Read `problems`; do not infer health from `status` alone.
+  production puts the subsystem into read-only protection instead of pretending to be healthy. For the
+  knowledge graph the refusing state also names its cause in a `reason` field: a store that was
+  configured and then failed keeps `503 storage_read_only`, while a deployment that never enabled one
+  answers `409 knowledge_graph_unconfigured` (R103) - nothing a client retries can configure a store, so
+  the two facts must not leave through one name. Read `problems`; do not infer health from `status` alone.
 - **Four admin observability routes exist** (`app/api/v1/observability.py`, mounted under
   `/api/v1`): `POST /retrieval/debug`, `GET /traces/{trace_id}`, `GET /evaluations`,
   `GET /audit/events`. They sit on already-authenticated paths - the `AuthMiddleware` allow-list
