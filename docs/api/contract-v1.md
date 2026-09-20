@@ -74,6 +74,13 @@ Error responses use a stable `code` from:
 > unconfigured half is load-bearing: nothing a client retries will configure a store, so a `503` would bill
 > a decision the operator still has to make as downtime.
 
+Worker terminal state (R111): 容量耗尽携带 `rate_limited`，模型不可用携带 `model_unavailable`，
+status 均为 `model_unavailable` - `AgentResult.status` 的八枚 Literal 里没有 rate_limited 这一档，
+本单也不加（加取值要走 D 项）。所以一轮只报过容量拒绝的交付是
+`("model_unavailable", "rate_limited")`：status 不变、只有 error_code 分色，前端才可能说出
+「请稍等一会儿再试」而不是「模型坏了」。优先级照旧：越权盖过这两枚，两枚同时在场报
+`model_unavailable`（真坏了优先于容量紧）。钉在 `tests/test_r111_capacity_color.py`。
+
 The payload is compatible with:
 
 ```json

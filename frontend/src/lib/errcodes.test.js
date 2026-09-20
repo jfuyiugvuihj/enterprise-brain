@@ -113,6 +113,29 @@ describe('码表蓝本', () => {
     })
   })
 
+  // R111：后端 app/agents/evidence.py::_terminal_status 从此把「容量不够」与「模型坏了」分色交付
+  // —— 同一枚 status=model_unavailable 之下，只报过容量拒绝的那一轮带 error_code=rate_limited。
+  // 分色若在前端又被糊回一句话，后端这次改色对客户等于没改：两枚码必须各说各话、各自都能重试。
+  it('R111：rate_limited 与 model_unavailable 走不同 message，且都可重试', () => {
+    const capacity = ERROR_CODES.rate_limited
+    const broken = ERROR_CODES.model_unavailable
+
+    expect(capacity.message).toBeTruthy()
+    expect(broken.message).toBeTruthy()
+    expect(capacity.message).not.toBe(broken.message)
+    expect(capacity.retryable).toBe(true)
+    expect(broken.retryable).toBe(true)
+
+    // 再走一遍真实通道：码名喂进 normalizeError，两句人话不许撞在一起
+    const capacityView = normalizeError({ response: { data: { detail: 'rate_limited' } } })
+    const brokenView = normalizeError({ response: { data: { detail: 'model_unavailable' } } })
+    expect(capacityView.code).toBe('rate_limited')
+    expect(brokenView.code).toBe('model_unavailable')
+    expect(capacityView.message).not.toBe(brokenView.message)
+    expect(isRetryable(capacityView)).toBe(true)
+    expect(isRetryable(brokenView)).toBe(true)
+  })
+
   it('别名与散文表只指向枚举内的码名，不发明新码', () => {
     Object.entries(LEGACY_ALIASES).forEach(([legacy, alias]) => expect(CONTRACT, legacy).toContain(alias.code))
     Object.entries(PROSE_ALIASES).forEach(([prose, entry]) => expect(ENUM, prose).toContain(entry.code))
