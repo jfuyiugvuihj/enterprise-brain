@@ -1707,3 +1707,30 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 - 现在那 46 枚只钉「同一题面装箱后不再被整题拒」，用的是**夹具题面 + 桩检索料**，不是真机当时的 prompt 尺寸。真机 run3 会产出逐题 `prompt_tokens`（后端日志 `[ModelBudget]` 行），取到之后：把逐题实测 token 落进采集侧车的新字段（属 `scripts/eval_transport_ask_v2.py` 写域，🔴 不许改评测夹具），再把 `tests/test_r112_prompt_packing.py` 的参数化族升级成「按实测 token 复算 room」。
 - 前置：run3 收窗 + R112 已并树。派工前先确认侧车扩字段不会污染 `docs/testing/evaluation-report.json` 的算分口径（多一个字段不该改变分数，需一枚对照用例证明）。
 
+
+
+## 55. R114 作废 · R117 新立（第二十八班，09-20 18:1x，主树 `72a2b70`，基线两值 2685/35 与 2684/36）
+
+**为什么作废（总控独立复测，不采信执行层自述）**
+
+- `Banach`@R114 按 §54「第一任务先复测」执行，回报 §54 前提的后半句不成立。本班自己重做了两件事，两件都成立：
+  - ① **静态**：`app/agents/tools.py:562`/`:572` 的 `_pack_ledger[key] = used + packed_tokens` 只增不减，键 `thread:<thread_id>:<worker>`（`:414`）跨轮恒定，而 `room_total = context_pack_room()` 恒定 1606 ⇒ 跨轮必然把 room 扣穿。**这才是「越问越少装」的真机制。**
+  - ② **动态**：总控自己的探针（`%TEMP%\probe_ns2.py`，langgraph 1.2.5，零模型、零容器、不碰仓）在父节点内 invoke 一枚带 checkpointer 的子图、`thread_id` 固定、每轮只递当前那条 HumanMessage ⇒ **子图每轮可见消息 = [1,1,1]**，`checkpoint_ns` 三轮三枚不同（`w:<新 uuid>|c:<新 uuid>`）。真装配 `app/agents/orchestrator.py:607` 的 `graph.invoke({"messages": [user_msg]}, config=child_cfg)` 正是这个形状。
+- ⇒ 生产路径下**子图历史根本不跨轮**，「旧检索串留在历史里」无从裁起；§54 那句「最坏再吃一整个 room」只在**直连子图**时成立（执行层测到的 0.87–1.05 个 room 是那个形状）。R114 原样落地 = 永不触发的死代码 + 一个假的「已修」⇒ **作废**。
+- 那份 `orchestrator.py` patch（12680 B，sha256 `5b19838a…`）与 11 枚用例（20169 B，sha256 `4f63f495…`，6 passed / 5 failed）留在 `%TEMP%\r114_probe\`（仓外，`git apply --check` 通过），**不进树**；若 R118 认定「子图应当 resume」是原设计，它们可直接续用。
+
+**R117 · 装箱账按轮记，不许跨轮扣房**（落点 `app/agents/tools.py`，写域独占；源自 R114 复测交回）
+
+- 症状（执行层实测：真嵌套路径、6 轮、R112 已并树）：room=1606，`_pack_ledger` 累计 466→932→1398→**1606→1606→1606**，本轮实得检索料 466/466/466/**208**/**82**/**82**，第 5 轮起答案里那个关键数字读不到了（`限额读数=NONE`）。
+- 要求：① **同一轮内**照旧累加——react 循环里并发/串发的多次工具调用，那些串确实同时在一次 prompt 里，doc-12=3897 的形状就是它防的；② **跨轮不得累加**——下一轮的 prompt 里没有上一轮的 ToolMessage（② 为证）；③ 轮身份必须用请求路径上**已存在**的字段（`step_id = f"{trace_id}:worker:{name}"`，`orchestrator.py:555`；父层 `request_id`/`trace_id`/`task_id` 的透传清单见 `:559-573`），🔴 不许新开 contextvar、不许新造全局计数器；④ 取不到轮身份时的回落口径**由总控定 = 照旧按 thread 累加**（宁可少装，也不许出现「同一轮并发多发各自吃满 room」的回归），且这条回落要被用例钉住。
+- 判据要点：a. 一条行为用例「同一 thread 连问 4 轮，第 4 轮的 room 余额 = 第 1 轮的 room 余额」（跨轮不扣）；b. 一条「同一轮内两发并发 `search_docs` 仍互相扣房」（防回归到 doc-12 形状）；c. `[PromptPack]` 台账字段一枚都不许改名（run3/run4 的日志口径要连续）；d. 反证：把键改回纯 thread ⇒ a 当场红并指名；e. 全量两值并列（基线 2685/35 与 2684/36）。
+- 🔴 不许碰 `app/rag/retrieval_pipeline.py`（room 真源）、`app/agents/contracts.py`（预算）、`app/api/v1/chat.py`、`tests/fixtures/**`。窗口期内不许跑全量、不许真跑采集脚本。
+
+**R118 · 新立（只读定策单，暂不派）：doc 腿每轮冷启动 ⇒ 跨轮失忆**
+
+- 同一份复测的副产品：子图 checkpointer 在生产装配下形同虚设（`orchestrator.py:201` 那句「带 checkpointer，可持久化」与事实不符），doc/data 腿的跨轮记忆只剩父层那句【doc Agent 返回】。要么修装配形状让子图真的 resume（则上面那两份留档的 patch/用例续用），要么显式承认失忆并把注释与文档改对。属产品级取舍，且 R117 落地后「每轮独立」变成一致性前提 ⇒ 排 R117 结案之后再定。
+
+**R119 · 新立（小单，暂不派）：`CONTEXT_HISTORY_RESERVE_TOKENS=322` 与 R112 夹具的「答案按 400 字」名不副实**
+
+- 执行层查出：夹具里那句「答案按 400 字」实为 `("…"*6)[:400]` = **132 字**；答案真 400 字时同口径每轮 **403–429 枚** token ⇒ 322 枚的历史预留只够 0.75 轮真问答。R117 结案后连带校准，数须来自实测不许推算。
+
