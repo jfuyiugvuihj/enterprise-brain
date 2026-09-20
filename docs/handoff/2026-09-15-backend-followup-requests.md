@@ -1797,3 +1797,15 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 - 追加 1：`scripts/perf_probe_prodpath.py:124` 的 `cn_text(500)` 是同一族手抄（R115 交回，它的识别式按设计不响，因为那是合成料尺寸不是截断动作）。R116 既然要动 `scripts/`，顺手复用 `perf_probe_rounds.doc_content_cap()` 的**只读 ast 取真源**路子，读不到必须硬失败。
 - 追加 2：`scripts/perf_probe_rounds.py:196` docstring 里「synthetic 500-char chunk overstates … ~4x」是**带日期的历史实测**，不是尺。R116 复核实测后：过期就改成「标注为 09-19 当晚口径」，不许悄悄删。
 - 追加 3（本班新量，重要）：同题对照 `avg 25 s → 33 s`（+32%）**发生在 run2→run3 之间**，而 run3 被测 rev 含 R112 装箱 ⇒ R116 复算 room 的同时**要给出装箱自身开销的实测拆账**（打包耗时 vs 生成长度），否则「装箱让系统变慢」这句话永远没有数。
+
+### 58. 第三十班追加：跑分账号定档 `evalbot`（P-9 口径要补一条）· R111/R122 第二投的硬证与裁定 · run4 开窗（09-20 19:4x，主树 `6672afb`，run4 窗口内只读取证）
+
+**一、跑分账号 = `evalbot`**（口令在 `deploy/.env.server` 的 `EB_EVAL_PASSWORD`，值不抄进文档）。R107 预演 §7.2 把「跑分账号是谁」列为本单未能确定，本班实测结清：`dataowner` + `EB_SEED_OWNER_PASSWORD` **能登录**、`/api/v1/data-files` 看得见 `报销明细表.csv`，但 **`GET /api/v1/documents` 返回 `{"documents":[]}`（0 篇）**；换 `evalbot` 才看到 **live 100 篇 + catalog 100 行全 `indexed`（双向差 0）**。
+- 🔴 ⇒ **P-9 的判据要换个说法**：不是「这个账号能登录」，而是「**这个 principal 看得见 100 篇语料**」。照 `dataowner` 开窗，整轮量的是「一个没有语料的系统」，而采集器照样 `collected=105 of 105`、exit 0 —— 与 §5-H 那一族静默失败同类，前置十条一条都盖不住。
+- 已随本单把 runbook §3.2 的 `EVAL_USERNAME` 占位换成实名（口令仍不落文档）。
+
+**二、R111 / R122 各投第二次（本班裁定，理由写死）**：两单首投均被 `unsupported call` 拒且两次回执文本不同（§55A/§56 已记为不可知）。本班**先取硬证**：`sessions/2026/09/20/` 在 19:05 之后**零枚新 rollout**，且为其新建的两棵工作树 `be-r122`（@`6672afb`）、`be-r111`（@`7b45c07`→ff `6672afb`）`git status --porcelain` **全空** ⇒ 从未产生过可写的身体。这与事故 #14（同一单两枚 agent 同时在写）不是同一情形，与 §0 `Copernicus` 行的先例同形 ⇒ **各投一次**（一个 block 一次调用、`spawn_agent` 单通道、不带 `model` override），投后硬证：`01a0be9d-d876-7932-ab67-b040059fc699`（19:40:10，R122）、`01a0be9e-5b27-7da0-a4c5-50af1dc7f4ee`（19:40:44，R111）。
+- 🔴 **§55A 那条「R117 结案前严禁先派 R122」的前置本班已成立**：R117 于 `f29a020` 并树、本班亲验（名册 Banach 行）。R122 投递词另加一条：三条腿都要看，`tools.py` 行号按锚文本 `keep_first_truncated=True` 重定位（§55A 里的 `:666/:886/:979` 是 R117 之前的）。
+- ⚠️ **R111 的禁碰清单本班做了一处实质变更**：§56.h 写「禁碰 `tools.py`（在途 R117）」——R117 已结案，但**此刻 `tools.py` 归 `Cicero`@R122 独占** ⇒ 投递词改指 `Cicero`，禁碰集合不变、理由换了主人。
+
+**三、run4 已开窗**：19:37:46（PID 68364），被测 rev **`6672afb`**（含 R112 装箱 + R115 单一尺 + R117 轮身份账 + 三笔注释订正），镜像同源判据 **PASS（MATCH）**。前置 P-1…P-18 逐条亲量记录在看板 §4BH.10。本班在窗口内只做只读取证与文档，不并树、不跑全量。

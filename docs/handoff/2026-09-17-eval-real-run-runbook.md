@@ -69,7 +69,8 @@
 
 跑法（base_url / 账号都走环境变量，代码里没有硬编凭据）：
     $env:EVAL_BASE_URL = "http://127.0.0.1:8001"      # 容器内直连；宿主经 nginx 用 http://localhost
-    $env:EVAL_USERNAME = "<业主提供>";  $env:EVAL_PASSWORD = "<业主提供>"
+    $env:EVAL_USERNAME = "evalbot"     # 09-20 实测定档（跟进单 §58.一）：只有这个 principal 看得见 100 篇语料
+    $env:EVAL_PASSWORD = "<取 deploy/.env.server 的 EB_EVAL_PASSWORD，值不抄进文档>"
     $env:PYTHONPATH  = "$env:TEMP\evalrun"            # 本文件所在目录
     & "<venv 绝对路径>" scripts/collect_evaluation_answers.py --transport eval_transport_ask:transport
 """
