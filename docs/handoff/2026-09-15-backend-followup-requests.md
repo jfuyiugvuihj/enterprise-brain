@@ -1411,3 +1411,43 @@ PROBE index reached = 0
   6. 全量回归绿；被合法改动的既有钉子（`tests/test_r30_model_tiers.py` / `tests/test_r30_config_defaults.py` 里钉着 120/8.18/1536 这些数的用例）要逐条列出"改了哪一行、为什么原来的断言不再成立"，不许默默放宽。
 - 独占写域：`app/common/model_budget.py`、`app/agents/nodes.py`、新增 `scripts/bench_model_throughput.py`、上述两个 r30 测试文件 + 新增 `tests/test_r99_budget_selfconsistency.py`、`deploy/.env.server.example`、`.env.example`。禁碰 `app/agents/orchestrator.py`（R98 独占）、`frontend/**`、`migrations/**`、`tests/fixtures/business_evaluation_100.jsonl`（评测集禁改）。
 - 执行层**不得 commit**，改完把 `git status --porcelain -uall` 与逐文件 diff 摘要回报，由总控主树复跑验收后代提交。
+
+### 42. R100 / R101 · R99 之后现网「诚实但答不出来」的两笔（2026-09-19 23:5x，总控第二十四班，主树 `352c5f0`）
+
+本班把 R99 并了树（`352c5f0`，主树亲跑 **2507 passed / 35 skipped / 0 failed**，恰 = 前基线 2448 + R99 的 59 枚）。并树之后现网的状态是**诚实但不作答**：analysis 档在现网链路上必出 0 字正文，R99 把「拿离线模板冒充答案」改成了 `no_answer_produced` 失败归档。这对验收是对的，对跑分是不够的——所以有了 R100。
+
+**取证（本班亲跑，同 prompt 八变体，容器内 `python /tmp/r99_think.py`，产物 `%TEMP%\r99_think_evidence.txt`，qwen3.5:9b，`ollama ps` = 100% GPU，prompt 23 字）**：
+
+| # | 链路 | 参数 | 秒 | 正文字数 | thinking 字数 | done/finish | 计费 token |
+|---|---|---|---|---|---|---|---|
+| 1 | native `/api/chat` | `num_predict=1536`（现档等值） | 53.5 | 79 | 4047 | `stop` | eval=1525 |
+| 2 | native | 同上 + **请求体顶层 `think:false`** | **1.9** | 83 | 0 | `stop` | eval=46 |
+| 3 | native | 同上 + `options.thinking_disabled=true` | 43.5 | **0** | 4529 | `length` | 1536 |
+| 4 | native | `num_predict=4096` + 顶层 `think:false` | 1.8 | 80 | 0 | `stop` | eval=43 |
+| 5 | compat `/v1/chat/completions` | `max_tokens=1536`（**现网原样**） | 43.9 | **0** | — | **`length`** | 1536 |
+| 6 | compat | 同上 + `thinking:{type:"disabled"}` | 37.3 | **93** | 0 | **`stop`** | 1328 |
+| 7 | compat | 同上 + 请求体顶层 `think:false` | 44.1 | 0 | 0 | `length` | 1536 |
+| 8 | compat | `max_tokens=4096` + `thinking:{type:"disabled"}` | 45.9 | 82 | 0 | `stop` | 1640 |
+
+**四条结论，其中两条推翻本班先前的判断**：
+
+1. **现网链路（compat）在 1536 下必出 0 字正文**（#5，`finish_reason=length`）。`deploy/.env.server` 里 `LOCAL_MODEL_BASE_URL=http://ollama:11434/v1` 就是 compat，所以每一发 analysis 都会撞上 R99 的新守卫。⇒ **D14甲 开窗前必须先落 R100**，否则量到的是 105 个 `no_answer_produced`。
+2. 🔴 **推翻本班 22:3x 写过的一条**：当时记「compat 与 native 速度差在同量级 ⇒『compat 比 native 慢』不成立」。真把思考关掉之后差距是 **20 倍**（#2 的 1.9 s / 46 token vs #6 的 37.3 s / 1328 token）。当时测不出来的原因是两边都在生成思考链，慢是共同的。`thinking:{type:"disabled"}` 在 compat 上**只是把推理从 `content` 里搬走，计费 token 一个没省**（#6 completion=1328 而正文 93 字）；真正省时间的是 native 的顶层 `think:false`。
+3. **错拼法清单**（不得据这些下「关不掉」的结论）：`options.thinking_disabled`（#3，0 字）、compat 请求体顶层 `think:false`（#7，0 字）。有效的只有两种：native 顶层 `think:false`、compat 的 `thinking:{type:"disabled"}`。
+4. **抬档到 4096 不是出路**（#8：82 字 / 45.9 s，不比 #6 好），而且 489 prompt + 4096 > `n_ctx=4096` 会被 `authorize()` 直接拒。⇒ R99 回报 §6-② 列的三条出路里，「抬档」这条已被实测否证，剩下的只有「关思考」与「换 native」。
+
+#### 42.1 R100 · 让现网链路真的能答（写码单）
+
+- 判据 1：现网 compat 请求带 `thinking: {"type": "disabled"}`（#6 是实测唯一在现网链路能出正文的拼法），由**一个显式开关**控制（建议 `MODEL_THINKING=disabled|enabled`）。默认值必须是 `disabled`，且**判断默认值是否可达要查调用点**，不许只看签名。开关配错、配空一律退默认并 `logger.warning`。
+- 判据 2：夹取地板 `MODEL_MIN_ANSWER_TOKENS` 必须按**关掉思考之后**重新标定，不许沿用 1537 那个「思考开着」时代测出的数（#2 显示真正省的是 46 token）。标定命令 = `scripts/bench_model_throughput.py`（R99 刚落的那件）；复测与本文不一致时以复测为准，并回来改本文表格。
+- 判据 3：一条真机判据，**不许用单测代替**：同一道**非评测**冒烟题走 `/api/v1/ask`，日志必须出现 `[doc] 完成 status=ok`（不是 `model_unavailable`、不是 `no_answer_produced`），正文 >0 字，且 `empty_answer_rejected` 计数不因此增加。
+- 判据 4：`clamped=` 与 `budget_verdict=` 的语义（R99 刚收紧过的）不得回退；任何「把空正文重新算作成功」的新路径一律驳回。
+- 独占写域：`app/agents/nodes.py`、`app/common/model_budget.py`、`tests/test_r99_budget_selfconsistency.py`、`tests/test_r30_model_tiers.py`、`tests/test_r30_config_defaults.py`、`.env.example`、`deploy/.env.server.example`，新增测试自取 `tests/test_r100_*.py`。禁碰 `app/agents/orchestrator.py`、`app/api/v1/chat.py`、`app/common/cache.py`、`frontend/**`、`migrations/**`、`tests/fixtures/business_evaluation_100.jsonl`。
+- 全量回归必须绿（当前主树基线 **2507 passed / 35 skipped**）。被合法改动的既有钉子逐条列「改了哪一行、为什么原断言不再成立」。执行层**不得 commit**。
+
+#### 42.2 R101 · native 链路为什么在生产用不上（**只读调查单，不写码**）
+
+- 背景：#2 与 #6 差 20 倍。105 题 × 平均 2~3 发调用 ⇒ compat 下 2~4 小时、native 下 <20 分钟。这个差值决定阶段 B 的可行性，必须先有人把机理讲清楚，别让下一班再从零猜。
+- 要回答的四问：① native 客户端**到底存在吗**、被谁调用、`[Model] ollama-native 应答` 那行日志的真实出处（以实读为准，别引用本单的转述）；② 为什么生产走 compat 而 native 只在某些路径出现——是路由裁定、还是遗漏；③ 把 analysis 档切到 native 会破坏什么不变量（工具调用 / 流式 / 计费 token 口径 / `keep_alive` / R51 观测点 / AGENTS.md「第一版只管理本机 Ollama」）；④ 给一页**结论与建议**，二选一并写清代价。
+- 交付物：只一个新文件 `docs/handoff/2026-09-19-native-route-audit.md`。**除该文件外不得写任何路径**，不得 commit，不得跑评测、不得起停服务（`docker exec ... ollama ps` 这类只读可以）。
+- 相关既有裁定必须引用而不是转述：`app/agents/nodes.py` 里「上下文冲突故意不用离线回复」的那段注释（R99 后行号有变，按实读），R56 宿主模型端口闸门，以及跟进单 §41.2 判据 1 里 (b)(c) 两条候选因。
