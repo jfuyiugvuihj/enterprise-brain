@@ -1829,3 +1829,12 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 
 **禁碰**：`scripts/compare_vector_recall.py`、`app/db/migrations.py`、`migrations/**`、`docker-compose.yml`、`.env*`、`deploy/**`（以上在途 R120）；`app/agents/tools.py`（在途 R122）、`app/agents/evidence.py`（在途 R111）；`tests/fixtures/**`、`tests/test_evaluation_report.py`、`chroma_db/**`、`frontend/**`。
 **排队**：R124 排在 run4 收窗之后，与 **R116 同批**（两单写域零交集：R116 在 `scripts/perf_probe_*` + room 复算，R124 是一枚新脚本）；基线两值以收窗后的主树为准。
+
+### 60. 🔴 本班自纠：§59 立的 R124 前提错了，就此作废（09-20 20:0x，主树 `111e68a`，run4 窗口内）
+
+`R122`/`R111` 的执行层回执还没到，先把本班自己的一笔记清楚，别让它变成下一班的一枚重复工。
+
+- **§59 说的那件「现成件不存在」的东西是存在的，名字在另一层**：Chroma 侧的全零/跨维普查早就有 —— `scripts/rebuild_index.py:176-210` 的 `vector_census()`，逐文档 `collection.get(where={"filename": ...}, include=["embeddings"])`，输出 `measurable` / `total` / `widths` / `wrong_dimension` / `zero_vectors`，而且它把「看不了」显式写成 `measurable: false`（正是 §59 判据 d 想要的那条语义，**已经实现了**）。PG 侧 §59 判据 a 想要的「具名清单」也已经有现成 SQL，在 pgvector 方案 **§8.6** 里（`WITH z AS (...) SELECT vector_id, filename, chunk_index, index_version_id FROM chunk_vectors, z ...`），零字面量由 `compare_vector_recall.py:118` 按 `vector_scope.dimension` 现拼。
+- **我为什么会漏**：本班写 §59 之前查过 `pgvector-adoption-plan.md`，但查到的是 **124 行的旧版** —— §8（含 8.6）是 `Peirce`@R120 在同一段时间里 append 进去的 180 行，而那枚文件当时归它在途独占，我没等它就下了结论。⇒ **教训（进派工规矩）**：**凡与在途单同一主题的立案，必须先等那单交工再读它改过的文件**；「报某物不存在」在本项目里已经错过四次，这是第五次，而且这次的代价是一枚废单号。
+- **处置**：R124 **不派、不写代码**；U3 的真答案改由**总控亲跑** `python scripts/rebuild_index.py --status --json`（只读，run4 收窗之后跑，产物落 `%TEMP%`），把每条文档的 `zero_vectors` 与 `measurable=false` 的文档名列出来，直接答 §8.6。计划书 §5.2 的 R124 行同步标 ⚪ **作废**。
+- ⚠️ 顺手记一笔 §59 里被我一并写错的另一个前提：我写「PG 侧 `chunk_vectors` 必然是空表」——这句**在 R120 并树之后仍然成立**（双写默认 `off`，从未真开过），但**它的理由变了**：从「compose 不透传所以打不开」变成「透传已打通、等业主在 `deploy/.env.server` 显式写 `VECTOR_DUAL_WRITE=on` + 一次人工全量重建」（pgvector 方案 §8.3/§8.4，业主动作）。
