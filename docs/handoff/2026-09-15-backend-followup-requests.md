@@ -1776,3 +1776,8 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 - h. 禁碰：`app/agents/tools.py`（在途 R117）、`app/agents/orchestrator.py`、`app/rag/retrieval_pipeline.py`、`app/api/v1/chat.py`（R55 已结案的历史写域，且它是 21 字哨兵的另一半）、`tests/fixtures/**`。
 
 **与 §50 的差异**：§50 说的第二件事（「每次离线作答多写一行 `model_unavailable` span」）本班维持「那是正确的」，仍不在本单范围内。R112 交回的 `no_answer_produced` 与 21 字哨兵同色 = 另一族（发射端在 `chat.py:1377/:1883`，被 `tests/test_error_code_vocabulary.py:33` 的 emitter 台账钉着），**本单不做**，窗口后另立。
+
+
+**投递事故（第二十九班，09-20 18:39，🔴 按规矩未补投）**：判据写完后总控向 `spawn_agent` 投 R111 一次，回执 `unsupported call: mcp__multi_agent_v1__spawn_agent`。**这次有硬证据证明它没落地**（① `C:\Users\fengx\.codex\sessions\2026\09\20\` 在 18:39:56 前零枚新 rollout；② 为其新建的工作树 `be-r111` 到 18:40 仍 `git status --porcelain` 空）。但按派工规矩「投递若报错 ⇒ 退回跟进单 + 业主手动开线，不许补投」，本班**不重试**。
+
+🟢 **业主只需开一条线、把工作目录指过去即可，判据与写域已全部就绪**：工作树 `C:\Users\fengx\PycharmProjects\be-r111`（分支 `codex/be-r111` @ `7b45c07`，0 脏项，判据原文就在它自己树的跟进单 §56），开场令一句「读 `docs/handoff/2026-09-15-backend-followup-requests.md` §56，按 a–h 做 R111，禁 commit/禁跑全量」。
