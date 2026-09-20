@@ -74,8 +74,13 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--database-url", default=os.getenv("DATABASE_URL", "") or None)
     parser.add_argument("--chroma-dir", default=os.getenv("CHROMA_DIR", "./chroma_db"))
+    # R120：默认 collection 名必须就是生产在写的那一个。写入侧叫它 enterprise_docs
+    # （app/rag/retriever.py 里 get_or_create_collection("enterprise_docs")），而这里原先
+    # 抄的是 Postgres 的库名 enterprise_brain —— 两个名字长得像，不是一回事。业主照手册
+    # 第一步跑就会死在 open_chroma() 的"取不到 collection"上（退出码 2，不带任何对比结论）。
+    # tests/test_r120_p3_collection_default.py 把两侧名字钉在一起，防止以后再各写各的。
     parser.add_argument("--collection",
-                        default=os.getenv("CHROMA_COLLECTION", "enterprise_brain"))
+                        default=os.getenv("CHROMA_COLLECTION", "enterprise_docs"))
     parser.add_argument("--vector-table", default=pg_store.DEFAULT_VECTOR_TABLE)
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--fixture", action="append", default=None,
@@ -192,6 +197,15 @@ def chroma_distance(collection) -> str:
     return _CHROMA_SPACES.get(space, "")
 
 
+def canonical_distance(value: str) -> str:
+    """R120：两侧对同一件事有两种拼法 —— 0010 的 CHECK 收 l2|cosine|ip，本脚本与 Chroma
+    把第三种写成 inner_product。比较之前统一拼法，否则哪天真有库用 ip，脚本会报一条
+    假的"[前置不满足] …先核对 0010"，把业主支去改一个没写错的地方。
+    只对拼法，不改判据：认不出来的值原样返回，仍然走"不一致 ⇒ 退出码 2"那条既有路径。"""
+    spelled = str(value or "").strip().lower()
+    return _CHROMA_SPACES.get(spelled, spelled)
+
+
 def chroma_all_ids(collection) -> list:
     try:
         page = collection.get(include=[])
@@ -289,7 +303,7 @@ def main(argv=None) -> int:
         scope = read_scope(connection, vector_table)
         collection = open_chroma(args.chroma_dir, args.collection)
         space = chroma_distance(collection)
-        if space != scope["distance_function"]:
+        if space != canonical_distance(scope["distance_function"]):
             print("[前置不满足] collection 距离=" + (space or "未记录")
                   + "，vector_scope 声明=" + scope["distance_function"])
             print("两边排序天然不同，不出召回结论；先核对 0010 的 app.vector_distance_function")
