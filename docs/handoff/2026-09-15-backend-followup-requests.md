@@ -1857,3 +1857,22 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 **写域**：`scripts/rebuild_index.py` + 新 `tests/test_r125_*.py` + `docs/handoff/2026-09-17-pgvector-adoption-plan.md`（§8.6 那一小段）。
 **禁碰**：`app/rag/retriever.py`、`app/rag/indexing.py`、`migrations/**`、`chroma_db/**`、`tests/fixtures/**`、`docker-compose.yml`、`.env*`、`deploy/**`、`app/agents/tools.py`（R122 刚落）、`app/agents/evidence.py`（R111 刚落）。
 **排队**：R125 与 **R116** 同批（零文件交集）；R125 的 d③/④ 要能在**不连真库**下自证（桩），真机普查由总控在并树后跑一次并把 U3 的数写进方案 §5。
+### 62. 第三十一班追加：run5 收窗后的三笔 R116 输入 · R125 投递 · 🔴 更正前任「20 枚零提交」误判 · 两条新的派工纪律（09-20 22:4x，主树 `2f965c1`，被测 rev `27c676f`）
+
+**一、🔴 前任的「计划书 20 枚零提交」清单是错的，本班逐枚证伪并更正账本**
+
+- 前任在看板/跟进单与本班的派工单里反复写「R29 R30 R31 R32 R33 R34 R35 R37 R38 R40 R42 R43 R44 R46 R47 R48 R49 R50 R51 R52 共 20 枚在整个仓库历史里零提交」。**实测：其中 12 枚早在 09-18～09-19 就已并树**——R30 `3cb563b`(merge `50aff1a`)、R34 `b1d185e`(merge `e4d0c1b`)、R35 `63651f1`(merge `90d029f`)、R37 `9e50e60`+`45b9720`(merge `0c08209`)、R40 `dc31a44`(merge `8585315`)、R42 `5ff93cd`(merge `89965d5`)、R44 `9940c13`+`564340e`(merge `39006b8`)、R47 `95a1cd9`(merge `006c613`)、R49 `8680f43`(merge `c26afda`)、R50 `090c820`(merge `94f7fa1`)、R51 `6833140`(merge `cef08bf`)、R52 `8c888c7`。R110 也已实现（`f7971d3` 改 `app/agents/nodes.py`+`app/trace/spans.py`+新增 `tests/test_r110_stream_drop_closes_span.py`，merge `9b4154d`；HEAD 里 `nodes.py:603 span.finish("cancelled", record_evidence=False)` 在位）。R113 = `9de5e89`（纯测试件）。
+- 🔴 **真·零提交的只有 8 枚：R29 R31 R32 R33 R38 R43 R46 R48**（`R31/R32/R38/R48` 全历史 subject+body 0 命中；`R33/R43/R46` 各 1 命中且全在同一枚文档提交 §4BB.2 的派工面正文里，不是代码）。计划书完成度按此从「6 单半 / 27」改为「**18 单半 / 26**」。
+- **错因**：只在主树单支、只匹 subject 地 `git log --grep='RNN'`，把「我没查到」写成「不存在」——正是 §4AB「报不存在前先确认在哪一层查」那条教训的复发。**新纪律：任何"某单零提交"的全称否定，必须同时给 ① `git log --all --grep` 的 subject+body 命中数、② `git merge-base --is-ancestor` 的 exit code，两条硬证才算数。**
+- ⚠️ 连带更正：`app/agents/orchestrator.py` 被「R30/R31/R33/R42/R38 五单共占」是**假冲突**——该文件全文 `lane` 0 命中，R42 真身在 `app/agents/nodes.py:680-700`，R38 真身在 `app/agents/nodes.py` + `app/trace/spans.py`（`ModelCallSpan` **没有** `cached_tokens` 字段：`git grep -c cached_tokens -- app` = 0）。真实共占 = **R33 + R118（+ R31 视方案）**。
+- 逐单凭据全表在 `docs/handoff/2026-09-20-unblock-map.md` §F（`Franklin` 出，总控逐枚复验）。🔴 该文件的**聊天回执**不可信：它三处"更正"（R52/R35/R110）均被总控证伪，根因是 `--format='%h | %ad | %s'` 经 PowerShell 被 `|` 截成管道。**新纪律：子 agent 引 commit subject / 任何含 `|` 的 git format，必须走 python subprocess 参数列表，不许经 shell。**
+
+**二、R116 追加三笔输入（run5 实测，`%TEMP%\evalrun\backend-run5.log`，UTF-16 LE）**
+
+1. `stub=` 台账**没铺满三条腿**：282 枚 `[PromptPack]` 里 `stub=` 只在 `leg=doc`(152) 与 `leg=data`(81/101) 出现，**`leg=retrieval` 29 枚 0 命中**，另有 `leg=data` 20 枚走「装箱未送出，证据袋不记」分支也没有 ⇒ R116 复算 room 时**顺带把这条腿的账补齐或写清为何不补**（写域若需要碰 `retrieval_pipeline.py`，先回报总控，别自己扩面）。
+2. **装箱饿死的实测量级已到位**：`stub=refused` 17 枚**全部 `fitted=0`**；`fitted` 总计 654、68/262 发空手、`dropped` 574；`room_total=1606`、单发 top-5 实测 `packed_tokens` 可到 1348–1604 ⇒ 「一发就把 room 吃光」在 run5 仍是主症。R116 的 room 复算必须给出**这 17 枚 refused 若按实测 prompt_tokens 重算能不能变成实料**的答案，否则 R122 的诚实只是把问题从"假料"变成"没料"。
+3. **长尾变慢的两枚新证据**：分析/报告类 p95 117.6→**144.0 s**，`data-10` 177.8 s、`insight-04` 160.3 s（`evidence_n=0` 却耗时最长）⇒ 与装箱无关也要拆账：R116 交回"打包耗时 vs 生成长度"分解时**必须点名这两枚**。
+
+**三、R125 投递（判据见 §61，本班 22:4x 与 R116 同批、零文件交集）**：写域 `scripts/rebuild_index.py` + 新用例 + `docs/handoff/2026-09-17-pgvector-adoption-plan.md` §8.6 那一段。🔴 禁碰 `migrations/**`、真 `deploy/.env.server`、`app/**`。⚠️ 交班必读：真机 `deploy/.env.server` **已有** `EMBEDDING_MODEL`/`EMBEDDING_DIMENSION` 那一对（本班实测容器内 `EMBEDDING_MODEL=nomic-embed-text`、`/health/details` 报 `scope=nomic-embed-text/768`）⇒ Peirce 交回的"业主必做①"其实已满足，R125 不要再为它设判据。
+
+**四、run5 官方基线变更**：run5 是**第一枚含 R122 装箱诚实**的样本 ⇒ `correctness 0.4762 / evidence 0.6857` 起作新基线（旧：run4 0.4571/0.7524、run3 0.4571/0.7333、run2 0.3524/0.7048）。🔴 引用分数时必须同批说明"证据分下降是 R122 的预期代价"，不许只报 correctness 涨了。`hitl` 仍 18/105 占分母 ⇒ R123 三选一仍等业主。
