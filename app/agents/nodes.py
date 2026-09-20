@@ -33,8 +33,10 @@ from app.common.model_budget import (
     model_tier_budget,
     model_timeout_code,
     produced_a_tool_call,
+    resolve_model_thinking,
     record_budget_event,
     report_budget,
+    thinking_extra_body,
 )
 from app.agents.critic import review_agent_results
 from app.agents.planner import build_task_plan
@@ -172,6 +174,57 @@ class _OfflineModel(Runnable):
         yield type("Chunk", (), {"choices": [type("Choice", (), {"delta": type("Delta", (), {"content": OFFLINE_STREAM_CHUNK})()})()]})()
 
 
+#: Whether the resolved thinking mode has been announced to the log this process lifetime.
+#: ``_make_model`` runs once per graph at import time -- the four worker graphs, the
+#: orchestrator's dispatcher, the planner, the code and alert sites -- so an un-latched line
+#: prints eight identical sentences before the first request and adds nothing after it.
+_THINKING_MODE_LOGGED = False
+
+
+def _log_thinking_mode(base_url: str) -> None:
+    """Say once which thinking mode the compatible leg will send, and how it got that one."""
+    global _THINKING_MODE_LOGGED
+    if _THINKING_MODE_LOGGED:
+        return
+    _THINKING_MODE_LOGGED = True
+    policy = resolve_model_thinking()
+    logger.info(
+        f"[Model] 兼容腿 thinking={policy.mode}"
+        f"（{'请求体带 thinking 字段' if policy.wire else '请求体不带 thinking 字段，与 R100 之前逐字节相同'}）"
+        f"，来源 {policy.note}，端点 {base_url}"
+    )
+
+
+def reset_thinking_mode_log() -> None:
+    """Let the next model built announce its mode again. A test seam for the latch above."""
+    global _THINKING_MODE_LOGGED
+    _THINKING_MODE_LOGGED = False
+
+
+def _with_thinking_field(call_kwargs: dict) -> dict:
+    """Re-assert the thinking field on the body this boundary is about to send.
+
+    :meth:`_ResilientModel._budget_kwargs` already puts it there, and a caller that brings its
+    own ``extra_body`` would otherwise delete it: ``langchain_openai`` merges call-time kwargs
+    over the client defaults, it does not deep-merge ``extra_body``. So the merge happens here
+    instead. The caller keeps its own ``max_tokens`` -- R30 pinned that a caller's cap wins --
+    and only the field this boundary owns is put back when the caller never mentioned it. A
+    caller that writes an explicit ``thinking`` value is obeyed, because that is a decision
+    rather than an accident.
+
+    An ``enabled`` process adds nothing at all, which is what makes "switch it back on" mean
+    "send the bytes this product sent before this ticket" instead of inventing a second
+    spelling nobody measured.
+    """
+    thinking = thinking_extra_body()
+    if not thinking:
+        return call_kwargs
+    extra_body = dict(call_kwargs.get("extra_body") or {})
+    for field, value in thinking.items():
+        extra_body.setdefault(field, value)
+    return {**call_kwargs, "extra_body": extra_body}
+
+
 class _ResilientModel(Runnable):
     """Provider 请求失败时回退到本地离线模型，避免单点服务故障扩散。
 
@@ -266,6 +319,15 @@ class _ResilientModel(Runnable):
         The verdict travels with the kwargs because a clamp that is not written down is a
         mystery, and ``self.budget`` is deliberately left alone: this instance is built once
         per graph at import time and shared by every request.
+
+        The same body also carries the thinking field, for the reason §42 measured: on the
+        compatible leg an output cap and a thinking mode are not two independent settings. At
+        the same ``max_tokens=1536`` the model spent the whole budget on a hidden chain and
+        returned zero characters with ``finish_reason=length``, or answered 93 characters with
+        ``finish_reason=stop``, depending on one request field. Sizing an answer while leaving
+        the model free to eat that answer thinking would make the cap below the floor a
+        mystery to the next reader, so the two decisions are made in one place and sent in one
+        body.
         """
         if self.budget is None:
             return {}, None
@@ -274,7 +336,7 @@ class _ResilientModel(Runnable):
         return (
             {
                 "timeout": http_timeout(sized, prompt_tokens, stream=stream),
-                "extra_body": {"max_tokens": sized.max_tokens},
+                "extra_body": {"max_tokens": sized.max_tokens, **thinking_extra_body()},
             },
             authorized.verdict,
         )
@@ -313,7 +375,7 @@ class _ResilientModel(Runnable):
         prompt_tokens = estimate_prompt_tokens(messages)
         try:
             budget_kwargs, verdict = self._budget_kwargs(prompt_tokens, stream=False)
-            call_kwargs = {**budget_kwargs, **kwargs}
+            call_kwargs = _with_thinking_field({**budget_kwargs, **kwargs})
         except ModelContextLimitExceeded as exc:
             # Refused before the provider saw it. The offline reply is deliberately not
             # used here: it would record model_unavailable, and evidence._terminal_status
@@ -408,7 +470,8 @@ class _ResilientModel(Runnable):
                         code=empty_code,
                         **self._verdict_fields(verdict),
                     )
-                    + " [Model] 模型正文为空（思考链吃满输出预算），不作为答案交付"
+                    + " [Model] 模型正文为空，不作为答案交付（同一行的 thinking= 说明这次到底有没有要求"
+                    "关掉思考，max_tokens= 说明预算有多大；思考链吃满预算只是已测过的成因之一）"
                 )
         span.finish(
             "failed" if empty_code else "completed",
@@ -444,7 +507,7 @@ class _ResilientModel(Runnable):
         prompt_tokens = estimate_prompt_tokens(messages)
         try:
             budget_kwargs, verdict = self._budget_kwargs(prompt_tokens, stream=True)
-            kwargs = {**budget_kwargs, **kwargs}
+            kwargs = _with_thinking_field({**budget_kwargs, **kwargs})
         except ModelContextLimitExceeded as exc:
             slot.release()
             span.finish("failed", error_code=exc.code)
@@ -513,7 +576,8 @@ class _ResilientModel(Runnable):
                     stream=True,
                     code=NO_ANSWER_CODE,
                 )
-                + " [Model] 流式正文为空（思考链吃满输出预算），不作为答案交付"
+                + " [Model] 流式正文为空，不作为答案交付（同一行的 thinking= 说明这次到底有没有要求"
+                "关掉思考；思考链吃满预算只是已测过的成因之一）"
             )
             span.finish("failed", error_code=NO_ANSWER_CODE)
             return
@@ -547,6 +611,7 @@ def _make_model(tier: ModelTier | str = DEFAULT_MODEL_TIER, *, prompt=None):
         return _OfflineModel()
     provider = "ollama" if ":11434" in settings.base_url else "local-openai-compatible"
     try:
+        _log_thinking_mode(settings.base_url)
         client_timeout = http_timeout(budget, prompt_tokens)
         primary = ChatOpenAI(
             base_url=settings.base_url,

@@ -53,6 +53,7 @@ from app.common.model_budget import (
     model_tier_budget,
     model_timeout_code,
     reset_budget_events,
+    thinking_extra_body,
     tier_max_tokens,
 )
 
@@ -232,8 +233,8 @@ def test_the_analysis_tier_as_shipped_is_self_contradictory_and_says_so():
     1536 tokens at 8 tok/s is 192 s of decode against a 120 s ceiling, so the tier could only
     ever be told to stop. The old behaviour was to print ``clamped=yes`` on every call and then
     spend the whole ceiling anyway. The honest verdict is that no cap this machine can write in
-    time is a cap this model will answer with -- 811 tokens is inside the zone where the
-    measured thinking chain returns nothing at all.
+    time is a cap this model will answer with -- 811 tokens sits below the answer floor, and
+    nothing under that floor has a recorded non-empty answer on either thinking setting.
     """
     budget = model_tier_budget(ModelTier.ANALYSIS)
 
@@ -244,7 +245,7 @@ def test_the_analysis_tier_as_shipped_is_self_contradictory_and_says_so():
     verdict = max_tokens_verdict(budget, PROMPT_TOKENS)
 
     assert verdict.affordable_max_tokens == 811
-    assert verdict.min_answer_tokens == DEFAULT_MIN_ANSWER_TOKENS == 1537
+    assert verdict.min_answer_tokens == DEFAULT_MIN_ANSWER_TOKENS == 1536
     assert verdict.unaffordable is True
     assert verdict.clamped is False
     assert verdict.max_tokens == 1536
@@ -332,7 +333,7 @@ def test_the_answer_is_shortened_to_what_the_clock_can_write(monkeypatch, caplog
     assert "max_tokens=3688" in line[0]
     assert "declared_max_tokens=4096" in line[0]
     assert "affordable_max_tokens=3688" in line[0]
-    assert "min_answer_tokens=1537" in line[0]
+    assert "min_answer_tokens=1536" in line[0]
     assert "MODEL_DECODE_TOKENS_PER_SECOND=37tok/s(env)" in line[0]
     assert "MODEL_REQUEST_TIMEOUT=120s(calibrated-default)" in line[0]
 
@@ -379,9 +380,11 @@ def test_a_clamp_is_this_call_only_and_cannot_stick_to_the_shared_budget(monkeyp
 def test_a_clamp_below_the_measured_thinking_floor_is_refused_and_said_out_loud(caplog):
     """The floor clause: shortening into the empty-answer zone is not a fix, it is the other bug.
 
-    Measured in the shipping container: 1024 and 1536 output tokens both come back with zero
-    visible characters; 4096 produced 439. The clock may not be honoured by buying an answer
-    that is known in advance to be blank, so the call keeps its cap and is reported instead.
+    Measured in the shipping container on a thinking link: 1024 and 1536 output tokens both
+    came back with zero visible characters, and 4096 produced 439. R100 then measured 1536 on
+    the request this client actually sends (MODEL_THINKING=disabled) and got 93 characters with
+    finish_reason=stop, so the floor sits at 1536 now. Shortening below it is still buying an
+    answer that is not known to be writable, so the call keeps its cap and is reported instead.
     """
     budget = model_tier_budget(ModelTier.ANALYSIS)
     with caplog.at_level(logging.WARNING, logger="enterprise_brain"):
@@ -399,7 +402,7 @@ def test_a_clamp_below_the_measured_thinking_floor_is_refused_and_said_out_loud(
     # to say instead is which finding it is, in its own token.
     assert "clamped=no" in line
     assert "budget_verdict=budget_unaffordable" in line
-    assert "min_answer_tokens=1537" in line
+    assert "min_answer_tokens=1536" in line
     assert "affordable_max_tokens=723" in line
     assert "declared_max_tokens=1536" in line and "max_tokens=1536" in line
 
@@ -466,7 +469,12 @@ def test_a_clamped_call_announces_a_length_stop_with_its_clamp(monkeypatch, capl
     with caplog.at_level(logging.WARNING, logger="enterprise_brain"):
         _resilient(ModelTier.ANALYSIS, primary).invoke([HumanMessage(content=PROMPT_BODY)], config=config)
 
-    assert primary.calls[0]["extra_body"] == {"max_tokens": 3688}, "the wire cap is not the clamped one"
+    #: R100 put a second field on this body. The cap is what this file pins, so the fragment the
+    #: thinking boundary owns is composed from that boundary rather than written out a second time
+    #: -- the equality below is still an exact, whole-body check.
+    assert primary.calls[0]["extra_body"] == {
+        "max_tokens": 3688, **thinking_extra_body(),
+    }, "the wire cap is not the clamped one"
     truncated = [m for m in caplog.messages if OUTPUT_TRUNCATED_CODE in m]
     assert truncated, caplog.text
     assert "max_tokens=3688" in truncated[0]

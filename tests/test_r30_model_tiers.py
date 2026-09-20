@@ -19,6 +19,7 @@ from app.common.model_budget import (
     estimate_prompt_tokens,
     max_tokens_verdict,
     model_tier_budget,
+    thinking_extra_body,
     tier_max_tokens,
     tier_max_tokens_env_name,
 )
@@ -93,7 +94,8 @@ def test_the_cap_is_declared_on_the_request_not_only_in_the_profile():
     R99 rewrote the right-hand side of the last assertion. It used to read
     ``{"max_tokens": tier_max_tokens(tier)}``, and under the shipped defaults that is still
     the number on the wire -- but for a reason this file never claimed: the thinking floor
-    (MODEL_MIN_ANSWER_TOKENS=1537) now forbids shortening an analysis request down to the 811
+    (MODEL_MIN_ANSWER_TOKENS -- 1537 when R99 wrote this, 1536 since R100 re-measured it on the
+    thinking-free link this client now sends) now forbids shortening an analysis request down to the 811
     tokens the CPU-only calibration says the clock can pay for, so the declared cap survives
     untouched and the old assertion passed by coincidence. What holds in every configuration
     is "the wire carries the cap this call was authorised to", so that is what is asserted
@@ -106,7 +108,11 @@ def test_the_cap_is_declared_on_the_request_not_only_in_the_profile():
 
         authorised = max_tokens_verdict(model.budget, estimate_prompt_tokens(GREETING))
         assert len(primary.calls) == 1, tier
-        assert primary.calls[0]["extra_body"] == {"max_tokens": authorised.max_tokens}, tier
+        #: R100 added a second field to this body, composed here from the boundary that owns it so
+        #: this file keeps pinning the cap and cannot drift into a second opinion about thinking.
+        assert primary.calls[0]["extra_body"] == {
+            "max_tokens": authorised.max_tokens, **thinking_extra_body(),
+        }, tier
         assert authorised.max_tokens <= tier_max_tokens(tier), tier
 
 
@@ -127,7 +133,9 @@ def test_the_wire_carries_the_shortened_cap_when_the_clock_overrules_the_profile
     model.invoke(messages, config=None)
 
     assert tier_max_tokens(ModelTier.ANALYSIS) == 4096
-    assert primary.calls[0]["extra_body"] == {"max_tokens": 3688}, primary.calls[0]
+    assert primary.calls[0]["extra_body"] == {
+        "max_tokens": 3688, **thinking_extra_body(),
+    }, primary.calls[0]
 
 
 def test_a_cap_never_exceeds_the_window_it_has_to_share():

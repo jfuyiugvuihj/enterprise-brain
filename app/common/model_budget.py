@@ -221,27 +221,37 @@ DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 120.0
 DEFAULT_CONTEXT_TOKENS = 4096
 
-#: The ``MODEL_MIN_ANSWER_TOKENS`` default: the output cap below which the shipping model has
-#: been measured to return **no visible text at all**, so an answer cap may never be clamped
-#: past it. Measured 2026-09-19 22:3x +08:00 by 总控 inside the live container (image
-#: ``78b8507``, qwen3.5:9b, ``ollama ps`` 100% GPU, ~37 tok/s) -- NOT an output of
-#: ``scripts/bench_model_throughput.py``, which has never run there. Same prompt, native
-#: ``/api/chat``, non-streaming:
+#: The ``MODEL_MIN_ANSWER_TOKENS`` default: the output cap below which this model has not been
+#: observed to answer at all, so an answer cap may never be clamped past it.
 #:
-#:   num_predict 1024           -> eval_count 1024, content 0 chars, done_reason=length
-#:   num_predict 1536           -> eval_count 1536, content 0 chars, done_reason=length
-#:   num_predict 1536 think=False in options -> identical, content 0 chars
-#:   num_predict 1536 think=True  in options -> identical, content 0 chars
-#:   num_predict 4096 (compat leg)-> content 439 chars, finish_reason=stop
+#: RE-CALIBRATED FOR THE LINK THAT SHIPS NOW. The previous value, 1537, measured the hidden
+#: chain of a model that was *thinking*: the 2026-09-19 22:3x container runs (board §4BE.3)
+#: got 0 visible characters at ``num_predict``/``max_tokens`` 1024 and 1536, both with
+#: ``finish=length``, and 439 characters at 4096. R100 asks the compatible leg to stop
+#: thinking (``MODEL_THINKING`` below), so the floor has to be measured on the thinking-free
+#: link -- carrying a thinking-on number over would keep a limit nobody asked for again.
 #:
-#: The reasoning chain therefore spends somewhere in (1536, 4096] tokens before a single
-#: visible character appears. This default takes the low end of the bracket plus one: the
-#: smallest cap that is not *already known* to produce nothing. It is not a guess about where
-#: the floor really sits, and it is not padded with hope -- which is also why
-#: ``TIER_MAX_TOKEN_DEFAULTS[ANALYSIS] = 1536`` is documented as being *inside* the dead
-#: zone rather than being quietly raised here. A re-measurement that brackets it tighter
-#: overrides this number through the environment variable, and the clamp below honours it.
-DEFAULT_MIN_ANSWER_TOKENS = 1537
+#: Measured on that link by 总控 2026-09-19 23:4x, same container, same prompt, compat
+#: ``/v1/chat/completions`` with ``thinking:{"type":"disabled"}`` (跟进单 §42 rows #6 and #8):
+#:
+#:   max_tokens 1536 -> 93 visible chars, finish_reason=stop, completion_tokens=1328
+#:   max_tokens 4096 -> 82 visible chars, finish_reason=stop, completion_tokens=1640
+#:
+#: 1536 is the smallest cap with a recorded non-empty, self-terminated answer on the request
+#: the product actually sends, and this default is that cap. It is deliberately not lower:
+#: nothing under 1536 has ever been tried in this spelling, and §42 conclusion 2 records that
+#: the switch moves the reasoning out of ``content`` **without saving a billed token** (1328
+#: of them for 93 characters), so nothing supports the floor having collapsed towards the 46
+#: tokens the native leg spends on a top-level ``think:false``. A smaller number here would be
+#: exactly the invention this constant exists to make impossible.
+#:
+#: 待真机标定 (below 1536): run ``python scripts/bench_model_throughput.py --caps 256 512
+#: 1024`` inside the shipping container *after* its compatible arm learns to send
+#: ``thinking:{"type":"disabled"}`` -- as landed in R99 it sends only ``think:false`` at the
+#: top level there, which §42 row #7 measures as 0 characters, so the script as it stands
+#: cannot produce this bracket. Write what a rerun prints into the environment variable;
+#: ``scripts/bench_model_throughput.py`` stays the only command allowed to move this number.
+DEFAULT_MIN_ANSWER_TOKENS = 1536
 
 #: Framing around each message: the estimate is of a request, not of a bare string.
 MESSAGE_OVERHEAD_TOKENS = 4
@@ -326,6 +336,131 @@ def _env_positive_int(name: str, default: int) -> int:
 def min_answer_tokens() -> int:
     """The cap below which this model has been measured to answer with nothing at all."""
     return _env_positive_int("MODEL_MIN_ANSWER_TOKENS", DEFAULT_MIN_ANSWER_TOKENS)
+
+
+# ==================== the thinking switch (R100) ====================
+
+#: ``MODEL_THINKING``: does this deployment ask the local server to spend its output budget on
+#: a hidden chain of thought before it answers?
+#:
+#: The question is not academic on the machine that ships. 跟进单 §42 ran one prompt eight
+#: ways on the live container: the compatible leg with no thinking field at all spent
+#: ``max_tokens=1536`` entirely on hidden reasoning and returned **zero visible characters**
+#: with ``finish_reason=length`` (row #5), while the same request carrying
+#: ``thinking:{"type":"disabled"}`` returned 93 characters and ``finish_reason=stop`` (row #6).
+#: The near-miss spellings return nothing too -- top-level ``think:false`` on the compat body
+#: (row #7) and ``options.thinking_disabled`` on the native body (row #3) are both measured at
+#: 0 characters -- so an operator who copies one of those concludes the model cannot be
+#: switched off. It can, in exactly one spelling per leg: native takes ``think`` at the request
+#: top level, compat takes ``thinking`` in the body.
+#:
+#: This boundary owns the compatible leg (``app/agents/nodes.py:_make_model``), so it sends
+#: that one spelling and no other. ``disabled`` is the default because the measured
+#: alternative answers with nothing: R99 made an empty body an honest failure, and an honest
+#: failure is better than a fake answer, but it is still not an answer.
+MODEL_THINKING_ENV = "MODEL_THINKING"
+#: The only two values that mean something. Anything else is a misconfiguration, not a mode.
+THINKING_DISABLED = "disabled"
+THINKING_ENABLED = "enabled"
+MODEL_THINKING_MODES = (THINKING_DISABLED, THINKING_ENABLED)
+DEFAULT_MODEL_THINKING = THINKING_DISABLED
+#: The request field Ollama's OpenAI-compatible ``/v1/chat/completions`` body reads, and the
+#: value §42 row #6 measured on it. A wire object rather than a boolean because that is the
+#: shape that was measured; the field is not offered as a knob to tune.
+THINKING_REQUEST_FIELD = "thinking"
+THINKING_REQUEST_VALUE = {"type": "disabled"}
+
+
+@dataclass(frozen=True)
+class ThinkingPolicy:
+    """What this process asks the model about thinking, and how it arrived at that.
+
+    ``note`` rides along for the reason ``KeepAlivePolicy`` has one: the resolved value alone
+    cannot tell an operator whether it was configured, defaulted, or rescued from a typo, and
+    the last of the three is the one that will be searched for at three in the morning.
+    """
+
+    mode: str
+    #: The request-body fragment this boundary adds: ``{"thinking": {...}}``, or empty when
+    #: thinking is left alone. An ``enabled`` call has to be the exact body this product sent
+    #: before R100, so switching thinking back on is a no-op on the wire rather than a second
+    #: spelling nobody measured.
+    wire: dict[str, Any]
+    note: str
+
+
+#: Whether the "your value was unusable" warning has already been said this process lifetime.
+#: ``_make_model`` runs once per graph at import time and every call re-reads the environment,
+#: so without a latch one typo prints a dozen identical lines and buries the one finding that
+#: explains the others.
+_THINKING_WARNING_SHOWN = False
+
+
+def reset_thinking_warning() -> None:
+    """Allow the next misconfiguration to warn. A test seam, and the reason the latch is named.
+
+    It is also what an operator gets from one grep: the count of this line in a log is either
+    zero or one, which is what makes it usable as a signal rather than noise.
+    """
+    global _THINKING_WARNING_SHOWN
+    _THINKING_WARNING_SHOWN = False
+
+
+def resolve_model_thinking(raw: str | None = None) -> ThinkingPolicy:
+    """Read ``MODEL_THINKING`` defensively: a wrong value changes nothing except the log line.
+
+    ``raw`` is the test seam, mirroring :func:`resolve_keep_alive`. One rule and three cases:
+    a written value is honoured, an absent value takes the shipped default quietly, and every
+    other input takes the default *loudly*. Nothing here raises -- a request that would have
+    been answered is never thrown away because a configuration line has a typo in it, and the
+    failure this ticket exists to prevent is a silent one, so the loud half is the warning.
+
+    Absent stays silent on purpose: both shipped env samples write the default, so "nobody
+    said anything" and "the default" must not come to mean two different things. Present and
+    unusable -- empty, whitespace, ``off``, ``TRUE``, a number, any other string -- is the case
+    that has to leave exactly one warning behind.
+    """
+    global _THINKING_WARNING_SHOWN
+    if raw is None:
+        raw = os.environ.get(MODEL_THINKING_ENV)
+        if raw is None:
+            note = f"{MODEL_THINKING_ENV} unset"
+            value = DEFAULT_MODEL_THINKING
+        else:
+            value = raw.strip()
+            note = f"{MODEL_THINKING_ENV}={value!r}"
+    else:
+        value = str(raw).strip()
+        note = f"{MODEL_THINKING_ENV}={value!r} (given)"
+    value = value.lower()
+    if value in MODEL_THINKING_MODES:
+        mode = value
+    else:
+        mode = DEFAULT_MODEL_THINKING
+        note = f"{note} is not one of {'|'.join(MODEL_THINKING_MODES)}; using {mode}"
+        if not _THINKING_WARNING_SHOWN:
+            _THINKING_WARNING_SHOWN = True
+            logger.warning(
+                f"[ModelBudget] {note}. The request is still sent, sized by this default, "
+                "and every later line says "
+                f"thinking={mode}."
+            )
+    wire = (
+        {THINKING_REQUEST_FIELD: dict(THINKING_REQUEST_VALUE)}
+        if mode == THINKING_DISABLED
+        else {}
+    )
+    return ThinkingPolicy(mode=mode, wire=wire, note=note)
+
+
+def thinking_extra_body(raw: str | None = None) -> dict[str, Any]:
+    """The body fragment one call adds for its thinking mode, or ``{}`` when it adds none."""
+    return {key: dict(value) if isinstance(value, dict) else value for key, value in resolve_model_thinking(raw).wire.items()}
+
+
+def model_thinking_mode(raw: str | None = None) -> str:
+    """The mode one call runs in, for a log line that has to say which one it was."""
+    return resolve_model_thinking(raw).mode
 
 
 def request_timeout_ceiling_seconds() -> float:
@@ -513,10 +648,19 @@ def budget_signal(
     marker covers used to share the word -- a ceiling that shortened an answer and a ceiling
     that cannot be honoured at any cap worth answering with are different incidents, and an
     operator greps ``clamped=yes`` to find the first one.
+
+    ``thinking=`` rides on every line, not only on a clamp, because on the compatible leg it
+    decides what an output cap buys at all: §42 measured the same prompt at the same
+    ``max_tokens=1536`` returning 0 characters with ``finish_reason=length`` with thinking on
+    and 93 characters with ``finish_reason=stop`` with it off. An operator reading
+    ``empty_answer_rejected`` therefore has to be able to tell "we asked it to think and it
+    starved" from "we asked it not to and it still starved" without opening an env file, and
+    the two must not be able to share a count without saying which one is being counted.
     """
     parts = [
         MODEL_BUDGET_MARKER,
         f"tier={ModelTier(tier).value}",
+        f"thinking={model_thinking_mode()}",
         f"prompt_tokens={prompt_tokens if prompt_tokens is not None else 'unknown'}",
         f"read_seconds={read_seconds:.1f}",
     ]
@@ -950,8 +1094,22 @@ def model_budget_readout() -> dict[str, Any]:
     inside that snapshot builder, next to ``"hot_index"``.
     """
     profile = tier_profile(ModelTier.ANALYSIS)
+    thinking = resolve_model_thinking()
     return {
         "events": budget_event_counts(),
+        "thinking": {
+            "mode": thinking.mode,
+            #: Whether a ``thinking`` field is going on the wire at all. ``enabled`` sends no
+            #: field, which is the pre-R100 body, so "not sent" is a fact an operator needs
+            #: separately from the mode word.
+            "request_field_sent": bool(thinking.wire),
+            "request_field": THINKING_REQUEST_FIELD if thinking.wire else "",
+            "accepted_values": list(MODEL_THINKING_MODES),
+            "provenance": "env"
+            if os.environ.get(MODEL_THINKING_ENV) is not None
+            else "calibrated-default",
+            "note": thinking.note,
+        },
         "throughput_tokens_per_second": {
             "prefill": profile["prefill_tokens_per_second"],
             "decode": profile["decode_tokens_per_second"],
