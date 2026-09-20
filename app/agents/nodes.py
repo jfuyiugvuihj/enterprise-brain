@@ -508,6 +508,8 @@ class _ResilientModel(Runnable):
         # consumer stopped reading. That last one is not an exception this body can catch
         # -- it is GeneratorExit raised at a yield -- so the release is one finally rather
         # than the call on each refusal path, which is all it used to be.
+        # The same exit has to close the span as well, and R102 left that half undone.
+        span = None
         try:
             span = self._span(config, queue_wait_ms=slot.wait_ms)
             prompt_tokens = estimate_prompt_tokens(messages)
@@ -588,6 +590,17 @@ class _ResilientModel(Runnable):
             span.finish("completed")
         finally:
             slot.release()
+            # Nothing above closed it, so this is the consumer throwing the stream away:
+            # GeneratorExit walks past every except clause here, and an open span leaves
+            # two marks, not one. Trace keeps a `model.started` that never pairs, and the
+            # R51 stage ledger -- which is fed by finish() alone -- never sees the call,
+            # so the slowest tail of the distribution (a user who stopped waiting) is
+            # missing from the statistics rather than merely under-counted. Cancelling is
+            # the caller's decision and not a model failure, so it closes as `cancelled`
+            # and stays out of the evidence bag: the round is judged exactly as a round
+            # that ran to the end would have been.
+            if span is not None and not span.finished:
+                span.finish("cancelled", record_evidence=False)
 
 
 def _make_model(tier: ModelTier | str = DEFAULT_MODEL_TIER, *, prompt=None):

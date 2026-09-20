@@ -145,11 +145,26 @@ class ExecutionSpan:
         *,
         error_code: str = "",
         summary: dict[str, Any] | None = None,
+        record_evidence: bool = True,
     ) -> dict[str, Any]:
+        """Close the span. ``record_evidence`` is the R110 switch, and it is the only one.
+
+        A call the consumer threw away is over, so its ``*.finished`` event and its R51
+        stage sample have to exist like any other exit. What must not happen is the
+        execution evidence bag hearing about it: ``_record_boundary_status`` feeds
+        ``model_statuses``, and ``evidence._terminal_status`` reads that list. A word it has
+        never met is inert only for as long as none of its branches matches it -- the day one
+        does, a stream the caller chose to stop reading buys the customer a warning sentence,
+        or turns a ``success`` into a ``partial``. So the close skips the bag instead of
+        betting on the branch table: the event bytes, the payload keys and the ledger sample
+        are identical either way, and the round keeps the judgement it would have kept had
+        the stream run to the end.
+        """
         if self.finished:
             return {}
         self.finished = True
-        self._record_boundary_status(status, error_code)
+        if record_evidence:
+            self._record_boundary_status(status, error_code)
         duration_ms = int((time.monotonic() - self.monotonic_start) * 1000)
         payload = {
             "record_id": self.record_id,
