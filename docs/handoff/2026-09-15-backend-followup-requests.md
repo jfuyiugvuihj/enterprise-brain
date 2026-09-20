@@ -1838,3 +1838,22 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 - **我为什么会漏**：本班写 §59 之前查过 `pgvector-adoption-plan.md`，但查到的是 **124 行的旧版** —— §8（含 8.6）是 `Peirce`@R120 在同一段时间里 append 进去的 180 行，而那枚文件当时归它在途独占，我没等它就下了结论。⇒ **教训（进派工规矩）**：**凡与在途单同一主题的立案，必须先等那单交工再读它改过的文件**；「报某物不存在」在本项目里已经错过四次，这是第五次，而且这次的代价是一枚废单号。
 - **处置**：R124 **不派、不写代码**；U3 的真答案改由**总控亲跑** `python scripts/rebuild_index.py --status --json`（只读，run4 收窗之后跑，产物落 `%TEMP%`），把每条文档的 `zero_vectors` 与 `measurable=false` 的文档名列出来，直接答 §8.6。计划书 §5.2 的 R124 行同步标 ⚪ **作废**。
 - ⚠️ 顺手记一笔 §59 里被我一并写错的另一个前提：我写「PG 侧 `chunk_vectors` 必然是空表」——这句**在 R120 并树之后仍然成立**（双写默认 `off`，从未真开过），但**它的理由变了**：从「compose 不透传所以打不开」变成「透传已打通、等业主在 `deploy/.env.server` 显式写 `VECTOR_DUAL_WRITE=on` + 一次人工全量重建」（pgvector 方案 §8.3/§8.4，业主动作）。
+
+### 61. 立 R125 · pgvector 手册 §8.6 的「`--status --json` 里有两枚普查字段」是错的（09-20 21:0x，主树 `27c676f`，run4 已收窗）
+
+**本班真机亲跑**（容器内正确解释器，只读）：`docker exec enterprise-brain-backend-1 python scripts/rebuild_index.py --status --json` 交回
+`{"codes":["embedding_scope_unknown"],"documents":100,"indexes":128,"documents_needing_rebuild":1,"drifted":true,"scope":"nomic-embed-text/768","stale_documents":["AI-Agent学习路线图.pdf"],"unknown_scope_versions":["document:browser-e2e-policy-237.txt:v3f4008…","document:browser-e2e-rv-237.txt:va2b37…","document:r8-scope-0b665a63.txt:v6b279…","document:r8-scope-4f311c41.txt:vc85a8…","document:r8-scope-8f193cfe.txt:v63347…"]}`
+——🔴 **没有** `zero_vectors_before`，也**没有** `cross_dimension_vectors_before`。而 R120 交回的 pgvector 方案 **§8.6** 原文写着「8.4 第一条 `--status --json` 里的 `zero_vectors_before` 与 `cross_dimension_vectors_before`」。⇒ 业主照 §8.6 取 U3 会取到空，与 R90a/R120 同族（指引指向一个不存在的东西）。
+
+**根因（本班亲读，逐行）**：那两枚字段只在 `run_rebuild()` 的累加里长（`scripts/rebuild_index.py:640-642`，初值 `:552-554`），而 `--status` 走的是另一条 `status_report()`（`:694`），它压根不调用 `vector_census()`（`:176`，被 `rebuild_document()` 的 `:364` 调，且 `apply=False` 时也算）。**能力在，入口没接**。
+
+**判据（a–e）**
+- a. `--status --json` 必须输出 `zero_vectors_before` / `cross_dimension_vectors_before` / **`census_measurable`**，且**不写任何数据**：只允许 `collection.get(...)` 与目录读，🔴 禁 `add`/`upsert`/`delete`/`modify`，禁用 `--apply` 通路。
+- b. 普查按文档聚合，全零/跨维两枚各出**具名清单**（`filename` + 计数），stdout 只印前 N 条、全量落仓外（`%TEMP%`）；`measurable:false` 的文档必须**单列成"看不了"而不是"没问题"**（这条语义 `vector_census()` 的 docstring 已经立了，别在汇总时洗掉）。
+- c. 🔴 **分页**：现网 `indexes=128`、100 篇，`vector_census()` 现在一次 `include=["embeddings"]` 取一篇，汇总全库时不许一次把全库 embeddings 拉进内存；把窗口大小做成参数并在回执里给出实测峰值 RSS 与耗时（这是业主真机要跑的件，慢可以，炸不行）。
+- d. 用例 `tests/test_r125_*.py` ≥4 枚：① 桩里塞一枚精确零 + 一枚跨维 + 一枚正常 ⇒ 三个计数各归各；② `measurable:false` 的一篇进不了"零问题"那一档；③ `--status` 跑完**没有任何写调用**（用假的 collection 记 call 名单，出现 `add`/`upsert` 即红）；④ 反证：把 `census_measurable` 与 `zero_vectors_before` 印成同一行 ⇒ ②当场红。
+- e. 顺手：pgvector 方案 §8.6 那两句改成与实现一致（跑哪条命令、拿到什么字段、拿不到时看哪条），🔴 **R120 已并树，那枚文件现在没人占**；`unknown_scope_versions` 那 5 枚测试残留**只登记不删**（删 `chroma_db` 属业主 H4/H5/H8）。
+
+**写域**：`scripts/rebuild_index.py` + 新 `tests/test_r125_*.py` + `docs/handoff/2026-09-17-pgvector-adoption-plan.md`（§8.6 那一小段）。
+**禁碰**：`app/rag/retriever.py`、`app/rag/indexing.py`、`migrations/**`、`chroma_db/**`、`tests/fixtures/**`、`docker-compose.yml`、`.env*`、`deploy/**`、`app/agents/tools.py`（R122 刚落）、`app/agents/evidence.py`（R111 刚落）。
+**排队**：R125 与 **R116** 同批（零文件交集）；R125 的 d③/④ 要能在**不连真库**下自证（桩），真机普查由总控在并树后跑一次并把 U3 的数写进方案 §5。
