@@ -36,6 +36,18 @@ _STORE_COLLECTION = "knowledge_graph_relations"
 _STORE_ERRORS: dict[str, str] = {}
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
 
+# Why a write is refused, named once and shared by three surfaces: the HTTP status and
+# detail this subsystem's route reports (app/api/v1/intelligence.py), the audit reason
+# recorded next to it, and the "reason" field the state below feeds into
+# /api/v1/health/details. A client that read the response and an operator who reads
+# health must not be handed two names for one fact. The field is present only on a state
+# that refuses writes: a durable store has nothing to explain, and the development
+# dictionary accepts writes, so reporting "unconfigured" there would be a false alarm.
+REASON_UNCONFIGURED = "knowledge_graph_unconfigured"
+# The store was configured and then could not be opened or written: that really is a
+# storage outage, so it keeps the 503 and keeps the name it has always had.
+REASON_STORE_FAILURE = "storage_read_only"
+
 # Where a relation got to. ``status`` is the record's own life; ``verification_state`` is
 # the separate answer to "has a human checked the source", and only that second answer
 # gates promotion, so confirming a record (a scope/typo decision by its author) can never
@@ -145,6 +157,7 @@ class KnowledgeGraph:
                 "durable": False,
                 "shared_across_processes": False,
                 "protection": "read_only",
+                "reason": REASON_STORE_FAILURE,
                 "detail": error,
             }
         if _is_production_environment():
@@ -153,6 +166,10 @@ class KnowledgeGraph:
                 "durable": False,
                 "shared_across_processes": False,
                 "protection": "read_only",
+                # The deployment never enabled the feature. "read_only" above says what
+                # happens to a write; this says why, which is the part an operator can
+                # act on and the part the HTTP exit is allowed to answer with.
+                "reason": REASON_UNCONFIGURED,
                 "detail": f"{_STORE_PATH_ENV} is not configured; relation writes are refused",
             }
         return {

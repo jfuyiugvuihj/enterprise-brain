@@ -350,6 +350,15 @@ async def register_open_application(data: ApplicationRegisterRequest, request: R
         record_audit(principal, "open_platform:app_register", "denied", str(data.app_name or ""), str(exc))
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ProductionReadOnlyProtection as exc:
+        # Checked for R103 and deliberately left at 503: the refusal that reaches here
+        # with a reason of its own (open_platform_store_write_failed) is a store that was
+        # configured and then could not be written, which is an outage and retryable once
+        # the mount is fixed -- so the code matches the fact and is not the knowledge
+        # graph's 503-for-an-unconfigured-feature (app/api/v1/intelligence.py). The
+        # sibling raise in app/common/open_platform.py that fires when no store path is
+        # set at all shares this handler and is the same lie in miniature; separating the
+        # two needs a reason field on app_registry_storage_state(), which is outside this
+        # ticket's write domain, so it is reported up rather than patched sideways here.
         record_audit(principal, "open_platform:app_register", "denied", str(data.app_name or ""), str(exc))
         raise HTTPException(status_code=503, detail="storage_read_only") from exc
     record_audit(principal, "open_platform:app_register", "allowed", issued["app_id"])

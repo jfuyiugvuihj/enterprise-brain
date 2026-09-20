@@ -29,7 +29,11 @@ from app.common.policy import authorization_decision
 from app.common.logger import logger
 from app.dashboard.service import build_dashboard
 from app.insights.rules import detect_insights
-from app.knowledge_graph.service import KnowledgeGraph
+from app.knowledge_graph.service import (
+    REASON_STORE_FAILURE,
+    REASON_UNCONFIGURED,
+    KnowledgeGraph,
+)
 from app.quality.provenance import build_answer_provenance
 from app.semantics.registry import match_metric_definition, metric_catalog
 
@@ -75,6 +79,24 @@ class ProvenanceRequest(BaseModel):
 
 class SemanticRequest(BaseModel):
     question: str = ""
+
+
+def _relation_refusal_reason() -> str:
+    """Say why a graph write was refused, from the graph's own state.
+
+    ``ProductionReadOnlyProtection`` covers two different facts: this deployment never
+    configured a durable store, and a configured store that then failed to open or to
+    accept a write. The first is a deployment the owner has not enabled, the second is an
+    outage, so they must not leave through the same code. The state read here is the same
+    object ``/api/v1/health/details`` reports, so the response, the audit reason and the
+    health section cannot drift apart over the name of one refusal.
+    """
+    try:
+        state = _graph.storage_state()
+    except Exception as exc:  # pragma: no cover - a failed probe must not hide a refusal
+        logger.warning(f"[Intelligence] relation refusal unclassified: {type(exc).__name__}")
+        return REASON_STORE_FAILURE
+    return str(state.get("reason") or REASON_STORE_FAILURE)
 
 
 def _authorized(request: Request, action: str, resource_name: str):
@@ -183,13 +205,39 @@ async def add_relation(data: RelationRequest, request: Request):
             classification=str(principal.clearance),
         )
     except ProductionReadOnlyProtection as exc:
-        logger.warning(f"[Intelligence] relation write refused: {exc}")
-        record_audit(principal, "resource:upload", "denied", "knowledge_graph_relation", "storage_read_only")
-        raise HTTPException(status_code=503, detail="storage_read_only") from exc
+        reason = _relation_refusal_reason()
+        logger.warning(f"[Intelligence] relation write refused ({reason}): {exc}")
+        record_audit(principal, "resource:upload", "denied", "knowledge_graph_relation", reason)
+        # An unconfigured deployment answers 409 knowledge_graph_unconfigured, not 503
+        # storage_read_only and not 404. Not 503: that means "temporarily unavailable,
+        # retry later", and nothing a client retries will configure
+        # KNOWLEDGE_GRAPH_STORE_PATH -- the customer would retry forever, monitoring
+        # would bill a feature that was never enabled as downtime, and the audit trail
+        # would blame storage for a decision the operator still has to make. Not 404
+        # either: the resource exists -- the route, the collection and the promotion exit
+        # are all here -- so what conflicts is this write against the current state of
+        # the deployment, which is exactly the fact 409 carries. Hiding that behind "not
+        # found" would be worse than stating it: a reader of the response would go and
+        # fix the wrong thing. A store that was configured and then failed keeps the 503.
+        raise HTTPException(
+            status_code=409 if reason == REASON_UNCONFIGURED else 503, detail=reason
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="relation_source_required") from exc
     except PermissionError as exc:
         logger.warning(f"[Intelligence] relation refused: {exc}")
+        # The audit line keeps the permission the caller actually lacked -- the service
+        # names it -- while the response stays one stable code. Three kinds of refusal
+        # (not configured, no permission, store really read-only) have to be tellable
+        # apart in the trail, which is what a storage_read_only stamp on all of them
+        # destroyed.
+        record_audit(
+            principal,
+            "resource:upload",
+            "denied",
+            "knowledge_graph_relation",
+            str(exc).strip() or "permission_denied",
+        )
         raise HTTPException(status_code=403, detail="permission_denied") from exc
     return record.to_dict()
 
