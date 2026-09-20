@@ -398,3 +398,23 @@ sys.exit(1 if flags else 0)
 - **`server_only` 那 4 条的身份已查实，别再当新发现**：`/app/documents/.document-versions.json` 里四条全是 `owner_id=admin`、`department=''`、`created_at` 集中在 **2026-09-18 22:00:49 ~ 22:01:04**，即浏览器验收那一批探针（`browser_acceptance_policy.txt` 267 B、`六级作文模板.docx`、`深度学习入门：基于Python的理论与实现.pdf` **11.3 MB**、`深度学习技术栈学习路线.pdf`）。`tests/test_seed_workspace.py:24` 的 `SERVER_ONLY_ROWS` 早就把它们钉成闭合集，所以**不许删条目、不许扩名单**——扩名单等于承认又丢了数据，唯一的修法是让文件回到盘上。
 - 🔴 **这条直接改变跑分报告的口径**：一次全新装机只能种出 **96 篇**（manifest 100 条里 4 条无文件），而这台机器答的是 **100 篇**。报告抬头写语料数时必须写「100（其中 4 篇仅存于本机卷，不可由装机重建）」，只写 100 是给客户看的假可复现性。
 - PDF 算不算出处这条口径**不因本次改动而变**：主规则仍是 95 txt、`29` 行无出处；把 PDF 也算进去会得到 27，而 `chat-02` / `insight-07` 那两次「被 PDF 救回」在 `docs/handoff/2026-09-19-eval-evidence-audit.md` §3.10 已判为**假有据**。复算出 27 的人是把 PDF 算进去了，不是谁算错。
+
+## 16. 开窗机械预检复跑 + 三个会让窗口即死的坑（2026-09-20 00:0x，总控第二十四班，跑分树 `codex/be-eval95` @ `ede64f2`）
+
+本班把「窗口一开就死」能靠 CPU 排掉的都排掉了，全部亲跑，不引用旧结论：
+
+| 预检 | 实取 | 判定 |
+|---|---|---|
+| 跑分树快进 + 零脏项 | `git merge --ff-only ede64f2` 后 `status --porcelain -uall` = **0 行** | ✅ 主树永远脏（1 万项），开窗只能用这棵树 |
+| 冻结三分片完整性 | `r97-shard-{1,2,3}.jsonl` 拼接 **逐字节等于** `tests/fixtures/business_evaluation_100.jsonl`，sha256 前缀 `2230b2b45be18bfb`，24,346 B | ✅ 与登记一致，题源没被碰过 |
+| P-7 采集器 dry-run | `collected=105 of 105`，exit 0，产物落 TEMP | ✅ 采集器与夹具接口仍对接 |
+| 适配器导入 + `EVAL_SIDECAR` 生效 | `SIDECAR` 解析到 TEMP（`inside_repo=False`），`transport` 可调用 | ✅ 默认值是 `scripts/collect-sidecar.jsonl`，**不设环境变量就是往仓内写** |
+| 认证链路（不打模型） | 经 `eval_transport_ask_v2.login()` 真取到 JWT，`token_len=147`、`prefix=eyJhbG` | ✅ 口令、`/api/v1/login`、顶层 `token` 键、`:8001` 直连四项同时对 |
+
+🔴 **三个坑，都是本班亲踩，写在开窗之前**：
+
+1. **跑分树里没有 `deploy/.env.server`**（它被 gitignore，只存在于主树）。在它里面取口令会得到空串 ⇒ `/api/v1/login` **401**（适配器会抛 `HTTPError`，不会假通过，这点好）。⇒ 一切引用 `deploy/.env.server` 的命令，在跑分树上必须换成主树绝对路径 `C:\Users\fengx\PycharmProjects\企业智脑\deploy\.env.server`；compose 的 `--env-file` 同理。口令现值长度 14（不写值）。
+2. **P-7 的 `--dry-run` 不经过冻结适配器**：采集器把 `--dry-run` 与 `--transport` 判为互斥（`error: --dry-run already supplies a fake transport; drop --transport`），所以 dry-run 绿**不能**证明 `eval_transport_ask_v2` 能用。⇒ 上表后两行就是为补这个洞而加的；正式开窗前若要再验一次，跑这两行而不是重跑 dry-run。
+3. **冻结适配器里的 `chat.py` 行号引用会随并树偏移**。它现在引 `chat.py:1359-1365 / 1364 / 1379 / 1403-1418 / 1177`，而跟进单 §42.3 排队的那笔缓存闸门改动就在 1362 附近 ⇒ 落地后这些引用整体后移。**适配器是冻结件，不许为了对齐行号去改它**；改动并树时在本节记一行「§42.3 使适配器行号引用偏移 +N，行为不变」即可。
+
+**开窗还差的两件事，都不是机械问题**：① R100 未并树 ⇒ 现网每发 analysis 仍是 0 字正文，开窗只会量到 105 个 `no_answer_produced`（§42 表 #5）；② 计时预算要按 R100 的结果重估，§14 的 7.6 h 与旧 73 min 都已作废，compat 关掉思考是 37 s/发、native 是 1.9 s/发，差 20 倍（§42 结论 2）。
