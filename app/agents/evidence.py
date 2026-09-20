@@ -251,8 +251,16 @@ def _terminal_status(bag: dict[str, Any] | None, answer: str) -> tuple[str, str]
 
     if "rejected" in names or "authorization_required" in codes or "permission_denied" in codes:
         return "rejected", "permission_denied"
+    # R111：「容量不够」与「模型坏了」不是一件事，证据面不许同色。AgentResult.status 的八枚 Literal
+    # 里没有 rate_limited 这一档（app/agents/contracts.py:339，加取值要走 D 项），所以 status 照旧
+    # model_unavailable、只让 error_code 分色：只报过 rate_limited 的一轮交付
+    # ("model_unavailable", "rate_limited")，否则 frontend/src/lib/errcodes.js 那句「请稍等一会儿再试」
+    # 永远到不了客户。内层把两枚同时在场判回 model_unavailable —— 真坏了优先于容量紧，折叠前的
+    # 判定一格不动；越权那一支仍留在最前，「没权限」永远盖过「容量不够」。
     if "model_unavailable" in names or "rate_limited" in codes:
-        return "model_unavailable", "model_unavailable"
+        if "model_unavailable" in names or "model_unavailable" in codes:
+            return "model_unavailable", "model_unavailable"
+        return "model_unavailable", "rate_limited"
     if "retrieval_unavailable" in names or "retrieval_unavailable" in codes:
         return "retrieval_unavailable", "retrieval_unavailable"
     if "timeout" in names or "task_timeout" in codes:
