@@ -1517,3 +1517,32 @@ R100 并树后按这三笔做，逐条已验证过形状：
 ### 44.4 顺带更正一笔旧账（R101 查出，总控已主树亲验）
 
 - `app/agents/nodes.py` 全文 `keep_alive` **0 次** ⇒ `deploy/.env.server:50` 的 `LOCAL_MODEL_KEEP_ALIVE=15m` **只有改写腿吃到**（native 腿 `app/common/model_handler.py`），答题腿从来没下发过。⇒ **R34「keep_alive 常驻」的完成度要把这一半退回 R29**，不得记成 R34 已结案。看板 §4BF.6 已挂。
+
+### 45. R104 / R106 · 第二十五班派工（09-20 11:2x，主树 `36aac74`，后端基线 **2515 passed / 35 skipped**）
+
+#### 45.1 R104 · `vue-router` 真路由（§44.2 细化；前提由接班总控 11:1x 主树直查，不信转述）
+
+**事实**：`frontend/package.json` 里 `vue-router: ^4.6.4` 是依赖；`src/router` **不存在**；`src/**` 全文 `createRouter|useRoute|router-view` **0 命中**；导航是 `App.vue:43` 手写 `navigation` 数组 + `:57` `workspaceMap`，`activeTab` 为 `shallowRef('overview')`（`:23`），赋值只出现在 `:68`（chat）与 `:86`（overview）。⇒ 「装了没接」为真，深链今天不可能。
+
+**判据**：
+1. 新建 `src/router/index.js`：一级屏一屏一路由（`overview` `insights` `docs` `data` `approval` `chat` 六条，与撤入口后的 `navigation` 一一对应），`name` 即屏 id，`meta.title` 必填；图谱屏给一枚**非一级**路由（结掉 §44.1 遗留的落点问题），它**不许**出现在导航数组里。默认落点有且只有一个，选哪个由执行层裁定并写理由。
+2. `App.vue` 挂 `<router-view>`，`workspaceMap` 退役；面包屑/`activeMeta` 一律从 `route.meta` 取；面板 `@goto` 跨屏改 `router.push`。**不得**留下第二套真源（任何 `activeTab.value =` 直赋都算，除非它本身是路由状态的派生）。`GraphPanel.vue` 与既有面板组件**一字不改**。
+3. 焦点与键盘可达：切路由后焦点落到新屏主区，**复用** `src/components/ui/focus-trap.js`、`list-nav.js`，不许造第二套焦点管理；深链直达（`/docs` 或 `/#/docs`，取实际 history 模式）必须渲染同一屏。`<keep-alive>` 用不用都行，但必须在回报里写明它改变了重挂载语义没有。
+4. 测试：新增 `src/router/__tests__/routes.test.js`，至少覆盖「路由表 = 导航集合（图谱不在一级）」「深链解析到正确组件」「`@goto` 目标可达」。**既有 21 files / 499 枚一枚不许少**，`npm test` 改前/改后两遍原始末 10 行都要交；`npm run build`、`npm run lint` 原始末 10 行照交。⚠️ **禁 `npm install`、禁改 `package-lock.json`、禁改 vite/vitest 配置、禁往 `package.json` 塞脚本**（`node_modules` 是总控接的 junction，装一下就毁）。
+5. 顺带结掉 R103 交回的两笔账：`frontend/src/lib/errcodes.js` 的 `LEGACY_ALIASES` 补 `knowledge_graph_unconfigured`（`retryable:false`，文案**不得**与 `storage_read_only` 的「只读降级」共用）；`docs/api/contract-v1.md:65`、`:449` 那两行今天写的是「图谱 503 `storage_read_only`」——**R103 之后文档是错的**，按 `storage_read_only` 同规格改登记为 409 裸 detail、非 `ErrorEnvelope.code` 成员。
+6. 后端全量回归必须仍是 `2515 passed / 35 skipped`：本单不该动后端一行，动了就是越界。
+
+**独占写域**：`frontend/src/router/**`（新建）、`frontend/src/App.vue`、`frontend/src/main.js`（挂 router 所需最小改动）、`frontend/src/lib/errcodes.js`、新增 `frontend/src/**/__tests__/**`、`docs/api/contract-v1.md`（仅第 5 判据那两处）。**禁碰** `frontend/package.json`/`package-lock.json`/vite 与 vitest 配置、`app/**`（`Boyle`@R100 正在写 `app/agents/nodes.py`、`app/common/model_budget.py`）、`app/common/monitoring.py`（§42.3 总控自用）、`migrations/**`、评测 fixture。**不占 GPU**。工作树 `be-r104`；执行层**不得 commit**。
+
+#### 45.2 R106 · 开放平台「生产未配 store」不得冒名存储故障（R103 交回的域外账）
+
+**事实**（总控 11:2x 直查，行号以 `36aac74` 为准）：`app/api/v1/open_platform.py:353` 那枚 `503 storage_read_only` 下游有两个 raise 点——`app/common/open_platform.py:370`（`_current_store() is None` 且生产 ⇒ 功能压根没开）与 `:397`（store 配好了、`upsert` 真失败 ⇒ 确实是故障，503 与事实相符）。health 那一节走 `app/common/monitoring.py:22` 的 `app_registry_storage_state()`，而 `:53` 的 `_subsystem_state` 是 `dict(...)` **原样透传** ⇒ **本单不需要碰 `monitoring.py`**，加了 `reason` 字段 health 自动就有（R103 在图谱上就是这么成立的）。
+
+**判据**：
+1. 仿 `app/knowledge_graph/service.py:39-50` 的形状，在 `app/common/open_platform.py` 导出两枚共享词常量（`open_platform_unconfigured` / `storage_read_only`），在 `app_registry_storage_state()` 的两个拒写分支上各挂 `reason`；耐久态与开发态**不加**（无理由可解释）。不许第二份真源，不许嗅探异常文本。
+2. 路由 `open_platform.py:353`：未配 ⇒ `409 open_platform_unconfigured`；真写失败 ⇒ **保持** `503 storage_read_only`；`record_audit` 的 reason 必须能分辨这两件事（R103 判据 2 同款）。
+3. 用例：真 `TestClient`（不 grep 源码），覆盖未配 409 / 真故障仍 503 / 开发态注册不受影响 / **health 与路由同词**（反证：拆掉 `reason` 那一行必须同时红）。
+4. 若 `tests/test_deployment_guards.py` 里有**逐键**断言 `app_registry_storage_state()` 的钉子，必须同步跟 `reason` 走——该文件因此**授权**进本单写域，但只许改那枚逐键钉子（规矩出处：看板 §4BF.9）。
+5. 全量回归基线 **2515 / 35**，并写明账目（新增几枚、skipped 有无变化；多出的 skip 必须逐枚比对给出真身，不接受印象式归因）。
+
+**独占写域**：`app/common/open_platform.py`、`app/api/v1/open_platform.py`、`tests/test_deployment_guards.py`（仅逐键钉子）、新 `tests/test_r106_*.py`。**禁碰** `app/common/monitoring.py`（§42.3 排队）、`app/api/v1/intelligence.py`、`app/agents/**`、`frontend/**`（`R104` 在写）、`migrations/**`、评测 fixture。**不占 GPU**。工作树 `be-r106`；执行层**不得 commit**。
