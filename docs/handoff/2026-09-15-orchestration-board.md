@@ -2893,3 +2893,22 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - R108 那笔两小时的活已从「32 项未提交」变成 `516b656` + 双远端（它自己的树现在零脏项）。R109/R110 在途，交付验收后同样先保活再谈并树。
 - 待办一条（并 R108 时顺手做，别忘）：`be-r108` 里 `Bernoulli` 按既有惯例建的 junction `be-r108\frontend\node_modules` 与构建产物 `be-r108\frontend\dist` 都被 gitignore 但**在磁盘上**，要零足迹就 `cmd /c rmdir "C:\Users\fengx\PycharmProjects\be-r108\frontend\node_modules"`（只摘联接、不伤主树那份真工具链）+ 删 `dist`。
 
+
+### 4BH.4 本班下第二格（09-20 14:5x–15:3x，主树 `f5bd16a`）：**D14甲 真机开窗 · run1 四分钟作废但撞出 R112 · run2 15:27 起飞**
+
+**开窗前置（全部实测，非引用）**
+- 后端镜像按 H12/P-8 的正解重建：`docker compose build migrate`（**2.4 s**，重层全命中缓存，只重写 `app` 层）⇒ 新镜像 BUILD_INFO `revision=f5bd16a built_at=2026-09-20T07:07:16Z`；`up -d --wait` 后 backend/worker/scheduler 全 Healthy。
+- 🔴 **P-8 溯源门禁历史上第一次 PASS**：`scripts/check_image_provenance.py` 出 `tree f5bd16a (build inputs clean) / image label …=f5bd16a / verdict MATCH / gate: PASS`。挂了五天的「镜像落后主树」这条账（H12）到此结。
+- **R98 欠的那条证据也在这扇窗补上了**：冒烟第一发打到图上之后，server 自己写下 `[Orchestrator] 使用 PostgresSaver 持久化`（15:12:52）。R98 至此四条全绿。
+- 环境两条实测：`com.docker.service = Stopped / Manual`（事故 #32 要求的形态，没动）；机器原本 **AC 30 分钟就睡**（`STANDBYIDLE=0x708`），已 `powercfg /change standby-timeout-ac 0` 防掐窗，**原值 1800 s 记在这里，收窗后还原**。
+
+**run1：四分钟就按停（判据救回来的，不是运气）**
+- 侧车 14 条里 **2 条 `error_event`**（`doc-12`、`doc-14`，各 `answer_chars=21`、`evidence_n=0`、`wall_ms≈11.9 s`），按预演文档 §3.1「出现任何一题 error_event 即整窗作废、立刻停窗别烧第二小时」当场 `Stop-Process`，作废侧车留成 `sidecar-VOID-run1.jsonl`。
+- 真凶**不是**预算也**不是** R102 的槽：日志 4 次 `concurrency budget exhausted` 全在 `model_handler` 的**改写腿**（英文行，且它自己「已回退为原始问题」，属 R92 设计的正常降级）；`nodes.py` 的中文 `并发预算耗尽` 与 `使用离线流` 各 **0 次** ⇒ 那 21 字不是离线罐头。真因是 `error_code=context_limit_exceeded`（`prompt_tokens=3897` 与 `4610`，`clamped=yes`），已立案 **R112**（跟进单 §52），含机制逐行、两题证据、和"离线预演为什么量不到它"的方法账。
+- 顺带结一条：**R107 §5-C 没有被推翻**。普通题实测仍是 `clamped=no budget_verdict=budget_unaffordable`（`affordable 505–816 < 地板 1536`），C 说的"时钟夹取不可达"成立；R112 撞的是**另一枚容量**（n_ctx），且 prompt 长度取决于当次检索回来的字数 ⇒ 新规矩：**凡取决于运行时检索结果的预算，离线预演一律不可信**。
+- P-18 两次都做了实测口径：起跑前 `answer:*` 从 1（冒烟留下）清到 **0**；run1 按停后**再清一次**才起 run2（不清必 raise，预演 §2.4）。P-17 语料快照 `corpus_before.csv` 97 行已留 TEMP。
+
+**run2（在途）**：PID 12380，**15:27:22 起**，被测 rev `f5bd16a`，仓外产物 `answers-run2.jsonl` + `sidecar-run2.jsonl`，夹具 `tests/fixtures/business_evaluation_100.jsonl`（105 行，显式指，P-3）。预演给的预算 2.49 h ⇒ **ETA ≈ 18:00**。窗口内三条铁律：不动部署、不并树、子 agent 不跑全量 pytest（`Dirac`@R109 已下窗口优先指令，只许跑自己那枚文件）。
+
+**窗口期间只做了不占机器的事**：R110 交付**保活提交 `f7971d3` 并推双远端**（尚未验收，窗口后按 §47/§48 顺序并树）；跟进单 §52 立 R112；本节与 §4BH.2/§4BH.3 入库。
+

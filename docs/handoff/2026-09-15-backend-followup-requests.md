@@ -1640,3 +1640,30 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 
 **乙半（只能在 D14甲 跑分窗口之后）**：把窗口产出的真实分布填进甲半的位，并落一份基线分数供 R29/R33/R35 对比（R36 判据 ③）。⚠️ 填数那一次要顺带核一件事：窗口里被 `aclose()` 丢弃的调用**不会进台账**（R110 的缺尾），所以 R110 未并树前填出来的 P95 是**偏乐观**的——两半的先后顺序不许倒。
 
+### 52. R112 · doc 腿组装的 prompt 撞上 n_ctx 就**整题拒绝**，而不是把上下文装箱到装得下（D14甲 窗口真机撞出，总控 09-20 15:19–15:25 亲取；主树 `f5bd16a`，基线两值 2564/35 与 2563/36）
+
+**真机事实（不是离线算的，是刚才那扇窗撞出来的）**：开窗后前 14 题里两题被产品**当场拒绝**，容器日志原文（`docker compose logs backend`，15:19:20,093 与 15:19:4x）：
+- `[ModelBudget] tier=analysis thinking=disabled prompt_tokens=3897 read_seconds=120.0 stream=no clamped=yes error_code=context_limit_exceeded` ⇒ `执行失败: Local model context window cannot hold this request ... prompt_tokens=3897 and max_...`
+- 同形第二发 `prompt_tokens=4610`。采集侧对应 `doc-12`、`doc-14` 两枚 `kind=error_event`，`answer_chars=21`、`evidence_n=0`、`tool_calls=2`、`wall_ms≈11.9 s`。
+- 容量实测两头一致、没人谎报：`ollama ps` 的 CONTEXT 列 = **4096**，`MODEL_CONTEXT_TOKENS` 未设 ⇒ 取 `model_budget.py:476 context_limit_tokens()` 的默认 **4096**（`DEFAULT_CONTEXT_TOKENS`）。
+
+**机制（本班逐行读树）**：`app/common/model_budget.py:839` 那句注释自己写明顺序是「**先拒装不下 n_ctx 的，再 shorten 时钟付不起的**」，`:950` 在发请求前抛 `ModelContextLimitExceeded`（`:64-78` 的文案就是日志那句），经 `contracts.py:221` 定性为**不可重试**码。于是：
+- `doc-12`：prompt 3897 本身**装得进** 4096，但 4096−3897=**199** < 本档 `MODEL_MIN_ANSWER_TOKENS=1536` ⇒ `clamped=yes` 之后仍然拒；**为了守住"至少写 1536 字"的地板，宁可一个字都不写**。
+- `doc-14`：prompt 4610 > 4096，光题面+检索料就超窗 ⇒ 拒。
+- 两题交付的都是同一枚 21 字，客户看不出是"容量不够"还是"模型坏了"——这与 R111 是同一个色盲问题，但**这条是可用性洞，不是诊断洞**。
+
+**为什么 R107 离线预演没算到（记下来，别再指望离线）**：预演 §5-C 建模的是**时钟**预算（`affordable_max = 120/1.15 × 8 = 834 < 1536` ⇒ `always_unaffordable`、`clamped` 不可达），那条结论**至今成立**（本班实测普通题日志确为 `clamped=no budget_verdict=budget_unaffordable`）；但 `context_limit` 用的是**另一枚容量**，且 prompt 长度取决于**当次检索回来的 chunk 实际字数**——离线只有语料没有检索，量不出来。⇒ 教训：**凡是"取决于运行时检索结果"的预算，离线预演一律不可信**，这条要写进预演方法本身。
+
+**总控裁定（产品取向，业主可推翻）**：窗口吃紧时**宁可答案短，不可整题拒**。地板 `MODEL_MIN_ANSWER_TOKENS` 是"时钟够不够"的判据，不该被拿来当"这一题要不要答"的判据。
+
+**判据**：
+1. doc 腿组装上下文要**按预算装箱**：以 `context_limit_tokens() − 本档输出预留` 为容量，按 RRF/重排**分数从高到低**装 chunk，装不下就丢最低分的，🚫 **不许**静默丢（丢了几条、装进多少条要能事后核：日志或 evidence 里留一行可 grep 的账）。
+2. 拒答只留给"连最小可用上下文都装不进"这一种真装不下的情形（如 `doc-14` 的 4610 装不进 4096 且裁无可裁），且**必须与"容量不够"分色**：`context_limit_exceeded` 的交付文案要指名"本题检索料超出本机上下文"，🚫 不许再是同一枚 21 字。
+3. 时钟地板与窗口容量解耦：`MODEL_MIN_ANSWER_TOKENS` 不得再作为**拒答**理由（它只用于夹取/预算判语），改这一点必须让既有 `tests/test_r30_context_limit_guard.py` 逐条**指名**哪些断言因语义变化而改，不许默默改红。
+4. 用真机枚举做回归：本班窗口（run2）会产出**全部**撞 `error_event` 的题号与各自 prompt_tokens，逐题补成参数化用例（`doc-12`/`doc-14` 至少各一枚），断言"同一题面在装箱后不再拒、且 evidence 条数只减不增"。枚举未回填前本单**只许做 1–3 与两枚已知题**，不许凭想象凑题。
+5. 全量回归两值并列：主树 **2564 / 35**、执行层树 **2563 / 36**（跑完本单新增枚数各自加）。
+6. 一条反证：把装箱退化成"装不下就整题拒" ⇒ 判据 4 的 `doc-12` 那枚当场红且指名用例全名（不许空响），随后逐字节还原给 sha256。
+
+- **独占写域**：`app/rag/retrieval_pipeline.py`（装箱/截断，参考 `:650` rerank 与 `:652` 那行日志）+ doc 腿组装 prompt 的那一处 + `app/common/model_budget.py` 里**仅**地板参与拒判的那一处 + 新 `tests/test_r112_*.py`。🚫 禁碰 `frontend/**`、`migrations/**`、评测 fixture、`docs/**`、`app/api/v1/chat.py`（`Dirac`@R109 在写）、`app/agents/nodes.py`（`Beauvoir`@R110 已交付待并树，先让它进树）。
+- **派工时机**：🔴 **D14甲 窗口结束之前不许派**（判据 4 要等枚举；且任何子 agent 跑全量 pytest 都会把窗口计时跑成污染值）。窗口后先并 R109/R110/R108，再在**新基线**上派本单。
+
