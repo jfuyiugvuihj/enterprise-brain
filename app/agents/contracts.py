@@ -1,4 +1,4 @@
-﻿from typing import Any, Literal
+from typing import Any, Literal
 
 from enum import StrEnum
 from pydantic import BaseModel, Field, model_validator

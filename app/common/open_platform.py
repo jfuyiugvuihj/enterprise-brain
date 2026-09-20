@@ -1,4 +1,4 @@
-﻿from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict
 import hashlib
 import hmac
 import json

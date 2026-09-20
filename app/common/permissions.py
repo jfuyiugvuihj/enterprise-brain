@@ -1,4 +1,4 @@
-﻿ACTION_VIEW = "resource:view"
+ACTION_VIEW = "resource:view"
 ACTION_UPLOAD = "resource:upload"
 ACTION_DOWNLOAD = "resource:download"
 ACTION_DELETE = "resource:delete"

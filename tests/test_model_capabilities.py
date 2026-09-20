@@ -1,4 +1,4 @@
-﻿from app.common.model_capabilities import discover_ollama_models, infer_capabilities
+from app.common.model_capabilities import discover_ollama_models, infer_capabilities
 
 
 def test_capabilities_distinguish_chat_and_embedding_models():

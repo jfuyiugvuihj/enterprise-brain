@@ -1,4 +1,4 @@
-﻿from fastapi import HTTPException
+from fastapi import HTTPException
 
 from app.common.audit import record_audit
 from app.common.identity import Principal

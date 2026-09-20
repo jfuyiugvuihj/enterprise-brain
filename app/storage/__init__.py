@@ -1,4 +1,4 @@
-﻿"""Controlled local file storage boundary."""
+"""Controlled local file storage boundary."""
 
 from app.storage.artifacts import (
     ArtifactRecord,

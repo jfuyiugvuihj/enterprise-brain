@@ -1,4 +1,4 @@
-﻿from app.agents.contracts import AgentResult, Evidence
+from app.agents.contracts import AgentResult, Evidence
 from app.common.tracing import build_tracing_config, sanitize_trace_event
 from app.quality.eval import evaluate_golden_set
 from app.quality.provenance import build_answer_provenance

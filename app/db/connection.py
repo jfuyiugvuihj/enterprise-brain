@@ -1,4 +1,4 @@
-﻿"""Offline-safe database configuration and connection boundary.
+"""Offline-safe database configuration and connection boundary.
 
 This module validates configuration and exposes a connection factory contract. It does
 not connect or create schema during import; deployment code must call that explicitly.

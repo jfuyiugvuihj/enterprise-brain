@@ -1,4 +1,4 @@
-﻿import time
+import time
 
 from fastapi.testclient import TestClient
 

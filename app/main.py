@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 if sys.platform == "win32":
     import asyncio, selectors
