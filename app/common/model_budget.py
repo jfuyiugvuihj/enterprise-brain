@@ -1083,16 +1083,17 @@ def model_budget_readout() -> dict[str, Any]:
 
     Shaped like ``app/rag/hot_index.py:hot_index_snapshot`` on purpose: read-only, in-memory,
     opens no socket, never reads the vector store, and returns a dict a caller can embed
-    verbatim. It is *not* wired into ``/api/v1/health/details`` yet, because that answer is
-    built by ``app/common/monitoring.py:build_health_snapshot``, which is outside this
-    ticket's write domain (and conditionally another agent's). The one-line wiring is
+    verbatim. It is embedded: ``app/common/monitoring.py:build_health_snapshot`` publishes
+    it as the ``model_budget`` key next to ``hot_index``, through the same
+    ``_subsystem_state`` accessor the storage subsystems use -- so there is no second copy
+    of these numbers for an operator to be misled by, and a failing probe degrades to
+    ``unavailable`` instead of breaking the health request. R99 判据 4 asked for the readout
+    to be reachable from a health response rather than only from a log line; that wiring
+    landed after R100 (跟进单 §42.3) and is pinned by
+    tests/test_r99_budget_selfconsistency.py.
+    
 
-        "model_budget": _subsystem_state(
-            "app.common.model_budget", "model_budget_readout"
-        ),
-
-    inside that snapshot builder, next to ``"hot_index"``.
-    """
+"""
     profile = tier_profile(ModelTier.ANALYSIS)
     thinking = resolve_model_thinking()
     return {

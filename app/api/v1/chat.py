@@ -1358,8 +1358,14 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 saved = True
                 if full_text:
                     from app.common.cache import cache_answer
+                    from app.agents.nodes import is_offline_reply_text
+
                     # 等待确认的状态说明不是一个问题的答案，不允许进全局答案缓存。
-                    if use_answer_cache and not intr:
+                    # R99 判据 4 的另一半（跟进单 §42.3）：超时或失败时模型腿交回的是一句预制的话，
+                    # 它同样不是这个客户问题的答案。落进缓存就等于让后来者在几毫秒内拿到一句假答案，
+                    # 还带 [cached] 标注——比空正文更难查。识别函数由 app/agents/nodes.py 自己提供，
+                    # 与日志和拒交付用的是同一个，不在这再枚举一遍句子。
+                    if use_answer_cache and not intr and not is_offline_reply_text(full_text):
                         cache_answer(rewritten_msg, full_text, scope=answer_scope)
                     yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': full_text}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)

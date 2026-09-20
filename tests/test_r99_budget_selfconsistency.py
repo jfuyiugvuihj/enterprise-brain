@@ -758,28 +758,34 @@ def test_a_readout_of_a_moving_machine_says_which_values_are_in_force(monkeypatc
     assert readout["tiers"]["analysis"]["fits_ceiling"] is True
 
 
-def test_the_readout_is_not_yet_embedded_in_health_details():
-    """Written down so nobody believes judgement 4's counter dial is finished.
+def test_the_readout_is_embedded_in_health_details_and_shares_one_accessor():
+    """Judgement 4 second half: the readout is reachable from a health request now.
 
-    ``/api/v1/health/details`` is answered by ``app/common/monitoring.py:build_health_snapshot``,
-    which is outside this ticket's write domain (and conditionally another agent's), so the
-    counter exists and the snapshot does not yet carry it. When the wiring lands, this is the
-    test to turn into the positive assertion -- it must not be deleted quietly.
-
-    The check reads source text instead of calling the builder: ``build_health_snapshot``
-    probes its dependencies over the network, and a pytest that opens a socket at
-    127.0.0.1:11434 is stopped by the R56 host-model gate -- which is that gate working, not a
-    test to route around.
+    R99 left this as a receipt that the counter dial was NOT reachable. It is wired:
+    ``build_health_snapshot`` publishes ``model_budget`` next to ``hot_index``, through the
+    same ``_subsystem_state`` accessor the storage subsystems use, so there is no second
+    copy of these numbers to go stale, and a failing probe degrades to ``unavailable`
+    instead of breaking the request. The check still reads source rather than calling the
+    builder, for the reason this file already gave: the builder probes its dependencies over
+    the network, and a pytest that opens a socket at 127.0.0.1:11434 is stopped by the R56
+    host-model gate -- which is that gate working, not a test to route around.
     """
     import inspect
 
     from app.common import monitoring
 
-    assert "model_budget" not in inspect.getsource(monitoring.build_health_snapshot)
-    assert "model_budget_readout" not in inspect.getsource(monitoring)
+    source = inspect.getsource(monitoring.build_health_snapshot)
+
+    assert '"model_budget": _subsystem_state(' in source, source
+    assert "model_budget_readout" in source, source
     assert callable(model_budget_readout)
-
-
+    # Not a hand-copied dict: what health would publish is exactly what this boundary
+    # reports, read through the accessor health itself uses.
+    published = monitoring._subsystem_state(
+        "app.common.model_budget", "model_budget_readout"
+    )
+    assert published == model_budget_readout()
+    assert set(published["thinking"]) >= {"mode", "request_field_sent", "provenance"}
 def test_every_offline_sentence_is_identifiable_as_one():
     """The recogniser has to survive a rewording, because it protects a cache, not a log.
 
@@ -808,28 +814,25 @@ def test_every_offline_sentence_is_identifiable_as_one():
     assert nodes.is_offline_reply_text(None) is False
 
 
-def test_the_cache_guard_that_has_to_use_the_recogniser_is_not_wired_yet():
-    """The second half of judgement 4's "may not enter the answer cache", as a receipt.
+def test_the_cache_guard_uses_the_recogniser_before_it_writes():
+    """Judgement 4 cache half: the recogniser gates the cache write now.
 
-    A timeout still hands back a canned sentence -- judgement 4 asks for that sentence to be
-    loud, not for it to disappear -- and the cache write is one layer up, in
-    ``app/api/v1/chat.py``, which is outside this ticket's write domain. The boundary now
-    names the sentences and offers the test; the patch is one clause next to the guard that
-    already refuses to cache a HITL status line::
-
-        if use_answer_cache and not intr and not is_offline_reply_text(full_text):
-
-    Invert this assertion when that lands. Do not delete it: an empty body is not cached
-    today only because ``chat.py`` guards the write with ``if full_text``, and that is a
-    fact about a line in another file, which is exactly the kind of fact a test should own.
+    The clause below is the one R99 wrote down and left for the next shift. An offline
+    sentence is loud rather than absent on purpose, and loudness is only honest if it never
+    becomes somebody else's cached answer: a canned line stored under a customer question
+    comes back in milliseconds, with the [cached] stamp, for a question that was never
+    answered. The recogniser is the one nodes.py owns, so a reworded sentence cannot slip
+    past this guard unnoticed -- test_every_offline_sentence_is_identifiable_as_one walks its
+    branches. The first two assertions still guard the fact rather than the phrase: if the
+    cache write or its empty-body guard ever moves, this test has to be re-read, not deleted.
     """
     source = (_REPOSITORY / "app" / "api" / "v1" / "chat.py").read_text(encoding="utf-8")
 
     assert "cache_answer(rewritten_msg, full_text" in source, "the write this pin is about moved"
     assert "if full_text:" in source, "an empty answer would now be cached, re-read this"
-    assert "is_offline_reply_text" not in source
-
-
+    assert (
+        "if use_answer_cache and not intr and not is_offline_reply_text(full_text):" in source
+    ), "a canned offline sentence can be cached again"
 # ==================== judgement 1: the calibration artefact ================================
 
 

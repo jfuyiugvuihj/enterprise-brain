@@ -242,6 +242,13 @@ def build_health_snapshot(performance: dict | None = None) -> dict:
         "storage": storage,
         "embedding": _embedding_state(),
         "hot_index": _hot_index_state(),
+        # R99 判据 4 的第二半（跟进单 §42.3）：预算边界自己的读数——夹取计数、每档速率的出处、
+        # 以及这次到底有没有要求关掉思考。它走 _subsystem_state，与存储子系统同一个入口，
+        # 所以健康页和这条边界之间不存在第二份会过期的数字；探针抛异常也只降级成 unavailable，
+        # 不会把一次健康检查整体打挂。形状学上面的 hot_index（R79）：只读进程内状态，不开 socket。
+        "model_budget": _subsystem_state(
+            "app.common.model_budget", "model_budget_readout"
+        ),
         "problems": problems,
     }
 
