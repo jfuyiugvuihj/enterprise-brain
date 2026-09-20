@@ -571,6 +571,11 @@ def test_evaluations_lists_stored_reports_without_running_the_stack(
 
 def test_evaluations_reports_an_absent_suite_and_no_reports(app_client, users, monkeypatch):
     admin = users("s3-admin-empty-eval", "admin")
+    # The bundled score at docs/testing/evaluation-report.json is a shipped artifact since D14
+    # first filled it in, and the route appends DEFAULT_EVALUATION_REPORT_FILES after the
+    # configured dirs (app/api/v1/observability.py:332) -- so an empty-configured-dir case is
+    # only a no_reports case when the bundled default is neutralised too.
+    monkeypatch.setattr(observability, "DEFAULT_EVALUATION_REPORT_FILES", ())
     monkeypatch.setenv("EVALUATION_REPORT_DIRS", "tmp/_s3-no-such-reports")
     monkeypatch.setenv("EVALUATION_SET_PATHS", "tmp/_s3-no-such-suite.jsonl")
 
