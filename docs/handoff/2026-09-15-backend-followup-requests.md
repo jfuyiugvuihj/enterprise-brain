@@ -1667,3 +1667,28 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 - **独占写域**：`app/rag/retrieval_pipeline.py`（装箱/截断，参考 `:650` rerank 与 `:652` 那行日志）+ doc 腿组装 prompt 的那一处 + `app/common/model_budget.py` 里**仅**地板参与拒判的那一处 + 新 `tests/test_r112_*.py`。🚫 禁碰 `frontend/**`、`migrations/**`、评测 fixture、`docs/**`、`app/api/v1/chat.py`（`Dirac`@R109 在写）、`app/agents/nodes.py`（`Beauvoir`@R110 已交付待并树，先让它进树）。
 - **派工时机**：🔴 **D14甲 窗口结束之前不许派**（判据 4 要等枚举；且任何子 agent 跑全量 pytest 都会把窗口计时跑成污染值）。窗口后先并 R109/R110/R108，再在**新基线**上派本单。
 
+### 53. R112 派工前判据订正（总控第二十七班，09-20 15:5x，主树 `2957499`；🔴 本节**推翻 §52 的机制段与判据 3**，派工以本节为准）
+
+**被推翻的那半句**：§52 写「4096−3897=199 < 地板 1536 ⇒ 为守住地板宁可整题拒绝」。主树实测不成立——**地板从不参与拒判**。
+- 拒判只有一处：`app/agents/contracts.py:187 context_window_code()`，条件是 `prompt_tokens + max_tokens > context_limit_tokens`，其中的 `max_tokens` 是**该档声明的输出上限**（`app/common/model_budget.py:180 TIER_MAX_TOKEN_DEFAULTS[ANALYSIS]=1536`，走 `:485 tier_max_tokens()`）。`authorize()`（`model_budget.py:836`）先问它，非 None 就 `:851 raise ModelContextLimitExceeded`。
+- 地板只活在 `max_tokens_verdict()`（`:801-818`）里，而那条路**从不拒**：`affordable < floor` 时它 `resolved = declared`（不夹取），只把 `unaffordable` 记上日志与 span。⇒ §52 判据 3「地板不得再作拒答理由」打在不存在的路径上，**作废**；`tests/test_r30_context_limit_guard.py` 因此也不需要为此逐条改判。
+- ⚠️ **两枚 1536 同值不同源**（一档声明上限、一枚时钟地板），§52 就是把它们混成了一枚。以后引用这个数字先说清是哪一枚。
+
+**订正后的真机制（一句话）**：analysis 档 `n_ctx=4096 − 声明输出 1536 = 2560` 才是**可发题面的真上限**，而这个数仓库里早有真源——`contracts.py:157 input_budget_tokens`——**但全仓只有 `:153`（算超时）读它，没有一处组装上下文时读它**。doc 腿把检索料直接拼成 prompt，实测 3897 / 4610，所以撞墙是必然。
+
+**为什么「宁短不拒」不能靠砍输出预算实现（本机实测，写死）**：`model_budget.py:233-242` 那段校准记的是 qwen3.5:9b thinking 下 `max_tokens=1536 → 只有 93 个可见字符`、`4096 → 82 个字符`，再低就**整条 0 可见字符**。⇒ 把声明输出降到 1536 以下换来的是空答案，不是短答案。**唯一的解是把输入装进箱子**。
+
+**为什么不选「抬高 n_ctx」**：同一处校准的 prefill = **35.2 tok/s**（CPU-only），每多装 1000 token ≈ **28 s**，而 `read_seconds` 已被 timeout 上限夹在 120 s；抬窗只是把「当场拒」换成「跑到一半被掐」，且显存/内存另算。真机要抬窗属业主侧，与本单无关。
+
+**判据改写（替代 §52 判据 1/3；§52 判据 2/4/5/6 原文继续有效）**：
+1. **装箱容量取真源不抄数**：doc 腿组装上下文时以 `ModelBudget.input_budget_tokens`（= `context_limit_tokens − 该档声明 max_tokens`）为总容量，再**预留 system + 历史 + 工具壳的实测份额**，剩下的按 RRF/重排分数从高到低装 chunk，装不下丢最低分。🚫 不许在代码里另写一枚 2560 或 4096 常数；预留份额不许拍脑袋，要用「组装前后 `prompt_tokens` 实测差」钉出来。
+2. **丢得不静默**：丢几条、装进几条、装箱后 prompt_tokens 各是多少，要有一行可 grep 的账（沿用 `[ModelBudget]`/检索腿既有前缀风格），并能事后核对。
+3. **拒答只留给裁无可裁**，且文案与「模型坏了」分色（§52 判据 2 原样有效，那枚 21 字必须换掉）。
+4. **组装点自己找，但只许改这几处**：token 质量主要来自 `app/agents/tools.py` 文档检索工具的返回串（`search_documents` 一族，`:453` 那行 `join`），其次是 `app/rag/retrieval_pipeline.py` 的最终 top-k。改前者即可满足判据 1；若两处都要改，先交回方案再动手。
+
+**写域订正**：§52 原写「`model_budget.py` 仅地板参与拒判的那一处」——该处不存在 ⇒ 改为 **`app/agents/tools.py`（文档检索返回串）+ `app/rag/retrieval_pipeline.py`（最终 top-k）+ 新 `tests/test_r112_*.py`**。🔴 不许改 `app/common/model_budget.py`、`app/agents/contracts.py`（地板与声明上限都在那里，本单不动语义）、`app/api/v1/chat.py`、`app/agents/nodes.py`、`app/agents/evidence.py`、评测 fixture、`docs/**`、`frontend/**`、`migrations/**`。
+
+**已知撞墙题号（本班 run2 实测，判据 4 的输入；全量枚举等窗口结束回填）**：`doc-12`、`doc-14`、`doc-16`、`doc-17`、`chat-02`、`chat-05`、`chat-07`、`chat-11`、`metric-02`、`metric-06`、`metric-08`、`metric-11`、`metric-16`、`metric-17`、`metric-18`、`metric-19`、`data-03`、`data-08`、`insight-01`（截至 15:54 共 24 枚，全部 `answer_chars=21`、`evidence_n=0`）。
+
+**补一句（同一节，别当成两条判据）**：上面「拒判只有一处」说的是**判据谓词**只有一枚（`context_window_code`），🔴 但 `raise ModelContextLimitExceeded` 有 **5 处**——`model_budget.py:851`（`authorize()` 内）、`app/agents/nodes.py:406`（`invoke()` 出口）、`nodes.py:541`（`stream()` 出口）、`app/common/model_handler.py:345` 与 `:404`。doc 腿走的是 `_ResilientModel` ⇒ 现场抛点在 `nodes.py` 那两枚。执行层只准装箱，🔴 不许顺手改这 5 处任何一枚的抛/不抛语义（R102 刚动过 `nodes.py:stream()` 的出口，R110 又压在同一函数上）。
+

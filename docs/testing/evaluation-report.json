@@ -1,0 +1,68 @@
+{
+  "total": 105,
+  "answer_correctness": 0.2381,
+  "evidence_coverage": 0.4381,
+  "unsupported_claim_rate": 0.0,
+  "category_metrics": {
+    "文档问答": {
+      "correctness": 0.6316,
+      "evidence_coverage": 0.7895,
+      "total": 19
+    },
+    "多轮对话": {
+      "correctness": 0.1667,
+      "evidence_coverage": 0.3333,
+      "total": 12
+    },
+    "口径冲突": {
+      "correctness": 0.1579,
+      "evidence_coverage": 0.1579,
+      "total": 19
+    },
+    "Excel计算": {
+      "correctness": 0.0,
+      "evidence_coverage": 0.0,
+      "total": 12
+    },
+    "主动洞察": {
+      "correctness": 0.0,
+      "evidence_coverage": 0.0,
+      "total": 7
+    },
+    "图表生成": {
+      "correctness": 0.5,
+      "evidence_coverage": 0.0,
+      "total": 4
+    },
+    "审批判断": {
+      "correctness": 0.1667,
+      "evidence_coverage": 0.1667,
+      "total": 6
+    },
+    "跨部门权限": {
+      "correctness": 0.0,
+      "evidence_coverage": 0.0,
+      "total": 6
+    },
+    "无证据问题": {
+      "correctness": 0.0,
+      "evidence_coverage": 0.75,
+      "total": 4
+    },
+    "工具调用": {
+      "correctness": 0.75,
+      "evidence_coverage": 0.0,
+      "total": 4
+    },
+    "报告生成": {
+      "correctness": 0.1667,
+      "evidence_coverage": 0.1667,
+      "total": 12
+    }
+  },
+  "latency_ms": {
+    "count": 105,
+    "average": 24287.97,
+    "p95": 48803.425
+  }
+}
