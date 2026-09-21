@@ -574,21 +574,30 @@ class CrossEncoderReranker:
 #      ``[PromptPack]`` 那一行账，能 grep、能事后核。
 PROMPT_PACK_MARKER = "[PromptPack]"
 
-#: 实测预留（不是偏好）。测量口径：四条 worker 腿各自的真 system 段（``DOC_PROMPT`` /
-#: ``DATA_PROMPT`` / ``CHART_PROMPT`` / ``EXPORT_PROMPT``）经真 ``create_react_agent``
-#: 组装，量"最终 ``prompt_tokens`` − 本轮工具串 token"，取 4 条腿 × 题面 ≤400 字 ×
-#: 规划文字 ≤360 字 × 1~3 轮工具调用 那张形态表的最大值（632，最大值出自带两发并发工具
-#: 调用的 data 腿）。复测就是 ``tests/test_r112_prompt_packing.py`` 里那枚
-#: ``test_shell_reserve_covers_the_measured_assembly_shell``——system 段或壳变长，它当场红。
-CONTEXT_SHELL_RESERVE_TOKENS = 632
-#: 同一把尺实测：doc 子图每多压一轮"上一问 + 上一答"（答案按 400 字算）多花 161 枚 token，
-#: 这里按两轮留出 322 枚（复测：
-#: ``test_history_reserve_covers_the_pinned_number_of_turns``）。上一轮**检索串**这一笔既不靠这个数兜，
+#: 实测预留（不是偏好）。**R119 把量它的尺子修对了**：旧尺的题面是 10/64/90/800 字的合成
+#: 长度（注释里还写着"题面 ≤400 字"，实际那一格是 800 字），而 run5 真题面只有 **8~20 字**
+#: （n=105，中位 12 字）。题面虚高几十倍，壳就被抬虚：632 里一大半是根本不会这么长的题面撑
+#: 起来的。把题面换成真机实测长度（中位/最长各一条）、规划文字与 1~3 轮工具调用一格不动之后
+#: 重量，四条腿 × 八种形态的最大值是 **456**（出自带 114 字规划文字 ×3 轮的 doc 腿）。
+#:   真机侧独立复算同一笔：run5"本轮第一发装箱"（``packs == 1``，n=37）的实测固定壳是
+#: **90~163** 枚，456 盖得住；多出的 293 枚是留给同轮第 2~3 发重复规划文字的，不是留白。
+#: 同轮累加的料不在这里兜——装箱台账 ``room_left`` 自己扣，两笔不重复计。复测：
+#: ``test_shell_reserve_covers_the_measured_assembly_shell``（合成壳涨过它→红）、
+#: ``test_shell_reserve_is_not_inflated_above_the_measured_ceiling``（虚高多留→也红；R116 量到的
+#: 正是"预留虚高 ⇒ 白白拒发"那笔账，所以多留同样是缺陷）与
+#: ``test_shell_reserve_also_covers_the_real_machine_first_pack``（真机那把尺两头都夹）。
+CONTEXT_SHELL_RESERVE_TOKENS = 456
+#: 同一把尺实测，但 R119 之前这把尺是假的：旧夹具写 ``("上一轮的结论：…" * 6)[:400]``，那句
+#: 22 字 × 6 = **132 字**，``[:400]`` 是个空操作——132 字冒称 400 字，于是量出每轮 161 枚、两轮
+#: 322 枚。夹具改喂 run5 实测答案长度**中位 424 字**（n=105；尺子取自
+#: ``scripts/perf_probe_run5_ledger.py`` 的 ``RUN5_ANSWER_CHARS``，字数不手抄）之后，同口径每轮
+#: **453 枚**，两轮 **906** 枚（400 字那一档是 429 枚，与跟进单 §55 记的 403~429 逐字对得上，
+#: 互相印证）。复测：``test_history_reserve_covers_the_pinned_number_of_turns``。上一轮**检索串**这一笔既不靠这个数兜，
 #: 也不再靠跨轮累加兜：R117 实测 worker 子图在真装配下**每轮冷启动**（langgraph 给嵌套子图注入的
 #: ``checkpoint_ns`` 逐轮换 uuid），上一轮的检索串这一轮并不在 prompt 里；装箱账因此改挂**轮身份**
 #: （见 ``app/agents/tools.py`` 的 ``_pack_ledger_key``，跟进单 §55），同轮并发多发仍互相扣房。
 #: 「该不该让子图跨轮 resume」是产品级取舍（已立案 R118，交回总控裁定），不在本单写域。
-CONTEXT_HISTORY_RESERVE_TOKENS = 322
+CONTEXT_HISTORY_RESERVE_TOKENS = 906
 
 #: 装箱服务的是哪一档：doc/data/chart/export 四条 worker 腿跑的都是 analysis 档
 #: （``app/agents/orchestrator.py`` 建图那几行），所以容量只问这一档的真源。
