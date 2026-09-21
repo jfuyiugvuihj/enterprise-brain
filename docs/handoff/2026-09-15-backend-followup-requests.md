@@ -1897,3 +1897,40 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 6. 金丝雀过了再放量：`--apply --confirm-scope "nomic-embed-text/768" --incremental`（`--incremental` 是断点续跑的正道，`--time-budget-seconds`/`--max-documents` 可切片，边界落在文档之间不会留半件）。
 7. **R58③ 真跑** `scripts/compare_vector_recall.py`（Chroma vs PG 双读差异表）+ **R58④ 恢复演练**（把本节 2 的 dump .restore 进一次性库 `eb_restore_drill`，验向量列在恢复后仍可查，验完 `DROP DATABASE`——🔴 建库/删库属改数据，本班已获业主授权，下一班若要复用需自己再拿授权）。
 - ⚠️ 双写开着之后**每次上传/重建都会写 PG**，这是维护窗的本意；但 run6 跑分窗口内**不许**同时做重建（P-17 语料快照会漂）。⇒ 窗做完立刻把 `VECTOR_DUAL_WRITE` 留 `on` 没问题，只是**开跑分窗前确认没有正在进行的 `--apply`**。
+
+## 64. 本班（09-21，总控第三十二班，主树 `14036d9`）：**R118 结案与裁定（乙案切两刀 = R127/R128）· 新立 R126（改写腿两处缺陷，附总控亲验凭据）· R126/R127 两张施工单判据全文**
+
+### 一、R118 结案登记
+
+- 交付：`docs/handoff/2026-09-20-r118-subgraph-memory.md`，33 660 B / 246 行 / 纯 CRLF 无 BOM / sha256 前 16 `48451f703c2f5545`（总控本班亲算，与执行层自报**逐位吻合**）。
+- 总控亲验四条（全部本班自己跑命令，零采信自述）：① `app/agents/orchestrator.py:368-379` 的 `filtered`——`git grep -n filtered -- app` 只出现在赋值与 `append` 上，**全仓零读取** ⇒ 父层那句【doc Agent 返回】确实从没进过任何模型（`:397` 只送 `[sys_msg, current_user_msg]`）。② `git grep -c checkpoint_ns -- tests` = **空输出**（零命中）⇒「子图跨轮不回读」今天零形状钉。③ `chat.py:1116` 先 `_save_message(thread_id,"user",request.message)`、`:1125` 才 `_rewrite_followup(thread_id, orchestration_msg)`、`:693` `prev_user = [m["content"] for m in msgs if m["role"]=="user"]`、`:700` 逐字 `上一问: {prev_user[-1]}` ⇒ **「上一问」永远 = 当前问**。④ 白名单 `:688 triggers = ["那","它","这个","那个","他们","换","改成"]` 对 `tests/fixtures/business_evaluation_100.jsonl`（实为 105 行）里 `group=多轮对话` 的 12 枚题现算 **命中 4 枚**（`chat-02/chat-06/chat-07/chat-12`）、丢 8 枚。
+- 裁定：**乙案**，切两刀给号 **R127（乙-1，立即）** / **R128（乙-2，单独批，排 R116 结案后）**；**甲案关闭留门**，反悔条款六条原文 = 交付纸 §5。最硬的一条理由：`scripts/eval_transport_ask_v2.py:184` 每题每 attempt 都换 `uuid.uuid4().hex` ⇒ **105 题 = 105 线程，评测里根本不存在「第二轮」**，两案对分数恒零效应；`多轮对话` 的 `0.4167` 只是 `chat-02(1,0,1)` 与 `chat-05(0,1,0)` 两枚翻面恰好抵消，不是同一批题稳定。
+
+### 二、R126（新立·施工单）【改写腿：「上一问」取成当前问 + 触发白名单丢掉三成多轮题】
+
+- **为什么它排在甲案之前**：这是**今天正在掉分的那条腿**——run5 日志「查询改写正文解析失败」12 枚，而改写腿是**唯一**带「上文」字样的通道（子图记忆已被本班证伪为「只写不读」，用户级记忆另有其脉）。它比甲案便宜得多，且不修它，将来任何「多轮记忆」的评测道都会被它污染。
+- **写域**：`app/api/v1/chat.py`（落点只许在 `:687-702` 取值与白名单、`:1112-1125` 存-读顺序两段内）、`tests/test_r109_rewrite_offline_guard.py`（**必须同步修**那枚 autouse fixture，见判据②）、一枚新用例（建议 `tests/test_r126_rewrite_prev_turn.py`）。
+- **不许碰**：`app/agents/orchestrator.py`（R127 在写）、`app/rag/retrieval_pipeline.py`、`app/agents/tools.py`、`scripts/eval_transport_ask_v2.py` 与 `app/quality/**`（`Laplace` 在写 R123）、`scripts/perf_probe_*`（`Erdos` 在写）、`tests/fixtures/**`、`tests/test_evaluation_report.py`、`migrations/**`、`deploy/**`、`.env*`、`frontend/**`、`docs/**`（纸由总控写）。
+- **判据① 存-读顺序**：同一轮里 `_rewrite_followup` 拿到的「上一问」必须是**真上一轮**的用户消息，不得等于本轮自己。形式自由（把存当前问往后挪 / 取值改 `[-2]` / 显式剔除本轮消息皆可），但**必须有一枚用例走真路由**（真 `_ensure_sessions_table` + 真 `_save_message` + 真 `_get_session_messages`，不得 monkeypatch 替掉存取），断言「连问两轮时改写器看到的上一问 == 第一轮原文」。
+- **判据② fixture 不许反向奖励**：`tests/test_r109_rewrite_offline_guard.py:78-85` 的 `one_turn_of_history` 从「替换成只含 1 条历史的假历史」改成**含本轮问题在内的 ≥2 条真形状历史**，使正确修法不再 `IndexError`。改完该文件 12 枚用例必须仍全绿，且**一条既有断言都不许弱化**（它守的是 provider 失败时「离线模式…」不许当问题文本送进图，这条与本案正交）。
+- **判据③ 白名单**：12 枚 `group=多轮对话` 的 fixture 题**现算必须一枚不丢**（含 `chat-03 把…`、`chat-04 如果换成…`、`chat-09 这和你前面…`、`chat-10 只给我结论…`、`chat-11 把金额换成…`）。允许扩前缀、允许改正则/长度+指代词策略、允许「会话内 ≥1 轮即尝试改写并交模型自判」，但**不许把非多轮群组的题引进来**（`文档问答` 等 93 枚题的 prompt 不得因本案多一个字），并给一枚「明显独立的单轮问题不被改写」的负向用例。
+- **判据④ 反证（总控自写，执行层不许改）**：(a) 把 `:693` 退回 `prev_user[-1]` 且不改存-读顺序 ⇒ 判据①用例当场红；(b) 把 `:688` 白名单删回七个前缀 ⇒ 判据③红；(c) 偷偷改评测 fixture 或 `test_evaluation_report.py` ⇒ 直接退单。
+- **必绿清单**：`tests/test_r109_rewrite_offline_guard.py`（本班定向实测该文件 + r117 + r122 = **30 passed**，是本案的基线）、`tests/test_r117_ledger_turn_scoped.py`、`tests/test_r122_stub_honesty.py`、`tests/test_agent_result_records.py`、`tests/test_cancellation_epoch.py`、`tests/test_r98_checkpointer_backend.py`、`tests/test_evaluation_report.py`。全量两值以 **2759 / 35** 起算**只增不减**。
+- **不许**：commit、push、docker、起服务、跑评测、打 8001 或 Ollama、动 GPU。交工回执按「改了哪些文件 / 逐条对应哪道判据 / 跑过的命令原样 / 三笔诚实账」四段。
+
+### 三、R127（乙-1·施工单）【把注释、契约、形状钉三处改到与已证事实同色】
+
+- **写域**：`app/agents/orchestrator.py`（**只许动 `:201` 与 `:557` 旁注释**）、`docs/api/contract-v1.md`（新增一段散文语义，不动 schema、不 bump 版本）、新用例 `tests/test_r118_subgraph_memory.py`。
+- **判据**：① 形状钉——真装配（`orchestrator._make_worker_wrapper` + 真 `create_react_agent` + 稳定 thread，形如 `tests/test_r117_ledger_turn_scoped.py:142-184`）连跑 3 轮，断言**子图每轮看到的 prompt == [system, 本轮问题]**；直接复用 `_nested_session` 已在收集、今天没人断言的 `model.seen`（`tests/test_r117_ledger_turn_scoped.py:116`）。② 注释与事实同色——`:201` 改成「带 checkpointer，**仅本轮内**可持久化；跨轮不回读（`checkpoint_ns` 逐轮换）」，用例名或注释必须指名 R118/R127，防再被写回「可持久化」。③ 契约句存在且可读——同一段要同时说清「保证什么 / 不保证什么」（实测 `contract-v1.md` 对「多轮/记忆」0 命中）。
+- **不许碰**：`:198` 的装配决策与 `:212-215` 的 `checkpointer=`（那是 R128 的刀，本单撤了会顺手动掉 `tests/test_r98_checkpointer_backend.py` 守的父图「不许谎报降级」）、`app/api/v1/chat.py`（R126 在写）、`app/agents/tools.py`、`app/rag/retrieval_pipeline.py`、`scripts/perf_probe_*`、`tests/fixtures/**`、`migrations/**`、`deploy/**`、`frontend/**`。
+- **必绿清单**：同 R126（含 `test_r112_prompt_packing.py`——🔴 若 `Erdos` 已并树则以并树后的新版为准，不许倒回旧版）。两值 **2759 / 35** 起算只增不减。
+- **反证**：把 `:201` 注释改回「可持久化」⇒ 判据②当场红；给子图加/减 `checkpointer=` ⇒ 判据①与 `test_r98` 当场红。
+
+### 四、R128（乙-2·待批，不派）
+
+撤 `:212-215` 四腿 `checkpointer=`，并给 `clear_session` 一个 `<sid>:<worker>` 子线程回收口径（或写明「撤后不再产生」），另补一枚「同会话连问 3 轮，PG 侧不新增子线程行」的**桩**用例（不许连真库）。🔴 排在 R116 结案之后：它改的是装箱与预算的书面前提；且 §55 已登记「PG 子线程真实行数/体积」至今无人实测，派工前得先有那一枚数。
+
+### 五、两条纪律再钉（防复发）
+
+- **复用已 completed 的 agent 下新工单不占新名额**：本班把 R127 交回 `Wegener`/`01a0bf45`（它已握有 `checkpoint_ns` 全链证据与必绿清单），R126 才新起一棵 `be-r126`。一个 block 内只允许一次投递调用，`spawn_agent` 与 `send_input` 二选一，报错不补投。
+- **任何「某单零提交」的全称否定必须同时给 `git log --all --grep` 命中数 + `merge-base --is-ancestor` 的 exit code**（PowerShell `if (git ...)` 读的是 stdout 不是 exit code，必须查 `$LASTEXITCODE`）；引用任何数字前先查有没有被后续实测推翻——本班的第四条亲验就是把「12 枚只命中 4 枚」从转述升成实测。

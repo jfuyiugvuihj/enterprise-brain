@@ -309,7 +309,7 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 > | R115 | 手抄正文上限 `500` 还活在两处（`app/mcp_server.py`、`scripts/perf_probe_rounds.py`），真源已是 `DOC_HIT_CONTENT_CHARS` | 🟢 **已结案**：并树 `e74330c`（判据 跟进单 §54）
 > | R116 | 把 46 枚参数化钉桩升级成按**实测** `prompt_tokens` 复算 room | 🟡 **在途** `be-r116`/`Erdos`（09-20 22:39 投；判据 跟进单 §54/§57 + 🔴 **§62 二** 追加 run5 三笔：`stub=` 台账没铺满 `leg=retrieval`、17 枚 `stub=refused` 全部 `fitted=0` 若按实测重算能否变实料、`data-10`/`insight-04` 两枚长尾点名拆账）。⚠️ 与 R119 共占 `tests/test_r112_prompt_packing.py` ⇒ R119 压后
 > | R117 | 装箱账改挂**轮身份**、不挂会话身份（R114 的替代品） | 🟢 **已结案**：并树 `f29a020`（反证由总控自写；判据 跟进单 §55）
-> | R118 | doc 腿每轮冷启动 ⇒ 跨轮失忆（`orchestrator.py:201` 注释与事实不符） | 🟡 **在途** `be-r118`/`Wegener`（09-20 22:5x 投·**只读定策单**，唯一可写 = 新文件 `docs/handoff/2026-09-20-r118-subgraph-memory.md`；判据 跟进单 §55 + 解锁图 §B 簇 1/§G-1。🔴 它必须用 run3/4/5 三枚报告回答「`多轮对话` 钉在 0.4167 是不是跨轮失忆」）
+> | R118 | doc 腿每轮冷启动 ⇒ 跨轮失忆（`orchestrator.py:201` 注释与事实不符） | 🟢 **已结案（定策单，交付纸入库）**：`be-r118`/`Wegener` 交付 `docs/handoff/2026-09-20-r118-subgraph-memory.md`（33 660 B / sha256 前 16 `48451f703c2f5545`，总控逐位核）。四条承重断言总控亲验为真，并**新立 R126**（改写腿）。🔴 **裁定＝乙案切两刀**：R127（乙-1，立即，已复用 `Wegener` 派建）/ R128（乙-2，待批排 R116 后）；**甲案关闭留门**（留档 patch 不含形状修正、钉 `checkpoint_ns=''` 已被探针证伪、真 resume 第 3 轮旧串 = budget 的 0.98×）。反悔条款六条在交付纸 §5 |
 > | R119 | `CONTEXT_HISTORY_RESERVE_TOKENS=322` 只够 0.75 轮真问答（真 400 字答案实测每轮 403–429 枚） | ⏸ **待派**：随 R117 连带校准，数须来自实测不许推算（跟进单 §55）
 > | R120 | **D9 放行件**：迁移 0010 干净环境首装必停 + 补救指引指错库；顺带把 `VECTOR_DUAL_WRITE` 透传进 compose | 🟡 **在途** `be-r120`（`Peirce`/`01a0be57`，保活 `ab6d033`，未交工，剩 2 枚改动）
 > | R121 | — | ⚪ **未启用**（本行占位，勿复用此号，防与 §55A 的 R122 混读） |
@@ -317,6 +317,9 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 > | R123 | 评测里 `kind=hitl` 的题根本没答完却仍占 `correctness` 分母（run3 18/105=17%）⇒ 评测道要不要显式批准 | 🟡 **在途** `be-r123`/`Laplace`（09-20 22:5x 投·**业主 09-20 裁定甲案**：`auth.py`/`rbac.py` 全文 `approve` 0 命中 ⇒ 采集器有权批准这道 D 项被证据消解；判据 跟进单 §57 + §63 一） |
 > | R124 | （本行前提作废，见跟进单 §60）全零/近零向量普查两侧具名清单 | ⚪ **作废（本班自纠）**：Chroma 侧普查早已存在于 `scripts/rebuild_index.py:176-210` 的 `vector_census()`，PG 侧具名清单 SQL 在 pgvector 方案 §8.6 ⇒ 不立单不派工，U3 由总控亲跑 `rebuild_index.py --status --json` 取只读证据（跟进单 §60） |
 > | R125 | `--status --json` 现在**不输出**全零/跨维普查两枚字段（能力在 `vector_census()`，入口没接），pgvector 方案 §8.6 指错了 ⇒ 业主照手册取 U3 会取到空 | 🟡 **在途** `be-r125`/`Tesla`（09-20 22:41 投；判据 跟进单 §61 + §62 三；写域 `scripts/rebuild_index.py` + 新用例 + 方案 §8.6 那一段，与 R116 零交集） |
+> | R126 | 追问改写腿两处缺陷：`chat.py:1116` 先存当前问、`:1125` 才读、`:693` 取 `prev_user[-1]` ⇒ **「上一问」永远＝当前问**；且 `:688` 白名单只认七个前缀，105 题里 **12 枚多轮对话题只命中 4 枚**（总控本班现算） | 🟡 **在途** `be-r126`（09-21 派建·判据 跟进单 **§64 二**；写域 `app/api/v1/chat.py` + **必须同步修** `tests/test_r109_rewrite_offline_guard.py:78-85` 那枚反向奖励错做法的 autouse fixture + 一枚走真存读路由的新用例。与 R127 行级/文件级双零交集 ⇒ 可并行） |
+> | R127 | （＝R118 乙-1）把 `orchestrator.py:201` 注释、`docs/api/contract-v1.md` 语义、`checkpoint_ns` 形状钉三处改到与已证事实同色 | 🟡 **在途** `be-r118`/`Wegener` **复用**（09-21 `send_input` 一次·不占新名额；判据 跟进单 **§64 三**；🔴 禁碰 `:198` 装配决策与 `:212-215` 的 `checkpointer=`——那是 R128 的刀；必绿清单含 `test_r98_checkpointer_backend.py`） |
+> | R128 | （＝R118 乙-2）撤四腿 `checkpointer=` + 定旧 `<sid>:<worker>` 子线程怎么清（PG 侧今天仍在长行，`clear_session` 不回收） | ⏸ **待批（不派）**：排 R116 结案之后；派工前需先有「PG 子线程真实行数/体积」那一枚实测数（R118 自报未取，需连真库） |
 >
 > 🔴 **两条在册表上查不到的新事实**：① `VECTOR_DUAL_WRITE` **既不在 `deploy/.env.server`、`docker-compose.yml` 也从不透传** ⇒ 双写在真机今天根本打不开，P3 召回对比从未跑过一次（已进 R120）；② 真机 `[PromptPack]` 136 枚实测**推翻「跨轮累加是 run3 主症」**——采集器每问一个新 thread，真主症是**同轮内第 2/3 发检索被饿死**（28 枚空手其中 26 枚距上一发 ≤2 s），跟进单 §55A。
 ---
