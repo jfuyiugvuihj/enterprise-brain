@@ -17,7 +17,12 @@ from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import Runnable
 
 from app.common.logger import logger
-from app.common.model_config import get_local_model_settings
+from app.common.model_config import (
+    DEFAULT_KEEP_ALIVE_SECONDS,
+    get_local_model_settings,
+    resolve_keep_alive,
+)
+from app.common.model_handler import KEEP_ALIVE_FIELD
 from app.agents.contracts import AgentResult, DEFAULT_MODEL_TIER, ModelTier
 from app.common.model_budget import (
     NO_ANSWER_CODE,
@@ -201,8 +206,51 @@ def reset_thinking_mode_log() -> None:
     _THINKING_MODE_LOGGED = False
 
 
-def _with_thinking_field(call_kwargs: dict) -> dict:
-    """Re-assert the thinking field on the body this boundary is about to send.
+#: Whether the residency window this leg asks for has been announced to the log yet. Same
+#: latch and same reason as ``_THINKING_MODE_LOGGED`` above.
+_KEEP_ALIVE_MODE_LOGGED = False
+
+
+def _log_keep_alive_mode(base_url: str) -> None:
+    """Say once how long the answer leg asks the local server to keep the model loaded.
+
+    R34 gave the deployment ``LOCAL_MODEL_KEEP_ALIVE`` and resolved it into one bounded policy,
+    but this file carried no ``keep_alive`` reference at all, so only the rewrite leg sent it and
+    the answer leg never said what it wanted. 跟进单 L1519 charges that gap to this ticket; say
+    what the gap actually turns out to be, because the honest version is narrower than the
+    variable suggests. On this host (Ollama 0.34.2, measured 2026-09-21 by reading ``/api/ps``
+    between calls) the native leg does obey the field -- ``20m`` left 1200 s, ``6m`` left 360 s --
+    while ``/v1`` ignores it: the same 1200 s survived a compat call asking for ``20m``, one
+    asking for nothing, and one asking for ``1800s`` while only 360 s were left. So this line
+    announces a request, not a result. The reason to make the request anyway is that a leg which
+    never states its window cannot be audited, cannot be migrated, and cannot be the leg that
+    benefits the day the server starts listening. What a cold load costs here was observed once,
+    not designed for: 9.36 s against 2.62 s for the same request warm.
+    """
+    global _KEEP_ALIVE_MODE_LOGGED
+    if _KEEP_ALIVE_MODE_LOGGED:
+        return
+    _KEEP_ALIVE_MODE_LOGGED = True
+    policy = resolve_keep_alive()
+    logger.info(
+        f"[Model] 兼容腿 keep_alive="
+        + (
+            f"{policy.wire}（来源 {policy.note}）"
+            if policy.seconds != DEFAULT_KEEP_ALIVE_SECONDS
+            else f"未下发，即用服务端默认 {DEFAULT_KEEP_ALIVE_SECONDS}s（本机未改常驻窗口，来源 {policy.note}）"
+        )
+        + f"，端点 {base_url}"
+    )
+
+
+def reset_keep_alive_mode_log() -> None:
+    """Let the next model built announce its residency window again. A test seam for the latch."""
+    global _KEEP_ALIVE_MODE_LOGGED
+    _KEEP_ALIVE_MODE_LOGGED = False
+
+
+def _with_boundary_fields(call_kwargs: dict) -> dict:
+    """Re-assert the body fields this boundary owns on the request it is about to send.
 
     :meth:`_ResilientModel._budget_kwargs` already puts it there, and a caller that brings its
     own ``extra_body`` would otherwise delete it: ``langchain_openai`` merges call-time kwargs
@@ -215,13 +263,35 @@ def _with_thinking_field(call_kwargs: dict) -> dict:
     An ``enabled`` process adds nothing at all, which is what makes "switch it back on" mean
     "send the bytes this product sent before this ticket" instead of inventing a second
     spelling nobody measured.
+
+    ``keep_alive`` joined the same merge under R29, for the same reason and with the same
+    respect for a caller that spelled the field itself. Its value is resolved per call rather
+    than cached on the instance, exactly like :meth:`app.common.model_handler.ModelHandler._keep_alive`:
+    an operator who edits the variable between two questions must not have to restart the
+    service, and a clamped window has to travel with the request it explains. Note what this
+    field is and is not: it buys back the seconds a *cold* load costs, and it does nothing about
+    a thinking model's tokens -- 跟进单 §21 R29 的「思考税」与 R34 的「常驻」是两笔账。
+
+    It is asked for only when this deployment actually moved the window. Two reasons, and both
+    are load-bearing: a number equal to the server's own documented default
+    (``DEFAULT_KEEP_ALIVE_SECONDS``) changes nothing on the wire, and ``tests/test_r100_thinking_switch.py``
+    holds this leg's body to a byte-level claim -- "an ``enabled`` process sends exactly the body
+    it sent before R100" -- which any always-on field would break. So the shipped ``15m`` in the
+    deployment files reaches the answer leg's *request* from here on, and a box that never
+    configured one keeps sending nothing at all, which is what it would have done anyway. What
+    the server does with the request is a separate, measured fact and it is not flattering: on
+    this host ``/v1`` ignores the field -- ``_log_keep_alive_mode`` carries the reading -- so the
+    client half of 跟进单 L1519 is closed and the wire half is still open. Two consequences
+    belong here: today the rewrite leg's native window does survive the answer call, because a
+    compat call neither applies nor resets, which is also why R34's 09-19 finding that the answer
+    leg shortens the window no longer reproduces on 0.34.2.
     """
-    thinking = thinking_extra_body()
-    if not thinking:
-        return call_kwargs
     extra_body = dict(call_kwargs.get("extra_body") or {})
-    for field, value in thinking.items():
+    for field, value in thinking_extra_body().items():
         extra_body.setdefault(field, value)
+    keep_alive = resolve_keep_alive()
+    if keep_alive.seconds != DEFAULT_KEEP_ALIVE_SECONDS:
+        extra_body.setdefault(KEEP_ALIVE_FIELD, keep_alive.wire)
     return {**call_kwargs, "extra_body": extra_body}
 
 
@@ -375,7 +445,7 @@ class _ResilientModel(Runnable):
         prompt_tokens = estimate_prompt_tokens(messages)
         try:
             budget_kwargs, verdict = self._budget_kwargs(prompt_tokens, stream=False)
-            call_kwargs = _with_thinking_field({**budget_kwargs, **kwargs})
+            call_kwargs = _with_boundary_fields({**budget_kwargs, **kwargs})
         except ModelContextLimitExceeded as exc:
             # Refused before the provider saw it. The offline reply is deliberately not
             # used here: it would record model_unavailable, and evidence._terminal_status
@@ -515,7 +585,7 @@ class _ResilientModel(Runnable):
             prompt_tokens = estimate_prompt_tokens(messages)
             try:
                 budget_kwargs, verdict = self._budget_kwargs(prompt_tokens, stream=True)
-                kwargs = _with_thinking_field({**budget_kwargs, **kwargs})
+                kwargs = _with_boundary_fields({**budget_kwargs, **kwargs})
             except ModelContextLimitExceeded as exc:
                 span.finish("failed", error_code=exc.code)
                 raise
@@ -631,6 +701,7 @@ def _make_model(tier: ModelTier | str = DEFAULT_MODEL_TIER, *, prompt=None):
     provider = "ollama" if ":11434" in settings.base_url else "local-openai-compatible"
     try:
         _log_thinking_mode(settings.base_url)
+        _log_keep_alive_mode(settings.base_url)
         client_timeout = http_timeout(budget, prompt_tokens)
         primary = ChatOpenAI(
             base_url=settings.base_url,

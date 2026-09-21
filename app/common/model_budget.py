@@ -358,6 +358,26 @@ def min_answer_tokens() -> int:
 #: switched off. It can, in exactly one spelling per leg: native takes ``think`` at the request
 #: top level, compat takes ``thinking`` in the body.
 #:
+#: RE-MEASURED ON THE SHIPPING HOST BY R29 (2026-09-21, qwen3:4b, host Ollama, streaming -- which
+#: is the shape the answer leg actually uses), and the sentence above needs its second half
+#: spelled out, because "switched off" is a claim about the *field*, not about the cost:
+#:
+#:   compat  thinking:{"type":"disabled"}   reasoning 613 chars, content 26, 5.40 s
+#:   compat  no thinking field at all       reasoning 613 chars, content 26, 5.35 s
+#:   native  think:false                    thinking    0 chars, content 577, 5.10 s  (369 tok)
+#:   native  think absent                   thinking  613 chars, content 26, 5.39 s  (415 tok)
+#:
+#: So on the compatible streaming leg this field changes **nothing measurable** -- it is the
+#: non-streaming (rewrite) shape that §42 row #6 measured, and R100 landed the spelling, not a
+#: saving. And ``think:false`` on the native leg answers 判据① literally (0 ``thinking`` chars)
+#: while doing nothing for 判据②: the same text arrives in ``content`` instead, at the same
+#: token cost, so an answer leg moved there would stream the model's monologue to the customer.
+#: Two further host facts belong with them: at the CHAT tier's measured cap of 256 output tokens
+#: *both* legs return zero visible characters (the reasoning eats the whole cap either way), and
+#: streamed ``/v1`` frames carry no ``usage`` object at all, so the answer leg cannot be metered
+#: from a stream -- which is also why ``model_calls.input_tokens``/``output_tokens`` stay NULL for
+#: streamed rounds whatever this switch says.
+#:
 #: This boundary owns the compatible leg (``app/agents/nodes.py:_make_model``), so it sends
 #: that one spelling and no other. ``disabled`` is the default because the measured
 #: alternative answers with nothing: R99 made an empty body an honest failure, and an honest
