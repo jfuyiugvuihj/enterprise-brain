@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from app.api.v1 import artifacts, chat, data, auth, alerts, dashboard, intelligence, open_platform, observability
+from app.api.v1 import artifacts, chat, data, auth, alerts, dashboard, feedback, intelligence, open_platform, observability
 
 
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
@@ -86,6 +86,7 @@ app.include_router(dashboard.router, prefix="/api/v1")  # R14-A1 总览聚合（
 app.include_router(open_platform.router, prefix="/api/v1")
 app.include_router(observability.router, prefix="/api/v1")
 app.include_router(open_platform.apps_router, prefix="/api/v1")
+app.include_router(feedback.router, prefix="/api/v1")  # R46 活动信号出口（只落计数，不存内容）
 
 # 对所有 /api/v1/ 路径添加鉴权中间件（login 除外）
 from starlette.middleware.base import BaseHTTPMiddleware

@@ -377,6 +377,254 @@ def metadata_matches(metadata, where) -> bool:
 
 # ==================== 文档检索器 ====================
 
+# ==================== R46 · 活动信号先验（采纳/驳回 → 相关度先验）====================
+#
+# 跟进单 §21 给 R46 的三条判据在这段代码里各有各的位置：① 排序真的会变
+# （rank_hits_by_activity）；② 无信号时与现状逐字一致（同一个函数在无信号时把**同一个
+# 列表对象**原样交回，不复制、不加键、不改序）；③ 只读计数不读内容（唯一的数据来源是
+# 0011 那张计数表，本模块任何路径都不把 query 交给它，也不从它读回任何文本）。
+#
+# fail-open 是本单的裁定，不是疏忽：先验读不到（0011 没跑、连不上 PG、psycopg 缺失）时
+# 排序退回"本单之前的顺序"。反过来选 fail-closed 只有两种写法，两种都更坏——要么让一次
+# 数据库故障决定问答能不能作答（把一枚排序信号提权成了服务依赖），要么"读不到就换一种
+# 排法"（那才是真的把现状改掉）。权限那一侧不受这里影响：可见性判定仍然只在下推与截断
+# 之前发生（app/rag/filters.py 一处），先验只在**已经合法**的候选集内部挪名次，既不新增
+# 候选也不删候选。判据②要能核对，"没读到"与"没有信号"必须可分辨：前者记在
+# activity_prior_diagnostics()["reason"]，后者是读成功而零行。
+
+#: 灰度开关与 app/common/rbac.py 的 R17 那条同口径：默认生效，退回必须写成一次显式的
+#: ``RAG_ACTIVITY_PRIOR=off``。拼错的值不算退回——把"没人配置"读成"配置成了关"，
+#: 判据②那句"与现状一致"就会被读成"先验生效了但没人打过点"，那种误读比 bug 本身贵。
+ACTIVITY_PRIOR_ENV = "RAG_ACTIVITY_PRIOR"
+ACTIVITY_PRIOR_OFF_VALUES = frozenset({"off", "0", "false", "no"})
+
+#: 名次分与先验分同形：rank_score = 1/(rank_base + rank)，rank 从 1 起，正是
+#: retrieval_pipeline.rrf_fusion 的 1/(k+rank)（k 默认 60）那个形状。于是 weight 的单位
+#: 是"往前挪多少个名次"，不是"相关度乘多少"：榜首附近挪一名约值 1/61-1/62 ≈ 2.6e-4，
+#: weight=0.01 足够让一篇被采信过的文档上位，又不至于让"谁点得多"盖过"谁更相关"。
+#: 融合在下游做，本模块只负责把每条腿自己的次序交准。
+ACTIVITY_PRIOR_WEIGHT = 0.01
+#: 平滑＝分母上先垫三张空票：一枚采纳只值 1/(1+3)=0.25 单位，二十枚才接近满单位。
+#: 样本小的文档先验就该弱，否则第一个点的人替整篇定了序。
+ACTIVITY_PRIOR_SMOOTHING = 3.0
+ACTIVITY_PRIOR_RANK_BASE = 60
+
+#: 整表快照的进程内 TTL。排序每次问答都要走，为它开一趟 PG 往返而不缓存不划算；这张表
+#: 至多"打过点的文档"每篇一行，整表读一次比按 filename 逐篇点查便宜得多。
+ACTIVITY_PRIOR_TTL_SECONDS = 30.0
+
+#: 读失败之后的退避窗口。不缓存失败＝每次问答都重付一趟连接超时（实测宿主对
+#: 127.0.0.1:1 的探测每次 2.03s），那等于把一枚排序信号提权成全站延迟：fail-open
+#: 必须是**便宜**的 open，一次库故障最多拖慢一个窗口，而不是拖慢每一问。
+ACTIVITY_PRIOR_RETRY_SECONDS = 10.0
+#: 本模块自己连库时的超时上界。只在调用方没写 connect_timeout 时才补：业主写的数字优先。
+ACTIVITY_PRIOR_CONNECT_TIMEOUT_SECONDS = 2
+#: 哪些来源的结果在窗口内值得复用。读成功与读失败都要复用，后者就是上一条的理由。
+ACTIVITY_PRIOR_CACHED_SOURCES = frozenset({"store", "error"})
+
+#: 观测面（判据②的可核对性）：先验这次读成了没有、读到几行、上一次为什么没读到。
+#: "没有信号"与"没读到信号"在排序上的表现完全相同，只能靠这份计数分开。
+_ACTIVITY_PRIOR_STATE: dict = {
+    "loaded_at": 0.0,
+    "expires_at": 0.0,
+    "documents": 0,
+    "source": "never",
+    "reason": "",
+}
+
+#: TTL 内的整表快照，与 _ACTIVITY_PRIOR_STATE 同生命周期（reset 一起清）。
+_CACHED_ACTIVITY_PRIORS: dict = {}
+
+
+def activity_prior_enabled() -> bool:
+    """本次排序要不要用先验：默认要，``RAG_ACTIVITY_PRIOR=off`` 是显式退回。"""
+    try:
+        raw = str(os.getenv(ACTIVITY_PRIOR_ENV, "") or "").strip().lower().replace("_", "-")
+    except Exception:  # pragma: no cover - 配置值连字符串都读不出来时按默认那一档
+        return True
+    return raw not in ACTIVITY_PRIOR_OFF_VALUES
+
+
+def _read_activity_signal_rows() -> list[tuple]:
+    """整表读计数，交回 (filename, accepted, rejected) 元组列表。读不成一律往外抛。
+
+    SELECT 的列名写死在这里，与本模块唯一的数据来源 0011 同生死：那张表里没有文本列，
+    所以这条语句**结构上不可能**把用户问题原文读进排序路径（判据③）。
+    """
+    import psycopg
+
+    # 函数内 import：app.rag.pg_store 反向 import 本模块的稳定码（见 _open_vector_mirror
+    # 的注释），提到模块级会绕成环。DATABASE_URL 的口径也只认 pg_store 那一处，不重抄。
+    from app.rag import pg_store
+
+    url = pg_store.resolve_database_url()
+    if "connect_timeout=" not in url:
+        # 超时随 conninfo 走（与 pg_store._with_connect_timeout 同一个口径）：调用方写了
+        # 就用他的，没写才补上界，别让一次排序探测挂到操作系统的 TCP 超时上。
+        url = url + ("&" if "?" in url else "?") + (
+            "connect_timeout=" + str(ACTIVITY_PRIOR_CONNECT_TIMEOUT_SECONDS)
+        )
+    with psycopg.connect(url) as connection:
+        rows = connection.execute(
+            "SELECT filename, accepted_count, rejected_count FROM document_activity_signals"
+        ).fetchall()
+    return [
+        (str(row[0]), int(row[1]), int(row[2]))
+        for row in rows
+        if str(row[0] or "").strip()
+    ]
+
+
+def activity_priors(*, now: float | None = None, row_reader=None) -> dict[str, dict]:
+    """filename -> {"accepted", "rejected"}：带 TTL 缓存，**fail-open**。
+
+    读不到就是空字典，等于没有先验，排序退回现状，而不是把问答问失败。row_reader 是给
+    测试留的注入口（不连库也能验排序）；它抛错同样退化成空字典，但原因会留在观测面里。
+    注入 reader 的调用恒真跑（不享退避），生产那条路才按窗口复用上一次的结果。
+    """
+    import time as _time
+
+    clock = _time.monotonic if now is None else (lambda: float(now))
+    if row_reader is None:
+        if not activity_prior_enabled():
+            _ACTIVITY_PRIOR_STATE.update(
+                {"source": "disabled", "reason": "disabled_by_configuration", "documents": 0}
+            )
+            return {}
+        if (
+            _ACTIVITY_PRIOR_STATE["source"] in ACTIVITY_PRIOR_CACHED_SOURCES
+            and clock() < _ACTIVITY_PRIOR_STATE["expires_at"]
+        ):
+            # 窗口内的连续问答只读一趟库；命中不改 reason，失败态也照这条退避。
+            return dict(_CACHED_ACTIVITY_PRIORS)
+        row_reader = _read_activity_signal_rows
+    try:
+        rows = list(row_reader() or [])
+    except Exception as exc:
+        _CACHED_ACTIVITY_PRIORS.clear()
+        _ACTIVITY_PRIOR_STATE.update(
+            {
+                "source": "error",
+                "reason": type(exc).__name__,
+                "documents": 0,
+                "loaded_at": clock(),
+                # 失败也占一个窗口：见 ACTIVITY_PRIOR_RETRY_SECONDS 那条注释。
+                "expires_at": clock() + ACTIVITY_PRIOR_RETRY_SECONDS,
+            }
+        )
+        logger.warning(f"活动信号计数读不到，本次排序不动用先验: {exc}")
+        return {}
+    priors = {
+        str(name): {"accepted": int(accepted), "rejected": int(rejected)}
+        for name, accepted, rejected in rows
+    }
+    _CACHED_ACTIVITY_PRIORS.clear()
+    _CACHED_ACTIVITY_PRIORS.update(priors)
+    _ACTIVITY_PRIOR_STATE.update(
+        {
+            "loaded_at": clock(),
+            # 空表也算读成功：读通而零行是"没有信号"，读不通是"error"，两者必须分得开。
+            "expires_at": clock() + ACTIVITY_PRIOR_TTL_SECONDS,
+            "documents": len(priors),
+            "source": "store",
+            "reason": "",
+        }
+    )
+    return dict(priors)
+
+
+def activity_prior_diagnostics() -> dict:
+    """先验这一路的可读数：开关、读没读成、几篇、为什么。"""
+    return {
+        "enabled": activity_prior_enabled(),
+        "source": _ACTIVITY_PRIOR_STATE["source"],
+        "reason": _ACTIVITY_PRIOR_STATE["reason"],
+        "documents": int(_ACTIVITY_PRIOR_STATE["documents"]),
+        "weight": ACTIVITY_PRIOR_WEIGHT,
+        "smoothing": ACTIVITY_PRIOR_SMOOTHING,
+    }
+
+
+def reset_activity_priors() -> None:
+    """清掉缓存与观测面（测试用，以及"刚跑完 0011"之后想让下一问立刻读到新账）。"""
+    _CACHED_ACTIVITY_PRIORS.clear()
+    _ACTIVITY_PRIOR_STATE.update(
+        {"loaded_at": 0.0, "expires_at": 0.0, "documents": 0, "source": "never", "reason": ""}
+    )
+
+
+def activity_prior_value(counts) -> float:
+    """一篇文档的先验分值；没打过点＝0.0＝不动名次。"""
+    if not isinstance(counts, dict):
+        return 0.0
+    try:
+        accepted = int(counts.get("accepted") or 0)
+        rejected = int(counts.get("rejected") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    total = accepted + rejected
+    if total <= 0:
+        return 0.0
+    return ACTIVITY_PRIOR_WEIGHT * (accepted - rejected) / (total + ACTIVITY_PRIOR_SMOOTHING)
+
+
+def _hit_source(hit) -> str:
+    """命中里那个文档标识；不是字典、或没带 source，一律读成空串（＝这一条拿不到先验）。
+
+    🔴 两遍循环必须共用这一把尺：第一遍算调整值时用 isinstance 挡过非字典命中，第二遍复制
+    命中时若忘了挡，一条畸形命中就能在排序里抛 AttributeError——而 rank_hits_by_activity
+    是在 _apply_activity_prior 那个 try **之外**调用的。那等于让一枚畸形命中把整条检索打挂，
+    比先验失效严重得多，也与本模块 fail-open 的承诺相反。
+    """
+    if not isinstance(hit, dict):
+        return ""
+    return str(hit.get("source") or "")
+
+
+def rank_hits_by_activity(hits, priors, *, enabled: bool = True, rank_base: int = ACTIVITY_PRIOR_RANK_BASE):
+    """在同一个候选集内部按活动信号重排；候选的进出一个都不动。
+
+    🔴 判据②的口径写在这条返回上：开关关着、输入不是列表、为空、或者**没有任何一条命中
+    带先验**时，交回的是同一个对象——不是"内容恰好相同的另一份拷贝"。于是"无信号 ⇒ 与
+    现状逐字一致"是可证的，不依赖浮点比较。只有真有信号时才复制字典，并给每条命中补一枚
+    ``activity_prior``（accepted / rejected / adjustment / rank_score / previous_rank /
+    new_rank），让"这篇凭什么排上来"在答案侧看得见；那枚字典里只有计数与名次，没有内容。
+
+    并列分不靠运气：排序键是 (分值, 原名次)，分值相同则原序保持，同一批输入永远同一批输出。
+    列表里混进非字典条目时，那些条目按 _hit_source 的口径拿不到先验、也不被注记，只按原名次参与排序：
+    本函数对畸形输入交回的是排好序的原条目，不是异常。
+    """
+    if not enabled or not isinstance(hits, list) or not hits:
+        return hits
+    lookup = priors or {}
+    adjustments = []
+    for hit in hits:
+        name = _hit_source(hit)
+        adjustments.append(activity_prior_value(lookup.get(name)))
+    if not any(adjustments):
+        return hits
+    scored = []
+    for rank, (hit, adjustment) in enumerate(zip(hits, adjustments), start=1):
+        counts = lookup.get(_hit_source(hit)) or {}
+        if isinstance(hit, dict):
+            carrier = dict(hit)
+            carrier["activity_prior"] = {
+                "accepted": int(counts.get("accepted") or 0),
+                "rejected": int(counts.get("rejected") or 0),
+                "adjustment": adjustment,
+                "rank_score": 1.0 / (rank_base + rank) + adjustment,
+                "previous_rank": rank,
+            }
+        else:
+            carrier = hit  # 畸形命中：原样带着走，一个键都不注记，只按自己的名次参与排序
+        scored.append([1.0 / (rank_base + rank) + adjustment, rank, carrier])
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    for new_rank, item in enumerate(scored, start=1):
+        if isinstance(item[2], dict):
+            item[2]["activity_prior"]["new_rank"] = new_rank
+    return [item[2] for item in scored]
+
+
 class DocumentRetriever:
     """文档检索引擎：管理 Chroma 向量库
 
@@ -391,9 +639,12 @@ class DocumentRetriever:
     MODE_KEYWORD = RETRIEVAL_MODE_KEYWORD
     REASON_STORE_OFFLINE = RETRIEVAL_REASON_STORE_OFFLINE
 
-    def __init__(self, chroma_dir: str = "./chroma_db"):
+    def __init__(self, chroma_dir: str = "./chroma_db", *, activity_prior=None):
         os.makedirs(chroma_dir, exist_ok=True)
         self.chroma_dir = chroma_dir
+        # R46：计数表的读取方可注入（测试不连库也能验排序），默认走进程内缓存的
+        # 整表快照。注入一个返回 {} 的 callable 就等于关掉先验，不改排序语义。
+        self._activity_prior_loader = activity_prior or activity_priors
         if chromadb is None:
             class _JsonCollection:
                 def __init__(self, path):
@@ -982,22 +1233,41 @@ class DocumentRetriever:
                 query_embedding = self.embedding.embed_query(query)
             except EmbeddingError as exc:
                 logger.error(f"向量腿下线，本次检索退化为关键词召回: {exc}")
-                return self._keyword_hits(query, k, where, exc.reason)
+                return self._apply_activity_prior(self._keyword_hits(query, k, where, exc.reason))
             hot_hits = self._hot_hits(query_embedding, k, where, pred)
             if hot_hits is not None:
-                return hot_hits
+                return self._apply_activity_prior(hot_hits)
             kwargs = {"query_embeddings": [query_embedding], "n_results": k}
             if where:
                 kwargs["where"] = where
             results = self.collection.query(**kwargs) or {}
             self._note_search(self.MODE_SEMANTIC, "")
-            return self._hit_dicts(
-                (results.get("documents") or [[]])[0],
-                (results.get("metadatas") or [[]])[0],
-                self.MODE_SEMANTIC,
-                "",
+            # R46：先验只在这条腿自己排好的候选集内部挪名次。n_results 一个字没改——多要
+            # 几行才能让低于第 k 名的文档上位，但那会改掉 R44 明确钉住的"外部向量库那条路径
+            # 的调用序列与本单之前逐字一致"，本单不碰（要放宽得另立单，已写进回执）。所以
+            # R46 的"回填"目前只作用于召回窗口之内，窗口外的先验等 next-result 那一单。
+            return self._apply_activity_prior(
+                self._hit_dicts(
+                    (results.get("documents") or [[]])[0],
+                    (results.get("metadatas") or [[]])[0],
+                    self.MODE_SEMANTIC,
+                    "",
+                )
             )
-        return self._keyword_hits(query, k, where, self.REASON_STORE_OFFLINE)
+        return self._apply_activity_prior(self._keyword_hits(query, k, where, self.REASON_STORE_OFFLINE))
+
+    def _apply_activity_prior(self, hits):
+        """R46：把采纳/驳回计数施加在这条腿刚排好的候选集上（四条腿共用这一处）。
+
+        读不到计数＝没有先验＝把**同一个列表对象**原序交回（fail-open，裁定理由见模块里
+        R46 那段注释）。判定可见性的仍是 filters.py 那一处，本方法一个候选都不增减。
+        """
+        try:
+            priors = self._activity_prior_loader() or {}
+        except Exception as exc:  # pragma: no cover - 默认 loader 已自兜底，只防注入的 loader 抛错
+            logger.warning(f"活动信号先验不可用，本次排序不动: {type(exc).__name__}")
+            return hits
+        return rank_hits_by_activity(hits, priors, enabled=activity_prior_enabled())
 
     def _note_search(self, mode: str, reason: str) -> None:
         """记录本次检索走的腿；降级计入进程内可观测计数。"""

@@ -280,7 +280,12 @@ def test_task0_editing_without_the_manifest_dies_at_the_loader(tmp_path):
 
 
 def test_task0_left_the_migrations_directory_alone():
-    """本单走的是"禁止改 0010"那条判据，这条用例就是那句"我没改"的可查证据。"""
+    """本单走的是"禁止改 0010"那条判据，这条用例就是那句"我没改"的可查证据。
+
+    尾号那一格与 tests/test_document_catalog_sync.py 的同名引信一起改口（R58 的先例：加一版
+    就主动改这条，别让它静默失效）。R120 自己仍然一枚前滚迁移都没加，但 0010 之后现在确有
+    R46 的 0011，所以钉法从"后面什么都没有"换成"后面只许站着那一枚、且它的账对得上"。
+    """
     on_disk = (MIGRATIONS_DIR / "0010_pgvector_chunks.sql").read_text(encoding="utf-8")
     manifest = json.loads((MIGRATIONS_DIR / "manifest.json").read_text(encoding="utf-8"))
     registered = next(item for item in mig.MIGRATIONS if item.version == "0010")
@@ -288,8 +293,20 @@ def test_task0_left_the_migrations_directory_alone():
     assert sha256(on_disk.encode("utf-8")).hexdigest() == BASELINE_0010_SHA256
     assert manifest["0010_pgvector_chunks.sql"] == BASELINE_0010_SHA256
     assert registered.checksum == BASELINE_0010_SHA256
-    assert not any(item.version > "0010" for item in mig.MIGRATIONS), (
-        "no forward migration was needed either: nothing in migrations/** had to change"
+    # 0010 之后只许站着 R46 那一枚 0011：本单没加前滚迁移，别人加了就必须回到这里指名。
+    forward = [item for item in mig.MIGRATIONS if item.version > "0010"]
+    assert [item.version for item in forward] == ["0011"], (
+        "the only forward migration past 0010 is R46's: "
+        + str([item.version for item in forward])
+    )
+    assert forward[0].name == "document_activity_signals", forward[0].name
+    path_0011 = MIGRATIONS_DIR / "0011_document_activity_signals.sql"
+    on_disk_0011 = path_0011.read_text(encoding="utf-8")
+    registered_0011 = forward[0].checksum
+    assert sha256(on_disk_0011.encode("utf-8")).hexdigest() == registered_0011 == manifest[
+        "0011_document_activity_signals.sql"
+    ], (
+        "0011 on disk must be the exact bytes the loader registered and the manifest carries"
     )
 
 
