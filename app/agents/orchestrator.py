@@ -38,6 +38,7 @@ from app.approval.assistant import build_precheck
 from app.agents.tools import search_docs, analyze_data, query_data, generate_chart, export_report
 from app.agents.planner import build_task_plan
 from app.agents.nodes import (
+    STREAM_PIECE_SINK_KEY,
     _make_model, classify_intent, classify_route, LANE_QA, respond, load_memory, plan,
     reflect_node, route_reflect, synthesize,
 )
@@ -1110,12 +1111,20 @@ def run_with_stream(
     task_id: str | None = None,
     trace_store: TraceStore | None = None,
     cancel_event=None,
+    stream_piece_sink=None,
 ):
     """流式跑一轮编排。
 
     ``cancel_event`` 是调用方（SSE 生成器）持有的 ``threading.Event``，语义上只表示
     "我不再接收本轮回答"，**不等于拒绝**（详见 ``RequestCancelled``）。不传时为 None，
     排队任务与全部既有调用点行为逐字节不变。
+
+    ``stream_piece_sink`` 是 R31 的片段出口：一个可调用对象，收到模型的每一片
+    :class:`app.agents.nodes.StreamPiece`（已按判据③ 合并、按判据② 时间戳不重叠）。
+    默认 None 时本函数**不产生任何新事件**——图仍只按 ``stream_mode="values"`` 吐整份
+    state 快照，legacy 全量重发一条不改（判据④）。出口之所以挂在这里而不是直接 yield
+    进事件流：SSE 的 ``text`` 由 ``app/api/v1/chat.py`` 的 ``_ask_stream`` 在 done 分支
+    单发，那枚文件本单禁碰（详见交付说明的符号锚与受阻条目）。
     """
     request_id, trace_id, task_id = _execution_ids(request_id, trace_id, task_id)
     trace_store = trace_store or _trace_store
@@ -1145,6 +1154,11 @@ def run_with_stream(
         # 序列化（PG 路径下 threading.Event 不可 JSON 化），configurable 才是本次运行
         # 的只读上下文——principal 走的就是同一条通道。
         config["configurable"]["cancel_event"] = cancel_event
+    if stream_piece_sink is not None:
+        # R31 的入口，和 cancel_event 走同一条通道，理由是同一个：回调不可序列化，
+        # 进 state 就会在 PG checkpointer 路径上炸。不注册时这里一个键都不多加，
+        # 图的形状与之前逐字节相同（判据④）。
+        config["configurable"][STREAM_PIECE_SINK_KEY] = stream_piece_sink
     initial_state = _initial_execution_state(
         user_message,
         thread_id=thread_id,
