@@ -213,10 +213,24 @@
 
 ### 8.6 U3 全零向量普查：两侧各一份
 
-- **Chroma 侧**（现成件，零改动）：8.4 第一条 `--status --json` 里的 `zero_vectors_before` 与
-  `cross_dimension_vectors_before`，出自 `scripts/rebuild_index.py:176-210` 的 `vector_census()`
-  （逐文档 `collection.get(where={"filename": ...}, include=["embeddings"])`）。
-  `measurable: false` 的意思是"看不了"，不是"没有问题"，交回时原样带上。
+- **Chroma 侧**（R125 之后才有这两枚；在那之前 `--status` 压根不普查，字段不存在，照本节执行 U3
+  会取到空）：8.4 第一条 `--status --json` 交出 `zero_vectors_before`（全零）与
+  `cross_dimension_vectors_before`（跨维），普查是 `scripts/rebuild_index.py` 里的
+  `library_vector_census()`：整库分页扫（`collection.get` 带 `limit`/`offset`，窗口由
+  `--census-page-size` 定，默认 200 枚），只发读、不叫 embedder、不写向量；全量清单另落在
+  `census_report_path` 指的仓外临时文件（默认系统临时目录，`--census-report` 可改）。逐文档那枚
+  `vector_census()` 仍在原位、仍由重建路径用，两侧共用同一条 `_is_zero_vector()` 判据。
+- 🔴 **先读 `census_measurable`，再读那两个数**：只有它是 `true` 时两枚计数才算测过。`false` 时两枚
+  都是 `null`（不是 0），原因写在 `census_reason`——服务还在写（Chroma 一个目录一个写者）、目录不
+  存在、`chromadb` 取不到、扫描没覆盖 `collection.count` 的总数，全算"看不了"，都不等于"没有全零
+  向量"。所以这一步要在 8.2 停写之后跑；省掉 `--json` 时同一份报告印 `zero_vectors_before=unmeasurable`。
+- 🔴 「只读」说的是这条路径不发写调用：没有 `add`/`upsert`/`delete`，不调 embedder，也不碰 `--apply` 那条通路；
+  跑完之后 1008 枚向量的逐枚摘要与总数一字不变。但它不等于目录字节不动——Chroma 只要被一个新进程打开就会自己把索引和 sqlite 重写一遍（尺寸相同；
+  实测连不带普查的裸 `collection.get` 也一样重写），在服务还持着这个目录时抢开属于未知状态。所以这一步只在 8.2 停写之后跑；
+  真被写者占着，`census_measurable` 直接给 `false` 并把原因写进 `census_reason`，那一次就没有数，别当成 0。
+- 具名清单各给前 10 条（`--census-list-limit` 可改）：`zero_vector_documents` 与
+  `cross_dimension_vector_documents`（带 `widths`）；目录在册而库里一枚向量都没有的文档进
+  `unmeasurable_documents`，那是"没东西可看"，不是"干净"。
 - **PG 侧**：8.7 输出的 `drift.all_zero_rows`。零字面量由脚本按 `vector_scope.dimension` 现拼
   （`scripts/compare_vector_recall.py:118`），手抄 768 个数一定会数错。要逐行清单就在 8.1 那个会话里贴：
 

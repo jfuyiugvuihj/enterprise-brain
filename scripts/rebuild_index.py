@@ -40,6 +40,17 @@ profile is about to be written.
 
     python scripts/rebuild_index.py --status
     python scripts/rebuild_index.py --apply --confirm-scope "nomic-embed-text/768"
+
+WHAT ``--status`` ANSWERS
+
+The profile questions come out of the index registry, and the vector questions come out of the
+store: ``zero_vectors_before`` counts the stored vectors that are all zeros, and
+``cross_dimension_vectors_before`` counts the ones whose width is not the declared dimension.
+Those two are the Chroma half of the mirror gate in the pgvector runbook, so they are reported
+by the command the operator is told to run rather than only by a rebuild. The store is read a
+page at a time (``--census-page-size``) with no embedder and no model call, and a store that
+cannot be read comes back as ``census_measurable: false`` with both counters null: an
+unmeasured gate never prints like a passed one.
 """
 from __future__ import annotations
 
@@ -48,6 +59,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import time
 from typing import Callable
 
@@ -215,6 +227,275 @@ def _is_zero_vector(vector) -> bool:
         return len(vector) > 0 and not any(float(value) for value in vector)
     except (TypeError, ValueError):
         return False
+
+
+#: How many stored vectors one census page reads. The census is what lets ``--status`` answer
+#: the mirror gate in the pgvector runbook (跟进单 §61 / R125), and a stored vector is
+#: ``dimension`` floats: asking a whole library for its embeddings in one call is how a
+#: read-only report turns into a memory incident, so the store is walked a page at a time.
+CENSUS_PAGE_SIZE = 200
+
+#: How many named documents of each census list reach stdout. The full lists go to the report
+#: file named by ``census_report_path``, outside the repository.
+CENSUS_LIST_LIMIT = 10
+
+#: Bucket for stored vectors whose metadata carries no filename, so they are named by what
+#: they are instead of quietly missing from the per-document lists.
+CENSUS_NO_FILENAME = "(vectors with no filename in their metadata)"
+
+#: Name under which a census that could not read the store at all reports itself, so "the
+#: whole store was unmeasurable" is not repeated as a hundred complaints about documents.
+CENSUS_NO_STORE = "(the whole vector store)"
+
+
+class _CensusCollection:
+    """A vector collection with the write half hidden.
+
+    The census is advertised as something an operator may run against a live library, so the
+    handle it is given must not be able to write even if the code above it changes its mind:
+    ``get`` and ``count``, and anything else is an error rather than a call.
+    """
+
+    def __init__(self, collection):
+        self._collection = collection
+
+    def get(self, **kwargs):
+        return self._collection.get(**kwargs)
+
+    def count(self):
+        return self._collection.count()
+
+    def __getattr__(self, name):
+        raise AttributeError(
+            f"{type(self).__name__} exposes get() and count() only; {name!r} would be a write"
+        )
+
+
+class CensusStore:
+    """A vector store opened for a census: one read-only collection, and where it came from."""
+
+    def __init__(self, collection, *, source: str = ""):
+        self.collection = collection if isinstance(collection, _CensusCollection) else _CensusCollection(collection)
+        self.source = str(source)
+
+
+def open_census_store(chroma_dir: str | None = None,
+                      collection_name: str | None = None) -> tuple:
+    """Open the live vector store for a census, or come back with why it stayed shut.
+
+    Deliberately not ``DocumentRetriever()``: that constructor makes the directory when it is
+    missing and calls ``get_or_create_collection``, so a command whose whole job is to report
+    what is already stored would be able to add to it. The store is also opened without
+    touching the embedder, because ``--status`` has to answer on a machine where the model is
+    not configured, and an unopenable store is an unmeasurable census, not a crash.
+    """
+    directory = str(chroma_dir or os.getenv("CHROMA_DIR") or (ROOT / "chroma_db"))
+    name = str(collection_name or os.getenv("CHROMA_COLLECTION") or "enterprise_docs")
+    if not Path(directory).is_dir():
+        return None, f"there is no vector store directory at {directory}"
+    try:
+        import chromadb
+        from chromadb.config import Settings
+    except ModuleNotFoundError as exc:
+        return None, f"chromadb is not importable here ({exc})"
+    try:
+        client = chromadb.PersistentClient(
+            path=directory, settings=Settings(anonymized_telemetry=False)
+        )
+        collection = client.get_collection(name=name)
+    except Exception as exc:
+        # Chroma is one writer per directory, so "the application is writing right now" has
+        # to arrive as a reason an operator can read, not as a traceback.
+        return None, f"{type(exc).__name__}: {exc}"
+    return CensusStore(collection, source=f"{directory}#{name}"), ""
+
+
+def _tally_stored_vector(documents: dict, vector, metadata, dimension: int) -> bool:
+    """Add one stored vector to its document's tally; False when the row is not a vector.
+
+    The zero rule is the one the write gate uses (``_is_zero_vector``), so a vector the
+    rebuild would refuse is the same vector the census counts. Two answers to "is this
+    vector all zeros" is how a gate gets passed by looking at the wrong sheet.
+    """
+    try:
+        width = len(vector)
+    except TypeError:
+        return False
+    row = documents.setdefault(
+        str((metadata or {}).get("filename") or "") or CENSUS_NO_FILENAME,
+        {"vectors": 0, "zero_vectors": 0, "cross_dimension_vectors": 0, "widths": set()},
+    )
+    row["vectors"] += 1
+    if _is_zero_vector(vector):
+        row["zero_vectors"] += 1
+    if width != int(dimension):
+        row["cross_dimension_vectors"] += 1
+        row["widths"].add(int(width))
+    return True
+
+
+def library_vector_census(retriever, dimension: int, *, page_size: int = CENSUS_PAGE_SIZE,
+                          catalog_filenames=(), unavailable_reason: str = "",
+                          clock: Callable[[], float] = time.monotonic) -> dict:
+    """Every stored vector in the library, counted by document, read a page at a time.
+
+    ``vector_census()`` counts one document because a rebuild needs that answer twice per
+    document, while the operator's question is bigger than one document: "is there any
+    unusable vector in this store". Asking it document by document is one request per
+    document and a total nobody can check against the store's own count, so this walks the
+    store itself -- ``get(limit=window, offset=n)`` -- classifies each vector, drops the
+    floats, and keeps only the tallies.
+
+    It only ever reads (``get`` and ``count``), and it refuses to answer a question it could
+    not ask: a store that will not open, a page that raises, a window the store ignores, or a
+    scan that did not cover ``collection.count()`` vectors comes back ``measurable: false``
+    with both counters null and a reason naming what happened. A document the catalog knows
+    about but the store holds nothing for is listed as "nothing to look at", which is not the
+    same answer as "looked, nothing wrong".
+    """
+    census = {
+        "measurable": False,
+        "reason": unavailable_reason or "no vector store was opened",
+        "source": str(getattr(retriever, "source", "")),
+        "dimension": int(dimension),
+        "page_size": int(page_size),
+        "pages_read": 0,
+        "vectors_read": 0,
+        "store_vectors": None,
+        "non_sequence_vectors": 0,
+        "zero_vectors": None,
+        "cross_dimension_vectors": None,
+        "documents": 0,
+        "elapsed_seconds": 0.0,
+        "zero_vector_documents": [],
+        "cross_dimension_vector_documents": [],
+        "unmeasurable_documents": [],
+    }
+    collection = getattr(retriever, "collection", None)
+    getter = getattr(collection, "get", None)
+    if int(page_size) < 1:
+        census["reason"] = unavailable_reason or f"--census-page-size must be at least 1, not {page_size}"
+        return census
+    if not callable(getter):
+        return census
+    started = clock()
+    window = int(page_size)
+    documents: dict[str, dict] = {}
+    counter = getattr(collection, "count", None)
+    if callable(counter):
+        try:
+            census["store_vectors"] = int(counter())
+        except Exception:
+            census["store_vectors"] = None
+    offset = 0
+    previous_ids: frozenset = frozenset()
+    reached_end = False
+    honoured_window = True
+    while True:
+        try:
+            page = getter(include=["embeddings", "metadatas"], limit=window, offset=offset) or {}
+        except TypeError as exc:
+            census["reason"] = f"this store's get() cannot take a page window ({exc})"
+            break
+        except Exception as exc:
+            census["reason"] = f"the vector store raised {type(exc).__name__} while paging"
+            break
+        vectors = page.get("embeddings")
+        ids = page.get("ids")
+        if vectors is None or ids is None:
+            census["reason"] = "the vector store returned a page with no embeddings or ids in it"
+            break
+        page_ids = frozenset(str(item) for item in ids)
+        if page_ids and page_ids == previous_ids:
+            honoured_window = False
+            break
+        previous_ids = page_ids
+        rows = list(vectors)
+        metadatas = list(page.get("metadatas") or [])
+        for position, vector in enumerate(rows):
+            metadata = metadatas[position] if position < len(metadatas) else None
+            if not _tally_stored_vector(documents, vector, metadata, dimension):
+                census["non_sequence_vectors"] += 1
+        census["pages_read"] += 1
+        census["vectors_read"] += len(rows)
+        offset += len(rows)
+        if len(rows) < window:
+            reached_end = True
+            break
+    rows_by_name = sorted(documents.items())
+    census["documents"] = len(rows_by_name)
+    census["zero_vector_documents"] = [
+        {"filename": name, "zero_vectors": row["zero_vectors"], "vectors": row["vectors"]}
+        for name, row in rows_by_name
+        if row["zero_vectors"]
+    ]
+    census["cross_dimension_vector_documents"] = [
+        {
+            "filename": name,
+            "cross_dimension_vectors": row["cross_dimension_vectors"],
+            "vectors": row["vectors"],
+            "widths": sorted(row["widths"]),
+        }
+        for name, row in rows_by_name
+        if row["cross_dimension_vectors"]
+    ]
+    stored = census["store_vectors"]
+    if not honoured_window:
+        census["reason"] = (
+            "the store handed back the same page twice, so it does not honour the read "
+            f"window; the scan stopped after {census['vectors_read']} vectors"
+        )
+    elif not reached_end:
+        pass  # The reason was already set where the read failed.
+    elif stored is not None and stored != census["vectors_read"]:
+        census["reason"] = (
+            f"the scan read {census['vectors_read']} vectors, the store counts {stored}"
+        )
+    else:
+        census["measurable"] = True
+        census["reason"] = ""
+        census["zero_vectors"] = sum(row["zero_vectors"] for _name, row in rows_by_name)
+        census["cross_dimension_vectors"] = sum(
+            row["cross_dimension_vectors"] for _name, row in rows_by_name
+        )
+    wanted = sorted({str(item) for item in catalog_filenames if str(item)})
+    if census["pages_read"]:
+        # The store was read, so a catalog document with no rows in it is a document there was
+        # nothing to look at -- which is a different answer from "looked, found nothing wrong".
+        census["unmeasurable_documents"] = [
+            {
+                "filename": name,
+                "reason": "the store holds no vectors for this document, so there is nothing to census",
+            }
+            for name in wanted
+            if not documents.get(name)
+        ]
+    else:
+        # Nothing could be read at all, so say so once instead of blaming every document in
+        # the catalog for the store being shut.
+        census["unmeasurable_documents"] = [{"filename": CENSUS_NO_STORE, "reason": census["reason"]}]
+    census["elapsed_seconds"] = round(max(0.0, clock() - started), 3)
+    return census
+
+
+def write_census_report(census: dict, *, path: str | None = None) -> str:
+    """Put the full census lists outside the repository, where an operator can open them.
+
+    stdout carries the first ``CENSUS_LIST_LIMIT`` named documents of each list and nothing
+    else, because ``--status --json`` gets pasted into a ticket and a hundred-document library
+    would print a screen of names to repeat what the two counters already say. The whole lists
+    land here instead; an empty path means the file could not be written, which is never a
+    reason to lose the counters on stdout.
+    """
+    target = Path(path or Path(tempfile.gettempdir()) / "enterprise-brain-vector-census.json")
+    try:
+        target.write_text(
+            json.dumps(census, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return ""
+    return str(target)
 
 
 def probe_embedder(embeddings, scope: EmbeddingScope) -> str:
@@ -691,8 +972,56 @@ def retained_versions(registry: IndexRegistry, filenames) -> list[dict]:
     return retained
 
 
-def status_report(*, registry: IndexRegistry, scope: EmbeddingScope, targets) -> dict:
-    """The read-only answer: what is current, under which profile, and what would change."""
+def _census_fields(census: dict | None, *, list_limit: int = CENSUS_LIST_LIMIT) -> dict:
+    """The census half of a ``--status`` report: two counters, and which documents are behind them.
+
+    The named lists are cut to ``list_limit`` because this dict is what gets printed --
+    ``write_census_report`` keeps the whole of them -- while the two counters always cover
+    whatever the scan covered. ``census_measurable`` is deliberately *not* another spelling of
+    "the counters read zero": a census that could not look leaves both counters null, so the
+    two cannot be printed as one line and read as the other.
+    """
+    seen = dict(census) if census else library_vector_census(None, 0)
+    zero_rows = list(seen.get("zero_vector_documents") or [])
+    cross_rows = list(seen.get("cross_dimension_vector_documents") or [])
+    unmeasurable = list(seen.get("unmeasurable_documents") or [])
+    limit = max(0, int(list_limit))
+    return {
+        "zero_vectors_before": seen.get("zero_vectors"),
+        "cross_dimension_vectors_before": seen.get("cross_dimension_vectors"),
+        "census_measurable": bool(seen.get("measurable")),
+        "census_documents": int(seen.get("documents") or 0),
+        "census_vectors_read": int(seen.get("vectors_read") or 0),
+        "census_store_vectors": seen.get("store_vectors"),
+        "census_page_size": int(seen.get("page_size") or 0),
+        "census_pages_read": int(seen.get("pages_read") or 0),
+        "census_non_sequence_vectors": int(seen.get("non_sequence_vectors") or 0),
+        "census_elapsed_seconds": seen.get("elapsed_seconds"),
+        "census_source": str(seen.get("source") or ""),
+        "census_reason": str(seen.get("reason") or ""),
+        "census_report_path": "",
+        "zero_vector_documents": zero_rows[:limit],
+        "zero_vector_documents_total": len(zero_rows),
+        "cross_dimension_vector_documents": cross_rows[:limit],
+        "cross_dimension_vector_documents_total": len(cross_rows),
+        "unmeasurable_documents": unmeasurable[:limit],
+        "unmeasurable_documents_total": len(unmeasurable),
+    }
+
+
+def status_report(*, registry: IndexRegistry, scope: EmbeddingScope, targets,
+                  census: dict | None = None, list_limit: int = CENSUS_LIST_LIMIT) -> dict:
+    """The read-only answer: what is current, under which profile, and what would change.
+
+    The vector census rides along with it (跟进单 §61 / R125), because this is the entry point
+    the operator is told to run. The counting has been in this file since R22 -- it lives in
+    ``vector_census``, reached once per document from ``rebuild_document`` -- but nothing
+    connected it to ``--status``, so the runbook's U3 step took two fields that were never
+    there, and the printed report answered them with the ``0`` that an absent key defaults to.
+
+    The existing keys, in the existing order, are untouched: the runbook and the board read
+    this shape, and 跟进单 R22's test pins several of them by name.
+    """
     drift = registry.embedding_drift()
     stale = []
     for row in targets:
@@ -706,7 +1035,7 @@ def status_report(*, registry: IndexRegistry, scope: EmbeddingScope, targets) ->
             continue
         if current.scope != scope:
             stale.append(str(row.get("filename")))
-    return {
+    report = {
         "scope": str(scope),
         "drifted": drift.drifted,
         "codes": list(drift.codes),
@@ -716,6 +1045,8 @@ def status_report(*, registry: IndexRegistry, scope: EmbeddingScope, targets) ->
         "documents_needing_rebuild": len(stale),
         "stale_documents": sorted(stale),
     }
+    report.update(_census_fields(census, list_limit=list_limit))
+    return report
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -752,6 +1083,36 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="stop once this many seconds of work have been spent; the boundary is between "
         "documents, so the run is never left half-done (requires --apply)",
+    )
+    parser.add_argument(
+        "--census-page-size",
+        type=int,
+        default=CENSUS_PAGE_SIZE,
+        help="stored vectors read per page by the --status vector census; smaller pages use "
+        "less memory and send more requests (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--census-list-limit",
+        type=int,
+        default=CENSUS_LIST_LIMIT,
+        help="how many named documents of each census list reach stdout; the full lists are "
+        "written to --census-report (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--census-report",
+        default=None,
+        help="where the full census lists are written (defaults to a file in the system temp "
+        "directory, i.e. outside the repository)",
+    )
+    parser.add_argument(
+        "--chroma-dir",
+        default=None,
+        help="vector store directory the --status census reads (defaults to CHROMA_DIR, then ./chroma_db)",
+    )
+    parser.add_argument(
+        "--chroma-collection",
+        default=None,
+        help="collection the --status census reads (defaults to CHROMA_COLLECTION, then enterprise_docs)",
     )
     parser.add_argument("--json", action="store_true", help="emit the report as JSON")
     return parser
@@ -799,6 +1160,12 @@ def main(argv: list[str] | None = None) -> int:
         if not args.apply:
             print(f"refusing: {name} only means anything together with --apply", file=sys.stderr)
             return EXIT_USAGE
+    if args.census_page_size < 1:
+        print("refusing: --census-page-size must be at least 1", file=sys.stderr)
+        return EXIT_USAGE
+    if args.census_list_limit < 0:
+        print("refusing: --census-list-limit must not be negative", file=sys.stderr)
+        return EXIT_USAGE
 
     metadata_path = args.metadata_path or default_metadata_path()
     registry = IndexRegistry(metadata_path, scope=scope)
@@ -809,7 +1176,23 @@ def main(argv: list[str] | None = None) -> int:
     targets = documents_to_rebuild(current_documents, only_names=args.document or None)
 
     if args.status:
-        report = status_report(registry=registry, scope=scope, targets=targets)
+        # The census is read off the live store, a page at a time, and it is the only thing
+        # this path asks of it: no embedder, no publisher, no model call. A store that will
+        # not open leaves the counters null and says why, which is the difference between an
+        # unmeasured gate and a passed one.
+        store, open_reason = open_census_store(args.chroma_dir, args.chroma_collection)
+        census = library_vector_census(
+            store,
+            scope.dimension,
+            page_size=args.census_page_size,
+            catalog_filenames=[row.get("filename") for row in targets],
+            unavailable_reason=open_reason,
+        )
+        report = status_report(
+            registry=registry, scope=scope, targets=targets, census=census,
+            list_limit=args.census_list_limit,
+        )
+        report["census_report_path"] = write_census_report(census, path=args.census_report)
         _emit(report, as_json=args.json)
         return EXIT_OK
 
@@ -867,6 +1250,48 @@ def _emit(report: dict, *, as_json: bool) -> None:
         print(line)
 
 
+def _count_text(value) -> str:
+    """How a counter that was never measured reads, so it cannot be mistaken for a zero.
+
+    Before the census was wired in, ``--status`` printed ``zero_vectors_before=0`` purely
+    because the key was absent and the line had a default: an unmeasured gate reading exactly
+    like a passed one. Null now means nobody looked, and it prints that way.
+    """
+    return "unmeasurable" if value is None else str(value)
+
+
+def _census_list_lines(report: dict) -> list[str]:
+    """The named documents behind each census counter, one line each, preview only.
+
+    The full lists are in the file ``census_full_lists`` names; these lines exist so the
+    answer is readable without opening it, and so a document that could not be measured is
+    named as unmeasurable instead of being missing from a list that looks complete.
+    """
+    lines: list[str] = []
+    for row in report.get("zero_vector_documents") or []:
+        lines.append(
+            f"  zero_vectors {row['filename']}: {row['zero_vectors']} of "
+            f"{row['vectors']} stored vectors"
+        )
+    for row in report.get("cross_dimension_vector_documents") or []:
+        lines.append(
+            f"  cross_dimension {row['filename']}: {row['cross_dimension_vectors']} of "
+            f"{row['vectors']} stored vectors, widths={row.get('widths')}"
+        )
+    for row in report.get("unmeasurable_documents") or []:
+        lines.append(f"  unmeasurable {row['filename']}: {row['reason']}")
+    for key in (
+        "zero_vector_documents",
+        "cross_dimension_vector_documents",
+        "unmeasurable_documents",
+    ):
+        shown = len(report.get(key) or [])
+        total = int(report.get(f"{key}_total") or 0)
+        if total > shown:
+            lines.append(f"  {key}: {total} in total, the first {shown} are shown above")
+    return lines
+
+
 def report_lines(report: dict) -> list[str]:
     """The completion criteria, in the order an operator asks for them.
 
@@ -880,13 +1305,46 @@ def report_lines(report: dict) -> list[str]:
         f"planned={report.get('planned', 0)} rebuilt={report.get('rebuilt', 0)} "
         f"skipped={report.get('skipped', 0)} failed={report.get('failed', 0)}",
         f"planned_only={report.get('planned_only', 0)}",
-        f"cross_dimension_vectors before={report.get('cross_dimension_vectors_before', 0)} "
-        f"after={report.get('cross_dimension_vectors_after', 0)}",
-        f"zero_vectors_before={report.get('zero_vectors_before', 0)}",
+        f"cross_dimension_vectors before={_count_text(report.get('cross_dimension_vectors_before', 0))} "
+        f"after={_count_text(report.get('cross_dimension_vectors_after', 0))}",
+        f"zero_vectors_before={_count_text(report.get('zero_vectors_before', 0))}",
         f"embedded_texts={report.get('embedded_texts', 0)} "
         f"attempted={report.get('attempted', 0)} remaining={report.get('remaining', 0)} "
         f"stopped_at={report.get('stopped_at') or 'end'}",
     ]
+    if report.get("census_measurable") is not None:
+        # The census half of a --status report, printed apart from the two lines above: a
+        # rebuild report carries no census of its own, and the coverage numbers are what tell
+        # an operator whether those two counters measured the library or gave up on it.
+        lines.append(
+            f"drift={'yes' if report.get('drifted') else 'no'} "
+            f"indexes={report.get('indexes', 0)} "
+            f"catalog_documents={report.get('documents', 0)} "
+            f"needs_rebuild={report.get('documents_needing_rebuild', 0)}"
+        )
+        stale = list(report.get("stale_documents") or [])
+        for name in stale[:CENSUS_LIST_LIMIT]:
+            lines.append(f"  needs_rebuild {name}")
+        if len(stale) > CENSUS_LIST_LIMIT:
+            lines.append(
+                f"  needs_rebuild: {len(stale)} in total, the first {CENSUS_LIST_LIMIT} are shown above"
+            )
+        lines.append(
+            f"census={'measurable' if report['census_measurable'] else 'UNMEASURABLE'} "
+            f"vectors_read={report.get('census_vectors_read', 0)}"
+            f"/{_count_text(report.get('census_store_vectors'))} "
+            f"pages={report.get('census_pages_read', 0)} "
+            f"page_size={report.get('census_page_size', 0)} "
+            f"documents={report.get('census_documents', 0)} "
+            f"elapsed={report.get('census_elapsed_seconds', 0)}s"
+        )
+        if report.get("census_reason"):
+            lines.append(f"census_reason={report['census_reason']}")
+        if report.get("census_source"):
+            lines.append(f"census_source={report['census_source']}")
+        lines.extend(_census_list_lines(report))
+        if report.get("census_report_path"):
+            lines.append(f"census_full_lists={report['census_report_path']}")
     if report.get("incremental"):
         # The incremental answer is the one an operator needs before starting a long job: how
         # much of the library this run really re-embeds, and what that will cost in vectors.
@@ -898,7 +1356,13 @@ def report_lines(report: dict) -> list[str]:
         )
     if report.get("codes") is not None:
         lines.append(f"drift_codes={','.join(report['codes']) or 'none'}")
-    for document in report.get("documents", []):
+    # A --status report answers "documents" with a count and a rebuild report with the
+    # per-document list, and this loop belongs to the rebuild shape. Before R125 the printed
+    # --status died right here -- TypeError: 'int' object is not iterable, reproduced on the
+    # owner's build at rev 27c676f -- which is also why §8.4's promise that dropping --json
+    # still prints the two counters could never have been true.
+    stored = report.get("documents")
+    for document in stored if isinstance(stored, list) else []:
         detail = f"  {document['filename']}: {document['status']}"
         if document.get("index_version_id"):
             detail += f" current={document['index_version_id']}"
