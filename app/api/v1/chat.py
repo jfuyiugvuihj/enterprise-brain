@@ -684,20 +684,77 @@ def _upsert_document(
 
 # ==================== 追问改写 ====================
 
+#: 追问的文本信号，按家族分列。判定只问一件事：这一句自己能不能立住 —— 要拿上一轮才能
+#: 补全主语、对象或比较基准的才算追问。R126 之前这里是一张七个前缀的白名单，
+#: tests/fixtures/business_evaluation_100.jsonl 里 12 枚「多轮对话」题只命中 4 枚。
+#: 词表按家族组织，一枚标记服务的是一类说法而不是一道题；扩表请连带写明它服务哪种说法。
+_DEICTIC_PREFIXES = ("这", "那")
+#: 单字"他/她"是所有格（"他的报销"），只有加"们"才是这里要的指代
+_PLURAL_PRONOUN_PREFIXES = ("他", "她")
+#: 指代后面紧跟量词＋实物名词（"这份报告""那张图表"）时对象已经说死，不靠上文
+_MEASURE_WORDS = "份张篇页条笔位名种"
+#: "这个月""那周"是时间状语；"这个标准"才是指代 —— 哪个标准得由上文指出
+_TEMPORAL_NOUNS = "月年周日次号期季"
+_FOLLOWUP_PREFIXES = (
+    "那", "它", "他", "她", "这", "换", "改成", "如果", "要是", "请给", "只给",
+)
+#: 要求改判／重算：换掉上一轮里的某个成分再走一遍
+_REWRITE_MARKERS = ("换成", "改成", "改为", "调成", "再算", "重新算", "换个", "换种")
+#: 指令下在"上一答怎么说"上，而不是下在新事实上
+_FORM_MARKERS = ("更简单", "简单点", "说得更", "一点", "通俗", "大白话", "总结", "不要引用")
+#: 拿上一答当对照对象
+_PREVIOUS_ANSWER_MARKERS = ("矛盾", "前面说", "刚才说", "刚说", "之前说", "上面说", "你提到")
+#: 只补出情形，规则本身来自上文（"两个人合住一间……""我昨晚住了650元……"）
+_SITUATION_MARKERS = ("叠加", "合住", "昨晚", "昨天", "报多少")
+_FOLLOWUP_MARKERS = (
+    _REWRITE_MARKERS + _FORM_MARKERS + _PREVIOUS_ANSWER_MARKERS + _SITUATION_MARKERS
+)
+
+
+def _starts_with_deictic(text: str) -> bool:
+    """句首指代，且不是"这份报告""这个月"那种把对象与时间说全了的假指代。"""
+    for prefix in _FOLLOWUP_PREFIXES:
+        if not text.startswith(prefix):
+            continue
+        rest = text[len(prefix):]
+        if prefix in _DEICTIC_PREFIXES and rest[:1] in _MEASURE_WORDS:
+            continue
+        tail = rest[1:] if rest[:1] == "个" else rest
+        if prefix in _DEICTIC_PREFIXES and tail[:1] in _TEMPORAL_NOUNS:
+            continue
+        if prefix in _PLURAL_PRONOUN_PREFIXES and not rest.startswith("们"):
+            continue
+        return True
+    return False
+
+
+def _is_followup(message: str) -> bool:
+    """这一句要不要结合上一轮才读得懂：纯文本判定，不调模型、不查库。"""
+    text = (message or "").strip()
+    if not text:
+        return False
+    return _starts_with_deictic(text) or any(marker in text for marker in _FOLLOWUP_MARKERS)
+
+
 def _rewrite_followup(session_id: str, user_msg: str) -> str:
-    triggers = ["那", "它", "这个", "那个", "他们", "换", "改成"]
-    if not any(user_msg.startswith(t) for t in triggers):
+    if not _is_followup(user_msg):
         return user_msg
 
     msgs = _get_session_messages(session_id)
     prev_user = [m["content"] for m in msgs if m["role"] == "user"]
+    # R126：「上一问」不许等于本轮自己。ask 路由已改成"先改写、后落库"，这里再钉第二道闸：
+    # 只要历史末尾就是本轮这句（老调用点、或任何先落库的调用方），就把它剔掉 —— 否则
+    # prompt 会变成"上一问: X ／ 当前: X"，模型没有上文可用，只能凭空编一段。
+    if prev_user and prev_user[-1] == user_msg:
+        prev_user = prev_user[:-1]
     if not prev_user:
         return user_msg
 
+    previous_user_msg = prev_user[-1]
     try:
         prompt = f"""把追问改写为完整独立问题。结合上文语境。
 
-上一问: {prev_user[-1]}
+上一问: {previous_user_msg}
 当前: {user_msg}
 
 只输出改写后的问题:"""
@@ -1113,7 +1170,6 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail="permission_denied") from exc
     _ensure_session(thread_id, str(request_principal.user_id))
-    _save_message(thread_id, "user", request.message)
 
     original_msg = request.message
     orchestration_msg = original_msg
@@ -1122,7 +1178,11 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             f"请仅使用数据分析工具分析数据文件《{request.data_filename}》。"
             f"用户问题：{original_msg}"
         )
+    # R126：读历史必须排在写本轮之前。这句的下一句原先就是 _save_message(..., "user", ...)，
+    # 于是 _rewrite_followup 取到的「上一问」永远是本轮自己。落库挪到改写之后，会话里
+    # 仍是"用户问在前、助手答在后"（答复那枚 _save_message 在几百行之后），历史不缺行。
     rewritten_msg = _rewrite_followup(thread_id, orchestration_msg)
+    _save_message(thread_id, "user", request.message)
 
     # ——— 限流检查 (Layer 5: 超限入队而非拒绝) ———
     from app.common.cache import check_rate_limit

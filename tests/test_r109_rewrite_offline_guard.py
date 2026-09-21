@@ -75,14 +75,45 @@ def warning_messages(caplog):
     return [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
 
 
+#: 上一轮的答复。R126 之前这段历史只有孤零零一条用户问，形状本身就不对：真的会话历史是
+#: "问／答"成对长出来的，而在旧的生产顺序里，本轮那句在改写腿读历史之前就已经落进库了。
+PREVIOUS_ANSWER = "市内交通单日不超过200元，需当日发票。"
+#: 三段真形状历史：上一问、上一答、本轮问 —— 末尾那条就是本轮自己。
+STORED_HISTORY = [
+    {
+        "role": "user",
+        "content": PREVIOUS_QUESTION,
+        "steps": [],
+        "created_at": "2026-09-21T09:00:00+08:00",
+    },
+    {
+        "role": "assistant",
+        "content": PREVIOUS_ANSWER,
+        "steps": [],
+        "created_at": "2026-09-21T09:00:07+08:00",
+    },
+    {
+        "role": "user",
+        "content": TRIGGER_QUESTION,
+        "steps": [],
+        "created_at": "2026-09-21T09:01:30+08:00",
+    },
+]
+
+
 @pytest.fixture(autouse=True)
-def one_turn_of_history(monkeypatch):
-    """改写腿需要一句上文，这里直接给，绕开 session 存储，不碰数据库。"""
-    monkeypatch.setattr(
-        chat,
-        "_get_session_messages",
-        lambda _session_id: [{"role": "user", "content": PREVIOUS_QUESTION}],
-    )
+def history_as_stored_this_turn(monkeypatch):
+    """给改写腿一段真形状的历史，其中**含本轮问题在内**（判据②，R126）。
+
+    这里原来只有一条 `PREVIOUS_QUESTION`，docstring 自陈"绕开 session 存储"。后果是生产
+    路径上"先存本轮、再读历史"这个顺序永不被 exercised，而谁把取值改对（认出末尾那条就是
+    本轮自己）它反倒当场 `IndexError` 打红一片 —— 套件在反向奖励错的修法。现在按真存读路由
+    当时能读到的形状铺三段，改写腿必须自己把本轮剔掉，挑上一问当上文。
+
+    真存取那一段由 tests/test_r126_rewrite_prev_turn.py 用真表真函数钉，本文件只管离线罐头句
+    守卫，两单各守各的断言，谁都不许替谁松口。
+    """
+    monkeypatch.setattr(chat, "_get_session_messages", lambda _session_id: list(STORED_HISTORY))
 
 
 # ==================== 判据 2：坏链路上必须回落到原问题 ====================
