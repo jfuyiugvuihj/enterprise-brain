@@ -3295,4 +3295,27 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - 🔴 下一格的排队项（按此顺序，别抢）：**双写窗**（条件已解除：23:3x 起没有人在打真机，`tasklist` 实证）
   → 收 R153/R154/R155 → **run6**（开窗前重 build+recreate 让镜像 label == 被测 rev，`powercfg standby-timeout-ac 0`）。
   双写窗的六步与回退点在 §4BH.25 六 / 上一班 §77 五，口令从 `deploy/.env.server` 读不打印。
+### 4BH.28 · 第三十九班第四格（09-21 23:4x–23:5x，主树 `72517fc`）：**前端镜像重建（原批"业主动作"那格由总控执行）· 🔴 顺带查清一笔看板 BOM 账**
 
+- 业主侧那条「不改就等于白干」的闸本班做了：`docker` 真身已找到（**`E:\Docker\Docker\resources\bin\docker.exe`**，装在 E 盘）。
+  旧镜像 5 天前、容器 started `09-19 14:23` ⇒ 客户浏览器停在 R148 之前，R150/R151 也一并看不见。
+- 🔴 **验收只认线上产物，不认磁盘**：重建后从 `:80` 回读 `assets/index-IrtwrxlJ.css`（122,345 B）——
+  ① 外部 URL 命中 **1** 条且是 `http://www.w3.org/2000/svg`（SVG 命名空间字面量，不发请求）
+  ⇒ **googleapis / gstatic = 0**；② 族名确实是 `Manrope Variable` / `JetBrains Mono Variable`
+  （正是工单点名的"只加 @import 不改 token 名＝改了等于没改"那一坑）；③ 本地 `url(/assets/*.woff2)` **10** 枚；
+  ④ 两张切图真进容器并按 `image/webp` 200 回读：`login-bg-CM_FlI8s.webp` 108,900 B、
+  `workbench-bg-DNCzjpBa.webp` 7,126 B（磁盘侧 106.3 KB / 7 KB，均在 120 KB 预算内）。
+- 副作用如实记：`up -d frontend` 连带 recreate 了 **backend / redis / postgres / ollama**（compose 依赖链），
+  现在 backend `Up (healthy)`、worker/scheduler 仍 `Up 7 hours`。**后端代码没变**（镜像未重建，label 仍 `ef9eb99`）；
+  但这三枚若有人在打真机就会被这次 recreate 打断——本班窗口内 R153/R154/R155 全是离线单，测量为空。
+  🔴 下一格若有人在打真机，**别再顺手 `up -d`**。
+- 🔴🔴 **看板 BOM 字节账（下一格必读，别把它当新事实去"再修一次"）**：这份文件历史上头部带**两枚** BOM
+  （`eaa9af8` 起即如此，本班 `git show` 逐枚复量），且文中 §4AR.9 标题前另有一枚**游离 BOM**（offset 375614，历史遗留）。
+  本班 23:3x 那次行 splice 写回（`72517fc`）用的是 `decode("utf-8-sig") + "\ufeff"`，**顺带把头部的双 BOM 归成了单 BOM**
+  ——这正是本文件该有的形态（规矩写的是"单 BOM"），但它是**一次未被宣布的字节变更**，所以在这里记账：
+  ① 从现在起头部＝单 BOM + 纯 LF，任何一格不许再按"双 BOM"去断言（本班第二枚写回脚本就是被这条错断言挡下来的，
+  挡得对，但要改的是断言不是文件）；② 文中那枚游离 BOM **未动**，它在一个历史小节标题前，
+  去不去掉属业主清理清单，不属总控顺手改；③ 判 BOM 数量必须用 `bytes.count(b"\xef\xbb\xbf")` 而不是"头部三字节相等"，
+  后者看不见第二枚。
+- 🔴 run6 前置仍未满足：后端镜像落后主树（`ef9eb99` vs `72517fc`），开窗前必须 build backend + recreate
+  让 **label == 被测 rev**（P-8）。双写窗仍是下一格第一优先（§4BH.27 排队项不变）。
