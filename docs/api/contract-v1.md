@@ -88,6 +88,7 @@ Error responses use a stable `code` from:
 - `rate_limited`
 - `queue_unavailable`
 - `model_unavailable`
+- `context_limit_exceeded`
 - `retrieval_unavailable`
 - `storage_unavailable`
 - `task_timeout`
@@ -103,26 +104,45 @@ Error responses use a stable `code` from:
 - `unsupported_export_format`
 - `department_scope_required`
 - `no_answer_produced`
+- `row_scope_denied`
+- `no_visible_rows`
 - `internal_error`
 
 > `storage_unavailable` was added on 2026-09-16 (`35ee27e`) for "the schema this build requires
-> is not applied" - see the HITL section below. The eight names after it were **ratified, not
-> invented**: `tests/test_error_code_vocabulary.py` maps each one to the emitter in `app/**` (7 in
-> `app/api/v1/data.py`, `no_answer_produced` in `app/api/v1/chat.py`) and fails if an emitter is removed
-> while the name stays in the enum, so the list cannot quietly accumulate fossils.
-> `app/rag/evidence.py` used to keep its own copy of the retryable vocabulary; it now derives from the
-> same Literal and a test asserts the two sets cannot drift (R13-4).
-> Note the deliberate exceptions, which come in pairs. `503 storage_read_only` -- a durable store that was
-> configured and then could not be opened or written -- is what `app/api/v1/intelligence.py:222` (knowledge
-> graph) and `app/api/v1/open_platform.py:395` (application registration) answer when the store the operator
-> did configure refuses them. Each has an `unconfigured` sibling telling different news: a production
-> deployment that never configured such a store at all answers `409 knowledge_graph_unconfigured` (R103) or
-> `409 open_platform_unconfigured` (R106). All four are **not** `ErrorEnvelope.code` members; they are bare
-> detail strings on legacy-shaped responses. Ratifying them was explicitly declined in this batch:
-> "read-only protection", "this deployment never enabled the feature" and "schema missing" are different
-> failures, and merging them would make an operator fix the wrong one. `409` rather than `503` for the
-> unconfigured half is load-bearing: nothing a client retries will configure a store, so a `503` would bill
-> a decision the operator still has to make as downtime.
+> is not applied" - see the HITL section below. The names in the list above are **ratified, not
+> invented**: `tests/test_error_code_vocabulary.py::RATIFIED` maps each of them to the emitter in
+> `app/**`, and `test_no_ratified_code_is_invented` fails when an emitter is removed while the name
+> stays in the enum, so the list cannot quietly accumulate fossils. How many entries that register
+> holds today is deliberately **not** written here: it moves with every ticket, and a count in prose
+> is the first thing to go stale. What keeps this list and `ErrorEnvelope.code` the same set is
+> `tests/test_r142_error_code_table_sync.py`, which reads the Literal out of
+> `app/agents/contracts.py` by AST and requires the bullets above to carry the same members in the
+> same order -- so a code added to the enum but not to this page fails, naming the code.
+> `app/agents/evidence.py` used to keep its own copy of the retryable vocabulary; it now derives from
+> the same Literal and a test asserts the two sets cannot drift (R13-4).
+>
+> The deliberate exceptions come in pairs and are **not** `ErrorEnvelope.code` members: they are
+> bare detail strings on legacy-shaped responses. `503 storage_read_only` -- a durable store that
+> was configured and then could not be opened or written -- is what `add_relation`
+> (`app/api/v1/intelligence.py`) and `register_application` (`app/api/v1/open_platform.py`) answer
+> when the store the operator did configure refuses them. Each has an `unconfigured` sibling telling
+> different news: a deployment that never configured such a store at all answers
+> `409 knowledge_graph_unconfigured` (R103) or `409 open_platform_unconfigured` (R106). Ratifying
+> them was explicitly declined: "read-only protection", "this deployment never enabled the
+> feature" and "schema missing" are different failures, and merging them would make an operator fix
+> the wrong one. `409` rather than `503` for the unconfigured half is load-bearing: nothing a client
+> retries will configure a store, so a `503` would bill a decision the operator still has to make as
+> downtime.
+>
+> R142 gave that family the register it never had. Every bare snake_case detail an endpoint still
+> emits is named in `tests/test_error_code_vocabulary.py::BARE_CODES_OUTSIDE_THE_ENUM` with its
+> emitter, the sentence `frontend/src/lib/errcodes.js::LEGACY_ALIASES` folds it into, and the reason
+> it stays outside the enum. `400 idempotency_key_required` is the entry this ticket ruled on: it is
+> emitted by `_enqueue_ask_turn` (`app/api/v1/chat.py`) whenever a background turn arrives without an
+> idempotency key, it is documented per endpoint in the `/ask` row of the status table below, and the
+> client already reads it as `validation_error`. Renaming it **server-side** would change a response
+> body -- a contract change, not housekeeping -- so it is named for the coordinator rather than
+> folded on the side; `tests/test_r37_report_lane_enqueue.py` keeps pinning the exact string.
 
 Worker terminal state (R111): 容量耗尽携带 `rate_limited`，模型不可用携带 `model_unavailable`，
 status 均为 `model_unavailable` - `AgentResult.status` 的八枚 Literal 里没有 rate_limited 这一档，
@@ -768,11 +788,12 @@ reddens if the two disagree, so the mapping is written down once and mirrored, n
 - Screen names are route names and come from the router (R104). A backend row may name a route;
   it may not define one, and `frontend/**` is not this ticket's to edit.
 - `report` is the only tier with a second addressable surface, and that route answers only when
-  `REPORT_LANE_VIA_QUEUE` is on (`app/api/v1/chat.py:828-843`); with it off, the tier is served
+  `REPORT_LANE_VIA_QUEUE` is on (`app/api/v1/chat.py::_report_lane_via_queue_enabled`, which gates
+  `_queue_lane`); with it off, the tier is served
   synchronously by `/ask` and the queue path does not exist.
 - What the client sends in `AskRequest.lane` is **not** the tier. The field is a closed set of four
-  values -- `""` (declare nothing), `qa`, `analysis`, `report` (`chat.py:856-887`,
-  `ASK_LANE_VALUES`) -- and anything else is refused with `400` and stable code
+  values -- `""` (declare nothing), `qa`, `analysis`, `report` (`ASK_LANE_VALUES` and the
+  `_require_valid_lane` guard in `app/api/v1/chat.py`) -- and anything else is refused with `400` and stable code
   `validation_error`, before a session row, a queue entry or a model call is spent. The previous
   draft of this line said that refusal “is not implemented”; R32 implemented it, so the sentence
   now reads the other way. Empty means the server picks: the tier of a measured request is R42's

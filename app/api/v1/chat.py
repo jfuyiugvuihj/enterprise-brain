@@ -769,7 +769,7 @@ def _rewrite_followup(session_id: str, user_msg: str) -> str:
         # 挂在返回体上。本守卫的集合只收"这句话由 model_handler 自己造、不是模型说的"这两枚 ——
         #   MODEL_UNAVAILABLE_CODE  provider 挂/超时，正文是"离线模式：模型不可用…"四十字
         #   RATE_LIMITED_CODE       容量闸住改写预算，正文是 103 字的英文 "Local model capacity
-        #                           is exhausted…"（app/common/model_handler.py:246-253）
+        #                           is exhausted…"（app/common/model_handler.py 的 _call_budget）
         # 两枚的正文都非空且远超下面 len(rewritten) > 3 那道尺寸检查，会原样取代用户真正的问题
         # 送进图、送进检索、参与缓存键，而 except 分支在这两条路上都不触发。反过来
         # RESPONSE_EMPTY_CODE / OUTPUT_TRUNCATED_CODE 是真答案身上带的诊断码 —— 尤其
@@ -785,7 +785,8 @@ def _rewrite_followup(session_id: str, user_msg: str) -> str:
             # 两条回落共用判据 1 那句 stem，把差别写在原因与改写码上：运维 grep
             # "改写码 rate_limited" 还是 "改写码 model_unavailable"，就分得清"预算太小"和
             # "模型坏了"。这里刻意不带那串等号前缀 —— 跟进单 §12.1 把"码名只许出现在结构化赋值
-            # 处、不许塞进可读文本"钉成了机器判据（tests/test_error_code_vocabulary.py:122 扫
+            # 处、不许塞进可读文本"钉成了机器判据（tests/test_error_code_vocabulary.py 的
+            # test_no_bare_error_code_lives_inside_a_string_literal_in_chat_py 扫
             # 整份 chat.py），本行是日志而不是异常载荷，所以用中文键名挂裸码值。
             logger.warning(
                 f"[REWRITE] 改写腿拿到离线罐头句，已回退原问题：{canned_reason}"
@@ -846,7 +847,8 @@ def _queue_lane(request) -> str:
 # R32：``AskRequest.lane`` 的取值闭集，以及"写错了就当场拒"那道闸。
 #
 # 为什么新增函数而不是改 _queue_lane：那枚谓词回答的是"这一轮进不进可靠队列"，
-# tests/test_r37_report_lane_enqueue.py:323 逐字钉着它对 qa/analysis 一律回空串——
+# tests/test_r37_report_lane_enqueue.py 的
+# test_the_lane_predicate_only_reads_the_request 逐字钉着它对 qa/analysis 一律回空串——
 # 档位标签不许改变入队判定是 R37 的判据②。本闸管的是另一件事：调用方写了一个服务端
 # 认不得的档位，从前被静默忽略（等于替调用方猜心思），现在当场 400 并给稳定码。
 #
@@ -1829,7 +1831,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
     principal = _authorize_session_request(http_request, request.session_id)
     user_ctx = _agent_user_context(principal)
     # canonical 事件必须带 request_id/trace_id/task_id，而 /approve 此前整条流只有
-    # legacy 事件、从来没有过这三个 id。生成方式与 /ask (:784-786) 逐字相同，客户端
+    # legacy 事件、从来没有过这三个 id。生成方式与 /ask 里生成 request_id/trace_id/task_id
+    # 那三行逐字相同，客户端
     # 不必为两个端点写两套解析。
     request_id = f"req-{uuid.uuid4().hex}"
     trace_id = f"trace-{uuid.uuid4().hex}"
@@ -1887,7 +1890,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         # R55：来源取证复用 /ask 那一个收集器与同一种 sink，收尾时只读不反推。
         source_rows: dict[str, dict] = {}
 
-        # canonical 信封事件从这一条起与 /ask (:1084-1093) 同构：同一个构造器、同一套
+        # canonical 信封事件从这一条起与 /ask 的第一条
+        # canonical_sse_event("request.started") 同构：同一个构造器、同一套
         # 三个 id、sequence 从 1 连续。legacy 事件全部照旧保留，canonical 是加在旁边。
         yield canonical_sse_event(
             "request.started",
@@ -1907,7 +1911,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 # 停止 != 拒绝（裁定 ④甲）：账面写 abandoned，绝不写 refused。
                 # 这一行在 R12（826d318）之前是不敢写的——那时"停止"的会话其实跑完了。
                 _decide_pending_approval(request.session_id, pending_approvals.ABANDONED)
-                # 先发 canonical、再发 legacy，与 /ask 的取消形状 (:958-973) 一致：
+                # 先发 canonical、再发 legacy，与 /ask 的取消形状（request.cancelled 之后紧跟 legacy cancelled）一致：
                 # 事件名、status="cancelled"、data.session_id 全同。legacy 保留是给
                 # 还没接 canonical 的旧客户端的，不是过渡期垃圾。
                 yield canonical_sse_event(
@@ -1926,7 +1930,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 )
                 break
             if budget.expired():
-                # error_code 与 /ask (:1117-1126) 同名同形状：同一个"超过处理时限"在两条
+                # error_code 与 /ask 的超时形状（request.failed 携 task_timeout）同名同形状：同一个"超过处理时限"在两条
                 # 流里必须是同一个码，客户端不必按端点分支。legacy error 原文照发。
                 yield canonical_sse_event(
                     "request.failed",
@@ -1966,7 +1970,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': full_text}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
                 # R55 判据④：批准后图可能又停在下一个 HITL 节点。先问真实的挂起状态，再
-                # 决定这一轮算"完成（含新挂起）"还是"什么都没产出"——与 /ask (:1149-1156)
+                # 决定这一轮算"完成（含新挂起）"还是"什么都没产出"——与 /ask 里读 check_interrupt 的那一支
                 # 用同一个 check_interrupt，不凭正文猜。
                 try:
                     from app.agents.orchestrator import check_interrupt
@@ -1976,7 +1980,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 if not full_text and not intr:
                     # 图跑完了，既没有正文也没有新的等待确认：这是内部失败。报成
                     # request.completed 就是把"什么都没产出"伪装成"已回答"
-                    # （/ask :1162-1188 同一裁定）。legacy 这一支只发 done，不新增 error：
+                    # （/ask 的 no_answer_produced 那一支同一裁定）。legacy 这一支只发 done，不新增 error：
                     # 本单对 legacy 只加不减，旧客户端收到 done 才是既有契约。
                     yield canonical_sse_event(
                         "request.failed",
@@ -1997,7 +2001,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     break
                 if intr:
                     # 原注释登记的那条长期缺口在本单补上：新挂起既当场发给客户端（legacy
-                    # hitl 与 /ask :1212 同一个 payload 形状），也记成新的 awaiting 行。写账
+                    # hitl 与 /ask 那条 hitl 事件同一个 payload 形状），也记成新的 awaiting 行。写账
                     # 必须排在上面的 _decide_pending_approval 之后，否则 mark_status 会去
                     # 闭合刚写入的新行、把旧行留在待批里。
                     _record_pending_approval(
@@ -2028,7 +2032,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 )
                 sequence += 1
                 # R41 新立的 sources 事件在 /approve 这个出口上此前是缺失的。判定入口逐字
-                # 复用 /ask (:1235) 的 _authorized_source_rows -> app/rag/filters.py 的
+                # 复用 /ask 里那次 _authorized_source_rows(...) 调用 -> app/rag/filters.py 的
                 # scope.allows，不另写一套过滤；本轮没检索过就是 0 条，不伪造。
                 visible_rows, scope_reason_code = _authorized_source_rows(source_rows, principal)
                 yield canonical_sse_event(
@@ -2054,7 +2058,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
 
             if kind == "error":
                 # 编排线程抛错 = 这一轮失败。legacy error 只带人读的文字，机器读的码走
-                # canonical（/ask :1262-1271 同一口径），legacy 原文照发不吞。
+                # canonical（/ask 那批 request.* 信封同一口径），legacy 原文照发不吞。
                 yield canonical_sse_event(
                     "request.failed",
                     request_id=request_id,
