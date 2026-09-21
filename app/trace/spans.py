@@ -266,15 +266,52 @@ def record_stage_event(
     return payload
 
 
+def _reported_count(value: Any) -> int | None:
+    """One rule for "the server counted this": an int, or ``None``.
+
+    Shared by both reply shapes on purpose, because both failure modes of the old code lived
+    in the gap between them: a count the server never reported had to stay ``None`` (a 0 here
+    reads as "counted zero", and NULL is a different fact), and a count the server *did*
+    report had to survive whatever object shape it arrived in. Nothing in here estimates:
+    ``app.common.model_budget.estimate_prompt_tokens`` sizes clocks and budgets, and following
+    跟进单 §21（「不得估算冒充实测 token 数」）it is not allowed to become a metered number.
+    """
+    return value if isinstance(value, int) else None
+
+
 def model_token_counts(response: Any) -> dict[str, Any]:
+    """The two token counts this call came back with, or ``None`` for "not reported".
+
+    R38: exactly two reply shapes are read, and both now reach ``model_calls`` through
+    ``app/trace/store.py``.
+
+    * the provider object of the LangChain/OpenAI leg -- ``usage_metadata`` (LangChain) or a
+      ``usage`` mapping, keyed ``input_tokens`` / ``output_tokens``;
+    * :class:`app.common.model_handler.ModelReply` -- the attributes a leg carries after this
+      ticket, ``input_tokens`` (native ``prompt_eval_count``) and ``output_tokens``
+      (native ``eval_count``). Before R38 this shape matched neither branch, so a reply that
+      had been counted came back as two ``None`` values.
+
+    There is deliberately no third key. ``cached_tokens`` is the one an operator would expect
+    here, and this deployment has no measured source for it: the local Ollama native
+    ``/api/chat`` reply carries no cached-token field at all
+    (``native_leg_reports_no_cached_tokens``), and the compatible leg's
+    ``usage.prompt_tokens_details.cached_tokens`` measured 0 on product traffic because every
+    round rewrites its prefix (``docs/perf/latency-budget-2026-09-16.md``, raw readings in
+    ``docs/perf/raw/prodpath.jsonl``). So the 0 in the perf ledger is a measured 0, not a hit
+    rate -- and writing a 0 here would be the one way to make it look like one.
+    """
     usage = getattr(response, "usage_metadata", None)
     if not isinstance(usage, dict):
         usage = getattr(response, "usage", None) if isinstance(getattr(response, "usage", None), dict) else None
-    if not usage:
-        return {"input_tokens": None, "output_tokens": None}
+    if usage:
+        return {
+            "input_tokens": _reported_count(usage.get("input_tokens")),
+            "output_tokens": _reported_count(usage.get("output_tokens")),
+        }
     return {
-        "input_tokens": usage.get("input_tokens") if isinstance(usage.get("input_tokens"), int) else None,
-        "output_tokens": usage.get("output_tokens") if isinstance(usage.get("output_tokens"), int) else None,
+        "input_tokens": _reported_count(getattr(response, "input_tokens", None)),
+        "output_tokens": _reported_count(getattr(response, "output_tokens", None)),
     }
 
 

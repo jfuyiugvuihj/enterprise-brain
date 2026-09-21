@@ -91,7 +91,7 @@ class ModelReply(str):
     Subclass rather than a new return type: ``str`` is the contract every caller already
     reads, so equality, ``in``, ``.strip()`` and ``json.loads(str(x))`` all keep working
     unchanged. The attributes carry what a string cannot hold -- which leg answered, why the
-    text is unusable when it is, how much the server wrote -- which is what lets the query
+    text is unusable when it is, how much the server read and wrote -- which is what lets the query
     rewriter tell "the model answered nothing" apart from "the model answered something we
     cannot parse".
     """
@@ -101,12 +101,17 @@ class ModelReply(str):
         content: str = "",
         *,
         finish_reason: str = "",
+        input_tokens: int | None = None,
         output_tokens: int | None = None,
         transport: str = TRANSPORT_COMPAT,
         error_code: str = "",
     ):
         reply = super().__new__(cls, "" if content is None else str(content))
         reply.finish_reason = str(finish_reason or "")
+        #: What the server itself counted, read side and write side (R38). Either one stays
+        #: ``None`` when the server did not report it, which is what makes the metering
+        #: column NULL instead of a zero or a number somebody estimated.
+        reply.input_tokens = input_tokens
         reply.output_tokens = output_tokens
         reply.transport = transport
         reply.error_code = error_code
@@ -146,6 +151,12 @@ def compat_reply(response) -> ModelReply:
     The old boundary handed back ``response.choices[0].message.content`` and nothing else, so
     a truncated answer and an empty one arrived identically dressed. Both facts are still on
     the response object; this only stops throwing them away.
+
+    R38 did the same for the counters: ``usage`` carries ``prompt_tokens`` next to
+    ``completion_tokens``, and only the second one was being read, so a compatible-leg answer
+    reported what the model wrote while the number the server had for what it read was
+    dropped. Reading it is not the same as trusting it: a missing ``usage`` still answers
+    ``None`` on both sides.
     """
     choice = response.choices[0]
     message = getattr(choice, "message", None)
@@ -155,6 +166,7 @@ def compat_reply(response) -> ModelReply:
     return ModelReply(
         content,
         finish_reason=finish_reason,
+        input_tokens=getattr(usage, "prompt_tokens", None),
         output_tokens=getattr(usage, "completion_tokens", None),
         transport=TRANSPORT_COMPAT,
         error_code=answer_error_code(content, finish_reason),
@@ -357,6 +369,12 @@ class ModelHandler:
         content = str(message.get("content") or "")
         thinking = str(message.get("thinking") or body.get("thinking") or "")
         finish_reason = str(body.get("done_reason") or "")
+        #: The server's own two counters (R38). ``prompt_eval_count`` is what it read and
+        #: ``eval_count`` is what it wrote; the read side used to be dropped here, which left
+        #: ``model_calls.input_tokens`` without a source on this leg. Neither is ever
+        #: substituted by an estimate: the durations below are logged next to them for
+        #: comparison only, and ``estimate_prompt_tokens`` sizes clocks, not the ledger.
+        input_tokens = body.get("prompt_eval_count")
         output_tokens = body.get("eval_count")
         code = answer_error_code(content, finish_reason)
         load_seconds = float(body.get("load_duration") or 0) / 1e9
@@ -364,13 +382,15 @@ class ModelHandler:
             f"[Model] {TRANSPORT_NATIVE} 应答: seconds={time.monotonic() - started:.2f} "
             f"load_seconds={load_seconds:.2f} "
             f"keep_alive={keep_alive_log(self._keep_alive())} "
-            f"done_reason={finish_reason or 'none'} eval_count={output_tokens} "
+            f"done_reason={finish_reason or 'none'} "
+            f"prompt_eval_count={input_tokens} eval_count={output_tokens} "
             f"content_chars={len(content)} thinking_chars={len(thinking)}"
             + (f" error_code={code}" if code else "")
         )
         return ModelReply(
             content,
             finish_reason=finish_reason,
+            input_tokens=input_tokens,
             output_tokens=output_tokens,
             transport=TRANSPORT_NATIVE,
             error_code=code,
