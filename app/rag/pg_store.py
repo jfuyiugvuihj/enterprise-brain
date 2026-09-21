@@ -374,6 +374,10 @@ class VectorMirror:
                 # index version, the publication that follows it does. Inventing one
                 # here is R22's silent desync, so the row says "not yet published" and
                 # scripts/compare_vector_recall.py counts those rows instead.
+                # R76 is that publication: IndexMirrorSession.tag_vector_index_version
+                # stamps the id in the same transaction that marks the version published.
+                # A re-upsert here still belongs to no version, which is the correct
+                # answer -- a freshly written vector is newer than anything published.
                 None,
                 _vector_literal(vector),
                 model,

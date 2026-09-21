@@ -64,7 +64,23 @@ CODE_DIMENSION_DRIFT = "embedding_dimension_drift"
 # deployment state, not a failed upload: a document that already reached Chroma must not
 # be reported as unparsable because index bookkeeping tables are missing, so the mirror
 # degrades with a warning and the publication stays local.
-_MIRROR_TABLES = ("index_registry", "index_versions", "chunks", "resource_versions")
+#: The tables that decide whether index bookkeeping exists at all. Each of them is created
+#: by a migration that predates pgvector, so a database missing one has not been migrated
+#: for any index bookkeeping -- and a partial mirror is worse than an absent one that says
+#: so out loud and publishes locally.
+_MIRROR_REQUIRED_TABLES = ("index_registry", "index_versions", "chunks", "resource_versions")
+
+#: The vector mirror's own table. app/rag/pg_store.py:71 is the writer and names the same
+#: literal; the two are pinned together by a test rather than by an import, because
+#: pg_store.py:41 imports this module and importing it back would be a cycle.
+#: chunk_vectors joins the probe list -- the publication has to see it to bind a version
+#: into it (R76) -- but deliberately not _MIRROR_REQUIRED_TABLES: migrations/0010 is
+#: optional while VECTOR_DUAL_WRITE is off, and gating the whole index mirror on it would
+#: take bookkeeping away from every deployment that has not adopted pgvector. The binding
+#: step degrades on its own instead, exactly the way the chunk_count counter already does.
+VECTOR_MIRROR_TABLE = "chunk_vectors"
+
+_MIRROR_TABLES = _MIRROR_REQUIRED_TABLES + (VECTOR_MIRROR_TABLE,)
 _MIRROR_COLUMNS = {
     "index_registry": (
         "index_id",
@@ -110,6 +126,16 @@ _MIRROR_COLUMNS = {
         "metadata",
         "superseded_at",
     ),
+    VECTOR_MIRROR_TABLE: (
+        # The columns the publication binding reads and writes, and nothing more. The table
+        # also holds content/embedding/distance_function, but those belong to the dual
+        # write: naming them here would make index bookkeeping refuse to bind vectors over a
+        # column this ticket never touches.
+        "vector_id",
+        "index_version_id",
+        "embedding_model",
+        "embedding_dimension",
+    ),
 }
 _COUNTER_TABLES = ("documents", "document_versions")
 _COUNTER_COLUMN = "chunk_count"
@@ -123,6 +149,26 @@ ON CONFLICT (chunk_id) DO UPDATE SET
     content = EXCLUDED.content,
     index_version_id = EXCLUDED.index_version_id,
     metadata = EXCLUDED.metadata
+"""
+
+#: R76. The read is a GROUP BY rather than a count because the answer has to name the
+#: profile the stored vectors were produced under, not only how many of them there are.
+#: Both columns are NOT NULL (migrations/0010_pgvector_chunks.sql:144-145), so an empty
+#: model or a zero width in a group is itself the evidence of an unlabelled generation.
+_VECTOR_SCOPE_PROBE_SQL = f"""
+SELECT embedding_model, embedding_dimension, COUNT(*) AS row_count
+FROM {VECTOR_MIRROR_TABLE}
+WHERE vector_id = ANY(%s::text[])
+GROUP BY embedding_model, embedding_dimension
+"""
+
+#: The scope predicate is not decoration. It is what stops a generation that was not the one
+#: probed from being stamped by this version: a row whose profile moved between the read and
+#: the write stops matching, and the step refuses the mismatch instead of hiding it.
+_TAG_VECTOR_VERSION_SQL = f"""
+UPDATE {VECTOR_MIRROR_TABLE}
+SET index_version_id = %s, updated_at = NOW()
+WHERE vector_id = ANY(%s::text[]) AND embedding_model = %s AND embedding_dimension = %s
 """
 
 
@@ -965,6 +1011,38 @@ def publication_checksum(publication: DocumentIndexPublication) -> str:
 
 
 @dataclass(frozen=True)
+class VectorTagging:
+    """What one publication did to ``chunk_vectors.index_version_id``.
+
+    Three numbers because they answer three different questions. ``carried`` is how many
+    vector ids the publication named; ``existing`` is how many rows the vector mirror
+    actually holds for them; ``tagged`` is how many this publication bound to its own index
+    version. ``carried - existing`` is the mirror not having caught up, which is a state to
+    report, and a ``tagged`` above zero with rows present is the whole point of the step: a
+    caller that wants to know whether the chain reached the table reads this, not a log line.
+    """
+
+    carried: int = 0
+    existing: int = 0
+    tagged: int = 0
+    scope: EmbeddingScope = EmbeddingScope.unknown()
+
+    @property
+    def missing(self) -> int:
+        """Ids this publication named that the vector mirror holds no row for."""
+        return max(self.carried - self.existing, 0)
+
+    def as_dict(self) -> dict:
+        return {
+            "carried": self.carried,
+            "existing": self.existing,
+            "tagged": self.tagged,
+            "missing": self.missing,
+            "scope": self.scope.as_dict(),
+        }
+
+
+@dataclass(frozen=True)
 class PublicationOutcome:
     index_id: str
     index_version_id: str
@@ -978,6 +1056,8 @@ class PublicationOutcome:
     warnings: tuple[str, ...] = ()
     embedding_model: str | None = None
     dimension: int | None = None
+    vector_rows_tagged: int = 0
+    vector_rows_missing: int = 0
 
     def as_dict(self) -> dict:
         """The public shape: enough to trace a publication without a server path."""
@@ -995,6 +1075,11 @@ class PublicationOutcome:
             # cannot see this cannot tell a fresh publication from a stale one.
             "embedding_model": self.embedding_model or SCOPE_UNKNOWN,
             "dimension": self.dimension if self.dimension else SCOPE_UNKNOWN,
+            # R76: how much of the vector mirror this publication bound to its own index
+            # version, and how much of it it could not name. Tagged 0 and missing 0 is an
+            # install that holds no vector rows, not a failure; the warnings say which.
+            "vector_rows_tagged": self.vector_rows_tagged,
+            "vector_rows_missing": self.vector_rows_missing,
         }
 
 
@@ -1006,10 +1091,22 @@ class IndexMirrorSession:
     statements on the store would commit and roll back through each other's transaction.
     """
 
-    def __init__(self, connection, *, counters_enabled: bool, degraded_reason: str = ""):
+    def __init__(
+        self,
+        connection,
+        *,
+        counters_enabled: bool,
+        vectors_enabled: bool = False,
+        degraded_reason: str = "",
+    ):
         self._connection = connection
         self.enabled = connection is not None
         self.counters_enabled = counters_enabled
+        # Whether chunk_vectors is there to be bound into. Defaults to off so a session
+        # built without a schema probe -- an older caller, or a unit test holding one
+        # statement -- never guesses that the table exists, the same way counters_enabled
+        # has to be told rather than inferred.
+        self.vectors_enabled = vectors_enabled
         self.degraded_reason = degraded_reason
 
     def commit(self) -> None:
@@ -1199,6 +1296,105 @@ ON CONFLICT (resource_type, resource_id, version_id) DO UPDATE SET
             )
         return stored
 
+    def tag_vector_index_version(
+        self, publication: DocumentIndexPublication, version: IndexVersion
+    ) -> VectorTagging:
+        """Bind this publication's vector rows to its index version, or refuse.
+
+        ``chunk_vectors.index_version_id`` is the column that answers "which published
+        version do these vectors belong to", and until now nothing wrote it: the dual write
+        leaves it NULL on purpose, because the retriever that performs it has never heard of
+        index versions. The publication that follows it has, so this is the step that closes
+        that open end.
+
+        Two rules, both fail-closed:
+
+        * The stored rows speak for their own profile. Every row about to be stamped carries
+          the model and width that actually produced its vector. If that is not the scope of
+          the version being published, the mirror is a different generation from the index,
+          and stamping it would make the half state *readable as a finished one* -- a search
+          could then filter on ``index_version_id`` and trust vectors some other embedder
+          computed. Refused with R22's own drift codes, so the publication aborts inside
+          the one transaction and neither the registry nor the mirror moves.
+        * A row that is simply not there is not a disagreement. VECTOR_DUAL_WRITE is off by
+          default and chunk_vectors is empty in exactly that state, which is the documented
+          deployment posture rather than corruption. Those ids are counted and reported as a
+          warning; the publication still proceeds, because refusing here would take index
+          bookkeeping away from every install that has not adopted pgvector.
+
+        Crash safety (the all-or-nothing the mirror already promises): this runs in the same
+        transaction as the chunk rows, before ``mark_published`` and before the commit. A
+        process that dies between here and the commit leaves these rows at NULL -- "not yet
+        published", the same shape a dual-written row has before any publication reached it
+        -- never stamped with a version id that never became current. There is no partial
+        visible state to reconcile, and a retry re-runs the same two statements.
+        """
+        vector_ids = list(dict.fromkeys(str(item) for item in publication.vector_ids if str(item)))
+        if not vector_ids:
+            return VectorTagging()
+        publishing_scope = version.scope
+        groups: list[tuple[EmbeddingScope, int]] = []
+        for row in self._execute(_VECTOR_SCOPE_PROBE_SQL, (vector_ids,)).fetchall():
+            values = list(row.values()) if isinstance(row, dict) else list(row)
+            if len(values) < 3:
+                continue
+            try:
+                dimension = int(values[1] or 0)
+            except (TypeError, ValueError):
+                dimension = 0
+            try:
+                count = int(values[2] or 0)
+            except (TypeError, ValueError):
+                count = 0
+            groups.append((EmbeddingScope(str(values[0] or ""), dimension), count))
+        existing = sum(count for _scope, count in groups)
+        codes: list[str] = []
+        for stored_scope, _count in groups:
+            for code in stored_scope.disagreement(publishing_scope):
+                if code not in codes:
+                    codes.append(code)
+        if codes:
+            stored_scope, _count = groups[0]
+            raise IndexScopeError(
+                codes[0],
+                f"{VECTOR_MIRROR_TABLE} holds {existing} vector rows for {publication.filename} "
+                f"produced under {stored_scope}, which is not the profile this publication "
+                f"is publishing ({publishing_scope}): binding them would leave the index on "
+                "one embedder and the vector mirror on another",
+                index_id=publication.index_id,
+                index_version_id=version.index_version_id,
+                version_scope=stored_scope,
+                configured_scope=publishing_scope,
+                codes=tuple(codes),
+            )
+        if not existing:
+            # Nothing to bind, so no statement is spent: with the dual write off this is the
+            # ordinary path. The probe above is the read that proves the chain reached the
+            # table, and carried/missing is what the caller gets back for it.
+            return VectorTagging(
+                carried=len(vector_ids), existing=0, tagged=0, scope=publishing_scope
+            )
+        stored_scope = groups[0][0]
+        cursor = self._execute(
+            _TAG_VECTOR_VERSION_SQL,
+            (
+                version.index_version_id,
+                vector_ids,
+                stored_scope.embedding_model,
+                stored_scope.dimension,
+            ),
+        )
+        tagged = int(getattr(cursor, "rowcount", 0) or 0)
+        if tagged != existing:
+            raise ValueError(
+                f"{VECTOR_MIRROR_TABLE} bound {tagged} of {existing} vector rows for "
+                f"{publication.filename}; the stored profile moved during this publication, "
+                "so nothing is claimed to be published that was not bound"
+            )
+        return VectorTagging(
+            carried=len(vector_ids), existing=existing, tagged=tagged, scope=stored_scope
+        )
+
     def mark_published(
         self,
         publication: DocumentIndexPublication,
@@ -1326,7 +1522,10 @@ class PostgresIndexStore:
             except Exception:
                 pass
             return IndexMirrorSession(None, counters_enabled=False, degraded_reason=reason)
-        missing = [table for table in _MIRROR_TABLES if not _table_is_present(present, table)]
+        # The required four only: chunk_vectors degrades on its own, see VECTOR_MIRROR_TABLE.
+        missing = [
+            table for table in _MIRROR_REQUIRED_TABLES if not _table_is_present(present, table)
+        ]
         if missing:
             reason = "index mirror tables are not migrated: " + ", ".join(missing)
             logger.warning(f"[Index] {reason}; run the migrations before trusting index bookkeeping")
@@ -1336,7 +1535,11 @@ class PostgresIndexStore:
                 pass
             return IndexMirrorSession(None, counters_enabled=False, degraded_reason=reason)
         counters_enabled = all((table, _COUNTER_COLUMN) in present for table in _COUNTER_TABLES)
-        return IndexMirrorSession(connection, counters_enabled=counters_enabled)
+        return IndexMirrorSession(
+            connection,
+            counters_enabled=counters_enabled,
+            vectors_enabled=_table_is_present(present, VECTOR_MIRROR_TABLE),
+        )
 
 
 class IndexPublisher:
@@ -1389,6 +1592,7 @@ class IndexPublisher:
         )
         warnings: list[str] = []
         mirrored = False
+        vector_tagging = VectorTagging()
         session: IndexMirrorSession | None = None
         try:
             if self.store is not None:
@@ -1412,6 +1616,28 @@ class IndexPublisher:
                 else:
                     self._step("chunks", lambda: session.write_chunks(publication, version))
                 self._step("validate", lambda: session.validate(publication, version))
+                # Bound the vectors before the version is called published, and in the same
+                # transaction: a current version must never be readable as owning vector rows
+                # that are not tagged to it.
+                named_vectors = any(str(item) for item in publication.vector_ids)
+                if session.vectors_enabled:
+                    vector_tagging = self._step(
+                        "vector_index_version",
+                        lambda: session.tag_vector_index_version(publication, version),
+                    )
+                    if vector_tagging.missing:
+                        warnings.append(
+                            f"{vector_tagging.missing} of {vector_tagging.carried} vector ids "
+                            f"for {publication.resource_version_id} have no row in "
+                            f"{VECTOR_MIRROR_TABLE}; the index published without a complete "
+                            "vector mirror to bind"
+                        )
+                elif named_vectors:
+                    warnings.append(
+                        f"{VECTOR_MIRROR_TABLE} is not migrated; apply "
+                        "migrations/0010_pgvector_chunks.sql to bind index_version_id "
+                        "into the vector mirror"
+                    )
                 self._step("publish", lambda: session.mark_published(publication, version, previous_id))
                 if session.counters_enabled:
                     self._step("chunk_count", lambda: session.record_chunk_count(publication))
@@ -1445,6 +1671,8 @@ class IndexPublisher:
             warnings=tuple(warnings),
             embedding_model=version.embedding_model,
             dimension=version.dimension,
+            vector_rows_tagged=vector_tagging.tagged,
+            vector_rows_missing=vector_tagging.missing,
         )
 
     def _current_id(self, index_id: str) -> str | None:
