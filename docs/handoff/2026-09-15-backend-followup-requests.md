@@ -1993,3 +1993,34 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 ### 五、R130 已派
 
 `Chandrasekhar`/`01a0c18c`@`be-r130`（09-21 10:0x `spawn_agent` 一次，基线 `6500173`，开工 0 脏项）。判据全文 = **§65 二**；🔴 已明令禁碰 `scripts/rebuild_index.py`（R125 刚落树，`--chroma-dir` 等新参数归它），禁碰真机三服务与双写开关。
+
+## 67. 本班第一格（09-21 09:3x–10:1x，总控第三十三班，主树 `fd6aa8e`）：**R116 与 R127 并树后的账 + 四枚新派工判据全文（R119 / R33 / R38 / R132）**
+
+### 一、R119（`Erdos`/`01a0bf41`@`be-r119`，基线 `3b8a2e1`）· 历史预留常数 322 与它那把假尺
+
+- **实测事实（总控本班在 `3b8a2e1` 量的）**：`app/rag/retrieval_pipeline.py:583 CONTEXT_SHELL_RESERVE_TOKENS = 632`、`:591 CONTEXT_HISTORY_RESERVE_TOKENS = 322` ⇒ 合计 954；🔴 而量历史单价的尺是假的——`tests/test_r112_prompt_packing.py:180` 写的是 `seed.append(AIMessage(content=("上一轮的结论：限额以制度为准，来源见文件名。" * 6)[:400]))`，那句 **22 字 × 6 = 132 字**，`[:400]` 是**空操作** ⇒ `_measured_history_unit_price()` 量的是 132 字答案的单价，`:274 test_history_reserve_covers_the_pinned_number_of_turns`（`COVERED_HISTORY_TURNS = 2`）因此**绿着**；§55 L1735 记的真 400 字答案是**每轮 403–429 枚** ⇒ 322 枚只够 **0.75 轮**。反向那半：R116 实测壳 **208–464 枚** ≪ 钉死的 632 ⇒ 两枚预留一枚被高估、一枚被低估，必须**一起重排**。
+- **判据**：① 先修尺（夹具喂真 400 字级答案，字数走 R116 台账的 `answer_chars` 分布取实测口径，注释里写明"以前 132 字冒称 400 字"）；② 两枚常数按实测算式 + 样本 n 重填，🔴 **不许整十整百**（`:285 test_reserves_are_measured_numbers_not_round_guesses` 会咬）、**不许估算**（§21 那条照用）；③ 🔴 会踩 `test_r116_measured_room.py:166` 的 `_reserve() == 954` 绊线——**不许放宽/删/改比较符**，正确解法见看板 §4BH.16 七①，并要求把 R116 判据 2 那个「17/17 变实料」的数**在新尺下重算重报**；④ `0 < RESERVE < context_pack_capacity()` 仍成立、room 增减给方向与幅度、不许为分数好看撑爆总量；⑤ 反证两把（抄回 632/322 ⇒ ①②红；夹具改回 132 字 ⇒ 单价红并指名"尺被改小"）。
+- **写域**：`retrieval_pipeline.py` 只动那两枚常数与注释块 `:584-591`；`tests/test_r112_prompt_packing.py` 夹具与三枚预留用例；`tests/test_r116_measured_room.py` 只动③那枚绊线与其台账引用；`scripts/perf_probe_run5_ledger.py` 只加取数口径、**不许改已烘的实测数值**（要改就逐行给差值）；新 `tests/test_r119_*.py`。`CONTEXT_PACK_TIER` / `DOC_HIT_CONTENT_CHARS` / 装箱算法**一行不许动**。
+
+### 二、R33（`Wegener`/`01a0bf45`@`be-r33`，基线 `fd6aa8e`）· 历史裁剪改成零模型（判据以解锁图 §G-4 改写版为准，§21 L505 原文大半已被 R30/R112/R117/R122 吃掉）
+
+- **现状锚点**：`app/agents/orchestrator.py:50` import、**`:342 all_msgs = compress_messages(all_msgs, _make_model(ModelTier.COMPRESS))`** ⇒ 裁剪本身仍多发一发模型；`app/memory/summarizer.py:37` 走模型、`:49` 把摘要塞成 `SystemMessage("【历史摘要】…")` 放最前；连带面 `app/common/model_budget.py:185 ModelTier.COMPRESS: 512`、`app/common/stage_timing.py:60 "compress": ""`（该表把它归在"五段之外"）、`app/memory/__init__.py:8/:23` 再导出。
+- **判据**：① `orchestrator.py` 内 `ModelTier.COMPRESS` **零调用点**，钉成 **AST 级**用例（grep 不算）；枚举保留还是删净由它给理由，删则必须同批改 `model_budget.py:185`+`contracts.py`+`stage_timing.py:51-60` 三处；② 新裁剪**纯确定性、零 provider 调用**，计数桩复用 `tests/test_r42_zero_model_calls.py` 的桩形，同输入必同输出；③ 🔴 硬护栏：裁剪后 `where`/`pred` 权限谓词文本与 `[来源: …]` 定位串**一条不少**，反例文本从 `app/rag/filters.py` 与 `app/agents/evidence.py:82` **取真源不许手抄**；④ 裁剪后 prompt 估算不得变胖 + 保留条数下限写明轮数与理由；⑤ 反证两把（改回走模型 ⇒ ①②红；摘护栏 ⇒ ③红）。
+- **它自己刚钉的警报必须仍绿**：`tests/test_r118_subgraph_memory.py` 两枚注释钉 + `test_r98_checkpointer_backend.py`；🔴 禁碰 `:198` 装配与 `:212-215` 的 `checkpointer=`（R128 的刀）。真机"答案不退化"验收不在本单，由总控在 run6 观察；若它判断零模型前提下摘要语义必然损失信息，**要求它照实说并给替代方案，不许做一枚假绿**。
+
+### 三、R38 代码半（`Laplace`/`01a0bf4f`@`be-r38`，基线 `6f3777d`）· 计量列不再写零
+
+- **缺陷锚点（总控实测）**：`app/common/model_handler.py:360` 原生 `/api/chat` 腿只读 `output_tokens = body.get("eval_count")`，🔴 **`prompt_eval_count` 全仓 `app/` 零引用** ⇒ 服务端报了输入 token 而产品丢掉；`ModelReply`（同文件，`class ModelReply(str)`）无 input 侧字段；`app/trace/spans.py:269 model_token_counts()` 只认 LangChain 形状，拿不到就 `:274` 返回两个 None；`app/trace/store.py:270-272` 把两值写进 `model_calls` INSERT（列见 `migrations/0002:147`）。
+- **判据**：① 事实链逐枚锚点 + 一枚"改动前就存在的反证用例"（喂只带两枚 `*_eval_count` 的假应答 ⇒ 改前 `input_tokens` 必为 None）；② 原生腿出口补读 `prompt_eval_count` 经 `ModelReply` 带出，`model_token_counts` 对两类应答都取得到，None 语义与 `eval_count` 对齐，🔴 **绝不许估算**（字符数/外推/`total-output` 反推都不行），并把"缺失即 NULL"钉成用例；③ 至少一枚用例证明两值真进 `store` 侧 values（用仓里**现有**假连接模式）；④ `cached_tokens` 归真：接真值来源，或在注释＋文档明写「本机 Ollama 不报，0 是实测事实」，**不许为好看改成非 0**。
+- **写域**：`model_handler.py`、`app/trace/spans.py`、`app/trace/store.py`、`app/agents/nodes.py`（只动 usage 读取处）、`docs/api/contract-v1.md`（**只许最小订正 usage 相关句**）、新 `tests/test_r38_*.py`。真机"抽查一问与 Ollama 自报一致"那半**归总控等窗口**，本单不开 HTTP。
+
+### 四、R132（`Hooke`/`01a0c167`@`be-r132`，基线 `fd6aa8e`）· 契约散文与 `_is_followup` 的一致性钉（新单，本段即判据全文）
+
+- **由来**：R127 收口时 `Wegener` 具名报告「全仓没有任何用例读 `contract-v1.md` 那段会话/记忆语义 ⇒ 一致性纯人治」。本班采纳成单。
+- **判据**：① 用 **ast** 从 `app/api/v1/chat.py` 取 `_FOLLOWUP_PREFIXES`/`_REWRITE_MARKERS`/`_FORM_MARKERS`/`_PREVIOUS_ANSWER_MARKERS`/`_SITUATION_MARKERS` 五枚常量的标识符名与字面量集合（现位 `:698-710`），🔴 测试文件里**一处词表都不许手抄**；② 契约那段必须逐字点名五枚常量名（防改名漂移）；③ 每族**至少一枚代表词**必须出现在散文里，交集按①的实测集合求，不许硬编码"该出现哪几个词"；④ 保证侧与不保证侧两半都在（锚词 `Guaranteed across turns` / `Explicitly **not** guaranteed`），且不保证侧点名四条 worker 腿与「改写≠已解析指代」；⑤ 否定式钉：`closed prefix list` 与 `starts with one of` 那类旧口径字样不许复活；⑥ 散文引用的文件名必须真实存在，且 `tests/test_r126_rewrite_prev_turn.py` 里确实有断 12/93 两数的用例；⑦ 反空转三把（改名⇒②红；整族清空⇒③红；改回旧口径⇒⑤红），变异实验**单进程串行 + 每步断言 restore sha + 日志头尾各插一次未改动对照组**。
+- **写域**：**只有**新用例 `tests/test_r132_*.py`。🔴 禁改 `app/api/v1/chat.py` 与 `docs/api/contract-v1.md` 的任何字节；**若发现散文与代码今天已不一致，停下具名上报，不许顺手修**（那是别人的写域，且是一条新账）。
+
+### 五、本班两笔要转出去的账
+
+- `Erdos`（R116 判据 6）定性出两处台账缺线，**都不是它的写域**：`app/rag/retrieval_pipeline.py:766` 的 `leg=retrieval` 只走 `pack_hit_list` 整条丢弃、从不裁桩 ⇒ 29 枚天然无 `stub=` 账，但同口径缺 `room_total/room_left/truncated/ledger_packed_tokens/prompt_estimate_tokens`（只有 `room`）；`app/agents/tools.py:1019` 证据袋记账 ⇒ 101−81 = 20 枚「装箱未送出故不记」不是漏接。它已按本班要求以 ≤5 行交回字段需求，**由总控转派给持有这两枚文件的 Agent**（R119 正持 `retrieval_pipeline.py`，但它的写域被本单严格限死在两枚常数＋注释块 ⇒ 补线另立单，不许塞进 R119）。
+- 规矩一条（源自 R127 的跨单冲突）：**执行层不许 rebase/merge 主树**，所以它的交付永远只对它那一版的基线为真；总控在并树之前必须把「与主树现值有语义牵扯」的每一件（契约、文档、被后续单改过的行为）按主树逐句核过——本班这笔是靠 `Wegener` 自己在回执里写明「这段散文对主树为真、对本树为假」才没漏掉的。
