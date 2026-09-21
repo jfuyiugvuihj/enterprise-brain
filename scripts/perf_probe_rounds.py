@@ -192,8 +192,22 @@ def tool_result_text(hits, cap):
 
 def real_chunk_text(cap):
     """Read the chunk text tonight KB actually holds, straight off the read-only
-    documents dir. Tonight that is ONE file of 116 chars, which is why a synthetic
-    500-char chunk overstates the real generation prompt by ~4x."""
+    documents dir.
+
+    Dated measurement (09-19 that night): the KB then held ONE file of 116 chars, so
+    this function fell back to ``cn_text(116)`` and a synthetic 500-char chunk looked
+    about 4x the real generation prompt. That ~4x is a *that-night* ratio and must not
+    be quoted as today's ruler.
+
+    Re-measured 09-21 against run5 (跟进单 §57 追加 2): this tree's ``documents/`` has
+    zero ``.md`` files (95 ``.txt`` + 2 ``.pdf``), so the 116-char fallback is still not
+    real corpus; the real per-hit size now has to come off the backend log instead.
+    Measured with the product's own ruler, the probe's single synthetic chunk is
+    ``text_pack_tokens("[1] 来源:...\\n" + cn_text(DOC_HIT_CONTENT_CHARS))`` = 445 tokens,
+    while run5's doc-leg per-hit median is 275 tokens (n=321) -- i.e. the synthetic chunk
+    overstates a real hit by ~1.6x, not ~4x. Reproduce with
+    ``python scripts/perf_probe_run5_ledger.py --format hits``.
+    """
     parts = []
     for path in sorted((APP_ROOT / "documents").glob("*.md")):
         text = path.read_text(encoding="utf-8", errors="replace")
