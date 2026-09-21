@@ -24,6 +24,56 @@ Missing identity, missing scope, or an authorization policy error is not an admi
 fallback. The boundary must reject the operation with `401`, `403`, or
 `authorization_unavailable` as appropriate.
 
+## Session and Cross-Turn Memory Semantics (2026-09-21, R118 plan B / R127)
+
+`POST /api/v1/ask` accepts an optional `session_id`. Supplying one reuses the same
+conversation thread for transcript storage, cancellation generations and HITL parking.
+It is **not** a promise that the specialist workers re-read what they retrieved on an
+earlier turn. Because that difference changes how a caller must phrase a follow-up, the
+boundary is stated here in prose. No field, event name, status code or payload shape is
+introduced or changed by this section.
+
+Guaranteed across turns of one `session_id`:
+
+- The session transcript itself (`sessions` / `session_messages`), so a client can re-render
+  earlier questions and answers.
+- Best-effort rewriting of anaphoric follow-ups: before dispatch, a message may be rewritten
+  into a standalone question. Since R126 the trigger is a text-only judgement (no model call,
+  no lookup) that asks one thing: can this sentence stand on its own, or does it need the
+  previous turn to supply its subject, object or comparison basis? It is a union of five
+  wording families, **not** a closed prefix list: sentence-initial deixis (`那` / `它` / `这` /
+  `他们` / `她们` / `换` / `改成` / `如果` / `要是` / `请给` / `只给`); a demand to re-judge or
+  recompute part of the previous answer (`换成` / `改为` / `再算` / `换个` etc.); a
+  meta-instruction about how the previous answer was worded (`更简单` / `通俗` / `大白话` /
+  `总结` / `不要引用` etc.); a comparison against what was said before (`矛盾` / `前面说` /
+  `刚才说` / `上面说` etc.); and a bare added situation whose rule came from the previous turn
+  (`合住` / `昨晚` / `叠加` / `报多少` etc.). The "etc." is deliberate: the authoritative lists
+  live in `app/api/v1/chat.py` (`_FOLLOWUP_PREFIXES`, `_REWRITE_MARKERS`, `_FORM_MARKERS`,
+  `_PREVIOUS_ANSWER_MARKERS`, `_SITUATION_MARKERS`) and are expected to grow, so this section
+  names the families instead of repeating a vocabulary that would then go stale, which is how
+  the sentence it replaced stopped being true. Deixis is excused at the start of a sentence
+  when the object or the time is already spelled out (`这份报告`, `那张图表`, `这个月`, `那周`),
+  and a lone `他` / `她` is possessive, so only `他们` / `她们` count. This is a wording
+  heuristic, not an anaphora resolver: it promises nothing about follow-ups phrased outside
+  those families, and such messages are dispatched verbatim. Measured on the shipped
+  105-question set it takes all 12 `多轮对话` questions and none of the other 93
+  (`tests/test_r126_rewrite_prev_turn.py`); the seven-prefix list it replaced reached only 4
+  of those 12. The caller's original text is still used unchanged whenever the rewriting model
+  leg is unavailable or rate-limited.
+- Per-user long-term memory recall, injected to the supervisor as `【用户历史记忆】`. It is
+  keyed by the authenticated user, not by the session, so it is not a private
+  per-conversation store and two sessions of one user share it.
+
+Explicitly **not** guaranteed, and callers must not depend on it:
+
+- A worker leg (`doc` / `data` / `chart` / `export`) remembering the documents or rows it
+  fetched in a previous turn. Each worker turn starts cold: the prompt that leg sees is its
+  system instruction plus this turn's question, so a follow-up that omits its subject can be
+  retrieved against the wrong terms. Restate the subject in the follow-up, or pass the
+  intended document explicitly.
+- That a rewritten question proves the server resolved the reference. Rewriting is a text
+  transform, not evidence of memory.
+
 ## REST Error Envelope
 
 Error responses use a stable `code` from:
