@@ -210,7 +210,7 @@ CRLF/LF（字节数差 = 行数，已逐个核对），所以读容器内的模�
 
 ```
 v1_supervisor  wall 29.598s
-  usage.prompt_tokens      543   cached_tokens 0
+  usage.prompt_tokens      543   cached_tokens 292   <-- [订正 R146] 原写 0，与同目录 raw/prodpath.jsonl 第 2 行不符
   usage.completion_tokens   97
   content_chars              0      <-- 用户在屏幕上看到的内容
   reasoning_chars          134      <-- 模型实际生成、被产品丢掉的内容
@@ -231,9 +231,16 @@ v1_supervisor  wall 29.598s
 粗算：现状 160.6 s 里约 **45–55 s 花在被丢弃的思考 token 上**（按每发思考占比折半估）。
 `[算术]`，精确值见 `docs/perf/raw/think_off.jsonl`（第 5 节 E 档）。
 
-同时确认：`usage.prompt_tokens_details.cached_tokens` 可见。产品真实请求里
-`cached_tokens=0` —— 也就是说**产品的 prompt 前缀每次都不同（带了记忆和会话内容），
-Ollama 的前缀缓存一条都没命中**，第 2.1 节的冷 prefill 速率就是产品实际付的速率。`[实测]`
+同时确认：`usage.prompt_tokens_details.cached_tokens` 可见。
+
+> 🔴 **本节结论订正（09-21，总控亲读 `docs/perf/raw/prodpath.jsonl` 五行现读）**：原文写
+> 「产品真实请求里 `cached_tokens=0`，前缀缓存一条都没命中」，与本目录自己的 raw 对不上：
+> 同一发 `v1_supervisor` 是 **543 prompt / 292 cached**，`v1_doc_react_2` 是 **769 / 257**，
+> 只有 `v1_query_rewrite` 是 **116 / 0**（那才是真零，它的 prompt 每次都不同）。⇒ 「产品前缀
+> 每次重写、缓存全不命中」这句**不成立**，第 2.1 节用「冷 prefill 速率＝产品实际付的速率」
+> 做的算术要按「部分命中」重读。账面上取不到这枚数是我们自己在两处扔的（`model_handler` 抄帧
+> 扔一次、`model_token_counts` 记账再扔一次），不是服务器没报（R146）。另：兼容腿**流式**默认
+> 不带 usage，但带 `stream_options.include_usage` 就带（R31 探针）——「流式测不到」不是恒真。`[实测]`
 
 ### 4.1 端点级 token 归属（`usage` 不受排队影响，可直接采信）
 
