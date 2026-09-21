@@ -768,12 +768,20 @@ reddens if the two disagree, so the mapping is written down once and mirrored, n
 - Screen names are route names and come from the router (R104). A backend row may name a route;
   it may not define one, and `frontend/**` is not this ticket's to edit.
 - `report` is the only tier with a second addressable surface, and that route answers only when
-  `REPORT_LANE_VIA_QUEUE` is on (`app/api/v1/chat.py:771-786`); with it off, the tier is served
+  `REPORT_LANE_VIA_QUEUE` is on (`app/api/v1/chat.py:828-843`); with it off, the tier is served
   synchronously by `/ask` and the queue path does not exist.
-- What the client sends in `AskRequest.lane` is **not** the tier. `/ask` today recognises only the
-  literal `report` and ignores anything else (`chat.py:776-786`); R32's 非法档 → `400` is not
-  implemented. The tier of a measured request is R42's verdict, so a request cannot choose its own
-  SLO bucket.
+- What the client sends in `AskRequest.lane` is **not** the tier. The field is a closed set of four
+  values -- `""` (declare nothing), `qa`, `analysis`, `report` (`chat.py:856-887`,
+  `ASK_LANE_VALUES`) -- and anything else is refused with `400` and stable code
+  `validation_error`, before a session row, a queue entry or a model call is spent. The previous
+  draft of this line said that refusal “is not implemented”; R32 implemented it, so the sentence
+  now reads the other way. Empty means the server picks: the tier of a measured request is R42's
+  verdict (`app/agents/nodes.py::classify_route`, a function of the question text alone), so a
+  request cannot choose its own SLO bucket. Accepting a label is not the same as honouring it --
+  the only behaviour a client label can change today is the `report`-plus-switch-on detour above,
+  measured dimension by dimension by `tests/test_r32_lane_contract.py`, which is also why
+  `frontend/**` still ships no tier selector (R32's fake-control ban: a control that changes
+  nothing is a lie about a feature).
 
 ### 3. One percentile algorithm
 

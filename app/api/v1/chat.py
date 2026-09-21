@@ -843,6 +843,50 @@ def _queue_lane(request) -> str:
     return lane if lane == LANE_REPORT else ""
 
 
+# R32：``AskRequest.lane`` 的取值闭集，以及"写错了就当场拒"那道闸。
+#
+# 为什么新增函数而不是改 _queue_lane：那枚谓词回答的是"这一轮进不进可靠队列"，
+# tests/test_r37_report_lane_enqueue.py:323 逐字钉着它对 qa/analysis 一律回空串——
+# 档位标签不许改变入队判定是 R37 的判据②。本闸管的是另一件事：调用方写了一个服务端
+# 认不得的档位，从前被静默忽略（等于替调用方猜心思），现在当场 400 并给稳定码。
+#
+# LANE_QA / LANE_ANALYSIS 是 app/agents/nodes.py 那两个名字的第二次落地，理由与上面
+# LANE_REPORT 那段注释一样：不抓并发同事的私有名。两份的一致性由
+# tests/test_r32_lane_contract.py 钉住，改任何一边都会红。
+LANE_QA = "qa"
+LANE_ANALYSIS = "analysis"
+#: 空串＝调用方不声明档位，服务端按 R42 判别器以问题文本自选（nodes.classify_route）。
+ASK_LANE_VALUES: tuple[str, ...] = (LANE_QA, LANE_ANALYSIS, LANE_REPORT, "")
+#: 非法档位的稳定码：复用 ErrorEnvelope.code 里**已有**的 validation_error，本单不新造码名。
+#: 同一路由的 503（_enqueue_ask_turn）与 observability / intelligence / open_platform 的
+#: 400 都是这一个码、这一个形状；追认登记见 tests/test_error_code_vocabulary.py::RATIFIED。
+LANE_ERROR_CODE = "validation_error"
+
+
+def _require_valid_lane(request) -> None:
+    """档位取值闸：三档加空串放行，其余 400，且必须跑在任何副作用之前。
+
+    只管取值不管类型：lane 不是字符串时 pydantic 在函数体之前就拒了（与仓内其它 str
+    字段同一个 422 口径）。这里兜的是"字符串存在，但不是任何一个已声明档位"。
+    """
+    lane = getattr(request, "lane", "")
+    if isinstance(lane, str) and lane.strip() in ASK_LANE_VALUES:
+        return
+    allowed = ", ".join(f"'{value}'" for value in ASK_LANE_VALUES)
+    raise HTTPException(
+        status_code=400,
+        detail=ErrorEnvelope(
+            code=LANE_ERROR_CODE,
+            message=f"lane must be one of {allowed}; '' lets the server pick the tier",
+            details={
+                "field": "lane",
+                "allowed": list(ASK_LANE_VALUES),
+                "given": lane if isinstance(lane, str) else None,
+            },
+        ).model_dump(),
+    )
+
+
 def _should_use_data_context(message: str, filename: str) -> bool:
     if not filename:
         return False
@@ -1164,6 +1208,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     request_principal = principal_from_request(http_request) if http_request else None
     if request_principal is None:
         raise HTTPException(status_code=401, detail="authentication_required")
+    # R32：先验取值再动手。这一行必须在建表、绑会话、落库、入队、模型之前，
+    # 非法档位留下的是零副作用，而不是"跑了一半再告诉调用方字段写错了"。
+    _require_valid_lane(request)
     _ensure_sessions_table()
     try:
         session_registry.bind(thread_id, request_principal)
