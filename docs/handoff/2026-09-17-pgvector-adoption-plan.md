@@ -260,6 +260,19 @@
 - 判读只看三个数：`pg_vectors` 与 `chroma_vectors` 是否相等、`only_in_pg` / `only_in_chroma` 是否为空、
   `wrong_width` 是否为空。`index_version_id_null` **不是故障**：retriever 不知道索引版本，双写时留
   NULL 等发布回填（R22 口径，脚本 docstring 也写了），它是待回填计数。
+- ⚠ R76 把这半句里的「等发布回填」变成了事实，读法跟着变（仍不是故障）：回填落在
+  `app/rag/indexing.py` 的 `IndexMirrorSession.tag_vector_index_version` —— 一条
+  `UPDATE chunk_vectors SET index_version_id = <本次发布的版本 id>`，与 `mark_published` 同一个事务、
+  同一次 commit。所以双写开着、0010 已跑、且这枚文档此后**发布过一次**（上传，或
+  `scripts/rebuild_index.py:749` 的逐文档重建，两者走同一个 publisher）⇒ 该行就带上版本 id；
+  还留 NULL 的只剩「写进镜像之后没再发布过」的存量，它掉不回 0 也不代表坏，别按新故障判读。
+- R76 在发布侧另给了两枚读数：上传回执（`PublicationOutcome.as_dict()`）里的 `vector_rows_tagged`
+  与 `vector_rows_missing`，用来指名这次回填走没走到、有多少 id 在镜像里没有行。它们不在本脚本的
+  `--out` JSON 里，两边对不上先查 `VECTOR_DUAL_WRITE` 与 0010 有没有跑。
+- 换 embedding 模型的那道闸也落在同一步：镜像里存着的行如果 `embedding_model` / `embedding_dimension`
+  与本次发布的口径不符，发布**整笔拒绝**（R22 的 `embedding_model_drift` / `embedding_dimension_drift`，
+  失败阶段名 `vector_index_version`），不留「主索引新模型、镜像旧模型」的半张脸。重建窗口里看到这一条
+  报错是预期行为，正确处置是把这一枚文档的向量腿补重做，不是改发布代码。
 
 ### 8.8 第二轮：带题对比（前置第 4 条：Ollama 在位、模型与 `EMBEDDING_MODEL` 同一个）
 
