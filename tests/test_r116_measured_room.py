@@ -46,8 +46,16 @@ perf_probe_rounds = importlib.import_module("perf_probe_rounds")
 
 REFUSED_PACKS = run5.records(run5.MEASURED_REFUSED_RUN5, run5.REFUSED_FIELDS)
 REFUSED_IDS = ["%s:%s#%d" % (row["row_id"], row["leg"], row["refused_seq"]) for row in REFUSED_PACKS]
-#: run5 那批改写发生时的估算 room；今天真源变了就必须整表重测，下面的用例第一件事就是核对它。
-RUN5_ESTIMATED_ROOM = 1606
+#: 🔴 下面三枚全是**历史具名常数**：它们记的是 run5 当时刻被测代码自己的预留与 room，
+#: 不是今天的现值。R119（跟进单 §55 反案）把 ``CONTEXT_SHELL_RESERVE_TOKENS`` /
+#: ``CONTEXT_HISTORY_RESERVE_TOKENS`` 从 632/322 重排成实测值之后，"现值"与"run5 当时的值"
+#: **已经不同源**：台账里的 ``room_left`` 是按 1606 那份房算出来的，拿今天的 room 去反推
+#: ``over_reserve`` 会把两笔账混成一笔（今天的房越少，算出来的"估窄"就越大，那是自己的改动
+#: 而不是真机的事实）。所以本文件的复算一律锚在 run5 自己的那套数上；要引用今天的口径，
+#: 必须先 ``--emit-table`` 重跑一遍采集、把新表烘进来，再另立一单复算。
+RUN5_RESERVE = run5.RUN5_RESERVE                      # run5 当时：壳 632 + 历史 322
+RUN5_CAPACITY = run5.RUN5_CAPACITY                    # run5 当时 analysis 档容量
+RUN5_ESTIMATED_ROOM = RUN5_CAPACITY - RUN5_RESERVE    # =1606，与台账 room_total 逐行同值
 
 
 def _source(name: str) -> str:
@@ -67,11 +75,15 @@ def _reserve() -> int:
 
 
 @pytest.fixture
-def room_sources(monkeypatch):
-    """清掉环境变量再取真源：容量 / 估算 room / 预留三枚数一律由被测代码自己交出。"""
-    monkeypatch.delenv("MODEL_CONTEXT_TOKENS", raising=False)
-    monkeypatch.delenv("MODEL_TIER_ANALYSIS_MAX_TOKENS", raising=False)
-    return context_pack_capacity(), context_pack_room()
+def room_sources():
+    """交出**run5 当时**的（容量, 估算 room）：复算真机台账只能用真机那套尺。
+
+    R116 刚立的时候这里现取被测真源（``context_pack_capacity()`` / ``context_pack_room()``），
+    因为当时"现值 == run5 值"。R119 把预留按实测重排之后两者不再相等，于是改成显式取历史
+    常数——这不是放宽，恰恰是把"复算不许被今天的改动污染"这条钉死：谁再动预留，
+    ``test_run5_anchor_is_history_and_today_is_a_different_pair`` 立刻把两副口径摆出来。
+    """
+    return RUN5_CAPACITY, RUN5_ESTIMATED_ROOM
 
 
 # ==================== 判据 2：17 枚 refused 按实测 room 复算 ====================
@@ -160,16 +172,47 @@ def test_answer_to_criterion_two_all_seventeen_refused_packs_turn_into_material(
 
 
 def test_measured_room_recalculation_inputs_come_from_the_pinned_reserve(room_sources):
-    """复算只用三枚真源数：容量、估算 room、预留。测试里不许另抄一份 1606 / 954。"""
+    """复算只用三枚**历史**真源数：run5 的容量、run5 的估算 room、run5 的预留。
+
+    原来的第二行是 ``assert _reserve() == 954``——那是把"今天的现值"当"run5 当时的事实"用，
+    R119 重排预留后这枚断言必然红。立意正确的说法是：run5 当时的壳+历史预留就是 954，
+    它与今天的现值无关，所以这里比对历史常数，不再比对 ``_reserve()``。
+    """
     capacity, estimated = room_sources
-    assert capacity - estimated == _reserve()
-    assert _reserve() == 954, "预留动过（现值 %d）：run5 的 over_reserve 全部要重算" % _reserve()
-    assert estimated == RUN5_ESTIMATED_ROOM
+    assert capacity - estimated == RUN5_RESERVE
+    assert RUN5_RESERVE == 954, "run5 当时的预留记成 %d 枚，看板 §4BH.11 的账要重对" % RUN5_RESERVE
+    assert estimated == RUN5_ESTIMATED_ROOM == 1606
+    # 台账每行都记着真机当时的 room_total，它必须等于历史锚点；容量本身另核一枚。
+    totals = {row["room_total"] for row in run5.records(run5.MEASURED_PACKS_RUN5, run5.TABLE_FIELDS)}
+    assert totals == {RUN5_ESTIMATED_ROOM}, f"台账 room_total 不再单一：{sorted(totals)}"
+    assert RUN5_CAPACITY == 2560 and RUN5_RESERVE + RUN5_ESTIMATED_ROOM == RUN5_CAPACITY
     shells = [
         run5.measured_shell(row)
         for row in run5.records(run5.MEASURED_PACKS_RUN5, run5.TABLE_FIELDS)
     ]
     assert min(shells) == 90 and max(shells) == 1154, "真机壳的量程动了：room 估窄这枚结论的边界要重描"
+
+
+def test_run5_anchor_is_history_and_today_is_a_different_pair():
+    """R119 追加：现值已按实测重排，两副口径不同源——over_reserve 表不重烘就不许引用。"""
+    live_reserve = _reserve()
+    live_capacity, live_room = context_pack_capacity(), context_pack_room()
+    assert live_capacity - live_room == live_reserve, "今天的容量/room/预留本身就对不上"
+    assert live_reserve != RUN5_RESERVE, (
+        f"现值预留仍是 {RUN5_RESERVE} 枚：R119 的重排没落地，本文件的历史口径写法要退回"
+    )
+    assert (live_capacity, live_room) != (RUN5_CAPACITY, RUN5_ESTIMATED_ROOM), (
+        "今天的 room 与 run5 的 room 还同源：台账锚点白拆了"
+    )
+    assert RUN5_ESTIMATED_ROOM > live_room, (
+        f"今天的估算 room {live_room} 反而比 run5 当时 {RUN5_ESTIMATED_ROOM} 大："
+        "over_reserve 的方向变了，判据 2 那句话得整个重写"
+    )
+    # 引用今天的口径谈 run5 的估窄，必须先重烘台账；这里把差值当场摊开，不许含混。
+    drift = RUN5_ESTIMATED_ROOM - live_room
+    assert drift == live_reserve - RUN5_RESERVE, (
+        f"room 少 {drift} 枚而预留多 {live_reserve - RUN5_RESERVE} 枚，两笔账合不上"
+    )
 
 
 # ==================== 判据 3：打包耗时 vs 生成长度 ====================

@@ -727,6 +727,84 @@ def synthetic_overstatement_ratio(synthetic_tokens: int = None, real_median: int
         raise ValueError("倍率两头都得是正数：synthetic=%r median=%r" % (tokens, median))
     return round(tokens / median, 2)
 
+# ==================== R119 判据 1/2：预留那把尺子的口径 ====================
+
+#: run5 当时被测代码用的两枚预留之和与由此定下的估算 room。R116 的整套"按实测壳复算"
+#: 锚死在这两个**历史**数上：台账里的 ``room_left`` 是按 1606 那份房算出来的，拿今天的
+#: 预留去反推 ``over_reserve`` 会把两笔账混成一笔。R119 重排预留后，现值不再是 954/1606。
+RUN5_RESERVE = 954
+#: run5 当时 analysis 档的装箱容量：台账 89 行 ``room_total + 本轮已装`` 逐行反推出来的真机
+#: 数，与今天的 ``context_pack_capacity()`` 相等纯属两回事同值——引用时别把它当现值。
+RUN5_CAPACITY = 2560
+RUN5_ESTIMATED_ROOM = 1606  # = 台账 89 行 room_total 逐行同值，真机当时的数，不是算出来的
+
+RUN5_ANSWER_CHARS = (
+    15, 15, 15, 21, 21, 37, 37, 37, 132, 158,
+    160, 173, 174, 185, 190, 201, 205, 210, 211, 215,
+    237, 247, 259, 272, 273, 281, 291, 291, 296, 307,
+    307, 317, 320, 322, 348, 353, 360, 362, 366, 372,
+    373, 374, 383, 386, 387, 388, 393, 405, 409, 410,
+    412, 413, 424, 433, 440, 455, 466, 468, 472, 474,
+    483, 486, 489, 491, 500, 500, 507, 508, 513, 519,
+    531, 557, 559, 566, 571, 576, 591, 593, 606, 608,
+    620, 645, 648, 652, 673, 689, 692, 702, 703, 717,
+    745, 759, 764, 809, 869, 894, 951, 962, 999, 1010,
+    1061, 1077, 1206, 1623, 2383,
+)
+
+#: 历史夹具的字数从这里来，**不许手抄**。R112 当年的夹具写的是
+#: ``("上一轮的结论：限额以制度为准，来源见文件名。" * 6)[:400]``——那句 22 字乘 6 等于
+#: **132 字**，``[:400]`` 是个空操作，132 字冒称 400 字。用这把短尺量出来的"每轮历史单价"
+#: 是 161 枚，只有真值的三分之一强，``CONTEXT_HISTORY_RESERVE_TOKENS = 322`` 就是这么来的。
+
+
+def _quantile(sorted_values: list, fraction: float) -> int:
+    """升序表上取"第 ``ceil(fraction * n)`` 个"：全仓分位数只有这一把尺。"""
+    index = int(math.ceil(fraction * len(sorted_values))) - 1
+    return sorted_values[min(len(sorted_values) - 1, max(0, index))]
+
+
+def answer_char_stats(table: tuple = None) -> dict:
+    """真机答案长度分布（字）：R119 历史侧夹具的尺子，中位数就是它定的。"""
+    values = sorted(RUN5_ANSWER_CHARS if table is None else table)
+    if not values:
+        raise ValueError("答案长度表是空的，夹具没有尺子")
+    return {
+        "n": len(values),
+        "min": values[0],
+        "p25": _quantile(values, 0.25),
+        "median": int(statistics.median(values)),
+        "p75": _quantile(values, 0.75),
+        "p90": _quantile(values, 0.90),
+        "max": values[-1],
+    }
+
+
+def fixed_shell(record: dict) -> int:
+    """本轮第一发装箱时"躲不掉的固定开销"：实测壳再扣掉同一轮更早几发已送出的料。
+
+    ``measured_shell`` 是"模型那一发实际看到的 prompt − 本发送出的工具串"，所以同一轮里
+    前面几发送出的工具串也算进了壳。预留管的是本轮开局那份（system 段 + 题面 + 规划文字
+    + 工具调用信封），累加的料由装箱台账自己扣，两笔不许混在一把尺里重复计。
+    """
+    return measured_shell(record) - int(record["delivered_before_tokens"])
+
+
+def first_pack_shell_stats(table: tuple = None) -> dict:
+    """只量"本轮第一发装箱"（``packs == 1``）的固定壳：那才是预留该盖住的形态。"""
+    rows = records(MEASURED_PACKS_RUN5, TABLE_FIELDS) if table is None else list(table)
+    values = sorted(fixed_shell(row) for row in rows if int(row["packs"]) == 1)
+    if not values:
+        raise ValueError("台账里没有 packs==1 的发，固定壳量不出来")
+    return {
+        "n": len(values),
+        "min": values[0],
+        "median": int(statistics.median(values)),
+        "p90": _quantile(values, 0.90),
+        "max": values[-1],
+    }
+
+
 def records(table: tuple, order: tuple) -> list:
     """把烘进仓库的实测行还原成字典：表里只有数，没有第二把尺。"""
     return [dict(zip(order, row)) for row in table]
@@ -753,7 +831,7 @@ def main(argv=None) -> int:
     parser.add_argument("--estimated-room", type=int, default=None)
     parser.add_argument(
         "--format",
-        choices=("refused", "cost", "ledger", "counterfactual", "hits", "census", "pins"),
+        choices=("refused", "cost", "ledger", "counterfactual", "hits", "census", "pins", "ruler"),
         default="refused",
     )
     parser.add_argument("--emit-table", action="store_true")
@@ -782,6 +860,21 @@ def main(argv=None) -> int:
         print(json.dumps(prompt_pack_census(rows), ensure_ascii=False, indent=1,
                            sort_keys=True))
         return 0
+    if args.format == "ruler":
+        # R119：两枚预留各自的"量出来的算式 + 样本 n"，回执与复算共用这一处出口。
+        answer = answer_char_stats()
+        shell = first_pack_shell_stats(records(MEASURED_PACKS_RUN5, TABLE_FIELDS))
+        print("answer_chars(run5 105 题实测)  n=%d median=%d p25=%d p75=%d p90=%d max=%d"
+              % (answer["n"], answer["median"], answer["p25"], answer["p75"], answer["p90"], answer["max"]))
+        print("fixed_shell(run5 packs==1 实测) n=%d median=%d p90=%d max=%d"
+              % (shell["n"], shell["median"], shell["p90"], shell["max"]))
+        capacity, estimated_room = source_room()
+        if capacity is None:
+            raise SystemExit("ruler 取不到被测真源的容量与 room：不许回退抄来的常数")
+        print("live: capacity=%d estimated_room=%d reserve=%d" % (capacity, estimated_room, capacity - estimated_room))
+        print("RUN5 当时: reserve=%d estimated_room=%d" % (RUN5_RESERVE, RUN5_ESTIMATED_ROOM))
+        return 0
+
     if args.format == "hits":
         stats = doc_hit_price_stats(rows)
         print(json.dumps(stats, ensure_ascii=False))

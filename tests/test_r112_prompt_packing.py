@@ -10,11 +10,16 @@ room 是多少（估算口径与实测口径各一个）、实得料多少条几
 ``estimate_text_tokens`` / ``pack_prefix_by_rank`` / ``_fit_unit_to_room``。
 
 那两枚预留常数（``CONTEXT_SHELL_RESERVE_TOKENS`` / ``CONTEXT_HISTORY_RESERVE_TOKENS``）不是
-抄来的，是下面 ``test_*reserve*`` 两枚用例复算出来的。测量口径：拿四条 worker 腿各自的真
-system 段（``DOC_PROMPT`` 等）经真 ``create_react_agent`` 组装，量"最终 ``prompt_tokens``
-− 本轮工具串 token"；扫 4 条腿 × 题面 10/64/256/400 字 × 规划文字 0/120/360 字 × 1~3 轮
-工具调用 取最大值，历史另按"每轮上一问一答"实测单价留两轮。同一个口径也抄了一份在
-``app/rag/retrieval_pipeline.py`` 装箱那一节的注释里——system 段变长就当场红。
+抄来的，是下面 ``test_*reserve*`` 复算出来的。测量口径：拿四条 worker 腿各自的真 system 段
+（``DOC_PROMPT`` 等）经真 ``create_react_agent`` 组装，量"最终 ``prompt_tokens`` − 本轮工具串
+token"；扫 4 条腿 × 题面（**真机实测长度**，见 ``Q_MEDIAN`` / ``Q_LONGEST``）× 规划文字
+0/8/19/114 字 × 1~3 轮工具调用 取最大值，历史另按"每轮上一问一答"实测单价留两轮。同一个
+口径也抄了一份在 ``app/rag/retrieval_pipeline.py`` 装箱那一节的注释里——system 段变长就当场红。
+
+🔴 R119（跟进单 §55 反案）修的就是上面这把尺：老尺有两处**冒称**——题面写成 10/64/256/400
+字（真机只有 8~20 字，n=105），"上一答"写 ``("…" * 6)[:400]``（实际 132 字，``[:400]`` 是空
+操作）。两处都让预留偏离实测：壳侧被虚高的题面抬到 632，历史侧被短尺压到 322。所以本文件
+除了"盖不住就红"，另加"虚高多留也红"——R116 量到的正是预留虚高 ⇒ 白白拒发。
 """
 import ast
 import io
@@ -65,6 +70,15 @@ from app.rag.retrieval_pipeline import (
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESERVE = CONTEXT_SHELL_RESERVE_TOKENS + CONTEXT_HISTORY_RESERVE_TOKENS
 COVERED_HISTORY_TURNS = 2
+
+#: 🔴 R119 之后这两组数**不再同源**：``RESERVE`` 是今天的现值，``RUN5_*`` 是 run5 采集当时刻
+#: 被测代码用的那套（壳 632 + 历史 322 = 954，room 1606）。下面那族 46 枚"按实测 room 复算"
+#: 必须锚在 run5 自己那套上，否则台账里的 ``room_left`` 会被今天的改动二次计价。复算时只把
+#: 配置真源（``MODEL_CONTEXT_TOKENS`` 那一格）调到能复现 run5 room 的位置，装箱算法与被测
+#: 函数一行都不换；壳仍然是真机 ``prompt_tokens`` 量出来的那枚，所以判据 2 的答案不因本单动过。
+RUN5_RESERVE = run5.RUN5_RESERVE
+RUN5_CAPACITY = run5.RUN5_CAPACITY
+RUN5_ESTIMATED_ROOM = RUN5_CAPACITY - RUN5_RESERVE
 
 #: run2 收窗后从采集侧车（仓外 ``%LOCALAPPDATA%\Temp\evalrun\sidecar-run2.jsonl``，105 行
 #: = 50 ``ok`` + 9 ``hitl`` + 46 ``error_event``）逐行读出的**全部** 46 枚撞墙题号，按侧车
@@ -177,7 +191,7 @@ def _assemble_and_measure(system_text, question, tool_chars, prose, rounds=1, hi
     seed = []
     for turn in range(history):
         seed.append(HumanMessage(content=f"上一轮的问题（{turn}）：住宿费限额到底是多少？"))
-        seed.append(AIMessage(content=("上一轮的结论：限额以制度为准，来源见文件名。" * 6)[:400]))
+        seed.append(AIMessage(content=_history_answer_text()))
     seed.append(HumanMessage(content=question))
     graph.invoke({"messages": seed}, config={"recursion_limit": 60})
 
@@ -190,19 +204,55 @@ def _assemble_and_measure(system_text, question, tool_chars, prose, rounds=1, hi
     return estimate_prompt_tokens(messages), tool_tokens
 
 
+#: 历史夹具的"上一答"尺子：run5 全部 105 题 ``answer_chars`` 的实测中位数（字）。
+#: 🔴 以前这里是 ``("上一轮的结论：限额以制度为准，来源见文件名。" * 6)[:400]``——那句 22 字
+#: × 6 = **132 字**，``[:400]`` 是个空操作，132 字冒称 400 字。短尺量出"每轮历史 161 枚"，
+#: 只有真值的三分之一强，``CONTEXT_HISTORY_RESERVE_TOKENS = 322`` 就是这么被撑出来的假绿。
+HISTORY_ANSWER_CHARS = run5.answer_char_stats()["median"]
+_ANSWER_SENTENCE = "上一轮的结论：限额以制度为准，来源见文件名，超标部分需要事前书面审批。"
+
+
+def _history_answer_text() -> str:
+    """交出恰好 ``HISTORY_ANSWER_CHARS`` 字的一条"上一答"，长度当场自证。
+
+    自证这行是 R119 立的关键断言：老 bug 不是"字数写少了"，是**写了个 [:400] 却只凑到
+    132 字**而没人查——所以截完之后必须回头量，不许让"标称长度"和"实际长度"再分家。
+    """
+    text = (_ANSWER_SENTENCE * (HISTORY_ANSWER_CHARS // len(_ANSWER_SENTENCE) + 2))[:HISTORY_ANSWER_CHARS]
+    assert len(text) == HISTORY_ANSWER_CHARS, (
+        f"历史夹具标称 {HISTORY_ANSWER_CHARS} 字，实得 {len(text)} 字：尺子又冒称了"
+    )
+    return text
+
+
+#: 真机题面尺子：run5 评测集里实际出现过的题面长度是 8~20 字（n=105，中位 12 字），而下面
+#: 这张表以前喂的是 10/64/90/800 字的合成题面——"≤400 字"那格实际是 800 字。题面虚高几十倍，
+#: 量出来的壳自然虚高：合成壳上界 632 里有一大半是根本不会这么长的题面撑起来的。R119 只把
+#: **题面**换成真题面（中位那条与最长那条），规划文字与工具调用轮数一格不动，所以这不是
+#: 放宽尺子，是把尺子上唯一那处虚构换掉。
+_BANK = os.path.join(REPO, "tests", "fixtures", "business_evaluation_100.jsonl")
+
+
+def _real_questions() -> tuple:
+    """从 run5 评测集读"最短够用、最长真实"两条题面：长度不手抄。"""
+    with io.open(_BANK, encoding="utf-8") as handle:
+        questions = [json.loads(line)["question"] for line in handle if line.strip()]
+    ordered = sorted(questions, key=len)
+    return ordered[len(ordered) // 2], ordered[-1]
+
+
+Q_MEDIAN, Q_LONGEST = _real_questions()
+
 SHELL_PROBE_CASES = (
-    # (system 段, 题面, 规划文字, 工具调用轮数)
-    ("DOC_PROMPT", "审批通过后多久打款？", "", 1),
-    ("DOC_PROMPT", "那财务是在部门负责人之前还是之后？", "我先查制度原文。", 1),
-    ("DOC_PROMPT", "住宿费限额是多少？" * 10, "我先查制度原文，重点看时限与例外情形。", 2),
-    ("DOC_PROMPT", "请把公司差旅报销制度里关于住宿费、餐费和交通费的限额、审批链条、打款时限、"
-                   "超标处理和发票要求全部列出来并逐条对比，同时给出财务部与销售部口径差异的"
-                   "原文依据，并注明每一条出自哪一份文件的哪一个章节。" * 2,
-     "我先查制度原文，重点看时限与例外情形，再补一次关键词覆盖发票抬头与超标处理。" * 3, 3),
-    ("DATA_PROMPT", "哪个部门花费最高？", "先看排名再看环比。", 2),
-    ("DATA_PROMPT", "本季度和上季度费用总额相比变化多少？" * 8, "我按两个季度分别汇总后对比。", 3),
-    ("CHART_PROMPT", "把各部门费用画成柱状图。", "先取真实数据再画图。", 2),
-    ("EXPORT_PROMPT", "导出这份报告。", "", 1),
+    # (system 段, 题面, 规划文字, 工具调用轮数)——题面一律走真机实测长度，见上面那段
+    ("DOC_PROMPT", Q_MEDIAN, "", 1),
+    ("DOC_PROMPT", Q_MEDIAN, "我先查制度原文。", 1),
+    ("DOC_PROMPT", Q_LONGEST, "我先查制度原文，重点看时限与例外情形。", 2),
+    ("DOC_PROMPT", Q_LONGEST, "我先查制度原文，重点看时限与例外情形，再补一次关键词覆盖发票抬头与超标处理。" * 3, 3),
+    ("DATA_PROMPT", Q_LONGEST, "先看排名再看环比。", 2),
+    ("DATA_PROMPT", Q_LONGEST, "我按两个季度分别汇总后对比。", 3),
+    ("CHART_PROMPT", Q_MEDIAN, "先取真实数据再画图。", 2),
+    ("EXPORT_PROMPT", Q_MEDIAN, "", 1),
 )
 
 
@@ -271,6 +321,34 @@ def test_shell_reserve_covers_the_measured_assembly_shell():
     )
 
 
+def test_shell_reserve_is_not_inflated_above_the_measured_ceiling():
+    """反方向同样要红：预留不许高于实测壳上界，多留的每一枚都是从装箱房里白扣的。
+
+    R116（跟进单 §62 二）量到的病就是"预留虚高 ⇒ 真机 room 被估窄 ⇒ 白白拒发"，所以
+    "盖得住"只是半个判据。这一枚把另一半钉上：预留 == 实测上界，想抬高它必须先让壳真的
+    变长（上一枚红），想压低它必须先让壳真的变短（这一枚红）。
+    """
+    ceiling = _measured_shell_ceiling()
+    assert CONTEXT_SHELL_RESERVE_TOKENS == ceiling, (
+        f"壳预留 {CONTEXT_SHELL_RESERVE_TOKENS} 枚 ≠ 实测上界 {ceiling} 枚：多留的 "
+        f"{CONTEXT_SHELL_RESERVE_TOKENS - ceiling} 枚会从本轮装箱房里白扣掉（R116 的估窄病）"
+    )
+
+
+def test_shell_reserve_also_covers_the_real_machine_first_pack():
+    """合成壳之外再要一把真机尺：run5"本轮第一发装箱"的实测固定壳必须被盖住。"""
+    stats = run5.first_pack_shell_stats()
+    assert stats["n"] == 37, f"真机第一发样本 {stats['n']} 枚，台账动过"
+    assert CONTEXT_SHELL_RESERVE_TOKENS >= stats["max"], (
+        f"真机第一发固定壳实测最大 {stats['max']} 枚（n={stats['n']}）已超预留 "
+        f"{CONTEXT_SHELL_RESERVE_TOKENS} 枚：合成形态表量窄了"
+    )
+    assert CONTEXT_SHELL_RESERVE_TOKENS - stats["max"] <= 320, (
+        f"预留 {CONTEXT_SHELL_RESERVE_TOKENS} 比真机实测最大壳 {stats['max']} 高出 "
+        f"{CONTEXT_SHELL_RESERVE_TOKENS - stats['max']} 枚：合成表与真机两头至少一头在虚高"
+    )
+
+
 def test_history_reserve_covers_the_pinned_number_of_turns():
     """历史那份额外预留：按实测单价 × 覆盖轮数核，留少了红。"""
     unit = _measured_history_unit_price()
@@ -280,6 +358,24 @@ def test_history_reserve_covers_the_pinned_number_of_turns():
         f"每轮历史实测 {unit:.1f} 枚，{COVERED_HISTORY_TURNS} 轮要 {needed} 枚，"
         f"现在只留 {CONTEXT_HISTORY_RESERVE_TOKENS} 枚"
     )
+    assert CONTEXT_HISTORY_RESERVE_TOKENS == needed, (
+        f"历史预留 {CONTEXT_HISTORY_RESERVE_TOKENS} 枚 ≠ 实测单价 {unit:.1f} × "
+        f"{COVERED_HISTORY_TURNS} 轮 = {needed} 枚：同样不许虚高多留（R116 的估窄病）"
+    )
+
+
+def test_history_fixture_measures_a_real_length_answer():
+    """R119 判据 1：量历史的尺必须喂真机实测长度的答案，不许再拿 132 字冒称 400 字。"""
+    measured_median = run5.answer_char_stats()["median"]
+    assert HISTORY_ANSWER_CHARS == measured_median == 424, (
+        f"历史夹具的尺被改小或被手抄成 {HISTORY_ANSWER_CHARS} 字，"
+        f"台账实测中位是 {measured_median} 字：标称与实得不许分家"
+    )
+    text = _history_answer_text()
+    assert len(text) == HISTORY_ANSWER_CHARS, f"标称 {HISTORY_ANSWER_CHARS} 字，实得 {len(text)} 字"
+    unit = _measured_history_unit_price()
+    # 132 字那把假尺量出 161 枚/轮：短尺一旦回来，单价立刻掉回真值的三分之一，这里当场红。
+    assert unit > 2.5 * 161.0, f"每轮历史单价只有 {unit:.1f} 枚，夹具又缩回 132 字那把假尺了"
 
 
 def test_reserves_are_measured_numbers_not_round_guesses():
@@ -683,10 +779,19 @@ def _assert_measured_room_account(monkeypatch, info_log, row_id) -> list:
         )
         return []
 
-    monkeypatch.delenv("MODEL_CONTEXT_TOKENS", raising=False)
     monkeypatch.delenv("MODEL_TIER_ANALYSIS_MAX_TOKENS", raising=False)
+    monkeypatch.delenv("MODEL_CONTEXT_TOKENS", raising=False)
     budget = model_tier_budget(ModelTier.ANALYSIS)
+    base_capacity = context_pack_capacity()          # 今天真源算出来的容量
+    # 只动配置真源这一格：把容量平移到"run5 的估算 room + 今天的预留"，让被测代码自己算出
+    # 1606 那份房——复现的是真机当时的条件，不是今天的常数；装箱算法一行都不换。
+    anchor_capacity = RUN5_ESTIMATED_ROOM + RESERVE
+    monkeypatch.setenv("MODEL_CONTEXT_TOKENS", str(budget.context_limit_tokens + (anchor_capacity - base_capacity)))
     capacity, estimated = context_pack_capacity(), context_pack_room()
+    assert (capacity, estimated) == (anchor_capacity, RUN5_ESTIMATED_ROOM), (
+        f"复算锚点没搭起来：被测算出 capacity={capacity} room={estimated}，"
+        f"要复现的是 run5 那发当时的 {anchor_capacity}/{RUN5_ESTIMATED_ROOM}"
+    )
     head = _measured_hit_head(monkeypatch)
     answers = []
     for record in _MEASURED_BY_ROW[row_id]:
@@ -696,7 +801,9 @@ def _assert_measured_room_account(monkeypatch, info_log, row_id) -> list:
             f"{estimated} 不再相等——预留或容量动过，run5 这张表必须重测重填"
         )
         shell = run5.measured_shell(record)
-        measured = run5.measured_room(record, capacity)
+        # 壳是真机在 2560 那扇窗口里量出来的，实测 room 也必须按真机容量算，不许顺着上面的
+        # 锚点容量一起被抬高——那等于给自己的改动记两遍功。
+        measured = run5.measured_room(record, RUN5_CAPACITY)
         extra = measured - estimated
         prices = run5.replay_prices(record)
         assert shell > 0, f"{tag}：实测壳 {shell} 枚不是正数，配对配错了"
@@ -736,8 +843,11 @@ def _assert_measured_room_account(monkeypatch, info_log, row_id) -> list:
 
         # 乙＝实测 prompt_tokens 复算的 room：只改配置真源，装箱算法一行都不换。
         with monkeypatch.context() as metered:
-            metered.setenv("MODEL_CONTEXT_TOKENS", str(budget.context_limit_tokens + extra))
-            assert context_pack_capacity() == capacity + extra, tag
+            metered.setenv(
+                "MODEL_CONTEXT_TOKENS",
+                str(budget.context_limit_tokens + (measured + RESERVE - base_capacity)),
+            )
+            assert context_pack_capacity() == measured + RESERVE, tag
             assert context_pack_room() == measured, tag
             packed_b, fields_b = _replay_pack(
                 info_log, record=record, units=units,
@@ -897,27 +1007,36 @@ def _single_tool_row(trace_store):
 
 
 def test_doc_evidence_bag_holds_only_the_hits_that_actually_went_out(monkeypatch, trace_store):
-    """装 3 丢 2：证据袋与这一发 span 都只能说那 3 条，被丢的两条不许还挂着出处。"""
+    """装 2 丢 3：证据袋与这一发 span 都只能说装出去那 2 条，被丢的三条不许还挂着出处。
+
+    🔴 本枚用例原来钉的是"装 3 丢 2"，R119 把它改成"装 2 丢 3"——**这不是放宽**，断言还是
+    ``==``，改的是被测代码在本轮真源下实际装得下几条：R112 立这枚判据时今天的预留是 954
+    枚（room 1606），R119 按实测重排成 1362 枚（room 1198）之后，同样五条 500 字料就只能装
+    下两条。方向与幅度在 ``tests/test_r119_reserve_ruler.py`` 里单独一枚摊开算账。
+    """
     from app.agents.evidence import evidence_from_bag
 
     config, bag = _bag_config()
+    monkeypatch.delenv("MODEL_CONTEXT_TOKENS", raising=False)
+    monkeypatch.delenv("MODEL_TIER_ANALYSIS_MAX_TOKENS", raising=False)
+    assert context_pack_room() == context_pack_capacity() - RESERVE, "本轮房不是现值算出来的"
     monkeypatch.setattr(tools, "_get_pipeline", lambda: _FakePipeline(_hits(5), pack_at_source=False))
 
     out = tools.search_docs.invoke({"query": "住宿费打款时限"}, config=config)
 
     units = out.split("\n\n---\n\n")
-    assert (len(units), 5 - len(units)) == (3, 2), units
+    assert (len(units), 5 - len(units)) == (2, 3), units
     recorded = [document["source_name"] for document in bag["documents"]]
-    assert recorded == ["差旅费报销制度1.pdf", "差旅费报销制度2.pdf", "差旅费报销制度3.pdf"]
+    assert recorded == ["差旅费报销制度1.pdf", "差旅费报销制度2.pdf"]
     for index, name in enumerate(recorded, start=1):
         assert f"[{index}] 来源:{name}" in out, name
-    for name in ("差旅费报销制度4.pdf", "差旅费报销制度5.pdf"):
-        assert name not in out, "被装箱丢掉的那两条不许还有出处"
+    for name in ("差旅费报销制度3.pdf", "差旅费报销制度4.pdf", "差旅费报销制度5.pdf"):
+        assert name not in out, "被装箱丢掉的那几条不许还有出处"
     assert len(evidence_from_bag(bag)) == len(recorded), "客户看到的 evidence 列表也只许有装出去的那几条"
 
     summary = _single_tool_row(trace_store)["result_summary"]
     assert summary["hit_count"] == 5, "找回几条仍然要说清"
-    assert summary["packed_count"] == 3 and summary["dropped_count"] == 2
+    assert summary["packed_count"] == 2 and summary["dropped_count"] == 3
     assert summary["truncated"] == 0
 
 
