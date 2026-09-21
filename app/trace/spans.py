@@ -279,8 +279,55 @@ def _reported_count(value: Any) -> int | None:
     return value if isinstance(value, int) else None
 
 
+#: R38 registered this string as the name of a fact -- "the native leg reports no cached
+#: tokens". R29's captured frames refute it: the native ``/api/chat`` done frame really does
+#: carry ``prompt_eval_cached_count`` (the four verbatim frames in
+#: ``tests/test_r29_thinking_tax.py`` section D report 148 / 1 / 3 of them). The literal stays
+#: here only because ``tests/test_r38_cached_tokens_honesty.py:81`` and the contract row at
+#: ``docs/api/contract-v1.md:850`` pin it, and it stays as a labelled historical marker: R146
+#: corrects the sentence, R142 owns the contract prose. Nothing below treats it as a reading.
+REFUTED_CACHED_TOKEN_CLAIM = "native_leg_reports_no_cached_tokens"
+
+
+def _cached_token_count(usage: Any, response: Any) -> int | None:
+    """The cached-token count this reply actually carries, or ``None`` when it carries none.
+
+    Three names for one server-side fact, all three readings rather than derivations:
+
+    * ``usage_metadata["input_token_details"]["cache_read"]`` -- the name LangChain gives the
+      compatible leg's ``usage.prompt_tokens_details.cached_tokens``. Checked against
+      ``langchain_openai.chat_models.base._create_usage_metadata``, which drops a ``None``
+      detail and keeps a reported 0, so "key present" means "the server said a number".
+      Measured on this host: all 9 usage-bearing rows of ``docs/perf/raw/think_off.jsonl`` report
+      ``cached_tokens`` 257 against a 506--510 prompt, and ``docs/perf/raw/prodpath.jsonl`` reports
+      292 of 543, 257 of 769, plus one honest 0 of 116.
+    * ``usage["prompt_tokens_details"]["cached_tokens"]`` -- the same field on an OpenAI-shaped
+      ``usage`` mapping that never passed LangChain's renamer.
+    * ``response.cached_tokens`` -- the seam for the native leg. The frame has the number;
+      ``app/common/model_handler.py:394-395`` copies only ``prompt_eval_count`` and
+      ``eval_count`` into ``ModelReply``, so today nothing ever sets it. Widening that copy is
+      outside this ticket's write domain and R146 hands it back instead; when it lands, this
+      function needs no second change to meter it.
+
+    ``None`` means "there is no reading", and the caller drops the key rather than writing a
+    zero. ``prompt_eval_count - cached`` and every similar subtraction is arithmetic done to a
+    reading, not a reading: 跟进单 §21（「不得估算冒充实测 token 数」）keeps it out of the ledger.
+    """
+    if isinstance(usage, dict):
+        for block_name, field in (
+            ("input_token_details", "cache_read"),
+            ("prompt_tokens_details", "cached_tokens"),
+        ):
+            block = usage.get(block_name)
+            if isinstance(block, dict):
+                counted = _reported_count(block.get(field))
+                if counted is not None:
+                    return counted
+    return _reported_count(getattr(response, "cached_tokens", None))
+
+
 def model_token_counts(response: Any) -> dict[str, Any]:
-    """The two token counts this call came back with, or ``None`` for "not reported".
+    """The token counts this call came back with, or ``None`` for "not reported".
 
     R38: exactly two reply shapes are read, and both now reach ``model_calls`` through
     ``app/trace/store.py``.
@@ -288,31 +335,63 @@ def model_token_counts(response: Any) -> dict[str, Any]:
     * the provider object of the LangChain/OpenAI leg -- ``usage_metadata`` (LangChain) or a
       ``usage`` mapping, keyed ``input_tokens`` / ``output_tokens``;
     * :class:`app.common.model_handler.ModelReply` -- the attributes a leg carries after this
-      ticket, ``input_tokens`` (native ``prompt_eval_count``) and ``output_tokens``
-      (native ``eval_count``). Before R38 this shape matched neither branch, so a reply that
-      had been counted came back as two ``None`` values.
+      ticket, ``input_tokens`` (native ``prompt_eval_count``) and ``output_tokens`` (native
+      ``eval_count``). Before R38 this shape matched neither branch, so a reply that had been
+      counted came back as two ``None`` values.
 
-    There is deliberately no third key. ``cached_tokens`` is the one an operator would expect
-    here, and this deployment has no measured source for it: the local Ollama native
-    ``/api/chat`` reply carries no cached-token field at all
-    (``native_leg_reports_no_cached_tokens``), and the compatible leg's
-    ``usage.prompt_tokens_details.cached_tokens`` measured 0 on product traffic because every
-    round rewrites its prefix (``docs/perf/latency-budget-2026-09-16.md``, raw readings in
-    ``docs/perf/raw/prodpath.jsonl``). So the 0 in the perf ledger is a measured 0, not a hit
-    rate -- and writing a 0 here would be the one way to make it look like one.
+    A third key, ``cached_tokens``, joins them **only on a call whose reply really reported
+    one**; with no reading the key stays absent rather than becoming a zero. R38 withheld any
+    third key for reasons the shipping host contradicts, and R146 keeps the withholding rule
+    while correcting the reason, shape by shape:
+
+    * a reply that carries a LangChain ``usage_metadata`` (or a bare OpenAI-shaped ``usage``
+      mapping) -- which is exactly what the two ``_ResilientModel.invoke`` exits hand this
+      function (``app/agents/nodes.py:370`` and ``:505``), because those calls go out without
+      streaming. That shape reports
+      ``usage.prompt_tokens_details.cached_tokens``, and it is metered here for the first
+      time in R146.
+    * the query rewriter (``app/rag/retrieval_pipeline.py:214-217``) is evidence about the
+      server, not an entry point here: it is non-streaming too, but it answers through
+      ``app/common/model_handler.py`` and never reaches this function. Its readings -- and
+      ``docs/perf/raw/prodpath.jsonl`` -- are what prove the server reports a cached count on
+      a non-streaming call, which is the half R38 got wrong.
+    * native leg ``/api/chat`` -- the ``done`` frame reports ``prompt_eval_cached_count``. So
+      the server is not the gap; :func:`_cached_token_count` is ready for it, and the missing
+      copy is ``app/common/model_handler.py:394-395``. Do not read a native round's absent key
+      as "no cache": it is "this process dropped the field before it got here".
+    * compatible leg, **streaming** -- the answer leg, and the one this bullet list exists to
+      describe: its frames carry no ``usage`` object at all, so nothing about tokens is
+      measurable from a stream, neither the two counters nor a cached count. That is why
+      ``model_calls.input_tokens``/``output_tokens`` are NULL on streamed rounds; it is a fact
+      about the frame shape, pinned by the verbatim frames in
+      ``tests/test_r29_thinking_tax.py`` section D and by the host readings at
+      ``app/common/model_budget.py:377-379``. 🔴 A streamed round with no ``cached_tokens``
+      therefore means "the stream could not say", never "the prefix cache did not hit" -- the
+      cache can be warm and the stream still silent. Anyone who wants a measured cached count
+      has to ask on a non-streaming shape, which is the condition R43 判据② (实测 cached_tokens
+      > 0) has to be stated against.
+
+    Nothing in here estimates: ``app.common.model_budget.estimate_prompt_tokens`` sizes clocks
+    and budgets, and following 跟进单 §21（「不得估算冒充实测 token 数」）it is not allowed to
+    become a metered number -- not as a count, not as a subtraction, not as a zero.
     """
     usage = getattr(response, "usage_metadata", None)
     if not isinstance(usage, dict):
         usage = getattr(response, "usage", None) if isinstance(getattr(response, "usage", None), dict) else None
     if usage:
-        return {
+        counts = {
             "input_tokens": _reported_count(usage.get("input_tokens")),
             "output_tokens": _reported_count(usage.get("output_tokens")),
         }
-    return {
-        "input_tokens": _reported_count(getattr(response, "input_tokens", None)),
-        "output_tokens": _reported_count(getattr(response, "output_tokens", None)),
-    }
+    else:
+        counts = {
+            "input_tokens": _reported_count(getattr(response, "input_tokens", None)),
+            "output_tokens": _reported_count(getattr(response, "output_tokens", None)),
+        }
+    cached = _cached_token_count(usage, response)
+    if cached is not None:
+        counts["cached_tokens"] = cached
+    return counts
 
 
 def start_model_call(
