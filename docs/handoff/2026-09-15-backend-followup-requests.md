@@ -2241,3 +2241,61 @@ ode_modules`，已实测可用）；含中文路径的 `.cmd` 批处理不可用
 - 三枚在途复核（磁盘与进程实测，非自述）：`be-r29`(Laplace/R149) 脏 3 枚、最新写 49 分钟前；
   `be-r119`(Erdos/R150) 脏 9 枚、最新写 2.8 分钟前仍在动；`be-r32`(Hooke/R151) 脏 8 枚、最新写 42 分钟前。
   本机当时只有 1 枚 92K 的 python 进程 ⇒ **没有 agent 在跑 pytest、也没有人在打真机**，主树全量排在窗口内。
+## 79 · 本班（09-21 第三十九班第二格）：三枚并树收完（R149/R150/R151）· 新立 R149b / R154 / R155 / R156
+
+### 一、三枚结案账（总控独立复量，非自述）
+
+- **R149（Laplace @`be-r29`，施工 `798b129`，并树 `3aba146`）**——写域 `chat.py` +64/-3 与新件 16 枚。
+  亲跑：新件 16 passed；再加它点名的四件旧钉（`test_answer_cache_scope` / `test_routing_intent_and_terminal_state`
+  / `test_sse_sources` / `test_approve_canonical_events`）**107 passed / 12 skipped**，与其回执逐字吻合。
+  `sse_event` 与旧内联字面同为 `ensure_ascii=False`、键序未动 ⇒ "done 帧逐字节不变"有专钉。
+  🔴 **本班裁定：只算收端半张（R149a）**。它提的判据异议**成立**：判据①「线上事件数 > 1」的唯一前提
+  （生成腿改流式）正好落在判据⑥ 的禁改清单里，两枚判据在同一条写域上互斥；它在案发现场复现并如实上报
+  （三档问题 `model_calls` 全 stream=0、pieces=0）。⇒ 腿改造转 **R149b**。
+- **R151（Hooke @`be-r32`，施工 `b6cf064`，并树 `876b1ed`）**——写域 8 枚。亲测主树合并态：
+  `npm run lint:colors` **148 problems / 0 errors EXIT=0**（与它同步写进 `package.json` 的新预算逐字相等）；
+  `npm test` **23 files / 536 passed**；`theme.css` 69/0 **纯 append**（没碰 R148 的 `.login-bg*`/`.app-bg*`）。
+  八把变异全红全还原；像素判据是量出来的（432 枚探针 0 处不一致、10,359,360 px 差 0）。
+- **R150（Erdos @`be-r119`，施工 `f8d7a19`，并树 `5daecf1`）**——写域 9 枚，后端 0 字节。
+  亲测：`lint:colors` 合并态仍 **148**（它的 373 行新增逐行扫过，裸 hex/rgba/text-shadow 命中 **0**
+  ⇒ **棘轮没被顶破、也没靠改预算蒙过去**，这是 R150 与 R151 同树叠加的关键交汇点）；
+  `npm test` **26 files / 615 passed**（536+79）；`npm run build` ✓ 355ms；禁碰件逐枚 `git diff --quiet` rc=0。
+  🔴 **它自纠两笔**：① 上一版那枚"生效日期"读取位读的是**凭空发明的键**（映射层根本不产出）⇒ 已改成后端真名
+  `effective_date`/`published_at`/`created_at` 并补 2 枚用例 + 3 格反证；② 上一版需求清单说"全仓无生效日期"是错的，
+  `index_versions.published_at` 在 `migrations/0002` 在册、`app/rag/indexing.py` 有读有写，只是**没有 API 出口**。
+- **主树全量三枚并完后**：**3355 passed / 39 skipped，EXIT=0（168.8 s）**；契约四改后相关族 **126 passed / 4 skipped**。
+  链条：`d1ef49c`(记账) → `798b129`+`3aba146`(R149) → `b6cf064`+`876b1ed`(R151) → `f8d7a19`+`5daecf1`(R150)。
+
+### 二、🔴 契约欠账已补（Laplace/Erdos 具名上报，总控落笔）
+
+`docs/api/contract-v1.md` 四改（992 → 1024 行）：① canonical 名单**过去根本没有 `sources`**——那枚事件
+R41 就上线了、12/12 真机帧每轮都带、`tests/test_sse_sources.py` 早就钉着，可名单里没有它；② 补它的载荷形状
+（`sources`/`hit_count`/`unauthorized_count`/`scope_reason_code`/`session_id`）与**在流里的位置**（`request.completed`
+之后、legacy `done` 之前，`done` 仍是唯一收尾信号）；③「退役前置」那条从"未达成"改判成
+**✅ 已达成但对缓存命中腿不成立**（命中腿只发 `status`/`text`/`done`，缓存记录只有 `{answer,created_at}`
+⇒ 那一轮结构上没有来源清单，前端因此实现第四态 `cached-unknown` 而不是猜）；④ 迁移日志补 R149 那半张与 R149b 两条硬前置。
+🔴 顺带一笔登记为 **R156**：`## SSE Events` 这一节全仓**没有任何用例读过**（本班 grep 实证）
+⇒ "chat.py 实际发射的 canonical 事件名 == 契约名单"这枚同源钉从来就没有，这次靠人眼补齐，下次还会漂。
+
+### 三、新立四单（判据全文，按可派性排）
+
+- **R154（`app/api/v1/chat.py`，可立即派）** 出处面补齐三格：① `_document_source_row` 把证据袋里已有的
+  `excerpt`（`app/agents/evidence.py`）抄进 sources 行；② 把 `published_at` 抄进 sources 行**并**同时进
+  `GET /documents/{f}/versions` 的行（真值在 `index_versions`，只是没有出口）；③ 缓存命中腿也交来源清单
+  （缓存记录现在只存 `{answer, created_at}`），让 `cached-stale` 这一态**结构上可能成立**。
+  判据：前端读取位已由 R150 接好（不许改前端来满足本单）；三格各自要有"字段没抄 ⇒ 红"的具名反证；
+  ③ 若要扩缓存记录，必须说明**旧缓存条目读不出来时那一轮显示什么**（不许默认成"没改版"）。
+- **R155（`app/common/reliable_queue.py`，可立即派）** 让「队列已满」变成可证的读数：本文件 279 行、
+  `ReliableQueue.__init__` 无任何 cap 参数（本班核过），所以今天 `queue/stats` 给不出"满"这个状态。
+  判据：加容量与当前深度的**读数**（不是先定策略），`/queue/stats` 暴露它；「满了怎么办」（拒收/排队上限/降级）
+  属业主裁定，本单只把"看不见"变成"看得见"，**不许顺手改入队语义**。
+- **R149b（写域撞 `nodes.py`+`orchestrator.py` 串行锁，排在 R141/R43 那一族之后）** 生成腿改流式。
+  两条硬前置由 R149 交工时具名：① 片必须带**调用身份**（`StreamPiece` 现在只有文字+时间戳），
+  否则一轮里 planner/worker 的字混进同一条累计串＝把口播搬进可见正文（R29 明确拒绝过）；
+  ② 计量不许回 NULL（R31 实测兼容腿带 `stream_options.include_usage` 即有 usage）。
+  判据① 的 n≥6 真机抓帧只在两条前置都落地后才可测。
+- **R156（文档同源钉，小单）** 见第二节末：契约 canonical 事件名单与 `chat.py` 发射面同源，零手抄、AST 现抠。
+- 🔵 另有两格 R150 上报的存量待办（不立单，记账）：`orchestrator.py::run_with_stream` 的 docstring 仍写着
+  "`text` 由 `_ask_stream` 在 done 分支单发"——本单之后**这句不再真**（该文件在 R30/R31/R33/R42/R38 的串行锁里，
+  由下一枚动它的人顺带改）；`observability.py::SLO_BLOCKERS` 与 `scripts/eval_transport_ask_v2.py` 注释里的
+  `chat.py:NNN` 裸行号已因 R149/R150 漂移（这正是 R142 在清的存量，主树全量没红说明**没有钉咬它们**，纯散文风险）。

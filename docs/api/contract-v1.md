@@ -209,7 +209,8 @@ The canonical event names are:
 `request.started`, `step.started`, `step.progress`, `tool.started`,
 `tool.completed`, `model.started`, `model.completed`, `retrieval.completed`,
 `evidence.available`, `approval.required`, `result.partial`, `request.completed`,
-`request.failed`, `request.cancelled`, and `heartbeat`.
+`request.failed`, `request.cancelled`, and `heartbeat`. `POST /api/v1/ask` additionally emits the
+canonical content event `sources` (R41, documented below).
 
 Every event includes `request_id`, `trace_id`, `sequence`, `timestamp`, and `status`.
 A request has exactly one terminal event: `request.completed`, `request.failed`, or
@@ -222,6 +223,23 @@ terminal event alongside the legacy events. The same `request_id`, `trace_id`, a
 the transition, the orchestrator persists redacted request lifecycle, progress, and
 worker-completion metadata to the local JSONL `TraceStore`; this is not yet the
 planned PostgreSQL `AgentRun` / `AgentStep` / `ToolCall` / `ModelCall` schema.
+
+`sources` payload (`event: sources`, canonical envelope, `status: "completed"`):
+
+- `sources` - the rows this principal may see, in retrieval order.
+- `hit_count` - how many rows that is.
+- `unauthorized_count` - how many retrieved rows were withheld. Without this number "0 条来源"
+  cannot tell 「没检索到」 apart from 「检索到了但不给你看」, and those two need opposite replies.
+- `scope_reason_code` - which visibility rule decided it.
+- `session_id`.
+
+Position in the stream: after `request.completed`, before the legacy `done`. `done` stays the single
+end-of-stream signal, an old client that ignores an unknown name keeps its answer, and the sequence
+of `request.started` / `request.completed` does not shift. 🔴 One asymmetry is not yet closed:
+the **cache-hit leg** of `/ask` yields only `status` / `text` / `done` (the answer cache stores
+`{answer, created_at}` and nothing else), so a cached turn carries **no** `sources` event and a client
+cannot say 「这条答案的来源后来改版了」 for it. Registered as R154; the frontend shows a distinct
+`cached-unknown` face rather than guessing.
 
 Example:
 
@@ -713,7 +731,11 @@ Consequence: the canonical envelope is currently a lifecycle wrapper only. Strea
 - A canonical event carries streamed text (named `result.partial` in the list above).
 - `step.started` plus a matching completion event carry worker progress.
 - `approval.required` carries the HITL pending payload and its labels.
-- A sources event exists on `/ask` and is documented with its payload shape.
+- ✅ Met 2026-09-21: `/ask` emits a canonical `sources` event, and its payload shape is documented
+  above. The event itself landed with R41; what was missing until today was the documentation half,
+  which is why this line still read as unmet. 🔴 It is met for the normal answer path only - the
+  cache-hit leg emits no `sources` (R154), so a client cannot retire the legacy channel on this
+  precondition alone.
 - The frontend parser is switched to canonical-first with a legacy fallback and verified in a browser.
 - Both owners sign a dated entry in the migration log below.
 
@@ -721,6 +743,16 @@ Until all six hold, the legacy rows above are the only supported content channel
 
 ### Migration log
 
+- 2026-09-21 (R149, 收端半张): all three `event: text` paths of `/ask` now share one builder
+  (`text_sse_frame`), and the frame's `content` is **the cumulative answer up to that frame, not a
+  delta** - the last frame equals the whole answer, so a client that replaces `msg.content` per frame
+  keeps working unchanged. 🔴 Measured on the current tree: the generation leg is still invoked
+  rather than streamed, so a real turn still carries exactly one `text` frame. Wiring the leg is
+  R149b, whose hard preconditions are (a) a piece must carry its calling identity, otherwise planner
+  and worker text merge into one cumulative string and the receiving end can only log the mismatch,
+  and (b) usage must not go back to NULL (measured: the compatible leg returns usage when the
+  request opts into `stream_options.include_usage`). Byte-equality of the done frame is pinned by
+  `tests/test_r149_sse_text_pieces.py`; the piece branch's single `await` is `sleep(0)`.
 - 2026-09-16 (R13-1): `/approve` gained one additive canonical event, `request.cancelled`, after the cancellation shape was re-read from `app/api/v1/chat.py:1256-1276` against `/ask` at `:958-973`. No legacy event removed, renamed or reordered; `/approve` still carries no canonical content events, so the six retirement preconditions below are unchanged and the frontend parser work (F2) is still the blocker.
 - 2026-09-14: section added after the frontend workspace audit. No event was removed, renamed or reordered by this change. Backend line-number references elsewhere in the repository are treated as a dated snapshot, not as contract.
 
