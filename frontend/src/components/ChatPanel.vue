@@ -1,6 +1,10 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import CacheFace from './CacheFace.vue'
 import ChartViewer from './ChartViewer.vue'
+import DocumentPreviewModal from './DocumentPreviewModal.vue'
+import QueueFace from './QueueFace.vue'
+import SourceCard from './SourceCard.vue'
 import { fetchRuntimeHealth, modelState, modelStatusText } from '../lib/health.js'
 import {
   abortStream,
@@ -28,7 +32,16 @@ import {
   switchSession,
   syncActive,
 } from '../lib/sessions'
-import { authedFetch } from '../lib/http'
+import { authedFetch, errorDetail, http } from '../lib/http'
+import {
+  cacheFace,
+  queueFace,
+  queuePollFailedFace,
+  queueRejectedFace,
+  queueStatsFace,
+  revisionsAfter,
+  sourcesFace,
+} from '../lib/provenance'
 import { UiEmptyState, UiErrorState } from './ui'
 
 const input = ref('')
@@ -151,6 +164,7 @@ async function refreshRuntimeHealth() {
 
 onMounted(() => {
   refreshRuntimeHealth()
+  restoreQueuedTurns()
   window.addEventListener('chat-ask', onChatAsk)
   document.addEventListener('visibilitychange', onVisibilityChange)
   if (!sessions.value.length) {
@@ -165,6 +179,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  stopQueueWatches()
   window.removeEventListener('chat-ask', onChatAsk)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   flushScroll()
@@ -181,8 +196,12 @@ async function send(dataFilename = activeDataFilename.value) {
 
   messages.value.push({ role: 'user', content: text, sources: null })
   input.value = ''
-  messages.value.push({ role: 'assistant', content: '', steps: [], sources: null })
+  // mid 是这一轮的脸的钥匙：排队位次与缓存改版核对都是流结束之后才异步回来的，而 store 的
+  // messages 是 shallowRef，往消息对象上塞属性触发不了重渲染。派生态住在组件的 ref 表里，
+  // 消息对象上那一份（msg.sources / msg.cache / msg.queue）只负责随会话落盘与历史复原。
+  messages.value.push({ role: 'assistant', content: '', steps: [], sources: null, mid: genId() })
   const aiMsg = messages.value[messages.value.length - 1]
+  const turn = turnKey(aiMsg, messages.value.length - 1)
   note('')
   cancelPhase.value = 'idle'
   syncActive()
@@ -211,11 +230,34 @@ async function send(dataFilename = activeDataFilename.value) {
       },
       onText: flush,
       onBatch: flush,
+      onSources: (sources) => {
+        sourceReads.value = { ...sourceReads.value, [turn]: sources }
+      },
+      onCache: (cache) => {
+        cacheReads.value = { ...cacheReads.value, [turn]: cache }
+      },
+      onQueued: (queue) => {
+        // 回执里只有 request_id：位次与结果必须另读 GET /queue/status/{id}（判据④）。
+        watchQueueTurn(turn, queue?.requestId)
+      },
+      onUnknownEvent: (event) => {
+        // 界面没认领的后端事件：告警在 lib/sessions.js 打一次，这里再画上屏一次，不静默吞。
+        // 同时抄一份进消息对象：那一格会随会话落盘，刷新之后自陈还在（自陈不是控制台日志）。
+        const seen = unseenReads.value[turn] || []
+        if (seen.includes(event)) return
+        unseenReads.value = { ...unseenReads.value, [turn]: [...seen, event] }
+        aiMsg.unseenEvents = [...(Array.isArray(aiMsg.unseenEvents) ? aiMsg.unseenEvents : []), event]
+      },
     })
 
     if (!result.ok) {
       aiMsg.content = `[请求错误] ${result.error}`
       note(`本轮请求未成功（HTTP ${result.status}）。`, 'error')
+      // 入队这一步就失败（503 那一格）说的是「排没排上队」，与气泡里的错误行不是同一句话，
+      // 两枚各画各的：错误行进气泡，排队脸进下面那张表。
+      if (result.stopped === 'http_error' && result.normalized) {
+        rejectedReads.value = { ...rejectedReads.value, [turn]: result.normalized }
+      }
     } else if (result.state.terminal === 'failed') {
       const text2 = friendlyErrorText(result.state)
       aiMsg.content = aiMsg.content ? `${aiMsg.content}\n${text2}` : text2
@@ -225,6 +267,9 @@ async function send(dataFilename = activeDataFilename.value) {
     } else if (result.stopped !== 'hitl' && !aiMsg.content) {
       aiMsg.content = '本轮没有返回内容。'
     }
+    // 「命中缓存但来源已改版」这句只能真读 GET /documents/{filename}/versions 才说得出。
+    // 放在流结束之后而不是 onCache 里：sources 帧在 text 之后到，先查会拿着空清单误报。
+    await checkCacheStaleness(turn, aiMsg)
     syncActive()
     await scrollBottom()
   } catch (err) {
@@ -365,6 +410,274 @@ function handleKeydown(e) {
   }
 }
 
+// ==================== R150 · 三张脸：出处 / 缓存 / 排队 ====================
+// 后端早就把这些字段吐到线上了（R41 的 sources、R35 的 cached 三枚、R26 的 queued），
+// 界面上却一处读取方都没有：sources 被 isCanonicalEvent() 判成 canonical 之后落 default，
+// 塞进 state.unknownEvents 就没人读过。这里补的就是读取方。
+//
+// 分工写死，免得「后端报了但界面没说」这类缺陷有两个可能归属：
+//   lib/sessions.js   把帧读成事实（数字与键名）
+//   lib/provenance.js 把事实说成人话（几种读法各说什么、哪两句必须分开）
+//   本面板            只做取数与挂元素，不当第三套判断
+
+// 每一枚读数的键都是「哪一轮」，见 turnKey()。消息对象上那份只负责落盘与历史复原。
+const sourceReads = ref({})   // sources 帧的出处读数
+const cacheReads = ref({})    // text 帧上那三枚缓存字段
+const unseenReads = ref({})   // 本轮发出、界面尚未认领的事件名
+const queueReads = ref({})    // GET /queue/status/{id} 的最近一次读数
+const queueFaults = ref({})   // 排队状态这一次没读回来时的原始错误
+const rejectedReads = ref({}) // 入队这一步就失败（HTTP 5xx / 4xx）的归一结果
+const cacheChecks = ref({})   // 改版核对：缺键=未查 / null=无从核对 / []=没改版 / [{}]=改版了
+const queueStats = ref(null)  // GET /queue/stats 的最近一次读数（全局一块，不按轮次分）
+
+const preview = reactive({
+  open: false,
+  filename: '',
+  kind: 'text',
+  text: '',
+  blobUrl: '',
+  error: '',
+  loading: false,
+  truncated: false,
+})
+
+const QUEUE_POLL_MS = 3000
+const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired']
+let queueWatches = []
+
+/** 这一轮的脸挂在哪个键上：优先消息自带的 mid（随会话落盘），退回「会话 + 序号」。 */
+function turnKey(msg, index) {
+  if (msg && typeof msg.mid === 'string' && msg.mid) return `m${msg.mid}`
+  return `${activeId.value}#${index}`
+}
+
+function storeBag(bag, key, value) {
+  return { ...bag.value, [key]: value }
+}
+
+function readTurn(bag, msg, index) {
+  return bag.value[turnKey(msg, index)] || null
+}
+
+/**
+ * 出处那张脸。后端这一轮没发 sources 事件时返回 null，界面什么都不画。
+ *
+ * 这条留白是有意的：「没发出处事件」与「发了、但一条没检索到」是两件事，前者多半是这一轮
+ * 压根没走文档检索（数据问答、寒暄），画一张「没有检索到可用文档」的卡等于替后端撒谎。
+ */
+function sourceFaceOf(msg, index) {
+  return sourcesFace(readTurn(sourceReads, msg, index) || msg.sources)
+}
+
+function cacheFaceOf(msg, index) {
+  // 读数的来源只有 text 帧那三枚字段；一枚都没有就把这一轮读成「实时算」（证据写在句子里）。
+  const read = readTurn(cacheReads, msg, index) || msg.cache || null
+  return cacheFace(read, cacheChecks.value[turnKey(msg, index)])
+}
+
+function queueFaceOf(msg, index) {
+  const key = turnKey(msg, index)
+  if (rejectedReads.value[key]) return queueRejectedFace(rejectedReads.value[key])
+  const read = queueReads.value[key]
+  if (!read) {
+    if (queueFaults.value[key]) return queuePollFailedFace(queueFaults.value[key])
+    // 只收到 queued 回执、状态还没读回来：说「已排上队、位次未读到」，不补 0 也不猜人数。
+    return msg.queue ? queueFace({ status: 'queued' }) : null
+  }
+  return queueFace(read)
+}
+
+function queueStatsOf() {
+  return queueStatsFace(queueStats.value)
+}
+
+function unseenOf(msg, index) {
+  const live = readTurn(unseenReads, msg, index)
+  const stored = Array.isArray(msg.unseenEvents) ? msg.unseenEvents : []
+  const arrived = Array.isArray(live) ? live : []
+  return [...new Set([...stored, ...arrived])]
+}
+
+/** 排队答案补回这条回答：这一轮界面没有实时流，正文只来自状态读数里的 result。 */
+function applyQueuedAnswer(key, answer) {
+  const index = messages.value.findIndex((msg, at) => turnKey(msg, at) === key)
+  if (index < 0) return
+  const msg = messages.value[index]
+  if (msg.content) return
+  msg.content = answer
+  syncActive()
+}
+
+function watchQueueTurn(key, requestId) {
+  if (!requestId) return
+  if (queueWatches.some(item => item.key === key)) return
+  const entry = { key, timer: 0 }
+  const stop = () => {
+    clearInterval(entry.timer)
+    queueWatches = queueWatches.filter(item => item !== entry)
+  }
+  const tick = async () => {
+    try {
+      const status = await http.get(`/queue/status/${encodeURIComponent(requestId)}`)
+      const read = {
+        status: typeof status.data?.status === 'string' ? status.data.status : '',
+        position: Number.isFinite(Number(status.data?.position)) ? Number(status.data.position) : null,
+        failure: status.data?.failure || null,
+        result: typeof status.data?.result === 'string' ? status.data.result : '',
+      }
+      queueReads.value = storeBag(queueReads, key, read)
+      queueFaults.value = storeBag(queueFaults, key, null)
+      if (read.status === 'done' && read.result) applyQueuedAnswer(key, read.result)
+      if (QUEUE_SETTLED.includes(read.status)) stop()
+    } catch (err) {
+      queueFaults.value = storeBag(queueFaults, key, err)
+    }
+    try {
+      const stats = await http.get('/queue/stats')
+      queueStats.value = stats.data || null
+    } catch (_) {
+      // 全局等待人数读不到就不说这一行，不影响这一轮的位次与状态。
+      queueStats.value = null
+    }
+  }
+  tick()
+  entry.timer = setInterval(tick, QUEUE_POLL_MS)
+  queueWatches.push(entry)
+}
+
+// 面板常驻 v-show，卸载不是常态；但真卸载时必须停表：排队轮询会在别人不看的界面上一直打接口。
+function stopQueueWatches() {
+  queueWatches.forEach(entry => clearInterval(entry.timer))
+  queueWatches = []
+}
+
+/** 刷新或切回来接着盯：queued 那一轮的答案在 Redis 回执过期前仍然读得到，读数过期就画过期。 */
+function restoreQueuedTurns() {
+  messages.value.forEach((msg, index) => {
+    if (msg?.role !== 'assistant' || !msg.queue?.requestId) return
+    if (msg.content) return
+    watchQueueTurn(turnKey(msg, index), msg.queue.requestId)
+  })
+}
+
+/**
+ * 缓存改版的核对：真读 GET /documents/{filename}/versions，界面自己不造时间。
+ *
+ * 三条退路都明说，不并成一句「已核对」：
+ *   答案没带生成时间 / 这一轮压根没交出来源文件 / 版本接口读不到 -> null（无从核对）
+ *   读到了但每一版都早于生成时间 -> []（确实没改版）
+ *   有晚于生成时间的版本 -> 逐文件名带上最新版本号与入库时间
+ */
+async function checkCacheStaleness(key, msg) {
+  const cache = msg.cache
+  if (!cache || cache.cached !== true) return
+  const born = cache.generatedAt
+  const files = [...new Set((msg.sources?.rows || []).map(row => row.filename).filter(Boolean))]
+  if (!born || !files.length) {
+    cacheChecks.value = storeBag(cacheChecks, key, null)
+    return
+  }
+  const stale = []
+  for (const filename of files) {
+    try {
+      const res = await http.get(`/documents/${encodeURIComponent(filename)}/versions`)
+      const revisions = revisionsAfter(born, res.data?.versions)
+      if (revisions === null) {
+        cacheChecks.value = storeBag(cacheChecks, key, null)
+        return
+      }
+      if (revisions.length) {
+        stale.push({
+          filename,
+          revisions,
+          latestVersion: revisions[0].version,
+          latestMoment: revisions[0].moment,
+        })
+      }
+    } catch (err) {
+      cacheChecks.value = storeBag(cacheChecks, key, null)
+      return
+    }
+  }
+  cacheChecks.value = storeBag(cacheChecks, key, stale)
+}
+
+/** 出处卡片上的「看原文」：复用既有预览弹窗组件（只 import，不改它一行）。 */
+async function openSourcePreview(row) {
+  const filename = typeof row?.filename === 'string' ? row.filename.trim() : ''
+  if (!filename) return
+  if (preview.blobUrl) {
+    URL.revokeObjectURL(preview.blobUrl)
+    preview.blobUrl = ''
+  }
+  preview.open = true
+  preview.filename = filename
+  preview.kind = 'text'
+  preview.text = ''
+  preview.error = ''
+  preview.loading = true
+  preview.truncated = false
+  try {
+    const res = await http.get(`/documents/${encodeURIComponent(filename)}/preview`)
+    preview.kind = res.data?.kind || 'text'
+    preview.text = res.data?.text || ''
+    preview.truncated = Boolean(res.data?.truncated)
+    if (preview.kind === 'pdf') {
+      const file = await http.get(`/documents/${encodeURIComponent(filename)}/file`, {
+        responseType: 'blob',
+        params: { inline: true },
+      })
+      preview.blobUrl = URL.createObjectURL(file.data)
+    }
+  } catch (err) {
+    preview.error = errorDetail(err, '文件预览失败')
+  } finally {
+    preview.loading = false
+  }
+}
+
+function closeSourcePreview() {
+  preview.open = false
+  if (preview.blobUrl) {
+    URL.revokeObjectURL(preview.blobUrl)
+    preview.blobUrl = ''
+  }
+}
+
+async function downloadSourcedFile() {
+  const filename = preview.filename
+  if (!filename) return
+  try {
+    const file = await http.get(`/documents/${encodeURIComponent(filename)}/file`, {
+      responseType: 'blob',
+      params: { inline: false },
+    })
+    const url = URL.createObjectURL(file.data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch (err) {
+    note(`原文没能下载：${errorDetail(err, '文件下载失败')}`, 'error')
+  }
+}
+
+/** 排队被拒且可重试：把原问题照原样再问一次，不改字、不猜意图。 */
+function retryTurn(index) {
+  if (loading.value || hitl.value) return
+  let question = ''
+  for (let at = index; at >= 0; at -= 1) {
+    if (messages.value[at]?.role === 'user') {
+      question = String(messages.value[at].content || '')
+      break
+    }
+  }
+  if (!question.trim()) return
+  input.value = question
+  send()
+}
+
 // ==================== Markdown ====================
 
 function renderMd(raw) {
@@ -498,6 +811,32 @@ function renderMd(raw) {
 
                 <ChartViewer v-for="(ch, ci) in parseCharts(msg.content)"
                              :key="ci" :src="ch.src" :caption="ch.caption" />
+
+                <!-- R150 · 三张脸。字段都是后端早已发出的（sources / cached / queued），
+                     这里只是第一次有人读它们。措辞与判据在 lib/provenance.js，本面板不当第三套判断。
+                     sourceFaceOf / cacheFaceOf / queueFaceOf 各调两次（v-if 与 :face）是有意的：
+                     数据住在 shallowRef 的消息对象上，包一层 computed 会缓存成旧值。 -->
+                <div v-if="msg.role === 'assistant'" class="face-stack" data-testid="r150-faces">
+                  <SourceCard
+                    v-if="sourceFaceOf(msg, i)"
+                    :face="sourceFaceOf(msg, i)"
+                    @preview="openSourcePreview"
+                  />
+                  <!-- 「实时算」也是必须说出口的一态（不是留白），但它只对当场看到的轮次说。 -->
+                  <CacheFace v-if="cacheFaceOf(msg, i)" :face="cacheFaceOf(msg, i)" :key="`cache-${turnKey(msg, i)}`" />
+                  <QueueFace
+                    v-if="queueFaceOf(msg, i)"
+                    :face="queueFaceOf(msg, i)"
+                    :stats="queueStatsOf()"
+                    @retry="retryTurn(i)"
+                  />
+                  <!-- 界面没认领的后端事件：画成系统自陈，而不是静默丢进 unknownEvents 当没看见。
+                       这行的「技术信息」四个字同时是 V6 裸码闸门认得的诊断区标记。 -->
+                  <p v-if="unseenOf(msg, i).length" class="face-unseen" role="status" data-testid="face-unseen">
+                    本轮后端还发出过界面尚未认领的事件（技术信息）：{{ unseenOf(msg, i).join('、') }}。
+                    答案正文照旧，但这几格的读数今天画不出来，请当成缺陷报给前端。
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -556,6 +895,19 @@ function renderMd(raw) {
         </p>
       </div>
     </div>
+    <!-- 「看原文」复用的预览弹窗：只 import 既有组件，本单不改它一行（R151 的写域）。 -->
+    <DocumentPreviewModal
+      :open="preview.open"
+      :filename="preview.filename"
+      :kind="preview.kind"
+      :text="preview.text"
+      :blob-url="preview.blobUrl"
+      :loading="preview.loading"
+      :error="preview.error"
+      :truncated="preview.truncated"
+      @close="closeSourcePreview"
+      @download="downloadSourcedFile"
+    />
   </div>
 </template>
 
@@ -1262,5 +1614,23 @@ function renderMd(raw) {
 .send-pill.ghost:hover {
   background: rgba(157, 178, 207, .12);
   transform: none;
+}
+
+/* R150 · 三张脸的容器。色值纪律：这里一个新裸色都不写，全部借 theme.css 的 token——
+   lint:colors 的告警数此刻正好顶在 334 条预算上，多一条 CI 当场红。需要新 token 走回执具名上报。 */
+.face-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  margin-top: var(--s-2);
+}
+
+.face-unseen {
+  margin: 0;
+  padding: var(--s-1) var(--s-2);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--r-sm);
+  font-size: var(--t-xs);
+  color: var(--text-3);
 }
 </style>

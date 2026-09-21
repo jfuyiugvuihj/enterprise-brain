@@ -1,6 +1,12 @@
 import { nextTick, shallowRef } from 'vue'
 import { http } from './http'
 import { formatError } from './errcodes'
+// normalizeError 另起一行 import 而不是并进上面那行：lib/sessions-error-text.test.js:22 把
+// "import { formatError } from './errcodes'" 整行字面量钉住了，那是别人已并树的断言，本单
+// 不放宽也不删。字典仍然只有 errcodes 这一本，取码通道仍然只有一条，只是多认一个入口函数。
+// 入队失败的错误体是 {code, message} 对象（chat.py::_enqueue_ask_turn 的 503），老写法
+// `payload?.detail || detail` 会把整个对象塞进模板字面量，界面渲染成 [object Object]。
+import { normalizeError } from './errcodes'
 
 // 会话状态放在模块级 shallowRef，面板卸载也不会丢：切走再回来还是同一份会话。
 // 等 V3 上了 router，这份 store 直接交给路由上下文接管。
@@ -222,6 +228,135 @@ export async function scrollTo(el, behavior = 'smooth') {
 export const CANONICAL_PREFIXES = ['request.']
 export const LEGACY_EVENTS = new Set(['status', 'text', 'step', 'hitl', 'error', 'cancelled', 'done', 'heartbeat', 'queued'])
 
+/**
+ * 后端 SSE 事件名的【唯一认领表】（R150 判据① 的根因面）。
+ *
+ * 为什么要有这张表：R41 交出的 `sources` 事件被 isCanonicalEvent() 判成 canonical 之后落进
+ * 下面的 default，塞进 state.unknownEvents 就再没有第二行代码读过它（全仓零读取方），于是
+ * 「后端早就把这些字段吐到线上了」在界面上等于没有 —— R41 判据③ 的引用条至今没销账，就是
+ * 这么销掉的。
+ *
+ * 口径：后端每一枚事件名都必须在这里有一句交代。render＝画进界面；note＝只进过程提示条；
+ * terminal＝收尾信号；silent＝【显式选择不画】（heartbeat 只表示连接还活着，不是漏接）。
+ * 新增一种后端事件而这里没登记 → src/lib/r150-event-claims.test.js 直接读
+ * app/api/v1/chat.py 的出口枚举名字，当场红。不靠自觉，也不抄第二份清单。
+ */
+export const EVENT_CLAIMS = {
+  // legacy 腿：chat.py 里直写帧与 sse_event() 的调用点
+  status: 'note',
+  text: 'render',
+  step: 'render',
+  hitl: 'render',
+  error: 'render',
+  cancelled: 'render',
+  done: 'terminal',
+  heartbeat: 'silent',
+  queued: 'render',
+  // canonical 信封：chat.py::canonical_sse_event 的调用点
+  'request.started': 'silent',
+  'request.completed': 'terminal',
+  'request.failed': 'render',
+  'request.cancelled': 'render',
+  sources: 'render',
+}
+
+/** 名字不在这张表里＝前端还没认领；unknownEvents 的读取方与告警一律以它为准。 */
+export function isClaimedEvent(event) {
+  return Object.prototype.hasOwnProperty.call(EVENT_CLAIMS, String(event || ''))
+}
+
+function textOf(value) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/**
+ * canonical `sources` 事件的 data → 出处卡片的数据（chat.py:1547-1562 与 :2038-2053 两个出口）。
+ *
+ * 三枚计数各说各的事，一枚都不许合并：`sources` 是看得见的行，`hit_count` 是它们的条数，
+ * `unauthorized_count` 是「检到了但这一条检索范围不给你看」的条数（chat.py:1558 同一口径）。
+ * `scope_reason_code` 一格两用：正常时是可见范围的理由（app/rag/filters.py 的两枚 reason），
+ * 取不到范围时后端把【错误码】塞进同一格（chat.py:294-305 的 except 分支）。这里只搬运不解释，
+ * 「两种词汇必须分开说人话」归 lib/provenance.js。
+ */
+export function sourcesFromEnvelope(data) {
+  const rows = Array.isArray(data?.sources) ? data.sources : []
+  const counted = rows.map(sourceRowFromWire).filter(row => row.filename)
+  const declared = Number(data?.hit_count)
+  return {
+    rows: counted,
+    hitCount: Number.isFinite(declared) && declared >= 0 ? Math.trunc(declared) : counted.length,
+    hiddenCount: Math.max(0, readNumber(data?.unauthorized_count, 0)),
+    scopeReasonCode: textOf(data?.scope_reason_code),
+  }
+}
+
+/**
+ * 一行命中 → 卡片要用的字段。取不到的键【留空而不是造一个】：密级、版本、分都是后端给的。
+ *
+ * `excerpt`（命中句）今天不在这枚事件里：证据袋有它（app/agents/evidence.py:80），
+ * 而 chat.py::_document_source_row 没把它抄进 sources 行 —— 那是后端那一格欠的账，本单
+ * 只把读取位留好：它什么时候出现，什么时候上屏，不猜内容。
+ */
+function sourceRowFromWire(row) {
+  const raw = row && typeof row === 'object' ? row : {}
+  const score = Number(raw.score)
+  const chunk = Number(raw.chunk_index)
+  const version = Number(raw.document_version_id)
+  const level = Number(raw.classification)
+  return {
+    filename: textOf(raw.source),
+    sourceId: textOf(raw.source_id),
+    chunkIndex: Number.isFinite(chunk) ? Math.trunc(chunk) : null,
+    score: Number.isFinite(score) ? score : null,
+    scoreType: textOf(raw.score_type),
+    versionId: Number.isFinite(version) ? String(version) : textOf(raw.document_version_id),
+    classification: Number.isFinite(level) ? String(level) : textOf(raw.classification),
+    department: textOf(raw.department),
+    excerpt: textOf(raw.excerpt) || textOf(raw.content),
+    // 生效日期：chat.py::_document_source_row 今天没抄这一格，但真值在库里就有 ——
+    // app/rag/indexing.py:102/361 的 version.published_at（574/640 写入，0002 迁移在册）。
+    // 读取位按后端的命名法接住它，出现就上屏；一枚都没给就是空串，界面绝不自己补「今天」。
+    effectiveDate: textOf(raw.effective_date) || textOf(raw.published_at) || textOf(raw.created_at),
+    worker: textOf(raw.worker),
+  }
+}
+
+/**
+ * 缓存那张脸的读数来自【legacy `text` 帧的 payload】（chat.py:1307-1316：只有命中路径才带
+ * cached / cache_generated_at / cache_note，实时路径一枚都不带）。
+ *
+ * 未命中也记一格，但记的是「我当场看到的回答帧没带这三枚」，不是「后端报了未命中」：
+ *   cached:false + observed:true = 这一轮亲眼看着它实时生成（界面那句「本轮实时生成」只认这个）
+ *   整格缺失                     = 这一轮没被当场观察到（从 localStorage 复原的老消息）—— 界面不说这一态
+ * 把「没带字段」直接推成「当时是实时算的」是拿缺席当证据：本单之前入库的老消息里，缓存命中的那几条
+ * 同样没带过这三枚，那样推会把它们一一标错。
+ */
+export function cacheFromFrame(payload) {
+  const hit = payload && typeof payload === 'object' && 'cached' in payload
+  return {
+    cached: hit ? payload.cached === true : false,
+    generatedAt: hit ? textOf(payload.cache_generated_at) : '',
+    note: hit ? textOf(payload.cache_note) : '',
+    observed: true,
+  }
+}
+
+/**
+ * `event: queued` 的回执（chat.py:1171-1181）：request_id 是后面轮询 /queue/status 的唯一入口。
+ *
+ * 回执里另外两枚字段说明「这一轮为什么被转成后台任务」，前端今天【一枚都不读】：
+ * R32 的假控件禁令把「档」这个词钉在服务端真分出轻重之前不许出现在前端任何一处源码里
+ * （tests/test_r32_lane_contract.py 判据⑥，枚枚文件全文搜词，注释与测试件一起算），而那两枚
+ * 字段的值本身就是档位名。这不等于不解释排队原因——chat.py 给的那格是英文码名，直插进句子
+ * 还会撞上 V6 裸码闸门。等 nodes.py 与 orchestrator 真按档分流那天，连同这格读取一起评审。
+ */
+export function queueFromFrame(payload) {
+  return {
+    requestId: textOf(payload?.request_id),
+    status: textOf(payload?.status) || 'queued',
+  }
+}
+
 export function parseSseFrame(frame) {
   if (typeof frame !== 'string' || !frame.trim()) return null
   let event = ''
@@ -296,16 +431,25 @@ export function createStreamReducer(msg, state) {
         case 'request.cancelled':
           state.terminal = state.terminal || 'cancelled'
           return { action: 'cancelled' }
+        case 'sources':
+          // R41 判据③ 欠的账在这一格：出处事件不是「认不得的 canonical 事件」，它是正经载荷。
+          // 顺序也在这儿吃 canonical 的 sequence 闸门：迟到的、重放的 sources 不会覆盖新一轮。
+          msg.sources = sourcesFromEnvelope(data)
+          return { action: 'sources', sources: msg.sources }
         default:
-          // 尚未认识的 canonical 事件（例如以后新增的 message.delta）：丢弃且不崩。
+          // 走到这里＝后端新增了一种 canonical 事件、而本文件还没认领它（认领表见 EVENT_CLAIMS）。
+          // 不崩是底线，但绝不静默：记名 → consumeSseStream 告警 → 界面画一句系统自陈 → 用例红。
           if (!state.unknownEvents.includes(event)) state.unknownEvents.push(event)
-          return { action: 'ignored' }
+          return { action: 'unknown', event }
       }
     }
 
     if (!LEGACY_EVENTS.has(event)) {
-      if (!state.unknownEvents.includes(event || '(anonymous)')) state.unknownEvents.push(event || '(anonymous)')
-      return { action: 'ignored' }
+      const name = event || '(anonymous)'
+      if (!state.unknownEvents.includes(name)) state.unknownEvents.push(name)
+      // 不带 event: 名的帧、以及 LEGACY_EVENTS 没登记过的新名字，走的是同一条「未认领」通道。
+      // 只记名不往外报，等于没人会去读它 —— sources 就是这么在界面上消失了两年（R41 判据③）。
+      return { action: 'unknown', event: name }
     }
 
     switch (event) {
@@ -325,7 +469,15 @@ export function createStreamReducer(msg, state) {
           state.segments = covering ? [chunk] : [...state.segments, chunk]
         }
         state.sawText = true
-        return { action: 'text' }
+        // 缓存那三枚字段就骑在这一枚 text 帧上（chat.py:1315 的 payload 展开），没有第二条通道：
+        // 读到就记。没读到【不写 msg.cache】—— 不许把「后端没带」记成 cached:false 那种它没报的读数。
+        // 只有真正把正文续上的那一帧才走到这里（空帧与重复帧都在上面 return 了）：
+        // 所以这一格记的是「亲眼见过一枚实时回答帧」，不是「这帧碰巧没带 cached」。
+        const cache = cacheFromFrame(payload)
+        msg.cache = cache
+        // 把读数一起带出去：store 的 messages 是 shallowRef，光往消息对象上塞属性，
+        // 面板不会重渲染。缓存那张脸要能当场出现，就得有一条能触发的通道。
+        return { action: 'text', cache }
       }
       case 'step': {
         const steps = ensureSteps(msg)
@@ -361,11 +513,18 @@ export function createStreamReducer(msg, state) {
       case 'done':
         if (!state.terminal) state.terminal = 'completed'
         return { action: 'terminal' }
+      case 'queued': {
+        // 排队那张脸的起点。回执只给 request_id，位次与结果必须另读 /queue/status/{id}（判据④）。
+        msg.queue = queueFromFrame(payload)
+        return { action: 'queued', queue: msg.queue }
+      }
       case 'heartbeat':
-      case 'queued':
-      default:
-        // heartbeat/queued 只表示还活着；default 保证任何新事件名都不会让前端崩。
+        // 【显式选择不画】：它只表示连接还活着，画出来是噪声。认领表里它是 silent，不是漏接。
         return { action: 'ignored' }
+      default:
+        // 走到这里＝名字在 LEGACY_EVENTS 里但本文件没给 case：这是自己漏接，不是后端新事件。
+        if (!state.unknownEvents.includes(event || '(anonymous)')) state.unknownEvents.push(event || '(anonymous)')
+        return { action: 'unknown', event: event || '(anonymous)' }
     }
   }
 }
@@ -403,12 +562,29 @@ export async function consumeSseStream(response, msg, handlers = {}) {
 
   if (!response) return { ok: false, status: 0, state, error: '服务未返回响应', stopped: 'no_response' }
   if (!response.ok) {
-    let detail = `HTTP ${response.status}`
+    let body = null
     try {
-      const payload = await response.clone().json()
-      detail = payload?.detail || detail
-    } catch (_) { /* 非 JSON 错误体 */ }
-    return { ok: false, status: response.status, state, error: detail, stopped: 'http_error' }
+      body = await response.clone().json()
+    } catch (_) { /* 非 JSON 错误体：仍要按状态码归类出一句人话 */ }
+    // 后端在入队失败这一格给的是 {code, message} 对象（chat.py::_enqueue_ask_turn 的 503
+    // detail=ErrorEnvelope）。老写法把整个对象塞进模板字面量，界面渲染成 [object Object]，
+    // 于是「排队系统不可用」这句最该说清的话变成一串噪声。归一只走 errcodes 一个通道。
+    const normalized = normalizeError({
+      status: response.status,
+      detail: body?.detail ?? (body && typeof body === 'object' ? body : undefined),
+    })
+    return {
+      ok: false,
+      status: response.status,
+      state,
+      error: normalized.message,
+      errorCode: normalized.code,
+      retryable: normalized.retryable,
+      // 归一成品整体带出：面板要画「没能排上队」那张脸时，第二次 normalizeError 会把
+      // 未知码那格的 rawCode 洗成空串（小字静默消失）。给它成品，就不存在两套口径。
+      normalized,
+      stopped: 'http_error',
+    }
   }
   if (!response.body) {
     return { ok: false, status: response.status, state, error: '服务未返回可读取的回答流', stopped: 'no_body' }
@@ -417,6 +593,8 @@ export async function consumeSseStream(response, msg, handlers = {}) {
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  // 本轮已经报过的未认领事件名：一条一名报一次，不把控制台与界面刷成噪声。
+  const unseen = new Set()
 
   while (!stopped) {
     if (signal?.aborted) { stopped = 'aborted'; break }
@@ -447,6 +625,23 @@ export async function consumeSseStream(response, msg, handlers = {}) {
           break
         case 'text':
           handlers.onText?.(state)
+          // 缓存三枚字段骑在 text 帧上（chat.py:1315），没有独立事件；单独回报一次，
+          // 不必等整轮跑完才画得出「实时算 / 命中缓存」那张脸。
+          if (result.cache) handlers.onCache?.(result.cache, state)
+          break
+        case 'sources':
+          handlers.onSources?.(result.sources, state)
+          break
+        case 'queued':
+          handlers.onQueued?.(result.queue, state)
+          break
+        case 'unknown':
+          // 界面没认领的后端事件：告警 + 回调各一次，一名一次。静默丢掉就是 sources 当年的死法。
+          if (!unseen.has(result.event)) {
+            unseen.add(result.event)
+            console.warn(`[SSE] 界面未认领的事件：${result.event}`)
+            handlers.onUnknownEvent?.(result.event, state)
+          }
           break
         case 'terminal':
         case 'ignored':
