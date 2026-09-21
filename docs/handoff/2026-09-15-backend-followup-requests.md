@@ -2172,3 +2172,72 @@ ode_modules`，已实测可用）；含中文路径的 `.cmd` 批处理不可用
   ③ `tests/test_r34_keep_alive_residency.py::test_the_refusal_statuses_are_still_the_same_four` **一枚未动**：因为拆分保留了并集、取值逐字相同，这枚钉子原地继续成立——这也是刻意保留`NATIVE_REFUSED_STATUSES` 这个名字的原因。
 - **四、四枚在途复核（21:1x 实测，非自述）**：`be-r29`(R149) 脏 2 枚、最新写 11 分钟前；`be-r119`(R150) 脏 9 枚、最新写 0.2 分钟前；`be-r32`(R151) 本班开局**全干净**（reflog 显示42 分钟前才 fast-forward 到 `eef642b`，`lastfailed` 是 16:32 的 R142 旧账，不是本单在跑反证——上一班记的"在跑反证"**记错了**），21:4x 起脏 8 枚已开工；`be-r46b`(R152) 脏 8 枚、最新写 29 分钟前。十对写域交集当场复核 **全部为 0**（含主树）。
 - **五、远端账**：`70695df` 已推 **gitee**；**github 今天九试九败**（`TLS connect error: error:0A000126:SSL routines::unexpected eof`，网络侧非权限）。H6"分支从未 push、本机唯一副本"仍不成立（gitee 有全量）。
+## 78 · 本班（09-21 第三十九班）：R152 两笔文档欠账结案 + 🔴 实测出的 R153 立案
+
+### 一、R152 具名上报的两笔文档欠账，由总控代做完了
+
+- **契约**：`docs/api/contract-v1.md` 新增 `## Document Activity Feedback (2026-09-21, R152 / R46)` 一节
+  （追加在文件末尾，931 → 992 行）。写清两枚路由、只认 `filename`/`signal` 两键、多一键 422、
+  五枚状态码与 detail 的对应、404 的**理由**（不存在的文档不收信号，否则计数表成了任意 key 的写法）、
+  403 沿用唯一可见性判定、拒绝也记审计、GET 那三枚 `prior_*` 是为了让「没人打点」与「没读到」可分辨、
+  POST 成功后 reset 快照所以回执与下一读不会打架。末段「What this switch does not claim」把留账写进契约本体。
+- **两份 env 示例**：`.env.example` 与 `deploy/.env.server.example` 各补 `RAG_ACTIVITY_PRIOR=on`
+  一段（187 / 152 行），写明默认即开、`off/0/false/no` 才算关、**拼错不算关**、fail-open 的表现、
+  改值要 recreate 不要 reload，以及下面第二节那个实测数字。
+- **焊条**：新 `tests/test_r152_activity_feedback_docs.py`，8 枚，全离线。开关名与常量一律
+  `from app.rag import retriever` 现取（零手抄）；码表与 `feedback.py` 的 `HTTPException` AST 同源双向对账；
+  隐私那句改钉成「列清单里除 `filename` 之外没有第二枚 TEXT 列、且不许长出 query/answer/note/user_id」；
+  另钉 R120 那条旧账（旋钮必须到得了 backend/worker/scheduler，`env_file` 整份读入才算数）。
+  🔴 **散文里的数字由常量现算**：一枚采纳的分值、榜首两名的分差、能挪几个名次、腿宽 `k=5`，
+  四枚数都从代码算出来再要求散文引用同一个数——改常量不改散文，当场红。
+- **牙齿**：五把变异（M1 散文把 0.0025 写成 0.0030｜M2 示例默认写 off｜M3 两份示例各写一套｜
+  M4 契约码表删掉 503 那一行｜M5 给 0011 加一枚 `note TEXT`）逐把指名红，跑完逐字节还原、控制组 8 passed。
+- **复跑**：读文档与示例的全族（`test_r142` / `test_r132` / `test_r105` / `test_r32_lane` / `test_r38` /
+  `test_r30` / `test_r120` 三件 / `test_deployment_*` 三件 / `test_private_model_routing` / `test_phase8` /
+  `test_r46_activity_signals`）**350 passed**，无连带伤害。
+
+### 二、🔴 本班实测：R152 那个先验的强度与它的注释不符（这就是 R153）
+
+总控在为示例写说明时算了一遍，量法是把 `activity_prior_value` 直接放进它自己要调整的那个形状
+`rank_score = 1/(60+rank)` 里比：
+
+- 榜首与第二名差 **0.00026**；**一枚「采纳」值 0.0025** ⇒ 等效 **11 个名次**；5 枚 0.00625、20 枚 0.00870、上界 0.01。
+- 而一条腿只有 **5** 个候选（`app/api/v1/chat.py` 里 `retriever.search(..., k=5)`，pipeline 默认同值）。
+- 端到端过真函数复核：`rank_hits_by_activity` 收到 12 条命中、末位那篇带 20 枚采纳 ⇒ `previous_rank=12 → new_rank=1`。
+
+⇒ **一个同事点一次，就能决定这一条腿的第一名。** `app/rag/retriever.py:404` 那句
+「weight=0.01 足够让一篇被采信过的文档上位，又不至于让"谁点得多"盖过"谁更相关"」的**后半句不成立**
+（前半句成立）。它自己的 `activity_prior_value` 对 0/0 与 5/5 都给 0.0 那处注释已被 R152 改对，
+但这处是量级判断，不是措辞问题。契约与示例里的措辞按实测写，没沿用那半句。
+
+### 三、R153 派工全文（先验强度校准）
+
+- **Step 0**：`git -C <你的工作树> merge --ff-only eaa9af8` 把基线抬到主树现 HEAD（`c29ccf5` 是它的祖先，
+  可快进），核 `rev-parse HEAD == eaa9af8` 再动工。
+- **① 一根具名的界**：先验对单条命中的**最大位移 ≤ 1 个名次**（正负两侧都是），且这个界**与腿宽无关**
+  ——腿 5 / 12 / 40 三种各自测过，各自给出「最远能从第几名顶到第几名」的实测数。
+- **② 判据② 一字不许松**：无信号 / 开关关着 / 输入非列表时仍交回**同一个对象**（不是内容相等的新列表）。
+  那枚钉继续绿才算数。
+- **③ 形状自选，推荐名次空间**：把调整挪到 `key = previous_rank - value`（`value ∈ [-1, 1]`），
+  于是界天然与 RRF 分差解耦。无论选哪种，注释必须说清「为什么这个界不再随候选宽度漂」。
+  `activity_prior` 注记仍要让「这篇凭什么排上来」在答案侧看得见。
+- **④ 若坚持分值相加**：给出新的 `ACTIVITY_PRIOR_WEIGHT`，使**最大**调整 ≤ 榜首分差（现算 0.00026），
+  并把这条算式写进常量注释。
+- **⑤ 改口旧钉必须记账**：R152 那 40 枚里凡钉住具体 `adjustment` 数字的，逐枚写「原名 / 原断言 / 新断言 /
+  为什么不是放宽」。**一枚都不许删**，也不许顺手弱化与本单无关的断言。
+- **⑥ 反证至少三把**：把界放宽一档 / 把「无信号返回原对象」改成复制 / 把 `value` 上界撑到 1.5，
+  每把必须有具名用例红；跑完逐字节还原 + 控制组绿。
+- **⑦ 文档不归你**：你改完，`tests/test_r152_activity_feedback_docs.py` 里那枚「散文数字与常量同源」会**红**，
+  这是设计如此。交工回执里把新算出的三个数打出来（一枚采纳的位移 / 榜首分差 / 新形状的最大调整），
+  由总控改契约与两份示例。**执行层禁碰 `docs/**`。**
+- **⑧ 不许顺手做限额**：「按人限次 / 冷却」是业主闸门（见 §77 五与 H 清单），本单只校准强度。
+- **⑨ 写域锁**：`app/rag/retriever.py` + `tests/test_r46_activity_signals.py` + 新测试件。
+  `app/api/v1/chat.py`（Laplace 在改）、`frontend/**`（Erdos / Hooke 在改）一律不碰。
+
+### 四、本机账（09-21 22:4x 实测）
+
+- 主树 HEAD `eaa9af8`，**`eaa9af8` 已推 gitee**；🔴 github（remote 名叫 `origin`）**十试十败**，
+  全是 `TLS connect error: unexpected eof`，网络侧非权限，未改写历史。
+- 三枚在途复核（磁盘与进程实测，非自述）：`be-r29`(Laplace/R149) 脏 3 枚、最新写 49 分钟前；
+  `be-r119`(Erdos/R150) 脏 9 枚、最新写 2.8 分钟前仍在动；`be-r32`(Hooke/R151) 脏 8 枚、最新写 42 分钟前。
+  本机当时只有 1 枚 92K 的 python 进程 ⇒ **没有 agent 在跑 pytest、也没有人在打真机**，主树全量排在窗口内。
