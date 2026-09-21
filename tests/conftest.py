@@ -333,128 +333,31 @@ assert MODEL_DISCOVERY_PIN.offline is not MODEL_DISCOVERY_PIN.shipped, "离线�
 assert (os.environ.get("LOCAL_MODEL_NAME") or "").strip(), "LOCAL_MODEL_NAME 钉子不能是空串"
 assert not OFFLINE_DISCOVERY_CALLS, "发现桩只该在被调用时记录，装桩本身不该触发"
 
-# ==================== 跟进单 R53：测试期把 Chroma 目录钉进临时沙箱 ====================
-# app/rag/retriever.py:89 的默认参数是相对路径 "./chroma_db"，__init__ 第 90 行立刻
-# os.makedirs(chroma_dir)，第 190-191 行再 chromadb.PersistentClient(path=chroma_dir)。
-# pytest 的 cwd 就是仓库根，所以 app/rag/retrieval_pipeline.py:142、:174 那两处无参
-# DocumentRetriever() 会把向量库直接写进工作树里已被 git 跟踪的 ./chroma_db。
-# 和上面的 PERSISTENCE_*、DATABASE_URL 同一招：必须在 conftest 导入期动手，因为默认值挂在
-# 函数对象上，等测试模块 import 完 app 再改就晚了。本单不改 app/ 的签名，也不新增生产环境变量。
-CHROMA_SANDBOX_ROOT = tempfile.mkdtemp(prefix="enterprise-brain-tests-chroma-")
-CHROMA_SANDBOX = os.path.join(CHROMA_SANDBOX_ROOT, "chroma_db")
-# EB_TEST_KEEP_SANDBOX=1 只用于取证：跑完保留沙箱，好让人核对 Chroma 确实落在临时目录。
-KEEP_TEST_SANDBOXES = os.environ.get("EB_TEST_KEEP_SANDBOX", "").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+# ==================== 跟进单 R53 / R134：测试期把 Chroma 目录钉进临时沙箱 ====================
+# 实现本体搬进 tests/_chroma_sandbox.py，因为 R134 查明：pytest 只沿「命令行参数的祖先链」加载
+# conftest.py，把 tests/ 之外的路径交给 pytest（例如 `pytest app/api/v1/chat.py`）根本不加载本文件，
+# 而 app/api/v1/chat.py 是模块级 DocumentRetriever()——一 import 就把被跟踪的 chroma.sqlite3 就地写脏。
+# 所以实现只留一份，装载点两处：仓库根 conftest.py（任何起法都会加载）与本文件。分工由
+# tests/test_r134_chroma_writeback.py 的静态钉守着：仓库根只装依赖级那半（PersistentClient 改道 +
+# 写回基线），app 级的默认值改写仍留给本文件——改写要 import app.rag.retriever，而那枚模块 :19 就调
+# load_dotenv()，在本文件把 .env 堵住（R70）之前引 app 等于把那道闸重新放开。
+from tests import _chroma_sandbox as chroma_sandbox_pins
 
+_path_within = chroma_sandbox_pins._path_within
+_pin_chroma_sandbox_default = chroma_sandbox_pins._pin_chroma_sandbox_default
+_discard_chroma_sandbox = chroma_sandbox_pins._discard_chroma_sandbox
+_chroma_store_snapshot = chroma_sandbox_pins._chroma_store_snapshot
+_chroma_writeback_violations = chroma_sandbox_pins._chroma_writeback_violations
+_format_chroma_writeback = chroma_sandbox_pins._format_chroma_writeback
+_pin_chroma_persistent_client = chroma_sandbox_pins._pin_chroma_persistent_client
+note_current_test = chroma_sandbox_pins.note_current_test
+writeback_violations_for = chroma_sandbox_pins.writeback_violations_for
+CHROMA_SANDBOX_ROOT = chroma_sandbox_pins.CHROMA_SANDBOX_ROOT
+CHROMA_SANDBOX = chroma_sandbox_pins.CHROMA_SANDBOX
+KEEP_TEST_SANDBOXES = chroma_sandbox_pins.KEEP_TEST_SANDBOXES
 
-def _positional_default_names(init) -> list[str]:
-    """__init__ 上带默认值的位置参数名，顺序与 __defaults__ 尾部对齐。"""
-    parameters = list(inspect.signature(init).parameters.values())
-    if not parameters or parameters[0].name != "self":
-        raise RuntimeError(f"{init!r} 不像普通的实例 __init__，无法定位 chroma_dir 默认值")
-    names = []
-    for parameter in parameters[1:]:
-        if parameter.kind in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD):
-            continue
-        if parameter.kind is parameter.KEYWORD_ONLY or parameter.default is parameter.empty:
-            continue
-        names.append(parameter.name)
-    return names
-
-
-def _chroma_default_index(init) -> int:
-    """chroma_dir 在 __init__.__defaults__ 里的下标；签名一变就抛，绝不静默跳过。"""
-    names = _positional_default_names(init)
-    if "chroma_dir" not in names:
-        raise RuntimeError(
-            "DocumentRetriever.__init__ 的签名里找不到带默认值的 chroma_dir"
-            f"（实际带默认值的位置参数={names}）。R53 拒绝在目录没钉死的情况下跑测试。"
-        )
-    defaults = init.__defaults__ or ()
-    if len(defaults) != len(names):
-        raise RuntimeError(
-            f"__defaults__ 有 {len(defaults)} 项，签名声明的带默认值位置参数有 {len(names)} 项 {names}，"
-            "两者无法对应；R53 拒绝猜测下标。"
-        )
-    # __defaults__ 与签名里「带默认值的位置参数」从后往前一一对应：
-    # names[-1] <-> defaults[-1]，所以偏移量是两边长度的差。当前两者等长，偏移恒为 0，
-    # 写成通式是为了万一以后 chroma_dir 后面又多了别的带默认值参数，也不会钉错位置。
-    return names.index("chroma_dir") - (len(names) - len(defaults))
-
-
-def _pin_chroma_sandbox_default(sandbox_dir: str, retriever_class=None):
-    """把 DocumentRetriever 的 chroma_dir 默认值改写成沙箱绝对路径。
-
-    拿不到目标就抛 RuntimeError：静默跳过等于本单白做——每次 pytest 又会去写工作树的
-    ./chroma_db。返回 (defaults 下标, 被替换掉的出厂默认值)。
-    """
-    if retriever_class is None:
-        # 只有 conftest 会在测试模块之前 import app，改写发生在这一行之前才有效。
-        import app.rag.retriever as rag_retriever
-
-        retriever_class = getattr(rag_retriever, "DocumentRetriever", None)
-        if retriever_class is None:
-            raise RuntimeError("app.rag.retriever 里没有 DocumentRetriever，R53 无处可钉。")
-    init = getattr(retriever_class, "__init__", None)
-    if not callable(init):
-        raise RuntimeError(f"{retriever_class!r} 没有可调用的 __init__，R53 无处可钉。")
-    index = _chroma_default_index(init)
-    original = init.__defaults__[index]
-    if not isinstance(original, str):
-        raise RuntimeError(f"chroma_dir 的默认值不是路径字符串，而是 {original!r}。")
-    sandbox = os.path.abspath(str(sandbox_dir))
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    if _path_within(repo_root, sandbox):
-        raise RuntimeError(f"Chroma 沙箱不能落在工作树里：{sandbox}")
-    pinned = list(init.__defaults__)
-    pinned[index] = sandbox
-    try:
-        init.__defaults__ = tuple(pinned)
-    except (AttributeError, TypeError) as exc:
-        raise RuntimeError(
-            f"改写 {retriever_class.__name__}.__init__.__defaults__ 失败：{exc}；"
-            "生产实现换了写法，R53 需要改用别的钩子，而不是放过它。"
-        ) from exc
-    if init.__defaults__[index] != sandbox:
-        raise RuntimeError("Chroma 沙箱默认值改写之后没有生效。")
-    return index, original
-
-
-def _path_within(parent: str, child: str) -> bool:
-    """child 是否位于 parent 之内（含相等）。两个参数都按绝对路径规范化后比较。"""
-    parent = os.path.normcase(os.path.abspath(parent))
-    child = os.path.normcase(os.path.abspath(child))
-    return child == parent or child.startswith(parent + os.sep)
-
-
-def _discard_chroma_sandbox() -> str | None:
-    """尽力删掉本次会话的 Chroma 沙箱，删不掉就把路径返回出去，绝不静默。
-
-    Windows 上 chromadb 会一直攥着 chroma.sqlite3 的文件句柄，连
-    SharedSystemClient.clear_system_cache() 都不释放，所以会话结束时的清理只能尽力而为：
-    最坏情况是 %TEMP% 里留下一个一百多 KB 的目录，工作树的 ./chroma_db 始终不受影响。
-    """
-    if KEEP_TEST_SANDBOXES:
-        return None
-    shutil.rmtree(CHROMA_SANDBOX_ROOT, ignore_errors=True)
-    return CHROMA_SANDBOX_ROOT if os.path.isdir(CHROMA_SANDBOX_ROOT) else None
-
-
-CHROMA_DIR_DEFAULT_INDEX, CHROMA_DIR_SHIPPED_DEFAULT = _pin_chroma_sandbox_default(
-    CHROMA_SANDBOX
-)
-
-assert os.path.isabs(CHROMA_SANDBOX), "the Chroma sandbox must be an absolute path"
-assert isinstance(CHROMA_DIR_SHIPPED_DEFAULT, str), "chroma_dir 的出厂默认值必须是路径字符串"
-assert CHROMA_SANDBOX_ROOT != _PERSISTENCE_SANDBOX, "Chroma 沙箱要与持久化沙箱分开，便于分别取证"
-# 交叉标记：守卫测试靠它确认改写真的发生了，而不是在 except 分支里被静默跳过。
-os.environ["ENTERPRISE_BRAIN_PYTEST_CHROMA_DIR"] = CHROMA_SANDBOX
-# --collect-only 这类调用不会走到 fixture 拆除，沙箱目录就交给 atexit 收尾。
-atexit.register(_discard_chroma_sandbox)
+# 必须在导入期动手：默认值挂在函数对象上，等测试模块 import 完 app 再改就晚了。
+chroma_sandbox_pins.install_chroma_sandbox_pins(_PERSISTENCE_SANDBOX, pin_retriever_default=True)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -482,9 +385,9 @@ def chroma_sandbox():
     return SimpleNamespace(
         root=CHROMA_SANDBOX_ROOT,
         path=CHROMA_SANDBOX,
-        default_index=CHROMA_DIR_DEFAULT_INDEX,
-        shipped_default=CHROMA_DIR_SHIPPED_DEFAULT,
-        repo_root=os.path.abspath(os.path.join(os.path.dirname(__file__), "..")),
+        default_index=chroma_sandbox_pins.CHROMA_DIR_DEFAULT_INDEX,
+        shipped_default=chroma_sandbox_pins.CHROMA_DIR_SHIPPED_DEFAULT,
+        repo_root=chroma_sandbox_pins.CHROMA_REPO_ROOT,
         marker=os.environ["ENTERPRISE_BRAIN_PYTEST_CHROMA_DIR"],
     )
 
@@ -493,6 +396,51 @@ def chroma_sandbox():
 def pin_chroma_sandbox_default():
     """把改写函数本身交给测试，用来验证它「签名不对就抛」而不是静默跳过。"""
     return _pin_chroma_sandbox_default
+
+
+@pytest.fixture(autouse=True)
+def chroma_writeback_tripwire(request):
+    """R134 判据：逐用例比对工作树快照，被写过就红，并指名是哪一枚用例先写坏的。"""
+    note_current_test(request.node.nodeid)
+    yield
+    problems = writeback_violations_for(
+        request.node.nodeid,
+        already_failed=bool(getattr(request.node, "_eb_r134_call_failed", False)),
+    )
+    if problems:
+        pytest.fail(_format_chroma_writeback(problems, request.node.nodeid), pytrace=False)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def chroma_writeback_session_guard():
+    """会话收尾再量一次：抓最后一次用例之后（teardown、后台线程）才落盘的写回。"""
+    yield
+    problems = chroma_sandbox_pins._chroma_writeback_violations(
+        chroma_sandbox_pins.CHROMA_WRITEBACK_BASELINE
+    )
+    if problems:
+        raise AssertionError(_format_chroma_writeback(problems, "<会话收尾>"))
+
+
+@pytest.fixture
+def chroma_writeback_guard():
+    """把 R134 的钉子与台账交给守卫/反证用例，用例不必去 import conftest。"""
+    return SimpleNamespace(
+        repo_root=chroma_sandbox_pins.CHROMA_REPO_ROOT,
+        store_dir=chroma_sandbox_pins.CHROMA_REPO_STORE,
+        sandbox_root=CHROMA_SANDBOX_ROOT,
+        baseline=chroma_sandbox_pins.CHROMA_WRITEBACK_BASELINE,
+        redirects=chroma_sandbox_pins.CHROMA_SANDBOX_REDIRECTS,
+        calls=chroma_sandbox_pins.CHROMA_PERSISTENT_CLIENT_CALLS,
+        violations=chroma_sandbox_pins.CHROMA_WRITEBACK_VIOLATIONS,
+        parameter=chroma_sandbox_pins.CHROMA_CLIENT_PARAMETER,
+        shipped=chroma_sandbox_pins.CHROMA_CLIENT_SHIPPED,
+        pins=chroma_sandbox_pins,
+        snapshot=_chroma_store_snapshot,
+        diff=chroma_sandbox_pins._chroma_writeback_violations,
+        pin=_pin_chroma_persistent_client,
+        within=_path_within,
+    )
 
 
 # ==================== R56：逐用例兜底断言与取证 ====================
@@ -607,6 +555,27 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         terminalreporter.write_line(
             f"  re-pinned at {record['stage']}: 上一个用例 {record['previous']}"
         )
+
+    violations = chroma_sandbox_pins.CHROMA_WRITEBACK_VIOLATIONS
+    calls = chroma_sandbox_pins.CHROMA_PERSISTENT_CLIENT_CALLS
+    redirected = [entry for entry in calls if entry["target"] != entry["requested"]]
+    terminalreporter.write_sep("=", "R134 工作树 Chroma 写回闸门")
+    terminalreporter.write_line(
+        f"PersistentClient 调用: {len(calls)} 次，其中落点被改道出工作树: {len(redirected)} "
+        f"次（{len(chroma_sandbox_pins.CHROMA_SANDBOX_REDIRECTS)} 个原路径）"
+    )
+    for entry in redirected[:8]:
+        terminalreporter.write_line(
+            f"  {entry['requested']} -> {entry['target']} <- {entry['test']}"
+        )
+    if len(redirected) > 8:
+        terminalreporter.write_line(f"  ... 其余 {len(redirected) - 8} 条从略")
+    terminalreporter.write_line(
+        f"工作树 chroma_db 写回告警用例: {len(violations)} 枚"
+        f"（会话基线 {len(chroma_sandbox_pins.CHROMA_WRITEBACK_BASELINE)} 个文件）"
+    )
+    for record in violations[:3]:
+        terminalreporter.write_line(f"  {record['test']}: {record['problems'][:1]}")
 
 
 @pytest.fixture(autouse=True)
