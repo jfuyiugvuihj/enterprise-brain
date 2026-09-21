@@ -396,7 +396,6 @@ onMounted(loadDataFiles)
   width: 4px;
 }
 .data-panel::-webkit-scrollbar-thumb {
-  background: #d0d5dd;
   border-radius: 4px;
 }
 
@@ -404,14 +403,12 @@ onMounted(loadDataFiles)
 .upload-section {
   text-align: center;
   padding: 18px 0 14px;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
+  border-bottom: 1px solid color-mix(in srgb, var(--legacy-void) 5%, transparent);
 }
 
 .upload-btn {
   display: inline-block;
   padding: 10px 22px;
-  background: linear-gradient(135deg, #10b981, #059669);
-  color: #fff;
   border-radius: 8px;
   cursor: pointer;
   font-size: 14px;
@@ -421,11 +418,10 @@ onMounted(loadDataFiles)
 
 .upload-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(16,185,129,0.3);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--legacy-emerald) 30%, transparent);
 }
 
 .upload-btn.loading {
-  background: #a7f3d0;
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
@@ -434,12 +430,12 @@ onMounted(loadDataFiles)
 .upload-hint {
   margin-top: 8px;
   font-size: 12px;
-  color: #909399;
+  color: var(--legacy-ink-soft);
 }
 
 .data-files-section {
   padding: 16px 0 2px;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
+  border-bottom: 1px solid color-mix(in srgb, var(--legacy-void) 5%, transparent);
 }
 
 .section-heading {
@@ -447,7 +443,7 @@ onMounted(loadDataFiles)
   align-items: center;
   gap: 7px;
   margin-bottom: 9px;
-  color: #303133;
+  color: var(--legacy-ink-strong);
   font-size: 13px;
   font-weight: 600;
 }
@@ -456,8 +452,8 @@ onMounted(loadDataFiles)
   min-width: 18px;
   padding: 1px 6px;
   border-radius: 99px;
-  background: rgba(16,185,129,0.12);
-  color: #047857;
+  background: color-mix(in srgb, var(--legacy-emerald) 12%, transparent);
+  color: var(--legacy-emerald-deeper);
   font-size: 11px;
   text-align: center;
 }
@@ -477,10 +473,10 @@ onMounted(loadDataFiles)
   align-items: center;
   gap: 9px;
   padding: 9px 10px;
-  border: 1px solid #edf0f2;
+  border: 1px solid var(--legacy-fill-cool);
   border-radius: 8px;
-  background: #fff;
-  color: #303133;
+  background: var(--legacy-paper);
+  color: var(--legacy-ink-strong);
   cursor: pointer;
   font: inherit;
   text-align: left;
@@ -488,15 +484,15 @@ onMounted(loadDataFiles)
 }
 
 .data-file-item:hover {
-  border-color: #6ee7b7;
-  background: #f0fdf4;
+  border-color: var(--legacy-emerald-300);
+  background: var(--legacy-emerald-pale);
   transform: translateX(2px);
 }
 
 .data-file-item.active {
-  border-color: #10b981;
-  background: linear-gradient(135deg, #ecfdf5, #f0fdf4);
-  box-shadow: 0 2px 8px rgba(16,185,129,0.1);
+  border-color: var(--legacy-emerald);
+  background: linear-gradient(135deg, var(--legacy-emerald-mist), var(--legacy-emerald-pale));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--legacy-emerald) 10%, transparent);
 }
 
 .data-file-item.loading {
@@ -508,8 +504,8 @@ onMounted(loadDataFiles)
   min-width: 30px;
   padding: 4px 3px;
   border-radius: 5px;
-  background: #dcfce7;
-  color: #047857;
+  background: var(--legacy-emerald-100);
+  color: var(--legacy-emerald-deeper);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.4px;
@@ -526,7 +522,7 @@ onMounted(loadDataFiles)
 
 .data-file-name {
   overflow: hidden;
-  color: #374151;
+  color: var(--legacy-ink-graphite);
   font-size: 12px;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -534,16 +530,16 @@ onMounted(loadDataFiles)
 }
 
 .data-file-meta {
-  color: #9ca3af;
+  color: var(--legacy-ink-mute);
   font-size: 10px;
 }
 
 /* 数据画像 */
 .profile-card {
   margin-top: 16px;
-  background: rgba(255,255,255,0.8);
+  background: color-mix(in srgb, var(--legacy-paper) 80%, transparent);
   border-radius: 10px;
-  border: 1px solid rgba(0,0,0,0.04);
+  border: 1px solid color-mix(in srgb, var(--legacy-void) 4%, transparent);
   overflow: hidden;
 }
 
@@ -552,8 +548,8 @@ onMounted(loadDataFiles)
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
-  background: rgba(16,185,129,0.06);
-  border-bottom: 1px solid rgba(0,0,0,0.04);
+  background: color-mix(in srgb, var(--legacy-emerald) 6%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--legacy-void) 4%, transparent);
 }
 
 .profile-heading {
@@ -570,7 +566,7 @@ onMounted(loadDataFiles)
 
 .profile-stats {
   font-size: 11px;
-  color: #909399;
+  color: var(--legacy-ink-soft);
 }
 
 .data-file-actions {
@@ -581,18 +577,12 @@ onMounted(loadDataFiles)
 
 .data-action-btn {
   padding: 4px 9px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--legacy-line-mute);
   border-radius: 5px;
-  background: #fff;
-  color: #4b5563;
+  color: var(--legacy-ink-graphite-deep);
   cursor: pointer;
   font: inherit;
   font-size: 11px;
-}
-
-.data-action-btn:hover {
-  border-color: #10b981;
-  color: #047857;
 }
 
 .col-list {
@@ -601,7 +591,7 @@ onMounted(loadDataFiles)
 
 .col-item {
   padding: 10px 14px;
-  border-bottom: 1px solid #f5f5f5;
+  border-bottom: 1px solid var(--legacy-fill-plain);
 }
 
 .col-item:last-child {
@@ -622,13 +612,13 @@ onMounted(loadDataFiles)
 .col-name {
   font-size: 13px;
   font-weight: 500;
-  color: #303133;
+  color: var(--legacy-ink-strong);
 }
 
 .col-type {
   font-size: 11px;
-  color: #909399;
-  background: #f0f2f5;
+  color: var(--legacy-ink-soft);
+  background: var(--legacy-fill);
   padding: 1px 6px;
   border-radius: 4px;
 }
@@ -640,13 +630,11 @@ onMounted(loadDataFiles)
   border-radius: 4px;
 }
 
-.col-missing.ok { color: #67c23a; background: rgba(103,194,58,0.08); }
-.col-missing.warn { color: #e6a23c; background: rgba(230,162,60,0.08); }
-.col-missing.bad { color: #f56c6c; background: rgba(245,108,108,0.08); }
+.col-missing.warn { color: var(--legacy-ep-orange); }
 
 .col-stats {
   font-size: 11px;
-  color: #909399;
+  color: var(--legacy-ink-soft);
 }
 
 /* 快捷操作 */
@@ -657,7 +645,7 @@ onMounted(loadDataFiles)
 .quick-actions h4 {
   font-size: 13px;
   font-weight: 600;
-  color: #303133;
+  color: var(--legacy-ink-strong);
   margin-bottom: 10px;
 }
 
@@ -667,20 +655,20 @@ onMounted(loadDataFiles)
   text-align: left;
   padding: 10px 14px;
   margin-bottom: 6px;
-  background: #fff;
-  border: 1px solid #e4e7ed;
+  background: var(--legacy-paper);
+  border: 1px solid var(--legacy-line-hair);
   border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
   font-family: inherit;
-  color: #303133;
+  color: var(--legacy-ink-strong);
   transition: all 0.15s;
 }
 
 .quick-chip:hover {
-  border-color: #409eff;
-  color: #409eff;
-  background: rgba(64,158,255,0.03);
+  border-color: var(--legacy-ep-primary);
+  color: var(--legacy-ep-primary);
+  background: color-mix(in srgb, var(--legacy-ep-primary) 3%, transparent);
   transform: translateX(3px);
 }
 
@@ -690,7 +678,7 @@ onMounted(loadDataFiles)
 }
 
 .data-panel::-webkit-scrollbar-thumb {
-  background: rgba(157, 178, 207, .25);
+  background: color-mix(in srgb, var(--legacy-steel) 25%, transparent);
 }
 
 .upload-section,
@@ -699,13 +687,13 @@ onMounted(loadDataFiles)
 }
 
 .upload-btn {
-  background: linear-gradient(135deg, var(--cyan), #1a9f9a);
-  color: #061016;
-  box-shadow: 0 10px 24px rgba(53, 211, 200, .14);
+  background: linear-gradient(135deg, var(--cyan), var(--legacy-aqua));
+  color: var(--legacy-night);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--legacy-aqua-bright) 14%, transparent);
 }
 
 .upload-btn.loading {
-  background: rgba(53, 211, 200, .25);
+  background: color-mix(in srgb, var(--legacy-aqua-bright) 25%, transparent);
   color: var(--ink-soft);
 }
 
@@ -724,7 +712,7 @@ onMounted(loadDataFiles)
 
 .file-count,
 .col-type {
-  background: rgba(53, 211, 200, .1);
+  background: color-mix(in srgb, var(--legacy-aqua-bright) 10%, transparent);
   color: var(--cyan);
 }
 
@@ -732,15 +720,15 @@ onMounted(loadDataFiles)
 .profile-card,
 .col-item,
 .quick-chip {
-  background: rgba(255, 255, 255, .035);
+  background: color-mix(in srgb, var(--legacy-paper) 3.5%, transparent);
   border-color: var(--line);
 }
 
 .data-file-item:hover,
 .data-file-item.active,
 .quick-chip:hover {
-  border-color: rgba(53, 211, 200, .42);
-  background: rgba(53, 211, 200, .08);
+  border-color: color-mix(in srgb, var(--legacy-aqua-bright) 42%, transparent);
+  background: color-mix(in srgb, var(--legacy-aqua-bright) 8%, transparent);
   color: var(--cyan);
 }
 
@@ -752,13 +740,13 @@ onMounted(loadDataFiles)
 
 .data-action-btn {
   border-color: var(--line-strong);
-  background: rgba(255, 255, 255, .04);
+  background: color-mix(in srgb, var(--legacy-paper) 4%, transparent);
   color: var(--ink-soft);
 }
 
 .data-action-btn:hover {
   border-color: var(--blue);
-  color: #b5c4ff;
+  color: var(--legacy-periwinkle-pale);
 }
 
 /* 删除入口（W2-3）：只借 --danger 一个语义色，不给它加底色渐变（视觉文档 §5.3 彩色预算） */
@@ -773,16 +761,16 @@ onMounted(loadDataFiles)
 
 .col-missing.ok {
   color: var(--green);
-  background: rgba(101, 212, 154, .1);
+  background: color-mix(in srgb, var(--green) 10%, transparent);
 }
 
 .col-missing.warn {
   color: var(--amber);
-  background: rgba(228, 162, 74, .1);
+  background: color-mix(in srgb, var(--amber) 10%, transparent);
 }
 
 .col-missing.bad {
-  color: #ff9da5;
-  background: rgba(238, 109, 120, .1);
+  color: var(--legacy-coral);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
 }
 </style>

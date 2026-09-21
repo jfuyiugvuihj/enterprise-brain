@@ -144,8 +144,9 @@ describe('DataPanel · 文件列表三张脸 + 色债随接线一起掉', () => 
     const s = source('DataPanel.vue')
     expect(s).not.toContain('#dc2626')
     expect(s).not.toContain('#fafafa')
-    // #d1d5db 还剩 1 处，那是 .data-file-item 的描边，跟状态块无关，属 V1 色债，别混进这次接线。
-    expect(s.match(/#d1d5db/g)).toHaveLength(1)
+    // R151 把最后这一枚裸色也吃掉了（.data-action-btn 的描边 -> var(--legacy-line-mute)），
+    // 所以这里的计数从「还剩 1」收到 0：棘轮只准降，任何一枚裸 #d1d5db 复活都会当场红。
+    expect(s.match(/#d1d5db/g) || []).toHaveLength(0)
     expect(s).not.toContain('.data-state.error')
     expect(s).not.toContain('.data-state.empty')
     // 摘掉分支后没人用的 .preview-error 也一起清了，不留死样式
