@@ -334,12 +334,15 @@ def _prior_dispatch_decision(turn_messages: list):
 def main_agent_node(state: AgentState) -> dict:
     all_msgs = state.get("messages", [])
 
-    # 短期记忆：超阈值自动压缩
-    # Compression has the longest prompt of any call here -- it carries the whole history --
-    # and a short output, which is exactly the combination the old flat 30 s punished. The
-    # prompt is built inside summarize(), so no text is passed: the tier is sized for its
-    # largest permitted prompt, which is the honest worst case from this distance.
-    all_msgs = compress_messages(all_msgs, _make_model(ModelTier.COMPRESS))
+    # 短期记忆：R33 起确定性裁剪，零模型。旧写法在这里多发一发 COMPRESS 往返，让本机模型
+    # 把旧历史写成一句摘要，而这条线上唯一消费 all_msgs 的地方是下面“取本轮最后一条
+    # HumanMessage”那一圈：supervisor 真正发出的 prompt 只有 [sys_msg, current_user_msg]
+    # （tests/test_supervisor_roundtrip.py:7-9 早就把这一点当既成事实钉着），摘要串与 worker
+    # 结果一个字都不进上下文 —— 那一发买回来的东西当场被丢掉，是纯开销。
+    # 预算也不再由裁剪自己猜：交给真正吃这份历史的 supervisor 那一档（:259 main_model 用的
+    # ModelTier.ANALYSIS）的 input_budget_tokens。ModelTier.COMPRESS 这一档**保留**，档位预算
+    # 校准用例 tests/test_r30_timeout_budget.py 仍按它量表；生产路径自 R33 起不再调用它。
+    all_msgs = compress_messages(all_msgs, tier=ModelTier.ANALYSIS)
 
     # 长期记忆注入
     mem = state.get("memory") or {}
