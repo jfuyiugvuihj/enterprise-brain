@@ -140,16 +140,16 @@ onUnmounted(() => {
 <style scoped>
 .chart-card {
   margin: 12px 0;
-  background: rgba(17, 27, 44, .92);
+  background: color-mix(in srgb, var(--legacy-night-2) 92%, transparent);
   border-radius: 12px;
-  border: 1px solid rgba(157, 178, 207, .16);
+  border: 1px solid color-mix(in srgb, var(--legacy-steel) 16%, transparent);
   overflow: hidden;
-  box-shadow: 0 14px 34px rgba(0, 0, 0, .18);
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--legacy-void) 18%, transparent);
   transition: box-shadow 0.2s;
 }
 
 .chart-card:hover {
-  box-shadow: 0 18px 42px rgba(0, 0, 0, .28);
+  box-shadow: 0 18px 42px color-mix(in srgb, var(--legacy-void) 28%, transparent);
 }
 
 .chart-header {
@@ -157,13 +157,13 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(157, 178, 207, .12);
+  border-bottom: 1px solid color-mix(in srgb, var(--legacy-steel) 12%, transparent);
 }
 
 .chart-caption {
   font-size: 13px;
   font-weight: 500;
-  color: #f0f4fb;
+  color: var(--ink);
 }
 
 .chart-actions {
@@ -181,14 +181,14 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #9eacc1;
+  color: var(--legacy-ink-steel);
   text-decoration: none;
   transition: all 0.15s;
 }
 
 .chart-btn:hover {
-  background: rgba(106, 140, 255, .14);
-  color: #8ea8ff;
+  background: color-mix(in srgb, var(--legacy-periwinkle-strong) 14%, transparent);
+  color: var(--legacy-periwinkle);
 }
 
 .chart-img-wrap {
@@ -202,7 +202,7 @@ onUnmounted(() => {
   max-width: 100%;
   max-height: 360px;
   border-radius: 6px;
-  background: #fff;
+  background: var(--legacy-paper);
   transition: transform 0.2s;
 }
 
@@ -214,7 +214,7 @@ onUnmounted(() => {
 .preview-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(3, 7, 16, .82);
+  background: color-mix(in srgb, var(--legacy-veil) 82%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -238,10 +238,10 @@ onUnmounted(() => {
 
 .tb-btn {
   padding: 8px 20px;
-  border: 1px solid rgba(255,255,255,0.25);
+  border: 1px solid color-mix(in srgb, var(--legacy-paper) 25%, transparent);
   border-radius: 8px;
-  background: rgba(255,255,255,0.1);
-  color: #f0f4fb;
+  background: color-mix(in srgb, var(--legacy-paper) 10%, transparent);
+  color: var(--ink);
   cursor: pointer;
   font-size: 13px;
   font-family: inherit;
@@ -251,7 +251,7 @@ onUnmounted(() => {
 }
 
 .tb-btn:hover {
-  background: rgba(255,255,255,0.2);
+  background: color-mix(in srgb, var(--legacy-paper) 20%, transparent);
 }
 
 .tb-close {
@@ -265,7 +265,7 @@ onUnmounted(() => {
   max-height: 75vh;
   border-radius: 8px;
   transition: transform 0.3s ease;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  box-shadow: 0 20px 60px color-mix(in srgb, var(--legacy-void) 30%, transparent);
 }
 
 /* ===== 弹窗动画 ===== */
@@ -288,7 +288,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   padding: 26px 16px;
-  color: #9eacc1;
+  color: var(--legacy-ink-steel);
 }
 
 .chart-state-error {
@@ -305,7 +305,7 @@ onUnmounted(() => {
 
 .chart-state-title {
   font-size: 13px;
-  color: #f0f4fb;
+  color: var(--ink);
 }
 
 .chart-state-text {
@@ -321,10 +321,10 @@ onUnmounted(() => {
 .chart-retry {
   flex: none;
   padding: 6px 14px;
-  border: 1px solid rgba(142, 168, 255, .45);
+  border: 1px solid color-mix(in srgb, var(--legacy-periwinkle) 45%, transparent);
   border-radius: 6px;
-  background: rgba(106, 140, 255, .14);
-  color: #8ea8ff;
+  background: color-mix(in srgb, var(--legacy-periwinkle-strong) 14%, transparent);
+  color: var(--legacy-periwinkle);
   font-size: 12px;
   font-family: inherit;
   cursor: pointer;
@@ -332,8 +332,8 @@ onUnmounted(() => {
 }
 
 .chart-retry:hover {
-  background: rgba(106, 140, 255, .26);
-  color: #f0f4fb;
+  background: color-mix(in srgb, var(--legacy-periwinkle-strong) 26%, transparent);
+  color: var(--ink);
 }
 
 .chart-btn:disabled {

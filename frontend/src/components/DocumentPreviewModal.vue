@@ -105,7 +105,7 @@ const emit = defineEmits(['close', 'download'])
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(3, 7, 16, .82);
+  background: color-mix(in srgb, var(--legacy-veil) 82%, transparent);
   backdrop-filter: blur(4px);
 }
 
@@ -115,10 +115,10 @@ const emit = defineEmits(['close', 'download'])
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: #111b2c;
+  background: var(--legacy-night-2);
   border-radius: 10px;
-  border: 1px solid rgba(157, 178, 207, .18);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, .42);
+  border: 1px solid color-mix(in srgb, var(--legacy-steel) 18%, transparent);
+  box-shadow: 0 24px 80px color-mix(in srgb, var(--legacy-void) 42%, transparent);
 }
 
 .preview-header {
@@ -127,7 +127,7 @@ const emit = defineEmits(['close', 'download'])
   justify-content: space-between;
   gap: 16px;
   padding: 14px 18px;
-  border-bottom: 1px solid rgba(157, 178, 207, .16);
+  border-bottom: 1px solid color-mix(in srgb, var(--legacy-steel) 16%, transparent);
 }
 
 .preview-heading {
@@ -139,14 +139,14 @@ const emit = defineEmits(['close', 'download'])
 
 .preview-heading strong {
   overflow: hidden;
-  color: #f0f4fb;
+  color: var(--ink);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .preview-heading span {
   flex-shrink: 0;
-  color: #9eacc1;
+  color: var(--legacy-ink-steel);
   font-size: 12px;
 }
 
@@ -158,10 +158,10 @@ const emit = defineEmits(['close', 'download'])
 
 .preview-btn,
 .preview-close {
-  border: 1px solid rgba(157, 178, 207, .22);
+  border: 1px solid color-mix(in srgb, var(--legacy-steel) 22%, transparent);
   border-radius: 6px;
-  background: rgba(255, 255, 255, .04);
-  color: #dbe5f3;
+  background: color-mix(in srgb, var(--legacy-paper) 4%, transparent);
+  color: var(--legacy-tint-azure);
   cursor: pointer;
   font: inherit;
 }
@@ -172,8 +172,8 @@ const emit = defineEmits(['close', 'download'])
 }
 
 .preview-btn:hover {
-  border-color: #6a8cff;
-  color: #aabdff;
+  border-color: var(--legacy-periwinkle-strong);
+  color: var(--legacy-periwinkle-mid);
 }
 
 .preview-close {
@@ -184,13 +184,13 @@ const emit = defineEmits(['close', 'download'])
 }
 
 .preview-close:hover {
-  background: rgba(106, 140, 255, .12);
+  background: color-mix(in srgb, var(--legacy-periwinkle-strong) 12%, transparent);
 }
 
 .preview-body {
   flex: 1;
   min-height: 0;
-  background: #0b1220;
+  background: var(--legacy-night-1);
 }
 
 .preview-state {
@@ -198,19 +198,19 @@ const emit = defineEmits(['close', 'download'])
   height: 100%;
   place-items: center;
   padding: 24px;
-  color: #9eacc1;
+  color: var(--legacy-ink-steel);
   font-size: 13px;
 }
 
 .preview-error {
-  color: #ff9da5;
+  color: var(--legacy-coral);
 }
 
 .pdf-frame {
   width: 100%;
   height: 100%;
   border: 0;
-  background: #525659;
+  background: var(--legacy-slate-dark);
 }
 
 .text-preview {
@@ -218,8 +218,8 @@ const emit = defineEmits(['close', 'download'])
   margin: 0;
   overflow: auto;
   padding: 24px;
-  color: #e7eef9;
-  background: #0d1728;
+  color: var(--legacy-tint-azure-soft);
+  background: var(--legacy-night-3);
   font: 13px/1.75 Consolas, "Microsoft YaHei", monospace;
   white-space: pre-wrap;
   word-break: break-word;
@@ -236,15 +236,15 @@ const emit = defineEmits(['close', 'download'])
   display: flex;
   gap: 16px;
   margin-bottom: 10px;
-  color: #9eacc1;
+  color: var(--legacy-ink-steel);
   font-size: 12px;
 }
 
 .table-scroll {
   flex: 1;
   overflow: auto;
-  border: 1px solid rgba(157, 178, 207, .16);
-  background: #142035;
+  border: 1px solid color-mix(in srgb, var(--legacy-steel) 16%, transparent);
+  background: var(--legacy-night-4);
 }
 
 table {
@@ -259,8 +259,8 @@ td {
   min-width: 120px;
   max-width: 280px;
   padding: 9px 12px;
-  border-right: 1px solid rgba(157, 178, 207, .12);
-  border-bottom: 1px solid rgba(157, 178, 207, .12);
+  border-right: 1px solid color-mix(in srgb, var(--legacy-steel) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--legacy-steel) 12%, transparent);
   text-align: left;
   vertical-align: top;
   white-space: nowrap;
@@ -270,17 +270,17 @@ th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #172a36;
-  color: #8ce2bf;
+  background: var(--legacy-aqua-night);
+  color: var(--legacy-mint);
   font-weight: 600;
 }
 
 td {
-  color: #dbe5f3;
+  color: var(--legacy-tint-azure);
 }
 
 tr:hover td {
-  background: rgba(106, 140, 255, .08);
+  background: color-mix(in srgb, var(--legacy-periwinkle-strong) 8%, transparent);
 }
 
 .preview-modal-enter-active,

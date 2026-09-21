@@ -2523,3 +2523,72 @@ textarea:focus-visible {
 @media (max-width: 720px) {
 
 }
+
+/* ----------------------------------------------------------------------------
+ * R151 还债追加段（2026-09-21）：DocPanel / DataPanel / DocumentPreviewModal / ChartViewer
+ * 四块面板里的裸色值，逐字搬进来，一枚 token 对一枚原字面量，值一字未改。
+ * 这一段的作用是「让债有名字」，不是「让债变漂亮」：这些值仍然属于浅色 Element 时代的调色板，
+ * 坐在暗色壳里就是脏卡片。重上色（把它们逐个指向 --surface-* / --text-*）属于视觉工单，
+ * 不属于还债工单 —— R151 判据④要求逐像素不变，所以本轮只改名不改色。
+ * 反证在 src/components/__tests__/r151-legacy-colors.test.js：改任一枚 token 的值，或
+ * 把面板里任一处 var() 换回字面量，那枚用例当场红。
+ * -------------------------------------------------------------------------- */
+:root {
+  /* 浅色时代的中性文本（Element-Plus 遗留色板，面板里那批浅色卡片在用） */
+  --legacy-ink-faint: #c0c4cc;
+  --legacy-ink-graphite: #374151;
+  --legacy-ink-graphite-deep: #4b5563;
+  --legacy-ink-mid: #606266;
+  --legacy-ink-mute: #9ca3af;
+  --legacy-ink-soft: #909399;
+  --legacy-ink-steel: #9eacc1;
+  --legacy-ink-strong: #303133;
+  /* 浅色时代的分隔线与浅底（同上，删除会改视觉，只能先命名） */
+  --legacy-fill: #f0f2f5;
+  --legacy-fill-cool: #edf0f2;
+  --legacy-fill-mist: #edf2f7;
+  --legacy-fill-plain: #f5f5f5;
+  --legacy-line: #d0d5dd;
+  --legacy-line-hair: #e4e7ed;
+  --legacy-line-mute: #d1d5db;
+  --legacy-line-pale: #ebeef5;
+  --legacy-steel: #9db2cf;
+  --legacy-tint-azure: #dbe5f3;
+  --legacy-tint-azure-soft: #e7eef9;
+  /* Element-Plus 语义色（主色/成功/警告/危险与其浅化描边） */
+  --legacy-ep-danger: #f56c6c;
+  --legacy-ep-danger-line: #fab6b6;
+  --legacy-ep-orange: #e6a23c;
+  --legacy-ep-primary: #409eff;
+  --legacy-ep-success: #67c23a;
+  --legacy-ep-success-line: #b3e19d;
+  /* 绿-青族（深色时代与浅色时代混用） */
+  --legacy-aqua: #1a9f9a;
+  --legacy-aqua-bright: #35d3c8;
+  --legacy-aqua-night: #172a36;
+  --legacy-emerald: #10b981;
+  --legacy-emerald-100: #dcfce7;
+  --legacy-emerald-300: #6ee7b7;
+  --legacy-emerald-deeper: #047857;
+  --legacy-emerald-mist: #ecfdf5;
+  --legacy-emerald-pale: #f0fdf4;
+  --legacy-mint: #8ce2bf;
+  /* 蓝-红族强调色（深色时代的 periwinkle / coral） */
+  --legacy-coral: #ff9da5;
+  --legacy-coral-soft: #ffabb2;
+  --legacy-periwinkle: #8ea8ff;
+  --legacy-periwinkle-mid: #aabdff;
+  --legacy-periwinkle-pale: #b5c4ff;
+  --legacy-periwinkle-strong: #6a8cff;
+  /* 近黑底与中性深灰（图表/遮罩/滚动条） */
+  --legacy-night: #061016;
+  --legacy-night-1: #0b1220;
+  --legacy-night-2: #111b2c;
+  --legacy-night-3: #0d1728;
+  --legacy-night-4: #142035;
+  --legacy-slate-dark: #525659;
+  --legacy-veil: #030710;
+  /* 纯白与纯黑（alpha 变体一律由 color-mix 派生，不再写 rgba 字面量） */
+  --legacy-paper: #ffffff;
+  --legacy-void: #000000;
+}
