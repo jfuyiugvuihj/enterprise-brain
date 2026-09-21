@@ -691,14 +691,18 @@ def test_there_is_still_only_one_directory_funnel_to_guard(chroma_writeback_guar
     新位置。那时要改的是 tests/_chroma_sandbox.py 的收口清单，而不是再叠一层默认值改写——
     「第 N 层改写」正是本单判据里禁止的表面补丁。
     """
-    assert _chroma_funnel_sites(Path(chroma_writeback_guard.repo_root)) == [
-        "app/rag/retriever.py:480:PersistentClient",
-        "scripts/compare_vector_recall.py:185:PersistentClient",
-        "scripts/rebuild_index.py:302:PersistentClient",
-    ], (
-        "按目录开 Chroma 的收口清单变了，R134 的改道要跟着扩："
-        + "、".join(_chroma_funnel_sites(Path(chroma_writeback_guard.repo_root)))
-    )
+    sites = _chroma_funnel_sites(Path(chroma_writeback_guard.repo_root))
+    # 钉的是"收口有哪几处"，不是"那几处今天坐在第几行"：本单原文的依据就是
+    # 「全仓按目录开库的收口只有那三处」。带行号的等式会被一次无关的插行打红——
+    # R152 在 retriever.py 里加了 251 行，把这枚 PersistentClient 从 480 顶到 731，
+    # 收口一个没多、一个没少，却红了一整条全量。所以这里比 (文件, 工厂名) 与**枚数**：
+    # 同文件再长第二处会得到 4 枚，照样当场红（行号仍随消息打出来，指位置用）。
+    funnels = [site.split(":", 1)[0] + ":" + site.rsplit(":", 1)[1] for site in sites]
+    assert funnels == [
+        "app/rag/retriever.py:PersistentClient",
+        "scripts/compare_vector_recall.py:PersistentClient",
+        "scripts/rebuild_index.py:PersistentClient",
+    ], "按目录开 Chroma 的收口清单变了，R134 的改道要跟着扩：" + "、".join(sites)
 
 
 def test_the_tests_conftest_still_installs_the_app_level_half(chroma_writeback_guard):
