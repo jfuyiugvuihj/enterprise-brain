@@ -1966,3 +1966,30 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 
 - 交付 `docs/handoff/2026-09-21-must-contain-orphans.md`（30 779 B / 200 行 / 纯 CRLF 无 BOM / sha256 前 16 `bd7b6d9a2f32547f`）。它给的三条**接受并入库**：①「29 枚里 9 枚今天就在得分、只有 `approval-05`/`report-07` 是真缺页」⇒ **拿 29 当补语料工程量是假命题**；②覆盖度检查与判分器不是同一把尺；③`T1` 有 4 枚（`insight-05`/`data-07`/`report-08`/`doc-17`）得分正文其实是拒答段或与金标反向 ⇒ **为清出处去改锚词会把假阳性焊死**。这三条与本班 §4BH.14 二互为正反面，run6 报告引用 `must_contain` 分数时必须同批引用本节。
 - 业主裁定面：A 8 条（改题面/锚词，须批准）· B 7 条（补语料主题）· C 14 条（显式扣口径）——**A 类一律不许由 Agent 代做**（动 `tests/fixtures/**` = 动分数定义）。
+
+## 66. 本班第三格（09-21 09:4x–10:2x，总控第三十二班，主树 `6554901`）：**R125 + R126 同日验收并树 · 双写窗容器重启归因（是总控）· 三笔对总控口径的更正 · R130 已派**
+
+### 一、两单验收结论（凭据全为总控亲跑，非转述）
+
+- **R125 `Tesla`/`01a0bf43` → 达标并树 `db414e0`**（代提交 `c034db6`）：三枚 sha256 逐位吻合；定向 **34 passed**（新件 + 旧消费者 `test_r22_rebuild_cli.py`）；本树全量 **2773 / 36** 亲跑复现。🔴 **差值实验**：主树旧版 `--status` 不带 `--json` 在真库副本上 **`TypeError: 'int' object is not iterable` @ `rebuild_index.py:901`、exit 1**，R125 版 exit 0 且普查打全（`vectors_read=401/401 pages=3 documents=95 measurable=true`）⇒ §61 的「业主会取到空」实测升级为「会直接崩」，已修。新语义已核：普查走独立只读句柄（不建目录、不 `get_or_create`、`_CensusCollection` 只透传 `get`/`count`），`--chroma-dir` 默认 `CHROMA_DIR→ROOT/chroma_db` 属新增、未改旧路径。
+- **R126 `Hooke`/`01a0c167` → 达标并树 `6554901`**（代提交 `c69e190`）：新件 **20 passed** 亲跑；本树全量 **2778 / 36** 亲跑复现；R56 宿主端口 0 命中。存-读顺序已修（`_save_message` 挪到改写之后 + 取值端第二道闸），触发判据由七枚 `startswith` 前缀升为五族文本判据 `_is_followup`，**105 题现算 12/12 命中、0/93 误伤**；r109 的 autouse fixture 按判据②改成三段真形状历史，既有 14 枚断言零删零弱化。
+
+### 二、双写窗归因与环境规矩一条
+
+- `Tesla` 报告「09-21 09:07:07 backend/scheduler/worker 被 stop/start（`RestartCount=0`、日志冷启动 BM25 985 篇）」并请求裁定是谁干的 ⇒ **是总控做第④步 `up -d --wait` recreate**，镜像未变、run5 同源性未破、与 R116 无交互。🔴 **新规矩：总控任何动容器的动作，先在看板落时间戳再动手**，否则执行层会把环境变动误判成邻单干扰（这会污染它们的归因与回执）。
+
+### 三、三笔对总控口径的更正（都进本单，别再去翻旧投递词）
+
+1. 评测集分组字段真名是 **`category`**，不是 `group`（§64 写错；`Hooke` 抓的。其实本班早先一次探针输出里 `group=` 就是 None，当时没回看）。⇒ 今后凡按分组切 105 题，用 `category`。
+2. `tests/test_r109_rewrite_offline_guard.py` 是 **14 枚**用例，不是 12 枚（`--collect-only` 实测，改前改后同数）。
+3. 🔴 **「非 R51 执行层树」两值不是常数**：`e4e8c48` 那批树实测 **2758 / 36**，与主树 2759/35 差一枚 —— 差在 `tests/test_phase1_arch.py:73`（唯一与 Postgres 可达性挂钩的用例，conftest 把 `DATABASE_URL` 钉在保留端口 1 ⇒ 必跳）。⇒ **派工一律现场复量并在回执里带基线**，抄上一班数字必错。
+
+### 四、两笔待裁（本班不擅自扩域）
+
+- `Tesla`：`--status` 打印行里 `cross_dimension_vectors_after=0` 是**假 0**（status 报告本无此键），判据④ 不许动旧行故留着 ⇒ 待并成 R116 后的一枚小单。
+- `Hooke`（对判据③的实质异议，本班认账但不在 R126 里重开）：**四对近义题任何可泛化规则都分不开**（`chat-01`↔`approval-01`、`chat-03`↔`report-03`、`chat-12`↔`insight-04`、`chat-08`↔`metric-03`），静态词表只能按这份题集校准 ⇒ 建议 **R131** 把判据换成「有 ≥1 轮上文即交模型自判，静态词表降级为前置省钱闸」。排在 R33 之后议，run6 之前不做。
+- ⚠️ 前瞻（`Hooke` 提出，本班转成 run6 观察项）：进改写的题从 4 枚涨到 12 枚 ⇒ 每轮多一次非流式本机调用，**run6 请盯 `[REWRITE]` 日志量与 `rate_limited` 命中率**；R109 守卫保证坏不了只会回落原问题，但改写预算要算进延迟账。
+
+### 五、R130 已派
+
+`Chandrasekhar`/`01a0c18c`@`be-r130`（09-21 10:0x `spawn_agent` 一次，基线 `6500173`，开工 0 脏项）。判据全文 = **§65 二**；🔴 已明令禁碰 `scripts/rebuild_index.py`（R125 刚落树，`--chroma-dir` 等新参数归它），禁碰真机三服务与双写开关。
