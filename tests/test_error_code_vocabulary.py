@@ -38,6 +38,13 @@ RATIFIED = {
     # 那一层一个字都没改，本单只是给它旁边补了一条机器读得懂的路。
     "row_scope_denied": "app/agents/tools.py",
     "no_visible_rows": "app/agents/tools.py",
+    # R32：/ask 的非法档位（AskRequest.lane 写了四值之外的字符串）吐的码。**不是新造码名**：
+    # validation_error 早在这张表之外就被枚举追认（app/agents/contracts.py），observability /
+    # intelligence / open_platform 三条 400 一直用它，本单只是给 chat.py 补上第一个 emit 点
+    # （_require_valid_lane）。为什么不新造 invalid_lane：frontend/src/lib/errcodes.test.js:99
+    # 拿 git ref codex/data-file-catalog 的枚举比对前端键集合——枚举行里多一枚而前端少一枚，
+    # 执行层无法 commit 的那一半就会当场红。
+    "validation_error": "app/api/v1/chat.py",
 }
 
 # ==================== 登记：还没资格进枚举的码（R64 判据①的改判面） ====================
