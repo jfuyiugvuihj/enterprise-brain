@@ -1934,3 +1934,35 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 
 - **复用已 completed 的 agent 下新工单不占新名额**：本班把 R127 交回 `Wegener`/`01a0bf45`（它已握有 `checkpoint_ns` 全链证据与必绿清单），R126 才新起一棵 `be-r126`。一个 block 内只允许一次投递调用，`spawn_agent` 与 `send_input` 二选一，报错不补投。
 - **任何「某单零提交」的全称否定必须同时给 `git log --all --grep` 命中数 + `merge-base --is-ancestor` 的 exit code**（PowerShell `if (git ...)` 读的是 stdout 不是 exit code，必须查 `$LASTEXITCODE`）；引用任何数字前先查有没有被后续实测推翻——本班的第四条亲验就是把「12 枚只命中 4 枚」从转述升成实测。
+
+## 65. 本班下格（09-21 09:0x–09:4x，总控第三十二班，主树 `4b731eb`，基线两值 **2785 / 39**）：**R123 并树 · 更正甲案分数上界（+12 而非 +18，失败倒扣 6）· pgvector 双写窗第④⑤步执行账 · 新立 R130（P1：PDF 抽取带 NUL 打断 pgvector 镜像）· R129 结案**
+
+### 一、基线与两笔更正
+
+- **基线两值刷新：主树 2785 passed / 39 skipped**（并树 R123 后本班亲跑 112.80 s）。凡引用 2759/35 的旧判据，一律按新值起算。
+- 更正一（对执行层自报算术）：R123 交工回执里「甲案上界 +18/105 = +0.1714、correctness 可抬到 0.6476」**作废**，改为 **上界 +12/105、诚实区间 [0.4190, 0.5905]**，凭据与算法见看板 §4BH.14 二。
+- 更正二（对总控自己的投递词）：批准端点真名 **`POST /api/v1/approve`**（`app/api/v1/chat.py:1718` + `app/main.py:80` 把 chat.router 挂在 `/api/v1`），**不是** `/api/v1/chat/approve`；本班在 R123 工单里写错，执行层第一投被打成 404 后自行纠正并留了实测凭据。今后工单模板一律以 `--status`/openapi 为准，不凭记忆写路由。
+
+### 二、R130（新立·施工单）【P1：pypdf 抽出的 NUL 字节打断 pgvector 镜像写，双写一开该类文档整单上传失败】
+
+- **现象与真因（总控真机实测，不必重证）**：`docker exec enterprise-brain-backend-1 python scripts/rebuild_index.py --apply --confirm-scope "nomic-embed-text/768" --document "AI-Agent学习路线图.pdf" --json` ⇒ `aborted: ... embed_failed (VectorWriteRejectedError)`；真值经进程内打印包装逼出：`psycopg.DataError: PostgreSQL text fields cannot contain NUL (0x00) bytes`，`vector_mirror_diagnostics()` 记 `reason=vector_mirror_write_failed`、`rejected_writes=1`。NUL 出自 **`app/rag/loader.py:11-21` 的 `load_pdf`**（`page.extract_text()` 不做净化，`:17` 的 `.strip()` 去不掉**内部**的 `\x00`），随分块文本一起进 `VectorMirror.add` 的 `executemany`。
+- **半径（总控实测）**：全仓 PDF 扫一遍 ⇒ **只有 `AI-Agent学习路线图.pdf` 这 1 枚、1 个 NUL 字符**；现存 985 枚 Chroma 分块 **0 枚含 NUL**。但该文件 **git 已跟踪**（`documents/AI-Agent学习路线图.pdf`，4 748 712 B）⇒ 可在离线用例里真复现，**不许拿它当 fixture 改动对象**（`tests/fixtures/**` 仍禁碰；直接从 `documents/` 读）。
+- **写域**：`app/rag/loader.py`（净化落在**出口**：`load_pdf` 必做，`load_docx`/`load_doc`/`load_txt`/`load_md`/`load_document` 同一把尺，别只补一处）、`app/rag/pg_store.py`（把"文本列收不下"变成**开 cursor 之前**的具名拒绝，与净化两层各司其职）、新用例 `tests/test_r130_text_unencodable_is_named_refusal.py`（文件名可改，一枚即可）。🔴 **禁碰 `scripts/rebuild_index.py`**（`Tesla`/`01a0bf43` 正在写 R125）——那条「`:422` 吞掉 `exc.reason`」的可诊断性缺陷本班已单独记账，等 R125 并树后由总控并入或另开小单。
+- **判据 ①（净化正确性，必须是"只删不该在的"）**：对该真件跑 `load_pdf` ⇒ 结果 **不含 `\x00`**，且 `净化结果 == 原抽出.replace("\x00", "")` **逐字相等**（不许顺手 `strip` 空白、不许折叠换行、不许删 emoji、不许改大小写）；另钉「抽出字符总数差 == NUL 枚数」（本例差 1）。
+- **判据 ②（镜像具名早拒）**：`VectorMirror.build_rows`（或 `add` 在 `executemany` 之前）遇到含 NUL 的 `document` 必须抛 `VectorWriteRejectedError` 且 **`reason` 是新立的具名码**（建议 `vector_mirror_text_unencodable`），消息里必须带**可定位信息**（`filename` 与 `chunk_index`），并在 `vector_mirror_diagnostics()` 的 `last_failure` 里可读到同一枚 reason。🔴 **不许**把"净化"当成唯一修法而让镜像层继续把脏料拖到 psycopg 才炸；也不许让镜像层悄悄 strip 后照写（那会把污染藏进两本账）。
+- **判据 ③（端到端离线）**：一枚**离线**用例证明"含 NUL 的分块文本走 `VectorMirror.add`"不再产生 `psycopg.DataError` 而是产生②的具名拒绝（桩 connection/cursor，🔴 不许连真库、不许起容器、不许 `docker exec`）。
+- **判据 ④（存量一条不许动）**：断言现存 985 枚 Chroma 分块与 PG `chunks` 985 行**不被本单改写**；把"扫描存量含 NUL 的枚数"钉成一枚只读用例（现值 0，将来非 0 必须指名文档而不是自动清洗）。
+- **判据 ⑤（反证，执行层先自己跑）**：(a) 摘掉 `load_pdf` 净化 ⇒ ①③ 当场红；(b) 摘掉②的具名早拒 ⇒ ②红、③退回 `psycopg.DataError` 那种"原因被吞"的形状；(c) 若改用"镜像层 strip 后照写" ⇒ ②红。
+- **必绿清单**：`tests/test_r98_checkpointer_backend.py` 之外，重点是 pgvector 那一族（`git grep -ln "VectorMirror\|vector_mirror" -- tests` 逐枚）、`test_r50_resumable_rebuild.py`、`test_r115_*`、`test_r122_*`、`test_r21_*`。两值以 **2785 / 39** 起算只增不减。
+- **纪律**：禁止 commit/push/docker/起服务/跑评测/打 8001 与 Ollama/GPU；解释器唯一 `C:\Users\fengx\PycharmProjects\企业智脑\.venv\Scripts\python.exe`，跑测试前 `$env:LOCAL_MODEL_NAME='__eb_test_disabled__'`；含 `|` 的 git format 与中文路径走 python `subprocess` 参数列表；跑 `pypdf` 解析真件时**务必把 stderr 吞掉**（`_cmap.py` 会为上千条坏行刷屏，本班被灌过一轮）。
+
+### 三、双写窗执行账（七步表现在跟进单 §63 三）
+
+- 已做：①②③（U3 普查 / 备份件 / `.env.server` 追加）上一班；**④ 本班做成两次**（先 `on` 验证透传三服务全 `on`，发现 P1 后回退 `off`，现值 `off`）；**⑤ 本班真打并失败于 R130**。
+- 未做：⑥ 放量、⑦ `compare_vector_recall.py` + 恢复演练。🔴 **门禁顺序**：R130 并树 → 后端镜像重建（含 R123/R130 的新代码）→ 回 `on` recreate → ⑤ 金丝雀必须看到 PG 侧 `count(*) filter (where embedding is not null)` 从 0 变非 0 且维度 768 → 才允许 ⑥ → ⑦。
+- 再钉一条：recreate 会清后端 `docker compose logs` 历史，**先取走再动**（本班已把 run5 之后的日志保全到 `%TEMP%\evalrun\backend-post-run5.log`，含 `POST /api/v1/approve 200` 那三行探针凭据）。
+
+### 四、R129 结案登记
+
+- 交付 `docs/handoff/2026-09-21-must-contain-orphans.md`（30 779 B / 200 行 / 纯 CRLF 无 BOM / sha256 前 16 `bd7b6d9a2f32547f`）。它给的三条**接受并入库**：①「29 枚里 9 枚今天就在得分、只有 `approval-05`/`report-07` 是真缺页」⇒ **拿 29 当补语料工程量是假命题**；②覆盖度检查与判分器不是同一把尺；③`T1` 有 4 枚（`insight-05`/`data-07`/`report-08`/`doc-17`）得分正文其实是拒答段或与金标反向 ⇒ **为清出处去改锚词会把假阳性焊死**。这三条与本班 §4BH.14 二互为正反面，run6 报告引用 `must_contain` 分数时必须同批引用本节。
+- 业主裁定面：A 8 条（改题面/锚词，须批准）· B 7 条（补语料主题）· C 14 条（显式扣口径）——**A 类一律不许由 Agent 代做**（动 `tests/fixtures/**` = 动分数定义）。
