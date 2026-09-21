@@ -332,6 +332,14 @@ onUnmounted(() => {
       </div>
     </main>
     <div v-else class="workbench-shell reference-workbench" data-testid="workbench">
+      <!-- R148 背景四层（L0 基底 / L1 美术 / L2 网格 / L3 遮罩）：纯装饰，aria-hidden +
+           pointer-events: none，不放噪点层。参数全部在 theme.css 的 .app-bg* 里。 -->
+      <div class="app-bg" aria-hidden="true">
+        <span class="app-bg__base"></span>
+        <span class="app-bg__art"></span>
+        <span class="app-bg__grid"></span>
+        <span class="app-bg__scrim"></span>
+      </div>
       <aside class="sidebar" aria-label="工作区导航" data-testid="sidebar">
         <div class="sidebar-brand">
           <span class="brand-mark"><span></span></span>

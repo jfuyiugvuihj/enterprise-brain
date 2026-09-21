@@ -1,4 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
+/* 字体一律本地化（R148）：客户内网连不上 fonts.googleapis.com 会卡首屏。
+   包在 package.json:16-17 已装；🔴 这两个包声明的 family 名带 " Variable" 后缀，
+   所以下面 :root 的 --font-body/--font-mono 必须同名改，否则 @import 等于白写
+   （肉眼看不出来）。中文继续走 PingFang SC / Microsoft YaHei：Manrope 不含中文字形。 */
+@import "@fontsource-variable/manrope/wght.css";
+@import "@fontsource-variable/jetbrains-mono/wght.css";
 
 :root {
   --bg: #040812;
@@ -25,8 +30,8 @@
   --radius-lg: 18px;
   --radius-md: 13px;
   --radius-sm: 9px;
-  --font-body: Manrope, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-  --font-mono: "DM Mono", "Cascadia Code", Consolas, monospace;
+  --font-body: "Manrope Variable", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "Cascadia Code", Consolas, monospace;
 
   /* =====================================================================
      语义 token 层（视觉文档 §5.1 原名 · 落地顺序表 V1/V2 的地基）
@@ -1180,16 +1185,17 @@ textarea:focus-visible {
 }
 
 /*
-  L1 美术层暂时空着：现有两张候选切图都不合格。
-  docs/reference/art/login-earth.webp(1020x941/79KB) 与 login-plate.webp(1680x945/80KB)
-  都把「数据 1.2M+ / 洞察 +42% / 知识 300K+」三张装饰卡烤进了位图，
-  直接违反 V2 的「位图不含任何文字，文案 100% 来自 DOM」；
-  按 docs/reference/make_plate.py 的 inpaint 路线修补，实测会在地球上留下矩形残影
-  （TEMP/v2-preview.png）。干净切图到位后，取消下面两行注释即可，DOM 侧无需再改。
+  L1 美术层（R148 接线）：src/assets/login-bg.webp，1254x1254 / 108 900 B / webp q78。
+  业主定盘用的就是他原来那张地球，图生图只抹掉了烤在像素里的三张假数字卡
+  （数据 1.2M+ / 知识 300K+ / 洞察 +42%），点阵、连线、轨道环、光点原样保留，
+  复查无矩形残影 ⇒ 满足 V2「位图不含任何文字，文案 100% 来自 DOM」。
+  旧图 login-earth.webp(1020x941) 与 login-plate.webp(1680x945) 都带假卡，已弃用。
+  底色近黑（实测均值 RGB 2,19,36），正好吃 mix-blend-mode: screen——screen 把暗部当透明，只画发光部分。
+  新图是正方形、旧图是 1.08:1，所以下面两个断点的尺寸/锚点重验过（见 @media 960 / 640 两处）。
 */
 .login-bg__art {
-  /* background-image: url("./login-earth.webp"); */
-  /* background-size: auto 104%; */
+  background-image: url("./login-bg.webp");
+  background-size: auto 104%;
   background-repeat: no-repeat;
   background-position: 63% 50%;
   mix-blend-mode: screen;
@@ -1220,6 +1226,64 @@ textarea:focus-visible {
     linear-gradient(90deg, rgba(4, 7, 13, .92) 0%, rgba(4, 7, 13, .66) 24%, rgba(4, 7, 13, .16) 44%, transparent 58%),
     radial-gradient(126% 108% at 64% 46%, transparent 46%, rgba(3, 5, 11, .62) 100%);
 }
+
+/* =====================================================================
+   R148 · 工作台背景层：与 .login-bg 同一套参数，只有 L1/L3 按正文密度重压。
+   可读性仍然只由 L3 遮罩负责（不给文字加 text-shadow）；换图只动 __art 的 opacity。
+   这层不放 __noise：正文密度高，噪点会糊小字号（登录页那层保留不动）。
+   ===================================================================== */
+.app-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  isolation: isolate;
+  pointer-events: none;
+}
+.app-bg > * { position: absolute; inset: 0; }
+
+/* L0 基底：.reference-workbench 原来的两个渐变挪进这里，色相换成定盘的深空靛蓝 */
+.app-bg__base {
+  background:
+    radial-gradient(64% 78% at 66% 44%, rgba(30, 96, 152, .28) 0%, rgba(16, 52, 92, .14) 42%, transparent 68%),
+    linear-gradient(178deg, #070d18 0%, var(--surface-0) 52%, #02040a 100%);
+}
+
+/* L1 美术：src/assets/workbench-bg.webp（1536x1024，由 _peer-starter/art/E-workspace.png 导 q78） */
+.app-bg__art {
+  background-image: url("./workbench-bg.webp");
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: 72% 68%;
+  opacity: .5;
+  mix-blend-mode: screen;
+}
+@supports not (mix-blend-mode: screen) {
+  /* screen 不可用就整层不画，回退成 L0 纯色底，不做半透叠加 */
+  .app-bg__art { display: none; }
+}
+
+/* L2 网格：复用登录页的 88px 与 mask，opacity 再降一档 */
+.app-bg__grid {
+  background-image:
+    linear-gradient(90deg, var(--border-1) 1px, transparent 1px),
+    linear-gradient(0deg, var(--border-1) 1px, transparent 1px);
+  background-size: 88px 88px;
+  opacity: .4;
+  -webkit-mask-image: radial-gradient(112% 96% at 8% 50%, #000 0%, rgba(0, 0, 0, .35) 42%, transparent 66%);
+  mask-image: radial-gradient(112% 96% at 8% 50%, #000 0%, rgba(0, 0, 0, .35) 42%, transparent 66%);
+}
+
+/* L3 遮罩：只保侧栏与顶栏，正文区不压——正文面板本来就是实心 var(--surface-2) */
+.app-bg__scrim {
+  background:
+    linear-gradient(90deg, rgba(4, 7, 13, .86) 0%, rgba(4, 7, 13, .58) 24%, rgba(4, 7, 13, .18) 46%, transparent 62%),
+    linear-gradient(0deg, rgba(3, 5, 11, .55) 0%, transparent 34%);
+}
+
+/* 内容抬到层之上：grid item 不显式定位吃不到 z-index */
+.reference-workbench > .sidebar,
+.reference-workbench > .workspace { position: relative; z-index: 1; }
 
 .login-brand,
 .login-stage,
@@ -1625,9 +1689,9 @@ textarea:focus-visible {
   min-height: 100dvh;
   padding: 0;
   gap: 0;
-  background:
-    radial-gradient(circle at 76% -16%, rgba(33, 119, 207, .20), transparent 29rem),
-    linear-gradient(135deg, #071b2e, #061224 55%, #071122);
+  /* R148：底色由 .app-bg__base 负责，原来这两个渐变（含会偏回 #071b2e 的那条）已挪走，
+             两层底叠在一起色相就不对了。position 是给绝对定位的背景层当 containing block 的。 */
+  position: relative;
 }
 
 .reference-workbench .sidebar {
