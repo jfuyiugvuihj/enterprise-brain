@@ -50,6 +50,9 @@ from app.common.model_config import (
 )
 from app.common.model_handler import (
     KEEP_ALIVE_FIELD,
+    NATIVE_REFUSED_STATUSES,
+    NATIVE_PROTOCOL_ABSENT_STATUSES,
+    NATIVE_REQUEST_REJECTED_STATUSES,
     RESPONSE_EMPTY_CODE,
     NATIVE_CHAT_SUFFIX,
     NATIVE_MAX_TOKENS_FIELD,
@@ -58,6 +61,7 @@ from app.common.model_handler import (
     ModelHandler,
     ModelReply,
     ModelSource,
+    _NativeChatRequestRejected,
     _NativeChatUnsupported,
     answer_error_code,
 )
@@ -319,11 +323,12 @@ def test_the_native_leg_still_carries_the_tier_cap_untouched(monkeypatch):
 def test_a_shape_refused_by_the_native_leg_downgrades_without_losing_the_answer(monkeypatch):
     """判据④的产品侧后果，按真机报文重放（E 段给出那枚 400 的原文）。
 
-    原生腿把 400 归类为「这台服务器没有原生 API」，于是它**整个进程退役**，改写腿跟着一起
-    退回兼容腿。这是既有分类（``NATIVE_REFUSED_STATUSES``），本单不改它，只把它钉住：
-    形状冲突必须"少一条腿"，绝不能"少一个答案"。
+    **R147 改判**：本单结案时这里钉的是"400 ⇒ 整条腿进程级退役"，判据④要的"少一条腿但不
+    少一个答案"当年是靠砍腿实现的。R147 把 400 从「这台服务器没有原生 API」里拆出去
+    （``NATIVE_REQUEST_REJECTED_STATUSES``），所以现在钉的是：**本条退回兼容腿、答案一字不
+    少、腿不退役**。"绝不能少一个答案"这半句一字未动。
     """
-    native = _NativeRecorder(raises=_NativeChatUnsupported(NATIVE_400_ON_STRING_ARGS))
+    native = _NativeRecorder(raises=_NativeChatRequestRejected(NATIVE_400_ON_STRING_ARGS))
     handler = _handler(monkeypatch)
     completions = SimpleNamespace(create=lambda **kwargs: SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content='{"rewrites": []}'), finish_reason="stop")],
@@ -338,17 +343,21 @@ def test_a_shape_refused_by_the_native_leg_downgrades_without_losing_the_answer(
     assert reply.transport == TRANSPORT_COMPAT
     assert str(reply) == '{"rewrites": []}'
     assert reply.error_code == ""
-    assert handler._native_supported is False
+    assert handler._native_supported is True, "R147：400 说的是我们的报文，不是这台服务器没有 API"
 
 
 def test_that_retirement_is_sticky_for_the_rest_of_the_process(monkeypatch):
-    """The same fact from the other side: one client-side shape error costs both legs, forever.
+    """Retirement is sticky -- for the one refusal that justifies it.
 
-    Deliberately a pin on current behaviour, not an endorsement. If a later ticket decides a
-    400 caused by *our* message shape must not retire the leg, this is the test to change --
-    and the one that proves the exposure is real today.
+    This used to be a pin on a 400, and its own docstring said as much: if a later ticket
+    decides a 400 about *our* message shape must not retire the leg, this is the test to
+    change. R147 is that ticket. The 400 moved to tests/test_r147_native_leg_verdict.py;
+    what stays pinned here is the half that is still true -- once the server says it has no
+    native chat API (404 / 405 / 410), the process stops asking, and one probe per process
+    is all the discovery ever costs.
     """
-    native = _NativeRecorder(raises=_NativeChatUnsupported(NATIVE_400_ON_STRING_ARGS))
+    absent = sorted(NATIVE_PROTOCOL_ABSENT_STATUSES)[0]
+    native = _NativeRecorder(raises=_NativeChatUnsupported(f"HTTP {absent}: not found"))
     handler = _handler(monkeypatch)
     monkeypatch.setattr(handler, "_native_chat_request", native)
     rewrite = model_tier_budget(ModelTier.REWRITE)
@@ -357,6 +366,8 @@ def test_that_retirement_is_sticky_for_the_rest_of_the_process(monkeypatch):
 
     assert first is None and second is None
     assert len(native.calls) == 1, "退役之后不该再为原生腿花第二次钱"
+    assert handler._native_supported is False
+    assert absent in NATIVE_PROTOCOL_ABSENT_STATUSES
 
 
 # ==================== D：真机逐帧契约（2026-09-21，宿主 127.0.0.1:11434，qwen3:4b） ====================
@@ -1077,3 +1088,19 @@ def test_the_wiring_still_asks_so_a_server_that_listens_is_not_a_code_change(mon
 
     assert primary.last_body[KEEP_ALIVE_FIELD] == "900s", "兼容腿：问了，今天被忽略"
     assert native.calls[0]["payload"][KEEP_ALIVE_FIELD] == "900s", "原生腿：问了，今天有效"
+
+
+# ==================== R147：本单钉下的 400 分类已被改判（记在此处，勿再抄回上面） =====
+# 上面 C 段那枚"形状冲突"用例今天钉的是新语义：400 = 我方报文错 = 本条退回、腿不退役。
+# 退役语义（404/405/410）与具名读数的完整钉子搬进 tests/test_r147_native_leg_verdict.py，
+# 那里全部走真分类器（假冒 httpx 让 _native_chat_request 自己吐异常），不在本文件重复。
+
+
+def test_the_two_halves_of_the_old_refusal_set_are_disjoint():
+    """拆分的形状钉子：并集仍是当年那四个、交集为空、400 单独成半。"""
+    assert (
+        NATIVE_PROTOCOL_ABSENT_STATUSES | NATIVE_REQUEST_REJECTED_STATUSES
+        == NATIVE_REFUSED_STATUSES
+    )
+    assert NATIVE_PROTOCOL_ABSENT_STATUSES & NATIVE_REQUEST_REJECTED_STATUSES == frozenset()
+    assert NATIVE_REQUEST_REJECTED_STATUSES == frozenset({400})

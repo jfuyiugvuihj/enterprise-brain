@@ -70,10 +70,39 @@ KEEP_ALIVE_FIELD = "keep_alive"
 #: Which leg answered a call. A log line that cannot say this is not evidence of anything.
 TRANSPORT_NATIVE = "ollama-native"
 TRANSPORT_COMPAT = "openai-compat"
-#: Statuses that mean "this server has no native chat API", as opposed to "not right now".
-#: 429 and the 5xx family are deliberately absent: they are temporary, and retiring the leg
-#: over one overloaded afternoon would quietly downgrade every request that follows.
-NATIVE_REFUSED_STATUSES = frozenset({400, 404, 405, 410})
+#: Statuses that mean "this server has no native chat API at all", as opposed to "not right
+#: now". 429 and the 5xx family are deliberately absent from both halves below: they are
+#: temporary, and retiring the leg over one overloaded afternoon would quietly downgrade
+#: every request that follows.
+#:
+#: R147 split the one set this file used to carry. The two halves are different findings and
+#: used to carry the same consequence. 404 / 405 / 410 say the endpoint is not there, so
+#: asking again can only waste time. A 400 says the opposite -- the endpoint is there and
+#: answered, and what it refused was the body we sent: measured on the host 2026-09-21, an
+#: OpenAI-shaped ``tool_calls.arguments`` string handed to the native leg is answered with a
+#: 400 naming the shape (``NATIVE_400_ON_STRING_ARGS`` in tests/test_r29_thinking_tax.py).
+#: Retiring on that read a bug in our own payload as the server not having an API, and the
+#: retirement lasted the rest of the process: every later rewrite lost the leg that asks for
+#: no thinking chain, with nothing in the log to say which of the two happened.
+NATIVE_PROTOCOL_ABSENT_STATUSES = frozenset({404, 405, 410})
+#: Statuses that mean "this request body is not acceptable". The call goes to the compatible
+#: leg and the native leg stays open, because the next body may well be fine.
+NATIVE_REQUEST_REJECTED_STATUSES = frozenset({400})
+#: Every status after which this call leaves the native leg. Being in this set is not a
+#: reason to retire anything: that verdict belongs to
+#: :data:`NATIVE_PROTOCOL_ABSENT_STATUSES` alone.
+NATIVE_REFUSED_STATUSES = NATIVE_PROTOCOL_ABSENT_STATUSES | NATIVE_REQUEST_REJECTED_STATUSES
+
+#: The named readings for what the native leg last told us (R147). "A 400 happened" has to be
+#: tellable apart from "this server has no native API" without re-reading a warning line, so
+#: every outcome writes one of these names on the handler in the same breath as it decides
+#: whether to retire. ``NATIVE_VERDICT_UNTRIED`` is the state of a process that has never
+#: asked, which is not the same as a process that asked and was refused.
+NATIVE_VERDICT_UNTRIED = "untried"
+NATIVE_VERDICT_ANSWERED = "answered"
+NATIVE_VERDICT_PROTOCOL_ABSENT = "protocol_absent"
+NATIVE_VERDICT_REQUEST_REJECTED = "request_rejected"
+NATIVE_VERDICT_NOT_JSON = "response_not_json"
 
 #: The offline sentence, spelled once. It was already written twice in this file, and both
 #: legs have to answer with the same words for the same reason.
@@ -136,7 +165,34 @@ class ModelReply(str):
 
 
 class _NativeChatUnsupported(RuntimeError):
-    """The server behind this base_url has no native chat API to speak of."""
+    """The server behind this base_url has no native chat API to speak of.
+
+    R147: this is the *retiring* refusal. The endpoint is absent, or something that is not
+    this API is answering for it, so no fix to our payload changes the outcome and the
+    process stops asking. A server that has the endpoint and disliked our body raises
+    :class:`_NativeChatRequestRejected` instead.
+    """
+
+    #: Named reading for a refusal that retires (R147).
+    verdict = NATIVE_VERDICT_PROTOCOL_ABSENT
+
+    def __init__(self, message: str, verdict: str | None = None):
+        super().__init__(message)
+        if verdict is not None:
+            self.verdict = verdict
+
+
+class _NativeChatRequestRejected(RuntimeError):
+    """The native endpoint is there and answered -- it refused *this* body.
+
+    A separate exception type rather than a flag on the one above, because the decision
+    site would otherwise have to re-parse status codes out of a message string to tell "our
+    payload is wrong" from "this server has no API". That parse is exactly the mistake R147
+    is fixing: the two used to be one class, so the two were one consequence.
+    """
+
+    #: Named reading for a refusal that must not retire (R147).
+    verdict = NATIVE_VERDICT_REQUEST_REJECTED
 
 
 def answer_error_code(content, finish_reason) -> str:
@@ -230,10 +286,20 @@ class ModelHandler:
         from app.common.model_budget import default_model_budget
 
         self._budget = default_model_budget()
-        #: One probe per process. A server that answers 404 on its native chat API is told so
-        #: once and then never asked again, so a vLLM-style endpoint pays for the discovery
-        #: exactly once instead of on every rewrite. See :meth:`_native_chat`.
+        #: One probe per process, for the one kind of refusal that justifies it. A server
+        #: that answers 404 on its native chat API is told so once and then never asked
+        #: again, so a vLLM-style endpoint pays for the discovery exactly once instead of on
+        #: every rewrite. See :meth:`_native_chat`. R147 narrowed this to the protocol-absent
+        #: half: a 400 about our own body is not evidence about the endpoint, so it moves one
+        #: call and leaves the flag alone.
         self._native_supported = True
+        #: The last thing the native leg told us, as a name (R147). See ``NATIVE_VERDICT_*``.
+        self._native_verdict = NATIVE_VERDICT_UNTRIED
+        #: How many times an endpoint that stayed open refused one of our bodies (R147).
+        #: Counted rather than only logged, because "once" and "every call" are different
+        #: incidents: the second one means a payload bug is live right now and silently
+        #: paying for the compatible leg on every rewrite.
+        self._native_request_rejections = 0
         try:
             self.local_client = OpenAI(
                 base_url=local_settings.base_url,
@@ -270,6 +336,20 @@ class ModelHandler:
         answers at a rewrite's length or let a rewrite run for minutes.
         """
         return model_tier_budget(ModelTier.ANALYSIS if stream else ModelTier.REWRITE)
+
+    def native_leg_readout(self) -> dict:
+        """Where the native leg stands, as three names instead of a guess (R147).
+
+        Before this there was one boolean, so "the server has no native API", "the server
+        disliked my body", and "I have not asked yet" were all the same absence of a fact.
+        An operator deciding whether to go look at a payload bug needs those three apart, and
+        needs it without grepping a warning line that fires once per process by design.
+        """
+        return {
+            "supported": self._native_supported,
+            "verdict": self._native_verdict,
+            "request_rejections": self._native_request_rejections,
+        }
 
     def _rate_limited_response(self, stream: bool):
         content = (
@@ -328,13 +408,24 @@ class ModelHandler:
         """
         with httpx.Client(trust_env=False) as http:
             response = http.post(url, json=payload, timeout=timeout)
-        if response.status_code in NATIVE_REFUSED_STATUSES:
+        # Classified by status, at the one place that has the status. The two sets mean
+        # different things and the caller decides retirement from the exception type, so
+        # neither verdict is re-derived from text (R147).
+        if response.status_code in NATIVE_PROTOCOL_ABSENT_STATUSES:
             raise _NativeChatUnsupported(f"HTTP {response.status_code}: {response.text[:200]}")
+        if response.status_code in NATIVE_REQUEST_REJECTED_STATUSES:
+            raise _NativeChatRequestRejected(f"HTTP {response.status_code}: {response.text[:200]}")
         response.raise_for_status()
         try:
             body = response.json()
         except ValueError as exc:
-            raise _NativeChatUnsupported(f"响应不是 JSON: {type(exc).__name__}") from exc
+            # Kept on the retiring side, deliberately: a body that is not JSON at all means
+            # something other than this API is answering the URL -- a proxy, a login page, a
+            # captive portal. No change to our payload makes a non-answer into an answer, so
+            # this is a standing fact about the endpoint, not about one request.
+            raise _NativeChatUnsupported(
+                f"响应不是 JSON: {type(exc).__name__}", NATIVE_VERDICT_NOT_JSON
+            ) from exc
         return body if isinstance(body, dict) else {}
 
     def _native_chat(self, client, model, messages, budget, prompt_tokens):
@@ -363,8 +454,23 @@ class ModelHandler:
             body = self._native_chat_request(
                 url, payload, timeout=http_timeout(budget, prompt_tokens, stream=False)
             )
+        except _NativeChatRequestRejected as exc:
+            # R147: our body was refused. This call moves; the leg does not retire.
+            self._native_request_rejections += 1
+            self._native_verdict = exc.verdict
+            refused = context_error_code(exc)
+            if refused:
+                self._log_budget_verdict(budget, prompt_tokens, refused)
+                raise ModelContextLimitExceeded(budget, prompt_tokens or 0) from exc
+            logger.warning(
+                f"[Model] 原生 {NATIVE_CHAT_SUFFIX} 拒收本次报文形状（{exc}）："
+                f"本次退回 {TRANSPORT_COMPAT} 腿，原生腿不退役"
+                f"（verdict={exc.verdict} request_rejections={self._native_request_rejections}）"
+            )
+            return None
         except _NativeChatUnsupported as exc:
             self._native_supported = False
+            self._native_verdict = exc.verdict
             refused = context_error_code(exc)
             if refused:
                 # A server that refuses this URL for length reasons says so the same way the
@@ -374,7 +480,7 @@ class ModelHandler:
                 raise ModelContextLimitExceeded(budget, prompt_tokens or 0) from exc
             logger.warning(
                 f"[Model] 服务端不支持原生 {NATIVE_CHAT_SUFFIX}（{exc}）："
-                f"本进程后续非流式调用退回 {TRANSPORT_COMPAT} 腿"
+                f"本进程后续非流式调用退回 {TRANSPORT_COMPAT} 腿（verdict={exc.verdict}）"
             )
             return None
         except Exception as exc:
@@ -382,6 +488,7 @@ class ModelHandler:
                 exc, budget, prompt_tokens, stream=False, transport=TRANSPORT_NATIVE
             )
 
+        self._native_verdict = NATIVE_VERDICT_ANSWERED
         message = body.get("message") or {}
         content = str(message.get("content") or "")
         thinking = str(message.get("thinking") or body.get("thinking") or "")
