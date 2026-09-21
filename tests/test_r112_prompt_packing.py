@@ -3,6 +3,12 @@
 全离线：不连模型、不起服务、不动数据。模型名由 tests/conftest.py 的哨兵挡住；本文件里的
 "模型"全是脚本化假 model，检索/数据结果全是测试自造的假 hits，一次 socket 都不该开。
 
+R116（跟进单 §54 / §57 / §62 二）把下面那族 46 枚 ``WINDOW_IDS`` 钉桩从"合成 token 尺寸"
+升级成**按真机实测 ``prompt_tokens`` 复算 room**：每枚钉桩现在都答得出三个数——这一发的
+room 是多少（估算口径与实测口径各一个）、实得料多少条几枚、拒发多少条几枚——数全部来自
+``scripts/perf_probe_run5_ledger.py`` 烘进来的 run5 实测表，尺子全部是被测代码自己的
+``estimate_text_tokens`` / ``pack_prefix_by_rank`` / ``_fit_unit_to_room``。
+
 那两枚预留常数（``CONTEXT_SHELL_RESERVE_TOKENS`` / ``CONTEXT_HISTORY_RESERVE_TOKENS``）不是
 抄来的，是下面 ``test_*reserve*`` 两枚用例复算出来的。测量口径：拿四条 worker 腿各自的真
 system 段（``DOC_PROMPT`` 等）经真 ``create_react_agent`` 组装，量"最终 ``prompt_tokens``
@@ -31,11 +37,19 @@ from langgraph.prebuilt import create_react_agent
 
 from app.agents import tools
 from app.agents.contracts import CONTEXT_LIMIT_CODE, ModelTier
+from app.agents.tools import (
+    PACK_MIN_STUB_BODY_TOKENS,
+    PACK_STUB_KEPT,
+    PACK_STUB_NONE,
+    PACK_STUB_REFUSED,
+    PACK_TRUNCATION_MARK,
+)
 from app.common.model_budget import (
     estimate_prompt_tokens,
     estimate_text_tokens,
     model_tier_budget,
 )
+from scripts import perf_probe_run5_ledger as run5
 from app.rag.retrieval_pipeline import (
     CONTEXT_HISTORY_RESERVE_TOKENS,
     CONTEXT_PACK_TIER,
@@ -564,12 +578,206 @@ def test_pack_prefix_drops_nothing_when_it_fits():
     assert used == text_pack_tokens(units[0]) + text_pack_tokens(units[1])
 
 
-# ==================== §52 判据 4：真机撞墙题号的回归 ====================
+# ==================== §52 判据 4：真机撞墙题号的回归（R116 改成按实测复算） ============
+
+#: run5 逐发实测账，按题号分组（一题两条腿就两条都算，各自出一组三个数）。
+_MEASURED_BY_ROW = {}
+for _measured_row in run5.records(run5.MEASURED_PACKS_RUN5, run5.TABLE_FIELDS):
+    _MEASURED_BY_ROW.setdefault(_measured_row["row_id"], []).append(_measured_row)
+
+#: run5 里这些题压根没走到装箱（supervisor 直接终答，``[ASK] steps=0``、侧车 tool_calls=0），
+#: 没有实测 prompt_tokens 可复算 ⇒ 照实记账并单独钉一条，不许拿别的题的数顶替。
+_MEASURED_NOT_PACKED = {
+    row[0]: {"tool_calls": row[1], "ask_steps": row[2], "answer_chars": row[3], "wall_s": row[4]}
+    for row in run5.MEASURED_NOT_PACKED_RUN5
+}
+
+
+def _measured_hit_head(monkeypatch) -> str:
+    """让被测渲染器自己交出命中行头（含换行）：单位形状与行头枚数都不在测试里抄第二份。"""
+    spy = _pack_spy(monkeypatch)
+    monkeypatch.setattr(tools, "_get_pipeline", lambda: _FakePipeline(_hits(1), pack_at_source=False))
+    tools.search_docs.invoke({"query": "住宿费打款时限"}, config=_doc_config("trace-r116:head"))
+    unit = str(spy["doc"]["before"][0])
+    head, separator, _body = unit.partition("\n")
+    assert separator == "\n" and head.startswith("[1] "), unit
+    return head + "\n"
+
+
+def _measured_replay_units(head: str, prices: list) -> list:
+    """按实测逐条枚数造候选：条数与每条枚数都来自 run5 那一行，内容只是占位符。"""
+    head_tokens = text_pack_tokens(head)
+    assert min(prices) > head_tokens, (
+        f"真机票价最低 {min(prices)} 枚连行头 {head_tokens} 枚都装不下，实测表与尺子对不上"
+    )
+    return [head + "费" * (int(price) - head_tokens) for price in prices]
+
+
+def _assert_priced_as_the_table(prices: list, units: list) -> None:
+    """候选必须逐条等于表里那枚数：尺子是被测自己的 ``text_pack_tokens``，不许测试另造一把。"""
+    measured = [text_pack_tokens(unit) for unit in units]
+    assert measured == [int(price) for price in prices], (
+        f"复算用的候选逐条枚数是 {measured}，与实测表反推的 {list(prices)} 不符——尺子被换过了"
+    )
+
+
+def _replay_pack(info_log, *, record, units, delivered: int, step: str):
+    """把"本轮已装"回填进账，再让**被测装箱函数**在同一发候选上重跑，返回它自己记的那本账。"""
+    tools._pack_ledger["step:" + step] = delivered
+    first = len(info_log.records)
+    packed = tools._pack_into_prompt_room(
+        _doc_config(step), leg=record["leg"], units=units, keep_first_truncated=True
+    )
+    lines = [r.message for r in info_log.records[first:] if PROMPT_PACK_MARKER in r.message]
+    assert len(lines) == 1, (
+        f"{record['row_id']}/{record['leg']}：这一发留下 {len(lines)} 行账，应恰好 1 行"
+    )
+    return packed, _pack_fields(lines[0])
+
+
+def _stub_branch(unit: str, room_left: int) -> tuple:
+    """整批一条都装不下时被测会落哪一档：裁尾与"够不够读"两枚判断全走被测真原语。
+
+    这里**只**复用被测的裁尾/量正文两件工具，room 本身仍是复算出来的那个数；甲口径下这条
+    分支还要与被测、与 run5 真机记录三方对齐（见 ``_assert_measured_room_account``），
+    所以对不上时红的是断言，不是被悄悄换掉的尺子。
+    """
+    stub = tools._fit_unit_to_room(unit, int(room_left))
+    if not stub:                                    # 连截断标记都装不下：交一枚空桩不如不交
+        return PACK_STUB_NONE, 0
+    if tools._stub_body_tokens(stub, unit) < PACK_MIN_STUB_BODY_TOKENS:
+        return PACK_STUB_REFUSED, 0                 # R122 门槛：正文不够读就不当证据交出去
+    return PACK_STUB_KEPT, text_pack_tokens(stub)
+
+
+def _predict_pack(prices: list, units: list, room_left: int) -> tuple:
+    """整批发数/丢数/枚数 + 桩档位的完整预测：整条装得下就不落桩，装不下才进 _stub_branch。"""
+    room_left = max(0, int(room_left))
+    fitted, dropped, used = run5.fit_prices(prices, room_left)
+    if fitted:
+        return fitted, dropped, used, PACK_STUB_NONE, 0
+    stub, stub_used = _stub_branch(str(units[0]), room_left)
+    if stub == PACK_STUB_KEPT:
+        return 1, dropped - 1, stub_used, stub, 1
+    return 0, dropped, stub_used, stub, 0
+
+
+def _assert_measured_room_account(monkeypatch, info_log, row_id) -> list:
+    """判据 1：同一题面的 room / 实得料 / 拒发，按真机 ``prompt_tokens`` 复算并逐枚钉死。
+
+    两个口径各跑一次**被测装箱函数**，装箱算法一行都不换，只换 room 的真源：
+
+    * 甲＝今天的估算口径（``context_pack_room()``）。它必须一字不差复现 run5 那一发真机记录
+      的 ``room_left`` / ``fitted`` / ``dropped`` / ``packed_tokens`` / ``stub`` / ``truncated``
+      ——复现不上就说明复算点与真机不是同一发，或估算 room 已经动过。
+    * 乙＝按该发实测 ``prompt_tokens`` 反推的 room（壳＝``prompt_tokens − ledger_packed_tokens``，
+      实测 room＝``context_pack_capacity() − 壳``）。它答的是"要是房按真机算，这发能得几条料、
+      拒几条"。
+    """
+    if row_id in _MEASURED_NOT_PACKED:
+        fact = _MEASURED_NOT_PACKED[row_id]
+        assert row_id not in _MEASURED_BY_ROW, f"{row_id}：表里既有实测行又有「未装箱」记录，台账自相矛盾"
+        assert fact["tool_calls"] == 0 and fact["ask_steps"] == 0, (
+            f"{row_id}：侧车说它走了工具（tool_calls={fact['tool_calls']}、steps={fact['ask_steps']}），"
+            "那就必须有装箱账，这张表得重出"
+        )
+        return []
+
+    monkeypatch.delenv("MODEL_CONTEXT_TOKENS", raising=False)
+    monkeypatch.delenv("MODEL_TIER_ANALYSIS_MAX_TOKENS", raising=False)
+    budget = model_tier_budget(ModelTier.ANALYSIS)
+    capacity, estimated = context_pack_capacity(), context_pack_room()
+    head = _measured_hit_head(monkeypatch)
+    answers = []
+    for record in _MEASURED_BY_ROW[row_id]:
+        tag = f"{row_id}/{record['leg']}"
+        assert record["room_total"] == estimated, (
+            f"{tag}：真机那发记账的 room_total={record['room_total']} 与今天的真源 room="
+            f"{estimated} 不再相等——预留或容量动过，run5 这张表必须重测重填"
+        )
+        shell = run5.measured_shell(record)
+        measured = run5.measured_room(record, capacity)
+        extra = measured - estimated
+        prices = run5.replay_prices(record)
+        assert shell > 0, f"{tag}：实测壳 {shell} 枚不是正数，配对配错了"
+        assert prices and len(prices) == record["candidates"], f"{tag}：逐条价表与候选数不齐"
+        units = _measured_replay_units(head, prices)
+        _assert_priced_as_the_table(prices, units)
+        room_b = max(0, record["room_left"] + extra)
+
+        # 甲＝估算口径：必须复现真机那一发的全部六枚数。
+        packed_a, fields_a = _replay_pack(
+            info_log, record=record, units=units,
+            delivered=record["delivered_before_tokens"], step=f"trace-r116:estimate:{tag}",
+        )
+        assert int(fields_a["room_total"]) == estimated, tag
+        assert int(fields_a["room_left"]) == record["room_left"], (
+            f"{tag}：估算口径复算的 room_left={fields_a.get('room_left')} 对不上真机记录的 "
+            f"{record['room_left']}——复算点与真机不是同一发"
+        )
+        got_a = (
+            len(packed_a), packed_a.dropped_count, packed_a.packed_tokens,
+            packed_a.stub, packed_a.truncated_count,
+        )
+        real_a = (
+            record["fitted"], record["dropped"], record["packed_tokens"],
+            record["stub"], record["truncated"],
+        )
+        assert got_a == real_a, (
+            f"{tag}：估算口径复现不了真机那一发（被测 {got_a}，真机 {real_a}）"
+        )
+        assert got_a == _predict_pack(prices, units, record["room_left"]), (
+            f"{tag}：估算口径下被测与整数复算各说各话（被测 {got_a}）"
+        )
+        assert int(fields_a["ledger_packed_tokens"]) == record["delivered_tokens"], (
+            f"{tag}：复算后的本轮已装 {fields_a.get('ledger_packed_tokens')} 枚与真机 "
+            f"{record['delivered_tokens']} 枚不等，预扣的账对不上"
+        )
+
+        # 乙＝实测 prompt_tokens 复算的 room：只改配置真源，装箱算法一行都不换。
+        with monkeypatch.context() as metered:
+            metered.setenv("MODEL_CONTEXT_TOKENS", str(budget.context_limit_tokens + extra))
+            assert context_pack_capacity() == capacity + extra, tag
+            assert context_pack_room() == measured, tag
+            packed_b, fields_b = _replay_pack(
+                info_log, record=record, units=units,
+                delivered=record["delivered_before_tokens"], step=f"trace-r116:measured:{tag}",
+            )
+        assert int(fields_b["room_total"]) == measured, tag
+        assert int(fields_b["room_left"]) == room_b, (
+            f"{tag}：按实测 room 复算的那一发，剩余房应是 {room_b} 枚，被测记的是 "
+            f"{fields_b.get('room_left')} 枚（room_total={fields_b.get('room_total')}，"
+            f"预扣 {record['delivered_before_tokens']} 枚）"
+        )
+        want_b = _predict_pack(prices, units, room_b)
+        got_b = (
+            len(packed_b), packed_b.dropped_count, packed_b.packed_tokens,
+            packed_b.stub, packed_b.truncated_count,
+        )
+        assert got_b == want_b, f"{tag}：按实测 room 复算的实得/拒发与复算不符（被测 {got_b}，复算 {want_b}）"
+        assert got_b[0] >= got_a[0] and got_b[2] >= got_a[2], (
+            f"{tag}：房放宽之后装出去的料反而少了（{got_a} -> {got_b}），装箱单调性破了"
+        )
+        if record["stub"] == PACK_STUB_REFUSED:
+            assert want_b[4] == 0 and want_b[3] == PACK_STUB_NONE, (
+                f"{tag}：真机这发是 stub=refused，按实测 room 复算只许交出**整条**实料，"
+                f"不许换成裁尾桩（复算 {want_b}）"
+            )
+        answers.append({
+            "row_id": row_id, "leg": record["leg"], "estimated_room": estimated,
+            "measured_room": measured, "measured_shell": shell, "over_reserve": extra,
+            "candidate_prices": prices, "estimated": got_a, "measured": got_b,
+            "real": record,
+        })
+    return answers
 
 
 @pytest.mark.parametrize("row_id", WINDOW_IDS)
-def test_packed_real_window_questions_no_longer_refused(monkeypatch, row_id):
-    """同一题面：装箱前会被 ``n_ctx`` 判拒，装箱后不再判拒，且进 prompt 的条数只减不增。"""
+def test_packed_real_window_questions_no_longer_refused(monkeypatch, info_log, row_id):
+    """同一题面：装箱前会被 ``n_ctx`` 判拒，装箱后不再判拒，且进 prompt 的条数只减不增。
+
+    R116 追加：同一枚用例还必须答出这一发的 room（估算/实测两个口径）、实得料、拒发。
+    """
     record = _pack_spy(monkeypatch)
     monkeypatch.delenv("MODEL_CONTEXT_TOKENS", raising=False)
     monkeypatch.delenv("MODEL_TIER_ANALYSIS_MAX_TOKENS", raising=False)
@@ -589,6 +797,45 @@ def test_packed_real_window_questions_no_longer_refused(monkeypatch, row_id):
     assert budget.context_window_code(packed) is None, f"{row_id}：装箱后仍被判拒，prompt≈{packed}"
     assert len(record["doc"]["after"]) <= len(before), "进 prompt 的条数只减不增"
     assert record["doc"]["after"], f"{row_id}：装箱后一条检索料都不剩，等于换个姿势不答题"
+
+    # ---- R116 判据 1：46 枚钉桩按真机实测 prompt_tokens 复算 room ----
+    _assert_measured_room_account(monkeypatch, info_log, row_id)
+
+
+def test_measured_run5_table_covers_the_whole_window_id_set():
+    """46 枚钉桩与实测表一对一：表里没盖到的题号必须**点名**说明为什么盖不到，不许静默少一枚。"""
+    covered = set(_MEASURED_BY_ROW)
+    missing = sorted(set(WINDOW_IDS) - covered - set(_MEASURED_NOT_PACKED))
+    assert not missing, f"实测表盖不到这些钉桩题号，复算无从下手：{missing}"
+    assert sorted(_MEASURED_NOT_PACKED) == sorted(run5.MEASURED_NOT_PACKED_IDS), (
+        "run5 未装箱的题号清单与探针模块不一致"
+    )
+    window_rows = [row for row_id in WINDOW_IDS for row in _MEASURED_BY_ROW.get(row_id, [])]
+    assert len(window_rows) == 47, (
+        f"46 枚钉桩应摊到 47 发实测装箱账（doc/data 两条腿），现表里是 {len(window_rows)} 发"
+    )
+
+
+def test_measured_run5_shell_is_far_below_the_pinned_reserve():
+    """R116 的正面结论也要钉住：真机壳远小于 954 枚预留，所以 room 长期被估窄。"""
+    shells = [
+        run5.measured_shell(row)
+        for row in run5.records(run5.MEASURED_PACKS_RUN5, run5.TABLE_FIELDS)
+    ]
+    assert len(shells) == len(run5.MEASURED_PACKS_RUN5)
+    median = sorted(shells)[len(shells) // 2]
+    assert median == run5.RUN5_SHELL_MEDIAN, (
+        f"全量实测壳中位数 {median} 与表里记的 {run5.RUN5_SHELL_MEDIAN} 不符"
+    )
+    assert median < RESERVE, f"实测壳中位数 {median} 已不低于预留 {RESERVE}，本单的结论要重写"
+    window = [
+        run5.measured_shell(row)
+        for row_id in WINDOW_IDS
+        for row in _MEASURED_BY_ROW.get(row_id, [])
+    ]
+    assert sorted(window)[len(window) // 2] == run5.RUN5_SHELL_MEDIAN_PACKS, (
+        f"46 枚钉桩子集的实测壳中位数与表里记的 {run5.RUN5_SHELL_MEDIAN_PACKS} 不符"
+    )
 
 
 @pytest.mark.parametrize(("row_id", "prompt_tokens"), sorted(REAL_REFUSED_PROMPT_TOKENS.items()))

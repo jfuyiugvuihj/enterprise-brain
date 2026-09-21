@@ -100,6 +100,51 @@ def tool(name, desc, props, req):
             "parameters": {"type": "object", "properties": props, "required": req}}}
 
 
+def _load_rounds_probe():
+    """Load ``scripts/perf_probe_rounds.py`` for its read-only-ast route to the product's
+    content cap. This probe runs either as ``python scripts/perf_probe_prodpath.py`` (repo
+    checkout) or piped into the container via ``docker exec ... python -`` (no ``__file__``,
+    app source under APP_ROOT), so both layouts are tried before giving up.
+    """
+    import importlib.util
+
+    candidates = []
+    try:
+        candidates.append(pathlib.Path(__file__).with_name("perf_probe_rounds.py"))
+    except NameError:  # pragma: no cover - stdin mode has no __file__
+        pass
+    candidates.append(APP_ROOT / "scripts" / "perf_probe_rounds.py")
+    candidates.append(pathlib.Path("scripts/perf_probe_rounds.py"))
+    for path in candidates:
+        if not path.is_file():
+            continue
+        spec = importlib.util.spec_from_file_location("eb_perf_probe_rounds", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    raise RuntimeError(
+        "cannot locate scripts/perf_probe_rounds.py in any of %s" % [str(p) for p in candidates]
+    )
+
+
+def doc_content_cap():
+    """Per-hit content cap, taken from ``perf_probe_rounds.doc_content_cap()`` -- the only
+    route in this repo that reads DOC_HIT_CONTENT_CHARS off the product source with `ast`.
+
+    R116 (跟进单 §57 追加 1): this file used to hand-copy the per-hit cap as a literal
+    five-hundred. A missing or unreadable truth source is a HARD FAIL here -- the probe
+    never falls back to a number of its own.
+    """
+    try:
+        rounds = _load_rounds_probe()
+        cap = rounds.doc_content_cap(APP_ROOT)
+    except Exception as exc:  # noqa: BLE001 - re-raised with the reason, never swallowed
+        raise RuntimeError("content cap truth source is unreachable: %r" % (exc,)) from exc
+    if not isinstance(cap, int) or cap <= 0:
+        raise RuntimeError("doc_content_cap() returned %r, not a positive int" % (cap,))
+    return cap
+
+
 def cn_text(target_chars):
     s = ["经销商逾期超过六十天的，系统自动冻结新货发运，需经区域总监与销售运营双签方可解除。",
          "信用额度依据上一年度实际回款表现核定，最高不超过年度采购额的百分之四十。",
@@ -121,7 +166,8 @@ def main():
                          {"workers": {"type": "array", "items": {"type": "string"}}}, ["workers"])
     search_tool = tool("search_docs", "搜索公司内部文档知识库。用于查找：公司制度、报销流程、请假规定、产品规格、技术架构、客户案例、定价策略、安全规范、操作手册等所有文档类信息。",
                        {"query": {"type": "string"}}, ["query"])
-    tool_text = "[1] 来源:demo-policy.md 相关度:未评分\n" + cn_text(500)
+    cap = doc_content_cap()  # R116: 真源读数，读不到就地硬失败，不再手抄 500
+    tool_text = "[1] 来源:demo-policy.md 相关度:未评分\n" + cn_text(cap)
     nonce = ANSWER_MARK % uuid.uuid4().hex[:10]
 
     r = v1([{"role": "user", "content": nonce + tpl["MAIN_SYSTEM"]}, {"role": "user", "content": q}],
