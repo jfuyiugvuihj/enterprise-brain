@@ -928,3 +928,65 @@ is the behaviour this section documents, not a flaw in the test. Whether the unc
 should become 「显式配置是唯一真源」 is a route-semantics decision held by 总控 - same family as R111
 (配置/诊断未被完全尊重), and its route is decided together, not here.
 
+
+## Document Activity Feedback (2026-09-21, R152 / R46)
+
+`app/api/v1/feedback.py` records a 「采纳 / 驳回」 signal against a source document and lets retrieval
+ranking read it back as a prior. Two routes, both mounted under `/api/v1`.
+
+### `POST /api/v1/feedback/document`
+
+The body accepts **exactly two keys**: `filename` (at most 512 characters, the same hard ceiling as the
+`CHECK` in `migrations/0011_document_activity_signals.sql` - both sides are enforced, neither trusts the
+caller) and `signal`, one of `accepted` | `rejected`. The enum holds two members on purpose: the
+browse/click family named in 跟进单 §21 needs frontend instrumentation, and this contract does not
+advertise a value that nothing writes yet.
+
+A third key is refused with 422, and only the **field name** reaches the log, never the value - a body
+carrying a free-text `note` key is precisely how a user question would end up stored in a second place.
+That is why 判据③ (counts, not content) is structural rather than a promise: the only INSERT in the
+module takes `(filename, 1, 0)` or `(filename, 0, 1)`.
+
+`200` returns `{status, filename, signal, accepted_count, rejected_count}`; the two counts are the totals
+for that filename *after* this write.
+
+| Status | `detail` | when |
+| --- | --- | --- |
+| 401 | `authentication_required` | no principal on the request |
+| 403 | `permission_denied`, or the `RetrievalScopeError.code` | the document exists but this principal may not see it |
+| 404 | `resource_not_found` | the filename is not in the catalog |
+| 422 | `validation_error` | body is not a JSON object, carries an extra key, or fails the shape |
+| 503 | `storage_unavailable` | PostgreSQL is unreachable, or 0011 has not been applied |
+
+Signals for documents that are not in the catalog are refused (404) instead of counted: an unregistered
+key would turn the table into somewhere anyone can write, and the ranking would then read a prior with
+no source. 「能不能给这篇打分」 is resolved by the single visibility judgement
+(`app/rag/filters.py::resolve_document_retrieval_scope`), so it can never be wider than 「能不能看见
+这篇」. Denials are audited (`record_audit` records outcome `failure`) so 判据④ is checkable as a count
+of things that got through, not as a status code that looks tidy.
+
+### `GET /api/v1/feedback/document?filename=...`
+
+`200` returns `{filename, accepted_count, rejected_count, prior_source, prior_reason, prior_enabled}`.
+The last three exist because a bare `0` cannot answer 「这篇真没人打点，还是这一趟根本没读到表」:
+`prior_source` is one of `store` / `error` / `never`, and `prior_reason` says why a read failed. Reads go
+through the same 30-second in-process snapshot the ranker uses - deliberately, because two SELECTs
+written in two places eventually answer two different questions. A successful POST resets that snapshot,
+so the receipt and the next read cannot disagree.
+
+### What this switch does not claim
+
+- `RAG_ACTIVITY_PRIOR` (defined in `app/rag/retriever.py`, listed in `.env.example` and
+  `deploy/.env.server.example`) is on by default. `off` / `0` / `false` / `no` turn it off; a misspelled
+  value does **not** - reading 「nobody configured it」 as 「it was configured off」 would make 判据②
+  (identical to today when nothing signalled) unfalsifiable.
+- The prior re-orders candidates that are already authorised. It adds none, removes none, and sits
+  downstream of the permission filter, so it cannot widen visibility.
+- Counts are aggregated by `filename` and carry no identity, and the weight (`ACTIVITY_PRIOR_WEIGHT = 0.01`) is bigger than it looks.
+  Measured against the shape it adjusts (base 60 reciprocal rank): the gap between first and second is
+  0.00026, while one acceptance is worth 0.0025, so a **single click moves a hit 11 places** - more
+  than a whole leg, because `search()` ships `k=5`. One person,
+  clicking once, can decide the top of a leg; there is no throttle and no cooldown. Recalibration is
+  R153; whether to additionally cap signals per person stays an owner decision.
+- 判据① (the order really changes) is proven offline today: the tests drive the ranker with fabricated
+  rows, not a live PostgreSQL under concurrent clicks. Registered in 跟进单 §77 as an open item.
