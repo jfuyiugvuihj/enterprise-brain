@@ -789,6 +789,7 @@ Each code is emitted in-band by `GET /api/v1/slo` under `blockers[]`, with the s
 | `cache_hits_are_not_traced` | a cache hit returns before any `request.started` (`chat.py:1191-1215`) ⇒ no window, no sample; 缓存命中 has a zero denominator today, not a fast answer |
 | `wire_step_events_are_not_recorded` | `step.progress` is persisted per graph superstep (`orchestrator.py:1173-1185`), which measures graph advancement rather than delivery to the client |
 | `export_leg_has_no_stage` | `TOOL_TO_STAGE["export_report"]` is empty (`stage_timing.py:71`) ⇒ the report tier's file writing lands in `unattributed`, so the five-stage sum is not that tier's end-to-end; `coverage_error_pct` / `gap_ms` are what say so |
+| `native_leg_reports_no_cached_tokens` | the metered pair is `input_tokens` / `output_tokens` (`spans.py::model_token_counts` → `store.py:270-272` → `model_calls`), and there is no third measured pair to add: Ollama's native `/api/chat` reply carries no cached-token field, and the compatible leg's `usage.prompt_tokens_details.cached_tokens` measured 0 on product traffic because every round rewrites its prefix (`docs/perf/raw/prodpath.jsonl`) ⇒ the `cached_tokens=0` in the perf ledger is a measured 0, not a cache-hit rate, and `model_token_counts` writes no `cached_tokens` key at all (R38) |
 
 Closing `lane_attribution_absent` is one field on one call site; it belongs to the ticket that
 owns `spans.py`, not to this one. Until it closes, 乙半 can fill the pooled distribution
