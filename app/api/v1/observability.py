@@ -941,7 +941,8 @@ def slo_tiers() -> tuple[SloTier, ...]:
             note=(
                 "the only tier with a second addressable surface: /ask answers it and "
                 "GET /api/v1/queue/status/{request_id} reads the result back. That route only "
-                "exists once REPORT_LANE_VIA_QUEUE is on (app/api/v1/chat.py:742-757), and its "
+                "exists once REPORT_LANE_VIA_QUEUE is on (app/api/v1/chat.py, gated by "
+                "_report_lane_via_queue_enabled / _queue_lane), and its "
                 "export leg is not a ledger stage at all"
             ),
         ),
