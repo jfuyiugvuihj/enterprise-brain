@@ -243,6 +243,21 @@ def canonical_sse_event(
     )
 
 
+def text_sse_frame(content: str, cache_fields: dict | None = None) -> str:
+    """一枚 ``event: text`` 的字面：命中道、逐片道、done 收尾道共用这一处构造。
+
+    R149 判据② —— ``content`` 是**截至这一片的累计全文**，不是增量，所以老前端一字
+    不改也能逐字显示（``frontend/src/lib/sessions.js`` 的 covering 分支把新片整段替换
+    进 ``msg.content``）。判据③ —— done 那枚帧的键序固定 ``type`` -> ``content`` ->
+    缓存字段，与 R35 之后线上跑出去的字面逐字节相同，改的只是构造地点。判据④ —— 缓存
+    三枚字段由调用方在同一轮里给同一份 ``cache_fields``，帧与帧之间不会一半有一半没有。
+    """
+    payload: dict = {"type": "text", "content": content}
+    if cache_fields:
+        payload.update(cache_fields)
+    return sse_event("text", payload)
+
+
 def _document_source_row(worker: str, evidence: dict) -> dict | None:
     """还原一条文档 Evidence 成 ``DocumentRetrievalScope.allows`` 认得的命中形状。
 
@@ -1312,8 +1327,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         async def cached_response():
             yield f"event: status\ndata: {json.dumps({'type': 'status', 'content': '📋 缓存命中，直接返回'}, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)
-            payload = {'type': 'text', 'content': cached, **cache_fields}
-            yield f"event: text\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            yield text_sse_frame(cached, cache_fields)
             await asyncio.sleep(0)
             yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)
@@ -1342,6 +1356,17 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         heartbeat_interval = float(os.getenv("SSE_HEARTBEAT_INTERVAL", "15"))
         result_queue: qmod.Queue = qmod.Queue()
 
+        def _piece_sink(piece) -> None:
+            """R149 的片段入口：模型侧的片从工作线程进**同一条**队列。
+
+            与图事件共用一枚 ``result_queue`` 是有意的：FIFO 让"片早于终答"这个顺序
+            天然等于真实到达顺序，收端不必再开第二条同步通道，也不必排序或补时间戳。
+            """
+            if cancel_event.is_set():
+                # 停止之后不再往没人读的流里塞东西，与下面 ("event", ...) 同一裁定。
+                return
+            result_queue.put(("piece", piece))
+
         def _run():
             try:
                 for event in run_with_stream(
@@ -1354,6 +1379,12 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     # 这一行是 R12 的正题：标记不传下去，编排里的取消检查点就恒等于
                     # _raise_if_cancelled(None)，用户按了停止图照样跑完。
                     cancel_event=cancel_event,
+                    # R149：把流式片段出口注册进本轮。今天生产图路径上的生成腿只被
+                    # invoke，所以这枚 sink 一次都不会响（R31 具名上报的那道锁，本单在
+                    # 案发现场复现：三档问题各跑一遍，model_calls 全是 stream=0、
+                    # pieces=0，答案在快照里 0 字直接跳到整段）。生成腿一旦改走流式，
+                    # 片从这里进来，本文件不必再改一个字。
+                    stream_piece_sink=_piece_sink,
                 ):
                     if cancel_event.is_set():
                         # 停止之后不再往没人读的流里塞事件；已经落盘的不回滚，那不是
@@ -1386,6 +1417,15 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         latest_worker_results: dict = {}
         latest_final_answer = ""
         answer_candidates: list[str] = []
+        # R149 判据②：累计全文与片数。片带的是增量、帧带的是累计，换算只发生在这枚
+        # 变量上——收端一个字都不切，也不自己合并（判据③ 的两把尺在上游的 merger 里）。
+        cumulative_text = ""
+        piece_count = 0
+        # 判据④：一轮之内所有 text 帧共用同一份缓存字段。R35 的既有裁定是"未命中的那一
+        # 轮不许带缓存标记"（旧钉 test_answer_cache_scope 断言 "cached" not in），而收尾
+        # 那枚帧的形状不许改（判据③），所以"每一枚片上语义一致"在实时这一轮里等于
+        # "每一枚片都不带"。要改就改这一枚变量，帧与帧不可能再分叉。
+        live_cache_fields: dict | None = None
         source_rows: dict[str, dict] = {}
         sequence = 1
 
@@ -1443,6 +1483,16 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 await asyncio.sleep(0.05)
                 continue
 
+            if kind == "piece":
+                # 判据①②：片一到就发一帧，不攒、不切、不等下一枚。这里唯一的 await 是
+                # sleep(0)（把控制权交回事件循环，零延时），判据⑤ 由 AST 面闸钉住这一支
+                # 不许长出节流或定时器。
+                piece_count += 1
+                cumulative_text += str(getattr(data, "text", "") or "")
+                yield text_sse_frame(cumulative_text, live_cache_fields)
+                await asyncio.sleep(0)
+                continue
+
             if kind == "done":
                 elapsed_total = round(time.time() - start_time, 1)
                 _ASK_STATS.observe(elapsed_total * 1000)
@@ -1464,6 +1514,17 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     intr = None
                 if not full_text and intr:
                     full_text = hitl_park_text(intr)
+                if cumulative_text and not full_text.startswith(cumulative_text):
+                    # 累计片必须是终答的前缀，否则"片"与"终答"不同源。最可能的成因是 R31
+                    # 那枚片只带文字与时间戳、不带调用身份：一轮里 planner/worker 的片会
+                    # 混进同一条累计串（已具名上报，属生成腿改造单的硬前置）。这里只大声
+                    # 记账、不改帧：sessions.js 的 covering 分支会拿整段终答替换，终态永远
+                    # 是对的，把错误藏起来反而查不到。
+                    logger.error(
+                        f"[R149] session={thread_id[:8]}... 流式片段与终答不同源："
+                        f"pieces={piece_count} cumulative={len(cumulative_text)}"
+                        f" final={len(full_text)}"
+                    )
                 if not full_text:
                     # 图跑完了，既没有正文也没有等待确认的步骤：这是内部失败。
                     # 把它报成 request.completed 就是把“什么都没产出”伪装成“已回答”。
@@ -1505,7 +1566,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     # 与日志和拒交付用的是同一个，不在这再枚举一遍句子。
                     if use_answer_cache and not intr and not is_offline_reply_text(full_text):
                         cache_answer(rewritten_msg, full_text, scope=answer_scope)
-                    yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': full_text}, ensure_ascii=False)}\n\n"
+                    yield text_sse_frame(full_text, live_cache_fields)
                     await asyncio.sleep(0)
                 logger.info(f"[ASK] session={thread_id[:8]}... {elapsed_total}s | steps={len(steps_log)}")
 
