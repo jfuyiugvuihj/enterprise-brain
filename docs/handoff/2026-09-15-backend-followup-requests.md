@@ -2024,3 +2024,39 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 
 - `Erdos`（R116 判据 6）定性出两处台账缺线，**都不是它的写域**：`app/rag/retrieval_pipeline.py:766` 的 `leg=retrieval` 只走 `pack_hit_list` 整条丢弃、从不裁桩 ⇒ 29 枚天然无 `stub=` 账，但同口径缺 `room_total/room_left/truncated/ledger_packed_tokens/prompt_estimate_tokens`（只有 `room`）；`app/agents/tools.py:1019` 证据袋记账 ⇒ 101−81 = 20 枚「装箱未送出故不记」不是漏接。它已按本班要求以 ≤5 行交回字段需求，**由总控转派给持有这两枚文件的 Agent**（R119 正持 `retrieval_pipeline.py`，但它的写域被本单严格限死在两枚常数＋注释块 ⇒ 补线另立单，不许塞进 R119）。
 - 规矩一条（源自 R127 的跨单冲突）：**执行层不许 rebase/merge 主树**，所以它的交付永远只对它那一版的基线为真；总控在并树之前必须把「与主树现值有语义牵扯」的每一件（契约、文档、被后续单改过的行为）按主树逐句核过——本班这笔是靠 `Wegener` 自己在回执里写明「这段散文对主树为真、对本树为假」才没漏掉的。
+
+## §68 · 第三十四班派工判据全文（09-21 10:5x，主树 `2e6abc6`；三枚全部复用已结案 agent，零新增名额）
+
+> 本节是三枚在途单**验收的唯一判据源**（派工背景见看板 §4BH.17 三/四）。执行层一律不许 commit/push/建分支或 worktree；交工前本树全量 0 failed；解释器用主树 `.venv`，跑测试先 `$env:LOCAL_MODEL_NAME=__eb_test_disabled__`；禁 `docker`、禁起服务、禁跑评测、禁连真库、禁碰 `deploy/**` 与 `.env*`。
+
+### 一、R29 思考税：把生成轮搬到原生 `/api/chat` 腿 —— `Laplace`/`01a0bf4f` @ `be-r29`
+- 背景（现抠，不抄行号）：`app/common/model_handler.py` docstring 自证原生腿带 think 字段只服务**非流式改写**、「the streaming half is left exactly as it was」⇒ 生成轮仍走 `app/agents/nodes.py:_make_model` 的 `/v1` compat 腿，所以 §21 L501「`/v1` 上五种关思考写法全无效」今天仍成立。
+- ① `thinking` 字段实测 0 字：真机打宿主 `http://127.0.0.1:11434`（`qwen3:4b` capabilities 含 `thinking`），交请求体 + 应答 `thinking` 实际长度 + `done_reason`；不许只读代码宣布。
+- ② 生成轮 30.6 s → ≤22 s：同题同模型改前/改后**逐题 n ≥ 8**，给中位数与 p95 + 脚本路径与命令原样；达不到就报实测，不许挪口径。
+- ③ 证据链一条不许撤（`app/rag/filters.py`、`app/agents/evidence.py` 的 `[来源: …]`）；不得使逐类分数退化——无法在不跑评测的前提下证明就写「受阻」交回总控，不许偷跑评测。
+- ④ `tool_calls` 报文重做后权限/超时语义全复验：离线桩 + ≥1 枚真机样本。
+- ⑤ 禁止假完成：不许只在 `/v1` 加个参数就当完成；不许在无线上端点证据前宣布思考已关。
+- ⑥ 退路：迁不动则交 `PARAMETER think false` 的 Modelfile 全文 + 宿主需执行的动作清单，🔴 不许自己建/删模型（改环境属业主侧）。
+- 写域：`app/common/model_handler.py`、`app/agents/nodes.py`、`app/common/model_budget.py`、`app/common/model_config.py`、新 `tests/test_r29_*.py`。反证下限两把：摘 think 字段 / 生成轮回退 compat 腿 ⇒ 必须变红。
+
+### 二、R46 后端半张单（活动信号回填排序）—— `Tesla`/`01a0bf43` @ `be-r46b`
+- §21 L517 三条原样：① 有信号后排序变化可测（要断言名次/分值真变了，不是断言读到了计数）；② **无信号时与现状逐字一致**（开/关两态分值快照比对，并写明先验缺失时 fail-open 还是 fail-closed 及理由）；③ 隐私只存计数不存内容（新表列清单不得有原文，另加一把反证：塞超长自由文本 ⇒ 要么拒要么只落计数）。
+- 本班加三条：④ 信号出口走既有 RBAC 口径，越权 0 条通过且给可读拒绝码（新码先查 `tests/test_error_code_vocabulary.py` 已批清单，缺则具名上报不许自塞）；⑤ 迁移卫生——只许新 `migrations/0011_*.sql` + `manifest.json` 同步，0001–0010 一枚不许动，需改已有表或 0012 ⇒ 停下上报排号（与 R76 争 schema）；⑥ 不许只加一张没人读的空表结案。
+- 🔴 **前端半不在本单**（禁改 `frontend/**`）：Hooke 正在改聊天视图，R46 前端排 R32 结案后另派。
+- 写域：新 `migrations/0011_*.sql`、`migrations/manifest.json`、新 feedback 出口文件 + `app/main.py` **一行**注册、`app/rag/retriever.py`、新 `tests/test_r46_*.py`。反证下限两把：摘先验读取 / 摘隐私拒绝路径 ⇒ 必须变红。
+
+### 三、R76（`chunk_vectors` 接进索引发布/回填链）—— `Chandrasekhar`/`01a0c18c` @ `be-r76`
+- §21 L922 原样：`_MIRROR_TABLES` 增表 + 发布时按 `index_version_id` 回填 + 换 embedding 模型必须连镜像一起换（不留半张脸）。前置「R58 真机三件之后」**已满足**：双写窗 09-21 真跑过、R130 并树 `cdc5ead`、PG 现值 `rows=985 / with_vector=0 / dim=none` 总控代核。
+- 加判据：① 增表要能**指名走到了**（诊断读数或返回值，不是日志形容词）；② 未发布 ⇒ `index_version_id` 为 NULL，发布后 ⇒ 等于本次发布版本 id；③ 一把反证：只换主索引不换镜像 ⇒ 必须有测试变红；④ 中途失败不许留混合态，所选语义写进注释并钉住；⑤ 真库并发与真 chromadb 重复 id 行为不许用离线绿灯外推（KNIFE-3 教训），未证明就写「未证明」。
+- 🔴 它上单留的「把具名拒绝码迁进 `retriever.py` 的 REASON_* 群」**不属本单**（那是 Tesla 的写域）。
+- 写域：`app/rag/indexing.py`、`app/rag/pg_store.py`、新 `tests/test_r76_*.py`、pgvector 方案文档相关段（纯 CRLF、无 BOM、只 append 或整行 splice）。禁 `migrations/**`。
+
+### 四、新立 **R133**（⚪ 待派 · 来源：R38 结案时 `Laplace` 查出、总控裁决另立）
+- 事实：`start_model_call` 全仓只有 `app/agents/nodes.py` 一处调用者，且那条腿不产 `ModelReply`；原生腿另两处服务点（`app/rag/retrieval_pipeline.py` 的改写、`app/api/v1/chat.py` 的两处）**根本不开 `model_calls` span** ⇒ R38 补的是「读出口」，改写那一发的 `input_tokens` 在生产仍为 NULL，**缺的是写入者**。
+- 判据（派工前须按主树现值复核行号）：给改写发与 chat 两发开 `model_calls` span（或等价计量写入点），`model_calls.input_tokens` 在真机可读非 NULL；🔴 不许为凑数写 0。
+- 排程：写域落在 `app/rag/**` 与 `app/api/v1/chat.py` ⇒ 必须排 **R119（`retrieval_pipeline.py`）与 R32（`chat.py`）结案之后**。
+
+### 五、转出账与一条订正（登记不掩盖）
+- `Erdos` 在 R116 判据 6 定性出的两处台账缺线仍挂在 §67 五（`retrieval_pipeline.py` 的 `leg=retrieval` 只走 `pack_hit_list` 整条丢弃 / `tools.py` 那处），本班已再次向 R119 索要那份 ≤5 行需求单；收到前不许另派碰这两行。
+- **R43 判据② 受阻**：R38 并树 `2e6abc6` 已证原生腿应答无 cached 字段、`model_calls` 亦无该列 ⇒ 「E3 档实测 `cached_tokens > 0`」在当前宿主 Ollama 上不可测。派 R43 前由总控先订正判据（只交 ①前缀字节级稳定 + 一把命中/未命中可读计数），未订正前**不派**。
+- R31 与 R29 同一条生成路径（流式腿）⇒ 串行，R29 先；§21 L503 那句「禁改 `frontend/**`」按本班第二节口径视为该单自身设计约束（前端零改动），不再是授权禁令。
