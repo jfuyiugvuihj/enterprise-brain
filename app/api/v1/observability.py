@@ -1191,3 +1191,155 @@ async def read_audit_events(
             "clamped": limit_clamped,
         },
     }
+
+
+# ==================== R135·S1 · 模型档位事实（只读出口） ====================
+
+#: 一台私有化机器到底跑在多大的窗口上，今天要么翻日志、要么猜 env——R135 查证就是靠两枪
+#: ``docker run --entrypoint env`` 才发现三枚关键变量根本没有任何部署文件设置过。这一节把
+#: 四问答成一次 GET：生效的 context 窗口、生成档真正能塞的房、并发闸门与等待秒数、以及
+#: 🔴 每一枚数字是 env 设的还是代码默认。数值一律由 ``app/common/model_budget.py`` 自己的
+#: 读数器交出（``context_limit_tokens`` / ``tier_profile`` / ``budget_env_defaults`` /
+#: ``model_tier_budget`` / ``LocalModelBudget``），本模块一处都不重算、一处都不抄第二份。
+MODEL_BUDGET_FACTS_PATH = "/model-budget/facts"
+SOURCE_ENV = "env"
+SOURCE_DEFAULT = "default"
+SOURCE_ENV_IGNORED = "env_ignored"
+MAX_ENV_ECHO_CHARS = 64
+
+
+def _provenance_number(raw: Any) -> float | None:
+    """只判"这串 env 值像不像一个数"，用于出处分类；不参与任何读数本身。"""
+    try:
+        return float(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _budget_knob(name: str, effective: Any, code_default: Any) -> dict[str, Any]:
+    """一枚数字的完整出处：``effective`` 是谁在生效，``source`` 说它是谁定的。
+
+    🔴 三种来源必须分开交。今天这台机器上 ``MODEL_MAX_CONCURRENCY=1`` 是 compose 写的，
+    而 ``MODEL_CONTEXT_TOKENS`` / ``MODEL_CONCURRENCY_WAIT_SECONDS`` /
+    ``MODEL_MIN_ANSWER_TOKENS`` 一个部署文件都没写、跑的是代码默认——把两枚默认和一枚 env
+    压成"一个数"，就是把这一班的坑原样交给下一班。``env_ignored`` 是第四种最难的坑：操作员
+    确实写了，但值不合法或被代码夹回默认，生效的其实是默认值，"我明明设过"在这一档里必须
+    当场可辨。
+
+    词汇与现成口径的关系（不是第二套口径）：判定用的谓词就是 ``model_budget._env_set``，
+    写过的取值 ``"env"`` 与 ``model_budget.py:769`` 里速率出处的 ``origin = "env"`` 同一个词、
+    同一个谓词；只有"没写过"这一档这里叫 ``default`` 而不叫 ``calibrated-default``——窗口默认
+    4096 是兜底数、不是标定值，沿用它那个词会把两件不同的事说成一件。两种写法在同一条响应里
+    都看得见（``budget_readout`` 原样嵌在下面），不做隐藏。
+    """
+    from app.common.model_budget import _env_set  # 现成的出处判定，本模块不再造第二套
+
+    written = _env_set(name)
+    raw = os.environ.get(name, "")
+    number = _provenance_number(raw)
+    if not written:
+        source = SOURCE_DEFAULT
+    elif code_default is None:
+        source = SOURCE_ENV if number is not None else SOURCE_ENV_IGNORED
+    elif number is None:
+        source = SOURCE_ENV_IGNORED
+    elif float(effective) == float(code_default):
+        source = SOURCE_ENV if number == float(code_default) else SOURCE_ENV_IGNORED
+    else:
+        source = SOURCE_ENV
+    return {
+        "env": name,
+        "effective": effective,
+        "source": source,
+        "code_default": code_default,
+        "written": bool(written),
+        "written_value": str(raw)[:MAX_ENV_ECHO_CHARS] if written else None,
+    }
+
+
+def model_budget_facts() -> dict[str, Any]:
+    """四问的读数：窗口 / 生成档房 / 并发闸门与等待 / 每一枚的出处。纯进程内，零 I/O。"""
+    from app.agents.contracts import ModelTier
+    from app.common.model_budget import (
+        LocalModelBudget,
+        budget_env_defaults,
+        context_limit_tokens,
+        min_answer_tokens,
+        model_budget_readout,
+        model_tier_budget,
+        tier_max_tokens_env_name,
+    )
+
+    defaults = budget_env_defaults()
+    window = int(context_limit_tokens())
+    #: 只为读回两枚已配置的闸门数而新建一个实例：它不占槽、不开 socket，也不去碰
+    #: ``default_model_budget()`` 那个进程级单例——一条 GET 不该有把全局闸换掉的能力。
+    gate = LocalModelBudget()
+    analysis = model_tier_budget(ModelTier.ANALYSIS)
+    tiers = []
+    for tier in ModelTier:
+        budget = model_tier_budget(tier)
+        cap_name = tier_max_tokens_env_name(tier)
+        tiers.append(
+            {
+                "tier": tier.value,
+                "declared_output_cap": _budget_knob(
+                    cap_name, int(budget.max_tokens), defaults.get(cap_name)
+                ),
+                "generation_room_tokens": int(budget.input_budget_tokens),
+                "fits_timeout_ceiling": bool(budget.fits_within_timeout(0, stream=False)),
+            }
+        )
+    return {
+        "as_of": _now(),
+        "context_window": _budget_knob(
+            "MODEL_CONTEXT_TOKENS", window, defaults.get("MODEL_CONTEXT_TOKENS")
+        ),
+        "generation_room": {
+            "tier": ModelTier.ANALYSIS.value,
+            "input_budget_tokens": int(analysis.input_budget_tokens),
+            "basis": "context_limit_tokens - 本档声明的输出上限（contracts.py:ModelBudget.input_budget_tokens）",
+            "output_cap": _budget_knob(
+                tier_max_tokens_env_name(ModelTier.ANALYSIS),
+                int(analysis.max_tokens),
+                defaults.get(tier_max_tokens_env_name(ModelTier.ANALYSIS)),
+            ),
+            "timeout_ceiling_seconds": float(analysis.timeout_ceiling_seconds),
+        },
+        "concurrency": {
+            "max_concurrency": _budget_knob(
+                "MODEL_MAX_CONCURRENCY", int(gate.max_concurrency), defaults.get("MODEL_MAX_CONCURRENCY")
+            ),
+            "wait_seconds": _budget_knob(
+                "MODEL_CONCURRENCY_WAIT_SECONDS", float(gate.default_wait_seconds), None
+            ),
+        },
+        "answer_floor": _budget_knob(
+            "MODEL_MIN_ANSWER_TOKENS", int(min_answer_tokens()), defaults.get("MODEL_MIN_ANSWER_TOKENS")
+        ),
+        "tiers": tiers,
+        #: 现成件原样嵌进来，不抄第二份：夹取计数、速率出处、每档声明值都在这里面。
+        "budget_readout": model_budget_readout(),
+        "caveats": [
+            "窗口这一枚是产品按之计算的那个数；服务端 n_ctx 是否被显式设定不在本读数声称范围"
+            "内（R135·S1 现场查证：全仓 app/** 无任何一处把 num_ctx 发进请求载荷，命中的全是注释与报错文案）。",
+            "MODEL_CONCURRENCY_WAIT_SECONDS 的代码默认没有命名常数（60.0 是 "
+            "LocalModelBudget._configured_wait 里的裸字面量），所以本出口不发布它的 "
+            "code_default，只发布 effective 与 source——拒绝为它抄第二份 60.0。",
+            "镜像内没有 .env：未被 compose 提供的变量跑的就是代码默认，"
+            "source=default 的读数与 env 写的读数在这台机器上含义完全不同。",
+        ],
+    }
+
+
+@router.get(MODEL_BUDGET_FACTS_PATH, responses=_ERROR_RESPONSES)
+async def read_model_budget_facts(request: Request) -> dict[str, Any]:
+    """模型档位事实：不看日志、不猜 env，一次 GET 回答"我们到底跑在 4096 上吗"。
+
+    只读：不开模型往返、不开 socket、不读向量库、不写审计以外的任何东西；没有任何一次
+    探测，因为一次巡检不该把本地模型服务叫醒排队（同 R51 对被观测性的要求）。
+    """
+    principal = _require_action(request, ACTION_VIEW, "model-budget")
+    report = model_budget_facts()
+    report["requested_by"] = _principal_summary(principal)
+    return report
