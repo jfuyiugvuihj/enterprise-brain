@@ -2152,3 +2152,23 @@ ode_modules`，已实测可用）；含中文路径的 `.cmd` 批处理不可用
 - **四、R152 判据全文（`Chandrasekhar` @`be-r46b`，接手失联 agent 的半成品）**：`Tesla`/`01a0bf43` 于本班 `wait_agent` 查无此线（`not_found`），其树 6 枚脏件全部保留并已由总控 `merge --ff-only` 到主树 `eef642b`（脏文件与主树自 `2e6abc6` 以来的改动**交集为空**⇒无损）。判据：🔴 两条**旧钉必须消失**且不许用 skip 掩盖——`tests/test_document_catalog_sync.py::test_the_offline_migration_plan_loads_every_version_through_0010` 的 `versions[-1]=="0010"` 改认 0011、`tests/test_r120_clean_install_first_boot.py::test_task0_left_the_migrations_directory_alone` 的 migrations 目录钉；它自己那 4 枚红用例必须变绿；交工当场 `.pytest_cache/v/cache/lastfailed` 里属于本单的条目必须为 0。R46 本体（采纳/驳回信号回填）逐条对 §21 R46 原文。写域＝那 6 枚 + 上述两枚旧钉文件；不许动 `app/agents/**`、`app/api/v1/chat.py`（R149 在写）、`frontend/**`（R150/R151 在写）、`docs/**`。🔴 跑全量会把 `chroma_db` 弄脏（R134 尚未并树），收单当场 `git status --porcelain` 必须只剩本单写域。
 - **五、两枚失联树的处置（记成规矩，别再靠猜）**：`Tesla`/`01a0bf43`（R46）与 `Wegener`/`01a0bf45`（R134）在本班 `wait_agent` 均 `not_found` ⇒ **执行层死线不等于工作丢失**：磁盘上的 diff 与 `.pytest_cache/v/cache/lastfailed` 才是事实源，本班按「非该线自证」的既有先例处理（R46 转 R152 复派收尾；R134 由总控亲收，因为 `tests/conftest.py` 是全仓最共享的文件，不该在四枚 agent 并发写代码时由第五枚去改它）。
 - **六、投递纪律（本班实测合规）**：四枚全部**复用已结案 agent**（`send_input`，零新增名额），一枚 block 一次调用，零补投。共同约束随单下发：本线程不换模型；执行层禁 commit/push/docker/起服务/真库迁移/打宿主 Ollama；跑 pytest 前 `LOCAL_MODEL_NAME=__eb_test_disabled__`（env dict 传）；`apply_patch` 的 Windows shim 取不到多行补丁参数（两枚 agent 独立复现），编辑一律用逐锚点 python 脚本＋字节/行尾/`py_compile` 三件套自证；基线两值 3252/39。
+
+## §77 第三十八班第一格（09-21 21:1x–21:5x，主树 `070f087` → `70695df`，基线两值 **3291 passed / 39 skipped**）：R147 总控亲做结案 + 四枚在途复核
+
+- **一、R147 的判据全文**（工单立案时只写在计划书行内，这里补齐，下一班不必再猜）：
+  ① 喂一枚**人为造错的 400** ⇒ 原生腿**不许退役**，且必须留下**具名读数**（读数不许是一句日志，必须是能被现读代码问出来的三格：`supported` / `verdict` / `request_rejections`）。
+  ② 喂 **404**（连带 405/410）⇒ **必须退役**，且一个进程只白付一次探测。
+  ③ 判定**只此一份**：不许把状态码分类或退役判定复制进 `app/agents/nodes.py` / `app/agents/orchestrator.py`（要动先停下回报）。
+  ④ 并集口径不许漂：`NATIVE_REFUSED_STATUSES` 仍等于 `{400,404,405,410}`，429 与 5xx 一枚都不许进任何一半（R92 的既有裁定：暂时故障不该永久降级）。
+  ⑤ 每条判据配反证；改判他人已并树的钉子必须在并树说明里记账，且**不许顺手弱化**。
+  ⑥ 非 JSON 响应这一支的去留要**具名写明理由**，不许默默改语义。
+- **二、验收结论：达标**。写域 `app/common/model_handler.py` + 新测试件 + 两枚旧钉；分类发生在唯一持有状态码的 `_native_chat_request`，退役与否由**异常种类**决定，决策点不再从报文文本反推（旧代码就是靠 `HTTP {code}:` 文本一把抓，才把 400 读成"没有 API"）。
+  🔴 400 样本**不手抄**：由 AST 从 `tests/test_r29_thinking_tax.py` 的实测常量 `NATIVE_400_ON_STRING_ARGS` 里取，另有一枚用例把它逐字对回去——样本编不出来。
+  🔴 19 枚用例全部走**真分类器**（假冒 `httpx.Client` 让真函数自己吐异常），没有一枚手工构造异常喂 `_native_chat`；并额外钉「本文件不许 patch `_native_chat_request`」之外的两枚面闸：退役赋值全文件只许一处、判定不得出现在 Agent 层（AST）。
+  变异账（跑完 `git checkout` 还原、控制组 58 passed，**全程在已提交的树上做**，§4BH.23 新规矩）：M1 让 400 重新退役 → 6 红｜M2 让 404 不退役 → 6 红｜M3 读数改名让 400 与 404 同号 → 2 红｜M4 把 429 拉进退役半 → 2 红｜M5 把判定复制进 `nodes.py` → 1 红。
+- **三、🔴 两枚旧钉按 R147 改判（记账在此，防下一班误读成"有人弱化了别人的断言"）**：
+  ① `tests/test_r29_thinking_tax.py::test_a_shape_refused_by_the_native_leg_downgrades_without_losing_the_answer`——原末尾 `assert handler._native_supported is False`，其散文自陈「这是既有分类，本单不改它，只把它钉住」；现按新语义改钉 `is True`。**"绝不能少一个答案"那半句一字未动**（`transport==TRANSPORT_COMPAT`、`error_code==""`、答案内容比对全部原样保留）。同文件追加一枚并集/交集形状钉子。
+  ② 同文件 `test_that_retirement_is_sticky_for_the_rest_of_the_process`——它的 docstring 明写着"如果后来有一单判定我方报文形状错不该退役，这就是要改的那枚用例"，R147 正是那单；退役粘性**没有丢**，只是搬去 404（协议事实）继续钉，并补 assert 退役标志与状态码归属。
+  ③ `tests/test_r34_keep_alive_residency.py::test_the_refusal_statuses_are_still_the_same_four` **一枚未动**：因为拆分保留了并集、取值逐字相同，这枚钉子原地继续成立——这也是刻意保留`NATIVE_REFUSED_STATUSES` 这个名字的原因。
+- **四、四枚在途复核（21:1x 实测，非自述）**：`be-r29`(R149) 脏 2 枚、最新写 11 分钟前；`be-r119`(R150) 脏 9 枚、最新写 0.2 分钟前；`be-r32`(R151) 本班开局**全干净**（reflog 显示42 分钟前才 fast-forward 到 `eef642b`，`lastfailed` 是 16:32 的 R142 旧账，不是本单在跑反证——上一班记的"在跑反证"**记错了**），21:4x 起脏 8 枚已开工；`be-r46b`(R152) 脏 8 枚、最新写 29 分钟前。十对写域交集当场复核 **全部为 0**（含主树）。
+- **五、远端账**：`70695df` 已推 **gitee**；**github 今天九试九败**（`TLS connect error: error:0A000126:SSL routines::unexpected eof`，网络侧非权限）。H6"分支从未 push、本机唯一副本"仍不成立（gitee 有全量）。
