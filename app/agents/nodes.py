@@ -5,9 +5,10 @@
 共享模型工厂 _make_model 也放这里，避免 orchestrator 循环依赖。
 """
 import os
+import time
 import httpx
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple, Sequence
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -295,6 +296,222 @@ def _with_boundary_fields(call_kwargs: dict) -> dict:
     return {**call_kwargs, "extra_body": extra_body}
 
 
+# ==================== R31：生成轮流式片段边界 ====================
+#
+# 判据出处：跟进单 §21 R31 判据②③，以及《计划书》§2.7 点名的两个静默陷阱。前端
+# ``frontend/src/lib/sessions.js`` 的 ``case 'text'`` 是**逐片追加**，并且拿
+# ``state.segments.includes(chunk)`` 做去重：把模型逐 token 吐出的增量原样转成 SSE，
+# "。""，"、空格、短数字会互相撞车并被**静默丢弃**——表现为答案缺字，且不报任何错。
+# 所以合并只能做在后端（本单判据③ 追加约束也明写不许推给前端）。规则做成三枚常量 +
+# 一枚可钉的类：
+#
+#   尺寸闸  缓冲攒到 ``STREAM_PIECE_MIN_CHARS``（20 字）即成片——这是正常输出速率下的
+#            唯一闸，所以"每片 ≥20 字"是真的成立，不是一个被另一条 OR 掉掉的形容词；
+#   空档闸  下一个字隔了 ``STREAM_PIECE_MERGE_SECONDS``（100 ms）还没到，就把已攒的字成片
+#            发出（"按 100 ms 合并"）。空档判定发生在**下一次到达**，所以本层不需要线程
+#            与定时器；另有 ``STREAM_PIECE_STALL_FLOOR_CHARS`` 一枚地板，因为"按 100 ms
+#            合并"绝不许被实现成"每 100 ms 发一个单字碎片"，那正是 §2.7 要禁的东西。
+#   末片    收尾时残余的缓冲照发，允许短于 20 字：无损（判据②）优先于整齐，末尾没有
+#            下一个字来把它补足。
+#
+# 空档闸为什么按"离上一次到达隔了多久"量，而不是按"缓冲攒了多久"量：后者是字面能过而
+# 实际不设防的写法。R31 真机第一版就是这么写的（缓冲起算 100 ms 即成片），在宿主
+# qwen2.5:3b-instruct 实测 ~90 字/s 的解码速率下，9 发 136 片里 127 片不足 20 字
+# （p50=11、p95=15）——每一片都是被时延闸提前放走的，"≥20 字"一个字都没做到。按空档量，
+# 只要字还在连续到达就一定是尺寸闸说了算，只有模型真停手才让短片出去。
+
+#: 判据③ 的两把尺。改这两个数就是改契约，由 ``tests/test_r31_stream_pieces.py`` 钉住。
+STREAM_PIECE_MIN_CHARS = 20
+#: 空档闸：离上一次字到达隔过这么多秒，才允许发一片不足 20 字的片。
+STREAM_PIECE_MERGE_SECONDS = 0.1
+#: 空档闸的地板。判据③ 禁"单字碎片"，所以它不许被设成 1；也不许高过尺寸闸，
+#: 否则空档闸形同不存在（构造期夹住）。
+STREAM_PIECE_STALL_FLOOR_CHARS = 4
+
+#: ``config["configurable"]`` 里"这一轮的流式片段往哪儿送"的键。走 configurable 而不是
+#: state：state 要过 checkpointer 序列化，回调不可 JSON 化；``cancel_event``、``principal``、
+#: ``evidence_bag`` 走的就是同一条只读通道。
+STREAM_PIECE_SINK_KEY = "stream_piece_sink"
+
+
+class StreamPiece(NamedTuple):
+    """一片可以发给前端的可见正文，连同它自己的字到达区间。
+
+    ``start_at`` 是这片**第一个字符**到达的时刻，``end_at`` 是它**最后一个字符**到达的时刻，
+    ``emitted_at`` 是它被交出去的时刻，三枚读数取自同一枚单调时钟。判据② 的"片段时间戳不
+    重叠"说的是字到达区间：任何两片的 ``[start_at, end_at]`` 互不相交——后一片的第一个字
+    一定在前一片的最后一个字之后才到达。发射时刻另记一枚，是因为空档闸天然要等到下一次
+    到达才决定"上一片该走了"，区间与交出时刻本来就不该混在同一枚数里。
+    """
+
+    text: str
+    start_at: float
+    end_at: float
+    source_fragments: int
+    emitted_at: float = 0.0
+
+    @property
+    def chars(self) -> int:
+        return len(self.text)
+
+
+def visible_chunk_text(chunk: Any) -> str:
+    """一个流式片段里的可见文字，**不 strip**。
+
+    这里不复用 :func:`app.common.model_budget.answer_text` 是有意为之：它对结果做
+    ``strip()``。逐 token 调用它，每个片界都会被剥掉头尾的空白与换行——拼回去就少字，
+    那正是判据② 要防的"缺字"。空答案守卫仍然用 ``answer_text``（整段剥一次没错），
+    片边界这一层必须用这一枚。
+    """
+    content = getattr(chunk, "content", None)
+    if content is None and isinstance(chunk, dict):
+        content = chunk.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+    return ""
+
+
+class StreamPieceMerger:
+    """把逐 token 的模型增量合并成满足判据②③ 的片段序列。
+
+    四条不变量，每条都有具名用例钉住：
+
+    G1 无损    ``"".join(p.text for p in 所有片)`` 逐字等于按到达顺序拼起来的可见正文，
+              一个字符不多也不少（含空白与换行）。
+    G2 不重叠  ``pieces[i].end_at <= pieces[i + 1].start_at``；调用方的时钟倒着走也拦得住。
+    G3 禁单字  任何一片都不短于 ``stall_floor_chars``（末片除外——末片是答案的全部剩余，
+              扣着不发就是丢字，而它后面已经没有字了）。
+    G4 不扣字  字还在连续到达时由尺寸闸说了算；一旦隔满 ``merge_seconds`` 才来下一个字，
+              那一次到达必须先把已攒的字成片发出去，不许继续攒着。
+
+    没有线程也没有定时器：空档是在**下一次到达**时结算的，所以判据③ 的"100 ms"读作
+    "字与字之间最多允许被攒多久"，而不是"每 100 ms 一定发一片"。答案结束由 :meth:`finish`
+    兜底，残余必发。
+    """
+
+    def __init__(
+        self,
+        *,
+        min_chars: int = STREAM_PIECE_MIN_CHARS,
+        merge_seconds: float = STREAM_PIECE_MERGE_SECONDS,
+        stall_floor_chars: int = STREAM_PIECE_STALL_FLOOR_CHARS,
+        clock=time.monotonic,
+    ) -> None:
+        self.min_chars = max(1, int(min_chars))
+        self.merge_seconds = max(0.0, float(merge_seconds))
+        self.stall_floor_chars = min(max(2, int(stall_floor_chars)), self.min_chars)
+        self._clock = clock
+        self._buffer: list[str] = []
+        self._buffered_chars = 0
+        self._opened_at: float | None = None
+        self._last_arrival_at: float | None = None
+        self._fragments = 0
+        self._previous_end_at: float | None = None
+
+    @property
+    def buffered_chars(self) -> int:
+        """还没发出去的字数（观测用；不影响任何一门的判据）。"""
+        return self._buffered_chars
+
+    def feed(self, text: str) -> list:
+        """喂进模型刚吐出的一段可见文字，返回此刻可以发出去的片（0、1 或 2 枚）。
+
+        2 枚只可能出现在"隔了空档之后又来了一大坨"：先把上一坨按空档闸结清，再让新来的
+        这坨把尺寸闸撞响。两枚的先后顺序仍然与到达顺序一致。
+        """
+        if not text:
+            return []
+        now = float(self._clock())
+        pieces: list = []
+        gap = (
+            now - self._last_arrival_at
+            if self._last_arrival_at is not None
+            else 0.0
+        )
+        if (
+            self._buffered_chars
+            and gap >= self.merge_seconds
+            and self._buffered_chars >= self.stall_floor_chars
+        ):
+            pieces.append(self._emit(self._last_arrival_at, now))
+        if self._opened_at is None:
+            self._opened_at = now
+        self._buffer.append(text)
+        self._buffered_chars += len(text)
+        self._last_arrival_at = now
+        self._fragments += 1
+        if self._buffered_chars >= self.min_chars:
+            pieces.append(self._emit(now, now))
+        return pieces
+
+    def finish(self) -> list:
+        """收尾：把残余缓冲照发。这是唯一允许短于 ``min_chars`` 的一片。"""
+        if not self._buffered_chars:
+            return []
+        return [self._emit(self._last_arrival_at, float(self._clock()))]
+
+    def _emit(self, content_end_at: float | None, emitted_at: float):
+        """把当前缓冲结清成一片：区间＝首字到达到末字到达，交出时刻＝``emitted_at``。"""
+        text = "".join(self._buffer)
+        start_at = self._opened_at if self._opened_at is not None else emitted_at
+        if self._previous_end_at is not None and start_at < self._previous_end_at:
+            # 时钟倒着走（或调用方换了时间源）也不许造出重叠的两片：把这一片的起点抬到
+            # 上一片的终点。区间偏窄可以，区间重叠不行——§2.7 陷阱② 里"新片整体替换旧片"
+            # 那条 covering 分支正是被重叠/包含关系触发的。
+            start_at = self._previous_end_at
+        end_at = content_end_at if content_end_at is not None else emitted_at
+        if end_at < start_at:
+            end_at = start_at
+        piece = StreamPiece(
+            text=text,
+            start_at=start_at,
+            end_at=end_at,
+            source_fragments=self._fragments,
+            emitted_at=emitted_at,
+        )
+        self._previous_end_at = end_at
+        self._buffer = []
+        self._buffered_chars = 0
+        self._opened_at = None
+        self._last_arrival_at = None
+        self._fragments = 0
+        return piece
+
+
+def publish_stream_pieces(config: Any, pieces: Sequence) -> None:
+    """把成片交给本轮注册的 sink；没注册就什么都不做。
+
+    sink 抛错不许影响答案：正文已经在同一条腿上手递手流出去了，为一根观测通道把用户的
+    回答打断是最差的取舍，所以异常只记一行日志然后继续。默认无人注册时这一枚函数是整个
+    特性关掉的样子——不建列表、不发事件、``stream_mode="values"`` 的形状一个字节都不动
+    （判据④）。
+    """
+    if not pieces:
+        return
+    sink = None
+    if isinstance(config, dict):
+        configurable = config.get("configurable")
+        if isinstance(configurable, dict):
+            sink = configurable.get(STREAM_PIECE_SINK_KEY)
+    if sink is None:
+        return
+    for piece in pieces:
+        try:
+            sink(piece)
+        except Exception as exc:
+            logger.warning(f"[R31] 流式片段出口抛错，已忽略（答案不受影响）: {exc}")
+            return
+
 class _ResilientModel(Runnable):
     """Provider 请求失败时回退到本地离线模型，避免单点服务故障扩散。
 
@@ -551,6 +768,13 @@ class _ResilientModel(Runnable):
         return response
 
     def stream(self, *args, **kwargs):
+        """流式跑一发：预算、span、离线回退，外加 R31 的片段边界出口。
+
+        这一枚边界把模型逐 token 吐的增量合并成判据②③ 合格的片，只送给**注册了 sink 的**
+        调用方；没注册时一个字节都不变。今天生产图路径上根本走不到这里（
+        ``stream_mode="values"`` 下 react agent 只调 ``invoke``），所以它是 R31 的上半场：
+        规则先落地并钉住，下半场（生成腿改流式 + SSE 出口多发 ``text``）见交付说明。
+        """
         from app.common.model_budget import ModelBudgetExhausted, default_model_budget
 
         config = kwargs.get("config")
@@ -591,11 +815,13 @@ class _ResilientModel(Runnable):
                 raise
             visible_total = 0
             saw_tool_call = False
+            piece_merger = StreamPieceMerger()
             try:
                 for chunk in self.primary.stream(*args, **kwargs):
                     span.mark_first_token()
                     visible_total += len(answer_text(chunk))
                     saw_tool_call = saw_tool_call or produced_a_tool_call(chunk)
+                    publish_stream_pieces(config, piece_merger.feed(visible_chunk_text(chunk)))
                     yield chunk
             except Exception as exc:
                 provider_code = context_error_code(exc)
@@ -657,6 +883,9 @@ class _ResilientModel(Runnable):
                 )
                 span.finish("failed", error_code=NO_ANSWER_CODE)
                 return
+            # 末片只在真的跑完这一发时发：中途 provider 失败会改走离线流，
+            # 把半截缓冲当成"答案的最后一块"推给出口，是判据③ 明确不许的那种冒充。
+            publish_stream_pieces(config, piece_merger.finish())
             span.finish("completed")
         finally:
             slot.release()
