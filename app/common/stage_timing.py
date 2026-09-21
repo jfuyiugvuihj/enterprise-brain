@@ -48,9 +48,11 @@ from app.common.performance import PerformanceStats
 CANONICAL_STAGES: tuple[str, ...] = ("classify", "rewrite", "retrieve", "generate", "reflect")
 
 #: ``ModelTier`` value -> segment. Tiers are the enum the call sites already pass, so no
-#: new label has to be trusted. ``compress`` / ``alert`` are real tiers with real callers
-#: that are none of the five segments; mapping them to "" is deliberate -- they surface in
-#: ``unattributed`` rather than inflating a named segment.
+#: new label has to be trusted. ``alert`` is a real tier with real callers; ``compress``
+#: lost its last production caller in R33, where history trimming became deterministic, and
+#: survives only as a ``model_budget`` calibration entry. Neither is one of the five
+#: segments; mapping them to "" is deliberate -- they surface in ``unattributed``
+#: rather than inflating a named segment.
 TIER_TO_STAGE: dict[str, str] = {
     "chat": "generate",      # app/agents/nodes.py respond -- the answer text
     "plan": "classify",      # app/agents/nodes.py plan -- split the compound question

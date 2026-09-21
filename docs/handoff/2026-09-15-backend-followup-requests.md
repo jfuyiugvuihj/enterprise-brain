@@ -2060,3 +2060,12 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 - `Erdos` 在 R116 判据 6 定性出的两处台账缺线仍挂在 §67 五（`retrieval_pipeline.py` 的 `leg=retrieval` 只走 `pack_hit_list` 整条丢弃 / `tools.py` 那处），本班已再次向 R119 索要那份 ≤5 行需求单；收到前不许另派碰这两行。
 - **R43 判据② 受阻**：R38 并树 `2e6abc6` 已证原生腿应答无 cached 字段、`model_calls` 亦无该列 ⇒ 「E3 档实测 `cached_tokens > 0`」在当前宿主 Ollama 上不可测。派 R43 前由总控先订正判据（只交 ①前缀字节级稳定 + 一把命中/未命中可读计数），未订正前**不派**。
 - R31 与 R29 同一条生成路径（流式腿）⇒ 串行，R29 先；§21 L503 那句「禁改 `frontend/**`」按本班第二节口径视为该单自身设计约束（前端零改动），不再是授权禁令。
+
+## §69 · 第三十四班第二格实测订正（09-21 11:0x，主树 `eb4c5c3`；四条都是本班亲跑，不是转述）
+
+- **一、「后端镜像落后主树 21 小时」这句要换证据**。P-8 现值：`check_image_provenance.py` ⇒ `tree=eb4c5c3 (build inputs clean)` / `image label org.opencontainers.image.revision=27c676f` / **verdict MISMATCH**，被点名的是镜像确实承载的文件：`app/agents/orchestrator.py`、`app/api/v1/chat.py`、`app/common/model_handler.py`、`app/quality/eval.py`、`app/quality/runner.py`、`app/rag/loader.py` 等。⇒ 正确的说法是「**镜像落后 `27c676f` 之后所有动过 `app/**` 的并树**」，不是小时数：`docker images` 的 `CREATED` 对「只换 label 的重建」不可信（run5 那次带 `GIT_SHA` 的重建只花 **2 s**，层时间戳根本没动）。**结论不变**（run6 开窗前必须带 `GIT_SHA` 重建 `migrate` 服务，`build backend` 无 build 段是空操作），但别再引那枚 21 小时。
+- **二、run5 的归因不必推翻**：看板 §4BH.12 记的是 P-8 当时 `PASS（MATCH，image label=27c676f，build inputs clean）`，且 `27c676f` 已含 R111/R122/R120 三笔 ⇒ 「run5 是第一枚含 R122 的官方基线」**成立**，`correctness 0.4762` 与 `evidence 0.6857` 的趋势解释维持原样。
+- **三、今晨双写窗跑的是 `27c676f` 镜像 ⇒ 不含 R130 的 NUL 净化**。所以「金丝雀当场炸 P1、损害归零（23 枚找回、全库 1008 枚＝原值）」两笔都成立，且推出一条硬顺序：**重开双写窗之前必须先重建镜像**，否则 `app/rag/loader.py` 的净化与 `pg_store.py` 的具名早拒进不了容器，第⑤步金丝雀会原地再炸一次。本班未动 `VECTOR_DUAL_WRITE`（仍 `off`）。
+- **四、前端离线基线（总控亲跑，主树 `eb4c5c3`，`frontend/` 工作目录）**：`npm run build` **exit 0**（vite 8.0.16，142 modules，`dist/assets/index-*.js` 280.68 kB／gzip 99.61 kB，CSS 102.12 kB／gzip 19.41 kB，346 ms）；`npm test` **exit 0（22 files / 526 tests 全绿，1.51 s）**。⇒ Hooke 的 R32 前端半张单有一枚可对照的绿基线（交工后必须仍是 526+ 全绿且 build exit 0）。vitest 自报「transform 7.08 s 每轮重做，可用 `fsModuleCache: true` 缓存」——属可选优化，不属任何在册单，登记不派。
+- **五、写给业主的一条可见性真相**：`enterprise-brain-frontend:local` 容器已 **37 小时**未重建，而 `docker-compose.dev.yml` 的热挂载只管后端 `app/**`、**管不到前端**（该文件自己的注释也写明前端不在其内）⇒ 业主在浏览器里看到的仍是 09-19 那版界面；R32/R46 的前端改动在**重建前端镜像并重启该服务之前不可见**。这不是代码没做，是部署侧的可见性闸门。
+- **六、六枚在途活性（11:0x 亲测工作副本 mtime，不作交付凭据）**：R119 最新写 10:57、R33 10:46、R32 10:59（`app/api/v1/chat.py` 已动）、R29 与 R46b 已进入跑测试阶段（`tests/__pycache__` 10:53／10:59）、R76 刚开工。
