@@ -330,6 +330,7 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 > | R143 | 双写窗第⑦步的 **recall 对账**（`scripts/compare_vector_recall.py`）预跑一次，出 go/no-go 与窗口内命令序 | 待派 🔴 R29 并树这一半锁已解（`791568c`），仍要**非跑分窗口 + 机器空闲**（要 embed ⇒ 打 Ollama）；集合面那一半已拆 R145 先做，其结论即本单开场 |
 > | R145 | 向量镜像**集合面**对账：只在 Chroma／只在 PG／两边都有 三数 + `index_version_id IS NULL` 按 R76 新语义判读 + embedding 口径分组 + 孤儿；🔴 零 Ollama、只读、不写仓库 `chroma_db` | **在途**：`Chandrasekhar`/`01a0c18c` @`be-r76`（14:3x 复用派），判据 §73 四 |
 > | R146 | （R29 交工具名上报的待办②转单）cached-token 论述与记账归真：R38 写下过「本机不报 cached」，R29 真机两处推翻（原生 `done` 帧有 `prompt_eval_cached_count`、兼容腿非流式报过 `cached_tokens=257`），而**流式 /v1 帧不带 `usage`** ⇒ 答案腿今天就是从流里量不到；写域 `app/trace/spans.py` + 新测试件 | **在途**：`Erdos`/`01a0bf41` @`be-r119`（14:5x 复用派），判据 §74 二；本单结论是 **R43 判据② 订正**的直接输入，不许为凑数写 0 |
+> | R147 | （R29 交工具名上报的待办③转单）`app/common/model_handler.py` 的 `NATIVE_REFUSED_STATUSES` 把**一切 400** 都当成「服务端没有原生 `/api/chat`」⇒ 一次**我方**报文形状错误就会把原生腿**永久退役**（进程内不再尝试），应区分「协议不支持」（404/405，该退役）与「报文不合法」（400，不该退役） | 待派 🔴 写域 `model_handler.py`，排 R31 之后（`nodes.py`/`orchestrator.py` 在途，两腿同源）；判据要点：喂一枚人为造错的 400 ⇒ 原生腿不许退役且必须留下具名读数；喂 404 ⇒ 必须退役。今天无人踩过这颗雷纯属请求体恰好合法 |
 >
 > 🔴 **两条在册表上查不到的新事实**：① `VECTOR_DUAL_WRITE` **既不在 `deploy/.env.server`、`docker-compose.yml` 也从不透传** ⇒ 双写在真机今天根本打不开，P3 召回对比从未跑过一次（已进 R120）；② 真机 `[PromptPack]` 136 枚实测**推翻「跨轮累加是 run3 主症」**——采集器每问一个新 thread，真主症是**同轮内第 2/3 发检索被饿死**（28 枚空手其中 26 枚距上一发 ≤2 s），跟进单 §55A。
 ---
