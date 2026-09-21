@@ -11,6 +11,23 @@ rewrite comes back 200 with an empty body and ``finish_reason=length`` -- roughl
 per question for text nothing can parse. The native ``/api/chat`` leg with ``think:false``
 answers the same prompt inside the same budget, so the non-streaming half asks Ollama
 natively and the streaming half is left exactly as it was.
+
+R29 asked whether that second half should move too, and measured the answer on this host instead
+of assuming it: for one and the same prompt, the native leg with ``think:false`` returns zero
+``thinking`` characters and about four hundred characters of *the same text* inside ``content``,
+in the same wall time as the compatible leg. That pair was then re-measured on the request which
+actually produced the 30.6 s ledger line -- ``scripts/perf_probe_think.py:gen_messages``, same
+tool, same 400-token cap, eight questions, both legs warm: median wall 5.34 s native against
+5.35 s compatible, ratio 0.9981, both arms spending the whole 400 tokens, the native arm
+returning 667 characters of "好的，我现在需要回答用户…" where the compatible arm returned zero. The
+flag relocates the reasoning, it does not stop it, so moving the answer leg here would not
+collect the 思考税 of 跟进单 §21 R29 -- it would print the model's monologue into the customer's
+answer stream, ahead of any ``[来源: ...]``, and pass ``answer_error_code`` as a finished answer.
+One more reason it is not a one-line move: the two legs reject each other's tool-call history
+(native 400s on a string ``arguments``, compatible 400s on an object) and LangChain's serializer
+only ever emits the string. The streaming half stays where it is, and ``app/agents/nodes.py`` is
+where the residency request (R34's other half, which R29 inherits and which is the one saving
+this ticket could actually bank) now goes out.
 """
 from enum import Enum
 import time
@@ -475,8 +492,11 @@ class ModelHandler:
                 max_tokens=budget.max_tokens,
                 timeout=http_timeout(budget, prompt_tokens, stream=stream),
                 # The compatible leg gets the same request it would make without this line,
-                # plus residency. Whether Ollama honours keep_alive here is a server fact,
-                # measured rather than assumed; a server that ignores it loses nothing.
+                # plus residency. Whether the server honours keep_alive is a server fact, and on
+                # this one it does not: /v1 on Ollama 0.34.2 ignores the field outright (measured
+                # 2026-09-21 from /api/ps -- 1200 s survived a compat call asking for 20m, one
+                # asking for nothing, and one asking for 1800s). Asking anyway costs nothing and
+                # keeps both legs stating the same window in the same request.
                 extra_body={KEEP_ALIVE_FIELD: keep_alive.wire},
             )
         except Exception as exc:
