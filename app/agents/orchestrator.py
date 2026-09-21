@@ -198,7 +198,7 @@ def _make_checkpointer():
 _checkpointer = _make_checkpointer()
 _trace_store = default_trace_store()
 
-# ==================== Worker 子图（带 checkpointer，可持久化） ====================
+# ============ Worker 子图（带 checkpointer，仅本轮内可持久化；跨轮不回读：checkpoint_ns 每轮换 uuid · R118/R127） ============
 
 DOC_PROMPT = """你是文档搜索专家。搜公司知识库回答问题。一次想好几个搜索方向，同时搜多个关键词，避免来回。返回完整准确结果并引用来源文件名。"""
 DATA_PROMPT = """你是数据分析专家。分析经营数据回答问题。一次想好几个分析角度，同时查多个维度。返回详细结论和关键数字。
@@ -554,6 +554,11 @@ def _make_worker_wrapper(graph, name: str):
         task_id = str(parent_conf.get("task_id") or "")
         step_id = f"{trace_id}:worker:{name}" if trace_id else ""
         evidence_bag = new_evidence_bag()
+        # R127（= R118 乙案·乙-1）：下面这枚子线程号本身是稳定的（同一会话内跨轮恒定），
+        # 但线程号恒定不等于子图能回读上一轮——langgraph 给父节点内的嵌套 invoke 注入的
+        # checkpoint_ns 每轮换一枚新 uuid，于是这四张子图是每轮都写、永不回读：子图每轮进
+        # 模型的 prompt 恒等于 [system, 本轮那条 HumanMessage]。别把建图那几行的 checkpointer=
+        # 当跨轮记忆用；撤不撤它是 R128 的决策，形状钉在 tests/test_r118_subgraph_memory.py。
         child_conf = {"thread_id": f"{parent}:{name}"}
         # 阶段 2：把调用者身份传给子图，工具可据此做权限过滤
         for k in (
