@@ -98,6 +98,33 @@ _UPSERT_VECTOR_SQL = (
 _DELETE_VECTOR_SQL = "DELETE FROM chunk_vectors WHERE vector_id = ANY(%s::text[])"
 _COUNT_VECTORS_SQL = "SELECT count(*) FROM chunk_vectors"
 
+#: Columns in the order VectorMirror.build_rows lays one out for _UPSERT_VECTOR_SQL. Only
+#: read to name the offending column in an R130 refusal; a mismatch with the SQL above is
+#: caught by tests/test_r130_text_unencodable_is_named_refusal.py, not by PostgreSQL.
+_UPSERT_COLUMNS = (
+    "vector_id",
+    "filename",
+    "chunk_index",
+    "content",
+    "classification",
+    "department",
+    "content_sha256",
+    "index_version_id",
+    "embedding",
+    "embedding_model",
+    "embedding_dimension",
+    "distance_function",
+)
+
+#: R130 判据②: PostgreSQL refuses U+0000 in any text column, psycopg refuses the whole
+#: executemany batch over it, and the failure that reaches an operator is a bare class
+#: name. The mirror therefore refuses by name before it opens a cursor.
+#: app/rag/loader.py drops this same character on the way out of every parser; the
+#: literal lives here too because a storage layer that imports the parsing layer would
+#: drag pypdf into every process that only wants to read vector_mirror_diagnostics().
+REASON_VECTOR_MIRROR_TEXT_UNENCODABLE = "vector_mirror_text_unencodable"
+NUL_CHARACTER = "\x00"
+
 #: Process-local observability, deliberately kept out of retriever._DIAGNOSTICS:
 #: tests/test_r21_answer_side_degradation.py compares that dictionary key for key, so
 #: adding mirror keys to it would be a change to R21's contract, not an addition to it.
@@ -278,8 +305,12 @@ class VectorMirror:
 
         assert_writable_embeddings is R21's gate and is not re-implemented here. This adds
         the one thing only the mirror can know -- the width this database was migrated for
-        -- plus the metadata shape the columns need. A refusal means nothing was sent: this
-        function opens no cursor and issues no SQL.
+        -- plus the metadata shape the columns need, and the one thing the column types
+        cannot survive: a NUL character (R130). A refusal means nothing was sent: this
+        function opens no cursor and issues no SQL, and it never cleans a value on its way
+        in -- dropping the character is the loader's job, naming the refusal is this
+        layer's, and a mirror that silently rewrote text would leave Chroma and
+        PostgreSQL holding two different documents.
         """
         vector_list = list(embeddings)
         id_list = [str(item) for item in ids]
@@ -331,26 +362,39 @@ class VectorMirror:
             chunk_index = self._as_int(
                 values.get("chunk_index"), vector_id, "chunk_index", model, allow_none=False
             )
-            rows.append(
-                (
-                    vector_id,
-                    filename,
-                    chunk_index,
-                    document,
-                    classification,
-                    str(values.get("department") or ""),
-                    str(values.get("hash") or "") or None,
-                    # index_version_id, NULL by design: the retriever does not know the
-                    # index version, the publication that follows it does. Inventing one
-                    # here is R22's silent desync, so the row says "not yet published" and
-                    # scripts/compare_vector_recall.py counts those rows instead.
-                    None,
-                    _vector_literal(vector),
-                    model,
-                    self.scope.dimension,
-                    self.scope.distance_function,
-                )
+            row = (
+                vector_id,
+                filename,
+                chunk_index,
+                document,
+                classification,
+                str(values.get("department") or ""),
+                str(values.get("hash") or "") or None,
+                # index_version_id, NULL by design: the retriever does not know the
+                # index version, the publication that follows it does. Inventing one
+                # here is R22's silent desync, so the row says "not yet published" and
+                # scripts/compare_vector_recall.py counts those rows instead.
+                None,
+                _vector_literal(vector),
+                model,
+                self.scope.dimension,
+                self.scope.distance_function,
             )
+            # R130 判据②: text a PostgreSQL column cannot hold is refused here, by
+            # name, with the document that carries it -- which is the information
+            # psycopg's DataError throws away and executemany is too late to add.
+            for column, value in zip(_UPSERT_COLUMNS, row):
+                if isinstance(value, str) and NUL_CHARACTER in value:
+                    raise self._refuse(
+                        REASON_VECTOR_MIRROR_TEXT_UNENCODABLE,
+                        f"镜像拒写：filename={filename} chunk_index={chunk_index} "
+                        f"(vector_id={vector_id}) 的列 {column} 含 "
+                        f"{value.count(NUL_CHARACTER)} 枚 \\x00（首枚偏移 "
+                        f"{value.index(NUL_CHARACTER)}），PostgreSQL text 列收不下这个"
+                        "字符；整批零写入，镜像层不代为清洗（清洗属 loader 净化层）",
+                        model,
+                    )
+            rows.append(row)
         return rows
 
     # -- writes ------------------------------------------------------------
