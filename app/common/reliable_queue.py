@@ -2,7 +2,8 @@
 
 This module is deliberately separate from the legacy queue adapter until the worker
 integration contract is reviewed. It provides reserve/ack, lease expiry, retry,
-dead-letter, idempotency, cancellation, and explicit status transitions.
+dead-letter, idempotency, cancellation, explicit status transitions,
+and passive queue-pressure readings (depth plus declared capacity) for monitoring.
 """
 from __future__ import annotations
 
@@ -18,6 +19,36 @@ class QueueConnectionError(RuntimeError):
     """Raised when the reliable queue cannot establish a verified Redis connection."""
 
     code = "queue_unavailable"
+
+
+#: R155: 部署侧声明的排队上限。这一枚常量只产生「看得见」的读数，不产生任何执法——
+#: 「满了怎么办」（拒收 / 排队上限 / 降级）是业主裁定（跟进单 §79 三 R155），今天入队照旧全收。
+QUEUE_CAPACITY_ENV = "QUEUE_MAX_PENDING"
+#: capacity_source 的四枚取值：报出这枚容量从哪来，以及「读不到」算谁的。
+CAPACITY_SOURCE_ENV = f"env:{QUEUE_CAPACITY_ENV}"
+CAPACITY_SOURCE_EXPLICIT = "constructor"
+CAPACITY_SOURCE_NOT_CONFIGURED = "not_configured"
+CAPACITY_SOURCE_INVALID = "invalid_configuration"
+#: depth_source: 深度一律现读 Redis 服务端的 LLEN，多进程/多副本读的是同一份账。
+DEPTH_SOURCE_REDIS_LLEN = "redis_llen"
+
+
+def parse_queue_capacity(raw: Any, *, source: str = CAPACITY_SOURCE_ENV) -> tuple[int | None, str]:
+    """把配置里的排队上限读成一枚容量读数；读不懂就报「不知道」。
+
+    不拿 0 冒充「没有上限」，也不拿默认值冒充「还空着」——那两种糊法都会让「队列已满」
+    重新变回一个编出来的数。读不到时返回 (None, 原因)，由读数面原样上报成 null。
+    """
+    text = "" if raw is None else str(raw).strip()
+    if not text:
+        return None, CAPACITY_SOURCE_NOT_CONFIGURED
+    try:
+        value = int(text)
+    except ValueError:
+        return None, CAPACITY_SOURCE_INVALID
+    if value <= 0:
+        return None, CAPACITY_SOURCE_INVALID
+    return value, source
 
 
 @dataclass(frozen=True)
@@ -37,6 +68,8 @@ class ReliableQueue:
         max_attempts: int = 3,
         idempotency_ttl: int = 86400,
         result_ttl: int = 1800,
+        capacity: int | None = None,
+        capacity_source: str = CAPACITY_SOURCE_EXPLICIT,
     ):
         if (
             not name
@@ -46,12 +79,25 @@ class ReliableQueue:
             or result_ttl <= 0
         ):
             raise ValueError("invalid queue configuration")
+        if capacity is not None and (
+            isinstance(capacity, bool) or not isinstance(capacity, int) or capacity <= 0
+        ):
+            #: 容量只接受「正整数」或「不知道」两种形态；0、负数、字符串一律当场拒，
+            #: 免得半吊子配置把 saturated 变成一枚看着像真数的假读数。
+            raise ValueError("invalid queue configuration")
         self.redis = redis_client
         self.name = name.rstrip(":")
         self.lease_seconds = lease_seconds
         self.max_attempts = max_attempts
         self.idempotency_ttl = idempotency_ttl
         self.result_ttl = result_ttl
+        self.capacity = capacity
+        #: 容量与来源必须成对：capacity 是空的而来源写 constructor 是句假话。
+        self.capacity_source = (
+            CAPACITY_SOURCE_NOT_CONFIGURED
+            if capacity is None and capacity_source == CAPACITY_SOURCE_EXPLICIT
+            else capacity_source
+        )
 
     @property
     def pending_key(self) -> str:
@@ -251,6 +297,53 @@ class ReliableQueue:
             "max_attempts": self.max_attempts,
         }
 
+    def _list_depth(self, key: str) -> int:
+        """队列深度现读 Redis 服务端的 LLEN，不在本进程里数。
+
+        多进程/多副本下这是唯一能信的说法：API 进程与 worker 进程各自记的账都不作数，
+        只有服务端那一份会随入队/出队一起动。也不拿 LRANGE 拉全长列表回来数长度——
+        观测面不该把被观测的压力再放大一遍。
+        """
+        return int(self.redis.llen(key))
+
+    def pending_depth(self) -> int:
+        #: 排队区深度：等开跑的请求数，「满」按这一枚算。
+        return self._list_depth(self.pending_key)
+
+    def processing_depth(self) -> int:
+        #: 处理中深度：已被 worker 领走、还挂在处理表上的请求数。
+        return self._list_depth(self.processing_key)
+
+    def dead_letter_depth(self) -> int:
+        #: 死信深度：重试预算耗尽或被判定不可重试后停车的请求数。
+        return self._list_depth(self.dead_key)
+
+    def stats(self) -> dict[str, Any]:
+        """把「满没满」变成能被读到的状态——只交读数，不做任何执法。
+
+        - queue_length / processing：与 GET /api/v1/queue/stats 今天交出的两枚键同名
+          同值（LLEN 与 len(LRANGE 0 -1) 在 Redis 语义上恒等），路由改成直接返回本方法时
+          那两枚数一个字都不许变。
+        - capacity：部署声明的排队上限；没声明就是 null，既不是 0 也不是「无限」。
+        - remaining：capacity - queue_length，夹到不小于 0；容量未知时 null。
+        - saturated：queue_length >= capacity。**容量未知时是 null，不是 false**——
+          「读不到」和「还没满」是两句话，合并成一句就开始编数了。
+        - capacity_source / depth_source：这两枚数是从哪来的，供审计与前端分色。
+
+        入队语义与本页无关：本方法一个字节都不写，也拒不了任何一条消息。
+        """
+        pending = self.pending_depth()
+        capacity = self.capacity
+        return {
+            "queue_length": pending,
+            "processing": self.processing_depth(),
+            "capacity": capacity,
+            "remaining": None if capacity is None else max(capacity - pending, 0),
+            "saturated": None if capacity is None else pending >= capacity,
+            "capacity_source": self.capacity_source,
+            "depth_source": DEPTH_SOURCE_REDIS_LLEN,
+        }
+
 
 def connect_reliable_queue(
     redis_url: str | None = None,
@@ -275,4 +368,9 @@ def connect_reliable_queue(
         client.ping()
     except Exception as exc:
         raise QueueConnectionError(f"Redis queue is unavailable: {exc}") from exc
+    #: 容量读数在健康探针通过之后才去读：REDIS_URL 缺失、Redis 不通、redis 依赖不在，
+    #: 仍然是 QueueConnectionError → 503 queue_unavailable，这条路径一个字没动（判据③）。
+    capacity, capacity_source = parse_queue_capacity(os.getenv(QUEUE_CAPACITY_ENV))
+    queue_options.setdefault("capacity", capacity)
+    queue_options.setdefault("capacity_source", capacity_source)
     return ReliableQueue(client, **queue_options)
