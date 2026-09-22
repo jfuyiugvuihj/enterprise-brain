@@ -230,6 +230,12 @@ planned PostgreSQL `AgentRun` / `AgentStep` / `ToolCall` / `ModelCall` schema.
 - `hit_count` - how many rows that is.
 - `unauthorized_count` - how many retrieved rows were withheld. Without this number "0 条来源"
   cannot tell 「没检索到」 apart from 「检索到了但不给你看」, and those two need opposite replies.
+- `scope_reason_code` - which scope judgement produced this list: `RetrievalScope.reason_code` from
+  `app/rag/filters.py::resolve_document_retrieval_scope`, or the `RetrievalScopeError.code` when no
+  usable scope could be resolved (then the rows are empty by construction, not by chance).
+  `unauthorized_count` says how many rows were withheld; this names **why**, so a client need not
+  re-derive the principal's scope to tell the two apart. Documented as the fifth key, which is what
+  the 「the same five payload keys」 line below has been claiming all along.
 - Per row, two provenance fields since R154. `excerpt` is **always present** (a string, possibly empty,
   at most 400 characters, truncated at the tool boundary by `app/agents/evidence.py::record_document_hits`)
   and is the passage that was actually used, not a sentence recovered from the answer. `published_at` is
