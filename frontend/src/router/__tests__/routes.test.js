@@ -13,7 +13,13 @@
  * 三条反证（跑完即还原，不留在树里）：
  *   删掉 routes 里任意一枚一级路由       → 本文件「路由表 = 导航集合」与深链那两组当场红。
  *   App.vue 重新留一条 activeTab.value =  → 「App.vue 里没有第二套真源」红。
- *   图谱路由 meta.primary 翻成可派生      → 「一级导航就是这六个」红（本文件与 navigation.test.js 各一处）。
+ *   图谱路由 meta.primary 翻成可派生      → 「一级导航就是这五枚」红（本文件与 navigation.test.js 各一处）。
+ *
+ * R136 改动的口径（合屏之后哪些数字变了，逐条在这里对账，不留暗改）：
+ *   一级屏 6 → 5：文档与数据并成「喂料」两标签一屏，/docs、/data 降级为老地址重定向。
+ *   「goto 目标必须是一级屏」→「goto 落点必须可达，且跳完落在一级屏上」。后者更硬：
+ *   前者只看静态名单，后者连重定向后的落点一起看，老屏名从入口掉出去一定红。
+ *   「App.vue 不许 import 面板组件」的覆盖面从 7 块扩到 8 块（喂料的两块标签面板也算面板）。
  */
 import { readFileSync, readdirSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
@@ -25,6 +31,7 @@ import ChatPanel from '../../components/ChatPanel.vue'
 import DashboardPanel from '../../components/DashboardPanel.vue'
 import DataPanel from '../../components/DataPanel.vue'
 import DocPanel from '../../components/DocPanel.vue'
+import FeedPanel from '../../components/FeedPanel.vue'
 import GraphPanel from '../../components/GraphPanel.vue'
 import InsightPanel from '../../components/InsightPanel.vue'
 import { FOCUSABLE_SELECTOR } from '../../components/ui/focus-trap.js'
@@ -38,6 +45,7 @@ import {
   screenRouteIds,
 } from '../index.js'
 import { focusScreenMain, isRoveKey, navItems, nextNavItem } from '../nav-focus.js'
+import { FEED_SCREEN, FEED_TABS, LEGACY_FEED_NAMES } from '../feed-tabs.js'
 
 const read = rel => readFileSync(new URL(rel, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const app = read('../../App.vue')
@@ -46,14 +54,23 @@ const main = read('../../main.js')
 /** 一屏一条：深链地址、路由名、期望挂载的面板组件。 */
 const SCREENS = [
   ['/overview', 'overview', DashboardPanel],
-  ['/docs', 'docs', DocPanel],
-  ['/data', 'data', DataPanel],
+  // R136：文档与数据并成一屏两标签，挂的是 FeedPanel（两块面板由 feed-tabs.js 那张表带来）
+  ['/feed', 'feed', FeedPanel],
   ['/insights', 'insights', InsightPanel],
   ['/approval', 'approval', ApprovalPanel],
   ['/chat', 'chat', ChatPanel],
   // 图谱是屏，但不是一级入口：它只有一条非一级路由，深链进得来。
   ['/graph', 'graph', GraphPanel],
 ]
+
+/** 老屏名：不再是屏，但仍然是入口（总览的卡片与 @goto 还指着它们）。 */
+const LEGACY = [
+  ['/docs', 'docs', DocPanel],
+  ['/data', 'data', DataPanel],
+]
+
+/** 每一枚面板组件都要有人 import，App.vue 一个都不许 import。 */
+const ALL_PANELS = [...SCREENS.map(entry => entry[2]), ...FEED_TABS.map(tab => tab.component)]
 
 const screenRoutes = routes.filter(route => route.meta?.screen)
 
@@ -66,7 +83,7 @@ function gotoTargetsOf(source) {
   ].map(match => match[1])
 }
 
-/** 七块面板扫出来的 goto 落点全集（DataPanel 的 ask 另算，它不是跨屏目标而是提问）。 */
+/** 全部面板扫出来的 goto 落点（DataPanel 的 ask 另算，它不是跨屏目标而是提问）。 */
 function allGotoTargets() {
   const dir = new URL('../../components/', import.meta.url)
   const names = readdirSync(dir).filter(name => name.endsWith('.vue'))
@@ -89,9 +106,11 @@ async function routerAt(location) {
 describe('R104 判据 1 · 一级屏一屏一路由，导航是它的派生视图', () => {
   it('路由表 = 导航集合：一级屏与派生出的导航项逐条对得上', () => {
     expect(screenIds).toEqual(navigation.map(item => item.id))
-    expect(screenIds).toEqual(['overview', 'docs', 'data', 'insights', 'approval', 'chat'])
-    // 屏的全集只比一级多图谱一枚，且它就是那条非一级路由
-    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['graph'])
+    // R136 判据② · 一级屏五枚：文档 + 数据 合成「喂料」，侧栏于是少一项，不是多一项
+    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat'])
+    // 屏的全集只比一级多图谱一枚；屏之外的入口（老屏名）不许被当成屏
+    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['graph', ...LEGACY_FEED_NAMES])
+    expect(LEGACY_FEED_NAMES).toEqual(['docs', 'data'])
     // 一屏一条路由：地址、组件、标题都不许多也不许少
     expect(screenRoutes.map(route => route.path)).toEqual(SCREENS.map(entry => entry[0]))
     expect(screenRoutes.map(route => route.name)).toEqual(SCREENS.map(entry => entry[1]))
@@ -145,6 +164,16 @@ describe('R104 判据 1 · 一级屏一屏一路由，导航是它的派生视�
 })
 
 describe('R104 判据 3 · 深链直达解析并渲染同一屏', () => {
+  it('老地址是一枚真落点：/docs、/data 都解析得到记录，不落通配兜底', () => {
+    for (const [path, name] of LEGACY) {
+      const record = routes.find(route => route.path === path && route.name === name)
+      expect(record, `${path} 这条老地址没了`).toBeTruthy()
+      expect(record.meta.screen, `${path} 又变回一屏了`).toBeFalsy()
+      expect(record.meta.legacyScreenOf, `${path} 没记自己落到哪一屏`).toBe(FEED_SCREEN)
+      expect(typeof record.redirect, `${path} 的重定向没了`).toBe('function')
+    }
+  })
+
   for (const [path, name, panel] of SCREENS) {
     it(`${path} 解析到 ${name}，渲染出的 HTML 与直接渲染该面板一致`, async () => {
       const router = await routerAt(path)
@@ -174,14 +203,19 @@ describe('R104 判据 3 · 深链直达解析并渲染同一屏', () => {
 describe('R104 判据 2 · 面板 @goto 目标可达，且 App.vue 不留第二套真源', () => {
   const targets = allGotoTargets()
 
-  it('面板发出的每一个 goto 目标都是一条真路由，且是一级屏', async () => {
+  it('面板发出的每一个 goto 目标都可达，跳完必须落在一级屏上', async () => {
+    // R136 之前这条钉的是「目标本身就是一级屏」。合屏之后 'docs' / 'data' 不再是屏，
+    // 但总览的卡片还在往它们发 @goto —— 所以口径改成看落点：静态名单 + 跳转之后真正
+    // 落脚的那一屏都必须是一级屏。老屏名从入口里掉出去（按钮变死键）与落在非一级屏上，
+    // 两种走法都会红，比原来那枚更硬而不是更松。
     const router = createAppRouter({ history: createMemoryHistory() })
     for (const target of targets) {
-      expect(screenRouteIds, `${target} 不是路由表里的屏`).toContain(target)
-      expect(screenIds, `${target} 不是一级屏，侧栏里没有它的入口`).toContain(target)
+      expect(screenRouteIds, `${target} 不是路由表里的落点`).toContain(target)
       expect(router.resolve({ name: target }).name, `${target} 解析不出地址`).toBe(target)
       await router.push({ name: target })
-      expect(router.currentRoute.value.name).toBe(target)
+      const landed = router.currentRoute.value.name
+      expect(screenIds, `${target} 跳完之后不在一级屏上`).toContain(landed)
+      expect(landed, `${target} 的落点`).toBe(LEGACY_FEED_NAMES.includes(target) ? FEED_SCREEN : target)
     }
   })
 
@@ -211,8 +245,8 @@ describe('R104 判据 2 · 面板 @goto 目标可达，且 App.vue 不留第二�
     // 顶栏标题取路由元信息，不再回头查导航数组
     expect(app).toMatch(/const activeMeta = computed\(\(\) => route\.meta/)
     expect(app).toMatch(/\{\{ activeMeta\.title \}\}/)
-    // 面板组件的 import 只该存在于路由表里
-    for (const [, , panel] of SCREENS) {
+    // 面板组件的 import 只该存在于路由表那两张文件里（八枚：六屏面板 + 喂料的两块标签面板）
+    for (const panel of ALL_PANELS) {
       const file = panel.__name || panel.name
       expect(app, `App.vue 还自己 import 了 ${file}`).not.toContain(`components/${file}.vue`)
     }
@@ -235,9 +269,9 @@ describe('R104 判据 3 · 切屏不丢会话，也不改别人家的重挂载�
     expect(app).toMatch(/<KeepAlive :include="cachedScreens">/)
   })
 
-  it('其余六屏照旧每次进来重挂载：没有被塞进 keep-alive 名单', () => {
+  it('其余屏照旧每次进来重挂载：没有被塞进 keep-alive 名单', () => {
     const names = screenRoutes.map(route => route.component.name || route.component.__name)
-    expect(names).toEqual(['DashboardPanel', 'DocPanel', 'DataPanel', 'InsightPanel', 'ApprovalPanel', 'ChatPanel', 'GraphPanel'])
+    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'InsightPanel', 'ApprovalPanel', 'ChatPanel', 'GraphPanel'])
     expect(names.filter(name => cachedScreens.includes(name))).toEqual(['ChatPanel'])
   })
 })

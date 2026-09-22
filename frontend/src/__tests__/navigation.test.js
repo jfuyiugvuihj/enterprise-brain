@@ -44,8 +44,10 @@ const gotoTargets = [
 ].map(match => match[1])
 
 describe('R103 · 图谱的一级入口已撤下', () => {
-  it('一级导航就是这六个，图谱不在其中（一条不许多、一条不许少）', () => {
-    expect(navigationIds).toEqual(['overview', 'docs', 'data', 'insights', 'approval', 'chat'])
+  it('一级导航就是这五枚，图谱不在其中（一条不许多、一条不许少）', () => {
+    // R136 合屏：docs + data 两枚一级入口并成一枚 feed（老地址改重定向，不再派生入口）。
+    // 断言强度未降——名单仍然逐字相等、仍然多一条少一条都红，只是名单本身换了。
+    expect(navigationIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat'])
     expect(navigationIds).not.toContain('graph')
   })
 
