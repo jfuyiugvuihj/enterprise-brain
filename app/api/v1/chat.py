@@ -3289,7 +3289,11 @@ async def cancel_queued_request(request_id: str, request: FastAPIRequest):
 
 @router.get("/queue/stats")
 async def queue_stats():
-    """队列监控：当前排队数、处理中数"""
+    """队列监控：排队数、处理中数，另加 R155 的容量读数（声明上限/剩余位/是否已满）。
+
+    两枚旧键同名同值：接表只是把算法来源从 len(LRANGE 0 -1) 换成服务端 LLEN，
+    不改口径、不新增执法——「满了怎么办」仍属业主裁定。
+    """
     from app.common.reliable_queue import QueueConnectionError
 
     try:
@@ -3299,7 +3303,4 @@ async def queue_stats():
             status_code=503,
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
-    return {
-        "queue_length": len(queue.redis.lrange(queue.pending_key, 0, -1)),
-        "processing": len(queue.redis.lrange(queue.processing_key, 0, -1)),
-    }
+    return queue.stats()
