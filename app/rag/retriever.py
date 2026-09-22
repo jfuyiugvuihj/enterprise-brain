@@ -398,15 +398,33 @@ def metadata_matches(metadata, where) -> bool:
 ACTIVITY_PRIOR_ENV = "RAG_ACTIVITY_PRIOR"
 ACTIVITY_PRIOR_OFF_VALUES = frozenset({"off", "0", "false", "no"})
 
-#: 名次分与先验分同形：rank_score = 1/(rank_base + rank)，rank 从 1 起，正是
-#: retrieval_pipeline.rrf_fusion 的 1/(k+rank)（k 默认 60）那个形状。于是 weight 的单位
-#: 是"往前挪多少个名次"，不是"相关度乘多少"：榜首附近挪一名约值 1/61-1/62 ≈ 2.6e-4，
-#: weight=0.01 足够让一篇被采信过的文档上位，又不至于让"谁点得多"盖过"谁更相关"。
-#: 融合在下游做，本模块只负责把每条腿自己的次序交准。
-ACTIVITY_PRIOR_WEIGHT = 0.01
-#: 平滑＝分母上先垫三张空票：一枚采纳只值 1/(1+3)=0.25 单位，二十枚才接近满单位。
-#: 样本小的文档先验就该弱，否则第一个点的人替整篇定了序。
+#: 🔴 R153 · 先验的单位从「分值」换成了「名次」，换的理由是量级，不是措辞。
+#: 旧写法（ACTIVITY_PRIOR_WEIGHT=0.01 乘净值再加进 1/(60+rank)）里说话的是「值多少分」，
+#: 而它能挪几个名次取决于加进去那一带有多挤：榜首附近一名只值 2.6e-4，一枚净采纳值 0.0025。
+#: 总控在跟进单 §78 二量出「等效 11 个名次」，本单在同一把形状上现量的更难看——一条 5 名
+#: 的腿一枚采纳就从第 5 名顶到第 1 名，一条 40 名的腿从第 40 名顶到第 21 名。一句话点一次
+#: 就能决定这一腿的第一名，那句「不至于让谁点得多盖过谁更相关」就是这么不成立的。
+#:
+#: 现在界写成 ACTIVITY_PRIOR_MAX_SHIFT_RANKS = 1 枚名次（正负两侧同一个数）。为什么不继续
+#: 走判据④那条「分值相加、把 weight 调小」的路：要把位移钉成 ≤1 名，最大调整值必须不超过
+#: 本腿里最挤那一档的分差，而第 r 名与第 r+1 名差 1/((60+r)(61+r)) 随名次变深（r=1 是
+#: 2.6e-4，r=40 只剩 9.9e-5）；照最深处取上界，浅处的调整就小到谁也挪不动，一枚净采纳连一
+#: 档都过不去，特性当场死掉；何况「要多小」仍然同时取决于 rank_base 和候选条数——那正是本
+#: 单要修的漂移。名次空间里这根界是个常数，与两者都无关。
+#:
+#: 而界不随候选宽度漂的真正理由是结构而不是算术：位移由 rank_hits_by_activity 里「一条命中
+#: 每轮至多参与一次相邻交换、交换轮数＝这根界」给出，那段代码从头到尾没读 k、没读
+#: len(hits)、也没读 rank_base。腿 5 / 12 / 40 三种的实测读数都是「最远一名」。
+ACTIVITY_PRIOR_MAX_SHIFT_RANKS = 1
+#: 证据强度折进 ±1 名：净采纳数除以「总票数 + 平滑」再乘增益，最后夹进上面那根界。一枚净采
+#: 纳＝0.5（半格），两枚＝0.8，三枚到顶＝满格。到顶之后再点**不多挪**——多出来的强度只买到
+#: 「两个候选抢同一次交换名额时谁赢」。强度不再兑换位移枚数，这就是校准本身。
+ACTIVITY_PRIOR_SIGNAL_GAIN = 2.0
+#: 平滑＝分母上先垫三张空票：一枚采纳只值半格而不是满格，样本小的文档先验就该弱，
+#: 否则第一个点的人替整篇定了序。
 ACTIVITY_PRIOR_SMOOTHING = 3.0
+#: 名次分形状（retrieval_pipeline.rrf_fusion 的 1/(k+rank)，k 默认 60）。R153 之后先验不再
+#: 往这枚分值里加东西：它只留在注记里当「这条命中本来排第几」的可读数，排序本身用不到它。
 ACTIVITY_PRIOR_RANK_BASE = 60
 
 #: 整表快照的进程内 TTL。排序每次问答都要走，为它开一趟 PG 往返而不缓存不划算；这张表
@@ -540,7 +558,8 @@ def activity_prior_diagnostics() -> dict:
         "source": _ACTIVITY_PRIOR_STATE["source"],
         "reason": _ACTIVITY_PRIOR_STATE["reason"],
         "documents": int(_ACTIVITY_PRIOR_STATE["documents"]),
-        "weight": ACTIVITY_PRIOR_WEIGHT,
+        "max_shift_ranks": ACTIVITY_PRIOR_MAX_SHIFT_RANKS,
+        "gain_per_signal": ACTIVITY_PRIOR_SIGNAL_GAIN,
         "smoothing": ACTIVITY_PRIOR_SMOOTHING,
     }
 
@@ -554,7 +573,13 @@ def reset_activity_priors() -> None:
 
 
 def activity_prior_value(counts) -> float:
-    """一篇文档的先验分值；没打过点＝0.0＝不动名次。"""
+    """一篇文档的先验强度，单位是**名次**；没打过点＝0.0＝不动名次。
+
+    净值除以「总票数 + 平滑」再乘增益，最后夹进 ±ACTIVITY_PRIOR_MAX_SHIFT_RANKS。0/0 与
+    5/5 同样给 0.0：分开记两列买到的是「可分辨」，不是「另一档权重」。
+    这枚数值只用来决定「谁更值得用掉那一次相邻交换」；位移枚数由 rank_hits_by_activity 的
+    结构封顶（至多一根界的长度）。所以把 20 枚采纳降成 3 枚不会少挪一名，把界改成 2 名才会。
+    """
     if not isinstance(counts, dict):
         return 0.0
     try:
@@ -565,7 +590,9 @@ def activity_prior_value(counts) -> float:
     total = accepted + rejected
     if total <= 0:
         return 0.0
-    return ACTIVITY_PRIOR_WEIGHT * (accepted - rejected) / (total + ACTIVITY_PRIOR_SMOOTHING)
+    cap = float(ACTIVITY_PRIOR_MAX_SHIFT_RANKS)
+    raw = ACTIVITY_PRIOR_SIGNAL_GAIN * (accepted - rejected) / (total + ACTIVITY_PRIOR_SMOOTHING)
+    return max(-cap, min(cap, raw))
 
 
 def _hit_source(hit) -> str:
@@ -581,48 +608,86 @@ def _hit_source(hit) -> str:
     return str(hit.get("source") or "")
 
 
+def _one_round_of_bounded_transpositions(order, strengths) -> bool:
+    """跑一轮互不相交的相邻交换，交回这一轮到底换没换过（换过才值得再来一轮）。
+
+    判据①那根界的落点就在这里：一轮内每条命中至多参与一次交换，而一次相邻交换只把它的
+    下标挪一格，没参与交换的条目下标一个都不变 ⇒ **一轮至多一名**，跑几轮就是几名，而
+    这件事与列表有多长无关。同一轮里两个候选抢同一个空位时，把名额给 shift 更大的一枚
+    （同 shift 取位置靠前的），于是「20 枚采纳」与「1 枚采纳」争同一位时永远是前者拿到。
+    """
+    exchanged = False
+    used = set()
+    while True:
+        pick = -1
+        pick_shift = None
+        for position in range(len(order) - 1):
+            upper, lower = order[position], order[position + 1]
+            if upper in used or lower in used:
+                continue  # 换过的一轮里不再换第二次：这正是「每轮至多一名」的由来
+            if strengths[lower] <= strengths[upper]:
+                continue  # 证据不比上位者强就一次都不换，并列永远保持原序
+            if pick < 0 or strengths[lower] > pick_shift:
+                pick, pick_shift = position, strengths[lower]
+        if pick < 0:
+            return exchanged
+        used.add(order[pick])
+        used.add(order[pick + 1])
+        order[pick], order[pick + 1] = order[pick + 1], order[pick]
+        exchanged = True
+
+
 def rank_hits_by_activity(hits, priors, *, enabled: bool = True, rank_base: int = ACTIVITY_PRIOR_RANK_BASE):
     """在同一个候选集内部按活动信号重排；候选的进出一个都不动。
 
-    🔴 判据②的口径写在这条返回上：开关关着、输入不是列表、为空、或者**没有任何一条命中
-    带先验**时，交回的是同一个对象——不是"内容恰好相同的另一份拷贝"。于是"无信号 ⇒ 与
-    现状逐字一致"是可证的，不依赖浮点比较。只有真有信号时才复制字典，并给每条命中补一枚
-    ``activity_prior``（accepted / rejected / adjustment / rank_score / previous_rank /
-    new_rank），让"这篇凭什么排上来"在答案侧看得见；那枚字典里只有计数与名次，没有内容。
+    🔴 判据②的口径写在这条返回上，R153 一个字没松：开关关着、输入不是列表、为空、或者
+    **没有任何一条命中带先验**时，交回的是同一个对象——不是「内容恰好相同的另一份拷贝」。
+    于是「无信号 ⇒ 与现状逐字一致」是可证的，不依赖浮点比较。只有真有信号时才复制字典，
+    并给每条命中补一枚 ``activity_prior``（accepted / rejected / shift_ranks / rank_score /
+    previous_rank / new_rank / places_moved），让「这篇凭什么排上来」在答案侧看得见：计数、
+    强度、本来第几名、现在第几名、挪了几名，一个都不缺；那枚字典里只有计数与名次，没有内容。
 
-    并列分不靠运气：排序键是 (分值, 原名次)，分值相同则原序保持，同一批输入永远同一批输出。
-    列表里混进非字典条目时，那些条目按 _hit_source 的口径拿不到先验、也不被注记，只按原名次参与排序：
-    本函数对畸形输入交回的是排好序的原条目，不是异常。
+    位移上界（判据①）＝ ACTIVITY_PRIOR_MAX_SHIFT_RANKS 枚名次，正负两侧同一个数，且与腿宽
+    无关。实现是「相邻交换」而不是「按分值重排」，理由见 _one_round_of_bounded_transpositions
+    与上面那段常量注释：分值相加时一枚采纳能值几个名次取决于那一带多挤，界就会随 rank_base
+    和候选条数漂。同一批输入永远同一批输出，不靠排序算法的运气。
+
+    列表里混进非字典条目时，那些条目按 _hit_source 的口径拿不到先验、也不被注记，只按原名次
+    参与交换：本函数对畸形输入交回的是排好序的原条目，不是异常。
     """
     if not enabled or not isinstance(hits, list) or not hits:
         return hits
     lookup = priors or {}
-    adjustments = []
-    for hit in hits:
-        name = _hit_source(hit)
-        adjustments.append(activity_prior_value(lookup.get(name)))
-    if not any(adjustments):
+    strengths = [activity_prior_value(lookup.get(_hit_source(hit))) for hit in hits]
+    if not any(strengths):
         return hits
-    scored = []
-    for rank, (hit, adjustment) in enumerate(zip(hits, adjustments), start=1):
+    carriers = []
+    for rank, hit in enumerate(hits, start=1):
         counts = lookup.get(_hit_source(hit)) or {}
         if isinstance(hit, dict):
             carrier = dict(hit)
             carrier["activity_prior"] = {
                 "accepted": int(counts.get("accepted") or 0),
                 "rejected": int(counts.get("rejected") or 0),
-                "adjustment": adjustment,
-                "rank_score": 1.0 / (rank_base + rank) + adjustment,
+                "shift_ranks": strengths[rank - 1],
+                "rank_score": 1.0 / (rank_base + rank),
                 "previous_rank": rank,
             }
         else:
             carrier = hit  # 畸形命中：原样带着走，一个键都不注记，只按自己的名次参与排序
-        scored.append([1.0 / (rank_base + rank) + adjustment, rank, carrier])
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    for new_rank, item in enumerate(scored, start=1):
-        if isinstance(item[2], dict):
-            item[2]["activity_prior"]["new_rank"] = new_rank
-    return [item[2] for item in scored]
+        carriers.append(carrier)
+    order = list(range(len(carriers)))
+    for _ in range(int(ACTIVITY_PRIOR_MAX_SHIFT_RANKS)):
+        if not _one_round_of_bounded_transpositions(order, strengths):
+            break
+    ranked = []
+    for new_rank, index in enumerate(order, start=1):
+        carrier = carriers[index]
+        if isinstance(carrier, dict):
+            carrier["activity_prior"]["new_rank"] = new_rank
+            carrier["activity_prior"]["places_moved"] = index + 1 - new_rank
+        ranked.append(carrier)
+    return ranked
 
 
 class DocumentRetriever:

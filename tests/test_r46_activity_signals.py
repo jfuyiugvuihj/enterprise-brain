@@ -71,10 +71,16 @@ def test_an_adopted_document_moves_up_and_a_rejected_one_moves_down():
         "R46 判据①：+12/-0 的那篇必须升到第一，-9 的那篇必须掉到末位；"
         "这里断言的是**名次**真的变了，不是「读到了计数」。"
     )
-    # 分值同样真的动了：榜首的分值高于它原来那一档的名次分。
+    # R153 改口（跟进单 §78 三 判据⑤，记账）：原来钉的是「榜首的分值高于它原档的名次分」，
+    # 它只挡得住「先验没往 rank_score 里加东西」这一种错法。单位换成名次之后 rank_score
+    # 交回的是名次分本身，于是这句钉成**相等**——相等比不相等更难满足（加多了、加少了、
+    # 没读名次分三种都挡得住），再补一枚 places_moved 把位移本身钉死在具名界内。
     first = ranked[0]["activity_prior"]
     assert first["previous_rank"] == 2 and first["new_rank"] == 1
-    assert first["rank_score"] > 1.0 / (rt.ACTIVITY_PRIOR_RANK_BASE + 2)
+    assert first["places_moved"] == 1, "判据①：位移直接读得出来，且必须在具名界（一名）之内"
+    assert first["rank_score"] == 1.0 / (rt.ACTIVITY_PRIOR_RANK_BASE + first["previous_rank"]), (
+        "名次分只是注记：先验一个字都不许再加进去——界与 rank_base 解耦就靠这句"
+    )
 
 
 def test_the_prior_reorders_the_candidate_set_without_widening_or_narrowing_it():
@@ -89,9 +95,13 @@ def test_a_single_adoption_is_weakened_by_the_smoothing_term():
     """一枚采纳不该替整篇文档定序：平滑项就是为了让小样本的先验弱。"""
     one = rt.activity_prior_value({"accepted": 1, "rejected": 0})
     many = rt.activity_prior_value({"accepted": 20, "rejected": 0})
-    assert 0 < one < many
-    assert many < rt.ACTIVITY_PRIOR_WEIGHT
-    assert abs(one - rt.ACTIVITY_PRIOR_WEIGHT / (1 + rt.ACTIVITY_PRIOR_SMOOTHING)) < 1e-12
+    assert 0 < one < many, "一枚采纳仍要比二十枚弱：平滑项就是为了让小样本的先验弱"
+    # R153 改口（判据⑤，记账）：这两句原来钉分值上界（many < weight=0.01）与「一枚采纳＝
+    # weight/(1+smoothing)」。换成名次之后同样两句钉「满格就是那根界」与「一枚＝gain/
+    # (1+smoothing) 名」。钉的不是同一个数，钉的是同一种关系，而且多钉一件事：到顶之后再
+    # 多的信号也不许多要位移——旧的 many < 0.01 可没挡住 20 枚逼近「整条腿随便挪」。
+    assert many == float(rt.ACTIVITY_PRIOR_MAX_SHIFT_RANKS), "二十枚采纳到顶＝那根界＝一名"
+    assert abs(one - rt.ACTIVITY_PRIOR_SIGNAL_GAIN * 1 / (1 + rt.ACTIVITY_PRIOR_SMOOTHING)) < 1e-12
 
 
 def test_equal_priors_keep_the_original_order_rather_than_coin_flipping():
@@ -227,11 +237,19 @@ def test_the_search_call_itself_reorders_when_a_document_was_adopted(monkeypatch
 
     hits = instance.search("季度营收", k=3)
 
-    assert [hit["source"] for hit in hits] == ["finance-q3.txt", "neutral.txt", "x.txt"], (
+    # R153 改口（判据⑤，记账）：原来钉的是 12 枚采纳那篇从第 3 名**一次跨两名**顶到榜首，
+    # 那正是本单要消灭的形状（跟进单 §78 二）。现在它买到的是 3→2：次序照样真的变了，所以
+    # 把 search() 里那几处 self._apply_activity_prior(...) 摘掉，这条用例仍然红在同一处——
+    # 反证那把牙齿（「接线必须长在 search 上」）一点没被削弱。
+    assert [hit["source"] for hit in hits] == ["neutral.txt", "finance-q3.txt", "x.txt"], (
         "R46 判据①：search() 交回的次序没变，说明先验没接进这条腿（摘掉接线就红在这里）"
     )
-    assert hits[0]["activity_prior"]["previous_rank"] == 3
-    assert hits[0]["activity_prior"]["accepted"] == 12
+    prior = hits[1]["activity_prior"]
+    assert (prior["previous_rank"], prior["new_rank"], prior["places_moved"]) == (3, 2, 1), (
+        "界内最大位移＝一名：第 3 名被采纳上到第 2 名，榜首不再是点一次就买到"
+    )
+    assert prior["accepted"] == 12
+    assert hits[0]["activity_prior"]["places_moved"] == 0, "没打过点的邻居一格都不许多动"
 
 
 def test_every_leg_of_search_routes_through_the_prior():
@@ -667,8 +685,16 @@ def test_a_signal_recorded_through_the_endpoint_is_read_back_and_moves_the_ranki
     hits = _hits("neutral.txt", "x.txt", "finance-q3.txt")
     ranked = rt.rank_hits_by_activity(hits, rt.activity_priors(row_reader=table.snapshot))
 
-    assert _sources(ranked)[0] == "finance-q3.txt", "4 采纳 1 驳回的那篇必须被顶到首位"
-    assert ranked[0]["activity_prior"]["accepted"] == 4 and ranked[0]["activity_prior"]["rejected"] == 1
+    # R153 改口（判据⑤，记账）：原来钉「必须被顶到首位」，靠的同样是 3→1 那次跨两档。现在
+    # 一名就是它的上限（4 采纳 1 驳回 ⇒ shift 0.75，越得过紧邻那位无信号的，仅此而已）。本
+    # 枚钉子的正证目标一字未改：HTTP 出口写进去的账，排序侧真读了回来、真改了名次——把
+    # endpoint 写库那一步摘掉，它照样红在次序上。
+    assert _sources(ranked) == ["neutral.txt", "finance-q3.txt", "x.txt"], (
+        "4 采纳 1 驳回的那篇必须被顶上一名（具名界＝一名，首位不再是它应得的）"
+    )
+    prior = ranked[1]["activity_prior"]
+    assert (prior["previous_rank"], prior["new_rank"], prior["places_moved"]) == (3, 2, 1)
+    assert prior["accepted"] == 4 and prior["rejected"] == 1
 
 # ------------------------------------------------------------- 判据④ 越权要留痕
 def test_a_refused_signal_is_written_into_the_audit_trail(monkeypatch):
@@ -941,7 +967,11 @@ def test_a_malformed_hit_travels_through_instead_of_breaking_the_whole_search():
     ranked = rt.rank_hits_by_activity(hits, _priors())
 
     shape = [hit if not isinstance(hit, dict) else hit["source"] for hit in ranked]
-    assert shape == ["finance-q3.txt", "a.txt", "not-a-dict"], shape
+    # R153 改口（判据⑤，记账）：次序从 [finance, a, 畸形] 变成 [a, finance, 畸形]，因为 12 枚
+    # 采纳的那篇如今只能越过紧邻的一位（原形状是它一次越过两位）。这枚钉子的靶子一个字没动：
+    # 畸形命中必须原样带着走、候选一个不许多一个不许少、注记只长在字典命中上；把 _hit_source
+    # 里那层 isinstance 挡掉，它照样当场红——红在抛异常，而不是红在次序。
+    assert shape == ["a.txt", "finance-q3.txt", "not-a-dict"], shape
     assert len(ranked) == len(hits), "一个候选都不许多、都不许少"
     assert all("activity_prior" in hit for hit in ranked if isinstance(hit, dict)), (
         "注记只长在字典命中上，畸形那一条原样带着走"
@@ -976,8 +1006,10 @@ def test_a_disputed_document_scores_zero_and_stays_separable_only_in_the_counts(
     priors["adopted.txt"] = {"accepted": 4, "rejected": 0}
     ranked = rt.rank_hits_by_activity(mixed, priors)
     note = next(hit for hit in ranked if hit["source"] == "disputed.txt")["activity_prior"]
-    assert (note["accepted"], note["rejected"], note["adjustment"]) == (5, 5, 0.0), (
-        "计数读得回来，分值仍是 0：可分辨不等于被加权"
+    # R153 改口（判据⑤，记账）：注记里那枚键随单位改名（adjustment 分值 → shift_ranks 名
+    # 次），钉的数仍是 0.0，「计数读得回来但没被加权」这句一字未动。
+    assert (note["accepted"], note["rejected"], note["shift_ranks"]) == (5, 5, 0.0), (
+        "计数读得回来，强度仍是 0：可分辨不等于被加权"
     )
 
     sql = (MIGRATIONS / "0011_document_activity_signals.sql").read_text(encoding="utf-8")
