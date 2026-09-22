@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -194,7 +195,93 @@ def chroma_distance(collection) -> str:
     """collection 自己记的相似度函数；没记就返回空串，由调用方判前置。"""
     metadata = getattr(collection, "metadata", None) or {}
     space = str(metadata.get("hnsw:space", "") or "").lower()
-    return _CHROMA_SPACES.get(space, "")
+    return _CHROMA_SPACES.get(space, "")#: U1 实测的形状常数：样本不够、探针不够、候选并列，全部按"测不出来"处理（退出码 2）。
+U1_SAMPLE_LIMIT = 64
+U1_MIN_SAMPLES = 12
+U1_PROBES = 2
+_U1_CANDIDATES = ("l2", "cosine", "inner_product")
+
+
+def _u1_order(ids, vectors, probe_index, metric, take):
+    """把一份样本按某个候选算子排序，取前 take 个 id。
+
+    只用排序、不用数值：Chroma 对 l2 返回的是**平方**欧氏距离（R157 真机实测），
+    数值对不上不代表排序对不上，而这张表关心的只有顺序——排序一致才谈得上召回一致。
+    """
+    probe = vectors[probe_index]
+    probe_norm = math.sqrt(sum(value * value for value in probe))
+    scored = []
+    for index, vector in enumerate(vectors):
+        dot = sum(a * b for a, b in zip(vector, probe))
+        if metric == "l2":
+            distance = sum((a - b) ** 2 for a, b in zip(vector, probe))
+        elif metric == "cosine":
+            norm = math.sqrt(sum(value * value for value in vector))
+            if not norm or not probe_norm:
+                return []
+            distance = 1.0 - dot / (norm * probe_norm)
+        else:
+            distance = -dot
+        scored.append((distance, index))
+    scored.sort(key=lambda item: (item[0], item[1]))
+    return [ids[position] for _, position in scored[:take]]
+
+
+def resolve_chroma_distance(collection, *, sample_limit=U1_SAMPLE_LIMIT, probes=U1_PROBES):
+    """U1：这库到底按什么距离排序——先读记录，没记录就当场量，量不拢照旧拒。
+
+    `chroma_distance()` 只看 collection 的 metadata，而真实安装里它一直是 None
+    （app/rag/retriever.py 建集合时不写 hnsw:space，Chroma 用自己的默认值）
+    ⇒ 那条 `space != scope` 在任何一台装过这套的客户机上恒成立，P3 永远跑不了。
+    "没记" 不等于 "不知道"：同一批向量在 l2 / cosine / inner_product 下排序不同，
+    所以拿真 collection 的返回顺序对一遍就知道它用哪个——这一步只读，不写一字节。
+
+    返回 (canonical_name, evidence)；测不拢时名字是空串，调用方仍然走退出码 2。
+    并列（比如向量已归一化，l2 与 cosine 同序）与样本不足都算测不拢：宁可不跑，不猜。
+    """
+    recorded = chroma_distance(collection)
+    evidence = {"source": "metadata", "recorded": recorded, "sampled": 0, "probes": 0,
+                "matched": [recorded] if recorded else [], "reason": ""}
+    if recorded:
+        return recorded, evidence
+
+    evidence["source"] = "measured"
+    page = collection.get(include=["embeddings"], limit=sample_limit) or {}
+    ids = [str(item) for item in (page.get("ids") or [])]
+    vectors = [[float(value) for value in vector] for vector in (page.get("embeddings") or [])]
+    evidence["sampled"] = len(ids)
+    if len(ids) < U1_MIN_SAMPLES or len(vectors) != len(ids):
+        evidence["reason"] = "样本只有 %d 枚，少于 %d——排序对得上也可能巧合，按前置不满足处理"
+        evidence["reason"] %= (len(ids), U1_MIN_SAMPLES)
+        return "", evidence
+    widths = {len(vector) for vector in vectors}
+    if len(widths) != 1 or 0 in widths:
+        evidence["reason"] = "样本维度不齐（宽度 %s），无法比排序，按前置不满足处理" % sorted(widths)
+        return "", evidence
+
+    probe_slots = [0] if probes <= 1 else [0, len(ids) // 2][:probes]
+    evidence["probes"] = len(probe_slots)
+    matched = None
+    for slot in probe_slots:
+        hit = collection.query(query_embeddings=[vectors[slot]], n_results=U1_MIN_SAMPLES) or {}
+        got = [str(item) for item in ((hit.get("ids") or [[]])[0] or [])]
+        if not got:
+            evidence["reason"] = "collection.query 没返回任何东西，测不出排序"
+            return "", evidence
+        winners = [metric for metric in _U1_CANDIDATES
+                   if _u1_order(ids, vectors, slot, metric, len(got)) == got]
+        matched = winners if matched is None else [m for m in matched if m in winners]
+        if not matched:
+            evidence["reason"] = "该探针的排序不属于任何候选算子（探针 %d 命中 %s），按前置不满足处理"
+            evidence["reason"] %= (slot, winners or "无")
+            return "", evidence
+    if len(matched) > 1:
+        evidence["matched"] = matched
+        evidence["reason"] = "候选并列：%s 给出同一排序（样本可能已归一化），排序分不开，按前置不满足处理"
+        evidence["reason"] %= "/".join(matched)
+        return "", evidence
+    evidence["matched"] = matched
+    return matched[0], evidence
 
 
 def canonical_distance(value: str) -> str:
@@ -302,16 +389,21 @@ def main(argv=None) -> int:
     try:
         scope = read_scope(connection, vector_table)
         collection = open_chroma(args.chroma_dir, args.collection)
-        space = chroma_distance(collection)
+        space, u1 = resolve_chroma_distance(collection)
         if space != canonical_distance(scope["distance_function"]):
-            print("[前置不满足] collection 距离=" + (space or "未记录")
+            print("[前置不满足] collection 距离=" + (space or u1["source"])
                   + "，vector_scope 声明=" + scope["distance_function"])
+            if u1.get("reason"):
+                print("    U1 判读：" + u1["reason"])
             print("两边排序天然不同，不出召回结论；先核对 0010 的 app.vector_distance_function")
             return 2
         drift = corpus_drift(connection, collection, vector_table=vector_table, scope=scope)
-        result = {"scope": scope, "k": args.k, "drift": drift, "questions": [], "summary": {}}
+        result = {"scope": scope, "u1": u1, "k": args.k, "drift": drift,
+                "questions": [], "summary": {}}
         print("-- 口径：" + scope["embedding_model"] + " / "
               + str(scope["dimension"]) + " 维 / " + scope["distance_function"] + " --")
+        print("-- U1：collection 距离=%s（来源=%s，样本=%d 枚，探针=%d 枚）--" % (
+              space, u1["source"], u1["sampled"], u1["probes"]))
         _print_drift(drift)
         gap = bool(drift["only_in_pg"] or drift["only_in_chroma"])
 
