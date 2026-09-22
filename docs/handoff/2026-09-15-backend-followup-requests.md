@@ -2409,3 +2409,63 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 `Chandrasekhar`/R158@`be-r46b`（`retriever.py`+新测试件+可选只读诊断件）。写域两两零交集，派工前逐棵实取核过。
 ⚠ `Laplace`/R43a@`be-r29`（`model_handler.py`+`retrieval_pipeline.py`+新测试件）＝**待投**：
 首投未落地（取证见上一节），本班不按「已派」记账。
+
+## 82. 第四十班第二格（09-22 09:5x–10:3x，主树 `cd75cb7` → **`b030c68`**）：R156 并树账 · R43a 落地 · 新派 R159/R160 · 🔴 事故 #34 归因定死
+
+### 一、R156 并树（并树枚 `b030c68`，基点 `3a5c24b`）
+
+- 施工件唯一：新 `tests/test_r156_sse_event_surface_sync.py`＝契约 canonical 名单与 `chat.py` 发射面的**同源钉**（改一边必红另一边）。
+
+- 总控现取：`sha256[:16] 6a64c8771929dcf7` / 30 591 B / 577 行 / 纯 CRLF（`count(\r)==count(\n)==count(\r\n)==577`，无游离 LF、无 CR 落单、无 BOM）/ `--collect-only` 13 枚 ⇒ 与该线回执**逐位吻合**。
+
+- 该树单跑 13 passed / EXIT=0 / `blocked connect attempts to host model port: 0` / `chroma_db` 零脏；**主树复跑 3472 passed / 39 skipped（197.06 s，EXIT=0）＝并树前基线 3459/39 + 恰 13 枚 ⇒ 零退化**。
+
+- 写域交集核过：`git diff --name-only 3a5c24b a524d9d` = 两枚交接文档 + 7 枚 `frontend/**`（R136），与本件**零交集** ⇒ 直接取文件，无需三方合并。
+
+- 🔴 **随单代改（账在总控）**：① `docs/api/contract-v1.md` 补第五条载荷键 bullet `scope_reason_code`（+574 B）——它由 `chat.py:1551`（缓存腿）/ `:1855` / `:2350` 三处真在交，语义 = `resolve_document_retrieval_scope(principal).reason_code`，范围解析失败时是 `RetrievalScopeError.code`；契约那条兼容注记一直自称 "the same **five** payload keys" 而键清单只列四枚 ⇒ 补上之后散文与清单才自洽。② 该件顶部 `UNDOCUMENTED_PAYLOAD_KEYS` 由 `{"scope_reason_code"}` 清成 `frozenset()`（件内 sha → **`c814ad1781bca247`** / 30 558 B），清空后主树 13 枚复跑仍全绿。这就是作者设计的「例外不许活过它的修复」被兑现。
+
+- 🔵 **新欠账（总控的活，不派执行层）**：契约行级只点名 `excerpt` / `published_at` 两枚，代码行实有 **14** 枚键 ⇒ **12 枚零记载**（`worker` `source` `source_id` `chunk_index` `score` `score_type` `excerpt` `document_version_id` `index_version_id` `content_sha256` `classification` `department` `permission_checked` `provenance_status`）。执行层没钉它是有道理的：钉「缺 12 枚」就得把名字抄进测试，正面撞它自己的「零手抄」判据 ⇒ 补文档散文即可，要不要加钉另议。
+
+### 二、R43a：从「待投」翻「在途」（这一格两次改口，第二次是好消息）
+
+- 首投 `send_input` 返回 `unsupported call: mcp__multi_agent_v1__send_input`（工具注册表中途失效）＝**从未落地**；取证与改口账见 §81 三末、看板 §4BH.30 一。本班先把改口账入库 `a524d9d`，再在**新 block** 内单次重投 ⇒ 回执 `01a0c6df-c582-74b3-b4a0-15359a865a18`。
+
+- 10:3x 现取：`be-r29` HEAD `a524d9d`、`dirty=5` = `M app/common/model_handler.py`、`M app/rag/retrieval_pipeline.py`、新 `tests/test_r43a_native_cached_tokens.py`、新 `tests/test_r43a_rewrite_prefix_reuse.py`、一枚 `?? data/..persistence.json.lock` ⇒ **在写**。判据见 §81 三，此处不重复。
+
+- 一条纪律再确认：**「未落地不算重复投递」连着两天各用一次（R158 前例、本枚），两次都先拿到零写入取证才敢重投**，不是拿它当补投的许可证。
+
+### 三、🔴 事故 #34（同类第四次）：总控不读自己写过的规矩，但把 §4BH.2 那句「未分离变量」做成了单变量实证
+
+- 事实：本班 R159 首发在 `spawn_agent` 里多写了 `model: gpt-5.6-terra` ⇒ 新身体**第一次请求**就死于 `Invalid 'id': message id must be a string starting with 'msg_', got 'at_da87d75b-…'`。而 §4BH.2（事故 #33，09-20）**白纸黑字**写着「`spawn_agent` 一律不许设 `model` 字段」。零落盘取证 `be-r159` HEAD `a524d9d` / `dirty=0`，已 `close_agent`。
+
+- ⚠️ **归因升级（这一枚唯一换回来的东西）**：§4BH.2 原文留了一句诚实保留——「本班同时改了两个变量（`items` 通道 + `model` override），没能单独证明是谁」。本班两投**都走 `items` 通道**、只有 `model` 字段一有一无 ⇒ 带 override 的当场秒死、摘掉的两枚（`Anscombe`/R159、`Laplace`/R43a）都活着在写。
+
+- ⇒ **就此写死：`items` 通道无罪，`model` override 是真凶。** 下班当已证事实用：派工不带 `model`、`items` 通道照用，不必退回 `message`，也不必再拿这一格做第二次实验。杀死 `01a09dda` 与 `01a0acfb` 两条总控线的是同一族污染。
+
+### 四、新派两枚的判据（全文只写在这两份文档里，别去翻对话）
+
+**R159 · 阶段 C 越权验收矩阵**（`Anscombe`@`be-r159`）。计划书 §6 C 行第一条「越权命中 **0 条**」到今天没有任何一枚可宣布的读数；§8.5 又明写「阶段 C 未完成前，E 线越权判据不得宣布通过」⇒ 这是**门禁**，不是新功能。
+
+1. 唯一产物 = 新 `tests/test_r159_*.py`，把「身份 × 资源面 × 断言」做成参数化表，每一格机器可验；覆盖至少：跨部门 / 跨密级 / 无部门账号（fail-closed）/ 管理员 / 开放平台自报 `department` 头（R67·R71 面）/ 会话·告警·数据集·文档·情报路由 / 检索腿 / 行级 scope / legacy chat / 答案缓存命中腿。
+
+2. 每格三条断言：① 拿不到别人的内容（含 excerpt / 表格行 / 文件名 / 图表 / 导出物）；② **不许把「被权限隐藏」说成「代码执行未通过」或「没有数据」**（R62 的诚实性面，若现状如此就如实钉红）；③ 越权请求要落审计。
+
+3. 交一张「既存 23 枚权限件各盖了哪格 vs 本件新补了哪格」对照表，加一句能直接写进 §6 C 行的读数（例：「越权命中 0/NN 格」）。
+
+4. 硬边界：**禁改 `app/**`**（发现真越权按 P1 回报复现 + 现取行号，不许顺手修）、禁改既存测试件与评测集、禁起服务、禁向运行中容器打 HTTP、禁 `skip`/`xfail` 换绿、禁一切时延结论（本机 Ollama 正被多枚 Agent 抢，数不可比）。
+
+
+
+**R160 · R61 的只读普查**（`Russell`@`be-r160`）。R61 那行自写「先跑存量普查再裁，普查本身可派（只读）」⇒ 本单**只供数、不裁定**。
+
+1. 逐张枚举 `data/enterprise.db`（只读 URI）+ 容器 PG（`E:\Docker\Docker\resources\bin\docker.exe exec` 发只读目录 SQL）+ 上传落地的表文件（先读登记面再按登记枚举，不许只拍 `data/` 目录），每张给：有无部门列（按 `app/common/rbac.py:32` 的四个候选名）/ 有无密级列（`:33`）/ 行数 / 调用点 / 若按乙会不会整表查不到。
+
+2. 三个汇总数：总表数 / 无部门列表数 / **按乙将完全查不到的表数**，后者再拆「客户真数据 vs 仓内样本」两个数。
+
+3. 🔴 单列一节 P1：若「无部门列」的表里含薪酬 / 客户名单 / 合同金额 / 个人信息等敏感字段 ⇒ 那就不是口径风格问题而是**越权面**，业主裁甲的代价要按这一节重算。
+
+4. 唯一允许落仓的产物 = 新 `scripts/audit_r160_department_columns.py`（只读、不联网、不改文件、可复跑、读不出要指名而不静默跳过）；报告**不落仓**（`docs/**` 属总控写域）。禁 DDL/DML、禁改 `app/common/rbac.py` 的判定、禁模型与时延、禁碰 `chroma_db/**`。
+
+### 五、本格在途五枚（一 block 一次投递，零补投）
+
+`Erdos`/R141@`be-r119`（`nodes.py`+`orchestrator.py`+`chat.py`+**4 枚 `frontend/**`**，10:3x 实测 dirty=9）｜`Laplace`/R43a@`be-r29`（dirty=5）｜`Chandrasekhar`/R158@`be-r46b`（dirty=1，10:26 起在写 `retriever.py`）｜`Anscombe`/R159@`be-r159`｜`Russell`/R160@`be-r160`。五棵写域两两零交集，派工前逐棵实取核过。🔴 `Erdos` 的战线已越出简报范围（进了 `frontend/**`）：在 D13 授权之内，但**验收要按实际写域逐行审，不许按简报口径放行**。
