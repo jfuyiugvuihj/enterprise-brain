@@ -5,6 +5,7 @@ import os
 import mimetypes
 import re
 import json
+import hashlib
 import time
 import uuid
 import queue as qmod
@@ -45,6 +46,9 @@ from app.rag.indexing import (
     IndexRegistry,
     PostgresIndexStore,
     default_metadata_path,
+    document_index_id,
+    document_resource_version_id,
+    read_index_metadata,
 )
 from app.common.model_handler import ModelHandler, ModelSource
 from app.common.logger import logger
@@ -280,6 +284,11 @@ def _document_source_row(worker: str, evidence: dict) -> dict | None:
         "chunk_index": locator.get("chunk_index"),
         "score": evidence.get("score"),
         "score_type": evidence.get("score_type"),
+        # R154 判据①：命中句从证据袋原样搬过来。它是 ``app/agents/evidence.py
+        # ::record_document_hits`` 在工具边界上记下的那一段正文（400 字以内），不是从回答
+        # 文本里反推的。这一格骑在行本身的放行结论上：行过了 ``scope.allows`` 才谈得上看它
+        # 的摘录，这里不新增任何放行分支。
+        "excerpt": str(evidence.get("excerpt") or ""),
         "document_version_id": evidence.get("document_version_id"),
         "index_version_id": evidence.get("index_version_id"),
         "content_sha256": metadata.get("content_sha256"),
@@ -318,6 +327,188 @@ def _authorized_source_rows(rows: dict, principal) -> tuple[list[dict], str]:
         logger.warning(f"[ASK] 来源事件缺少可用检索范围: code={scope_error.code}")
         return [], scope_error.code
     return [row for row in rows.values() if scope.allows(row)], scope.reason_code
+
+
+# ==================== 出处面三格：命中句 / 生效日期 / 缓存轮清单（R154）====================
+# 判据全文在跟进单 §79 第三条。三格各自独立，谁也不替谁作证：``excerpt`` 是搬运（见
+# ``_document_source_row``），``published_at`` 是索引侧的账（下面四枚读数函数），缓存腿交
+# 清单是另一次下发（``_cache_source_manifest`` / ``_cached_source_manifest``）。
+
+
+def _index_registry_snapshot() -> tuple[list, dict[str, str]]:
+    """读一次索引注册表，拿到 ``(每一个索引版本的记录, index_id -> 当前版本 id)``。
+
+    读的是 ``IndexRegistry`` 自己写下的那份记录，而不是 PG 的 ``index_versions`` 表：一次
+    发布里这两笔时间是同一个 ``IndexPublisher.publish`` 先后取的（注册表在
+    ``IndexRegistry.publish`` 里 ``datetime.now``，PG 镜像在 ``mark_published`` 里
+    ``COALESCE(published_at, NOW())``），相差以微秒计；而单机没起 PG 时注册表是唯一还在的
+    读数。把一次 HTTP 挂到 DB 往返上，换来的只是一个更贵的小数点。
+
+    读不出（文件在写到一半、JSON 坏掉、记录形状不认识）一律回答"没有可说的"，两把表都会
+    空：``GET /documents/{f}/versions`` 不能因为一本读不出来的账而 500，出处行也不能因此
+    少发——生效日期这一格宁可不带。
+    """
+    try:
+        return read_index_metadata(default_metadata_path())
+    except Exception as exc:
+        logger.warning(f"[DOCS] 索引注册表读不出发布时间: {type(exc).__name__}: {exc}")
+        return [], {}
+
+
+def _index_publication_moments() -> tuple[dict[str, str], dict[str, str]]:
+    """两把"发布时间"表：``index_id -> 正在服务的那一版`` 与 ``source_version_id -> 该版``。
+
+    只收 ``published_at`` 真有值的记录，墓碑（``retirement``）一枚都不收——它记的是"这一版
+    索引什么时候被撤下"，把撤下时间当生效日期报出去是一句假话。同一个源版本被重建过多次时
+    取最晚那次发布：出处回答的是"现在这份内容什么时候生效"，不是"它第一次生效于何时"。
+    """
+    versions, current = _index_registry_snapshot()
+    by_id = {version.index_version_id: version for version in versions}
+    current_moments: dict[str, str] = {}
+    for index_id, version_id in current.items():
+        version = by_id.get(version_id)
+        if version is None or version.retirement:
+            continue
+        moment = str(version.published_at or "").strip()
+        if moment:
+            current_moments[str(index_id)] = moment
+    version_moments: dict[str, str] = {}
+    for version in sorted(versions, key=lambda item: str(item.created_at or "")):
+        if version.retirement:
+            continue
+        moment = str(version.published_at or "").strip()
+        coordinate = str(version.source_version_id or "").strip()
+        if moment and coordinate:
+            version_moments[coordinate] = moment
+    return current_moments, version_moments
+
+
+def _stamp_source_publications(source_rows: dict[str, dict]) -> None:
+    """判据②（sources 出口）：给每一行出处补上"当前生效的那一版索引何时发布"。
+
+    就地补，不动可见性判定——放行/拒绝在这一步之前由 ``_authorized_source_rows`` 已经判完，
+    这里只往已经判给这个调用方的行上加字段。证据袋只记到文件名（``record_document_hits``
+    不带版本号），所以坐标是 ``document_index_id(filename)`` 而不是某一版文档。查不到就不带
+    这一格：「说不出来」与「没有日期」不是一回事，拿 ``created_at`` 或今天凑一个数，界面上
+    那行"生效日期"就成了谎。
+    """
+    if not source_rows:
+        return
+    current_moments, _ = _index_publication_moments()
+    if not current_moments:
+        return
+    for row in source_rows.values():
+        moment = current_moments.get(document_index_id(str(row.get("source") or "")))
+        if moment:
+            row["published_at"] = moment
+
+
+def _stamp_version_publications(rows: list[dict]) -> list[dict]:
+    """判据②（versions 出口）：``published_at`` 按 (filename, version) 精确配对补进版本行。
+
+    ``catalog.py`` 的公开投影只搬 ``document_versions`` 自己的列，那张表里没有发布时间这一
+    列；生效日期是索引侧的账，所以在出口这一侧补。配不上（这份文档从没发布过索引、注册表
+    读不出）就不带键，与 sources 出口同一口径。
+    """
+    if not rows:
+        return rows
+    _, version_moments = _index_publication_moments()
+    if not version_moments:
+        return rows
+    for row in rows:
+        filename = str(row.get("filename") or "")
+        version = row.get("version")
+        if not filename or version is None:
+            continue
+        try:
+            coordinate = document_resource_version_id(filename, int(version))
+        except (TypeError, ValueError):
+            continue
+        moment = version_moments.get(coordinate)
+        if moment:
+            row["published_at"] = moment
+    return rows
+
+
+# 清单键的标记前缀。它出现在 ``answer:`` 命名空间里，所以读它的路径与答案缓存共用同一把
+# 作用域尺子（``answer_cache_scope`` 一枚维度都不落）：换个部门/密级/角色既读不到答案，
+# 也读不到那份答案的证据快照。
+EVIDENCE_MANIFEST_PREFIX = "__evidence_manifest__:"
+
+
+def _evidence_manifest_key(question: str) -> str:
+    """来源清单的键材料：前缀 + 问题文本的 sha256，不是一段能被问出来的话。
+
+    存法走 ``cache_answer`` 这个公开入口本身，而不是自己去摸 Redis，也不给 ``cache.py``
+    添新 API（那枚文件不在本单写域里）。代价是每问一题多占一条缓存位，收益是 TTL、作用域
+    前缀、坏记录不回读这三件事全部沿用答案的既有实现，不在这儿抄第二份。标记里放摘要而不是
+    原文：任何人的提问文本都不可能拼出别人那道题的清单键。
+    """
+    digest = hashlib.sha256(str(question or "").encode("utf-8")).hexdigest()
+    return f"{EVIDENCE_MANIFEST_PREFIX}{digest}"
+
+
+def _cache_source_manifest(question: str, scope: str, source_rows: dict[str, dict]) -> bool:
+    """判据③（写侧）：本轮答案进了缓存，就把它的证据快照跟着存进同一条作用域键空间。
+
+    存的是**过滤前**的行。命中的那一轮要报得出 ``hit_count``/``unauthorized_count`` 两个数，
+    就得知道"检到了几条、其中几条不给看"；只存可见行会把第二个数永远写成 0，那是把
+    R41 已经交出去的读数在缓存这条腿上偷偷丢掉了。放行结论不落盘，落盘的是证据——
+    读出来还要再过一次 ``_authorized_source_rows``。
+    """
+    rows = list((source_rows or {}).values())
+    if not rows:
+        # 本轮压根没有文档来源，也就没有可交的清单：不存空表。空表与缺表在界面上画的是同
+        # 一张脸（``ChatPanel.vue::checkCacheStaleness`` 拿不到文件名 -> cached-unknown），
+        # 存空表只是让每条无源答案多占一枚缓存位。
+        return False
+    try:
+        from app.common.cache import cache_answer
+
+        cache_answer(
+            _evidence_manifest_key(question),
+            json.dumps(rows, ensure_ascii=False),
+            scope=scope,
+        )
+    except Exception as exc:
+        logger.warning(f"[ASK] 来源清单没能写进缓存: {type(exc).__name__}: {exc}")
+        return False
+    return True
+
+
+def _cached_source_manifest(question: str, scope: str) -> dict[str, dict] | None:
+    """判据③（读侧）：读回那一轮的证据快照；读不出来返回 ``None``，由命中腿什么都不发。
+
+    ``None`` 是这一单最要紧的一枚返回值。R154 之前写下的条目、被逐出淘汰的条目、JSON 坏掉
+    的条目，统统读不出一份清单。这时候命中腿**不许**发一枚空的 ``sources`` 事件充数：那是把
+    "没查到"说成"查过了，没有"。不发，前端 ``ChatPanel.vue::checkCacheStaleness`` 就凑不出
+    文件名清单，``provenance.js::cacheFace`` 画的是第四态 ``cached-unknown``——屏幕上那句
+    "这一轮的回答没有再交出来源清单，是否改版无从核对"，与第三态 ``cached``（真核对过，
+    确实没改版）在界面上是两回事。
+    """
+    try:
+        from app.common.cache import get_cached_answer_record
+
+        record = get_cached_answer_record(_evidence_manifest_key(question), scope=scope)
+    except Exception as exc:
+        # 清单这一格读崩了不该把命中的一整轮拖下水：降级成"没有清单可交"，界面走
+        # cached-unknown，正文与缓存三字段照发。
+        logger.warning(f"[ASK] 来源清单读不出来: {type(exc).__name__}: {exc}")
+        return None
+    if not record:
+        return None
+    try:
+        payload = json.loads(record["answer"])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, list):
+        return None
+    rows = {
+        str(row.get("source_id")): row
+        for row in payload
+        if isinstance(row, dict) and str(row.get("source_id") or "").strip()
+    }
+    return rows or None
 
 
 def _latest_document_version(filename: str) -> dict | None:
@@ -1324,11 +1515,43 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             "cache_generated_at": origin.get("generated_at_iso") or "",
             "cache_note": origin.get("generated_at_text") or "缓存结果 · 生成时间未知",
         }
+        # R154 判据③：命中的一轮也要交来源清单。读不出来（R154 之前的旧条目、被逐出的、
+        # 形状不认得的）就是 None，那一轮**什么都不发**——宁缺毋造，界面上落第四态
+        # cached-unknown（"没有再交出来源清单，是否改版无从核对"），绝不许画成
+        # cached（已核对过，确实没改版）。清单是那一轮的证据快照，里面的 published_at
+        # 是当年的读数，不刷新：今天这一版索引何时生效由 versions 端点说，两者各司其职。
+        manifest = _cached_source_manifest(rewritten_msg, answer_scope) if use_answer_cache else None
+
         async def cached_response():
             yield f"event: status\ndata: {json.dumps({'type': 'status', 'content': '📋 缓存命中，直接返回'}, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)
             yield text_sse_frame(cached, cache_fields)
             await asyncio.sleep(0)
+            if manifest:
+                # 放行结论不落盘：清单里存的是**过滤前**的证据行，命中这一轮重新过一遍
+                # ``_authorized_source_rows``（同一个 ``scope.allows``），与实时那一腿同
+                # 一道防线，不复用当年的判定结果。
+                cached_visible, cached_scope_reason = _authorized_source_rows(manifest, request_principal)
+                # 顺序沿用 /ask：正文之后、done 之前。这一腿一条 canonical 事件都没有过，
+                # sequence 从 1 起（前端 ``lib/sessions.js`` 的 canonical 闸门要求严格大于
+                # 上一枚，收端 lastSequence 初值 0 -> 1 过闸）。legacy 三枚帧的次序与字面
+                # 一字不动：那枚 ``test_hit_frames_keep_the_pre_r35_shape`` 还钉着它们。
+                yield canonical_sse_event(
+                    "sources",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=1,
+                    status="completed",
+                    data={
+                        "session_id": thread_id,
+                        "sources": cached_visible,
+                        "hit_count": len(cached_visible),
+                        "unauthorized_count": len(manifest) - len(cached_visible),
+                        "scope_reason_code": cached_scope_reason,
+                    },
+                )
+                await asyncio.sleep(0)
             yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)
         return StreamingResponse(
@@ -1427,6 +1650,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         # "每一枚片都不带"。要改就改这一枚变量，帧与帧不可能再分叉。
         live_cache_fields: dict | None = None
         source_rows: dict[str, dict] = {}
+        # R154 判据③：本轮答案有没有真的落进缓存，落清单时只认这一枚标记（判据的门槛与
+        # ``cache_answer`` 那一道完全同一条：未命中不算、挂起轮不算、预制话术不算）。
+        answer_cached = False
         sequence = 1
 
         yield canonical_sse_event(
@@ -1566,6 +1792,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     # 与日志和拒交付用的是同一个，不在这再枚举一遍句子。
                     if use_answer_cache and not intr and not is_offline_reply_text(full_text):
                         cache_answer(rewritten_msg, full_text, scope=answer_scope)
+                        # 证据快照的写入排在下面发 sources 事件那一处：生效日期要先盖到行上，
+                        # 存下的与发出去的必须是同一批对象。这里只记"答案确实进缓存了"。
+                        answer_cached = True
                     yield text_sse_frame(full_text, live_cache_fields)
                     await asyncio.sleep(0)
                 logger.info(f"[ASK] session={thread_id[:8]}... {elapsed_total}s | steps={len(steps_log)}")
@@ -1605,6 +1834,11 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 # done 之前：done 仍是"流结束"的唯一信号，旧客户端遇到认不得的事件名也
                 # 不会丢正文；request.started/completed 的 sequence 也不因本单漂移。
                 visible_rows, scope_reason_code = _authorized_source_rows(source_rows, request_principal)
+                # R154 判据②：出处行带生效日期；判据③：本轮答案进了缓存就把这份证据快照
+                # 一起存下，命中的那一轮才交得出来源清单。盖章先于存表，也先于发事件。
+                _stamp_source_publications(source_rows)
+                if answer_cached:
+                    _cache_source_manifest(rewritten_msg, answer_scope, source_rows)
                 yield canonical_sse_event(
                     "sources",
                     request_id=request_id,
@@ -2096,6 +2330,10 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 # 复用 /ask 里那次 _authorized_source_rows(...) 调用 -> app/rag/filters.py 的
                 # scope.allows，不另写一套过滤；本轮没检索过就是 0 条，不伪造。
                 visible_rows, scope_reason_code = _authorized_source_rows(source_rows, principal)
+                # R154 判据②：审批续出来的这一轮与 /ask 同一份行形状，生效日期一枚都不许少。
+                # 这一腿不落答案缓存（整轮是从挂起点续上的，不是一题的完整答案），所以
+                # 只盖章、不存清单。
+                _stamp_source_publications(source_rows)
                 yield canonical_sse_event(
                     "sources",
                     request_id=request_id,
@@ -2793,7 +3031,10 @@ async def document_version_history(filename: str, request: FastAPIRequest):
         raise HTTPException(status_code=403, detail=decision.reason_code)
     return {
         "filename": filename,
-        "versions": _visible_document_rows(request, versions),
+        # R154 判据②：``index_versions.published_at`` 到这里才有出口。版本行的公开投影
+        # 由 catalog 负责（那张表本身没有发布时间列），生效日期是索引侧的账，所以在出口
+        # 这一侧按 (filename, version) 配对补上；配不上就不带键。
+        "versions": _stamp_version_publications(_visible_document_rows(request, versions)),
     }
 
 
