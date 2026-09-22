@@ -2098,9 +2098,7 @@ docs/scripts 6 枚：`docs/api/resource-authorization-matrix.md`、`docs/handoff
 - **R136 · 名称与工作区映射落到唯一真源**（写域：`src/router/**` + `src/App.vue` + `src/router/__tests__/**` + 新用例）：① 把 §2 定名写进 `routes[].meta.title`（总览 / 喂料 / 问一句 / 异常与告警 / 报销自查），并钉**同源**——一枚用例遍历所有 primary 屏，断言 `meta.title` 与该面板自己渲染的标题一致，不许两处各写一份字符串；② 文档+数据合并成「喂料」两标签屏，老地址 `/docs`、`/data` 必须**重定向**到新屏（不许白屏：`router/index.js` 通配兜底那段注释就是这条口径）；③ 图谱保持 `primary: false`，同时用例要钉它仍可从文档预览进入（`依据` 6 处在树）；④ 反证：把任一 `meta.title` 改回旧名 ⇒ 用例红。🔴 禁改 `tests/visual/**`（Playwright 要起服务，执行层不许跑）。
 - **R137 · 把「交成果」做成真屏**（写域：`src/components/ArtifactList.vue` + `src/lib/artifacts.js` + 新用例；🔴 **不含 `src/router/index.js`**，挂载那一行等 R136 并完之后另起一笔，避免同文件双改）：零件已在树，§2 要的是新增一屏，B-1/R2 才是后端依赖。⇒ 本单只做「接得上就成屏、接不上就明说」这半：未接线时显示**文字态降级**而不是空列表（§2 禁令：不许假百分比/假趋势线）。判据：① 用例钉「拿不到 artifacts 时不得渲染出任何看起来像数据的行」；② 用例钉「端点 404/未配置」与「确实没有成果」是两张可区分的眼；③ 反证：把降级态换成空列表 ⇒ 红。
 - **R26 残半（缺 embedding / 无 GPU 两张眼）**：§6.1 自己记着「四张眼分开已完成，但缺 embedding / 无 GPU 两张仍未分，随 R26 补」。落点在 `ChatPanel` 的状态区与 `src/lib/errcodes.js`、`src/lib/health.js` ⇒ 🔴 **与 R32 的 lane 选择器同文件，一律排 R32（`Hooke`）并完之后，并与 lane 那半合派同一枚 agent**，不许两枚 agent 同改 `ChatPanel.vue`。
-- **前端验收硬口径（每枚都要，缺一不收）**：`npm run build` **exit 0** + `npm test` **vitest 全绿**（总控在主树 `eb4c5c3` 亲测基线 = 22 files / 526 tests）+ 写明新增用例枚数；共享 `node_modules` 用 junction（`New-Item -ItemType Junction -Path ..e-rXXXrontend
-ode_modules -Target <主树>rontend
-ode_modules`，已实测可用）；含中文路径的 `.cmd` 批处理不可用，改走 `Start-Process powershell.exe -ArgumentList ... -Command`。
+- **前端验收硬口径（每枚都要，缺一不收）**：`npm run build` **exit 0** + `npm test` **vitest 全绿**（总控在主树 `eb4c5c3` 亲测基线 = 22 files / 526 tests）+ 写明新增用例枚数；共享 `node_modules` 用 junction（`New-Item -ItemType Junction -Path ..\be-rXXX\frontend\node_modules -Target <主树>\frontend\node_modules`，已实测可用）；含中文路径的 `.cmd` 批处理不可用，改走 `Start-Process powershell.exe -ArgumentList ... -Command`。
 - **可见性（业主侧）**：`enterprise-brain-frontend:local` 已 37 小时未重建，`docker-compose.dev.yml` 的热挂载只管后端 `app/**` ⇒ **浏览器里看到的还是 09-19 那版**。⇒ 前端这一批并完之后**一次性** `docker compose build frontend` + `up -d --wait frontend`，再请业主肉眼验收 D13 三屏；中途不反复重建（每次几分钟且会闪断）。
 - **道次**：今天可开两道互不撞的＝R136（router+App.vue）与 R137（ArtifactList+lib，不含 router 行）；R32 并完后再开两道＝ChatPanel（lane 选择器 + R26 两张眼合派同一枚）与「喂料」合并后的面板内部。`办待办`/`管系统` 明确不做，等 C-1/C-3。
 ## §72 · 前端第二格：以「105 条人话请求 + 60 条已有接口」倒推屏（09-21 12:4x，主树 `d9db8b2`；业主令「从使用员工的角度想页面该有什么功能、要符合人们的请求」）
@@ -2347,4 +2345,67 @@ R41 就上线了、12/12 真机帧每轮都带、`tests/test_sse_sources.py` 早
 必须在腿宽 5/12/40 上**同一个数**（不漂）、必须**严格大于 0** 且正负两侧各量一遍（不缩小成装饰）。
 新量法换尺：从"手算分值等效几名"改成调 `rank_hits_by_activity` 读它自己写下的 `places_moved`。
 🔵 踩坑记一笔：驳回那一侧第一版量出来是 **0**——因为把驳回记在末尾那条命中上，它脚底下已经没人可换了；
-那不是界松了，是量法错。改到榜首往下量之后与界一致。反证：把界 1→2 ⇒ 两枚散文钉连 R153 自己 12 枚一起红。
+那不是界松了，是量法错。改到榜首往下量之后与界一致。反证：把界 1→2 ⇒ 两枚散文钉连 R153 自己 12 枚一起红。## 81 · 本班第二格：R43 判据② 订正落笔（§74 四 欠的账）+ R43 拆两半（可动的半张当场派）
+
+### 一、R43 判据② 作废重写（改分腿口径，依据全部现场复核）
+
+- 原判据「② E3 档实测 `cached_tokens > 0`」**作废**：它没说是哪条腿，而两条腿的帧形状不同。
+- **新判据②**：**非流式腿**（原生 `/api/chat` 应答、兼容腿非流式）实测 `cached_tokens > 0`；
+  **流式答案腿**今天无 `usage` 可取，该腿**只许**判据①（前缀字节级稳定）。
+  🔴 不许拿估算数冒充计数，也不许把「流里读不到」写成「没命中」——`app/trace/spans.py:368-370` 已把这句钉死。
+- 复核依据（本班逐行读，非转述）：`app/trace/spans.py:342-372` 分腿论述 + `tests/test_r29_thinking_tax.py` D 段逐字帧。
+
+### 二、🔴 R146 散文里那枚行号是错的（docs 是总控写域，本班代改，不等执行层）
+
+`app/trace/spans.py:360` 写「the missing copy is `app/common/model_handler.py:394-395`」。
+实取 `:394-395` 是 `_keep_alive()` docstring 的中段，与缓存计数**无关**。真缺口在 **`:496-520`**：
+那里只取 `prompt_eval_count` / `eval_count`，从不取 `prompt_eval_cached_count`；再往上一层，
+`ModelReply.__new__`（`:134-160`）的形参里**根本没有 `cached_tokens` 这个槽**——所以
+`spans.py:326` 那句 `getattr(response, "cached_tokens", None)` 是**结构性永远拿不到值**，
+不是「等施工接上」，而是**接的地方没有洞**。⇒ 随单改两处散文：行号订正为 `:496-520`，
+并补上「`ModelReply` 今天没有这一格」这半句。
+🔵 教训同 §4BH.28 那笔哈希账：**散文里的行号也是数字**，落笔必须现取现写。
+
+### 三、R43 拆两半（写域实测：半张立刻可派，别再挂 `orchestrator.py` 串行锁）
+
+**R43a（两枚目标文件实取全空闲；⚠ 首投未落地，本班取证后改记）**
+
+🔴 **09:5x 首次投递失败**：对 `Laplace`/`01a0bf4f-…` 的 `send_input` 返回 
+`unsupported call: mcp__multi_agent_v1__send_input`（全工具注册表中途失效，非该线拒绝）。
+落盘取证：`be-r29` HEAD 仍 `7641a74`、近 4 分钟零写入、脏项仅一枚 
+`?? data/..persistence.json.lock` ⇒ 判「**未落地**」而非「重复投递」。
+按铁规**不当场补投**；由下一格在**新 block** 内单次重投并记回执
+（先例＝R158：首枚同名工具名写错未落地，次 block 单投成功，同属一次有效投递）。
+🔴 若重投再失败 ⇒ 本单退回业主手动开线，总控不做第三次投递。
+
+1. `app/common/model_handler.py`：原生腿把 `prompt_eval_cached_count` 接进 `ModelReply`（新增 `cached_tokens` 槽，
+   与 `:501-502` 那对计数器**同一口径**：服务器没报就是 `None`；🔴 不许写 0、不许 `input - cached` 反推）。
+2. `app/rag/retrieval_pipeline.py:39-44` `REWRITE_PROMPT`：今天 `{question}` 夹在指令**中间**（41 行），
+   可复用前缀只剩 39 行那一句 ⇒ 改成「固定指令在前、可变内容置于末尾」。
+   ✅ 本班亲查：全仓 60 处 `rewrites` 断言全是**桩 / 解析 payload**，**没有一枚钉这段模板字面** ⇒ 改模板不破既存钉。
+   🔴 但 JSON 契约（3 rewrites / 2-3 sub_questions、`{{ }}` 转义）一字不许动。
+3. 判据① 的钉：同角色、同档连发两发 ⇒ 前缀**字节级**相同（无时间戳、无随机序、无 uuid、无字典序漏网）。
+4. 判据② 今天只交**形状钉 + 一枚具名读数**；真机那一格留给跑分窗（本机 Ollama 正被在途三枚 Agent 抢，
+   此刻测出来的数不可比）。🔴 不许提前宣布「前缀缓存生效」。
+
+**R43b（压后）**：答案腿的 prompt 组装落在 `nodes.py` / `orchestrator.py` ⇒ `Erdos` 正持这两枚的串行锁（R141）。
+
+**原单硬约束一条不松**：不许把权限/部门信息塞进可复用前缀；不许改答案腿语义；
+外部锚（llm-d TTFT 0.542 s vs 94.865 s）只当背景，不许冒充我们自己的实测数。
+
+### 四、随单修的一处文档损坏（非本单产物，本班实测发现）
+
+本节所在的这份跟进单，`node_modules` junction 那一条里的命令**曾被转义吃掉**：
+原文写作 `-Path ..\be-rXXX\frontend\node_modules -Target <主树>\frontend\node_modules`，
+落盘时被当成普通字符串，`\b`→0x08、`\f`→0x0C、`\n`→0x0A，三个控制字节进了文件，
+读出来是 `-Path ..<BS>e-rXXX<FF>rontend<LF>ode_modules`——**照着抄会得到一条错命令**。
+本班按字节还原成反斜杠（全文件 0x08/0x0C 计数由 1/2 归 0，仅此两处，逐枚断言后替换）。
+🔴 顺带一条给下一格：**这份文件的行结束符是 `CR CR LF`，不是 CRLF**（实测 CR 3711 / CRLF 2347），
+git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没脏"别用行数，用字节数与 SHA。
+
+### 五、本格在途三枚 + 待投一枚（一 block 一次投递，零补投）
+
+`Erdos`/R141@`be-r119`（`nodes.py`+`orchestrator.py`+`chat.py`）｜`Hooke`/R156@`be-r32`（只动一枚新测试件）｜
+`Chandrasekhar`/R158@`be-r46b`（`retriever.py`+新测试件+可选只读诊断件）。写域两两零交集，派工前逐棵实取核过。
+⚠ `Laplace`/R43a@`be-r29`（`model_handler.py`+`retrieval_pipeline.py`+新测试件）＝**待投**：
+首投未落地（取证见上一节），本班不按「已派」记账。
