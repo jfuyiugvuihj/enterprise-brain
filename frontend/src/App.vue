@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { DEFAULT_SCREEN, cachedScreens, navigation, screenRouteIds } from './router'
+import { DEFAULT_SCREEN, FEED_SCREEN, cachedScreens, navigation, screenRouteIds } from './router'
 import { focusScreenMain, navItems, nextNavItem } from './router/nav-focus'
 import { resetSessions } from './lib/sessions'
 import {
@@ -39,14 +39,17 @@ let unsubscribeAuth = null
 let toastTimer = null
 const toast = shallowRef(null)
 
-// R104：侧栏那六项与「点下去渲染谁」都从 src/router 的一张路由表派生，这里不再手写第二份。
+// R104：侧栏那几项与「点下去渲染谁」都从 src/router 的一张路由表派生，这里不再手写第二份。
 // 图谱的非一级落点（/graph）也在那张表上，D13① 撤的是一级入口而不是功能。
+// R136：屏名同样只在那张表上写一遍（meta.title），顶栏与侧栏都是它的派生视图。
 
 // 顶栏标题（面包屑的末级）只认路由元信息：它以前回头查 navigation 数组，等于「现在在哪一屏」
 // 有两份记账，查的那份还可能是过期的。
 const activeMeta = computed(() => route.meta || {})
-// 只有文档面板需要 user-role 这项入参，其余面板不该收到多余属性。
-const screenProps = computed(() => (route.name === 'docs' ? { userRole: userRole.value } : {}))
+// user-role 这项入参今天只有「喂料」屏里的文档那一枚标签要：绑给谁由 src/router 的标签表
+// （feed-tabs.js 的 needsUserRole 那一列）决定，这里只认屏名，不认面板，也不写 'docs' 字面量。
+// 其余屏不该收到多余属性。
+const screenProps = computed(() => (route.name === FEED_SCREEN ? { userRole: userRole.value } : {}))
 const roleLabel = computed(() => userRole.value === 'admin' ? '管理员' : '普通用户')
 
 /**
