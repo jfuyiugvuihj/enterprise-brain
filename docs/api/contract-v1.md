@@ -244,6 +244,30 @@ planned PostgreSQL `AgentRun` / `AgentStep` / `ToolCall` / `ModelCall` schema.
   it has passed `scope.allows`, so these fields add no visibility branch.
 - `session_id`.
 
+Per-row keys, all of them (registered 2026-09-22 by 总控 alongside R156: until this paragraph the two
+provenance fields above were the only row keys the contract named, while the row the code builds carries
+fourteen). This is a **record of what is on the wire**, not a new promise - a client must keep depending only
+on what the provenance bullet above names, and the R156 same-source pin asserts only that *documented*
+fields really exist and that their qualifiers do not lie. The shape comes from
+`app/api/v1/chat.py::_document_source_row`, which is transport and not judgement: it copies what the tool
+boundary actually retrieved (`app/agents/evidence.py::record_document_hits`) and adds no visibility branch;
+a hit whose metadata is unusable is invisible, never partially shown.
+
+| row key | where it comes from | on the wire |
+|---|---|---|
+| `worker` | which sub-agent's evidence this row was collected from | always |
+| `source` | `source_name`, stripped | always - a row with an empty name is dropped before it can be emitted |
+| `source_id` | `source_id`, falling back to `source` | always; it is also the de-duplication key when several workers hit the same source |
+| `chunk_index` | the evidence locator's chunk position | may be null |
+| `score`, `score_type` | the retrieval score, and which yardstick it is on | may be null |
+| `excerpt` | see the provenance bullet above | always present, at most 400 characters |
+| `document_version_id`, `index_version_id` | which document version and which index version produced the hit | may be null; the evidence record carries only a filename today, which is why the stamp below is keyed on the index |
+| `content_sha256` | evidence metadata | may be null |
+| `classification`, `department` | evidence metadata - these are the two values `DocumentRetrievalScope.allows` actually weighed | may be null; kept in the event so 「why was this one visible」 can be re-checked without re-deriving the caller's scope |
+| `permission_checked` | `bool(...)` of the evidence flag | always a boolean |
+| `provenance_status` | evidence-level provenance marker | may be null |
+| `published_at` | **not** in the constructor: stamped afterwards, in place, by `app/api/v1/chat.py::_stamp_source_publications`, and only onto rows already granted to this caller | optional, and absence is a real answer (see the R154 compatibility note below) |
+
 Position in the stream: after `request.completed`, before the legacy `done`. `done` stays the single
 end-of-stream signal, an old client that ignores an unknown name keeps its answer, and the sequence
 of `request.started` / `request.completed` does not shift.

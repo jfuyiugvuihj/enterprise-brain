@@ -2469,3 +2469,10 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 ### 五、本格在途五枚（一 block 一次投递，零补投）
 
 `Erdos`/R141@`be-r119`（`nodes.py`+`orchestrator.py`+`chat.py`+**4 枚 `frontend/**`**，10:3x 实测 dirty=9）｜`Laplace`/R43a@`be-r29`（dirty=5）｜`Chandrasekhar`/R158@`be-r46b`（dirty=1，10:26 起在写 `retriever.py`）｜`Anscombe`/R159@`be-r159`｜`Russell`/R160@`be-r160`。五棵写域两两零交集，派工前逐棵实取核过。🔴 `Erdos` 的战线已越出简报范围（进了 `frontend/**`）：在 D13 授权之内，但**验收要按实际写域逐行审，不许按简报口径放行**。
+
+### 六、同格销账：契约那 12 枚行级键已补记载（总控 10:5x，主树 `d9e8015` → 本枚待落）
++2 411 B 落在 `docs/api/contract-v1.md`，新增一节 **Per-row keys, all of them**，把构造器 14 枚键 + 事后补的 `published_at` 逐枚写明来源与可空性。
+两条边界要一起读：这一节是**记载不是承诺**（客户端只许依赖上面 provenance 散文点名的格）；`published_at` 不在 `_document_source_row` 里，由 `chat.py:386-405 _stamp_source_publications` 就地补、只补给已经判给这个调用方的行。
+🔴 为什么**只补文档不加钉**（这是设计不是偷懒）：给那 12 枚加同源钉，就得把 12 个名字抄进测试件，正面撞 R156 自己的「零手抄」判据（`test_no_real_event_name_is_written_by_hand_in_this_file`）⇒ 施工层当时的理由总控认下来，改由文档承载。
+复跑证据（改完立刻跑，主树）：`test_r156` 13 + `test_r132` 3 + `test_public_contracts` 10 = **26 passed / 0 failed**；同源钉的解析范围一字未动（新节写在被解析的 bullet 块之外，中间隔一个空行）。
+另：`Chandrasekhar`/R158 于 10:5x 以事故 #30 形态断在句子中间，盘上留下 `M app/rag/retriever.py` +193/−11（五枚检索结局码 + 只读形状账本，判据③ 已达），已单次 `send_input` 叫回续交（回执 `01a0c6ff-6b7a-7b52-ab12-84e96c8e8c3d`），详见看板 §4BH.31 三。
