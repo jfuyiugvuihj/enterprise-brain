@@ -199,6 +199,10 @@ def chroma_distance(collection) -> str:
 U1_SAMPLE_LIMIT = 64
 U1_MIN_SAMPLES = 12
 U1_PROBES = 2
+#: 探针问回来多少名就拿多少名比排序。刻意不在"采样的 64 枚"里比：
+#: collection.query 排的是**整库**，采样集外的命中会挤进前几名，
+#: 拿采样集的去比序，谁都对不上（09-22 第一次真跑就是这么误判成"不属于任何候选算子"）。
+U1_MIN_RESULTS = 12
 _U1_CANDIDATES = ("l2", "cosine", "inner_product")
 
 
@@ -241,6 +245,7 @@ def resolve_chroma_distance(collection, *, sample_limit=U1_SAMPLE_LIMIT, probes=
     """
     recorded = chroma_distance(collection)
     evidence = {"source": "metadata", "recorded": recorded, "sampled": 0, "probes": 0,
+                "returned": 0,
                 "matched": [recorded] if recorded else [], "reason": ""}
     if recorded:
         return recorded, evidence
@@ -265,15 +270,37 @@ def resolve_chroma_distance(collection, *, sample_limit=U1_SAMPLE_LIMIT, probes=
 
     probe_slots = [0] if probes <= 1 else [0, len(ids) // 2][:probes]
     evidence["probes"] = len(probe_slots)
+    known = {name: vector for name, vector in zip(ids, vectors)}
     matched = None
     for slot in probe_slots:
-        hit = collection.query(query_embeddings=[vectors[slot]], n_results=U1_MIN_SAMPLES) or {}
+        hit = collection.query(query_embeddings=[vectors[slot]], n_results=U1_MIN_RESULTS) or {}
         got = [str(item) for item in ((hit.get("ids") or [[]])[0] or [])]
-        if not got:
-            evidence["reason"] = "collection.query 没返回任何东西，测不出排序"
+        evidence["returned"] = len(got)
+        if len(got) < U1_MIN_RESULTS:
+            evidence["reason"] = ("探针只问回 %d 名，少于 %d 枚，排序比不出差别，按前置不满足处理"
+                                  % (len(got), U1_MIN_RESULTS))
             return "", evidence
+        missing = [name for name in got if name not in known]
+        if missing:
+            rows = collection.get(ids=missing, include=["embeddings"]) or {}
+            got_ids = [str(item) for item in (rows.get("ids") or [])]
+            got_rows = rows.get("embeddings")
+            got_rows = [] if got_rows is None else [[float(v) for v in row] for row in got_rows]
+            known.update(dict(zip(got_ids, got_rows)))
+        probed = [known.get(name) for name in got]
+        if any(row is None for row in probed):
+            evidence["reason"] = "探针返回的命中里取不到向量，无法复算排序，按前置不满足处理"
+            return "", evidence
+        probe_name = ids[slot]
+        if probe_name not in got:
+            # 自己离自己最近，本该排第一；排不进去说明这库的序不是这三种算符算出来的，
+            # 也可能是"距离被归一化过"——无论哪种，都不许拿返回集合的第 0 名顶替探针。
+            evidence["reason"] = "探针没出现在自己返回的前 %d 名里，按前置不满足处理"
+            evidence["reason"] %= U1_MIN_RESULTS
+            return "", evidence
+        probe_index = got.index(probe_name)
         winners = [metric for metric in _U1_CANDIDATES
-                   if _u1_order(ids, vectors, slot, metric, len(got)) == got]
+                   if _u1_order(got, probed, probe_index, metric, len(got)) == got]
         matched = winners if matched is None else [m for m in matched if m in winners]
         if not matched:
             evidence["reason"] = "该探针的排序不属于任何候选算子（探针 %d 命中 %s），按前置不满足处理"
@@ -281,7 +308,7 @@ def resolve_chroma_distance(collection, *, sample_limit=U1_SAMPLE_LIMIT, probes=
             return "", evidence
     if len(matched) > 1:
         evidence["matched"] = matched
-        evidence["reason"] = "候选并列：%s 给出同一排序（样本可能已归一化），排序分不开，按前置不满足处理"
+        evidence["reason"] = "候选并列：%s 给出同一排序（样本可能同模长或已归一化），排序分不开，按前置不满足处理"
         evidence["reason"] %= "/".join(matched)
         return "", evidence
     evidence["matched"] = matched
