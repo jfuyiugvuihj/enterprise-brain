@@ -8,7 +8,8 @@
   ① 开关名与取值一律从 ``app/rag/retriever.py`` 现取，示例里写下的值必须落在"代码认作开"的那一侧，
      且两份示例不许各写一套；
   ② 契约那段里**每一个数字都由常量现算**（一枚采纳值多少、榜首两名差多少、能挪几个名次），
-     改 ``ACTIVITY_PRIOR_WEIGHT`` 而不改散文，本钉当场红——散文不许替功能粉饰；
+     改 ``ACTIVITY_PRIOR_MAX_SHIFT_RANKS`` / ``ACTIVITY_PRIOR_SIGNAL_GAIN`` 而不改散文，本钉当场红——
+     散文不许替功能粉饰（R153 之后先验的单位是名次，旧的 ``ACTIVITY_PRIOR_WEIGHT`` 已退役）;
   ③ 契约的码表与 ``feedback.py`` 真会抛的码同源（AST 现抠，零手抄）：多列一枚就是替后端开洞。
 
 另有一条 R120 的旧账顺手钉住：写在 env 示例里的旋钮必须真能到达跑检索的进程，否则它就是装饰。
@@ -67,17 +68,31 @@ def _score(rank: int) -> float:
     return 1.0 / (retriever.ACTIVITY_PRIOR_RANK_BASE + rank)
 
 
-def _places_a_single_acceptance_crosses() -> int:
-    """一枚采纳能把一条命中往上顶几个名次（在那条形如 1/(60+rank) 的列表上）。
+#: R153 之后一起量的腿宽：出厂那条（从 chat.py 现抠）再加两条明显更宽的。界的定义就是
+#: 「这几处必须同一个数」——旧写法（分值相加）在 5 名腿上走 4 名、在 40 名腿上走 19 名，
+#: 拿任何一处理成的散文都会在下一次换腿宽时变成假话。
+MEASURED_LEG_WIDTHS = (5, 12, 40)
 
-    取一条比出厂宽度宽得多的列表来量：这样量到的是"分值等效于几个名次"，不是"k 恰好是几"的巧合。
+
+def _places_a_single_acceptance_crosses(leg_width: int = 40, *, signal: str = "accepted") -> int:
+    """一枚信号过真函数能把那条命中挪几个名次（绝对值），在指定宽度的腿上量。
+
+    原尺（R152 立的）是手算：把 ``activity_prior_value`` 加进 ``1/(60+rank)`` 再问它能越过谁——
+    那量的正是"分值等效几名"，也就是 R153 要消灭的那种随拥挤度漂移的读数。现在改成调
+    ``rank_hits_by_activity`` 本体、读它自己写下的 ``places_moved``：量的是代码实际做的事，
+    不是散文以为它做的事。
     """
-    boost = retriever.activity_prior_value({"accepted": 1, "rejected": 0})
-    for rank in range(40, 0, -1):
-        adjusted = _score(rank) + boost
-        if all(_score(other) <= adjusted for other in range(1, 41)):
-            return rank
-    raise AssertionError("连四十条都顶不到头，这量的就不是同一个形状了")
+    # 放在**能动的那个位置**上量：一枚采纳要从不利的末尾往上顶，一枚驳回要从有利的榜首往下掉。
+    # 把驳回记在末尾那条上会得到 0，而那 0 不是界松了，是它脚底下已经没有人了——那种量法拦不住漂移。
+    spot = leg_width - 1 if signal == "accepted" else 0
+    hits = [{"source": "doc-%d.pdf" % index} for index in range(leg_width)]
+    hits[spot]["source"] = "hot.pdf"
+    counts = {"accepted": 1, "rejected": 0} if signal == "accepted" else {"accepted": 0, "rejected": 1}
+    ranked = retriever.rank_hits_by_activity(hits, {"hot.pdf": counts})
+    marked = [hit for hit in ranked if isinstance(hit, dict) and hit.get("source") == "hot.pdf"]
+    assert len(marked) == 1, "命中在结果里丢了：候选进出一个都不动那句已经不成立"
+    assert "activity_prior" in marked[0], "有信号的命中没被注记，places_moved 无从可量"
+    return abs(int(marked[0]["activity_prior"]["places_moved"]))
 
 
 # ==================== ① 开关：名字、取值、两份示例同色 ====================
@@ -126,35 +141,60 @@ def test_the_switch_reaches_the_processes_that_rank():
 
 
 def test_the_prose_reports_measured_figures_not_advertised_ones():
-    """契约里那三个数（一枚采纳值多少、头两名差多少、能挪几名）与代码算出来的一致。"""
+    """契约里那几个数（一枚采纳值多少、头两名差多少、最多挪几名）与代码算出来的一致。"""
     section = _section()
 
     one_acceptance = retriever.activity_prior_value({"accepted": 1, "rejected": 0})
     head_gap = _score(1) - _score(2)
-    places = _places_a_single_acceptance_crosses()
+    bound = retriever.ACTIVITY_PRIOR_MAX_SHIFT_RANKS
+    gain = retriever.ACTIVITY_PRIOR_SIGNAL_GAIN
+    measured = {_places_a_single_acceptance_crosses(width) for width in MEASURED_LEG_WIDTHS}
 
+    assert measured == {bound}, f"过真函数现量到 {sorted(measured)}，常量却写着 {bound}：界不在代码里"
     assert "%.4f" % one_acceptance in section, (
-        f"散文里那枚'一枚采纳的分值'与代码算出的 {one_acceptance!r} 对不上：改了常量不改散文就是假话"
+        f"散文里那枚'一枚采纳的名次强度'与代码算出的 {one_acceptance!r} 对不上：改了常量不改散文就是假话"
     )
     assert "%.5f" % head_gap in section, (
         f"散文里那枚'榜首两名的分差'与代码算出的 {head_gap!r} 对不上"
     )
-    assert str(places) in section, (
-        f"散文没写出实测的位移枚数（现算 {places} 个名次）：先验的强度只许按算式陈述"
+    assert f"{bound} rank" in section, f"散文不再写出实测的位移上界 {bound} rank：强度只许按量出来的数陈述"
+    assert f"ACTIVITY_PRIOR_MAX_SHIFT_RANKS = {bound}" in section, "散文不再指名那根界的出处常量"
+    assert f"ACTIVITY_PRIOR_SIGNAL_GAIN = {gain}" in section, "散文不再指名每枚信号的增益常量"
+    assert "ACTIVITY_PRIOR_WEIGHT" not in section, (
+        "散文还在引用 R153 退役的那枚权重：单位已从分值换成名次，旧数留着就是替功能粉饰"
     )
-    assert str(retriever.ACTIVITY_PRIOR_WEIGHT) in section, "散文不再引用那枚权重本身"
 
 
 def test_the_prose_admits_the_prior_spans_a_whole_shipped_leg():
-    """诚实的一半：位移枚数必须≥出厂腿宽，散文不许暗示"只是挪一点点"。"""
+    """🔴 这枚钉的名字在 R153 之后是**反的**，留着名字是为了留住它拦的那句假话。
+
+    原断言（跟进单 §77 立的）：``places >= min(leg_widths)``——拦的是"散文把先验说成挪一点点"，
+    因为当时一枚采纳确实横跨整条腿（5 名的腿走 4 名）。R153 把位移钉成 1 名之后那句不再真，
+    照抄会让本钉永远红（现量 1 < 5），所以按 R58 / R147 的先例连名带断言一起改口，记账：
+
+    - 不夸大：位移必须**等于**界，且在几种腿宽上**同一个数**（旧写法随拥挤度漂，这一条从前拦不住）；
+    - 不缩小：界必须**严格大于 0**，且正负两侧都现量——否则"开关开着但其实一序未动"这种装饰没人发现得了；
+    - 不手抄：腿宽清单仍从 ``chat.py`` 的 ``search(k=…)`` 用 AST 现抠，一枚都不许少。
+
+    三件合起来比原来那一件更难满足，断言强度未降。
+    """
     section = _section()
 
     leg_widths = _shipped_leg_widths()
     assert leg_widths, "chat.py 里的 search(...) 不再带 k= 实参，腿宽得换个地方量（连这里一起改）"
-    places = _places_a_single_acceptance_crosses()
-    assert places >= min(leg_widths), (
-        f"一枚采纳只挪 {places} 名，而腿宽 {sorted(leg_widths)}：散文那句'盖不过更相关的'可以重新说了"
+    bound = retriever.ACTIVITY_PRIOR_MAX_SHIFT_RANKS
+    widths = sorted(set(leg_widths) | set(MEASURED_LEG_WIDTHS))
+    upward = {width: _places_a_single_acceptance_crosses(width) for width in widths}
+    downward = {width: _places_a_single_acceptance_crosses(width, signal="rejected") for width in widths}
+
+    assert bound > 0, "界为 0 等于关掉这个特性，契约那句「排名读回来当先验」就该整段删掉"
+    assert set(upward.values()) == {bound}, f"一枚采纳的位移随腿宽漂了：{upward}"
+    assert set(downward.values()) == {bound}, f"一枚驳回的位移随腿宽漂了：{downward}"
+    assert f"measured as {bound} place at leg widths" in section, (
+        f"散文不再写出实测位移与它量过的腿宽（现量 {upward}）：只许报量过的数"
     )
+    for width in widths:
+        assert re.search(r"\b%d\b" % width, section), f"契约不再提到它量过的腿宽 {width}"
     for width in leg_widths:
         assert f"k={width}" in section, f"契约不再写出腿宽 k={width}"
 

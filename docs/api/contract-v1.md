@@ -230,17 +230,41 @@ planned PostgreSQL `AgentRun` / `AgentStep` / `ToolCall` / `ModelCall` schema.
 - `hit_count` - how many rows that is.
 - `unauthorized_count` - how many retrieved rows were withheld. Without this number "0 条来源"
   cannot tell 「没检索到」 apart from 「检索到了但不给你看」, and those two need opposite replies.
-- `scope_reason_code` - which visibility rule decided it.
+- Per row, two provenance fields since R154. `excerpt` is **always present** (a string, possibly empty,
+  at most 400 characters, truncated at the tool boundary by `app/agents/evidence.py::record_document_hits`)
+  and is the passage that was actually used, not a sentence recovered from the answer. `published_at` is
+  an ISO-8601 string and **may be absent**: absent means "this document has no published, non-tombstoned
+  index version to report", which is not the same claim as "it has no date". A row is stamped only after
+  it has passed `scope.allows`, so these fields add no visibility branch.
 - `session_id`.
 
 Position in the stream: after `request.completed`, before the legacy `done`. `done` stays the single
 end-of-stream signal, an old client that ignores an unknown name keeps its answer, and the sequence
-of `request.started` / `request.completed` does not shift. 🔴 One asymmetry is not yet closed:
-the **cache-hit leg** of `/ask` yields only `status` / `text` / `done` (the answer cache stores
-`{answer, created_at}` and nothing else), so a cached turn carries **no** `sources` event and a client
-cannot say 「这条答案的来源后来改版了」 for it. Registered as R154; the frontend shows a distinct
-`cached-unknown` face rather than guessing.
+of `request.started` / `request.completed` does not shift.
 
+### Compatibility note 2026-09-22 (R154: the cache-hit leg can now answer 「改版了没有」)
+
+The asymmetry registered against R154 is closed, additively. A cache hit on `/ask` used to yield only
+`status` / `text` / `done`, because the answer cache stored `{answer, created_at}` and nothing else, so a
+repeated question could not name its sources. It now emits an **optional** `sources` event between `text`
+and `done` with the same five payload keys and the same row shape as a live turn (`sequence` restarts at 1,
+`done` remains the only terminal event). Three properties the client can rely on:
+
+- **Absence is a real answer.** Entries written before R154, entries evicted from the cache, and entries
+  that fail to parse yield **no** `sources` event - never an empty one. An empty list would say 「检索过了，
+  没有来源」; absence says 「这一轮没有可交的清单」. The frontend renders these as the distinct
+  `cached-unknown` face instead of guessing.
+- **The counts survive the round trip.** The snapshot stores the rows *before* authorization filtering and
+  the reader re-applies `_authorized_source_rows`, so `hit_count` / `unauthorized_count` on a cached turn
+  mean the same thing as on a live turn. A cached turn's `published_at` is the moment recorded for that
+  round; today's effective date comes from the versions route, not from a replayed answer.
+- **Nothing new is decided here.** Visibility is still resolved by the single judgement in
+  `app/rag/filters.py::resolve_document_retrieval_scope`; the manifest is evidence, and reading it back
+  re-runs the filter.
+
+`GET /api/v1/documents/{filename}/versions` gained the same `published_at` per row (also optional), and
+`/approve` continuation turns carry both row fields. `GET /api/v1/documents/catalog` and `/documents` are
+unchanged. Approval turns (`/approve`) are unchanged in event order.
 Example:
 
 ```json
@@ -1014,11 +1038,20 @@ so the receipt and the next read cannot disagree.
   (identical to today when nothing signalled) unfalsifiable.
 - The prior re-orders candidates that are already authorised. It adds none, removes none, and sits
   downstream of the permission filter, so it cannot widen visibility.
-- Counts are aggregated by `filename` and carry no identity, and the weight (`ACTIVITY_PRIOR_WEIGHT = 0.01`) is bigger than it looks.
-  Measured against the shape it adjusts (base 60 reciprocal rank): the gap between first and second is
-  0.00026, while one acceptance is worth 0.0025, so a **single click moves a hit 11 places** - more
-  than a whole leg, because `search()` ships `k=5`. One person,
-  clicking once, can decide the top of a leg; there is no throttle and no cooldown. Recalibration is
-  R153; whether to additionally cap signals per person stays an owner decision.
+- Counts are aggregated by `filename` and carry no identity, and there is no per-person throttle or
+  cooldown, so one reader clicking twice is two signals. Since R153 the prior speaks in ranks, not in
+  score: one net acceptance is worth `0.5000` of a rank (`ACTIVITY_PRIOR_SIGNAL_GAIN = 2.0`, smoothed by
+  three phantom votes, so three net acceptances saturate it), and the hard bound is `1 rank`
+  (`ACTIVITY_PRIOR_MAX_SHIFT_RANKS = 1`). Measured through the ranker itself, the displacement is
+  measured as 1 place at leg widths 5, 12 and 40, in both directions, and it is the same number at the
+  20-acceptance ceiling: extra votes buy only precedence when two candidates want the same swap, never a
+  second place. The bound is structural rather than arithmetic - a candidate takes part in at most one
+  adjacent swap per round and the number of rounds is the bound, so the code that moves rows never reads
+  `k`, the candidate count or `ACTIVITY_PRIOR_RANK_BASE`. For reference, in the reciprocal-rank shape the
+  prior used to be added into, first and second differ by 0.00026; before R153 that is what made a single
+  click on a `search(k=5)` leg worth more than the whole leg (measured and recorded in 跟进单 §78).
+  What is still true today: one click can swap the top two of a short leg, and last can still reach
+  second-last. Whether to additionally cap signals per person stays an owner decision.
+
 - 判据① (the order really changes) is proven offline today: the tests drive the ranker with fabricated
   rows, not a live PostgreSQL under concurrent clicks. Registered in 跟进单 §77 as an open item.
