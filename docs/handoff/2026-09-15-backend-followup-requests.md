@@ -2476,3 +2476,41 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 🔴 为什么**只补文档不加钉**（这是设计不是偷懒）：给那 12 枚加同源钉，就得把 12 个名字抄进测试件，正面撞 R156 自己的「零手抄」判据（`test_no_real_event_name_is_written_by_hand_in_this_file`）⇒ 施工层当时的理由总控认下来，改由文档承载。
 复跑证据（改完立刻跑，主树）：`test_r156` 13 + `test_r132` 3 + `test_public_contracts` 10 = **26 passed / 0 failed**；同源钉的解析范围一字未动（新节写在被解析的 bullet 块之外，中间隔一个空行）。
 另：`Chandrasekhar`/R158 于 10:5x 以事故 #30 形态断在句子中间，盘上留下 `M app/rag/retriever.py` +193/−11（五枚检索结局码 + 只读形状账本，判据③ 已达），已单次 `send_input` 叫回续交（回执 `01a0c6ff-6b7a-7b52-ab12-84e96c8e8c3d`），详见看板 §4BH.31 三。
+
+## 83. 第四十班第三格（09-22 10:4x–11:1x，主树 `20f1501` → **`4586bb4`**，基线两值 **3494 passed / 39 skipped**）：R43a 结案账 + 🔴 一条把总控判据顶回来的实测 + R161 判据全文
+
+### 一、R43a 结案（并树枚 `4586bb4`，施工 `Laplace`@`be-r29`，基点 `a524d9d`）
+
+- 四枚产物总控现取逐位吻合：`app/common/model_handler.py` 33 463 B `6a9a17a3d8e8025b`（+24/−5）｜`app/rag/retrieval_pipeline.py` 43 484 B `af6f80c06753f7f3`（+9/−3）｜新 `tests/test_r43a_native_cached_tokens.py` 10 793 B `d61451ae9bb26acb`（10 枚）｜新 `tests/test_r43a_rewrite_prefix_reuse.py` 10 781 B `c344750f38eba549`（12 枚）。
+
+- 复跑：定向 5 枚件 **81 passed**（含 R38 / R146 / R29 既存钉）；**主树全量 3494 / 39（182.03 s，EXIT=0）＝并树前 3472/39 + 恰 22 枚**；`blocked connect attempts to host model port: 0`；`chroma_db` 跑后已还原零脏。
+
+- 实况两条：可复用前缀 123 B（39.7%）→ **265 B（85.5%）**、问题之后固定指令残留 142 B → **0 B**；`app/trace/spans.py` 一字未改即接上（§81 二 那条「接的地方没有洞」的账就此销掉）。🔴 **判据④ 未宣布生效**——只交形状钉，真机那一格留给跑分窗。
+
+### 二、🔴 施工层把总控写下的判据顶回来一次，本班认账并点名裁定
+
+- §81 三 原话是「与既有那对计数器**同一口径**：服务器没报就是 `None`」。字面做成 eager `None` 会当场打红 `tests/test_r38_cached_tokens_honesty.py::test_the_reply_object_grows_no_cached_token_field`（它钉 `assert not hasattr(native_reply, "cached_tokens")`，且该件在写域外）——施工层实测过才来要裁定（反证③：它那棵树里本件 2 failed ＋ 枚外 1 failed）。
+
+- **裁定（归总控，业主一句话可驳回）**：接受**条件赋值**（服务端真报了才挂这枚属性）。理由三条：① R38 那枚钉的是「服务器没说过就不许凭空长出一格」的诚实性，不是形式对称；② 读侧本就是 `getattr(reply, "cached_tokens", None)`，absent 与 None 在收端同一张脸，`spans.py` 的三态（未报 / 报 0 / 报 N）不受影响；③ 对称的唯一收益是少一行 `if`，代价是拆一枚 P1 级诚实钉 ⇒ **不派改 R38 的单**。
+
+- 🔴 教训同 §4BH.28 那笔哈希账与 §4BH.30 那条行号账：**判据本身也是数字**，写下「就是 `None`」的时候我没查它会撞谁。判据与散文一样，落笔前得去调用点现取。
+
+### 三、三笔挂号（都写清不是漏做）
+
+1. **落库那一格今天仍不通**：`app/trace/store.py` 与 `migrations/**` 都没有 cached 列（`git grep cached_tokens` 两处 0 命中），且 `model_token_counts` 的两个生产调用点（`app/agents/nodes.py:589` / `:724`）收的是 LangChain provider 对象，改写腿不经这道边界 ⇒ R43a 买到的是「对象带得出 + 日志看得见 + span 会记」，**买不到「库里查得到」**。要落库须动 `migrations/**` + `store.py`，另立单，且**排在双写窗与 run6 之后**——别在窗口前加新迁移（R90b 那格「0010 首装必停」就是这类顺序债）。
+
+2. **散文行号又过期一次**：§81 二 本班自己写的替代行号 `:496-520` 随本枚并树即失效，且仍是裸行号；`spans.py` 里 `REFUTED_CACHED_TOKEN_CLAIM` 注释引的 `tests/test_r38_cached_tokens_honesty.py:81` 同为裸行号（R142 正在清这个毛病）；`tests/test_r38_cached_tokens_honesty.py` 模块 docstring 首句「原生 `/api/chat` 腿的应答里根本没有 cached 计数字段」已被 R29 / R146 / 本枚三次推翻（它仍绿只因夹具恰好是「没报」形状）⇒ 立 **R162 散文归真**（只改注释与散文、零行为变更），排在 `nodes.py` 串行锁释放之后。
+
+3. **收益前提**：可复用前缀要真省时间，除字节稳定外还得 `keep_alive` 覆盖两发之间、且档位不是 `fast`（`fast` 档这一发根本不发生）⇒ **run6 的开单条件里必须记 `RETRIEVAL_TIER`**，否则会拿一个 fast 档环境去期待前缀收益。
+
+### 四、R161 判据全文（给 H20 供数，`Laplace`@`be-r161` @ `4586bb4`，只读）
+
+- 事由：§4BH.29 五定「R59 切读不能平移」（同查询 Chroma 交 0 条、PG 交 d ≈ 16 的不相干内容），前置要一枚显式距离下限，而该口径归业主 ⇒ 挂号 **H20**。业主要裁「定多少」而手上没有分布数，本单去把分布数拿出来：**只供数、不裁定**。
+
+- 唯一允许落仓的产物 = 新 `scripts/census_r161_distance_floor.py`；**报告不落仓**（`docs/**` 归总控），JSON 落仓外。底座沿用 `scripts/compare_vector_recall.py` 的只读口径（连上 PG 即 `SET SESSION READ ONLY`；题向量与生产侧同一枚 embedding 模型、同维度，R22 口径）。
+
+- 三张分布：① **全库自近邻基线**（1008 枚，每枚对本库第 1 / 第 5 近邻的距离，p50/p90/p95/p99/max）——回答「这台机器上一次正常命中长什么样」；② **P3 那 135 题逐题 PG top-k**，按三桶分开（68 一致 / 43 集合不同 / 24 Chroma 空手），每桶给均值、分位、d 最小与最大的题名与数值；③ **负对照**（与语料无关的问句：评测集 无证据问题 桶 + 自拼跨行业句，句面现取现写）——没有③，下限就是拍脑袋。
+
+- 必须交回：≥6 档**下限扫描表**（每档：砍掉多少真命中 / 放过多少噪声 / 24 题那批被拒几题）＋「有没有一档能既挡下 24 题那批又不误伤 68 题那批」的**明确回答**（没有就照实说没有，那本身就是关键读数：意味着下限救不了 R59）＋ **权限面 SQL 实读**（把 `app/rag/filters.py::resolve_document_retrieval_scope` 的判定写成 PG 谓词，实测不做前置过滤时 top-5 里有多少行不该给这个 principal 看，逐条给部门与密级实际值）＋ 一句能贴进 H20 的**建议**口径三行（数值 / 判定式 cosine 还是 L2、用哪一列、k 取多少 / 读不到时交回什么稳定码）。
+
+- 边界：禁 INSERT/UPDATE/DELETE/DDL；Chroma 只 `get`/`query`；`chroma_db/**` 是跟踪文件，跑完 `git status --porcelain` 必须零命中；禁重建索引 / 删库重灌；允许只读 embedding 但不许改存量向量与 `EMBEDDING_*` 配置；禁改 `app/**`、既存测试件、评测集（`tests/fixtures/**` 只读）、`frontend/**`、`migrations/**`、`deploy/**`、`.env*`；禁 commit；禁一切时延结论；读不到单列成「没读到 + 为什么」。
