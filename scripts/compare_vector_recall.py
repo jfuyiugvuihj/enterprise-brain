@@ -246,9 +246,13 @@ def resolve_chroma_distance(collection, *, sample_limit=U1_SAMPLE_LIMIT, probes=
         return recorded, evidence
 
     evidence["source"] = "measured"
-    page = collection.get(include=["embeddings"], limit=sample_limit) or {}
+    page = collection.get(include=["embeddings"], limit=sample_limit)
+    page = {} if page is None else dict(page)
     ids = [str(item) for item in (page.get("ids") or [])]
-    vectors = [[float(value) for value in vector] for vector in (page.get("embeddings") or [])]
+    rows = page.get("embeddings")
+    # chromadb 1.5 这里给的是 numpy.ndarray，不是 list：`rows or []` 会当场抛
+    # "truth value of an array is ambiguous"（09-22 第一次真跑就是这么死的）。只认 None。
+    vectors = [] if rows is None else [[float(value) for value in row] for row in rows]
     evidence["sampled"] = len(ids)
     if len(ids) < U1_MIN_SAMPLES or len(vectors) != len(ids):
         evidence["reason"] = "样本只有 %d 枚，少于 %d——排序对得上也可能巧合，按前置不满足处理"

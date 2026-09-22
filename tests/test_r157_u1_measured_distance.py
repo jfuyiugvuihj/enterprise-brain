@@ -320,6 +320,56 @@ def test_main_sends_the_measured_operator_to_pg(tmp_path, capsys, monkeypatch):
     assert '"source": "measured"' in payload and '"probes": 2' in payload
 
 
+# ------------------------------------------------------------------- 真形状钉（R157 补）
+def test_chromadb_hands_back_numpy_arrays_not_lists():
+    """09-22 第一次真跑就是死在这里：chromadb 的 get()["embeddings"] 是 numpy.ndarray。
+
+    `page.get("embeddings") or []` 对一个 ndarray 求布尔值会抛
+    "The truth value of an array with more than one element is ambiguous"，
+    而假 collection 全用 list 写的测试一枚都拦不住——所以这一枚把**真形状**钉进来：
+    embeddings 是 ndarray、ids 是 numpy.str_、query 返回的是嵌套 list。
+    """
+    numpy = pytest.importorskip("numpy")
+    orders = [_permutation("l2", index) for index in PROBE_INDICES]
+    queue = list(orders)
+
+    class NumpyCollection(FakeCollection):
+        def get(self, include=None, limit=None):
+            payload = super().get(include=include, limit=limit)
+            payload["embeddings"] = numpy.asarray(payload["embeddings"], dtype=numpy.float64)
+            return payload
+
+        def query(self, query_embeddings=None, n_results=None):
+            self.calls.append(("query", len(query_embeddings or []), n_results))
+            order = queue.pop(0)
+            assert queue.__class__ is list and n_results == SCRIPT.U1_MIN_SAMPLES, n_results
+            return {"ids": [[numpy.str_(name) for name in order[:n_results]]]}
+
+    collection = NumpyCollection()
+    name, evidence = SCRIPT.resolve_chroma_distance(collection)
+    assert name == "l2", evidence
+    assert evidence["matched"] == ["l2"] and evidence["probes"] == SCRIPT.U1_PROBES
+    assert queue == [], "两枚探针都该被问到"
+
+
+@pytest.mark.parametrize("shape", ["empty-dict", "none", "missing-keys"])
+def test_an_empty_response_is_refused_not_crashed(shape):
+    """三种"什么都取不到"的形状都得走同一条路：报样本不足，不抛异常、不去问序。"""
+
+    class EmptyCollection(FakeCollection):
+        def get(self, include=None, limit=None):
+            self.calls.append(("get", limit))
+            if shape == "none":
+                return None
+            if shape == "missing-keys":
+                return {}
+            return {"ids": [], "embeddings": []}
+
+    name, evidence = SCRIPT.resolve_chroma_distance(EmptyCollection())
+    assert name == "" and "样本只有 0 枚" in evidence["reason"], (shape, evidence)
+    assert [call[0] for call in EmptyCollection().calls] == []
+
+
 # --------------------------------------------------------------------------- ⑦
 def test_the_write_side_still_does_not_record_hnsw_space():
     """同源钉：①② 的分工（记了就用、没记就量）成立的前提，是写入侧确实不记。
