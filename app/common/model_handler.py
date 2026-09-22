@@ -151,6 +151,7 @@ class ModelReply(str):
         output_tokens: int | None = None,
         transport: str = TRANSPORT_COMPAT,
         error_code: str = "",
+        cached_tokens: int | None = None,
     ):
         reply = super().__new__(cls, "" if content is None else str(content))
         reply.finish_reason = str(finish_reason or "")
@@ -159,6 +160,17 @@ class ModelReply(str):
         #: column NULL instead of a zero or a number somebody estimated.
         reply.input_tokens = input_tokens
         reply.output_tokens = output_tokens
+        #: How much of what the server read came off its own prefix cache (R43a). The frame
+        #: name is ``prompt_eval_cached_count``, reported only by the native leg, and it joins
+        #: this object when -- and only when -- the server actually counted it. Absent is not
+        #: the same reading as zero: ``app.trace.spans._cached_token_count`` drops the ledger
+        #: key for an absent count and meters a reported 0 as 0, and
+        #: ``tests.test_r38_cached_tokens_honesty`` pins that a reply built from a frame which
+        #: said nothing grows no cached field. So this attribute stays unassigned rather than
+        #: defaulting to ``None``; readers ask for it as ``getattr(reply, "cached_tokens", None)``.
+        #: Never a zero by default, never ``input_tokens - cached_tokens``.
+        if cached_tokens is not None:
+            reply.cached_tokens = cached_tokens
         reply.transport = transport
         reply.error_code = error_code
         return reply
@@ -493,13 +505,18 @@ class ModelHandler:
         content = str(message.get("content") or "")
         thinking = str(message.get("thinking") or body.get("thinking") or "")
         finish_reason = str(body.get("done_reason") or "")
-        #: The server's own two counters (R38). ``prompt_eval_count`` is what it read and
-        #: ``eval_count`` is what it wrote; the read side used to be dropped here, which left
-        #: ``model_calls.input_tokens`` without a source on this leg. Neither is ever
-        #: substituted by an estimate: the durations below are logged next to them for
-        #: comparison only, and ``estimate_prompt_tokens`` sizes clocks, not the ledger.
+        #: The server's own counters. ``prompt_eval_count`` is what it read and ``eval_count``
+        #: is what it wrote (R38); ``prompt_eval_cached_count`` is how much of the read side
+        #: the server says it took from its own prefix cache (R43a). The read side used to be
+        #: dropped here, which left ``model_calls.input_tokens`` without a source on this leg,
+        #: and the cached side was dropped the same way even though the frame has always
+        #: carried it -- the verbatim frames in ``tests/test_r29_thinking_tax.py`` section D
+        #: report 1 / 148 / 3. None of the three is ever substituted by an estimate: the
+        #: durations below are logged next to them for comparison only, and
+        #: ``estimate_prompt_tokens`` sizes clocks, not the ledger.
         input_tokens = body.get("prompt_eval_count")
         output_tokens = body.get("eval_count")
+        cached_tokens = body.get("prompt_eval_cached_count")
         code = answer_error_code(content, finish_reason)
         load_seconds = float(body.get("load_duration") or 0) / 1e9
         logger.info(
@@ -508,6 +525,7 @@ class ModelHandler:
             f"keep_alive={keep_alive_log(self._keep_alive())} "
             f"done_reason={finish_reason or 'none'} "
             f"prompt_eval_count={input_tokens} eval_count={output_tokens} "
+            f"prompt_eval_cached_count={cached_tokens} "
             f"content_chars={len(content)} thinking_chars={len(thinking)}"
             + (f" error_code={code}" if code else "")
         )
@@ -516,6 +534,7 @@ class ModelHandler:
             finish_reason=finish_reason,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
             transport=TRANSPORT_NATIVE,
             error_code=code,
         )
