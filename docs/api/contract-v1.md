@@ -293,8 +293,9 @@ and `done` with the same five payload keys and the same row shape as a live turn
   re-runs the filter.
 
 `GET /api/v1/documents/{filename}/versions` gained the same `published_at` per row (also optional), and
-`/approve` continuation turns carry both row fields. `GET /api/v1/documents/catalog` and `/documents` are
-unchanged. Approval turns (`/approve`) are unchanged in event order.
+`/approve` continuation turns carry both row fields. `GET /api/v1/documents/catalog` and `/documents` were not touched by that change — they
+have since grown a `restricted` field, so read the section below rather than this sentence. Approval
+turns (`/approve`) are unchanged in event order.
 Example:
 
 ```json
@@ -737,6 +738,27 @@ Three cases the catalogue must not collapse into one another, and the consumer's
   「暂无数据文件」. A screen that renders an emptiness sentence while `restricted.count` is
   non-zero contradicts itself in one breath, which R186 pins in
   `frontend/src/components/__tests__/r186-row-scope-voices.test.js`.
+
+**`GET /api/v1/documents` and `GET /api/v1/documents/catalog` -> `restricted`**
+> Deliberately prose, not a `###` subhead: the set of subheads in this part of the contract is pinned, and
+> a third one has to be added by whoever welds these two document routes to that pin, not as a side effect
+> of a sentence. That weld is filed (R201), not done.
+
+Both flat document routes answer with the **same** optional key, built by one shared projection
+(`app/api/v1/chat.py::_restricted_summary`), and its keys are exactly the table above: `documents`
+stays a plain list of what the caller may see, while a caller who was withheld documents sees
+`restricted` next to it instead of a shorter list plus silence. Judgement and counting happen once,
+in `_classify_document_rows` — the route never counts permissions a second time.
+
+* `restricted` **absent** plus a non-empty `documents` means nothing is being hidden;
+* `restricted` **absent** plus an empty `documents` is the only shape that entitles a screen to say
+  「没有文档」;
+* the flat route is a plain array of filenames and is **not** paginated — it declares no query
+  parameters, so `?page=&page_size=` on it is discarded by the framework, not honoured.
+
+> **Known duplicate**: `app/api/v1/data.py:183-240` builds this shape a third time for the data-file
+> leg. One judgement should have one projection; merging them is filed as follow-up, not done.
+
 
 ## Frontend Collaboration Boundary
 

@@ -767,7 +767,7 @@ Neo4j / 图数据库、"三柱图谱"叙事、多租户与 SaaS 化、legacy SSE
 |---|---|---|---|---|
 | 前置 | **R21** | embedding 失败不得静默降级为全零向量 | `app/rag/retriever.py` | ① 失败即抛并留可观测原因；② 写入侧拒收全零向量；③ **反证**：把 raise 改回 pass 必须红 |
 | 前置 | **R22** | 索引版本绑定 `embedding_model + dimension` | `app/rag/indexing.py` | ① 维度/模型变即产生新 index version；② 禁混维度共存（同库查询 0 命中跨维度）；③ 给出全量重建 CLI，**只许人工触发，禁止自动执行** |
-| ① | **R58** | 双读镜像：Chroma 与 PGVector 同事务双写 | 新 `app/rag/pg_store.py`、`app/rag/retriever.py`、新迁移 `migrations/0010_pgvector_chunks.sql` | ① 迁移给 `chunks.embedding` 补 `vector(<dim>)` 并建 `hnsw`（或 `ivfflat`）索引，按 `migrations/README.md` 登记 manifest SHA-256；② 双写任一失败即整体回滚（fail-closed，不留"元数据可见⇔向量不可检索"窗口）；③ 逐题召回对比脚本产出差异表，**55 条无出处条目清零在先**；④ 备份恢复演练覆盖 PG 向量列 |
+| ① | **R58** | 双读镜像：Chroma 与 PGVector 同事务双写 | 新 `app/rag/pg_store.py`、`app/rag/retriever.py`、新迁移 `migrations/0010_pgvector_chunks.sql` | ① 迁移给 `chunks.embedding` 补 `vector(<dim>)` 并建 `hnsw`（或 `ivfflat`）索引，按 `migrations/README.md` 登记 manifest SHA-256；② 双写任一失败即整体回滚（fail-closed，不留"元数据可见⇔向量不可检索"窗口）；③ 逐题召回对比脚本产出差异表，**55 条无出处条目清零在先**（🔴 09-23 R196 复测：今天实测 **29** 枚，不是 55；55 这个数属于 09-19 R66 之前的 94 篇语料，补进《制度与口径登记表.txt》后已降到 29，剩下的 A/C 桶非语料可清 ⇒ 本判据的门槛按 29 读，不要把 55 当今天的未知量）；④ 备份恢复演练覆盖 PG 向量列 |
 | ② | **R59** | 切读：读路径按开关选引擎 | `app/rag/retrieval_pipeline.py`、`app/api/v1/chat.py` | ① 开关默认仍走 Chroma，切读必须显式赋值；② 权限过滤下推 PG `WHERE`（`owner/department/classification`）后，**R45 / R57 全套越权用例逐条平移且全绿**，禁改断言迁就实现；③ 以 R36 的 105 题基线证明召回不退化 |
 | ③ | **R60** | 停写与退役 | `app/rag/retriever.py`、`docker-compose.yml`、`deploy/**`、`docs/**` | ① 停 Chroma 写；② `chroma_db` 归档/下线路径写进部署文档与升级手册；③ 一键回滚到上一索引版本演练一次并留证 |
 
@@ -2786,3 +2786,19 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 - **R194 `Halley`**（`be-r194` @ `749b754`）：① `chat.py:703 _authorize_queue_task` 五枚拒绝出口不落审计（含 `:725` owner 不匹配那枚 403），复用 R179 那条唯一通路、动词分门、响应体字节不许动；② `chat.py:3410 GET /documents` 平铺路由那张「有但不给看」假脸，先取证消费者，零消费者就停手（删接口是业主动作）。
 - **R195 `Mencius`**（`be-r195` @ `749b754`）：出处卡片「采纳 / 项回」接 `POST /api/v1/feedback/document`（`app/api/v1/feedback.py:181`，只发 `filename` + `signal` 两键）。硬门：`npm test` 基线 909/45 只许加、`lint:colors` 恒 148、`build` EXIT=0、无撤回出口就不许自造第三种 signal、问题文本永远不许进请求体。
 - **R196 `Ampere`**（`be-r196` @ `b839617`，**零写盘**）：run6 前置体检五格：预演器四发 / 出处覆盖率枚数（旧账 55/105，若变即头条）/ 用 run2–5 真产物重算窗口预算 / 宿主与线上态只读（`standby-timeout-ac`、盘余、现役镜像 revision、Redis `answer:*`）/ 重建跑分树的命令（只给不执行）。禁开窗、禁 105 题、禁 `pytest`、禁动容器生命周期。
+
+## §92（09-23 22:2x，第四十三班，主树 `a653151`）：新立四张单的判据 + 一处旧账改口
+
+本节只写判据，结论在看板 **§4BP**。R193(`eef676c`) / R194(`a653151`) / R195(`484536c`) / R197(`e6d9ae6`) 四枚已结案，不在本节。
+
+- **§92.0 改口**：§21 里 R58 判据①那句「**55 条无出处条目清零在先**」已就地标注：今天实测 **29**（R196 用同一件函数复测，剔掉 `documents/制度与口径登记表.txt` 就精确复现 55，差的 26 枚由 R66(`9f2f869`, 09-19) 补语料时清掉）。⇒ **门槛按 29 读**，剩下的属 A/C 桶（题目错 / “出处”概念不适用），不是语料能清的；改这些题要动评测集 = 业主单独批。
+
+- **R198（已派，`Schrodinger` @ `be-r198`，写域前端 `ChatPanel.vue`）**：排队轮询在终止性 4xx 上不停表。病灶：`ChatPanel.vue:944` 只在 `QUEUE_SETTLED` 时 `stop()`，`catch` 分支不停表 ⇒ 一枚拿到 404 `resource_not_found` 的失效页签按 3 s 永远轮，R194 落了 404 的账之后约 **1200 笔/小时**台账（客户的安全记录被刷成噪声）。判据：① 先在自己树上用假 timer 写一枚**改前必须红**的用例（复现不出来就停手报告）；② 只有终止性判定停表（404 `resource_not_found`、403 `permission_denied`、401 走既有登录失效通路）；③ ❗ 网络错误 / 超时 / 5xx 一律不许停表，并要有一枚钉专门盯着它；④ 停的那一下屏上不许永远停在「排队中」；⑤ 硬门 npm 971/48 只许加、lint 恒 148（0 errors）、build EXIT=0；⑥ 不许碰后端、不许断言审计台账（R194 的东西不在它的树上）。
+
+- **R199（待派，后端，写域 `app/main.py` + 新测试件）**：匿名探测无人记账。R194 取证：队列腿那枚 401 出口**经 HTTP 栈不可达**——`app/main.py:96` 的 `AuthMiddleware` 在进路由之前就回 401（`:124`、`:129`），所以帮忙忙在中间件层，不在帮忙在路由层。判据：① 先拿真实中间件路径证明 401 到不了路由（不许只看签名）；② 匿名拒绝落一笔与 R179 同形的账（主体取不到就按 `anonymous` / `unknown` 的既有退化路径，`app/common/audit.py:541-542` 已经这么兜）；③ 不许新造第二套 logger；④ ❗ 刷账面：中间件是全站的，必须带一枚“同一来源短时间内不无限长账”的钉或明写为什么不去重；⑤ 现有 40 多路由的响应体零变化。
+
+- **R200（待派，后端，写域 `app/api/v1/data.py` + `app/api/v1/chat.py`）**：三份同形 `restricted` 并成一份。现状：`data.py:183-240`（R180 的数据文件腿）与 `chat.py` 的 `_restricted_summary`（R194 新造，两个文档出口共用）形成三份形状相同的代码 ⇒ **早迟一处改了口径另两处还在说假话**。判据：① 先把三份的句子/键集合逐字对差异列表；② 并成一份后两侧的既往断言零放宽（`test_r179_*` / `test_r180_*` / `test_r194_*` 全部仍绿）；③ 契约那段英文句子只许有一处出处；④ 禁止顺手改用户可见文案（句子是契约）。
+
+- **R201（待派，测试层 + 契约）**：两枚平铺文档出口的契约 ↔ 代码焦条。今天契约里关于它们的段落是**散文**（本班写的），零枚用例读它，而且它不能写成 `###` 子节——`test_r186_row_scope_contract.py:317` 把那一块的子节集合钉死（本班触碰两次、两次都改文档不改钉）。判据：① 把两个文档出口的键集合用 AST 现抠并与契约互判（方法借 R186 / R191，零抄断言）；② 开既往钉要带归属（为什么第三个子节合法）；③ 顺带把 R194 取证到的假口径写进 runbook：`GET /api/v1/documents` 不声明任何查询参数，`?page=&page_size=` 被丢弃 ⇒ P-9 / P-11 数的其实是全量。
+
+- **§92.5 本班记一笔机器账**：`be-r193` / `be-r194` / `be-r196` / `be-r197` 四棵树与它们的身体都已结案并 close，但按事故 #38 的新规矩（dirty 或单号未结案一律不许清理），本班没清任何树；`be-eval95` 已按 bundle 现场重建（`27c676f`），等最终 HEAD 再 ff。
