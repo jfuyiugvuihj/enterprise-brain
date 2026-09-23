@@ -56,6 +56,25 @@ class DocumentRetrievalScope(NamedTuple):
             return True
         return str(hit.get("department") or "") in self.departments
 
+    def refusal_code(self, hit: dict) -> str:
+        """Say why ``allows`` turned one recalled chunk away. It never decides access.
+
+        判序照抄 allows：先问它，它说能看就回空串；剩下的才按同一条顺序归因——
+        元数据读不出来那一只记 resource_scope_missing（fail-closed 的那一支不许
+        对某一维下结论），密级越档记 clearance_insufficient，其余记
+        department_scope_denied。放行与拒绝出自同一个类，
+        「能不能看」与「为什么不能看」就不会长成两套口径。
+        """
+        if self.allows(hit):
+            return ""
+        try:
+            level = int(hit.get("classification"))
+        except (TypeError, ValueError):
+            return "resource_scope_missing"
+        if level not in self.classification_levels:
+            return "clearance_insufficient"
+        return "department_scope_denied"
+
 
 #: 检索面在审计台账里的资源标识：写的是「哪一道闸门拒的」，不是「哪一份文档」。
 AUDIT_SURFACE = "document_retrieval"

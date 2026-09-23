@@ -580,9 +580,27 @@ def _session_principal_or_error(request: FastAPIRequest):
     return principal
 
 
-def _authorize_session_request(request: FastAPIRequest, session_id: str):
+def _authorize_session_request(
+    request: FastAPIRequest,
+    session_id: str,
+    action: str = ACTION_VIEW,
+):
+    """Authorize a session-scoped call, and leave a trace when it is refused.
+
+    防资源枚举那半条一字未动：不是你的会话仍然像不存在一样（404
+    resource_not_found），拦人的谓词仍然是 app/storage/sessions.py:85 的
+    is_owned_by，它不认角色，所以 administrator 在这条口子上不豁免。
+    补的是留账那半条：「有人拿这个会话 id 来探过」以前在审计台账里查不到一笔
+    （R163 矩阵 session_route 两格的红）。
+
+    台账只写主体 / 会话 id / 判定结果三样：用的就是 alerts.py 与 rag/filters.py
+    那一条 record_audit 通路，不在这里另起一套形状。会话 id 是被探测的资源标识；
+    别人的会话正文一个字都不进。
+    """
     principal = _session_principal_or_error(request)
     if not session_registry.is_owned_by(session_id, principal):
+        # permission_denied 是同文件队列腿早就在用的码，不新造。
+        record_audit(principal, action, "denied", session_id, "permission_denied")
         raise HTTPException(status_code=404, detail="resource_not_found")
     return principal
 
@@ -599,21 +617,40 @@ def _agent_user_context(principal) -> dict | None:
     }
 
 
-def _visible_document_rows(request: FastAPIRequest, rows: list[dict]) -> list[dict]:
+def _classify_document_rows(
+    request: FastAPIRequest,
+    rows: list[dict],
+    action: str = ACTION_VIEW,
+) -> tuple[list[dict], list[tuple[str, str]]]:
+    """Split stored rows into 「看得见」 and 「有，但你不能看」.
+
+    旧实现只交给调用方一个过滤后的列表，于是「目录里没有这份文档」和「文档在，
+    只是你没权看」长成同一张脸（R163 矩阵 document_route 那格 B 类红的根因）。
+    这里把两个结论分开返回，并给每一条被拒的行在既有 record_audit 通路上留一笔：
+    主体 / 文件名（文档腿的资源标识，与 _authorize_document_request 同一个口径）/
+    判定结果。文档正文一个字都不进台账。
+
+    The row is shaped after it has been filtered: an authorization decision must
+    read what the store recorded, and a response must carry the ownership and parse
+    state of that same row rather than whatever shape the caller handed over.
+    """
     principal = _document_principal_or_error(request)
-    # The row is shaped after it has been filtered: an authorization decision must
-    # read what the store recorded, and a response must carry the ownership and parse
-    # state of that same row rather than whatever shape the caller handed over.
-    return [
-        public_document_row(row)
-        for row in rows
-        if _document_authorization_decision(
-            principal,
-            str(row.get("filename") or ""),
-            row,
-            ACTION_VIEW,
-        ).allowed
-    ]
+    visible: list[dict] = []
+    withheld: list[tuple[str, str]] = []
+    for row in rows:
+        filename = str(row.get("filename") or "")
+        decision = _document_authorization_decision(principal, filename, row, action)
+        if decision.allowed:
+            visible.append(public_document_row(row))
+            continue
+        withheld.append((filename, decision.reason_code))
+        record_audit(principal, action, "denied", filename, decision.reason_code)
+    return visible, withheld
+
+
+def _visible_document_rows(request: FastAPIRequest, rows: list[dict]) -> list[dict]:
+    visible, _withheld = _classify_document_rows(request, rows)
+    return visible
 
 
 def _authorize_document_request(
@@ -1355,6 +1392,28 @@ def _ensure_sessions_table():
         conn.commit()
 
 
+# ==================== 旧版 Chat 的两张脸 ====================
+
+def _withheld_retrieval_context(scope, recalled: list[dict]) -> str:
+    """旧版 /chat 的第二张脸：检索命中了资料，但当前账号一份都无权查阅。
+
+    这句话只进模型上下文，判据有两头：
+    - 说得出权限因由（部门 / 密级 / 可见范围 + 稳定码），模型才转述得准；
+    - 一个字都不点名被裁掉的文档——文件名与正文都是别人的，写出来就是二次泄漏。
+    判定权仍在 scope.allows：本函数只对已经被裁掉的块解释为什么，原因码取自
+    DocumentRetrievalScope.refusal_code，与判定同出一个类，不会长成第二套口径。
+    """
+    codes = [
+        code for code in dict.fromkeys(scope.refusal_code(hit) for hit in recalled) if code
+    ]
+    return (
+        f"本轮检索在知识库中命中 {len(recalled)} 份文档，它们全部落在当前账号的可见范围之外，"
+        "因此本次问答不开放其中任何一份。这是权限判定：资料存在，只是当前账号无权查阅。"
+        "请如实向用户说明这一点，并建议联系管理员核对本人部门归属与文档的部门、密级标注；"
+        "不要把本轮当作检索无结果。权限码：" + "、".join(codes)
+    )
+
+
 # ==================== 旧版 Chat（保留兼容） ====================
 
 @router.post("/chat")
@@ -1374,11 +1433,19 @@ async def chat(request: ChatRequest, http_request: FastAPIRequest):
 
     async def generate():
         try:
-            sources = [source for source in retriever.search(request.message, k=5, where=retrieval_filter) if scope.allows(source)]
+            recalled = list(retriever.search(request.message, k=5, where=retrieval_filter))
+            sources = [source for source in recalled if scope.allows(source)]
             record_retrieval_scope(principal, scope, hit_count=len(sources))
-            context = "\n\n".join(
-                f"[来源: {s['source']}]\n{s['content']}" for s in sources
-            ) if sources else "暂无相关文档"
+            if sources:
+                context = "\n\n".join(
+                    f"[来源: {s['source']}]\n{s['content']}" for s in sources
+                )
+            elif recalled:
+                # 两张脸之二：命中了资料，但一份都不给看——不能改口说成检索没结果。
+                context = _withheld_retrieval_context(scope, recalled)
+            else:
+                # 两张脸之一：检索真的没命中。
+                context = "暂无相关文档"
 
             prompt = f"""你是一个企业智能助手。参考以下文档内容回答用户问题。
 
@@ -1592,7 +1659,8 @@ def _enqueue_ask_turn(
 @router.post("/ask/{session_id}/cancel")
 async def cancel_ask(session_id: str, http_request: FastAPIRequest):
     # 取消是对他人会话的破坏性动作，先证明归属再动手。
-    _authorize_session_request(http_request, session_id)
+    # 权限词表里没有 cancel，破坏性动作按 ACTION_DELETE 记账，不新造码。
+    _authorize_session_request(http_request, session_id, ACTION_DELETE)
     return {"cancelled": cancel_request(session_id), "session_id": session_id}
 
 
@@ -2416,7 +2484,7 @@ async def hitl_pending(
 async def approve(request: ApproveRequest, http_request: FastAPIRequest):
     # /approve 会接管该会话的挂起轮次并把会话内容流式回传给调用方，
     # 因此它和读取会话必须是同一套归属判定，不能只校验"已登录"。
-    principal = _authorize_session_request(http_request, request.session_id)
+    principal = _authorize_session_request(http_request, request.session_id, ACTION_APPROVE)
     user_ctx = _agent_user_context(principal)
     # canonical 事件必须带 request_id/trace_id/task_id，而 /approve 此前整条流只有
     # legacy 事件、从来没有过这三个 id。生成方式与 /ask 里生成 request_id/trace_id/task_id
@@ -2784,7 +2852,7 @@ async def get_session(session_id: str, request: FastAPIRequest):
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str, request: FastAPIRequest):
-    _authorize_session_request(request, session_id)
+    _authorize_session_request(request, session_id, ACTION_DELETE)
     _delete_session(session_id)
     try:
         from app.agents.orchestrator import clear_session
@@ -3354,7 +3422,20 @@ async def list_documents(request: FastAPIRequest):
 
 @router.get("/documents/catalog")
 async def list_document_catalog(request: FastAPIRequest):
-    return {"documents": _visible_document_rows(request, current_documents())}
+    visible, withheld = _classify_document_rows(request, current_documents())
+    result: dict = {"documents": visible}
+    if withheld:
+        # 判据②（两张脸）：口径照本仓已并树的 app/api/v1/data.py（R180）正解——
+        # 结论写进成功体的字段，不把文件级返回改成 403；只报数量与原因码，不点名文档。
+        result["restricted"] = {
+            "count": len(withheld),
+            "reason_codes": list(dict.fromkeys(code for _name, code in withheld)),
+            "message": (
+                f"有 {len(withheld)} 份文档存在，但不在当前账号的可见范围内；"
+                "如需访问，请联系管理员核对你的部门归属与文档的部门、密级标注。"
+            ),
+        }
+    return result
 
 
 @router.get("/documents/{filename}/versions")
