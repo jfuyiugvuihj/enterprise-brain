@@ -9,5 +9,6 @@
   "0008_pending_approvals.sql": "ec916aa114b9a842ae38fc17a52f539901f676daccbb226d3a2a1a8c497a95c5",
   "0009_metric_definition_semantics.sql": "bef492d4d1303159a307bb625c3e557ef3a5b1748384492ab37bee412f2fbc2a",
   "0010_pgvector_chunks.sql": "abc4f16d25fec72e174305c95589c1cb9475245856be0ab0035082279176d6d3",
-  "0011_document_activity_signals.sql": "68780a4d77ae0c7c5688981f49deeb22e4b6dac09fd2250008542c8331ef64b5"
+  "0011_document_activity_signals.sql": "68780a4d77ae0c7c5688981f49deeb22e4b6dac09fd2250008542c8331ef64b5",
+  "0012_alert_and_pending_approval_attribution_columns.sql": "c87bfb898c152bb8e771587a3257a205a66b97b13f2d1acc939a3d947da8b648"
 }
