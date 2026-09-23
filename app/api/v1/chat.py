@@ -653,6 +653,24 @@ def _visible_document_rows(request: FastAPIRequest, rows: list[dict]) -> list[di
     return visible
 
 
+def _restricted_summary(withheld: list[tuple[str, str]]) -> dict:
+    """Shape 「有，但你不能看」 into one field of a successful body.
+
+    两处平铺出口（GET /documents 与 GET /documents/catalog）共用这一份形状，免得其中
+    一处改了口径、另一处还在说假话。计数与判定都来自 _classify_document_rows 已经给出
+    的结论：这里只负责解释，不再裁一次。只报数量与稳定码，不点名是哪一份文档，
+    也不把文件级返回改成 403——口径照本仓已并树的 app/api/v1/data.py（R180）。
+    """
+    return {
+        "count": len(withheld),
+        "reason_codes": list(dict.fromkeys(code for _name, code in withheld)),
+        "message": (
+            f"有 {len(withheld)} 份文档存在，但不在当前账号的可见范围内；"
+            "如需访问，请联系管理员核对你的部门归属与文档的部门、密级标注。"
+        ),
+    }
+
+
 def _authorize_document_request(
     request: FastAPIRequest,
     filename: str,
@@ -704,25 +722,47 @@ def _authorize_queue_task(
     request: FastAPIRequest,
     queue,
     request_id: str,
+    action: str = ACTION_VIEW,
 ) -> dict:
+    """Authorize a queue-task call, and leave a trace when it is refused.
+
+    这条腿的五枚拒绝出口（401 / 404 / 403 authorization_unavailable 两枚 / 403
+    permission_denied）以前在审计台账里一行痕迹都没有：别人排在队列里的任务 id 探
+    一下，屏上给了拒绝、机器上查不到这笔探测。补的仍是 R179 那一条通路 —— 本文件
+    第 31 行导入的 record_audit，_authorize_session_request（603 行落账）与
+    _classify_document_rows（647 行落账）用的就是它，不在这里另起一套形状：
+    主体 / 被探的任务 id / 动词 / 判定结果四样，排着队的任务载荷一个字都不进台账。
+
+    动词按门分：读状态那扇门记 resource:view，取消那扇门记 resource:delete。后者沿用
+    本文件 /ask/{session_id}/cancel 早就在用的那枚码——取消一条排队任务与取消一次会话
+    生成是同一种动作——不新造第三枚。
+
+    怎么说那一半一字未动：五枚出口的 status_code 与 detail 逐字保持原样。
+    """
     principal = principal_from_request(request)
+
+    def _refused(status_code: int, reason: str) -> HTTPException:
+        # 一扇门一笔账：走的还是那条通路，码就是出口自己那句 detail。
+        record_audit(principal, action, "denied", request_id, reason)
+        return HTTPException(status_code=status_code, detail=reason)
+
     if principal is None:
-        raise HTTPException(status_code=401, detail="authentication_required")
+        raise _refused(401, "authentication_required")
     raw = queue.redis.get(queue._message_key(request_id))
     if raw is None:
-        raise HTTPException(status_code=404, detail="resource_not_found")
+        raise _refused(404, "resource_not_found")
     if isinstance(raw, bytes):
         raw = raw.decode()
     try:
         payload = json.loads(raw).get("payload") or {}
     except (TypeError, json.JSONDecodeError) as exc:
-        raise HTTPException(status_code=403, detail="authorization_unavailable") from exc
+        raise _refused(403, "authorization_unavailable") from exc
     owner = payload.get("principal") or {}
     owner_id = str(owner.get("user_id") or "")
     if not owner_id:
-        raise HTTPException(status_code=403, detail="authorization_unavailable")
+        raise _refused(403, "authorization_unavailable")
     if owner_id != str(principal.user_id):
-        raise HTTPException(status_code=403, detail="permission_denied")
+        raise _refused(403, "permission_denied")
     return payload
 
 
@@ -3410,14 +3450,19 @@ async def upload_document(file: UploadFile = File(...),
 @router.get("/documents")
 async def list_documents(request: FastAPIRequest):
     indexed_names = set(retriever.list_documents())
-    visible_rows = _visible_document_rows(request, current_documents())
-    return {
+    # 判定与计数只走 _classify_document_rows 那一份（R179 的通路），这里不数第二遍权限。
+    visible_rows, withheld = _classify_document_rows(request, current_documents())
+    result: dict = {
         "documents": [
             row["filename"]
             for row in visible_rows
             if row.get("filename") in indexed_names
         ]
     }
+    if withheld:
+        # 数组里的「没有」只管已索引；被权限挡掉的另说一笔，两张脸不许长成一张。
+        result["restricted"] = _restricted_summary(withheld)
+    return result
 
 
 @router.get("/documents/catalog")
@@ -3425,16 +3470,8 @@ async def list_document_catalog(request: FastAPIRequest):
     visible, withheld = _classify_document_rows(request, current_documents())
     result: dict = {"documents": visible}
     if withheld:
-        # 判据②（两张脸）：口径照本仓已并树的 app/api/v1/data.py（R180）正解——
-        # 结论写进成功体的字段，不把文件级返回改成 403；只报数量与原因码，不点名文档。
-        result["restricted"] = {
-            "count": len(withheld),
-            "reason_codes": list(dict.fromkeys(code for _name, code in withheld)),
-            "message": (
-                f"有 {len(withheld)} 份文档存在，但不在当前账号的可见范围内；"
-                "如需访问，请联系管理员核对你的部门归属与文档的部门、密级标注。"
-            ),
-        }
+        # 判据②（两张脸）：形状与 GET /documents 共用 _restricted_summary 那一份。
+        result["restricted"] = _restricted_summary(withheld)
     return result
 
 
@@ -3660,7 +3697,8 @@ async def queue_status(request_id: str, request: FastAPIRequest):
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
 
-    _authorize_queue_task(request, queue, request_id)
+    # 读状态这扇门：动词记 resource:view（默认值也写出来，一扇门一眼看得见记的是哪本账）。
+    _authorize_queue_task(request, queue, request_id, ACTION_VIEW)
     status = queue.status(request_id)
     if status is None:
         return {"status": "expired", "message": "请求已过期，请重新提交"}
@@ -3695,7 +3733,8 @@ async def cancel_queued_request(request_id: str, request: FastAPIRequest):
             status_code=503,
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
-    _authorize_queue_task(request, queue, request_id)
+    # 取消这扇门：词表里没有 cancel，破坏性动作按 ACTION_DELETE 记账，不新造码。
+    _authorize_queue_task(request, queue, request_id, ACTION_DELETE)
     if not queue.cancel(request_id):
         raise HTTPException(status_code=404, detail="resource_not_found")
     return {
