@@ -18,6 +18,13 @@ Design constraints this module is built around:
   ``GET /alerts`` makes) allows it. When it answers 403 the ``alerts`` key is **omitted**
   entirely: a ``0`` would render as a healthy tenant and would also be a back door around
   request R1 (staff may not read alerts), reachable with one ``ACTION_ANALYZE`` call.
+ - **Passing that gate is the first layer only: the count is row-scoped like the ledger
+   beside it (R188).** A finance manager must not read the company-wide alert total out of
+   one overview tile - a number is information by itself, whether or not a message body
+   came with it. Both branches therefore reuse the two predicates ``GET /alerts`` uses,
+   ``alert_row_visible`` offline and ``alert_row_scope_sql`` against PostgreSQL, and this
+   module restates neither of them. The cut goes *into* the ``COUNT(*)`` query, which is
+   also why the count never reads a page back and takes its length.
 - **The pending count is R13's ledger semantics.** It is one ``pending_approvals.open_items``
   call with the caller as ``owner_user_id`` - literally the read
   ``GET /hitl/pending`` performs. The ledger is not revalidated against the graph here,
@@ -41,9 +48,11 @@ from app.storage import pending_approvals
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-# The stored set, not the delivered page: GET /alerts is capped at the newest 100 rows
-# (alerts.py:402), so a "total" read off that list shrinks silently once a tenant has
-# more alarms than one page - the worst kind of wrong number, because it looks right.
+# The stored set, not the delivered page: GET /alerts is capped at the newest 100 rows, so
+# a "total" read off that list shrinks silently once a tenant has more alarms than one page
+# - the worst kind of wrong number, because it looks right. The statement carries no
+# ownership clause of its own on purpose: ``alerts.alert_row_scope_sql`` is the one place
+# that shape is written, and ``_alert_counts`` appends its answer here before counting.
 _ALERT_COUNT_SQL = "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE read = FALSE) AS unread FROM alerts"
 
 
@@ -76,7 +85,9 @@ def _alert_counts(request: Request) -> dict | None:
     (alerts.py:99-100), and an HTTP route must never take that branch.
     """
     try:
-        alerts_api._require_alert_management(request)
+        # The principal the gate resolves is the input of the second layer below; the
+        # call keeps its single-argument shape because that is the seam the tests spy on.
+        principal = alerts_api._require_alert_management(request)
     except HTTPException as exc:
         if exc.status_code == 403:
             return None
@@ -84,11 +95,20 @@ def _alert_counts(request: Request) -> dict | None:
 
     if alerts_api._database_available():
         alerts_api._ensure()
+        # Row scope first, then the count: filtering after a LIMIT would answer "0 alarms"
+        # to a department whose rows were pushed off the page by another one (the reason
+        # ``alert_row_scope_sql`` carries in its own docstring, and it applies here too).
+        predicate, params = alerts_api.alert_row_scope_sql(principal)
+        sql = " ".join(part for part in (_ALERT_COUNT_SQL, predicate) if part)
         with alerts_api._conn() as conn:
-            row = conn.execute(_ALERT_COUNT_SQL).fetchone() or {}
+            row = conn.execute(sql, params).fetchone() or {}
         return {"total": int(row.get("total") or 0), "unread": int(row.get("unread") or 0)}
 
-    stored = [dict(alert) for alert in alerts_api._MEM_ALERTS]
+    stored = [
+        dict(alert)
+        for alert in alerts_api._MEM_ALERTS
+        if alerts_api.alert_row_visible(principal, alert)
+    ]
     return {
         "total": len(stored),
         "unread": sum(1 for alert in stored if not alert.get("read")),
