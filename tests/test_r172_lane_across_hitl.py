@@ -547,11 +547,14 @@ def test_record_awaiting_still_works_for_the_pre_r172_callers():
     assert store.get_row(SESSION).declared_lane == ""
 
 
-def test_the_parking_writer_binds_no_column_the_ledger_does_not_have(monkeypatch):
-    """PG 分支一字未动：0008 没有 declared_lane，多绑一格就是 UndefinedColumn。
+def test_the_parking_writer_binds_only_columns_the_ledger_has(monkeypatch):
+    """R187 落笔退役（R58 先例：写域在本单之外，快照钉由总控改口，不是放宽）。
 
-    那条错会被 _record_pending_approval 吞掉，代价是**审批面板一条待办都不剩**，
-    所以这一格不许顺手加：钉住 INSERT 的列集与占位符数一致，也钉住它不含本单的新格。
+    当年 0008 没有 declared_lane，多绑一格就是 UndefinedColumn，而那条错会被
+    _record_pending_approval 吞掉：代价是审批面板一条待办都不剩。所以 R172 钉住「不许绑」。
+    R183 把列送进库、R187 开始绑它，那半句退役成「绑的必须都在账上」——列集 == 占位符数
+    == 实参数，且这一格今天真在 INSERT 里。durable 半边（含「没写过 0012 的库当场炸而
+    不是静默写空」）在 tests/test_r187_persist_declared_lane.py:324 与 :372。
     """
     statements = []
 
@@ -580,5 +583,5 @@ def test_the_parking_writer_binds_no_column_the_ledger_does_not_have(monkeypatch
 
     insert = next(sql for sql, _params in statements if "INSERT INTO pending_approvals" in sql)
     params = next(p for _sql, p in statements if "INSERT INTO pending_approvals" in _sql)
-    assert "declared_lane" not in insert
-    assert insert.count("%s") == len(params) == 9
+    assert "declared_lane" in insert, "R187 起这一格必须绑：写得进也要读得回"
+    assert insert.count("%s") == len(params) == 10

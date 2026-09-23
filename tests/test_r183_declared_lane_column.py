@@ -263,17 +263,17 @@ def test_the_empty_string_is_a_real_value_and_null_is_not_the_default_shape():
 
 
 # ==================================================== 判据 7：列已在、绑它合法（不做到已绑）
-def test_the_shipped_parking_writer_still_binds_nothing_the_ledger_lacks():
-    """那条 INSERT 的九枚列在迁移前后都全在台账里——R172 那枚断言因此继续绿。
+def test_the_shipped_parking_writer_binds_the_lane_column_since_r187():
+    """R187 落笔退役（原判据 7 那句「不做到已绑」是状态快照，R187 之后已过期）。
 
-    本件没改写侧一个字：它今天绑的列本来就都在，加一列不会让它变红。
-    """
+    性质换成：列集必须落在 0012 之后的台账列目录里，而在 pre-0012 时代必然非法——那半句
+    仍然成立，它正是 R172 -> R183 -> R187 这条边界一直没断过的凭据。"""
     statement = statement_literal("app/storage/pending_approvals.py", "INSERT INTO pending_approvals")
     table, columns = insert_columns(statement)
 
     assert table == "pending_approvals"
-    assert "declared_lane" not in columns, "本件不做写侧绑值，那半条腿转 R187"
-    assert set(columns) <= set(pre_columns()), columns
+    assert "declared_lane" in columns, "R187 并树后写侧必须绑它：本枚从「不许绑」退役成「必须绑」"
+    assert not set(columns) <= set(pre_columns()), "pre-0012 的台账答不出这一格"
     assert set(columns) <= set(post_columns()), columns
     assert len(columns) == len(set(columns)) == statement.count("%s"), statement
 
