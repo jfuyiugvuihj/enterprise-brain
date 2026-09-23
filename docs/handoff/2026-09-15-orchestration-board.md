@@ -1321,7 +1321,7 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Galileo` | `01a0cc5a-f0d2-79c2-b1c9-d14245a84a7f` | **R176**（R163-P1 之一）告警族三格：跨部门 manager 读到别人部门告警正文 + 两处拒绝不落审计 | **`be-r176`**（总控自 `f515494` 新建，**独占**，建后 `dirty=0`） | **在途**（12:0x 单枚 `spawn_agent`，不带 `model`）。写域 `app/api/v1/alerts.py` + 告警存取所在 storage/observability 层 + 新 `tests/test_r176_*.py`；🔴 禁入 `policy.py`/`rbac.py`（R177）、`filters.py`/`tools.py`（R178）、`chat.py`（R172）、`data.py`/`excel.py`（R170）、`nodes.py`、`frontend/**`。判据：先自建最小复现跑红（可 `git show codex/be-r163:…` 只读取断言形状，**不许把红件搬进本树**）→ 归属过滤与资源级授权分层 → 审计走既有通路且 payload 白名单 → 三把常驻反证 | 09-23 12:0x |
 | `Russell` | `01a0cc5b-7f37-7d30-a8aa-2a46464b871d` | **R177**（R163-P1 之二）知识图谱 `visibility=private` 写进库而读路径一个字不查 | **`be-r177`**（总控自 `f515494` 新建，**独占**，建后 `dirty=0`） | **在途**（12:0x 单枚 `spawn_agent`，不带 `model`）。写域 `app/knowledge_graph/**` + `app/common/policy.py` + `app/common/rbac.py`（这两枚本件独占）+ `intelligence.py` 那一格读路径 + 新 `tests/test_r177_*.py`。判据② 二选一写死：甲=真接进读路径；乙=论证它不参与可见性并改掉「看着像权限字段」的语义——🔴 不许留「写了不管用」这一格；要交 private 存量条数与修后可见面的读数，量不到具名申报，不许拿本机库冒充容器库 | 09-23 12:0x |
 | `Aristotle` | `01a0cc5b-f8e3-7750-aa7f-7d0ab083ecdb` | **R178**（R163 后续）拒绝不落审计 + 「没有数据文件」把权限藏光说成不存在 | **`be-r178`**（总控自 `f515494` 新建，**独占**，建后 `dirty=0`） | **在途**（12:1x 单枚 `spawn_agent`，不带 `model`）。写域 `app/rag/filters.py` + `app/agents/tools.py` + 新 `tests/test_r178_*.py`；`observability` 那层**只 import 不改**（改的权力已给 R176）；禁入 `retriever.py`/`retrieval_pipeline.py`（冻结只读）。判据③ 拆三张脸（本轮没绑定 / 有但权限一份都不给 / 可见但没那一列），🔴 `tools.py:952-954` 与 `:1069-1071` 同形两处只改一处就是留第二张假话 | 09-23 12:1x |
-| `Planck`（**本班新身体，与前几班同名者无关**） | `01a0cc81-4c4e-7471-bb0d-07aced1a0a5d` | **R181** 给跑分窗装阶段 A 判据② 的尺子（判据全文 跟进单 §87 二） | **`be-r181`**（基点 `8e1136d`，**独占**；`.venv` Junction 由总控本班建，建后实取本树 `app/` 解析正确、`dirty=0`） | **在途**（12:4x 单枚 `spawn_agent`，不带 `model`，零补投。🔴 记死：上一格留档的那枚 `01a0cca7-385c-…` 是**幻影 id**——全 `.codex` 目录搜零命中、`be-r181` 当时零落盘且 Junction 都没建 ⇒ 本班实投才是第一枚真身） |
+| `Planck`（**与前几班同名者无关**） | `01a0cc81-4c4e-7471-bb0d-07aced1a0a5d` | **R181** 给跑分窗装阶段 A 判据② 的尺子（判据全文 跟进单 §87 二） | **`be-r181`**（基点 `8e1136d`，**独占**；`.venv` Junction 由总控本班建） | 🔴 **订正本班上一格（§4BK）写错的两句话**：① 这具身体**不是本班派出来的**——rollout `ctime=12:23:41` 比本班那次 `spawn_agent` 早 5 分钟，本班那次投的是**同一个 id**（工具把在途的它又端了一遍），所以"幻影"那句只对摘要留的 `01a0cca7-385c` 成立；② 它 12:5x 自报"16 枚 / 3657-39"时**盘上为零**（全盘搜 `test_r181*` 无、本树 `dirty=0`）⇒ 判 premature 交付、不采信；到 14:0x 盘上才出现 `M scripts/eval_transport_ask_v2.py 176/7` + `M scripts/collect_evaluation_answers.py 17/2` + `?? tests/test_r181_text_frame_ruler.py` + `?? docs/testing/r181-text-frame-readings.md`。**这单仍未结案**：等四枚齐了由总控主树复跑定数。判据② 的尺子内 `answer` 取值口径未动（它把读数落在 sidecar 之外的第二份证据件 `FRAME_LEDGER`，绕开 `test_r123_hitl_approval.py:243` 那枚"甲案七键子集"死钉） |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -3481,3 +3481,30 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 - **三、R170 并树 `dbfa1dc`**（总控主树亲测，不采信自述）：后端全量 **3653 passed / 39 skipped / 0 failed（253.09 s）** = 基线 3641 + 恰本单 12 枚；前端 **767 passed / 37 files** = 761 + 恰 6 枚；`lint:colors` **148（0 errors）** 同基线 ⇒ 新增裸色值 0。改前红色原文已由施工方给出（`TypeError: Cannot read properties of undefined (reading 'length')` @ `DataPanel.vue:311`），修后「有列无行」交回完整画像 + `empty` 标记，只有零列才走 `ErrorEnvelope(code="parse_failed")`；分类改按 dtype 派生。**口径钉住**：0 行的数值列**不发** `min/max/mean/sum`——写 0 是把「没有数据」说成「数据是 0」，写 None 会让界面印「最小 null」。
 - **四、串行锁现状**：`chat.py` = R172 持有 ⇒ **R173 / R175 / R179** 排队；`data.py` 随 R170 交工**已解开** ⇒ **R180** 可派（A 类 preview 无行级过滤 + `data.py:121-163` 静默 `continue`，正压着 V1 那句「权限这层可以演示」）；`excel.py` 同时解开 ⇒ **R182** 可派；`App.vue` **空闲**（R171 从未开工）⇒ 可派。
 - **五、待业主（本班不动）**：🔴 Docker 守护进程仍未起（12:4x 亲测 `docker version` 连不上 `dockerDesktopLinuxEngine` npipe）⇒ 一并卡住 run6 / 阶段 A 真机复验 / pgvector 双写窗重开 / R161 供数 / R162 容器那 1008 枚正向缺口 / R177 容器侧 private 存量。另：心跳 automation-2 的 `targetThreadId` 仍指向死线程；主树 8 项未跟踪垃圾待删；改评测集需单独批。
+
+
+## 4BL · 第四十二班第二格（09-23 13:0x–14:1x，主树 `218bd6e` → **`3431053`**，基线 **3733 passed / 39 skipped**，前端 **826 passed / 40 files**，`lint:colors` 148（0 errors），`build` EXIT=0）：六枚并树 · 🔴 R180 被总控主树全量当场打回（别家仓库级规矩它没查）· 一枚身体半路死
+
+- **一、本班并树六枚，全部主树亲跑全量**（每枚并完都复跑，定向不算验收——这条是 §4BK 刚立的，本班一枚没破）：
+  `dbfa1dc` **R170**（3653-39 = 3641+12 / 前端 767-37）· `699e17d` **R172**（3669-39 = 3653+16）· `40278eb` **R177** + `a6c2710` **R178** + `cc5f859` **R174**（三枚一次复跑 **3709-39** = 3669+15+25，前端 826-40 = 767+59）· `3431053` **R176**（**3733-39** = 3709+24）。
+  三处对账逐位相符：R172 施工方自报 3656/40、R177 自报 3655/40、R178 自报 3665/40，主树实跑得 3669 / 3709 / 3733——差额全部来自"子树无 `.env` 使 1 枚 passed 翻 skip"这一条已预告的环境差，**没有一处需要靠改判据解释**。
+- **二、🔴 R180 打回（记成一格教训，不是记成一格事故）**：施工件（`app/api/v1/data.py` 109/2 + 9 枚钉）在**它自己树上 9 枚全绿**，进主树跑全量**当场红两枚**——
+  ① `tests/test_r64_row_scope_error_codes.py::test_the_row_scope_mapping_table_exists_exactly_once`：「行级码的映射表长出了第二份：`app/api/v1/data.py`」。这是 R64 立的**仓库级唯一表**规矩，施工简报里没写、它也没查 ⇒ 它照抄了一份 `_ROW_SCOPE_DENIAL_REASONS`。
+  ② `tests/test_response_hygiene.py::test_dataset_file_and_preview_are_not_cacheable`：无主体的 preview 调用走到 `principal.role` ⇒ `AttributeError` ⇒ 路由抛 500。
+  处置：主树 `git checkout -- app/api/v1/data.py` 复原 + 那枚测试件移入 `C:\Users\fengx\PycharmProjects\_quarantine\r180-stray-from-main-tree\`（本机策略禁我删文件）；**它的活没丢**——已在自己的分支 `codex/be-r180` 上做 WIP 提交 `9066de8` 并 **push origin**。
+  ⇒ **改派工规矩**：凡写域落在"有仓库级唯一表/唯一通路规矩"的模块（行级码映射、审计通路、scoping 判定、色值），简报必须点名那枚守卫用例的名字。这一格由总控负责，不由执行层负责。
+  ⚠️ 另记一笔我自己的读数错误：那次 WIP 提交抓到了施工**中途**的字节（`if False:` 与 `code = ""` 两枚桩在提交里），工作树随后补真 ⇒ 说明「给在途的单做保活提交」这件事本身有时效风险，保活要提交**当前**字节、并在名册里写明它是 WIP 不是交付。
+- **三、🔴 事故 #36（新类别：身体半路死）**：`Volta`（`01a0cccf-9cc9-…`，R171 `App.vue` 会话失效文案）14:0x 收到 `stream disconnected before completion: External service ModelService error <500> InternalError.Algo`，**非我 close**。实取 `be-r171` `dirty=0`、全盘搜 `r171*` 零命中 ⇒ **零落盘**，按 §4BK 立的规矩判"未派工"，本班另起一格补投一次；再死就退回跟进单 + 业主手动开线，不许三连投。
+- **四、当前名册（这一格起生效；派工只认这张表）**
+
+| Agent | id | 单 | 树（基点） | 状态与写域 |
+|---|---|---|---|---|
+| `Planck` | `01a0cc81-4c4e-…` | **R181** 判据② 装尺子 | `be-r181`（`8e1136d`） | **在途**·写域 `scripts/eval_transport_ask_v2.py`+`scripts/collect_evaluation_answers.py`+新件+`docs/testing/`；🚫 `app/**` |
+| `Helmholtz` | `01a0cc9a-d2a1-…` | **R180（返工）** | `be-r180`（WIP `9066de8`） | **在途**·`app/api/v1/data.py`+`docs/api/contract-v1.md`+新件；🔴 必修那两枚红：映射表唯一（走 `app/common/rbac.py` 那一份，不许复制）+ 无主体不许 500 |
+| `Kepler` | `01a0ccd2-1f27-…` | **R175** 批准失败那一轮账面不闭合 | `be-r175`（`3431053`） | **在途**·写域见跟进单；🔴 本班已逐行实读取证：漏闭合的是 `chat.py:2604-2619`（`internal_error`）与 `:2470-2484`（`task_timeout`）两条腿——**不是**留档说的"先写终态" |
+| `Dewey` | `01a0ccd0-019e-…` | **R182** pandas 3 文本列 | `be-r182`（`218bd6e`） | **在途**·`app/tools/excel.py`+`DataPanel.vue`+新件；须保住 R170 那 12 枚 |
+| `Volta` | `01a0cccf-9cc9-…` | R171 | `be-r171`（`218bd6e`） | ⚫ **死亡**（事故 #36，零落盘） |
+
+  已结案可 close：`Sartre`(R170) `Averroes`(R172) `Meitner`(R174) `Galileo`(R176) `Russell`(R177) `Aristotle`(R178)。
+- **五、串行锁**：`chat.py` = R175 持有 ⇒ **R179**（那族四格 B/C 类）**继续排队**，本班三次想派都因为这把锁没派；`data.py` = R180 返工持有；`excel.py`+`DataPanel.vue` = R182 持有；`App.vue` 空（R171 待补投）；`migrations/**` = 两枚待派单（**R183** `pending_approvals.declared_lane` 与 **R184** `alerts.department`）都等它，且必须**同一枚 migration 一起发**——R176 已把生产分支改成"缺列即 fail-closed 报错"，列上歪一半会让告警路由整条挂掉。
+- **六、待业主（本班不动）**：🔴 Docker 守护进程仍未起（13:0x 亲测连不上 `dockerDesktopLinuxEngine` npipe）⇒ run6 / 阶段 A 真机复验 / pgvector 双写窗 / R161 供数 全卡；心跳 `automation-2` 的 `targetThreadId` 仍指向死线程；主树 8 项未跟踪垃圾待删（含本机策略禁止我删的那枚隔离件）；改评测集需单独批。
