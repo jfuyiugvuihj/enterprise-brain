@@ -28,6 +28,7 @@ from app.common.permissions import (
     ACTION_VIEW,
 )
 from app.common.policy import authorization_decision
+from app.common.rbac import filter_dataframe_rows_with_scope
 from app.storage import artifacts as artifact_storage
 from app.storage.datasets import dataset_registry
 
@@ -41,6 +42,18 @@ DATA_FILE_EXTENSIONS = {".xlsx", ".xls", ".csv"}
 # manage users but cannot own data, which is a refusal, not a server fault.
 _OWNER_SCOPE_ERROR = "dataset owner must have a department scope"
 OWNER_SCOPE_REQUIRED = "department_scope_required"
+
+# R180: file-level authorization (app/common/policy.py) and row-level ownership
+# (app/common/rbac.py) are two independent judgments; the preview route only ever
+# ran the first one (criterion 1). The two public codes below are NOT a new error
+# shape: they are the already-ratified members of app/agents/contracts.py
+# ErrorEnvelope.code, also consumed by frontend/src/lib/errcodes.js and emitted on the
+# tool leg by app/agents/tools.py. Which rbac reason earns which code is decided in
+# exactly ONE place -- the translation layer in tools.py -- so this route asks that
+# layer instead of restating its table (test_r64_row_scope_error_codes forbids a second
+# copy); the two strings are pinned against the canonical ones by test_r180.
+ROW_SCOPE_DENIED = "row_scope_denied"
+NO_VISIBLE_ROWS = "no_visible_rows"
 
 
 def _format_data_file_size(size: int) -> str:
@@ -116,6 +129,45 @@ def build_dataframe_preview(df: pd.DataFrame, filename: str, limit: int = 100) -
     }
 
 
+def _row_scope_status(scope_info: dict) -> dict:
+    """Turn one row-level filtering result into a status layer for the route body.
+
+    This is the row-level judgment, kept in its own field and deliberately separate
+    from the file-level grant `_authorized_dataset` already produced (criterion 1):
+    the two are not to be folded into each other's return. It carries counts and a
+    stable code only -- no data rows, no column names, no other account's department
+    (criterion 4). When a frame had rows but the caller may see none of them, the code
+    and the sentence come from the tool leg's translation layer, which shares one
+    judgement source for both: it says `row_scope_denied` only when rbac can show the
+    department dimension really hid rows, and the neutral `no_visible_rows` when it
+    cannot -- so a frame cleared by some other, unratified dimension is never dressed
+    up as a permission call, and a real refusal never degrades into an empty list or a
+    bare "empty table" (criteria 2 and 3). A genuinely empty table (rows_in == 0) is
+    left to the R170 `empty` profile marker with a blank code, and an administrator or
+    any caller who does get rows keeps a blank code.
+    """
+    # Lazy: main.py does not load app.agents.tools at startup, and pulling langchain in
+    # through a router import is what chat.py deliberately avoids at module top.
+    from app.agents.tools import _row_scope_code, _row_scope_reason
+
+    rows_in = int(scope_info.get("rows_in") or 0)
+    rows_visible = int(scope_info.get("rows_visible") or 0)
+    # Only a frame that came back with nothing left is this layer's to explain; a
+    # partially visible frame is a normal answer and an empty table is R170's.
+    cleared = rows_in > 0 and rows_visible == 0
+    code = _row_scope_code(scope_info) if cleared else ""
+    message = _row_scope_reason(scope_info) if cleared else ""
+    status = {
+        "code": code,
+        "reason_code": str(scope_info.get("reason_code") or ""),
+        "rows_in": rows_in,
+        "rows_visible": rows_visible,
+    }
+    if message:
+        status["message"] = message
+    return status
+
+
 # ==================== Excel 上传 + 画像 ====================
 
 @router.get("/data-files")
@@ -123,6 +175,13 @@ async def list_data_files(request: Request = None):
     directory = Path(DATA_DIR)
     directory.mkdir(parents=True, exist_ok=True)
     files = []
+    # A registered file the caller is refused at the file level is neither appended to
+    # `files` nor dropped in silence: it is counted and its policy reason kept, so the
+    # catalogue can say "these exist but you cannot see them" without naming them
+    # (naming a resource an account has no scope for is its own leak, and every other
+    # dataset route already hides behind 403/404). R180 criteria 2/3/4.
+    restricted_count = 0
+    restricted_reasons: list[str] = []
     principal = principal_from_request(request) if request is not None else None
     for path in directory.iterdir():
         if not path.is_file() or path.suffix.lower() not in DATA_FILE_EXTENSIONS:
@@ -130,6 +189,9 @@ async def list_data_files(request: Request = None):
         record = dataset_registry.get_active_by_filename(path.name)
         if request is not None:
             if record is None:
+                # Not a lie and not a refusal: an unregistered file is not part of the
+                # managed catalogue at all (its preview is a 404 too), so the policy was
+                # never consulted and there is no owner to reason about. Kept hidden.
                 continue
             decision = authorization_decision(
                 principal,
@@ -138,6 +200,20 @@ async def list_data_files(request: Request = None):
                 require_resource_scope=True,
             )
             if not decision.allowed:
+                # Registered, present, refused at the file level. The old code just
+                # continued: "there is a file you cannot open" answered exactly like
+                # "there is no file", with no audit trail. Now it both speaks and lands
+                # on the audit path (subject / dataset id / verdict, zero body).
+                restricted_count += 1
+                if decision.reason_code not in restricted_reasons:
+                    restricted_reasons.append(decision.reason_code)
+                record_audit(
+                    principal,
+                    ACTION_VIEW,
+                    "denied",
+                    record.dataset_id,
+                    decision.reason_code,
+                )
                 continue
         stat = path.stat()
         item = {
@@ -160,7 +236,17 @@ async def list_data_files(request: Request = None):
     files.sort(key=lambda item: item["_modified_timestamp"], reverse=True)
     for item in files:
         item.pop("_modified_timestamp")
-    return {"files": files}
+    result = {"files": files}
+    if restricted_count:
+        result["restricted"] = {
+            "count": restricted_count,
+            "reason_codes": restricted_reasons,
+            "message": (
+                f"有 {restricted_count} 个数据文件存在，但不在当前账号的可见范围内；"
+                "如需访问，请联系管理员核对你的部门归属与文件的部门标注。"
+            ),
+        }
+    return result
 
 
 @router.post("/upload-excel")
@@ -207,7 +293,30 @@ async def preview_data_file(filename: str, request: Request, response: Response)
     response.headers.update(NO_STORE_HEADERS)
     try:
         df = await asyncio.to_thread(load_excel, str(path))
-        preview = build_dataframe_preview(df, record.filename)
+        # R180: the preview is a structured excerpt channel, so it must apply the same
+        # row-level scope app/agents/tools.py uses on the tool leg, not only the file-level
+        # grant above. `_authorized_dataset` (file level) already ran and, for a
+        # department mismatch, already answered 403 with the policy reason; reaching here
+        # means the caller may open the file, which is NOT the same as seeing every row.
+        principal = principal_from_request(request)
+        # `_authorized_dataset` already answered 401 for a missing principal, so None can
+        # only come from a direct call with the file-level gate stubbed out. No principal
+        # means no department to scope by: fail closed (rbac's
+        # `authorization_unavailable`), never a channel that sees every row (criterion 1).
+        scoped_df, scope_info = filter_dataframe_rows_with_scope(
+            df,
+            role=getattr(principal, "role", "") or "",
+            department=getattr(principal, "department", "") or "",
+        )
+        row_scope = _row_scope_status(scope_info)
+        if row_scope["code"] == ROW_SCOPE_DENIED:
+            # Authorized for the file, refused every row: record the refusal on the existing
+            # audit path with subject / dataset id / verdict only -- no data rows (criterion 4).
+            record_audit(
+                principal, ACTION_VIEW, "denied", record.dataset_id, ROW_SCOPE_DENIED
+            )
+        preview = build_dataframe_preview(scoped_df, record.filename)
+        preview["row_scope"] = row_scope
         preview.update({"dataset_id": record.dataset_id, "version_id": record.version_id})
         return preview
     except HTTPException:
