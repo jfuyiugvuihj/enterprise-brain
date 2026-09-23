@@ -6,6 +6,7 @@ import os
 import hashlib
 import json
 import time
+import threading
 import urllib.request
 from urllib.error import HTTPError, URLError
 from dotenv import load_dotenv
@@ -62,6 +63,25 @@ REASON_VECTOR_MIRROR_WRITE_FAILED = "vector_mirror_write_failed"
 # ---- 检索腿稳定码（R21 判据④）：命中属于哪条腿、为什么退到那条腿 ----
 RETRIEVAL_MODE_SEMANTIC = "semantic"
 RETRIEVAL_MODE_KEYWORD = "keyword_fallback"
+
+#: 🔴 R158 · 检索结局稳定码（跟进单 §80 一 判据③）。在此之前，"向量库里找不到邻居"与
+#: "检索根本没跑成"在调用方是同一张脸：都是一个空列表。P3 那 24/135 题就是这个形状——客户
+#: 看到"没有来源"，真相是图里问不出邻居，两者在界面上无法分辨。这几枚码只进
+#: search_shape_diagnostics() 的读数，不改 search() 的返回形状、不新增任何吞异常的路径。
+RETRIEVAL_OUTCOME_ANSWERED = "answered"
+#: 走到的那条腿正常交回 0 行＝"这台机器的索引里查无此物"。不是故障。
+RETRIEVAL_OUTCOME_ZERO_ROWS = "leg_returned_zero_rows"
+#: 向量库明明交回了行，命中数却是 0＝行丢在我们这一侧（_hit_dicts 两列对不齐、或先验之前
+#: 就被裁空）。这一枚必须与上一枚可分辨，否则"我们丢了数据"会永远冒充"索引里没有"。
+RETRIEVAL_OUTCOME_ROWS_DROPPED = "rows_dropped_before_hits"
+#: 向量库抛异常：读数记下异常类名之后**照旧往上抛**，本单不把它改成空列表。
+RETRIEVAL_OUTCOME_STORE_FAILED = "vector_store_failed"
+
+#: 这一问是谁答的。热集答的与外部向量库答的必须可分辨：R44 那层是加速缓存，它交回 0 行
+#: 时外部向量库压根没被问过，把这种 0 记成"HNSW 找不到邻居"就是假账。
+RETRIEVAL_SERVER_CHROMA = "chroma"
+RETRIEVAL_SERVER_HOT_INDEX = "hot_index"
+RETRIEVAL_SERVER_KEYWORD_STORE = "keyword_scan"
 #: 向量后端根本不存向量（离线 _JsonCollection）时的降级原因码
 RETRIEVAL_REASON_STORE_OFFLINE = "vector_store_offline"
 
@@ -157,6 +177,65 @@ def _record_failure_diagnostic(reason: str, model: str, detail: str) -> None:
         "detail": detail,
         "at": time.time(),
     }
+
+
+#: 🔴 R158 · 最近一次检索的形状读数与累计计数（判据③要求的"具名读数"）。
+#:
+#: 为什么放在模块级而不是挂在 DocumentRetriever 实例上：chat.py 与评测每次问答都可能新建
+#: 检索器，挂在实例上就等于把"上一问到底发生了什么"随对象一起扔了。与 _DIAGNOSTICS /
+#: hot_index._DIAGNOSTICS / pg_store._DIAGNOSTICS 同一形状：模块级、加锁、只记账、不发 IO。
+#:
+#: 刻意不包含查询原文、命中内容与任何标识符，只有数字与稳定码：这张表会被健康面与测试读，
+#: 把 query 抄进来就是 R46 隐私判据的反面教材。
+_SEARCH_SHAPE_LOCK = threading.Lock()
+_SEARCH_SHAPE: dict = {"last": None, "totals": {}, "legs": {}}
+
+
+def search_shape_diagnostics() -> dict:
+    """最近一问的形状读数 + 各结局/各答复方的累计次数。全程只读内存，不发请求。"""
+    with _SEARCH_SHAPE_LOCK:
+        last = _SEARCH_SHAPE["last"]
+        return {
+            "last": dict(last) if isinstance(last, dict) else None,
+            "totals": dict(_SEARCH_SHAPE["totals"]),
+            "answered_by": dict(_SEARCH_SHAPE["legs"]),
+        }
+
+
+def reset_search_shape() -> None:
+    """清空形状读数。只给测试用，生产代码不得调用。"""
+    with _SEARCH_SHAPE_LOCK:
+        _SEARCH_SHAPE["last"] = None
+        _SEARCH_SHAPE["totals"] = {}
+        _SEARCH_SHAPE["legs"] = {}
+
+
+def _record_search_shape(*, collection: str, answered_by: str, leg: str, reason: str,
+                         n_results: int, rows_returned: int, hits_built: int,
+                         outcome: str, store_error: str = "") -> None:
+    """把一问的形状记下来，并累计两笔数：结局计数与答复方计数。
+
+    读数里全是**具名数字与稳定码**，没有"是不是失败了"这种布尔量：判据③要的是能指名道姓
+    读出"哪个 collection、要几行、回几行、谁答的、有没有走过降级腿"，布尔量答不了这些。
+    """
+    reading = {
+        "collection": str(collection or ""),
+        "answered_by": str(answered_by or ""),
+        "leg": str(leg or ""),
+        "degradation_reason": str(reason or ""),
+        "n_results_requested": int(n_results),
+        "rows_returned": int(rows_returned),
+        "hits_built": int(hits_built),
+        "rows_lost": int(rows_returned) - int(hits_built),
+        "outcome": str(outcome or ""),
+        "store_error": str(store_error or ""),
+    }
+    with _SEARCH_SHAPE_LOCK:
+        _SEARCH_SHAPE["last"] = reading
+        _SEARCH_SHAPE["totals"][reading["outcome"]] = \
+            _SEARCH_SHAPE["totals"].get(reading["outcome"], 0) + 1
+        _SEARCH_SHAPE["legs"][reading["answered_by"]] = \
+            _SEARCH_SHAPE["legs"].get(reading["answered_by"], 0) + 1
 
 
 def _classify_http_error(exc: HTTPError) -> str:
@@ -1028,12 +1107,24 @@ class DocumentRetriever:
         # 热集命中不是降级：检索腿标注与外部向量库那条完全同值（R21 判据④的口径），
         # 所以这里照样过一遍 _note_search，last_search_mode/reason 不会停在上一问的关键词腿。
         self._note_search(self.MODE_SEMANTIC, "")
-        return self._hit_dicts(
+        hits = self._hit_dicts(
             [item[2] for item in ranked],
             [item[3] for item in ranked],
             self.MODE_SEMANTIC,
             "",
         )
+        # R158：热集交回 0 行时外部向量库压根没被问过。把这种 0 记成"HNSW 找不到邻居"就是
+        # 假账，所以 answered_by 明确写 hot_index——读数的价值就在于能指名是谁答的。
+        self._note_search_shape(
+            answered_by=RETRIEVAL_SERVER_HOT_INDEX,
+            leg=self.MODE_SEMANTIC,
+            reason="",
+            n_results=k,
+            rows_returned=len(ranked),
+            hits_built=len(hits),
+            outcome=self._outcome_for(len(ranked), len(hits)),
+        )
+        return hits
 
     def _write_batch(self, ids, documents, metadatas, embeddings, *, mirror=None):
         """全库唯一允许把向量交给向量库的入口（R21 判据②）。
@@ -1298,28 +1389,77 @@ class DocumentRetriever:
                 query_embedding = self.embedding.embed_query(query)
             except EmbeddingError as exc:
                 logger.error(f"向量腿下线，本次检索退化为关键词召回: {exc}")
-                return self._apply_activity_prior(self._keyword_hits(query, k, where, exc.reason))
+                degraded = self._keyword_hits(query, k, where, exc.reason)
+                self._note_search_shape(
+                    answered_by=RETRIEVAL_SERVER_KEYWORD_STORE,
+                    leg=self.MODE_KEYWORD,
+                    reason=exc.reason,
+                    n_results=k,
+                    rows_returned=len(degraded),
+                    hits_built=len(degraded),
+                    outcome=self._outcome_for(len(degraded), len(degraded)),
+                )
+                return self._apply_activity_prior(degraded)
             hot_hits = self._hot_hits(query_embedding, k, where, pred)
             if hot_hits is not None:
                 return self._apply_activity_prior(hot_hits)
             kwargs = {"query_embeddings": [query_embedding], "n_results": k}
             if where:
                 kwargs["where"] = where
-            results = self.collection.query(**kwargs) or {}
+            # 🔴 R158 判据②(d)：这一步此前**没有** try/except，向量库抛异常就一路抛出
+            # search()，不存在"我们把异常吞成空列表"。本单把它改成"先记下形状、再原样上抛"，
+            # 语义一个字没变（调用方看到的仍然是异常），变的只是事后读得到是谁、要了几行。
+            try:
+                results = self.collection.query(**kwargs) or {}
+            except Exception as exc:
+                self._note_search_shape(
+                    answered_by=RETRIEVAL_SERVER_CHROMA,
+                    leg=self.MODE_SEMANTIC,
+                    reason="",
+                    n_results=k,
+                    rows_returned=0,
+                    hits_built=0,
+                    outcome=RETRIEVAL_OUTCOME_STORE_FAILED,
+                    store_error=type(exc).__name__,
+                )
+                raise
             self._note_search(self.MODE_SEMANTIC, "")
             # R46：先验只在这条腿自己排好的候选集内部挪名次。n_results 一个字没改——多要
             # 几行才能让低于第 k 名的文档上位，但那会改掉 R44 明确钉住的"外部向量库那条路径
             # 的调用序列与本单之前逐字一致"，本单不碰（要放宽得另立单，已写进回执）。所以
             # R46 的"回填"目前只作用于召回窗口之内，窗口外的先验等 next-result 那一单。
-            return self._apply_activity_prior(
-                self._hit_dicts(
-                    (results.get("documents") or [[]])[0],
-                    (results.get("metadatas") or [[]])[0],
-                    self.MODE_SEMANTIC,
-                    "",
-                )
+            documents = (results.get("documents") or [[]])[0]
+            metadatas = (results.get("metadatas") or [[]])[0]
+            hits = self._hit_dicts(documents, metadatas, self.MODE_SEMANTIC, "")
+            # 行数取三列里最宽的那个：ids 才是"库给了几行"的本体，而 documents/metadatas
+            # 可能因 include 形状缺列。只数 documents 会把"给了 5 行、建出 0 条命中"记成
+            # "库里没邻居"——那正是判据③要分开的两种 0。
+            rows_returned = max(
+                self._store_row_count(results, "ids"),
+                self._store_row_count(results, "documents"),
+                self._store_row_count(results, "metadatas"),
             )
-        return self._apply_activity_prior(self._keyword_hits(query, k, where, self.REASON_STORE_OFFLINE))
+            self._note_search_shape(
+                answered_by=RETRIEVAL_SERVER_CHROMA,
+                leg=self.MODE_SEMANTIC,
+                reason="",
+                n_results=k,
+                rows_returned=rows_returned,
+                hits_built=len(hits),
+                outcome=self._outcome_for(rows_returned, len(hits)),
+            )
+            return self._apply_activity_prior(hits)
+        offline_hits = self._keyword_hits(query, k, where, self.REASON_STORE_OFFLINE)
+        self._note_search_shape(
+            answered_by=RETRIEVAL_SERVER_KEYWORD_STORE,
+            leg=self.MODE_KEYWORD,
+            reason=self.REASON_STORE_OFFLINE,
+            n_results=k,
+            rows_returned=len(offline_hits),
+            hits_built=len(offline_hits),
+            outcome=self._outcome_for(len(offline_hits), len(offline_hits)),
+        )
+        return self._apply_activity_prior(offline_hits)
 
     def _apply_activity_prior(self, hits):
         """R46：把采纳/驳回计数施加在这条腿刚排好的候选集上（四条腿共用这一处）。
@@ -1333,6 +1473,48 @@ class DocumentRetriever:
             logger.warning(f"活动信号先验不可用，本次排序不动: {type(exc).__name__}")
             return hits
         return rank_hits_by_activity(hits, priors, enabled=activity_prior_enabled())
+
+    def _collection_name(self) -> str:
+        """这一问打的是哪个 collection。离线态没有名字，交回空串而不是猜一个。"""
+        return str(getattr(self.collection, "name", "") or "")
+
+    @staticmethod
+    def _store_row_count(results, key: str) -> int:
+        """数向量库原始应答里某一列的行数：只认 list/tuple，其它一律 0。
+
+        为什么要单独数 ids：query 交回的 documents/metadatas 可能因为 include 的形状而比 ids
+        少（甚至缺列），只数 documents 会把"库给了 5 行、我们建成了 0 条命中"误记成"库里
+        就没邻居"——那正是 R158 要能分辨的两种 0。
+        """
+        rows = (results or {}).get(key)
+        if not isinstance(rows, (list, tuple)) or not rows:
+            return 0
+        first = rows[0]
+        return len(first) if isinstance(first, (list, tuple)) else 0
+
+    def _note_search_shape(self, *, answered_by: str, leg: str, reason: str, n_results: int,
+                           rows_returned: int, hits_built: int, outcome: str,
+                           store_error: str = "") -> None:
+        """把这一问的形状记进模块级读数（判据③）。不发 IO、不改返回形状。"""
+        _record_search_shape(
+            collection=self._collection_name(),
+            answered_by=answered_by,
+            leg=leg,
+            reason=reason,
+            n_results=n_results,
+            rows_returned=rows_returned,
+            hits_built=hits_built,
+            outcome=outcome,
+            store_error=store_error,
+        )
+
+    @staticmethod
+    def _outcome_for(rows_returned: int, hits_built: int) -> str:
+        """结局码：0 命中时，"库本来就没给行"与"给了行却在我们将要交回前丢了"必须分家。"""
+        if hits_built > 0:
+            return RETRIEVAL_OUTCOME_ANSWERED
+        return (RETRIEVAL_OUTCOME_ROWS_DROPPED if rows_returned > 0
+                else RETRIEVAL_OUTCOME_ZERO_ROWS)
 
     def _note_search(self, mode: str, reason: str) -> None:
         """记录本次检索走的腿；降级计入进程内可观测计数。"""
