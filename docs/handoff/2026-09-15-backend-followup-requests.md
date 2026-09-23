@@ -2755,3 +2755,34 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 - **六、事故 #37（新类别：并树行尾）**：本仓 `core.autocrlf=true` ⇒ 正常检出的工作树是 **CRLF**；把交付件按施工方字节原样拷进主树会带成 LF，而 `tests/test_r156_sse_event_surface_sync.py` 的 `_TempEdit` 锚点**硬编码 `\\r\\n`** ⇒ 合批全量当场红一枚（`chat.py 里找不到待改的锚`）。规矩：**并树后把"改前就是 CRLF 的 tracked 文件"归一回 CRLF（内容零变化、numstat 不变），只有迁移件按 R183 判据 10 必须留 LF**；并树前先问"这文件在 HEAD 工作树里是什么行尾"，别默认施工方那台的字节就是本机惯例。
 - **七、开局快照与在途核对**：五枚在途全部实名（Gibbs/Kepler/Hubble/Bohr/Hume）。🔴 `be-r183` 开局一度 `dirty=0`、`0012` 与三枚测试件从盘上消失——不是丢活，是施工方在跑它自己的反证 (b)（把 0012 改窄看引信）。自此每格对本班在途树做开工快照：`%TEMP%\\wip-snapshots\\<树>-<HHmmss>\\`（tracked diff + 全部未跟踪件）。R185 那笔并树提交正文把施工方写成 `Meitner`，真身 `01a0cd41`（Hume）；提交已双推 ⇒ 不改历史，账记在看板 §4BN 名册与本节。
 - **八、下一格接手顺序（V1 收口的关键路径）**：① 收 R179 ⇒ 接 `codex/be-r163`(`eebaadb`) 两枚矩阵件（种子加 `"department": DEPT_A` 一处 + `EXPECTED_ATTRIBUTION` 归因到已修件，由总控落笔）⇒ 计划书 §6 C 行翻绿；② 收 R187 ⇒ 投 R190；③ 收 R191/R192 ⇒ 全部并完 → 双远端 push → 镜像重建到最终 HEAD → `--env-file deploy/.env.server up -d`（保 `VECTOR_DUAL_WRITE=on`）→ healthy；④ run6 独占窗（2.49–4.73 h，§9 红线：窗内禁部署、禁跑仓库测试）。
+
+## 91. 第四十二班第五格（09-23 20:3x–21:2x，主树 `64bfcb2` → **`b839617`**，后端 **3986 passed / 39 skipped**，前端 **909 / 45 files**，`lint:colors` 恒 148（0 errors），`build` EXIT=0）：三枚並树（R192 / R191 / R190）· 引信与契约同窗改口 · �包 事故 #38（一把只看祖先关系的 worktree 清理）· 「计划书 8 枚零提交」订正 · 新派四枚（R193 / R194 / R195 / R196）
+
+叙事全文在看板 **§4BO**，本节只留下一班验收要用的判据与数字。
+
+### 一、结案三枚（总控主树亲跑，不采信施工层自述）
+- **R192（`8eb0945`，Turing/`01a0cdf3-f5b7`，基点 `c053ddd`）**：「排名前三」给前十 + 零数值列被 `except Exception: pass` 吞成零日志。钉：条数只走唯一取值口 `_ranking_count`（中文数词与阿拉伯数字同解，前三 / 前五 / 前十名 / 前10 四形共用），且对「后跟数字 / 数量级位 / 时间单位」三形设不认闸（退回默认条数－与改前逐字相同，不新造第二句假话）；零数值列那张脸说事实句、记账只走 `record_tool_status`。全仓实扫确既有中文数词通路不存在 ⇒ 新函数不是第二套解析器。**裁定**：零数值列那一层施工方选了「只出脸不落 status」，总控接受——落 `failed` 会经 `app/agents/evidence.py` → `critic.py` → `nodes.py` 触发整轮 redo（多发一发模型），把数据形状问题升级成用户可见故障。点名改口：`tests/test_r189_label_column_from_query.py:161` 那枚「排名前10」现状钉 → 「前排3」（1/1 行，不静默）。
+- **R191（`749b754`，Popper/`01a0cdf3-5057`，基点 `c053ddd`）**：甲半补契约（`GET /hitl/pending` 的 `failed_turns[]` / `failed_turns_has_more` / 终态 `failed` + 「R190 前 PG 存不下 failed」的线上事实），机检靠 `tests/test_r191_hitl_contract_pins.py` 14 枚从 `chat.py` AST 现抠键集合与文档键表互判；乙半拆两张脸说假话（面板「全表 120 中可见 40」对弹窗「40 行预览」），句子唯一出处 `rowScopeVisibleNote()`。硬门复跑：`npm test` **909 / 45 files**（基线 894/44，+15）、`lint:colors` 恒 148（0 errors）、`build` EXIT=0。
+- **R190（`b839617`，Ohm/`01a0ce14-7645`，基点 `64bfcb2`）**：`migrations/0013_pending_approvals_status_includes_failed.sql` 把生效的 `pending_approvals_status_check` 前滚到六枚（含 `failed`），零 UPDATE 零回填零改行，0008 一字不动；可重跑凭据换成 PG 文档原文逐字引文 + URL（`tests/test_r190_status_failed_domain.py:337` 起）；词表三方对判（0013 落盘语句 == `PG_STATUSES` == `ALL_STATUSES`）+ AST 自查零抄词表。11 枚落盘，新件 12 枚用例。定向 **157 passed** → 主树全量 **3986 / 39 · 0 failed**（「施工方预测 3974→3986」逐字命中）。�包 **0013 尚未落线上库**：迁移件在镜像里，现役后端镜像停在 `c053ddd` ⇒ 此刻 `compose run migrate` 根本看不见 0013。正解顺序：全部并完 → 重建镜像到最终 HEAD → apply → 核 `pg_get_constraintdef` 六枚。R187 那四枚绑值一字未动（diff 亲验）。
+
+### 二、�包 R191 埋的三枚引信与契约改口：总控落笔，不是「先并它看它红一遍」
+- 施工方报告里最要紧的一句不是它自己的实现，而是「**R191 埋了三枚等 R190 并树就红一次的钉，判据 5/8 都没算它**」——两处在 R190 写域之外，等于给下一班留了一个必须同窗执行的 trap。
+- 契约（`docs/api/contract-v1.md` +25/−26）：取值域那节换题为「the CHECK that had to widen to admit it」、`pending_approvals_status_check accepts:` 行补 `failed`（顺序与 `PG_STATUSES` 源码顺序逐位同源，否则互判钉红）、「�包 The PG gap」那段改写为「今天写得进去」并保留昨天那半句作历史、「Who rewords this」改成双向引信说明。
+- 钉（`tests/test_r191_hitl_contract_pins.py` +58/−39）：`STATUS_SUBHEAD` 随题改、`GAP_ANCHORS` 拆成 `GAP_SENTENCES`（缺口存在时必须在）+ `CLOSED_ANCHORS`（闭合时必须在）；`test_the_contract_states_the_pg_gap_while_the_gap_exists` 翻成**双向**（闭合后若旧话还躺着就红）；`test_the_gap_between_the_two_documented_domains_is_exactly_failed` 更名 `test_the_two_documented_domains_agree_now_that_the_check_is_wide`；`test_the_check_constraint_and_the_pg_constant_agree` 第二句反转为「生效 CHECK 必须认得 failed」。
+- 另三处只活在散文里的假话（零测试钉着，只有人会读出来）：`app/storage/pending_approvals.py:35` / `:274` / `:420`。
+- 【规矩】引信可以设计成「未来必红一次」，但**引信自己也得写明红之后该怎么改**：本次三处改口全靠施工方主动把它们点名交回，否则下一班只会看见 3 枚无主的红。派工时写「本单会让哪些钉翻面」要求施工方具名，已写进本班四枚新单的判据。
+
+### 三、�包 事故 #38（新类别）：一把只看祖先关系的 worktree 清理
+- 20:34 主树侧清掉 96 棵树 + 96 条分支（备份齐全：`_worktree-cleanup-2026-09-23/` 里 `all-refs.bundle` + 33 枚 tracked diff + 142 枚未跟踪件 + `RESTORE.md`），判据是「分支 tip 是 HEAD 的祖先 ⇒ 已并树」。两笔后果：① **在途树 `be-r190` 被删**（当时 dirty=11、单号未结案），Ohm 当场零字节复原并逐枚核 sha；② **`C:\Users\fengx\PycharmProjects\fe-trunk` 被删**，而主树 `frontend\node_modules` 是指向它的 Junction ⇒ `npm test` / `lint:colors` / `build` 全报「vitest 不是内部或外部命令」。总控已 `npm ci` 重建（220 包 / 8 s）。�包 `frontend/node_modules.stub/` 不是替代品（77 项、有 `vite` 无 `vitest`/`stylelint`）。
+- 【新规矩】工作树 **dirty** 或其单号在 §0 名册未结案 ⇒ 一律不许清理；`merged` 只能由名册状态 + 提交正文里的并树 sha 证明，不许由 `merge-base --is-ancestor` 代替；清理前先冻结 / 关停该线身体。附带损失：**`be-eval95`（跑分树）连同本地分支被删**，剩 `remotes/gitee/codex/be-eval95`（`ede64f2`）与 bundle ⇒ run6 前要重建并 ff（已写进 R196 判据⑤）。
+- 双远端欠账：`f51576f` 之后的 `8eb0945` / `749b754` / `b839617` 尚未 push（H6 那句「本机是唯一副本」对主干仍未结）。
+
+### 四、订正：§85 那句「真零提交只有 8 枚」已过期
+- L3229 写于 09-21 早上；此后 R31(`070f087`)、R32(`8a91f4e`)、R33(`9678d21`)、R43a(`4586bb4`)、R43b=R167(`839c344`)、R46 后端半(`eaa9af8`)、R29 一族（R141/R147/R149/R152）均已并树，`tests/test_r29_thinking_tax.py`、`test_r38_*.py`、`test_r46_activity_signals.py` 都在 HEAD 里。⇒ 计划书真欠的只剩 **R48**（首屏结论卡片，0.75 人日）+ R46 前端半张（＝本班 R195）+ R38 边角。
+- 同族教训：「某号在提交历史里 grep 不到」≠「该单零提交」。派工前查交付物（测试件文件名、路由、列名），不查单号字符串。另：R73 的写域名 `app/agents/supervisor*` 在本仓**不存在**（supervisor 是 `app/agents/orchestrator.py:265` 那个节点），§27.5 那张 R73–R77 表的「写域」列要按现名重核再派。
+
+### 五、本班新派四枚的验收判据（下一班据此验收，别采信自述）
+- **R193 `Newton`**（`be-r193` @ `749b754`，写域只有矩阵两件）：取 `eebaadb` 的 `tests/test_r159_cross_scope_matrix.py`（blob `14296a39d3a63a352e5fe014634d2b1e80941dd2`）与 `tests/test_r163_matrix_teeth.py`（`47fbd709d230ca813e610243cd6b85890ccdf395`）→ 一处种子（`_drive_alert` 往 `_MEM_ALERTS` 的行补 `"department": DEPT_A`）→ `EXPECTED_ATTRIBUTION` 13 格逐格归因到已修件 → 两枚计数钉（13 / 7）改新值但不许消失 → teeth 反证不许削弱。�包 禁 `app/**`、`migrations/**`。验收：分件读数 50 格全绿（或逐格归因到已修单）；书写计划书 §6 C 行由总控落笔。
+- **R194 `Halley`**（`be-r194` @ `749b754`）：① `chat.py:703 _authorize_queue_task` 五枚拒绝出口不落审计（含 `:725` owner 不匹配那枚 403），复用 R179 那条唯一通路、动词分门、响应体字节不许动；② `chat.py:3410 GET /documents` 平铺路由那张「有但不给看」假脸，先取证消费者，零消费者就停手（删接口是业主动作）。
+- **R195 `Mencius`**（`be-r195` @ `749b754`）：出处卡片「采纳 / 项回」接 `POST /api/v1/feedback/document`（`app/api/v1/feedback.py:181`，只发 `filename` + `signal` 两键）。硬门：`npm test` 基线 909/45 只许加、`lint:colors` 恒 148、`build` EXIT=0、无撤回出口就不许自造第三种 signal、问题文本永远不许进请求体。
+- **R196 `Ampere`**（`be-r196` @ `b839617`，**零写盘**）：run6 前置体检五格：预演器四发 / 出处覆盖率枚数（旧账 55/105，若变即头条）/ 用 run2–5 真产物重算窗口预算 / 宿主与线上态只读（`standby-timeout-ac`、盘余、现役镜像 revision、Redis `answer:*`）/ 重建跑分树的命令（只给不执行）。禁开窗、禁 105 题、禁 `pytest`、禁动容器生命周期。
