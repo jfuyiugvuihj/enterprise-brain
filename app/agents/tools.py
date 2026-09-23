@@ -5,6 +5,7 @@ import os
 import json
 import re
 from collections import OrderedDict
+from typing import NamedTuple
 import inspect
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
@@ -151,6 +152,60 @@ _DATASET_GATE = "dataset_access"
 def _authorization_error() -> str:
     return "未找到：当前请求缺少有效授权主体（error_code=authorization_required）"
 
+
+class DatasetsHiddenByScope(NamedTuple):
+    """数据集准入闸的第三种回答：台账里登记着文件，而这一个账号一份都读不到。
+
+    它不是异常，也不带文件名、部门归属、密级这些被挡资源的实际值——只带一个数量与一枚
+    公开码。数量够工具说清「不是没有文件」，码够机器读；再多一个字，就是拿拒绝当借口把
+    别人资源的元数据发出去了。
+    """
+
+    total: int
+    code: str
+
+
+#: 三张脸之一：本轮真的什么都没绑定（台账是空的）。这时候让人去上传是对的。
+_NO_BOUND_DATASET_TEXT = (
+    "本轮没有绑定任何数据文件：数据集台账里一个文件都没有。请先到数据分析面板上传 Excel/CSV 文件。"
+)
+
+#: 三张脸之二：有文件，但按当前权限读不到。措辞的目的很具体——让人去申请权限，而不是让人
+#: 再传一次；「不是文件不存在」那一短句就是撞过这面墙的员工需要听到的那句话。
+#: 终态的「（error_code=码）」由 _denial_text 统一拼，本层不发明第二套格式。
+_HIDDEN_DATASETS_HEAD = (
+    "本轮没有展示任何数据文件：台账里登记着数据文件，但按你当前的权限一份都读不到。"
+    "这是权限判定，不是文件不存在——不需要重新上传，请找管理员为这个账号开通对应数据的读取权限。"
+)
+
+
+def _dataset_gate_terminal_code(codes: list[str]) -> str:
+    """几份文件几种因由混在一起时取哪一枚码：说得出具体原因的优先，兜底码只在别无可选时用。
+
+    与 _row_scope_terminal_code 同一个取法（具体的压过笼统的）。能走到这一步就说明每一份
+    文件都被闸挡了，所以这里没有第三种事实可取；一张空表交不出码，而 _record_denial 对空码
+    本来就不落状态（R64），本层也不替它硬造一枚。
+    """
+    for code in codes:
+        if code != _POLICY_DENIAL_FALLBACK_CODE:
+            return code
+    return codes[0] if codes else ""
+
+
+def _dataset_access_text(config, error: object) -> str:
+    """把闸交回来的终态翻成这一条腿自己的人话：两条腿各有一句 return，漏一条就是第二张假话。
+
+    闸能交出两种东西：一句已经拼好的拒绝原文（选中文件那两条分支），或一张
+    ``DatasetsHiddenByScope``。后者必须在这一层变成话，否则调用方拿回去的是这个
+    NamedTuple 的 repr——那是把「有，但你不能看」说得更难懂的新形态。
+    """
+    if isinstance(error, DatasetsHiddenByScope):
+        return _denial_text(
+            config, tool=_DATASET_GATE, code=error.code, head=_HIDDEN_DATASETS_HEAD
+        )
+    return str(error)
+
+
 def _artifact_principal(config, action: str | None = None) -> object | None:
     try:
         principal = _tool_principal(config)
@@ -193,7 +248,9 @@ def _register_artifact(path: str, artifact_type: str, config):
     return artifact
 
 
-def _authorized_dataset_files(config) -> tuple[list[tuple[str, str]], str | None]:
+def _authorized_dataset_files(
+    config,
+) -> "tuple[list[tuple[str, str]], str | DatasetsHiddenByScope | None]":
     """Resolve registered datasets after applying the same scope policy as API routes."""
     principal = _artifact_principal(config, ACTION_ANALYZE)
     if principal is None:
@@ -235,8 +292,10 @@ def _authorized_dataset_files(config) -> tuple[list[tuple[str, str]], str | None
             return [], f"暂无可访问的数据文件（error_code={decision.reason_code}）"
         return [(record.filename, record.storage_path)], None
 
-    permitted = []
-    for record in dataset_storage.dataset_registry.active_records():
+    records = list(dataset_storage.dataset_registry.active_records())
+    permitted: list[tuple[str, str]] = []
+    hidden_codes: list[str] = []
+    for record in records:
         decision = authorization_decision(
             principal,
             record.resource_scope,
@@ -245,6 +304,13 @@ def _authorized_dataset_files(config) -> tuple[list[tuple[str, str]], str | None
         )
         if decision.allowed:
             permitted.append((record.filename, record.storage_path))
+        else:
+            hidden_codes.append(_policy_denial_code(decision.reason_code))
+    if not permitted and records:
+        # 判定与顺序一个字都没动：还是逐条 authorization_decision，只是把「为什么空」带了出去。
+        # 空表本身说不清自己是「没有文件」还是「有文件但读不到」，逼调用方猜，猜出来的就是
+        # 员工最常撞的那句假话。空台账照旧交空表与 None，那是第一张脸，不是权限事实。
+        return [], DatasetsHiddenByScope(len(records), _dataset_gate_terminal_code(hidden_codes))
     return permitted, None
 
 
@@ -948,10 +1014,11 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
     role = context["role"]
     dept = context["department"]
     files, dataset_error = _authorized_dataset_files(config)
-    if dataset_error:
-        return dataset_error
+    if dataset_error is not None:
+        return _dataset_access_text(config, dataset_error)
     if not files:
-        return "暂无数据文件。请先在数据分析面板上传 Excel/CSV 文件。"
+        # 走到这里才是真的「本轮没有绑定任何数据文件」：台账是空的，一句都不提权限。
+        return _NO_BOUND_DATASET_TEXT
 
     parts = []
     scope_codes: list[str] = []
@@ -1065,10 +1132,12 @@ def _query_data(query: str, config: RunnableConfig) -> str:
     role = context["role"]
     dept = context["department"]
     files, dataset_error = _authorized_dataset_files(config)
-    if dataset_error:
-        return dataset_error
+    if dataset_error is not None:
+        # 与 _analyze_data 同形的第二处（app/agents/tools.py 原 :1069-1071）：两处都得自己
+        # 把 DatasetsHiddenByScope 翻成人话，只改一处就是留下第二张假话给 query_data 这条腿。
+        return _dataset_access_text(config, dataset_error)
     if not files:
-        return "暂无数据文件。请先在数据分析面板上传 Excel/CSV 文件。"
+        return _NO_BOUND_DATASET_TEXT
 
     attempted = 0
     denied_rows: list[str] = []
