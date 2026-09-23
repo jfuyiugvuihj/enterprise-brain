@@ -2617,3 +2617,37 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 
 - 两枚都**禁** `docs/**` / `src/router/**` / `src/lib/**` / 后端一切文件 / `tests/visual/**`；两枚都禁 `npm install`；`lint:colors` 上限 148 不许涨（本单不该新增裸色值）。
 - 四枚后端单 + 两枚前端单**同时只碰六棵工作树**，主树本班不再动产品代码，只做验收与并树：这样总控的复跑窗口不会被自己的施工顶掉。
+## 85. 第四十一班第二格（09-23 10:4x–11:5x，主树 `3d7ced6` → **`839c344`**，基线两值 **3641 passed / 39 skipped**，前端 **724 passed / 34 files**）：先还上一格欠的账（airgap 自伤红）· 四枚并树（R165 / R162 / R169 / R167）· 新派两枚（R170 / R172）· 排队两枚（R171 / R173）
+
+### 一、总控自记一笔漏验账（先说自己的错）
+
+上一格并 R160 时只跑了定向，没跑全量 ⇒ `scripts/audit_r160_department_columns.py:40-42` 三行 OOXML 命名空间 URI 被 R52 空气隔离闸门当成「未防护外联主机」，`tests/test_r52_airgap_readiness.py::test_the_shipped_tree_passes_the_air_gap_gate` 从 `3d7ced6` 起在**每一棵以它为基点的树里都是红的**（Goodall 与 Banach 各自撞见并具名报回）。修法走根因（`1b84fb2`）：
+- `NAMESPACE_LITERAL` 只认两种结构形状（ElementTree Clark 记法与 `xmlns=`），**逐行**剔除后再扫主机名 ⇒ 混写行照样红；不设主机白名单，没有名字可漏。
+- 豁免要付账：新增 `namespace_exemption_leaks()` —— 写了命名空间的文件不许有网络能力（`socket/ssl/http/urllib/requests/httpx/aiohttp/ftplib/smtplib` 或 `subprocess` 里 `curl/wget`），否则闸门 FAIL 并点名文件与行。R160 那枚诊断件只用 `zipfile/xml.etree/sqlite3(ro)/subprocess(docker exec)`，付得起。
+- 判据未放宽：外联主机格仍 FAIL-on-anything-not-internal；TLS 表、telemetry、mirror、registry 四格一字未动。枚数 17 → 22。
+
+### 二、四笔验收结论（全部总控亲自复跑 + 逐文件 numstat，不采信自述）
+
+- **R165 达标并树 `10ce8a5`**（`Goodall`）：`app/common/monitoring.py` +12/−0 挂 `search_shape` 上现有只读出口，新件 19 枚。具名偏离成立（简报点名的 `app/api/v1/health.py` 不存在，出口就是 snapshot）。
+- **R162 达标并树 `151958d`**（`Carson`）：只读诊断件 672 行 + 13 枚，`app/**` 一字未改。三笔旧账被翻：**「24 题」实为 21 枚不同问句**（135 行只覆盖 105 道题，`business_evaluation_30` 是 105 题集严格子集）；空手不集中任何文件、不集中高 chunk_index；**形状双峰**（答得出必共享 3–4 枚，共享 0/1/2 为 0）⇒ 排除 ef/半径类渐变机制。三条候选因逐条：(a) 09-21 重灌本机排除、(b) HNSW 参数网格离线排除、(c) 图内节点解析不成行为最可能变体。🔴 唯一没交死的一格 = 容器那 1008 枚的正向缺口与题向量：**Docker 未起 + 禁打 Ollama**，没拿本机库冒充。随单把 R134 的「按目录开库收口清单」三处 → 四处、`_chroma_sandbox.py` 那段「全仓四处」订正为五处（加长发生在新收口进来时，不是放宽）。
+- **R169 达标并树 `0bfb9ad`**（`Franklin`）：四份前端验收件、产品代码零改动，`npm test` **659 → 724**，主树现取同为 724/34。V1「六条主线可操作」拆成 **40 格**：11 格既存已盖 + 23 格新补 = **34 格有可机读证据**，另 **6 格本机补不了**（真容器 4 / 真浏览器 2）。⇒ 「V1 前端七成八」这句估算从此换成读数。
+- **R167 达标并树 `839c344`**（`Banach`）：**产品代码 +0/−0**，交回 715 行 / 29 枚的账 + 尺子 + 三把反证。结论要顶回来一句：答案腿 prompt 在 `nodes.py`+`orchestrator.py` 写域内**今天已经是固定在前、可变在末尾**，可挪字节 = 0（supervisor 可复用前缀 783 B；「问题之后固定残留」0 B）。M1/M2/M3 三把反证各红 8/2/6 枚后还原归零。判据② 未达成正位移 = 这格里没有可挪的字节，已具名申报三处写域外夹心 ⇒ **R173**。
+
+### 三、新立四枚（R170 / R171 / R172 / R173）
+
+- **R170（已派，`Sartre`/`01a0cc4d-03ee-7291-98a3-9bb1e5e266d5`@be-r170）· 只有一行表头的 CSV 能把数据面板点崩**。链路：`app/tools/excel.py:106` `df.empty ⇒ {"error": "数据为空"}` ⇒ `app/api/v1/data.py:115` 原样塞 `profile` ⇒ `DataPanel.vue:305` `v-if="profile"` 判真、`:310` 读 `profile.column_count || profile.columns.length` ⇒ `undefined.length` 渲染期抛错。判据：① 先交两枚红钉（后端直调 + 前端挂载）附红色原文；② 修根因 —— 「有列无行」交回形状完整的画像（`rows:0` / 真列数 / 逐列信息不许留 undefined / 一枚诚实空表标记），真·零列或解析失败才走既有错误信封与错误码，前后端两处都要改且各有钉；③ 前端只许改画像渲染那一处防御，禁入 `hitl/**`（R168）与 `theme.css`/`lib/**`/`router/**`，`lint:colors` 148 不许涨；④ 两把常驻反证。并树门槛：本树全量与前端 724 一枚不许掉。
+- **R171（排队，等 R168 并树）· 会话失效被踢回登录页却一句话都没有**。`App.vue` 的 `onAuthEvent` 对认不得的事件按失效收尾并清会话，但该支 `loginError.value = event.message` 为 undefined ⇒ 错误条 `v-if` 不亮。R169 只钉了「本地令牌不许留着」那一半。写域 `frontend/src/App.vue` + 一枚新用例。🔴 排队理由：`App.vue` 是 R168 挂新屏的天然落点，两 agent 同文件 = 真写域冲突。
+- **R172（已派，`Averroes`/`01a0cc4d-8cd3-7262-b44e-70c4fa877d5e`@be-r172）· 声明的档位跨不过 HITL 审批门**。R141 结案时总控记的真缺口：带声明发问 → 弹确认卡 → 批准后续跑轮三处出口读 `resumed`，等于「这一轮的档谁定的」在续跑轮答不出。锚点：`chat.py:1127` / `:1156` / `:2347-2348` / `:2569`，四态与 `resumed_lane()` 在 `app/agents/nodes.py`，pending 记录在 `app/storage/pending_approvals.py`。判据：① 端到端三处出口原文红账；② 声明随 pending 存下并读回，**旧记录兼容表必须写死**（不许静默当 `explicit`），三处出口同一份数字、隐私不变；③ 三把常驻反证（摘存腿 / 摘读腿 / 硬编 `explicit`）；④ 既有 `resumed` 散文钉可改但须逐条列改哪句、凭什么。禁入 `orchestrator.py`（`nodes.py` 只许 `resumed_lane` 与四态表那几行）。
+- **R173（排队，`chat.py` 锁在手 ⇒ 排 R172 之后）· 答案腿家族剩下的 298 B 固定残留**：`app/agents/tools.py:1039` `_llm_pandas_code` 固定尾 242 B、`app/api/v1/chat.py:961` `_rewrite_followup` 固定尾句 39 B、`app/api/v1/chat.py:1319` 旧 `/chat` 答案腿 `## 要求` 尾块 149 B。口径逐字沿用 R43a/R167（同角色同档连发两发逐字节比公共前缀），前缀缓存**真机生效**一格仍留跑分窗。
+
+### 四、串行锁现状（下一格照此派，别凭记忆）
+
+`nodes.py`+`orchestrator.py`：R167 交工后**已解开**（零产品改动），下一个持有者是 R172（只 `nodes.py` 局部）；`chat.py`：**R172 持有**（R173 因此在排队）；`app/tools/excel.py` + `app/api/v1/data.py` + `DataPanel.vue`：R170 持有；`ApprovalPanel.vue` + `components/hitl/**`：R168 持有；`App.vue`：等 R168 结案后由 R171 接；`retriever.py` / `retrieval_pipeline.py` / 评测集：仍冻结（评测集要改属业主单独批）。
+
+### 五、在途与并发数
+
+本格并发 **四枚**：`Herschel`@be-r163=R163（在途）· `Lorentz`@be-r168=R168（在途）· `Sartre`@be-r170=R170（新派）· `Averroes`@be-r172=R172（新派）。四棵写域两两零交集，派工前逐棵实取 `dirty=0`。全部「一 block 一次投递、不带 `model`、零补投」。
+
+### 六、待业主（本班不动、下班也别代做）
+
+① **起 Docker Desktop**（再崩先清 `engine.sock.stale`）——它一并卡住 R161 供数 / pgvector 双写窗 / run6 / 阶段 A 真机复验 / R162 那 1008 枚那格；② 心跳 automation-2 的 `target_thread_id` 还指向死线程；③ 主树 8 项未跟踪垃圾待删；④ R61 甲/乙 可裁；⑤ 改评测集需单独批。
