@@ -1249,9 +1249,15 @@ function renderMd(raw) {
                      sourceFaceOf / cacheFaceOf / queueFaceOf 各调两次（v-if 与 :face）是有意的：
                      数据住在 shallowRef 的消息对象上，包一层 computed 会缓存成旧值。 -->
                 <div v-if="msg.role === 'assistant'" class="face-stack" data-testid="r150-faces">
+                  <!-- R197 · 出处卡按【哪一轮】挂 key，不按【下标】：R195 那两枚一次性动作的态是按
+                       filename 存在卡片实例里的，而外层消息循环是按位次挂 key 的，不补这枚按轮 key
+                       的话切会话时实例被复用，上一轮那把「已记下」的锁会跟着文件名跟到新一轮去。
+                       形状照下面的 CacheFace，键走既有 turnKey()；判据钉在 components/__tests__/
+                       r197-turn-key-inheritance.test.js（乙段直接从本行源码抠 key）。 -->
                   <SourceCard
                     v-if="sourceFaceOf(msg, i)"
                     :face="sourceFaceOf(msg, i)"
+                    :key="`source-${turnKey(msg, i)}`"
                     @preview="openSourcePreview"
                   />
                   <!-- 「实时算」也是必须说出口的一态（不是留白），但它只对当场看到的轮次说。 -->
