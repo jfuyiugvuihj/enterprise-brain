@@ -242,6 +242,18 @@ def build_health_snapshot(performance: dict | None = None) -> dict:
         "storage": storage,
         "embedding": _embedding_state(),
         "hot_index": _hot_index_state(),
+        # R165 判据①（跟进单 §84 五）：R158 那枚检索形状读数（app/rag/retriever.py 的
+        # search_shape_diagnostics()：四枚结局码 + 三枚答复方 + 逐问累计）交出来时没有生产
+        # 消费者，这笔账写在该枚提交信息里。本节把它接上这张已有的只读出口。
+        # 走 _subsystem_state 而不是再写一枚包装：那枚函数是本页面所有边界共用的同一个入口
+        # （见下面的 model_budget），另开一套聚合口径就是第二份会过期的数字，判据明令不许。
+        # 键名逐字取自 retriever 的返回值（last / totals / answered_by），出口侧不翻译、不改名、
+        # 不重排——运维在响应体里读到的，与记账那一侧给出的，必须是同一张表。
+        # 与上面 embedding / hot_index 同两条纪律：只读进程内状态，不开 socket、不问向量库；
+        # 刻意不并进 problems——"索引里查无此物"是客户问对了而库里真没有，不是当下故障。
+        "search_shape": _subsystem_state(
+            "app.rag.retriever", "search_shape_diagnostics"
+        ),
         # R99 判据 4 的第二半（跟进单 §42.3）：预算边界自己的读数——夹取计数、每档速率的出处、
         # 以及这次到底有没有要求关掉思考。它走 _subsystem_state，与存储子系统同一个入口，
         # 所以健康页和这条边界之间不存在第二份会过期的数字；探针抛异常也只降级成 unavailable，
