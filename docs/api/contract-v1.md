@@ -464,6 +464,138 @@ metadata and retains the existing filename routes for frontend compatibility; it
 not a substitute for the planned persistent Dataset/DatasetVersion schema, immutable
 physical storage, version history, schema snapshots, period metadata, or retention.
 
+## Dataset Row-Level Visibility (2026-09-23, R180 / R186)
+
+Two dataset routes report a **row-level** verdict next to the file-level grant they already
+honoured, and they report it inside the *success* body - never folded back into the file-level
+answer, never degraded into a 404 or an empty list. Being allowed to open a dataset is not the
+same as being allowed to read every row of it; being refused some datasets is not the same as
+there being none. Both fields are additive: a client that ignores them keeps working, and a
+client that reads them must not restate them as absence. That restatement ("there are none") is
+exactly the class of defect R163 catalogued as class B, and `frontend/src/components/DataPanel.vue`
+is the consumer that R186 made stop doing it.
+
+Machine-checked against the construction sites: `app/api/v1/data.py::_row_scope_status`
+(`app/api/v1/data.py:132-169`, attached at `app/api/v1/data.py:319`) and
+`app/api/v1/data.py::list_data_files` (`app/api/v1/data.py:240-249`). The pins live in
+`tests/test_r186_row_scope_contract.py`; they compare key sets, code value domains and the
+sentence a route emits, so prose and code cannot drift apart silently.
+
+### `GET /api/v1/data-files/{filename}/preview` -> `preview.row_scope`
+
+Requires `resource:view` like every other preview path; a file-level refusal is still a `403`
+with the policy reason code and never reaches this layer. This field is the row-level layer, and
+every successful response of this route carries it - including the ordinary answer, where the two
+counts are equal or only part of the frame is visible and `code` stays the empty string:
+
+```json
+{
+  "row_scope": {
+    "code": "",
+    "reason_code": "department_scope",
+    "rows_in": 120,
+    "rows_visible": 40
+  }
+}
+```
+
+| key | type | meaning |
+| --- | --- | --- |
+| `code` | string | the row layer's own verdict; see the value domain below |
+| `reason_code` | string | `app/common/rbac.py` row-scope reason passed through verbatim - **not** a contract enum, consumers must branch on `code` |
+| `rows_in` | int | rows in the frame before row-level filtering |
+| `rows_visible` | int | rows the caller may see, i.e. the rows the rest of this body describes |
+| `message` | string | optional; present only when the row layer has something to say (see below) |
+
+`row_scope.code` value domain: row_scope_denied | no_visible_rows | ""
+
+* `row_scope_denied` - the frame had rows and the caller may see none of them, and rbac can show
+  the department dimension really hid them. The rows exist; they are outside this account's
+  visibility. This is the only member of the domain that carries a `message`.
+* `no_visible_rows` - the frame came back empty and the row layer **deliberately declines to say
+  why**. The department dimension had not hidden a row, so the clearing came from some other,
+  unratified dimension (classification is H13, owner-open). Guessing a cause here would present an
+  unratified dimension as a permission call, which R62/R64 ruled out.
+* `""` - nothing for this layer to report: a normal answer (some or all rows visible), or a table
+  that genuinely has no rows. A genuinely empty table is *not* a permission event; it stays with
+  the R170 `profile.empty` marker, and consumers must not dress it in visibility wording.
+
+`message` is attached under the same condition as `row_scope_denied`, so the two cannot disagree.
+The sentence is the tool leg's own - `app/agents/tools.py::_row_scope_reason`, one translation
+source for both the streaming tool answers and this route - and it is composed from rbac counters
+only. Example, with the shape the route actually returns:
+
+```json
+{
+  "row_scope": {
+    "code": "row_scope_denied",
+    "reason_code": "department_scope",
+    "rows_in": 3,
+    "rows_visible": 0,
+    "message": "本表 3 行属于其他部门，都不在当前账号（部门「财务」）的可见范围内"
+  }
+}
+```
+
+When `code` is `no_visible_rows` the `message` key is **absent**, not empty. Consumers must then
+either stay silent or state only facts this body already carries (`rows_in`, `rows_visible`); they
+must not reuse the `row_scope_denied` sentence, and must not introduce permission, visibility or
+department wording of their own.
+
+`rows_in > rows_visible > 0` keeps `code: ""` - it is a normal answer, not a refusal - but the two
+counts differ, and a consumer that prints `rows_visible` as the size of the table is lying about
+the table. Say both numbers.
+
+A refusal at this layer is audited (`record_audit(... "denied" ...)` with subject, dataset id and
+verdict only) while the body stays free of row contents, column names, and any other account's
+department.
+
+### `GET /api/v1/data-files` -> `restricted`
+
+The catalogue appends one key when registered active datasets exist that this principal was
+refused at the file level. It is **absent entirely** when nothing was refused, so "no key" means
+"nothing is being hidden from you", not "the check failed":
+
+```json
+{
+  "files": [],
+  "restricted": {
+    "count": 2,
+    "reason_codes": ["department_scope_denied"],
+    "message": "有 2 个数据文件存在，但不在当前账号的可见范围内；如需访问，请联系管理员核对你的部门归属与文件的部门标注。"
+  }
+}
+```
+
+| key | type | meaning |
+| --- | --- | --- |
+| `count` | int | how many registered, present datasets were refused for this caller |
+| `reason_codes` | string[] | distinct policy reason codes, in first-refusal order - **not** a contract enum |
+| `message` | string | the ready-made sentence for this case; present whenever `restricted` is |
+
+`restricted.message` template (the route substitutes the count; the wording is the contract):
+
+`有 {count} 个数据文件存在，但不在当前账号的可见范围内；如需访问，请联系管理员核对你的部门归属与文件的部门标注。`
+
+**Why nothing is named.** A refused dataset contributes no filename, no dataset id and no
+classification to this response - only a tally and the reason codes. Naming a resource an account
+has no scope for is itself a disclosure: it would hand a caller a way to enumerate other
+departments' files through an endpoint that is only supposed to say "some are not yours", while
+`GET /api/v1/data-files/{filename}/preview` still answers those very names with `403`/`404`. Every
+other dataset route already hides behind those two codes, so the catalogue keeps the same boundary
+and speaks the *quantity* instead. Each refusal is separately audited with subject, dataset id and
+verdict.
+
+Three cases the catalogue must not collapse into one another, and the consumer's duty:
+
+* a file that is not in the registry at all is not part of the managed catalogue: the policy was
+  never consulted, so it is neither listed nor counted in `restricted`;
+* a file that is registered, present and refused is counted in `restricted` and is *not* "missing";
+* `restricted` absent plus an empty `files` is the only shape that entitles a screen to say
+  「暂无数据文件」. A screen that renders an emptiness sentence while `restricted.count` is
+  non-zero contradicts itself in one breath, which R186 pins in
+  `frontend/src/components/__tests__/r186-row-scope-voices.test.js`.
+
 ## Frontend Collaboration Boundary
 
 The backend does not modify `frontend/`. The frontend agent consumes this contract,

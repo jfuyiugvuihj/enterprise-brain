@@ -6,6 +6,42 @@ import DocumentPreviewModal from './DocumentPreviewModal.vue'
 // 产物列表（W2-2 挂载）与两步删除状态机共用一份实现：两处删除入口的确认行为不许各写一遍
 import ArtifactList, { advanceDelete, deleteButtonLabel, deleteErrorView, isPendingDelete } from './ArtifactList.vue'
 
+/**
+ * R186 · 行级判定的三张脸。后端（R180）已经把结论写进两枚成功体字段 ——
+ * preview.row_scope（app/api/v1/data.py:132-169 构形、:319 挂上）与 GET /data-files 的
+ * restricted（app/api/v1/data.py:240-249）。这一枚面板只做一件事：把后端已经做出的判定
+ * 说出去，一个字都不替它猜。
+ *
+ * 三张脸必须互不相同，且都不是「不存在」（R163 归的 B 类病就死在最后半句上）：
+ *   ① 真没有      code === '' 且 rows_in === 0 —— 归 R170 那套 empty 画像口径，这里一个字
+ *                 都不插，插了就是把一张真空表说成权限问题；
+ *   ② 有但看不见   code === 'row_scope_denied' —— 用后端 message 原句，键缺席时才用兜底句，
+ *                 两句都说得出「行存在」这件事；
+ *   ②b 一行未剩   code === 'no_visible_rows' —— 后端故意不给 message（部门维度一行没藏过时，
+ *                 猜因由就是把没裁过的维度说成权限，R64/R62 裁过）。这一支不许出现「权限 /
+ *                 可见范围 / 部门」任何一枚词，也不许复用 ② 的那句话；
+ *   ③ 只裁一部分   rows_in > rows_visible > 0 —— 正常答案加一行交代：明说全表 N 行、可见 M 行，
+ *                 不许让 M 冒充这张表的总行数。
+ */
+const ROW_SCOPE_DENIED = 'row_scope_denied'
+const NO_VISIBLE_ROWS = 'no_visible_rows'
+/**
+ * 兜底句只在后端没挂 message 键时开口（契约允许缺席：data.py:166-167 是 if message 才写）。
+ * 它必须与后端原句同义：说得出「行存在」，并把下一步指回部门归属核对 —— 因为 code 本身就
+ * 是后端对「部门维度真的藏了行」的认定（app/agents/tools.py:955-970 那一份唯一判据源）。
+ */
+const ROW_SCOPE_DENIED_FALLBACK =
+  '这份数据文件里确实有数据行，只是不在当前账号的行级可见范围内，界面上一行都没有显示；如需查看，请联系管理员核对你的部门归属与文件的部门标注。'
+/** 同上：restricted.message 按契约恒在（data.py:244-247），这一句只在缺席时兜底，且不点名文件。 */
+const RESTRICTED_FILES_FALLBACK =
+  '有数据文件存在，但不在当前账号的可见范围内，所以没有出现在上面的列表里；如需访问，请联系管理员核对你的部门归属与文件的部门标注。'
+
+/** 计数只认非负整数：后端给 int，界面上不许出现 NaN、负数或小数冒充行数。 */
+function rowCount(value) {
+  const count = Number(value)
+  return Number.isFinite(count) && count > 0 ? Math.trunc(count) : 0
+}
+
 const profile = ref(null)
 const dataFile = ref('')
 const tableColumns = ref([])
@@ -19,6 +55,9 @@ const uploading = ref(false)
 const dataFiles = ref([])
 const filesLoading = ref(false)
 const filesError = ref('')
+// 行级判定的两份原始载荷：预览那一屏的 row_scope 与列表那一屏的 restricted，各自随请求重置。
+const rowScope = ref(null)
+const restrictedFiles = ref(null)
 // 无权限 / 坏了 / 空列表是三张脸（R1c），文件列表与预览各自判一次。
 const filesDenied = ref(false)
 const selectingFile = ref(false)
@@ -65,14 +104,18 @@ function applyDataPreview(data) {
   tableColumns.value = data.columns || []
   tableRows.value = data.rows || []
   tableTruncated.value = Boolean(data.truncated)
+  rowScope.value = data.row_scope || null
 }
 
 async function loadDataFiles(preferredFilename = '') {
   filesLoading.value = true
   filesError.value = ''
+  // 上一轮那句「有 N 个看不见」不属于这一轮：重载先清，失败也清，不许留成陈话。
+  restrictedFiles.value = null
   try {
     const res = await http.get('/data-files', { params: { _ts: Date.now() } })
     dataFiles.value = res.data.files || []
+    restrictedFiles.value = res.data.restricted || null
     const currentExists = dataFiles.value.some(file => file.filename === dataFile.value)
     const preferredExists = dataFiles.value.some(file => file.filename === preferredFilename)
     const nextFilename = preferredExists
@@ -84,6 +127,7 @@ async function loadDataFiles(preferredFilename = '') {
       await selectDataFile(nextFilename)
     }
   } catch (err) {
+        restrictedFiles.value = null
         filesDenied.value = isPermissionDenied(err)
         filesError.value = filesDenied.value
           ? '当前账号没有查看数据文件列表的权限，请联系管理员开通。'
@@ -98,6 +142,8 @@ async function selectDataFile(filename) {
   selectingFile.value = true
   previewError.value = ''
   previewDenied.value = false
+  // 换文件与请求失败都不许留着上一个文件的行级结论：那一屏的因由改由 previewError 说。
+  rowScope.value = null
   try {
     const res = await http.get(
       `/data-files/${encodeURIComponent(filename)}/preview`,
@@ -156,9 +202,95 @@ function clearTableState() {
   tableColumns.value = []
   tableRows.value = []
   tableTruncated.value = false
+  rowScope.value = null
   dataFile.value = ''
   pendingFileDelete.value = ''
 }
+
+/**
+ * 预览那一屏的行级状态。判定形状在这里定，句子一律读后端那一层给的 code / message / 计数。
+ */
+const previewScope = computed(() => {
+  const scope = rowScope.value
+  if (!scope) return null
+  const rowsIn = rowCount(scope.rows_in)
+  const rowsVisible = rowCount(scope.rows_visible)
+  const code = String(scope.code || '')
+  if (code === ROW_SCOPE_DENIED) {
+    return {
+      face: 'denied',
+      rowsIn,
+      rowsVisible,
+      message: String(scope.message || '') || ROW_SCOPE_DENIED_FALLBACK,
+    }
+  }
+  if (code === NO_VISIBLE_ROWS && rowsIn > 0) {
+    // 只把后端已经报过的事实（rows_in 是它的计数）复述一遍，不补一个字的因由。
+    return {
+      face: 'no-visible',
+      rowsIn,
+      rowsVisible,
+      message: `这份数据文件里共有 ${rowsIn} 行，界面上一行都没有显示出来。显示为空不代表文件里没有数据行。`,
+    }
+  }
+  if (rowsIn > 0 && rowsVisible > 0 && rowsVisible < rowsIn) {
+    return { face: 'partial', rowsIn, rowsVisible, message: '' }
+  }
+  // 判据 1①：真空表（code==='' 且 rows_in===0）与全部可见都落在这里 —— 这一格不归本层说。
+  return null
+})
+
+/**
+ * 「一行都没显示出来」的两张脸（② / ②b）。retryable 一律不给：行级可见范围是账号的确定
+ * 属性，同一个请求重发筛出来的还是那批行 —— 与 lib/errcodes.js 给这两枚码判 retryable:false
+ * 的三条依据同源，这里不另立口径。两句标题也各自分开，且都不说「不存在」。
+ */
+const previewScopeNotice = computed(() => {
+  const scope = previewScope.value
+  if (!scope) return null
+  if (scope.face === 'denied') {
+    return { title: '这份数据文件有行，只是没有显示给你', description: scope.message }
+  }
+  if (scope.face === 'no-visible') {
+    return { title: '这份数据文件没有显示任何一行', description: scope.message }
+  }
+  return null
+})
+
+/**
+ * 画像卡统计行后面那半句：把「这张表多大」和「你看到多少」分成两个数说（判据 1③）。
+ * 没有 row_scope 的载荷（上传回包、旧响应）逐字回到 R170 的口径，一个字节都不改。
+ */
+const profileStatsSuffix = computed(() => {
+  const scope = previewScope.value
+  if (!scope) return profile.value?.empty ? ' · 空表，尚无数据行' : ''
+  if (scope.face === 'partial') {
+    return ` · 全表 ${scope.rowsIn} 行中，当前账号可见的 ${scope.rowsVisible} 行`
+  }
+  return ' · 当前显示 0 行'
+})
+
+/**
+ * 列表那一屏的 restricted：说「有 N 个存在但你看不见」，不点名文件 —— 点名一件无权访问的
+ * 资源本身就是泄露，后端那份 message 里也没有名字，界面这边一枚都不补。
+ */
+const restrictedNotice = computed(() => {
+  const restricted = restrictedFiles.value
+  const count = rowCount(restricted?.count)
+  if (!count) return null
+  return {
+    count,
+    title: `还有 ${count} 个数据文件没有列在这里`,
+    description: String(restricted?.message || '') || RESTRICTED_FILES_FALLBACK,
+  }
+})
+
+/**
+ * 预览弹窗的 error 通道：那枚组件不在本单写域里，改不了它自己的形状，但它空着那一支内置
+ * 的话是「暂无数据」—— 正是要消灭的那句假话。所以「一行都没显示」的两张脸借这枚已有的
+ * 字符串 prop 说真句子；真失败（previewError）优先，弹窗不许把「坏了」说成「被拒绝」。
+ */
+const previewModalError = computed(() => previewError.value || previewScopeNotice.value?.description || '')
 
 const fileDeleteView = computed(() => deleteErrorView({
   denied: fileDeleteDenied.value,
@@ -263,12 +395,17 @@ onMounted(loadDataFiles)
         dense
         @retry="loadDataFiles"
       />
-      <UiEmptyState
-        v-else-if="!dataFiles.length"
-        title="暂无数据文件"
-        description="上传 Excel 或 CSV 开始分析。"
-        dense
-      />
+      <template v-else-if="!dataFiles.length">
+        <!-- 「一枚都没有」与「有 N 枚被权限藏起来」是两张脸（判据 1④）：同一屏既说「暂无数据
+             文件」又说「还有 N 个看不见」是一句话自相矛盾。所以空态只在 restricted 缺席时才开口，
+             被藏起来的那些由下面那一块单独说，两块不共用一句文案。 -->
+        <UiEmptyState
+          v-if="!restrictedNotice"
+          title="暂无数据文件"
+          description="上传 Excel 或 CSV 开始分析。"
+          dense
+        />
+      </template>
 
       <div v-else class="data-file-list">
         <button
@@ -285,6 +422,18 @@ onMounted(loadDataFiles)
           </span>
         </button>
       </div>
+
+      <!-- R186：后端在成功体里已经说了「有 N 个数据文件存在，但不在当前账号的可见范围内」
+           （app/api/v1/data.py:240-249），这一屏此前一个字都不提，员工看到的仍是「没有文件」。
+           原句照搬，不点名文件；列表有货时同样要说，所以它站在那条三张脸链之外单独一枚。 -->
+      <UiErrorState
+        v-if="restrictedNotice"
+        :title="restrictedNotice.title"
+        :description="restrictedNotice.description"
+        :retryable="false"
+        data-testid="data-files-restricted"
+        dense
+      />
     </section>
 
     <!-- 分析产物（W2-2）：接 GET /artifacts 分页列表，挂在「数据文件」区之后 -->
@@ -301,6 +450,17 @@ onMounted(loadDataFiles)
       @retry="selectDataFile(dataFile)"
     />
 
+    <!-- R186 判据 1②/1②b：文件打开了、行级却一行都没显示 —— 这既不是「空表」也不是「没这个
+         文件」，是两张互不相同的脸，句子各归后端的那个 code，这里不合并、不串味。 -->
+    <UiErrorState
+      v-if="previewScopeNotice"
+      :title="previewScopeNotice.title"
+      :description="previewScopeNotice.description"
+      :retryable="false"
+      :data-testid="`row-scope-${previewScope.face}`"
+      dense
+    />
+
     <!-- 数据画像 -->
     <!-- R170：这张卡只认结构完整的画像。后端把「什么都没解析出来」装进信封回过来时 profile.error 在，
          卡就不许出现 —— 把一条错误渲染成一次统计，正是 R169 扫出来的崩溃现场。 -->
@@ -309,7 +469,7 @@ onMounted(loadDataFiles)
         <div class="profile-heading">
           <span class="profile-title">📋 数据画像</span>
           <span class="profile-stats">
-            {{ profile.rows }} 行 × {{ profile.column_count || profile.columns?.length || 0 }} 列<template v-if="profile.empty"> · 空表，尚无数据行</template>
+            {{ profile.rows }} 行 × {{ profile.column_count || profile.columns?.length || 0 }} 列{{ profileStatsSuffix }}
           </span>
         </div>
         <div class="data-file-actions">
@@ -381,8 +541,8 @@ onMounted(loadDataFiles)
       :columns="tableColumns"
       :rows="tableRows"
       :loading="previewLoading"
-      :error="previewError"
       :truncated="tableTruncated"
+      :error="previewModalError"
       @close="closeDataPreview"
       @download="downloadDataFile"
     />
