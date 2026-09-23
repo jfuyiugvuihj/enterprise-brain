@@ -2651,3 +2651,33 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 ### 六、待业主（本班不动、下班也别代做）
 
 ① **起 Docker Desktop**（再崩先清 `engine.sock.stale`）——它一并卡住 R161 供数 / pgvector 双写窗 / run6 / 阶段 A 真机复验 / R162 那 1008 枚那格；② 心跳 automation-2 的 `target_thread_id` 还指向死线程；③ 主树 8 项未跟踪垃圾待删；④ R61 甲/乙 可裁；⑤ 改评测集需单独批。
+
+
+## 86. 第四十一班第三格（09-23 11:2x–12:1x，主树 `839c344` → **`f515494`**，基线两值 **3641 passed / 39 skipped**，前端 **761 passed / 36 files**）：🔴 R163 把「阶段 C 越权 0 条」这句验收话打成假话（实测 3 条真越权）· R168 并树 · 新派四枚（R174 / R176 / R177 / R178）· 另立四枚排队（R175 / R179 / R180 与既排的 R171 / R173）
+
+### 一、R163 交工与处置（不并树，但活已保住）
+
+起点 21 红 → **13 failed / 40 passed**（矩阵 50 格 → 51 格，只补一枚正向对照，逐 id 与起点工件比对：零删格、13 面 / 7 身份不变）+ 新件 `tests/test_r163_matrix_teeth.py` 合跑 13 failed / 78 passed。死钉改法（标记表整块按 AST 行区间剥离 + 三道同源闸：族不许缺、总数不许缩、审计口径全收）与**磁盘往返实测**（真写原件塞 `pytest.skip(` → 红 → 撤桩 → sha 与开工一致）已钉进件内。归因防洗白：`EXPECTED_ATTRIBUTION` 快照钉死「归产品因的 13 格今天必须真红」「判桩错的 7 格必须真绿」。
+
+🔴 **三格 A 类 = 真拿到别人的数据正文**（进程内 TestClient，路由实名已核）：
+1. `dataset_route.preview_must_not_leak_foreign_rows` ⇒ `app/api/v1/data.py:203-218` + `:104-117` 文件级授权通过但**无行级过滤**（对照 `app/agents/tools.py:964`、`app/common/rbac.py:127-199` 是有的）。
+2. `alert_route.foreign_manager_reads_scoped_alert` ⇒ `app/api/v1/alerts.py:76-84`、`:291`、`:397-405`，跨部门 manager 读到 `r159-own` 部门告警正文。
+3. `intelligence_route.peer_cannot_see_anothers_triples` ⇒ `app/knowledge_graph/service.py:86,113-118,442-453` + `app/common/policy.py:68-71,127-213`，`visibility=private` **写进库而读路径一个字不查**。
+另有 B 类 4 格（把「有但不能看」说成「不存在」等假话）与 C 类 6 格（拒绝不落审计）。**验收后果写死**：计划书与看板里「阶段 C 越权命中 0 条」这句**不成立**，在四枚修复件并树前不得再抄。
+
+处置：本件按其判据③ **不并树**（红件进主树会钉死基线，重演 §85 一 那笔 airgap 自伤）；两枚工件由总控在 `codex/be-r163` 上做 **WIP 提交 `eebaadb`** 保活（分支与主仓共享 .git ⇒ 机器一崩不丢活），修复件并树后再把矩阵接绿并树。
+
+### 二、新派四枚（一 block 一枚 `spawn_agent`，全部不带 `model`，零补投）
+
+- **R174** `Meitner`/`01a0cc59-0d89-…`@be-r174（基点 `f515494`）· 深链与屏名三格：① `/chat?session=&request=` 冷启动要真落到那一轮（`ChatPanel.vue` 今天只读 `?lane=`），落不到要分得清「这一轮不存在 / 不是你的 / 后端读不到 / 参数不对」四张脸，不许静默落到最新一轮；② 「可回看」改由**后端有没有这一条**决定，不许只判本机 localStorage；③ 屏名按总控裁定改「审批与待办」（`meta.title` 现名「报销自查」是业务专属词，客户一装机就误以为只管报销），同步 `r169/r136` 那几处与 `insight-alerts.test.js`。三组硬门：`npm test` 761 不许掉、`lint:colors` 148 不许涨、`build` EXIT=0；确认后端返回体没有轮号↔正文对应就停下立新单，不许前端猜。
+- **R176** `Galileo`/`01a0cc5a-f0d2-…`@be-r176 · 告警族三格（A 类跨部门读 + C 类读/写拒绝无审计）：归属过滤要与资源级授权分层，`administrator` 豁免不许改坏也不许放大；审计走既有通路且 payload 白名单（只主体 / 资源标识 / 判定结果）。写域 `app/api/v1/alerts.py` + 告警存取所在 storage/observability 层 + 新件。
+- **R177** `Russell`/`01a0cc5b-7f37-…`@be-r177 · 知识图谱 private 那一格：`visibility` 要么真接进读路径（甲），要么论证它不参与可见性并改掉「看着像权限字段」的语义（乙），🔴 不许留「写了不管用」这一格；要交 private 存量条数与修后可见面的读数，量不到就具名申报，不许拿本机库冒充容器库。写域 `app/knowledge_graph/**` + `app/common/policy.py` + `app/common/rbac.py`（这两枚本件独占）+ `intelligence.py` 那一格读路径。
+- **R178** `Aristotle`/`01a0cc5b-f8e3-…`@be-r178 · 检索过滤与工具两格：`filters.py:102-106` 拒绝前补审计（不落别人正文）；`tools.py:237-248` + `:952-954` + `:1069-1071` 把「没有数据文件」拆成三张脸（本轮没绑定 / 有但权限一份都不给 / 可见但没那一列），🔴 同形两处只改一处就是留第二张假话。写域 `app/rag/filters.py` + `app/agents/tools.py` + 新件。
+
+### 三、排队四枚（写域被占，解锁即派）
+
+**R171**（`App.vue` 会话失效被踢回登录页零文案）· **R173**（答案腿剩余 298 B 固定残留，写域 `chat.py` + `agents/tools.py`）· **R175**（批准失败那一支后端可能已把账本行写成终态，`_decide_pending_approval` 排在 `request.failed` 之前 —— R168 交工第 ⑤ 格）· **R179**（`chat.py` 族四格：`legacy_chat` 无部门拒绝无审计 + 「暂无相关文档」写死 `chat.py:1313-1317` + `session_route` 两格 404 无审计 `chat.py:583-587` + `document_route` 空列表假话 `chat.py:3172-3174`）· **R180**（`data.py` 族两格：A 类 preview 无行级过滤 + B 类 `nodept_catalog_answers_empty_list` 静默 `continue`）。前三枚等 `chat.py`（R172 在写）；R180 等 `data.py`（R170 在写）。
+
+### 四、并发与锁
+
+本格并发 **六枚**（R170 / R172 / R174 / R176 / R177 / R178），六棵写域两两零交集（`excel+data+DataPanel` · `chat+pending_approvals+nodes局部` · `ChatPanel+router+sessions.js` · `alerts+observability` · `knowledge_graph+policy+rbac` · `filters+tools`），派工前逐棵实取 `dirty=0`。`observability` 那层同时被 R176 与 R178 的「走既有通路」引用 —— 已把**改**的权力只给 R176，R178 只 import。
