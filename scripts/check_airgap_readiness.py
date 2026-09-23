@@ -27,6 +27,20 @@ INTERNAL_HOSTS = {"127.0.0.1", "localhost", "0.0.0.0", "::1", "host.docker.inter
                  "ollama", "redis", "postgres", "backend", "frontend", "migrate",
                  "worker", "scheduler", "enterprise-brain-ollama-1"}
 
+# An XML namespace is an identifier that merely happens to be spelled as a URL. The two
+# forms below are the only shapes one takes in shipped source: ElementTree's Clark notation
+# and an xmlns declaration. Neither can open a socket, so counting them as an exit would only
+# teach people to write "http" + "/ns/..." to get a green gate. The exemption is structural --
+# there is no host allowlist that a name can be lost to -- and it is paid for by
+# namespace_exemption_leaks below: a file that spells namespaces must not be able to talk.
+NAMESPACE_LITERAL = re.compile(r'"\{https?://[^"]*\}"|xmlns(?::[\w.\-]+)?\s*=\s*"https?://[^"]*"')
+NETWORK_CLIENT_IMPORTS = (
+    (r"^\s*(?:import|from)\s+(?:socket|ssl|http(?:\.client)?|urllib|requests|httpx|aiohttp|ftplib|smtplib)\b",
+     "imports a network client"),
+    (r"\bsubprocess\.(?:run|Popen|call|check_call|check_output)\b[^#]*\b(?:curl|wget)\b",
+     "shells out to curl/wget"),
+)
+
 TLS_BYPASS = [
     (r"verify\s*=\s*False", "requests/httpx: certificate checking switched off"),
     (r"CERT_NONE", "ssl: certificate checking switched off"),
@@ -74,13 +88,32 @@ def tls_bypass_hits(text: str) -> list[str]:
 
 
 def external_host_hits(text: str) -> list[str]:
-    """Outbound hosts that are neither loopback nor a Compose service name."""
+    """Outbound hosts that are neither loopback nor a Compose service name.
+
+    Namespace literals are dropped line by line first -- an identifier written as a URL is not
+    an exit -- but removal is per line, so a request URL sharing the line still counts.
+    """
     found: list[str] = []
     for line_number, line in enumerate(text.splitlines(), start=1):
-        for host in re.findall(r"https?://([A-Za-z0-9.\-]+)", line):
+        for host in re.findall(r"https?://([A-Za-z0-9.\-]+)", NAMESPACE_LITERAL.sub("", line)):
             if host not in INTERNAL_HOSTS and "." in host and not host.endswith(".test"):
                 found.append("line " + str(line_number) + ": " + host)
     return found
+
+
+def namespace_exemption_leaks(text: str) -> list[str]:
+    """Lines that void the namespace exemption: namespaces plus a way to reach the network.
+
+    Without this check the exemption is a hole -- one import line and a namespace literal would
+    hide a real CDN URL. It returns the offending lines so the gate names the file and the
+    import rather than just going red.
+    """
+    if not NAMESPACE_LITERAL.search(text):
+        return []
+    return ["line " + str(line_number) + ": " + why
+            for line_number, line in enumerate(text.splitlines(), start=1)
+            for pattern, why in NETWORK_CLIENT_IMPORTS
+            if re.search(pattern, line)]
 
 
 def report() -> tuple[list[tuple[str, str, str]], list[str]]:
@@ -113,13 +146,18 @@ def report() -> tuple[list[tuple[str, str, str]], list[str]]:
     # --- runtime exits to the public internet ---------------------------------------
     external: list[str] = []
     for path in source_files("app", "scripts", "deploy"):
-        for hit in external_host_hits(read(path)):
+        text = read(path)
+        for hit in external_host_hits(text):
             external.append(str(path.relative_to(ROOT)) + " " + hit)
+        for leak in namespace_exemption_leaks(text):
+            external.append(str(path.relative_to(ROOT)) + " " + leak
+                            + " -> namespace exemption voided by a network client")
     if external:
         add("FAIL", "no unguarded external host in shipped code", "; ".join(external[:6]))
     else:
         add("PASS", "no unguarded external host in shipped code",
-            "app/** literals are localhost and Compose service names only")
+            "app/**, scripts/** and deploy/** literals are localhost, Compose service "
+            "names and XML namespace identifiers only")
 
     # --- tracing must be off unless the operator says otherwise ---------------------
     tracing = ROOT / "app" / "common" / "tracing.py"
