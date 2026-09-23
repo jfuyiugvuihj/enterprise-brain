@@ -112,6 +112,17 @@ export function loadSessions() {
   }
 }
 
+/** 本机 store 里这一条会话的消息正文；没有这一条就返回 null（不新建，判据④那条老规矩）。 */
+export function localMessagesOf(id) {
+  const sessionId = textOf(id)
+  if (!sessionId) return null
+  // 正被这一屏用着的那一份以 messages.value 为准：流式进行中的正文还没落盘，
+  // 从 sessions 里读到的是上一轮的副本，拿它定位会把最新一轮当成链接那一轮。
+  if (sessionId === activeId.value) return messages.value
+  const entry = sessions.value.find(s => String(s.id) === sessionId)
+  return entry ? entry.messages || [] : null
+}
+
 export function restoreActive(id) {
   const entry = sessions.value.find(s => s.id === id)
   messages.value = entry ? [...entry.messages] : []
@@ -389,6 +400,9 @@ export function createStreamState() {
   return {
     lastSequence: 0,
     terminal: null,
+    // R174 判据一：这一轮在后端的身份（canonical 信封上的 request_id）。读到才有值，
+    // 读不到留空串 —— 空串是「这一轮没有可核对的轮号」，不是「轮号不存在」。
+    requestId: '',
     errorCode: '',
     awaitingHitl: false,
     pendingSteps: [],
@@ -414,6 +428,15 @@ export function createStreamReducer(msg, state) {
       if (Number.isFinite(sequence)) {
         if (sequence <= state.lastSequence) return { action: 'ignored' }
         state.lastSequence = sequence
+      }
+      // 轮号后端早就随每一枚 canonical 信封发出（app/api/v1/chat.py::canonical_sse_event 的
+      // request_id），本文件此前只用 sequence 做乱序闸门，从没把它抄进消息里。于是这一轮
+      // 落盘之后就没了身份，深链在本地也无从定位。这里补的是「第一次有人读后端早已发出的
+      // 字段」，与 R150 读 sources / cached 同一手法：读到才记，读不到不写。
+      const requestId = textOf(payload.request_id)
+      if (requestId) {
+        state.requestId = requestId
+        if (!msg.requestId) msg.requestId = requestId
       }
       const data = payload?.data || {}
       switch (event) {
@@ -657,4 +680,145 @@ export async function consumeSseStream(response, msg, handlers = {}) {
   }
 
   return { ok: true, status: response.status, state, stopped: stopped || 'done' }
+}
+
+// ==================== R174 · 「那一轮」在后端到底有没有 ====================
+//
+// 为什么这两条读取住在本文件而不在面板里：判据①第 2 件的原话是「站内点击与冷启动两条路最终
+// 必须落到同一份 store，不许各存一套」，而这份 store 的真源就是本文件（sessions / activeId /
+// messages 三枚 shallowRef）。把网络出口放在面板里，就会出现「面板里有一份后端正文、store 里
+// 有一份本地正文」的两套；所以这里只多两件事：向后端问一次，问到的交回同一份 store。
+//
+// 🔴 一件本单做不到、也坚决没猜的事（已具名报总控，见交付说明里的 B 单）：
+// GET /sessions/{session_id} 的返回体是 { session, messages }，而 messages 里每一条只有
+// role / content / steps / created_at —— 轮号在这一格里根本不存在：
+//   app/api/v1/chat.py:1280 建 session_messages 表，没有这一列；
+//   app/api/v1/chat.py:763   INSERT 的字段清单里没有它；
+//   app/api/v1/chat.py:801   SELECT 出来的三枚字段里也没有它；
+//   app/api/v1/chat.py:755   内存回退分支构造的字典同样只有那四枚。
+// 缺的是后端的一个字段，不是前端的一段代码。所以这里【只按字面读 request_id 一枚】：后端哪天
+// 带上，跨机器就自动定位得到，本文件一字不改；今天一枚都不带，就报 turnIds:false，
+// 绝不拿 created_at 或消息位次去猜「哪一条才是那一轮」—— 那是伪造定位，比不定位更坏。
+
+/** 会话正文端点，逐字对齐 app/api/v1/chat.py:2588 的 GET /sessions/{session_id}。 */
+export const sessionPath = id => `/sessions/${encodeURIComponent(String(id == null ? '' : id))}`
+
+/** 会话名单端点：后端已按归属过滤（chat.py::list_sessions 只留 is_owned_by 为真的那些）。 */
+export const SESSIONS_LIST_PATH = '/sessions'
+
+/**
+ * 一次「后端有没有这一条」的读数。四种落不到各是一种，不许并格（判据①第 4 件）：
+ *   found       200 且 messages 是数组 —— 正文到手了，能不能再定位到某一轮是另一件事
+ *   notFound    404 resource_not_found —— 后端的口径是「读不到就像不存在」
+ *   notYours    401 / 403 —— 身份对不上，与「没有」是两句话
+ *   unreachable 连接失败与 5xx —— 这格永远不许被说成「没有」
+ *   badBody     200 但 messages 不是数组 —— 后端换了形状，也不许当成空会话
+ */
+export const SESSION_READ = {
+  found: 'found',
+  notFound: 'not_found',
+  notYours: 'not_yours',
+  unreachable: 'unreachable',
+  badBody: 'bad_body',
+}
+
+/** 深链参数允许的形状：后端两枚 id 都是十六进制族（uuid hex / req-<hex> / 本地 genId 的 base36）。 */
+export const DEEP_LINK_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/
+
+/** 轮号在后端正文里的字面名字：与 canonical 信封、与 ?request= 带的是同一枚值，只认这一个。 */
+const TURN_ID_KEY = 'request_id'
+
+function statusCodeOf(err) {
+  const status = Number(err?.response?.status ?? err?.status)
+  return Number.isFinite(status) ? status : 0
+}
+
+function classifySessionReadError(err) {
+  const status = statusCodeOf(err)
+  if (status === 404) return SESSION_READ.notFound
+  if (status === 401 || status === 403) return SESSION_READ.notYours
+  // 0 = 连上了却没响应/超时/DNS，5xx = 服务坏了：这两种都是「读不到」，不是「没有」。
+  if (status === 0 || status >= 500) return SESSION_READ.unreachable
+  return SESSION_READ.badBody
+}
+
+/**
+ * 后端 messages 行 → store 里的消息形状。
+ *
+ * 逐字带 role / content / steps / created_at 四枚（这就是后端给的全部），轮号只在
+ * 后端真的带上 request_id 时才存在；带不上就不写这一格，并整份标记 turnIds:false ——
+ * 面板据此说「这一轮定位不到，因为后端读到的正文里没有轮号」，而不是说「没有这一轮」。
+ */
+export function backendSessionMessages(payload) {
+  const list = Array.isArray(payload?.messages) ? payload.messages : null
+  if (!list) return { ok: false, messages: [], turnIds: false }
+  let turnIds = false
+  const messages = list.filter(item => item && typeof item === 'object').map((item, index) => {
+    const requestId = textOf(item[TURN_ID_KEY])
+    if (requestId) turnIds = true
+    return {
+      role: textOf(item.role),
+      content: textOf(item.content),
+      steps: Array.isArray(item.steps) ? item.steps : [],
+      created_at: item.created_at == null ? '' : String(item.created_at),
+      requestId,
+      // mid 是面板给每一轮起的钥匙（sources / 缓存那些派生脸用它）；后端行没有本地 mid，
+      // 就按位次补一枚，只当身份用，不当内容用。
+      mid: `backend-${index}`,
+    }
+  })
+  return { ok: true, messages, turnIds }
+}
+
+/** 向后端问一次「这一条会话你那儿有正文吗」，并把正文原样带回来。 */
+export async function readBackendSession(id) {
+  const sessionId = textOf(id)
+  if (!sessionId) return { outcome: SESSION_READ.badBody, messages: [], turnIds: false }
+  let response = null
+  try {
+    response = await http.get(sessionPath(sessionId))
+  } catch (err) {
+    return { outcome: classifySessionReadError(err), messages: [], turnIds: false }
+  }
+  const read = backendSessionMessages(response?.data)
+  if (!read.ok) return { outcome: SESSION_READ.badBody, messages: [], turnIds: false }
+  return { outcome: SESSION_READ.found, messages: read.messages, turnIds: read.turnIds }
+}
+
+/**
+ * 「后端有没有这一条」的名单（判据②的读数）。
+ * known:false 说的是「这份名单没读到」，与「名单是空的」是两句话 —— 后者才等于「后端没有」。
+ */
+export async function readBackendSessionIds() {
+  let response = null
+  try {
+    response = await http.get(SESSIONS_LIST_PATH)
+  } catch (err) {
+    return { known: false, ids: [], failure: classifySessionReadError(err) }
+  }
+  const list = Array.isArray(response?.data?.sessions) ? response.data.sessions : null
+  if (!list) return { known: false, ids: [], failure: SESSION_READ.badBody }
+  return { known: true, ids: list.map(row => textOf(row?.id)).filter(Boolean), failure: '' }
+}
+
+/** 这台浏览器的 store 里有没有这一条会话（判据②要分的那两格，只用它做对照，不再当裁决）。 */
+export function hasLocalSession(id) {
+  const sessionId = textOf(id)
+  return Boolean(sessionId) && sessions.value.some(item => String(item.id) === sessionId)
+}
+
+/**
+ * 后端读到的正文交回【同一份】store：切过去、落盘、以后就当普通历史看。
+ * 走的是既有的 syncActive()，不另开第二份消息表；也不顺手新建会话 —— 只有真读到正文才谈得上交回。
+ */
+export function adoptBackendSession(id, list = []) {
+  const sessionId = textOf(id)
+  if (!sessionId) return []
+  messages.value = (Array.isArray(list) ? list : []).map(item => ({ ...item }))
+  activeId.value = sessionId
+  activeDataFilename.value = ''
+  hitl.value = null
+  scrollOffset.value = 0
+  syncActive()
+  return messages.value
 }

@@ -44,7 +44,7 @@ onMounted(submitCheck)
     <header class="panel-head">
       <div>
         <div class="eyebrow">Approval</div>
-        <h3>报销自查</h3>
+        <h3>审批与待办</h3>
         <p>这是一台报销政策自查工具：填一组参数，看金额按标准算是否超标，并拿到下一步建议。它不办理审批。</p>
         <p>真正在等你拍板的事在上方那一块：每一笔都能就地定夺，也能跳回产生它的那一轮对话。</p>
       </div>

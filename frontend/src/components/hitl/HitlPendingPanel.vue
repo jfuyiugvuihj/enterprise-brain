@@ -30,14 +30,22 @@
  *   ② 演示常量目录在本文件一次都不 import，也没有任何写死的行；
  *   ③ 失败路径先清 rows 再画 failure，而 pendingFace 里 failure 排在 rowCount 之前。
  *
- * 判据④用的是这台浏览器自己的会话历史（lib/sessions.js 的 sessions 列表）：ChatPanel 读的就是
- * 那一份，所以切过去就是产生这一笔的那一轮。对不上就明写「这一笔没有可回看的对话」——
- * switchSession 拿不到那个 id 时会就地新建一份同名空会话，那是伪造历史，
- * canReplayTurn() 就是把这道门的，绝不让它有机会被踩。
+ * 判据④（R168 那一半，一行未动）：switchSession 拿不到那个 id 时会就地新建一份同名空会话，
+ * 那是伪造历史，canReplayTurn() 就是把这道门的，绝不让它有机会被踩。
+ *
+ * R174 判据②改的是这道门的【判据】，不是这道门：能不能回看从今天起由【后端】说了算 ——
+ * GET /sessions 返回的就是「这个账号在后端还留着哪些会话」（chat.py::list_sessions 已按归属
+ * 过滤，app/storage/sessions.py:85 的 is_owned_by 是唯一那道闸）。旧口径判的是这台浏览器的
+ * 会话历史，于是员工把链接发给同事、同事换台机器打开就说「没有可回看的对话」——那句话是假的，
+ * 正文明明在服务端。本机那份历史从此只当【对照】用：后端没有而本机有，另说一句
+ * REPLAY_LOCAL_ONLY，不与「真的没有」并成一格。
  */
 import { errorDetail } from '../../lib/http'
 import { errorCodeLabel, errorCodeOf, errorText, normalizeError } from '../../lib/errcodes'
 import { formatStamp, readFailureView, SHAPE_FAILURE_DESCRIPTION } from '../../lib/alerts'
+// SESSION_READ 在普通 <script> 块里 import 一次就够了：两个块同属一个模块作用域。
+import { SESSION_READ } from '../../lib/sessions'
+import { REPLAY_LOCAL_ONLY, REPLAY_NONE } from './HitlPendingRow.vue'
 
 export default { name: 'HitlPendingPanel' }
 
@@ -223,14 +231,40 @@ export function transportDecisionView(approved, err) {
 }
 
 /**
- * 这一笔能不能跳回那一轮：只在「这台浏览器的会话历史里真有那一条」时才给。
- * 账本记的是服务器上的挂起，会话正文存在浏览器本地，两者不是一回事；对不上就老实说
- * 「没有可回看的对话」，绝不新建一份空会话冒充（判据④的「不许静默」与「不许新开」同一条）。
+ * 这一笔能不能跳回那一轮：只看「传进来的这份会话名单里有没有它」。
+ * R174 判据②之后这份名单是【后端那份】（GET /sessions），不再是这台浏览器的历史 ——
+ * 函数本身只认名单不认来路，所以两格的差别由调用方（decorateReplay）负责挑，一处判定只有一份。
  */
 export function canReplayTurn(row, localIds) {
   const sessionId = String((row && row.sessionId) || '')
   if (!sessionId || !Array.isArray(localIds)) return false
   return localIds.indexOf(sessionId) >= 0
+}
+
+/**
+ * 把「这一行能不能跳回去」判成一张按会话号索引的表。
+ * 判定的结果【不写进行数据】：rows 只可能是后端 items 映射出来的行（R168 判据③那条源码钉），
+ * 而「这一行能不能跳」是派生态，派生态住在派生表里，由 computed 现算，不去污染行的形状。
+ * 三种判不到各说各的，一格都不许并：
+ *   后端有这一条         → 给跳转（本机翻不到也给 —— 换台机器打开链接的那一位就是这一格）
+ *   后端没有、本机有     → REPLAY_LOCAL_ONLY，另说一句，不并进「没有可回看」
+ *   后端没有、本机也没有 → REPLAY_NONE
+ *   后端那份名单读不到   → 暂时退回按本机判，并把 basis 记成 local，由屏上另一句单独认账
+ * 读不到时退回本机不等于「按本机裁决」：那句话必须由屏幕上说出来，不能让行上静默换标准。
+ */
+export function replayVerdicts(rows, read, localIds) {
+  const known = Boolean(read && read.known)
+  const basis = known ? read.ids : localIds
+  const verdicts = {}
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const canOpen = canReplayTurn(row, basis)
+    verdicts[row.sessionId] = {
+      canOpen,
+      note: canOpen ? '' : (known && canReplayTurn(row, localIds) ? REPLAY_LOCAL_ONLY : REPLAY_NONE),
+      basis: known ? 'backend' : 'local',
+    }
+  }
+  return verdicts
 }
 
 /** 深链落到对话屏，并把这一笔的编号带在地址上：转发与对账用的是同一条地址。 */
@@ -240,6 +274,26 @@ export function chatAnchor(row) {
   if (requestId) query.request = requestId
   return { name: 'chat', query }
 }
+
+/**
+ * 点了「回到这一轮」之后后端那句认账的话（R174 判据②：这一枪真的发出去才知道有没有）。
+ * 与行上那两句各说各的事：那两句说的是「这一屏判过了不给跳转」，这几句说的是
+ * 「屏上判着该给，点下去正文却没回来」——两种落不到不许并成一张脸。
+ */
+export const REPLAY_READ_FAILED = {
+  [SESSION_READ.notFound]: '那一轮的会话后端说没有：这一条链接可能已经过期，也可能对方把它删了。',
+  [SESSION_READ.notYours]: '那一轮的会话不是当前这个账号能看的：换回发起这一问的那个账号再点一次。',
+  [SESSION_READ.unreachable]: '那一轮的正文没能读回来：后端这会儿读不到。这一笔仍然挂在上面，没被抹掉。',
+  [SESSION_READ.badBody]: '那一轮的正文没能读回来：后端回的形状系统不认识。这一笔仍然挂在上面，没被抹掉。',
+}
+
+/**
+ * 后端那份名单没读到，这一屏只能暂时按本机判：换标准这件事必须自己说出口（判据②「别静默」）。
+ * 它成为一枚常量而不是模板里的一段裸话，只为了一件事 —— 屏上这几张脸两两不同句这条规矩，
+ * 用例能把这一句一起拉进来比，而不是比一份抄来的副本。
+ */
+export const REPLAY_BASIS_LOCAL_NOTE = '后端那份会话名单这会儿没读到，上面几行「能不能回到那一轮」暂时只能按这台浏览器判：'
+  + '换台机器、换个浏览器打开同一串链接，这一格可能给出的不是同一个答案。'
 </script>
 
 <script setup>
@@ -247,7 +301,16 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { authedFetch, http } from '../../lib/http'
 import { listRows } from '../../lib/alerts'
-import { consumeSseStream, loadSessions, sessions, switchSession } from '../../lib/sessions'
+import {
+  adoptBackendSession,
+  consumeSseStream,
+  hasLocalSession,
+  loadSessions,
+  readBackendSession,
+  readBackendSessionIds,
+  sessions,
+  switchSession,
+} from '../../lib/sessions'
 import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from '../ui'
 import HitlPendingRow from './HitlPendingRow.vue'
 
@@ -265,9 +328,20 @@ const offset = ref(0)
 const busyId = ref('')
 const outcomes = ref({})
 const localIds = ref([])
+// 判据②的那份【后端】会话名单。asked = 这一屏有没有真去问过；known = 问到了没有。
+// 「没问过」「问了但读不到」「问到了而且名单是空的」是三件事，一句都不许顶另一句。
+const backendRead = ref({ asked: false, known: false, ids: [], failure: '' })
+// 点了跳转、正文却没回来时的那一句：与「这一笔没有可回看的对话」不是一格，各说各的。
+const openFailure = ref('')
+
+/** 判定表：行 + 后端那份名单 + 本机那份对照，三样现算，任何一样变了都自动跟上。 */
+const verdicts = computed(() => replayVerdicts(rows.value, backendRead.value, localIds.value))
+
+const verdictOf = row => verdicts.value[row.sessionId] || null
 
 const pageSize = PENDING_PAGE_SIZE
 const emptyCopy = { title: EMPTY_TITLE, description: EMPTY_DESCRIPTION }
+const replayBasisNote = REPLAY_BASIS_LOCAL_NOTE
 
 const face = computed(() => pendingFace({
   loading: loading.value,
@@ -280,19 +354,72 @@ const face = computed(() => pendingFace({
  * 刻意不每次都用盘上的副本去覆盖它：loadSessions() 会把 sessions.value 整份换成 localStorage 里的
  * 内容，而对话屏是 keep-alive 的、正在跑的那一轮还没落盘 —— 这一屏只是想读个名单，
  * 不该顺手把别人正在用的那份列表回滚一次。所以只在它还是空的时候补一次盘。
+ * R174 判据②之后这份名单【降级为对照】：它只用来认出「后端没有而本机还留着」那一格。
  */
 function readLocalIds() {
   if (!sessions.value.length) loadSessions()
   return sessions.value.map(item => String(item.id))
 }
 
+/**
+ * 向后端问一次「这些会话你那儿还留着哪些」：一发 GET /sessions 判全部行，
+ * 不给每一行各发一枪（一页 50 笔就是 50 枪）。这一屏每次开屏问一次，
+ * 问到的名单就地进判定表；行本身一个字段都不必动。
+ */
+async function refreshReplayBasis() {
+  const read = await readBackendSessionIds()
+  backendRead.value = { ...read, asked: true }
+  return read
+}
+
 /** 模板只认这一屏自己的绑定，跨块的纯函数一律包一层再交给模板。 */
 function canOpen(row) {
-  return canReplayTurn(row, localIds.value)
+  const verdict = verdictOf(row)
+  return Boolean(verdict && verdict.canOpen)
+}
+
+function replayOf(row) {
+  return verdictOf(row) || { canOpen: false, note: REPLAY_NONE, basis: 'local' }
 }
 
 function outcomeOf(row) {
   return outcomes.value[row.sessionId] || null
+}
+
+/** 后端名单判到了就直接采信，没判到（这一屏还没问过、或那一枪没读回来）才就地算一次。 */
+function replayable(row) {
+  return canOpen(row)
+}
+
+/**
+ * 跳回产生这一笔的那一轮。
+ * 本机有这一条：同步切过去（R168 那条既有行为，一毫秒都不许多等）。
+ * 本机没有、后端有：这正是「换台机器打开同事发来的链接」那一格 —— 先把地址落到那一轮，
+ * 正文在后台取；取不到就把人带回这一屏并明说一句，绝不静默留一份空会话在对话屏上。
+ */
+function openTurn(row) {
+  if (!row || !replayable(row)) return false
+  openFailure.value = ''
+  if (!hasLocalSession(row.sessionId)) {
+    if (router) router.push(chatAnchor(row))
+    void replayFromBackend(row)
+    return true
+  }
+  switchSession(row.sessionId)
+  if (router) router.push(chatAnchor(row))
+  return true
+}
+
+async function replayFromBackend(row) {
+  const read = await readBackendSession(row.sessionId)
+  if (read.outcome === SESSION_READ.found) {
+    // 交回那份唯一的 store：对话屏读的就是这一份，站内点击与冷启动不会各存一套。
+    adoptBackendSession(row.sessionId, read.messages)
+    return true
+  }
+  openFailure.value = REPLAY_READ_FAILED[read.outcome] || REPLAY_READ_FAILED[SESSION_READ.badBody]
+  if (router) router.replace({ name: 'approval' })
+  return false
 }
 
 async function loadPending({ append = false } = {}) {
@@ -381,19 +508,15 @@ async function decide({ row, approved } = {}) {
   return view
 }
 
-function openTurn(row) {
-  if (!canReplayTurn(row, localIds.value)) return false
-  switchSession(row.sessionId)
-  if (router) router.push(chatAnchor(row))
-  return true
-}
-
 function loadMore() {
   return loadPending({ append: true })
 }
 
 onMounted(() => {
   localIds.value = readLocalIds()
+  // 判据②：这一屏每次开屏向后端问一次「这些会话你还留着哪些」——能不能回看由它判，
+  // 不由这台浏览器的历史判。它不占 loadPending 那一枪的预算：读账本与读名单是两件事。
+  refreshReplayBasis()
   loadPending()
 })
 </script>
@@ -416,6 +539,15 @@ onMounted(() => {
       智能体跑到需要你点头的那一步就会停下来挂在这里，而那一问今天埋在对话流里，一滚屏就找不着。
       这一屏把它摊开：手头有哪几笔在等你拍板、批准还是驳回、办完之后回到哪一轮去看结果。
     </p>
+
+    <!-- R174 判据②：那份名单没读到时，这一格换成了按本机判 —— 必须自己说出口，
+         不能让行上悄悄换了标准还装作是后端的答复。asked 之前不画这句：没问不等于问不到。 -->
+    <p v-if="rows.length && backendRead.asked && !backendRead.known" class="hitl-note"
+       role="status" data-basis="local" data-testid="hitl-replay-basis">
+      {{ replayBasisNote }}
+    </p>
+    <!-- 点了跳转而正文没回来：与行上那两句各说各的事，也单独一句。 -->
+    <p v-if="openFailure" class="hitl-note" role="alert" data-testid="hitl-open-failure">{{ openFailure }}</p>
 
     <UiLoadingState v-if="face === 'loading'" label="正在读取挂起待办..." dense />
     <UiErrorState
@@ -440,6 +572,7 @@ onMounted(() => {
         v-for="row in rows"
         :key="row.sessionId"
         :row="row"
+        :replay="replayOf(row)"
         :can-open="canOpen(row)"
         :busy="busyId === row.sessionId"
         :outcome="outcomeOf(row)"

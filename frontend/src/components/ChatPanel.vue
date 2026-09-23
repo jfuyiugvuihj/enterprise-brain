@@ -1,3 +1,235 @@
+<script>
+/**
+ * R174 · 冷启动深链：`/chat?session=<会话号>&request=<轮号>` 要落到那一轮
+ *
+ * 一句话：同事把链接发过来，打开的人看到的就该是那一轮，而不是登录页、也不是最新一轮。
+ * 这件事今天做不到 —— 本面板原先只读 `?lane=` 那一枚参数（R141 的落点），session / request
+ * 两枚写进地址就没人读（R168 的 chatAnchor 一直在往地址上挂它们，落点却是空的）。
+ *
+ * 为什么这一段纯逻辑住在普通 <script> 块里（与 hitl/HitlPendingRow.vue 同一写法）：
+ * 深链的四种落不到只有交给真函数跑得一遍才算验过 —— 放在 <script setup> 里，node +
+ * @vue/server-renderer 既拿不到 ref 也等不到 promise，测试就只能去扫源码，那是自欺。
+ * 状态机本身不碰网络也不碰 DOM：读正文、切会话、交回 store 三件事一律由调用方递进来，
+ * 所以用例调的就是面板自己调的那一枚函数，不是它的副本。
+ */
+import {
+  adoptBackendSession,
+  DEEP_LINK_ID_RE,
+  localMessagesOf,
+  readBackendSession,
+  SESSION_READ,
+} from '../lib/sessions'
+
+/**
+ * 深链那两枚参数的形状就是 lib/sessions.js 的 DEEP_LINK_ID_RE 那一枚：地址里的写法与后端认的
+ * 写法必须只有一本账，所以这里是 import 而不是再抄一遍正则（普通 <script> 块与 <script setup>
+ * 同属一个模块作用域，HitlPendingPanel.vue 同此写法）。后端两枚 id 都在十六进制族里：
+ * uuid hex / req-<hex> / 本地 genId 的 base36。
+ */
+export const DEEP_ID_SHAPE = DEEP_LINK_ID_RE
+
+/**
+ * 每一张脸：blocking = 这一屏下面什么都不该画（连别人正在看的那条会话也不该顶上来）；
+ * retry = 只给「再问一次后端有可能换个结果」的那一张，无权与「没有」都不给重试（判据④）。
+ *
+ * 九句两两不同（判据①第 4 件要分的四类，加上今天真的分得出来的另几类）：
+ *   四类里「后端读不到」= unreachable 那一句，「不是你的」= not_yours，
+ *   「这一轮不存在」= turnMissing，「参数缺失或格式不对」= bad-session / bad-request 两句。
+ *   noTurnIds 那一句是 R174 实取后端之后多出来的一格：它既不是「没有这一轮」也不是「读不到」，
+ *   而是「后端把正文给了、但正文里没有轮号可对」，所以它单独占一张脸，不与任何一张并格。
+ */
+export const DEEP_LINK_FACES = {
+  'bad-session': {
+    blocking: true, tone: 'warn', retry: false,
+    text: '这条链接没带会话号，或会话号的写法系统认不出来，所以这一屏不知道该打开哪一条 —— 就没有打开任何东西。',
+  },
+  'bad-request': {
+    blocking: false, tone: 'warn', retry: false,
+    text: '链接里的轮号写法系统认不出来（会话号是好的）：这一条会话照旧打开，但没有定位到某一轮。',
+  },
+  [SESSION_READ.notFound]: {
+    blocking: true, tone: 'error', retry: false,
+    text: '后端给了确定回答：没有这一条会话。要留意它的口径 —— 归属对不上时后端也回同一句（见交付说明的 B 单），'
+      + '所以这一句不能排除「它属于别人」；但它是后端读回来了的答案，不等于「读不到」。',
+  },
+  [SESSION_READ.notYours]: {
+    blocking: true, tone: 'error', retry: false,
+    text: '这一条不是你的：后端认出现在这个身份看不着它（没登录或没这份权限），所以正文没交出来。'
+      + '先登录对上的那个账号，或找管理员开权限 —— 反复点这条链接不会把它变出来。',
+  },
+  [SESSION_READ.unreachable]: {
+    blocking: true, tone: 'error', retry: true,
+    text: '后端这会儿读不到（连接没建立，或服务回了 5xx）。这不代表那一轮不存在，也不代表这条会话没有：'
+      + '只是这一屏没拿到答案，等服务通了再问一次。',
+  },
+  [SESSION_READ.badBody]: {
+    blocking: true, tone: 'error', retry: false,
+    text: '后端回话了，但这一格的形状系统不认识（读不到 messages 那一列）。系统没有把它当成「这条会话是空的」：'
+      + '那是两回事，认不出形状就说认不出。',
+  },
+  noTurnIds: {
+    blocking: false, tone: 'warn', retry: false,
+    text: '这一条会话的正文读到了，但正文里的每一轮都没带轮号，所以「是哪一轮」这件事在这一屏对不上号。'
+      + '这不是「没有这一轮」：会话就在下面，只是没法替你把那一轮挑出来 —— 缺的是后端那一格，已具名报总控。',
+  },
+  turnMissing: {
+    blocking: false, tone: 'error', retry: false,
+    text: '这一轮不存在：这一条会话里每一轮都带着轮号，其中没有链接上写的那个。'
+      + '可能是那一轮被删了，也可能是链接抄错了；下面打开的是这一条会话本身。',
+  },
+  sessionOnly: {
+    blocking: false, tone: 'info', retry: false,
+    text: '这条链接只指到会话、没指到某一轮，所以下面打开的是整条对话。',
+  },
+}
+
+const deepIdOf = value => (
+  typeof value === 'string' && DEEP_ID_SHAPE.test(value.trim()) ? value.trim() : ''
+)
+
+/** 地址里那两枚参数 → 一次落点请求。没写这两枚就不是深链（返回 null，正常进这一屏）。 */
+export function deepLinkFromQuery(query) {
+  const bag = query && typeof query === 'object' ? query : {}
+  if (bag.session === undefined && bag.request === undefined) return null
+  const session = deepIdOf(bag.session)
+  if (!session) return { session: '', request: '', bad: 'bad-session' }
+  if (bag.request === undefined) return { session, request: '', bad: '' }
+  const request = deepIdOf(bag.request)
+  // 轮号写坏了但会话号是好的：不整条链接一起作废，会话照开，只多说一句轮号不认。
+  if (!request) return { session, request: '', bad: 'bad-request' }
+  return { session, request, bad: '' }
+}
+
+const turnIdOf = row => {
+  if (!row || typeof row !== 'object') return ''
+  const value = row.requestId === undefined || row.requestId === null || row.requestId === ''
+    ? row.request_id
+    : row.requestId
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/**
+ * 在一份消息里找那一轮。只按字面比轮号，一次模糊匹配都不做（位次、时间、内容长度全都不算证据）。
+ * hasIds 单独报出来：整份都没轮号时，「找不到」这句话就不许说成「这一轮不存在」。
+ */
+export function locateDeepTurn(list, requestId) {
+  const rows = Array.isArray(list) ? list : []
+  const wanted = typeof requestId === 'string' ? requestId.trim() : ''
+  const ids = rows.map(turnIdOf).filter(Boolean)
+  return {
+    hasIds: ids.length > 0,
+    found: Boolean(wanted) && ids.indexOf(wanted) >= 0,
+    index: wanted ? rows.findIndex(row => turnIdOf(row) === wanted) : -1,
+  }
+}
+
+/** 一次「后端有没有这一条」的读数 → 该说哪一句。认得的四种各一张脸，认不出的不许并成「没有」。 */
+export function deepLinkFaceOfRead(read) {
+  const outcome = read && typeof read === 'object' ? String(read.outcome || '') : ''
+  // 正文到手不是一张脸：它是「接着往下走」的那一态，所以 found 要在这里就被摘出去。
+  if (outcome === SESSION_READ.found) return ''
+  return Object.prototype.hasOwnProperty.call(DEEP_LINK_FACES, outcome) ? outcome : SESSION_READ.badBody
+}
+
+/**
+ * 「这一轮到底在哪」的结论只算一次：本机那条路与后端那条路都汇到这里，两腿不各写一套判定
+ * （判据①第 2 件的原话是两条路落到同一份 store，这里落到的是同一份结论）。
+ */
+export function concludeDeepTurn(link, list, from) {
+  const base = { face: '', session: link.session, request: link.request, turn: -1, from }
+  if (!link.request) {
+    // 轮号写坏了与会话号没问题：都不该假装定位到了某一轮，各说一句各的事。
+    return { ...base, state: 'session', face: link.bad === 'bad-request' ? 'bad-request' : 'sessionOnly' }
+  }
+  const at = locateDeepTurn(list, link.request)
+  if (!at.hasIds) return { ...base, state: 'session', face: 'noTurnIds' }
+  if (!at.found) return { ...base, state: 'session', face: 'turnMissing' }
+  return { ...base, state: 'turn', turn: at.index }
+}
+
+/**
+ * 本地那一腿：判据①第 1 件要的是「本机有这一条就直接定位」，一次请求都不该发，
+ * 所以它必须是同步的 —— 冷启动的第一帧就能画出结论，而不是先闪一下别人的最新一条。
+ * 返回 null = 本机没有这一条，得交给后端那一腿。
+ *
+ * deps 三件都是面板递进来的真通道，本文件不自己碰网络也不自己碰 DOM：
+ *   localMessages(id) 本机 store 里这一条的正文（lib/sessions.js::localMessagesOf）
+ *   readSession(id)   本机没有时向后端取正文（lib/sessions.js::readBackendSession）
+ *   adopt(id, list)   取到的正文交回【同一份】store（lib/sessions.js::adoptBackendSession）
+ *   switchTo(id)      站内点击与冷启动共用的那一次切换（lib/sessions.js::switchSession）
+ */
+export function resolveLocalDeepLink(deps = {}) {
+  const link = deepLinkFromQuery(deps.query)
+  if (!link) return { state: 'none', face: '', session: '', request: '', turn: -1, from: '' }
+  if (link.bad === 'bad-session') {
+    return { state: 'face', face: 'bad-session', session: '', request: '', turn: -1, from: '' }
+  }
+  const list = typeof deps.localMessages === 'function' ? deps.localMessages(link.session) : null
+  if (!Array.isArray(list)) return null
+  if (typeof deps.switchTo === 'function') deps.switchTo(link.session)
+  return concludeDeepTurn(link, list, 'local')
+}
+
+/** 后端那一腿：本机没有这一条时，先向后端问「这一条你那儿有正文吗」，再走同一枚结论。 */
+export async function resolveDeepLinkWith(deps = {}) {
+  const local = resolveLocalDeepLink(deps)
+  if (local && local.state !== 'none') return local
+  const link = deepLinkFromQuery(deps.query)
+  if (!link || link.bad === 'bad-session') return local
+  const read = typeof deps.readSession === 'function' ? await deps.readSession(link.session) : null
+  const face = deepLinkFaceOfRead(read)
+  if (face) return { state: 'face', face, session: link.session, request: link.request, turn: -1, from: 'backend' }
+  if (!Array.isArray(read.messages)) {
+    return { state: 'face', face: SESSION_READ.badBody, session: link.session, request: link.request, turn: -1, from: 'backend' }
+  }
+  // 交回同一份 store 之后再定位：站内点击与冷启动看的、滚的、标的都是 store 里这一份。
+  if (typeof deps.adopt === 'function') deps.adopt(link.session, read.messages)
+  // 两条路共用同一次切换落在同一份 store 上（后端那一腿 adopt 已经把它设成当前这条，
+  // 这里再走一次是同一枚 switchSession，不是第二条落点通道）。
+  if (typeof deps.switchTo === 'function') deps.switchTo(link.session)
+  return concludeDeepTurn(link, read.messages, 'backend')
+}
+
+/** 那一轮在屏上的锚点：每一行都带位次，被点中的那一行另外带一枚 target 标记。 */
+export function deepTurnSelector(index) {
+  return `[data-turn="${Number(index)}"]`
+}
+
+/**
+ * 滚动这一件事拆成可单测的纯函数：传进来的是一个「有 querySelector 的容器」，
+ * node 里给它一枚假容器就能真验「找的是哪一行、滚没滚」，不必等 jsdom。
+ * 找不到那一行时返回 found:false —— 面板不猜位置，也不静默滚到最新一条。
+ */
+export function revealDeepTurnIn(container, index) {
+  const selector = deepTurnSelector(index)
+  if (!container || typeof container.querySelector !== 'function') {
+    return { found: false, scrolled: false, selector }
+  }
+  const target = container.querySelector(selector)
+  if (!target) return { found: false, scrolled: false, selector }
+  const top = Math.max(0, (Number(target.offsetTop) || 0) - 12)
+  if (typeof container.scrollTo === 'function') container.scrollTo({ top, behavior: 'smooth' })
+  else container.scrollTop = top
+  return { found: true, scrolled: true, selector, top }
+}
+
+/**
+ * 面板用到的那张接线表（本地正文 / 向后端取正文 / 交回 store / 切会话）。
+ * 它单独成为一枚函数只为了一件事：用例吃的必须就是面板自己用的这一份，而不是照着抄的副本 ——
+ * 否则「把向后端取正文那一腿摘掉」只会红在源码钉上，红不到跨机器回看那条行为。
+ * 面板这一侧只是换个人来填同一张表，落点路径一字未改。
+ */
+export function buildDeepDeps(query) {
+  return {
+    query,
+    localMessages: localMessagesOf,
+    readSession: readBackendSession,
+    adopt: adoptBackendSession,
+    switchTo: switchSession,
+  }
+}
+</script>
+
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -121,6 +353,78 @@ function readLaneHeaders(turn, msg, response) {
 // 会话与消息存在模块级 store 里：面板卸载或切走再回来都不会丢，生成中的流也不会断。
 const sessionId = activeId
 
+// ==================== R174 · 冷启动深链落到那一轮 ====================
+//
+const deepDeps = buildDeepDeps(route?.query)
+
+/** 落点结论到手之后才谈得上滚动：nextTick 等 DOM 就位，交完活把结果原样带回去。 */
+async function revealDeepTurn(result) {
+  if (!result || result.state !== 'turn') return result
+  await nextTick()
+  revealDeepTurnIn(chatEl.value, result.turn)
+  return result
+}
+
+/**
+ * 不用发一个请求就能定下来的那部分，全部在这里算完（判据①第 1 件）：
+ * 本机有这一条 → 直接给出结论（命中那一轮 / 这一轮不存在 / 这一份没轮号可对）；
+ * 本机没有 → 只给 'reading' 那一态。'reading' 不许省：向后端问话的这段时间里，
+ * 屏上既不许是空白，也不许把别人上次看的那一条当成链接的落点画出来。
+ * loadSessions() 读的是盘上那份，不发请求，所以它有权在这里跑一次。
+ */
+function deepOpening() {
+  const query = route?.query
+  deepDeps.query = query
+  const link = deepLinkFromQuery(query)
+  if (!link) return null
+  if (!sessions.value.length) loadSessions()
+  const local = resolveLocalDeepLink(deepDeps)
+  if (local) return local.state === 'none' ? null : local
+  return { state: 'reading', face: '', session: link.session, request: link.request, turn: -1, from: 'backend' }
+}
+
+/** setup 期就把这一格算完：SSR 与客户端同一条路，冷启动第一帧就有结论。 */
+const deepLink = ref(deepOpening())
+
+/** 本地定不下来时才发那一枪；结论回来后换掉 'reading'，再滚到点中的那一行。 */
+function applyDeepLink() {
+  deepLink.value = deepOpening()
+  const opening = deepLink.value
+  if (opening && opening.state === 'reading') {
+    return resolveDeepLinkWith(deepDeps).then(result => {
+      deepLink.value = result
+      return revealDeepTurn(result)
+    })
+  }
+  return revealDeepTurn(opening)
+}
+
+const deepFace = computed(() => {
+  const state = deepLink.value
+  return state && state.face ? DEEP_LINK_FACES[state.face] || null : null
+})
+// 这一屏下面还画不画会话：链接还没落到可看的东西之前一律先盖住 —— 拿另一条会话补位
+// 就是判据①明令不许的「静默落到最新一轮」，一片空白也不许。
+const deepBlocked = computed(() => {
+  const state = deepLink.value
+  if (!state) return false
+  if (state.state === 'reading') return true
+  return state.state === 'face' && Boolean(deepFace.value && deepFace.value.blocking)
+})
+const deepTurn = computed(() => (deepLink.value && deepLink.value.state === 'turn' ? deepLink.value.turn : -1))
+const deepBadge = computed(() => {
+  const state = deepLink.value
+  if (!state || state.state !== 'turn') return ''
+  return state.from === 'backend'
+    ? '就是这一轮 · 正文由后端读回（这台浏览器原先没有这一条会话）'
+    : '就是这一轮 · 由链接定位'
+})
+
+// 地址里那两枚参数变了就重新落一次点：站内点待办的「回到这一轮」、回退、转发都走这条路。
+// 盯的是这两枚拼出来的一枚串而不是数组：换档位（?lane=）也会换掉 query 对象，
+// 拿数组比就每次都判成「变了」，把同一枪对着后端重复发。
+watch(() => `${route?.query?.session ?? ''}|${route?.query?.request ?? ''}`, () => { applyDeepLink() })
+
 
 function note(text, tone = 'info') {
   streamNote.value = text
@@ -234,15 +538,21 @@ onMounted(() => {
   restoreQueuedTurns()
   window.addEventListener('chat-ask', onChatAsk)
   document.addEventListener('visibilitychange', onVisibilityChange)
+  // 地址带着深链时，「恢复上次看的那一条」这条路要关掉：那正是判据①明令不许的静默落到最新一轮。
+  // loadSessions() 照旧要跑 —— 本机有没有这一条会话，靠的就是它。
+  const linked = Boolean(deepLinkFromQuery(route?.query))
   if (!sessions.value.length) {
     const storedActive = loadSessions()
-    if (!activeId.value && storedActive) activeId.value = storedActive
+    if (!activeId.value && storedActive && !linked) activeId.value = storedActive
   }
   if (!activeId.value) activeId.value = genId()
   // 只在 store 里还没有这份会话时回填，避免把正在写入的流替换掉。
-  if (!messages.value.length) restoreActive(activeId.value)
+  if (!messages.value.length && !linked) restoreActive(activeId.value)
   ensureSession()
   restoreScroll()
+  // 浏览器里才补这一刀：本地那一腿 setup 期已经走完，这里只补「本机没有 → 问后端」那一枪，
+  // 以及给已经落定的那一轮滚一次（setup 期 chatEl 还没挂上，滚不动）。
+  if (linked) applyDeepLink()
 })
 
 onUnmounted(() => {
@@ -858,9 +1168,22 @@ function renderMd(raw) {
         先在服务器上拉取模型（或在本机模型设置里选一个已存在的），再回来提问。
       </div>
 
-      <!-- 消息区 -->
       <div class="chat-messages" ref="chatEl" @scroll.passive="onScroll">
-        <div v-if="messages.length === 0" class="welcome-screen">
+        <!-- R174 · 深链落点先说一句，再画会话本体。落不到的那几张脸各自一句（判据①第 4 件），
+             其中 blocking 那几张干脆把会话区盖住：宁可不画，也不许把另一条会话当成链接的落点。 -->
+        <p v-if="deepLink && deepLink.state === 'reading'" class="deep-link-note" data-tone="info"
+           data-state="reading" data-testid="deep-link-note">
+          这条链接指的是另一条会话里的某一轮，正在问后端有没有把它交给我们……
+        </p>
+        <div v-else-if="deepFace" class="deep-link-note" :data-tone="deepFace.tone"
+             :role="deepFace.tone === 'error' ? 'alert' : 'status'" :data-face="deepLink.face"
+             :data-session="deepLink.session || null" :data-request="deepLink.request || null"
+             data-testid="deep-link-note">
+          <span class="deep-link-text">{{ deepFace.text }}</span>
+          <button v-if="deepFace.retry" type="button" class="deep-link-retry"
+                  data-testid="deep-link-retry" @click="applyDeepLink()">再问一次后端</button>
+        </div>
+        <div v-if="messages.length === 0 && !deepBlocked" class="welcome-screen">
           <div class="welcome-glow"></div>
           <div class="welcome-card">
             <div class="wc-icon">🧠</div>
@@ -884,14 +1207,20 @@ function renderMd(raw) {
           </div>
         </div>
 
-        <TransitionGroup name="msg">
+        <!-- 链接落不到可看的东西之前，这一条会话整段先不画：拿另一条补位就是「静默落到最新一轮」。 -->
+        <TransitionGroup v-if="!deepBlocked" name="msg">
           <div v-for="(msg, i) in messages" :key="i"
-               :class="['msg-row', msg.role]">
+               :data-turn="i"
+               :data-deep-target="i === deepTurn ? '1' : null"
+               :class="['msg-row', msg.role, { 'is-deep-target': i === deepTurn }]">
             <div v-if="msg.role === 'assistant'" class="msg-avatar ai">
               {{ loading && i === messages.length - 1 && !msg.content ? '⏳' : '🤖' }}
             </div>
 
             <div class="msg-bubble-wrap">
+              <!-- 可视标记：链接点中的那一轮，一眼看得出就是这条。 -->
+              <p v-if="i === deepTurn" class="deep-link-badge" role="status"
+                 data-testid="deep-link-badge" :data-request="msg.requestId || null">{{ deepBadge }}</p>
               <div :class="['msg-bubble', msg.role]">
                 <!-- 进度卡片 -->
                 <div v-if="msg.steps && msg.steps.length" class="steps-bar">
@@ -1232,6 +1561,54 @@ function renderMd(raw) {
 }
 .chat-messages::-webkit-scrollbar { width: 5px; }
 .chat-messages::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 5px; }
+
+/* R174 · 深链那一句与「就是这一轮」那枚标记：只借 theme.css 既有令牌，零裸色值。 */
+.deep-link-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0 0 var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+  font-size: var(--t-xs);
+  line-height: 1.6;
+}
+
+.deep-link-note[data-tone='error'] {
+  border-left-color: var(--danger);
+}
+
+.deep-link-note[data-tone='warn'] {
+  border-left-color: var(--warning);
+}
+
+.deep-link-note[data-tone='info'] {
+  border-left-color: var(--cyan);
+}
+
+.deep-link-retry {
+  padding: var(--s-1) var(--s-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.deep-link-badge {
+  margin: 0 0 var(--s-1);
+  color: var(--muted);
+  font-size: var(--t-xs);
+}
+
+.msg-row.is-deep-target .msg-bubble {
+  outline: 2px solid var(--accent);
+}
 
 /* ===== 欢迎页 ===== */
 .welcome-screen {

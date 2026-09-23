@@ -16,7 +16,7 @@
  * R136（屏名与工作区映射）在这张表上追加两件事，都在同一处声明，不另开口子：
  *  ① 屏名只有 meta.title 一个人说。顶栏（App.vue 的 activeMeta.title）与侧栏
  *    （navigation 的派生）取的都是这一格，计划书 §四 的定名就写在这里：
- *    总览 / 喂料 / 问一句 / 异常与告警 / 报销自查。旧名「洞察 / 审批 / 对话」是
+ *    总览 / 喂料 / 问一句 / 异常与告警 / 审批与待办。旧名「洞察 / 审批 / 对话」是
  *    §71 点名的病：页内标题早就改了，顶栏还认旧名，同一屏两个名字。
  *  ② 「喂料」= 文档 + 数据 两标签一屏，老地址 /docs、/data 不许白屏，见下面由
  *    FEED_TABS 派生的那组 redirect。标签与老地址同是一条记录的两张脸，写在
@@ -76,7 +76,9 @@ export const routes = [
     path: '/approval',
     name: 'approval',
     component: ApprovalPanel,
-    meta: { screen: true, title: '报销自查', icon: 'M6 4h12v16H6zM9 9h6M9 13h6M9 17h3M5 12l3 3 6-7' },
+    // R174 判据③ · 定名「审批与待办」：这一屏今天挂着真待办（GET /hitl/pending）与真审批
+    // （POST /approve），而「报销」是一枚业务专属词 —— 客户一装机就以为产品只管报销。
+    meta: { screen: true, title: '审批与待办', icon: 'M6 4h12v16H6zM9 9h6M9 13h6M9 17h3M5 12l3 3 6-7' },
   },
   {
     path: '/chat',
