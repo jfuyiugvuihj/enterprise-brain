@@ -4,15 +4,25 @@
  *
  * 一句话：智能体停下来等确认的那件事，今天只画在对话流里（ChatPanel 的那张卡片），一滚屏就找不着。
  * 这块把「我手头有几件要办的事、办完回哪儿去」抽成一屏。数据只有一个来源：
- *   GET  /hitl/pending   挂起账本（app/api/v1/chat.py:2181；契约 docs/api/contract-v1.md
+ *   GET  /hitl/pending   挂起账本（app/api/v1/chat.py:2294；契约 docs/api/contract-v1.md
  *                        的 HITL Pending Listing 一节）
  * 写操作也只有一个出口：
- *   POST /approve        body 恰为 { session_id, approved }，回来的是一条 SSE 流（chat.py:2271）
+ *   POST /approve        body 恰为 { session_id, approved }，回来的是一条 SSE 流（chat.py:2415）
  *
  * 字段逐条照契约抄，不猜：items[].{session_id, owner_user_id, parked_steps, labels, status,
  * created_at, expires_at, request_id, trace_id, task_id}，外层 {items, count, limit, offset, has_more}。
  * count 是「过滤后的长度」，契约明写不得当总数用 —— 所以这一屏不摆「待办 N 条」那种数字，
  * 只如实说这一页取了最近多少笔、账本里还有没有更早的。
+ *
+ * R175 起同一份响应里还有第二格：failed_turns[] + failed_turns_has_more。它装的是
+ * 「员工批过板、而那一轮被系统跑挂了」的那几行账（app/storage/pending_approvals.py 的
+ * FAILED）。这一格与待办是两件事，画法也必须是两件事：
+ *   · 它【不进】items，所以不会被列成一条新的待办，也不带批准/驳回按钮 ——
+ *     后端闭合那一行之后，图很可能还挂在同一个中断上，再点一次就是让同一轮 resume 第二遍；
+ *   · 它【不进】复核循环：check_interrupt 问「还挂着吗」，答案必然是「没挂着」，
+ *     走那条腿就会被就地判成 stale，于是「你批过而那一轮失败了」在屏上变成「已作废」；
+ *   · 它【不许】被画成「已拒绝」，也不许被画成「已完成」—— 账上那一格叫 failed，
+ *     三句里它是唯一一句真话。
  *
  * 四张脸互不冒充（判据①，看板 G4 口径）：
  *   loading      进页面先「在读」—— 还没读过账本就说「没有待办」是句假话，所以它优先于一切。
@@ -21,7 +31,7 @@
  *   200 有行     列表，一行就是账本里的一笔。
  *   无权限与空列表是两条不可能互相顶替的路径：失败只可能来自 catch，200 空数组走不到 catch。
  *   备注（诚实记账）：/hitl/pending 今天不会回 403 —— 它对 anonymous 回 401、对别人的会话回 404
- *   而不是 403（chat.py:242-246 的「读不到就像不存在」惯例），归属靠 owner 过滤fail-closed。
+ *   而不是 403（chat.py:583-587 的「读不到就像不存在」惯例），归属靠 owner 过滤 fail-closed。
  *   403 那张脸照样留着：哪天归属换成分层权限，这一屏不许把它悄悄画成「暂无待办」。
  *
  * 位阶最高的一条（判据③）：行只可能来自真响应。没有真 pending 就留空态，不造演示行、
@@ -45,7 +55,8 @@ import { errorCodeLabel, errorCodeOf, errorText, normalizeError } from '../../li
 import { formatStamp, readFailureView, SHAPE_FAILURE_DESCRIPTION } from '../../lib/alerts'
 // SESSION_READ 在普通 <script> 块里 import 一次就够了：两个块同属一个模块作用域。
 import { SESSION_READ } from '../../lib/sessions'
-import { REPLAY_LOCAL_ONLY, REPLAY_NONE } from './HitlPendingRow.vue'
+// rowLabels / shortId 住在那一枚文件里：动作名与长 id 的说法全站只有一份，这里不抄第二份。
+import { REPLAY_LOCAL_ONLY, REPLAY_NONE, rowLabels, shortId } from './HitlPendingRow.vue'
 
 export default { name: 'HitlPendingPanel' }
 
@@ -89,6 +100,40 @@ export function mapPendingRow(row) {
     expiresAt: formatStamp(source.expires_at),
   }
 }
+
+// 形状钉：上面这个返回值由 tests/…/r168-hitl-pending.test.js 逐字段钉住（本单写域之外，
+// 不许动那枚钉子）。所以失败那一行的 ``decided_at`` 【不进】视图模型 —— 屏上那句
+// 「批过了、那一轮失败了」用的是挂起时间与请求号，够人对账；账本里那一格仍然留着
+// decided_at，哪天要把「断于几点」画上屏，先要过一次那枚形状钉。
+
+/**
+ * 后端那一格 failed_turns -> 视图行数组。
+ *
+ * 只认响应里真的有这一格：老镜像没有它、或后端坏成形状不对，一律回空数组 ——
+ * 那一屏于是只说「没有等你拍板的事」，绝不凭空造一句「你批过而失败了」。
+ */
+export function failedTurnsOf(payload) {
+  const rows = payload && payload.failed_turns
+  return Array.isArray(rows) ? rows : []
+}
+
+/** 这一格的一行：动作名（后端给了标签就用，没给按步骤名说中文）+ 长 id 只留前 8 位。 */
+export function failedTurnLabel(turn) {
+  const names = rowLabels(turn)
+  const request = shortId(turn && turn.requestId)
+  return names.join(' / ') + (request ? '（请求 #' + request + '）' : '')
+}
+
+/**
+ * R175 判据②的那三句话。两条红线写在这里，由用例逐字钉住：
+ *   · 不许出现「已拒绝 / 已驳回」—— 员工点的是同意，那一轮是系统跑挂的；
+ *   · 不许出现「已完成 / 已放行」—— 什么都没产出，报办完就是伪装。
+ */
+export const FAILED_TURN_TITLE = '批过了，但那一轮失败了'
+export const FAILED_TURN_LEAD = '下面这些步骤你当时拍了板，可那一轮没能跑完：编排报错，或者超过了系统处理时限。'
+  + '它们不算新的待办，也不会再回来等你批第二次 —— 这一屏没有把它记成你驳回，也没有记成办完。'
+  + '要拿到结果，请回那一轮对话重新问一次。'
+export const FAILED_TURN_MORE = '更早的失败那一轮仍在账本上，这一屏只列了最近这些。'
 
 /**
  * 谁排在谁前面：loading > failure > empty/list。
@@ -172,11 +217,12 @@ export function decisionView({
       face: 'failed',
       title: verb + '没有生效',
       description: (approved
-        ? '那一步并没有跑出结果：' + (reason || '本轮什么也没产出') + '。这一屏不把它记成办妥，这一行也留在原地。'
+        ? '那一步并没有跑出结果：' + (reason || '本轮什么也没产出') + '。这一屏不把它记成办妥，也不算你驳回。'
         : '驳回也没有生效：' + (reason || '本轮什么也没产出') + '。这一步既没执行、也没被确认否决，先别按办完记账。')
-        // 账本可能已经把这笔记成已处理（后端在报失败之前先闭合了账面），那也只是账面：
-        // 不代表这一步真跑出了结果。要说清楚，免得「重新读取」把这一行抹掉后被当成办妥。
-        + '按「重新读取」可以向账本再问一次；它要是把这笔记成了已处理，也不等于这一步真跑完了。',
+        // R175 之后「这一行也留在原地」成了半句真话：后端在报失败【之前】就把那一格闭成
+        // failed，重新读取之后它不再作为待办回来。所以话只能这么说 —— 账面闭合是一回事，
+        // 那一步真跑出了结果又是另一回事，前者永远不能拿来顶后者。
+        + '按「重新读取」可以向账本再问一次；它要是把这笔记成了失败的那一轮，也不等于这一步真跑完了。',
       codeLabel,
     }
   }
@@ -333,6 +379,10 @@ const localIds = ref([])
 const backendRead = ref({ asked: false, known: false, ids: [], failure: '' })
 // 点了跳转、正文却没回来时的那一句：与「这一笔没有可回看的对话」不是一格，各说各的。
 const openFailure = ref('')
+// R175：批过了而那一轮失败的那几笔。它与 rows 各存一份、永不并格 —— rows 只可能是待办，
+// 这一份只可能是已闭合的失败轮。两份混成一份，屏上就会重新出现「拿故障当新待办」。
+const failedTurns = ref([])
+const failedTurnsMore = ref(false)
 
 /** 判定表：行 + 后端那份名单 + 本机那份对照，三样现算，任何一样变了都自动跟上。 */
 const verdicts = computed(() => replayVerdicts(rows.value, backendRead.value, localIds.value))
@@ -342,6 +392,8 @@ const verdictOf = row => verdicts.value[row.sessionId] || null
 const pageSize = PENDING_PAGE_SIZE
 const emptyCopy = { title: EMPTY_TITLE, description: EMPTY_DESCRIPTION }
 const replayBasisNote = REPLAY_BASIS_LOCAL_NOTE
+const failedCopy = { title: FAILED_TURN_TITLE, lead: FAILED_TURN_LEAD, more: FAILED_TURN_MORE }
+const failedLine = failedTurnLabel
 
 const face = computed(() => pendingFace({
   loading: loading.value,
@@ -428,7 +480,14 @@ async function loadPending({ append = false } = {}) {
   if (inFlight.value) return
   inFlight.value = true
   if (append) loadingMore.value = true
-  else { loading.value = true; failure.value = null; moreError.value = '' }
+  else {
+    loading.value = true
+    failure.value = null
+    moreError.value = ''
+    // 重读之前先撤下那一句：账本这会儿是什么样还不知道，屏上不许拿上一次的话冒充这一次。
+    failedTurns.value = []
+    failedTurnsMore.value = false
+  }
   // 能不能跳回那一轮，取决于这台浏览器的会话历史长什么样；每次读列表前重取一次，
   // 免得用户在对话里跑了几轮之后回到这一屏，行上还按旧账给跳转。
   localIds.value = readLocalIds()
@@ -440,12 +499,19 @@ async function loadPending({ append = false } = {}) {
       // 形状不对＝坏了，不是空的：画失败脸，绝不落到「现在没有等你拍板的事」。
       rows.value = []
       hasMore.value = false
+      failedTurns.value = []
       failure.value = pendingShapeFailure()
       return
     }
     const mapped = items.map(mapPendingRow)
     rows.value = append ? rows.value.concat(mapped) : mapped
     hasMore.value = Boolean(response.data.has_more)
+    // 失败那一格不翻页：翻页游标说的是待办，而这一格说的是「最近这些轮失败了」。
+    // append 那一枪带回来的是同一批，重复赋值只会让屏上的行数抖一下。
+    if (!append) {
+      failedTurns.value = failedTurnsOf(response.data).map(mapPendingRow)
+      failedTurnsMore.value = Boolean(response.data.failed_turns_has_more)
+    }
     // 游标推进按「这一页真正消费掉多少行账本」：后端取 limit+1 行、截到 limit 行再逐行复核，
     // 复核不过的行就地排除 —— 所以 mapped.length 可能小于它消费掉的行数。
     // 按 mapped 推进会把被复核掉的行再读一遍（同一笔待办在屏上出现两次）。
@@ -457,6 +523,7 @@ async function loadPending({ append = false } = {}) {
       rows.value = []
       hasMore.value = false
       offset.value = 0
+      failedTurns.value = []
       failure.value = pendingFailureView(err)
     }
   } finally {
@@ -549,6 +616,30 @@ onMounted(() => {
     <!-- 点了跳转而正文没回来：与行上那两句各说各的事，也单独一句。 -->
     <p v-if="openFailure" class="hitl-note" role="alert" data-testid="hitl-open-failure">{{ openFailure }}</p>
 
+    <!-- R175 判据②：员工批过板而那一轮被系统跑挂了。那一行账已在后端闭合成 failed，
+         所以它【不】会作为待办回来（那等于让同一个中断 resume 第二遍），但也不能无声消失 ——
+         「我明明点了同意，它自己没了」还是半句假话。这一格只说这一件事：不带批准/驳回按钮，
+         不进上面那四张脸，也不许被画成「已拒绝」。 -->
+    <section v-if="failedTurns.length" class="hitl-failed" role="status" data-testid="hitl-failed-turns">
+      <h5 class="hitl-failed__title">{{ failedCopy.title }}</h5>
+      <p class="hitl-failed__lead">{{ failedCopy.lead }}</p>
+      <ul class="hitl-failed__list">
+        <li
+          v-for="turn in failedTurns"
+          :key="turn.sessionId + '/' + turn.requestId"
+          class="hitl-failed__item"
+          data-testid="hitl-failed-turn"
+          :data-session="turn.sessionId"
+          :data-request="turn.requestId"
+          :data-status="turn.status"
+        >
+          {{ failedLine(turn) }}
+          <span v-if="turn.createdAt">· 挂起于 {{ turn.createdAt }}</span>
+        </li>
+      </ul>
+      <p v-if="failedTurnsMore" class="hitl-note" data-testid="hitl-failed-more">{{ failedCopy.more }}</p>
+    </section>
+
     <UiLoadingState v-if="face === 'loading'" label="正在读取挂起待办..." dense />
     <UiErrorState
       v-else-if="failure"
@@ -622,5 +713,36 @@ onMounted(() => {
   color: var(--ink-soft);
   font-size: var(--t-xs);
   line-height: 1.6;
+}
+
+/* 只借 theme.css 既有令牌与 var(--*)，零裸色值 —— 与 HitlPendingRow 同一份视觉口径。 */
+.hitl-failed {
+  display: grid;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+.hitl-failed__title {
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.hitl-failed__lead,
+.hitl-failed__item {
+  color: var(--ink-soft);
+  font-size: var(--t-xs);
+  line-height: 1.6;
+}
+
+.hitl-failed__list {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding-left: var(--s-3);
 }
 </style>

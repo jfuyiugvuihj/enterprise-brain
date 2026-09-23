@@ -39,8 +39,19 @@ RESUMED = "resumed"
 REFUSED = "refused"
 ABANDONED = "abandoned"
 STALE = "stale"
-DECIDED_STATUSES = frozenset({RESUMED, REFUSED, ABANDONED})
-ALL_STATUSES = (AWAITING, RESUMED, REFUSED, ABANDONED, STALE)
+#: R175：图自己跑挂了（internal_error）或跑超时了（task_timeout）。这一格既不是员工驳回
+#: （refused），也不是员工按了停止（abandoned），更不是"图不再确认这次挂起"（stale）——把
+#: 一次故障写成那三格里的任何一格，都是替员工说了一句他没说的话。裁定与 app/api/v1/chat.py
+#: 取消腿的「停止 != 拒绝，写 abandoned 绝不写 refused」是同一条，不许开倒车。
+FAILED = "failed"
+DECIDED_STATUSES = frozenset({RESUMED, REFUSED, ABANDONED, FAILED})
+ALL_STATUSES = (AWAITING, RESUMED, REFUSED, ABANDONED, STALE, FAILED)
+#: 🔴 0008 的 CHECK 只认前五枚，``failed`` 不在其中，而 migrations/** 在 R175 写域之外
+#: （R172 的 ``declared_lane`` 停在同一处）。结论：PG 腿今天写不进这一格 —— ``mark_status``
+#: 会撞 ``pending_approvals_status_check``，由 ``_decide_pending_approval`` 记 exception，
+#: 那一行留在 awaiting。本机文件账能闭合，PG 那一半是**具名欠账**，不是"顺手拿 refused
+#: 顶数"的理由。缺口由 tests/test_r175_failed_turn.py 逐枚钉住：多一枚漏一枚都会红。
+PG_STATUSES = frozenset({AWAITING, RESUMED, REFUSED, ABANDONED, STALE})
 
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
 _DEFAULT_TTL_HOURS = 24.0
@@ -103,6 +114,17 @@ def _ttl_window() -> timedelta:
 def _is_open(record: PendingApprovalRecord, at: datetime) -> bool:
     if record.status != AWAITING:
         return False
+    return _within_action_window(record, at)
+
+
+def _within_action_window(record: PendingApprovalRecord, at: datetime) -> bool:
+    """``expires_at`` 之前这一行还落在「当时还说得出口」的窗口里。
+
+    读不懂到期时间就当还在窗口内：宁可多列一行让人核对，也不替账本宣布它已经过去了。
+    抽出来是因为 R175 之后有两个读侧要用同一个窗口 —— ``awaiting`` 问的是「还能不能批」，
+    ``failed`` 问的是「这一句『你批过而那一轮失败了』还算不算新话」，两者用的是同一格
+    ``expires_at``，一处过滤过期一处不过滤迟早漂。
+    """
     try:
         expires = datetime.fromisoformat(record.expires_at)
     except (TypeError, ValueError):
@@ -240,6 +262,12 @@ def mark_status(session_id: str, status: str) -> PendingApprovalRecord | None:
 
     只碰还在 awaiting 且没到期的行：过期的挂起不该还能被批准，那会写出一条
     decided_at 晚于 expires_at 的自相矛盾记录。
+
+    R175 之后 ``FAILED`` 也在可写的终态里，而它恰恰是**唯一一枚 PG 写不进去**的：
+    0008 的 ``pending_approvals_status_check`` 不认它，PG 分支的 UPDATE 会撞约束并由
+    调用方 ``_decide_pending_approval`` 记 exception（那一行于是留在 awaiting）。本机
+    文件账这一半是真闭合；PG 那一半是具名欠账，补法是一枚 migrations 脚本放开 CHECK，
+    不是在这里换用 refused/abandoned 顶数。缺口由 tests/test_r175_failed_turn.py 钉住。
     """
     session_id = str(session_id or "").strip()
     if status not in ALL_STATUSES or status == AWAITING:
@@ -280,19 +308,19 @@ def _latest_open_in_memory(session_id: str) -> PendingApprovalRecord | None:
     return max(candidates, key=lambda record: record.created_at) if candidates else None
 
 
-def open_items(
+def _items_with_status(
+    status: str,
     *,
     owner_user_id: str | None = None,
     session_id: str | None = None,
     limit: int | None = None,
     offset: int = 0,
 ) -> list[PendingApprovalRecord]:
-    """未闭合（awaiting 且未过期）的行，按挂起时间从新到旧。
+    """按状态取还在行动窗口内的行，页边界下推 SQL。WHERE 只有一份。
 
-    ``limit`` 默认**不设限**：分页是读端点的代价策略（`GET /hitl/pending` 每列一行就要向图
-    复核一次 ``check_interrupt``），账本层自己不需要页。传了就把页边界**下推进 SQL 的
-    LIMIT/OFFSET**，而不是把整表读回来再切片——后者只是把"有上限"说成半句真话。
-    不传时 SQL 一字不变，免得内部读侧被这次的接口改动带着漂移。
+    ``open_items``（awaiting）与 ``failed_items``（failed）读的是同一张账本，差别只有
+    那一格 status。两处各写一套 SQL，迟早漂成一处过滤过期、一处不过滤 —— 而「已闭合的
+    失败行会不会永远挂在屏上」正是由这一格窗口决定的。
     """
     bounded = None if limit is None else max(0, int(limit))
     start = max(0, int(offset))
@@ -303,7 +331,8 @@ def open_items(
             records = [
                 record
                 for record in _MEM_ROWS.values()
-                if _is_open(record, now)
+                if record.status == status
+                and _within_action_window(record, now)
                 and (owner_user_id is None or record.owner_user_id == str(owner_user_id))
                 and (session_id is None or record.session_id == str(session_id))
             ]
@@ -315,7 +344,7 @@ def open_items(
         "task_id, created_at, expires_at, decided_at FROM pending_approvals "
         "WHERE status = %s AND expires_at > NOW()"
     )
-    params: list[Any] = [AWAITING]
+    params: list[Any] = [status]
     if owner_user_id is not None:
         sql += " AND owner_user_id = %s"
         params.append(str(owner_user_id))
@@ -334,6 +363,61 @@ def open_items(
         _require_table(conn)
         rows = conn.execute(sql, tuple(params)).fetchall()
     return [_record_from_row(dict(row)) for row in rows]
+
+
+def open_items(
+    *,
+    owner_user_id: str | None = None,
+    session_id: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[PendingApprovalRecord]:
+    """未闭合（awaiting 且未过期）的行，按挂起时间从新到旧。
+
+    ``limit`` 默认**不设限**：分页是读端点的代价策略（`GET /hitl/pending` 每列一行就要向图
+    复核一次 ``check_interrupt``），账本层自己不需要页。传了就把页边界**下推进 SQL 的
+    LIMIT/OFFSET**，而不是把整表读回来再切片——后者只是把"有上限"说成半句真话。
+    不传时 SQL 一字不变，免得内部读侧被这次的接口改动带着漂移。
+    """
+    return _items_with_status(
+        AWAITING,
+        owner_user_id=owner_user_id,
+        session_id=session_id,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def failed_items(
+    *,
+    owner_user_id: str,
+    session_id: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[PendingApprovalRecord]:
+    """R175：闭合为 ``failed`` 的那一轮 —— 员工批过板，而系统没把那轮跑完。
+
+    这一份读侧是给「审批与待办」那一屏的一句话用的：待办行闭合之后就不在 ``open_items``
+    里了，如果屏上只认待办，那一笔会**无声消失** —— 员工看到的是「我明明点了同意，它自己
+    没了」。所以这一格必须与待办一起回，句子上屏才有据可依，而不是前端凭一次请求的成败猜。
+
+    两条写死的规矩：
+    - **绝不向图复核**。``check_interrupt`` 问的是「现在还挂着吗」，而这一行的答案本来就
+      是「没挂着了」；拿它去问，``GET /hitl/pending`` 的复核腿会把失败行就地判成
+      ``stale``（"已作废"）—— 那正是本单要消灭的那句话。
+    - 只到 ``expires_at`` 为止。过期的失败行仍留在账本与审计里（一行都不删），但不再占用
+      屏上那一格：这与「过期挂起不再算待办」是同一条既有口径，不是新造的失忆。
+
+    ``owner_user_id`` 是必填：归属过滤 fail-closed，不带归属的读等于读全司。
+    PG 腿今天读得到 ``failed`` 行（读不受 CHECK 约束），写不进去 —— 见模块常量段。
+    """
+    return _items_with_status(
+        FAILED,
+        owner_user_id=str(owner_user_id or ""),
+        session_id=session_id,
+        limit=limit,
+        offset=offset,
+    )
 
 
 def get_row(session_id: str) -> PendingApprovalRecord | None:

@@ -53,7 +53,7 @@ from app.rag.indexing import (
 from app.common.model_handler import ModelHandler, ModelSource
 from app.common.logger import logger
 from app.common.performance import PerformanceStats, RequestBudget
-from app.common.permissions import ACTION_DELETE, ACTION_DOWNLOAD, ACTION_VIEW
+from app.common.permissions import ACTION_APPROVE, ACTION_DELETE, ACTION_DOWNLOAD, ACTION_VIEW
 from app.common.policy import authorization_decision
 from app.documents.catalog import (
     build_storage_name,
@@ -2253,6 +2253,43 @@ def _decide_pending_approval(session_id: str, status: str) -> None:
 DEFAULT_PENDING_LIMIT = 50
 MAX_PENDING_LIMIT = 200
 
+#: 挂起账本在审计台账里的资源标识：写的是「哪一本账」，不是「哪一轮说了什么」。
+#: 与 app/rag/filters.py 的 AUDIT_SURFACE 同一口径 —— 面名固定，具体哪一轮走 request_id。
+HITL_LEDGER_SURFACE = "hitl_pending_approval"
+
+
+def _fail_pending_approval_turn(
+    session_id: str,
+    principal,
+    *,
+    error_code: str,
+    request_id: str = "",
+) -> None:
+    """把「员工批过板、而这一轮被系统跑挂了」记成一格 ``failed``，并沿既有通路落一笔审计。
+
+    两条漏闭的出口共用这一处（``internal_error`` 与 ``task_timeout``）：同一件事在两条出口
+    必须是同一个判定，一处补一处漏就是第三句互相打架的话。
+
+    为什么新造一格而不复用 ``REFUSED``：那是把故障写成拒批。审批人点的确实是「同意」，账上
+    却留一行 refused，等于事后替他说了一句他没说的话 —— 与本文件取消腿那句「停止 != 拒绝，
+    账面写 abandoned，绝不写 refused」（:2517-2519）是同一条裁定，不许开倒车。也不许写
+    ``STALE``：stale 说的是「图不再确认这次挂起」，而跑挂了图很可能**还**挂在同一个中断上。
+
+    审计写的是这一轮的结局（谁、哪个面、failure、哪个稳定码 + request_id 定位哪一轮），
+    不是「账面已闭合」的收据 —— 后者在 PG 腿上今天做不到（见 pending_approvals 模块常量段），
+    写成收据就是把半条腿伪装成完整的。零正文：这一刻手里只有一个人读的错误串，把它灌进
+    台账就是往审计里塞内容。
+    """
+    _decide_pending_approval(session_id, pending_approvals.FAILED)
+    record_audit(
+        principal,
+        ACTION_APPROVE,
+        "failure",
+        HITL_LEDGER_SURFACE,
+        error_code,
+        request_id=request_id or None,
+    )
+
 
 @router.get("/hitl/pending")
 async def hitl_pending(
@@ -2293,12 +2330,25 @@ async def hitl_pending(
             limit=applied_limit + 1,
             offset=applied_offset,
         )
+        # R175 判据②：同一本账上「已闭合为失败」的那几行也跟着回。它们是**已经办完的事**，
+        # 不是待办，所以只多取一行问 has_more、一条都不进上面的复核循环 —— 复核问的是
+        # 「图还挂着吗」，答案必然是「没挂着」，走那条腿就会被 :2363-2365 就地判成 stale，
+        # 于是「你批过、那一轮失败了」在屏上变成「已作废」。同一张表、同一次连接，
+        # 缺表照旧翻 503：把这一格读不到洗成"没有失败的那一轮"又是一句假话。
+        failed_rows = pending_approvals.failed_items(
+            owner_user_id=str(principal.user_id or ""),
+            session_id=session_id or None,
+            limit=applied_limit + 1,
+            offset=0,
+        )
     except pending_approvals.PendingApprovalStoreMissing as exc:
         # 只接这一种错。吞成 200 空列表是造假（R13 整单就是为了消灭它），翻成
         # internal_error 又等于把"跑迁移"这条运维可执行的诊断洗成通用故障。
         raise HTTPException(status_code=503, detail="storage_unavailable") from exc
     has_more = len(rows) > applied_limit
     page = rows[:applied_limit]
+    failed_has_more = len(failed_rows) > applied_limit
+    failed_page = failed_rows[:applied_limit]
 
     items: list[dict] = []
     for row in page:
@@ -2341,6 +2391,24 @@ async def hitl_pending(
         "limit": applied_limit,
         "offset": applied_offset,
         "has_more": has_more,
+        # 两格互不顶替：``items`` 空只说明确实没有等着批的事，``failed_turns`` 说的
+        # 是「批过了而那一轮失败了」。没有 ``labels`` 这一格 —— 标签来自向图复核，
+        # 而这一行不许去问图（见上），前端按 ``parked_steps`` 里既有的步骤名说中文。
+        "failed_turns": [
+            {
+                "session_id": row.session_id,
+                "owner_user_id": row.owner_user_id,
+                "parked_steps": list(row.parked_steps),
+                "status": row.status,
+                "created_at": row.created_at,
+                "expires_at": row.expires_at,
+                "request_id": row.request_id,
+                "trace_id": row.trace_id,
+                "task_id": row.task_id,
+            }
+            for row in failed_page
+        ],
+        "failed_turns_has_more": failed_has_more,
     }
 
 
@@ -2470,6 +2538,17 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             if budget.expired():
                 # error_code 与 /ask 的超时形状（request.failed 携 task_timeout）同名同形状：同一个"超过处理时限"在两条
                 # 流里必须是同一个码，客户端不必按端点分支。legacy error 原文照发。
+                # R175：超时这一样得先把员工已经拍过板的那一行账闭合，再发失败帧。此前
+                # 这一条 break 一次都没闭合过账，那一行于是留在 awaiting：下次开屏它要么被
+                # 当成新待办原样列回来（图还挂在同一个中断上，等于让同一轮 resume 第二遍），
+                # 要么被复核腿（:2363-2365）就地判成 stale。写账排在发帧之前，与取消腿
+                # （:2519）、收尾腿（:2582-2585）同一个次序 —— 客户端在半路断线也不该留一格开着的账。
+                _fail_pending_approval_turn(
+                    request.session_id,
+                    principal,
+                    error_code="task_timeout",
+                    request_id=request_id,
+                )
                 yield canonical_sse_event(
                     "request.failed",
                     request_id=request_id,
@@ -2604,6 +2683,13 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             if kind == "error":
                 # 编排线程抛错 = 这一轮失败。legacy error 只带人读的文字，机器读的码走
                 # canonical（/ask 那批 request.* 信封同一口径），legacy 原文照发不吞。
+                # R175：同上，跑挂了也要闭合那一行账。这一条 break 此前同样一次都没闭合过。
+                _fail_pending_approval_turn(
+                    request.session_id,
+                    principal,
+                    error_code="internal_error",
+                    request_id=request_id,
+                )
                 yield canonical_sse_event(
                     "request.failed",
                     request_id=request_id,
