@@ -339,8 +339,40 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
     results = []
 
     q_lower = query.lower()
-    first_txt_col = txt_cols[0] if txt_cols else ""
     first_num_col = num_cols[0] if num_cols else ""
+
+    # R189 · 名字列也要按问法选。数值列那一支早就有"点名优先、点不出就不静默选"的规矩
+    # （matched = [nc for nc in num_cols if nc in query] 连同注释 C3），文本列此前一律取 txt_cols[0]：
+    # 帧 {姓名, 部门, 销售额} 上问「哪个部门销售额最高」，答案给的是人名 —— 员工看得见的一句假话。
+    # 本单补的就是这枚不对称。取数方式与数值列同型（对 txt_cols 做 c in query），不另发明第二套匹配，
+    # 也不叫模型来选列：这是纯本地 pandas 判定。名单的唯一出口仍是
+    # app/tools/excel.py 的 select_text_columns()（本单一字未动）。
+    named_txt_cols = [tc for tc in txt_cols if tc in query]
+    if named_txt_cols:
+        # 问法点名 => 用它；多列点名时取名单里第一枚，同数值列那一支的 matched[:1]。
+        # 列名问题里已经说过，产物不加前缀 —— 与改前逐字节相同（也保住 R185 钉死的那行排名读数）。
+        label_col, label_tag = named_txt_cols[0], ""
+    elif len(txt_cols) > 1:
+        # 判据 2 取 (a)"输出里显式带出按哪一列作答"，不取 (b)"照数值列先例逐列都给"，理由两条：
+        #   1) 这段文本是直接进 prompt 的，装箱预算就卡在那儿。逐列都给在"排名前 N"那一支要把同一批
+        #      数值行按每个候选名字列重播一遍，行数随候选列数线性翻倍，多出来的行只会把真结论挤出窗口；
+        #      在排名答案那一支还要与数值列的 cols_use 相乘（多指标 x 多名字列），读数糊成一团。
+        #   2) (a) 只多一个"列名="前缀：读的人看得见这一行是按哪一列给的，模型看得见下一句该点名谁，
+        #      而"点名"与"只有一个候选"两种情形一个字节都不动。
+        # 候选之间依然按名单顺序取第一枚（名单顺序＝列顺序，由 select_text_columns 守住），
+        # 但这一枚会被标出来 —— 不再是静默选错列。
+        label_col, label_tag = txt_cols[0], f"{txt_cols[0]}="
+    else:
+        label_col, label_tag = txt_cols[0] if txt_cols else "", ""
+
+    def label_value(row) -> str:
+        """三处消费（排名答案 / 前 N 名逐行标签 / 兜底预览）唯一的名字取值口。
+
+        选列的结论只存在于上面那一处，本函数只做格式化 —— 三处各写一份 if 迟早各自漂移。
+        """
+        if not label_col:
+            return ""
+        return label_tag + str(row[label_col])
 
     # "哪个/谁最XX" → 排名第一
     m = re.search(r"(哪个|谁|哪家|哪).*?(最高|最低|最多|最少|最大|最小)", query)
@@ -359,7 +391,7 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
                 row = df.loc[df[col].idxmin()]
             else:
                 row = df.loc[df[col].idxmax()]
-            name_val = str(row[first_txt_col]) if first_txt_col else ""
+            name_val = label_value(row)
             results.append(f"🎯 {direction}({col}): {name_val} — {col}={row[col]}")
 
     # "排名/排序" → top N
@@ -383,7 +415,7 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
         sorted_df = df.sort_values(sort_col, ascending=False).head(top_n)
         lines = [f"📊 按 {sort_col} 排名前{top_n}:"]
         for _, r in sorted_df.iterrows():
-            name = str(r[first_txt_col]) if first_txt_col else ""
+            name = label_value(r)
             vals = ", ".join(f"{c}={r[c]}" for c in num_cols[:3])
             lines.append(f"  {name}: {vals}")
         results.append("\n".join(lines))
@@ -432,7 +464,7 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
         sorted_df = df.sort_values(num_cols[0], ascending=False).head(10)
         lines = [f"📊 数据预览 (按{num_cols[0]}降序):"]
         for _, r in sorted_df.iterrows():
-            name = str(r[first_txt_col]) if first_txt_col else ""
+            name = label_value(r)
             vals = ", ".join(f"{c}={r[c]}" for c in num_cols[:3])
             lines.append(f"  {name}: {vals}")
         results.append("\n".join(lines))
