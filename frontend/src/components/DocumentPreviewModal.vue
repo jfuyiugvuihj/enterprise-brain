@@ -1,7 +1,44 @@
+<script>
+/**
+ * 行级可见范围「只裁掉一部分」那一格（R191 · Bohr 交工第⑥格挂账）。
+ *
+ * 这句话在这里定义、也只在这里定义：DataPanel 的统计行与本弹窗的预览行是同一件事的两张脸。
+ * R186 让面板开始说「全表 120 行中，当前账号可见的 40 行」，而弹窗打开仍只报
+ * 「40 行预览」—— 把一部分说成全部（R163 归的 B 类），客户一开弹窗就抓到。两处各写一套
+ * 迟早漂成两句互相打架的真话，所以句子只有这一枚出处。
+ *
+ * 三个不许：
+ *   ① 不许数行：两个数一律来自后端 preview.row_scope 的 rows_in / rows_visible
+ *      （app/api/v1/data.py::_row_scope_status 构形、:319 挂上），一枚 rows.length 都不参与；
+ *   ② 不许猜因由：code 非空（row_scope_denied / no_visible_rows）就是后端自己的裁决，那一支
+ *      的句子归后端的 message（走本组件已有的 error prop），这里一个字都不补 —— 只裁掉一部分
+ *      的情形 code 恒为空串（契约 docs/api/contract-v1.md「Dataset Row-Level Visibility」）；
+ *   ③ 不许越界说话：rows_in === rows_visible（含两者皆 0 的真空表）与读不到 row_scope 的载荷
+ *      （上传回包、旧响应）一律空串，产物字节与本格装上之前逐字相同。
+ */
+export function rowScopeVisibleNote(scope) {
+  if (!scope) return ''
+  const rowsIn = scopeRowCount(scope.rows_in)
+  const rowsVisible = scopeRowCount(scope.rows_visible)
+  if (String(scope.code || '') !== '') return ''
+  if (rowsIn > 0 && rowsVisible > 0 && rowsVisible < rowsIn) {
+    return `全表 ${rowsIn} 行中，当前账号可见的 ${rowsVisible} 行`
+  }
+  return ''
+}
+
+/** 计数只认正整数：后端给 int，界面上不许出现 NaN、负数或小数冒充行数。 */
+function scopeRowCount(value) {
+  const count = Number(value)
+  return Number.isFinite(count) && count > 0 ? Math.trunc(count) : 0
+}
+</script>
+
 <script setup>
+import { computed } from 'vue'
 import { UiLoadingState } from './ui'
 
-defineProps({
+const props = defineProps({
   open: Boolean,
   filename: {
     type: String,
@@ -32,10 +69,21 @@ defineProps({
     type: String,
     default: ''
   },
-  truncated: Boolean
+  truncated: Boolean,
+  // R191：后端 preview.row_scope 的原样载荷（rows_in / rows_visible / code / reason_code）。
+  // 缺席（null）= 这一份响应没有行级判定可说，弹窗照旧一个字都不插。
+  rowScope: {
+    type: Object,
+    default: null
+  }
 })
 
 const emit = defineEmits(['close', 'download'])
+
+const rowScopeNote = computed(() => rowScopeVisibleNote(props.rowScope))
+// 分隔符由这一格自己带上：后端两数相等（或读不到 row_scope）时它是空串，
+// 预览那一行的产物字节与本格装上之前逐字相同（R191 判据②）。
+const rowScopeSuffix = computed(() => (rowScopeNote.value ? ` · ${rowScopeNote.value}` : ''))
 </script>
 
 <template>
@@ -68,7 +116,7 @@ const emit = defineEmits(['close', 'download'])
             <pre v-else-if="kind === 'text'" class="text-preview">{{ text }}</pre>
             <div v-else-if="kind === 'table'" class="table-preview" data-preview>
               <div class="table-meta">
-                <span>{{ rows.length }} 行预览</span>
+                <span>{{ rows.length }} 行预览{{ rowScopeSuffix }}</span>
                 <span v-if="truncated">仅显示前 100 行</span>
               </div>
               <div v-if="!rows.length" class="preview-state">暂无数据</div>

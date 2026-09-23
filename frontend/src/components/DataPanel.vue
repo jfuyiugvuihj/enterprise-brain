@@ -3,6 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { errorDetail, http, isPermissionDenied } from '../lib/http'
 import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
+// R191：「全表 N 行中，当前账号可见的 M 行」这句话与它自己的判据只有一枚出处（同文件导出），
+// 面板这一格与弹窗那一格逐字同源 —— 两处各写一套，迟早漂成两句互相打架的真话。
+import { rowScopeVisibleNote } from './DocumentPreviewModal.vue'
 // 产物列表（W2-2 挂载）与两步删除状态机共用一份实现：两处删除入口的确认行为不许各写一遍
 import ArtifactList, { advanceDelete, deleteButtonLabel, deleteErrorView, isPendingDelete } from './ArtifactList.vue'
 
@@ -22,6 +25,9 @@ import ArtifactList, { advanceDelete, deleteButtonLabel, deleteErrorView, isPend
  *                 可见范围 / 部门」任何一枚词，也不许复用 ② 的那句话；
  *   ③ 只裁一部分   rows_in > rows_visible > 0 —— 正常答案加一行交代：明说全表 N 行、可见 M 行，
  *                 不许让 M 冒充这张表的总行数。
+ *
+ * R191 补的那一格：③ 的那句话本文件不再自己拼，读 rowScopeVisibleNote()；同一份后端计数
+ * 从这里喂给弹窗的预览行（:row-scope），两张脸从此逐字同源。
  */
 const ROW_SCOPE_DENIED = 'row_scope_denied'
 const NO_VISIBLE_ROWS = 'no_visible_rows'
@@ -207,8 +213,12 @@ function clearTableState() {
   pendingFileDelete.value = ''
 }
 
+// R191：那句话（含它自己的判据）的唯一出处，输入就是后端那枚 row_scope 原样对象。
+const rowScopeNote = computed(() => rowScopeVisibleNote(rowScope.value))
+
 /**
- * 预览那一屏的行级状态。判定形状在这里定，句子一律读后端那一层给的 code / message / 计数。
+ * 预览那一屏的行级状态。判定形状在这里定，句子一律读后端那一层给的 code / message / 计数，
+ * 而 ③ 那一支连句子本身都读 rowScopeNote（R191：与弹窗共用同一枚出处）。
  */
 const previewScope = computed(() => {
   const scope = rowScope.value
@@ -233,7 +243,8 @@ const previewScope = computed(() => {
       message: `这份数据文件里共有 ${rowsIn} 行，界面上一行都没有显示出来。显示为空不代表文件里没有数据行。`,
     }
   }
-  if (rowsIn > 0 && rowsVisible > 0 && rowsVisible < rowsIn) {
+  if (rowScopeNote.value) {
+    // 判据也只有一枚出处：那句话开口了才算「只裁掉一部分」，本层不再自己比一次这两个数。
     return { face: 'partial', rowsIn, rowsVisible, message: '' }
   }
   // 判据 1①：真空表（code==='' 且 rows_in===0）与全部可见都落在这里 —— 这一格不归本层说。
@@ -265,7 +276,7 @@ const profileStatsSuffix = computed(() => {
   const scope = previewScope.value
   if (!scope) return profile.value?.empty ? ' · 空表，尚无数据行' : ''
   if (scope.face === 'partial') {
-    return ` · 全表 ${scope.rowsIn} 行中，当前账号可见的 ${scope.rowsVisible} 行`
+    return rowScopeNote.value ? ` · ${rowScopeNote.value}` : ''
   }
   return ' · 当前显示 0 行'
 })
@@ -543,6 +554,7 @@ onMounted(loadDataFiles)
       :loading="previewLoading"
       :truncated="tableTruncated"
       :error="previewModalError"
+      :row-scope="rowScope"
       @close="closeDataPreview"
       @download="downloadDataFile"
     />

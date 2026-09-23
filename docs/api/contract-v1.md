@@ -317,13 +317,19 @@ Example:
 re-registered on 2026-09-16 after `5ea8dee` (paging), `35ee27e` (missing-table 503) and `6606f59`
 (code ratification), against the suite at **831 passed / 22 skipped / 0 failed**.
 
-Shape (as implemented, not as aspirational):
+Shape (as implemented, not as aspirational). R175 grew a second list on the same call; this block
+and the two key tables in the subsections below are one shape, and
+`tests/test_r191_hitl_contract_pins.py` compares all three of them against the `return` dict of
+`app/api/v1/chat.py::hitl_pending`:
 
 ```
 { "items": [ { "session_id", "owner_user_id", "parked_steps": [node...], "labels": [..],
                "status", "created_at", "expires_at", "request_id", "trace_id", "task_id" } ],
   "count": <== items.length, after filtering>, "limit": <applied>, "offset": <applied>,
-  "has_more": <bool> }
+  "has_more": <bool>,
+  "failed_turns": [ { "session_id", "owner_user_id", "parked_steps": [node...], "status",
+                      "created_at", "expires_at", "request_id", "trace_id", "task_id" } ],
+  "failed_turns_has_more": <bool> }
 ```
 
 - `parked_steps` values come from the compile-time constant `_HITL_PARKED`
@@ -367,6 +373,143 @@ Closed on 2026-09-16 (both were recorded above as "not guarantees", not discover
    string detail, not an `ErrorEnvelope` - matching this file's local convention (`chat.py:1303`).
    A subclass was required because `tests/test_hitl_pending.py:395` pinned the `RuntimeError` base
    class from the write side; naming the error must not turn an old assertion red.
+
+### `GET /api/v1/hitl/pending` -> response envelope
+
+Machine-checked section. Every key table below is compared, in order and in both directions, with
+the AST of `app/api/v1/chat.py::hitl_pending`: its single `return` dict, the dict literal appended
+to `items`, and the dict literal inside the `failed_turns` comprehension. The pins live in
+`tests/test_r191_hitl_contract_pins.py`. A key built in code and missing here is a hole in this
+contract; a key documented here and not built is a client reading a field that never arrives.
+
+| key | type | meaning |
+| --- | --- | --- |
+| `items` | object[] | parked rows this principal owns, each reconfirmed against the graph. One key wider than the table below: `labels`, which only the rechecked rows may carry |
+| `count` | int | `len(items)`, after filtering and after the recheck dropped rows - a page length, never a total of open approvals |
+| `limit` | int | the applied limit: default `DEFAULT_PENDING_LIMIT` (50), clamped to at least 1 and at most `MAX_PENDING_LIMIT` (200) |
+| `offset` | int | the applied offset. It pages `items` and **does not** page `failed_turns` |
+| `has_more` | bool | the awaiting leg of the ledger holds rows beyond this page, not "more rows you are allowed to see" |
+| `failed_turns` | object[] | rows the ledger closed as `failed`: the approver decided and the system did not finish that round - shape in the next subsection |
+| `failed_turns_has_more` | bool | the failed leg holds more rows than the applied limit; since `offset` is not applied to that leg, "more" is a standing fact here, not a next page this call can move through |
+
+Four rules a consumer has to be able to read off this table:
+
+* **Both legs are one request.** `failed_turns` comes from the second read of the same ledger
+  (`app/storage/pending_approvals.py::failed_items`) inside the same `try`, so a missing table is
+  still `503 storage_unavailable` for the whole call. Answering "you have no failed turns" for a
+  ledger that could not be read would be the second lie on top of the first.
+* **Rows in `failed_turns` are never reconfirmed against the graph.** `check_interrupt` answers "is
+  this still parked?", and for a closed row the answer is always no; running that leg over these
+  rows would mark them `stale` (「已作废」) in place, which is the exact sentence R175 exists to
+  remove. This endpoint asks the graph once per listed to-do and zero times per failed turn.
+* **`offset` does not move the failed leg.** The code calls `failed_items(..., offset=0)`
+  unconditionally, so this list is always the newest `limit` closed-as-failed rows, ordered
+  `created_at DESC`. A screen that pages `items` with 「看更早的」 must keep this block as what it
+  is (the recent ones) and must not present the second page of to-dos as a second page of failed
+  turns. Paging this leg is not offered by v1.
+* **Empty `items` plus non-empty `failed_turns` is a real state.** The two blocks do not substitute
+  for each other: 「没有等你拍板的事」 and 「你批过了，那一轮失败了」 are statements about two
+  different sets of rows, and each may only ever be rendered from its own list.
+
+### `GET /api/v1/hitl/pending` -> `failed_turns[]` rows
+
+```json
+{
+  "failed_turns": [
+    {
+      "session_id": "sess-1",
+      "owner_user_id": "u-1",
+      "parked_steps": ["chart"],
+      "status": "failed",
+      "created_at": "2026-09-23T09:12:44.123456+08:00",
+      "expires_at": "2026-09-23T11:12:44.123456+08:00",
+      "request_id": "req-1",
+      "trace_id": "trace-1",
+      "task_id": "task-1"
+    }
+  ]
+}
+```
+
+| key | type | meaning |
+| --- | --- | --- |
+| `session_id` | string | the conversation the parked round belonged to - the same route a client uses to re-ask |
+| `owner_user_id` | string | whose ledger this is; the read is filtered by it fail-closed, so it is the caller's own id |
+| `parked_steps` | string[] | the step names that were parked when the round died, from `_HITL_PARKED` and nothing else |
+| `status` | string | always `failed` in this list - see the value domain below |
+| `created_at` | string | when the round parked |
+| `expires_at` | string | end of the action window: past it the row leaves this list but stays in the ledger and the audit trail |
+| `request_id` | string | locates the dead round in the audit log; the only handle back to 「哪一轮」 |
+| `trace_id` | string | the trace of that round |
+| `task_id` | string | the queue task of that round, empty when the run was inline |
+
+There is deliberately **no `labels` key** in this shape, and that is the whole difference between
+the two element shapes: `labels` is the only key `items` rows carry that these do not, and these
+carry nothing that `items` rows lack. Labels are read off the graph during the recheck, which this
+list is forbidden to run (above). A client that needs a human-readable step name says it out of
+`parked_steps`, whose values come from the same compile-time constant `items` uses, and it must not
+invent a status the backend did not report.
+
+### The `failed` terminal status, and where PostgreSQL still cannot store it
+
+`pending_approvals.status` value domain: awaiting | resumed | refused | abandoned | stale | failed
+
+`items[].status` value domain: awaiting
+
+`failed_turns[].status` value domain: failed
+
+`DECIDED_STATUSES`: resumed | refused | abandoned | failed
+
+`pending_approvals_status_check` accepts: awaiting | resumed | refused | abandoned | stale
+
+Those five lines are not prose to be skimmed. Each is compared with a constant read out of
+`app/storage/pending_approvals.py` by AST, and the last one with the constraint's own text in
+`migrations/0008_pending_approvals.sql`, so this section cannot say "five" where the code says
+"six" - and cannot promise PostgreSQL a sixth value it would reject.
+
+What each decided value means, and why `failed` is a fifth thing rather than a synonym:
+
+* `resumed` - the approver pressed 「同意」 and the round went on running.
+* `refused` - the approver pressed 「驳回」. The employee said no.
+* `abandoned` - the run was cancelled or stopped while parked. Meaningful only since R12's
+  cooperative cancellation (`826d318`): before it, a "stopped" run still finished, and the label
+  would have asserted something the process had not done.
+* `stale` - nobody decided. A newer park on the same session superseded this row, the graph
+  recheck no longer confirms it, or it aged past the approval TTL (reported stale, never deleted).
+* `failed` - **the approver decided, and the system did not finish the round.** Written by
+  `app/api/v1/chat.py::_fail_pending_approval_turn` on exactly two legs of `/approve`: the error
+  leg (`request.failed` carrying `internal_error`) and the budget leg (`request.failed` carrying
+  `task_timeout`), both of which used to `break` with the row still `awaiting`. It closes the row
+  through the same `mark_status` and the same `DECIDED_STATUSES` as its three neighbours - no
+  second state machine, no second ledger, no new table.
+
+`failed` must never be written as one of its neighbours. 「批过然后系统跑挂」 is not `refused` - that
+puts a refusal in the approver's mouth, the same ruling as the cancel leg's 「停止 != 拒绝，账面写
+abandoned，绝不写 refused」. It is not `abandoned` - nobody stopped anything. It is not `stale` -
+the graph may well still be parked on that very interrupt, and `stale` would tell the approver
+their own decision expired by itself.
+
+**🔴 The PG gap: `failed` is a status the file ledger can store and PostgreSQL cannot - yet.**
+`failed` is not a member of `pending_approvals_status_check` in
+`migrations/0008_pending_approvals.sql`, and `migrations/**` was outside the change that introduced
+the status. So on a PostgreSQL deployment `mark_status(..., "failed")` raises the CHECK violation,
+`_decide_pending_approval` records the exception instead of interrupting the answer, and **that row
+stays `awaiting`** - the round is neither reported as decided nor closed, and `failed_turns` comes
+back empty for it. The local file ledger is the half that closes today: the same call moves the row
+to `failed`, `failed_items` reads it back, and this endpoint lists it. Nothing above should be read
+as "PostgreSQL stores failed turns": until the migration R190 is proposing widens that CHECK, the
+gap is production truth, and the answer to it is that migration - not writing `refused` or
+`abandoned` to make the numbers add up, which is the defect R175 was filed against.
+
+**Who rewords this once R190 lands.** The obligation sits on the change that closes the gap - the
+R190 merge itself (whoever widens `pending_approvals_status_check`, or grows
+`app/storage/pending_approvals.py::PG_STATUSES` to admit `failed`) - and not on some later reader
+of this file. The pin file `tests/test_r191_hitl_contract_pins.py` is the fuse that makes that
+handover non-optional: while the code still reports a gap it demands the paragraph above stay
+here, and the moment the gap closes - in the constant or in the SQL - the assertion
+`test_the_contract_states_the_pg_gap_while_the_gap_exists` goes red by name and points back at
+this subsection, so the sentence is rewritten in that same change instead of quietly ageing into
+a falsehood.
 
 ## Structured Agent Result
 
