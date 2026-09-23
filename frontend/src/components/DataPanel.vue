@@ -215,7 +215,8 @@ function askQuestion(q) {
 function typeIcon(dtype) {
   if (!dtype) return '❓'
   if (dtype.includes('int') || dtype.includes('float')) return '🔢'
-  if (dtype.includes('object')) return '📝'
+  // R182：pandas 3 起字符串列的 dtype 是 str / string，只认 object 会让真机数据的文本列挑中 📦。
+  if (dtype === 'str' || dtype === 'string' || dtype.includes('object')) return '📝'
   if (dtype.includes('datetime')) return '📅'
   return '📦'
 }

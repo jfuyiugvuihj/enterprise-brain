@@ -96,6 +96,23 @@ def load_excel(file_path: str) -> pd.DataFrame:
 
 # ==================== Excel 数据画像 (#1) ====================
 
+def _is_text_series(series: pd.Series) -> bool:
+    """文本列的语义判定：只问 pandas.api.types 这一族谓词，不和字面 dtype 串比较。
+
+    R182：pandas 3 起字符串列的 dtype 是 `str`，旧实现那一支比的是字面「object」，
+    真机数据上基本进不去 —— text_columns 常年为空、每列「多少个不同取值」永远不发，
+    数据面板等于对客户说「这台机器上没有文本列」。判类别要判语义，不判 dtype 的写法：
+    - is_string_dtype 收 str / string，也收装着字符串的 object 列与 category 列；
+    - is_object_dtype 再兜住混装列（字符串与数字同列）与全空的 object 列 —— 旧实现
+      把它们算作文本列，不收进来就等于让这批列从两份名单里一起消失（假干净）；
+    - 数值（含 bool）先出局：一列同时进 numeric 与 text 两份名单，等于对同一列说两次谎。
+    日期与时间差不归这两份名单里的任何一份，维持原样。
+    """
+    if pd.api.types.is_numeric_dtype(series):
+        return False
+    return bool(pd.api.types.is_string_dtype(series) or pd.api.types.is_object_dtype(series))
+
+
 def profile_dataframe(df: pd.DataFrame) -> dict[str, Any]:
     """
     生成数据画像：
@@ -135,11 +152,13 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, Any]:
         missing = int(series.isna().sum())
         missing_pct = round(missing / max(row_count, 1) * 100, 1)
         is_numeric = bool(pd.api.types.is_numeric_dtype(series))
+        # 一次判定两处共用：汇总名单与逐列统计键必须由同一个布尔派生，否则两份名单各说各话。
+        is_text = _is_text_series(series)
 
-        # 分类按 dtype 走，不按「统计键在不在」走：空表不发统计量，后者会把 float 列说成文本列。
+        # 分类按语义谓词走，不按「统计键在不在」走：空表不发统计量，后者会把 float 列说成文本列。
         if is_numeric:
             numeric_names.append(str(col))
-        elif dtype == "object":
+        elif is_text:
             text_names.append(str(col))
 
         info = {
@@ -163,7 +182,7 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, Any]:
             info["sum"] = _safe_float(series.sum())
 
         # 文本列
-        elif dtype == "object":
+        elif is_text:
             info["unique_values"] = int(series.nunique())
 
         cols_info.append(info)
