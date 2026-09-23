@@ -53,7 +53,7 @@ from app.rag.indexing import (
 from app.common.model_handler import ModelHandler, ModelSource
 from app.common.logger import logger
 from app.common.performance import PerformanceStats, RequestBudget
-from app.common.permissions import ACTION_DELETE, ACTION_DOWNLOAD, ACTION_VIEW
+from app.common.permissions import ACTION_APPROVE, ACTION_DELETE, ACTION_DOWNLOAD, ACTION_VIEW
 from app.common.policy import authorization_decision
 from app.documents.catalog import (
     build_storage_name,
@@ -1013,6 +1013,11 @@ def _rewrite_followup(session_id: str, user_msg: str) -> str:
 
 class ChatRequest(BaseModel):
     message: str
+    # R141 判据②：这一格今天就被 _require_no_lane_on_chat 硬拒（任何值都拒）。加它不是
+    # 为了支持，而是为了**把静默忽略变成当场报错**：pydantic 默认丢弃未知字段，于是给
+    # /chat 发 lane=report 的客户端会拿到一条"看起来成功了"的纯文本回答，而路径一个字没变
+    # —— 那正是 R32 拒交前端选择器的那张脸。声明只在 /ask 上有腿可分。
+    lane: str = ""
 
 
 class AskRequest(BaseModel):
@@ -1090,6 +1095,173 @@ def _require_valid_lane(request) -> None:
                 "field": "lane",
                 "allowed": list(ASK_LANE_VALUES),
                 "given": lane if isinstance(lane, str) else None,
+            },
+        ).model_dump(),
+    )
+
+
+# ==================== R141 · 档位读数的三处出口（响应头 / SSE 帧 / trace） ====================
+#
+# 三处读的都是 app.agents.nodes.TurnLane.as_dict() 那一份，不各写一套口径：
+#  - 响应头：不看 SSE 的客户端（curl、网关日志、运维抽查）也能读到生效档位与它的来源；
+#  - request.started 帧 data：在场的浏览器（前端选择器要靠它自证"我发出去的这一格真生效了"）；
+#  - request.started trace 载荷：事后取证，GET /api/v1/traces/{trace_id} 直接可查。
+#
+# 头名一律小写常量、值一律 ASCII：档位名是 qa/analysis/report，来源名是四个英文标签，
+# 没有任何一格需要百分号编码。取不到的读数**整个头不发**，不发空值也不发 "-"：
+# 一枚存在的头必须永远可信，否则它就是在制造第三态。
+EFFECTIVE_LANE_HEADER = "x-effective-lane"
+LANE_SOURCE_HEADER = "x-lane-source"
+DECLARED_LANE_HEADER = "x-declared-lane"
+
+#: /chat 没有工作腿可分：它是一发检索加一发模型，压根不进多 Agent 图。所以这里拒收
+#: 的取值闭集是**全体**（含 qa）——把 qa 放行的代价是一条不改变任何路径的标签，
+#: 与判据② 严禁的那张脸逐字同形。想按档位分流就发 /ask，这一句写在错误体里。
+CHAT_LANE_SUPPORTED: tuple[str, ...] = ()
+
+
+#: R141：全 chat.py 里读请求档位标签的函数**只有四枚**，逐枚点名钉在
+#: tests/test_r32_lane_contract.py::test_nothing_outside_the_two_lane_functions_reads_the_request_label
+#: 与 tests/test_r141_lane_behavior.py。这枚是"图路径"那一个读口：它只做归一，
+#: 不做判别、不改问题文本、也不许在别处被拿来当检索参数用（判据② 的结构证据）。
+def _declared_lane(request) -> str:
+    """把调用方声明的档位归一成交给图的那一枚字符串（未声明＝空串）。
+
+    取值合法性由 _require_valid_lane 在前面 400 过；这里再 strip 一次是纯粹归一，
+    两者不是两道闸：闸会拒，这枚只会把 " qa " 变成 "qa"。
+    """
+    lane = getattr(request, "lane", "")
+    return lane.strip() if isinstance(lane, str) else ""
+
+
+def _turn_lane_readout(question: str, declared: str, *, routed: bool = True) -> dict:
+    """本轮的档位读数。三处出口（响应头 / request.started 帧 / trace 载荷）都取自这里。
+
+    ``routed=False`` 给的是"这一轮没走图"那一族读数（入队、答案缓存命中、/chat）。它不是
+    装饰性字段：调用方选了报告档而这一轮被限流入队时，把 lane 读成 report 等于把"承诺"与
+    "证据"混成一句话 —— 判据② 严禁的正是这种合并。
+
+    迟 import app.agents.nodes：本文件顶部不碰图与模型装配（沿用 _ask_stream 里对
+    orchestrator 的同一打法），且只取公开名 ——
+    tests/test_r37_report_lane_enqueue.py::test_chat_py_never_grabs_a_private_name_from_the_lane_owner
+    用 ast 扫本文件，从 app.agents* 抓下划线开头的名字会当场红。
+    """
+    from app.agents import nodes
+
+    if not routed:
+        return nodes.not_routed_lane(declared).as_dict()
+    return nodes.resolve_turn_lane(question, declared).as_dict()
+
+
+def _parked_declaration(session_id: str) -> str:
+    """读回挂起那一轮声明的档位（R172）：它随 pending 账本的行跨过 HITL 那道门。
+
+    回空串的四种情形都是实话，不是漏读：那一轮压根没声明、行写在 R172 之前（TTL 未到
+    但账上没有这一格）、PG 后端的 0008 尚无此列（补它要一枚 migrations 脚本，本单写域外）、
+    账本压根读不到（缺表或后端抛错 —— 与 _decide_pending_approval 同一裁定：记账坏了不许
+    打断用户已经等到的流，但留 exception 级痕迹）。
+    🔴 无论哪一种都不许补成一档 —— 补成 explicit 就是说"本轮现声明"，而本轮压根没收到
+    声明；取值不在闭集里的脏行同样退成空串，退向只能是"没有记录"，不能是"有人定过"。
+    """
+    try:
+        row = pending_approvals.get_row(session_id)
+    except Exception:
+        logger.exception(f"[R172][HITL] 续跑轮读不到挂起账本 session={session_id}，按无声明读数")
+        return ""
+
+    declared = str(getattr(row, "declared_lane", "") or "").strip()
+    if declared and declared not in ASK_LANE_VALUES:
+        logger.warning(
+            f"[R172][HITL] 挂起账本里的档位不是闭集成员 session={session_id}，按无声明读数"
+        )
+        return ""
+    return declared
+
+
+def _resumed_lane_readout(session_id: str) -> dict:
+    """批准后从挂起点续跑那一轮的读数：图在跑，档位是挂起前那一轮定的（R172 才读得回来）。
+
+    读成 r42 会把"没人声明"与"声明丢了"混成一格，读成 not_routed 会把"图在跑"说成没跑，
+    读成 explicit 会把"沿用别人早先定的档"说成"这一轮现声明"。三态都不对，所以还是第四态
+    resumed，只是从 R172 起它的 declared_lane 那一格真装着东西：谁定的读得回来，而生效那格
+    仍旧空 —— 续跑这条腿没有按这一档重新派发过（那要跨 checkpointer 与 orchestrator）。
+    """
+    from app.agents.nodes import resumed_lane
+
+    return resumed_lane(_parked_declaration(session_id)).as_dict()
+
+
+def _record_resumed_lane_trace(
+    readout: dict,
+    *,
+    session_id: str,
+    owner_id: str,
+    request_id: str,
+    trace_id: str,
+    task_id: str,
+) -> None:
+    """续跑轮的第三处出口：trace 的 request.started 载荷（R172）。
+
+    /ask 那一轮的这一处出口住在 app.agents.orchestrator.run_with_stream 里（本单禁碰），
+    而 run_interrupt_stream 从不记 request.started ⇒ 续跑轮此前只有响应头与 SSE 帧两处，
+    "三处出口同一份读数"在这一轮是半句空话。这里补上第三处：事件名、status、payload 形状
+    与 orchestrator 那一处同构，发的就是调用方交进来的同一份 readout 对象，不第二套口径。
+
+    记账失败不许打断用户已经等到的流（与 _record_pending_approval 同一裁定），但留
+    exception 级痕迹：一处出口哑掉与三处出口都在，是两件不同的事。
+    """
+    from app.trace.store import default_trace_store
+
+    payload = {"session_id": session_id, **readout}
+    if owner_id:
+        payload["owner_id"] = owner_id
+    try:
+        default_trace_store().record_event(
+            trace_id=trace_id,
+            request_id=request_id,
+            task_id=task_id,
+            event_type="request.started",
+            status="running",
+            payload=payload,
+        )
+    except Exception as exc:
+        logger.warning(f"[R172][Trace] 续跑轮读数没能落进 trace：{exc}")
+
+
+def _lane_readout_headers(readout: dict) -> dict:
+    """把本轮档位读数压成响应头。读数缺格就少发一枚头，不发假值。"""
+    headers = {}
+    lane = str((readout or {}).get("lane") or "")
+    declared = str((readout or {}).get("declared_lane") or "")
+    source = str((readout or {}).get("lane_source") or "")
+    if lane:
+        headers[EFFECTIVE_LANE_HEADER] = lane
+    if declared:
+        headers[DECLARED_LANE_HEADER] = declared
+    if source:
+        headers[LANE_SOURCE_HEADER] = source
+    return headers
+
+
+def _require_no_lane_on_chat(request) -> None:
+    """/chat 收到任何档位声明都当场 400，跑在检索与模型之前，零副作用。"""
+    lane = str(getattr(request, "lane", "") or "").strip()
+    if not lane:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=ErrorEnvelope(
+            code=LANE_ERROR_CODE,
+            message=(
+                "lane is accepted only on /api/v1/ask; /chat has no worker legs to "
+                "route, so declaring a tier there would change nothing"
+            ),
+            details={
+                "field": "lane",
+                "endpoint": "/chat",
+                "allowed": list(CHAT_LANE_SUPPORTED),
+                "given": lane,
+                "use_instead": "/api/v1/ask",
             },
         ).model_dump(),
     )
@@ -1195,6 +1367,9 @@ async def chat(request: ChatRequest, http_request: FastAPIRequest):
         status_code = 401 if scope_error.code == "authentication_required" else 403
         logger.warning(f"[CHAT] 拒绝无范围检索: user={principal.username} code={scope_error.code}")
         raise HTTPException(status_code=status_code, detail=scope_error.code)
+    # R141 判据②：与 /ask 同一条次序裁定（tests/test_r32_lane_contract.py 的
+    # test_the_gate_answers_401_before_it_answers_400）——先验身份，再验档位，最后才碰检索。
+    _require_no_lane_on_chat(request)
     retrieval_filter = scope.filters
 
     async def generate():
@@ -1229,7 +1404,13 @@ async def chat(request: ChatRequest, http_request: FastAPIRequest):
             logger.error(f"Chat error: {exc}")
             yield "\n[错误] 本轮检索或模型调用失败，请重试或改用 /api/v1/ask。"
 
-    return StreamingResponse(generate(), media_type="text/plain")
+    # /chat 的读数永远是"这一轮没按任何档位走图"：端点结构决定，与调用方声明无关。
+    # 有声明在上一条就 400 了，所以这里 declared 必为空串，只发 x-lane-source 一枚。
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain",
+        headers=_lane_readout_headers(_turn_lane_readout("", "", routed=False)),
+    )
 
 
 # ==================== Multi-Agent Ask (SSE) ====================
@@ -1307,11 +1488,16 @@ def record_hitl_awaiting(
     request_id: str = "",
     trace_id: str = "",
     task_id: str = "",
+    declared_lane: str = "",
 ) -> bool:
     """队列 worker 用的挂起记账，语义与同步路径的 _record_pending_approval 同源。
 
     差别只有两处：归属人已由 worker 解析成 user_id 传进来；成败要回给调用方——
     后台没有打断用户流这回事，但待办没开成必须能被终态看见。
+
+    ``declared_lane``（R172）默认空串：调用它是 deploy/queue_worker.py，而那枚文件在本单
+    写域之外，所以后台那一轮的声明今天仍然落不进账本 —— 那一轮续跑读数照旧是无声明的
+    resumed（第四态本来就说这句话），不是 explicit。工单转出项写在交付说明里。
     """
     if not owner_user_id or not intr:
         return False
@@ -1323,6 +1509,7 @@ def record_hitl_awaiting(
             request_id=request_id,
             trace_id=trace_id,
             task_id=task_id,
+            declared_lane=declared_lane,
         )
     except Exception:
         logger.exception(
@@ -1341,6 +1528,9 @@ def _enqueue_ask_turn(
     username: str,
     principal,
     lane: str,
+    # R141：入队这一支的读数只上**响应头**。载荷与 queued 事件的字段一格不加 ——
+    # tests/test_r37_report_lane_enqueue.py 与 test_r32_lane_contract.py 逐字段钉着它们。
+    lane_readout: dict | None = None,
 ) -> StreamingResponse:
     """把一轮问答收进可靠队列，回一条只含回执的 SSE。
 
@@ -1391,7 +1581,11 @@ def _enqueue_ask_turn(
     return StreamingResponse(
         queued_response(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            **_lane_readout_headers(lane_readout or {}),
+        },
     )
 
 
@@ -1439,6 +1633,12 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     rewritten_msg = _rewrite_followup(thread_id, orchestration_msg)
     _save_message(thread_id, "user", request.message)
 
+    # R141 判据①：本轮声明的档位与它的读数。取 rewritten_msg 而不是原始 message —— 图里的
+    # plan()/route_main 读的就是这一枚文本，读数与生效路径必须同源，否则在追问改写过的轮次上
+    # "读到的档位"与"跑出来的档位"会分叉成两张脸。
+    declared = _declared_lane(request)
+    lane_readout = _turn_lane_readout(rewritten_msg, declared)
+
     # ——— 限流检查 (Layer 5: 超限入队而非拒绝) ———
     from app.common.cache import check_rate_limit
     username = getattr(http_request.state if http_request else None, "username", None) or "anonymous"
@@ -1471,6 +1671,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             username=username,
             principal=request_principal,
             lane="",
+            lane_readout=_turn_lane_readout(rewritten_msg, declared, routed=False),
         )
 
 
@@ -1487,6 +1688,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             username=username,
             principal=request_principal,
             lane=lane,
+            lane_readout=_turn_lane_readout(rewritten_msg, declared, routed=False),
         )
 
     # ——— 答案缓存 ———
@@ -1557,7 +1759,13 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         return StreamingResponse(
             cached_response(),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                **_lane_readout_headers(
+                    _turn_lane_readout(rewritten_msg, declared, routed=False)
+                ),
+            },
         )
 
     async def generate():
@@ -1608,6 +1816,10 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     # pieces=0，答案在快照里 0 字直接跳到整段）。生成腿一旦改走流式，
                     # 片从这里进来，本文件不必再改一个字。
                     stream_piece_sink=_piece_sink,
+                    # R141：只有真声明了才加这一格。不声明时连键都不传 ——
+                    # tests/test_r149_sse_text_pieces.py 逐字段钉着的那份注册参数集（RUN_KWARGS）
+                    # 一格未变；声明轮次多出来的那一格由图里的 route_main/plan 消费。
+                    **({"declared_lane": declared} if declared else {}),
                 ):
                     if cancel_event.is_set():
                         # 停止之后不再往没人读的流里塞事件；已经落盘的不回滚，那不是
@@ -1662,7 +1874,10 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             task_id=task_id,
             sequence=sequence,
             status="running",
-            data={"session_id": thread_id},
+            # R141 判据① 的第二处出口。往 data 里加键是安全的：已并树的用例钉的是**帧名序列**
+            # （test_approve_canonical_events / test_sse_sources / test_r149_sse_text_pieces），
+            # 不是 data 的键集；第三处出口（trace 载荷）在 orchestrator 里同源发出。
+            data={"session_id": thread_id, **lane_readout},
         )
         sequence += 1
 
@@ -1809,6 +2024,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                         request_id=request_id,
                         trace_id=trace_id,
                         task_id=task_id,
+                        declared_lane=declared,
                     )
                     yield f"event: hitl\ndata: {json.dumps({'type': 'hitl', 'pending': intr['pending'], 'labels': intr['labels']}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
@@ -1974,7 +2190,11 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            **_lane_readout_headers(lane_readout),
+        },
     )
 
 
@@ -1991,11 +2211,15 @@ def _record_pending_approval(
     request_id: str = "",
     trace_id: str = "",
     task_id: str = "",
+    declared_lane: str = "",
 ) -> None:
     """把一次挂起写成一行 awaiting。
 
     记账失败不许打断用户已经等到的回答流，所以这里吞异常；但也不许静默——面板少一条
     待办和面板说"没有待办"是两件不同的事，因此留 exception 级痕迹。
+
+    ``declared_lane``（R172）是本轮声明的档位，必须跟着这一行进账本：批准之后续跑的那一轮
+    既拿不到请求体也拿不到上一轮的 config，"这一轮的档是谁定的"只剩这一格能回答。
     """
     owner_user_id = str(getattr(principal, "user_id", "") or "")
     if not owner_user_id or not intr:
@@ -2008,6 +2232,7 @@ def _record_pending_approval(
             request_id=request_id,
             trace_id=trace_id,
             task_id=task_id,
+            declared_lane=declared_lane,
         )
     except Exception:
         logger.exception(
@@ -2027,6 +2252,43 @@ def _decide_pending_approval(session_id: str, status: str) -> None:
 
 DEFAULT_PENDING_LIMIT = 50
 MAX_PENDING_LIMIT = 200
+
+#: 挂起账本在审计台账里的资源标识：写的是「哪一本账」，不是「哪一轮说了什么」。
+#: 与 app/rag/filters.py 的 AUDIT_SURFACE 同一口径 —— 面名固定，具体哪一轮走 request_id。
+HITL_LEDGER_SURFACE = "hitl_pending_approval"
+
+
+def _fail_pending_approval_turn(
+    session_id: str,
+    principal,
+    *,
+    error_code: str,
+    request_id: str = "",
+) -> None:
+    """把「员工批过板、而这一轮被系统跑挂了」记成一格 ``failed``，并沿既有通路落一笔审计。
+
+    两条漏闭的出口共用这一处（``internal_error`` 与 ``task_timeout``）：同一件事在两条出口
+    必须是同一个判定，一处补一处漏就是第三句互相打架的话。
+
+    为什么新造一格而不复用 ``REFUSED``：那是把故障写成拒批。审批人点的确实是「同意」，账上
+    却留一行 refused，等于事后替他说了一句他没说的话 —— 与本文件取消腿那句「停止 != 拒绝，
+    账面写 abandoned，绝不写 refused」（:2517-2519）是同一条裁定，不许开倒车。也不许写
+    ``STALE``：stale 说的是「图不再确认这次挂起」，而跑挂了图很可能**还**挂在同一个中断上。
+
+    审计写的是这一轮的结局（谁、哪个面、failure、哪个稳定码 + request_id 定位哪一轮），
+    不是「账面已闭合」的收据 —— 后者在 PG 腿上今天做不到（见 pending_approvals 模块常量段），
+    写成收据就是把半条腿伪装成完整的。零正文：这一刻手里只有一个人读的错误串，把它灌进
+    台账就是往审计里塞内容。
+    """
+    _decide_pending_approval(session_id, pending_approvals.FAILED)
+    record_audit(
+        principal,
+        ACTION_APPROVE,
+        "failure",
+        HITL_LEDGER_SURFACE,
+        error_code,
+        request_id=request_id or None,
+    )
 
 
 @router.get("/hitl/pending")
@@ -2068,12 +2330,25 @@ async def hitl_pending(
             limit=applied_limit + 1,
             offset=applied_offset,
         )
+        # R175 判据②：同一本账上「已闭合为失败」的那几行也跟着回。它们是**已经办完的事**，
+        # 不是待办，所以只多取一行问 has_more、一条都不进上面的复核循环 —— 复核问的是
+        # 「图还挂着吗」，答案必然是「没挂着」，走那条腿就会被 :2363-2365 就地判成 stale，
+        # 于是「你批过、那一轮失败了」在屏上变成「已作废」。同一张表、同一次连接，
+        # 缺表照旧翻 503：把这一格读不到洗成"没有失败的那一轮"又是一句假话。
+        failed_rows = pending_approvals.failed_items(
+            owner_user_id=str(principal.user_id or ""),
+            session_id=session_id or None,
+            limit=applied_limit + 1,
+            offset=0,
+        )
     except pending_approvals.PendingApprovalStoreMissing as exc:
         # 只接这一种错。吞成 200 空列表是造假（R13 整单就是为了消灭它），翻成
         # internal_error 又等于把"跑迁移"这条运维可执行的诊断洗成通用故障。
         raise HTTPException(status_code=503, detail="storage_unavailable") from exc
     has_more = len(rows) > applied_limit
     page = rows[:applied_limit]
+    failed_has_more = len(failed_rows) > applied_limit
+    failed_page = failed_rows[:applied_limit]
 
     items: list[dict] = []
     for row in page:
@@ -2116,6 +2391,24 @@ async def hitl_pending(
         "limit": applied_limit,
         "offset": applied_offset,
         "has_more": has_more,
+        # 两格互不顶替：``items`` 空只说明确实没有等着批的事，``failed_turns`` 说的
+        # 是「批过了而那一轮失败了」。没有 ``labels`` 这一格 —— 标签来自向图复核，
+        # 而这一行不许去问图（见上），前端按 ``parked_steps`` 里既有的步骤名说中文。
+        "failed_turns": [
+            {
+                "session_id": row.session_id,
+                "owner_user_id": row.owner_user_id,
+                "parked_steps": list(row.parked_steps),
+                "status": row.status,
+                "created_at": row.created_at,
+                "expires_at": row.expires_at,
+                "request_id": row.request_id,
+                "trace_id": row.trace_id,
+                "task_id": row.task_id,
+            }
+            for row in failed_page
+        ],
+        "failed_turns_has_more": failed_has_more,
     }
 
 
@@ -2132,6 +2425,12 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
     request_id = f"req-{uuid.uuid4().hex}"
     trace_id = f"trace-{uuid.uuid4().hex}"
     task_id = f"task-{uuid.uuid4().hex}"
+
+    # R172：续跑轮的档位读数在这里算**一次**，下面三处出口（响应头 / request.started 帧 /
+    # trace 载荷）发出去的是同一份对象。算两次就是留一道口子：哪天其中一处换了口径，
+    # 同一轮的三处读数会各说一句话而没人报错 —— 判据② 要的是同一份数字，不是三个同形的数字。
+    # 此刻挂起那行还是 awaiting（闭合在下面那条流的 done 分支里），声明读得回来。
+    lane_readout = _resumed_lane_readout(request.session_id)
 
     async def generate():
         # 同 /ask：注册与本代弹出留在同一个帧里。resume 起来的那一代才是取消唯一能打击
@@ -2188,6 +2487,15 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         # canonical 信封事件从这一条起与 /ask 的第一条
         # canonical_sse_event("request.started") 同构：同一个构造器、同一套
         # 三个 id、sequence 从 1 连续。legacy 事件全部照旧保留，canonical 是加在旁边。
+        # trace 那一处出口排在发帧之前：客户端在这一帧上断线也不该让事后取证先少一格。
+        _record_resumed_lane_trace(
+            lane_readout,
+            session_id=request.session_id,
+            owner_id=str(getattr(principal, "user_id", "") or ""),
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+        )
         yield canonical_sse_event(
             "request.started",
             request_id=request_id,
@@ -2195,7 +2503,10 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             task_id=task_id,
             sequence=sequence,
             status="running",
-            data={"session_id": request.session_id},
+            # R141 判据②：续跑轮读 resumed，而不是把"声明没跨过 HITL 那道门"糊成 r42。
+            # R172 把那一格补上了：resumed 说的从"没人定过"改成"沿用挂起前那一轮定的档"，
+            # 声明住在 declared_lane，lane 那格仍旧空 —— 这一轮的腿没按它重新派发过。
+            data={"session_id": request.session_id, **lane_readout},
         )
         sequence += 1
 
@@ -2227,6 +2538,17 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             if budget.expired():
                 # error_code 与 /ask 的超时形状（request.failed 携 task_timeout）同名同形状：同一个"超过处理时限"在两条
                 # 流里必须是同一个码，客户端不必按端点分支。legacy error 原文照发。
+                # R175：超时这一样得先把员工已经拍过板的那一行账闭合，再发失败帧。此前
+                # 这一条 break 一次都没闭合过账，那一行于是留在 awaiting：下次开屏它要么被
+                # 当成新待办原样列回来（图还挂在同一个中断上，等于让同一轮 resume 第二遍），
+                # 要么被复核腿（:2363-2365）就地判成 stale。写账排在发帧之前，与取消腿
+                # （:2519）、收尾腿（:2582-2585）同一个次序 —— 客户端在半路断线也不该留一格开着的账。
+                _fail_pending_approval_turn(
+                    request.session_id,
+                    principal,
+                    error_code="task_timeout",
+                    request_id=request_id,
+                )
                 yield canonical_sse_event(
                     "request.failed",
                     request_id=request_id,
@@ -2299,6 +2621,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     # hitl 与 /ask 那条 hitl 事件同一个 payload 形状），也记成新的 awaiting 行。写账
                     # 必须排在上面的 _decide_pending_approval 之后，否则 mark_status 会去
                     # 闭合刚写入的新行、把旧行留在待批里。
+                    # 图第二次挂起：本轮沿用的那份声明必须跟着续下一行账，否则第三次
+                    # 批准时就又只剩"没人定过"。抄的是同一份 lane_readout，不再问一次账本。
                     _record_pending_approval(
                         request.session_id,
                         principal,
@@ -2306,6 +2630,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                         request_id=request_id,
                         trace_id=trace_id,
                         task_id=task_id,
+                        declared_lane=str(lane_readout.get("declared_lane") or ""),
                     )
                     yield f"event: hitl\ndata: {json.dumps({'type': 'hitl', 'pending': intr['pending'], 'labels': intr['labels']}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
@@ -2358,6 +2683,13 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             if kind == "error":
                 # 编排线程抛错 = 这一轮失败。legacy error 只带人读的文字，机器读的码走
                 # canonical（/ask 那批 request.* 信封同一口径），legacy 原文照发不吞。
+                # R175：同上，跑挂了也要闭合那一行账。这一条 break 此前同样一次都没闭合过。
+                _fail_pending_approval_turn(
+                    request.session_id,
+                    principal,
+                    error_code="internal_error",
+                    request_id=request_id,
+                )
                 yield canonical_sse_event(
                     "request.failed",
                     request_id=request_id,
@@ -2413,7 +2745,12 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            # R172：与上面那两处出口同一份对象，不看 SSE 的客户端读到的是同一句话。
+            **_lane_readout_headers(lane_readout),
+        },
     )
 
 

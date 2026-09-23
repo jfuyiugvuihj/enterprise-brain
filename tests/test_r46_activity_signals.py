@@ -800,14 +800,18 @@ def test_the_same_query_returns_the_same_snapshot_with_the_prior_off_and_with_no
 
 
 # ------------------------------------------------------------ 判据⑤ 迁移卫生
-def test_the_migrations_stay_one_to_one_with_the_manifest_after_0011():
-    """新增一版之后仍然一一对应；README 那条 fail-closed 规矩不许被本单弄破。"""
+def test_the_migrations_stay_one_to_one_with_the_manifest_after_0012():
+    """新增一版之后仍然一一对应；README 那条 fail-closed 规矩不许被本单弄破。
+
+    尾号引信按 R58 先例连名带断言一起改口（0012 那枚由总控落笔，写域在本单之外）：
+    这是把钉子收紧一版，不是放宽。
+    """
     manifest = json.loads((MIGRATIONS / "manifest.json").read_text(encoding="utf-8"))
     on_disk = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
 
     assert sorted(manifest) == on_disk, "SQL 文件与 manifest.json 必须一一对应"
     assert "0011_document_activity_signals.sql" in on_disk
-    assert not [name for name in on_disk if name.split("_")[0] > "0011"], "本单没排 0012 的号"
+    assert not [name for name in on_disk if name.split("_")[0] > "0012"], "本单没排 0013 的号"
     assert len({name.split("_")[0] for name in on_disk}) == len(on_disk), "版本号不许重复"
 
 

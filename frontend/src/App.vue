@@ -100,16 +100,32 @@ function showToast(message, tone = 'error', holdMs = 6000) {
 
 // lib/http.js 只有一条失效收尾：真过期与 401 共用同一个 unauthorized 事件（令牌已经不再
 // 可信，留着只会让界面继续拿它发请求）；expiring 只是「快到期」的提醒，只弹提示不动会话。
+// R171：这一支收的是「任何」鉴权事件，不能假定发出方带了文案。今天 shipped 的两枚事件都带
+// （lib/http.js:95 / :127），但少带 message、带空串、带非字符串都会把人从工作台踢回登录页，
+// 而错误条与提示条两处一起空着——员工看到的是「莫名其妙被登出」。这里补两句自家话，两张脸
+// 各一句：真失效说失效，来路不明说来路不明；两句话面不同，都不含英文稳定码。
+const AUTH_EXPIRED_MESSAGE = '登录状态已失效，请重新登录。'
+const AUTH_EVENT_UNKNOWN_MESSAGE = '收到无法识别的账号状态事件，为安全起见已退出，请重新登录。'
+
+/** 只有「去掉首尾空白仍非空的字符串」算一句话：undefined / null / 数字 / 纯空白一律不算。 */
+function readableMessage(message) {
+  return typeof message === 'string' && message.trim() !== '' ? message : ''
+}
+
 function onAuthEvent(event) {
   if (!event) return
   if (event.type === 'expiring') {
     showToast(event.message, 'warn', 12000)
     return
   }
+  // 认不得的 type 不借用它带来的文案：来路不明的句子不是可信信息，只按「无法识别」这一张脸说。
+  const message = event.type === 'unauthorized'
+    ? (readableMessage(event.message) || AUTH_EXPIRED_MESSAGE)
+    : AUTH_EVENT_UNKNOWN_MESSAGE
   clearSession()
   goToLogin()
-  loginError.value = event.message
-  showToast(event.message, 'error', 6000)
+  loginError.value = message
+  showToast(message, 'error', 6000)
 }
 
 function persistRememberedUsername() {

@@ -40,7 +40,7 @@ const PLAN_TITLES = {
   feed: '喂料',
   chat: '问一句',
   insights: '异常与告警',
-  approval: '报销自查',
+  approval: '审批与待办',
 }
 
 /** 合屏之前与改名之前的旧屏名：一律不得再作任何一屏的 meta.title。 */
@@ -80,9 +80,9 @@ describe('R136 判据① · 计划书 §四 的定名落在 meta.title 上', () 
     }
   })
 
-  it('改名的两枚正是 §71 点名的那两处：洞察 → 异常与告警、审批 → 报销自查', () => {
+  it('改名的两枚正是 §71 点名的那两处：洞察 → 异常与告警、审批（旧名）→ 审批与待办（R174 定名）', () => {
     expect(byName.get('insights').meta.title).toBe('异常与告警')
-    expect(byName.get('approval').meta.title).toBe('报销自查')
+    expect(byName.get('approval').meta.title).toBe('审批与待办')
     // 图谱不在 §四 的定名栏里，但它页内早就写着「知识图谱」，同源就一并跟上
     expect(byName.get('graph').meta.title).toBe('知识图谱')
   })

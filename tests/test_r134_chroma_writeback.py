@@ -683,7 +683,7 @@ def _chroma_funnel_sites(root: Path) -> list[str]:
 
 
 def test_there_is_still_only_one_directory_funnel_to_guard(chroma_writeback_guard):
-    """R134 只钉一枚 chromadb.PersistentClient，依据是「全仓按目录开库的收口只有那三处」。
+    """R134 只钉一枚 chromadb.PersistentClient，依据是「全仓按目录开库的收口只有那三处」（R162 起为四处）。
 
     这条依据是别人给的（总控 09-21 的 git grep），所以必须自己钉住：app/ 或 scripts/ 里以后
     若长出第二种开库写法（chromadb.Client(...) / Settings(persist_directory=...) /
@@ -693,14 +693,18 @@ def test_there_is_still_only_one_directory_funnel_to_guard(chroma_writeback_guar
     """
     sites = _chroma_funnel_sites(Path(chroma_writeback_guard.repo_root))
     # 钉的是"收口有哪几处"，不是"那几处今天坐在第几行"：本单原文的依据就是
-    # 「全仓按目录开库的收口只有那三处」。带行号的等式会被一次无关的插行打红——
+    # 「全仓按目录开库的收口只有那三处」；今天四处——加长只能发生在**新收口进来时**，不是把断言改松。
     # R152 在 retriever.py 里加了 251 行，把这枚 PersistentClient 从 480 顶到 731，
     # 收口一个没多、一个没少，却红了一整条全量。所以这里比 (文件, 工厂名) 与**枚数**：
     # 同文件再长第二处会得到 4 枚，照样当场红（行号仍随消息打出来，指位置用）。
     funnels = [site.split(":", 1)[0] + ":" + site.rsplit(":", 1)[1] for site in sites]
+    # R162 起了第四处（scripts/diag_r162_chroma_zero_rows.py）：它按字节把源库复制到仓外，
+    # PersistentClient 只开副本，所以这一处**不需要**新增改道规则——改道打在工厂本身，新收口自动落在
+    # 罩子里。清单仍要如实加长：本用例钉的是"一共有几处"，不是"谁需要特判"。
     assert funnels == [
         "app/rag/retriever.py:PersistentClient",
         "scripts/compare_vector_recall.py:PersistentClient",
+        "scripts/diag_r162_chroma_zero_rows.py:PersistentClient",
         "scripts/rebuild_index.py:PersistentClient",
     ], "按目录开 Chroma 的收口清单变了，R134 的改道要跟着扩：" + "、".join(sites)
 

@@ -3,6 +3,12 @@
 A relation is a claim about real sources, so every record keeps the Principal that
 submitted it, the scope that may read it, and the source locator that justifies it.
 
+Two questions get two predicates, and the gap between them is the design of this ledger
+rather than an oversight: ``can_read`` asks whether a principal may act on a record whose
+id it already holds - a reviewer has to open somebody else's claim to check it - and
+``can_browse`` asks whether the record may turn up in front of them at all, which is the
+question the record's own ``visibility`` answers.
+
 What this subsystem is allowed to be, stated so that no reader has to infer it from the
 absence of a consumer:
 
@@ -62,6 +68,38 @@ UNVERIFIED = "unverified"
 VERIFIED = "verified"
 REJECTED = "rejected"
 VERIFICATION_OUTCOMES = (VERIFIED, REJECTED)
+
+#: Visibility labels that keep a record out of a listing. ``private`` is the value this
+#: ledger writes for every relation - ``Relation.visibility``, and the dataclass default
+#: that also fills a record loaded from a store written before the field existed - so
+#: today the set covers everything the graph holds. An unlabelled record lands here too:
+#: a missing label is read as the strictest answer, not as permission to browse.
+#: Anything else is a label somebody set on purpose, and it leaves the decision to the
+#: department-and-clearance test in app/common/policy.py, which is where every other
+#: resource on this host already stops.
+WITHHELD_VISIBILITIES = frozenset({"", "private"})
+
+
+def discloses_to(visibility: str, owner_id: str, principal: "Principal | None") -> bool:
+    """Does this record's own visibility label let this principal be *shown* it?
+
+    The one place the label is read. ``authorization_decision`` never consults it: it
+    weighs owner, action, legacy ownership, clearance and department, in that order, and
+    copies ``visibility`` into its attribute dict without a branch. So a value this
+    ledger has written onto every record - and handed to the client on top of that - had
+    no reader at all until here, which is the gap that made a colleague in the author's
+    department a permitted reader of somebody else's claim.
+    """
+    from app.common.policy import is_administrator
+
+    if principal is None:
+        return False
+    if str(visibility or "").strip().lower() not in WITHHELD_VISIBILITIES:
+        return True
+    owner = str(owner_id or "").strip()
+    if owner and owner == str(principal.user_id):
+        return True
+    return is_administrator(principal)
 
 
 def _is_production_environment() -> bool:
@@ -452,6 +490,29 @@ class KnowledgeGraph:
         )
         return decision.allowed
 
+    @staticmethod
+    def can_browse(record: Relation, principal: Principal | None) -> bool:
+        """May this principal meet this record without already holding its id?
+
+        This is ``can_read`` minus one widening plus one label. The minus is deliberate:
+        the review exit is built on the assumption that a reviewer who is *not* the author
+        opens the claim (an author certifying their own assertion is refused, and
+        ``docs/system-architecture-2026-09-17.md`` states the promotion gate as
+        ``resource:approve`` plus scope-readable plus never self-certified), so a
+        department colleague has to reach a record it was pointed at. The plus is the
+        record's own ``visibility`` (see ``discloses_to``): a private candidate assertion
+        is one person's claim, so browsing it takes its author or an account acting for
+        the whole tenant. Same department is not enough, and neither is the
+        ``resource:view`` that both of them hold.
+
+        An unowned record is refused to everyone but an administrator, the same way policy
+        treats a document row that predates the owner column: no owner is a legacy record,
+        never a public one.
+        """
+        if not KnowledgeGraph.can_read(record, principal):
+            return False
+        return discloses_to(record.visibility, record.owner_id, principal)
+
     def query(
         self,
         source_entity: str | None = None,
@@ -459,7 +520,30 @@ class KnowledgeGraph:
         *,
         principal: Principal | None = None,
     ) -> list[dict]:
-        """Return only relations the caller is allowed to read; no owner means nothing."""
+        """Every relation this principal may read; no owner means nothing.
+
+        This is the scope answer, and it is deliberately not what goes on the wire: a
+        colleague in the same department passes it for a record they do not own, which is
+        what the review exit needs and what tests/test_knowledge_graph.py pins. A caller
+        that is about to *show* the list calls ``browse`` instead.
+        """
+        return self._listing(source_entity, relation, principal=principal, may_see=self.can_read)
+
+    def browse(
+        self,
+        source_entity: str | None = None,
+        relation: str | None = None,
+        *,
+        principal: Principal | None = None,
+    ) -> list[dict]:
+        """The relations this principal may be shown, honouring each record's visibility.
+
+        The only enumeration exit with a production caller, and the one whose answer is
+        allowed to reach a client; see ``can_browse`` for what it narrows and why.
+        """
+        return self._listing(source_entity, relation, principal=principal, may_see=self.can_browse)
+
+    def _listing(self, source_entity, relation, *, principal, may_see) -> list[dict]:
         if principal is None:
             return []
         with self._lock:
@@ -469,7 +553,7 @@ class KnowledgeGraph:
                 for item in self._relations.values()
                 if (source_entity is None or item.source_entity == source_entity)
                 and (relation is None or item.relation == relation)
-                and self.can_read(item, principal)
+                and may_see(item, principal)
             ]
 
 

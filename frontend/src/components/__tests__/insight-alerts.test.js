@@ -648,7 +648,7 @@ describe('W7 判据③ · 审批页是报销政策自查工具，不是审批', 
 
   it('界面自己说清定位：自查工具、不办理审批、不生成工单', () => {
     const s = source('ApprovalPanel.vue')
-    for (const phrase of ['报销自查', '它不办理审批', '自查工具，不是审批', '入口在对话页',
+    for (const phrase of ['审批与待办', '它不办理审批', '自查工具，不是审批', '入口在对话页',
       '不会生成工单', '不会记在任何人名下', '不会改变任何单据的状态']) {
       expect(s).toContain(phrase)
     }

@@ -5,14 +5,29 @@ the 105-question set could not be scored. This is that missing producer: it driv
 fixture through an injected transport and emits the JSONL the runner reads.
 
 Output contract, verbatim against the reader:
-  * app/quality/runner.py:7-13 parses each line and indexes it by str(item["id"]),
+  * app/quality/runner.py:22-28 parses each line and indexes it by str(item["id"]),
     so id/answer/evidence/latency_ms must be top-level keys;
-  * app/quality/runner.py:23-27 answers any id it never saw with
+  * app/quality/runner.py:44-48 answers any id it never saw with
     {"answer": "", "evidence": [], "latency_ms": None}. That turns "we never collected
     this" into "the model answered badly", so it must never fire for a real gap: the
     coverage gate below fails loudly instead of leaving holes to be filled in silently.
   * first_token_at / thinking_chars / tool_calls ride along for the R29 thinking tax and
     the R38 usage audit. Unknown is recorded as null; nothing is ever estimated.
+
+R181 (2026-09-23) - where acceptance 2 (`text` frames) is persisted, and where it is not.
+  The real-run transport measures every `event: text` frame it receives: a per-question frame
+  count, the count of adjacent-frame prefix monotonicity breaks (cumulative semantics), and the
+  missing/extra character counts between the last frame and the terminal answer. Consistency is
+  judged with **covering** semantics (last frame startswith the answer), never strict equality.
+  Readings ride one row per question into `<sidecar stem>-frames.jsonl` (`EVAL_FRAME_LEDGER`,
+  scripts/eval_transport_ask_v2.py), joined by `id`, written in the same per-question step that
+  writes the sidecar. They deliberately do NOT extend the answers lines below, nor the sidecar
+  row: the payload key set is pinned by tests/test_r123_hitl_approval.py:205 and the sidecar
+  extras by :243 - both outside R181's write domain - and run2..run5 answers files must stay
+  question-for-question comparable. Observation only: `answer`, `APPROVAL_FAILED_SENTINEL`,
+  `cached`, `first_token_at` and `steps` keep the exact values they had before R181.
+  Criteria, the cache-hit single-frame reading and the two standing counter-proofs:
+  docs/testing/r181-text-frame-readings.md.
 
 Offline by construction: there is no built-in network transport. A real run must name one
 with --transport module:callable; --dry-run supplies a fake transport instead. That fake

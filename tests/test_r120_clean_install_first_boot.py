@@ -293,13 +293,14 @@ def test_task0_left_the_migrations_directory_alone():
     assert sha256(on_disk.encode("utf-8")).hexdigest() == BASELINE_0010_SHA256
     assert manifest["0010_pgvector_chunks.sql"] == BASELINE_0010_SHA256
     assert registered.checksum == BASELINE_0010_SHA256
-    # 0010 之后只许站着 R46 那一枚 0011：本单没加前滚迁移，别人加了就必须回到这里指名。
+    # 0010 之后只站着两枚：R46 的 0011 与 R183/R184 的 0012。本单没加前滚迁移，别人加了就必须回到这里指名。
     forward = [item for item in mig.MIGRATIONS if item.version > "0010"]
-    assert [item.version for item in forward] == ["0011"], (
+    assert [item.version for item in forward] == ["0011", "0012"], (
         "the only forward migration past 0010 is R46's: "
         + str([item.version for item in forward])
     )
     assert forward[0].name == "document_activity_signals", forward[0].name
+    assert forward[1].name == "alert_and_pending_approval_attribution_columns", forward[1].name
     path_0011 = MIGRATIONS_DIR / "0011_document_activity_signals.sql"
     on_disk_0011 = path_0011.read_text(encoding="utf-8")
     registered_0011 = forward[0].checksum

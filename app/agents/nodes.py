@@ -1129,6 +1129,264 @@ def _route_rules(text: str) -> RouteDecision:
     return RouteDecision(LANE_QA, LANE_TIERS[LANE_QA], "default")
 
 
+# ==================== R141 · 声明档位 → 真实路径差 ====================
+#
+# R42 交的是判别器（读题面猜一条道，判错有兜底与 reflect 往上抬），R32 交的是一枚取值闸
+# （调用方写错档位当场 400）。两单之间缺了中间那一环：**显式声明**的档位除了决定进不进
+# 可靠队列（chat._queue_lane），对图里到底派谁出门一个字都不影响。R32 因此拒交前端选择器
+# ——「一枚点了没反应的控件比没有控件更糟」。本节把那一环补上，只有三条新事实：
+#  ① 天花板 LANE_WORKERS：这一档最多允许哪几条工作腿；
+#  ② 地板 LANE_REQUIRED_WORKERS：这一档缺了哪条腿就不算兑现承诺；
+#  ③ 读数 TurnLane.as_dict()：本轮生效的是哪条道、它是"你选的"还是"系统判的"、
+#     允许与要求各有哪些腿。同一份 as_dict 上到三处出口：HTTP 响应头、
+#     canonical 的 request.started 帧、trace 的 request.started 载荷。
+#     判据① 要的是**读数**，不是文档里的一段散文。
+#
+# 🔴 天花板与地板**只作用在 source == LANE_SOURCE_EXPLICIT 上**，一条都不许漏给 R42 判出
+# 的道。这不是保守，是已并树的裁定：tests/test_r42_fallback_upgrade.py 钉着"route_main 的
+# 关键词兜底与 reflect 仍能把 rules 判出的问答档升回分析档"。拿同一张天花板去压 rules-qa，
+# 那条升档道今天就红。
+#
+# 未声明（lane 缺省或空串）时本节四个函数一个都不改派、一个都不加日志，图的形状与 R141
+# 之前逐字节相同 —— 判据④ 那句"阶段 A 的问答档口径今天不可比风险为零"靠的就是这一条。
+
+#: 显式档位进入图内的通道：``config["configurable"]`` 里的键名。
+#:
+#: 走 configurable 而不是走 state，理由与 ``cancel_event``、``STREAM_PIECE_SINK_KEY``
+#: 逐字相同（见 app/agents/orchestrator.py::run_with_stream 那段注释）：state 要被
+#: checkpointer 序列化，PG 路径下多塞一个键就是把面扩到别人的写域里去了。
+DECLARED_LANE_KEY = "declared_lane"
+
+#: ``lane_source`` 读数取值的全集（判据②：四态两两可分辨，而"未知值"**不在**这张表里 ——
+#: 它在 HTTP 边界上被 _require_valid_lane 400，在图内被 normalize_declared_lane 当场炸）。
+#: 前两态回答"这一轮按谁的判断走"，后两态回答"这一轮压根没按任何档位走，为什么"。
+#: - r42         调用方没声明，本轮的道是 R42 判别器按题面判的（R141 之前唯一存在的一种）。
+#: - explicit    调用方显式声明，本节真的按它改派了腿。
+#: - not_routed  本轮根本没进图（入队 / 答案缓存命中）：档位没有参与路径。
+#:               诚实说"没参与"比假装生效值钱，那正是判据② 严禁的第三张脸。
+LANE_SOURCE_R42 = "r42"
+LANE_SOURCE_EXPLICIT = "explicit"
+LANE_SOURCE_NOT_ROUTED = "not_routed"
+#: - resumed     批准后从挂起点续跑的那一轮：图**在跑**，而这一轮的档不是本轮定的。
+#:               R172 起，挂起前那一轮声明的档位随 pending_approvals 的挂起行跨过 HITL
+#:               那道门一起读回来，住在 declared_lane 那一格；把这一格读成 r42 或
+#:               not_routed 都是撒谎，读成 explicit 更是（本轮没有现声明，续跑这条腿也
+#:               没按这一档重新派发过 —— 那要跨 checkpointer 与 orchestrator，仍在写域外）。
+#:               挂起行里没有这一格时（R172 之前挂起的旧行、0008 尚无此列的 PG 后端）
+#:               declared_lane 落空串，读数与 R172 之前逐字节相同：缺口照旧可数，不遮丑。
+LANE_SOURCE_RESUMED = "resumed"
+
+#: 图里真实存在的四条工作腿。顺序就是阅读与派发的顺序，不是集合：读数要能逐字比对。
+#: 出处是 app/agents/orchestrator.py 的 add_node 装配与 route_main 里的 valid。
+WORK_LEGS: tuple[str, ...] = ("doc", "data", "chart", "export")
+
+#: approval 不是工作腿而是批准闸（工具层要人工确认时才挂它）。把它关进天花板，等于
+#: "选了问答档 ⇒ 待确认卡凭空消失"：那是减一道安全门，不是省算力，故无条件放行。
+LANE_EXEMPT_WORKERS: tuple[str, ...] = ("approval",)
+
+#: 天花板：这一档允许出现的工作腿。阶梯是**单调包含**的（qa ⊂ analysis ⊂ report），
+#: 往便宜档选 = 少付；每一档都含 doc = 最便宜的那条读腿，任何档都不许把人家的文件
+#: 库看没了。qa 只给 doc：不拆题、不进 pandas、不出图、不产文件，这就是问答档的承诺。
+LANE_WORKERS: dict[str, tuple[str, ...]] = {
+    LANE_QA: ("doc",),
+    LANE_ANALYSIS: ("doc", "data", "chart"),
+    LANE_REPORT: ("doc", "data", "chart", "export"),
+}
+
+#: 地板：``(worker, 条件名)``。只有天花板会退化成"点了没反应的控件"——题目里没写"导出"
+#: 二字时 supervisor 本就不排 export，用户显式选了报告档却什么都没多出来，那一格就是
+#: R32 拒交的那张脸。地板只在 explicit 生效，条件三条见 _FLOOR_CONDITIONS。
+LANE_REQUIRED_WORKERS: dict[str, tuple[tuple[str, str], ...]] = {
+    LANE_QA: (("doc", "abstained"),),
+    LANE_ANALYSIS: (("data", "has_data"),),
+    LANE_REPORT: (("export", "always"), ("data", "has_data")),
+}
+
+#: 地板条件的全部取值（写错就当场炸，不许静默不补腿）：
+#: - always     无条件补。选了报告档就得真出产物腿；export 带 HITL 挂起，那正是它的脸。
+#: - has_data   本轮带了 data_filename 才补。没料硬派 pandas 是编造数字，不是分流。
+#: - abstained  supervisor 既没派发也没给正文时才补一条读腿。触发条件与 R42 那句
+#:              "[R42] 弃权轮判为问答档 → 补派 doc，不再空转一轮" 同一条：省的是空转，
+#:              不是在已经答完的轮上多花一发模型。
+_FLOOR_CONDITIONS = ("always", "has_data", "abstained")
+
+#: 天花板把腿砍到零时的退路 = 这一档最小可兑现的一条读腿。砍到零不等于"这档什么都不做"：
+#: route_main 会在 workers 为空时 return "reflect"，reflect 判 redo，再烧一发 supervisor，
+#  恰恰是 R42 花力气省掉的那种空转轮。
+LANE_PRIMARY_LEG = "doc"
+
+
+@dataclass(frozen=True)
+class TurnLane:
+    """一轮的档位读数：生效道、它的来源、它的腿边界、它要不要付拆题。
+
+    字段就是判据① 的读数，``as_dict`` 是三处出口共用的那一份身体。``rule`` 与
+    ``rules_lane`` 保留 R42 判别器的原始裁定：声明与判别不一致时（用户选了问答档、
+    题面却带"环比"），两个都必须能读回来，否则界面上"你选的"三个字没有对账依据。
+    """
+
+    lane: str
+    source: str
+    rule: str
+    declared: str
+    rules_lane: str
+    tier: str
+    allowed_workers: tuple[str, ...]
+    required_workers: tuple[tuple[str, str], ...]
+    may_plan: bool
+
+    def as_dict(self) -> dict:
+        """JSON-safe 出口：trace 载荷与 SSE 帧都只认这一条，别在下游再换算一遍。"""
+        return {
+            "lane": self.lane,
+            "lane_source": self.source,
+            "lane_rule": self.rule,
+            "declared_lane": self.declared,
+            "rules_lane": self.rules_lane,
+            "tier": self.tier,
+            "allowed_workers": list(self.allowed_workers),
+            "required_workers": [[worker, condition] for worker, condition in self.required_workers],
+            "may_plan": self.may_plan,
+        }
+
+
+def normalize_declared_lane(declared) -> str:
+    """把"声明的档位"归一成三值之一或空串，未知值**硬失败**。
+
+    HTTP 边界上 _require_valid_lane 已经 400 过一遍，这一道管的是图内与以后所有调用方：
+    把 REPORT / repot 这类拼错的名字静默当成"没声明"，就是把判据② 严禁的第三态从后门
+    放回来 —— 而且放回的是最贵的一种：调用方以为选了档，路径照旧。
+    """
+    text = str(declared or "").strip()
+    if not text:
+        return ""
+    if text not in LANE_TIERS:
+        allowed = ", ".join(f"'{value}'" for value in LANE_TIERS)
+        raise ValueError(f"unknown declared lane {text!r}; declare one of {allowed} or nothing")
+    return text
+
+
+def turn_lane_from_decision(decision: RouteDecision, declared=None) -> TurnLane:
+    """把 R42 的判别结果与调用方的声明合成本轮读数。纯函数，零日志，零模型调用。"""
+    declared = normalize_declared_lane(declared)
+    if not declared:
+        # 没声明 ⇒ 生效道就是判别器判的那条。天花板给满、地板给空，于是 decide_workers
+        # 在这一条道上必然原样返回；lane_source 那格明写 r42，与 explicit 永远可分辨。
+        return TurnLane(
+            lane=decision.lane,
+            source=LANE_SOURCE_R42,
+            rule=decision.rule,
+            declared="",
+            rules_lane=decision.lane,
+            tier=decision.tier.value,
+            allowed_workers=WORK_LEGS + LANE_EXEMPT_WORKERS,
+            required_workers=(),
+            may_plan=decision.lane != LANE_QA,
+        )
+    return TurnLane(
+        lane=declared,
+        source=LANE_SOURCE_EXPLICIT,
+        rule=decision.rule,
+        declared=declared,
+        rules_lane=decision.lane,
+        tier=LANE_TIERS[declared].value,
+        allowed_workers=LANE_WORKERS[declared] + LANE_EXEMPT_WORKERS,
+        required_workers=LANE_REQUIRED_WORKERS[declared],
+        may_plan=declared != LANE_QA,
+    )
+
+
+def resolve_turn_lane(question: str, declared=None) -> TurnLane:
+    """按题面与声明算出本轮读数。
+
+    🔴 刻意调 _route_rules 而不是 classify_route：那行 ``[R42]`` 日志是 R51 读表的锚点，
+    app/common/stage_timing.py::R42_LOG_PATTERN 逐字节钉着它的形状，它的**频次**同样是
+    口径的一部分（一次运行敲几次钟）。锚点仍归 classify_route 在 plan() 里敲，本函数只
+    借规则本体，不重复敲钟。
+    """
+    return turn_lane_from_decision(_route_rules(str(question or "").strip()), declared)
+
+
+def declared_lane_from_config(config) -> str:
+    """读本轮声明。没走 run_with_stream 的调用（含全部单参数直调）自然拿到空串。"""
+    configurable = (config or {}).get("configurable") or {}
+    return str(configurable.get(DECLARED_LANE_KEY) or "")
+
+
+def not_routed_lane(declared=None) -> TurnLane:
+    """本轮没进图（入队 / 答案缓存命中）时的诚实读数。
+
+    lane 读空串而不是把声明抄进 lane 那格：选了报告档而这一轮被入队，此刻"报告档生效"
+    还没有任何证据，有证据的是"它被排队后台跑"（载荷里的 lane 就是给 worker 的交代）。
+    声明本身留在 declared 那格，两件事不混。
+    """
+    declared = normalize_declared_lane(declared)
+    return TurnLane(
+        lane="",
+        source=LANE_SOURCE_NOT_ROUTED,
+        rule="",
+        declared=declared,
+        rules_lane="",
+        tier="",
+        allowed_workers=(),
+        required_workers=(),
+        may_plan=False,
+    )
+
+
+def resumed_lane(declared=None) -> TurnLane:
+    """批准后续跑那一轮的读数：图在跑，档位是挂起前那一轮定的（R172 才读得回来）。
+
+    与 not_routed 同构（lane 读空串、不付拆题、不声称任何腿边界），区别只在 source 那一格：
+    这一轮确实进了图。declared 那一格装的是随挂起行跨过 HITL 读回来的原始声明，读不到时
+    是空串 —— 与 R172 之前逐字节相同。填不填得上都不许动 lane：续跑的腿没有按这一档重新
+    派发过，把承诺写进生效格就是判据② 严禁的那张脸。声明与"这一轮沿用它"是两句话，
+    分别住在 declared_lane 与 lane_source 两格里，谁也不许并谁的格。
+    """
+    declared = normalize_declared_lane(declared)
+    return TurnLane(
+        lane="",
+        source=LANE_SOURCE_RESUMED,
+        rule="",
+        declared=declared,
+        rules_lane="",
+        tier="",
+        allowed_workers=(),
+        required_workers=(),
+        may_plan=False,
+    )
+
+
+def decide_workers(turn: TurnLane, workers, *, has_data: bool = False, abstained: bool = False):
+    """按本轮读数改派工作腿，返回 ``(改派后, 被砍的腿, 被补的腿)``。
+
+    后两组是判据① 要的"那条分支"：选了 A 少跑哪条腿、选了 B 多跑哪条腿，全部具名。
+    source 不是 explicit 就一个字符都不动 —— 判据② 的"缺省与显式可分辨"在行为上的
+    那一半就是这一句，读数那一半在 as_dict 里。
+    """
+    given = [str(worker) for worker in (workers or [])]
+    if turn.source != LANE_SOURCE_EXPLICIT:
+        return tuple(given), (), ()
+    allowed = set(turn.allowed_workers)
+    kept = [worker for worker in given if worker in allowed]
+    cut = [worker for worker in given if worker not in allowed]
+    added: list[str] = []
+    if cut and not kept:
+        kept.append(LANE_PRIMARY_LEG)
+        added.append(LANE_PRIMARY_LEG)
+    for worker, condition in turn.required_workers:
+        if condition not in _FLOOR_CONDITIONS:
+            raise ValueError(f"unknown floor condition {condition!r} for lane {turn.lane!r}")
+        if condition == "has_data" and not has_data:
+            continue
+        if condition == "abstained" and not abstained:
+            continue
+        if worker not in kept:
+            kept.append(worker)
+            added.append(worker)
+    return tuple(kept), tuple(cut), tuple(added)
+
+
 def respond(state) -> dict:
     """闲聊直接回答，不走 worker"""
     q = _last_user(state)
@@ -1184,14 +1442,21 @@ def load_memory(state) -> dict:
 _COMPLEX = ["和", "并且", "同时", "另外", "还有", "以及", "然后"]
 
 
-def plan(state) -> dict:
-    """复杂问题拆子任务；简单问题返回空列表"""
+def plan(state, config=None) -> dict:
+    """复杂问题拆子任务；简单问题返回空列表
+
+    ``config`` 只用来读 R141 的声明档位（``configurable["declared_lane"]``）。不传
+    时与 R141 之前逐字节相同：单参数直调它的 tests/test_r42_zero_model_calls.py
+    两枚用例都不必改口。
+    """
     q = _last_user(state)
     deterministic_plan = build_task_plan(q)
     if deterministic_plan:
         logger.info(f"[Plan] deterministic tasks={len(deterministic_plan)}")
         return {"plan": deterministic_plan}
-    if classify_route(q).lane == LANE_QA:
+    decision = classify_route(q)
+    turn = turn_lane_from_decision(decision, declared_lane_from_config(config))
+    if not turn.may_plan:
         # R42 判别器判到问答档 ⇒ 这一发拆题模型不付。判错了有边界：route_main 的
         # 关键词兜底与 reflect 的"要图没图/要导出没下载链接"仍能把这一轮升回分析档
         # （判据②），而省下的这一发是真的会打顶的：docs/perf/latency-budget-2026-09-16.md

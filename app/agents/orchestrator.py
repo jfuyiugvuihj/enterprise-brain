@@ -38,9 +38,12 @@ from app.approval.assistant import build_precheck
 from app.agents.tools import search_docs, analyze_data, query_data, generate_chart, export_report
 from app.agents.planner import build_task_plan
 from app.agents.nodes import (
+    DECLARED_LANE_KEY,
+    LANE_QA,
     STREAM_PIECE_SINK_KEY,
-    _make_model, classify_intent, classify_route, LANE_QA, respond, load_memory, plan,
-    reflect_node, route_reflect, synthesize,
+    _make_model, classify_intent, classify_route, decide_workers, declared_lane_from_config,
+    normalize_declared_lane, respond, load_memory, plan, reflect_node, resolve_turn_lane,
+    route_reflect, synthesize,
 )
 from app.agents.evidence import (
     aggregate_agent_result,
@@ -439,7 +442,12 @@ def _intent_text(user_message: str) -> str:
 
 # ==================== 路由 ====================
 
-def route_main(state: AgentState):
+def route_main(state: AgentState, config=None):
+    """决定这一轮派谁出门。
+
+    ``config`` 只为一件事存在：读出调用方声明的档位（R141）。不传时（全部既有单参数
+    直调，含 tests/test_r42_zero_model_calls.py 的 105 题全量）本函数与改动前逐字节相同。
+    """
     last = state["messages"][-1]
     tools = getattr(last, "tool_calls", None) or []
 
@@ -523,6 +531,26 @@ def route_main(state: AgentState):
     if not workers and abstained and classify_route(intent_text).lane == LANE_QA:
         workers = ["doc"]
         logger.info("[R42] 弃权轮判为问答档 → 补派 doc，不再空转一轮")
+
+    # R141 判据①：显式声明的档位在这一格落地成"腿的有无"。上面那句 R42 补派一个字不动
+    # —— 它管的是"系统判出来的问答档不许空转"，本节管的是"人明确点了问答档不许跑重活"。
+    # 只在真有了声明时才多算一次规则判别（resolve_turn_lane 不打 [R42] 日志，锚点频次不变）。
+    declared = declared_lane_from_config(config)
+    if declared:
+        turn = resolve_turn_lane(intent_text, declared)
+        kept, cut, added = decide_workers(
+            turn,
+            workers,
+            has_data=bool(((config or {}).get("configurable") or {}).get("data_filename")),
+            abstained=abstained,
+        )
+        if cut or added:
+            workers = list(kept)
+            logger.info(
+                f"[R141] 声明档 {turn.lane}（系统判 {turn.rules_lane}）"
+                f" → 派 {workers or '-'} | 砍 {','.join(cut) or '-'}"
+                f" | 补 {','.join(added) or '-'}"
+            )
 
     completed_workers = set((state.get("worker_results") or {}).keys())
     remaining = [worker for worker in workers if worker not in completed_workers]
@@ -1112,8 +1140,15 @@ def run_with_stream(
     trace_store: TraceStore | None = None,
     cancel_event=None,
     stream_piece_sink=None,
+    declared_lane: str = "",
 ):
     """流式跑一轮编排。
+
+    ``declared_lane``（R141）是调用方**显式声明**的档位，三值之一或空串。空串＝没声明，
+    本轮的道由 R42 判别器按题面判：configurable 里连键都不加，图的形状与 R141 之前逐字节
+    相同。非空时它进 ``configurable[DECLARED_LANE_KEY]``，由 route_main 落地成腿的有无、由
+    plan() 落地成拆题那一发付不付。未知值在 ``normalize_declared_lane`` 里当场炸：这一层
+    是图内守门，不替调用方把拼错的档位猜成"没声明"。
 
     ``cancel_event`` 是调用方（SSE 生成器）持有的 ``threading.Event``，语义上只表示
     "我不再接收本轮回答"，**不等于拒绝**（详见 ``RequestCancelled``）。不传时为 None，
@@ -1159,6 +1194,11 @@ def run_with_stream(
         # 进 state 就会在 PG checkpointer 路径上炸。不注册时这里一个键都不多加，
         # 图的形状与之前逐字节相同（判据④）。
         config["configurable"][STREAM_PIECE_SINK_KEY] = stream_piece_sink
+    declared = normalize_declared_lane(declared_lane)
+    if declared:
+        # 与上面两枚同一个理由：能进 state 的东西才进 state，声明只是一个字符串，但它要影响
+        # 的是**图内**派发，跨不过节点的只有 config，所以走同一条 configurable 通道。
+        config["configurable"][DECLARED_LANE_KEY] = declared
     initial_state = _initial_execution_state(
         user_message,
         thread_id=thread_id,
@@ -1167,6 +1207,9 @@ def run_with_stream(
         trace_id=trace_id,
         task_id=task_id,
     )
+    # 本轮档位读数：与图内 plan()/route_main 读的是同一份规则本体（resolve_turn_lane 不打
+    # [R42] 锚点，频次一字不动），user_message 就是 plan() 拿到的那枚文本 ⇒ 读数与生效路径同源。
+    turn = resolve_turn_lane(user_message, declared)
     max_attempts = 3
     last_worker_results: dict = {}
     last_state: dict = {}
@@ -1177,7 +1220,9 @@ def run_with_stream(
         task_id=task_id,
         event_type="request.started",
         status="running",
-        payload={"session_id": thread_id},
+        # R141 判据① 的第二处出口：不看日志、不猜请求体也能读到"这轮按哪条道走的、
+        # 是谁定的"。GET /api/v1/traces/{trace_id} 直接把这一格吐出来。
+        payload={"session_id": thread_id, **turn.as_dict()},
         owner_id=owner_id,
     )
     for attempt in range(1, max_attempts + 1):

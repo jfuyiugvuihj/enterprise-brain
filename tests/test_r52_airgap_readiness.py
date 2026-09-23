@@ -47,6 +47,8 @@ def test_the_shipped_tree_passes_the_air_gap_gate() -> None:
     'tls: { rejectUnauthorized: false }',
     'RUN npm config set strict-ssl --insecure',
 ])
+
+
 def test_the_detector_recognises_a_tls_shortcut(snippet: str) -> None:
     assert air.tls_bypass_hits(snippet), "pattern table went blind to: " + snippet
 
@@ -61,9 +63,34 @@ def test_clean_code_passes_the_detector() -> None:
     ('set $api http://backend:8001;', False),
     ('health = "http://127.0.0.1:8001/api/v1/health"', False),
     ('upstream = "http://redis:6379"', False),
+    # An XML namespace is an identifier that is merely spelled as a URL, so Clark notation and
+    # an xmlns declaration are exempt -- but only on their own line, hence the mixed row.
+    ('MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"', False),
+    ('<svg xmlns="http://www.w3.org/2000/svg" width="2">', False),
+    ('NS = "{http://a.example/ns}"; url = "https://cdn.jsdelivr.net/chart.js"', True),
 ])
 def test_only_public_hosts_count_as_an_exit(line: str, external: bool) -> None:
     assert bool(air.external_host_hits(line)) is external
+
+
+def test_the_namespace_exemption_is_paid_for_with_no_network_client() -> None:
+    """The exemption covers files that cannot talk, otherwise it is a hiding place."""
+    namespaces = 'import zipfile\nNS = "{http://www.w3.org/2000/svg}"\n'
+    assert air.namespace_exemption_leaks(namespaces) == []
+    for opener in ("import socket", "from urllib.request import urlopen", "import requests",
+                   "from http.client import HTTPConnection", "import ssl", "import httpx",
+                   'subprocess.run(["curl", "http://a.example"])'):
+        assert air.namespace_exemption_leaks(opener + "\n" + namespaces), "exempted: " + opener
+    # A file that writes no namespaces is not in scope for this rule at all.
+    assert air.namespace_exemption_leaks("import socket\nsocket.setdefaulttimeout(3)\n") == []
+
+
+def test_the_shipped_tree_pays_for_every_namespace_it_writes() -> None:
+    offenders = [str(path.relative_to(air.ROOT)) + " " + leak
+                 for path in air.source_files("app", "scripts", "deploy")
+                 for leak in air.namespace_exemption_leaks(air.read(path))]
+    assert offenders == [], "; ".join(offenders)
+
 
 
 def test_the_https_variant_keeps_every_security_directive() -> None:

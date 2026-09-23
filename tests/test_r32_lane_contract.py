@@ -34,6 +34,12 @@ CHAT_SOURCE = REPO / "app" / "api" / "v1" / "chat.py"
 CONTRACT_DOC = REPO / "docs" / "api" / "contract-v1.md"
 TRACE_DIR = REPO / "app" / "trace"
 FRONTEND_SRC = REPO / "frontend" / "src"
+#: R141 获准在前端提 lane 的**发货源件**（用例件不在其列）。这张名单就是「假控件禁令」
+#: 改口之后的牙：多一枚提名件=第二套取值表，少一枚=控件被摘了却没撤闸，两样都当场红。
+R141_LANE_FRONTEND_SHIPMENTS = (
+    "frontend/src/components/ChatPanel.vue",
+    "frontend/src/router/lane-choice.js",
+)
 
 #: R105 甲半那段的位置（按 ``## `` 标题定位，别按行号——行号会为别人的一次编辑而漂）
 SLO_SECTION_TITLE = "## Three-Tier SLO Contract (2026-09-20, R105 甲半)"
@@ -516,12 +522,19 @@ def test_the_contract_still_names_the_lane_attribution_blocker():
 
 
 def test_the_prose_line_about_the_lane_field_tells_todays_truth():
-    """①/⑥ 的散文面：契约不许再写"非法档不返 400"是现在时，也不许把三档说成已生效。"""
+    """①/⑥ 的散文面：契约不许再写"非法档不返 400"是现在时，也不许把档位说成惰性标签。
+
+    末那半句在 R141 之后换了方向：前端确实发货了档位选择器，所以契约必须同时留下
+    「声明真的改派了腿」与「R32 禁令管的是改了什么都不动的那类控件」两句现在时。
+    R141 之前这里钉的是反向的一句（still ships no tier selector），改口不是放宽。
+    """
     text = _contract_text()
 
     assert "closed set of four" in text, "契约不再写 lane 的取值闭集了"
     assert "validation_error" in text, "契约不再指名非法档的稳定码"
-    assert "still ships no tier selector" in text, "契约不再交代前端为什么没有选择器"
+    assert "a declaration now moves real worker legs" in text, "契约不再交代声明档位真的改派腿（R141）"
+    assert "ships a tier selector" in text, "契约不再交代前端已发货档位选择器"
+    assert "R32 ban was never on the control" in text, "契约把 R32 假控件禁令的落点写丢了"
     for position in [match.start() for match in re.finditer(r"is not\s+implemented", text)]:
         window = re.sub(r"\s+", " ", text[max(0, position - 240) : position + 40])
         assert "previous draft" in window, "契约又把「非法档不返 400」写成现在时的缺口了"
@@ -531,7 +544,14 @@ def test_the_prose_line_about_the_lane_field_tells_todays_truth():
 
 
 def test_the_client_label_changes_exactly_one_behaviour_and_it_is_default_off(monkeypatch, tmp_path):
-    """⑥：四档 × 两开关态，逐维度比可读数——qa/analysis 与"不声明"必须处处相同。"""
+    """⑥：四档 × 两开关态，逐维度比 /ask **这一层**的可读数。
+
+    qa/analysis 与"不声明"在本矩阵每个维度上相等，R141 之后依然成立、也依然必须成立：
+    本矩阵数的是 HTTP 层的计数与帧名序列，而这里的 run_with_stream 是被桩顶掉的（桩不读
+    declared_lane，图内改派发生在矩阵之外）。"声明进了图就必然改派发"由同单的
+    tests/test_r141_lane_behavior.py 钉：它顶同一枚桩，但把 kwargs 读回来比。两枚各管一层，
+    谁也不许替谁宣布"档位没有行为差"。
+    """
     cells = {
         (switch, lane): drive(monkeypatch, tmp_path, lane=lane, switch=switch, with_sources=True).summary()
         for switch in (None, "1")
@@ -554,7 +574,10 @@ def test_the_client_label_changes_exactly_one_behaviour_and_it_is_default_off(mo
 
 
 def test_nothing_outside_the_two_lane_functions_reads_the_request_label():
-    """⑥ 的结构证据：全 chat.py 里读 request.lane 的只有两枚函数，没有第三处把它喂给图或检索。"""
+    """⑥ 的结构证据：读 request.lane 的函数是一枚**闭集**，多一处没登记的读取就红。
+
+    闭集的成员由 R141 从两枚扩到四枚，扩的理由与逐枚点名写在下面的断言旁边。
+    """
     readers = set()
     for node in ast.walk(_chat_tree()):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -569,7 +592,19 @@ def test_nothing_outside_the_two_lane_functions_reads_the_request_label():
             if direct or via_getattr:
                 readers.add(node.name)
 
-    assert readers == {"_queue_lane", "_require_valid_lane"}, readers
+    # R32 写下这条时闭集是两枚（闸 + 入队判别），因为那一天标签确实什么都不改变。
+    # R141 判据① 要求标签真的改变图里的派发，于是闭集扩到四枚，逐枚点名；枚数仍然钉死，
+    # "谁都能读 lane" 那张脸照样红。新增两枚各自只干什么，写在它们自己的 docstring 里：
+    #   - _require_no_lane_on_chat：/chat 收到任何声明都 400（把静默忽略变成报错，判据②）；
+    #   - _declared_lane：只做归一，把值交给 run_with_stream 的 declared_lane 与档位读数。
+    # 同单新增的 tests/test_r141_lane_behavior.py 再钉一层：这一格的值除档位读数与图内
+    # 派发之外不许抵达任何别的地方（逐枚点名 chat.py 里的调用点）。
+    assert readers == {
+        "_queue_lane",
+        "_require_valid_lane",
+        "_require_no_lane_on_chat",
+        "_declared_lane",
+    }, readers
 
 
 def test_the_gate_is_called_once_and_before_the_store(monkeypatch, tmp_path):
@@ -600,12 +635,23 @@ def test_the_model_counters_have_teeth(monkeypatch, tmp_path):
         chat.model_handler.chat(messages=[{"role": "user", "content": "x"}])
 
 
-def test_the_frontend_ships_no_tier_selector_while_the_label_is_inert():
-    """⑥ 假控件禁令（这条比做出来更重要）：改不了任何行为的控件就是假料壳。
+def test_the_tier_selector_is_only_real_while_the_tiers_really_diverge():
+    """⑥ 假控件禁令的 R141 改口版（原名 `test_the_frontend_ships_no_tier_selector_while_the_label_is_inert`）。
 
-    今天前端一个 lane 都不发。这枚钉**该被改掉**而不是被绕过的那一天，是 qa/analysis 在
-    /ask 上真分出轻重的那一天——那要动 ``app/agents/nodes.py`` 与 orchestrator 的写域，
-    在本单之外（已具名报总控）。到那一天连同控件一起评审。
+    原断言：前端一件都不许提 lane（`hits == []`）——因为那时标签惰性，控件必为假壳。
+    旧 docstring 自己写明「这枚钉**该被改掉**而不是被绕过的那一天，是 qa/analysis 在 /ask 上
+    真分出轻重的那一天」，R141 落的正是那一天，所以这里按它留的门改口，不是绕过、不是删除。
+
+    改口后的四条，逐条都比旧断言更硬（旧断言只咬「前端提 lane」这一件事）：
+      a) 提 lane 的**发货源件**必须逐名等于 R141 那份名单：多一枚就是第二套取值表，当场红；
+      b) 面板必须**引用**那枚唯一真源（`lane-choice.js`），并在 `JSON.stringify` 的请求体里
+         真把档位发出去：只在本地存一份 = R32 拒交的那张脸，当场红；
+      c) 前端档位字面量集合必须与后端 `ASK_LANE_VALUES` 逐值相同：两边各抄一份迟早漂，当场红；
+      d) 服务端三档的腿集合必须**两两不同且严格递增**：一旦有人把 ``LANE_WORKERS`` 拍平，
+         控件重新变成假的，这条立刻红并要求撤控件。
+
+    为什么不是放宽：d 条是旧断言完全没有的新增约束，b/c 同理；a 把「一件都不许提」换成
+    「只许这两枚提名」，覆盖面是旧断言的超集（旧断言下这 2 枚根本不该存在）。
     """
     files = [path for path in FRONTEND_SRC.rglob("*") if path.suffix in {".vue", ".js", ".ts"}]
     assert len(files) > 20, f"只读到 {len(files)} 枚前端源文件，本钉已经空转"
@@ -614,7 +660,31 @@ def test_the_frontend_ships_no_tier_selector_while_the_label_is_inert():
         path.relative_to(REPO).as_posix() for path in files
         if re.search(r"\blane\b", path.read_text(encoding="utf-8"), re.IGNORECASE)
     ]
-    assert hits == [], f"前端开始发档位了：{hits} —— 先证明服务端认，再谈控件"
+    shipping = sorted(path for path in hits if "__tests__" not in Path(path).parts)
+    assert shipping == sorted(R141_LANE_FRONTEND_SHIPMENTS), (
+        f"前端提 lane 的发货源件与 R141 名单不符：实得 {shipping}，名单 {sorted(R141_LANE_FRONTEND_SHIPMENTS)}"
+    )
+    assert len(hits) > len(shipping), "档位控件的用信件没了：读取方与告警面必须一起在场"
+
+    panel = next(path for path in files if path.name == "ChatPanel.vue").read_text(encoding="utf-8")
+    assert re.search(r"from\s+[^;]*lane-choice\.js", panel), (
+        "ChatPanel 不再引用 lane-choice.js：取值表要被抄出第二份了"
+    )
+    bodies = re.findall(r"JSON\.stringify\(\{(.*?)\}\)", panel, re.DOTALL)
+    assert bodies, "ChatPanel 里再没有序列化请求体，这条钉要先改指向"
+    assert any(re.search(r"\blane:\s*selectedLane\.value\b", body) for body in bodies), (
+        "档位只存在前端本地、没写进请求体 —— 这正是 R32 拒交选择器的那张假控件脸"
+    )
+
+    table = next(path for path in files if path.name == "lane-choice.js").read_text(encoding="utf-8")
+    literals = set(re.findall(r"\{ value: (?:LANE_UNDECLARED|'([^']*)')", table))
+    assert {value or "" for value in literals} == set(chat.ASK_LANE_VALUES), (
+        f"前端档位字面量 {sorted({value or '' for value in literals})} 与后端 ASK_LANE_VALUES 漂了"
+    )
+
+    tiers = {lane: set(nodes.LANE_WORKERS[lane]) for lane in ("qa", "analysis", "report")}
+    assert len({frozenset(value) for value in tiers.values()}) == 3, f"三档腿集合被拍平，控件成假：{tiers}"
+    assert tiers["qa"] < tiers["analysis"] < tiers["report"], f"三档不再严格递增，撤下选择器：{tiers}"
 
 
 def test_the_four_hundred_renders_honestly_on_the_client_without_new_frontend():
