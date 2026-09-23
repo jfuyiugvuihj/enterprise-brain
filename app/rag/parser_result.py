@@ -245,6 +245,7 @@ class DocumentParseResult:
     parsers: tuple[ParserType, ...] = ()
     failure_reason: str | None = None
     warnings: tuple[str, ...] = ()
+    errors: tuple[ParseError, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -289,6 +290,8 @@ class DocumentParseResult:
             payload["failure_reason"] = self.failure_reason
         if self.warnings:
             payload["warnings"] = list(self.warnings)
+        if self.errors:
+            payload["errors"] = [error.as_dict() for error in self.errors]
         if self.metadata:
             payload["metadata"] = dict(self.metadata)
         return payload
@@ -301,6 +304,7 @@ class DocumentParseResult:
         blocks: Iterable[ContentBlock] = (),
         parsers: Iterable[ParserType] = (),
         warnings: Iterable[str] = (),
+        errors: Iterable[ParseError] = (),
         metadata: dict[str, Any] | None = None,
     ) -> "DocumentParseResult":
         return cls(
@@ -310,6 +314,7 @@ class DocumentParseResult:
             blocks=tuple(blocks),
             parsers=tuple(parsers),
             warnings=tuple(warnings),
+            errors=tuple(errors),
             metadata=dict(metadata or {}),
         )
 
@@ -321,6 +326,7 @@ class DocumentParseResult:
         blocks: Iterable[ContentBlock] = (),
         parsers: Iterable[ParserType] = (),
         warnings: Iterable[str] = (),
+        errors: Iterable[ParseError] = (),
         metadata: dict[str, Any] | None = None,
     ) -> "DocumentParseResult":
         return cls(
@@ -330,6 +336,7 @@ class DocumentParseResult:
             blocks=tuple(blocks),
             parsers=tuple(parsers),
             warnings=tuple(warnings),
+            errors=tuple(errors),
             metadata=dict(metadata or {}),
         )
 
@@ -340,6 +347,7 @@ class DocumentParseResult:
         extension: str,
         parsers: Iterable[ParserType] = (),
         warnings: Iterable[str] = (),
+        errors: Iterable[ParseError] = (),
         metadata: dict[str, Any] | None = None,
     ) -> "DocumentParseResult":
         return cls(
@@ -348,6 +356,7 @@ class DocumentParseResult:
             status=ParseStatus.EMPTY,
             parsers=tuple(parsers),
             warnings=tuple(warnings),
+            errors=tuple(errors),
             metadata=dict(metadata or {}),
         )
 
@@ -370,3 +379,4 @@ class DocumentParseResult:
             failure_reason=failure_reason,
             metadata=dict(metadata or {}),
         )
+

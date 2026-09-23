@@ -173,3 +173,21 @@ def test_parse_error_serializes_code_message_and_retryable():
     assert payload["parser"] == "ocr"
     assert payload["retryable"] is True
     assert payload["location"]["page"] == 3
+
+def test_failed_result_can_carry_aggregate_errors():
+    error = ParseError(
+        code="ocr_engine_missing",
+        message="OCR requested but no engine provided",
+        parser=ParserType.OCR,
+        location=SourceLocation(file_path="scan.pdf"),
+    )
+    result = DocumentParseResult(
+        source="scan.pdf",
+        extension=".pdf",
+        status=ParseStatus.PARTIAL_SUCCESS,
+        blocks=(),
+        parsers=(ParserType.OCR,),
+        errors=(error,),
+    )
+    assert result.errors == (error,)
+    assert result.as_dict()["errors"][0]["code"] == "ocr_engine_missing"
