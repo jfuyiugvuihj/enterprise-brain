@@ -158,7 +158,7 @@ def test_one_candidate_and_no_name_is_byte_for_byte_what_it_always_was():
         "🎯 最高(营收): 建国路 — 营收=300"
     ]
     assert _answer(frame, "营收排名前三", ["营收", "利润"], ["门店"]) == [
-        "📊 按 营收 排名前10:\n"
+        "📊 按 营收 排名前3:\n"
         "  建国路: 营收=300, 利润=30\n"
         "  人民路: 营收=200, 利润=20\n"
         "  中山路: 营收=100, 利润=10"

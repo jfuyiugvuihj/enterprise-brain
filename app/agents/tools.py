@@ -333,6 +333,83 @@ def _record_dataset_evidence(config, filename: str, df) -> None:
     )
 
 
+# ==================== R192 · 问法里的「前 N」：中文数词与阿拉伯数字同解 ====================
+# 病灶：员工写「排名前三」，屏上标题写「排名前10」——标题里那个数就是 top_n 本身，而 top_n
+# 只在 `re.search(r"前\s*(\d+)")` 命中时才动，\d 不吃中文数字，于是问三答十。
+# 为什么这一族归一全仓只此一处（三条都是改前实取，不是推测）：
+#   1) 扫遍 app/**，"前 + 数字"的取数正则只有 _answer_query 这一枚命中，没有第二个消费者；
+#   2) 仓里没有既成的中文数词→整数通路可复用：app/documents/index_policy.py 里的
+#      [一二三四五六七八九十百] 是"这一行像不像标题"的字符类，只做形状匹配，不产数值；
+#   3) app/common/model_budget.py::_env_int 与 app/rag/indexing.py::_scope_int 化的是环境量
+#      和台账字段，输入永远是阿拉伯数字串，喂中文数词只会落回默认值——不是同一件事。
+# 所以本单养的是唯一一个消费者：正则一枚、取值一口。第二枚消费者出现时调 _ranking_count()，
+# 不许再抄一份；也不许顺手长成一套通用数词文法（判据明令不许新增自由解析器）。
+
+#: 中文个位数 → 值。"两"是手写里"二"的常见替代，同解。
+_CN_DIGIT_VALUES = {
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+
+#: 「前」后面那一串，外加三种"这根本不是排名条数"的后随形状，命中就整条不认：
+#:   - 后面还是数字：「前30年」被贪婪匹配截成"前 3"是一枚新假话；
+#:   - 数量级位（零/百/千/万）：「前一百名」认成"前 1"同样是假话，宁可退回默认条数——那与改前逐字相同；
+#:   - 时间单位（天/日/周/月/年…）：「提前一天」「前五个月」问的是时间段，不是要前几名。
+_RANKING_COUNT_RE = re.compile(
+    r"前\s*(\d+|[一二两三四五六七八九十]{1,3})"
+    r"(?!\s*(?:\d|[零百千万]|个?(?:工作日|工作天|天|日|号|星期|周|月|年|小时|分钟)))"
+)
+
+#: 问法里点不出数时的条数：沿用改前那一枚，本单不动它。
+_DEFAULT_RANKING_COUNT = 10
+
+#: 病灶二那张脸（用户可见那一层）。它与准入闸那三张脸不同族：那三张说的是文件读不读得到，
+#: 这一张说的是文件读到了、也有行，只是这张表能拿来比大小的列一枚都没有。
+#: 措辞三条红线：不说"没结论"（那是把算不出来说成没算过）、不说"没数据"（数据就在下一段）、
+#: 不提权限与部门（因由不归这里猜）。
+_NO_SORTABLE_NUMERIC_COLUMN_TEXT = (
+    "这份文件没有可排序的数值列：它已有的列全是文本，排名需要一个能比大小的数值列。"
+)
+
+
+def _chinese_ranking_number(token: str) -> int | None:
+    """1..99 的中文数词 → 整数；认不出交 None，不猜。
+
+    只覆盖「三」「十」「十二」「二十」「二十三」这一档形状。再往上（一百、一千）是数量级组合，
+    要吃得下就得写一套完整的中文数词文法，而今天没有任何问法需要它：那一档一律 None，
+    由调用方落回默认条数，读数与改前逐字相同。
+    """
+    if "十" in token:
+        head, _, tail = token.partition("十")
+        tens = 1 if not head else _CN_DIGIT_VALUES.get(head, 0)
+        if not tens:
+            return None
+        if not tail:
+            return tens * 10
+        units = _CN_DIGIT_VALUES.get(tail, 0) if len(tail) == 1 else 0
+        return tens * 10 + units if units else None
+    return _CN_DIGIT_VALUES.get(token)
+
+
+def _ranking_count(query: str) -> int | None:
+    """问法里「前 N」的那个 N：阿拉伯数字与中文数词同解；点不出来交 None。"""
+    match = _RANKING_COUNT_RE.search(query or "")
+    if match is None:
+        return None
+    token = match.group(1)
+    if token.isdigit():
+        return int(token)
+    return _chinese_ranking_number(token)
+
+
 def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> list[str]:
     """用 pandas 计算查询结果，返回简洁的分析文本"""
     import pandas as pd
@@ -396,29 +473,38 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
 
     # "排名/排序" → top N
     if any(kw in q_lower for kw in ["排名", "排序", "前", "top", "降序", "升序"]):
-        sort_col = None
-        for nc in num_cols:
-            if nc in query:
-                sort_col = nc
-                break
-        if not sort_col and "利润" in query:
+        if not num_cols:
+            # R192 病灶二第 2 层（用户可见那张脸）：下面那一枚 `num_cols[0]` 在零数值列时抛
+            # IndexError，改前被调用方的 `except Exception: pass` 整个吞掉，于是员工只看见
+            # "这份文件没结论"。因由在这里就说得出，就在这里说，而不是把话留给一次注定被
+            # 吞掉的异常——那是把"说得清"主动降级成"说不清"。
+            results.append(_NO_SORTABLE_NUMERIC_COLUMN_TEXT)
+        else:
+            sort_col = None
             for nc in num_cols:
-                if "利润" in nc:
+                if nc in query:
                     sort_col = nc
                     break
-        if not sort_col:
-            sort_col = first_num_col or num_cols[0]
-        top_n = 10
-        m = re.search(r"前\s*(\d+)", query)
-        if m:
-            top_n = int(m.group(1))
-        sorted_df = df.sort_values(sort_col, ascending=False).head(top_n)
-        lines = [f"📊 按 {sort_col} 排名前{top_n}:"]
-        for _, r in sorted_df.iterrows():
-            name = label_value(r)
-            vals = ", ".join(f"{c}={r[c]}" for c in num_cols[:3])
-            lines.append(f"  {name}: {vals}")
-        results.append("\n".join(lines))
+            if not sort_col and "利润" in query:
+                for nc in num_cols:
+                    if "利润" in nc:
+                        sort_col = nc
+                        break
+            if not sort_col:
+                sort_col = first_num_col or num_cols[0]
+            # 条数：中文数词与阿拉伯数字同解（前三 / 前五 / 前十名 / 前 10 四形共用一个取值口）。
+            # 点不出数＝改前的零匹配，落回默认条数，读数与改前逐字相同。标题与 head() 取的是
+            # 同一枚 top_n，所以"问三答十"那类各说各话不可能再出现；表本身不足 N 行时列满即止，
+            # 这一格语义本单不动（改前「排名前10」在三行表上印的也是三行，R189 钉的就是那个形状）。
+            count = _ranking_count(query)
+            top_n = _DEFAULT_RANKING_COUNT if count is None else count
+            sorted_df = df.sort_values(sort_col, ascending=False).head(top_n)
+            lines = [f"📊 按 {sort_col} 排名前{top_n}:"]
+            for _, r in sorted_df.iterrows():
+                name = label_value(r)
+                vals = ", ".join(f"{c}={r[c]}" for c in num_cols[:3])
+                lines.append(f"  {name}: {vals}")
+            results.append("\n".join(lines))
 
     # "统计/汇总/平均/合计" → describe
     if any(kw in q_lower for kw in ["统计", "汇总", "平均", "合计", "总计", "概括", "概览"]):
@@ -1082,7 +1168,22 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 ai_parts = _answer_query(df, query, numeric_cols, text_cols)
                 parts.extend(ai_parts)
             except Exception:
-                pass
+                # R192 病灶二第 1 层（可诊断性）：这一支改前是裸 `pass`——异常被吞干净之后，
+                # 员工看见的是"这份文件没结论"，运维侧一个字都没有，现场不可复现。
+                # 记账只走仓里既有那一条通路（record_tool_status：本文件上方几处拒绝出口用的
+                # 就是它），不另立日志器、不 print、不新增 logging 配置。
+                # 码取这条边界本来就会给的兜底码：app/trace/spans.py::error_code_for 对未登记的
+                # 异常交 internal_error。本单不发明新码——新增一枚枚举码要同时动
+                # app/agents/contracts.py 与前端键集合（tests/test_error_code_vocabulary.py 与
+                # 那枚"枚举＝前端键"用例双向钉着），两处都不在本单写域内。
+                # 落 failed 而不是 rejected：evidence._terminal_status 会把任何 rejected 折成
+                # permission_denied，那是把"算不出来"说成"没权限"（本文件 _record_denial 同一规矩）。
+                record_tool_status(
+                    bag_from_config(config),
+                    tool="analyze_data",
+                    status="failed",
+                    error_code="internal_error",
+                )
 
             # 返回前 15 行数据用于图表
             try:
