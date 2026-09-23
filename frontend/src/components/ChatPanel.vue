@@ -266,6 +266,7 @@ import {
   syncActive,
 } from '../lib/sessions'
 import { authedFetch, errorDetail, http } from '../lib/http'
+import { errorCodeLabel, errorCodeOf, normalizeError } from '../lib/errcodes'
 import {
   cacheFace,
   queueFace,
@@ -812,6 +813,7 @@ const cacheReads = ref({})    // text 帧上那三枚缓存字段
 const unseenReads = ref({})   // 本轮发出、界面尚未认领的事件名
 const queueReads = ref({})    // GET /queue/status/{id} 的最近一次读数
 const queueFaults = ref({})   // 排队状态这一次没读回来时的原始错误
+const queueStops = ref({})    // 这一轮的轮询被终止性判定叫停：停表之后读数不会自己回来
 const rejectedReads = ref({}) // 入队这一步就失败（HTTP 5xx / 4xx）的归一结果
 const cacheChecks = ref({})   // 改版核对：缺键=未查 / null=无从核对 / []=没改版 / [{}]=改版了
 const queueStats = ref(null)  // GET /queue/stats 的最近一次读数（全局一块，不按轮次分）
@@ -829,6 +831,25 @@ const preview = reactive({
 
 const QUEUE_POLL_MS = 3000
 const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired']
+
+// 轮询还有另一种停法：后端明确说「这一轮你再也读不回来了」。
+// 名单只收终止性判定，出处 app/api/v1/chat.py::_authorize_queue_task（401 / 404 / 403 各一枚，
+// 错误体是形状 1：detail 就是稳定码名）。网络错误、超时与 5xx 一律不在名单里——
+// 瞬断不能杀死排队状态的显示，那一族继续按 3 秒重试，脸上说的是「这次没读到」。
+// 判码只走 lib/errcodes 那一份口径（errorCodeOf），面板不另立第二套分类。
+const QUEUE_POLL_STOPPERS = [
+  { status: 404, code: 'resource_not_found' },
+  { status: 403, code: 'permission_denied' },
+  { status: 401, code: 'authentication_required' },
+]
+
+/** 这一发失败算不算「终止性判定」：算就回那一格，不算回 null（继续轮）。 */
+function queuePollStopper(err) {
+  const status = Number(err?.response?.status ?? 0)
+  if (!status) return null
+  const code = errorCodeOf(err)
+  return QUEUE_POLL_STOPPERS.find(item => item.status === status && item.code === code) || null
+}
 let queueWatches = []
 
 /** 这一轮的脸挂在哪个键上：优先消息自带的 mid（随会话落盘），退回「会话 + 序号」。 */
@@ -888,9 +909,33 @@ function cacheFaceOf(msg, index) {
   return cacheFace(read, cacheChecks.value[turnKey(msg, index)])
 }
 
+/**
+ * 轮询被终止性判定叫停那一轮的脸。
+ *
+ * 为什么不复用 queuePollFailedFace：它句尾写着「界面每 3 秒再读一次状态」，表都停了
+ * 还这么说就是假话。为什么要在面板里写这一句：「自己还在不在轮」只有面板知道，
+ * lib/provenance.js 只把读数说成人话，它读不到这张表。措辞仍走同一份字典——正文取
+ * normalizeError(err).message，码名小字走 errorCodeLabel()，本函数只补一句「不再查询」。
+ */
+function queuePollStoppedFace(error) {
+  const result = normalizeError(error)
+  return {
+    kind: 'unreadable-stopped',
+    headline: '这一轮排队状态读不回来了，界面已停止继续查询',
+    detail: `${result.message}停止查询后不会再有新读数；要看结果请把这一轮的问题原样再问一次。`,
+    codeLabel: errorCodeLabel(result),
+    tone: 'warn',
+    retryable: result.retryable,
+    ahead: null,
+  }
+}
+
 function queueFaceOf(msg, index) {
   const key = turnKey(msg, index)
   if (rejectedReads.value[key]) return queueRejectedFace(rejectedReads.value[key])
+  // 停表优先于一切读数：这一轮此前只要读到过一次 queued，不特别处理就会永远画着
+  // 「前面还有 N 人」——那是本单病灶的屏幕半，另一半是每 3 秒一笔被拒的台账。
+  if (queueStops.value[key]) return queuePollStoppedFace(queueStops.value[key])
   const read = queueReads.value[key]
   if (!read) {
     if (queueFaults.value[key]) return queuePollFailedFace(queueFaults.value[key])
@@ -944,6 +989,12 @@ function watchQueueTurn(key, requestId) {
       if (QUEUE_SETTLED.includes(read.status)) stop()
     } catch (err) {
       queueFaults.value = storeBag(queueFaults, key, err)
+      if (queuePollStopper(err)) {
+        // 终止性判定：继续打只会把同一句拒绝反复写进后端台账（一枚失效页签约 1200 笔/小时），
+        // 屏上也不会因此多出一个字。收表，并把原因画成人话（见 queuePollStoppedFace）。
+        queueStops.value = storeBag(queueStops, key, err)
+        stop()
+      }
     }
     try {
       const stats = await http.get('/queue/stats')
