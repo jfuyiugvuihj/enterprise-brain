@@ -200,8 +200,11 @@ async def add_relation(data: RelationRequest, request: Request):
             data.source,
             principal=principal,
             department_ids=list(principal.department_ids) or None,
-            # A candidate relation inherits the author clearance, so it is readable by
-            # the author and by higher clearance in the same department only.
+            # A candidate relation inherits the author clearance, so a reviewer can only
+            # be somebody in the author's department holding at least that clearance. The
+            # listing a client sees is narrower than that: every record is written
+            # ``private``, and app/knowledge_graph/service.py::discloses_to honours the
+            # label, so browsing another author's claim takes an administrator.
             classification=str(principal.clearance),
         )
     except ProductionReadOnlyProtection as exc:
@@ -245,7 +248,7 @@ async def add_relation(data: RelationRequest, request: Request):
 @router.get("/knowledge-graph/relations")
 async def list_relations(source_entity: str | None = None, relation: str | None = None, request: Request = None):
     principal = _authorized(request, ACTION_VIEW, "knowledge_graph_relation")
-    return {"relations": _graph.query(source_entity, relation, principal=principal)}
+    return {"relations": _graph.browse(source_entity, relation, principal=principal)}
 
 
 @router.post("/provenance/summary")
