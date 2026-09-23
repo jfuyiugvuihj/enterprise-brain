@@ -8,6 +8,7 @@ import io
 import pandas as pd
 import openpyxl
 from typing import Any
+from app.agents.contracts import ErrorEnvelope
 from app.common.logger import logger
 
 # ==================== 编码检测 (#4) ====================
@@ -101,21 +102,45 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, Any]:
     - 行列数、列名、类型
     - 数值列统计（均值/最大/最小/缺失）
     - 文本列唯一值数量
+
+    「有列无行」是一张合法的空表画像，不是一条错误。只交了表头的 CSV/Excel 在 pandas 里
+    恰好 df.empty 为真，旧实现把它和「真的什么都没解析出来」一起塞进 `{"error": ...}`，
+    前端 `v-if="profile"` 判真之后去读 profile.columns.length，上传空表就当场抛。
+    现在：空表交回形状完整的画像并带 empty 标记；只有零列才走错误形状，
+    错误走既有信封 ErrorEnvelope 与既有稳定码（app/agents/contracts.py）。
+    契约与空列口径钉在 tests/test_r170_header_only_dataframe_profile.py。
     """
-    if df.empty:
-        return {"error": "数据为空"}
+    row_count = int(len(df))
+    column_names = list(df.columns)
+    if not column_names:
+        return _profile_failure(
+            "parse_failed",
+            "这份文件没有解析出任何列，无法生成数据画像；请确认文件里有表头行。",
+        )
 
     profile = {
-        "rows": len(df),
-        "columns": len(df.columns),
-        "column_count": len(df.columns),
+        "rows": row_count,
+        "columns": len(column_names),
+        "column_count": len(column_names),
+        # 0 行不等于统计失败：这是一张开张空表，标记让读的人和界面分得清这两种「空」。
+        "empty": row_count == 0,
     }
 
     cols_info = []
-    for col in df.columns:
-        dtype = str(df[col].dtype)
-        missing = int(df[col].isna().sum())
-        missing_pct = round(missing / max(len(df), 1) * 100, 1)
+    numeric_names: list[str] = []
+    text_names: list[str] = []
+    for col in column_names:
+        series = df[col]
+        dtype = str(series.dtype)
+        missing = int(series.isna().sum())
+        missing_pct = round(missing / max(row_count, 1) * 100, 1)
+        is_numeric = bool(pd.api.types.is_numeric_dtype(series))
+
+        # 分类按 dtype 走，不按「统计键在不在」走：空表不发统计量，后者会把 float 列说成文本列。
+        if is_numeric:
+            numeric_names.append(str(col))
+        elif dtype == "object":
+            text_names.append(str(col))
 
         info = {
             "name": str(col),
@@ -124,33 +149,48 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, Any]:
             "missing_pct": missing_pct,
         }
 
+        if row_count == 0:
+            # 空列的口径，定死不许留白：一个单元格都没有 => missing 0 / missing_pct 0.0；
+            # 一个取值都没有 => 唯一值 0 个。数值列不发 min/max/mean/sum —— 0 行的均值不是
+            # 一个数，写 0 会把「没有数据」说成「数据是 0」，写 None 会让界面印出「最小 null」。
+            info["unique_values"] = 0
+
         # 数值列
-        if pd.api.types.is_numeric_dtype(df[col]):
-            info["min"] = _safe_float(df[col].min())
-            info["max"] = _safe_float(df[col].max())
-            info["mean"] = _safe_float(df[col].mean())
-            info["sum"] = _safe_float(df[col].sum())
+        elif is_numeric:
+            info["min"] = _safe_float(series.min())
+            info["max"] = _safe_float(series.max())
+            info["mean"] = _safe_float(series.mean())
+            info["sum"] = _safe_float(series.sum())
 
         # 文本列
         elif dtype == "object":
-            info["unique_values"] = int(df[col].nunique())
+            info["unique_values"] = int(series.nunique())
 
         cols_info.append(info)
 
     profile["columns"] = cols_info
 
     # 摘要
-    num_cols = [c["name"] for c in cols_info if "mean" in c]
-    text_cols = [c["name"] for c in cols_info if "unique_values" in c]
-    profile["numeric_columns"] = num_cols
-    profile["text_columns"] = text_cols
+    profile["numeric_columns"] = numeric_names
+    profile["text_columns"] = text_names
     profile["total_missing"] = int(df.isna().sum().sum())
 
     # 行数抽样提示 (#5)
-    if len(df) > 10000:
-        profile["warning"] = f"文件较大 ({len(df)} 行)，建议抽样分析。统计信息基于全量数据。"
+    if row_count > 10000:
+        profile["warning"] = f"文件较大 ({row_count} 行)，建议抽样分析。统计信息基于全量数据。"
 
     return profile
+
+
+def _profile_failure(code: str, message: str) -> dict[str, Any]:
+    """画像层的错误形状：只有既有信封，不新造字段与裸码。
+
+    键名 error 是这里本来就在用的那一个，换掉的只是它的值：从「人读得懂、机器读不懂」的裸中文
+    换成 app/agents/contracts.py::ErrorEnvelope，码名走封闭枚举，前端 lib/errcodes.js 才有归一的地方。
+    除它以外一个键都不给，免得错误形状长得像画像。
+    """
+    envelope = ErrorEnvelope(code=code, message=message, retryable=False)
+    return {"error": envelope.model_dump()}
 
 
 def _safe_float(val) -> float | None:

@@ -301,12 +301,14 @@ onMounted(loadDataFiles)
     />
 
     <!-- 数据画像 -->
-    <div v-if="profile" class="profile-card">
+    <!-- R170：这张卡只认结构完整的画像。后端把「什么都没解析出来」装进信封回过来时 profile.error 在，
+         卡就不许出现 —— 把一条错误渲染成一次统计，正是 R169 扫出来的崩溃现场。 -->
+    <div v-if="profile && !profile.error" class="profile-card">
       <div class="profile-header">
         <div class="profile-heading">
           <span class="profile-title">📋 数据画像</span>
           <span class="profile-stats">
-            {{ profile.rows }} 行 × {{ profile.column_count || profile.columns.length }} 列
+            {{ profile.rows }} 行 × {{ profile.column_count || profile.columns?.length || 0 }} 列<template v-if="profile.empty"> · 空表，尚无数据行</template>
           </span>
         </div>
         <div class="data-file-actions">
