@@ -17,16 +17,18 @@ R175（并树 36e512a）给 ``GET /hitl/pending`` 加了两枚字段（``failed_
      ``len(items)``、两枚 ``*_has_more`` 由同一算法算出、归属过滤两腿同一个表达式（fail-closed）、
      🔴 以及「``offset`` 不移动失败那一腿」（``failed_items`` 的 offset 实参恒为字面量 ``0``）；
   ④ 端点路径从装饰器与 ``app/main.py`` 的 prefix 现算，两枚小节标题必须把路径与字段绑在同一行上；
-  ⑤ 🔴 **PG 缺口那一段是本文件的引信**：只要代码侧仍报缺口（``ALL_STATUSES - PG_STATUSES`` 非空），
-     契约就必须明写「PG 今天存不下 ``failed``、那一行留在 ``awaiting``」。R190 把那枚 CHECK 放开之后
-     本文件**必须红一次**，逼写文档的人回来改那一段 —— 那不是回归，恰恰是这枚引信存在的目的。
-     缺口今天还在的第三条证据不收散文：``migrations/0008_pending_approvals.sql`` 的 CHECK 文本与
-     ``PG_STATUSES`` 必须是同一枚集合，且按文件名序取**最后一条**重定义（R190 的新脚本会盖掉 0008）。
+  ⑤ 🔴 **取值域那一节是本文件的引信，而且是双向的**：代码侧若还报缺口
+     （``ALL_STATUSES - PG_STATUSES`` 非空），契约就必须明写「PG 今天存不下 ``failed``、那一行留在
+     ``awaiting``」；缺口一闭合（今天：0013 已并树、``PG_STATUSES`` 已是六枚），那几句旧话就必须被删掉，
+     不许继续躺着骗人。两个方向都留着，是为了谁把常量或 SQL 再改窄一次时，屏幕那句人话当场红，
+     而不是安静地烂在日志里。缺口这一半不收散文：``migrations/**`` 里按文件名序取**最后一条**重定义的
+     ``pending_approvals_status_check``（0013 盖掉 0008）必须与 ``PG_STATUSES``、``ALL_STATUSES`` 同一枚集合。
 
-判据⑤(b) 的反证路径：把契约里 ``**🔴 The PG gap`` 那一段删掉 ⇒
-``test_the_contract_states_the_pg_gap_while_the_gap_exists`` 具名红；把
+判据⑤(b) 的反证路径（三把各咬一个方向）：把契约里 ``**`failed` is stored in PostgreSQL today.**``
+那一段删掉 ⇒ ``test_the_contract_states_the_pg_gap_while_the_gap_exists`` 具名红（闭合方向少了正面话）；
+把那一段旧话 ``stays `awaiting``` 抄回契约 ⇒ 同一枚钉按"缺口已闭合"方向红；把
 ``pending_approvals_status_check accepts:`` 那一行删掉 ⇒
-``test_documented_status_domains_match_the_code_constants`` 具名红。
+``test_documented_status_domains_match_the_code_constants`` 具名红
 """
 from __future__ import annotations
 
@@ -48,7 +50,7 @@ ENDPOINT = "GET /api/v1/hitl/pending"
 SECTION_HEADING = "## HITL Pending Listing"
 ENVELOPE_SUBHEAD = f"`{ENDPOINT}` -> response envelope"
 FAILED_SUBHEAD = f"`{ENDPOINT}` -> `failed_turns[]` rows"
-STATUS_SUBHEAD = "The `failed` terminal status, and where PostgreSQL still cannot store it"
+STATUS_SUBHEAD = "The `failed` terminal status, and the CHECK that had to widen to admit it"
 
 #: 契约里那五行取值域的行首锚（冒号之后就是域本身，竖线顺序即文档承诺的顺序）
 DOMAIN_PATTERNS = {
@@ -59,15 +61,19 @@ DOMAIN_PATTERNS = {
     "pg": r"^`pending_approvals_status_check` accepts: (.+)$",
 }
 
-#: 🔴 缺口那一段的锚词：任一枚被删掉都等于契约不再替员工说这句话
-GAP_ANCHORS = (
-    "**🔴 The PG gap",
+#: 缺口**存在**时契约必须明写的那几句话（任一被删 = 把"PG 写不进去"说成"已经能用"）
+GAP_SENTENCES = (
     "PostgreSQL cannot",
     "stays `awaiting`",
-    "`failed_items` reads it back",
     "the migration R190 is proposing widens that CHECK",
     "not writing `refused` or `abandoned` to make the numbers add up",
-    "migrations/0008_pending_approvals.sql",
+)
+
+#: 缺口**已闭合**时契约必须说的那句正面话（任一被删 = 今天能用却被写成不能用）
+CLOSED_ANCHORS = (
+    "**`failed` is stored in PostgreSQL today.**",
+    "the same `mark_status`, the same `DECIDED_STATUSES`",
+    "migrations/0013_pending_approvals_status_includes_failed.sql",
 )
 
 #: 信封那一节里前端唯一能据以说话的行为裁决（缺一条，界面上就有一句没据可依）
@@ -449,15 +455,21 @@ def test_documented_status_domains_match_the_code_constants():
     assert _domain(body, "failed_status") == [_status_value("FAILED")]
 
 
-def test_the_gap_between_the_two_documented_domains_is_exactly_failed():
+def test_the_two_documented_domains_agree_now_that_the_check_is_wide():
+    """0013 之前那枚"两行域之差恰为 failed"的钉，今天按反方向钉：两行必须同一串。
+
+    留着老名字里的账没有意义——契约少写一格就是把线上事实写窄，多写一格就是替 PG 许了它没许的东西。
+    """
     _, subs = _split_section()
     body = subs[STATUS_SUBHEAD]
     full = set(_domain(body, "status"))
     pg = set(_domain(body, "pg"))
-    assert full - pg == {_status_value("FAILED")}, (
-        "契约那两行域之间的差已不再只有 failed：那一句「PG 少一格」得重写"
+    assert pg <= full, "契约那行 CHECK 接受域出现了代码状态域里没有的名字"
+    assert full == pg, (
+        "契约那两行域不再同一串（对称差 " + str(sorted(full ^ pg)) + "）：0013 已把 CHECK 放开到六枚，"
+        "文档任何一行单独改口都是第二套真相"
     )
-    assert pg <= full, "PG 的接受域出现了代码里的状态域没有的名字"
+    assert _status_value("FAILED") in pg, "契约那行接受域不含 failed：那一行在 PG 腿上又被写成存不下了"
 
 
 # ==================== ③ 行为裁决：offset / limit / count / has_more / 归属 ====================
@@ -552,37 +564,44 @@ def test_the_endpoint_in_the_subheads_is_the_registered_route():
 
 
 def test_the_contract_states_the_pg_gap_while_the_gap_exists():
-    """🔴 R190 并树之后这一枚必须红一次：那是它的目的，不是它的故障。
+    """🔴 双向引信：代码侧报缺口，契约就必须明写；缺口闭合，旧话就不许继续躺着。
 
-    今天（施工基点 c053ddd）线上事实是：本机文件账把那一行闭合成 failed 并读得回来，PG 那一行
-    仍留在 awaiting —— 因为 ``failed`` 不在 0008 的 ``pending_approvals_status_check`` 里。
-    只要代码侧还报这枚缺口，契约就必须把这句话写在纸上；缺口一旦闭合，这句话就成了假话，
-    本钉必须拦住它继续躺着。
+    施工基点（`c053ddd`，R190 之前）那一半是「PG 今天存不下 failed」；0013 并树、``PG_STATUSES``
+    放开到六枚之后，本钉翻面继续当引信——两向都留着，是因为两个方向都能各自长成一句假话。
     """
     _, subs = _split_section()
     body = subs[STATUS_SUBHEAD]
     flattened = _flat(body)
     gap = set(_status_seq("ALL_STATUSES")) - set(_status_seq("PG_STATUSES"))
-    assert gap, (
-        "🔴 引信按设计红这一次：代码侧的 PG 缺口已经闭合（ALL_STATUSES 与 PG_STATUSES 同一枚集合，"
-        "R190 的 CHECK 应当已经并树），而契约里那段「PG 今天存不下 failed」已经变成假话 —— "
-        "请改写 STATUS_SUBHEAD 那一节并删掉 GAP_ANCHORS 里那些句子，别让它继续躺着骗人"
-    )
-    assert gap == {_status_value("FAILED")}, f"缺口今天不再是只有 failed 一枚：{sorted(gap)}"
-    for anchor in GAP_ANCHORS:
-        assert anchor in body or _flat(anchor) in flattened, (
-            f"契约不再明写 PG 缺口（锚词 {anchor!r} 不见了）：那一格今天仍是线上事实，不许写成已经能用"
-        )
+    if gap:
+        assert gap == {_status_value("FAILED")}, f"缺口不再是只有 failed 一枚：{sorted(gap)}"
+        for anchor in GAP_SENTENCES:
+            assert anchor in body or _flat(anchor) in flattened, (
+                f"代码侧仍报 PG 缺口，契约却不写这句话（锚词 {anchor!r} 不见了）：不许把写不进去说成已经能用"
+            )
+    else:
+        for anchor in CLOSED_ANCHORS:
+            assert anchor in body or _flat(anchor) in flattened, (
+                f"缺口今天已闭合，契约少了那句正面话（锚词 {anchor!r}）：员工与客户读到的应当是今天的事实"
+            )
+        for anchor in GAP_SENTENCES:
+            assert anchor not in body and _flat(anchor) not in flattened, (
+                f"缺口已闭合而契约里还躺着「{anchor}」：那句话今天已经是假话，删掉它，别留成第二套真相"
+            )
 
 
 def test_the_check_constraint_and_the_pg_constant_agree():
-    """缺口的第三条证据不收散文：SQL 那枚 CHECK 与 PG_STATUSES 必须同一枚集合。"""
+    """生效那枚 CHECK 与代码侧两份词表必须同一串：这一半不收散文。"""
     allowed, origin = _in_force_check()
     assert allowed == set(_status_seq("PG_STATUSES")), (
         f"{origin} 里生效的 pending_approvals_status_check 与 PG_STATUSES 不再同一枚集合："
-        "R190 并树后的预期红 —— app/storage/pending_approvals.py 的常量注释与本文件的"
-        " STATUS_SUBHEAD 那一节都要跟着改写"
+        "谁单独改窄了一边，那一行在 PG 腿上的结局就从『写得进』变回『留在 awaiting』"
     )
-    assert _status_value("FAILED") not in allowed, (
-        "CHECK 已经认得 failed 了：契约那句「PG 腿今天存不下」必须删，不许留成第二套真相"
+    assert allowed == set(_status_seq("ALL_STATUSES")), (
+        f"{origin} 认不全代码写得出的每一格（差集 "
+        + str(sorted(set(_status_seq("ALL_STATUSES")) ^ allowed)) + "）：R190 之前缺的就是 failed"
+    )
+    assert _status_value("FAILED") in allowed, (
+        "生效的 CHECK 又不认 failed 了：docs/api/contract-v1.md 那句『PG 今天存不下』得改回去，"
+        "本文件那两行取值域也是"
     )

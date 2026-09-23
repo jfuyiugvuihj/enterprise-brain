@@ -32,8 +32,8 @@ except ImportError:  # pragma: no cover
     dict_row = None
 
 TABLE = "pending_approvals"
-# 状态名在这里是具名常量而不是散落的字面量：0008 上有 CHECK 约束钉着同一组词，路由
-     # 侧写错一个字母就会在真库上撞约束，而在内存后端里悄悄"成功"。
+# 状态名在这里是具名常量而不是散落的字面量：库上生效的那枚 CHECK 钉着同一组词（0008 建五枚、
+     # 0013 前滚到六枚），路由侧写错一个字母就会在真库上撞约束，而在内存后端里悄悄"成功"。
 AWAITING = "awaiting"
 RESUMED = "resumed"
 REFUSED = "refused"
@@ -46,13 +46,16 @@ STALE = "stale"
 FAILED = "failed"
 DECIDED_STATUSES = frozenset({RESUMED, REFUSED, ABANDONED, FAILED})
 ALL_STATUSES = (AWAITING, RESUMED, REFUSED, ABANDONED, STALE, FAILED)
-#: 🔴 0008 的 CHECK 只认前五枚，``failed`` 不在其中，而 migrations/** 在 R175 写域之外
-#: （同一处曾停着 R172 的 ``declared_lane``：0012 补了列、R187 补了绑值；``failed`` 至今没有
-#: 对应迁移）。结论：PG 腿今天写不进这一格 —— ``mark_status``
-#: 会撞 ``pending_approvals_status_check``，由 ``_decide_pending_approval`` 记 exception，
-#: 那一行留在 awaiting。本机文件账能闭合，PG 那一半是**具名欠账**，不是"顺手拿 refused
-#: 顶数"的理由。缺口由 tests/test_r175_failed_turn.py 逐枚钉住：多一枚漏一枚都会红。
-PG_STATUSES = frozenset({AWAITING, RESUMED, REFUSED, ABANDONED, STALE})
+#: 这一组常量连同 ``ALL_STATUSES`` 是状态词表在产品侧的**唯一枚举处**。DDL 里的 CHECK 是
+#: PostgreSQL 唯一能持有封闭集的形状，于是必然是第二份拼写：``failed`` 落地时 0008 不认它，PG 腿
+#: 写不进这一格 —— ``mark_status`` 撞 ``pending_approvals_status_check``，由
+#: ``_decide_pending_approval`` 记 exception，那一行永远留在 awaiting。这笔具名欠账已由
+#: migrations/0013_pending_approvals_status_includes_failed.sql **前滚闭合**：它 DROP 掉旧 CHECK、
+#: ADD 一枚认全六枚的，零回填零改行，0008 一字未动。两份拼写不许各自漂移，由
+#: tests/test_r190_status_failed_domain.py 逐枚对判（0013 落盘语句 == ``PG_STATUSES`` ==
+#: ``ALL_STATUSES``，多一枚少一枚当场红）；终态那一半另由 tests/test_r175_failed_turn.py 重放
+#: 整册目录取证。R175 当年留不下这一格，不是因为可以拿 refused 顶数，那条裁定仍然有效。
+PG_STATUSES = frozenset({AWAITING, RESUMED, REFUSED, ABANDONED, STALE, FAILED})
 
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
 _DEFAULT_TTL_HOURS = 24.0
@@ -268,11 +271,11 @@ def mark_status(session_id: str, status: str) -> PendingApprovalRecord | None:
     只碰还在 awaiting 且没到期的行：过期的挂起不该还能被批准，那会写出一条
     decided_at 晚于 expires_at 的自相矛盾记录。
 
-    R175 之后 ``FAILED`` 也在可写的终态里，而它恰恰是**唯一一枚 PG 写不进去**的：
-    0008 的 ``pending_approvals_status_check`` 不认它，PG 分支的 UPDATE 会撞约束并由
-    调用方 ``_decide_pending_approval`` 记 exception（那一行于是留在 awaiting）。本机
-    文件账这一半是真闭合；PG 那一半是具名欠账，补法是一枚 migrations 脚本放开 CHECK，
-    不是在这里换用 refused/abandoned 顶数。缺口由 tests/test_r175_failed_turn.py 钉住。
+    ``FAILED`` 在两条腿上都写得进去了：``migrations/0013_pending_approvals_status_includes_failed.sql``
+    把生效的 ``pending_approvals_status_check`` 前滚到六枚之后，PG 分支与内存分支同一张脸。
+    在那之前它恰恰是唯一一枚 PG 写不进去的终态——撞约束、由调用方 ``_decide_pending_approval``
+    记 exception、那一行留在 awaiting。闭合的凭据是 migrations 脚本，不是在这里换用
+    refused/abandoned 顶数：那条裁定（R175）到今天仍然有效，由 tests/test_r175_failed_turn.py 钉住。
     """
     session_id = str(session_id or "").strip()
     if status not in ALL_STATUSES or status == AWAITING:
@@ -414,7 +417,7 @@ def failed_items(
       屏上那一格：这与「过期挂起不再算待办」是同一条既有口径，不是新造的失忆。
 
     ``owner_user_id`` 是必填：归属过滤 fail-closed，不带归属的读等于读全司。
-    PG 腿今天读得到 ``failed`` 行（读不受 CHECK 约束），写不进去 —— 见模块常量段。
+    PG 腿读写这一格现在都对：读不受 CHECK 约束，写那一格由 0013 放开 —— 见模块常量段。
     """
     return _items_with_status(
         FAILED,

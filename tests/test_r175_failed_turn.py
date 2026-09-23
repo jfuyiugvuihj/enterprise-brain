@@ -24,16 +24,18 @@ resume 第二遍），要么下次开屏被复核腿就地判成 ``stale``（「
 """
 import asyncio
 import json
-import re
 import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
 from app.common.identity import Principal
 from app.storage import pending_approvals as store
 from app.storage.sessions import SessionRegistry
+from test_r190_status_failed_domain import (  # noqa: T401  共用同一份离线 DDL 重放，词表不外抄
+    CATALOG_TAIL_VERSION,
+    status_domain_through,
+)
 
 SESSION_ID = "r175-crash"
 OWNER = "u-r175"
@@ -278,24 +280,24 @@ def test_the_failure_status_goes_through_the_existing_state_machine():
         store.mark_status(SESSION_ID, "exploded")
 
 
-def test_the_failure_status_is_the_only_one_pg_cannot_persist_today():
-    """🔴 半条腿必须可数：0008 的 CHECK 不认 failed，而 migrations/** 在本单写域之外。
+def test_every_status_the_code_can_write_now_reaches_pg_including_the_failure():
+    """R175 交工时那半条腿写不进 PG；0013 前滚之后六枚全通 —— 凭据是把目录重放到尾号。
 
-    这一条不是遮丑，是把欠账钉成一个集合：哪天迁移脚本放开了 CHECK，改 PG_STATUSES 时
-    这里会红一次，逼着改的人来把 chat.py 那条注释一起摘掉 —— 而不是让「PG 写不进去」
-    变成一条没人记得的口头传说。R172 的 ``declared_lane`` 停在同一处边界上。
+    这枚钉子原来是「``failed`` 是唯一一枚 PG 写不进去的」（Kepler 具名：多一枚漏一枚都红）。
+    R190 之后它测的已经不是事实，按判据改口成现行凭据，**不删枚不置灰**：取值一律从
+    ``migrations/*.sql`` 经 ``app.db.migrations`` 的 loader 重放出来，与 ``PG_STATUSES`` /
+    ``ALL_STATUSES`` 逐枚对判，本文件不抄词表。反向那一格仍然留着：0008 单独重放出来的域不许
+    含 ``failed`` —— 放开只许发生在前滚的那一版，已发布的迁移文本一字不许改，改了就又是 R175
+    当时那种形状（代码六枚、DDL 五枚），而且 ``app/api/v1/chat.py`` 那条注释也得跟着摘。
     """
-    sql = (
-        Path(__file__).resolve().parents[1] / "migrations" / "0008_pending_approvals.sql"
-    ).read_text(encoding="utf-8")
-    check = re.search(
-        r"pending_approvals_status_check\s+CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)", sql, re.I
-    )
-    assert check, "0008 的 status 必须有封闭取值域"
-    allowed = {item.strip().strip("'") for item in check.group(1).split(",")}
+    domain = status_domain_through(CATALOG_TAIL_VERSION)
 
-    assert allowed == set(store.PG_STATUSES)
-    assert set(store.ALL_STATUSES) - allowed == {store.FAILED}
+    assert domain == set(store.PG_STATUSES) == set(store.ALL_STATUSES)
+    assert store.FAILED in domain, "批准之后跑挂/超时的那一轮必须能写进 PG，而不是留在 awaiting"
+    assert set(store.ALL_STATUSES) - domain == set(), sorted(set(store.ALL_STATUSES) - domain)
+    assert store.FAILED not in status_domain_through("0008"), (
+        "0008 是已发布迁移：它放开就意味着有人改了历史文件的字节，清单与 schema_migrations 会一起对不上"
+    )
 
 
 # ---------------------------------------------------- 判据③ · 失败不许穿完成的衣服

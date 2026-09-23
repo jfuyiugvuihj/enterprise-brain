@@ -26,6 +26,7 @@ from test_r183_184_migration_pair import (  # noqa: T401  共用同一份离线 
     LANE_TARGETS,
     NEW_VERSION,
     PENDING_LANE,
+    CATALOG_TAIL_VERSION,
     added_column_specs,
     executable_statements,
     first_adding_spec,
@@ -98,12 +99,18 @@ def test_the_parking_ledger_gains_exactly_one_column_and_the_0008_shape_survives
 
 
 def test_the_column_comes_from_the_loader_not_from_a_hand_read_file():
-    """离线可验的入口是 app.db.migrations 的 loader：盘上有、loader 不认等于没落。"""
+    """离线可验的入口是 app.db.migrations 的 loader：盘上有、loader 不认等于没落。
+
+    尾号那一格是目录尾号引信（与 test_document_catalog_sync / test_r46 / test_r120 /
+    test_r190_status_failed_domain 同族）：R190 排了 0013，本件按 R58 先例连断言一起改口，取值
+    一律走 ``CATALOG_TAIL_VERSION``。本件对 0012 的主张不因此变松——列出自哪一版仍由下一枚用例
+    按 ``landed_spec().version`` 逐枚判。
+    """
     from app.db.migrations import MIGRATIONS
 
     versions = [item.version for item in MIGRATIONS]
 
-    assert NEW_VERSION in versions and versions[-1] == NEW_VERSION
+    assert NEW_VERSION in versions and versions[-1] == CATALOG_TAIL_VERSION
     spec = next(
         column
         for item in MIGRATIONS

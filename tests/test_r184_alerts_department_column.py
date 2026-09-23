@@ -490,12 +490,40 @@ def test_the_census_script_does_not_depend_on_the_migration_catalog():
 
 
 def test_the_landed_bytes_still_match_the_manifest_digest():
-    """判据 4 的落盘前提：取 hash 的对象是盘上那枚文件，不是内存里的字符串。"""
+    """判据 4 的落盘前提：取 hash 的对象是盘上那枚文件，不是内存里的字符串。
+
+    R190 改口（判据 6 的同一病灶，本枚是它的孪生件，``tests/test_r183_184_migration_pair.py``
+    同名改口的口径照搬）：仓库 ``core.autocrlf`` 为 true 而仓库没有 ``.gitattributes`` 给
+    ``migrations/*.sql`` 定行尾 ⇒ 任何一次全新检出都会把 0012 变成 CRLF，于是"盘上字节 hash ==
+    manifest 数字"与"盘上不许出现 ``\r\n``"在兄弟树里必红（R187 施工方当场撞着，本单 45 枚
+    迁移相关件复跑也撞着）。原口径钉的是"这台机器怎么检出的"，不是不变量。
+
+    仍然逐字节判，不比长度：取 hash 的对象是**归一后的盘上字节**（``CRLF -> LF``），且它必须等于
+    ``read_text()`` 的通用换行归一结果 —— loader 登记进 ``schema_migrations`` 的正是这一枚。三枚
+    真性质一枚不丢：``\n`` 之外不许有裸 ``\r``、不许带 BOM、末尾恰好一个换行。0012 的字节不改，
+    也不为"迁就"检出把它转成 CRLF。
+    """
     import json
 
     filename = "0012_alert_and_pending_approval_attribution_columns.sql"
     manifest = json.loads((REPO / "migrations" / "manifest.json").read_text(encoding="utf-8"))
-    raw = (REPO / "migrations" / filename).read_bytes()
+    path = REPO / "migrations" / filename
+    raw = path.read_bytes()
+    normalized = raw.replace(b"\r\n", b"\n")
+    text = path.read_text(encoding="utf-8")
 
-    assert hashlib.sha256(raw).hexdigest() == manifest[filename]
-    assert raw.endswith(b"\n") and b"\r\n" not in raw, "本件落盘为 LF，换行符也是字节"
+    assert len(raw) - len(normalized) == raw.count(b"\r\n"), "归一化吃掉的字节数与 CRLF 枚数不等：比的不是同一份内容"
+    assert raw.count(b"\r") == raw.count(b"\r\n"), "出现裸 CR（``\\n`` 之外的单枚 ``\\r``）：归一化会把它吃掉而改变行结构"
+    assert not raw.startswith(b"\xef\xbb\xbf"), "带 BOM 会让首行注释多出看不见的字符"
+    assert normalized.endswith(b"\n") and not normalized.endswith(b"\n\n"), "文件末尾恰好一个换行"
+    from_bytes = hashlib.sha256(normalized).hexdigest()
+    from_text = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    assert from_bytes == from_text == manifest[filename], {
+        "bytes": from_bytes,
+        "text": from_text,
+        "manifest": manifest[filename],
+    }
+    assert hashlib.sha256(normalized + b" ").hexdigest() != manifest[filename], (
+        "正向对照失效：多一枚空格都不改数字，说明这格退化成了比长度"
+    )

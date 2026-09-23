@@ -40,6 +40,12 @@ NEW_VERSION = "0012"
 NEW_FILENAME = "0012_alert_and_pending_approval_attribution_columns.sql"
 NEW_PATH = MIGRATIONS_DIR / NEW_FILENAME
 
+#: 🔴 目录尾号引信（与 tests/test_document_catalog_sync.py、tests/test_r46_activity_signals.py、
+#: tests/test_r120_clean_install_first_boot.py、tests/test_r190_status_failed_domain.py 同族）。
+#: 本单落 0012 时尾号就是 0012；R190 排了 0013（放开挂起台账 status 的取值域）之后尾号归它，本件
+#: 连名带断言一起改口 —— 这是把钉子收紧一版，不是放宽。谁排下一号必须回到这里改这一格。
+CATALOG_TAIL_VERSION = "0013"
+
 #: 本单送的两枚列：R184 管告警台账的行级归属，R183 管挂起轮声明的档位。
 ALERTS_DEPARTMENT = ("alerts", "department")
 PENDING_LANE = ("pending_approvals", "declared_lane")
@@ -311,7 +317,13 @@ def test_the_catalog_gains_exactly_one_version_and_the_loader_accepts_it():
     on_disk = sorted(path.name for path in MIGRATIONS_DIR.glob("*.sql"))
 
     assert versions == [f"{number:04d}" for number in range(1, len(versions) + 1)], versions
-    assert versions[-1] == NEW_VERSION, "本单只排一枚新号：要加第三枚列请回到 0012 里加"
+    assert NEW_VERSION in versions, "本单的两枚列必须由已登记的 0012 送出"
+    assert versions[-1] == CATALOG_TAIL_VERSION, (
+        "目录尾号引信（来历见 CATALOG_TAIL_VERSION）：要加第三枚列请回到 0012 里加"
+    )
+    assert [version for version in versions if version > NEW_VERSION] == [CATALOG_TAIL_VERSION], (
+        "0012 之后只许站着被指名的那一枚前滚迁移，多一枚就得回到这里指名：" + str(versions)
+    )
     assert NEW_FILENAME in on_disk
     assert discover_migrations() == MIGRATIONS, "清单校验不过的目录不该被 loader 认下来"
 
@@ -470,22 +482,43 @@ def test_a_zero_row_ledger_takes_the_same_path_as_a_populated_one():
 
 # ---------------------------------------------------------------- 判据 10：字节与号
 def test_the_manifest_digest_is_the_sha256_of_the_landed_bytes_not_of_a_string():
-    """清单数字 == 落盘字节的 sha256 == loader 读到文本的 sha256 == loader 登记的校验和。
+    """清单数字 == **归一后**盘上字节的 sha256 == loader 文本的 sha256 == loader 登记的校验和。
 
-    本仓库 ``core.autocrlf`` 是 true，而 loader 算的是 ``read_text()`` 之后的文本：文件带 CRLF 时
-    「字节 hash」与「清单 hash」会算成两个数（0001..0011 落盘都带 CRLF，靠 loader 的换行归一才
-    碰对上）。0012 因此按 **LF** 落盘，这一格把这件事钉死：以后谁把换行改成 CRLF 而没重算清单，
-    红的就是这里。
+    原口径（R183/R184 判据 10）另有一格 ``assert b"\r\n" not in raw``，也就是"0012 必须按 LF
+    落盘"。🔴 那一格是**机器依赖**而不是不变量，本单实测坐实：仓库 ``core.autocrlf`` 为 true，
+    仓库里又没有 ``.gitattributes`` 给 ``migrations/*.sql`` 定行尾 ⇒ 任何一次全新 worktree/clone
+    检出都会把 0012 变成 CRLF，于是"盘上字节 == manifest 数字"在兄弟树里当场红（R187 的施工方就
+    在兄弟树撞着它并具名申报）；主树看不出来，只因为主树那份是施工时按 LF 直接写下去的、没经过
+    一次检出。把行尾习惯钉进测试，等于把"这台机器怎么检出的"当成产品性质。
+
+    真不变量是这条链，而且它逐字节判、不许退化成比长度：``read_text()`` 的通用换行归一（loader
+    就是这么算数字的）== 把盘上字节按 ``CRLF -> LF`` 归一 == manifest 登记的数字 == loader 会写进
+    ``schema_migrations`` 的那枚。仍然守住的三枚真性质：``\n`` 之外不许有裸 ``\r``（裸 CR 会被
+    归一化吃掉而改变行结构）、不许带 BOM、末尾恰好一个换行；再加两枚正向对照：改一个字节数字就得
+    变，以及归一前后的可执行语句必须逐枚相同——后者才是"CRLF 对 SQL 语义无害、所以可重跑这件事与
+    检出方式无关"这句主张的可查形状。
+    🔴 本件不改 0012 一个字节，也不为"迁就"检出把它转成 CRLF：已发布迁移的字节就是它的身份。
     """
     raw = NEW_PATH.read_bytes()
+    normalized = raw.replace(b"\r\n", b"\n")
+    text = NEW_PATH.read_text(encoding="utf-8")
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
-    assert b"\r\n" not in raw, "0012 必须按 LF 落盘，否则字节 hash 与 loader 文本 hash 会分家"
+    # 归一化只许吃掉 CRLF 里的那一枚 \r：两种字节数之差恰好等于 CRLF 枚数，才算"比的是同一份内容"。
+    assert len(raw) - len(normalized) == raw.count(b"\r\n"), {
+        "raw": len(raw),
+        "normalized": len(normalized),
+        "crlf": raw.count(b"\r\n"),
+    }
+    assert raw.count(b"\r") == raw.count(b"\r\n"), "出现裸 CR（``\\n`` 之外的单枚 ``\\r``）：归一化会把它吃掉而改变行结构"
     assert not raw.startswith(b"\xef\xbb\xbf"), "带 BOM 会让首行注释多出看不见的字符"
-    assert raw.endswith(b"\n") and not raw.endswith(b"\n\n"), "文件末尾恰好一个换行"
+    assert normalized.endswith(b"\n") and not normalized.endswith(b"\n\n"), "文件末尾恰好一个换行"
+    assert executable_statements(raw.decode("utf-8")) == executable_statements(text), (
+        "行尾差异改动了可执行语句：这支迁移的语义开始依赖检出方式"
+    )
 
-    from_bytes = sha256(raw).hexdigest()
-    from_text = sha256(NEW_PATH.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+    from_bytes = sha256(normalized).hexdigest()
+    from_text = sha256(text.encode("utf-8")).hexdigest()
     registered = next(item for item in MIGRATIONS if item.version == NEW_VERSION).checksum
 
     assert from_bytes == from_text == manifest[NEW_FILENAME] == registered, {
@@ -494,6 +527,9 @@ def test_the_manifest_digest_is_the_sha256_of_the_landed_bytes_not_of_a_string()
         "manifest": manifest[NEW_FILENAME],
         "loader": registered,
     }
+    assert sha256(normalized + b" ").hexdigest() != registered, (
+        "正向对照失效：多一枚空格都不改数字，说明这格退化成了比长度"
+    )
 
 
 def test_the_manifest_still_maps_one_entry_per_sql_file():

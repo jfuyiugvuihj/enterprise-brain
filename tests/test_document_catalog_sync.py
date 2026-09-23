@@ -120,19 +120,20 @@ def test_0007_lets_the_owner_be_absent_in_every_mirrored_table():
     )
 
 
-def test_the_offline_migration_plan_loads_every_version_through_0012():
+def test_the_offline_migration_plan_loads_every_version_through_0013():
     """被 C-R13 更新过一轮，R15-b 又更新了一次：钉的是"最新一版是谁"。
 
     那个字面量必然随每一版过期，所以断言换成一串仍然成立的性质，并且**继续显式钉住
     目录尾号**：将来谁加下一版，必须像 0010（R58 pgvector 双写）、0011（R46 活动信号
-    计数）、0012（R183/R184 两本台账的归属列）这三次一样主动改这条，而不是让它
-    静默失去意义。0012 这一枚由总控落笔（R58 先例：该写域在施工方之外）。
+    计数）、0012（R183/R184 两本台账的归属列）、0013（R190 放开挂起台账 status 的取值域）这四次
+    一样主动改这条，而不是让它静默失去意义。0012 那一枚由总控落笔（R58 先例：该写域在施工方
+    之外），0013 这一枚由施工方本人改口——尾号引信留在哪一版手里，下一版就归谁动。
     """
     from app.db.migrations import MIGRATIONS, discover_migrations, migration_plan
 
     versions = [migration.version for migration in MIGRATIONS]
     assert versions == sorted(versions) and len(set(versions)) == len(versions)
-    assert versions[-1] == "0012"
+    assert versions[-1] == "0013"
     assert [migration.version for migration in migration_plan({})] == [
         migration.version for migration in MIGRATIONS
     ]

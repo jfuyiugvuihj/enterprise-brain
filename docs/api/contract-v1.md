@@ -450,7 +450,7 @@ list is forbidden to run (above). A client that needs a human-readable step name
 `parked_steps`, whose values come from the same compile-time constant `items` uses, and it must not
 invent a status the backend did not report.
 
-### The `failed` terminal status, and where PostgreSQL still cannot store it
+### The `failed` terminal status, and the CHECK that had to widen to admit it
 
 `pending_approvals.status` value domain: awaiting | resumed | refused | abandoned | stale | failed
 
@@ -460,12 +460,14 @@ invent a status the backend did not report.
 
 `DECIDED_STATUSES`: resumed | refused | abandoned | failed
 
-`pending_approvals_status_check` accepts: awaiting | resumed | refused | abandoned | stale
+`pending_approvals_status_check` accepts: awaiting | resumed | refused | abandoned | stale | failed
 
 Those five lines are not prose to be skimmed. Each is compared with a constant read out of
-`app/storage/pending_approvals.py` by AST, and the last one with the constraint's own text in
-`migrations/0008_pending_approvals.sql`, so this section cannot say "five" where the code says
-"six" - and cannot promise PostgreSQL a sixth value it would reject.
+`app/storage/pending_approvals.py` by AST, and the last one with the text of the CHECK that is
+*actually in force*: `migrations/0013_pending_approvals_status_includes_failed.sql` redefines
+`pending_approvals_status_check`, so the pin reads the last redefinition by filename order instead of
+trusting the five-value text still sitting in `migrations/0008_pending_approvals.sql`. Neither side may
+say "five" where the other says "six" - and this file may not promise a wide CHECK the SQL does not hold.
 
 What each decided value means, and why `failed` is a fifth thing rather than a synonym:
 
@@ -489,27 +491,24 @@ abandoned，绝不写 refused」. It is not `abandoned` - nobody stopped anythin
 the graph may well still be parked on that very interrupt, and `stale` would tell the approver
 their own decision expired by itself.
 
-**🔴 The PG gap: `failed` is a status the file ledger can store and PostgreSQL cannot - yet.**
-`failed` is not a member of `pending_approvals_status_check` in
-`migrations/0008_pending_approvals.sql`, and `migrations/**` was outside the change that introduced
-the status. So on a PostgreSQL deployment `mark_status(..., "failed")` raises the CHECK violation,
-`_decide_pending_approval` records the exception instead of interrupting the answer, and **that row
-stays `awaiting`** - the round is neither reported as decided nor closed, and `failed_turns` comes
-back empty for it. The local file ledger is the half that closes today: the same call moves the row
-to `failed`, `failed_items` reads it back, and this endpoint lists it. Nothing above should be read
-as "PostgreSQL stores failed turns": until the migration R190 is proposing widens that CHECK, the
-gap is production truth, and the answer to it is that migration - not writing `refused` or
-`abandoned` to make the numbers add up, which is the defect R175 was filed against.
+**`failed` is stored in PostgreSQL today.** It is a member of the CHECK in force, so
+`mark_status(..., "failed")` moves the row on a PostgreSQL deployment exactly as it does in the local
+file ledger: the same `mark_status`, the same `DECIDED_STATUSES`, one read path, no second state machine
+and no second ledger. That was not true when this subsection was written. Until 0013 landed, 0008's CHECK
+did not admit `failed`, so the PG leg raised, `_decide_pending_approval` recorded the exception instead of
+interrupting the answer, and **that row stayed `awaiting`** - neither reported as decided nor closed, with
+`failed_turns` coming back empty for it. The sentence above is today's fact and the paragraph before it is
+yesterday's; only one of them may be quoted at a customer.
 
-**Who rewords this once R190 lands.** The obligation sits on the change that closes the gap - the
-R190 merge itself (whoever widens `pending_approvals_status_check`, or grows
-`app/storage/pending_approvals.py::PG_STATUSES` to admit `failed`) - and not on some later reader
-of this file. The pin file `tests/test_r191_hitl_contract_pins.py` is the fuse that makes that
-handover non-optional: while the code still reports a gap it demands the paragraph above stay
-here, and the moment the gap closes - in the constant or in the SQL - the assertion
-`test_the_contract_states_the_pg_gap_while_the_gap_exists` goes red by name and points back at
-this subsection, so the sentence is rewritten in that same change instead of quietly ageing into
-a falsehood.
+**What keeps this subsection from ageing into a second set of truth.** The rewording obligation sat on the
+change that closed the gap - the R190 merge, whoever widens `pending_approvals_status_check` or grows
+`app/storage/pending_approvals.py::PG_STATUSES` - and not on some later reader of this file. The fuse is
+`tests/test_r191_hitl_contract_pins.py::test_the_contract_states_the_pg_gap_while_the_gap_exists`, which
+now runs in two directions: while the code reports a gap (`ALL_STATUSES - PG_STATUSES` non-empty) it demands
+the "PG cannot store it" sentences stay here, and with the gap closed - as today - it refuses to let those
+sentences keep lying in place. Either half flipping without the other goes red by name. What no direction
+permits is the old shortcut R175 was filed against: writing `refused` or `abandoned` to make the numbers add
+up.
 
 ## Structured Agent Result
 
