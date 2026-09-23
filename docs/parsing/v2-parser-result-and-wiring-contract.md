@@ -131,3 +131,12 @@ PDF 光栅化**（poppler/pypdfium2），避免引入系统级依赖。接线方
 - ✅ 测试完成：`pytest --noconftest` 下 6 个新测试文件共 48 例通过（本机 Python 3.13）。
 - ❌ 已接入系统入口：未接入（上传 API / 索引 / 白名单 / 前端均未改）。
 - ❌ 真实环境验收：未做（未运行真实 OCR 模型、未跑真实数据库与索引链路）。
+
+## 9. 依赖与锁文件注意
+
+- `pyproject.toml` 已声明 `pdfplumber>=0.11`（离线纯库，无模型下载）。
+- `uv.lock` 未随本次改动重新生成：本机访问项目锁定的清华 PyPI 源返回 403，
+  为避免把整份锁文件的 registry 从清华源整体改写为 PyPI.org（会造成数千行无关 diff），
+  未在本地执行 `uv lock`。集成方在可访问清华源的机器上执行 `uv lock`（或 `uv sync`）
+  把 `pdfplumber` 与 `pdfminer-six` 写入锁文件即可；在此之前代码对 `pdfplumber` 为懒加载，
+  缺失时会明确报错而非静默降级。
