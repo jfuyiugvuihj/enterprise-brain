@@ -177,8 +177,9 @@ def _discard_chroma_sandbox() -> str | None:
 # 所以「它只是读一下」不是豁免理由：Chroma 一开目录就往 sqlite 落 WAL 并回写，
 # 被跟踪的二进制立刻脏掉，而任何人顺手一次 git add -A 就是上百 MB 入库。
 # 修法沿用 R53 那一招：在 conftest 导入期动手，app/** 与 scripts/** 一个字都不改，钉在唯一的
-# 收口上。全仓四处 PersistentClient 调用（app/rag/retriever.py:481、scripts/rebuild_index.py:302、
-# scripts/compare_vector_recall.py:185、tests/test_r125_status_vector_census.py:384）写的都是
+# 收口上。全仓五处 PersistentClient 调用（app/rag/retriever.py:875、scripts/rebuild_index.py:302、
+# scripts/compare_vector_recall.py:186、scripts/diag_r162_chroma_zero_rows.py:498（只开仓外副本）、
+# tests/test_r125_status_vector_census.py:384）写的都是
 # chromadb.PersistentClient(...) —— 属性查找发生在调用期，所以包这一层同时盖住上面四条路。
 # 工作树之外的目录（tmp_path 等）原样放行：本单只关心仓库里那批被跟踪的文件。
 
