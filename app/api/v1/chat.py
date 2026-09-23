@@ -1013,6 +1013,11 @@ def _rewrite_followup(session_id: str, user_msg: str) -> str:
 
 class ChatRequest(BaseModel):
     message: str
+    # R141 判据②：这一格今天就被 _require_no_lane_on_chat 硬拒（任何值都拒）。加它不是
+    # 为了支持，而是为了**把静默忽略变成当场报错**：pydantic 默认丢弃未知字段，于是给
+    # /chat 发 lane=report 的客户端会拿到一条"看起来成功了"的纯文本回答，而路径一个字没变
+    # —— 那正是 R32 拒交前端选择器的那张脸。声明只在 /ask 上有腿可分。
+    lane: str = ""
 
 
 class AskRequest(BaseModel):
@@ -1090,6 +1095,109 @@ def _require_valid_lane(request) -> None:
                 "field": "lane",
                 "allowed": list(ASK_LANE_VALUES),
                 "given": lane if isinstance(lane, str) else None,
+            },
+        ).model_dump(),
+    )
+
+
+# ==================== R141 · 档位读数的三处出口（响应头 / SSE 帧 / trace） ====================
+#
+# 三处读的都是 app.agents.nodes.TurnLane.as_dict() 那一份，不各写一套口径：
+#  - 响应头：不看 SSE 的客户端（curl、网关日志、运维抽查）也能读到生效档位与它的来源；
+#  - request.started 帧 data：在场的浏览器（前端选择器要靠它自证"我发出去的这一格真生效了"）；
+#  - request.started trace 载荷：事后取证，GET /api/v1/traces/{trace_id} 直接可查。
+#
+# 头名一律小写常量、值一律 ASCII：档位名是 qa/analysis/report，来源名是四个英文标签，
+# 没有任何一格需要百分号编码。取不到的读数**整个头不发**，不发空值也不发 "-"：
+# 一枚存在的头必须永远可信，否则它就是在制造第三态。
+EFFECTIVE_LANE_HEADER = "x-effective-lane"
+LANE_SOURCE_HEADER = "x-lane-source"
+DECLARED_LANE_HEADER = "x-declared-lane"
+
+#: /chat 没有工作腿可分：它是一发检索加一发模型，压根不进多 Agent 图。所以这里拒收
+#: 的取值闭集是**全体**（含 qa）——把 qa 放行的代价是一条不改变任何路径的标签，
+#: 与判据② 严禁的那张脸逐字同形。想按档位分流就发 /ask，这一句写在错误体里。
+CHAT_LANE_SUPPORTED: tuple[str, ...] = ()
+
+
+#: R141：全 chat.py 里读请求档位标签的函数**只有四枚**，逐枚点名钉在
+#: tests/test_r32_lane_contract.py::test_nothing_outside_the_two_lane_functions_reads_the_request_label
+#: 与 tests/test_r141_lane_behavior.py。这枚是"图路径"那一个读口：它只做归一，
+#: 不做判别、不改问题文本、也不许在别处被拿来当检索参数用（判据② 的结构证据）。
+def _declared_lane(request) -> str:
+    """把调用方声明的档位归一成交给图的那一枚字符串（未声明＝空串）。
+
+    取值合法性由 _require_valid_lane 在前面 400 过；这里再 strip 一次是纯粹归一，
+    两者不是两道闸：闸会拒，这枚只会把 " qa " 变成 "qa"。
+    """
+    lane = getattr(request, "lane", "")
+    return lane.strip() if isinstance(lane, str) else ""
+
+
+def _turn_lane_readout(question: str, declared: str, *, routed: bool = True) -> dict:
+    """本轮的档位读数。三处出口（响应头 / request.started 帧 / trace 载荷）都取自这里。
+
+    ``routed=False`` 给的是"这一轮没走图"那一族读数（入队、答案缓存命中、/chat）。它不是
+    装饰性字段：调用方选了报告档而这一轮被限流入队时，把 lane 读成 report 等于把"承诺"与
+    "证据"混成一句话 —— 判据② 严禁的正是这种合并。
+
+    迟 import app.agents.nodes：本文件顶部不碰图与模型装配（沿用 _ask_stream 里对
+    orchestrator 的同一打法），且只取公开名 ——
+    tests/test_r37_report_lane_enqueue.py::test_chat_py_never_grabs_a_private_name_from_the_lane_owner
+    用 ast 扫本文件，从 app.agents* 抓下划线开头的名字会当场红。
+    """
+    from app.agents import nodes
+
+    if not routed:
+        return nodes.not_routed_lane(declared).as_dict()
+    return nodes.resolve_turn_lane(question, declared).as_dict()
+
+
+def _resumed_lane_readout() -> dict:
+    """批准后从挂起点续跑那一轮的读数：图在跑，但原始声明没跟着 checkpoint 进来。
+
+    读成 r42 会把"没人声明"与"声明丢了"混成一格，读成 not_routed 会把"图在跑"说成没跑。
+    所以是第四态 resumed：缺口本身在读数面板上可见，而不是只在交付说明里存在。
+    """
+    from app.agents.nodes import resumed_lane
+
+    return resumed_lane().as_dict()
+
+
+def _lane_readout_headers(readout: dict) -> dict:
+    """把本轮档位读数压成响应头。读数缺格就少发一枚头，不发假值。"""
+    headers = {}
+    lane = str((readout or {}).get("lane") or "")
+    declared = str((readout or {}).get("declared_lane") or "")
+    source = str((readout or {}).get("lane_source") or "")
+    if lane:
+        headers[EFFECTIVE_LANE_HEADER] = lane
+    if declared:
+        headers[DECLARED_LANE_HEADER] = declared
+    if source:
+        headers[LANE_SOURCE_HEADER] = source
+    return headers
+
+
+def _require_no_lane_on_chat(request) -> None:
+    """/chat 收到任何档位声明都当场 400，跑在检索与模型之前，零副作用。"""
+    lane = str(getattr(request, "lane", "") or "").strip()
+    if not lane:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=ErrorEnvelope(
+            code=LANE_ERROR_CODE,
+            message=(
+                "lane is accepted only on /api/v1/ask; /chat has no worker legs to "
+                "route, so declaring a tier there would change nothing"
+            ),
+            details={
+                "field": "lane",
+                "endpoint": "/chat",
+                "allowed": list(CHAT_LANE_SUPPORTED),
+                "given": lane,
+                "use_instead": "/api/v1/ask",
             },
         ).model_dump(),
     )
@@ -1195,6 +1303,9 @@ async def chat(request: ChatRequest, http_request: FastAPIRequest):
         status_code = 401 if scope_error.code == "authentication_required" else 403
         logger.warning(f"[CHAT] 拒绝无范围检索: user={principal.username} code={scope_error.code}")
         raise HTTPException(status_code=status_code, detail=scope_error.code)
+    # R141 判据②：与 /ask 同一条次序裁定（tests/test_r32_lane_contract.py 的
+    # test_the_gate_answers_401_before_it_answers_400）——先验身份，再验档位，最后才碰检索。
+    _require_no_lane_on_chat(request)
     retrieval_filter = scope.filters
 
     async def generate():
@@ -1229,7 +1340,13 @@ async def chat(request: ChatRequest, http_request: FastAPIRequest):
             logger.error(f"Chat error: {exc}")
             yield "\n[错误] 本轮检索或模型调用失败，请重试或改用 /api/v1/ask。"
 
-    return StreamingResponse(generate(), media_type="text/plain")
+    # /chat 的读数永远是"这一轮没按任何档位走图"：端点结构决定，与调用方声明无关。
+    # 有声明在上一条就 400 了，所以这里 declared 必为空串，只发 x-lane-source 一枚。
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain",
+        headers=_lane_readout_headers(_turn_lane_readout("", "", routed=False)),
+    )
 
 
 # ==================== Multi-Agent Ask (SSE) ====================
@@ -1341,6 +1458,9 @@ def _enqueue_ask_turn(
     username: str,
     principal,
     lane: str,
+    # R141：入队这一支的读数只上**响应头**。载荷与 queued 事件的字段一格不加 ——
+    # tests/test_r37_report_lane_enqueue.py 与 test_r32_lane_contract.py 逐字段钉着它们。
+    lane_readout: dict | None = None,
 ) -> StreamingResponse:
     """把一轮问答收进可靠队列，回一条只含回执的 SSE。
 
@@ -1391,7 +1511,11 @@ def _enqueue_ask_turn(
     return StreamingResponse(
         queued_response(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            **_lane_readout_headers(lane_readout or {}),
+        },
     )
 
 
@@ -1439,6 +1563,12 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     rewritten_msg = _rewrite_followup(thread_id, orchestration_msg)
     _save_message(thread_id, "user", request.message)
 
+    # R141 判据①：本轮声明的档位与它的读数。取 rewritten_msg 而不是原始 message —— 图里的
+    # plan()/route_main 读的就是这一枚文本，读数与生效路径必须同源，否则在追问改写过的轮次上
+    # "读到的档位"与"跑出来的档位"会分叉成两张脸。
+    declared = _declared_lane(request)
+    lane_readout = _turn_lane_readout(rewritten_msg, declared)
+
     # ——— 限流检查 (Layer 5: 超限入队而非拒绝) ———
     from app.common.cache import check_rate_limit
     username = getattr(http_request.state if http_request else None, "username", None) or "anonymous"
@@ -1471,6 +1601,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             username=username,
             principal=request_principal,
             lane="",
+            lane_readout=_turn_lane_readout(rewritten_msg, declared, routed=False),
         )
 
 
@@ -1487,6 +1618,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             username=username,
             principal=request_principal,
             lane=lane,
+            lane_readout=_turn_lane_readout(rewritten_msg, declared, routed=False),
         )
 
     # ——— 答案缓存 ———
@@ -1557,7 +1689,13 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         return StreamingResponse(
             cached_response(),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                **_lane_readout_headers(
+                    _turn_lane_readout(rewritten_msg, declared, routed=False)
+                ),
+            },
         )
 
     async def generate():
@@ -1608,6 +1746,10 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     # pieces=0，答案在快照里 0 字直接跳到整段）。生成腿一旦改走流式，
                     # 片从这里进来，本文件不必再改一个字。
                     stream_piece_sink=_piece_sink,
+                    # R141：只有真声明了才加这一格。不声明时连键都不传 ——
+                    # tests/test_r149_sse_text_pieces.py 逐字段钉着的那份注册参数集（RUN_KWARGS）
+                    # 一格未变；声明轮次多出来的那一格由图里的 route_main/plan 消费。
+                    **({"declared_lane": declared} if declared else {}),
                 ):
                     if cancel_event.is_set():
                         # 停止之后不再往没人读的流里塞事件；已经落盘的不回滚，那不是
@@ -1662,7 +1804,10 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             task_id=task_id,
             sequence=sequence,
             status="running",
-            data={"session_id": thread_id},
+            # R141 判据① 的第二处出口。往 data 里加键是安全的：已并树的用例钉的是**帧名序列**
+            # （test_approve_canonical_events / test_sse_sources / test_r149_sse_text_pieces），
+            # 不是 data 的键集；第三处出口（trace 载荷）在 orchestrator 里同源发出。
+            data={"session_id": thread_id, **lane_readout},
         )
         sequence += 1
 
@@ -1974,7 +2119,11 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            **_lane_readout_headers(lane_readout),
+        },
     )
 
 
@@ -2195,7 +2344,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             task_id=task_id,
             sequence=sequence,
             status="running",
-            data={"session_id": request.session_id},
+            # R141 判据②：续跑轮读 resumed，而不是把"声明没跨过 HITL 那道门"糊成 r42。
+            data={"session_id": request.session_id, **_resumed_lane_readout()},
         )
         sequence += 1
 
@@ -2413,7 +2563,11 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            **_lane_readout_headers(_resumed_lane_readout()),
+        },
     )
 
 

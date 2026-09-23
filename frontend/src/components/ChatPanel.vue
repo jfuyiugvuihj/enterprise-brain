@@ -1,5 +1,6 @@
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import CacheFace from './CacheFace.vue'
 import ChartViewer from './ChartViewer.vue'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
@@ -43,6 +44,7 @@ import {
   sourcesFace,
 } from '../lib/provenance'
 import { UiEmptyState, UiErrorState } from './ui'
+import { LANE_CHOICES, LANE_UNDECLARED, laneFromQuery, queryWithLane } from '../router/lane-choice.js'
 
 const input = ref('')
 const chatEl = ref(null)
@@ -50,6 +52,71 @@ const sidebarOpen = ref(true)
 const cancelPhase = ref('idle')
 const streamNote = ref('')
 const noteTone = ref('info')
+
+// ==================== R141 · 档位选择器（选了必须真的改行为） ====================
+//
+// 这枚控件今天才准上屏：R32 那次拒交的原话是「要让标签真改变行为须动 nodes.py 与
+// orchestrator.py，两者皆在写域外」。R141 把那一格补齐了（天花板/地板/读数三件事都在
+// tests/test_r141_lane_behavior.py 里成了行为用例），所以下面这根控件有权存在。
+//
+// 三件事缺一条就是假控件：① 发出去真的带这一格（send 的 body）；② 选中项写进地址，
+// 刷新与转发都留得住；③ 每一轮画回**生效读数**——读不到就不画，绝不用选择框代替证据。
+//
+// 值那张表在 ../router/lane-choice.js（含「为什么不发明第四种拼写」的理由），本面板不抄第二份；
+// 空串＝不声明，服务端按 R42 判别器以题面自选，那一格在读数里叫「系统判的」。
+// 响应头是这一腿唯一的读数来源：SSE 帧的解析住在 lib/sessions.js（本单写域之外），
+// 而 request.started 的 data 今天到不了这里。头名逐字对齐 app/api/v1/chat.py 的三枚常量。
+const LANE_HEADER_EFFECTIVE = 'x-effective-lane'
+const LANE_HEADER_SOURCE = 'x-lane-source'
+const LANE_HEADER_DECLARED = 'x-declared-lane'
+const LANE_NAMES = { qa: '问答档', analysis: '分析档', report: '报告档' }
+// 档位在界面上的承诺，与 nodes.LANE_WORKERS 那张表同一方向（只写人话，不写腿名清单）：
+// 读的是「选了会怎样」，不是替后端宣布它跑了什么。
+const LANE_PROMISES = {
+  '': '按问题内容自动挑一条最省的路',
+  qa: '只查知识库回答，不算数、不出图、不产文件',
+  analysis: '允许进数据分析与图表，但不产文件',
+  report: '一定走导出这一腿（会先请你确认）',
+}
+
+// 路由在这里是**可选**的：组件被单测裸渲染（renderToString，无 router 上下文）时
+// useRoute()/useRouter() 返回 undefined，全部访问点都走可选链，读不到就当地址没写。
+const route = useRoute()
+const router = useRouter()
+
+const laneFromAddress = () => laneFromQuery(route?.query)
+const selectedLane = ref(laneFromAddress())
+// 地址是真相：从别的屏带 ?lane= 跳进来、或后退回这一屏时，选择框跟着地址走。
+watch(() => route?.query?.lane, () => { selectedLane.value = laneFromAddress() })
+
+function chooseLane(value) {
+  selectedLane.value = queryWithLane({}, value).lane ?? LANE_UNDECLARED
+  router?.replace({ query: queryWithLane(route?.query, selectedLane.value) })
+}
+
+/**
+ * 本轮档位读数（响应头那三枚）。没有读数就整条不画——留白不等于「系统判断」，
+ * 更不等于后端没实现：它可能只是被网关吃掉了头，那种情况下界面不许编一句。
+ *
+ * 与出处/缓存/排队那三张脸同一形状：bag 里那份管重渲染，消息对象上那份管随会话
+ * 落盘与刷新复原（档位住在地址里，读数住在这一轮的答案上，两件事各自留痕）。
+ */
+const laneReads = ref({})
+
+function readLaneHeaders(turn, msg, response) {
+  const header = (name) => (
+    typeof response?.headers?.get === 'function' ? response.headers.get(name) || '' : ''
+  )
+  const read = {
+    lane: header(LANE_HEADER_EFFECTIVE),
+    source: header(LANE_HEADER_SOURCE),
+    declared: header(LANE_HEADER_DECLARED),
+    observed: true,
+  }
+  laneReads.value = storeBag(laneReads, turn, read)
+  if (msg) msg.lane = read
+  return read
+}
 
 // 会话与消息存在模块级 store 里：面板卸载或切走再回来都不会丢，生成中的流也不会断。
 const sessionId = activeId
@@ -218,8 +285,14 @@ async function send(dataFilename = activeDataFilename.value) {
         message: text,
         session_id: activeId.value,
         data_filename: dataFilename,
+        // R141：这一格就是「发出去真的带着档位」。空串是合法取值（不声明），
+        // 与后端 AskRequest.lane 的默认值同一含义，不是漏传。
+        lane: selectedLane.value,
       }),
     })
+
+    // 读数在流之前读：响应头随状态行一起到，不必等最后一帧，也就不会被中途中断吃掉。
+    readLaneHeaders(turn, aiMsg, response)
 
     const result = await consumeSseStream(response, aiMsg, {
       signal,
@@ -355,6 +428,7 @@ async function approve(approved) {
   }
 
   loading.value = true
+  const turn = turnKey(aiMsg, messages.value.length - 1)
   const signal = beginStream()
   try {
     const response = await authedFetch('/approve', {
@@ -364,6 +438,8 @@ async function approve(approved) {
       body: JSON.stringify({ session_id: activeId.value, approved }),
     })
 
+    // 批准后这一轮的读数是第四态（resumed）：确认门把原始声明落在了门外面，界面照着说。
+    readLaneHeaders(turn, aiMsg, response)
     const result = await consumeSseStream(response, aiMsg, {
       signal,
       onHitl: ({ pending: nextPending, labels }) => {
@@ -457,6 +533,33 @@ function storeBag(bag, key, value) {
 
 function readTurn(bag, msg, index) {
   return bag.value[turnKey(msg, index)] || null
+}
+
+function laneFaceOf(msg, index) {
+  return readTurn(laneReads, msg, index) || msg.lane || null
+}
+
+/**
+ * 档位读数的人话。四态分开说，一句都不许合并：
+ *   explicit     你选的，而且图按它改派了腿；
+ *   r42          没人选，系统按题面判的（这一格必须说得出"没人在选"这件事）；
+ *   not_routed   这一轮压根没走图（缓存命中/排队），档位没参与路径；
+ *   resumed      批准后从挂起点续跑，原始声明没跟着过来。
+ * 后两态还要把"你明明选了 X"说回来，否则用户会以为自己的选择被无视是正常现象。
+ */
+function laneFaceText(read) {
+  if (!read || !read.source) return ''
+  const named = LANE_NAMES[read.lane] || ''
+  const declaredName = LANE_NAMES[read.declared] || ''
+  if (read.source === 'explicit') return `本轮档位：${named}（你选的）`
+  if (read.source === 'r42') return `本轮档位：${named || '系统判断'}（系统按问题内容判的，你没选）`
+  if (read.source === 'not_routed') {
+    return declaredName
+      ? `本轮没有走进分析图（缓存命中或已排队），档位「${declaredName}」没参与这一轮的路径`
+      : '本轮没有走进分析图（缓存命中或已排队），不涉及档位'
+  }
+  if (read.source === 'resumed') return '批准后续跑的这一轮：原始档位声明没有跟着跨过确认门，本轮按系统默认路径走'
+  return `本轮档位读数（未认识）：${read.source}`
 }
 
 /**
@@ -830,6 +933,10 @@ function renderMd(raw) {
                     :stats="queueStatsOf()"
                     @retry="retryTurn(i)"
                   />
+                  <!-- 档位那张脸：读的是响应头给的本轮真读数，不是选择框的当前值。
+                       用户中途改选择框不会回改已落定的那一轮；后端没发读数就整条不画。 -->
+                  <p v-if="laneFaceText(laneFaceOf(msg, i))" class="lane-readout" role="status"
+                     data-testid="lane-readout">{{ laneFaceText(laneFaceOf(msg, i)) }}</p>
                   <!-- 界面没认领的后端事件：画成系统自陈，而不是静默丢进 unknownEvents 当没看见。
                        这行的「技术信息」四个字同时是 V6 裸码闸门认得的诊断区标记。 -->
                   <p v-if="unseenOf(msg, i).length" class="face-unseen" role="status" data-testid="face-unseen">
@@ -863,6 +970,21 @@ function renderMd(raw) {
 
       <!-- 输入区 -->
       <div class="chat-input-bar">
+        <!-- R141 · 档位选择器。三件事在这一屏上闭环，缺一件就不许上屏：
+             ① 选中项写进地址（?lane=），刷新与转发都留得住；
+             ② 发出去真的带这一格（send 的 body 里那一行 lane）；
+             ③ 每一轮画回**档位读数**（下面气泡里的 lane-readout），读不到就不画。
+             用原生 <select> 而不是自造下拉：键盘/读屏/输入法行为不用重新发明，也不新增色值。 -->
+        <div class="lane-bar" data-testid="chat-lane-picker">
+          <label class="lane-label" for="chat-lane-select">本轮档位</label>
+          <select id="chat-lane-select" class="lane-picker" :value="selectedLane"
+                  @change="chooseLane($event.target.value)">
+            <option v-for="choice in LANE_CHOICES" :key="choice.value" :value="choice.value">
+              {{ choice.label }}
+            </option>
+          </select>
+          <span class="lane-promise" data-testid="chat-lane-promise">{{ LANE_PROMISES[selectedLane] }}</span>
+        </div>
         <!-- 失败提示原先只是换行色的 <p role="status">：读屏不会打断，等于把错误当通知。
              这些句子都是一次性结果，不是一条能重试的面板加载，所以 retryable=false。 -->
         <UiErrorState v-if="streamNote && noteTone === 'error'" :title="streamNote" :retryable="false" dense />
@@ -1626,6 +1748,39 @@ function renderMd(raw) {
 }
 
 .face-unseen {
+  margin: 0;
+  padding: var(--s-1) var(--s-2);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--r-sm);
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+/* ===== R141 · 档位选择器与生效读数 =====
+   一条裸色值都不写：色值预算 148 是上限，多一条 CI 当场红；这里全部走 theme.css 的 token。 */
+.lane-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+  flex-wrap: wrap;
+}
+.lane-label {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+.lane-picker {
+  font-size: var(--t-xs);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  padding: var(--s-1) var(--s-2);
+}
+.lane-promise {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+.lane-readout {
   margin: 0;
   padding: var(--s-1) var(--s-2);
   border: 1px dashed var(--border-2);
