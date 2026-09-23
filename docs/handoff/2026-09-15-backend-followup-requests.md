@@ -2681,3 +2681,12 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 ### 四、并发与锁
 
 本格并发 **六枚**（R170 / R172 / R174 / R176 / R177 / R178），六棵写域两两零交集（`excel+data+DataPanel` · `chat+pending_approvals+nodes局部` · `ChatPanel+router+sessions.js` · `alerts+observability` · `knowledge_graph+policy+rbac` · `filters+tools`），派工前逐棵实取 `dirty=0`。`observability` 那层同时被 R176 与 R178 的「走既有通路」引用 —— 已把**改**的权力只给 R176，R178 只 import。
+
+
+## 87. 第四十一班同格第三拍（09-23 12:1x–12:3x，主树 `f515494` → **`8e1136d`**）：🔴 阶段 A 判据②「从没验过」的真正成因查清 = 量具没装 · 立 R181 · 新添两枚 docs 交付
+
+- **一、判据② 的账翻出来了（这条比多并一枚单值钱）**：阶段 A 四条验收里 ②「`text` 事件数 >1 且逐字比对无缺字」从来没宣布验过，run2–run5 四轮跑分都没有这一格读数。总控今天实取查到：**功能侧在流**——`app/api/v1/chat.py:1858-1866` 每来一枚 `piece` 就发一帧 cumulative `text`（构造器 `text_sse_frame()` 在 `:250-262`，R149 的判据①②③④ 都写在它身上），`:1889` 在累计片与终答不同源时大声记 error；**量具侧没数**——跑分窗 transport `scripts/eval_transport_ask_v2.py:141-148` 收到 text 帧只做 `out["answer"] = str(content)`（末帧覆盖），既不数帧数也不比前缀单调，旁边注释还写着「/ask 只发一条整段 text（chat.py:1364）」，而 `chat.py:1364` 今天是 `_complete_pending_steps` 的 return ⇒ **那句已经不成立**。⇒ 不是"验过没通过"，是**从来没量过**。旧记录里凡按"没报错即通过"读判据② 的一律作废。
+- **二、R181（已立，判据全文见本节；派工受阻见下）**：给跑分窗装判据② 的尺子——观察桶加 `text_frames` 计数 / 前缀单调坏形计数 / 末帧与终答一致（covering 语义）/ `missing_chars`+`extra_chars` 两枚缺字计数；🔴 **只观测不改评分**（`answer` 取值口径、`APPROVAL_FAILED_SENTINEL`、`cached`、`first_token_at`、`steps` 一律不许动，run2–run5 必须还能逐题对齐）；读数随采集器落盘并在 docs 写一小节"判据② 的凭据长什么样、缓存命中只一帧怎么判"；离线用合成 SSE 字节喂真 `_consume()` 出七类用例；两把常驻反证（改回不计数 ⇒ 红；把前缀缩短吞成静默 ⇒ 红）。写域 `scripts/eval_transport_ask_v2.py` + `scripts/collect_evaluation_answers.py`（落盘字段与注释层）+ 新 `tests/test_r181_*.py` + 一枚 docs 小节；禁入 `app/**`（确认必须后端配合就停下申报）。工作树 `be-r181`（分支 `codex/be-r181`，基点 `8e1136d`）已建、`dirty=0`。
+- **三、🔴 投递受阻的处置（记死，别让下班误以为漏做）**：R181 那次 `spawn_agent` 被工具层直接拒（在途六枚已满额 ⇒ 并发上限），返回的是明确错误、**不是超时**，经查 `be-r181` 零落盘、`sessions/2026/09/23` 无对应 rollout ⇒ 判"未落地"，按规矩**不当场补投**。等六枚里任何一枚结案腾出名额后，**另起一格**按本节判据原样投一次；投之前先数 rollout 与 `dirty`，投之后名册只认那一枚 id。
+- **四、另两笔交付件**：① 新增 `docs/handoff/2026-09-23-v1-acceptance-record.md`（`fe4dc6d`）——V1 九条业务主线 + 六条隐性要求逐条三态（有证据 / 本机补不了 / 缺），并把"越权三格正压着 V1 的宣布"单列一节；② 计划书 §6 C 行加 🔴 更正（`8e1136d`）——「越权命中 0 条」被 R163 证伪，四枚修复件并树并绿之前 C 行不得翻绿。原分支 `codex/be-r163`（WIP `eebaadb`）**已推 origin** ⇒ 那两枚红工件不再只在这台机器上有一份。
+- **五、本格并发六枚**：`Sartre`@be-r170=R170 · `Averroes`@be-r172=R172 · `Meitner`@be-r174=R174 · `Galileo`@be-r176=R176 · `Russell`@be-r177=R177 · `Aristotle`@be-r178=R178。排队：**R181**（等名额，见三）· R171 · R173 · R175 · R179 · R180。
