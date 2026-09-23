@@ -884,11 +884,50 @@ reddens if the two disagree, so the mapping is written down once and mirrored, n
   draft of this line said that refusal “is not implemented”; R32 implemented it, so the sentence
   now reads the other way. Empty means the server picks: the tier of a measured request is R42's
   verdict (`app/agents/nodes.py::classify_route`, a function of the question text alone), so a
-  request cannot choose its own SLO bucket. Accepting a label is not the same as honouring it --
-  the only behaviour a client label can change today is the `report`-plus-switch-on detour above,
-  measured dimension by dimension by `tests/test_r32_lane_contract.py`, which is also why
-  `frontend/**` still ships no tier selector (R32's fake-control ban: a control that changes
-  nothing is a lie about a feature).
+    request that declares nothing therefore cannot choose its own SLO bucket, and a request that
+  does declare one gets it on `POST /api/v1/ask` or a `400` on `POST /api/v1/chat` (2b). A label
+  being accepted is not the same as a label being honoured, and as of R141 those two are no longer
+  the same sentence: a declaration now moves real worker legs, which is why `frontend/**` now
+  ships a tier selector. R32 ban was never on the control, it was on a control that changes
+  nothing; the pin that forbade the selector was rewritten into four harder ones rather than
+  relaxed (closed shipment list, one source of truth, wire-equal literals, diverging leg sets).
+
+### 2b. What a declaration buys, and where the outcome is readable (2026-09-22, R141)
+
+A label is honoured on one axis only. `app/agents/nodes.py::LANE_WORKERS` is the ceiling -- `qa`
+may use `doc`, `analysis` may use `doc`, `data`, `chart`, `report` may use all four -- and the
+three sets are strictly increasing, which `tests/test_r32_lane_contract.py` reddens if anyone
+flattens them, because a selector whose options are equal is the fake control R32 refused to
+ship. `LANE_REQUIRED_WORKERS` is the floor, so a requested `report` turn always owes an `export`
+leg rather than merely being allowed one; the floor is charged to an `explicit` declaration and
+never to a tier R42 inferred, so an unrequested turn pays for no leg it did not need. Nothing
+else is for sale -- not the model, not the retrieval budget, not the queue policy -- and
+`tests/test_r141_lane_behavior.py` names every call site a label may reach.
+
+The outcome is readable at three outlets, all of them the same body (`TurnLane.as_dict()`), so no
+downstream may convert it a second time: the response headers `x-effective-lane`, `x-lane-source`
+and `x-declared-lane`; the same-named keys inside the canonical `request.started` frame data,
+together with `lane`, `lane_rule`, `declared_lane`, `rules_lane`, `tier`, `allowed_workers`,
+`required_workers` and `may_plan`; and the `request.started` trace payload, read back from
+`GET /api/v1/traces/{trace_id}`. A header is omitted, never faked with an empty value, when the
+readout has nothing to say, because a header that exists must always be believed. These keys are
+invisible to `tests/test_r156_sse_event_surface_sync.py`, which scrapes literals at the emission
+site and here receives a helper return value; that hole is why `tests/test_r32_lane_contract.py`
+pins them from the runtime reading instead.
+
+`lane_source` is a closed set of four: `r42` (the server picked), `explicit` (a client declaration
+was honoured), `not_routed` (this turn never entered the graph -- queued, or answered from the
+answer cache -- so no tier participated in it), and `resumed` (the graph is running after an
+approval while the original declaration did not survive the checkpoint). The last two exist
+because a lost declaration, an irrelevant declaration and an absent declaration are three
+different facts; letting `r42` absorb all three puts the third state back in through the reading
+panel.
+
+`POST /api/v1/chat` refuses every declaration with `400` and the same stable code, before a
+retrieval, a model call or a session row: it is one retrieval plus one model round and has no
+worker legs to route. `ChatRequest.lane` exists only so that this refusal happens out loud, since
+pydantic would otherwise drop an unknown field and hand the caller an answer that quietly ignored
+what it asked for.
 
 ### 3. One percentile algorithm
 

@@ -522,12 +522,19 @@ def test_the_contract_still_names_the_lane_attribution_blocker():
 
 
 def test_the_prose_line_about_the_lane_field_tells_todays_truth():
-    """①/⑥ 的散文面：契约不许再写"非法档不返 400"是现在时，也不许把三档说成已生效。"""
+    """①/⑥ 的散文面：契约不许再写"非法档不返 400"是现在时，也不许把档位说成惰性标签。
+
+    末那半句在 R141 之后换了方向：前端确实发货了档位选择器，所以契约必须同时留下
+    「声明真的改派了腿」与「R32 禁令管的是改了什么都不动的那类控件」两句现在时。
+    R141 之前这里钉的是反向的一句（still ships no tier selector），改口不是放宽。
+    """
     text = _contract_text()
 
     assert "closed set of four" in text, "契约不再写 lane 的取值闭集了"
     assert "validation_error" in text, "契约不再指名非法档的稳定码"
-    assert "still ships no tier selector" in text, "契约不再交代前端为什么没有选择器"
+    assert "a declaration now moves real worker legs" in text, "契约不再交代声明档位真的改派腿（R141）"
+    assert "ships a tier selector" in text, "契约不再交代前端已发货档位选择器"
+    assert "R32 ban was never on the control" in text, "契约把 R32 假控件禁令的落点写丢了"
     for position in [match.start() for match in re.finditer(r"is not\s+implemented", text)]:
         window = re.sub(r"\s+", " ", text[max(0, position - 240) : position + 40])
         assert "previous draft" in window, "契约又把「非法档不返 400」写成现在时的缺口了"
