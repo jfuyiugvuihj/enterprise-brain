@@ -265,10 +265,14 @@ def test_a_not_routed_turn_keeps_the_declaration_but_claims_no_effect():
     assert readout["allowed_workers"] == []
 
 
-def test_a_resumed_turn_does_not_claim_the_original_declaration():
-    """批准后续跑：原始声明没跨过 HITL 那道门，resumed 的 declared 必须是空串。
+def test_a_resumed_turn_does_not_claim_a_declaration_the_ledger_does_not_hold():
+    """账上没这一格时（旧行、0008 尚无此列的 PG 后端、本轮压根没声明），resumed 的
+    declared 必须是空串。
 
-    把 report 抄进这一格就是"读数替缺口遮丑"——缺口要可数，不是可见于文档。
+    这句在 R141 当时是"原始声明跨不过 HITL 那道门"，R172 把那条腿接上了：声明随挂起行
+    存下来、批准后续跑轮读回来，于是这一枚钉的是**读不到**的那一侧 —— 读不到就明说读不到，
+    补成一档就是"读数替缺口遮丑"。读得到的那一侧由
+    tests/test_r172_lane_across_hitl.py 端到端钉（三处出口逐字同一份读数）。
     """
     readout = resumed_lane().as_dict()
 
@@ -692,7 +696,20 @@ def test_the_declaration_reaches_the_graph_through_exactly_one_channel():
     source = CHAT_SOURCE.read_text(encoding="utf-8")
 
     assert source.count('"declared_lane": declared') == 1
-    assert "declared_lane=declared" not in source
+    # R172 起，chat.py 里那份归一后的声明有了第二个去处：挂起账本。原钉写的是
+    # "declared_lane=declared 一次都不许多出现"，它防的是**第二道进图的通道**；今天进图
+    # 仍旧只有上面那一枚（run_with_stream 的 configurable），所以改钉成"带 declared_lane
+    # 关键字的调用点闭集里只有账本那两枚，图不在其中" —— 保护的是同一件事，钉得更直。
+    tree = ast.parse(source)
+    callees = {
+        getattr(node.func, "id", "") or getattr(node.func, "attr", "")
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and any(keyword.arg == "declared_lane" for keyword in node.keywords)
+    }
+
+    assert callees == {"_record_pending_approval", "record_awaiting"}, callees
+    assert "run_with_stream" not in callees, "图那边多了一道带声明的入口"
     assert source.count("request.lane") == 0, "直读属性就是绕过那四枚具名读口"
 
 

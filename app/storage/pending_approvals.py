@@ -49,11 +49,21 @@ _NOW = lambda: datetime.now(timezone.utc)  # noqa: E731 - 只有一处语义，�
 
 @dataclass
 class PendingApprovalRecord:
-    """一行挂起记录。字段与 0008 的列一一对应，parked_steps 不是 blob 而是数组。"""
+    """一行挂起记录。除 ``declared_lane`` 外字段与 0008 的列一一对应；parked_steps 不是 blob 而是数组。"""
 
     session_id: str
     owner_user_id: str
     parked_steps: list[str] = field(default_factory=list)
+    #: R172：挂起**那一轮**调用方声明的档位。它是"这一轮的档是谁定的"这句话在批准后
+    #: 续跑轮里唯一的凭据 —— 原始请求体与图内 configurable 都随那一轮流结束了，只有
+    #: 随这行账本存下来才跨得过 HITL 那道门。
+    #:
+    #: 🔴 0008 上没有这一列，所以 PG 分支的 INSERT/SELECT 一字未动：那半条持久化腿要
+    #: 一枚 migrations/ 里的新脚本，而 migrations/** 在本单写域之外。读不到这一格的行
+    #: （R172 之前挂起的旧行、0008 尚无此列的 PG 后端）一律回空串，续跑轮于是读成
+    #: "沿用一次没有记录的声明"，绝不许被补成 explicit —— 落点见 app.agents.nodes
+    #: 的 resumed_lane 与 app/api/v1/chat.py 的 _parked_declaration。
+    declared_lane: str = ""
     status: str = AWAITING
     request_id: str = ""
     trace_id: str = ""
@@ -128,6 +138,9 @@ def _record_from_row(row: dict) -> PendingApprovalRecord:
         session_id=str(row.get("session_id") or ""),
         owner_user_id=str(row.get("owner_user_id") or ""),
         parked_steps=[str(step) for step in (steps or [])],
+        # 0008 尚无此列时 row.get 回 None，于是旧行与 PG 行都落成空串：这正是
+        # 上面那张兼容表要的形状，不是"忘了写"。
+        declared_lane=str(row.get("declared_lane") or ""),
         status=str(row.get("status") or AWAITING),
         request_id=str(row.get("request_id") or ""),
         trace_id=str(row.get("trace_id") or ""),
@@ -147,11 +160,18 @@ def record_awaiting(
     trace_id: str = "",
     task_id: str = "",
     expires_at: str | None = None,
+    declared_lane: str = "",
 ) -> PendingApprovalRecord:
     """为一次挂起开一行 awaiting；同一会话上未闭合的旧行先判 stale。
 
     旧行必须先闭合再插入：0008 上有 ``..._open_session_idx`` 的 partial unique 索引，
     一个会话同时只允许一条 awaiting，重试/续跑才不会撞约束。
+
+    ``declared_lane``（R172）是挂起那一轮调用方声明的档位，由调用方在 HTTP 边界上归一
+    过后才交进来（""／qa／analysis／report 四值之一）；本层不猜、不校验、不替谁把它
+    补成任何一档。PG 分支不写这一格 —— 0008 没有这一列，多绑一个参数就是让每一次挂起
+    都撞 UndefinedColumn，而被 ``_record_pending_approval`` 吞掉之后**审批面板会一条
+    待办都不剩**。那一半要等一枚 migrations 脚本，见 PendingApprovalRecord 的注释。
     """
     session_id = str(session_id or "").strip()
     owner_user_id = str(owner_user_id or "").strip()
@@ -172,6 +192,7 @@ def record_awaiting(
         task_id=str(task_id or ""),
         created_at=created_at,
         expires_at=until,
+        declared_lane=str(declared_lane or ""),
     )
 
     if not _database_available():

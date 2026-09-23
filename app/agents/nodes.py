@@ -1167,10 +1167,13 @@ DECLARED_LANE_KEY = "declared_lane"
 LANE_SOURCE_R42 = "r42"
 LANE_SOURCE_EXPLICIT = "explicit"
 LANE_SOURCE_NOT_ROUTED = "not_routed"
-#: - resumed     批准后从挂起点续跑的那一轮：图**在跑**，但原始那一次的档位声明没有
-#:               跟着 checkpoint 走进来（它住在 pending_approvals 与 checkpointer 里，
-#:               都在本单写域之外）。把这一格读成 r42 或 not_routed 都是撒谎，读成
-#:               resumed 才是缺口本身上了读数面板。缺口要补在哪一格写进交付说明。
+#: - resumed     批准后从挂起点续跑的那一轮：图**在跑**，而这一轮的档不是本轮定的。
+#:               R172 起，挂起前那一轮声明的档位随 pending_approvals 的挂起行跨过 HITL
+#:               那道门一起读回来，住在 declared_lane 那一格；把这一格读成 r42 或
+#:               not_routed 都是撒谎，读成 explicit 更是（本轮没有现声明，续跑这条腿也
+#:               没按这一档重新派发过 —— 那要跨 checkpointer 与 orchestrator，仍在写域外）。
+#:               挂起行里没有这一格时（R172 之前挂起的旧行、0008 尚无此列的 PG 后端）
+#:               declared_lane 落空串，读数与 R172 之前逐字节相同：缺口照旧可数，不遮丑。
 LANE_SOURCE_RESUMED = "resumed"
 
 #: 图里真实存在的四条工作腿。顺序就是阅读与派发的顺序，不是集合：读数要能逐字比对。
@@ -1331,18 +1334,21 @@ def not_routed_lane(declared=None) -> TurnLane:
     )
 
 
-def resumed_lane() -> TurnLane:
-    """批准后续跑那一轮的读数：图在跑，但没有任何档位声明抵达它。
+def resumed_lane(declared=None) -> TurnLane:
+    """批准后续跑那一轮的读数：图在跑，档位是挂起前那一轮定的（R172 才读得回来）。
 
     与 not_routed 同构（lane 读空串、不付拆题、不声称任何腿边界），区别只在 source 那一格：
-    这一轮确实进了图，只是"你选的档位"没能跨过 HITL 那道门跟着过来。读数把它和缓存命中
-    分开，是为了让缺口可数 —— 而不是让 R141 的读数面板看起来比现实更完整。
+    这一轮确实进了图。declared 那一格装的是随挂起行跨过 HITL 读回来的原始声明，读不到时
+    是空串 —— 与 R172 之前逐字节相同。填不填得上都不许动 lane：续跑的腿没有按这一档重新
+    派发过，把承诺写进生效格就是判据② 严禁的那张脸。声明与"这一轮沿用它"是两句话，
+    分别住在 declared_lane 与 lane_source 两格里，谁也不许并谁的格。
     """
+    declared = normalize_declared_lane(declared)
     return TurnLane(
         lane="",
         source=LANE_SOURCE_RESUMED,
         rule="",
-        declared="",
+        declared=declared,
         rules_lane="",
         tier="",
         allowed_workers=(),

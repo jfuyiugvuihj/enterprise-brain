@@ -1153,15 +1153,79 @@ def _turn_lane_readout(question: str, declared: str, *, routed: bool = True) -> 
     return nodes.resolve_turn_lane(question, declared).as_dict()
 
 
-def _resumed_lane_readout() -> dict:
-    """批准后从挂起点续跑那一轮的读数：图在跑，但原始声明没跟着 checkpoint 进来。
+def _parked_declaration(session_id: str) -> str:
+    """读回挂起那一轮声明的档位（R172）：它随 pending 账本的行跨过 HITL 那道门。
 
-    读成 r42 会把"没人声明"与"声明丢了"混成一格，读成 not_routed 会把"图在跑"说成没跑。
-    所以是第四态 resumed：缺口本身在读数面板上可见，而不是只在交付说明里存在。
+    回空串的四种情形都是实话，不是漏读：那一轮压根没声明、行写在 R172 之前（TTL 未到
+    但账上没有这一格）、PG 后端的 0008 尚无此列（补它要一枚 migrations 脚本，本单写域外）、
+    账本压根读不到（缺表或后端抛错 —— 与 _decide_pending_approval 同一裁定：记账坏了不许
+    打断用户已经等到的流，但留 exception 级痕迹）。
+    🔴 无论哪一种都不许补成一档 —— 补成 explicit 就是说"本轮现声明"，而本轮压根没收到
+    声明；取值不在闭集里的脏行同样退成空串，退向只能是"没有记录"，不能是"有人定过"。
+    """
+    try:
+        row = pending_approvals.get_row(session_id)
+    except Exception:
+        logger.exception(f"[R172][HITL] 续跑轮读不到挂起账本 session={session_id}，按无声明读数")
+        return ""
+
+    declared = str(getattr(row, "declared_lane", "") or "").strip()
+    if declared and declared not in ASK_LANE_VALUES:
+        logger.warning(
+            f"[R172][HITL] 挂起账本里的档位不是闭集成员 session={session_id}，按无声明读数"
+        )
+        return ""
+    return declared
+
+
+def _resumed_lane_readout(session_id: str) -> dict:
+    """批准后从挂起点续跑那一轮的读数：图在跑，档位是挂起前那一轮定的（R172 才读得回来）。
+
+    读成 r42 会把"没人声明"与"声明丢了"混成一格，读成 not_routed 会把"图在跑"说成没跑，
+    读成 explicit 会把"沿用别人早先定的档"说成"这一轮现声明"。三态都不对，所以还是第四态
+    resumed，只是从 R172 起它的 declared_lane 那一格真装着东西：谁定的读得回来，而生效那格
+    仍旧空 —— 续跑这条腿没有按这一档重新派发过（那要跨 checkpointer 与 orchestrator）。
     """
     from app.agents.nodes import resumed_lane
 
-    return resumed_lane().as_dict()
+    return resumed_lane(_parked_declaration(session_id)).as_dict()
+
+
+def _record_resumed_lane_trace(
+    readout: dict,
+    *,
+    session_id: str,
+    owner_id: str,
+    request_id: str,
+    trace_id: str,
+    task_id: str,
+) -> None:
+    """续跑轮的第三处出口：trace 的 request.started 载荷（R172）。
+
+    /ask 那一轮的这一处出口住在 app.agents.orchestrator.run_with_stream 里（本单禁碰），
+    而 run_interrupt_stream 从不记 request.started ⇒ 续跑轮此前只有响应头与 SSE 帧两处，
+    "三处出口同一份读数"在这一轮是半句空话。这里补上第三处：事件名、status、payload 形状
+    与 orchestrator 那一处同构，发的就是调用方交进来的同一份 readout 对象，不第二套口径。
+
+    记账失败不许打断用户已经等到的流（与 _record_pending_approval 同一裁定），但留
+    exception 级痕迹：一处出口哑掉与三处出口都在，是两件不同的事。
+    """
+    from app.trace.store import default_trace_store
+
+    payload = {"session_id": session_id, **readout}
+    if owner_id:
+        payload["owner_id"] = owner_id
+    try:
+        default_trace_store().record_event(
+            trace_id=trace_id,
+            request_id=request_id,
+            task_id=task_id,
+            event_type="request.started",
+            status="running",
+            payload=payload,
+        )
+    except Exception as exc:
+        logger.warning(f"[R172][Trace] 续跑轮读数没能落进 trace：{exc}")
 
 
 def _lane_readout_headers(readout: dict) -> dict:
@@ -1424,11 +1488,16 @@ def record_hitl_awaiting(
     request_id: str = "",
     trace_id: str = "",
     task_id: str = "",
+    declared_lane: str = "",
 ) -> bool:
     """队列 worker 用的挂起记账，语义与同步路径的 _record_pending_approval 同源。
 
     差别只有两处：归属人已由 worker 解析成 user_id 传进来；成败要回给调用方——
     后台没有打断用户流这回事，但待办没开成必须能被终态看见。
+
+    ``declared_lane``（R172）默认空串：调用它是 deploy/queue_worker.py，而那枚文件在本单
+    写域之外，所以后台那一轮的声明今天仍然落不进账本 —— 那一轮续跑读数照旧是无声明的
+    resumed（第四态本来就说这句话），不是 explicit。工单转出项写在交付说明里。
     """
     if not owner_user_id or not intr:
         return False
@@ -1440,6 +1509,7 @@ def record_hitl_awaiting(
             request_id=request_id,
             trace_id=trace_id,
             task_id=task_id,
+            declared_lane=declared_lane,
         )
     except Exception:
         logger.exception(
@@ -1954,6 +2024,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                         request_id=request_id,
                         trace_id=trace_id,
                         task_id=task_id,
+                        declared_lane=declared,
                     )
                     yield f"event: hitl\ndata: {json.dumps({'type': 'hitl', 'pending': intr['pending'], 'labels': intr['labels']}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
@@ -2140,11 +2211,15 @@ def _record_pending_approval(
     request_id: str = "",
     trace_id: str = "",
     task_id: str = "",
+    declared_lane: str = "",
 ) -> None:
     """把一次挂起写成一行 awaiting。
 
     记账失败不许打断用户已经等到的回答流，所以这里吞异常；但也不许静默——面板少一条
     待办和面板说"没有待办"是两件不同的事，因此留 exception 级痕迹。
+
+    ``declared_lane``（R172）是本轮声明的档位，必须跟着这一行进账本：批准之后续跑的那一轮
+    既拿不到请求体也拿不到上一轮的 config，"这一轮的档是谁定的"只剩这一格能回答。
     """
     owner_user_id = str(getattr(principal, "user_id", "") or "")
     if not owner_user_id or not intr:
@@ -2157,6 +2232,7 @@ def _record_pending_approval(
             request_id=request_id,
             trace_id=trace_id,
             task_id=task_id,
+            declared_lane=declared_lane,
         )
     except Exception:
         logger.exception(
@@ -2282,6 +2358,12 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
     trace_id = f"trace-{uuid.uuid4().hex}"
     task_id = f"task-{uuid.uuid4().hex}"
 
+    # R172：续跑轮的档位读数在这里算**一次**，下面三处出口（响应头 / request.started 帧 /
+    # trace 载荷）发出去的是同一份对象。算两次就是留一道口子：哪天其中一处换了口径，
+    # 同一轮的三处读数会各说一句话而没人报错 —— 判据② 要的是同一份数字，不是三个同形的数字。
+    # 此刻挂起那行还是 awaiting（闭合在下面那条流的 done 分支里），声明读得回来。
+    lane_readout = _resumed_lane_readout(request.session_id)
+
     async def generate():
         # 同 /ask：注册与本代弹出留在同一个帧里。resume 起来的那一代才是取消唯一能打击
         # 的对象，所以停在 HITL 的会话被按过停止之后，随后的批准会拿到一个生来就置位的
@@ -2337,6 +2419,15 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         # canonical 信封事件从这一条起与 /ask 的第一条
         # canonical_sse_event("request.started") 同构：同一个构造器、同一套
         # 三个 id、sequence 从 1 连续。legacy 事件全部照旧保留，canonical 是加在旁边。
+        # trace 那一处出口排在发帧之前：客户端在这一帧上断线也不该让事后取证先少一格。
+        _record_resumed_lane_trace(
+            lane_readout,
+            session_id=request.session_id,
+            owner_id=str(getattr(principal, "user_id", "") or ""),
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+        )
         yield canonical_sse_event(
             "request.started",
             request_id=request_id,
@@ -2345,7 +2436,9 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             sequence=sequence,
             status="running",
             # R141 判据②：续跑轮读 resumed，而不是把"声明没跨过 HITL 那道门"糊成 r42。
-            data={"session_id": request.session_id, **_resumed_lane_readout()},
+            # R172 把那一格补上了：resumed 说的从"没人定过"改成"沿用挂起前那一轮定的档"，
+            # 声明住在 declared_lane，lane 那格仍旧空 —— 这一轮的腿没按它重新派发过。
+            data={"session_id": request.session_id, **lane_readout},
         )
         sequence += 1
 
@@ -2449,6 +2542,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     # hitl 与 /ask 那条 hitl 事件同一个 payload 形状），也记成新的 awaiting 行。写账
                     # 必须排在上面的 _decide_pending_approval 之后，否则 mark_status 会去
                     # 闭合刚写入的新行、把旧行留在待批里。
+                    # 图第二次挂起：本轮沿用的那份声明必须跟着续下一行账，否则第三次
+                    # 批准时就又只剩"没人定过"。抄的是同一份 lane_readout，不再问一次账本。
                     _record_pending_approval(
                         request.session_id,
                         principal,
@@ -2456,6 +2551,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                         request_id=request_id,
                         trace_id=trace_id,
                         task_id=task_id,
+                        declared_lane=str(lane_readout.get("declared_lane") or ""),
                     )
                     yield f"event: hitl\ndata: {json.dumps({'type': 'hitl', 'pending': intr['pending'], 'labels': intr['labels']}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
@@ -2566,7 +2662,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
-            **_lane_readout_headers(_resumed_lane_readout()),
+            # R172：与上面那两处出口同一份对象，不看 SSE 的客户端读到的是同一句话。
+            **_lane_readout_headers(lane_readout),
         },
     )
 
