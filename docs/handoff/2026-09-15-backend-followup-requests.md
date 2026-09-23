@@ -2703,3 +2703,44 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 
 - **三、新单 R182（pandas 3 字符串列 dtype，总控本班实测复现，不是转述）**：`profile_dataframe` 的文本列那一支判 `dtype == "object"`，而 pandas 3.0.3 把字符串列判成 **`str`** ⇒ 真机数据上那一支基本进不去。本班用 `pd.DataFrame({"月份":["1月","2月","3月"],"额":[1,2,3]})` 实跑主树现在的代码：`text_columns: []`（应为 `["月份"]`）、该列 keys 只有 `dtype/missing/missing_pct/name`（**没有 `unique_values`**）、`numeric_columns: ["额"]`。⇒ 数据面板的"文本列"区对客户文档**常年空白**，是员工看得见的假干净。判据：文本列判定改走 `pd.api.types.is_string_dtype`/`is_object_dtype` 的**语义谓词**（不许再比字面 dtype 串），`text_columns` 与 `unique_values` 在真机字符串帧上必须给值；🔴 要连带核 `R112`/`R122` 读的汇总语义与前端 `DataPanel.vue` 的列卡（R170 刚改过它，别改回空表说谎）；两把反证（退回字面比较 ⇒ 红；只改判定不给 `unique_values` ⇒ 红）。写域 `app/tools/excel.py` + `frontend/src/components/DataPanel.vue` + 新件。
   - 同单另一格（R170 交工第 4 条申报）：零列信封在前端只是"画像卡整块不出现"，没有错误条——`profile.error` 该接 `UiErrorState` 并显示 `message`，不许静默。
+
+## 89. 第四十二班第三格（09-23 14:2x–，主树 `cd19f47` → `9577b12`，前端基线 **849 passed / 41 files**，`lint:colors` 148（0 errors））：🔴 Docker 其实一直在跑（上一班"未起"是它自己沙盒不可达）· R171 判据证伪并收窄后并树 · 🔴 新硬依赖：线上库没有 `alerts.department` 列 ⇒ 后端镜像已重建但**不许 recreate** · R183+R184 判据首次成文
+
+### 一、🔴 被推翻的一格前置：不是 Docker 没起
+
+- 实取：`Get-Process com.docker.backend` 两枚 StartTime = **2026/9/23 12:19:41/42**；`docker version` 的 **Server 段正常应答**（Docker Desktop 4.90.0 / Engine 29.7.2）；`docker ps -a` 八枚容器全在 —— backend / worker / scheduler 均 `Up 2 hours (healthy)`，另有 frontend、redis、postgres(pgvector)、ollama、migrate（30 h 前 exit 0）。
+- 所以上一格 §4BL 第六格那句「Docker 守护进程仍未起（13:0x 亲测连不上 `dockerDesktopLinuxEngine` npipe）⇒ run6 / 阶段 A 真机复验 / pgvector 双写窗全卡」**是它自己那层的读数错**：受限沙盒够不到命名管道，不等于守护进程没起。
+- ⇒ 补一条可机检规矩：**判「Docker 没起」必须同时出示 `docker version` 的 Server 段与 `Get-Process com.docker.backend` 的 StartTime**，缺一律记「未取证」，且必须先确认自己在哪一层查（沙盒内查不到 npipe 属工具限制，不属环境故障）。这条直接解开了 run6 / 阶段 A 复验 / 双写窗三处"等业主"的假闸。
+
+### 二、镜像重建（H12 那格由总控执行，不回报业主）
+
+- 🔴 `docker compose build` 在本机**不可用**：报 `failed to dial gRPC: header key "x-docker-expose-session-sharedkey" contains value with non-printable ASCII characters`（compose 的 buildkit 会话头）。正解是 plain `docker build` —— `docker-compose.yml:260-262` 的注释本来就为此把 tag 写死（`enterprise-brain:local` / `enterprise-brain-frontend:local`），`up -d --no-build` 能离线复用同名。
+- 🔴 **`--build-arg APT_MIRROR` 必须与现役镜像同值**（现取 `deploy/.env.server` 的 `mirrors.tuna.tsinghua.edu.cn`）。本班第一次少传 ⇒ `Dockerfile:24` 那层 cache miss，`apt-get update` + `build-essential` 重装跑到 180 s 未完，当场停；补对参数后**后端镜像 3 s、前端镜像 14 s 建成**。`GIT_SHA` / `BUILT_AT` 在 `Dockerfile:92-95`、位于全部 `COPY` 之后 ⇒ 改这两个值不会 invalidate 依赖层，可放心打 provenance。
+- 线上态证据（P-8 自此有据，不再靠猜）：`docker inspect` label `org.opencontainers.image.revision` = **`9577b12`**，`/app/BUILD_INFO` 同值；容器内计数 `alert_row_visible` **3** / `can_browse` **4** / `NUL_CHARACTER` **4** ⇒ R176 / R177 / R130 确在镜像内。
+- 一条虚警记档防下班再查：`docker compose --env-file deploy/.env.server config` 会打 `The "T2s4UfscQoRgZghD38IZY" variable is not set`。实测渲染值与文件原值**逐字节相同**（`POSTGRES_USER`/`POSTGRES_PASSWORD`/`REDIS_PASSWORD`/`AUTH_PASSWORD_HASH` 四枚全等；口令里那 6 枚 `$` 走的是 compose 的 `$$` 转义）⇒ 这不是「口令被插值改空」，别去改 `.env.server`。
+
+### 三、🔴 本格最有价值的一格：新镜像与线上库对不上，recreate 会当场打断告警屏
+
+- 实取线上库 `alerts` 列集合 = `ai_analysis / created_at / id / message / read / rule_id` 六列，**没有 `department`**；`schema_migrations` 已应用 0001–0011 且与 `migrations/` 文件名集合一一对上（`manifest.json` 11 枚）⇒ 不是漏跑迁移，是**从来没有这支迁移**。
+- 为什么以前不炸：`app/api/v1/alerts.py:104-106` 那条 `ALTER TABLE alerts ADD COLUMN IF NOT EXISTS department` 只在**非生产**分支跑；容器实读 `APP_ENV=production` ⇒ 走 `:62-78` 的检查分支。
+- 后果（若照原计划直接 recreate）：`_ensure()` 在 `alerts.py:75-78` 抛 `RuntimeError("alerts.department column is required in production; run migrations first")`；写侧 `alerts.py:454` 的 `INSERT INTO alerts (rule_id, message, ai_analysis, department)` 也会撞 `column "department" does not exist`。⇒ **R184 由「排队单」升为「后端镜像落地」的硬前置**。本班处置：镜像建好但**不 recreate**，旧容器继续跑旧代码（线上告警屏可用，代价是越权那三格在线上仍是旧的）；容器 recreate 与 run6 一起排在 R184 落库之后。
+- 存量读数（回填要靠它，不许猜）：`select count(*) from alerts` = **0 行**、`from pending_approvals` = **83 行**。
+
+### 四、R183 + R184 判据（此前只在看板 §4BL 五 有一句话，本节首次成文）
+
+两枚**必须同一笔迁移文件**发（`migrations/0012_*.sql` + `manifest.json` 同步一枚条目）：分两笔的话，第一笔只补 `alerts.department` 会让 R176 的读侧与 R172 的写侧在半路上各自看到「列存在但对面那张表还没有」，而 R176 是 fail-closed 的，歪一半等于告警路由整条挂。
+
+- **R184 `alerts.department`**：`ALTER TABLE alerts ADD COLUMN department TEXT NOT NULL DEFAULT ''`。语义必须与 `app/api/v1/alerts.py` 已并树的判定逐字对齐 —— `alert_row_scope_sql` 认 `department IS NULL OR department = ''` 为**无归属=对已过资源级闸门的主体保持可见**（`alert_row_visible` 的 docstring 明写这条心智，与 `app/common/policy.py` 的「无主文档」同源）。⇒ 判据：① 迁移幂等（`IF NOT EXISTS`），零行存量时执行完 0 警告；② 有存量行时**只留 `''`，不许从 `rule_id`/数据集登记表反推猜部门**（猜一次就是一条写进库的假归属）；③ 迁移后生产分支的 `_ensure()` 必须从 `RuntimeError` 变成放行，这一点要用一条**真跑 `_ensure()`** 的用例钉住，而不是只钉 SQL 文本；④ `scripts/audit_r160_department_columns.py` 的普查读数要跟着翻（它今天把 `alerts` 记成缺列）。
+- **R183 `pending_approvals.declared_lane`**：R172（`699e17d`）留的 PG 半条腿。列 `TEXT NOT NULL DEFAULT ''`；写侧 `app/storage/pending_approvals.py:212` 那条 `INSERT` 开始绑这一列，值取 `app/agents/nodes.py:1158` 的 `DECLARED_LANE_KEY` 同源（`declared_lane_from_config`），**不许另起第二份归一化**（`normalize_declared_lane` 已存在，仓库级唯一通路规矩）。判据：① 83 枚存量行回填后 `declared_lane = ''`，且 R172 已钉的「读不到那一格时落空串、读数与改前逐字节相同」在两列都成立（缺口照旧可数，不遮丑）；② 被 `tests/test_r172_lane_across_hitl.py::test_the_parking_writer_binds_no_column_the_ledger_does_not_have` 钉着的那条禁令自此**由「不许绑」翻成「列已在、必须绑」**——翻钉要写清理由，不许静默改断言；③ 读侧回灌走 R172 已有的三处出口（响应头 / canonical `request.started` / trace 载荷），**本单不碰 `chat.py`**（该文件 R175 在写）。
+- 🔴 迁移是**部署件**：`migrations/README.md` 明写「Runtime imports must not create tables」，执行只走 `python scripts/migrate.py`；执行层与总控都**不许**在产品代码里补 DDL，也不许直接对线上库手搓 `ALTER`。落库属真机动作，与 recreate 同窗口由总控执行并留时间戳。
+
+### 五、R171 并树 `9577b12`（原判据被证伪，收窄后才成立）
+
+跟进单 §85 三 那句「`onAuthEvent` 的 `loginError.value = event.message` 为 undefined ⇒ 错误条不亮」不成立：`frontend/src/lib/http.js:95` 自 `a07294f`（09-15）起就带文案，且全盘 `src/**` 只有 `:95` / `:127` 两枚 `emit`、都带文案。真残留是**失效收尾这一支假定发出方一定带了文案**：少带 / 空串 / 非字符串时人已被踢回登录页而错误条与提示条两处一起空着（施工方在反证里 SSR 出过印着 `NaN` 二字的真产物，不是理论洞）。现在两张脸各一句自家话（真失效 / 来路不明），认不得的 `type` 不借用它自带的句子；`!event` 与 `expiring` 两条既存语义一字未动。R169 那枚「认不得的事件」用例只钉了「令牌不许留着」、**一处屏上文字都没钉**，所以这一格此前无人值守是事实。主树亲测前端 **849 / 41 files** = 826+23，`lint:colors` 148（0 errors）同基线。
+
+### 六、名册与锁（这一格起生效）
+
+- 在途：`Planck`(R181@be-r181) · `Kepler`(R175@be-r175，**持有 `chat.py`**) · `Helmholtz`(R180 返工@be-r180) · 新派 `@be-r183`（R183+R184，基点 `9577b12`，写域 `migrations/**` + `app/storage/pending_approvals.py` + 新件，🚫 `chat.py`/`frontend/**`）。
+- 已结案待并/已并：`Dewey`(R182) 交工 —— `app/tools/excel.py` 23/4 + `DataPanel.vue` 2/1 + 两枚新件（后端 13 枚 / 前端 6 枚），主树定向复跑 25 passed（R170 那 12 枚不退化）+ 前端 6 passed，全量见本节末尾数字。`Sagan`(R171) 已并 `9577b12` 并 close。
+- 🔴 R182 交工申报的第二处病灶在禁入区：`app/agents/tools.py:978` `df.select_dtypes(include=["object"])` 在 pandas 3 下同样恒空 ⇒ `:281` 的「哪个/谁最高」分支永不触发。`tools.py` 当前无人持有，但**它同时是 R173 的写域**（等 `chat.py`），故另立 **R185**（复用 `_is_text_series`，一处判定、两枚反证），排在 R173 之前先派 —— 它不需要 `chat.py`，别和 R173 绑在一起。
+- 待业主缩到很短：`automation-2` 心跳仍指死线程；主树 8 项未跟踪垃圾；改评测集（55/105 条 `must_contain` 无出处）需单独批。**Docker / 镜像重建两格本格已做完，不再挂在业主名下。**
