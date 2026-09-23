@@ -34,9 +34,22 @@
 5. 零字节的题用哨兵串 EVAL_BLANK_SENTINEL 占位，并把 evidence 强制清空（不许给一条没答的题记
    出处分），sidecar 标 sentinel；超过 EVAL_MAX_BLANKS 题就 raise 停窗：那是系统性故障，
    不该被一份能出数的报告盖住。
+7. R181 判据②（09-23）：给 ``event: text`` 装一把尺子 —— 帧数、前缀单调坏形数、末帧与终答的
+   缺字/多字，逐题落到 sidecar 之外的第二份证据件（``FRAME_LEDGER``，默认与 sidecar 同目录、
+   同名加 ``-frames``）。🔴 这一条**只观测，不改评分**：``answer`` 的取值口径、
+   ``APPROVAL_FAILED_SENTINEL``、``cached``、``first_token_at``、``steps`` 五样一个字未动，
+   sidecar 那九键与其后的甲案七键也一字未动（把读数并进 sidecar 那一行会被
+   ``tests/test_r123_hitl_approval.py:243`` 那条「extras 只许是甲案七键的子集」当场判红，
+   而那枚文件不在本单写域）。读数口径与成因见 ``docs/testing/r181-text-frame-readings.md``。
+
+   本文件的行号引用会随 ``app/api/v1/chat.py`` 漂移。09-23 在本树实取：``chat.py:1364`` 今天落在
+   ``_complete_pending_steps`` 的收尾里（``return completed`` 在 :1363），「/ask 只发一条整段 text」
+   这句旧断言早已失效；``/approve`` 路由在 :2271 而不是 :1719。R181 只订正自己动到的那几处，
+   其余留给总控统一校。
 
 跑法与凭据见看板 §4BD：BASE_URL / 账号一律走环境变量，代码里没有硬编凭据。
 """
+import hashlib
 import json
 import os
 import time
@@ -61,6 +74,23 @@ APPROVAL_ROUNDS = max(1, int(os.getenv("EVAL_APPROVAL_ROUNDS", "3")))
 APPROVAL_FAILED_SENTINEL = os.getenv(
     "EVAL_APPROVAL_FAILED_SENTINEL", "<approval-failed-no-terminal-answer>")
 SIDECAR = Path(os.getenv("EVAL_SIDECAR") or str(Path(__file__).with_name("collect-sidecar.jsonl")))
+#: R181 判据② 的帧证据件：一题一行，join 键 ``id``（外加 attempt / session_id）。
+#: 落点由 frame_ledger_path() 现算 —— 钉在 import 期会绕过"事后重绑 SIDECAR"的仓外纪律
+#: （本单第一版就栽在这里：跑兄弟用例时往 scripts/ 里漏了一行，已清）。
+FRAME_LEDGER_ENV = "EVAL_FRAME_LEDGER"
+
+
+def frame_ledger_path():
+    """帧证据件落点：``EVAL_FRAME_LEDGER`` 优先，否则跟着 SIDECAR（同目录、``-frames`` 尾缀）。
+
+    跟着 SIDECAR 是为了让 runbook §8「产物落仓外」这一条纪律自动覆盖它：开窗只设一个
+    ``EVAL_SIDECAR`` 就不会把第二份证据件漏在仓内。两个变量都不设时两份都落进 ``scripts/``，
+    与 sidecar 默认值是同一条既有脚枪（runbook §16 记过）。
+    """
+    override = str(os.getenv(FRAME_LEDGER_ENV) or "").strip()
+    if override:
+        return Path(override)
+    return Path(SIDECAR).with_name(Path(SIDECAR).stem + "-frames.jsonl")
 # 空 dict = 无视 http_proxy/HTTPS_PROXY，等价 curl --noproxy "*"（runbook §6：Clash 会劫 127.0.0.1）
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _TOKEN = ""
@@ -124,10 +154,17 @@ def _pace():
 
 
 def _blank_observation(session_id):
-    """一轮流的观测桶：/ask 与 /approve 两个出口共用同一个形状、同一套解析。"""
+    """一轮流的观测桶：/ask 与 /approve 两个出口共用同一个形状、同一套解析。
+
+    R181 判据② 在桶尾追加四枚帧读数（帧数 / 坏形数 / 首枚坏形序号 / 末帧原文）。
+    🔴 只记账：``answer`` 仍然是「后帧覆盖前帧」的末帧取值，一个字节都没改口径。
+    """
     return {"answer": "", "evidence": [], "first_token_at": None, "steps": 0,
             "hitl": False, "error_text": "", "queued": None, "cancelled": False,
-            "cached": False, "session_id": session_id}
+            "cached": False, "session_id": session_id,
+            # R181：这一条流的 text 帧尺（cumulative 语义下的帧数与坏形数）
+            "text_frames": 0, "prefix_breaks": 0, "first_break_at": 0,
+            "last_text_frame": ""}
 
 
 def _consume(response, out):
@@ -139,12 +176,15 @@ def _consume(response, out):
             out["steps"] += 1  # 计数留给 R38 用量审计
         elif name == "text":
             if data.get("cached"):
-                out["cached"] = True  # chat.py:1177
+                out["cached"] = True  # 命中帧的 cache_fields 在 chat.py:1645-1649，发帧在 :1660
             content = data.get("content")
+            # R181 判据②：先给这一帧记账，再按既有口径取末帧覆盖前帧。缺 content 的帧
+            # 记成空串帧 —— "空帧"本身就是一种形状，不许不数。计数不参与下面任何一行。
+            _count_text_frame(out, "" if content is None else str(content))
             if content:
                 if out["first_token_at"] is None:
                     out["first_token_at"] = arrival  # 首字到达＝客户端实测，不用服务端 elapsed 折算
-                out["answer"] = str(content)  # /ask 只发一条整段 text（chat.py:1364）
+                out["answer"] = str(content)  # 末帧覆盖前帧：片帧 chat.py:1863，收尾整段 :1943
         elif name == "sources":
             out["evidence"] = list((data.get("data") or {}).get("sources", []))  # chat.py:1403-1418
         elif name == "hitl":
@@ -158,6 +198,123 @@ def _consume(response, out):
         elif name == "cancelled":
             out["cancelled"] = True  # chat.py:1283
     return out
+
+
+# ===== R181 判据②：给 ``event: text`` 装的尺子。以下每一行都只观测，不改评分。 =====
+
+def _sha12(text):
+    """帧正文的短指纹。判据② 要「逐字比对」，但不必把客户正文抄进第二份文件。"""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def _common_prefix_len(left, right):
+    """两串共有的前缀长度 —— 它就是「缺字 / 多字」的分界线。"""
+    limit = min(len(left), len(right))
+    index = 0
+    while index < limit and left[index] == right[index]:
+        index += 1
+    return index
+
+
+def _count_text_frame(out, frame):
+    """收帧处：数帧 + 查相邻两帧的前缀单调（cumulative 语义），坏形记一次并留首枚序号。
+
+    后端每来一枚片就发一帧「截至这一片的累计全文」——构造器 ``text_sse_frame()`` 在
+    ``app/api/v1/chat.py:250-262``，片帧发在 :1863、收尾整段发在 :1943、命中道只有 :1660
+    那一帧。所以一条合法流里后帧必须以先帧为前缀；不满足就是坏形（片与终答不同源，或
+    流被截断）。后端在 :1888 为同一件事记 error 日志，这里是收端那把对称的尺子。
+    """
+    if out["text_frames"] and not frame.startswith(out["last_text_frame"]):
+        out["prefix_breaks"] += 1
+        if not out["first_break_at"]:
+            out["first_break_at"] = out["text_frames"] + 1  # 坏形记"后帧"的序号（1 起）
+    out["text_frames"] += 1
+    out["last_text_frame"] = frame
+
+
+def _new_frame_ledger():
+    """一题的帧账本。一题可能不止一条流：/ask 之外还有 R123 甲案的若干轮 /approve。"""
+    return {"text_frames": 0, "prefix_breaks": 0, "last_text_frame": "",
+            "streams": 0, "max_stream_frames": 0, "per_stream": []}
+
+
+def _fold_frames(ledger, out):
+    """把一条流的帧读数并进这一题的账，原地返回这本账。
+
+    前缀单调只在**同一条流内**判：批准后恢复的那条流从零起累计，拿它去比挂起轮的末帧
+    会凭空长出坏形。跨流只留「最后真正到达的那一帧」当末帧（covering 语义下收端显示的
+    就是它）。零帧的流照样计入 ``streams``，但不覆盖末帧 —— 没到达的帧不算末帧。
+    """
+    frames = int(out.get("text_frames") or 0)
+    breaks = int(out.get("prefix_breaks") or 0)
+    ledger["text_frames"] += frames
+    ledger["prefix_breaks"] += breaks
+    ledger["per_stream"].append({"frames": frames, "breaks": breaks,
+                                 "first_break_at": int(out.get("first_break_at") or 0)})
+    ledger["streams"] += 1
+    ledger["max_stream_frames"] = max(int(ledger["max_stream_frames"]), frames)
+    if frames:
+        ledger["last_text_frame"] = str(out.get("last_text_frame") or "")
+    return ledger
+
+
+def _frame_readings(frames, answer):
+    """判据② 的四枚读数，外加逐字比对用的两枚指纹。🔴 没有任何一枚进评分。
+
+    ``missing_chars`` / ``extra_chars`` 都是「终答相对末帧」：前者＝末帧里终答没写到的字，
+    后者＝终答里末帧没带出来的字，共同前缀是分界，所以两侧分叉时两枚各记自己那半。
+    一致性按 **covering 语义**判：末帧把终答所缺的部分盖住（``末帧.startswith(终答)``）
+    即算一致 —— **不是严格相等**，收端 ``frontend/src/lib/sessions.js`` 的 covering 分支
+    拿新帧整段替换，前端最终显示的就是末帧。``text_frames == 0`` 是**空读**（一帧都没到）：
+    这一枚只在终答也是空串时才"空真"为 true，别读成通过 —— 合格线要求 ``text_frames > 1``，
+    空读永远读不出成立。
+    """
+    last = str(frames.get("last_text_frame") or "")
+    answer = str(answer or "")
+    shared = _common_prefix_len(last, answer)
+    return {"text_frames": int(frames["text_frames"]),
+            "prefix_breaks": int(frames["prefix_breaks"]),
+            "missing_chars": len(last) - shared,
+            "extra_chars": len(answer) - shared,
+            "last_frame_covers_answer": last.startswith(answer),
+            "last_frame_chars": len(last),
+            "last_frame_sha": _sha12(last),
+            "answer_chars": len(answer),
+            "answer_sha": _sha12(answer),
+            "streams": int(frames["streams"]),
+            # 这一枚单独给，是为了把"两条单帧流凑出 2 帧"与"一条流真在逐片累计"分开读：
+            # 判据② 要的是后者。挂起轮 + 批准轮各一帧时 text_frames=2 而 max_stream_frames=1。
+            "max_stream_frames": int(frames["max_stream_frames"]),
+            "per_stream": list(frames["per_stream"])}
+
+
+def _frame_verdict(readings):
+    """把四枚读数折成一格「判据② 这条流今天成不成立」，供收窗直接读。
+
+    口径写死在 ``docs/testing/r181-text-frame-readings.md``：同一条流里累计出 >1 帧、
+    零坏形、终答相对末帧不缺字（covering ⇒ ``extra_chars == 0``）。
+    """
+    return bool(readings["text_frames"] > 1
+                and readings["max_stream_frames"] > 1
+                and readings["prefix_breaks"] == 0
+                and readings["extra_chars"] == 0)
+
+
+def _record_frames(row_id, kind, attempt, session_id, frames, answer, sentinel):
+    """一题一行的帧证据件：与 sidecar 同一次落盘动作里写，join 键 ``id``。
+
+    🔴 侧车一个字都不动：``tests/test_r123_hitl_approval.py:243`` 把 sidecar 除九键之外的
+    键集钉成甲案那七键的子集，读数并进那一行即红，而那枚文件不在 R181 写域。
+    """
+    row = {"id": row_id, "kind": kind, "attempt": attempt, "sentinel": sentinel,
+           "session_id": session_id, "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
+    readings = _frame_readings(frames, answer)
+    row.update(readings)
+    row["criterion_two_holds"] = _frame_verdict(readings)
+    target = frame_ledger_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as fh:
+        print(json.dumps(row, ensure_ascii=False), file=fh)
 
 
 def _stream_once(question, session_id, idempotency_key):
@@ -180,8 +337,11 @@ def _approve_once(session_id):
         return _consume(resp, out)
 
 
-def _resolve_hitl(row_id, session_id, steps):
+def _resolve_hitl(row_id, session_id, steps, frames=None):
     """R123 甲案：把挂起轮批准到终答（判据 1），拿不到终答就照实记 approval_failed（判据 3）。
+
+    ``frames`` 是 R181 判据② 那一题的帧账本：恢复流的帧并进同一本账（不传就现造一本，
+    单测可以只管这一条流）。评分口径一个字没动。
 
     返回 dict：交回采集器的 answer/evidence/first_token_at/steps/kind/sentinel，加侧车用的
     approved/rounds/http_status/error。🔴 每一条失败分支都不返回批准前的 park 文本 ——
@@ -190,6 +350,7 @@ def _resolve_hitl(row_id, session_id, steps):
     批准失败**不占用** EVAL_ATTEMPTS 的重试预算：attempt 记的是「这道题的 /ask 打到第几次」
     （判据 5），整题重来会把已花掉的生成时间重复计一次，量出来的就不是模型而是排队。
     """
+    frames = _new_frame_ledger() if frames is None else frames
     approved = False
     rounds = 0
     http_status = None
@@ -211,6 +372,7 @@ def _resolve_hitl(row_id, session_id, steps):
             break
         http_status = 200
         approved = True
+        _fold_frames(frames, out)  # R181 判据②：恢复流的帧也算进这一题的账
         if out["cached"]:
             raise RuntimeError(
                 row_id + ": /approve 之后出现缓存命中 ⇒ 开窗纪律破了（P-18），停下重跑，不许估算")
@@ -299,6 +461,9 @@ def transport(row):
             last_error = type(exc).__name__ + ": " + str(exc)
             time.sleep(RETRY_SLEEP)
             continue
+        # R181 判据②：这一题的帧账从这条流起记。被打回重试的那一次整题重来，
+        # 它没交回采集器，也就不替它记账 —— 记的是"这一题最终交回的那一路字节"。
+        frames = _fold_frames(_new_frame_ledger(), out)
         if out["cached"]:
             raise RuntimeError(
                 row_id + ": 命中答案缓存 ⇒ 开窗纪律破了（P-18 要求开窗前 flush Redis 的 answer:*）。"
@@ -331,7 +496,7 @@ def transport(row):
         steps = out["steps"]
         if kind == "hitl":
             extra["pre_answer"] = str(answer)  # 旧口径重算要的那一帧原文（判据 2）
-            resolved = _resolve_hitl(row_id, out["session_id"], steps)
+            resolved = _resolve_hitl(row_id, out["session_id"], steps, frames)
             answer = resolved["answer"]
             evidence = resolved["evidence"]
             first_token_at = resolved["first_token_at"]
@@ -349,6 +514,9 @@ def transport(row):
                    "tool_calls": steps}
         # 故意不自报 latency_ms：交给采集器 perf_counter 实测（collect:192/:146）
         _record(row_id, kind, attempt, started, payload, sentinel, extra)
+        # R181 判据②：sidecar 那九键 + 甲案七键原样不动，帧读数落在第二份证据件里。
+        # 取的是交回采集器的那个 answer（含哨兵替换之后），所以"终答"就是评分真正看到的字。
+        _record_frames(row_id, kind, attempt, out["session_id"], frames, answer, sentinel)
         return payload
     raise RuntimeError(row_id + ": " + str(ATTEMPTS) + " 次都没打通，最后一次 " + str(last_error))
 
@@ -358,4 +526,5 @@ def summary():
     return {"sidecar": str(SIDECAR), "blank_threshold": MAX_BLANKS, "attempts": ATTEMPTS,
             "approval_rounds": APPROVAL_ROUNDS,
             "approval_failed_sentinel": APPROVAL_FAILED_SENTINEL,
-            "approval_failures_this_process": _APPROVAL_FAILURES}
+            "approval_failures_this_process": _APPROVAL_FAILURES,
+            "frame_ledger": str(frame_ledger_path())}  # R181 判据② 的证据件落点（收窗自查用）
