@@ -1003,7 +1003,7 @@ def _row_scope_denial_text(
 
 def _analyze_data(query: str, config: RunnableConfig) -> str:
     from app.common.rbac import filter_dataframe_rows_with_scope
-    from app.tools.excel import load_excel, profile_dataframe
+    from app.tools.excel import load_excel, profile_dataframe, select_text_columns
     context = _tool_context(config)
     if context is None:
         record_tool_status(
@@ -1042,7 +1042,9 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
 
             # 根据 query 计算具体答案
             numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-            text_cols = df.select_dtypes(include=["object"]).columns.tolist()
+            # R185：文本列名单走 excel 那一族语义谓词的唯一出口，不再自己比 dtype 字面串。
+            # 旧写法只靠 pandas 3 那条声明要移除的兼容通道才勉强捞到 str 列，string/category 两族当场漏。
+            text_cols = select_text_columns(df)
 
             try:
                 ai_parts = _answer_query(df, query, numeric_cols, text_cols)

@@ -113,6 +113,20 @@ def _is_text_series(series: pd.Series) -> bool:
     return bool(pd.api.types.is_string_dtype(series) or pd.api.types.is_object_dtype(series))
 
 
+def select_text_columns(frame: pd.DataFrame) -> list:
+    """一帧里文本列的名单 —— 判定复用 `_is_text_series`，本函数不另立第二份谓词。
+
+    R185 把这格口径公开成出口：`app/agents/tools.py` 的 analyze_data 那条腿原先自己写了一份
+    `select_dtypes`，只按字面 dtype 串「object」判定；它今天全凭 pandas 3 那条声明要移除的兼容通道
+    才勉强捞到 `str` 列（每调一次发一枚 Pandas4Warning），而 `string` / `category` 两族当场漏掉。
+    兼容通道一撤，这份名单就从「勉强对」滑成「恒空」，「哪个/谁最XX」那一支随之饿死。
+
+    返回原始列标签而不是 `str(col)`：画像里的 `text_columns` 是给人看的显示名，这一份是要拿去
+    `frame[col]` 取数的键，两者同源于同一个谓词，但不能互相顶替。
+    """
+    return [column for column in frame.columns if _is_text_series(frame[column])]
+
+
 def profile_dataframe(df: pd.DataFrame) -> dict[str, Any]:
     """
     生成数据画像：
