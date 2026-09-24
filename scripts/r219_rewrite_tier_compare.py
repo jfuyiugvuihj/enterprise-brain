@@ -126,9 +126,19 @@ def install_offline_guard() -> None:
 
 
 def uninstall_offline_guard() -> None:
-    """还原闸门（selfcheck 之外不需要，但留一口，防子进程继承脏桩）。"""
-    for name, value in _ORIGINALS.items():
-        socket.socket = value if name == "class" else setattr(socket, name, value)
+    """还原闸门：装了多少就得还多少，一条不许漏。
+
+    🔴 09-24 总控修（原来这枚函数是坏的）：旧实现是
+    `socket.socket = value if name == "class" else setattr(socket, name, value)`——
+    对非 class 项，条件表达式先调用 setattr（还原正确），再把它的返回值 None
+    赋给 `socket.socket`，等于**还原时顺手把 socket 类删了**。它今天没炸只是因为
+    从来没人调用它（见 build_report 那笔）。两步一起修，少一步都是假的。
+    """
+    if "class" in _ORIGINALS:
+        socket.socket = _ORIGINALS["class"]
+    for name in _GUARD_ARMS:
+        if name in _ORIGINALS:
+            setattr(socket, name, _ORIGINALS[name])
 
 
 def chromadb_loaded() -> bool:
@@ -473,45 +483,56 @@ def run(standin_mode: str, limit: int | None, selfcheck: bool) -> dict:
         StandInRewriter(mode=standin_mode, registry=registry_lookup), clone_documents(documents))
     pipeline_fast = build_pipeline(
         StandInRewriter(mode=standin_mode, registry=registry_lookup), clone_documents(documents))
+    # 🔴 09-24 总控修（全量门 291 枚假红的真因）：这枚闸门换的是**进程级**的
+    # socket.socket / create_connection / getaddrinfo。原来只装不还，被 pytest
+    # 进程内 import 跑一次之后，桩就留给整个会话：之后绑定 socket 的东西
+    # （asyncio 事件循环、psycopg、redis）拿到的都是会抛 AssertionError 的桩，
+    # orchestrator 直接「Postgres 探活失败 → 降级 MemorySaver」，同会话后面每一枚
+    # /ask 用例集体倒。主张一个字不删——量具照样全程拦出站，只是不再把桩留给邻居。
+    # 同一形状今天第二次（第一次是 rehearse_eval_window 的 import 副作用拦网，R218 修）。
     install_offline_guard()
-    normalize = coverage.normalize
+    try:
+        normalize = coverage.normalize
 
-    results: list[dict] = []
-    for row in rows_spec[:limit]:
-        question = str(row["question"])
-        full = run_arm(pipeline_full, question, "full")
-        fast = run_arm(pipeline_fast, question, "fast")
-        terms = [str(term) for term in (row.get("must_contain") or [])]
-        gold = _gold_for(terms, documents, normalize)
-        results.append({"id": str(row["id"]), "question": question, "terms": terms,
-                        "full": full, "fast": fast, "gold": gold})
-    summary = compare_rows(results)
-    # 自校：同一臂、同一题、同一管线连跑两次必须逐位相同（不同 ⇒ 状态还在漏，读数作废）
-    determinism = {"full_arm_rerun_identical": None, "sampled": 0}
-    if results:
-        checked = 0
-        identical = True
-        for row in results[:3]:
-            again = run_arm(pipeline_full, row["question"], "full")
-            checked += 1
-            identical &= (again["hits"] == row["full"]["hits"])
-        determinism = {"full_arm_rerun_identical": bool(identical), "sampled": checked}
-    summary["determinism"] = determinism
-    summary["standin_mode"] = standin_mode
-    summary["registry_available"] = any(
-        _registry_seen(row) for row in results) if standin_mode == "registry" else None
-    summary["corpus"] = corpus_meta
-    summary["legs"] = "keyword-only"
-    summary["sample"] = {
-        "fixture": str(coverage.FIXTURE_REL), "rows": len(rows_spec),
-        "used": len(results),
-    }
-    summary["guard"] = {
-        "blocked_socket_attempts": len(BLOCKED_SOCKET_ATTEMPTS),
-        "chromadb_imported": chromadb_loaded(),
-    }
-    if selfcheck:
-        _selfcheck(results, summary)
+        results: list[dict] = []
+        for row in rows_spec[:limit]:
+            question = str(row["question"])
+            full = run_arm(pipeline_full, question, "full")
+            fast = run_arm(pipeline_fast, question, "fast")
+            terms = [str(term) for term in (row.get("must_contain") or [])]
+            gold = _gold_for(terms, documents, normalize)
+            results.append({"id": str(row["id"]), "question": question, "terms": terms,
+                            "full": full, "fast": fast, "gold": gold})
+        summary = compare_rows(results)
+        # 自校：同一臂、同一题、同一管线连跑两次必须逐位相同（不同 ⇒ 状态还在漏，读数作废）
+        determinism = {"full_arm_rerun_identical": None, "sampled": 0}
+        if results:
+            checked = 0
+            identical = True
+            for row in results[:3]:
+                again = run_arm(pipeline_full, row["question"], "full")
+                checked += 1
+                identical &= (again["hits"] == row["full"]["hits"])
+            determinism = {"full_arm_rerun_identical": bool(identical), "sampled": checked}
+        summary["determinism"] = determinism
+        summary["standin_mode"] = standin_mode
+        summary["registry_available"] = any(
+            _registry_seen(row) for row in results) if standin_mode == "registry" else None
+        summary["corpus"] = corpus_meta
+        summary["legs"] = "keyword-only"
+        summary["sample"] = {
+            "fixture": str(coverage.FIXTURE_REL), "rows": len(rows_spec),
+            "used": len(results),
+        }
+        summary["guard"] = {
+            "blocked_socket_attempts": len(BLOCKED_SOCKET_ATTEMPTS),
+            "chromadb_imported": chromadb_loaded(),
+        }
+        if selfcheck:
+            _selfcheck(results, summary)
+    finally:
+        uninstall_offline_guard()
+
     return {"summary": summary, "rows": results}
 
 

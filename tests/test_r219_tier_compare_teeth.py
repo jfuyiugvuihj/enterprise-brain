@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import socket
 import sys
 from pathlib import Path
 
@@ -204,3 +205,38 @@ def test_counter_evidence_a_sandbox_corpus_label_fails_the_provenance_cell(
     padded["matches_production_index"] = True
     assert padded["matches_production_index"] is not meta["matches_production_index"]
     assert len(fake) != len(documents)
+
+# ---------------------------------------------------------------------------
+# 09-24 补：闸门的**生命周期**（本案最贵的一格——它毒死的是别人，不是自己）
+# ---------------------------------------------------------------------------
+
+def test_the_offline_guard_does_not_survive_the_report(ruler, report):
+    """跑完一次报告，进程级 socket 必须还是真的。
+
+    这枚钉今天才有价值：`report` 夹具在本进程里跑量具，而量具装的是全局桩。旧版只装不还
+    ⇒ 同会话之后每一枚 /ask 用例都拿到被换掉的 `socket.socket`，orchestrator 连不上 Postgres
+    就降级 MemorySaver，全量门 291 枚红而**本件自己全绿**。摘掉 finally 就红在这一格。
+    """
+    assert socket.socket is ruler._REAL_SOCKET_CLASS, (
+        "闸门没还原：socket.socket 仍是本件的桩（或被还原成 None）——" + repr(socket.socket))
+    for name in ruler._GUARD_ARMS:
+        assert callable(getattr(socket, name)), f"{name} 在还原过程中被弄没了"
+    with pytest.raises(OSError) as info:
+        socket.create_connection(("127.0.0.1", 1), timeout=1)
+    assert not isinstance(info.value, AssertionError), f"仍被本件的桩拦住：{info.value}"
+
+
+def test_counter_evidence_a_leaked_guard_is_caught_here(ruler):
+    """反证：把「不还原」这一形状真造出来，红的必须落在上面那一格，不是落在别处。"""
+    ruler.install_offline_guard()
+    try:
+        assert socket.socket is not ruler._REAL_SOCKET_CLASS, "闸门没装上，反证无从谈起"
+        with pytest.raises(AssertionError):
+            socket.create_connection(("127.0.0.1", 1), timeout=1)
+    finally:
+        ruler.uninstall_offline_guard()
+    assert socket.socket is ruler._REAL_SOCKET_CLASS, (
+        "还原是坏的：uninstall 之后 socket.socket = " + repr(socket.socket))
+    with pytest.raises(OSError) as info:
+        socket.create_connection(("127.0.0.1", 1), timeout=1)
+    assert not isinstance(info.value, AssertionError), f"还原没还原干净：{info.value}"

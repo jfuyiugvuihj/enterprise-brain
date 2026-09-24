@@ -701,10 +701,15 @@ def test_there_is_still_only_one_directory_funnel_to_guard(chroma_writeback_guar
     # R162 起了第四处（scripts/diag_r162_chroma_zero_rows.py）：它按字节把源库复制到仓外，
     # PersistentClient 只开副本，所以这一处**不需要**新增改道规则——改道打在工厂本身，新收口自动落在
     # 罩子里。清单仍要如实加长：本用例钉的是"一共有几处"，不是"谁需要特判"。
+    # R218（09-24 随并树进来）起了第五处：scripts/r218_switch_rehearsal.py 的 PersistentClient。
+    # 与 R162 同一形状——它先按字节把库复制进临时目录、只开副本，所以照样不需要特判；
+    # 这里只是把枚数如实从四记到五。总控 09-24 亲验：本件跑完 R134 的收尾报告仍是
+    # 「落点被改道出工作树: N 次（0 个原路径）」，且 git status 里 chroma_db 零变化。
     assert funnels == [
         "app/rag/retriever.py:PersistentClient",
         "scripts/compare_vector_recall.py:PersistentClient",
         "scripts/diag_r162_chroma_zero_rows.py:PersistentClient",
+        "scripts/r218_switch_rehearsal.py:PersistentClient",
         "scripts/rebuild_index.py:PersistentClient",
     ], "按目录开 Chroma 的收口清单变了，R134 的改道要跟着扩：" + "、".join(sites)
 
