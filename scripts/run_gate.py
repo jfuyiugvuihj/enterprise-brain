@@ -11,6 +11,13 @@ Measured on this box (32 logical cores, 274 test files, 4101 passed / 39 skipped
 subprocess, a container or a git call; ``--dist load`` would split one file's tests across
 workers and turn those into false reds. ``worksteal`` was not measured.
 
+Worker count is memory-bound here, not core-bound, and this box has already died once from
+getting it wrong: on 09-24 at 10:18 the Resource-Exhaustion-Detector logged three python.exe
+processes at ~2 GB each while a ``-n 16`` gate was running next to five agents' own test runs,
+and at 10:20 the host rebooted dirty (Kernel-Power 41) and killed four in-flight agents. Every
+worker of this suite imports torch/pandas, so budget ~2 GB per worker and read the free-memory
+figure before trusting ``-n``. The default below throttles itself for that reason.
+
 The flags deliberately do NOT live in ``pyproject.toml`` as ``addopts``: the nested pytest
 invocations above inherit ``addopts``, so a global ``-n 8`` fans out recursively, and a
 three-test file would still pay for eight interpreters. Opt in here, not globally.
@@ -29,20 +36,56 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import ctypes
+import ctypes.wintypes as wt
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE_ARGS = ["-m", "pytest", "-q", "-p", "no:cacheprovider", "--no-header"]
 
 
+class MemoryStatusEx(ctypes.Structure):
+    _fields_ = [
+        ("dwLength", wt.DWORD), ("dwMemoryLoad", wt.DWORD),
+        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+        ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+    ]
+
+
+def free_memory_gb() -> float:
+    """Available physical memory, or -1.0 when the question cannot be asked."""
+    try:
+        stat = MemoryStatusEx()
+        stat.dwLength = ctypes.sizeof(MemoryStatusEx)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+            return -1.0
+        return stat.ullAvailPhys / 1024 ** 3
+    except Exception:
+        return -1.0
+
+
+def fit_workers() -> int:
+    """One worker of this suite costs about 2 GB (torch + pandas per interpreter)."""
+    free = free_memory_gb()
+    if free < 0:
+        return 4
+    if free < 4:
+        return 1
+    return max(2, min(8, int(free // 2)))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("-n", "--workers", type=int, default=8,
-                        help="xdist workers for --dist loadfile (default 8; 16 measured slower)")
+    parser.add_argument("-n", "--workers", type=int, default=0,
+                        help="xdist workers (default 0 = pick from free memory; 8 needs ~16 GB free)")
     parser.add_argument("--serial", action="store_true", help="force the serial gate")
-    parser.add_argument("args", nargs="*", help="extra pytest arguments (files, -k, -m, ...)")
-    opts = parser.parse_args()
+    # Anything argparse does not own (paths, -k, -m, --lf, ...) goes straight to pytest, in order.
+    opts, extra = parser.parse_known_args()
+    if opts.workers <= 0:
+        opts.workers = fit_workers()
 
-    cmd = [sys.executable, *BASE_ARGS, *opts.args]
+    cmd = [sys.executable, *BASE_ARGS, *extra]
     parallel = importlib.util.find_spec("xdist") is not None and not opts.serial and opts.workers > 1
     if parallel:
         cmd += ["-n", str(opts.workers), "--dist", "loadfile"]
