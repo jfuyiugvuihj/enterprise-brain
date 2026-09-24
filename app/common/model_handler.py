@@ -42,7 +42,7 @@ from app.common.logger import logger
 from app.common.model_budget import (
     ModelContextLimitExceeded,
     OUTPUT_TRUNCATED_CODE,
-    authorize_call,
+    authorize_or_refuse,
     budget_signal,
     context_error_code,
     estimate_prompt_tokens,
@@ -582,10 +582,11 @@ class ModelHandler:
 
         budget = self._call_budget(stream)
         prompt_tokens = estimate_prompt_tokens(messages)
-        # Sized and, if it cannot fit, refused before a slot is taken. A request this
-        # window will never hold must not queue behind real work, and must not come back
-        # as an answer the server stopped halfway through.
-        authorize_call(budget, prompt_tokens, stream=stream)
+        # Sized and refused before a slot is taken, twice over: a request this window will
+        # never hold must not queue behind real work and must not come back as an answer the
+        # server stopped halfway through, and a request this clock cannot pay for must not be
+        # sent at all -- that one is the 20-minute hole R204 was opened for.
+        authorize_or_refuse(budget, prompt_tokens, stream=stream)
 
         try:
             slot = self._budget.acquire(wait_seconds=0)

@@ -18,6 +18,11 @@ is the one outcome ``app/agents/nodes.py`` already refuses to produce for a cont
 ``max_tokens_verdict`` performs that arithmetic, ``authorize`` applies it to one call, and
 every number behind the decision is logged next to the final value, so a clamp can never be
 mistaken for a choice an operator made.
+
+``authorize_or_refuse`` is the same arithmetic with the missing half-sentence attached: a
+boundary that is about to put a request on the wire can decline to send an answer this clock
+cannot pay for, and report the ratified timeout code instead of spending the whole ceiling
+finding out.
 """
 from __future__ import annotations
 
@@ -307,6 +312,47 @@ CONTEXT_ERROR_FRAGMENTS = (
     "too many tokens",
     "prompt is too long",
 )
+
+#:
+#: The refusal for "this clock cannot pay for this answer, and no clamp exists that could".
+#:
+#: It is a subclass of :class:`ModelContextLimitExceeded` for one reason, and the reason is a
+#: semaphore, not a taxonomy: ``app/agents/nodes.py`` hands the single local-model slot back on
+#: exactly that class at its pre-send boundary (non-streaming ``:666``, streaming ``:813``), and
+#: ``MODEL_MAX_CONCURRENCY=1`` means a refusal that leaked its slot would turn one unaffordable
+#: question into a machine that answers nothing ever again. So the plumbing -- give the slot
+#: back, finish the span with an error code, re-raise typed -- is shared with the window
+#: refusal on purpose. The verdict is not: ``code`` says ``task_timeout``, and the message names
+#: the clock and never ``n_ctx``.
+class ModelClockUnaffordable(ModelContextLimitExceeded):
+    """The clock is too short for this tier's answer, said before the request is sent.
+
+    This is R99's ``budget_unaffordable`` finding with the half-sentence it was missing: the
+    finding used to be written to the log and then walked past, so a request the machine had
+    already measured at about twice its own ceiling still went on the wire and still held the
+    only service window for the whole of it.
+    """
+
+    code = TIMEOUT_ERROR_CODE
+
+    def __init__(self, budget: ModelBudget, prompt_tokens: int | None, verdict=None):
+        self.prompt_tokens = int(prompt_tokens or 0)
+        self.max_tokens = int(budget.max_tokens)
+        self.context_limit_tokens = int(budget.context_limit_tokens)
+        self.tier = budget.tier
+        self.verdict = verdict
+        self.affordable_max_tokens = int(getattr(verdict, "affordable_max_tokens", 0) or 0)
+        self.min_answer_tokens = int(getattr(verdict, "min_answer_tokens", 0) or 0)
+        super(ModelContextLimitExceeded, self).__init__(
+            "Local model clock cannot write this tier's answer inside its own ceiling "
+            f"(error_code={self.code}): prompt_tokens={self.prompt_tokens} and "
+            f"max_tokens={self.max_tokens} need more than the "
+            f"{budget.timeout_ceiling_seconds:g}s ceiling at "
+            f"{budget.decode_tokens_per_second:g}tok/s, where the most this clock can pay for "
+            f"is affordable_max_tokens={self.affordable_max_tokens} -- below the "
+            f"min_answer_tokens={self.min_answer_tokens} this model answers at. No request was "
+            "sent and no business conclusion was generated."
+        )
 
 
 def _env_set(name: str) -> bool:
@@ -854,7 +900,11 @@ class AuthorizedCall:
 
 
 def authorize(
-    budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False
+    budget: ModelBudget,
+    prompt_tokens: int | None,
+    *,
+    stream: bool = False,
+    refuse_unaffordable: bool = False,
 ) -> AuthorizedCall:
     """Size one call: refuse what ``n_ctx`` cannot hold, then shorten what the clock cannot.
 
@@ -862,6 +912,14 @@ def authorize(
     cap, exactly as it always has, so clamping can never rescue a prompt that used to be
     refused -- the existing limit is not relaxed by one token. Only after that does the
     clock get its say, and it gets it about the answer, not about the deadline.
+
+    ``refuse_unaffordable`` is the second half of the sentence a boundary that is about to
+    put this request on the wire needs: when the clock cannot pay for even the shortest answer
+    this model will give at all, and the floor leaves no clamp available to make it pay (R99),
+    the honest ending is to not send it. Raise :class:`ModelClockUnaffordable`, which reports
+    the ratified timeout code at the moment the machine already knows, instead of spending the
+    whole ceiling to find out. Default off: sizing a call and deciding to send it are two
+    different judgements, and every existing caller asked for the first one only.
     """
     code = budget.context_window_code(prompt_tokens)
     if code:
@@ -873,6 +931,18 @@ def authorize(
     effective = verdict.apply_to(budget)
     if verdict.clamped or verdict.unaffordable:
         record_budget_event("max_tokens_clamped" if verdict.clamped else "budget_unaffordable")
+    if refuse_unaffordable and verdict.unaffordable:
+        # Counted and reported before being raised, in that order: a refused call has to leave
+        # the same counter and the same one line as the call it replaces, or the budget stops
+        # being a measure of how many answers this machine cannot pay for.
+        report_budget(
+            effective,
+            prompt_tokens,
+            stream=stream,
+            verdict=verdict,
+            code=TIMEOUT_ERROR_CODE,
+        )
+        raise ModelClockUnaffordable(effective, prompt_tokens, verdict)
     report_budget(effective, prompt_tokens, stream=stream, verdict=verdict)
     return AuthorizedCall(budget=effective, verdict=verdict)
 
@@ -882,6 +952,19 @@ def authorize_budget(
 ) -> ModelBudget:
     """``authorize`` for a caller that only needs the sized budget."""
     return authorize(budget, prompt_tokens, stream=stream).budget
+
+
+def authorize_or_refuse(
+    budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False
+) -> AuthorizedCall:
+    """``authorize`` for the boundary that is about to send: refuse what the clock cannot pay for.
+
+    Nothing is shortened on this path. ``max_tokens`` keeps the tier's own number, so an
+    answer that fits its clock is delivered with the bytes it would have had anyway, and the
+    only behaviour change is on the leg the clock had already priced out of the ceiling --
+    which now costs no request, no queue and no wall clock.
+    """
+    return authorize(budget, prompt_tokens, stream=stream, refuse_unaffordable=True)
 
 
 def http_timeout(
@@ -908,6 +991,7 @@ def report_budget(
     *,
     stream: bool = False,
     verdict: MaxTokensVerdict | None = None,
+    code: str = "",
 ) -> str | None:
     """Log one verdict line when this call is already outside its own budget, else stay quiet.
 
@@ -921,8 +1005,17 @@ def report_budget(
     third is a configuration that contradicts itself: analysis on a CPU-calibrated budget is
     exactly that case, and it announced itself as a clamp on every single call while sending
     the uncut cap anyway.
+
+    A call site that refuses an unaffordable request passes its own ``code``, and gets one
+    line that says both what the clock found and what the boundary did about it.
     """
-    code = budget.context_window_code(prompt_tokens)
+    window_code = budget.context_window_code(prompt_tokens)
+    # A boundary that refuses a call for being unaffordable injects its own code here, so the
+    # refusal is readable on the same one line the verdict was always logged on. What binds
+    # ``clamped=`` stays the window code alone: ``clamped=`` means "this call writes less than
+    # its tier asked", and a call that was refused without ever being shortened must not
+    # borrow that word -- that is the exact pollution R99 removed.
+    code = (str(code) if code else "") or window_code
     # ``prompt_tokens is None`` means nobody measured it, which is a fact about the call
     # site, not about the machine: the clock for an unknown prompt is deliberately the
     # tier's worst case, so declaring it clamped on every construction would warn five
@@ -933,7 +1026,7 @@ def report_budget(
     )
     clamped = bool(verdict.clamped) if verdict is not None else ceiling_binds
     verdict_word = ""
-    if code:
+    if window_code:
         # A refusal on the window is its own finding and carries no clamp verdict: the
         # request never got as far as being sized, and this line keeps the exact shape it had
         # before the output cap was ever negotiated.
