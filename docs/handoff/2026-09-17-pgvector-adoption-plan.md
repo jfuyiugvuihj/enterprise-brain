@@ -395,3 +395,19 @@
 复现与逐题明细：`docs/testing/r59b-recall-reading-2026-09-24.md`、
 `docs/testing/r59b-recall-comparison-2026-09-24.json`、`docs/testing/r59b-stability-2026-09-24.json`。
 量具：`scripts/r59_recall_compare.py`。上一遍作废说明：`docs/testing/r59-recall-reading-2026-09-24.md`。
+
+## 10. 总控独立复算 R59b 那份对照（2026-09-24 14:0x，主树 `fe5b180`）：Chroma 向量腿的缺陷面第一次有了题号清单
+
+复算对象是已并树的只读原件 `docs/testing/r59b-recall-comparison-2026-09-24.json`（135 题、k=5、两侧各 1008 枚、无估算腿），**没有重跑容器、没有采信任何自述**，只是把那份 JSON 重新数了一遍：
+
+| 读数 | 值 |
+|---|---|
+| `chroma_rows == 0` 的题 | **24**（族分布：口径冲突 7／跨部门权限 5／主动洞察 3／工具调用 3／文档问答 2／图表 1／Excel 1／审批 1／报告 1） |
+| 这 24 题里 `chroma_exact_ids` 有货的 | **24/24** ⇒ **数据在 Chroma 自己的集合里，是它的 ANN 不交**，不是没入库 |
+| PG 侧同题 `pg_rows` | 全部 5；`pg_index_vs_exact_same_set` **135/135** |
+| `pg_rows == 0` 的题 | **0** |
+| 两侧结果集不一致的题 | 67，其中 `exact_sides_same_set` 为真 **67/67** ⇒ 分歧**全部**落在索引腿，两侧精确解完全一致 |
+
+- 题号清单（按 `id` 去重后 21 枚）：`metric-04` `metric-05` `metric-10` `metric-11` `metric-13` `metric-18` `metric-19` ／ `scope-01` `scope-03` `scope-05` `scope-06` ／ `insight-02` `insight-06` ／ `tool-01` `tool-04` ／ `doc-09` `doc-13` ／ `chart-04` ／ `data-08` ／ `approval-06` ／ `report-12`。
+- 🔴 **一条必须写小的边界**：这 24 题不等于"客户今天答不出这 24 题"。生产读路径除向量腿外还有 BM25／改写／多路召回，run6 里 `metric-05`／`metric-10`／`metric-18`／`metric-19` 都拿到了引证。诚实说法是：**"向量腿单腿交 0 行 24 题，其中 11 题在 run6 同时读成零引证"**（交集：`chart-04` `insight-02` `insight-06` `metric-04` `metric-11` `metric-13` `scope-01` `scope-03` `scope-05` `tool-01` `tool-04`）。
+- 本节对 §9.3 那六格的作用：**不消任何一格**，但给第 ⑥ 格（24 题空答复要不要当基线缺陷）一份定量答案——**它是 Chroma 的缺陷、不是我们数据的缺陷、更不是 PG 的缺陷**（PG 侧 135/135 索引=精确、零空答复）。⇒ **R211 裁定"不修 Chroma、由切读吸收"至此有题号级凭据**；反过来，若切读 on 之后这 21 枚里有谁仍交空集，R211 的裁定当场作废、另立新单。
