@@ -43,7 +43,7 @@ from app.agents.nodes import (
     STREAM_PIECE_SINK_KEY,
     _make_model, classify_intent, classify_route, decide_workers, declared_lane_from_config,
     normalize_declared_lane, respond, load_memory, plan, reflect_node, resolve_turn_lane,
-    route_reflect, synthesize,
+    route_probe_quiet, route_reflect, synthesize,
 )
 from app.agents.evidence import (
     aggregate_agent_result,
@@ -530,7 +530,8 @@ def route_main(state: AgentState, config=None):
     # 这条永远抢不过它——判据②"兜底仍能升档"正是靠这个先后顺序成立。
     if not workers and abstained and classify_route(intent_text).lane == LANE_QA:
         workers = ["doc"]
-        logger.info("[R42] 弃权轮判为问答档 → 补派 doc，不再空转一轮")
+        if not route_probe_quiet():
+            logger.info("[R42] 弃权轮判为问答档 → 补派 doc，不再空转一轮")
 
     # R141 判据①：显式声明的档位在这一格落地成"腿的有无"。上面那句 R42 补派一个字不动
     # —— 它管的是"系统判出来的问答档不许空转"，本节管的是"人明确点了问答档不许跑重活"。
@@ -546,11 +547,12 @@ def route_main(state: AgentState, config=None):
         )
         if cut or added:
             workers = list(kept)
-            logger.info(
-                f"[R141] 声明档 {turn.lane}（系统判 {turn.rules_lane}）"
-                f" → 派 {workers or '-'} | 砍 {','.join(cut) or '-'}"
-                f" | 补 {','.join(added) or '-'}"
-            )
+            if not route_probe_quiet():
+                logger.info(
+                    f"[R141] 声明档 {turn.lane}（系统判 {turn.rules_lane}）"
+                    f" → 派 {workers or '-'} | 砍 {','.join(cut) or '-'}"
+                    f" | 补 {','.join(added) or '-'}"
+                )
 
     completed_workers = set((state.get("worker_results") or {}).keys())
     remaining = [worker for worker in workers if worker not in completed_workers]
@@ -568,7 +570,8 @@ def route_main(state: AgentState, config=None):
     if not workers:
         return "reflect"
 
-    logger.info(f"[Route] dispatch → {workers}")
+    if not route_probe_quiet():
+        logger.info(f"[Route] dispatch → {workers}")
     return ["main_tools"] + [Send(w, state) for w in workers]
 
 # ==================== Worker Wrapper（传 thread_id） ====================

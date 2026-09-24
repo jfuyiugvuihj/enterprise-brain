@@ -7,7 +7,10 @@
 import os
 import time
 import httpx
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from itertools import combinations
 from typing import Any, NamedTuple, Sequence
 from uuid import uuid4
 
@@ -1323,10 +1326,13 @@ def classify_route(question: str) -> RouteDecision:
     """
     text = str(question or "").strip()
     decision = _route_rules(text)
-    logger.info(
-        f"[R42] '{text[:30]}' → lane={decision.lane} tier={decision.tier.value} "
-        f"rule={decision.rule} hit={'/'.join(decision.matched) or '-'}"
-    )
+    if not route_probe_quiet():
+        # R205b：探针窗口内不敲钟。这行的形状由 stage_timing.R42_LOG_PATTERN 逐字节钉着，
+        # 它的**频次**是 R51 读数口径的一部分，路由探针一行都不许留下。
+        logger.info(
+            f"[R42] '{text[:30]}' → lane={decision.lane} tier={decision.tier.value} "
+            f"rule={decision.rule} hit={'/'.join(decision.matched) or '-'}"
+        )
     return decision
 
 
@@ -1772,11 +1778,122 @@ def reflect_node(state) -> dict:
     return update
 
 
-def route_reflect(state) -> str:
-    """redo 且未超重派上限 → 回 supervisor；否则 → synthesize"""
-    if state.get("redo") and state.get("reflect_count", 0) <= 1:
-        return "supervisor"
-    return "synthesize"
+# ==================== R205b · 重派轮探针 ====================
+#
+# run6 逐题帧账里 chart / insight 两族最贵。归因读出来的是：图走到 reflect 判 redo
+# 之后，硬边把控制送回 supervisor，而 supervisor 那一发
+# main_model.invoke([sys_msg, current_user_msg]) 的输入与它第 1 发逐字节相同——worker
+# 结果与 reflect 的否决理由一个字都不进 prompt。第 2 发买到什么？今天实测：什么都没有。
+# route_main 按 worker_results 把那一发的决策判成 remaining=[] → 直接落回 reflect，
+# 第 2 发只是把第 1 发的决策重抄一遍再被丢掉。
+#
+# 本探针不假设「模型会复读」：它把 main_agent_node 那一发**所有可能的输出**逐种喂给真
+# route_main，只有每一种都只能落到 "reflect" 才短路。模型这一发就算胡说八道、临时改派
+# 任何一条腿的任意组合，结论都一样，所以省掉它不需要信 temperature=0。
+
+_ROUTE_PROBE_QUIET: ContextVar[bool] = ContextVar("r205b_route_probe_quiet", default=False)
+
+
+def route_probe_quiet() -> bool:
+    """当前执行上下文是否处在 R205b 的路由探针窗口内（供三处路由账闭嘴用）。"""
+    return bool(_ROUTE_PROBE_QUIET.get())
+
+
+@contextmanager
+def route_probe_window():
+    """探针期间静音 route_main / classify_route 的读数账。窗口外与改动前逐字一致。"""
+    token = _ROUTE_PROBE_QUIET.set(True)
+    try:
+        yield
+    finally:
+        _ROUTE_PROBE_QUIET.reset(token)
+
+
+#: supervisor 唯一能派出去的腿名。route_main 先把 dispatch 参数按这个名字集过滤
+#: （orchestrator.py 的 valid = {...}），名字集之外的派发等于空派发，所以枚举这五枚的
+#: 全部子集＝枚举完模型那一发所有可能的派发输出。tests/test_r205b_shot_ledger.py 从
+#: route_main 源码里把这枚字面量抠出来比对，防它日后漂移成第六枚。
+_DISPATCHABLE_WORKERS: tuple[str, ...] = ("doc", "data", "chart", "export", "approval")
+
+
+def _probe_shapes() -> list[AIMessage]:
+    """重派轮那一发可能回的全部消息形状：32 种派发子集 ＋ 1 种纯正文。"""
+    shapes: list[AIMessage] = []
+    for size in range(len(_DISPATCHABLE_WORKERS) + 1):
+        for combo in combinations(_DISPATCHABLE_WORKERS, size):
+            shapes.append(
+                AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "dispatch",
+                            "args": {"workers": list(combo)},
+                            "id": f"r205b-probe-{size}-{'-'.join(combo) or 'none'}",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            )
+    # 既不派发、也不带 tool_calls、只回正文那一发：abstained=False，route_main 改走
+    # 关键词/计划分支，是派发子集覆盖不到的一种 shape。
+    shapes.append(AIMessage(content="R205b 探针正文"))
+    return shapes
+
+
+def _redo_lap_is_void(state, config) -> bool:
+    """reflect 判了 redo，但回 supervisor 那一发必然派不出任何工作 ⇒ 纯空往返。
+
+    三条前置缺一不可，任何一条不成立就照今天的路走：
+    ① 本轮已经有一次 dispatch 决策在场。没有就说明这还是第一次进 supervisor，
+       那一发是决策本身，不是重派的补抄。
+    ② worker_results 里至少有一条非空正文。终答的来源是它：synthesize 与
+       chat.py::_select_final_answer 都只在 worker 正文全空时才退回读 supervisor 的
+       散文。这一格不为空，少掉那一发就不可能改变交付的字节。
+    ③ 把 ①② 之外的整张决策表喂给真 route_main（带真 config，R141 的补派边界一字
+       不改），逐种 shape 都只能落到 "reflect"。
+    """
+    results = state.get("worker_results") or {}
+    if not any(str(value or "").strip() for value in results.values()):
+        return False
+    try:
+        from app.agents.orchestrator import (
+            _current_turn,
+            _prior_dispatch_decision,
+            route_main,
+        )
+    except Exception:  # pragma: no cover - 循环导入兜底：探不出结论就不省
+        return False
+    try:
+        _question, turn_messages = _current_turn(state)
+        if _prior_dispatch_decision(turn_messages) is None:
+            return False
+        base = list(state.get("messages") or [])
+        with route_probe_window():
+            for shape in _probe_shapes():
+                probe = dict(state)
+                probe["messages"] = base + [shape]
+                if route_main(probe, config) != "reflect":
+                    return False
+    except Exception as exc:  # pragma: no cover - 探针任何异常一律按"不省"处理
+        logger.warning(f"[R205b] 重派轮探针异常，按今天的路径继续: {exc}")
+        return False
+    return True
+
+
+def route_reflect(state, config=None) -> str:
+    """redo 且未超重派上限 → 回 supervisor；否则 → synthesize
+
+    R205b：回 supervisor 之前先探一次「这一发还能派出去什么」。图上那条边
+    （orchestrator.py add_conditional_edges("reflect", route_reflect, ...)）带 config，
+    所以探针看到的是本轮真实的档位声明；既有的单参数直调（test_phase1_arch、
+    test_r42_fallback_upgrade）传 None，走的是与改动前逐字相同的判定。
+    """
+    if not (state.get("redo") and state.get("reflect_count", 0) <= 1):
+        return "synthesize"
+    if _redo_lap_is_void(state, config):
+        logger.info("[R205b] 重派轮探不到任何可派工作 → 跳过 supervisor 那一发空往返，直接 synthesize")
+        return "synthesize"
+    return "supervisor"
 
 
 # ==================== 汇总 + 沉淀 ====================
