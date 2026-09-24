@@ -15,9 +15,25 @@ machine.
 
 Usage (on the host, against the published container port)::
 
-    $env:EB_SEED_OWNER_PASSWORD = "<the data owner password>"
-    python scripts/seed_workspace.py --token-file "$env:TEMP\\admin-token.txt"
-    python scripts/seed_workspace.py --token-file "$env:TEMP\\admin-token.txt" --check
+    python scripts/seed_workspace.py --check
+
+Three credential keys, three different accounts -- do not swap them:
+
+* ``DEMO_ADMIN_PASSWORD`` is the password of the administrator that ``--username``
+  names (default ``admin``), and it is the only key a default run reads. The process
+  environment wins, then ``--env-file`` (default ``deploy/.env.server``), so the
+  command above does not need a key name typed on the command line.
+* ``EB_SEED_ADMIN_TOKEN`` is an already-issued administrator bearer token;
+  ``--token-file`` reads that same token out of a file and skips the login.
+* ``EB_SEED_OWNER_PASSWORD`` is the password of the *data owner* account
+  ``dataowner``, which is who deploy/workspace-seed.json lists under ``owners``.
+  That is a different person from the administrator: a seed run logs in as the
+  administrator, creates ``dataowner``, then uploads the expense dataset as
+  ``dataowner``. Setting this key alone cannot log you in as the administrator, and
+  ``dataowner`` cannot run ``--check`` either, because that leg lists ``/users``
+  and the staff role it holds does not carry ``users:manage``.
+
+A credential that cannot be found is named out loud, never reported as a login failure.
 """
 from __future__ import annotations
 
@@ -31,6 +47,8 @@ import requests
 
 DEFAULT_MANIFEST = Path("deploy") / "workspace-seed.json"
 DEFAULT_BASE_URL = "http://127.0.0.1:8001"
+#: Fallback source for the administrator password, the same file the parity check reads.
+DEFAULT_ENV_FILE = "deploy/.env.server"
 #: A knowledge-base document is embedded on the way in, so one upload is a model call.
 UPLOAD_TIMEOUT_SECONDS = 600.0
 API_PREFIX = "/api/v1"
@@ -61,7 +79,21 @@ def _session(base_url: str, token: str) -> requests.Session:
     return session
 
 
-def _login(base_url: str, username: str, password: str) -> str:
+def _env_file_values(path: Path) -> dict[str, str]:
+    """Read the KEY=VALUE lines of a dotenv file; a missing file is not an error."""
+    if not path.is_file():
+        return {}
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        values[key.strip()] = value.strip()
+    return values
+
+
+def _login(base_url: str, username: str, password: str, credential_note: str = "") -> str:
     session = requests.Session()
     session.trust_env = False
     response = session.post(
@@ -72,6 +104,7 @@ def _login(base_url: str, username: str, password: str) -> str:
     if response.status_code != 200:
         raise SeedError(
             f"login as {username!r} failed: HTTP {response.status_code} {response.text[:200]}"
+            + (f"; the credential was read as {credential_note}" if credential_note else "")
         )
     token = str(response.json().get("token") or "")
     if not token:
@@ -79,7 +112,7 @@ def _login(base_url: str, username: str, password: str) -> str:
     return token
 
 
-def _admin_token(base_url: str, args: argparse.Namespace) -> str:
+def _admin_token(base_url: str, args: argparse.Namespace, root: Path) -> str:
     if args.token_file:
         path = Path(args.token_file)
         if not path.is_file():
@@ -88,13 +121,49 @@ def _admin_token(base_url: str, args: argparse.Namespace) -> str:
     token = os.getenv(args.token_env or "", "").strip()
     if token:
         return token
-    password = os.getenv(args.password_env or "", "")
-    if not args.username or not password:
+    username = str(args.username or "").strip()
+    if not username:
         raise SeedError(
-            "no administrator credential: pass --token-file, or --username plus the "
-            "password named by --password-env"
+            "no administrator to log in as: --username is empty, so pass --username, or "
+            f"an already-issued token via --token-file or {args.token_env}"
         )
-    return _login(base_url, args.username, password)
+    password, source = _admin_password(args, root)
+    return _login(base_url, username, password, credential_note=source)
+
+
+def _admin_password(args: argparse.Namespace, root: Path) -> tuple[str, str]:
+    """The administrator password, plus a note on where it came from.
+
+    The precedence is the one scripts/check_corpus_parity.py uses: a process environment
+    value wins, --env-file is the fallback, and a key found in neither is named out loud
+    together with the file that was tried. The account this resolves for is the
+    administrator, not the data owner whose password the seed manifest names under
+    owners[].password_env -- conflating the two is what made a working deployment look
+    like it owed someone a password.
+    """
+    key = str(args.password_env or "").strip()
+    if not key:
+        raise SeedError(
+            "--password-env is empty, so there is no key an administrator password could "
+            f"be read from: pass --password-env, --token-file or {args.token_env}"
+        )
+    password = os.getenv(key, "")
+    if password:
+        return password, f"{key} from the process environment"
+    env_file = Path(str(args.env_file or "").strip() or DEFAULT_ENV_FILE)
+    if not env_file.is_absolute():
+        env_file = root / env_file
+    password = _env_file_values(env_file).get(key, "")
+    if password:
+        return password, f"{key} from {env_file}"
+    raise SeedError(
+        f"no administrator password: {key} is set neither in the process environment nor "
+        f"in {env_file}, the file named by --env-file. Set {key} for the account "
+        f"--username {args.username!r} names, or pass --token-file/--token-env. This is a "
+        "missing credential, not a wrong password: nothing was sent to the server. The "
+        "owners[].password_env key in the seed manifest belongs to the data owner account, "
+        "which is not the account being logged in here."
+    )
 
 
 def _remote_document_names(session: requests.Session, base_url: str) -> set[str]:
@@ -147,6 +216,13 @@ def ensure_owners(session: requests.Session, base_url: str, owners: list[dict], 
     and left alone, because moving someone's scope is not a seed job.
     """
     response = session.get(f"{base_url}{API_PREFIX}/users", timeout=30.0)
+    if response.status_code == 403:
+        raise SeedError(
+            "GET /users answered 403, which is a permission problem and not a wrong "
+            "password: listing users needs the users:manage permission, and the staff "
+            "role does not have it. dataowner is staff, so run this script as the "
+            "administrator (--username admin, the default), not as a data owner."
+        )
     if response.status_code != 200:
         raise SeedError(f"GET /users: HTTP {response.status_code} {response.text[:200]}")
     existing = {str(row.get("username")): row for row in (response.json().get("users") or [])}
@@ -265,16 +341,35 @@ def seed_documents(session, base_url, wanted, classification, check) -> None:
         print(f"doc     {path.name:<40} uploaded")
 
 
-def main(argv: list[str] | None = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
+    """The whole credential surface of this script, in one place the tests can read.
+
+    Every default here has to be a key that exists somewhere outside this file, and the
+    module docstring has to teach it: a default nobody can set is how a run ended up
+    blaming the owner for a typo.
+    """
     parser = argparse.ArgumentParser(description="Seed the reference corpus and datasets of one deployment.")
     parser.add_argument("--base-url", default=os.getenv("EVAL_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--token-file", default=None, help="read the administrator bearer token from this file")
-    parser.add_argument("--token-env", default="EB_SEED_ADMIN_TOKEN")
-    parser.add_argument("--username", default="admin")
-    parser.add_argument("--password-env", default="EB_SEED_ADMIN_PASSWORD")
-    parser.add_argument("--check", action="store_true", help="report what is missing and upload nothing")
-    args = parser.parse_args(argv)
+    parser.add_argument("--token-env", default="EB_SEED_ADMIN_TOKEN",
+                        help="environment variable holding an administrator bearer token")
+    parser.add_argument("--username", default="admin",
+                        help="administrator account to log in as; a staff account such as dataowner "
+                             "cannot list /users, so --check needs this one")
+    parser.add_argument("--password-env", default="DEMO_ADMIN_PASSWORD",
+                        help="environment variable holding the password of --username")
+    parser.add_argument("--env-file", default=DEFAULT_ENV_FILE,
+                        help="fallback file to read the --password-env key from")
+    parser.add_argument("--check", action="store_true",
+                        help="report what is missing and upload nothing; it lists /users, so run it "
+                             "as the administrator rather than as dataowner, whose staff role lacks "
+                             "users:manage")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
 
     root = _repository_root()
     base_url = args.base_url.rstrip("/")
@@ -288,7 +383,7 @@ def main(argv: list[str] | None = None) -> int:
         wanted_names = [str(name) for name in manifest["documents"]["files"]]
         dataset_names = [Path(str(spec["path"])).name for spec in manifest["datasets"]]
 
-        session = _session(base_url, _admin_token(base_url, args))
+        session = _session(base_url, _admin_token(base_url, args, root))
         remote_documents = _remote_document_names(session, base_url)
         remote_datasets = _remote_dataset_names(session, base_url)
         wanted, absent, already, server_only = plan_documents(manifest, corpus_dir, remote_documents)
