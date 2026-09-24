@@ -335,3 +335,63 @@
 > **但定案不等于已切换，本节把今天的事实钉住**（免得改口改出一句假话）：① **双写在跑**——`VECTOR_DUAL_WRITE=on` 在 `deploy/.env.server` 里就是 on，PDF 抽取带 NUL 那枚 P1 已由 **R130**（落树 `cdc5ead`）修掉，全库 **1008 枚向量**在位；② **读路径今天仍在 Chroma**——`app/rag/retriever.py` / `retrieval_pipeline.py` / `app/documents/catalog.py` 尚未切；③ **P3 召回对比从未跑过一次** ⇒ 切过去会不会悄悄变差，这一格目前零读数，**R59（切读）已于 09-24 提到第一批派工**（`be-r59`），它的第一判据就是把那份读数做出来，在做出来之前**不许把任何生产路径的默认读后端翻成 PGVector**；④ **H20（距离下限口径）业主未裁**，本班按「不新增人为下限、top-k 与阈值沿用现值」代裁推进，**可推翻**。
 >
 > 三枚用例钉着本文件（`tests/test_r120_dual_write_passthrough.py:43`、`tests/test_r120_p3_collection_default.py:31`、`tests/test_r125_status_vector_census.py:25`）⇒ 本节是**追加**，未改动任何既有行；改这份文件的人必须复跑那三件。
+---
+
+## 9. R59b 切读复测收口（2026-09-24 落笔 · **默认值未翻，读路径仍在 Chroma**）
+
+本节只追加，不改上面任何一行。落笔人：R59b（执行层）。判据由总控复跑，不在此自宣达成。
+
+### 9.1 今天真实位置
+
+- 双写在开，镜像逐枚齐：`chunk_vectors` 1008 行 vs collection `enterprise_docs` count 1008，
+  **id 集合逐枚相等**（`only_in_pg=0`、`only_in_chroma=0`）；两侧向量本体最大逐位差
+  `2.1679687467468511e-07`（float32 重嵌入噪声底），两库各自精确算的 top-5 **135/135 全等**。
+- 读路径**仍在 Chroma**（遗留件，今天仍在提供读服务）。`INDEX_BACKEND` 的字面量一字未动，仍是 `chroma`。
+- 已落地的是一副**接好但没合闸**的读腿：`app/rag/indexing.py` 认 `chroma`/`pgvector` 两个值并交出
+  `read_backend()` / `pgvector_reads_enabled()`；`app/rag/pg_store.py` 交出
+  `sql_scope_filter` / `search_vectors` / `read_topk`（谓词翻不出来就拒答，绝不退化成「没有 WHERE」）；
+  `app/rag/retriever.py` 在遗留腿之前挂 `_pgvector_hits()`，开关关着时**一个 SQL 都不发**。
+- 用例：`tests/test_r59b_pg_read_switch.py`（24 枚）。11 枚变异逐条复验全部能让点名用例变红。
+
+### 9.2 读数结论（k=5，135 题，PG 腿＝真库读，无估算腿）
+
+众数遍次：**68/135 题两侧 top-5 集合一致，67 题不一致**。分歧归因是单向的：
+
+- PG 腿 `pg_index_vs_exact_same_set` = **135/135**：索引腿＝全表精确腿，HNSW 近似性在本库这个规模上
+  不产生成员差也不产生名次差（当时会话 `hnsw.ef_search=40`，未扫参）。**没有一题是 PG 答得比精确解差。**
+- `exact_sides_same_set` = **135/135**：两库精确算逐题全等 ⇒ 分歧不来自向量本体。
+- 67 题不一致 = Chroma 索引腿 ≠ **Chroma 自己在同一批向量上的精确解**：43 题成员对称换入换出，
+  24 题 Chroma 整条交回 0 行（PG 侧全部交 5 行）。`mean_kendall_tau` 恒 1.0 ⇒ 分歧全在「谁进 top-5」。
+- 机制（本轮结掉的部分）：Chroma 的元数据段 1008 行、集合水位 seq 78696，而 HNSW 向量段水位只到
+  seq 77968 —— 中间 729 条日志（657 put / 72 delete）从未回放进索引，段里只剩 422 枚活标签；
+  `sync_threshold=1000` 大于未消费数，所以它不会自己追平。一次要回全库只捞得出 878 枚，
+  **约 130 枚向量在生产库里有、在它的 ANN 里不可达**。
+- 未结：Chroma 对 24 题交 0 行的字节层成因（与谓词/`ids` 白名单/`n_results` 大小/远近都无关，只量到形状）。
+- 跨进程稳定性：同一份输入、同一枚脚本，`same_set` 在 68–92 之间摆，**会摆的只有 Chroma 那条腿**
+  （`query_sha`、`pg_ids`、`pg_exact_ids`、`chroma_exact_ids` 全程 0 变化）。
+
+⇒ **方向支持切读**；本轮**不翻默认**。
+
+### 9.3 翻默认之前还差的格子
+
+1. 服务内端到端没在真库上跑过（今天只在 fake connection 用例下绿过）。
+2. 热集让路的代价没量：切读态下 `_hot_hits` 整层让路（`app/rag/hot_index.py` 新原因码
+   `hot_index_read_backend_switched`），延迟与命中分布两侧对比无数据。
+3. 选择性权限过滤没量：本库 `classification` 全=1、`department` 全=`''`，谓词只能全命中或全不命中。
+   全命中谓词两侧答案不变、零命中谓词两侧一致地空（**PG 侧没有漏放行**），但「选择性强过滤下的
+   召回差」这一格**没量到**，要量得先在沙盒库里造一份跨部门/跨密级语料。
+4. 双写开满一轮全量重建未确认（§3 P3 的语义前置）。
+5. 遗留库仍在被写要拍板：`chroma.sqlite3` 的 mtime 会随**只读**进程前进（静置 128 s 不动，每开一遍读动一次）。
+6. 那 24/135 题空答复要不要作为切读前的基线缺陷单独追（它同时是今天生产的读路径症状）。
+
+### 9.4 一条取证纪律（这次的坑，写给下一个跑对比的人）
+
+**别在宿主机上跑这组对比。** 5432 上可能挂着另一台野 PostgreSQL（没有 `vector_scope`），连上去
+`vector_scope` 不存在，脚本就会把 PG 腿降级成估算腿（numpy 代替真库）——产物看着一应俱全，其实只有一条腿。
+同理别用 `%TEMP%` 下的临时 Chroma 目录当样本：那一遍读数是 401 枚的沙盒，与生产 1008 枚不是一批东西。
+要么在 backend 容器里跑（`/app/chroma_db` 是生产卷、`postgres` 是内网 DNS），要么别跑。
+真 DSN 的原文不入文档，只走环境变量。
+
+复现与逐题明细：`docs/testing/r59b-recall-reading-2026-09-24.md`、
+`docs/testing/r59b-recall-comparison-2026-09-24.json`、`docs/testing/r59b-stability-2026-09-24.json`。
+量具：`scripts/r59_recall_compare.py`。上一遍作废说明：`docs/testing/r59-recall-reading-2026-09-24.md`。

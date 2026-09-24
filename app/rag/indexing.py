@@ -37,7 +37,14 @@ from uuid import uuid4
 from app.common.logger import logger
 
 RESOURCE_TYPE_DOCUMENT = "document"
-INDEX_BACKEND = "chroma"
+#: The two backend spellings this build knows. R59b: ``INDEX_BACKEND`` below is no longer
+#: only a label written into the version ledger -- it is the switch that decides which
+#: engine a semantic search asks. One constant, so the ledger and the read path cannot be
+#: set apart from each other by accident.
+INDEX_BACKENDS = frozenset({"chroma", "pgvector"})
+INDEX_BACKEND_DEFAULT = "chroma"
+PGVECTOR_BACKEND = "pgvector"
+INDEX_BACKEND = INDEX_BACKEND_DEFAULT
 INDEX_METADATA_ENV = "INDEX_METADATA_PATH"
 DEFAULT_INDEX_METADATA_PATH = "./data/index-versions.json"
 
@@ -515,7 +522,7 @@ class IndexRegistry:
     ) -> IndexVersion:
         if not index_id.strip() or not source_version_id.strip():
             raise ValueError("index_id and source_version_id are required")
-        if backend not in {"chroma", "pgvector"}:
+        if backend not in INDEX_BACKENDS:
             raise ValueError("unsupported index backend")
         if not re.fullmatch(r"[0-9a-f]{64}", checksum):
             raise ValueError("index checksum must be a SHA-256 hex digest")
@@ -2008,3 +2015,40 @@ def plan_index_refresh(
 def _table_is_present(present: set[tuple[str, str]], table: str) -> bool:
     required = _MIRROR_COLUMNS.get(table, ())
     return all((table, column) in present for column in required)
+
+
+# ------------------------------------------------------------------ read-path switch
+
+
+def read_backend() -> str:
+    """Which engine answers a semantic search: ``"chroma"`` or ``"pgvector"``.
+
+    This reads ``INDEX_BACKEND`` at call time, not at import time, for the same reason
+    :func:`configured_embedding_scope` does: a process that has already imported this
+    module must see the value the deployment actually settled on, and a test that sets
+    the constant has to move the read path too -- otherwise the two would disagree about
+    which engine is live, which is exactly the half-switched state R59b exists to avoid.
+
+    An unrecognised value keeps reads on the shipped engine and says so in the log, the
+    way :func:`app.rag.pg_store.dual_write_enabled` treats a typo in VECTOR_DUAL_WRITE.
+    Silently trying the other engine is the worse failure: "pgvector" misspelled as
+    "pg_vetcor" would otherwise read an empty Chroma nobody writes to.
+    """
+    value = str(INDEX_BACKEND or "").strip().lower()
+    if value in INDEX_BACKENDS:
+        return value
+    if value:
+        logger.warning(
+            f"[Indexing] INDEX_BACKEND={value!r} is not one of "
+            f"{sorted(INDEX_BACKENDS)}; reads stay on {INDEX_BACKEND_DEFAULT}."
+        )
+    return INDEX_BACKEND_DEFAULT
+
+
+def pgvector_reads_enabled() -> bool:
+    """True when the semantic read leg should ask PostgreSQL instead of Chroma.
+
+    Default off: ``INDEX_BACKEND`` still ships as ``"chroma"``, and flipping it is the
+    adoption plan's call, not this function's.
+    """
+    return read_backend() == PGVECTOR_BACKEND

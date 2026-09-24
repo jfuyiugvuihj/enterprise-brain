@@ -82,6 +82,9 @@ RETRIEVAL_OUTCOME_STORE_FAILED = "vector_store_failed"
 RETRIEVAL_SERVER_CHROMA = "chroma"
 RETRIEVAL_SERVER_HOT_INDEX = "hot_index"
 RETRIEVAL_SERVER_KEYWORD_STORE = "keyword_scan"
+#: R59b：读路径切到 PGVector 之后，"谁答的"多一个合法答案。它不复用 chroma 那一枚：
+#: 把 PG 的答复记成 Chroma 答的，正好抹掉这一单唯一想让人看见的那件事。
+RETRIEVAL_SERVER_PGVECTOR = "pgvector"
 #: 向量后端根本不存向量（离线 _JsonCollection）时的降级原因码
 RETRIEVAL_REASON_STORE_OFFLINE = "vector_store_offline"
 
@@ -1068,6 +1071,50 @@ class DocumentRetriever:
         index.populate(rows, scope_key=scope_key)
         return ""
 
+    def _pgvector_hits(self, query_embedding, k: int, where: dict | None):
+        """R59b：把语义腿问到 PostgreSQL + PGVector。开关关着就一条 SQL 都不发。
+
+        交回 None ＝ 这一腿没答（开关关 / 双写没开 / 连不上 / 过滤器翻译不出来），
+        调用方原路退回遗留的 Chroma 腿。退回不等于少一道闸门：Chroma 那条本来就把同一份
+        ``where`` 下推给向量库，两条腿都是先过滤再截名次，越权行在名次里压根不占位。
+
+        命中的字典仍由 ``_hit_dicts`` 生成（R44 钉的形状），检索腿标注也仍是 semantic ——
+        换引擎不是降级。密级为 NULL 的行原样交回 None：R57 的 fail-closed 由 _hit_dicts
+        那一处守，本方法不许在这里替它把缺密级补成 1 级。
+        """
+        from app.rag import indexing as indexing_module
+        from app.rag import pg_store
+
+        if not indexing_module.pgvector_reads_enabled():
+            return None
+        try:
+            rows = pg_store.read_topk(query_vector=query_embedding, k=k, where=where)
+        except Exception as exc:
+            reason = str(getattr(exc, "reason", "") or pg_store.REASON_VECTOR_READ_FAILED)
+            logger.warning(f"PGVector 读腿拒答，本次退回遗留 Chroma 腿（{reason}）：{exc}")
+            pg_store.note_read_bypass(reason, f"{type(exc).__name__}: {exc}")
+            return None
+        pg_store.note_read_answered(len(rows))
+        metadatas = [{
+            "filename": row.get("filename") or "unknown",
+            "chunk_index": row.get("chunk_index"),
+            "classification": row.get("classification"),
+            "department": row.get("department") or "",
+        } for row in rows]
+        hits = self._hit_dicts([row.get("content") for row in rows], metadatas,
+                               self.MODE_SEMANTIC, "")
+        self._note_search(self.MODE_SEMANTIC, "")
+        self._note_search_shape(
+            answered_by=RETRIEVAL_SERVER_PGVECTOR,
+            leg=self.MODE_SEMANTIC,
+            reason="",
+            n_results=k,
+            rows_returned=len(rows),
+            hits_built=len(hits),
+            outcome=self._outcome_for(len(rows), len(hits)),
+        )
+        return hits
+
     def _hot_hits(self, query_embedding, k: int, where: dict | None, pred):
         """热集那一腿：能服务就交回命中字典，不能服务返回 None，调用方原路走外部向量库。
 
@@ -1077,7 +1124,14 @@ class DocumentRetriever:
         走 hot_index_diagnostics()。
         """
         from app.rag import hot_index
+        from app.rag import indexing as indexing_module
 
+        if indexing_module.pgvector_reads_enabled():
+            # R59b：热集常驻的是 Chroma 那一份向量。读路径切到 PG 之后它不许再抢答，否则
+            # "切了读"只对热集问不出的那部分生效，剩下的大半流量仍在读旧引擎——半切比不切
+            # 更难查，因为诊断里它长得像已经切完了。让路不是故障，单独一枚原因码。
+            hot_index.note_bypass(hot_index.REASON_READ_BACKEND_SWITCHED)
+            return None
         if not hot_index.hot_index_enabled():
             return None
         if k <= 0:
@@ -1403,6 +1457,11 @@ class DocumentRetriever:
             hot_hits = self._hot_hits(query_embedding, k, where, pred)
             if hot_hits is not None:
                 return self._apply_activity_prior(hot_hits)
+            # R59b：开关在 pgvector 时这一腿答；开关在 chroma 时它一个调用都不发，
+            # 下面的遗留腿与切读之前逐字一致（同 R44 给热集那条立的规矩）。
+            pg_hits = self._pgvector_hits(query_embedding, k, where)
+            if pg_hits is not None:
+                return self._apply_activity_prior(pg_hits)
             kwargs = {"query_embeddings": [query_embedding], "n_results": k}
             if where:
                 kwargs["where"] = where

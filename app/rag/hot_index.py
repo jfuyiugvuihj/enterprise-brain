@@ -73,6 +73,9 @@ REASON_SCOPE_MISMATCH = "hot_index_scope_mismatch"
 REASON_INCOMPLETE = "hot_index_incomplete"
 REASON_NO_VECTORS = "hot_index_store_without_vectors"
 REASON_NO_QUERY_VECTOR = "hot_index_no_query_vector"
+#: R59b：读路径切到 pgvector 之后，热集整层让路。它既不是故障也不是没命中，所以单独一枚
+#: 码：常驻的向量是 Chroma 那一份，让它在 PG 读腿上抢答，读数就长成一个已经切完的样子。
+REASON_READ_BACKEND_SWITCHED = "hot_index_read_backend_switched"
 #: 热集自己出了任何意外（读回的形状不对、谓词抛错……）都算"不能服务"，绝不让一层缓存
 #: 把检索问出异常来。原因码单独一个，运维看得到，不会被误读成"缓存没命中"。
 REASON_ERROR = "hot_index_error"

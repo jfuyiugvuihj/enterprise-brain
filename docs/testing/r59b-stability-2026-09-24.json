@@ -1,0 +1,430 @@
+{
+  "tool": "scripts/r59_recall_compare.py (R59b build + reachability probe, md5 34610326f6cafcccbcf9da28b9cad370)",
+  "headline_pass": "h2",
+  "passes": [
+    {
+      "tag": "h1",
+      "same": 89,
+      "diff": 46,
+      "c0": 24,
+      "p0": 0,
+      "pgx": 135,
+      "cex": 89,
+      "exe": 135,
+      "reach": 877,
+      "stable": true,
+      "where": null
+    },
+    {
+      "tag": "h2",
+      "same": 68,
+      "diff": 67,
+      "c0": 24,
+      "p0": 0,
+      "pgx": 135,
+      "cex": 68,
+      "exe": 135,
+      "reach": 878,
+      "stable": true,
+      "where": null
+    },
+    {
+      "tag": "h3",
+      "same": 68,
+      "diff": 67,
+      "c0": 24,
+      "p0": 0,
+      "pgx": 135,
+      "cex": 68,
+      "exe": 135,
+      "reach": 876,
+      "stable": true,
+      "where": null
+    },
+    {
+      "tag": "h4",
+      "same": 68,
+      "diff": 67,
+      "c0": 24,
+      "p0": 0,
+      "pgx": 135,
+      "cex": 68,
+      "exe": 135,
+      "reach": 876,
+      "stable": true,
+      "where": null
+    },
+    {
+      "tag": "h5",
+      "same": 68,
+      "diff": 67,
+      "c0": 24,
+      "p0": 0,
+      "pgx": 135,
+      "cex": 68,
+      "exe": 135,
+      "reach": 881,
+      "stable": true,
+      "where": null
+    },
+    {
+      "tag": "p1a",
+      "same": 68,
+      "diff": 67,
+      "c0": 24,
+      "p0": 0,
+      "pgx": 135,
+      "cex": 68,
+      "exe": 135,
+      "reach": 877,
+      "stable": true,
+      "where": {
+        "classification": {
+          "$in": [
+            1,
+            2,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "tag": "p1b",
+      "same": 68,
+      "diff": 67,
+      "c0": 24,
+      "p0": 0,
+      "pgx": 135,
+      "cex": 68,
+      "exe": 135,
+      "reach": 877,
+      "stable": true,
+      "where": {
+        "classification": {
+          "$in": [
+            1,
+            2,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "tag": "p2a",
+      "same": 68,
+      "diff": 67,
+      "c0": 24,
+      "p0": 0,
+      "pgx": 135,
+      "cex": 68,
+      "exe": 135,
+      "reach": 880,
+      "stable": true,
+      "where": {
+        "$and": [
+          {
+            "classification": {
+              "$in": [
+                1,
+                2,
+                3
+              ]
+            }
+          },
+          {
+            "department": {
+              "$in": [
+                ""
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "tag": "p2b",
+      "same": 68,
+      "diff": 67,
+      "c0": 24,
+      "p0": 0,
+      "pgx": 135,
+      "cex": 68,
+      "exe": 135,
+      "reach": 882,
+      "stable": true,
+      "where": {
+        "$and": [
+          {
+            "classification": {
+              "$in": [
+                1,
+                2,
+                3
+              ]
+            }
+          },
+          {
+            "department": {
+              "$in": [
+                ""
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "tag": "p2c",
+      "same": 69,
+      "diff": 66,
+      "c0": 24,
+      "p0": 0,
+      "pgx": 135,
+      "cex": 69,
+      "exe": 135,
+      "reach": 878,
+      "stable": true,
+      "where": {
+        "$and": [
+          {
+            "classification": {
+              "$in": [
+                1,
+                2,
+                3
+              ]
+            }
+          },
+          {
+            "department": {
+              "$in": [
+                ""
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "tag": "p3",
+      "same": 135,
+      "diff": 0,
+      "c0": 135,
+      "p0": 135,
+      "pgx": 135,
+      "cex": 135,
+      "exe": 135,
+      "reach": 875,
+      "stable": true,
+      "where": {
+        "$and": [
+          {
+            "classification": {
+              "$in": [
+                1
+              ]
+            }
+          },
+          {
+            "department": {
+              "$in": [
+                "研发中心"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "tag": "p4",
+      "same": 135,
+      "diff": 0,
+      "c0": 135,
+      "p0": 135,
+      "pgx": 135,
+      "cex": 135,
+      "exe": 135,
+      "reach": 880,
+      "stable": true,
+      "where": {
+        "classification": {
+          "$in": [
+            2,
+            3
+          ]
+        }
+      }
+    }
+  ],
+  "leg_diff_unfiltered_vs_headline": {
+    "h1": {
+      "query_sha": 0,
+      "chroma_ids": 36,
+      "pg_ids": 0,
+      "pg_exact_ids": 0,
+      "chroma_exact_ids": 0
+    },
+    "h3": {
+      "query_sha": 0,
+      "chroma_ids": 0,
+      "pg_ids": 0,
+      "pg_exact_ids": 0,
+      "chroma_exact_ids": 0
+    },
+    "h4": {
+      "query_sha": 0,
+      "chroma_ids": 1,
+      "pg_ids": 0,
+      "pg_exact_ids": 0,
+      "chroma_exact_ids": 0
+    },
+    "h5": {
+      "query_sha": 0,
+      "chroma_ids": 0,
+      "pg_ids": 0,
+      "pg_exact_ids": 0,
+      "chroma_exact_ids": 0
+    }
+  },
+  "leg_diff_w1": {
+    "p1b": {
+      "query_sha": 0,
+      "chroma_ids": 0,
+      "pg_ids": 0,
+      "pg_exact_ids": 0,
+      "chroma_exact_ids": 0
+    }
+  },
+  "leg_diff_w2": {
+    "p2b": {
+      "query_sha": 0,
+      "chroma_ids": 1,
+      "pg_ids": 0,
+      "pg_exact_ids": 0,
+      "chroma_exact_ids": 0
+    },
+    "p2c": {
+      "query_sha": 0,
+      "chroma_ids": 3,
+      "pg_ids": 0,
+      "pg_exact_ids": 0,
+      "chroma_exact_ids": 0
+    }
+  },
+  "leg_diff_headline_vs_w2_full_match": {
+    "query_sha": 0,
+    "chroma_ids": 1,
+    "pg_ids": 0,
+    "pg_exact_ids": 0,
+    "chroma_exact_ids": 0
+  },
+  "pg_leg_state": "read_live",
+  "corpus": {
+    "chroma_store_rows": 1008,
+    "pg_rows": 1008,
+    "ids_equal": true,
+    "vector_bodies": {
+      "compared": 1008,
+      "identical": 0,
+      "max_abs_diff": 2.1679687467468511e-07,
+      "mean_abs_diff": 8.784e-09,
+      "differing_ids": [
+        "2025-2026中国企业协同办公市场研究报告.txt_0",
+        "2025-2026中国企业协同办公市场研究报告.txt_1",
+        "2025-2026中国企业协同办公市场研究报告.txt_2",
+        "2025-2026中国企业协同办公市场研究报告.txt_3",
+        "2026年Q1经营分析报告.txt_0",
+        "2026年Q1经营分析报告.txt_1",
+        "2026年Q1经营分析报告.txt_2",
+        "2026年Q2经营分析报告.txt_0",
+        "2026年Q2经营分析报告.txt_1",
+        "2026年Q2经营分析报告.txt_2",
+        "2026年中国AI大模型应用落地报告.txt_0",
+        "2026年中国AI大模型应用落地报告.txt_1",
+        "2026年中国AI大模型应用落地报告.txt_2",
+        "2026年五一劳动节放假通知.txt_0",
+        "2026年度预算方案_摘要.txt_0",
+        "2026年度预算方案_摘要.txt_1",
+        "2026年度预算方案_摘要.txt_2",
+        "2026年春节放假通知.txt_0",
+        "AI-Agent学习路线图.pdf_0",
+        "AI-Agent学习路线图.pdf_1"
+      ],
+      "missing_in_pg": [],
+      "unreadable_in_pg": 0,
+      "chroma_total": 1008,
+      "all_identical": false
+    }
+  },
+  "distance": {
+    "scope_row": {
+      "schema_version": 1,
+      "embedding_model": "nomic-embed-text",
+      "dimension": 768,
+      "distance_function": "l2",
+      "hnsw_m": 16,
+      "hnsw_ef_construction": 100
+    },
+    "hnsw_ef_search": "40",
+    "indexdef": [
+      "CREATE INDEX chunk_vectors_embedding_idx ON public.chunk_vectors USING hnsw (embedding vector_l2_ops) WITH (m='16', ef_construction='100')"
+    ],
+    "chroma_u1": {
+      "source": "measured",
+      "recorded": "",
+      "sampled": 64,
+      "probes": 2,
+      "returned": 12,
+      "matched": [
+        "l2"
+      ],
+      "reason": ""
+    },
+    "chroma_declared_space": "l2",
+    "scale_by_kind": {
+      "chroma_self": {
+        "probes": 111,
+        "checked": 95,
+        "max_error": 2.583e-06
+      },
+      "cross_engine": {
+        "probes": 95,
+        "checked": 95,
+        "max_error": 3.63e-06
+      }
+    }
+  },
+  "chroma_forensics": {
+    "chroma_index_labels": 422,
+    "chroma_store_rows": 1008,
+    "collection_seq": 78696,
+    "vector_segment_seq": 77968,
+    "queue_ops": 729,
+    "queue_puts": 657,
+    "queue_deletes": 72,
+    "ids_equal": true,
+    "chroma_hnsw_config": {
+      "ef_construction": 100,
+      "max_neighbors": 16,
+      "ef_search": 100,
+      "num_threads": 12,
+      "batch_size": 100,
+      "sync_threshold": 1000,
+      "resize_factor": 1.2
+    },
+    "chroma_space_declared": "l2",
+    "pg_count": 1008,
+    "total_elements_added": 39195
+  },
+  "disagreement_kinds": {
+    "chroma_empty": 24,
+    "symmetric_swap": 43
+  },
+  "not_measured": [
+    "选择性权限过滤下的召回差（本库 classification 全 1 / department 全空串）",
+    "Chroma 对 24 题交 0 行的字节层成因",
+    "切读态热集让路的延迟代价",
+    "服务内端到端（/api/v1/chat）走 PG 读腿的实测",
+    "HNSW ef_search 扫参；更大语料上的近似性"
+  ]
+}

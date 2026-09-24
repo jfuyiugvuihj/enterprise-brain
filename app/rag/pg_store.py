@@ -9,9 +9,11 @@ produces a vector, how wide that vector is, or how results are re-ranked
 (docs/handoff/2026-09-17-pgvector-adoption-plan.md section 7 lists all three under
 明确不做). Nothing here calls an embedding endpoint: it writes vectors somebody else made.
 
-Chroma stays the read path until R59. pg_store writes, plus the two read-only probes in
-vector_mirror(), which is what proves the target really is the database these vectors
-belong to before a single one of them is sent to it.
+Chroma is still the read path: R59b added the pgvector read leg at the bottom of this
+file, but its switch -- indexing.INDEX_BACKEND -- still ships on "chroma", so which engine
+answers a search does not change until somebody flips that on purpose. Everything the read
+leg needs is already here: it reuses vector_mirror(), so the 0010 scope row and the real
+column type are the same two probes that gate writes, never a second口径 check.
 
 ================================================================== fail closed
 The switch is VECTOR_DUAL_WRITE and its default is OFF. With it off this module imports no
@@ -597,3 +599,230 @@ def vector_mirror(*, connection_factory=None, url: str | None = None,
             reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
             model=configured.embedding_model,
         ) from exc
+
+
+# ================================================================== reads (R59b)
+#
+# The read half of the mirror this file already writes: one SQL top-k over chunk_vectors,
+# with the caller's scope filter pushed into the WHERE clause.
+#
+# Fail-closed where it matters more than availability: an authorisation filter
+# :func:`sql_scope_filter` does not recognise must never become "no WHERE clause". Every
+# refusal below raises, and the caller in app/rag/retriever.py answers by falling back to
+# the legacy Chroma leg -- which enforces the same filter natively -- so a refusal costs a
+# slower answer, never a wider one.
+
+#: SQL operator per 0010's CHECK spelling of distance_function. The index 0010 builds is
+#: ``vector_l2_ops``, so l2 has to travel as <-> or the query will not use it. An unmapped
+#: spelling is a refusal, not a guess: R120's lesson is that a guessed operator still
+#: returns a number, and a number from the wrong arithmetic looks exactly like a result.
+DISTANCE_OPERATORS = {"l2": "<->", "cosine": "<=>", "ip": "<#>"}
+
+#: What a read has to hand back to rebuild ``retriever._hit_dicts``' shape. Deliberately
+#: not SELECT *: that dict is R44's contract, and a column that stops existing has to fail
+#: here by name rather than turn into a silently missing metadata key.
+_READ_COLUMNS = ("vector_id", "content", "filename", "chunk_index", "classification",
+                 "department")
+
+#: The only scope columns the retrieval gate speaks, and the SQL type each needs.
+_SCOPE_COLUMNS = {"classification": "integer", "department": "text"}
+
+#: Read-leg stable codes. They live here -- like REASON_VECTOR_MIRROR_TEXT_UNENCODABLE
+#: above -- precisely so they stay out of retriever's R21 degradation-code set, which a
+#: test compares key for key.
+REASON_VECTOR_READ_FILTER_UNTRANSLATABLE = "vector_read_filter_untranslatable"
+REASON_VECTOR_READ_WITHOUT_DUAL_WRITE = "vector_read_without_dual_write"
+REASON_VECTOR_READ_OPERATOR_UNKNOWN = "vector_read_operator_unknown"
+REASON_VECTOR_READ_TABLE_UNRECOGNISED = "vector_read_table_unrecognised"
+REASON_VECTOR_READ_FAILED = "vector_read_failed"
+
+
+class VectorReadRejectedError(RuntimeError):
+    """The pgvector read leg refuses to answer. ``reason`` says which guard fired."""
+
+    def __init__(self, message: str, *, reason: str = REASON_VECTOR_READ_FAILED):
+        super().__init__(message)
+        self.reason = reason
+
+
+class ScopeFilterUntranslatable(VectorReadRejectedError):
+    """Raised instead of issuing a vector query with a missing or partial WHERE clause."""
+
+    def __init__(self, message: str):
+        super().__init__(message, reason=REASON_VECTOR_READ_FILTER_UNTRANSLATABLE)
+
+
+def _scope_clause(column: str, values, sql_type: str):
+    """One ``column = ANY(%s::type[])`` predicate, with no coercion of the values.
+
+    The bind list is wrapped -- ``([kept],)`` -- because this predicate owns exactly one
+    ``%s``: returning the inner list bare makes :func:`sql_scope_filter`'s ``$and`` branch
+    ``extend`` the individual levels into the parameter tuple, so a two-key filter ships
+    five values against four placeholders. The 2026-09-24 first pass of
+    tests/test_r59b_pg_read_switch.py caught that off a fake connection that has since
+    been made to count placeholders, because a fake that ignores arity is a fake that
+    approves broken SQL.
+    """
+    if not isinstance(values, (list, tuple, set, frozenset)):
+        raise ScopeFilterUntranslatable(
+            f"{column} 的谓词不是集合：{type(values).__name__}")
+    kept: list = []
+    for value in values:
+        if sql_type == "integer":
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ScopeFilterUntranslatable(
+                    f"{column} 收了非整数密级 {value!r}：密级这一维不做字符串→整数猜测")
+            kept.append(int(value))
+        elif not isinstance(value, str):
+            raise ScopeFilterUntranslatable(
+                f"{column} 收了非字符串部门名 {value!r}")
+        else:
+            kept.append(value)
+    return f"{column} = ANY(%s::{sql_type}[])", [kept]
+
+
+def sql_scope_filter(where):
+    """Translate the retrieval scope's Chroma-shaped ``where`` into a SQL predicate.
+
+    What is accepted is what app/rag/filters.py actually builds -- a bare
+    ``{"classification": {"$in": [...]}}``, a bare ``{"department": {"$in": [...]}}``, and
+    ``{"$and": [that, that]}`` -- plus "no filter at all" (``None`` / ``{}``), the shape
+    the hot set and scripts/compare_vector_recall.py use. Everything else raises
+    ScopeFilterUntranslatable: an ``$or``, a second top-level key, a bare equality, any
+    operator other than ``$in``, a value that is not a collection of the right type.
+
+    Returns ``(clause, params)``, and ``clause`` is "" only when there is genuinely no
+    predicate to add. A row whose classification is NULL drops out of ``= ANY`` exactly as
+    a row missing the key drops out of Chroma's ``$in``, so the two engines do not differ
+    in who is allowed to see what.
+    """
+    if where is None:
+        return "", []
+    if not isinstance(where, dict):
+        raise ScopeFilterUntranslatable(f"where 不是字典：{type(where).__name__}")
+    if not where:
+        return "", []
+    if len(where) != 1:
+        raise ScopeFilterUntranslatable(
+            f"一份 where 只允许一个顶层键，拿到 {sorted(where)}")
+    key, value = next(iter(where.items()))
+    if key == "$and":
+        if not isinstance(value, (list, tuple)) or not value:
+            raise ScopeFilterUntranslatable("$and 需要非空列表")
+        clauses: list = []
+        params: list = []
+        for item in value:
+            clause, part = sql_scope_filter(item)
+            if clause:
+                clauses.append(clause)
+                params.extend(part)
+        if not clauses:
+            return "", []
+        return "(" + " AND ".join(clauses) + ")", params
+    if key not in _SCOPE_COLUMNS:
+        raise ScopeFilterUntranslatable(
+            f"不认识的作用域列 {key!r}：检索闸门只发 classification / department 两维")
+    if not isinstance(value, dict) or set(value) != {"$in"}:
+        raise ScopeFilterUntranslatable(
+            f"{key} 只接受 $in 这一种算符，拿到 {sorted(value) if isinstance(value, dict) else type(value).__name__}")
+    return _scope_clause(key, value["$in"], _SCOPE_COLUMNS[key])
+
+
+def _read_row_dict(row):
+    names = _READ_COLUMNS + ("distance",)
+    if isinstance(row, dict):
+        return {name: row.get(name) for name in names}
+    return dict(zip(names, row))
+
+
+def search_vectors(*, connection, vector_table: str, distance_function: str,
+                   query_vector, k: int, where=None) -> list:
+    """Top-k over chunk_vectors with the caller's scope filter inside the SQL.
+
+    The query vector travels as pgvector's text form (:func:`_vector_literal`), because
+    psycopg has no adapter for the type -- the same route the writer takes, so a read can
+    never be measuring an encoding that was not stored.
+    """
+    if vector_table != DEFAULT_VECTOR_TABLE:
+        raise VectorReadRejectedError(
+            f"读腿只认 {DEFAULT_VECTOR_TABLE}，拿到 {vector_table!r}",
+            reason=REASON_VECTOR_READ_TABLE_UNRECOGNISED)
+    operator = DISTANCE_OPERATORS.get(str(distance_function or "").strip().lower())
+    if operator is None:
+        raise VectorReadRejectedError(
+            f"vector_scope.distance_function={distance_function!r} 没有对应的 SQL 算符："
+            "猜一个算符换来的排序，和正确答案长得一模一样",
+            reason=REASON_VECTOR_READ_OPERATOR_UNKNOWN)
+    clause, params = sql_scope_filter(where)
+    literal = _vector_literal(query_vector)
+    limit = int(k) if int(k) > 0 else 0
+    sql = ("SELECT " + ", ".join(_READ_COLUMNS) + ", embedding " + operator
+           + " %s::vector AS distance FROM " + vector_table
+           + (" WHERE " + clause if clause else "")
+           + " ORDER BY embedding " + operator + " %s::vector LIMIT %s")
+    rows = connection.execute(sql, (literal, *params, literal, limit)).fetchall()
+    return [_read_row_dict(row) for row in rows]
+
+
+def read_topk(*, query_vector, k: int, where=None, connection_factory=None,
+              url: str | None = None, vector_table: str = DEFAULT_VECTOR_TABLE) -> list:
+    """One semantic top-k over the mirror, under the same two probes that gate writes.
+
+    ``connection_factory`` is the test seam :func:`vector_mirror` already exposes; with it
+    unset this opens a fresh connection per call, which is what the write side does too.
+    """
+    mirror = vector_mirror(connection_factory=connection_factory, url=url,
+                           vector_table=vector_table)
+    if mirror is None:
+        raise VectorReadRejectedError(
+            f"{DUAL_WRITE_ENV} 关着：chunk_vectors 里没有人在写的向量，把读切过去只会问出一库空。"
+            "切读的前置是双写先开满一轮重建，不是把这枚写开关当读开关用",
+            reason=REASON_VECTOR_READ_WITHOUT_DUAL_WRITE)
+    try:
+        return search_vectors(connection=mirror.connection,
+                              vector_table=mirror.vector_table,
+                              distance_function=mirror.scope.distance_function,
+                              query_vector=query_vector, k=k, where=where)
+    finally:
+        # Reads never commit: whatever transaction the probes opened ends with the
+        # connection, so this path cannot leave a row behind even if handed one that writes.
+        mirror.close()
+
+
+_READ_DIAGNOSTICS: dict = {"attempts": 0, "answered": 0, "rows": 0, "bypasses": {},
+                           "last_bypass": None}
+
+
+def note_read_bypass(reason: str, detail: str = "") -> None:
+    """Count a read leg that did not answer, under the stable code that says why."""
+    _READ_DIAGNOSTICS["attempts"] += 1
+    bypasses = _READ_DIAGNOSTICS["bypasses"]
+    bypasses[reason] = int(bypasses.get(reason, 0)) + 1
+    _READ_DIAGNOSTICS["last_bypass"] = {"reason": reason, "detail": str(detail)[:200]}
+
+
+def note_read_answered(rows: int) -> None:
+    _READ_DIAGNOSTICS["attempts"] += 1
+    _READ_DIAGNOSTICS["answered"] += 1
+    _READ_DIAGNOSTICS["rows"] += int(rows)
+    _READ_DIAGNOSTICS["last_bypass"] = None
+
+
+def vector_read_diagnostics() -> dict:
+    """Read-side counters. Reading this dictionary opens no connection and issues no SQL."""
+    return {
+        "attempts": int(_READ_DIAGNOSTICS["attempts"]),
+        "answered": int(_READ_DIAGNOSTICS["answered"]),
+        "rows": int(_READ_DIAGNOSTICS["rows"]),
+        "bypasses": dict(_READ_DIAGNOSTICS["bypasses"]),
+        "last_bypass": (dict(_READ_DIAGNOSTICS["last_bypass"])
+                        if _READ_DIAGNOSTICS["last_bypass"] else None),
+    }
+
+
+def reset_vector_read_diagnostics() -> None:
+    _READ_DIAGNOSTICS["attempts"] = 0
+    _READ_DIAGNOSTICS["answered"] = 0
+    _READ_DIAGNOSTICS["rows"] = 0
+    _READ_DIAGNOSTICS["bypasses"] = {}
+    _READ_DIAGNOSTICS["last_bypass"] = None
