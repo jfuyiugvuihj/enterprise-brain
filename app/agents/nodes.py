@@ -1288,6 +1288,15 @@ _VALUE_VERB_MARKERS = (
     "汇总", "除以", "变化",
 )
 
+#: R206a：口径题"知识库腿必须出门"的词集。刻意不新造第三张表——它就是上面两张
+#: 已裁定闭集的并（⑤ 的归属词 ∪ 定义题词集）。两张表都已经为"这类题的答案在制度里、
+#: 不在表格里"做过一次裁定（run6 前），再抄一遍只会漂。
+#: 面向的是派工，不是档位：档位判别（classify_route）问"这一题要不要花重流程的钱"，
+#: 本词集问"这一题的原文在不至少在知识库里"——metric-12「算人均产值用哪个分母」
+#: 判到分析档是对的，但那一档里一条读腿都没有就是错的。
+#: 闭集之外的裸"多少"/裸"统计"一律不收：那是问数，不是问口径（判据③）。
+KB_CALIBER_MARKERS: tuple[str, ...] = tuple(dict.fromkeys(_CALIBER_MARKERS + _DEFINITIONAL_MARKERS))
+
 
 @dataclass(frozen=True)
 class RouteDecision:

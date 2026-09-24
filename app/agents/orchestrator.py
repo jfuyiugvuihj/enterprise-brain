@@ -39,6 +39,7 @@ from app.agents.tools import search_docs, analyze_data, query_data, generate_cha
 from app.agents.planner import build_task_plan
 from app.agents.nodes import (
     DECLARED_LANE_KEY,
+    KB_CALIBER_MARKERS,
     LANE_QA,
     STREAM_PIECE_SINK_KEY,
     _make_model, classify_intent, classify_route, decide_workers, declared_lane_from_config,
@@ -442,6 +443,39 @@ def _intent_text(user_message: str) -> str:
 
 # ==================== 路由 ====================
 
+#: 副作用一轮：编译期带 interrupt_before，只能单独占一个 superstep
+#: （出处是上面的 _HITL_PARKED，本单只借用"这两条腿不该被重新分层"这一条事实）。
+_SIDE_EFFECT_LEGS: tuple[str, ...] = ("chart", "export")
+
+
+def kb_leg_for_caliber(text: str, workers) -> list[str]:
+    """R206a：口径题的知识库腿没出门就补一条，**只加不减**。
+
+    病根（run6 逐题凭据，跟进单 §93.14）：下面 route_main 的关键词兜底里，
+    "制度类只派 doc"那一条要求**一条 `data_kw` 都不命中**，而口径题的题面里恰好
+    带裸"统计"（metric-04/05）或裸"哪个"（metric-11/12/13/14/15）——一票否决之后
+    落到"追加 data"那一支；metric-07/17 两条兜底都不命中，supervisor 派什么就是什么。
+    结果 9 道题 `evidence_n = 0`，答案是数据分析腿从上传的报销明细表里"文件里没有这个
+    字段"拼出来的通用说法，知识库一个字都没读。
+
+    三条边界，每条都有用例钉着（判据②③④）：
+    ① 只加不减——数据分析腿不许为了省一次检索撤掉，题面带着上传文件时它是真需要的；
+    ② 词集是闭集——裸"多少"/裸"统计"不收，纯算数的题不许被拖进知识库多花一发检索；
+    ③ 副作用一轮不改派——chart/export 补一条读腿要多烧整个 superstep 的钟，另账。
+    """
+    if not workers:
+        # 弃权轮仍归 R42 那条"问答档补派 doc"管：两条规则同时开口就变成两个锚点，
+        # 摘掉任一条都有用例不红。判据⑤的反证钉靠的就是这一条边界可指名道姓。
+        return []
+    if "doc" in workers:
+        return list(workers)
+    if any(leg in workers for leg in _SIDE_EFFECT_LEGS):
+        return list(workers)
+    if not any(marker in text for marker in KB_CALIBER_MARKERS):
+        return list(workers)
+    return list(workers) + ["doc"]
+
+
 def route_main(state: AgentState, config=None):
     """决定这一轮派谁出门。
 
@@ -519,6 +553,14 @@ def route_main(state: AgentState, config=None):
             for worker in planned_workers:
                 if worker not in workers and worker not in ("chart", "export"):
                     workers.insert(0, worker)
+
+    # R206a：口径题的派工里若没有知识库腿，补一条。放在计划分支与关键词兜底**之后**、
+    # R42 弃权补派**之前**——前面两条定的是"这一轮干什么"，本条只往里加一条读腿；
+    # 排在 R42 之前是为了让弃权轮的既有形状一个字不动（workers 仍为空时本条不开口）。
+    caliber_filled = kb_leg_for_caliber(intent_text, workers)
+    if caliber_filled != workers:
+        logger.info(f"[R206a] 口径题知识库腿缺席 → 补派 doc：{workers} → {caliber_filled}")
+        workers = caliber_filled
 
     # R42 判别器只接管一种局面：supervisor 弃权、计划为空、关键词一条不命中，
     # 也就是 route_main 收尾那句 `if not workers: return "reflect"`——派发列表为空
