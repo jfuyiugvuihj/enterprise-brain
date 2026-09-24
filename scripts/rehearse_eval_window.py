@@ -272,8 +272,11 @@ def budget_table(floor_override: int | None) -> list:
         affordable_max = clock_affordable_tokens(budget, 0, stream=False)
         # affordable(p) = (ceiling/margin - p/prefill_rate) * rate 在 p=0 处取最大
         # clamped 需要 floor <= affordable < declared；上限都够不到 floor 就不存在这样的 p
+        # always_unaffordable 必须是「连本档自己的地板都付不起」，即 affordable < min(declared, floor)。
+        # 旧式漏了地板这一侧，于是 declared > affordable >= floor 那一段会同时印出 clamp_possible=true
+        # 与 always_unaffordable=true —— 一枚说「能夹」一枚说「永远付不起」，两旗自相矛盾。
         clamp_possible = floor <= affordable_max and affordable_max < declared
-        always_unaffordable = affordable_max < declared
+        always_unaffordable = affordable_max < min(declared, floor)
         break_even = (ceiling / margin - declared / rate) * prefill_rate
         out.append({
             "tier": tier.value,
