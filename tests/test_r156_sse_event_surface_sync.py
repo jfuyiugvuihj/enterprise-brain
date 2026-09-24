@@ -477,19 +477,28 @@ def test_this_file_adds_no_skip_and_no_xfail():
 class _TempEdit:
     """按字节进出的一枚临时变异；退出时不论断言成败都还原，并留 sha 证据。"""
 
-    def __init__(self, path: Path, old: str, new: str, every: bool = False):
+    def __init__(self, path: Path, old: str, new: str, every: bool = False,
+                 line: int | None = None):
         self.path = path
         self.old = old
         self.new = new
         self.every = every
+        self.line = line
         self.info: dict = {}
 
     def __enter__(self):
         raw = self.path.read_bytes().decode("utf-8")
         self.info = {"before": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16], "raw": raw}
-        n = raw.count(self.old)
-        assert n >= 1, "%s 里找不到待改的锚：%r" % (self.path.name, self.old[:60])
-        edited = raw.replace(self.old, self.new) if self.every else raw.replace(self.old, self.new, 1)
+        if self.line is None:
+            n = raw.count(self.old)
+            assert n >= 1, "%s 里找不到待改的锚：%r" % (self.path.name, self.old[:60])
+            edited = raw.replace(self.old, self.new) if self.every else raw.replace(self.old, self.new, 1)
+        else:
+            rows = raw.split("\n")
+            row = rows[self.line - 1]
+            assert self.old in row, ("{} 第 {} 行里没有待改的锚：{}" % (self.path.name, self.line, self.old[:60]))
+            rows[self.line - 1] = row.replace(self.old, self.new, 1)
+            edited = "\n".join(rows)
         assert edited != raw
         self.path.write_bytes(edited.encode("utf-8"))
         return self.info
@@ -512,13 +521,38 @@ def _first_sink_site(scrape: dict) -> tuple:
     raise AssertionError("发射面里没有 sink-call 站点，反证没法做")
 
 
+def _rename_anchor(path: Path, name: str, lineno: int, callee: str) -> tuple:
+    """给「改名红」那枚反证钉求一枚只改这一处的锚，返回 (old, new, line, probe)。
+
+    两枚形状假设是这枚钉原来没有的：站点既可以写成 `callee("name", ...)` 同行，也可以
+    写成 `callee(` 换行再写名字（本仓那枚 canonical 构造器全程是后一种）；事件名既可以不带点，
+    也可以带一枚点（形如 `x.y`），而 `.probe` 后缀会把点数顶到两枚、被 `WIRE_NAME_RE`
+    当场拒掉——那时红的是「读错了行」，不再是「代码在发而契约没记」。
+    """
+    probe = "%s.probe" % name if "." not in name else "%s_probe" % name
+    rows = path.read_bytes().decode("utf-8").split("\n")
+    inline = '%s("%s"' % (callee, name)
+    quoted = '"%s"' % name
+    for offset in range(6):
+        idx = lineno - 1 + offset
+        if idx >= len(rows):
+            break
+        row = rows[idx]
+        if inline in row:
+            return inline, '%s("%s"' % (callee, probe), idx + 1, probe
+        if quoted in row:
+            return quoted, '"%s"' % probe, idx + 1, probe
+    raise AssertionError("%s：站点第 %d 行往后六行里找不到 %r 的字面量，反证没法做"
+                         % (path.name, lineno, name))
+
+
 def test_counter_evidence_a_renamed_emission_turns_the_forward_pin_red():
     contract, scrape, _, _ = _state()
     check_emitted_are_recorded(scrape, contract)
-    name, rel, _, callee = _first_sink_site(scrape)
-    probe = "%s.probe" % name
+    name, rel, lineno, callee = _first_sink_site(scrape)
     path = REPO / rel
-    with _TempEdit(path, '%s("%s"' % (callee, name), '%s("%s"' % (callee, probe)) as info:
+    old, new, edit_line, probe = _rename_anchor(path, name, lineno, callee)
+    with _TempEdit(path, old, new, line=edit_line) as info:
         contract2, scrape2, _, _ = _state()
         with pytest.raises(AssertionError) as exc:
             check_emitted_are_recorded(scrape2, contract2)
