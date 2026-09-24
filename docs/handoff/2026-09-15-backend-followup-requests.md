@@ -2922,3 +2922,117 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
   - **R218** → `Russell`（`01a0d26d-ab49-7c83-a3fd-28459d983d0e`）@ 自建 `be-r218`（基点 `dea3ee4`）。写域 `scripts/rehearse_eval_window.py` + 新 `tests/test_r218_*.py` + `scripts/r218_*`。目的：**凡是离线能抓的失败一律不许留进今晚那扇窗**——补 D 三格前置（`REPORT_LANE_VIA_QUEUE` 翻 on 后的入队/轮询/停轮）、C 格「缓存命中可不可观测」、A② 量具自校准（用 R215 那两格新读数在离线合成流上证明尺子有牙）。测不了的不许放宽判据，落成 `NOT_COVERED_OFFLINE` + 一句原因。
   - 🔴 同名词撞车两枚：`Hilbert`（R179 `01a0cdf0-…`）、`Russell`（R160 `01a0c6f3-…`／R177 `01a0cc5b-…`）都是历史代号。名册一律按 `agent_id` 定序，撞名不并账。
 - **待业主（本格刷新）**：① 心跳 `automation-2` 的 `targetThreadId` 仍指死线程；② 批准改评测集（29 条 `must_contain` 查无出处）；③ **H20**（R59 切读的显式距离下限）+ 密级维度复核；④「rename 数据库表」始终没给表名列名；⑤ VM `sshd` 掉了（不在 V1 关键路径）；⑥ **R214 两选一**（路 A 重标定 / 路 B 承认分析档付不起）；⑦ 新增：**A① 的整表 p95 口径**——问答档 61.0 s 已绿，整表 107.9 s / 分析+报告档 144.0 s 到底算不算验收面，这条不定，阶段 A 不许翻绿。
+
+## §94（09-24 22:2x–，第八班第一格·接手死线程 `01a0acfb`，主树 **`8b86f4c`** 全程为测量基线）：run7 相 1 开窗 · 🔴 计划书"8 枚零提交"是假账（7 枚早有自己的并树提交）· 新立 **R221/R222** · **R220** 正式登记
+
+**本班是接手班**：上一条总控线 18:49 之后连续四次请求被服务端拒（`Invalid 'id' …got 'at_…'` / `Invalid 'call_id'`），与 H19 记的同一种死法。本班**没读它的对话**，下面每条结论都来自磁盘或现网实测；引用前任数字的地方一律标"前任实测"。
+
+### 一、接手核对（本班亲跑）
+
+| 项 | 读数 | 判 |
+|---|---|---|
+| 主树 | HEAD `8b86f4c`，build-inputs（`app`/`migrations`/`scripts`/`deploy` + `pyproject.toml`/`uv.lock`/`README.md`/`Dockerfile`/`.dockerignore`）**dirty=0**；未跟踪只有业主自己的 `课程实践-…` 与 `.zcodeignore` | ✅ |
+| 镜像 | `check_image_provenance.py --expect-container` → **MATCH / exit 0**，label 与容器内 `/app/BUILD_INFO` 均 `8b86f4c`，built_at `2026-09-24T22:18:16+08:00`（前任重建，本班复跑） | ✅ |
+| 容器 | 七件全 Up，backend/worker/scheduler 22:19 随新镜像 recreate | ✅ |
+| 凭据 | `scripts/seed_workspace.py --check` → `RESULT ok documents=100 datasets=1 owners=1` **exit 0**；WARN：服务端有、盘上无 4 枚（`browser_acceptance_policy.txt`、`六级作文模板.docx`、`深度学习入门….pdf`、`深度学习技术栈学习路线.pdf`）——本班级旧账，不是今晚新增 | ✅ |
+| P-18 | 容器内 `PING`→`PONG`、`DBSIZE`→**0**、`answer:*`→**0**、`maxmemory-policy=noeviction`。可用写法（runbook §17 第 8 步原文那条在容器里展不开口令）：`docker exec -e RG=<deploy/.env.server 的 REDIS_PASSWORD> enterprise-brain-redis-1 sh -lc 'redis-cli --no-auth-warning -a "$RG" …'` | ✅ |
+| P-19 | `%TEMP%\ka.txt` 本班 22:22:22 重起常驻（PID 20256，240 s 一续），22:26:22 起稳态 `SET=0x80000003`；开窗时刻 22:36:19 的最近一次续租是 22:34:22（≈2 分钟，满足"5 分钟内"）。前任留下的 17:39:33 那枚文件内容是 **25 个 0x00 字节**（进程被杀在半路），判死正确 | ✅ |
+| P-17 | 脚本内 22:36:19 出 `corpus_before.csv`（`documents/` 盘上 97 枚文件，15 340 B） | ✅ |
+| P-14 | 对**仓内量具** `scripts/eval_transport_ask_v2.py` 取字符串字面量：端点只有 `"/api/v1/ask"`（`:443`）+ `"/api/v1/login"`（`:127`）+ `"/api/v1/approve"`（`:81`）+ `"/api/v1/queue/status/…"`（`:522`）⇒ **没有 `/api/v1/chat`**。其余 `api/v1/chat` 命中全是 `app/api/v1/chat.py` 这种文件路径引用 | ✅ |
+| A② 量具 | `scripts/rehearse_eval_window.py --switches` 在**最终 HEAD `8b86f4c`** 复跑：`cells=3 red=1`，A② 帧账自校准 **MEASURED_GREEN**（尺子代际实读 `R181+R215` 与声称一致；受控纠正轮 `uncorrected_breaks=0 → verdict True`，真断流/中途断流两形状 `verdict False`），C 缓存命中腿 **MEASURED_GREEN**，D 报告档 **RED**（见下"三"）；`exit=1` | ✅（D 格红另立单） |
+| 模型在位 | `ollama ps`：`qwen3.5:9b` **100% GPU** / context 4096 / 5.3 GB，`nomic-embed-text` **100% GPU**；`inference compute` 日志 library=**CUDA** name=CUDA0（RTX 4060 Laptop 8 GB）| ✅ A③ |
+| 两棵跑分树 | `be-eval95` = `8b86f4c` clean（前任已 `merge --ff-only`）；主树 clean | ✅ |
+
+🔴 **本班新增一条开窗前置（前任没做过，写进判读表抬头）**：**开窗前热机**。`OLLAMA_KEEP_ALIVE` 服务器默认 5 min，容器 recreate 之后 `ollama ps` 是**空的**——直接开窗会把首题的加载（实测 `load_duration` 8.21 s / 整发 13.7 s）吃进 A① 的 max。本班做法：stamp **之前**从 backend 容器里对 `http://ollama:11434/api/generate` + `/api/embeddings` 各发一发，`keep_alive="30m"`。🔴 两个口径边界：① 这是**直连 Ollama、不经 app** ⇒ 一个字的 `answer:*` 缓存都不产生，不违反 P-18；② 全仓 `app/**` 没有任何一处把 `num_ctx` 发进载荷（`app/api/v1/observability.py:1326` 原话，本班复核），所以热机**不带 options** 就是同一条口径，服务端自己的 context 就是 4096。实测结果支持这个做法：run7 首题 `doc-01` 28.0 s，与全表 p50 28.9 s 同档，而 run6 首题 33.7 s。
+
+🔴 **两条会坑下一个人的环境事实**：① 宿主 `python` 是 `C:\Users\fengx\anaconda3\python.exe`，**没有 `chromadb`**——`scripts/rehearse_eval_window.py --switches` 用它会 `ModuleNotFoundError` 退出 1（不是判据红）。仓库侧一切量具必须走 `.venv\Scripts\python.exe`。② 本机 `hosts` 里有 `127.0.0.1 github.com` 一整列 ⇒ `git push origin` 必失败，与网络在不在飘无关；gitee 正常（本班 `git fetch` 复确认 `behind=0`）。
+
+### 二、🔴 台账订正：计划书"还剩 8 枚零提交"是假账
+
+前任 09-24 的账写「计划书 27 单里真零提交 = **R29 R31 R32 R33 R38 R43 R46 R48**（约 7.5 人日）」。本班不查号、查两样：**主干里以自号并树的提交** + **该单要求的产物在不在树上**。逐条实测（`git merge-base --is-ancestor <c> HEAD` 全部 IN-HEAD）：
+
+| 号 | 证据 | 判 |
+|---|---|---|
+| R29 | `791568c` 09-21 14:53「并树 R29（Laplace）：思考税判负并钉成契约」 | **早已并树**（并的是"判负 + 钉"） |
+| R31 | `eef642b` 09-21 20:32「并树 R31：后端流式产出合格片序列（判据①a）」 | **早已并树** |
+| R32 | `8a91f4e` 09-21 14:21「并树 R32：档位取值闸 + 契约散文归真」 | **早已并树** |
+| R33 | `9678d21` 09-21 11:14「并树 R33：短期记忆那条腿自本枚起零模型」 | **早已并树** |
+| R38 | `2e6abc6` 09-21 10:36「并树 R38：input_tokens 穿得出原生腿 + cached_tokens 归真」 | **早已并树** |
+| R43 | `4586bb4` 09-22 10:58「并树 R43a：原生腿 cached 计数接上 + 改写 prompt 可变内容后置」 | **R43a 已并树**（R43b 未单列，本班不替它宣布整单结案） |
+| R48 | `0ad3d3e` 09-24 21:29 并树（前任） | **昨夜并树** |
+| R30 | 判据要拆的 3 处硬编 `timeout=30` 在 `app/**` **零命中** | 产物在树 |
+| R34 | `keep_alive` 4 枚文件命中；`deploy/.env.server` 有 `LOCAL_MODEL_KEEP_ALIVE=15m`；机制在 `app/common/model_config.py` | 产物在树 |
+| R37 | `REPORT_LANE_VIA_QUEUE` 4 枚文件命中（今晚相 2 正要开它） | 产物在树，**开关默认关** |
+| R40 | `standard_source` 3 枚文件命中（含服务端一侧） | 产物在树 |
+| R47 | `app/rag/**` 里 `match_terms` 4 处命中 | 产物在树 |
+| R49 | `app/documents/index_policy.py` 存在（docstring 首行自报 R49），`chat.py:3512` 是它的调用点 | 产物在树 |
+| **R46** | 出口在（`app/api/v1/feedback.py:181/226`，R195 落的），🔴 **消费侧零**：`app/rag/**` 里 `feedback`/排序先验 **0 命中**（`pg_store.py:9`、`indexing.py:2052` 那两处命中的是 `pgvector-adoption` 这个英文词组，不是信号） | **真未做** |
+| **R50** | `app/documents`、`app/scheduler*` 里 `rebuild`/`incremental` 只有一处无关 docstring（`file_security.py:141` 讲上传写盘） | **真未做** |
+
+⇒ 前任那 8 枚里 **7 枚在 09-21/09-22/昨夜就已并树**，真未做的是 **R46 消费侧** 与 **R50** 两枚，约 **2.5 人日**，不是 7.5。"约 7.5 人日"这句今后不许再抄。🔴 口径写清楚：本班核的是"号有没有自号并树 + 判据要求的产物在不在树"，**不等于逐判据结案**——逐判据结案要按跟进单 §21 原文对着测试重跑，本班把它列为派工项（见"五"），不替任何一枚宣布 V1 结案。
+
+### 三、新立两枚（R218 的 D 格 RED 抓出来的，都是真缺陷）
+
+- **R221｜前端队列看门狗不认 `dead`，且整条看门狗没有 deadline**（写域 `frontend/src/components/ChatPanel.vue` + 新 vitest 件；前端线已获业主授权）。实取证：`ChatPanel.vue:840` `const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired']`、`:1010` `if (QUEUE_SETTLED.includes(read.status)) stop()`、`:1029` `entry.timer = setInterval(tick, QUEUE_POLL_MS)`；而 `dead` **是后端真会交出来的终态**（`app/common/reliable_queue.py:249-251` `rpush(dead_key)` + `set(status_key,"dead")`；`deploy/queue_worker.py:206` 也按 `dead` 分支写回）。⇒ 一发任务进 `dead`，浏览器**永远停不下这个计时器**（R218 同格另一条读数：`frontend_watch_has_no_deadline=true`，前端侧零枚 `setTimeout/clearTimeout/Deadline` 字样）。判据：① `dead` 进停表集合，且停表时必须给用户一句人话终态而不是永久 spinner；② 看门狗带显式 deadline，超时后停表并标注「已转后台，稍后可查回」；③ 反证钉的红色必须落在这两格本身上（教训 #46：红在别的格不算牙）。
+- **R222｜跑分/取回适配器不认 `cancelled`/`dead`**（写域只有 `scripts/eval_transport_ask_v2.py` 的停表字面 + 新 `tests/test_r222_*.py`）。R218 读数 `adapter_stops=["done","expired","failed"]`、`adapter_unhandled_final=["cancelled","dead"]`、`adapter_deadline_seconds=900`、`adapter_waste_per_stalled_watch_seconds=900` ⇒ 队列道下一题落进 `cancelled`/`dead` 就**白烧 15 分钟**（12 题全落 = 1575 分钟）。🔴 本班明确**不在 run7 窗内改它**（量具改动会随代码进窗，改了就换了测量条件）；落树时机 = run7 收窗之后、run8 之前，且报告抬头必须记「run8 的适配器 ≠ run6/run7 的适配器」。
+
+### 四、R220 正式登记（前任只在口头存在过）
+
+`be-r220`（HEAD `92285ff`）里一枚 520 行未跟踪 `scripts/r220_packing_loss.py`，**从没进过任何文档**。本班读全文判质量：立论是「top-k 里有、进 prompt 没有」的逐题损失表与三桶归因（`lost_by_room` / `lost_before_packing` / `lost_unattributed`），🔴 取证纪律达标——不 import `app.rag.retrieval_pipeline`（那模块 import 期就构造 `ModelHandler()`，裸跑等于对宿主模型端口发一次连接），容量/预留/top-k/召回深度全部按真源现算或 AST 按**调用点**读（它自己写了"不看签名看调用点"，正是 H19 那条规矩）；输入是四份已并树只读原件并逐次记 sha256。**未做的**：本班尚未运行它（跑一次要 CPU，窗内硬禁）、零枚用例、零登记。⇒ 列进"五"的 W1，验收判据 = 跑通出表 + 三桶并起来正好等于损失行 + 反证钉（摘掉一桶必须红在该桶的计数上）。
+
+### 五、下一波（run7 收窗后点火；写域逐对互斥已核）
+
+| 波 | 号 | 写域 | 与谁冲突 |
+|---|---|---|---|
+| W1 | **R59c** 切读前三格补数（计划书 §9.3 ①②③） | `app/rag/**`、`app/documents/catalog.py`、新 `scripts/r59c_*` + `docs/testing/r59c-*` | 要真容器 + 真 PG ⇒ 必须整窗独占，不与跑分窗并置 |
+| W1 | **R200** 三份同形 `restricted` 并一 | `app/api/v1/data.py` + `app/api/v1/chat.py` + 契约那一处出处 | `chat.py` 自 R48 并树后已腾空 |
+| W1 | **R221** | `frontend/src/components/ChatPanel.vue` + 新件 | 前端独占 |
+| W1 | **R222** | `scripts/eval_transport_ask_v2.py` + 新件 | 与其他单零交集，但**时间上必须在 run7 之后** |
+| W1 | **R220** | `scripts/r220_packing_loss.py` + 新 `tests/test_r220_*` + `docs/testing/r220-*` | 只新建 |
+| W2 | R60 停写与退役 / R90b 迁移 0010 首装必停 / 计划书逐单结案核对（R46 消费侧、R50 是仅有的两枚零产物） | — | R60 前置 = R59c 合闸 |
+
+🔴 **并发上限按内存定，不按业主给的 6–8 定**：Docker 栈一起，`vmmemWSL` 吃 7 GB、本班实测空闲 9.4–12.4 GB；前任 `-n 8` 全量门已炸过 worker（`SystemError: AST constructor recursion depth mismatch`），事故 #42 是 `-n 16` 打出脏重启。⇒ 本班落 **`-n 4`（118 s 级）**，且**执行层一律禁跑全量门**（只跑定向件），全量门只在静默窗由总控跑一次。五枚 W1 同跑定向件 = 每枚 1 进程 + 工作树 I/O，这个形状在本机是安全的。
+
+
+### 六、本班另外三笔实测（都影响"看得见"，不影响今晚读数）
+
+- 🔴 **前端镜像落后主树 4 枚**：`enterprise-brain-frontend:local` 的 `Created` = **2026-09-23 22:38（京）**，而 `git log --since=2026-09-23 22:30 -- frontend` 实测 **5 枚**提交在后：`03a5872`(R202) / `0997489`(R205a) / `424199c`(R208) / **`0ad3d3e`(R48 首屏线索卡 `answer.headline`)**。⇒ **业主浏览器里现在看不到 R48 那张卡**，不是功能没做，是镜像没重建。收窗后第一件事就是重建前端镜像（`docker build -f frontend/Dockerfile -t enterprise-brain-frontend:local frontend` 一条，绕开本机 `compose build` 的 gRPC sharedkey 老毛病），再 `up -d --no-build frontend`。
+- **前端"运行时零外部请求"本班做了静态核对**：`src/assets/theme.css:1` 已是本地化注释（R148），`--font-body/--font-mono` 两枚 token 用的是 `"Manrope Variable"` / `"JetBrains Mono Variable"`（与 `@fontsource-variable/*` 声明的 family 名同名，那正是"只加 @import 不改 token 名等于没改"的坑，前任做对了）；`src/**` 全量 `rg "https?://"` 除 `www.w3.org`（SVG 命名空间，不产生请求）与 localhost 之外**零命中**；三张位图 `login-bg.webp 106.3 KB` / `workbench-bg.webp 7.0 KB` / `hero.png 12.8 KB`。⚠️ 遗留：`hero.png`（2026-06-16 旧件）**引用数实测 0**，是枚死资产——**删文件归业主**，本班只报不删。断网实测（DevTools Offline 刷两屏）要动浏览器与容器，本班留到收窗后。
+- **本班自伤两条，写下来给下一个跑读数的人**：① `rg -r <字符串>` 是**替换显示**不是递归——本班两次把 `rg -rn "X"` 当递归用，结果终端里看到的"文档原文"是被替换过的（`问答档` 变成 `n`），文档本身没坏但**照抄那次显示就是假话**；② A① 的档位成员清单**纸面有两套**（见"判读表附"那节）⇒ 反解之前谁都不知道，本班改成"两套都过才算绿"。
+
+### 七、🔴 工作树全队列抢救结论：**除 R220 一枚之外，没有任何"白干"的活**（09-24 23:0x 全量实扫）
+
+前任两班的头号焦虑是"执行层死了、活躺在磁盘上没提交、机器一崩就白干"。本班把 34 棵工作树全量扫了一遍，判据不是"脏不脏"而是**该文件字节在主树 HEAD 里存不存在**（`git -C <树> hash-object <路径>` 对 `git rev-parse HEAD:<路径>`）：
+
+| 判 | 数量 | 含义 |
+|---|---|---|
+| 字节与主树 HEAD **完全相同** | **88 枚** | 纯残料：活早已并树，旧基工作树里留着同字节副本 |
+| 主树**有该路径**但字节已演进 | 24 枚 | 并树之后主树又被后续单改过（`chat.py`/`nodes.py`/`ChatPanel.vue`/契约等），不是丢活 |
+| 主树 HEAD **根本没有这个路径** | **1 枚** | 🔴 只有 `be-r220 :: scripts/r220_packing_loss.py` |
+
+⇒ **"两笔未提交的活"这个前提，到今天为止只剩一笔**（R220，见"四"）。`be-r20`/`be-r53`/`be-leg2` 三棵 09-17 那晚被点名的树，本班会话起手实测**已经不在工作树清单里**，它们的内容要么已并树要么随树回收；本班不去推断它们的死法，只报今天的字节事实。
+⚠️ **回收纪律（事故 #38 的账，别再犯）**：不许拿"只看祖先关系"的批量清理扫树——事故 #38 就是这么扫走在途树并连带删掉前端工具链的。要清必须先逐棵给判据：该单在主干有自号并树 + 该树脏项全部字节级命中主树 ⇒ 才可回收；**`be-r220` 在 R220 验收并树之前一枚都不许动**（它是全队列唯一的孤本）。删树/删文件归业主，本班只出判据清单与命令，不代做。
+### 八、W1 里 R59c 的量法定了（本班实找到现成入口，省掉一整轮真机问答）
+
+计划书 §9.3 那三格原本读起来像"要再跑一轮 105 题"。本班在路由表里实找到 **`POST /api/v1/observability/retrieval/debug`**（`app/api/v1/observability.py:481`，docstring 原话 "Run one permission-scoped retrieval and return a bounded, replayable report"）：收 `query` + `top_k`（带 clamp）+ 由鉴权 principal 决定作用域，内部走 `run_retrieval_debug(..., pipeline=_pipeline(), ...)`。⇒
+
+- **①「服务内端到端没在真库上跑过」**：翻 `INDEX_BACKEND=pgvector` 后逐题打这一枚入口就能判，**不生成答案、不进 pandas、不出图**；每发仍会走一次查询改写（现值 4.08 s/发，跟进单 §36.6），135 题 ≈ 9–10 分钟一侧，比再开一轮问答便宜一个量级。
+- **③「选择性权限过滤没量到」**：这枚入口天生是 principal-scoped，所以至少能实测"全命中 / 全不命中"两种谓词两侧行为一致且 PG 侧不漏放行；而**真·选择性强过滤仍然量不到**——现库 `classification` 全=1、`department` 全=`''`，要量必须另建**沙盒语料**（🔴 只能建在独立的沙盒库里，生产库一枚字节都不许动；本班不授权任何执行层碰生产 DML/DDL）。这条按计划书原样保留为未结格子，不许用"入口能跑"冒充"这一格量过了"。
+- 开关怎么进容器（本班实证的机制，别再猜）：`docker-compose.yml:15-16` 给 `x-runtime` 挂了 **`env_file: deploy/.env.server`**（`backend`/`worker` 经 `<<: *runtime` 继承），所以**未被 `${}` 引用的变量也能进容器**——改 `deploy/.env.server` + `up -d --no-build` 即可；`REPORT_LANE_VIA_QUEUE` 今晚就是这样翻的（它在全仓 compose 里零引用，若只按 `${}` 逻辑判断会得出"翻不了"的假结论）。🔴 反过来说：`deploy/.env.server` 是 **gitignored 的部署文件**，改了不进版本控制，收窗后必须改回并复量容器 env，否则"今晚测过的态"和"明天运行的态"会静默分叉。
+
+
+### 九、收窗后紧跟一扇**六分钟的小探针窗**，能白捡阶段 B 的一格（本班按判据原文算出来的）
+
+`docs/perf/enterprise-env-matrix.md:100` 的 Go/No-Go「速度」行原文：**问答档 P95 首屏 ≤1 s、结论 ≤10 s、缓存命中 ≤1 s；分析档 P95 ≤45 s 且每 ≤15 s 有进度；报告档 100% 完成且可查回**。逐格对"今晚这份数据能不能判"：
+
+| 格 | 今晚数据够不够 | 本班判 |
+|---|---|---|
+| 缓存命中 ≤1 s | **够，且不必再跑 105 题**：缓存键含用户/部门/密级/角色但不含 `session_id`（`app/common/cache.py:195`+`:144`）⇒ 同一 principal 问第二遍必命中 | 🔵 收窗后单开一扇 **6 分钟探针**：10 题各问两遍，只量第二遍的客户端墙钟，P95 ≤1 s 才写绿。🔴 必须**绕开评测适配器**（命中腿在 `eval_transport_ask_v2.py:467` 是硬抛停窗设计，用它会被自己拦死），也别走 `answers-run7*` 那两份产物 ⇒ 单独记成 `docs/testing/b1-cache-probe-*`，**不许并进 run7 的读数里** |
+| 结论 ≤10 s | 够：sidecar `wall_ms` 逐题就是终答墙钟 | 🔴 预计**判红**（run6 问答档 p50 27.9 / p95 68.9 ⇒ 结论不可能 ≤10 s）。照实写红，别拿"首屏卡"糊这一格 |
+| 首屏 ≤1 s | **不够**：客户端没有"首屏卡到达时刻"这一格读数 | 见下 R223 |
+| 分析档 P95 ≤45 s | 够（逐类 `wall_ms` 已有）| 预计红：run6 口径下分析族最贵 231–254 s |
+| 每 ≤15 s 有进度 | **不够**：帧账只记帧数与形状，**不记每帧到达时刻** | 见下 R223 |
+| 报告档 100% 可查回 | 相 2 就是为它开的 | 今晚判 |
+
+- **R223（并入 R222 同一枚执行单，同写域不另开人）**：`scripts/eval_transport_ask_v2.py` 的帧账补两样读数——**每帧到达时刻**（`frames[].arrival_at`）与**首枚非 `text` 可见事件（含 R48 的 `answer.headline`）到达时刻**。判据：① 只加读数，`answer`/`first_token_at`/`steps`/`cached`/`sentinel`/甲案七键**一字不动**（R181 那条例矩：只观测不改评分，动了会被 `tests/test_r123_hitl_approval.py:243` 的"extras 子集"钉当场判红）；② 补一帧就补一枚反证钉，且红色必须落在新格本身；③ **量具改动必须随代码进窗并写进下一轮报告抬头**——run8 的适配器从此不等于 run6/run7。
+- 🔴 本班明确**不在 run7 窗内动这枚量具**（同上：动了就换测量条件）。
