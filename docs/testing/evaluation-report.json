@@ -1,26 +1,26 @@
 {
   "total": 105,
-  "answer_correctness": 0.4762,
-  "evidence_coverage": 0.6857,
+  "answer_correctness": 0.5143,
+  "evidence_coverage": 0.7143,
   "unsupported_claim_rate": 0.0,
   "category_metrics": {
     "文档问答": {
       "correctness": 0.6842,
-      "evidence_coverage": 1.0,
+      "evidence_coverage": 0.9474,
       "total": 19
     },
     "多轮对话": {
       "correctness": 0.4167,
-      "evidence_coverage": 0.5833,
+      "evidence_coverage": 0.6667,
       "total": 12
     },
     "口径冲突": {
-      "correctness": 0.4211,
-      "evidence_coverage": 0.3684,
+      "correctness": 0.3158,
+      "evidence_coverage": 0.5263,
       "total": 19
     },
     "Excel计算": {
-      "correctness": 0.5,
+      "correctness": 0.5833,
       "evidence_coverage": 0.4167,
       "total": 12
     },
@@ -35,17 +35,17 @@
       "total": 4
     },
     "审批判断": {
-      "correctness": 0.6667,
+      "correctness": 0.8333,
       "evidence_coverage": 1.0,
       "total": 6
     },
     "跨部门权限": {
-      "correctness": 0.0,
+      "correctness": 0.1667,
       "evidence_coverage": 0.3333,
       "total": 6
     },
     "无证据问题": {
-      "correctness": 0.0,
+      "correctness": 0.25,
       "evidence_coverage": 0.75,
       "total": 4
     },
@@ -55,14 +55,72 @@
       "total": 4
     },
     "报告生成": {
-      "correctness": 0.3333,
-      "evidence_coverage": 0.6667,
+      "correctness": 0.5,
+      "evidence_coverage": 0.75,
       "total": 12
     }
   },
   "latency_ms": {
     "count": 105,
-    "average": 41700.27,
-    "p95": 107901.121
-  }
+    "average": 351121.76,
+    "p95": 163262.073
+  },
+  "approval_ledger": {
+    "hitl_pre_n": 19,
+    "hitl_pre_ids": [
+      "approval-05",
+      "chart-01",
+      "chart-02",
+      "chart-03",
+      "chart-04",
+      "insight-07",
+      "report-02",
+      "report-04",
+      "report-05",
+      "report-07",
+      "report-09",
+      "report-10",
+      "report-11",
+      "report-12",
+      "scope-02",
+      "scope-05",
+      "tool-01",
+      "tool-02",
+      "tool-04"
+    ],
+    "approved_final_n": 19,
+    "approved_final_ids": [
+      "approval-05",
+      "chart-01",
+      "chart-02",
+      "chart-03",
+      "chart-04",
+      "insight-07",
+      "report-02",
+      "report-04",
+      "report-05",
+      "report-07",
+      "report-09",
+      "report-10",
+      "report-11",
+      "report-12",
+      "scope-02",
+      "scope-05",
+      "tool-01",
+      "tool-02",
+      "tool-04"
+    ],
+    "approval_failed_n": 0,
+    "approval_failed_ids": [],
+    "ledger_rows": 105,
+    "ledger_rows_not_in_fixture": []
+  },
+  "pre_approval_ruler": {
+    "total": 105,
+    "answer_correctness": 0.5238,
+    "evidence_coverage": 0.7143,
+    "substituted_rows": 19,
+    "basis": "卡闸的题按侧车 pre_answer / pre_evidence_n 计分＝run2..run5 口径；分母不变"
+  },
+  "approval_line": "approval: 本轮经审批取得终答的题数 19 / 批准失败 0（批准前卡在闸上 19 题，账本 105 行） ｜ correctness 甲案 0.5143 / 旧口径 0.5238 ｜ evidence 甲案 0.7143 / 旧口径 0.7143"
 }

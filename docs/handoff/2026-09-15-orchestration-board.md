@@ -1338,6 +1338,8 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Russell` | `01a0cc5b-7f37-7d30-a8aa-2a46464b871d` | **R177**（R163-P1 之二）知识图谱 `visibility=private` 写进库而读路径一个字不查 | **`be-r177`**（总控自 `f515494` 新建，**独占**，建后 `dirty=0`） | **在途**（12:0x 单枚 `spawn_agent`，不带 `model`）。写域 `app/knowledge_graph/**` + `app/common/policy.py` + `app/common/rbac.py`（这两枚本件独占）+ `intelligence.py` 那一格读路径 + 新 `tests/test_r177_*.py`。判据② 二选一写死：甲=真接进读路径；乙=论证它不参与可见性并改掉「看着像权限字段」的语义——🔴 不许留「写了不管用」这一格；要交 private 存量条数与修后可见面的读数，量不到具名申报，不许拿本机库冒充容器库 | 09-23 12:0x |
 | `Aristotle` | `01a0cc5b-f8e3-7750-aa7f-7d0ab083ecdb` | **R178**（R163 后续）拒绝不落审计 + 「没有数据文件」把权限藏光说成不存在 | **`be-r178`**（总控自 `f515494` 新建，**独占**，建后 `dirty=0`） | **在途**（12:1x 单枚 `spawn_agent`，不带 `model`）。写域 `app/rag/filters.py` + `app/agents/tools.py` + 新 `tests/test_r178_*.py`；`observability` 那层**只 import 不改**（改的权力已给 R176）；禁入 `retriever.py`/`retrieval_pipeline.py`（冻结只读）。判据③ 拆三张脸（本轮没绑定 / 有但权限一份都不给 / 可见但没那一列），🔴 `tools.py:952-954` 与 `:1069-1071` 同形两处只改一处就是留第二张假话 | 09-23 12:1x |
 | `Planck`（**与前几班同名者无关**） | `01a0cc81-4c4e-7471-bb0d-07aced1a0a5d` | **R181** 给跑分窗装阶段 A 判据② 的尺子（判据全文 跟进单 §87 二） | **`be-r181`**（基点 `8e1136d`，**独占**；`.venv` Junction 由总控本班建） | 🔴 **订正本班上一格（§4BK）写错的两句话**：① 这具身体**不是本班派出来的**——rollout `ctime=12:23:41` 比本班那次 `spawn_agent` 早 5 分钟，本班那次投的是**同一个 id**（工具把在途的它又端了一遍），所以"幻影"那句只对摘要留的 `01a0cca7-385c` 成立；② 它 12:5x 自报"16 枚 / 3657-39"时**盘上为零**（全盘搜 `test_r181*` 无、本树 `dirty=0`）⇒ 判 premature 交付、不采信；到 14:0x 盘上才出现 `M scripts/eval_transport_ask_v2.py 176/7` + `M scripts/collect_evaluation_answers.py 17/2` + `?? tests/test_r181_text_frame_ruler.py` + `?? docs/testing/r181-text-frame-readings.md`。**这单仍未结案**：等四枚齐了由总控主树复跑定数。判据② 的尺子内 `answer` 取值口径未动（它把读数落在 sidecar 之外的第二份证据件 `FRAME_LEDGER`，绕开 `test_r123_hitl_approval.py:243` 那枚"甲案七键子集"死钉） ⇒ ✅ **09-23 15:5x 交工**（判读与总控裁定见 §4BM 五：帧读数落第二份证据件，甲案七键死钉不放宽） |
+| `Boole` | `01a0ceb3-2d82-7050-9a27-1af5cbef5e86` | **R48S**（只读取证，无工作树＝只读主树 `7b0ae26`） | 无（零写盘） | ✅ **已结案**（09-24 08:0x）：三条纪律（只读／禁跑测试／禁打模型）全部守住；报告全量进跟进单 §93，据此**定案 R48 走路线甲**；身体已 close | 08:0x |
+| `Schrodinger` | `01a0ce9c-57ad-7851-a8ea-9e96147913a5` | **R198** 排队轮询在终止性 4xx 上不停表 | `be-r198`（基点 `e6d9ae6`，**独占**） | ✅ **已结案并树 `7b0ae26`**（主树亲跑 4101/39；npm 993/49、lint 恒 148、build EXIT=0）·它顶回的同形缺陷**总控收下立案 R202**·身体已 close | 08:5x |
 
 | `Sagan` | `01a0cce0-11c2-7240-9403-c7971fcde021` | **R171（判据已被总控证伪并收窄）** 失效收尾那一支不许假定发出方带了文案 | `be-r171`（`218bd6e`） | ✅ **已并树 `9577b12`**（前端 849/41 = 826+23，`lint:colors` 148 不涨）·原判据「错误条不亮」对 shipped 路径不成立：`http.js:95` 自 `a07294f`（09-15）起就带文案，详见跟进单 §89 五 |
 | `Gibbs` | `01a0cd3b-b649-7641-959c-9a71981bd35a` | **R183 + R184**（同一笔 `0012`） | `be-r183`（`9577b12`） | **在途**·`migrations/**`+`app/storage/pending_approvals.py`+新件；🚫 `chat.py`/`data.py`/`frontend/**`/评测集；🔴 判据全文首次成文于跟进单 **§89 四**（此前只在本板 §4BL 五 有一句话）；这单是新镜像能否 recreate 的硬前置，见 §4BM 三 |
@@ -3631,3 +3633,44 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 
 ### 7. 下一格顺序（不再需要业主动手）
 冻结代码 → 双远端 push → plain `docker build --build-arg APT_MIRROR=…`（后端 + 前端两像，compose build 本机报 gRPC sharedkey）→ `--env-file deploy/.env.server up -d --no-build` → `run --rm --no-deps migrate` **apply 0013** 并核六枚约束词 → 重开 `VECTOR_DUAL_WRITE` 双写窗 → `be-eval95` ff 到最终 HEAD → **run6 独占窗**（1.5 h + 余量，窗内禁部署禁仓库测试）→ 逐格判读 A①②③④ 与 B / C / D / E。
+
+
+## 4BQ · 第四十四班（09-24 07:5x–09:0x，主树 `7b0ae26` 全程冻结不动 · run6 收窗）：**run6 `105/105` 判读 · 判据② 判红并给出病根 · 判据④ 第二次抓到真退化 · 🔴 事故 #40 整机待机冻 8 h 6 min · R48 定案 + 新立三张**
+
+### 1. 本班接手时手上有什么
+- 上一班死在 run6 开窗之后（22:42 开窗，本班 07:5x 接手时窗还在跑）。名册上唯一在途是 `Boole`（R48S 只读取证），本班 08:0x 收到全量报告后 close。
+- 代码全程没动过一个字节：`7b0ae26` 从上一班冻到本班收窗，容器镜像 rev 与之一致 ⇒ **run6 的读数与线上态是同一枚 revision**，这是这条流水线第一次做到。
+
+### 2. 🔴 事故 #40（机器侧，不是代码侧）：`standby-timeout-ac=0` 挡不住 S0 现代待机
+- 09-23 23:34 → 09-24 07:40 整机掉进待机 **8 h 6 min**，采集器与四枚 Agent 一起被冻。`STANDBYIDLE` 的 AC 值实测本来就是 `0x0` ⇒ **runbook 那条"开窗前 `powercfg /change standby-timeout-ac 0`"前置是假绿**（09-21 夜也冻过一次，这是第二次）。
+- 本班处置：起常驻进程调 `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED|ES_DISPLAY_REQUIRED)`（返回 `0x80000000`，每 240 s 续一次），并把这条写进跟进单 §93.0 与 runbook 前置（runbook 那一格待下班补）。
+- **时延读数没被污染**（核对过才敢用）：采集器每次重试在循环内重取 `started`（`scripts/eval_transport_ask_v2.py:444-445`），被打回的尝试不记账 ⇒ 跨冻结的 data-06 记的是解冻后的 `55.9 s`。**但报告里的 `latency_ms.average=351 121 ms` 被污染了**（`scripts/collect_evaluation_answers.py:128-135`：载荷不自报就用 `perf_counter` 实测，那一发把 8 小时整段吃进去）——它大于逐题最大值，一眼可辨。⇒ **时延一律以逐题帧账 `wall_ms` 为准，`evaluation-report.json` 那一栏本班不采信、已就地记为待修（并入 R205 口径，见 §6）。**
+
+### 3. run6 逐格判读（五道门，`COLLECT_EXIT=0 / SCORE_EXIT=0`，`evaluated=105/105`、缺题 0、哨兵 0 ⇒ 本轮成立）
+- **分数**：`correctness 0.4762 → 0.5143`（+0.0381）｜ `evidence 0.6857 → 0.7143`（+0.0286）｜ `unsupported_claim_rate 0.0` **七连零**。审批腿 **19 题全部经批准拿到终答、批准失败 0**（`hitl_pre_n` 与 `approved_final_n` 两串 id 逐位相同）。`evidence_n` 逐题总和 319 → 267。
+- **A① ≤90 s（问答档 n=64）**：`median 27.9 s / p95 68.9 s / max 80.9 s` ⇒ ✅ **连续第二窗过线**（run5 61.0 s）。但分析档 n=35 `p95 212.1 s`、报告档 n=20 `p95 146.6 s`、**整表 `p95 143.8 s`** ⇒ 整表口径未定死，**这一格只算问答档绿**。
+- **A② 流式逐字无缺**：❌ **0/105 成立**。`(text_frames,max_stream_frames)` = `(1,1)×85`、`(2,1)×19`、`(0,0)×1`。那 19 枚的两帧是"挂起文案 + 终答"，不是增量流。**且不是量具坏**：`missing_chars/extra_chars` 全表只有 `tool-03` 一枚非零（`extra_chars=21`），其余 104 题逐字无缺 ⇒ 病在**生成腿根本没接流式**（唯一逐片出口 `chat.py:2041` 是死道）⇒ **立案 R203**。
+- **A③**：✅（H11 已拿到卡）。
+- **A④ 逐类不退化**：❌ **抓到真退化 `口径冲突 0.4211 → 0.3158`（−0.1053，19 题掉 2 题）**，同族 evidence 反升 0.3684→0.5263。其余十族零退步、五族进步（`无证据问题 +0.25`、`跨部门权限 +0.1667`、`审批判断 +0.1666`、`报告生成 +0.1667`、`Excel计算 +0.0833`）。⇒ 这是该判据**第二次**抓到真退化（第一次 run4 的 `doc-19`），**"逐类不退化"本窗判红，不许拿"总分涨了"抵账**。
+- **B / C / D / E**：本班**没有**任何一格宣布验过。C 行的越权那格已在上班结清，其余仍是 0。
+- **🔴 新查出的时延尾巴**：`图表生成 n=4 p95 254.0 s`、`主动洞察 n=7 p95 231.3 s / max 272.2 s`，是问答档中位数的 **8–10 倍**；这两族正是 `tool_calls=4` 的那批（全表分布 2×94 / 0×7 / 4×4）。整表 p95 从 107.9 s 涨到 143.8 s，涨的就是它俩 ⇒ 单独立案 **R205**。
+
+### 4. R198 结案并树（`7b0ae26`，上一班已并、本班补账）+ 它顶回来的那格
+- `Schrodinger` 的 R198 七条判据全落地（改前红 10 枚、反证两组、`npm test 993/49`、`lint:colors` 恒 148、`build` EXIT=0），主树亲跑 **4101 passed / 39 skipped**。
+- 它"超授权只报不动"里那条**同形缺陷是对的**：`403 authorization_unavailable`（现主干 `chat.py:759` / `:763`）同样"永远不会自己变好"，但不在 R198 的三枚名单内 ⇒ 至今每 3 秒照轮、照刷台账。**本班裁定收下，立案 R202**（行号以 `7b0ae26` 为准，它报的 `:714/:718` 是 `e6d9ae6` 基点上的旧号）。
+
+### 5. R48S 取证结论与 R48 定案
+- `Boole`（只读、零写盘、禁跑测试/禁打模型三条纪律**全部守住**）交回三路线走查。**本班定案走路线甲 = 新 canonical 事件 `answer.headline`**，唯一理由是它给得出带 `sequence`+`timestamp` 的线上读数，路线丙等于拿没有量具的数去交判据。
+- 🔴 **判据①「首屏 ≤1 s 有可用结论」本班不宣布达成**：机测地板「只吐 1 枚 token 也要 11.0 s」+ 最短真实产品腿 27.5 s ⇒ 1 s 内不存在任何已生成的结论。交付形态是并排三句，口径变更留给业主。
+- 取证顺带查出一枚会**把判据② 从诚实的红翻成假绿**的坑：卡片若发成 `event: text` 帧，`text_frames>1 且 max_stream_frames>1 且 prefix_breaks==0 且 extra_chars==0` 四格会同时为真。这条已写死进 §93 派工词。
+
+### 6. 单号台账（本班新立 3 张 · 定案 1 张 · §92 三张继续待派）
+- 新立：**R202**（前端停表名单漏 403 `authorization_unavailable`）· **R203**（生成腿接真流式，修判据②）· **R204**（`budget_unaffordable` 只警告不夹，单发能堵 21 min）· **R205**（评分器 `latency_ms` 口径 + 图表/洞察时延尾巴）。判据全在跟进单 **§93**。
+- 定案：**R48**（路线甲，1.5–2.5 人日，不是计划书原估 0.75）。
+- 继续待派（§92）：**R199**（`app/main.py`）· **R200**（`data.py`+`chat.py` 三份 `restricted` 并档）· **R201**（两枚平铺文档出口焊条）。
+- 🔴 **写域冲突图**（派工顺序由此定）：`chat.py` 被 R200 / R203 / R48 三单共抢 ⇒ 串行；`ChatPanel.vue` 被 R202 / R48 共抢 ⇒ 串行；`app/main.py`、`app/common/model_budget.py`+`model_handler.py` 与全部后端单互不相交 ⇒ 可并发。**波次 = 波1 R199 ∥ R202 ∥ R204 → 波2 R203 ∥ R201 → 波3 R200 → R48**（R203/R205 的复测各需一扇独占窗，排在并树之后）。
+
+### 7. 本班账
+- 主树 HEAD 收窗前后都是 `7b0ae26`；本班第一笔代码外提交 = 报告并树 + 看板 + 跟进单 §93。基线主树亲跑：**4101 passed / 39 skipped / 0 failed**（收窗后复跑，见本节末格）。
+- 双远端：本班收窗后按业主既有授权 push origin + gitee。
+- `be-eval95` 现场：`7b0ae26` + `M docs/testing/evaluation-report.json`（run6 产物，本班已取回主树），**dirty ⇒ 按事故 #38 不清理**。
