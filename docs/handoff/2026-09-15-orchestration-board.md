@@ -1340,12 +1340,16 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Planck`（**与前几班同名者无关**） | `01a0cc81-4c4e-7471-bb0d-07aced1a0a5d` | **R181** 给跑分窗装阶段 A 判据② 的尺子（判据全文 跟进单 §87 二） | **`be-r181`**（基点 `8e1136d`，**独占**；`.venv` Junction 由总控本班建） | 🔴 **订正本班上一格（§4BK）写错的两句话**：① 这具身体**不是本班派出来的**——rollout `ctime=12:23:41` 比本班那次 `spawn_agent` 早 5 分钟，本班那次投的是**同一个 id**（工具把在途的它又端了一遍），所以"幻影"那句只对摘要留的 `01a0cca7-385c` 成立；② 它 12:5x 自报"16 枚 / 3657-39"时**盘上为零**（全盘搜 `test_r181*` 无、本树 `dirty=0`）⇒ 判 premature 交付、不采信；到 14:0x 盘上才出现 `M scripts/eval_transport_ask_v2.py 176/7` + `M scripts/collect_evaluation_answers.py 17/2` + `?? tests/test_r181_text_frame_ruler.py` + `?? docs/testing/r181-text-frame-readings.md`。**这单仍未结案**：等四枚齐了由总控主树复跑定数。判据② 的尺子内 `answer` 取值口径未动（它把读数落在 sidecar 之外的第二份证据件 `FRAME_LEDGER`，绕开 `test_r123_hitl_approval.py:243` 那枚"甲案七键子集"死钉） ⇒ ✅ **09-23 15:5x 交工**（判读与总控裁定见 §4BM 五：帧读数落第二份证据件，甲案七键死钉不放宽） |
 | `Boole` | `01a0ceb3-2d82-7050-9a27-1af5cbef5e86` | **R48S**（只读取证，无工作树＝只读主树 `7b0ae26`） | 无（零写盘） | ✅ **已结案**（09-24 08:0x）：三条纪律（只读／禁跑测试／禁打模型）全部守住；报告全量进跟进单 §93，据此**定案 R48 走路线甲**；身体已 close | 08:0x |
 | `Schrodinger` | `01a0ce9c-57ad-7851-a8ea-9e96147913a5` | **R198** 排队轮询在终止性 4xx 上不停表 | `be-r198`（基点 `e6d9ae6`，**独占**） | ✅ **已结案并树 `7b0ae26`**（主树亲跑 4101/39；npm 993/49、lint 恒 148、build EXIT=0）·它顶回的同形缺陷**总控收下立案 R202**·身体已 close | 08:5x |
-| `Singer` | `01a0d0fe-6437-7740-9506-b2f4f4cdfeca` | **R199** 匿名 401 被中间件挡在路由前、全站探测零记账 | `be-r199`（基点 `4dcbd30`，**独占**；`.venv`/`node_modules` Junction） | 🔵 **在途**（09-24 09:4x 投）。写域只有 `app/main.py` + 新建 `tests/test_r199_*.py`；判据 跟进单 §92 R199 五条（含"不许只看签名"与"刷账面必须有钉"） | 09:4x |
-| `Popper` | `01a0d0ff-2ef0-7703-a2a3-99e6b425720b` | **R202** 停表名单漏 `403 authorization_unavailable` | `be-r202`（基点 `4dcbd30`，**独占**） | 🔵 **在途**。写域只有 `frontend/src/components/ChatPanel.vue` + 新建 r202 测试件；这一格是 R198 施工方自己顶回来请总控裁的，本班收下立案 | 09:4x |
-| `Hegel` | `01a0d103-9f41-7f91-842a-5e8be58a5f5c` | **R204** `budget_unaffordable` 只警告不夹，单发能堵 21 min | `be-r204`（基点 `4dcbd30`，**独占**） | 🔵 **在途**。写域 `model_budget.py` + `model_handler.py`；🔴 明禁 `app/agents/**`、`app/api/**`（撞 R203/R200），要扩写域须停手回报；不得改 `MODEL_REQUEST_TIMEOUT` 数值糊弄 | 09:5x |
+| `Singer` | `01a0d0fe-6437-7740-9506-b2f4f4cdfeca` | **R199** 匿名 401 被中间件挡在路由前、全站探测零记账 | `be-r199`（基点 `4dcbd30`） | 🔴 **事故 #41：零写入掉线**（09:18 检出后一个字节没写，10:3x `send_input` 回 `agent with id not found`；两棵树 `git status` = 0 项 ⇒ 零损失、无遗作）。**已复投 `Curie`**（同单同写域同基点）。与事故 #14 的区别：原投确认零落盘才复投，属复投不属补投 | 10:3x |
+| `Popper` | `01a0d0ff-2ef0-7703-a2a3-99e6b425720b` | **R202** 停表名单漏 `403 authorization_unavailable` | `be-r202`（基点 `4dcbd30`） | 🔴 **事故 #41 同刻掉线**（零写入，`git status` = 0 项，无遗作）。**已复投 `Heisenberg`**（同单同写域同基点）。写域仍只有 `frontend/src/components/ChatPanel.vue` + 新建 r202 测试件，`frontend/src/lib/` 归 R48 那一批 | 10:3x |
+| `Hegel` | `01a0d103-9f41-7f91-842a-5e8be58a5f5c` | **R204** `budget_unaffordable` 只警告不夹，单发能堵 21 min | `be-r204`（基点 `4dcbd30`，**独占**） | ✅ **已结案并树 `8636ca4`**（判据 跟进单 §93.10；主树亲跑 4120/39 零失败；sha256 复算与自述逐位相同）。🔴 施工方请总控代按的 `nodes.py:621` 那一行**本班不按**：文件在 R203 写域里，且 09-16 的 8 tok/s 标定是拿卡之前的，接上＝analysis 档每发立倒。接线改由 **R204b**（等 R207 读数 + R203 腾文件）一批做完 · 身体已 close | 10:3x |
 | `Bernoulli` | `01a0d108-0712-7e92-bd63-740998fbec94` | **R203** 生成腿接真流式（阶段 A 判据② 唯一翻绿路径） | `be-r203`（基点 `ca2c7d7`，**独占**） | 🔵 **在途·关键路径**。写域 `chat.py` + `app/agents/nodes.py`；红线＝终答字节逐位不变、`prefix_breaks`/`extra_chars` 恒 0、R149 注释必须正面处理、**不许改量具 `scripts/eval_transport_ask_v2.py`** | 09:5x |
 | `Descartes` | `01a0d108-652e-74c3-8c2d-ce72d8d929b8` | **R201** 两枚平铺文档出口的契约 ↔ 代码焊条 | `be-r201`（基点 `ca2c7d7`，**独占**） | 🔵 **在途**。写域只有新建测试件 + `contract-v1.md` + runbook P-9/P-11 两行；🔴 全部产品在制文件列为禁改；开既往钉须带归属，优先不动 `test_r186_row_scope_contract.py:317` | 09:5x |
 | `Leibniz` | `01a0d108-ec3b-7f72-87c8-96b8d53d6bc4` | **R59** 切读 PGVector（业主 09-24 定案，从后排提到第一批） | `be-r59`（基点 `ca2c7d7`，**独占**） | 🔵 **在途**。写域 `app/rag/**` + `documents/catalog.py` + 新建对比脚本；第一判据＝先把 **P3 召回对比**做成可机读读数，读数出来前**禁止把默认读后端翻成 PGVector**；H20 由本班代裁（可推翻） | 09:5x |
+| `Ramanujan` | `01a0d122-d6b1-7790-836b-55143e07e4d7` | **R205a** 评分器 `latency_ms` 记账侧（run6 那栏 average 351 121 ms 大于逐题最大值） | `be-r205a`（基点 `cf3bca6`，**独占**；`.venv` Junction） | 🔵 **在途**（09-24 10:0x 单枚 `spawn_agent`，不带 `model`）。写域只有 `scripts/collect_evaluation_answers.py` + `app/quality/eval.py` + 新建 `tests/test_r205a_*.py`；🔴 禁改 `scripts/eval_transport_ask_v2.py`（R181 尺子 + R203 判据钉在那件上）、禁改评测集与 `docs/testing/evaluation-report.json`。判据 跟进单 §93.9 | 10:0x |
+| `Nietzsche` | `01a0d13f-d7ee-7651-a3e2-205c0d1cdfec` | **R207** 本机模型吞吐重标定（R204b 的前置，本班新立） | `be-r207`（基点 `8636ca4`，**独占**；`.venv` Junction） | 🔵 **在途**（09-24 10:3x 单枚 `spawn_agent`）。**只测量只写文档**：写域只有新建 `docs/perf/throughput-recalibration-2026-09-24.md` + `docs/perf/raw/r207-*`；🔴 改 `app/**`、`.env*`、`deploy/**` 即越界——**改常数由总控做**；容器只许只读取，禁 restart/stop/build；严禁外推。判据 跟进单 §93.10 | 10:3x |
+| `Curie` | `01a0d141-0883-7cc3-b03d-668fcfc11861` | **R199**（复投 `Singer`，事故 #41 零写入）匿名探测无人记账 | `be-r199`（基点 `4dcbd30`，**独占**） | 🔵 **在途**（09-24 10:3x 单枚 `spawn_agent`）。写域只有 `app/main.py` + 新建 `tests/test_r199_*.py`；判据 跟进单 §92 R199 五条（含「不许只看签名」与「刷账面必须有牙」）；响应体 40 多路由零变化 | 10:3x |
+| `Heisenberg` | `01a0d141-b3f5-74a0-8d3a-4cf587e3a7a4` | **R202**（复投 `Popper`，事故 #41 零写入）停表名单漏一枚 | `be-r202`（基点 `4dcbd30`，**独占**） | 🔵 **在途**（09-24 10:3x 单枚 `spawn_agent`）。写域只有 `frontend/src/components/ChatPanel.vue` + 新建 r202 测试件；`status`+`code` 双条件不许放宽成只看 `status`；网络错/超时/5xx 不许停表那枚钉原位保留；硬门 npm 993/49 只许加、lint 恒 148、build EXIT=0 | 10:3x |
 
 | `Sagan` | `01a0cce0-11c2-7240-9403-c7971fcde021` | **R171（判据已被总控证伪并收窄）** 失效收尾那一支不许假定发出方带了文案 | `be-r171`（`218bd6e`） | ✅ **已并树 `9577b12`**（前端 849/41 = 826+23，`lint:colors` 148 不涨）·原判据「错误条不亮」对 shipped 路径不成立：`http.js:95` 自 `a07294f`（09-15）起就带文案，详见跟进单 §89 五 |
 | `Gibbs` | `01a0cd3b-b649-7641-959c-9a71981bd35a` | **R183 + R184**（同一笔 `0012`） | `be-r183`（`9577b12`） | **在途**·`migrations/**`+`app/storage/pending_approvals.py`+新件；🚫 `chat.py`/`data.py`/`frontend/**`/评测集；🔴 判据全文首次成文于跟进单 **§89 四**（此前只在本板 §4BL 五 有一句话）；这单是新镜像能否 recreate 的硬前置，见 §4BM 三 |
@@ -3687,3 +3691,33 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 - 主树 HEAD 收窗前后都是 `7b0ae26`；本班第一笔代码外提交 = 报告并树 + 看板 + 跟进单 §93。基线主树亲跑：**4101 passed / 39 skipped / 0 failed**（收窗后复跑，见本节末格）。
 - 双远端：本班收窗后按业主既有授权 push origin + gitee。
 - `be-eval95` 现场：`7b0ae26` + `M docs/testing/evaluation-report.json`（run6 产物，本班已取回主树），**dirty ⇒ 按事故 #38 不清理**。
+
+## §4BR（09-24 10:3x，第六班第二格，主树 `cf3bca6` → **`8636ca4`**）：R204 并树 · 事故 #41（两枚 Agent 零写入掉线，已复投）· 门禁并行化落地 · 在途七枚
+
+### 一、结案一格
+- **R204（`8636ca4`，Hegel @ `be-r204`，基点 `4dcbd30`）**：判据全文与总控复跑结论在跟进单 **§93.10**。一句话——预算判"不可负担"从此会在**进模型之前**拒发（复用既有 `task_timeout` 码，零新造、零新开关），但只接了 `app/common/model_handler.py` 那一腿；graph 腿等 R207 重标定 + R203 腾出 `nodes.py` 之后由 **R204b** 一次接完。主树亲跑全量门 **4120 passed / 39 skipped / 0 failed**（基线 4101/39，+19 全在本单用例；施工方树上 4119/40 与主干那一枚的差＝ R51 越界守卫在分支自跳、在主干照常绿，逐位对得上）。
+- 🔴 本班**没有**采纳施工方请总控代按的那一行 `app/agents/nodes.py:621`（`authorize` → `authorize_or_refuse`）。两条理由，都记进跟进单：① 那枚文件在在途 R203 的写域里（共抢图见 §4BQ 末），按了就是两枚 Agent 改同一文件；② 拿 09-16 那次（H11 拿到卡**之前**）的 `MODEL_DECODE_TOKENS_PER_SECOND = 8` 去接，analysis 档每一发都会立刻 `task_timeout`——run6 同一发第二次尝试 35 s 就出了终答，标定对现硬件悲观约 5 倍。**这是产品事故，不是快修**；施工方自己也把这条后果写进交付并要求先重标定，总控照做。
+
+### 二、事故 #41（机器侧，零损失）
+- `Singer`（R199）与 `Popper`（R202）在 09:18 检出工作树之后**一个字节都没写**就没了身体（`send_input` 回 `agent with id … not found`）。总控先取证：两棵树 `git status --porcelain` 均为 **0 项**、文件最后写入时间＝检出时刻（73 分钟前）⇒ **零损失、无遗作**，不必归因到代码，也不必读它们没写过的东西。
+- 处置：各复投一枚 —— `Curie` @ `be-r199`、`Heisenberg` @ `be-r202`（同一单号、同一写域、同一基点，派工词首段明写"上一枚零写入掉线，你从零开始"）。
+- 🔴 与事故 #14（同单双投）的区别写清楚以免被误读：**原投已确认零落盘且身体已不存在 ⇒ 这是复投不是补投**；复投动作前置是取证零写入，取证不做完不许复投。
+- 与前两条线程死因同源的那条铁规继续有效并且本班全程照做：**派工一律不带 `model` 覆盖、本班从头到尾不换模型。**
+
+### 三、门禁并行化（本班实测并落地；工具件 `scripts/run_gate.py`）
+| 门 | 命令 | 实测 |
+|---|---|---|
+| 串行基线 | `run_gate.py --serial` | 首跑 **255.7 s** ／ 次跑 **246.9 s**（内部 245.45／237.40），两次都 `4101 passed / 39 skipped` |
+| **并行＝新默认** | `run_gate.py`（`-n 8 --dist loadfile`） | **83.0 s ／ 90.0 s** 两次复跑，`4101/39` 逐位相同、零失败；R204 并树后 82.27 s（内部）／97.0 s（含解释器启动）→ `4120/39` |
+| 过订阅 | `-n 16 --dist loadfile` | **99.0 s（更慢）** ⇒ 本机拐点在 8；"30–45 s" 那句是外推，**不采信** |
+| 反证钉单独跑 | `-k "counter_evidence or teeth"` | **43.4 s / 56 枚 / 8 件** ＝ 串行门的 **17.5%**（不是传闻的 26%）；纯收集固定成本实测 **10.2–10.3 s**（不是 18 s） |
+- 三条裁定：**① 并行采纳**（并树门降到 ~85 s，"敢不敢多并树"的心理成本一起去掉）；**② `-n` 绝不进 `addopts`**——六枚测试件会嵌套起 pytest（`tests/_chroma_sandbox.py`、`test_r134_chroma_writeback.py`、`test_r163_matrix_teeth.py`、`test_r49_corpus_calibration.py`、`test_r81_queue_terminal_retry.py`、`test_sse_sources.py`），全局 `-n 8` 会递归扇成 8×8，而三枚用例的单体跑也要付八台解释器的钱；**③ 反证钉不分层出门**——省下的约 7 s 不值"守卫被摘掉就不咬"这个代价（run4 的 `doc-19`、run6 的 `口径冲突` 都是这类有牙的东西抓的），并树门继续每格全跑。
+- 必须 `loadfile` 而非 `load`：29 枚测试件起子进程/容器、10 枚跑 git/ssh、6 枚嵌套 pytest——按测试粒度分发就是把它们拆到不同 worker，那是**假红制造机**。
+- 依赖记账：`pytest-xdist 3.8.0` + `execnet 2.1.2` 已装进 `.venv`（全仓工作树共享的 Junction），**未**写进 `pyproject.toml` / `uv.lock`。理由不是偷懒：`pytest` 本身从来不在 lock 里，只补半截 dev 声明会让一次 `uv sync --dev` 反过来把 pytest 删掉、门当场死。要正解就得整组补齐 dev 依赖并验 `uv sync --frozen`，那是独立一张单，别在收口周做。镜像侧安全：`Dockerfile:61/63` 是 `uv sync --frozen --no-dev`，dev 件永不进客户镜像，私有化口径不破。
+- 待证的一格：以上都在"同机另有 5–7 枚 Agent 在跑"的条件下测的，绝对值含争用；拐点（8 vs 16）值得在安静机上复量一次，但**不必为此专门开窗**。"首跑税 437→218" 复现失败（差 8.8 s）⇒ 那 437 s 判为同机并发争用，不是冷缓存也不是杀软，Defender 排除项这轮不做。
+
+### 四、名册净变化与波次
+- 结案并树：R204（`Hegel`，身体已 close）。掉线零写入：R199（`Singer`）、R202（`Popper`）。
+- **在途七枚**：`Bernoulli` R203（关键路径）· `Descartes` R201 · `Leibniz` R59 · `Ramanujan` R205a · `Nietzsche` R207 · `Curie` R199（复投）· `Heisenberg` R202（复投）。
+- 排队不变：`chat.py`（R203 并完）→ 放 R200 + R48；`nodes.py`（R203 并完）→ 放 R206 + R205b + R204b（R204b 还要等 R207 读数）。
+- 合并复验窗（三扇压一扇：R203 真流式 + R59 切读开关 on + `REPORT_LANE_VIA_QUEUE=on`）判据不变；**前置新增一条**：开窗前把 R207 的吞吐读数抄进窗记录口径段，否则窗内 `budget_verdict=budget_unaffordable` 那批日志会继续讲假话、下一班又要花一格去归因它。
