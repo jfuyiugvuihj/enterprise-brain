@@ -41,6 +41,15 @@
    sidecar 那九键与其后的甲案七键也一字未动（把读数并进 sidecar 那一行会被
    ``tests/test_r123_hitl_approval.py:243`` 那条「extras 只许是甲案七键的子集」当场判红，
    而那枚文件不在本单写域）。读数口径与成因见 ``docs/testing/r181-text-frame-readings.md``。
+ 8. R215 判据② 换读法（09-24，出路 (c) 由总控裁定，本条即那一单）：收尾那枚**受控纠正替换**
+   （R210 守卫在断流轮发的那一次整段替换）不再冒充成「流被截断」。帧账新增两格 ——
+   ``corrective_replacements``（本轮被判为受控纠正替换的坏形枚数）与 ``uncorrected_breaks``
+   （= ``prefix_breaks`` − 被豁免的枚数），判据② 读后者归零。🔴 原始账一个字不漂：
+   ``text_frames`` / ``prefix_breaks`` / ``first_break_at`` / ``missing_chars`` / ``extra_chars``
+   / ``answer_sha`` 取值口径逐字节不变。可逐位对的老证据只有 run6 那 105 行（仓库里唯一一份
+   帧账原件；run2…run5 当年还没有这一格），复算已落成用例：
+   ``tests/test_r215_recomputing_run6_frames.py``。豁免四条同时成立才给，缺一条不给：
+   末帧 / 本轮至多一枚 / 前面紧邻那枚 step(running, answer_correction) / 末帧与终答逐字相等。
 
    本文件的行号引用会随 ``app/api/v1/chat.py`` 漂移。09-23 在本树实取：``chat.py:1364`` 今天落在
    ``_complete_pending_steps`` 的收尾里（``return completed`` 在 :1363），「/ask 只发一条整段 text」
@@ -158,29 +167,45 @@ def _blank_observation(session_id):
 
     R181 判据② 在桶尾追加四枚帧读数（帧数 / 坏形数 / 首枚坏形序号 / 末帧原文）。
     🔴 只记账：``answer`` 仍然是「后帧覆盖前帧」的末帧取值，一个字节都没改口径。
+
+    R215 再加一枚 ``break_frames``：坏形那一枚帧**到达时**的形状证词（第几帧、前面紧邻的是
+    不是那枚武装替换的 step、帧正文）。它只喂豁免判据，不参与上面任何一格的计数。
     """
     return {"answer": "", "evidence": [], "first_token_at": None, "steps": 0,
             "hitl": False, "error_text": "", "queued": None, "cancelled": False,
             "cached": False, "session_id": session_id,
             # R181：这一条流的 text 帧尺（cumulative 语义下的帧数与坏形数）
             "text_frames": 0, "prefix_breaks": 0, "first_break_at": 0,
-            "last_text_frame": ""}
+            "last_text_frame": "",
+            # R215：坏形的到达顺序证词。🔴 只有走真 ``_consume`` 的那条路才填得进来。
+            "break_frames": []}
 
 
 def _consume(response, out):
-    """把一条 SSE 流从头读到尾，逐事件填进观测桶。/ask 与 /approve 事件形状同构。"""
+    """把一条 SSE 流从头读到尾，逐事件填进观测桶。/ask 与 /approve 事件形状同构。
+
+    R215：多记一样东西 —— 每一枚帧到达时，它前面紧邻的是不是那枚武装整段替换的 step。
+    🔴 「紧邻」只有在**事件流**上才判得出来，帧账本身判不出来：把 text 帧摘出来单独喂给尺
+    （单测里那两枚 ``_readings`` 就是这么办的）证词就是空的，豁免永远拿不到，也就撒不了谎。
+    """
+    armed = False  # 上一枚事件是不是 step(tool=answer_correction, status=running)
     for name, data, arrival in iter_events(response):
+        preceding_arm = armed
+        armed = False
         if name == "status" and "缓存命中" in str(data.get("content", "")):
             out["cached"] = True
         elif name == "step":
             out["steps"] += 1  # 计数留给 R38 用量审计
+            armed = _is_correction_arm(data)
         elif name == "text":
             if data.get("cached"):
                 out["cached"] = True  # 命中帧的 cache_fields 在 chat.py:1645-1649，发帧在 :1660
             content = data.get("content")
             # R181 判据②：先给这一帧记账，再按既有口径取末帧覆盖前帧。缺 content 的帧
             # 记成空串帧 —— "空帧"本身就是一种形状，不许不数。计数不参与下面任何一行。
-            _count_text_frame(out, "" if content is None else str(content))
+            frame = "" if content is None else str(content)
+            _count_text_frame(out, frame)
+            _note_frame_shape(out, frame, preceding_arm)  # R215：只补证词，不动计数
             if content:
                 if out["first_token_at"] is None:
                     out["first_token_at"] = arrival  # 首字到达＝客户端实测，不用服务端 elapsed 折算
@@ -201,6 +226,13 @@ def _consume(response, out):
 
 
 # ===== R181 判据②：给 ``event: text`` 装的尺子。以下每一行都只观测，不改评分。 =====
+
+#: R210 收尾那枚「换源纠正」step 的 tool 名，镜像 app/api/v1/chat.py 里的同名常量。
+#: 量具不许 import app（它要能被 importlib 单独加载），所以这里抄一份字面，并由
+#: tests/test_r215_recognizing_a_controlled_correction.py 逐字钉住两边相等 —— 上游改名而
+#: 这里没跟上的后果是豁免拿不到：宁可少豁免一次，不可多豁免一次。
+CORRECTION_STEP_TOOL = "answer_correction"
+
 
 def _sha12(text):
     """帧正文的短指纹。判据② 要「逐字比对」，但不必把客户正文抄进第二份文件。"""
@@ -232,10 +264,38 @@ def _count_text_frame(out, frame):
     out["last_text_frame"] = frame
 
 
+def _is_correction_arm(data):
+    """「武装整段替换」那枚 step 的形状：既有 step 词汇表里的 running + 那个 tool，没别的。
+
+    认的是 R210 守卫在 ``app/api/v1/chat.py`` 收尾处发的那一枚（``sse_event("step",
+    {**correction, "status": "running"})``）。前端 ``sessions.js`` 也正是被它置上
+    ``_correcting``，屏上随后那枚 text 帧才整段替换 —— 量具认的和屏上做的是同一枚事件。
+    """
+    return bool(isinstance(data, dict) and data.get("tool") == CORRECTION_STEP_TOOL
+                and data.get("status") == "running")
+
+
+def _note_frame_shape(out, frame, armed):
+    """紧跟在 ``_count_text_frame`` 后面，替刚到达的这一枚帧留下到达顺序上的证词。
+
+    🔴 这里不自己判坏形：坏形与否**只读** ``prefix_breaks`` 的变化（判据仍然只有
+    ``_count_text_frame`` 那一份），所以它既多不出一枚坏形，也少不出一枚坏形 —— 只能给
+    已经发生的坏形补一份「它当时站在流的哪个位置、前面紧邻着什么」。
+    """
+    records = out.get("break_frames")
+    if records is None:
+        records = out["break_frames"] = []
+    if out["prefix_breaks"] > len(records):
+        records.append({"at": out["text_frames"], "armed": bool(armed), "text": frame})
+
+
 def _new_frame_ledger():
     """一题的帧账本。一题可能不止一条流：/ask 之外还有 R123 甲案的若干轮 /approve。"""
     return {"text_frames": 0, "prefix_breaks": 0, "last_text_frame": "",
-            "streams": 0, "max_stream_frames": 0, "per_stream": []}
+            "streams": 0, "max_stream_frames": 0, "per_stream": [],
+            # R215：跨流的坏形证词。它**不进** per_stream —— 那一格的键集被
+            # tests/test_r181_text_frame_ruler.py 逐字钉着，一多一少都算改尺。
+            "break_frames": []}
 
 
 def _fold_frames(ledger, out):
@@ -251,6 +311,14 @@ def _fold_frames(ledger, out):
     ledger["prefix_breaks"] += breaks
     ledger["per_stream"].append({"frames": frames, "breaks": breaks,
                                  "first_break_at": int(out.get("first_break_at") or 0)})
+    # R215：这条流的坏形证词跟着折进账，顺手记下「这条流一共几枚帧」—— 判据① （末帧）
+    # 要的就是这两个数相等。零帧的流没有证词可带（上面那格同理不覆盖末帧）。
+    stream_index = len(ledger["per_stream"]) - 1
+    for record in out.get("break_frames") or []:
+        ledger["break_frames"].append(
+            {"stream": stream_index, "stream_frames": frames,
+             "at": int(record.get("at") or 0), "armed": bool(record.get("armed")),
+             "text": str(record.get("text") or "")})
     ledger["streams"] += 1
     ledger["max_stream_frames"] = max(int(ledger["max_stream_frames"]), frames)
     if frames:
@@ -258,8 +326,43 @@ def _fold_frames(ledger, out):
     return ledger
 
 
+def _corrective_readings(frames, answer):
+    """R215 判据② 的豁免账：本轮几枚坏形是「受控纠正替换」，剩下几枚是真断流。
+
+    四条**同时**成立才豁免一枚，缺一条就不豁免 —— 量具多豁免一次，判据② 就永久假绿一次：
+      ① 它是**这一条流的最后一枚** text 帧。中途坏形说明流被截断过，收尾救不回来；
+      ② 本轮至多一枚。一题里出现第二次换源，那已经不是「一次纠正」；
+      ③ 它前面紧邻一枚 ``step(tool=answer_correction, status=running)``。光靠字节流的形状
+         （短一截、换个头、又变长）蒙不过去 —— 屏上那次整段替换是被这枚 step 武装的；
+      ④ 它的正文与最终交付的 ``answer`` **逐字相等**。换源之后屏上没换成这份字，就不算纠正。
+    🔴 原始账一格不动：``prefix_breaks`` 照旧，豁免只体现在 ``uncorrected_breaks``。
+    """
+    granted = 0
+    answer_text = str(answer or "")
+    for record in frames.get("break_frames") or []:
+        if granted:  # ② 本轮至多一枚：第一枚拿到豁免之后，后面的候选一律不给
+            break
+        at = int(record.get("at") or 0)
+        if at < 1:  # 帧序号从 1 起，0 是「没有这么一枚帧」——不许拿缺证词当证据
+            continue
+        if at != int(record.get("stream_frames") or 0):
+            continue  # ① 不是这一条流的末帧
+        if not record.get("armed"):
+            continue  # ③ 前面没有那枚武装替换的 step
+        if str(record.get("text") or "") != answer_text:
+            continue  # ④ 屏上没真替换成交付的那份字
+        granted += 1
+    total = int(frames.get("prefix_breaks") or 0)
+    return {"corrective_replacements": granted, "uncorrected_breaks": total - granted}
+
+
 def _frame_readings(frames, answer):
     """判据② 的四枚读数，外加逐字比对用的两枚指纹。🔴 没有任何一枚进评分。
+
+    R215 起再多两格（``corrective_replacements`` / ``uncorrected_breaks``）：照样一枚都不进
+    评分，也不动前面那几格的取值口径。🔴 帧账一行的键集自本单起多这两格，那份键集钉在
+    ``tests/test_r181_text_frame_ruler.py`` 的 ``FRAME_READING_KEYS`` —— 那枚文件不在本单
+    写域，两个名字由总控补进去（少补一个就是当场红，不会静默漏过）。
 
     ``missing_chars`` / ``extra_chars`` 都是「终答相对末帧」：前者＝末帧里终答没写到的字，
     后者＝终答里末帧没带出来的字，共同前缀是分界，所以两侧分叉时两枚各记自己那半。
@@ -272,8 +375,12 @@ def _frame_readings(frames, answer):
     last = str(frames.get("last_text_frame") or "")
     answer = str(answer or "")
     shared = _common_prefix_len(last, answer)
+    corrective = _corrective_readings(frames, answer)
     return {"text_frames": int(frames["text_frames"]),
             "prefix_breaks": int(frames["prefix_breaks"]),
+            # R215：坏形分家 —— 哪几枚是收尾那次受控纠正替换，哪几枚是没被救回来的真断流。
+            "corrective_replacements": corrective["corrective_replacements"],
+            "uncorrected_breaks": corrective["uncorrected_breaks"],
             "missing_chars": len(last) - shared,
             "extra_chars": len(answer) - shared,
             "last_frame_covers_answer": last.startswith(answer),
@@ -289,15 +396,28 @@ def _frame_readings(frames, answer):
 
 
 def _frame_verdict(readings):
-    """把四枚读数折成一格「判据② 这条流今天成不成立」，供收窗直接读。
+    """把读数折成一格「判据② 这条流今天成不成立」，供收窗直接读。
 
     口径写死在 ``docs/testing/r181-text-frame-readings.md``：同一条流里累计出 >1 帧、
-    零坏形、终答相对末帧不缺字（covering ⇒ ``extra_chars == 0``）。
+    终答相对末帧不缺字也不多字（covering ⇒ ``extra_chars == 0``）、末帧覆盖终答。
+    R215 只换「坏形」那一格的读法：``prefix_breaks == 0`` → **``uncorrected_breaks == 0``**，
+    读作「剩下的坏形里没有任何一次真断流」——收尾那次受控纠正替换（四条判据见
+    ``_corrective_readings``）不再冒充成断流。🔴 与流式无关的条件一枚没加、一枚没减；
+    原始 ``prefix_breaks`` 继续写进帧账，红了也看得见红在哪。
+
+    ⚠️ 口径变更（R215 判据④ 明文要求，方向是**变严**）：``missing_chars == 0`` 与
+    ``last_frame_covers_answer`` 自本单起进入合取。R181 那张纸
+    （``docs/testing/r181-text-frame-readings.md`` §判据② 读法）当时只合取 ``extra_chars == 0``，
+    并写着「``missing_chars > 0`` 在这一格算一致」—— 纸由总控改。实测影响面：run6 那 105 行
+    的 ``criterion_two_holds`` 逐行不变（``tests/test_r215_recomputing_run6_frames.py`` 复算 0 漂），
+    R181 那件重放的绿行数也不变；末帧比终答多字的形状从今天起读 False。
     """
     return bool(readings["text_frames"] > 1
                 and readings["max_stream_frames"] > 1
-                and readings["prefix_breaks"] == 0
-                and readings["extra_chars"] == 0)
+                and readings["uncorrected_breaks"] == 0
+                and readings["missing_chars"] == 0
+                and readings["extra_chars"] == 0
+                and readings["last_frame_covers_answer"])
 
 
 def _record_frames(row_id, kind, attempt, session_id, frames, answer, sentinel):

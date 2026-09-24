@@ -32,7 +32,9 @@ import 期就会绕过窗口事后重绑 `SIDECAR` 的仓外纪律（runbook §8
 |---|---|---|
 | `text_frames` | 一题收到的 `event: text` 帧计数（缺 `content` 的空帧也算一帧） | 判据② 的「>1」 |
 | `max_stream_frames` | 单条流内的最大帧数 | 把「两条单帧流凑 2 帧」与「一条流真在逐片累计」分开 |
-| `prefix_breaks` | 相邻两帧里后帧不以先帧为前缀的次数（cumulative 语义）；只在**同一条流内**判 | 「不许吞前缀缩短」 |
+| `prefix_breaks` | 相邻两帧里后帧不以先帧为前缀的次数（cumulative 语义）；只在**同一条流内**判 | 原始账（R215 起不直接判定，见下） |
+| `corrective_replacements` | R215 新增：`prefix_breaks` 里属于「收尾那次受控纠正整段替换」的次数（四条判据写死在 `_corrective_readings`） | 只观测，一枚都不进评分 |
+| `uncorrected_breaks` | R215 新增：`prefix_breaks − corrective_replacements`，＝没被救回来的真断流；恒等式在 run6 105/105 成立 | 判据② 的「无坏形」 |
 | `missing_chars` | 终答相对末帧的缺字数＝末帧里终答没写到的字（`len(末帧) − 共同前缀`） | 逐字比对 |
 | `extra_chars` | 终答相对末帧的多字数＝终答里末帧没带出来的字（`len(终答) − 共同前缀`） | 逐字比对 |
 | `last_frame_covers_answer` | **covering 语义的一致性**：`末帧.startswith(终答)` 即算一致 | 判据写死：不许退化成严格相等 |
@@ -43,13 +45,27 @@ import 期就会绕过窗口事后重绑 `SIDECAR` 的仓外纪律（runbook §8
 合格线（写死在 `scripts/eval_transport_ask_v2.py:_frame_verdict`）：
 
 ```
-text_frames > 1 且 max_stream_frames > 1 且 prefix_breaks == 0 且 extra_chars == 0
+text_frames > 1 且 max_stream_frames > 1 且 uncorrected_breaks == 0
+且 missing_chars == 0 且 extra_chars == 0 且 last_frame_covers_answer
 ```
 
 `extra_chars == 0` 就是「无缺字」的 covering 读法：终答里的每一枚字都由末帧带出来了。
-`missing_chars > 0`（末帧比终答长）在这一格算一致，但必须连着 `prefix_breaks` 一起读 ——
-末帧长出的那截通常就是同一条流里的坏形（片与终答不同源，`app/api/v1/chat.py:1888` 那枚 error
-的收端对称面）。
+
+**R215 的两处口径变更**（2026-09-24；两处方向都是**变严**，本节此前与代码不一致的那句已改掉）：
+
+- 「无坏形」从 `prefix_breaks == 0` 换读 `uncorrected_breaks == 0`。换的理由不是放宽，是原先把两件事记成了
+  一件：实时收尾那次受控纠正（`event: step` `answer_correction` → 整段替换屏上已有的字）在 cumulative 语义下
+  **必然**留下一枚前缀断裂，而这枚断裂恰恰是「屏上被救回来了」的凭据，不是缺字。豁免只有四条（本轮至多一枚 /
+  前面紧邻那枚就是 `answer_correction` 的 step / 替换后的末帧逐字等于交付 / 原始账一字不漂），且原始
+  `prefix_breaks` 继续原值写进帧账 —— 红了也看得见红在哪。
+- `missing_chars == 0` 与 `last_frame_covers_answer` 进入合取。本节此前写着「`missing_chars > 0`（末帧比终答长）
+  在这一格算一致」，那是错的：末帧比终答多字时屏上最后显示的就是那截多出来的字，不能读成「逐字无缺」。
+  严格说在 `missing_chars` 与 `extra_chars` 双零时 `last_frame_covers_answer` 恒真，留着是把 covering 语义
+  显式写进判定，不让人以为这格只看字数。
+- 实测影响面：run6 那 105 行的 `criterion_two_holds` **逐行不变**（`tests/test_r215_recomputing_run6_frames.py`
+  105 行 × 13 格复算 0 处差异），R181 重放件的绿行数不变；「末帧多字」这种形状从今天起读 False。
+- 🔴 以上都不等于判据② 已翻绿。真断流的形状（同一条流中途换源、之后没救回来）读 `uncorrected_breaks == 1`
+  仍然 False，反证钉 a–f 六枚各有实跑红色。翻绿要等下一个真机窗。
 
 ## 三、凭据长什么样（真实样本行）
 

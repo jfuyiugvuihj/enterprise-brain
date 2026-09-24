@@ -37,8 +37,11 @@ SIDECAR_BASE_KEYS = ("id", "kind", "attempt", "sentinel", "evidence_n",
 R123_EXTRA_KEYS = {"pre_kind", "pre_answer_chars", "pre_evidence_n", "approved",
                    "approval_rounds", "approval_http_status", "approval_error"}
 PAYLOAD_KEYS = {"answer", "evidence", "first_token_at", "thinking_chars", "tool_calls"}
-#: 帧证据件的一行里，除 join 键之外该有的读数（判据② 的四枚 + covering 布尔 + 取证辅助）。
-FRAME_READING_KEYS = {"text_frames", "prefix_breaks", "missing_chars", "extra_chars",
+#: 帧证据件的一行里，除 join 键之外该有的读数（判据② 的读数 + covering 布尔 + 取证辅助）。
+#: R215 起多两格「坏形分家」：corrective_replacements = 收尾那次受控纠正替换掉的坏形数，
+#: uncorrected_breaks = 没被救回来的真断流数；判据② 换读后者，原始 prefix_breaks 继续留在账上。
+FRAME_READING_KEYS = {"text_frames", "prefix_breaks", "corrective_replacements",
+                      "uncorrected_breaks", "missing_chars", "extra_chars",
                       "last_frame_covers_answer", "last_frame_chars", "last_frame_sha",
                       "answer_chars", "answer_sha", "streams", "max_stream_frames",
                       "per_stream", "criterion_two_holds"}

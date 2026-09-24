@@ -29,6 +29,17 @@ R181 (2026-09-23) - where acceptance 2 (`text` frames) is persisted, and where i
   Criteria, the cache-hit single-frame reading and the two standing counter-proofs:
   docs/testing/r181-text-frame-readings.md.
 
+R215 (2026-09-24) - the frame ledger grows two more cells, still observation only.
+  `criterion_two_holds` stops reading `prefix_breaks == 0` and starts reading
+  `uncorrected_breaks == 0`, so the controlled end-of-stream correction R210 added no longer
+  reads as a truncated stream. `prefix_breaks` itself is unchanged, byte for byte, and is still
+  written out. The two new cells - `corrective_replacements` / `uncorrected_breaks` - ride the
+  same `<sidecar stem>-frames.jsonl` rows and nothing else: they do not reach the answers lines
+  below, nor the sidecar row. `_latency_ms` (R205a) is untouched by this ticket. All four
+  conditions must hold before a break is exempted; see
+  scripts/eval_transport_ask_v2.py::_corrective_readings and
+  tests/test_r215_recognizing_a_controlled_correction.py.
+
 R205a (2026-09-24) - what this collector must NOT write into latency_ms.
   The real transport deliberately self-reports nothing (scripts/eval_transport_ask_v2.py:515), so the
   line used to carry the collector's own perf_counter span, which is the WHOLE CALL: retried attempts,

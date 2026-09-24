@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""R210 判据 1：断流轮在**帧账**上到底读成什么。这一格本单没做到，理由钉在这里。
+"""R210 判据 1：断流轮在**帧账**上到底读成什么 —— 读数、证明，以及 R215 之后的目标态。
 
-判据 1 要的是「provider 中途死掉且已发 >=1 片」这一形状下 ``prefix_breaks == 0``。实测：
-**带着 R210 的守卫它仍然是 1** —— 守卫改的是「屏上怎么显示」，改不了「线上曾经发过什么」，
+判据 1 要的是「provider 中途死掉且已发 >=1 片」这一形状下 ``prefix_breaks == 0``。R210 本班
+实测：**带着守卫它仍然是 1** —— 守卫改的是「屏上怎么显示」，改不了「线上曾经发过什么」，
 而评分器那把尺（``scripts/eval_transport_ask_v2.py::_count_text_frame``）量的就是后者。
+🔴 R215 没有把它抹成 0：原始账一格不动，豁免只长在新增的 ``uncorrected_breaks`` 那一格上。
 
 为什么在「不改量具、不改前端、断流轮线上必有 >=1 枚半截帧」这三条约束下它不可能成立：
 设这一轮线上的 text 帧为 ``F1..Fk``（``k >= 2``，判据形状就是「已发 >=1 片」）。
@@ -26,9 +27,18 @@
   (b) 收尾不发 ``text`` 帧 —— 屏上留着半截真话冒充答案，判据 2 当场死。
   (c) 让量具认得「纠正帧」（改 ``scripts/eval_transport_ask_v2.py`` = 改量具，须业主裁定）。
 
-所以本文件钉的是**读数本身 + 可归因性**：坏形恰一枚，且恰指到守卫当作纠正替换发出去的
-那一枚末帧；中途的累计帧一枚都没坏。摘掉守卫之后，``prefix_breaks`` 一格都不会变好，
-而「这枚坏形是那次纠正替换」这一格当场红 —— 那才是守卫在帧账这一侧真正做到的事。
+R210 本班不走 (a) 也不走 (b)，(c) 越界，所以只交出读数与证明。R215 经业主授权走 (c)，
+走法是把「坏形」分家而不是把原始账改小：``prefix_breaks`` 照旧，新增
+``corrective_replacements`` / ``uncorrected_breaks`` 两格，判据② 改读后者。豁免要四条同时
+成立（① 末帧 / ② 本轮至多一枚 / ③ 前面紧邻那枚 ``step(answer_correction, running)`` /
+④ 末帧逐字等于交付的那份字），而且证词**只有走真事件流才拿得到** —— 本文件那枚
+``_readings`` 只喂 text 帧、把 step 丢在半路，所以它永远豁免不了。最后一枚用例把两头一起
+钉住：豁免成立，而原始 ``prefix_breaks`` 仍然是 1。反证钉实测（09-24 现场施加）：摘掉量具
+那四条里的任何一条，``tests/test_r215_recognizing_a_controlled_correction.py`` 对应那枚反例
+当场红；把豁免写回 ``prefix_breaks``（拿扣除后的值冒充原始账），本文件最后一枚与那枚
+``test_the_raw_ledger_is_identical_with_and_without_the_wire_testimony`` 一起红 —— 原始账一漂，
+两头同时叫；而 ``tests/test_r215_recomputing_run6_frames.py`` 钉的是另一头：老数据上任何一格
+读数漂一位（实测把 covering 反着比），105 行逐格复算当场点名到题号。
 """
 
 import pytest
@@ -43,6 +53,9 @@ from tests.test_r210_break_replaces_the_screen import (  # noqa: F401  -- 同一
     _text_contents,
     _wire,
     ruler,
+)
+from tests.test_r215_recognizing_a_controlled_correction import (  # noqa: F401,E402
+    _wire_readings,
 )
 
 
@@ -120,19 +133,31 @@ def test_a_break_before_the_first_frame_reads_zero_breaks(monkeypatch, tmp_path,
     assert nodes.is_offline_reply_text(contents[0]), "末帧不是离线话术：这一格形状换了，先取证再说"
 
 
-# ==================== 判据 1 的目标：明写没做到 ====================
+# ==================== R215 之后：判据② 的读法换到 uncorrected_breaks ====================
 
 
-@pytest.mark.skip(
-    reason=(
-        "判据 1 没做到：断流轮的 prefix_breaks 实测 1（见上面两枚）。守卫改的是屏上显示，"
-        "改不了线上发过什么；要它读 0 只能不发半截帧（收端无预知能力）或改量具"
-        "（越界，须业主裁定）。证明与本文件的实测读数一起写在交回单。"
-    )
-)
-def test_judgment_one_prefix_breaks_back_to_zero():
-    """占位：判据 1 原文「帧账口径下断流轮的 prefix_breaks 回到 0」。
+def test_judgment_one_reads_the_controlled_correction_without_lying(monkeypatch, tmp_path):
+    """R210 留的那枚缺口，R215 真做掉了 —— 而做掉的方式不是撒谎。
 
-    留着这枚 skip 而不是悄悄不写，是为了让它在每次跑分抬头里都被数到一次。谁真做到了，
-    把上面那枚 ``..._still_counts_one_break`` 一起改绿 —— 两枚是对着钉的，改不动就跳不过。
+    同一枚用例里对着钉两件事：
+      - 豁免那一侧：``corrective_replacements == 1``、``uncorrected_breaks == 0``，
+        于是 ``_frame_verdict`` 在整条事件流上读真（判据② 不再被收尾那次替换卡住）；
+      - 原始账那一侧：``prefix_breaks`` **仍然是 1**，一帧半截真话都没从账上消失。
+
+    再钉一条方向：把 step 丢在半路的那条老读法（本文件从头用到尾的 ``_readings``）拿不到
+    证词，``uncorrected_breaks`` 还是 1 —— 豁免只可能来自线上真到达的那枚武装帧。
     """
+    ask = _round(monkeypatch, tmp_path, [("doc", None)], die_after=DIE_AFTER_FRAMES)
+    body = ask()
+
+    exempted = _wire_readings(body)
+    assert exempted["prefix_breaks"] == 1, f"原始账漂了，豁免就成了撒谎：{exempted}"
+    assert exempted["corrective_replacements"] == 1, exempted
+    assert exempted["uncorrected_breaks"] == 0, exempted
+    assert ruler._frame_verdict(exempted) is True, exempted
+
+    frame_only = _readings(body)
+    assert frame_only["prefix_breaks"] == 1, frame_only
+    assert frame_only["corrective_replacements"] == 0, frame_only
+    assert frame_only["uncorrected_breaks"] == 1, frame_only
+    assert ruler._frame_verdict(frame_only) is False, frame_only
