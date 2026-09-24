@@ -430,6 +430,7 @@ sys.exit(1 if flags else 0)
 - ✅ **窗内可以照做的**（本班实际用过）：读盘取证（`git grep` / `git log` / 读文件 / 读容器日志 `--tail`）；写 `%TEMP%` 暂存派工词与记账文本；做写域冲突图与波次规划；`git worktree add` 与 Junction 预配（不占 CPU）；只读子 Agent 的取证单；核对上一班数字口径。
 - **窗口的正确用法是"把下一波准备好到能秒发"**：本班收窗后 3 分钟内派出两枚 Agent，靠的就是窗内先把工作树、Junction、写域、判据全备齐。
 - ⏱ **等待本身要用阻塞式监视，不要用轮询**：起一枚 `while` 直到 `__RUN6_DONE__` 出现的常驻等待（`write_stdin` 一次挂 240–300 s），把省下的回合拿去做上面那栏。
+- 🔴 **产物留档新规矩（本班补，起因是 run5 逐题答案没留档）**：收窗后 `answers-runN.jsonl` 必须与 `evaluation-report.json` **同批并树进 `docs/testing/`**。理由：报告只有聚合数与 `category_metrics`，**没有逐题判定**；不留逐题，下次"逐类退化"就只能判红、不能判因（A④ 这次已经付过一次这个学费）。核对办法：`app.quality.eval._is_correct` 可以在主树现算逐题表，与报告 `category_metrics` 必须逐位吻合——不吻合就是判分器被改过。
 
 | 窗内动作 | 允许？ | 为什么 |
 |---|---|---|
