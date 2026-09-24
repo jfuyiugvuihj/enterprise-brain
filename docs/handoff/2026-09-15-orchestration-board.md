@@ -1364,6 +1364,17 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Euler`（**与 R62 那枚同名者无关**） | `01a0d179-f793-71c2-b690-18016e8ac489` | **R208** 错误字典措辞 + 别名覆盖面 | `be-r208`（本班自建 worktree，基点 `a218fa6`，**独占**） | 🔵 **在途**。写域只有 `frontend/src/lib/**`；要动 `ChatPanel.vue` 须先停下报告（R48 排队等它） | 11:42:41 |
 | `Nietzsche`（上一班那枚，R207） | `01a0d13f-d7ee-7651-a3e2-205c0d1cdfec` | R207 吞吐重标定 | `be-r207`（基点 `8636ca4`） | 🔴 **零落盘**（11:0x 实取 `git status` 全空、无未跟踪件）⇒ 待复投；它要**独占模型**，只能排在 R203 / R59b 交回之后 | 11:42:41 |
 
+| `Leibniz`（新，与前几班同名者无关） | `01a0d179-7b8e-7b23-b53f-06db621d23ce` | R205a | `be-r205a` | **已结案**：并入主树 `0997489`；总控用 run6 原件复核平均 351121.8 ms 逐位相同、剔三枚待机污染后诚实均值 49535 ms；它交来的"开钉"被裁成改注释 | 13:20 |
+| `Euler`（新） | `01a0d179-f793-71c2-b690-18016e8ac489` | R208 | `be-r208` | **已结案**：并入主树 `424199c`；npm 1042/52、lint:colors 148/0 errors、build EXIT=0；🔴 收窄那一刀总控裁**收口周不落**（属 R48 写域且是用户可见行为改判），另记两笔过覆盖只记不判 | 13:20 |
+| `Harvey` | `01a0d163-10f0-7de1-847b-6dab1f9c0aa2` | R59b | `be-r59` | **已结案**：并入主树 `8ab60cc`；切读腿**接好但不合闸**（`INDEX_BACKEND` 仍 chroma，+331/-5 全增量）+ 第一份 PGVector 真读数；11 枚反证钉全复验 + 自查补强两枚原本无齿的用例；证件留在容器 `/tmp/r59b/` | 13:20 |
+| `Nietzsche`（新，R203） | `01a0d163-8e20-75f1-a63e-497797304935` | R203 | `be-r203` | **已结案**：并入主树 `8f429b7`；生成腿真流式 pieces 0→2-5 / text_frames 3-6；44 枚新用例 + 5 枚实测反证钉；答案字节逐位不变有专钉；三枚 `_quarantine` 野探针搬出到 `%TEMP%\r203_quarantine_out`；它交底的红线缺口 = R210 | 13:20 |
+| `Bernoulli`（新，与死于 #42 那枚同名者无关） | `01a0d1c2-eb58-7b33-9c3e-8da3122a0d5d` | **R210** 断流轮不许把半截真话拼离线话术 | `be-r210`（基点 `8f429b7`，**独占**） | 🔵 **在途**（12:5x 落地，13:2x 实取 `M app/api/v1/chat.py` +42 行 / 两枚新件）。写域只有 `app/api/v1/chat.py` 的「不同源」分支 + 新 `tests/test_r210_*`；禁碰 frontend / `nodes.py` / `app/rag`；不补投 | 13:20 |
+| （无 Agent） | — | **R205b** 图表/洞察两族工具循环收敛 | `be-r205b`（基点 `8f429b7`，已建、零写入） | 🔴 **事故 #45 未落地**（`CreatePipe` 故障，树建好即死）⇒ 按铁规不补投。写域 `app/agents/**`，🔴 收口窗之前并不进来也不影响 V1 判定 ⇒ 排本窗之后 | 13:20 |
+| （总控亲做） | — | **R206a** 口径题的知识库腿必须出门 | **`be-r206a`**（基点 `8ab60cc`，本班新建；🔴 原写 `be-r206`，因事故 #46 那枚落地 Agent 正在里面写 R206b ⇒ 整刀搬树） | ✅ **已并树（本格）**：A④ 主症改判后拆出的第一刀，`KB_CALIBER_MARKERS` + `kb_leg_for_caliber` + 新件 27 枚含两把反证钉；主树亲跑 **4277 passed / 39 skipped** | 13:44 |
+| （代号未取，回执报错致名册漏记） | **待其回执核 `agent_id`**（候选 `01a0d1c3-62fc-72b2-b2ef-32c02403bda2` / `01a0d1cd-36cd-7023-adec-71bacade6bf4`） | **R206b** 口径原话逐字进正文 | **`be-r206`**（基点 `8ab60cc`，**该树归它独占**） | 🔵 **在途·事故 #46 才登记**（12:5x 投·回执报错·13:3x 实取 254 行在写）。写域 `app/rag/retrieval_pipeline.py` + `nodes.py::synthesize` 异区 + 新件 `tests/test_r206_caliber_quotes.py`；禁碰 `orchestrator.py`（R210 之后归 R206a 已并树） | 13:44 |
+| （代号未取，同上） | **待其回执核 `agent_id`** | **R205b** 图表/洞察两族工具循环收敛 | `be-r205b`（基点 `8f429b7`） | 🟡 **落地但零源码写入**（只留 13:04:12 的一批 `__pycache__`）⇒ 按 #46 新规①**不许再判死**、也不许复投；它在收口窗之后，不影响 V1 判定 | 13:44 |
+| `Epicurus` | `01a0d1dc-a98e-70a1-96aa-aaaff83f4b90` | **R212** 真机窗口前置体检（零写域取证单） | 无（禁改仓库任何文件） | 🔵 **在途**（13:2x 单枚 `spawn_agent` 落地 = 事故 #45 那枚运行时故障**自愈**）。三问：`seed_workspace.py --check` 的 401 是哪一层哪个值 / `rehearse_eval_window.py` 逐格前置 / 镜像 rev 落后量 | 13:20 |
+
 | `Sagan` | `01a0cce0-11c2-7240-9403-c7971fcde021` | **R171（判据已被总控证伪并收窄）** 失效收尾那一支不许假定发出方带了文案 | `be-r171`（`218bd6e`） | ✅ **已并树 `9577b12`**（前端 849/41 = 826+23，`lint:colors` 148 不涨）·原判据「错误条不亮」对 shipped 路径不成立：`http.js:95` 自 `a07294f`（09-15）起就带文案，详见跟进单 §89 五 |
 | `Gibbs` | `01a0cd3b-b649-7641-959c-9a71981bd35a` | **R183 + R184**（同一笔 `0012`） | `be-r183`（`9577b12`） | **在途**·`migrations/**`+`app/storage/pending_approvals.py`+新件；🚫 `chat.py`/`data.py`/`frontend/**`/评测集；🔴 判据全文首次成文于跟进单 **§89 四**（此前只在本板 §4BL 五 有一句话）；这单是新镜像能否 recreate 的硬前置，见 §4BM 三 |
 
@@ -3814,3 +3825,93 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 ### 七、仍只等业主（本班不动、下班也别代做）
 
 ① 心跳 `automation-2` 的 `targetThreadId` 仍指死线程 `01a0acfb`（PAUSED）；② 批准改评测集（29 条 `must_contain` 查无出处）；③ 推翻式复核 H20（本班已代裁「不新增人为下限、阈值沿用现值」）与 H13 密级维度；④ 「rename 数据库表」始终没给表名列名；⑤ VM `sshd` 掉了（`git grep 192\.168\.254` 全仓零命中 ⇒ **不进 V1 关键路径**，5 分钟的事）。
+
+
+## §4BU（09-24 11:4x–13:4x，第七班第五格，主树 `91cc6ec` → 本格）：四枚结案 · 事故 #45（投递运行时故障，已自愈）· 🔴 A④ 主症改判：不在装箱，在派工 · R206a 并树 · R211 裁定不修 · R212 立案
+
+### 一、本班四枚结案（全部总控主树亲跑，执行层自述零采信）
+
+- **R205a `0997489`**——时延记账**修在源头** `scripts/collect_evaluation_answers.py::_latency_ms`（前任留下的 184 行是死代码：`aggregate_latency_ms` 从来没有调用点）。总控拿 run6 原件复核：105 题平均 **351121.8 ms**（与正式报告逐位相同，说明"351 秒"这个假数一直是记账侧把整机待机的 8 h 折进单题造成的）；三枚被污染读数 `data-06=29265911.2`(8.13 h)/`data-04=1342781.9`/`data-07=1206484.0`；**剔掉三枚后的诚实均值 = 49535 ms**。执行层提议"开一枚钉把剔除规则钉住"，总控裁**改成改注释**：钉红的是 `tests/test_r30_config_defaults.py::test_model_request_timeout_is_read_in_exactly_one_place`，起因只是 `app/quality/eval.py:200` 的 `#:` 注释提了常量名——那枚钉子是文本扫描，不是行为断言，拿它当行为证据就是假绿。
+- **R208 `424199c`**——错误字典措辞归一 + 别名覆盖面**反证钉**（判据①"二选一"已满足）。npm **1042 passed / 52 files**、`lint:colors` **148 problems / 0 errors**、`npm run build` EXIT=0。🔴 它顺手想收窄的那一刀我裁**收口周不落**：改点在 `frontend/src/components/chat/ChatPanel.vue:269`、`:855-856`，属 R48 写域且是用户可见行为改判，两件事不该同一笔提交。另记两笔**只记不判**的过覆盖：`errcodes.js:205/206` 折进 `permission_denied`；403 未登记码走 `STATUS_CODES[403]` 兜底。
+- **R203 `8f429b7`**——阶段 A 判据② 的唯一翻绿路径：生成腿真走流式。读数 pieces 0 → **2–5**、text_frames **3–6**；44 枚新用例 + 5 枚实测反证钉；「答案字节逐位不变」有专钉（判据② 不许拿改答案换流式）；它交来的三枚 `_quarantine` 野探针搬出仓库到 `%TEMP%203_quarantine_out`。**它交底的那条红线缺口就是 R210**（断流轮：provider 死在半路且此前已交出 ≥1 片 ⇒ 终答换离线话术，那一轮 `prefix_breaks=1`，屏上会拼成"半截真话 + 离线话术"）——不修就别开 run7，故 `Bernoulli` 现在在做。
+- **R59b `8ab60cc`**——切读腿**接好但不合闸**（`INDEX_BACKEND` 默认仍 `chroma`，+331/−5 全增量，读路径今天一个字没换）+ **第一份 PGVector 真读数**（容器内、两侧各 1008 枚、k=5、135 题、12 遍、无估算腿）。11 枚反证钉逐条复验，并自查出两枚原本无齿的用例当场补强。
+
+### 二、🔴 事故 #45 + #46 · 投递回执报错但 Agent 其实落地 · 第七次同类，这次是总控自己踩的
+
+- **#45 的半条**：12:5x 两枚 `spawn_agent` 各报一次 `collab spawn failed: CreatePipe(...): No such file or directory (os error 2)`（投 **R205b**、**R206**，均在 `close_agent` 之后）。本班 13:0x 用"`git status --porcelain` 空"取证成"零写入 = 未落地"。
+- **#46 = 那个取证结论错了**：13:3x 实取 `be-r206` 里已有 **254 行在写**（`retrieval_pipeline.py` +150 / `nodes.py` +94 / 新件 `tests/test_r206_caliber_quotes.py` 18 KB，mtime 13:35:13 仍在动），`be-r205b` 有 13:04:12 的一批 `__pycache__/*.pyc` ⇒ **两枚投递都落地了，回执报错在先、开工在后二十多分钟**。总控因为信了"未落地"，把 R206 的另一半写进了**同一棵树**。
+- **损害归零（操作，不是结论）**：`git apply --3way` 之后 `git diff --stat` 里冒出 104/150 这种对不上自己改动量级的数 ⇒ 立刻停手；全量取证存 `%TEMP%e-r206-full-1336.patch`；`git restore --staged --worktree` 退主树；新件搬 `%TEMP%`；另起 `be-r206a`（基点同为 `8ab60cc`）重落自己那一刀。**主树全程没收到那半件在制品。**
+- **三条新规矩**：① 投递报错后的取证**必须两次、间隔 ≥20 min**，并看 `__pycache__` mtime——一次空 `git status` 判死等于把活 Agent 当死的；② 总控下场前先对目标树做"独占声明"（两次 status + mtime 排序），mtime 在两次读取之间走过就搬新树；③ 改动量级与自己写的不符 ⇒ 先取证再回退，不许"顺手一起提交"。
+- **R206 正式分家**：落地那枚继续 **R206b 逐字保真**；总控交 **R206a 派工**（`be-r206a`）。合并顺序先 a 后 b。
+- **同格另记（运行时确实自愈了一半）**：13:2x 投 R212（`Epicurus`/`Noether`）一枚落地并**已交回**（见本节第五段）。`CreatePipe` 那两枚的归因仍是**未证**。
+
+### 三、🔴 A④ 主症改判：上一班的归因只对 5/13
+
+用刚抢救并树的 `docs/testing/answers-run6.jsonl` 原件重做逐题机器分类（判分函数 = `app/quality/eval._is_correct`，与客户拿到的那份报告同源）：
+
+| 机制 | 题数 | 题号 |
+|---|---|---|
+| **派工里根本没有 `doc` 腿**（`evidence` 全 `[]`） | **8** | metric-04 / 07 / 11 / 12 / 13 / 14 / 15 / 17 |
+| markdown 加粗切断原话成非连续子串 | 2 | metric-10、metric-18 |
+| 同义改写（意思对、字面换） | 1 | metric-05 |
+| 字面未含、需再判 | 2 | metric-08、metric-16 |
+
+代码级根因（`app/agents/orchestrator.py::route_main`）：`doc_kw:483` 里**没有"口径/分母/时点/归口/哪个月"**，而强制只派 doc 那一支 `:509` 要求"一条 `data_kw` 都不命中"，`data_kw:481` 恰好收了裸**"统计"**与裸**"哪个"**——「按什么口径统计」「用哪个分母」「算进哪个月」全部一票否决，落到 `:514` 追加 data。
+一句话：**档位判别（`classify_route`）早就认出这是口径题，派工兜底认不出来**；档位管"花不花钱"、派工管"出门查不查"，两张表过去互不相干，这就是漏点。
+更正全文与凭据已**只追加**进 `docs/testing/a4-metric-conflict-attribution-2026-09-24.md` §4（该文 §0.3/§3 那句"修法是装箱/synthesize"是错的半句，不删原文、就地更正）。
+
+### 四、R206a 并树（本格）· 三条边界都有牙
+
+- `app/agents/nodes.py` 出口 `KB_CALIBER_MARKERS` = ⑤ 归属词 ∪ 定义题词集，**刻意不新造第三张表**（并集相等本身有钉子，判据③）。
+- `app/agents/orchestrator.py::kb_leg_for_caliber` 四条边界：① **只加不减**（数据分析腿一条不撤，题面带着上传文件时它是真需要的）；② 词集是闭集（裸"多少"/裸"统计"不收，纯算数的题不许被拖进知识库多花一发检索）；③ **副作用一轮不改派**（chart/export 补一条读腿要多烧整个 superstep，那是另一笔账——chart-04 就在豁免面上，明写不遮丑）；④ 弃权轮不开口（仍归 R42 那条补派管，两条规则同时开口就变成两个锚点、摘掉任一条都有用例不红）。
+- 覆盖面是**机器钉住**的：`tests/test_r206a_caliber_kb_leg.py` 直接读 run6 的 sidecar + 评测夹具，凡 `kind=ok` 且 `evidence_n=0` 且命中口径词的题号必须恰好是那九道——**跑分产物换批而题号表没跟着换，这枚当场红**。两把反证钉：恒等掉补派 ⇒ 九道立刻回到缺腿形状；放宽词集 ⇒ 判据③ 那条当场不成立。
+- 新件 27 枚 + 邻近十二件 **222 passed / 7 skipped**（路由/档位/supervisor/prefix 复用全族）。
+- 🔴 **本单不宣布分数**：派工修的是"知识库有没有出门"，"原话有没有整字落到正文"要等 R206b 与 run7。
+
+### 五、切读现状与 R211 的裁定
+
+- 计划书 §9.3 那六格没变：服务内端到端未真库跑过 / 热集整层让路代价无量 / 选择性权限过滤在本库量不出来（`classification` 全=1、`department` 全=`''`）/ 双写开满一轮重建未确认 / 只读进程会推 `chroma.sqlite3` mtime（**要业主拍板**）/ 24 题空答复要不要当基线缺陷。
+- **R211 裁定：不修 Chroma**。机制已定位（HNSW 段水位 77968 vs 集合水位 78696 ⇒ 729 条日志从未回放进索引，约 130 枚向量生产库里有、它的 ANN 里不可达），但修它是给一台正在退役的机器续命；**由 R59 切读吸收**，证伪条件写死：切读 on 之后那 24 题若仍交空集，说明不是 Chroma 的账，另立新单。字节层成因不再追（24 题交 0 行的那半句"为什么"，切读之后就不重要了）。
+
+### 六、名册与下一步
+
+- 在途 **2 枚**：`Bernoulli`/R210（`be-r210`，独占 `chat.py`，关键路径）、`Epicurus`/R212（零写域取证）。
+- 下一步顺序：R210 落地结案 → R206b（装箱与 `DOC_PROMPT` 逐字保真）→ 镜像重建 + `check_image_provenance` 退出码 0 → 与 R207 / R135·S5 **同扇**测量 → 合并复验窗（A② + D 三格 + C 两格 + 切读不退化 压成一扇）。
+- 🔴 ~~收口前置卡业主一格：`seed_workspace.py --check` 回 401~~ ⇒ **本格由 R212 结案：一枚凭据都不欠业主**，错的是那次调用喂给 `--password-env` 的键名（详见 §4BV 一）。
+
+## §4BV（09-24 13:2x–13:5x，第七班第六格，主树 `8ab60cc` → 本格）：R212 交回 · 🔴 跑分窗的凭据前置其实不欠业主 · 门基线 **4277 passed / 39 skipped** · R213/R214 立案 · 现役镜像落后 19 枚
+
+### 一、R212（`Epicurus`/`Noether`，零写域取证单）· 三条硬结论
+
+1. **`seed_workspace.py --check` 那个 401 与业主无关**——上一班（含本班 §4BU 六原来那句）都记成"等业主给正确 owner 口令"，**记错了**：
+   - 定案是 **(b) 跨层配对错**：`EB_SEED_OWNER_PASSWORD` 是 `deploy/workspace-seed.json:8-13` 里属主 **`dataowner`** 的口令，从来不属于 `AUTH_USERNAME` 指的那个人（库里就 `admin`/`dataowner`/`evalbot` 三行，`admin` 行的 `password_hash` 与 `deploy/.env.server` 的 `AUTH_PASSWORD_HASH` 逐字符相等 ⇒ 不是"更早一版口令"）。
+   - 判死 (c)：`app/api/v1/auth.py:63-67` 的 `/login` 只收 `username`+`password`，`users` 表**没有停用/状态列**，"owner 被停用"结构上不可能；`check_rate_limit` 只在 `chat.py:1829` 被调 ⇒ **代码层根本没有锁号机制**（这条顺便说明上一班"怕锁号"是怕了个不存在的东西，但**没硬撞是对的**）。
+   - ✅ **可用命令（实测 exit 0，`RESULT ok documents=100 datasets=1 owners=1`，全程只 GET）**：`python scripts/seed_workspace.py --check --username admin --password-env DEMO_ADMIN_PASSWORD`。备选凭据：`evalbot` + `EB_EVAL_PASSWORD`（看板 §3108 定档的跑分账号）。🔴 不能用 `dataowner` 跑 `--check`：`ensure_owners` 要打 `GET /users`（需 `users:manage`，staff 不含）。
+   - 取证纪律：该会话登录尝试 **2/2 全部成功**（一次 seed `--check`、一次取只读 token），12 组 user×credential 走的是**离线 bcrypt 矩阵、零次登录**；口令值一枚都没抄进报告；中途落在 `%TEMP%` 的 24 h token 已删并复核。
+2. **`scripts/rehearse_eval_window.py` 不是前置闸门**——派工词里我称它"开窗前的只读预演"，它对 **P-1…P-19 一枚都不检**（与 P 有交集的只有顺带的 `rows=105`、`baseline` 两枚读数）。它是 R107 的 **105 题离线预演件**（网络桩担保只读）。**派工词里的这句前置描述错了，记一笔**：下一班别再拿它当 P 门。
+3. **现役后端镜像落后主树 19 枚 commit，provenance 门 FAIL**（`check_image_provenance.py` exit 1；镜像 rev `7b0ae26`、`built_at 2026-09-23T22:37:29`；跑分树 `be-eval95` 恰好同源停在 `7b0ae26`）。⇒ 收口前那一枚重建跑不掉（plain `docker build --build-arg APT_MIRROR=…` + `docker compose up -d`）。
+
+### 二、预演件读出来的两枚新缺陷（都值得立单，都是总控可修）
+
+- 🔴 **`analysis` 档 `always_unaffordable=true`**：`floor=1536` > `affordable_max=834`——`MODEL_MIN_ANSWER_TOKENS=1536` 与 120 s ceiling 的算术在这一档上**互相买不起**。其余六档（chat/plan/compress/rewrite/code/alert）全 false。⇒ 立 **R214**：先取证"这一档今天真被拒过没有"（`budget_unaffordable` 只在 R204 那枚日志锚里见过，R204 已并树 ⇒ 现网有没有真红一次要查），再决定是动常量还是动 ceiling。**不许顺手把 floor 调小**：那 1536 是按最坏答案长度标定的。
+- **`false_green_rows = 11`**：罐头文案能骗过子串判分器（`app/quality/eval.py:60-66`）——`approval-01` `chart-01..03` `chat-04` `chat-05` `data-05/06` `doc-02` `insight-03` `tool-04`。与 A④ 那批"零引证却判对"（`metric-02`）是同一族病：**分数里有一部分是靠"没说错话"挣来的，不是靠"查到资料"**。本格不当单修（改判分器＝改尺子，须业主批），只把清单钉在这里。
+- 其余读数：`no_provenance_rows=29`（与登记的 29 条逐位一致，`--check-29` exit 0、`buckets={A:1,B:8,C:5,D:15}`）、`evidence_gate_expected_fail=23`、`evidence_coverage_ceiling=82/105=0.781`、整窗估 **2.49 h–4.73 h**、限流 9 发 <10 不入队道。
+
+### 三、真正的窗口前置逐格读数（用对口的只读件补取）
+
+| 编号 | 读数 | 判定 |
+|---|---|---|
+| P-1 | 主树脏 4 行（全来自并发 Agent + 本班文档）；跑分树 `be-eval95` 有 1 枚 `M docs/testing/evaluation-report.json` | 🟡 开窗前必须两树都 CLEAN（总控活） |
+| P-2 / P-3 / P-4 | `3.11.7` + 主树 `.venv`／`105`+`30`／容器 `RETRIEVAL_TIER` 空 ⇒ 默认 `full` | ✅ |
+| P-8 | 见上（19 枚 · exit 1） | 🔴 重建镜像 |
+| P-9 / P-10 / P-11 | `GET /documents`=100 且 `--check` 同数／容器内 `报销明细表.csv` 12153 B + `GET /data-files` 同名 1 枚／`check_corpus_parity.py` **verdict PASS**（`disk=97 live=100 manifest=100`） | ✅（P-11 那 4 条 `server_only` WARN 身份早已查实，别再当新发现） |
+| P-12 / P-13 / P-16 / P-18 | `dataowner` 在位／`/health/details` `status=ok` 且 embedding 零失败零降级／`catalog_rows=100` 且 `not_indexed=[]`／redis `answer:*` scan=0、`DBSIZE`=0 | ✅ |
+| P-14 / P-15 / P-17 / P-19 | transport 适配器已不在 TEMP／`docker logs --tail 4000` 不覆盖 run6 时段（**0 命中不能当 PASS**）／快照留档要写盘与本单零写入冲突／`powercfg /requests` 需提升权限未读，AC `STANDBYIDLE=0x0` 单独用是假绿 | 🟡 **四格未检**，全属总控开窗前那一格自己做 |
+| 服务健康态 | **7 枚**（题面记的六枚过期）：backend/scheduler/worker/redis/postgres/pgvector/ollama 全 `running healthy restarts=0`；`frontend-1` running 但 **`health=none`**（镜像未定义 HEALTHCHECK） | 🟡 前端那格不算健康证据 |
+
+### 四、本格门基线与在途
+
+- 主树全量门（`scripts/run_gate.py`，本机自动选到 `-n 6`）：**4277 passed / 39 skipped / 0 failed，84.47 s，EXIT=0** = 上一格 4250 + R206a 新件 27 枚，**逐位对得上**。
+- 在途（本格收格后）：**R206b** 落地未登记那枚（`be-r206` 独占）、**R215** `Dewey`/`01a0d1ef-8669-7540-b5c9-06bc0580d093`（`be-r215`，量具侧）、**R213** `agent_id 待核`（`be-r213`，脚本侧）、**R205b** 落地零写入那枚（按 #46 新规不判死不复投）。已结案待回收身体：`Noether`/R212、`Bernoulli`(新)/R210。
+- 本格门基线两次复算：R206a 并树后 **4277 passed / 39 skipped**（84.47 s，-n 6）→ R210 并树后 **4290 passed / 40 skipped**（102.43 s，-n 4，EXIT=0）。🔴 那 1 枚 skip = R210 判据 1 的明写缺口，R215 落地后必须换成真断言。
+- 立案三枚：**R213**（悬空凭据默认键）、**R214**（`analysis` 档 `always_unaffordable=true`，`floor=1536` > `affordable_max=834`）、**R215**（判据② 认「受控末帧纠正」）。
