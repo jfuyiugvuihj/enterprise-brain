@@ -1354,6 +1354,15 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Ohm`（**与前几班同名者无关**） | `01a0d155-f1fe-7ac3-8108-50e00344465d` | **R59**（接手 `Leibniz`）切读 PGVector | `be-r59`（基点 `ca2c7d7`，**独占**；三份前任读数 + 快照 `be-r59-104038`） | 🔵 **在途**。写域 `app/rag/**` + `app/documents/catalog.py` + 那三份读数与对比脚本；🔴 双写现状一字不动、不许停写（退役是 R60）、`migrations/**` 不许动、线上 PG **只读**（任何 DML/DDL/迁移即没收）；第一判据仍是「把两腿都真跑出来的可机读读数」，跑不成的半腿必须标 `not_measured`，**严禁估算冒充实测**；读数没出来前禁止翻默认读，出来了也归总控裁。H20 已由总控代裁（可推翻） | 11:0x |
 | `Fermat` | `01a0d156-277f-7b73-a29f-c010dbf74f19` | **R205a**（接手 `Ramanujan`）评分器 `latency_ms` 记账侧 | `be-r205a`（基点 `cf3bca6`，**独占**；快照 `be-r205a-104038`） | 🔵 **在途**。写域只有 `scripts/collect_evaluation_answers.py` + `app/quality/eval.py` + 新建 `tests/test_r205a_*`；🔴 禁改 `eval_transport_ask_v2.py`、评测集、`docs/testing/evaluation-report.json`；分数三格逐位不变必须有钉；「平均值大于逐题最大值」今后要被用例当场拦红。判据 跟进单 §93.9 | 11:0x |
 | `Sartre` | `01a0d157-2451-7503-8172-5748ea984977` | **R201**（接手 `Descartes`）两枚平铺文档出口的契约 ↔ 代码焊条 | `be-r201`（基点 `ca2c7d7`，**独占**；快照 `be-r201-104038`） | 🔵 **在途**。写域只有新建 `tests/test_r201_*` + `docs/api/contract-v1.md` + runbook **P-9/P-11 两行**；🔴 全部产品在制文件禁改、`test_r186_row_scope_contract.py:317` 不许动、adoption-plan 不归它；焊条要「拔一根针就红」并交反证片段。判据 跟进单 §92 R201 | 11:0x |
+| `Sartre` | `01a0d157-2451-7503-8172-5748ea984977` | R201 | `be-r201` | **已结案**：并入主树 `a218fa6`；总控主树亲跑 30 passed，`test_r186_row_scope_contract.py` 一字未动仍绿；身体待回收 | 11:42:41 |
+| `Curie` | `01a0d141-0883-7cc3-b03d-668fcfc11861` | R199 | `be-r199` | **已结案**：并入主树 `a218fa6`；总控亲跑本件 18 passed + 鉴权/台账面 458 passed；身体待回收 | 11:42:41 |
+| `Tesla` | `01a0d155-9c5f-74d3-89d4-c80b86a8e630` | R203（死亡移交） | `be-r203` | **判未达标**：留 324 行未提交 + 🔴 **零枚用例** + 三枚 `_quarantine` 野探针 ⇒ 11:1x 由 `Nietzsche`（新）接手投 | 11:42:41 |
+| `Ohm` | `01a0d155-f1fe-7ac3-8108-50e00344465d` | R59（死亡移交） | `be-r59` | **读数整体作废**（误判 #43：两侧样本全取错，详见 §4BT 三）⇒ 11:0x 由 `Harvey` 复测投 | 11:42:41 |
+| `Harvey` | `01a0d163-10f0-7de1-847b-6dab1f9c0aa2` | **R59b** 真读数 + 切读接线 | `be-r59`（基点 `ca2c7d7`，**独占**） | 🔵 **在途**。写域 `app/rag/**` + `app/documents/catalog.py` + `scripts/r59_*` + `docs/testing/r59-*`；禁改 `chat.py`/`app/agents/**` | 11:42:41 |
+| `Nietzsche`（**与上一班同名者无关**） | `01a0d163-8e20-75f1-a63e-497797304935` | **R203**（接手 `Tesla`）生成腿接真流式 | `be-r203`（基点 `ca2c7d7`，**独占**） | 🔵 **在途·全项目关键路径**（阶段 A 判据② 唯一翻绿路径）。写域 `chat.py` + `app/agents/**` | 11:42:41 |
+| `Leibniz`（**与前几班同名者无关**） | `01a0d179-7b8e-7b23-b53f-06db621d23ce` | **R205a**（接手 `Fermat`） | `be-r205a`（基点 `cf3bca6`，**独占**） | 🔵 **在途**。前任 9 passed / 1 failed，红的正是判据① 那枚；重点改源头 `scripts/collect_evaluation_answers.py::_latency_ms` | 11:42:41 |
+| `Euler`（**与 R62 那枚同名者无关**） | `01a0d179-f793-71c2-b690-18016e8ac489` | **R208** 错误字典措辞 + 别名覆盖面 | `be-r208`（本班自建 worktree，基点 `a218fa6`，**独占**） | 🔵 **在途**。写域只有 `frontend/src/lib/**`；要动 `ChatPanel.vue` 须先停下报告（R48 排队等它） | 11:42:41 |
+| `Nietzsche`（上一班那枚，R207） | `01a0d13f-d7ee-7651-a3e2-205c0d1cdfec` | R207 吞吐重标定 | `be-r207`（基点 `8636ca4`） | 🔴 **零落盘**（11:0x 实取 `git status` 全空、无未跟踪件）⇒ 待复投；它要**独占模型**，只能排在 R203 / R59b 交回之后 | 11:42:41 |
 
 | `Sagan` | `01a0cce0-11c2-7240-9403-c7971fcde021` | **R171（判据已被总控证伪并收窄）** 失效收尾那一支不许假定发出方带了文案 | `be-r171`（`218bd6e`） | ✅ **已并树 `9577b12`**（前端 849/41 = 826+23，`lint:colors` 148 不涨）·原判据「错误条不亮」对 shipped 路径不成立：`http.js:95` 自 `a07294f`（09-15）起就带文案，详见跟进单 §89 五 |
 | `Gibbs` | `01a0cd3b-b649-7641-959c-9a71981bd35a` | **R183 + R184**（同一笔 `0012`） | `be-r183`（`9577b12`） | **在途**·`migrations/**`+`app/storage/pending_approvals.py`+新件；🚫 `chat.py`/`data.py`/`frontend/**`/评测集；🔴 判据全文首次成文于跟进单 **§89 四**（此前只在本板 §4BL 五 有一句话）；这单是新镜像能否 recreate 的硬前置，见 §4BM 三 |
@@ -3758,3 +3767,50 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 | `ssh vm` 不通 = "你真机速度的物理上限" | `ssh vm` 实测确实 `Connection closed by 192.168.254.128 port 22`（TCP 通、sshd 拒），但**全仓 `git grep '192\.168\.254'` 零命中**、根 AGENTS.md 之外没有任何文档用它；评测窗跑在**本机 Docker + 本机 Ollama**上，与那台 VM 无关 | ❌ **归因错**（而且它是在分析之前先把结论写出来的）。真上限是 `MODEL_MAX_CONCURRENCY=1` × 105 题 ≈ **89 min 纯模型时间**，所以"把三扇窗压成一扇多判据窗"这个结论**保留**，理由换掉。VM 的 sshd 属业主侧 5 分钟看一眼，**不进 V1 关键路径** |
 | 台账机器化（`tickets.yaml` + 校验钉） | 认同——本班为找乙5 的裁定实烧了一次 grep（第一次 grep docs 未命中＝查错层，见 §4BS 二），且每班开工都要重读跟进单与看板。🔴 本班实测：看板 3 761 行 / 755 KB、跟进单 2 850 文本行 / 530 KB，那份建议里写的「2,894 行 / 515 KB」两个数都对不上 | 📌 立 **R209**（生成式索引 + 一枚校验钉，散文只留事故复盘），排在 V1 收口之后 |
 | V2 再谈砍自建 | 认同，且现在动 = 把收口周的稳定期赔进去 | 📌 不动 |
+
+
+## §4BT（09-24 10:5x–11:4x，第六班第四格，主树 `72d0812` → **`a218fa6`**）：事故 #42 善后 · 🔴 误判 #43（R59 读数两侧样本全取错）· R199/R201 结案 · R205a 判未达标 · 四枚接手投
+
+### 一、事故 #42 善后（不是新故障，别再当新故障查）
+
+- 业主 11:0x 又贴来一次 `sailor-ingest.sock … .stale: The file cannot be accessed by the system`。实取：这台机 `LastBootUpTime = 2026-09-24 10:20:17`（就是事故 #42 那记 `Kernel-Power 41`），Docker **10:37:27 已自愈**，7 枚容器 `Up` 且 5 枚 healthy，`engine.sock.stale` / `sailor-ingest.sock.stale` 时间戳停在 **09-23 12:19:53** ⇒ 那两枚 0 字节残留是上一次开机留下的，rename 撞它们才报错，属**开机噪音**，不是第二起故障。残留文件归业主删（本项目删文件一律业主本人），删了下次重启就不必再撞。
+- 🔴 **保活进程随崩溃一起死了**，而真机窗全靠它挡待机（run6 那 8 h 冻结就是这么来的）。本班 10:5x 已重挂 `%TEMP%\keepawake.ps1`，实取 `SET=0x80000003`、11:30:40 在续。**下一班接手第一件事仍是确认它还在。**
+- 险情一笔（不另立事故号）：10:5x 实取空闲内存最低到 **0.64 GB / 32 GB**——`vmmemWSL` 独占 **7.92 GB**，加一枚 `run_gate.py -n 4`（自限过，仍是四路 worker）加数枚 Agent 冷启。⇒ 本班起新规矩：**四枚在途期间总控不跑门**，门只在各枚交回、逐枚并树时各跑一次；`-n` 由 `run_gate.py` 按空闲内存自限，总控不手敲。
+
+### 二、结案两枚（总控主树亲跑，不采信施工层自述）
+
+- **R199 匿名探测落账** → 并树 `a218fa6`（施工 `Curie` @ `be-r199`，基点 `4dcbd30`）。判据五条逐条对：① 真 ASGI 栈两向钉住「401 到不了路由」；② 走同一个 `record_audit` 出口 + `app/common/audit.py:541-542` 的 `anonymous`/`unknown` 退化投影，不新造码、不新造 logger；③ 只此一本账（含一枚反证钉：那行只能从这条路径来）；④ 刷账面按 2 的幂折叠 + 每来源 8 枚出口预算 + 全表 1024 上限；⑤ 401 回话字节级等于改前基线，且台账写坏不许把 401 变 500。两条设计决定值得留下：**去重键取 socket 对端、不取 `X-Forwarded-For`**（`deploy/nginx.conf:58` 用的是 `$proxy_add_x_forwarded_for`，第一跳客户端自己可塞 ⇒ 拿可伪造的头当闸门钥匙等于把闸门交给攻击者；代价是反代后同源共用一窗，要 per-attacker 粒度得运维显式开 `--proxy-headers`）；**必须折叠**的硬理由是每笔账都是一次带 fsync 的整档重写（`app/storage/persistence.py:247`），一万个 401 就是一万次磁盘同步——那会把「记录攻击」做成「替攻击者做拒绝服务」。主树亲跑：本件 18 passed + `-k auth/audit/deni/restrict/middleware/unauthenticated` **458 passed / 0 failed**。
+- **R201 平铺文档出口契约接线** → 并树 `a218fa6`（施工 `Sartre` @ `be-r201`，基点 `ca2c7d7`）。① 两个出口的键集合用 `ast` 现抠与契约互判（借 R186/R191 方法，零抄断言）；② 契约写在 R186 不读的区域 ⇒ **不开任何既往钉**，`test_r186_row_scope_contract.py` 一字未动；③ R194 那笔假口径已落进 runbook **P-9 / P-11 两行**：`GET /api/v1/documents`（`app/api/v1/chat.py::list_documents`）**不声明任何查询参数**，`?page=1&page_size=500` 被框架丢弃 ⇒ 那两行数的一向是**全量**，判据一字未改、只改读数解释。主树亲跑 30 passed。
+
+### 三、🔴 误判 #43：R59 的读数**两侧样本都取错**，整份作废（本班真机逐条实取）
+
+| 前任报的 | 实取真相 |
+|---|---|
+| PG 腿 `UndefinedTable: relation "vector_scope" does not exist` ⇒ 降级 `estimated_exact_knn` | 宿主机 5432 上另有一个**野 PostgreSQL**（pid 8572，用户 `fengx`，正是主树 `.env` 里 `DATABASE_URL=postgresql://fengx:…@localhost:5432/enterprise_brain` 连的那个），里面没有 `vector_scope`。**真库在容器里**：`vector_scope` 在位（`schema_version=1` / `nomic-embed-text` / 768 维 / `distance_function=l2` / `hnsw_m=16` / `hnsw_ef_construction=100`，created 09-18、updated 09-22），`chunk_vectors` **1008 行**，索引 `chunk_vectors_embedding_idx = USING hnsw (embedding vector_l2_ops)`，`schema_migrations` 里 **0001–0013 全在**（0010 pgvector 那枚早已应用 ⇒ R90b 的「首装必停」对**现网**不成立，它只管首装）|
+| `chroma_vectors=401` vs 普查 1008 ⇒ 「差 607 枚」 | 前任读的是 `%TEMP%59chroma` 那枚临时沙盒。生产读路径是 **docker 卷** `enterprise-brain_vectordb` → 容器内 `/app/chroma_db`，本班容器内实取 `collection enterprise_docs count = 1008`；主树根那个 7.9 MB 的 `chroma_db/` 目录同样**不是**生产库 |
+| `mean_overlap=1.0`、135 题两侧逐位相同 | 那是 **Chroma 与 numpy 全库暴力自己比自己**（PG 腿根本没读库），不构成切读证据 |
+
+⇒ 三条直接后果：① 「607 枚缺口」作废，两侧**条数相等**（1008 = 1008）；② 「距离口径未锁」也基本清了——PG 侧索引 `vector_l2_ops` 与 `vector_scope.distance_function=l2` 同源对齐；③ 切读缺的仍然只剩**真 top-k 对照**这一格，本班已作为 **R59b 第一步**下发，且要求比对必须在**两侧同时可达**的地方跑（backend 容器内：`/app/chroma_db` 是真卷、`postgres` 是内网 DNS；5432 未向宿主发布，宿主侧连不进去是设计如此）。🔴 老毛病第三次记账：**报「某物不存在」之前，先确认自己在哪一层查、用的是不是这一层的正确名字**——这次是查错了服务器上的另一个进程。
+
+### 四、R205a 判未达标（不是判据错，是实现没兜住）
+
+主树/施工树双向实取：**9 passed / 1 failed**，红的正是最要紧那枚 `test_the_frozen_attempt_must_not_be_averaged_into_the_latency_cell`：`average=7332096.7 > honest_max=55930.8` ⇒ 8 h 待机那一发**仍然被算进平均**，也就是 run6 那个「平均值大于逐题最大值」的假形状今后照样出得来。病灶定位：前任只在**评分侧**加了 184 行规则，🔴 **一枚都没碰 `scripts/collect_evaluation_answers.py`**——而数是从采集器的 `_latency_ms` 开始说谎的（载荷不自报时拿 `perf_counter` 整调用跨度冒充一发时延）。在假账本上加备注不等于不记假账 ⇒ 接手投要求源头修 + 保留评分侧第二道闸，并交回反证钉。
+
+### 五、本班四枚接手投的写域矩阵（派工前逐棵实取，两两零交集）
+
+| 单号 | Agent | 树（基点） | 独占写域 | 关键约束 |
+|---|---|---|---|---|
+| R59b | `Harvey` | `be-r59`（`ca2c7d7`） | `app/rag/**`、`app/documents/catalog.py`、`scripts/r59_*`、`docs/testing/r59-*`、pgvector 计划书（只追加） | 先读数后接线；🔴 最终报告不许出现 `estimated_exact_knn`；不许翻默认读（翻默认归总控）；PG 只读 |
+| R203 | `Nietzsche`(新) | `be-r203`（`ca2c7d7`） | `app/api/v1/chat.py`、`app/agents/**`、新 `tests/test_r203_*` | 判据④ 硬红线：答案字节逐位不变、`prefix_breaks`/`extra_chars` 恒 0；`_quarantine` 三枚野探针须收编或搬出；legacy 事件名不许下线；不许改 `eval_transport_ask_v2.py` 合格线 |
+| R205a | `Leibniz`(新) | `be-r205a`（`cf3bca6`） | `scripts/collect_evaluation_answers.py`、`app/quality/eval.py`、`tests/test_r205a_*` | 禁碰 `eval_transport_ask_v2.py`、评测集、run6 已入账分数；不许重跑 run6、不许打模型 |
+| R208 | `Euler`(新) | `be-r208`（`a218fa6`，本班自建） | 只有 `frontend/src/lib/**` | 别名那格要么收窄要么补反证钉，🔴 不许拿「今天发不出」当安全依据；R198/R202 四枚钉一字不放宽；npm 1017/50 只许加、`lint:colors` 恒 148、build EXIT=0 |
+
+排队（写域被占，解锁即派）：**R200 / R48** 等 `chat.py`（R48 另需 `ChatPanel.vue` + 必须同批改 `frontend/src/lib/sessions.js` 的 `EVENT_CLAIMS:255`）；**R206 / R205b / R204b** 等 `app/agents/nodes.py`（R204b 另需 R207 读数）；**R207** 等模型空档（它要独占打模型）；**R209** 排 V1 收口后。
+
+### 六、镜像与收口窗口现状（别在窗内翻默认）
+
+容器侧代码 rev 仍是 `7b0ae26`，主树已到 `a218fa6` ⇒ 四枚并完之后必须重建镜像（plain `docker build --build-arg APT_MIRROR=…`，`docker compose build` 本机报 gRPC；是 `build migrate` 不是 `build backend`；`--env-file deploy/.env.server` 不可省），过 `scripts/check_image_provenance.py` 退出码 0 才算 P-8。合并复验窗（A② + D 三格 + R59 不退化 三扇压一扇）的 P-1…P-19 前置、`powercfg standby-timeout-ac 0` 挂 execution-state、Redis `answer:*` 清空、凭据 `evalbot` 等，仍按 `docs/handoff/2026-09-17-eval-real-run-runbook.md`；🔴 开窗前把 R207 读数抄进窗记录口径段，否则窗内 `budget_verdict` 日志继续说假话。
+
+### 七、仍只等业主（本班不动、下班也别代做）
+
+① 心跳 `automation-2` 的 `targetThreadId` 仍指死线程 `01a0acfb`（PAUSED）；② 批准改评测集（29 条 `must_contain` 查无出处）；③ 推翻式复核 H20（本班已代裁「不新增人为下限、阈值沿用现值」）与 H13 密级维度；④ 「rename 数据库表」始终没给表名列名；⑤ VM `sshd` 掉了（`git grep 192\.168\.254` 全仓零命中 ⇒ **不进 V1 关键路径**，5 分钟的事）。
