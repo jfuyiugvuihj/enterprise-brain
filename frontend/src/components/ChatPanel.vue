@@ -833,13 +833,18 @@ const QUEUE_POLL_MS = 3000
 const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired']
 
 // 轮询还有另一种停法：后端明确说「这一轮你再也读不回来了」。
-// 名单只收终止性判定，出处 app/api/v1/chat.py::_authorize_queue_task（401 / 404 / 403 各一枚，
-// 错误体是形状 1：detail 就是稳定码名）。网络错误、超时与 5xx 一律不在名单里——
-// 瞬断不能杀死排队状态的显示，那一族继续按 3 秒重试，脸上说的是「这次没读到」。
-// 判码只走 lib/errcodes 那一份口径（errorCodeOf），面板不另立第二套分类。
+// 名单只收终止性判定，出处 app/api/v1/chat.py::_authorize_queue_task 的五枚拒绝出口：
+// 401 未登录一枚、404 任务不在队列里一枚、403 越权一枚，加上 R202 补的两枚（载荷读不出
+// JSON 与载荷没登记 principal，两枚回的是同一个码）——那一族的回执同样没机会自己变好。
+// 错误体是形状 1：detail 就是稳定码名。网络错误、超时与 5xx 一律不在名单里——瞬断不能
+// 杀死排队状态的显示，那一族继续按 3 秒重试，脸上说的是「这次没读到」。
+// 名单照旧逐格登记 (status, code)，不许退化成只看 status：403 那一段里除了上面点名的两格
+// 还有别的判定，语义各是各的，整段放行等于替后端扩大判定。判码只走 lib/errcodes 那一份
+// 口径（errorCodeOf），停的那一下说哪句话也只走那一份字典，面板不另立第二套分类。
 const QUEUE_POLL_STOPPERS = [
   { status: 404, code: 'resource_not_found' },
   { status: 403, code: 'permission_denied' },
+  { status: 403, code: 'authorization_unavailable' },
   { status: 401, code: 'authentication_required' },
 ]
 

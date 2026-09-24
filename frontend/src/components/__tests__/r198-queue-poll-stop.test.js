@@ -298,14 +298,16 @@ describe('乙 · 判据② 另一半：瞬断、超时、5xx 一律不许停表�
     expect(statusCalls(), '恢复之后仍在轮：一次成功读数不该把表停掉').toBe(4)
   })
 
-  it('乙5 名单外的 403（authorization_unavailable）今天不许停表', async () => {
-    // 判据②只点名三枚终止性判定。chat.py:714/718 那枚 403 authorization_unavailable
-    // 是同形缺陷（回执也没机会自己变好），但不在名单里 —— 本件按授权范围只钉「不许扩名单」，
-    // 要不要把它收进名单由总控裁定，见交工报告「同形只报不动」。
+  it('乙5 403 authorization_unavailable：R202 改判为必须叫停', async () => {
+    // 本件交付时这一格钉的是「判据②名单外一律不停表」，同时把「要不要收进名单」交给总控
+    // 裁定（交工报告「同形只报不动」）。总控在并树提交 7b0ae26 里裁定：同一族，收名单 = R202
+    // 一行改动 + 改判乙5，出处 app/api/v1/chat.py 那两枚载荷拒绝出口（今天的行号 759 / 763，
+    // 本件旧注释里的 714 / 718 已随 R179 的落账改动位移）。判据②的双条件没有放宽，
+    // 反向那半由 r202-queue-poll-stop-authz.test.js 的乙组钉着：名单外的 403 照旧不许停表。
     const turn = queuedTurn()
     await mountPanel([turn], [axiosStatusError(403, 'authorization_unavailable')])
     await vi.advanceTimersByTimeAsync(QUEUE_MS * 2)
-    expect(statusCalls(), '判据②名单外一律不停表').toBe(3)
+    expect(statusCalls(), 'R202 判据①：与 404 同形，第 1 发之后就不许再打一枪').toBe(1)
   })
 })
 
