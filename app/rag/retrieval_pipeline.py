@@ -4,6 +4,7 @@ Agentic RAG 检索管线：
 """
 import json
 import os
+import re
 import threading
 import urllib.request
 import numpy as np
@@ -673,6 +674,156 @@ def _pack_source_labels(hits: list[dict], limit: int = 3) -> str:
     if len(hits) > limit:
         labels.append("…+" + str(len(hits) - limit))
     return ",".join(labels) or "-"
+
+
+# ==================== R206：口径原话随引证片段进正文 ====================
+#
+# A④ 判据④里那枚真退化（口径冲突族 correctness 0.4211 → 0.3158）实测形状是：
+# **那一句登记口径已经作为引证片段进了 prompt，模型却把它改写成同义句再交出去**
+# （run6 metric-10 交回的是「费用以**入账月归属**」——粗体插进原话中间；metric-05
+# 丢了主语；metric-18 同理）。逐字判分之下，同义改写就是错答。所以本节的规矩只有一条：
+# **本题所问的那句口径原话，必须逐字出现在正文里**，改写不算。
+#
+# 为什么这套判据住在装箱模块而不是 ``app/agents/nodes.py``：装箱定的就是「哪些字会随
+# 片段一起进模型」，「哪一句才算这道题的口径原话」是同一件事的另一面，抄第二份迟早漂移。
+# 执法点在 ``synthesize`` 腿（那里才是终答成文的地方），本模块只出判据与原文，不碰名次、
+# 不碰召回，一行现网装箱逻辑都不改。
+#
+# 选句**只按字面重合**，不做同义匹配——判据①要求「费用以发生月归属」与「费用以入账月
+# 归属」这对互斥口径各命中各自的那句，靠语义相似去选就会两边都够。
+
+#: 候选句的最短长度：短于此的多半是表头、条号列或一句引述，不是一条口径。
+CALIBER_MIN_STATEMENT_CHARS = 12
+
+#: 与题面至少要共有几枚双字组才算「本题所问的那一句」。这枚数是拿 run6 全 105 题的**记录
+#: 证据**标定的，不是拍的：门槛 2 时全库有 19 题会被追加（含「住宿费平均值」这种算数题被
+#: 拽去一句合并开票条款），改成 3 之后收到 13 题，而本单要救的三题（metric-05/10/18）
+#: 逐字命中数一枚不少——cp-04 财务部那一行与题面重合 3 枚（财务/务部/费用），与它互斥的
+#: 市场部那一行只有 1 枚，所以 3 这一刀同时切掉了「另一侧串味」和不相干的登记行。
+#: 复测：``test_the_conflicting_pair_each_lands_on_its_own_wording``——两侧各断言一次「有自己、无对方」。
+CALIBER_MIN_MATCH_BIGRAMS = 3
+
+#: 一发最多补几句：主口径一句，与它同分的对侧至多再一句（制度 §〇.2 本就要求两侧都说明）。
+CALIBER_MAX_QUOTES = 2
+
+#: 补进正文的那一段的标题。判分器读的是整段正文，标题写清楚「逐字引自」是诚实性边界：
+#: 这一段不是模型的话，是出处的原话。
+CALIBER_QUOTE_LABEL = "口径原文（逐字引自出处）"
+
+#: 题面里不参与重合度计算的标点：留着它们，「？」这种字也能凑出一枚双字组。
+_CALIBER_QUESTION_PUNCTUATION = "？?。，,、；;：:（）()「」“”‘’"
+
+#: **只有带条号的登记行才算「口径原话」**（``| cp-04 | …`` / ``| t-02 | …``）。两条例子写在
+#: 这里而不是写进 ``synthesize``：① 语料自己就是这么规定的——《制度与口径登记表》§三.3
+#: 「本表的任何一条被引用时，回答中必须给出条号」，条号就是可核验引用的形态；② 散文句子
+#: 不是「登记」，把任意一行当原话补进正文，守卫就退化成复读机（R206 交回里明写了这条边界：
+#: 本单只保登记条线，不保散文复述）。表格分隔行 ``|---|---|`` 同一条正则就挡掉了。
+_CALIBER_REGISTERED_ROW = re.compile(r"^\|?\s*[A-Za-z]{1,6}-\d{1,4}\s*\|")
+
+#: 一句登记行的收尾字符。行尾没有收尾符＝这一行是被谁裁断的（证据摘录有 400 字上限，
+#: 表格行落在边界上就会被切一半），半行不许当「原话」补进正文——那正是本单要修的形状，
+#: 不能再由修法自己制造一遍。
+_CALIBER_LINE_ENDINGS = ("|", "。")
+
+
+def caliber_question_bigrams(question: str) -> frozenset:
+    """题面的双字组（空白与标点剔除）。中文没有词边界，双字组是不引分词依赖的最小重合单位。"""
+    cleaned = "".join(
+        ch for ch in str(question or "")
+        if not ch.isspace() and ch not in _CALIBER_QUESTION_PUNCTUATION
+    )
+    if len(cleaned) < 2:
+        return frozenset({cleaned} if cleaned else set())
+    return frozenset(cleaned[i:i + 2] for i in range(len(cleaned) - 1))
+
+
+def caliber_candidate_lines(text: str) -> list:
+    """片段正文里所有「可能是一句口径登记」的整行，按原文顺序，逐字不改。
+
+    只按行切，不做任何改写：交出去的字符串必须与片段里那一行**逐字相同**，否则判分器
+    照样判错，而「原话」二字也就没有意义了。表格行按整行留（条号与部门都在同一行里，
+    制度 §三.3 要求被引用时给出条号）。
+    """
+    found = []
+    for raw in str(text or "").splitlines():
+        line = raw.strip()
+        if len(line) < CALIBER_MIN_STATEMENT_CHARS or line.startswith("#"):
+            continue
+        if not _CALIBER_REGISTERED_ROW.match(line):
+            continue
+        if not line.endswith(_CALIBER_LINE_ENDINGS):
+            continue
+        found.append(line)
+    return found
+
+
+def caliber_match_score(line: str, bigrams: frozenset) -> int:
+    """这一行与题面共有多少枚双字组。枚数就是重合度，不引入第二把尺。"""
+    if not bigrams:
+        return 0
+    text = "".join(ch for ch in line if not ch.isspace())
+    return sum(1 for pair in bigrams if pair in text)
+
+
+def select_caliber_quotes(fragments, question: str) -> list:
+    """从被引证的片段里挑出回答这道题的那几句口径原话。
+
+    ``fragments`` 是 ``[{"text": 片段正文, "source": 来源名}]``（顺序即引证名次）。返回
+    ``[{"line", "source", "score"}]``：先取全库最高分，再按名次收，同分的对侧最多收到
+    ``CALIBER_MAX_QUOTES`` 句；一句都够不上门槛时返回空表——宁可不补，也不许把不相干的
+    制度行糊进客户看到的答案里。
+    """
+    bigrams = caliber_question_bigrams(question)
+    if not bigrams:
+        return []
+    ranked = []
+    for position, fragment in enumerate(fragments or []):
+        text = str((fragment or {}).get("text") or "")
+        source = str((fragment or {}).get("source") or "")
+        for line in caliber_candidate_lines(text):
+            score = caliber_match_score(line, bigrams)
+            if score >= CALIBER_MIN_MATCH_BIGRAMS:
+                ranked.append((score, -position, line, source))
+    if not ranked:
+        return []
+    top = max(item[0] for item in ranked)
+    picked = []
+    seen = set()
+    for score, neg_position, line, source in sorted(ranked, reverse=True):
+        if score < top or line in seen:
+            continue
+        seen.add(line)
+        picked.append({"line": line, "source": source, "score": score})
+        if len(picked) >= CALIBER_MAX_QUOTES:
+            break
+    return picked
+
+
+def render_caliber_quotes(quotes, answer: str) -> str:
+    """把还缺的那几句原话补成正文末尾的一段；正文里已经逐字有的句子不重复补。
+
+    只做两件事：挑出缺失的句子、按固定格式落在正文末尾。**不改写、不截断、不同义替换**——
+    补进去的每一行都能在其来源片段里逐字找到。答案为空时不补（没答案就没资格带出处）。
+    返回要追加的那段文字（含前导空行），一句都不缺时返回空串。
+    """
+    body = str(answer or "")
+    if not body.strip():
+        return ""
+    missing = [item for item in (quotes or []) if str(item.get("line") or "") not in body]
+    if not missing:
+        return ""
+    # 出处名进标题，引证行本身保持片段的那一份字节原样：这样「补进去的每一行都能在出处里
+    # 逐字找到」是一眼可核的机械事实，而不是要靠去掉尾巴才成立的说法。
+    sources = []
+    for item in missing:
+        source = str(item.get("source") or "").strip()[:40]
+        if source and source not in sources:
+            sources.append(source)
+    title = CALIBER_QUOTE_LABEL + "："
+    if sources:
+        title += "、".join(sources)
+    quoted = ["> " + str(item["line"]) for item in missing]
+    return "\n\n" + "\n".join([title] + quoted) + "\n"
 
 
 # ==================== 统一检索入口 ====================

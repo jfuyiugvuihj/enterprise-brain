@@ -1790,6 +1790,84 @@ def route_reflect(state) -> str:
 
 # ==================== 汇总 + 沉淀 ====================
 
+#: 这一腿的账进日志时用的标记：run7 窗内要能 grep 出"哪一题被守卫带进了原话"，
+#: 也要能反证守卫一次没开口时确实没开口。
+CALIBER_QUOTE_MARKER = "[CaliberQuote]"
+
+
+def _cited_caliber_fragments(state) -> list[dict]:
+    """本轮**模型真读到过**的那些片段，按引证顺序交回 ``[{"text", "source"}]``。
+
+    读的是 ``agent_results[*].evidence``——那是工具边界在装箱**之后**记下的账（R112/R36：
+    装进 prompt 的才算被引证，装不下的不许报出处），不是从答案文字里反推的。只认过了权限、
+    ``provenance_status=verified`` 的那几枚：守卫的产物是要进客户看到的正文的，它的每一行
+    都必须能在真出处里逐字找到，所以这里不但不许编，也不许把没核过的行当原文抬。
+    """
+    fragments: list[dict] = []
+    for raw in (state.get("agent_results") or {}).values():
+        if isinstance(raw, dict):
+            evidence = raw.get("evidence") or []
+        else:
+            evidence = getattr(raw, "evidence", None) or []
+        for item in evidence:
+            if isinstance(item, dict):
+                row = item
+            elif hasattr(item, "model_dump"):
+                row = item.model_dump()
+            else:
+                continue
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("provenance_status") or "") != "verified":
+                continue
+            if row.get("permission_checked") is not True:
+                continue
+            excerpt = str(row.get("excerpt") or "")
+            if not excerpt.strip():
+                continue
+            fragments.append({"text": excerpt, "source": str(row.get("source_name") or "")})
+    return fragments
+
+
+def _carry_caliber_quotes(state, question: str, final: str, worker_results: dict):
+    """把本题那句**登记口径原话**逐字带进正文；正文里已经有的，一个字都不动。
+
+    三条形状约束，每条都不是审美：
+
+    1. **只追加、不改写**。正文是模型写的，守卫没有资格替它重说话；而 R203 的流式帧要求
+       每一枚帧都是终答的前缀——只有往末尾加能同时满足"不替模型说话"和"帧仍是前缀"。
+       所以追加落在 ``worker_results`` 里**最后**那一条腿上：收端 ``_select_final_answer``
+       交出去的就是 ``"\n\n".join(worker_results.values())``，改末尾才不动前面已发的字。
+    2. **交回的是整张 ``worker_results``**。``chat.py`` 是拿节点增量整张覆盖
+       （``latest_worker_results = dict(worker_results)``），只回一条腿会把别的腿洗掉；
+       也不用 ``__reset__``——那是 state 合并协议内部的记法，漏进收端就是脏字。
+    3. **够不上判据就闭嘴**。``select_caliber_quotes`` 认不出登记行时返回空，本腿原样交回，
+       ``final_answer`` 与守卫落地前逐字相同（判据③：硬门只许加，不许把别的族改出新形状）。
+    """
+    from app.rag.retrieval_pipeline import render_caliber_quotes, select_caliber_quotes
+
+    quotes = select_caliber_quotes(_cited_caliber_fragments(state), question)
+    block = render_caliber_quotes(quotes, final).strip()
+    if not block:
+        return final, None
+
+    values = [key for key, value in (worker_results or {}).items() if str(value or "").strip()]
+    merged: dict | None = None
+    if values:
+        merged = dict(worker_results)
+        last = values[-1]
+        merged[last] = str(merged[last]).strip() + "\n\n" + block
+        rebuilt = "\n\n".join(str(merged[key]).strip() for key in values if str(merged[key]).strip())
+    else:
+        rebuilt = str(final).strip() + "\n\n" + block
+    logger.info(
+        f"{CALIBER_QUOTE_MARKER} quotes={len(quotes)} sources="
+        f"{[str(item.get('source') or '')[:24] for item in quotes]} "
+        f"answer_chars={len(str(final))}->{len(rebuilt)}"
+    )
+    return rebuilt, merged
+
+
 def synthesize(state) -> dict:
     """把最终回答写入 state，并把值得记的沉淀进长期记忆"""
     q = _last_user(state)
@@ -1810,6 +1888,17 @@ def synthesize(state) -> dict:
                 final = m.content
                 break
 
+    # R206（A④ 判据④那枚真退化）：被引证片段里的那句口径原话必须逐字进正文。
+    # 它排在记忆沉淀**之前**：值得沉淀的是交回客户的那一份文字，不是补写前的半成品。
+    # 整条守卫炸了也不能带走终答——这一腿是 END 前最后一站。
+    try:
+        guarded, worker_update = _carry_caliber_quotes(state, q, final, worker_results)
+    except Exception as exc:  # noqa: BLE001 - 终答优先，守卫失声只许记账不许拦
+        guarded, worker_update = final, None
+        logger.warning(f"{CALIBER_QUOTE_MARKER} status=skipped error={exc}")
+    if guarded != final:
+        final = guarded
+
     if state.get("intent") == "task" and q and final:
         user_id = _memory_user_id(state)
         if user_id:
@@ -1817,4 +1906,8 @@ def synthesize(state) -> dict:
         else:
             logger.warning("[Synthesize] memory persistence skipped because the request has no authenticated identity")
 
-    return {"final_answer": final}
+    update = {"final_answer": final}
+    if worker_update is not None:
+        # 交回整张表：收端拿 worker_results 当终答正文（见 _carry_caliber_quotes 约束 1、2）
+        update["worker_results"] = worker_update
+    return update
