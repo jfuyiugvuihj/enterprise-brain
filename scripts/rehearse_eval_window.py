@@ -17,6 +17,7 @@
      表里的腿数/秒数是 [推算]，算式写在 --summary 里，参数取跟进单 §42 八变体的实测行。
 
 用法（仓库根，项目 venv 解释器）：
+    python scripts/rehearse_eval_window.py --switches       # R218：窗口要翻的那几个开关（三格）
     python scripts/rehearse_eval_window.py                 # 每题一行 markdown 表
     python scripts/rehearse_eval_window.py --only doc      # 按题号前缀筛
     python scripts/rehearse_eval_window.py --csv           # 机器可读（仍只走 stdout）
@@ -87,7 +88,48 @@ def _block_network() -> None:
     socket.socket.connect = _boom
 
 
-_block_network()
+#: --- R218 修：拦网装在哪一刻（门内地雷）----------------------------------------------
+#: 原来这里是无条件一句 ``_block_network()``（HEAD 第 90 行）。它把「import 任何业务代码之前
+#: 先拦住三条出站路径」这条安全主张实现成了 **import 副作用** —— 于是任何在 pytest 里
+#: import 本件的人，会把这三条桩留给**同进程的别的事**：
+#:   tests/test_r217_strict_unaffordable_form.py:15 一句 ``from scripts.rehearse_eval_window
+#:   import budget_table`` ⇒ 同 worker 的 tests/test_r37_report_lane_enqueue.py 当场
+#:   ``AssertionError: R107 预演件禁止任何网络动作``（09-24 实测：r37 单跑 14 passed；
+#:   r37 + r217 无论谁在前都是 11 failed / 8 passed；对照 r37 + r155 是 41 passed）。
+#:   全量门 ``-n 8 --dist loadfile`` 只要把这俩文件派进同一枚 worker，就会为**与判据无关的
+#:   原因**变红。
+#: 现在的形状：**主张一个字不删，只改装载条件** —— 进程里没有更严的闸门时才拦（脚本直跑、
+#: ``python -c``、被非 pytest 的调用方 import 全在这一类）；conftest 的 R56 端口闸门已在时
+#: 让位，因为它按目标端口识别、逐用例记 attempt、收尾再判一次红，比这枚桩严格。
+#: 「在 import 业务代码之前」仍然成立：本段就在下面那几行 ``from app...`` 之上。
+#: 反证形状见 tests/test_r218_egress_gate_placement.py（摘掉这枚条件 ⇒ 红必须落在
+#: 「脚本模式下没拦网」这一格）。
+EGRESS_GUARDED = False
+
+
+def _conftest_gate_loaded() -> bool:
+    """pytest 的 R56 闸门在不在本进程里：在就让位，不在就必须自己拦。
+
+    判据用「conftest 模块带着 BLOCKED_MODEL_PORT_ATTEMPTS 进没进 sys.modules」，不用
+    PYTEST_CURRENT_TEST 之类环境变量 —— 那只覆盖用例执行期，收集期 import app 同样危险。
+    """
+    for name in ("tests.conftest", "conftest"):
+        module = sys.modules.get(name)
+        if module is not None and hasattr(module, "BLOCKED_MODEL_PORT_ATTEMPTS"):
+            return True
+    return False
+
+
+def egress_guard_state() -> dict:
+    """本件此刻拦没拦、为什么这么选：给反证钉读的出口，不改变任何行为。"""
+    return {"guarded": EGRESS_GUARDED,
+            "conftest_gate_loaded": _conftest_gate_loaded(),
+            "stubbed": getattr(socket.create_connection, "__name__", "") == "_boom"}
+
+
+if not _conftest_gate_loaded():
+    _block_network()
+    EGRESS_GUARDED = True
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -552,7 +594,16 @@ def main(argv=None) -> int:
                         help="实取的无出处清单 vs 登记抄本，逐条点名（判据 1 最后一条）")
     parser.add_argument("--floor", type=int, default=None,
                         help="把 MODEL_MIN_ANSWER_TOKENS 当这个值复算（R100 会把它从 1537 改到 1536）")
+    # R218：本件预演「窗口形状」，这一扇门预演「窗口要翻的那几个开关」（判据 ② 的三格）。
+    # 只加一个分支，上面那几样既有用法的输出一个字都不变；两扇门的只读纪律同一条。
+    parser.add_argument("--switches", action="store_true",
+                        help="跑 R218 的开关离线预演三格（D 报告档翻开关 / C 缓存命中腿 / A② 帧账量具）")
     args = parser.parse_args(argv)
+
+    if args.switches:
+        import r218_switch_rehearsal
+
+        return r218_switch_rehearsal.main([])
 
     from app.common.model_budget import min_answer_tokens
 
