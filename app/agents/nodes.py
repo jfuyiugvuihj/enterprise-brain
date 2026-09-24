@@ -6,6 +6,7 @@
 """
 import os
 import time
+import re
 import httpx
 from dataclasses import dataclass
 from typing import Any, NamedTuple, Sequence
@@ -1794,6 +1795,206 @@ def route_reflect(state) -> str:
 #: 也要能反证守卫一次没开口时确实没开口。
 CALIBER_QUOTE_MARKER = "[CaliberQuote]"
 
+# ==================== R216：互斥口径的择边（特例压过一般条款） ====================
+#
+# A④ 判据④ 五分类的第 4 格（`docs/testing/a4-metric-conflict-attribution-2026-09-24.md` §5）：
+# 被引证的登记料里**同时**躺着一条一般条款和一条只管某个范围的特例条款，特例条款的登记原文
+# 自己就把那个范围让给了别条（``… 销售部的签约统计另按 cp-03 销售部一侧执行。``）。模型两条
+# 都抄了，结论段却按一般条款作答 ⇒ 答反了。R206a 治派工、R206b 治逐字保真，两枚都不治这一格。
+#
+# 🔴 与邻单的两道边界写在这里不是装饰，是收口的把手：
+#   * 本腿**不补召回**：特例那一行没被引证到上下文时它必须闭嘴（那格账在装箱/切读那边）；
+#   * 本腿**不逐字保真**：它只判"哪一侧算本题结论"，逐字引证是 R206b 的活，两枚的收益不许互记；
+#   * 本腿只追加、不改写，落点抄 ``_carry_caliber_quotes``，为的是 R203 那条"已发帧仍是终答前缀"。
+
+#: 台账标记：run7 窗内要能 grep 出"哪一题被择边腿判过边"。
+CLAUSE_SIDE_MARKER = "[ClauseSide]"
+
+#: 追加段落的标题。这一段不是模型的话，是登记表自己的排序规则，标题里写明依据来自条号。
+CLAUSE_SIDE_LABEL = "口径择边（本题按题面点名的那一侧作答）"
+
+#: 条号形状。与 R206b 同一把尺：只认带条号的登记行——散文不是「登记」，把任意一段话当条款
+#: 就会让本腿退化成第二个复读机（R206 交回里明写的边界）。
+_CLAUSE_CODE = r"[A-Za-z]{1,6}-\d{1,4}"
+_CLAUSE_CODE_AT_LINE_START = re.compile(r"^\s*\|?\s*(" + _CLAUSE_CODE + r")\s*\|")
+_CLAUSE_CODE_IN_TEXT = re.compile(_CLAUSE_CODE)
+
+#: 一条登记行里能当「适用范围」的格子最长多长。超过它就不是范围名而是口径正文本身，
+#: 拿口径正文去题面里找子串会把每一条都判成"被点名"。
+CLAUSE_SCOPE_MAX_CHARS = 12
+
+#: 登记行里那些**讲出处而不是讲范围**的格子（``本表 cp-03`` / ``《费用报销管理制度》`` / ``V1.0``）。
+#: 这一格是表格的"依据/版本"列，形状上是"前缀词 + 引用体"或版本号，不是部门名也不是事项名；
+#: 不收掉它，"依据 cp-03"这种格子会被当成范围名拿去题面里找子串。
+_CLAUSE_PROVENANCE_CELL = re.compile(r"^(本表|依据|来源|版本|生效|V\d|v\d|《)")
+
+#: 赢家至少要比第二名多命中几枚双字组才敢定"题面点的是它"。这枚余量不是风格问题：并列时
+#: 本腿必须闭嘴（判据③——不涉及冲突的族一个字都不许变）。重合度沿用 R206b 那一枚尺。
+CLAUSE_SIDE_MIN_MARGIN = 2
+
+
+def _caliber_clause_rows(fragments) -> list:
+    """把被引证的**登记行**摊成条款：``[{"code","payload","scopes","line","source"}]``。
+
+    行还是 R206b 那把尺挑出来的（``caliber_candidate_lines``：条号开头、整行、没被裁断），本函数
+    只多做一件结构分析：一行表格里有三种格子——条号、口径正文、范围名。切法不按列号，因为
+    cp 表与 t 表列数不同；按「最长格是正文、其余短格是范围」切，两张表都成立。
+    """
+    from app.rag.retrieval_pipeline import caliber_candidate_lines
+
+    rows = []
+    for fragment in fragments or []:
+        text = str((fragment or {}).get("text") or "")
+        source = str((fragment or {}).get("source") or "")
+        for line in caliber_candidate_lines(text):
+            started = _CLAUSE_CODE_AT_LINE_START.match(line)
+            if not started:
+                continue
+            cells = [cell for cell in (item.strip() for item in line.strip().strip("|").split("|")) if cell]
+            body = cells[1:]
+            if not body:
+                continue
+            payload = max(body, key=len)
+            scopes = [
+                cell for cell in body
+                if cell != payload
+                and len(cell) <= CLAUSE_SCOPE_MAX_CHARS
+                and not _CLAUSE_PROVENANCE_CELL.match(cell)
+            ]
+            rows.append({
+                "code": started.group(1),
+                "payload": payload,
+                "scopes": scopes,
+                "line": line,
+                "source": source,
+            })
+    return rows
+
+
+def _clause_named_rows(rows, question: str) -> list:
+    """哪些登记行的**范围格整格出现在题面里**，按与题面的重合度从高到低排。
+
+    「点名」只看一件事：范围名本身是从被引证的登记行里读出来的，不是本腿带来的词表——换一份
+    制度文件、换一批部门、换一种问法，这一格跟着材料走（判据②：不许出现题目关键词硬编码）。
+    """
+    from app.rag.retrieval_pipeline import caliber_match_score, caliber_question_bigrams
+
+    bigrams = caliber_question_bigrams(question)
+    if not bigrams:
+        return []
+    named = []
+    for row in rows:
+        hit = [scope for scope in row["scopes"] if scope and scope in str(question or "")]
+        if not hit:
+            continue
+        named.append((caliber_match_score(row["line"], bigrams), row, hit))
+    named.sort(key=lambda item: item[0], reverse=True)
+    return named
+
+
+def _clause_rows_citing(rows, code: str, question: str) -> list:
+    """正文里**显式指向**某个条号、而自己没有范围被题面点名的那些登记行。
+
+    只认条号字面（``… 另按 cp-03 销售部一侧执行`` 里的 ``cp-03``）：这是登记表自己写明的引用
+    关系（§三.3 要求被引用时给出条号），不是本腿发明的语义匹配。排除"自己也被点名"的行，
+    否则两枚同族特例会互相指认，一般条款就无处可寻。
+    """
+    citing = []
+    for row in rows:
+        if row["code"] == code:
+            continue
+        if code not in _CLAUSE_CODE_IN_TEXT.findall(row["payload"]):
+            continue
+        if any(scope in str(question or "") for scope in row["scopes"]):
+            continue
+        citing.append(row)
+    return citing
+
+
+def select_caliber_side(fragments, question: str):
+    """判出本题的「特例侧 / 让位的一般侧 / 并列对侧」；够不上形状就交回 ``None``。
+
+    三件事必须同时成立，缺一枚本腿都不开口（每一枚都对着判据③ 要求一字不变的一族形状）：
+
+    1. 有一枚登记行的**范围格被题面点名**，且它与题面的重合度**明显**赢过第二名；
+    2. 另有一枚登记行在自己的正文里**指向**赢家那个条号 ⇒ 一般条款自己就写明了不适用于那个范围；
+    3. 特例那一行确实在被引证的料里（枚 1 与枚 2 都只看引证料，本腿不补召回）。
+    """
+    rows = _caliber_clause_rows(fragments)
+    if len(rows) < 2:
+        return None
+    named = _clause_named_rows(rows, question)
+    if not named:
+        return None
+    top_score, special, scopes = named[0]
+    if len(named) > 1 and top_score - named[1][0] < CLAUSE_SIDE_MIN_MARGIN:
+        return None
+    general = _clause_rows_citing(rows, special["code"], question)
+    if not general:
+        return None
+    peers = [row for row in rows if row["code"] == special["code"] and row is not special]
+    return {"special": special, "general": general, "peers": peers, "scopes": scopes}
+
+
+def render_caliber_side(decision, model_answer: str) -> str:
+    """把择边的结论写成正文末尾那一段；结论本来就站在对侧时交回空串。
+
+    🔴 每一句口径都是登记行里的原格子，本函数一个字都不重写：它只决定"哪一句是本题结论"。
+
+    ``model_answer`` 喂的是**模型自己写的那一份**，不是逐字保真腿补写之后的那一份：判"边有没有
+    选错"问的是模型说了什么。拿补写后的正文去判，R206b 带进来的那句原话会冒充"模型已经选对了"，
+    两枚守卫就会互相把对方的活记到自己账上（判据① 那条纪律要挡的正是这个）。
+    """
+    if not decision:
+        return ""
+    special = decision["special"]
+    payload = special["payload"]
+    if payload and payload in str(model_answer or ""):
+        # 模型已经按特例侧作答 ⇒ 没有边选错，本腿一个字都不许多说。
+        return ""
+    scope = "／".join(decision["scopes"])
+    lines = [f"### {CLAUSE_SIDE_LABEL}", "", f"- 本题结论（特例 {special['code']}·{scope}）：{payload}"]
+    for row in decision["general"]:
+        lines.append(
+            f"- 不适用本题的一般条款 {row['code']}：其登记原文已把{scope}指向 {special['code']}，"
+            f"不得拿它当{scope}的结论。"
+        )
+    for row in decision["peers"]:
+        other = "／".join(item for item in row["scopes"] if item not in special["scopes"]) or row["code"]
+        lines.append(f"- 并列对侧（{other}）：{row['payload']}")
+    basis = f"（依据条号 {special['code']}；来源 {special['source']}）"
+    lines.append(basis if special["source"] else f"（依据条号 {special['code']}）")
+    return "\n".join(lines)
+
+
+def _apply_caliber_side(state, question: str, final: str, worker_results: dict,
+                        model_answer: str = ""):
+    """择边腿的落地：只往**最后**那条有字的腿上追加，并整张交回 ``worker_results``。
+
+    追加位置与交回形状两件事都抄 ``_carry_caliber_quotes`` 的三条约束，理由同一条：收端拿
+    ``"\\n\\n".join(worker_results.values())`` 当终答正文，而流式那一边要求已发的帧仍是终答前缀。
+    """
+    decision = select_caliber_side(_cited_caliber_fragments(state), question)
+    block = render_caliber_side(decision, model_answer or final)
+    if not block:
+        return final, None
+
+    values = [key for key, value in (worker_results or {}).items() if str(value or "").strip()]
+    merged: dict | None = None
+    if values:
+        merged = dict(worker_results)
+        last = values[-1]
+        merged[last] = str(merged[last]).strip() + "\n\n" + block
+        rebuilt = "\n\n".join(str(merged[key]).strip() for key in values if str(merged[key]).strip())
+    else:
+        rebuilt = str(final).strip() + "\n\n" + block
+    logger.info(
+        f"{CLAUSE_SIDE_MARKER} special={decision['special']['code']} scopes={decision['scopes']} "
+        f"general={[row['code'] for row in decision['general']]} peers={len(decision['peers'])} "
+        f"answer_chars={len(str(final))}->{len(rebuilt)}"
+    )
+    return rebuilt, merged
+
 
 def _cited_caliber_fragments(state) -> list[dict]:
     """本轮**模型真读到过**的那些片段，按引证顺序交回 ``[{"text", "source"}]``。
@@ -1891,6 +2092,9 @@ def synthesize(state) -> dict:
     # R206（A④ 判据④那枚真退化）：被引证片段里的那句口径原话必须逐字进正文。
     # 它排在记忆沉淀**之前**：值得沉淀的是交回客户的那一份文字，不是补写前的半成品。
     # 整条守卫炸了也不能带走终答——这一腿是 END 前最后一站。
+    #: 模型自己写的那一份，在逐字保真腿补写**之前**取：R216 的择边腿判"边选错没"要问这一份，
+    #: 不能问补写之后的那一份（否则 R206b 抬进来的原话会冒充"模型已经选对了"）。
+    model_final = final
     try:
         guarded, worker_update = _carry_caliber_quotes(state, q, final, worker_results)
     except Exception as exc:  # noqa: BLE001 - 终答优先，守卫失声只许记账不许拦
@@ -1898,6 +2102,20 @@ def synthesize(state) -> dict:
         logger.warning(f"{CALIBER_QUOTE_MARKER} status=skipped error={exc}")
     if guarded != final:
         final = guarded
+
+    # R216（A④ 判据④ 第 4 格）：互斥口径必须按题面点名的那一侧作答。排在逐字保真**之后**：
+    # 先把原话送进正文，再判哪一句是本题结论——两枚守卫各治各的格，收益不互记。
+    # 与上一腿同一条硬规矩：整条炸了也不能带走终答，这一腿是 END 前最后一站。
+    try:
+        side_base = worker_update if worker_update is not None else worker_results
+        guarded, side_update = _apply_caliber_side(state, q, final, side_base, model_final)
+    except Exception as exc:  # noqa: BLE001 - 终答优先，择边腿失声只许记账不许拦
+        guarded, side_update = final, None
+        logger.warning(f"{CLAUSE_SIDE_MARKER} status=skipped error={exc}")
+    if guarded != final:
+        final = guarded
+    if side_update is not None:
+        worker_update = side_update
 
     if state.get("intent") == "task" and q and final:
         user_id = _memory_user_id(state)
