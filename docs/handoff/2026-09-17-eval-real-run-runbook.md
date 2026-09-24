@@ -37,6 +37,7 @@
 | **P-16** | **在盘 ≠ 已索引**：`/documents` 与 `/documents/catalog` 名单必须对得上 | 先按 P-11 取 `docs_live.json`，再 `curl.exe -sS --noproxy '*' -H "Authorization: Bearer $env:EVAL_TOKEN" "http://127.0.0.1:8001/api/v1/documents/catalog?page=1&page_size=500" -o "$env:TEMP\evalrun\docs_catalog.json"`，然后 `& $py -c "import json,pathlib;cat=json.loads(pathlib.Path(r'$env:TEMP\evalrun\docs_catalog.json').read_text(encoding='utf-8-sig'))['documents'];live=set(json.loads(pathlib.Path(r'$env:TEMP\evalrun\docs_live.json').read_text(encoding='utf-8-sig'))['documents']);print('catalog_not_indexed=',sorted(d['filename'] for d in cat if d.get('index_status')!='indexed'));print('live_not_in_catalog=',sorted(live-{d['filename'] for d in cat}))"` | `live_not_in_catalog` **必须为空**；`catalog_not_indexed` 必须等于**已知**的"按策略不入索引"集合（`index_status` 取值见 `app/api/v1/chat.py:2028` 与 `INDEX_STATUS_INDEXED / EXCLUDED / UNKNOWN`；`/documents` 在 `:2560`、`/documents/catalog` 在 `:2573`）。`:2562-2569` 显示 `/documents` 只回**同时**满足"目录可见"且"在向量库里"的名字 ⇒ 一条上传成功但没发布的文件会在 P-9 的计数里**凭空消失**（表现为"篇数不够"），反过来只看 catalog 又会**多算**（表现为"语料在位但检索不到"）。上一班是"被删了还在跑"，这一种是"传了但查不到"，同一个失效面换了入口 |
 | **P-17** | **语料基线快照留档（事后可自证的证据链）** | 开窗前 `Get-ChildItem documents -File \| Get-FileHash -Algorithm SHA256 \| Select-Object Path, Hash \| Export-Csv -NoTypeInformation -Encoding UTF8 "$env:TEMP\evalrun\corpus_before.csv"`，收窗后同法出 `corpus_after.csv`，再 `Compare-Object (Import-Csv -Encoding UTF8 "$env:TEMP\evalrun\corpus_before.csv") (Import-Csv -Encoding UTF8 "$env:TEMP\evalrun\corpus_after.csv")` | `Compare-Object` **无输出**（两次名单/哈希逐字节相同），且报告正文引用这两个文件的**绝对路径 + `Get-Date` 时间戳**（时点戳口径同 §7）。落点必须在**仓外**（`$env:TEMP\evalrun\`，§8 产物纪律）。为什么不留一个数：上一轮废跑的根因就是拿宿主 `chroma_db` 快照当语料真相源（看板 §4AZ.3、P-9 的 🔴）。另注意主树 `documents/` 盘上 123 个文件里 **26 个是上传测试产物**（`kb_policy_*__v1.txt`、`browser_upload_test__v*.txt`、`codex-upload-[ab]__v1.txt`、`qa_*__v1.txt`、`安全生产管理制度汇编.zip` 等）⇒ 任何 `_reconcile.py` 型对账**必须**以"窗口前留档的名单"为唯一真相源，否则又会朝污染集合删文件 |
 | **P-18** | **开窗前清掉答案缓存**（本班级补；`scripts/eval_transport_ask_v2.py` 的注释里一直引它，但本文 §2 从来没有这一行 —— 2026-09-19 22:1x 实取 `answer:*` 为 0 键才没暴雷） | `docker exec enterprise-brain-redis-1 sh -lc "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning --scan --pattern 'answer:*' | wc -l"`（口令取自 `deploy/.env.server` 的 `REDIS_PASSWORD`，**redis 要鉴权**） | 开窗前该数必须为 **0**；不为 0 就 `--scan --pattern 'answer:*' | xargs redis-cli -a <pw> --no-auth-warning DEL`（只删 `answer:*`，别 `FLUSHALL`）。为什么是硬闸：缓存键含用户/部门/密级/角色/权限但**不含 `session_id`**（`app/common/cache.py:195` + `:144`），TTL 1800 s ⇒ 换新 session 关不掉缓存；半路重跑同一个 shard 或先做过单题冒烟，第二次就会拿到约 50 ms 的假时延，而 §10 的 I-3 只在 max<1 s 时才判死 —— 混在一轮里（部分命中）它拦不住。冻结的适配器另有双路识别（`text.cached` 与 status 文案「缓存命中」）并直接 raise 停窗 |
+| **P-19** | **待机锁**（09-24 补·run6 第二次冻窗后立的硬前置） | 开窗前必须挂上 execution-state 请求：起一枚常驻进程调 `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED|ES_DISPLAY_REQUIRED)`（返回 `0x80000000` 才算挂上，每 240 s 续一次）| 🔴 **`powercfg /change standby-timeout-ac 0` 单独用是假绿**：09-21 与 09-23 两次实测 AC 值都是 `0x0`，机器仍然掉进 S0 现代待机（后者冻 8 h 6 min）⇒ 只有 P-19 这条算前置 |
 
 - 判据取哪个符号：任选一个**只存在于被测版本**里的符号即可，本次用的是 `_authorized_source_rows`（R41 引入，`app/api/v1/chat.py:284`）。树内计数命令与容器内计数命令必须指向**同一个文件相对路径**（容器内是 `/app/app/api/v1/chat.py`）。
 - **P-8 不过的唯一正解是重建后端镜像，且必须 `docker compose build migrate`**：直接 build `backend` 会**静默空跑**，跑完还以为更新了。重建属**业主侧长任务（已挂 H12）**，Agent 不得代做。
@@ -419,3 +420,22 @@ sys.exit(1 if flags else 0)
 3. **冻结适配器里的 `chat.py` 行号引用会随并树偏移**。它现在引 `chat.py:1359-1365 / 1364 / 1379 / 1403-1418 / 1177`，而跟进单 §42.3 排队的那笔缓存闸门改动就在 1362 附近 ⇒ 落地后这些引用整体后移。**适配器是冻结件，不许为了对齐行号去改它**；改动并树时在本节记一行「§42.3 使适配器行号引用偏移 +N，行为不变」即可。
 
 **开窗还差的两件事，都不是机械问题**：① R100 未并树 ⇒ 现网每发 analysis 仍是 0 字正文，开窗只会量到 105 个 `no_answer_produced`（§42 表 #5）；② 计时预算要按 R100 的结果重估，§14 的 7.6 h 与旧 73 min 都已作废，compat 关掉思考是 37 s/发、native 是 1.9 s/发，差 20 倍（§42 结论 2）。
+
+## 17. 🔴 窗口内不许空转（09-24 09:2x，第四十四班，业主 09-24 明令「以后有 run6 这种长期要跑的，别等待了，你先做别的」）
+
+本班实证的浪费：**run6 从 23:33 到 08:56 收窗，总控一共只做了"每 5 分钟读一次 sidecar 行数"这一件事**，中间约 **2 小时是纯等待轮询**（12 次近乎相同的 `write_stdin`），而同期完全可以做的活（写 §93 判据、取证 `QUEUE_POLL_STOPPERS` 漏的那一格、准备波次与写域冲突图）有一半是被业主追问才顺手做的。规矩定死如下：
+
+- **开窗之后，总控的时间分成两半**：窗内不许动的（见下表）之外，**其余一律照做照派**，不许用"等窗口"当不推进的理由。
+- 🔴 **窗内三条硬禁**（违反任何一条 = 这一轮时延读数作废，必须整轮重跑）：**不许并树**、**不许在主树或任何工作树跑测试**（CPU/GPU 抢占会污染 p95）、**任何 Agent 不许打模型**（含只读取证单，判据里必须明写禁打模型）。
+- ✅ **窗内可以照做的**（本班实际用过）：读盘取证（`git grep` / `git log` / 读文件 / 读容器日志 `--tail`）；写 `%TEMP%` 暂存派工词与记账文本；做写域冲突图与波次规划；`git worktree add` 与 Junction 预配（不占 CPU）；只读子 Agent 的取证单；核对上一班数字口径。
+- **窗口的正确用法是"把下一波准备好到能秒发"**：本班收窗后 3 分钟内派出两枚 Agent，靠的就是窗内先把工作树、Junction、写域、判据全备齐。
+- ⏱ **等待本身要用阻塞式监视，不要用轮询**：起一枚 `while` 直到 `__RUN6_DONE__` 出现的常驻等待（`write_stdin` 一次挂 240–300 s），把省下的回合拿去做上面那栏。
+
+| 窗内动作 | 允许？ | 为什么 |
+|---|---|---|
+| 并树 / 改主树代码字节 | ❌ | 测的就不再是那一版；镜像 rev 与主树 rev 必须相等 |
+| 跑 `pytest` / `npm test` / `build` | ❌ | 抢占 CPU/GPU，p95 直接失真 |
+| 起停容器、重建镜像、跑迁移 | ❌ | 改环境 = 改测量条件 |
+| 派打模型的单 | ❌ | P-6 独占纪律 |
+| 取证、写判据、规划波次、建工作树、配 Junction | ✅ | 零 CPU 争用，且正是窗口该产出的下游 |
+| 读 `docker logs --tail`、读侧车、读报告 | ✅ | 只读 |
