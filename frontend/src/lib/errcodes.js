@@ -10,8 +10,9 @@
  * 码名蓝本：app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举。本字典的键与它一一对应，
  * 不多不少（errcodes.test.js 双向对账钉死，见下面的「码表对账」）。线上出现的其它历史码名走
  * LEGACY_ALIASES 归一。
- * 鉴权中间件返的是**中文散文**（app/main.py:104/109 的 401「请先登录」、
- * app/main.py:113 的 403「账号不可用」），那不是码，走 PROSE_ALIASES 按原文索引。
+ * 鉴权中间件今天吐的是**枚举码本尊**（app/main.py 的 401 authentication_required 与
+ * 403 account_unavailable 那几枚 JSONResponse 出口）；按 detail 原文索引中文散文的那张
+ * PROSE_ALIASES 只剩野外兜底，换代理由与复核出处写在下面那张表的注释里。
  *
  * 硬不变量：normalizeError() 的 .code 一定 ∈ Object.keys(ERROR_CODES) ∪ {''}。
  * 后端原样回来的码名/散文一律放进 .rawCode，只供排查与「错误码：xxx」小字使用。
@@ -45,8 +46,18 @@ export const ERROR_CODES = {
   permission_denied: { message: '当前账号没有这项权限，请联系管理员开通。', retryable: false },
   // 部门授权范围取不到。原 lib/sessions.js:379 那句把「换带部门的账号或联系管理员」说清了，
   // 这里收下这层语义，只把裸码名摘掉（文案政策：句子说人话，码名走 errorCodeOf 独立通道）。
+  //
+  // R208 判据①：这一句原本还写着「请稍后重试」，而这一枚码恰好在排队轮询的停表名单里
+  //（ChatPanel.vue::QUEUE_POLL_STOPPERS 的 403 那一格），于是停表那张脸并排画出两句真话——
+  // 「请稍后重试」与尾句「界面已停止继续查询」：各自都不假，并排读就是自相矛盾。
+  // 「等一会儿它自己会变好」这一层在这一格是假的：表已经停了，不会再有读数回来，
+  // 要变得由人重新发起一次。所以句子只留「哪件事没做成」+「谁能修」，重试那一层交给下面
+  // 这枚 retryable（它才是 QueueFace「按原文再问一次」那颗按钮的唯一生产者），
+  // 不在散文里另许一遍。retryable 保持 true：R202 甲6 钉着「判这一族可恢复就要给出出口」。
+  // 钉子：r208-dictionary-voice.test.js —— 停表名单里每一格的字典句都不许承诺「稍后再试」，
+  // 且屏上那句归属话必须仍出自本字典（组件里不许硬写第二句）。
   authorization_unavailable: {
-    message: '暂时确认不了你的数据权限范围，请稍后重试；仍不行的话请换带部门授权的账号或联系管理员。',
+    message: '暂时确认不了你的数据权限范围，这次没能判定你能看哪些数据；请联系管理员补齐授权，或改用带部门授权的账号。',
     retryable: true,
   },
   // 账号被停用：既不是 permission_denied（不是权限不够，重新登录也没用），也不该退化成兜底句。
@@ -198,10 +209,16 @@ export const LEGACY_ALIASES = {
 }
 
 /**
- * 鉴权中间件的**中文散文** → 枚举码（按 detail 原文索引，与 LEGACY_ALIASES 分开）。
- * 出处：app/main.py:104（缺 token / token 验不过）、app/main.py:109（token 指向的用户已不存在）
- *      均 401 {"detail":"请先登录"}；app/main.py:113（principal.status !== 'active'）
- *      403 {"detail":"账号不可用"}。白名单见 app/main.py:86-95。
+ * 鉴权中间件早年的**中文散文** → 枚举码（按 detail 原文索引，与 LEGACY_ALIASES 分开）。
+ * 出处已随 R199 换代（2026-09-24 R208 复核调用点，读 git 对象不读注释）：
+ *   app/main.py 那几枚 JSONResponse 出口回的是枚举码本尊 —— 401 authentication_required
+ *   两枚（一枚管缺 token 与 token 验不过，一枚管 token 指向的用户已不存在）、
+ *   403 account_unavailable 一枚（principal.status !== 'active'）；白名单也搬在中间件
+ *   dispatch 里那份字面量上。tests/test_auth_stable_codes.py::
+ *   test_no_prose_is_left_in_the_authentication_surface 从后端钉着鉴权面不许回散文，
+ *   r208-alias-coverage.test.js 乙组从前端这一侧再钉一次。
+ * 这张表因此只剩野外兜底：旧网关、旧副本、以及任何把中文直出成 detail 的角落仍然会命中它，
+ * 删表就等于把那一发降级成兜底句 —— 所以留表留语义，只是别再把它当成鉴权门的现行出口。
  * 匹配规则刻意保守：**规范化后全等**才认，宁可漏判走兜底句。
  * 误判成 authentication_required 的代价是把正在干活的员工踢回登录页，比漏判重得多。
  */
@@ -522,6 +539,45 @@ function toResult(input) {
  */
 export function errorCodeOf(errOrResult) {
   return toResult(errOrResult).code
+}
+
+/**
+ * 这一发的 code 是不是「前端替后端换的词」——只认 LEGACY_ALIASES 那一道折痕。
+ *
+ * 为什么要单独问这一句（R208 判据①）：停表名单逐格登记的是 (status, code)，而 code 走
+ * errorCodeOf 归一 ⇒ 别名表把谁折进名单某一格，谁就顺带拿到叫停这一轮轮询的权力。
+ * 出处调用点（2026-09-24 逐枚查，不采信「今天发不出」）：
+ *   本尊 rawCode === code —— app/api/v1/chat.py::_authorize_queue_task 五枚拒绝出口
+ *     :750 401 authentication_required / :753 404 resource_not_found /
+ *     :759 与 :763 两枚 403 authorization_unavailable / :765 403 permission_denied；
+ *   别名折入 rawCode !== code —— app/common/policy.py::authorization_decision 的原因码族，
+ *     七枚 raise 处逐枚回 detail=decision.reason_code：chat.py:703 与 :3486、artifacts.py:50、
+ *     intelligence.py:109、alerts.py:262、data.py:103 与 :437（feedback.py:202/234 那两枚走的是
+ *     RetrievalScopeError 那一族，不是 policy 的原因码；observability.py::_deny 把原因码放进
+ *     details，裸码不出门 —— 两处都不在这笔账里）。其中四枚被本表折进名单里已有的格：
+ *     resource_scope_missing / resource_scope_invalid → authorization_unavailable，
+ *     department_scope_denied / clearance_insufficient → permission_denied。
+ *     逐枚位锚的真源是 tests/test_error_code_vocabulary.py::BARE_CODES_OUTSIDE_THE_ENUM，
+ *     r208-alias-coverage.test.js 丙组拿那本登记册与本表双向对平，对不上就红。
+ * 名单那一格说的是「后端明确判定这一轮再也读不回来」，这句话只能由后端自己说；
+ * 被折进来的那族是「按什么维度拒的」那套独立词汇（tests/test_error_code_vocabulary.py::
+ * BARE_CODES_OUTSIDE_THE_ENUM 逐枚在册），不该顺带获得停表权。
+ *
+ * 刻意只认 LEGACY 一道折痕，不按「是不是本尊」取反：名单那一格今天还能被另外两种非本尊
+ * 来源打中，两种都不该被这一枚谓词顺手改判——
+ *   PROSE_ALIASES（中文散文「请先登录」/「账号不可用」）：鉴权门今天吐的已经是枚举码本尊，
+ *     这张表只剩野外兜底（复核见上面那张表的注释）；散文折进来的那一发算不算终止性判定，
+ *     今天没有人裁过，也不该由这枚谓词代裁。
+ *   STATUS_CODES 兜底（403 且码没登记时归 permission_denied）：这一族今天照样叫停，
+ *     但它不是别名，R208 只把它记进交回，不在这里改判。
+ * 把 errorCodeOf 换成「rawCode === code 才算」会把上面两种一起放走 —— 那是两笔没裁的改判。
+ * 所以这枚谓词回答的是「别名折不折得进来」：名单要收窄，就把它当第三个条件用。
+ */
+export function isAliasFoldedCode(errOrResult) {
+  const result = toResult(errOrResult)
+  const raw = cleanText(result.rawCode)
+  if (!raw || !result.code || raw === result.code) return false
+  return LEGACY_ALIASES[raw]?.code === result.code
 }
 
 export function errorCodeLabel(errOrResult) {
