@@ -1371,12 +1371,17 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Bernoulli`（新，与死于 #42 那枚同名者无关） | `01a0d1c2-eb58-7b33-9c3e-8da3122a0d5d` | **R210** 断流轮不许把半截真话拼离线话术 | `be-r210`（基点 `8f429b7`，**独占**） | 🔵 **在途**（12:5x 落地，13:2x 实取 `M app/api/v1/chat.py` +42 行 / 两枚新件）。写域只有 `app/api/v1/chat.py` 的「不同源」分支 + 新 `tests/test_r210_*`；禁碰 frontend / `nodes.py` / `app/rag`；不补投 | 13:20 |
 | （无 Agent） | — | **R205b** 图表/洞察两族工具循环收敛 | `be-r205b`（基点 `8f429b7`，已建、零写入） | 🔴 **事故 #45 未落地**（`CreatePipe` 故障，树建好即死）⇒ 按铁规不补投。写域 `app/agents/**`，🔴 收口窗之前并不进来也不影响 V1 判定 ⇒ 排本窗之后 | 13:20 |
 | （总控亲做） | — | **R206a** 口径题的知识库腿必须出门 | **`be-r206a`**（基点 `8ab60cc`，本班新建；🔴 原写 `be-r206`，因事故 #46 那枚落地 Agent 正在里面写 R206b ⇒ 整刀搬树） | ✅ **已并树（本格）**：A④ 主症改判后拆出的第一刀，`KB_CALIBER_MARKERS` + `kb_leg_for_caliber` + 新件 27 枚含两把反证钉；主树亲跑 **4277 passed / 39 skipped** | 13:44 |
-| （代号未取，回执报错致名册漏记） | **待其回执核 `agent_id`**（候选 `01a0d1c3-62fc-72b2-b2ef-32c02403bda2` / `01a0d1cd-36cd-7023-adec-71bacade6bf4`） | **R206b** 口径原话逐字进正文 | **`be-r206`**（基点 `8ab60cc`，**该树归它独占**） | 🔵 **在途·事故 #46 才登记**（12:5x 投·回执报错·13:3x 实取 254 行在写）。写域 `app/rag/retrieval_pipeline.py` + `nodes.py::synthesize` 异区 + 新件 `tests/test_r206_caliber_quotes.py`；禁碰 `orchestrator.py`（R210 之后归 R206a 已并树） | 13:44 |
-| （代号未取，同上） | **待其回执核 `agent_id`** | **R205b** 图表/洞察两族工具循环收敛 | `be-r205b`（基点 `8f429b7`） | 🟡 **落地但零源码写入**（只留 13:04:12 的一批 `__pycache__`）⇒ 按 #46 新规①**不许再判死**、也不许复投；它在收口窗之后，不影响 V1 判定 | 13:44 |
+| `Pauli`（应用侧显示名，回执未自取代号） | `01a0d1cd-36cd-7023-adec-71bacade6bf4` | **R206b** 口径原话逐字进正文 | `be-r206`（基点 `8ab60cc`） | ✅ **已结案并树 `ffea5ff`**（总控对 HEAD 逐格取证 = nodes 94/1 + retrieval_pipeline 151/0 + orchestrator 0；主树定向 76 passed；两枚反证钉自跑；全量门 4323/40）。身体待 close | 14:35 |
+| `Curie`（应用侧显示名） | `01a0d1c3-62fc-72b2-b2ef-32c02403bda2` | **R205b** 图表/洞察两族工具循环收敛 | `be-r205b`（基点 `8f429b7`） | 🔵 **在途·订正 13:44 那一格**：14:2x 实取它**已经在写主文件**（`nodes.py +126/−9`、`orchestrator.py +11/−8`、新件 `tests/test_r205b_shot_ledger.py`，mtime 13:42/13:58/13:59），14:1x 只回过一条未完工口述 ⇒ 按 #46 新规不判死不复投，改 `send_input` 催交回；🔴 与刚并树的 R206b 同抢 `nodes.py` ⇒ 交回后一律以 `efe5461` 新建的树上 `git apply --3way` 逐 hunk 重落，不许直接叠 patch | 14:2x |
 | `Epicurus` | `01a0d1dc-a98e-70a1-96aa-aaaff83f4b90` | **R212** 真机窗口前置体检（零写域取证单） | 无（禁改仓库任何文件） | 🔵 **在途**（13:2x 单枚 `spawn_agent` 落地 = 事故 #45 那枚运行时故障**自愈**）。三问：`seed_workspace.py --check` 的 401 是哪一层哪个值 / `rehearse_eval_window.py` 逐格前置 / 镜像 rev 落后量 | 13:20 |
 
 | `Sagan` | `01a0cce0-11c2-7240-9403-c7971fcde021` | **R171（判据已被总控证伪并收窄）** 失效收尾那一支不许假定发出方带了文案 | `be-r171`（`218bd6e`） | ✅ **已并树 `9577b12`**（前端 849/41 = 826+23，`lint:colors` 148 不涨）·原判据「错误条不亮」对 shipped 路径不成立：`http.js:95` 自 `a07294f`（09-15）起就带文案，详见跟进单 §89 五 |
 | `Gibbs` | `01a0cd3b-b649-7641-959c-9a71981bd35a` | **R183 + R184**（同一笔 `0012`） | `be-r183`（`9577b12`） | **在途**·`migrations/**`+`app/storage/pending_approvals.py`+新件；🚫 `chat.py`/`data.py`/`frontend/**`/评测集；🔴 判据全文首次成文于跟进单 **§89 四**（此前只在本板 §4BL 五 有一句话）；这单是新镜像能否 recreate 的硬前置，见 §4BM 三 |
+| `Turing`（回执自称 `Moseley`，与 R214 那枚**撞代号**） | `01a0d1f0-0d6e-7171-a7ac-12ad24834180` | **R213** 播种件凭据默认键悬空 | `be-r213`（基点 `4581727`） | ✅ **已结案并树 `443469e`**（净增量 112/17 + 新件 396 行/19 枚；主树定向 35 passed；宿主模型端口拦截 0）。身体待 close | 14:35 |
+| `Kierkegaard`（回执自称 `Moseley`，同上撞名） | `01a0d1f3-debf-7592-bd46-5148b3521657` | **R214** `analysis` 档 `always_unaffordable` | `be-r214`（基点 `7469ca7`，工作树零写入） | ✅ **已结案·代码零改动**（病因＝标定数过期，非算错：552 判决 / 0 拒发 / 中位 5.3 s）⇒ **上报业主两选一（业主项 ⑥）**，见跟进单 §93.15。身体待 close | 14:35 |
+| `Dewey` | `01a0d1ef-8669-7540-b5c9-06bc0580d093` | **R215** 判据② 认「受控末帧纠正」（量具侧） | `be-r215`（基点 `fe5b180`） | 🔵 **在途**（14:2x 实取 `scripts/eval_transport_ask_v2.py +121/−9` + 两枚新件 mtime 14:08/14:13）。写域＝该量具 + 新件 + `collect_evaluation_answers.py` 只许加字段；🔴 必须吃掉 R210 那枚明写 skip | 14:2x |
+| `Confucius` | `01a0d200-88e8-7631-8cf5-03ffcb5b2383` | **R48** 首屏线索卡 `answer.headline`（路线甲） | `be-r48`（基点 `2835df7`） | 🔵 **在途·刚由总控解锁**（14:1x 撞 `test_r156` 反证钉的两处形状假设 ⇒ 总控亲改钉并树 `efe5461`，两棵树各 13 passed）。14:4x 实取 `chat.py +100/0`、`docs/api/contract-v1.md +3/−2`；待写 `frontend/src/lib/sessions.js` 的 `EVENT_CLAIMS`+switch。🔴 三条铁规：卡片绝不发成 `event: text`、绝不为它多发一发模型、不许宣布「首屏 ≤1 s 达成」 | 14:4x |
+| （待派） | — | **R217** 预演件 `always_unaffordable` 严格式 + 「标定读数不许漂」钉（R214 附带上报，总控裁定不并入 R215） | 待建 `be-r217`（基点 `efe5461`） | ⏳ 本格待派：写域只有 `scripts/rehearse_eval_window.py` + 新件 ⇒ 与四枚在途零交集 | 14:4x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -3943,3 +3948,35 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 - **R214** `Kierkegaard`/`01a0d1f3-debf-7592-bd46-5148b3521657` @`be-r214`：`analysis` 档 `floor=1536 > affordable_max=834`。派工词里明写**先复算再动手**、且**若结论是"数学上真的买不起"就不许多改一个字、交具名上报由业主在两个数之间选一个**。
 - **R206b** 落地未登记那枚 @`be-r206`：仍在写（`tests/test_r206_caliber_quotes.py` mtime 13:39）。
 - 本格**没有新的并树**（两笔已进主树：`4581727` R206a / `fe5b180` R210，均已双推）。
+
+## §4BX（09-24 14:1x–14:4x，第七班第八格，主树 `2835df7` → 本格）：三枚结案·两枚并树·R48 的钉锁由总控亲解·R205b 状态订正
+
+### 一、本格并树（全部总控主树亲跑，执行层自述零采信）
+
+- `ffea5ff` **R206b**（`Pauli`/`01a0d1cd-*` @`be-r206`，基点 `8ab60cc`）：口径原话逐字进正文。取证 = 它对 `2835df7` 的净增量 `nodes 94/1` + `retrieval_pipeline 151/0` + `orchestrator 0`（R206a 已在树）；禁改面零命中；评测集与 `must_contain` 一字未动。离线复算：口径冲突族 6/19=0.3158 → **9/19=0.4737**（run5 0.4211 ⇒ 判据④ 这格有余量），全库 54/105 → 57/105，**绿转红 0**。🔴 订正它自述的一处报数：新件实为 **443 行 / 14 枚**（它写 345 行）。
+- `443469e` **R213**（`Turing`/`01a0d1f0-*` @`be-r213`）：`--password-env` 默认从悬空键 `EB_SEED_ADMIN_PASSWORD` 换成 `DEMO_ADMIN_PASSWORD`，加 `--env-file deploy/.env.server` 兜底 + 具名 `SeedError`（发请求之前失败）+ 401/403 分支分开。**"窗口欠业主一枚口令"那句假话到此结案**。
+- `efe5461` **总控亲做**（见本节三）。
+- 门基线 **4323 passed / 40 skipped / 0 failed**（`-n 4`，115.27 s 与 135.9 s 两跑同集，上一格 4290/40）。🔴 那 1 枚 skip 仍是 R210 的明写缺口 ⇒ 等 R215 换成真断言。
+
+### 二、R214 结案：病因是标定数过期，代码零改动
+
+`affordable_max = int((120/1.15 − prompt/35) × 8) = 834` 里 `decode=8.0`/`prefill=35` 两枚都是 **09-16 纯 CPU** 读数（H11 拿到 GPU 之前，入库 `1eea673`）；现网同容器同模型跑在 GPU，native 腿实测 decode 中位 **29.2 tok/s** ⇒ 代回公式变 2056–3861，`analysis` 翻 false。现网证据：**552 发被判付不起 / 拒发 0 次 / 窗内 0 次超时**，配对墙钟中位 5.3 s、最慢 39.8 s ⇒ **从未伤到客户**（🔴 容器 10:59 重启过，日志只覆盖 22:39–08:56，"0 命中"只能报成覆盖窗内 0 命中，不是 PASS）。`analysis` 是唯一中招档因为它 `floor == declared == 1536` 零余量，不是它坏了。
+⇒ **上报业主两选一（业主项 ⑥）**：路 A 重标定（代价=产品口径绑 GPU，必须同时回答"CPU-only 客户要不要卖 analysis"）／路 B 保 8 tok/s（等于承认分析档给不出自己写进默认配置的输出帽）。施工层倾向 A。
+另两处由总控裁定：`rehearse_eval_window.py:275-276` 的 `always_unaffordable` 漏 `< min(declared, floor)` ⇒ **立 R217**（连同"标定读数不许漂"的钉），不并入 R215（中途给在途 Agent 扩写域就是漂移源）。
+
+### 三、🔴 R48 撞钉：它的归因只对一半，钉由总控改
+
+R48 在 `chat.py` 新增 canonical 事件 `answer.headline`，它成了 `test_r156` 里 `_first_sink_site` 字典序首位 ⇒ 「改名红」那枚反证钉当场失效。它报的是「`.probe` 撞 `WIRE_NAME_RE`」，主树实取**两半都在**：钉的文本锚 `callee("name"` 要求事件名与 callee 同行（`cancelled` 那处同行才一直能跑，而 `canonical_sse_event(` 全站换行写名字）；且带点的名字加 `.probe` 会变成两枚点、被钉自己判成"读错了行"。⇒ 总控新增 `_rename_anchor()`（同行优先、退回行内字面量、带点改 `_probe` 后缀、`_TempEdit` 加 `line=` 定域），**R48 的多行写法保持不动**，钉不许执行层改。牙齿复验：主树（无点/同行分支）**13 passed**、be-r48（带点/换行分支）**13 passed**。
+
+### 四、R205b 状态订正 —— #46 新规第一次真的救回来东西
+
+名册 13:44 那格写「落地但零源码写入」，**14:2x 实取已过期**：`be-r205b` 有 `nodes.py +126/−9`、`orchestrator.py +11/−8`、新件 `tests/test_r205b_shot_ledger.py`（mtime 13:42/13:58/13:59），14:1x 只回过一条未完工口述 ⇒ 不判死、不复投，改 `send_input` 催交回。
+🔴 连带一笔硬账：**同一枚 `app/agents/nodes.py` 在 40 分钟内被三枚 Agent 写过**（R206a 已并 / R206b 已并 / R205b 在写）。它基点 `8f429b7` 早于那两刀 ⇒ 交回后不许直接叠 patch，一律以本格 HEAD 新建 `be-r205b2` 走 `git apply --3way` 逐 hunk 重落。**派工时的互斥判据是"同文件"，不是"同功能名"。**
+
+### 五、名册与下一步
+
+- 待 close 身体（已结案）：`Pauli`/`01a0d1cd-*`、`Turing`/`01a0d1f0-*`、`Kierkegaard`/`01a0d1f3-*`。
+- 在途：`Dewey`(R215·量具) / `Confucius`(R48·已解锁) / `Curie`(R205b·催交回)。
+- 待派：**R217**（`scripts/rehearse_eval_window.py` + 新件，与在途四枚零交集）。
+- 合并顺序：R206b ✅ → R213 ✅ → **R48 → R215 → R205b**（`chat.py`/量具/`nodes.py` 各自排队）。
+- 只等业主：H13 密级维度、H20 复核、评测集 29 条改题授权、rename 表名列名、VM sshd、**业主项 ⑥ R214 两选一**、心跳 `automation-2` 的 `targetThreadId`。
