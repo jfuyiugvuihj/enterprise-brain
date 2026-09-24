@@ -269,6 +269,9 @@ export const EVENT_CLAIMS = {
   'request.failed': 'render',
   'request.cancelled': 'render',
   sources: 'render',
+  // R48 路线甲：首屏线索卡。它同样是 render —— 「后端发了、界面认得、但没人读」就是
+  // sources 当年的死法（本表开头那段），所以这张卡从落盘那一刻起就必须有人画它。
+  'answer.headline': 'render',
 }
 
 /** 名字不在这张表里＝前端还没认领；unknownEvents 的读取方与告警一律以它为准。 */
@@ -329,6 +332,36 @@ function sourceRowFromWire(row) {
     // 读取位按后端的命名法接住它，出现就上屏；一枚都没给就是空串，界面绝不自己补「今天」。
     effectiveDate: textOf(raw.effective_date) || textOf(raw.published_at) || textOf(raw.created_at),
     worker: textOf(raw.worker),
+  }
+}
+
+/**
+ * canonical `answer.headline` 的 data → 首屏那张卡（app/api/v1/chat.py::_answer_headline_frame）。
+ *
+ * 三格纪律，逐条对着 §93 路线甲的判据写：
+ *   · `carriesAnswer` 只认后端那一格 `carries_answer === true`。后端今天恒发 false，
+ *     界面也不许在它缺席时"当作 true"——缺席就是缺席（与 cacheFromFrame 同一口径）。
+ *   · 行形状复用 `sourcesFromEnvelope` 那一枚 `sourceRowFromWire`，不抄第二份取字段表。
+ *   · 🔴 这里一个字都不往 `msg.content` 上写：卡片与正文是两条通道，把卡片当正文写就是
+ *     「先渲染结论再纠正」那张脸（V1 §4.1 对 R48 明写不许），也是判据② 假绿的入口。
+ * 轮号与时间戳不在这一份里：信封顶层那两格由上面的 canonical 分支统一抄进
+ * `msg.requestId` / `state.lastSequence`（所有 canonical 事件共用一条通道），卡片不自建第二份。
+ */
+export function headlineFromEnvelope(data) {
+  const rows = Array.isArray(data?.sources) ? data.sources : []
+  const counted = rows.map(sourceRowFromWire).filter(row => row.filename)
+  const declaredShown = Number(data?.shown_count)
+  const declaredHit = Number(data?.hit_count)
+  return {
+    rows: counted,
+    shownCount: Number.isFinite(declaredShown) && declaredShown >= 0
+      ? Math.trunc(declaredShown)
+      : counted.length,
+    // 「画了几条」与「命中几条」是两件事：截断时靠这两格说清还有多少没画。
+    hitCount: Number.isFinite(declaredHit) && declaredHit >= 0 ? Math.trunc(declaredHit) : counted.length,
+    hiddenCount: Math.max(0, readNumber(data?.unauthorized_count, 0)),
+    elapsedMs: Math.max(0, readNumber(data?.elapsed_ms, 0)),
+    carriesAnswer: data?.carries_answer === true,
   }
 }
 
@@ -454,6 +487,11 @@ export function createStreamReducer(msg, state) {
         case 'request.cancelled':
           state.terminal = state.terminal || 'cancelled'
           return { action: 'cancelled' }
+        case 'answer.headline':
+          // R48 路线甲。整段替换而不是追加：本轮如果又来一枚卡（今天收端只认第一枚，发卡方
+          // 也一轮只发一枚），屏上不留两张卡——但绝不与 msg.content 发生任何关系。
+          msg.headline = headlineFromEnvelope(data)
+          return { action: 'headline', headline: msg.headline }
         case 'sources':
           // R41 判据③ 欠的账在这一格：出处事件不是「认不得的 canonical 事件」，它是正经载荷。
           // 顺序也在这儿吃 canonical 的 sequence 闸门：迟到的、重放的 sources 不会覆盖新一轮。
@@ -654,6 +692,10 @@ export async function consumeSseStream(response, msg, handlers = {}) {
           break
         case 'sources':
           handlers.onSources?.(result.sources, state)
+          break
+        case 'headline':
+          // 首屏那张卡要当场出现，不等整轮跑完：与 onSources 同一打法。
+          handlers.onHeadline?.(result.headline, state)
           break
         case 'queued':
           handlers.onQueued?.(result.queue, state)

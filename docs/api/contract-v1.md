@@ -210,7 +210,8 @@ The canonical event names are:
 `tool.completed`, `model.started`, `model.completed`, `retrieval.completed`,
 `evidence.available`, `approval.required`, `result.partial`, `request.completed`,
 `request.failed`, `request.cancelled`, and `heartbeat`. `POST /api/v1/ask` additionally emits the
-canonical content event `sources` (R41, documented below).
+canonical content event `sources` (R41, documented below) and the canonical first-screen card event
+`answer.headline` (R48, documented in the R48 compatibility note below).
 
 Every event includes `request_id`, `trace_id`, `sequence`, `timestamp`, and `status`.
 A request has exactly one terminal event: `request.completed`, `request.failed`, or
@@ -309,6 +310,56 @@ Example:
   "data": {}
 }
 ```
+
+### Compatibility note 2026-09-24 (R48 route A: the first-screen source card)
+
+`POST /api/v1/ask` gained one additive canonical event, `answer.headline`. It carries **which
+documents this turn has already hit**, nothing else. Route A was chosen over the two alternatives
+because it is the only shape that puts a `sequence` and a `timestamp` on the wire for that reading.
+
+Position in the stream: after `request.started`, and as early as the turn has one *visible* source
+row in hand - i.e. the moment the tool boundary reports evidence that `scope.allows` grants to this
+caller. At most one per turn. `answer.headline` does not shift the relative order or the numbering of
+anything that already ran: every emission shares one `sequence` counter, so `sources` still follows
+`request.completed` immediately.
+
+Envelope: the same builder as `request.started` (`canonical_sse_event`), so the seven envelope keys are
+identical, with `status: "running"` - the card is not a terminal signal and no client may treat it as
+one. Keys inside `data`:
+
+| data key | what it is | on the wire |
+|---|---|---|
+| `session_id` | the turn this card belongs to | always |
+| `carries_answer` | literal `false`, always. A client must not render this card as an answer, and the flag exists so that rule is machine-checkable rather than a comment | always |
+| `sources` | up to `HEADLINE_SOURCE_LIMIT` rows, retrieval order, already filtered by `_authorized_source_rows` | always an array; a withheld filename never appears in it, not even as a string |
+| `shown_count` | how many rows the card carries | always |
+| `hit_count` | how many *visible* rows the turn had at the moment the card was sent - so a truncated card still reports the real total | always |
+| `unauthorized_count` | how many retrieved rows were withheld at that moment | always |
+| `elapsed_ms` | milliseconds between the turn starting and the card being built | always |
+
+The row shape is the `sources` event's row shape, copied verbatim, so a client needs no second parser
+and the contract does not grow a second field list. 🔴 The card is deliberately **not** a preview of
+the answer: nothing in it is model output, no extra model call is made for it, and nothing is cut out
+of `msg.content`. It is also never emitted on the `event: text` channel - a card frame that rides the
+text channel would make the streaming yardstick read green (`text_frames > 1`, `max_stream_frames > 1`,
+`prefix_breaks == 0`, `extra_chars == 0` all at once) for a turn that streams nothing at all. This is
+pinned as behaviour, at `_consume` level, by `tests/test_r48_headline_never_enters_the_text_ledger.py`.
+
+Absence is a real answer, three separate ways:
+- a turn whose retrieved rows are all withheld sends **no** card (「检索到了但不给你看」),
+- a turn that retrieved nothing sends **no** card (「库里没有」),
+- and neither case may be papered over with an empty card - the two faces above belong to the
+  `sources` event at the end of the turn, which is where the counts and the scope reason live.
+- the cache-hit leg and the `/approve` continuation leg send no card: the first answers in
+  milliseconds with its body already present, the second is the same turn resumed after an approval.
+
+🔴 What this event does **not** claim: 「首屏 ≤1 s 有可用结论」 is not met and is not declared met. The
+measured floor on this hardware is 11.0 s for a single generated token
+(`docs/perf/raw/rate_prefill.jsonl`) and 27.5 s for the shortest real product leg
+(`docs/perf/raw/rounds.jsonl`), so within one second there is no generated conclusion to show. What
+lands within a second is a card of *readings*, and a change of yardstick is the owner's call, not this
+event's. Clients must label the card as sources-not-conclusion (see `answer.headline` handling in
+`frontend/src/lib/sessions.js`), and must not quote it as an answer.
 
 ## HITL Pending Listing (2026-09-16, R13)
 
@@ -1269,7 +1320,7 @@ Snapshot basis: `app/api/v1/chat.py` as read on 2026-09-14 13:50 (+08:00). Event
 
 | Emitter | Event names | Carries answer content | Status |
 |---|---|---|---|
-| `canonical_sse_event()` | `request.started`, `request.completed`, `request.failed`, `request.cancelled` | no | emitted |
+| `canonical_sse_event()` | `request.started`, `request.completed`, `request.failed`, `request.cancelled`, `answer.headline` | no | emitted |
 | `sse_event()` | `cancelled`, `error`, `heartbeat` | only `error` | emitted |
 | inline `event: <name>` yields inside the ask generator | `queued`, `status`, `text`, `step`, `hitl`, `done`, `error`, `cancelled`, `heartbeat` | yes: `text` and `hitl` | emitted |
 | canonical content events listed in the SSE Events section above | `step.started`, `step.progress`, `tool.started`, `tool.completed`, `model.started`, `model.completed`, `retrieval.completed`, `evidence.available`, `approval.required`, `result.partial` | - | documented but NOT emitted by any route today |

@@ -233,6 +233,7 @@ export function buildDeepDeps(query) {
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import AnswerHeadlineCard from './AnswerHeadlineCard.vue'
 import CacheFace from './CacheFace.vue'
 import ChartViewer from './ChartViewer.vue'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
@@ -617,6 +618,11 @@ async function send(dataFilename = activeDataFilename.value) {
       onSources: (sources) => {
         sourceReads.value = { ...sourceReads.value, [turn]: sources }
       },
+      onHeadline: (headline) => {
+        // 🔴 键表而不是消息对象：messages 是 shallowRef，往消息对象上塞属性触发不了重渲染
+        // ——卡片是首屏那一格，必须当场画出来，不能等下一次整体赋值顺便带出来。
+        headlineReads.value = { ...headlineReads.value, [turn]: headline }
+      },
       onCache: (cache) => {
         cacheReads.value = { ...cacheReads.value, [turn]: cache }
       },
@@ -810,6 +816,7 @@ function handleKeydown(e) {
 // 每一枚读数的键都是「哪一轮」，见 turnKey()。消息对象上那份只负责落盘与历史复原。
 const sourceReads = ref({})   // sources 帧的出处读数
 const cacheReads = ref({})    // text 帧上那三枚缓存字段
+const headlineReads = ref({})   // answer.headline 的首屏线索卡读数（R48）
 const unseenReads = ref({})   // 本轮发出、界面尚未认领的事件名
 const queueReads = ref({})    // GET /queue/status/{id} 的最近一次读数
 const queueFaults = ref({})   // 排队状态这一次没读回来时的原始错误
@@ -906,6 +913,15 @@ function laneFaceText(read) {
  */
 function sourceFaceOf(msg, index) {
   return sourcesFace(readTurn(sourceReads, msg, index) || msg.sources)
+}
+
+/**
+ * 首屏那张卡的读数（R48 路线甲）。本轮没收到 answer.headline 就返回 null，整条不渲染——
+ * 「没发卡」（无来源／无权限那一支）与「发了卡但正文没补齐」是两张脸，后者由组件里的
+ * unfilled 承担，这里不替它说话。消息对象上那一份只负责随会话落盘与历史复原。
+ */
+function headlineOf(msg, index) {
+  return readTurn(headlineReads, msg, index) || msg.headline || null
 }
 
 function cacheFaceOf(msg, index) {
@@ -1289,6 +1305,16 @@ function renderMd(raw) {
                   </div>
                 </div>
 
+                <!-- R48 路线甲 · 首屏那张卡：读 answer.headline，画在正文之前。
+                     这里只是挂载点：读数走按键表（headlineOf，与 sourceFaceOf 同一打法），没事件不渲染、
+                     按轮挂 key（与 SourceCard 同一打法）。三张脸与措辞在组件里，本面板不加判断。 -->
+                <AnswerHeadlineCard
+                  v-if="msg.role === 'assistant' && headlineOf(msg, i)"
+                  :key="`headline-${turnKey(msg, i)}`"
+                  :headline="headlineOf(msg, i)"
+                  :has-answer="Boolean(msg.content)"
+                  :streaming="Boolean(loading && i === messages.length - 1)"
+                />
                 <div v-if="msg.role === 'assistant' && loading && i === messages.length - 1 && !msg.content && !msg.steps?.length"
                      class="typing-dots">
                   <span></span><span></span><span></span>

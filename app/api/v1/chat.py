@@ -329,6 +329,89 @@ def _authorized_source_rows(rows: dict, principal) -> tuple[list[dict], str]:
     return [row for row in rows.values() if scope.allows(row)], scope.reason_code
 
 
+# ==================== R48 路线甲：首屏线索卡 ====================
+# 判据全文在跟进单 §93「R48 定案（路线甲）」。这一节只做一件事：把**发卡这一刻已经在场的
+# 事实**装进一枚带 sequence 与 timestamp 的 canonical 事件，让首屏先出现一张「本轮命中了哪些
+# 资料」的卡，正文照旧在后面补齐。
+#
+# 🔴 三条硬边界，逐条对着判据写：
+#   · 它不是结论：本卡一个字都不从模型那里来——多发一发模型、从 msg.content 截一段、
+#     拼一句「看起来像答案」的话，三种都不许（§93 判据④：机测地板「只吐 1 枚 token 也要
+#     11.0 s」，1 s 之内不存在任何已生成的结论，所以这里能说的只有来源清单）。
+#   · 它绝不骑 text 道：卡片帧一旦成为 event: text，「卡片作首帧 + 终答以它为前缀」
+#     会让 text_frames / max_stream_frames / prefix_breaks / extra_chars 四格同时变绿——
+#     那是把判据② 从诚实的红洗成假绿。行为钉在
+#     tests/test_r48_headline_never_enters_the_text_ledger.py。
+#   · 无来源 / 无权限那一支不发卡：宁缺毋造。两分支在屏上的区别由收尾那枚 sources 事件的
+#     三张脸承担（见 _authorized_source_rows 与 lib/provenance.js::sourcesFace），本卡不替
+#     它们说话。
+#
+# 事件名的三处同源（改一处必红另一处）：本文件的发射点、docs/api/contract-v1.md 的 canonical
+# 名单、frontend/src/lib/sessions.js 的 EVENT_CLAIMS。前两处由
+# tests/test_r156_sse_event_surface_sync.py 钉，第三处由
+# frontend/src/lib/r150-event-claims.test.js 钉。
+
+#: 卡片最多画几条来源，超出就在屏上折算成「另有 N 条」。这是**显示**上限，不是权限上限：
+#: hit_count 那一格始终是本轮真命中的可见条数。
+HEADLINE_SOURCE_LIMIT = 3
+
+
+def _headline_card_data(rows: list[dict], *, withheld: int, elapsed_ms: float) -> dict:
+    """线索卡的载荷：每一格都指得回一次读数，没有一格是手填的示例值。
+
+    ``rows`` 必须是**已经过** ``_authorized_source_rows`` 的可见行（同一枚 ``scope.allows``），
+    所以这里不新增任何放行分支：被拒的文件名连字符串都不许出现在这一份载荷里。行数超过
+    ``HEADLINE_SOURCE_LIMIT`` 时只带前若干条，但 ``hit_count`` 仍报真总数——「画了几条」与
+    「命中几条」是两件事，合并成一格就把截断说成了全部。
+    """
+    shown = rows[:HEADLINE_SOURCE_LIMIT]
+    return {
+        # 这张卡不承载答案：界面上那句「这不是结论」以这格为准，不靠措辞自觉。
+        "carries_answer": False,
+        "sources": [dict(row) for row in shown],
+        "shown_count": len(shown),
+        "hit_count": len(rows),
+        "unauthorized_count": max(0, int(withheld)),
+        # 发卡这一刻距本轮开始多久：首屏那一格的机测读数。判据④ 不许宣布达成，但必须量得出。
+        "elapsed_ms": max(0, int(elapsed_ms)),
+    }
+
+
+def _answer_headline_frame(
+    rows: list[dict],
+    *,
+    withheld: int,
+    started_at: float,
+    session_id: str,
+    request_id: str,
+    trace_id: str,
+    task_id: str,
+    sequence: int,
+) -> str:
+    r"""把线索卡压成一枚 canonical 帧。
+
+    🔴 事件名必须以字面量待在 ``canonical_sse_event("answer.headline", ...)`` 这一枚 sink-call
+    里，不许改回手拼字面帧（形如 ``"event: " + name + "\ndata: " + payload``）：前端
+    认领门 ``frontend/src/lib/r150-event-claims.test.js::collectWireNames`` 的三条正则中，
+    直写帧那条是 ``event:\s*([a-z][a-z0-9_]*)\ndata:``——字符类里没有点，
+    带点的名字抠不出来，于是 ``EVENT_CLAIMS`` 里的这枚名字会被它自己的僵尸名用例判成
+    「后端已不再发出」。那一枚红不随并树消失，是永久红。走 sink-call 同时让信封回到唯一
+    构造器，不复制平行形状。
+    """
+    data = {"session_id": session_id,
+            **_headline_card_data(rows, withheld=withheld,
+                                  elapsed_ms=(time.time() - started_at) * 1000)}
+    return canonical_sse_event(
+        "answer.headline",
+        request_id=request_id,
+        trace_id=trace_id,
+        task_id=task_id,
+        sequence=sequence,
+        status="running",
+        data=data,
+    )
+
+
 # ==================== 出处面三格：命中句 / 生效日期 / 缓存轮清单（R154）====================
 # 判据全文在跟进单 §79 第三条。三格各自独立，谁也不替谁作证：``excerpt`` 是搬运（见
 # ``_document_source_row``），``published_at`` 是索引侧的账（下面四枚读数函数），缓存腿交
@@ -2074,6 +2157,8 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         # "每一枚片都不带"。要改就改这一枚变量，帧与帧不可能再分叉。
         live_cache_fields: dict | None = None
         source_rows: dict[str, dict] = {}
+        # R48：首屏线索卡一轮只发一枚。置真的唯一条件是「这一刻已经有看得见的一行」。
+        headline_emitted = False
         # R154 判据③：本轮答案有没有真的落进缓存，落清单时只认这一枚标记（判据的门槛与
         # ``cache_answer`` 那一道完全同一条：未命中不算、挂起轮不算、预制话术不算）。
         answer_cached = False
@@ -2355,6 +2440,28 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             agent_results = data.get("agent_results")
             if isinstance(agent_results, dict):
                 _collect_document_sources(agent_results, source_rows)
+                # R48 路线甲：本轮第一批**看得见**的来源一到手就发首屏线索卡，一轮只发一枚。
+                # 三条硬边界都收在这十几行里：走 canonical 信封（绝不骑 text 道）、正文一格
+                # 都不写（载荷只有来源行与两枚计数）、没有可见行就一枚都不发（宁缺毋造——
+                # 「没检索到」与「检索到了但不给你看」这两张脸归收尾的那枚 sources 事件，
+                # 本卡不替它们说话，也不拿一张假卡去填首屏）。
+                if not headline_emitted and source_rows:
+                    headline_rows, _headline_reason = _authorized_source_rows(
+                        source_rows, request_principal
+                    )
+                    if headline_rows:
+                        headline_emitted = True
+                        yield _answer_headline_frame(
+                            headline_rows,
+                            withheld=len(source_rows) - len(headline_rows),
+                            started_at=start_time,
+                            session_id=thread_id,
+                            request_id=request_id,
+                            trace_id=trace_id,
+                            task_id=task_id,
+                            sequence=sequence,
+                        )
+                        sequence += 1
 
             dispatched: list[str] = []
             for msg in msgs:
