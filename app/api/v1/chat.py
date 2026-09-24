@@ -1534,6 +1534,84 @@ def _complete_pending_steps(steps: list[dict], elapsed: float) -> list[dict]:
     return completed
 
 
+def _settled_answer_text(worker_results: dict) -> str:
+    """终答里**已经落定**的那一段，规范化与 :func:`_select_final_answer` 逐字同一条。
+
+    实时帧要报"截至这一片已经能确定的正文"，而那段正文将来必然出现在终答开头——这件事
+    只有按同一套规则折才成立：逐值 ``strip()``、空值剔除、``\n\n`` 连接。两枚函数若各有
+    一套说法，第一条追问就会在 ``prefix_breaks`` 上露馅，所以这里不重新发明，只把
+    ``_select_final_answer`` 里 worker 那一段原样取出来（``tests/test_r203_*`` 钉着这个
+    同形）。
+    """
+    answers = [
+        str(value).strip()
+        for value in (worker_results or {}).values()
+        if str(value).strip()
+    ]
+    return "\n\n".join(answers)
+
+
+class _AnswerPieceStream:
+    """把出口交来的片折成"终答的单调前缀"帧；一轮之内只认一条正在写的生成腿。
+
+    R203 收端半边。上游（``app/agents/nodes.py::_AnswerPieceTap``）交来的每一片都带着
+    ``call_id`` 与 ``worker``——R149 把这两格写成本单的硬前置，就是因为没有它们，一轮里
+    两次调用的字会混进同一条累计串，收端连"该不该接着发"都无从判断。
+
+    三条规则，每条都只朝"少发"那一侧偏：
+
+    1. **同一发调用**才累计。``call_id`` 换了腿，必须等前一发那条腿已经落进
+       ``worker_results``（它的字已经算进 ``base``）才允许开新的一发；否则就是两发同时在
+       写，本轮到此为止不再多发帧——已经发出去的那些仍是终答的前缀，而再发下去谁也不
+       知道会以哪一段收尾。**少发帧的代价是"这一题今天没逐字"，多发错帧的代价是坏形。**
+    2. **帧正文 = 已落定的答案 + 本发已经写出的字**，两侧都按 ``_settled_answer_text``
+       那一条规范化。多工作腿时终答就是 ``"\n\n".join(worker_results)``，这样折出来的
+       每一枚帧天然还是终答的前缀——不折这一格，第二条腿的第一片就会把分隔符挤掉。
+    3. **只在新帧真的比上一枚长时才发**。一片纯空白（模型吐出的换行攒够尺寸闸）不该多出
+       一枚同文帧。
+    """
+
+    def __init__(self) -> None:
+        self.call_id: str | None = None
+        self.worker = ""
+        self.base = ""
+        self.text = ""
+        self.last_frame = ""
+        self.closed = False
+        self.dropped = 0
+
+    def frame_for(self, piece, worker_results: dict) -> str | None:
+        """这一枚片该发的帧正文；``None`` 表示这一片不发帧。"""
+        if self.closed:
+            self.dropped += 1
+            return None
+        call_id = str(getattr(piece, "call_id", "") or "")
+        worker = str(getattr(piece, "worker", "") or "")
+        if self.call_id is None:
+            self._open(call_id, worker, worker_results)
+        elif call_id != self.call_id:
+            if self.worker and self.worker not in (worker_results or {}):
+                self.closed = True
+                self.dropped += 1
+                return None
+            self._open(call_id, worker, worker_results)
+        self.text += str(getattr(piece, "text", "") or "")
+        body = self.text.strip()
+        if not body:
+            return None
+        frame = f"{self.base}\n\n{body}" if self.base else body
+        if frame == self.last_frame:
+            return None
+        self.last_frame = frame
+        return frame
+
+    def _open(self, call_id: str, worker: str, worker_results: dict) -> None:
+        self.call_id = call_id
+        self.worker = worker
+        self.text = ""
+        self.base = _settled_answer_text(worker_results)
+
+
 def _select_final_answer(
     final_answer: str = "",
     worker_results: dict | None = None,
@@ -1918,11 +1996,22 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     # 这一行是 R12 的正题：标记不传下去，编排里的取消检查点就恒等于
                     # _raise_if_cancelled(None)，用户按了停止图照样跑完。
                     cancel_event=cancel_event,
-                    # R149：把流式片段出口注册进本轮。今天生产图路径上的生成腿只被
-                    # invoke，所以这枚 sink 一次都不会响（R31 具名上报的那道锁，本单在
-                    # 案发现场复现：三档问题各跑一遍，model_calls 全是 stream=0、
-                    # pieces=0，答案在快照里 0 字直接跳到整段）。生成腿一旦改走流式，
-                    # 片从这里进来，本文件不必再改一个字。
+                    # R149 注册这枚出口时，它在生产路径上一次都不会响——那时代码里的理由是
+                    # "生成腿只被 invoke，改了就会双重下发"。**R203 正面处理这枚注释**：
+                    # 前提已经翻面（``app/agents/nodes.py`` 的生成腿在满足准入条件的那一发
+                    # 改走流式，片真从这里进来），而"双重下发"当年之所以成立、今天之所以
+                    # 不成立，都是同一件事——**片带的是增量、帧带的是累计全文**：
+                    #   · 屏上：``frontend/src/lib/sessions.js:486-492`` 三条分支——同文帧走
+                    #     ``segments.includes(chunk)`` 直接 ignored，覆盖帧走 covering 整段替换
+                    #     ``msg.content``，只有"既不同文也不覆盖"才追加。累计语义天然落在前两
+                    #     条上：一条腿流完再落终答，屏上始终只有一份正文，末片帧与收尾帧同文
+                    #     也只丢弃不追加。三条分支各有一枚漂移钉，摘掉任一条前端断言本单即红。
+                    #   · 账上：``_save_message`` 与 ``cache_answer`` 只在正常收尾那一支各走一次
+                    #     （:2209 与 :2221；失败那一支 :2188 是另一条互斥的路），片道一个字节
+                    #     都不落库，会话历史里不会有第二条 assistant 行，缓存也不会被写两遍。
+                    #     钉在 ``tests/test_r203_no_double_delivery.py``。
+                    #   · 尺上：R181 那把尺读的是"末帧相对终答不缺字"（``extra_chars``），
+                    #     末帧就是 ``full_text`` 本身，多枚累计帧既不多字也不缺字。
                     stream_piece_sink=_piece_sink,
                     # R141：只有真声明了才加这一格。不声明时连键都不传 ——
                     # tests/test_r149_sse_text_pieces.py 逐字段钉着的那份注册参数集（RUN_KWARGS）
@@ -1960,10 +2049,14 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         latest_worker_results: dict = {}
         latest_final_answer = ""
         answer_candidates: list[str] = []
-        # R149 判据②：累计全文与片数。片带的是增量、帧带的是累计，换算只发生在这枚
-        # 变量上——收端一个字都不切，也不自己合并（判据③ 的两把尺在上游的 merger 里）。
+        # R149 判据②：累计全文与片数。片带的是增量、帧带的是累计，换算只发生在这两枚
+        # 对象上——收端一个字都不切，也不自己合并（判据③ 的两把尺在上游的 merger 里）。
+        # R203 起 ``cumulative_text`` 记的是**屏上已经发出的那一枚帧正文**（不再只是
+        # "片文字的直加"）：下面那枚前缀守卫要比的、判据④ 要保证的，都是客户端真见过的
+        # 那份字，多一条腿换发或少一条腿没接上都只对它有影响。
         cumulative_text = ""
         piece_count = 0
+        piece_stream = _AnswerPieceStream()
         # 判据④：一轮之内所有 text 帧共用同一份缓存字段。R35 的既有裁定是"未命中的那一
         # 轮不许带缓存标记"（旧钉 test_answer_cache_scope 断言 "cached" not in），而收尾
         # 那枚帧的形状不许改（判据③），所以"每一枚片上语义一致"在实时这一轮里等于
@@ -2035,9 +2128,13 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             if kind == "piece":
                 # 判据①②：片一到就发一帧，不攒、不切、不等下一枚。这里唯一的 await 是
                 # sleep(0)（把控制权交回事件循环，零延时），判据⑤ 由 AST 面闸钉住这一支
-                # 不许长出节流或定时器。
+                # 不许长出节流或定时器。折帧的三条规则（同一条腿、已落定的底座、只发变长
+                # 的那一枚）全在 ``_AnswerPieceStream.frame_for`` 里，这一支一行都不裁。
                 piece_count += 1
-                cumulative_text += str(getattr(data, "text", "") or "")
+                frame_text = piece_stream.frame_for(data, latest_worker_results)
+                if frame_text is None:
+                    continue
+                cumulative_text = frame_text
                 yield text_sse_frame(cumulative_text, live_cache_fields)
                 await asyncio.sleep(0)
                 continue
@@ -2064,15 +2161,22 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 if not full_text and intr:
                     full_text = hitl_park_text(intr)
                 if cumulative_text and not full_text.startswith(cumulative_text):
-                    # 累计片必须是终答的前缀，否则"片"与"终答"不同源。最可能的成因是 R31
-                    # 那枚片只带文字与时间戳、不带调用身份：一轮里 planner/worker 的片会
-                    # 混进同一条累计串（已具名上报，属生成腿改造单的硬前置）。这里只大声
-                    # 记账、不改帧：sessions.js 的 covering 分支会拿整段终答替换，终态永远
-                    # 是对的，把错误藏起来反而查不到。
+                    # 累计片必须是终答的前缀，否则"片"与"终答"不同源。R149 当年写的成因
+                    # （片不带调用身份，planner 的字混进同一条串）已被 R203 关掉：片现在
+                    # 带 ``call_id``/``worker``，未落定就换发的那一发由收端直接关门。剩下
+                    # 唯一的结构性成因是 **provider 死在半路**：tap 按 T3 之后一片不发，而
+                    # 离线回复不是刚才那半截字的延伸 —— 注意这一格上 sessions.js 的 covering
+                    # **不成立**（终答并不包含末帧），前端会落到追加分支。本单不藏它：这里
+                    # 只大声记账（附 leg/call/dropped 三格归因）、不改帧形，量化与请裁定见
+                    # R203 交回单；行为钉在 test_a_provider_that_dies_mid_stream_stops_...。
                     logger.error(
                         f"[R149] session={thread_id[:8]}... 流式片段与终答不同源："
                         f"pieces={piece_count} cumulative={len(cumulative_text)}"
                         f" final={len(full_text)}"
+                        # R203 归因用的三格：是哪条腿、哪一发、还有收端一共丢过几片。
+                        # 病因与解法都在上游那枚 tap 的准入条件里，这里只负责不静默。
+                        f" leg={piece_stream.worker or '-'} call={piece_stream.call_id or '-'}"
+                        f" dropped={piece_stream.dropped}"
                     )
                 if not full_text:
                     # 图跑完了，既没有正文也没有等待确认的步骤：这是内部失败。

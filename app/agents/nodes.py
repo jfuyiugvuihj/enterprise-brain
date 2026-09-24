@@ -9,11 +9,13 @@ import time
 import httpx
 from dataclasses import dataclass
 from typing import Any, NamedTuple, Sequence
+from uuid import uuid4
 
 from dotenv import load_dotenv
 load_dotenv()
 
 from langchain_openai import ChatOpenAI
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import Runnable
 
@@ -349,6 +351,16 @@ class StreamPiece(NamedTuple):
     end_at: float
     source_fragments: int
     emitted_at: float = 0.0
+    #: R203 判据① 的硬前置（R149 交工时具名留在这里的那一条）：**片必须带调用身份**。
+    #: 一轮里跑的不止一发模型——supervisor 派发、worker 的工具轮、工具之后那一发终答，
+    #: 全都可能往同一个出口里吐字。收端要把"终答的那一发"与"别的那些发"分开，只有靠
+    #: 这两格：``call_id`` 认"同一次调用"（同一次调用的字必然首尾相接），``worker`` 认
+    #: "哪条腿"（收端拿它比对已经落定的 ``worker_results``，判断这一发是不是接在已交付
+    #: 的答案后面）。缺任何一格，一轮里两次调用的字就会混进同一条累计串，而累计串一旦
+    #: 不是终答的前缀，线上读到的就是坏形（``prefix_breaks``）——那正是判据② 的红线。
+    #: 默认空串：不带身份的片（全部既有用例、``stream()`` 的老口径）形状一字不变。
+    call_id: str = ""
+    worker: str = ""
 
     @property
     def chars(self) -> int:
@@ -488,13 +500,19 @@ class StreamPieceMerger:
         return piece
 
 
-def publish_stream_pieces(config: Any, pieces: Sequence) -> None:
+def publish_stream_pieces(
+    config: Any, pieces: Sequence, *, call_id: str = "", worker: str = ""
+) -> None:
     """把成片交给本轮注册的 sink；没注册就什么都不做。
 
     sink 抛错不许影响答案：正文已经在同一条腿上手递手流出去了，为一根观测通道把用户的
     回答打断是最差的取舍，所以异常只记一行日志然后继续。默认无人注册时这一枚函数是整个
     特性关掉的样子——不建列表、不发事件、``stream_mode="values"`` 的形状一个字节都不动
     （判据④）。
+
+    ``call_id`` / ``worker``（R203）非空时盖到每一片上——只加字段，不改任何一片的文字与
+    时间戳；两格都留空时（``stream()`` 那条老路、全部既有用例）交出去的就是原对象本身，
+    与改动前逐枚同身份。这是全仓唯一的盖章点，收端认的就是这里写进去的那两格。
     """
     if not pieces:
         return
@@ -506,11 +524,182 @@ def publish_stream_pieces(config: Any, pieces: Sequence) -> None:
     if sink is None:
         return
     for piece in pieces:
+        if call_id or worker:
+            try:
+                piece = piece._replace(call_id=call_id, worker=worker)
+            except (AttributeError, ValueError):
+                # 不是 ``StreamPiece``（调用方自定义的片形状）就原样交出去，不为一格
+                # 观测字段把这一片丢掉。
+                pass
         try:
             sink(piece)
         except Exception as exc:
             logger.warning(f"[R31] 流式片段出口抛错，已忽略（答案不受影响）: {exc}")
             return
+
+# ==================== R203：图路径上的生成腿改走流式 ====================
+
+#: 允许把 ``invoke`` 这一发改走流式的工作腿。名单之外的那几条是逐条查过的，不是漏的：
+#:
+#: ``export``：它那一发的正文会在**调用返回之后**被
+#: :func:`app.agents.orchestrator._fallback_export_result` 整段换掉（模型没写出下载链接时
+#: 报告由工具重新产出），"片必须是终答的前缀"这条硬红线在它身上结构上不成立。
+#:
+#: ``approval``：两条各自成立的理由，取证见 R203 交回单，钉在
+#: ``tests/test_r203_sink_reaches_the_leg.py``。
+#:   1. 挂起之前的那一轮里它**没有字可流**：审批腿不是 react 子图
+#:      （``_builder.add_node("approval", _approval_worker_node)`` 挂的是普通节点），
+#:      正文由 orchestrator.py:856-877 用 ``build_precheck()`` / ``extract_standard()``
+#:      确定性拼出（``app/approval/assistant.py`` 全文零枚模型符号），既没有一发模型调用
+#:      可流、拼出来的散文也不是模型正文 —— "每枚帧都是终答的前缀"在这里无从谈起。
+#:      它的 child_conf 确实把本轮 sink 整本带进 configurable（:777 是全量拷贝），
+#:      名单挡它不是因为接不到，是因为接到了也没有字。
+#:   2. 挂起之后从 ``/approve`` 续的那一跑道**结构上接不到 sink**：
+#:      ``run_interrupt_stream``（orchestrator.py:1341-1350）不收这一格，config
+#:      （:1359-1367）也不塞，``chat._approve_stream`` 的队列只有 event/done/error 三件
+#:      （chat.py:2676-2682），收端循环（:2777 起）没有 piece 一支。
+#:      ⇒ 这一腿的逐字交付落在本单写域之外（要改的是续跑道那本 config），
+#:      且第 1 条已经说明改了也发不出字：明写不判为缺陷，也不默默漏掉。
+ANSWER_LEG_STREAM_WORKERS = frozenset({"doc", "data", "chart"})
+
+
+def answer_leg_stream_target(config: Any) -> tuple[Any, str]:
+    """这一发是不是"在场 SSE 上的工作腿生成调用"？是就返回 ``(sink, worker)``。
+
+    两格必须在 ``configurable`` 里同时出现，缺一不发：
+
+    - ``stream_piece_sink`` —— 只有 :func:`app.api.v1.chat._ask_stream` 会为本轮注册它。
+      队列道、审批道、离线直调一律没有它，于是那些道上的字节与今天逐字相同。
+    - ``worker`` —— 只有 ``_make_worker_wrapper`` 交给子图的那本 config 带它。这一格把
+      supervisor 派发那一发、``plan()``、``respond()``、``_llm_pandas_code`` 这些
+      **同样会经过 ``_ResilientModel.invoke`` 但不是终答**的调用关在外面：它们的字一旦
+      进了累计串，收端就再也拿不回"每枚帧都是终答的单调前缀"。
+
+    子图能看见这两格，靠的是 langgraph 把父运行的 ``configurable`` 并进嵌套调用——
+    ``orchestrator.py`` 那张白名单里并没有 ``stream_piece_sink``，实测照样传得下去。
+    这条取证记在交回单，别把它误当成白名单的功劳（也不必为此去改白名单）。
+    """
+    if not isinstance(config, dict):
+        return None, ""
+    configurable = config.get("configurable")
+    if not isinstance(configurable, dict):
+        return None, ""
+    sink = configurable.get(STREAM_PIECE_SINK_KEY)
+    if sink is None or not callable(sink):
+        return None, ""
+    worker = str(configurable.get("worker") or "")
+    if worker not in ANSWER_LEG_STREAM_WORKERS:
+        return None, ""
+    return sink, worker
+
+
+class _AnswerPieceTap(BaseCallbackHandler):
+    """把框架在 ``invoke`` 内部走的那一路流，接回 R31 的片段出口。
+
+    装法走的是 langchain 的正门：一枚带 ``tap_output_iter`` 的 v1 流式回调挂进
+    ``config["callbacks"]``，``BaseChatModel._should_stream`` 就认定这次 invoke 要按流式
+    发——于是**聚合由框架自己做**（``generate_from_stream`` → ``message_chunk_to_message``），
+    交回给 react agent 的仍是 ``type == "ai"`` 的 ``AIMessage``、带同一份 ``usage_metadata``。
+    这一条是判据④ 的地基：自己拿 ``+`` 拼片会交出 ``AIMessageChunk`` 并丢掉
+    ``token_usage``，而 ``synthesize``、``reflect_node``、收端判据全都用
+    ``type(m).__name__ == "AIMessage"`` 认答案——形状一变，终答就不是今天这份终答。
+
+    三道闸门决定"哪些字可以交出去"，每一道对着一条硬红线：
+
+    T1 只发答案那一发  任何一枚 chunk 里出现工具调用（``tool_call_chunks``）就永久放弃
+      这一发：它是工具轮，它的字不是终答。
+    T2 滚动留一  第 k 片要等第 k+1 片真到了才发。只憋出半句就转去调工具的那一发，
+      一片都发不出去——这挡掉的正是 R149 记名的"规划器口播混进同一条累计串"。
+    T3 干净跑完才收尾  ``close()`` 只在 ``invoke`` 正常返回之后调；provider 抛错改走离线
+      回复时 ``abandon()``，残余缓冲整片丢弃（与 R31 那枚
+      ``test_a_mid_stream_provider_failure_does_not_publish_a_final_piece`` 同一条裁定：
+      半截字不许冒充答案的最后一块）。
+
+    尺寸闸与空档闸一个字不改：这里用的就是 R31 那枚 ``StreamPieceMerger``——判据③ 的两把
+    尺由它钉着，本单不动它，动它就是动契约。
+    """
+
+    def __init__(self, config: Any, sink, *, worker: str, call_id: str) -> None:
+        self.config = config
+        self.sink = sink
+        self.worker = worker
+        self.call_id = call_id
+        self.merger = StreamPieceMerger()
+        self.published = 0
+        self._pending = None
+        self._abandoned = ""
+
+    # --- v1 流式回调的认门标记：``_should_stream`` 靠这两枚方法判定本 handler 要流 ---
+    def tap_output_iter(self, run_id, output):
+        return output
+
+    def tap_output_aiter(self, run_id, output):
+        return output
+
+    @property
+    def abandoned(self) -> str:
+        return self._abandoned
+
+    def on_llm_new_token(self, token, **kwargs) -> None:
+        if self._abandoned:
+            return
+        message = getattr(kwargs.get("chunk"), "message", None)
+        if message is None:
+            return
+        if produced_a_tool_call(message):
+            self.abandon("tool_call")
+            return
+        for piece in self.merger.feed(visible_chunk_text(message)):
+            self._offer(piece)
+
+    def _offer(self, piece) -> None:
+        """T2：手里始终压着最新那片，等下一片证明"这一发还在往答案里写字"再放。"""
+        if self._pending is not None:
+            self._deliver(self._pending)
+        self._pending = piece
+
+    def _deliver(self, piece) -> None:
+        if self._abandoned:
+            return
+        publish_stream_pieces(self.config, [piece], call_id=self.call_id, worker=self.worker)
+        self.published += 1
+
+    def close(self) -> int:
+        """这一发没有工具调用、也没有抛错：它就是终答那一发，把尾巴放完。"""
+        if self._abandoned:
+            return self.published
+        pending, self._pending = self._pending, None
+        if pending is not None:
+            self._deliver(pending)
+        for piece in self.merger.finish():
+            self._deliver(piece)
+        return self.published
+
+    def abandon(self, reason: str) -> None:
+        if self._abandoned:
+            return
+        self._abandoned = reason
+        self._pending = None
+
+
+def _config_with_tap(config: Any, tap: _AnswerPieceTap) -> dict:
+    """把 tap 挂进 ``callbacks``，其余键原样带过去——**不改调用方那本 config**。
+
+    ``config["callbacks"]`` 到这里可能是一枚 ``CallbackManager``（langgraph 给的）也可能是
+    一个列表，两种都得把已有的 handler 留住：trace 与计量的 handler 全在里面，把它们换掉
+    等于让这一发的读数凭空消失。
+    """
+    merged = dict(config or {})
+    existing = merged.get("callbacks")
+    if existing is None:
+        handlers: list = []
+    elif isinstance(existing, (list, tuple)):
+        handlers = list(existing)
+    else:
+        handlers = list(getattr(existing, "handlers", None) or [])
+    merged["callbacks"] = [tap, *handlers]
+    return merged
+
 
 class _ResilientModel(Runnable):
     """Provider 请求失败时回退到本地离线模型，避免单点服务故障扩散。
@@ -647,6 +836,25 @@ class _ResilientModel(Runnable):
             "clamp_basis": verdict.basis,
         }
 
+    def _answer_leg_tap(self, config, call_kwargs: dict) -> tuple[Any, Any, dict]:
+        """该发流式就返回 ``(tap, 这一发要用的 config, 附加 kwargs)``，否则 ``(None, config, {})``。
+
+        ``stream_options.include_usage`` 是 R149b 具名的第二条硬前置（计量不许回 NULL）：
+        兼容腿的流帧默认一个 ``usage`` 都不带，R38 那两格会整排回 NULL。带上它，末帧把
+        ``prompt_tokens_details.cached_tokens`` 一并送回来——``stream()`` 那条老路的本机
+        实测已经证明这一格可用；非流式的 body 一个字不受影响，因为只有真走流式时 langchain
+        才把它放进请求。调用方自己写过 ``stream_options`` 时不越俎代庖（与 R30 那一条
+        "caller's cap wins" 同一个裁定）。
+        """
+        sink, worker = answer_leg_stream_target(config)
+        if sink is None:
+            return None, config, {}
+        tap = _AnswerPieceTap(config, sink, worker=worker, call_id=uuid4().hex[:12])
+        extra: dict = {}
+        if "stream_options" not in call_kwargs:
+            extra["stream_options"] = {"include_usage": True}
+        return tap, _config_with_tap(config, tap), extra
+
     def invoke(self, messages, config=None, **kwargs):
         from app.common.model_budget import ModelBudgetExhausted, default_model_budget
 
@@ -672,9 +880,23 @@ class _ResilientModel(Runnable):
             slot.release()
             span.finish("failed", error_code=exc.code)
             raise
+        # R203：在场 SSE 的工作腿这一发改走流式，好让本轮注册的那枚片段出口真响。
+        # 预算**仍按 ``stream=False`` 那一档量**（``call_kwargs`` 就是它算出来的）：这不是
+        # 笔误。``authorize(..., stream=True)`` 会按钟重新裁 ``max_tokens``，裁了就可能裁出
+        # 另一个答案，而判据④ 要的是"同一个答案，逐字到达"——所以只改传输道，不改量法，
+        # 发出去的 body 与今天只差 ``stream`` 与 ``stream_options`` 两格。要紧的一句话留
+        # 在这里：日志里那枚 ``stream=no`` 说的是 sizing 口径（由 ``report_budget`` 格式化，
+        # 不在本单写域），不代表这一发没走流式。
+        tap, leg_config, leg_kwargs = self._answer_leg_tap(config, call_kwargs)
         try:
-            response = self.primary.invoke(messages, config=config, **call_kwargs)
+            response = self.primary.invoke(
+                messages, config=leg_config, **{**call_kwargs, **leg_kwargs}
+            )
         except Exception as exc:
+            if tap is not None:
+                # 离线回复顶上来了，而那一句话不是刚才流出去的半截字：整发放弃，剩下的
+                # 片一片不发（T3）。已经发出去的那几片是判据④ 的残余风险，如实记在交回单。
+                tap.abandon("provider_error")
             provider_code = context_error_code(exc)
             if provider_code:
                 logger.warning(
@@ -719,6 +941,12 @@ class _ResilientModel(Runnable):
                 logger.warning(f"[Model] provider invoke 失败，使用离线回复: {exc}")
             return self._offline_fallback(messages, config=config, **kwargs)
         slot.release()
+        if tap is not None:
+            delivered = tap.close()
+            if delivered:
+                logger.info(
+                    f"[R203] leg={tap.worker} call={tap.call_id} 生成腿流式 pieces={delivered}"
+                )
         from app.trace.spans import model_token_counts
 
         summary = dict(model_token_counts(response))
