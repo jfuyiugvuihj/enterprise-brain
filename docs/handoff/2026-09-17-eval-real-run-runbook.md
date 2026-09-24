@@ -440,3 +440,25 @@ sys.exit(1 if flags else 0)
 | 派打模型的单 | ❌ | P-6 独占纪律 |
 | 取证、写判据、规划波次、建工作树、配 Junction | ✅ | 零 CPU 争用，且正是窗口该产出的下游 |
 | 读 `docker logs --tail`、读侧车、读报告 | ✅ | 只读 |
+
+## 17. run7 开窗前置逐格（09-24 15:4x，总控第七班第八格；两笔纸面订正在最前）
+
+**订正一：本文的量具真身写错了。** §3.2 让人「把骨架存到仓外 `%TEMP:\evalrun\eval_transport_ask.py`」、P-14 也照那枚文件取证 —— 但 **run6 实际不是这么跑的**：`docs/testing/answers-run6.jsonl` 每一行都带 `"answer_source": "eval_transport_ask_v2:transport"`，窗内用的是**仓内** `scripts/eval_transport_ask_v2.py`。⇒ P-14 的取证命令改为对 `scripts/eval_transport_ask_v2.py` 查 `/api/v1/ask` 与 `/api/v1/chat`；更要紧的是：**量具在仓内 ⇒ 它的改动（R215 正在改判据② 的识别）会随代码一起进窗**，不必二次冻结；反过来，若哪天改用仓外副本，量具改动就悄悄进不了窗，读数会假绿。
+
+**订正二：P-19 的判据文字会把干活的锁读成 FAIL。** 原文「返回 `0x80000000` 才算挂上」不成立：`SetThreadExecutionState` 的返回值是**新的执行状态**，我们请求的是 `ES_CONTINUOUS|ES_SYSTEM_REQUIRED|ES_DISPLAY_REQUIRED = 0x80000003`，所以**稳态回 `0x80000003` 就是挂上了，只有回 `0` 才是失败**。09-24 14:46:48 实测 `%TEMP%\ka.txt` = `SET=0x80000003`（常驻 PID 11600，自 11:01:24 起，240 s 一续）⇒ PASS。别再照旧文字去判死这枚锁。
+
+**逐格（顺序即依赖，一格一命令）**
+
+1. **静默窗**：`git -C <主树> status --porcelain` 空 + **零枚在途 Agent**。🔴 新规（09-24 实测代价 37 分钟）：**≥2 枚在途时不跑全量门**——那一跑 `run_gate -n 4` 在 4% 处 xdist worker 崩（`INTERNALERROR ... crashitem`），`test_r75` 单跑主树 96 passed 8.22 s ⇒ 崩的是并发争用不是判据。
+2. **门基线**：`python scripts/run_gate.py`（`-n` 交给它按空闲内存自选；本机 32 GB，`-n 8` 约需 16 GB 空闲；🔴 绝不手敲更大的 `-n`，事故 #42 = `-n 16` 把机器打成脏重启）。记下 passed/skipped 两个数。
+3. **重建镜像（plain build，`compose build` 本机报 gRPC sharedkey）**：`docker build -f Dockerfile -t enterprise-brain:local --build-arg APT_MIRROR=mirrors.tuna.tsinghua.edu.cn --build-arg GIT_SHA=<rev-parse --short HEAD> --build-arg BUILT_AT=<ISO 时刻> .`——`APT_MIRROR` 必须与 `deploy/.env.server` 同值，少传就整链 apt 重装（跑到 180 s 未完就当场停）。`GIT_SHA`/`BUILT_AT` 在 `Dockerfile:92-95` 全在 COPY 之后，打 provenance 不 invalidate 依赖层。
+4. **P-8 唯一判据**：`python scripts/check_image_provenance.py` → **退出码 0**（它读镜像自己的 OCI label + 容器内 `/app/BUILD_INFO`，不再拿时间戳做算术）。🔴 镜像 label 传长 sha 时判据走 DOCS_ONLY 分支也算 PASS；传短 sha 走 MATCH。
+5. **recreate**：`docker compose --env-file deploy/.env.server up -d --no-build`——`--env-file` 不可省（`VECTOR_DUAL_WRITE=on` 只在那里面，省了就静默关掉双写窗）。
+6. **P-1 两树 CLEAN**：主树与跑分树 `be-eval95` 都要 `git status --porcelain` 空，且 `be-eval95` 先 `merge --ff-only` 到最终 HEAD。
+7. **凭据**：`python scripts/seed_workspace.py --check`（R213 之后裸命令即可，默认 `admin` + `DEMO_ADMIN_PASSWORD` + `deploy/.env.server` 兜底；在跑分树里跑要补 `--env-file <主树>\deploy\.env.server`，那文件是 gitignored 的）。🔴 别再把它读成「欠业主一枚口令」：`EB_SEED_OWNER_PASSWORD` 是属主 `dataowner` 的键，`dataowner` 也跑不了 `--check`（要打 `GET /users`，staff 不含 `users:manage`）。
+8. **P-18 缓存清零**：`docker exec enterprise-brain-redis-1 sh -lc "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning --scan --pattern 'answer:*' | wc -l"` → 必须 **0**（键里不含 `session_id`，换 session 关不掉缓存）。
+9. **P-17 语料快照**：开窗前 `Get-ChildItem documents -File | Get-FileHash SHA256 | Export-Csv "$env:TEMP\evalrun\corpus_before.csv"`，收窗后同法出 `corpus_after.csv` 再 `Compare-Object` 无输出；报告正文引两文件的绝对路径 + `Get-Date`。
+10. **P-19**：确认 `%TEMP%\ka.txt` 时间戳在 5 分钟内且值含 `0x80000000` 位；`powercfg /change standby-timeout-ac 0` 只是辅，单独用是假绿（09-21、09-23 两次 AC=`0x0` 仍掉进 S0）。
+11. **P-14 / P-15**：P-14 按订正一对 `scripts/eval_transport_ask_v2.py` 取证 + 收窗后 `tool_calls_gt0 > 0`；P-15 把「查询改写失败」计数原样写进报告抬头（0 / 少量 / ≈105 是三回事）。
+12. **窗内硬禁**：并树、跑仓库测试、动容器、打模型（除被测腿）；窗内只许零 CPU 争用的取证与判据书写。等待用**阻塞式监视**（`Get-Content -Wait` / 轮询 stamp 文件），不用轮询式心跳。
+13. **收窗**：`answers-runN.jsonl` + `evaluation-report.json` + 逐格判读 **同批并树**（run6 的原件已在 `docs/testing/answers-run6.jsonl`，那是"读数可追"的唯一凭据）。
