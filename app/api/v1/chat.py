@@ -1637,6 +1637,14 @@ def _select_final_answer(
 select_final_answer = _select_final_answer
 
 
+#: R210：断流轮「纠正替换」那两枚 step 帧的身份。走的是既有 step 词汇表里 ``tool``/
+#: ``label``/``status``/``elapsed`` 那四枚键，不新增帧键，也不碰 ``text`` 帧的键集合。
+#: 这个名字不出现在 ``steps_log`` 里：它是传输层的换源信号，不是一枚真跑过的工作步骤，
+#: 落进会话历史就等于给后人说「这一轮跑过一个叫这个名字的步骤」。
+CORRECTION_STEP_TOOL = "answer_correction"
+CORRECTION_STEP_LABEL = "🔁 换源重发本轮回答"
+
+
 def hitl_park_text(intr: dict) -> str:
     """挂起时给用户的那句话：同步路径与后台 worker 必须逐字同一份。
 
@@ -2043,6 +2051,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         last_workers: list[str] = []
         last_completed: set[str] = set()
         emitted_running: set[str] = set()
+        # R210：这一轮的终答与已发出去的累计帧不同源时置真，收尾那一枚 text 帧改发成
+        # 「纠正替换」（见下面 done 分支里那道守卫）。默认假 ⇒ 正常轮一帧都不多发。
+        answer_needs_correction = False
         emitted_done: set[str] = set()
         initial_msg_count = -1
         initial_worker_results: dict = {}
@@ -2178,6 +2189,15 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                         f" leg={piece_stream.worker or '-'} call={piece_stream.call_id or '-'}"
                         f" dropped={piece_stream.dropped}"
                     )
+                    # R210：屏上此刻站着的是半截真话，而终答不是它的延伸。旧形状下收尾那枚
+                    # 帧会落进 sessions.js 的追加分支（:491），用户读到「半截真话 + 离线话术」
+                    # 拼成的一句 —— 那是 R203 把生成腿接上流式之后才存在的残损面（pieces 恒 0
+                    # 的改前结构上到不了这里）。这里把它改发成一次**纠正替换**：借既有 step
+                    # 语义（running 那一枚在 msg.content 非空时置 ``_correcting``，:513），
+                    # 紧跟着的收尾帧就整段替换屏上正文（:482）；收尾再补一发同 tool 的 done，
+                    # 不给界面留一枚永远转圈的步骤。帧名、帧键、legacy 词汇表一个都没动，
+                    # ``text_sse_frame`` 的字面也一个字没动 —— 多的只是它前面那两枚 step。
+                    answer_needs_correction = True
                 if not full_text:
                     # 图跑完了，既没有正文也没有等待确认的步骤：这是内部失败。
                     # 把它报成 request.completed 就是把“什么都没产出”伪装成“已回答”。
@@ -2222,7 +2242,15 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                         # 证据快照的写入排在下面发 sources 事件那一处：生效日期要先盖到行上，
                         # 存下的与发出去的必须是同一批对象。这里只记"答案确实进缓存了"。
                         answer_cached = True
+                    correction = {"type": "step", "tool": CORRECTION_STEP_TOOL,
+                                  "label": CORRECTION_STEP_LABEL}
+                    if answer_needs_correction:
+                        yield sse_event("step", {**correction, "status": "running"})
+                        await asyncio.sleep(0)
                     yield text_sse_frame(full_text, live_cache_fields)
+                    if answer_needs_correction:
+                        yield sse_event("step", {**correction, "status": "done",
+                                                 "elapsed": elapsed_total})
                     await asyncio.sleep(0)
                 logger.info(f"[ASK] session={thread_id[:8]}... {elapsed_total}s | steps={len(steps_log)}")
 
