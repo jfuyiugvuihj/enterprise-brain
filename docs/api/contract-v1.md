@@ -294,7 +294,8 @@ and `done` with the same five payload keys and the same row shape as a live turn
 
 `GET /api/v1/documents/{filename}/versions` gained the same `published_at` per row (also optional), and
 `/approve` continuation turns carry both row fields. `GET /api/v1/documents/catalog` and `/documents` were not touched by that change — they
-have since grown a `restricted` field, so read the section below rather than this sentence. Approval
+have since grown a `restricted` field, so read `## Document Catalog Visibility` below rather
+than this sentence. Approval
 turns (`/approve`) are unchanged in event order.
 Example:
 
@@ -739,10 +740,163 @@ Three cases the catalogue must not collapse into one another, and the consumer's
   non-zero contradicts itself in one breath, which R186 pins in
   `frontend/src/components/__tests__/r186-row-scope-voices.test.js`.
 
+> The two flat document routes are specified in their own section,
+> `## Document Catalog Visibility (2026-09-24, R194 / R201)`. Their sentences used to sit here as
+> prose because the set of subheads in this part of the contract is pinned; R201 moved the block
+> out instead of adding a third one, and welded it to the AST of the routes.
+
+> **Known duplicate**: `app/api/v1/data.py:183-240` builds this shape a third time for the data-file
+> leg. One judgement should have one projection; merging them is filed as follow-up, not done.
+
+
+## Document Catalog Visibility (2026-09-24, R194 / R201)
+
+Two flat document routes answer a listing request with a *success* body that has to carry two
+different facts: which documents this caller may read, and how many documents exist that this
+caller may not. Both of them build the second fact from **one** shared projection, so one route
+cannot start saying something the other one does not.
+
+Machine-checked against the construction sites, never against a hand copy: the envelope comes from
+`app/api/v1/chat.py::list_documents` and `app/api/v1/chat.py::list_document_catalog`, the withheld
+tally from `app/api/v1/chat.py::_restricted_summary`, and one array element of the catalogue from
+`app/documents/catalog.py::public_document_row`, whose offline twin
+`app/documents/catalog.py::_local_row` has to keep the same key set. The pins live in
+`tests/test_r201_flat_document_contract.py`: key sets and their order, the element type of each
+array, the ownership marker and the message sentence are compared with the AST of those four
+construction sites, so prose and code cannot drift apart silently. Neither route declares a
+`response_model`: the dict the body builds *is* the wire shape, and a route that ever grows a model
+of its own has to make this page say so.
+
+### `GET /api/v1/documents` -> body
+
+```json
+{
+  "documents": [
+    "handbook-v3.txt",
+    "policy-2026.txt"
+  ],
+  "restricted": {
+    "count": 2,
+    "reason_codes": [
+      "department_scope_denied"
+    ],
+    "message": "有 2 份文档存在，但不在当前账号的可见范围内；如需访问，请联系管理员核对你的部门归属与文档的部门、密级标注。"
+  }
+}
+```
+
+```json
+{
+  "documents": [
+    "handbook-v3.txt"
+  ]
+}
+```
+
+| key | type | presence | meaning |
+| --- | --- | --- | --- |
+| `documents` | string[] | always | plain array of filenames, each one read from `filename`: what this caller may view **and** what the index currently holds, newest version only |
+| `restricted` | object | only when refused | the withheld tally, `restricted` below; absent entirely when nothing was refused |
+
+* `documents` is an **intersection**, not the visible list: a document this caller may see whose
+  latest version was never published into the index appears in neither `documents` nor
+  `restricted`. That is an indexing fact and not a permission fact, and
+  `GET /api/v1/documents/catalog` is where it shows up.
+
+### `GET /api/v1/documents/catalog` -> body
+
+```json
+{
+  "documents": [
+    {
+      "filename": "handbook-v3.txt",
+      "version": 2,
+      "classification": 1,
+      "department": "finance",
+      "storage_path": "documents/handbook-v3__v2.txt",
+      "created_at": "2026-09-18T22:01:04+08:00",
+      "owner_id": "u-17",
+      "size_bytes": 20480,
+      "parse_status": "ready",
+      "ownership": "owned",
+      "index_status": "indexed",
+      "index_reason": ""
+    },
+    {
+      "filename": "policy-2026.txt",
+      "version": 1,
+      "classification": 3,
+      "department": "",
+      "storage_path": "documents/policy-2026__v1.txt",
+      "created_at": "2026-09-14T09:02:11+08:00",
+      "owner_id": null,
+      "size_bytes": 4096,
+      "parse_status": "ready",
+      "ownership": "legacy"
+    }
+  ],
+  "restricted": {
+    "count": 1,
+    "reason_codes": [
+      "department_scope_denied"
+    ],
+    "message": "有 1 份文档存在，但不在当前账号的可见范围内；如需访问，请联系管理员核对你的部门归属与文档的部门、密级标注。"
+  }
+}
+```
+
+| key | type | presence | meaning |
+| --- | --- | --- | --- |
+| `documents` | object[] | always | every document this caller may view, indexed or not; each row is the `documents[]` shape at the end of this section, built by `public_document_row` |
+| `restricted` | object | only when refused | the same projection as `GET /api/v1/documents`, the same builder, one shape for both |
+
+The catalogue does not intersect with the index the way the flat route above does: a row that is
+visible but not indexed is exactly the difference the two routes are allowed to disagree about.
+
+For a caller nothing was refused from, the answer is one key shorter:
+
+```json
+{
+  "documents": [
+    {
+      "filename": "handbook-v3.txt",
+      "version": 2,
+      "classification": 1,
+      "department": "finance",
+      "storage_path": "documents/handbook-v3__v2.txt",
+      "created_at": "2026-09-18T22:01:04+08:00",
+      "owner_id": "u-17",
+      "size_bytes": 20480,
+      "parse_status": "ready",
+      "ownership": "owned",
+      "index_status": "indexed",
+      "index_reason": ""
+    }
+  ]
+}
+```
+
+### `restricted` -> the one shared projection
+
+| key | type | presence | meaning |
+| --- | --- | --- | --- |
+| `count` | int | always | how many documents exist outside this caller's visibility; the same `len(withheld)` that the sentence below repeats |
+| `reason_codes` | string[] | always | the distinct policy reason codes of those refusals in first-seen order (`dict.fromkeys`) - **not** a contract enum, branch on presence and never on a name |
+| `message` | string | always | the ready-made sentence for this case; present whenever `restricted` is |
+
+`restricted.message` template (the projection substitutes the count; the wording is the contract):
+
+`有 {count} 份文档存在，但不在当前账号的可见范围内；如需访问，请联系管理员核对你的部门归属与文档的部门、密级标注。`
+
+Nothing in this object names a document: a withheld row contributes a tally and its reason code
+only, never a filename, never an id, never a classification. Each refusal is separately audited
+with subject, filename and verdict, and this body stays free of that record.
+
 **`GET /api/v1/documents` and `GET /api/v1/documents/catalog` -> `restricted`**
-> Deliberately prose, not a `###` subhead: the set of subheads in this part of the contract is pinned, and
-> a third one has to be added by whoever welds these two document routes to that pin, not as a side effect
-> of a sentence. That weld is filed (R201), not done.
+> Rewelded 2026-09-24 (R201): the two flat document routes are specified here, in their own
+> section, and the subheads of the dataset section above stay pinned by the R186 contract test -
+> which is why they still carry no third one. If a subhead is ever added there, it needs its own
+> justification for not speaking for the other field.
 
 Both flat document routes answer with the **same** optional key, built by one shared projection
 (`app/api/v1/chat.py::_restricted_summary`), and its keys are exactly the table above: `documents`
@@ -756,9 +910,63 @@ in `_classify_document_rows` — the route never counts permissions a second tim
 * the flat route is a plain array of filenames and is **not** paginated — it declares no query
   parameters, so `?page=&page_size=` on it is discarded by the framework, not honoured.
 
-> **Known duplicate**: `app/api/v1/data.py:183-240` builds this shape a third time for the data-file
-> leg. One judgement should have one projection; merging them is filed as follow-up, not done.
+### `GET /api/v1/documents/catalog` -> `documents[]` rows
 
+```json
+{
+  "filename": "handbook-v3.txt",
+  "version": 2,
+  "classification": 1,
+  "department": "finance",
+  "storage_path": "documents/handbook-v3__v2.txt",
+  "created_at": "2026-09-18T22:01:04+08:00",
+  "owner_id": "u-17",
+  "size_bytes": 20480,
+  "parse_status": "ready",
+  "ownership": "owned",
+  "index_status": "indexed",
+  "index_reason": ""
+}
+```
+
+A row stored before an index decision was ever recorded answers without that pair, and a client
+must read the absence as no decision, never as not indexed:
+
+```json
+{
+  "filename": "policy-2026.txt",
+  "version": 1,
+  "classification": 3,
+  "department": "",
+  "storage_path": "documents/policy-2026__v1.txt",
+  "created_at": "2026-09-14T09:02:11+08:00",
+  "owner_id": null,
+  "size_bytes": 4096,
+  "parse_status": "ready",
+  "ownership": "legacy"
+}
+```
+
+Required keys come first and the two conditional keys come last; that is the order of this table, not
+an order on the wire. The conditional pair is what a row drops when no index decision was ever
+recorded for it: a row stored before that decision existed stays silent rather than being
+stamped a value it never carried, and silence is not the same answer as `excluded`, which is a
+decision somebody made.
+
+| key | type | presence | meaning |
+| --- | --- | --- | --- |
+| `filename` | string | always | the document name, as the catalogue registered it |
+| `version` | int | always | the newest version of that document; one row per document, not per version |
+| `classification` | int | always | the recorded classification level this row was judged with |
+| `department` | string | always | the recorded department scope; empty means no department was recorded |
+| `storage_path` | string | always | an opaque de-identified reference, never a server path (Wave 1 above) |
+| `created_at` | string | always | when that version was recorded |
+| `owner_id` | string / null | always | the owning account, or `null` for a row that predates document ownership |
+| `size_bytes` | int | always | the stored size the catalogue resolved for that version |
+| `parse_status` | string | always | how the parse of that version ended |
+| `ownership` | string | always | which of the two visibility groups this row belongs to: `owned` or `legacy` |
+| `index_status` | string | only when recorded | whether the assistant can find this version: `indexed`, `excluded` or `unknown`; the pair is absent when no decision was ever recorded |
+| `index_reason` | string | only when recorded | the stable reason an `excluded` row gives; the empty string for every other state |
 
 ## Frontend Collaboration Boundary
 
