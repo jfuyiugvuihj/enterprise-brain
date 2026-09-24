@@ -329,3 +329,9 @@
 - 评测集与 `must_contain` 不许为凑绿改动（`tests/test_evaluation_report.py` 钉着）；8.8 的复跑只是
   取数，不是清理。
 - 跑分窗口在跑时不排这一串（它要独占 Ollama 与 Chroma 目录）。
+
+> **🔴 09-24 定案补记（第四十四班，业主原话「chroma 不在用改成 pgvector 你把文档也改了，上次我就说要换了」）**：本文件的**方向**从「目标态设计 / 待评估」升格为**已定案**——生产向量库 = PostgreSQL + PGVector，Chroma 进入退役轨道。三份治理文档已同步改口（`AGENTS.md` 技术栈与核心原则、`docs/system-architecture-2026-09-17.md` §存储条、`docs/system-design-2026-09-16.md` 同条、`docs/version-roadmap-and-next-week-plan-2026-09-22.md` 两条）。
+>
+> **但定案不等于已切换，本节把今天的事实钉住**（免得改口改出一句假话）：① **双写在跑**——`VECTOR_DUAL_WRITE=on` 在 `deploy/.env.server` 里就是 on，PDF 抽取带 NUL 那枚 P1 已由 **R130**（落树 `cdc5ead`）修掉，全库 **1008 枚向量**在位；② **读路径今天仍在 Chroma**——`app/rag/retriever.py` / `retrieval_pipeline.py` / `app/documents/catalog.py` 尚未切；③ **P3 召回对比从未跑过一次** ⇒ 切过去会不会悄悄变差，这一格目前零读数，**R59（切读）已于 09-24 提到第一批派工**（`be-r59`），它的第一判据就是把那份读数做出来，在做出来之前**不许把任何生产路径的默认读后端翻成 PGVector**；④ **H20（距离下限口径）业主未裁**，本班按「不新增人为下限、top-k 与阈值沿用现值」代裁推进，**可推翻**。
+>
+> 三枚用例钉着本文件（`tests/test_r120_dual_write_passthrough.py:43`、`tests/test_r120_p3_collection_default.py:31`、`tests/test_r125_status_vector_census.py:25`）⇒ 本节是**追加**，未改动任何既有行；改这份文件的人必须复跑那三件。

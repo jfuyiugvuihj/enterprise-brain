@@ -133,7 +133,7 @@ Docker Compose 七服务，一条命令 `docker compose --env-file deploy/.env.s
 | 层 | 选型 |
 |---|---|
 | 后端 | Python 3.11+（uv 管理）、FastAPI、Pydantic v2、LangChain + LangGraph（含 Postgres checkpointer） |
-| 向量 | **PostgreSQL + PGVector（目标态统一存储）**；Chroma 仅为迁移期过渡（见 §5.2） |
+| 向量 | **PostgreSQL + PGVector（生产向量库·业主 09-24 定案）**；Chroma = 退役中的遗留件，今天仍在提供读服务、尚未切完（切读单 R59 在途，进度见 §5.2 与 `2026-09-17-pgvector-adoption-plan.md`） |
 | 数据 | pandas、matplotlib、openpyxl/xlsxwriter、fpdf2 |
 | 检索 | jieba + rank-bm25、sentence-transformers（Cross-Encoder 重排）、Ollama embedding |
 | 前端 | Vue 3.5 + Vite 8 + vue-router 4（无 TS、无 Pinia/Element Plus）、markdown-it + DOMPurify |
