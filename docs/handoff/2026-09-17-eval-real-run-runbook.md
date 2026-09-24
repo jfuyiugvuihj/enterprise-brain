@@ -462,3 +462,14 @@ sys.exit(1 if flags else 0)
 11. **P-14 / P-15**：P-14 按订正一对 `scripts/eval_transport_ask_v2.py` 取证 + 收窗后 `tool_calls_gt0 > 0`；P-15 把「查询改写失败」计数原样写进报告抬头（0 / 少量 / ≈105 是三回事）。
 12. **窗内硬禁**：并树、跑仓库测试、动容器、打模型（除被测腿）；窗内只许零 CPU 争用的取证与判据书写。等待用**阻塞式监视**（`Get-Content -Wait` / 轮询 stamp 文件），不用轮询式心跳。
 13. **收窗**：`answers-runN.jsonl` + `evaluation-report.json` + 逐格判读 **同批并树**（run6 的原件已在 `docs/testing/answers-run6.jsonl`，那是"读数可追"的唯一凭据）。
+
+14. **🔴 窗口形状：两相一窗（09-24 16:3x 总控定，写死，别再拿一相去判五格）**
+
+    **为什么必须分相**：D 行三格要 `REPORT_LANE_VIA_QUEUE=on`，而报告档一旦改走队列道，回答是**取回整段**、不是逐片累计 ⇒ 那 12 题的帧账必然读 `(text_frames, max_stream_frames) = (1, 1)`。把它和 A②「流式逐字无缺」放在**同一轮**里测，等于用 D 的开关把 A② 洗成假红；反过来，为了 A② 好看而不开这个关，D 三格就永远 0 格。**这两个判据在同一轮里物理互斥**，不是纪律问题。
+
+    - **相 1（主轮，`REPORT_LANE_VIA_QUEUE` 保持默认关）**：跑全 105 题。这一轮拿 **A①（问答档 n=64）+ A②（帧账 105 行）+ A③ + A④（逐类）+ C 两格（缓存命中显式标注 / 分数不退化）**。分数与 run6 可比，因为开关状态与 run6 相同。
+    - **相 2（子集轮，`REPORT_LANE_VIA_QUEUE=on`）**：**只跑报告档那 12 题**（`report-01`…`report-12`，`category=报告生成`，实测 `git grep` 自 `tests/fixtures/business_evaluation_100.jsonl`：105 行按 id 前缀 = doc 19 / metric 19 / chat 12 / data 12 / report 12 / insight 7 / approval 6 / scope 6 / unsupported 4 / chart 4 / tool 4）。拿 **D 三格（报告档可查回 / `usage` 非零 / `sources` 在流里）**。估 12 × ~150 s ≈ **30 分钟**，与主轮同窗。
+    - 子集轮**不改评测集**：`collect_evaluation_answers.py` 的 `--fixture` 收任意路径（`scripts/collect_evaluation_answers.py:349`），把 12 行 `report-*` 抽到 `%TEMP%\evalrun\fixture-report12.jsonl` 再指过去即可。🔴 抽取只许**整行原样复制**，一个字不许改（评测集被 `tests/test_evaluation_report.py` 钉住，子集件在仓外，不入树、不评分基线）。
+    - 🔴 **两相之间必须复跑 P-18**：相 1 会把 105 题的答案写进 Redis `answer:*`，相 2 若不清零，报告档那 12 题会**命中缓存直接返回**，`REPORT_LANE_VIA_QUEUE` 根本没被走过 —— 那是 D 三格最容易被假绿的地方。清零判据仍按第 8 步：`--scan --pattern 'answer:*' | wc -l` → 0。⚠️ 本班实测第 8 步原文那条命令**跑不通**（容器内 `sh -lc` 展开 `$REDIS_PASSWORD` 拿到的是空值 ⇒ `NOAUTH`），可用写法：把口令从 `deploy/.env.server` 读出来用 `docker exec -e RG=<口令>` 注入，再 `redis-cli --no-auth-warning -a "$RG"`。
+    - 相 2 结束后如果还要在同一窗里做别的事（例如切读对比），**开关状态必须逐相记进报告抬头**，不许用"这一窗"当作一个测量条件。
+    - 🔴 p95/时延读数**只认帧账 sidecar 的 `wall_ms`**：`answers-runN.jsonl` 的 `latency_ms` 自 R205a（并树 `0997489`）起对"越出一发量级上限的整调用跨度"记 `null` 并把原观测留在 `latency_suspect`，run6 那三行 `data-04/06/07` 是修复前的原件（38×/523×/6.5×，总控 105 行逐位复算）。⇒ 谁拿 `latency_ms` 复算 p95，得到的是假数。
