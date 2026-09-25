@@ -3221,3 +3221,57 @@ R238b `2ab2369`（总控补做那两格报告）· 看板 `75d9a6d` · 本节。
    **rollout 的 mtime 创建后就不动，必须读 JSONL 最后一条 `timestamp`**；再配工作树 dirty 与文件 mtime 双证。
 
 等业主 11 项未变（清单见看板 §4CA 末段），本班一项都没代做。
+## 99（09-25 16:4x-17:3x，第八班第四格；主树 `614f558`→本次并树）：事故 49 唤醒四枚、R239/R246/R247 并树、判据 A(2) 翻案、R214 标定改写报告档结论、V2 四单开波
+
+### 99.1 判据原文（V2 四单，业主 09-25 令「除已分他人的部分外你自己规划」）
+
+来源 `docs/version-roadmap-and-next-week-plan-2026-09-22.md:247` V2 段逐条：Document/DocumentVersion、Dataset/DatasetVersion、Artifact 与 CalculationRun、
+所有资源有稳定 ID/owner/生命周期、四档角色权限统一、四类资源级隔离、PostgreSQL 成为主要业务存储、Redis 可靠队列（重试/死信/幂等/失败原因完整）、
+会话与产物与数据与文档重启后可恢复、Dashboard 真实期间真实数据、告警支持确认/转派/关闭至少一部分闭环、管理员可查看一次运行的关键 Trace、
+OCR 与扫描 PDF、PDF/Word 表格解析、Excel/CSV 知识库模式、知识图谱/审批助手/通知、PGVector 正式读路径。
+V2 验收目标原文：10-30 名内部用户；跨部门跨密级越权命中 0；服务重启不丢核心业务数据；失败任务可定位和重试；页面主要数据不依赖固定演示值。
+
+**本班实测的三处地基自述（决定 V2 第一批是「接线」而非「新建模」）**：
+- `app/storage/artifacts.py` 类 docstring：JSON-backed local registry until the canonical Artifact table is integrated
+- `app/storage/datasets.py` 类 docstring：JSON-backed transition registry until Dataset/DatasetVersion tables are active
+- `app/trace/store.py` 类 docstring：Append-only local trace store used until database trace tables are integrated
+- 目标表**已在库**：`migrations/0001_core_resource_versions.sql` 建 `schema_migrations`/`resource_versions`/`artifacts`；
+  `migrations/0002_execution_data_lineage.sql` 建 `datasets`/`dataset_versions`/`calculation_runs`/`metric_definitions`/`agent_runs`/`agent_steps`/`tool_calls`/`model_calls`/`retrieval_traces`/`trace_events`/`index_registry`/`index_versions`/`chunks`。
+- 按 Python 正则现数（`insert into`/`from` 两侧，app/** 全量）：`dataset_versions`、`calculation_runs`、`agent_runs`、`agent_steps`、`tool_calls`、`model_calls`、`retrieval_traces` 的**读写点均为 0**；`artifacts` 写 0 读 1（那 1 处还是 `__init__.py` 的字符串）。⇒ 「表在、线没接」是实测不是推断。
+
+### 99.2 立单与写域切法
+
+| 单 | 内容 | 写域 | 迁移 |
+|---|---|---|---|
+| R248 | Artifacts 落 PG，稳定 ID/owner/生命周期上列 | `app/storage/artifacts.py` + 新测试（可用 `app/storage/__init__.py`）| 禁 |
+| R249 | Dataset/DatasetVersion 落 PG + **版本链真做** | `app/storage/datasets.py` + 新测试（禁 `__init__.py`）| 禁 |
+| R250 | Trace 落 PG + 管理员按 run_id 查回 | `app/trace/**` + `app/api/v1/observability.py` | 禁 |
+| R251 | 告警确认/转派/关闭闭环 | `app/api/v1/alerts.py` + 新测试 | **唯一持迁移者**：`0014_*` + `migrations/manifest.json` |
+
+规则化一条：**同一波里只允许一枚 Agent 持迁移与 `migrations/manifest.json`**，否则两枚抢同一记账文件必返工（本轮之前没有明文，本班补上）。
+
+### 99.3 R214 标定（判据级凭据已落 `docs/testing/run8-phase2-plan-2026-09-25.md` 第五章）
+
+- 实测 prefill 1,410/1,474/1,537 tok/s、decode 39.6-45.5 tok/s；代码默认 35/8 系 `.env.example:115` 自陈的 CPU-only 下限，容器两枚均未设。
+- **算式后果**：`clock_affordable_tokens = (MODEL_REQUEST_TIMEOUT/MODEL_TIMEOUT_MARGIN - prompt/prefill_rate) * decode_rate`（`app/common/model_budget.py:850-863`，默认 120/1.15）。
+  prompt=2,444 时旧尺 = 276 token < `MODEL_MIN_ANSWER_TOKENS=1536` ⇒ `unaffordable` ⇒ **非流式直接拒发请求**；新尺 1200/40 同格 = 4,092 ⇒ 放行。
+- ⇒ 此前「报告档从未真进过队列」有两成因：96 节记的量具不发 `lane`，加本班这枚预算尺拒发。**流式不受该算式约束**（:857-861 短路），故问答档一直绿、报告档一直没跑，两档差别不是快慢是有没有发出去。
+- 并发实测（否决本班上一轮给业主的建议）：1/2/4 路聚合 38.6/40.6/39.9 tok/s，单路 13.2/18.9/31.9 s ⇒ 加 `MODEL_MAX_CONCURRENCY` 买不到吞吐；容器内 `OLLAMA_NUM_PARALLEL` 为空才是根因，动它须重测判据(1)。
+- 落点坑：`deploy/.env.server` 被 `.gitignore:11` 忽略、**不进版本库** ⇒ 标定值唯一跟踪态凭据只能落文档，本班已落 run8 计划第五章。
+
+### 99.4 判据 A(2) 更正（R239 交付，总控亲跑 14 passed）
+
+run7 底账 105 行：`text_frames>1` 96/105、逐字无缺 105/105、合账 93/105，分歧 chart-01/chart-03/tool-04。前任记的「0/105」是 run6 账。
+量具 `_frame_verdict`（`scripts/eval_transport_ask_v2.py:653`）另两条件系 R181/R215 自加，非计划书 6 章原文。9 枚红全在每挂只发一帧且末帧 sha == 答案 sha ⇒ 内容未丢。
+**A(2) 仍不翻绿**：run7 底账 21 键零枚带逐帧到达键，「>=20 字或 100 ms 合并／禁单字碎片」缺数据不缺判器，待相 2。
+
+### 99.5 事故 49（同类第二次）与唤醒纪律
+
+四枚 Agent（R239/R245/R246/R247）rollout 末条 timestamp 同为 2026-09-25T06:12:42.6xZ，各带 turn_aborted；与 #48 同因（总控被打断即整棵树被掐）。
+本班处置：**不派替换体**，`resume_agent` + `send_input` 逐枚唤醒（每 block 一次投递），四枚均复工会交工 ⇒ 未构成事故 14 的重复投递。
+新规矩（写进派工词模板）：每单须自带「被打断后如何自证已落盘」一段，且自证以工作树 `git status --porcelain` + rollout 末条 timestamp 双证为准，不以自述为准。
+
+### 99.6 本班两处自纠（不做成假话留给下一班）
+
+1. 误把 `deploy/.env.server` 当可提交件；2. 用文本模式 `open()` 追加把 run8 计划文档 CRLF 整片刷成 LF（CR 55→50），当场 `git checkout --` 回滚按字节重做（修后 CR=LF=103、增量相等）。**看板已反复记过该坑，本班仍犯** ⇒ 追加一律 rb 取原文、CRLF 拼、写回数 CR/LF。
+
