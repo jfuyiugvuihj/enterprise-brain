@@ -749,7 +749,9 @@ department.
 
 The catalogue appends one key when registered active datasets exist that this principal was
 refused at the file level. It is **absent entirely** when nothing was refused, so "no key" means
-"nothing is being hidden from you", not "the check failed":
+"nothing is being hidden from you", not "the check failed". How that object is built is said once
+for every exit that carries it - see `restricted -> the one shared projection` under
+`## Document Catalog Visibility` - so this leg registers only what is its own: the sentence below.
 
 ```json
 {
@@ -796,20 +798,30 @@ Three cases the catalogue must not collapse into one another, and the consumer's
 > prose because the set of subheads in this part of the contract is pinned; R201 moved the block
 > out instead of adding a third one, and welded it to the AST of the routes.
 
-> **Known duplicate**: `app/api/v1/data.py:183-240` builds this shape a third time for the data-file
-> leg. One judgement should have one projection; merging them is filed as follow-up, not done.
+> **Merged (R200)**: the object is no longer spelled out twice. One builder owns it -
+> `app/api/v1/restricted.py::restricted_summary` - and the two sentences are the module constants
+> sitting next to it, `DATA_FILE_TEMPLATE` (the one above) and `DOCUMENT_TEMPLATE` (the one in the
+> canon section below). A leg hands that builder its own refused `(resource, reason code)` pairs and
+> its own sentence and keeps no shape of its own: `app/api/v1/data.py` is this leg,
+> `app/api/v1/chat.py` is the two document routes. What stays local to this page is therefore only
+> the sentence; the key list and its order, the tally behind the count, the ordered single-pass dedup
+> and the boundary that a thing counted is never a thing named are stated once, under
+> `restricted -> the one shared projection` below, and are the same words at every exit.
+> `tests/test_r200_restricted_single_source.py` scans `app/**` for the construction site and turns
+> red the moment a second one appears, so this paragraph cannot be left behind by the code again.
 
 
 ## Document Catalog Visibility (2026-09-24, R194 / R201)
 
 Two flat document routes answer a listing request with a *success* body that has to carry two
-different facts: which documents this caller may read, and how many documents exist that this
-caller may not. Both of them build the second fact from **one** shared projection, so one route
-cannot start saying something the other one does not.
+different facts: which documents this caller may read, and how many documents exist that this caller
+may not. Both carry the second fact in the same optional key, and the rule that builds it is stated
+once below, under `restricted -> the one shared projection` - there is no second place that could
+start saying something the other one does not.
 
 Machine-checked against the construction sites, never against a hand copy: the envelope comes from
 `app/api/v1/chat.py::list_documents` and `app/api/v1/chat.py::list_document_catalog`, the withheld
-tally from `app/api/v1/chat.py::_restricted_summary`, and one array element of the catalogue from
+tally from `app/api/v1/restricted.py::restricted_summary`, and one array element of the catalogue from
 `app/documents/catalog.py::public_document_row`, whose offline twin
 `app/documents/catalog.py::_local_row` has to keep the same key set. The pins live in
 `tests/test_r201_flat_document_contract.py`: key sets and their order, the element type of each
@@ -929,6 +941,19 @@ For a caller nothing was refused from, the answer is one key shorter:
 
 ### `restricted` -> the one shared projection
 
+**Canon - one judgement, one projection.** Every exit that answers a refusal with a tally builds it
+the way this subsection says, and this is the only place the contract states the rule: the policy
+layer judges once, the route counts what that judgement already returned, and the projection only
+*explains* it. Judgement and counting happen once, so a route never counts permissions a second
+time, and the object therefore carries the number and the stable codes behind it in the order of the
+table below - at every exit that has one, identically. Since R200 the rule has exactly one
+implementation as well: `app/api/v1/restricted.py::restricted_summary`, next to whose two module
+constants the two sentences live, one per leg; every exit calls that builder and shapes nothing of
+its own, and a second construction site is a red test rather than a documentation task. What may
+differ per exit is the sentence alone, and each exit registers its own wording where it is specified:
+the dataset leg lives in `## Dataset Row-Level Visibility`, and its sentence is a different sentence
+because a dataset is not a document.
+
 | key | type | presence | meaning |
 | --- | --- | --- | --- |
 | `count` | int | always | how many documents exist outside this caller's visibility; the same `len(withheld)` that the sentence below repeats |
@@ -950,10 +975,10 @@ with subject, filename and verdict, and this body stays free of that record.
 > justification for not speaking for the other field.
 
 Both flat document routes answer with the **same** optional key, built by one shared projection
-(`app/api/v1/chat.py::_restricted_summary`), and its keys are exactly the table above: `documents`
+(`app/api/v1/restricted.py::restricted_summary`), and its keys are exactly the table above: `documents`
 stays a plain list of what the caller may see, while a caller who was withheld documents sees
-`restricted` next to it instead of a shorter list plus silence. Judgement and counting happen once,
-in `_classify_document_rows` — the route never counts permissions a second time.
+`restricted` next to it instead of a shorter list plus silence. How that key is arrived at is stated
+once, in the canon at the head of this subsection; the routes add no tally of their own.
 
 * `restricted` **absent** plus a non-empty `documents` means nothing is being hidden;
 * `restricted` **absent** plus an empty `documents` is the only shape that entitles a screen to say

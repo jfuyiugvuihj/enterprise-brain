@@ -31,6 +31,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_PY = ROOT / "app" / "api" / "v1" / "data.py"
+# R200 换厂：restricted 的构造自本单起只在 app/api/v1/restricted.py 那一处，本钉改读它与它
+# 登记给数据文件腿的那句模板常量。期望串、断言数量与被钉语义一字未改。
+RESTRICTED_PY = ROOT / "app" / "api" / "v1" / "restricted.py"
+PROJECTION = "restricted_summary"
+DATA_FILE_TEMPLATE_NAME = "DATA_FILE_TEMPLATE"
 MAIN_PY = ROOT / "app" / "main.py"
 CONTRACT = ROOT / "docs" / "api" / "contract-v1.md"
 
@@ -85,6 +90,25 @@ def _table_keys(body: str) -> list[str]:
 @pytest.fixture(scope="module")
 def data_tree() -> ast.Module:
     return ast.parse(_text(DATA_PY))
+
+
+@pytest.fixture(scope="module")
+def restricted_tree() -> ast.Module:
+    return ast.parse(_text(RESTRICTED_PY))
+
+
+def _module_constant(tree: ast.Module, name: str) -> str:
+    """按字节读出一枚模块级字符串常量（读不懂就红，不许退化成手抄）。"""
+    found = [
+        node.value for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == name
+    ]
+    assert len(found) == 1, "%s 应当在本模块里只有一处定义，实取 %d 处" % (name, len(found))
+    assert isinstance(found[0], ast.Constant) and isinstance(found[0].value, str), (
+        "%s 不再是一枚可读的字符串字面量：本钉读不到句子就不许装绿" % name
+    )
+    return str(found[0].value)
 
 
 def _function(tree: ast.Module, name: str) -> ast.AST:
@@ -144,36 +168,63 @@ def _row_scope_shape(tree: ast.Module) -> dict:
     }
 
 
-def _restricted_shape(tree: ast.Module) -> dict:
+def _restricted_shape(tree: ast.Module, restricted_tree: ast.Module) -> dict:
+    """R200 之后 restricted 的读点分两半，钉的语义仍是改前那一套：
+
+      · 键清单与 ``message`` 的「数与话里的数是同一个表达式」改从**共用 builder** 的返回 dict 现抠
+        （改前它从本路由内联那枚 dict 现抠 —— 那是同一件事的另一半：形状只有一处定义）；
+      · 挂载条件（``guard``）与「句子里插的值就是本腿那一枚计数」仍从**本路由**现读：出口必须把
+        ``restricted_count`` 定义成 ``len(restricted_withheld)``，并把 ``restricted_withheld``
+        与本腿那句模板常量原样递给 builder；
+      · 句子按字节从 ``DATA_FILE_TEMPLATE`` 常量读出（改前从 f-string 的常量段复原）。
+    """
     fn = _function(tree, "list_data_files")
     assigns = _subscript_targets(fn, "result")
     assert "restricted" in assigns, "目录里那枚 result[`restricted`] 构形处不见了"
-    payload = assigns["restricted"]
-    assert isinstance(payload, ast.Dict), "restricted 不再是 dict 字面量：请同步契约与本钉"
+    call = assigns["restricted"]
+    assert (
+        isinstance(call, ast.Call) and ast.unparse(call.func) == PROJECTION
+        and [ast.unparse(arg) for arg in call.args] == ["restricted_withheld", DATA_FILE_TEMPLATE_NAME]
+        and _simple_assign(fn, "restricted_count") == "len(restricted_withheld)"
+    ), "数据文件腿不再把那一串被拒清单与它自己的计数交给共用 builder：请同步契约与本钉"
     guarded = [
         node for node in ast.walk(fn)
         if isinstance(node, ast.If) and "restricted" in _subscript_targets(node, "result")
     ]
     assert len(guarded) == 1, "restricted 必须只在真有拒绝时才挂（无拒绝=不挂键，不是挂零）"
-    fields = {key.value: value for key, value in zip(payload.keys, payload.values)}
+    payload = _function(restricted_tree, PROJECTION)
+    returns = [node for node in ast.walk(payload) if isinstance(node, ast.Return)]
+    assert len(returns) == 1 and isinstance(returns[0].value, ast.Dict), (
+        "%s 不再只返回一枚 dict 字面量：请同步契约与本钉" % PROJECTION
+    )
+    fields = {key.value: value for key, value in zip(returns[0].value.keys, returns[0].value.values)}
     message = fields["message"]
-    assert isinstance(message, ast.JoinedStr), "restricted.message 不再是拼 count 的 f-string"
-    template_parts = []
-    for part in message.values:
-        if isinstance(part, ast.Constant):
-            template_parts.append(str(part.value))
-        elif isinstance(part, ast.FormattedValue):
-            assert ast.unparse(part.value) == "restricted_count", (
-                f"句子里插的值换了：{ast.unparse(part.value)}（契约那行模板写的是 count）"
-            )
-            template_parts.append("{count}")
-        else:  # pragma: no cover
-            raise AssertionError("restricted.message 出现了读不懂的节点")
+    slots = {keyword.arg: keyword.value for keyword in message.keywords} if isinstance(message, ast.Call) else None
+    assert isinstance(message, ast.Call) and ast.unparse(message.func) == "template.format" and slots is not None, (
+        "restricted.message 不再是拼 count 的模板渲染"
+    )
+    assert ast.unparse(slots.get("count")) == ast.unparse(fields["count"]), (
+        "句子里插的值与 count 字段不再是同一个表达式（契约那行模板写的是 count）"
+    )
+    # 改前那一枚 else 分支原样搬过来：登记的模板里没有槽，就等于句子拼不出数
+    if "{count}" not in _module_constant(restricted_tree, DATA_FILE_TEMPLATE_NAME):
+        raise AssertionError("restricted.message 出现了读不懂的节点")
     return {
-        "keys": _dict_keys(payload),
+        "keys": _dict_keys(returns[0].value),
         "guard": ast.unparse(guarded[0].test),
-        "template": "".join(template_parts),
+        "template": _module_constant(restricted_tree, DATA_FILE_TEMPLATE_NAME),
     }
+
+
+def _simple_assign(fn: ast.AST, name: str) -> str:
+    """``name = <expr>`` 的右值（只此一处，多写一处即读不懂）。"""
+    found = [
+        ast.unparse(node.value) for node in ast.walk(fn)
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == name
+    ]
+    assert len(found) == 1, "%s 的赋值应当只有一处，实取 %d 处" % (name, len(found))
+    return found[0]
 
 
 def _route_key(tree: ast.Module, function_name: str) -> tuple[str, str]:
@@ -229,7 +280,7 @@ def test_documented_row_scope_keys_are_the_keys_the_constructor_builds():
 
 def test_documented_restricted_keys_are_the_keys_the_catalog_builds():
     tree = ast.parse(_text(DATA_PY))
-    shape = _restricted_shape(tree)
+    shape = _restricted_shape(tree, ast.parse(_text(RESTRICTED_PY)))
     body = _subsections()[CATALOG_SUBHEAD]
 
     assert _table_keys(body) == shape["keys"], "restricted 的键清单与目录构形处不同源"
@@ -351,7 +402,7 @@ def test_preview_route_attaches_the_field_the_contract_names():
 
 def test_the_catalog_sentence_in_the_contract_is_the_route_own_bytes():
     tree = ast.parse(_text(DATA_PY))
-    shape = _restricted_shape(tree)
+    shape = _restricted_shape(tree, ast.parse(_text(RESTRICTED_PY)))
     body = _subsections()[CATALOG_SUBHEAD]
 
     assert shape["guard"] == "restricted_count", (
@@ -370,7 +421,7 @@ def test_the_catalog_sentence_in_the_contract_is_the_route_own_bytes():
 
 def test_restricted_carries_no_name_and_the_contract_says_why():
     tree = ast.parse(_text(DATA_PY))
-    shape = _restricted_shape(tree)
+    shape = _restricted_shape(tree, ast.parse(_text(RESTRICTED_PY)))
     body = _subsections()[CATALOG_SUBHEAD]
 
     assert shape["keys"] == ["count", "reason_codes", "message"], (

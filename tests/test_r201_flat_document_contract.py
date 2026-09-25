@@ -32,6 +32,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "docs" / "api" / "contract-v1.md"
 CHAT_PY = ROOT / "app" / "api" / "v1" / "chat.py"
+# R200 换厂：restricted 的构造自本单起只在 app/api/v1/restricted.py 那一处。本钉改读那一处，
+# 三条被钉的约束（message 必须由模板与同一个数拼成、count 逐字等于 len(withheld)、两处 attach
+# 必须逐字是共用 builder 的调用）一字未改，只是不再从 chat.py 的函数体里读形状。
+RESTRICTED_PY = ROOT / "app" / "api" / "v1" / "restricted.py"
 CATALOG_PY = ROOT / "app" / "documents" / "catalog.py"
 MAIN_PY = ROOT / "app" / "main.py"
 POLICY_PY = ROOT / "app" / "documents" / "index_policy.py"
@@ -47,7 +51,8 @@ SUBHEADS = {FLAT_SUBHEAD, CATALOG_SUBHEAD, RESTRICTED_SUBHEAD, ROWS_SUBHEAD}
 
 FLAT_ROUTE = "list_documents"
 CATALOG_ROUTE = "list_document_catalog"
-PROJECTION = "_restricted_summary"
+PROJECTION = "restricted_summary"
+PROJECTION_TEMPLATE = "DOCUMENT_TEMPLATE"
 SERIALIZER = "public_document_row"
 VERBS = {"get", "post", "put", "delete"}
 CONTRACT_PHRASE = "discarded by the framework, not honoured"
@@ -237,31 +242,59 @@ def _envelope(chat: str, name: str) -> dict:
     }
 
 
-def _projection(chat: str) -> dict:
-    fn = _function(chat, PROJECTION)
+def _projection(restricted: str) -> dict:
+    """The tally's shape, read out of the one module that builds it (R200).
+
+    改前三条被钉的语义：``message`` 是一句字面量与一个表达式拼出来的（不是运行时重新写的一句话）、
+    句子里那个数逐字等于 ``count`` 字段的表达式、整枚返回值就是一枚 dict 字面量。合并之后同一套
+    语义落在新形状上：句子是一枚按字节可读的模块级模板常量，由 ``template.format(count=<同一个表达式>)``
+    填进去 —— 所以本函数把「读 f-string 的常量段」换成「读模板常量 + 校验填进去的就是 count」，
+    五枚断言一枚不少，且多校验了「渲染的必须是调用方递来的那一句模板」这一头。
+    """
+    fn = _function(restricted, PROJECTION)
     returns = [node for node in ast.walk(fn) if isinstance(node, ast.Return)]
     assert len(returns) == 1, "%s should return exactly one dict" % PROJECTION
     assert isinstance(returns[0].value, ast.Dict), "%s no longer returns a literal dict" % PROJECTION
     fields = {str(key.value): value for key, value in zip(returns[0].value.keys, returns[0].value.values)}
     message = fields["message"]
-    assert isinstance(message, ast.JoinedStr), "restricted.message is no longer an interpolated sentence"
-    template = ""
-    for part in message.values:
-        if isinstance(part, ast.Constant):
-            template += str(part.value)
-        elif isinstance(part, ast.FormattedValue):
-            assert ast.unparse(part.value) == ast.unparse(fields["count"]), (
+    assert (
+        isinstance(message, ast.Call) and ast.unparse(message.func) == "template.format"
+    ), "restricted.message is no longer an interpolated sentence"
+    slots = {
+        str(keyword.arg): keyword.value for keyword in message.keywords
+    } if isinstance(message, ast.Call) else {}
+    template = _module_constant(restricted, PROJECTION_TEMPLATE)
+    for name, value in slots.items():
+        if name == "count":
+            assert ast.unparse(value) == ast.unparse(fields["count"]), (
                 "the number inside the sentence is not the number in the count field"
             )
-            template += "{count}"
         else:
             raise AssertionError("unreadable node inside restricted.message")
+    assert set(slots) == {"count"}, "restricted.message 的占位符不再只有 count 一枚：%s" % sorted(slots)
     return {
         "keys": list(fields),
         "count": ast.unparse(fields["count"]),
         "reasons": ast.unparse(fields["reason_codes"]),
         "template": template,
     }
+
+
+def _module_constant(source: str, name: str) -> str:
+    """Read one module-level string constant byte for byte (unreadable is red, never hand-copied)."""
+    tree = _tree(source)
+    found = [
+        node.value for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == name
+    ]
+    assert len(found) == 1, "%s should be defined exactly once, found %d" % (name, len(found))
+    assert isinstance(found[0], ast.Constant) and isinstance(found[0].value, str), (
+        "%s is no longer a readable string literal: this pin refuses to guess the wording" % name
+    )
+    text = str(found[0].value)
+    assert "{count}" in text, "%s 里那枚占位符不见了：句子与 count 不再是同一笔账" % name
+    return text
 
 
 def _attach_points(chat: str) -> list[tuple[str, str, str]]:
@@ -397,7 +430,9 @@ def _check_envelope(
         assert isinstance(value, ast.Call) and ast.unparse(value.func) == PROJECTION, (
             "%s is no longer built by %s: one fact, two shapes" % (key, PROJECTION)
         )
-        assert [ast.unparse(argument) for argument in value.args] == [guard], (
+        # R200 换厂：共用 builder 除了那一串判定还要收本腿登记的那句模板，所以两样一起逐字钉住 ——
+        # 第一枚参数仍必须是守卫它的那一枚 verdict，语义一字未改，只是多钉了一句模板来源。
+        assert [ast.unparse(argument) for argument in value.args] == [guard, PROJECTION_TEMPLATE], (
             "%s is fed something other than the verdict it is guarded by" % key
         )
 
@@ -463,9 +498,13 @@ def test_the_shared_projection_is_attached_exactly_twice_in_chat() -> None:
     hits = _attach_points(chat)
     assert sorted(name for name, _guard, _call in hits) == sorted([FLAT_ROUTE, CATALOG_ROUTE]), hits
     assert all(guard == "withheld" for _name, guard, _call in hits), hits
-    assert [call for _name, _guard, call in hits] == ["%s(withheld)" % PROJECTION] * 2, hits
-    builders = [node for node in ast.walk(_tree(chat))
-                if isinstance(node, ast.FunctionDef) and node.name == PROJECTION]
+    assert [
+        call for _name, _guard, call in hits
+    ] == ["%s(withheld, %s)" % (PROJECTION, PROJECTION_TEMPLATE)] * 2, hits
+    builders = [
+        node for source in (chat, _text(RESTRICTED_PY)) for node in ast.walk(_tree(source))
+        if isinstance(node, ast.FunctionDef) and node.name == PROJECTION
+    ]
     assert len(builders) == 1, "%s is defined more than once" % PROJECTION
 
 
@@ -485,7 +524,7 @@ def _tally_examples(contract: str | None = None) -> list[dict]:
 
 def test_the_documented_tally_keys_are_the_projection_keys() -> None:
     body = _subsections()[RESTRICTED_SUBHEAD]
-    shape = _projection(_text(CHAT_PY))
+    shape = _projection(_text(RESTRICTED_PY))
     required, optional = _presence(_table(body))
     assert optional == [], "restricted grew a key that only appears sometimes: say under what"
     assert required == shape["keys"], (
@@ -499,7 +538,7 @@ def test_the_documented_tally_keys_are_the_projection_keys() -> None:
 
 def test_the_number_in_the_sentence_is_the_number_in_the_field() -> None:
     body = _subsections()[RESTRICTED_SUBHEAD]
-    shape = _projection(_text(CHAT_PY))
+    shape = _projection(_text(RESTRICTED_PY))
     assert shape["count"] == "len(withheld)", "the tally is computed from something else now"
     assert "`%s`" % shape["count"] in _cell(body, "count")[2], (
         "the contract no longer quotes the expression the count is built from"
@@ -510,7 +549,7 @@ def test_the_number_in_the_sentence_is_the_number_in_the_field() -> None:
 
 def test_the_message_template_is_the_sentence_the_projection_emits() -> None:
     body = _subsections()[RESTRICTED_SUBHEAD]
-    shape = _projection(_text(CHAT_PY))
+    shape = _projection(_text(RESTRICTED_PY))
     documented = re.findall(r"`([^`\n]*\{count\}[^`\n]*)`", body)
     assert len(documented) == 1, "the section carries %d templates for one sentence" % len(documented)
     assert documented[0] == shape["template"], (
@@ -525,7 +564,7 @@ def test_the_message_template_is_the_sentence_the_projection_emits() -> None:
 
 def test_the_reason_codes_are_that_verdicts_codes_deduplicated_in_order() -> None:
     body = _subsections()[RESTRICTED_SUBHEAD]
-    shape = _projection(_text(CHAT_PY))
+    shape = _projection(_text(RESTRICTED_PY))
     assert "dict.fromkeys" in shape["reasons"], "reason codes are no longer collected in one ordered pass"
     assert "withheld" in shape["reasons"], "reason codes no longer come from the same verdict as the count"
     _type, _presence_cell, meaning = _cell(body, "reason_codes")
@@ -745,8 +784,9 @@ def test_falsification_a_renamed_key_turns_the_weld_red() -> None:
 def test_falsification_a_second_restricted_builder_in_chat_turns_the_weld_red() -> None:
     chat = _text(CHAT_PY)
     split = chat.replace(
-        "    result[\"restricted\"] = _restricted_summary(withheld)\n    return result\n\n\n"
-        "@router.get(\"/documents/catalog\")",
+        "    result[\"restricted\"] = %s(withheld, %s)\n    return result\n\n\n"
+        % (PROJECTION, PROJECTION_TEMPLATE)
+        + "@router.get(\"/documents/catalog\")",
         "    result[\"restricted\"] = {\"count\": len(withheld)}\n    return result\n\n\n"
         "@router.get(\"/documents/catalog\")",
         1,
@@ -754,8 +794,8 @@ def test_falsification_a_second_restricted_builder_in_chat_turns_the_weld_red() 
     assert split != chat, "the falsifier stopped finding the shared projection"
     hits = _attach_points(split)
     assert [call for _name, _guard, call in hits] != [
-        "%s(withheld)" % PROJECTION, "%s(withheld)" % PROJECTION
-    ], "a route splitting off the shared projection did not register: the pin is blind"
+        "%s(withheld, %s)" % (PROJECTION, PROJECTION_TEMPLATE)
+    ] * 2, "a route splitting off the shared projection did not register: the pin is blind"
     body = _subsections()[FLAT_SUBHEAD]
     with pytest.raises(AssertionError):
         _check_envelope(body, FLAT_ROUTE, "string", "filename", chat=split, label="split paragraph")

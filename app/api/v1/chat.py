@@ -71,6 +71,7 @@ from app.documents.file_security import (
     build_storage_path,
     inspect_upload_header,
 )
+from app.api.v1.restricted import DOCUMENT_TEMPLATE, restricted_summary
 from app.documents.index_policy import (
     INDEX_STATUS_EXCLUDED,
     INDEX_STATUS_INDEXED,
@@ -734,24 +735,6 @@ def _classify_document_rows(
 def _visible_document_rows(request: FastAPIRequest, rows: list[dict]) -> list[dict]:
     visible, _withheld = _classify_document_rows(request, rows)
     return visible
-
-
-def _restricted_summary(withheld: list[tuple[str, str]]) -> dict:
-    """Shape 「有，但你不能看」 into one field of a successful body.
-
-    两处平铺出口（GET /documents 与 GET /documents/catalog）共用这一份形状，免得其中
-    一处改了口径、另一处还在说假话。计数与判定都来自 _classify_document_rows 已经给出
-    的结论：这里只负责解释，不再裁一次。只报数量与稳定码，不点名是哪一份文档，
-    也不把文件级返回改成 403——口径照本仓已并树的 app/api/v1/data.py（R180）。
-    """
-    return {
-        "count": len(withheld),
-        "reason_codes": list(dict.fromkeys(code for _name, code in withheld)),
-        "message": (
-            f"有 {len(withheld)} 份文档存在，但不在当前账号的可见范围内；"
-            "如需访问，请联系管理员核对你的部门归属与文档的部门、密级标注。"
-        ),
-    }
 
 
 def _authorize_document_request(
@@ -3689,7 +3672,8 @@ async def upload_document(file: UploadFile = File(...),
 @router.get("/documents")
 async def list_documents(request: FastAPIRequest):
     indexed_names = set(retriever.list_documents())
-    # 判定与计数只走 _classify_document_rows 那一份（R179 的通路），这里不数第二遍权限。
+    # 判定与计数只走 _classify_document_rows 那一份（R179 的通路），这里不数第二遍权限；
+    # 形状只走 app/api/v1/restricted.py 那一份（R200），这里也不拼第二遍。
     visible_rows, withheld = _classify_document_rows(request, current_documents())
     result: dict = {
         "documents": [
@@ -3700,7 +3684,7 @@ async def list_documents(request: FastAPIRequest):
     }
     if withheld:
         # 数组里的「没有」只管已索引；被权限挡掉的另说一笔，两张脸不许长成一张。
-        result["restricted"] = _restricted_summary(withheld)
+        result["restricted"] = restricted_summary(withheld, DOCUMENT_TEMPLATE)
     return result
 
 
@@ -3709,8 +3693,8 @@ async def list_document_catalog(request: FastAPIRequest):
     visible, withheld = _classify_document_rows(request, current_documents())
     result: dict = {"documents": visible}
     if withheld:
-        # 判据②（两张脸）：形状与 GET /documents 共用 _restricted_summary 那一份。
-        result["restricted"] = _restricted_summary(withheld)
+        # 判据②（两张脸）：形状与 GET /documents 共用 restricted_summary 那一份。
+        result["restricted"] = restricted_summary(withheld, DOCUMENT_TEMPLATE)
     return result
 
 

@@ -17,6 +17,7 @@ from app.tools.chart import bar_chart, line_chart, pie_chart, radar_chart
 from app.tools.visualize import gantt_chart, mindmap
 from app.tools.export import generate_pdf_report, export_to_excel
 from app.common.logger import logger
+from app.api.v1.restricted import DATA_FILE_TEMPLATE, restricted_summary
 from app.common.audit import record_audit
 from app.common.authorization import principal_from_request
 from app.common.permissions import (
@@ -176,12 +177,15 @@ async def list_data_files(request: Request = None):
     directory.mkdir(parents=True, exist_ok=True)
     files = []
     # A registered file the caller is refused at the file level is neither appended to
-    # `files` nor dropped in silence: it is counted and its policy reason kept, so the
-    # catalogue can say "these exist but you cannot see them" without naming them
-    # (naming a resource an account has no scope for is its own leak, and every other
-    # dataset route already hides behind 403/404). R180 criteria 2/3/4.
-    restricted_count = 0
-    restricted_reasons: list[str] = []
+    # `files` nor dropped in silence: it is counted and its reason kept, so the catalogue
+    # can say "these exist but you cannot see them" without naming them (naming a resource
+    # an account has no scope for is its own leak, and every other dataset route already
+    # hides behind 403/404). R180 criteria 2/3/4. Nothing about the tally is shaped here
+    # any more: the leg hands its own (dataset id, reason code) pairs to the one shared
+    # builder (app/api/v1/restricted.py) and that one sentence template - the canon is
+    # `restricted -> the one shared projection` in docs/api/contract-v1.md, and
+    # tests/test_r200_restricted_single_source.py keeps every exit honest to it.
+    restricted_withheld: list[tuple[str, str]] = []
     principal = principal_from_request(request) if request is not None else None
     for path in directory.iterdir():
         if not path.is_file() or path.suffix.lower() not in DATA_FILE_EXTENSIONS:
@@ -204,9 +208,7 @@ async def list_data_files(request: Request = None):
                 # continued: "there is a file you cannot open" answered exactly like
                 # "there is no file", with no audit trail. Now it both speaks and lands
                 # on the audit path (subject / dataset id / verdict, zero body).
-                restricted_count += 1
-                if decision.reason_code not in restricted_reasons:
-                    restricted_reasons.append(decision.reason_code)
+                restricted_withheld.append((record.dataset_id, decision.reason_code))
                 record_audit(
                     principal,
                     ACTION_VIEW,
@@ -233,19 +235,13 @@ async def list_data_files(request: Request = None):
                 }
             )
         files.append(item)
+    restricted_count = len(restricted_withheld)
     files.sort(key=lambda item: item["_modified_timestamp"], reverse=True)
     for item in files:
         item.pop("_modified_timestamp")
     result = {"files": files}
     if restricted_count:
-        result["restricted"] = {
-            "count": restricted_count,
-            "reason_codes": restricted_reasons,
-            "message": (
-                f"有 {restricted_count} 个数据文件存在，但不在当前账号的可见范围内；"
-                "如需访问，请联系管理员核对你的部门归属与文件的部门标注。"
-            ),
-        }
+        result["restricted"] = restricted_summary(restricted_withheld, DATA_FILE_TEMPLATE)
     return result
 
 
