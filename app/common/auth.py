@@ -1,6 +1,7 @@
 """JWT auth and user management with PostgreSQL fallback."""
 import os
 import re
+import secrets  # 只为一件事留在这儿：给 SSO 新建用户铸造不可猜的本地占位口令（见 upsert_sso_user）
 import time
 from datetime import datetime, timedelta, timezone
 
