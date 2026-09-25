@@ -1384,6 +1384,11 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | （总控亲做） | — | **R217** 预演件 `always_unaffordable` 严格式 + 「标定读数不许漂」钉 | `be-r217`（基点 `e34323d`） | ✅ **已并树 `170fd08`**：严格式 `affordable_max < min(declared, floor)` + 新件 87 行/5 枚（含「本件必须有牙」自证）；第②部分（标定出处）判为重复劳动取消——`model_budget.py:195-222` 早就写着 CPU-only 且 re-measure before citing。🔴 派工词自纠：原判据把分歧方向写反，真分歧只在 `floor ≤ affordable < declared`（旧式是假阳，两旗可同时为真） | 15:0x |
 | `Hilbert`（简报自定代号 `Herschel`；与 R179 那枚 `Hilbert` `01a0cdf0-…` **同名不同人**，按 agent_id 定序） | `01a0d26b-ab69-7642-940c-e72b65e0971a` | **R216** A④ 第 4 格：`metric-08` 引对原文却选错边 | `be-r216`（基点 `dea3ee4`，`.venv`/`node_modules` Junction 已配） | 🔵 **在途**（16:0x 单枚 `spawn_agent`）。写域 `app/agents/nodes.py` + `app/agents/orchestrator.py` + 新 `tests/test_r216_*.py`；🚫 `chat.py`（R48 独占）/`app/rag/**`/`frontend/**`/`docs/**`/评测集。纪律四条：不许算进「逐字保真」收益；产品代码里出现题目关键词或原文片段硬编码 = 没收工；必须 ≥2 道换部门换条款方向的参数化合成题；要改被 `test_r167` 钉的 prompt 前缀字节布局即停手回报。反证红色必须落在本格判据上 | 16:0x |
 | `Russell`（与 R160 `01a0c6f3-…`／R177 `01a0cc5b-…` **同名不同人**） | `01a0d26d-ab49-7c83-a3fd-28459d983d0e` | **R218** run7 开窗前的离线可测性补格 | 自建 `be-r218`（基点 `dea3ee4`） | 🔵 **在途**（16:0x 单枚 `spawn_agent`）。写域只有 `scripts/rehearse_eval_window.py` + `scripts/r218_*` + 新 `tests/test_r218_*.py`。三格：D 前置（`REPORT_LANE_VIA_QUEUE` 翻 on 后的入队/轮询/停轮）、C（缓存命中腿在采集器里可不可观测）、A② 量具自校准（拿 R215 那两格新读数在离线合成流上证明尺子有牙）。🔴 测不了的不许放宽判据，落成 `NOT_COVERED_OFFLINE` + 原因，并交「窗内必须现场判」清单给总控 | 16:0x |
+| `Meitner`（回执代号，总控原给 `Boltzmann` 未被采纳；与 09-17 R35 那枚 `Meitner` `01a0af9c-…` **同名不同人**，按 agent_id 定序） | `01a0d640-aceb-76f3-83a6-8d5c2637e09d` | **R200** 三份同形 `restricted` 并一（判据 跟进单 §94 五·W1） | `be-r200`（基点 `4e29141`，**独占**；写域 `app/api/v1/data.py` + `app/api/v1/chat.py` + `docs/api/contract-v1.md` + 新 `tests/test_r200_*`） | 🟢 **本班（第九班第一格）09:49:59 投出**，一 block 一枚、无重复投递；开工核查 `be-r200` HEAD=`4e29141` dirty=0 | 09:49:59 |
+| `Noether`（回执代号，总控原给 `Huygens` 未被采纳；与 R160 前代同名者无关，按 agent_id 定序） | `01a0d641-de74-7eb0-94fb-23f6ab65529e` | **R221** 前端队列看门狗不认 `dead` + 无 deadline（判据 跟进单 §94 三） | `be-r221`（基点 `4e29141`，**独占**；写域 `frontend/src/components/ChatPanel.vue` + 新 `__tests__/r221-*.test.js`；`frontend\node_modules` 已由总控预配 Junction） | 🟢 **本班 09:50:54 投出**，一 block 一枚 | 09:50:54 |
+| `Ohm`（回执代号，总控原给 `Bergson` 未被采纳；与 R50/R190/`01a0b7dd`／R59/`01a0d155-f1fe` 等同名者**均无关**，按 agent_id 定序） | `01a0d642-f55d-7b81-addf-66cb73c381db` | **R222 + R223**（同树同枚：适配器认全五枚终态 + 帧账补 `arrival_at`/首枚非-text 可见事件） | `be-r222`（基点 `4e29141`，**独占**；写域 `scripts/eval_transport_ask_v2.py` + 新 `tests/test_r222_*`/`test_r223_*`） | 🟢 **本班 09:52:01 投出**；🔴 投递词明令**不得回退 R226**（`4e29141` 的 `EVAL_DECLARE_LANE_TIER`） | 09:52:01 |
+| `Wegener`（回执代号，总控原给 `Seneca` 未被采纳；与 R116 那枚 `Wegener` **同名不同人**，按 agent_id 定序） | `01a0d644-4c72-7c32-9e79-c2a96b70bccb` | **R224** 计划书 28 号逐单对 §21 判据亲验（纯文书；产物在树≠判据达成） | `be-r224`（基点 `4e29141`，**独占**；写域只有新建 `docs/handoff/2026-09-25-plan-ticket-closure.md`） | 🟢 **本班 09:53:38 投出**；投递词明令禁「拿 grep 不到当证据」、禁改任何既有文档、禁全量门 | 09:53:38 |
+| `Boole`（回执代号，总控原给 `Malthus` 未被采纳；与 R98 `01a0b9fe`／R104 `01a0bcc8`／R48S `01a0ceb3` 等同名者**均无关**，按 agent_id 定序） | `01a0d645-4821-7b12-8b79-df2b36337d72` | **R59c** 切读前三格补数（计划书 §9.3 ①②③）——**本轮是预配量具窗，不是合闸窗** | `be-r59c`（基点 `4e29141`，**独占**；写域只有新 `scripts/r59c_*` + 新 `docs/testing/r59c-*`；🔴 `app/rag/**` 与 `app/documents/catalog.py` 本轮零写入，不许翻开关/动容器） | 🟢 本班 09:5x 投出；真库两侧对照等总控排窗 | 09:5x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -3995,3 +4000,54 @@ R48 在 `chat.py` 新增 canonical 事件 `answer.headline`，它成了 `test_r1
 - **五、本格在途与写域交集（16:1x 逐棵现取）**：`Confucius`/R48@`be-r48`（`chat.py`+`contract-v1.md`+`frontend/src/lib/sessions.js`+`ChatPanel.vue`+新件）｜`Hilbert`/R216@`be-r216`（`app/agents/nodes.py`+`orchestrator.py`+新件）｜`Russell`/R218@自建 `be-r218`（`scripts/rehearse_eval_window.py`+`scripts/r218_*`+新件）。**三棵两两零交集**；主树工作区另压着已验收的 R215 净增量（`scripts/` 两枚 + `tests/` 三枚 + 键集钉 + 纸面订正）。⇒ 🔴 **全量门现在不能跑**（事故 #47），基线 4323/40 自 `ffea5ff` 起未复算，等三枚全部交回的静默窗。
 - **六、收格时窗内可做什么**：三枚在途期间总控只做零 CPU 争用的活（验收取证、写判据、预配工作树、对账）。R200（`chat.py`，排 R48 后）、R205b（V1 后）、R216/R218 并树后的第二枚候选，都等这一轮静默。
 - **七、待业主（本格刷新，共 7 条，总控一律不代做）**：① 心跳 `automation-2` 的 `targetThreadId` 仍指死线程 `01a0acfb`；② 批准改评测集（29 条 `must_contain` 查无出处）；③ **H20** R59 切读的显式距离下限 + 密级维度复核（⇒ R59 继续按住不派）；④「rename 数据库表」始终没给表名列名；⑤ VM `sshd` 掉了（`ssh vm` Connection closed，不在 V1 关键路径）；⑥ **R214 两选一**（路 A 重标定 / 路 B 承认分析档付不起）；⑦ 新增：**A① 的整表 p95 口径**——问答档 n=64 `p95 61.0 s` 已绿，整表 107.9 s / 分析与报告档 144.0 s 到算不算验收面，这条不定，阶段 A 不许翻绿。
+
+---
+
+## §4BZ（09-25 09:3x–09:5x，第九班第一格·接手第八班第三格，主树 `866c2f3`）：六枚派工逐枚投出（一 block 一枚，零重复投递）· 🔴 六枚回执代号全部未采纳总控原定名 · 四行过期"在途"账作废 · 看板行尾实测是 **LF** 不是 CRLF
+
+### 一、接手核对（本班亲跑，不采信前任摘要）
+
+| 项 | 读数 | 判 |
+|---|---|---|
+| 主树 | `企业智脑`，分支 `codex/data-file-catalog`，HEAD `866c2f3`；tracked dirty=0（未跟踪只有业主 `课程实践-…` 与 `.zcodeignore`） | ✅ |
+| 本班链 | `7375390`→`723550c`→`ff8c7d4`→`4e29141`→`866c2f3`（第八班三格） | ✅ |
+| 全量门 | 前任实测 **4447 passed / 39 skipped / 0 failed**（`run_gate.py -n 4`，121.83 s，@`4e29141`）。🔴 **本班未复跑**（六枚在途，跑门争内存），收格复跑 | ⚠️ 待复跑 |
+| Docker | 引擎已从 stale socket 恢复；本班 09:47 实取七件容器全 Up，backend/worker/scheduler/redis/postgres/ollama healthy | ✅ |
+| 六棵树 | `be-r227`/`be-r200`/`be-r221`/`be-r222`/`be-r224`/`be-r59c` 基点全部 `4e29141`，投出时 dirty=0 | ✅ |
+| 跑分树 | `be-eval95` 已 `merge --ff-only` 跟到 `4e29141`，clean | ✅ |
+### 二、🔴 六枚派工（逐枚投出，一枚一 block，投后立即回写 §0 + 核树）
+
+| 号 | 独占树 | 写域 | 总控原定代号 → **回执代号** | 判据出处 |
+|---|---|---|---|---|
+| R227 | `be-r227` | `deploy/queue_worker.py` + `app/common/reliable_queue.py` + 新 `tests/test_r227_*` | Franklin → **`Kant`**（与 R101 `01a0bc6a` 同名不同人） | 跟进单 §96 二 |
+| R200 | `be-r200` | `app/api/v1/data.py` + `app/api/v1/chat.py` + `docs/api/contract-v1.md` + 新 `tests/test_r200_*` | Boltzmann → **`Meitner`**（与 R35 `01a0af9c` 同名不同人） | 跟进单 §94 五·W1 |
+| R221 | `be-r221` | `frontend/src/components/ChatPanel.vue` + 新 `__tests__/r221-*.test.js` | Huygens → **`Noether`** | 跟进单 §94 三 |
+| R222+R223 | `be-r222` | `scripts/eval_transport_ask_v2.py` + 新 `tests/test_r222_*`/`test_r223_*` | Bergson → **`Ohm`**（与 R50/R190/R59 几枚同名者无关） | 跟进单 §94 三 + §96 四 |
+| R224 | `be-r224` | **只新建** `docs/handoff/2026-09-25-plan-ticket-closure.md` | Seneca → **`Wegener`**（与 R116 同名不同人） | 跟进单 §95 |
+| R59c | `be-r59c` | **只新建** `scripts/r59c_*` + `docs/testing/r59c-*`（🔴 本轮 `app/rag/**` 零写入、不翻开关、不动容器） | Malthus → **`Boole`**（与 R98/R104/R48S 同名者无关） | 跟进单 §94 八 + 计划书 §9.3 ①②③ |
+
+- **写集互斥本班逐对核过**：三枚后端件、一枚前端件、一枚量具件、两枚纯新建件，零交集。
+- 🔴 **六枚全未采纳总控给的名字** ⇒ 今后派工词里代号只作署名提示，**唯一键按 `agent_id`**，撞名一律在本表加"同名不同人"标注。
+- 🔴 **R222 的代际提示已写进投递词**：它的基点 `4e29141` 就是总控自修的 R226（量具补 `lane`），投递词明令"不得回退 R226"，验收时本班逐字节复量 off/报告 两种载荷。
+### 三、名册过期账（前任留的"在途"字样）——本班按 git 事实作废
+
+`git merge-base --is-ancestor <子提交> HEAD` 亲验四枚全部 **IN-HEAD**：R48 `0ad3d3e`、R216 `8fa3a1c`、R218 `d34bfbc`、R219 `39f3ae0`。⇒ §0 里 `Confucius`(R48)、`Hilbert`(R216)、`Russell`(R218) 与各 R219 行的"在途"**字样作废**，产物已在树上，只剩验收文书。
+
+🔴 **立一条通则**（名册里仍有 ~27 行写着"在途"，逐行追改没完）：**凡某单号在主干有自己的并树提交，其名册行的"在途"字样即自动作废**；"在途"的唯一定义 = 当班总控在 §0 行内 `状态` 列实取填写。历史行内容不再逐行修，以每格新开的这节清单为准。
+
+🔴 **仍真在途/未结案**：`be-r220`（`scripts/r220_packing_loss.py` 520 行未验收，**全队列唯一孤本**，R220 结案前一枚树都不许回收）、R225 / R228 / R229（已立未派）、R73、R76（R76 至今零提交）、R26（09-17 记了结案但查不到并树痕迹，已交给 R224 出独立结论）。
+
+### 四、环境事实订正与新增（会咬下一班，必读）
+
+- 🔴 **看板 `2026-09-15-orchestration-board.md` 行尾实测是裸 LF**（4003 枚 lone LF、CRLF 0），**不是前任摘要写的"统一 CRLF"**。本班按 LF 写回，BOM `EF BB BF` 保留（行 splice + `WriteAllText(…, UTF8Encoding($true))`）。同源实测：跟进单 = 3070 CRLF + **25 枚 lone LF（混体）**；计划书 / human-gates = 纯 CRLF 无 BOM。⇒ **抄模板前先数行尾，别拿跟进单当 CRLF 模板**。
+- **执行层跑定向件的解释器**（本班实测可用）：在任意工作树根执行 `& 'C:\Users\fengx\PycharmProjects\企业智脑\.venv\Scripts\python.exe' -m pytest <定向件> -q -p no:cacheprovider`，conftest 与 R134 闸门正常装载；宿主 `python` 是 anaconda、无 `chromadb`。
+- **`be-r221\frontend\node_modules` 本班已预成 Junction**（指主树 `node_modules`，与 `be-r48` 同构，121.2 MB / 7989 文件不复制）⇒ 前端单开箱即 `npm test`，执行层不许 `npm install`。
+- **rollout 文件 mtime 不是存活信号**：本班六枚的 rollout 在创建那一秒写完初始体量后 mtime 就不再动，而树里稍后才见写盘 ⇒ 判活只按**工作树 dirty** 与**回执**，别按 mtime 判死（本班差点把 R227 判成死枚）。
+### 五、本格现场主动停下的两笔（没硬烧）
+
+- **run7 相 2** 只有 `report-01` 一枚试点读数（09:27:01 接单 → 09:32:12 worker 生成完 1519 字 → 09:32:14 结果被丢弃 → `/queue/status` = `done` + `result=null`）。剩余 11 题**没跑**：同一枚丢弃墙每 5 分钟必撞，只会产出 11 枚 blank 哨兵，不出数。等 R227 并树后重开，一次拿全 D-1/D-2/D-3。
+- **`REPORT_LANE_VIA_QUEUE` 已还原删除**（`deploy/.env.server` 现无该行、容器内该变量消失、`VECTOR_DUAL_WRITE=on` 仍在）；R227 复验窗要再翻它，正解见跟进单 §96 与 runbook。
+
+### 六、等业主（不代做，本格刷新）
+
+① 心跳 `automation-2` 仍指死线程 `01a0acfb`（现 `status="PAUSED"`，没在空撞）；② 批准改评测集（29 条 `must_contain` 查无出处；A④ 新证据：逐字锚词会把语义对的答案判错，6 枚退化里 5 枚属此类）；③ H20 前任代裁可推翻；④ rename 表名列名；⑤ VM `sshd` 掉（非 V1 关键路径）；⑥ **R214 两选一**——新证据：报告档走队列道时 3 次 `analysis` 腿 `budget_unaffordable`，**不裁 R214 则 D 门走不完**；⑦ A① 整表 p95 口径未裁 ⇒ 阶段 A 不许翻绿；⑧ 反跟踪 `chroma_db`；⑨ hosts 里 `127.0.0.1 github.com`（`push origin` 必失败，只推 gitee）；⑩ 工作树清理清单（现 40 棵，`be-r220` 孤本除外）。
