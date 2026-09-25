@@ -269,7 +269,10 @@ def test_counter_proof_the_exemption_guard_is_load_bearing(tmp_path):
     assert "broken_stream_reads_green" in cell["problems"]
     assert (cell["readings"]["shapes"]["true_break_round"]["readings"]
             ["corrective_replacements"] == 1)
-    assert R.cell_lane_flip(overlay)["verdict"] == R.RED  # 且红的原因不是它
+    # 钉法改口（R245b·总控补做）：R245 把 D 格从「永久红 / 等人来重算代价」换成三跳现读的有名
+    # 读数，这一格的 verdict 从此不是常量，钉常量就等于替 R245 记一笔过期的账。换成更强的一句：
+    # 本次对适配器的变异必须**动不到** D 格（与净树同值），D 格自己那格的期望值归它本家钉。
+    assert R.cell_lane_flip(overlay)["verdict"] == R.cell_lane_flip(REPO)["verdict"]
     assert R.cell_cache_hit(overlay)["readings"]["mismatched_legs"] == []
 
     shutil.rmtree(tmp_path)
