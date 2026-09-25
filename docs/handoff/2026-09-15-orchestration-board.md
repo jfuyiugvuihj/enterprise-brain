@@ -4141,3 +4141,17 @@ app/storage/datasets.py 自陈 until Dataset/DatasetVersion tables are active、
 **4CB.8 遗留**：主树 M chroma_db/chroma.sqlite3 是 16:36 栈重启后容器自己写的，本班未提交亦未还原（反跟踪归业主）；
 本班为 R248-R251 建过 chroma_db junction，已用 cmd rmdir 只解链接撤销（否则 R134 写回闸门对新树失效），现四树只剩 .venv 一枚 junction。
 
+
+### 4CD（09-25 17:4x，第八班第四格·自纠第三笔）：4CB.5 那句「报告档 n=25」是假话，现取为 **20**
+
+4CB.5 与 `run8-phase2-plan` 5.2 里的「n=25（21 导出 + 4 分析）」是从上一班交接照抄的，本班落档前**没有现取**，写完即自审推翻：
+题库 `tests/fixtures/business_evaluation_100.jsonl`（105 行、sha256 前 16 `2230b2b45be18bfb`）的 `tier` 字段实测为 问答 50 / 分析 35 / **报告 20**，
+20 行名单 = `report-01..12` + `metric-16..19` + `tool-01..04`；`category=报告生成` 只有 12 行且 12 ⊆ 20。
+订正已写进 `docs/testing/run8-phase2-plan-2026-09-25.md` 5.5/5.6 两节，4CB.5 原文按「不静默改写历史」的规矩保留、以本节为准。
+
+**立规一条进派工规矩**：凡引用上一班交接稿里的数字，落档或写进派工词之前必须现取一次。本班这枚 `Counter` 花了两秒，
+代价本是一扇按错样本量设计的真机窗（25 vs 20 还关系到 D 格判据「100% 可查回」的分母）。
+
+顺带在案：本班已把开窗方案落成**可执行**形态——采集器无选行口，故改用仓外 20 题子集 fixture（`%TEMP%\eval-run8-phase2-report20.jsonl`，
+sha256 前 16 `a138beb8edbb52bd`），**零代码改动、不动被 `tests/test_evaluation_report.py` 钉死的评测集本体**；命令与开窗前三件见 run8 计划 5.6 节。
+

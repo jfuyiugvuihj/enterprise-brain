@@ -101,3 +101,33 @@
 两枚率写入 `deploy/.env.server`——该件被 `.gitignore:11` 忽略、**不进版本库**，本节即其唯一跟踪态凭据，
 换机或重装必须照本节重写。硬顺序：**先并 R245（它按现值取前端截止）再 recreate**；
 recreate 后必须 `docker exec enterprise-brain-backend-1 env | grep MODEL_` 复取，证明真的进了进程。
+### 5.5 🔴 自纠：5.2 那句 n=25 是交接带过来的数，我没现取就用了（本班当场推翻）
+
+现取 `tests/fixtures/business_evaluation_100.jsonl`（105 行，sha256 前 16 `2230b2b45be18bfb`）的 `tier` 字段：
+
+| tier | 行数 | id |
+|---|---|---|
+| 问答 | 50 | — |
+| 分析 | 35 | — |
+| **报告** | **20** | `report-01..12`（12）+ `metric-16..19`（4）+ `tool-01..04`（4）|
+
+`category=报告生成` 只有 12 行且 **12 ⊆ 20**（另有 8 行属报告档但类别不是报告生成）。所以：
+- 「n=25＝21 导出 + 4 分析」是**上一班交接的数，错**；D 格的样本量按题库字段是 **20**。
+- 窗口估算随之改：20 × 单题报告档（run7 同表实测 median 37.0 s / mean 51.7 s）+ 队列等待 ⇒ **25-40 分钟**，不是 40 分钟封顶。
+- 教训回写派工规矩：**凡引用上一班交接里的数字，落档前必须现取一次**；本班就是靠一枚 `Counter(r["tier"])` 当场抓出来的。
+
+### 5.6 开窗命令（已落成可执行，仓外子集，零代码改动、不动被钉死的评测集本体）
+
+采集器 `scripts/collect_evaluation_answers.py` 只有 `--fixture/--output/--transport/--dry-run/--allow-sample`，**没有选行口**；
+因此不改代码，而是把 20 题子集写到仓外：`%TEMP%\eval-run8-phase2-report20.jsonl`（20 行，sha256 前 16 `a138beb8edbb52bd`，本班已生成并复读核对）。
+
+```powershell
+$env:EVAL_SIDECAR      = "$env:TEMP\run8-p2-sidecar.jsonl"   # 🔴 不设就是往 scripts/ 里写（:413 那条取证）
+$env:EVAL_FRAME_LEDGER = "$env:TEMP\run8-p2-frames.jsonl"
+$env:EVAL_DECLARE_LANE_TIER = "报告"        # 与下一枚必须同设，只翻开关不入队
+$env:REPORT_LANE_VIA_QUEUE  = "on"
+python scripts/collect_evaluation_answers.py --fixture "$env:TEMP\eval-run8-phase2-report20.jsonl" --output "$env:TEMP\run8-p2-answers.jsonl" --transport scripts.eval_transport_ask_v2:transport
+```
+
+开窗前三件：`powercfg /change standby-timeout-ac 0`；Redis `answer:*` 清零（P-18）；`docker exec enterprise-brain-backend-1 env | grep MODEL_` 复取两枚率已生效。
+
