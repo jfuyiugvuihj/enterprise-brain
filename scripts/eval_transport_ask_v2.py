@@ -50,6 +50,51 @@
    帧账原件；run2…run5 当年还没有这一格），复算已落成用例：
    ``tests/test_r215_recomputing_run6_frames.py``。豁免四条同时成立才给，缺一条不给：
    末帧 / 本轮至多一枚 / 前面紧邻那枚 step(running, answer_correction) / 末帧与终答逐字相等。
+ 9. R222（09-25）队列道停表：``_poll_queue`` 从前只认 ``done`` / ``expired`` / ``failed``，落进
+   ``cancelled`` / ``dead`` 就一路轮到 deadline ⇒ 每题白烧 900 s（R218 实取的病：
+   ``adapter_unhandled_final=[cancelled,dead]`` / ``adapter_waste_per_stalled_watch_seconds=900``）。
+   今天五枚终态（``done`` / ``cancelled`` / ``dead`` / ``expired`` / ``failed``）逐枚一枚可区分的
+   kind，另加三枚「没读到终局」的 kind（``queued_stalled`` / ``queued_deadline`` /
+   ``queued_no_status``）；取回那一程的账（几轮询 / 几次瞬断 / 等了多久 / 最后读到什么）落在
+   帧账新格 ``queue`` 里。判据② 同装：非 2xx / 连不通 / JSON 解不开**一律不是停表条件**，
+   只算一次抖动接着轮（与前端 R198/R202 同一族口径）。白烧上限另开
+   ``EVAL_QUEUE_STALL_SECONDS``（默认 300 s，理由写在那一枚常数的注释里）：状态载荷连续
+   300 s 没有任何可观测变化就停表 ⇒ 未识别终态那一族从 900 s 降到 300 s，而
+   ``cancelled`` / ``dead`` 那一族从今天起读到就停，代价是至多一枚轮询间隔（3 s）。
+10. R223（09-25）到达时刻的账：帧账从前只有「这一帧长什么样」，没有「这一帧什么时候到」，
+    于是导不出「断流发生在什么时间」与「首屏可见元素何时到位」（B 门首屏 ≤1 s 一直没有尺子；
+    run7 那枚 p50 24.3 s / p95 121.4 s 量的是正文首片，不是首屏）。今天帧账多七格：
+    ``frames``（逐枚 text 帧：到达时刻 / 距零点毫秒 / 字数 / 短指纹 / 是否坏形）、
+    ``events``（逐枚**全部**事件的到达时刻 + 它在前端认领表里的类别）、``first_visible_at`` /
+    ``first_visible_event`` / ``first_visible_ms``（首枚非-text 可见事件，含 R48 已并树的
+    canonical ``answer.headline``）、``stream_clock``（每条流的零点与第一枚事件）、
+    ``queue``（见第 9 条）。🔴 只加读数：``answer`` / ``first_token_at`` / ``steps`` / ``cached`` /
+    ``sentinel`` / 甲案七键 / 帧账既有十三格与 R215 两格 取值口径一字未动 ——
+    ``tests/test_r215_recomputing_run6_frames.py`` 拿 run6 原件复算照旧逐位相同，
+    「关掉新读数再跑同一条流」的反证钉在 ``tests/test_r223_frame_arrival_clock.py``。
+    可见事件口径抄自 ``frontend/src/lib/sessions.js`` 的 ``EVENT_CLAIMS``（render 且名字不是
+    text），抄本漂移由同一枚件当场红。
+
+   🔴 钟的纪律（本单真踩过一次，所以写进代码）：上面这些读数**一次都不许多读表**。
+   /ask 那条流的零点抄 ``_pace()`` 的放行戳（放行与 POST 之间只构造请求体，没有 I/O）；
+   批准那条流抄不到表戳就留 null、退到本流第一枚事件；``_poll_queue`` 里 stalled 与
+   deadline 两族的等待由「每轮那一枚唯一的表戳」算出来（零点用 deadline 反推）。用的哪
+   一侧逐条写在 ``stream_clock.elapsed_base``，读的人不必猜。为什么这么苛刻：量具的假钟
+   每读一次就走一格，多读一枚就把 R181 那 105 题重放的时间轴整条推走 ——
+   ``PRE_R181_ANSWERS_SHA`` 当场红，而那枚 digest 正是「只加读数」这句话的裁判。
+   同一族纪律还管着逐帧那一格：它**跟着 ``_count_text_frame`` 的计数走**（尺子没数的枚次
+   这格也不记），所以它不是第二把尺 —— R215 的 ``_note_frame_shape`` 就是这么办的。
+
+   🔴 **判据⑤ 抬头口径（写进代码，供总控抄档）：run8 的适配器 ≠ run6 / run7 的适配器。**
+   两件事各自有名：(a) kind 词汇表自 R222 起多出 ``queued_*`` 九枚（``queued_polled`` /
+   ``queued_done_no_bytes`` / ``queued_cancelled`` / ``queued_dead`` / ``queued_expired`` /
+   ``queued_failed`` / ``queued_stalled`` / ``queued_deadline`` / ``queued_no_status``），
+   旧轮次一枚也不可能有
+   （本树实取：run6 帧账 kind 只有 ``ok`` / ``approved_ok`` / ``error_event``，run7 只有
+   ``ok`` / ``approved_ok``）；(b) 到达时刻与 ``queue`` 那几格自 R223 / R222 起才存在，旧帧账
+   原件（``docs/testing/sidecar-run6-frames.jsonl`` 十三格、``sidecar-run7-frames.jsonl``
+   十五格）里没有它们 ⇒ 拿旧件重放只会长出**空列**，不许读成「当年零停表」，也不许读成
+   「当年无断流」。断流的时刻与首屏的时刻从 run8 起才是量得出来的两件事。
 
    本文件的行号引用会随 ``app/api/v1/chat.py`` 漂移。09-23 在本树实取：``chat.py:1364`` 今天落在
    ``_complete_pending_steps`` 的收尾里（``return completed`` 在 :1363），「/ask 只发一条整段 text」
@@ -72,7 +117,29 @@ TIMEOUT = float(os.getenv("EVAL_HTTP_TIMEOUT", "900"))
 ATTEMPTS = max(1, int(os.getenv("EVAL_ATTEMPTS", "3")))
 RETRY_SLEEP = float(os.getenv("EVAL_RETRY_SLEEP", "20"))
 MIN_GAP_SECONDS = float(os.getenv("EVAL_MIN_GAP_SECONDS", "7"))
+#: 五枚终态的逐枚出处（不手抄清单，逐条可对）：done = app/common/reliable_queue.py:201、
+#: cancelled = :165/:197/:237/:271、failed = :170、dead = :250（``deploy/queue_worker.py:206``
+#: 自己把 ``terminal_status == "dead"`` 叫终态）、expired = app/api/v1/chat.py:3943（状态键
+#: 读不到时 API 现造）。在途态 queued :149 / processing :177 / cancel_requested :273 不是终态：
+#: 它们有代码写下的下一步迁移，所以「读到它」不构成停表理由（R218 同一份名单）。
+#:
+#: 外圈截止（改这行的字面或形状会同时打断总控的预演件：``scripts/r218_switch_rehearsal.py``
+#: 里那条 ``QUEUE_POLL_SECONDS = float(os.getenv("EVAL_QUEUE_POLL_SECONDS", "N"))`` 正则与
+#: ``_CITATIONS`` 的 ``deadline = time.time() + QUEUE_POLL_SECONDS`` 抄本，要改一起改）：
+#: 这一枚只管「状态还在动」的轮询最多多等多久，它**不是**白烧的天花板。
 QUEUE_POLL_SECONDS = float(os.getenv("EVAL_QUEUE_POLL_SECONDS", "900"))
+#: 🔴 R222 判据① 真正降下来的那一枚：白烧上限。状态载荷（status / position /
+#: ``failure.attempts`` 三样）连续这么久**没有任何可观测变化**就停表，读成 ``queued_stalled``。
+#: 300 s 的两条理由：① 与后端自己的租约同源 —— ``reliable_queue.lease_seconds`` 默认 300
+#: （app/common/reliable_queue.py:67），一个租约周期内没人再动这条消息，再等就是白烧；
+#: ② 不误伤还在写的轮子 —— run7 报告档实测最慢单轮 159.8 s（本树实取
+#: ``docs/testing/sidecar-run7.jsonl`` 的 wall_ms，档位按评测集 join），300 s 是它的 1.9 倍。
+#: ⇒ 未识别终态那一族的白烧从 900 s 降到 300 s；``cancelled`` / ``dead`` 那一族读到就停，
+#: 代价是至多一枚轮询间隔（3 s），不再是整段 deadline。
+QUEUE_STALL_SECONDS = float(os.getenv("EVAL_QUEUE_STALL_SECONDS", "300"))
+#: 轮询间隔与前端同源：``frontend/src/components/ChatPanel.vue:839`` 的 ``QUEUE_POLL_MS = 3000``。
+#: 两族轮子一把尺，「前端 3 s 一停 vs 适配器 3 s 一停」才读得成同一句话。
+QUEUE_POLL_INTERVAL = float(os.getenv("EVAL_QUEUE_POLL_INTERVAL_SECONDS", "3.0"))
 BLANK_SENTINEL = os.getenv("EVAL_BLANK_SENTINEL", "<no-bytes-emitted>")
 MAX_BLANKS = int(os.getenv("EVAL_MAX_BLANKS", "5"))
 #: R123 甲案。路由挂在 `/api/v1` 上（app/main.py:80 `include_router(chat.router, "/api/v1")`），
@@ -170,6 +237,7 @@ def _pace():
     if wait > 0:
         time.sleep(wait)
     _LAST_CALL = time.time()
+    return _LAST_CALL  # R223：把这一枚放行戳交给调用者当零点 —— 量具因此不必再读一次表
 
 
 def _blank_observation(session_id):
@@ -188,7 +256,15 @@ def _blank_observation(session_id):
             "text_frames": 0, "prefix_breaks": 0, "first_break_at": 0,
             "last_text_frame": "",
             # R215：坏形的到达顺序证词。🔴 只有走真 ``_consume`` 的那条路才填得进来。
-            "break_frames": []}
+            "break_frames": [],
+            # R223：到达时刻的原始账。🔴 只记时刻，不参与上面与下面任何一格的计数与判据。
+            # ``frame_arrivals`` 逐枚 text 帧，``event_arrivals`` 逐枚事件（text 与非 text 都记）。
+            "frame_arrivals": [], "event_arrivals": [],
+            # 本条流的零点：/ask 那条抄 ``_pace()`` 的放行戳（＝放行这一题、亦即发出 POST
+            # 那一刻）。批准那条流没有表戳可抄 —— 量具不许为读数新读一次表 ⇒ 留 null。
+            # 🔴 单测直接喂 ``_consume`` 时它是 None ⇒ elapsed 退到「本流第一枚事件到达」，
+            # 退到哪一侧随读数一起交（帧账的 ``stream_clock.elapsed_base``），不静默换尺。
+            "request_sent_at": None}
 
 
 def _consume(response, out):
@@ -197,11 +273,20 @@ def _consume(response, out):
     R215：多记一样东西 —— 每一枚帧到达时，它前面紧邻的是不是那枚武装整段替换的 step。
     🔴 「紧邻」只有在**事件流**上才判得出来，帧账本身判不出来：把 text 帧摘出来单独喂给尺
     （单测里那两枚 ``_readings`` 就是这么办的）证词就是空的，豁免永远拿不到，也就撒不了谎。
+
+    R223 在同一个圈里再多抄一样东西：每一枚事件与每一枚 text 帧**到达的时刻**。钟不是新起的
+    —— ``iter_events`` 本来就在 ``data:`` 那一行打了 ``time.time()`` 的戳（``first_token_at``
+    用的就是它），这里只是把同一个戳抄进账。🔴 只抄不改：返回的还是同一个 ``out``，
+    ``answer`` / ``first_token_at`` / ``steps`` / ``cached`` / ``evidence`` 的取值口径与把新读数
+    关掉时逐字相同（那一件事由 tests/test_r223_frame_arrival_clock.py 的反证钉着）。
     """
     armed = False  # 上一枚事件是不是 step(tool=answer_correction, status=running)
     for name, data, arrival in iter_events(response):
         preceding_arm = armed
         armed = False
+        # R223：先抄到达时刻，再走既有的分派。它认下**全部**事件名（连前端还没认领的也照实
+        # 记成 unclaimed），只抄时刻与类别，一个字都不改下面任何一格的判定。
+        _note_event_arrival(out, name, arrival)
         if name == "status" and "缓存命中" in str(data.get("content", "")):
             out["cached"] = True
         elif name == "step":
@@ -216,6 +301,7 @@ def _consume(response, out):
             frame = "" if content is None else str(content)
             _count_text_frame(out, frame)
             _note_frame_shape(out, frame, preceding_arm)  # R215：只补证词，不动计数
+            _note_frame_arrival(out, frame, arrival)  # R223：只补时刻，不动计数
             if content:
                 if out["first_token_at"] is None:
                     out["first_token_at"] = arrival  # 首字到达＝客户端实测，不用服务端 elapsed 折算
@@ -299,13 +385,170 @@ def _note_frame_shape(out, frame, armed):
         records.append({"at": out["text_frames"], "armed": bool(armed), "text": frame})
 
 
+# ===== R223：帧账的到达时刻。以下每一行都只读数，不改判据，也不参与评分。 =====
+
+#: 事件名 → 它在前端那张认领表里的类别，抄自 ``frontend/src/lib/sessions.js`` 的
+#: ``EVENT_CLAIMS``（口径原文：``render``＝画进界面；``note``＝只进过程提示条；
+#: ``terminal``＝收尾信号；``silent``＝显式选择不画）。🔴 量具不许 import 前端，所以这里抄
+#: 一份字面，并由 ``tests/test_r223_frame_arrival_clock.py`` 逐枚比对两边相等：抄本漂了的
+#: 后果是「首屏」那一格静默换口径 —— 宁可当场红，不可悄悄量。
+EVENT_CLASSES = {
+    "status": "note",
+    "text": "render",
+    "step": "render",
+    "hitl": "render",
+    "error": "render",
+    "cancelled": "render",
+    "done": "terminal",
+    "heartbeat": "silent",
+    "queued": "render",
+    "request.started": "silent",
+    "request.completed": "terminal",
+    "request.failed": "render",
+    "request.cancelled": "render",
+    "sources": "render",
+    # R48 路线甲：首屏那张线索卡（app/api/v1/chat.py::_answer_headline_frame）。它不是一枚
+    # text 帧，却是**第一个画到屏上的元素** ⇒ B 门「首屏 ≤1 s」量的就是它，不是正文首片。
+    "answer.headline": "render",
+}
+#: 名字不在表里 = 量具没替它作过证（新事件名先在这儿露脸，是一枚信号，不是一枚错误）。
+UNCLAIMED_EVENT_CLASS = "unclaimed"
+#: 「首屏可见」只认画进界面那一族（``note`` 只进过程提示条，``silent``/``terminal`` 屏上无物）。
+VISIBLE_EVENT_CLASS = "render"
+
+
+def _event_class(name):
+    return EVENT_CLASSES.get(str(name), UNCLAIMED_EVENT_CLASS)
+
+
+def _is_first_screen_event(name):
+    """首屏那一格两条同时成立：类别是 render，且它不是正文 ``text``（那一枚有 first_token_at）。"""
+    return _event_class(name) == VISIBLE_EVENT_CLASS and str(name) != "text"
+
+
+def _note_event_arrival(out, name, arrival):
+    """给刚到达的这一枚事件抄一个时刻。🔴 不判形状、不计数，也不动 ``out`` 里任何既有键。"""
+    records = out.get("event_arrivals")
+    if records is None:
+        records = out["event_arrivals"] = []
+    records.append({"at": len(records) + 1, "event": str(name),
+                    "class": _event_class(name), "arrival_at": arrival})
+
+
+def _note_frame_arrival(out, frame, arrival):
+    """给刚到达的这一枚 text 帧抄时刻 + 形状指纹（钟与事件账同一枚，永远同格）。
+
+    🔴 这一格跟着 ``_count_text_frame`` 的计数走：尺子数了几枚，账上就有几枚到达时刻；
+    尺子没数的那一枚不记（下面那道 ``at != len(records) + 1`` 的闸）。所以它不是第二把尺。
+    🔴 ``prefix_break`` 只是把 R181 那把尺**已经判过**的坏形抄到这一枚帧上：读
+    ``break_frames`` 末枚的序号，既不因此多出一枚坏形，也不少记一枚。
+    """
+    records = out.get("frame_arrivals")
+    if records is None:
+        records = out["frame_arrivals"] = []
+    at = int(out.get("text_frames") or 0)  # _count_text_frame 已自增 ⇒ 这就是本帧的流内序号
+    if at != len(records) + 1:
+        # 🔴 R181 那把尺这一枚没数 ⇒ 这一格也不记。与 R215 的 ``_note_frame_shape`` 同一
+        # 条纪律（它只跟着 ``prefix_breaks`` 的变化走）：新列必须是**派生**读数，不许
+        # 自成第二把尺 —— 否则「把计数摘掉之后三帧与零帧同形」那枚常驻反证会被这格
+        # 悄悄救活（tests/test_r181_text_frame_ruler.py:467）。尺子瞎，这格一起瞎。
+        return
+    breaks = out.get("break_frames") or []
+    prefix_break = bool(breaks) and int(breaks[-1].get("at") or 0) == at
+    records.append({"at": at, "arrival_at": arrival, "chars": len(frame),
+                    "sha": _sha12(frame), "prefix_break": bool(prefix_break)})
+
+
+def _elapsed_ms(arrival, base):
+    """毫秒差。缺任何一侧都是 None —— 🔴 禁止估算，也不许拿 0 冒充「同一时刻」。"""
+    if arrival is None or base is None:
+        return None
+    return round((float(arrival) - float(base)) * 1000.0, 1)
+
+
+def _fold_arrivals(ledger, out, stream_index):
+    """把这一条流的到达时刻折进这一题的账（R223）。
+
+    零点按「先 POST，退到本流第一枚事件」的顺序取，用的是哪一侧随读数一起交
+    （``stream_clock.elapsed_base``）。``at`` 是**流内**序号，与
+    ``per_stream[i]["first_break_at"]``、``break_frames[].at`` 同一个坐标系 —— 断流那一枚帧
+    因此在帧账里既是「第 stream 条流的第 at 帧」，又有它自己的到达时刻。
+    """
+    sent = out.get("request_sent_at")
+    event_records = list(out.get("event_arrivals") or [])
+    first_event_at = next((item.get("arrival_at") for item in event_records
+                           if item.get("arrival_at") is not None), None)
+    base = sent if sent is not None else first_event_at
+    ledger["clocks"].append({
+        "stream": stream_index, "request_sent_at": sent, "first_event_at": first_event_at,
+        "elapsed_base": ("request_sent_at" if sent is not None
+                         else ("first_event_at" if base is not None else None))})
+    for record in event_records:
+        ledger["events"].append(
+            {"stream": stream_index, "at": int(record.get("at") or 0),
+             "event": str(record.get("event") or ""),
+             "class": str(record.get("class") or UNCLAIMED_EVENT_CLASS),
+             "arrival_at": record.get("arrival_at"),
+             "elapsed_ms": _elapsed_ms(record.get("arrival_at"), base)})
+    for record in list(out.get("frame_arrivals") or []):
+        ledger["frame_arrivals"].append(
+            {"stream": stream_index, "at": int(record.get("at") or 0),
+             "arrival_at": record.get("arrival_at"),
+             "elapsed_ms": _elapsed_ms(record.get("arrival_at"), base),
+             "chars": int(record.get("chars") or 0), "sha": str(record.get("sha") or ""),
+             "prefix_break": bool(record.get("prefix_break"))})
+    return ledger
+
+
+def _first_screen_reading(events):
+    """首枚**非-text 可见事件**：跨流按到达时刻取最早的那一枚。
+
+    没量到时刻的事件一律不参与（没量到的东西不许冒充量到了）；一枚都没有 ⇒ 三格
+    null / 空串，读作「这一轮的首屏没量到」，不读作「屏上什么都没有」。
+    """
+    timed = [item for item in events
+             if item.get("arrival_at") is not None and _is_first_screen_event(item.get("event"))]
+    if not timed:
+        return {"first_visible_at": None, "first_visible_event": "", "first_visible_ms": None}
+    first = min(timed, key=lambda item: (float(item["arrival_at"]), int(item.get("at") or 0)))
+    return {"first_visible_at": first["arrival_at"],
+            "first_visible_event": str(first.get("event") or ""),
+            "first_visible_ms": first.get("elapsed_ms")}
+
+
+def _arrival_readings(frames):
+    """R223 / R222 的七格新列：逐帧与逐事件的到达时刻、首屏那一枚、每条流的钟、取回账。
+
+    🔴 与 ``_frame_readings`` 分开写是有原因的，不是风格：那一枚是 R181 的尺，它的**返回形状**
+    被 ``tests/test_r181_text_frame_ruler.py:467`` 的整字典对判钉着（把计数摘瞎之后「三帧与
+    零帧同形」必须仍然成立）。本单的新列只开在**落盘这一层**（``_record_frames`` 把它们并进
+    同一行），既有那枚函数一字未动 ⇒ 旧的反证与新的读数各管各的事。帧账一行的键集仍钉在
+    ``FRAME_READING_KEYS``，七个新名字照旧由总控补，少补一个当场红。
+
+    口径：``first_visible_*`` 只认 render 且名字不是 ``text`` 的最早那一枚（``EVENT_CLASSES``
+    抄自前端 ``EVENT_CLAIMS``）；没量到时刻的记录一律不参与（禁止估算）。🔴 七格全部不进评分，
+    也不参与 ``_frame_verdict``。
+    """
+    events = list(frames.get("events") or [])
+    readings = {"frames": list(frames.get("frame_arrivals") or []),
+                "events": events,
+                "stream_clock": list(frames.get("clocks") or []),
+                "queue": dict(frames.get("queue") or {})}
+    readings.update(_first_screen_reading(events))
+    return readings
+
+
 def _new_frame_ledger():
     """一题的帧账本。一题可能不止一条流：/ask 之外还有 R123 甲案的若干轮 /approve。"""
     return {"text_frames": 0, "prefix_breaks": 0, "last_text_frame": "",
             "streams": 0, "max_stream_frames": 0, "per_stream": [],
             # R215：跨流的坏形证词。它**不进** per_stream —— 那一格的键集被
             # tests/test_r181_text_frame_ruler.py 逐字钉着，一多一少都算改尺。
-            "break_frames": []}
+            "break_frames": [],
+            # R223：到达时刻的账（跨流，同样**不进** per_stream）。
+            "frame_arrivals": [], "events": [], "clocks": [],
+            # R222：队列道取回那一程的停表账。没走队列就是空字典，读作「这一题没取回过」。
+            "queue": {}}
 
 
 def _fold_frames(ledger, out):
@@ -329,6 +572,8 @@ def _fold_frames(ledger, out):
             {"stream": stream_index, "stream_frames": frames,
              "at": int(record.get("at") or 0), "armed": bool(record.get("armed")),
              "text": str(record.get("text") or "")})
+    # R223：这条流的到达时刻跟着折进账（只抄时刻，不参与上面任何一格的计数）。
+    _fold_arrivals(ledger, out, stream_index)
     ledger["streams"] += 1
     ledger["max_stream_frames"] = max(int(ledger["max_stream_frames"]), frames)
     if frames:
@@ -439,6 +684,8 @@ def _record_frames(row_id, kind, attempt, session_id, frames, answer, sentinel):
     row = {"id": row_id, "kind": kind, "attempt": attempt, "sentinel": sentinel,
            "session_id": session_id, "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
     readings = _frame_readings(frames, answer)
+    # R223 / R222：到达时刻与取回账作为**新列**并进这一行（上面那枚函数一字未动）。
+    row.update(_arrival_readings(frames))
     row.update(readings)
     row["criterion_two_holds"] = _frame_verdict(readings)
     target = frame_ledger_path()
@@ -447,11 +694,16 @@ def _record_frames(row_id, kind, attempt, session_id, frames, answer, sentinel):
         print(json.dumps(row, ensure_ascii=False), file=fh)
 
 
-def _stream_once(question, session_id, idempotency_key, lane=""):
+def _stream_once(question, session_id, idempotency_key, lane="", request_sent_at=None):
     out = _blank_observation(session_id)
     payload = {"message": question, "session_id": session_id, "idempotency_key": idempotency_key}
     if lane:
         payload["lane"] = lane
+    # R223 时标的零点：``_pace()`` 放行这一题的那一刻（放行与 POST 之间只有构造请求体，
+    # 没有任何 I/O）。🔴 这里**不另读一次表**：量具的假钟每读一次就走一格，多读一枚就把
+    # R181 那 105 题重放的整条时间轴推走（PRE_R181_ANSWERS_SHA 当场红）—— 只加读数的东西
+    # 必须复用已有的表戳，或在账上老实写明退到了哪一侧（stream_clock.elapsed_base）。
+    out["request_sent_at"] = request_sent_at
     with _open("/api/v1/ask", payload) as resp:
         return _consume(resp, out)
 
@@ -465,6 +717,10 @@ def _approve_once(session_id):
     只走 HTTP：不绕过鉴权、不伪造 session、不直接调 run_interrupt_stream。
     """
     out = _blank_observation(session_id)
+    # R223：批准这一条流**没有**零点表可抄 —— ``_resolve_hitl`` 的循环里从前一次都不读表，
+    # 今天也不许为了一枚读数新读一次（同上：会把 105 题重放的时间轴推走）。所以这一条流
+    # 的账老实退到「本流第一枚事件」，并把它退到了哪一侧写进 stream_clock.elapsed_base。
+    # 读法：批准轮的毫秒数都是「相对本流第一枚事件」，不是相对 POST。
     with _open(APPROVAL_PATH, {"session_id": session_id, "approved": True}) as resp:
         return _consume(resp, out)
 
@@ -526,21 +782,117 @@ def _resolve_hitl(row_id, session_id, steps, frames=None):
             "rounds": rounds, "http_status": http_status, "error": error}
 
 
+#: R222 判据①：五枚终态各一枚 kind，外加三枚「没读到终局」各一枚。全部与 ``ok`` 不同名，
+#: 全部可以在 sidecar / 帧账的 ``kind`` 那一列上直接统计（那一列的名字与顺序未动）。
+#: 🔴 ``done`` 沿用 ``queued_polled`` 这个名字：``tests/test_r181_text_frame_ruler.py:322``
+#: 钉着它，而它也是「相 2 第一枚真取回正文」那一格的历史对接口，换名就是抹账。
+#: ``queued_cancelled`` / ``queued_dead`` 是这一单的病：从前它们不落任何名字，一路轮到
+#: deadline，最后和「一帧都没到的空答题」共用同一枚 ``blank`` —— 既看不出白烧，也看不出
+#: 后端其实已经明说过这一轮不会再有正文。
+#: 写法纪律：这些字面必须以 ``status == "..."`` / ``status in ("...", ...)`` 留在
+#: ``_poll_queue`` 的函数体里 —— 总控的量具量具（``scripts/r218_switch_rehearsal.py`` 的
+#: ``adapter_stop_vocabulary``）就是按 AST 抠「与名为 ``status`` 的名字比较的字面」。改成查表
+#: 或集合常量那一格读数当场瞎掉：那是「量具有牙」这句主张的一种新形状的假绿。
 def _poll_queue(request_id):
-    """入队那道的正文只能事后取：轮询到 done 取 result（reliable_queue.py:171 回 str）。
-    expired / failed 取不到就是取不到，返回空串交给上层判 kind，不伪造。"""
+    """把一条已入队的轮次读到**任何一枚终态**为止，回 ``(kind, answer, 取回账)``。
+
+    三条口径，逐条对着判据写：
+
+    ① 五枚终态全部停表（``done`` / ``cancelled`` / ``dead`` / ``expired`` / ``failed``），
+       且逐枚一枚可区分的 kind；``cancelled`` / ``dead`` 的正文是空串 —— 🔴 后端说这一轮
+       不会再有正文，量具就不许把它当成模型答完了（``kind`` 也不叫 ``ok``，见上表）。
+    ② 瞬断不等于终态（与前端 R198/R202 同一族口径）：非 2xx / 连不通 / JSON 解不开
+       **一律不是停表条件**，只记一次抖动接着轮。401 那一枚是可恢复的（令牌过期，
+       ``login()`` 幂等，重登接着读），记成 ``relogins`` 单独一格，不与终态混读。
+       载荷读不成对象（``body`` 不是 dict）同算抖动。
+    ③ 白烧的天花板从 900 s 降下来，但**不是**把外圈一刀砍短：还在动的轮询不该被
+       掐死（误伤一次就是一次假红），该掐的是「载荷不再变化」的那一族。所以两枚分开：
+       ``QUEUE_STALL_SECONDS``（默认 300 s，理由在该常数的注释里）封顶无进展的等待，
+       ``QUEUE_POLL_SECONDS``（900 s，未动）只封顶「状态一直在动」的外圈。
+       代价读数：``cancelled`` / ``dead`` 一族 = 至多一枚轮询间隔（3 s）；
+       无进展一族 = 300 s；两族都不再是 900 s。
+
+    ``取回账`` 是那一段观测的账（轮了几次 / 抖了几次 / 重登几次 / 等了多久 / 最后读到什么），
+    由 ``transport`` 折进帧账的 ``queue`` 那一格。🔴 它不进 sidecar（那一行的键集被
+    ``tests/test_r123_hitl_approval.py:243`` 钉成甲案七键的子集），也不改 ``kind`` 之外
+    任何一格的口径。取不到就是取不到：正文一律空串，不伪造、不估算。
+    """
+    book = {"polls": 0, "blips": 0, "relogins": 0, "final": "", "last_status": "",
+            "wait_ms": 0.0, "stall_ms": int(QUEUE_STALL_SECONDS * 1000),
+            "deadline_ms": int(QUEUE_POLL_SECONDS * 1000),
+            "interval_ms": int(QUEUE_POLL_INTERVAL * 1000)}
+
+    def _stop(kind, answer, final, now):
+        """停表：结局 + 正文 + 这一段观测的账。``now`` 是本轮那一枚唯一的表戳。"""
+        book["final"] = final
+        book["wait_ms"] = round((now - zero) * 1000.0, 1)
+        return kind, answer, book
+
+    # 🔴 钟的纪律（与 R223 同一件事）：这一段一次都不许多读表。原件是「deadline 一枚 +
+    # 每轮 while 一枚」，今天还是这个数：零点由 deadline 反推，无进展截止用本轮那枚 now
+    # 起算，于是 stalled / deadline 两族各烧了多久都算得出来，而不必引入第二枚钟 ——
+    # 量具的假钟每多读一次就走一格，多读会把 105 题重放的时间轴整条推走。
+    # 抄本行（总控的预演件按原文钉它）：外圈截止只管「还在动」的那一族。
     deadline = time.time() + QUEUE_POLL_SECONDS
-    while time.time() < deadline:
-        with _open("/api/v1/queue/status/" + str(request_id), None, "GET") as resp:
-            body = json.loads(resp.read().decode("utf-8", "replace"))
+    zero = deadline - QUEUE_POLL_SECONDS
+    stalled_at = None  # 无进展截止：第一次读到状态之后才起算
+    signature = None   # 可观测进展：status / position / attempts 三样的快照
+    now = zero
+    while True:
+        now = time.time()  # 每轮唯一一枚：与原件的 while 判定同一枚读数
+        if now >= deadline:
+            break
+        if stalled_at is not None and now >= stalled_at:
+            # 读到了状态，但载荷再也不动 ⇒ 这一族才是真白烧（300 s 封顶，不是 900 s）
+            return _stop("queued_stalled", "", "stalled", now)
+        try:
+            with _open("/api/v1/queue/status/" + str(request_id), None, "GET") as resp:
+                body = json.loads(resp.read().decode("utf-8", "replace"))
+            if not isinstance(body, dict):
+                raise ValueError("queue/status 答的不是对象")
+        except urllib.error.HTTPError as exc:
+            # 判据②：非 2xx 是**读不到**，不是**读完了**。401 换票接着读，其余原样重试。
+            book["blips"] += 1
+            if exc.code == 401:
+                # 令牌过期是最常见的一枚可恢复抖动：换票接着读（login() 幂等，见 :132）。
+                global _TOKEN
+                _TOKEN = ""
+                book["relogins"] += 1
+                try:
+                    login()
+                except Exception:  # 登不回去也照样不停表：下一轮再试，另记一笔
+                    book["relogin_failures"] = book.get("relogin_failures", 0) + 1
+            time.sleep(QUEUE_POLL_INTERVAL)
+            continue
+        except (urllib.error.URLError, OSError, UnicodeDecodeError,
+                json.JSONDecodeError, ValueError) as exc:
+            book["blips"] += 1
+            book["last_blip"] = type(exc).__name__
+            time.sleep(QUEUE_POLL_INTERVAL)
+            continue
+        book["polls"] += 1
         status = str(body.get("status", ""))
+        book["last_status"] = status
+        failure = body.get("failure") if isinstance(body.get("failure"), dict) else {}
+        mark = (status, body.get("position"), failure.get("attempts"))
+        if mark != signature:  # 有任何一格在动 ⇒ 这不是白烧，重新起算无进展截止
+            signature = mark
+            stalled_at = now + QUEUE_STALL_SECONDS  # 用本轮那枚表戳起算，不再读一次
         if status == "done":
             result = body.get("result")
-            return result if isinstance(result, str) else ""
-        if status in ("expired", "failed"):
-            return ""
-        time.sleep(3.0)
-    return ""
+            if isinstance(result, str) and result.strip():
+                return _stop("queued_polled", result, "done", now)
+            # done 但 result 不是正文（None / 非 str / 全空白）：取回了个空，另立一枚 kind，
+            # 不许与「取回了一份字」共用 queued_polled，也不许冒充 ok。
+            return _stop("queued_done_no_bytes", "", "done_no_bytes", now)
+        if status in ("cancelled", "dead", "expired", "failed"):
+            # 后端自己宣布这一轮不会再有正文：读到就停（从前这两枚要烧到 deadline）。
+            return _stop("queued_" + status, "", status, now)
+        # queued / processing / cancel_requested / 任何不认得的字面 ⇒ 都不是终态，接着轮
+        time.sleep(QUEUE_POLL_INTERVAL)
+    # 外圈到点：一次状态都没读到过 = 这一题根本没读通（另立 kind，不并进 stalled）
+    return _stop("queued_no_status" if not book["polls"] else "queued_deadline",
+                 "", "no_status" if not book["polls"] else "deadline", now)
 
 
 def _record(row_id, kind, attempt, started, payload, sentinel, extra=None):
@@ -576,11 +928,12 @@ def transport(row):
     for attempt in range(1, ATTEMPTS + 1):
         started = time.time()
         login()
-        _pace()
+        pacing = _pace()  # R223：这一枚就是「发出 POST 的一刻」（不另读表）
         try:
             tier = str(row.get("tier", "")).strip()
             lane = LANE_BY_TIER.get(tier, "") if DECLARE_LANE_TIER and tier == DECLARE_LANE_TIER else ""
-            out = _stream_once(str(row["question"]), uuid.uuid4().hex, uuid.uuid4().hex, lane)
+            out = _stream_once(str(row["question"]), uuid.uuid4().hex, uuid.uuid4().hex,
+                               lane, request_sent_at=pacing)
         except urllib.error.HTTPError as exc:  # HTTPError 先于 URLError 捕获，401 强制重登
             try:
                 detail = exc.read().decode("utf-8", "replace")[:300]
@@ -607,14 +960,19 @@ def transport(row):
         first_token_at = out["first_token_at"]
         sentinel = False
         kind = "ok"
-        if out["queued"] is not None:
-            kind = "queued_polled"
-            answer = _poll_queue(out["queued"].get("request_id"))
+        from_queue = out["queued"] is not None
+        if from_queue:
+            # R222：kind 由停表那一层给（五枚终态 + 三枚没读到终局，逐枚可区分），
+            # 取回那一程的账折进帧账的 queue 那一格。
+            kind, answer, frames["queue"] = _poll_queue(out["queued"].get("request_id"))
             first_token_at = None  # 后台跑的首字观测不到 ⇒ null（采集器允许 null，禁止估算）
-        if not answer.strip() and out["error_text"].strip():
+        # 🔴 走过队列道就不许再被前台那枚 error 帧或那枚 cancelled 帧换掉 kind：后端已经
+        # 明说过这一轮的结局，拿一条没送达的旁证去改写它，量的就不是同一件事了。
+        if not answer.strip() and out["error_text"].strip() and not from_queue:
             answer, kind, evidence = out["error_text"], "error_event", []
         if not answer.strip():
-            kind = "cancelled" if out["cancelled"] else "blank"
+            if not from_queue:
+                kind = "cancelled" if out["cancelled"] else "blank"
             _BLANKS += 1
             if _BLANKS > MAX_BLANKS:
                 raise RuntimeError(

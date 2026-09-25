@@ -46,6 +46,13 @@ FRAME_READING_KEYS = {"text_frames", "prefix_breaks", "corrective_replacements",
                       "answer_chars", "answer_sha", "streams", "max_stream_frames",
                       "per_stream", "criterion_two_holds"}
 JOIN_KEYS = {"id", "kind", "attempt", "sentinel", "session_id", "ts"}
+#: R223 / R222 新开在**落盘这一层**的七格（``scripts/eval_transport_ask_v2.py:519`` 的
+#: ``_arrival_readings``，由 ``_record_frames`` 并进同一行）：逐帧到达、逐事件到达、每条流的
+#: 钟、队列取回账，加首屏那三枚。它们**不进** ``_frame_readings`` —— R181 那把尺的返回形状
+#: 一格未动（``tests/test_r223_frame_arrival_clock.py:629`` 亲自钉着两层各管各的形状），
+#: 所以这里另立一份名单，不并进 FRAME_READING_KEYS；键集仍是**对判**，不是子集。
+ARRIVAL_READING_KEYS = {"frames", "events", "stream_clock", "queue",
+                        "first_visible_at", "first_visible_event", "first_visible_ms"}
 
 FULL = "据统计，Q3 营收 1200 万元，环比增长 8%，毛利率持平。"
 PARK_TEXT = "本轮在「生成图表」前等待你确认，确认后才会执行，目前尚未产出回答内容。"
@@ -423,7 +430,7 @@ def test_the_payload_and_sidecar_contracts_are_untouched(adapter):
     assert record["answer_chars"] == len(FULL)
     assert record["tool_calls"] == 0                        # steps 没被帧计数污染
     got = frames[0]
-    assert set(got) == JOIN_KEYS | FRAME_READING_KEYS
+    assert set(got) == JOIN_KEYS | FRAME_READING_KEYS | ARRIVAL_READING_KEYS
     assert got["id"] == record["id"] and got["kind"] == record["kind"]
     assert got["answer_chars"] == record["answer_chars"]     # 同一份终答，两把尺各记一次
 

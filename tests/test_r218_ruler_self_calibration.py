@@ -172,7 +172,7 @@ def test_counter_proof_a_lying_generation_claim_goes_red_here():
     assert "claim=R181-only actual=R181+R215" in " ".join(cell["problems"])
     # 红只能落在本格：另两格对同一棵真树照旧
     assert R.cell_cache_hit(REPO)["verdict"] == R.GREEN
-    assert R.cell_lane_flip(REPO)["readings"]["frontend_unhandled_final"] == ["dead"]
+    assert R.cell_lane_flip(REPO)["readings"]["frontend_unhandled_final"] == []
     assert _tree_sha() == before
 
 
@@ -210,7 +210,7 @@ def test_counter_proof_the_other_direction_still_bites(tmp_path):
     assert "claim=R181+R215 actual=R181-only" in " ".join(lying["problems"])
 
     # 红只能落在本格：D 格与 C 格对着同一枚退代临时根判，必须维持原判
-    assert R.cell_lane_flip(overlay)["readings"]["frontend_unhandled_final"] == ["dead"]
+    assert R.cell_lane_flip(overlay)["readings"]["frontend_unhandled_final"] == []
     assert R.cell_cache_hit(overlay)["readings"]["mismatched_legs"] == []
 
     shutil.rmtree(tmp_path)
@@ -241,7 +241,7 @@ def test_counter_proof_removing_the_prefix_guard_goes_red_here(tmp_path):
     assert cell["readings"]["shapes"]["true_break_round"]["verdict"] is True
 
     # 红只能落在本格：D 格读的是 _poll_queue 与停表名单，C 格读的是 cached 证词，都不该动
-    assert R.cell_lane_flip(overlay)["readings"]["frontend_unhandled_final"] == ["dead"]
+    assert R.cell_lane_flip(overlay)["readings"]["frontend_unhandled_final"] == []
     assert R.cell_cache_hit(overlay)["readings"]["mismatched_legs"] == []
 
     shutil.rmtree(tmp_path)

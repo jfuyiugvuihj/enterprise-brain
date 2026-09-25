@@ -146,8 +146,8 @@ def test_counter_proof_removing_the_moved_guard_goes_red_on_the_blocking_cell(tm
 
     # 同会话里真件必须仍然拦得住：证明红是因"摘掉守卫"，不是探针自己坏了
     assert _probe(REPO / TARGET)["state"]["guarded"] is True
-    # 红只落这一格：D 格与 C 格对着同一枚临时根维持原判
-    assert R.cell_lane_flip(root)["readings"]["frontend_unhandled_final"] == ["dead"]
+    # 红只落这一格：D 格与 C 格对着同一枚临时根维持原判（D 格今天读 []，见 R234 改钉）
+    assert R.cell_lane_flip(root)["readings"]["frontend_unhandled_final"] == []
     assert R.cell_cache_hit(root)["readings"]["mismatched_legs"] == []
 
     assert _tree_sha() == before
