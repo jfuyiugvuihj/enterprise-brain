@@ -3834,6 +3834,14 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 | `Poincare` | `01a0d7e7-a7de-7b11-bee3-235c10dd9106` | **R250** V2｜Trace 落 PG + 管理员按 run_id 查回 | `be-r250`（`e82619c`，**独占**） | **在途** 17:2x 投出；写域只 `app/trace/**` 与 `observability.py` |
 | `Godel` | `01a0d7e8-0014-7740-abad-0748aa926f78` | **R251** V2｜告警确认/转派/关闭闭环 | `be-r251`（`e82619c`，**独占**） | **在途** 17:2x 投出；**本波唯一持迁移者**（`0014_*` 与 `migrations/manifest.json`）|
 | `Plato` | `01a0d7f3-85e3-7f33-9dbc-9b193a6ae193` | **R252** V1 真机窗 run8 相 2 执行 | `be-r245`（`fe439bc`，**独占**） | **在途** 17:5x 投出；零写仓内、进程须脱离会话（详 4CE.4）|
+| `Godel`（总控登记名） | 第八班第四格派出（四枚交付均已并树，按 rollout 定锚） | **R251**（结案） | `be-r251` | ✅ **已结案并树 `13a5801`**：总控亲跑本单两枚新件 + 被改口六枚既有件 = **186 passed / 0 failed**；迁移 0014 现取 92 行纯 LF、sha `5fe425e0…`、manifest 同步；越权面复用 `authorization_decision(ACTION_MANAGE_ALERTS)` + `alert_row_scope_sql`，404 与「不存在」同形、转派四格同一枚 400。六枚改口逐条裁定见跟进单 §100.1。**欠一笔真库执行**（已申报，归 R256 一并清） | 20:2x |
+| `Archimedes`（总控登记名） | 同上 | **R248**（结案） | `be-r248` | ✅ **已结案并树 `9ba266e`**：+454/−114 与自报逐字相符。🔴 **总控裁定维持 fail-closed**：真值源不可达时读侧交回 500；404 等于报一次谁都没做过的删除（与 R37/R62/R190 同口径）。施工方只跑 `--serial`（4899/40/341.63 s，怕复现 09-24 宿主 Kernel-Power 41），全量由总控统一补 = 5081/44/0。`deleted_at` 落列归 R256 | 20:2x |
+| `Curie`（总控登记名，与 09-17 R17 那位同名不同人） | 同上 | **R249**（结案） | `be-r249` | ✅ **已结案并树 `2ef24e3`**：+978/−98 相符，未动 `app/storage/__init__.py`（写域合规）。裸机缺省 `PERSISTENCE_BACKEND=json` 落内存过渡表 = 相对 JSON 落盘的倒退 ⇒ 进 R256；`test_r249_dataset_pg_acceptance.py` 本机 4 skipped **不作达标证据**。**它独立定位到跨 worker 撞读盘的假红根因**（就地改写被跟踪文件），本班据此立 R253 | 20:2x |
+| `Poincare`（总控登记名，与 R35/R59c 那几位同名不同人） | 同上 | **R250**（结案） | `be-r250` | ✅ **已结案并树 `4076a68`**：`GET /runs/{run_id}` 走 `_require_admin(ACTION_AUDIT, …)`，不自建第二套鉴权；派工词写的 `unavailable_ledgers` 仓里不存在（**总控编的，记账**），改用 `audit.py` 既有 `degraded/degraded_reason/health` + 唯一名 `trace_local_fallback`。它留的隔离 PG 现取 **5433 已无监听**。两笔未完（六表回填 / 卷语义）= R257 | 20:2x |
+| `Socrates` | `01a0d88f-5782-7822-8865-b6b8fd46c6ef`（**本班 spawn 返回值直取，未经抄写**） | **R253** 反证钉不得就地改写被跟踪文件 | `be-r253`（基点 `8841578`，**独占**；写域 `tests/test_r48_headline_*.py` + `tests/test_r156_*.py` + 新 helper 与新钉件；🚫 产品码 / 量具件 / `docs/**` / 迁移 / 评测集） | 🟢 20:4x 派出（本 block 只此一次投递）。判据四条见跟进单 §100.4，灵魂是「只搬变异落点、不动变异内容」，反证强度一枚不许掉；收尾要同一 HEAD 连跑三次 `-n 8` 零漂移 | 20:4x |
+| `Maxwell` | `01a0d88f-dfd9-78c3-b6b2-56db815bf776`（spawn 返回值直取） | **R254** 队列道客户端可见契约（P1：HITL 无恢复路径致 11/20 交回挂起文案 · `sources` 0/20 · `usage` 无面 · 零模型调用却报 `done`） | `be-r254`（基点 `8841578`，**独占**；写域 `app/api/v1/chat.py` + `deploy/queue_worker.py` + `app/queue/**` + `contract-v1.md` 队列节） | 🟢 20:4x 派出（一 block 一枚）。🚫 `contracts.py`/`model_budget.py`（R255）、迁移（R256）、量具件。真机窗读数与红因点名见 `docs/testing/run8-phase2-readout-2026-09-25.md` | 20:4x |
+| `Rawls` | `01a0d890-57c0-7780-ba3c-769fb5a4dbd7`（spawn 返回值直取；与 09-17 那位 R26b 的 `Rawls` 同号不同人，按 id 定序） | **R255** 报告档上下文顶（`MODEL_CONTEXT_TOKENS=4096` 第一次拿到真机发生率） | `be-r255`（基点 `8841578`，**独占**；写域 `app/agents/contracts.py` + `app/common/model_budget.py` + `.env.example` 的 `MODEL_*` 行） | 🟢 20:4x 派出（一 block 一枚）。🚫 `chat.py`（R254）、`nodes.py`、迁移。派工词已写死两条物理事实：4096 与显存无关 / 单请求未压进 60÷人数 秒前不许抬 `MODEL_MAX_CONCURRENCY` | 20:4x |
+| `Tesla` | `01a0d890-f30c-7543-ace8-7c5918d49f11`（spawn 返回值直取） | **R256** 今天欠的三列（`artifacts.deleted_at` / `dataset_versions` scope / 裸机 `PERSISTENCE_BACKEND` 倒退）＋**本波唯一持迁移者** | `be-r256`（基点 `8841578`，**独占**；写域 新建 `migrations/0015_*` + `manifest.json` + `app/storage/persistence.py` + 四枚尾号引信件 + `setup.sh`/`.env.example` 的 `PERSISTENCE_BACKEND` 行） | 🟢 20:4x 派出（一 block 一枚）。判据④要它在隔离 PG 5433 上把 **0014 + 0015 一起真跑一遍**（R251 欠的那笔一并清）。🚫 5432 生产库、容器、`MODEL_*` 那几行 | 20:4x |
 
 ⇒ 三条直接后果：① 「607 枚缺口」作废，两侧**条数相等**（1008 = 1008）；② 「距离口径未锁」也基本清了——PG 侧索引 `vector_l2_ops` 与 `vector_scope.distance_function=l2` 同源对齐；③ 切读缺的仍然只剩**真 top-k 对照**这一格，本班已作为 **R59b 第一步**下发，且要求比对必须在**两侧同时可达**的地方跑（backend 容器内：`/app/chroma_db` 是真卷、`postgres` 是内网 DNS；5432 未向宿主发布，宿主侧连不进去是设计如此）。🔴 老毛病第三次记账：**报「某物不存在」之前，先确认自己在哪一层查、用的是不是这一层的正确名字**——这次是查错了服务器上的另一个进程。
 
@@ -4180,3 +4188,32 @@ frontend/** 全程只读（ChatPanel.vue sha256 前 16 39fd661fa74ca098，16:54:
 一窗同取 D-1/2/3 ＋ A②（**含 run7 缺的逐帧到达**）＋ A④ 逐类 ＋ B 首屏。窗口估算 25-40 分钟（按 run7 单题 median 37.0 s / mean 51.7 s 外推）。
 读数须注明「与四枚并发施工同窗采集」——毫秒级数字会被争用污染，这条诚实比好看重要。
 
+## 4CF（第八班第五格·20:1x–20:4x·主树 `ff7ade1` → 本次记账，gitee 已同步）
+
+**一、V2 第一波收尾：四枚全部验收并树**
+
+- 顺序 R251 → R248 → R249 → R250，落点 `13a5801` / `9ba266e` / `2ef24e3` / `4076a68`。搬前先证不相交：37 枚文件逐枚比 `git show HEAD:<path>` 与 `git show e82619c:<path>` ⇒ 全部 unchanged-since-base，零漂移；搬运后两侧 sha256 逐位相同。
+- 总控亲跑：R251 局部 **186 passed**；并树后全量 `-n 8` = **5081 passed / 44 skipped / 0 failed / 105.01 s**（基线 4864 → +217）。
+- 三处总控裁定入档：① R248 维持 **fail-closed**（读侧 500；404 等于报一次谁都没做过的删除）；② R251 那六枚改口逐条判成立（四枚目录尾号引信按 0011–0014 先例、`test_r184` 主语放宽而牙齿变多、`test_r190` 收窄主语 + 新增目录级闭合钉）；③ R249 裸机路径那格倒退不进 V1 门槛（容器 compose 已钉 `postgres`）⇒ 归 R256。
+- 「派工词写了仓里不存在的落点名」（`unavailable_ledgers`）是**总控自己的错**，已规矩化：以后派工词里每个落点名先现取。
+
+**二、R245b（总控补做 `881adad`）· 一枚真回归在树上躺了两格**
+
+- 第一次全量门 3 failed。分诊：两枚单文件串行 = 绿（`test_r48…::test_d1` 报 `chat.py` 锚点 **0 处**；`test_r218_egress_gate_placement::test_counter_proof` 抓到 `chat.py` 的 sha 在测试中途自己变）⇒ 跨 worker 撞读盘假红；第三枚串行仍红 ⇒ 真回归。
+- 定责用双棵 detached 树实测：`e82619c`（R245 之前）**9 passed** / `ff7ade1`（R245 之后、本波之前）**1 failed** ⇒ 红由上一格并的 **R245** 引入，与本波四枚无关。根因：R245 把 D 格从「永久红·等人来重算」换成有名读数，`tests/test_r218_ruler_self_calibration.py:272` 钉的是那个常量。
+- 修法不是换新常量，是换成**更强的不变量**（本次变异必须动不到 D 格，D 格期望值归它本家钉）。🔴 新规矩：**任何并树之后总控必须自己跑一次 `-n 8` 才许派下一波**。
+
+**三、run8 相 2 真机窗判读已入仓（`cca9081`）——五格里四格红，红因全部点名到文件与行号**
+
+- 判读件 `docs/testing/run8-phase2-readout-2026-09-25.md` + 五枚账件按 run7 惯例入仓（`sidecar-run8p2.jsonl` / `sidecar-run8p2-frames.jsonl` / `answers-run8p2.jsonl` / `evaluation-report-run8p2.json` / `bank-run8p2-subset20.jsonl`，sha 全签）。
+- 判决：**D-1** 形状过（done 19 / stalled 1、blips 2 真 500、`wait_ms` median 49,942.9）内容不过（真正文只 8 枚）；**D-2 不过**（可读面无 `usage`；真库 `model_calls` 70 行 / Σinput 91,271 / Σoutput 18,859 客户看不见）；**D-3 不过**（`sources` 0/20，根因 `queue_worker.py:366` 与 `:471` 只存正文字符串）；**A② 本窗物理判不了**（`frames[]` 20/20 空 ⇒ 是空集不是通过，判它必须另开一扇 `REPORT_LANE_VIA_QUEUE=off` 的窗）；**A④ 三格全退化**（0.55→0.30；evidence 0.40 是假分数，全来自 8 行 `requires_evidence=false`，真交回出处 0/12）。B 行多一枚 `first_visible_ms` 尺（median 73.7 ms，量的是回执上屏，与 run7 量正文不可比），V1 门槛不变。
+- 本班现取时**订正前一格三笔**：交回挂起文案是 **11 枚**不是 12 枚（第 12 枚是 `report-04` 的 `<no-bytes-emitted>`）；`done` 载荷写死有**两处**（`chat.py:1838` + `:2017`）；`queue.complete` 只存正文也是**两处**（`:366` + `:471`）。
+- 标定复核全过（`budget_unaffordable` 0 / 预算耗尽 0 / 关键词召回退化 0 / 查询改写失败 0 / `resolve host postgres` 0），新墙换位置到 `context_limit_exceeded`（`prompt_tokens` 2691 与 2778 各 + 1536 > `n_ctx` 4096，同一 request_id）⇒ 「口子二」第一次拿到**真机发生率**。
+- 三处假零陷阱入档：PG 存 **UTC**（本地时段查 = 假零，本班现场踩过）· runbook P-18 口令不回展开 · P-19 常驻 keepalive 已死（`ka.txt` 停在 12:59:15）。
+
+**四、V2 第二波已开（并发 4 枚，基点统一 `8841578`，写集互斥）**
+
+- R253 `Socrates`（测试卫生：反证钉 overlay 化）· R254 `Maxwell`（队列道契约三格，P1）· R255 `Rawls`（4096 上下文顶）· R256 `Tesla`（今天欠的三列，唯一持迁移者，顺带把 R251 欠的真库执行一起清）。
+- 唯一潜在撞行点是 `.env.example`：R255 只动 `MODEL_*` 行、R256 只动 `PERSISTENCE_BACKEND` 行，两边派工词都写明了边界。
+- 排在波次二未派：R257（Trace 兜底两笔，拟让 `Poincare` 续）· R258（runbook 两处假零，总控自办）· A② 那扇 off 小窗（R254 并树前开没意义）。
+- 🔴 被测镜像仍落后（`BUILD_INFO revision=75d9a6d`）⇒ 本窗读数是行为级证据，不是验收级；R254 并完之后 D 三格必须复测。
