@@ -595,8 +595,33 @@ then polls `GET /api/v1/queue/status/{request_id}` and may
 }
 ```
 
-`status` is one of `queued`, `processing`, `done`, `cancelled`, `dead`, or `expired`.
+`status` is one of `queued`, `processing`, `cancel_requested`, `done`, `cancelled`, `failed`, `dead`, or `expired`.
 A `done` response additionally carries `result`.
+
+The vocabulary is split twice over: by which layer answers the value, and by whether polling should
+stop. A non-terminal value means the task can still move; a terminal value means its outcome will not
+change, so the client must stop polling.
+
+* `queued` (non-terminal, written by the queue): `submit()` writes it when a task arrives, and
+  `fail_or_retry()` writes it again when a retryable attempt goes back for another run.
+* `processing` (non-terminal, written by the queue): `reserve()` moved the task onto the processing
+  list under a live lease. A task whose lease was dropped without an acknowledge stays here, so this
+  is what a client reads while an attempt runs and between a lost lease and the next sweep.
+* `cancel_requested` (non-terminal, written by the queue): `cancel()` was called after the task had
+  already left the pending list, so the cancel mark is recorded and the owning worker settles the task
+  on its next check. From here the task ends `cancelled`; it never becomes `done`.
+* `done` (terminal, written by the queue): `ack()` closed the task while it still held its lease, and
+  the answer is readable as `result`.
+* `cancelled` (terminal, written by the queue): the task was cancelled while it still sat on the
+  pending list, or a worker found the cancel mark before or after running it and discarded the result
+  instead of publishing it.
+* `failed` (terminal, written by the queue): `reserve()` found a request id on a list whose message
+  payload is already gone, so there is nothing left to run and no attempt was made for it.
+* `dead` (terminal, written by the queue): `fail_or_retry()` gave up on the task, either because it
+  exhausted `max_attempts` or because it was failed with `retryable=False`; see the compatibility
+  note below.
+* `expired` (terminal, answered by the route): the queue's status key can no longer be read, so
+  `GET /api/v1/queue/status/{request_id}` answers this value itself; the queue never writes it.
 
 A `complete()` that returns `False` is a discard, never a completion: no answer is published,
 the status is never `done`, and `failure.last_error` records the stable code
