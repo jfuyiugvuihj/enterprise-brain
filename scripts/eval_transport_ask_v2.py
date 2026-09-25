@@ -80,6 +80,16 @@ MAX_BLANKS = int(os.getenv("EVAL_MAX_BLANKS", "5"))
 #: 那个路径不存在，真机第一投就是被它打成 404 的（08-21 08:31 探针，容器 openapi 复核）。
 APPROVAL_PATH = "/api/v1/approve"
 APPROVAL_ROUNDS = max(1, int(os.getenv("EVAL_APPROVAL_ROUNDS", "3")))
+#: R226（run7 相 2 前置·总控亲做）：入队要两件事同时成立 —— app/api/v1/chat.py:1955-1956 的
+#: `lane == LANE_REPORT and _report_lane_via_queue_enabled()`。本量具从前从不发 lane（全文零命中），
+#: 所以历轮跑分里报告档走的一律是同步道：只翻 REPORT_LANE_VIA_QUEUE 也不入队，D-1「入队 → worker
+#: 跑完 → /queue/status 取回正文」从来没被量到过（run6 与 run7 相 1 的 12 道报告题 kind 全是 ok，
+#: 没有一枚 queued_polled）。
+#: 🔴 默认空串 = 载荷一个字节都不多，run6 / run7 相 1 的口径不受影响；把档位名设进来（相 2 用「报告」）
+#: 才替该档的题补 lane，取值表与前端同源（frontend/src/router/lane-choice.js，ChatPanel.vue:602
+#: 就是照这张表发的）⇒ 这是**量具缺陷，不是产品缺陷**。
+DECLARE_LANE_TIER = os.getenv("EVAL_DECLARE_LANE_TIER", "").strip()
+LANE_BY_TIER = {"报告": "report", "分析": "analysis", "问答": "qa"}
 APPROVAL_FAILED_SENTINEL = os.getenv(
     "EVAL_APPROVAL_FAILED_SENTINEL", "<approval-failed-no-terminal-answer>")
 SIDECAR = Path(os.getenv("EVAL_SIDECAR") or str(Path(__file__).with_name("collect-sidecar.jsonl")))
@@ -437,9 +447,11 @@ def _record_frames(row_id, kind, attempt, session_id, frames, answer, sentinel):
         print(json.dumps(row, ensure_ascii=False), file=fh)
 
 
-def _stream_once(question, session_id, idempotency_key):
+def _stream_once(question, session_id, idempotency_key, lane=""):
     out = _blank_observation(session_id)
     payload = {"message": question, "session_id": session_id, "idempotency_key": idempotency_key}
+    if lane:
+        payload["lane"] = lane
     with _open("/api/v1/ask", payload) as resp:
         return _consume(resp, out)
 
@@ -566,7 +578,9 @@ def transport(row):
         login()
         _pace()
         try:
-            out = _stream_once(str(row["question"]), uuid.uuid4().hex, uuid.uuid4().hex)
+            tier = str(row.get("tier", "")).strip()
+            lane = LANE_BY_TIER.get(tier, "") if DECLARE_LANE_TIER and tier == DECLARE_LANE_TIER else ""
+            out = _stream_once(str(row["question"]), uuid.uuid4().hex, uuid.uuid4().hex, lane)
         except urllib.error.HTTPError as exc:  # HTTPError 先于 URLError 捕获，401 强制重登
             try:
                 detail = exc.read().decode("utf-8", "replace")[:300]
