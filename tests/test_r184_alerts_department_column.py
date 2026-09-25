@@ -143,10 +143,21 @@ def test_the_alert_ledger_gains_exactly_one_column_and_the_six_survive():
 
 
 def test_the_column_is_appended_by_the_migration_not_rewritten_by_product_code():
-    """生产分支只查不建：alerts.py 里不许出现给这张表加列的语句。
+    """生产分支只查不建：alerts.py 里那些 ALTER 只许是「给自建库幂等补迁移已经建过的列」。
 
-    迁移是部署件，runtime imports must not create tables —— 放行读侧的办法只能是
-    「列已在」，不能是「应用顺手 ALTER」。
+    迁移是部署件，runtime imports must not create tables —— 放行读侧的办法只能是「列已在」，
+    不能是「应用顺手 ALTER」。R251 又给 alerts 落了八枚处置列，自建库同样要就地补（这一版之前
+    建好的开发库不然永远读不到它们，而那条分支不是生产库，不走 migrations），所以本格的钉法从
+    「逐枚点名录音」换成三条一起判，每一条都比原来窄：
+
+    ① 形状 —— 每一枚都必须是带 IF NOT EXISTS 守卫的 ADD COLUMN ... TEXT NOT NULL 并带常量默认值：
+      没守卫的第二遍 _ensure() 会当场炸，这条钉的是守卫，不是某一枚字符串；
+    ② 集合 —— 产品代码补的列必须 == 迁移目录给 alerts 建过的列，集合从 migrations 现取、零手抄：
+      补一枚迁移没建过的列（那是替生产库编造 schema），或者迁移建了而自建库不补（两条腿从此两种
+      形状），都当场红；
+    ③ 默认值 —— 逐列与迁移那一版同值，否则同一行在有库与无库两条腿上读出两种答案。
+
+    0012 那一枚补列语句本身仍然逐字钉在名单里：它是这条口子的来历，不许被后来的枚数冲淡。
     """
     source = (REPO / "app" / "api" / "v1" / "alerts.py").read_text(encoding="utf-8")
     altered = [
@@ -155,9 +166,41 @@ def test_the_column_is_appended_by_the_migration_not_rewritten_by_product_code()
         if "alerts" in statement
     ]
 
-    assert altered == [
-        "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS department TEXT NOT NULL DEFAULT ''"
-    ], altered
+    assert altered, "自建库就地补列那条 ALTER 不见了，开发库从此读不到处置列"
+    assert (
+        "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS department TEXT NOT NULL DEFAULT ''" in altered
+    ), "0012 那一枚就地补列的写法必须逐字还在"
+
+    specs = []
+    for statement in altered:
+        parsed = added_column_specs(statement)
+        assert len(parsed) == 1, f"不是一枚预期的加列语句：{statement}"
+        specs.append(parsed[0])
+
+    assert all(
+        spec.column_guarded
+        and spec.not_null
+        and spec.data_type == "TEXT"
+        and spec.default_literal is not None
+        for spec in specs
+    ), ["守卫/类型/默认值不齐：" + statement for statement in altered]
+
+    from app.db.migrations import MIGRATIONS
+
+    migration_specs = [
+        spec
+        for item in MIGRATIONS
+        for spec in added_column_specs(item.sql, item.version)
+        if spec.table == "alerts"
+    ]
+    migration_columns = {spec.column for spec in migration_specs}
+    assert {spec.column for spec in specs} == migration_columns, (
+        "alerts.py 就地补的列与迁移目录给 alerts 建的列分家了："
+        + str(sorted({spec.column for spec in specs} ^ migration_columns))
+    )
+    assert {spec.column: spec.default_literal for spec in specs} == {
+        spec.column: spec.default_literal for spec in migration_specs
+    }, altered
     assert "CREATE TABLE IF NOT EXISTS alerts" in source, "开发库懒建表那一腿仍要在"
     assert "run migrations first" in source, "生产缺列必须指名去找迁移，而不是自行补建"
 

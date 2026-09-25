@@ -3,13 +3,13 @@
 
 - 告警规则 CRUD（数值比较）
 - evaluate_all(): 读经营数据 → 逐规则判定 → 触发则写告警 + AI 归因
-- daily_report(): 汇总关键指标生成日报文本
+- daily_report(): 汇总关键指标生成日报文本；处置闭环（R251）：确认 / 转派 / 关闭 —— 状态机、处置人与时间落库、处置后按新状态读回
 导入不硬依赖 Postgres（懒建表）。
 """
 import os
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from itertools import islice
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
@@ -54,6 +54,21 @@ def _is_production_environment() -> bool:
     return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
 
 
+#: 处置闭环（R251）落在 alerts 行上的八枚列，自建库（非生产）就地补的 DDL。逐枚写死而不是拼
+#: 字符串：「与 migrations/0014 逐枚同名同默认值」这件事由 tests/test_r251_alert_disposal.py 对着
+#: 迁移目录判等，不靠注释维持。生产库的补法只归 migrations，本件在那条分支里只查不建。
+_ALERT_DISPOSAL_LAZY_DDLS: tuple[str, ...] = (
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS acknowledged_by TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS acknowledged_at TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS closed_by TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS closed_at TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS assignee TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS assigned_by TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS assigned_at TEXT NOT NULL DEFAULT ''",
+)
+
+
 def _ensure():
     global _initialized
     if _initialized:
@@ -96,6 +111,14 @@ def _ensure():
                 ai_analysis TEXT,
                 department TEXT NOT NULL DEFAULT '',
                 read BOOLEAN NOT NULL DEFAULT FALSE,
+                status TEXT NOT NULL DEFAULT 'open',
+                acknowledged_by TEXT NOT NULL DEFAULT '',
+                acknowledged_at TEXT NOT NULL DEFAULT '',
+                closed_by TEXT NOT NULL DEFAULT '',
+                closed_at TEXT NOT NULL DEFAULT '',
+                assignee TEXT NOT NULL DEFAULT '',
+                assigned_by TEXT NOT NULL DEFAULT '',
+                assigned_at TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL DEFAULT (NOW() AT TIME ZONE 'Asia/Shanghai')::text
             )
         """)
@@ -104,6 +127,9 @@ def _ensure():
         conn.execute(
             "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS department TEXT NOT NULL DEFAULT ''"
         )
+        # 处置列同一套路：IF NOT EXISTS 幂等补列，给这一版之前已经自建过的开发库让出位置。
+        for _disposal_ddl in _ALERT_DISPOSAL_LAZY_DDLS:
+            conn.execute(_disposal_ddl)
         conn.commit()
     _initialized = True
 
@@ -113,6 +139,11 @@ class RuleCreate(BaseModel):
     metric: str
     op: str = "lt"
     threshold: float
+
+
+#: 转派的请求体只有一枚目标用户名：谁派的、什么时候派的，服务端自己记，不接受客户端代填。
+class AlertAssignCreate(BaseModel):
+    assignee: str
 
 
 # 审计里的资源名：读台账与写规则是两条不同的口，拒绝行要看得出是哪条拒的。
@@ -261,6 +292,332 @@ def _require_alert_management(request: Request | None, resource: str = ALERT_LED
         _audit_alert_denial(principal, resource, decision.reason_code)
         raise HTTPException(status_code=403, detail=decision.reason_code)
     return principal
+
+
+# ==================== 处置闭环（R251）：状态词表、守卫与三件动作 ====================
+
+#: 台账上「处置一条告警」这条口子的审计资源名。读台账、写规则、动处置是三道不同的口，
+#: 拒绝行要看得出是哪一道拒的（与 ALERT_LEDGER_RESOURCE / ALERT_RULES_RESOURCE 同一命名法）。
+ALERT_DISPOSAL_RESOURCE = "alert_disposal"
+
+#: 一条告警的处置状态：封闭集合，``closed`` 是唯一的终态。词表的第二份拼写在
+#: migrations/0014 的 CHECK 里 —— 那是 PostgreSQL 唯一能持有封闭集的形状，不是第三份。
+#: 两份取值集合必须逐枚相等，由 tests/test_r251_alert_disposal.py 现读迁移判，抄不算。
+ALERT_STATUS_OPEN = "open"
+ALERT_STATUS_ACKNOWLEDGED = "acknowledged"
+ALERT_STATUS_CLOSED = "closed"
+ALERT_STATUSES: tuple[str, ...] = (
+    ALERT_STATUS_OPEN,
+    ALERT_STATUS_ACKNOWLEDGED,
+    ALERT_STATUS_CLOSED,
+)
+#: 进了这一枚就不许再往前推，也不许退回来：重开不在本单三件动作里，所以也没有那条出口。
+ALERT_TERMINAL_STATUSES: frozenset[str] = frozenset({ALERT_STATUS_CLOSED})
+
+#: 三件动作，与三条路径一一对应（ack / close / assign 各自可寻址，判据 J-2）。
+ALERT_ACTION_ACK = "ack"
+ALERT_ACTION_CLOSE = "close"
+ALERT_ACTION_ASSIGN = "assign"
+ALERT_ACTIONS: tuple[str, ...] = (ALERT_ACTION_ACK, ALERT_ACTION_CLOSE, ALERT_ACTION_ASSIGN)
+
+#: 每一枚动作唯一的合法形状：``(允许出发的当前状态, 写入后的状态)``，目标为 ``None`` 即状态不动。
+#: assign 有意不动状态：派出去说的是「现在归他」，不是「有人决定了」，接手的本人还得自己确认一次；
+#: 已关闭那一枚不再改派，那等于替别人重开一笔已经销掉的账。
+ALERT_DISPOSAL_RULES: dict[str, tuple[frozenset[str], str | None]] = {
+    ALERT_ACTION_ACK: (
+        frozenset({ALERT_STATUS_OPEN}),
+        ALERT_STATUS_ACKNOWLEDGED,
+    ),
+    ALERT_ACTION_CLOSE: (
+        frozenset({ALERT_STATUS_OPEN, ALERT_STATUS_ACKNOWLEDGED}),
+        ALERT_STATUS_CLOSED,
+    ),
+    ALERT_ACTION_ASSIGN: (
+        frozenset({ALERT_STATUS_OPEN, ALERT_STATUS_ACKNOWLEDGED}),
+        None,
+    ),
+}
+
+#: 每一枚动作往行上写的列。顺序就是 UPDATE 里 SET 的顺序，也是值串的顺序，两处不再各数一遍。
+ALERT_DISPOSAL_WRITE_COLUMNS: dict[str, tuple[str, ...]] = {
+    ALERT_ACTION_ACK: ("status", "acknowledged_by", "acknowledged_at"),
+    ALERT_ACTION_CLOSE: ("status", "closed_by", "closed_at"),
+    ALERT_ACTION_ASSIGN: ("assignee", "assigned_by", "assigned_at"),
+}
+
+#: 八枚处置列的默认值，与 migrations/0014 逐枚同值：没记过处置的行就是 ``open``，
+#: 处置人、处置时间与转派目标就是空串 —— 空串是「没记过」，不是猜出来的名字或时间。
+ALERT_DISPOSAL_DEFAULTS: dict[str, str] = {
+    "status": ALERT_STATUS_OPEN,
+    "acknowledged_by": "",
+    "acknowledged_at": "",
+    "closed_by": "",
+    "closed_at": "",
+    "assignee": "",
+    "assigned_by": "",
+    "assigned_at": "",
+}
+
+#: 三枚拒绝出口的稳定码，全部复用 ErrorEnvelope.code 里**已有**的字面量，本单一枚都不新造：
+#: 新造一枚要同时动 app/agents/contracts.py 的封闭枚举、docs/api/contract-v1.md 那张错误码表与
+#: tests/test_error_code_vocabulary.py 的出处账，三处都在本单写域之外。
+#: 404 那一枚同时是「这一条不存在」与「这一条存在但不归你读」的同一句话 —— 平台既有口径
+#: （app/api/v1/chat.py、app/api/v1/data.py、app/api/v1/artifacts.py 都这么答越权读），
+#: 因为「这条告警在不在」本身就是别人的信息，404 与 403 之差在这里就是一条存在性 oracle。
+ALERT_DISPOSAL_NOT_FOUND_CODE = "resource_not_found"
+ALERT_DISPOSAL_CONFLICT_CODE = "conflict"
+ALERT_DISPOSAL_ASSIGNEE_CODE = "validation_error"
+
+#: 生产库这一腿依赖 alerts.status；缺它就像缺归属列一样当场指名 run migrations first，
+#: 而不是让处置的 UPDATE 撞一个 column "status" does not exist 的 500。只查，不建。
+ALERT_DISPOSAL_SCHEMA_COLUMN = "status"
+
+
+def alert_disposal_target_status(action: str, current_status: str) -> str | None:
+    """这一枚动作从 ``current_status`` 出发要写成的状态；``None`` ＝ 这一枚跳转不合法。
+
+    全仓只有这一处判状态机：守卫、写集、测试三边都问它，所以「允不允许」与「写成什么」
+    不可能各说一套。原地转派回当前状态，那是合法但不改状态的一件。
+    """
+    rule = ALERT_DISPOSAL_RULES.get(action)
+    if rule is None:
+        return None
+    allowed_from, target = rule
+    if current_status not in allowed_from:
+        return None
+    return current_status if target is None else target
+
+
+def alert_disposal_guard(action: str, current_status: str) -> bool:
+    """这一枚动作能不能从这一格状态出发。"""
+    return alert_disposal_target_status(action, current_status) is not None
+
+
+def alert_disposal_writes(
+    action: str,
+    current_status: str,
+    *,
+    actor: str,
+    assignee: str = "",
+    disposed_at: str,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """``(列名串, 值串)``：守卫过了才谈得上写，非法跳转在这里直接抛。
+
+    刻意不回「空写集」： 回一份空写集会让人忘记判守卫的那条调用路安静地什么都不做，
+    而那条路今天就是判据 J-1 要拦的那一条。``actor`` 与 ``assignee`` 都是 username。
+    """
+    target = alert_disposal_target_status(action, current_status)
+    if target is None:
+        raise ValueError(f"非法的告警处置跳转: action={action} from status={current_status!r}")
+    columns = ALERT_DISPOSAL_WRITE_COLUMNS[action]
+    if action == ALERT_ACTION_ASSIGN:
+        return columns, (assignee, actor, disposed_at)
+    return columns, (target, actor, disposed_at)
+
+
+def alert_row_status(row: dict) -> str:
+    """这一行现在的处置状态。
+
+    缺键或空串按 ``open`` 读：那是 0014 给存量行填的同一个默认值，不是新加的第三种状态 ——
+    迁移之前写下的行确实没有人处置过它。
+    """
+    return str(row.get("status") or ALERT_STATUS_OPEN)
+
+
+def alert_ledger_row(row: dict) -> dict:
+    """读路径交回的行：八枚处置列永远在场。
+
+    有库那条腿永远读得到它们（迁移给存量行填的就是这些常量），无库那条腿里的行是测试与旧代码
+    直接塞进内存表的字典，可能没带这些键。补的是同一组默认值，不是新判定：两条腿对同一行
+    必须答出同一个形状，否则「处置之后列表与详情读到处置后的状态」只对一腿成立。
+    """
+    merged = dict(row)
+    for column, default in ALERT_DISPOSAL_DEFAULTS.items():
+        if merged.get(column) in (None, ""):
+            merged[column] = default
+    return merged
+
+
+def _alert_disposal_now() -> str:
+    """处置时间：两条腿共用服务端这一枚时钟，所以再读一次时这个字段逐字相同。
+
+    有库那条腿如果让 ``NOW()`` 去生成，``_MEM_ALERTS`` 与 PostgreSQL 会各交一套时间写法，
+    「逐字段一致」这件事就只能对一腿断言。既有 ``created_at`` 的列默认值仍然由服务端 SQL 写，
+    那一条口径本单不动。
+    """
+    # 服务端那枚时钟：两条腿共用它（app/common/auth.py、app/api/v1/chat.py 同一个固定偏移，
+    # 中国无夏令时）。既有 created_at 的列默认值仍由服务端 SQL 生成，本单不动。
+    return datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds")
+
+
+def alert_assignee_principal(username: str):
+    """按 username 找人；查人走 ``app.common.auth`` 的模块属性，与 ``principal_from_request``
+    同一个缝（桩换得到它，本件不自建第二张用户表，也不接受客户端代填的身份）。"""
+    from app.agents.contracts import Principal
+    from app.common import auth
+
+    if not username:
+        return None
+    user = auth.get_user(username)
+    if not user:
+        return None
+    return Principal.from_user(user)
+
+
+def alert_assignee_can_handle(assignee, row: dict) -> bool:
+    """转派的目标自己必须处置得了这一条：两道既有的门都过，本件不加第三道判定。
+
+    资源级那道（``alerts:manage``）判他能不能用告警功能，行级那道（``alert_row_visible``）判这一条
+    归不归他。派给看不见这一行的人是假闭环 —— 他列表里都找不到它，确认与关闭都无从谈起；派给没有
+    ``alerts:manage`` 的人（staff / auditor）同样是死胡同，那一格今天就是 403。停用账号由
+    ``authorization_decision`` 自己判（``principal_inactive``），这里不再抄一遍它的口径。
+    """
+    if assignee is None:
+        return False
+    if not authorization_decision(assignee, None, action=ACTION_MANAGE_ALERTS).allowed:
+        return False
+    return alert_row_visible(assignee, row)
+
+
+def _alert_scoped_select(principal, *, for_update: bool = False) -> tuple[str, tuple]:
+    """按行级归属读单条告警的 SQL 与参数（参数按 SQL 里 ``%s`` 的出现次序）。
+
+    归属谓词在这里不重写一遍：``alert_row_scope_sql`` 的 WHERE 整体是一括号的析取，剥掉那五个
+    字符直接挂到 ``id = %s`` 后面还是同一个判定，读列表、读单条、处置写回三条路共用一份。
+    ``for_update`` 只有处置那条腿要：它锁住这一行，让「守卫读到的那一版」与「即将写的那一版」
+    是同一版，否则两个 manager 同时确认会互相看不见对方已经改过。
+    """
+    predicate, params = alert_row_scope_sql(principal)
+    clause = ""
+    if predicate:
+        body = predicate.strip()
+        if body.upper().startswith("WHERE"):
+            body = body[len("WHERE"):].strip()
+        clause = f"AND ({body})"
+    sql = " ".join(
+        part
+        for part in (
+            "SELECT * FROM alerts WHERE id = %s",
+            clause,
+            "FOR UPDATE" if for_update else "",
+        )
+        if part
+    )
+    return sql, params
+
+
+def _alert_row_from_connection(conn, principal, alert_id: int, *, for_update: bool = False) -> dict | None:
+    """有库那条腿的单行读。读不到＝这一条不存在，或者存在但不归这个人的行级范围（两者同形）。"""
+    sql, params = _alert_scoped_select(principal, for_update=for_update)
+    row = conn.execute(sql, (alert_id, *params)).fetchone()
+    return dict(row) if row else None
+
+
+def _alert_row_from_memory(principal, alert_id: int) -> dict | None:
+    """无库那条腿的单行读：谓词跑在内存行上，与列表那条腿同一个 ``alert_row_visible``。"""
+    for row in reversed(_MEM_ALERTS):
+        if row.get("id") == alert_id and alert_row_visible(principal, row):
+            return row
+    return None
+
+
+def _require_alert_disposal_schema(conn) -> None:
+    """生产库缺 ``alerts.status`` 就说指名的一句话，不退 500，也不在这儿偷偷 ALTER。"""
+    if not _is_production_environment():
+        return
+    column = conn.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'alerts' AND column_name = %s LIMIT 1",
+        (ALERT_DISPOSAL_SCHEMA_COLUMN,),
+    ).fetchone()
+    if not column:
+        raise RuntimeError("alerts.status column is required in production; run migrations first")
+
+
+def _refuse_alert_disposal(principal, code: str, status_code: int) -> None:
+    """三道拒绝出口共用同一笔账与同一次抛出。
+
+    审计里只落主体、动作、判定、资源名与那枚稳定码（沿用 ``_audit_alert_denial``），告警正文、
+    别人的部门、目标用户的属性一个字都不进 payload；``reason`` 取的就是响应那枚码，本件不为
+    审计另开第二份码表。
+    """
+    _audit_alert_denial(principal, ALERT_DISPOSAL_RESOURCE, code)
+    raise HTTPException(status_code=status_code, detail=code)
+
+
+def _require_capable_assignee(principal, row: dict, assignee: str) -> None:
+    """转派的四格失败共用一枚码。
+
+    查无此人、账号停用、没有 ``alerts:manage``、读不到这一条 —— 响应里不说是哪一格：
+    「这个用户名在不在我们系统里」不是调用方的信息，拆开答就是一条用户名枚举口。
+    """
+    candidate = alert_assignee_principal(assignee)
+    if not alert_assignee_can_handle(candidate, row):
+        _refuse_alert_disposal(principal, ALERT_DISPOSAL_ASSIGNEE_CODE, 400)
+
+
+def _dispose_alert(principal, alert_id: int, action: str, assignee: str = "") -> dict:
+    """把一条告警处置掉，并把**处置之后**的行交回。
+
+    三件事按顺序判，前一件不过就碰不到后一件的数据：
+
+    1. 这一条归不归他读（行级归属，与列表同一份谓词）→ 否则 404，与「不存在」同形；
+    2. 这一枚动作能不能从当前状态出发（``alert_disposal_guard``）→ 否则 409 ``conflict``；
+    3. 转派的目标是不是自己处置得了这一条（两道既有的门）→ 否则 400 ``validation_error``。
+
+    有库那条腿把 1 锁进事务（``FOR UPDATE``），守卫之后才拼 UPDATE，写完 commit 再从同一条
+    归属谓词读回来 —— 交回的不是「我以为写成什么样」，是库里现在什么样。
+    """
+    if not _database_available():
+        row = _alert_row_from_memory(principal, alert_id)
+        if row is None:
+            _refuse_alert_disposal(principal, ALERT_DISPOSAL_NOT_FOUND_CODE, 404)
+        current = alert_row_status(row)
+        if not alert_disposal_guard(action, current):
+            _refuse_alert_disposal(principal, ALERT_DISPOSAL_CONFLICT_CODE, 409)
+        if action == ALERT_ACTION_ASSIGN:
+            _require_capable_assignee(principal, row, assignee)
+        columns, values = alert_disposal_writes(
+            action,
+            current,
+            actor=principal.username,
+            assignee=assignee,
+            disposed_at=_alert_disposal_now(),
+        )
+        row.update(zip(columns, values))
+        return alert_ledger_row(row)
+
+    _ensure()
+    with _conn() as conn:
+        _require_alert_disposal_schema(conn)
+        row = _alert_row_from_connection(conn, principal, alert_id, for_update=True)
+        if row is None:
+            _refuse_alert_disposal(principal, ALERT_DISPOSAL_NOT_FOUND_CODE, 404)
+        current = alert_row_status(row)
+        if not alert_disposal_guard(action, current):
+            _refuse_alert_disposal(principal, ALERT_DISPOSAL_CONFLICT_CODE, 409)
+        if action == ALERT_ACTION_ASSIGN:
+            _require_capable_assignee(principal, row, assignee)
+        columns, values = alert_disposal_writes(
+            action,
+            current,
+            actor=principal.username,
+            assignee=assignee,
+            disposed_at=_alert_disposal_now(),
+        )
+        assignments = ", ".join(f"{column} = %s" for column in columns)
+        updated = conn.execute(
+            f"UPDATE alerts SET {assignments} WHERE id = %s", (*values, alert_id)
+        )
+        if updated.rowcount != 1:
+            # 锁内一行都没写成：与「读不到」同形交回，不补第二笔，也不换个说法再试一次。
+            conn.rollback()
+            _refuse_alert_disposal(principal, ALERT_DISPOSAL_NOT_FOUND_CODE, 404)
+        conn.commit()
+        refreshed = _alert_row_from_connection(conn, principal, alert_id)
+        if refreshed is None:
+            raise RuntimeError("alert disposal wrote a row that cannot be read back")
+        return alert_ledger_row(refreshed)
 
 
 # ==================== 纯判定（可单测） ====================
@@ -466,6 +823,7 @@ def evaluate_all(principal=None, scan_summary: dict | None = None) -> list[dict]
                             "department": owner_department,
                             "read": False,
                             "created_at": datetime.now().isoformat(),
+                            **ALERT_DISPOSAL_DEFAULTS,
                         }
                     )
                 triggered.append({"message": msg, "ai_analysis": analysis})
@@ -569,7 +927,7 @@ async def list_alerts(request: Request):
         visible = list(
             islice(
                 (
-                    dict(alert)
+                    alert_ledger_row(alert)
                     for alert in reversed(_MEM_ALERTS)
                     if alert_row_visible(principal, alert)
                 ),
@@ -596,3 +954,59 @@ async def check_now(request: Request):
     scan_scope: dict = {}
     triggered = evaluate_all(principal=principal, scan_summary=scan_scope)
     return {"triggered": triggered, "scan_scope": scan_scope}
+
+
+# ==================== 处置闭环的 API（R251）====================
+
+@router.get("/alerts/{alert_id}")
+async def get_alert(alert_id: int, request: Request):
+    """详情读：处置之后在这儿读回**处置之后**的样子。
+
+    门与列表完全同一条（资源级 ``_require_alert_management`` + 行级 ``alert_row_scope_sql``），
+    所以「列表里没有这一条」与「详情说读不到」是同一句话。读不到一律 404
+    ``resource_not_found``，不存在与不归你读答得一模一样，本件不用 403 去区分它们 ——
+    一区分，别人就能拿状态码之差试出「这条告警在不在」。
+    """
+    principal = _require_alert_management(request, ALERT_LEDGER_RESOURCE)
+    if _database_available():
+        _ensure()
+        with _conn() as conn:
+            row = _alert_row_from_connection(conn, principal, alert_id)
+    else:
+        row = _alert_row_from_memory(principal, alert_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=ALERT_DISPOSAL_NOT_FOUND_CODE)
+    return {"alert": alert_ledger_row(row)}
+
+
+@router.post("/alerts/{alert_id}/ack")
+async def acknowledge_alert(alert_id: int, request: Request):
+    """确认：``open`` → ``acknowledged``，落确认人与确认时间。
+
+    已经确认过的再点一次不合法的：那一格记的是「谁第一次认领了这条」，让它被后一次点击覆盖，
+    等于把台账上唯一那句关于认领的话改成最后一个人的。要改的是转派，不是重写确认。
+    """
+    principal = _require_alert_management(request, ALERT_DISPOSAL_RESOURCE)
+    return {"alert": _dispose_alert(principal, alert_id, ALERT_ACTION_ACK)}
+
+
+@router.post("/alerts/{alert_id}/close")
+async def close_alert(alert_id: int, request: Request):
+    """关闭：``open`` / ``acknowledged`` → ``closed``（终态），落关闭人与关闭时间。
+
+    没确认也能直接关：一条已经处置完的告警不需要先补一次「我看过了」才能销掉，那只会让人
+    在台账上多写一笔他没做过的事。关完之后这一条就不再是任何动作的合法起点。
+    """
+    principal = _require_alert_management(request, ALERT_DISPOSAL_RESOURCE)
+    return {"alert": _dispose_alert(principal, alert_id, ALERT_ACTION_CLOSE)}
+
+
+@router.post("/alerts/{alert_id}/assign")
+async def assign_alert(alert_id: int, data: AlertAssignCreate, request: Request):
+    """转派：只换处置人，不动状态 —— 派出去说的是「现在归他」，不是「有人决定了」。
+
+    目标必须自己两道门都过（能管告警、且这一条读得到），否则这一件是假闭环：他会连列表里
+    都没有它。接手的本人仍然要自己确认一次，确认人才算落在他身上。
+    """
+    principal = _require_alert_management(request, ALERT_DISPOSAL_RESOURCE)
+    return {"alert": _dispose_alert(principal, alert_id, ALERT_ACTION_ASSIGN, data.assignee)}

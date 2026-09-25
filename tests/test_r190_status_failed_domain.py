@@ -60,10 +60,13 @@ CONSTRAINT_NAME = "pending_approvals_status_check"
 #: 0008：这枚 CHECK 的出生地，也是"存量行过去被什么关着"的基准。
 BASE_VERSION = "0008"
 #: 🔴 目录尾号引信（与 tests/test_document_catalog_sync.py、tests/test_r46_activity_signals.py、
-#: tests/test_r120_clean_install_first_boot.py 同族）：谁排下一号，必须回到这里连名带断言一起改口。
-#: 改口是收紧，不是放宽。
-CATALOG_TAIL_VERSION = "0013"
-NEW_VERSION = CATALOG_TAIL_VERSION
+#: tests/test_r120_clean_install_first_boot.py、tests/test_r251_alert_disposal_migration.py 同族）：
+#: 谁排下一号，必须回到这里连名带断言一起改口。改口是收紧，不是放宽。
+#: R251 排了 0014（告警台账的处置列），尾号归它；本单的主题仍然是 0013 那一枚，所以 NEW_VERSION
+#: 不再等于尾号 —— 本件判的始终是「0013 放开的域 == 代码侧那两份」，把 0014 卷进来只会让
+#: alerts 的 CHECK 冒充 pending_approvals 的词表。尾号仍然由上面那条断言逐字钉住。
+CATALOG_TAIL_VERSION = "0014"
+NEW_VERSION = "0013"
 NEW_FILENAME = "0013_pending_approvals_status_includes_failed.sql"
 NEW_NAME = "pending_approvals_status_includes_failed"
 NEW_PATH = MIGRATIONS_DIR / NEW_FILENAME
@@ -647,24 +650,37 @@ def test_both_statements_are_guarded_and_a_database_without_the_table_skips_them
 
 # ------------------------------------------------------ 判据 2 的另一半：不许有第三份
 def test_the_vocabulary_is_written_in_sql_exactly_twice_and_both_are_the_same_words_or_supersets():
-    """整册目录里 status 的封闭集只许出现在 0008 与 0013 两处。
+    """本单那张表（``pending_approvals.status``）的封闭集只许出现在 0008 与 0013 两处。
 
-    0008 那一处是历史（不许改写），0013 这一处是现行域；第三处拼写一旦长出来，就有两份 DDL 与一份
-    代码互相指认，而本单的判据 2 只对判三方。
+    这枚钉原判的是"整册目录里 status 的封闭集"，R251 落 0014（``alerts`` 的处置词表）之后必须按表
+    收窄 —— 收窄的是判据的**主语**，不是它的强度。判据 2 的威胁模型从来是"同一枚列长出第二份拼写，
+    于是两份 DDL 与一份代码互相指认"；两枚表共享列名 ``status`` 不代表共享词表（挂起台账的
+    awaiting/resumed 与告警的 open/acknowledged 没有一格语义相同）。原来那句跨表全等于是顺手把
+    "本目录只有一张表带 status CHECK" 当成了不变量。
+
+    牙齿因此留在两处，一枚都不许化：本表这一侧仍逐字判 ``[0008, 0013]`` 两枚、约束名相等、
+    0008 是 0013 的真子集；目录那一侧新长一枚**闭合表名集合**的钉 —— 带 status 封闭集的 (表, 版)
+    只许是这三枚。谁给第三张表偷偷加一枚 status CHECK，或者给 alerts 加出第二处拼写，这里当场红。
     """
     enumerations = [
         (item.version, table, name, words)
         for item in MIGRATIONS
         for table, name, words in status_enumerations(item.sql)
     ]
-    versions = [version for version, _, _, _ in enumerations]
+    mine = [row for row in enumerations if row[1] == TABLE]
+    versions = [version for version, _, _, _ in mine]
 
-    assert versions == [BASE_VERSION, NEW_VERSION], enumerations
-    assert {table for _, table, _, _ in enumerations} == {TABLE}
-    assert {name for _, _, name, _ in enumerations} == {CONSTRAINT_NAME}
-    by_version = {version: words for version, _, _, words in enumerations}
+    assert versions == [BASE_VERSION, NEW_VERSION], mine
+    assert {name for _, _, name, _ in mine} == {CONSTRAINT_NAME}
+    by_version = {version: words for version, _, _, words in mine}
     assert by_version[NEW_VERSION] == status_domain_through(NEW_VERSION)
     assert by_version[BASE_VERSION] < by_version[NEW_VERSION]
+
+    assert {(table, version) for version, table, _, _ in enumerations} == {
+        (TABLE, BASE_VERSION),
+        (TABLE, NEW_VERSION),
+        ("alerts", "0014"),
+    }, enumerations
 
 
 def test_this_file_carries_no_second_copy_of_the_status_vocabulary():

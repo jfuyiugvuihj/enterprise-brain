@@ -42,9 +42,10 @@ NEW_PATH = MIGRATIONS_DIR / NEW_FILENAME
 
 #: 🔴 目录尾号引信（与 tests/test_document_catalog_sync.py、tests/test_r46_activity_signals.py、
 #: tests/test_r120_clean_install_first_boot.py、tests/test_r190_status_failed_domain.py 同族）。
-#: 本单落 0012 时尾号就是 0012；R190 排了 0013（放开挂起台账 status 的取值域）之后尾号归它，本件
-#: 连名带断言一起改口 —— 这是把钉子收紧一版，不是放宽。谁排下一号必须回到这里改这一格。
-CATALOG_TAIL_VERSION = "0013"
+#: 本单落 0012 时尾号就是 0012；R190 排了 0013（放开挂起台账 status 的取值域）之后尾号归它，
+#: R251 排了 0014（告警台账的处置列）之后尾号归它。本件连名带断言一起改口 —— 这是把钉子收紧
+#: 一版，不是放宽。谁排下一号必须回到这里改这一格。
+CATALOG_TAIL_VERSION = "0014"
 
 #: 本单送的两枚列：R184 管告警台账的行级归属，R183 管挂起轮声明的档位。
 ALERTS_DEPARTMENT = ("alerts", "department")
@@ -321,8 +322,9 @@ def test_the_catalog_gains_exactly_one_version_and_the_loader_accepts_it():
     assert versions[-1] == CATALOG_TAIL_VERSION, (
         "目录尾号引信（来历见 CATALOG_TAIL_VERSION）：要加第三枚列请回到 0012 里加"
     )
-    assert [version for version in versions if version > NEW_VERSION] == [CATALOG_TAIL_VERSION], (
-        "0012 之后只许站着被指名的那一枚前滚迁移，多一枚就得回到这里指名：" + str(versions)
+    assert [version for version in versions if version > NEW_VERSION] == ["0013", CATALOG_TAIL_VERSION], (
+        "0012 之后只许站着被指名的那两枚前滚迁移（R190 的 0013 与 R251 的 0014），"
+        "多一枚就得回到这里指名：" + str(versions)
     )
     assert NEW_FILENAME in on_disk
     assert discover_migrations() == MIGRATIONS, "清单校验不过的目录不该被 loader 认下来"
