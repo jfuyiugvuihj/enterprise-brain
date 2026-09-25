@@ -1,14 +1,16 @@
 """Reliable Redis queue primitives.
 
 This module is deliberately separate from the legacy queue adapter until the worker
-integration contract is reviewed. It provides reserve/ack, lease expiry, retry,
-dead-letter, idempotency, cancellation, explicit status transitions,
+integration contract is reviewed. It provides reserve/ack, lease expiry with an
+in-run renewal heartbeat (R227), retry, dead-letter, idempotency, cancellation,
+explicit status transitions,
 and passive queue-pressure readings (depth plus declared capacity) for monitoring.
 """
 from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -32,6 +34,32 @@ CAPACITY_SOURCE_INVALID = "invalid_configuration"
 #: depth_source: 深度一律现读 Redis 服务端的 LLEN，多进程/多副本读的是同一份账。
 DEPTH_SOURCE_REDIS_LLEN = "redis_llen"
 
+#: ---- R227：处理租约的续拍与丢弃原因码 -------------------------------------------
+#:
+#: 租约从前只在 `reserve()` 写过一次（TTL = lease_seconds，生产默认 300 s），运行途中
+#: 全树零续租点。09-25 总控亲测：一档报告题跑完 311 s > 300 s，任务还在正常跑就被自己
+#: 的持有者判成"租约已丢失"，1519 字正文在 `complete()` 门口当场丢弃。那一枚判定读的是
+#: "起跑之后过了多久"，不是"持有者还活着吗"——心跳把语义修回后者。
+#:
+#: 间隔取 lease_seconds / DIVISOR：一份租约的有效期内至少落三拍，任何一拍没赶上（GIL
+#: 卡顿、瞬时断连）后面还有两拍兜着。下限 1 s 是给测试里那种 2 s 短租约用的：不许把
+#: 心跳变成 busy loop。
+LEASE_HEARTBEAT_DIVISOR = 3
+LEASE_HEARTBEAT_MIN_INTERVAL_SECONDS = 1.0
+#: 续租的墙钟保险丝：一条任务最多让心跳续这么多秒，到点停手让租约自然过期，交给
+#: `requeue_expired` 回收。没有这条线，一个卡死但没崩的 worker 就能无限期把消息占在
+#: 处理表上——那等于心跳把租约机制存在的理由吃掉了。代价口径见 R227 交工报告：
+#: 崩溃检测照旧是 lease_seconds 量级，"活着但卡死"的检测从 lease_seconds 变成这一枚。
+LEASE_MAX_RENEW_SECONDS_ENV = "QUEUE_LEASE_MAX_RENEW_SECONDS"
+LEASE_MAX_RENEW_SECONDS_DEFAULT = 3600
+#: 保险丝的天花板：坏配置一律回落到默认值，不许把上限读成"无限"。
+LEASE_MAX_RENEW_SECONDS_CEILING = 86400
+#: 稳定码：结果被丢弃这件事的成因。只进队列账本（`failure()["last_error"]`）与日志，
+#: 不进用户正文（R16 同口径）。
+RESULT_DISCARDED = "result_discarded"
+DISCARD_REASON_CANCELLED = "cancelled"
+DISCARD_REASON_LEASE_LOST = "lease_lost"
+
 
 def parse_queue_capacity(raw: Any, *, source: str = CAPACITY_SOURCE_ENV) -> tuple[int | None, str]:
     """把配置里的排队上限读成一枚容量读数；读不懂就报「不知道」。
@@ -49,6 +77,24 @@ def parse_queue_capacity(raw: Any, *, source: str = CAPACITY_SOURCE_ENV) -> tupl
     if value <= 0:
         return None, CAPACITY_SOURCE_INVALID
     return value, source
+
+
+def lease_renew_budget(raw: Any = None) -> float:
+    """续租保险丝的秒数：没声明、读不懂、不为正、超出天花板，一律回落到默认值。
+
+    坏配置的方向刻意是"退回 3600 s"而不是"取消上限"：一句打错的 env 不许把幽灵任务
+    窗口拉成无限——那正是本单要修的谎报的另一副面孔。
+    """
+    text = (os.getenv(LEASE_MAX_RENEW_SECONDS_ENV, "") if raw is None else str(raw)).strip()
+    if not text:
+        return float(LEASE_MAX_RENEW_SECONDS_DEFAULT)
+    try:
+        value = float(text)
+    except ValueError:
+        return float(LEASE_MAX_RENEW_SECONDS_DEFAULT)
+    if not 0 < value <= LEASE_MAX_RENEW_SECONDS_CEILING:
+        return float(LEASE_MAX_RENEW_SECONDS_DEFAULT)
+    return value
 
 
 @dataclass(frozen=True)
@@ -186,6 +232,45 @@ class ReliableQueue:
         """
         return not bool(self.redis.exists(self._lease_key(request_id)))
 
+    def renew_lease(self, request_id: str) -> bool:
+        """把还在手上的处理租约续满；租约已经不在了就返回 False，绝不复活它。
+
+        Redis 的 `EXPIRE` 对不存在的键返回 0，这一枚语义正是本单要的：任务一旦被
+        `requeue_expired` 收回或改派，上一任再想续也续不回来。改用 `SET ... EX` 续
+        会把这道保护踩平——那等于两任持有者同时声称在跑同一条消息，而账上只有后写的
+        那一份租约。（跨持有者的令牌围栏仍是已知限制，本方法不假装解决它。）
+        """
+        return bool(self.redis.expire(self._lease_key(request_id), self.lease_seconds))
+
+    def lease_heartbeat(
+        self,
+        request_id: str,
+        *,
+        interval_seconds: float | None = None,
+        budget_seconds: float | None = None,
+        clock=time.monotonic,
+    ) -> LeaseHeartbeat:
+        """为一条在跑的任务造一枚续租心跳。未 `start()` 前它是哑的，`with` 会自己开。
+
+        间隔默认 `lease_seconds / 3`（下限 1 s），保险丝默认 `lease_renew_budget()`；
+        两者都能显式传入，是为了让"311 s 的长任务"这一格能被量出来而不必真等 311 s。
+        """
+        if interval_seconds is None:
+            interval = max(
+                self.lease_seconds / LEASE_HEARTBEAT_DIVISOR,
+                LEASE_HEARTBEAT_MIN_INTERVAL_SECONDS,
+            )
+        else:
+            interval = float(interval_seconds)
+        budget = lease_renew_budget() if budget_seconds is None else float(budget_seconds)
+        return LeaseHeartbeat(
+            self,
+            request_id,
+            interval_seconds=interval,
+            budget_seconds=budget,
+            clock=clock,
+        )
+
     def ack(self, request_id: str) -> bool:
         removed = self.redis.lrem(self.processing_key, 1, request_id)
         if removed:
@@ -206,13 +291,49 @@ class ReliableQueue:
 
         取消优先且所有权优先：运行途中被取消、或租约已过期被回收时，本 worker
         已不再拥有这条消息，必须丢弃结果，既不得发布答案也不得谎报 done。
+
+        R227 把"不得谎报 done"落成读得到的东西。`complete()` 交回 False 当且仅当这一格
+        结果被丢弃，此时三件事同时成立：
+
+        1. 答案键不存在（`result()` 读回 None，永不出现"跑完了、正文空"）；
+        2. 状态**不是** `done`——取消那一支仍由 `ack()` 落成 `cancelled`，租约那一支
+           不去 `ack()`（正是它把状态写成 done 的），消息留在处理表里等 `requeue_expired`
+           重投，所读到的仍是非终态 `processing`，下一任跑完的答案才是发布出去的那一份；
+        3. `failure()["last_error"]` 写着 `result_discarded:<reason>`，成因可区分,
+           `attempts` 一个字节不动——重试预算属于队列，不属于这一任。
         """
-        if self.is_cancelled(request_id) or self._lease_lost(request_id):
+        if self.is_cancelled(request_id):
+            self._record_discard(request_id, DISCARD_REASON_CANCELLED)
             self.redis.delete(self._result_key(request_id))
             self.ack(request_id)
             return False
+        if self._lease_lost(request_id):
+            self._record_discard(request_id, DISCARD_REASON_LEASE_LOST)
+            self.redis.delete(self._result_key(request_id))
+            return False
         self.redis.set(self._result_key(request_id), result, ex=self.result_ttl)
         return self.ack(request_id)
+
+    def _record_discard(self, request_id: str, reason: str) -> None:
+        """把"结果被丢弃"写进重试账本，供 `failure()` 与 /queue/status 读得到。
+
+        账本读不懂（消息键不在、或载荷不是当年那本 dict 账）就一个字节都不盖——
+        宁可少一笔原因，也不拿伪造的账本冒充事实。
+        """
+        raw = self.redis.get(self._message_key(request_id))
+        if not raw:
+            return
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(data, dict):
+            return
+        data["last_error"] = f"{RESULT_DISCARDED}:{reason}"
+        self.redis.set(
+            self._message_key(request_id),
+            json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+        )
 
     def result(self, request_id: str) -> str | None:
         value = self.redis.get(self._result_key(request_id))
@@ -343,6 +464,131 @@ class ReliableQueue:
             "capacity_source": self.capacity_source,
             "depth_source": DEPTH_SOURCE_REDIS_LLEN,
         }
+
+
+class LeaseHeartbeat:
+    """在任务运行期间把处理租约续到满格；一旦不再持有，立刻停表。
+
+    心跳是"持有者还活着"的读数，不是所有权凭证。三条边界写死在这里：
+
+    - 续租走 `EXPIRE`：键已经不在就返回 0，所以被 `requeue_expired` 收回或改派的租约
+      绝不会被上一任 worker 唤醒。
+    - 心跳死了就是租约死了：线程随进程一起消失，租约在 `lease_seconds` 内过期，
+      `requeue_expired` 照旧重投——崩溃检测的速度一个字节都没变慢。
+    - 到 `budget_seconds` 这条保险丝就停手：卡死但没崩的进程不许无限期占着消息。
+
+    `renewals` / `refusals` / `stopped_reason` 三枚读数交给 worker 落日志。下次再有人问
+    "这一格到底是哪一支触发的"，不必再从两枚时间戳之差反推。
+
+    `beat()` 是可以脱离线程单独驱动的（注入 `clock` 后按假时钟推进），这一格之所以要能
+    离线量：真等 311 s 的用例在全量门里跑不动，而跑不动的判据等于没有判据。
+    """
+
+    STOP_MANUAL = "manual"
+    STOP_LEASE_LOST = "lease_lost"
+    STOP_BUDGET = "renew_budget_spent"
+    STOP_RENEW_ERROR = "renew_error"
+
+    def __init__(
+        self,
+        queue: ReliableQueue,
+        request_id: str,
+        *,
+        interval_seconds: float,
+        budget_seconds: float,
+        clock=time.monotonic,
+    ):
+        if interval_seconds <= 0 or budget_seconds <= 0:
+            raise ValueError("invalid lease heartbeat configuration")
+        self.queue = queue
+        self.request_id = request_id
+        self.interval_seconds = float(interval_seconds)
+        self.budget_seconds = float(budget_seconds)
+        self.renewals = 0
+        self.refusals = 0
+        self.stopped_reason: str | None = None
+        self.started_at = clock()
+        self._clock = clock
+        self._next_due = self.started_at + self.interval_seconds
+        self._thread: threading.Thread | None = None
+        self._wake = threading.Event()
+
+    @property
+    def running(self) -> bool:
+        return self.stopped_reason is None and self._thread is not None
+
+    def start(self) -> "LeaseHeartbeat":
+        if self.stopped_reason is not None or self._thread is not None:
+            return self
+        self._thread = threading.Thread(
+            target=self._loop,
+            name=f"lease-heartbeat-{self.request_id[:8]}",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def beat(self, now: float | None = None) -> bool:
+        """到点的一拍：续上了返回 True（继续跳），停表返回 False。
+
+        没到 `interval_seconds` 的拍一个字节都不写 Redis。心跳的意义是"定期报活",
+        不是"每次被调度都重盖一次章"——否则一枚被高频驱动的假时钟能把它读成无限租约。
+        """
+        if self.stopped_reason is not None:
+            return False
+        now = self._clock() if now is None else now
+        if now - self.started_at >= self.budget_seconds:
+            self._stop(self.STOP_BUDGET)
+            return False
+        if now < self._next_due:
+            return True
+        self._next_due = now + self.interval_seconds
+        try:
+            held = self.queue.renew_lease(self.request_id)
+        except Exception:
+            # 客户端不支持 EXPIRE、连接瞬断……一律停表：租约就此自然过期，交给回收器。
+            # 心跳不许把正在跑的这一轮打死，也不许在报不了活的时候装作报到了。
+            self._stop(self.STOP_RENEW_ERROR)
+            return False
+        if held:
+            self.renewals += 1
+            return True
+        self.refusals += 1
+        self._stop(self.STOP_LEASE_LOST)
+        return False
+
+    def _loop(self) -> None:
+        while self.stopped_reason is None:
+            self._wake.wait(self.interval_seconds)
+            self.beat()
+
+    def _stop(self, reason: str) -> None:
+        self.stopped_reason = reason
+        self._wake.set()
+
+    def stop(self) -> str:
+        """停表并回收线程，返回停表原因；正常跑完是 `manual`，提前停的就是那枚成因。"""
+        if self.stopped_reason is None:
+            self._stop(self.STOP_MANUAL)
+        thread = self._thread
+        self._thread = None
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=self.interval_seconds + 1.0)
+        return str(self.stopped_reason)
+
+    def readings(self) -> dict[str, Any]:
+        return {
+            "renewals": self.renewals,
+            "refusals": self.refusals,
+            "stopped_reason": self.stopped_reason,
+        }
+
+    def __enter__(self) -> "LeaseHeartbeat":
+        return self.start()
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.stop()
+        return False
 
 
 def connect_reliable_queue(

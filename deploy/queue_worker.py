@@ -17,6 +17,7 @@ import os
 import sys
 import time
 import signal
+from contextlib import nullcontext
 from uuid import uuid4
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,7 +25,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-from app.common.reliable_queue import QueueConnectionError, ReliableQueue, connect_reliable_queue
+from app.common.reliable_queue import (
+    LeaseHeartbeat,
+    QueueConnectionError,
+    QueueMessage,
+    ReliableQueue,
+    connect_reliable_queue,
+)
 from app.common.logger import logger, setup_logging
 from app.trace.records import record_agent_result
 
@@ -45,6 +52,59 @@ def shutdown(signum, frame):
     global running
     logger.info(f"[QueueWorker] 收到信号 {signum}，正在退出...")
     running = False
+
+
+def _lease_beat(queue: ReliableQueue, request_id: str):
+    """向队列要一枚续租心跳，作用域由调用方用 `with` 划。
+
+    这里的队列对象是鸭子类型的（用例里有只实现 reserve/complete 的替身），所以"这一版
+    队列不支持续租"必须退化成"没有心跳"，而不是 AttributeError 把 worker 掀翻。
+    """
+    factory = getattr(queue, "lease_heartbeat", None)
+    if factory is None:
+        return nullcontext()
+    return factory(request_id)
+
+
+def _report_lease(heartbeat, request_id: str) -> None:
+    """把续租心跳的读数落成日志：正常跑完一律安静，只有提前停表才说话。
+
+    停表原因就是这一格的取证本身——09-25 那句"被取消或租约已丢失"要人拿两枚时间戳反推,
+    今天它写在账上。
+    """
+    readings = getattr(heartbeat, "readings", None)
+    if readings is None:
+        return
+    data = readings()
+    if data["stopped_reason"] in (None, LeaseHeartbeat.STOP_MANUAL):
+        return
+    logger.warning(
+        f"[QueueWorker] request_id={request_id} 租约心跳提前停表 "
+        f"reason={data['stopped_reason']} renewals={data['renewals']} "
+        f"refusals={data['refusals']}（租约就此过期，交给 requeue_expired 回收）"
+    )
+
+
+def _discard_reason(queue: ReliableQueue, request_id: str) -> str:
+    """丢弃成因读自队列账本；读不动就明着报 unknown，不许留一枚空的。"""
+    try:
+        reason = queue.failure(request_id).get("last_error")
+    except Exception as exc:
+        logger.warning(f"[QueueWorker] request_id={request_id} 读不到丢弃成因: {exc}")
+        return "unknown"
+    return str(reason or "unknown")
+
+
+def _log_discard_cause(queue: ReliableQueue, request_id: str) -> None:
+    """把"到底是哪一支触发的"单独记一行。
+
+    上面那行丢弃日志被 R81 钉成了逐字文案（`tests/test_r81_queue_terminal_retry.py:132`），
+    本单不许放宽那条断言，所以成因另起一行，而不是往那句里塞字。
+    """
+    logger.info(
+        f"[QueueWorker] request_id={request_id} 丢弃成因 "
+        f"reason={_discard_reason(queue, request_id)}"
+    )
 
 
 signal.signal(signal.SIGINT, shutdown)
@@ -310,6 +370,7 @@ def _process_report_lane_turn(
                 state=queue.status(request_id),
             )
         )
+        _log_discard_cause(queue, request_id)
         return True
     if write_back:
         _save_background_turn(session_id, answer)
@@ -324,12 +385,29 @@ def _process_report_lane_turn(
 
 
 def process_one():
-    """处理一个队列请求，并把结果收敛为一条 canonical AgentResult 记录"""
+    """领一个队列请求，在续租心跳的护持下跑完它"""
     queue = _get_queue()
     message = queue.reserve(timeout=10)
     if message is None:
         return False  # 队列为空
 
+    # R227：从领走到发布答案为止，租约每 lease_seconds/3 续一次格。09-25 实测一档报告题
+    # 跑完 311 s > lease_seconds=300，而从前只有 reserve() 写过一次租约 ⇒ 任务还在正常跑
+    # 就被自己的持有者判成租约丢失，1519 字正文当场丢弃。心跳不许比这一轮活得更久:
+    # complete() 一出口就停表，之后进程再卡死也不该替这条消息报活。
+    heartbeat = _lease_beat(queue, message.request_id)
+    with heartbeat:
+        outcome = _process_reserved(queue, message)
+    _report_lease(heartbeat, message.request_id)
+    return outcome
+
+
+def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
+    """领到任务之后那一段：判身份、定线程、跑图、发布结果。
+
+    从 `process_one` 拆出来只为划清心跳的作用域——`complete()` 必须落在心跳里面,
+    判据与语义一条没改。
+    """
     request_id = message.request_id
     payload = message.payload or {}
     user_message = str(payload.get("message") or "")
@@ -397,6 +475,7 @@ def process_one():
                     state=queue.status(request_id),
                 )
             )
+            _log_discard_cause(queue, request_id)
             return True
         logger.info(
             "request_id={rid} 完成 status={status} evidence={ev}".format(
