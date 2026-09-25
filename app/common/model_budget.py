@@ -23,6 +23,13 @@ mistaken for a choice an operator made.
 boundary that is about to put a request on the wire can decline to send an answer this clock
 cannot pay for, and report the ratified timeout code instead of spending the whole ceiling
 finding out.
+
+The third ceiling is the window itself, and R255 moved its arithmetic out of three separate
+readers into one: :func:`window_plan` derives ``MODEL_CONTEXT_TOKENS`` together with the two
+rates, the request ceiling, the queue a second caller tolerates and the slots that queue is
+divided between, and reports when an operator has moved only one of them. That is the only
+place in this file allowed to say what raising a window costs; the refusal raises the same
+numbers it used to raise, with the distance and the paired fix attached.
 """
 from __future__ import annotations
 
@@ -72,21 +79,54 @@ class ModelContextLimitExceeded(RuntimeError):
     behind: the server refused the request and the caller saw a bare provider error, or
     the server answered with a completion cut off mid-sentence. Both are refused here,
     in favour of not sending a request the window demonstrably cannot hold.
+
+    R255 changed the sentence and left the verdict alone. The refusal still happens before
+    anything goes on the wire, and :mod:`app.agents.nodes` still refuses to launder it
+    through the offline reply -- a canned greeting with the real reason buried in a log line
+    is the outcome that made this code necessary. What changed is that the wall has now been
+    hit on a real machine, and not only proven by arithmetic: on 2026-09-25 the report lane
+    refused ``prompt_tokens=2691`` and ``prompt_tokens=2778`` against ``n_ctx=4096``, twice on
+    one request, and the sentence an operator read named three numbers and no distance
+    between them. So it now carries the shortfall, the window that would hold the call, and
+    the budget that has to be moved with it -- the reading is meant to be "these parameters
+    are small", never "this model is weak".
     """
 
     code = CONTEXT_LIMIT_CODE
 
+    #: Class-level shape, so ``ModelClockUnaffordable`` -- a *clock* finding that inherits
+    #: this class for its slot plumbing and computes none of these numbers -- can be caught
+    #: as a window refusal without the handler tripping over a missing attribute.
+    over_by_tokens = 0
+    required_context_tokens = 0
+    prompt_room_tokens = 0
+    plan = None
+
     def __init__(self, budget, prompt_tokens: int):
-        super().__init__(
-            "Local model context window cannot hold this request "
-            f"(error_code={self.code}): prompt_tokens={prompt_tokens} and "
-            f"max_tokens={budget.max_tokens} do not fit n_ctx={budget.context_limit_tokens}; "
-            "no business conclusion was generated."
-        )
         self.prompt_tokens = int(prompt_tokens)
-        self.max_tokens = int(budget.max_tokens)
+        #: What the tier asked to write. The window check runs against the *declared* cap, so
+        #: this is not "what the answer would have been"; a clamp has already been ruled out.
+        self.declared_max_tokens = int(budget.max_tokens)
         self.context_limit_tokens = int(budget.context_limit_tokens)
         self.tier = budget.tier
+        #: The ratified short spelling; read by ``tests/test_r204_budget_refusal.py``.
+        self.max_tokens = int(budget.max_tokens)
+        self.required_context_tokens = self.prompt_tokens + self.declared_max_tokens
+        #: 差额: the distance the window is short, in tokens.
+        self.over_by_tokens = max(0, self.required_context_tokens - self.context_limit_tokens)
+        self.prompt_room_tokens = max(1, self.context_limit_tokens - self.declared_max_tokens)
+        #: The same numbers the guard used, read together with the budget around them.
+        self.plan = window_plan(budget)
+        super().__init__(
+            "Local model context window cannot hold this request "
+            f"(error_code={self.code}): prompt_tokens={self.prompt_tokens} plus this tier's "
+            f"declared max_tokens={self.declared_max_tokens} needs "
+            f"n_ctx={self.required_context_tokens}, which is {self.over_by_tokens} tokens "
+            f"more than the configured MODEL_CONTEXT_TOKENS={self.context_limit_tokens} -- "
+            f"that window leaves {self.prompt_room_tokens} tokens for the prompt. "
+            f"{self.plan.remediation(self.prompt_tokens)} "
+            "No request was sent and no business conclusion was generated."
+        )
 
 
 @dataclass
@@ -304,6 +344,16 @@ TIMEOUT_ERROR_FRAGMENTS = (
 )
 
 #: Fragments a local server uses when it refuses a request for being too long.
+#:
+#: The last two are R255's, and they come from a recorded body rather than from a guess:
+#: ``docs/perf/raw/rate_prefill.jsonl`` holds what Ollama answers when the prompt is over the
+#: window the server was loaded with -- ``request (4402 tokens) exceeds the available context
+#: size (4096 tokens), try increasing it``, ``type: exceed_context_size_error``. Before this,
+#: that text was recognised only because the JSON body happens to carry a field literally
+#: named ``n_ctx``: the message alone -- which is all a wrapping client keeps -- resolved to
+#: None and was filed as ``internal_error``. That is the exact failure an over-declared
+#: ``MODEL_CONTEXT_TOKENS`` produces (the guard lets the request out, the server says no), so
+#: recognising it is part of refusing honestly.
 CONTEXT_ERROR_FRAGMENTS = (
     "context length",
     "context_length",
@@ -311,6 +361,8 @@ CONTEXT_ERROR_FRAGMENTS = (
     "n_ctx",
     "too many tokens",
     "prompt is too long",
+    "available context size",
+    "exceed_context_size_error",
 )
 
 #:
@@ -386,6 +438,289 @@ def _env_positive_int(name: str, default: int) -> int:
 def min_answer_tokens() -> int:
     """The cap below which this model has been measured to answer with nothing at all."""
     return _env_positive_int("MODEL_MIN_ANSWER_TOKENS", DEFAULT_MIN_ANSWER_TOKENS)
+
+
+# ============ the context window and the budget that has to move with it (R255) ============
+
+#: One machine-readable token per way a configured window can contradict the budget beside it.
+#: These words appear in ``[ModelBudget]`` lines (``incoherent_budget=clock_binds|queue_binds``)
+#: and in :attr:`WindowPlan.red_reasons`, so an operator greps one and lands on the variable
+#: the sentence next to it names. "incoherent" and not "stale" on purpose: a stock install that
+#: nobody has touched can read red here, and the reading is still true about its numbers.
+WINDOW_RED_CLOCK = "clock_binds"
+WINDOW_RED_QUEUE = "queue_binds"
+WINDOW_RED_FLOOR = "floor_below_measurement"
+
+
+def queue_gates() -> tuple[int, float]:
+    """``(slots, queue seconds)`` exactly as the class that enforces them resolves them.
+
+    Read off a fresh :class:`LocalModelBudget` instead of parsing the two variables again:
+    60.0 is ``_configured_wait``'s number and "floor the slots at 1" is ``acquire``'s rule,
+    and a window plan that re-implemented either would be a second copy free to drift. The
+    instance takes a semaphore and opens nothing -- ``app/api/v1/observability.py`` already
+    reads these two numbers the same way for the same reason.
+    """
+    gate = LocalModelBudget()
+    return int(gate.max_concurrency), float(gate.default_wait_seconds)
+
+
+@dataclass(frozen=True)
+class WindowPlan:
+    """One context window, plus every other budget number that has to move with it.
+
+    R255 判据① is a demand about *where a number is computed*. The window, the request
+    ceiling and the queue used to be read in three places that never spoke to each other, so
+    an operator who raised ``MODEL_CONTEXT_TOKENS`` had changed one of three and got a machine
+    that still could not answer. This is the one object that reads them together and can
+    therefore say out loud when only one head moved.
+
+    The arithmetic, in the order the physics happens:
+
+        prompt_room             = n_ctx - max_tokens        # what the window leaves for material
+        seconds_at_full_window  = margin * ( prompt_room / prefill_rate      # reading it
+                                              + max_tokens / decode_rate )   # writing the answer
+        queue_seconds_per_caller = MODEL_CONCURRENCY_WAIT_SECONDS / MODEL_MAX_CONCURRENCY
+        coherent                = seconds_at_full_window <= MODEL_REQUEST_TIMEOUT
+                                  and seconds_at_full_window <= queue_seconds_per_caller
+
+    Two measured facts are why those are one object rather than three comments:
+
+    * The window is the model *server*'s, and it is not a function of how much memory the
+      card holds: 4096 is exactly what this Ollama answers with, and an A100 80G loaded at the
+      server default answers inside the same 4096 (业主口径, 2026-09-25). This product sends no
+      ``num_ctx`` in any request payload -- R135 read that off ``app/**`` and published it as a
+      caveat on ``/api/v1/model-budget/facts``. So raising only the declared number widens
+      nothing: it admits prompts the server will reject, replacing a refusal that cost nothing
+      with a round trip that costs the whole queue. The recorded shape of that answer is in
+      ``docs/perf/raw/rate_prefill.jsonl``.
+      Widening the window for real is a server-side change, and the measured cost of one is a
+      model reload: the same 2154-token prompt at ``num_ctx`` 4096 vs 8192 came out
+      66.683 s vs 68.849 s of prefill (+3.3%) with ``load_s`` 0.001 vs 5.811 s, and nothing at
+      16384 has ever been measured here, so "memory blows up at 16k" is a warning, not a number.
+    * A wider window is a longer *worst-case request*, and the second person in line does not
+      wait longer -- the queue gives up after ``MODEL_CONCURRENCY_WAIT_SECONDS`` and that
+      caller is answered with the offline sentence (跟进单 §6.2: 160.6 / 116.8 / 75.2 / 70.2 s
+      all exceed 60 s, so from the second caller on nobody gets an answer). At one slot the queue
+      binds the window long before the request ceiling does: on the rates measured on
+      2026-09-25 (prefill 1200, decode 40 tok/s) the ceiling would pay for an 80k window while
+      a 60 s queue at one slot pays for about 18k.
+
+    Nothing here is a knob. It reads the configuration, does the multiplication once, and
+    reports which variable is the one that has gone stale.
+    """
+
+    tier: ModelTier
+    #: The window this process computes against, and whether anybody wrote it down.
+    context_limit_tokens: int
+    context_limit_source: str
+    #: This tier's declared output cap -- the half of the window an answer reserves.
+    declared_max_tokens: int
+    min_answer_tokens: int
+    #: The floor as *measured*, which is what makes :attr:`floor_below_measurement` a finding
+    #: about a configuration rather than about a preference.
+    measured_min_answer_tokens: int
+    prefill_tokens_per_second: float
+    decode_tokens_per_second: float
+    timeout_margin: float
+    timeout_ceiling_seconds: float
+    max_concurrency: int
+    queue_wait_seconds: float
+
+    @property
+    def prompt_room_tokens(self) -> int:
+        """What this window leaves for the prompt once this tier's answer is reserved."""
+        return max(0, self.context_limit_tokens - self.declared_max_tokens)
+
+    @property
+    def decode_seconds(self) -> float:
+        return self.declared_max_tokens / max(0.1, self.decode_tokens_per_second)
+
+    @property
+    def prefill_seconds_at_full_window(self) -> float:
+        return self.prompt_room_tokens / max(0.1, self.prefill_tokens_per_second)
+
+    def seconds_for_prompt(self, prompt_tokens: int) -> float:
+        """Wall clock one request of this size costs at the rates configured beside it."""
+        reading = max(0, int(prompt_tokens)) / max(0.1, self.prefill_tokens_per_second)
+        return (reading + self.decode_seconds) * max(1.0, self.timeout_margin)
+
+    @property
+    def seconds_at_full_window(self) -> float:
+        """The worst case this window is *configured* to allow, in seconds."""
+        return self.seconds_for_prompt(self.prompt_room_tokens)
+
+    @property
+    def required_timeout_seconds(self) -> float:
+        """``MODEL_REQUEST_TIMEOUT`` this window demands: the same number, named for its knob."""
+        return self.seconds_at_full_window
+
+    @property
+    def queue_seconds_per_caller(self) -> float:
+        """How long the person behind you tolerates before the answer they get is the canned one."""
+        return self.queue_wait_seconds / max(1, self.max_concurrency)
+
+    @property
+    def clock_binds(self) -> bool:
+        return self.seconds_at_full_window > self.timeout_ceiling_seconds + 1e-9
+
+    @property
+    def queue_binds(self) -> bool:
+        return self.seconds_at_full_window > self.queue_seconds_per_caller + 1e-9
+
+    @property
+    def floor_below_measurement(self) -> bool:
+        """True when somebody lowered ``MODEL_MIN_ANSWER_TOKENS`` under what was measured.
+
+        It is reported here because this is where a window refusal gets explained, and the
+        tempting wrong answer to a window refusal is a smaller floor. That is R255 判据④: the
+        floor is a measurement of when this model starts answering with nothing, and it does
+        not appear in the refusal arithmetic at all -- ``context_window_code`` subtracts the
+        tier's *output cap*, not this number -- so lowering it cannot fit one more token.
+        """
+        return self.min_answer_tokens < self.measured_min_answer_tokens
+
+    @property
+    def maximum_coherent_context_tokens(self) -> int:
+        """The largest window the configured clock and queue can still pay a full request for.
+
+        Zero means *none*: on rates slow enough that this tier's own answer outlasts the
+        queue, no value of ``MODEL_CONTEXT_TOKENS`` is coherent, and the head that has to move
+        is a calibrated rate or the ceiling -- not the window. That is the shipped default
+        pair (35/8 tok/s) against a 60 s queue, and it is R99's finding restated as geometry.
+        """
+        payable = min(self.timeout_ceiling_seconds, self.queue_seconds_per_caller)
+        room_seconds = payable / max(1.0, self.timeout_margin) - self.decode_seconds
+        return max(0, self.declared_max_tokens + int(room_seconds * max(0.1, self.prefill_tokens_per_second)))
+
+    @property
+    def red_reasons(self) -> tuple[str, ...]:
+        reasons: list[str] = []
+        if self.clock_binds:
+            reasons.append(WINDOW_RED_CLOCK)
+        if self.queue_binds:
+            reasons.append(WINDOW_RED_QUEUE)
+        if self.floor_below_measurement:
+            reasons.append(WINDOW_RED_FLOOR)
+        return tuple(reasons)
+
+    @property
+    def coherent(self) -> bool:
+        """False the moment one of these numbers has been moved on its own."""
+        return not self.red_reasons
+
+    def minimum_window_for(self, prompt_tokens: int) -> int:
+        """The smallest ``n_ctx`` that would hold a prompt of this size plus this tier's answer."""
+        return max(0, int(prompt_tokens or 0)) + self.declared_max_tokens
+
+    def admits(self, prompt_tokens: int) -> bool:
+        """Would a request this size go out *and* be paid for, at the budget set beside it?"""
+        prompt = max(0, int(prompt_tokens or 0))
+        if self.minimum_window_for(prompt) > self.context_limit_tokens:
+            return False
+        seconds = self.seconds_for_prompt(prompt)
+        ceiling = 1e-9 + min(self.timeout_ceiling_seconds, self.queue_seconds_per_caller)
+        return seconds <= ceiling
+
+    def remediation(self, prompt_tokens: int | None = None) -> str:
+        """Which variables move together, and to what numbers, in one greppable sentence.
+
+        Three clauses, in the order an operator can act on them: the window and the server
+        that has to agree with it, the clock and queue that have to pay for a full window, and
+        the one knob that must not be touched to make the refusal disappear.
+        """
+        prompt = max(0, int(prompt_tokens or 0))
+        needed = self.minimum_window_for(prompt)
+        seconds = self.seconds_for_prompt(prompt)
+        fix = (
+            f"raise MODEL_CONTEXT_TOKENS to >= {needed} *and* the model server's own n_ctx to "
+            "match, then recreate the container -- a running process keeps the environment it "
+            "was created with, so neither an edit alone nor a restart alone takes effect"
+        )
+        if seconds > min(self.timeout_ceiling_seconds, self.queue_seconds_per_caller):
+            fix += (
+                f"; a request this size costs {seconds:.1f}s at "
+                f"{self.prefill_tokens_per_second:g}/{self.decode_tokens_per_second:g} tok/s "
+                f"while this configuration allows {self.timeout_ceiling_seconds:g}s of clock and "
+                f"{self.queue_seconds_per_caller:.1f}s per caller "
+                f"({self.queue_wait_seconds:g}s queue / {self.max_concurrency} slot), so raise "
+                "MODEL_REQUEST_TIMEOUT and re-measure the two rates with "
+                "scripts/bench_model_throughput.py first"
+            )
+        return (
+            "This is the size of a configured window, not a limit of the model. The paired "
+            f"change is: {fix}. "
+            "MODEL_MIN_ANSWER_TOKENS is not a window knob: no request was refused because of "
+            "it, and this guard subtracts the tier cap, not the floor."
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        """A JSON-shaped reading for a health surface: no I/O, no model call, no second copy."""
+        return {
+            "tier": self.tier.value,
+            "n_ctx": self.context_limit_tokens,
+            "n_ctx_source": self.context_limit_source,
+            "declared_max_tokens": self.declared_max_tokens,
+            "prompt_room_tokens": self.prompt_room_tokens,
+            "min_answer_tokens": self.min_answer_tokens,
+            "measured_min_answer_tokens": self.measured_min_answer_tokens,
+            "prefill_tokens_per_second": self.prefill_tokens_per_second,
+            "decode_tokens_per_second": self.decode_tokens_per_second,
+            "timeout_margin": self.timeout_margin,
+            "timeout_ceiling_seconds": self.timeout_ceiling_seconds,
+            "max_concurrency": self.max_concurrency,
+            "queue_wait_seconds": self.queue_wait_seconds,
+            "queue_seconds_per_caller": round(self.queue_seconds_per_caller, 2),
+            "prefill_seconds_at_full_window": round(self.prefill_seconds_at_full_window, 2),
+            "decode_seconds": round(self.decode_seconds, 2),
+            "full_window_seconds": round(self.seconds_at_full_window, 2),
+            "required_timeout_seconds": round(self.required_timeout_seconds, 2),
+            "max_coherent_n_ctx": self.maximum_coherent_context_tokens,
+            "coherent": self.coherent,
+            "red_reasons": list(self.red_reasons),
+        }
+
+
+def window_plan(tier_or_budget=None, *, context_limit_tokens: int | None = None) -> WindowPlan:
+    """Derive the window together with the clock and queue that have to move with it.
+
+    The single place that answers "what does this window cost", which is the property R255
+    判据① asked for: one function, so "operator raised only the window" is a state this file
+    can detect rather than a mistake it has to wait for a real request to make.
+
+    ``tier_or_budget`` accepts a :class:`~app.agents.contracts.ModelBudget` -- a boundary that
+    is about to refuse a call passes the very object it judged, so the advice is computed from
+    the numbers that produced the refusal and not from a second read of the environment -- or a
+    ``ModelTier`` to resolve from configuration. It defaults to ``ANALYSIS``, the tier whose
+    cap reserves the most window and therefore the tier that binds first.
+
+    ``context_limit_tokens`` overrides the window *only*. That is not a convenience: it is how
+    you ask "what happens if I raise just this line", and on the rates this file still defaults
+    to the answer is a plan that reads ``clock_binds`` and ``queue_binds`` both red.
+    """
+    from app.agents.contracts import ModelBudget
+
+    if isinstance(tier_or_budget, ModelBudget):
+        budget = tier_or_budget
+    else:
+        budget = model_tier_budget(tier_or_budget or ModelTier.ANALYSIS)
+    slots, queue_seconds = queue_gates()
+    return WindowPlan(
+        tier=ModelTier(budget.tier),
+        context_limit_tokens=int(
+            budget.context_limit_tokens if context_limit_tokens is None else int(context_limit_tokens)
+        ),
+        context_limit_source="env" if _env_set("MODEL_CONTEXT_TOKENS") else "code-default",
+        declared_max_tokens=int(budget.max_tokens),
+        min_answer_tokens=min_answer_tokens(),
+        measured_min_answer_tokens=DEFAULT_MIN_ANSWER_TOKENS,
+        prefill_tokens_per_second=float(budget.prefill_tokens_per_second),
+        decode_tokens_per_second=float(budget.decode_tokens_per_second),
+        timeout_margin=float(budget.timeout_margin),
+        timeout_ceiling_seconds=float(budget.timeout_ceiling_seconds),
+        max_concurrency=slots,
+        queue_wait_seconds=queue_seconds,
+    )
 
 
 # ==================== the thinking switch (R100) ====================
@@ -702,6 +1037,9 @@ def budget_signal(
     min_answer_tokens: int | None = None,
     clamp_basis: str = "",
     verdict: str = "",
+    window: "WindowPlan | None" = None,
+    over_by_tokens: int | None = None,
+    required_n_ctx: int | None = None,
 ) -> str:
     """The one line format every budget verdict is logged as, marker included.
 
@@ -750,6 +1088,20 @@ def budget_signal(
         parts.append(f"min_answer_tokens={min_answer_tokens}")
     if clamp_basis:
         parts.append(f"clamp_basis={clamp_basis}")
+    # R255 判据②: a window refusal says how far over it is, and whether the budget beside the
+    # window moved with it. These ride on the refusal line only -- a call that fits the window
+    # gains no fields, so the shape every existing [ModelBudget] grep depends on is unchanged.
+    if over_by_tokens is not None:
+        parts.append(f"over_by_tokens={over_by_tokens}")
+    if required_n_ctx is not None:
+        parts.append(f"required_n_ctx={required_n_ctx}")
+    if window is not None:
+        parts.append(f"n_ctx={window.context_limit_tokens}")
+        parts.append(f"full_window_seconds={window.seconds_at_full_window:.1f}")
+        parts.append(f"max_coherent_n_ctx={window.maximum_coherent_context_tokens}")
+        parts.append(f"window_coherent={'yes' if window.coherent else 'no'}")
+        if not window.coherent:
+            parts.append("incoherent_budget=" + "|".join(window.red_reasons))
     if code:
         parts.append(f"error_code={code}")
     return " ".join(parts)
@@ -1040,6 +1392,10 @@ def report_budget(
             verdict_word = "ceiling_binds"
     if not (code or clamped or verdict_word):
         return code
+    # A window refusal is the one verdict that gets the paired-budget reading, and it gets it on
+    # this line: a second [ModelBudget] line for one call would break the "one grep, one finding"
+    # property tests/test_r30_context_limit_guard.py pins.
+    paired_window = window_plan(budget) if window_code else None
     logger.warning(
         budget_signal(
             budget.tier,
@@ -1054,6 +1410,9 @@ def report_budget(
             min_answer_tokens=verdict.min_answer_tokens if verdict else None,
             clamp_basis=verdict.basis if verdict else "",
             verdict=verdict_word,
+            window=paired_window,
+            over_by_tokens=budget.context_overage_tokens(prompt_tokens) if window_code else None,
+            required_n_ctx=budget.required_context_tokens(prompt_tokens) if window_code else None,
         )
     )
     return code
@@ -1213,6 +1572,7 @@ def model_budget_readout() -> dict[str, Any]:
 """
     profile = tier_profile(ModelTier.ANALYSIS)
     thinking = resolve_model_thinking()
+    plan = window_plan(ModelTier.ANALYSIS)
     return {
         "events": budget_event_counts(),
         "thinking": {
@@ -1246,6 +1606,12 @@ def model_budget_readout() -> dict[str, Any]:
         "request_timeout_ceiling_seconds": profile["timeout_ceiling_seconds"],
         "context_limit_tokens": profile["context_limit_tokens"],
         "min_answer_tokens": min_answer_tokens(),
+        #: R255: the window is not a lone number, so it is not published as one. Everything a
+        #: refusal says about the budget beside it can be read here before anything fails --
+        #: including ``coherent``, the field that goes red when only the window was raised.
+        #: Window provenance stays out of ``throughput_provenance``: that key is R135's and its
+        #: rates-only shape is pinned by tests/test_r135_s1_model_budget_facts.py.
+        "window_plan": plan.as_dict(),
         "tiers": {
             tier.value: {
                 "declared_max_tokens": int(budget.max_tokens),

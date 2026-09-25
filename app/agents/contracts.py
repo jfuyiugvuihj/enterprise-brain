@@ -133,6 +133,13 @@ class ModelBudget(BaseModel):
     timeout_seconds: float | None = None
     max_concurrency: int | None = None
     #: ``n_ctx`` of the local server: prompt plus declared output must fit inside it.
+    #: R255: this is a *claim about the server*, not a control that resizes it. The window
+    #: Ollama actually serves is configured on the server, and this repository sends no
+    #: ``num_ctx`` in any request payload (R135 read the same fact through
+    #: ``/api/v1/model-budget/facts``), so raising this number alone makes the claim false:
+    #: the prompt that used to be refused here goes out and comes back as the server's own
+    #: HTTP 400. The numbers that have to move with it -- clock, queue, slots -- are derived
+    #: in one place, ``app/common/model_budget.py:window_plan``.
     context_limit_tokens: int | None = None
     prefill_tokens_per_second: float | None = None
     decode_tokens_per_second: float | None = None
@@ -195,6 +202,25 @@ class ModelBudget(BaseModel):
         if int(prompt_tokens) + int(self.max_tokens) <= int(self.context_limit_tokens):
             return None
         return CONTEXT_LIMIT_CODE
+
+    def required_context_tokens(self, prompt_tokens: int | None) -> int:
+        """The smallest ``n_ctx`` that would hold this prompt plus this tier's declared cap.
+
+        Read it with :meth:`context_window_code`, never instead of it: this is arithmetic
+        about a refusal that has already been decided, and an operator who raises the window
+        to exactly this number has fitted one prompt and fixed nothing about the next.
+        """
+        return max(0, int(prompt_tokens or 0)) + int(self.max_tokens)
+
+    def context_overage_tokens(self, prompt_tokens: int | None) -> int:
+        """How far past the window this call is, in tokens; 0 when it is inside it.
+
+        The 2026-09-25 real window refused ``prompt_tokens=2691`` and ``2778`` against
+        ``n_ctx=4096`` (跟进单 run8 相 2 判读 §2) and named three numbers with no distance
+        between them, so the reader had to do the subtraction at three in the morning to
+        learn the one thing that mattered: the parameters are small, by 131 and 218 tokens.
+        """
+        return max(0, self.required_context_tokens(prompt_tokens) - int(self.context_limit_tokens))
 
 
 class ArtifactRef(BaseModel):
