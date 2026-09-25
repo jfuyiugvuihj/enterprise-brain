@@ -41,6 +41,15 @@ _RETRY_BACKOFF_BASE_SECONDS = 0.05
 _RETRY_BACKOFF_CAP_SECONDS = 0.2
 _RETRY_BUDGET_SECONDS = 3.0
 
+# ---------------------------------------------------------------------------
+# R230 自愈：上面那五个数管的是"一枚请求怎么连"，这枚数管的是"隔多久才许再问一次"。
+#
+# 它不是第二套时延参数——超时/退避/预算仍然只有 R229 那五枚，本单一个新数都不带。
+# 它是一枚节流：没有它，每一发撞上门的登录请求都会自己去握一次手（见
+# `_retry_readiness_probe` 的代价 2）。
+# ---------------------------------------------------------------------------
+_READY_PROBE_INTERVAL_SECONDS = 15.0
+
 _config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config.yaml")
 _config = {}
 try:
@@ -178,14 +187,105 @@ def user_storage_state() -> dict:
     }
 
 
+_last_ready_probe_at: float | None = None
+
+
+def _retry_readiness_probe() -> bool:
+    """在"拒绝"落下来之前，给这个进程一次重新确认用户库是不是真的不通的机会。
+
+    为什么必须长在这一支（R230 的病）：`_db_ready` 全仓只有两处置真——import 期探针
+    与 `_get_conn()`。而后者的那一枚长在 `if not _db_ready` 里，要走到那一行必须先过
+    开头的 `if _using_memory_store(): return _FakeConn()`，而 `_using_memory_store()`
+    恰在 `_db_ready` 为假时为真 ⇒ 那一格恒不可达。生产里 `_memory_store_denied` 又抢在
+    `_get_conn()` 之前把 7 枚鉴权入口全挡住，于是"容器起来那一刻 PG 还在恢复"就等于
+    之后每一发鉴权都被拒，且没有任何重探通路，直到有人重启进程。这一枚就是缺的那条通路。
+
+    三条硬约束，逐条有钉（`tests/test_r230_db_ready_selfheal.py`）：
+    (a) 有界：两次重探之间至少隔 `_READY_PROBE_INTERVAL_SECONDS`，且"本窗口已探过"
+        由开头那枚时间戳**先落地再握手**保证，所以同一窗口里撞进来的并发登录只有一枚
+        会真去建连，其余照旧直接拒。
+    (b) 复用：建连走 `_connect_for_request`，也就是 R229 那套 `connect_timeout` / 退避
+        / 预算；本函数自己不带任何时延参数、不睡人、不加池。
+    (c) 安静：探不通就 `return False`，调用方落原来那条 ERROR、给原来那个拒答，对外
+        可见结果一个字节都不变。default-deny 不放宽，内存表永远不是一条放行的路。
+
+    代价，写清楚了才许用：
+    1. 撞上门的那一发请求替全场付一次握手。最坏情况是"黑洞式失败"（每一发都跑满
+       `connect_timeout` 才红）：实测 2.001 s，界是 R229 的 `_RETRY_BUDGET_SECONDS`
+       = 3.0 s（慢死时预算装不下第二次尝试，所以一枚探测只吃一次 connect，拿不到第三
+       次）。这条路跑在事件循环上（`app/main.py:246` 的 `async def dispatch` 直调同步
+       `get_user`），这 2 s 是全场的，不是这一个用户的。
+    2. 占空比由节流兜住：一个窗口只发生一枚探测（实测 200 发登录在窗口内共多花
+       0.003 s，建连仍为 3 次）。快速失败（PG 容器还没起来 = connection refused，现网
+       最常见）一枚探测 = 3 次尝试 + 50 ms + 100 ms 退避 = 实测 0.151 s，摊到 15 s
+       窗口 = 1.00% 的事件循环；只有黑洞式失败才到 13.33%。窗口内其余请求各付
+       实测 22 µs（一次单调钟比较 + 原来那条 ERROR）。
+    3. 治好那一发多花一枚建连（探测一枚 + 它自己的查询一枚），此后稳态仍是"每请求
+       一枚连接"；不加池 ⇒ 不新增常驻连接。
+    4. `psycopg is None`（驱动缺失）直接不探：那不是抖动，重启之外没有恢复通路，
+       探一次都是白付钱。开发环境同样不探——它不被这一支挡着，本单不动它的语义。
+    5. 就绪判据与 import 探针同源（`_connect_for_request` + `_create_schema`），所以
+       生产形态下它只读两句 SELECT（`to_regclass` + `COUNT`），零 DDL、零 commit；
+       表空时与探针同形地 seed 第一枚管理员——那是探针本来就有的写点，不是本单新增。
+    6. 只把 `_db_ready` 从 False 翻到 True，永不反向：这枚旗另有 6 处读者（alerts /
+       chat / catalog / profile / registry / pending_approvals），把它们一起翻正正是
+       本单要的效果，而翻回假是本单不该有的副作用。
+    """
+    global _db_ready, _last_ready_probe_at
+
+    if psycopg is None or _db_ready or not _is_production_environment():
+        return False
+    now = time.monotonic()
+    if (
+        _last_ready_probe_at is not None
+        and now - _last_ready_probe_at < _READY_PROBE_INTERVAL_SECONDS
+    ):
+        return False
+    _last_ready_probe_at = now
+
+    try:
+        conn = _connect_for_request("production user store")
+    except Exception as exc:  # noqa: BLE001 - 探不通 = 照旧拒绝，不许把错递给调用方
+        logger.debug(f"[Auth] R230 重探未连上用户库，维持拒绝: {type(exc).__name__}: {exc}")
+        return False
+
+    ready = False
+    try:
+        _create_schema(conn)
+        ready = True
+    except Exception as exc:  # noqa: BLE001 - 连上了但用户表不可用，同样是拒绝
+        logger.debug(f"[Auth] R230 重探连上但用户表不可用，维持拒绝: {type(exc).__name__}: {exc}")
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001 - 关不掉交给 GC，不影响就绪判定
+            pass
+
+    if not ready:
+        return False
+    _db_ready = True
+    logger.info("[Auth] R230 生产用户库在启动探针失败后重新可用，鉴权不再需要重启进程")
+    return True
+
+
 def _memory_store_denied(operation: str) -> bool:
     """Refuse to authenticate against a process-local user table in production.
 
     Login is a write path (user creation, SSO sync, password change), so there is no
     read-only form of this store: two workers would disagree about who exists. Every
     caller keeps its previous default-deny behaviour when this returns True.
+
+    R230 puts one rate-limited re-probe *ahead* of the refusal and changes nothing
+    about the refusal itself. Before this, a deployment whose import-time probe blipped
+    denied every login until somebody restarted the process, because the only runtime
+    code able to set ``_db_ready`` sat behind this very check. When the probe fails,
+    the ERROR below and the caller's default-deny answer are byte-for-byte what they
+    always were: an unreachable user store still refuses, it never falls back to the
+    process-local table.
     """
     if not (_is_production_environment() and _using_memory_store()):
+        return False
+    if _retry_readiness_probe():
         return False
     logger.error(
         f"[Auth] production user store is not durable; refused {operation} "
