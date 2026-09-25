@@ -1,5 +1,7 @@
 """JWT auth and user management with PostgreSQL fallback."""
 import os
+import re
+import time
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -21,6 +23,23 @@ except ModuleNotFoundError:  # pragma: no cover
 
 _tz = timezone(timedelta(hours=8))
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
+
+# ---------------------------------------------------------------------------
+# R229 乙案（把短暂解析失败收敛成可重试）——鉴权建连的时延参数。
+#
+# 现网症状：/queue/status 间歇 500，栈停在
+# `psycopg.OperationalError: failed to resolve host 'postgres' [Errno -3]`。
+# 根因是鉴权这条路"每个请求新建一条 psycopg 连接、失败即抛给调用方"，而
+# `_raw_conn()` 连 `connect_timeout` 都没有，于是解析器抖一下 = 用户一个 500。
+#
+# 下面五个数全是"有界"，不是"最优"：调大能多吸一点抖动，调大的同时拉长最坏情况
+# 的单请求时延，而这条路跑在事件循环上（见 `_connect_for_request` 代价 5）。
+# ---------------------------------------------------------------------------
+_CONNECT_TIMEOUT_SECONDS = 2
+_CONNECT_ATTEMPTS = 3
+_RETRY_BACKOFF_BASE_SECONDS = 0.05
+_RETRY_BACKOFF_CAP_SECONDS = 0.2
+_RETRY_BUDGET_SECONDS = 3.0
 
 _config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config.yaml")
 _config = {}
@@ -178,7 +197,113 @@ def _memory_store_denied(operation: str) -> bool:
 def _raw_conn():
     if psycopg is None:
         raise RuntimeError("psycopg unavailable")
-    return psycopg.connect(_PG_URL, row_factory=dict_row)
+    return psycopg.connect(_PG_URL, row_factory=dict_row, **_connect_kwargs())
+
+
+# `connect_timeout` 在 libpq 里是 URI 的查询参数（?connect_timeout=2），也认
+# 空格式 conninfo（connect_timeout=2），两种都认下来，才谈得上"不覆盖它"。
+_DSN_CONNECT_TIMEOUT = re.compile(r"(?:[?&;]|\s)connect_timeout\s*=")
+
+
+def _connect_kwargs() -> dict:
+    """给这枚 connect 补上 `connect_timeout`，除非 DSN 自己已经写了。
+
+    今天这枚 connect 是没有任何超时的：解析卡住时归 OS 解析器说了算，glibc 默认能
+    拖到 5s 以上还会自己叠重发。本单不加池、不改连接归属，只把"最坏情况无上限"换成
+    "最坏情况有上限"，这一条比下面那枚重试更值钱。
+
+    不覆盖 DSN 里已有的 `connect_timeout` 是有意的：`tests/conftest.py:51` 把测试 DSN
+    钉成 `127.0.0.1:1` 并断言串里带着 `connect_timeout=1`，那是"探活必须快"的测试口径，
+    本单不许把它改成 2s。库上真写了超时就以库上的读数为准。
+    """
+    if _DSN_CONNECT_TIMEOUT.search(_PG_URL or ""):
+        return {}
+    return {"connect_timeout": _CONNECT_TIMEOUT_SECONDS}
+
+
+def _transient_connect_errors() -> tuple:
+    """只有 `OperationalError` 够格重试；连这枚类都拿不到时，一律不重试。
+
+    现网那枚 `failed to resolve host` 就是 `psycopg.OperationalError`，实测 psycopg
+    3.3.5 里 `ConnectionTimeout` / `CannotConnectNow` / `TooManyConnections` 也都挂在
+    它下面，所以一枚 `OperationalError` 就盖住了"服务端还没受理这条语句"的整类失败。
+    `ProgrammingError`、`UniqueViolation` 这类"语句已经到达服务端"的错不在名单里：
+    宁可少吸一次抖动，也不许把一条可能已经落盘的写语句重放。
+
+    返回空元组的意思是"不重试"，不是"什么都重试"。`tests/test_auth_database.py:90`
+    会把 `auth.psycopg` 换成一个 `object()`，那时代码里根本取不到异常类，必须安静地
+    退回今天"失败即抛"的行为，而不是拿一个不存在的类去做 `except`。
+    """
+    operational = getattr(psycopg, "OperationalError", None) if psycopg is not None else None
+    if isinstance(operational, type) and issubclass(operational, BaseException):
+        return (operational,)
+    return ()
+
+
+def _connect_for_request(operation: str):
+    """新建一条鉴权连接，只把"连接尚未建立"这一段失败收敛成有界重试。
+
+    为什么是乙（有界重试）而不是甲（连接池）——先把数出来账摆平：
+    `_raw_conn()` 的直接调用点全仓 **2 枚**（本文件 import 探针 `_c = _raw_conn()`
+    与 `_get_conn()` 里的 `conn = _raw_conn()`），`_get_conn()` 的调用点 **7 枚**
+    （verify_password / list_users / create_user / get_user / upsert_sso_user /
+    delete_user / change_password）。而一发已登录请求在热路径上只走 `get_user`
+    一处（`app/main.py:277`；`_authorize_queue_task` 用的是 middleware 已经塞进
+    `request.state.principal` 的对象，不再查库），即"每请求 1 条新连接"。
+    频率读数：run7 相 1 整窗 0 次，今晨 78 发 /queue/status 里 1 次（约 1.3%）。
+
+    也就是说：看到的是解析器抖了一下，不是连接被用光。池能把 78 次握手压成个位数，
+    但它消不掉同一个依赖——池补到 min_size、或回收一条被服务端掐死的连接时，照样
+    得现场做一次 DNS + 解析，抖动那一下它一样红，只是红的次数少些。而它的代价是立刻
+    落在账面上的：`app/agents/orchestrator.py:174` 已经在同进程里开了枚
+    min_size=5/max_size=50 的池（findings.md:377 记的就是这笔"replicas x 50 必须小于
+    max_connections"的账），本文件又被 backend / worker / mcp_server 三方各自 import，
+    第二枚池意味着每个进程再多常驻 min_size 条连接，而 `deploy/docker-compose.server.yml:22`
+    把 PG 上限定成 `POSTGRES_MAX_CONNECTIONS:-200`。实测 app/** 里 auth.py 之外还有 14 处
+    `psycopg.connect`（其中 7 处连 `connect_timeout` 都没有），池只治得到鉴权这一棵，治不到整体连接数。
+
+    结论：先按症状下刀（超时 + 有界重试），把池留给总控当"全仓一处连接边界"来定，
+    而不是在这里偷偷加第二枚常驻池、还要为它背一层"池坏了不能把鉴权打死"的回退码。
+
+    代价，写清楚了才许用：
+    1. 抖动是拿"最坏情况更慢"换的。今天失败立刻抛；现在最坏要多掏一次退避。上界由
+       `_RETRY_BUDGET_SECONDS` 与下面那句"剩下的预算装不下一次完整尝试就放手"共同兜住。
+    2. 重试只发生在"连接还没建立"这一格：`_raw_conn()` 除了 connect 什么都不做，
+       抛出来就意味一条语句也没递上去，所以不可能重放写。`_create_schema()` 与
+       `upsert_sso_user` 的 commit 全在拿到连接之后，一次尝试都不多给。
+    3. 快速失败才吃得到 3 次机会，慢死（每发都跑到超时）只吃 1 次——多等不如快失败。
+       这也是为什么预算用"装得下一次完整尝试"来卡，而不是"只要还剩一秒就再试"。
+    4. 退避是定死的指数（50ms -> 100ms，封顶 200ms），没加 jitter。失败同批醒来这个
+       风险今天不存在（每请求一条连接，没有共享资源可争），量级上去再说。
+    5. 这条路跑在事件循环上：`app/main.py:246` 是 `async def dispatch`，里面直接调
+       同步的 `get_user()`。所以 `time.sleep` 的每一毫秒都是全场共享的，这也是
+       `connect_timeout` 比"重试次数"更要紧的原因。把鉴权挪出事件循环是总控的账。
+    """
+    transient = _transient_connect_errors()
+    started = time.monotonic()
+    for attempt in range(1, _CONNECT_ATTEMPTS + 1):
+        try:
+            return _raw_conn()
+        except transient as exc:
+            elapsed = time.monotonic() - started
+            backoff = min(
+                _RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)),
+                _RETRY_BACKOFF_CAP_SECONDS,
+            )
+            fits = elapsed + backoff + _CONNECT_TIMEOUT_SECONDS <= _RETRY_BUDGET_SECONDS
+            if attempt >= _CONNECT_ATTEMPTS or not fits:
+                logger.warning(
+                    f"[Auth] {operation} 建连失败，不再重试"
+                    f"（第 {attempt}/{_CONNECT_ATTEMPTS} 次，已耗 {elapsed:.3f}s，"
+                    f"预算 {_RETRY_BUDGET_SECONDS}s）: {type(exc).__name__}: {exc}"
+                )
+                raise
+            logger.warning(
+                f"[Auth] {operation} 建连失败，{backoff * 1000:.0f}ms 后重连"
+                f"（第 {attempt}/{_CONNECT_ATTEMPTS} 次）: {type(exc).__name__}: {exc}"
+            )
+            time.sleep(backoff)
+    raise RuntimeError("unreachable: _connect_for_request used up its attempts")
 
 
 def _create_schema(conn):
@@ -241,6 +366,10 @@ def _seed_bootstrap_admin(conn) -> None:
 _db_ready = False
 if psycopg is not None:
     try:
+        # 这枚 import 期探针刻意不走 `_connect_for_request`：启动时还没有人在等答复，
+        # 把重试放在这里只会把"PG 没起来"换成"容器多停几秒"，拖住健康检查与重启循环。
+        # 探针失败今天也只记一条 warning，真正的补救在请求路径上（`_get_conn` 会重建表）。
+        # 同理，`_connect_kwargs()` 对这枚探针也有效：DSN 没写超时时，它不再能无限期挂住 import。
         _c = _raw_conn()
         _create_schema(_c)
         _c.close()
@@ -256,7 +385,7 @@ def _get_conn():
     global _db_ready
     if _using_memory_store():
         return _FakeConn()
-    conn = _raw_conn()
+    conn = _connect_for_request("user store access")
     if not _db_ready:
         try:
             _create_schema(conn)
