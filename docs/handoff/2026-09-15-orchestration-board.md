@@ -3833,6 +3833,7 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 | `Curie` | `01a0d7e7-4de4-77d0-906c-57c1892843b6` | **R249** V2｜Dataset/DatasetVersion 落 PG | `be-r249`（`e82619c`，**独占**） | **在途** 17:2x 投出；写域禁 `app/storage/__init__.py`（归 R248）与 `migrations/**`（归 R251）|
 | `Poincare` | `01a0d7e7-a7de-7b11-bee3-235c10dd9106` | **R250** V2｜Trace 落 PG + 管理员按 run_id 查回 | `be-r250`（`e82619c`，**独占**） | **在途** 17:2x 投出；写域只 `app/trace/**` 与 `observability.py` |
 | `Godel` | `01a0d7e8-0014-7740-abad-0748aa926f78` | **R251** V2｜告警确认/转派/关闭闭环 | `be-r251`（`e82619c`，**独占**） | **在途** 17:2x 投出；**本波唯一持迁移者**（`0014_*` 与 `migrations/manifest.json`）|
+| `Plato` | `01a0d7f3-85e3-7f33-9dbc-9b193a6ae193` | **R252** V1 真机窗 run8 相 2 执行 | `be-r245`（`fe439bc`，**独占**） | **在途** 17:5x 投出；零写仓内、进程须脱离会话（详 4CE.4）|
 
 ⇒ 三条直接后果：① 「607 枚缺口」作废，两侧**条数相等**（1008 = 1008）；② 「距离口径未锁」也基本清了——PG 侧索引 `vector_l2_ops` 与 `vector_scope.distance_function=l2` 同源对齐；③ 切读缺的仍然只剩**真 top-k 对照**这一格，本班已作为 **R59b 第一步**下发，且要求比对必须在**两侧同时可达**的地方跑（backend 容器内：`/app/chroma_db` 是真卷、`postgres` 是内网 DNS；5432 未向宿主发布，宿主侧连不进去是设计如此）。🔴 老毛病第三次记账：**报「某物不存在」之前，先确认自己在哪一层查、用的是不是这一层的正确名字**——这次是查错了服务器上的另一个进程。
 
@@ -4154,4 +4155,28 @@ app/storage/datasets.py 自陈 until Dataset/DatasetVersion tables are active、
 
 顺带在案：本班已把开窗方案落成**可执行**形态——采集器无选行口，故改用仓外 20 题子集 fixture（`%TEMP%\eval-run8-phase2-report20.jsonl`，
 sha256 前 16 `a138beb8edbb52bd`），**零代码改动、不动被 `tests/test_evaluation_report.py` 钉死的评测集本体**；命令与开窗前三件见 run8 计划 5.6 节。
+### 4CE（09-25 17:4x-18:0x，第八班第四格·下半）：R245 并树、标定生效、报告档开关落 on、真机窗交子线跑
+
+**4CE.1 R245 并树 `fe439bc`**（总控主树亲跑 10 passed，含预授权翻转的 :91/:191 两枚，新断言仍判恰等）。
+D 格量具从此交两枚有名读数：frontend_deadline_ms=300000、frontend_waste_per_stalled_watch_seconds=300.0；
+三跳现读（轮询自停的 if(polls>MAX_POLLS) → MAX_POLLS=DEADLINE_MS/POLL_MS → 分子字面量），断任一跳即不交读数只交缺口名。
+frontend/** 全程只读（ChatPanel.vue sha256 前 16 39fd661fa74ca098，16:54:23 取证）。
+施工方自述缺失：16:56:22 又被同秒集体打断（4CE.2），但判读文档已在打断前写出 ⇒ 按 R236/R238 先例以工作树 blob＋总控亲跑验收。
+
+**4CE.2 🔴 事故 #50：中断总控的一轮 = 同秒掐死所有在途子 Agent（因果链第一次被钉死）**
+证据：本班 16:56 业主中断总控那一轮（当时在跑 R246 的验证 pytest），R245 rollout 末条 timestamp 恰为 16:56:22、类型 turn_aborted，
+与 #49 那四枚 14:12:42 同一形状。⇒ **#48/#49 的「不可指认的集体打断」现在可指认了：就是总控被中断的那一刻**，不是网络、不是模型、不是配额。
+这条解释了本班的返工量：**业主因为总控慢而中断，中断又杀掉正在干活的子线**，形成正反馈。
+处置两条（已落进本班操作）：① 总控轮次一律做短，长命令改脱离式后台（docker exec -d / Start-Process -WindowStyle Hidden + 输出落文件再分段读），使业主无需中断；
+② 派工词强制加「抗打断」段：长任务进程须脱离会话、账落仓外、PID 落盘、**禁止管道尾截**（上一班 Select-Object -Last 40 就是这么丢掉整窗输出的）。
+另记：唤醒协议有效——resume_agent + send_input 逐枚唤醒四枚，全部复工会交工，**没有一枚需要重投**，未触发事故 #14 那类重复投递。
+
+**4CE.3 标定与开关已进进程（此前一直是空的）**：容器 env 现取 ⇒ MODEL_PREFILL_TOKENS_PER_SECOND=1200、MODEL_DECODE_TOKENS_PER_SECOND=40。
+随带把 REPORT_LANE_VIA_QUEUE=on 落进 deploy/.env.server 并 recreate；此前该变量在容器内 grep 计数为 0 ⇒ 一直走 chat.py:1178 的代码默认 off。
+**这就是「D 格从未验过」的直接成因**：开关关着，报告档从没进过队列，判据无从判。
+⚠️ 交付口径提请业主：REPORT_LANE_VIA_QUEUE 本机现常开；若交付形态要求默认关，那是另一枚决定，本班不动代码默认值。
+
+**4CE.4 真机窗交子线（业主令：别自己守窗）**：R252 执行 run8 相 2，样本为仓外 20 题子集（tier=报告，sha 前 16 a138beb8edbb52bd），
+一窗同取 D-1/2/3 ＋ A②（**含 run7 缺的逐帧到达**）＋ A④ 逐类 ＋ B 首屏。窗口估算 25-40 分钟（按 run7 单题 median 37.0 s / mean 51.7 s 外推）。
+读数须注明「与四枚并发施工同窗采集」——毫秒级数字会被争用污染，这条诚实比好看重要。
 
