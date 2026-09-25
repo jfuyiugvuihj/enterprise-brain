@@ -821,6 +821,7 @@ const unseenReads = ref({})   // 本轮发出、界面尚未认领的事件名
 const queueReads = ref({})    // GET /queue/status/{id} 的最近一次读数
 const queueFaults = ref({})   // 排队状态这一次没读回来时的原始错误
 const queueStops = ref({})    // 这一轮的轮询被终止性判定叫停：停表之后读数不会自己回来
+const queueWaits = ref({})    // R221 · 这一轮盯到点收表：只说「前台不再当场等」，不带失败判定
 const rejectedReads = ref({}) // 入队这一步就失败（HTTP 5xx / 4xx）的归一结果
 const cacheChecks = ref({})   // 改版核对：缺键=未查 / null=无从核对 / []=没改版 / [{}]=改版了
 const queueStats = ref(null)  // GET /queue/stats 的最近一次读数（全局一块，不按轮次分）
@@ -837,7 +838,29 @@ const preview = reactive({
 })
 
 const QUEUE_POLL_MS = 3000
-const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired']
+// R221 · 停表名单此前漏了后端真会交出来的第五枚终态：dead（死信）。
+// 出处三条，逐条对过源码：
+//   app/common/reliable_queue.py:248-251 —— 重试名额用完，或契约判定「重试也不会变」的
+//     那一支，直接 rpush(dead_key) 再把状态写成 dead，一个名额都不占；
+//   deploy/queue_worker.py:206 —— 只有落到 dead 才往会话历史补那一句；
+//   app/api/v1/chat.py:3961 —— 状态既不是 done 也不是 queued 时，这一枚原样交回前端。
+// 漏它的代价不是「少一句话」：那一发的计时器永不停，每 3 秒继续打一枪，打到页签关掉
+// 为止（R218 读数 frontend_watch_has_no_deadline=true），屏上还停在最后一次读数上装死。
+// dead 的脸不在这里另立：读数交给 lib/provenance.js 的 queueFace，它那句
+// 「这一轮在后台执行失败，没有产出答案」本来就写着管「failed 与后端给的其它状态」，
+// 原因仍走 normalizeError 那一份口径，本面板不当第三套判断，也不新增字典条目。
+const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired', 'dead']
+
+// 看门狗的另一半：前台等待有上限，盯到点就收表，并标注「已转后台，稍后可查回」。
+// 到点 = 界面不再当场盯着，【不是】判定这一轮失败。任务此刻在不在跑、跑没跑完，
+// 界面读不到，说失败就是假话；而瞬断、超时、5xx 那一族在到点之前一律照常重试，
+// r198 乙组与 r202 丙组钉着的反向半条，本单一个字没放宽。
+// 300 秒不是拍的：后端一枚任务的最长租约 lease_seconds=300（reliable_queue.py:67），
+// 回执保留 result_ttl=1800（同文件 :70）——停表之后「稍后仍然查得回」还是真话。
+const QUEUE_WAIT_DEADLINE_MS = 300000
+// 到点用同一枚 3 秒时钟数出来：既不多起一枚计时器（r198 丁4 钉的就是只准一枚时钟），
+// 也不读系统时间——改系统时钟、页签被浏览器节流，都不该把这一轮的前台等待提前判死。
+const QUEUE_WAIT_MAX_POLLS = QUEUE_WAIT_DEADLINE_MS / QUEUE_POLL_MS
 
 // 轮询还有另一种停法：后端明确说「这一轮你再也读不回来了」。
 // 名单只收终止性判定，出处 app/api/v1/chat.py::_authorize_queue_task 的五枚拒绝出口：
@@ -951,12 +974,40 @@ function queuePollStoppedFace(error) {
   }
 }
 
+/**
+ * 前台盯到点收表那一轮的脸（R221 判据②）。
+ *
+ * 与上面那张停表脸的分别，就是这一单的语义红线：终止性判定说的是「这一轮你再也读不
+ * 回来了」（后端已经判死），到点说的只是「界面不再当场盯着」。所以这张脸
+ * 不许出现「失败／没有产出答案」那类判定，不许借 queueFace 继续画「前面还有 N 人」
+ * （表停了还在报位次就是假话），也不许留「每 3 秒再读一次」那句。
+ * 「稍后可查回」同样不是安慰话：面板重新挂载时 restoreQueuedTurns() 会替没有正文的
+ * 轮次重新盯上，而回执在服务器还要留 1800 秒，比这一轮盯的时间长。
+ * 字段形状照上面两张脸那一份，不另起一套；codeLabel 留空是诚实的——到点这件事没有
+ * 错误码可归，硬凑一枚就是自造第二套口径。
+ */
+function queuePollWaitFace() {
+  return {
+    kind: 'waited-background',
+    headline: '这一轮前台已盯到上限：已转后台，稍后可查回',
+    detail: '界面只是不再当场盯着，没有对这一轮下任何结论：任务仍在后台排队或运行，结果跑完会补进这条回答。刷新这一屏会自动再查一次。',
+    codeLabel: '',
+    tone: 'info',
+    retryable: false,
+    ahead: null,
+  }
+}
+
 function queueFaceOf(msg, index) {
   const key = turnKey(msg, index)
   if (rejectedReads.value[key]) return queueRejectedFace(rejectedReads.value[key])
   // 停表优先于一切读数：这一轮此前只要读到过一次 queued，不特别处理就会永远画着
   // 「前面还有 N 人」——那是本单病灶的屏幕半，另一半是每 3 秒一笔被拒的台账。
   if (queueStops.value[key]) return queuePollStoppedFace(queueStops.value[key])
+  // R221 · 到点收表同样优先于读数：不拦这一格，这一轮会永远停在最后一次读到的
+  // 「前面还有 N 人」——那正是本单要治的永久 spinner。迟到的读数把正文补回来之后
+  // 这一张脸就不必再说了，所以让位给正文。
+  if (queueWaits.value[key] && !msg.content) return queuePollWaitFace()
   const read = queueReads.value[key]
   if (!read) {
     if (queueFaults.value[key]) return queuePollFailedFace(queueFaults.value[key])
@@ -990,12 +1041,24 @@ function applyQueuedAnswer(key, answer) {
 function watchQueueTurn(key, requestId) {
   if (!requestId) return
   if (queueWatches.some(item => item.key === key)) return
-  const entry = { key, timer: 0 }
+  const entry = { key, timer: 0, polls: 0 }
+  // 重新盯上 = 又一轮前台等待：上一轮到点的痕要清掉，否则那张脸会盖住新读数。
+  queueWaits.value = storeBag(queueWaits, key, null)
   const stop = () => {
     clearInterval(entry.timer)
     queueWatches = queueWatches.filter(item => item !== entry)
   }
+  /** 判据②：到点只收表，这一轮的成败一个字都不改判——读不到就是读不到，不替后端宣布失败。 */
+  const stopAtDeadline = () => {
+    queueWaits.value = storeBag(queueWaits, key, true)
+    stop()
+  }
   const tick = async () => {
+    entry.polls += 1
+    if (entry.polls > QUEUE_WAIT_MAX_POLLS) {
+      stopAtDeadline()
+      return
+    }
     try {
       const status = await http.get(`/queue/status/${encodeURIComponent(requestId)}`)
       const read = {
