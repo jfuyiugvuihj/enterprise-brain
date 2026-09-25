@@ -73,14 +73,16 @@ pgvector_reads_enabled() 为真，整层立刻让路并记原因码 hot_index_re
       * HOT_INDEX_ENABLED 是**真 env 开关**（app/rag/hot_index.py:45,151-154：未设置、空、
         不认识的值一律算关），而 deploy/.env.server 今天没有这一行 ⇒ **生产现状 = A1
         chroma-cold**；要量 A2 才需要加行 + recreate backend。
-      * INDEX_BACKEND **不是 env**：app/rag/indexing.py:47 是模块级字面量
-        （INDEX_BACKEND = INDEX_BACKEND_DEFAULT），read_backend() 读的就是那枚常量。本单在
-        零写入条件下实测：把 INDEX_BACKEND=pgvector 塞进环境再 import，read_backend() 仍回
-        'chroma'、pgvector_reads_enabled() 仍 False。⇒ **B 臂今天翻不出来**，除非有人改代码
-        （tests/test_r59b_pg_read_switch.py:154 还专门钉着「字面量改掉这条立刻红」）。
-        翻法见 docs/testing/r59c-window-ops-2026-09-25.md §1.1，还原见同文 §7。
-      * ⇒ 臂身份检查因此不是形式主义：往 env 里加一行 INDEX_BACKEND=pgvector 再 recreate，
-        服务照旧由 chroma 答复，本件当场退出码 3 判整臂作废 —— 那正是「假合闸」的形状。
+      * INDEX_BACKEND 自 R231（并树 ed9f8b0，09-25）起有**两个来源**：deploy/.env.server 里的
+        INDEX_BACKEND 与 app/rag/indexing.py 的模块级常量，**env 赢**；解析只在中性函数
+        read_backend() 一处，读路径 / 版本台账 / publication 记录三处共用它 ⇒ **B 臂翻得出来**，
+        不必再改代码。旧文那两行「不是 env」「B 臂今天翻不出来」「塞进环境仍回 chroma」是
+        R231 之前的事实，本班按 R231 交回 §6 作废。默认仍是 shipped 的 chroma——
+        **能翻不等于已翻**，所以本件的产物头照旧记 answered_by（进程真答复的那台），不记期望。
+      * ⇒ 臂身份检查因此更要，不是形式主义：它证的不再是「代码没有旋钮」，而是**这个真在跑的
+        进程**当下确实由声称的那台引擎答复。仍会中招：只 restart 不 --force-recreate（env 是
+        create 时烘进 .Config.Env 的）、只 recreate backend 而 worker/scheduler 仍旧引擎、
+        以及镜像落后于 R231。任一种都是「假合闸」，本件当场退出码 3 判整臂作废、不出对照。
 
     热集收益   hot_gain_ms        = paired(A1 - A2)  —— 让路之前热集原本省下多少
     切读裸代价 switch_cost_ms    = paired(B  - A1)  —— 只换引擎、两侧都没有热集
@@ -192,8 +194,9 @@ ARMS = {
     "pgvector": frozenset({LEG_PGVECTOR}),
 }
 #: 臂的**开关声明**，只进产物头与 dry-run 提示，不当证据用（证据是 answered_by）。
-#: 写成「怎么落到进程」而不是「env 里写什么」：INDEX_BACKEND 今天不是 env（app/rag/indexing.py:47
-#: 是模块级字面量），拿它当环境变量设一遍就是假合闸 —— 详见 docs/testing/r59c-window-ops-2026-09-25.md §1。
+#: 写成「怎么落到进程」而不是「env 里写什么」，因为落到进程这一跳才是证据：R231 起 INDEX_BACKEND 确实
+#: 是 env 了，可只 restart 不 recreate、或镜像落后于 R231，读到的都还是 create 时烘进去的旧值。
+#: 详见 docs/testing/r59c-window-ops-2026-09-25.md §1（含 09-25 换对象说明与三种仍会中招的做法）。
 ARM_SWITCHES = {
     "chroma-hot": "读后端=chroma(默认字面量) + HOT_INDEX_ENABLED=on(env)",
     "chroma-cold": "读后端=chroma(默认字面量) + HOT_INDEX_ENABLED 未设/关(env) = 今天生产",

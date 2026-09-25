@@ -23,14 +23,16 @@
 原因：`app/rag/indexing.py:47` 是模块级字面量 `INDEX_BACKEND = INDEX_BACKEND_DEFAULT`（`:45` = `"chroma"`），`read_backend()`（`:2023-2045`）读的就是这枚常量，全仓 `rg 'getenv..INDEX_BACKEND'` **零命中**；`deploy/.env.server` 里也没有 `INDEX_BACKEND` 这一行。
 而 `tests/test_r59b_pg_read_switch.py:154` 专门钉着"字面量改掉这条立刻红"（`test_the_switch_defaults_to_the_legacy_engine`）。
 
-⇒ **谁往 `deploy/.env.server` 加一行 `INDEX_BACKEND=pgvector` 再 recreate，服务照旧由 Chroma 答复。** 这是最省事的假合闸形状，也是 R59c 量具退出码 3 专门抓的东西（臂身份未证实 ⇒ 整臂作废，不出对照）。
+⇒ 上面那条取证**在 09-25 之前是真事实、今天是假事实**：R231（并树 `ed9f8b0`）之后，往 `deploy/.env.server` 加一行 `INDEX_BACKEND=pgvector` 再 `--force-recreate`，读路径**会**翻到 pgvector——env 赢常量，`tests/test_r231_*` 钉死，且版本台账 `as_dict() 里的 backend 键` 与 `create_version` 跟着同一个 `read_backend()`，不留半切换。
+
+🔴 但本节这条取证**不能删**，它换了对象：臂身份检查（退出码 3）现在证的不再是「代码没有旋钮」，而是「**这个真在跑的进程**当下确实由它声称的那台引擎答复」。仍会中招的三种做法：① 加了 env 行却只 `docker restart`——env 是容器 **create 时**烘进 `.Config.Env` 的，restart 复用同一份创建配置，照旧由 Chroma 答复；② 只 recreate backend，worker/scheduler 还走旧引擎（三进程共用 `x-runtime` 的 `env_file`，要一起 recreate）；③ 镜像里根本没有 R231 那枚解析器——镜像落后主树时，改 env 等于没改。
 
 ### 1.1 三种翻法（总控二选一，按用途分）
 
 | 做法 | 动作 | 改到什么 | 还原 | 用途 |
 |---|---|---|---|---|
 | **甲：容器内临时注入** | `docker cp` 出 `indexing.py` → 把 `INDEX_BACKEND = INDEX_BACKEND_DEFAULT` 改成 `INDEX_BACKEND = PGVECTOR_BACKEND` → `docker cp` 回去 → `docker restart enterprise-brain-backend-1` | 只改**运行中容器的可写层**；仓、镜像、生产 env 一字未动 | `docker compose ... up -d --force-recreate backend`（可写层丢弃，镜像原样回来） | **本窗量读数用这个**：零版本库改动，且下次 recreate 必丢 ⇒ 不可能漂进生产 |
-| **乙：加 env 钩子**（新单） | `read_backend()` 改读 `os.getenv("INDEX_BACKEND")`，未设仍回 `chroma`；那枚钉用例连带补"env 拼错仍留 chroma" | `app/rag/indexing.py` + `tests/test_r59b_pg_read_switch.py` | 删 env 行即回 | **生产该长的形状**：私有化部署里"换读引擎"不该要求改代码重打镜像。需另立单授权（本单写域禁改 `app/rag/**`） |
+| ✅ **乙：加 env 钩子**（**已落地：R231，并树 `ed9f8b0`，09-25 12:12**） | `read_backend()` 现先读 `INDEX_BACKEND` env，未设/空白仍回常量 `chroma`；拼错回落 shipped 引擎并落一句告警；env 与常量同时给且不一致 ⇒ **env 赢** | `app/rag/indexing.py` + `tests/test_r59b_pg_read_switch.py` + 新 `tests/test_r231_{index_backend_env,no_half_switch}.py` | 删 env 行即回（且必须 `--force-recreate`，restart 不算） | **生产该用的翻法**：私有化部署里"换读引擎"不该要求改代码重打镜像。🔴 旋钮已在位 ≠ 已合闸：默认仍是 chroma，合闸由总控排窗 |
 | **丙：直接翻字面量并 commit** | 改 `indexing.py:47` | 版本库 + 那枚"默认不翻"的钉必红，必须连带改测试 | revert commit | ❌ 不建议在补数窗做：它把"补读数"和"合闸"混成一件事 |
 
 做法甲的两条现场细节（本单在 `Dockerfile` 上复核过，省得窗内试错）：
@@ -193,7 +195,7 @@ Set-Location 'C:\Users\fengx\PycharmProjects\企业智脑'
 docker compose --env-file deploy/.env.server -f docker-compose.yml up -d --force-recreate backend
 
 # 7.3 还原证明（一把看代码态）
-docker exec enterprise-brain-backend-1 python -c "from app.rag.indexing import read_backend; print('read_backend =', read_backend())"   # 期望 chroma
+docker exec enterprise-brain-backend-1 python -c "from app.rag.indexing import read_backend; print('read_backend =', read_backend())"   # 还原后期望 chroma（默认值未翻）。R231 起这一跳真能读到 env，所以它同时也是「env 到进程」的凭据：设了 env 却读出 chroma，就是 recreate 没做到位
 
 # 7.4 还原证明（另一把看服务态，不发问答）
 Set-Location 'C:\Users\fengx\PycharmProjects\be-r59c'
