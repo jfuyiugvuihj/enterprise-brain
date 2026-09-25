@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | `dashboard-demo.js` | `DashboardPanel.vue` 的趋势卡、异常卡、`审批任务` KPI | R14：`/dashboard` 与 `/insights/detect` 目前都是客户端喂 rows 的算法端点，不查库 |
 | `insights-demo.js` | `InsightPanel.vue` → `POST /insights/detect` 的入参 | R14：同上 |
-| `approval-demo.js` | `ApprovalPanel.vue` → `POST /approval/precheck` 的入参 | R13：列挂起 HITL 待办的端点尚不存在 |
+| `approval-demo.js` | `ApprovalPanel.vue` → `POST /approval/precheck` 的入参（只剩金额 / 部门 / 费用类型三格） | 这一格不是「在等端点」：R13 那两条早已落地，挂起待办读的是 `GET /hitl/pending`；留下这三格是 F4 裁定保留的「自查计算器」初始输入。**R237 起 `standard` 与 `evidence` 已按 R40 判据③删除** —— 比的标准与它的出处由服务端从知识库检索后随结论回，界面不持有数字 |
 | `login-demo.js` | **已删除**，登录页不得出现任何未溯源数字 | 不等端点：文件与三张装饰卡已一并移除，见下方注 2 |
 
 > 注 2：登录页原先有三张装饰数据卡（`数据 1.2M+` / `洞察 +42%` / `知识 300K+`），连同

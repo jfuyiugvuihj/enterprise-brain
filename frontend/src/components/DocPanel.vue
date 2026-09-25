@@ -4,6 +4,10 @@ import { http, errorDetail } from '../lib/http'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
 import { UiButton, UiEmptyState, UiErrorState } from './ui'
 
+// 列表存的是【行】而不是裸文件名：GET /documents/catalog 每一行都带着
+// index_status / index_reason（app/documents/catalog.py 的 public_document_row），
+// R49 判据②要的那张「未索引」脸只能从这两枚字段来。以前这里把行压成 filename 就丢掉
+// 了它们 —— 服务端答了，界面把答案扔了，用户上传被排除的那篇就此在库里查无此脸。
 const docs = ref([])
 // 本面板自己的失败提示；401 不在这里判，统一交给 lib/http.js 的响应拦截。
 const notice = ref('')
@@ -75,6 +79,43 @@ function createUploadItem(file) {
   })
 }
 
+// ==================== 未索引那张脸（R49 判据②） ====================
+
+const INDEX_STATUS_EXCLUDED = 'excluded'
+const INDEX_STATUS_INDEXED = 'indexed'
+
+// 后端把「为什么没入索引」编成了稳定码（app/documents/index_policy.py），这里只把码念成
+// 人话：句子不带数字，也不带码名——实测长度与阈值归服务端那句 notice 说，界面不另算一份。
+const INDEX_REASON_TEXT = {
+  no_text_content: '解析出来是空的，正文里没有可检索的文字',
+  below_minimum_size: '正文太短，承载不了可检索的信息',
+  placeholder_skeleton: '正文以未填写的占位符为主，按模板骨架处理',
+  outline_only_shell: '只有小节标题、正文没有内容，按草稿骨架处理',
+  unchanged_content: '同名文档内容未变化，索引沿用了已有版本',
+  index_refused: '索引层拒绝了这份正文',
+}
+const INDEX_REASON_UNKNOWN = '该文档未进入知识库索引'
+
+/** 三态分明：excluded 才有脸，indexed 不涂，键 absent 是 R49 之前入库的历史行。
+ *  契约（catalog.py 的 public_document_row）明写客户端不许靠字段消失去推断，也不许把
+ *  「从没判过」画成「故意不入索引」—— 所以 unrecorded 这一格什么都不画。 */
+function indexStatus(row) {
+  const status = row.index_status
+  return status === INDEX_STATUS_EXCLUDED || status === INDEX_STATUS_INDEXED ? status : 'unrecorded'
+}
+
+function isExcluded(row) {
+  return indexStatus(row) === INDEX_STATUS_EXCLUDED
+}
+
+function indexReasonText(row) {
+  const reason = row.index_reason
+  const known = typeof reason === 'string' && Object.prototype.hasOwnProperty.call(INDEX_REASON_TEXT, reason)
+  return known ? INDEX_REASON_TEXT[reason] : INDEX_REASON_UNKNOWN
+}
+
+const excludedDocs = computed(() => docs.value.filter(row => isExcluded(row)))
+
 // 过滤后的文档列表
 // 搜索无结果的那句话里带双引号，放进模板属性字面量会撞 Vue 的无引号属性限制，
 // 所以在 script 里拼；文案与接线前逐字相同。
@@ -83,7 +124,7 @@ const noMatchTitle = computed(() => `没有匹配 "${searchQuery.value}" 的文�
 const filteredDocs = computed(() => {
   if (!searchQuery.value) return docs.value
   const q = searchQuery.value.toLowerCase()
-  return docs.value.filter(d => d.toLowerCase().includes(q))
+  return docs.value.filter(row => row.filename.toLowerCase().includes(q))
 })
 
 async function loadDocs() {
@@ -92,9 +133,10 @@ async function loadDocs() {
     const res = await http.get('/documents/catalog', {
       params: { _ts: Date.now() }
     })
+    // 行原样留下，索引状态才有地方住；老部署只回一串文件名时也接得住（回退成 unrecorded）。
     docs.value = (res.data.documents || [])
-      .map(item => (typeof item === 'string' ? item : item.filename))
-      .filter(Boolean)
+      .map(item => (typeof item === 'string' ? { filename: item } : item))
+      .filter(row => Boolean(row && row.filename))
   } catch (err) {
     console.error('文档列表加载失败', err)
     raiseNotice('文档列表没加载出来', errorDetail(err, '文档列表加载失败'), true)
@@ -230,7 +272,7 @@ function toggleAll() {
   if (selectedFiles.value.size === filteredDocs.value.length) {
     selectedFiles.value.clear()
   } else {
-    filteredDocs.value.forEach(d => selectedFiles.value.add(d))
+    filteredDocs.value.forEach(row => selectedFiles.value.add(row.filename))
   }
 }
 
@@ -399,22 +441,34 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
       <UiEmptyState v-else-if="filteredDocs.length === 0" :title="noMatchTitle" dense />
 
       <TransitionGroup name="list" tag="div">
-        <div v-for="doc in filteredDocs" :key="doc"
-             :class="['doc-row', { selected: selectedFiles.has(doc) }]"
-             @click="toggleSelect(doc)">
+        <div v-for="row in filteredDocs" :key="row.filename" data-testid="doc-row"
+             :class="['doc-row', { selected: selectedFiles.has(row.filename) }]"
+             :data-index-status="indexStatus(row)"
+             :data-index-reason="row.index_reason || ''"
+             @click="toggleSelect(row.filename)">
           <!-- 选择框（管理员） -->
           <span v-if="isAdmin" class="check-box">
-            {{ selectedFiles.has(doc) ? '☑' : '☐' }}
+            {{ selectedFiles.has(row.filename) ? '☑' : '☐' }}
           </span>
 
-          <span class="doc-icon">{{ fileIcon(doc) }}</span>
-          <span class="doc-name" :title="doc">{{ doc }}</span>
+          <span class="doc-icon">{{ fileIcon(row.filename) }}</span>
+          <div class="doc-main">
+            <div class="doc-line">
+              <span class="doc-name" :title="row.filename">{{ row.filename }}</span>
+              <!-- R49②：被排除的那篇要在库里看得见，而且要看得见原因，
+                   不许只留一个图标让人猜；也不许拿「这一步上传被跳过」冒充「这篇未索引」。 -->
+              <span v-if="isExcluded(row)" class="doc-index-flag" data-testid="doc-index-status"
+                    data-index-status="excluded">未索引</span>
+            </div>
+            <p v-if="isExcluded(row)" class="doc-index-reason" data-testid="doc-index-reason"
+               :data-index-reason="row.index_reason || ''">{{ indexReasonText(row) }}；文件与目录记录均已保留。</p>
+          </div>
           <div class="doc-actions">
-            <button class="doc-open-btn" @click.stop="openDocument(doc)">打开</button>
-            <button class="doc-open-btn" @click.stop="downloadDocument(doc)">下载</button>
+            <button class="doc-open-btn" @click.stop="openDocument(row.filename)">打开</button>
+            <button class="doc-open-btn" @click.stop="downloadDocument(row.filename)">下载</button>
 
           <!-- 删除按钮（管理员） -->
-            <button v-if="isAdmin" class="del-btn" @click.stop="deleteOne(doc)" title="删除">删除</button>
+            <button v-if="isAdmin" class="del-btn" @click.stop="deleteOne(row.filename)" title="删除">删除</button>
           </div>
         </div>
       </TransitionGroup>
@@ -423,6 +477,7 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
     <!-- 底栏统计 -->
     <div v-if="docs.length > 0" class="panel-footer">
       <span>共 {{ docs.length }} 个文档</span>
+      <span v-if="excludedDocs.length" class="footer-excluded" data-testid="document-excluded-count">{{ excludedDocs.length }} 个未入索引</span>
       <span v-if="isAdmin" class="footer-hint">点击选择 · 批量删除</span>
     </div>
 
@@ -717,5 +772,32 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
 
 .panel-footer {
   border-top-color: var(--line);
+}
+
+/* ===== 未索引这张脸（R49②） =====
+   色值只引 theme.css 里已有的 token，本单不新增、不改值（预算 148 枚告警已顶满）。 */
+.doc-main {
+  flex: 1; min-width: 0;
+}
+.doc-line {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+.doc-index-flag {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--amber) 34%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  color: var(--amber);
+  font-size: 11px;
+}
+.doc-index-reason {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.footer-excluded {
+  color: var(--amber);
 }
 </style>
