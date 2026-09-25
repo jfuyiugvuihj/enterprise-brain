@@ -1,7 +1,18 @@
+<script>
+// R247 判据①：员工在面板间来回切时 Vue 会反复 unmount/mount，而每一发预审在背后都是
+// 一次真知识库检索（app/approval/assistant.py 的 resolve_standard_from_knowledge_base），
+// 知识库不在线时那一发直接回 503。所以这里放一枚模块级的一次性缓存：同一组自查参数在
+// 同一枚 app（= 一次页面会话）里只真发一次，后来的挂载直接复用那一次的读数。
+// 键挂 app 而不是纯全局：刷新页面是一枚新 app，本来就该重取新鲜数 —— 把上一次会话的
+// 读数端给员工才是假话。参数改了是另一组问题，照实重取；失败的读数不进缓存，没有可复用的数。
+const precheckMemo = new WeakMap()
+</script>
+
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, getCurrentInstance, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
 import { errorDetail, isPermissionDenied } from '../lib/http'
+import { errorCodeOf } from '../lib/errcodes'
 import { demoForm } from '../devFixtures/approval-demo'
 import { UiEmptyState, UiErrorState } from './ui'
 import HitlPendingPanel from './hitl/HitlPendingPanel.vue'
@@ -12,16 +23,26 @@ import HitlPendingPanel from './hitl/HitlPendingPanel.vue'
 // 本文件里从此不许再出现 standard 常量：那等于把客户的制度阈值抄死在界面里。
 const STANDARD_SOURCE_AUTO = 'auto_from_knowledge_base'
 
+// R247 判据②：知识库检索不到那一个标准时，后端不猜数，直接回 503 + 这一枚稳定码
+// （app/api/v1/intelligence.py 的 approval_precheck）。它既不是「跑挂了」也不是「没有数据」，
+// 是「此刻取不到比的那个数」—— 所以单独一张脸，与通用失败分开画（无权限 / 空 / 降级 / 错误）。
+const KB_UNAVAILABLE_CODE = 'retrieval_unavailable'
+
 // 表单会改写这些值，所以拷一份，避免面板把模块常量改掉。
 // evidence 不再种子假文件名：auto 口径下服务端用检索出处整条覆盖它，填了也上不了屏。
 const form = ref({ ...demoForm })
 const result = ref(null)
 const loading = ref(false)
 const error = ref('')
-// 面板 onMounted 就自己发一次预审，所以「等待分析」在失败时是句假话：
-// 它把「跑失败了」说成「还没跑」。failed 用来把这两件事分开（R1c 同一判据）。
+// 面板 onMounted 自己发那一发预审（R247 之后是「一次页面会话里最多真发一次」，见上面那枚缓存）。
+// failed 把「跑失败了」与「还没跑」分开（R1c 同一判据）：失败不许画成空态那张脸。
 const failed = ref(false)
 const denied = ref(false)
+// R247 判据②：降级（知识库此刻取不到标准）与错误（这一发压根没跑完）是两张脸，不共用一句话。
+const degraded = ref(false)
+// R247 判据①：这一屏的读数取于何时、是不是复用来的 —— 两格都要上屏，不许含糊。
+const readingAt = ref('')
+const reusedReading = ref(false)
 
 // 下面四枚都是【读响应】的派生值：界面无从知道标准是多少，所以只能说服务端回了什么。
 // 服务端没回口径时不替它编出处 —— 那一格宁可说一句没回话，也不画一张像结论的脸。
@@ -35,19 +56,83 @@ const standardLabel = computed(() => {
   return standardGiven.value ? result.value.standard : '服务端未给出'
 })
 
-async function submitCheck() {
+// 失败那一张脸的说法：无权限 / 降级 / 真失败各说各的，全部是人话，不带码名。
+const failureTitle = computed(() => {
+  if (denied.value) return '没有权限做审批预审'
+  if (degraded.value) return '知识库取不到报销标准'
+  return '预审没有跑完'
+})
+const failureCopy = computed(() => {
+  if (degraded.value) {
+    return '现在从知识库里取不到比的那个数，所以这一屏说不出超没超标。它不是「没有超标」，也不是「还在跑」，是此刻取不到；知识库恢复后点「重新预审」再取一次。'
+  }
+  return error.value
+})
+
+// 读数只报钟点：这一屏装不出秒级精度，报个大概时间比装作精确诚实。
+const pad2 = value => String(value).padStart(2, '0')
+const clockOf = stamp => {
+  const date = new Date(stamp)
+  return pad2(date.getHours()) + ':' + pad2(date.getMinutes())
+}
+const readingLine = computed(() => {
+  if (!readingAt.value) return ''
+  if (reusedReading.value) {
+    return '这是上次自查留下的读数，取于 ' + readingAt.value + ' —— 切回这一屏没有重新问知识库。要新鲜的数就点「重新自查」。'
+  }
+  return '这是刚查出来的读数，取于 ' + readingAt.value + '。'
+})
+
+// 缓存归这一枚 app：一次页面会话一份，挂在这枚实例所属的 app 对象上。
+const ownerApp = getCurrentInstance()?.appContext.app
+function memoBucket() {
+  if (!ownerApp) return null
+  let bucket = precheckMemo.get(ownerApp)
+  if (!bucket) {
+    bucket = new Map()
+    precheckMemo.set(ownerApp, bucket)
+  }
+  return bucket
+}
+
+function applyReusedReading(hit) {
+  result.value = hit.result
+  error.value = ''
+  failed.value = false
+  denied.value = false
+  degraded.value = false
+  loading.value = false
+  readingAt.value = clockOf(hit.fetchedAt)
+  reusedReading.value = true
+}
+
+async function submitCheck(force = false) {
+  const payload = { ...form.value, standard_source: STANDARD_SOURCE_AUTO }
+  const signature = [payload.amount, payload.department, payload.expense_type].join('|')
+  if (force !== true) {
+    const hit = memoBucket()?.get(signature)
+    if (hit) {
+      // 复用上次读数，不再打知识库：上屏的是「上次结果 + 取其时间」，不是新鲜结论。
+      applyReusedReading(hit)
+      return
+    }
+  }
   loading.value = true
   error.value = ''
   failed.value = false
   denied.value = false
+  degraded.value = false
+  readingAt.value = ''
+  reusedReading.value = false
   try {
-    const response = await api.post('/approval/precheck', {
-      ...form.value,
-      standard_source: STANDARD_SOURCE_AUTO,
-    })
+    const response = await api.post('/approval/precheck', payload)
     result.value = response.data
+    const fetchedAt = Date.now()
+    memoBucket()?.set(signature, { result: response.data, fetchedAt })
+    readingAt.value = clockOf(fetchedAt)
   } catch (err) {
     denied.value = isPermissionDenied(err)
+    degraded.value = !denied.value && errorCodeOf(err) === KB_UNAVAILABLE_CODE
     failed.value = true
     result.value = null
     error.value = denied.value
@@ -113,7 +198,7 @@ onMounted(submitCheck)
           这一格没有「标准」输入框，也没有「证据」输入框：比的那个数和它的出处都由服务端从知识库里取，界面不持有它，也就无从改它。
         </p>
         <div class="actions">
-          <button class="primary-btn" data-testid="run-approval" :disabled="loading" @click="submitCheck">
+          <button class="primary-btn" data-testid="run-approval" :disabled="loading" @click="submitCheck(true)">
             {{ loading ? '正在自查' : '重新自查' }}
           </button>
         </div>
@@ -123,8 +208,8 @@ onMounted(submitCheck)
         <div class="section-head"><h4>自查结论</h4></div>
         <UiErrorState
           v-if="failed"
-          :title="denied ? '没有权限做审批预审' : '预审没有跑完'"
-          :description="error"
+          :title="failureTitle"
+          :description="failureCopy"
           :retryable="!denied"
           retry-text="重新预审"
           :busy="loading"
@@ -137,6 +222,7 @@ onMounted(submitCheck)
             <strong>{{ result.status }}</strong>
             <span class="badge">演示</span>
           </div>
+          <p v-if="readingLine" class="reading-age" data-testid="approval-reading-age">{{ readingLine }}</p>
           <div class="result-grid">
             <span>金额：{{ result.amount }}</span>
             <span data-testid="approval-standard">标准：{{ standardLabel }}</span>
@@ -213,6 +299,15 @@ label {
   padding: var(--s-2);
   border: 1px dashed var(--line-strong);
   border-radius: var(--radius-sm);
+}
+
+.reading-age {
+  margin: 0;
+  padding: var(--s-2);
+  color: var(--muted);
+  font-size: var(--t-xs);
+  line-height: 1.6;
+  border-left: 2px solid var(--line-strong);
 }
 
 .actions {

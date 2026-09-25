@@ -194,12 +194,12 @@ _last_ready_probe_at: float | None = None
 def _retry_readiness_probe() -> bool:
     """在"拒绝"落下来之前，给这个进程一次重新确认用户库是不是真的不通的机会。
 
-    为什么必须长在这一支（R230 的病）：`_db_ready` 全仓只有两处置真——import 期探针
-    与 `_get_conn()`。而后者的那一枚长在 `if not _db_ready` 里，要走到那一行必须先过
-    开头的 `if _using_memory_store(): return _FakeConn()`，而 `_using_memory_store()`
-    恰在 `_db_ready` 为假时为真 ⇒ 那一格恒不可达。生产里 `_memory_store_denied` 又抢在
-    `_get_conn()` 之前把 7 枚鉴权入口全挡住，于是"容器起来那一刻 PG 还在恢复"就等于
-    之后每一发鉴权都被拒，且没有任何重探通路，直到有人重启进程。这一枚就是缺的那条通路。
+    为什么必须长在这一支（R230 的病，形状是修前的）：修前 `_db_ready` 只有两处置真——import 期
+    探针与 `_get_conn()`，而后者那一枚长在 `if not _db_ready` 里，要走到它必须先过开头的
+    `if _using_memory_store(): return _FakeConn()`，后者恰在 `_db_ready` 为假时为真 ⇒ 那一格
+    恒不可达（R246 已把这段死码连同 `global` 删掉：今天运行期只有本函数一处置真）。生产里
+    `_memory_store_denied` 又抢在 `_get_conn()` 之前挡住 7 枚鉴权入口，于是"PG 还在恢复"那一刻起
+    每一发鉴权都被拒且没有重探通路，直到有人重启进程——这一枚就是缺的那条通路。
 
     三条硬约束，逐条有钉（`tests/test_r230_db_ready_selfheal.py`）：
     (a) 有界：两次重探之间至少隔 `_READY_PROBE_INTERVAL_SECONDS`，且"本窗口已探过"
@@ -228,9 +228,9 @@ def _retry_readiness_probe() -> bool:
     5. 就绪判据与 import 探针同源（`_connect_for_request` + `_create_schema`），所以
        生产形态下它只读两句 SELECT（`to_regclass` + `COUNT`），零 DDL、零 commit；
        表空时与探针同形地 seed 第一枚管理员——那是探针本来就有的写点，不是本单新增。
-    6. 只把 `_db_ready` 从 False 翻到 True，永不反向：这枚旗另有 6 处读者（alerts /
-       chat / catalog / profile / registry / pending_approvals），把它们一起翻正正是
-       本单要的效果，而翻回假是本单不该有的副作用。
+    6. 只把 `_db_ready` 从 False 翻到 True，永不反向：本文件之外另有 6 处读者，各一枚（alerts
+       / chat / catalog / profile / registry / pending_approvals），把它们一起翻正正是本单要的
+       效果，而翻回假是本单不该有的副作用。
     """
     global _db_ready, _last_ready_probe_at
 
@@ -469,31 +469,30 @@ if psycopg is not None:
     try:
         # 这枚 import 期探针刻意不走 `_connect_for_request`：启动时还没有人在等答复，
         # 把重试放在这里只会把"PG 没起来"换成"容器多停几秒"，拖住健康检查与重启循环。
-        # 探针失败今天也只记一条 warning，真正的补救在请求路径上（`_get_conn` 会重建表）。
+        # 探针失败只记一条 warning，请求路径不补救（`_get_conn()` 不建表）：生产建表归 migrations/0003、探针只校验 + 播种，红过之后生产侧由 R230 重探再校验，非生产侧不自愈，直到进程重启。
         # 同理，`_connect_kwargs()` 对这枚探针也有效：DSN 没写超时时，它不再能无限期挂住 import。
         _c = _raw_conn()
         _create_schema(_c)
         _c.close()
         _db_ready = True
     except Exception as exc:
-        logger.warning(f"[Auth] Postgres 不可用，将在首次连接时建表: {exc}")
+        logger.warning(
+            "[Auth] Postgres 探针失败：本进程改用进程内内存表管理员，请求路径不建表也不自愈；"
+            "生产侧由 `_retry_readiness_probe()`（R230）重探再校验后恢复（建表归 migrations/0003），"
+            f"非生产侧要到进程重启才恢复: {exc}"
+        )
         _load_memory_admin()
 else:
     _load_memory_admin()
 
 
 def _get_conn():
-    global _db_ready
+    # R246：请求路径不建表。生产建表归 `migrations/0003_legacy_runtime_tables.sql`，本文件的探针只做
+    # "表在不在 + 空表播种"；原先跟在连接后面的 `if not _db_ready: _create_schema(conn)` 恒不可达（要走到
+    # 它必须先过下面那枚 return），已连同那行 `global _db_ready` 一并删掉，行为零变化。
     if _using_memory_store():
         return _FakeConn()
-    conn = _connect_for_request("user store access")
-    if not _db_ready:
-        try:
-            _create_schema(conn)
-            _db_ready = True
-        except Exception:
-            pass
-    return conn
+    return _connect_for_request("user store access")
 
 
 def verify_password(username: str, password: str) -> bool:
