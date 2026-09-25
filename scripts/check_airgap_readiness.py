@@ -27,6 +27,14 @@ INTERNAL_HOSTS = {"127.0.0.1", "localhost", "0.0.0.0", "::1", "host.docker.inter
                  "ollama", "redis", "postgres", "backend", "frontend", "migrate",
                  "worker", "scheduler", "enterprise-brain-ollama-1"}
 
+# A name under one of these suffixes can never resolve: RFC 2606 and RFC 6761 reserve them and
+# no registry delegates them, which is exactly why they are the conventional spelling for a
+# test stub or a self-check placeholder (scripts/r59c_*.py both carry http://selfcheck.invalid).
+# Counting one as an exit would only teach the "http" + "/ns" split the comment above refuses
+# to allow. The match is on the whole trailing label, so example.com -- which does resolve --
+# stays in scope.
+RESERVED_UNROUTABLE_SUFFIXES = (".test", ".example", ".invalid")
+
 # An XML namespace is an identifier that merely happens to be spelled as a URL. The two
 # forms below are the only shapes one takes in shipped source: ElementTree's Clark notation
 # and an xmlns declaration. Neither can open a socket, so counting them as an exit would only
@@ -96,7 +104,8 @@ def external_host_hits(text: str) -> list[str]:
     found: list[str] = []
     for line_number, line in enumerate(text.splitlines(), start=1):
         for host in re.findall(r"https?://([A-Za-z0-9.\-]+)", NAMESPACE_LITERAL.sub("", line)):
-            if host not in INTERNAL_HOSTS and "." in host and not host.endswith(".test"):
+            if (host not in INTERNAL_HOSTS and "." in host
+                    and not host.endswith(RESERVED_UNROUTABLE_SUFFIXES)):
                 found.append("line " + str(line_number) + ": " + host)
     return found
 

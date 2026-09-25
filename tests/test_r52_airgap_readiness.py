@@ -68,6 +68,15 @@ def test_clean_code_passes_the_detector() -> None:
     ('MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"', False),
     ('<svg xmlns="http://www.w3.org/2000/svg" width="2">', False),
     ('NS = "{http://a.example/ns}"; url = "https://cdn.jsdelivr.net/chart.js"', True),
+    # Reserved names never resolve, so a stub written with one is not an exit either. The
+    # R59c self-check stubs (http://selfcheck.invalid) are the real shapes this has to clear.
+    ('stub = "http://selfcheck.invalid"', False),
+    ('probe = "https://healthcheck.test/health"', False),
+    # ...but the exemption is a trailing-label match, not a substring match: the same words
+    # on a domain that really resolves stay an exit, and that is what keeps the widened list
+    # from turning into an allowlist anyone can park behind.
+    ('stub = "https://example.com/v1"', True),
+    ('stub = "https://selfcheck.invalid.attacker.net/x"', True),
 ])
 def test_only_public_hosts_count_as_an_exit(line: str, external: bool) -> None:
     assert bool(air.external_host_hits(line)) is external
