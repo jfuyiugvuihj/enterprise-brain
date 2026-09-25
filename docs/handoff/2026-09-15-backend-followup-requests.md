@@ -3140,3 +3140,84 @@ R224/`01a0d644`（文书，主树等本班验收）· R234/`01a0d6b0` Kuhn（改
 - R241 候选：`vector_read_diagnostics()` 无 HTTP 出口（观测件，R59c/R231 都需要它）。
 - R242 候选：SSO 那条 `except Exception as exc: return False, f"…{exc}"` 把编程错误洗成无栈无日志的失败（R233 亲口点名，属语义改动要单独判据）。
 - 业主级：SSO 新建用户永远没有本地口令且仓内无管理员 reset 口（R233）；三枚 `SERVER_ONLY_ROWS` 语料补料（值 73.6% 的 R220 分辨率）；A① 整表 p95 口径；改评测集（29 条 `must_contain` 查无出处）。
+## §98（09-25 13:0x–14:0x，第八班第三格；主树 `33c7f3b`→`75d9a6d`：八笔并树、四枚在途、一次可指认的集体打断）
+
+### 98.1 🔴 事故 #48：上一班中途换模型的那一瞬间，四枚在途 Agent 同时停笔（同类第六次；成因第一次能指名）
+
+证据三处一致，全是只读取证：`Kuhn`(R234)／`Helmholtz`(R236)／`Epicurus`(R238)／`Bohr`(R239) 的 rollout
+JSONL 最后时间戳分别 `04:42:00Z`–`04:43:59Z`（本地 12:42–12:44），四枚 id 在本线程注册表 `wait_agent`
+一律回 `not_found`，`be-r239` 树 **dirty=0 且零新建文件**（那枚投递只活了六分钟）。与业主记录的两次
+线程死亡同型：同一线程里来回换模型会把别家 provider 的消息 id 带进历史，之后每次请求必被服务端拒。
+
+⇒ 本班起生效的两条硬规矩：**派工词一律不得带 model 覆盖；总控线程绝不中途换模型**。并补一条验收口径：
+**并树一律以工作树 blob ＋ 总控亲跑为准，执行层自述缺失不阻塞验收，但必须在提交正文写明"自述缺失"**
+——否则施工方一旦被打断，它挖出来的东西就跟着一起蒸发。
+
+### 98.2 新立单判据原文（派工前必须把这段逐字抄进派工词，不许用单号标题转述——R235 就是死在转述上）
+
+- **R245**（在途 `Pasteur`@`be-r245`，基点 `2ab2369`）判据＝① 前端交两枚有名读数
+  `frontend_waste_per_stalled_watch_seconds` 与截止原始读数，**数值从 `frontend/src/components/ChatPanel.vue`
+  现读**，写字面量即判未完成（沿用 `scripts/r218_switch_rehearsal.py:59` 自己立的"现读不手抄"，
+  那行注释记的就是上一班 `900 × 105` 里 105 抄错的账）；② `:389-392` 那条"宁可当场红"换成有界判据：
+  有截止 ⇒ 必须有有名读数，读数缺失/为 0/非数/无界 ⇒ 仍 append 一条新名字的 problem，**保留过期即红的纪律**；
+  ③ 预授权翻转 `tests/test_r218_lane_flip_stop_sets.py:91/:191` 两行，但新断言必须仍判"恰等"，
+  不许改成 `in` 或 `len(...)` 放宽；④ 两枚反证钉（摘掉前端截止 ⇒ 读数改口；把 deadline 弄成不可解析 ⇒ D 格红）
+  ＋ sha256 自证没写脏工作树。**这格不修，run8 相 2 的 D 格永久红，那扇 3–5 小时真机窗白开一次。**
+- **R246**（在途 `Peirce`@`be-r246`）定性＝**改话不改骨**。判据＝① 删掉 `_get_conn` 里恒不可达的建表支
+  （证明链三行：`auth.py:164` 恰在 `_db_ready` 为假时为真 → `:487` 先过它 → `:490` 再判 `if not _db_ready`），
+  行为零变化；② `:472` 注释与 `:479` 那条 **运维可见的 warning**（"Postgres 不可用，将在首次连接时建表"）
+  改成实话：生产建表在 `migrations/0003_legacy_runtime_tables.sql:5`、`_create_schema` 生产分支只
+  `to_regclass` 校验＋播种（`:411-416`）、R230 重探是生产专属（`:237`）⇒ 非生产侧零自愈锁到重启；
+  ③ 一枚 AST 可达性钉 ＋ 反证（把死码塞回临时副本必须被扫出）；④ 核 `:231` 那句"`_db_ready` 另有 6 处读者"
+  是真是假，AST 逐枚列 `file:line`。**明令禁止发明新的自愈路径**（那是需要真机验收的产品行为变更）。
+  禁改：`test_r229_connect_retry`（`:155` 钉 `_get_conn` 调用点==7、`:292` 钉未就绪返回 `_FakeConn`）、
+  `test_r230_db_ready_selfheal`、`test_r233_*` 逐枚 `git diff --exit-code`；`_create_schema` 本体必须留
+  （`test_bootstrap_admin` 十处以上直呼）。
+- **R247**（在途 `Dirac`@`be-r247`，前端线）靶＝`ApprovalPanel.vue:61` `onMounted(submitCheck)` 每次挂载
+  真打一发知识库检索（后端不可用回 503），而 `:21` 自己的注释承认"所以『等待分析』在失败时是句假话"。
+  判据＝① 重复挂载复用上次结果、显式按钮（`:116 data-testid="run-approval"`）仍可强制重发；
+  🔴 字面量 `onMounted(submitCheck)` 必须原样保留 ⇒ `panel-states.test.js:221` 那枚现状钉一字不动仍为真；
+  ② 失败那张脸诚实（V 线四张脸要求，至少区分 成功／知识库不可用／真失败，文案说人话）；
+  ③ 三枚反证（挂载两次只调一次／点按钮必再调并刷新时间／桩 503 时屏上不得出现"等待分析"，断言到具体字符串）；
+  ④ `npx stylelint` 告警条数改前改后各报一个数且不得上升（总控 13:0x 本机现取 **148**）、运行时零外部请求。
+- **R239**（替换重做，在途 `Chandrasekhar`@`be-r239b`）判据原文只有计划书 §6 A 行那一句
+  「② `text` 事件数 >1 且逐字比对无缺字」。必答四问里最硬的是 `chart-01`：`text_frames=2`、四计数全 0、
+  `last_frame_covers_answer=True` 却判 False ⇒ **判据② 到底还有没有第三个条件**，给确定答案，不许"可能"。
+  现取底账：`docs/testing/sidecar-run7-frames.jsonl` 105 行，`criterion_two_holds` True=93/False=12，
+  12 枚里 9 枚红在"事件数>1"那一半（`missing_chars=extra_chars=uncorrected_breaks=0`）。
+  是"替换"不是"补投"：`Bohr` 三处证据证死且零写入，不存在两枚 Agent 同时做同一单号。
+- **R240**（待派·14 枚站点迁入边界）判据追加一条（源出本班 R238b）：**`alerts.py:45` 与 `chat.py:853`
+  这两枚"既在事件循环上建连、又完全没有超时"的站点，迁入边界后仍须单判"不在事件循环上建连"**
+  （`run_in_threadpool` 或端点改 sync 走线程池），换个函数名不算过这一格。
+
+### 98.3 本班并树八笔（判据级凭据，细节与 sha 逐笔在看板 §4CA）
+
+R242 `33c7f3b`（总控亲做·R22 的钉补 AST 遍与三枚反证，22 passed）· R244 `aea7a51`（总控亲做·气隔
+保留名豁免补齐 RFC 2606 三后缀，26 passed）· **R222＋R223＋R234 `017402f`**（一笔并，拆开中间提交必红；
+同构性当复验凭据；六件一族 108 passed；删掉的 10 枚 assert 逐条核过，新增 skip/xfail=0）·
+R236 `d7e4061`（三枚 aftermath，R233 那族"bug 存在钉"是**加严**：清单归零 ＋ 重新引入必被抓 ＋
+sha256 自证不写脏树；85→109 passed）· R238 `e5db4a4`（边界与棘轮，四格达标**两格未交付**如实记，42 passed）·
+R238b `2ab2369`（总控补做那两格报告）· 看板 `75d9a6d` · 本节。
+
+**门与镜像**：并树前后各跑一次全量门 `scripts/run_gate.py`：开场 **1 failed / 4751 passed**（唯一那枚红
+是 R59c 的 `http://selfcheck.invalid` 被当成出网口，**它自 11:28 `d13201f` 起在主干上落了 19 枚提交无人
+复跑**），收格 **4834 passed / 39 skipped / 0 failed，exit=0，114.6 s**。另清掉一格陈年闸门：**H12 后端镜像
+落后** —— 已重建后端与前端镜像并 `--force-recreate` 起栈，`scripts/check_image_provenance.py`
+→ **verdict DOCS-ONLY / provenance gate: PASS**（label `75d9a6d`，与树同步）。踩到的坑记一条：
+`docker compose build` 撞 Docker Desktop 的 `x-docker-expose-session-sharedkey` 非可打印字符故障，
+**plain `docker build` 是 compose 注释 :260-262 自己认可的回退路径**，只是必须自带
+`--build-arg GIT_SHA/BUILT_AT`（`APT_MIRROR=mirrors.tuna.tsinghua.edu.cn`），否则标签记 unknown。
+
+### 98.4 台账更正四笔
+
+1. **"边界外裸 connect==11"（R238 派工词）是错的**：真值 `app/**` 侧 14 ＋ `scripts/**` 1（含边界共 16 枚
+   调用点）。派工那张表漏了整棵 `app/api/v1/`。同一枚探针的历史读数是 7（旧账）→12（上一班订正）→
+   15/16（本班）。⇒ 新规矩见看板 §4CA：计数必须现取，且同时交"命中行数"与"涉及文件数"两栏。
+2. **`auth.py:301` 不是"无超时"**：它的 `connect_timeout` 藏在 `**_connect_kwargs()` 展开里，按关键字形状数
+   会假阳。真无超时的是 7 枚（边界外 6 ＋ 边界自身 1，后者是 R238 判据①要求的状态）。
+3. **"`:371` 假注释"指错行**：`connection.py` 里没有 `_db_ready`（现读 0 命中），真身在 `auth.py:472`/`:479`/
+   `:492` —— 见 R246。
+4. **判活口径更正**：本板上文写"rollout 文件锁＝存活证据、mtime 不反映当前是否在跑"，本班实测是
+   **rollout 的 mtime 创建后就不动，必须读 JSONL 最后一条 `timestamp`**；再配工作树 dirty 与文件 mtime 双证。
+
+等业主 11 项未变（清单见看板 §4CA 末段），本班一项都没代做。
