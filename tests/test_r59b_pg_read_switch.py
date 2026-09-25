@@ -5,6 +5,11 @@
 出去了"：权限谓词有没有进 WHERE、翻译不出来时是不是干脆没发、只读腿有没有顺手 commit。
 先验（RAG_ACTIVITY_PRIOR）显式关掉：它默认要读一张计数表，那是真 IO，本文件一条都不许发。
 
+R231 之后这枚开关有了两个来源（env 与模块常量，env 赢）。本文件仍走"只改常量"这条老路，
+所以凡是要断言"没人翻过开关"的用例都得自己把 env 摘干净 —— 见下面两枚 delenv，它们不是
+放宽，是把前置说到脸上：本班实测机器上有一行 $env:INDEX_BACKEND='pgvector' 时，那两枚
+用例当场红在 assert 'pgvector' == 'chroma'，而那台机器上的代码与常量一个字都没动。
+
 每枚用例都留了一处"摘掉守卫就变红"的地方，逐条写在 docstring 里：
 
 - 默认仍在 chroma —— 把 `indexing.INDEX_BACKEND` 翻过去，这条立刻红。
@@ -151,8 +156,13 @@ def retriever_off(tmp_path, monkeypatch, connection):
 # ---------------------------------------------------------------------- 开关本身
 
 
-def test_the_switch_defaults_to_the_legacy_engine(retriever_off, connection):
-    """本轮硬要求"默认值不翻"：把 indexing.INDEX_BACKEND 的字面量改掉，这条立刻红。"""
+def test_the_switch_defaults_to_the_legacy_engine(retriever_off, connection, monkeypatch):
+    """本轮硬要求"默认值不翻"：把开关的任一来源翻过去，这条立刻红。
+
+    判据③逼出来的口径改动：R231 起"默认"由 env 与常量两份合起来决定，所以这条得把 env
+    摘掉才谈得上"默认"。三行断言原样未动，也没有 skip/xfail。
+    """
+    monkeypatch.delenv(indexing.INDEX_BACKEND_ENV, raising=False)
     assert indexing.read_backend() == "chroma"
     assert indexing.pgvector_reads_enabled() is False
     assert retriever_off._pgvector_hits(list(QUERY), 5, WHERE_ADMIN) is None
@@ -161,7 +171,11 @@ def test_the_switch_defaults_to_the_legacy_engine(retriever_off, connection):
 
 
 def test_an_unrecognised_backend_does_not_move_the_reads(monkeypatch):
-    """"pg_vetcor" 这种手滑必须留在遗留引擎上并说一句话，不许悄悄试另一个引擎。"""
+    """"pg_vetcor" 这种手滑必须留在遗留引擎上并说一句话，不许悄悄试另一个引擎。
+
+    同一枚判据③：常量这条路要单独可证，就得先把 env 那条路堵住，否则它测的其实是环境。
+    """
+    monkeypatch.delenv(indexing.INDEX_BACKEND_ENV, raising=False)
     monkeypatch.setattr(indexing, "INDEX_BACKEND", "pg_vetcor")
 
     assert indexing.read_backend() == "chroma"

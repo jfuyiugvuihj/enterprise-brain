@@ -39,11 +39,22 @@ from app.common.logger import logger
 RESOURCE_TYPE_DOCUMENT = "document"
 #: The two backend spellings this build knows. R59b: ``INDEX_BACKEND`` below is no longer
 #: only a label written into the version ledger -- it is the switch that decides which
-#: engine a semantic search asks. One constant, so the ledger and the read path cannot be
-#: set apart from each other by accident.
+#: engine a semantic search asks. R231 gave that switch a second spelling, the
+#: deployment's ``INDEX_BACKEND_ENV``, so moving the read path no longer needs a code
+#: change. Neither spelling is resolved anywhere but in :func:`read_backend`, and the
+#: search leg, the version ledger, and a publication record all call that one function:
+#: the ledger naming one engine while reads answer from another is the half-switched
+#: state R59b exists to avoid, and two readers that each pick their own source is how it
+#: comes back.
 INDEX_BACKENDS = frozenset({"chroma", "pgvector"})
 INDEX_BACKEND_DEFAULT = "chroma"
 PGVECTOR_BACKEND = "pgvector"
+#: The operator's spelling of the same switch, read when it is asked. It is *not* set
+#: here: the shipped answer stays ``INDEX_BACKEND_DEFAULT`` until a deployment says
+#: otherwise, so building this knob did not close it. Blank counts as nothing said, which
+#: is how ``VECTOR_DUAL_WRITE`` reads an empty line, and leaves the constant below in
+#: charge -- a test that moves only that constant keeps moving the read path.
+INDEX_BACKEND_ENV = "INDEX_BACKEND"
 INDEX_BACKEND = INDEX_BACKEND_DEFAULT
 INDEX_METADATA_ENV = "INDEX_METADATA_PATH"
 DEFAULT_INDEX_METADATA_PATH = "./data/index-versions.json"
@@ -1073,7 +1084,11 @@ class PublicationOutcome:
             "index_id": self.index_id,
             "index_version_id": self.index_version_id,
             "source_version_id": self.source_version_id,
-            "backend": INDEX_BACKEND,
+            # Resolved, never read raw: the record a caller sees has to name the engine the
+            # search leg is actually asking. Reading the constant here would let a
+            # deployment that set the environment keep publishing versions attributed to an
+            # engine that is not serving reads.
+            "backend": read_backend(),
             "chunk_count": self.chunk_count,
             "checksum": self.checksum,
             "mirrored": self.mirrored,
@@ -1589,7 +1604,9 @@ class IndexPublisher:
             lambda: self.registry.create_version(
                 index_id=index_id,
                 source_version_id=publication.resource_version_id,
-                backend=INDEX_BACKEND,
+                # The same resolution as the read path and as as_dict(), so a version
+                # record can never be stamped with an engine other than the live one.
+                backend=read_backend(),
                 chunk_count=publication.chunk_count,
                 checksum=publication_checksum(publication),
                 retirement=publication.retirement,
@@ -2023,7 +2040,23 @@ def _table_is_present(present: set[tuple[str, str]], table: str) -> bool:
 def read_backend() -> str:
     """Which engine answers a semantic search: ``"chroma"`` or ``"pgvector"``.
 
-    This reads ``INDEX_BACKEND`` at call time, not at import time, for the same reason
+    This is the one resolution of the switch in the tree, and three things ask it: the
+    semantic leg in app/rag/retriever.py, :meth:`PublicationOutcome.as_dict`, and the
+    backend :meth:`IndexRegistry.create_version` stamps into a version record. Each calls
+    *this function* rather than picking a source of its own, which is what keeps the
+    ledger and the read path from being set apart -- by accident, by a typo, or by a
+    deployment that only half said what it meant.
+
+    Two spellings, one order of authority: ``INDEX_BACKEND_ENV`` first, then the
+    ``INDEX_BACKEND`` constant in this module. The environment wins because it is the
+    deployment speaking, and the whole point of a knob is that an operator can move the
+    read engine and roll it back again without a rebuild. A test or a fork that sets only
+    the constant is still heard, so long as nothing in the environment contradicts it.
+    The price of that order is real: a stray ``INDEX_BACKEND`` in a shell outranks the
+    code, in a test run too, which is why every pin that cares states its environment
+    precondition instead of trusting the machine it happens to run on.
+
+    This resolves at call time, not at import time, for the same reason
     :func:`configured_embedding_scope` does: a process that has already imported this
     module must see the value the deployment actually settled on, and a test that sets
     the constant has to move the read path too -- otherwise the two would disagree about
@@ -2032,9 +2065,15 @@ def read_backend() -> str:
     An unrecognised value keeps reads on the shipped engine and says so in the log, the
     way :func:`app.rag.pg_store.dual_write_enabled` treats a typo in VECTOR_DUAL_WRITE.
     Silently trying the other engine is the worse failure: "pgvector" misspelled as
-    "pg_vetcor" would otherwise read an empty Chroma nobody writes to.
+    "pg_vetcor" would otherwise read an empty Chroma nobody writes to. A value that
+    cannot be read is not rescued by the other spelling either -- an environment typo
+    stays a typo even when the constant happens to name a real engine, because the
+    operator's intent is then unknown and only the shipped answer is honest.
     """
-    value = str(INDEX_BACKEND or "").strip().lower()
+    requested = str(os.getenv(INDEX_BACKEND_ENV, "") or "")
+    if not requested.strip():
+        requested = str(INDEX_BACKEND or "")
+    value = requested.strip().lower()
     if value in INDEX_BACKENDS:
         return value
     if value:
@@ -2048,7 +2087,9 @@ def read_backend() -> str:
 def pgvector_reads_enabled() -> bool:
     """True when the semantic read leg should ask PostgreSQL instead of Chroma.
 
-    Default off: ``INDEX_BACKEND`` still ships as ``"chroma"``, and flipping it is the
-    adoption plan's call, not this function's.
+    Default off: the switch still ships on ``"chroma"`` -- in the constant, and as the
+    answer whenever nothing sets ``INDEX_BACKEND_ENV``. R231 built the knob; turning it
+    is a deployment decision on a planned window, which makes it the adoption plan's
+    call, not this function's.
     """
     return read_backend() == PGVECTOR_BACKEND
