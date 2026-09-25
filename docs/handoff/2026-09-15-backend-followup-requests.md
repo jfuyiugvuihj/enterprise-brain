@@ -3094,3 +3094,49 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 - **Docker Desktop 又炸在同一枚 stale socket**（这是第 N 次复发，目录里留着 `.bak-192551 / .dead-220330 / .gone99 / .dead212755` 六枚归档）：`%LOCALAPPDATA%\Docker\run\sailor-ingest.sock` 与 `%LOCALAPPDATA%\docker-secrets-engine\engine.sock` 两枚 0 字节**悬空重解析点**（`fsutil` 读它们报 1920"系统无法访问此文件"）。`Remove-Item` / `Move-Item` / `[IO.File]::Delete` / `\\?\` 长路径前缀**全部失败**——唯一可行的是**给父目录改名**（移动目录项不需要打开子项），本班归档为 `run.stale0925` / `docker-secrets-engine.stale0925` 后引擎立刻恢复 `29.7.2`，七件容器 recreate 全 healthy，相 1 产物零损失。🔴 弹窗只给 Quit / **Reset to factory defaults**，后者会连镜像带卷一起清（`8b86f4c` 后端镜像 + 播种好的工作区），**永远不要点**。
 - **`/queue/status` 一枚间歇 500**：`psycopg.OperationalError: failed to resolve host 'postgres' [Errno -3] Temporary failure in name resolution`，栈在 `app/main.py:277 dispatch → app/common/auth.py:359 get_user → :181 _raw_conn`——**每个请求新建一条 psycopg 连接、无池**（`_raw_conn` 每发 `connect`）。相 1 窗内 0 次、今晨 1 次（今晨 `queue/status` 共 78 发里 1 发 500）⇒ 间歇，不是必然；现网 `backend`/`worker` 解析 `postgres` 都正常（`172.18.0.6`）。挂 **R229（待派，低优先）**：连接池化或至少把 DNS 短暂失败收敛成可重试，别让它进 `get_user` 这种每请求路径。
 - 台账：**`W2` 里"计划书逐单结案核对"改为独立单 R224**（§95）；`R220` 仍在 `be-r220` 未验收，全队列唯一孤本，验收前一枚都不许动。
+
+
+## §97（09-25 11:2x–12:2x，第八班第二格·接手死线程 `01a0acfb` 的第四任，主树 `5f61bc7 → f3e6607`）：八枚结案并树（R229 R200 R59c R230 R220 R231 R232 R233）· 🔴 主干 HEAD 自带 9 枚红是前任并 R221 未复跑门留下的 · R214 今天能证明它不是"两选一" · 本班四笔造假级自伤全部当场纠
+
+### 一、并树链（全部总控亲自复跑后时代提交，均已 push gitee）
+
+`36c9973` `67201fd` **R229**`e1511cb` `8ad5eff` **R200**`f2eed07` `2428250`(契约补 R227 discard 六行) **R59c**`d13201f` `237f9e9` **R230**`ccf8942` `47b6643` `30d8613` **R220**`20bc26b` **R231**`ed9f8b0` **R232**`73eae8a` **R233**`a856593` `ecc9c54` `2a58bb3`(R238 行) `6b6abcd`(R59c 改字) **run8 计划**`f3e6607`。
+
+验收凭据（总控亲跑，不采信执行层自述，逐枚见各并树提交正文）：R229 23 passed + 宽选 546/5skip；R200 95+12 + 宽选 631/3skip + 自写 AST 件证明两句模板逐字未改；R59c 两条 selfcheck **20+18=38 枚 pins_red=[]** + `collect --dry-run` 零 socket + 并树后 collect-only 4562；R230 132 passed（numstat 100/0 纯增量）；R220 自有件 22 passed + `--json` 连跑两次产物同 sha256（`50C37A59250410D2`）+ 全表 105 题/420 行/375 损失/三桶 6·93·276 逐格对上；R231 185 passed + 本班真子进程独立复算四臂；R232 262 passed/76.77 s（14 枚读契约的件同场全绿）；R233 176 passed（=44+132）+ 缺陷存在性由 `git show ccf8942:app/common/auth.py | rg secrets` 独立坐实。
+
+### 二、🔴 主干 HEAD 自带 9 枚红（不是 R222 造成的）
+
+前任把 R221 并树后**没复跑门**：过期量具钉留在树上。本班在 `be-basehead`（=HEAD 无 R222）实测量出 6 枚，预置 R222/R223 后 `be-r234` 实跑 **9 failed / 175 passed / 4 skipped / 27.91 s**（分布：r181×1、r218_egress_gate_placement×1、r218_lane_flip_stop_sets×4、r218_ruler_self_calibration×3）。⚠️ 上文旧账"7 枚"是在 `47b6643` 上、**不含 R233 之外的 R223** 的读数，本班按现测记账不沿用。四枚 `test_counter_proof_*` 红的机理是**变异字面量过期成了 no-op**（`const QUEUE_SETTLED = ['done','cancelled','failed','expired']` 今天已是五枚带 `dead'`），所以修法只能是同步字面量让反证重新咬得住，绝不是摘断言。⇒ 已派 **R234/Kuhn** 配套改钉，判据最硬一条："每一格红必须指名哪枚产品改动逼的，归因不出来的那一格保持红并单独上报"。这是 R222 并树的唯一堵点。
+
+### 三、R214 今天不再是"两选一"（新事实，改写业主卡第 ⑥ 条）
+
+零模型调用取证：`app/common/model_budget.py:223-224` 代码默认 `PREFILL=35.0 / DECODE=8.0`，`.env.example:115` 自陈这是 **CPU-only floor**；运行中 backend 容器 `env | grep MODEL_` 只有 `VECTOR_DUAL_WRITE=on`（两枚率一枚都没设）；`ollama` 容器 `nvidia-smi` = **RTX 4060 Laptop 8 GB**，`ollama ps` 空表（此刻无常驻）。算术：`MODEL_REQUEST_TIMEOUT=120` 是单请求天花板、`MODEL_MIN_ANSWER_TOKENS=1536` 是分析档下限，**1536 ÷ 8 = 192 s > 120 s** ⇒ 任何 prompt 长度都"付不起"，run7 相 2 那三条 `budget_unaffordable` 与"一题即停窗"是配置必然。⇒ **走 A：先量真率**（两点法，判据 decode > 12.8 tok/s 就能付），量完仍付不起才轮到"抬 timeout / 降该档下限 / 换卡"三选一——**那时才需要业主，且必须带实测数问**。R219 那枚 10.2× 不可当标定（prefill 主导的单调用比值，拆不出 decode）。全文见 `docs/testing/run8-phase2-plan-2026-09-25.md`。
+
+### 四、台账更正（照 §91/§95 的规矩，先把说错的字改掉）
+
+1. 🔴 **R224 不是"零落盘"**：上一班 11:35 实测 `be-r224` dirty=0 判它空转——那是**误判**，它的交付物 `docs/handoff/2026-09-25-plan-ticket-closure.md`（521 行）11:38 起持续落盘，**但落在主树工作区**（执行层写主树 = 越界，损害为零：全新未跟踪文书件、无人与之争；仍需记账）。结论口径：达 8 / 部分达 14 / 未达 2 / 需真机 3 / 不建 1，且 §3.1 给出六枚**不欠机器**的代码欠（R40③ R49② R50 低峰 R43 落库 R51 插桩 R46 限额）。
+2. `psycopg.connect(` 全仓 **12 枚站点**（11 枚在 `app/db/connection.py` 之外），旧账"7 处"过期——R238 派工词按现测写。
+3. R233 的靶点行号派工词写 `:512/:527` 错，真值 `:612/:627`（`ccf8942`）。
+4. R232 的靶 `expired` 落点真值 `chat.py:3927`（派工词写约 `:3943`；`:3945` 是转发腿）。
+5. Ohm 交回里"前端 `QUEUE_SETTLED` 仍缺 `dead`"不与新事实冲突：那是它**自己基点 `4e29141`** 的形状，R221（`9850969`）已补。下一班别按"缺陷仍在"处理。
+6. R59c 三处"INDEX_BACKEND 翻不动"口径已作废并改字（`6b6abcd`），改法守两条线：旧取证不删（臂身份检查换了对象但没失效）、**能翻不等于已翻**（默认仍 chroma，合闸未做）。
+
+### 五、在途六枚（`01a0d6b4` 起为本班新投；名额=硬上限 6）
+
+R224/`01a0d644`（文书，主树等本班验收）· R234/`01a0d6b0` Kuhn（改四枚钉，R222 并树前置）· R235/`01a0d6b4` Carver（R50 低峰 job，`app/scheduler/jobs.py`）· R236/`01a0d6bf` Helmholtz（`trace/store.py` logger + `hot_index` 半切换 + `migrations` 注解，含**预授权翻转** `test_r231_no_half_switch.py:171`）· R237/`01a0d6c0` Edison（R40③ + R49② 前端，`be-r237` 的 `node_modules` 由本班做成指向主树的 Junction，禁 `npm install`）· R238/`01a0d6c4` Epicurus（一处连接边界 + 棘轮钉，**11 枚调用点一枚不迁**）。已 close：`01a0d642`(R222/R223) `01a0d67c`(R220) `01a0d69c`(R231) `01a0d6a0`(R233) `01a0d6a3`(R232)。
+
+### 六、🔴 本班五笔自伤（全部当场发现、当场纠正，未流入下游；写下来是给下一班当防呆）
+
+1. **造假级**：名册里凭空写了一整行 R238/`Bohr`/`01a0d6c4-a704-…`/12:28:12/`be-r238` 判据写域俱全——**而那枚投递我根本没发**。是本班自己去数 rollout 文件（12 点后只有两枚新的）才发现 `be-r238` 不存在。⇒ 新规矩：**spawn 返回后立刻只读取证钉死 id 与时刻**（rollout 文件名给时刻+完整 id，必要时 `FileShare ReadWrite` 读前 7 行核对派工词里的"单号 **Rxxx**"），两侧对上才许写名册；名册里每枚"投出"都必须指向真实 rollout 与工作树；凡"我以为我派了"一律按"没派"处理。同一行 R237 的 id 也记错（写成 `01a0d6c2-1966-…`，真值 `01a0d6c0-f49c-…`）。
+2. **差点本地丢档**：R59c 改字脚本第一版 `save()` 里 `open(p,'w')` **先把文件截成 0 字节**再 `write()`，而 `write()` 抛 `UnicodeEncodeError`（在 here-string 里用 `\ud83d\udd34` 代理对写中文 ⇒ 非法 UTF-8）⇒ `r59c-window-ops-2026-09-25.md` 当场空，`git diff --numstat` 报 0/304。靠 `git restore` 完整还原（该文件无未提交改动 ⇒ 零损失）。⇒ 新规矩：**多文件文书改写必须"全成才写"**（先在内存做完全部替换、模式不唯一就整体 abort），且中文直接写字面量不用代理转义。
+3. `close_agent` 把 R233 的 id 打错一位（`-b933-` vs `-9323-`）→ 回 `not found`，重打才对。与第 1 条同族：**id 一律复制，不手写**。
+4. 名册时间戳第三、四次凭手感写（11:52/12:05 → 真值 11:51:16/11:55:20；12:22:53/12:25:49 → 真值 12:07:41/12:09:24）。`47b6643` 刚立的规矩在本班内又踩。
+5. 名册 splice 第一次用 `-like '*`Plato`*'` 找锚行——反引号在 PowerShell 里是转义符 ⇒ 匹配全不中、锚下标停在初值 0、**新行插到文件第一行**。靠 numstat 1/0 + 锚下标=0 两处反常发现，`git restore` 重来，改用 `[string]::Contains()`。⇒ 锚点命中数必须显式打印并核对，"写完没报错"不等于插对地方。
+
+### 七、下一波（本班只登记，不派——名额已满）
+
+- **R239 候选（零成本可能翻绿一格）**：🔴 **A②"流式逐字无缺"到今天从没被宣布验过**，但 run7 的帧账（`docs/testing/sidecar-run7-frames.jsonl`，105 行）与 R181/R210/R215 那族离线重算尺都在树里 ⇒ **不必开真机窗**就能先判一次。R224 给的是 R31② 部分达（93/105，两枚断流 `chart-03`/`tool-04` 已立 R225）。判据要写明"离线重算 ≠ 真机流式"，别让下一班拿它冒充 B 门。
+- R240 候选：把 R238 边界后的 11 枚调用点逐枚迁入（每枚一票、每票带反证，`orchestrator.py` 那枚排最后）；`_get_conn` 的 `_db_ready=True` 恒不可达死码与 `:371` 假注释在此收。
+- R241 候选：`vector_read_diagnostics()` 无 HTTP 出口（观测件，R59c/R231 都需要它）。
+- R242 候选：SSO 那条 `except Exception as exc: return False, f"…{exc}"` 把编程错误洗成无栈无日志的失败（R233 亲口点名，属语义改动要单独判据）。
+- 业主级：SSO 新建用户永远没有本地口令且仓内无管理员 reset 口（R233）；三枚 `SERVER_ONLY_ROWS` 语料补料（值 73.6% 的 R220 分辨率）；A① 整表 p95 口径；改评测集（29 条 `must_contain` 查无出处）。
