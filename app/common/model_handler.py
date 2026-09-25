@@ -126,6 +126,100 @@ MODEL_UNAVAILABLE_CODE = "model_unavailable"
 RATE_LIMITED_CODE = "rate_limited"
 
 
+#: How long a query rewrite will queue for a free slot before the retrieval leg degrades to
+#: the raw question. Until R228 this was 0.0, and 0.0 means "refuse on the spot".
+#:
+#: Who it refuses against is its own turn. ``route_main`` fans worker legs out with ``Send``
+#: (app/agents/orchestrator.py:614), so a report-tier turn runs the doc leg and the data leg
+#: concurrently in one process. The data leg's ANALYSIS round holds the only slot
+#: (``DEFAULT_MAX_CONCURRENCY = 1`` at app/common/model_budget.py:52, which is what both shipped
+#: env samples ship and what compose substitutes), and the doc leg's rewrite -- the non-streaming
+#: half of this boundary -- asked for that slot with zero patience and therefore lost on every
+#: collision. The retrieval pipeline logged one warning, fell back to the raw question, and
+#: correctness went on scoring the answer as if recall had been wide. That is the whole of R228.
+#:
+#: 15.0 is bounded by two measured numbers rather than by a wish. This process already treats 60 s
+#: as "how long a model call may wait before it is allowed to start paying" (the code default of
+#: ``MODEL_CONCURRENCY_WAIT_SECONDS``, the 60.0 literal in ``LocalModelBudget._configured_wait``),
+#: and a rewrite's own sized clock is 43.4 s at a rewrite-shaped prompt (``http_timeout`` on the
+#: rewrite tier for 200 prompt tokens, off the CPU baseline of prefill 35.2 / decode 8.18 tok/s).
+#: 43.4 + 15 < 60, so this leg cannot become the reason a turn is slower than a turn that was
+#: refused outright -- and the number is a patience bound, not a capacity decision: raising
+#: ``MODEL_MAX_CONCURRENCY`` is the owner's call and would turn "one leg fails" into "every leg is
+#: slower", which is why this file does not touch it.
+#:
+#: The cost, in full. (1) A rewrite that cannot get a slot now blocks the retrieval leg for up to
+#: 15 s before it degrades, where before it degraded in 0 s. (2) A queue deeper than 15 s still
+#: degrades: a full ANALYSIS round on the CPU baseline runs to minutes, so this bound recovers the
+#: collisions that clear quickly and not the ones that do not. (3) The streaming half is left at
+#: zero patience on purpose -- that refusal is a live SSE response the user is watching, and
+#: trading an instant ``rate_limited`` sentence for 15 s of silence before the same sentence is a
+#: worse product, not a better one. What item (2) buys is the third leg of the fix: every refusal
+#: past the bound is now counted and logged as an error, because a degradation that enters no
+#: number is indistinguishable from a system that never degrades.
+REWRITE_SLOT_WAIT_SECONDS = 15.0
+
+#: The rewrite leg's contention ledger. Deliberately not a ``BUDGET_EVENT_NAMES`` member:
+#: ``record_budget_event`` refuses undeclared names, and declaring one means editing
+#: ``app/common/model_budget.py``, which R228's write domain excludes -- so this file owns the
+#: counter for the refusal this file causes. ``tests/test_r228_rewrite_slot_wait.py`` pins it, and
+#: the numbers are not published on an HTTP surface yet (``monitoring.py`` embeds
+#: ``model_budget_readout`` and ``observability.py`` embeds that snapshot; either one needs a
+#: line from a file this ticket may not write -- filed as a follow-up rather than worked around
+#: by editing a stranger's file).
+_rewrite_slot_lock = Lock()
+_rewrite_slot_ledger: dict[str, int] = {
+    #: Rewrites that queued and got a slot, so the retrieval ran with model-written wording.
+    "grants_after_wait": 0,
+    #: Rewrites that queued, hit the bound, and degraded to the raw question. Every one of these
+    #: is a report whose recall was silently lowered before R228 and is loud now.
+    "refusals": 0,
+    #: Queue time actually paid, on the granted side. ``refusal_wait_ms_max`` is the same on the
+    #: refused side, which is what tells an operator whether the bound is being spent or skipped.
+    "queue_ms_total": 0,
+    "queue_ms_max": 0,
+    "refusal_wait_ms_max": 0,
+}
+
+
+def record_rewrite_slot_grant(wait_ms: int) -> None:
+    """Book one rewrite that got its slot after waiting for it."""
+    with _rewrite_slot_lock:
+        if wait_ms > 0:
+            _rewrite_slot_ledger["grants_after_wait"] += 1
+            _rewrite_slot_ledger["queue_ms_total"] += int(wait_ms)
+            _rewrite_slot_ledger["queue_ms_max"] = max(
+                _rewrite_slot_ledger["queue_ms_max"], int(wait_ms)
+            )
+
+
+def record_rewrite_slot_refusal(wait_ms: int) -> None:
+    """Book one rewrite that degraded because the bound expired. This is the silent-recall count."""
+    with _rewrite_slot_lock:
+        _rewrite_slot_ledger["refusals"] += 1
+        _rewrite_slot_ledger["refusal_wait_ms_max"] = max(
+            _rewrite_slot_ledger["refusal_wait_ms_max"], int(wait_ms)
+        )
+
+
+def rewrite_slot_readout() -> dict[str, int]:
+    """The rewrite leg's contention ledger as a copy, so a reader cannot mutate it.
+
+    Shaped like ``native_leg_readout``: in-memory, no socket, one grep. ``refusals`` is the
+    number that answers "how many of this process's retrievals ran on the raw question alone
+    because the model was busy", which is the question no score used to be able to ask.
+    """
+    with _rewrite_slot_lock:
+        return dict(_rewrite_slot_ledger)
+
+
+def reset_rewrite_slot_counts() -> None:
+    """Zero the ledger. Test seam, the same reason ``reset_budget_events`` exists."""
+    with _rewrite_slot_lock:
+        for name in _rewrite_slot_ledger:
+            _rewrite_slot_ledger[name] = 0
+
+
 class ModelSource(str, Enum):
     LOCAL = "local"
     OLLAMA = "local"
@@ -588,11 +682,32 @@ class ModelHandler:
         # sent at all -- that one is the 20-minute hole R204 was opened for.
         authorize_or_refuse(budget, prompt_tokens, stream=stream)
 
+        # Zero patience on the streaming half, bounded patience on the rewrite half, and the
+        # difference is what a refusal costs the caller. On the streaming leg a refusal is the
+        # answer sentence itself, so waiting only makes the user watch a spinner for 15 s before
+        # reading the same sentence. On this leg the refusal is *not* visible to the caller at
+        # all: the rewrite falls back to the raw question, retrieval narrows by the whole width of
+        # one question's rewordings, and correctness keeps scoring the answer. R228 gave that
+        # caller a bound and gave the degradation a count; the bound is ``REWRITE_SLOT_WAIT_SECONDS``
+        # and the reasons both ways are written there.
+        slot_wait = 0.0 if stream else REWRITE_SLOT_WAIT_SECONDS
         try:
-            slot = self._budget.acquire(wait_seconds=0)
-        except ModelBudgetExhausted:
-            logger.warning("[Model] local model concurrency budget exhausted")
+            slot = self._budget.acquire(wait_seconds=slot_wait)
+        except ModelBudgetExhausted as exc:
+            if not stream:
+                record_rewrite_slot_refusal(exc.wait_ms)
+                logger.error(
+                    "[Model] local model concurrency budget exhausted"
+                    f" leg=rewrite slot_wait_seconds={slot_wait:g}"
+                    f" waited_ms={exc.wait_ms}"
+                    f" refusals={rewrite_slot_readout()['refusals']}"
+                    " —— 本次检索只用原始问题：召回被容量压低，不是模型坏了"
+                )
+            else:
+                logger.warning("[Model] local model concurrency budget exhausted")
             return self._rate_limited_response(stream)
+        if not stream:
+            record_rewrite_slot_grant(slot.wait_ms)
         keep_alive = self._keep_alive()
         logger.info(f"使用内部本地模型: {model} keep_alive={keep_alive_log(keep_alive)}")
 
