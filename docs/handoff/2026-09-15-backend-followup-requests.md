@@ -3054,3 +3054,43 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 - **R224（新立·总控派工·非执行层自取）**：计划书 28 号逐单结案核对。写域**只有** `docs/handoff/**`（不许碰 `app/**`/`frontend/**`/`tests/**`），产出两张表：① 逐号「判据条目 → 在树产物路径:行 → 亲验命令 → 达/未达/需真机」；② 未达清单按"要不要真机"分桶，直接喂给 B/C/D/E 门的排窗。判据：每一号**必须**给得出产物路径与行号，给不出的写"零产物"并列反查命令；禁止用"某号 grep 不到"当证据（§91 + 本节两遍学费）。排在 W2，不与 W1 抢写域。
 - **派工影响**：W2 那一行"（R46 消费侧、R50 是仅有的两枚零产物）"按本节作废，改述为"R224 逐单结案核对"。W1 五枚的写域表不受影响（互斥性本班逐对复验：`app/rag/**` + `catalog.py` / `data.py`+`chat.py` / `frontend/.../ChatPanel.vue` / `scripts/eval_transport_ask_v2.py` / `scripts/r220_*`——五方零交集）。
 - 窗内纪律：本节零 CPU、零并树、零容器动作；写这些字的时候相 1 正在跑第 74/105 题。
+
+## §96（09-25 09:1x–09:4x，第八班第三格·相 2 首测即抓到 P1，主树 `8b86f4c → 4e29141`）：🔴 历轮跑分的报告档**从来没进过队列道**（量具不发 `lane`）· 一测就红：**worker 生成完 1519 字周报又把它丢了，还把终态写成 `done`** · 新立 **R225/R227/R228**，**R226 总控已自修**
+
+### 一、R226（总控亲做，落树 `4e29141`）：为什么相 2 开跑前必须改量具
+
+`app/api/v1/chat.py:1955-1956` 的入队判定是**两件事同时成立**：`lane == LANE_REPORT` **且** `_report_lane_via_queue_enabled()`。而 `scripts/eval_transport_ask_v2.py` 全文**零个 `lane`**（本班 `rg` 实取）⇒ 从前只翻 `REPORT_LANE_VIA_QUEUE=on` 照样走同步道。凭据：run6 与 run7 相 1 的 12 道报告题 `kind` 全是 `ok`，**零枚 `queued_polled`** ⇒ **D-1「入队 → worker 跑完 → `/queue/status` 取回正文」在项目历史上从来没有被量到过**，判读表里那句"从未宣布验过"到今天为止是对的，而且原因不是缺窗，是缺字段。
+
+修法：新增 `EVAL_DECLARE_LANE_TIER`（默认空 = 载荷一字节都不多，run6/相 1 口径不受影响），设「报告」才按 `LANE_BY_TIER` 补 `lane`，取值表与前端同源——🔴 **前端一直是发的**（`frontend/src/router/lane-choice.js` + `ChatPanel.vue:602 lane: selectedLane.value` + `?lane=` 写进地址）⇒ **这是量具缺陷，不是产品缺陷**，别把它报成"报告档没实现"。自校：AST OK；三种载荷逐字节比对；10 枚定向件（r123/r181/r203/r210/r215/r218/r48）EXIT=0。
+
+### 二、🔴 R227（P1·待派）：报告档队列道——结果生成完又被丢弃，终态还谎报 `done`
+
+单题试点（`report-01`，`EVAL_DECLARE_LANE_TIER=报告`，`REPORT_LANE_VIA_QUEUE=on`，开窗前 Redis `answer:*`=0 亲验）实测时序：
+
+| 时刻 | 现场 |
+|---|---|
+| 09:26:57 | 适配器发出 `POST /api/v1/ask`（带 `lane=report`） |
+| 09:27:01 | `[QueueWorker] 处理中 request_id=3d37af0ea5b94e58b0d2588e0b6d53c7: 生成本月差旅费用分析周报` ⇒ **入队成功，worker 接单** |
+| 09:29:02 / 09:29:21 / 09:31:30 | 三次 `[ModelBudget] tier=analysis ... budget_verdict=budget_unaffordable`（`affordable_max_tokens` 710/816/531 都 `< min_answer_tokens=1536`）；09:30:06 还有一枚 `[PromptPack] leg=doc room_left=83 fitted=0 dropped=5 stub=refused` |
+| 09:32:12 | `[doc] 完成 status=success 结果 1519 字` ⇒ **周报真的生成出来了**，全程 **311 s** |
+| 09:32:14 | 🔴 `request_id=3d37af0e… 报告档结果已丢弃：运行途中被取消或租约已丢失 terminal_status=done`（`deploy/queue_worker.py:306-313`：`queue.complete(request_id, answer)` 返回 False 就丢） |
+| 本班直查 | `GET /api/v1/queue/status/3d37af0e…` → `{"status":"done","result":null,"failure":{"attempts":1,"last_error":null,"max_attempts":3}}`；`result` 键 `TTL=-2`（不存在） |
+
+判据缺口两条，都要 R227 一并收：① **丢弃条件**——`app/common/reliable_queue.py:204-215 complete()` 在 `is_cancelled` 或 `_lease_lost` 时删结果并 `ack` 返 False；311 s 的运行时长对上 lease TTL 到底是哪一支触发，必须实测出来（`tasks:lease:<rid>` 键在 Redis 里能取到 TTL），不许停在日志那句话上。② **终态谎报**——`complete()` 的 docstring 自己写着"既不得发布答案**也不得谎报 done**"，可现场就是 `status=done` + `result=null`。🔴 客户端拿到的语义是"跑完了，正文空"：适配器 `_poll_queue`（`eval_transport_ask_v2.py:517-531`）见 `done` 就取 `result`，取到 `None` 返回空串 ⇒ 上层判 `kind=blank` 打哨兵 ⇒ **D-1 必然红，而且红得让人误以为是模型没答**。要么把丢弃写成可区分的终态（如 `expired`/`dropped`），要么保住结果，两条选一并在契约里写死。
+⚠️ 待办：相 2 剩余 11 题本班**没有继续烧**——同一枚丢弃墙每 5 分钟撞一次、结果一定是 11 枚 blank，跑了也不出数。R227 修完再重开相 2（一次拿全 D-1/D-2/D-3）。
+
+### 三、R228（新立·待归因，写域 `app/common/model_budget.py` 或 `app/model_handler.py` 二选一，先取证再动）：队列道里查询改写**必被自己的闸门挡死**
+
+`app/model_handler.py:592` 是 `self._budget.acquire(wait_seconds=0)`——**非流式调用绝不等位**，抢不到就 `_rate_limited_response`。试点窗里 worker 连发 `local model concurrency budget exhausted` + `查询改写没有可用正文: error_code=rate_limited ... 已回退为原始问题（本次检索只用原问题）`（09:29:43/09:29:44 两枚）。⇒ 同一进程里外层那一轮占着槽、内层改写抢不到 ⇒ **后台报告档的检索一律只用原问题，召回被静默压低**，而这类降级**不进任何分数**（correctness 照算）。判据：① 先量清"谁持有槽"（拿 `observability.py:1312` 那枚 `MODEL_MAX_CONCURRENCY` 现值读数 + 一次最小复现，不许猜）；② 给改写一条**有上限的等待**或把它划到槽外，两者都要写清代价；③ 反证钉：造"外层持槽 + 内层改写"形状，红的必须是这一格而不是别格。🔴 相 1 窗内 `查询改写失败=0` 是**同步道**的读数，别拿它当"这条不存在"（跟进单 §95 同一族错）。
+
+### 四、R225（新立·待派）：A② 那两枚未纠正断流
+
+`chart-03`（16 帧/2 流，断在第 2 流第 2 帧）、`tool-04`（3 帧/2 流，同形状），两枚都 `missing_chars=0 extra_chars=0 last_frame_covers_answer=true` ⇒ **正文最终完整，破的是中间连续性**（前端会看到一次整段重写）。判据：① 用 R223 的 `arrival_at` 复现断流的**时刻**与相邻帧文本（今晚的帧账没存 `break_frames` 正文，只有 armed 时才记——这就是量不出来的原因）；② 修法只许在"要么不断、要么纠正掉"里选，不许放宽 A② 的六条件；③ 排 **R222/R223 并树之后**（同一把量具）。
+
+### 五、其余本格实测（写给下一个别重跑）
+
+- 🔴 **P-15 的第一遍 0 是假绿**：09:0x 本班第一次量它时 **Docker 引擎根本不在**，`docker logs` 走错误流、`Select-String` 数空。09:2x 复量才是 **0 条**（同窗 backend 日志 **5983 行**）。**新纪律：凡"从容器日志数出来的 0"必须同时报日志总行数**，已写进判读表。
+- **09:1x 现场**：`ollama ps` 空（夜间机器停过 + 引擎重启），Redis `DBSIZE=0 / answer:*=0 / noeviction`；`standby-timeout-ac=0x0`、无 `HYBERNATEIDLE`、插电 100%——`keepawake.ps1` 重挂后 `SetThreadExecutionState` 返回 `0x80000000`（昨夜稳态是 `0x80000003`），`powercfg /requests` 要管理员权限量不了 ⇒ 本班没宣布保活有效，用的是那三条可查的硬前置。
+- **Docker Desktop 又炸在同一枚 stale socket**（这是第 N 次复发，目录里留着 `.bak-192551 / .dead-220330 / .gone99 / .dead212755` 六枚归档）：`%LOCALAPPDATA%\Docker\run\sailor-ingest.sock` 与 `%LOCALAPPDATA%\docker-secrets-engine\engine.sock` 两枚 0 字节**悬空重解析点**（`fsutil` 读它们报 1920"系统无法访问此文件"）。`Remove-Item` / `Move-Item` / `[IO.File]::Delete` / `\\?\` 长路径前缀**全部失败**——唯一可行的是**给父目录改名**（移动目录项不需要打开子项），本班归档为 `run.stale0925` / `docker-secrets-engine.stale0925` 后引擎立刻恢复 `29.7.2`，七件容器 recreate 全 healthy，相 1 产物零损失。🔴 弹窗只给 Quit / **Reset to factory defaults**，后者会连镜像带卷一起清（`8b86f4c` 后端镜像 + 播种好的工作区），**永远不要点**。
+- **`/queue/status` 一枚间歇 500**：`psycopg.OperationalError: failed to resolve host 'postgres' [Errno -3] Temporary failure in name resolution`，栈在 `app/main.py:277 dispatch → app/common/auth.py:359 get_user → :181 _raw_conn`——**每个请求新建一条 psycopg 连接、无池**（`_raw_conn` 每发 `connect`）。相 1 窗内 0 次、今晨 1 次（今晨 `queue/status` 共 78 发里 1 发 500）⇒ 间歇，不是必然；现网 `backend`/`worker` 解析 `postgres` 都正常（`172.18.0.6`）。挂 **R229（待派，低优先）**：连接池化或至少把 DNS 短暂失败收敛成可重试，别让它进 `get_user` 这种每请求路径。
+- 台账：**`W2` 里"计划书逐单结案核对"改为独立单 R224**（§95）；`R220` 仍在 `be-r220` 未验收，全队列唯一孤本，验收前一枚都不许动。

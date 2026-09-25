@@ -78,3 +78,21 @@
 1. 🔴 **P-15 第一遍是假绿**：09:0x 本班第一次量到 0，是因为当时 **Docker 引擎根本不在**，`docker logs` 走的是错误流、`Select-String` 数了个空。09:2x 复量（同窗 5983 行）才是真数。**教训**：任何"从容器日志数出来的 0"必须同时报"日志总行数"，否则等于没测。
 2. 🔴 **00:06 收窗到 09:07 之间机器停过一次**：Docker Desktop 起不来，报 `%LOCALAPPDATA%\Docker\run\sailor-ingest.sock` 与 `%LOCALAPPDATA%\docker-secrets-engine\engine.sock` 两枚 **0 字节悬空重解析点** 改名失败（`fsutil` 读它们报 1920"系统无法访问此文件"）——同一枚病在这台机上已复发多次（那两个目录里留着 `.bak-192551 / .dead-220330 / .gone99 / .dead212755` 六枚历史归档）。`Remove-Item`/`Move-Item`/`.File::Delete` 对悬空条目全部失败，唯一可行的是**给父目录改名**（不需要打开子项），本班按同法归档成 `run.stale0925` / `docker-secrets-engine.stale0925`，引擎随即恢复 `29.7.2`，七件容器 recreate 全 healthy，相 1 产物零损失。🔴 **绝不点弹窗里的 "Reset to factory defaults"**——那会连镜像带卷一起清（`8b86f4c` 后端镜像 + 已播种工作区）。
 3. 🔴 **相 1 与相 2 之间隔了 9 小时**（不是连跑）：`ollama ps` 已空、Redis `DBSIZE=0`。本班重挂保活（`keepawake.ps1`，但 `SetThreadExecutionState` 这次返回 `0x80000000` 而不是昨晚稳态 `0x80000003`，`powercfg /requests` 要管理员权限量不了）⇒ 改用可查的两条硬前置兜住：`standby-timeout-ac = 0x0`（永不）、`HYBERNATEIDLE` 无此项、插电 100%。相 2 开窗前复量 P-18 = `DBSIZE=0 / answer:*=0 / noeviction` ✅。
+---
+
+## 四、run7 相 2（D 门）读数：**首测即红，且红在根上**（09-25 09:1x–09:4x，量具代际已变 `R226 落树 4e29141`）
+
+🔴 **先记代际**：相 2 之前量具补了 `lane` 声明（`EVAL_DECLARE_LANE_TIER`，默认关）。**run6 / run7 相 1 的适配器 ≠ 现在的适配器**，下一轮（run8）报告抬头必须写这句。原因与取证见跟进单 **§96 一**：`chat.py:1955-1956` 入队要 `lane=='report'` 且开关 on 同时成立，而量具从前零个 `lane` ⇒ 历轮跑分报告档走的都是同步道，D-1 从未被量到过（12 道报告题 `kind` 全 `ok`，零枚 `queued_polled`）。
+
+**相 2 没有跑满 12 题，只做了一题试点就停窗**（停了不是逃：同一枚丢弃墙每 5 分钟必撞一次，剩下 11 题只会产出 11 枚 blank 哨兵，不出数）。
+
+| 格 | 实测 | 判 |
+|---|---|---|
+| **D-1 入队→worker 跑完→取回正文** | `report-01`：09:26:57 发 → 09:27:01 `[QueueWorker] 处理中 request_id=3d37af0e…` ⇒ **入队与接单成立**；09:32:12 `[doc] 完成 status=success 结果 1519 字` ⇒ **正文真生成**，全程 **311 s**；09:32:14 `报告档结果已丢弃：运行途中被取消或租约已丢失 terminal_status=done`（`queue_worker.py:306-313`，`reliable_queue.py:204-215 complete()` 返 False 即丢）；本班直查 `GET /api/v1/queue/status/…` = `{"status":"done","result":null,"failure":{"attempts":1,"last_error":null,"max_attempts":3}}`，`result` 键 `TTL=-2` | ❌ **红（新立 R227，P1）**——而且"红得骗人"：客户端拿到的是"跑完了、正文空"，`_poll_queue` 见 `done` 取 `result` 得 `None` ⇒ 上层判 `blank` 打哨兵。丢弃条件（`is_cancelled` 还是 `_lease_lost`）与"谎报 done"两条都要 R227 收 |
+| D-2 `usage` 逐题非零 | 未量到（相 2 未跑满） | ⬜ 仍空 |
+| D-3 `sources` 在流里 | 未量到（队列道正文都不在，`sources` 更谈不上） | ⬜ 仍空 |
+| D-漏停 | 现场见到一枚**间歇 500**：`GET /api/v1/queue/status` → `psycopg.OperationalError: failed to resolve host 'postgres'`，栈在 `main.py:277 → auth.py:359 get_user → :181 _raw_conn`（每请求新建连接、无池）。相 1 窗内 0 次、今晨 78 发里 1 发；现网解析正常（`172.18.0.6`）⇒ 间歇，挂 R229 低优先 | ⚠️ 记一笔 |
+| 顺带抓到的第二枚缺陷 | 队列道里 `[Model] local model concurrency budget exhausted` ×2 ⇒ `查询改写没有可用正文…已回退为原始问题`（`model_handler.py:592` 是 `acquire(wait_seconds=0)`，非流式绝不等位）⇒ **后台报告档检索静默降级成只用原问题**，且不进任何分数。新立 **R228** | ❌ 新缺陷 |
+| 顺带撞上的业主未裁项 | 311 s 里三次 `[ModelBudget] tier=analysis budget_verdict=budget_unaffordable`（`affordable_max_tokens` 710/816/531 全 `< min_answer_tokens=1536`）+ 一枚 `[PromptPack] room_left=83 fitted=0 dropped=5 stub=refused` ⇒ **R214（分析档付得起吗）不裁，报告档队列道就走不完** | 🔴 等业主 ⑥ |
+
+**相 2 之后现场已还原**：`REPORT_LANE_VIA_QUEUE` 那一行从 `deploy/.env.server` 删除（`removed_lines=1`）、backend recreate、容器内该变量消失（`env_still_there=` 空）、`VECTOR_DUAL_WRITE=on` 仍在、七件 healthy。相 1 全部读数见第三节，不受本节影响。
