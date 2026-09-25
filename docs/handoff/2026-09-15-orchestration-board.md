@@ -1388,7 +1388,7 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Noether`（回执代号，总控原给 `Huygens` 未被采纳；与 R160 前代同名者无关，按 agent_id 定序） | `01a0d641-de74-7eb0-94fb-23f6ab65529e` | **R221** 前端队列看门狗不认 `dead` + 无 deadline（判据 跟进单 §94 三） | `be-r221`（基点 `4e29141`，**独占**；写域 `frontend/src/components/ChatPanel.vue` + 新 `__tests__/r221-*.test.js`；`frontend\node_modules` 已由总控预配 Junction） | 🟢 **本班 09:50:54 投出**，一 block 一枚 | 09:50:54 |
 | `Ohm`（回执代号，总控原给 `Bergson` 未被采纳；与 R50/R190/`01a0b7dd`／R59/`01a0d155-f1fe` 等同名者**均无关**，按 agent_id 定序） | `01a0d642-f55d-7b81-addf-66cb73c381db` | **R222 + R223**（同树同枚：适配器认全五枚终态 + 帧账补 `arrival_at`/首枚非-text 可见事件） | `be-r222`（基点 `4e29141`，**独占**；写域 `scripts/eval_transport_ask_v2.py` + 新 `tests/test_r222_*`/`test_r223_*`） | 🟢 **本班 09:52:01 投出**；🔴 投递词明令**不得回退 R226**（`4e29141` 的 `EVAL_DECLARE_LANE_TIER`） | 09:52:01 |
 | `Wegener`（回执代号，总控原给 `Seneca` 未被采纳；与 R116 那枚 `Wegener` **同名不同人**，按 agent_id 定序） | `01a0d644-4c72-7c32-9e79-c2a96b70bccb` | **R224** 计划书 28 号逐单对 §21 判据亲验（纯文书；产物在树≠判据达成） | `be-r224`（基点 `4e29141`，**独占**；写域只有新建 `docs/handoff/2026-09-25-plan-ticket-closure.md`） | 🟢 **本班 09:53:38 投出**；投递词明令禁「拿 grep 不到当证据」、禁改任何既有文档、禁全量门 | 09:53:38 |
-| `Boole`（回执代号，总控原给 `Malthus` 未被采纳；与 R98 `01a0b9fe`／R104 `01a0bcc8`／R48S `01a0ceb3` 等同名者**均无关**，按 agent_id 定序） | `01a0d645-4821-7b12-8b79-df2b36337d72` | **R59c** 切读前三格补数（计划书 §9.3 ①②③）——**本轮是预配量具窗，不是合闸窗** | `be-r59c`（基点 `4e29141`，**独占**；写域只有新 `scripts/r59c_*` + 新 `docs/testing/r59c-*`；🔴 `app/rag/**` 与 `app/documents/catalog.py` 本轮零写入，不许翻开关/动容器） | 🟢 本班 09:5x 投出；真库两侧对照等总控排窗 | 09:5x |
+| `Boyle`（回执代号，总控原给 `Malthus` 未被采纳；与 `Boole` 系 R98 `01a0b9fe`／R104 `01a0bcc8`／R48S `01a0ceb3` 几枚**均无关**，按 agent_id 定序） | `01a0d645-7110-7b91-b650-ab7abd03d141` | **R59c** 切读前三格补数（计划书 §9.3 ①②③）——**本轮是预配量具窗，不是合闸窗** | `be-r59c`（基点 `4e29141`，**独占**；写域只有新 `scripts/r59c_*` + 新 `docs/testing/r59c-*`；🔴 `app/rag/**` 与 `app/documents/catalog.py` 本轮零写入，不许翻开关/动容器） | 🟢 本班投出；🔴 名册首写把代号错记成 `Boole`、agent_id 错写成 `01a0d645-4821-…`（不存在的 id），本行按回执订正并留痕 | 10:12 |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -4024,7 +4024,7 @@ R48 在 `chat.py` 新增 canonical 事件 `answer.headline`，它成了 `test_r1
 | R221 | `be-r221` | `frontend/src/components/ChatPanel.vue` + 新 `__tests__/r221-*.test.js` | Huygens → **`Noether`** | 跟进单 §94 三 |
 | R222+R223 | `be-r222` | `scripts/eval_transport_ask_v2.py` + 新 `tests/test_r222_*`/`test_r223_*` | Bergson → **`Ohm`**（与 R50/R190/R59 几枚同名者无关） | 跟进单 §94 三 + §96 四 |
 | R224 | `be-r224` | **只新建** `docs/handoff/2026-09-25-plan-ticket-closure.md` | Seneca → **`Wegener`**（与 R116 同名不同人） | 跟进单 §95 |
-| R59c | `be-r59c` | **只新建** `scripts/r59c_*` + `docs/testing/r59c-*`（🔴 本轮 `app/rag/**` 零写入、不翻开关、不动容器） | Malthus → **`Boole`**（与 R98/R104/R48S 同名者无关） | 跟进单 §94 八 + 计划书 §9.3 ①②③ |
+| R59c | `be-r59c` | **只新建** `scripts/r59c_*` + `docs/testing/r59c-*`（🔴 本轮 `app/rag/**` 零写入、不翻开关、不动容器） | Malthus → **`Boyle`**（与 `Boole` 系 R98/R104/R48S 几枚无关） | 跟进单 §94 八 + 计划书 §9.3 ①②③ |
 
 - **写集互斥本班逐对核过**：三枚后端件、一枚前端件、一枚量具件、两枚纯新建件，零交集。
 - 🔴 **六枚全未采纳总控给的名字** ⇒ 今后派工词里代号只作署名提示，**唯一键按 `agent_id`**，撞名一律在本表加"同名不同人"标注。
