@@ -42,6 +42,7 @@ import importlib
 import importlib.util
 import inspect
 import json
+import math
 import os
 import re
 import socket
@@ -89,7 +90,7 @@ _CITATIONS: tuple[tuple[str, str, str], ...] = (
     ("app/api/v1/chat.py", 'REPORT_LANE_QUEUE_ENV = "REPORT_LANE_VIA_QUEUE"',
      "报告档开关的 env 字面"),
     ("frontend/src/components/ChatPanel.vue", "entry.timer = setInterval(tick, QUEUE_POLL_MS)",
-     "前端轮询无截止：只有名单命中才停表"),
+     "前端轮询的时钟：命中名单/终止回执才停，到点自停数的是同一枚时钟"),
     ("scripts/eval_transport_ask_v2.py", "deadline = time.time() + QUEUE_POLL_SECONDS",
      "适配器轮询有截止，漏停的代价是整段 deadline"),
 )
@@ -262,12 +263,95 @@ def _function_body(text: str, name: str) -> str:
     raise AssertionError(f"{name} 的函数体没配平闭合")
 
 
-def frontend_stop_vocabulary(root: Path) -> dict:
-    """前端那族停轮子：``QUEUE_SETTLED``（状态名单）+ ``QUEUE_POLL_STOPPERS``（HTTP 回执）。
 
-    再多交一枚 ``no_deadline``：``watchQueueTurn`` 只有 ``setInterval``（ChatPanel.vue:1013）与
-    两枚 ``stop()``（:994 命中名单 / :1001 命中终止回执），**没有第三枚到点自停** —— 这决定了
-    它漏停一枚的代价不是一个秒数，而是"永不停"。
+# --- R245 起：前端那族轮询的「截止」是有名读数，不是等人重算的那格红 ---------------------
+#: 🔴 现读不手抄（本文件开头那条老规矩，同款理由：抄本一改就成假数）：截止的**名字**从
+#: ``watchQueueTurn`` 函数体里到点自停那一跳读出来，**值**再顺着名字回到模块级 ``const`` 现读。
+#: 三跳 = ①函数体里的 ``if (entry.polls > <LIMIT>)`` ②那枚上限的推导式
+#: ``const <LIMIT> = <DEADLINE_MS> / <CLOCK>`` ③分子 ``const <DEADLINE_MS> = <十进制字面>``。
+#: 为什么不直接按名字搜 ``QUEUE_WAIT_DEADLINE_MS`` 了事：写在文件里、但没装进这族轮询的截止
+#: 等于没有截止 —— 那种形状下每条未终结的轮子回到「永不停」那一侧（R245 反证钉 (a) 钉它）。
+_COUNTER_LIMIT_STOP = re.compile(
+    r"(?P<counter>[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?)\s*>\s*(?P<limit>[A-Za-z_$][\w$]+)")
+_LIMIT_BY_CLOCK = re.compile(
+    r"^[ \t]*const\s+(?P<limit>[A-Za-z_$][\w$]+)\s*=\s*(?P<numerator>[A-Za-z_$][\w$]+)"
+    r"\s*/\s*(?P<clock>[A-Za-z_$][\w$]+)[ \t]*(?://.*)?$", re.M)
+_BODY_POLL_CLOCK = re.compile(r"setInterval\(\s*tick\s*,\s*(?P<clock>[A-Za-z_$][\w$]+)\s*\)")
+
+
+def _const_decimal(text: str, name: str):
+    """``const <name> = <十进制字面>`` 的值；形状不符（NaN / 表达式 / 删掉导出）一律 None，不猜。"""
+    match = re.search(rf"^[ \t]*const\s+{re.escape(name)}\s*=\s*"
+                      r"(?P<value>[+-]?\d+(?:\.\d+)?)[ \t]*(?://.*)?$", text, re.M)
+    if match is None:
+        return None
+    raw = match.group("value")
+    return int(raw) if re.fullmatch(r"[+-]?\d+", raw) else float(raw)
+
+
+def _line_at(text: str, index: int) -> str:
+    """命中处的原文（与 ``stop_actions`` 同一条理由：连原文一起交，别只交行号）。"""
+    lines = text.splitlines()
+    at = text[:index].count("\n")
+    return lines[at].strip() if at < len(lines) else ""
+
+
+def frontend_deadline_cost_reading(text: str, body: str, poll_ms: int) -> dict:
+    """「前端每条未终结轮询白等多久」的算式本体：三跳全通才把秒数交出去。
+
+    断在哪一跳就点名哪一跳（``gaps``），读数与判据读同一份缺口清单，不许两边各算一份。
+    到点那一跳数的是**枚数**（``entry.polls > LIMIT``，LIMIT 由同一枚轮询时钟除出来），
+    所以 ``deadline_ms`` 就是这条轮询最多白等多久：首枚 ``tick()`` 在 t=0 打，此后每
+    ``CLOCK`` 毫秒一枚，数到第 ``LIMIT + 1`` 枚收表 ⇒ 收表时刻 = LIMIT × CLOCK = deadline_ms。
+    本件不另立第二把尺，只把前端自己那三跳的算术复述一遍。
+    """
+    reading = {"counter": "", "limit_const": "", "deadline_const": "", "clock_const": "",
+               "enforcement_line": "", "deadline_ms": None, "max_polls": None,
+               "waste_seconds": None, "gaps": ["enforcement_not_wired"]}
+    hit = None
+    for match in _COUNTER_LIMIT_STOP.finditer(body):
+        derived = next((row for row in _LIMIT_BY_CLOCK.finditer(text)
+                        if row.group("limit") == match.group("limit")), None)
+        if derived is not None:
+            hit = (match, derived)
+            break
+    if hit is None:
+        return reading
+    match, derived = hit
+    deadline_ms = _const_decimal(text, derived.group("numerator"))
+    clock = _BODY_POLL_CLOCK.search(body)
+    gaps = []
+    if deadline_ms is None:
+        gaps.append("deadline_ms_unreadable")
+    elif not math.isfinite(deadline_ms):
+        gaps.append("deadline_ms_not_finite")
+    elif deadline_ms <= 0:
+        gaps.append("deadline_ms_not_positive")
+    if not (clock and clock.group("clock") == derived.group("clock") and poll_ms > 0):
+        gaps.append("poll_clock_unreadable")
+    reading.update({"counter": match.group("counter"), "limit_const": match.group("limit"),
+                    "deadline_const": derived.group("numerator"),
+                    "clock_const": derived.group("clock"),
+                    "enforcement_line": _line_at(body, match.start()),
+                    "gaps": sorted(gaps)})
+    if not gaps:
+        reading["deadline_ms"] = deadline_ms
+        reading["max_polls"] = deadline_ms / poll_ms
+        reading["waste_seconds"] = deadline_ms / 1000.0
+    return reading
+
+def frontend_stop_vocabulary(root: Path) -> dict:
+    """前端那族停轮子：``QUEUE_SETTLED``（状态名单）+ ``QUEUE_POLL_STOPPERS``（HTTP 回执）
+    + 到点自停那半条（R221 起装进 ``watchQueueTurn``：数同一枚时钟的枚数，到点收表）。
+
+    两族读数各管各的形状，不许互相冒充：
+      - ``no_deadline``：``DEADLINE_TOKENS`` 在函数体里一次没命中 ⇒ 这一族**只会**靠名单与
+        HTTP 终止回执停表 ⇒ 漏停一枚的代价不是一个秒数，而是"永不停"（09-24 实测读 True，
+        R221 并树后读 False —— 本件按现读改口，不拿旧口径继续报数）；
+      - ``deadline_ms`` / ``waste_seconds``：有截止时**这条轮询到底白等多久**的有名读数，由
+        ``frontend_deadline_cost_reading`` 现读三跳算出；任一跳断裂 ⇒ 读 None + ``gaps``
+        点名断在哪。这正是 ``adapter_waste_per_stalled_watch_seconds`` 在前端的对称物，
+        R218 立件时欠的就是这一枚。
     """
     rel = "frontend/src/components/ChatPanel.vue"
     text = _read(root, rel)
@@ -275,17 +359,27 @@ def frontend_stop_vocabulary(root: Path) -> dict:
     stoppers = re.search(r"const QUEUE_POLL_STOPPERS = \[(.*?)\n\]", text, re.S)
     codes = re.findall(r"status:\s*(\d+),\s*code:\s*'([^']+)'", stoppers.group(1)) if stoppers else []
     interval = re.search(r"const QUEUE_POLL_MS = (\d+)", text)
+    poll_ms = int(interval.group(1)) if interval else 0
     body = _function_body(text, "watchQueueTurn")
+    cost = frontend_deadline_cost_reading(text, body, poll_ms)
     return {"settled": sorted(x.strip().strip("'\"") for x in
                               (settled.group(1).split(",") if settled else [])),
             "http_stoppers": sorted(f"{a}:{b}" for a, b in codes),
-            "poll_ms": int(interval.group(1)) if interval else 0,
+            "poll_ms": poll_ms,
             # 停表动作逐枚取证：连**原文**一起交，别只交行号 —— 只钉行号的话，别人在这枚
             # 文件上沿插一行就把本件打成假红（这正是本单第 ② 件要修的这类地雷）。
             "stop_actions": [[n, line.strip()] for n, line in enumerate(text.splitlines(), 1)
                              if "QUEUE_SETTLED.includes" in line or "setInterval(tick" in line],
             "deadline_tokens_seen": {tok: body.count(tok) for tok in DEADLINE_TOKENS},
-            "no_deadline": not any(tok in body for tok in DEADLINE_TOKENS)}
+            "no_deadline": not any(tok in body for tok in DEADLINE_TOKENS),
+            "deadline_ms": cost["deadline_ms"],
+            "waste_seconds": cost["waste_seconds"],
+            "deadline_gaps": cost["gaps"],
+            "deadline_source": {"counter": cost["counter"], "limit_const": cost["limit_const"],
+                                "deadline_const": cost["deadline_const"],
+                                "clock_const": cost["clock_const"],
+                                "polls_before_stop": cost["max_polls"],
+                                "enforcement_line": cost["enforcement_line"]}}
 
 
 def question_count(root: Path) -> int:
@@ -365,8 +459,10 @@ def cell_lane_flip(root: Path) -> dict:
     flip = lane_flip_readings(root)
     drift = citation_drift(root)
     questions = question_count(root)
-    # 前端无截止（抄本：watchQueueTurn 只有 setInterval，命中名单或 HTTP 终止回执才 stop）⇒
-    # 每一个终态都必须出现在 QUEUE_SETTLED 里，少一枚就是一枚停不干净的轮子。
+    # 两族停表各自漏掉的终态：漏一枚 = 那一族的轮子收不干净。前端自 R221 起多了第三枚停法
+    # （到点收表），但"漏停"的代价口径照旧按 ``no_deadline`` 那一侧算：名单没收到这一枚 ⇒
+    # 它在到点之前每 3 秒照打一枪，``frontend_deadline_ms`` 只担保它最晚到点收表，
+    # 不担保它认得这一枚终态 —— 所以 ``frontend_never_stops_on=`` 与截止读数各判各的。
     unhandled_front, unhandled_back = stop_set_gap(front["settled"], back["stops"])
     not_covered = [
         f"{NOT_COVERED} 队列 worker 真取回（deploy/queue_worker.py 要真 Redis + 真进程；离线只能判"
@@ -387,9 +483,19 @@ def cell_lane_flip(root: Path) -> dict:
     if unhandled_front:
         problems.append("frontend_never_stops_on=" + ",".join(unhandled_front))
     if not front["no_deadline"]:
-        # 前端一旦有了截止表，"漏停 = 永不停"这句代价口径就过期了：本件的读数要跟着改，
-        # 不许拿着旧口径继续报数 —— 宁可当场红，让窗前来人重算。
-        problems.append("frontend_deadline_appeared_rerun_the_cost_reading")
+        # 前端有了截止表 ⇒ "漏停 = 永不停"这句旧代价口径过期。R245 起"过期"不再等于
+        # "停下来等人重算"：重算的公式就在件里（``frontend_deadline_cost_reading`` 那三跳），
+        # 两枚有名读数与适配器那枚对称地进同一个 readings 字典。
+        # 🔴 "宁可当场红"的纪律原样保留：读数缺失 / 为 0 / 非数 / 无界 ⇒ 照样当场红，
+        # 谁都不许拿"每条未终结轮子白等一整段 deadline"那句旧话替前端报数。
+        if front["deadline_gaps"]:
+            problems.append("frontend_deadline_cost_reading_unbounded="
+                            + ",".join(front["deadline_gaps"]))
+    elif front["deadline_ms"] is not None:
+        # 反向半条：token 清单说"这一族没有截止"，而有名读数却交得出一个有界秒数 ⇒ 件里
+        # 同时存着两份互相矛盾的代价口径。与钉掉 ``adapter_deadline_cost_105q_minutes``
+        # 同一条纪律：互相矛盾的读数只能红着让人对齐，不许叠着报。
+        problems.append("frontend_deadline_cost_reading_contradicts_no_deadline")
     return {"cell": CELL_D,
             "verdict": RED if problems else GREEN,
             "readings": {"backend_answers": vocab["answers"],
@@ -400,6 +506,10 @@ def cell_lane_flip(root: Path) -> dict:
                          "frontend_poll_ms": front["poll_ms"],
                          "frontend_stop_actions": front["stop_actions"],
                          "frontend_deadline_tokens_seen": front["deadline_tokens_seen"],
+                         "frontend_deadline_ms": front["deadline_ms"],
+                         "frontend_waste_per_stalled_watch_seconds": front["waste_seconds"],
+                         "frontend_deadline_gaps": front["deadline_gaps"],
+                         "frontend_deadline_source": front["deadline_source"],
                          "frontend_unhandled_final": unhandled_front,
                          "adapter_stops": back["stops"],
                          "adapter_unhandled_final": unhandled_back,
@@ -412,7 +522,11 @@ def cell_lane_flip(root: Path) -> dict:
                          # 现在把两件事分开交，且都不冒充期望值：
                          #   per_stalled_watch_waste_seconds —— 每条未终结轮询各白等多久（=deadline 本身）；
                          #   worst_case_*_if_every_question_stalls —— 只有"105 题全部撞上"才成立的天花板。
-                         # 前端那一族另算：它压根没有 deadline，代价是"永不停"，不是一个秒数。
+                         # 前端那一族自 R221 起也有了 deadline，R245 起同样交有名读数
+                         # （``frontend_deadline_ms`` / ``frontend_waste_per_stalled_watch_seconds``，
+                         # 上面四格），口径与这两枚对称：单条白等时长 = 截止本身。
+                         # 🔴 前端不交天花板：105 题里真起前端轮子的枚数离线读不出来，
+                         # 拿题数去乘它就是重犯上一班那句 900 × 105 的错。
                          "adapter_waste_per_stalled_watch_seconds": back["deadline_seconds"],
                          "adapter_worst_case_minutes_if_every_question_stalls":
                              round(back["deadline_seconds"] * questions / 60.0, 1),
