@@ -1,0 +1,34 @@
+{
+  "total": 20,
+  "answer_correctness": 0.3,
+  "evidence_coverage": 0.4,
+  "unsupported_claim_rate": 0.0,
+  "category_metrics": {
+    "口径冲突": {
+      "correctness": 0.25,
+      "evidence_coverage": 0.0,
+      "total": 4
+    },
+    "工具调用": {
+      "correctness": 0.25,
+      "evidence_coverage": 0.0,
+      "total": 4
+    },
+    "报告生成": {
+      "correctness": 0.3333,
+      "evidence_coverage": 0.0,
+      "total": 12
+    }
+  },
+  "latency_ms": {
+    "count": 20,
+    "average": 78874.57,
+    "p95": 154618.314,
+    "max": 441674.643,
+    "frame_ledger_rows": 0,
+    "one_attempt_envelope_ms": 960000.0,
+    "suspect_n": 0,
+    "suspect": [],
+    "basis": "latency_ms 只由每发尝试自己的真实跨度构成：与帧账 wall_ms 相符者按实测进聚合，越界者按帧账逐发跨度替换，无实测而帧账可用者按帧账顶上，拿不出诚实跨度的题排除并逐题列在 suspect"
+  }
+}
