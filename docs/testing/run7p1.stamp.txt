@@ -1,0 +1,8 @@
+﻿WARM START 22:36:13
+WARM_EXIT=0 at 22:36:19
+CORPUS_SNAPSHOT 15340 B at 22:36:19
+WINDOW START 2026-09-24 22:36:19 shellerPID=24428 HEAD=8b86f4c sidecar=C:\Users\fengx\AppData\Local\Temp\evalrun\sidecar-run7.jsonl frames=C:\Users\fengx\AppData\Local\Temp\evalrun\sidecar-run7-frames.jsonl
+COLLECT_EXIT=0 at 00:06:29
+SCORE_EXIT=0 at 00:06:29
+WINDOW END 2026-09-25 00:06:29
+__RUN7P1_DONE__
