@@ -3275,3 +3275,41 @@ run7 底账 105 行：`text_frames>1` 96/105、逐字无缺 105/105、合账 93/
 
 1. 误把 `deploy/.env.server` 当可提交件；2. 用文本模式 `open()` 追加把 run8 计划文档 CRLF 整片刷成 LF（CR 55→50），当场 `git checkout --` 回滚按字节重做（修后 CR=LF=103、增量相等）。**看板已反复记过该坑，本班仍犯** ⇒ 追加一律 rb 取原文、CRLF 拼、写回数 CR/LF。
 
+
+## 100（09-25 20:1x–20:4x，第八班第五格；主树 `ff7ade1`→`cca9081`：V2 四枚并树、R245b 补口、run8 相 2 判读入仓、V2 第二波开波）
+
+### 100.1 四枚并树的判据级凭据（总控独担验收，逐枚亲跑，不采信自述）
+
+- 写集先证不相交再搬：37 枚文件逐枚比对 `git show HEAD:<path>` 与 `git show e82619c:<path>` ⇒ 全部 unchanged-since-base，无漂移；整文件搬运后两侧 sha256 逐位相同。
+- **R251** `13a5801`（Godel@be-r251）：本单两枚新件 + 被改口六枚既有件 = 总控亲跑 **186 passed / 0 failed**。迁移 0014 现取 92 行纯 LF、sha `5fe425e0…`、manifest 同步；越权面复用 `authorization_decision(ACTION_MANAGE_ALERTS)` + `alert_row_scope_sql/alert_row_visible` 两道既有门，404 与「不存在」同形、转派四格失败同一枚 400（不给用户名枚举口）。**六枚改口逐条裁**：四枚目录尾号引信（文件自己写明谁排下一号必须改口，0011/0012/0013 先例在前）成立；`test_r184` 由「只许一句逐字 ALTER」换成三条同判（守卫形状 / 与迁移目录给 alerts 建的列集合相等 / 默认值逐列同值）＝主语放宽、牙齿变多；`test_r190` 把「整册只许两处 status 封闭集」的主语按表收窄并**新增一枚目录级闭合钉** `{(table,version)}` ＝收紧。未做真库执行验证（已申报）⇒ 本班补。
+- **R248** `9ba266e`（Archimedes@be-r248）：+454/−114 与自报逐字相符。**总控裁定：维持 fail-closed**——真值源不可达时「没有这一枚」是关于数据库的陈述，模块无权编造，读侧交回 500；404 会报一次谁都没做过的删除（与 R37/R62/R190 同一口径）。施工方只跑了 `--serial`（怕复现 09-24 宿主 Kernel-Power 41），全量由总控统一补。
+- **R249** `2ef24e3`（Curie@be-r249）：+978/−98 相符；未动 `app/storage/__init__.py`（写域合规）。容器路径 compose 钉 `PERSISTENCE_BACKEND=postgres`（`tests/test_deployment_topology.py:104` 已钉）⇒ V1 门槛看容器重启，可并；裸机缺省 json 落内存过渡表是相对 JSON 落盘的倒退 ⇒ 进 R256。`test_r249_dataset_pg_acceptance.py` 本机 4 skipped，**不作为达标证据**。
+- **R250** `4076a68`（Poincare@be-r250）：新增 `GET /runs/{run_id}` 走 `_require_admin(ACTION_AUDIT, ...)`，不自建第二套鉴权；派工词写的 `unavailable_ledgers` 仓里不存在（**派工词错，记总控账**），施工方改用 `audit.py` 既有 `degraded/degraded_reason/health` + 唯一名 `trace_local_fallback`，复核成立。它留的隔离 PG 现取 **5433 已无监听**。
+- 并树后门：`-n 8` = **5081 passed / 44 skipped / 0 failed / 105.01 s**（基线 4864 → +217）。
+
+### 100.2 R245b（总控补做）· 一枚真回归在树上躺了两格
+
+- 第一次门读数 3 failed：两枚（`test_r48_headline_never_enters_the_text_ledger::test_d1`、`test_r218_egress_gate_placement::test_counter_proof`）单文件串行复跑＝绿——前者报 `chat.py` 锚点 **0 处**、后者当场抓到 `chat.py` 的 sha 在测试中途自己变了 ⇒ 跨 worker 撞读盘假红；第三枚串行仍红 ⇒ 真回归。
+- 定责用双棵 detached 树实测：`e82619c`（R245 之前）**9 passed** / `ff7ade1`（R245 之后、本波之前）**1 failed** ⇒ 红由 R245 引入，与本波四枚无关。机理：R245 把 D 格从「永久红·等人来重算」换成三跳现读的有名读数，`tests/test_r218_ruler_self_calibration.py:272` 钉的是常量。
+- 修法不是换个新常量，是换更强的不变量：本次变异必须**动不到** D 格（与净树同值），D 格期望值归它本家钉。落点 `881adad`。
+- 流程账：**上一格并 R245 后没复跑全量门**。新规矩化一条：任何并树之后，总控必须跑一次自己的 `-n 8`，才允许派下一波。
+
+### 100.3 run8 相 2 判读三笔订正（前一格转述 vs 本班现取）
+
+- 交回 37 字挂起文案的是 **11 枚**不是 12 枚；第 12 枚 awaiting_hitl 是 `report-04` 的 `<no-bytes-emitted>`。真正文 8 枚。
+- `done` 载荷写死 `{'type':'done'}` 有**两处**（`chat.py:1838`、`chat.py:2017`），前一格只点名一处；`queue.complete(request_id, answer)` 也是**两处**（`queue_worker.py:366`、`:471`）。
+- 服务端补尺现取（按那 20 个 request_id 查真库，避开 UTC/本地时区假零）：`model_calls` **70 行 / 19 request_id / 2 行 NULL token / 68 行双非零**，completed 68 + failed 2（`context_limit_exceeded` 两枚，同一 request_id `edf880c8…`），Σinput 91,271 / Σoutput 18,859；零枚模型调用却 `final=done` 的那枚 = `64c3ef3b…`（题面「把上面那张图表插进正文」，tool 档，`status=partial awaiting_hitl=True`）。
+
+### 100.4 新立单判据原文（V2 第二波·派工前逐字抄进派工词，不许用单号标题转述）
+
+- **R253 反证钉不得就地改写被跟踪文件**（写域只 `tests/test_r48_headline_card_lands_on_the_wire.py`、`tests/test_r48_headline_never_enters_the_text_ledger.py`、`tests/test_r156_*.py` 与新 helper）。判据：① 找出全仓所有「在测试运行期间改写 `app/**` 或 `docs/**` 里被跟踪文件」的钉（现证两处：`chat.py`、`contract-v1.md`），逐枚改成只改 **overlay 副本** 或 **进程内 monkeypatch**，磁盘上的被跟踪文件在整个会话期间 sha 恒定；② 加一枚闭合钉：全仓扫描后「就地改写被跟踪文件」的形态 **0 处**，出现新的一处当场红；③ 反证强度一枚不许掉——原来会红的变异，改完仍然必须红，且报错原文要能指到同一格；④ 同一 HEAD 连跑三次 `-n 8` 门零漂移（跑一次不算，负载敏感是概率的）。
+- **R254 队列道客户端可见契约**（写域 `app/api/v1/chat.py`、`deploy/queue_worker.py`、`app/queue/**`、`docs/api/contract-v1.md` 队列节）。判据：① HITL 出口——队列道里 `awaiting_hitl=True` 的轮次必须在 `/queue/status` 面交出**可批准的东西**（pending 标识 + 可寻址批准路径），客户端能在不重发的情况下批准并拿到真正文；把 37 字挂起文案当 `result` 的形态必须消失或改成语义明确的 `status=awaiting_approval`（两者选一，但**不许**继续报 `done`）；② 出处回客户端——`queue.complete` 那条腿只存正文字符串（`queue_worker.py:366/:471`）要改成结构化终态，带出处的题在 `/queue/status` 与 `done` 载荷里读得到 `sources`；③ usage 上可读面——`chat.py:1838` 与 `:2017` 两处 `done` 载荷与 `/queue/status`（`:3910`）必须交回 prompt/completion/total tokens，值取自真库同源，不许现编；④ 零枚模型调用的 run 不得报 `final=done`（现证 `64c3ef3b…`），终态必须诚实到「一次模型都没打」这一格；⑤ 同步道那两处 `done` 载荷同步改口，两道的客户端可见形状一致，`docs/api/contract-v1.md` 逐字跟上；⑥ 契约改动必须新增参数化用例覆盖「done 但无正文」「done 但无出处」「done 但零模型调用」三枚假终态。
+- **R255 报告档上下文顶**（写域 `app/agents/contracts.py`、`app/common/model_budget.py`、`.env.example`、新测试；🚫 `chat.py`（归 R254）、🚫 `app/agents/nodes.py`）。判据：① 真机发生率已在手（`prompt_tokens=2691`/`2778` + `max_tokens=1536` > `n_ctx=4096`）⇒ 给出**配套**的抬窗口路径：`MODEL_CONTEXT_TOKENS` 与并发/超时预算同一处推导，只改一头必须判红；② 撞顶仍然是「请求之前就拒 + 不走兜底文案」这一口径不变（`nodes.py:379-387` 的理由仍然成立），但错误面要带上当时的 `prompt_tokens/declared_max_tokens/n_ctx/差额`，运维一眼看得出是参数小不是模型笨；③ `.env.example` 那两行注释必须写清「改 `.env` 不重建镜像等于没改」并给出换算式；④ 不许为了绿而把 `MODEL_MIN_ANSWER_TOKENS=1536` 调小（那是答案完整性的地板）。
+- **R256 今天欠的三列**（写域 `migrations/0015_*.sql` ＋ **唯一持迁移者** ＋ `migrations/manifest.json` ＋ `app/storage/persistence.py` ＋ 四枚目录尾号引信件）。判据：① `artifacts.deleted_at` 落进 `persistence._TABLES` 里 artifacts 的 columns（今天 11 枚不含它，所以 R248 那枚退役只活在内存里）；② `dataset_versions` 加 scope 两列，堵掉「降密一并放宽历史版本」；③ 裸机路径缺省 `PERSISTENCE_BACKEND=json` 致登记重启即失——要么给 JSON 版表存储、要么把操作者前置写进 `setup.sh`/`.env.example` 并让缺省翻转有钉；④ 迁移必须在**隔离 PG 真库**执行一次并留凭据（R251 那笔欠的账这次不许再欠）；⑤ 四枚尾号引信连名带断言一起改口，`COMMENT ON` 那类散文里若出现分号，扫描器不得被裸切骗过（本班实测 0014 今天没有，但那是运气）。
+- **R257 Trace 兜底两笔**（写域 `app/trace/**`，波次二，拟让 `Poincare` 续做）：兜底窗口事件回填六表；`TRACE_STORE_PATH` 卷此后只含兜底行 ⇒ 要么改名要么在面上写清它不再是全量账。
+- **R258 runbook 两处假零**（总控自办）：P-18 的 `docker exec ... sh -lc "\$REDIS_PASSWORD"` 在本机回 `WRONGPASS`，`wc -l` 给假零，正确形态 `docker exec -e RG=<pw> ... redis-cli -a "$RG"`（本机清前 0 / 清后 0 / `dbsize` 3）；P-19 常驻 keepalive 已死（`ka.txt` 停在 12:59:15）。另加一条：**PG 存 UTC**，用本地时段查 `model_calls` 得 0 行是假零。
+
+### 100.5 规矩化两条
+
+- 任何并树之后，总控必须跑一次自己的 `-n 8` 全量门才允许派下一波（R245 那笔红在树上躺了两格）。
+- 派工词落笔前，其中引用的每个落点名（表名/常量名/路径）必须先在仓里现取一次——本格 `unavailable_ledgers` 是总控自己编的。
