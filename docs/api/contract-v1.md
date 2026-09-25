@@ -598,6 +598,12 @@ then polls `GET /api/v1/queue/status/{request_id}` and may
 `status` is one of `queued`, `processing`, `done`, `cancelled`, `dead`, or `expired`.
 A `done` response additionally carries `result`.
 
+A `complete()` that returns `False` is a discard, never a completion: no answer is published,
+the status is never `done`, and `failure.last_error` records the stable code
+`result_discarded:cancelled` or `result_discarded:lease_lost`. A lease-discarded task stays on the
+processing list without a lease, so the next sweep requeues it and only the attempt that still
+holds a live lease may publish; a discard never consumes a retry slot.
+
 ### Compatibility note 2026-09-13
 
 `failure` was added to every non-`expired` status response. Existing clients keep
