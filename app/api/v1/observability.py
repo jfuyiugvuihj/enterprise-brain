@@ -279,6 +279,37 @@ def _bounded_report(report: dict[str, Any]) -> tuple[dict[str, Any], dict[str, A
     return bounded, bounds
 
 
+def _bounded_trace_value(value: Any) -> tuple[Any, bool]:
+    """Bound a trace document without changing the type of the numbers inside it.
+
+    ``_bounded_value`` is the retrieval debug plane's helper and it reads every scalar as a
+    float, which is right for a score and wrong for a count: ``counts.agent_steps`` is an
+    integer the administrator matches against what they wrote, and ``sequence`` is the event
+    order. This version keeps ints integers and only truncates what can actually grow:
+    strings, lists and dict breadth.
+    """
+    if isinstance(value, dict):
+        bounded: dict[Any, Any] = {}
+        truncated = False
+        for index, (key, item) in enumerate(value.items()):
+            if index >= MAX_DICT_ITEMS:
+                truncated = True
+                break
+            bounded[key], item_truncated = _bounded_trace_value(item)
+            truncated = truncated or item_truncated
+        return bounded, truncated
+    if isinstance(value, (list, tuple)):
+        truncated = len(value) > MAX_LIST_ITEMS
+        items = [_bounded_trace_value(item)[0] for item in list(value)[:MAX_LIST_ITEMS]]
+        return items, truncated
+    if isinstance(value, str):
+        return value[:MAX_STRING_CHARS], len(value) > MAX_STRING_CHARS
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value, False
+    text = str(value)
+    return text[:MAX_STRING_CHARS], len(text) > MAX_STRING_CHARS
+
+
 def _bounded_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Pass every recorded field through, so a richer event schema is never hidden."""
     bounded = []
@@ -1344,3 +1375,87 @@ async def read_model_budget_facts(request: Request) -> dict[str, Any]:
     report = model_budget_facts()
     report["requested_by"] = _principal_summary(principal)
     return report
+
+
+# ==================== R250: one run, read back out of the trace tables ====================
+
+#: The resource name of the run readout. It is a template, never the requested id: an
+#: authorization refusal must not describe the run it refused to show, and the id of
+#: somebody else's run is exactly the kind of detail that must not come back in an error
+#: body. The id appears only in a 404, which the caller could only have learned by asking
+#: for that id in the first place.
+RUN_READOUT_RESOURCE = "runs"
+RUN_READOUT_PATH = "/runs/{run_id}"
+MAX_RUN_ID_CHARS = 200
+
+
+@router.get(RUN_READOUT_PATH, responses=_ERROR_RESPONSES)
+async def read_run(run_id: str, request: Request) -> dict[str, Any]:
+    """Hand an administrator one run: the row, its steps, and its tool and model calls.
+
+    R248/R249 kept the run history in a file that only the writing process could see, so
+    "what did this request actually do" was unanswerable from the management plane. This
+    route reads the six PostgreSQL trace tables (``app/trace/run_reader.py``) through
+    ``TraceStore.read_run``, which stitches the three sections together: ``agent_runs`` ->
+    ``agent_steps`` -> ``tool_calls`` / ``model_calls``, with ``retrieval_traces`` and the
+    ``trace_events`` that produced them alongside.
+
+    Three contract points, all of them pinned:
+
+    * the gate is ``_require_admin``, the same primitive every other management route
+      uses -- an auditor, a manager and a staff account are refused here before a single
+      row is read, and the refusal body carries error codes only;
+    * the body states its own durability: ``source`` is ``postgres`` when the six tables
+      answered and ``trace_local_fallback`` when the local journal had to be replayed, so a
+      degraded answer is never presented as a durable one;
+    * the terminal verdict comes with the two facts that support it -- the status word and
+      whether the store actually saw the terminal event -- because "completed" without a
+      completion timestamp is a claim, not a record.
+    """
+    principal = _require_admin(request, ACTION_AUDIT, RUN_READOUT_RESOURCE)
+    normalized = str(run_id or "").strip()
+    if not normalized:
+        _fail(400, "validation_error", "run_id is required.", details={"field": "run_id"})
+    if len(normalized) > MAX_RUN_ID_CHARS:
+        _fail(
+            400,
+            "validation_error",
+            f"run_id exceeds {MAX_RUN_ID_CHARS} characters.",
+            details={"field": "run_id", "max_chars": MAX_RUN_ID_CHARS},
+        )
+    try:
+        readout = _trace_store().read_run(normalized)
+    except TraceStoreError as exc:
+        _fail(
+            400,
+            exc.code if exc.code in _SCOPE_ERROR_STATUS else "validation_error",
+            str(exc),
+            details={"stage": "trace_store"},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _fail(
+            500,
+            "internal_error",
+            f"run readout failed: {type(exc).__name__}",
+            details={"stage": "trace_store"},
+        )
+    if not readout.get("found"):
+        _fail(
+            404,
+            "resource_not_found",
+            f"No run is recorded under run_id {normalized!r}.",
+            details={"run_id": normalized, "source": str(readout.get("source") or "")},
+        )
+    #: An error body stays an error body: it names the run it could not find and nothing
+    #: else, so a probe cannot use a 404 to learn how another tenant's runs are shaped.
+    audit_log.record_audit(
+        principal, ACTION_AUDIT, "allowed", RUN_READOUT_RESOURCE, "permission_granted"
+    )
+    bounded, bounds = _bounded_trace_value(readout)
+    bounded["run_id"] = normalized
+    bounded["requested_by"] = _principal_summary(principal)
+    bounded["bounds"] = bounds
+    bounded["generated_at"] = _now()
+    return bounded
