@@ -18,9 +18,13 @@ walrus / 推导式目标 / global / def / class / match 捕获）又不是内建
 
 本门只报不动：写域之外一枚都不改。清单与逐条定性见 `EXPECTED_INVENTORY`，
 新增一枚 = 新增一例 R233 同类，判红。
+
+R236 把本班交回的两枚修掉了（`app/trace/store.py` 的 `logger`、`app/db/migrations.py` 的
+`EmbeddingScope`），今天的读数是清单归零；力气挪到"摘掉修复必照样报"的反证钉上，门没变钝。
 """
 import ast
 import builtins
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -36,24 +40,14 @@ EXTRA_GLOBALS = {
     "__annotations__", "__weakref__", "__module__", "__qualname__",
 }
 
-#: 实测读数（基点 ccf8942 + 本单补上 `import secrets` 之后，见下面两枚定性钉）。
-#: 这一枚就是"这类 bug 还有几枚"的答案：一枚真炸的、一枚延迟引信，范围外没有第三枚。
-EXPECTED_INVENTORY = {
-    # 真阳性（活雷）：`app/trace/store.py:123` 在 `except Exception as exc:` 的兜底里用
-    # `logger.warning(...)`，而该文件没有 import logger —— 同仓有 40 枚文件写着
-    # `from app.common.logger import logger`，它漏了这一句。后果：`_observe_request_window`
-    # try 块里任何一次异常都会被这枚 NameError 二次替换并顺着 `record_event`（同一把锁内、
-    # 无外层兜底）抛给调用方，函数注释里那句 "a counter is never a request failure" 当场不成立。
-    # 本单写域之外（app/trace/**），只报不动。
-    ("app/trace/store.py", "logger"),
-    # 今天不炸、但是延迟引信：`app/db/migrations.py:283` 的返回注解写了 `EmbeddingScope`，
-    # 而这枚名字全文件只出现这一次 —— 它没有 import（类型其实在 `app/rag/indexing.py:238`）。
-    # 同文件第 12 行有 `from __future__ import annotations` ⇒ 注解只是字符串，import 期不求值，
-    # 所以今天跑不出错；但任何 `typing.get_type_hints()` / `inspect.signature(..., eval_str=True)`
-    # 会当场炸，将来谁删掉那枚 future import，模块立刻在 import 期死。
-    # 本单写域之外（app/db/**），只报不动。
-    ("app/db/migrations.py", "EmbeddingScope"),
-}
+#: 实测读数：范围（app/deploy/scripts）内今天 0 枚。
+#: 本班交回的两枚由 R236 修掉 —— `app/trace/store.py` 补上 `from app.common.logger import
+#: logger`（那句 `logger.warning` 坐在 `except Exception as exc:` 里，缺它就是拿兜底做二次
+#: 替换），`app/db/migrations.py` 补上 `from app.rag.indexing import EmbeddingScope`（注解位
+#: 在 future import 之下今天不求值，但 `get_type_hints` 一求就炸）。
+#: 清单归零不等于门变钝：`test_a_fixed_survivor_reintroduced_still_gets_caught` 拿工作树外的
+#: 副本各演一遍"把那句 import 摘掉"，摘掉必照样报出那枚根名字。多一枚 = 新增一例同类，判红。
+EXPECTED_INVENTORY = set()
 
 
 def _bound_names(tree):
@@ -178,9 +172,15 @@ def _inventory():
     return rows, files
 
 
-# ----------------------------------------------------------------------- 门：清单不许多
-def test_the_inventory_is_exactly_the_two_known_survivors(capsys):
-    """这类 bug 在 app/deploy/scripts 里一共还剩这两枚，多一枚少一枚都算判红。"""
+# ------------------------------------------------------------------- 门：清单归零，双向可炸
+def test_the_inventory_is_empty(capsys):
+    """这类 bug 在 app/deploy/scripts 里今天一枚不剩；冒出任何一枚即判红。
+
+    清单空不等于门钝：这枚只回答"还剩几枚"，"还抓得住"由那族反证钉代劳
+    （`test_the_base_version_of_auth_py_would_have_been_caught` 与
+    `test_a_fixed_survivor_reintroduced_still_gets_caught`）。两枚合起来才双向可炸 ——
+    多一枚红，扫描器失去力气也红。
+    """
     rows, files = _inventory()
 
     print("\n=== R233 同类扫描：范围 %s，py 文件 %d 枚，命中 %d 枚 ===" % (SCOPE, len(files), len(rows)))
@@ -190,6 +190,7 @@ def test_the_inventory_is_exactly_the_two_known_survivors(capsys):
             % (row["file"], row["line"], row["root"], row["inert_annotation"], row["star_import"])
         )
 
+    assert EXPECTED_INVENTORY == set(), "清单已归零：这枚门只判多一枚，不许再登记幸存者"
     assert {(row["file"], row["root"]) for row in rows} == EXPECTED_INVENTORY, rows
     assert not any(row["star_import"] for row in rows), "范围里冒出了 star import，静态判定失效"
 
@@ -217,15 +218,77 @@ def test_the_base_version_of_auth_py_would_have_been_caught():
     assert {number for number, _name in findings} == {first_use}, "命中点必须是那两处铸口令之一"
 
 
-# ------------------------------------------------------------------- 两条幸存者的定性依据
-def test_survivor_one_is_a_live_nameerror_in_an_exception_handler():
-    """`app/trace/store.py` 的 `logger`：不在注解里、文件也没有 future import ⇒ 真炸。"""
+# R236 修掉的两枚幸存者：文件 -> (R236 补上的那一句 import, 摘掉它就该报出的根名字,
+# 是否属于"注解位 + future import"那一形)。副本只落在 tmp_path，真文件全程只读。
+REINTRODUCED_SHAPES = {
+    "app/trace/store.py": (
+        "from app.common.logger import logger",
+        "logger",
+        False,
+    ),
+    "app/db/migrations.py": (
+        "from app.rag.indexing import EmbeddingScope",
+        "EmbeddingScope",
+        True,
+    ),
+}
+
+
+@pytest.mark.parametrize("rel", sorted(REINTRODUCED_SHAPES))
+def test_a_fixed_survivor_reintroduced_still_gets_caught(rel, tmp_path):
+    """门仍有牙：把 R236 补的那句 import 摘掉，工作树外的副本照旧必须报出那枚根名字。
+
+    这就是"清单归零而门不钝"的另一半凭据，强度照 `auth.py` 那枚反证钉办。收尾再核一次
+    真文件的 sha256 与开头一致 —— 本枚不许改工作树取证（与 R233 本体"只报不动"同一条纪律）。
+    惰性那一格顺手核 `inert_annotation`：注解位的形状今天照样被打上标记。
+    """
+    binding, root_name, inert_expected = REINTRODUCED_SHAPES[rel]
+    real = ROOT / rel
+    digest_before = hashlib.sha256(real.read_bytes()).hexdigest()
+    source = real.read_text(encoding="utf-8")
+    assert binding in source, "R236 的那句 import 不在位，这枚反证钉要重写"
+
+    stripped = source.replace(binding + "\n", "", 1)
+    assert stripped != source, "摘不掉就不是反证"
+    tree = ast.parse(stripped)
+    copy = tmp_path / rel.replace("/", "__")
+    assert not copy.resolve().is_relative_to(ROOT), "副本必须落在工作树之外"
+    copy.write_text(stripped, encoding="utf-8")
+
+    findings, _star, inert = _scan_source(
+        copy.read_text(encoding="utf-8"), future_flag=_has_future_annotations(tree)
+    )
+    first_use = min(
+        node.lineno for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == root_name
+    )
+
+    assert findings == [(first_use, root_name)], findings
+    assert (root_name in inert) is inert_expected, inert
+    assert hashlib.sha256(real.read_bytes()).hexdigest() == digest_before, "反证钉不许动工作树"
+
+
+# ------------------------------------------------- 两枚幸存者的修复凭据（R236 改掉之后）
+def test_survivor_one_is_fixed_and_still_lives_in_an_exception_handler():
+    """`app/trace/store.py` 的 `logger`：形状一格没改，改的是那枚名字今天有 import。
+
+    三半缺一即红：形状还在（文件仍无 future import，`logger.warning` 仍坐在
+    `except Exception as exc:` 里面 —— 谁把兜底改成上抛，本枚红，那条语义归总控裁定）；
+    修复在位且绑在**模块级**（塞进函数体或 `TYPE_CHECKING` 都救不了兜底）；仍被覆盖
+    （本门每次都扫这枚文件，今天交回 0 枚，删掉那句 import 会同时红在这里与反证钉）。
+    """
     rel = "app/trace/store.py"
     source = (ROOT / rel).read_text(encoding="utf-8")
     tree = ast.parse(source)
 
     assert _has_future_annotations(tree) is False
-    assert "from app.common.logger import logger" not in source
+    assert "from app.common.logger import logger" in source
+    assert [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "app.common.logger"
+        and any(alias.name == "logger" for alias in node.names)
+    ], "那句 import 必须在模块级，except 兜底才拿得到它"
     handler_lines = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ExceptHandler):
@@ -235,15 +298,18 @@ def test_survivor_one_is_a_live_nameerror_in_an_exception_handler():
                     handler_lines.append(root.lineno)
     assert handler_lines, "`logger` 不在 except 兜底里，本定性要重写"
 
+    assert _scan_source(source)[0] == [], "修后的 store.py 必须扫不出东西"
     rows, _files = _inventory()
-    survivor = next(row for row in rows if row["file"] == rel)
-    assert survivor["root"] == "logger" and survivor["inert_annotation"] is False
+    assert [row for row in rows if row["file"] == rel] == []
 
 
-def test_survivor_two_is_inert_only_because_of_a_future_import():
-    """`app/db/migrations.py` 的 `EmbeddingScope`：注解位 + future import ⇒ 今天不求值，延迟引信。"""
+def test_survivor_two_is_fixed_and_still_the_inert_annotation_shape():
+    """`app/db/migrations.py` 的 `EmbeddingScope`：还是"注解位 + future import"那一形，
+    变的是类型今天运行期可达 —— 原钉关于注解本身的那一半一个字没动。
+    """
     rel = "app/db/migrations.py"
-    tree = ast.parse((ROOT / rel).read_text(encoding="utf-8"))
+    source = (ROOT / rel).read_text(encoding="utf-8")
+    tree = ast.parse(source)
 
     assert _has_future_annotations(tree) is True
     ann = [
@@ -252,13 +318,20 @@ def test_survivor_two_is_inert_only_because_of_a_future_import():
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "declared_embedding_profile"
     ]
     assert isinstance(ann[0].returns, ast.Name) and ann[0].returns.id == "EmbeddingScope"
-    assert "EmbeddingScope" not in "".join(
+    assert "EmbeddingScope" in "".join(
         alias.name for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names
-    ), "它没有 import；注解指了一枚本模块拿不到的类型"
+    ), "R236 之后它必须被 import，注解才求值得动"
+    assert [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "app.rag.indexing"
+        and any(alias.name == "EmbeddingScope" for alias in node.names)
+    ], "那句 import 必须在模块级：塞进函数里，注解照样是哑弹"
 
+    assert _scan_source(source, future_flag=True)[0] == [], "修后的 migrations.py 必须扫不出东西"
     rows, _files = _inventory()
-    survivor = next(row for row in rows if row["file"] == rel)
-    assert survivor["root"] == "EmbeddingScope" and survivor["inert_annotation"] is True
+    assert [row for row in rows if row["file"] == rel] == []
 
 
 # ------------------------------------------------------------- 扫描器自己的假阳对拍（判据 4 的凭据）

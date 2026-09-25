@@ -168,18 +168,21 @@ def test_the_two_ledger_sites_ask_the_resolver():
     assert {"as_dict", "publish"} <= holders, sorted(holders)
 
 
-# ------------------------------------------------------------------ 只报不动的一格
+# ------------------------------------------------- R231 记下的那一格：R236 已按交回单改掉
 
 
-def test_the_hot_index_scope_key_still_names_the_constant_not_the_env(monkeypatch):
-    """记录一处本班无权修的分歧（写域禁改 `app/rag/hot_index.py`），钉成"现状"而非"应该"。
+def test_the_hot_index_scope_key_follows_the_resolver_not_the_constant(monkeypatch):
+    """R231 钉"现状"、R236 改成钉"应该"：热集首轴必须与 `read_backend()` 同源。
 
-    `hot_index.current_scope_key()` 的首轴读的是裸常量（app/rag/hot_index.py:675、:678），
-    不是 `read_backend()`。加了 env 钩子之后两者可以不同值：env=pgvector 时读路径答
-    pgvector，热集缓存键的首轴仍写 chroma。本窗不出错 —— 切读态下热集整层让路
-    （`retriever._hot_hits` 在 app/rag/retriever.py:1129 直接 return None，R59b 有钉），
-    所以它只是一枚暂时没人当引擎身份读的首轴。但它是种子：谁哪天让热集在切读态下重新服务，
-    或把首轴当"当前引擎"读，这一格必须当场红，然后按 R231 交回单改成 `read_backend()`。
+    R231 交回单记下一处分歧（写域禁改 `app/rag/hot_index.py`）：`current_scope_key()` 的首轴
+    裸读常量 `INDEX_BACKEND`（app/rag/hot_index.py:675、:678），而 env 钩子只长在
+    `read_backend()` 上，两者可以不同值 —— env=pgvector 时读路径答 pgvector、热集键仍写
+    chroma。R236 按总控**预授权**把那枚断言翻成修完的真值（首轴 == `read_backend()`），
+    输入形状一字未动：还是 env=pgvector + 常量=默认这对最容易分裂的组合。
+
+    它防的两件事都还在：谁把首轴改回裸常量，这格红；`read_backend()` 被摘掉 env 钩子，
+    上一行那枚形状断言红。今天热集在切读态下仍整层让路（`retriever._hot_hits` 在
+    app/rag/retriever.py:1129 直接 return None），所以这格改的是"将来重新服务时不许带旧引擎名"。
     """
     from app.rag import hot_index
 
@@ -187,4 +190,4 @@ def test_the_hot_index_scope_key_still_names_the_constant_not_the_env(monkeypatc
     monkeypatch.setattr(indexing, "INDEX_BACKEND", indexing.INDEX_BACKEND_DEFAULT)
 
     assert indexing.read_backend() == "pgvector"
-    assert hot_index.current_scope_key()[0] == indexing.INDEX_BACKEND_DEFAULT
+    assert hot_index.current_scope_key()[0] == indexing.read_backend() == "pgvector"

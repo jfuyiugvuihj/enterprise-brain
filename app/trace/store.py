@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.common.logger import logger
 from app.common.tracing import sanitize_trace_event
 from app.storage.persistence import build_persistence_adapter
 

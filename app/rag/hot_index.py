@@ -672,7 +672,7 @@ def current_scope_key(*, index_version_id: str = "") -> tuple:
     模型与维度直接取 app/rag/indexing.py 的 configured_embedding_scope()，也就是 R22 门禁
     用的同一个口径源，本模块不自成一套；不缓存，因为测试与运维都会就地改这些值。
     """
-    from app.rag.indexing import INDEX_BACKEND, configured_embedding_scope
+    from app.rag.indexing import configured_embedding_scope, read_backend
 
     scope = configured_embedding_scope()
-    return (INDEX_BACKEND, scope.embedding_model, scope.dimension, str(index_version_id or ""))
+    return (read_backend(), scope.embedding_model, scope.dimension, str(index_version_id or ""))
