@@ -318,27 +318,43 @@ describe('乙 · 判据① 重新打开一条会话时这一格画的是哪句�
   })
 })
 
-// ==================== 丙 · 判据①「同一件事全站只许一种说法」 ====================
+// ==================== 丙 · 判据①「同一件事全站一种说法」：措辞只剩一处出处 ====================
+//
+// 改口说明（R293 · 业主判定：面板那份本地措辞是第二个事实源，删）：
+// R282 写下这一组时，面板里另存着一份 headline / detail / tone，所以它能做的极限是「抠出那段函数
+// 体，钉它与 lib 那份逐字相等」。R293 把面板那一份删了、改为委派 lib，于是抠不到字面量：旧 :332-
+// :334 那三条 toBeTruthy 会红，旧 :339-:341 那三条更危险——它们会变成 null === null 一路假绿过去。
+// 这一组因此换成「面板不再持有自己的措辞」。三条都只变严，没有一条变宽：
+//   旧组只在抠到字面量时比三枚字段（headline / detail / tone），kind / retryable / ahead / action
+//   一枚都没比；新组拿整枚对象 toEqual，多一枚少一枚都红。
+//   旧组对「面板另存一份措辞」只能在事后量距离；新组先把两句字面量判死在面板全文里，不给它漂完再
+//   抓的机会，也堵掉「两份恰好同文所以逐字相等成立」这条旧钉根本抓不到的路。
+//   取脸入口被删或被改名照旧红：委派不等于入口消失（r268 :387 拿的就是这个入口）。
+//
+// 顺手记一笔（R293）：乙组那三枚钉的前提是【落盘那一格里存着 cancel_requested】，R282 当时靠测试
+// 自己手搭 historyTurn('cancel_requested') 才成立，面板没有任何一处写得出这一格。写点在 R293 补上
+// （ChatPanel.vue:1506-1511）。🔴 总控并树时现取：`components/__tests__/r293-cancel-requested-persist.test.js` **还不存在**（Test-Path 为 False）⇒ 这一格今天只有写点、没有真路径凭据，由 **R293 第二棒**补，补上之前这句话不许被当成已验。
 
-describe('丙 · 判据③ 词面与面板既有那一份口径逐字对齐（漂了必红）', () => {
+describe('丙 · 判据③ 措辞的唯一出处在 lib，面板一份都不许持有（自持措辞必红）', () => {
   const pendingBlock = /function queueCancelPendingFace\(\) \{([\s\S]*?)\n\}/.exec(panel)
   const pendingSrc = pendingBlock ? pendingBlock[1] : ''
-  const panelHeadline = /headline: '([^']*)'/.exec(pendingSrc)?.[1] ?? null
-  const panelDetail = /detail: '([^']*)'/.exec(pendingSrc)?.[1] ?? null
-  const panelTone = /tone: '(\w+)'/.exec(pendingSrc)?.[1] ?? null
 
-  it('丙0 前提：面板那一张脸还在，两枚字面量抠得出来（抠不出来本组就是假绿）', () => {
+  it('丙0 前提守门：面板仍持有这一格的取脸入口，而它只做委派（抠不出来本组就是假绿）', () => {
     expect(pendingBlock, '面板的 queueCancelPendingFace 被删或改了名：本组钉的就是空气').toBeTruthy()
-    expect(panelHeadline).toBeTruthy()
-    expect(panelDetail).toBeTruthy()
-    expect(panelTone).toBeTruthy()
+    expect(pendingSrc.trim(), '函数体抠空了：入口还在，可核对的实现不在').toBeTruthy()
+    expect(pendingSrc, '这一格必须委派给 lib/provenance.js:386 那一张脸，不许就地组词')
+      .toMatch(/return queueFace\(\{ status: 'cancel_requested' \}\)/)
   })
 
-  it('丙1 lib 这张脸与面板那张逐字相等：两处各写一份迟早漂，这一钉就是那道闸门', () => {
-    const face = queueFace(cancelRead())
-    expect(face.headline).toBe(panelHeadline)
-    expect(face.detail).toBe(panelDetail)
-    expect(face.tone).toBe(panelTone)
+  it('丙1 唯一出处：两句措辞在面板全文不存在，而面板取回的脸逐字等于 lib 那一张整枚', async () => {
+    expect(panel, '「取消已登记」那一句只许住在 lib 一处').not.toMatch(/headline:\s*'取消已登记/)
+    expect(panel, '收尾那一句只许住在 lib 一处').not.toMatch(/detail:\s*'取消标记已经写进队列/)
+    expect(panel, 'lib 那句 detail 的正文只要在面板里再出现一份，就是第二个事实源')
+      .not.toContain('后台正在收尾，落定之前它不会再回答任何东西')
+    const turn = historyTurn('queued', 'r282-bing')
+    await mountPanel([turn])
+    expect(mounted.state.queueCancelPendingFace(), '面板这张脸必须就是 lib 那一张：字段一枚不多、一枚不少')
+      .toEqual(queueFace(cancelRead()))
   })
 
   it('丙2 口径出处对得上：面板 :1447 / :1495 那两句写的就是这一格，用词一字不差地跟着走', () => {

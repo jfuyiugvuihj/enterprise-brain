@@ -394,4 +394,21 @@ describe('丁 · 接线形状：组件只画钮、面板只发请求，两处都
     }
     expect(pending.kind).not.toBe(failed.kind)
   })
+
+  it('R293 收口：这一格的面板入口不再自持措辞（本地那一份已删，只剩委派）', async () => {
+    // 上面那枚钉拿 mounted.state.queueCancelPendingFace() 取脸。R293 把它的实现换成了委派 lib，
+    // 函数名与返回形状一个字没动，所以那枚钉原样成立、一个字不用改（这是两枚撞线钉里的第一枚，
+    // 选「保留函数名只换实现」这条路：改动面最小，且不削弱任何断言）。这一枚补的是它管不到的
+    // 那一半 —— 面板不许再留第二份话：入口只许取脸，不许自持任何一枚措辞字段。
+    const turn = queuedTurn()
+    await mountPanel([turn])
+    const pending = mounted.state.queueCancelPendingFace()
+    expect(pending.kind, '取脸入口换实现不换语义').toBe('cancel-requested')
+    const body = /function queueCancelPendingFace\(\) \{([\s\S]*?)\n\}/.exec(panel)?.[1] ?? ''
+    expect(body, 'lib/provenance.js:386 是唯一出处：这一格必须从 queueFace 取脸').toMatch(/return queueFace\(/)
+    for (const field of ['kind', 'headline', 'detail', 'tone', 'retryable', 'ahead']) {
+      expect(new RegExp('\\b' + field + ':').test(body),
+        '面板这一格不许自持 ' + field + '：同一句话两处写，改一处就漂一处').toBe(false)
+    }
+  })
 })

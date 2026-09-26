@@ -1239,21 +1239,21 @@ function withCancelHandle(face, cancel) {
 
 /**
  * 取消已登记、但这一轮还没落定（后端那一格叫 cancel_requested：标记写下去了，握着任务的 worker
- * 下一次检查时判死）。契约那句话是这一格的判据：从这里起它只会落「已取消」，永远不会变成「跑完」。
- * 所以这一格两头都不许站：借 queueFace 最后那格兜底就说成「后台执行失败」（人刚按了取消，界面
- * 反过来说系统坏了 —— 这正是改前那一版的假话），提前说「已取消」又是替后端宣布还没发生的事。
- * codeLabel 留空：登记这件事没有错误码可归，硬凑一枚就是自造第二套口径（与 R221 到点脸同规矩）。
+ * 下一次检查时判死）。契约那句判据是：从这里起它只会落「已取消」，永远不会变成「跑完」，所以两头
+ * 都不许站——借 queueFace 最后那格兜底就说成「后台执行失败」（人刚按了中断，界面反过来说系统坏了，
+ * 正是改前那一版的假话），提前说「已取消」又是替后端宣布还没发生的事。
+ * 🔴 R293 · 一件事全站一种说法：措辞的唯一出处是 lib/provenance.js:386，面板这一格不再另存一份。
  */
 function queueCancelPendingFace() {
-  return {
-    kind: 'cancel-requested',
-    headline: '取消已登记：这一轮不会再产出答案',
-    detail: '取消标记已经写进队列，后台正在收尾，落定之前它不会再回答任何东西。界面还在读这一轮的状态，落定之后这一格会跟着改口。',
-    codeLabel: '',
-    tone: 'info',
-    retryable: false,
-    ahead: null,
-  }
+  // 面板这一层只决定「哪一枚状态该取哪张脸」，一句话都不在这里写：传进去的是后端那一枚状态名，
+  // 不是面板自造的词，也不复制它的任何一句措辞。codeLabel 一并交给 lib —— 那张脸本来没有这一格，
+  // 而 QueueFace.vue 只画 headline / detail / tone / ahead 与三枚按钮，没有第四处会读它。
+  // 这份注释此前写着「codeLabel 留空：登记这件事没有错误码可归」；那句话如今由 lib 那张脸自己负责
+  // ——它没给这一格就是没有，硬留一枚空串只是把第二事实源换个地方继续摆着。
+  // 为什么两条腿必须走到同一张脸：员工当场按下中断走的是这里（queueFaceOf :1311），刷新或换回这
+  // 条会话走的是 :1317 那份落盘读数 —— R293 补上写点之后两条腿读到的是同一枚 status，措辞只要还
+  // 有一份留在面板里，屏幕就会因「有没有刷新过」而改口。函数名保留：r268 :387 拿它取这一格的脸。
+  return queueFace({ status: 'cancel_requested' })
 }
 
 /**
@@ -1497,6 +1497,18 @@ async function cancelQueuedTurn(msg, index) {
     queueReads.value = storeBag(queueReads, key, {
       status: receipt.status, position: null, failure: null, result: '', approval: null,
     })
+    // 🔴 R293 · 上面那一格只活过一次浏览：刷新或换回这条会话时 queueReads 是空的，屏上说话的是
+    // 消息对象上那一份。它此前只有 cancelled 那一支才写，于是这一格落不进盘：重新挂载时
+    // restoreQueuedTurns 还没长出活读数，:1310 那条守卫的前置条件 read && 整条跳过，:1317 就把
+    // 落盘那一格原样交给 queueFace，画回「排队中」。形状照 cancelled 那一支逐字同构，差别只有一处
+    // ——这里落的是后端给的【非终态】。落盘不等于当终态画：表继续开着（不调 stopQueueWatch），
+    // 不给重试钮（kind 不在 QUEUE_CANCELLABLE_KINDS），也不宣布「已取消」，那三件事由 lib 那张脸管。
+    if (msg) {
+      msg.queue = { ...(msg.queue || {}), requestId, status: receipt.status }
+      // 只补盘，不调 syncActive：还没落定的一轮不该顺手把这条会话的 updatedAt 顶到侧栏最前，
+      // 那是「已取消」那一支才有的动作。send() 起这一轮时已经 syncActive 过，会话登记在案。
+      persist()
+    }
   }
   queueCancels.value = storeBag(queueCancels, key, { phase: 'requested' })
   note('取消已登记：这一轮不会再产出答案，落定之前界面继续读它的状态。', 'info')
