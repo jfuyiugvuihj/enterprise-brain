@@ -97,6 +97,104 @@ export function shouldReadUploadAgain(faces, ticksDone, maxTicks) {
   if (!list.length) return false
   return list.some(face => isUnsettledFace(face))
 }
+
+// ==================== 上传密级（R313 格一） ====================
+/**
+ * 默认值就是后端那一句 classification: int = Form(1)（app/api/v1/chat.py:3933）里的 1。
+ * 这一枚数字是「用户不动选择框」的唯一出口：表单带着 1 发出去，FastAPI 收到的分类与今天
+ * （前端压根不发这一枚字段、由 Form 默认补上 1）逐字相同 —— 落库行、检索判定都不变，零行为变化。
+ * 要挪这个默认只能连着后端那句一起挪：只改这里等于把默认悄悄换了位。
+ */
+export const DEFAULT_UPLOAD_CLASSIFICATION = 1
+
+/**
+ * 可选档位只放**今天真有人读得到**的那几档：1/2/3。出处是 app/common/rbac.py:31 的
+ * ROLE_CLEARANCE = {staff:1, manager:2, admin:3} —— 检索按「主语 clearance >= 文档密级」判可见，
+ * 所以上面这三档每一档都至少有一类账号看得见。
+ * 后端词表里还有第 4 档（policy.py:25 core），但今天没有任何角色的 clearance 够得着它：把它放上
+ * 下拉，等于让员工一键把自己的资料对全公司【含管理员】锁死，只剩 owner 通道能取回，而且界面上
+ * 没有任何一句话会告诉他这件事。放不放 4 档属密级口径，是业主的闸门（H13/U5），不是界面该替客户定的。
+ * 本屏也不给档位起名字 —— 3 级在后端同时对应 confidential 与 secret 两枚字面量，替客户挑一个名字
+ * 就是造假。下拉每一档显示的仍是 lib/provenance.js 的 classificationLabel 那一句「密级 N 级」，全站只有那一份措辞。
+ */
+export const UPLOAD_CLASSIFICATION_LEVELS = Object.freeze([1, 2, 3])
+
+/**
+ * 表单值归一：只有名单里的整数才发得出去。空串、NaN、越界、被人手改过的 DOM value 一律退回默认档，
+ * 免得把垃圾值写进 classification 那枚 NOT NULL 列 —— 后端不做白名单校验（它按 principal 判可见性），
+ * 界面这边不能跟着不设防。
+ */
+export function normalizeClassification(value) {
+  const level = Number(value)
+  return UPLOAD_CLASSIFICATION_LEVELS.includes(level)
+    ? level
+    : DEFAULT_UPLOAD_CLASSIFICATION
+}
+
+// ==================== 行内真值（R313 格三） ====================
+// 三句话读的全是 app/documents/catalog.py::public_document_row 随【每一行】发出的既有字段
+// （owner_id / size_bytes / parse_status），本格不为任何人多开一次请求，也不要求后端加字段。
+// 取不到就是取不到：那一格说「读不到」，不拿 0 B、不拿「无主」顶替。
+
+/** 没有可信读数时的说法。与上面 retrievalFace 的「读不到」同词，不在这里另立第二套。 */
+export const TRUTH_UNREADABLE_SUFFIX = '读不到'
+
+/**
+ * 归属人。后端把无主行记成 None（catalog.py 的 _is_unowned：None 或纯空白），legacy 行就是这个形状。
+ * 键【缺席】是另一件事：那是老部署只回一串文件名时本屏自己造的 { filename } 行，服务端压根没答过
+ * 归属，所以它不许被画成「无主」—— 那是一句关于数据的断言，而这一屏在那里没有断言的资格。
+ */
+export function ownerTruth(row) {
+  const source = row && typeof row === 'object' ? row : {}
+  if (!Object.prototype.hasOwnProperty.call(source, 'owner_id')) return '上传者' + TRUTH_UNREADABLE_SUFFIX
+  const raw = source.owner_id
+  const text = raw === null || raw === undefined ? '' : String(raw).trim()
+  return text ? `上传者 ${text}` : '上传者无主'
+}
+
+/**
+ * 「这一格有没有读数」只判一次。null / undefined / 空串 / 布尔 / 对象都不算数 —— 这里必须点名
+ * 一条 JavaScript 的坑：Number(null) 与 Number('') 都是 0，直接 Number() 一下就把「后端没给出大小」
+ * 画成了「0 B」，那是一句关于文件大小的假话（catalog.py::_resolved_size 返回的正是 int 或 None）。
+ */
+export function sizeNumber(value) {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value === 'boolean' || typeof value === 'object') return null
+  const size = Number(value)
+  return Number.isFinite(size) && size >= 0 ? Math.trunc(size) : null
+}
+
+/** 字节数成人话：分档尺子与 app/api/v1/data.py::_format_data_file_size 同一把（B / KB / MB，一位小数）。 */
+export function documentSizeLabel(bytes) {
+  const size = sizeNumber(bytes)
+  if (size === null) return ''
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export function sizeTruth(row) {
+  const source = row && typeof row === 'object' ? row : {}
+  const label = documentSizeLabel(source.size_bytes)
+  return label ? `大小 ${label}` : '大小' + TRUTH_UNREADABLE_SUFFIX
+}
+
+/**
+ * 这一版解析到哪一步。后端只有四个合法值（catalog.py 的 PARSE_STATUSES，migrations/0006 的 CHECK），
+ * 而 _normalise_parse_status 把「没记过」与认不出的值一并归成 pending —— 所以 pending 与键缺席都画
+ * 「读不到」：这一屏分不出「正在解析」与「这台机器从没记过这一列」，也就不许装成分得出来。
+ * 这条口径承接上面判据 2 已成的结论，不是本单新立的。
+ */
+export const VERSION_STAGE_LABEL = {
+  ready: '本版 解析完成',
+  parsing: '本版 解析中',
+  failed: '本版 解析失败',
+}
+
+export function stageTruth(row) {
+  const source = row && typeof row === 'object' ? row : {}
+  return VERSION_STAGE_LABEL[statusWord(source.parse_status)] || '本版 ' + TRUTH_UNREADABLE_SUFFIX
+}
 </script>
 
 <script setup>
@@ -107,12 +205,21 @@ import { UiButton, UiEmptyState, UiErrorState } from './ui'
 // 删除确认沿用本仓已有那一套两步内联状态机（ArtifactList.vue 的 advanceDelete，
 // DataPanel.vue 与 ChatPanel.vue 都是这么引的），不再新建第三套词汇。
 import { advanceDelete, deleteButtonLabel, isPendingDelete } from './ArtifactList.vue'
+// 密级这一格不自造措辞：整数级怎么说成人话，全站只有 lib/provenance.js 那一份口径
+// （classificationLabel：整数级就说「密级 N 级」，不替客户发明档位名字）。
+import { classificationLabel } from '../lib/provenance'
 
 // 列表存的是【行】而不是裸文件名：GET /documents/catalog 每一行都带着
 // index_status / index_reason（app/documents/catalog.py 的 public_document_row），
 // R49 判据②要的那张「未索引」脸只能从这两枚字段来。以前这里把行压成 filename 就丢掉
 // 了它们 —— 服务端答了，界面把答案扔了，用户上传被排除的那篇就此在库里查无此脸。
 const docs = ref([])
+// R313 格二 · 「有 N 份存在，但你看不见」那一格。读的是 GET /documents/catalog 成功体里的
+// restricted（app/api/v1/chat.py:4235；形状只出自 app/api/v1/restricted.py 那一份 —— R200）。
+// 后端早就把这句话发出来了，界面此前一个字都不提，权限不足的员工站在有资料的库里听到的仍是
+// 「知识库是空的」—— 那是会让人去重复上传、去找管理员的假话，不是措辞洁癖。
+// 这里只取 count 与 message 两格：restricted_summary 本来就不点名资源，界面这边一枚也不补。
+const restricted = ref(null)
 // 本面板自己的失败提示；401 不在这里判，统一交给 lib/http.js 的响应拦截。
 const notice = ref('')
 // notice 以前是一句话，外加一个不管发生什么都「重新加载列表」的按钮。
@@ -140,6 +247,60 @@ const props = defineProps({
 })
 const isAdmin = computed(() => props.userRole === 'admin')
 const searchQuery = ref('')
+// R313 格一 · 这一发上传按几级走。默认值与后端 chat.py 的 Form(1) 同值：不碰选择框 ⇒ 发出去的
+// 仍是 1 级，与今天（压根不发这一枚字段）等价。改它只影响改后拼出去的那几份表单：
+// 每一发读这一枚值的时刻在「建 FormData 那一刻」（见 uploadSingleFile），表单拼完之后再改下拉追不上它。
+const uploadClassification = ref(DEFAULT_UPLOAD_CLASSIFICATION)
+
+/**
+ * 密级这一格的说法只经由全站那一份 classificationLabel（lib/provenance.js:147：整数级就说「密级 N 级」，
+ * 不替客户发明档位名字）。它吃的是字符串（同文件 textOf 只认 string），所以这里补那一枚转换，
+ * 措辞一个字都不改；顺手把值归一，屏上说的与表单发的中间就没有第二条路。
+ */
+function classificationWords(level) {
+  return classificationLabel(String(normalizeClassification(level)))
+}
+
+/** 下拉里的每一档：文案走上面那一枚出口，本屏只负责把档位排出来。 */
+const classificationChoices = computed(() => UPLOAD_CLASSIFICATION_LEVELS.map(level => ({
+  value: level,
+  label: classificationWords(level),
+  isDefault: level === DEFAULT_UPLOAD_CLASSIFICATION,
+})))
+
+/** 选择框旁边那一句：只说这一屏真做得到的事。部门那一格归服务端（chat.py 的 docstring 明写理由）。 */
+const classificationNote = computed(() =>
+  `这一发按 ${classificationWords(uploadClassification.value)} 上传 · 部门由服务端按你的账号判定`)
+
+/**
+ * 后端在成功体里说「有 N 份文档存在，但不在当前账号的可见范围内」，界面此前一个字都不提。
+ * 计数只认正整数：restricted_summary 给的是 len(withheld)，界面上不许出现 NaN、负数或小数
+ * 冒充份数；拿不到正的数就当这一格不存在。这把尺与 DataPanel.vue 的 rowCount 同一条（R186 已成口径）。
+ */
+function restrictedCount(value) {
+  const count = Number(value)
+  return Number.isFinite(count) && count > 0 ? Math.trunc(count) : 0
+}
+
+/** message 缺席时的兜底句：句式与后端那一句同构，只是没有数（有数的时候一律用后端原句）。 */
+const RESTRICTED_DOCS_FALLBACK =
+  '有文档存在，但不在当前账号的可见范围内，所以没有出现在上面的列表里；如需访问，请联系管理员核对你的部门归属与文档的部门、密级标注。'
+
+/**
+ * 那一格的正脸：说「有 N 份存在但你看不见」，一个文件名都不点。
+ * 点名一件对方无权访问的文档本身就是泄露，后端那两份投影里也没有名字，界面这边一枚都不补。
+ * 形状照 DataPanel.vue:288 的 restrictedNotice，不另创第二套说法。
+ */
+const restrictedNotice = computed(() => {
+  const tally = restricted.value
+  const count = restrictedCount(tally && tally.count)
+  if (!count) return null
+  return {
+    count,
+    title: `还有 ${count} 份文档没有列在这里`,
+    description: String((tally && tally.message) || '') || RESTRICTED_DOCS_FALLBACK,
+  }
+})
 const preview = reactive({
   open: false,
   filename: '',
@@ -179,7 +340,10 @@ function createUploadItem(file) {
     phase: 'uploading',
     progress: 0,
     progressTimer: null,
-    msg: '正在上传...'
+    msg: '正在上传...',
+    // 队列项带得上「这一发实际带出去的那一档」，回执之后回看还在（R313 格一）。
+    // 初值就是后端 Form(1) 那一枚：uploadSingleFile 建表单时会按选择框改写它。
+    classification: DEFAULT_UPLOAD_CLASSIFICATION
   })
 }
 
@@ -229,9 +393,21 @@ const filteredDocs = computed(() => {
   return docs.value.filter(row => row.filename.toLowerCase().includes(q))
 })
 
+/**
+ * restricted 只按【形状】读：这一格只承认 count 与 message 两枚字段，别的一概不带进界面。
+ * 后端今天不给名字（restricted_summary 的注释明写「资源标识一个字节都不进返回体」），
+ * 界面这里再设一道：将来谁把投影改胖了，也带不出一串文件清单。
+ */
+function readRestricted(payload) {
+  if (!payload || typeof payload !== 'object') return null
+  return { count: payload.count, message: payload.message }
+}
+
 /** 返回值就是「这一发列表读到了没有」：轮询那一格要据此决定读不读得到状态。 */
 async function loadDocs() {
   dismissNotice()
+  // 上一轮那句「有 N 份看不见」不属于这一轮：重载先清，失败也清，不许留成陈话（与 DataPanel 同一条）。
+  restricted.value = null
   try {
     const res = await http.get('/documents/catalog', {
       params: { _ts: Date.now() }
@@ -240,8 +416,11 @@ async function loadDocs() {
     docs.value = (res.data.documents || [])
       .map(item => (typeof item === 'string' ? { filename: item } : item))
       .filter(row => Boolean(row && row.filename))
+    // 服务端这一腿答了「有 N 份你看不见」，界面就得说这句话；它没给就是真没有。
+    restricted.value = readRestricted(res.data.restricted)
     return true
   } catch (err) {
+    restricted.value = null
     console.error('文档列表加载失败', err)
     raiseNotice('文档列表没加载出来', errorDetail(err, '文档列表加载失败'), true)
     return false
@@ -314,12 +493,23 @@ async function uploadFilesParallel(files) {
   await loadDocs()
 }
 
+// 🔴 这两枚签名（uploadSingleFile(file) / createUploadItem(file)）钉在
+// tests/test_frontend_upload_auth.py:66-68 与 :99 那三枚字面量上（本单写集之外，一字未动）。
+// 密级这一格因此不走「多传一枚参数」，改成建表单那一刻现读选择框 —— 语义等价：JS 单线程，
+// uploadFilesParallel 的 map 会把每一发的表单在同一次同步执行里拼完，之后改下拉追不上已拼好的那几份。
 async function uploadSingleFile(file) {
   const item = createUploadItem(file)
   uploads.value.unshift(item)
   startProgressTimer(item)
   const form = new FormData()
   form.append('file', file)
+  // R313 格一：密级这一枚值【真发出去】。在这一行之前整个面板只有上面那一枚 append，所以后端
+  // 永远拿的是 Form(1) 那个默认 —— 上传人从没被问过一句，全库默认 1 级。
+  // 不碰选择框时这里发的就是同一枚 1：请求结果与今天相同（FastAPI 今天用 Form 默认补的那一枚也是 1）。
+  // 🔴 这里永远不 append department：app/api/v1/chat.py 那段 docstring 写明了理由 —— 检索按
+  // 【来问的人】的部门去匹配文档，客户端能挑部门就等于允许往别人的结果里投稿，服务端按 principal 自己定。
+  item.classification = normalizeClassification(uploadClassification.value)
+  form.append('classification', String(item.classification))
   try {
     const res = await http.post('/upload', form, {
       onUploadProgress: (event) => {
@@ -356,6 +546,22 @@ async function uploadSingleFile(file) {
 function onFileInput(e) {
   if (e.target.files.length) uploadFilesParallel([...e.target.files])
   e.target.value = ''
+}
+
+/**
+ * 密级这一格只有这一枚入口：DOM 交回来的永远是字符串（"3"），越界与垃圾一律走
+ * normalizeClassification 那道门退回默认档。所以「屏上显示的那一档」与「表单发出去的那一档」
+ * 中间不存在第二条路 —— 也就不会出现界面写着 3 级、请求里其实另有一枚值。
+ */
+function chooseClassification(value) {
+  uploadClassification.value = normalizeClassification(value)
+}
+
+/** 同一枚判据的 data-* 通道：没有读数就留空串，不写 0、也不写 "null" 这种看着像值的字符串。 */
+function sizeAttr(row) {
+  const source = row && typeof row === 'object' ? row : {}
+  const size = sizeNumber(source.size_bytes)
+  return size === null ? '' : String(size)
 }
 
 function onDrop(e) {
@@ -620,6 +826,27 @@ onDeactivated(stopUploadPoll)
       </label>
     </div>
 
+    <!-- R313 · 格一：上传时终于问一句密级。用原生 <select>（与 ChatPanel 那两枚选择框同一条规矩：
+         键盘 / 读屏 / 输入法行为不重新发明，也不新增色值）。默认档就是后端 Form(1) 的那一枚 1，
+         不动它 = 今天的行为。🔴 这一屏只有密级、没有部门：部门由服务端按 principal 判（chat.py 写明理由）。 -->
+    <div class="classification-bar" data-testid="document-classification-picker">
+      <label class="classification-label" for="document-classification-select">这一发的密级</label>
+      <select
+        id="document-classification-select"
+        class="classification-picker"
+        data-testid="document-classification-select"
+        :value="uploadClassification"
+        @change="chooseClassification($event.target.value)"
+      >
+        <option
+          v-for="choice in classificationChoices"
+          :key="choice.value"
+          :value="choice.value"
+        >{{ choice.label }}{{ choice.isDefault ? '（默认）' : '' }}</option>
+      </select>
+      <span class="classification-note" data-testid="document-classification-note">{{ classificationNote }}</span>
+    </div>
+
     <!-- 上传队列 -->
     <TransitionGroup name="queue">
       <div v-for="item in uploads" :key="item.id" :class="['upload-item', item.status]">
@@ -646,6 +873,8 @@ onDeactivated(stopUploadPoll)
           <div class="up-line">
             <span class="up-name">{{ item.name }}</span>
             <span class="up-msg">{{ item.status === 'uploading' ? (item.phase === 'processing' ? '解析入库中...' : '上传中...') : item.msg }}</span>
+            <!-- 这一发【实际带出去的】那一档：界面说的与表单发的是同一枚值，不是选择框现在的样子。 -->
+            <span class="up-class" data-testid="upload-item-classification">{{ classificationWords(item.classification) }}</span>
           </div>
           <div
             v-if="item.status === 'uploading' || item.status === 'done'"
@@ -714,8 +943,11 @@ onDeactivated(stopUploadPoll)
 
     <!-- 文档列表 -->
     <div class="doc-list" data-testid="document-list">
-      <UiEmptyState v-if="docs.length === 0" title="知识库是空的" description="上传公司制度、手册或数据开始" />
-      <UiEmptyState v-else-if="filteredDocs.length === 0" :title="noMatchTitle" dense />
+      <!-- R313 · 格二：「知识库是空的」只在【真的一枚都没有】时才许说出口。
+           后端在同一个成功体里另挂了 restricted（app/api/v1/chat.py:4235）=「有，但你看不见」，
+           那是与「没有」正相反的一句话，两句不许同时站在这块屏上（与 DataPanel 判据 1④ 同一条）。 -->
+      <UiEmptyState v-if="docs.length === 0 && !restrictedNotice" title="知识库是空的" description="上传公司制度、手册或数据开始" />
+      <UiEmptyState v-else-if="docs.length > 0 && filteredDocs.length === 0" :title="noMatchTitle" dense />
 
       <TransitionGroup name="list" tag="div">
         <div v-for="row in filteredDocs" :key="row.filename" data-testid="doc-row"
@@ -758,6 +990,15 @@ onDeactivated(stopUploadPoll)
             </div>
             <p v-if="isExcluded(row)" class="doc-index-reason" data-testid="doc-index-reason"
                :data-index-reason="row.index_reason || ''">{{ indexReasonText(row) }}；文件与目录记录均已保留。</p>
+            <!-- R313 · 格三：谁传的 / 多大 / 这一版到哪一步 —— 三句全读这一行已有的字段
+                 （public_document_row 的 owner_id、size_bytes、parse_status），不为这一格多发一次请求，
+                 也不要求后端加字段。裸值走 data-* 通道给测试与诊断，给人看的那一行只有中文。 -->
+            <p class="doc-truth" data-testid="doc-row-truth"
+               :data-owner-id="row.owner_id || ''"
+               :data-size-bytes="sizeAttr(row)"
+               :data-parse-status="row.parse_status || ''">
+              {{ ownerTruth(row) }} · {{ sizeTruth(row) }} · {{ stageTruth(row) }}
+            </p>
           </div>
           <div class="doc-actions">
             <UiButton
@@ -800,6 +1041,21 @@ onDeactivated(stopUploadPoll)
           </div>
         </div>
       </TransitionGroup>
+
+      <!-- R313 · 格二：那一腿服务端已经答了「有 N 份文档存在，但不在当前账号的可见范围内」
+           （restricted_summary，形状全站只此一份 —— R200），这一屏必须给它正脸。
+           句子用后端那一份原话，界面只补一个「没有列在这里」的标题；不点名任何一份文件 ——
+           点名一件对方无权访问的就是泄露，那两份投影里本来也没有名字。
+           列表有货时同样要说，所以它站在那条空态链之外单独一枚（同 DataPanel 的 data-files-restricted）。 -->
+      <UiErrorState
+        v-if="restrictedNotice"
+        :title="restrictedNotice.title"
+        :description="restrictedNotice.description"
+        :retryable="false"
+        :data-restricted-count="restrictedNotice.count"
+        data-testid="documents-restricted"
+        dense
+      />
     </div>
 
     <!-- 底栏统计 -->
@@ -1174,4 +1430,35 @@ onDeactivated(stopUploadPoll)
 /* 待确认那一档：取消与「无法恢复」并排，句子不给按钮文案让位。 */
 .batch-actions { display: flex; align-items: center; gap: 6px; }
 .batch-note { color: var(--legacy-ep-danger); font-size: 11px; }
+
+/* ===== 上传密级这一格（R313 格一） =====
+   色值只引 theme.css 里已有的 token（--muted / --surface-2 / --line-strong），本单不新增、
+   不改值：lint:colors 的 148 枚告警已顶满，多一枚就是违约（判据①）。
+   控件形状照 ChatPanel 的 .lane-picker（原生 select 已有先例，不新造一档控件高度）。 */
+.classification-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: 0 0 8px; font-size: 11px;
+}
+.classification-label { color: var(--muted); }
+.classification-picker {
+  font-family: inherit;
+  font-size: var(--t-xs);
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  padding: var(--s-1) 6px;
+}
+.classification-note { color: var(--muted); }
+
+/* ===== 行内真值那一行（R313 格三） =====
+   与 .doc-index-reason 同档（同色同字号），这一格是补白不是主角，不写 background：
+   浅色卡片棘轮（r151 的 LIGHT_BG_SITES=18）只准降，本单一枚都不给它添数。 */
+.doc-truth {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.up-class { flex-shrink: 0; font-size: 11px; }
 </style>
