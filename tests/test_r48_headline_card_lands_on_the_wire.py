@@ -29,6 +29,7 @@ import pytest
 
 from app.api.v1 import chat
 
+import tests._temp_edit_overlay as overlay      # R253: 反证窗的影子根（变异只落副本）
 from tests.test_sse_sources import (  # noqa: F401  -- 同一条链，不造第二份夹具
     FINANCE_DOC,
     HR_DOC,
@@ -418,44 +419,46 @@ def _run_r150_patterns(js_source, chat_source):
     return found
 
 
-# ==================== 判据 ⑤：反证（临时改文件 -> 具名用例红 -> 逐字节还原）====================
+# ==================== 判据 ⑤：反证（影子副本上落变异 -> 具名用例红 -> 被跟踪文件全程只读）====================
+
+#: 反证③ 前半那枚变异的两端：提到模块级，是为了 R253 的动态件复用**同一枚**变异，不抄第二份。
+C1_ANCHOR = '        "unauthorized_count": max(0, int(withheld)),'
+C1_MUTANT = C1_ANCHOR + "\n" + DQ + "fabricated_note" + DQ + ": " + DQ + "一线 500 元（手填示例值）" + DQ + ","
 
 
-class _TempEdit:
-    """按字节进出的一枚临时变异；退出时不论断言成败都还原，并留 sha 证据。"""
+class _TempEdit(overlay.ShadowEdit):
+    """一扇只改影子副本的反证窗（R253）：按字节进出、退出即还原视图，盘上那枚从头到尾只读。
+
+    骨架在 ``tests/_temp_edit_overlay.py``；本件留下的只有「变异是什么」：锚点唯一性与那行
+    ``里锚点不唯一（N 处）`` 的报错原文照旧。本件的反证要真跑码，所以 ``execs_module`` 开着——
+    窗内把影子字节 exec 进 ``app.api.v1.chat`` 那枚现有模块对象，退出再 exec 回盘上的字。
+    """
+
+    tag = "r48"
+    execs_module = True
 
     def __init__(self, path, edits):
-        self.path = path
+        super().__init__(path)
         self.edits = edits                      # [(old, new), ...] 每一枚锚点都必须唯一
-        self.info = {}
 
-    def __enter__(self):
-        raw = self.path.read_bytes().decode("utf-8")
-        self.info = {"before": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16], "raw": raw}
-        edited = raw
+    def mutate(self, text: str) -> str:
+        edited = text
         for old, new in self.edits:
             hits = edited.count(old)
             assert hits == 1, "%s 里锚点不唯一（%d 处）：%r" % (self.path.name, hits, old[:70])
             edited = edited.replace(old, new)
-        assert edited != raw
-        self.path.write_bytes(edited.encode("utf-8"))
-        return self.info
-
-    def __exit__(self, *_exc):
-        self.path.write_bytes(self.info["raw"].encode("utf-8"))
-        after = hashlib.sha256(self.path.read_bytes()).hexdigest()[:16]
-        self.info["after"] = after
-        self.info["restored"] = after == self.info["before"]
-        print("[r48] %s %s -> %s restored=%s" % (self.path.name, self.info["before"],
-                                                 after, self.info["restored"]))
-        return False
+        return edited
 
 
 def _reload():
-    """把 chat 模块按盘上的字重新装一遍：临时变异要能被跑到。"""
+    """把 chat 模块按**当前该算数的那份字节**重跑一遍：窗内是影子副本，窗外是盘上的被跟踪文件。
+
+    ``overlay.install_source`` 与 ``importlib.reload`` 同形：都在同一个模块对象的 ``__dict__``
+    上重跑码体，所以 ``from app.api.v1 import chat`` 的旧绑定一起看到新码，而被跟踪文件不开口。
+    """
     import tests.test_sse_sources as sources
 
-    importlib.reload(chat)
+    overlay.install_source(chat, overlay.authoritative_text(overlay.rel_of(CHAT_PY)), CHAT_PY)
     importlib.reload(sources)
     return sources
 
@@ -466,6 +469,9 @@ def test_counter_evidence_b_dropping_the_name_from_the_contract_turns_r156_red()
     🔴 摘的是**两处**（canonical 名单与发射表），不是只摘一处：r156 的 ``recorded`` 是这两处的
     并集，只摘一处会被另一处兜住、门照样绿。那正是「反证跑了却没红」的假形状，所以这里先把
     「只摘一处仍然绿」实量出来，再摘两处看它红——两半都是读数，不是叙述。
+
+    R253：变异只落影子副本，所以窗内要读的是 ``info.read_text()``；盘上那枚契约在窗里被逐字
+    比对一次（``== text``），它是只读的这件事实本身也算这枚反证的读数。
     """
     r156 = _r156()
     text = CONTRACT.read_bytes().decode("utf-8")
@@ -473,18 +479,19 @@ def test_counter_evidence_b_dropping_the_name_from_the_contract_turns_r156_red()
     table_anchor = BT + "request.cancelled" + BT + ", " + BT + EVENT + BT
 
     with _TempEdit(CONTRACT, [(canonical_anchor, "")]) as solo:
-        contract = r156.parse_contract(CONTRACT.read_bytes().decode("utf-8"))
-        scrape = r156.scrape_emission_surface(REPO / "app")
+        contract = r156.parse_contract(solo.read_text())
+        scrape = r156.scrape_emission_surface(overlay.view_root() / "app")
         assert EVENT not in contract["canonical"], "canonical 名单没被摘干净，反证无从谈起"
         assert EVENT in contract["recorded"], (
             "预期「只摘一处仍被发射表兜住」不成立了：发射表那一处也没记名，本枚反证要重看")
         r156.check_emitted_are_recorded(scrape, contract)      # 仍然绿——这就是只摘一处的代价
+        assert CONTRACT.read_bytes().decode("utf-8") == text, "盘上的契约在窗里被改过：影子根没接住"
     assert solo["restored"], "第一处变异没还原"
 
     with _TempEdit(CONTRACT, [(canonical_anchor, ""),
                               (table_anchor, BT + "request.cancelled" + BT)]) as info:
-        contract = r156.parse_contract(CONTRACT.read_bytes().decode("utf-8"))
-        scrape = r156.scrape_emission_surface(REPO / "app")
+        contract = r156.parse_contract(info.read_text())
+        scrape = r156.scrape_emission_surface(overlay.view_root() / "app")
         assert EVENT not in contract["recorded"], "两处都没摘干净，反证无从谈起"
         with pytest.raises(AssertionError) as exc:
             r156.check_emitted_are_recorded(scrape, contract)
@@ -500,19 +507,20 @@ def test_counter_evidence_c1_a_payload_key_nobody_named_turns_the_provenance_pin
     这一格要拦的形状很具体：往载荷里塞一句手填示例值，屏上就多出一格没有出处的读数，
     而它不需要改任何契约就能上屏——所以拦它的必须是对钉，不是契约门。
     """
-    anchor = '        "unauthorized_count": max(0, int(withheld)),'
-    patched = anchor + "\n" + DQ + "fabricated_note" + DQ + ": " + DQ + "一线 500 元（手填示例值）" + DQ + ","
+    tracked = hashlib.sha256(CHAT_PY.read_bytes()).hexdigest()[:16]
     try:
-        with _TempEdit(CHAT_PY, [(anchor, patched)]) as info:
+        with _TempEdit(CHAT_PY, [(C1_ANCHOR, C1_MUTANT)]) as info:
             sources = _reload()
             body = sources.drive(monkeypatch, tmp_path,
                                  [sources.doc_state(sources.fake_retriever_hits())],
                                  sources.finance_principal())
             data = _one_card(body)["data"]
-            assert "fabricated_note" in data, "变异没跑到盘上的码：这枚反证是空的"
+            assert "fabricated_note" in data, "变异没跑到影子副本的码：这枚反证是空的"
             with pytest.raises(AssertionError) as exc:
                 _check_payload_keys(data)
             assert "fabricated_note" in str(exc.value), str(exc.value)
+            assert hashlib.sha256(CHAT_PY.read_bytes()).hexdigest()[:16] == tracked, (
+                "被跟踪的 chat.py 在反证窗里被改过：影子根没接住变异")
             print("[r48] 反证③ 前半 实际报错原文：", str(exc.value))
     finally:
         _reload()

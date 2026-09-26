@@ -17,7 +17,7 @@ import，一个字不改——与 R203 同一分工，「不许改量具」）�
   A 非流式的一轮（一帧收尾）：加卡与摘卡逐位相同，且评分尺那格今天本就是 False。
   B 正文道载荷闭集：每一枚 ``text`` 帧的键必须落在既有六枚之内，卡片那几格不许从侧门混进来。
   C R210 那两条形状（真流片轮 / 半路断流轮）：同样逐位相同。
-  D 反证 ①：把发射点就地改成 ``text_sse_frame(第一枚来源文件名)``、终答以它开头 ——
+  D 反证 ①：把发射点整段换成 ``text_sse_frame(第一枚来源文件名)``、终答以它开头 ——
      A 那枚钉必须**当场变红**（红在帧账数字上），而尺子自己那格必须**当场变绿**。
      两件事同时发生才叫假绿，本枚把两份读数与报错原文都留在记录里。
 
@@ -313,11 +313,12 @@ def test_d1_counter_evidence_a_card_sent_as_text_turns_this_pin_red(monkeypatch,
     「卡片动了帧账」，绿的那一枚是尺子自己那格 ``criterion_two_holds``。
     """
     answer = FINANCE_DOC + "：一线城市住宿费为每晚 500 元，凭发票据实报销。"
+    tracked = _CHAT_PY.read_bytes()                  # 判据①的现场取证：被跟踪文件全程只读
     try:
         with _TempEdit(_CHAT_PY, [(_crlf(CALL_ANCHOR), _crlf(CALL_MUTANT))]) as info:
             sources = _reload()
             with_card = _mutated_round(sources, monkeypatch, tmp_path, answer)
-            # 摘卡那一遍摘的就是盘上那份新码：``importlib.reload`` 就地改写同一个模块对象。
+            # 摘卡那一遍摘的就是影子副本那份新码：变异 exec 在同一个模块对象上，身份没换。
             restore = suppress_card(chat)
             try:
                 without_card = _mutated_round(sources, monkeypatch, tmp_path, answer)
@@ -339,12 +340,13 @@ def test_d1_counter_evidence_a_card_sent_as_text_turns_this_pin_red(monkeypatch,
                       readings["missing_chars"], ruler._frame_verdict(readings)))
             assert ruler._frame_verdict(readings) is True, readings
             assert not cards_in(with_card), "变异后仍按卡片事件名发：那改法没生效"
-        assert info["restored"], "临时变异没还原"
+        assert info["restored"], "被跟踪的 chat.py 没保持原样"
     finally:
-        # 🔴 顺序是这枚反证的一半：``_TempEdit.__exit__`` 先把盘上的字还原，这里才重载模块。
-        # 反过来写（在 with 里面 reload）会把变异后的码永久留在 sys.modules 里，同批那十枚
-        # 用例接着就红在无关格上——这是本班实际踩过的一枚污染，留成注释当路标。
+        # 🔴 顺序是这枚反证的一半：``_TempEdit.__exit__`` 先把模块 exec 回盘上的字、还原视图，
+        # 这里才把夹具再重载一遍。反过来写（在 with 里面 reload）会把变异后的码留在内存里，
+        # 同批那十枚用例接着就红在无关格上——这是本班实际踩过的一枚污染，留成注释当路标。
         _reload()
+    assert _CHAT_PY.read_bytes() == tracked, "被跟踪的 chat.py 在窗里被改过：影子根没接住变异"
     assert _CHAT_PY.read_bytes().decode("utf-8").count(_crlf(CALL_ANCHOR)) == 1, "发射点没回到原样"
 
 

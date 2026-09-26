@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 
+import tests._temp_edit_overlay as overlay      # R253: 反证窗的影子根（变异只落副本）
+
 REPO = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = REPO / "docs" / "api" / "contract-v1.md"
 SSE_HEADING = "## SSE Events"
@@ -375,10 +377,12 @@ def check_row_fields_match_their_qualifiers(module_text: str, contract: dict) ->
 
 
 def _state() -> tuple:
-    contract = parse_contract(_read_text(CONTRACT_PATH))
-    scrape = scrape_emission_surface(REPO / "app")
-    sites = payload_key_sets_from_code(REPO / "app", contract["payload_event"])
-    module_text = (REPO / sites[0][0]).read_text(encoding="utf-8")
+    """窗外读盘上的真身，窗内读影子根（R253）：同一份解析代码，两种视图。"""
+    root = overlay.view_root()
+    contract = parse_contract(_read_text(root / "docs" / "api" / "contract-v1.md"))
+    scrape = scrape_emission_surface(root / "app")
+    sites = payload_key_sets_from_code(root / "app", contract["payload_event"])
+    module_text = (root / sites[0][0]).read_text(encoding="utf-8")
     return contract, scrape, sites, module_text
 
 
@@ -471,45 +475,39 @@ def test_this_file_adds_no_skip_and_no_xfail():
     assert not hits, "本件里出现了 skip/xfail：%s" % hits
 
 
-# ==================== 判据⑤：反证（临时改文件 -> 具名用例红 -> finally 逐字节还原） ====================
+# ==================== 判据⑤：反证（影子副本上落变异 -> 具名用例红 -> 被跟踪文件全程只读） ====================
 
 
-class _TempEdit:
-    """按字节进出的一枚临时变异；退出时不论断言成败都还原，并留 sha 证据。"""
+class _TempEdit(overlay.ShadowEdit):
+    """一扇只改影子副本的反证窗（R253）：按字节进出、退出即还原视图，盘上那枚从头到尾只读。
+
+    骨架在 ``tests/_temp_edit_overlay.py``；本件留下的只有「变异是什么」与它那三格读数——
+    锚点唯一性、行号核对、报错原文的措辞全部照旧，摘掉守卫会红的那一格还在同一格红。
+    """
+
+    tag = "r156"
 
     def __init__(self, path: Path, old: str, new: str, every: bool = False,
                  line: int | None = None):
-        self.path = path
+        super().__init__(path)
         self.old = old
         self.new = new
         self.every = every
         self.line = line
-        self.info: dict = {}
 
-    def __enter__(self):
-        raw = self.path.read_bytes().decode("utf-8")
-        self.info = {"before": hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16], "raw": raw}
+    def mutate(self, text: str) -> str:
+        """把本件那三种改法算成一份新字节：整片替换、逐枚替换、按行替换。"""
         if self.line is None:
-            n = raw.count(self.old)
+            n = text.count(self.old)
             assert n >= 1, "%s 里找不到待改的锚：%r" % (self.path.name, self.old[:60])
-            edited = raw.replace(self.old, self.new) if self.every else raw.replace(self.old, self.new, 1)
-        else:
-            rows = raw.split("\n")
-            row = rows[self.line - 1]
-            assert self.old in row, ("{} 第 {} 行里没有待改的锚：{}" % (self.path.name, self.line, self.old[:60]))
-            rows[self.line - 1] = row.replace(self.old, self.new, 1)
-            edited = "\n".join(rows)
-        assert edited != raw
-        self.path.write_bytes(edited.encode("utf-8"))
-        return self.info
-
-    def __exit__(self, *exc):
-        self.path.write_bytes(self.info["raw"].encode("utf-8"))
-        after = sha256_of(self.path)
-        self.info["after"] = after
-        self.info["restored"] = after == self.info["before"]
-        print("[r156] %s %s -> %s restored=%s" % (self.path.name, self.info["before"], after, self.info["restored"]))
-        return False
+            return text.replace(self.old, self.new) if self.every \
+                else text.replace(self.old, self.new, 1)
+        rows = text.split("\n")
+        row = rows[self.line - 1]
+        assert self.old in row, ("%s 第 %d 行里没有待改的锚：%s" % (self.path.name, self.line,
+                                                                   self.old[:60]))
+        rows[self.line - 1] = row.replace(self.old, self.new, 1)
+        return "\n".join(rows)
 
 
 def _first_sink_site(scrape: dict) -> tuple:
@@ -552,12 +550,14 @@ def test_counter_evidence_a_renamed_emission_turns_the_forward_pin_red():
     name, rel, lineno, callee = _first_sink_site(scrape)
     path = REPO / rel
     old, new, edit_line, probe = _rename_anchor(path, name, lineno, callee)
+    tracked = sha256_of(path)                    # 判据①的现场取证：窗开后盘上的字一个不许变
     with _TempEdit(path, old, new, line=edit_line) as info:
         contract2, scrape2, _, _ = _state()
         with pytest.raises(AssertionError) as exc:
             check_emitted_are_recorded(scrape2, contract2)
         assert probe in str(exc.value), str(exc.value)
-    assert info["restored"], "临时变异没还原：%s" % info
+        assert sha256_of(path) == tracked, "被跟踪的文件在反证窗里被改过：影子根没接住变异"
+    assert info["restored"], "被跟踪的文件没保持原样：%s" % info
     assert info["before"] == info["after"]
 
 
