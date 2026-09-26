@@ -1917,3 +1917,87 @@ never report a cleaner queue).
 The auth gate is unchanged: `401 authentication_required` and `403 permission_denied`
 bodies carry no counts, and neither document column is readable through them.
 
+
+## Moving an account between departments: `PUT /api/v1/users/department` (2026-09-26, R290)
+
+Until today an account's department could only be changed by deleting and recreating the account
+(`POST /api/v1/users` is the only other writer of that column). This route is the missing writer.
+It is gated server-side on `users:manage` (`ACTION_MANAGE_USERS`) and it **has no self-service
+exemption** - unlike `PUT /api/v1/users/password`, which lets a caller change their own password,
+this one refuses even when `body.username` equals the caller. That asymmetry is deliberate:
+department is an authorization input, a password is not.
+
+### Request body `UpdateDepartmentRequest`
+
+- `username` *string* - required. The **target** account, not the caller.
+- `department` *string | null* - optional, and absence is not the same as an empty string:
+  1. **absent or `null`** - nothing is written, the response says `changed: false`. A dropped
+     field must never read as "clear this person's belonging".
+  2. **`""`** (whitespace-only folds to the same) - explicitly clear the belonging. PostgreSQL
+     stores `NULL`, the in-memory table stores `""`, matching `POST /api/v1/users` and
+     `migrations/0003_legacy_runtime_tables.sql`.
+  3. **non-empty string** - trimmed, then written.
+
+There is no dictionary of legal departments: values are free text, exactly as in `create_user`.
+A typo therefore creates a brand-new empty scope rather than failing loudly - recorded in 跟进单
+as an open product decision, not a defect this route fixes.
+
+### `200`
+
+`{"status":"ok","username":string,"department":string,"changed":boolean,"message":string}`
+
+`department` is the effective value after the call (`""` when cleared); `changed` reports whether
+this call actually moved the value.
+
+### Errors (verbatim `detail` strings, no new wording invented)
+
+| status | body | who can see it |
+| --- | --- | --- |
+| 401 | `{"detail":"authentication_required"}` | everyone |
+| 403 | `{"detail":"权限不足: users:manage (permission_denied)"}` | any caller without `users:manage`, **including a caller naming themselves** |
+| 404 | `{"detail":"用户不存在"}` | only a caller who already holds the gate |
+
+The gate runs before validation and before existence lookup, so a staff member probing whether an
+account exists receives 403 and learns nothing (`tests/test_r290_department_endpoint.py`).
+
+### Audit
+
+One `app.common.audit.record_audit` line per write, same five positional arguments and shape as
+`app/api/v1/artifacts.py`: `action="users:manage"`, `resource="users:<username>"`, success as
+`outcome="allowed"` / `reason="department_updated"` carrying `before_summary` and
+`after_summary` `{"department": ...}`; a missing account as `outcome="failure"` /
+`reason="user_not_found"`. Refusals are booked by the existing gate
+(`app/common/authorization.py`), not by a second path invented here.
+
+### What clearing a department actually does (the frontend must copy this, not guess)
+
+Clearing is locking someone out, not widening their boundary. A non-administrator with no
+department: is refused the whole retrieval path (`app/rag/filters.py` returns
+`authorization_unavailable`), cannot produce artifacts (`app/storage/artifacts.py` refuses), and
+fails every department-scoped resource check as `resource_scope_missing`
+(`app/common/policy.py`). Administrators are unaffected (`administrator_scope`).
+
+### Registered, not fixed (three residuals found while writing this route)
+
+1. 🔴 **The queued-task payload carries a `Principal` snapshot.** `app/api/v1/chat.py` enqueues
+   `principal.model_dump(mode="json")` and `deploy/queue_worker.py` reconstructs the Principal
+   from that snapshot, so a turn enqueued *before* the move still runs with the *old* department's
+   scope. Either the payload stores only `user_id` and the worker re-reads the Principal, or
+   `department` joins the payload fingerprint and the entry goes stale. Measured offline:
+   queue-time `市场部` vs live row `研发部` vs consumption-time scope `['市场部']`.
+2. 🔴 **Session history is returned by owner only.** `GET /api/v1/sessions/{id}` filters on
+   `is_owned_by` and nothing else, so answers produced under the old department (including their
+   document citations) stay readable after the move. Either the session records a department
+   dimension or the read-back re-checks `scope.allows`.
+3. 🔴 **A second, self-writable copy of `department` exists.** `app/memory/profile.py`
+   **overrides** the authoritative value from `users` with `user_profiles.department`, and
+   `PUT /api/v1/profile` is self-service; `app/agents/nodes.py` then splices it into the model
+   context. So after an administrator moves someone, `GET /profile` and the prompt still report the
+   old department - and an employee can self-report an arbitrary department string into their own
+   prompt. `user_profiles` is not an authorization input (`Principal` reads `users`), which is why
+   this is a labelling/prompt defect rather than a privilege escalation, and why it needs its own
+   ticket.
+
+None of the three is fixed here: the cache, session and profile layers belong to other write
+domains. Verification status: the PostgreSQL branch is pinned with a fake table that recognises
+exactly the one new `UPDATE`; a live-PostgreSQL run is still outstanding on this machine.

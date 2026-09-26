@@ -198,8 +198,8 @@ def _retry_readiness_probe() -> bool:
     探针与 `_get_conn()`，而后者那一枚长在 `if not _db_ready` 里，要走到它必须先过开头的
     `if _using_memory_store(): return _FakeConn()`，后者恰在 `_db_ready` 为假时为真 ⇒ 那一格
     恒不可达（R246 已把这段死码连同 `global` 删掉：今天运行期只有本函数一处置真）。生产里
-    `_memory_store_denied` 又抢在 `_get_conn()` 之前挡住 7 枚鉴权入口，于是"PG 还在恢复"那一刻起
-    每一发鉴权都被拒且没有重探通路，直到有人重启进程——这一枚就是缺的那条通路。
+    `_memory_store_denied` 又抢在 `_get_conn()` 之前挡住鉴权入口（R230 当年 7 枚，R290 起 8 枚），于是
+    "PG 还在恢复"那一刻起每一发鉴权都被拒且没有重探通路，直到有人重启进程——这一枚就是缺的那条通路。
 
     三条硬约束，逐条有钉（`tests/test_r230_db_ready_selfheal.py`）：
     (a) 有界：两次重探之间至少隔 `_READY_PROBE_INTERVAL_SECONDS`，且"本窗口已探过"
@@ -665,3 +665,41 @@ def change_password(username: str, old_password: str, new_password: str) -> tupl
         conn.execute("UPDATE users SET password_hash = %s WHERE username = %s", (hsh, username))
         conn.commit()
     return True, "密码已更新"
+
+
+USER_NOT_FOUND = "用户不存在"
+
+
+def update_department(username: str, department: str | None) -> tuple[bool, str]:
+    """Move one account to ``department``; ``None`` clears the 归属.
+
+    与 ``create_user`` 同一口径，两条都是现取的，不是抄来的：
+
+    * ``department=None`` 在 PG 里落 **NULL**（``migrations/0003_legacy_runtime_tables.sql:10``
+      的 ``department TEXT`` 既可空也无默认），``create_user`` 那支也写 ``data.department or
+      None``（``app/api/v1/auth.py:98``）；内存表没有 NULL，落空串，两边读出来是同一件事。
+    * 读侧把 NULL 与 "" 一律读成空串（``app/agents/contracts.py:38``），所以"无归属"只有
+      一种表现，不需要本函数再区分。
+
+    本函数**只按 username 定位单行**，不提供任何批量形状：R20 从测试里删掉的 ``LIKE``
+    扫荡不许从生产侧长回来（``tests/test_auth.py:382`` 还钉着那一句）。
+    """
+    if not username:
+        return False, "用户名不能为空"
+    if _memory_store_denied("department change"):
+        return False, "production_user_store_unavailable"
+    if _using_memory_store():
+        row = _MEM_USERS.get(username)
+        if row is None:
+            return False, USER_NOT_FOUND
+        row["department"] = department or ""
+        return True, "部门已更新"
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE users SET department = %s WHERE username = %s",
+            (department, username),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return False, USER_NOT_FOUND
+    return True, "部门已更新"

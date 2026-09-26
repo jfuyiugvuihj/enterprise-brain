@@ -133,13 +133,13 @@ def no_real_driver_connect(monkeypatch):
 
 # ------------------------------------------------------------------ 判据 1 的读数
 def test_call_site_counts_are_pinned():
-    """`_raw_conn` 直接调用点 2 枚、`_get_conn` 调用点 7 枚 —— 选路的依据钉死在这里。
+    """`_raw_conn` 直接调用点 2 枚、`_get_conn` 调用点 8 枚 —— 选路的依据钉死在这里。
 
     修前：`_raw_conn()` = import 探针 + `_get_conn()`；修后仍是 2 枚，只是第二枚挪进了
-    `_connect_for_request`（它只做一件事：调 `_raw_conn()`）。`_get_conn()` 那 7 枚调用者
+    `_connect_for_request`（它只做一件事：调 `_raw_conn()`）。`_get_conn()` 那 8 枚调用者
     = verify_password / list_users / create_user / get_user / upsert_sso_user /
-    delete_user / change_password，即"每个鉴权动作一条新连接"。数不一致就说明代码变了
-    形而注释还在撒谎，两者都算红。
+    delete_user / change_password / update_department（R290 的归属写口），即"每个
+    鉴权动作一条新连接"。数不一致就说明代码变了形而注释还在撒谎，两者都算红。
     """
     source = io.open(auth.__file__, encoding="utf-8").read()
     tree = ast.parse(source)
@@ -152,7 +152,7 @@ def test_call_site_counts_are_pinned():
             elif name == "_get_conn":
                 get_conn_calls += 1
     assert raw_calls == 2, f"_raw_conn 直接调用点应为 2 枚，实测 {raw_calls}"
-    assert get_conn_calls == 7, f"_get_conn 调用点应为 7 枚，实测 {get_conn_calls}"
+    assert get_conn_calls == 8, f"_get_conn 调用点应为 8 枚，实测 {get_conn_calls}"
 
 
 # -------------------------------------------------------------- 判据 2 乙案主钉

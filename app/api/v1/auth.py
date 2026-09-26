@@ -1,6 +1,7 @@
 """Day 19: 登录 + 用户管理 API"""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from app.common import audit as audit_log
 from app.common import auth
 from app.common.authorization import authorize_request, principal_from_request
 from app.common.permissions import ACTION_MANAGE_USERS
@@ -26,6 +27,13 @@ class ChangePasswordRequest(BaseModel):
     username: str
     old_password: str
     new_password: str
+
+
+class UpdateDepartmentRequest(BaseModel):
+    """``department`` 缺席/为 null = 「这轮没说」，显式空串 = 「清空归属」。"""
+
+    username: str
+    department: str | None = None
 
 
 class UpdateProfileRequest(BaseModel):
@@ -124,6 +132,76 @@ async def change_password(data: ChangePasswordRequest, request: Request):
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"status": "ok", "message": msg}
+
+
+# R290: 部门归属的写入口。形状照上一支（PUT /users/password，body 里带 username），
+# 闸**不**照它抄 —— 见下面的 docstring，这一格差别就是本单存在的理由。
+@router.put("/users/department")
+async def update_user_department(data: UpdateDepartmentRequest, request: Request):
+    """改一名员工的部门归属；只有 ``users:manage`` 改得动，本人改自己也一样拒。
+
+    为什么不能自助（本单最重要的判据）：``app/common/authorization.py:47`` 造 Principal
+    取的就是 ``users`` 这一行的 ``department``，而这一列正是切数据范围的那把尺——
+    ``app/common/policy.py:204`` 的资源面与 ``app/rag/filters.py:130`` 的检索面都按它比。
+    ``PUT /users/password`` 那半条 ``data.username != principal.username`` 的自助豁免
+    （本文件 ``:129``）搬到部门上，等于任何员工一发请求就横向拿到别的部门的文档与数据。
+    所以这里没有 "本人" 这一支：闸只问权限，不问是不是自己。
+
+    无归属（清空）意味着什么也是现取的，不是推测：非管理员一旦 ``department`` 为空，
+    ``app/rag/filters.py:135`` 直接 ``authorization_unavailable`` 拒掉整条检索，
+    ``app/storage/artifacts.py:537`` 拒绝产出物，``app/common/policy.py:206`` 对任何带
+    部门的资源都判 ``resource_scope_missing``——清空是把人关到门外，不是放开边界。
+    """
+    authorize_request(request, ACTION_MANAGE_USERS, resource_name="users")
+    principal = principal_from_request(request)
+
+    target = auth.get_user(data.username)
+    if target is None:
+        # 账号不存在也要留痕：有人拿别人的用户名为探针试这扇门，是本仓 R163 那族账在记的事。
+        audit_log.record_audit(
+            principal,
+            ACTION_MANAGE_USERS,
+            "failure",
+            f"users:{data.username}",
+            "user_not_found",
+        )
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    before = str(target.get("department") or "")
+    if data.department is None:
+        # 「漏传字段」不等于「清空归属」：一个前端少发了一个 select，就把人从部门里踢出去、
+        # 连带把检索与产出物全关掉，是本单要钉死的反面。这一支一个字都不写。
+        return {
+            "status": "ok",
+            "username": data.username,
+            "department": before,
+            "changed": False,
+            "message": "未提供 department，归属保持不变",
+        }
+
+    after = data.department.strip()
+    ok, msg = auth.update_department(data.username, after or None)
+    if not ok:
+        if msg == auth.USER_NOT_FOUND:
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+
+    audit_log.record_audit(
+        principal,
+        ACTION_MANAGE_USERS,
+        "allowed",
+        f"users:{data.username}",
+        "department_updated",
+        before_summary={"department": before},
+        after_summary={"department": after},
+    )
+    return {
+        "status": "ok",
+        "username": data.username,
+        "department": after,
+        "changed": after != before,
+        "message": msg,
+    }
 
 
 @router.post("/sso/login")

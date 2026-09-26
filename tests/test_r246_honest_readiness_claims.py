@@ -13,7 +13,7 @@
    顺带钉住"不许把建表挪到请求路径上"（那是产品行为变更，本单明令不做）。
 2. `test_get_conn_still_shields_the_memory_branch_first` / `test_the_selection_counts_...`
    （判据 1 的"行为零变化"半边）：正面复算 `tests/test_r229_connect_retry.py:155`（调用点
-   `_raw_conn` 2 枚 / `_get_conn` 7 枚）与 `:292`（未就绪时返回 `_FakeConn`）、
+   `_raw_conn` 2 枚 / `_get_conn` 8 枚（R290 加了第 8 枚）与 `:292`（未就绪返回 `_FakeConn`）、
    `tests/test_r230_db_ready_selfheal.py:522`（`_get_conn` 翻不了这枚旗）各自判的那件事，
    证明本单的删除没改变它们，而不是只喊"全绿"。
 3. `test_the_two_lies_are_gone_from_the_source` + `test_probe_failure_warning_...` +
@@ -307,7 +307,7 @@ def test_the_selection_counts_the_r229_nail_pins_still_hold():
     """正面复算 `tests/test_r229_connect_retry.py:155` 判的那件事：选路依据一枚没动。
 
     `_raw_conn()` 仍是 2 枚（import 探针 + `_connect_for_request` 内部）、`_get_conn()` 的调用点
-    仍是 7 枚。本单唯一改动的计数是 `_create_schema` 的调用点 3 → 2（死掉的那一枚），函数本体照旧
+    仍是 7 枚（R290 之后为 8 枚：新增 `update_department` 那支归属写口走同一条选路）。本单唯一改动的计数是 `_create_schema` 调用点 3 → 2，函数本体照旧
     留在文件里——`tests/test_bootstrap_admin.py` 十处以上直接调它，删不得。
     """
     tree = ast.parse(_auth_source())
@@ -319,7 +319,7 @@ def test_the_selection_counts_the_r229_nail_pins_still_hold():
             get += name == "_get_conn"
             schema += name == "_create_schema"
 
-    assert (raw, get) == (2, 7), f"选路计数漂移，R229 的判据就塌了：_raw_conn={raw} _get_conn={get}"
+    assert (raw, get) == (2, 8), f"选路计数漂移，R229 的判据就塌了：_raw_conn={raw} _get_conn={get}"
     assert schema == 2, f"`_create_schema` 调用点应为 2 枚（import 探针 + R230 重探），实测 {schema}"
     assert any(
         isinstance(node, ast.FunctionDef) and node.name == "_create_schema" for node in tree.body
