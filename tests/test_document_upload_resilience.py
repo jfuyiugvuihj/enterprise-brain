@@ -34,7 +34,7 @@ def test_upload_enforces_size_limit_and_removes_partial_file(tmp_path, monkeypat
     monkeypatch.setattr(chat, "MAX_DOCUMENT_UPLOAD_BYTES", 4)
     monkeypatch.setattr(chat, "retriever", FakeRetriever())
     monkeypatch.setattr(chat, "peek_next_document_version", lambda filename: 1)
-    monkeypatch.setattr(chat, "load_document", lambda path: "document content")
+    monkeypatch.setattr(chat, "load_document", lambda path, display_name=None: "document content")
     monkeypatch.setattr(chat, "catalog_database_available", lambda: False)
     monkeypatch.setattr(tools, "rebuild_bm25", lambda: None)
 
@@ -99,7 +99,7 @@ def test_upload_keeps_document_when_optional_metadata_store_is_down(tmp_path, mo
     monkeypatch.setattr(chat, "DOCUMENTS_DIR", str(tmp_path))
     monkeypatch.setattr(chat, "retriever", FakeRetriever())
     monkeypatch.setattr(chat, "peek_next_document_version", lambda filename: 1)
-    monkeypatch.setattr(chat, "load_document", lambda path: "document content")
+    monkeypatch.setattr(chat, "load_document", lambda path, display_name=None: "document content")
     monkeypatch.setattr(chat, "_upsert_document", lambda *args: (_ for _ in ()).throw(RuntimeError("db down")))
     monkeypatch.setattr(chat, "record_document_version", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("db down")))
     monkeypatch.setattr(tools, "rebuild_bm25", lambda: None)
@@ -117,7 +117,10 @@ def test_upload_moves_blocking_parsing_and_indexing_off_the_event_loop():
 
     source = (Path(__file__).resolve().parents[1] / "app" / "api" / "v1" / "chat.py").read_text(encoding="utf-8")
 
-    assert "await asyncio.to_thread(load_document, file_path)" in source
+    # R306 施工口四：这一格钉的是「阻塞的解析必须离开事件循环」，换绑到新的那一行原文上。
+    # 标准没降：新串是旧串的超集（同一个 to_thread、同一枚 load_document、同一个 file_path），
+    # 只是多钉了 `display_name=` 这一格——把它摘掉本件同样红。
+    assert "await asyncio.to_thread(load_document, file_path, display_name=inspection.display_filename)" in source
     assert "await asyncio.to_thread(" in source
 
 
@@ -141,7 +144,7 @@ def test_upload_schedules_bm25_rebuild_without_waiting_for_it(tmp_path, monkeypa
     monkeypatch.setattr(chat, "DOCUMENTS_DIR", str(tmp_path))
     monkeypatch.setattr(chat, "retriever", FakeRetriever())
     monkeypatch.setattr(chat, "peek_next_document_version", lambda filename: 1)
-    monkeypatch.setattr(chat, "load_document", lambda path: "document content")
+    monkeypatch.setattr(chat, "load_document", lambda path, display_name=None: "document content")
     monkeypatch.setattr(chat, "catalog_database_available", lambda: False)
     monkeypatch.setattr(chat, "_executor", executor)
 
@@ -195,7 +198,7 @@ def test_upload_skips_optional_metadata_sync_when_postgres_is_offline(tmp_path, 
     monkeypatch.setattr(chat, "DOCUMENTS_DIR", str(tmp_path))
     monkeypatch.setattr(chat, "retriever", FakeRetriever())
     monkeypatch.setattr(chat, "peek_next_document_version", lambda filename: 1)
-    monkeypatch.setattr(chat, "load_document", lambda path: "document content")
+    monkeypatch.setattr(chat, "load_document", lambda path, display_name=None: "document content")
     monkeypatch.setattr(chat, "catalog_database_available", lambda: False, raising=False)
     monkeypatch.setattr(chat, "_upsert_document", unexpected_metadata_sync)
     monkeypatch.setattr(chat, "record_document_version", unexpected_metadata_sync)
@@ -272,7 +275,7 @@ def test_upload_returns_clear_error_when_pdf_parse_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(chat, "DOCUMENTS_DIR", str(tmp_path))
     monkeypatch.setattr(chat, "peek_next_document_version", lambda filename: 1)
     monkeypatch.setattr(chat, "build_storage_name", lambda filename, version: f"{Path(filename).stem}__v{version}.pdf")
-    monkeypatch.setattr(chat, "load_document", lambda path: (_ for _ in ()).throw(ValueError("boom")))
+    monkeypatch.setattr(chat, "load_document", lambda path, display_name=None: (_ for _ in ()).throw(ValueError("boom")))
 
     upload = UploadFile(filename="policy.pdf", file=io.BytesIO(b"%PDF-1.4 test"))
 

@@ -4002,7 +4002,7 @@ async def upload_document(file: UploadFile = File(...),
             extraction = await asyncio.to_thread(extract_document_with_reports, file_path)
             content = extraction.text
         else:
-            content = await asyncio.to_thread(load_document, file_path)
+            content = await asyncio.to_thread(load_document, file_path, display_name=inspection.display_filename)
     except Exception as exc:
         logger.exception(f"[Docs] parse failed: {file.filename}")
         # The stored file and its catalog row are kept on purpose. A version that

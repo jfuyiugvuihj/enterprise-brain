@@ -1247,13 +1247,21 @@ Redis cannot be reached. `GET /api/v1/queue/status/{request_id}`,
 `POST /api/v1/queue/{request_id}/cancel` and `GET /api/v1/queue/stats` are the only queue
 routes.
 
-`POST /api/v1/upload` now accepts exactly the four extensions that the parser can read:
-`pdf`, `txt`, `md`, `docx`. `.xlsx` and `.csv` were removed from the knowledge-base whitelist
-because they passed the header check, were written to storage, were deleted again by the
-parse-failure handler, and surfaced as an HTTP 500. Spreadsheets are datasets and keep using
-`POST /api/v1/upload-excel`, which has its own filename, permission and conflict rules (see
-`Dataset File Delivery`) and does not share the document whitelist. An unsupported extension
-is now rejected before any byte is written, as `400` whose `detail` is exactly the stable code
+`POST /api/v1/upload` accepts exactly the extensions that the parser can read. As of S5 this
+was four - `pdf`, `txt`, `md`, `docx` - and `.xlsx`/`.csv` had been taken off the knowledge-base
+whitelist because they passed the header check, were written to storage, and surfaced as an
+HTTP 500. **R306 (2026-09-26) put both back and made the promise behind it true**:
+`app/rag/loader.py::load_document` dispatches `.xlsx` and `.csv` to `app/rag/spreadsheets.py`,
+so an accepted upload is now also a readable upload. Six extensions today: `pdf`, `txt`, `md`,
+`docx`, `xlsx`, `csv`; the closed set is pinned by `tests/test_r306_spreadsheets_in_the_upload_path.py`.
+`.xls` stays out on purpose - openpyxl cannot read the legacy binary format and `xlrd` is not a
+direct dependency - so it is refused as `unsupported_file` before any byte is written. A stored
+spreadsheet is also still a dataset: `POST /api/v1/upload-excel` is unchanged and keeps its own
+filename, permission and conflict rules (see `Dataset File Delivery`); the two routes share the
+extension and nothing else. A body that passes the header check but cannot be parsed answers with
+the pre-existing `500` `document_parse_failed` and keeps its file and catalog row, exactly as a
+broken `.docx` does - no new error code was introduced for spreadsheets. An unsupported extension
+is rejected before any byte is written, as `400` whose `detail` is exactly the stable code
 `unsupported_file` (`app/api/v1/chat.py:1245`). The human-readable reason - an unsupported
 extension, a double extension, a path separator, or a magic-byte mismatch - stays in the
 server log and is no longer a response body, so clients must branch on `detail` and never on
@@ -2769,3 +2777,147 @@ the bytes (sha256 verified identical afterwards):
   upload of `.csv` / `.xlsx` -> 200 and registered, legacy `.xls` preview -> 400 and not 500, and the
   catalogue stops listing `.xls`; plus three in-test knives over monkeypatched tables (the same four
   were also run on disk, above).
+## Knowledge-Base Spreadsheets (2026-09-26, R306)
+
+`.xlsx` and `.csv` reach the knowledge base through `POST /api/v1/upload`. The parse layer is
+`app/rag/spreadsheets.py` (R305); the dispatch is one branch inside
+`app/rag/loader.py::load_document`, gated by `spreadsheets.SPREADSHEET_SUFFIXES`, and the text it
+hands back passes the same `sanitize_text` as every other loader exit (R130).
+`extract_document_with_reports()` reaches spreadsheets through that same branch, so the two entries
+return byte-identical text for one file: there is no "readable directly, unreadable through the
+report channel".
+
+### Anchor grammar
+
+Every stored segment opens with exactly one anchor line, joined by ` · ` (`tables.ANCHOR_JOIN`,
+the same joiner PDF and Word tables have used since R300):
+
+    文件名.xlsx · Sheet「工作表名」 · 表N（i/j段） · 合并单元格K处
+    文件名.csv · 表N（i/j段）
+
+* **How the first field is computed.** It is the name the parser was handed, not necessarily the
+  name the customer uploaded. `load_document()` receives the *storage* path (`uuid + suffix`), so
+  unless the caller passes `display_name` the first field is that uuid name -- which is what PDF
+  and Word table anchors already show, because `app/rag/tables.py` builds all three of its anchors
+  from `path.name`. Passing `load_document(file_path, display_name=...)`, or the same keyword on
+  `extract_document_with_reports()`, replaces the first field verbatim: cleaned once through
+  `tables._cell_text`, and falling back to the storage name if the result is empty.
+  Two call sites exist and today they are **deliberately asymmetric** (R306 ruling 3):
+  * `POST /api/v1/upload` (`app/api/v1/chat.py:4005`) passes `inspection.display_filename`, so an
+    indexed spreadsheet is anchored under the name the customer uploaded, never under its uuid.
+  * `GET /api/v1/documents/{filename}/preview` (`app/documents/preview.py`) **does not** pass it.
+    That `{filename}` is whatever the caller typed, and feeding it to the parser would let one
+    stored file answer with a different anchor depending on who asked. A preview is therefore
+    anchored by the stored (uuid) name while the indexed body is anchored by the uploaded name.
+    This is a known, chosen gap, not a silent one: the two texts are not byte-identical for a
+    spreadsheet, and a client that cites an anchor back to `/upload` must expect the uploaded
+    spelling. Wiring the preview is a separate ticket.
+  Clients must still treat the first field as a label and match on the sheet/ordinal fields.
+* `Sheet「...」` exists only for `.xlsx`; a CSV is one table and has no sheet name.
+* `表N` is 1-based over **emitted blocks**, not over sheets: an empty sheet takes no number, so a
+  citation can never point at a `表1` that is not in the store.
+* `（i/j段）` is the segment index of that table and `合并单元格K处` counts covered grid positions.
+  Both are rendering metadata; neither ever carries a truncation.
+
+### The five truncation codes
+
+`Spreadsheet.truncated` names one code -- the first ceiling that bit -- and the per-sheet account is
+in `stats()["sheets_detail"]`. Nothing is dropped silently.
+
+| code | measured shape | ceiling | what it says |
+|---|---|---|---|
+| `rows:` | `rows:一月:3of6`, `rows:CSV:5000+` | `MAX_ROWS_PER_SHEET = 5_000` | materialisation stopped at the ceiling. For `.xlsx` the total is the grid the format itself claims (`ws.max_row`, header row included); a CSV is streamed and never counted to the end, so it says `+` instead of inventing a total. |
+| `cols:` | `cols:一月:128of130` | `MAX_COLUMNS_PER_SHEET = 128` | the sheet is wider than the ceiling: the first 128 columns are kept, in original order, the rest are dropped. |
+| `sheets:` | `sheets:2of3` | `MAX_SHEETS_PER_WORKBOOK = 200` (= `tables.MAX_TABLES_PER_DOCUMENT`) | reading stopped at sheet 2 of 3; the rest were never opened. |
+| `budget:` | `budget:1:1of5` | `MAX_SPREADSHEET_CHARS = 40_000` (= `tables.MAX_TABLE_CHARS`) | the document-wide character ceiling, `<块序>:<留下>of<本可留下>` rows. The header is fitted first, then rows. A table whose header alone cannot fit is not stored at all, and says so here instead of vanishing. The ticket called this one `chars:`; `budget:` is the token the code emits. |
+| `time:` | `time:0of3` | `SPREADSHEET_TIME_BUDGET_SECONDS = 12.0` (= `tables.TABLE_TIME_BUDGET_SECONDS`) | the wall-clock budget ran out before the next sheet was opened. `.xlsx` only: `load_csv()` takes no time budget, because one CSV is one pass and the row ceiling already bounds it. |
+
+### The three fidelity rules
+
+1. **Merged cells.** Coverage comes from `ws.merged_cells.ranges` and the value from its top-left
+   cell, so a `None` is treated as covered only when a range says it is: a genuinely blank cell
+   stays blank instead of inheriting its left neighbour. Same in-place expansion as
+   `app/tools/excel.py::_fill_merged_cells`, and the reason `read_only=True` is not used (that mode
+   exposes no `merged_cells` at all). A row that is nothing but one full-width merge renders as a
+   caption line (`> 合计说明`) rather than N copies of one value.
+2. **Dates and numbers.** One value, one spelling, and no locale anywhere on the rendering path:
+   a `datetime` with a time -> `YYYY-MM-DD HH:MM:SS`; a pure date (which xlsx stores as midnight) ->
+   `YYYY-MM-DD`; `date`/`time` -> `isoformat()`. Numbers are the stored value rendered with `str()`
+   and are never rounded a second time: `100.0` arrives as `100` and `0.1+0.2` arrives as `0.3`
+   because openpyxl's write-side `safe_string` (`"%.16g"`) already decided that. Re-formatting on
+   the read side would be a second drift on top of the first.
+3. **Column order.** Columns keep their original left-to-right order through trimming, blank-row
+   removal and empty-column removal. `columns_total - columns_kept` is exactly what the ceiling and
+   the dropped empty columns took, and `cols:` names the ceiling part of it. The markdown header row
+   is the sheet's first kept row -- the parser never guesses which row "is really" the header.
+
+### `.xls` is refused, out loud, at every layer
+
+`spreadsheets.UNSUPPORTED_SUFFIXES == (".xls",)` and `.xls` is **not** in the upload whitelist:
+`inspect_upload_header()` answers `400 unsupported_file` before any byte is written, and a direct
+`load_document("...xls")` still answers `ValueError: Unsupported file format: .xls` (the dispatch's
+own existing raise; calling `spreadsheets.load_spreadsheet_text()` directly names the reason:
+openpyxl cannot read the legacy binary format and `xlrd` is not a direct dependency of this
+repository). No error code was added anywhere in this ticket.
+
+### What this ticket does not claim
+
+* The upload response still does not carry the spreadsheet's own receipt (truncation code, sheet
+  accounting). Surfacing it is R308; today that account goes to the server log
+  (`R305 表格入库 xlsx: {...}`) and to `Spreadsheet.summary()` / `stats()`.
+* Preview is **not wired to the display name** (R306 ruling 3). `app/documents/preview.py` calls
+  `load_document(str(path))` with one argument, so `GET /api/v1/documents/{filename}/preview` returns
+  a spreadsheet anchored by the stored uuid name while the indexed body is anchored by the uploaded
+  name. The two texts for one file are therefore not byte-identical, by choice: `{filename}` is
+  caller-supplied, and letting it into the parser would give one stored file a different source
+  depending on who asked. Wiring it means first deciding where that name is authoritative -- a
+  separate ticket, not a silent leftover of this one.
+* A spreadsheet that is also a dataset keeps its other life: `POST /api/v1/upload-excel` is
+  unchanged and shares nothing with the document whitelist except the extension.
+* `app/tools/excel.py:87-88` still selects `engine = "xlrd"` for `.xls`, and `xlrd` is not a
+  dependency, so that branch remains dead. Reported here, not treated here.
+
+### Pins
+
+- `tests/test_r306_spreadsheets_in_the_upload_path.py` (28): a real multi-sheet workbook and a real
+  CSV arrive through `load_document()` with anchored text, and so do both corpus spreadsheets; the
+  new exit cannot let a NUL through, both with a stub and with a file that really holds one; the
+  report entry and the direct entry agree byte for byte on both suffixes and both carry the same
+  first anchor field; every whitelisted extension is actually dispatched; the six-type closed set
+  and its agreement with `SPREADSHEET_SUFFIXES`; `.xlsx` still has to match `PK\x03\x04` while
+  `.csv` sits in the same no-magic tier as `.txt`/`.md`; storage stays `uuid + one suffix`;
+  `.csv`/`.xlsx` in the middle of a name are still disguises while `V2.1` in the middle is still a
+  naming habit; `.xls` is refused at all three layers; preview equals the indexed text for both
+  suffixes and never runs ahead of the upload whitelist; the real route indexes a workbook and a CSV
+  and answers the pre-existing `document_parse_failed` for a forged body while keeping the file; the
+  comment above the whitelist and the S5 sentence above both changed in the same breath; and no
+  module this ticket touched gained an error code.
+- `tests/test_r130_text_unencodable_is_named_refusal.py`: `test_dispatch_exit_has_its_own_ruler`
+  gained the spreadsheet exit in its monkeypatch list and `.xlsx`/`.csv` in its extension tuple;
+  `test_every_loader_exit_calls_the_same_ruler` gained `load_spreadsheet`. Both are widenings -- no
+  standard was lowered and no assertion was deleted.
+- `tests/test_file_upload_security.py` -- the eight places that pinned the **old** state ("a
+  spreadsheet never reaches the upload path") were re-bound, not weakened, in the same breath as the
+  whitelist: the closed set grew four cells to six; the rejected-extension list swapped
+  `sheet.xlsx`/`table.csv` (now accepted) for five still-rejected names; `build_storage_path` gained
+  a "stored as `uuid` + exactly one suffix" assertion; `load_document` is now pinned to hand a
+  workbook to the parser (`zipfile.BadZipFile` on a forged body, real text on a real one); the route
+  is pinned to pass **both** the storage path and `display_name=inspection.display_filename` to the
+  parser; the fake-workbook case moved from `400 unsupported_file` to the pre-existing
+  `500 document_parse_failed` while keeping the file and writing nothing to the index; and the
+  "a rejected upload must touch no disk" tooth was re-bound onto a new parametrized pair
+  (`.xls`, `.pptx`) that asserts the directory stays empty. The disguise blocklist copy gained the
+  same two cells as production, each backed by its own refusal case.
+- `tests/test_r305_spreadsheets.py::test_load_document_reads_both_formats_once_wired` replaces
+  `..._still_refuses_both_formats_today`, which pinned the pre-wiring state and is now the inverse
+  of the truth. It is a positive pin with teeth: dropping the dispatch branch makes it fail on the
+  first assertion, and it additionally pins the anchor's first field with and without
+  `display_name`, plus `extract_document_with_reports()` agreeing byte for byte.
+- `tests/test_document_upload_resilience.py` / `tests/test_r49_upload_contract.py` /
+  `tests/test_document_ownership.py`: six `lambda path:` parser stubs became
+  `lambda path, display_name=None:` to match the real signature -- a binding change, same behaviour
+  asserted. The source-text pin `test_upload_moves_blocking_parsing_and_indexing_off_the_event_loop`
+  was re-bound to the new one-line call including `display_name=inspection.display_filename`; the
+  new string is a superset of the old one, so the pin is strictly stronger, and it now turns red if
+  the display name is dropped.
+

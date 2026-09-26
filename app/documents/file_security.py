@@ -22,9 +22,13 @@ class UploadInspection:
 
 
 # Knowledge-base upload whitelist: every extension here must be handled by
-# app.rag.loader.load_document(), otherwise a stored file is deleted and the
-# upload route fails with a 500 parse error. Spreadsheets are datasets, not
-# knowledge-base documents, and belong to POST /api/v1/upload-excel.
+# app.rag.loader.load_document(), otherwise the stored file and its catalog row
+# survive as a failed version and the upload route answers 500 document_parse_failed.
+# R306 put `.xlsx` and `.csv` in: they are read by app/rag/spreadsheets.py, so they
+# are knowledge-base documents as well as datasets. POST /api/v1/upload-excel is still
+# a separate route with its own filename, permission and conflict rules, and it does
+# not read this dict. `.xls` is deliberately absent: openpyxl cannot read the legacy
+# binary format and xlrd is not a direct dependency of this repository.
 _ALLOWED_TYPES = {
     ".pdf": ("application/pdf", (b"%PDF-",)),
     ".txt": ("text/plain", ()),
@@ -33,6 +37,15 @@ _ALLOWED_TYPES = {
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         (b"PK\x03\x04",),
     ),
+    ".xlsx": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        (b"PK\x03\x04",),
+    ),
+    # A CSV has no magic bytes to verify, so it joins the tier `.txt`/`.md` already
+    # occupy: an empty signature tuple. `inspect_upload_header()` skips verification
+    # only when there is nothing to verify -- every extension that DOES declare a
+    # signature still has to match one, and that includes `.xlsx` right above.
+    ".csv": ("text/csv", ()),
 }
 _RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$")
 
@@ -58,16 +71,17 @@ _RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$")
 # lists and a re-download reuses, and that is exactly where "looks like a
 # document, is an executable" misleads a person. So this check is narrowed to a
 # closed, explainable set: a middle segment that is itself a known document /
-# executable / script / web / archive suffix, the four whitelisted document types
+# executable / script / web / archive suffix, every whitelisted knowledge-base type
 # included. Anything else between two dots —
 # `V2.1`, `1_更新日志`, `Q3.预算` — is a naming habit, not a file type, and passes.
 _DOUBLE_EXTENSION_BLOCKLIST = frozenset(
     {
-        # the four knowledge-base types themselves: `policy.md.exe` and
-        # `notes.txt.exe` are precisely the costumes this rule exists to catch
-        ".txt", ".md", ".pdf", ".docx",
+        # every knowledge-base type itself -- R306 grew this line from four to six:
+        # `policy.md.exe` and `notes.txt.exe` are precisely the costumes this rule
+        # exists to catch, and so is `ledger.csv.exe`
+        ".txt", ".md", ".pdf", ".docx", ".csv", ".xlsx",
         # other documents and office containers
-        ".doc", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".doc", ".xls", ".ppt", ".pptx",
         # windows executables, libraries and installers
         ".exe", ".dll", ".com", ".scr", ".msi", ".lnk", ".jar",
         # scripts

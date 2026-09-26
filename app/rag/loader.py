@@ -14,6 +14,12 @@ R304: 表格接进来了。带表的 PDF / DOCX 在交给分块器之前先经�
 正文里多出的是「每枚表一段、段首一行来源锚」的 markdown，每一表行恰好一次；0 表的
 文档逐字退回上面两条腿今天的输出，已索引语料不因为本单重算 hash。表格上限触顶、
 表格通道自己塌了，都从 DocumentExtraction.tables 这一枚账里看得见（判据⑤：不许静默）。
+
+R306: 电子表格接进知识库这条腿。``.xlsx`` / ``.csv`` 从 :func:`load_document` 走
+app/rag/spreadsheets.py（R305 的解析层）出来，交回的也是一段每段自带来源锚的 markdown，
+与上面三条过的是**同一把** :func:`sanitize_text`——R130 那句「每一个 load_* 出口」包括
+这一枚新增的出口，也包括分派那一处。``.xls`` 不在这一格：openpyxl 读不了旧二进制格式，
+仓库直接依赖里也没有 xlrd，它继续由分派出口 ``raise ValueError`` 出声拒绝。
 """
 import contextlib
 import os
@@ -25,6 +31,7 @@ from pypdf import PdfReader
 
 from app.common.logger import logger
 from app.rag import ocr as ocr_channel
+from app.rag import spreadsheets as spreadsheet_channel
 from app.rag import tables as table_channel
 
 #: U+0000 -- the one character a PostgreSQL ``text`` column refuses, and therefore the
@@ -726,8 +733,29 @@ def load_md(file_path: str) -> str:
     return sanitize_text(load_txt(file_path))
 
 
-def load_document(file_path: str) -> str:
-    """Auto-detect file type and return plain text."""
+def load_spreadsheet(file_path: str, display_name: str | None = None) -> str:
+    """Read XLSX / CSV as anchored retrieval text (R305 的解析层，R306 接进来这一格)。
+
+    上限、截断回执、渲染口径全在 app/rag/spreadsheets.py，这里不加第二套。
+    ``display_name`` 只改锚点的第一段：落盘名是一枚 uuid，而客户要看的是自己上传的
+    那个文件名，``spreadsheets._anchor_base`` 早就为这一格留了口子。
+    """
+    return sanitize_text(
+        spreadsheet_channel.load_spreadsheet_text(file_path, display_name=display_name)
+    )
+
+
+def load_document(file_path: str, display_name: str | None = None) -> str:
+    """Auto-detect file type and return plain text.
+
+    ``display_name`` 只对电子表格那一支有作用（锚点第一段），其余格式忽略它：PDF / DOCX
+    的来源锚今天仍由 app/rag/tables.py 用落盘名生成（``tables.py`` 里三处 ``path.name``），
+    本单不改那一格。调用点两枚，今天**故意不对称**（总控 R306 裁定③）：
+    ``app/api/v1/chat.py`` 上传段传展示名，``app/documents/preview.py`` 不传 —— 预览那一格
+    拿到的是调用方填进 ``/documents/{filename}/preview`` 的名字，把它灌进解析层等于让同一份
+    文件按「谁来问」换一枚锚。于是同一份电子表格，索引正文的锚点第一段是客户上传的那个名字，
+    预览的锚点第一段是落盘名：这一格分家写在 docs/api/contract-v1.md 的 R306 一节里，不是沉默的漏。
+    """
     ext = Path(file_path).suffix.lower()
     logger.info(f"Loading document: {file_path} ({ext})")
 
@@ -741,6 +769,8 @@ def load_document(file_path: str) -> str:
         return sanitize_text(load_txt(file_path))
     if ext == ".md":
         return sanitize_text(load_md(file_path))
+    if ext in spreadsheet_channel.SPREADSHEET_SUFFIXES:
+        return sanitize_text(load_spreadsheet(file_path, display_name=display_name))
     raise ValueError(f"Unsupported file format: {ext}")
 
 
@@ -763,7 +793,9 @@ def _text_only_extraction(file_path: str, text: str) -> DocumentExtraction:
     )
 
 
-def extract_document_with_reports(file_path: str) -> DocumentExtraction:
+def extract_document_with_reports(
+    file_path: str, display_name: str | None = None
+) -> DocumentExtraction:
     """:func:`load_document` 的带账版本：同样一次解析，正文之外把两本账一并交回调用方。
 
     为什么需要这一枚：``load_document`` 只交正文串，而 :func:`extract_pdf_with_tables`
@@ -780,10 +812,14 @@ def extract_document_with_reports(file_path: str) -> DocumentExtraction:
       一遍 —— 先 ``load_document`` 再补一遍账，等于把 R298 的 OCR 在客户机上重跑一次。
     - 账只在**真正产出它的格式**上非空：``.pdf`` 两本都有；``.docx`` 只有表格账
       （``pdf is None``，没有逐页账可报）；其余格式两本都是「未参与」的形状。
+      电子表格（``.xlsx`` / ``.csv``）算「其余格式」：``tables.py`` 那一枚表格通道确实没
+      参与，正文由 ``spreadsheets.py`` 产出，所以 ``source=""`` 是真话而不是漏账。那一份
+      自己的截断账在 ``Spreadsheet.summary()`` 里，本单不搬进 ``DocumentExtraction``。
 
-    ``load_document`` 的签名与行为一字未改，只要正文的调用方（``app/documents/preview.py``）
-    照旧。重入闸里那一层（:func:`_pdf_prose_holdover` 命中）与 ``load_pdf`` 同一口径：交回
-    被扣住的那一份正文，账由外层那一次解析负责，这里不重复产第二本。
+    R301 落笔时 ``load_document`` 一字未改；R306 只给它加了 ``display_name`` 一枚带默认值
+    的关键字参数，只要正文的调用方（``app/documents/preview.py``）照旧。重入闸里那一层
+    （:func:`_pdf_prose_holdover` 命中）与 ``load_pdf`` 同一口径：交回被扣住的那一份正文，
+    账由外层那一次解析负责，这里不重复产第二本。
     """
     ext = Path(file_path).suffix.lower()
     if ext == ".pdf":
@@ -794,5 +830,7 @@ def extract_document_with_reports(file_path: str) -> DocumentExtraction:
     elif ext == ".docx":
         extraction = extract_docx_with_tables(file_path)
     else:
-        return _text_only_extraction(file_path, load_document(file_path))
+        return _text_only_extraction(
+            file_path, load_document(file_path, display_name=display_name)
+        )
     return replace(extraction, text=sanitize_text(extraction.text))

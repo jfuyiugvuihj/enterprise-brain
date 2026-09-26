@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import re
+
 import pytest
 
 from app.documents.file_security import (
@@ -66,7 +68,11 @@ def test_upload_security_error_keeps_the_stable_contract_code():
 
 
 def test_knowledge_base_whitelist_is_limited_to_parsable_document_types():
-    assert set(_ALLOWED_TYPES) == {".pdf", ".txt", ".md", ".docx"}
+    # R306 接线：闭集从四格长到六格。这不是放宽——同一把尺（"是个闭集，且一格不多"）原样保留，
+    # 只是解析层真长出了 `.xlsx`/`.csv` 这一格；"每一格都必须被分派认得"由
+    # tests/test_r306_spreadsheets_in_the_upload_path.py::test_every_whitelisted_extension_is_actually_dispatched
+    # 逐格验，摘掉 loader 分派那一格它当场红。
+    assert set(_ALLOWED_TYPES) == {".pdf", ".txt", ".md", ".docx", ".xlsx", ".csv"}
 
 
 def test_inspect_upload_header_rejects_double_extensions():
@@ -82,7 +88,12 @@ def test_inspect_upload_header_rejects_a_forged_docx_body():
         inspect_upload_header("policy.docx", b"%PDF-1.7 not really a docx")
 
 
-@pytest.mark.parametrize("filename", ["sheet.xlsx", "table.csv", "legacy.doc", "payload.exe"])
+@pytest.mark.parametrize(
+    "filename",
+    # R306: `sheet.xlsx`/`table.csv` 今天已在名单内，换掉它们；补上来的三枚仍是名单外的真代表，
+    # 其中 `legacy.xls` 正是契约里明确拒绝的那一枚。覆盖面 4 -> 5，一把没少。
+    ["legacy.xls", "deck.pptx", "archive.zip", "legacy.doc", "payload.exe"],
+)
 def test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base(filename):
     with pytest.raises(UploadSecurityError, match="unsupported upload extension") as exc_info:
         inspect_upload_header(filename, b"whatever")
@@ -90,10 +101,26 @@ def test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base(fil
     assert exc_info.value.code == "unsupported_file"
 
 
-@pytest.mark.parametrize("extension", [".xlsx", ".csv"])
-def test_build_storage_path_refuses_dataset_spreadsheet_extensions(tmp_path, extension):
-    with pytest.raises(UploadSecurityError, match="unsupported upload extension"):
-        build_storage_path(tmp_path, "resource-0001", extension)
+@pytest.mark.parametrize("extension", [".xlsx", ".csv", ".xls", ".exe"])
+def test_build_storage_path_accepts_the_whitelist_and_refuses_everything_else(tmp_path, extension):
+    """R306 接线：这两格从"被拒"翻成"必须落盘"，而拒绝那一半换绑到仍在名单外的两格上。
+
+    原断言：`.xlsx`/`.csv` 一律 `unsupported upload extension`。
+    现断言：白名单内的两格必须存成 `uuid + 单一后缀`（并且磁盘名只许一个点——那是双扩展守卫
+    的前提，原件没有这条，现在是加严不是放松），名单外的 `.xls`/`.exe` 必须继续被拒。
+    摘掉白名单里任意一格 ⇒ 第一句红；把白名单校验整个拆掉 ⇒ 第二句红。
+    """
+    from app.documents.file_security import _ALLOWED_TYPES as allowed
+
+    if extension in allowed:
+        stored = build_storage_path(tmp_path, "resource-0001", extension)
+
+        assert stored.parent == tmp_path.resolve()
+        assert stored.name == "resource-0001" + extension
+        assert stored.name.count(".") == 1
+    else:
+        with pytest.raises(UploadSecurityError, match="unsupported upload extension"):
+            build_storage_path(tmp_path, "resource-0001", extension)
 
 
 def test_build_storage_path_normalizes_a_bare_whitelisted_extension(tmp_path):
@@ -131,12 +158,33 @@ def test_load_document_reads_gbk_markdown(tmp_path):
     assert "旧文档" in load_document(str(document))
 
 
-def test_load_document_still_rejects_dataset_spreadsheets(tmp_path):
+def test_load_document_hands_spreadsheets_to_the_parser(tmp_path):
+    """R306 接线：分派不再对 `.xlsx` 说「不认得这格式」，坏内容改由解析层自己出声。
+
+    原断言：`ValueError("Unsupported file format")`——钉的正是「分派那一格不存在」。
+    现断言：同一枚假工作簿必须走到解析层（`zipfile.BadZipFile` 是 openpyxl 打不开那坨假 zip
+    的真话），而一枚真工作簿必须读出正文。摘掉 loader 分派那一格 ⇒ 第一句拿到的是
+    "Unsupported file format"，当场红；把 `.xlsx` 从 SPREADSHEET_SUFFIXES 摘掉 ⇒ 第二句红。
+    """
+    import zipfile
+
+    import openpyxl
+
     workbook = tmp_path / "sales.xlsx"
     workbook.write_bytes(b"PK\x03\x04not-a-real-workbook")
 
-    with pytest.raises(ValueError, match="Unsupported file format"):
+    with pytest.raises(zipfile.BadZipFile):
         load_document(str(workbook))
+
+    good = tmp_path / "good.xlsx"
+    book = openpyxl.Workbook()
+    book.active.title = "一月"
+    book.active.append(["部门", "金额"])
+    book.active.append(["销售", 10])
+    book.save(str(good))
+
+    body = load_document(str(good))
+    assert "销售" in body and "Sheet「一月」" in body
 
 
 def _document_upload_client(monkeypatch, tmp_path):
@@ -196,7 +244,7 @@ def _upload_client_as(monkeypatch, tmp_path, username: str, department: str):
     return TestClient(probe), retriever
 
 
-def test_upload_route_rejects_a_spreadsheet_before_writing_files(tmp_path, monkeypatch):
+def test_upload_route_passes_the_stored_path_and_display_name_to_the_parser(tmp_path, monkeypatch):
     import asyncio
     import io
 
@@ -204,12 +252,16 @@ def test_upload_route_rejects_a_spreadsheet_before_writing_files(tmp_path, monke
 
     from app.api.v1 import chat
 
-    def forbidden(*args, **kwargs):
-        raise AssertionError("a rejected upload must not reach the parser or the index")
+    calls = []
+
+    def recording_parser(path, display_name=None):
+        calls.append((path, display_name))
+        raise ValueError("stop here: 本件钉的是解析层收到了什么，不是索引那一步")
 
     monkeypatch.setattr(chat, "DOCUMENTS_DIR", str(tmp_path))
-    monkeypatch.setattr(chat, "load_document", forbidden)
-    monkeypatch.setattr(chat, "peek_next_document_version", forbidden)
+    monkeypatch.setattr(chat, "load_document", recording_parser)
+    monkeypatch.setattr(chat, "peek_next_document_version", lambda filename: 1)
+    monkeypatch.setattr(chat, "catalog_database_available", lambda: False, raising=False)
 
     workbook = io.BytesIO(b"PK\x03\x04fake workbook body")
     upload = UploadFile(filename="sales.xlsx", file=workbook)
@@ -217,29 +269,46 @@ def test_upload_route_rejects_a_spreadsheet_before_writing_files(tmp_path, monke
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(chat.upload_document(upload))
 
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == "unsupported_file"
-    assert list(tmp_path.iterdir()) == []
+    # 原断言：`.xlsx` 在写第一个字节之前就被拒（400 unsupported_file，磁盘零写入）。
+    # 现断言：白名单放开之后解析层必须真被叫到一次，而且拿到的是「落盘的 uuid 名 + 展示名」
+    # 两样——施工口四那一行的凭据。摘掉 chat.py 那一行的 `display_name=` ⇒ 第二句红。
+    # 「被拒的上传不许碰解析层/索引」这一半没有丢：它换绑在
+    # test_upload_route_still_refuses_a_name_the_whitelist_does_not_cover 与
+    # test_http_upload_still_rejects_a_disguised_name_with_the_stable_code 上。
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "document_parse_failed"
+    assert len(calls) == 1, f"解析层被叫了 {len(calls)} 次：{calls}"
+    parsed_path, parsed_display = calls[0]
+    assert parsed_display == "sales.xlsx"
+    assert Path(parsed_path).parent == tmp_path.resolve()
+    assert re.fullmatch(r"[0-9a-f]{32}\.xlsx", Path(parsed_path).name), parsed_path
+    assert Path(parsed_path).is_file(), "落盘文件在解析时就该已经存在"
+    assert list(tmp_path.glob(".upload-*.tmp")) == []
 
 
-def test_upload_route_rejects_a_csv_before_writing_files(tmp_path, monkeypatch):
-    import asyncio
-    import io
+def test_upload_route_ingests_a_csv_through_the_real_parser(tmp_path, monkeypatch):
+    """原断言：`.csv` 拿 400、零写入。现断言：200，且索引到的正文带锚。
 
-    from fastapi import HTTPException, UploadFile
+    这里**不桩 load_document**：跑的是真分派 + 真解析层，所以摘掉 loader 那一格本件必红
+    （解析 raise ⇒ 500）；锚点第一段必须是用户上传的那个名字而不是 uuid ⇒ 摘掉施工口四
+    那一行的 `display_name=` 同样必红。
+    """
+    client, retriever = _document_upload_client(monkeypatch, tmp_path)
 
-    from app.api.v1 import chat
+    response = client.post(
+        "/api/v1/upload",
+        files={"file": ("expenses.csv", b"month,amount\n2026-01,120\n", "text/csv")},
+        data={"classification": "2"},
+    )
 
-    monkeypatch.setattr(chat, "DOCUMENTS_DIR", str(tmp_path))
-
-    upload = UploadFile(filename="expenses.csv", file=io.BytesIO(b"month,amount\n2026-01,120\n"))
-
-    with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(chat.upload_document(upload))
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.detail == "unsupported_file"
-    assert list(tmp_path.iterdir()) == []
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["filename"] == "expenses.csv"
+    assert re.fullmatch(r"[0-9a-f]{32}\.csv", payload["stored_name"]), payload["stored_name"]
+    assert retriever.indexed["content"].startswith("expenses.csv · 表1"), retriever.indexed["content"]
+    assert "| 2026-01 | 120 |" in retriever.indexed["content"]
+    assert (tmp_path / payload["stored_name"]).read_bytes() == b"month,amount\n2026-01,120\n"
 
 
 def test_http_upload_ingests_a_markdown_document(tmp_path, monkeypatch):
@@ -292,7 +361,19 @@ def test_an_upload_with_no_subject_stays_unscoped(tmp_path, monkeypatch):
     assert retriever.indexed["department"] is None
 
 
-def test_http_upload_rejects_a_spreadsheet_with_a_stable_error_code(tmp_path, monkeypatch):
+def test_http_upload_ingests_a_fake_workbook_and_keeps_the_file(tmp_path, monkeypatch):
+    """R306 接线：假工作簿从 400 unsupported_file 翻成 500 document_parse_failed。
+
+    原断言：`.xlsx` 在写第一个字节之前就被拒——400 + `list(tmp_path.iterdir()) == []`。
+    现断言：名字拿到了那一格，内容读不动就必须诚实报 500，而且
+      * 错误码是既有的那一枚（本单零新增错误码，判据⑦）；
+      * 落盘文件保留、索引一字不写（不把读不懂的内容变成可检索的假象）；
+      * 临时文件不许残留。
+    拿到的两样东西（uuid 落盘名 / 展示名）由
+    test_upload_route_passes_the_stored_path_and_display_name_to_the_parser 钉；
+    「名字不在白名单里的上传必须碰不到磁盘」这一半换绑到
+    test_upload_route_still_refuses_a_name_the_whitelist_does_not_cover，一字未减。
+    """
     client, retriever = _document_upload_client(monkeypatch, tmp_path)
 
     response = client.post(
@@ -306,10 +387,35 @@ def test_http_upload_rejects_a_spreadsheet_with_a_stable_error_code(tmp_path, mo
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 500, response.text
+    assert response.json() == {"detail": "document_parse_failed"}
+    assert retriever.indexed == {}
+    assert len(list(tmp_path.glob("*.xlsx"))) == 1, list(tmp_path.iterdir())
+    assert list(tmp_path.glob(".upload-*.tmp")) == []
+
+
+@pytest.mark.parametrize("filename", ["legacy.xls", "notes.pptx"])
+def test_upload_route_still_refuses_a_name_the_whitelist_does_not_cover(
+    tmp_path, monkeypatch, filename
+):
+    """本文件原来靠电子表格顺手钉的那颗「零写入」牙，现在换绑到这里。
+
+    名字不在白名单 => 写第一个字节之前就得结束：400 unsupported_file、目录空、索引空。
+    `.xls` 是契约里写死拒绝的那一格（openpyxl 读不了旧二进制格式，xlrd 不在依赖里）。
+    把两格丢进白名单的下场是 500，本件同时红。
+    """
+    client, retriever = _document_upload_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/v1/upload",
+        files={"file": (filename, b"whatever the body is", "application/octet-stream")},
+    )
+
+    assert response.status_code == 400, response.text
     assert response.json() == {"detail": "unsupported_file"}
     assert retriever.indexed == {}
     assert list(tmp_path.iterdir()) == []
+
 
 # ===========================================================================
 # R91 —— 上传守卫拒绝的应当是「伪装后缀」，不是「文件名里有两个点」
@@ -340,8 +446,11 @@ REAL_VERSIONED_FILENAMES = (
 # 生产侧多加任意一项 ⇒ 集合相等断言红，放行类的 11 个真名用例也可能红。
 # 两条路互为保险，所以「判据是假的」（改了黑名单没人发现）不成立。
 EXPECTED_DISGUISE_SUFFIXES = (
-    ".txt", ".md", ".pdf", ".docx",
-    ".doc", ".xls", ".xlsx", ".ppt", ".pptx",
+    # R306 接线：生产那枚闭集从四格长到六格，这份**独立副本**同步补 `.csv`、`.xlsx` 两格。
+    # 注意这不是放宽：新增的两格各自带一条按名参数化的拒绝用例（`ledger.csv.exe.txt` /
+    # `book.xlsx.exe.txt` 必须继续被拒），所以副本只会比原来更严。
+    ".txt", ".md", ".pdf", ".docx", ".csv", ".xlsx",
+    ".doc", ".xls", ".ppt", ".pptx",
     ".exe", ".dll", ".com", ".scr", ".msi", ".lnk", ".jar",
     ".js", ".vbs", ".bat", ".cmd", ".sh", ".ps1",
     ".php", ".html", ".htm", ".svg",

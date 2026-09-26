@@ -358,7 +358,7 @@ def test_failed_upload_keeps_a_failed_row_that_can_still_be_retired(monkeypatch,
     from app.documents import catalog
 
     client, _retriever = _upload_client(monkeypatch, tmp_path, _principal("alice", "finance"))
-    monkeypatch.setattr(chat, "load_document", lambda path: (_ for _ in ()).throw(ValueError("boom")))
+    monkeypatch.setattr(chat, "load_document", lambda path, display_name=None: (_ for _ in ()).throw(ValueError("boom")))
 
     upload = client.post(
         "/api/v1/upload",

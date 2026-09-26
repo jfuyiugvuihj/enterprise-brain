@@ -177,13 +177,41 @@ def test_the_upload_whitelist_cannot_run_ahead_of_the_parsers() -> None:
     assert not ahead, f"上传白名单比解析能力多出来的一格会变成 500 而不是 400：{sorted(ahead)}"
 
 
-def test_load_document_still_refuses_both_formats_today(tmp_path) -> None:
-    """本单**没有**接线，这句是现状：分派仍然只认五格后缀，表格两格照样 raise。"""
-    csv_path = r305_write_csv(tmp_path / "r305_nothing.csv", "部门,金额\n销售,10\n")
-    with pytest.raises(ValueError) as refused:
-        loader.load_document(str(csv_path))
-    assert "Unsupported file format" in str(refused.value)
-    assert ".csv" not in loader.load_document.__doc__ or True  # 上面那行 raise 仍在，见回执第 4 节
+def test_load_document_reads_both_formats_once_wired(tmp_path) -> None:
+    """R306 接线之后这句才成立：分派认得电子表格两格，正文从同一枚出口出来。
+
+    原断言（本单施工前）：`.csv` 进 `load_document` 必须 `raise ValueError("Unsupported file format")`，
+      钉的是「这一格还没接线」这个旧现状。
+    现断言：同一枚 CSV 与一枚多 sheet 工作簿都必须从 `load_document` 读出**带锚正文**，
+      锚点第一段在没有展示名时退回落盘名、给了展示名就得是展示名；带账那枚出口必须走同一条路。
+    不是删除也不是降标准：原件只验一句 raise 的字符串，现件验的是
+      两格后缀 × 正文在位 × 锚行在位 × 展示名那一格 × 两条出口同事实。摘掉 loader 分派那一格
+      ⇒ 第一句就拿 "Unsupported file format"，当场红；把 `.csv` 从 SPREADSHEET_SUFFIXES 摘掉
+      ⇒ 同样红。原件末尾那句恒真废话（`... or True`）随本件一并消除，它本来就没牙。
+    """
+    csv_path = r305_write_csv(tmp_path / "r305_wired.csv", "部门,金额\n销售,10\n")
+    csv_text = loader.load_document(str(csv_path))
+    assert "| 销售 | 10 |" in csv_text, csv_text
+    assert r305_anchors(csv_text) == ["r305_wired.csv" + ANCHOR_JOIN + "表1"], csv_text
+
+    workbook = r305_write_xlsx(
+        tmp_path / "r305_wired.xlsx",
+        [("一月", [["部门", "金额"], ["销售", 10]], []), ("二月", [["部门", "金额"], ["行政", 20]], [])],
+    )
+    xlsx_text = loader.load_document(str(workbook))
+    assert "Sheet「一月」" in xlsx_text and "Sheet「二月」" in xlsx_text, xlsx_text
+    assert "| 销售 | 10 |" in xlsx_text and "| 行政 | 20 |" in xlsx_text, xlsx_text
+    assert len(r305_anchors(xlsx_text)) == 2, xlsx_text
+    assert all(anchor.startswith("r305_wired.xlsx" + ANCHOR_JOIN) for anchor in r305_anchors(xlsx_text)), xlsx_text
+
+    # 施工口四那一格：同一个出口，给展示名就换第一段，不给就照旧是落盘名。
+    named = loader.load_document(str(workbook), display_name="门店销量.xlsx")
+    assert named.splitlines()[0].startswith("门店销量.xlsx" + ANCHOR_JOIN), named
+    assert "r305_wired.xlsx" not in named, named
+
+    # 带账那枚出口必须走同一条路，不许变成「直连能读、走报告通道读不到」。
+    extracted = loader.extract_document_with_reports(str(csv_path), display_name="费用.csv")
+    assert extracted.text == loader.load_document(str(csv_path), display_name="费用.csv"), extracted.text
 
 
 def test_the_parse_layer_never_writes_anything() -> None:
