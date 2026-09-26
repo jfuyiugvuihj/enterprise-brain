@@ -3852,6 +3852,11 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 | `Maxwell`（总控登记名·结案） | 同上 `01a0d88f-dfd9-78c3-b6b2-56db815bf776` | **R254**（结案） | `be-r254`（身体待 close） | ✅ **已结案并树 `8f89def`**（09-26 10:08）。🔴 真实基点 `cca9081` 而非派工词写的 `8841578`：8 枚共改文件逐枚 `git rev-parse` 证 `cca9081`≡`ea2a539` ⇒ 整文件搬运零夹带（numstat 与施工树逐字相符）。队列道与同步道终态从此不许谎报；转出项 ⇒ R259/R260/R261；并树后门抓到三枚红 ⇒ 总控补口 `c70548a` | 10:08 |
 | `Tesla`（总控登记名·结案） | 同上 `01a0d890-f30c-7543-ace8-7c5918d49f11` | **R256**（结案） | `be-r256`（已 close） | ✅ **已结案并树 `ff0f4ec`**（09-26 10:43）＋总控补口 `d853153`（10:49）。五条判据逐条达标，判据④＝**隔离 PG 5433 真库**由总控亲跑：`applied=15 tail=0015`、二次跑 `applied=0` 幂等、`test_r256_pg_migration_acceptance.py` **5 passed**。🔴 施工方 09-25 21:57 最后写盘后从未交回报告 ⇒ 按盘上交付验收；三处越界改口判为收紧（详 4CG.二） | 10:43 |
 | `Pauli` | `01a0dba9-6107-7081-ae45-96da97160a6e`（spawn 返回值直取） | **R262** 计划书台账归真——把「哪些单真落地了」做成机器可校验的尺子（V1「计划书代码单清零」能不能判，全卡在这里） | `be-r262`（基点 `03beca8`，**独占**；`.venv` junction 本班建；写域只 新 `scripts/audit_plan_ticket_ledger.py` ＋ 新 `docs/handoff/plan-ticket-ledger-2026-09-26.md` ＋ 计划书 §5.2/§6 的状态词；🚫 本看板／跟进单／`app/**`／`frontend/**`／`tests/**`／迁移／跑门） | 🟢 11:03 派出（本 block **只此一次投递，不带 model 覆盖**）。灵魂＝判据⑤ 反证自证：判 LANDED 而证据提交不在 HEAD 祖先链上必须非零退出，并现场演示一次故意注错能被抓。上格误报「零提交」的六枚（R29 `791568c`／R31 `eef642b`／R32 `8a91f4e`／R33 `9678d21`／R43 `839c344`(=R43b=R167)／R48 `0ad3d3e`）逐枚复核；R46/R38 被引用的 `af4c22e`/`40e6789` 一并验真 | 11:03 |
+| `Tesla`（总控登记名·结案） | 同上 `01a0db81-b565-7e23-9c77-af45adbda048` | **R259**（结案） | `be-r259`（身体待 close） | ✅ **已结案并树 `67ea193`**（09-26 11:10）：量具 `eval_transport_ask_v2.py:1029` 认 `awaiting_approval`（总控实读确认是字面比较，不是查表），队列终态读数折进 `queue.terminal`。凭据＝离线新两枚 37 passed/0 skip ＋连同 r222·r181·r123 三枚 = 123 passed/4 skip（那 4 枚属 `test_r123_real_probe`，按设计要 `EB_PROBE=1`）。总控裁定其 `_PARKED` 分账成立（白烧闸本体未削）。 | 11:10 |
+| `Bacon`（总控登记名·结案） | 同上 `01a0db83-87ed-7e80-9ae5-30ebbcffe180` | **R261**（结案） | `be-r261`（身体待 close） | ✅ **已结案并树 `c9ad493`**（09-26 11:13）：裸 connect 棘轮改 `路径::作用域#序` 身份记账，行号退出账本但留在报错里。凭据＝本件 33 passed ＋邻居族 170 passed/0 failed。合账一处按派工时预告：其 `LEGACY_LINE_LEDGER` 的 `persistence.py:595` 改回主树实测的 `596`。 | 11:13 |
+| `Bacon`（总控登记名·结案） | 同上 `01a0db82-c9de-71d1-a479-7f541cae7333` | **R260**（结案） | `be-r260`（身体待 close） | ✅ **已结案并树 `b8ea5a9`**（09-26 11:16，D13 授权动 `frontend/**`）：挂起的那一轮前端停表，并给一件真能点的东西。凭据＝主树前端全量 **1160 passed/58 files**（总控亲跑，与其自报逐位相同）；`lint:colors` **148（0 errors）** 预算未涨；`ChatPanel.vue:860` 仍是那枚数组字面量（形状钉没被绕）。🔴 它把名单从 5 枚补成 6 枚，连带咬红 Python 侧两枚反证钉 ⇒ 见下行 R260b。 | 11:16 |
+| 总控自办·补口 | — | **R260b**（结案） | 主树 | ✅ **`9dd6eba`**（09-26 11:26）：并树后全量门抓到的两枚红（`tests/test_r218_lane_flip_stop_sets.py` 的两枚反证钉按 `QUEUE_SETTLED` 旧 5 枚字面量做替换 ⇒ replace 落空 ⇒ 该件自带的判空断言报「这枚钉是空的」）。按该件 `:176` 自己写过的规矩「同步到现值」处置：锚点换 6 枚，`five/four` 改名 `lit_full/lit_no_dead`，摘 `expired`／摘 `dead` 的红断言与 `problems == []` 一句**未削**。改后本件 10 passed，CR 仍＝LF＝391（该件 CRLF）。 | 11:26 |
+| `Confucius`（总控登记名·结案） | 同上 `01a0db84-83ec-7da0-bdc1-3bb7a5728414` | **R257**（结案） | `be-r257`（身体待 close） | ✅ **已结案并树 `71aea57`**（09-26 11:20）：兜底那卷 jsonl 从此会被结清且每行自报身份。凭据＝离线族 42 passed/13 skip ＋**隔离 PG 5433 真库 26 passed/0 failed/exit=0**（含它点名要总控跑的 `test_live_postgres_settles_a_degraded_window_and_holds_at_one_row`）；承重前 24 行与 HEAD 逐字节相同（首 hunk `@@ -24,0 +25,14 @@`）。🔴 它证伪了派工词的前提 ⇒ 另立 **R263**（跟进单 §101.5）。 | 11:20 |
 
 ⇒ 三条直接后果：① 「607 枚缺口」作废，两侧**条数相等**（1008 = 1008）；② 「距离口径未锁」也基本清了——PG 侧索引 `vector_l2_ops` 与 `vector_scope.distance_function=l2` 同源对齐；③ 切读缺的仍然只剩**真 top-k 对照**这一格，本班已作为 **R59b 第一步**下发，且要求比对必须在**两侧同时可达**的地方跑（backend 容器内：`/app/chroma_db` 是真卷、`postgres` 是内网 DNS；5432 未向宿主发布，宿主侧连不进去是设计如此）。🔴 老毛病第三次记账：**报「某物不存在」之前，先确认自己在哪一层查、用的是不是这一层的正确名字**——这次是查错了服务器上的另一个进程。
 
@@ -4276,3 +4281,40 @@ frontend/** 全程只读（ChatPanel.vue sha256 前 16 39fd661fa74ca098，16:54:
 - 登记时 `gitee` 只到 `ea2a539`，本班四枚（`8f89def`／`c70548a`／`ff0f4ec`／`d853153`）尚未 push——push 已获业主授权，本格记账完立即执行。
 - 在途四枚写域互斥，基点统一 `c70548a`：R259 `Tesla`（量具认 `awaiting_approval`）·R260 `Bacon`（前端停表＋可批准入口）·R261 `Bacon`（棘轮换身份口径）·R257 `Confucius`（Trace 兜底两笔）。本班两笔并树与前三者零交集，唯 R261 同文件（见三）。
 - A② 第二扇窗（`REPORT_LANE_VIA_QUEUE=off` 判逐帧到达）等 R259 并树才有意义；开窗前 `powercfg /change standby-timeout-ac 0`。
+
+## §4CH（09-26 11:0x–11:2x，第九班·总控第三格，主树 `d853153` → 本格）：四枚交回逐条验收并树 · 真库那一格由总控亲自跑 · 一枚被施工证伪的派工前提
+
+**一、四枚并树（全部总控亲自复跑，未采信执行层自述）**
+
+- **R259 → `67ea193`**（`Tesla`@`be-r259`）：量具认识 `awaiting_approval`（`:1029` 字面比较，实读确认）并把队列终态读数折进 `queue.terminal`。凭据：新两枚 37 passed/0 skipped；连同 r222·r181·r123 三枚 = 123 passed/4 skipped（那 4 枚属 `test_r123_real_probe`，按设计要 `EB_PROBE=1`）。不并的代价：run9 报告档 20 题里 11 题各白烧 300 s（约 55 min）且 D-1/D-2/D-3 三格读数全废。
+- **R261 → `c9ad493`**（`Bacon`@`be-r261`）：裸 connect 棘轮改身份记账 `路径::作用域#序`，行号退出账本但留在报错里。凭据：本件 33 passed；连同边界策略·R254 两枚·队列状态 API·R253 元钉·R233 未定义名 = 170 passed/0 failed。本班按派工时预告的口径合账一处：其 `LEGACY_LINE_LEDGER` 的 `persistence.py:595` 改回主树实测的 `596`。
+- **R260 → `b8ea5a9`**（`Bacon`@`be-r260`，D13 授权动前端）：挂起轮前端停表并给可批准入口。凭据：主树前端全量 **1160 passed/58 files**（与其自报逐位相同）；`lint:colors` **148（0 errors）** 预算未涨；`ChatPanel.vue:860` 的 `QUEUE_SETTLED` **仍是数组字面量**（那枚正则钉的形状没被绕）。
+- **R257 → `71aea57`**（`Confucius`@`be-r257`）：兜底窗会被自动结清且每行自报身份。凭据：离线族 42 passed/13 skipped；**隔离 PG 5433 真库 26 passed/0 failed/exit=0**（含它点名要总控跑的 `test_live_postgres_settles_a_degraded_window_and_holds_at_one_row`）；承重前 24 行与 HEAD 逐字节相同（首 hunk 起于 `@@ -24,0 +25,14 @@`）。
+
+**二、真库验收的两条方法学（本班撞出来的，写死别再摸）**
+
+- 一次性验收库**必须先迁移再跑**：直接建空库跑 ⇒ `UndefinedTable: relation "trace_events" 不存在`。正解 `python scripts/migrate.py --database-url <URL>`（实测 `applied=15`），跑完 DROP。
+- 🔴 `test_postgres_execution_persistence.py::test_pgvector_extension_and_distance_operators` 插的是二维向量 ⇒ **该族要求验收库宽度 = 2**。本班第一次给库定了 768，当场被它判 `expected 768 dimensions, not 2`——那是环境把量具前提改写，不是产品缺陷。教训：给 `EB_PG_ACCEPTANCE_URL` 造库时，`EMBEDDING_DIMENSION` 要按被测族的要求，不能照搬跑分窗的 768。
+
+**三、一枚被施工证伪的派工前提 ⇒ 另立 R263**
+
+- R257 交回时点名：「靠既有 id 口径挡住无脑重放」今天**不成立**——`app/trace/store.py:705` `_postgres_sequence_floor` 在 PG 拒答时返回 0，`_next_sequence`(:703) 于是只剩文件底 ⇒ 降级期发出的号会与表里已有的**另一枚**事件同号；照 id 重放会 `DO UPDATE` 顶掉表里那行。本班实读 :700-717 确认成立。
+- 施工的处置守住了判据④（不改发号件），改成**拒绝覆盖 + 报数**并钉住；缺陷本体另立 **R263**（判据见跟进单 §101.5）。这笔账要记在派工词头上：派工词把「既有 id 口径能挡住」当前提写进单子里，而它没查降级路径的返回值。
+
+**四、门基线与skip**
+
+- `d853153` 5260/49 → `c9ad493`（R259+R261）**5312 passed / 49 skipped / 0 failed**（123.88 s，exit=0）：5312 − 5260 = **52** ＝ R259 的 37 ＋ R261 的 15，逐位对上，无一枚既有件被削。
+- 本格最后一枚门：`71aea57`（R260+R257 并树之后）**5326 passed / 50 skipped / 🔴 2 failed**（120.15 s，exit=1）——两枚红都在 `tests/test_r218_lane_flip_stop_sets.py`，根因见五。总控补口 `9dd6eba` 复跑 **5328 passed / 50 skipped / 0 failed**（pytest 125.63 s，run_gate 133.6 s，exit=0）⇒ **本班交班基线＝5328 / 50**，下班按此对账（skip 49→50 是 R257 那格 live-PG 在离线档的按设计 skip，不是回归）。
+
+**五、并树后才咬的那两枚红（R260b）⇒ 改前端字面量必须连 Python 侧的反证锚点一起看**
+
+- 病根：R260 把 `frontend/src/components/ChatPanel.vue:860` 的 `QUEUE_SETTLED` 从 5 枚补成 6 枚（补 `awaiting_approval`），而 Python 侧 `tests/test_r218_lane_flip_stop_sets.py` 的两枚反证钉**是按那串 5 枚字面量做文本替换**的 ⇒ 替换落空 ⇒ 该件自带的判空断言当场报「这枚钉是空的」。两枚红都是量具，产品码一处没动。
+- 处置按该件 `:176` 自己写过的规矩「同步到现值」：锚点换成现值 6 枚，`five` / `four` 改名 `lit_full` / `lit_no_dead`；**摘 `expired`／摘 `dead` 的两枚红断言、以及 `problems == []` 那句，一字未削**。改后本件 10 passed，该文件 CR 仍＝LF＝391（纯 CRLF 件）。同文里 R221/R234/R245 的历史陈述（"当年是五枚"）不改。
+- 🔴 记进派工纪律：前端一枚数组字面量被 Python 侧当锚点抄了一份。这类跨语言耦合本仓至少三处（`QUEUE_SETTLED`、`r221-queue-deadline.test.js:206` 的正则、`adapter_stop_vocabulary` 的 AST 认字面量）。今后派碰这几处的单，派工词必须把**对面那枚锚点**列进写域，否则施工层改对了也照样红在邻居身上。
+
+**六、主干同步与下一步**
+
+- 记账时 `gitee` 只到 `8051897`，本格五枚（`67ea193`／`c9ad493`／`b8ea5a9`／`71aea57`／`9dd6eba`）随本节 push（push 已获业主授权）。
+- 在途一枚：R262 `Pauli`@`be-r262`（基点 `03beca8`，计划书台账归真的尺子）。本格四枚交回的 Agent 身体随后 close，close 不挡记账。
+- A② 第二扇窗（`REPORT_LANE_VIA_QUEUE=off` 判逐帧到达）到本格才算真解锁（量具 R259 与前端 R260 均已并树）；开窗前 `powercfg /change standby-timeout-ac 0`。
+- 下一扇真机窗可一次拿完：A①②③④ ＋ C 两格 ＋ D 三格（D 三格的产品码由 R254 修、量具由 R259 修）。
