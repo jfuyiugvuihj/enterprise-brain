@@ -73,7 +73,6 @@ onMounted(loadRelations)
   <div class="panel-shell" data-testid="graph-panel">
     <header class="panel-head">
       <div>
-        <div class="eyebrow">Knowledge Graph</div>
         <h3>知识图谱</h3>
         <p>把制度、指标、部门和责任关系串联起来。</p>
       </div>
