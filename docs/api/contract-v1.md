@@ -2210,3 +2210,110 @@ parallel book this ticket forbids.
 Verification status: pinned offline. The PostgreSQL leg of `notification_states` is exercised with
 a fake connection that answers `to_regclass` with NULL and with the same migration runner the
 first-boot family uses; a live-PostgreSQL run is still outstanding on this machine.
+
+## Notification Inbox: the four faces R303 turned into pins (2026-09-26, R303)
+
+Follow-up to `## Notification Inbox (2026-09-26, R299)` above. That section stays the authority for
+everything it already says, and nothing in it is reworded here. R303 took the four faces R299
+declared "implemented, nobody exercised them" and made each one checkable; this page is where each
+claim now lives, so a client reader never has to open `app/notifications/sources.py` to learn what
+a field means.
+
+### `truncated` has two independent triggers, and each half is named
+
+`sources.<source>.truncated` is written by an `or` with two different reasons behind it. Each half
+now has a dedicated case that seeds the *other* half out of the picture, so neither claim rests on
+reading the code:
+
+| half | fires when | the bound it is measured against |
+| --- | --- | --- |
+| candidate window | this source offered more than `SOURCE_WINDOW` (50) candidates, so `_sorted_window` dropped some | `app/notifications/sources.py::SOURCE_WINDOW` |
+| alert leg page | `GET /api/v1/alerts` handed back `ALERT_LEG_PAGE` (100) rows, so the ledger's own `LIMIT 100` may have swallowed more than this read ever saw | `app/notifications/sources.py::ALERT_LEG_PAGE` |
+
+The two halves stay distinguishable from the receipt alone: `candidates` is how many items survived
+that source's own terminal-status filter, `scanned` is how many rows the source actually looked at,
+and `truncated` says at least one of the two limits bit. A projection reading `candidates: 1,
+scanned: 100, truncated: true` was trimmed by the ledger page while `included: true` and
+`reason_code: "ok"` still hold; one reading `candidates: 50, scanned: 55, truncated: true` was
+trimmed by the window. Both cases, plus a third where the two halves fire together, are in
+`tests/test_r303_notification_pins.py`; its counter-evidence deletes the leg-page half and shows
+that pin going red while the window pin stays green.
+
+### One refused id does not roll back the batch -- and must not be rewritten that way
+
+`POST /api/v1/notifications/read` and `POST /api/v1/notifications/dismiss` answer per id, not per
+batch. An id the caller cannot address is refused inside its own `results[]` element -- `state:
+null`, `changed: false`, `reason: "notification_not_addressable"` -- while every other id in the same
+call is still written, still counted in `changed`, and the status is still `200`. This is a contract
+and not an accident of the loop: turning it into an all-or-nothing transaction would let one
+somebody-else's id throw away the reader's other actions, and would make `changed: false` ambiguous
+between "already dismissed" and "never attempted". `tests/test_r303_notification_pins.py` pins it
+for both actions and three id orderings (a refusal first, middle and last must give the same
+verdicts), and its counter-evidence installs exactly that batch gate to show the pin red.
+
+### The full-window read is timed offline -- that number is not a production reading
+
+`tests/test_r303_notification_pins.py` seeds all three sources to their caps (55 parked approvals,
+100 alert rows, 55 indexed documents, so `total: 150`), pages with `limit=100`, and times one read
+through `TestClient` with no PostgreSQL, no vector-store traffic and no host model. Nine runs of that
+case on this machine landed between 8.9 ms and 12.4 ms. That is a **test-double measurement taken
+under a pin, not a real-machine reading**: it is not a latency target, not an SLO row, and not
+comparable with `## Three-Tier SLO Contract`, which requires real deployment samples. What it does
+establish is the shape of the cost: pagination merges the three books in memory and pages over the
+merged list with an `offset` cursor only -- there is no keyset cursor -- so one read costs on the
+order of 3 x `SOURCE_WINDOW` candidates plus one lifecycle-row read, and that bound is a design
+decision, not an accident.
+
+### The PostgreSQL leg of `apply_state` is now executed by a test
+
+The `INSERT ... ON CONFLICT (notification_id, recipient) DO UPDATE` statement is asserted
+statement-for-statement against a fake connection that records SQL text and bound parameters, with
+the conflict target checked against the `notification_states_reader_key` UNIQUE columns in
+`migrations/0016_notification_states.sql` rather than a hand-copied list. `tests/test_r303_pg_upsert_leg.py`
+also pins that the one-way lifecycle rule has exactly one implementation: `advance_state` in
+`app/notifications/contracts.py`. The storage leg may not carry its own copy of the ordering -- a
+second rule there is precisely the parallel-book shape this resource exists to avoid -- so the
+stored value is asserted to be whatever `advance_state` returned, and an AST pin checks that `final`
+is assigned once inside `apply_state` and comes from that call.
+
+Concurrency is claimed only as far as the row lock reaches. With a `dismissed` row already
+committed, two threads hammering `read` and `dismissed` at the same `(notification_id, recipient)`
+never revive it and never issue a write at all. On a pair nobody has ever written, both legs can
+read "no row" before either writes; the unique key plus the UPSERT then guarantee exactly one legal
+row, not which of the two words it holds. That window is the one `app/notifications/states.py`
+already documents in its own comment: pinned here as "one row, one legal word", deliberately not as
+"the loser is discarded", because closing it would mean putting the ordering rule into SQL -- a
+second book, which the whole resource exists not to be. Registered, not fixed.
+
+The five keys of one `sources.<source>` projection, named once as a list so a client can check this
+page instead of the code: `included` (did that book answer at all), `reason_code` (`ok`, or the
+ledger's own refusal word), `candidates`, `scanned`, `truncated`.
+
+Sample spread, and a superseding note on the paragraph above. Seven more runs of the same case on
+the same machine gave 8.6 / 9.3 / 9.7 / 11.5 / 13.6 / 14.0 / 15.5 ms, so the honest reading across
+all sixteen samples taken for this ticket is **min 8.6 ms, max 15.5 ms** -- "single-digit to
+mid-teens milliseconds on a development laptop", not the 8.9--12.4 ms window quoted a few lines up.
+That spread is also why the case prints its own measurement instead of asserting a bound: no upper
+bound is pinned here, and a page of this contract must not leave one behind as if it were. The only
+standing claim is the shape -- 3 x `SOURCE_WINDOW` candidates merged and paged in memory, an
+`offset` cursor, no keyset -- plus the warning that every millisecond figure in this section is a
+test-double reading, not a production one.
+
+Write-side receipts are named the same way, because a client must not have to read
+`app/api/v1/notifications.py` to parse one. A successful call carries `action` (`read` or
+`dismiss`), `requested` (how many ids survive de-duplication), `changed` (how many of those
+actually moved a row) and `results`, one element per id carrying `id`, `state`, `changed` and
+`reason`. `reason` takes exactly two words: `applied` for an id this caller may address, and
+`notification_not_addressable` for one it may not. `state: null` appears only beside a refused id
+-- never beside an applied one -- and both actions answer through the same four fields, so a reader
+can tell "I just dismissed it" from "it was already dismissed" (`changed` true versus false) while
+`state` stays the same word.
+
+Recorded tally for the sentence above, so nobody has to guess which runs it covers: nineteen
+recorded readings of that case on this machine, minimum 8.6 ms, maximum 15.5 ms, median 10.2 ms.
+Executions whose reading was not written down are not counted, and the case prints its own reading
+on every run -- that printed line, not any number quoted here, is what a later reader should trust.
+
+Handoff sample, and the last timing run of this ticket: 11.5 ms, inside the range above, taken with
+the same seed set on the same machine. Twenty recorded readings in total; nothing after this line is
+a number anyone should quote.
