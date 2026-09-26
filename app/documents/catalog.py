@@ -395,6 +395,61 @@ def _file_mtime(storage_path) -> str:
         return datetime.now(_tz).isoformat()
 
 
+def _version_number(row: dict) -> int:
+    """Read a catalog row's version as the number it actually is.
+
+    ``document_versions.version`` is ``INT NOT NULL`` (see ``_ensure`` in this file, and the
+    ``version DESC`` in the index created by migrations/0006_document_ownership.sql),
+    ``next_document_version`` returns an ``int``, and an offline row already passed through
+    ``int()`` inside ``_local_version_rows``. So "which version is current" is a comparison over
+    a **monotonic integer**, never a string comparison. An unreadable value is compared as 0 and
+    logged; it never falls back to lexicographic order, which is exactly how ``10`` would end up
+    in front of ``2``.
+    """
+    raw = row.get("version")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            f"[Docs] catalog row {row.get('filename')!r} has unreadable version {raw!r}; compared as 0"
+        )
+        return 0
+
+
+def _ordered_by_current_version(rows: list[dict]) -> list[dict]:
+    """Order rows the way ``ORDER BY filename, version DESC`` orders them.
+
+    The shared half of the R292 contract: an ordering the database leg used to express only in
+    SQL now exists once, in Python, and both legs pass through it.
+    """
+    return sorted(rows, key=lambda row: (str(row.get("filename") or ""), -_version_number(row)))
+
+
+def _current_version_rows(rows: list[dict]) -> list[dict]:
+    """Collapse stored versions into one "current" row per filename - the single arbiter.
+
+    A logical document can have N stored versions but appears in the catalog once, and which row
+    it appears as is the answer to "what is the current version". Before R292 that question had
+    two different answers. The database leg asked SQL: ``ORDER BY filename, version DESC`` pushed
+    the newest version into the first slot of each filename, so ``setdefault``'s first-write-wins
+    happened to collect the newest. The offline leg (``_local_version_rows``) carried no version
+    ordering at all, so first-write-wins collected **whatever the enumeration handed over first** -
+    on NTFS the lexicographic order of ``name__vN.ext``, and for sidecar-only rows the
+    ``sort_keys`` order of the JSON file. Both put ``v1`` before ``v2``, so an offline deployment
+    reported its *oldest* stored version as current while the same rows in PostgreSQL reported the
+    newest.
+
+    Both legs now reach this one function and input order no longer participates in the decision.
+    Two rows sharing a filename and a version cannot get here (``UNIQUE(filename, version)`` on the
+    database side, the ``listed`` set on the offline side); if one ever does the first is kept,
+    which is what SQL does with an unordered tie, so this rule strictly extends the old one.
+    """
+    current: dict[str, dict] = {}
+    for row in _ordered_by_current_version(rows):
+        current.setdefault(str(row.get("filename") or ""), row)
+    return list(current.values())
+
+
 def _local_version_rows(filename: str | None = None) -> list[dict]:
     rows = []
     pattern = re.compile(r"^(?P<stem>.+)__v(?P<version>\d+)(?P<ext>\.[^.]+)$")
@@ -443,7 +498,11 @@ def _local_version_rows(filename: str | None = None) -> list[dict]:
         path = Path(str(recorded_path))
         rows.append(_local_row(filename=name, version=version, storage_path=path, stored=stored))
         listed.add((name, version))
-    return rows
+    # Neither of the two sources above can say which version is current: the directory scan
+    # comes back in filesystem enumeration order and the sidecar in JSON key order. Hand the
+    # rows over in the catalog order instead so no reader, this module's dedup included, can
+    # pick up a "current version" from the filesystem. R292.
+    return _ordered_by_current_version(rows)
 
 
 def _ensure():
@@ -664,10 +723,11 @@ def current_documents() -> list[dict]:
             logger.warning(f"[Docs] current listing fallback: {exc}")
             rows = _local_version_rows()
 
-    latest = {}
-    for row in rows:
-        latest.setdefault(row["filename"], row)
-    ordered = sorted(latest.values(), key=lambda item: item["created_at"], reverse=True)
+    # One arbiter for "current version", the same on both legs (R292). The ORDER BY above is
+    # still worth sending - it makes the read deterministic - but correctness no longer depends
+    # on it, which is the whole point: the offline leg has no ORDER BY to depend on.
+    latest = _current_version_rows(rows)
+    ordered = sorted(latest, key=lambda item: item["created_at"], reverse=True)
     return _public_rows(_apply_index_policy(ordered))
 
 
@@ -675,7 +735,7 @@ def list_document_versions(filename: str) -> list[dict]:
     if not _database_available():
         return _public_rows(
             _apply_index_policy(
-                sorted(_local_version_rows(filename), key=lambda item: item["version"], reverse=True)
+                _ordered_by_current_version(_local_version_rows(filename))
             )
         )
     try:
@@ -695,7 +755,7 @@ def list_document_versions(filename: str) -> list[dict]:
         logger.warning(f"[Docs] history fallback: {exc}")
         return _public_rows(
             _apply_index_policy(
-                sorted(_local_version_rows(filename), key=lambda item: item["version"], reverse=True)
+                _ordered_by_current_version(_local_version_rows(filename))
             )
         )
 
