@@ -22,6 +22,20 @@ Two details are load bearing rather than cosmetic:
 * a projection is never allowed to half-succeed silently. The store catches the database
   error, keeps the event in the fallback journal, and names the reason -- the answer to a
   broken ledger is an observable degraded one, not a request that dies on telemetry.
+
+Two more claims belong here, because both of the sentences above are only true once the
+fallback window has been closed -- and R257 is what closes it:
+
+* the journal is an exception list, not the total account. Every line in it is a line
+  PostgreSQL refused, and since R257 each one carries its own admission -- the reason code,
+  the timestamp, and a pointer at the six tables as the complete ledger -- so nobody can
+  read a count out of this file and mistake it for the number of events the system saw;
+* a refused write does not stay refused. The next event that reaches the tables settles
+  what the journal holds (``TraceStore.backfill_fallback_journal``): each recorded
+  ``(trace_id, sequence)`` is replayed through the very projections above, so the unique key
+  is what makes a second sweep a no-op instead of a second row. Settled lines are not
+  erased -- the sweep appends a receipt line naming what it moved into the tables, because
+  on a private host this file is the only copy until the tables say otherwise.
 """
 
 import json
@@ -57,6 +71,29 @@ from app.trace.runs import assemble_run_readout, fold_events, trace_id_from_run_
 from app.trace.schema import TraceSchemaError
 
 
+#: The two kinds of line the fallback journal holds. An event the tables refused carries a
+#: ``fallback`` block saying why and where the whole ledger lives; a ``fallback_receipt``
+#: block is a settlement sweep reporting which lines are now rows in the six tables. Neither
+#: marker holds a trace id, so annotating a line cannot make ``grep -c`` on an id count it
+#: twice -- the mistake this file stopped being able to answer for in R250.
+FALLBACK_LINE_MARKER = "fallback"
+BACKFILL_RECEIPT_MARKER = "fallback_receipt"
+
+#: The sentence every refused line says about itself, in the line itself.
+FULL_LEDGER_STATEMENT = (
+    "local fallback copy: PostgreSQL refused this write, so this file is not the full trace "
+    "ledger -- the six trace tables (trace_events and siblings) are"
+)
+
+#: The name a sweep gives the line whose event id the tables already hold for a different
+#: event, so the log says which refusal left the line behind without a new reason code.
+ID_TAKEN_DETAIL = "event id is held by another event"
+
+#: Events one settlement sweep offers to the tables. The sweep runs under the write lock, so
+#: a longer journal is drained over more than one sweep and each report names what is left.
+BACKFILL_LINES_PER_SWEEP = 2_000
+
+
 class TraceStoreError(ValueError):
     """Raised when a trace event cannot be safely recorded."""
 
@@ -77,6 +114,11 @@ class TraceStore:
         #: health readout can state an end-to-end window without re-reading the log.
         #: Bounded because an abandoned request must not grow a process forever.
         self._request_started: dict[str, str] = {}
+        #: Whether the journal may hold lines the tables do not. True to start with: another
+        #: process, or a previous lifetime of this one, may have left refused lines behind,
+        #: and the counters in ``app.trace.durability`` are process-local and cannot say so.
+        #: ``_write_fallback`` re-arms it; one successful write spends it.
+        self._backfill_sweep_pending = True
         durability.set_backend(backend=self._backend_name(), postgres=self.database is not None)
 
     # ------------------------------------------------------------------ backends
@@ -133,6 +175,7 @@ class TraceStore:
             owner_id = str((payload or {}).get("owner_id") or "").strip()
             attempts = 2 if self.database is not None else 1
             event: dict[str, Any] = {}
+            settled = False
             for attempt in range(attempts):
                 event = self._build_event(
                     trace_id=trace_id,
@@ -154,12 +197,17 @@ class TraceStore:
                     break
                 reason, detail = self._persist(event, owner_id)
                 if reason is None:
+                    settled = True
                     break
                 if attempt == 0 and _is_sequence_collision(detail):
                     continue
                 self._write_fallback(event, reason, detail)
                 break
             self._observe_request_window(event)
+            if settled:
+                # Reached only when this process can write to the tables right now, which is
+                # exactly the moment a line in the fallback journal became stale.
+                self.maybe_backfill_fallback_journal()
             return event
 
     def _build_event(
@@ -184,13 +232,32 @@ class TraceStore:
         }
 
     def _write_fallback(self, event: dict[str, Any], reason: str, detail: str) -> None:
-        """Append one event to the local journal and say out loud that we had to."""
+        """Append one event to the local journal and say out loud that we had to.
+
+        Three places learn about it: the log line and the ledger count, as before, and now
+        the line itself. That third one is the point -- since R250 this file holds *only*
+        refused events, so anybody reading it with ``grep`` or a dump tool has to be able to
+        tell from the bytes on the page that the number they are counting is not the number
+        of events the system saw, without opening a document to find out.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        line = dict(event)
+        line[FALLBACK_LINE_MARKER] = {
+            "is_fallback": True,
+            "reason": str(reason or ""),
+            # The event's own stamp, not a second reading of the clock: the admission
+            # describes the moment this line was recorded, and the store already decided
+            # what that moment was.
+            "recorded_at": str(event.get("timestamp") or ""),
+            "full_ledger": FULL_LEDGER_STATEMENT,
+        }
         with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+            handle.write(json.dumps(line, ensure_ascii=False) + "\n")
         durability.note_local_fallback(
             reason, f"event_id={event['trace_id']}:{event['sequence']} {detail}"
         )
+        # A refused line is precisely what the next successful write has to settle.
+        self._backfill_sweep_pending = True
 
     def _persist(self, event: dict[str, Any], owner_id: str) -> tuple[str | None, str]:
         """Write one event and its rows to the configured backend.
@@ -234,6 +301,233 @@ class TraceStore:
         if self.persistence is None or not record_id:
             return None
         return self.persistence.get(collection, record_id)
+
+    # ---------------------------------------------------------------------- backfill
+
+    def _durable_event_row(self, event: dict[str, Any]) -> dict[str, Any] | None:
+        """The ``trace_events`` row holding this event's id, when the tables have one.
+
+        A question, not the guard: the guard is the unique key. Asking first is what lets a
+        sweep tell an event it recovered from one the tables already answer for, and -- the
+        reason it asks about content and not only about the id -- what lets it refuse to
+        overwrite a durable row with a different event. ``_next_sequence`` takes the higher
+        of the PostgreSQL floor and the journal floor, and the first of those reads as 0
+        whenever the database is the thing that is down, so a trace that degrades *midway*
+        can hand a journal line an id the tables already gave to another event.
+
+        ``None`` means "the tables are not answering for this id", which includes "the
+        question could not be asked": an unreadable table is no reason to skip a replay, and
+        the insert will be refused by the key if it turns out to be occupied.
+        """
+        event_id = f"{event.get('trace_id')}:{event.get('sequence')}"
+        if self.persistence is None or not event_id:
+            return None
+        try:
+            row = self.persistence.get("trace_events", event_id)
+        except Exception:
+            return None
+        return row if isinstance(row, dict) else None
+
+    @staticmethod
+    def _is_the_same_event(row: dict[str, Any], event: dict[str, Any]) -> bool:
+        """Whether a ``trace_events`` row and a journal line describe one and the same event."""
+        return (
+            str(row.get("event_type") or ""), str(row.get("status") or "")
+        ) == (str(event.get("event_type") or ""), str(event.get("status") or ""))
+
+
+
+    def backfill_fallback_journal(
+        self, *, limit: int | None = BACKFILL_LINES_PER_SWEEP
+    ) -> dict[str, Any]:
+        """Replay the fallback journal into the six tables, and say what is still missing.
+
+        This is the debt R250 left open: PostgreSQL refused a write, the event went to the
+        journal, and nothing ever carried it back, so "the six tables are the source of
+        truth" was untrue for exactly that stretch of time -- and an administrator querying
+        the run by id could not read those events at all. A sweep walks the journal in line
+        order and hands every event to ``_persist``, the same owner check, the same
+        projections and the same column contract as a live write, so there is no second
+        writer for the first one to disagree with.
+
+        Idempotency belongs to the tables, not to this loop. An event is addressed by the
+        ``(trace_id, sequence)`` it was recorded with and ``trace_events`` makes that pair
+        unique, so a sweep that runs twice leaves one row -- it does not need to remember
+        having run. That is also why a settled line is never erased: the sweep appends a
+        receipt naming the lines it covered and leaves the events exactly where they were,
+        because on a private host this file is the only copy until the tables say otherwise.
+
+        Two consequences worth stating rather than hiding. Lines written before the journal
+        annotated itself are offered to the tables like any other, which also recovers what
+        this file held back when it *was* the only store. And a line whose payload carries
+        no ``owner_id`` can never reach the tables -- the live write refuses it for the same
+        reason -- so it is counted in ``never_in_tables`` instead of being retried forever,
+        and it is the one part of this answer that stays "not in the six tables", loudly.
+        """
+        if self.database is None:
+            # No tables to fill. Naming that is the ledger's job, not a reason to sweep.
+            return {"attempted": False, "skipped_reason": REASON_BACKEND_NOT_POSTGRES}
+        with self._lock:
+            report = self._empty_backfill_report()
+            records = self._journal_records(tolerant=True)
+            events = [record for record in records if record["kind"] == "event"]
+            report["journal_events"] = len(events)
+            report["unreadable_lines"] = sum(
+                1 for record in records if record["kind"] == "unparsed"
+            )
+            report["receipt_lines"] = sum(
+                1 for record in records if record["kind"] == "receipt"
+            )
+            report["still_local_lines"] = len(events)
+            if not events:
+                return report
+            pending = events if limit is None else events[: max(0, int(limit))]
+            for record in pending:
+                report["scanned"] += 1
+                event = record["event"]
+                owner_id = str((event.get("payload") or {}).get("owner_id") or "").strip()
+                if not owner_id:
+                    report["never_in_tables"] += 1
+                    continue
+                row = self._durable_event_row(event)
+                if row is not None:
+                    if self._is_the_same_event(row, event):
+                        report["already_in_tables"] += 1
+                        report["covered_through_line"] = int(record["line"])
+                    else:
+                        # The id is taken by a different event. Writing it would replace a
+                        # durable row -- losing the event that is really there to "recover"
+                        # one that is not -- so the line stays in the journal, where the
+                        # readout reports it as missing, and the reason is named in the log.
+                        report["refused"][REASON_WRITE_FAILED] = report["refused"].get(REASON_WRITE_FAILED, 0) + 1
+                        report["refused_detail"][ID_TAKEN_DETAIL] = (
+                            report["refused_detail"].get(ID_TAKEN_DETAIL, 0) + 1
+                        )
+                    continue
+                why, detail = self._persist(event, owner_id)
+                if why is None:
+                    report["settled_events"] += 1
+                    report["covered_through_line"] = int(record["line"])
+                    continue
+                # A refusal keeps the line exactly where it is, including the interesting
+                # one: PostgreSQL refusing this (trace_id, sequence) because a concurrent
+                # writer took it between the question above and this insert. Folding such a
+                # line into already_in_tables would report a lost event as a recovered one,
+                # so it is refused and stays visible -- in the journal, in this report, and
+                # in the readout's gap. Who dealt the id out twice is _next_sequence's
+                # question, not this sweep's.
+                report["refused"][why] = report["refused"].get(why, 0) + 1
+                refused_detail = str(detail)[:200] or why
+                report["refused_detail"][refused_detail] = (
+                    report["refused_detail"].get(refused_detail, 0) + 1
+                )
+
+            report["still_local_lines"] = (
+                report["journal_events"]
+                - report["settled_events"]
+                - report["already_in_tables"]
+            )
+            if report["settled_events"]:
+                report["receipt"] = self._append_backfill_receipt(report)
+            durability.note_backfill(
+                settled_events=report["settled_events"],
+                already_in_tables=report["already_in_tables"],
+                local_only_lines=report["still_local_lines"],
+                never_in_tables=report["never_in_tables"],
+            )
+            self._log_backfill(report)
+            return report
+
+    @staticmethod
+    def _empty_backfill_report() -> dict[str, Any]:
+        return {
+            "attempted": True,
+            "journal_events": 0,
+            "scanned": 0,
+            "settled_events": 0,
+            "already_in_tables": 0,
+            "never_in_tables": 0,
+            "refused": {},
+            "covered_through_line": 0,
+            "still_local_lines": 0,
+            "unreadable_lines": 0,
+            "receipt_lines": 0,
+            "receipt": False,
+            "refused_detail": {},
+        }
+
+    def _log_backfill(self, report: dict[str, Any]) -> None:
+        """Say what the sweep did, and name what it could not do, in the log."""
+        if report["still_local_lines"]:
+            logger.warning(
+                "[Trace] %s backfill settled %d event(s) into the six tables (already there: "
+                "%d) and %d line(s) are still held only by %s: no owner=%d refused=%s "
+                "not scanned=%d. Why they were refused: %s -- the tables are the ledger and "
+                "this file is the exception list, not the total account",
+                LOCAL_FALLBACK_NAME,
+                report["settled_events"],
+                report["already_in_tables"],
+                report["still_local_lines"],
+                self.path,
+                report["never_in_tables"],
+                report["refused"],
+                report["journal_events"] - report["scanned"],
+                sorted(report["refused_detail"]),
+            )
+            return
+        if report["settled_events"] or report["already_in_tables"]:
+            logger.info(
+                "[Trace] %s journal settled: %d event(s) replayed into the six tables, %d "
+                "already answered for; %d unannotated line(s) left in place, none deleted",
+                LOCAL_FALLBACK_NAME,
+                report["settled_events"],
+                report["already_in_tables"],
+                report["unreadable_lines"],
+            )
+
+    def maybe_backfill_fallback_journal(self) -> dict[str, Any] | None:
+        """One bounded settlement sweep, and only when this process has a reason to expect one.
+
+        Called from the write path *after* an event has already reached the tables, so the
+        request that triggered it pays for at most one sweep. A process whose PostgreSQL
+        never went away pays for one ``exists()`` check: an absent journal is the normal
+        case, and this never creates the file.
+        """
+        if self.database is None or not self._backfill_sweep_pending:
+            return None
+        self._backfill_sweep_pending = False
+        try:
+            return self.backfill_fallback_journal()
+        except Exception as exc:  # recovery is telemetry, it does not fail a request
+            durability.note_backfill_error(f"{type(exc).__name__}: {exc}")
+            self._backfill_sweep_pending = True
+            return None
+
+    def _append_backfill_receipt(self, report: dict[str, Any]) -> dict[str, Any]:
+        """Say on the journal itself which of its lines the six tables now hold.
+
+        A receipt is the second kind of line in the same append-only file, and it repeats no
+        trace id on purpose: a receipt that echoed ids would make a count of the file double,
+        which is the exact mistake the annotations exist to prevent.
+        """
+        receipt = {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "settled_events": report["settled_events"],
+            "already_in_tables": report["already_in_tables"],
+            "never_in_tables": report["never_in_tables"],
+            "refused": dict(report["refused"]),
+            "covered_through_line": report["covered_through_line"],
+            "journal_events_at_receipt": report["journal_events"],
+            "still_local_lines": report["still_local_lines"],
+            "unreadable_lines": report["unreadable_lines"],
+            "full_ledger": FULL_LEDGER_STATEMENT,
+            "note": "every event line up to the numbered line above was offered to the six "
+            "trace tables by this sweep; no journal line was deleted to get there",
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({BACKFILL_RECEIPT_MARKER: receipt}, ensure_ascii=False) + "\n")
+        return receipt
 
     # -------------------------------------------------------------- projections API
 
@@ -312,6 +606,9 @@ class TraceStore:
 
         Falls back to folding the local journal through the same projections when
         PostgreSQL cannot answer, and the returned document names which one it came from.
+        When the tables answered but a degraded window is still waiting to be settled, the
+        document also carries ``local_only``: the events this run has in the journal and not
+        in the rows, counted and dated (``backfill_fallback_journal`` empties it).
         """
         run_id = str(run_id or "").strip()
         if not run_id:
@@ -324,11 +621,19 @@ class TraceStore:
                     durability.note_local_read_fallback(exc.reason, str(exc))
                 else:
                     if bundle.get("run") is not None or bundle.get("events"):
+                        durable = {
+                            f"{event.get('trace_id')}:{event.get('sequence')}": (
+                                str(event.get("event_type") or ""),
+                                str(event.get("status") or ""),
+                            )
+                            for event in bundle.get("events") or []
+                        }
                         return assemble_run_readout(
                             run_id,
                             bundle,
                             source=POSTGRES_SOURCE,
                             durability_block=self.durability_status(),
+                            local_only=self._local_only_gap(run_id, durable),
                         )
                     # PostgreSQL was reached and has no such run. The journal is still
                     # consulted, because a degraded window put events there on purpose; but a
@@ -347,6 +652,9 @@ class TraceStore:
                         durability_block=self.durability_status(),
                     )
             events = self._run_events(run_id)
+            # No gap to disclose beside this one: the journal *is* the answer it is being
+            # read from, ``source`` already says so, and counting its lines back at the
+            # caller as missing rows would report the same events twice.
             return assemble_run_readout(
                 run_id,
                 fold_events(events, run_id),
@@ -415,6 +723,56 @@ class TraceStore:
             return 0
         return max(int(event.get("sequence") or 0) for event in events)
 
+    def _local_only_gap(self, run_id: str, durable: dict[str, tuple[str, str]]) -> dict[str, Any]:
+        """The journal lines this run holds that the six tables do not, counted and dated.
+
+        The honest half of "the tables are the source of truth": between a degraded window
+        and the sweep that closes it, an administrator counting this run's events from the
+        tables alone would count too few, and the direction of the error is "it never
+        happened". So the gap is reported with its own count and time range rather than
+        folded into the durable answer as if it had come from there. It is empty as soon as
+        ``backfill_fallback_journal`` has settled the lines, and it is the only place the
+        events that can never reach the tables are named: the ones with no owner to
+        attribute them to, and the ones whose id the tables already gave to a different
+        event (see ``_event_in_tables``).
+        """
+        trace_id = trace_id_from_run_id(run_id)
+        stamps: list[str] = []
+        reasons: set[str] = set()
+        unanswerable = 0
+        for record in self._journal_records(tolerant=True):
+            if record["kind"] != "event":
+                continue
+            event = record["event"]
+            if str(event.get("trace_id") or "") != trace_id:
+                continue
+            event_id = f"{event.get('trace_id')}:{event.get('sequence')}"
+            held = durable.get(event_id)
+            if held == (str(event.get("event_type") or ""), str(event.get("status") or "")):
+                continue
+            stamps.append(str(event.get("timestamp") or ""))
+            reason = str((record.get("marker") or {}).get("reason") or "")
+            if reason:
+                reasons.add(reason)
+            owner_id = str((event.get("payload") or {}).get("owner_id") or "").strip()
+            if not owner_id or held is not None:
+                # Either nothing can own it, or its id is taken: the tables will not be
+                # holding this event tomorrow either, and an operator is owed that
+                # distinction rather than a number that keeps promising recovery.
+                unanswerable += 1
+        if not stamps:
+            return {}
+        stamps.sort()
+        return {
+            "name": LOCAL_FALLBACK_NAME,
+            "events": len(stamps),
+            "first_event_at": stamps[0],
+            "last_event_at": stamps[-1],
+            "reasons": sorted(reasons),
+            "will_reach_tables": len(stamps) - unanswerable,
+            "will_not_reach_tables": unanswerable,
+        }
+
     def _run_events(self, run_id: str) -> list[dict[str, Any]]:
         """The fallback journal's events for one run's trace."""
         return [
@@ -423,14 +781,62 @@ class TraceStore:
             if event.get("trace_id") == trace_id_from_run_id(run_id)
         ]
 
-    def _read_events(self) -> list[dict[str, Any]]:
+    def _journal_records(self, *, tolerant: bool = False) -> list[dict[str, Any]]:
+        """Read the fallback journal as typed lines rather than as a bag of events.
+
+        A line is one of three things: an event the tables refused (from R257 on, carrying
+        the ``fallback`` marker that says why and where the whole ledger lives), a receipt a
+        settlement sweep appended, or a line that will not parse. Line numbers are physical
+        and one-based, because an append-only journal never moves a line and a receipt has
+        to name the ones it covered.
+
+        ``tolerant`` is how a sweep reads: one torn line must not stop a thousand other
+        events from reaching the tables. The read path is deliberately strict and raises,
+        exactly as it did before, so a damaged journal is never quietly read as a shorter
+        trace -- and the events it does return keep the eight-key contract, with neither a
+        receipt nor a marker in them.
+        """
         if not self.path.exists():
             return []
-        events = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                events.append(json.loads(line))
-        return events
+        records: list[dict[str, Any]] = []
+        for number, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                if not tolerant:
+                    raise
+                records.append({"line": number, "kind": "unparsed", "event": None, "marker": {}})
+                continue
+            if not isinstance(record, dict):
+                if not tolerant:
+                    raise ValueError(f"journal line {number} is not a JSON object")
+                records.append({"line": number, "kind": "unparsed", "event": None, "marker": {}})
+                continue
+            receipt = record.get(BACKFILL_RECEIPT_MARKER)
+            if isinstance(receipt, dict):
+                records.append(
+                    {"line": number, "kind": "receipt", "event": None, "marker": {}, "receipt": receipt}
+                )
+                continue
+            marker = record.get(FALLBACK_LINE_MARKER)
+            records.append({
+                "line": number,
+                "kind": "event",
+                "event": {key: value for key, value in record.items() if key != FALLBACK_LINE_MARKER},
+                "marker": marker if isinstance(marker, dict) else {},
+            })
+        return records
+
+    def _read_events(self) -> list[dict[str, Any]]:
+        """The journal's event lines, in the shape the write side produces.
+
+        Receipts are not events and a line's ``fallback`` marker is not part of an event, so
+        both are filtered here: the journal is a page an operator reads, while ``replay`` and
+        ``fold_events`` speak the trace-event contract.
+        """
+        return [record["event"] for record in self._journal_records() if record["kind"] == "event"]
 
 
 

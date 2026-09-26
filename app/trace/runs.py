@@ -7,6 +7,12 @@ degraded window carries the same fields as one read back from ``agent_runs``. Wh
 is ``source``, which is the point of R250's second requirement: an operator has to be able
 to tell the two apart without opening a filesystem.
 
+The ``local_only`` block is the same honesty applied to a durable answer: PostgreSQL may
+have taken the run while a degraded window's events are still waiting to be settled into it
+(``TraceStore.backfill_fallback_journal``), and a readout that silently reported fewer
+events than the trace has would be reporting that they never happened. It is therefore
+counted and dated, and only present when there is something to report.
+
 The ``joined`` block is deliberately blunt. A child row that does not hang off this run, or
 a tool call whose ``agent_step_id`` matches no step of this run, is reported as a number
 instead of being quietly dropped -- a run whose three sections do not stitch together is a
@@ -112,6 +118,7 @@ def assemble_run_readout(
     source: str,
     requested_by: dict[str, Any] | None = None,
     durability_block: dict[str, Any] | None = None,
+    local_only: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The administrator's document for one run, with its durability named in the body."""
     run_id = str(run_id or "").strip()
@@ -150,7 +157,7 @@ def assemble_run_readout(
         "events_for_this_trace": len(events),
     }
 
-    return {
+    readout = {
         "run_id": run_id,
         "trace_id": trace_id_from_run_id(run_id),
         "found": bool(run),
@@ -178,3 +185,8 @@ def assemble_run_readout(
         "joined": joined,
         "durability": durability_block if durability_block is not None else durability_status(),
     }
+    if local_only:
+        # Absent, not zero, when there is no gap: a durable answer must not advertise the
+        # fallback it is not using, which is the rule R250 pinned for this body.
+        readout["local_only"] = local_only
+    return readout

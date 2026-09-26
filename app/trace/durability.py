@@ -15,6 +15,15 @@ trusted right now" with ``degraded`` / ``degraded_reason`` / ``health`` instead 
 boolean ``ok``: a journal nobody else can read is not healthy just because the write call
 returned. The counters here are process-local; the authoritative numbers live in the
 tables, this ledger only says whether they can be trusted right now.
+
+R257 added the recovery half of that sentence, on the same page and with no new
+vocabulary: ``fallback_events`` says how many events the tables refused, and
+``backfilled_events`` / ``local_only_lines`` say how many of them the tables hold again
+after a settlement sweep (``app.trace.store.TraceStore.backfill_fallback_journal``) and how
+many the file still holds alone -- including ``never_in_tables``, the lines that can never
+reach the tables because they carry no owner to attribute them to. A successful backfill
+does not walk ``degraded`` back: the window happened, and an operator reading this ledger
+should still be able to see that it did.
 """
 from __future__ import annotations
 
@@ -67,6 +76,12 @@ def _fresh_ledger() -> dict[str, Any]:
         "fallback_events": 0,
         "fallback_reads": 0,
         "illegal_status_transitions": 0,
+        "backfilled_events": 0,
+        "backfill_already_in_tables": 0,
+        "backfill_errors": 0,
+        "local_only_lines": 0,
+        "never_in_tables": 0,
+        "last_backfill_at": "",
         "fallback_by_reason": {reason: 0 for reason in _FALLBACK_REASONS},
         "last_error": "",
         "last_fallback_at": "",
@@ -150,6 +165,49 @@ def note_local_read_fallback(reason_code: str, detail: str) -> int:
             message[:200] or "-",
         )
     return count
+
+
+def note_backfill_error(detail: str) -> int:
+    """Count a settlement sweep that did not finish, in the ledger it was reporting to.
+
+    A failed backfill is not a request failure: the events stay where they are, in the
+    journal, and the next sweep offers them again. But "we will get to it" is only honest
+    while somebody can see that we have not.
+    """
+    with _lock:
+        _ledger["backfill_errors"] += 1
+        _ledger["last_error"] = str(detail or "")[:500]
+        count = _ledger["backfill_errors"]
+    logger.warning(
+        "[Trace] %s backfill sweep did not finish (occurrences=%d): %s",
+        LOCAL_FALLBACK_NAME,
+        count,
+        str(detail or "")[:200] or "-",
+    )
+    return count
+
+
+def note_backfill(
+    *,
+    settled_events: int,
+    already_in_tables: int,
+    local_only_lines: int,
+    never_in_tables: int = 0,
+) -> dict[str, Any]:
+    """Record what one settlement sweep moved from the journal into the six tables.
+
+    Same ledger, same reason codes, new numbers -- not a second book: ``settled_events``
+    reached the tables for the first time here, ``already_in_tables`` were answered for by
+    an earlier sweep or an earlier writer (which is what makes a repeat sweep cheap instead
+    of double-counting), and ``local_only_lines`` is what this file still holds alone.
+    """
+    with _lock:
+        _ledger["backfilled_events"] += int(settled_events or 0)
+        _ledger["backfill_already_in_tables"] += int(already_in_tables or 0)
+        _ledger["local_only_lines"] = max(0, int(local_only_lines or 0))
+        _ledger["never_in_tables"] = max(0, int(never_in_tables or 0))
+        _ledger["last_backfill_at"] = datetime.now(timezone.utc).isoformat()
+        return dict(_ledger)
 
 
 def note_illegal_status_transition(run_id: str, current: str, requested: str) -> int:
