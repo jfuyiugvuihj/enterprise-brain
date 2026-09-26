@@ -410,3 +410,23 @@
 - 题号清单（按 `id` 去重后 21 枚）：`metric-04` `metric-05` `metric-10` `metric-11` `metric-13` `metric-18` `metric-19` ／ `scope-01` `scope-03` `scope-05` `scope-06` ／ `insight-02` `insight-06` ／ `tool-01` `tool-04` ／ `doc-09` `doc-13` ／ `chart-04` ／ `data-08` ／ `approval-06` ／ `report-12`。
 - 🔴 **一条必须写小的边界**：这 24 题不等于"客户今天答不出这 24 题"。生产读路径除向量腿外还有 BM25／改写／多路召回，run6 里 `metric-05`／`metric-10`／`metric-18`／`metric-19` 都拿到了引证。诚实说法是：**"向量腿单腿交 0 行 24 题，其中 11 题在 run6 同时读成零引证"**（交集：`chart-04` `insight-02` `insight-06` `metric-04` `metric-11` `metric-13` `scope-01` `scope-03` `scope-05` `tool-01` `tool-04`）。
 - 本节对 §9.3 那六格的作用：**不消任何一格**，但给第 ⑥ 格（24 题空答复要不要当基线缺陷）一份定量答案——**它是 Chroma 的缺陷、不是我们数据的缺陷、更不是 PG 的缺陷**（PG 侧 135/135 索引=精确、零空答复）。⇒ **R211 裁定"不修 Chroma、由切读吸收"至此有题号级凭据**；反过来，若切读 on 之后这 21 枚里有谁仍交空集，R211 的裁定当场作废、另立新单。
+
+## 2026-09-26 第四格·总控落笔：R59 块2 的结案口径，以及三条从这里生效的硬口
+
+### 一、块2 按「接线凭据到位」结案，不按「切读完成」结案
+
+`Planck`（`01a0dd54-a8c6-7890-8c6b-6a9b62b8d1e2`@`be-r592`，基点 `d194d99`）交回时对块2 的既定前提作了证伪，并附实证：`chat.py` 的检索入口**今天已经**跟着块1 那条腿走——只设 `INDEX_BACKEND=pgvector`（出厂常量仍为 `chroma`）就能在端点上打出「一条排名 SQL、旧句柄 `query()`/`get()` 双零、`answered_by==pgvector`」；`/ask` 那条链（`app/agents/tools.py:968` → `search_for_principal` → `app/rag/retrieval_pipeline.py:370` → `app/rag/retriever.py:1501`）同一枚开关跟着走。判据②明令「不许自造第二把开关」，而要在 `chat.py` 里再接一次，正是那第二把 ⇒ 本单**零生产码改动**，交回 3 枚端点层凭据件（16 用例）＋ 5 把反证。
+
+总控在主树 `dbc2047` 亲跑（不采信自述）：`test_r592_*` 三件 + `test_r59b_pg_read_switch.py` = **40 passed**；权限四件（`test_prefiltering.py`／`test_classification_fail_closed.py`／`test_r159_cross_scope_matrix.py`／`test_legacy_chat_retrieval_scope.py`）= **97 passed**，原有断言一字未放宽；`app/rag/indexing.py:50` 现取 `INDEX_BACKEND_DEFAULT = "chroma"`——默认没翻。**结案口径 = 接线实现与端点凭据到位、默认未翻、不宣布切读完成。** `R60`（停写退役）仍受两格阻塞：`R305` 那枚「真库恢复」读数未跑绿（§4CR 已锁），加上下面第 3 条那格量不到的选择性权限过滤。
+
+### 二、🔴 新硬口：动检索装箱顺序，必须点名跑那枚顺序钉
+
+施工反证 K4 报回来一条改变既有句法强度的事实：**既有的 21 枚 R45 参数化件挡不住「先去重、后过滤」**——把顺序换反之后 `test_prefiltering.py` 全绿，红的只有 `tests/test_r592_permission_order_on_the_pg_leg.py::test_the_permission_filter_still_runs_before_deduplication`（1 failed / 47 passed）。⇒ 从今天起「R45 全套已钉死装箱顺序」这句话**不再成立**，唯一守这一格的是 r592 那枚顺序钉（它 spy `_deduplicate`，断言收到的每条都已过 `scope.allows`，位置在 `app/rag/retrieval_pipeline.py:928`）。凡改动检索结果装箱／去重／过滤顺序的单，派工词里必须把这一枚点名进去。
+
+### 三、跑分与召回对比的题数不是同一个数（引用之前先看这条）
+
+`scripts/r59_recall_compare.py:51 DEFAULT_FIXTURES = (business_evaluation_30.jsonl, business_evaluation_100.jsonl)` ⇒ 默认并集是 **135 题**（`:620` 的 `args.fixture or list(DEFAULT_FIXTURES)` 允许单指），而计划书 §P4 与 run4/run5 那几份基线说的是 **105 题**（`business_evaluation_100.jsonl` 实测 105 行，文件名是历史名；跑分侧 `run_quality_evaluation.py` 必须显式 `--fixture`，见跑分手册 §P-3）。**两本账不许混着引用**：召回对比若拿默认跑，报告里必须写 135；要与 run 基线逐题对齐，就显式 `--fixture tests/fixtures/business_evaluation_100.jsonl` 锁到 105。
+
+### 四、新立 R330（待投）：PG 那本账要在出口读得到
+
+`vector_read_diagnostics()`／`vector_corpus_diagnostics()` 今天在 `app/**` **零消费者**（只有测试读），而 `search_shape` 早在 R165 就接上了 `/health/details`（`app/common/monitoring.py:254`）。回滚是个要人操作的动作——运维看不见「这一问是谁答的、切读命中了几条、上一次旁路是什么」，回滚点就没有可操作性。写域锁 `app/common/monitoring.py` + 新 `tests/test_r330_*.py`（与 R165 同一条出口，不许另开一屏）；判据含「不许新增第二本账，只投影既有 diagnostics」。排在 R59 块2 之后、R60 之前。

@@ -3674,3 +3674,22 @@ V2 明列「所有资源有稳定 ID、owner 和生命周期」「资源级隔�
 
 在途五枚：`Planck` R59 块2（`be-r592`·`chat.py`）·`Wegener` R305（`be-r305`·新 `app/rag/*` 表格/电子表格模块）·`Herschel` R307（`be-r307`·`App.vue` 8 + `SourceCard.vue` 3，现取仍 dirty=0）·`Gibbs` R291 A 案（`be-r291`）·`Kepler` R310（`be-r310`）。上限实测 6，本格不再投第 7 枚。
 待投池：`R301`（等 `chat.py` 让位）·`R306`（等 R305 并树，接 `loader.py` 分派＋白名单）·`R293`（等 `panel-states.test.js` 让位）·`R308`（表格截断透出，等 `chat.py`）。
+
+## §106（09-26 第四格·总控续）：R59 块2 结案并树 `dbc2047` · K4 那条改变既有句法强度的账 · R301 已投 · 名册补了 R307 那枚漏记的行
+
+### 一、R59 块2：并树 `dbc2047`（施工 `Planck`@`be-r592`，基点 `d194d99`）
+
+- **交付形态**：零生产码改动 + 3 枚端点层凭据件（16 用例）+ 5 把反证。前提证伪成立（`chat.py` 检索入口已随块1 那条腿走，附 env-only 实证与 `/ask` 链路逐枚行号），我按判据②「不许自造第二把开关」认这个结论。
+- **总控主树亲跑**：`test_r592_*`＋`test_r59b_pg_read_switch.py` = **40 passed**；权限四件 = **97 passed**（断言零放宽）；`app/rag/indexing.py:50` 现取 `INDEX_BACKEND_DEFAULT = "chroma"`。**结案＝接线凭据到位、默认未翻、不宣布切读完成。**
+- **四条请示的裁定**：(1) PG diagnostics 出口读不到 ⇒ **甲**，新立 **R330**（写域 `app/common/monitoring.py`，与 R165 `search_shape` 同一条出口，待投池第 1 位）；(2) 结案口径 ⇒ **甲**；(3) K4 那条 ⇒ **记账并立永久条款**（凡动检索装箱顺序必点 `test_r592_permission_order_on_the_pg_leg.py`），全文见 pgvector 定案文档第二节；(4) 105/135 ⇒ **甲＋乙**（定案文档第三节已落笔；跑分窗一律显式 `--fixture` 锁 105）。
+- 🔴 **R60 仍不许翻绿**：除既有的「R305 真库那一格未跑绿」，再加上「本库 `classification` 全=1、`department` 全=空 ⇒ 选择性权限过滤那一格量不到，须先在沙盒库造跨部门跨密级语料」。
+
+### 二、名册补行（一处记账漏洞）＋席位
+
+- 🔴 **R307 那枚派出去没写名册行**：`Herschel`/`01a0dd63-3d0e-72a1-9139-94313b4f31f2`@`be-r307`（基点 `fa3d16c`）在 §4CR 五里只活了半句，名册无行。本班按行 splice 补上，并把四要素现取写全：名册有行（本班补）＋有回执＋有进程（`wait_agent` 未终态）＋**落盘＝0**（19:5x 现取 `be-r307` 仍 dirty=0）。按 §4CR 二那条新条款，**树干净不等于没落地，不得据此重投**。教训：投递成功返回 `agent_id` 的同一格就要写名册，不许攒到班末。
+- 同格把 `Turing` 那行订正为已结案并树 `9344028`，id 前缀 `01a0dd2c-…` 是上一班记错的，真 id `01a0dd36-daf2-7c13-bc3a-858013c14fdc`（并树提交正文可查）；`Gibbs` 那行改成本班批 A 案续投；原「R305 待投」那一行改成了 R307 的行（`Wegener` 的行在上一行已有，那枚待投行自此作废）。
+- **席位现取（满 6）**：`Wegener` R305（`be-r305`）·`Herschel` R307（`be-r307`）·`Gibbs` R291 A 案（`be-r291`）·`Kepler` R310（`be-r310`）·`Pascal` R309 取证（`be-r309`）·`Aristotle` R301（`be-r301`@`dbc2047`）。待投池：`R330`（PG diagnostics 出口）·`R306`（等 R305 并树 + R301 让出 `loader.py`）·`R293`（等 `panel-states.test.js` 让位）·`R308`（表格截断透出，等 `chat.py`）。🔴 号段：**R309–R312 已占**，`Pascal` 的建议号从 **R313** 起；总控自办新单一律从 **R330** 起，两班不许撞号。
+
+### 三、R301 已投（`Aristotle`/`01a0dd78-39ac-72d2-b6c6-7e82cfc27a0a`@`be-r301`@`dbc2047`）
+
+V2 完成判据「失败状态、来源和质量状态可查看」那一格。现取证：`app/rag/loader.py:176 PdfExtractionReport` 三枚 property 齐全（`scanned_page_numbers`/`scanned_pages`/`source_counts`），`:591` 内部就在组装 `DocumentExtraction(file_path, text, tables, pdf=report)`，可对外只有 `:655 load_pdf(...) -> str` 与 `:729 load_document(...) -> str` ⇒ `rg -l PdfExtractionReport` 全仓只落在 `ocr.py`/`loader.py` 与两枚测试。写域：`loader.py`（只准加一枚交回 `DocumentExtraction` 的对外入口，`load_document` 签名行为一字不变，`app/documents/preview.py:29` 那个调用点别碰）＋ `chat.py` **只准动上传那一段**（`:3889 upload_document`）＋ 新 `tests/test_r301_*.py` ＋ 契约**文末追加**。四条硬口：非 PDF 那一格必须写死建议 `None` 不许塞空对象；不落库不加迁移（契约里明写「这是这一次上传的读数，不是历史账」）；`file_path` 是绝对路径 ⇒ 响应只许出现用户上传的文件名，并交一枚泄露反证钉；降级句沿用 `report.degradation_sentence` 那一把尺，`ocr_available=False` 与「引擎在、这一页没跑成」必须分得开。检索/回读那两段被 r592 与 R295 的钉着，禁改。
