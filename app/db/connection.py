@@ -65,9 +65,9 @@ def open_connection(settings: DatabaseSettings):
 
 
 # ---------------------------------------------------------------------------
-# R238 —— 建连时延策略的唯一之家。本单一个调用点都不迁。
+# R238 —— 建连时延策略的唯一之家。R238 自己一个调用点都不迁；第一枚迁入者是 R299。
 #
-# 下面这一节今天除了测试没有第二个读者。它把"超时 / 有界重试 / 退避 / 预算"收成一份
+# 这一节今天的读者 = 测试 + 一枚生产调用方（app/notifications/states.py:30）。它把"超时 / 有界重试 / 退避 / 预算"收成一份
 # 可复用入口，为的是让下一批迁移不必各自在这堵墙前面盖小房子（R229 已经在鉴权那一侧
 # 盖了一间，R230 又在拒绝之前加了一枚 15s 节流重探，两间都还着，墙本身还在）。判据②要
 # 的就是"一处策略"；"一处"能不能守住，靠的是 tests/test_r238_bare_connect_ratchet.py
@@ -222,7 +222,8 @@ def connect_with_policy(url: str, *, policy=None, environ=None, connect=None,
     """按 :func:`connect_policy` 的读数开一条连接：超时 + 有界重试 + 指数退避 + 预算。
 
     env 一个都不设时走的是 ``connect(url)`` 一发：不睡、不重试、不加超时，和
-    ``open_connection()`` 今天做的事完全相同。判据②：本节零调用方，迁入调用点是下一单。
+    ``open_connection()`` 今天做的事完全相同。判据②：本节今天只有一枚调用方（R299 的 notifications 那一族），
+    第二枚起要先对判据——账记在 tests/test_r238_connect_boundary_policy.py 的语义账上，不是行号账。
 
     ``connect`` / ``transient`` / ``sleep`` / ``clock`` 是给测试留的缝（与本仓
     ``connection_factory=`` 同一族做法）。注入假 connect 而不给 transient 时重试自动

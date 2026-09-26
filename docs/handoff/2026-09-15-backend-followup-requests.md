@@ -3551,3 +3551,46 @@ Chroma 侧"修"它的唯一手段是重建那 1,008 枚索引，而 `rebuild_ind
 ### 五、并发上限实测（修订「6 到 8」那句期望）
 
 本班第 7 枚投递被 harness 直接拒：`collab spawn failed: agent thread limit reached`。⇒ **实测上限仍是 6 枚在途**，超出即投递失败，不是提速空间。已结案的两枚必须**先 `close_agent` 再投下一枚**；投递被拒＝未落地，**不当场补投**，改由名册记「待投 + 树已就绪」。
+
+## §103（09-26 第三格·总控）：V2 波次二开工两枚 · R304 表格接线 · R305 Excel/CSV 知识库模式
+
+### 〇、本格现取取证（不靠上一班转述）
+
+- 主树 HEAD `4cc5c39`，tracked 零 diff（脏项只有 `chroma_db/chroma.sqlite3` 与两枚未跟踪杂物）。
+- 🔴 **订正一笔假账**：上一班把 **R304 记成「在途，agent id 从后续 notification 取」**，但 §0 名册末行是 `Blackwell`R303，**没有 Turing 这一行**；`be-r304`@`4cc539…` 现取 **HEAD `4cc5c39`、dirty=0、无任何 `.py` 落盘痕迹** ⇒ 那枚投递**未落地**。按铁规「投递被拒＝未落地，不当场补投」，本格视为**新 block 内的首次有效投递**，不记重复投递。
+- 在途四枚现取：`Darwin`(R295)／`Volta`(R288)／`Faraday`(R283)／`Blackwell`(R303) ⇒ 并发上限实测 6，本格再投两枚**用满**。
+- 依赖现取：`openpyxl` 是**直接依赖**（`pyproject.toml:29`，`uv.lock:2403` = 3.1.5，镜像 `uv sync --frozen` 在位）⇒ Excel 那一枚**不许动 `pyproject.toml`/`uv.lock`**。
+- 真空档现取：`app/rag/loader.py:405-425` 的 `load_document` 只认 `.pdf/.docx/.doc/.txt/.md`，其余 `raise ValueError` ⇒ 客户上传 `.xlsx`/`.csv` 今天必 400；`app/documents/file_security.py:13` 是白名单真正生效处（**按调用点取证，不是只看签名**）。
+
+### 一、R304 · 表格抽取接进上传路径（写域 `app/rag/loader.py` + 新 `tests/test_r304_*.py`；树 `be-r304`@`4cc5c39`）
+
+判据（验收逐条对，不采信自述）：
+
+1. `load_pdf`／`load_docx` 的返回按 `app/rag/tables.py` 头部契约接 `extract_pdf_text`／`extract_docx_text`，**锚定 return 语句、不许按行号改**；这两处之外的分支（`.doc`/`.txt`/`.md`、OCR 腿、`sanitize_text`）一字不动。
+2. **不带表的文件必须逐字节回今天同样的字符串**：反证 = 在仓 `documents/refactor_guide.pdf` 与任一在仓 `.docx`，接前接后 sha256 相同。这条不达标 = 让已入库的 1,008 枚向量搬家，当场退单。
+3. R130 那把 NUL 尺仍在链上：`tables` 交回的每个串都要过 `sanitize_text`，专件证明「表里塞 NUL 会被拒」不是被接线绕过的。
+4. 带表 fixture（`tests/fixtures/r300_*`）端到端：抽取→切块，表进块、每块不超 `CHUNK_SIZE_CHARS` 预算，超预算走 `tables` 自己的分段策略（不许自创截断）。
+5. 全局四钉连带跑：`test_r238` ＋ `test_r246` ＋ `test_r142` ＋ `test_r132`。
+6. 禁域：`app/api/v1/chat.py`（`Darwin` 在写）·`app/rag/tables.py`（**只读**，发现缺陷回报不自改）·`migrations/**`·评测集·`frontend/**`·`pyproject.toml`/`uv.lock`·`docs/**`。
+
+### 二、R305 · Excel/CSV 知识库模式（写域 新 `app/rag/tabular.py` + 新 `tests/test_r305_*.py` + `tests/fixtures/r305_*`；树 `be-r305`@`4cc5c39` 新建 dirty=0）
+
+背景：V2「新增业务能力」明列 Excel/CSV 知识库模式，今天零支持（见上第〇节末条）。
+
+判据：
+
+1. 🔴 **禁 `loader.py`**（`R304` 正在写）：本格只交模块＋件＋契约，接线两行由总控在 R304 并树后另立单落笔。半接线（白名单放开但下游还 `raise`）比不做更坏。
+2. CSV：编码沿用 `load_txt` 那三档（`utf-8`/`gbk`/`gb2312`）；分隔符 sniff；空行、全空列不得产出空白块。
+3. XLSX：`openpyxl` 已在依赖里 ⇒ **不许新增/改依赖**；多 sheet 各自成段并保留 sheet 名做锚点；合并单元格按 `tables.py` 头部**实测口径**（pdfplumber 填网格、openpyxl 回 `None`）处理，不许自创第二套渲染。
+4. 产物必须是**给检索用的文本**：每行带表头锚点（复用 `tables.py` 的 `ANCHOR_JOIN`／`MAX_CONTEXT_CHARS` 口径），块预算同 `CHUNK_SIZE_CHARS`；禁止把整表拼成一坨无锚点长串。
+5. 数据红线：日期/数字渲染语义不得漂（日期固定一种写法，不跟 locale）；长表必须落硬顶（`MAX_TABLE_CHARS`／`MAX_TABLES_PER_DOCUMENT` 同量级），并有专件证明这顶**真被触发**而不是摆设。
+6. 反证 ≥4 把，逐把写清摘了哪把、红了哪条；不许交一枚永远绿的假钉。
+7. 全局四钉 ＋ `check_no_bom`；禁域同 R304，另加 `app/rag/tables.py` 只读复用。
+
+### 三、排队图（本格改写，取代 §102 四的最后两行）
+
+- `chat.py` 串行不变：`R295`(在途) → `R59 块2` → `R301 OCR 接线`。
+- `loader.py` 串行：`R304`(本格投) → `R306` 表格/表格型文件接进 `load_document` 分派 → 上传白名单那半（`file_security.py`）随 `R306`，一次一枚。
+- 前端一次一枚：`R288`(在途) → `R291` → `R293`。
+- 待投池（空槽即取）：**R306** xlsx/csv 接进分派＋白名单＋契约（`loader.py`＋`file_security.py`＋`docs/api/contract-v1.md` append）· **R257** Trace 兜底两笔（`app/trace/**`＋`observability.py`）。
+

@@ -8,7 +8,7 @@
   一枚默认从"关"翻成"开"，或者把 ``connect_policy`` 里"只有 attempts>1 才补超时/预算"
   那两条 fallback 提前，至少一枚当场红。
 - 判据②（一处策略）由 ``test_connection_py_imports_no_call_site`` 与
-  ``test_no_call_site_imports_the_new_policy_yet`` 把住：本节零调用方，且
+  ``test_policy_call_sites_are_exactly_the_ledger`` 把住：调用方只许账本上那一枚，且
   ``app/db/connection.py`` 不许 import 任何调用方。
 - 判据③（不许第二份时延参数）由 ``test_the_latency_numbers_are_not_a_second_set`` 与
   ``test_this_module_invents_no_extra_latency_names`` 把住。前者用 AST 比对本模块与
@@ -410,11 +410,21 @@ def test_connection_py_imports_no_call_site():
     assert "app.common.logger" in imported, "日志走本仓既有那枚 logger，不自己配 handler"
 
 
-def test_no_call_site_imports_the_new_policy_yet():
-    """反向也一样：今天 app/** 里除本模块外，一枚调用方都不许已经在用这一节。
+MIGRATED_POLICY_CALL_SITES = {
+    # 账本记的是语义（谁在用、用的是哪几个名字），不是物理行号：搬动这些文件不该咬钉，
+    # 但多一枚调用方、少一枚调用方、同一枚换了名字，三样都当场红。
+    # 第一枚迁入者 = R299（并树 fa8709c，通知中心落 PG 时选了这一节的有界重试入口），
+    # 由总控 2026-09-26 落笔入账。R238 那句「本单一个调用点都不迁」仍然成立。
+    "app/notifications/states.py": ("open_connection_with_policy",),
+}
 
-    本单定位就是"只造边界与棘轮，一个调用点都不迁"。这一枚红了说明有人提前迁了，
-    那是另一单的活，得先对判据。
+
+def test_policy_call_sites_are_exactly_the_ledger():
+    """反向也一样：app/** 里用这一节的调用方，必须与账本逐枚相等。
+
+    原断言是「今天一枚都不许用」，那是 R238 建边界那一天的事实。R299 把
+    ``app/notifications/states.py`` 迁了进来（用策略入口而不是新造一枚裸 connect，方向是对的），
+    事实变了就把断言改成语义账：账本之外多一枚 -> 红；账本之内那一枚不再用 -> 也红（过期）。
     """
     new_names = (
         "connect_policy", "connect_with_policy", "open_connection_with_policy",
@@ -426,8 +436,10 @@ def test_no_call_site_imports_the_new_policy_yet():
         if rel == "app/db/connection.py":
             continue
         source = path.read_text(encoding="utf-8")
-        hit = [name for name in new_names if re.search(r"\b" + name + r"\b", source)]
-        if hit:
-            offenders.append(f"{rel}: {hit}")
+        hit = tuple(sorted(name for name in new_names
+                           if re.search(r"\b" + name + r"\b", source)))
+        allowed = MIGRATED_POLICY_CALL_SITES.get(rel, ())
+        if hit != allowed:
+            offenders.append(rel + ": 实到 " + str(list(hit)) + ", 账本允许 " + str(list(allowed)))
 
-    assert offenders == [], "本单不迁调用点：" + "; ".join(offenders)
+    assert offenders == [], "调用点迁移没对账（要迁先对判据，不许顺手）：" + "; ".join(offenders)
