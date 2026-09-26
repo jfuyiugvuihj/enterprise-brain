@@ -32,7 +32,7 @@ from app.common import reliable_queue
 from app.common.audit import record_audit
 from app.storage import pending_approvals
 from app.common.authorization import principal_from_request
-from app.rag.loader import load_document
+from app.rag.loader import PAGE_SOURCE_OCR_DEGRADED, DocumentExtraction, extract_document_with_reports, load_document
 from app.documents.preview import build_document_preview
 from app.rag.retriever import DocumentRetriever
 from app.rag.filters import (
@@ -3838,6 +3838,42 @@ def _unpublished_index_outcome(filename: str, version: int, reason: str) -> dict
     }
 
 
+def _pdf_extraction_cell(extraction: DocumentExtraction | None) -> dict | None:
+    """这一次上传的 PDF 提取读数（R301 判据①②③⑤）。
+
+    三个「只」：只搬 :class:`PdfExtractionReport` 已经有的读数，逐页来源用现成的
+    ``source_counts``，不新造第二套词表；降级说明只抄 ``degradation_sentence`` 那一把尺
+    （R298 已经把「引擎不可用」与「引擎在、只是这一页没跑成」分成两档，这里一个字不改口）；
+    只报读数 —— 「这一页 OCR 没跑成」与「这一页没有内容」是两件事，本格只说前者，后者由
+    ``source_counts`` 里的 ``blank`` 与 ``ocr-empty`` 各自说话，不合并、不引申。
+
+    没有逐页账 ⇒ 整格 ``None``：非 PDF（``.txt`` / ``.md`` / ``.doc``）与 ``.docx`` 都走
+    这一支。不返回 ``{}`` —— 一个空对象读起来像「查过了，什么都没查到」，而那恰恰是判据③
+    点名要禁的形状：没读过的东西不许长得像读过。
+
+    格里没有绝对路径：``extraction.file_path`` 与 ``report.file_path`` 都是服务器落盘位置，
+    客户看得见的是自己上传时那个文件名（响应里已有的 ``filename``）。这一格也不落库 ——
+    它是「这一次上传的读数」，写进目录行就要迁移，那是另一枚单。
+    """
+    report = extraction.pdf if extraction is not None else None
+    if report is None:
+        return None
+    return {
+        "page_count": report.page_count,
+        "scanned_pages": report.scanned_pages,
+        "scanned_page_numbers": list(report.scanned_page_numbers),
+        "ocr_attempted": report.ocr_attempted,
+        "ocr_available": report.ocr_available,
+        "ocr_engine": report.ocr_engine,
+        "ocr_dpi": report.ocr_dpi,
+        "source_counts": dict(report.source_counts),
+        "ocr_degraded_page_numbers": [
+            page.page_number for page in report.pages if page.source == PAGE_SOURCE_OCR_DEGRADED
+        ],
+        "degradation_note": report.degradation_sentence,
+    }
+
+
 def _document_upload_result(
     *,
     filename: str,
@@ -3852,6 +3888,7 @@ def _document_upload_result(
     index_publication: dict,
     status: str,
     message: str,
+    pdf_extraction: dict | None,
     chunk_count: int | None = None,
     index_metrics: dict | None = None,
 ) -> dict:
@@ -3860,6 +3897,11 @@ def _document_upload_result(
     R49 gives a skipped upload the same fields as an indexed one on purpose: the caller
     must be able to tell "searchable" from "deliberately not indexed" by reading
     ``index_status``, and must never have to infer it from a field that went missing.
+
+    R301 adds ``pdf_extraction`` to that same shape: the page-source reading of this one
+    upload, ``None`` (never ``{}``) whenever the format has no page book to report. It is a
+    reading, not a ledger -- nothing here persists it, because a column for one would need a
+    migration and that is a separate ticket awaiting the owner.
     """
     receipt = {
         "filename": filename,
@@ -3868,6 +3910,7 @@ def _document_upload_result(
         "version": version_meta.get("version"),
         "size_bytes": version_meta.get("size_bytes"),
         "parse_status": version_meta.get("parse_status"),
+        "pdf_extraction": pdf_extraction,
         "owner_id": owner_id,
         "department": department,
         "chunk_count": (
@@ -3950,8 +3993,16 @@ async def upload_document(file: UploadFile = File(...),
     stored_name = storage_path.name
     file_path = str(storage_path)
     logger.info(f"[Docs] upload received: {inspection.display_filename} -> {stored_name}")
+    # R301 判据①：PDF 走带账的那一枚出口，一次解析同时拿回正文与逐页来源账。
+    # 不先 load_document 再补一遍账 —— 那等于把 R298 的 OCR 在客户机上重跑一次。
+    # 其余格式照旧只取正文：那一格对它们没有账可报（判据③，整格 None）。
+    extraction: DocumentExtraction | None = None
     try:
-        content = await asyncio.to_thread(load_document, file_path)
+        if inspection.extension == ".pdf":
+            extraction = await asyncio.to_thread(extract_document_with_reports, file_path)
+            content = extraction.text
+        else:
+            content = await asyncio.to_thread(load_document, file_path)
     except Exception as exc:
         logger.exception(f"[Docs] parse failed: {file.filename}")
         # The stored file and its catalog row are kept on purpose. A version that
@@ -3970,6 +4021,10 @@ async def upload_document(file: UploadFile = File(...),
             parse_status="failed",
         )
         raise HTTPException(status_code=500, detail="document_parse_failed") from exc
+
+    # R301：读数在这一刻定稿。后面四条返回路径（indexed / excluded / 重复未收 / 索引拒收但保留文件）
+    # 带同一格、同一形状 —— 少一条就变成"客户端靠键不见了去猜"，那是 R49 已经否掉的写法。
+    pdf_extraction = _pdf_extraction_cell(extraction)
 
     # R49 索引瘦身：值不值得入索引，在这里判、在花钱之前判。判定只看正文特征，不看文件名
     # （理由与阈值见 app/documents/index_policy.py）。被排除的版本一律保留文件、保留目录行、
@@ -3996,6 +4051,7 @@ async def upload_document(file: UploadFile = File(...),
             index_reason=eligibility.reason,
         )
         return _document_upload_result(
+            pdf_extraction=pdf_extraction,
             filename=inspection.display_filename,
             stored_name=stored_name,
             resource_id=resource_id,
@@ -4070,6 +4126,7 @@ async def upload_document(file: UploadFile = File(...),
             else None
         )
         return _document_upload_result(
+            pdf_extraction=pdf_extraction,
             filename=inspection.display_filename,
             stored_name=stored_name,
             resource_id=resource_id,
@@ -4100,6 +4157,7 @@ async def upload_document(file: UploadFile = File(...),
         # 这份正文已经在索引里（同名的上一个版本），所以状态是 indexed 而不是 excluded；
         # 没有新增可检索内容这件事由 index_publication.reason 说清楚。
         return _document_upload_result(
+            pdf_extraction=pdf_extraction,
             filename=inspection.display_filename,
             stored_name=None,
             resource_id=resource_id,
@@ -4130,6 +4188,7 @@ async def upload_document(file: UploadFile = File(...),
         index_reason=refusal,
     )
     return _document_upload_result(
+        pdf_extraction=pdf_extraction,
         filename=inspection.display_filename,
         stored_name=stored_name,
         resource_id=resource_id,

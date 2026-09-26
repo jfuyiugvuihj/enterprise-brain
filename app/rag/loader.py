@@ -742,3 +742,57 @@ def load_document(file_path: str) -> str:
     if ext == ".md":
         return sanitize_text(load_md(file_path))
     raise ValueError(f"Unsupported file format: {ext}")
+
+
+
+# ==================== R301：把已经组装好的那本账交到调用方手里 ====================
+
+
+def _text_only_extraction(file_path: str, text: str) -> DocumentExtraction:
+    """没有账可报的那一支：正文照交，两本账写明「本轮未参与」，不编一份看起来读过的。
+
+    ``TableExtractionReport.source=""`` 是本模块既有的「表格通道没参与」记号
+    （``attached`` 就按它判），与「参与了、一枚表都没抽到」（``source="pdf", tables=0``）
+    是两句不同的话。``pdf`` 留 ``None`` 而不是空报告：非 PDF 根本没有逐页来源账。
+    """
+    body = sanitize_text(text)
+    return DocumentExtraction(
+        file_path=str(file_path),
+        text=body,
+        tables=TableExtractionReport(source="", prose_chars=len(body.strip())),
+    )
+
+
+def extract_document_with_reports(file_path: str) -> DocumentExtraction:
+    """:func:`load_document` 的带账版本：同样一次解析，正文之外把两本账一并交回调用方。
+
+    为什么需要这一枚：``load_document`` 只交正文串，而 :func:`extract_pdf_with_tables`
+    在 loader 内部早就把 :class:`DocumentExtraction`（``pdf`` 逐页来源账 + ``tables``
+    表格账）组装好了 —— 除了测试没人拿得到，于是「这份扫描件一共几页 / 几页是扫的 /
+    哪几页 OCR 没跑成」这三句话在客户屏幕上永远看不见（R301 治的就是这一格）。
+
+    口径三条：
+
+    - 分派与 :func:`load_document` 逐字一致（同一枚 ``ext`` 判断；不带账的格式直接退回
+      ``load_document`` 自己，不复制它的编码探测与「不支持就出声」）；交回的 ``text``
+      与 ``load_document`` 在同一次调用上逐字相同，一份文档不会有两个正文。
+    - **不重解析**：账来自产出它的那一次解析，PDF 只走 :func:`extract_pdf_with_tables`
+      一遍 —— 先 ``load_document`` 再补一遍账，等于把 R298 的 OCR 在客户机上重跑一次。
+    - 账只在**真正产出它的格式**上非空：``.pdf`` 两本都有；``.docx`` 只有表格账
+      （``pdf is None``，没有逐页账可报）；其余格式两本都是「未参与」的形状。
+
+    ``load_document`` 的签名与行为一字未改，只要正文的调用方（``app/documents/preview.py``）
+    照旧。重入闸里那一层（:func:`_pdf_prose_holdover` 命中）与 ``load_pdf`` 同一口径：交回
+    被扣住的那一份正文，账由外层那一次解析负责，这里不重复产第二本。
+    """
+    ext = Path(file_path).suffix.lower()
+    if ext == ".pdf":
+        holdover = _pdf_prose_holdover(file_path)
+        if holdover is not None:
+            return _text_only_extraction(file_path, holdover)
+        extraction = extract_pdf_with_tables(file_path)
+    elif ext == ".docx":
+        extraction = extract_docx_with_tables(file_path)
+    else:
+        return _text_only_extraction(file_path, load_document(file_path))
+    return replace(extraction, text=sanitize_text(extraction.text))

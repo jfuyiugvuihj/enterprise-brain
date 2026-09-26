@@ -2338,3 +2338,73 @@ which describes R290's own write set and stays true.
 Neither closure was made inside R290's route, and neither reopens it. Verification status: both are
 pinned offline on this machine; the live-PostgreSQL run still outstanding here belongs to R59/R60, not
 to these two residuals.
+
+## The upload receipt carries its own page-source reading (2026-09-26, R301)
+
+`POST /api/v1/upload` answers one more field, `pdf_extraction`. It is the reading of *this
+one upload* -- what the PDF extractor saw, page by page. Nothing in it is invented:
+`app/rag/loader.py` has assembled that book since R298 and R304 (`DocumentExtraction`,
+carrying `pdf` and `tables`), and until now nothing outside the tests could reach it. A
+customer who uploaded a scan could not see "12 pages, 3 of them scanned, page 7 never got
+OCR'd" anywhere on screen, because both loader exits returned only the text string.
+
+The public exit added for this is `extract_document_with_reports(file_path) ->
+DocumentExtraction` -- `load_document`'s sibling with the books attached. `load_document`
+keeps its signature and its behaviour word for word: `app/documents/preview.py` is a caller
+that wants only the text, and it is untouched.
+
+| field | where it comes from |
+| --- | --- |
+| `page_count` | `PdfExtractionReport.page_count` |
+| `scanned_pages` / `scanned_page_numbers` | `.scanned_pages` / `.scanned_page_numbers` |
+| `ocr_attempted` | `.ocr_attempted` -- did the OCR channel get opened at all this run |
+| `ocr_available` | `.ocr_available` -- was the engine usable at that moment |
+| `ocr_engine` / `ocr_dpi` | `.ocr_engine` / `.ocr_dpi` |
+| `source_counts` | `.source_counts`, the loader's own five words (`text-layer`, `ocr`,
+  `ocr-empty`, `ocr-degraded`, `blank`) -- no second vocabulary on the wire |
+| `ocr_degraded_page_numbers` | the pages whose source is `ocr-degraded`, i.e. "which pages
+  did not run", as page numbers |
+| `degradation_note` | `.degradation_sentence`, verbatim |
+
+Five rules the field obeys, each one pinned by `tests/test_r301_upload_readout.py`:
+
+1. **Readings, not conclusions.** `ocr-degraded` means "this page's OCR did not run". It
+   does not mean "this page has nothing on it", and the receipt never says or implies the
+   second sentence while reporting the first. A page that was OCR'd and genuinely held no
+   text stays `ocr-empty`; a page with neither text layer nor image object stays `blank`.
+   Three facts, three words, not one word with three meanings.
+2. **One ruler for the degradation sentence.** `degradation_note` is
+   `report.degradation_sentence` with no editing here, which is what keeps R298's split
+   visible on the wire: `ocr_available: false` opens with
+   `ocr.ENGINE_UNAVAILABLE_NOTE` ("本地 OCR 引擎不可用，扫描页未识别文字"), while an engine
+   that *was* available and lost one page opens with
+   `loader.DEGRADATION_NOTE_PREFIX` ("扫描页 OCR 降级"). "Install the engine" and "this one
+   page failed" stay two different answers, and a client does not have to parse the tail of
+   the sentence to tell them apart.
+3. **Not a PDF, no reading.** The key is present on all four outcomes of the endpoint
+   (indexed, excluded by the R49 policy, duplicate not accepted, refused but kept) and its
+   value is `null` for `.txt`, `.md`, `.doc` and `.docx`. An empty object is expressly not
+   allowed: `{}` renders as "we looked, there was nothing", which is a claim about the
+   document instead of a reading of it. `.docx` has a table book and still answers `null`
+   here, because this field is about pages and only PDFs have a page book.
+4. **Nothing is persisted, and there is no migration.** This is a reading of one upload, not
+   a ledger over the corpus: the catalog row does not carry it, no version column holds it,
+   and no file under `migrations/` mentions it. Keeping it across restarts would need a
+   migration, which is a separate ticket and needs the owner. Until that exists, "what did
+   this upload report" is answered by the upload response and by the WARNING log R298 already
+   writes -- not by the document list.
+5. **No server paths leave the endpoint.** `PdfExtractionReport.file_path` and
+   `DocumentExtraction.file_path` are absolute paths on the customer's machine, and this
+   field moves none of them. The only names a client sees are the `filename` they uploaded
+   with and the basename `stored_name` R49 already returns.
+
+The cost note, because it shaped the wiring: for a PDF the endpoint calls the with-books exit
+*instead of* `load_document`, never in addition to it. Fetching this reading by parsing the
+file twice would run R298's OCR a second time on every scanned upload -- the measured
+per-page CPU cost in R298's own notes -- on the one machine whose purpose is to be the
+customer's only copy. `test_one_pdf_is_parsed_exactly_once` pins the count, including that
+the OCR engine is called once per scanned page and not twice.
+
+Registered, not fixed: nothing under `frontend/**` renders this field yet -- that tree has
+three tickets in flight and is outside this write set. The reading is on the wire today; the
+「扫描页 N/M」 line in the upload panel is the next hop and needs only the fields above.
