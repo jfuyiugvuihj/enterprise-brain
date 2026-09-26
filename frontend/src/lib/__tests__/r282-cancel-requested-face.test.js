@@ -333,7 +333,10 @@ describe('乙 · 判据① 重新打开一条会话时这一格画的是哪句�
 //
 // 顺手记一笔（R293）：乙组那三枚钉的前提是【落盘那一格里存着 cancel_requested】，R282 当时靠测试
 // 自己手搭 historyTurn('cancel_requested') 才成立，面板没有任何一处写得出这一格。写点在 R293 补上
-// （ChatPanel.vue:1506-1511）。🔴 总控并树时现取：`components/__tests__/r293-cancel-requested-persist.test.js` **还不存在**（Test-Path 为 False）⇒ 这一格今天只有写点、没有真路径凭据，由 **R293 第二棒**补，补上之前这句话不许被当成已验。
+// （ChatPanel.vue:1506-1511），真路径凭据由 R293 第二棒补上：`components/__tests__/r293-cancel-requested-persist.test.js:1`
+// —— 16 枚，真挂载面板 → 真点「不排了」拿非终态回执 → 当场看那一次回写 → 卸载后只用盘上那一格重新挂载，
+// 屏幕第二回仍说同一句；四把反证（摘 persist / 冒充 cancelled / 加回 syncActive+stopQueueWatch / 措辞分叉）
+// 的实测红名清单在那枚文件头 :39-59。乙组这三枚的前提从此不再靠手搭。
 
 describe('丙 · 判据③ 措辞的唯一出处在 lib，面板一份都不许持有（自持措辞必红）', () => {
   const pendingBlock = /function queueCancelPendingFace\(\) \{([\s\S]*?)\n\}/.exec(panel)
