@@ -2124,6 +2124,13 @@ def _enqueue_ask_turn(
 
     from app.common.reliable_queue import QueueConnectionError, connect_reliable_queue
 
+    # R294：下面这一枚 `principal` 是**入队那一刻**的身份快照，冻在这里就再没人回来更新。
+    # 它从此只作两件事用：替 worker 定位用户库那一行的引用，以及作为漂移比对的证据——
+    # 权威身份出自消费时刻的现取（`deploy/queue_worker.py::resolve_consumption_principal`）。
+    # R290 之后部门是会变的：排队期间被挪了部门还按这一枚跑完，就是拿旧作用域的成果记在
+    # 新身份账上，所以 worker 一发现它对不上现取结果就判失效，不猜、不补、不改用新部门。
+    # 键的形状一字未动：载荷字段集与 queued 事件由 tests/test_r37_report_lane_enqueue.py
+    # 与 tests/test_r32_lane_contract.py 逐字段钉着，本单一格都不新增、一格都不删。
     payload = {
         "task_type": "ask",
         "message": rewritten_msg,

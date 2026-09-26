@@ -40,8 +40,25 @@ def _get_user_context(user: dict | None = None) -> dict:
     }
 
 
+#: R294 —— 载荷快照不是权威身份。图内这一族只认两种投影：在场请求直接下发的 `Principal`
+#: 对象，以及后台 worker 在**消费时刻**从用户库现取、逐维核过漂移之后交出的那一份 dict。
+#: 后者靠一枚随行签名自证。签名长在 configurable 上而不是 Principal 里：两条路径的
+#: Principal 字段集必须逐字相等（判据②），把出处塞成字段，相等就没有了。
+#: 取值必须与 deploy/queue_worker.py 的同名常量逐字相等，由
+#: tests/test_r294_principal_freeze.py 钉住（写法照 queue_worker 的 REPORT_LANE）。
+PRINCIPAL_PROVENANCE_KEY = "principal_provenance"
+CONSUMPTION_PRINCIPAL_PROVENANCE = "consumption-time"
+
+
 def _tool_principal(config):
-    """Resolve the canonical Principal carried by the Agent runtime."""
+    """Resolve the canonical Principal carried by the Agent runtime.
+
+    R294: a dict here is a queue payload's projection, and a queue payload outlives an
+    identity change -- the department it froze is not the department in force now. Only
+    the worker's consumption-time re-resolution may hand one over, and it signs the
+    hand-off. Anything else that tries to make a frozen dict speak as the subject is
+    refused, because the only honest directions left are narrowing and invalidation.
+    """
     conf = (config or {}).get("configurable", {}) or {}
     try:
         from app.common.identity import Principal
@@ -50,6 +67,10 @@ def _tool_principal(config):
         if isinstance(provided, Principal):
             principal = provided
         elif isinstance(provided, dict):
+            if str(conf.get(PRINCIPAL_PROVENANCE_KEY) or "") != CONSUMPTION_PRINCIPAL_PROVENANCE:
+                raise PermissionError(
+                    "authorization_required: agent tool identity is not consumption-time resolved"
+                )
             principal = Principal.model_validate(provided)
         else:
             principal = Principal.from_user(conf, auth_source="agent")
