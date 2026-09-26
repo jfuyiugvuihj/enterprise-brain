@@ -86,7 +86,7 @@ def test_cell_reads_the_flip_and_the_stop_sets():
 
 
 def test_cell_is_red_because_a_final_status_is_never_stopped():
-    """本格今天读出的红只剩一枚，而且【不是】停表：两族停表都已收全五枚终态。
+    """本格今天读出的红只剩一枚，而且【不是】停表：两族停表都已收全六枚终态。
 
     ⚠️ 函数名是本单起点之前那一格红的名字，今天那枚红已经**不在了**（见下面的归因）。
     改钉只许动读数与字面量 ⇒ 名字留在原地，别按名索引的人以为少了一枚用例。
@@ -159,7 +159,7 @@ def test_cell_is_red_because_a_final_status_is_never_stopped():
 def test_control_overlay_reproduces_the_real_verdict(tmp_path):
     """对照：原样复制的临时根必须复现同一判定，否则下面的红色是复制造出来的假红。
 
-    两族名单今天都已收全五枚终态 ⇒ 缺口读两枚空表（前端一枚归 R221 ``9850969``，
+    两族名单今天都已收全六枚终态（R260 给前端名单补 `awaiting_approval`，R259 同日给量具补同一枚）⇒ 缺口读两枚空表（前端一枚归 R221 ``9850969``，
     适配器一枚归待并树 R222 ``scripts/eval_transport_ask_v2.py:888``）。
     """
     overlay = _overlay(tmp_path)
@@ -173,11 +173,11 @@ def test_counter_proof_dropping_one_settled_status_goes_red_here(tmp_path):
     overlay = _overlay(tmp_path)
     panel = overlay / "frontend/src/components/ChatPanel.vue"
     original = panel.read_text(encoding="utf-8")
-    # 🔴 抄本自 R221 起过期：产品那一行今天是五枚（含 dead），拿四枚的旧抄本去 replace
-    # 是一枚 no-op —— 那正是本件自己禁的假钉。同步到现值，摘的仍是 expired 这一枚。
+    # 🔴 抄本会过期，这里按现值同步：产品那一行自 R260 起是六枚（多 `awaiting_approval`），
+    # 拿五枚的旧抄本去 replace 是一枚 no-op —— 那正是本件自己禁的假钉。摘的仍是 expired 这一枚。
     mutated = original.replace(
-        "const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired', 'dead']",
-        "const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'dead']")
+        "const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired', 'dead', 'awaiting_approval']",
+        "const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'dead', 'awaiting_approval']")
     assert mutated != original, "反证没作用到东西上，这枚钉是空的"
     panel.write_text(mutated, encoding="utf-8")
 
@@ -200,7 +200,7 @@ def test_counter_proof_dropping_one_settled_status_goes_red_here(tmp_path):
 
 
 def test_the_pin_has_teeth_in_the_other_direction_too(tmp_path):
-    """反证钉要能钉回绿：名单收全五枚终态 ⇒ 本格不许再因停表变红（不许靠放宽判据变绿）。
+    """反证钉要能钉回绿：名单收全六枚终态 ⇒ 本格不许再因停表变红（不许靠放宽判据变绿）。
 
     R234 改钉：``dead`` 自 R221（``9850969``，``ChatPanel.vue:852``）起就在名单里，原来那句
     「把四枚的旧抄本换成五枚」落在今天的原件上是**no-op** ⇒ 一枚不咬人的假钉（本件自己禁）。
@@ -214,9 +214,9 @@ def test_the_pin_has_teeth_in_the_other_direction_too(tmp_path):
     overlay = _overlay(tmp_path)
     panel = overlay / "frontend/src/components/ChatPanel.vue"
     original = panel.read_text(encoding="utf-8")
-    five = "const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired', 'dead']"
-    four = "const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired']"
-    stripped = original.replace(five, four)
+    lit_full = "const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired', 'dead', 'awaiting_approval']"
+    lit_no_dead = "const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired', 'awaiting_approval']"
+    stripped = original.replace(lit_full, lit_no_dead)
     assert stripped != original, "反证没作用到东西上，这枚钉是空的"
     panel.write_text(stripped, encoding="utf-8")
     red = R.cell_lane_flip(overlay)
@@ -224,7 +224,7 @@ def test_the_pin_has_teeth_in_the_other_direction_too(tmp_path):
     assert "frontend_never_stops_on=dead" in red["problems"]
     assert red["verdict"] == R.RED
 
-    restored = stripped.replace(four, five)
+    restored = stripped.replace(lit_no_dead, lit_full)
     assert restored == original, "摘得下补不回：两枚抄本不是同一行，本钉的对照失效"
     panel.write_text(restored, encoding="utf-8")
     cell = R.cell_lane_flip(overlay)
