@@ -3453,3 +3453,52 @@ run7 底账 105 行：`text_frames>1` 96/105、逐字无缺 105/105、合账 93/
 - 为什么必须等：写域含 `panel-states.test.js`（刚被总控为 R277 落笔）与 `r151-legacy-colors.test.js`，且要动 `DashboardPanel.vue`（`Schrodinger` 正写）与可能的 `ChatPanel.vue`（`Locke` 若判要动会先停下回报）——同一批文件两枚 Agent 就是真写域冲突。
 
 - **两笔代记已结**：`devFixtures/README.md:18`「三格→两格」由总控落 `af2c131`；`test_r184:511`「活库今天确实只有六列」加日期限定由总控落 `db250f3`（按 R276 刚定的"历史叙述不改史"原则）。`r247` 的「四张脸」自述仍待裁（`Leibniz` 已在件内加注释指向第五张脸，未改判）。
+
+---
+
+## §101.15（09-26 第九班·第三格·总控记账）：R269 结论把"修 Chroma"整条排期推翻 ⇒ 切读升为第一优先；六枚新单立案
+
+### 一、R269（`Goodall`·只诊断不开刀）改判了什么
+
+继承的读数是"Chroma 持久索引坏了 ⇒ 138 枚向量不可达"。**实测不成立**，两半要分开算：
+
+- **症状 A（138 枚自探针取不到自己）＝ 不需要修，也不是损坏。** 在**一枚都没删**的健康库上就能复现：向量本体 1008/1008 全在、与 PG 侧单元素最大差 2.17e-07、同批向量 numpy 精确扫描 **0 漏**。病在近似检索的**候选预算被近重复堆吃光**——`chunk_overlap=50`（`app/rag/retriever.py:889-892`）造近重复，而 `retriever.py:882` **从不传 hnsw 配置 ⇒ `ef_search` 恒 100**。实测 ef=100 时 240 探针 miss 23（9.6%）、ef=5000 时 miss 5（2.1%）。密度对照也纠正了 `by_document` 的旧读法：大档 126/586=**21.5%** vs 其余 12/422=**2.8%**，138 个下标无 stride/批次规律。
+- **症状 B（21 题 `k=50` 仍 0 行）＝ 只证到"这种状态存在、会被写出来、写出来就固化"，没证到"什么顺序必然写出它"。** 照抄重传路径写 41 代 ⇒ 一次实测空表 889，**同配方复跑 6 遍只出 1 遍**（其余 201/155/13 miss、空表 0）；换新进程重读仍 889。硬杀写进程／双 client 共卷／95% 墓碑／ef 扫四路全部 0 复现。已排除并留证：WAL 未 flush（`os._exit` 硬杀后回放自愈）。
+- 🔴 **两处继承假话当场纠正**：`r3a_pickle.log` 那句 `index_metadata.pickle -> {}` 是 `run3.py:19-30` 只 `getattr` Python 参考实现的属性名造成的读法错误，**现网 pickle 非空**（118,132 B ≈ 1,332 条）；旧"level-0 邻接数按 int32 直读、零邻接槽=受损指纹"模型作废（健康库会读出 `35,389,980` 这类非法值）。
+
+### 二、方向裁定（判据③，一句话）
+
+> **更该快切 PG：病在 Chroma 的读路径与它自己的持久图状态上，切读即愈。**
+
+Chroma 侧"修"它的唯一手段是重建那 1,008 枚索引，而 `rebuild_index.py --apply` 在 `VECTOR_DUAL_WRITE=on` 之下会**立刻重新长出**一座没有 compaction 会去收的 39.6:1 墓碑堆（chroma-rs 1.5.9 **无任何 compaction/defrag**）——代价是动生产卷，收益是零。⇒ 排期改两条：**"重建一次就好"从"修 Chroma"排期里删掉**，"chroma-rs 无 compaction"进 **R59 之后**的"Chroma 退役"验收。
+
+🔴 **切读治不到、必须并入 R59 判据的三处**（写清，防止把 R59 当万能药）：
+① `app/rag/retriever.py:1490-1492` 把"库交回 0 行"当合法空答案、只有 embedding 挂掉才降级关键词——这条语义**与引擎无关**，切读后 PG 腿打空（权限过滤落空、`embedding_scope_unknown`）用户照样拿空上下文 ⇒ **R59 必须含"PG 腿 0 行也要降级并记 `search_shape`"的钉**；
+② `where` 下推等价性：打在没写过的键上就是 0 行（R162 已证），切读后跟着 PG 走 ⇒ **R59 判据必须含一枚"同一 where 两侧行数相等"**；
+③ 写入拓扑不变：`delete 同 id → add 同 id` 的堆只在 Chroma 侧长，但只要双写还在喂、3 进程共卷还在，回滚开关一开立刻复发 ⇒ 归业主/总控处置（见第四节）。
+
+### 三、本班新立六枚单（三枚已投、三枚待派）
+
+**R291｜`rawMessage` 只有数据出口没有渲染出口**（待派·🔴 必须排 `Franklin`R288 并树之后）——`lib/artifacts.js:52-55` 重建 Error 时只复制 `message/status/code/retryable`，`rawMessage` 与 `rawCode` 在这道消费口被丢掉 ⇒ 客户"贴给后端"时屏幕上一个字符都看不到。判据：把后端原文透到 `UiErrorState` 详情区，写域含 `components/ui/**` 与 `lib/artifacts.js`。为什么必须等：`panel-states.test.js` 现含 **12 处** `UiErrorState` 引用，同文件两枚单＝真写域冲突。本班并树时曾在此钉过一枚 `err.rawMessage` 断言，跑出 `undefined` 后**当场撤回归因**（见 `c5c89b8` 提交正文），不是放宽，是不属该单射程。
+
+**R292｜catalog 离线腿没有版本排序**（🟢 已投 `Epicurus` `01a0dc89-1b4a-71a3-8910-7f9fb10fc5c0`@`be-r292`）——`app/documents/catalog.py:669` `latest.setdefault(filename, row)` 去重，DB 腿靠 `:659` `ORDER BY filename, version DESC` 成立，离线腿 `:406` `iterdir()` **无任何版本排序** ⇒ 同一篇多版本时两腿"当前版本"可能不同。派工词已明写"先证伪再动手"，允许"证明没问题"作为合格交付。
+
+**R293｜`cancel_requested` 落盘写点＋面板措辞委派 lib**（🟢 已投 `Russell` `01a0dc8a-f345-7f11-bea4-2248db55a9b6`@`be-r293`）——`ChatPanel.vue:1496-1500` 拿到非终态回执只进内存 `queueReads` 不落 `msg.queue`（对照 `:1488` 终态那一支会落），刷新后 `:1310` 守卫前置 `read &&` 整条跳过 ⇒ `:1317` 把落盘那格交给 `queueFace`。R282 已把这格的验收钉留好（`r282-cancel-requested-face.test.js:284` 乙1）。另一格：`ChatPanel.vue:1247` 与 `provenance.js:384` 同一句话存在两份，须委派归一，两枚耦合钉（`r282:324-331` 正则抠函数体、`r268-queue-cancel:387` 调 `mounted.state`）必须连它们一起改口。
+
+**R294｜排队载荷把 `Principal` 连部门一起冻结在入队时刻**（🟢 已投 `Lagrange` `01a0dc98-829f-7c92-9697-fcf75b64d899`@`be-r294`）——`app/api/v1/chat.py:2132` 入队 `principal.model_dump(mode="json")` → `deploy/queue_worker.py:299/:519/:553` 用 `payload.get("principal")` 还原 → `app/agents/tools.py:53` `Principal.model_validate` 当权威身份。后果：**R290 的成果在后台跑的那一轮里直接失效**（旧部门仍在跑检索面），是 R290 三处残留里最重的一枚。唯一不变量＝"消费时刻作用域与此刻发一个全新请求逐字相等"；方向只许收缩到当前身份或判失效，**绝不允许按旧快照跑完再记一条警告**；另需一枚"队列里残留的旧载荷不崩不提权"的兼容钉（客户机上真会躺一堆）。
+
+**R295｜会话历史只按 owner 归还**（待派·排 R294 之后）——`app/api/v1/chat.py:3459` 只过 `is_owned_by`，故旧部门期间那轮的答案正文（含旧部门文档引用）在改完归属之后仍可整段读回。`app/storage/sessions.py:16-21` 的 `SessionRecord` 压根没有部门维。两条路：给 session 落部门维，或回读时重过 `scope.allows`。判据必须含"改完归属再读同一条会话，旧范围的正文与引用不得再出现"，并明写**这一格与"自己上传的文件按 `owner_match` 仍可读写"（`app/common/policy.py:150-155`）是两件事**，后者是既有设计不许顺手改。
+
+**R296｜`user_profiles.department` 是第二份、员工自助可写、且会盖住权威值**（待派·🔴 优先）——`app/memory/profile.py:110/117` 用 `user_profiles.department` **覆盖**来自 `users` 的 fallback，而 `PUT /api/v1/profile`（`app/api/v1/auth.py:244`）是自助写的，`app/agents/nodes.py:1666-1673` 又把它拼进 prompt。⇒ 管理员挪完部门，`GET /profile` 与模型上下文仍报旧部门；且**员工可自报任意部门串进自己的 prompt**。口径澄清（防把它当提级）：`user_profiles` **不是授权输入**（`Principal` 读 `users` 那一行），所以这是标注／提示污染，不是越权提级——但它是私有化交付里客户最容易追问的一格。判据方向：画像里的 department 要么降为只读派生、要么从 prompt 拼接里摘掉，二选一由总控裁定后写死，不许"两份都留但打个警告"。
+
+**R297｜`test_r230_db_ready_selfheal.py` 入口矩阵 7→8 跟随**（待派·小单）——R290 新增第 8 枚 PG 写口，`tests/test_r230_db_ready_selfheal.py:339` 的 7 枚 parametrize 未扩（扩它要给该件内部假表加 UPDATE），`:354` 那句"7 枚入口"从今天起少一枚；`app/common/auth.py:201` 已就地标成"R230 当年 7 枚，R290 起 8 枚"。施工层改在自己件里钉了同一件事（`test_production_refuses_to_move_a_department_in_the_process_local_table`），所以**语义不缺，缺的是矩阵完整**。
+
+### 四、要业主本人的新增一格
+
+🔴 **`deploy/.env.server:56` `VECTOR_DUAL_WRITE=on`（三进程一致）仍在喂那座 39.6:1 的墓碑堆**，加上 3 进程共卷（`docker-compose.yml:167/209/244` ＋ `deploy/queue_worker.py:237/288/514` → `app/api/v1/chat.py:89`，backend／queue_worker／scheduler 各持一枚 `DocumentRetriever` 打同一个卷）。跨进程共卷那一层**今天既没证到有害也没排除**（VM 整程不可达）。这不是 R269 的刀，也不是任何代码单能收的——**属业主处置项**，登记在此。
+
+### 五、本班抓到的一枚"会随机把门染红"的断言（纪律类，值得留档）
+
+`tests/test_r269_index_state.py:312` 的 `assert ann_miss >= 1` 在主树首跑即红（其后单跑 6 次全绿 ⇒ 抖动率约 1/7，与该件 docstring `:287` "缺口 7..480 随写序浮动" 及报告 §9.2 "6 遍只出 1 遍"同源）。退回 `Goodall` 收口，判据写死：**门内只留确定性断言**（`count==1000`／`by_data==13000`／`len(stored)==1000`／`brute_miss==0`），随机那半改为现取记录＋方法学守卫；🔴 不许 `skip`／`xfail`／删件，也不许改成"跑 5 遍至少中 1 遍"（那是拿 22 s 门时买一个仍然非零的假红率）。理由：**门一旦被假红污染，"敢不敢并树"的心理成本会把整条流水线拖死**——这一格比这一格的知识重要。
+
+另两笔留档：(1) 本班据**被截断的 `git status` 输出**判定 `be-r282` 干净、几乎照摘要派第七枚碰 `provenance.js` 的单，靠"逐棵现取"救命 ⇒ 摘要与名册都不能替代实取；(2) 派工词写域第三次漏列（`Schrodinger` 那枚越界实为判据③所要求），规矩补一条：**派工前必须把判据里点名的每一枚钉 rg 出来并入写域清单**。
