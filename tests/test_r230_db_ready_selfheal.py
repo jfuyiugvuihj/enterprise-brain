@@ -1,7 +1,7 @@
 """R230 反证钉：生产鉴权的 `_db_ready` 死锁——启动探针抖一下 = 401 到重启为止。
 
 病（在本树 e1511cb 上自己复现的通路，不是抄来的结论；行号按基点 e1511cb，本单之后会挪）：
-`_db_ready` 只有两处置真——import 期探针（`:376`）与 `_get_conn()`（`:392`）。而 7 枚
+`_db_ready` 只有两处置真——import 期探针（`:376`）与 `_get_conn()`（`:392`）。而当时那 7 枚
 鉴权函数**先**问 `_memory_store_denied()`（`:181`），生产 + 内存表时它记一条 ERROR 就
 `return True`，调用方当场 default-deny，永远走不到 `_get_conn()`。
 于是"容器启动那一刻 PG 还在恢复"= `_db_ready` 恒 False = 全公司登不进来，直到有人重启。
@@ -20,9 +20,11 @@
 一条真连接都不许发出去：`tests/conftest.py:41-53` 已把 DATABASE_URL 钉成
 `127.0.0.1:1` + `connect_timeout=1`，本文件再加一枚哨兵，真驱动一旦想 connect 就当场炸。
 """
+import ast
 import builtins
 import inspect
 import io
+import re
 import sys
 import time
 import types
@@ -43,6 +45,7 @@ BLIP = psycopg.OperationalError(
 ADMIN = "admin"
 ADMIN_PASSWORD = "admin123"
 NEW_PASSWORD = "brand-new-1"
+MOVED_DEPARTMENT = "finance"
 
 # 修前逐格读数：这些就是 default-deny 今天对用户吐的东西（判据 3 一个字都不许改它们，
 # 本单只改"什么时候才允许走到它们面前"）。
@@ -54,7 +57,27 @@ DENIED_NOW = {
     "upsert_sso_user": (False, "production_user_store_unavailable"),
     "delete_user": False,
     "change_password": (False, "原密码错误"),
+    "update_department": (False, "production_user_store_unavailable"),
 }
+
+# 鉴权入口矩阵：本文件「一共有几枚入口」的唯一事实源。判据 1 的参数化、判据 3 的循环、
+# 完整性钉全部从这里取数，散文里的数字只是它的读数——漂了就红。
+# 第 8 枚是 R290 的部门写口：`app/api/v1/auth.py:139` 的 `PUT /users/department` 经
+# `update_user_department` 调 `auth.update_department`，它照的是同一枚 `_memory_store_denied`
+# 闸，所以在表里过同一把尺，不许开特例分支。
+ENTRY_POINTS = [
+    ("verify_password", (ADMIN, ADMIN_PASSWORD)),
+    ("list_users", ()),
+    ("get_user", (ADMIN,)),
+    ("create_user", ("ghost", "pass1234")),
+    ("upsert_sso_user", (ADMIN,)),
+    ("delete_user", (1,)),
+    ("change_password", (ADMIN, ADMIN_PASSWORD, NEW_PASSWORD)),
+    ("update_department", (ADMIN, MOVED_DEPARTMENT)),
+]
+
+#: 判据 1 那句叙述的字面形状：总数 + 「另外 N 枚」。写成人话，判器按话读（口径同 R246）。
+ENTRY_COUNT_CLAIM = re.compile(r"(\d+) 枚入口.*?另外 (\d+) 枚入口", re.S)
 
 REFUSAL_ERROR = (
     "[Auth] production user store is not durable; refused user lookup "
@@ -151,6 +174,14 @@ class _FakeUsers:
             if hit:
                 hit["password_hash"] = password_hash
             return _Result()
+        if text.startswith("update users set department"):
+            # R290 的归属写口：按 username 定位单行，命中几行就照真 PG 报几行 rowcount；
+            # `department=None` 在 PG 里落 NULL（只有内存表才把「无归属」折成空串）。
+            department, username = params
+            hit = self._by_name(username)
+            if hit:
+                hit["department"] = department
+            return _Result(rowcount=1 if hit else 0)
         if text.startswith("delete from users where id"):
             keep = [row for row in self.rows if row["id"] != params[0]]
             removed = len(self.rows) - len(keep)
@@ -336,26 +367,18 @@ def test_the_blip_at_startup_heals_on_the_next_login_without_a_restart(monkeypat
     assert auth._db_ready is False
 
 
-@pytest.mark.parametrize(
-    "operation, args",
-    [
-        ("verify_password", (ADMIN, ADMIN_PASSWORD)),
-        ("list_users", ()),
-        ("get_user", (ADMIN,)),
-        ("create_user", ("ghost", "pass1234")),
-        ("upsert_sso_user", (ADMIN,)),
-        ("delete_user", (1,)),
-        ("change_password", (ADMIN, ADMIN_PASSWORD, NEW_PASSWORD)),
-    ],
-)
+@pytest.mark.parametrize("operation, args", ENTRY_POINTS)
 def test_every_authentication_entry_point_gets_its_recovery_chance(
     monkeypatch, operation, args
 ):
-    """7 枚入口一枚都不能漏：只有 `_memory_store_denied` 拿到重探机会才算解开死锁。
+    """8 枚入口一枚都不能漏：只有 `_memory_store_denied` 拿到重探机会才算解开死锁。
 
     `app/main.py:246` 的 `async def dispatch` 直调的是同步 `get_user`，但运维建号、
-    改密、SSO 同步走另外 6 枚入口——漏一枚就是漏一条"只能重启"的路。每一轮都把状态
-    摆回"探针红过"（`_db_ready=False` + 节流清零）再打这一枚。
+    改密、SSO 同步、部门归属走另外 7 枚入口——漏一枚就是漏一条「只能重启」的路。
+    每一轮都把状态摆回「探针红过」（`_db_ready=False` + 节流清零）再打这一枚。
+
+    上面那两枚数字不在这里记账：事实源是 `ENTRY_POINTS`，散文与矩阵同源由
+    `test_the_entry_point_count_in_the_prose_matches_the_matrix` 现算复核。
     """
     stuck = _stuck(monkeypatch)
 
@@ -365,6 +388,66 @@ def test_every_authentication_entry_point_gets_its_recovery_chance(
     assert auth._db_ready is True
     assert auth._using_memory_store() is False
     assert stuck.connects, "这一枚入口根本没试过重新建连"
+
+
+def _gated_entry_points() -> list[str]:
+    """从生产源码现读：`app/common/auth.py` 里每一枚**先**问 `_memory_store_denied` 的公开函数。
+
+    只读源码、只走 AST，一次调用都不发，所以这枚钉既不碰库也不碰鉴权语义；它判的是
+    「谁站在这道闸后面」，而该进矩阵的正是这批人。
+    """
+    tree = ast.parse(inspect.getsource(auth))
+    gated = []
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or node.name.startswith("_"):
+            continue
+        for call in ast.walk(node):
+            func = call.func if isinstance(call, ast.Call) else None
+            if (getattr(func, "id", "") or getattr(func, "attr", "")) == "_memory_store_denied":
+                gated.append(node.name)
+                break
+    return gated
+
+
+def test_the_entry_point_matrix_covers_every_gated_entry_point():
+    """矩阵完整性：闸后面冒出一枚新入口，这张表不跟着长就当场红。
+
+    这张矩阵的全部价值就在这格——R290 加第 8 枚（`update_department`）时它没跟着长，
+    于是矩阵从今天起只能说一半真话。下一枚（第 9 枚）无论叫什么名字，只要照同一道闸，
+    就必须在这里露面。`DENIED_NOW` 的键一起判：只补矩阵不补拒答读数，同样是半张表。
+    """
+    gated = _gated_entry_points()
+    matrix = [operation for operation, _ in ENTRY_POINTS]
+
+    assert gated, "判器在 auth 源码里读不到任何闸后入口，这枚钉自己失效了"
+    assert set(matrix) == set(gated), (
+        f"闸后面 {len(gated)} 枚入口，矩阵只覆盖 {len(matrix)} 枚："
+        f"漏在表外 {sorted(set(gated) - set(matrix))}，表外多写 {sorted(set(matrix) - set(gated))}"
+    )
+    assert len(matrix) == len(set(matrix)), f"矩阵里有重复入口：{matrix}"
+    assert set(DENIED_NOW) == set(matrix), (
+        f"矩阵与拒答读数不是同一批人：{sorted(set(DENIED_NOW) ^ set(matrix))}"
+    )
+
+
+def test_the_entry_point_count_in_the_prose_matches_the_matrix():
+    """数字只许有一处事实源：散文里的两枚计数必须由 `len(ENTRY_POINTS)` 现算复核。
+
+    矩阵长了而散文没改口 ⇒ 红在这一格；散文改了而矩阵没长 ⇒ 红在完整性钉。两枚钉夹住
+    的是同一件事：这张入口矩阵不许停在「R230 当年 7 枚」那句老话上自说自话。
+    """
+    prose = test_every_authentication_entry_point_gets_its_recovery_chance.__doc__ or ""
+    claim = ENTRY_COUNT_CLAIM.search(prose)
+
+    assert claim, "判据 1 的 docstring 不再写「N 枚入口……另外 M 枚入口」，判器读不到计数"
+    total, others = (int(number) for number in claim.groups())
+    assert total == len(ENTRY_POINTS), (
+        f"散文写 {total} 枚入口，矩阵实际 {len(ENTRY_POINTS)} 枚：同一个数硬写了两处且已经漂"
+    )
+    assert others == len(ENTRY_POINTS) - 1, (
+        f"散文写「另外 {others} 枚」，矩阵去掉 `get_user` 自己应是 {len(ENTRY_POINTS) - 1} 枚"
+    )
+
 
 # ------------------------------------------------- 判据 2：自愈修法的三条硬界
 def test_the_reprobe_is_rate_limited(monkeypatch, no_sleep):
@@ -486,16 +569,15 @@ def test_a_refused_request_never_gets_let_in_by_the_memory_table(monkeypatch, no
         },
     )
 
-    assert auth.verify_password(ADMIN, ADMIN_PASSWORD) is DENIED_NOW["verify_password"]
-    assert auth.get_user(ADMIN) is DENIED_NOW["get_user"]
-    assert auth.list_users() == DENIED_NOW["list_users"]
-    assert auth.create_user("ghost", "pass1234") == DENIED_NOW["create_user"]
-    assert auth.upsert_sso_user(ADMIN) == DENIED_NOW["upsert_sso_user"]
-    assert auth.delete_user(1) is DENIED_NOW["delete_user"]
-    assert (
-        auth.change_password(ADMIN, ADMIN_PASSWORD, NEW_PASSWORD)
-        == DENIED_NOW["change_password"]
-    )
+    untouched = {name: dict(row) for name, row in auth._MEM_USERS.items()}
+
+    for operation, args in ENTRY_POINTS:
+        result = getattr(auth, operation)(*args)
+        assert result == DENIED_NOW[operation], (operation, result)
+        assert type(result) is type(DENIED_NOW[operation]), (operation, result)
+
+    # 拒答的路上进程内表一枚都不许被就地改动：改了就是两台 worker 各记一份归属。
+    assert auth._MEM_USERS == untouched, "拒答改写进程内表 = 内存表偷偷成了事实源"
     assert auth.user_storage_state()["storage_mode"] == "unavailable"
     assert auth.user_storage_state()["protection"] == "refuse_start"
 
