@@ -728,13 +728,21 @@ def test_table_only_document_has_text_and_no_prose(tmp_path):
         assert document.text.splitlines()[0].startswith(path.name)
 
 
-def test_today_load_docx_drops_every_word_table(tmp_path):
-    """判据⑥的前半：现状就是 paragraph-only —— 这一条今天必须是红的才算把病灶钉住了。"""
+def test_load_docx_no_longer_drops_word_tables(tmp_path):
+    """R300 当年记的是病灶快照（paragraph-only）；R304 接上表格腿之后这一条必须反过来。
+
+    改口由总控落笔（随 R304 并树）。这枚件的使命从来不是「表被丢掉」那句话，而是
+    「表不许静默消失」，所以快照过期不等于放宽——断言反而更硬：走真入口 loader.load_docx，
+    单元格里的字必须在、必须是以来源锚开头的表格段、而且只能出现一次。
+    """
     path = r300_write_docx(tmp_path / "r300_dropped.docx", [("t", [["大区", "营收"], ["华东", "1200"]], [])])
 
-    assert loader.load_docx(str(path)) == ""
-    assert "华东" not in loader.load_docx(str(path))
-    assert "华东" in tables.extract_docx_text(path, loader.load_docx(str(path)))
+    text = loader.load_docx(str(path))
+
+    assert "华东" in text, "Word 表格又被静默丢掉了"
+    assert "| 大区 | 营收 |" in text, "回来的不是表格段，是没有锚的裸文本"
+    assert text.splitlines()[0].startswith(path.name), "表格段首行没有来源锚"
+    assert text.count("华东") == 1, "同一张表吐了两次"
 
 
 def test_pdf_text_does_not_repeat_the_table(tmp_path):
@@ -748,7 +756,12 @@ def test_pdf_text_does_not_repeat_the_table(tmp_path):
     assert "Region Q1 Q2" not in text, "表又以裸文本回到正文里了：去重那一半失效"
     assert text.count("| Region | Q1 | Q2 |") == 1
     assert "Prose alpha line." in text
-    assert tables.pdf_prose_via_loader(str(path)).count("East 11 12") == 1, "对照：今天 pypdf 那一版确实带着表"
+    # 对照组必须不经 load_pdf：接线之后 pdf_prose_via_loader 交回的就是接线版本身，
+    # 拿它当「今天 pypdf 那一版」是假对照。这里直接调 pypdf，量的仍是那份未接线的正文。
+    from pypdf import PdfReader
+
+    legacy = "\n".join((page.extract_text() or "") for page in PdfReader(str(path)).pages)
+    assert legacy.count("East 11 12") == 1, "对照失效：pypdf 那一版本来就带着表行"
 
 
 def test_docx_prose_and_tables_do_not_overlap(tmp_path):

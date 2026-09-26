@@ -9,8 +9,15 @@ R298: PDF 不再只有文本层这一条腿。逐页判定"这页是扫描页"�
 本地 OCR 通道（app/rag/ocr.py，判据②），有文本层的页一个字都不再 OCR（判据④）。OCR
 出来的文字与 pypdf 交回的文字过的是**同一个** :func:`sanitize_text`（判据⑤）—— PG 那一腿
 对 NUL 的拒绝与它从哪条通道来无关。
+
+R304: 表格接进来了。带表的 PDF / DOCX 在交给分块器之前先经过 app/rag/tables.py：
+正文里多出的是「每枚表一段、段首一行来源锚」的 markdown，每一表行恰好一次；0 表的
+文档逐字退回上面两条腿今天的输出，已索引语料不因为本单重算 hash。表格上限触顶、
+表格通道自己塌了，都从 DocumentExtraction.tables 这一枚账里看得见（判据⑤：不许静默）。
 """
+import contextlib
 import os
+import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -18,6 +25,7 @@ from pypdf import PdfReader
 
 from app.common.logger import logger
 from app.rag import ocr as ocr_channel
+from app.rag import tables as table_channel
 
 #: U+0000 -- the one character a PostgreSQL ``text`` column refuses, and therefore the
 #: one character this module drops. psycopg only complains about it from inside
@@ -336,20 +344,219 @@ def extract_pdf(
     return report
 
 
-def load_pdf(
+# ==================== R304：把 R300 的表格模块接进上传路径 ====================
+
+#: 上限触顶时的 WARNING 前缀（判据⑤：截断不许静默）。口径与 R298 的降级句一致 —— 事实进
+#: 账、进日志，**不**进正文：那句「表格没抽完」会被切块、被 embedding、被检索命中，正是
+#: R298 判据⑥ 点名的墓碑。要看截断，出口是 DocumentExtraction.tables。
+TABLE_TRUNCATION_LOG_PREFIX = "[R304] 表格预算触顶"
+
+#: 表格通道自己塌了（文件读不了、解析器抛错）时的那一句：退回纯正文，不冒充「这份文档没表」。
+TABLE_CHANNEL_LOG_PREFIX = "[R304] 表格通道"
+
+#: 逐页散文回补只认这两种触顶：它们是「页根本没走到」，不是「表太多放不下」。前者会把
+#: 未走到的页的正文一起丢掉（prose 与 tables 共用同一趟 pdfplumber 页走），接线不许制造这种
+#: 丢字；后者的页已经走完，散文完整，回补只会把同一页的字吐两次。
+TAIL_RECOVERABLE_TRUNCATION = ("pages:", "time:")
+
+
+@dataclass(frozen=True)
+class TableExtractionReport:
+    """一份文档的表格账（判据⑤）：接了几枚表、有没有被上限切断、表格通道自己塌没塌。
+
+    ``load_*`` 只能交回一串正文，所以这一份是接线之后**新增的那半个出口**：
+    :func:`extract_pdf_with_tables` 与 :func:`extract_docx_with_tables` 都带着它，
+    上传链路要报「表格被截断了」不必回头 grep 日志。
+    """
+
+    source: str = ""
+    tables: int = 0
+    rows: int = 0
+    segments: int = 0
+    table_chars: int = 0
+    page_count: int = 0
+    pages_scanned: int = 0
+    prose_chars: int = 0
+    truncated: str = ""
+    degraded: str = ""
+
+    @property
+    def has_prose(self) -> bool:
+        """判据②：表不算「有正文」——这一枚只数散文通道，一枚表格字符都不算进来。"""
+        return self.prose_chars > 0
+
+    @property
+    def attached(self) -> bool:
+        """表格通道这轮真的接上了（没塌、且抽到了表）：判据① 在 loader 侧的可核对形式。"""
+        return bool(self.source) and not self.degraded and self.tables > 0
+
+    @property
+    def truncated_notice(self) -> str:
+        """一句能直接给客户看的话：哪一道上限收的口、还差哪几页。空串表示没触顶。"""
+        if not self.truncated:
+            return ""
+        kind = self.truncated.split(":", 1)[0]
+        labels = {
+            "pages": "页数上限",
+            "time": "时间预算",
+            "chars": "表格字数上限",
+            "tables": "表格枚数上限",
+        }
+        label = labels.get(kind, "未知上限")
+        missing = ""
+        if self.page_count and self.pages_scanned < self.page_count:
+            missing = f"，未走到的页为第 {self.pages_scanned + 1}-{self.page_count} 页"
+        return (
+            f"表格抽取被{label}切断（{self.truncated}）：已入正文 "
+            f"{self.tables} 枚表 / {self.rows} 行 / {self.segments} 段{missing}。"
+            "未抽到的表格不补，未走到的页的正文按逐页账回补。"
+        )
+
+    def summary(self) -> str:
+        return (
+            f"source={self.source or '-'} tables={self.tables} rows={self.rows} "
+            f"segments={self.segments} table_chars={self.table_chars} "
+            f"prose_chars={self.prose_chars} pages={self.pages_scanned}/{self.page_count} "
+            f"truncated={self.truncated or '-'} degraded={self.degraded or '-'}"
+        )
+
+
+@dataclass(frozen=True)
+class DocumentExtraction:
+    """接线后的统一出口：正文（含表格段）+ 表格账 +（PDF 才有的）R298 逐页来源账。
+
+    ``pdf`` 这一枚是判据④ 的凭据：接了表格，逐页「这页走了文本层还是 OCR」的账**逐页照旧**，
+    表格那一腿不改写它，也不与它抢口径 —— 表格段是往正文后面**追加**的，不是替换某一页。
+    """
+
+    file_path: str
+    text: str
+    tables: TableExtractionReport
+    pdf: PdfExtractionReport | None = None
+
+    @property
+    def has_prose(self) -> bool:
+        return self.tables.has_prose
+
+    def summary(self) -> str:
+        head = f"{self.tables.source or 'document'}: {self.file_path} chars={len(self.text)}"
+        return f"{head} | {self.tables.summary()}"
+
+
+# ---------- 重入闸：tables.pdf_prose_via_loader() 调回来的那一层 ----------
+#
+# 0 表的 PDF 必须逐字交回「今天的正文」，而 tables.py 拿到这句话的方式是回头调
+# load_pdf 自己（它不复制实现，为的是永不与 loader 漂移）。接线之后 load_pdf 又要调表格
+# 模块 —— 中间不加这一道闸就是无限递归。闸同时还是个省字的地方：回调那一层不再解析一次
+# PDF，也不再跑一遍 OCR（R298 那两条口径由调用方自己带进来的那份账保证，逐字不变）。
+# 用 thread-local：上传走 asyncio.to_thread，多枚线程可以同时在不同 PDF 上接线。
+
+_PDF_PROSE_PASS = threading.local()
+
+
+def _pdf_pass_key(file_path) -> str:
+    return os.path.abspath(os.fspath(file_path))
+
+
+@contextlib.contextmanager
+def _pdf_prose_pass(key: str, prose: str):
+    stack = getattr(_PDF_PROSE_PASS, "stack", None)
+    if stack is None:
+        stack = []
+        _PDF_PROSE_PASS.stack = stack
+    stack.append((key, prose))
+    try:
+        yield
+    finally:
+        stack.pop()
+
+
+def _pdf_prose_holdover(file_path) -> str | None:
+    """本轮表格接线里这份 PDF 的「今天的正文」。不在本轮里就返回 None（照平常一样解析）。"""
+    stack = getattr(_PDF_PROSE_PASS, "stack", None)
+    if not stack:
+        return None
+    key = _pdf_pass_key(file_path)
+    for held_key, prose in reversed(stack):
+        if held_key == key:
+            return prose
+    return None
+
+
+def _table_report(
+    document,
+    *,
+    prose: str,
+    page_count: int = 0,
+) -> TableExtractionReport:
+    """tables.DocumentTables -> loader 的账（只搬运，不重新发明第二个口径）。"""
+    return TableExtractionReport(
+        source=document.source,
+        tables=document.table_count,
+        rows=document.tables.row_count,
+        # 一枚表至少渲染一段（无数据行的表走 header-only 那一支，parts() 是空的），
+        # 所以这里的段数是「读者会看见几段带锚的表」，不是 parts() 的长度之和。
+        segments=sum(max(1, len(block.parts())) for block in document.tables.blocks),
+        table_chars=document.tables.char_count,
+        page_count=page_count or document.tables.pages,
+        pages_scanned=document.tables.pages_scanned,
+        prose_chars=len(prose.strip()),
+        truncated=document.tables.truncated,
+    )
+
+
+def _report_table_facts(file_path: str, report: TableExtractionReport) -> None:
+    """判据⑤：触顶要在 loader 的出口上留下一句能看见的话，而不是悄悄少几枚表。"""
+    if report.truncated:
+        logger.warning(f"{TABLE_TRUNCATION_LOG_PREFIX}: {file_path} | {report.truncated_notice}")
+
+
+def _pdf_scanned_prose(report: PdfExtractionReport) -> str:
+    """扫描页的 OCR 文字（逐页账里 source=ocr 那些页）。
+
+    为什么要把它们单独再交一次：带表 PDF 的散文那一半改用 pdfplumber 扣掉表框的文字，
+    而扫描页根本没有文本层，pdfplumber 从那些页上什么字也拿不到 —— 不补这一笔，接线就会
+    把 R298 好不容易 OCR 回来的正文整个丢掉，逐页来源账当场变成假账。
+    """
+    parts = [page.text for page in report.pages if page.source == PAGE_SOURCE_OCR and page.text.strip()]
+    return table_channel.BLOCK_SEPARATOR.join(parts)
+
+
+def _pdf_prose_beyond(report: PdfExtractionReport, pages_walked: int) -> str:
+    """表格上限切断页走时，把没走到的那些页的正文按逐页账回补（判据⑤ 的另一半）。"""
+    parts = [
+        page.text for page in report.pages if page.page_number > pages_walked and page.text.strip()
+    ]
+    return table_channel.BLOCK_SEPARATOR.join(parts)
+
+
+def extract_pdf_with_tables(
     file_path: str,
     *,
     dpi: int | None = None,
     enable_ocr: bool = True,
     engine=None,
     include_degradation_note: bool = False,
-) -> str:
-    """抽取 PDF 正文：本地 pypdf 文本层 + 本地 OCR 扫描页（判据②：不联网、不上云）。
+) -> DocumentExtraction:
+    """PDF 的接线出口（R304）：R298 的逐页正文 + R300 的锚定表格段。
 
-    出口再过一次 :func:`sanitize_text` —— R130 的不变量是"每一个 load_* 出口都过同一把
-    尺"（``tests/test_r130_text_unencodable_is_named_refusal.py`` 按源码钉这条），尺在
-    ``extract_pdf`` 里已经落过两次（OCR 通道一次、整件收尾一次），这里是第三个出口口径，
-    对不含 NUL 的文本是恒等，不多改一个字符。
+    两半按「这枚文档有没有表」分岔，这条岔路是 R300 的模块自己定的（判据①⑤）：
+
+    - 0 表：正文逐字退回「今天的 load_pdf」。已索引语料不因此重算 hash，接线对存量是空操作。
+    - 有表：散文改用 pdfplumber 扣掉表框的那一份，表格段追加在后面。pypdf 那份里本来就
+      带着表框里的字，两半不能并存 —— 判据① 要的是「同一枚表不许吐两次」。
+
+    扫描页与表格的**已知边界**（判据④，不许假装支持）：扫描页的正文是 OCR 出来的**文字**，
+    而 pdfplumber 找表靠的是页里的矢量框线；一张整页扫描件里没有框线，也根本没有文本层，
+    所以「扫描件里的表格」今天不支持，本模块不猜、不声称支持。这类页在这份账里只有一个
+    来源（PAGE_SOURCE_OCR），表数为 0，正文不会因为接线而多出一段假的表。
+
+    表格通道塌了（文件读不了 / 解析器抛错）时**只朝一个方向退化**：交回 R298 那份纯正文，
+    并在账里写明 degraded —— 那与「这份文档没有表」是两句不同的话，不许混。
+
+    判据②：表不算「有正文」。散文通道为空时 ``tables.has_prose is False``，而 ``text`` 非空、
+    首行是来源锚 —— R49 的入索引闸门看的是 loader 交回的正文长度，不是这一枚 has_prose，
+    所以「只有表的文档」照常入索引，不会被判成 no_text_content。
     """
     report = extract_pdf(
         file_path,
@@ -358,15 +565,133 @@ def load_pdf(
         engine=engine,
         include_degradation_note=include_degradation_note,
     )
-    return sanitize_text(report.text)
+    prose = sanitize_text(report.text)
+    path = str(file_path)
+
+    try:
+        with _pdf_prose_pass(_pdf_pass_key(file_path), prose):
+            document = table_channel.extract_document(path, extra_prose="")
+    except Exception as exc:  # noqa: BLE001 - 表格通道不许把一次成功的解析顶掉
+        logger.warning(f"{TABLE_CHANNEL_LOG_PREFIX} 退回纯正文: {path} | {type(exc).__name__}: {exc}")
+        return DocumentExtraction(
+            file_path=path,
+            text=prose,
+            tables=TableExtractionReport(
+                source="pdf",
+                page_count=report.page_count,
+                prose_chars=len(prose.strip()),
+                degraded=f"{type(exc).__name__}: {exc}",
+            ),
+            pdf=report,
+        )
+
+    if document.table_count == 0:
+        fallback = _table_report(document, prose=prose, page_count=report.page_count)
+        _report_table_facts(path, fallback)
+        return DocumentExtraction(file_path=path, text=prose, tables=fallback, pdf=report)
+
+    extra_parts: list[str] = [_pdf_scanned_prose(report)]
+    if document.tables.truncated.startswith(TAIL_RECOVERABLE_TRUNCATION):
+        extra_parts.append(_pdf_prose_beyond(report, document.tables.pages_scanned))
+    if include_degradation_note:
+        extra_parts.append(report.degradation_sentence)
+    extra = table_channel.BLOCK_SEPARATOR.join(part for part in extra_parts if part.strip())
+    composed = replace(document, extra_prose=extra) if extra else document
+
+    tables_report = _table_report(
+        composed,
+        prose=table_channel.BLOCK_SEPARATOR.join([composed.prose, extra]),
+        page_count=report.page_count,
+    )
+    text = sanitize_text(composed.text)
+    _report_table_facts(path, tables_report)
+    logger.info(f"[PDF] 表格接线: {path} | {tables_report.summary()}")
+    return DocumentExtraction(file_path=path, text=text, tables=tables_report, pdf=report)
 
 
-def load_docx(file_path: str) -> str:
-    """Extract plain text from .docx."""
+def _docx_paragraph_prose(file_path: str) -> str:
+    """今天 load_docx 的那一串段落，逐字保留（判据③：接线不换正文通道，只追加表格段）。"""
     from docx import Document
 
     doc = Document(file_path)
     return sanitize_text("\n".join(p.text for p in doc.paragraphs if p.text.strip()))
+
+
+def extract_docx_with_tables(file_path: str) -> DocumentExtraction:
+    """.docx 的接线出口（R304）：段落 join + Word 表格段（含嵌在单元格里的表）。
+
+    与 PDF 那一侧不同，这里**不存在重复的余地**：``doc.paragraphs`` 从来不含单元格里的字
+    （R300 实测：只有表的 .docx 交回空列表），所以段落 join 与表格段拼接后每行恰好一次。
+
+    0 表时正文逐字退回今天的样子；表格通道塌了则退回段落 join 并在账里写明。
+    """
+    prose = _docx_paragraph_prose(file_path)
+    try:
+        document = table_channel.extract_document(file_path, prose=prose)
+    except Exception as exc:  # noqa: BLE001 - 表格通道不许把一次成功的解析顶掉
+        logger.warning(f"{TABLE_CHANNEL_LOG_PREFIX} 退回纯正文: {file_path} | {type(exc).__name__}: {exc}")
+        return DocumentExtraction(
+            file_path=file_path,
+            text=prose,
+            tables=TableExtractionReport(
+                source="docx", prose_chars=len(prose.strip()), degraded=f"{type(exc).__name__}: {exc}"
+            ),
+        )
+
+    if document.table_count == 0:
+        return DocumentExtraction(
+            file_path=file_path,
+            text=prose,
+            tables=_table_report(document, prose=prose),
+        )
+
+    tables_report = _table_report(document, prose=document.prose)
+    text = sanitize_text(document.text)
+    _report_table_facts(file_path, tables_report)
+    logger.info(f"[DOCX] 表格接线: {file_path} | {tables_report.summary()}")
+    return DocumentExtraction(file_path=file_path, text=text, tables=tables_report)
+
+
+def load_pdf(
+    file_path: str,
+    *,
+    dpi: int | None = None,
+    enable_ocr: bool = True,
+    engine=None,
+    include_degradation_note: bool = False,
+) -> str:
+    """抽取 PDF 正文：本地 pypdf 文本层 + 本地 OCR 扫描页（R298）+ 锚定表格段（R304）。
+
+    接线的那一腿在 :func:`extract_pdf_with_tables`（含「扫描件里的表格今天不支持」那条边界）；
+    这一枚只负责交回正文串，要表格账与逐页来源账的调用方用前者。
+
+    出口再过一次 :func:`sanitize_text` —— R130 的不变量是"每一个 load_* 出口都过同一把
+    尺"（``tests/test_r130_text_unencodable_is_named_refusal.py`` 按源码钉这条），尺在这一条
+    路上已经落过几次（OCR 通道一次、整件收尾一次、表格模块的 _finish 一次），这里是最后一个
+    出口口径，对不含 NUL 的文本是恒等，不多改一个字符。
+
+    被 :func:`app.rag.tables.pdf_prose_via_loader` 回调进来的那一层直接从闸里交回正文，
+    不再走第二遍表格模块 —— 那既是递归的止点，也是"0 表的 PDF 逐字不变"的凭据。
+    """
+    holdover = _pdf_prose_holdover(file_path)
+    if holdover is not None:
+        return sanitize_text(holdover)
+    extraction = extract_pdf_with_tables(
+        file_path,
+        dpi=dpi,
+        enable_ocr=enable_ocr,
+        engine=engine,
+        include_degradation_note=include_degradation_note,
+    )
+    return sanitize_text(extraction.text)
+
+
+def load_docx(file_path: str) -> str:
+    """Plain text from .docx: 段落 join（逐字不变）+ Word 表格段（R304 接线）。
+
+    账在 :func:`extract_docx_with_tables`；这一枚只交回正文串，出口照旧过同一把尺。
+    """
+    return sanitize_text(extract_docx_with_tables(file_path).text)
 
 
 def load_doc(file_path: str) -> str:
