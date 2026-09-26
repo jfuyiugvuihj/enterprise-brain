@@ -3878,6 +3878,7 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 | `Ramanujan`（**spawn 返回体直取**） | `01a0dc25-dbbc-7db0-91ea-c961ab0d4434`（rollout `13-17-43` 已数到） | **R272** live 写路径取号竞态：撞号时不许顶掉别人的正文（R263 交回点名） | `be-r272`（**本班自建** worktree，基点 `70b4f26`，`.venv` junction 已验活：`chromadb 1.5.9`） | 🟡 09-26 13:17 派出。形状：可证明的号仍共用 `{trace_id}:{sequence}` 主键 ⇒ A 读 floor／B 写入／A 用同一 `event_id` 写**不同正文** → `ON CONFLICT (event_id) DO UPDATE` 顶掉 B。机制二选一（insert-if-absent ＋ rowcount／advisory lock），🔴 硬约束「**不许把 `upsert` 全局改成不更新**」（`agent_runs` 等表同一行的合法改写必须照旧）；拒了必须有界重试且进账本；`migrations/**` 一律不碰（要走业主窗口）；真库连不上就明写「只到 `FakePostgres` 这一层」，不许 skip 蒙混 | 13:26 |
 | `Pasteur`（**spawn 返回体直取**） | `01a0dc2c-c5b5-7e73-8373-42bf95ae11d6`（rollout `13-25-16` 已数到） | **R274** 前端块 A 续＝R267 三枚转出项 X-3／X-4／X-6 | `be-r274`（**本班自建** worktree，基点 `56458c2`，`.venv`＋`frontend/node_modules` junction 已验活） | 🟡 09-26 13:25 派出。写域只 `lib/dashboard.js`＋`devFixtures/README.md`＋`DashboardPanel.vue`＋新 `r274-*.test.js`。🔴 三处明写的「停下回报」：① X-3 若后端聚合撑不起那句话就报缺列（属 X-1 族，总控另立后端单），不许换个写死法 ② X-6 若告警卡与文档卡共用状态变量拆不开，不许硬拆（`Lovelace` 正在改 `mapAlertRow` 契约）③ 若必须动 `panel-states.test.js`／`r151-legacy-colors.test.js`（块 E 持有）才过关，停手回报。`insights-demo.js` 那行**保持原样**（X-5 等 R271 并树） | 13:28 |
  | 总控自办·待派 | — | **R276** 文档向量库口径归真（PGVector＝生产、Chroma＝退役中遗留件）＋ `scripts/check_vector_wording.py` 机器钉 | — | 🔴 09-26 13:28 `spawn` 返回 **`collab spawn failed: agent thread limit reached`** ⇒ 判**未落地**（目标树 `be-r276` 已建好并验活，`dirty=0`，基点 `56458c2`，等名额）。按铁规**不当场补投**；判据原文写进跟进单 **§101.12**，名额一空即投（这是排队重投，不是同一单当场补投那一族）。受管文档实测：`current-functionality-2026-09-10.md` 28 处／`version-roadmap…` 10 处／`system-architecture-2026-09-17.md` 8 处／`system-design-2026-09-16.md` 8 处／`api/contract-v1.md`、`deployment/*`、`documents/ownership-and-authorization.md`、`perf/enterprise-env-matrix.md` 各 1–2 处；🚫 `docs/perf/raw/**`、`docs/testing/**`、`docs/handoff/**`、`docs/superpowers/**` 一律不许动 | 13:30 |
+| `Cicero`（总控登记名·结案） | 同上 `01a0dbf3-3062-7103-85e9-e2f4cb1354ce` | **R268**（结案） | `be-r268`（已 close） | ✅ **已结案并树 `90c15bb`**（09-26 13:4x）：块 D 四件落地（G06 就地取消／G04 名单并回／G07 降级三张脸／G03 本轮数据表，另 G15·G20·G17）。🔴 三门由总控独立复跑：`be-r268` **63 files / 1235 passed**（与自述逐字一致）→ 主树合后 **66 / 1262**（＝61+5 件、1187+75 枚，分毫对得上）、`lint:colors` 仍 **148/0**、`build` exit 0；写域越界与 `1142c27..HEAD` 漂移双向实取为零。改口旧件只一处（`r169` 的 `hitl-btn` 计数从「class 前缀」改「出现次数」，恰好两枚的意图未放宽）⇒ **认可**。九枚反证刀 K1–K9 逐刀还原。它**自曝两处自身缺陷**（`sessionDeleteLabel` 传 ref 本体 ⇒ 两步确认在屏上永不改口；依赖脸把后端状态名直插人话句）并已各自补钉 ⇒ 记为加分不是扣分。转出六项裁定见 §4CL 第四节 | 13:46 |
 
 ⇒ 三条直接后果：① 「607 枚缺口」作废，两侧**条数相等**（1008 = 1008）；② 「距离口径未锁」也基本清了——PG 侧索引 `vector_l2_ops` 与 `vector_scope.distance_function=l2` 同源对齐；③ 切读缺的仍然只剩**真 top-k 对照**这一格，本班已作为 **R59b 第一步**下发，且要求比对必须在**两侧同时可达**的地方跑（backend 容器内：`/app/chroma_db` 是真卷、`postgres` 是内网 DNS；5432 未向宿主发布，宿主侧连不进去是设计如此）。🔴 老毛病第三次记账：**报「某物不存在」之前，先确认自己在哪一层查、用的是不是这一层的正确名字**——这次是查错了服务器上的另一个进程。
 
@@ -4424,3 +4425,40 @@ frontend/** 全程只读（ChatPanel.vue sha256 前 16 39fd661fa74ca098，16:54:
 3. `Ramanujan` 若真库连不上，其结论只到 `FakePostgres` 层 ⇒ 总控在联网档补跑 `tests/test_r250_pg_trace_source_of_truth.py` 真库那一格（`Carver` 同一条欠账一并补）。
 4. 真机那一窗（A①②③④＋C 两格＋D 三格，两相一窗）仍排在「在途清空＋全量门绿」之后；开窗前 `powercfg /change standby-timeout-ac 0`、plain build、**两相之间复跑 P-18**。
 5. R59 切读三格不变：② 归 R59 自己做、③ 等业主裁（H13/U5）、① 等业主批改题。
+
+## §4CL（09-26 13:3x–13:5x，第九班·总控末格续，主树 `81ebdd8` → `90c15bb`）：R268 交回并树 · R276 补投成功 · 六枚转出项逐条裁定 · 🔴 并发上限实测＝六
+
+### 一、并树
+
+- **R268**（施工 `Cicero`@`be-r268`，基点 `1142c27`）＝前端块 D「对话页四件」＋ G15/G20/G17 的对话页那半 ⇒ `90c15bb`（10 枚文件：4 改 1 改钉 ＋ 5 枚新件 75 条用例）。
+- 三门**总控独立复跑**（不采信自述）：`be-r268` = **63 files / 1235 passed / exit 0**（与它自述逐字一致）；主树合后 = **66 files / 1262 passed**——与「61+5 件、1187+75 枚」的预测**分毫对上**，这说明两波改动真的按写集不相交在并行，不是碰运气；`lint:colors` 仍 **148 problems / 0 errors**；`build` exit 0（345 ms）。
+- 双向越界取证：`git diff --name-only 1142c27..HEAD` 对它那五枚被改文件 = **空**（无漂移，copy 不会静默回退别人的改动）；它的 10 枚路径全在派工写域内；`rg demo` 在这 10 枚里 = **0 命中** ⇒ 与 R267 删掉的 `dashboard-demo.js` 无耦合。
+- 它自曝两处自身缺陷并补钉（`sessionDeleteLabel` 把 ref 本体传进判定 ⇒ 两步确认在屏上永不改口；依赖族脸把 `postgres_not_configured` 这类后端状态名直插人话句）——**自曝并修＝加分**。
+
+### 二、投递与名额
+
+- 🔴 **R276 第一次投递被拒**：`collab spawn failed: agent thread limit reached` ⇒ 判**未落地**（看得见失败，比 §101.10 那枚「成功样幻影」诚实），按铁规**不当场补投**，判据先写进跟进单 §101.12。R268 并树＋`Cicero` close 腾出一格后，**换线程重投**＝`Noether` `01a0dc34-0eb1-75b3-8a54-04d3376afccf`@`be-r276`（rollout `13-3x` 数到）。⇒ **实测本波并发上限＝六枚在途**，第七枚必被拒；派工前先数在途枚数。
+- 名额账：在途六枚 = `Goodall`(R269) · `Curie`(R270) · `Lovelace`(R271) · `Ramanujan`(R272) · `Pasteur`(R274) · `Noether`(R276)。已结案并 close = `Carver`(R263) · `Popper`(R266) · `Hilbert`(R267) · `Cicero`(R268)。
+- push：`b1b05d1..81ebdd8` 已推 `gitee/codex/data-file-catalog`（业主先前授权范围内）；`90c15bb` 之后的链留到在途清空随全量门一起推。
+
+### 三、机械规矩（这一格又踩/又验的）
+
+- 🔴 **LF 文件里给新行尾加 CR 会把两行并成一行**：名册两枚新行我用 `$row+"`r"` 拼接，PowerShell 的 `,` 优先级高于 `+`，结果两行合成一行且 CR 计数 2→4 ⇒ 现场抓到、按 `Split([char]13)` 拆回、CR 复原 2、`git diff --numstat` 自证 2/0。**看板一律 `"`n"` 连接，禁 `+"`r"`**。
+- `rg` 的行号与 .NET `ReadAllLines` 的行号在跟进单里**不一致**（同一枚 needle：rg :3363 / .NET 4897）⇒ 引用该文件一律用 §号，行号只作辅助且落笔前现取。
+- 三门复跑口径已可用：`npx vitest run --fsModuleCache --fsModuleCachePath ..\tmp\vc-<树>`（缓存落仓库根 `tmp/`，`git check-ignore` 命中），墙钟 2.7–4.9 s ⇒ **每枚前端单并树前后各跑一次**已是零成本纪律。
+
+### 四、`Cicero` 六枚转出项的裁定（本格一次结清）
+
+- **G04 半格（挂载期自动取回）＝本轮不做**，立 **R279 待派**。拦路的是别人持有的 `r260-queue-awaiting-approval.test.js:560`（挂载期端点集合钉），那枚钉拦的是**挂载期请求风暴**（R260 时代的真事故），不是它写错。要自动取回必须先给边界（**只在本机名单为空时才发那一发**）并同步该钉 ＋ 补一枚反证「名单非空时不许发」⇒ 改口由总控落笔，施工不许碰别人的钉。
+- **块 F（`App.vue:183-197` 退出整包清 `localStorage`）＝转 R278 候选**（块 F 今天无人持有：`App.vue`/`router`/`theme.css`/`package.json`）。
+- **后端终态读数不带 `data_filename`＝转 R280 候选**，排在真机窗之后。界面今天只说「发出去带了哪张表」，这句是真的；说「后端真正用了哪张表」要等后端补字段，🔴 不许前端猜。
+- **`fromEnvelope` 把 envelope 的 `message` 顶在字典句之前＝转 R281 候选**：与 `Curie` 的 R270 同一枚文件（`lib/errcodes.js`）⇒ 必须等 R270 并树后另派，现在派＝真写域冲突。
+- **`cancel_requested` 在 `lib/provenance.js::queueFace` 仍落 `failed` 兜底＝转 R282 候选**（`provenance.js` 无人持有，可并行），但要求同批同步 r208/r260 两枚钉，别只改一处。
+- **块 C 的 `class="hitl-btn approve"` 源码字面量**：`Lovelace` 的派工词已明令不许动 `ChatPanel.vue`，R268 也加了反证钉 ⇒ 将来再动 HITL 按钮**必须块 C／块 D 串行**，此条进 §0 名册备注。
+
+### 五、下一格
+
+1. 逐枚验收在途六枚并树（每并一枚都跑一次主树三门复跑）；🔴 **`Ramanujan` 若动 `app/trace/**`，并树前必须由总控重跑 trace 邻域 `-k`**（R263 刚并，邻域基线 304/3）。
+2. 六枚清空后：全量门 `python scripts/run_gate.py -n 8 --dist loadfile`（R263 之后从没跑过）→ 绿则 push 全链。
+3. 名额一空即派 **R277**（前端块 E 前三格：G01 上传后不刷新看「解析中→已可检索」／G15 原生 `confirm` 归零／G20 UiUpload·UiTable 接线；🔴 **G08 密级那一格不做**，等 H13/U5 业主裁定）。
+4. 真机那一窗仍排在「在途清空＋全量门绿」之后；今日外部前置实测：Docker 引擎活（`29.7.2`，七枚容器 up 20–21 h），但 `enterprise-brain:local` 与 `enterprise-brain-frontend:local` 都是 **09-25 13:56 建**⇒ 已落后今天全部并树，开窗前必须 plain rebuild；`ssh vm` 第二验证机仍不可用（未复测，勿当已修）。
