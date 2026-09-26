@@ -24,6 +24,14 @@ many the file still holds alone -- including ``never_in_tables``, the lines that
 reach the tables because they carry no owner to attribute them to. A successful backfill
 does not walk ``degraded`` back: the window happened, and an operator reading this ledger
 should still be able to see that it did.
+
+R263 adds the two counters of the numbering book. ``unproven_sequence_events`` says how many
+events this process recorded with a number the tables never confirmed -- PostgreSQL would not
+answer ``MAX(sequence)``, so the journal could state the order of those events but not where
+they belong among the rows -- and ``sequence_renumbered_events`` says how many of them a
+settlement sweep has since given a number of its own. Neither is a degradation of its own and
+neither sets ``degraded``: the refused write is already named by ``fallback_events``, and
+counting the same window twice is how an operator ends up reading two where there was one.
 """
 from __future__ import annotations
 
@@ -77,6 +85,8 @@ def _fresh_ledger() -> dict[str, Any]:
         "fallback_reads": 0,
         "illegal_status_transitions": 0,
         "backfilled_events": 0,
+        "unproven_sequence_events": 0,
+        "sequence_renumbered_events": 0,
         "backfill_already_in_tables": 0,
         "backfill_errors": 0,
         "local_only_lines": 0,
@@ -142,6 +152,26 @@ def note_local_fallback(reason_code: str, detail: str) -> int:
             message[:200] or "-",
         )
     return count
+
+
+def note_unproven_sequence() -> int:
+    """Count one event recorded with a number the tables have not confirmed (R263).
+
+    The event is not lost and is not counted as a second fallback -- the write that went to
+    the journal already said that. What this says is narrower and was never on the page: the
+    number on that line is an ordinal of the file, and until the tables answer for it the
+    trace has events whose place among the rows is undecided.
+    """
+    with _lock:
+        _ledger["unproven_sequence_events"] += 1
+        return _ledger["unproven_sequence_events"]
+
+
+def note_sequence_renumbered() -> int:
+    """Count one line the tables have now given a number of its own."""
+    with _lock:
+        _ledger["sequence_renumbered_events"] += 1
+        return _ledger["sequence_renumbered_events"]
 
 
 def note_local_read_fallback(reason_code: str, detail: str) -> int:

@@ -36,6 +36,23 @@ SPAN_EVENT_TYPES = {
 TOOL_COMPLETED_EVENT = "tool.completed"
 
 
+#: The address book of a journal line whose number the tables never confirmed (R263). Such a
+#: line is replayed under ``{trace_id}:u{token}``, an id no event addressed by
+#: ``(trace_id, sequence)`` can ever produce, so its primary key cannot alias the row another
+#: event holds. ``app/trace/store.py`` decides when a line belongs in this book.
+PROVISIONAL_ID_PREFIX = "u"
+
+
+def event_row_id(event: dict[str, Any]) -> str:
+    """The ``trace_events`` primary key an event is addressed by."""
+    return f"{event['trace_id']}:{event['sequence']}"
+
+
+def provisional_event_id(trace_id: str, token: str) -> str:
+    """The ``trace_events`` primary key of one line whose number is not confirmed."""
+    return f"{trace_id}:{PROVISIONAL_ID_PREFIX}{token}"
+
+
 @dataclass(frozen=True)
 class Projection:
     """One row a trace event asks for: which table, which key, which columns."""
@@ -83,13 +100,23 @@ def _metadata_current(current: dict[str, Any]) -> dict[str, Any]:
     return metadata if isinstance(metadata, dict) else {}
 
 
-def project_event_row(event: dict[str, Any], owner_id: str) -> Projection:
-    """The ``trace_events`` row: the event as recorded, redacted upstream."""
+def project_event_row(
+    event: dict[str, Any], owner_id: str, *, event_id: str | None = None
+) -> Projection:
+    """The ``trace_events`` row: the event as recorded, redacted upstream.
+
+    ``event_id`` names the address the row is stored at, and only R263's settlement sweep
+    passes it: a fallback line written while PostgreSQL would not answer ``MAX(sequence)`` is
+    re-numbered from the tables when it is replayed and stored under its own token id, so a
+    number that turned out to be taken is refused by ``UNIQUE (trace_id, sequence)`` instead
+    of landing on ``ON CONFLICT (event_id) DO UPDATE`` over somebody else's row.
+    """
+    record_id = str(event_id or event_row_id(event))
     return Projection(
         "trace_events",
-        f"{event['trace_id']}:{event['sequence']}",
+        record_id,
         {
-            "event_id": f"{event['trace_id']}:{event['sequence']}",
+            "event_id": record_id,
             "trace_id": event["trace_id"],
             "request_id": event["request_id"],
             "task_id": event["task_id"],

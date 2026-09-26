@@ -36,10 +36,24 @@ fallback window has been closed -- and R257 is what closes it:
   is what makes a second sweep a no-op instead of a second row. Settled lines are not
   erased -- the sweep appends a receipt line naming what it moved into the tables, because
   on a private host this file is the only copy until the tables say otherwise.
+
+A fourth claim belongs here, because the two sentences above are only true while PostgreSQL
+answers for itself. ``MAX(sequence)`` is the one reading that says what the tables already
+hold; when it does not answer, there is no number this store is entitled to put on an event
+and later replay at that address (R263). Such an event is recorded with a *local ordinal* --
+enough to keep two journal lines apart, and admitted on the line itself as not confirmed by
+the tables, under ``fallback.sequence_proven`` -- and it is addressed out of the number book,
+by its own ``provisional_id``. The sweep that recovers it takes a number from the tables as
+they are at that moment and stores the row under ``{trace_id}:u{token}``, so a number that
+had turned out to be taken is refused by ``UNIQUE (trace_id, sequence)`` instead of landing
+on ``ON CONFLICT (event_id) DO UPDATE`` over the row that already holds it. An unanswered
+sequence read costs the trace its place in the tables' ordering, which the sweep restores in
+journal order; what it can no longer cost is somebody else's event.
 """
 
 import json
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -64,6 +78,7 @@ from app.trace.projections import (
     project_run,
     project_span,
     project_step,
+    provisional_event_id,
     run_id_for,
 )
 from app.trace.run_reader import TraceDatabase, TraceDatabaseUnavailable, database_for
@@ -88,6 +103,15 @@ FULL_LEDGER_STATEMENT = (
 #: The name a sweep gives the line whose event id the tables already hold for a different
 #: event, so the log says which refusal left the line behind without a new reason code.
 ID_TAKEN_DETAIL = "event id is held by another event"
+
+#: What the ordinal of an unconfirmed event says about itself, on the line that carries it.
+#: The number is real -- it keeps two journal lines apart and orders them -- it is simply not
+#: this event's id in ``trace_events``, and an operator reading the file has to be able to
+#: tell those two statements apart without opening this module (R263).
+UNPROVEN_SEQUENCE_STATEMENT = (
+    "local ordinal only: PostgreSQL did not answer MAX(sequence) when this number was taken, "
+    "so it is not this event's id in trace_events; the settlement sweep gives it one"
+)
 
 #: Events one settlement sweep offers to the tables. The sweep runs under the write lock, so
 #: a longer journal is drained over more than one sweep and each report names what is left.
@@ -119,6 +143,11 @@ class TraceStore:
         #: and the counters in ``app.trace.durability`` are process-local and cannot say so.
         #: ``_write_fallback`` re-arms it; one successful write spends it.
         self._backfill_sweep_pending = True
+        #: The ``trace_events`` addresses of journal lines this process has watched settle.
+        #: Only lines admitted as unproven are recorded: their row is addressed by a token
+        #: rather than a number, so a read cannot recognise it from the rows alone. Bounded,
+        #: because a settled line is answered by the tables from then on either way.
+        self._durable_provisional_ids: set[str] = set()
         durability.set_backend(backend=self._backend_name(), postgres=self.database is not None)
 
     # ------------------------------------------------------------------ backends
@@ -174,9 +203,15 @@ class TraceStore:
         with self._lock:
             owner_id = str((payload or {}).get("owner_id") or "").strip()
             attempts = 2 if self.database is not None else 1
+            #: An open window is settled before this event takes a number, so the events it
+            #: held keep their place ahead of this one on the tables' number line instead of
+            #: being re-numbered behind it. A process with nothing to settle pays for the
+            #: same one ``exists()`` this call has always paid, one event later.
+            self.maybe_backfill_fallback_journal()
             event: dict[str, Any] = {}
             settled = False
             for attempt in range(attempts):
+                sequence, proven, unproven_note = self._next_sequence(trace_id)
                 event = self._build_event(
                     trace_id=trace_id,
                     request_id=request_id,
@@ -184,6 +219,7 @@ class TraceStore:
                     event_type=event_type,
                     status=status,
                     payload=payload or {},
+                    sequence=sequence,
                 )
                 if self.database is None:
                     # No PostgreSQL in this process: whatever the configured journal holds,
@@ -194,6 +230,21 @@ class TraceStore:
                         reason or REASON_BACKEND_NOT_POSTGRES,
                         detail or "the six trace tables are not configured for this process",
                     )
+                    break
+                if not proven:
+                    # The tables would not say what they hold, so this number is an ordinal
+                    # and nothing entitles this process to write at that address: whatever is
+                    # there is a different event, and ``ON CONFLICT (event_id) DO UPDATE``
+                    # would replace it without an error. The line is kept, named, and given a
+                    # number by the sweep that runs once the tables answer again. Why it could
+                    # not reach the tables for any *other* reason is still named first: an
+                    # event nobody can own is not a numbering problem, and the operator who
+                    # has to fix it is owed the reason that is true of it.
+                    reason, detail = self._refusal_before_writing(owner_id) or (
+                        REASON_WRITE_FAILED,
+                        f"sequence {sequence} is not confirmed by the tables ({unproven_note})",
+                    )
+                    self._write_fallback(event, reason, detail, proven=False)
                     break
                 reason, detail = self._persist(event, owner_id)
                 if reason is None:
@@ -219,19 +270,22 @@ class TraceStore:
         event_type: str,
         status: str,
         payload: dict[str, Any],
+        sequence: int,
     ) -> dict[str, Any]:
         return {
             "trace_id": trace_id,
             "request_id": request_id,
             "task_id": task_id,
-            "sequence": self._next_sequence(trace_id),
+            "sequence": sequence,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": str(event_type or ""),
             "status": str(status or ""),
             "payload": sanitize_trace_event(payload or {}),
         }
 
-    def _write_fallback(self, event: dict[str, Any], reason: str, detail: str) -> None:
+    def _write_fallback(
+        self, event: dict[str, Any], reason: str, detail: str, *, proven: bool = True
+    ) -> None:
         """Append one event to the local journal and say out loud that we had to.
 
         Three places learn about it: the log line and the ledger count, as before, and now
@@ -239,10 +293,16 @@ class TraceStore:
         refused events, so anybody reading it with ``grep`` or a dump tool has to be able to
         tell from the bytes on the page that the number they are counting is not the number
         of events the system saw, without opening a document to find out.
+
+        ``proven`` is R263's half of that sentence. When PostgreSQL would not answer
+        ``MAX(sequence)`` for this event, the number it carries is an ordinal of this file,
+        not an address in ``trace_events``, and the line says so and names the token the row
+        will be addressed by once the tables can be asked. Both statements live in the
+        marker, so the event keeps its eight keys and counting a trace id in this file still
+        counts events.
         """
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        line = dict(event)
-        line[FALLBACK_LINE_MARKER] = {
+        marker = {
             "is_fallback": True,
             "reason": str(reason or ""),
             # The event's own stamp, not a second reading of the clock: the admission
@@ -251,27 +311,40 @@ class TraceStore:
             "recorded_at": str(event.get("timestamp") or ""),
             "full_ledger": FULL_LEDGER_STATEMENT,
         }
+        address = f"{event['trace_id']}:{event['sequence']}"
+        if not proven:
+            token = uuid.uuid4().hex
+            marker["sequence_proven"] = False
+            marker["provisional_id"] = token
+            marker["sequence_note"] = UNPROVEN_SEQUENCE_STATEMENT
+            address = provisional_event_id(str(event["trace_id"]), token)
+        line = dict(event)
+        line[FALLBACK_LINE_MARKER] = marker
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(line, ensure_ascii=False) + "\n")
-        durability.note_local_fallback(
-            reason, f"event_id={event['trace_id']}:{event['sequence']} {detail}"
-        )
+        durability.note_local_fallback(reason, f"event_id={address} {detail}")
+        if not proven:
+            durability.note_unproven_sequence()
         # A refused line is precisely what the next successful write has to settle.
         self._backfill_sweep_pending = True
 
-    def _persist(self, event: dict[str, Any], owner_id: str) -> tuple[str | None, str]:
+    def _persist(
+        self, event: dict[str, Any], owner_id: str, *, event_id: str | None = None
+    ) -> tuple[str | None, str]:
         """Write one event and its rows to the configured backend.
 
         Returns ``(None, "")`` when the tables hold the whole event, and a
         ``(reason, detail)`` pair when they do not; the caller decides what the fallback
-        journal has to keep.
+        journal has to keep. ``event_id`` is the address the ``trace_events`` row is stored
+        at, and only R263's sweep passes one: a recovered line whose own number was never
+        confirmed keeps its child rows on the number it is given then, but its event row on
+        the id of the line, so the insert cannot land on another event's row.
         """
-        if self.persistence is None:
-            return REASON_BACKEND_NOT_POSTGRES, "no persistence adapter is configured"
-        if not owner_id:
-            return REASON_OWNER_MISSING, "trace events require an owner_id to reach the tables"
+        refusal = self._refusal_before_writing(owner_id)
+        if refusal is not None:
+            return refusal
         try:
-            self._apply(project_event_row(event, owner_id).seal())
+            self._apply(project_event_row(event, owner_id, event_id=event_id).seal())
             for projection in project_event(event, owner_id=owner_id, fetch=self._current_row):
                 self._apply(projection)
         except TraceSchemaError as exc:
@@ -283,6 +356,21 @@ class TraceStore:
         except Exception as exc:  # telemetry never fails a request, but it is never silent
             return REASON_WRITE_FAILED, f"{type(exc).__name__}: {exc}"
         return None, ""
+
+    def _refusal_before_writing(self, owner_id: str) -> tuple[str, str] | None:
+        """Why an event cannot reach the tables whatever else is true of them.
+
+        Two facts are independent of PostgreSQL being up, so R263 asks them before it takes
+        the number's address to itself: no adapter configured, and no owner to attribute the
+        row to. A line that fails one of those is named for it, not for the sequence read
+        that also happened to be unanswered, or an operator reads a numbering problem where
+        the trace has an identity problem.
+        """
+        if self.persistence is None:
+            return REASON_BACKEND_NOT_POSTGRES, "no persistence adapter is configured"
+        if not owner_id:
+            return REASON_OWNER_MISSING, "trace events require an owner_id to reach the tables"
+        return None
 
     def _apply(self, projection: Projection) -> None:
         """Push one sealed projection through the configured adapter."""
@@ -304,22 +392,56 @@ class TraceStore:
 
     # ---------------------------------------------------------------------- backfill
 
-    def _durable_event_row(self, event: dict[str, Any]) -> dict[str, Any] | None:
-        """The ``trace_events`` row holding this event's id, when the tables have one.
+    @staticmethod
+    def _event_identity(event: dict[str, Any], marker: dict[str, Any]) -> str:
+        """Which book one journal line is addressed in.
+
+        A line whose number the tables confirmed is addressed by that number, exactly as a
+        live event is. A line admitted as unproven (R263) is addressed by its own token
+        instead, in an id no ``(trace_id, sequence)`` pair can produce, so replaying it can
+        only ever conflict with itself -- and a number that has since been taken is refused by
+        the table's unique key rather than written over the event that holds it.
+        """
+        trace_id = str(event.get("trace_id") or "")
+        if marker.get("sequence_proven") is False:
+            token = str(marker.get("provisional_id") or "")
+            if token:
+                return provisional_event_id(trace_id, token)
+        return f"{trace_id}:{event.get('sequence')}"
+
+    def _remember_durable(self, identity: str) -> None:
+        """Note that a token-addressed line is answered for by a row (bounded memo)."""
+        if len(self._durable_provisional_ids) < 4096:
+            self._durable_provisional_ids.add(identity)
+
+    def _provisional_line_is_durable(self, identity: str) -> bool:
+        """Whether a line addressed out of the number book is already a row.
+
+        Only token-addressed lines are asked: a line with a confirmed number carries the row's
+        own id, so the read path recognises it from the rows already in hand. The journal
+        never deletes the line it settled, so the answer is remembered for this process.
+        """
+        if identity in self._durable_provisional_ids:
+            return True
+        if self._durable_row_by_id(identity) is None:
+            return False
+        self._remember_durable(identity)
+        return True
+
+    def _durable_row_by_id(self, event_id: str) -> dict[str, Any] | None:
+        """The ``trace_events`` row stored at one address, when the tables have one.
 
         A question, not the guard: the guard is the unique key. Asking first is what lets a
         sweep tell an event it recovered from one the tables already answer for, and -- the
         reason it asks about content and not only about the id -- what lets it refuse to
-        overwrite a durable row with a different event. ``_next_sequence`` takes the higher
-        of the PostgreSQL floor and the journal floor, and the first of those reads as 0
-        whenever the database is the thing that is down, so a trace that degrades *midway*
-        can hand a journal line an id the tables already gave to another event.
+        overwrite a durable row with a different event. Since R263 the ids it asks about come
+        from two books: a confirmed line is asked about by its number, an unconfirmed one by
+        its token, which is the only address that line will ever be written at.
 
         ``None`` means "the tables are not answering for this id", which includes "the
         question could not be asked": an unreadable table is no reason to skip a replay, and
         the insert will be refused by the key if it turns out to be occupied.
         """
-        event_id = f"{event.get('trace_id')}:{event.get('sequence')}"
         if self.persistence is None or not event_id:
             return None
         try:
@@ -328,14 +450,16 @@ class TraceStore:
             return None
         return row if isinstance(row, dict) else None
 
+    def _durable_event_row(self, event: dict[str, Any]) -> dict[str, Any] | None:
+        """The row at one event's own address. See ``_durable_row_by_id``."""
+        return self._durable_row_by_id(self._event_identity(event, {}))
+
     @staticmethod
     def _is_the_same_event(row: dict[str, Any], event: dict[str, Any]) -> bool:
         """Whether a ``trace_events`` row and a journal line describe one and the same event."""
         return (
             str(row.get("event_type") or ""), str(row.get("status") or "")
         ) == (str(event.get("event_type") or ""), str(event.get("status") or ""))
-
-
 
     def backfill_fallback_journal(
         self, *, limit: int | None = BACKFILL_LINES_PER_SWEEP
@@ -350,9 +474,12 @@ class TraceStore:
         projections and the same column contract as a live write, so there is no second
         writer for the first one to disagree with.
 
-        Idempotency belongs to the tables, not to this loop. An event is addressed by the
-        ``(trace_id, sequence)`` it was recorded with and ``trace_events`` makes that pair
-        unique, so a sweep that runs twice leaves one row -- it does not need to remember
+        Idempotency belongs to the tables, not to this loop. A line whose number the
+        tables confirmed is addressed by that ``(trace_id, sequence)`` and ``trace_events``
+        makes that pair unique; a line that could not confirm one (R263) is renumbered at
+        the floor the tables report and keyed by its own token, which no pair can produce.
+        Either way a sweep that runs twice leaves one row -- it does not need to remember
+
         having run. That is also why a settled line is never erased: the sweep appends a
         receipt naming the lines it covered and leaves the events exactly where they were,
         because on a private host this file is the only copy until the tables say otherwise.
@@ -389,11 +516,22 @@ class TraceStore:
                 if not owner_id:
                     report["never_in_tables"] += 1
                     continue
-                row = self._durable_event_row(event)
+                marker = record["marker"]
+                proven = marker.get("sequence_proven") is not False
+                identity = self._event_identity(event, marker)
+                if proven:
+                    row = self._durable_event_row(event)
+                else:
+                    # R263: this line carries an ordinal of this file, not an address in the
+                    # tables, so it is asked about -- and written -- under its own token.
+                    report["unproven_lines"] += 1
+                    row = self._durable_row_by_id(identity)
                 if row is not None:
                     if self._is_the_same_event(row, event):
                         report["already_in_tables"] += 1
                         report["covered_through_line"] = int(record["line"])
+                        if not proven:
+                            self._remember_durable(identity)
                     else:
                         # The id is taken by a different event. Writing it would replace a
                         # durable row -- losing the event that is really there to "recover"
@@ -404,9 +542,29 @@ class TraceStore:
                             report["refused_detail"].get(ID_TAKEN_DETAIL, 0) + 1
                         )
                     continue
-                why, detail = self._persist(event, owner_id)
+                if proven:
+                    address = None
+                else:
+                    trace_id = str(event.get("trace_id") or "")
+                    floor, answered, note = self._postgres_sequence_floor(trace_id)
+                    if not answered:
+                        # The tables still cannot say what they hold, so they cannot be told
+                        # where to put this. The line waits, counted and named in the report,
+                        # and the readout still calls it a gap: deferred, not lost.
+                        report["unproven_deferred"] += 1
+                        report["deferred_note"] = note[:200]
+                        continue
+                    event = {**event, "sequence": floor + 1}
+                    address = identity
+                why, detail = self._persist(event, owner_id, event_id=address)
                 if why is None:
                     report["settled_events"] += 1
+                    if not proven:
+                        # Every number this sweep takes comes from the tables as they are at
+                        # that moment, so the line before it has already raised the floor.
+                        report["renumbered_lines"] += 1
+                        durability.note_sequence_renumbered()
+                        self._remember_durable(identity)
                     report["covered_through_line"] = int(record["line"])
                     continue
                 # A refusal keeps the line exactly where it is, including the interesting
@@ -414,8 +572,9 @@ class TraceStore:
                 # writer took it between the question above and this insert. Folding such a
                 # line into already_in_tables would report a lost event as a recovered one,
                 # so it is refused and stays visible -- in the journal, in this report, and
-                # in the readout's gap. Who dealt the id out twice is _next_sequence's
-                # question, not this sweep's.
+                # in the readout's gap. Since R263 the insert can actually be refused that
+                # way rather than updating the row that got there first, and an unproven line
+                # simply offers its number again on the next sweep, which asks again.
                 report["refused"][why] = report["refused"].get(why, 0) + 1
                 refused_detail = str(detail)[:200] or why
                 report["refused_detail"][refused_detail] = (
@@ -454,6 +613,10 @@ class TraceStore:
             "receipt_lines": 0,
             "receipt": False,
             "refused_detail": {},
+            "unproven_lines": 0,
+            "renumbered_lines": 0,
+            "unproven_deferred": 0,
+            "deferred_note": "",
         }
 
     def _log_backfill(self, report: dict[str, Any]) -> None:
@@ -572,7 +735,7 @@ class TraceStore:
         if not trace_id:
             return []
         with self._lock:
-            local = [event for event in self._read_events() if event.get("trace_id") == trace_id]
+            lines = self._local_trace_lines(trace_id)
             if self.database is None:
                 if self.persistence is not None:
                     # The JSON adapter is a durable journal too; it is simply not the six
@@ -586,16 +749,48 @@ class TraceStore:
                     except Exception as exc:
                         durability.note_local_read_fallback(REASON_READ_FAILED, str(exc))
                         stored = []
-                    local = _merge_events(stored, local)
-                return sorted(local, key=lambda event: int(event.get("sequence") or 0))
+                    events = _merge_events(stored, lines)
+                else:
+                    events = [event for _, event in lines]
+                return sorted(events, key=lambda event: int(event.get("sequence") or 0))
             try:
                 events = self.database.fetch_events(trace_id)
             except TraceDatabaseUnavailable as exc:
                 durability.note_local_read_fallback(exc.reason, str(exc))
-                return sorted(local, key=lambda event: int(event.get("sequence") or 0))
+                return sorted(
+                    (event for _, event in lines),
+                    key=lambda event: int(event.get("sequence") or 0),
+                )
             return sorted(
-                _merge_events(events, local), key=lambda event: int(event.get("sequence") or 0)
+                _merge_events(events, lines), key=lambda event: int(event.get("sequence") or 0)
             )
+
+    def _local_trace_lines(self, trace_id: str) -> list[tuple[str, dict[str, Any]]]:
+        """This trace's journal lines, as (address, event) pairs, minus the ones already rows.
+
+        A line whose number the tables confirmed is addressed by that number, which is also
+        the id of its row, so the merge below recognises it without asking. A line admitted as
+        unproven (R263) carries an ordinal of this file, and the only thing that ties it to
+        the row it settled into is its own token: the tables are asked for that, once per
+        line, and the answer is remembered. Dropping such a line is honest only because the
+        row is in the answer already -- dropping a line the tables never took would be the
+        "this trace is complete" lie this file exists to prevent, and that is what the
+        address is for: a confirmed line hides behind no row, because the two share an id.
+        """
+        lines: list[tuple[str, dict[str, Any]]] = []
+        for record in self._journal_records():
+            if record["kind"] != "event":
+                continue
+            event = record["event"]
+            if str(event.get("trace_id") or "") != trace_id:
+                continue
+            marker = record["marker"] or {}
+            identity = self._event_identity(event, marker)
+            if marker.get("sequence_proven") is False:
+                if self._provisional_line_is_durable(identity):
+                    continue
+            lines.append((identity, event))
+        return lines
 
     @staticmethod
     def database_as_event(row: dict[str, Any]) -> dict[str, Any]:
@@ -698,24 +893,47 @@ class TraceStore:
         except Exception as exc:  # noqa: BLE001 - a counter is never a request failure
             logger.warning("[Trace] request window was not recorded: %s", exc)
 
-    def _next_sequence(self, trace_id: str) -> int:
-        """The next event sequence, taken from whichever ledger holds the higher one."""
-        return max(self._postgres_sequence_floor(trace_id), self._file_sequence_floor(trace_id)) + 1
+    def _next_sequence(self, trace_id: str) -> tuple[int, bool, str]:
+        """The number for the next event, and whether the tables stand behind it.
 
-    def _postgres_sequence_floor(self, trace_id: str) -> int:
-        """The highest event id PostgreSQL holds, or 0 when it cannot say.
+        ``max(pg, file) + 1`` is the rule; what R263 adds is that the two floors are not the
+        same kind of fact. PostgreSQL answering is what makes a number safe to replay at that
+        address, while the journal floor only says what this file has handed out. So the
+        answer is a triple: the number, whether the tables confirmed it, and what they said
+        when they did not. An unconfirmed number is still taken, because two lines of one
+        trace must not read as one event, but it is an ordinal of this file and is never used
+        as an address in ``trace_events`` -- see ``record_event`` and the sweep.
+        """
+        floor, proven, note = self._postgres_sequence_floor(trace_id)
+        file_floor = self._file_sequence_floor(trace_id)
+        if not proven:
+            return file_floor + 1, False, note
+        return max(floor, file_floor) + 1, True, ""
 
-        An unanswered sequence read is not counted as a fallback of its own: the event that
-        is being built right now either reaches the tables (nothing was lost) or goes to the
-        journal one statement later, and that write is what gets named. Naming both would
-        double every degraded event in the ledger an operator reads.
+    def _postgres_sequence_floor(self, trace_id: str) -> tuple[int, bool, str]:
+        """What PostgreSQL says the highest event id is, and whether it answered at all.
+
+        The second value is the whole of R263. Reading an unanswered ``MAX(sequence)`` as a
+        floor of 0 is what let a trace that degrades *midway* hand a fallback line an id the
+        tables had already given to another event, and a replay addressed at that id does not
+        fail loudly: ``trace_events`` is written ``ON CONFLICT (event_id) DO UPDATE``, so the
+        other event's row is quietly replaced while the journal reports a recovery. "Nothing
+        here yet" and "not answering" are two different facts, and only the first is a floor.
+
+        An unanswered sequence read is not counted as a fallback of its own: the event being
+        built right now either reaches the tables (nothing was lost) or goes to the journal
+        one statement later, and that write is what gets named. Naming both would double
+        every degraded event in the ledger an operator reads.
         """
         if self.database is None:
-            return 0
+            # No six tables in this process at all, so there is no number line to disagree
+            # with and the journal floor is the whole of it. That is a durability statement,
+            # already named by the fallback source, not an unanswered question.
+            return 0, True, ""
         try:
-            return self.database.max_sequence(trace_id)
-        except TraceDatabaseUnavailable:
-            return 0
+            return self.database.max_sequence(trace_id), True, ""
+        except TraceDatabaseUnavailable as exc:
+            return 0, False, f"{exc.reason}: {exc}"
 
     def _file_sequence_floor(self, trace_id: str) -> int:
         events = [event for event in self._read_events() if event.get("trace_id") == trace_id]
@@ -746,8 +964,15 @@ class TraceStore:
             event = record["event"]
             if str(event.get("trace_id") or "") != trace_id:
                 continue
-            event_id = f"{event.get('trace_id')}:{event.get('sequence')}"
-            held = durable.get(event_id)
+            marker = record.get("marker") or {}
+            identity = self._event_identity(event, marker)
+            if marker.get("sequence_proven") is False:
+                # Out of the number book, so the rows in hand cannot name it: ask once. A
+                # settled line is not a gap, and an unsettled one is not an answer the
+                # tables will refuse either -- they only have to be asked again.
+                if self._provisional_line_is_durable(identity):
+                    continue
+            held = durable.get(identity)
             if held == (str(event.get("event_type") or ""), str(event.get("status") or "")):
                 continue
             stamps.append(str(event.get("timestamp") or ""))
@@ -847,12 +1072,16 @@ def _is_sequence_collision(detail: str) -> bool:
 
 
 def _merge_events(
-    stored: list[dict[str, Any]], fallback: list[dict[str, Any]]
+    stored: list[dict[str, Any]], fallback: list[tuple[str, dict[str, Any]]]
 ) -> list[dict[str, Any]]:
-    """Prefer the database rows, keep fallback events the database never received."""
-    merged = {
-        f"{event.get('trace_id')}:{event.get('sequence')}": event for event in fallback or []
-    }
+    """Prefer the database rows, keep fallback events the database never received.
+
+    ``fallback`` arrives paired with the address its line is recognised by -- the number for
+    a confirmed line, the token for one R263 admitted the tables never confirmed. Keying both
+    by the number printed on the line is what let a degraded window hide behind the row that
+    had taken that number: the replay came back complete and the event in it was not this one.
+    """
+    merged = {identity: event for identity, event in fallback or []}
     for event in stored or []:
         merged[f"{event.get('trace_id')}:{event.get('sequence')}"] = event
     return list(merged.values())

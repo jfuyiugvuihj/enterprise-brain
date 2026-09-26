@@ -37,7 +37,7 @@ from app.trace.durability import (
     REASON_WRITE_FAILED,
 )
 from app.trace.projections import run_id_for
-from app.trace.store import BACKFILL_RECEIPT_MARKER, TraceStore
+from app.trace.store import BACKFILL_RECEIPT_MARKER, FALLBACK_LINE_MARKER, TraceStore
 from tests._r250_fake_postgres import FakePostgres
 from tests._r250_run_fixture import emit_full_run
 
@@ -248,14 +248,16 @@ def test_an_unsettled_window_is_a_gap_on_the_readout_and_the_gap_closes(tmp_path
     assert durability.durability_status()["local_only_lines"] == 0
 
 
-def test_a_line_whose_id_another_event_took_is_never_reported_as_settled(tmp_path):
-    """Counter-evidence for the recovery claim, kept as a test and not as a comment.
+def test_a_line_that_cannot_prove_its_id_settles_at_a_number_of_its_own(tmp_path):
+    """R263 changed the verdict recorded here; the borrowed id is still the premise.
 
-    A trace that degrades *midway* hands the journal the same ids the tables already hold,
-    because ``_next_sequence`` reads the database floor as 0 while the database is the thing
-    that is down. A sweep calling those lines "already in the tables" would turn two lost
-    events into two recovered ones -- the exact direction of lying this ticket is about. They
-    are refused instead, and the readout keeps naming them.
+    A trace that degrades midway hands the journal numbers the tables already hold,
+    because the sequence read is the one thing that says what is stored, and it is the
+    thing that is down. R257 answered that by refusing the lines: nothing was recovered
+    and the gap stayed open for good. R263 answers it by never borrowing a number -- an
+    unprovable line is addressed by its own token and, once the tables can answer for
+    themselves, is renumbered at the floor they report. So the honest counter-evidence
+    is no longer "refused forever": it is "settled, and without overwriting a row".
     """
     engine = FakePostgres()
     store = _store(tmp_path, engine)
@@ -269,31 +271,49 @@ def test_a_line_whose_id_another_event_took_is_never_reported_as_settled(tmp_pat
     record("request.completed", "completed", worker_count=1, has_final_answer=True)
     engine.set_unavailable(False)
 
-    assert [line["sequence"] for line in _event_lines(store)] == [1, 2], (
-        "the sequence floor R257 does not touch: pre-existing behaviour, recorded here"
+    lines = _event_lines(store)
+    assert [line["sequence"] for line in lines] == [1, 2], (
+        "the premise R263 keeps: a degraded writer still hands out borrowed numbers"
+    )
+    assert all(line[FALLBACK_LINE_MARKER]["sequence_proven"] is False for line in lines), (
+        "and admits it on the line, which is the only thing the sweep may key on"
     )
 
     report = store.backfill_fallback_journal()
 
-    assert report["settled_events"] == 0
+    assert report["settled_events"] == 2
     assert report["already_in_tables"] == 0
-    assert report["refused"] == {REASON_WRITE_FAILED: 2}
-    assert report["still_local_lines"] == 2
-    assert len(engine.rows("trace_events")) == 2
-    assert sorted(row["event_type"] for row in engine.rows("trace_events").values()) == [
-        "request.started", "step.started",
-    ], "a sweep must not overwrite a durable row in order to settle a refused line"
-    assert BACKFILL_RECEIPT_MARKER not in store.path.read_text(encoding="utf-8"), (
-        "a sweep that settled nothing must not write a receipt claiming it did"
+    assert report["refused"] == {}
+    assert report["still_local_lines"] == 0
+    assert report["unproven_lines"] == 2
+    assert report["renumbered_lines"] == 2
+    assert report["never_in_tables"] == 0, "no line in this journal is missing an owner"
+
+    rows = engine.rows("trace_events")
+    assert len(rows) == 4, "the two durable rows plus the two lines that arrived late"
+    assert sorted(row["sequence"] for row in rows.values()) == [1, 2, 3, 4], (
+        "the late lines continue past the floor instead of landing on it"
     )
-    gap = store.read_run(run_id_for(trace))["local_only"]
-    assert gap["events"] == 2
-    assert gap["will_reach_tables"] == 0
-    assert gap["will_not_reach_tables"] == 2
-    assert store.read_run(run_id_for(trace))["run"]["status"] == "started", (
-        "the terminal event is one of the refused lines, so the run row keeps the verdict"
-        " the durable events support and no more"
+    assert rows[f"{trace}:1"]["event_type"] == "request.started", (
+        "a sweep must not overwrite a durable row to settle a late line"
     )
+    assert rows[f"{trace}:2"]["event_type"] == "step.started"
+    assert BACKFILL_RECEIPT_MARKER in store.path.read_text(encoding="utf-8"), (
+        "a sweep that settled both lines must say so in the journal"
+    )
+
+    readout = store.read_run(run_id_for(trace))
+    assert readout["counts"]["trace_events"] == 4
+    assert "local_only" not in readout, "nothing is left held only by the file"
+    assert readout["run"]["status"] == "completed", (
+        "the terminal event reaches the tables, so the run row stops being cut short"
+    )
+
+    ledger = durability.durability_status()
+    assert ledger["local_only_lines"] == 0
+    assert ledger["unproven_sequence_events"] == 2
+    assert ledger["sequence_renumbered_events"] == 2
+    assert ledger["degraded"] is True, "the window itself is still reported as degraded"
 
 
 def test_a_line_the_tables_can_never_own_is_counted_rather_than_retried(tmp_path):
