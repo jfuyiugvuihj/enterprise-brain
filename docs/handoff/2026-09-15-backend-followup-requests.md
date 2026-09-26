@@ -3566,3 +3566,36 @@ P¸Í‹d ÍÁ e3 šh< Ş paragraph-only ’ ¢¹"1 ’ ¢	e =4 **¸9 `loader.py`**R29
 - `be-r292` dirty=2`catalog.py` +  š(‹@ò¥ÑŒ	`be-r294` dirty=0úŒ1»†	$š**¿(ŸŸú¹**Í• åH `git diff` °Ö¨K
 - `be-r288`MïW E 	<dirty=7	 `be-r293`Mï’Öˆ=Ø™¹dirty=8	,í**Í•**Mï™ß R291I R288	(â!ŒmšvÑ
 PòáöŸ0İY
+## §10309-26 17:14 ,Aí·, <çV2 â!Œ’$nH™ŒI;§rI
+
+â! mšòá§102	b/**}z™ß„¥›U**vŒ¢ú1•ê 
+
+###  R296=4 H z1•	· ;ÏÌ„ department /,Œıø
+- Åv
+íÖ½å 8	`app/memory/profile.py:110/117` ( `user_profiles.department` **†Ö**eê `users` „C<`PUT /api/v1/profile``app/api/v1/auth.py:244`	/**Xåê©ï™**„`app/agents/nodes.py:1666-1673` ÈŠƒüÛ promptÒ ¡X*Œèè`GET /profile` !‹
+‡Í¥çèèXåïê¥ûèè2Ûêñ„ prompt
+- ã„„+™Ğ§	`user_profiles` **/ˆC“e**`Principal` û„/ `users` £ L	@åÙ/**èĞ:aÓ**/ŠCĞ§ƒK@åHà:Á	¤ØÌ¢7 1ıÙ <
+- =4 **;§Áš,<™{Œ	 	**p**M:êû>**1`Principal` „C/ `users`R290 Ù admin  † `PUT /users/department`,Œı**ï™**„èèX(,«1/G&=0B` `profile` û0„ department  ‹°Ö `users`« `user_profiles` †Öa `PUT /profile` & department ö**nÒİ**3šï + ºİ¸YØ"Wµ¸6†(	b prompt ü¥çí(><c ÍÁ e3 šXåê¥èè ’ 9¨C< prompt Ø¡X9èè ’ `GET /profile` Å{ß@Øb†Ö£ L ’ ¢d `user_profiles.department` ÌòX„<**—«ûˆC‹**Áû/ã„™ pn^;¨\,Uê™ã„gL	
+- ™ß`app/memory/profile.py` + `app/api/v1/auth.py`Å `PUT /profile` £µ	+ `app/agents/nodes.py`Åü¥å Ö	+ ° `tests/test_r296_*.py`=4 ¸° `chat.py`R294	`retriever.py`/`pipeline`/`pg_store.py`R59	`catalog.py`R292	`app/notifications/**`·`app/main.py`R299	`loader.py`·`ocr.py`R298	`frontend/**`
+
+### ŒR297Uï R296 •	· eãéé 7’8 *ß
+- ÅvR290 °, 8 š PG ™ã`tests/test_r230_db_ready_selfheal.py:339` „ 7 š parametrize ¡iiƒÙåö…èGh  UPDATE	`:354` £å7 šeãÎÊ)w š`app/common/auth.py:201` ò10èR230 St 7 šR290 w 8 š
+- $nééeP0 8 š**íI—>~**½åBò(êñöÌ‰† ö‹`test_production_refuses_to_move_a_department_in_the_process_local_table`	Ò ,U:„/**ééŒt'**/Ÿı¸Š£šâ	‰,ÛeÑp_¸ Í
+- ™ßÅ `tests/test_r230_db_ready_selfheal.py`° §ã
+
+### 	R283  U°U + Í•ã„;§²Œ `be-r283`,<ÑÇáêğ	
+- **Óº¾ Ş**°ö–Ñ **8 failed / 8 passed**	*ìËŸà
+  1. `SyntaxError` @ `:254`Ì÷2ÌL†ñ‡ô¥÷Š "t“ dump Å6†Ö" SÁnÙÍ™Õ	Ò töàÕ6Æ**;§ò109**…*Ğ¤ M+«Ù9¨Ê0	
+  2. `monkeypatch.tmpdir`  `MonkeyPatch` 9,¡Ù*^'”å( `tmp_path` èŒÂp	‰Ê `:291/:307/:335/:343/:351` ”
+  3. `_FakeCursor.execute` (9M SQL ö¥ `IndexError: no such group``:112`ÖÁş­( `verify_vector_landings` ’ `_landing_vector_row` £ ó	æ	 š `pytest.raises(match="½¦")` ±
+Eˆo
+- ïY„}'Í•ö¸¨	`scripts/backup_database.py` „¹ù`tables_in_backup` / `missing_landing_tables`sûšIpn$aîUpp	:» `tests/test_postgres_backup_recovery.py` òŠ$na=**$Š:PıÑ**`<=>`  `<->`„Hğ top-1	zKŞT† H20 İ»ã„„gIÍÁ‰ò8{Š\ÏÎ­ UX‰ ’ èêñ¢`:430`	
+- Í•$nŸUÛaØ	` $š=¹+bLp—
+a bZ Ñø<¦åâÖŞŸ top-1b „‰ `chunk_vectors` Å¢c “MıÑ„£ <**™*ŒvÙÑÕ**¸ skip ™÷  ,UÓHM R60 ¸ûÿ
+- ™ß`scripts/backup_database.py` + `tests/test_postgres_backup_recovery.py` + `tests/test_r283_*.py`° `catalog.py`R292	`retriever/pipeline/pg_store`R59	
+- =4 ;§ê° ,<™ §103 „,êñ_¯† åÅLWô¥÷	, H(íÕ6µ1{†ö™ØÙÁ£a‰/ Meitner *º`ï/**-‡‡cÌ)„Q**™&‡„W&2 ‹(+Wñ‡Ì÷
+
+### Ûâ!Œzh{+`	
+1. `R296` ’ 2. `R297`$ ™ß’ørïö•	’ 3. `R283` Í•Ÿ	’ 4. `R295`W Å{I R294 vƒ_9 `chat.py`	’ 5. `R59 W2`I R294 Mı° `chat.py`	’ 6. `R300 ¥¿`I R298 vŒMı9 `loader.py`	’ 7. `R288` çí ’ 8. `R291`I R288`panel-states.test.js` °+ 12  `UiErrorState`	’ 9. `R293` çí`ChatPanel.vue`¿(ƒêñ„çö	
+- Mï	š™ßø’¤Æ** !êı• š**â! Mï™ß:ö	 Uh(ï	Ù1/,âımšvá„Ÿà
+- „Må\òZ`be-r298`/`be-r299`/`be-r300`/`be-r59d`Gê `fe9fa9f`junction òŒ;	R296/R297 „•Múú¹) ° HEADĞMú± !öû8ù	
