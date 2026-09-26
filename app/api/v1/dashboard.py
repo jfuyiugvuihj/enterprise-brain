@@ -42,12 +42,27 @@ Design constraints this module is built around:
   exception type is translated; any other ledger failure propagates unchanged so a real
   defect keeps its shape. No new error code is introduced, and the alert table keeps the
   behaviour of its own route (a bootstrap failure there stays a server error, exactly as
-  ``GET /alerts`` answers it).
+   ``GET /alerts`` answers it).
+- **The trend series cuts periods out of stored time columns (R332).**
+  ``GET /dashboard/trend`` is a second route in this module and it shares that whole
+  permission story: the same ``intelligence._authorized`` analyze gate, the same
+  ``NO_STORE_HEADERS``, documents out of the one ``chat.list_document_catalog`` read,
+  datasets out of the one ``data.list_data_files`` read, alerts out of the one row-scope
+  predicate. What it adds is a bucket, and a bucket is only honest when it is cut from the
+  row's own ``created_at``. Never from a file mtime - ``data.list_data_files`` answers
+  ``modified_at`` off ``path.stat()``, which is exactly why the period is not read from that
+  key. Never from a page length - ``_document_counts``' docstring is the standing tombstone.
+  And a row whose period cannot be read fails the whole response instead of disappearing
+  from the series or being filled with ``0``: a series that quietly loses a row totals less
+  than ``/summary`` reports for the same caller, which is one question answered twice.
 """
+from datetime import date, datetime, timedelta, timezone
+
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from app.api.v1 import alerts as alerts_api
 from app.api.v1 import chat, data, intelligence
+from app.common.logger import logger
 from app.common.no_store import NO_STORE_HEADERS
 from app.common.permissions import ACTION_ANALYZE
 from app.storage import pending_approvals
@@ -201,3 +216,335 @@ async def dashboard_summary(request: Request, response: Response):
     if alerts is not None:
         payload["alerts"] = alerts
     return payload
+
+
+# ================================================================= GET /dashboard/trend
+#
+# R332. ``/summary`` answers how many rows exist now; this route answers in which period
+# they arrived. The second question is the one the overview panel is still asking:
+# ``frontend/src/components/DashboardPanel.vue:12-13`` draws the 「数据趋势」 empty state
+# *because* no server aggregate returned a period series, and ``:304`` says that card may
+# only grow numbers once such an aggregate exists. This section is the aggregate it waits
+# for. ``/summary`` itself is not touched - its four tiles carry R284's accounting and
+# several pins of their own.
+
+#: The single clock every bucket boundary is cut with: ``Asia/Shanghai``. The same fixed
+#: +08:00 offset as ``app/common/auth.py:25`` and ``app/documents/catalog.py:15``, and the
+#: same wall the alert table stamps its own rows from - ``alerts.py:122`` and
+#: ``migrations/0003_legacy_runtime_tables.sql:9`` both store
+#: ``(NOW() AT TIME ZONE 'Asia/Shanghai')::text``. China has no daylight saving, the
+#: conclusion ``alerts.py:449`` already records beside the disposal clock, so a fixed offset
+#: cannot slide a month edge by an hour the way a named zone with a rule would.
+_TREND_TIME_ZONE = timezone(timedelta(hours=8))
+_TREND_TIME_ZONE_NAME = "Asia/Shanghai"
+_TREND_PERIODS = ("month", "week")
+_TREND_DEFAULT_PERIOD = "month"
+_TREND_DEFAULT_BUCKETS = 12
+
+#: The cap exists because both legs keep whatever they count: the offline leg filters a
+#: Python list in memory, and the SQL leg deliberately carries no ``LIMIT`` - a bounded read
+#: is how a total starts shrinking quietly once a tenant outgrows the bound, which is the
+#: defect ``_ALERT_COUNT_SQL`` above was written against. So the window is capped, not the
+#: query. 60 monthly buckets is five years, 60 weekly buckets fourteen months; neither is a
+#: range one card on one screen can draw anyway.
+_TREND_MAX_BUCKETS = 60
+
+#: Read row by row, not page by page, and with no ownership clause of its own: the predicate
+#: comes from ``alerts.alert_row_scope_sql``, exactly as in ``_ALERT_COUNT_SQL``.
+_ALERT_SERIES_SQL = "SELECT created_at, status FROM alerts"
+
+#: Denial cannot be spelled ``None`` here, because ``None`` is already the answer for "this
+#: caller may read alerts and nothing arrived in the window". Same reason ``_alert_counts``
+#: spells denial as a missing key rather than as a zero.
+_ALERTS_DENIED = object()
+
+
+def _trend_now() -> datetime:
+    """The anchor of the window: server wall time, in the trend's own zone."""
+    return datetime.now(_TREND_TIME_ZONE)
+
+
+def _trend_unreadable(source: str, ident: object) -> HTTPException:
+    """One row whose period cannot be read refuses the entire response.
+
+    ``503 storage_unavailable`` is this module's existing face for "a book cannot be
+    accounted for" (``_pending_count`` translates exactly that failure today); no new error
+    code is opened here. The two quiet alternatives are both worse. Dropping the row makes
+    the series total less than ``/summary`` reports for the same caller and the same scope -
+    one question, two answers. Filling the hole with ``0`` is the face the client already
+    refuses to render: ``frontend/src/lib/dashboard.js:32``, 「不会用旧数字或 0 顶上」.
+    """
+    logger.warning(f"[Dashboard] trend period unreadable: source={source} row={ident}")
+    return HTTPException(status_code=503, detail="storage_unavailable")
+
+
+def _trend_moment(value: object, *, source: str, ident: object) -> datetime:
+    """Turn one stored time column into a moment in ``_TREND_TIME_ZONE``.
+
+    The three books write three shapes today and each keeps its own meaning:
+
+    - ``document_versions.created_at`` is ``TEXT`` holding ``catalog.py:580``, i.e. ISO text
+      carrying an explicit ``+08:00``.
+    - ``alerts.created_at`` is ``TEXT`` holding ``(NOW() AT TIME ZONE
+      'Asia/Shanghai')::text`` (``alerts.py:122``) - Shanghai wall time with the offset
+      stripped by the cast - and the offline list appends ``datetime.now().isoformat()``
+      (``alerts.py:825``), naive for the same reason.
+    - ``datasets.created_at`` is ``TIMESTAMPTZ`` (``migrations/0002:16``) written from
+      ``_utc_now_text()`` (``datasets.py:56``), so it always reads back with an offset: an
+      instant, never a local guess.
+
+    An offset on the value is therefore honoured (convert, do not re-read the digits), and a
+    missing offset is read as Shanghai, because that is what the two text columns above
+    actually hold. Assuming UTC for naive text - the reflex that would be right for the
+    datasets column - would push eight hours of every month into the bucket beside it.
+
+    ``app/storage/datasets.py::_timestamp_text`` is the existing normaliser for "the driver
+    hands back a datetime, the JSON import hands back a string"; this function accepts what
+    it produces instead of opening a second parser, which is also why the datetime branch is
+    first rather than an afterthought.
+    """
+    if isinstance(value, datetime):
+        moment = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            moment = datetime.fromisoformat(value.strip())
+        except ValueError:
+            raise _trend_unreadable(source, ident) from None
+    else:
+        raise _trend_unreadable(source, ident)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=_TREND_TIME_ZONE)
+    return moment.astimezone(_TREND_TIME_ZONE)
+
+
+def _month_start(day: date, back: int) -> date:
+    """First day of the month ``back`` months before ``day``."""
+    ordinal = day.year * 12 + day.month - 1 - back
+    return date(ordinal // 12, ordinal % 12 + 1, 1)
+
+
+def _week_start(day: date, back: int) -> date:
+    """Monday of the week ``back`` weeks before ``day``'s week."""
+    return day - timedelta(days=day.weekday() + 7 * back)
+
+
+def _bucket_start(period: str, day: date) -> date:
+    """Which bucket a Shanghai calendar day falls in, keyed by that bucket's first day."""
+    return _month_start(day, 0) if period == "month" else _week_start(day, 0)
+
+
+def _bucket_label(period: str, start: date) -> str:
+    """``2026-09`` for a month, ``2026-W40`` for a week.
+
+    The week label is taken from ``start``, which is always a Monday, so an ISO week that
+    straddles New Year is labelled by the year its own Monday belongs to and appears once
+    instead of being split across two year numbers.
+    """
+    if period == "month":
+        return f"{start.year:04d}-{start.month:02d}"
+    iso = start.isocalendar()
+    return f"{iso[0]:04d}-W{iso[1]:02d}"
+
+
+def _bucket_starts(period: str, buckets: int) -> list[date]:
+    """``buckets`` consecutive bucket starts, oldest first, ending with the current period.
+
+    Continuity is the deliverable, not an optimisation. A period in which nothing new
+    arrived is a fact the server has to state (``0``); handing back only the non-empty
+    buckets would make the client infer the gaps, and an inferred gap is exactly where a
+    quiet quarter and a broken read become indistinguishable.
+    """
+    anchor = _trend_now().date()
+    step = _month_start if period == "month" else _week_start
+    starts = [step(anchor, back) for back in range(buckets)]
+    starts.reverse()
+    return starts
+
+
+def _bump(counts: dict[date, int], key: date) -> None:
+    counts[key] = counts.get(key, 0) + 1
+
+
+async def _document_series(request: Request, period: str) -> tuple[dict[date, int], dict[date, int]]:
+    """``(documents, documents_ready)`` per bucket, out of the one catalog read of ``/summary``.
+
+    Same call, same rows, same ``_PARSE_STATUS_READY`` literal as ``_document_counts``: the
+    tile beside this chart and the chart itself cannot answer two scopes, because there is
+    only one read between them. R284's stated understatement travels with the rows - a
+    legacy line whose ``parse_status`` the migration defaulted to ``pending`` still counts as
+    unparsed here too. This route does not get to look more optimistic than the tile about
+    the same document; ``docs/api/contract-v1.md`` says why in one place and repeats it
+    rather than restating a second, friendlier reading.
+    """
+    catalog = await chat.list_document_catalog(request)
+    totals: dict[date, int] = {}
+    ready: dict[date, int] = {}
+    for row in catalog["documents"]:
+        moment = _trend_moment(
+            row.get("created_at"), source="documents", ident=row.get("filename")
+        )
+        start = _bucket_start(period, moment.date())
+        _bump(totals, start)
+        if row.get("parse_status") == _PARSE_STATUS_READY:
+            _bump(ready, start)
+    return totals, ready
+
+
+async def _dataset_series(request: Request, period: str) -> dict[date, int]:
+    """Datasets per bucket: the visibility of ``list_data_files``, the clock of its registry row.
+
+    ``data.list_data_files`` is the scope and nothing else decides it - the very call
+    ``_dataset_count`` makes, so a file the caller may not list cannot enter a bucket either.
+    What is *not* read from that listing is its ``modified_at``: that key comes off
+    ``path.stat()`` (``data.py:239-248``), a filesystem timestamp, not a registration time.
+    The period therefore comes from the registry, which is the same source the visibility
+    check consulted a few lines earlier (``data.py:212``).
+
+    The registry is read once (``active_records()``) rather than once per file, and several
+    rows for one name resolve to the newest registration by the same rule
+    ``DatasetRegistry.get_active_by_filename`` applies (``datasets.py:1039-1049``). A visible
+    file with no active row is a contradiction between the two reads, and an active row with
+    no recorded ``created_at`` - what a legacy sidecar import leaves behind - is a row with no
+    period. Neither is an empty bucket, so both go through ``_trend_unreadable``.
+    """
+    listing = await data.list_data_files(request=request)
+    recorded: dict[str, list[object]] = {}
+    for record in data.dataset_registry.active_records():
+        recorded.setdefault(str(record.filename), []).append(record.created_at)
+
+    counts: dict[date, int] = {}
+    for item in listing["files"]:
+        filename = str(item.get("filename") or "")
+        values = recorded.get(filename)
+        if not values:
+            raise _trend_unreadable("datasets", filename)
+        moments = [
+            _trend_moment(value, source="datasets", ident=filename) for value in values
+        ]
+        _bump(counts, _bucket_start(period, max(moments).date()))
+    return counts
+
+
+def _alert_management_principal(request: Request):
+    """The principal ``GET /alerts`` would resolve, or ``_ALERTS_DENIED``.
+
+    The 403 branch is written twice in this module on purpose. ``_alert_counts`` keeps its
+    body untouched: it is the seam ``tests/test_dashboard_summary.py`` watches, and editing a
+    pinned helper to save four lines is how a closing week acquires a second set of red tests.
+    """
+    try:
+        return alerts_api._require_alert_management(request)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            return _ALERTS_DENIED
+        raise
+
+
+def _alert_series(request: Request, period: str) -> dict[date, tuple[int, int]] | None:
+    """``{bucket: (alerts, alerts_open)}``, or ``None`` when this caller may not read alerts.
+
+    Two layers, same as ``_alert_counts``: the ``_require_alert_management`` gate first, then
+    the row-scope predicate - passing the gate is not a licence for the company-wide total.
+    ``None`` means the ``alerts`` keys disappear from every bucket. A ``0`` there would tell
+    a staff account "no alarms this month", which is a false green light and, worse, the
+    alert ledger read through a route that is not ``GET /alerts`` - reachable with one
+    ``ACTION_ANALYZE`` call, which is request R1 reopened.
+
+    ``alerts_open`` is a present status drawn onto a past creation period: the rows created
+    in that bucket whose ``status`` is ``open`` as of this request, read through
+    ``alerts.alert_row_status`` so a row predating migration 0014 answers the same ``open``
+    the alert panel answers. An alarm acknowledged last week therefore lowers last week's
+    number, and the contract words the column as 「截至今日仍未处置」 for that reason.
+
+    The bucketing happens in Python on both legs rather than in SQL: ``created_at`` is
+    ``TEXT`` holding the three shapes ``_trend_moment`` documents, and ``date_trunc`` over it
+    would hand the PostgreSQL leg a period rule the offline leg does not have - the split
+    ``alerts.py:441-450`` exists to keep out of the disposal clock.
+    """
+    principal = _alert_management_principal(request)
+    if principal is _ALERTS_DENIED:
+        return None
+
+    if alerts_api._database_available():
+        alerts_api._ensure()
+        predicate, params = alerts_api.alert_row_scope_sql(principal)
+        sql = " ".join(part for part in (_ALERT_SERIES_SQL, predicate) if part)
+        with alerts_api._conn() as conn:
+            rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
+    else:
+        rows = [
+            dict(alert)
+            for alert in alerts_api._MEM_ALERTS
+            if alerts_api.alert_row_visible(principal, alert)
+        ]
+
+    totals: dict[date, int] = {}
+    open_counts: dict[date, int] = {}
+    for row in rows:
+        moment = _trend_moment(row.get("created_at"), source="alerts", ident=row.get("id"))
+        start = _bucket_start(period, moment.date())
+        _bump(totals, start)
+        if alerts_api.alert_row_status(row) == alerts_api.ALERT_STATUS_OPEN:
+            _bump(open_counts, start)
+    return {start: (total, open_counts.get(start, 0)) for start, total in totals.items()}
+
+
+@router.get("/trend")
+async def dashboard_trend(
+    request: Request,
+    response: Response,
+    period: str = _TREND_DEFAULT_PERIOD,
+    buckets: int = _TREND_DEFAULT_BUCKETS,
+):
+    """The overview page's period series, computed inside the signed-in caller's scope.
+
+    ``period`` is ``month`` or ``week``; ``buckets`` is ``1.._TREND_MAX_BUCKETS``. Either one
+    out of range answers ``422 validation_error``, which is ``app/api/v1/notifications.py``'s
+    existing rejection for a bad filter value and an out-of-range page limit alike - this
+    route opens no error code, so the error-code table and its two sync pins stay untouched.
+
+    The gate is the same call ``/summary`` makes, ``intelligence._authorized`` with
+    ``ACTION_ANALYZE``, and the answer is no more cacheable: every bucket is a
+    per-principal authorization result, so one stored 200 is another department's company.
+
+    A bucket of ``0`` asserts that nothing new was created in that period. It is never a
+    stand-in for a read that failed, which is why all three books are read before a single
+    point is assembled: the response is either every period or no response.
+    """
+    principal = intelligence._authorized(request, ACTION_ANALYZE, "dashboard_trend")
+    # Same reason as on /summary: each bucket is scoped to the caller, so a cached body is
+    # somebody else's visible range.
+    response.headers.update(NO_STORE_HEADERS)
+
+    if period not in _TREND_PERIODS:
+        raise HTTPException(status_code=422, detail="validation_error")
+    if not 1 <= buckets <= _TREND_MAX_BUCKETS:
+        raise HTTPException(status_code=422, detail="validation_error")
+
+    starts = _bucket_starts(period, buckets)
+    documents, documents_ready = await _document_series(request, period)
+    datasets = await _dataset_series(request, period)
+    alerts = _alert_series(request, period)
+
+    series: list[dict] = []
+    for start in starts:
+        point: dict = {
+            "bucket": _bucket_label(period, start),
+            "start": start.isoformat(),
+            "documents": documents.get(start, 0),
+            "documents_ready": documents_ready.get(start, 0),
+            "datasets": datasets.get(start, 0),
+        }
+        if alerts is not None:
+            total, still_open = alerts.get(start, (0, 0))
+            point["alerts"] = total
+            point["alerts_open"] = still_open
+        series.append(point)
+
+    return {
+        "generated_for": str(principal.user_id),
+        "period": period,
+        "buckets": buckets,
+        "time_zone": _TREND_TIME_ZONE_NAME,
+        "series": series,
+    }

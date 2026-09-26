@@ -2504,3 +2504,138 @@ touched. Two consequences are therefore registered here instead of rewritten the
   the `record is None` pin (the stray row loses the key) and lets the registry's raw empty string
   reach the interface for an unowned row, while the per-account row set and every call count stay
   untouched -- which is what makes (d) a different knife from (a).
+
+
+## The overview page grows a period: `GET /api/v1/dashboard/trend` (2026-09-26, R332)
+
+`GET /api/v1/dashboard/summary` answers 「现在有几篇」. The 「数据趋势」 card on that same screen asks
+another question -- 「哪一期新增了几篇」 -- and no server aggregate had ever answered it: `app/api/v1/dashboard.py`
+carried exactly one route, and the frontend says so out loud (`frontend/src/components/DashboardPanel.vue:12-13`
+draws an empty state because nothing returned a period series, `:304` promises numbers only once such an
+aggregate exists). This is that aggregate. `/summary` is not modified -- its four tiles carry R284's
+accounting and several pins of their own -- so this section documents a second route beside them.
+
+### Query parameters
+
+| Parameter | Domain | Default | Refused as |
+| --- | --- | --- | --- |
+| `period` | `month` \| `week` | `month` | `422 validation_error` |
+| `buckets` | integer `1..60` | `12` | `422 validation_error` |
+
+`422 validation_error` is the pre-existing rejection for a bad filter value and an out-of-range page limit
+alike (`app/api/v1/notifications.py::_clean_state_filter`, `::_clean_page`). **No error code is opened by this
+route**: a new bare `detail` would have to be ratified in `## REST Error Envelope` above and in
+`tests/test_error_code_vocabulary.py::BARE_CODES_OUTSIDE_THE_ENUM` in the same change, and
+`tests/test_r332_dashboard_trend.py::test_the_route_opens_no_error_code_outside_the_ratified_enum` keeps every
+`HTTPException` literal in this module inside the enum so that debt cannot be incurred quietly. A non-numeric
+`buckets` answers FastAPI's own `422`, the same face every other integer query parameter in the API gives.
+The gate runs *before* parameter validation: an anonymous or unauthorised caller cannot probe which values
+are legal.
+
+### Response body
+
+| Key | Type | Nullable | Says |
+| --- | --- | --- | --- |
+| `generated_for` | string | no | the principal the buckets were computed for |
+| `period` | string | no | the period this series was cut with |
+| `buckets` | int | no | `len(series)`, equal to the parameter |
+| `time_zone` | string | no | `"Asia/Shanghai"` -- the zone every label below is cut in |
+| `series` | array | no | `buckets` consecutive points, oldest first |
+
+| Point key | Type | Nullable | Says |
+| --- | --- | --- | --- |
+| `bucket` | string | no | `2026-09` for a month, `2026-W40` (ISO year-week) for a week |
+| `start` | date | no | the bucket's first Shanghai calendar day: the 1st, or the week's Monday |
+| `documents` | int | no | catalog rows this caller may list, created in this bucket |
+| `documents_ready` | int | no | those same rows, the ones whose `parse_status` is `ready` |
+| `datasets` | int | no | visible data files whose registry `created_at` falls in this bucket |
+| `alerts` | int | **absent without alert rights** | rows created in this bucket that the caller's row scope covers |
+| `alerts_open` | int | **absent without alert rights** | of those, the rows whose `status` is `open` as of this request |
+
+### Bucket semantics: one zone, three real columns, no clock of its own
+
+The period is never generated here. Each bucket is cut from the stored time column of the row itself, and
+the three books store three shapes, so the rule is stated once (`app/api/v1/dashboard.py::_trend_moment`):
+a value carrying an offset is *converted*, a value without one is *read as Shanghai wall time*.
+
+- `document_versions.created_at` -- `TEXT`, written with an explicit `+08:00` (`app/documents/catalog.py:580`).
+- `alerts.created_at` -- `TEXT` holding `(NOW() AT TIME ZONE 'Asia/Shanghai')::text` (`app/api/v1/alerts.py:122`,
+  `migrations/0003_legacy_runtime_tables.sql:9`): Shanghai wall time, offset stripped by the cast. The offline
+  ledger appends `datetime.now().isoformat()` (`alerts.py:825`), naive for the same reason.
+- `datasets.created_at` -- `TIMESTAMPTZ` (`migrations/0002_execution_data_lineage.sql:16`) written from
+  `_utc_now_text()` (`app/storage/datasets.py:56`), so it is always an instant with an offset. Treating it as
+  local would shift it eight hours: a table registered at `2026-08-31T16:30+00:00` *is*
+  `2026-09-01T00:30+08:00` and belongs in the September bucket, and
+  `test_a_month_edge_moment_is_bucketed_by_shanghai_wall_time` is the knife that keeps it there.
+
+The zone is `Asia/Shanghai`, declared in the body as `time_zone` and pinned by the tests. It is the same
+fixed +08:00 offset the rest of the server already keeps (`app/common/auth.py:25`, `catalog.py:15`) and the
+same wall the alert table stamps itself from; China has no daylight saving, the conclusion
+`alerts.py:449` already records beside the disposal clock, so a boundary cannot slide by an hour.
+
+**No file mtime is consulted.** `data.list_data_files` answers `modified_at` off `path.stat()`
+(`app/api/v1/data.py:239-248`); that key is not read for a period, which is why `_dataset_series` asks the
+registry -- the same source the visibility check itself consulted a few lines earlier (`data.py:212`).
+`test_the_period_is_not_read_from_the_filesystem_mtime` pins it by giving two datasets one shared mtime in a
+third month and requiring that month to stay empty. One inheritance is stated rather than hidden: for a
+document row whose `created_at` was never recorded, `catalog.py:386-387` substitutes the file mtime into the
+*row itself*, so `GET /documents/catalog` already displays that value as the upload time; this route reads
+that one project-wide value and adds no second mtime path, and it cannot separate the two because the
+substitution happens before the row reaches this module.
+
+### The two faces of nothing
+
+- **An empty period answers `0`.** Nothing new was created in that bucket, which is a fact the server
+  states; `series` is consecutive, so a client never has to infer which periods were omitted.
+- **A book that cannot be read answers `503 storage_unavailable` for the whole response.** Three triggers,
+  all of them a row with no accountable period: `created_at` empty, `created_at` unparseable, or a file
+  `list_data_files` reported visible that the registry no longer carries. There is no partial series, no
+  shortened `series`, no `0` standing in. `503 storage_unavailable` is this module's existing face for "a
+  book cannot be accounted for" (`_pending_count`), so no code is added. The reason is arithmetic, not taste:
+  a row quietly dropped makes the buckets total less than `/summary` reports for the same caller and the same
+  scope -- one question, two answers -- and the client already refuses the other shortcut
+  (`frontend/src/lib/dashboard.js:32`, 「不会用旧数字或 0 顶上」). Any other failure inside a read propagates
+  unchanged; nothing is caught here.
+
+**Series totals are not the tile totals.** `sum(bucket.documents)` counts only rows created inside the
+window, while `/summary` counts every visible row; on a corpus older than `buckets` periods the series
+sums to less. That is the window, not a lost row.
+
+### Permission: the same legs, not a second pair
+
+`GET /dashboard/trend` opens with the one call `/summary` opens with --
+`app/api/v1/dashboard.py::dashboard_trend` runs `intelligence._authorized(request, ACTION_ANALYZE, ...)`,
+which is `principal_from_request` -> `authorization_decision` -> audit -> `401 authentication_required` /
+`403 <reason code>`, and then sets `NO_STORE_HEADERS` for the same reason `/summary` does: every bucket is
+computed inside the caller's visible range, so a stored 200 is another department's company. Documents come
+out of `chat.list_document_catalog` (the `_classify_document_rows` -> `authorization_decision` read that
+`GET /documents/catalog` answers with), datasets out of `data.list_data_files`, and alerts out of the two
+layers `GET /alerts` uses -- `_require_alert_management` and then `alert_row_scope_sql` against PostgreSQL or
+`alert_row_visible` offline. None of them is restated in this module.
+
+**A caller without alert rights gets no `alerts` and no `alerts_open` in any bucket** -- the keys are absent,
+as on `/summary`. A `0` would be the alert ledger read through a route that is not `GET /alerts`, reachable
+with one `ACTION_ANALYZE` call, i.e. request R1 reopened; and passing the resource gate is only the first
+layer, since a finance manager's buckets must not carry the HR department's alarms (R188).
+
+### `documents_ready` keeps R284's stated bias
+
+`documents_ready` is counted off the same rows and the same `ready` literal as the summary column, so the
+「Historical rows count as unparsed - a stated understatement」 paragraph under
+`## Overview Aggregate: documents_ready (2026-09-26, R284)` above applies to every bucket unchanged: a
+document whose `parse_status` the migration defaulted to `pending` is 「还没解析完」 here too. This route
+restates the bias, it does not revise it, and no bucket is permitted a friendlier reading of the same row
+than the tile beside it gets.
+
+### Pins
+
+`tests/test_r332_dashboard_trend.py` (26): the route is published read-only and no-store; the gate is that
+one `ACTION_ANALYZE` call (spied), with `401`/`403` refusing every bucket; a staff caller keeps documents and
+datasets and loses both alert keys; row scope separates two managers and an admin; the buckets add up to
+`/summary`, `/documents/catalog` and `/data-files` for the same caller; the window is consecutive and ends on
+the current period; a quiet period is a stated `0` while the other eleven stay present; three unreadable-row
+triggers plus the vanished-registry-row and the propagating read each refuse the whole response; the month
+edge is bucketed by Shanghai wall time from both directions (UTC-offset instants and naive column text);
+week buckets start on a Monday; the filesystem mtime is pinned out; `documents_ready` agrees with the tile;
+both illegal parameters answer the pre-existing `422 validation_error` behind the gate; and every
+`HTTPException` literal in the module stays inside the ratified enum.
