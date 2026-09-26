@@ -1800,15 +1800,8 @@ textarea:focus-visible {
   color: #5beaff;
 }
 
-.workspace-tools > button svg {
-  width: 17px;
-  height: 17px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.45;
-}
+/* R278：这条管的是顶栏那两枚图标按钮（搜索、通知）里的 svg。两枚控件已经摘掉，工具行里
+   今天没有一枚按钮画图，规则留着就是死代码——删。 */
 
 .user-avatar {
   display: grid;
@@ -2405,10 +2398,9 @@ textarea:focus-visible {
     gap: 7px;
   }
 
-  .workspace-tools > button:first-child,
-  .workspace-tools > button:nth-child(2) {
-    display: none;
-  }
+  /* R278：这里原先有两条 display:none，按位置洗掉的是顶栏前两枚按钮——正是那两枚「按了
+     没反应」的搜索与通知。控件已摘，规则再留着就会把唯一剩下的那枚退出按钮当成第一枚隐掉，
+     窄屏上人就退不出登录了。所以随控件一起删。 */
 
   .workspace-tools .identity {
     display: none;

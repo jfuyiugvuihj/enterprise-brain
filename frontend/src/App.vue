@@ -53,6 +53,29 @@ const screenProps = computed(() => (route.name === FEED_SCREEN ? { userRole: use
 const roleLabel = computed(() => userRole.value === 'admin' ? '管理员' : '普通用户')
 
 /**
+ * R278 · G16 · 顶栏不留死控件（改造前：两枚 button 挂着但没有 @click，按下去什么都不发生）
+ *
+ * 搜索那一枚【摘掉】而不是接半截：全站没有一枚「全局检索」端点可用。app/api 的路由名单里
+ * 只有 POST /retrieval/debug（管理侧的可观测工具，不是员工搜索框）与各屏自己的列表
+ * （documents/catalog、artifacts、data-files）。壳层要接，只能把关键字塞进「当前那一屏」的
+ * 筛选框，而壳层不认识各屏的输入框，硬猜就是第二件假控件。
+ *
+ * 通知那一枚同样【摘掉】，理由是今天没有一句诚实的「条数」可说：
+ *   · GET /hitl/pending 回的那个计数是过滤并逐行向图复核之后【这一页】的长度，契约
+ *     docs/api/contract-v1.md 的 HITL Pending Listing 一节明写它不得当总数用；
+ *   · GET /dashboard/summary 那一格虽是全集长度，却不向图复核，它自己模块头写着「可能高估、
+ *     绝不会少报」——拿它摆徽标就是把已经办完的事说成还等着拍板；
+ *   · 徽标要在人点开之前就有数，只能每屏挂载时多发一次请求去猜，这笔代价不该由壳层背。
+ * 真待办的正脸在侧栏那一屏（components/hitl/HitlPendingPanel.vue 读同一本账），入口不在这枚钮上。
+ */
+// 退出那枚原先只画一个「⌄」：读屏念出来只有「按钮」，看着像下拉箭头，按下去却是登出。
+// 可及名称补上「当前是谁」——私有化机器常是几个人共用一个浏览器，这一句同时是「要把谁下线」
+// 的确认。账号名读的是 lib/http 那份唯一真源；没有名字（异常态）就只说「退出登录」，不编一个。
+const logoutLabel = computed(() => (username.value
+  ? `退出登录（当前账号 ${username.value}）`
+  : '退出登录'))
+
+/**
  * 跨屏跳转的唯一出口：目标是路由名（屏 id），不再是 tab 字符串。
  * 认不出的屏什么都不做 —— 面板可以随便加按钮，但按不动一张没有的地址。
  */
@@ -168,21 +191,25 @@ function closeForgotPassword() {
   showForgotDialog.value = false
 }
 
-// 手动登出与 401/过期都收口到这里，所以会话清理只写这一处；两个分支各写一遍迟早会漏。
+/**
+ * R278 · 判据④ · 退出清到哪一格，两件事叠在一起判一次
+ *
+ * 取证（本单基点 951909b，全站可写出的 eb_* 一枚枚数过）：
+ *   eb_token / eb_user / eb_role / eb_department / eb_token_expires_at —— lib/http.js:8-12，clearSession() 清；
+ *   eb_sessions_v2 / eb_msg_<id> —— lib/sessions.js:13-14，resetSessions() -> clearStoredSessions() 清；
+ *   eb_remember_username —— 只有它该活下来（那是「下次给你预填账号名」，不是数据）。
+ * 原先那段 eb_* 整包扫挂在 doLogout 里，于是有一个真实的不一致：手动退出洗得到兜底位，
+ * 401/过期那条收尾（同一个 goToLogin，却没有那一刀）洗不到。今天两者刚好等价，纯粹因为
+ * 暂时没有第六枚键；下一次谁新加一枚 eb_*，被踢下线那台浏览器就会留着上一位的。
+ * 所以这一刀上收到两条路共用的出口里：doLogout 的净效果一行未变（该清的照样清），
+ * 换人使用的口径从此只有一处：两条收尾走同一把扫帚，不再有「只洗一条路」的第二种写法。
+ * 🔴 名单清掉不等于历史找不回来：那一列的第二条腿是 R268 的「点一次从服务端取回」，
+ *   它读的是 GET /sessions（服务端按归属过滤），并的是内存 store，本机一行都没有也建得出整张表
+ *   （判据钉在 r278-logout-locality 的乙组，与 r268-session-pull 丙组那条同向）。
+ */
 function goToLogin() {
   resetSessions()
-  stopExpiryWatch?.()
-  stopExpiryWatch = null
-  isLoggedIn.value = false
-  username.value = ''
-  userRole.value = 'staff'
-  loginPass.value = ''
-  if (route.name !== DEFAULT_SCREEN) router.replace({ name: DEFAULT_SCREEN })
-}
-
-function doLogout() {
-  // 退出清掉所有 eb_* 本地态（含会话缓存），只保留「记住我」的账号名。
-  clearSession()
+  // 兜底：任何一枚 eb_* 都不许留给下一位使用者，只有「记住我」的账号名例外。
   try {
     const keys = []
     for (let index = 0; index < localStorage.length; index += 1) {
@@ -193,6 +220,17 @@ function doLogout() {
   } catch {
     /* 隐私模式下没有本地态可清 */
   }
+  stopExpiryWatch?.()
+  stopExpiryWatch = null
+  isLoggedIn.value = false
+  username.value = ''
+  userRole.value = 'staff'
+  loginPass.value = ''
+  if (route.name !== DEFAULT_SCREEN) router.replace({ name: DEFAULT_SCREEN })
+}
+
+function doLogout() {
+  clearSession()
   goToLogin()
 }
 
@@ -390,15 +428,12 @@ onUnmounted(() => {
         <header class="workspace-head" data-testid="topbar">
           <h1>{{ activeMeta.title }}</h1>
           <div class="workspace-tools">
-            <button type="button" aria-label="搜索">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8" /><path d="m15.2 15.2 5 5" /></svg>
-            </button>
-            <button type="button" aria-label="通知" class="bell">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" /></svg>
-            </button>
+            <!-- R278 · G16①②：这里原先摆着两枚按了没反应的按钮（搜索、通知），一并摘掉。
+                 为什么不接半截、今天为什么没有一枚诚实的条数可摆，账记在上面 script 里那段；
+                 判据钉在 src 下的顶栏用例 r278-topbar 里。 -->
             <span class="user-avatar">{{ username.slice(0, 1).toUpperCase() || 'A' }}</span>
             <span class="identity"><strong>{{ username }}</strong><span>{{ roleLabel }}</span></span>
-            <button class="logout-link" type="button" @click="doLogout">⌄</button>
+            <button class="logout-link" type="button" :aria-label="logoutLabel" :title="logoutLabel" @click="doLogout">⌄</button>
           </div>
         </header>
 
