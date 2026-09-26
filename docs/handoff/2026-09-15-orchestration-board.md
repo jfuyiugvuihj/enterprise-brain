@@ -1433,10 +1433,14 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Herschel`（与 R67/R163/R179 同名不同人，唯一键只认 id；**上一班派工时漏记名册，本班 §4CT 四补的行**） | `01a0dd63-3d0e-72a1-9139-94313b4f31f2` | **R307** 裸按钮余量（`App.vue` 8 + `SourceCard.vue` 3） | `be-r307`（总控自 `fa3d16c` 新建） | **第一棒已结案并树 `1dda05e`**：`SourceCard.vue` 三枚真接进 `UiButton`（`:91`→ghost/sm、`:114`/`:123`→secondary/sm，`:disabled`/`@click`/`aria-*` 全保留），棘轮 `DEBT_TOTAL_RATCHET` 20 → **17**。🔴 它把本单前提**证伪并取到四段红字原文**：`App.vue` 那 8 枚收不掉是因为 `src/__tests__/r278-topbar.test.js` 拿 `readFileSync('../App.vue')` + `/<button\b/g` 数源码开标签当验收（`:150` expected 7 to be greater than or equal to 8，另 `:170`/`:194`/`:216` 三处）——那两枚文件不在它写域，它**只做探针、原样还原、不写永远绿的假钉**，处理正确 ⇒ `App.vue` 那 8 枚转给 **R307 第二棒（`Ampere`@`be-r307b`）**，连同 `r278` 改口与 `r197` 夹具补 `UiButton`（现况：30 条 `Failed to resolve component: UiButton`，全套仍绿但绿的是桩件）。总控主树亲跑：**83 files / 1532 passed**、`lint:colors` 148/0 rc=0、`build` exit 0；`App.vue` 与基点逐位吻合（背景五层零触碰，`git status` 里根本没有它） | 09-26 21:0x |
 | `Erdos` | `01a0dd6b-c0c3-78e3-91e6-407d61f34efc` | **R310 首投（未落地）** | `be-r310`（总控自 `9344028` 新建，`codex/be-r310`） | 🔴 **事故 #19·总控造成**：我在 `spawn_agent` 里带了 `model` 覆盖，该枚首次请求即报 `Invalid 'id': message id must be a string starting with 'msg_', got 'at_ac599466-…'`——与死线程 01a0acfb／01a09dda 同一味病。现取 `be-r310` **dirty=0** 零写入，损害归零；已 `close_agent`（返回 `errored`）。**不是执行层的错**，全过程与「派工前三问」见 §4CS 一／跟进单 §105 一 | 09-26 19:4x |
 | `Kepler` | `01a0dd6c-d558-75b0-8cef-56704e8bf3a6` | **R310** 数据文件行补 `owner_id`（V2「所有资源有稳定 ID、owner」＋T3 症状；判据 跟进单 §105 三） | `be-r310`（**同一棵旧树复用**，基点 `9344028`；合规依据＝`Erdos` 已确认 `errored` 且零落盘 ⇒ 四要素排除「进程／落盘」，不算双投） | **在途**（19:5x 单枚 `spawn`，**不带 `model`**）。写域锁 `app/api/v1/data.py` + 新 `tests/test_r310_*.py` + `docs/api/contract-v1.md` **文末追加** + `tests/test_data_file_catalog.py` 期望键集合那一个字面量。三条硬口：无主口径必须与 `app/documents/catalog.py:236` 逐字一致（`None`，不是空串）；不许为补字段多开一次查询或第二条权限链；行数逐档不变。反证 ≥3 把 | 09-26 19:5x |
-| `Pascal` | `01a0dd73-226a-7d40-8815-80374e8ff410` | **R309** 前端缺口清单现取复评（G01–G20 ＋ T1–T11 ⇒ 下一波可派表） | `be-r309`（总控自 `9344028` **新建**，建后 dirty=0） | **在途**（20:0x 单枚 `spawn`，不带 `model`）。**取证单**：写域只一枚新 `docs/handoff/2026-09-26-frontend-gap-recheck.md`，生产码／测试码／`frontend/**` 零写入，看板与跟进单禁改。事实源 `docs/handoff/2026-09-26-v1-frontend-gap-list.md`（R265，今天 11:48）——它已被 `9344028` 之前的 R288／R271 推翻若干条：总控已亲验 G01（`DocPanel.vue` 有 `retrievable: '已可检索'`＋`armUploadPoll` 有限轮询）与 T6（`lib/alerts.js::disposeAlert()`＋`InsightPanel.vue:349`）**均已完成**。新号从 **R313** 起（R309–R312 已占） | 09-26 20:0x |
+| `Pascal` | `01a0dd73-226a-7d40-8815-80374e8ff410` | **R309** 前端缺口清单现取复评（G01–G20 ＋ T1–T11 ⇒ 下一波可派表） | `be-r309`（总控自 `9344028` **新建**，建后 dirty=0） | **已结案并树 `fa36ac1`**（产物 `docs/handoff/2026-09-26-frontend-gap-recheck.md` 入库；两处翻案成立并已兑现：加一级屏不必碰 `App.vue` ⇒ 本班据此派出 R313；G10 前提过期）｜原在途（20:0x 单枚 `spawn`，不带 `model`）。**取证单**：写域只一枚新 `docs/handoff/2026-09-26-frontend-gap-recheck.md`，生产码／测试码／`frontend/**` 零写入，看板与跟进单禁改。事实源 `docs/handoff/2026-09-26-v1-frontend-gap-list.md`（R265，今天 11:48）——它已被 `9344028` 之前的 R288／R271 推翻若干条：总控已亲验 G01（`DocPanel.vue` 有 `retrievable: '已可检索'`＋`armUploadPoll` 有限轮询）与 T6（`lib/alerts.js::disposeAlert()`＋`InsightPanel.vue:349`）**均已完成**。新号从 **R313** 起（R309–R312 已占） | 09-26 20:0x |
 | `Ampere` | `01a0dd82-bbbc-7a13-a71b-fa0334ea7012` | **R307 第二棒** `App.vue` 8 枚接原语 + `r278-topbar.test.js` 四处改口（只许改绑法不许降要求）+ `r197` 夹具补 `UiButton` | `be-r307b`（总控自 `1dda05e` **新建**，建后 dirty=0） | **在途**（21:1x 单枚 `spawn`，**不带 `model`**）。写域锁 `App.vue`（只动那 8 枚与配套基线复位）＋`src/__tests__/r278-topbar.test.js`＋`components/__tests__/r197-turn-key-inheritance.test.js`（只准补注册）＋`r288-native-buttons.test.js`（棘轮只准改小 `App.vue` 8→0、合计 17→**9**）＋新 `r307b-*.test.js`。🔴 禁碰 `App.vue` 背景五层（L0–L3／`.login-bg__*`／`.app-bg__*`）·`components/ui/**`（不给 `UiButton` 加 `link` 档）·`DashboardPanel.vue`（9 枚留下棒）·`lib/**`·后端 | 09-26 21:1x |
 | `Averroes` | `01a0dd83-481b-7101-a88b-1e1bcd550506` | **R293 第二棒** `cancel_requested` 落盘的**真路径凭据**（第一棒只有写点、没凭据） | `be-r293b`（总控自 `1dda05e` **新建**，建后 dirty=0） | **在途**（21:1x 单枚 `spawn`，不带 `model`）。写域锁 新 `components/__tests__/r293-cancel-requested-persist.test.js` ＋ `lib/__tests__/r282-cancel-requested-face.test.js` 里我那一句改口注释（断言一字不动）＋ `ChatPanel.vue`（**仅当验出写点真有缺陷**才许动，且须单列）。判据核心：两段式「挂载→真点中断→拿非终态回执→落盘→重新挂载」，屏幕不许改口答「排队中」，且两条腿必须取到同一张脸；🔴 明令**不许手搭 `historyTurn('cancel_requested')` 冒充**，走不出来就停下来报我（证伪式交回算合格） | 09-26 21:1x |
-| `Hegel` | `01a0dd84-09c4-74d2-bcd4-ae0d847eb80f` | **R331** 表格装箱预算不变量（`TableBlock.parts()` 没给段号留余量 ⇒ 实发 450 > 声明上界 448） | `be-r331`（总控自 `1dda05e` **新建**，建后 dirty=0） | **在途**（21:2x 单枚 `spawn`，不带 `model`）。写域锁 `app/rag/tables.py`（只动 `parts()` 的预留口径，照 `_header_only()` 已用的 `anchor(99, 99)` 同法，不自创第二套）＋ `tests/test_r300_tables.py`/`test_r305_spreadsheets.py` 被影响的数字（**只准变硬**：450 明账升级成「任何一段都 ≤ 声明上界」的全称钉）＋新 `tests/test_r331_*.py`。段数与内容不许漂（144 行/37 段仍逐字按序、块块以锚开头）；不许改 `anchor()` 输出形状。🔴 附带验一条今日新立永久条款：动装箱顺序必点 `tests/test_r592_permission_order_on_the_pg_leg.py` | 09-26 21:2x |
+| `Hegel` | `01a0dd84-09c4-74d2-bcd4-ae0d847eb80f` | **R331** 表格装箱预算不变量（`TableBlock.parts()` 没给段号留余量 ⇒ 实发 450 > 声明上界 448） | `be-r331`（总控自 `1dda05e` **新建**，建后 dirty=0） | **已结案并树 `58111c9`**（总控主树亲复跑点名 4 件 110 passed：r331 10 / r305 56 / r300 39 / r592 5；🔴 真件段数 37→38 由总控裁定＝守 448 的必然代价，未摘余量；它点名的 `spreadsheets.py:35-39` 陈旧说明已由总控 `c145c30` 改口；两条遗留待裁：`_header_only()` 仍只按 `anchor(99,99)` 预留、三位数段号只在内存直造大表上验过）｜原在途（21:2x 单枚 `spawn`，不带 `model`）。写域锁 `app/rag/tables.py`（只动 `parts()` 的预留口径，照 `_header_only()` 已用的 `anchor(99, 99)` 同法，不自创第二套）＋ `tests/test_r300_tables.py`/`test_r305_spreadsheets.py` 被影响的数字（**只准变硬**：450 明账升级成「任何一段都 ≤ 声明上界」的全称钉）＋新 `tests/test_r331_*.py`。段数与内容不许漂（144 行/37 段仍逐字按序、块块以锚开头）；不许改 `anchor()` 输出形状。🔴 附带验一条今日新立永久条款：动装箱顺序必点 `tests/test_r592_permission_order_on_the_pg_leg.py` | 09-26 21:2x |
+| `Rawls`（与 09-17 R26b、09-25 R255 那两枚同名不同人，唯一键只认 id） | `01a0ddab-3743-7ca1-91a7-e81460e195c1` | **R306** 电子表格接进知识库上传路径（把 R305 那枚零消费者的 `spreadsheets.py` 接活；判据 跟进单 §105 四） | `be-r306`（总控自 `217d542` **新建**，建后 dirty=0，**独占**） | **在途** 09-26 22:5x 投出，**零 model 覆盖**；写域 `app/rag/loader.py` + `app/documents/file_security.py` + `app/documents/preview.py` + 契约文末 + 新 `tests/test_r306_*.py`；🔴 `chat.py` 只批一行且必须等行数替换（`test_r238` 的活行号钉在 `:854`）；🔴 禁改 `tests/test_r305_spreadsheets.py`（`Hegel` 在写）、`spreadsheets.py` **只读**、错误码零新增 | 22:5x |
+| `Beauvoir`（派工词里写的登记名是 `Lavoisier`，唯一键只认 id） | `01a0ddad-53a6-7de3-8e4c-fe4ea1080991` | **R330** PG 向量侧三本已有观测账接进 `/health/details`（R165 判据① 同一类病的第二次；排向量库退役单之前） | `be-r330`（总控自 `217d542` **新建**，建后 dirty=0，**独占**） | **在途** 09-26 23:0x 投出，**零 model 覆盖**；写域只 `app/common/monitoring.py` + 新 `tests/test_r330_*.py`；`app/rag/pg_store.py` **只读**；判据：走 `_subsystem_state` 同一个入口不许另开包装、键名逐字照抄、刻意不进 `problems`、零 IO（发现探针会连库即停下回报） | 23:0x |
+| `Mendel` | `01a0ddaf-2457-7cf0-9032-0684763e3898` | **R313** 喂料屏三格（G08 密级有人问 / 对着 `restricted` 说「知识库是空的」这句假话 / T3 行内真值）| `be-r313`（总控自 `217d542` **新建**，`.venv` + `frontend/node_modules` 两枚 junction 已验，建后 dirty=0，**独占**） | **在途** 09-26 23:1x 投出，**零 model 覆盖**；写域只 `components/DocPanel.vue` + 新 `r313-*.test.js`；禁 `App.vue`/`ui/**`/`router/**`/`lib/**`/`ChatPanel.vue`/`panel-states.test.js`；默认密级必须等后端 `Form(1)`、不许前端发 `department`；`lint:colors` 必须持平 148/0 | 23:1x |
+| `Halley` | `01a0ddc1-6a2d-74f2-a473-670cdc23f9a4` | **R332** Dashboard 真实期间·后端聚合（V2 硬要求 `roadmap:262` 那一半；前端 `DashboardPanel.vue:13/:304` 已开口等这枚聚合）| `be-r332`（总控自 `c145c30` **新建**，`.venv` junction 已验，建后 dirty=0，**独占**） | **在途** 09-26 23:4x 投出，**零 model 覆盖**；新增 `GET /dashboard/trend`，🔴 不碰 `GET /summary`；写域 `app/api/v1/dashboard.py` + 契约文末 + 新 `tests/test_r332_*.py`；判据：授权腿与 `/summary:183` 同源、时间列只用真实 `created_at`（`catalog.py:36` / `datasets.py:139` / `alerts.py:122`）、桶边界钉 `Asia/Shanghai`、读失败整格失败不许填 0、错误码零新增、禁 `frontend/**` | 23:4x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -4767,3 +4771,46 @@ R59 块1 已并 ⇒ 跑分窗的技术前置齐了。开窗顺序仍是：在途
 1. `Gibbs` 交回 → 我主树亲跑 vitest/lint/build 三读数（基线 80 files/1462、148 problems/0 errors、build exit 0）→ 并 R291 → 立刻投 `R293`。
 2. `Wegener` 交回 → 验「无锚点长串／合并单元格口径／硬顶真被触发」三格 → 并 R305 → 投 `R306`（`loader.py` 要等 `Aristotle` 让位，别撞）。
 3. `Kepler` 交回 → 验无主口径与「行数逐档不变」那枚钉 → 并 R310 → 前端「我传的」那一列另立单（写域 `DataPanel.vue`，从 R330 段取号）。
+
+
+## §4CU（09-26 第四格续·总控，主树 `217d542` → `c145c30`）：V2 波次三开工 · R331 并树并裁了一格段数账 · 台账机器第一次被总控自己用上
+
+**一、本班并树与落笔（六枚提交，全部已 push 到 gitee：`bf661c2..c145c30`）**
+
+| 提交 | 内容 | 总控亲自复跑 |
+|---|---|---|
+| `fa36ac1` | R309 并树（`Pascal`）：前端缺口清单现取复评 | 产物是文书，编码读数现取：noBOM / CR==LF==360 / 裸 CR 0 |
+| `bf0ef79` | 总控落笔：V2 波次三派工计划（新文件） | `tests/test_r302_docs_utf8_guard.py` **8 passed** |
+| `58111c9` | R331 并树（`Hegel`）：表格装箱预算按实发锚预留 | 点名 4 件 **110 passed**（r331 10 / r305 56 / r300 39 / r592 5） |
+| `c145c30` | 总控落笔：R331 并树后 `spreadsheets.py:35-39` 那段「缺陷仍未修／最长段 450」的陈旧说明改口 | 点名 3 件 **105 passed**；等行数替换，CR==LF==700 |
+
+**二、R331 的裁定（记死，别让下一班再吵）**
+
+- 缺陷是真的：`TableBlock.parts()` 用**不带段号**的 `anchor()` 算余量，而 `_assemble()` 印的是 `anchor(i,total)` ⇒ 真件 `data/报销明细表.csv` 实测最长段 **450 > 本模块自己声明的 448**。检索今天没炸纯属侥幸（450 仍 < 上游 500 与 R300 量出的 499 丢锚线）。
+- 🔴 **真件段数 37 → 38 总控照准**：那是守住 448 的**必然代价**，不是回归。执行层没有为凑 37 去摘余量，判据互斥时选择停下回报而非放宽 ⇒ 记它一笔好。
+- 明账只变硬：`CORPUS_CSV_WIDEST_SEGMENT 450→442`、新增 `CORPUS_CSV_SEGMENTS=38`、逐段断言 `<=448`；七把反证里 R2 证明「把上界摘到 500 是没牙的」⇒ **448 这颗钉不许放宽**。
+- 两条遗留待裁（下一班若要动表格腿先读这段）：① `_header_only()` 仍只按 `anchor(99,99)` 预留，>99 段的「纯表头表」理论上还能破 4 枚字；② 三位数段号只在内存直造的大表上验过，仓库里没有那种尺寸的**真件** ⇒ 客户上传 5000 行 CSV 时出处账的段号会整体重排。这两条都**不是**本班的账。
+- 🔴 K4 条款仍然生效：本单零改动装箱/去重/过滤顺序，`tests/test_r592_permission_order_on_the_pg_leg.py` 已点名复验。
+
+**三、V2 波次三（本班开工，队列全文 `docs/handoff/2026-09-26-v2-wave3-dispatch-plan.md`）**
+
+- 先纠一句容易被抄错的账：**V2 不存在「还没开工」**。计划书台账脚本 `scripts/audit_plan_ticket_ledger.py` 在 `fa36ac1` 现取的结论里，R248-R261 那一族（Artifacts/Dataset/Trace 落 PG、告警闭环、队列道契约、棘轮身份记账）全部 `LANDED`；V2 波次一（R298 OCR、R299 通知后端、R300 表格模块+契约）与波次二（R304 接线、R305 解析层、R307 第一棒、R291、R301、R310）也都已并树。波次三清的是**三处能力缺口 + 两处同类出口欠账**。
+- 本班投出：`R306`（`Rawls`，电子表格接进上传路径——R305 那枚解析层今天仍是**全仓零消费者的死出口**）、`R330`（`Beauvoir`，PG 三本向量观测账接进 `/health/details`，R165 那笔「交了出口没接消费」的第二次）、`R313`（`Mendel`，喂料屏三格）、`R332`（`Halley`，Dashboard 真实期间聚合）。加 `Ampere`(R307 第二棒)、`Averroes`(R293 第二棒)、`Hegel`(R331，已结案) ⇒ **六枚并满，写集零交集**。
+- 待投（判据已在波次三文件里）：`R336`（`.xls` 死路：`app/tools/excel.py:87` 按扩展名选 `engine="xlrd"`，而 `pyproject.toml:29` 只有 `openpyxl` ⇒ 那条腿今天必炸）、`R337`（`data.py:294-300` 预览回 `dataset_id/version_id/classification` 独缺 owner，`:305` 同病——R310 的尾巴）、`R338`（`DocPanel.vue` 丢掉 `pdf_extraction`，🔴 与 R313 同文件必须串行）、`R333`（通知中心前端正脸，等 `App.vue` 让出）。
+
+**四、`R313` 里那格 P1（说人话）**
+
+`frontend/src/components/DocPanel.vue:717` 对着后端在 `app/api/v1/chat.py:4225`/`:4235` 明挂的 `restricted` 说「知识库是空的」。一名权限不足的员工站在有资料的库里，界面告诉他这里什么都没有。同仓 `DataPanel.vue:124/:288` 早就做对了（说「有 N 个存在但你看不见」，不点名文件）⇒ 这不是设计分歧，是同一件事在两块屏上两张脸，改法有现成样板。
+
+**五、派工前三问（事故 #19 之后新立的规矩，本班全程执行）**
+
+1. 本 block 只允许一枚投递调用；
+2. 参数里不许出现 `model` / `reasoning_effort`（上一班就是带了它，`Erdos` 首次请求即死）；
+3. 目标树的持有者 id / 进程 / 落盘痕迹认得清。
+   本班四枚投递全部零 model 覆盖，且 `spawn_agent` 返回 id 当场写名册行（`Rawls 1440 / Beauvoir 1441 / Mendel 1442 / Halley 1443`）。
+
+**六、下一格先做哪三件**
+
+1. `Ampere`/`Averroes` 交回 → 主树亲跑 vitest + `lint:colors`（基线 83 files/1532、148 problems/0 errors）→ 达标才并 R307 第二棒（棘轮 17→9）与 R293 第二棒。
+2. `Rawls` 交回 → 逐条对 R306 七条判据，🔴 特别验「`chat.py` 那一行必须等行数替换」（`test_r238` 的活行号钉在 `:854`）与「`preview.py:6` 两枚同时加」→ 并树后立刻投 `R338`。
+3. `Halley` 交回 → 验授权腿同源与时区钉 → 并树后投 `R336`/`R337`（两枚写集互斥，可并发）。
