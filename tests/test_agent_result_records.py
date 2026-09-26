@@ -274,9 +274,10 @@ def test_queue_records_canonical_agent_result(monkeypatch):
     completed = {}
 
     class _Queue:
-        def complete(self, request_id, result):
+        def complete(self, request_id, result, *, terminal=None):
             completed["request_id"] = request_id
             completed["result"] = result
+            completed["terminal"] = terminal
             return True
 
         def reserve(self, timeout=0):
@@ -317,5 +318,8 @@ def test_queue_records_canonical_agent_result(monkeypatch):
 
     assert worker.process_one() is True
     assert completed["result"] == "住宿费上限 500 元/晚。"
+    # R254 判据⑤：老那条腿（无 interrupt 的图）从今天起也交结构化终态，不再只有一个字符串。
+    assert completed["terminal"]["schema"] == "queue-terminal-v1"
+    assert completed["terminal"]["terminal_state"] == "answered"
     assert recorded["status"] == "success"
     assert recorded["request_id"] == "req-q"

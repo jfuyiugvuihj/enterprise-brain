@@ -55,7 +55,7 @@ IMPORT_CONNECT = "import-connect"
 BASELINE = (
     "app/agents/orchestrator.py:167",
     "app/api/v1/alerts.py:45",
-    "app/api/v1/chat.py:853",
+    "app/api/v1/chat.py:854",
     "app/api/v1/feedback.py:70",
     "app/common/auth.py:301",
     "app/common/monitoring.py:381",
