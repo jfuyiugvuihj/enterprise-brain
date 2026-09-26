@@ -65,6 +65,25 @@ def _format_data_file_size(size: int) -> str:
     return f"{size / (1024 * 1024):.1f} MB"
 
 
+def _dataset_row_owner_id(record) -> str | None:
+    """The owning account of one catalogue row, spelled the way the document catalogue spells it.
+
+    The value is the ``DatasetRecord.owner_id`` this route already holds, so reading it opens no
+    second lookup and no second permission chain, and it never travels for a row the caller was
+    refused at. The unowned rule is the one in ``app/documents/catalog.py::public_document_row``
+    (``None if _is_unowned(value) else str(value)``, unowned meaning ``None`` or whitespace-only),
+    restated here instead of imported so an API router does not grow a new import edge into the
+    document layer for one field: an empty owner is ``None``, never ``""`` and never a word like
+    未分配. A row the registry never heard of (``record is None``) has no owner to state and answers
+    ``None`` as well -- the key is present on every row, because "nobody is on record" and "this
+    surface does not speak about owners" are different answers.
+    """
+    value = None if record is None else record.owner_id
+    if value is None or str(value).strip() == "":
+        return None
+    return str(value)
+
+
 def _safe_data_filename(filename: str) -> str:
     safe_name = Path(filename or "").name
     if not safe_name or safe_name in {".", ".."}:
@@ -220,6 +239,7 @@ async def list_data_files(request: Request = None):
         stat = path.stat()
         item = {
             "filename": path.name,
+            "owner_id": _dataset_row_owner_id(record),
             "size": stat.st_size,
             "size_label": _format_data_file_size(stat.st_size),
             "modified_at": datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds"),

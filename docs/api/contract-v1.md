@@ -2408,3 +2408,99 @@ the OCR engine is called once per scanned page and not twice.
 Registered, not fixed: nothing under `frontend/**` renders this field yet -- that tree has
 three tickets in flight and is outside this write set. The reading is on the wire today; the
 「扫描页 N/M」 line in the upload panel is the next hop and needs only the fields above.
+
+## Dataset rows name their owner (2026-09-26, R310)
+
+V2 lists "every resource has a stable ID, an owner and a lifecycle" and "documents, data, reports and
+alerts are isolated at resource level". The document catalogue has named an owner for a long time; the
+dataset list has not, so an employee looking at the data panel could never tell who uploaded a table.
+R310 closes that gap and nothing else: one field on one row, no new lookup, no second permission chain.
+
+### `GET /api/v1/data-files` -> `files[].owner_id`
+
+| key | type | presence | meaning |
+| --- | --- | --- | --- |
+| `owner_id` | string / null | always | the account that uploaded the table, or `null` when no owner is on record |
+
+One row as it arrives now (`owner_id` sits next to `filename`, in both shapes of a row; read the key,
+not its index):
+
+```json
+{
+  "filename": "consolidated.csv",
+  "owner_id": "u-17",
+  "size": 20480,
+  "size_label": "20.0 KB",
+  "modified_at": "2026-09-26T19:39:03+08:00",
+  "extension": ".csv",
+  "dataset_id": "0f0c1c0a5b1e4f0d9a6c7e2b1d3c4a5f",
+  "version_id": "0f0c1c0a5b1e4f0d9a6c7e2b1d3c4a5f:v2",
+  "classification": "internal"
+}
+```
+
+### Where the value comes from, and what `null` means
+
+- The value is `DatasetRecord.owner_id` (`app/storage/datasets.py:121`) of the row the route already
+  holds. It opens no second query: `list_data_files` performs exactly one
+  `dataset_registry.get_active_by_filename` per candidate file on disk, before and after this ticket.
+  `tests/test_r310_owner_lookup_cost.py` counts both sides on one fixture and reports them equal
+  30 lookups and 20 policy calls on each side: five accounts plus the request-less call, over
+  five files each.
+- `owner_id` is a login username -- the same identity the document row names, and the same one the
+  policy judges ownership with. It is never a password, a token or a server path.
+- **Unowned answers `null`.** The rule is taken verbatim from the document catalogue
+  (`app/documents/catalog.py:236`, whose predicate `_is_unowned` treats `None` and whitespace-only as
+  no owner): an unowned row answers `null` -- not `""`, not `未分配`. There is no second spelling of
+  "nobody owns this" in this API. The equality is machine-checked against the document layer's own
+  predicate over a corpus of values, so neither surface may drift alone
+  (`tests/test_r310_dataset_row_owner.py::test_the_unowned_rule_is_the_document_rule_on_the_same_corpus`).
+  The two surfaces restate the predicate rather than share an import edge, on purpose: a router must
+  not grow an import into the document layer for one field, and the ratchet that keeps the import face
+  of `app/api/v1/data.py` at its `9344028` baseline is
+  `tests/test_r310_dataset_row_owner.py::test_data_py_import_face_stays_the_baseline_set`.
+- A row the registry never heard of answers `null` as well, and it still carries the key. That case is
+  reachable only when the route runs without an HTTP request (in-process, as
+  `tests/test_data_file_catalog.py` calls it): an authenticated request has always skipped unregistered
+  files before reaching the row builder, and R310 did not change that. Presence of the key matters
+  because "nobody is on record for this file" and "this surface does not speak about owners" are two
+  different answers.
+
+### Correspondence with the prose already in this document
+
+The body above this section is byte-frozen for R310: no line was edited and no table in the middle was
+touched. Two consequences are therefore registered here instead of rewritten there.
+
+1. "Dataset File Delivery" states that `GET /api/v1/data-files` "returns only registered active
+   datasets that pass `resource:view`, including `dataset_id`, `version_id`, and classification". That
+   sentence is still true. `owner_id` is additive to those same rows and to nothing else: visibility is
+   still judged by the one pre-existing `authorization_decision(..., action=resource:view,
+   require_resource_scope=True)` gate, so a caller sees exactly the rows it saw before -- each of them
+   now with an owner. Refused datasets stay behind `restricted` (`restricted -> the one shared
+   projection`), still unnamed, and the owner of a refused row never travels.
+2. "Dataset Row-Level Visibility" cites the construction site as `app/api/v1/data.py:240-249`. This
+   ticket inserted 20 lines above and inside that text (19 for the owner reader and its separators,
+   at `app/api/v1/data.py:66-84`, plus the one `owner_id` line at `app/api/v1/data.py:242`), so the
+   cited block now reads `app/api/v1/data.py:260-269` and the row builder reads
+   `app/api/v1/data.py:239-257`. That citation is a line-number note, not a contract: the
+   shape it points at is unchanged, and it is pinned off the AST by
+   `tests/test_r186_row_scope_contract.py`, which stayed green.
+
+### Pins
+
+- `tests/test_r310_dataset_row_owner.py` (9): every row carries the owner the registry already holds;
+  an unregistered row carries the key and answers `null`; unowned is `null` and never `""`; the unowned
+  rule is the document rule on the same corpus; the visible set equals what the existing policy
+  computes for every account; only the login name travels (no foreign owner, no body, no path); the
+  row's key list is the one documented here; and the field arrives through the real route table and
+  JSON serialization, not only through a direct coroutine call.
+- `tests/test_r310_owner_lookup_cost.py` (7): the before/after reconciliation, run through the shadow
+  root with the assignment line physically removed from a copy of the source (so "before" is the
+  `9344028` shape, not a recollection) -- per-account `len(files)`, filename lists and `restricted`
+  tallies equal, lookup and decision counts equal -- plus four counter-evidence knives: (a) dropping
+  the assignment reddens the every-row-has-an-owner pin; (b) answering `""` for an unowned row reddens
+  the `null` pin; (c) widening the filter so refused rows arrive with owners reddens the row-set pin,
+  the leak pin and the row-count reconciliation; (d) giving the field only to registered rows reddens
+  the `record is None` pin (the stray row loses the key) and lets the registry's raw empty string
+  reach the interface for an unowned row, while the per-account row set and every call count stay
+  untouched -- which is what makes (d) a different knife from (a).
