@@ -3594,3 +3594,42 @@ Chroma 侧"修"它的唯一手段是重建那 1,008 枚索引，而 `rebuild_ind
 - 前端一次一枚：`R288`(在途) → `R291` → `R293`。
 - 待投池（空槽即取）：**R306** xlsx/csv 接进分派＋白名单＋契约（`loader.py`＋`file_security.py`＋`docs/api/contract-v1.md` append）· **R257** Trace 兜底两笔（`app/trace/**`＋`observability.py`）。
 
+
+## §104（09-26 第三格·总控）：V2 波次二落地四枚并树 · 🔴 事故 #18＝总控把 R304 重复派了一次 · 两处假账当场订正
+
+### 〇、本班并树（主树 `4cc5c39` → 现 HEAD）
+
+`4cc5c39` → `4e3a71a` **R288**（V2 前端块 E 三格）→ `fa3d16c` 总控落笔（R299 留下的第三处全局事实漂移）→ `920460f` **R283**（备份演练点名两枚向量落点）→ `d194d99` **R295**（会话历史只按 owner 归还）。每枚都是总控在主树亲自复跑点名件之后代提交，读数见下第三节。
+
+### 一、🔴 事故 #18（总控造成·同类第六次）：把已经在跑的 R304 又派了一遍
+
+- **事实**：`be-r304` 在 18:1x 我取证时 HEAD `4cc5c39`、dirty=0、`.py` 零落盘，我据此判上一班那句「R304 已派给 `Turing`」是**假账**，并在 18:2x 把同一单重投了一次（回执 `Bernoulli`）。18:30:52 `Turing` 开始往同一棵树写 `loader.py`（+330/-10，docstring 明写 "R304: 表格接进来了"），18:38:23 建 `tests/test_r304_table_wiring.py`，18:46:17 末帧后仍有 python 进程在跑 ⇒ **两枚 Agent 同一单同一树**。
+- **根因**：我把「树此刻还干净」当成了「投递未落地」的充分证据。**顺序错了**：正确做法是先认名册/上一班回执里的 id，再取树；树干净只说明它还没开工，不说明它不存在。而 18:2x 那次「第 7 枚被 harness 拒 `agent thread limit reached`」恰恰是反证——**当时已经有 5 枚活着**（`Darwin`/`Volta`/`Herschel`/`Rutherford`/`Turing`），我数漏了 `Turing`。
+- **执行层这一枚处理正确**：`Bernoulli` 发现撞车后**全程零写入**（没动 `app/`、没动 `tests/`、没 add/commit），把力气转成对已落地版的独立只读验收并**如实上报请总控裁定**——记它一笔。它另外自己认了一笔操作失误（把递归实验挂在最慢语料件 `refactor_guide.pdf` 上占了 2 分钟 CPU，期间另有 ≥4 枚在跑）。
+- **新条款（往「一 block 一枚投递」再加一条）**：派任何**沿用旧树**的单之前，必须先在派工词里点名那棵树的**上一个持有者 id**并向业主要回执；拿不到回执就**换一棵新树**（成本 1 秒，撞车成本 1 小时）。树 dirty=0 **不是**「未落地」的证据，「名册无行 + 无回执 + 无进程 + 无落盘」四样齐全才算。
+
+### 二、两处假账当场订正
+
+1. **§103 〇 那条「R304 未落地」是假话**，由本节订正（原文一字不删，按项目惯例只追加）。同理 §0 名册里我给 `Bernoulli` 写的那行也要改口：它**没做过 R304**，做的是「对 `Turing` 版本的只读验收」。
+2. **§103 三 待投池里那句「R257 Trace 兜底两笔」是过期数字**：R257 早在 09-26 11:20 结案并树 `71aea57`（看板行在案）。⇒ 待投池更正为：**R301**（`chat.py` 上传/详情段，OCR 报告透出）·**R306**（xlsx/csv 接进 `load_document` 分派＋`file_security` 白名单＋契约）·**R307**（六枚之外 20 枚裸按钮：`App.vue` 8／`SourceCard.vue` 3；`DashboardPanel.vue` 9 归 R291/R293 之后）·**R293**（等 R291 让位，抢 `panel-states.test.js`）。
+3. **§103 判据「一·2」与现实冲突**（`Bernoulli` 取证）：它要求「不带表的文件接前接后 sha256 相同」，而我点名的反证件 `documents/refactor_guide.pdf` **有 9 枚表**，那句在它身上不可能成立。判据拆成两半为准：**0 表文件逐字节相同** ＋ **带表文件内容只增不减**（token 覆盖率 <50% 的行必须为 0 枚）。R304 的验收按这两半都已通过。
+
+### 三、R304 现状与并树前置（🔴 未结案，不许并）
+
+- `Turing` 仍在那棵树上；总控**没有它的完整 id**（上一班只传下来 `01a0dd2c-…` 前缀）⇒ 等它的交回通知带 `agent_path` 来认人。**在它交回之前不许动 `be-r304`、不许并树、不许再派任何碰 `loader.py` 的单**（R305 已被明令禁 `loader.py`，R306 排它之后）。
+- `Bernoulli` 的独立只读验收（可作总控验收的第二双眼，但它自己声明「末帧之后对方仍在写，读数可能过期」）：14 枚在仓 PDF 里 **13 枚逐字节相同**（含带真 NUL 的 `documents/AI-Agent学习路线图.pdf`，两侧同 sha `7a42486474850d27`），唯一 DIFF 就是带 9 枚表的 `refactor_guide.pdf`（`468ef766104e7c47`→`ddeb8f9bc63e4de1`）；40 行×4 列表格 .docx 过真 splitter → 14 块、max 451、超预算 0 块、无锚块 0 枚；0 表 .docx 接前接后 SAME `ff0573a01d547cb8`；四枚全局钉 **70 passed**。
+- 🔴 **并树时必须由总控裁的两枚红针**（都在已结案的 `tests/test_r300_tables.py` 里，执行层无权改）：`:735` 钉的正是「`load_docx` 把 Word 表整个丢掉」＝R304 要推翻的对象；`:751` 把 `pdf_prose_via_loader` 当「未接线对照组」用，而该函数按 `app/rag/tables.py:888-896` 就是 `load_pdf` 本身，接线后必然带锚。改口口径按 `Bernoulli` 建议：735 改成「表不再被丢」，751 的对照组换成 `pdf_prose_without_tables`，并把「pypdf 版确实带表」这一事实另地保留。
+- 连带两处假话：`app/rag/tables.py:888` 那句 "Today's load_pdf output" 接线后半句成假；`docs/deployment/backup-restore.md` 的向量段随 R283 已订正（`920460f`）。
+- 长期凭据：在仓 `.docx` 实测**零枚** ⇒ 收一枚 `tests/fixtures/r304_plain.docx`（0 表、带 U+3000 段首缩进与尾部空格那类），否则判据 2 的 .docx 半边永远没有对象可跑。
+
+### 四、本班实测读数（总控亲跑，主树）
+
+- **R288**（`Volta`@`be-r288`，基点 `e441d10`）：`npx vitest run --fsModuleCache` **80 files / 1462 passed / 0 failed**（改前 1423，+39 枚新用例）；`npm run lint:colors` **148 problems / 0 errors** 贴边未动（`package.json` 钉 `--max-warnings=148`——交接词里那句 334 是过期数字，已订正）；`npm run build` exit 0；写域对 `e441d10..4cc5c39` 零漂移，十枚字节逐位吻合。裁定：`retrievalFace` 优先级改口 `excluded > failed > indexed` **认**（重传失败但上一版仍在索引里不许报成功）。
+- **R283**（`Herschel`@`be-r283`，基点 `61396b1`）：点名七件 **114 passed / 3 skipped in 21.27s**，与交回逐位相同；写域零漂移；三枚 sha `AB759F0356A2BCF6`／`5D8C2BC528DCC0FD`／`8421BE1F08C15ADC`。🔴 真库那一格 **3 skipped 明写未验** ⇒ **R60 不许翻绿**。裁定：生产 CLI 默认**不**带 `--require-table`（那是枚可能变红的闸，业主点头才进默认路径）。
+- **R295**（`Darwin`@`be-r295`，基点 `e441d10`）：r295 两件＋r204/r205/r271 邻居族＋四枚全局钉 = **144 passed / 0 failed in 22.43s**；`chat.py` 对 `e441d10..920460f` 零漂移；三枚 sha `8C9C9FAE8B471DB7`／`D13C8AE0FF6CD817`／`7B4E1F31A037E1CC`。**裸连棘轮与 `_db_ready` 读者声明实测无需改账**（两枚钉原样绿）⇒ 上一班交接词里那句「12→13 / 7→8 待落笔」是**未成立的请示**，不落。施工中证伪一枚承重前提：`source_bindings.turn_run_id` 在真会话里恒为空 ⇒ 原「按 turn_run_id 归并」会让回读拿到零行。
+- **fa3d16c 总控落笔**：`app/notifications/states.py:30` 是 `open_connection_with_policy` 的**第一枚生产调用方**（R299 并树 `fa8709c` 带入，上一班只订正了两处、漏了这第三处）。边界钉从「本节零调用方」改成**语义账** `MIGRATED_POLICY_CALL_SITES`（记「谁在用、用哪几个名字」，多一枚红、那一枚不再用也红）。牙已实验：往 `app/quality/__init__.py` 注入一枚 `connect_policy` 字样 ⇒ 当场红并点名到文件（探针已删；它非 git 跟踪、由总控本轮自造，删除属清理自己造的杂物，不是删别人的活）。
+
+### 五、并发上限订正
+
+本班实测仍是 **6 枚在途**：18:2x 那枚第 7 投被拒、18:5x 用满 6 枚（`Darwin`/`Rutherford`/`Turing`/`Wegener`/`Gibbs`/`Planck`）。§103 〇 若被读成「上限 5」是错的——上限 6，本班数漏 `Turing` 才误判成 5。
+
