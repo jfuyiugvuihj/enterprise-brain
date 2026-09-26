@@ -5,11 +5,143 @@ Day 7-8: Excel 数据处理
 import ast
 import os
 import io
+import importlib.util
 import pandas as pd
 import openpyxl
 from typing import Any
 from app.agents.contracts import ErrorEnvelope
 from app.common.logger import logger
+
+# ==================== 收口名单 <-> 读引擎 (R336) ====================
+#: 单一事实源: 一枚扩展名 -> 本机读它所用的引擎模块名; None = pandas 内置通道, 不需要额外的包。
+#: 「平台收哪个后缀」与「用什么读它」必须写在同一行。下一位往这张表里塞 .ods / .numbers 而忘了带
+#: 引擎, `unavailable_read_engines()` 现读 `importlib.util.find_spec` 就会当场咬人
+#: (尺子与两把反证见 tests/test_r336_read_engine_backs_the_whitelist.py)。结论不许写成常量。
+DATA_READ_ENGINES: dict[str, str | None] = {
+    ".csv": None,
+    ".xlsx": "openpyxl",
+}
+
+#: 客户仍然会递上来、但本系统明确不读的后缀: 具名拒绝 + 员工照着做得下去的下一步。
+#: `.xls` (Excel 97-2003) 要 xlrd 才读得动, 而 xlrd 不在依赖里 (`pyproject.toml` 只有 openpyxl):
+#: 旧实现那句 `engine = "openpyxl" if ext == ".xlsx" else "xlrd"` 是一条必然失败的 import,
+#: 而更早一步的 `_fill_merged_cells` 会让 openpyxl 先抛 InvalidFileException, 一路穿到路由变成 500。
+#: R336 裁定走「诚实拒绝」这一支, 不新增依赖; 「要不要真支持 2003 老格式」已进业主待裁清单。
+#: 将来要翻案, 只需把 .xls 从这张表搬进 `DATA_READ_ENGINES` (值写 xlrd) 并装上依赖, 别处一个字不用改。
+REFUSED_DATA_FILE_READS: dict[str, str] = {
+    ".xls": (
+        "请在 Excel 或 WPS 里打开它，选「另存为」，把保存类型改成「Excel 工作表 (*.xlsx)」"
+        "或「CSV (逗号分隔) (*.csv)」，再上传另存出来的那一份。文件名和表格里的内容都不用改。"
+    ),
+}
+
+
+class UnsupportedDataFile(ValueError):
+    """这一枚后缀在本机没有可用的读引擎: 一句具名拒绝, 不是一条运行时崩溃。
+
+    `code` 复用 app/agents/contracts.py::ErrorEnvelope.code 里已有的 `unsupported_file`
+    (app/api/v1/chat.py 的文档上传闸今天吐的就是这一枚), R336 零新增错误码。
+    `str(exc)` 是给员工看的那句话: 先告诉他下一步做什么, 再说不支持的是哪个格式。
+    """
+
+    code = "unsupported_file"
+
+    def __init__(self, filename: str, extension: str, message: str) -> None:
+        super().__init__(message)
+        self.filename = filename
+        self.extension = extension
+
+
+def extension_of(name_or_path: str) -> str:
+    """小写后缀; 没有后缀回空串。收口名单与读引擎问的都是这一个值。"""
+    return os.path.splitext(str(name_or_path))[-1].lower()
+
+
+def engine_for(extension: str) -> str | None:
+    """这张后缀声明用哪个引擎读; 不在名单里回 None (不是「换个默认引擎试试」)。"""
+    return DATA_READ_ENGINES.get(extension)
+
+
+def engine_is_importable(engine: str | None) -> bool:
+    """None = pandas 内置通道 (CSV), 恒可用; 其余一律现读 find_spec, 不缓存、不写死。"""
+    if engine is None:
+        return True
+    try:
+        return importlib.util.find_spec(engine) is not None
+    except (ImportError, ValueError, AttributeError):
+        return False
+
+
+def unavailable_read_engines(table: dict[str, str | None] | None = None) -> dict[str, str]:
+    """通用尺子: 名单里每一枚扩展名, 它的引擎在本机 import 得到吗。回量坏的那些。
+
+    空 dict = 白名单每一格脚下都有引擎。非空 = 有人在名单里挂了一枚读不动的格式:
+    要么补依赖, 要么把这一格搬去 `REFUSED_DATA_FILE_READS`, 不许留在收口名单里。
+    """
+    declared = DATA_READ_ENGINES if table is None else table
+    return {
+        ext: engine
+        for ext, engine in declared.items()
+        if engine is not None and not engine_is_importable(engine)
+    }
+
+
+def accepted_data_file_extensions() -> frozenset[str]:
+    """对外收口名单 = 引擎声明表的键, 现算。第二份手抄的扩展名清单正是本单的病灶。"""
+    return frozenset(DATA_READ_ENGINES)
+
+
+def refuse_data_file(name_or_path: str) -> UnsupportedDataFile | None:
+    """这一份能不能读: 能读回 None, 不能读回一枚话已经说好的拒绝 (调用方决定 raise 还是转 400)。
+
+    三种「不能读」各有各的实话, 不许糊成一句 unsupported file type:
+      1) 明确不做的格式 (.xls) -> 另存为什么、在哪一步点;
+      2) 名单里根本没有的后缀 -> 把名单现算给他看;
+      3) 名单里有、引擎却装不上 -> 这是服务器的锅, 说清楚, 并给一条今天就走得通的退路。
+    """
+    filename = os.path.basename(str(name_or_path))
+    ext = extension_of(name_or_path)
+
+    if ext in REFUSED_DATA_FILE_READS:
+        return UnsupportedDataFile(
+            filename,
+            ext,
+            "「{0}」是 {1} 老格式，本系统不读它。{2}".format(filename, ext, REFUSED_DATA_FILE_READS[ext]),
+        )
+
+    if ext not in DATA_READ_ENGINES:
+        return UnsupportedDataFile(
+            filename,
+            ext,
+            "「{0}」不是本系统能读的数据文件{1}。数据分析只收 {2}，请在 Excel 或 WPS 里把表格"
+            "「另存为 *.xlsx」或 CSV 之后再上传。".format(
+                filename,
+                "" if ext else " (没有文件后缀)",
+                " / ".join(
+                    "「{0}」".format(item) for item in sorted(accepted_data_file_extensions())
+                ),
+            ),
+        )
+
+    engine = DATA_READ_ENGINES[ext]
+    if not engine_is_importable(engine):
+        return UnsupportedDataFile(
+            filename,
+            ext,
+            "「{0}」这一份文件本身没问题，但这台服务器上缺读 {1} 所需的组件 ({2})，所以本系统读不了它。"
+            "请先在 Excel 或 WPS 里把它「另存为 *.csv」再上传，并把这一句转给管理员补组件。".format(
+                filename, ext, engine
+            ),
+        )
+
+    return None
+
+
+def ensure_data_file_readable(name_or_path: str) -> None:
+    """收口名单之外的文件在这里点名拒绝, 早于任何一次磁盘读。"""
+    refusal = refuse_data_file(name_or_path)
+    if refusal is not None:
+        raise refusal
 
 # ==================== 编码检测 (#4) ====================
 
@@ -75,17 +207,26 @@ def _fill_merged_cells(file_path: str) -> pd.DataFrame:
 # ==================== 文件加载 ====================
 
 def load_excel(file_path: str) -> pd.DataFrame:
-    """统一入口：自动识别 xlsx/xls/csv，处理合并单元格"""
-    ext = os.path.splitext(file_path)[-1].lower()
+    """统一入口：自动识别收口名单里的格式，处理合并单元格。
 
-    if ext == ".csv":
+    R336：进门先问「这一枚后缀在本机真有读引擎吗」，拒绝发生在任何一次磁盘读之前。
+    旧实现把答案押在 `engine = "openpyxl" if ext == ".xlsx" else "xlrd"` 上，而 xlrd 从来
+    不在依赖里：客户传一份真 .xls 上来，收到的是一条运行时 import 失败（更早一步还会先在
+    openpyxl 的 InvalidFileException 上炸开），不是一句「请另存为 .xlsx」。
+    """
+    ensure_data_file_readable(file_path)
+    ext = extension_of(file_path)
+
+    # 走哪条腿由那张声明表决定，不由读腿里再抄一份后缀判断决定：
+    # 引擎写着 None = pandas 内置通道（今天只有 .csv），其余一律 engine_for(ext) 交给 pandas。
+    # 上一版这里写的是 `if ext == ".csv"` 加一句 `else "xlrd"`，两处手抄各错一半。
+    if engine_for(ext) is None:
         return read_csv(file_path)
 
-    # .xlsx / .xls
+    # 收口名单里剩下的表格格式（今天只有 .xlsx），引擎名从 DATA_READ_ENGINES 现取
     df = _fill_merged_cells(file_path)
     if df is None:
-        engine = "openpyxl" if ext == ".xlsx" else "xlrd"
-        df = pd.read_excel(file_path, engine=engine)
+        df = pd.read_excel(file_path, engine=engine_for(ext))
 
     # 清理：删全空行/列
     df.dropna(how="all", inplace=True)

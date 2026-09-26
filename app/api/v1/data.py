@@ -12,7 +12,13 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Respons
 from fastapi.responses import FileResponse
 from app.common.no_store import NO_STORE_HEADERS
 from pydantic import BaseModel
-from app.tools.excel import load_excel, profile_dataframe
+from app.tools.excel import (
+    UnsupportedDataFile,
+    accepted_data_file_extensions,
+    ensure_data_file_readable,
+    load_excel,
+    profile_dataframe,
+)
 from app.tools.chart import bar_chart, line_chart, pie_chart, radar_chart
 from app.tools.visualize import gantt_chart, mindmap
 from app.tools.export import generate_pdf_report, export_to_excel
@@ -36,7 +42,11 @@ from app.storage.datasets import dataset_registry
 router = APIRouter()
 DATA_DIR = os.getenv("DATA_DIR", "./data")
 os.makedirs(DATA_DIR, exist_ok=True)
-DATA_FILE_EXTENSIONS = {".xlsx", ".xls", ".csv"}
+#: 收口名单不是另一份手抄：它就是 app/tools/excel.py 那张「扩展名 -> 读引擎」的声明表
+#: （`DATA_READ_ENGINES`）现算出来的键。上一版这里写着 {".xlsx", ".xls", ".csv"}，而 .xls 的
+#: 引擎（xlrd）从来不在依赖里 —— 闸门放了行，脚下那条腿是断的，客户传 .xls 换来一条 500。
+#: 今天加一枚没有引擎的后缀，tests/test_r336_read_engine_backs_the_whitelist.py 当场咬人。
+DATA_FILE_EXTENSIONS = accepted_data_file_extensions()
 # A dataset is owned by the account that uploaded it, and the registry derives that
 # ownership from a department scope. An account without one - the first administrator
 # of a fresh install, unless AUTH_DEPARTMENT named its department - can sign in and
@@ -89,6 +99,21 @@ def _safe_data_filename(filename: str) -> str:
     if not safe_name or safe_name in {".", ".."}:
         raise HTTPException(status_code=400, detail="invalid_filename")
     return safe_name
+
+
+def _refuse_unreadable_data_file(filename: str) -> None:
+    """收口名单之外的数据文件：400 具名拒绝，不是 500「系统坏了」。
+
+    判据只有 `app/tools/excel.py` 那一处（`ensure_data_file_readable`），本函数只负责把它翻成
+    HTTP 形状：`code` 复用封闭枚举里已有的 `unsupported_file`（零新增错误码），`message` 是给
+    员工的那句下一步做什么。上传与预览两条腿都问这一处，不各写一份后缀判断。
+    """
+    try:
+        ensure_data_file_readable(filename)
+    except UnsupportedDataFile as exc:
+        raise HTTPException(
+            status_code=400, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
 
 
 def _resolve_data_path(filename: str) -> Path:
@@ -272,6 +297,9 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
     principal = _authorized_principal(request, ACTION_UPLOAD)
     if dataset_registry.get_active_by_filename(filename) is not None:
         raise HTTPException(status_code=409, detail="dataset_filename_conflict")
+    # 拒绝发生在落盘之前：读不动的格式既不该留在 DATA_DIR 里，也不该走到 load_excel 那一步
+    # 才炸出一条 import 失败（那正是旧版 .xls 的下场）。
+    _refuse_unreadable_data_file(filename)
     file_path = Path(DATA_DIR) / filename
     content = await file.read()
     temp_path = file_path.with_name(f".{file_path.name}.upload")
@@ -307,6 +335,9 @@ async def preview_data_file(filename: str, request: Request, response: Response)
     record = _authorized_dataset(request, filename, ACTION_VIEW)
     path = Path(record.storage_path)
     response.headers.update(NO_STORE_HEADERS)
+    # 登记表里可能留着一份切换前落盘的 .xls：那一格同样只能给一句具名拒绝，
+    # 不许顺着 `except Exception` 滑成 500 dataset_preview_failed（那是把拒绝伪装成故障）。
+    _refuse_unreadable_data_file(record.filename)
     try:
         df = await asyncio.to_thread(load_excel, str(path))
         # R180: the preview is a structured excerpt channel, so it must apply the same

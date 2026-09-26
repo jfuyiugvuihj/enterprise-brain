@@ -2639,3 +2639,133 @@ edge is bucketed by Shanghai wall time from both directions (UTC-offset instants
 week buckets start on a Monday; the filesystem mtime is pinned out; `documents_ready` agrees with the tile;
 both illegal parameters answer the pre-existing `422 validation_error` behind the gate; and every
 `HTTPException` literal in the module stays inside the ratified enum.
+
+## The data whitelist admits only extensions whose engine imports on this machine (2026-09-26, R336)
+
+`app/api/v1/data.py` advertised `{".xlsx", ".xls", ".csv"}` while the leg that opens the file chose
+`engine = "openpyxl" if ext == ".xlsx" else "xlrd"`. `xlrd` is in neither `pyproject.toml` (only
+`openpyxl`, `:29`) nor this machine's environment -- read live, `importlib.util.find_spec("xlrd")` ->
+`None`. So a customer uploading a real 97-2003 workbook met an unhandled exception, not an
+instruction: `_fill_merged_cells` let openpyxl raise `InvalidFileException` first, with pandas'
+`ImportError` waiting behind it, and the upload route's `except Exception` unlinked the file and
+re-raised -- an HTTP 500. V2's line for a complex file is 「功能入口可用」: 明确拒绝 is 可用, a silent
+explosion is not. 总控 ruled this ticket takes the honest-refusal branch -- no new dependency (taking
+`xlrd` means a dependency change, a rebuilt image and a real `.xls` sample to verify, all owner-side
+windows), and 「要不要真支持 2003 老格式」 stays on the owner's pending list.
+
+### One table decides what is admitted and what reads it
+
+| extension | admitted | engine on this machine | answer today |
+| --- | --- | --- | --- |
+| `.csv` | yes | `None`: pandas' built-in CSV channel | parsed, profiled |
+| `.xlsx` | yes | `openpyxl`, importable here | parsed, profiled |
+| `.xls` | no | would need `xlrd`, which is not installed | `400` + the sentence below |
+| any other suffix | no | not declared | `400` + the generic sentence |
+
+`app/tools/excel.py::DATA_READ_ENGINES` is the single source: adding a row *is* admitting an
+extension, and the row must name the module that reads it. `DATA_FILE_EXTENSIONS` is now derived
+(`accepted_data_file_extensions()`) instead of being a second hand-copied set, and `load_excel` picks
+its branch from the same table (`engine_for(ext) is None` -> the CSV channel) instead of restating
+`ext == ".csv"`. Formats customers will still hand us and this platform will not read live in
+`REFUSED_DATA_FILE_READS`; the two tables are disjoint by pin, so no format can be both advertised
+and refused.
+
+### `POST /api/v1/upload-excel` -> `400` with a stable code and a next step, before any byte is written
+
+```json
+{
+  "detail": {
+    "code": "unsupported_file",
+    "message": "「报销明细.xls」是 .xls 老格式，本系统不读它。请在 Excel 或 WPS 里打开它，选「另存为」，把保存类型改成「Excel 工作表 (*.xlsx)」或「CSV (逗号分隔) (*.csv)」，再上传另存出来的那一份。文件名和表格里的内容都不用改。"
+  }
+}
+```
+
+- **Zero new error codes.** `unsupported_file` is already a member of
+  `app/agents/contracts.py::ErrorEnvelope.code` and is what `app/api/v1/chat.py::upload_document`
+  answers on its upload gate today, so `tests/test_error_code_vocabulary.py` and
+  `tests/test_r142_error_code_table_sync.py` move nothing (both green: 41 passed).
+- The route does not retype the code: the detail's `code` is `exc.code` carried from
+  `UnsupportedDataFile.code`, and a pin reddens if a code name is ever written as a literal there.
+- **400, not 500 and not 415.** A format refusal is a product answer -- neither a fault nor a
+  transport problem. It happens before `DATA_DIR` is touched, so an unreadable format no longer lands
+  on disk and never reaches `load_excel`.
+- `GET /api/v1/data-files/{filename}/preview` asks the same one place, so a legacy `.xls` row already
+  in the dataset registry answers with this 400 instead of the old `500 dataset_preview_failed` --
+  that shape was a refusal wearing a fault's clothes.
+
+### Three kinds of "cannot read", three different sentences
+
+1. `.xls`, explicitly not done: named as such, and it says which menu item to click.
+2. a suffix nobody declared: the sentence lists the accepted extensions *derived from the table*, so
+   the promise and the list cannot drift apart.
+3. declared here but not installed here: this one is the server's fault and says so, names the
+   missing module, and still gives the employee a step that works today (「另存为 *.csv」).
+
+### What the employee sees on screen
+
+`unsupported_file` is a known code, so under the R281 rule in `frontend/src/lib/errcodes.js` the
+visible human slot carries that dictionary's own sentence and this backend sentence arrives as
+`rawMessage`. The specific 「另存为 .xlsx」 step is therefore on the wire and in the 详情 area, not yet on
+the line the employee reads; surfacing it is a `frontend/**` change and outside this write set.
+Registered below, not fixed here.
+
+### Falsification, run against the real source and not in a docstring
+
+Each knife edited `app/tools/excel.py` / `app/api/v1/data.py` on disk, ran the pin file, and restored
+the bytes (sha256 verified identical afterwards):
+
+- `".xls": "xlrd"` pushed back into `DATA_READ_ENGINES` -> **9 red of 22**: the ruler names
+  `[('.xls', 'xlrd')]`, the gate/table equality pin fires, the round-trip pin demands a real `.xls`
+  sample, the disjointness pin fires, and the catalogue stops hiding it.
+- the `.xlsx` engine misspelled -> **7 red of 22**, and the same run shows a genuine `.xlsx` on disk
+  answering with sentence 3 instead of crashing. The ruler reads *this machine*, not a constant.
+- the `.xls` row deleted from `REFUSED_DATA_FILE_READS` -> **exactly 2 red of 22**, both the
+  named-refusal pin. The file is still refused by the generic sentence, so every other pin stays
+  green: that is the 「功能没塌所以没人发现」 cell this knife exists for.
+- `DATA_FILE_EXTENSIONS` written back as a hand-copied literal `{".xlsx", ".csv"}` (same content,
+  wrong mechanism) -> **exactly 1 red of 22**: the AST pin requiring a derived call.
+
+### Consequences admitted out loud
+
+- `.xls` rows already registered are no longer listed by `GET /api/v1/data-files`: the catalogue stops
+  advertising a format the read leg cannot open. Owner / `classification` / `restricted` semantics are
+  untouched, and R310's and R200's pins stayed green.
+- `.xlsm` used to slip in: there was no route-level suffix gate at all, so openpyxl read it, the
+  registry took it, the tool leg analysed it -- while the same file stayed invisible in the catalogue,
+  because the whitelist never named it. It now gets the named 400. Admitting it for real is one row in
+  `DATA_READ_ENGINES` (`"openpyxl"`) plus a sample builder in the pin that walks every admitted
+  extension -- an owner's call, not this ticket's.
+- A `.xls` renamed to `.xlsx` still fails inside openpyxl and still surfaces as a 500: content-level
+  spoof detection is a different gate than the suffix gate, and this ticket does not pretend otherwise.
+
+### Registered, not fixed (outside this write set)
+
+- `app/api/v1/alerts.py::_data_file_extensions` keeps a third copy of the list as a fallback literal
+  `{".csv", ".xlsx", ".xls"}`, reachable only if `DATA_FILE_EXTENSIONS` were missing (it never is, so
+  the literal is dead but visible). Its sweep also wraps `load_excel` in `except Exception: continue`,
+  so an `.xls` left in a tenant `DATA_DIR` is skipped without a word.
+- `docs/current-functionality-2026-09-10.md:289` still reads 「XLS | 代码尝试支持 | 使用 xlrd」, and
+  `app/rag/spreadsheets.py:134` still cites `app/tools/excel.py:88` for a branch that no longer exists.
+- Physical-line citations to `app/api/v1/data.py` moved: the file is 545 -> 576 lines (+10 above
+  `:104`, +25 above `:300`, +28 above `:337`, +31 below). R310's restated anchors `:66-84` / `:242` /
+  `:239-257` / `:260-269` now read `:76-94` / `:267` / `:264-282` / `:285-294`. These are line-number
+  notes, not contracts; the shapes they point at are unchanged,
+  `tests/test_r186_row_scope_contract.py` reads them off the AST, and
+  `tests/test_r142_error_code_table_sync.py` pins that the code table anchors on symbols. The R186-era
+  `:132-169` / "attached at `:319`" pair had already drifted before this ticket (R310 registered that
+  once); this note only adds its own delta.
+
+### Pins
+
+- `tests/test_r336_read_engine_backs_the_whitelist.py` (19 tests / 22 cases): the ruler, over the union
+  of both whitelist objects, with `find_spec` read by the test itself so no conclusion can be frozen
+  into a constant; gate and table are one fact (AST: a derived call, not a literal set); every
+  admitted extension round-trips a real file, including a merged-cell `.xlsx`; the read leg carries no
+  `xlrd` string constant, no literal `engine=`, and no second `ext == "..."` branch; `.xls` is refused
+  by name and the two tables are disjoint; every refusal sentence names the file, says 「另存为」, points
+  at a real target format and avoids the blame jargon; the code is in the closed enum and reaches the
+  wire through `exc.code`, with a 400 and a two-key detail; upload -> 400 with nothing written to disk,
+  upload of `.csv` / `.xlsx` -> 200 and registered, legacy `.xls` preview -> 400 and not 500, and the
+  catalogue stops listing `.xls`; plus three in-test knives over monkeypatched tables (the same four
+  were also run on disk, above).
