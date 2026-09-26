@@ -43,6 +43,31 @@ export const ALERT_STATE_COUNTED = 'counted'
 export const ALERTS_DENIED_NOTE = '无权限查看告警'
 export const ALERTS_UNREADABLE_NOTE = '告警计数读不出来'
 
+/**
+ * 文档卡那一句副文案（R274 · X-3）。
+ *
+ * 这一句原先是写死的：只要文档数大于 0 就报「都解析完了」那类好消息。可「目录里有 N 篇」
+ * 与「N 篇都解析完了」是两件事，一篇都没解析完时那句好话照样成立——R267 把面板里行级的解析
+ * 状态归了真，漏的就是 lib 这一层。现在这句话只从聚合回执里的「已解析篇数」来（前端读作
+ * documents_ready），四种走法四种说法，谁也不许顶替谁：
+ *   一篇都没有      -> 「还没有文档」
+ *   回执没带这个数  -> 「已解析篇数未记录」（线上今天就是这一张脸）
+ *   两数相等        -> 「全部已解析」
+ *   还有没解析完的  -> 「N 篇还没解析完」
+ * 已解析篇数比总数还大是一次坏掉的回执，不是一句好消息，所以那一档只说「对不上」。
+ * 🚫 后端补上这一数之前，这一格不许换成另一句写死的好话：宁可说没记录。
+ */
+export const DOCUMENTS_EMPTY_NOTE = '还没有文档'
+export const DOCUMENTS_UNRECORDED_NOTE = '已解析篇数未记录'
+export const DOCUMENTS_ALL_READY_NOTE = '全部已解析'
+export const DOCUMENTS_MISMATCH_NOTE = '已解析篇数与总数对不上'
+
+const DOCUMENTS_COUNTED_HINT = '按你有权查看的文档目录计数，不是全租户文档总数。'
+const DOCUMENTS_UNRECORDED_HINT = '文档篇数与「其中已解析多少篇」是两件事：这份聚合回执只回了前者，'
+  + '所以这一格不说已解析，只说没记录。等后端把已解析篇数一起回传，这里自己换说法。'
+const DOCUMENTS_READY_HINT = '已解析篇数与文档总数同一口径，都按你当前的可见范围计算。'
+const DOCUMENTS_MISMATCH_HINT = '回执里已解析的篇数比文档总数还大，这两个数不可能同时成立，所以这一格不下结论。'
+
 const hasOwn = (target, key) => Object.prototype.hasOwnProperty.call(target, key)
 
 /** 非负整数才算读出来的数；null / 字符串 / 负数 / 小数一律判「没数」，不静默降级成 0。 */
@@ -128,6 +153,8 @@ export function parseSummaryPayload(payload) {
   return {
     generatedFor: typeof payload.generated_for === 'string' ? payload.generated_for : '',
     documents,
+    // R274（X-3）：「其中已解析多少篇」。后端今天还没回这一数，缺席就是 null，不折成 0。
+    documentsReady: countOf(payload.documents_ready),
     datasets,
     pendingApprovals,
     alerts: readAlertFace(payload),
@@ -201,6 +228,20 @@ export function summaryScopeNote(generatedFor) {
 }
 
 /**
+ * 文档卡的副文案与口径提示：只从聚合结果里那两个数来，取值走法见上面那组常量的注释。
+ */
+export function documentsTileView(metrics) {
+  const counted = countOf(metrics?.documents)
+  if (counted === 0) return { delta: DOCUMENTS_EMPTY_NOTE, hint: DOCUMENTS_COUNTED_HINT }
+  const ready = countOf(metrics?.documentsReady)
+  // 总数或已解析篇数任意一枚取不出来，这句都只能是「未记录」：不许把读不出数说成「没有文档」。
+  if (counted === null || ready === null) return { delta: DOCUMENTS_UNRECORDED_NOTE, hint: DOCUMENTS_UNRECORDED_HINT }
+  if (ready > counted) return { delta: DOCUMENTS_MISMATCH_NOTE, hint: DOCUMENTS_MISMATCH_HINT }
+  if (ready === counted) return { delta: DOCUMENTS_ALL_READY_NOTE, hint: DOCUMENTS_READY_HINT }
+  return { delta: `${counted - ready} 篇还没解析完`, hint: DOCUMENTS_READY_HINT }
+}
+
+/**
  * 四个数字的视图模型：标签、数字、副文案、口径提示，全部只从聚合结果里取。
  * 图标与配色留在面板里（那是视觉层的事），这里一行 DOM 都不碰。
  */
@@ -212,8 +253,7 @@ export function summaryTiles(metrics) {
       id: 'documents',
       label: '文档总量',
       value: formatSummaryCount(metrics.documents),
-      delta: metrics.documents ? '已解析入库' : '还没有文档',
-      hint: '按你有权查看的文档目录计数，不是全租户文档总数。',
+      ...documentsTileView(metrics),
     },
     {
       id: 'datasets',
@@ -238,4 +278,27 @@ export function summaryTiles(metrics) {
       state: alerts.state,
     },
   ]
+}
+
+/**
+ * 「最新文档」这一格自己的失败脸（R274 · X-6）。
+ *
+ * 为什么归脸要放在 lib：面板里再调一次 isPermissionDenied 就是第三处权限判定，
+ * 而「这一格读不到」与「这一屏读不到」本来就是两件事（改前 catalog 一发失败会把整屏
+ * 拖进错误脸，连本来能读的告警账本都不再发请求）。没权限与真坏了仍是两句话：
+ * 前者不给重试按钮，后者给。
+ */
+export const DOCUMENTS_DENIED_TITLE = '这个账号看不到文档目录'
+export const DOCUMENTS_FAILED_TITLE = '最新文档没加载出来'
+
+const DOCUMENTS_DENIED_MESSAGE = '这个账号没有读取文档目录的权限，所以这一格没有行；上面四个数字与其余卡片不受影响。'
+const DOCUMENTS_FAILED_MESSAGE = '文档目录这一发没有回来，所以这一格没有行；这不代表公司没有文档，也不影响上面四个数字。'
+
+export function documentsFailureView(err) {
+  const denied = isPermissionDenied(err)
+  return {
+    denied,
+    title: denied ? DOCUMENTS_DENIED_TITLE : DOCUMENTS_FAILED_TITLE,
+    description: errorDetail(err, denied ? DOCUMENTS_DENIED_MESSAGE : DOCUMENTS_FAILED_MESSAGE),
+  }
 }

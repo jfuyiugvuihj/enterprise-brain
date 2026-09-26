@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
-import { loadDashboardSummary, SUMMARY_DENIED_TITLE, SUMMARY_FAILED_TITLE, summaryScopeNote, summaryTiles } from '../lib/dashboard'
+import { documentsFailureView, loadDashboardSummary, SUMMARY_DENIED_TITLE, SUMMARY_FAILED_TITLE, summaryScopeNote, summaryTiles } from '../lib/dashboard'
 import { errorDetail, isPermissionDenied } from '../lib/http'
 import { ALERTS_EMPTY_DESCRIPTION, fetchAlerts, mapAlertRow, readFailureView, shapeFailureView } from '../lib/alerts'
 import { UiEmptyState, UiErrorState, UiLoadingState } from './ui'
@@ -33,6 +33,9 @@ const metricContext = ref(null)
 const metricEvidence = ref(null)
 const metricQueried = ref(false)
 const documents = ref([])
+// R274（X-6）：文档目录那一发只归这一格的脸。它和整屏的 error 是两个变量——
+// 改前它冒到 loadDashboard 的 catch，于是「最新文档没读到」会把四个数字和异常卡一起拖走。
+const documentsFailure = ref(null)
 
 // 总览只摆最近几行；完整列表与处置在各自的屏里。
 const RISK_ROW_LIMIT = 4
@@ -163,9 +166,26 @@ async function loadDashboard() {
 
 // 列表回来什么就摆什么：行本身只用于展示，不参与任何数字——页长一截断就静默变小的那种数是错的。
 async function loadOverviewCards() {
-  const docsResponse = await api.get('/documents/catalog')
-  documents.value = docsResponse.data.documents || []
+  await loadDocumentRows()
   await loadRiskRows()
+}
+
+/**
+ * 「最新文档」的取数：失败就地换脸，不冒泡（R274 · X-6）。
+ *
+ * 改前这一发 500 会把整屏拖进错误态，而且因为异常卡在它后面，连告警账本都不再发请求；
+ * 现在四个数字、异常卡、口径卡各自照旧，只有这一格说「没加载出来」。
+ * 🚫 这一格不许因为「反正列表空着也是空着」回落成空态：读不到与没有是两句话。
+ */
+async function loadDocumentRows() {
+  documentsFailure.value = null
+  try {
+    const docsResponse = await api.get('/documents/catalog')
+    documents.value = docsResponse.data.documents || []
+  } catch (err) {
+    documents.value = []
+    documentsFailure.value = documentsFailureView(err)
+  }
 }
 
 /** 告警账本按登录者可见范围回传，且已按 id 倒序（最新在前）：这里只截前四行，不重排。 */
@@ -317,7 +337,16 @@ onMounted(async () => {
             <h2>最新文档</h2>
             <button type="button" @click="emit('goto', 'docs')">查看全部 ›</button>
           </header>
-          <div v-if="documents.length" class="reference-list">
+          <UiErrorState
+            v-if="documentsFailure"
+            :title="documentsFailure.title"
+            :description="documentsFailure.description"
+            :retryable="!documentsFailure.denied"
+            retry-text="重新加载"
+            dense
+            @retry="loadDocumentRows"
+          />
+          <div v-else-if="documents.length" class="reference-list">
             <button v-for="item in documents.slice(0, 3)" :key="documentName(item)" type="button" class="reference-list-row" data-testid="dashboard-doc-row" @click="emit('goto', 'docs')">
               <span class="row-icon">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6" /></svg>

@@ -13,7 +13,7 @@
 
 | 文件 | 喂给谁 | 在等哪个后端 |
 | --- | --- | --- |
-| `dashboard-demo.js` | `DashboardPanel.vue` 的趋势卡、异常卡、`审批任务` KPI | R14：`/dashboard` 与 `/insights/detect` 目前都是客户端喂 rows 的算法端点，不查库 |
+| `dashboard-demo.js` | **已删除**（R267）：三枚常量随总览接线一起整枚摘掉，不留空壳。现在趋势卡没有真时间序列就画空态，「异常与风险」读服务端告警账本，四个数字读 `/dashboard/summary` 聚合 | 不等端点：这一屏的输入已经全部来自真回执。留一份空文件在目录里，只会让下一个接线的人照着它再编一次数据，所以 `v7-fake-data.test.js` 钉着它不许回到树里 |
 | `insights-demo.js` | `InsightPanel.vue` → `POST /insights/detect` 的入参 | R14：同上 |
 | `approval-demo.js` | `ApprovalPanel.vue` → `POST /approval/precheck` 的入参（只剩金额 / 部门 / 费用类型三格） | 这一格不是「在等端点」：R13 那两条早已落地，挂起待办读的是 `GET /hitl/pending`；留下这三格是 F4 裁定保留的「自查计算器」初始输入。**R237 起 `standard` 与 `evidence` 已按 R40 判据③删除** —— 比的标准与它的出处由服务端从知识库检索后随结论回，界面不持有数字 |
 | `login-demo.js` | **已删除**，登录页不得出现任何未溯源数字 | 不等端点：文件与三张装饰卡已一并移除，见下方注 2 |
