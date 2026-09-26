@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover
     psycopg = None
     dict_row = None
 
+from app.db.connection import open_connection_with_policy, parse_database_settings
 from app.notifications.contracts import advance_state
 
 TABLE = 'notification_states'
@@ -59,7 +60,12 @@ def _database_available() -> bool:
 def _conn():
     if psycopg is None:  # pragma: no cover - 无驱动就走不到这条腿
         raise RuntimeError('PostgreSQL driver is unavailable')
-    return psycopg.connect(_PG_URL, row_factory=dict_row)
+    # R299 收口由总控落笔（账本钉 test_r238_bare_connect_ratchet 当场拒了这枚新落点）：
+    # 新模块不许自带裸 psycopg.connect——全仓只供出 app/db/connection.py 这一枚边界，
+    # 其余落点全按遗留记账、不许多长。这里改走既有缝，与 app/rag/pg_store.py::_connect
+    # 同一个入口，row_factory 原样递下去，调用方与测试桩（都打在 _conn 上）一格都不用改。
+    settings = parse_database_settings(_PG_URL)
+    return open_connection_with_policy(settings, row_factory=dict_row)
 
 
 def _now() -> str:
