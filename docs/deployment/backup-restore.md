@@ -3,7 +3,7 @@
 默认备份范围包括原始文档、数据文件、Chroma、导出报告和日志目录。PostgreSQL
 业务数据和 Redis 队列状态不包含在工作区 ZIP 中，生产备份必须单独导出数据库。
 
-向量这条腿今天有两处落点：定案的生产向量库是 PostgreSQL + PGVector，双写镜像 `chunk_vectors` 随整库 `pg_dump` 一起进 dump（`scripts/backup_database.py:41-48` 不做表级筛选）；仍提供读服务的 Chroma 目录走工作区 ZIP。已验证的隔离演练 `tests/test_postgres_backup_recovery.py:31-41` 点名的向量表只有 `chunks`，没点名 `chunk_vectors` ⇒ 停写退役（R60）之前这一格要补。
+向量这条腿今天有两处落点：定案的生产向量库是 PostgreSQL + PGVector，双写镜像 `chunk_vectors` 随整库 `pg_dump` 一起进 dump（`scripts/backup_database.py:41-48` 不做表级筛选）；仍提供读服务的 Chroma 目录走工作区 ZIP。隔离演练现在**两枚落点一起点名**：`tests/test_postgres_backup_recovery.py:109` 的 `VECTOR_LANDING_TABLES = ("chunks", "chunk_vectors")` 是唯一事实源，`scripts/backup_database.py:38/:51` 要求 `TABLE` 与 `TABLE DATA` 两条目录都齐才算在场（只点名表名不算），恢复侧逐枚数行数并按 `<=>`／`<->` 两把尺各取回 top-1 比对。🔴 **但真库那一格今天仍未跑绿过一次**：离线件 22 passed、真机件 3 skipped（跑法钉在该测试件模块头「判据④」，需要 `EB_PG_BIN_DIR` + 5433 一次性集群）⇒ 停写退役（R60）要等这一格真跑，本文件不许提前写成「备份已覆盖向量列」。生产 CLI 默认不带落点核对（`--require-table` 是一枚可能变红的闸，业主点头才进默认路径）。
 
 ```powershell
 python scripts/backup_workspace.py --output backups/enterprise-brain.zip
