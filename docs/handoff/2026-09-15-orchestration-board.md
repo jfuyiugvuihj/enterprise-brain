@@ -3889,10 +3889,14 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 | `Pasteur`（结案） | 同上 `01a0dc2c-c5b5-7e73-8373-42bf95ae11d6` | **R274**（结案） | `be-r274` | **已并树 `273b13f`**：X-3 文档卡五张脸读服务端真值（缺席＝null 不折 0，线上恒「已解析篇数未记录」是**正确的脸不是修完**）／X-6 只让「最新文档」换脸不拖整屏／X-4 README 与磁盘闭合。主树复跑 **71/1304**（+3 件 +21 枚，与其交回分毫对得上）。它**明确拒绝**了「数 catalog 列表长度」这条看着更快的口径 ⇒ 处置正确。转出：**R284**（后端补 `documents_ready`，本班已派）· **R285**（X-2，本班已派） | 14:2x |
 | `Lovelace`（结案） | 同上 `01a0dc23-fa7e-7421-a712-09a67d480877` | **R271**（结案） | `be-r271` | **已并树 `8b0b6ce`**：块 C 告警处置闭环——处置后必重读、屏上「谁·何时」只来自服务端那一格（不靠回执缓存）；🔴 现场抓到两处真返工并自修（`actionFailure` 写在重读之前会被自己顶掉 ⇒ 404/409 三张脸读不出；`runDisposal` 缺最后一道动作闸 ⇒ 注定 409 的 POST 漏得出去）。**订正登记值**：`alerts` 实测 **15 列**，账上那个 13 少数了 `department` 与 `assigned_by`。契约件参照物从写死分支名改成读本树 `alerts.py`+`migrations/*.sql`（防该分支并树后 main 无故长红，3162ms→20ms）。主树复跑 **73/1351**（+2 件 +47 枚） | 14:3x |
 | `Avicenna`（结案） | 同上 `01a0dc4e-77a3-7573-a4c7-15c01eb61c6e` | **R278**（结案） | `be-r278` | **已并树 `ec42480`**：块 F 第一片顶栏——搜索钮与通知钮**摘**（各自三条独立理由，见本笔提交）、退出钮补可及名称、`eb_*` 整包扫上收到两条收尾共用的 `goToLogin()`（🔴 顺手收掉一格真外泄隐患：401 那条路今天没这一刀）。主树复跑 **75 files / 1367 passed / 0 failed**、148/0、build 0，五发变异全在写域内。三笔裁定见 §4CM.3；附带取证（`GET /users` 回 department 但**无改归属端点**）直接立出 **R290** | 14:3x |
-| `Boole` | `01a0dc63-870c-7250-83bb-c2f43c59d169`（rollout `14-25-05` 已数到） | **R281** `fromEnvelope` 让后端英文原句顶在字典句之前 | `be-r281`（**本班自建**，基点 `af2c131`，两枚 junction 验活，开工 dirty=0） | 🟡 09-26 14:25 派出（本 block 只此一次投递，无 model 覆盖）。判据：全局改判「给人看的句子一律出自字典」＋后端原文保留可报告出口（不许新造第二通道）＋ 🔴 未知码那一档**不许退化**（要可泛化规则，两种偷懒写法都要交代为什么不选）＋ `http.js:165` 那句假注释改口。写域只 `lib/errcodes.js`＋`lib/http.js`＋`lib/**` 测试；**所有 `.vue` 禁**。基点 `af2c131`..`ec42480` 对其写域**零漂移**（本班实取）⇒ 无需返工 | 14:36 |
-| `Locke` | `01a0dc6a-b0c8-7670-8753-fa66c2769041`（rollout `14-32-54` 已数到） | **R282** `queueFace` 无 `cancel_requested` 分支 ⇒ 落 `failed` 兜底 | `be-r282`（**本班自建**，基点 `ec42480`，junction 验活，开工 dirty=0） | 🟡 09-26 14:32 派出。派工前总控已现取证：`provenance.js:349-423` 逐格判六种状态**独缺 `cancel_requested`**，`:416` 兜底那句「这一轮在后台执行失败」＝把员工自己按的中断说成系统坏了；`:250` 状态清单注释里明明写着这一格。🔴 调用点已查到（`ChatPanel.vue:1317/1319`，其中 `:1317` 走落盘读数，R268 在 `:1310` 加的守卫拦不住）⇒ 不是纸面缺陷。写域 `provenance.js`＋`r150`＋必要时改口 `r260`／`r268-queue-cancel`；`dead` 那一格**只判不动** | 14:36 |
-| `Mencius` | `01a0dc6b-e6cb-7ed1-a0d2-b43be6b9115d`（rollout `14-34-14` 已数到） | **R284** `/dashboard/summary` 缺 `documents_ready` 一列 | `be-r284`（**本班自建**，基点 `ec42480`，junction 验活，开工 dirty=0） | 🟡 09-26 14:34 派出。判据：口径与 `documents` **逐字同源**（`dashboard.py:59-62` 那批 catalog 行已在手里 ⇒ 数一个字段而非数列表长度），三处语义现取写死（`PARSE_STATUSES` 集合／`_normalise_parse_status` 把 NULL 归 `pending` ⇒ 历史行会少报，必须可分辨或明写偏差／`index_status` 是另一回事，本列＝**解析完成**不是「可检索」）。前端**零改动**（读点已在），`rg "documents_ready" frontend/src` 命中集前后逐字相同是自证项。不许用 skip 蒙混 | 14:36 |
-| `Schrodinger` | `01a0dc6c-c226-7d03-ab3c-8d970ea195f5`（rollout `14-35-10` 已数到） | **R285＋R287** 两小格合一（X-2 白 403 那一发 ／ X-5 死码 `demoRows`） | `be-r285`（**本班自建**，基点 `ec42480`，junction 验活，开工 dirty=0） | 🟡 09-26 14:35 派出。R285：staff 因 `canReadAlerts()` 恒 false 每次进总览白打一发必 403 的 `GET /alerts` ⇒ 无读权就不发；🔴 但不许把那一格说成「当前没有异常线索」，要补第三态，且 403/401/读失败/真空四张脸两两不共用（G4 口径）。**必改口两枚钉**：`r267-overview-no-self-fed-rows.test.js:101` 与 `r274-catalog-failure-face.test.js` 的「恰好三条 GET」⇒ 只许改成有前提的条件式，摘掉或放宽成 `>=2` 一律没收。R287：`devFixtures/insights-demo.js:5` 死码随 `README` 那行一起订正（引用关系现取，仍有人用就不是死码） | 14:36 |
+| `Boole`（结案） | 同上 `01a0dc63-870c-7250-83bb-c2f43c59d169` | **R281**（结案） | `be-r281` | **已并树 `c5c89b8`**（与 R282 同一笔·四枚禁域钉由总控落）：人话位归 `dictionaryClaims()`，后端原文改走新出口 `rawMessage`；主树 1407 passed／lint 148-0／build 0。已 close | 15:10 |
+| `Locke`（结案） | 同上 `01a0dc6a-b0c8-7670-8753-fa66c2769041` | **R282**（结案） | `be-r282` | **已并树 `c5c89b8`**：`queueFace` 补 `cancel_requested` 一张脸；🔴 它取证更正本班派工词（屏幕假话今天尚无生产写点）→ 转出两格另立 **R293** 已投。已 close | 15:10 |
+| `Mencius`（结案） | 同上 `01a0dc6b-e6cb-7ed1-a0d2-b43be6b9115d` | **R284**（结案） | `be-r284` | **已并树 `77bbae5`**：`documents_ready` 与 `documents` 同出一趟读；契约 :1852 新建整节；总控亲跑变异（ready→parsing）11 failed 证钉真咬。live-PG 一腿未验入账。已 close | 15:10 |
+| `Schrodinger`（结案） | 同上 `01a0dc6c-c226-7d03-ab3c-8d970ea195f5` | **R285＋R287**（结案） | `be-r285` | **已并树 `21f18b8`**：staff 白 403 归零（两枚计数钉改条件式）＋`insights-demo` 死码清空；其自报的写域越界由本班**追认为判据所需**（记在本班派工词漏列的账上）。已 close | 15:10 |
+| `Franklin` | `01a0dc85-29db-7fc3-b792-470ba4977127`（rollout `15-01-49` 已数到） | **R288** 前端块 E 前三格（G15 原生 confirm／G01 上传后不刷新见状态／G20 裸按钮接原语；🔴 G08 密级不做等 H13） | `be-r288`（基点 `21f18b8`，**独占**） | 在途 | 15:10 |
+| `Meitner` | `01a0dc85-bff1-7850-9ae4-1eef29b4e212`（rollout `15-0x` 已数到） | **R283** 备份隔离演练未点名 `chunk_vectors`（R60 硬前置） | `be-r283`（基点 `21f18b8`，**独占**） | 在途 | 15:10 |
+| `Epicurus` | `01a0dc89-1b4a-71a3-8910-7f9fb10fc5c0`（rollout `15-06-08` 已数到） | **R292** catalog 离线腿无版本排序 ⇒ 两腿「当前版本」可能不同（先证伪再动手） | `be-r292`（基点 `77bbae5`，**独占**） | 在途 | 15:10 |
+| `Russell` | `01a0dc8a-f345-7f11-bea4-2248db55a9b6`（rollout `15-08-09` 已数到） | **R293** `cancel_requested` 落盘写点＋面板措辞委派 lib（R282 转出两格） | `be-r293`（基点 `77bbae5`，**独占**） | 在途 | 15:10 |
 | `Dirac`（🔴 **与第七班 R75 那枚同名**，找本行按 id 不按名字） | `01a0dc6d-c644-7a33-adfc-a9b771fa5579`（rollout `14-36-16` 已数到） | **R290** 改用户部门归属无端点（G10 前置） | `be-r290`（**本班自建**，基点 `ec42480`，junction 验活，开工 dirty=0） | 🟡 09-26 14:36 派出。核心考题＝**部门不是密码，绝不能自助**：Principal 的 department 直接决定可见数据范围，做成自助＝一发请求横向拿到别部门数据；三态各一枚钉（admin 改别人／staff 改自己**被拒且回「没权限」那张脸**／staff 改别人）。另两格：空串 vs 不改必须可分辨（少传字段不许把人变成无部门）；审计照本仓既有惯例、没惯例就不发明第二套。🔴 取证题＝改完归属之后**旧部门范围的读数会不会仍然回给他**（答案缓存七维含不含部门／会话／在跑任务／数据文件可见集／权限缓存）——有残留即新缺陷，报总控不许顺手改缓存层。`docs/api/contract-v1.md` **禁写**（R284 持有），契约段落交回由总控代落 | 14:36 |
 
 ⇒ 三条直接后果：① 「607 枚缺口」作废，两侧**条数相等**（1008 = 1008）；② 「距离口径未锁」也基本清了——PG 侧索引 `vector_l2_ops` 与 `vector_scope.distance_function=l2` 同源对齐；③ 切读缺的仍然只剩**真 top-k 对照**这一格，本班已作为 **R59b 第一步**下发，且要求比对必须在**两侧同时可达**的地方跑（backend 容器内：`/app/chroma_db` 是真卷、`postgres` 是内网 DNS；5432 未向宿主发布，宿主侧连不进去是设计如此）。🔴 老毛病第三次记账：**报「某物不存在」之前，先确认自己在哪一层查、用的是不是这一层的正确名字**——这次是查错了服务器上的另一个进程。
@@ -4529,3 +4533,44 @@ frontend/** 全程只读（ChatPanel.vue sha256 前 16 39fd661fa74ca098，16:54:
 1. **块 E 前三格**（R288 待正式立号）：G01 上传后不刷新看到「解析中→已可检索」／G15 原生 `confirm` 归零／G20 五屏裸按钮接 `UiButton`·`UiUpload`·`UiTable`；🔴 **G08 密级那一格不做**（等 H13/U5 业主裁）。写域含 `panel-states.test.js` 与 `r151-legacy-colors.test.js` ⇒ 与 `Schrodinger`(R285 动 `DashboardPanel.vue`)、`Locke`(R282 若提 `ChatPanel.vue`) 正面相撞，**必须等这两枚并树后再派**。
 2. 六枚清空后：全量门 `python scripts/run_gate.py -n 8 --dist loadfile`（R263/R272 之后从没跑过）→ 绿则补推 github 全链。
 3. 真机那一窗仍排在「在途清空＋全量门绿」之后。今日外部前置增量：`enterprise-brain:local` 与 `enterprise-brain-frontend:local` 仍是 09-25 13:56 建的，落后今天全部并树 ⇒ 开窗前**必须 plain rebuild**；`ssh vm` 第二验证机仍未复测。
+
+## §4CN（09-26 14:4x–15:1x，第九班·第三格，主树 `4ce6599` → `77bbae5`）：四枚并树（两笔由总控落钉）· 一次假账当场抓到 · 三枚新单一次投出
+
+### 一、本班落了什么（五枚提交，链完整）
+
+| 提交 | 内容 | 门 |
+| --- | --- | --- |
+| `c5c89b8` | **R281＋R282 同一笔并树**，四枚禁域钉由总控落 | 77 files／**1407 passed**（合前 75/1367 ⇒ +2 件 +40 枚＝25＋15，分毫对上） |
+| `7c48f89` | `ApprovalPanel.vue` 那枚三元随 R281 改判变成同义反复，折成一条出口（净 −2 行） | 1407 不变·零测试件改动 |
+| `21f18b8` | **R285＋R287** 并树（staff 白 403 归零／`insights-demo` 死码清空） | 78 files／**1423 passed**（+1 件 +16 枚） |
+| `77bbae5` | **R284** 并树（`documents_ready`，两列同出一趟读） | 定向 109 passed |
+| 本枚 | 看板名册＋§4CN | — |
+
+`lint:colors` 全程 **148 problems / 0 errors** 一格未许多；`npm run build` 每笔 exit 0；`check_no_bom`／`check_vector_wording`（18 枚文档）／`audit_plan_ticket_ledger`（43 号逐条自证）三把尺子每笔 rc=0。gitee 已同步至 `21f18b8`（本格末再推），github `origin` 仍 TLS 握手即断（网络件，恢复后补推）。
+
+### 二、这一格真正的收获不是四枚并树，是抓到自己两笔错
+
+1. **🔴 上一格交接摘要里"be-r282 是干净的"是假的。** 本班第一枪 `git status` 输出被截断，据此以为 `Locke` 从未动工；实际它 14:40 起就在写 `provenance.js`／`r150-provenance.test.js`／新件。所幸下一步是"逐棵现取 HEAD＋dirty"而不是"照摘要派第七枚碰 `provenance.js` 的单"——**若照摘要派工就是两枚同文件真写域冲突**。教训：截断的输出不是证据，名册与摘要都不能替代逐棵实取（这条 `AGENTS.md` 已写，本班是第二次现场验证它的代价）。
+2. **派工词写域漏列第三枚。** `Schrodinger` 自报越界改了 `r274-devfixtures-readme-matches-tree.test.js`，但那是 R287 判据③**我自己明写的**「改口必须连它的期望一起同步」——README 行原文被 `expect(row.feeds).toBe(...)` 钉死，二者不可能同时满足。**裁定：越界不成立，追认该件为 R287 写域，账记在本班派工词头上。** 规矩补一条：派工前必须把判据里点名的每一枚钉 rg 出来并入写域清单，不能只列"我以为它会改的文件"。
+
+### 三、三笔裁定（避免下一班重复劳动）
+
+- **`dictionaryClaims()` 的分流规则采纳**：分流只认「这枚 code 有没有被字典收编」，不认「后端有没有回 message」。未登记的码保留后端那句原话占人话位，比"屏幕一律中文"诚实——未知码那一档，后端原句是唯一线索，删掉它屏幕上只剩一句笼统兜底。M2（切「一律丢弃 message」）**不采纳**，理由与切换成本都写在 `errcodes.js:475-516` 的 docstring 里，谁要翻案先读那段。
+- **同义反复就地收**：`errorText('department_override_denied')` 与 `errorDetail(那一发 403 信封)` 在 R281 之后**逐字同一**（本班 node 现跑实测，两通道输出完全相等），故 `ApprovalPanel.vue:183-185` 的三元是给已消失的洞打的补丁，留着＝给同一句话开第二条出口；:174 的 `departmentRefused` 保留（它管那张脸不管句子）。
+- **R284 的"历史行算 pending"偏差方向认可**：`_normalise_parse_status` 在端点看到行之前就把 NULL 折成 `pending`，要分辨「历史行 vs 诚实 pending」只能另发一次查询（撞"两列同趟读"的判据②）或在 catalog 透出原始值（禁域）。选悲观侧＋契约明写＝宁可少报 ready 不可多报。**不另立单。**
+
+### 四、总控亲验手段入库（不采信自述的具体做法）
+
+- **变异复验由总控亲手做**：把 `dashboard.py` 里 ready 的比对口径换成 `"parsing"` ⇒ `tests/test_r284_documents_ready_column.py` **11 failed／13 passed**，还原后 24 passed、numstat 回到 67/4。执行层报的"摘钉必红"只有自己动手复现一次才算数。
+- **搬树前后各取一次 numstat 对分毫**：`af2c131`／`ec42480` 到 HEAD 对写域 `git diff --name-only` 双向零漂移 → 按字节搬入 → `git diff --numstat` 与源树逐字相等（79/10、12/3、12/1、23/0、5/2、15/3、27/2、20/3、13/3、1/1、9/8、23/1、20/0、67/4、69/0）。本班插入 import 行带了裸 LF，`git` 当场警告 "LF will be replaced by CRLF" ⇒ 归一后 CR=LF 才提交。
+- **跨语言锚点独立复取**：`rg -ln "errcodes|provenance|artifacts|toasts" tests scripts` 命中 8 枚 Python 件，本班亲跑 **170 passed**；`rg "DashboardPanel|lib/dashboard|insights-demo" tests scripts` 命中 **0**（与交回一致，但由总控自己取）。
+
+### 五、R291 那格欠账的由来（本班新立，未派）
+
+`artifacts.test.js` 一度被本班钉了一枚 `err.rawMessage`，跑出来是 `undefined` —— 根因在 `frontend/src/lib/artifacts.js:52-55`：它 `new Error(result.message)` 之后只复制 `status/code/retryable`，**`rawMessage` 与 `rawCode` 在这道消费口被丢掉**。本班当场撤掉那枚越界断言并在测试件里写明撤的理由（不是放宽，是不属本单射程）。⇒ **R291**：让"后端原文"一路透到 `UiErrorState` 详情区，写域含 `components/ui/**` 与 `lib/artifacts.js`。🔴 **它与 R288 抢 `panel-states.test.js`（该件现含 12 处 `UiErrorState` 引用）**，故必须排在 `Franklin` 并树之后。
+
+### 六、在途六枚（并发已到实测上限 6，本班不再投）
+
+`Goodall`R269（基点 `af55756`·Chroma 读路径根因）／`Dirac`R290（`ec42480`·改用户部门归属端点＋G10 前置）／`Franklin`R288／`Meitner`R283／`Epicurus`R292／`Russell`R293——后四枚基点均为本班内新建，逐棵现取过 HEAD 与 porcelain。**R290 的契约段落仍由总控代落**（`contract-v1.md` 刚随 R284 新建了 `:1852` 一节，同一文件两枚单＝串行）。
+
+写域矩阵（派工前逐个核过两两零交集）：`DocPanel/DashboardPanel/DataPanel/ChartViewer/SourceCard/GraphPanel/DocumentPreviewModal/ApprovalPanel.vue`＋`panel-states`／`r151-legacy-colors` 归 `Franklin`；`tests/test_postgres_backup_recovery.py`＋`scripts/backup_database.py` 归 `Meitner`；`app/documents/catalog.py` 归 `Epicurus`；`ChatPanel.vue`＋`r268-queue-cancel`＋`r282-cancel-requested-face` 归 `Russell`；`scripts/compare_vector_recall.py`＋`tests/test_r269_*` 归 `Goodall`；`app/api/v1/users.py`／`app/common/auth.py` 归 `Dirac`。**🔴 `provenance.js` 谁都不许碰**（`Russell` 只能读，判要改即停下回报）。
