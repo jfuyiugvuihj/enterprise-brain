@@ -12,7 +12,7 @@ const precheckMemo = new WeakMap()
 import { computed, getCurrentInstance, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
 import { DEPARTMENT_KEY, errorDetail, isPermissionDenied } from '../lib/http'
-import { errorCodeOf, errorText, isRetryable, normalizeError } from '../lib/errcodes'
+import { errorCodeOf, isRetryable, normalizeError } from '../lib/errcodes'
 import { demoForm } from '../devFixtures/approval-demo'
 import { UiEmptyState, UiErrorState } from './ui'
 import HitlPendingPanel from './hitl/HitlPendingPanel.vue'
@@ -175,14 +175,12 @@ async function submitCheck(force = false) {
     degraded.value = !denied.value && !departmentRefused.value && errorCodeOf(err) === KB_UNAVAILABLE_CODE
     failed.value = true
     result.value = null
-    // 部门被拒那一发单独取字典那句：后端这一发的信封体是 {code, message}，而 message 是
-    // 英文原句（"department must match the authenticated principal"），normalizeError 先采信
-    // 信封里的 message ⇒ 屏上会挂出一句英文。取字典不是绕过后端：lib/http.js:163 写的就是
-    // 「句子一律出自 errcodes 字典」，而那半条在形状 2 上没兑现 —— 全局改判属 errcodes 层
-    // （本单禁域），这里只把自己这一张脸的句子的出处挑对。
-    error.value = departmentRefused.value
-      ? errorText(DEPARTMENT_OVERRIDE_CODE)
-      : errorDetail(err, '审批预审失败')
+    // 句子出处只有一处：R281 把「形状 2 的信封 message 占人话位」改判之后，errorDetail() 对
+    // department_override_denied（LEGACY_ALIASES 在册）出的已经是字典那句中文，后端那句英文改走
+    // rawMessage。原先这两行的三元是给那个洞打的现场补丁，今天补丁与 errorDetail 逐字同一
+    // （等值性由 lib/__tests__/r281-dictionary-voice.test.js:155 钉着），留着就是给同一句话开第二条出口。
+    // departmentRefused 本身照留：:174 它驱动失败卡那张脸（:89 的标题），管的是脸不是句子。
+    error.value = errorDetail(err, '审批预审失败')
   } finally {
     loading.value = false
   }
