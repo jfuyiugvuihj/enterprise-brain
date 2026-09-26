@@ -190,6 +190,9 @@ const loading = ref(false)
 const loadingMore = ref(false)
 const loadError = ref('')
 const loadDenied = ref(false)
+// R291：详情区（UiErrorState 的 raw-error）要的是错误对象本身，不是任何加工后的句子。
+// 这一格存列表那一发 catch 到的原物；它来自 http.js 的 GET /artifacts，不经 lib/artifacts.js。
+const loadErrorSource = ref(null)
 const moreError = ref('')
 
 const pendingDelete = ref('')
@@ -198,6 +201,9 @@ const openingId = ref('')
 const previewId = ref('')
 const previewUrl = ref('')
 const actionError = ref(null)
+// R291：同上，与 actionError 同生同灭。发不发 GET 失败、还是压根没有错误对象（无地址那一发），
+// 这一格就留 null —— 没有原文就不长详情区，前端不替后端编一句话。
+const actionErrorSource = ref(null)
 
 let activeHandle = null
 let openToken = 0
@@ -233,7 +239,7 @@ function dropList() {
 async function loadArtifacts(options) {
   const append = Boolean(options && options.append)
   if (append ? loadingMore.value || loading.value : loading.value) return
-  if (append) { loadingMore.value = true; moreError.value = '' } else { loading.value = true; loadError.value = ''; loadDenied.value = false }
+  if (append) { loadingMore.value = true; moreError.value = '' } else { loading.value = true; loadError.value = ''; loadDenied.value = false; loadErrorSource.value = null }
   const requestOffset = append ? offset.value : 0
   try {
     // _ts 沿用 DataPanel 读列表的防缓存写法；后端多余查询参数不校验，不影响 limit/offset 判定。
@@ -256,6 +262,7 @@ async function loadArtifacts(options) {
       dropList()
       loadDenied.value = denied
       loadError.value = detail
+      loadErrorSource.value = err
     }
   } finally {
     if (append) loadingMore.value = false
@@ -267,12 +274,15 @@ function reload() {
   releasePreview()
   loadError.value = ''
   loadDenied.value = false
+  loadErrorSource.value = null
   moreError.value = ''
   actionError.value = null
+  actionErrorSource.value = null
   loadArtifacts()
 }
 
-function noteAction(view, kind, artifactId) {
+function noteAction(view, kind, artifactId, source) {
+  actionErrorSource.value = source || null
   actionError.value = {
     title: view.title,
     description: view.description,
@@ -302,6 +312,7 @@ async function openArtifact(item) {
   const token = ++openToken
   openingId.value = item.artifactId
   actionError.value = null
+  actionErrorSource.value = null
   try {
     const handle = await fetchArtifactBlob(target)
     if (token !== openToken) { handle.revoke(); return }
@@ -321,6 +332,8 @@ async function openArtifact(item) {
       openErrorView({ denied: isPermissionDenied(err), detail: err.message || '', retryable: err.retryable }),
       'open',
       item.artifactId,
+      // 这一枚 err 就是 lib/artifacts.js 重建并 attachRawText 过的那一发的真身（R291 的病因现场）
+      err,
     )
   } finally {
     if (token === openToken) openingId.value = ''
@@ -337,6 +350,7 @@ async function removeArtifact(item) {
   if (!item || deletingId.value) return
   deletingId.value = item.artifactId
   actionError.value = null
+  actionErrorSource.value = null
   try {
     await http.delete('/artifacts/' + encodeURIComponent(item.artifactId))
     if (previewId.value === item.artifactId) releasePreview()
@@ -346,7 +360,7 @@ async function removeArtifact(item) {
     // 不把 offset 也退一格，下一页会整行漏掉一条。
     offset.value = Math.max(0, offset.value - 1)
   } catch (err) {
-    noteAction(deleteErrorView({ denied: isPermissionDenied(err), detail: errorDetail(err, '') }), 'delete', item.artifactId)
+    noteAction(deleteErrorView({ denied: isPermissionDenied(err), detail: errorDetail(err, '') }), 'delete', item.artifactId, err)
   } finally {
     deletingId.value = ''
   }
@@ -355,7 +369,7 @@ async function removeArtifact(item) {
 function requestDelete(item) {
   if (!item || deletingId.value || loading.value || loadingMore.value) return
   const step = advanceDelete(pendingDelete.value, item.artifactId)
-  if (step === 'arm') { pendingDelete.value = item.artifactId; actionError.value = null; return }
+  if (step === 'arm') { pendingDelete.value = item.artifactId; actionError.value = null; actionErrorSource.value = null; return }
   if (step !== 'execute') return
   pendingDelete.value = ''
   removeArtifact(item)
@@ -395,6 +409,7 @@ defineExpose({ loadArtifacts, reload })
       v-else-if="face === 'error'"
       :title="listView.title"
       :description="listView.description"
+      :raw-error="loadErrorSource"
       :retryable="listView.retryable"
       retry-text="重新加载"
       :busy="loading"
@@ -464,6 +479,7 @@ defineExpose({ loadArtifacts, reload })
         v-if="actionError"
         :title="actionView.title"
         :description="actionView.description"
+        :raw-error="actionErrorSource"
         :retryable="actionView.retryable"
         retry-text="再试一次"
         :busy="Boolean(openingId)"

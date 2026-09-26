@@ -74,3 +74,29 @@
 .ui-error-state--dense .ui-error-state__mark {
   margin-top: 0;
 }
+
+/* R291 详情区：后端原话只在这里出现。折叠 + 等宽 + 可整段选中，默认不占面板高度；
+   色相沿用 --danger 那一族之外的中性档（text-3），不给这块加第二个语义色与任何动效。 */
+.ui-error-state__detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1, 4px);
+  margin-top: var(--s-1, 4px);
+}
+
+.ui-error-state__detail-summary {
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: var(--t-xs, 12px);
+  overflow-wrap: anywhere;
+}
+
+/* 逐字照排：pre-wrap 保住后端自己的换行，前端不重排、不加前缀 */
+.ui-error-state__detail-text {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs, 12px);
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

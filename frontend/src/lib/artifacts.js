@@ -29,6 +29,25 @@ function createObjectUrl(blob) {
   return URL.createObjectURL(blob)
 }
 
+/**
+ * 把后端原文两格搬到 Error 上，随这一发失败一路走到渲染侧（R291 判据②的前半）。
+ *
+ * 为什么要这一枚函数：下面的 catch 把 blob 错误体交给 errcodes 的通用解析器，
+ * 拿回来的是一枚成品 result（六格：code / rawCode / message / rawMessage / retryable / status），
+ * 而重建 Error 那几行历史上只复制 message/status/code/retryable —— rawMessage 与 rawCode
+ * 在这道消费口当场被丢掉。数据出口不修，渲染侧（components/ui 的详情区）就永远没有东西可展示，
+ * 客户「把后端原文贴给运维」时屏幕上仍然一个字符都看不到。
+ *
+ * 为什么只在非空时挂：这两格的语义是「后端就这一发回了什么」。裸码名、422 数组、
+ * 传输层错误压根没有信封 message 那一格，留成 undefined 比留成空串诚实 —— 消费方
+ * 照样能无条件读（读不到就是今天那张脸，判定在 components/ui/error-detail.js）。
+ */
+function attachRawText(error, result) {
+  if (typeof result.rawMessage === 'string' && result.rawMessage) error.rawMessage = result.rawMessage
+  if (typeof result.rawCode === 'string' && result.rawCode) error.rawCode = result.rawCode
+  return error
+}
+
 export async function fetchArtifactBlob(url, { signal } = {}) {
   const target = resolveArtifactUrl(url)
   if (!target) {
@@ -53,6 +72,7 @@ export async function fetchArtifactBlob(url, { signal } = {}) {
       error.status = status
       error.code = result.code || `http_${status}`
       error.retryable = result.retryable
+      attachRawText(error, result)
       throw error
     }
     if (err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') {

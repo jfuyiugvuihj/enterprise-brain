@@ -15,7 +15,7 @@
 | `UiTabs` | `modelValue`(v-model) `items` `orientation` `ariaLabel` `emptyText` | `panel-<id>` `label-<id>` · default | `update:modelValue` `change` | roving tabindex；`role="tablist"` 满足 §8.2 |
 | `UiUpload` | `label` `hint` `accept` `multiple` `maxSizeMb` `items` `busy` `disabled` `error` `codeLabel` `emptyText` | — | `select(files)` `reject({file,code})` `remove(i)` `retry(i)` | 前端校验只产 errcodes 里的码名，不新增码 |
 | `UiEmptyState` | `title` `description` `actionLabel` `actionVariant` `dense` | `icon` `description` default · `actions` | `action` | 面板级空态；`role="status"`（结果，不打断读屏），一句人话 + 一个主操作（§8.5）。测试位 `ui-empty-state` / `ui-empty-action` |
-| `UiErrorState` | `title` `description` `codeLabel` `retryText` `retryable` `busy` `dense` | `icon` `description` default · `actions` | `retry` | 面板级失败态；`role="alert"`，只占 `--danger` 一个色相。测试位 `ui-error-state` / `ui-error-retry` |
+| `UiErrorState` | `title` `description` `codeLabel` `rawError` `retryText` `retryable` `busy` `dense` | `icon` `description` default · `actions` | `retry` | 面板级失败态；`role="alert"`，只占 `--danger` 一个色相。测试位 `ui-error-state` / `ui-error-retry` / `ui-error-state-raw` |
 
 ## 错误展示唯一入口
 
@@ -49,6 +49,27 @@ notifyError(err)                                    // 内部走 normalizeError�
 
 失败态的三件套都来自本目录：`errorCodeLabel` / `isRetryable` 全部读 `normalizeError` 的产物，
 面板不必自己碰后端原始响应。权限类失败传 `:retryable="false"`，不给用户一个只会再失败一次的按钮。
+
+## 后端原文：详情区（R291）
+
+`normalizeError()` 从 R281 起就把后端信封 `message` 那一格原样收进 `rawMessage`，但那是**数据出口**；
+渲染出口今天只有一条，且刻意不画它（`errorCodeLabel()` 的「错误码：xxx」小字只在字典收不下的码上出现）。
+于是「把后端原文贴给运维」这一格在屏幕上找不到一个字符。补法是把这一发错误原样递给原语：
+
+```vue
+<UiErrorState title="这张图没能打开" :description="errorDetail(err, '')" :raw-error="err" @retry="reload" />
+```
+
+面板只要多传一枚 `rawError`，剩下的判断都不在面板里：`error-detail.js::rawDetailOf()` 一处裁定
+「露不露、露哪一句」，测试位 `ui-error-state-raw`。三条口径写在它的文件头，逐条有契约出处：
+
+- 没有原文 ⇒ 这一块压根不渲染，屏幕上还是今天那张脸（不出现空串、`undefined`、`[object Object]`）。
+- 原文与人话同字（未知码那一档后端那句本来就占着人话位）⇒ 不重复第二遍。
+- 鉴权 / 越权 / 密级那一族（`permission_denied`、`authorization_unavailable`、`account_unavailable`、
+  `row_scope_denied`、`no_visible_rows` 与 policy.py 那一族原因码，以及 401/403 状态）⇒ 一律不显示
+  后端原文，也**不替它编**一句「后端未提供原文」。沉默就是沉默。
+
+`rawDetailOf` 也在 barrel 上，别在面板里复算一遍判断。
 
 ## token 依赖
 
