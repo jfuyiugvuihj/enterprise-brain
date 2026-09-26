@@ -3502,100 +3502,52 @@ Chroma 侧"修"它的唯一手段是重建那 1,008 枚索引，而 `rebuild_ind
 `tests/test_r269_index_state.py:312` 的 `assert ann_miss >= 1` 在主树首跑即红（其后单跑 6 次全绿 ⇒ 抖动率约 1/7，与该件 docstring `:287` "缺口 7..480 随写序浮动" 及报告 §9.2 "6 遍只出 1 遍"同源）。退回 `Goodall` 收口，判据写死：**门内只留确定性断言**（`count==1000`／`by_data==13000`／`len(stored)==1000`／`brute_miss==0`），随机那半改为现取记录＋方法学守卫；🔴 不许 `skip`／`xfail`／删件，也不许改成"跑 5 遍至少中 1 遍"（那是拿 22 s 门时买一个仍然非零的假红率）。理由：**门一旦被假红污染，"敢不敢并树"的心理成本会把整条流水线拖死**——这一格比这一格的知识重要。
 
 另两笔留档：(1) 本班据**被截断的 `git status` 输出**判定 `be-r282` 干净、几乎照摘要派第七枚碰 `provenance.js` 的单，靠"逐棵现取"救命 ⇒ 摘要与名册都不能替代实取；(2) 派工词写域第三次漏列（`Schrodinger` 那枚越界实为判据③所要求），规矩补一条：**派工前必须把判据里点名的每一枚钉 rg 出来并入写域清单**。
-## �10209-26 ,A��, <; `ab27f7e`�`fe9fa9f`V2 �! �H � + �� Agent �S�ӄn + �W1 �>	
+---
 
-### �E #15���� Agent ���{,m!	��Ӻ��Z
+## §102（09-26 第二格·总控重写本）：跟进单编码损坏已截除 · 波次一判据重立 · 波次二排队
 
-- `Franklin`(R288)/`Meitner`(R283)/`Epicurus`(R292)/`Russell`(R293)/`Lagrange`(R294) ���**  =�h�\( 15:2315:28**0 16:3x ��U��� ��� mtime`���	
-- ��Ӻ(d �+��	AC   `0x00000000``Test-Connection gitee.com` True`wait_agent` $! 15 min hz status10 � node + 3 � python � 810 s **dCPU h 0**�A��	;��� rollout ��� $�**�L�/!��a{**/b/:ha
-- nm�h� `close_agent`+ `Goodall`��s���� ����Q� ;���� � `ab27f7e`;��Ф�����**�:�	�ӄ�k**=����e	� � diff �0YXZ�
-- =4 **���;���u�	**>�� ~25 min �� !��  =���� 40 min �=�s�;�;���**͕U�( �**�rIKM{�we�/(�,�j9� *�
+> 🔴 **本节是重写本。** 原 §102／§103（09-26 第一格 `ef1fad8`／`27068de` 两次追加）已被字节级损坏，无法从历史里救回，现已从文件里截除。截断点 = 字节 697,424，与 `fe9fa9f` 提交态**逐字节相等**（纯追加，没伤史）。损坏只发生在追加的两段里：`ef1fad8` 起 U+FFFD 由 7 枚涨到 739，`27068de` 涨到 1,248，另混进 243 枚控制字符。
 
-###  �! �����:�H����n/��/���	
+### 一、事故 #17：跟进单自己烂了一截（总控亲手造成，不是执行层）
 
-| U | �`�� | ,�(��� |
+- **根因**：追加走的是「整文件按 latin1 解码 → 拼接 → 按 latin1 编码写回」。中文码点全部 > `0xFF`，latin1 编码时只保留低字节 ⇒「行」变成 `0x8C` 这类碎片，UTF-8 再读就是 U+FFFD + 控制字符。**latin1 往返只在「行 splice 改写既有行」时安全，追加新写的中文散文时必炸。**
+- **纠正条款（往上班规的修订）**：`docs/handoff/*.md` 的**追加**一律用字节拼接——`base = open(p,'rb').read()` 与 `new.encode('utf-8')` 直接相加，全程不做任何有损编解码；改写既有行才允许 latin1，且写前必须断言 `base == git show <基点>:<路径>` 的前缀，写后必须看 `git diff --numstat` 的**减少行数**（本类只该出现新增，出现大面 deletions 当场就是事故 #16 那一族）。
+- **新门**：`tests/test_r302_docs_utf8_guard.py`（总控自写自验，随本节同笔并树）扫 `docs/handoff/*.md` ⇒ 出现 U+FFFD 净增、NUL、或 `\t\n\r` 之外的控制字符就红。事故 #16（4,588 行看板被赋值成字面量 `"x"`）与事故 #17 是同一族：**共享文档的写入没有下牙**。
+- **谁受影响**：`Arendt`(R298) 取证时撞上并**如实上报、且没碰 `docs/**`**——记它一笔。波次一在途三张单的判据原文虽随损坏丢了，但**派工词在各 Agent 自己的上下文里完好**，施工不受影响；本节把判据按可核对的事实重立一遍，往后的验收以本节为准。
+
+### 二、写域图（V2 波次一/二唯一事实源；同名两枚 = 真冲突，必须串行）
+
+| 单 | 独占写域 | 备注 |
 |---|---|---|
-| R298 OCR | `app/rag/loader.py`/ 9�	+ � `app/rag/ocr.py` + � `tests/test_r298_*.py` | � |
-| R299 �-� | � `app/notifications/**` + � `app/api/v1/notifications.py` + `app/main.py`+1 L	+ ��� + � `tests/test_r299_*.py` + Q� append | ��(� `app/main.py`	 |
-| R300 h< | � `app/rag/tables.py` + � `tests/test_r300_*.py` | �=4 + `loader.py`����!� |
-| R59 W1 | `app/rag/retriever.py` + `retrieval_pipeline.py` + `pg_store.py` + �(� | �=4 + `chat.py`�/ R294 �	 |
-| R294 ͕ | `app/api/v1/chat.py` e}w + (� | �U$n� |
+| R298 OCR | `app/rag/loader.py` ＋ 新 `app/rag/ocr.py` ＋ `tests/test_r298_*.py` ＋ `tests/fixtures/r298_*` | ✅ 已并 `e441d10` |
+| R301 OCR 接线 | `app/api/v1/chat.py`（上传/详情那两段）＋ `tests/test_r301_*.py` | 🆕 本节新立，见第六节 |
+| R299 通知中心 | 新 `app/notifications/**` ＋ `app/api/v1/notifications.py` ＋ `app/main.py`（只 +1 行注册）＋ `tests/test_r299_*.py` ＋ 契约 append | 🔴 与谁都不抢 `main.py`；契约 `docs/api/contract-v1.md` 的 append 由总控代落 |
+| R300 表格抽取 | 新 `app/rag/tables.py` ＋ `tests/test_r300_*.py` | 🔴 **禁 `loader.py`**（R298 已占，接线排队到波次二 #6） |
+| R59 块1 切读实现 | `app/rag/retriever.py` ＋ `retrieval_pipeline.py` ＋ `pg_store.py` ＋ 配置 | 🔴 **禁 `chat.py`**（块2 排队，等 R295 让位） |
+| R59 块2 | `app/api/v1/chat.py` 的检索入口 + 切读开关 | 与 R295／R301 抢同一文件 ⇒ 串行 |
+| R294 消费时刻现取身份 | `deploy/queue_worker.py` ＋ `app/agents/tools.py` ＋ `chat.py`（仅注释） | ✅ 已并 `70fef37` |
+| R295 会话历史只按 owner 归还 | `app/api/v1/chat.py`（回读 + 队列归属两段）＋ 新 `tests/test_r295_*.py` | 🟢 在途（树 `be-r295`@`e441d10`）；**不写 migration**，走回读重过 `scope.allows` |
+| R296 画像部门降为只读派生 | `app/memory/profile.py` ＋ `app/common/auth.py`（`PUT /profile`）＋ `app/agents/nodes.py`（prompt 拼接）＋ `tests/test_r296_*.py` | 🟢 在途（树 `be-r296`@`27068de`）；裁定＝**降为只读派生**，不允「两份都留但打个警告」 |
+| R297 入口矩阵 7→8 | 只 `tests/test_r230_db_ready_selfheal.py` | 🟢 在途（树 `be-r297`@`e441d10`）；生产码零触碰 |
+| R283 备份演练点名向量列 | `scripts/backup_database.py` ＋ `tests/test_postgres_backup_recovery.py` ＋ `tests/test_r283_*.py` | 🟡 待投；`be-r283` 脏件保住（**好货别推倒**：`<=>` 与 `<->` 两把尺 + 预先声明 top-1，顺带答了 H20） |
+| R288 前端块 E 三格 | `frontend/src/components/{ApprovalPanel,ChartViewer,DataPanel,DocPanel,DocumentPreviewModal,GraphPanel}.vue` ＋ 扫描器 | 🟡 待投（第 7 枚投递被拒，见第五节）；Franklin 的 6 枚脏件原地保住，树已对齐 `e441d10` |
+| R291／R293 前端 | `components/ui/**`·`lib/artifacts.js`·`lib/provenance.js`·`ChatPanel.vue`·`panel-states.test.js` | 🟡 排队；与 R288 抢 `panel-states.test.js` ⇒ 一次一枚 |
+| 🔴 公摊禁域 | `app/agents/orchestrator.py`（R29/R30/R31/R32/R33/R38/R42 共抢）·`pyproject.toml`·`uv.lock`（依赖已由总控在 `fe9fa9f` 一次钉死）·`migrations/**`·评测集 `tests/fixtures/business_evaluation_*.jsonl`·`deploy/.env.server` | 本轮一律不许派 |
 
-- 	al�n` `loader.py`  `tables.py` �M� R298�R300 �vL$��� *��1�{2L�� �5.3	a �V1;� !MP`fe9fa9f`	**gLB��� `pyproject.toml`/`uv.lock`**b 	����h�0�Y͕ �**�(����**H diff ��K���e
+### 三、波次一验收结论（总控亲验，不采信执行层自述）
 
-### �R298 $nh�OCR k� PDFV2 �!  A	
+- **R294 → 并树 `70fef37`**。施工树 `be-r294`@`674353c` 首跑 400 passed；总控在**主树**重跑 11 份点名件 = **280 passed**（含 `test_r238_bare_connect_ratchet.py` 33 passed）。写域 `674353c..dc92df5` **零漂移**。⚠️ 施工树里 `test_r238` 那一枚红**不是本单的锅**：它的基点带着旧账本（`persistence.py:596`），而 `dde3c1f` 已因 R272 把它改口成 `:662`；尺子按物理行号记账，属基点落后，不是回归。
+  - 三项待裁（总控裁定见下）：① **memory 档回退口径**＝保留「按快照跑 + 日志明写未经现取校验」，因为可达性已按调用点取证（生产形态 `storage_mode` 只可能 `postgres`/`unavailable`），代价是既有 8 份队列件的 fixture 从不摆用户行；② **漂移方向**＝维持「判失效」，「换部门就当新部门跑完」要业主点头才改，反证二就是那条路的代价说明书；③ `chat.py:827-831` 载荷快照当单子归属人 → **转 R295**（已随 R295 派工词写进判据④）。
+  - 两笔**假话遗留**待总控落笔：`docs/api/contract-v1.md:1982-1987`（R290「三处残留」第 1 条今天成假话）、`app/api/v1/chat.py` `queue_turn_sources` 的 docstring（已在 R295 写域内，随它收）。
+- **R298 → 并树 `e441d10`**。总控在主树重跑 8 份件 = **219 passed**（含 R130 那把 NUL 尺、上传韧性、文件安全、归属、索引发布）；本单三件 39 passed 亲验两遍（施工树 17.2 s／主树）。写域 `fe9fa9f..dc92df5` 对 `loader.py` **零漂移**。实测读数：引擎初始化 0.610 s，扫描页单页 min 1.14／中位 2.11／max 2.72 s（CPU，dpi=200）。
+  - 🔴 **已知缺口（不阻塞结案，另立 R301）**：`PdfExtractionReport` 今天**没有任何消费方**——`load_document` 只能回 `str`，客户上传扫描件之后屏幕上看不到「扫描页 N/M／哪几页 OCR／哪几页没跑成」。
+- **R299／R300／R59 块1／R296／R295／R297 在途**，见名册。
 
-- **��;�,��/�K	**`app/rag/loader.py:37-46` �	 pypdf �,B�� PDF ��e/z2 `app/api/v1/chat.py:3870` � e� *W&����e��� `parse_status="failed"`� �7k���)��@/**
- s1%**/� F0,U9�1/� <
-- ` **�K/**u$� �u�,BW&pN�<X(���aM�k�u<�8�v�e��c=Tp�g��k�up/;up
-- a **OCR �M,0**��� `rapidocr_onnxruntime`!�� wheel ����det 4.7 MB + rec 10.9 MB + cls 0.6 MB	��U� OCR/TQ�!���(��**nM�v���**�Y���z�,�E�
-- b <( `pypdfium2`DPI �p� CPU Uu�K��7:� GPU _�ї�	
-- c **	�,B�u�� OCR**��c� = ��� + ����}-R269 �����	��I���	=4 ��u$u�e��t��	 
-- d OCR S�e��W�{� * `sanitize_text`R130 �  	& PG � `executemany` ��
-- e **�� e4 �**�� fixture � OCR � failed	 OCR � ��"	�,B�u�:L OCR � �΁( � M��^z�,OCR �,& NUL � �
-- ��`retriever.py`/`retrieval_pipeline.py`/`pg_store.py`R59 W1	`app/documents/catalog.py`R292	`app/api/v1/chat.py`R294	`frontend/**``tests/fixtures/business_evaluation_*.jsonl`�KƁ9	`pyproject.toml`/`uv.lock``migrations/**`
+### 四、V2 波次二排队（顺序锁死，别靠猜；chat.py 三单串行）
 
-### 	R299 $nh��-��V2 �!  B	
+`R296`(在途) → `R297`(在途) → `R295`(在途) → `R283` 重投 → `R288` 前端 → `R291` → `R293` → `R59 块2` → `R300 接线` → `R301 OCR 接线` → 继续 `R288` 之后的块 E 剩余格。
+🔴 前端三枚（R288/R291/R293）写域互相交集 ⇒ **一次只能投一枚**；`chat.py` 三枚（R295 / R59 块2 / R301）⇒ **一次只能投一枚**。
 
-- **��**`notification` ( `app/**` � 2 �}-`frontend/**` 0 ��)	Jf���	��H�6��
-- ` �D�&3� ID + owner + }hunread / read / dismissed	= PG ���=4 ��� �M**��** `migrations/` � '< +1�g�,�
-- a **� ���**,��y�� / Jf / �c"�	{�{**(�	&,**HITL pendingalertscatalog �	AGENTS.md �sL��,�,��&,�� U� R278 �v����X���	a1	
-- b CP6������ scope ����/Ƨ**�(�	��'$�**�� W��h=4 �C 0 a/l�� ���Ƨ �A 0 B �(�
-- c ��:;`GET /notifications`u + *��pㄙZ,u��/h�;p�/ R278 )Ǆ�*Q��)	��� read/dismiss $*�\BI
-- d Q� append 0 `docs/api/contract-v1.md`� BOMCRLF��LpW��	=4 M����!��>	
-- e **����**����� `tests/test_r120_clean_install_first_boot.py` � ω��9�19�v�1� skip
-- ��`chat.py``retriever.py`/`pipeline`/`pg_store.py``loader.py``tables.py``frontend/**``pyproject.toml`
+### 五、并发上限实测（修订「6 到 8」那句期望）
 
-### �R300 $nh�PDF/Word h<�V2 �!  C	
-
-- **��;����� 8	**h� `pdfplumber|tabula|extract_tables|markdown_table` � 1 �}-`docx` �� `doc.paragraphs``loader.py:53-54`	� **Word h<�)/��"��**��ݽ� �M�� M�=
-- ` ��ӄ markdown h + **e�**�� + u/h��	�(a�ޟ�a vUC<�uh�**�KL:**�Z��///+�b h<l�,p  chunk S��� R116 ű��c '�H�֞K��
-P���d �� e3 �h< � paragraph-only � ��"1 � �	e =4 **�9 `loader.py`**R298 �`	,U�!W + (� +  L��Q�����!�
-- ��
-�n� `app/rag/loader.py`
-
-### �R59 W1�**��**V1 , H=4 �ؤ s	
-
-- **:�H�(/, H**R269 9$`c3b2983`	138 ��/"O/ `retriever.py:882` �  hnsw Mn`ef_search` R 100 �**��**��s chroma-rs 1.5.9 � compaction � �� !1}�
-- **W1 �**` `INDEX_BACKEND=pgvector` �������S chroma	a 86 R269 	$n`retriever.py:1490-1492`��� 0 LS�zTH**�{M�v� `search_shape`**��sPG 7�	  `where` $�**Lp�I**ݻ/zӜ/CP�a��b ����̈́**��**(���1���	c �� a env � chroma	d =4 **ؤ<� chroma**� s:���1;�(��Z;���\	
-- **:�H�(�>**���5� R35 /�G&�( `3a5713b` �cR35 � 09-17 �H `63651f1`	5�/` `chat.py` � R294,W��+ `chat.py` � �vL
-- ��`app/api/v1/chat.py``app/documents/catalog.py``app/rag/loader.py``frontend/**``deploy/.env.server`;	���:��
-
-### mR292 / R294 ͕�U$n9�͕��	
-
-- `be-r292` dirty=2`catalog.py` +  �(�@�ь	`be-r294` dirty=0��1��	$�**�(����**͕ �H `git diff` �֍�K
-- `be-r288`M�W E 	<dirty=7	 `be-r293`M�ֈ=ؙ�dirty=8	,�**͕**M�� R291I R288	(�!�m�v�
-P����0�Y
-## �10309-26 17:14 ,A��, <�V2 �!��$nH��I�;�rI
-
-�! m����102	b/**}z��߄��U**v����1�� 
-
-###  R296=4 H� z1�	� ;�̄ department /,���
-- �v
-���� 8	`app/memory/profile.py:110/117` ( `user_profiles.department` **��**e� `users` �C<`PUT /api/v1/profile``app/api/v1/auth.py:244`	/**X���**�`app/agents/nodes.py:1666-1673` Ȋ��� prompt� �X*���`GET /profile` !�
-�ͥ���X������2��� prompt
-- ㄄+�Ч	`user_profiles` **/�C�e**`Principal` ��/ `users` � L	@��/**��:a�**/�CЧ�K@�H�:�	��̢7 1�� <
-- =4 **;���,<�{��	 	**p**M:��>**1`Principal` �C�/ `users`R290 � admin  � `PUT /users/department`,��**�**���X(,�1/G&�=0�B` `profile` �0� department  ��� `users`�� `user_profiles` ��a `PUT /profile` & department �**n��**3�� + ���Y�"W��6�(	b prompt ����(><c �� e3 �X���� � 9�C< prompt ��X9�� � `GET /profile` �{�@�b�֣ L � �d `user_profiles.department` ��X�<**����C��**��/ㄙ pn^;�\,U��gL	
-- ��`app/memory/profile.py` + `app/api/v1/auth.py`� `PUT /profile` ��	+ `app/agents/nodes.py`���� �	+ � `tests/test_r296_*.py`=4 �� `chat.py`R294	`retriever.py`/`pipeline`/`pg_store.py`R59	`catalog.py`R292	`app/notifications/**`�`app/main.py`R299	`loader.py`�`ocr.py`R298	`frontend/**`
-
-### �R297U� R296 �	� e��� 7�8 *ߏ
-- �vR290 ��, 8 � PG ��`tests/test_r230_db_ready_selfheal.py:339` � 7 � parametrize �ii�������Gh� UPDATE	`:354` ��7 �e���)w �`app/common/auth.py:201` �10�R230 St 7 �R290 w 8 �
-- $n��eP0 8 �**�I�>~**��B�(���̉� ��`test_production_refuses_to_move_a_department_in_the_process_local_table`	� ,U:�/**��t'**/�������	�,�e�p_� �
-- ��� `tests/test_r230_db_ready_selfheal.py`�� ��
-
-### 	R283  U�U + ͕�;��� `be-r283`,<������	
-- **Ӻ� �**���� **8 failed / 8 passed**	*�˟�
-  1. `SyntaxError` @ `:254`��2�L������ "t� dump �6��" S�n�͙�	� t���6�**;��109**�*Ф M+��9��0	
-  2. `monkeypatch.tmpdir`  `MonkeyPatch` 9,��*^'��( `tmp_path` ��p	�� `:291/:307/:335/:343/:351` �
-  3. `_FakeCursor.execute` (9M SQL �� `IndexError: no such group``:112`����( `verify_vector_landings` � `_landing_vector_row` � �	�	 � `pytest.raises(match="��")` �
-�E�o
-- �Y�}'͕���	`scripts/backup_database.py` ���`tables_in_backup` / `missing_landing_tables`s��Ipn$a�Upp	:� `tests/test_postgres_backup_recovery.py` �$na=**$�:P��**`<=>`  `<->`�H� top-1	zK�T� H20 ݻ㄄gI����8{�\�έ UX� � ���`:430`	
-- ͕$n�U�a�	` $�=�+bLp�
-a bZ ��<����ޟ top-1b �� `chunk_vectors` Ţc �M�ф� <**�*�v���**� skip ��� ,U�HM R60 ���
-- ��`scripts/backup_database.py` + `tests/test_postgres_backup_recovery.py` + `tests/test_r283_*.py`�� `catalog.py`R292	`retriever/pipeline/pg_store`R59	
-- =4 ;�� ,<� �103 �,��_�� ��LW���	, H(���6�1{�������a�/ Meitner *�`�/**-��c̏)�Q**�&��W&2 �(+W���
-
-### ��!�z�h{+`	
-1. `R296` � 2. `R297`$ �ߒ�r���	� 3. `R283` ͕�	� 4. `R295`W �{I R294 v�_9 `chat.py`	� 5. `R59 W2`I R294 M�� `chat.py`	� 6. `R300 ��`I R298 v�M�9 `loader.py`	� 7. `R288` �� � 8. `R291`I R288`panel-states.test.js` �+ 12  `UiErrorState`	� 9. `R293` ��`ChatPanel.vue`�(�����	
-- M�	�������** !��� �**�! M��:�	 Uh(�	�1/,��m�vᄟ�
-- �M�\�Z`be-r298`/`be-r299`/`be-r300`/`be-r59d`G� `fe9fa9f`junction �;	R296/R297 ��M�����) � HEAD�M�� !��8�	
+本班第 7 枚投递被 harness 直接拒：`collab spawn failed: agent thread limit reached`。⇒ **实测上限仍是 6 枚在途**，超出即投递失败，不是提速空间。已结案的两枚必须**先 `close_agent` 再投下一枚**；投递被拒＝未落地，**不当场补投**，改由名册记「待投 + 树已就绪」。
