@@ -195,6 +195,140 @@ export function stageTruth(row) {
   const source = row && typeof row === 'object' ? row : {}
   return VERSION_STAGE_LABEL[statusWord(source.parse_status)] || '本版 ' + TRUTH_UNREADABLE_SUFFIX
 }
+
+// ==================== 这一次上传的 PDF 提取读数（R338） ====================
+/**
+ * 员工视角：屏上那句「上传完成」可能是真话，但不完整 —— 一份 12 页是扫描页、OCR 那一档没跑成的
+ * PDF 传完之后，那 12 页的内容永远搜不到。这句话后端今天已经说出来了（app/api/v1/chat.py:3841
+ * _pdf_extraction_cell，契约 docs/api/contract-v1.md:2342），界面整格丢掉。本格把它搬上屏。
+ *
+ * 🔴 形状只出自【刚回来的那一发】POST /upload 回执，它不落库：app/documents/catalog.py 对
+ * pdf_extraction 零命中，契约第 4 条也明写「a reading, not a ledger」。三条硬边界由此而来：
+ *   1 只画在刚上传那一条上，刷新或重进就读不到 —— 读不到就是读不到，不拿缓存假装记得；
+ *   2 目录行不长「OCR 状态列」，那是第二本账；
+ *   3 不写 localStorage、不自建缓存、不为这一格多打一次请求（数据全部来自已回来的那次回执）。
+ *
+ * 三条最容易失手的口径：
+ *   ① null ⇒ 整格不画（非 PDF / .docx / .txt 走这一支）。把 null 画成「0 页扫描」是把「没读过」
+ *     伪装成「读过」：chat.py:3851 为同一理由禁止后端发 {}，界面这边同判。{} 后端不会发，真发来
+ *     了也不当 null 兜 —— 那一格该说的是「读不到」，同样不是「0 页」。
+ *   ② R298 的两档不合并：「引擎不可用」与「引擎在、这几页没跑成」在回执里是两枚不同的句头
+ *     （ocr.ENGINE_UNAVAILABLE_NOTE 与 loader.DEGRADATION_NOTE_PREFIX）。界面只把 degradation_note
+ *     原文搬上屏，一字不改口，也不重写成「OCR 未启用」那种把两档捏成一档的话。
+ *   ③ source_counts 一枚桶一句话：blank 与 ocr-empty 各说各的（chat.py:3847 明写不合并、不引申）。
+ */
+
+/**
+ * 页码一次最多列这么多枚 —— 判据④要的截断规则是一枚写死的常量，不是渲染时现场编。
+ * 超出的一律收成「另有 N 页未列出」，N 只从【这份列表自己没画下的条数】来：总数另有读数
+ * （scanned_pages / page_count 那两枚），界面既不拿列表长度冒充总数，也不拿截断后的清单谎报还剩几页。
+ */
+export const PDF_PAGE_LIST_CAP = 12
+
+/** 后端在线上传出的五枚桶名（app/rag/loader.py:73-77）：界面不重排成新词表，更不合并任何一枚。 */
+export const PDF_PAGE_SOURCE_ORDER = Object.freeze([
+  'text-layer',
+  'ocr',
+  'ocr-empty',
+  'ocr-degraded',
+  'blank',
+])
+
+/** 一枚桶一句人话，五句两两不同。这是给读的人加的注解，不是第二套判定：桶名仍以那一枚字面量为准。 */
+export const PDF_PAGE_SOURCE_LABEL = Object.freeze({
+  'text-layer': '文字层出字',
+  'ocr': 'OCR 出字',
+  'ocr-empty': 'OCR 跑了没检出字',
+  'ocr-degraded': 'OCR 没跑成',
+  'blank': '既无文字层也无图像',
+})
+
+/**
+ * 这一格到底有没有读数：null / undefined / 数组 / 非对象都算「没读数」（非 PDF 那一支），一格都不画；
+ * {} 是「有这一格，但一个数都没读到」，与 null 不是一件事，所以留在里面画「读不到」。
+ */
+export function hasPdfExtraction(cell) {
+  return cell !== null && typeof cell === 'object' && !Array.isArray(cell)
+}
+
+/**
+ * 页码成人话：「第 3、7、12 页」。非数字、0 与负数一律当没读到（PDF 的页码从 1 起）；
+ * 超过 PDF_PAGE_LIST_CAP 枚就截，尾巴那句「另有 N 页未列出」说的就是没画下来的那几页。
+ */
+export function pdfPageNumberPhrase(numbers) {
+  const list = (Array.isArray(numbers) ? numbers : [])
+    .map(sizeNumber)
+    .filter(page => page !== null && page > 0)
+  if (!list.length) return ''
+  const shown = list.slice(0, PDF_PAGE_LIST_CAP)
+  const hidden = list.length - shown.length
+  const head = `第 ${shown.join('、')} 页`
+  return hidden > 0 ? `${head}，另有 ${hidden} 页未列出` : head
+}
+
+/**
+ * 逐页来源：回执里有几枚桶就画几句，缺席的桶不画（替它补一句 0 页，等于替后端说它没说的话）。
+ * 词表外的新桶按【原词】上屏 —— 宁可留一句看不懂的读数，也不静默丢掉一格。
+ */
+export function pdfSourceCountEntries(counts) {
+  const source = hasPdfExtraction(counts) ? counts : null
+  if (!source) return []
+  const words = PDF_PAGE_SOURCE_ORDER.filter(word => Object.prototype.hasOwnProperty.call(source, word))
+  for (const word of Object.keys(source)) {
+    if (!words.includes(word)) words.push(word)
+  }
+  return words.map(word => {
+    const count = sizeNumber(source[word])
+    const label = PDF_PAGE_SOURCE_LABEL[word] || word
+    return {
+      word,
+      count,
+      text: count === null ? `${label}${TRUTH_UNREADABLE_SUFFIX}` : `${label} ${count} 页`,
+    }
+  })
+}
+
+/**
+ * 上屏那几句话，一行一枚 { key, tone, lead, entries }；返回 [] ⇒ 整格不画（判据①）。
+ * lead 是给人看的那一句，entries 只在「逐页来源」那行有内容（一枚桶一段，各说各的）。
+ * 降级那一行的 lead 就是 degradation_note 的【原文】（判据③）；tone 只有 info / warn 两档，
+ * 而 warn 的意义全在文字里 —— 红色只是补强，读屏拿到的是那两句字（判据⑦）。
+ */
+export function pdfExtractionLines(cell) {
+  if (!hasPdfExtraction(cell)) return []
+  const lines = []
+
+  const pageCount = sizeNumber(cell.page_count)
+  const scannedPages = sizeNumber(cell.scanned_pages)
+  const numbers = pdfPageNumberPhrase(cell.scanned_page_numbers)
+  const tally = [pageCount === null ? `总页数${TRUTH_UNREADABLE_SUFFIX}` : `本次共 ${pageCount} 页`]
+  if (scannedPages === null) {
+    tally.push(`扫描页${TRUTH_UNREADABLE_SUFFIX}`)
+  } else if (scannedPages > 0) {
+    // 总数只出自 scanned_pages 这一枚读数；后面那串页码是回执自己那份清单的列举，两件事各说各的。
+    tally.push(`扫描页 ${scannedPages} 页`)
+  } else {
+    tally.push('没有扫描页')
+  }
+  // 页码那一串单独上屏：清单与总数哪个读得出就画哪个。总数读不到时不许顺手把清单也藏掉 ——
+  // 那是员工唯一能拿去逐页核对的东西（判据④），藏掉它等于把「没读到」说成「没有这回事」。
+  if (numbers) tally.push(numbers)
+  lines.push({ key: 'tally', tone: 'info', lead: tally.join(' · '), entries: [] })
+
+  const sources = pdfSourceCountEntries(cell.source_counts)
+  lines.push({
+    key: 'sources',
+    tone: 'info',
+    lead: sources.length ? '逐页来源' : `逐页来源${TRUTH_UNREADABLE_SUFFIX}`,
+    entries: sources,
+  })
+
+  const note = typeof cell.degradation_note === 'string' ? cell.degradation_note : ''
+  if (note.trim()) {
+    lines.push({ key: 'degradation', tone: 'warn', lead: note, entries: [] })
+  }
+  return lines
+}
 </script>
 
 <script setup>
@@ -343,6 +477,10 @@ function createUploadItem(file) {
     msg: '正在上传...',
     // 队列项带得上「这一发实际带出去的那一档」，回执之后回看还在（R313 格一）。
     // 初值就是后端 Form(1) 那一枚：uploadSingleFile 建表单时会按选择框改写它。
+    // R338：这一格只活在【刚回来的那一发】回执里，所以初值是「没读数」而不是 0。
+    // 判据①：回执为 null（非 PDF / .docx / .txt）⇒ pdfLines 是空数组 ⇒ 整格一笔都不画。
+    pdf: null,
+    pdfLines: [],
     classification: DEFAULT_UPLOAD_CLASSIFICATION
   })
 }
@@ -531,6 +669,12 @@ async function uploadSingleFile(file) {
       item.phase = 'done'
     }
     item.msg = res.data.message || '上传完成'
+    // R338：把回执里那一格 PDF 提取读数搬上屏（形状见 app/api/v1/chat.py:3841）。
+    // 🔴 判据⑤：上面 item.status / item.progress / item.msg 那几行一字未动 —— 这一格是【追加】，
+    // 不是替换。「上传完成」与「这几页 OCR 没跑成、永远搜不到」两句同时为真，少任何一句都是假话；
+    // status 为 skipped 那一支也不因它变成成功：那一支照旧走上面那张 ⏭️ 脸，这里只补读数。
+    item.pdf = res.data.pdf_extraction ?? null
+    item.pdfLines = pdfExtractionLines(item.pdf)
     await loadDocs()
     // G01：回执落地才打开轮询窗口，盯的就是刚传的这一批。文件名取回执那一份，不拿本地
     // File.name 顶 —— 服务端会把显示名规范化，两串不是一回事。
@@ -562,6 +706,30 @@ function sizeAttr(row) {
   const source = row && typeof row === 'object' ? row : {}
   const size = sizeNumber(source.size_bytes)
   return size === null ? '' : String(size)
+}
+
+/**
+ * R338 的 data-* 通道（与上面 sizeAttr 同一条规矩）：给人看的那几行只有中文，裸读数留给测试与诊断；
+ * 取不到就留空串 —— 不写 0，也不写 "null" 这种看着像值的字符串。
+ */
+function pdfCountAttr(cell, key) {
+  const value = hasPdfExtraction(cell) ? sizeNumber(cell[key]) : null
+  return value === null ? '' : String(value)
+}
+
+/** ocr_available / ocr_attempted 是真布尔，原样回带；缺席或非布尔就留空串，不拿 false 冒充「读到了否」。 */
+function pdfFlagAttr(cell, key) {
+  if (!hasPdfExtraction(cell)) return ''
+  const value = cell[key]
+  return typeof value === 'boolean' ? String(value) : ''
+}
+
+/** 桶名与条数按后端那一枚字面量原样回带（text-layer=9 ocr-degraded=3），不套中文，免得长成第二本账。 */
+function pdfSourceAttr(cell) {
+  if (!hasPdfExtraction(cell)) return ''
+  return pdfSourceCountEntries(cell.source_counts)
+    .map(entry => `${entry.word}=${entry.count === null ? '' : entry.count}`)
+    .join(' ')
 }
 
 function onDrop(e) {
@@ -876,6 +1044,40 @@ onDeactivated(stopUploadPoll)
             <!-- 这一发【实际带出去的】那一档：界面说的与表单发的是同一枚值，不是选择框现在的样子。 -->
             <span class="up-class" data-testid="upload-item-classification">{{ classificationWords(item.classification) }}</span>
           </div>
+          <!-- R338：这一次上传的 PDF 提取读数。数据全部出自刚回来的那一发 POST /upload 回执，
+               本格不为它多打一次请求（判据⑥）。
+               🔴 这一格不落库（契约 docs/api/contract-v1.md:2390 明写「a reading, not a ledger」，
+               app/documents/catalog.py 对 pdf_extraction 零命中），所以只画在【刚上传这一条】上：
+               刷新或重进就读不到，目录行也不长「OCR 状态列」，更不写 localStorage 留住它。
+               回执为 null（非 PDF / .docx / .txt）⇒ v-if 不成立 ⇒ 整格不画，不画成「0 页扫描」（判据①）。
+               role="status"：降级那两句是【字】，读屏念得到，不靠颜色区分（判据⑦）。 -->
+          <div
+            v-if="item.pdfLines.length"
+            class="up-pdf"
+            role="status"
+            data-testid="upload-pdf-readout"
+            :data-pdf-page-count="pdfCountAttr(item.pdf, 'page_count')"
+            :data-pdf-scanned-pages="pdfCountAttr(item.pdf, 'scanned_pages')"
+            :data-pdf-ocr-available="pdfFlagAttr(item.pdf, 'ocr_available')"
+            :data-pdf-source-counts="pdfSourceAttr(item.pdf)"
+          >
+            <p
+              v-for="line in item.pdfLines"
+              :key="line.key"
+              class="up-pdf-line"
+              :data-pdf-line="line.key"
+              :data-pdf-tone="line.tone"
+            >
+              <span v-if="line.tone === 'warn'" class="up-pdf-mark" aria-hidden="true">⚠</span>
+              <span class="up-pdf-text">{{ line.lead }}</span>
+              <span
+                v-for="(entry, index) in line.entries"
+                :key="entry.word"
+                class="up-pdf-bucket"
+                :data-pdf-source="entry.word"
+              >{{ index ? ' · ' : '：' }}{{ entry.text }}</span>
+            </p>
+          </div>
           <div
             v-if="item.status === 'uploading' || item.status === 'done'"
             class="upload-progress-track"
@@ -1182,6 +1384,17 @@ onDeactivated(stopUploadPoll)
 .up-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .up-msg { color: var(--legacy-ep-success); flex-shrink: 0; }
 .upload-item.error .up-msg { color: var(--legacy-ep-danger); }
+/* R338：刚上传那一条下面的 PDF 提取读数。只用本文件【已经在用】的 token，一枚新色值都不加（判据⑧）；
+   warn 那一档由文字与 ⚠ 说话，颜色只是补强 —— 判据⑦：不许出现「只有红色才算警告」。 */
+.up-pdf {
+  display: flex; flex-direction: column; gap: 2px;
+  margin-top: 4px; padding-top: 4px;
+  border-top: 1px solid var(--legacy-line-pale);
+  color: var(--legacy-ink-soft); font-size: 10px; line-height: 1.45;
+}
+.up-pdf-line { display: flex; flex-wrap: wrap; margin: 0; }
+.up-pdf-line[data-pdf-tone="warn"] { color: var(--legacy-ep-danger); }
+.up-pdf-mark { margin-right: 4px; }
 .clear-btn {
   display: block; width: 100%; padding: 4px; border: none; background: none;
   color: var(--legacy-ink-soft); cursor: pointer; font-size: 11px; font-family: inherit;
