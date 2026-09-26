@@ -66,7 +66,7 @@ BASELINE = (
     "app/rag/retriever.py:567",
     "app/semantics/registry.py:514",
     "app/storage/pending_approvals.py:105",
-    "app/storage/persistence.py:595",
+    "app/storage/persistence.py:596",
     "scripts/audit_vector_mirror_sets.py:428",
 )
 
