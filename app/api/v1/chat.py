@@ -824,9 +824,9 @@ def _authorize_queue_task(
         payload = json.loads(raw).get("payload") or {}
     except (TypeError, json.JSONDecodeError) as exc:
         raise _refused(403, "authorization_unavailable") from exc
-    owner = payload.get("principal") or {}
-    owner_id = str(owner.get("user_id") or "")
-    if not owner_id:
+    # R295 判据④：归属不再读载荷快照，与 R294 同源现取；比对不出权威就判失效，不放宽。
+    owner_id, owner_refusal = queue_task_owner_user_id(payload)
+    if owner_refusal:
         raise _refused(403, "authorization_unavailable")
     if owner_id != str(principal.user_id):
         raise _refused(403, "permission_denied")
@@ -3450,6 +3450,112 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
 
 # ==================== 会话管理 API ====================
 
+# ==================== R295：会话历史回读时重过作用域闸门 ====================
+
+#: 病灶（contract-v1.md「Registered, not fixed」第 2 条登记的那一格）：`GET /sessions/{id}`
+#: 过去只过 `is_owned_by` 一枚归属谓词，于是员工在旧部门期间那一轮的答案正文——里面就写着
+#: 旧部门文档的引用——在被挪走部门、或者那份文档改完归属之后，仍然能整段读回来。归属答的
+#: 是「这是你的会话」，它答不了「这一轮的旧引用今天还在不在你范围内」，所以回读要补的是
+#: 第二道问句，不是把第一道换掉。
+#: 判据①要的两件事同时成立：旧作用域那一轮的正文与引用读不回来；屏上给的是「这一轮不在
+#: 你当前可见范围」这一张脸，而不是把整条会话变成空列表冒充「没有历史」。
+#: 这句话里不带码名（R16：落进历史行的散文洗不掉），稳定码走 withheld_reason 那一格。
+HISTORY_TURN_WITHHELD_TEXT = (
+    "这一轮的回答与出处已不在你当前的可见范围内，因此不再展示；"
+    "本轮仍然在你的会话历史里，需要核对请找管理员确认本人部门归属与文档标注。"
+)
+
+
+def _history_catalog_rows() -> list[dict]:
+    """回读复核用的那一份文档目录：当前版本行，部门与密级两格取的是**现值**。
+
+    现值是关键。这一格问的不是「那一轮当时看见了什么」，而是「此刻这一份文档还在不在调用
+    方的可见范围内」，所以读数必须来自目录里当前那一行——挪部门与改版重标都当场生效，这也
+    正是「不给 SessionRecord 加部门维」这条裁定能成立的原因：作用域不在会话上，在文档上。
+    读不出来交空表并留一行成因：目录读不出不该把历史端点拖成 500，也不许顺手抹掉整段历史。
+    """
+    try:
+        return [row for row in current_documents() if isinstance(row, dict)]
+    except Exception as exc:  # noqa: BLE001 - 读不出目录只说明无从复核
+        logger.warning(f"[R295] 会话历史回读取不到文档目录: {type(exc).__name__}")
+        return []
+
+
+def _cited_document_rows(content: str, catalog: list[dict]) -> list[dict]:
+    """那一轮正文点名过的文档：唯一形状是「当前目录里的文件名原样出现在正文里」。
+
+    引用本来就写在正文里：编排那一腿把命中的文件名连 chunk 号一起拼进答案（见
+    `app/agents/orchestrator.py` 的「来源：」那一行与 DOC_PROMPT 的「引用来源文件名」），
+    所以回读认得出、也只认得出这一种引用。不做模糊匹配、不靠语义猜：猜出来的引用会把没
+    有引用过的那一轮一起抹掉，那正是判据①禁的那张「冒充没有历史」的脸。
+    """
+    text = str(content or "")
+    if not text:
+        return []
+    cited: list[dict] = []
+    for row in catalog:
+        filename = str(row.get("filename") or "")
+        if filename and filename in text:
+            cited.append(row)
+    return cited
+
+
+def _history_scope_face(messages, principal, session_id: str) -> tuple[list[dict], int]:
+    """回读时把每一轮重新过一遍检索闸门（app/rag/filters.py 的 ``scope.allows``）。
+
+    判定不另起一套：用的就是出口那枚 sources 事件背后的同一个
+    `resolve_document_retrieval_scope(principal).allows`，与 `_authorized_source_rows` 和旧
+    `/chat` 里那句 `scope.allows(source)` 同出一个类，既不新增放行分支，也不放宽一道。被裁
+    的那一轮换成 `HISTORY_TURN_WITHHELD_TEXT`，它的 role / created_at / steps 照旧在位：列表
+    不缩短、历史不缺行，屏上说的是「这一轮不给你看」，不是「没有这一轮」。
+
+    没有可判引用的那一轮原样交回。这不是放水：闸门裁的是文档的部门与密级，本轮既然没点名
+    任何一份文档，就没有「旧作用域的引用」这一格可泄；把这种轮次也一起抹掉才是造假历史。
+
+    留账走既有那条 `record_audit` 通路，只写主体 / 会话 id / 动词 / 判定结果，外加闸门自己
+    那枚稳定码（`refusal_code` 与 `allows` 同出一个类，专为「为什么裁它」而写）：被裁掉的
+    文档名、它的部门实值与密级实值一个字都不进台账，也不进返回值——纪律照
+    `app/rag/filters.py::_record_refusal`。
+    """
+    catalog = _history_catalog_rows()
+    if not catalog:
+        return [dict(message) for message in messages], 0
+    scope = None
+    scope_code = ""
+    try:
+        scope = resolve_document_retrieval_scope(principal)
+    except RetrievalScopeError as scope_error:
+        # 闸门连作用域都给不出：任何一条引用都判不可见（fail-closed），成因就是它自己那枚码。
+        scope_code = scope_error.code
+    readout: list[dict] = []
+    withheld = 0
+    for message in messages:
+        row = dict(message)
+        cited = (
+            _cited_document_rows(row.get("content"), catalog)
+            if row.get("role") == "assistant"
+            else []
+        )
+        blocked = [item for item in cited if scope is None or not scope.allows(item)]
+        if not blocked:
+            readout.append(row)
+            continue
+        reason = scope_code or str(scope.refusal_code(blocked[0]) or "permission_denied")
+        withheld += 1
+        record_audit(principal, ACTION_VIEW, "denied", session_id, reason)
+        readout.append(
+            {
+                "role": row.get("role"),
+                "created_at": row.get("created_at"),
+                "steps": row.get("steps") or [],
+                "content": HISTORY_TURN_WITHHELD_TEXT,
+                "answer_withheld": True,
+                "withheld_reason": reason,
+            }
+        )
+    return readout, withheld
+
+
 @router.get("/sessions")
 async def list_sessions(request: FastAPIRequest):
     principal = _session_principal_or_error(request)
@@ -3464,15 +3570,24 @@ async def list_sessions(request: FastAPIRequest):
 
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str, request: FastAPIRequest):
-    _authorize_session_request(request, session_id)
-    msgs = _get_session_messages(session_id)
+    principal = _authorize_session_request(request, session_id)
+    # R295 判据①：归属之外再重过一遍作用域闸门。换的是不在范围内的**那一轮**的脸，
+    # 会话不清空——读的人仍然看得见这一轮存在过，只是它今天不给看。
+    msgs, withheld = _history_scope_face(
+        _get_session_messages(session_id), principal, session_id
+    )
     if not _session_database_available():
-        return {"session": _MEM_SESSIONS.get(session_id), "messages": msgs}
+        return {
+            "session": _MEM_SESSIONS.get(session_id),
+            "messages": msgs,
+            "withheld_turns": withheld,
+        }
     with _sess_conn() as conn:
         row = conn.execute("SELECT * FROM sessions WHERE id = %s", (session_id,)).fetchone()
     return {
         "session": dict(row) if row else None,
         "messages": msgs,
+        "withheld_turns": withheld,
     }
 
 
@@ -4272,7 +4387,14 @@ async def delete_document(filename: str, request: FastAPIRequest):
 # ==================== Layer 5: 队列削峰 API ====================
 
 
-def queue_terminal_readout(queue, request_id: str, payload: dict, status: str) -> dict:
+def queue_terminal_readout(
+    queue,
+    request_id: str,
+    payload: dict,
+    status: str,
+    *,
+    owner_user_id: str = "",
+) -> dict:
     """把一支队列任务的「客户端可见终态」拼齐（判据①②③⑤）。
 
     三条读路各有各的诚实，谁都不许冒充谁：
@@ -4291,10 +4413,9 @@ def queue_terminal_readout(queue, request_id: str, payload: dict, status: str) -
     state = str(terminal.get("state") or "")
     data = terminal.get("payload") or {}
     readout: dict = {"result": answer}
-    owner_id = ""
-    principal = payload.get("principal") if isinstance(payload, dict) else None
-    if isinstance(principal, dict):
-        owner_id = str(principal.get("user_id") or "")
+    # R295 判据④：这一格问的是「这张单子是谁的」，不再从载荷快照抄——调用方交回的是读取
+    # 时刻现取并比对过的那一份。缺这一格只说「归属读不出」，绝不退回快照（宁缺毋造）。
+    owner_id = str(owner_user_id or "")
     if state != reliable_queue.TERMINAL_OK:
         legacy = state == reliable_queue.TERMINAL_ABSENT
         readout.update(
@@ -4343,6 +4464,82 @@ def queue_terminal_readout(queue, request_id: str, payload: dict, status: str) -
     return readout
 
 
+# ==================== R295：队列单的归属在读取时刻现取 ====================
+
+#: 归属成因码。字面值与 `deploy/queue_worker.py` 里 R294 那一族逐字相等（本文件不 import
+#: 那枚文件：它模块级挂着 signal 处理器，API 进程一 import 就抢走 uvicorn 的收尾）。两侧
+#: 不许漂成两套词，由 tests/test_r295_queue_owner_readback.py 拿两份源码的模块级常量现比对
+#: 钉住。这几枚说的是「归属没能确立」的成因，只进日志与本函数的返回值，不进 HTTP detail：
+#: 这条腿对外说的仍然是它原来那两枚码（authorization_unavailable / permission_denied）。
+QUEUE_OWNER_SUBJECT_MISSING = "principal_subject_missing"
+QUEUE_OWNER_SUBJECT_MISMATCH = "principal_subject_mismatch"
+QUEUE_OWNER_STALE = "principal_stale"
+QUEUE_OWNER_ACCOUNT_INACTIVE = "principal_account_inactive"
+QUEUE_OWNER_STORE_UNAVAILABLE = "identity_store_unavailable"
+QUEUE_OWNER_STORE_NOT_SHARED = "identity_store_not_shared"
+
+
+def queue_task_owner_user_id(payload: dict) -> tuple[str, str]:
+    """一张队列载荷在**读取时刻**的归属人，交回 ``(user_id, 失效因)``。
+
+    病灶：`/queue/status` 与 cancel 这扇门过去拿载荷快照里的 ``user_id`` 当单子归属人，而
+    那是入队那一刻冻下的身份，之后没有任何一格回来更新它。R294 已经把「消费时刻现取身份」
+    立成权威（`deploy/queue_worker.py::resolve_consumption_principal`），载荷=权威这最后一
+    个还活着的读点就在本文件，所以一起收掉。方向只有两条，与 R294 同一套：现取，或比对后
+    判失效。第二枚非空就是归属没确立，调用方一律判失效，绝不把「读不出」放宽成「放行」。
+
+    用户库的三种形状逐字照 R294 的口径，不在这儿立第二套：``postgres`` 现取现比，取不到人、
+    账号不是 active、快照与现取的归属人对不上，都判失效；``unavailable`` 判失效（R230 早就
+    把它定成 default-deny，队列读侧不放宽）；``memory`` 是进程内表，跨进程本来就不同步，
+    这一侧无从现取，按快照交回并明写「未经现取校验」——那是既有的限制，不是本单开的例外。
+
+    旧载荷那两只形状都不崩：``principal`` 里只有 user_id/username/roles，以及压根没有
+    `principal` 只有顶层 user_id/username/roles。读不出归属人的那一格判失效，不猜默认值、
+    不补字段；提权更没有：调用方是谁由认证中间件那份现取身份说了算，载荷只决定「这张单子
+    该是谁的」，它说不出「来问的人是谁」。部门与密级实值一律不进返回值与日志。
+    """
+    snapshot = payload.get("principal") if isinstance(payload, dict) else None
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    claimed_subject = str(snapshot.get("username") or "").strip()
+    top_subject = str(payload.get("username") or "").strip() if isinstance(payload, dict) else ""
+    if claimed_subject and top_subject and claimed_subject != top_subject:
+        # 快照与顶层说的是两个人：这张单子是谁的，队列没资格替它挑一个。
+        return "", QUEUE_OWNER_SUBJECT_MISMATCH
+    subject = claimed_subject or top_subject
+    claimed_id = str(snapshot.get("user_id") or payload.get("user_id") or "").strip()
+    if not subject:
+        return "", QUEUE_OWNER_SUBJECT_MISSING
+
+    mode = str((auth.user_storage_state() or {}).get("storage_mode") or "").strip()
+    if mode == "memory":
+        if not claimed_id:
+            return "", QUEUE_OWNER_SUBJECT_MISSING
+        # 只记成因，不记主体：这是一次读别人的单子也会走到的分支，用户名不进这一行日志。
+        logger.warning(
+            "[R295] 用户库是进程内表（storage_mode=memory），队列归属无从现取、未经现取"
+            "校验，按载荷快照交回 reason=" + QUEUE_OWNER_STORE_NOT_SHARED
+        )
+        return claimed_id, ""
+    if mode != "postgres":
+        return "", QUEUE_OWNER_STORE_UNAVAILABLE
+
+    row = auth.get_user(subject)
+    if not row:
+        # 这个人此刻已经不在这张表里：按快照交回就是把旧身份记在一个无权存在的人账上。
+        return "", QUEUE_OWNER_STALE
+    try:
+        live = Principal.from_user(row)
+    except Exception:  # noqa: BLE001 - 这一行读不成身份就是无从确立归属，不猜
+        return "", QUEUE_OWNER_STALE
+    if live.status != "active":
+        return "", QUEUE_OWNER_ACCOUNT_INACTIVE
+    if not claimed_id or str(claimed_id) != str(live.user_id):
+        # 载荷说的不是这个人，或者旧载荷压根没说归属是谁：判失效，不退回快照、不补默认值。
+        return "", QUEUE_OWNER_STALE
+    return str(live.user_id), ""
+
+
 @router.get("/queue/status/{request_id}")
 async def queue_status(request_id: str, request: FastAPIRequest):
     """轮询队列请求的处理状态。前端每 3s 调用一次，直到终态。
@@ -4363,8 +4560,13 @@ async def queue_status(request_id: str, request: FastAPIRequest):
         ) from exc
 
     # 读状态这扇门：动词记 resource:view（默认值也写出来，一扇门一眼看得见记的是哪本账）。
-    # 权限判定本身一个字没改：先过这道门，才谈得上读下面任何一格。
+    # 门的次序一个字没改：先过这道门，才谈得上读下面任何一格。R295 改的是门里的归属读数——
+    # 不再信载荷快照，与 R294 同源现取（见 queue_task_owner_user_id）。
     payload = _authorize_queue_task(request, queue, request_id, ACTION_VIEW)
+    # 门已经证明「调用方 == 现取出来的归属人」，下面批准台账那一格就用这份现取读数，
+    # 不回头抄载荷里冻着的那一枚（抄回去，快照就又成权威了）。
+    caller = principal_from_request(request)
+    task_owner_user_id = str(caller.user_id) if caller is not None else ""
     status = queue.status(request_id)
     if status is None:
         return {"status": "expired", "message": "请求已过期，请重新提交"}
@@ -4376,7 +4578,11 @@ async def queue_status(request_id: str, request: FastAPIRequest):
     if status in (reliable_queue.AWAITING_APPROVAL, "done"):
         # 两枚都是「这一轮已经交出去了」的那一格，区别只在交没交正文。出处、token、批准
         # 把手只对这两枚有意义，别的状态下不凭空造键。
-        readout.update(queue_terminal_readout(queue, request_id, payload, status))
+        readout.update(
+            queue_terminal_readout(
+                queue, request_id, payload, status, owner_user_id=task_owner_user_id
+            )
+        )
     elif status == "queued":
         pending = queue.redis.lrange(queue.pending_key, 0, -1)
         ids = [item.decode() if isinstance(item, bytes) else str(item) for item in pending]
