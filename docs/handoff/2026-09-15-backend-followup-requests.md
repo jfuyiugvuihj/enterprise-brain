@@ -3313,3 +3313,41 @@ run7 底账 105 行：`text_frames>1` 96/105、逐字无缺 105/105、合账 93/
 
 - 任何并树之后，总控必须跑一次自己的 `-n 8` 全量门才允许派下一波（R245 那笔红在树上躺了两格）。
 - 派工词落笔前，其中引用的每个落点名（表名/常量名/路径）必须先在仓里现取一次——本格 `unavailable_ledgers` 是总控自己编的。
+
+## 101（09-26 09:5x–11:0x，第九班·总控；主树 `ea2a539`→`e7f1d92`：V2 波次二五枚并树、真库验收第一次跑到底、一次落在总控头上的派工事故）
+
+### 101.1 新立单判据原文（R259／R260／R261 ＋ 波次二 R257；派工前逐字抄进派工词，不许用单号标题转述）
+
+**R259 评测量具认识 `awaiting_approval`，并把队列终态读数纳入账**（施工 `Tesla`@`be-r259`，基点 `c70548a`；写域只 `scripts/eval_transport_ask_v2.py` ＋ 新 `tests/test_r259_*.py`，必要时改口 `tests/test_r222_queue_terminal_stopwatch.py`；🚫 `app/**`／`frontend/**`／`docs/**`／迁移／评测集／sidecar 七键）。不修则 run9 的 D-1／D-2／D-3 三格数据作废：11 枚挂起题各烧 300 s 落 `queued_stalled`。
+
+- ① 量具见到 `awaiting_approval` 就**停表**：既不许计成 `queued_stalled`，也不许把挂起的轮当「答完了」记分。🔴 停表条件必须写成 `if status == "awaiting_approval":` 的字面比较——`adapter_stop_vocabulary` 那枚钉用 AST 认字面量，改成查表＝假绿。
+- ② 队列终态逐态有读数面（`done`／`cancelled`／`failed`／`expired`／`dead`／`queued_stalled`／`awaiting_approval`），且读数能与真库 `model_calls` 对账（R254 已把 `sources`／`usage`／终态三格接上，本单只补量具侧）。
+- ③ 反证两条：删掉停表分支必须有新钉红；把挂起当完成记分必须有另一枚红。
+- ④ `tests/test_r222_queue_terminal_stopwatch.py` 若改口，要写明改了哪几条断言、为什么，不许整片放宽。
+
+**R260 前端停表名单补 `awaiting_approval` ＋ 挂起的轮次给一件能点的东西**（施工 `Bacon`@`be-r260`，基点 `c70548a`；写域只 `frontend/**`；🚫 任何色值／`theme.css`／`app/**`／装依赖）。
+
+- ① `frontend/src/components/ChatPanel.vue:852` 的 `const QUEUE_SETTLED = [...]` 必须**仍是数组字面量**——`frontend/src/components/__tests__/r221-queue-deadline.test.js:206` 用正则钉这个形状，改成 `new Set()` 或引用常量＝假绿。消费点在 `:1073` `if (QUEUE_SETTLED.includes(read.status)) stop()`。
+- ② 挂起的轮次屏上不能只有「已转后台」，要有一件**能点的批准入口**（复用 `hitl/HitlPendingPanel.vue` 与既有 `/approvals` 路，不新造第二套 HITL 状态机）。
+- ③ `npm run lint:colors` 预算现取＝**148**（旧账本里的 334 已过期），本单不许涨；vitest 全绿且不许削弱断言。
+- ④ 交付须附：改了哪几枚文件／每枚几行／`lint:colors` 实际告警数（要数字，不要「通过」两个字）。
+
+**R261 裸 connect 棘轮换身份口径，别再按 `path:line` 记账**（施工 `Bacon`@`be-r261`，基点 `c70548a`；写域**只 `tests/`**：改 `tests/test_r238_bare_connect_ratchet.py` ＋ 新钉件；🚫 `app/**`／`scripts/**`／任何调用点迁移）。立论由两笔实测背书：`c70548a` 手工改账 `chat.py:853→854`（R254 在上方插 481 行），`d853153` 手工改账 `persistence.py:595→596`（R256 在 `:317` 只插 **1 行**）——上方每插一行就得改一次账，这就是行号记账的税。
+
+- 判据六条：① 在站点上方插无关行 ⇒ 不咬；② 新增一枚裸 connect ⇒ 仍咬；③ 把已入册站点迁走 ⇒ 仍咬（要求删账）；④ 换皮不改强度：`psycopg.connect`／`psycopg2.connect`／模块别名／`**kwargs` 四形都要被同一条规则逮住；⑤ 记账仍一眼可读（路径可查，不许退化成匿名哈希表）；⑥ 反证自证：身份口径若退化成 path-only，必须让某枚咬合钉红。
+- 🔴 施工须知：本班 `d853153` 已把账上的 `595` 改成 `596`，**以主树为准，不许回带旧行号**；该件是纯 LF（CR 恒 0），改完仍须纯 LF；`docstring:8` 那句 `chat.py:853` 是对当年派工单表格的历史引用，要清理得说明理由。
+
+**R257 Trace 兜底两笔**（波次二，施工 `Confucius`@`be-r257`，基点 `c70548a`；写域只 `app/trace/**` ＋ 新钉件；🚫 `docs/**`／`migrations/**`／`chat.py`／`docker-compose.yml`）。甲＝兜底行幂等回填六表；乙＝明说永不回填并把话写到面上（`docs/testing/r59c-window-ops-2026-09-25.md:289` 到今天还把只含兜底行的那卷 jsonl 标成「总账」）。承重两枚不许动：`app/trace/store.py:18-21` sequence 取 `MAX(sequence)`、`:22-24` projection 永不半成功。邻居四枚（`test_r250_local_fallback_is_named`／`test_r250_run_terminal_status_honesty`／`test_postgres_execution_persistence`／`test_redis_worker_recovery`）逐枚复跑，不许放宽。
+
+### 101.2 已结案三枚的对账口径（判据级凭据详看板 §4CG）
+
+- **R253 `ea2a539`**：反证钉变异只落影子副本，不再就地改写被跟踪文件。🔴 「同一 HEAD 连跑三次 `-n 8` 零漂移」仍未满：`c70548a` 5218/44 一枚、`d853153` 5260/49 一枚。
+- **R254 `8f89def`**：真实基点 `cca9081`（≠ 派工词写的 `8841578`）；8 枚共改文件逐枚 `git rev-parse` 证 `cca9081`≡`ea2a539` ⇒ 整文件搬运零夹带。
+- **R256 `ff0f4ec` ＋ 补口 `d853153`**：判据④首次在**隔离 PG 5433 真库**跑到底并留凭据（一次性库 `applied=15 tail=0015`、二次跑 `applied=0` 幂等、验收件 5 passed，总控亲跑）。🔴 裸机真前置（原单与 runbook 都没写）：空库直跑会停在 **0010** 回滚，stderr 点名 `EMBEDDING_MODEL, EMBEDDING_DIMENSION are not declared`。
+- 全量门 skip 基线 44 → **49**（R256 新增真库件离线全 skip），下班按 49 对账，别当回归。
+
+### 101.3 规矩化三条
+
+- 🔴 **派工一律不带 model 覆盖，总控本身同样适用**。本格第一次落在总控头上：派 R259 首投带 `model: gpt-5.6-sol`，子线程首次请求即被服务端拒 `Invalid 'id': message id must be a string starting with 'msg_', got 'at_8d236e23-…'`，与已废的 `01a0acfb`／`01a09dda` 同一死因。三重取证确认零损失：errored 终态／`be-r259` 工作树零行／已 close_agent。补投规矩不变：一 block 只一次投递，报错即退回「写进跟进单＋业主手动开线」。
+- **行 splice 必须按内容锚定，不许按记忆行号**。本格两处：① 上一班把「事故登记」按行号写进看板 1266 行，覆盖掉 `Hubble` R188 的结案整行（本格从 HEAD 取原行逐字节还原，`git diff --numstat` = 57/0，删除为零为证）；② 本跟进单混用 CRLF 与裸 CR，按 `\n` 数是 3316 行、按文本行是 4849 行——照 `rg` 报的行号去切段必然错位（本单 §92 早记过同一坑）。
+- **接班第一件事 `Get-Date` 现取**，别继承摘要里的钟点：上一班把 09-26 上午 09:5x–10:5x 全记成 09-25 深夜，名册四行时钟已按 `.git/worktrees/*/HEAD` mtime（10:15:24–27）订正为 10:15。
