@@ -1,24 +1,24 @@
 """R305: Excel / CSV 上传 -> 带锚点的检索文本（渲染整套沿用 R300，不另起第二套）。
 
-================================================================== 这一单不接线（接线 = R306）
-两枚现取事实同时成立，所以"白名单先放开、分派还没落"确实比不接更坏：
+================================================================== 接线归 R306（本单只交解析层）
+两枚现取事实**在本树基线上同时成立**，所以"白名单先放开、分派还没落"确实比不接更坏：
 
-  - `app/documents/file_security.py:28` 的 `_ALLOWED_TYPES` 只有 .pdf/.txt/.md/.docx 四格。
+  - `app/documents/file_security.py:28` 的 `_ALLOWED_TYPES` 只有 .pdf/.txt/.md/.docx 四格，
     `.xlsx`/`.csv` 在 `inspect_upload_header()`（同文件 :106-107）就被拒，上传路由在**写第一个
     字节之前**回 400 `unsupported_file`（`app/api/v1/chat.py:3795` -> :3798）。
-  - `app/rag/loader.py:419` 的 `load_document()` 对认不出的后缀 `raise ValueError`。
+  - `app/rag/loader.py` 的 `load_document()` 对认不出的后缀 `raise ValueError`（基线 :744）。
 
 白名单一放开而分派不落地，客户拿到的就不再是 400 而是 500 `document_parse_failed`
 （`chat.py:3857`——那一条还会把文件和目录行留下、把版本记成 `parse_status="failed"`）。
-R306 缺的只有 `loader.py:419` 那行 raise 之前的三行：
+R306 要补的只有那行 raise 之前的两行，它的施工树已经落成这样（同文件 :769，raise 退到 :771）：
 
-    if ext in spreadsheets.SPREADSHEET_SUFFIXES:
-        return sanitize_text(spreadsheets.load_spreadsheet_text(file_path))
+    if ext in spreadsheet_channel.SPREADSHEET_SUFFIXES:
+        return sanitize_text(load_spreadsheet(file_path, display_name=display_name))
 
 `load_spreadsheet_text()` 与 `load_txt()` 同形（进一枚路径，出一段已过 R130 闸门的文本），
-所以这三行不需要 try/except，也不需要新错误码。判据①把 `loader.py` 划成禁域（R304 正在
-改它），本单因此一字未动那枚文件：上面是**建议的落笔**，不是已完成。白名单/预览两格的
-清单写在 R305 回执第 4 节，这里不复述。
+所以这两行不需要 try/except，也不需要新错误码。`loader.py` 自始至终是本单的禁域
+（R304 在写、R306 在接），本模块因此一字未动那枚文件：上面是**照着 R306 施工树记的落点**，
+不是本单已完成。白名单/预览两格的清单写在 R305 回执第 4 节，这里不复述。
 
 ================================================================== 产物是给检索用的文本，不是电子表格
 每一枚块都是 `app/rag/tables.py` 的 `TableBlock`，layout 也整个走 `tables.render_tables()`：
