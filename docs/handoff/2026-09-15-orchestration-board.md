@@ -3842,6 +3842,15 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 | `Maxwell` | `01a0d88f-dfd9-78c3-b6b2-56db815bf776`（spawn 返回值直取） | **R254** 队列道客户端可见契约（P1：HITL 无恢复路径致 11/20 交回挂起文案 · `sources` 0/20 · `usage` 无面 · 零模型调用却报 `done`） | `be-r254`（基点 `8841578`，**独占**；写域 `app/api/v1/chat.py` + `deploy/queue_worker.py` + `app/queue/**` + `contract-v1.md` 队列节） | 🟢 20:4x 派出（一 block 一枚）。🚫 `contracts.py`/`model_budget.py`（R255）、迁移（R256）、量具件。真机窗读数与红因点名见 `docs/testing/run8-phase2-readout-2026-09-25.md` | 20:4x |
 | `Rawls` | `01a0d890-57c0-7780-ba3c-769fb5a4dbd7`（spawn 返回值直取；与 09-17 那位 R26b 的 `Rawls` 同号不同人，按 id 定序） | **R255** 报告档上下文顶（`MODEL_CONTEXT_TOKENS=4096` 第一次拿到真机发生率） | `be-r255`（基点 `8841578`，**独占**；写域 `app/agents/contracts.py` + `app/common/model_budget.py` + `.env.example` 的 `MODEL_*` 行） | 🟢 20:4x 派出（一 block 一枚）。🚫 `chat.py`（R254）、`nodes.py`、迁移。派工词已写死两条物理事实：4096 与显存无关 / 单请求未压进 60÷人数 秒前不许抬 `MODEL_MAX_CONCURRENCY` | 20:4x |
 | `Tesla` | `01a0d890-f30c-7543-ace8-7c5918d49f11`（spawn 返回值直取） | **R256** 今天欠的三列（`artifacts.deleted_at` / `dataset_versions` scope / 裸机 `PERSISTENCE_BACKEND` 倒退）＋**本波唯一持迁移者** | `be-r256`（基点 `8841578`，**独占**；写域 新建 `migrations/0015_*` + `manifest.json` + `app/storage/persistence.py` + 四枚尾号引信件 + `setup.sh`/`.env.example` 的 `PERSISTENCE_BACKEND` 行） | 🟢 20:4x 派出（一 block 一枚）。判据④要它在隔离 PG 5433 上把 **0014 + 0015 一起真跑一遍**（R251 欠的那笔一并清）。🚫 5432 生产库、容器、`MODEL_*` 那几行 | 20:4x |
+| `Hubble` | `01a0db80-61dc-7641-a1ec-aa7eee74343e`（**本班 spawn 返回值直取，未经抄写**；派工词里自称 `Fermat`，真实昵称是 `Hubble`，下班按 id 与本行找） | **R259** 评测量具认识 `awaiting_approval` 并把队列终态读数纳入账（不做则 run9 的 D-1/D-2/D-3 三格数据全废） | `be-r259`（基点 `c70548a`，**独占**；写域 `scripts/eval_transport_ask_v2.py` + 新 `tests/test_r259_*.py` + 必要时改口 `tests/test_r222_queue_terminal_stopwatch.py`；🚫 `app/**` / `frontend/**` / `docs/**` / 迁移 / 评测集 / sidecar 七键） | 🔴 09-26 10:15 派出即死（见下行事故登记）（本 block **只此一次投递**，无 model 覆盖）；判据原文＝跟进单 §100「R259 判据」＋§100.4 R254 段；🔴 停表条件必须写成 `if status == "awaiting_approval":` 字面比较（`adapter_stop_vocabulary` 用 AST 认字面量，改查表＝假绿） | 10:15 |
+| `Hubble`（**未落地**） | `01a0db80-61dc-7641-a1ec-aa7eee74343e` | **R259**（第一次投递） | `be-r259`（基点 `c70548a`） | 🔴 **事故登记：同类问题第一次落在总控头上**。本班派工时带了 `model: gpt-5.6-sol` 覆盖，正是铁规要避开的那一件事（AGENTS.md／跟进单派工规矩：派工一律不得带 model 覆盖，中途换模型会污染消息 id 并使整条线程必死）。子线程首次请求即被服务端拒：`Invalid id: message id must be a string starting with msg_, got at_8d236e23-…`，与已废的 `01a0acfb`／`01a09dda` **同一死因**。三重取证：① 状态 errored（终态，不可能再落盘）；② `git -C be-r259 status --porcelain` 零行；③ 已 close_agent。⇒ 零产物损失、零重复体。下行正式投递**不带任何 model 覆盖**。 | 10:15 |
+| `Tesla`（**与 09-25 R256 那位 `Tesla` 同名不同人，按 id 定序**） | `01a0db81-b565-7e23-9c77-af45adbda048`（本班 spawn 返回值直取，未经抄写） | **R259** 评测量具认识 `awaiting_approval` 并把队列终态读数纳入账（不修则 run9 的 D-1/D-2/D-3 三格数据作废：11 枚挂起题各烧 300 s 落 `queued_stalled`） | `be-r259`（基点 `c70548a`，**独占**；写域 `scripts/eval_transport_ask_v2.py` + 新 `tests/test_r259_*.py` + 必要时改口 `tests/test_r222_queue_terminal_stopwatch.py`；🚫 `app/**` / `frontend/**` / `docs/**` / 迁移 / 评测集 / sidecar 七键） | 🟢 09-26 10:15 派出（本 block **只此一次投递**，**不带 model 覆盖**——上一行的教训已吃进）。判据原文＝跟进单 §100.4 R254 段＋本节。🔴 停表条件必须写成 `if status == "awaiting_approval":` 字面比较（`adapter_stop_vocabulary` 用 AST 认字面量，改查表＝假绿） | 10:15 |
+| `Bacon` | `01a0db82-c9de-71d1-a479-7f541cae7333`（**本班 spawn 返回值直取**；第一次写行时总控把 id 抄错了一次，现场订正并记账：凭记得不凭抄写，spawn 返回值要复制不要转写） | **R260** 前端停表名单补 `awaiting_approval` + 挂起的轮次给一件能点的东西（R254 转出项，D13 授权） | `be-r260`（基点 `c70548a`，**独占**；`.venv` 与 `frontend/node_modules` 均总控建 junction；写域只 `frontend/**`，🚫 色值/`theme.css`/`app/**`/依赖安装） | 🟢 09-26 10:15 派出（本 block 只此一次投递，无 model 覆盖）。🔴 名单必须仍是 `r221-queue-deadline.test.js:206` 正则认得的那枚数组字面量；`lint:colors` 预算现取＝**148**（旧班子里的 334 已过期，别抄）。 | 10:15 |
+| `Bacon`（**与上一行 R260 那位同名不同人**，nickname 撞了，按 id 定序） | `01a0db83-87ed-7e80-9ae5-30ebbcffe180`（spawn 返回值直取） | **R261** 裸 connect 棘轮别再按行号记账（今天 `chat.py:853→854` 一枚假红，账已现场改在 `c70548a`） | `be-r261`（基点 `c70548a`，**独占**；写域**只 `tests/`**：改 `tests/test_r238_bare_connect_ratchet.py` + 新钉件；🚫 `app/**` / `scripts/**` / 任何调用点迁移） | 🟢 09-26 10:15 派出（本 block 只此一次投递，无 model 覆盖）。判据六条：插入无关／新增仍咬／迁走仍咬／换皮不改强度（`psycopg`→`psycopg2`→别名→`**kwargs` 四形）／记账仍一眼可读／反证自证（身份退化成 path-only 必须让某枚咬合钉红）。 | 10:15 |
+| `Confucius` | `01a0db84-83ec-7da0-bdc1-3bb7a5728414`（spawn 返回值直取） | **R257** Trace 兜底两笔（甲＝兜底行幂等回填六表／乙＝明说永不回填；并把「那卷 jsonl 只含兜底行」写到面上——`docs/testing/r59c-window-ops-2026-09-25.md:289` 今天还把它标成「总账」） | `be-r257`（基点 `c70548a`，**独占**；写域只 `app/trace/**` + 新钉件；🚫 `docs/**` / `migrations/**` / `chat.py` / `docker-compose.yml`（走转出项）） | 🟢 09-26 10:15 派出（本 block 只此一次投递，无 model 覆盖）。承重两枚不许动：`store.py:18-21` sequence 取 `MAX(sequence)`、`:22-24` projection 永不半成功。邻居四枚（`test_r250_local_fallback_is_named` / `test_r250_run_terminal_status_honesty` / `test_postgres_execution_persistence` / `test_redis_worker_recovery`）逐枚复跑不许放宽 | 10:15 |
+| `Socrates`（总控登记名·结案） | 同上 `01a0d88f-5782-7822-8865-b6b8fd46c6ef` | **R253**（结案） | `be-r253`（身体待 close） | ✅ **已结案并树 `ea2a539`**（09-26 09:52）：反证钉不再就地改写被跟踪文件，变异只落影子副本。🔴 判据「同一 HEAD 连跑三次 `-n 8` 零漂移」**未满**：`d853153` 已 1 枚 5260/49，另 2 枚在本格之后跑 | 09:52 |
+| `Maxwell`（总控登记名·结案） | 同上 `01a0d88f-dfd9-78c3-b6b2-56db815bf776` | **R254**（结案） | `be-r254`（身体待 close） | ✅ **已结案并树 `8f89def`**（09-26 10:08）。🔴 真实基点 `cca9081` 而非派工词写的 `8841578`：8 枚共改文件逐枚 `git rev-parse` 证 `cca9081`≡`ea2a539` ⇒ 整文件搬运零夹带（numstat 与施工树逐字相符）。队列道与同步道终态从此不许谎报；转出项 ⇒ R259/R260/R261；并树后门抓到三枚红 ⇒ 总控补口 `c70548a` | 10:08 |
+| `Tesla`（总控登记名·结案） | 同上 `01a0d890-f30c-7543-ace8-7c5918d49f11` | **R256**（结案） | `be-r256`（已 close） | ✅ **已结案并树 `ff0f4ec`**（09-26 10:43）＋总控补口 `d853153`（10:49）。五条判据逐条达标，判据④＝**隔离 PG 5433 真库**由总控亲跑：`applied=15 tail=0015`、二次跑 `applied=0` 幂等、`test_r256_pg_migration_acceptance.py` **5 passed**。🔴 施工方 09-25 21:57 最后写盘后从未交回报告 ⇒ 按盘上交付验收；三处越界改口判为收紧（详 4CG.二） | 10:43 |
 
 ⇒ 三条直接后果：① 「607 枚缺口」作废，两侧**条数相等**（1008 = 1008）；② 「距离口径未锁」也基本清了——PG 侧索引 `vector_l2_ops` 与 `vector_scope.distance_function=l2` 同源对齐；③ 切读缺的仍然只剩**真 top-k 对照**这一格，本班已作为 **R59b 第一步**下发，且要求比对必须在**两侧同时可达**的地方跑（backend 容器内：`/app/chroma_db` 是真卷、`postgres` 是内网 DNS；5432 未向宿主发布，宿主侧连不进去是设计如此）。🔴 老毛病第三次记账：**报「某物不存在」之前，先确认自己在哪一层查、用的是不是这一层的正确名字**——这次是查错了服务器上的另一个进程。
 
@@ -4217,3 +4226,51 @@ frontend/** 全程只读（ChatPanel.vue sha256 前 16 39fd661fa74ca098，16:54:
 - 唯一潜在撞行点是 `.env.example`：R255 只动 `MODEL_*` 行、R256 只动 `PERSISTENCE_BACKEND` 行，两边派工词都写明了边界。
 - 排在波次二未派：R257（Trace 兜底两笔，拟让 `Poincare` 续）· R258（runbook 两处假零，总控自办）· A② 那扇 off 小窗（R254 并树前开没意义）。
 - 🔴 被测镜像仍落后（`BUILD_INFO revision=75d9a6d`）⇒ 本窗读数是行为级证据，不是验收级；R254 并完之后 D 三格必须复测。
+ 
+## §4CG（09-26 09:5x–10:5x，第九班·总控，主树 `ea2a539` → `d853153`）：V2 波次二五枚落地 · 真库验收第一次跑到底 · 一次落在总控头上的派工事故
+
+**一、提交链（时刻全部 `git log --date=format` 现取，非转述）**
+
+- `ea2a539` 09:52 并树 R253 → `8f89def` 10:08 并树 R254 → `c70548a` 10:13 R254b 总控补口 → 10:15 派出四枚（R259/R260/R261/R257）→ `ff0f4ec` 10:43 并树 R256 → `d853153` 10:49 R256b 总控补口。
+- 全量门（`python scripts/run_gate.py -n 8 --dist loadfile`，总控亲跑）：`c70548a` **5218 passed / 44 skipped / 0 failed**（124.0 s）；`ff0f4ec` **5258 passed / 49 skipped / 2 failed**（119.6 s，两枚红＝量具记账，见三）；`d853153` **5260 passed / 49 skipped / 0 failed**（133.3 s，run_gate 141.9 s，exit=0）。
+- 🔴 skip 计数 44 → **49** 系 R256 新增的真库验收件在离线档全部 skip，**不是回归**，下班照此对账，别把它当漂移。
+- R253 判据「同一 HEAD 连跑三次 `-n 8` 零漂移」：`d853153` 上已 1 枚，另 2 枚排在本格之后跑，结果回填名册 R253 结案行。
+
+**二、R256 五条判据逐条（跟进单 R256 原文）+ 总控裁定**
+
+- ① `artifacts.deleted_at` 已落 `persistence._TABLES` 的 artifacts columns（`app/storage/persistence.py:317`）⇒ R248 那枚退役状态从此不再只活在内存里。
+- ② `migrations/0015_dataset_version_scope_columns.sql` 给 `dataset_versions` 加 `department_ids` / `classification`（NOT NULL + 空值缺省，零回填零 UPDATE），`app/storage/datasets.py` 新增 `_strictness` / `_no_wider_scope`：版本 scope 与父行 scope 取**最严交集**（classification 取更严者、departments 取交集）⇒ 堵死「降密一并放宽历史版本」。未记录 scope 的版本读作 `resource_scope_missing`（拒绝）而不是继承父行；classification 的排序从 `app/common/policy.py` 借用 `_classification_level`，**存储层不留第二份词表**。
+- ③ 裸机 `PERSISTENCE_BACKEND` 缺省 json 致「登记重启即失」：操作者前置写进 `README.md` / `.env.example`，并钉 `tests/test_r256_persistence_backend_default.py`。
+- ④ 迁移在**隔离 PG 5433 真库**跑到底并留凭据（总控亲自复跑，未采信施工层自述）：一次性库 `python scripts/migrate.py` ⇒ `applied=15`、`tail=0015`，两列 shape 实测 `classification text NOT NULL ''::text` / `department_ids jsonb NOT NULL '[]'::jsonb`；二次跑 `applied=0`（幂等）；`tests/test_r256_pg_migration_acceptance.py` **5 passed**。另有离线凭据：29 枚邻居面 292 passed / 16 skipped，四枚新件＋九枚改口邻居件 177 passed / 0 failed。
+- 🔴 **裸机真前置（原单与 runbook 都没写，本班撞出来并已补进 README）**：空库直跑会停在 **0010** 并回滚，stderr 点名 `EMBEDDING_MODEL, EMBEDDING_DIMENSION are not declared`——实测要给 `nomic-embed-text` / `768` 才过。
+- ⑤ 尾号引信件连名带断言一起改口，`COMMENT ON` 散文里的分号不得被裸切骗过：`tests/test_r256_migration_scanners.py`。🔴 尾号引信从 4 枚涨到 **6 枚**。
+- **总控裁定（施工越界三处，判为成立且方向是收紧、不是放宽）**：`test_r248_artifact_column_alignment.py` 把 `DOCUMENTED_GAP` 收成 `frozenset()`；`test_r249_dataset_scope_faces.py` 的债钉反向往内收；`test_r251_alert_disposal_migration.py` 拆 `LANDED` / `CATALOG_TAIL` 两常量。
+- **总控补口两笔**：README 补裸机迁移步与 0010 前置；`.env.example` 里那句 "README.md gives the command" 原为**假话**（README 当时根本没给命令），已改真。
+- 施工方（`Tesla`@`be-r256`，最后写盘 09-25 21:57）**从未交回报告** ⇒ 按 R236/R238 先例以盘上交付验收，不按自述验收。
+
+**三、量具按行号记账第三次咬人 ⇒ R261 的立论由实测背书**
+
+- 第二次 `c70548a`：`chat.py:853→854`（R254 在上方插 481 行）；第三次 `d853153`：`persistence.py:595→596`（R256 在 :317 只插 **1 行**）。同一枚站点仅因上方插行就被报成「迁走一枚＋新长一枚」，两次都由总控手工改账维持主干绿——**上方每插一行就得改一次账，这是 `path:line` 记账的税**。
+- 改账不削强度：站点总数不变、仍按 `path:line` 认、新增长照样咬；改后本件 18 passed，字节数不变、CR 仍 0（该件是纯 LF）。
+- 🔴 给 R261（`Bacon`@`be-r261`）：**它改的正是本班 `d853153` 刚改过的那枚文件**——交回时那 1/1 改账以主树为准，不许回带旧行号；另该件 `docstring:8` 仍写 `chat.py:853`，那是引用当年派工单的表（历史陈述），要清理需说明理由。
+
+**四、🔴 事故登记：带 model 覆盖派工——同类问题第一次落在总控头上**
+
+- 派 R259 的第一次投递带了 `model: gpt-5.6-sol` ⇒ 子线程首次请求即被服务端拒：`Invalid 'id': message id must be a string starting with 'msg_', got 'at_8d236e23-…'`，与已废的 `01a0acfb`／`01a09dda` **同一死因**。三重取证：① 状态 errored（终态，不可能再落盘）；② `git -C be-r259 status --porcelain` 零行；③ 已 close_agent ⇒ 零产物损失、零重复体。正式投递不带任何 model 覆盖。
+- 规矩重申：**派工一律不带 model 覆盖**；本总控线程亦绝不中途换模型。这一条此前只约束执行层，本班起对总控本身同样生效。
+
+**五、时钟错觉订正**
+
+- 上一班把 09-26 上午记成 09-25 深夜：名册四行原写 23:3x／23:4x／23:5x／09-27 00:0x，实测四枚工作树创建时刻 **10:15:24–10:15:27**（`.git/worktrees/*/HEAD` mtime），已全部订正为 10:15，并补上名册缺的那一枚「时刻」列。教训：接班第一件事是 `Get-Date` 现取，别继承摘要里的钟点。
+
+**六、量具形状坑（写下来免得下班再摸一遍）**
+
+- `tests/test_r249_dataset_pg_acceptance.py::test_a_registration_lands_in_both_real_tables` 在同一枚验收库跑第二遍必 `9 == 1` 红（`dataset_id` 按逻辑文件名算、跨用例累积）⇒ 属量具形状，不是产品缺陷；R256 的验收件用 per-case CREATE/DROP 一次性库绕开。
+- 5433 上现存本班残渣库 `enterprise_brain_accept_r256` / `_r256b`；`_r250` 是别人的**别动**。删库属业主动作，本班不代做，只挂号。
+- 口令文件 `tmp/pgvector-isolated-5433.secret`（DPAPI 加密，永不打印）；复跑入口 `tmp/r256_acc.ps1`；`EB_PG_ACCEPTANCE_URL` 必须指向 `enterprise_brain_accept*` 前缀，拒 5432／非本机。
+
+**七、主干同步与下一步**
+
+- 登记时 `gitee` 只到 `ea2a539`，本班四枚（`8f89def`／`c70548a`／`ff0f4ec`／`d853153`）尚未 push——push 已获业主授权，本格记账完立即执行。
+- 在途四枚写域互斥，基点统一 `c70548a`：R259 `Tesla`（量具认 `awaiting_approval`）·R260 `Bacon`（前端停表＋可批准入口）·R261 `Bacon`（棘轮换身份口径）·R257 `Confucius`（Trace 兜底两笔）。本班两笔并树与前三者零交集，唯 R261 同文件（见三）。
+- A② 第二扇窗（`REPORT_LANE_VIA_QUEUE=off` 判逐帧到达）等 R259 并树才有意义；开窗前 `powercfg /change standby-timeout-ac 0`。
