@@ -12,5 +12,6 @@
   "0011_document_activity_signals.sql": "68780a4d77ae0c7c5688981f49deeb22e4b6dac09fd2250008542c8331ef64b5",
   "0012_alert_and_pending_approval_attribution_columns.sql": "c87bfb898c152bb8e771587a3257a205a66b97b13f2d1acc939a3d947da8b648",
   "0013_pending_approvals_status_includes_failed.sql": "49f721d18652103495326e661e7f5f358ab476c786eff59df5773cc533528d47",
-  "0014_alert_disposal_columns.sql": "5fe425e03bd4ebac6b50b521d3767bfdcf41af88586b54cbb58fcf75c16636eb"
+  "0014_alert_disposal_columns.sql": "5fe425e03bd4ebac6b50b521d3767bfdcf41af88586b54cbb58fcf75c16636eb",
+  "0015_dataset_version_scope_columns.sql": "39efb0fd5850809e303199cf5400e59e7a663a47f3599288c80c0fb609fc76b0"
 }

@@ -64,8 +64,10 @@ BASE_VERSION = "0008"
 #: 谁排下一号，必须回到这里连名带断言一起改口。改口是收紧，不是放宽。
 #: R251 排了 0014（告警台账的处置列），尾号归它；本单的主题仍然是 0013 那一枚，所以 NEW_VERSION
 #: 不再等于尾号 —— 本件判的始终是「0013 放开的域 == 代码侧那两份」，把 0014 卷进来只会让
-#: alerts 的 CHECK 冒充 pending_approvals 的词表。尾号仍然由上面那条断言逐字钉住。
-CATALOG_TAIL_VERSION = "0014"
+#: alerts 的 CHECK 冒充 pending_approvals 的词表。R256 排了 0015（给 dataset_versions 补
+#: 版本自己的 classification / department_ids）之后尾号归它，本件的主题与判法一概不随之改变。
+#: 尾号仍然由上面那条断言逐字钉住。
+CATALOG_TAIL_VERSION = "0015"
 NEW_VERSION = "0013"
 NEW_FILENAME = "0013_pending_approvals_status_includes_failed.sql"
 NEW_NAME = "pending_approvals_status_includes_failed"

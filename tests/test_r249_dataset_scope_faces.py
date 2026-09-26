@@ -5,9 +5,14 @@
 资源侧的口径仍然只有 ``DatasetRecord.resource_scope`` 这一处；本件钉的是"版本链 + 落表"
 这两件事没有把它俩改掉。
 
-第四格钉版本寻址：``scope_for_version`` 交回的是**父 dataset 行**的口径换了个 version_id。
-``dataset_versions`` 没有密级列也没有部门列（加列是迁移，不归本单），所以一个版本永远不许
-成为比它所属数据集更宽的资源；查不到的版本交回 None，policy 把 None 读成
+第四格钉版本寻址。R249 落这枚钉时 ``dataset_versions`` 没有密级列也没有部门列，所以
+``scope_for_version`` 只能交回**父 dataset 行**的口径换个 version_id：一个版本因此永远不许比
+它所属的数据集更宽，却也跟着父行一起放宽。那笔债的钉就是本文件最后一枚用例，连名带断言一起
+交给了 R256。
+
+📌 **R256 改口（迁移 0015 落了那两列）**：版本行现在自己记着 classification / department_ids，
+口径取的是「版本行记的那一份，且只严不宽」——两行里更严的密级、两份部门名单的交集。查不到的
+版本、没有记过口径的版本（0015 之前落的老行）都交回 None，policy 把 None 读成
 ``resource_scope_missing`` —— 缺行是关起来，不是放行到当前版本。
 """
 from __future__ import annotations
@@ -199,14 +204,15 @@ def test_a_scope_is_built_from_the_row_not_from_the_caller_s_assumptions(
     assert scope.version_id == record.current_version_id
     assert scope.status == "active"
 
-def test_a_lower_classification_on_a_later_registration_widens_the_whole_chain(
+def test_a_lower_classification_on_a_later_registration_leaves_the_history_strict(
     registry, tmp_path
 ) -> None:
-    """钉住一笔债：版本继承父行口径，所以把密级往下改会一并放宽历史版本。
+    """0015 关掉的那一格：把父行降密，不再一并放宽已经存过的历史版本。
 
-    ``dataset_versions`` 没有 classification / department 列（加列属迁移，本单不许碰
-    ``migrations/``），历史版本的内容与哈希都还在表里，但判定口径只有父行那一份。这条钉的是
-    "今天确实如此"，不是"这样对"：要按版本各自的密级判，得等一枚给 dataset_versions 加列的迁移。
+    这枚钉原来是反的——``test_a_lower_classification_on_a_later_registration_widens_the_whole_chain``，
+    断言 ``allowed is True``，钉的是"今天确实如此"而不是"这样对"，R249 在纸上写明解药是一枚给
+    ``dataset_versions`` 加列的迁移。0015 落了那两列，所以本件连名带断言一起改口：判据从"继承
+    父行"换成"版本行自己记的那一份，且只严不宽"。
     """
     path = tmp_path / "sales.csv"
     path.write_text(f"department,revenue\n{DEPT},1\n", encoding="utf-8")
@@ -214,20 +220,34 @@ def test_a_lower_classification_on_a_later_registration_widens_the_whole_chain(
         path, principal=_principal("owner"), classification="confidential"
     )
     path.write_text(f"department,revenue\n{DEPT},2\n", encoding="utf-8")
-    registry.register(path, principal=_principal("owner"), filename="sales.csv", classification="public")
+    lowered = registry.register(
+        path, principal=_principal("owner"), filename="sales.csv", classification="public"
+    )
     staff_peer = _principal("staff-peer", DEPT, "staff")
 
+    # 父行确实被后来那次登记改写了——这正是原来那一格会放宽的原因，它今天仍然如此。
     assert registry.get(confidential.dataset_id).classification == "public"
     assert (
         registry.get_version(confidential.dataset_id, 1).content_sha256
         == confidential.content_sha256
     )
-    assert (
-        authorization_decision(
-            staff_peer,
-            registry.scope_for_version(f"{confidential.dataset_id}:v1"),
-            action=ACTION_VIEW,
-            require_resource_scope=True,
-        ).allowed
-        is True
+    # 版本行不再跟着父行走：v1 记的还是 confidential，判定也就还是 confidential。
+    assert registry.get_version(confidential.dataset_id, 1).classification == "confidential"
+    history = authorization_decision(
+        staff_peer,
+        registry.scope_for_version(f"{confidential.dataset_id}:v1"),
+        action=ACTION_VIEW,
+        require_resource_scope=True,
     )
+    assert history.allowed is False, history.model_dump()
+    assert history.reason_code == "clearance_insufficient", history.model_dump()
+
+    # 反证的另一半：改口不是把历史版本一律关死。后来那次登记自己的那一版仍然读得到。
+    assert lowered.current_version_id == f"{confidential.dataset_id}:v2"
+    current = authorization_decision(
+        staff_peer,
+        registry.scope_for_version(lowered.current_version_id),
+        action=ACTION_VIEW,
+        require_resource_scope=True,
+    )
+    assert current.allowed is True, current.model_dump()

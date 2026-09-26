@@ -27,10 +27,14 @@ TABLE_BLOCK = re.compile(
 )
 CONSTRAINT_WORDS = ("primary", "unique", "foreign", "constraint", "check", "exclude")
 
-# 表里有、而控制面适配器今天的列元组没写的列。这不是"接入做完了"的一部分，是一笔明账：
-# app/storage/persistence.py 的 _TABLES["artifacts"].columns 才是决定哪些列真能落库的那张表，
-# 它归 R251 管。谁把它补齐（或又少写一枚），这枚钉就红一次，逼着改的人回来对这句话。
-DOCUMENTED_GAP = frozenset({"deleted_at"})
+# 表里有、而控制面适配器的列元组没写的列。这不是"接入做完了"的一部分，是一笔可以重新长出来的
+# 账：app/storage/persistence.py 的 _TABLES["artifacts"].columns 才是决定哪些列真能落库的那张表。
+# 今天它是空的——R256 把 deleted_at 补进了那枚列元组（跟进单 §100.4 判据①：在那之前 R248 的
+# "退役"只活在内存里，进程一重启 deleted_at 与 status 就一起复活）。DDL 侧本来就不欠这一枚：
+# 0001 建 artifacts 时就带着 deleted_at TIMESTAMPTZ，欠的只有适配器那一行。常量保留、值改空，
+# 是因为它会被人重新写满：谁少写一枚列，这里红一次，逼着他回来对这句话。
+# （派工词当初把这枚缺口归给 R251——那是告警台账的单——总控在 §100.4 已订正归 R256。）
+DOCUMENTED_GAP = frozenset()
 
 
 def _artifact_columns():
@@ -123,10 +127,12 @@ def test_a_registered_record_hands_the_store_every_column(tmp_path):
 
 
 def test_the_columns_written_to_the_table_are_named_not_assumed(tmp_path):
-    """真发出去的 INSERT 点了哪些列：除明账上的那枚缺口，一枚都不能少。
+    """真发出去的 INSERT 点了哪些列：一枚都不许多，也一枚都不许少。
 
     静态相等只证明"名字对得上"，这一枚证明"值真的写出去"——把 owner_id 从写出的列里摘掉，
-    它当场红（R248 反证 ① 的另一半）。
+    它当场红（R248 反证 ① 的另一半）。R248 落这枚钉时表里 12 枚列、适配器只点名 11 枚，缺的
+    那枚记在 DOCUMENTED_GAP 上；R256 补列之后那本明账归零，所以今天判的是"零枚缺口"——谁再
+    少写一枚，这里红，而不是往常量里塞个名字把它盖过去。
     """
     statements = []
 
@@ -183,8 +189,8 @@ def test_the_columns_written_to_the_table_are_named_not_assumed(tmp_path):
     columns = set(_artifact_columns())
     assert written <= columns, f"INSERT 写了表里没有的列：{sorted(written - columns)}"
     assert columns - written == DOCUMENTED_GAP, (
-        f"表里有 {sorted(columns - written)} 没被写；今天的明账只有 {sorted(DOCUMENTED_GAP)}，"
-        "要么补上 app/storage/persistence.py 的列元组，要么改这句话并说明理由"
+        f"表里有 {sorted(columns - written)} 没被写；R256 之后明账是空的（{sorted(DOCUMENTED_GAP)}），"
+        "要么补上 app/storage/persistence.py 的列元组，要么改 DOCUMENTED_GAP 并说明理由"
     )
     assert table["owner_id"] == "keeper" and table["status"] == "active"
     assert table["artifact_id"] == record.artifact_id

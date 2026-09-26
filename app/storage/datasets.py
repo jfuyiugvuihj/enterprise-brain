@@ -30,6 +30,11 @@ from typing import Any, Callable, Iterable, Mapping
 
 from app.agents.contracts import Principal, ResourceScope
 from app.common.logger import logger
+# The ranking of the classification words belongs to policy. A second copy of it here is how the
+# storage layer and the authorization layer start answering one resource two ways, so 0015's
+# reader borrows the one ranking there is. It is the only private name this module imports
+# because app/common/policy.py has no public spelling of it yet.
+from app.common.policy import _classification_level
 from app.storage.persistence import PersistenceWriteError
 
 DATASET_TABLE = "datasets"
@@ -163,9 +168,17 @@ class DatasetRecord:
 class DatasetVersionRecord:
     """One ``dataset_versions`` row: the content of one registration, addressed forever.
 
-    There are no classification or department columns on this table (that would need a
-    migration this slice does not own), so a version is authorized through its parent dataset
-    row and never as a looser resource -- see :meth:`DatasetRegistry.scope_for_version`.
+    The two scope columns arrived with migration 0015, and with them the row stopped being
+    content-only: ``department_ids`` and ``classification`` hold the scope **this**
+    registration was made under, which is the only scope anyone can state about the bytes
+    that row keeps. Before 0015 the parent ``datasets`` row was the only scope on the table,
+    so lowering it moved the whole chain with it -- the hole R256 exists to close. A version
+    is still never a *looser* resource than its dataset row: the reading takes the stricter
+    of the two. See :meth:`DatasetRegistry.scope_for_version`.
+
+    The two fields are last, in the order the ALTERs append them to the table, because
+    ``tests/test_r249_dataset_table_columns.py`` pins that the INSERT column order is the
+    composed DDL order.
     """
 
     dataset_version_id: str
@@ -182,6 +195,8 @@ class DatasetVersionRecord:
     published_at: str | None = None
     superseded_at: str | None = None
     metadata: dict = field(default_factory=dict)
+    department_ids: list = field(default_factory=list)
+    classification: str = ""
 
 
 DATASET_COLUMNS = tuple(item.name for item in dataclass_fields(DatasetRecord))
@@ -606,6 +621,56 @@ def _dataset_from_row(row: Mapping[str, Any]) -> DatasetRecord:
     )
 
 
+def _strictness(word: str) -> tuple[int, int]:
+    """Order one classification word so the *stricter* answer sorts higher.
+
+    A word ``app/common/policy.py`` cannot rank is not "lowest": it is refused outright,
+    which is the strictest thing the table can say, so it sorts above every rankable word.
+    Ranking it below would be exactly the widening 0015 exists to close.
+    """
+    level = _classification_level(word)
+    if level is None:
+        return (1, 0)
+    return (0, level)
+
+
+def _no_wider_scope(
+    version: DatasetVersionRecord, dataset: DatasetRecord
+) -> ResourceScope | None:
+    """The strictest scope both rows support, or ``None`` when the version records no scope.
+
+    One place, so the "never looser than the dataset row" rule cannot be re-decided
+    differently by a second caller. ``_classification_level`` is imported from
+    ``app/common/policy.py`` rather than restated here: the ranking of the words is
+    policy's, and a second copy is how two answers start disagreeing about one resource.
+
+    Three shapes are worth naming, because all three are denials rather than guesses:
+    a version that recorded no classification answers ``None`` (policy reads
+    ``resource_scope_missing``); a classification either row spells with a word policy
+    cannot rank outranks every rankable word, so it travels back as written and policy
+    refuses it by name (``resource_scope_invalid``) instead of being quietly replaced by
+    the other row's word; and departments are intersected, which can answer the empty
+    set -- also a ``resource_scope_missing``.
+    """
+    own = str(version.classification or "").strip()
+    if not own:
+        return None
+    parent = str(dataset.classification or "").strip()
+    strictest = own
+    if parent and _strictness(parent) > _strictness(own):
+        strictest = parent
+    return dataset.resource_scope.model_copy(
+        update={
+            "version_id": version.dataset_version_id,
+            "classification": strictest,
+            "department_ids": sorted(
+                {str(value) for value in version.department_ids if str(value)}
+                & {str(value) for value in dataset.department_ids if str(value)}
+            ),
+        }
+    )
+
+
 def _version_from_row(row: Mapping[str, Any]) -> DatasetVersionRecord:
     return DatasetVersionRecord(
         dataset_version_id=str(row.get("dataset_version_id") or ""),
@@ -622,6 +687,8 @@ def _version_from_row(row: Mapping[str, Any]) -> DatasetVersionRecord:
         published_at=_timestamp_text(row.get("published_at")) or None,
         superseded_at=_timestamp_text(row.get("superseded_at")) or None,
         metadata=_mapping_value(row.get("metadata")),
+        department_ids=_sequence_value(row.get("department_ids")),
+        classification=str(row.get("classification") or ""),
     )
 
 
@@ -723,6 +790,11 @@ class DatasetRegistry:
                         "created_at": created_at,
                         "published_at": created_at or None,
                         "metadata": source,
+                        # Not a backfill: the ledger holds one row per dataset, and that row
+                        # *is* the version named by ``version_id``, so the classification and
+                        # departments written here are the ones it recorded for it.
+                        "department_ids": _sequence_value(raw.get("department_ids")),
+                        "classification": str(raw.get("classification") or ""),
                     },
                 )
             )
@@ -867,6 +939,12 @@ class DatasetRegistry:
                 published_at=now,
                 superseded_at=None,
                 metadata={"registered_by": owner_id, "previous_version_id": previous_version_id},
+                # The scope this version is *registered under*, copied onto the version row
+                # rather than left to the dataset row to remember: the dataset row is what a
+                # later registration rewrites, and a version that only borrows it changes
+                # classification after the fact.
+                department_ids=list(departments),
+                classification=classification,
             )
             record = DatasetRecord(
                 dataset_id=dataset_id,
@@ -1041,22 +1119,43 @@ class DatasetRegistry:
             return None
         return self.get(str(_version_from_row(rows[0]).dataset_id))
 
+    def version_row(self, version_id: str) -> DatasetVersionRecord | None:
+        """One version row by its id, or ``None`` when the table has no such row."""
+        with self._lock:
+            self._ensure_legacy_import()
+            rows = self.store.select(
+                DATASET_VERSION_TABLE, where={"dataset_version_id": version_id}
+            )
+        return _version_from_row(rows[0]) if rows else None
+
     def scope_for_version(
         self, version: DatasetVersionRecord | str
     ) -> ResourceScope | None:
-        """Authorize a version with its dataset row's scope, addressed by that version.
+        """Authorize a version by the scope recorded **on its own row**, never wider than its dataset.
 
-        ``dataset_versions`` has no classification or department columns, so a version is
-        never its own looser resource: the scope comes from the parent row and only
-        ``version_id`` changes. An unknown version answers ``None``, which policy reads as
-        ``resource_scope_missing`` -- a missing row fails closed, it does not fall through to
-        the live version.
+        Migration 0015 gave ``dataset_versions`` a ``classification`` and a ``department_ids``,
+        so a version no longer has to borrow the only scope in the database -- the one a later
+        registration rewrites. The answer is the meet of the two rows rather than either one
+        alone: the stricter classification and the intersection of the department sets. That
+        keeps the property R249 stated (a version is never its own looser resource) while
+        closing what it could not close: lowering the dataset row no longer loosens the
+        versions stored before the lowering.
+
+        A version row with no recorded classification answers ``None``. Rows written before
+        0015 are exactly that, and 0015 refuses to invent a scope for them, so the honest
+        statement is "not recorded" and policy reads ``None`` as ``resource_scope_missing`` --
+        a denial, the same shape an unknown version already took. An unknown version, a
+        missing dataset row and an unrecorded scope therefore all fail closed together, and
+        none of them falls through to the live version.
         """
         version_id = version if isinstance(version, str) else version.dataset_version_id
-        record = self.dataset_for_version(version_id)
+        record = self.version_row(version_id)
         if record is None:
             return None
-        return record.resource_scope.model_copy(update={"version_id": version_id})
+        dataset = self.get(record.dataset_id)
+        if dataset is None:
+            return None
+        return _no_wider_scope(record, dataset)
 
     # --------------------------------------------------------------------------- retire
 

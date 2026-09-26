@@ -29,6 +29,12 @@ tests/test_r183_184_migration_pair.py、tests/test_r190_status_failed_domain.py 
 head 为 ``the product`` 的碎片）。R190 的逐目录扫描也走那把裸切刀，今天是运气没踩着。改法是删
 字面量里那枚分号（散文同义改写，SQL 语义一字没动），并把"两把切刀必须切出同一份语句"钉成 T-9
 —— 这才是那枚坑的可查形状。
+
+📌 **R256 追记（改的是本件的地基，不改本件的结论）**：那两把裸切刀——
+``test_r183_184_migration_pair.executable_statements`` 与 ``test_document_catalog_sync._statements``——
+今天已经换成认字面量的切法，所以下一版迁移允许在 ``COMMENT ON`` 的散文里写分号。T-9 那格
+随之换义：从「字面量里不许出现分号」变成「两把独立写成的切刀不许分家」。0014 本身一个字没动
+（前滚目录），它今天仍然没有字面量内的分号。
 """
 from __future__ import annotations
 
@@ -69,6 +75,15 @@ LANDED_VERSION = "0014"
 LANDED_FILENAME = "0014_alert_disposal_columns.sql"
 LANDED_PATH = MIGRATIONS_DIR / LANDED_FILENAME
 PRIOR_VERSION = "0013"
+
+#: 🔴 目录尾号引信（与 tests/test_document_catalog_sync.py、tests/test_r46_activity_signals.py、
+#: tests/test_r120_clean_install_first_boot.py、tests/test_r183_184_migration_pair.py、
+#: tests/test_r190_status_failed_domain.py 同族）。本件的主题是 0014，所以 ``LANDED_VERSION``
+#: 永远写 0014；但 T-1 那句「目录连续到几号」判的是目录的事实，跟着尾号走。R256 排了 0015
+#: （给 dataset_versions 补上版本自己那一份 classification / department_ids）之后尾号归它，
+#: 于是这里分成两枚常量：改口的只有 CATALOG_TAIL_*，本件重放的仍然是 0001..0014。
+CATALOG_TAIL_VERSION = "0015"
+CATALOG_TAIL_NAME = "dataset_version_scope_columns"
 
 TARGET_TABLE = "alerts"
 #: 八枚处置列的名单**取自产品代码**（``ALERT_DISPOSAL_DEFAULTS`` 的键序），本文件一枚都不抄。
@@ -357,13 +372,25 @@ def constraint_statement(statements: list[str]) -> tuple[int, str]:
 
 
 # ---------------------------------------------------------------- T-1 目录的账
-def test_the_catalog_is_contiguous_and_ends_at_the_landed_version():
-    """首装的前提：目录是 0001..0014 一枚不缺的连续序列，而且 loader 与磁盘说的是同一件事。"""
+def test_the_catalog_is_contiguous_and_ends_at_the_named_tail():
+    """首装的前提：目录是 0001..尾号 一枚不缺的连续序列，而且 loader 与磁盘说的是同一件事。
+
+    本件落 0014 的那一轮，「连续到 LANDED_VERSION」与「连续到尾号」还是同一句话；R256 排了
+    0015 之后它俩不再是同一件事，所以拆成两条分开钉——目录仍然一枚缺口都不许有，而 0014 那五格
+    重放判的照旧是 0001..0014。这是收紧（多了一条「主题版必须还在目录里」），不是把引信拆掉。
+    """
     versions = [item.version for item in MIGRATIONS]
 
-    assert versions == [f"{number:04d}" for number in range(1, int(LANDED_VERSION) + 1)], versions
+    assert versions == [
+        f"{number:04d}" for number in range(1, int(CATALOG_TAIL_VERSION) + 1)
+    ], versions
     assert versions == sorted(versions), "loader 登记的版次序不单调：首装的次序就不是它"
-    assert MIGRATIONS[-1].name == LANDED_FILENAME[: -len(".sql")].split("_", 1)[1]
+    assert LANDED_VERSION in versions, "本件的主题版被人从目录里摘走了"
+    assert versions[-1] == CATALOG_TAIL_VERSION
+    assert MIGRATIONS[-1].name == CATALOG_TAIL_NAME
+    assert next(item for item in MIGRATIONS if item.version == LANDED_VERSION).name == (
+        LANDED_FILENAME[: -len(".sql")].split("_", 1)[1]
+    )
     assert discover_migrations() == MIGRATIONS
     assert sorted(json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))) == sorted(
         path.name for path in MIGRATIONS_DIR.glob("*.sql")

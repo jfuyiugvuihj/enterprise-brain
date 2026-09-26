@@ -314,6 +314,7 @@ _TABLES = {
             "content_sha256",
             "status",
             "expires_at",
+            "deleted_at",
             "created_at",
             "metadata",
         ),

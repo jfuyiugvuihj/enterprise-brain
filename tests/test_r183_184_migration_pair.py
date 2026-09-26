@@ -43,9 +43,10 @@ NEW_PATH = MIGRATIONS_DIR / NEW_FILENAME
 #: 🔴 目录尾号引信（与 tests/test_document_catalog_sync.py、tests/test_r46_activity_signals.py、
 #: tests/test_r120_clean_install_first_boot.py、tests/test_r190_status_failed_domain.py 同族）。
 #: 本单落 0012 时尾号就是 0012；R190 排了 0013（放开挂起台账 status 的取值域）之后尾号归它，
-#: R251 排了 0014（告警台账的处置列）之后尾号归它。本件连名带断言一起改口 —— 这是把钉子收紧
-#: 一版，不是放宽。谁排下一号必须回到这里改这一格。
-CATALOG_TAIL_VERSION = "0014"
+#: R251 排了 0014（告警台账的处置列）之后尾号归它，R256 排了 0015（给 dataset_versions 补上
+#: 版本自己那一份 classification / department_ids）之后尾号归它。本件连名带断言一起改口 ——
+#: 这是把钉子收紧一版，不是放宽。谁排下一号必须回到这里改这一格。
+CATALOG_TAIL_VERSION = "0015"
 
 #: 本单送的两枚列：R184 管告警台账的行级归属，R183 管挂起轮声明的档位。
 ALERTS_DEPARTMENT = ("alerts", "department")
@@ -82,10 +83,42 @@ _CREATE_TABLE = re.compile(
 _LEDGER_WORD = re.compile(r"\b(?:alerts|pending_approvals)\b", re.IGNORECASE)
 
 
+def _split_statements(sql: str) -> list[str]:
+    """按 PostgreSQL 自己的读法切语句：字符串字面量**内部**的 ``;`` 不是语句结束符。"""
+    parts: list[str] = []
+    current: list[str] = []
+    in_string = False
+    index = 0
+    while index < len(sql):
+        char = sql[index]
+        if char == "'":
+            if in_string and sql[index + 1 : index + 2] == "'":
+                current.append("''")
+                index += 2
+                continue
+            in_string = not in_string
+        if char == ";" and not in_string:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    parts.append("".join(current))
+    assert not in_string, "字符串字面量没有闭合：本件的切法对它不成立"
+    return [part for part in parts if part.strip()]
+
+
 def executable_statements(sql: str) -> list[str]:
-    """只留能执行的语句：注释是散文，不是 SQL（与 tests/test_document_catalog_sync.py 同一打法）。"""
-    body = _COMMENT_LINE.sub("", sql)
-    return [" ".join(chunk.split()) for chunk in body.split(";") if chunk.strip()]
+    """只留能执行的语句：注释是散文，不是 SQL（与 tests/test_document_catalog_sync.py 同一打法）。
+
+    R256 把这里的裸切换成了认字面量的切法。``COMMENT ON ... IS '... ; ...'`` 那样的散文正是分号
+    最密的地方，按 ``;`` 裸切能把一版迁移切成两版都不认识的形状——R251 在 0014 上真踩过一次，
+    当时的解法是删掉字面量里那枚分号（``test_r251_alert_disposal_migration.py`` 的 T-9 钉的就是
+    那次删除），那是让迁移绕开工具；本件反过来，让工具配得上迁移里将来会写的散文。同族的另一把刀
+    ``quoted_statements`` 在 R251 那枚件里，两把刀加 ``test_document_catalog_sync.split_statements``
+    对同一串合成输入必须切出同一份语句，那一格钉在 ``tests/test_r256_migration_scanners.py``。
+    """
+    return [" ".join(chunk.split()) for chunk in _split_statements(_COMMENT_LINE.sub("", sql))]
 
 
 def statement_head(statement: str) -> str:
@@ -322,8 +355,12 @@ def test_the_catalog_gains_exactly_one_version_and_the_loader_accepts_it():
     assert versions[-1] == CATALOG_TAIL_VERSION, (
         "目录尾号引信（来历见 CATALOG_TAIL_VERSION）：要加第三枚列请回到 0012 里加"
     )
-    assert [version for version in versions if version > NEW_VERSION] == ["0013", CATALOG_TAIL_VERSION], (
-        "0012 之后只许站着被指名的那两枚前滚迁移（R190 的 0013 与 R251 的 0014），"
+    assert [version for version in versions if version > NEW_VERSION] == [
+        "0013",
+        "0014",
+        CATALOG_TAIL_VERSION,
+    ], (
+        "0012 之后只许站着被指名的那三枚前滚迁移（R190 的 0013、R251 的 0014 与 R256 的 0015），"
         "多一枚就得回到这里指名：" + str(versions)
     )
     assert NEW_FILENAME in on_disk

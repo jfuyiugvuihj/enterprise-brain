@@ -1,6 +1,7 @@
 """R249 判据 J-3 / J-4 —— 列对齐的静态钉，与 JSON 写点归零。
 
-J-3 拿 `migrations/0002_execution_data_lineage.sql` 里的建表语句当事实源，与
+J-3 拿 ``migrations/0002_execution_data_lineage.sql`` 的建表体**加上其后每一版点名本表的
+ADD COLUMN**（0015 起真有这样一版）当事实源，与
 `DatasetRecord` / `DatasetVersionRecord` 的字段集**双向**比对：表多一列、记录多一字段都算红。
 顺带把 CAST 家族（jsonb / timestamptz / date）与 DDL 列类型对齐，否则 `%s::jsonb` 可以指着
 一列 TEXT 而不被任何人发现。
@@ -15,11 +16,13 @@ from __future__ import annotations
 import ast
 import dataclasses
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from app.agents.contracts import Principal
+from app.db.migrations import MIGRATIONS
 from app.storage import datasets as dataset_storage
 from app.storage.datasets import (
     DATASET_TABLE,
@@ -30,6 +33,9 @@ from app.storage.datasets import (
     DatasetRowConflict,
     InMemoryDatasetTableStore,
     UnknownDatasetTable,
+)
+from test_r183_184_migration_pair import (  # noqa: T401  共用那把认字面量的语句切刀
+    executable_statements,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -53,8 +59,42 @@ def _create_table_sql(table: str) -> str:
     raise AssertionError(f"{table} 的建表语句没读完")
 
 
+#: 建表体之后的前滚迁移给本表补上的列：``ALTER TABLE ... ADD COLUMN IF NOT EXISTS 列 类型``。
+_ADD_COLUMN = re.compile(
+    r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?P<table>\w+)\s+ADD\s+COLUMN\s+"
+    r"(?:IF\s+NOT\s+EXISTS\s+)?(?P<column>\w+)\s+(?P<definition>.+)",
+    re.IGNORECASE | re.DOTALL,
+)
+#: 这两张表的出生地。比它新的每一版都可能有补列的语句。
+BASE_VERSION = "0002"
+
+
+def _added_columns(table: str) -> list[tuple[str, str]]:
+    """``0002`` 之后每一版里点名本表的 ``ADD COLUMN``，按版次与语句次序排列。
+
+    R256 起这枚钉不能只读建表体：``dataset_versions`` 的 scope 两列由迁移 0015 前滚补上，而
+    建表体永远停在 0002 那一版。只读建表体的钉会得出两种假话——「记录多了两个字段」或「表里
+    少了两列」，取决于先动哪一头。切语句用 ``test_r183_184_migration_pair`` 那把认字面量的刀，
+    与 0012/0014 那批件同一把：散文里的分号不该把一枚 ``ADD COLUMN`` 切成两半。
+    """
+    added: list[tuple[str, str]] = []
+    for item in MIGRATIONS:
+        if item.version <= BASE_VERSION:
+            continue
+        for statement in executable_statements(item.sql):
+            match = _ADD_COLUMN.match(statement.strip())
+            if match is None or match.group("table").lower() != table:
+                continue
+            added.append((match.group("column").lower(), " ".join(match.group("definition").split())))
+    return added
+
+
 def _ddl_columns(table: str) -> list[tuple[str, str]]:
-    """``[(column, type)]`` in declared order, skipping table-level constraints."""
+    """``[(column, type)]`` in declared order, skipping table-level constraints.
+
+    声明次序 = 建表体的次序 ＋ 每一版 ``ADD COLUMN`` 的次序，也就是 PostgreSQL 里
+    ``attnum`` 的次序。``DatasetVersionRecord`` 那两枚新字段排在末尾，正是为了对上这句话。
+    """
     rows: list[tuple[str, str]] = []
     for line in _create_table_sql(table).splitlines():
         line = line.strip().rstrip(",")
@@ -62,7 +102,7 @@ def _ddl_columns(table: str) -> list[tuple[str, str]]:
             continue
         name, _, rest = line.partition(" ")
         rows.append((name, rest.strip()))
-    return rows
+    return rows + _added_columns(table)
 
 
 TABLE_LEVEL_CONSTRAINTS = ("PRIMARY KEY", "UNIQUE", "CHECK", "CONSTRAINT", "FOREIGN KEY")
