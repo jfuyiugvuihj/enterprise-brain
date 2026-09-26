@@ -1,0 +1,572 @@
+{
+ "real": {
+  "mean_overlap": 0.7,
+  "same_order": 3,
+  "n": 10,
+  "same_source": false,
+  "left": {
+   "label": "chromadb/enterprise_docs",
+   "storage": "chromadb:///tmp/p3snap#enterprise_docs",
+   "detail": {
+    "count": 1008,
+    "dir": "/tmp/p3snap",
+    "width": 768
+   }
+  },
+  "right": {
+   "label": "pgvector/chunk_vectors",
+   "storage": "postgres://172.18.0.7:5432/enterprise_brain#chunk_vectors",
+   "detail": {
+    "system_identifier": "7685285828163473446",
+    "data_directory": "/var/lib/postgresql/data"
+   }
+  },
+  "per": [
+   {
+    "id": "doc-01",
+    "left": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "差旅费报销细则_2026版.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "公司年会流程_2025年度.txt_1"
+    ],
+    "right": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "差旅费报销细则_2026版.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436"
+    ]
+   },
+   {
+    "id": "doc-02",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288",
+     "销售话术培训_应对话术集.txt_1",
+     "深度学习入门：基于Python的理论与实现.pdf_200"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ]
+   },
+   {
+    "id": "doc-03",
+    "left": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "差旅费报销细则_2026版.txt_0",
+     "企业管理制度手册.txt_4",
+     "公司年会流程_2025年度.txt_1"
+    ],
+    "right": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "差旅费报销细则_2026版.txt_0",
+     "企业管理制度手册.txt_4"
+    ]
+   },
+   {
+    "id": "doc-04",
+    "left": [
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_4",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_3",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_0",
+     "档案管理办法.txt_0",
+     "客户数据保护政策_正式稿.txt_0"
+    ],
+    "right": [
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_4",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_3",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_0",
+     "档案管理办法.txt_0",
+     "客户数据保护政策_正式稿.txt_0"
+    ]
+   },
+   {
+    "id": "doc-05",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "销售话术培训_应对话术集.txt_1",
+     "深度学习入门：基于Python的理论与实现.pdf_288",
+     "深度学习入门：基于Python的理论与实现.pdf_200"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "销售话术培训_应对话术集.txt_1"
+    ]
+   },
+   {
+    "id": "doc-06",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288",
+     "深度学习入门：基于Python的理论与实现.pdf_200",
+     "销售话术培训_应对话术集.txt_1"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ]
+   },
+   {
+    "id": "doc-07",
+    "left": [
+     "差旅费报销细则_2026版.txt_1",
+     "差旅费报销细则_2026版.txt_2",
+     "员工培训与发展管理办法.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_281",
+     "远程办公管理规范_临时版.txt_1"
+    ],
+    "right": [
+     "差旅费报销细则_2026版.txt_1",
+     "差旅费报销细则_2026版.txt_2",
+     "员工培训与发展管理办法.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_281",
+     "远程办公管理规范_临时版.txt_1"
+    ]
+   },
+   {
+    "id": "doc-08",
+    "left": [
+     "browser_acceptance_policy.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "深度学习入门：基于Python的理论与实现.pdf_117",
+     "制度与口径登记表.txt_3",
+     "深度学习入门：基于Python的理论与实现.pdf_202"
+    ],
+    "right": [
+     "browser_acceptance_policy.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "深度学习入门：基于Python的理论与实现.pdf_117",
+     "制度与口径登记表.txt_3",
+     "深度学习入门：基于Python的理论与实现.pdf_202"
+    ]
+   },
+   {
+    "id": "doc-09",
+    "left": [],
+    "right": [
+     "采购管理制度_最新.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_286",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "深度学习入门：基于Python的理论与实现.pdf_48",
+     "深度学习入门：基于Python的理论与实现.pdf_114"
+    ]
+   },
+   {
+    "id": "doc-10",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288",
+     "销售话术培训_应对话术集.txt_1",
+     "深度学习入门：基于Python的理论与实现.pdf_200"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ]
+   }
+  ]
+ },
+ "chroma_vs_chromabrute": {
+  "mean_overlap": 0.7,
+  "same_order": 3,
+  "n": 10,
+  "same_source": true,
+  "left": {
+   "label": "chromadb/enterprise_docs",
+   "storage": "chromadb:///tmp/p3snap#enterprise_docs",
+   "detail": {
+    "count": 1008,
+    "dir": "/tmp/p3snap",
+    "width": 768
+   }
+  },
+  "right": {
+   "label": "numpy-bruteforce@chroma-snapshot",
+   "storage": "chromadb:///tmp/p3snap#enterprise_docs",
+   "detail": {
+    "metric": "l2"
+   }
+  },
+  "per": [
+   {
+    "id": "doc-01",
+    "left": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "差旅费报销细则_2026版.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "公司年会流程_2025年度.txt_1"
+    ],
+    "right": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "差旅费报销细则_2026版.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436"
+    ]
+   },
+   {
+    "id": "doc-02",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288",
+     "销售话术培训_应对话术集.txt_1",
+     "深度学习入门：基于Python的理论与实现.pdf_200"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ]
+   },
+   {
+    "id": "doc-03",
+    "left": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "差旅费报销细则_2026版.txt_0",
+     "企业管理制度手册.txt_4",
+     "公司年会流程_2025年度.txt_1"
+    ],
+    "right": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "差旅费报销细则_2026版.txt_0",
+     "企业管理制度手册.txt_4"
+    ]
+   },
+   {
+    "id": "doc-04",
+    "left": [
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_4",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_3",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_0",
+     "档案管理办法.txt_0",
+     "客户数据保护政策_正式稿.txt_0"
+    ],
+    "right": [
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_4",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_3",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_0",
+     "档案管理办法.txt_0",
+     "客户数据保护政策_正式稿.txt_0"
+    ]
+   },
+   {
+    "id": "doc-05",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "销售话术培训_应对话术集.txt_1",
+     "深度学习入门：基于Python的理论与实现.pdf_288",
+     "深度学习入门：基于Python的理论与实现.pdf_200"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "销售话术培训_应对话术集.txt_1"
+    ]
+   },
+   {
+    "id": "doc-06",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288",
+     "深度学习入门：基于Python的理论与实现.pdf_200",
+     "销售话术培训_应对话术集.txt_1"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ]
+   },
+   {
+    "id": "doc-07",
+    "left": [
+     "差旅费报销细则_2026版.txt_1",
+     "差旅费报销细则_2026版.txt_2",
+     "员工培训与发展管理办法.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_281",
+     "远程办公管理规范_临时版.txt_1"
+    ],
+    "right": [
+     "差旅费报销细则_2026版.txt_1",
+     "差旅费报销细则_2026版.txt_2",
+     "员工培训与发展管理办法.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_281",
+     "远程办公管理规范_临时版.txt_1"
+    ]
+   },
+   {
+    "id": "doc-08",
+    "left": [
+     "browser_acceptance_policy.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "深度学习入门：基于Python的理论与实现.pdf_117",
+     "制度与口径登记表.txt_3",
+     "深度学习入门：基于Python的理论与实现.pdf_202"
+    ],
+    "right": [
+     "browser_acceptance_policy.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "深度学习入门：基于Python的理论与实现.pdf_117",
+     "制度与口径登记表.txt_3",
+     "深度学习入门：基于Python的理论与实现.pdf_202"
+    ]
+   },
+   {
+    "id": "doc-09",
+    "left": [],
+    "right": [
+     "采购管理制度_最新.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_286",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "深度学习入门：基于Python的理论与实现.pdf_48",
+     "深度学习入门：基于Python的理论与实现.pdf_114"
+    ]
+   },
+   {
+    "id": "doc-10",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288",
+     "销售话术培训_应对话术集.txt_1",
+     "深度学习入门：基于Python的理论与实现.pdf_200"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ]
+   }
+  ]
+ },
+ "pg_vs_pgnumpy": {
+  "mean_overlap": 1.0,
+  "same_order": 10,
+  "n": 10,
+  "same_source": true,
+  "left": {
+   "label": "numpy-bruteforce@chunk_vectors",
+   "storage": "postgres://172.18.0.7:5432/enterprise_brain#chunk_vectors",
+   "detail": {
+    "metric": "l2"
+   }
+  },
+  "right": {
+   "label": "pgvector/chunk_vectors",
+   "storage": "postgres://172.18.0.7:5432/enterprise_brain#chunk_vectors",
+   "detail": {
+    "system_identifier": "7685285828163473446",
+    "data_directory": "/var/lib/postgresql/data"
+   }
+  },
+  "per": [
+   {
+    "id": "doc-01",
+    "left": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "差旅费报销细则_2026版.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436"
+    ],
+    "right": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "差旅费报销细则_2026版.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436"
+    ]
+   },
+   {
+    "id": "doc-02",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ]
+   },
+   {
+    "id": "doc-03",
+    "left": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "差旅费报销细则_2026版.txt_0",
+     "企业管理制度手册.txt_4"
+    ],
+    "right": [
+     "browser_acceptance_policy.txt_0",
+     "差旅费报销细则_2026版.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "差旅费报销细则_2026版.txt_0",
+     "企业管理制度手册.txt_4"
+    ]
+   },
+   {
+    "id": "doc-04",
+    "left": [
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_4",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_3",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_0",
+     "档案管理办法.txt_0",
+     "客户数据保护政策_正式稿.txt_0"
+    ],
+    "right": [
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_4",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_3",
+     "GB-T 22239-2019 信息安全技术等保三级要求.txt_0",
+     "档案管理办法.txt_0",
+     "客户数据保护政策_正式稿.txt_0"
+    ]
+   },
+   {
+    "id": "doc-05",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "销售话术培训_应对话术集.txt_1"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "销售话术培训_应对话术集.txt_1"
+    ]
+   },
+   {
+    "id": "doc-06",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ]
+   },
+   {
+    "id": "doc-07",
+    "left": [
+     "差旅费报销细则_2026版.txt_1",
+     "差旅费报销细则_2026版.txt_2",
+     "员工培训与发展管理办法.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_281",
+     "远程办公管理规范_临时版.txt_1"
+    ],
+    "right": [
+     "差旅费报销细则_2026版.txt_1",
+     "差旅费报销细则_2026版.txt_2",
+     "员工培训与发展管理办法.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_281",
+     "远程办公管理规范_临时版.txt_1"
+    ]
+   },
+   {
+    "id": "doc-08",
+    "left": [
+     "browser_acceptance_policy.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "深度学习入门：基于Python的理论与实现.pdf_117",
+     "制度与口径登记表.txt_3",
+     "深度学习入门：基于Python的理论与实现.pdf_202"
+    ],
+    "right": [
+     "browser_acceptance_policy.txt_0",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "深度学习入门：基于Python的理论与实现.pdf_117",
+     "制度与口径登记表.txt_3",
+     "深度学习入门：基于Python的理论与实现.pdf_202"
+    ]
+   },
+   {
+    "id": "doc-09",
+    "left": [
+     "采购管理制度_最新.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_286",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "深度学习入门：基于Python的理论与实现.pdf_48",
+     "深度学习入门：基于Python的理论与实现.pdf_114"
+    ],
+    "right": [
+     "采购管理制度_最新.txt_2",
+     "深度学习入门：基于Python的理论与实现.pdf_286",
+     "深度学习入门：基于Python的理论与实现.pdf_436",
+     "深度学习入门：基于Python的理论与实现.pdf_48",
+     "深度学习入门：基于Python的理论与实现.pdf_114"
+    ]
+   },
+   {
+    "id": "doc-10",
+    "left": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ],
+    "right": [
+     "深度学习入门：基于Python的理论与实现.pdf_510",
+     "深度学习入门：基于Python的理论与实现.pdf_290",
+     "深度学习入门：基于Python的理论与实现.pdf_502",
+     "深度学习入门：基于Python的理论与实现.pdf_188",
+     "深度学习入门：基于Python的理论与实现.pdf_288"
+    ]
+   }
+  ]
+ }
+}

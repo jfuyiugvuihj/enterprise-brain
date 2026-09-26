@@ -1,0 +1,36 @@
+{
+  "scope": {
+    "embedding_model": "nomic-embed-text",
+    "dimension": 768,
+    "distance_function": "l2",
+    "column_type": "vector(768)"
+  },
+  "u1": {
+    "source": "measured",
+    "recorded": "",
+    "sampled": 64,
+    "probes": 2,
+    "returned": 12,
+    "matched": [
+      "l2"
+    ],
+    "reason": ""
+  },
+  "k": 5,
+  "drift": {
+    "pg_vectors": 1008,
+    "chroma_vectors": 1008,
+    "only_in_pg": [],
+    "only_in_chroma": [],
+    "wrong_width": [],
+    "all_zero_rows": 0,
+    "index_version_id_null": 0,
+    "chunks_rows": 1008,
+    "chunks_with_backfilled_embedding": 1008
+  },
+  "questions": [],
+  "summary": {
+    "skipped_questions": true,
+    "corpus_gap": false
+  }
+}

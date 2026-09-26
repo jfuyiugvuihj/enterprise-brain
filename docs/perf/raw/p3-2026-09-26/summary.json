@@ -1,0 +1,267 @@
+{
+ "ticket": "R264 · pgvector P3 影子读对照（只读，不切流量）",
+ "ran_at_utc": "2026-09-26T03:57Z ~ 04:12Z",
+ "tree": {
+  "working_tree": "C:/Users/fengx/PycharmProjects/be-r264",
+  "branch": "codex/be-r264",
+  "base_commit": "8613dc7fd1da2ec769d8b6a3af446665ec091227"
+ },
+ "gate_前置三查": {
+  "migration_0010": {
+   "applied": true,
+   "name": "pgvector_chunks",
+   "checksum": "abc4f16d25fec72e174305c95589c1cb9475245856be0ab0035082279176d6d3",
+   "applied_at": "2026-09-18T12:22:20.779903+00:00",
+   "production_head": "0013（0014/0015 未上生产）"
+  },
+  "vector_scope": {
+   "schema_version": 1,
+   "embedding_model": "nomic-embed-text",
+   "dimension": 768,
+   "distance_function": "l2",
+   "column_type": "vector(768)"
+  },
+  "zero_vector_census": {
+   "chroma": {
+    "census_measurable": true,
+    "zero_vectors_before": 0,
+    "cross_dimension_vectors_before": 0,
+    "vectors_read": 1008,
+    "store_vectors": 1008,
+    "pages_read": 6,
+    "source": "/tmp/p3snap#enterprise_docs"
+   },
+   "pg": 0
+  },
+  "vector_dual_write": {
+   "backend": "on",
+   "worker": "on",
+   "scheduler": "on",
+   "source_of_truth": "deploy/.env.server:56 VECTOR_DUAL_WRITE=on",
+   "note": "🔴 与派工词写的「关着」相反：compose 的 ${VECTOR_DUAL_WRITE:-off} 只是默认值，现场被 env 文件覆盖成 on"
+  }
+ },
+ "leg_provenance": {
+  "pg": {
+   "dsn_masked": "postgresql://enterprise_brain:***@postgres:5432/enterprise_brain",
+   "object": "psycopg.Connection",
+   "read_only": true,
+   "server": {
+    "current_database": "enterprise_brain",
+    "inet_server_addr": "172.18.0.7/32:5432",
+    "data_directory": "/var/lib/postgresql/data",
+    "system_identifier": "7685285828163473446",
+    "server_version": "16.15",
+    "vector_extension": "0.8.6"
+   },
+   "stray_host_postgres": {
+    "host_listener_pid": 9036,
+    "listening": "0.0.0.0:5432",
+    "reachable_from_container": false,
+    "connect_ex": 111
+   },
+   "read_real": {
+    "chunk_vectors": 1008,
+    "chunks": 1008,
+    "embedding_null": 0,
+    "widths": "min=max=768 distinct=1"
+   }
+  },
+  "chroma": {
+   "storage": "chromadb:///tmp/p3snap#enterprise_docs",
+   "kind": "生产卷 enterprise-brain_vectordb 的 cp -a 字节级快照",
+   "production_dir_never_opened": "/app/chroma_db",
+   "files": 6,
+   "bytes": 251908236,
+   "snapshot_sha256_equals_live": true,
+   "live_unchanged_across_window": true,
+   "chromadb_version": "1.5.9",
+   "collection": "enterprise_docs",
+   "count": 1008,
+   "get_all_ids": 1008,
+   "metadata": null,
+   "u1": {
+    "source": "measured",
+    "sampled": 64,
+    "probes": 2,
+    "matched": [
+     "l2"
+    ]
+   },
+   "read_real": true
+  },
+  "distance_spelling": {
+   "pg_declared": "l2",
+   "pg_canonical": "l2",
+   "chroma_measured": "l2",
+   "unified_by": "canonical_distance() 之后再比"
+  }
+ },
+ "round1_corpus_drift": {
+  "pg_vectors": 1008,
+  "chroma_vectors": 1008,
+  "only_in_pg": [],
+  "only_in_chroma": [],
+  "wrong_width": [],
+  "all_zero_rows": 0,
+  "index_version_id_null": 0,
+  "chunks_rows": 1008,
+  "chunks_with_backfilled_embedding": 1008
+ },
+ "round2_recall_k5": {
+  "fixture": "tests/fixtures/business_evaluation_100.jsonl",
+  "fixture_sha256": "2230b2b45be18bfbb19f2f58a5ba55a5b36b444060886a30dcf073a81d678bab",
+  "questions": 105,
+  "k": 5,
+  "script_exit_code": 1,
+  "mean_overlap": 0.7238,
+  "mean_jaccard": 0.683,
+  "exact_order": 55,
+  "first_diff_rank_hist": {
+   "0": 32,
+   "1": 8,
+   "2": 5,
+   "3": 5
+  },
+  "chroma_returned_nothing": 21,
+  "cut_by_no_evidence_29": {
+   "all_105": {
+    "n": 105,
+    "mean_overlap": 0.7238,
+    "exact_order": 55,
+    "chroma_empty": 21
+   },
+   "excluding_29": {
+    "n": 76,
+    "mean_overlap": 0.6947,
+    "exact_order": 37,
+    "chroma_empty": 17
+   },
+   "only_29": {
+    "n": 29,
+    "mean_overlap": 0.8,
+    "exact_order": 18,
+    "chroma_empty": 4
+   }
+  }
+ },
+ "attribution_self_recall": {
+  "chroma_ann_vs_own_exact": {
+   "mean_overlap": 0.7238095238095237,
+   "mean_jaccard": 0.6829931972789115,
+   "exact": 55,
+   "n": 105,
+   "zero": 21
+  },
+  "pg_ann_vs_own_exact": {
+   "mean_overlap": 1,
+   "mean_jaccard": 1,
+   "exact": 105,
+   "n": 105,
+   "zero": 0
+  },
+  "exact_vs_exact": {
+   "mean_overlap": 1,
+   "mean_jaccard": 1,
+   "exact": 105,
+   "n": 105,
+   "zero": 0
+  },
+  "engine_vs_engine": {
+   "mean_overlap": 0.7238095238095237,
+   "mean_jaccard": 0.6829931972789115,
+   "exact": 55,
+   "n": 105,
+   "zero": 21
+  }
+ },
+ "vector_value_equality": {
+  "shared_ids": 1008,
+  "bit_identical": 0,
+  "differing": 1008,
+  "max_abs_element_diff": 2.1679687467468511e-7,
+  "note": "单元素最大 2.17e-07（float4/float64 表示级），且 exact(chroma) vs exact(pg) 105/105 全等 ⇒ 这点噪声没有换过任何一次名次"
+ },
+ "same_source_control": {
+  "real_cross_engine": {
+   "mean_overlap": 0.7,
+   "same_source": false
+  },
+  "chroma_vs_numpy_bruteforce_on_same_snapshot": {
+   "mean_overlap": 0.7,
+   "same_source": true
+  },
+  "pg_vs_numpy_bruteforce_on_same_table": {
+   "mean_overlap": 1,
+   "same_source": true
+  },
+  "detector": "provenance.storage 相同 ⇒ 判同源，数字作废；两枚控制均被认出",
+  "chroma_self_recall_gap": "同源自比那格 mean_overlap=0.700 而不是 1.000 —— Chroma 的 HNSW 连自己那份数据的精确解都对不齐"
+ },
+ "chroma_index_forensics": {
+  "self_probe_vectors": 1008,
+  "unreachable": 138,
+  "zero_distance_relabelled": 0,
+  "by_document_top": {
+   "AI-Agent学习路线图.pdf": 2,
+   "ISO27001信息安全管理体系_简介.txt": 2,
+   "MYBI_数据模型设计文档.txt": 2,
+   "MYBI_私有化部署手册.txt": 1,
+   "MYBI_部署手册V1.0.txt": 1,
+   "制度与口径登记表.txt": 1,
+   "深度学习入门：基于Python的理论与实现.pdf": 126,
+   "深度学习技术栈学习路线.pdf": 2,
+   "销售策略与客户案例.txt": 1
+  },
+  "empty_result_attribution": "21 道空表题的精确 top-5 里只有 6/105 枚落在 138 不可达集合内 ⇒ 空表与不可达是同一份坏索引的两个症状，不是「要的邻居没进索引」"
+ },
+ "script_identity": {
+  "image_sha256": "9e0e81cfa4fa719f8e7645461177adafd54feae982655ba7a14b2be8b8be42eb",
+  "tree_sha256": "9e0e81cfa4fa719f8e7645461177adafd54feae982655ba7a14b2be8b8be42eb",
+  "same_blob": true,
+  "image_revision": "75d9a6da3a42f627e68d1f26a07366f341510be8",
+  "tree_head_of_this_worktree": "8613dc7",
+  "note": "镜像 rev 落后主树，但本单唯一承重的脚本在 rev 8613dc7/7e2a0d5/镜像三处是同一枚 blob（git b5436b5 / sha256 9e0e81cf）⇒ 读数不降级"
+ },
+ "fail_closed_gates": [
+  {
+   "case": "--chroma-dir 指向不存在的目录",
+   "exit_code": 1,
+   "stdout": "[前置不满足] Chroma 目录不存在：/tmp/definitely-not-here（不要新建）",
+   "out_file_written": false
+  },
+  {
+   "case": "--collection 用错名（enterprise_brain 是库名不是集合名）",
+   "exit_code": 1,
+   "stdout": "[前置不满足] 取不到 collection 'enterprise_brain_wrongname'：Collection [enterprise_brain_wrongname] does not exist",
+   "out_file_written": false
+  },
+  {
+   "case": "空库负控：/tmp 里造一个名字对、目录真、count=0 的沙盒 collection",
+   "official_script": {
+    "exit_code": 2,
+    "stdout": "[前置不满足] collection 距离=measured，vector_scope 声明=l2 / U1 判读：样本只有 0 枚，少于 12",
+    "out_file_written": false,
+    "note": "fail-closed 成立，但报出来的原因是\"两边排序天然不同\"，真因是\"库里 0 枚样本可测\"——诊断文案错"
+   },
+   "r264_harness": {
+    "exit_code": 3,
+    "stdout": "🔴 [空读] Chroma 腿一条都没读到 —— 退出",
+    "overlap_computed": false
+   },
+   "production_volume": "本负控只在一次性容器 /tmp 造对象，生产卷收尾 sha 复核 LIVE-UNCHANGED-NEGCTRL"
+  }
+ ],
+ "exit_code_discrepancy": "脚本 docstring 与手册 §8.9 写「2=前置不满足」，实测六条前置里只有「距离不一致」那条走 return 2；其余 raise SystemExit(字符串) ⇒ 退出码 1，与「1=有差异」撞车",
+ "verdict": {
+  "grade": "不可切读",
+  "missing_cells": [
+   "must_contain 查无出处 29 条未清零（§8.8 明文：此时本读数只算影子读差集，不是 R58 判据③ 的验收证据）",
+   "权限过滤下推的语义等价未测（本轮两腿都是无 WHERE 裸检索）",
+   "H13/U5 密级口径未裁"
+  ],
+  "pg_side_findings": "本次零欠账：id 集合全等、值差仅 float 表示级(≤2.17e-07)、精确 top-5 在 105/105 题与现网数据全等、pgvector HNSW 105/105 等于精确解",
+  "chroma_side_findings": "21/105 题返回空 top-k；138/1008 枚向量自探针不可达 ⇒ 现网读路径缺陷，已列移交项",
+  "rebuild_needed": false
+ }
+}
