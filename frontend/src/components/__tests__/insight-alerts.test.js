@@ -45,6 +45,8 @@ import {
   RULE_OPERATORS,
   SCAN_REASON_MESSAGES,
   SHAPE_FAILURE_DESCRIPTION,
+  UNATTRIBUTED_DEPARTMENT,
+  UNRECORDED,
   advanceRuleDelete,
   checkOutcomeView,
   createRule,
@@ -154,15 +156,34 @@ function routePost(routes) {
   })
 }
 
-/** 告警行 / 规则行的后端真形状（GET /alerts 六列、alert_rules 六列）。 */
+/**
+ * 告警行 / 规则行的后端真形状。
+ *
+ * alerts 一行实测 15 列（R271 在 commit 70b4f26 逐列数出来：自建库 DDL 15 枚列名 ＝ 生产
+ * 0003 建表 6 列 + 0012 department + 0014 八枚处置列 ＝ 无库内存行 7 枚字面键 + ledger 8 枚）。
+ * 这里就按 15 枚给：六列那份旧账（连同 lib/alerts.js 里那句注释）随 R271 一起作废，
+ * 列集与逐列归属由 r271-alert-contract.test.js 直接读后端与迁移现算，抄在这里不算数。
+ *
+ * 默认给的是「一条刚触发、还没人处置」的 open 行：八枚处置列全是空串，
+ * 与后端 ALERT_DISPOSAL_DEFAULTS 逐枚同值——空串是「没记过」，不是 0，也不是空白。
+ */
 function alertRow(overrides) {
   return Object.assign({
     id: 7,
     rule_id: 3,
     message: '差旅费合计 12800 大于阈值 8000',
     ai_analysis: '集中在 9 月，环比上升明显。',
-    created_at: '2026-09-16T09:12:44.123456+08:00',
+    department: '市场部',
     read: false,
+    status: 'open',
+    acknowledged_by: '',
+    acknowledged_at: '',
+    closed_by: '',
+    closed_at: '',
+    assignee: '',
+    assigned_by: '',
+    assigned_at: '',
+    created_at: '2026-09-16T09:12:44.123456+08:00',
   }, overrides || {})
 }
 
@@ -456,8 +477,10 @@ describe('W7 判据② 追加 · 五个端点是后端真存在的路由，且�
     expect(rulePath(null)).toBe('')
   })
 
-  it('取数只走 lib/alerts.js 的五个函数，面板里不再手写路径、不再用旧 api 封装', () => {
-    for (const name of ['fetchAlerts(', 'fetchRules(', 'createRule(', 'removeRule(', 'runCheck(']) {
+  it('取数与处置只走 lib/alerts.js 的出口，面板里不再手写路径、不再用旧 api 封装', () => {
+    // R271 起三枚处置动作也走同一个出口：disposeAlert 是面板唯一的处置写路径，
+    // 路径字符串只许出现在 lib/alerts.js 里（下面那条 /alerts 字面量判据就是钉这一件事）。
+    for (const name of ['fetchAlerts(', 'fetchRules(', 'createRule(', 'removeRule(', 'runCheck(', 'disposeAlert(']) {
       expect(code(), '面板没接上 ' + name).toContain(name)
     }
     expect(code()).toContain("from '../lib/alerts'")
@@ -838,17 +861,52 @@ describe('W7 lib/alerts.js · 判脸与归码矩阵（R1 裁定 (c) 的逻辑全
     expect(operatorLabel(undefined)).toBe('无法识别的比较方式')
   })
 
-  it('mapAlertRow：后端六列 -> 视图字段，缺字段给一句人话而不是 undefined', () => {
+  it('mapAlertRow：后端 15 列 -> 视图字段，缺列给「未记录」而不是 0 或空白', () => {
+    expect(UNRECORDED).toBe('未记录')
     const row = mapAlertRow(alertRow())
     expect(row).toEqual({
-      id: '7', ruleId: '3', message: alertRow().message,
-      analysis: '集中在 9 月，环比上升明显。', createdAt: '2026-09-16 09:12',
+      id: '7',
+      ruleId: '3',
+      message: alertRow().message,
+      analysis: '集中在 9 月，环比上升明显。',
+      createdAt: '2026-09-16 09:12',
+      departmentText: '市场部',
+      status: 'open',
+      statusLabel: '还没人处理',
+      statusKnown: true,
+      handled: false,
+      actions: ['ack', 'close', 'assign'],
+      ledger: [
+        { key: 'ack', label: '确认', who: UNRECORDED, to: '', at: UNRECORDED, recorded: false },
+        { key: 'close', label: '关闭', who: UNRECORDED, to: '', at: UNRECORDED, recorded: false },
+        { key: 'assign', label: '指派', who: UNRECORDED, to: UNRECORDED, at: UNRECORDED, recorded: false },
+      ],
+      addressable: true,
     })
+    // 第 15 枚 read 是唯一刻意不进视图模型的一列：后端没有改成已读的端点。
     expect(Object.keys(row)).not.toContain('read')
     expect(mapAlertRow({}).message).toBe('这条告警没有留下说明文字。')
     expect(mapAlertRow(alertRow({ message: '   ' })).message).toBe('这条告警没有留下说明文字。')
     expect(mapAlertRow(alertRow({ ai_analysis: null })).analysis).toBe('')
-    expect(mapAlertRow(null)).toEqual({ id: '', ruleId: '', message: '这条告警没有留下说明文字。', analysis: '', createdAt: '' })
+    expect(mapAlertRow(null)).toEqual({
+      id: '',
+      ruleId: '',
+      message: '这条告警没有留下说明文字。',
+      analysis: '',
+      createdAt: '',
+      departmentText: UNATTRIBUTED_DEPARTMENT,
+      status: 'open',
+      statusLabel: '还没人处理',
+      statusKnown: true,
+      handled: false,
+      actions: ['ack', 'close', 'assign'],
+      ledger: [
+        { key: 'ack', label: '确认', who: UNRECORDED, to: '', at: UNRECORDED, recorded: false },
+        { key: 'close', label: '关闭', who: UNRECORDED, to: '', at: UNRECORDED, recorded: false },
+        { key: 'assign', label: '指派', who: UNRECORDED, to: UNRECORDED, at: UNRECORDED, recorded: false },
+      ],
+      addressable: false,
+    })
   })
 
   it('mapRuleRow：缺阈值/缺指标给「没有登记」而不是 NaN，enabled 缺省按启用', () => {
