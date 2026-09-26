@@ -79,14 +79,17 @@ function networkError() {
   return Object.assign(new Error('Network Error'), { code: 'ERR_NETWORK' })
 }
 
-function stubRoutes({ summary, catalogRows = [], card }) {
+// R267：这一屏的取数路径换成三条 GET——聚合、文档目录、告警账本。
+// POST 这条腿整个不留：/dashboard 算的是客户端送上来的 rows，面板再自备 rows 就是假话换了个出处。
+// 所以 post 桩只剩一枚探针：面板一旦再往任何路径 POST，这里立刻炸给看。
+function stubRoutes({ summary, catalogRows = [], alerts = [] }) {
   http.get.mockImplementation(async (url) => {
     if (url === SUMMARY_PATH) return { status: 200, data: summary }
     if (url === '/documents/catalog') return { status: 200, data: { documents: catalogRows } }
+    if (url === '/alerts') return { status: 200, data: { alerts } }
     throw new Error(`不该被请求的路径：${url}`)
   })
   http.post.mockImplementation(async (url) => {
-    if (url === '/dashboard') return { status: 200, data: card || { metrics: {}, departments: {}, insights: [] } }
     throw new Error(`不该被请求的路径：${url}`)
   })
 }
@@ -210,14 +213,19 @@ describe('W6-② 数字取聚合里的总数，不取列表页长', () => {
     expect(bindings.documents.value).toHaveLength(2)
   })
 
-  it('数据表的数字不再靠拉列表：/data-files 与 /alerts 一次都不许被请求', async () => {
-    stubRoutes({ summary: summaryBody() })
+  // 这条针的原意是「数字不许从列表页长来」。R267 之后 /alerts 确实会被请求——
+  // 但只为「异常与风险」摆行，依旧不算数。所以把针磨得更尖：账本回满 100 行，
+  // 告警位仍要画聚合给的 137；谁改成数列表，这一条立刻红。
+  it('数据表的数字不再靠拉列表：/data-files 一次都不许被请求，/alerts 回 100 行也不许顶掉 137', async () => {
+    const rows = Array.from({ length: 100 }, (_, index) => ({ id: index, message: `告警记录 ${index}` }))
+    stubRoutes({ summary: summaryBody(), alerts: rows })
     const html = await renderLoaded(await mountedPanel())
     const urls = http.get.mock.calls.map(call => call[0])
     expect(urls).toContain(SUMMARY_PATH)
     expect(urls).not.toContain('/data-files')
-    expect(urls).not.toContain('/alerts')
     expect(tileOf(html, 'datasets').value).toBe('12')
+    expect(tileOf(html, 'alerts').value).toBe('137')
+    expect(tileOf(html, 'alerts').value).not.toBe(String(rows.length))
   })
 
   it('四张卡的数值与千分位都来自同一次聚合', () => {
@@ -314,7 +322,7 @@ describe('W6-④ 取数走统一实例、检查 response.ok、失败可重试、
     expect(bindings.error.value).toBe('')
     expect(bindings.summary.value.documents).toBe(5)
     const urls = http.get.mock.calls.map(call => call[0])
-    expect(urls.every(url => url === SUMMARY_PATH || url === '/documents/catalog')).toBe(true)
+    expect(urls.every(url => [SUMMARY_PATH, '/documents/catalog', '/alerts'].includes(url))).toBe(true)
   })
 
   it('口径来源写在数字旁边，并如实带上服务端回显的登录者', () => {
