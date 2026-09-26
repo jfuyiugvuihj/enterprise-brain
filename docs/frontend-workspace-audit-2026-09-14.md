@@ -304,3 +304,11 @@
 - 其余后端与前端的行号是 2026-09-14 上午到中午的快照，复核时请重新定位。
 - 配套交付：后端侧接口需求另立清单 `docs/handoff/2026-09-14-backend-interface-requests.md`（R1 即本节的 B-9）；SSE 事件废弃策略已作为独立一节追加到 `docs/api/contract-v1.md`（仅追加，未改动其他 Agent 正在编辑的段落）；第 8 节第 1-6 步已展开为任务单 `docs/handoff/2026-09-14-frontend-workspace-fix-tasks.md`。
 
+
+## 后续订正（2026-09-26，R311 落笔）
+
+- 本文写于 2026-09-14，正文按当时的读数保留、不改历史。今天有一格已过期：本文第 94 行附近那枚
+  `{ session, messages }`，在 R295（并树 `d194d99`）之后回的是 `{ session, messages, withheld_turns }`。
+  回读不再只认 `is_owned_by`，而是重过 `scope.allows`：旧部门期间产生的那一轮现在被**扣下并计数**，
+  不再整段读回。会话/线程 id 从此不是授权凭证。引用这格形状之前，先看 `docs/api/contract-v1.md`
+  的 R311 一节。

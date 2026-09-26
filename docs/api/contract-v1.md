@@ -2317,3 +2317,24 @@ on every run -- that printed line, not any number quoted here, is what a later r
 Handoff sample, and the last timing run of this ticket: 11.5 ms, inside the range above, taken with
 the same seed set on the same machine. Twenty recorded readings in total; nothing after this line is
 a number anyone should quote.
+
+## R290's residuals 1 and 2 are closed: identity at consumption, and session read-back (2026-09-26, R311)
+
+R290 registered three residuals while writing `PUT /api/v1/users/department`. R296 closed the third
+(the profile store stops carrying a department). This section closes the first two. The text of that
+section is left exactly as it was written, including its "None of the three is fixed here" sentence,
+which describes R290's own write set and stays true.
+
+1. **The queued-task payload no longer decides scope from a `Principal` snapshot.** Closed by R294
+   (merged `70fef37`): `deploy/queue_worker.py` and `app/agents/tools.py` take the identity at
+   consumption time, so a turn enqueued before a department move runs with the department the row
+   holds now, never the one it was enqueued with. The enqueue-time payload survives only as a
+   reference plus drift evidence, which is the shape R290 asked for.
+2. **Session history is no longer returned by owner alone.** Closed by R295 (merged `d194d99`):
+   `GET /api/v1/sessions/{id}` re-runs `scope.allows` on read-back instead of trusting `is_owned_by`
+   and a session/thread id as a credential. Turns produced under a department the caller has left are
+   withheld, and the response says how many: `withheld_turns` sits beside `session` and `messages`.
+
+Neither closure was made inside R290's route, and neither reopens it. Verification status: both are
+pinned offline on this machine; the live-PostgreSQL run still outstanding here belongs to R59/R60, not
+to these two residuals.

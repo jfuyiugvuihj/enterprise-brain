@@ -4711,3 +4711,25 @@ R59 块1 已并 ⇒ 跑分窗的技术前置齐了。开窗顺序仍是：在途
 `Turing` R304（`be-r304`·`loader.py`）·`Rutherford` R303（`be-r303`·`app/notifications/**`）·`Wegener` R305（`be-r305`·新 `app/rag/tabular.py`）·`Gibbs` R291（`be-r291`·前端 `ui/**`+`artifacts.js`+`panel-states.test.js`）·`Planck` R59 块2（`be-r592`·`chat.py`）·`Darwin` 已结案待 close。
 待投池：`R301`（OCR 报告透出，等 `chat.py`）·`R306`（xlsx/csv 接分派＋白名单，等 `loader.py`）·`R307`（`App.vue` 8 + `SourceCard.vue` 3 裸按钮）·`R293`（等 `panel-states.test.js` 让位）。
 
+
+## §4CS（09-26 第四格·总控，主树 `9344028` → 本格）：🔴 事故 #19＝总控派工带了 model 覆盖 · R310 重投 · R291 批 A 案 · R311 落笔收四处假话
+
+### 一、事故 #19（本类第一次由总控亲手触发）
+
+派 R310 时我在 `spawn_agent` 带了 `model` 覆盖，那枚（`Erdos`/`01a0dd6b`）首次请求即报 `message id must be a string starting with 'msg_', got 'at_…'`——和 01a0acfb、01a09dda 同一味病。`be-r310` 现取 **dirty=0**，零写入，损失＝一次投递＋一枚席位。全过程与订正在跟进单 **§105 一**。**新条款（派工前三问，缺一不发）**：本 block 只一枚投递 → 参数里没有 `model`/`reasoning_effort` → 目标树的持有者 id/进程/落盘认得清。同格另记一笔字段纪律：`target` 误传进 `spawn_agent`，事后现取 `be-r307` 未受扰，不立事故号。
+
+### 二、本格动作
+
+- `Gibbs` R291 交回并批 A 案：原语已长出 `rawMessage` 渲染出口（`ui/error-detail.js` 一处裁定，401/403＋六枚拒绝枚举码＋七枚 policy 原因码沉默），差最后一跳；我只授权 `ArtifactList.vue` 的 **394/463** 两行（行号在主树 `9344028` 现取核对），附三条硬口（不动 `http.js`/`errcodes.js`、来源不匹配就明说、`ChartViewer.vue:58` 不治）。自述读数：改后 `81 files / 1499 tests`、`lint:colors 148 problems / 0 errors`、`build` exit 0——**待我主树亲验才并**。
+- 新立 **R310** 并由 `Kepler`（`01a0dd6c`）在 `be-r310`@`9344028` 重投：数据文件行补 `owner_id`，口径必须与 `app/documents/catalog.py:236` 逐字一致（无主＝`None`），不许为补字段多开查询或第二条权限链，行数逐档不变，反证 ≥3 把。
+- 落笔 **R311**：契约里 R290 那节两条残留已被 R294（`70fef37`）/R295（`d194d99`）推翻，按 R296 规矩文末追加、prefix 逐字节不动；两枚 09-14 前端文档追加 `{ session, messages, withheld_turns }` 订正；跟进单 R295 那行「待派」改口。读数：四枚钉件 **45 passed**，`check_no_bom`／`check_vector_wording` 双 rc=0。
+
+### 三、席位（现取）
+
+在途五枚：`Planck` R59 块2（`chat.py`）·`Wegener` R305（`app/rag/**` 新模块）·`Herschel` R307（`App.vue`/`SourceCard.vue`，仍 dirty=0）·`Gibbs` R291·`Kepler` R310。上限实测 6，本格不投第 7 枚。待投池：`R301`/`R306`/`R293`/`R308`，各自等谁已在 §105 六写死。
+
+### 四、下一格先做哪三件
+
+1. `Wegener` 交回 → 主树点名复跑 → 并 R305 → **立刻投 R306**（`loader.py` 分派＋`file_security.py` 白名单＋契约），别让 `loader.py` 那条腿空着。
+2. `Kepler` 交回 → 验 `None` 口径与「行数逐档不变」那枚钉 → 并 R310 → 前端才能接「我传的」那一列（另立单，写域 `DataPanel.vue`）。
+3. `Planck` 交回 → 切读块2 并树 → 投 R301（OCR 报告透出）→ 之后才是 R308；**R60 在 R305 那格真库读数补齐之前不许翻绿**（§4CR 已锁）。

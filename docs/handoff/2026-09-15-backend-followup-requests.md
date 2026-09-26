@@ -3487,7 +3487,7 @@ Chroma 侧"修"它的唯一手段是重建那 1,008 枚索引，而 `rebuild_ind
 
 **R294｜排队载荷把 `Principal` 连部门一起冻结在入队时刻**（🟢 已投 `Lagrange` `01a0dc98-829f-7c92-9697-fcf75b64d899`@`be-r294`）——`app/api/v1/chat.py:2132` 入队 `principal.model_dump(mode="json")` → `deploy/queue_worker.py:299/:519/:553` 用 `payload.get("principal")` 还原 → `app/agents/tools.py:53` `Principal.model_validate` 当权威身份。后果：**R290 的成果在后台跑的那一轮里直接失效**（旧部门仍在跑检索面），是 R290 三处残留里最重的一枚。唯一不变量＝"消费时刻作用域与此刻发一个全新请求逐字相等"；方向只许收缩到当前身份或判失效，**绝不允许按旧快照跑完再记一条警告**；另需一枚"队列里残留的旧载荷不崩不提权"的兼容钉（客户机上真会躺一堆）。
 
-**R295｜会话历史只按 owner 归还**（待派·排 R294 之后）——`app/api/v1/chat.py:3459` 只过 `is_owned_by`，故旧部门期间那轮的答案正文（含旧部门文档引用）在改完归属之后仍可整段读回。`app/storage/sessions.py:16-21` 的 `SessionRecord` 压根没有部门维。两条路：给 session 落部门维，或回读时重过 `scope.allows`。判据必须含"改完归属再读同一条会话，旧范围的正文与引用不得再出现"，并明写**这一格与"自己上传的文件按 `owner_match` 仍可读写"（`app/common/policy.py:150-155`）是两件事**，后者是既有设计不许顺手改。
+**R295｜会话历史只按 owner 归还**（✅ 已并树 `d194d99`·施工 Darwin@be-r295·总控主树亲验 144 passed；契约残留第 2 条随之由 R311 落笔收口）——`app/api/v1/chat.py:3459` 只过 `is_owned_by`，故旧部门期间那轮的答案正文（含旧部门文档引用）在改完归属之后仍可整段读回。`app/storage/sessions.py:16-21` 的 `SessionRecord` 压根没有部门维。两条路：给 session 落部门维，或回读时重过 `scope.allows`。判据必须含"改完归属再读同一条会话，旧范围的正文与引用不得再出现"，并明写**这一格与"自己上传的文件按 `owner_match` 仍可读写"（`app/common/policy.py:150-155`）是两件事**，后者是既有设计不许顺手改。
 
 **R296｜`user_profiles.department` 是第二份、员工自助可写、且会盖住权威值**（待派·🔴 优先）——`app/memory/profile.py:110/117` 用 `user_profiles.department` **覆盖**来自 `users` 的 fallback，而 `PUT /api/v1/profile`（`app/api/v1/auth.py:244`）是自助写的，`app/agents/nodes.py:1666-1673` 又把它拼进 prompt。⇒ 管理员挪完部门，`GET /profile` 与模型上下文仍报旧部门；且**员工可自报任意部门串进自己的 prompt**。口径澄清（防把它当提级）：`user_profiles` **不是授权输入**（`Principal` 读 `users` 那一行），所以这是标注／提示污染，不是越权提级——但它是私有化交付里客户最容易追问的一格。判据方向：画像里的 department 要么降为只读派生、要么从 prompt 拼接里摘掉，二选一由总控裁定后写死，不许"两份都留但打个警告"。
 
@@ -3633,3 +3633,44 @@ Chroma 侧"修"它的唯一手段是重建那 1,008 枚索引，而 `rebuild_ind
 
 本班实测仍是 **6 枚在途**：18:2x 那枚第 7 投被拒、18:5x 用满 6 枚（`Darwin`/`Rutherford`/`Turing`/`Wegener`/`Gibbs`/`Planck`）。§103 〇 若被读成「上限 5」是错的——上限 6，本班数漏 `Turing` 才误判成 5。
 
+
+## §105（09-26 第四格·总控）：🔴 事故 #19＝总控派工带了 `model` 覆盖·那枚 Agent 首次请求就死于老毛病 · R310 重投 · R291 批 A 案 · R311 落笔收四处假话
+
+### 一、事故 #19（总控直接造成·违反 AGENTS.md 与看板 §0 的明令·本类第六次之后又开一型）
+
+- **事实**：派 R310 时我在 `spawn_agent` 里带了 `model` 覆盖。该枚（`01a0dd6b-c0c3-78e3-91e6-407d61f34efc`，名 `Erdos`）**首次请求**即报 `Invalid 'id': message id must be a string starting with 'msg_', got 'at_ac599466-dedb-5b7d-b319-44053924aa62'`——与死线程 01a0acfb、01a09dda 同一味病，只是这次发作在执行层线程里、没伤到本线。
+- **取证**：`be-r310` 事发当时与现在均 **dirty=0**，零写入，损害归零；实际损失＝一次投递 + 一枚席位 + 约两分钟。
+- **根因**：明令写着「派工一律不得带 model 覆盖，中途换模型会污染消息 id 并使整条线程必死」，我照样犯了。这是本类事故**第一次由总控亲手触发**，前五次都记在执行层/历史线程头上。
+- **新条款（派工前三问，缺一不发）**：(1) 本 block 是否只有一枚投递、`spawn_agent`/`send_input` 二选一；(2) 参数里**有没有 `model`/`reasoning_effort`**——有就删；(3) 目标树的当前持有者 id 是谁、进程活着吗、落盘几枚。
+- **R310 重投的合规依据**：`Erdos` 已 `close_agent` 确认 `errored`，树零落盘 ⇒ 四要素（名册有行/有回执/有进程/有落盘）中「进程」「落盘」两项已被排除，故在同一棵 `be-r310`@`9344028` 由 `Kepler`（`01a0dd6c-d558-75b0-8cef-56704e8bf3a6`）重投**不算双投**，判据一字未改。
+- **同格另记一笔参数纪律（不立事故号）**：第一次重投时我把 `target` 误传进 `spawn_agent`（那是 `send_input` 的字段）。事后现取 `be-r307` 仍 dirty=0、其写域没有多出 `app/api/v1/data.py` ⇒ 判定未串台、R307 未受扰。不记第二次投递事故，只记字段纪律：`spawn_agent` 只带 `message`，`send_input` 才带 `target`。
+
+### 二、R291 批了 A 案（`Gibbs`/`01a0dd4c`@`be-r291`，基点 `fa3d16c`）
+
+交回读数（执行层自述，待总控主树亲验后才并）：改前 `Test Files 80 / Tests 1462`、改后 `81 / 1499`（新件一枚 37 钉，零回归）；`lint:colors` 改前改后**逐字相同 148 problems / 0 errors**；`build` exit 0；反证 8 把逐把记账。判据第 2 段（`rawMessage` 长出渲染出口）已在 `ui/error-detail.js` 一处裁定收口，401/403 与六枚拒绝枚举码、七枚 policy 原因码一律沉默。
+我批的 A 案范围锁在两行：`frontend/src/components/ArtifactList.vue` 的 **394**（列表脸 `face === 'error'`）与 **463**（操作脸 `actionError`）——两枚行号我在主树 `9344028` 现取核对过属实。附带三条硬口：不许改 `http.js`/`errcodes.js`；若列表那发的错根本不来自 `artifacts.js`，**明说**、不许为了上屏去改来源；`ChartViewer.vue:58` 的第二张脸本单不治。另要求交回一枚「真 Error ⇒ 屏上逐字出现后端原话」的 SSR 证据。
+
+### 三、R310（新立·`Kepler`@`be-r310`@`9344028`）·数据文件行补归属人
+
+V2 明列「所有资源有稳定 ID、owner 和生命周期」「资源级隔离」。现取空档：`app/api/v1/data.py` 组装文件行只给 `filename/size/size_label/modified_at/extension`（入账的再加 `dataset_id/version_id/classification`），**没有 owner**；而 `app/storage/datasets.py:121 DatasetRecord` 早带 `owner_id`（`:130`），`DatasetVersionRecord:186` 也带；`app/documents/catalog.py:236` 的文档行已经给了 `owner_id` 且无主记成 `None`——同类产品两套口径。写域只 `app/api/v1/data.py` + 新 `tests/test_r310_*.py` + 契约**文末追加** + `tests/test_data_file_catalog.py` 的期望键集合那一个字面量。三条硬口：无主口径必须与 `catalog.py:236` 逐字一致（`None`，不是空串）；不许为补字段多开一次查询或第二条权限链；行数必须逐档不变。反证 ≥3 把（摘字段/无主改空串/放宽过滤）。
+
+### 四、R311 落笔（总控自办·四处假话当场收口）
+
+`Darwin`（R295）交回时点了五处「已被后续并树推翻、文档还在照旧说」的账，我已逐处落笔并复跑钉件：
+
+1. `docs/api/contract-v1.md` 里 R290 那节「Registered, not fixed (three residuals)」的第 1 条（队列载荷带 `Principal` 快照）已被 **R294**（`70fef37`）推翻；
+2. 同节第 2 条（会话历史只按 owner 归还）已被 **R295**（`d194d99`）推翻；
+   两处都不做中间改写——按 R296 已立的规矩，**文末追加 R311 一节明写「那节正文照原样留着、它说的是 R290 自己的写域」**，prefix 逐字节不动（脚本自检 `prefix intact: True`）。
+3. `docs/frontend-workspace-audit-2026-09-14.md` 与 `docs/handoff/2026-09-14-frontend-workspace-fix-tasks.md` 各自末尾追加订正：那两处的 `{ session, messages }` 从今天起是 `{ session, messages, withheld_turns }`，历史正文不改。
+4. 跟进单 §102 写域图与 R295 那行的状态仍挂「待派」，已就地改口为「✅ 已并树 `d194d99`」。
+
+读数（主树 `.venv` 亲跑）：`tests/test_r132_contract_followup_sync.py`＋`tests/test_r302_docs_utf8_guard.py`＋`tests/test_r276_vector_wording_pin.py`＋`tests/test_r142_error_code_table_sync.py` = **45 passed**；`scripts/check_no_bom.py` rc=0；`scripts/check_vector_wording.py` 19 枚文档全过。
+
+### 五、B 类缓做（本格不办，立号待后）
+
+`R312` 候选：文档类**行号漂移**约 12 处（历史文档按当时读数记账，引用方照抄就错）＋既存错引若干。做法应是加「现取校验钉」而不是逐处补数字——补了也会被下一次并树再漂。排在 R306/R301 之后。
+
+### 六、席位（现取，不靠记忆）
+
+在途五枚：`Planck` R59 块2（`be-r592`·`chat.py`）·`Wegener` R305（`be-r305`·新 `app/rag/*` 表格/电子表格模块）·`Herschel` R307（`be-r307`·`App.vue` 8 + `SourceCard.vue` 3，现取仍 dirty=0）·`Gibbs` R291 A 案（`be-r291`）·`Kepler` R310（`be-r310`）。上限实测 6，本格不再投第 7 枚。
+待投池：`R301`（等 `chat.py` 让位）·`R306`（等 R305 并树，接 `loader.py` 分派＋白名单）·`R293`（等 `panel-states.test.js` 让位）·`R308`（表格截断透出，等 `chat.py`）。
