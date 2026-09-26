@@ -228,8 +228,8 @@ def _retry_readiness_probe() -> bool:
     5. 就绪判据与 import 探针同源（`_connect_for_request` + `_create_schema`），所以
        生产形态下它只读两句 SELECT（`to_regclass` + `COUNT`），零 DDL、零 commit；
        表空时与探针同形地 seed 第一枚管理员——那是探针本来就有的写点，不是本单新增。
-    6. 只把 `_db_ready` 从 False 翻到 True，永不反向：本文件之外另有 6 处读者，各一枚（alerts
-       / chat / catalog / profile / registry / pending_approvals），把它们一起翻正正是本单要的
+    6. 只把 `_db_ready` 从 False 翻到 True，永不反向：本文件之外另有 7 处读者，各一枚（alerts
+       / chat / catalog / profile / registry / pending_approvals / states），把它们一起翻正是本单要的效果
        效果，而翻回假是本单不该有的副作用。
     """
     global _db_ready, _last_ready_probe_at
