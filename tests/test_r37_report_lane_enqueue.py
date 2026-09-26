@@ -261,7 +261,19 @@ def test_the_queued_event_says_why_the_turn_went_background(monkeypatch, tmp_pat
         "lane": "report",
         "reason": "report_lane",
     }
-    assert body[-1] == {"type": "done"}
+    # R254 判据③⑤：`done` 那一帧从此要说清「这一轮到底跑了没有」。回执这一支一个模型都没打，
+    # 所以 usage 交 null 而不是 0/0/0——把「还没开始」与「跑完而零调用」洗成同一枚读数，正是
+    # 判据④要拦的那枚形状。
+    assert body[-1] == {
+        "type": "done",
+        "terminal_state": "queued",
+        "answer_present": False,
+        "sources_present": False,
+        "sources": [],
+        "sources_error": "",
+        "usage": None,
+        "approval": None,
+    }
 
 
 def test_the_over_limit_payload_is_untouched_for_callers_that_declare_no_lane(monkeypatch, tmp_path):

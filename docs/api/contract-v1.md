@@ -595,8 +595,9 @@ then polls `GET /api/v1/queue/status/{request_id}` and may
 }
 ```
 
-`status` is one of `queued`, `processing`, `cancel_requested`, `done`, `cancelled`, `failed`, `dead`, or `expired`.
-A `done` response additionally carries `result`.
+`status` is one of `queued`, `processing`, `cancel_requested`, `done`, `cancelled`, `failed`, `dead`, `awaiting_approval`, or `expired`.
+A `done` or `awaiting_approval` response additionally carries `result` plus the structured terminal
+readout documented in `Structured Terminal Readout (2026-09-25, R254)` below.
 
 The vocabulary is split twice over: by which layer answers the value, and by whether polling should
 stop. A non-terminal value means the task can still move; a terminal value means its outcome will not
@@ -620,6 +621,11 @@ change, so the client must stop polling.
 * `dead` (terminal, written by the queue): `fail_or_retry()` gave up on the task, either because it
   exhausted `max_attempts` or because it was failed with `retryable=False`; see the compatibility
   note below.
+* `awaiting_approval` (terminal, written by the queue): the run stopped in front of a HITL step and
+  published no answer at all, so `result` is `null` and `approval` names the thing a human can
+  approve. Terminal **for the poll** - nothing more will happen by itself, so a client must stop
+  polling - but not terminal **for the turn**: `POST /api/v1/approve` moves it again without
+  re-asking the question. It is never `done`, and it never carries the parked notice as `result`.
 * `expired` (terminal, answered by the route): the queue's status key can no longer be read, so
   `GET /api/v1/queue/status/{request_id}` answers this value itself; the queue never writes it.
 
@@ -628,6 +634,113 @@ the status is never `done`, and `failure.last_error` records the stable code
 `result_discarded:cancelled` or `result_discarded:lease_lost`. A lease-discarded task stays on the
 processing list without a lease, so the next sweep requeues it and only the attempt that still
 holds a live lease may publish; a discard never consumes a retry slot.
+
+### Structured terminal readout (2026-09-25, R254)
+
+Before R254 the queue lane published exactly one string. That string was the only thing a client
+could ever read back, and it produced three measured lies (see
+`docs/testing/run8-phase2-readout-2026-09-25.md`): eleven parked turns handed back the 37-character
+「waiting for your confirmation」 sentence **as the answer** while reporting `done`; a turn with zero
+model calls reported `done`; and no turn could deliver sources or token usage at all, because
+`complete()` had nowhere to put them.
+
+`GET /api/v1/queue/status/{request_id}` now answers the two published states with the keys below.
+`status`, `request_id` and `failure` keep their old meaning; the queue's own authorization gate is
+unchanged and is still walked before a single one of these keys is read.
+
+```json
+{
+  "status": "done",
+  "request_id": "6f1c…",
+  "result": "上季度毛利率 38.2%，环比 +1.4 个百分点。",
+  "failure": {"attempts": 1, "last_error": null, "max_attempts": 3},
+  "terminal_schema": "queue-terminal-v1",
+  "terminal_state": "answered",
+  "answer_present": true,
+  "answer_is_park_notice": false,
+  "worker_status": "success",
+  "sources_present": true,
+  "sources": [{"worker": "doc", "source": "经营月报.pdf", "excerpt": "…", "published_at": "…"}],
+  "scope_reason_code": "department_and_classification",
+  "sources_error": "",
+  "usage": {
+    "prompt_tokens": 91271,
+    "completion_tokens": 18859,
+    "total_tokens": 110130,
+    "model_calls": 70,
+    "calls_with_token_readout": 68,
+    "calls_missing_token_readout": 2,
+    "token_readout_complete": false,
+    "authoritative": true,
+    "ledger": "postgres_model_calls"
+  },
+  "approval": null,
+  "terminal_note": ""
+}
+```
+
+| key | what it says |
+|---|---|
+| `terminal_state` | `answered` or `awaiting_approval`. The queue's status key is derived from this one field, so a payload cannot say it is waiting for a human while the status says `done`. |
+| `answer_present` | whether `result` really is answer text. A parked turn publishes no answer at all (`result` is `null`), so 「ran out with an empty body」 and 「is waiting for you」 stay distinguishable. |
+| `sources`, `sources_present`, `scope_reason_code` | the same rows the synchronous lane puts on its canonical `sources` event, filtered by the same `DocumentRetrievalScope.allows`. This adds no visibility branch and loosens no check. |
+| `sources_error` | 「could not be computed at all」 (`principal_unavailable`, `sources_unavailable`, `answer_cache_without_manifest`) - a different claim from 「zero rows」. |
+| `usage` | prompt / completion / total tokens plus the call count, summed over the `model_calls` rows of this `request_id` in the same PostgreSQL the server writes them to. Nothing is estimated: `calls_missing_token_readout` counts the rows that reported no token and `token_readout_complete` is `false` whenever the ledger holds such a row. `total_tokens` is prompt + completion, an arithmetic result rather than a third reported number. `authoritative` is `true` only for `ledger: "postgres_model_calls"`; a box whose ledger cannot be read answers with nulls in the four number slots and **no** zero, because 「did not read」 and 「read zero」 are different facts. |
+| `approval` | what a human can act on, for `awaiting_approval` only: `session_id`, `pending_steps`, `labels`, the parked sentence as `notice` (a notice, never a result), and the addressable `decide_method` / `decide_path` / `decide_body` for `POST /api/v1/approve`. `ledger_status` is re-read from the pending-approval ledger at the time of the poll using the vocabulary the `HITL Pending Listing` section already names (`awaiting`, `resumed`, `refused`, `abandoned`, `stale`, `failed`), plus `absent` / `unavailable` / `owner_mismatch` / `no_session`. |
+| `terminal_note` | one human-readable sentence for the two states below; empty on a structured row. |
+
+The synchronous lane's legacy `event: done` frame carries the same readings under the same names, so one
+parser covers both lanes. Its frame name, its `type` key, and the rule that `done` is the only
+end-of-stream signal are untouched (freeze rule 1); every key below it is additive:
+
+```json
+{
+  "type": "done",
+  "terminal_state": "awaiting_approval",
+  "answer_present": false,
+  "sources_present": false,
+  "sources": [],
+  "sources_error": "",
+  "usage": {"prompt_tokens": 412, "completion_tokens": 0, "total_tokens": 412, "model_calls": 1,
+            "calls_with_token_readout": 1, "calls_missing_token_readout": 0,
+            "token_readout_complete": true, "authoritative": true, "ledger": "postgres_model_calls"},
+  "approval": {"session_id": "…", "pending_steps": ["export"], "labels": ["📋 导出报告"],
+               "notice": "本轮在「📋 导出报告」前等待你确认，确认后才会执行，目前尚未产出回答内容。",
+               "decide_method": "POST", "decide_path": "/api/v1/approve",
+               "decide_body": {"session_id": "…", "approved": true}, "decide_note": "…"}
+}
+```
+
+`sources_error` on this frame carries the one claim the synchronous lane can make and the queue lane
+cannot: an answer-cache entry written before per-turn source manifests existed, or whose manifest
+will not parse. That leg answers `answer_cache_without_manifest` beside an empty `sources` list, which
+says 「cannot be verified」, not 「there were none」 - the same distinction `provenance.js` keeps as its
+fourth cache state (`cached-unknown`). A bare empty list would be the other claim.
+
+`usage` on that frame is summed from the `model_calls` rows of the same `request_id` in the same
+PostgreSQL, so the two lanes cannot disagree about what a turn cost. `approval` is the same handle the
+queue hands back, minus `ledger_status` - that one is a read taken at the moment of a poll, and a stream
+that never polls has no moment to read it at. `terminal_state` on this frame takes a fourth value the
+queue cannot carry, `no_answer`: the graph finished and produced no body at all, which the stable code
+`no_answer_produced` already named on the canonical channel. A parked turn's frame says
+`awaiting_approval` here exactly as it does in `status` there.
+
+**A run that made zero model calls may not report `done`.** When the authoritative ledger holds no
+`model_calls` row for this `request_id`, the worker does not publish: it fails the attempt with
+`last_error` `no_model_call_recorded` and lets the ordinary retry budget decide between `queued` and
+`dead`. It does not declare the task non-retryable - the queue layer has no standing to make that
+call for the contract. When the ledger is not authoritative the gate cannot run, and the response
+says so rather than pretending it passed.
+
+### Compatibility note 2026-09-25 (R254: rows published before the structured terminal)
+
+Rows already in Redis when this ships have no `:terminal:` key. They stay readable, and they are
+marked instead of guessed: `terminal_schema: "legacy"`, `terminal_state: "legacy_row"`,
+`usage: null`, `sources: []`, `approval: null`, and `answer_is_park_notice` computed by rebuilding
+the parked sentence from `hitl_park_text` and comparing byte for byte. A legacy row therefore says
+「I cannot tell you whether this had sources」, which is true, instead of 「there were none」, which is
+not. A terminal key that is present but will not parse reports `terminal_schema: "unreadable"` /
+`terminal_state: "unreadable_terminal"` - corruption and legacy are two different diagnoses.
 
 ### Compatibility note 2026-09-13
 

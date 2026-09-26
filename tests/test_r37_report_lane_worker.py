@@ -169,11 +169,17 @@ def test_a_report_lane_turn_runs_on_the_graph_that_can_park(monkeypatch, tmp_pat
     assert ctx.worker.process_one() is True
 
     assert sink.exists() is False, "挂起没保住就等于自动批准"
-    assert ctx.queue.status(_request_id(ctx)) == "done"
+    # R254 判据①：挂着的一轮从此不许报 done。
+    assert ctx.queue.status(_request_id(ctx)) == "awaiting_approval"
 
 
 def test_a_parked_report_turn_never_executes_the_export_node(monkeypatch, tmp_path):
-    """判据⑤：查回来的结果要说“等你确认”，而且不许假装导出已完成。"""
+    """判据⑤加 R254 判据①：挂起的一轮不执行导出，也不再把挂起文案当正文交回。
+
+    改前这一枚钉的是 `result == PARK_EXPORT`——那正是 09-25 那扇窗量红的形状：11 枚把同一句
+    37 字文案当 `result` 交回、队列侧报 `final=done`。今天答案是「这一轮没有正文」，那句话说
+    它该说的地方（`approval.notice` 与会话历史），一行都不许多。
+    """
     sink = tmp_path / "export-should-not-exist-b"
     ctx = _install_worker(
         monkeypatch, tmp_path, name="r37-park-text", graph=_parked_graph(_SinkWorker(sink))
@@ -181,8 +187,12 @@ def test_a_parked_report_turn_never_executes_the_export_node(monkeypatch, tmp_pa
 
     assert ctx.worker.process_one() is True
 
-    assert ctx.queue.result(_request_id(ctx)) == PARK_EXPORT
+    assert ctx.queue.result(_request_id(ctx)) is None
     assert sink.exists() is False
+    terminal = ctx.queue.terminal(_request_id(ctx))
+    assert terminal["state"] == "ok"
+    assert terminal["payload"]["terminal_state"] == "awaiting_approval"
+    assert terminal["payload"]["answer_present"] is False
 
 
 def test_a_parked_report_turn_opens_one_awaiting_row_for_the_right_owner(monkeypatch, tmp_path):

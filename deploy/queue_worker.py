@@ -119,6 +119,10 @@ def _owner_from(payload: dict) -> str:
 
 
 NON_RETRYABLE_DEAD_REASON = "non_retryable_terminal"
+#: 判据④：真库 `model_calls` 里一枚调用都没有的这一轮，没有资格叫 done。这一枚说的是
+#: 「交回了答案却没有任何一次模型调用」，与 `no_answer_produced`（连答案都没有）不是一格。
+#: 只进队列账本（`failure()["last_error"]`）与日志，不进用户正文（R16 同口径）。
+NO_MODEL_CALL_READOUT = "no_model_call_recorded"
 
 
 def is_non_retryable_error(record: object) -> bool:
@@ -342,10 +346,18 @@ def _process_report_lane_turn(
     ).model_dump()
     record_agent_result(record, owner_id=owner_id, session_id=session_id, entry_point="queue")
 
+    # R254 判据③：token 读数在这一轮交出去之前就取好，两条发布的腿共用同一份。读的是真库
+    # `model_calls`（同源，不现编）。出处要到交正文那一支才取——挂起这一轮没有正文，取一遍
+    # 出处只是白打一次索引台账，那一格交空清单并说清「这一轮没有正文可带出处」。
+    usage = chat.read_model_call_usage(request_id)
+    visible_sources: list = []
+    scope_reason = ""
+    sources_error = ""
+
     if parked:
-        # 挂起记三笔账：审批面板一行待办、队列一个终态、会话历史一句话，缺一笔用户就
-        # 找不到这一轮。归属人只认载荷里解析出的 user_id——上面没有 owner 就已经拒执行，
-        # 这里更不许退回共享身份。
+        # 挂起记三笔账：审批面板一行待办、队列一个**非 done** 终态、会话历史一句话，缺一笔
+        # 用户就找不到这一轮。归属人只认载荷里解析出的 user_id——上面没有 owner 就已经拒
+        # 执行，这里更不许退回共享身份。
         if not chat.record_hitl_awaiting(
             session_id or thread_id,
             owner_id,
@@ -358,12 +370,67 @@ def _process_report_lane_turn(
                 f"[QueueWorker] request_id={request_id} 待办没能开成 session={session_id}："
                 "审批面板看不见这一轮后台挂起"
             )
-    elif record.get("status") not in {"success", "partial"}:
-        return _fail_report_turn(
-            queue, request_id, record, session_id=session_id, write_back=write_back
+        # 判据①：这一轮没有正文。从前它把那句 37 字挂起文案当 `result` 交回、状态还报
+        # `done`，客户端读到的是「跑完了」——那既不是正文也不是答案，是谎报终态。今天答案键
+        # 干脆不写（`result=None`），挂起文案只留在 `approval.notice` 那一格里，并随它交出
+        # 一件可寻址的批准把手（客户端不必重发本轮）。会话历史那一笔照旧写这句（R37 判据③⑤）。
+        terminal = chat.build_queue_terminal(
+            terminal_state=chat.TERMINAL_STATE_AWAITING_APPROVAL,
+            answer_present=False,
+            worker_status=str(record.get("status") or ""),
+            sources=[],
+            scope_reason_code="",
+            sources_error="",
+            usage=usage,
+            approval=chat.hitl_approval_handle(
+                session_id=session_id or thread_id, parked=parked
+            ),
         )
+        published = queue.complete(request_id, None, terminal=terminal)
+    else:
+        if record.get("status") not in {"success", "partial"}:
+            return _fail_report_turn(
+                queue, request_id, record, session_id=session_id, write_back=write_back
+            )
+        if chat.usage_proves_zero_model_calls(usage):
+            # 判据④：一次模型都没打的这一轮没有资格叫 done。真库台账说 0，就是 0；台账读不出
+            # （authoritative=False）时这一格不执法，那是「无从证明」，usage 里原样带着。
+            # 不宣布"重试也不会变"（retryable 走默认 True）：队列层没资格替契约宣布终局，
+            # 与 is_non_retryable_error 那段同一个理由，重试用完才 dead。
+            logger.error(
+                f"[QueueWorker] request_id={request_id} 报告档零枚模型调用却想交答案，"
+                "不落 done（reason=no_model_call_recorded）"
+            )
+            return _fail_report_turn(
+                queue,
+                request_id,
+                {
+                    "status": "failed",
+                    "error": {
+                        "code": NO_MODEL_CALL_READOUT,
+                        "message": "model_calls 台账里这一轮一枚模型调用都没有",
+                    },
+                },
+                session_id=session_id,
+                write_back=write_back,
+            )
+        # 判据②：出处走的是同步道那两只现成的件（`_collect_document_sources` 取证、
+        # `_authorized_source_rows` 复核），判定仍是 `scope.allows`，一行都不许多。
+        visible_sources, scope_reason, sources_error = chat.queue_turn_sources(
+            agent_results, payload.get("principal")
+        )
+        terminal = chat.build_queue_terminal(
+            terminal_state=chat.TERMINAL_STATE_ANSWERED,
+            answer_present=bool(answer),
+            worker_status=str(record.get("status") or ""),
+            sources=visible_sources,
+            scope_reason_code=scope_reason,
+            sources_error=sources_error,
+            usage=usage,
+        )
+        published = queue.complete(request_id, answer, terminal=terminal)
 
-    if not queue.complete(request_id, answer):
+    if not published:
         logger.info(
             "request_id={rid} 报告档结果已丢弃：运行途中被取消或租约已丢失 terminal_status={state}".format(
                 rid=request_id,
@@ -375,10 +442,13 @@ def _process_report_lane_turn(
     if write_back:
         _save_background_turn(session_id, answer)
     logger.info(
-        "request_id={rid} 报告档跑完 status={status} awaiting_hitl={awaiting}".format(
+        "request_id={rid} 报告档跑完 status={status} awaiting_hitl={awaiting} "
+        "sources={sources} model_calls={calls}".format(
             rid=request_id,
             status=record.get("status"),
             awaiting=bool(parked),
+            sources=len(visible_sources),
+            calls=usage.get("model_calls"),
         )
     )
     return True
@@ -441,6 +511,7 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
     try:
         # C2: 队列走无 interrupt 的图，chart/export 自动执行不卡审批
         from app.agents.orchestrator import run_orchestrator_result
+        from app.api.v1 import chat
 
         agent_result = run_orchestrator_result(
             user_message,
@@ -468,7 +539,31 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
             queue.fail_or_retry(request_id, code)
             return True
 
-        if not queue.complete(request_id, str(record.get("answer") or "")):
+        # R254 判据②③④：这条老腿同样要交结构化终态。它走的是无 interrupt 的图，永远不会
+        # 挂起，所以只有两枚读数要补：出处与 token。principal 从载荷里还原，放行判定仍是
+        # `scope.allows`——本单不新增也不放宽任何一道权限。
+        usage = chat.read_model_call_usage(request_id)
+        if chat.usage_proves_zero_model_calls(usage):
+            logger.error(
+                f"[QueueWorker] request_id={request_id} 零枚模型调用却想交答案，不落 done"
+                f"（reason={NO_MODEL_CALL_READOUT}）"
+            )
+            queue.fail_or_retry(request_id, NO_MODEL_CALL_READOUT)
+            return True
+        visible_sources, scope_reason, sources_error = chat.queue_turn_sources(
+            {"orchestrator": record}, payload.get("principal")
+        )
+        answer = str(record.get("answer") or "")
+        terminal = chat.build_queue_terminal(
+            terminal_state=chat.TERMINAL_STATE_ANSWERED,
+            answer_present=bool(answer),
+            worker_status=str(record.get("status") or ""),
+            sources=visible_sources,
+            scope_reason_code=scope_reason,
+            sources_error=sources_error,
+            usage=usage,
+        )
+        if not queue.complete(request_id, answer, terminal=terminal):
             logger.info(
                 "request_id={rid} 结果已丢弃：运行途中被取消或租约已丢失 terminal_status={state}".format(
                     rid=request_id,
@@ -482,6 +577,19 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
                 rid=request_id,
                 status=record.get("status"),
                 ev=len(record.get("evidence") or []),
+            )
+        )
+        # R254 的读数另起一行：上面那句被 R81 钉成逐字文案
+        #（`tests/test_r81_queue_terminal_retry.py::test_a_success_conclusion_still_completes_with_the_unchanged_log_line`），
+        # 与本文件 `_log_discard_cause` 对同一族钉的处置一模一样——不往被钉的那句里塞字。
+        logger.info(
+            "request_id={rid} 终态读数 sources={sources} model_calls={calls} "
+            "prompt_tokens={prompt} completion_tokens={completion}".format(
+                rid=request_id,
+                sources=len(visible_sources),
+                calls=usage.get("model_calls"),
+                prompt=(usage.get("prompt_tokens")),
+                completion=(usage.get("completion_tokens")),
             )
         )
 

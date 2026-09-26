@@ -26,8 +26,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from app.common.no_store import NO_STORE_HEADERS
 from pydantic import BaseModel
 
-from app.agents.contracts import AuthorizationDecision, ErrorEnvelope
+from app.agents.contracts import AuthorizationDecision, ErrorEnvelope, Principal
 from app.common import auth
+from app.common import reliable_queue
 from app.common.audit import record_audit
 from app.storage import pending_approvals
 from app.common.authorization import principal_from_request
@@ -1778,6 +1779,325 @@ def record_hitl_awaiting(
     return True
 
 
+# ==================== R254：两道共用的「诚实终态」读数 ====================
+# 判据全文在跟进单 §100.4，09-25 那扇真机窗（docs/testing/run8-phase2-readout-2026-09-25.md）
+# 把三格量红：挂起的轮次把一句 37 字文案当正文交回还报 done、出处回不到客户端、token
+# 读数在客户可读面上根本不存在。这一节只干这三件事，外加一条：不新增任何一道权限判定，
+# 也不放宽任何一道既有的。
+
+#: `done` 载荷与队列终态共用的终态语义。除 `answered` 之外全都不是「跑完了」。
+#: 队列真会落的两枚直接取自 `app/common/reliable_queue.py`，第二份词表不在这里出现。
+TERMINAL_STATE_ANSWERED = reliable_queue.TERMINAL_STATE_ANSWERED
+TERMINAL_STATE_AWAITING_APPROVAL = reliable_queue.TERMINAL_STATE_AWAITING_APPROVAL
+#: 图跑完、既没正文也没挂起：同步道早就用稳定码 `no_answer_produced` 说这件事，今天它同时
+#: 上到 legacy `done` 那一帧，客户不必解 canonical 事件也读得懂。
+TERMINAL_STATE_NO_ANSWER = "no_answer"
+#: 回执那一帧（本轮只是被收进队列，一步都没跑）、本单之前发布而说不出自己有没有出处的旧
+#: 队列行、终态键在位但载荷解不开（那是损坏，不是兼容）。三枚都不许冒充 `answered`。
+TERMINAL_STATE_QUEUED = "queued"
+TERMINAL_STATE_LEGACY = "legacy_row"
+TERMINAL_STATE_UNREADABLE = "unreadable_terminal"
+
+#: token 读数读自哪一本账。生产只有 PostgreSQL 六表这一本算 authoritative；JSON 侧账只有一台
+#: 机器看得见（口径抄自 `app/trace/durability.py` 自己那句话），所以它一律带着
+#: `authoritative: false` 出现——「读到了 0」与「没读成」是两件事，不许洗成同一张脸。
+USAGE_LEDGER_POSTGRES = "postgres_model_calls"
+USAGE_LEDGER_PERSISTENCE = "persistence_model_calls"
+USAGE_LEDGER_UNAVAILABLE = "ledger_unavailable"
+
+#: 批准这一轮走的是既有那扇门，本单不新建第二套批准路径。
+APPROVE_ROUTE_PATH = "/api/v1/approve"
+
+#: 答案缓存条目发布于「出处清单」之前，或那份清单读不出来 ⇒ 这一轮的出处**无从核对**。
+#: 它不许退化成空清单：判据②说「查到 0 条」与「压根没查成」是两件事，R154 的第四态
+#: `provenance.js::cacheFace = cached-unknown` 量的就是这一格（发空清单＝把「没查到」说成
+#: 「查过了，没有」）。同步道的 done 帧从前没有地方放这句话，今天有了同一枚键名。
+SOURCES_ERROR_NO_MANIFEST = "answer_cache_without_manifest"
+
+
+def model_call_rows(request_id: str) -> tuple[list[dict] | None, str]:
+    """按 request_id 读回 `model_calls` 的行，并说清读自哪一本账。
+
+    `rows=None` 只有一种意思：**读不到**（账本没配、连不上、解不开）。那一格绝不能退化成
+    空列表——否则「一台连不上真库的机器」与「这一轮一次模型都没打」在客户端长同一张脸，
+    而这两件事的处置完全相反。
+    """
+    if not request_id:
+        return None, USAGE_LEDGER_UNAVAILABLE
+    try:
+        from app.trace.store import default_trace_store
+
+        store = default_trace_store()
+        database = getattr(store, "database", None)
+        if database is not None:
+            rows = database.fetch_table("model_calls", "request_id = %s", request_id)
+            return list(rows), USAGE_LEDGER_POSTGRES
+        persistence = getattr(store, "persistence", None)
+        listing = getattr(persistence, "list", None)
+        if not callable(listing):
+            return None, USAGE_LEDGER_UNAVAILABLE
+        rows = [
+            row
+            for row in listing("model_calls")
+            if isinstance(row, dict) and str(row.get("request_id") or "") == request_id
+        ]
+        return rows, USAGE_LEDGER_PERSISTENCE
+    except Exception as exc:
+        # 只落异常类名：连接失败的文案里可能带主机与账号，凭据不进日志是铁规。
+        logger.warning(f"[R254] 读不到 model_calls 台账: {type(exc).__name__}")
+        return None, USAGE_LEDGER_UNAVAILABLE
+
+
+def _token_count(value) -> int | None:
+    """只认真读到的非负整数；NULL、布尔、字符串一律 None（不折算成 0）。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value >= 0 else None
+
+
+def read_model_call_usage(request_id: str) -> dict:
+    """把 `model_calls` 的行数成客户该看到的 token 读数（判据③：值取自真库同源）。
+
+    只加真读到的那几行，一枚都不许多估——`estimate_prompt_tokens` 是给预算尺装表用的，不是
+    给台账用的（`app/trace/spans.py` 里已经把这句话写过一遍）。有 NULL 就不假装齐：
+    `calls_missing_token_readout` 明写几枚没报数，`token_readout_complete` 因此为 False。
+    `total_tokens` 是 prompt + completion 这一枚算式的结果，不是模型报回来的第三个数。
+    """
+    rows, ledger = model_call_rows(request_id)
+    if rows is None:
+        return {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+            "model_calls": None,
+            "calls_with_token_readout": None,
+            "calls_missing_token_readout": None,
+            "token_readout_complete": False,
+            "authoritative": False,
+            "ledger": ledger,
+        }
+    prompt = 0
+    completion = 0
+    reported = 0
+    for row in rows:
+        tokens_in = _token_count(row.get("input_tokens"))
+        tokens_out = _token_count(row.get("output_tokens"))
+        if tokens_in is not None:
+            prompt += tokens_in
+        if tokens_out is not None:
+            completion += tokens_out
+        if tokens_in is not None and tokens_out is not None:
+            reported += 1
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+        "model_calls": len(rows),
+        "calls_with_token_readout": reported,
+        "calls_missing_token_readout": len(rows) - reported,
+        "token_readout_complete": bool(rows) and reported == len(rows),
+        "authoritative": ledger == USAGE_LEDGER_POSTGRES,
+        "ledger": ledger,
+    }
+
+
+def usage_proves_zero_model_calls(usage: dict | None) -> bool:
+    """真库能证明「一次模型都没打」吗？只有 authoritative 台账里那枚 0 才算证明。
+
+    台账读不到（`model_calls is None`）或只有一本 JSON 侧账（`authoritative: false`）时一律
+    False：那时能说的只有「无从证明」。把「没读到」升级成「没跑过」是另一种谎报。
+    """
+    if not isinstance(usage, dict):
+        return False
+    return bool(usage.get("authoritative")) and usage.get("model_calls") == 0
+
+
+def queue_turn_sources(agent_results: dict, principal_payload) -> tuple[list[dict], str, str]:
+    """把后台那一轮的证据袋折成客户端可读的出处清单（判据②）。
+
+    取证与放行用的就是同步道那两只现成的件（`_collect_document_sources` 从证据袋搬运、
+    `_authorized_source_rows` 走 `scope.allows` 复核），**不新增放行分支，也不放宽一道**；
+    主体是从队列载荷里还原出来的那一枚 Principal，与 worker 交给图的是同一份。返回
+    `(可见行, 理由码, 失败因)`：第三枚非空说的是「压根没查成」，那一格与「查到 0 条」必须
+    分开。`_stamp_source_publications` 与同步道同一处调用，生效日期一枚都不许少。
+    """
+    if not isinstance(principal_payload, dict) or not principal_payload:
+        return [], "", "principal_unavailable"
+    try:
+        principal = Principal.model_validate(principal_payload)
+    except Exception:
+        return [], "", "principal_unavailable"
+    try:
+        rows: dict[str, dict] = {}
+        _collect_document_sources(agent_results or {}, rows)
+        visible, reason = _authorized_source_rows(rows, principal)
+        _stamp_source_publications(rows)
+    except Exception as exc:
+        logger.warning(f"[R254] 队列这一轮的出处折不出来: {type(exc).__name__}")
+        return [], "", "sources_unavailable"
+    return visible, str(reason or ""), ""
+
+
+def hitl_approval_handle(*, session_id: str, parked: dict | None) -> dict:
+    """把「这一轮在等你确认」折成一件可寻址、可执行的东西（判据①）。
+
+    `decide_*` 三格说的是既有那扇门 `POST /api/v1/approve`：客户端照着敲就行，不必重发本轮
+    问题，也不必自己猜 session。挂起文案仍旧带着，但换了名字（`notice`）——它是一句说明，
+    不是正文，从今往后不再出现在 `result` 那一格里。批准之后归属判定照旧由
+    `_authorize_session_request` 重新走一遍，本函数不替它决定。
+    """
+    parked = parked or {}
+    pending = [str(step) for step in (parked.get("pending") or [])]
+    labels = [str(label) for label in (parked.get("labels") or [])]
+    return {
+        "session_id": str(session_id or ""),
+        "pending_steps": pending,
+        "labels": labels,
+        "notice": hitl_park_text({"labels": labels}),
+        "decide_method": "POST",
+        "decide_path": APPROVE_ROUTE_PATH,
+        "decide_body": {"session_id": str(session_id or ""), "approved": True},
+        "decide_note": "批准这一轮：把 decide_body POST 到 decide_path。无需重发本轮问题，"
+                       "续跑出来的正文由那条流交回。",
+    }
+
+
+def approval_ledger_state(session_id: str, owner_user_id: str) -> str:
+    """问一次待办台账：这一轮还开着吗。读不到就明说读不到，不许猜。
+
+    取值就是契约 `HITL Pending Listing` 已有的那套词（awaiting / resumed / refused /
+    abandoned / stale / failed），外加四枚出口：`absent`（没有这一行）、`unavailable`
+    （台账读不出）、`owner_mismatch`（有这一行而不属于这个调用方）、`no_session`。
+    本单不新增第二套词汇，也不因为这个查询放宽任何东西。
+    """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return "no_session"
+    try:
+        row = pending_approvals.get_row(session_id)
+    except Exception:
+        return "unavailable"
+    if row is None:
+        return "absent"
+    if owner_user_id and str(row.owner_user_id or "") != str(owner_user_id):
+        return "owner_mismatch"
+    return str(row.status)
+
+
+def build_queue_terminal(
+    *,
+    terminal_state: str,
+    answer_present: bool,
+    worker_status: str = "",
+    sources: list[dict] | None = None,
+    scope_reason_code: str = "",
+    sources_error: str = "",
+    usage: dict | None = None,
+    approval: dict | None = None,
+) -> dict:
+    """队列终态载荷的唯一构造点（判据①②③共用同一份形状）。
+
+    `terminal_state` 只认两枚能进队列的形状，别的一律 raise：队列的状态键由它推导，构造点
+    与落库点之间不存在第二份口径。
+    """
+    if terminal_state not in (TERMINAL_STATE_ANSWERED, TERMINAL_STATE_AWAITING_APPROVAL):
+        raise ValueError(f"queue terminal cannot carry terminal_state={terminal_state!r}")
+    rows = list(sources or [])
+    return {
+        "schema": reliable_queue.TERMINAL_SCHEMA,
+        "terminal_state": terminal_state,
+        "answer_present": bool(answer_present),
+        "worker_status": str(worker_status or ""),
+        "sources": rows,
+        "sources_present": bool(rows),
+        "scope_reason_code": str(scope_reason_code or ""),
+        # 「查到 0 条」与「压根没查成」是两件事：前者是结论，后者是这一格没读出来。
+        # 混成一格，客户就会拿着一个空清单去查检索，而真正坏的是主体还原或台账连接。
+        "sources_error": str(sources_error or ""),
+        "usage": usage,
+        "approval": approval,
+    }
+
+
+def is_hitl_park_notice(text: str) -> bool:
+    """这句是不是那句挂起文案。按 `hitl_park_text` 现构造再逐字比，不抄字面。
+
+    只为本单那条兼容路径服务：redis 里在位的旧行没有终态载荷，读的人必须能问一句「这一格
+    的 result 到底是正文还是一句挂起说明」。
+    """
+    prefix = "本轮在「"
+    suffix = "」前等待你确认，确认后才会执行，目前尚未产出回答内容。"
+    if not text or not text.startswith(prefix) or not text.endswith(suffix):
+        return False
+    labels = text[len(prefix): len(text) - len(suffix)]
+    return text == hitl_park_text({"labels": labels.split("、")})
+
+
+def done_sse_frame(
+    *,
+    terminal_state: str,
+    answer_present: bool,
+    sources_present: bool,
+    sources: list[dict] | None = None,
+    sources_error: str = "",
+    usage: dict | None = None,
+    approval: dict | None = None,
+) -> str:
+    """legacy `event: done` 那一帧的唯一构造点（判据②③⑤）。
+
+    帧名、`type` 键、以及「done 仍是流结束的唯一信号」这句话都不动（契约冻结规则 1）；加的
+    是六格读数，让「这一帧说流结束了」不再等于「这一轮跑完了」。两道的键集合逐字相同，
+    客户端不必为队列道与同步道写两套解析：`sources` 与队列终态里那一格同源同形，
+    `sources_present` 留在旁边，是为了让「本轮没有出处」与「出处没读出来」两种形状在只带
+    这一帧的旧客户端上也各说各的话；`sources_error` 与队列终态里同名那一格同一本账——
+    非空说的是「这一格压根没读出来」，它和「读出来是空表」不是同一句话。
+    """
+    return sse_event(
+        "done",
+        {
+            "type": "done",
+            "terminal_state": terminal_state,
+            "answer_present": bool(answer_present),
+            "sources_present": bool(sources_present),
+            "sources": [row for row in (sources or []) if isinstance(row, dict)],
+            "sources_error": str(sources_error or ""),
+            "usage": usage,
+            "approval": approval,
+        },
+    )
+
+
+def done_frame_for_turn(
+    *,
+    request_id: str,
+    session_id: str,
+    full_text: str,
+    intr: dict | None,
+    visible_rows: list[dict] | None,
+    sources_error: str = "",
+) -> str:
+    """跑完一轮的三条出口（/ask 正文、/approve 续跑、答案缓存命中）共用的 done 帧。
+
+    `sources_error` 只有缓存命中那一支会非空：那一轮的正文来自另一轮的账，出处清单可能
+    根本没记下（条目早于清单），这时能说的是「无从核对」，不是「没有出处」。
+    """
+    if intr:
+        state = TERMINAL_STATE_AWAITING_APPROVAL
+        approval = hitl_approval_handle(session_id=session_id, parked=intr)
+    else:
+        state = TERMINAL_STATE_ANSWERED if full_text else TERMINAL_STATE_NO_ANSWER
+        approval = None
+    return done_sse_frame(
+        terminal_state=state,
+        answer_present=bool(full_text),
+        sources_present=bool(visible_rows),
+        sources=visible_rows,
+        sources_error=sources_error,
+        usage=read_model_call_usage(request_id),
+        approval=approval,
+    )
+
+
 def _enqueue_ask_turn(
     *,
     request,
@@ -1835,7 +2155,14 @@ def _enqueue_ask_turn(
     async def queued_response():
         yield f"event: queued\ndata: {json.dumps(queued, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
-        yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+        # 这一帧说的是"这条流结束了"，不是"这一轮跑完了"：本轮此刻只被收进队列，一个模型
+        # 都没打，所以 usage 交 null 而不是 0/0/0——把"还没开始"与"跑完而零调用"洗成同一枚
+        # 读数，正是判据④要消灭的那种形状。真正的 token 读数在 /queue/status 那一面。
+        yield done_sse_frame(
+            terminal_state=TERMINAL_STATE_QUEUED,
+            answer_present=False,
+            sources_present=False,
+        )
         await asyncio.sleep(0)
     return StreamingResponse(
         queued_response(),
@@ -2014,7 +2341,14 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     },
                 )
                 await asyncio.sleep(0)
-            yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+            yield done_frame_for_turn(
+                request_id=request_id,
+                session_id=thread_id,
+                full_text=cached,
+                intr=None,
+                visible_rows=cached_visible if manifest else None,
+                sources_error="" if manifest else SOURCES_ERROR_NO_MANIFEST,
+            )
             await asyncio.sleep(0)
         return StreamingResponse(
             cached_response(),
@@ -2290,7 +2624,12 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                         },
                     )
                     sequence += 1
-                    yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                    yield done_sse_frame(
+                        terminal_state=TERMINAL_STATE_NO_ANSWER,
+                        answer_present=False,
+                        sources_present=False,
+                        usage=read_model_call_usage(request_id),
+                    )
                     await asyncio.sleep(0)
                     break
 
@@ -2380,7 +2719,13 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     },
                 )
                 sequence += 1
-                yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                yield done_frame_for_turn(
+                    request_id=request_id,
+                    session_id=thread_id,
+                    full_text=full_text,
+                    intr=intr,
+                    visible_rows=visible_rows,
+                )
                 await asyncio.sleep(0)
                 break
 
@@ -2943,7 +3288,13 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                         },
                     )
                     sequence += 1
-                    yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                    yield done_sse_frame(
+                        terminal_state=TERMINAL_STATE_NO_ANSWER,
+                        answer_present=False,
+                        sources_present=False,
+                        usage=read_model_call_usage(request_id),
+                    )
+
                     await asyncio.sleep(0)
                     break
                 if intr:
@@ -3006,7 +3357,13 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     },
                 )
                 sequence += 1
-                yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                yield done_frame_for_turn(
+                    request_id=request_id,
+                    session_id=request.session_id,
+                    full_text=full_text,
+                    intr=intr,
+                    visible_rows=visible_rows,
+                )
                 await asyncio.sleep(0)
                 break
 
@@ -3907,9 +4264,87 @@ async def delete_document(filename: str, request: FastAPIRequest):
 
 # ==================== Layer 5: 队列削峰 API ====================
 
+
+def queue_terminal_readout(queue, request_id: str, payload: dict, status: str) -> dict:
+    """把一支队列任务的「客户端可见终态」拼齐（判据①②③⑤）。
+
+    三条读路各有各的诚实，谁都不许冒充谁：
+
+    * 终态载荷在位（本单之后发布的行）——照载荷说，一格都不添。`result` 与载荷里的
+      `answer_present` 必须同源，所以这里再逐字问一次 `is_hitl_park_notice`：新行要是
+      把挂起文案当正文发了出来，这一格当场把它认出来，不必等人翻日志。
+    * 载荷 `absent`（本单之前发布的行）——只说读得到的东西：正文在不在、像不像那句挂起
+      文案；出处那一格明写「这一行说不出自己有没有出处」，绝不拿空清单冒充「没有出处」。
+      这是兼容路径，不是失效路径：旧行照样读得回来，只是它交不出本单新加的三格读数。
+    * 载荷 `unreadable`——键在位而解不开是损坏，另给一枚终态语义，不与兼容混为一谈。
+    """
+    answer = queue.result(request_id)
+    text = str(answer) if answer is not None else ""
+    terminal = queue.terminal(request_id)
+    state = str(terminal.get("state") or "")
+    data = terminal.get("payload") or {}
+    readout: dict = {"result": answer}
+    owner_id = ""
+    principal = payload.get("principal") if isinstance(payload, dict) else None
+    if isinstance(principal, dict):
+        owner_id = str(principal.get("user_id") or "")
+    if state != reliable_queue.TERMINAL_OK:
+        legacy = state == reliable_queue.TERMINAL_ABSENT
+        readout.update(
+            {
+                "terminal_schema": "legacy" if legacy else "unreadable",
+                "terminal_state": TERMINAL_STATE_LEGACY if legacy else TERMINAL_STATE_UNREADABLE,
+                "answer_present": bool(text),
+                "answer_is_park_notice": is_hitl_park_notice(text),
+                "worker_status": "",
+                "sources_present": False,
+                "sources": [],
+                "scope_reason_code": "",
+                "sources_error": "",
+                "usage": None,
+                "approval": None,
+                # 这一枚说的是「读不到」，不是「没有」：旧行的出处、token、批准把手三格
+                # 从来就没有落进过 redis，拿空值填它们会把「没记账」洗成「记成零」。
+                "terminal_note": legacy
+                and "这一行发布于结构化终态之前：出处、token 与批准把手三格当年没有落账。"
+                or "终态键在位而载荷解不开，那一格宁缺毋造。",
+            }
+        )
+        return readout
+    approval = data.get("approval") if isinstance(data.get("approval"), dict) else None
+    if approval is not None:
+        approval = dict(approval)
+        approval["ledger_status"] = approval_ledger_state(
+            str(approval.get("session_id") or ""), owner_id
+        )
+    readout.update(
+        {
+            "terminal_schema": str(data.get("schema") or ""),
+            "terminal_state": str(data.get("terminal_state") or ""),
+            "answer_present": bool(data.get("answer_present")) and not is_hitl_park_notice(text),
+            "answer_is_park_notice": is_hitl_park_notice(text),
+            "worker_status": str(data.get("worker_status") or ""),
+            "sources_present": bool(data.get("sources_present")),
+            "sources": [row for row in (data.get("sources") or []) if isinstance(row, dict)],
+            "scope_reason_code": str(data.get("scope_reason_code") or ""),
+            "sources_error": str(data.get("sources_error") or ""),
+            "usage": data.get("usage") if isinstance(data.get("usage"), dict) else None,
+            "approval": approval,
+            "terminal_note": "",
+        }
+    )
+    return readout
+
+
 @router.get("/queue/status/{request_id}")
 async def queue_status(request_id: str, request: FastAPIRequest):
-    """轮询队列请求的处理状态。前端每 3s 调用一次，直到 status=done"""
+    """轮询队列请求的处理状态。前端每 3s 调用一次，直到终态。
+
+    R254 之前这一支只会说四格（status / request_id / result / failure）。今天它还要说清三件
+    事：这一轮到底有没有正文、出处在不在、打了多少 token（判据①②③）。
+    `awaiting_approval` 是新增的那枚状态：挂起在等人批准的那一轮不再报 `done`，也不再交回
+    一句 37 字挂起文案；它交回一件可批准的东西（`approval`，见契约 `Long Task Status`）。
+    """
     from app.common.reliable_queue import QueueConnectionError
 
     try:
@@ -3921,28 +4356,25 @@ async def queue_status(request_id: str, request: FastAPIRequest):
         ) from exc
 
     # 读状态这扇门：动词记 resource:view（默认值也写出来，一扇门一眼看得见记的是哪本账）。
-    _authorize_queue_task(request, queue, request_id, ACTION_VIEW)
+    # 权限判定本身一个字没改：先过这道门，才谈得上读下面任何一格。
+    payload = _authorize_queue_task(request, queue, request_id, ACTION_VIEW)
     status = queue.status(request_id)
     if status is None:
         return {"status": "expired", "message": "请求已过期，请重新提交"}
-    failure = queue.failure(request_id)
-    if status == "done":
-        return {
-            "status": "done",
-            "request_id": request_id,
-            "result": queue.result(request_id),
-            "failure": failure,
-        }
-    if status == "queued":
+    readout: dict = {
+        "status": status,
+        "request_id": request_id,
+        "failure": queue.failure(request_id),
+    }
+    if status in (reliable_queue.AWAITING_APPROVAL, "done"):
+        # 两枚都是「这一轮已经交出去了」的那一格，区别只在交没交正文。出处、token、批准
+        # 把手只对这两枚有意义，别的状态下不凭空造键。
+        readout.update(queue_terminal_readout(queue, request_id, payload, status))
+    elif status == "queued":
         pending = queue.redis.lrange(queue.pending_key, 0, -1)
         ids = [item.decode() if isinstance(item, bytes) else str(item) for item in pending]
-        return {
-            "status": "queued",
-            "request_id": request_id,
-            "position": ids.index(request_id) + 1 if request_id in ids else None,
-            "failure": failure,
-        }
-    return {"status": status, "request_id": request_id, "failure": failure}
+        readout["position"] = ids.index(request_id) + 1 if request_id in ids else None
+    return readout
 
 
 @router.post("/queue/{request_id}/cancel")

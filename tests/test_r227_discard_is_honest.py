@@ -308,10 +308,10 @@ class _WatchingQueue(ReliableQueue):
         self.beats.append(heartbeat)
         return heartbeat
 
-    def complete(self, request_id, result):
+    def complete(self, request_id, result, *, terminal=None):
         current = self.beats[-1] if self.beats else None
         self.alive_at_complete = bool(current and current.running)
-        return super().complete(request_id, result)
+        return super().complete(request_id, result, terminal=terminal)
 
 
 def _install_worker(monkeypatch, queue, *, seconds: float):
@@ -377,7 +377,7 @@ def test_the_worker_falls_back_when_the_queue_cannot_renew(monkeypatch):
         def reserve(self, timeout=0):
             return type("M", (), {"request_id": "req-stub", "payload": _worker_payload()})()
 
-        def complete(self, request_id, result):
+        def complete(self, request_id, result, *, terminal=None):
             self.completed.append((request_id, result))
             return True
 
@@ -514,7 +514,12 @@ def test_the_contract_sentence_lives_where_the_code_does():
 
 
 def test_the_status_vocabulary_gained_no_new_terminal_word():
-    """②走的是"写进 failure"那条路：状态词表一个新字都没加，停表名单不必跟着改。"""
+    """②走的是"写进 failure"那条路：R227 的丢弃一族没长出自己的状态词，停表名单不必跟着改。
+
+    R254 在同一本账上多了一枚 `awaiting_approval`。那一枚说的是「挂起的轮次不许冒充 done」，
+    与「结果被丢弃」是两件事，所以本钉收窄成它真正要护的那一句：**丢弃这一族**没有新增状态词。
+    整本词表仍旧逐枚盯着——谁再多写一枚，这里就得当场红并把集合摊开给人看。
+    """
     written = set(
         re.findall(
             r'self\.redis\.set\(self\._status_key\(request_id\),\s*"([a-z_]+)"\)',
@@ -522,6 +527,7 @@ def test_the_status_vocabulary_gained_no_new_terminal_word():
         )
     )
     assert written == {
+        "awaiting_approval",
         "cancelled",
         "cancel_requested",
         "dead",

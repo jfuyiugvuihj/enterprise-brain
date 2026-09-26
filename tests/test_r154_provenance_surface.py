@@ -399,6 +399,17 @@ def _seed_manifest(chat, question, scope, text):
     cache.cache_answer(chat._evidence_manifest_key(question), text, scope=scope)
 
 
+def _done_data(body: str) -> str:
+    """流末那枚 ``done`` 帧的 JSON 文本。
+
+    R254 之后这一帧自带「这一轮到底怎么样了」的读数键，所以本文件再不许拿整具字节串
+    做 ``"sources" not in body`` 这类子串判断：它既会误伤正文里的字，也看不见
+    「空清单冒充查过」那一格。要说什么，就得逐键读它说了什么。
+    """
+    frames = [f for f in body.split("\n\n") if f.startswith("event: done")]
+    assert len(frames) == 1, "done 仍是流结束的唯一信号，一帧不多一帧不少"
+    return frames[-1].split("data: ", 1)[1].strip()
+
 def test_a_cached_hit_turn_hands_over_the_same_source_rows(monkeypatch, tmp_path):
     """③：命中的那一轮也发 canonical ``sources``，legacy 三枚帧的次序与字面原样不动。"""
     _chat, _backend, remaining, ask = _harness(monkeypatch, tmp_path, [[doc_state(fake_retriever_hits())]])
@@ -437,8 +448,15 @@ def test_a_cache_entry_from_before_the_manifest_says_nothing_at_all(monkeypatch,
 
     assert remaining == [], "这一轮是缓存命中，不许打模型"
     assert event_names(body) == ["status", "text", "done"]
-    assert "sources" not in body
+    assert "sources" not in event_names(body), "没有清单的缓存条目不许发 sources 事件"
     assert chat._cached_source_manifest(QUESTION, scope) is None
+    # R254 之后 `done` 载荷自带 sources 键，所以「说了什么」必须逐键读，不能再拿整具
+    # 字节串做子串判断（那既会误伤正文里的字，也看不见「空清单冒充查过」这一格）。
+    frame = json.loads(_done_data(body))
+    assert frame["sources"] == [] and frame["sources_present"] is False
+    assert frame["sources_error"] == chat.SOURCES_ERROR_NO_MANIFEST, (
+        "这一轮的出处无从核对，必须说出来；空清单等于把「没查到」写成「查过了，没有」"
+    )
 
 
 @pytest.mark.parametrize("shape", ["{not json at all", '{"rows": []}', "[]", '"一段话"'])
@@ -454,6 +472,9 @@ def test_a_manifest_that_cannot_be_read_is_not_served_as_an_empty_one(monkeypatc
 
     assert "sources" not in event_names(body)
     assert event_names(body) == ["status", "text", "done"]
+    assert json.loads(_done_data(body))["sources_error"] == "answer_cache_without_manifest", (
+        "清单读不出来与清单从来没有，是同一张脸：都说「无从核对」"
+    )
     assert json.loads(next(f.split("data: ", 1)[1] for f in body.split("\n\n") if f.startswith("event: text")))["cached"] is True
     assert chat._cached_source_manifest(QUESTION, scope) is None
 

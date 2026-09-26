@@ -59,6 +59,48 @@ LEASE_MAX_RENEW_SECONDS_CEILING = 86400
 RESULT_DISCARDED = "result_discarded"
 DISCARD_REASON_CANCELLED = "cancelled"
 DISCARD_REASON_LEASE_LOST = "lease_lost"
+#: R254 判据①：队列里「在等人批准」的那一轮从今天起有自己的一枚状态词。
+#: 为什么非新增不可：09-25 那扇窗的 20 行终态里 `awaiting_hitl=True` 有 12 枚，其中 11 枚
+#: 把同一句 37 字挂起文案当正文交回、队列侧照报 `final=done`——客户读到的是「跑完了」，
+#: 真相是「一步都没往下走」。那是谎报终态，不是慢。
+#: 🔴 新增一枚状态词有三处必须同批改口，缺一处就是假契约：
+#:   1. `docs/api/contract-v1.md` 的 `## Long Task Status`：那枚同步钉用 AST 逐枚比对词表，
+#:      且只认「往 status 键写一枚字符串字面量」这一种形状，写成常量会被记成 blind spot；
+#:   2. 前端停表名单 `frontend/src/components/ChatPanel.vue::QUEUE_SETTLED`；
+#:   3. 量具停表 `scripts/eval_transport_ask_v2.py::_poll_queue`。
+#: 后两枚在 R254 写域之外，已作为转出项写进交工报告。本仓那枚「词表一字未加」的钉
+#:（`tests/test_r227_discard_is_honest.py`）收窄成「R227 的丢弃路径没加字」——它本来要护的
+#: 就是这件事，不是替后人预先批准或否决每一个新状态词。
+AWAITING_APPROVAL = "awaiting_approval"
+#: 结构化终态载荷的结构名。redis 里在位的旧行没有这一格，读回来时据此走兼容路径。
+TERMINAL_SCHEMA = "queue-terminal-v1"
+#: 队列只认上面那两枚终态语义；第三枚由 `_terminal_awaits_approval` 当场拒，不许静默降级
+#: 回 `done`。构造点（`app/api/v1/chat.py::build_queue_terminal`）与落库点之间不存在第二份词表。
+
+#: 结构化终态的两枚语义（R254 判据①②④）。取值由 `app/api/v1/chat.py::build_queue_terminal`
+#: 独家构造，队列只认这两枚，别的一律拒——「载荷说在等人、状态键说已跑完」这种自相矛盾的
+#: 终态就是这么被挡在门外的。
+TERMINAL_STATE_ANSWERED = "answered"
+TERMINAL_STATE_AWAITING_APPROVAL = "awaiting_approval"
+#: 终态语义 -> 队列状态键。`answered` 走的还是 `ack()` 原本写的那枚 `done`，一个字都没改。
+TERMINAL_STATE_TO_STATUS = {
+    TERMINAL_STATE_ANSWERED: "done",
+    TERMINAL_STATE_AWAITING_APPROVAL: AWAITING_APPROVAL,
+}
+#: 结构化终态读回来时的三种可能：键不在位（本单之前的旧行）、在位且解得开、在位但解不开。
+TERMINAL_ABSENT = "absent"
+TERMINAL_OK = "ok"
+TERMINAL_UNREADABLE = "unreadable"
+
+
+def _terminal_awaits_approval(terminal: dict[str, Any] | None) -> bool:
+    """这枚终态是不是「在等人批准」。读不懂就当场 raise，不许猜、也不许退回 `done`。"""
+    if terminal is None:
+        return False
+    state = str(terminal.get("terminal_state") or "")
+    if state not in TERMINAL_STATE_TO_STATUS:
+        raise ValueError(f"unknown queue terminal_state: {state!r}")
+    return TERMINAL_STATE_TO_STATUS[state] == AWAITING_APPROVAL
 
 
 def parse_queue_capacity(raw: Any, *, source: str = CAPACITY_SOURCE_ENV) -> tuple[int | None, str]:
@@ -168,6 +210,9 @@ class ReliableQueue:
 
     def _lease_key(self, request_id: str) -> str:
         return f"{self.name}:lease:{request_id}"
+
+    def _terminal_key(self, request_id: str) -> str:
+        return f"{self.name}:terminal:{request_id}"
 
     def _idempotency_key(self, key: str) -> str:
         return f"{self.name}:idempotency:{key}"
@@ -286,8 +331,19 @@ class ReliableQueue:
         self.redis.set(self._status_key(request_id), "done")
         return True
 
-    def complete(self, request_id: str, result: str) -> bool:
+    def complete(self, request_id: str, result: str | None, *, terminal: dict[str, Any] | None = None) -> bool:
         """Persist the result before acknowledging the processing lease.
+
+        R254 把这条腿从「只有一个正文字符串」扩成「正文 + 结构化终态」。`terminal` 是随答案
+        一起发布的那份读数（终态语义、出处、批准把手；形状由 `app/api/v1/chat.py`
+        ::build_queue_terminal` 独家定义），落在独立的 `:terminal:` 键上，与答案键同生同死：
+        丢弃的两支一并删它，绝不出现「正文没了、读数还在」。
+        `result=None` 说的是「这一轮压根没有正文」——挂起在等人批准的那一轮就是它，从此不再由
+        一句 37 字挂起文案顶替。状态键由 `terminal["terminal_state"]` 推导，不是第二枚参数：
+        两枚各填各的就会造出「载荷说在等人、状态说已跑完」这种自相矛盾的终态。认得两枚
+        （`answered` -> `done`、`awaiting_approval` -> `awaiting_approval`），第三枚当场 raise，
+        绝不静默降级回 `done`——那等于把本单要消灭的那句谎报留在原地。
+        关键字参数带默认值，所以本单之前的每一处调用、以及 redis 里在位的每一枚旧行，逐字节不变。
 
         取消优先且所有权优先：运行途中被取消、或租约已过期被回收时，本 worker
         已不再拥有这条消息，必须丢弃结果，既不得发布答案也不得谎报 done。
@@ -302,17 +358,52 @@ class ReliableQueue:
         3. `failure()["last_error"]` 写着 `result_discarded:<reason>`，成因可区分,
            `attempts` 一个字节不动——重试预算属于队列，不属于这一任。
         """
+        awaiting = _terminal_awaits_approval(terminal)
         if self.is_cancelled(request_id):
             self._record_discard(request_id, DISCARD_REASON_CANCELLED)
             self.redis.delete(self._result_key(request_id))
+            self.redis.delete(self._terminal_key(request_id))
             self.ack(request_id)
             return False
         if self._lease_lost(request_id):
             self._record_discard(request_id, DISCARD_REASON_LEASE_LOST)
             self.redis.delete(self._result_key(request_id))
+            self.redis.delete(self._terminal_key(request_id))
             return False
-        self.redis.set(self._result_key(request_id), result, ex=self.result_ttl)
-        return self.ack(request_id)
+        if result is not None:
+            self.redis.set(self._result_key(request_id), result, ex=self.result_ttl)
+        if terminal is not None:
+            self.redis.set(
+                self._terminal_key(request_id),
+                json.dumps(terminal, ensure_ascii=False, separators=(",", ":")),
+                ex=self.result_ttl,
+            )
+        if not self.ack(request_id):
+            return False
+        if awaiting:
+            # 写在这里而不并进 `ack()`：ack 那一支说的仍是「闭合成 done」这件旧事，只有带着待批准
+            # 把手的这一轮才改口。🔴 必须是字符串字面量：R232 用 AST 认「往 status 键写字面量」
+            # 这枚形状，写成常量会落进它的 blind_spots，而那枚钉的文本计数还会把注释也数进去。
+            self.redis.set(self._status_key(request_id), "awaiting_approval")
+        return True
+
+    def terminal(self, request_id: str) -> dict[str, Any]:
+        """读回结构化终态：`{"state": ..., "payload": ...}`，三态各有名。
+
+        `absent` 是「这一格根本没有」——R254 之前发布的那些在位行就是它。读的人必须把它和
+        「有但读不懂」分开说，因为前者是兼容、后者是损坏。`unreadable` 是键在位而载荷解不开
+        （半截 JSON、被人手改过的、换代留下的异形）：那一格宁缺毋造。
+        """
+        raw = self.redis.get(self._terminal_key(request_id))
+        if raw is None:
+            return {"state": "absent", "payload": None}
+        try:
+            data = json.loads(raw.decode() if isinstance(raw, bytes) else str(raw))
+        except (TypeError, ValueError):
+            return {"state": "unreadable", "payload": None}
+        if not isinstance(data, dict):
+            return {"state": "unreadable", "payload": None}
+        return {"state": "ok", "payload": data}
 
     def _record_discard(self, request_id: str, reason: str) -> None:
         """把"结果被丢弃"写进重试账本，供 `failure()` 与 /queue/status 读得到。

@@ -69,11 +69,26 @@ def test_queue_status_returns_result_after_reliable_completion(monkeypatch):
     )
 
     assert response.status_code == 200
+    # R254：这一枚队列行是由 `complete(request_id, "answer")` 发布的，没有结构化终态载荷，
+    # 正是 redis 里在位那三枚旧行的形状。它照样读得回来（`result` 一字未动），但那一身新键
+    # 一律说「这一行说不出」，而不是拿零值冒充「查过，是零」。
     assert response.json() == {
         "status": "done",
         "request_id": message.request_id,
         "result": "answer",
         "failure": {"attempts": 1, "last_error": None, "max_attempts": 3},
+        "terminal_schema": "legacy",
+        "terminal_state": "legacy_row",
+        "answer_present": True,
+        "answer_is_park_notice": False,
+        "worker_status": "",
+        "sources_present": False,
+        "sources": [],
+        "scope_reason_code": "",
+        "sources_error": "",
+        "usage": None,
+        "approval": None,
+        "terminal_note": "这一行发布于结构化终态之前：出处、token 与批准把手三格当年没有落账。",
     }
 
 
