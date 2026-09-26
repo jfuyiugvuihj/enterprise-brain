@@ -9,6 +9,8 @@
  * 本件只钉「表与磁盘闭合」这一件事，不越界改别人的行：insights-demo.js 那一行同样陈旧
  * （W7 起 InsightPanel 已不引用它），那是 X-5，与 R271 的 insight-alerts.test.js 同写域，
  * 所以这里反过来钉住它**原样不动**，等 R271 并树后再由 X-5 收。
+ * —— R287（X-5）已按判据③收口：那一行订正成「已清空」，本件最下面那枚钉随之改口。
+ *    钉的还是同一件事（表说今天的真话，而且在册状态与磁盘一致），只是不再钉住旧措辞。
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
@@ -94,9 +96,17 @@ describe('R274② · README 的文件集与磁盘上的文件集逐条闭合', (
     expect(panel).not.toMatch(/devFixtures|dashboard-demo\.js/)
   })
 
-  it('insights-demo.js 那一行原样不动：那是 X-5 的写域，等 R271 并树后收', () => {
+  // R274 把这行钉成「原样不动」的理由是改口权在 X-5，而 X-5 当时与 R271 同写域。
+  // R271 已并树，R287 收口：这一行订正成「已清空」，本钉随之改口 —— 从钉措辞改成钉事实：
+  // 表不许再把 W7 之前那条 POST 入参说成今天还在喂的活件，也不许顺手把在册标成销档。
+  it('insights-demo.js 那一行已订正成「已清空」：不再冒充 POST /insights/detect 的入参，也不许标成销档', () => {
     const row = rows.find(item => item.file === 'insights-demo.js')
-    expect(row.feeds).toBe('`InsightPanel.vue` → `POST /insights/detect` 的入参')
-    expect(row.waiting).toBe('R14：同上')
+    expect(row, '表里必须留着这一行，说清它去哪了').toBeTruthy()
+    expect(row.feeds).toContain('已清空')
+    expect(row.feeds).not.toContain('POST /insights/detect')
+    expect(row.waiting).toContain('不等端点')
+    // 文件今天还在树里：标成「已删除」会让上一枚逐行闭合的钉当场对不上磁盘。
+    expect(row.removed).toBe(false)
+    expect(productionReferrers('insights-demo.js')).toEqual([])
   })
 })

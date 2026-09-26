@@ -17,7 +17,7 @@
  * 说成了真实异常。W7 起这条链路只认服务端回来的行。
  */
 import { errorCodeLabel, errorCodeOf, errorText } from './errcodes'
-import { errorDetail, http } from './http'
+import { errorDetail, http, PERMISSION_DENIED } from './http'
 
 /** 三条固定路径。列表与规则各自只有一条取数路径，不许在面板里再拼一遍。 */
 export const ALERTS_PATH = '/alerts'
@@ -144,6 +144,28 @@ export function readFailureView(err, { deniedTitle, failedTitle }) {
 /** 结构不对的失败：没有错误对象可归码，一律按「坏了」给重试，绝不画成空态。 */
 export function shapeFailureView(failedTitle) {
   return { face: 'error', title: failedTitle, description: SHAPE_FAILURE_DESCRIPTION, codeLabel: '', retryable: true }
+}
+
+/**
+ * 「这一格不向你开放」：没有告警读取权时，那一发 GET /alerts 根本不必发出去（R285 · X-2）。
+ *
+ * 不发 ≠ 沉默。少了这张脸，那一格会顺着 `alertRows = []` 掉回「当前没有异常线索」——
+ * 那是把「这一屏不给这个账号看异常」说成「公司没有异常」，正是 R1(c) 同族的那条缝。
+ *
+ * 它与 403 那张脸同源同句：讲的是同一件事（这个账号不在告警管理的权限里），所以句子照旧走
+ * lib/errcodes.js 的字典出口加 PERMISSION_WHERE，组件里不新造裸句子。四张脸仍两两不等：
+ * 没权限（这张）／401 登录失效（readFailureView unauthorized）／真读失败（error）／真空列表（面板空态）。
+ * codeLabel 留空：这一发从没发生过，没有后端码名可报，编一个是假话。
+ * retryable 为 false：再点一次只是把同一发注定被拒的请求再发一遍。
+ */
+export function alertsNotOpenView({ deniedTitle }) {
+  return {
+    face: 'denied',
+    title: deniedTitle,
+    description: errorText(PERMISSION_DENIED) + PERMISSION_WHERE,
+    codeLabel: '',
+    retryable: false,
+  }
 }
 
 /** 列表体只认 alerts / rules 两个键下的数组；形状不对返回 null，交给失败态。 */

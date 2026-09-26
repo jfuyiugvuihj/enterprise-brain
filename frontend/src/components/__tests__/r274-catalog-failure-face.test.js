@@ -40,14 +40,18 @@ function axiosError(status, detail) {
   return { response: { status, data: { detail } } }
 }
 
-function stubRoutes({ catalog = { status: 200, data: { documents: CATALOG_ROWS } }, alerts = { status: 200, data: { alerts: [] } } } = {}) {
+// summary 可覆盖：R285 起「三条 GET」这枚计数是有前提的，没告警读权那半份要拿一份不带
+// alerts 键的聚合来数（app/api/v1/dashboard.py:137-139 那一格只在有权限时才出）。
+function stubRoutes({ summary = SUMMARY, catalog = { status: 200, data: { documents: CATALOG_ROWS } }, alerts = { status: 200, data: { alerts: [] } } } = {}) {
   http.get.mockImplementation(async (url) => {
-    if (url === SUMMARY_PATH) return { status: 200, data: SUMMARY }
+    if (url === SUMMARY_PATH) return { status: 200, data: summary }
     if (url === '/documents/catalog') {
       if (catalog.status !== 200) throw axiosError(catalog.status, catalog.detail)
       return catalog
     }
     if (url === '/alerts') {
+      // 'absent' = 这一发压根不该出现（R285 那半份）：抛的是「不该被请求」，不是 403 归脸。
+      if (alerts === 'absent') throw new Error('不该被请求的路径：/alerts（这一屏没有告警读权）')
       if (alerts.status !== 200) throw axiosError(alerts.status, alerts.detail)
       return alerts
     }
@@ -105,11 +109,24 @@ describe('R274③ · catalog 500：只有「最新文档」换脸', () => {
     expect(html).not.toContain(DOCUMENTS_DENIED_TITLE)
   })
 
-  it('catalog 坏了不许再吞掉告警那一发请求：一次加载照旧只打三条 GET', async () => {
+  // 计数改成有前提的条件式（R285 · X-2），等号一个都没放宽：有告警读权这一发照发，
+  // catalog 坏了也不许吞掉它；没读权那一发本来就不该发，这一格换成「不向你开放」那张脸。
+  it('catalog 坏了不许再吞掉告警那一发请求：有告警读权时一次加载照旧只打三条 GET', async () => {
+    expect(Object.prototype.hasOwnProperty.call(SUMMARY, 'alerts')).toBe(true)
     const { bindings } = await loadedPanel({ catalog: { status: 500, detail: 'internal_error' } })
     expect(bindings.documents.value).toEqual([])
     expect(bindings.documentsFailure.value.denied).toBe(false)
     expect([...requestedUrls()].sort()).toEqual(['/alerts', '/documents/catalog', SUMMARY_PATH].sort())
+  })
+
+  it('换成没告警读权那半份：catalog 坏了仍是两行 GET，/alerts 一发都不许有', async () => {
+    const staff = { ...SUMMARY }
+    delete staff.alerts
+    const { bindings } = await loadedPanel({ summary: staff, catalog: { status: 500, detail: 'internal_error' }, alerts: 'absent' })
+    expect([...requestedUrls()].sort()).toEqual(['/documents/catalog', SUMMARY_PATH].sort())
+    // 不发 ≠ 沉默：这一格说「不向你开放」，而不是「当前没有异常线索」。
+    expect(bindings.alertFailure.value.face).toBe('denied')
+    expect(bindings.documentsFailure.value.denied).toBe(false)
   })
 })
 

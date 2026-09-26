@@ -2,7 +2,9 @@
  * R267 · 块 A 判据①② 的反证钉
  *
  * 钉的是两件事，方向都是「改回假数据就必须红」：
- *   ① 这一屏不再把自己造的 rows 送给后端：取数只剩三条 GET，POST 只准留给指标口径查询。
+ *   ① 这一屏不再把自己造的 rows 送给后端：取数只剩三条 GET（R285 起这一句有前提——只有
+ *      聚合回执给了 alerts 键才有第三条，没告警读权的账号是两行，那一发必 403 的不该发），
+ *      POST 只准留给指标口径查询。两半都是等号，不是「至少几条」。
  *   ② 金额折线没有真数据就不画（连装饰用的假趋势形状也不算数据）；「异常与风险」接真账，
  *      而「没权限 / 结构坏了 / 真没有记录」是三张脸，谁也不许顶替谁。
  *
@@ -45,6 +47,13 @@ function summaryBody(overrides = {}) {
 
 function axiosError(status, detail) {
   return { response: { status, data: { detail } } }
+}
+
+/** 无告警读权：后端把整个键省掉（app/api/v1/dashboard.py:137-139），不是给 0 也不是给 null。 */
+function summaryBodyWithoutAlerts() {
+  const body = summaryBody()
+  delete body.alerts
+  return body
 }
 
 function stubRoutes({ summary = summaryBody(), catalogRows = [], alerts = { status: 200, data: { alerts: [] } }, context = null } = {}) {
@@ -98,7 +107,10 @@ describe('R267① · 这一屏不再把自造 rows 送给后端', () => {
     expect(s).not.toMatch(/departments/)
   })
 
-  it('真跑一次加载：只打三条 GET，POST 只可能是指标口径查询', async () => {
+  // R285（X-2）把这枚钉磨成有前提的条件式，不是放宽：有告警读权 ⇒ 恰好三条 GET；
+  // 没读权 ⇒ 恰好两行且 /alerts 一发都不许有。两半都写等号，谁改成 >=2 或摘掉计数，
+  // 这枚拦请求风暴的钉当场失去牙齿。
+  it('真跑一次加载：有告警读权恰好三条 GET、没有恰好两行，POST 只可能是指标口径查询', async () => {
     stubRoutes()
     const bindings = await mountedPanel()
     await bindings.lookupMetric()
@@ -107,6 +119,19 @@ describe('R267① · 这一屏不再把自造 rows 送给后端', () => {
     const posts = http.post.mock.calls.map(call => call[0])
     expect(posts).toEqual(['/semantics/match'])
     expect(bindings.error.value).toBe('')
+
+    // 另一半：先自证这份聚合确实没有 alerts 键，再数那一发确实没了。
+    const staff = summaryBodyWithoutAlerts()
+    expect(Object.prototype.hasOwnProperty.call(staff, 'alerts')).toBe(false)
+    http.get.mockClear()
+    http.post.mockClear()
+    stubRoutes({ summary: staff })
+    const silent = await mountedPanel()
+    await silent.lookupMetric()
+    expect(http.get.mock.calls.map(call => call[0]).sort()).toEqual(['/documents/catalog', SUMMARY_PATH].sort())
+    expect(http.get.mock.calls.map(call => call[0])).not.toContain('/alerts')
+    expect(http.post.mock.calls.map(call => call[0])).toEqual(['/semantics/match'])
+    expect(silent.error.value).toBe('')
   })
 
   it('四个数字仍只从聚合来：文档列表回来 1 行，数字位照旧画 5', async () => {

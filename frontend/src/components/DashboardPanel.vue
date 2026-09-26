@@ -1,9 +1,9 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
-import { documentsFailureView, loadDashboardSummary, SUMMARY_DENIED_TITLE, SUMMARY_FAILED_TITLE, summaryScopeNote, summaryTiles } from '../lib/dashboard'
+import { canReadAlerts, documentsFailureView, loadDashboardSummary, SUMMARY_DENIED_TITLE, SUMMARY_FAILED_TITLE, summaryScopeNote, summaryTiles } from '../lib/dashboard'
 import { errorDetail, isPermissionDenied } from '../lib/http'
-import { ALERTS_EMPTY_DESCRIPTION, fetchAlerts, mapAlertRow, readFailureView, shapeFailureView } from '../lib/alerts'
+import { alertsNotOpenView, ALERTS_EMPTY_DESCRIPTION, fetchAlerts, mapAlertRow, readFailureView, shapeFailureView } from '../lib/alerts'
 import { UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 
 // R267：这一屏的输入全部来自服务端。
@@ -188,9 +188,21 @@ async function loadDocumentRows() {
   }
 }
 
-/** 告警账本按登录者可见范围回传，且已按 id 倒序（最新在前）：这里只截前四行，不重排。 */
+/**
+ * 告警账本按登录者可见范围回传，且已按 id 倒序（最新在前）：这里只截前四行，不重排。
+ *
+ * R285（X-2）：这一发只在「这个账号确实读得到告警」时发。聚合回执把 alerts 键整个省掉就是
+ * 没有告警读取权（判据在 lib/dashboard.js 的 canReadAlerts，与告警数字位同一枚），而
+ * GET /alerts 过同一条权限门，于是那一发每次必 403 —— 白打。不发的那一格照旧说话：
+ * 🚫 不许让它掉回下面的空态，「这一屏不给这个账号看」与「当前没有异常线索」是两句话。
+ */
 async function loadRiskRows() {
   alertFailure.value = null
+  if (!canReadAlerts(summary.value)) {
+    alertRows.value = []
+    alertFailure.value = alertsNotOpenView({ deniedTitle: RISK_DENIED_TITLE })
+    return
+  }
   try {
     const rows = await fetchAlerts()
     if (!rows) {
