@@ -508,7 +508,7 @@ def test_the_census_verdict_for_alerts_flips_from_missing_to_present_on_the_new_
     """迁移落到线上库之后，普查对 alerts 的读数自动从缺列变成有列：本件无需改动它。
 
     这是对判据 5 的正面回答——总控给的普查读数把 alerts 记成缺列，是因为**活库**今天
-    确实只有六列。0012 落库之后它自己会读对，不需要谁去改它的判定。
+    确实只有六列。0012 落库之后它自己会读对，不需要谁去改它的判定。（按日取证的历史叙述，不是现状断言：0012/0014 今天都已落库，`alerts` 实测 15 列，逐列现读现算见 frontend/src/components/__tests__/r271-alert-contract.test.js）
     """
     audit = _audit_module()
     dept_candidates, _class_candidates, _meta = audit.parse_rbac_candidates(REPO)
