@@ -89,12 +89,26 @@
    两件事各自有名：(a) kind 词汇表自 R222 起多出 ``queued_*`` 九枚（``queued_polled`` /
    ``queued_done_no_bytes`` / ``queued_cancelled`` / ``queued_dead`` / ``queued_expired`` /
    ``queued_failed`` / ``queued_stalled`` / ``queued_deadline`` / ``queued_no_status``），
+   自 R259 起再多一枚 ``queued_awaiting_approval``（挂起在等人批准的那一轮）⇒ 共十枚；
    旧轮次一枚也不可能有
    （本树实取：run6 帧账 kind 只有 ``ok`` / ``approved_ok`` / ``error_event``，run7 只有
    ``ok`` / ``approved_ok``）；(b) 到达时刻与 ``queue`` 那几格自 R223 / R222 起才存在，旧帧账
    原件（``docs/testing/sidecar-run6-frames.jsonl`` 十三格、``sidecar-run7-frames.jsonl``
    十五格）里没有它们 ⇒ 拿旧件重放只会长出**空列**，不许读成「当年零停表」，也不许读成
    「当年无断流」。断流的时刻与首屏的时刻从 run8 起才是量得出来的两件事。
+
+11. R259（09-26）认队列那枚新终态：R254 把挂起在 HITL 的那一轮从 ``done`` 改口成
+    ``awaiting_approval``（``result`` 从此是 null，不再拿一句 37 字挂起文案冒充正文），而量具
+    不认得这枚字 ⇒ 它落在「未识别状态」那一族里，一路轮到 ``QUEUE_STALL_SECONDS`` 才落
+    ``queued_stalled``。09-25 那窗报告档 20 题有 11 题挂在这一枚上 ⇒ 下一扇窗要白烧约 55
+    分钟，且 D-1/D-2/D-3 三格读数全被污染。今天读到就停（kind = ``queued_awaiting_approval``，
+    与 ``queued_polled`` / ``queued_done_no_bytes`` 三枚互不冒充），并且不喂「零字节超阈值停窗」
+    那把闸（产品结局，与 ``_APPROVAL_FAILURES`` 同口径）。同一天把 ``/queue/status`` 多交的那批
+    终态读数折进取回账新格 ``queue.terminal``（``_terminal_readout``）：D-2「客户端读没读到
+    token」与 D-3「读没读到出处」从此**有字段可算**，不必再事后翻日志。三条诚实口径写在
+    那枚函数上：说不出 ⇒ None（不拿 0 或空表冒充「查过，是零」）、载荷在位而解不开 ⇒ 另一枚
+    形状、``authoritative: false`` ⇒ 原样进账。🔴 五枚既有终态的 kind 与语义一字未改；sidecar
+    那一行的键集、帧账那一行的键集一个字没多（读数只长在 ``queue`` 那一格里）。
 
    本文件的行号引用会随 ``app/api/v1/chat.py`` 漂移。09-23 在本树实取：``chat.py:1364`` 今天落在
    ``_complete_pending_steps`` 的收尾里（``return completed`` 在 :1363），「/ask 只发一条整段 text」
@@ -182,6 +196,7 @@ _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _TOKEN = ""
 _LAST_CALL = 0.0
 _BLANKS = 0
+_PARKED = 0  # R259：本进程里挂起在等人批准的题数（与 _BLANKS 分账，见 transport）
 _APPROVAL_FAILURES = 0
 
 
@@ -782,6 +797,122 @@ def _resolve_hitl(row_id, session_id, steps, frames=None):
             "rounds": rounds, "http_status": http_status, "error": error}
 
 
+#: ==================== R259：把队列终态读数折进取回账 ====================
+#: R254 之后 `/api/v1/queue/status/{request_id}` 在 `done` / `awaiting_approval` 两枚状态下多交
+#: 一批读数（契约 `docs/api/contract-v1.md` 的 §Structured terminal readout (2026-09-25, R254)）：
+#: `terminal_state` / `answer_present` / `sources_present` / `sources` / `sources_error` / `usage`
+#: / `approval` / `terminal_schema` / `worker_status` / `scope_reason_code` / `terminal_note`。
+#: 量具从前只看 `status` 与 `result` 两格 ⇒ run8 相 2 的 D-2「可读面没有 usage」与 D-3
+#: 「`sources` 0/20」两枚是**无从判定**，不是判了红（`docs/testing/run8-phase2-readout-2026-09-25.md`）。
+#: 这一族函数把读数折进取回账（由 `transport` 塞进帧账 `queue` 那一格），三条诚实口径一条不省：
+#:   ① 键根本不在位（本单之前发布的旧行 / 服务端没交这批键）⇒ 槽位读 None，读作「这一行
+#:      说不出」，不拿 0 或空表冒充「查过，是零」；
+#:   ② 载荷在位而解不开（`unreadable_terminal`）⇒ 另记一枚形状，与 legacy 分开；
+#:   ③ `usage.authoritative` 为 false ⇒ 标志原样进账（那本账只有一台机器看得见），它交回的
+#:      null 照 null 记，一枚都不折算成零。
+#: 🔴 这一段一次表都不许多读：钟的纪律见文件抬头 R223 那一族（假钟每多读一格，105 题重放的
+#: 时间轴整条被推走 ⇒ PRE_R181_ANSWERS_SHA 当场红）。
+
+#: 取回账 ``terminal`` 那一格的五种形状，逐枚不同名、互不冒充。
+TERMINAL_SHAPE_STRUCTURED = "structured"          # 终态载荷在位且读得出（queue-terminal-v1）
+TERMINAL_SHAPE_LEGACY = "legacy"                  # 本单之前发布的行：它说不出自己有没有出处
+TERMINAL_SHAPE_UNREADABLE = "unreadable"          # 键在位而载荷解不开：损坏，不是兼容
+TERMINAL_SHAPE_NO_KEYS = "no_keys"                # 服务端在这一枚状态下压根没交这批键
+TERMINAL_SHAPE_NOT_TERMINAL = "not_terminal"      # 停表时一次终态载荷都没读到
+#: 出处三枚（``sources_present`` / ``len(sources)`` / ``sources_error``）只在**载荷真说了话**的
+#: 形状下才算读数：契约 §Compatibility note 2026-09-25 明写旧行交回的是占位空表 ``sources: []``，
+#: 照抄 len() 就把「这一行说不出」洗成「查过了，零枚」—— R254 刚治过的那枚谎换个格子复发。
+SOURCES_READABLE_SHAPES = (TERMINAL_SHAPE_STRUCTURED,)
+#: 进账的读数槽，名字与契约同源（一处解析两通道）。缺证词一律 None，不是 0、不是空串。
+TERMINAL_SLOTS = ("schema", "state", "answer_present", "answer_is_park_notice",
+                  "worker_status", "sources_present", "sources_n", "sources_error",
+                  "scope_reason_code", "usage", "approval_steps", "approval_ledger_status",
+                  "approval_notice_chars", "terminal_note")
+#: ``usage`` 里必须点名的六枚槽（判据②）：四枚数 + 那本账的名分 + 权威不权威。
+USAGE_SLOTS = ("prompt_tokens", "completion_tokens", "total_tokens", "model_calls",
+               "authoritative", "ledger")
+
+
+def _text_slot(source, key):
+    """只认真读到的字符串；键不在位或不是字符串 ⇒ None（说不出 ≠ 查过是空串）。"""
+    value = source.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _flag_slot(source, key):
+    """布尔槽位同上。🔴 None 与 False 是两枚不同的读数：前者是这一行说不出。"""
+    value = source.get(key)
+    return value if isinstance(value, bool) else None
+
+
+def _terminal_shape(body):
+    """这一行属于哪一枚形状（三条诚实口径全靠这一格分家）。"""
+    schema = _text_slot(body, "terminal_schema") or ""
+    state = _text_slot(body, "terminal_state") or ""
+    if schema == "legacy" or state == "legacy_row":
+        return TERMINAL_SHAPE_LEGACY
+    if schema == "unreadable" or state == "unreadable_terminal":
+        return TERMINAL_SHAPE_UNREADABLE
+    if not schema and not state:
+        return TERMINAL_SHAPE_NO_KEYS
+    return TERMINAL_SHAPE_STRUCTURED
+
+
+def _sources_are_reportable(shape):
+    """出处那一族在这一枚形状下到底说没说句话（判据② 第一条口径的开关）。"""
+    return shape in SOURCES_READABLE_SHAPES
+
+
+def _blank_terminal_readout(shape):
+    """一枚说不出话的终态格：形状有名，读数槽全 None（不是 0，不是空表，不是空串）。"""
+    readout = {"shape": shape, "usage_present": False, "approval_present": False}
+    readout.update({slot: None for slot in TERMINAL_SLOTS})
+    return readout
+
+
+def _terminal_readout(body):
+    """把一枚 `/queue/status` 载荷折成取回账的 ``terminal`` 那一格（判据②③）。
+
+    非 dict（停在 ``queued_stalled`` / ``queued_deadline`` / ``queued_no_status`` 上：一次终态
+    载荷都没读到过）⇒ 形状 ``not_terminal``，其余全 None。``answer_present`` 与
+    ``answer_is_park_notice`` 两枚在 legacy / unreadable 形状下仍是**真读数**（路由从 ``result``
+    现算，契约兼容节明写），照收不误。
+    """
+    if not isinstance(body, dict):
+        return _blank_terminal_readout(TERMINAL_SHAPE_NOT_TERMINAL)
+    shape = _terminal_shape(body)
+    readout = _blank_terminal_readout(shape)
+    readout["schema"] = _text_slot(body, "terminal_schema")
+    readout["state"] = _text_slot(body, "terminal_state")
+    readout["answer_present"] = _flag_slot(body, "answer_present")
+    readout["answer_is_park_notice"] = _flag_slot(body, "answer_is_park_notice")
+    readout["worker_status"] = _text_slot(body, "worker_status")
+    readout["scope_reason_code"] = _text_slot(body, "scope_reason_code")
+    readout["terminal_note"] = _text_slot(body, "terminal_note")
+    if _sources_are_reportable(shape):
+        sources = body.get("sources")
+        readout["sources_present"] = _flag_slot(body, "sources_present")
+        readout["sources_n"] = len(sources) if isinstance(sources, list) else None
+        readout["sources_error"] = _text_slot(body, "sources_error")
+    usage = body.get("usage")
+    if isinstance(usage, dict):
+        # 逐键照抄 + 六枚具名槽补位：authoritative 一枚不许洗掉（口径③），null 照 null 记。
+        readout["usage"] = {str(key): value for key, value in usage.items()}
+        for slot in USAGE_SLOTS:
+            readout["usage"].setdefault(slot, None)
+        readout["usage_present"] = True
+    approval = body.get("approval")
+    if isinstance(approval, dict):
+        readout["approval_present"] = True
+        steps = approval.get("pending_steps")
+        readout["approval_steps"] = ([str(step) for step in steps]
+                                     if isinstance(steps, list) else None)
+        readout["approval_ledger_status"] = _text_slot(approval, "ledger_status")
+        notice = _text_slot(approval, "notice")
+        readout["approval_notice_chars"] = len(notice) if notice is not None else None
+    return readout
+
+
 #: R222 判据①：五枚终态各一枚 kind，外加三枚「没读到终局」各一枚。全部与 ``ok`` 不同名，
 #: 全部可以在 sidecar / 帧账的 ``kind`` 那一列上直接统计（那一列的名字与顺序未动）。
 #: 🔴 ``done`` 沿用 ``queued_polled`` 这个名字：``tests/test_r181_text_frame_ruler.py:322``
@@ -789,6 +920,9 @@ def _resolve_hitl(row_id, session_id, steps, frames=None):
 #: ``queued_cancelled`` / ``queued_dead`` 是这一单的病：从前它们不落任何名字，一路轮到
 #: deadline，最后和「一帧都没到的空答题」共用同一枚 ``blank`` —— 既看不出白烧，也看不出
 #: 后端其实已经明说过这一轮不会再有正文。
+#: R259 在这一族之上再多一枚：``awaiting_approval``（挂起在等人批准）→
+#: ``queued_awaiting_approval``，正文空串。它从前落在「未识别状态」里 ⇒ 一路白烧到
+#: ``QUEUE_STALL_SECONDS``（09-25 那窗 11/20 题，约 55 min）。判据⑤：五枚既有终态一字未改。
 #: 写法纪律：这些字面必须以 ``status == "..."`` / ``status in ("...", ...)`` 留在
 #: ``_poll_queue`` 的函数体里 —— 总控的量具量具（``scripts/r218_switch_rehearsal.py`` 的
 #: ``adapter_stop_vocabulary``）就是按 AST 抠「与名为 ``status`` 的名字比较的字面」。改成查表
@@ -812,6 +946,11 @@ def _poll_queue(request_id):
        代价读数：``cancelled`` / ``dead`` 一族 = 至多一枚轮询间隔（3 s）；
        无进展一族 = 300 s；两族都不再是 900 s。
 
+    R259 起这一族再多一枚终态：``awaiting_approval``（挂起在等人批准的那一轮）读到就停，
+    kind = ``queued_awaiting_approval``，正文空串 —— 它与 ``queued_polled``（取回了一份字）、
+    ``queued_done_no_bytes``（跑完了没正文）三枚互不冒充。上面五枚终态的 kind 与语义一个字
+    没动（判据⑤）：新加一枚不等于可以重排旧的。
+
     ``取回账`` 是那一段观测的账（轮了几次 / 抖了几次 / 重登几次 / 等了多久 / 最后读到什么），
     由 ``transport`` 折进帧账的 ``queue`` 那一格。🔴 它不进 sidecar（那一行的键集被
     ``tests/test_r123_hitl_approval.py:243`` 钉成甲案七键的子集），也不改 ``kind`` 之外
@@ -825,6 +964,7 @@ def _poll_queue(request_id):
     def _stop(kind, answer, final, now):
         """停表：结局 + 正文 + 这一段观测的账。``now`` 是本轮那一枚唯一的表戳。"""
         book["final"] = final
+        book.setdefault("terminal", _terminal_readout(None))  # R259：每枚停表都说得出终态格那一格
         book["wait_ms"] = round((now - zero) * 1000.0, 1)
         return kind, answer, book
 
@@ -879,14 +1019,26 @@ def _poll_queue(request_id):
             signature = mark
             stalled_at = now + QUEUE_STALL_SECONDS  # 用本轮那枚表戳起算，不再读一次
         if status == "done":
+            book["terminal"] = _terminal_readout(body)  # R259 判据②：终态读数进账
             result = body.get("result")
             if isinstance(result, str) and result.strip():
                 return _stop("queued_polled", result, "done", now)
             # done 但 result 不是正文（None / 非 str / 全空白）：取回了个空，另立一枚 kind，
             # 不许与「取回了一份字」共用 queued_polled，也不许冒充 ok。
             return _stop("queued_done_no_bytes", "", "done_no_bytes", now)
+        if status == "awaiting_approval":
+            # R259 判据①：挂起在等人批准的那一轮**一步没走**，读到就停表。从前这一枚字落在
+            # 「未识别状态」那一族里，一路轮到 QUEUE_STALL_SECONDS（09-25 那窗 20 题里 11 题挂
+            # HITL ⇒ 每题白烧 300 s、约 55 min，且 D-1/D-2/D-3 三格读数全被污染）。
+            # 🔴 三枚 kind 互不冒充：``queued_polled`` =「取回了一份字」，``queued_done_no_bytes``
+            # =「跑完了但没正文」，本枚 =「一步没走、在等人批准」——不许并进前两枚的任何一枚。
+            # 🔴 正文交空串：契约里这一枚的 ``result`` 恒为 null，那句 37 字挂起文案只从
+            # ``queue.terminal.approval_*`` 读数里露脸，一个字都不许当正文交回评分器（R254 判据①）。
+            book["terminal"] = _terminal_readout(body)
+            return _stop("queued_awaiting_approval", "", "awaiting_approval", now)
         if status in ("cancelled", "dead", "expired", "failed"):
             # 后端自己宣布这一轮不会再有正文：读到就停（从前这两枚要烧到 deadline）。
+            book["terminal"] = _terminal_readout(body)  # 这几枚状态下契约不交读数键 ⇒ 形状 no_keys
             return _stop("queued_" + status, "", status, now)
         # queued / processing / cancel_requested / 任何不认得的字面 ⇒ 都不是终态，接着轮
         time.sleep(QUEUE_POLL_INTERVAL)
@@ -922,7 +1074,7 @@ def transport(row):
     吐出的字节。R123 甲案之后 HITL 等待文案不再是这一题的终答：先按契约批准，拿真终答回来；
     批准失败记 approval_failed，不拿挂起那一帧的半截文本冒充答案。
     """
-    global _TOKEN, _BLANKS, _APPROVAL_FAILURES
+    global _TOKEN, _BLANKS, _APPROVAL_FAILURES, _PARKED
     row_id = str(row.get("id", ""))
     last_error = None
     for attempt in range(1, ATTEMPTS + 1):
@@ -973,11 +1125,18 @@ def transport(row):
         if not answer.strip():
             if not from_queue:
                 kind = "cancelled" if out["cancelled"] else "blank"
-            _BLANKS += 1
-            if _BLANKS > MAX_BLANKS:
-                raise RuntimeError(
-                    row_id + ": 零字节题数已超 " + str(MAX_BLANKS) + " 题 ⇒ 系统性故障，停窗，"
-                    "不出报告。差因看 sidecar 与 docker logs。")
+            if kind == "queued_awaiting_approval":
+                # R259：挂起的一轮是**产品结局**，不是零字节系统性故障 —— 与下面那枚
+                # ``_APPROVAL_FAILURES`` 同一条口径（批准失败不进 ``_BLANKS``）。算进白烧闸的后果
+                # 是 09-25 那窗（11/20 挂 HITL）在第 6 枚就停窗、整轮不出报告：比白烧更坏的假象。
+                _PARKED += 1
+            else:
+                _BLANKS += 1
+                if _BLANKS > MAX_BLANKS:
+                    raise RuntimeError(
+                        row_id + ": 零字节题数已超 " + str(MAX_BLANKS) + " 题 ⇒ 系统性故障，停窗，"
+                        "不出报告。差因看 sidecar 与 docker logs。")
+            # 哨兵照旧：空正文 + 出处清空 + sentinel=true（挂起那一轮真的一字节都没吐出来）。
             answer, evidence, sentinel = BLANK_SENTINEL, [], True
         elif out["hitl"]:
             kind = "hitl"
@@ -1019,4 +1178,5 @@ def summary():
             "approval_rounds": APPROVAL_ROUNDS,
             "approval_failed_sentinel": APPROVAL_FAILED_SENTINEL,
             "approval_failures_this_process": _APPROVAL_FAILURES,
+            "awaiting_approval_turns": _PARKED,  # R259：挂起题数（不喂白烧闸）
             "frame_ledger": str(frame_ledger_path())}  # R181 判据② 的证据件落点（收窗自查用）
