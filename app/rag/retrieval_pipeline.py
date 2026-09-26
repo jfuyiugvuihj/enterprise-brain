@@ -394,11 +394,21 @@ class BM25Searcher:
         self._lock = threading.RLock()
 
     def build_index(self):
-        """从 Chroma 读取所有文档构建 BM25 索引"""
+        """构建 BM25 语料：默认取遗留向量库，切读态取 PGVector（R59 块1 判据①）。
+
+        两条腿取的是同一批内容（双写逐枚相等，计划书 §9.1），但"切了读"这句话如果只管
+        语义腿就是半切：每次建语料仍然朝那台要退役的引擎开一次全库 ``get()``。
+        ``switched_corpus()`` 交回 None 只说"这一腿没答"（没切 / 双写没开 / 连不上），
+        前两种都原路退回遗留腿，与切读之前逐字一致；它不会用空列表冒充"库是空的"。
+        开关默认不翻 ⇒ 这条分支在今天的默认态里一次都不生效（有一枚钉专管这件事）。
+        """
         with self._lock:
-            from app.rag.retriever import DocumentRetriever
-            r = DocumentRetriever()
-            all_data = r.collection.get()
+            from app.rag import pg_store
+            all_data = pg_store.switched_corpus()
+            if all_data is None:
+                from app.rag.retriever import DocumentRetriever
+                r = DocumentRetriever()
+                all_data = r.collection.get()
             docs = all_data.get("documents", [])
             metadatas = all_data.get("metadatas", [])
 

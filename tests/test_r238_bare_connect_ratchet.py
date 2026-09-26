@@ -108,7 +108,9 @@ LEGACY_LINE_LEDGER = (
     "app/memory/long_term.py:55",
     "app/memory/profile.py:36",
     "app/rag/indexing.py:1503",
-    "app/rag/retriever.py:567",
+    # 575 而不是 567：R59 块1（Anscombe，随本笔并树）在这一行上方加了 8 行；
+    # 尺子按物理行号记账，随之改口——与 persistence.py 那笔（662，见 dde3c1f）同源
+    "app/rag/retriever.py:575",
     "app/semantics/registry.py:514",
     "app/storage/pending_approvals.py:105",
     # 662 而不是 596：R272（951909b）在这一行上方加了 66 行；尺子按物理行号记账，随之改口

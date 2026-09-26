@@ -87,6 +87,12 @@ RETRIEVAL_SERVER_KEYWORD_STORE = "keyword_scan"
 RETRIEVAL_SERVER_PGVECTOR = "pgvector"
 #: 向量后端根本不存向量（离线 _JsonCollection）时的降级原因码
 RETRIEVAL_REASON_STORE_OFFLINE = "vector_store_offline"
+#: R59 块1 判据②(a)：切读态下 PGVector 腿正常答复、就是交回 0 行。这一枚与上一枚分家，
+#: 是因为它们的成因与修法完全不同——"向量库后端没启用"是这台机器压根没有语义腿，
+#: "读腿打空"是权限谓词落空 / 索引里没有邻居（R269 §3 那 21 题的形状）。把它们记成同一枚
+#: 码，运维就分不清该去装 chromadb 还是该去查 where。与引擎无关：这条降级不是 Chroma 病，
+#: 换到 PG 之后打空照样得降级，所以它必须是一枚独立的稳定码。
+RETRIEVAL_REASON_PG_ZERO_ROWS = "pgvector_read_leg_zero_rows"
 
 #: 原因码 → 能直接拼进回答的一句话。答案侧读标签，不比对日志文案。
 EMBEDDING_REASON_LABELS = {
@@ -107,6 +113,8 @@ EMBEDDING_REASON_LABELS = {
     REASON_VECTOR_MIRROR_SCOPE_MISMATCH: "向量镜像的维度或模型口径与运行时不一致，已拒绝写入",
     REASON_VECTOR_MIRROR_WRITE_FAILED: "向量镜像写入失败，Chroma 与 PostgreSQL 已一并回滚",
     RETRIEVAL_REASON_STORE_OFFLINE: "向量库后端未启用，无语义检索能力",
+    # R59 块1 判据②(a)：0 行降级必须说一句人话。答案侧只读这张表，不比对日志文案。
+    RETRIEVAL_REASON_PG_ZERO_ROWS: "向量库按权限查无命中，本轮改由关键词召回作答",
 }
 
 #: 降级提示模板。判据④要求"看得见"，所以这句话必须进回答，而不是只进日志。
@@ -785,6 +793,8 @@ class DocumentRetriever:
     MODE_SEMANTIC = RETRIEVAL_MODE_SEMANTIC
     MODE_KEYWORD = RETRIEVAL_MODE_KEYWORD
     REASON_STORE_OFFLINE = RETRIEVAL_REASON_STORE_OFFLINE
+    #: R59 块1 判据②(a)：切读态下 PG 腿打空时，命中带上的降级码（与上一枚分家，见模块注释）
+    REASON_PG_ZERO_ROWS = RETRIEVAL_REASON_PG_ZERO_ROWS
 
     def __init__(self, chroma_dir: str = "./chroma_db", *, activity_prior=None):
         os.makedirs(chroma_dir, exist_ok=True)
@@ -1071,16 +1081,24 @@ class DocumentRetriever:
         index.populate(rows, scope_key=scope_key)
         return ""
 
-    def _pgvector_hits(self, query_embedding, k: int, where: dict | None):
+    def _pgvector_hits(self, query_embedding, k: int, where: dict | None, *,
+                       query: str = ""):
         """R59b：把语义腿问到 PostgreSQL + PGVector。开关关着就一条 SQL 都不发。
 
         交回 None ＝ 这一腿没答（开关关 / 双写没开 / 连不上 / 过滤器翻译不出来），
         调用方原路退回遗留的 Chroma 腿。退回不等于少一道闸门：Chroma 那条本来就把同一份
         ``where`` 下推给向量库，两条腿都是先过滤再截名次，越权行在名次里压根不占位。
 
-        命中的字典仍由 ``_hit_dicts`` 生成（R44 钉的形状），检索腿标注也仍是 semantic ——
-        换引擎不是降级。密级为 NULL 的行原样交回 None：R57 的 fail-closed 由 _hit_dicts
-        那一处守，本方法不许在这里替它把缺密级补成 1 级。
+        🔴 R59 块1 判据②(a)：**PG 腿交回 0 行不是合法的"库说没有"**。R269 §5 第①处点名的
+        正是这一格——旧写法把 0 行原样交回，用户于是拿到一份空上下文，而整条降级分支只挂在
+        "embedding 挂掉"那一支上。这条语义与引擎无关（切读治不到它），所以降级在这里发生：
+        交回关键词腿的命中并带稳定码，一问仍只记一笔 search_shape（与 R158 同规）。
+        降级走的是 ``_keyword_hits`` 的内容扫描，它不问 ANN——切读之后 Chroma 那条向量索引
+        在任何分支上都不再是答复来源，唯一还会问它的是"读腿拒答"那一支（见 search()）。
+
+        答出行时命中的字典仍由 ``_hit_dicts`` 生成（R44 钉的形状），检索腿标注也仍是
+        semantic —— 换引擎不是降级。密级为 NULL 的行原样交回 None：R57 的 fail-closed 由
+        _hit_dicts 那一处守，本方法不许在这里替它把缺密级补成 1 级。
         """
         from app.rag import indexing as indexing_module
         from app.rag import pg_store
@@ -1095,6 +1113,25 @@ class DocumentRetriever:
             pg_store.note_read_bypass(reason, f"{type(exc).__name__}: {exc}")
             return None
         pg_store.note_read_answered(len(rows))
+        if not rows:
+            # 判据②(a) 的正身。日志只报形状不报值：where 里是别人的部门名与密级档位，
+            # 而这一行随时可能被捞进工单，R158 那条"读数不带正文"的隐私口径同样管日志。
+            logger.warning(
+                f"PGVector 读腿交回 0 行（请求 {k} 名，"
+                f"{'带' if where else '不带'}权限谓词），本次退化为关键词召回"
+            )
+            degraded = self._keyword_hits(query, k, where,
+                                          RETRIEVAL_REASON_PG_ZERO_ROWS)
+            self._note_search_shape(
+                answered_by=RETRIEVAL_SERVER_KEYWORD_STORE,
+                leg=self.MODE_KEYWORD,
+                reason=RETRIEVAL_REASON_PG_ZERO_ROWS,
+                n_results=k,
+                rows_returned=len(degraded),
+                hits_built=len(degraded),
+                outcome=self._outcome_for(len(degraded), len(degraded)),
+            )
+            return degraded
         metadatas = [{
             "filename": row.get("filename") or "unknown",
             "chunk_index": row.get("chunk_index"),
@@ -1459,7 +1496,9 @@ class DocumentRetriever:
                 return self._apply_activity_prior(hot_hits)
             # R59b：开关在 pgvector 时这一腿答；开关在 chroma 时它一个调用都不发，
             # 下面的遗留腿与切读之前逐字一致（同 R44 给热集那条立的规矩）。
-            pg_hits = self._pgvector_hits(query_embedding, k, where)
+            # R59 块1 判据②(a)：这一腿交回 0 行时它自己降级，交回来的永远是"可以直接用的
+            # 命中"，所以 None 只可能意味着"这一腿没答"，不再意味着"PG 库里没有"。
+            pg_hits = self._pgvector_hits(query_embedding, k, where, query=query)
             if pg_hits is not None:
                 return self._apply_activity_prior(pg_hits)
             kwargs = {"query_embeddings": [query_embedding], "n_results": k}

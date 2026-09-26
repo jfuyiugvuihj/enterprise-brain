@@ -624,6 +624,16 @@ DISTANCE_OPERATORS = {"l2": "<->", "cosine": "<=>", "ip": "<#>"}
 _READ_COLUMNS = ("vector_id", "content", "filename", "chunk_index", "classification",
                  "department")
 
+#: R59 block 1 criterion (1): once reads are switched, the *lexical* leg's corpus comes from
+#: here too, so the whole read path stops asking the retiring engine. No embedding column:
+#: BM25 scores text, and shipping 768 floats per row to build a token index is a different
+#: bill for the same answer. ORDER BY vector_id keeps two runs byte-comparable. The column
+#: list is _READ_COLUMNS verbatim -- the same six the top-k read hands back -- so a corpus
+#: and a search can never disagree about which metadata exists. It sits down there with
+#: that list, not up here with the write statements, because it copies the list.
+_READ_CORPUS_SQL = ("SELECT " + ", ".join(_READ_COLUMNS)
+                    + " FROM " + DEFAULT_VECTOR_TABLE + " ORDER BY vector_id")
+
 #: The only scope columns the retrieval gate speaks, and the SQL type each needs.
 _SCOPE_COLUMNS = {"classification": "integer", "department": "text"}
 
@@ -676,6 +686,18 @@ def _scope_clause(column: str, values, sql_type: str):
         elif not isinstance(value, str):
             raise ScopeFilterUntranslatable(
                 f"{column} 收了非字符串部门名 {value!r}")
+        elif not value.strip():
+            # R59 block 1 criterion (2c), the permission half: the writer normalises a
+            # missing department to "" (build_rows, str(values.get("department") or "")),
+            # while the retiring engine's metadata simply has no such key. Those two agree
+            # for every value app/rag/filters.py can actually build -- it drops falsy
+            # departments before assembling $in -- and disagree on exactly one spelling: an
+            # $in that contains the empty string, which SQL answers "yes" to and a missing
+            # key answers "no" to. Refusing is the only honest move: guessing either side
+            # would make the pushed-down filter wider than the one it replaces.
+            raise ScopeFilterUntranslatable(
+                f"{column} 的 $in 里有空串：两侧对『没有部门』的表示法不同，"
+                "这一档不做猜测，宁可拒答")
         else:
             kept.append(value)
     return f"{column} = ANY(%s::{sql_type}[])", [kept]
@@ -791,6 +813,101 @@ def read_topk(*, query_vector, k: int, where=None, connection_factory=None,
 
 _READ_DIAGNOSTICS: dict = {"attempts": 0, "answered": 0, "rows": 0, "bypasses": {},
                            "last_bypass": None}
+
+
+def read_corpus(*, connection_factory=None, url: str | None = None,
+                vector_table: str = DEFAULT_VECTOR_TABLE) -> list:
+    """Every mirrored row's text and metadata, under the same two probes that gate writes.
+
+    This is what the lexical leg of a switched deployment reads its corpus from, so that
+    "reads are on PostgreSQL" means the whole read path -- not only the ANN leg. It is a
+    full scan by design (BM25 needs the library), it selects no embedding, and it refuses
+    exactly where :func:`read_topk` refuses: no dual write, no mirror; an unknown table, no
+    rows. It never commits, and an empty mirror answers with an empty list rather than
+    pretending the legacy store has a copy.
+    """
+    if vector_table != DEFAULT_VECTOR_TABLE:
+        raise VectorReadRejectedError(
+            f"语料腿只认 {DEFAULT_VECTOR_TABLE}，拿到 {vector_table!r}",
+            reason=REASON_VECTOR_READ_TABLE_UNRECOGNISED)
+    mirror = vector_mirror(connection_factory=connection_factory, url=url,
+                           vector_table=vector_table)
+    if mirror is None:
+        raise VectorReadRejectedError(
+            f"{DUAL_WRITE_ENV} 关着：chunk_vectors 里没有人在写的内容，切读态的语料腿无库可读",
+            reason=REASON_VECTOR_READ_WITHOUT_DUAL_WRITE)
+    try:
+        rows = mirror.connection.execute(_READ_CORPUS_SQL).fetchall()
+    finally:
+        mirror.close()
+    return [dict(zip(_READ_COLUMNS, row)) for row in rows]
+
+
+#: Corpus-leg counters, kept apart from the top-k ones on purpose. "How many searches did
+#: the mirror answer" and "where did this process get its lexical corpus" are two questions
+#: that get answered by two different incidents, and one number covering both cannot tell a
+#: degraded answer apart from a rebuilt index.
+_CORPUS_DIAGNOSTICS: dict = {"reads": 0, "rows": 0, "source": "", "reason": ""}
+
+CORPUS_SOURCE_PGVECTOR = "pgvector"
+CORPUS_SOURCE_LEGACY = "legacy_chroma"
+CORPUS_SOURCE_NOT_SWITCHED = "not_switched"
+
+
+def _note_corpus(source: str, rows: int | None, reason: str = "") -> None:
+    _CORPUS_DIAGNOSTICS["reads"] += 1
+    _CORPUS_DIAGNOSTICS["source"] = source
+    _CORPUS_DIAGNOSTICS["reason"] = str(reason)[:200]
+    _CORPUS_DIAGNOSTICS["rows"] = (int(_CORPUS_DIAGNOSTICS["rows"]) + int(rows)
+                                   if rows is not None else int(_CORPUS_DIAGNOSTICS["rows"]))
+
+
+def vector_corpus_diagnostics() -> dict:
+    """The last corpus build's source and row count. Issues no SQL of its own."""
+    return dict(_CORPUS_DIAGNOSTICS)
+
+
+def reset_vector_corpus_diagnostics() -> None:
+    _CORPUS_DIAGNOSTICS.update({"reads": 0, "rows": 0, "source": "", "reason": ""})
+
+
+def switched_corpus():
+    """The corpus a switched deployment should use, or ``None`` to mean "ask the legacy one".
+
+    Three answers, three different sentences said out loud in the diagnostics: nobody
+    switched (``not_switched``), switched but the mirror will not open (a refusal reason --
+    and the caller then falls back, which is the same availability-first trade R59b made for
+    the top-k leg, and equally visible), and switched and answered (``pgvector``). Returning
+    ``None`` never means "the library is empty": that would let a connection failure look
+    like a corpus wipe, which is the exact shape R158 named for answers.
+    """
+    from app.rag import indexing as indexing_module
+
+    if not indexing_module.pgvector_reads_enabled():
+        _note_corpus(CORPUS_SOURCE_NOT_SWITCHED, None)
+        return None
+    try:
+        rows = read_corpus()
+    except Exception as exc:  # noqa: BLE001 - 一次拒答只该让语料建得慢一点，不该放宽
+        reason = str(getattr(exc, "reason", "") or REASON_VECTOR_READ_FAILED)
+        _note_corpus(CORPUS_SOURCE_LEGACY, None, f"{type(exc).__name__}: {exc}")
+        note_read_bypass(reason, f"corpus: {type(exc).__name__}: {exc}")
+        logger.warning(f"PGVector 语料腿拒答，本次语料仍取遗留向量库（{reason}）：{exc}")
+        return None
+    payload = {
+        "documents": [row.get("content") or "" for row in rows],
+        "metadatas": [{
+            "filename": row.get("filename") or "unknown",
+            "chunk_index": row.get("chunk_index"),
+            # Kept as NULL, not filled with 1: R57's fail-closed is one rule for both legs,
+            # and a corpus builder that invented a clearance would feed the very
+            # classification value app/rag/filters.py cannot tell apart from a real one.
+            "classification": row.get("classification"),
+            "department": row.get("department") or "",
+        } for row in rows],
+    }
+    _note_corpus(CORPUS_SOURCE_PGVECTOR, len(rows))
+    return payload
 
 
 def note_read_bypass(reason: str, detail: str = "") -> None:
