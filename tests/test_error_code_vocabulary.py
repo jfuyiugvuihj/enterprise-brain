@@ -183,6 +183,21 @@ BARE_CODES_OUTSIDE_THE_ENUM = {
         "folds_into": "authorization_unavailable",
         "why": "同上族：登记值格式坏。它与上一条都是数据质量问题，不是权限决定。",
     },
+    # ---- 部门自报这一族（R270 收进字典，R277 补后端这一半账） ----
+    "department_override_denied": {
+        # 字面量站在模块级常量 DEPARTMENT_SELF_REPORT_DENIED 上；raise 处在函数
+        # verify_department_self_report，但它引的是那枚常量的名字，函数体内没有这枚字面量
+        # ⇒ 位锚按本表既有规矩取 <module>（钉成 ::verify_department_self_report 会撞
+        # test_every_licensed_bare_code_still_has_a_live_emitter：出处要在原位锚上站着那枚字面量）。
+        "emitter": "app/common/authorization.py::<module>",
+        "folds_into": "validation_error",
+        "why": "这是一次被拒的请求，不是一格可计算的范围（authorization.py:59-61 的注释原话："
+               "a refused request, not a scope to compute with）。它也不该折进 permission_denied："
+               "那样界面只能把它画成「你没权限」，而真话是「你填的部门不是你的部门」——缺口 G09 上"
+               "那张假脸就是这么来的。放行条件只有两条（这一格留空，或重复这个账号自己的部门，见"
+               " verify_department_self_report），所以下一步是改这一格而不是重发这一发：字典据此判"
+               " retryable:false，界面不许再摆一颗必然再被拒的重试钮。",
+    },
 }
 
 _REPOSITORY = Path(__file__).resolve().parents[1]

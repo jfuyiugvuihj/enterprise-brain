@@ -11,8 +11,8 @@ const precheckMemo = new WeakMap()
 <script setup>
 import { computed, getCurrentInstance, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
-import { errorDetail, isPermissionDenied } from '../lib/http'
-import { errorCodeOf } from '../lib/errcodes'
+import { DEPARTMENT_KEY, errorDetail, isPermissionDenied } from '../lib/http'
+import { errorCodeOf, errorText, isRetryable, normalizeError } from '../lib/errcodes'
 import { demoForm } from '../devFixtures/approval-demo'
 import { UiEmptyState, UiErrorState } from './ui'
 import HitlPendingPanel from './hitl/HitlPendingPanel.vue'
@@ -28,9 +28,30 @@ const STANDARD_SOURCE_AUTO = 'auto_from_knowledge_base'
 // 是「此刻取不到比的那个数」—— 所以单独一张脸，与通用失败分开画（无权限 / 空 / 降级 / 错误）。
 const KB_UNAVAILABLE_CODE = 'retrieval_unavailable'
 
+// R277 判据①：部门那一格被拒时后端吐的是 DEPARTMENT_SELF_REPORT_DENIED（枚名见下），
+// 出处 app/common/authorization.py::verify_department_self_report。R270 已把它收进字典并
+// 折向 validation_error，所以它今天【不再是】isPermissionDenied 那一张脸：这是一次被拒的
+// 请求，不是一格可计算的范围，也不是一句「你没权限」。
+const DEPARTMENT_OVERRIDE_CODE = 'department_override_denied'
+
 // 表单会改写这些值，所以拷一份，避免面板把模块常量改掉。
 // evidence 不再种子假文件名：auto 口径下服务端用检索出处整条覆盖它，填了也上不了屏。
-const form = ref({ ...demoForm })
+//
+// 🔴 缺口 G09 的根就在这枚播种上：上一版常量里连部门一起填好，而且填的是【别人的】部门
+// （演示值写死一枚），于是一个不属于它的账号一进这一屏就换来一次 403，界面再把那枚 403 画成
+// 「没有权限做审批预审」。部门现在只可能是两样东西：登录响应里那枚本人部门（lib/http.js 存成
+// DEPARTMENT_KEY），或者空着 —— 后端 verify_department_self_report 放行这两条，空着由服务端
+// 按 principal 定，界面从此不替员工挑部门。
+function ownDepartment() {
+  try {
+    return localStorage.getItem(DEPARTMENT_KEY) || ''
+  } catch (_) {
+    // 读不到存储不等于「这个账号没有部门」：SSR 首屏与隐私模式都会走到这里。留空是后端
+    // 明确放行的一条路，所以宁可空着让服务端补，也不拿一枚猜来的部门去撞那道闸。
+    return ''
+  }
+}
+const form = ref({ ...demoForm, department: ownDepartment() })
 const result = ref(null)
 const loading = ref(false)
 const error = ref('')
@@ -38,6 +59,13 @@ const error = ref('')
 // failed 把「跑失败了」与「还没跑」分开（R1c 同一判据）：失败不许画成空态那张脸。
 const failed = ref(false)
 const denied = ref(false)
+// R277 判据②之二：这颗「重新预审」的有无改吃字典那枚 retryable，不再跟 !denied 走。
+// 跟 !denied 会说谎 —— 它断言「只要有权限，重发就有救」，而 department_override_denied
+// 原样重发必然再被拒（字典明写 retryable:false），摆出来就是一枚死控件（G20 那一族）。
+// 出口是 lib/errcodes.js::isRetryable；改回即红的钉在本单 r277 件 ②之二。
+const failureRetryable = ref(true)
+// R277 判据①：「部门填的不是你的」既不是没权限也不是跑挂了，单独一格，不与那两张脸共用。
+const departmentRefused = ref(false)
 // R247 判据②：降级（知识库此刻取不到标准）与错误（这一发压根没跑完）是两张脸，不共用一句话。
 const degraded = ref(false)
 // R247 判据①：这一屏的读数取于何时、是不是复用来的 —— 两格都要上屏，不许含糊。
@@ -56,8 +84,9 @@ const standardLabel = computed(() => {
   return standardGiven.value ? result.value.standard : '服务端未给出'
 })
 
-// 失败那一张脸的说法：无权限 / 降级 / 真失败各说各的，全部是人话，不带码名。
+// 失败那一张脸的说法：部门被拒 / 无权限 / 降级 / 真失败各说各的，全部是人话，不带码名。
 const failureTitle = computed(() => {
+  if (departmentRefused.value) return '部门那一格填的不是你的部门'
   if (denied.value) return '没有权限做审批预审'
   if (degraded.value) return '知识库取不到报销标准'
   return '预审没有跑完'
@@ -100,6 +129,8 @@ function applyReusedReading(hit) {
   error.value = ''
   failed.value = false
   denied.value = false
+  failureRetryable.value = true
+  departmentRefused.value = false
   degraded.value = false
   loading.value = false
   readingAt.value = clockOf(hit.fetchedAt)
@@ -121,6 +152,8 @@ async function submitCheck(force = false) {
   error.value = ''
   failed.value = false
   denied.value = false
+  failureRetryable.value = true
+  departmentRefused.value = false
   degraded.value = false
   readingAt.value = ''
   reusedReading.value = false
@@ -131,12 +164,24 @@ async function submitCheck(force = false) {
     memoBucket()?.set(signature, { result: response.data, fetchedAt })
     readingAt.value = clockOf(fetchedAt)
   } catch (err) {
+    // 判据⑤：句子一律出自字典，这一屏不再自己编一句「当前账号没有做预审的权限」——
+    // 同一枚 403 今天按权限维度与按部门维度各有说法（app/common/policy.py 那一族原因码经
+    // lib/errcodes.js 分开讲），界面替它挑一种因由就是说半句真话。
+    const verdict = normalizeError(err)
     denied.value = isPermissionDenied(err)
-    degraded.value = !denied.value && errorCodeOf(err) === KB_UNAVAILABLE_CODE
+    // 能不能重发由字典说（denied 只管「这张脸叫什么」，它管不了「按了有没有用」）。
+    failureRetryable.value = isRetryable(err)
+    departmentRefused.value = !denied.value && verdict.rawCode === DEPARTMENT_OVERRIDE_CODE
+    degraded.value = !denied.value && !departmentRefused.value && errorCodeOf(err) === KB_UNAVAILABLE_CODE
     failed.value = true
     result.value = null
-    error.value = denied.value
-      ? '当前账号没有做预审的权限，请联系管理员开通。'
+    // 部门被拒那一发单独取字典那句：后端这一发的信封体是 {code, message}，而 message 是
+    // 英文原句（"department must match the authenticated principal"），normalizeError 先采信
+    // 信封里的 message ⇒ 屏上会挂出一句英文。取字典不是绕过后端：lib/http.js:163 写的就是
+    // 「句子一律出自 errcodes 字典」，而那半条在形状 2 上没兑现 —— 全局改判属 errcodes 层
+    // （本单禁域），这里只把自己这一张脸的句子的出处挑对。
+    error.value = departmentRefused.value
+      ? errorText(DEPARTMENT_OVERRIDE_CODE)
       : errorDetail(err, '审批预审失败')
   } finally {
     loading.value = false
@@ -150,7 +195,6 @@ onMounted(submitCheck)
   <div class="panel-shell" data-testid="approval-panel" data-demo="fixtures">
     <header class="panel-head">
       <div>
-        <div class="eyebrow">Approval</div>
         <h3>审批与待办</h3>
         <p>这是一台报销政策自查工具：填一组参数，看金额按【服务端从知识库取到的标准】算是否超标，并拿到下一步建议。它不办理审批。</p>
         <p>真正在等你拍板的事在上方那一块：每一笔都能就地定夺，也能跳回产生它的那一轮对话。
@@ -162,10 +206,10 @@ onMounted(submitCheck)
          接的就是 GET /hitl/pending + POST /approve 两条真端点 —— 也就是下面这一整块。 -->
     <HitlPendingPanel />
 
-    <!-- 这一行以下才是一台用假参数预演的计算器。 -->
+    <!-- 这一行以下才是一台拿演示初始值预演的计算器：上方那一块待办不是它的一部分。 -->
     <aside class="demo-flag-row" data-testid="approval-demo-flag">
       <span class="demo-flag">演示数据</span>
-      <span class="demo-note">预审参数（金额 680 / 部门 市场部 / 费用类型 住宿费）来自前端常量 src/devFixtures/approval-demo.js，不是任何人的真单据；比的标准不在这些常量里，由服务端从知识库检索后随结论一起回，检索不到就直说没有。这块只管下面「自查参数 / 自查结论」两格，不构成审批记录；上方那一屏挂起待办读的是服务端真账本，跟这些假参数没有关系。</span>
+      <span class="demo-note">这一屏的初始值（屏上现在是金额 {{ form.amount }}、费用类型 {{ form.expense_type }}）是仓库里的演示常量，不是任何人的真单据；部门那一格不在那份常量里，填的是你这个账号在系统里登记的部门，账号没登记就空着由服务端补。比的标准也不在常量里，由服务端从知识库检索后随结论一起回，检索不到就直说没有。这块只管下面「自查参数 / 自查结论」两格，不构成审批记录；上方那一屏挂起待办读的是服务端真账本，跟这些初始值没有关系。</span>
     </aside>
 
     <!-- F4（checklist L111）当年裁定：这一屏只做「自查」，工单模型 C-1 没建，所以这里既没有
@@ -179,7 +223,7 @@ onMounted(submitCheck)
       <p>它回答的只有一个问题：这组费用参数按标准算超没超标。查完不会生成工单，不会记在任何人名下，也不会改变任何单据的状态。</p>
       <p>需要人工确认时，入口在对话页那一轮卡片上；上方那一屏列的就是同一批待确认的事。两处按的是同一个
           resolver、同一个判定，账本只有一份 —— 在哪儿点都一样，这一屏不放第二套结论，免得两处互相打架。</p>
-      <p>「挂起待办」这一屏读的是服务端挂起账本（GET /hitl/pending），一行一笔，没有真挂着的事就留空态。
+      <p>「挂起待办」这一屏读的是服务端挂起账本，一行一笔，没有真挂着的事就留空态。
           同一份响应里还带着「拍过板而那一轮失败了」的那几笔：它们已经从待办里闭合，
           所以既不占待办的行位、也不给动作按钮，只留一句人话 —— 故障不冒充拒绝，也不冒充办完。
           它仍然不摆「待审批 N 条」那种数字：后端给的 count 是过滤后的长度，契约明写不得当总数用，
@@ -206,11 +250,14 @@ onMounted(submitCheck)
 
       <section class="panel-card">
         <div class="section-head"><h4>自查结论</h4></div>
+        <!-- R277 判据②之二已结清（总控落笔，同批改口 panel-states.test.js 钉的表达式）：这颗
+             「重新预审」的有无改吃字典那枚 retryable，不再跟 !denied 走。面板底部那颗「重新自查」
+             是员工自己发起的动作，与字典无关，一直可用。 -->
         <UiErrorState
           v-if="failed"
           :title="failureTitle"
           :description="failureCopy"
-          :retryable="!denied"
+          :retryable="failureRetryable"
           retry-text="重新预审"
           :busy="loading"
           dense

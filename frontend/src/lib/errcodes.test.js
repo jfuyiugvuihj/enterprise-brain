@@ -232,7 +232,10 @@ describe('形状 1：detail 是字符串稳定码', () => {
   })
 
   it('data.py 的部门范围缺失与同名冲突也走字典', () => {
-    expect(normalizeError(axiosError(403, 'department_scope_required')).message).toBe('请先选择部门范围，再生成这项结果。')
+    // R270 判据①（G19）跟随订正：只换逐字钉的那一句原文，钉法一分未放宽——
+    // 旧句「请先选择部门范围，再生成这项结果。」叫用户去按界面上不存在的部门选择器，已由字典改口。
+    expect(normalizeError(axiosError(403, 'department_scope_required')).message)
+      .toBe('这次没能生成结果：你的账号还没有登记所属部门，系统定不出这份数据该记在哪个部门名下。请联系管理员补上你的部门归属，或改用已登记部门的账号，然后重新发起一次。')
     expect(normalizeError(axiosError(409, 'dataset_filename_conflict')).code).toBe('dataset_filename_conflict')
   })
 

@@ -224,11 +224,13 @@ describe('ApprovalPanel · 自动预审失败不许说成「等待分析」', ()
     expect(s).toContain('result.value = null')
   })
 
-  it('错误文案走 errorDetail，无权限不给重试', () => {
+  it('错误文案走 errorDetail；重试按钮的有无交给字典那枚 retryable（R277②之二）', () => {
     const s = source('ApprovalPanel.vue')
     expect(s).not.toMatch(/err\.response\?\.data\?\.detail \|\|/)
     expect(s).toContain('isPermissionDenied(err)')
-    expect(s).toMatch(/:retryable="!denied"/)
+    expect(s).toMatch(/:retryable="failureRetryable"/)
+    expect(s).toContain("failureRetryable.value = isRetryable(err)")
+    expect(s).not.toMatch(/:retryable="!denied"/)
     expect(s).toContain('retry-text="重新预审"')
   })
 })

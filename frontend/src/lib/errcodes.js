@@ -36,8 +36,12 @@
  *         internal_error 的缺陷，后端已删掉它，所以 A − B 恒为空，没有可钉的账。
  *   UNRATIFIED_CODES 概念随 6606f59 追认而作废：data.py 7 码与 no_answer_produced 现在都在
  *         列 A 里，「前端有话、契约没登记」恒为空，由 C − A 一条直接钉住，不留永远该是空的名单。
- *   还有一类账不在上面两列里：LEGACY_ALIASES 的 17 个后端实发码名与 PROSE_ALIASES 的 2 条中文散文
+ *   还有一类账不在上面两列里：LEGACY_ALIASES 的 18 个后端实发码名与 PROSE_ALIASES 的 2 条中文散文
  *   仍是「后端确实发得出、封闭枚举里没有」的输入，前端已归一，契约侧仍欠登记（派单给后端时带上）。
+ *   R270 判据②新增的 department_override_denied 欠的正是这一笔登记：R277 判据③已在
+ *   tests/test_error_code_vocabulary.py::BARE_CODES_OUTSIDE_THE_ENUM 补上那一条（该表今天 18 枚），
+ *   两头相平等式恢复成立 —— 凭据 pytest tests/test_r142_error_code_table_sync.py
+ *   tests/test_error_code_vocabulary.py -q = 41 passed（补之前 1 failed / 40 passed）。
  */
 
 /** 与后端封闭枚举一一对应的键（R89 实量 29 个）：它们就是 normalizeError().code 的全部合法取值。 */
@@ -102,7 +106,16 @@ export const ERROR_CODES = {
   invalid_filename: { message: '文件名不合法，请重命名后再试。', retryable: false },
   unsupported_chart_type: { message: '这种图表类型暂不支持，请换一种图表。', retryable: false },
   unsupported_export_format: { message: '这种导出格式暂不支持，请换一种格式。', retryable: false },
-  department_scope_required: { message: '请先选择部门范围，再生成这项结果。', retryable: false },
+  // R270 判据①（缺口 G19）：原句让用户「先挑一枚部门范围再生成结果」，叫的是**界面上不存在**的控件
+  // ——全站没有部门选择器（rg 部门 src/components 只剩报销自查那一格输入框），客户把这一格读成 bug，
+  // 新句按后端真正在说的话写：data.py:45 的 OWNER_SCOPE_REQUIRED 只有两条出口（:271 与 :459 的
+  // _require_artifact_scope），两条说的都是**这个账号自己没登记部门归属**，于是服务端定不出这份数据记在
+  // 哪个部门名下。缺的那一格在人身上不在界面上，所以下一步只能是找人补登记；retryable 仍为 false ——
+  // 同一发请求原样重发不会变，「补好之后重新发起一次」说的是改完之后再发起，不是等一会儿再试。
+  department_scope_required: {
+    message: '这次没能生成结果：你的账号还没有登记所属部门，系统定不出这份数据该记在哪个部门名下。请联系管理员补上你的部门归属，或改用已登记部门的账号，然后重新发起一次。',
+    retryable: false,
+  },
   dataset_filename_conflict: { message: '已存在同名数据文件，请重命名或先删除旧的。', retryable: false },
   dataset_preview_failed: { message: '数据文件预览没能打开，请稍后重试。', retryable: true },
   chart_generation_failed: { message: '图表没能生成，请稍后重试。', retryable: true },
@@ -206,6 +219,21 @@ export const LEGACY_ALIASES = {
   clearance_insufficient: { code: 'permission_denied', message: '这份资料的安全等级高于你的可见级别，不能打开，请联系管理员。', retryable: false }, // policy.py:189
   resource_scope_missing: { code: 'authorization_unavailable', message: '这份资料没有登记所属部门或密级，系统判断不了你能不能看，请联系管理员补齐登记。', retryable: false }, // policy.py:181,207
   resource_scope_invalid: { code: 'authorization_unavailable', message: '这份资料登记的部门或密级格式有误，系统判断不了你能不能看，请联系管理员。', retryable: false }, // policy.py:187
+  // R270 判据②（缺口 G09 的字典出口）：app/common/authorization.py:62 的 DEPARTMENT_SELF_REPORT_DENIED
+  // 由 verify_department_self_report 以 403 吐出，说的是「请求里写的部门不是这个账号所属的部门」。
+  // 今天它在字典与别名表里 0 命中 ⇒ 被 STATUS_CODES[403] 兜成 permission_denied，每一屏一律画成「没有权限」
+  // （ApprovalPanel.vue:134 走的就是 lib/http.js:160 isPermissionDenied）。那不是这件事的因由：同一个账号
+  // 对自己的部门本来就能办，被拒的只是**替别人报部门**这一格。
+  // 折到 validation_error 而不是 permission_denied，两条理由：
+  //   ① 后端注释原话是 "a refused request, not a scope to compute with"（authorization.py:59-61）——
+  //      请求里有一格不能用，改那一格就能继续办，不是缺一项权限；
+  //   ② 折进 permission_denied 就仍然被 isPermissionDenied 判成没权限，②要拆的正是这一律画法；
+  //      r208-alias-coverage.test.js 甲丙两组还钉着 permission_denied 那一格的别名交叉集「多一枚即红」，
+  //      那本账的对面是后端登记册 BARE_CODES_OUTSIDE_THE_ENUM，前端单方面改不得。
+  // 下一步两条经后端复核可做：verify_department_self_report 接受「留空」或「重复自己的部门」
+  // （authorization.py:88-90），剩下的才该由管理员核对部门归属。
+  // 🔴 只到字典这一层；ApprovalPanel.vue 那一屏（含钉「没有权限做审批预审」的 r237 用例）由块 B 复用本出口。
+  department_override_denied: { code: 'validation_error', message: '请求里写的部门不是你这个账号所属的部门，这次没有执行。请把部门那一格留空，或改成你自己的部门再提交一次；如果这些数据确实归在别的部门名下，请联系管理员核对部门归属。', retryable: false },
 }
 
 /**

@@ -2,8 +2,11 @@
  * R237 · R40 判据③ —— 前端不再出现 standard 硬编，且消失的方式是「标准由服务端 auto 出」
  *
  * 判据原文（跟进单 §21 表 L511）：「③ 不再出现前端 standard: 500 硬编」。
- * 禁改边界：不改审批动作的权限判定（本件一个字都没动鉴权：submitCheck 里那套
- * isPermissionDenied / denied / retryable="!denied" 原样保留，见丁组反向钉）。
+ * 禁改边界：不改审批动作的权限判定 —— 这一屏从头到尾没有自己的鉴权，判脸仍走
+ * lib/http.js::isPermissionDenied（丁2 钉着）。🔴 R277 把这枚丁2 从「403 一律是没权限」
+ * 改口成真值：R270 之后 department_override_denied 在字典里有了真码（折向 validation_error），
+ * 于是「原样保留」那句话成了假话，屏上画的已经不是「没有权限做审批预审」。鉴权调用一字未动，
+ * 动的是【界面替它顶罪】那一半；真无权限那张脸仍在（r247 判据②第三张脸钉着）。
  *
  * 改之前的磁盘事实（上一班在快照 866c2f3 上取证，本件在 a856593 上重新复现）：
  *   frontend/src/devFixtures/approval-demo.js:7 就是那枚 `standard: 500,`；它不只是显示常量 ——
@@ -268,10 +271,13 @@ describe('甲 · 硬编不许回来（探测器先自证会咬）', () => {
     }
   })
 
-  it('甲3 演示常量本身没有 standard / evidence 这两格', () => {
-    expect(Object.keys(demoForm)).toEqual(['amount', 'department', 'expense_type'])
+  it('甲3 演示常量本身没有 standard / evidence 这两格（R277 起连 department 一起摘）', () => {
+    expect(Object.keys(demoForm)).toEqual(['amount', 'expense_type'])
     expect(demoForm).not.toHaveProperty('standard')
     expect(demoForm).not.toHaveProperty('evidence')
+    // 🔴 G09 的根就在这一格：常量里多一枚 department，就是界面替员工填了一个可能不是他的
+    // 部门，换来一次 403。这一枚断言是反证钉：谁把部门再写回常量（哪怕换成别的部门名），这里就红。
+    expect(demoForm, '部门不许再住进演示常量：它只能来自登录账号，或空着由服务端补').not.toHaveProperty('department')
   })
 
   it('甲4 屏上那句自陈不再指向已删的常量', () => {
@@ -374,7 +380,7 @@ describe('丙 · 屏上那个标准只可能来自响应', () => {
   })
 })
 
-describe('丁 · 边界不许越：口径拼写对表后端，权限判定一字未动', () => {
+describe('丁 · 边界不许越：口径拼写对表后端，鉴权调用未动而顶罪画法已改口', () => {
   it('丁1 前端那枚 auto 字符串与 app/approval/assistant.py 逐字相等', () => {
     const backend = read(join(REPO_ROOT, 'app', 'approval', 'assistant.py'))
     const declared = /STANDARD_SOURCE_AUTO\s*=\s*"([^"]+)"/.exec(backend)
@@ -384,19 +390,35 @@ describe('丁 · 边界不许越：口径拼写对表后端，权限判定一字
     expect(panelSource()).toContain(`const STANDARD_SOURCE_AUTO = '${AUTO}'`)
   })
 
-  it('丁2 权限判定原样保留：403 仍走 isPermissionDenied，不给重试', async () => {
-    const denied = Object.assign(new Error('Request failed with status code 403'), {
+  // R277 判据②之一：这一枚原来是「403 一律走 isPermissionDenied」的钉，钉的是一句假话。
+  // 真值分两头钉，缺一头都不算归真：形状 1（裸串）走字典那句人话；形状 2（后端今天真发的
+  // {code, message} 信封，message 是英文原句）也不许把英文或「没有权限」画上屏。
+  it('丁2 部门被拒不顶「没有权限」：两种响应形状都画字典那句人话（R277 改口为真值）', async () => {
+    const wire = detail => Object.assign(new Error('Request failed with status code 403'), {
       isAxiosError: true,
       config: { url: '/approval/precheck' },
-      response: { status: 403, data: { detail: 'department_override_denied' } },
+      response: { status: 403, data: { detail } },
     })
-    await mountPanel(Promise.reject(denied))
-    const html = await screenHtml()
-    expect(html).toContain('没有权限做审批预审')
-    expect(html).not.toContain('等待分析')
+    const shapes = [
+      ['形状 1 · detail 是裸串', wire('department_override_denied')],
+      ['形状 2 · detail 是信封（app/common/authorization.py 今天发的就是这一枚）', wire({
+        code: 'department_override_denied',
+        message: 'department must match the authenticated principal',
+      })],
+    ]
+    for (const [name, err] of shapes) {
+      live?.app?.unmount()
+      live = null
+      await mountPanel(Promise.reject(err))
+      const html = await screenHtml()
+      expect(html, name + '：屏上画的必须是字典那句人话').toContain('请求里写的部门不是你这个账号所属的部门')
+      expect(html, name + '：不再一律画成没有权限').not.toContain('没有权限做审批预审')
+      expect(html, name + '：也不冒充「跑挂了」那张脸').not.toContain('预审没有跑完')
+      expect(html, name + '：后端英文原句不许上屏').not.toContain('department must match')
+      expect(html, name + '：失败不许画成空态').not.toContain('等待分析')
+    }
     const code = stripComments(panelSource())
     expect(code).toContain('isPermissionDenied(err)')
-    expect(code).toMatch(/:retryable="!denied"/)
     expect(code).toContain('onMounted(submitCheck)')
   })
 
