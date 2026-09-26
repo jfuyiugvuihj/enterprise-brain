@@ -49,6 +49,20 @@ had turned out to be taken is refused by ``UNIQUE (trace_id, sequence)`` instead
 on ``ON CONFLICT (event_id) DO UPDATE`` over the row that already holds it. An unanswered
 sequence read costs the trace its place in the tables' ordering, which the sweep restores in
 journal order; what it can no longer cost is somebody else's event.
+
+A fifth claim belongs here, because the four above only hold while a number is this event's
+own address to write at. Two processes that both hear ``MAX(sequence)`` answer can still take
+the same number, and the address made from it -- ``{trace_id}:{sequence}`` -- is the primary
+key of ``trace_events``. Reaching an address another event already holds is not a collision the
+unique key can be left to resolve: the key matches *itself*, and
+``ON CONFLICT (event_id) DO UPDATE`` answers that by replacing the row that got there first.
+That is somebody else's body, gone, and a success reported to both writers (R272). So the event
+row goes through ``insert_if_absent``: the key decides whether this call is what put the row
+there. When it was not, the number is not this event's address -- it belongs to whoever won --
+and the writer gives the number up, takes another from the tables, and tries again within
+``SEQUENCE_ATTEMPTS``. An event that still cannot win a number is recorded out of the number
+book exactly as R263 records an unconfirmed one, because that is what it has become: a body
+whose address the tables refuse, waiting for the settlement sweep to give it one.
 """
 
 import json
@@ -113,6 +127,27 @@ UNPROVEN_SEQUENCE_STATEMENT = (
     "so it is not this event's id in trace_events; the settlement sweep gives it one"
 )
 
+#: How many numbers one event may be given before this process stops asking for one (R272).
+#: The bound is a bound and not a prediction: a refused number means another process reached
+#: that address first, and the next reading of ``MAX(sequence)`` is taken *behind* that row, so
+#: every attempt is strictly better informed than the last. Four lets two or three processes
+#: race for one trace and still have each of them land on the tables' number line; past that, an
+#: event is recorded in the fallback journal rather than spinning on a book this process does
+#: not own, and it is the settlement sweep that gives it an address.
+SEQUENCE_ATTEMPTS = 4
+
+#: What the ordinal of an event that lost its number says on the line that carries it. The
+#: number is real, and so is the reason it cannot be used: the tables did answer
+#: ``MAX(sequence)``, then answered that the address made from it belongs to another event.
+#: This is R263's statement for a different question, which is why it is a different sentence --
+#: an operator reading the journal has to be able to tell "the tables would not say" apart from
+#: "the tables said, and said someone else".
+ID_TAKEN_SEQUENCE_STATEMENT = (
+    "local ordinal only: PostgreSQL answered MAX(sequence) but another event already holds "
+    "the id made from that number, so it is not this event's id in trace_events; the "
+    "settlement sweep gives it one"
+)
+
 #: Events one settlement sweep offers to the tables. The sweep runs under the write lock, so
 #: a longer journal is drained over more than one sweep and each report names what is left.
 BACKFILL_LINES_PER_SWEEP = 2_000
@@ -124,6 +159,25 @@ class TraceStoreError(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+class EventIdTakenError(RuntimeError):
+    """The ``trace_events`` address this event was given already holds another event.
+
+    R272: the address is the primary key, ``{trace_id}:{sequence}``, so two processes that read
+    the same floor reach it at the same time. It is raised rather than swallowed because the
+    two callers read it differently -- the live writer gives the number up and takes another,
+    a settlement sweep leaves the line in the journal and reports the refusal -- and both of
+    them would be wrong to report a row they did not write.
+    """
+
+    def __init__(self, event_id: str, *, same_event: bool):
+        self.event_id = str(event_id or "")
+        self.same_event = bool(same_event)
+        super().__init__(
+            f"{ID_TAKEN_DETAIL}{' (replayed as the same event)' if same_event else ''}: "
+            f"event_id={self.event_id}"
+        )
 
 
 class TraceStore:
@@ -202,7 +256,10 @@ class TraceStore:
 
         with self._lock:
             owner_id = str((payload or {}).get("owner_id") or "").strip()
-            attempts = 2 if self.database is not None else 1
+            #: A live event may have to give its number up and take another one (R272); the
+            #: bound lives in ``SEQUENCE_ATTEMPTS`` and is documented there.
+            attempts = SEQUENCE_ATTEMPTS if self.database is not None else 1
+
             #: An open window is settled before this event takes a number, so the events it
             #: held keep their place ahead of this one on the tables' number line instead of
             #: being re-numbered behind it. A process with nothing to settle pays for the
@@ -250,8 +307,29 @@ class TraceStore:
                 if reason is None:
                     settled = True
                     break
-                if attempt == 0 and _is_sequence_collision(detail):
+                if _is_number_refused(detail) and attempt + 1 < attempts:
+                    # The tables refused *this number*, not the event. Another process reached
+                    # the address first, or the ``(trace_id, sequence)`` pair collides with a
+                    # row that is not this one, and the next reading of ``MAX(sequence)`` is
+                    # taken behind that row -- so asking again is strictly better informed than
+                    # asking once. Give the number up rather than standing on it (R272).
+                    durability.note_sequence_retry()
                     continue
+                if _is_event_id_taken(detail):
+                    # The bound ran out. The number printed on this event is not its address in
+                    # the tables -- it is somebody else's -- so the line goes out of the number
+                    # book, exactly as R263 sends an unconfirmed number, and the settlement
+                    # sweep gives it an address of its own. Recording it at the number it lost
+                    # would strand it for good: the next sweep finds that id held by a different
+                    # event and refuses it, which is a gap that never closes.
+                    self._write_fallback(
+                        event,
+                        reason,
+                        detail,
+                        proven=False,
+                        sequence_note=ID_TAKEN_SEQUENCE_STATEMENT,
+                    )
+                    break
                 self._write_fallback(event, reason, detail)
                 break
             self._observe_request_window(event)
@@ -284,7 +362,13 @@ class TraceStore:
         }
 
     def _write_fallback(
-        self, event: dict[str, Any], reason: str, detail: str, *, proven: bool = True
+        self,
+        event: dict[str, Any],
+        reason: str,
+        detail: str,
+        *,
+        proven: bool = True,
+        sequence_note: str = "",
     ) -> None:
         """Append one event to the local journal and say out loud that we had to.
 
@@ -300,6 +384,11 @@ class TraceStore:
         will be addressed by once the tables can be asked. Both statements live in the
         marker, so the event keeps its eight keys and counting a trace id in this file still
         counts events.
+
+        ``sequence_note`` is R272's turn to use that machinery. A line is put out of the number
+        book for one of two reasons -- the tables would not answer ``MAX(sequence)``, or they
+        answered and the address made from the answer belongs to another event -- and the note
+        says which. Left empty, the line carries R263's statement, exactly as it did before.
         """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         marker = {
@@ -316,7 +405,7 @@ class TraceStore:
             token = uuid.uuid4().hex
             marker["sequence_proven"] = False
             marker["provisional_id"] = token
-            marker["sequence_note"] = UNPROVEN_SEQUENCE_STATEMENT
+            marker["sequence_note"] = sequence_note or UNPROVEN_SEQUENCE_STATEMENT
             address = provisional_event_id(str(event["trace_id"]), token)
         line = dict(event)
         line[FALLBACK_LINE_MARKER] = marker
@@ -324,7 +413,15 @@ class TraceStore:
             handle.write(json.dumps(line, ensure_ascii=False) + "\n")
         durability.note_local_fallback(reason, f"event_id={address} {detail}")
         if not proven:
-            durability.note_unproven_sequence()
+            # One line, one admission. R263's says "the tables would not say"; R272's says "the
+            # tables said, and said someone else". Both are numbers that are not addresses, and
+            # they are different facts, so each line raises exactly one of the two counters --
+            # counting one event under both is how an operator ends up reading two where there
+            # was one, which is the mistake this ledger exists to prevent.
+            if sequence_note == ID_TAKEN_SEQUENCE_STATEMENT:
+                durability.note_sequence_collision()
+            else:
+                durability.note_unproven_sequence()
         # A refused line is precisely what the next successful write has to settle.
         self._backfill_sweep_pending = True
 
@@ -339,16 +436,27 @@ class TraceStore:
         at, and only R263's sweep passes one: a recovered line whose own number was never
         confirmed keeps its child rows on the number it is given then, but its event row on
         the id of the line, so the insert cannot land on another event's row.
+
+        R272 adds the third answer a key can give. The event row is written so that an address
+        already held by another event is *refused* rather than updated, and that refusal comes
+        back here as ``EventIdTakenError``: a ``(reason, detail)`` pair naming the address that
+        is not this event's. It is not reported as a success, and it is not reported as the
+        tables being down either -- it is the tables answering a question nobody had asked them.
         """
         refusal = self._refusal_before_writing(owner_id)
         if refusal is not None:
             return refusal
         try:
-            self._apply(project_event_row(event, owner_id, event_id=event_id).seal())
+            self._apply_event_row(project_event_row(event, owner_id, event_id=event_id).seal())
             for projection in project_event(event, owner_id=owner_id, fetch=self._current_row):
                 self._apply(projection)
         except TraceSchemaError as exc:
             return REASON_SCHEMA_MISMATCH, f"{exc.code}: {exc}"
+        except EventIdTakenError as exc:
+            # Named for what the key said rather than folded into a generic write error,
+            # because the caller's next move is different: another number, not another retry of
+            # this one, and not a claim that PostgreSQL is unreachable when it answered plainly.
+            return REASON_WRITE_FAILED, str(exc)
         except PersistenceWriteError as exc:
             return REASON_WRITE_FAILED, str(exc)
         except (TraceDatabaseUnavailable, ValueError) as exc:
@@ -383,6 +491,40 @@ class TraceStore:
             )
         self.persistence.upsert(  # type: ignore[union-attr]
             projection.collection, projection.record_id, dict(projection.values)
+        )
+
+    def _apply_event_row(self, projection: Projection) -> None:
+        """Write the ``trace_events`` row without ever standing on another event's address.
+
+        Every other row an event asks for is a projection that legitimately changes while the
+        run moves: ``agent_runs`` is written again when its status advances, ``agent_steps``
+        when the step finishes. The event row is not like that. Its key *is* the event's
+        address, ``{trace_id}:{sequence}``, and a second write at an occupied address replaces
+        the body of whoever got there first while both writers hear "success" (R272). So this
+        row goes through the backend's insert-if-absent primitive, and a key that answers
+        "already held" is raised to the caller instead of being written over.
+
+        Asking the key rather than reading the table first is the point. A read would be a
+        second moment, and a rival fits between the two of them -- which is the same lesson
+        R263 wrote about the settlement sweep: the question is worth asking, and it is never
+        the guard. A backend without the primitive, such as the JSON journal of a notebook
+        host, keeps the behaviour it has always had: the hole being closed here is in the six
+        tables, and the file that stands in for them is already named as not-the-ledger.
+        """
+        insert_if_absent = getattr(self.persistence, "insert_if_absent", None)
+        if not callable(insert_if_absent):
+            self._apply(projection)
+            return
+        if insert_if_absent(projection.collection, projection.record_id, dict(projection.values)):
+            return
+        held = self._durable_row_by_id(projection.record_id)
+        raise EventIdTakenError(
+            projection.record_id,
+            # One verdict rather than a second one: this is the question the settlement sweep
+            # already asks of a row it finds in front of it, asked here only to name the
+            # refusal with the reason the tables gave. Either way, this body does not get to be
+            # written at this address.
+            same_event=held is not None and self._is_the_same_event(held, projection.values),
         )
 
     def _current_row(self, collection: str, record_id: str) -> dict[str, Any] | None:
@@ -1069,6 +1211,23 @@ def _is_sequence_collision(detail: str) -> bool:
     """Whether a failed write was the event id being taken, which is worth one retry."""
     text = str(detail or "").lower()
     return "duplicate key" in text or "unique" in text or "uq_trace" in text
+
+
+def _is_event_id_taken(detail: str) -> bool:
+    """Whether the tables said, in so many words, that this address is another event's.
+
+    The refusal R272 asks for, written by ``EventIdTakenError`` -- whose message opens with
+    ``ID_TAKEN_DETAIL`` -- when the key itself reports that a row is already there. It is a
+    different statement from the unique-key error above: that one is the *pair* being taken by
+    a row at another address, this one is *this* address being occupied. To a live writer they
+    mean the same thing, which is why both ask for another number.
+    """
+    return ID_TAKEN_DETAIL in str(detail or "")
+
+
+def _is_number_refused(detail: str) -> bool:
+    """Whether a refusal says "this number is not this event's", which is worth taking another."""
+    return _is_sequence_collision(detail) or _is_event_id_taken(detail)
 
 
 def _merge_events(

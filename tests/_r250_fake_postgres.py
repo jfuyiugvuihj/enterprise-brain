@@ -11,8 +11,14 @@ builds, against dictionaries:
   columns, ``UNIQUE (trace_id, sequence)`` on ``trace_events``, and the
   ``agent_steps`` / ``tool_calls`` / ``model_calls`` / ``retrieval_traces`` foreign keys onto
   ``agent_runs`` -- which is why write ordering is tested here and not assumed;
-* JSONB columns come back as objects and timestamp columns as aware datetimes, the same two
+* both conflict clauses the code builds, and the verdict each one gives: ``DO UPDATE`` writes
+  the row (R250's run and step projections advance a status by rewriting it), ``DO NOTHING``
+  leaves the row that is already there and reports zero rows affected (R272's event address).
+  A double that answered both with "no error" could not tell a caller whose body is standing at
+  that key, which is the only thing that question is asked for;
+* JSONB columns come back as objects and timestamps as aware datetimes, the same two
   shapes psycopg hands the reader.
+
 
 This is not a database. It is a hermetic contract check; ``tests/test_r250_pg_trace_source
 _of_truth.py`` runs the identical assertions against a real PostgreSQL when
@@ -33,7 +39,16 @@ _INSERT = re.compile(
     r"ON CONFLICT \((?P<key>\w+)\) DO UPDATE SET (?P<assignments>.*)$",
     re.S,
 )
+#: The statement R272 adds: an insert that must not replace the row standing at the key.
+#: It is a different statement and gets a different verdict -- zero rows affected -- so the
+#: double has to answer the question the driver answers, not simply accept the row.
+_INSERT_DO_NOTHING = re.compile(
+    r"^INSERT INTO (?P<table>\w+) \((?P<columns>[^)]*)\) VALUES \((?P<placeholders>[^)]*)\) "
+    r"ON CONFLICT \((?P<key>\w+)\) DO NOTHING$",
+    re.S,
+)
 _SELECT_WHERE = re.compile(
+
     r"^SELECT (?P<columns>.*) FROM (?P<table>\w+) WHERE (?P<column>\w+) = %s"
     r"(?: ORDER BY (?P<order>.*))?$",
     re.S,
@@ -127,8 +142,14 @@ class FakeConnection:
             raise FakePostgresError("PROBE: PostgreSQL is unavailable (connection timeout)")
         match = _INSERT.match(statement)
         if match:
-            self._insert(match, values)
-            return FakeResult([], [])
+            return FakeResult([], [], rowcount=self._insert(match, values))
+        match = _INSERT_DO_NOTHING.match(statement)
+        if match:
+            # Rowcount is the answer this statement asks for: 1 wrote the row, 0 found the key
+            # already held. A double that returned nothing here would let a caller read "no
+            # error" as "the row is mine", which is the mistake R272 exists to close.
+            return FakeResult([], [], rowcount=self._insert(match, values, overwrite=False))
+
         match = _MAX_SEQUENCE.match(statement)
         if match:
             rows = self.engine.rows("trace_events").values()
@@ -153,7 +174,11 @@ class FakeConnection:
 
     # ---------------------------------------------------------------------- kernels
 
-    def _insert(self, match: re.Match[str], values: tuple[Any, ...]) -> None:
+    def _insert(
+        self, match: re.Match[str], values: tuple[Any, ...], *, overwrite: bool = True
+    ) -> int:
+
+        """Apply one INSERT and report the rows affected, the way a driver reports them."""
         table = match.group("table")
         columns = [column.strip() for column in match.group("columns").split(",")]
         placeholders = [item.strip() for item in match.group("placeholders").split(",")]
@@ -178,6 +203,8 @@ class FakeConnection:
                     f"insert on {table} violates foreign key {foreign} -> agent_runs"
                 )
         if table == "trace_events":
+            # The second unique key is not the conflict target of either statement, so it
+            # refuses in both: a row at another address already holds this (trace, sequence).
             for event_id, row in self.engine.rows(table).items():
                 if (
                     event_id != record["event_id"]
@@ -188,8 +215,15 @@ class FakeConnection:
                         "duplicate key value violates unique constraint "
                         '"trace_events_trace_id_sequence_key"'
                     )
+        if not overwrite and record[key_column] in self.engine.rows(table):
+            # ``ON CONFLICT (key) DO NOTHING``: the key is held, so this call writes nothing and
+            # the row that holds it keeps its body. That is the entire content of the statement,
+            # which is why it is enforced here rather than assumed (R272).
+            return 0
         # ON CONFLICT DO UPDATE SET col = EXCLUDED.col: last write wins, the id stays.
         self.engine.rows(table)[record[key_column]] = record
+        return 1
+
 
     def _select(self, match: re.Match[str], values: tuple[Any, ...]) -> "FakeResult":
         table = match.group("table")
@@ -228,9 +262,16 @@ def _returned(value: Any) -> Any:
 
 
 class FakeResult:
-    def __init__(self, columns: list[str], rows: list[tuple[Any, ...]]):
+    def __init__(
+        self, columns: list[str], rows: list[tuple[Any, ...]], rowcount: int | None = None
+    ):
+
         self.columns = columns
         self.rows = rows
+        #: What a driver says about the statement: rows matched by a SELECT, rows written by an
+        #: INSERT -- zero for ``ON CONFLICT DO NOTHING`` when the key was already held.
+        self.rowcount = len(rows) if rowcount is None else rowcount
+
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         return list(self.rows)

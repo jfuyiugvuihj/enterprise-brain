@@ -32,7 +32,20 @@ they belong among the rows -- and ``sequence_renumbered_events`` says how many o
 settlement sweep has since given a number of its own. Neither is a degradation of its own and
 neither sets ``degraded``: the refused write is already named by ``fallback_events``, and
 counting the same window twice is how an operator ends up reading two where there was one.
+
+R272 adds the two counters of the race itself. ``sequence_retries`` says how many times a live
+write gave up a number because the tables answered that the address made from it already holds
+another event -- each of those is one more trip to ``MAX(sequence)``, and the event normally
+lands on the tables one number later with nothing lost, so it is a cost and not a degradation.
+``sequence_collision_events`` says how many events ran out of attempts (the bound lives in
+``app.trace.store.SEQUENCE_ATTEMPTS``) and went to the journal still without an address, which
+is the one number here that says "two processes on this host are racing for one trace's number
+line and one of them is being pushed out of the tables". Such a line is *also* a
+``fallback_events`` line -- it is in the file, and that is what ``degraded`` is for -- and it is
+deliberately not also an ``unproven_sequence_events`` line: the tables did answer that event,
+they simply answered about somebody else.
 """
+
 from __future__ import annotations
 
 import threading
@@ -87,6 +100,9 @@ def _fresh_ledger() -> dict[str, Any]:
         "backfilled_events": 0,
         "unproven_sequence_events": 0,
         "sequence_renumbered_events": 0,
+        "sequence_retries": 0,
+        "sequence_collision_events": 0,
+
         "backfill_already_in_tables": 0,
         "backfill_errors": 0,
         "local_only_lines": 0,
@@ -172,6 +188,39 @@ def note_sequence_renumbered() -> int:
     with _lock:
         _ledger["sequence_renumbered_events"] += 1
         return _ledger["sequence_renumbered_events"]
+
+
+def note_sequence_retry() -> int:
+    """Count one number a live write gave up because the tables said it was another event's.
+
+    R272. The counter answers a question no other cell on this page answers: how often the
+    processes on this host race for one trace's number line, and how much of that race costs a
+    second trip to ``MAX(sequence)``. It is not a degradation -- the event that gave a number up
+    is normally written one number later on the very next attempt, with nothing lost and no
+    window opened -- and it is deliberately not folded into ``fallback_events``, because an
+    operator comparing the two numbers wants to know how many *events* the file holds, not how
+    many numbers this process refused.
+    """
+    with _lock:
+        _ledger["sequence_retries"] += 1
+        return _ledger["sequence_retries"]
+
+
+def note_sequence_collision() -> int:
+    """Count one event that ended in the journal with no number the tables would let it use.
+
+    The bound in ``app.trace.store.SEQUENCE_ATTEMPTS`` ran out: every address this process was
+    offered is already held by a different event, so the line went out of the number book the
+    way R263 sends an unconfirmed number, and the settlement sweep is what gives it an address.
+    This is the expensive half of the race and it is the reason the retry is bounded: it always
+    coincides with one ``fallback_events`` line (the same event, named once for being in the
+    file), and never with ``unproven_sequence_events`` -- the tables did answer this event, they
+    answered about somebody else.
+    """
+    with _lock:
+        _ledger["sequence_collision_events"] += 1
+        return _ledger["sequence_collision_events"]
+
 
 
 def note_local_read_fallback(reason_code: str, detail: str) -> int:

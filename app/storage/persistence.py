@@ -466,7 +466,17 @@ class PostgresPersistenceAdapter:
     def __init__(self, connection_factory: Callable[[], Any]):
         self.connection_factory = connection_factory
 
-    def upsert(self, collection: str, record_id: str, record: dict[str, Any]) -> dict[str, Any]:
+    def _prepare(
+        self, collection: str, record_id: str, record: dict[str, Any]
+    ) -> tuple[_PostgresTable, dict[str, Any]]:
+        """Resolve one write against the table contract, without touching the database.
+
+        Shared by :meth:`upsert` and :meth:`insert_if_absent` on purpose: the two statements
+        differ only in what happens when the key is already there, so every other rule -- the
+        column set, the owner requirement on protected records, the timestamp defaults -- is
+        literally the same code for both. A write that can be refused must not also be a write
+        that can skip a check.
+        """
         definition = _TABLES.get(collection)
         if definition is None:
             raise ValueError(f"unsupported PostgreSQL collection: {collection}")
@@ -489,16 +499,36 @@ class PostgresPersistenceAdapter:
         for timestamp_field in ("created_at", "started_at"):
             if timestamp_field in definition.columns and values.get(timestamp_field) is None:
                 values[timestamp_field] = now
+        return definition, values
+
+    def _statement(
+        self, definition: _PostgresTable, values: dict[str, Any], *, overwrite: bool
+    ) -> tuple[str, tuple[Any, ...]]:
+        """The INSERT and its parameters, with the conflict clause the caller asked for.
+
+        ``overwrite=True`` is the statement this adapter has always built, byte for byte: a key
+        that is already there is *updated*, which is how a run's ``agent_runs`` row advances its
+        status. ``overwrite=False`` asks the key a different question -- was this row written by
+        this call -- which is the only question an append-only row deserves.
+        """
         columns = definition.columns
         placeholders = ", ".join(["%s"] * len(columns))
-        assignments = ", ".join(
-            f"{column} = EXCLUDED.{column}"
-            for column in columns
-            if column != definition.id_column
-        )
+        if not overwrite:
+            # The conflict target is named rather than left out on purpose: this table has more
+            # than one unique key, and a bare ``ON CONFLICT DO NOTHING`` would swallow a
+            # collision on the other one. A second key refusing this row is a different fact,
+            # and the caller has to hear it as an error rather than as "already there".
+            conflict = f"ON CONFLICT ({definition.id_column}) DO NOTHING"
+        else:
+            assignments = ", ".join(
+                f"{column} = EXCLUDED.{column}"
+                for column in columns
+                if column != definition.id_column
+            )
+            conflict = f"ON CONFLICT ({definition.id_column}) DO UPDATE SET {assignments}"
         sql = (
             f"INSERT INTO {definition.table} ({', '.join(columns)}) "
-            f"VALUES ({placeholders}) ON CONFLICT ({definition.id_column}) DO UPDATE SET {assignments}"
+            f"VALUES ({placeholders}) {conflict}"
         )
         params = tuple(
             _json_value(values.get(column, {}))
@@ -518,12 +548,17 @@ class PostgresPersistenceAdapter:
             else values.get(column)
             for column in columns
         )
+        return sql, params
+
+    def _execute(self, collection: str, sql: str, params: tuple[Any, ...]) -> Any:
+        """Run one statement on one connection and hand back the driver cursor."""
         connection = None
         try:
             connection = self.connection_factory()
-            connection.execute(sql, params)
+            cursor = connection.execute(sql, params)
             if hasattr(connection, "commit"):
                 connection.commit()
+            return cursor
         except Exception as exc:
             if connection is not None and hasattr(connection, "rollback"):
                 try:
@@ -534,7 +569,38 @@ class PostgresPersistenceAdapter:
         finally:
             if connection is not None and hasattr(connection, "close"):
                 connection.close()
+
+    def upsert(self, collection: str, record_id: str, record: dict[str, Any]) -> dict[str, Any]:
+        definition, values = self._prepare(collection, record_id, record)
+        sql, params = self._statement(definition, values, overwrite=True)
+        self._execute(collection, sql, params)
         return dict(record)
+
+    def insert_if_absent(self, collection: str, record_id: str, record: dict[str, Any]) -> bool:
+        """Write one row, and answer whether *this call* is what put it there.
+
+        ``upsert`` is neither changed nor retired by this method: for ``agent_runs``,
+        ``agent_steps``, ``tool_calls``, ``model_calls`` and the rest, a row that already exists
+        is a row being legitimately updated, and that is the only way a status can advance. This
+        exists for the one table where overwriting is a lie: ``trace_events``, whose primary key
+        is an event address, ``{trace_id}:{sequence}``, and whose rows are append-only. Two
+        processes that read ``MAX(sequence)`` before either inserts reach the same address, and
+        ``ON CONFLICT (event_id) DO UPDATE`` reads that as a replacement -- the later writer
+        swaps the earlier event's body out, and both of them hear "success" (R272). The refusal
+        cannot come from a read either: the read and the insert are two moments, and a rival fits
+        between them. So it comes from the key. ``ON CONFLICT (event_id) DO NOTHING`` writes the
+        row when the address is free and reports no rows affected when it is not.
+
+        ``True`` means this row is in the table because of this call. ``False`` means the key
+        already held a row, and the caller decides what that was -- the same event replayed, or
+        another event standing in the way. A table that does not answer at all is still a
+        ``PersistenceWriteError`` and never a ``False``: "not written" has to mean the key spoke,
+        not that the connection was down.
+        """
+        definition, values = self._prepare(collection, record_id, record)
+        sql, params = self._statement(definition, values, overwrite=False)
+        cursor = self._execute(collection, sql, params)
+        return int(getattr(cursor, "rowcount", 0) or 0) > 0
 
     @staticmethod
     def _as_record(definition: _PostgresTable, row: Any) -> dict[str, Any]:
