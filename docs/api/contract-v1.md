@@ -1848,3 +1848,72 @@ so the receipt and the next read cannot disagree.
 
 - 判据① (the order really changes) is proven offline today: the tests drive the ranker with fabricated
   rows, not a live PostgreSQL under concurrent clicks. Registered in 跟进单 §77 as an open item.
+
+## Overview Aggregate: `documents_ready` (2026-09-26, R284)
+
+`GET /api/v1/dashboard/summary` is the overview page's server-side aggregate (R14-A1). The
+document tile shows two numbers and the route carried only one of them until R284: how many
+documents this caller may see, and - the missing column - how many of those finished parsing.
+R274 had already given the frontend the reading position (`payload.documents_ready`, absence
+folds to `null`, never to 0 and never to 「全部」), and it deliberately declined to count a
+list length client-side, which is the silent shrink R14-A1 exists to remove. The gap was
+server-side, so this is the contract for that column.
+
+### `GET /api/v1/dashboard/summary` -> body
+
+| Key | Type | Nullable | Counted over |
+| --- | --- | --- | --- |
+| `generated_for` | string | no | the principal these counts were computed for |
+| `pending_approvals` | int | no | that principal's open HITL ledger rows |
+| `documents` | int | no | catalog rows this principal may list |
+| `documents_ready` | int | no | **those same rows**, the ones whose `parse_status` is `ready` |
+| `datasets` | int | no | registered data files this principal may analyze-and-open |
+| `alerts` | object `{total, unread}` | **the key is absent** | only when the alert gate allows it |
+
+**The key is never omitted.** `alerts` is conditional on purpose - there, absence *is* the
+permission answer (R14-A1). `documents_ready` is not: an absent column is a number the client
+would have to invent, so the route always answers with an integer, `0` included, and never
+with `null` or a numeric string. `documents_ready <= documents` holds because of the next
+paragraph, not because of a check.
+
+**One read, not a second query.** Both document columns come out of the single
+`chat.list_document_catalog` call in `app/api/v1/dashboard.py::_document_counts` - that is,
+out of `_classify_document_rows` -> `authorization_decision`, the same judgment
+`GET /documents/catalog` answers with. Counting a field on rows already in hand is not the
+R14-A1 shortcut: the total is not inferred from a delivered page. The pair is pinned in
+`tests/test_r284_documents_ready_column.py`, which counts the calls (exactly one per request)
+and re-derives both columns from that one return value, so two columns answering two scopes
+is a failing test rather than something a reviewer has to notice.
+
+**`ready` is 解析完成, not 可检索.** The counted value is the stored `parse_status`, whose
+domain is `("pending", "parsing", "ready", "failed")` (`app/documents/catalog.py`, enforced
+as `document_versions_parse_status_check` in `migrations/0006_document_ownership.sql`). Only
+`ready` counts, so `parsing` and `failed` both stay on the 「N 篇还没解析完」 side - the tile
+asks 「这篇读完了没有」, and a half-parsed document has not answered it. `index_status`
+(`app/documents/index_policy.py`, where an unrecorded value is a first-class
+`INDEX_STATUS_UNKNOWN`) is a different question - 「助理能不能检索到这篇」 - and the two are
+orthogonal in code as well as in name: the upload path records `parse_status="ready"`
+together with `index_status=excluded` whenever a document parsed into content the index
+policy does not want (`app/api/v1/chat.py:3870-3874`, `:3997-4008`), and a document still
+`parsing` is not ready however its index row reads. **Read this column as 「几篇解析完了」
+and never as 「几篇能被问到」.**
+
+**Historical rows count as unparsed - a stated understatement.** Two mechanisms, same
+outcome: `app/documents/catalog.py::_normalise_parse_status` folds NULL, empty and
+unrecognised values into `pending`, and `migrations/0006_document_ownership.sql:31,54` added
+the column as `TEXT NOT NULL DEFAULT 'pending'`, so every row already in the table took
+`pending` at migration time. A document ingested before that column landed is therefore
+counted as 未解析 until something actually parses it and records `ready`, even when the file
+on disk is fine. For the employee reading the tile: on a legacy corpus `documents_ready` can
+be **smaller** than the number of documents that really are usable, and 「N 篇还没解析完」
+may name rows nobody ever re-parsed. Two things were considered and rejected: the response
+cannot carry a 「历史行」 split without a second read - normalisation has already erased the
+difference by the time the endpoint sees the row - and counting NULL as ready to make the
+number look better would break the one property the tile depends on, namely that
+「全部已解析」 is only ever said when it is true. The bias is pessimistic in the same
+direction the pending count was already allowed to be (R13: it may overstate open work,
+never report a cleaner queue).
+
+The auth gate is unchanged: `401 authentication_required` and `403 permission_denied`
+bodies carry no counts, and neither document column is readable through them.
+

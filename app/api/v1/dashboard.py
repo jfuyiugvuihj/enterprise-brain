@@ -13,6 +13,12 @@ Design constraints this module is built around:
   ``authorization_decision``), datasets through ``data.list_data_files``, the analyze
   gate is ``intelligence._authorized``. A count that disagrees with the list beside it is
   the failure mode this endpoint was asked to remove, so none of them is restated here.
+- **``documents_ready`` shares that read rather than adding one (R284).** The document
+  tile has to say how many of the documents it just counted finished parsing, and a
+  second query for that number is how two columns come to answer two different scopes.
+  Both are counted out of the one catalog call in ``_document_counts``, reading a value
+  on rows already in hand - not the R14-A1 shortcut, because the total is still not
+  inferred from a page length.
 - **Alerts are gated, and "no permission" is not "no alarms".** The alert count is taken
   only after ``app/api/v1/alerts.py::_require_alert_management`` (the same call
   ``GET /alerts`` makes) allows it. When it answers 403 the ``alerts`` key is **omitted**
@@ -56,10 +62,56 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 _ALERT_COUNT_SQL = "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE read = FALSE) AS unread FROM alerts"
 
 
-async def _document_count(request: Request) -> int:
-    """How many stored documents this caller's own document panel can list."""
+#: The one stored value that means 「解析完了」. The domain is
+#: ``app/documents/catalog.py::PARSE_STATUSES`` -
+#: ``("pending", "parsing", "ready", "failed")`` - and it is a database ``CHECK``
+#: (``migrations/0006_document_ownership.sql``: ``document_versions_parse_status_check``),
+#: not an application habit.
+#: tests/test_r284_documents_ready_column.py pins this literal against that tuple, so a
+#: rename on either side is caught by a failing test rather than by an overview tile
+#: that quietly starts calling everything ready.
+_PARSE_STATUS_READY = "ready"
+
+
+async def _document_counts(request: Request) -> tuple[int, int]:
+    """``(documents, documents_ready)`` - two numbers, one catalog read, one visible scope.
+
+    Both are counted out of the same ``list_document_catalog`` return value, which is
+    that caller's own document panel (``chat._classify_document_rows`` ->
+    ``authorization_decision``). There is no second query here, so the two columns
+    cannot answer two scopes and ``documents_ready <= documents`` is structural rather
+    than a rule somebody has to remember. Counting a field on rows the endpoint already
+    holds is not the R14-A1 shortcut this module exists to remove: the total is still
+    not inferred from a page length.
+
+    What this counts, and the two ways it could be misread:
+
+    - **Ready is a parse state.** Only ``"ready"`` counts. ``"parsing"`` and ``"failed"``
+      are both 「还没解析完」 for the employee reading the tile - a half-parsed document
+      and one that produced no text answer the same question, so neither may join the
+      ready side.
+    - **A row that never recorded a status is not ready.**
+      ``catalog._normalise_parse_status`` folds NULL, empty and unrecognised values into
+      ``"pending"``, so a document stored before ``parse_status`` landed - the migration
+      added the column ``NOT NULL DEFAULT 'pending'``, which is exactly what every
+      existing row took - counts as unparsed until something re-parses it. The column
+      can therefore understate 「已解析」 on a legacy corpus; it cannot invent a ready
+      document. Normalisation happens before this function sees the row, so a response
+      cannot split 「历史行」 from an honest ``pending`` without a second read;
+      ``docs/api/contract-v1.md`` states the bias instead of quietly carrying it.
+    - **Parse is not retrieval.** ``index_status``
+      (``catalog._normalise_index_status``, whose unrecorded value is a first-class
+      ``INDEX_STATUS_UNKNOWN``) answers 「助理能不能检索到这篇」 and is orthogonal by
+      design (``app/documents/index_policy.py:32-36``). A ``ready`` document the index
+      policy excluded still counts here; an indexed document still being parsed does
+      not. This is not a count of askable documents, and the frontend wording
+      「N 篇还没解析完」 is written against parse, not index.
+    """
     catalog = await chat.list_document_catalog(request)
-    return len(catalog["documents"])
+    rows = catalog["documents"]
+    return len(rows), sum(
+        1 for row in rows if row.get("parse_status") == _PARSE_STATUS_READY
+    )
 
 
 async def _dataset_count(request: Request) -> int:
@@ -122,16 +174,27 @@ async def dashboard_summary(request: Request, response: Response):
     Anonymous and unauthorised callers are refused by the same analyze gate the
     algorithm endpoints use; the ledger is read before anything else so a broken
     install cannot answer 200 with the three numbers that did work.
+    install cannot answer 200 with the three numbers that did work.
+
+    ``documents`` and ``documents_ready`` are always present and always integers;
+    ``alerts`` stays the only conditional key, and only there because declining to
+    answer is the permission answer for that tile.
     """
     principal = intelligence._authorized(request, ACTION_ANALYZE, "dashboard_summary")
     # Every tile in here is a per-principal authorization answer, so a cached 200 is
     # another caller's scope.
     response.headers.update(NO_STORE_HEADERS)
 
+    documents, documents_ready = await _document_counts(request)
     payload: dict = {
         "generated_for": str(principal.user_id),
         "pending_approvals": _pending_count(principal),
-        "documents": await _document_count(request),
+        "documents": documents,
+        # R284: the tile's second line, and always a number. Unlike ``alerts`` this key
+        # is never conditional - the frontend reads absence as 「已解析篇数未记录」 and
+        # only an integer as an answer, so this endpoint does not get to pick which of
+        # the two faces a quiet day shows by leaving the key out.
+        "documents_ready": documents_ready,
         "datasets": await _dataset_count(request),
     }
     alerts = _alert_counts(request)
