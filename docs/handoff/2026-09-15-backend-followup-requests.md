@@ -3693,3 +3693,30 @@ V2 明列「所有资源有稳定 ID、owner 和生命周期」「资源级隔�
 ### 三、R301 已投（`Aristotle`/`01a0dd78-39ac-72d2-b6c6-7e82cfc27a0a`@`be-r301`@`dbc2047`）
 
 V2 完成判据「失败状态、来源和质量状态可查看」那一格。现取证：`app/rag/loader.py:176 PdfExtractionReport` 三枚 property 齐全（`scanned_page_numbers`/`scanned_pages`/`source_counts`），`:591` 内部就在组装 `DocumentExtraction(file_path, text, tables, pdf=report)`，可对外只有 `:655 load_pdf(...) -> str` 与 `:729 load_document(...) -> str` ⇒ `rg -l PdfExtractionReport` 全仓只落在 `ocr.py`/`loader.py` 与两枚测试。写域：`loader.py`（只准加一枚交回 `DocumentExtraction` 的对外入口，`load_document` 签名行为一字不变，`app/documents/preview.py:29` 那个调用点别碰）＋ `chat.py` **只准动上传那一段**（`:3889 upload_document`）＋ 新 `tests/test_r301_*.py` ＋ 契约**文末追加**。四条硬口：非 PDF 那一格必须写死建议 `None` 不许塞空对象；不落库不加迁移（契约里明写「这是这一次上传的读数，不是历史账」）；`file_path` 是绝对路径 ⇒ 响应只许出现用户上传的文件名，并交一枚泄露反证钉；降级句沿用 `report.degradation_sentence` 那一把尺，`ocr_available=False` 与「引擎在、这一页没跑成」必须分得开。检索/回读那两段被 r592 与 R295 的钉着，禁改。
+
+## §107（09-26 第四格·总控再续）：并四枚（R293 第一棒 / R305 / R307 第一棒 / 加 R291）· 扫旧树扫出一批没人名册的散活 · 三棒续投席位 again 满
+
+### 一、本格并树（主树 `1dda05e`，全部由总控在主树亲自复跑后代提交）
+
+| 单 | 并树 | 施工·树 | 总控亲跑读数 |
+|---|---|---|---|
+| **R293 第一棒** | `0c46948` | `Russell`/`01a0dc8a`@`be-r293`（基点 `77bbae5`，**09-25 的散活**） | vitest **82 files / 1511 passed**；`lint:colors` 148/0 rc=0；`build` exit 0 |
+| **R305** | `01db964` | `Wegener`@`be-r305`（基点 `4cc5c39`） | 点名 10 件 **332 passed**（56 专件 + r300 + preview + 两枚上传族 + r130 NUL 尺 + r238 两件 + r246 + r142） |
+| **R307 第一棒** | `1dda05e` | `Herschel`@`be-r307`（基点 `fa3d16c`） | vitest **83 files / 1532 passed**；`lint:colors` 148/0 rc=0；`build` exit 0 |
+（同格另两枚已在 §106 落过账：R291 `67e28a4`、R59 块2 `dbc2047`。）
+
+### 二、🔴 一批没人名册的散活是这样被发现的（新条款）
+
+我为查 R293 的原判据去 grep 跟进单，顺手 `git worktree list` + 逐树 `status`，才发现 `be-r293` 里躺着 `Russell`（`01a0dc8a`）09-25 交回的一批改动：`ChatPanel.vue` + 两枚测试件 + 5 枚 `tmp-*` 垃圾，**没有任何名册行认领它，也没有任何一格记它交回过**。它已经在磁盘上过了两天。这次运气好：`git diff --numstat 77bbae5..HEAD` 对那四枚相关文件**空输出** ⇒ 零漂移，我才能直接采纳；`tmp-*` 没搬。
+**新条款（写进派工/验收纪律）**：每班开工第一步不是读对话，是 **扫 `git worktree list` 并对每棵树现取 `status --porcelain` + `log -1`**，凡 dirty 且无名册行认领的，当场立案（保住、取证、判漂移），不许等对应 Agent 自己交回。这条与 §4CT 四那条「投递返回 `agent_id` 就当场写名册」是同一枚问题的两侧：**记账滞后 = 磁盘上的活随时会成孤儿**。
+
+### 三、三棒续投（席位满 6，全部不带 `model`）
+
+- **R307 第二棒 `Ampere`**@`be-r307b`：`App.vue` 8 枚 + `r278-topbar.test.js` 四处改口（只许把「数源码开标签」换成「数渲染产物」，要求不许降）+ `r197-turn-key-inheritance.test.js` 补 `components: { UiButton }` 并证明补完仍断言原意图（现况 30 条 `Failed to resolve component: UiButton`＝绿的是桩件）+ 棘轮 17→9。基线交回它：83/1532、148/0、build 0。
+- **R293 第二棒 `Averroes`**@`be-r293b`：`cancel_requested` 落盘的**真路径凭据**（两段式：挂载→真点中断→非终态回执→落盘→重新挂载，屏幕不许改口答「排队中」；两条腿取到同一张脸）。明令不许手搭 `historyTurn('cancel_requested')` 冒充，走不出来就报我——证伪式交回算合格。
+- **R331 `Hegel`**@`be-r331`：`TableBlock.parts()` 余量没给段号预留 ⇒ 真 CSV 实发 **450 > 声明上界 448**；照 `_header_only()` 的 `anchor(99, 99)` 同法修，450 那枚明账**升级成全称钉**（只准变硬），段数/内容/锚形状不许漂。
+另两枚仍在途：`Kepler` R310（`data.py` 补 `owner_id`）·`Pascal` R309（前端缺口现取复评）·`Aristotle` R301（OCR/表格两本账透出到上传响应）。待投池：**R330**（`app/common/monitoring.py` 接 PG diagnostics）·**R306**（`loader.py` 分派 + `file_security` 白名单 + `preview.py:6` `TEXT_EXTENSIONS` + 契约；🔴 `R301` 在写 `loader.py` ⇒ 必须排队，判据 6 条我已从 `Wegener` 的落笔建议整段转写进池，含「`sanitize_text` 必须外面再包一层否则 `test_every_loader_exit_calls_the_same_ruler` 当场红」「`.csv` 要补进 `_DOUBLE_EXTENSION_BLOCKLIST`」「只改白名单不改 `TEXT_EXTENSIONS` 后果是干净 415 不是 500」）。
+
+### 四、V2 侧今日累计（给业主看的一行）
+
+V2 波次一/二到今天并树的**能面**：R288 前端块 E、R291 后端原话上屏、R293 中断态落盘+措辞唯一化、R295 会话历史按 owner 归还、R296 画像部门只读、R297 入口矩阵、R298 扫描 PDF OCR、R299 通知中心、R300 PDF/Word 表格、R303 通知四处未测面、R304 表格真进正文、R305 Excel/CSV 解析层、R307 第一棒裸按钮、R59 块1/块2 切读接线与凭据。剩余大头：R306 接线、R301 透出、R330 出口可见、R60 停写退役（还压两格前置）、前端 21 处 `<UiErrorState` 与 `DashboardPanel.vue` 9 枚裸按钮。
