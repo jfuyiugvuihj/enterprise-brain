@@ -812,19 +812,25 @@ export function backendSessionMessages(payload) {
   return { ok: true, messages, turnIds }
 }
 
-/** 向后端问一次「这一条会话你那儿有正文吗」，并把正文原样带回来。 */
+/**
+ * 向后端问一次「这一条会话你那儿有正文吗」，并把正文原样带回来。
+ *
+ * R268 加了一枚 `error`：落哪一格只说得出「读不到」这一半，界面要把那一格说成人话还得靠
+ * errcodes 那一份字典，而字典吃的是原始错误。多带一枚原料而已，判定一个字没改，
+ * 既不新建第二套分类，也不让面板去猜「403 还是 401」。
+ */
 export async function readBackendSession(id) {
   const sessionId = textOf(id)
-  if (!sessionId) return { outcome: SESSION_READ.badBody, messages: [], turnIds: false }
+  if (!sessionId) return { outcome: SESSION_READ.badBody, messages: [], turnIds: false, error: null }
   let response = null
   try {
     response = await http.get(sessionPath(sessionId))
   } catch (err) {
-    return { outcome: classifySessionReadError(err), messages: [], turnIds: false }
+    return { outcome: classifySessionReadError(err), messages: [], turnIds: false, error: err }
   }
   const read = backendSessionMessages(response?.data)
-  if (!read.ok) return { outcome: SESSION_READ.badBody, messages: [], turnIds: false }
-  return { outcome: SESSION_READ.found, messages: read.messages, turnIds: read.turnIds }
+  if (!read.ok) return { outcome: SESSION_READ.badBody, messages: [], turnIds: false, error: null }
+  return { outcome: SESSION_READ.found, messages: read.messages, turnIds: read.turnIds, error: null }
 }
 
 /**
@@ -836,7 +842,7 @@ export async function readBackendSessionIds() {
   try {
     response = await http.get(SESSIONS_LIST_PATH)
   } catch (err) {
-    return { known: false, ids: [], failure: classifySessionReadError(err) }
+    return { known: false, ids: [], failure: classifySessionReadError(err), error: err }
   }
   const list = Array.isArray(response?.data?.sessions) ? response.data.sessions : null
   if (!list) return { known: false, ids: [], failure: SESSION_READ.badBody }
@@ -863,4 +869,138 @@ export function adoptBackendSession(id, list = []) {
   scrollOffset.value = 0
   syncActive()
   return messages.value
+}
+
+// ==================== R268 · G04：会话名单从服务器取回来，并与本地合并 ====================
+//
+// 病灶：左侧那一列会话今天只由本文件的 loadSessions() 从 localStorage 组装，而 GET /sessions
+// 早就把 id / title / updated_at / msg_count 全吐出来了（app/api/v1/chat.py 的 list_sessions，
+// 且已按归属过滤）—— 前端一行都不读那份名单。于是换一台浏览器、或被退出登录洗一次本地态，
+// 员工问过的话就「不见了」，而后端那一条会话一直都在。这一格是接线题，不是新接口题：零后端改动。
+//
+// 🔴 与 App.vue 那一刀的关系（已写进转出项，本单不改它一行）：退出登录时 App.vue 整包清
+// localStorage，本机那份必然没了。所以下面这一套【只依赖服务端读数 + 内存 store】，不假设本地
+// 态还留着，也不去动那一刀。合并是并集不是覆盖：本机有正文的一律保留本机那一份。
+// mount 期一枚请求都不发（r260 己1 钉着「本单不许新增 mount 期端点」）：取名单与取正文都只在
+// 员工伸手那一刻发生。
+
+/** 后端一行会话 → store 里那一行的形状。只按后端真给的字段读，一枚都不猜。 */
+export function serverSessionRow(row) {
+  const source = row && typeof row === 'object' ? row : null
+  if (!source) return null
+  const id = textOf(source.id)
+  if (!id) return null
+  const count = Number(source.msg_count)
+  return {
+    id,
+    title: textOf(source.title),
+    msgCount: Number.isFinite(count) && count >= 0 ? count : 0,
+    updatedAt: source.updated_at == null ? '' : String(source.updated_at),
+    createdAt: source.created_at == null ? '' : String(source.created_at),
+    // 这两枚是这一格的账：它是从服务端名单来的（fromServer），而它的正文还欠着（bodyFetched
+    // = false）—— 要点开才发 GET /sessions/{id} 取。正文没取回来时 messages 是空数组，
+    // 界面不许把它当「这条会话没内容」来说。
+    fromServer: true,
+    bodyFetched: false,
+    messages: [],
+  }
+}
+
+/**
+ * 一行的新旧比较键：本机存的是数字毫秒，后端存的是 ISO 串，两种都换算成同一枚数才排得动。
+ * 认不出来的一律回 0（排到最后），不猜一个时间出来。
+ */
+export function sessionMoment(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const parsed = Date.parse(String(value ?? ''))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+/**
+ * 名单这一次到底读回来没有：四种落不到各是一种，不许并格（与 readBackendSession 同一口径）。
+ * found + 空名单 = 「服务器上确实没有你的会话」，这与 unreachable「这一次没读到」是两句话 ——
+ * 把后者说成前者，员工就再也不会去点那枚按钮了。
+ */
+export async function readBackendSessionList() {
+  let response = null
+  try {
+    response = await http.get(SESSIONS_LIST_PATH)
+  } catch (err) {
+    return { outcome: classifySessionReadError(err), rows: [], error: err }
+  }
+  const list = Array.isArray(response?.data?.sessions) ? response.data.sessions : null
+  if (!list) return { outcome: SESSION_READ.badBody, rows: [], error: null }
+  return { outcome: SESSION_READ.found, rows: list.map(serverSessionRow).filter(Boolean), error: null }
+}
+
+/**
+ * 服务端名单并入本地 store（并集，不是覆盖）。返回四枚计数，面板说的那句话只用它们：
+ * serverRows 服务器上读到几行 / added 本机没有而并入几行 / refreshed 补正了几行 / total 合并后共几行。
+ */
+export function mergeServerSessions(rows) {
+  const incoming = (Array.isArray(rows) ? rows : [])
+    .map((row) => (row && row.fromServer === true ? row : serverSessionRow(row)))
+    .filter(Boolean)
+  const byId = new Map(sessions.value.map((item) => [String(item.id), item]))
+  let added = 0
+  let refreshed = 0
+  for (const row of incoming) {
+    const mine = byId.get(row.id)
+    if (!mine) {
+      byId.set(row.id, row)
+      added += 1
+      continue
+    }
+    const next = { ...mine, fromServer: true }
+    if (!next.title && row.title) {
+      next.title = row.title
+      refreshed += 1
+    }
+    // 问数与时间是同一件事的两个来源：本机有正文才信本机那两份；本机只剩个壳（换浏览器回来的
+    // 那一行）就用服务端的读数——那才是员工认得出的「几问 · 几月几号」。
+    const localHasBody = Array.isArray(next.messages) && next.messages.length > 0
+    if (!localHasBody) {
+      if (next.msgCount !== row.msgCount) refreshed += 1
+      next.msgCount = row.msgCount
+      if (!next.updatedAt) next.updatedAt = row.updatedAt
+    }
+    byId.set(row.id, next)
+  }
+  const merged = [...byId.values()].sort((a, b) => sessionMoment(b.updatedAt) - sessionMoment(a.updatedAt))
+  sessions.value = merged
+  persist()
+  return { serverRows: incoming.length, added, refreshed, total: merged.length }
+}
+
+/** 这一条的正文还欠着没取（只有名单先回来那一行才是 true）。 */
+export function sessionBodyMissing(id) {
+  const sessionId = textOf(id)
+  if (!sessionId) return false
+  const entry = sessions.value.find((item) => String(item.id) === sessionId)
+  return Boolean(entry) && entry.bodyFetched === false
+}
+
+/**
+ * 取回一条会话的正文并交回【同一份】store：走既有的 readBackendSession()，不另开第二份消息表。
+ * 读不到时原样把落哪一格报出去（found / notFound / notYours / unreachable / badBody），
+ * 面板据此说那一句人话；这一条一律不许「先切过去再说」——切过去是一条空会话，那就是假话。
+ */
+export async function pullBackendMessages(id) {
+  const sessionId = textOf(id)
+  if (!sessionId) return { outcome: SESSION_READ.badBody, messages: [], turnIds: false, error: null }
+  const read = await readBackendSession(sessionId)
+  if (read.outcome !== SESSION_READ.found) return read
+  const entry = sessions.value.find((item) => String(item.id) === sessionId)
+  if (entry) {
+    entry.messages = (read.messages || []).map((item) => ({ ...item }))
+    entry.bodyFetched = true
+    if (!entry.title) entry.title = titleOf(entry.messages)
+    if (!entry.msgCount) entry.msgCount = entry.messages.filter((item) => item.role === 'user').length
+  }
+  if (activeId.value === sessionId) {
+    messages.value = [...(read.messages || [])]
+    scrollOffset.value = 0
+  }
+  persist()
+  return read
 }

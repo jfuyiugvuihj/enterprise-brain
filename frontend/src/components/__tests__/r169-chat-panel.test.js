@@ -394,7 +394,11 @@ describe('R169 Q4 · 报告那一腿的确认门（SSR 真产物 + 跑真 approv
     expect(html).toContain('确认执行')
     expect(html).toContain('data-testid="hitl-reject"')
     // 这一屏只给两个决定：执行或拒绝。第三枚「稍后再说」之类的假控件一出现就该红。
-    expect(html.match(/class="hitl-btn/g)).toHaveLength(2)
+    // 🔴 R268（G20 接线）改口一处、意图一字不放宽：这两枚按钮今天接了 UiButton 原语，
+    // 原语把自己的类名排在前面（class="ui-button ui-button--primary hitl-btn approve"），
+    // 所以「class 属性以 hitl-btn 开头」这个形状不再是判据，「这一屏有几枚 hitl-btn」才是。
+    // 计数仍然恰好 2：多一枚假控件就红，少一枚（接线被摘掉）也红。
+    expect(html.match(/hitl-btn/g)).toHaveLength(2)
     hitl.value = null
   })
 

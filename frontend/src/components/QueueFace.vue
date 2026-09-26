@@ -7,7 +7,16 @@
  *   队列现状    GET /queue/stats 的 queue_length / processing
  *   排不上队    入队那一步的 HTTP 失败（今天只有 queue_unavailable 这一枚真实读数）
  * position 取不到时界面说「读不到」，不补 0，也不按排队人数编一个「队列已满」。
+ *
+ * R268 · G06：排队中那一轮今天多了一枚真能办事的「不排了」。本组件只画按钮、不打接口 ——
+ * 取消这件事由面板发到 POST /queue/{request_id}/cancel，它的三条落点（已取消 / 取消已登记 /
+ * 没取消成）也一律住在 ChatPanel.vue，与本组件既有的 retry / action 同一个分工。
+ * 给不给这枚按钮由 face.cancellable 决定，而只有【这一轮还没落定】那两格才置真：对着已经
+ * 落定的一轮、对着挂起等人拍板的一轮说「不排了」都是假话。
+ * face.cancelling = 这一枚还在飞（按钮转忙），face.cancelRetry = 上一次没办成（换文案）。
+ * G20 的接线半同时落在本组件：三枚按钮一律走 UiButton 原语，class 沿用既有那两枚，视觉不改。
  */
+import UiButton from './ui/UiButton.vue'
 defineProps({
   face: {
     type: Object,
@@ -19,7 +28,7 @@ defineProps({
   },
 })
 
-const emit = defineEmits(['retry', 'action'])
+const emit = defineEmits(['retry', 'action', 'cancel'])
 </script>
 
 <template>
@@ -35,25 +44,38 @@ const emit = defineEmits(['retry', 'action'])
     <span class="queue-headline" data-testid="queue-headline">{{ face.headline }}</span>
     <span v-if="face.detail" class="queue-detail" data-testid="queue-detail">{{ face.detail }}</span>
     <span v-if="stats" class="queue-stats" data-testid="queue-stats">{{ stats.headline }}</span>
-    <button
+    <UiButton
       v-if="face.retryable"
-      type="button"
       class="queue-retry"
+      size="sm"
       data-testid="queue-retry"
       @click="emit('retry')"
-    >按原文再问一次</button>
+    >按原文再问一次</UiButton>
     <!-- R260 · 挂起待批准那一轮给一件能点的东西：这一枚只做【去哪一屏】，
          批准本身仍由「审批与待办」那两枚既有组件（HitlPendingPanel / HitlPendingRow）
          发到 POST /approve —— 本组件不开第二套批准路径，也不在这里判归属（鉴权在服务端）。
          样式沿用上面那枚 pill：本单不涉视觉，零新增色值。 -->
-    <button
+    <UiButton
       v-if="face.action"
-      type="button"
       class="queue-retry"
+      size="sm"
       data-testid="queue-action"
       :data-action="face.action.kind"
       @click="emit('action', face.action)"
-    >{{ face.action.label }}</button>
+    >{{ face.action.label }}</UiButton>
+    <!-- R268 · 「不排了」走的是排队那一头的取消端点（见本组件文档注释点名的那一条腿）。它与
+         输入框旁边那枚「中断本次回答」不是同一条腿：一枚管还没开始跑的，一枚管
+         正在往屏上显示的。两枚各说各的，这里不借那一枚，也不把两条腿并成同一句「已取消」。
+         样式沿用上面那两枚 pill 与原语的 danger 档：本单零新增色值。 -->
+    <UiButton
+      v-if="face.cancellable"
+      class="queue-retry"
+      variant="danger"
+      size="sm"
+      :loading="Boolean(face.cancelling)"
+      data-testid="queue-cancel"
+      @click="emit('cancel')"
+    >{{ face.cancelRetry ? '再试一次取消' : (face.cancelling ? '取消中…' : '不排了') }}</UiButton>
   </p>
 </template>
 

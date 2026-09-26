@@ -239,7 +239,11 @@ import ChartViewer from './ChartViewer.vue'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
 import QueueFace from './QueueFace.vue'
 import SourceCard from './SourceCard.vue'
-import { fetchRuntimeHealth, modelState, modelStatusText } from '../lib/health.js'
+import { fetchRuntimeHealth, modelState, modelStatusText, runtimeFaces } from '../lib/health.js'
+// R268 · G15：删会话那一步不再问浏览器。状态机不新建第三套 —— 取的是产物列表里那份既有实现
+// （advanceDelete：第一次点击只把按钮改成确认文案，同一目标第二次点击才真的 execute），
+// 与告警规则删除同一条行为口径：一次错位的点击删不掉没点过的那一行。
+import { advanceDelete, deleteButtonLabel, isPendingDelete } from './ArtifactList.vue'
 import {
   abortStream,
   activeDataFilename,
@@ -258,8 +262,12 @@ import {
   newSession,
   persist,
   rememberScroll,
+  mergeServerSessions,
+  pullBackendMessages,
+  readBackendSessionList,
   removeSession,
   restoreActive,
+  sessionBodyMissing,
   scrollOffset,
   scrollTo,
   sessions,
@@ -267,7 +275,7 @@ import {
   syncActive,
 } from '../lib/sessions'
 import { authedFetch, errorDetail, http } from '../lib/http'
-import { errorCodeLabel, errorCodeOf, normalizeError } from '../lib/errcodes'
+import { ERROR_CODES, errorCodeLabel, errorCodeOf, normalizeError } from '../lib/errcodes'
 import {
   cacheFace,
   queueFace,
@@ -277,7 +285,8 @@ import {
   revisionsAfter,
   sourcesFace,
 } from '../lib/provenance'
-import { UiEmptyState, UiErrorState } from './ui'
+// R268 · G20：这一屏的按钮一律接自研原语，不再手写裸 button（原语早就在树里，缺的是接线）。
+import { UiButton, UiEmptyState, UiErrorState } from './ui'
 import { LANE_CHOICES, LANE_UNDECLARED, laneFromQuery, queryWithLane } from '../router/lane-choice.js'
 
 const input = ref('')
@@ -444,14 +453,205 @@ function formatTime(ts) {
   return (d.getMonth() + 1) + '/' + d.getDate()
 }
 
+// ==================== R268 · G15：删会话是两步，不再问浏览器 ====================
+//
+// 改前这一格用浏览器原生 confirm（全站只剩两枚之一），与仓里既有的两步确认并存两套：
+// 原生那一套弹在系统层、样式与语言都不受产品管，而且「点了删除→系统弹一层→点确定」读起来
+// 并不比应用内那两步更重。现在走的是产物列表同一枚纯函数（advanceDelete）：
+// 第一次点击只把【这一行】的按钮改成确认文案（arm），同一行第二次点击才 execute；
+// 换一行点只会把待确认挪过去，一次错位的点击删不掉没点过的会话。
+
+const pendingSessionDelete = ref('')
+const deletingSessionId = ref('')
+
 async function deleteSession(id) {
-  if (!confirm('删除此会话？')) return
+  const target = String(id ?? '')
+  const step = advanceDelete(pendingSessionDelete.value, target)
+  if (step !== 'execute') {
+    pendingSessionDelete.value = target
+    return
+  }
+  pendingSessionDelete.value = ''
+  deletingSessionId.value = target
   try {
-    await removeSession(id)
+    await removeSession(target)
   } catch (err) {
-    note(`会话未能从服务端删除：${err.message || err}`, 'error')
+    // 本机那一份已经拿掉了，服务端那一份没删掉 —— 这两句话必须分开说，而且「服务端那份还在」
+    // 是真的能再拿回来的：下一句直接给出那件能做的事，不写「请稍后再试」。
+    note(`会话未能从服务端删除：${normalizeError(err).message}按「从服务器取回」可以把它再取回列表。`, 'error')
+  } finally {
+    deletingSessionId.value = ''
   }
   await scrollBottom()
+}
+
+/** 这一行删除按钮此刻的三个名字：常态（一个叉）/ 待确认（问一句）/ 正在删。取自既有那枚函数。 */
+function sessionDeleteLabel(id) {
+  return deleteButtonLabel({
+    // 🔴 这里传的是【值】不是 ref：ArtifactList 那一处在模板里调，模板代理会把 ref 自动解包，
+    //    而本函数住在 script 里，不解包就会永远比不中（第一次点击后按钮不改口 = 假的两步确认）。
+    pending: isPendingDelete(pendingSessionDelete.value, String(id ?? '')),
+    busy: deletingSessionId.value === String(id ?? '') && deletingSessionId.value !== '',
+    label: '✕',
+  })
+}
+
+// ==================== R268 · G04：会话名单从服务器取回来 ====================
+//
+// 后端 GET /sessions 早就把 title / updated_at / msg_count 吐全了，前端一行都不读那份名单，
+// 于是换一台浏览器或被登出一次，问过的话就「不见了」。这里补的是读取方：并集合并（本机有
+// 正文的那条永远保留本机那份），而且挂载期一枚请求都不发（r260 己1 钉着），只在员工伸手
+// 那一刻发一次。「名单读到了但是空的」与「这一次没读到」是两句话，各自一张脸。
+
+const serverPull = ref({ phase: 'idle', outcome: '', summary: null, error: null })
+const sessionBodyFault = ref(null)
+
+/**
+ * 向服务端要一份东西没要到时的那几张脸：名单与正文共用同一份分类
+ * （lib/sessions.js 的 SESSION_READ 那几格，判定只在那一处），换的只是主语。
+ * 🔴 落不到分四格各说一句，一格都不许并：unreachable 说的是「界面不知道」，
+ * notFound / notYours 说的是后端给了确定回答，badBody 说的是接口换了形状。
+ * 归属那一句走 normalizeError 那一份字典，面板不另立第二套话。
+ */
+function outcomeFace(subject, outcome, error) {
+  const dict = error ? normalizeError(error).message : ''
+  if (outcome === SESSION_READ.notYours) {
+    return { tone: 'warn', text: `${subject}没取回来：${dict || '现在的登录身份看不着它。'}` }
+  }
+  if (outcome === SESSION_READ.notFound) {
+    return { tone: 'warn', text: `${subject}没取回来：${dict || '后端回话说找不到这一格。'}` }
+  }
+  if (outcome === SESSION_READ.unreachable) {
+    return {
+      tone: 'warn',
+      text: `${subject}这一次没读到：${dict || '连接没成，或服务没应答。'}服务端有没有这一格，界面不知道，列表一个字都没动。`,
+    }
+  }
+  return {
+    tone: 'warn',
+    text: `${subject}的形状不是界面认的那一种：多半是接口换了样子而前端还没跟上。列表一个字都没动。`,
+  }
+}
+
+function serverPullFace(state) {
+  if (!state || state.phase === 'idle') return null
+  if (state.phase === 'sending') return { tone: 'info', text: '正在读服务器上的会话名单……' }
+  if (state.phase === 'failed') return outcomeFace('会话名单', state.outcome, state.error)
+  const summary = state.summary || { serverRows: 0, added: 0, total: 0 }
+  if (!summary.serverRows) {
+    return { tone: 'info', text: '服务器上没有可取回的会话：这是后端读回来给的确定回答，不是「没读到」。' }
+  }
+  const merged = summary.added
+    ? `新并入 ${summary.added} 条`
+    : `${summary.serverRows} 条本机都已有，没有新增`
+  return {
+    tone: 'info',
+    text: `读到 ${summary.serverRows} 条：${merged}。标着「正文还欠着」的那些行，点开才会把正文取回来。`,
+  }
+}
+
+async function pullServerSessions() {
+  if (serverPull.value.phase === 'sending') return
+  serverPull.value = { phase: 'sending', outcome: '', summary: null, error: null }
+  const read = await readBackendSessionList()
+  if (read.outcome !== SESSION_READ.found) {
+    serverPull.value = { phase: 'failed', outcome: read.outcome, summary: null, error: read.error || null }
+    return
+  }
+  const summary = mergeServerSessions(read.rows)
+  sessionBodyFault.value = null
+  serverPull.value = { phase: 'done', outcome: SESSION_READ.found, summary, error: null }
+}
+
+/**
+ * 点开左侧某一条：本机有正文就直接切；那一条是刚从名单并进来的（正文还欠着），先替它把正文
+ * 取回来再切。取不到就【不切】——切过去是一条空会话，那等于界面自己宣布「这条没内容」，
+ * 而后端明明有。落哪一格就说哪一格的话（与上面那份分类同一出口）。
+ */
+async function openSession(id) {
+  if (sessionBodyMissing(id)) {
+    const read = await pullBackendMessages(id)
+    if (read.outcome !== SESSION_READ.found) {
+      sessionBodyFault.value = { id: String(id ?? ''), ...outcomeFace('这条会话的正文', read.outcome, read.error) }
+      return
+    }
+    sessionBodyFault.value = null
+  }
+  switchSession(id)
+}
+
+// ==================== R268 · G03：这一轮用的哪张表，看得见也能就地改 ====================
+//
+// 改前的样子：这一屏只有 activeDataFilename 那枚 store 值在动（别的屏派发过来的问题时顺手改它），
+// 模板里一个字都不显示 —— 员工看到的数与页面上选的表对不上时无从纠正。现在这一格有三件事：
+// ① 选择框上屏，看得见「下一轮将把哪张表发出去」；② 就地可改，改的就是下一轮真正发出去的那一份
+// （send 的默认参数读的就是它）；③ 每一轮回答下面画回【那一轮发出去时带的表】。
+// 🔴 措辞的边界：这三句说的都是「界面发出去的东西」。「后端这一轮真正用了哪张表」今天不在线上
+// 任何一格里（canonical 回执与 done 帧都没那一枚字段），所以界面不说那句话，只报自己发出的依据；
+// 要说出服务端那一份，需要后端在终态读数里带 data_filename —— 已写进转出项。
+// 清单是 lazy 读的：挂载期一枚请求都不发（r260 己1 钉着），伸手才读。
+
+const dataFiles = ref([])
+const dataFilesState = ref('idle')  // idle 还没读 / loading 在读 / ready 读到 / failed 没读到
+const dataFilesError = ref(null)
+
+/** 选择框里的候选：清单里那些 + 当前选中的那一枚（清单没读回来时也不许把已选的说成不存在）。 */
+function dataTableChoices() {
+  const names = dataFiles.value
+    .map((row) => (typeof row?.filename === 'string' ? row.filename.trim() : ''))
+    .filter(Boolean)
+  const chosen = String(activeDataFilename.value || '')
+  if (chosen && !names.includes(chosen)) names.unshift(chosen)
+  return names
+}
+
+/** 只在员工伸手那一刻读清单；读到过就不再打一枪（要新的按「重读」那枚按钮）。 */
+async function loadDataFiles({ force = false } = {}) {
+  if (dataFilesState.value === 'loading') return
+  if (dataFilesState.value === 'ready' && !force) return
+  dataFilesState.value = 'loading'
+  try {
+    const res = await http.get('/data-files', { params: { _ts: Date.now() } })
+    dataFiles.value = Array.isArray(res?.data?.files) ? res.data.files : []
+    dataFilesError.value = null
+    dataFilesState.value = 'ready'
+  } catch (err) {
+    dataFilesError.value = err
+    dataFilesState.value = 'failed'
+  }
+}
+
+/** 就地改表：改的就是下一轮 send() 默认要发出去的那一枚，并随会话落盘（切回来还是这一张）。 */
+function chooseDataTable(value) {
+  activeDataFilename.value = typeof value === 'string' ? value : ''
+  syncActive()
+}
+
+/** 选择框下面那一行说的三件事：这一轮将发哪张表 / 清单读到哪一步了 / 用不用得上由谁判。 */
+function dataTableFaceText() {
+  const chosen = String(activeDataFilename.value || '')
+  const picked = chosen
+    ? `这一轮将把〈${chosen}〉发给后端`
+    : '这一轮不指定数据表：由后端按问题内容决定走不走数据分析'
+  const tail = '问题看起来是查资料的，后端就不一定用这张表。'
+  if (dataFilesState.value === 'loading') return `${picked}｜数据表清单正在读……`
+  if (dataFilesState.value === 'failed') {
+    return `${picked}｜清单没读到：${normalizeError(dataFilesError.value).message}可以先按当前这张表问，或点「重读清单」再试。`
+  }
+  if (dataFilesState.value === 'ready') {
+    return `${picked}｜清单已读到 ${dataFiles.value.length} 张，可就地改。${tail}`
+  }
+  return `${picked}｜点开这里才读清单，界面挂载时不发请求。${tail}`
+}
+
+/**
+ * 这一轮回答下面那一句：说的是【发出去时带的表】，不是「后端选了哪张表」。
+ * 老会话里没有这一格（改前发出去就没记），那就一句都不画 —— 拿「不指定」冒充历史是假话。
+ */
+function dataTableOf(msg) {
+  if (!msg || msg.role !== 'assistant') return ''
+  if (typeof msg.dataFilename !== 'string') return ''
+  return msg.dataFilename ? `本轮发问带的表：${msg.dataFilename}` : '本轮没指定数据表'
 }
 
 // ==================== 图表解析 ====================
@@ -530,6 +730,9 @@ async function restoreScroll() {
 const runtimeHealth = ref(null)
 const modelStateValue = computed(() => modelState(runtimeHealth.value))
 const modelStateText = computed(() => modelStatusText(runtimeHealth.value))
+// R268 · G07：那枚点只管「权重在不在、还有没有别格不对劲」；具体不对劲的是哪几格，由这一份
+// 名单逐格说（lib/health.js 一族一句，六族六张脸）。这里只做挂载，本面板不当第二套判断。
+const runtimeFaceList = computed(() => runtimeFaces(runtimeHealth.value))
 
 async function refreshRuntimeHealth() {
   runtimeHealth.value = await fetchRuntimeHealth({ force: true })
@@ -578,7 +781,11 @@ async function send(dataFilename = activeDataFilename.value) {
   // mid 是这一轮的脸的钥匙：排队位次与缓存改版核对都是流结束之后才异步回来的，而 store 的
   // messages 是 shallowRef，往消息对象上塞属性触发不了重渲染。派生态住在组件的 ref 表里，
   // 消息对象上那一份（msg.sources / msg.cache / msg.queue）只负责随会话落盘与历史复原。
-  messages.value.push({ role: 'assistant', content: '', steps: [], sources: null, mid: genId() })
+  // R268 · G03：把这一轮发出去的表一起记进这条回答 —— 落盘之后刷新与换屏都还说得出「那一次
+  // 问的是哪张表」。这是界面的发依据，不是后端的用表读数（那枚字段今天线上没有）。
+  messages.value.push({
+    role: 'assistant', content: '', steps: [], sources: null, mid: genId(), dataFilename: dataFilename || '',
+  })
   const aiMsg = messages.value[messages.value.length - 1]
   const turn = turnKey(aiMsg, messages.value.length - 1)
   note('')
@@ -825,6 +1032,10 @@ const queueWaits = ref({})    // R221 · 这一轮盯到点收表：只说「前
 const rejectedReads = ref({}) // 入队这一步就失败（HTTP 5xx / 4xx）的归一结果
 const cacheChecks = ref({})   // 改版核对：缺键=未查 / null=无从核对 / []=没改版 / [{}]=改版了
 const queueStats = ref(null)  // GET /queue/stats 的最近一次读数（全局一块，不按轮次分）
+// R268 · G06：这一轮「不排了」走到哪一步。phase 空 = 没点过；sending = 请求在飞；
+// requested = 后端已登记取消标记（那一格叫 cancel_requested，任务离开队列、等 worker 收尾）；
+// failed = 服务端回绝了，error 原样留着，那张脸的正文取的是 errcodes 那一份字典。
+const queueCancels = ref({})
 
 const preview = reactive({
   open: false,
@@ -1006,6 +1217,80 @@ function queuePollWaitFace() {
   }
 }
 
+/**
+ * 「不排了」那枚按钮的唯一置真处（R268 · G06）。
+ *
+ * 只给那两枚【还没落定】的脸：排队中 / 正在跑。落定那一族（跑完 / 已取消 / 失败 / 过期 / 死信）、
+ * 挂起等人拍板那一格、以及本面板自己画的「读不到 / 停表 / 到点」那三张脸一律不给 ——
+ * 对着不会再动的东西说「不排了」是假控件，对着「状态读不回来」那一轮说「不排了」更是把两条腿
+ * 混成一条腿（那条腿是输入框旁边的「中断本次回答」，走的是会话取消，不在这枚按钮的份内）。
+ * 取消在飞时按钮转忙（原语的 loading），上一次没办成时它自己换文案，不另立第二枚控件。
+ */
+const QUEUE_CANCELLABLE_KINDS = ['queued', 'processing']
+
+function withCancelHandle(face, cancel) {
+  if (!face) return null
+  if (cancel && cancel.phase === 'failed') return { ...face, cancellable: true, cancelRetry: true }
+  if (!QUEUE_CANCELLABLE_KINDS.includes(face.kind)) return face
+  const next = { ...face, cancellable: true }
+  if (cancel && cancel.phase === 'sending') next.cancelling = true
+  return next
+}
+
+/**
+ * 取消已登记、但这一轮还没落定（后端那一格叫 cancel_requested：标记写下去了，握着任务的 worker
+ * 下一次检查时判死）。契约那句话是这一格的判据：从这里起它只会落「已取消」，永远不会变成「跑完」。
+ * 所以这一格两头都不许站：借 queueFace 最后那格兜底就说成「后台执行失败」（人刚按了取消，界面
+ * 反过来说系统坏了 —— 这正是改前那一版的假话），提前说「已取消」又是替后端宣布还没发生的事。
+ * codeLabel 留空：登记这件事没有错误码可归，硬凑一枚就是自造第二套口径（与 R221 到点脸同规矩）。
+ */
+function queueCancelPendingFace() {
+  return {
+    kind: 'cancel-requested',
+    headline: '取消已登记：这一轮不会再产出答案',
+    detail: '取消标记已经写进队列，后台正在收尾，落定之前它不会再回答任何东西。界面还在读这一轮的状态，落定之后这一格会跟着改口。',
+    codeLabel: '',
+    tone: 'info',
+    retryable: false,
+    ahead: null,
+  }
+}
+
+/**
+ * 判据①要的是「读服务端错误码并用人话说出来」。这一句取的是 errcodes 那一份字典里【该码】的
+ * 那一句（唯一真相源，面板不另编一套判定，也不自造第二张表）。为什么还要过这一道：
+ * lib/errcodes.js:415-421 的 fromEnvelope 把后端 envelope 里那行 message 顶在字典句之前，
+ * 而 POST /queue/{id}/cancel 的 503 那一格回的是给开发者看的英文正文
+ * （app/api/v1/chat.py:4388 带的是 str(QueueConnectionError)），照原样念给员工听就不是人话。
+ * 码认不进枚举时退回 normalizeError 自己的兜底句，一句都不硬编。
+ * 🔴 本函数只改【面板取句的那一格】，字典一行未动（lib/errcodes.js 归块 G）；那一条政策差异
+ * 已写进交回的转出项。
+ */
+function dictionarySentence(result) {
+  const code = errorCodeOf(result)
+  const entry = code && Object.prototype.hasOwnProperty.call(ERROR_CODES, code) ? ERROR_CODES[code] : null
+  return entry ? entry.message : result.message
+}
+
+/**
+ * 取消没办成：原因那一句取服务端那一格的码（normalizeError 那一份字典），面板不另编。
+ * 「这一轮没能取消」是这一格才有的事实，字典里没有第二份会替它说；两句话各说各的，
+ * 合成一句就变成「不知道哪儿坏了」那一类敷衍。retryable 写死 true 是有意与字典脱钩：
+ * 这一层的重试对象是「取消」这个动作本身，不是那一轮问答。
+ */
+function queueCancelFailedFace(error) {
+  const result = normalizeError(error)
+  return {
+    kind: 'cancel-failed',
+    headline: '这一轮没能取消',
+    detail: `${dictionarySentence(result)}这一轮还在原来的位置上，界面没有停表，也没有替后端宣布它已经取消。`,
+    codeLabel: errorCodeLabel(result),
+    tone: 'warn',
+    retryable: true,
+    ahead: null,
+  }
+}
+
 function queueFaceOf(msg, index) {
   const key = turnKey(msg, index)
   if (rejectedReads.value[key]) return queueRejectedFace(rejectedReads.value[key])
@@ -1016,13 +1301,24 @@ function queueFaceOf(msg, index) {
   // 「前面还有 N 人」——那正是本单要治的永久 spinner。迟到的读数把正文补回来之后
   // 这一张脸就不必再说了，所以让位给正文。
   if (queueWaits.value[key] && !msg.content) return queuePollWaitFace()
-  const read = queueReads.value[key]
-  if (!read) {
+  const cancel = queueCancels.value[key] || null
+  const read = queueReads.value[key] || null
+  let face
+  if (cancel && cancel.phase === 'failed') {
+    face = queueCancelFailedFace(cancel.error)
+  } else if (read && !QUEUE_SETTLED.includes(read.status)
+    && (read.status === 'cancel_requested' || (cancel && cancel.phase === 'requested'))) {
+    face = queueCancelPendingFace()
+  } else if (!read) {
     if (queueFaults.value[key]) return queuePollFailedFace(queueFaults.value[key])
     // 只收到 queued 回执、状态还没读回来：说「已排上队、位次未读到」，不补 0 也不猜人数。
-    return msg.queue ? queueFace({ status: 'queued' }) : null
+    // R268 把这半句改成读回执自己那枚状态（原来写死 queued）：取消落定之后这一轮重新挂载时
+    // 读数表是空的，写死就把它画回「排队中」——那是判据①点名的第二种假话。
+    face = msg.queue ? queueFace(msg.queue) : null
+  } else {
+    face = queueFace(read)
   }
-  return queueFace(read)
+  return withCancelHandle(face, cancel)
 }
 
 function queueStatsOf() {
@@ -1105,6 +1401,15 @@ function watchQueueTurn(key, requestId) {
   queueWatches.push(entry)
 }
 
+/**
+ * 只停【这一轮】的表（R268 · G06）：取消落定之后这一轮不会再有新读数，继续打就是每 3 秒一笔
+ * 没人看的请求。别的轮次各盯各的，一概不动 —— 那是按轮记账的本意。
+ */
+function stopQueueWatch(key) {
+  queueWatches.filter(entry => entry.key === key).forEach(entry => clearInterval(entry.timer))
+  queueWatches = queueWatches.filter(entry => entry.key !== key)
+}
+
 // 面板常驻 v-show，卸载不是常态；但真卸载时必须停表：排队轮询会在别人不看的界面上一直打接口。
 function stopQueueWatches() {
   queueWatches.forEach(entry => clearInterval(entry.timer))
@@ -1118,6 +1423,83 @@ function restoreQueuedTurns() {
     if (msg.content) return
     watchQueueTurn(turnKey(msg, index), msg.queue.requestId)
   })
+}
+
+/** GET /queue/{id}/cancel 的回执只有一枚真话可说：cancelled 为 true 且后端此刻读到的那一格状态。
+ *  后端在 404 / 403 / 503 那几格回的是错误（见下面 catch 那一段），200 时回的就是这三枚键。 */
+function cancelReceiptOf(response) {
+  const body = response?.data && typeof response.data === 'object' ? response.data : null
+  if (!body) return { receipt: false, cancelled: false, status: '' }
+  return {
+    receipt: true,
+    cancelled: body.cancelled === true,
+    status: typeof body.status === 'string' ? body.status : '',
+  }
+}
+
+/**
+ * 「不排了」唯一的落点：POST /queue/{request_id}/cancel。
+ *
+ * 三条判据各管一段：
+ * ① 走的就是排队那条腿 —— 与输入框旁边那枚「中断本次回答」（/ask/{session_id}/cancel）不是
+ *   同一条腿，一枚管还没开始跑的、一枚管正在往屏上显示的，两枚各说各的，这里不借那一枚。
+ * ② 说出口必须是事实：后端回 cancelled + status，界面照那两枚说。status 是 cancelled 才算
+ *   「已取消」；是 cancel_requested（任务已经离开待发队列、等 worker 收尾）只能说「已登记」。
+ *   HTTP 200 但回执里没有那枚 true —— 界面闭嘴说「服务没回结果」，不脑补成成功。
+ * ③ 失败必须读服务端错误码并用人话说出来：正文走 normalizeError 那一份字典（404 那一格说的是
+ *   要找的内容不存在、403 那一格说的是权限、503 那一格说的是队列服务连不上），面板不自造
+ *   第二套判定，也不把三格并成一句「取消失败」。
+ * request_id 只从这一轮的 queued 回执里取（lib/sessions.js 的 queueFromFrame），没有就点不动。
+ */
+async function cancelQueuedTurn(msg, index) {
+  const key = turnKey(msg, index)
+  const requestId = typeof msg?.queue?.requestId === 'string' ? msg.queue.requestId : ''
+  if (!requestId) return
+  if (queueCancels.value[key]?.phase === 'sending') return
+  queueCancels.value = storeBag(queueCancels, key, { phase: 'sending' })
+  let response = null
+  let failure = null
+  try {
+    response = await http.post(`/queue/${encodeURIComponent(requestId)}/cancel`)
+  } catch (err) {
+    failure = err
+  }
+  if (failure) {
+    queueCancels.value = storeBag(queueCancels, key, { phase: 'failed', error: failure })
+    const result = normalizeError(failure)
+    note(`这一轮没能取消：${dictionarySentence(result)}`, 'error')
+    return
+  }
+  const receipt = cancelReceiptOf(response)
+  if (!receipt.receipt || !receipt.cancelled) {
+    // 后端把 cancelled 说成 false 的那种落点（契约：那一枚只报「这一格有没有真东西被取消掉」）
+    // 与回执形状读不到是同一件事：界面没有证据，就不许宣布取消成功。
+    queueCancels.value = storeBag(queueCancels, key, { phase: 'unreadable' })
+    note('取消请求已经发出，但服务没有回「已取消」，界面不替它宣布结果。', 'warn')
+    return
+  }
+  if (receipt.status === 'cancelled') {
+    stopQueueWatch(key)
+    queueWaits.value = storeBag(queueWaits, key, null)
+    queueReads.value = storeBag(queueReads, key, {
+      status: 'cancelled', position: null, failure: null, result: '', approval: null,
+    })
+    // 消息对象上那一份管落盘与重挂载：没有它，刷新一次这一轮又会画回「排队中」。
+    if (msg) msg.queue = { ...(msg.queue || {}), requestId, status: 'cancelled' }
+    queueCancels.value = storeBag(queueCancels, key, null)
+    note('这一轮排队任务已取消，界面不再读它的状态。', 'info')
+    syncActive()
+    persist()
+    return
+  }
+  // 落定之前那一格（cancel_requested）：把后端给的状态原样收进读数表，表继续开着。
+  if (receipt.status) {
+    queueReads.value = storeBag(queueReads, key, {
+      status: receipt.status, position: null, failure: null, result: '', approval: null,
+    })
+  }
+  queueCancels.value = storeBag(queueCancels, key, { phase: 'requested' })
+  note('取消已登记：这一轮不会再产出答案，落定之前界面继续读它的状态。', 'info')
 }
 
 /**
@@ -1287,30 +1669,75 @@ function renderMd(raw) {
     <aside :class="['session-sidebar', { collapsed: !sidebarOpen }]">
       <div class="sidebar-hd">
         <span v-if="sidebarOpen" class="sidebar-title">💬 会话</span>
-        <button class="sidebar-toggle" @click="sidebarOpen = !sidebarOpen" :title="sidebarOpen ? '收起' : '展开'">
-          {{ sidebarOpen ? '◀' : '▶' }}
-        </button>
+        <UiButton
+          class="sidebar-toggle"
+          variant="ghost"
+          size="sm"
+          data-testid="sidebar-toggle"
+          :title="sidebarOpen ? '收起' : '展开'"
+          @click="sidebarOpen = !sidebarOpen"
+        >{{ sidebarOpen ? '◀' : '▶' }}</UiButton>
       </div>
 
       <template v-if="sidebarOpen">
-        <button class="new-session-btn" @click="newSession">＋ 新建会话</button>
+        <UiButton class="new-session-btn" size="sm" data-testid="new-session" @click="newSession">＋ 新建会话</UiButton>
+        <!-- R268 · G04：这一枚才是「换台电脑历史还在」的那条路。今天它只在被点下去的那一刻
+             发 GET /sessions（面板挂载时一枚请求都不发），把名单并进来：本机有正文的一条不动，
+             本机没有的那些行先只带标题 / 问数 / 时间，正文要点开才取。
+             读回来是空的与读不回来是两句话，下面那行逐格说（见 serverPullFace）。 -->
+        <UiButton
+          class="new-session-btn"
+          size="sm"
+          data-testid="session-pull"
+          :loading="serverPull.phase === 'sending'"
+          @click="pullServerSessions"
+        >从服务器取回</UiButton>
+        <p
+          v-if="serverPullFace(serverPull)"
+          class="session-meta"
+          role="status"
+          :data-tone="serverPullFace(serverPull).tone"
+          :data-phase="serverPull.phase"
+          data-testid="session-pull-face"
+        >{{ serverPullFace(serverPull).text }}</p>
 
         <div class="session-list">
-          <!-- 会话列表读的是本地 store（lib/sessions.js），不发请求，所以这里不需要「无权限」那张脸。 -->
+          <!-- 这一列本地那份今天还在读（lib/sessions.js），但 R268 之后它不再唯一：上面那枚
+               「从服务器取回」会打一次 GET /sessions 并把名单并进来，于是「看不着这一格」今天
+               有了第三种落法（不是你的 / 读不到 / 形状不对），那几张脸在列表下面逐格说。 -->
           <UiEmptyState v-if="sessions.length === 0" title="暂无历史会话" dense />
           <div v-for="s in sessions" :key="s.id"
                :class="['session-item', { active: s.id === sessionId }]"
-               @click="switchSession(s.id)">
+               @click="openSession(s.id)">
             <div class="session-info">
               <div class="session-title">{{ s.title || '新会话' }}</div>
               <div class="session-meta">
                 <span>{{ s.msgCount || 0 }} 问</span>
                 <span>·</span>
                 <span>{{ formatTime(s.updatedAt) }}</span>
+                <span v-if="sessionBodyMissing(s.id)">· 正文还欠着</span>
               </div>
             </div>
-            <button class="session-del" @click.stop="deleteSession(s.id)" title="删除">✕</button>
+            <!-- R268 · G15：第一次点击只把这一行改成「确认删除？」，同一行第二次点击才发 DELETE。
+                 待确认态记的是【哪一行】，换一行点只会把确认挪过去（状态机取自产物列表那份）。 -->
+            <UiButton
+              class="session-del"
+              variant="ghost"
+              size="sm"
+              data-testid="session-del"
+              :loading="deletingSessionId === String(s.id)"
+              :title="sessionDeleteLabel(s.id)"
+              @click.stop="deleteSession(s.id)"
+            >{{ sessionDeleteLabel(s.id) }}</UiButton>
           </div>
+          <p
+            v-if="sessionBodyFault"
+            class="session-meta"
+            role="status"
+            :data-tone="sessionBodyFault.tone"
+            :data-session="sessionBodyFault.id"
+            data-testid="session-body-fault"
+          >{{ sessionBodyFault.text }}</p>
         </div>
       </template>
     </aside>
@@ -1321,7 +1748,9 @@ function renderMd(raw) {
       <div class="chat-topbar">
         <div class="chat-topbar-left">
           <span class="chat-dot" :class="`chat-dot--${modelStateValue}`" data-testid="model-dot"></span>
-          <span class="chat-title">智能问答</span>
+          <!-- R268 · G17：屏名与路由名统一成同一句（meta.title 那一处是真源，本单不改 router）。
+               改前这一屏自己写着另一个叫法，同一屏两个名字，员工读到的是两份词汇表。 -->
+          <span class="chat-title" data-testid="chat-screen-name">问一句</span>
         </div>
         <span class="model-status" :class="`model-status--${modelStateValue}`" data-testid="model-status">
           🖥️ {{ modelStateText }}
@@ -1332,6 +1761,17 @@ function renderMd(raw) {
       <div v-if="modelStateValue === 'down'" class="model-degraded-notice" role="status" data-testid="model-degraded-notice">
         本机还没有可用的模型权重，下面的回答只是**检索到的原文片段**，不是模型给出的结论。
         先在服务器上拉取模型（或在本机模型设置里选一个已存在的），再回来提问。
+      </div>
+
+      <!-- R268 · G07：权重之外那几格不对劲，一格一句，逐格画在这里。
+           改前只认一枚权重缺失码，其余降级全在绿点后面装健康；现在 lib/health.js 一族一张脸，
+           检索模型 / 队列 / 只读 / 依赖 / 账号库 / 没走加速 六句两两不同（判据③不许并格）。
+           读不到 = 一句都不画；「不认识的那一格」那一族单独有一句，不闭嘴。 -->
+      <div v-if="runtimeFaceList.length" class="model-degraded-notice" role="status" data-testid="runtime-faces">
+        <p v-for="face in runtimeFaceList" :key="face.kind + (face.id || '')"
+           class="runtime-face" data-testid="runtime-face" :data-kind="face.kind">
+          {{ face.headline }}{{ face.detail }}
+        </p>
       </div>
 
       <div class="chat-messages" ref="chatEl" @scroll.passive="onScroll">
@@ -1346,8 +1786,8 @@ function renderMd(raw) {
              :data-session="deepLink.session || null" :data-request="deepLink.request || null"
              data-testid="deep-link-note">
           <span class="deep-link-text">{{ deepFace.text }}</span>
-          <button v-if="deepFace.retry" type="button" class="deep-link-retry"
-                  data-testid="deep-link-retry" @click="applyDeepLink()">再问一次后端</button>
+          <UiButton v-if="deepFace.retry" class="deep-link-retry" size="sm"
+                    data-testid="deep-link-retry" @click="applyDeepLink()">再问一次后端</UiButton>
         </div>
         <div v-if="messages.length === 0 && !deepBlocked" class="welcome-screen">
           <div class="welcome-glow"></div>
@@ -1358,7 +1798,7 @@ function renderMd(raw) {
             <div class="wc-features">
               <div class="wc-feat">
                 <span class="wc-feat-icon">📄</span>
-                <span>上传文档 · 智能问答</span>
+                <span>上传文档 · 问一句</span>
               </div>
               <div class="wc-feat">
                 <span class="wc-feat-icon">📊</span>
@@ -1444,7 +1884,12 @@ function renderMd(raw) {
                     :stats="queueStatsOf()"
                     @retry="retryTurn(i)"
                     @action="openApprovalTurn"
+                    @cancel="cancelQueuedTurn(msg, i)"
                   />
+                  <!-- R268 · G03：这一轮发出去时带的是哪张表。与档位那句同一形状：读的是【发出
+                       去的那一份】，后端真正用了哪张表今天不在线上任何一格里，界面不猜。 -->
+                  <p v-if="dataTableOf(msg)" class="lane-readout" role="status"
+                     data-testid="data-table-readout">{{ dataTableOf(msg) }}</p>
                   <!-- 档位那张脸：读的是响应头给的本轮真读数，不是选择框的当前值。
                        用户中途改选择框不会回改已落定的那一轮；后端没发读数就整条不画。 -->
                   <p v-if="laneFaceText(laneFaceOf(msg, i))" class="lane-readout" role="status"
@@ -1469,8 +1914,8 @@ function renderMd(raw) {
                   <span v-for="(lbl, li) in hitl.labels" :key="li">{{ lbl }}</span>
                 </div>
                 <div class="hitl-actions">
-                  <button class="hitl-btn approve" @click="approve(true)">✅ 确认执行</button>
-                  <button class="hitl-btn cancel" type="button" data-testid="hitl-reject" @click="approve(false)">✕ 拒绝这个动作</button>
+                  <UiButton class="hitl-btn approve" variant="primary" data-testid="hitl-approve-chat" @click="approve(true)">✅ 确认执行</UiButton>
+                  <UiButton class="hitl-btn cancel" variant="danger" data-testid="hitl-reject" @click="approve(false)">✕ 拒绝这个动作</UiButton>
                 </div>
               </div>
             </div>
@@ -1497,6 +1942,32 @@ function renderMd(raw) {
           </select>
           <span class="lane-promise" data-testid="chat-lane-promise">{{ LANE_PROMISES[selectedLane] }}</span>
         </div>
+        <!-- R268 · G03 · 数据表这一格与上面那枚档位控件同一条规矩：选择框说的是「下一轮发出去
+             带哪张表」，气泡里那句说的是「那一轮发出去带了哪张表」，两格各管一头，都不冒充
+             后端的用表读数。清单是 lazy 的：伸手（focus / 改选 / 点重读）才发那一枪。 -->
+        <div class="lane-bar" data-testid="chat-data-table-picker">
+          <label class="lane-label" for="chat-data-table-select">本轮数据表</label>
+          <select
+            id="chat-data-table-select"
+            class="lane-picker"
+            data-testid="chat-data-table-select"
+            :value="activeDataFilename"
+            @focus="loadDataFiles()"
+            @change="chooseDataTable($event.target.value); loadDataFiles()"
+          >
+            <option value="">不指定</option>
+            <option v-for="name in dataTableChoices()" :key="name" :value="name">{{ name }}</option>
+          </select>
+          <UiButton
+            class="face-pill"
+            variant="ghost"
+            size="sm"
+            data-testid="chat-data-table-reload"
+            :loading="dataFilesState === 'loading'"
+            @click="loadDataFiles({ force: true })"
+          >重读清单</UiButton>
+          <span class="lane-promise" data-testid="chat-data-table-face">{{ dataTableFaceText() }}</span>
+        </div>
         <!-- 失败提示原先只是换行色的 <p role="status">：读屏不会打断，等于把错误当通知。
              这些句子都是一次性结果，不是一条能重试的面板加载，所以 retryable=false。 -->
         <UiErrorState v-if="streamNote && noteTone === 'error'" :title="streamNote" :retryable="false" dense />
@@ -1512,17 +1983,33 @@ function renderMd(raw) {
           />
           <div v-if="cancelPhase === 'confirm'" class="cancel-confirm" data-testid="chat-cancel-confirm">
             <span class="cancel-confirm-text">中断只是不再接收本轮回答，不会撤销任何动作：待确认的动作仍挂在卡片上，已经批准的动作后端仍会继续执行完。</span>
-            <button class="send-pill danger" type="button" @click="confirmCancel">确认中断</button>
-            <button class="send-pill ghost" type="button" @click="cancelPhase = 'idle'">返回</button>
+            <UiButton class="send-pill danger" variant="danger" data-testid="chat-cancel-confirm-yes" @click="confirmCancel">确认中断</UiButton>
+            <UiButton class="send-pill ghost" variant="ghost" data-testid="chat-cancel-confirm-no" @click="cancelPhase = 'idle'">返回</UiButton>
           </div>
-          <button v-else-if="loading || hitl" class="send-pill cancel-generation" type="button" data-testid="chat-cancel" @click="requestCancel">中断本次回答</button>
-          <button v-else class="send-pill" data-testid="chat-send" @click="send()"
-                  :disabled="!input.trim()">
-            <svg v-if="!loading" width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
-            </svg>
-            <span v-else class="mini-spinner"></span>
-          </button>
+          <UiButton
+            v-else-if="loading || hitl"
+            class="send-pill cancel-generation"
+            variant="danger"
+            data-testid="chat-cancel"
+            @click="requestCancel"
+          >中断本次回答</UiButton>
+          <!-- 发出去那一枚：忙碌态交给原语的 loading（它同时管 aria-busy 与点不动），
+               禁用态还是「没写字就不能发」那一条，不多判一件。 -->
+          <UiButton
+            v-else
+            class="send-pill"
+            variant="primary"
+            data-testid="chat-send"
+            :disabled="!input.trim()"
+            :loading="loading"
+            @click="send()"
+          >
+            <template #icon>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
+              </svg>
+            </template>
+          </UiButton>
         </div>
         <p class="input-footer">
           本地模型推理 · 数据完全不出机器
@@ -1773,6 +2260,8 @@ function renderMd(raw) {
   border-left-color: var(--cyan);
 }
 
+/* R268 · 只加选择器别名，一条声明都不新增：色值棘轮（lint:colors 的 148）不动。 */
+.face-pill,
 .deep-link-retry {
   padding: var(--s-1) var(--s-2);
   border: 1px solid var(--line);
@@ -2340,6 +2829,10 @@ function renderMd(raw) {
   font-size: var(--t-xs);
   color: var(--text-3);
 }
+.runtime-face {
+  margin: 0;
+}
+
 .lane-readout {
   margin: 0;
   padding: var(--s-1) var(--s-2);
