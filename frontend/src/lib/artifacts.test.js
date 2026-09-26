@@ -12,6 +12,7 @@ const { httpGet } = vi.hoisted(() => ({ httpGet: vi.fn() }))
 vi.mock('./http', () => ({ http: { get: httpGet } }))
 
 const { fetchArtifactBlob } = await import('./artifacts.js')
+const { ERROR_CODES } = await import('./errcodes.js')
 
 const failWith = (status, body) => {
   httpGet.mockRejectedValue({ response: { status, data: body instanceof Blob ? body : new Blob([body], { type: 'application/json' }) } })
@@ -59,12 +60,16 @@ describe('artifacts · 取图失败的说法统一由字典负责', () => {
   })
 
   // 形状②：ErrorEnvelope（下载与 SSE 错误体用的是 error_code）
-  it('400 + ErrorEnvelope：认 error_code 这个字段名，后端 message 优先', async () => {
+  // R281 判据①改口：错误体里那格 message 不再占人话位（码在册），code/status/retryable 三样原样留。
+  it('400 + ErrorEnvelope：认 error_code 这个字段名，人话位归字典', async () => {
     failWith(400, '{"detail":{"error_code":"unsupported_file","message":"这个文件类型不支持","retryable":false}}')
     const err = await grab()
     expect(err.code).toBe('unsupported_file')
     expect(err.status).toBe(400)
-    expect(err.message).toBe('这个文件类型不支持')
+    expect(err.message).toBe(ERROR_CODES.unsupported_file.message)
+    // 这里刻意不钉 err.rawMessage：artifacts.js:52-55 重建 Error 时只复制 message/status/code/retryable，
+    // rawMessage 与 rawCode 在这道消费口被丢掉 —— 那是 R291（把后端原文一路透到 UiErrorState 详情区）的活，
+    // 不在 R281 的改判范围。字典侧的原文出口由 lib/__tests__/r281-dictionary-voice.test.js 钉着。
   })
 
   // 形状③：非 JSON。私拷会把正文前 120 字当 detail 返回，nginx 页面就此上屏。

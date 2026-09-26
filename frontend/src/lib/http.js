@@ -162,7 +162,18 @@ export function isPermissionDenied(err) {
 
 /**
  * 面板失败态要的一句人话：句子一律出自 errcodes 字典，本函数只决定「字典没话说时退回场景文案」。
- * 英文原句与 HTML 错误体不用在这儿防：errcodes 的 cleanText(:182-183) 已经把它们清了。
+ *
+ * R281 判据④（改口）：这一枚函数上面原来那半句声称「英文原句与 HTML 错误体都不必在这里防，
+ * 因为 errcodes 的 cleanText 会把它们过滤掉」，那是与实现不符的假话，已就地改口。cleanText 实际只清三类：
+ * HTML 标签、[object Object] 这一类字符串化的对象、axios 的 "Request failed with status code N"；
+ * 它不清英文句子。所以形状 2 的 { code, message } 信封曾经把后端英文原句顶在字典那句中文前面
+ * （现场：app/common/authorization.py:94-99 回的 department_override_denied）。
+ * 现在真正的防线在字典侧：errcodes.js::dictionaryClaims() 那一处分流 —— 码被字典收编 ⇒
+ * 信封 message 不参与人话位竞争，原文改由 normalizeError() 的 rawMessage 报告（判据①）。
+ * 本函数因此仍然不设第二道防线：句子出处只有一处，防英文的地方也只有一处。
+ * 钉在 __tests__/r281-dictionary-voice.test.js：把「英文原句优先」改回去必红，把那句假注释
+ * 写回这段注释也必红。
+ *
  * 合并前这里是自己映射的，还会把形状 2 的码名原样 return（面板把它直插进 UiErrorState 的
  * description，等于把 permission_denied 当人话画上屏）——那条运行时漏码一并收掉。
  */

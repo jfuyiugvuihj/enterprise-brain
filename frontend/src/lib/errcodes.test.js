@@ -314,11 +314,15 @@ describe('形状 2：detail 是 ErrorEnvelope 对象', () => {
     response: { status: 500, data: { detail: { code, message, retryable, details: { filename: '预算.xlsx', stage: 'index' } } } },
   })
 
+  // R281 判据①改口（不是放宽）：parse_failed 是字典在册的码，人话位归字典那句，
+  // 后端 message 不再顶上屏。原文没丢 —— 它改由 rawMessage 报告，所以这里同时钉它。
   it('不再弹 [object Object]，这是上传解析失败的真实回归', () => {
     const result = normalizeError(envelope('parse_failed', '工作簿受密码保护，无法读取。'))
-    expect(result.message).toBe('工作簿受密码保护，无法读取。')
+    expect(result.message).toBe('文件内容没能解析成功，请检查文件是否损坏或受保护。')
+    expect(result.message).toBe(ERROR_CODES.parse_failed.message)
     expect(result.message).not.toContain('[object Object]')
     expect(result.code).toBe('parse_failed')
+    expect(result.rawMessage).toBe('工作簿受密码保护，无法读取。')
   })
 
   it('envelope 没带 message 时回落到字典句', () => {
@@ -356,7 +360,10 @@ describe('形状 2：detail 是 ErrorEnvelope 对象', () => {
       },
     })
     expect(result.code).toBe('index_publish_failed')
-    expect(result.message).toBe('文件已收到，但没能进入知识库。')
+    // R281 判据①改口：信封 message 与字典句只差尾半句，改判之后屏上只能是字典那句；
+    // 后端原句进 rawMessage，retryable 那格仍照信封覆盖（判据不改这一格）。
+    expect(result.message).toBe(ERROR_CODES.index_publish_failed.message)
+    expect(result.rawMessage).toBe('文件已收到，但没能进入知识库。')
     expect(result.retryable).toBe(true)
   })
 })
@@ -614,7 +621,9 @@ describe('blob 错误体解析（B-5 ③，下载与预览的 403 不再被说�
     expect(errorCodeLabel(nested)).toBe('')
     const envelope = blobErrorText('{"detail":{"code":"index_publish_failed","message":"文件已收到，但没能进入知识库。","retryable":true}}', 500)
     expect(envelope.code).toBe('index_publish_failed')
-    expect(envelope.message).toBe('文件已收到，但没能进入知识库。')
+    // R281 判据①：blob 体走的是同一条 fromEnvelope，改判之后同样出字典句、原文进 rawMessage
+    expect(envelope.message).toBe(ERROR_CODES.index_publish_failed.message)
+    expect(envelope.rawMessage).toBe('文件已收到，但没能进入知识库。')
     expect(envelope.retryable).toBe(true)
   })
 

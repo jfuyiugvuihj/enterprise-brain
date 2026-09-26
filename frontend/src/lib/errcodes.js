@@ -15,12 +15,22 @@
  * PROSE_ALIASES 只剩野外兜底，换代理由与复核出处写在下面那张表的注释里。
  *
  * 硬不变量：normalizeError() 的 .code 一定 ∈ Object.keys(ERROR_CODES) ∪ {''}。
- * 后端原样回来的码名/散文一律放进 .rawCode，只供排查与「错误码：xxx」小字使用。
+ * 后端原样回来的码名/散文一律放进 .rawCode，只供排查与「错误码：xxx」小字使用；
+ * 后端信封 message 那一格原样回来的话一律放进 .rawMessage（R281 判据①，见下面「人话位归属」）。
  *
  * 文案政策（B-5 ②）：给人看的句子只说人话 + 下一步，不内嵌裸 snake_case 码名。
  * 码名走独立通道 errorCodeOf()，由界面放进 data-code / 「详情」折叠区；未知码才由
  * formatError() 在句尾附「错误码：xxx」小字。后端直出的句子若夹带码名，由 extractEmbeddedCode()
  * 在归类前摘掉，摘不干净的宁可走兜底句也不把码名留在正文里。
+ *
+ * 人话位归属（R281 判据①，2026-09-26 全局改判）：形状 2 的 {code, message} 信封过去把后端
+ * 那句 message 顶在字典句之前，后端回英文原句时屏上画的就是那句英文 —— 现场是
+ * app/common/authorization.py:94-99 回的 403 信封，客户读到的是 "department must match the
+ * authenticated principal"，那是缺陷不是信息。改判之后给人看的句子一律出自本字典，
+ * 分流只认 dictionaryClaims() 这一条谓词（判据③）：码被字典收编 ⇒ 用字典句；
+ * 字典收不下这枚 code ⇒ 后端那句 message 仍是唯一线索，继续占人话位，未知码那一档一分未退。
+ * 后端原文一个字符都不丢：它一律进 normalizeError() 的 rawMessage，通道只这一条
+ * （为什么不去扩「错误码：xxx」那条小字，理由写在 clampResult 的注释里）。
  *
  * 码表对账（A-6 ③ 起读真源；B-5 ④ 那三列手抄账整体作废，缘由见看板 §4L.5）：
  *   列 A  真源 = app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举。errcodes.test.js 用
@@ -350,21 +360,38 @@ function resolveProse(token) {
 
 /**
  * 唯一的收口处：任何分支产出的 code 都过这里，非枚举值一律降级为 ''。
- * @returns {{ code: string, rawCode: string, message: string, retryable: boolean }}
+ *
+ * rawMessage（R281 判据①给后端原文指定的那条出口）：后端在信封 message 那一格里原样回了
+ * 什么，与屏幕上画了什么无关。三条设计决定，逐条写清为什么：
+ *   ① 为什么新开这一格，而不是扩既有的「错误码：xxx」小字（errorCodeLabel/formatError）：
+ *      那条小字刻意只在「后端回了一枚字典收不下的码」时才出 —— errorCodeLabel 对已登记的 rawCode
+ *      一律回空串，errcodes.test.js 拿「散文命中的已知码不追加「错误码：」小字」与「formatError
+ *      对已知码不加噪声小字」两枚用例逐字钉着。而这次要留下的后端原文恰恰多半挂在**已登记**的码上
+ *      （department_override_denied 就在 LEGACY_ALIASES 在册，后端那句英文正是这一发的信封 message）。
+ *      走小字那条通道就得先把「未知码专属」改判成常开，再把自由散文塞进一枚短标签通道：
+ *      UiErrorState / UiToast / UiField 的 codeLabel 属性会开始随原始句长短抖动，而那正是判据①
+ *      明令不许的第二条并列通道。数据侧多一枚字段是加法语义，渲染侧改那条小字是改判语义。
+ *   ② 为什么照记不误、即便它与 message 同字（未知码那一档两格都会是同一句英文）：
+ *      这一格回答的是「后端回了什么」，让消费方无条件读得到，不必先自己复算这一发走了哪条分支。
+ *   ③ 为什么只有信封形状有它：形状 1 的裸串、形状 3 的 422 数组、传输层错误都没有
+ *      message 这一格，那句人话本来就在人话位上，再抄一份只会造出第二个说法。
+ * @returns {{ code: string, rawCode: string, message: string, rawMessage: string, retryable: boolean }}
  */
-function clampResult({ code = '', rawCode = '', message = '', retryable = false }) {
+function clampResult({ code = '', rawCode = '', message = '', rawMessage = '', retryable = false }) {
   const known = isEnumCode(code)
   return {
     code: known ? code : '',
     rawCode: cleanText(rawCode) || (known ? '' : cleanText(code)),
     message: cleanText(message) || FALLBACK_MESSAGE,
+    rawMessage: cleanText(rawMessage),
     retryable: Boolean(retryable),
   }
 }
 
 /**
- * 码名/散文 → { code, rawCode, message, retryable }。
+ * 码名/散文 → { code, rawCode, message, rawMessage, retryable }。
  * 查不到即兜底句；枚举外的原样串只进 rawCode，绝不进 code。
+ * 这条通道不碰 rawMessage：它拿到的本来就是单个码名/散文串，没有「信封 message」这一格。
  */
 function resolveCode(raw, status) {
   const token = cleanText(raw)
@@ -435,16 +462,57 @@ function resolveCode(raw, status) {
   return clampResult({ code: '', rawCode: token, message: token && !isCodeShape(token) ? token : FALLBACK_MESSAGE, retryable: false })
 }
 
-/** 形状 2：ErrorEnvelope / 任意 { code, message, retryable } 对象，后端给的 message 优先级最高 */
+/**
+ * R281 判据①③的唯一分流处：字典有没有为**这一枚 code 本身**备好句子。
+ *   true  ⇒ 码被字典收编（枚举本尊 / LEGACY_ALIASES 归一 / PROSE_ALIASES 散文 / 正文里内嵌
+ *           且摘出来认得是枚举码），字典对这一发的因由有话说；
+ *   false ⇒ 字典收不下（未登记的码名、压根没有 code、code 是句读不懂的散文），
+ *           字典关于这一发只有兜底句。
+ * 查表顺序与 resolveCode 逐条对齐，用的是同一批 lookup（isEnumCode / LEGACY_ALIASES /
+ * resolveProse / extractEmbeddedCode），没有第二张表可漂；r281-dictionary-voice.test.js 拿
+ * 三张表的每一个键正向钉这条谓词，谁在 resolveCode 里新加一条命中路径而这里没跟上就红。
+ */
+function dictionaryClaims(raw) {
+  const token = cleanText(raw)
+  if (!token) return false
+  if (isEnumCode(token)) return true
+  if (isCodeShape(token)) return Boolean(LEGACY_ALIASES[token])
+  if (resolveProse(token)) return true
+  const embedded = extractEmbeddedCode(token)
+  return Boolean(embedded && isEnumCode(embedded.code))
+}
+
+/**
+ * 形状 2：ErrorEnvelope / 任意 { code, message, retryable } 对象。
+ *
+ * R281 判据①（全局改判）：人话位归字典。分流只认 dictionaryClaims() 这一条谓词，
+ * 不认「有没有 message」—— 码被字典收编时，信封里那句 message **不参与竞争**，
+ * 它顶在字典那句中文前面的日子到此为止（现场：app/common/authorization.py:94-99 的
+ * { code: department_override_denied, message: 英文原句 }，屏上原来画的就是那句英文）。
+ *
+ * R281 判据③（未知码不退化）：字典收不下的那一档，字典关于这一发只有兜底句，
+ * 后端那句 message 仍是唯一线索，继续占人话位，与改判前逐字相同 —— 未知码排查路一分未堵。
+ * 两档都不丢后端原文：一律进 rawMessage（出口选择与理由见 clampResult 的注释）。
+ *
+ * 为什么不选「一律丢弃 message」：那会把未知码那一档唯一的信息源删掉，屏幕上只剩
+ * 「操作没有完成，请稍后重试。」，而字典对这一发本来就没话说。
+ * 为什么不选「有 message 就用 message」（改判前的写法）：那等于把判据①的洞原样留着 ——
+ * 后端 message 占不占人话位，取决于它有没有回话，而不是取决于字典认不认得这枚码。
+ *
+ * retryable 仍由信封覆盖字典默认值：那是机器读的开关，不是给人看的句子，不在这次改判范围内。
+ */
 function fromEnvelope(envelope, status) {
   // 后端在 SSE 与下载错误体里用的是 error_code，不是 code（chat.py:1013、artifacts 的 blob 体），两个都要认
   const wireCode = envelope.code ?? envelope.error_code
   const resolved = resolveCode(wireCode, status)
-  const message = cleanText(envelope.message)
+  const backendMessage = cleanText(envelope.message)
+  const claimed = dictionaryClaims(wireCode)
   return clampResult({
     code: resolved.code,
     rawCode: cleanText(wireCode) || resolved.rawCode,
-    message: message || resolved.message,
+    // claimed = true 时 resolved.message 必是字典句（enum / alias / prose / 内嵌码四条分支之一）
+    message: claimed ? resolved.message : backendMessage || resolved.message,
+    rawMessage: backendMessage,
     retryable: typeof envelope.retryable === 'boolean' ? envelope.retryable : resolved.retryable,
   })
 }
@@ -530,8 +598,9 @@ function resolveTransport(err, status) {
 /**
  * 统一入口：axios 错误、Error、裸字符串、ErrorEnvelope、中文散文都能喂。
  * @param {unknown} err
- * @returns {{ code: string, message: string, retryable: boolean, rawCode: string }}
- *   code 一定在 ERROR_CODES 里或为空串；后端原样回来的串放 rawCode。
+ * @returns {{ code: string, message: string, retryable: boolean, rawCode: string, rawMessage: string }}
+ *   code 一定在 ERROR_CODES 里或为空串；后端原样回来的串放 rawCode；
+ *   信封 message 那一格原样回来的话放 rawMessage（R281 判据①，只供排查，不上人话位）。
  */
 export function normalizeError(err) {
   const status = Number(err?.response?.status ?? err?.status ?? 0) || 0
@@ -646,7 +715,7 @@ export function errorText(code) {
  * 静态层塞进来的（nginx 的 Forbidden、502 页面），把它们当人话抛给界面比不抛更坏。
  * 非 JSON 或空 body 时只按 HTTP 状态归类，句子仍出自 ERROR_CODES 字典。
  *
- * @returns {{ code: string, rawCode: string, message: string, retryable: boolean }} 与 normalizeError 同形状
+ * @returns {{ code: string, rawCode: string, message: string, rawMessage: string, retryable: boolean }} 与 normalizeError 同形状
  */
 export function blobErrorText(body, status = 0) {
   const effStatus = Number(status) || 0

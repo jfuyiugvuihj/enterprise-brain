@@ -22,7 +22,7 @@ import {
   sourcesFace,
   versionMoment,
 } from './provenance.js'
-import { errorCodeLabel, normalizeError } from './errcodes.js'
+import { ERROR_CODES, errorCodeLabel, normalizeError } from './errcodes.js'
 
 const row = (over = {}) => ({
   filename: '差旅费报销制度-2026.pdf',
@@ -230,14 +230,17 @@ describe('E · 排队那张脸：三态与失败态各说各的', () => {
     expect(face.detail).not.toContain('满')
   })
 
-  it('processing / done / cancelled / expired 四态四句，一句「出错了」都不许复用', () => {
+  it('processing / done / cancelled / expired / cancel_requested 五态五句，一句「出错了」都不许复用', () => {
     const heads = [
       queueFace({ status: 'processing' }).headline,
       queueFace({ status: 'done', result: '答案正文' }).headline,
       queueFace({ status: 'cancelled' }).headline,
+      // R282 · 这份枚举跟着契约词表走：cancel_requested 今天有了自己的一张脸，钉里不含它就白过一格。
+      queueFace({ status: 'cancel_requested' }).headline,
       queueFace({ status: 'expired' }).headline,
     ]
-    expect(new Set(heads).size).toBe(4)
+    expect(new Set(heads).size).toBe(5)
+    expect(heads, '兜底那句是 failed / dead 的账，还没落定的那一族一格都不许借（判据④裁过 dead）').not.toContain(queueFace({ status: 'failed' }).headline)
     for (const line of heads) expect(line).not.toBe('出错了')
   })
 
@@ -281,7 +284,10 @@ describe('F · 入队被拒与轮询失败：两句都是人话，且都不叫�
   it('还没归一的原料也吃得：{code,message} 对象不许渲染成 [object Object]', () => {
     const face = queueRejectedFace({ status: 503, detail: { code: 'queue_unavailable', message: '排队系统当前不可用。' } })
     expect(face.detail).not.toContain('[object Object]')
-    expect(face.detail).toContain('排队')
+    // R281 判据①改口：queue_unavailable 在册 ⇒ 屏上是字典那句，而后端原句「排队系统当前不可用。」
+    // 不再占位。这句钉不许留 toContain('排队')：字典那句写的是「排不上队」，含不住那个子串，
+    // 留着它就是把旧口径当验收。改钉成「等于字典那句」，[object Object] 那条原判据一字未退。
+    expect(face.detail).toBe(ERROR_CODES.queue_unavailable.message)
     expect(face.kind).toBe('rejected')
   })
 

@@ -70,7 +70,8 @@ describe('notifyError 承接三种错误形状', () => {
   it('形状 2 ErrorEnvelope：不再弹 [object Object]', () => {
     withWindow()
     notifyError({ response: { status: 500, data: { detail: { code: 'index_publish_failed', message: '文件已收到，但没能进入知识库。', retryable: true, details: {} } } } })
-    expect(toasts[0].message).toBe('文件已收到，但没能进入知识库。')
+    // R281 判据①改口：index_publish_failed 在册 ⇒ 人话位归字典；后端那句只差尾半句，也不能再上屏。
+    expect(toasts[0].message).toBe(ERROR_CODES.index_publish_failed.message)
     expect(toasts[0].message).not.toContain('[object Object]')
     expect(toasts[0].retryable).toBe(true)
   })

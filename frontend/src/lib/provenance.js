@@ -370,6 +370,29 @@ export function queueFace(queue) {
   if (status === 'processing') {
     return { kind: 'processing', headline: '轮到你了，正在后台生成', detail: '跑完之后界面会从状态读数里把答案补回这条回答。', tone: 'info', ahead: 0 }
   }
+  // R282 - cancel_requested: 取消已经登记，但握着任务的那一稿还没落定。
+  // 契约 Long Task Status 那一节写着：这一枚是【非终态】，cancel() 是在任务离开 pending 列表
+  // 之后按下去的，标记写进台账、由 worker 下一次检查时落成 cancelled；从这里起它只会落
+  // cancelled，永远不会变成 done。两条谎各站一头，这一格哪头都不许站：
+  //   落到本函数最后那格 failed 兜底 => 员工自己按了「中断」，界面反过来说「系统执行失败」；
+  //   并到上面 cancelled 那一格 => 回执还没落，界面替后端宣布「已取消」。
+  // 它必须排在那格兜底【之前】，同 R260 给 awaiting_approval 立的顺序规矩。
+  // tone=info / ahead=null 照 queued 与 processing 那两格的惯例：非终态就是 info；位次读数
+  // 只有 status === 'queued' 那一支才给（app/api/v1/chat.py:4373），任务已经离开待发队列，
+  // 没有 position 可说就填 null，不补 0 也不编人数（r150 E 组同一条规矩）。
+  // retryable:false 且不带动作按钮：重发同一轮不是「继续中断」，这一轮也不必重发。
+  // 措辞与 ChatPanel.vue:1247 queueCancelPendingFace 逐字同一 —— 一件事全站一种说法，
+  // 由 r282-cancel-requested-face.test.js 从面板源码里抠出那两枚字面量钉住不漂。
+  if (status === 'cancel_requested') {
+    return {
+      kind: 'cancel-requested',
+      headline: '取消已登记：这一轮不会再产出答案',
+      detail: '取消标记已经写进队列，后台正在收尾，落定之前它不会再回答任何东西。界面还在读这一轮的状态，落定之后这一格会跟着改口。',
+      tone: 'info',
+      retryable: false,
+      ahead: null,
+    }
+  }
   if (status === 'done') {
     // 「跑完了」与「结果取回来了」是两件事：done 分支的 result 出自 chat.py:2948-2954，
     // 空串 / null 都说不上答案，不能借一个 done 就宣布界面上有答案。
