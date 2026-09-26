@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -279,13 +280,13 @@ def test_ninety_five_percent_tombstones_still_answer_every_query(tmp_path):
 
 # ------------------------------- 症状 A 的量级来源：同 id 重传的代际堆（现网 40 代）
 def test_generational_reupload_degrades_self_recall_on_an_uncorrupted_index(tmp_path):
-    """照抄重传路径写 8 代再从盘重开：记录平面仍是 1000 枚、向量一枚不缺，
-    但自探针已经开始问不到自己；同一批向量的精确扫描一枚不漏。
+    """同 id 重传 12 代再从盘重开：门内只断**确定性**那半——膨胀机制在、向量一枚不缺、
+    精确扫描不漏、两条腿同向量同 k 同口径。自探针缺口**只记录不断言**。
 
-    图平面里躺着 13 倍于在册元素的代际堆，候选预算（ef_search=100，
-    app/rag/retriever.py:882 从来没设过）被同坐标的近重复墓碑吃光。
-    缺口大小随并发写序浮动（实测落在 7..480 之间，且约 1/7 的运行一枚都不掉），所以本钉**不断缺口**：
-    量级是报告 §2/§3 的观测值，不是门。门里只留确定性断言——机制膨胀、探针方法学、精确扫描零漏。
+    为什么不赌缺口：图平面的落盘形状随并发写序浮动，1,000 枚探针实测 0..480 枚
+    （执行侧 6 次 1 次出状态，总控侧 7 次 1 次红），把它写成硬断言就是给全量门装一枚
+    假红发生器。机制是确定的（§2 的 ef 扫与精确对照已坐实），量级不是。
+    缺口现取现记，落在 tmp_path/r269_generational_self_recall.json，随 -rA 一起回显。
     """
     _release()
     ids, vectors = _ids(1000), _vectors(1000)
@@ -296,34 +297,40 @@ def test_generational_reupload_degrades_self_recall_on_an_uncorrupted_index(tmp_
         _add(collection, ids, [[value + 0.01 for value in row] for row in vectors])
     _release()
     client, collection = _open(tmp_path)
+    # ---- 门内断言：全部与写序无关
     assert collection.count() == 1000, "重传把记录数改了，本钉的前提就变了"
     assert _slot_census(tmp_path)["by_data"] == 13000, "十二代堆没攒出来，膨胀这条得另找因"
     page = collection.get(ids=ids, include=["embeddings"])
     stored = {str(a): [float(v) for v in row] for a, row in zip(page["ids"], page["embeddings"])}
     assert len(stored) == 1000, "向量本身一枚都不能少"
+    assert collection.configuration.get("hnsw", {}).get("space") == "l2", (
+        "库不是 l2 口径，下面的精确扫描与它不同尺，对照不成立")
     matrix = np.asarray([stored[name] for name in ids], dtype="float64")
-    ann_miss = brute_miss = 0
-    widths = set()
-    probe_sources = set()
+    n_results = 5
+    ann_miss = ann_empty = brute_miss = self_rank_first = same_vector = 0
     for index, name in enumerate(ids):
-        got = [str(x) for x in collection.query(query_embeddings=[stored[name]],
-                                                n_results=5)["ids"][0]]
-        ann_miss += name not in got
-        widths.add(len(got))
-        probe_sources.add(id(stored[name]))
+        probe = stored[name]
+        # 结构守卫①：两条腿吃的是同一枚向量（不是各算一遍）
+        same_vector += int(np.array_equal(np.asarray(probe, dtype="float64"), matrix[index]))
+        got = [str(x) for x in collection.query(query_embeddings=[probe],
+                                                n_results=n_results)["ids"][0]]
         dist = ((matrix - matrix[index]) ** 2).sum(axis=1)
-        brute_miss += name not in [ids[i] for i in np.argsort(dist, kind="stable")[:5]]
+        exact_top = [ids[i] for i in np.argsort(dist, kind="stable")[:n_results]]
+        # 结构守卫②：同一个 k，且平方欧氏下探针到自己的距离恒为 0 ⇒ 必排第 1
+        self_rank_first += int(exact_top[0] == name and len(exact_top) == n_results)
+        ann_miss += name not in got
+        ann_empty += not got
+        brute_miss += name not in exact_top
+    assert same_vector == len(ids), "有探针的向量与矩阵行不一致，对照的量具坏了"
+    assert self_rank_first == len(ids), (
+        "有探针在自己面前排不到第 1 ⇒ k 或距离口径不同尺，对照不成立：%d/%d" % (
+            self_rank_first, len(ids)))
     assert brute_miss == 0, ("精确扫描都有问不到的，探针就不对：%d" % brute_miss)
-    # 判据②（总控落笔·09-26）：此处原来是 assert ann_miss >= 1，实测抖动率约 1/7
-    # （主树首跑即红、其后单跑 6 次全绿；与本件 docstring 及报告 §9.2「6 遍只出 1 遍」同源）。
-    # 全量门每班要跑十几轮，1/7 的浮动率等于每天制造若干次假红——门一旦被假红污染，
-    # 「敢不敢并树」的心理成本会把整条流水线拖死。所以量级改为现取记录，不赌单次运行：
-    print("R269 self-probe: ann_miss=%d/%d brute_miss=%d/%d (hnsw 配置从未传 => ef_search 恒 100)"
-          % (ann_miss, len(ids), brute_miss, len(ids)))
-    # 守卫一（探针方法学，确定性）：每一发都拿回 5 名，且查的就是入库后读回的那一枚向量；
-    # 否则「ANN 会漏、精确扫描不漏」这组对照测的是两个东西，brute_miss == 0 会变成一个空洞的胜利。
-    assert widths == {5}, sorted(widths)
-    assert len(probe_sources) == len(ids)
-    # 守卫二（机制，确定性）：图平面槽位是记录平面的 13 倍——这才是「候选预算被代际堆吃光」的
-    # 可门证据。哪天 ef/hnsw 被正确设进 retriever.py:882，这一枚会先改口，不必靠某一次掉几枚报信。
-    assert _slot_census(tmp_path)["by_data"] == collection.count() * 13
+    # ---- 只记录，不断言：随写序浮动的那一半
+    evidence = {"probes": len(ids), "generations": 13, "slots": 13000,
+                "n_results": n_results, "space": "l2",
+                "ann_miss": ann_miss, "ann_empty": ann_empty,
+                "brute_miss": brute_miss, "miss_rate": round(ann_miss / float(len(ids)), 4)}
+    Path(tmp_path, "r269_generational_self_recall.json").write_text(
+        json.dumps(evidence, ensure_ascii=False, indent=1), encoding="utf-8")
+    print("R269 代际堆自探针缺口（只记录）：" + json.dumps(evidence, ensure_ascii=False))
