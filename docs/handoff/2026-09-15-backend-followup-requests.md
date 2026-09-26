@@ -3502,3 +3502,67 @@ Chroma ä¾§"ä¿®"å®ƒçš„å”¯ä¸€æ‰‹æ®µæ˜¯é‡å»ºé‚£ 1,008 æšç´¢å¼•ï¼Œè€Œ `rebuild_ind
 `tests/test_r269_index_state.py:312` çš„ `assert ann_miss >= 1` åœ¨ä¸»æ ‘é¦–è·‘å³çº¢ï¼ˆå…¶åå•è·‘ 6 æ¬¡å…¨ç»¿ â‡’ æŠ–åŠ¨ç‡çº¦ 1/7ï¼Œä¸è¯¥ä»¶ docstring `:287` "ç¼ºå£ 7..480 éšå†™åºæµ®åŠ¨" åŠæŠ¥å‘Š Â§9.2 "6 éåªå‡º 1 é"åŒæºï¼‰ã€‚é€€å› `Goodall` æ”¶å£ï¼Œåˆ¤æ®å†™æ­»ï¼š**é—¨å†…åªç•™ç¡®å®šæ€§æ–­è¨€**ï¼ˆ`count==1000`ï¼`by_data==13000`ï¼`len(stored)==1000`ï¼`brute_miss==0`ï¼‰ï¼Œéšæœºé‚£åŠæ”¹ä¸ºç°å–è®°å½•ï¼‹æ–¹æ³•å­¦å®ˆå«ï¼›ğŸ”´ ä¸è®¸ `skip`ï¼`xfail`ï¼åˆ ä»¶ï¼Œä¹Ÿä¸è®¸æ”¹æˆ"è·‘ 5 éè‡³å°‘ä¸­ 1 é"ï¼ˆé‚£æ˜¯æ‹¿ 22 s é—¨æ—¶ä¹°ä¸€ä¸ªä»ç„¶éé›¶çš„å‡çº¢ç‡ï¼‰ã€‚ç†ç”±ï¼š**é—¨ä¸€æ—¦è¢«å‡çº¢æ±¡æŸ“ï¼Œ"æ•¢ä¸æ•¢å¹¶æ ‘"çš„å¿ƒç†æˆæœ¬ä¼šæŠŠæ•´æ¡æµæ°´çº¿æ‹–æ­»**â€”â€”è¿™ä¸€æ ¼æ¯”è¿™ä¸€æ ¼çš„çŸ¥è¯†é‡è¦ã€‚
 
 å¦ä¸¤ç¬”ç•™æ¡£ï¼š(1) æœ¬ç­æ®**è¢«æˆªæ–­çš„ `git status` è¾“å‡º**åˆ¤å®š `be-r282` å¹²å‡€ã€å‡ ä¹ç…§æ‘˜è¦æ´¾ç¬¬ä¸ƒæšç¢° `provenance.js` çš„å•ï¼Œé "é€æ£µç°å–"æ•‘å‘½ â‡’ æ‘˜è¦ä¸åå†Œéƒ½ä¸èƒ½æ›¿ä»£å®å–ï¼›(2) æ´¾å·¥è¯å†™åŸŸç¬¬ä¸‰æ¬¡æ¼åˆ—ï¼ˆ`Schrodinger` é‚£æšè¶Šç•Œå®ä¸ºåˆ¤æ®â‘¢æ‰€è¦æ±‚ï¼‰ï¼Œè§„çŸ©è¡¥ä¸€æ¡ï¼š**æ´¾å·¥å‰å¿…é¡»æŠŠåˆ¤æ®é‡Œç‚¹åçš„æ¯ä¸€æšé’‰ rg å‡ºæ¥å¹¶å…¥å†™åŸŸæ¸…å•**ã€‚
+## §10209-26 ,Aí·, <; `ab27f7e`’`fe9fa9f`V2 â! ËH å + ”š Agent ÆS»Ó„n + ûW1 ï>	
+
+### ‹E #15”š½å Agent ö»Ó{,m!	ÖÁÓºÍZ
+
+- `Franklin`(R288)/`Meitner`(R283)/`Epicurus`(R292)/`Russell`(R293)/`Lagrange`(R294) ”š„**  =Øhè\( 15:2315:28**0 16:3x öÛUõ°Ö °‡ö mtime`Œ°Æ	
+- ÖÁÓº(d í+Ñ	AC   `0x00000000``Test-Connection gitee.com` True`wait_agent` $! 15 min hz status10 š node + 3 š python Û 810 s **dCPU h 0**ÑAŸê	;§êñ„ rollout «™Ò $š**ĞLö/!‹§a{**/b/:ha
+- nmšhè `close_agent`+ `Goodall`ƒ«síö¢Ş åİô¥Q† ;§êñ„’ Á `ab27f7e`;§ãĞ¤öŠ½åÌ**ô:„	šÓ„ˆk**=†°ÖŞe	ç ‹ diff Ÿ0YXZÂ
+- =4 **°Äé;§êñuˆ	**>åÏ ~25 min °Ö !Ïõ  =Øöô… 40 min ö=Øs¢;¢;Şô¥**Í•U¿( õ**¸rIKM{weÏ/(Ñ,íj9† *ö
+
+###  â! „™Æ”š:ÀHıöÑn/™Æ/Ÿığ	
+
+| U | ì`™ß | ,í(„¤Æ |
+|---|---|---|
+| R298 OCR | `app/rag/loader.py`/ 9¹	+ ° `app/rag/ocr.py` + ° `tests/test_r298_*.py` | ö |
+| R299 å-Ã | ° `app/notifications/**` + ° `app/api/v1/notifications.py` + `app/main.py`+1 L	+ °Áû + ° `tests/test_r299_*.py` + Q¦ append | öàº(™ `app/main.py`	 |
+| R300 h< | ° `app/rag/tables.py` + ° `tests/test_r300_*.py` | ö=4 + `loader.py`¥¿â!Œ |
+| R59 W1 | `app/rag/retriever.py` + `retrieval_pipeline.py` + `pg_store.py` + °(‹ | ö=4 + `chat.py`£/ R294 „	 |
+| R294 Í• | `app/api/v1/chat.py` e}w + (‹ | ŸU$nØ |
+
+- 	alÁn` `loader.py`  `tables.py` ¶M© R298·R300 ıvL$šı *‡ö1Å{2Lï¿ş §5.3	a V1;§ !MP`fe9fa9f`	**gLB¸° `pyproject.toml`/`uv.lock`**b 	õç„öhèŸ0İYÍ• ‹**¿(ŸŸú¹**H diff ¨K¸¨Íe
+
+### ŒR298 $nh‡OCR kÏ PDFV2 â!  A	
+
+- **°¶;§,íÖ/¨K	**`app/rag/loader.py:37-46` ê	 pypdf ‡,B¯ş PDF ½úe/z2 `app/api/v1/chat.py:3870` £ eŠ *W&ı¡ãúeô¥° `parse_status="failed"`Ò ¢7kÏöÊ)„Ó@/**
+ s1%**/ı F0,U9„1/Ù <
+- ` **ÀK/**u$’ åu‡,BW&pN<X(şÏùaM—kÏu<™8ÏvÙe¸c=TpŞgÙúkÏup/;up
+- a **OCR êM,0**Îúš `rapidocr_onnxruntime`!‹ò wheel »¿ŒÁdet 4.7 MB + rec 10.9 MB + cls 0.6 MB	¸ûU‘ OCR/TQÖ!‹Îï(ö**nM§vôŸà**¸YØÔŞz‡,’EŸ
+- b <( `pypdfium2`DPI ÂpÙ CPU UuKö¢7:¡ GPU _—Ñ—Œ	
+- c **	‡,B„u¸ OCR**Ìıc‡ = Ìıë + ÌıÑÍ}-R269 ÁÇÑÍŠ	„—I„ã÷	=4 ÷öu$u°e¸töŒ	 
+- d OCR Súe„‡WÅ{Ç * `sanitize_text`R130 £  	& PG „ `executemany` ÅÒ
+- e **ÍÁ e4 š**¯ş fixture à OCR ’ failed	 OCR ’ ïÀ"	‡,B„u«:L OCR ’ ¢Î( ’ M§å^z‡,OCR ‡,& NUL ’ ¢
+- ß`retriever.py`/`retrieval_pipeline.py`/`pg_store.py`R59 W1	`app/documents/catalog.py`R292	`app/api/v1/chat.py`R294	`frontend/**``tests/fixtures/business_evaluation_*.jsonl`ÄKÆ9	`pyproject.toml`/`uv.lock``migrations/**`
+
+### 	R299 $nh‡å-ÃïV2 â!  B	
+
+- **°¶**`notification` ( `app/**` Å 2 ö}-`frontend/**` 0 öÊ)	Jf€Ñ¡	åÀH„6ö±
+- ` °D&3š ID + owner + }hunread / read / dismissed	= PG °Áû=4 Áû÷ åM**°Ö** `migrations/` ° '< +1¸g„,‡
+- a **ê ‹ö**,ê¥¡y… / Jf / ‡c"Œ	{Å{**(â	&,**HITL pendingalertscatalog ¶	AGENTS.md sL°,Œ,…&,ô¥ UÂ R278 Šv’…’X‰„£	a1	
+- b CP6öºêÁêñ scope …„èè/Æ§**¿(â	ïÁ'$š**¸ê™ WÇäh=4 ŠC 0 a/lèó šèèÆ§ šA 0 B „(‹
+- c êû:;`GET /notifications`u + *û¡pã„™Z,u¦Ø/hÆ;pÙ/ R278 )Ç„£*Q¸)	™êÙ read/dismiss $*¨\BI
+- d Q¦ append 0 `docs/api/contract-v1.md`à BOMCRLFêÁLpW‚Ø	=4 Mï¸¨â!Œæ>	
+- e **–ÅÅÿ**°ÁûÇ `tests/test_r120_clean_install_first_boot.py` £ Ï‰‰9ã19ãv™1¸ skip
+- ß`chat.py``retriever.py`/`pipeline`/`pg_store.py``loader.py``tables.py``frontend/**``pyproject.toml`
+
+### ÛR300 $nh‡PDF/Word h<ãV2 â!  C	
+
+- **°¶;§Ö½å 8	**hÓ `pdfplumber|tabula|extract_tables|markdown_table` Å 1 ö}-`docx` êÖ `doc.paragraphs``loader.py:53-54`	Ò **Word h<Ê)/ô¥"‰„**Ùåİ½å åMêñŒ M=
+- ` “úÓ„ markdown h + **e**‡ö + u/h÷	›(a¹ŞŸ‡a vUC<èuh„**KL:**™Z¸™///+Êb h<l‡,p  chunk S¸ÕÇ R116 Å±„—c 'ıH°ÖKš
+P¸Í‹d ÍÁ e3 šh< Ş paragraph-only ’ ¢¹"1 ’ ¢	e =4 **¸9 `loader.py`**R298 ì`	,U¤!W + (‹ +  L¥¿Q¦¥¿â!Œ
+- ß
+ænú `app/rag/loader.py`
+
+### ”R59 W1û**°**V1 , H=4 ûØ¤ s	
+
+- **:ÀH°(/, H**R269 9$`c3b2983`	138 šï¾/"O/ `retriever.py:882` Î  hnsw Mn`ef_search` R 100 „**ûï„**Åûs chroma-rs 1.5.9 ö compaction Ò Íú !1}Ë
+- **W1 ô**` `INDEX_BACKEND=pgvector` „ûï„°ûS chroma	a 86 R269 	$n`retriever.py:1490-1492`“¤Ş 0 LSÕzTH**Å{M§v° `search_shape`**ÎàsPG 7	  `where` $§**LpøI**İ»/zÓœ/CPã„aÁšb ˜ìŞùÍ„**»¿**(‹Ş“1ıêÁ	c ŞÚï„™ a env Ş chroma	d =4 **Ø¤<İ chroma**û s:˜ùÍ1;§(Ñ—Z;ïÁ¨\	
+- **:ÀH°(ı>**Ÿ™„5¹ R35 /ÇG&ò( `3a5713b` ¢cR35 é 09-17 ÓH `63651f1`	5¹/` `chat.py` „ R294,W™ß+ `chat.py` Ò ïvL
+- ß`app/api/v1/chat.py``app/documents/catalog.py``app/rag/loader.py``frontend/**``deploy/.env.server`;	“Áû:Íú
+
+### mR292 / R294 Í•ŸU$n9ê°Í•‹	
+
+- `be-r292` dirty=2`catalog.py` +  š(‹@ò¥ÑŒ	`be-r294` dirty=0úŒ1»†	$š**¿(ŸŸú¹**Í• åH `git diff` °Ö¨K
+- `be-r288`MïW E 	<dirty=7	 `be-r293`Mï’Öˆ=Ø™¹dirty=8	,í**Í•**Mï™ß R291I R288	(â!ŒmšvÑ
+PòáöŸ0İY
