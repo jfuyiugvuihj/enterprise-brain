@@ -3,6 +3,8 @@
 默认备份范围包括原始文档、数据文件、Chroma、导出报告和日志目录。PostgreSQL
 业务数据和 Redis 队列状态不包含在工作区 ZIP 中，生产备份必须单独导出数据库。
 
+向量这条腿今天有两处落点：定案的生产向量库是 PostgreSQL + PGVector，双写镜像 `chunk_vectors` 随整库 `pg_dump` 一起进 dump（`scripts/backup_database.py:41-48` 不做表级筛选）；仍提供读服务的 Chroma 目录走工作区 ZIP。已验证的隔离演练 `tests/test_postgres_backup_recovery.py:31-41` 点名的向量表只有 `chunks`，没点名 `chunk_vectors` ⇒ 停写退役（R60）之前这一格要补。
+
 ```powershell
 python scripts/backup_workspace.py --output backups/enterprise-brain.zip
 python scripts/restore_workspace.py backups/enterprise-brain.zip --destination restore-check

@@ -221,7 +221,7 @@ class Principal(BaseModel):
 
 ### 5.2 向量库：Chroma → PGVector（目标态设计）
 
-- **现状**：Chroma 是当前唯一运行时向量读写方，为**过渡方案**；PGVector 仅有 schema 骨架（迁移 0001）。
+- **现状（2026-09-26 订正）**：定案的生产向量库是 PostgreSQL + PGVector（业主 2026-09-24，进度唯一事实源 `docs/handoff/2026-09-17-pgvector-adoption-plan.md`）；`0010_pgvector_chunks.sql:135` 建 `chunk_vectors`、`:292-305` 把两表向量列定标、`:342-352` 建 HNSW 索引，写侧同一事务双写已在填这张表（`app/rag/pg_store.py:88`、`app/rag/retriever.py:1201-1205`），而语义读路径仍在这套遗留件上（`app/rag/indexing.py:50` 出厂 `chroma`，切读开关 `app/rag/indexing.py:2087`）：切读单 R59 在途、停写退役 R60 未开工。
 - **目标态设计**（本设计文档纳入并按计划交付）：
   1. 统一存储：文档向量随业务数据同库，事务内保证"元数据可见 ⇔ 向量可检索"，消除双写窗口。
   2. 迁移绑定 Embedding 模型版本：`embedding_model + dimension` 作为索引元数据，禁止混维度共存；模型升级 = 新索引版本 + 全量重建 + 原子切换，不做在线混拼。
@@ -713,7 +713,7 @@ App.vue
 | 多 Agent 图/Send 并行/依赖分层/Reflect | §7 | **已落地** |
 | 证据袋与 AgentResult | §7.2 | **已落地** |
 | HITL interrupt_before=[chart,export] | §8 | **已落地** |
-| Chroma → PGVector 统一向量 | §5.2 | **目标态**（Chroma 为过渡，PGVector schema 已建） |
+| Chroma → PGVector 统一向量 | §5.2 | **目标态已定案、切换未完成**（双写在跑、`chunk_vectors` 与 HNSW 已在位；切读 R59 在途、停写退役 R60 未开工） |
 | 结构化查询 DSL 取代 eval | §9.2 | **目标态**（P0-07） |
 | Prompt Injection 分层防护 | §13.2 | **目标态**（P0-08） |
 | Artifact/Dataset PostgreSQL 持久化 + DatasetVersion 血缘 + TTL 清理 | §9.1/§9.3 | **目标态**（现为 JSON 过渡注册表） |
