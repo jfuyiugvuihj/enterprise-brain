@@ -14,7 +14,7 @@ import { api } from '../lib/api'
 import { DEPARTMENT_KEY, errorDetail, isPermissionDenied } from '../lib/http'
 import { errorCodeOf, isRetryable, normalizeError } from '../lib/errcodes'
 import { demoForm } from '../devFixtures/approval-demo'
-import { UiEmptyState, UiErrorState } from './ui'
+import { UiButton, UiEmptyState, UiErrorState } from './ui'
 import HitlPendingPanel from './hitl/HitlPendingPanel.vue'
 
 // R40 判据③：比较用的标准不由这一屏持有。这枚值是发给后端的【口径】，不是一个数 ——
@@ -240,9 +240,7 @@ onMounted(submitCheck)
           这一格没有「标准」输入框，也没有「证据」输入框：比的那个数和它的出处都由服务端从知识库里取，界面不持有它，也就无从改它。
         </p>
         <div class="actions">
-          <button class="primary-btn" data-testid="run-approval" :disabled="loading" @click="submitCheck(true)">
-            {{ loading ? '正在自查' : '重新自查' }}
-          </button>
+          <UiButton class="primary-btn" variant="primary" :loading="loading" :label="loading ? '正在自查' : '重新自查'" data-testid="run-approval" @click="submitCheck(true)" />
         </div>
       </section>
 

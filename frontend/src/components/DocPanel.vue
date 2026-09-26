@@ -1,8 +1,112 @@
+<script>
+/**
+ * R288 · G01 —— 「这一篇到底能不能被问到」那张脸的唯一算法，放在模块作用域，
+ * 好让用例直接对判据本身打反证，不必隔着模板猜。
+ *
+ * 读数只有一个来源：GET /documents/catalog 的每一行（app/documents/catalog.py 的
+ * public_document_row 随每行发出 parse_status 与 index_status），本屏不新增端点，
+ * 也不接半截 —— 拿不到的状态一律画「读不到」。
+ *
+ * 三条判据写在这里：
+ *   1 只有 index_status 为 indexed 才可以说「已可检索」。parse_status 为 ready 只说明
+ *      解析那一步成了，不等于检索得到：两枚字段在后端是正交的（index_policy.py 的注释
+ *      明写「解析成功但按策略不入索引」没有第五个 parse_status 可写）。
+ *      拿 ready 冒充 indexed 就是本仓最看重的那类假话。
+ *   2 后端把「没记过」和认不出的值一并归成 pending（catalog.py 的 _normalise_parse_status），
+ *      所以 pending 分不出「正在解析」与「这台机器从没记过这一列」，不许画成「解析中」；
+ *      只有 parsing 才是后端明说的在途值。
+ *   3 「解析中」还有第二条诚实来源：本屏自己那发上传请求还挂着 —— 这是界面亲眼看见的
+ *      在途，不是猜的。inflight 由调用方显式传进来，纯函数不读全局状态。
+ */
+export default { name: 'DocPanel' }
+
+const INDEX_STATUS_EXCLUDED = 'excluded'
+const INDEX_STATUS_INDEXED = 'indexed'
+
+/** 后端给的字面量归一：非字符串、大小写、首尾空白都在此收口，其余一律当没读到。 */
+function statusWord(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+/** 屏上那几个字只出自这张表；excluded 不在表里，它走 R49 那张「未索引」的脸。 */
+export const RETRIEVAL_FACE_LABEL = {
+  parsing: '解析中',
+  retrievable: '已可检索',
+  parsed: '已解析',
+  failed: '解析失败',
+  stalled: '还没等到结果',
+  unreadable: '读不到',
+}
+
+/**
+ * 一行的检索状态。参数全部显式传入，所以「谁在途」「谁这次没读到」都由调用方负责：
+ *   inflight   本屏还挂着上传请求的文件名（界面自己知道的在途，优先级最高）
+ *   unreadable 这一格这次取数没成功时点名的文件名（只点刚上传那几条，不牵连同屏其它行）
+ *   stalledNames 盯过一整轮窗口仍没落定的文件名：界面不替后端猜，改说「还没等到结果」
+ */
+export function retrievalFace(row, inflight, unreadable, stalledNames) {
+  const source = row && typeof row === 'object' ? row : {}
+  const name = typeof source.filename === 'string' ? source.filename : ''
+  const waiting = Array.isArray(inflight) ? inflight : []
+  const missed = Array.isArray(unreadable) ? unreadable : []
+  const expired = Array.isArray(stalledNames) ? stalledNames : []
+  if (name && waiting.includes(name)) return 'parsing'
+  if (name && missed.includes(name)) return 'unreadable'
+  const index = statusWord(source.index_status)
+  const parse = statusWord(source.parse_status)
+  // excluded 排第一：那一行本来就有「未索引」+ 原因两句话（R49 判据②），本格再摆一张就成三句。
+  // 空正文正是这一档最常见的组合：chat.py:3879 给它的读数是 parse_status=failed + excluded。
+  if (index === INDEX_STATUS_EXCLUDED) return 'excluded'
+  // 最新一版解析失败：这一行的最后一句话必须是失败，不许被上一版留下的 indexed 盖成成功。
+  if (parse === 'failed') return 'failed'
+  if (index === INDEX_STATUS_INDEXED) return 'retrievable'
+  if (parse === 'parsing') return 'parsing'
+  if (parse === 'ready') return 'parsed'
+  // 后端只给 pending 时，界面分不出「还在解析」与「这一列从没记过」，也就不许装成分得出来：
+  // 盯过一整轮窗口的报「还没等到结果」，没盯过的报「读不到」。两张脸都不说「已可检索」。
+  return name && expired.includes(name) ? 'stalled' : 'unreadable'
+}
+
+/** excluded 返回空串：那一行已经有「未索引」加原因两句话，本格不再重复画一张脸。 */
+export function retrievalFaceLabel(face) {
+  return RETRIEVAL_FACE_LABEL[face] || ''
+}
+
+/**
+ * 还没落定的两张脸：解析中与读不到都值得再读一次；其余就是终态。
+ * stalled 刻意不在其内 —— 它是「窗口数满，这一屏不再自己猜」的收口，
+ * 下一步由人点「再读一次」重新开窗，不由界面在后台无限续期。
+ */
+export function isUnsettledFace(face) {
+  return face === 'parsing' || face === 'unreadable'
+}
+
+/** 轮询窗口的两个上限写死在模块里：次数与间隔，不靠调用方每次现编。 */
+export const UPLOAD_POLL_MAX_TICKS = 6
+export const UPLOAD_POLL_INTERVAL_MS = 1500
+
+/**
+ * 有限轮询的停止判据（纯函数）：窗口里一个名字都没有就停；数满上限次数就停；
+ * 全部落定就停。返回 true 才许再发下一发取数。
+ */
+export function shouldReadUploadAgain(faces, ticksDone, maxTicks) {
+  const limit = Number.isFinite(maxTicks) ? maxTicks : UPLOAD_POLL_MAX_TICKS
+  const done = Number.isFinite(ticksDone) ? ticksDone : 0
+  const list = Array.isArray(faces) ? faces : []
+  if (done >= limit) return false
+  if (!list.length) return false
+  return list.some(face => isUnsettledFace(face))
+}
+</script>
+
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'
+import { computed, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { http, errorDetail } from '../lib/http'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
 import { UiButton, UiEmptyState, UiErrorState } from './ui'
+// 删除确认沿用本仓已有那一套两步内联状态机（ArtifactList.vue 的 advanceDelete，
+// DataPanel.vue 与 ChatPanel.vue 都是这么引的），不再新建第三套词汇。
+import { advanceDelete, deleteButtonLabel, isPendingDelete } from './ArtifactList.vue'
 
 // 列表存的是【行】而不是裸文件名：GET /documents/catalog 每一行都带着
 // index_status / index_reason（app/documents/catalog.py 的 public_document_row），
@@ -80,9 +184,7 @@ function createUploadItem(file) {
 }
 
 // ==================== 未索引那张脸（R49 判据②） ====================
-
-const INDEX_STATUS_EXCLUDED = 'excluded'
-const INDEX_STATUS_INDEXED = 'indexed'
+// 两枚字面量与 retrievalFace 共用模块作用域里的那一份，不在这里再声明一遍。
 
 // 后端把「为什么没入索引」编成了稳定码（app/documents/index_policy.py），这里只把码念成
 // 人话：句子不带数字，也不带码名——实测长度与阈值归服务端那句 notice 说，界面不另算一份。
@@ -127,6 +229,7 @@ const filteredDocs = computed(() => {
   return docs.value.filter(row => row.filename.toLowerCase().includes(q))
 })
 
+/** 返回值就是「这一发列表读到了没有」：轮询那一格要据此决定读不读得到状态。 */
 async function loadDocs() {
   dismissNotice()
   try {
@@ -137,9 +240,11 @@ async function loadDocs() {
     docs.value = (res.data.documents || [])
       .map(item => (typeof item === 'string' ? { filename: item } : item))
       .filter(row => Boolean(row && row.filename))
+    return true
   } catch (err) {
     console.error('文档列表加载失败', err)
     raiseNotice('文档列表没加载出来', errorDetail(err, '文档列表加载失败'), true)
+    return false
   }
 }
 
@@ -237,6 +342,9 @@ async function uploadSingleFile(file) {
     }
     item.msg = res.data.message || '上传完成'
     await loadDocs()
+    // G01：回执落地才打开轮询窗口，盯的就是刚传的这一批。文件名取回执那一份，不拿本地
+    // File.name 顶 —— 服务端会把显示名规范化，两串不是一回事。
+    armUploadPoll([res.data.filename || item.name])
   } catch (err) {
     stopProgressTimer(item)
     item.status = 'error'
@@ -258,6 +366,39 @@ function onDrop(e) {
 // 批量删除
 const selectedFiles = ref(new Set())
 const deleting = ref(false)
+// G15：删除确认改成两步内联，不再用浏览器原生弹窗。两个理由都写在判据里：原生弹窗在
+// 渲染型测试里根本不出现（那些「删之前必须先确认」的用例等于没验过），而私有化客户机上
+// 浏览器策略常把它静默拦掉 —— 拦掉之后那句「要不要删」压根没露过面，一次点击就直接删。
+// 这里第一次点击只把目标标成待确认，同一目标第二次点击才发请求；换了目标只会把待确认
+// 挪过去，一次错位的点击删不掉没点过的那一行。与产物列表、数据文件删除共用同一枚状态机。
+const pendingDelete = ref('')
+
+/** 待确认目标分两个命名空间：单行按文件名、批量按选择集，二者形状不同永不相撞。 */
+function rowDeleteKey(filename) {
+  return 'row:' + String(filename ?? '')
+}
+
+function batchDeleteKey(files) {
+  const list = Array.isArray(files) ? files : [...(files || [])]
+  return 'batch:' + list.map(String).sort().join('\u0001')
+}
+
+// 改选择集就是改「要删哪些」：待确认必须作废，不许拿着上一版的确认去删这一版的选择。
+watch(
+  () => [...selectedFiles.value].map(String).sort().join('\u0001'),
+  () => { pendingDelete.value = '' },
+)
+
+/** advanceDelete 三档收口：arm 只记账，execute 才清账放行，idle 什么都不做。 */
+function stepDelete(key) {
+  const step = advanceDelete(pendingDelete.value, key)
+  pendingDelete.value = step === 'arm' ? key : ''
+  return step
+}
+
+function cancelDelete() {
+  pendingDelete.value = ''
+}
 
 function toggleSelect(filename) {
   if (!isAdmin.value) return
@@ -278,7 +419,6 @@ function toggleAll() {
 
 async function deleteDocuments(files) {
   if (!files.length || deleting.value) return
-  if (!confirm(`确定删除选中的 ${files.length} 个文档？删除后无法恢复。`)) return
   deleting.value = true
   try {
     const results = await Promise.allSettled(
@@ -298,12 +438,111 @@ async function deleteDocuments(files) {
   }
 }
 
-async function deleteSelected() {
-  await deleteDocuments([...selectedFiles.value])
+/** 批量那一枚的待确认：🔴 这里传的是【值】不是 ref，脚本里不解包就永远比不中。 */
+function batchDeleteArmed() {
+  return isPendingDelete(pendingDelete.value, batchDeleteKey([...selectedFiles.value]))
 }
 
-async function deleteOne(filename) {
-  await deleteDocuments([filename])
+async function requestDeleteSelected() {
+  const files = [...selectedFiles.value]
+  if (!files.length || deleting.value) return
+  if (stepDelete(batchDeleteKey(files)) !== 'execute') return
+  await deleteDocuments(files)
+}
+
+async function requestDeleteOne(filename) {
+  const target = String(filename ?? '')
+  if (!target || deleting.value) return
+  if (stepDelete(rowDeleteKey(target)) !== 'execute') return
+  await deleteDocuments([target])
+}
+
+// ==================== 刚上传那一批的有限轮询（R288 G01） ====================
+// 窗口只由「上传回执」这个用户动作打开；落定、离开这一屏、或数满 UPLOAD_POLL_MAX_TICKS
+// 次就关。不是常驻定时器，也不在挂载期发任何新请求 —— 读的还是现成那一条
+// GET /documents/catalog，行级 parse_status 的唯一事实源，本单一个字都没动后端。
+const uploadWatch = ref([])
+const uploadPollTicks = ref(0)
+const uploadPollFault = ref(false)
+// 窗口数满仍未落定的那几个名字：它们画「还没等到结果」，既不画「解析中」也不画「读不到」。
+const uploadStalled = ref([])
+let uploadPollTimer = null
+
+// 本屏自己那发上传还挂着的那些文件：只有这是界面亲眼看见的在途，才允许画「解析中」。
+const inflightUploads = computed(() => uploads.value
+  .filter(upload => upload.status === 'uploading')
+  .map(upload => upload.name))
+
+// 轮询那一发取数失败时，只把「刚上传那一批」点名为读不到：同屏其它行是上一版真读到的，
+// 把它们一起涂成读不到同样是假话。
+const unreadableUploads = computed(() => (uploadPollFault.value ? uploadWatch.value : []))
+
+function rowFaceKey(row) {
+  return retrievalFace(row, inflightUploads.value, unreadableUploads.value, uploadStalled.value)
+}
+
+/** 「还没等到结果」这一格配一枚「再读一次」：出口由人点，不由界面在后台无限续。 */
+function rowNeedsRecheck(row) {
+  return rowFaceKey(row) === 'stalled'
+}
+
+function rowFaceText(row) {
+  return retrievalFaceLabel(rowFaceKey(row))
+}
+
+/**
+ * 收掉窗口。带名字收＝数满次数仍未落定，把它们点名为「还没等到结果」；
+ * 不带名字收＝读数已落定或人离开这一屏，一张新脸都不留。
+ */
+function stopUploadPoll(stalledNames) {
+  if (uploadPollTimer !== null) {
+    clearTimeout(uploadPollTimer)
+    uploadPollTimer = null
+  }
+  const expired = Array.isArray(stalledNames) ? stalledNames.map(String).filter(Boolean) : []
+  uploadStalled.value = expired
+  uploadWatch.value = []
+  uploadPollTicks.value = 0
+  uploadPollFault.value = false
+}
+
+function armUploadPoll(names) {
+  const incoming = (Array.isArray(names) ? names : [names]).map(String).filter(Boolean)
+  if (!incoming.length) return
+  // 重新盯就是重新等：上一轮的「还没等到结果」必须作废，否则两句话会同时挂在同一行上。
+  uploadStalled.value = uploadStalled.value.filter(name => !incoming.includes(name))
+  uploadWatch.value = [...new Set([...uploadWatch.value, ...incoming])]
+  uploadPollTicks.value = 0
+  uploadPollFault.value = false
+  scheduleUploadPoll()
+}
+
+function scheduleUploadPoll() {
+  if (uploadPollTimer !== null) clearTimeout(uploadPollTimer)
+  uploadPollTimer = setTimeout(runUploadPollTick, UPLOAD_POLL_INTERVAL_MS)
+}
+
+async function runUploadPollTick() {
+  uploadPollTimer = null
+  const watched = uploadWatch.value
+  if (!watched.length) return
+  uploadPollTicks.value += 1
+  const read = await loadDocs()
+  uploadPollFault.value = !read
+  const faces = watched.map(filename => {
+    const row = docs.value.find(item => item.filename === filename)
+    return row === undefined ? 'unreadable' : rowFaceKey(row)
+  })
+  if (shouldReadUploadAgain(faces, uploadPollTicks.value, UPLOAD_POLL_MAX_TICKS)) {
+    scheduleUploadPoll()
+    return
+  }
+  // 收窗口有两种收法：全部落定就安静收；数满次数还没落定的那几个要留一张「还没等到结果」。
+  // 少了这一笔，这一屏就是判据①明令禁止的「静默停在解析中」。
+  const expired = uploadPollTicks.value >= UPLOAD_POLL_MAX_TICKS
+    ? watched.filter((name, at) => isUnsettledFace(faces[at]))
+    : []
+  stopUploadPoll(expired)
 }
 
 function fileIcon(name) {
@@ -322,8 +561,15 @@ function clearUploads() {
   uploads.value = uploads.value.filter(u => u.status === 'uploading')
 }
 
+// 挂载期这一发列表是 R49 之前就有的既有行为；本单不在 onMounted 里加任何新的自动请求，
+// 上传之后的有限轮询只由「刚上传」那个动作打开（见 armUploadPoll）。
 onMounted(loadDocs)
-onUnmounted(() => uploads.value.forEach(stopProgressTimer))
+onUnmounted(() => {
+  uploads.value.forEach(stopProgressTimer)
+  stopUploadPoll()
+})
+// 离开这一屏就关掉窗口：KeepAlive 把面板缓存着，人不在屏上不该继续替它发请求。
+onDeactivated(stopUploadPoll)
 </script>
 
 <template>
@@ -420,7 +666,15 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
       </div>
     </TransitionGroup>
 
-    <button v-if="uploads.some(u => u.status !== 'uploading')" class="clear-btn" @click="clearUploads">清除已完成</button>
+    <UiButton
+      v-if="uploads.some(u => u.status !== 'uploading')"
+      class="clear-btn"
+      variant="ghost"
+      size="sm"
+      label="清除已完成"
+      data-testid="documents-clear-uploads"
+      @click="clearUploads"
+    />
 
     <!-- 批量操作栏（管理员可见） -->
     <div v-if="isAdmin && filteredDocs.length > 0" class="batch-bar">
@@ -430,9 +684,32 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
           {{ selectedFiles.size ? `已选 ${selectedFiles.size} 个` : '全选' }}
         </span>
       </label>
-      <button v-if="selectedFiles.size" class="batch-del" @click="deleteSelected">
-        🗑 删除选中
-      </button>
+      <span v-if="selectedFiles.size" class="batch-actions">
+        <UiButton
+          class="batch-del"
+          variant="danger"
+          size="sm"
+          :loading="deleting"
+          :label="deleteButtonLabel({ pending: batchDeleteArmed(), busy: deleting, label: '🗑 删除选中' })"
+          data-testid="documents-delete-selected"
+          @click="requestDeleteSelected"
+        />
+        <UiButton
+          v-if="batchDeleteArmed()"
+          variant="ghost"
+          size="sm"
+          label="取消"
+          data-testid="documents-delete-selected-cancel"
+          @click="cancelDelete"
+        />
+        <!-- 原生弹窗那句「无法恢复」不能因为换成内联确认就丢掉：待确认时把它写在按钮旁边。 -->
+        <span
+          v-if="batchDeleteArmed()"
+          class="batch-note"
+          role="status"
+          data-testid="documents-delete-warning"
+        >删除后无法恢复</span>
+      </span>
     </div>
 
     <!-- 文档列表 -->
@@ -459,16 +736,67 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
                    不许只留一个图标让人猜；也不许拿「这一步上传被跳过」冒充「这篇未索引」。 -->
               <span v-if="isExcluded(row)" class="doc-index-flag" data-testid="doc-index-status"
                     data-index-status="excluded">未索引</span>
+              <!-- R288 G01：这一格只说读数说过的话。indexed 才有「已可检索」，excluded 走
+                   上面那张未索引的脸（这里返回空串，一行不摆两句话），读不到就画读不到。 -->
+              <span
+                v-if="rowFaceText(row)"
+                class="doc-retrieval"
+                data-testid="doc-retrieval"
+                :data-retrieval-face="rowFaceKey(row)"
+              >{{ rowFaceText(row) }}</span>
+              <!-- 盯过一整轮仍没结果：给一次「再读一次」的出口，不许让人只能整页刷新。
+                   点它只重开同一个窗口，读的还是那一条 GET /documents/catalog。 -->
+              <UiButton
+                v-if="rowNeedsRecheck(row)"
+                class="doc-recheck-btn"
+                variant="ghost"
+                size="sm"
+                label="再读一次"
+                data-testid="doc-retrieval-recheck"
+                @click.stop="armUploadPoll([row.filename])"
+              />
             </div>
             <p v-if="isExcluded(row)" class="doc-index-reason" data-testid="doc-index-reason"
                :data-index-reason="row.index_reason || ''">{{ indexReasonText(row) }}；文件与目录记录均已保留。</p>
           </div>
           <div class="doc-actions">
-            <button class="doc-open-btn" @click.stop="openDocument(row.filename)">打开</button>
-            <button class="doc-open-btn" @click.stop="downloadDocument(row.filename)">下载</button>
+            <UiButton
+              class="doc-open-btn"
+              variant="secondary"
+              size="sm"
+              label="打开"
+              data-testid="document-open"
+              @click.stop="openDocument(row.filename)"
+            />
+            <UiButton
+              class="doc-open-btn"
+              variant="secondary"
+              size="sm"
+              label="下载"
+              data-testid="document-download"
+              @click.stop="downloadDocument(row.filename)"
+            />
 
-          <!-- 删除按钮（管理员） -->
-            <button v-if="isAdmin" class="del-btn" @click.stop="deleteOne(row.filename)" title="删除">删除</button>
+          <!-- 删除按钮（管理员）：第一次点击只把这一行改成确认文案，第二次才发请求 -->
+            <UiButton
+              v-if="isAdmin"
+              class="del-btn"
+              variant="danger"
+              size="sm"
+              title="删除"
+              :loading="deleting"
+              :label="deleteButtonLabel({ pending: isPendingDelete(pendingDelete, rowDeleteKey(row.filename)), busy: deleting, label: '删除' })"
+              data-testid="document-delete-one"
+              @click.stop="requestDeleteOne(row.filename)"
+            />
+            <UiButton
+              v-if="isAdmin && isPendingDelete(pendingDelete, rowDeleteKey(row.filename))"
+              variant="ghost"
+              size="sm"
+              label="取消"
+              data-testid="document-delete-one-cancel"
+              @click.stop="cancelDelete"
+            />
           </div>
         </div>
       </TransitionGroup>
@@ -800,4 +1128,50 @@ onUnmounted(() => uploads.value.forEach(stopProgressTimer))
 .footer-excluded {
   color: var(--amber);
 }
+
+/* ===== 检索状态那一格（R288 G01） =====
+   色值只借 theme.css 已有的 token，并且刻意绕开 --red / --blue 那两枚名字会撞 stylelint
+   关键字正则的：本仓 lint:colors 预算钉死在 148 枚告警，多一枚就是违约（判据①）。
+   也不写 background：r151 那条浅色板棘轮只准降，这一格不该给它添数。 */
+.doc-retrieval {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--muted) 34%, transparent);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.doc-retrieval[data-retrieval-face="retrievable"] {
+  border-color: color-mix(in srgb, var(--cyan) 34%, transparent);
+  color: var(--cyan);
+}
+
+.doc-retrieval[data-retrieval-face="parsing"] {
+  border-color: color-mix(in srgb, var(--amber) 34%, transparent);
+  color: var(--amber);
+}
+
+.doc-retrieval[data-retrieval-face="failed"] {
+  border-color: color-mix(in srgb, var(--legacy-ep-danger) 34%, transparent);
+  color: var(--legacy-ep-danger);
+}
+
+/* 数满窗口仍没落定：还是琥珀色（还没好），但换成虚线边，和「解析中」不是一张脸。 */
+.doc-retrieval[data-retrieval-face="stalled"] {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--amber) 34%, transparent);
+  color: var(--amber);
+}
+
+/* 「再读一次」贴着那一格，尺寸收进行内，不新造控件高度档，也不引新色值。 */
+.doc-recheck-btn {
+  min-height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+/* 待确认那一档：取消与「无法恢复」并排，句子不给按钮文案让位。 */
+.batch-actions { display: flex; align-items: center; gap: 6px; }
+.batch-note { color: var(--legacy-ep-danger); font-size: 11px; }
 </style>

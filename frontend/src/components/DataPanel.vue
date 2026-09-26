@@ -419,11 +419,14 @@ onMounted(loadDataFiles)
       </template>
 
       <div v-else class="data-file-list">
-        <button
+        <UiButton
           v-for="file in dataFiles"
           :key="file.filename"
           type="button"
+          variant="secondary"
+          size="sm"
           :class="['data-file-item', { active: file.filename === dataFile, loading: selectingFile && file.filename === dataFile }]"
+          data-testid="data-file-item"
           @click="selectDataFile(file.filename)"
         >
           <span class="data-file-icon">{{ file.extension === '.csv' ? 'CSV' : 'XLS' }}</span>
@@ -431,7 +434,7 @@ onMounted(loadDataFiles)
             <span class="data-file-name">{{ file.filename }}</span>
             <span class="data-file-meta">{{ file.size_label }} · {{ formatModifiedAt(file.modified_at) }}</span>
           </span>
-        </button>
+        </UiButton>
       </div>
 
       <!-- R186：后端在成功体里已经说了「有 N 个数据文件存在，但不在当前账号的可见范围内」
@@ -484,17 +487,17 @@ onMounted(loadDataFiles)
           </span>
         </div>
         <div class="data-file-actions">
-          <button type="button" class="data-action-btn" @click="openDataFile">打开</button>
-          <button type="button" class="data-action-btn" @click="downloadDataFile">下载</button>
-          <button
+          <UiButton type="button" class="data-action-btn" label="打开" data-testid="data-file-open" @click="openDataFile" />
+          <UiButton type="button" class="data-action-btn" label="下载" data-testid="data-file-download" @click="downloadDataFile" />
+          <UiButton
             type="button"
+            variant="danger"
             class="data-action-btn data-action-btn--danger"
             :disabled="deletingFile"
+            :label="deleteButtonLabel({ pending: isPendingDelete(pendingFileDelete, dataFile), busy: deletingFile, label: '删除所选数据文件' })"
             data-testid="data-file-delete"
             @click="requestFileDelete"
-          >
-            {{ deleteButtonLabel({ pending: isPendingDelete(pendingFileDelete, dataFile), busy: deletingFile, label: '删除所选数据文件' }) }}
-          </button>
+          />
           <UiButton
             v-if="isPendingDelete(pendingFileDelete, dataFile)"
             variant="ghost"
@@ -539,10 +542,13 @@ onMounted(loadDataFiles)
     <!-- 快捷提问 -->
     <div class="quick-actions" data-testid="data-quick-actions">
       <h4>💡 快捷提问</h4>
-      <button v-for="act in quickActions" :key="act.label"
-              class="quick-chip" @click="askQuestion(act.query)">
-        {{ act.label }}
-      </button>
+      <UiButton
+        v-for="act in quickActions"
+        :key="act.label"
+        class="quick-chip"
+        :label="act.label"
+        @click="askQuestion(act.query)"
+      />
     </div>
 
     <DocumentPreviewModal
@@ -644,6 +650,8 @@ onMounted(loadDataFiles)
 
 .data-file-item {
   display: flex;
+  /* 接了 UiButton 之后它是原语的根节点：原语默认居中，这一行是文件条目，得拉回左起。 */
+  justify-content: flex-start;
   width: 100%;
   align-items: center;
   gap: 9px;
@@ -656,6 +664,14 @@ onMounted(loadDataFiles)
   font: inherit;
   text-align: left;
   transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+
+/* 原语会把默认插槽包进一层 label 容器：这一行的排布在那一层之上，接管成同一套 flex。 */
+.data-file-item :deep(.ui-button__label) {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 9px;
 }
 
 .data-file-item:hover {

@@ -36,7 +36,7 @@ function scopeRowCount(value) {
 
 <script setup>
 import { computed } from 'vue'
-import { UiLoadingState } from './ui'
+import { UiButton, UiLoadingState } from './ui'
 
 const props = defineProps({
   open: Boolean,
@@ -99,8 +99,8 @@ const rowScopeSuffix = computed(() => (rowScopeNote.value ? ` · ${rowScopeNote.
               <span v-else>文本预览</span>
             </div>
             <div class="preview-actions">
-              <button class="preview-btn" type="button" @click="emit('download')">下载</button>
-              <button class="preview-close" type="button" aria-label="关闭" @click="emit('close')">×</button>
+              <UiButton class="preview-btn" type="button" label="下载" data-testid="preview-download" @click="emit('download')" />
+              <UiButton class="preview-close" type="button" variant="ghost" aria-label="关闭" label="×" data-testid="preview-close-x" @click="emit('close')" />
             </div>
           </header>
 
