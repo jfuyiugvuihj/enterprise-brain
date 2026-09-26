@@ -2001,3 +2001,158 @@ fails every department-scoped resource check as `resource_scope_missing`
 None of the three is fixed here: the cache, session and profile layers belong to other write
 domains. Verification status: the PostgreSQL branch is pinned with a fake table that recognises
 exactly the one new `UPDATE`; a live-PostgreSQL run is still outstanding on this machine.
+
+## Notification Inbox (2026-09-26, R299)
+
+One inbox, three existing ledgers, no new account of work. This resource answers the question the
+platform could not answer before -- *what should this particular person look at* -- and nothing
+else. Every candidate is a read-time projection over a book that already exists. The only thing
+`migrations/0016_notification_states.sql` stores is reader state: there is no body, department or
+classification column, so the inbox cannot grow into a second to-do ledger even by accident.
+
+### Endpoints
+
+| method | path | who |
+| --- | --- | --- |
+| GET | `/api/v1/notifications` | any authenticated principal; each caller sees only what their own scope admits |
+| POST | `/api/v1/notifications/read` | the same, and only for ids the caller can address |
+| POST | `/api/v1/notifications/dismiss` | the same, and only for ids the caller can address |
+
+### The three sources and the key each id is built from
+
+`id` is `<source_type>:<source_record_id>`, derived from a key that already exists in the source
+book -- never a number generated here -- so the same candidate spells the same string across
+processes, across restarts and across "nobody has read it yet".
+
+| source_type | the existing book that is read | `source_record_id` | in the inbox while |
+| --- | --- | --- | --- |
+| `approval` | `app/storage/pending_approvals.py::open_items(owner_user_id=<caller>)`, the same read `GET /api/v1/hitl/pending` performs | that ledger's `session_id` | the row is still `awaiting` and inside its action window |
+| `alert` | `app/api/v1/alerts.py::list_alerts(request)`, called directly so the resource gate, the row predicate and the row projection each keep exactly one definition | that ledger's `id` | `status` is not in `ALERT_TERMINAL_STATUSES` |
+| `document` | `app/api/v1/chat.py::list_document_catalog(request)`, called directly so visibility stays `authorization_decision`'s answer | `<filename>#v<version>` | `index_status == "indexed"` |
+
+A fourth source type is refused by `parse_notification_id`, and there would be nothing for it to
+write into: a candidate that no book would still list is simply not addressable.
+
+### Visibility: no second filter is written here
+
+Approval ownership is the ledger's own `owner_user_id`; alert row ownership is
+`alerts.alert_row_visible` / `alert_row_scope_sql`; document visibility is
+`app/common/policy.py::authorization_decision` behind the catalog route. Consequences that are
+pinned by `tests/test_r299_notification_inbox.py`: another person's approval todo is invisible and
+not dismissible; a same-department staff account does not see a level-2 document notification that
+a manager sees; another department's alert does not cross over even between two managers.
+Administrators are unconstrained **only** on the two books that already say so (alerts, documents)
+-- the HITL ledger stays owner-scoped for an administrator too.
+
+When a source is refused outright (a `staff` caller holds no `alerts:manage`), that source answers
+`included: false` with the ledger's own `reason_code` (`permission_denied`) -- never `0`, which
+would render as "your department had a quiet day" (the standing rule from the R188 overview tile).
+
+### `GET /api/v1/notifications` -- request and response
+
+Query parameters: `state` in `unread | read | all` (default `all`; `dismissed` is not a filter
+value, it is 422), `limit` 1..100 (default 20), `offset` >= 0. Rows are ordered newest first by
+`(created_at, id)`, where `created_at` is the source's own recorded time -- nothing here is
+re-timestamped.
+
+```json
+{
+  "notifications": [
+    {"id": "alert:701", "source_type": "alert", "source_id": "701", "title": "...",
+     "detail": "...", "created_at": "2026-09-26T09:00:00+08:00", "state": "unread",
+     "reference": {"alert_id": 701}}
+  ],
+  "state": "all", "limit": 20, "offset": 0,
+  "returned": 3, "has_more": false,
+  "total": 12, "unread_total": 9, "unread_returned": 3,
+  "is_exact": true,
+  "sources": {
+    "approval": {"included": true, "reason_code": "ok", "candidates": 3, "scanned": 3, "truncated": false},
+    "alert": {"included": false, "reason_code": "permission_denied", "candidates": 0, "scanned": 0, "truncated": false},
+    "document": {"included": true, "reason_code": "ok", "candidates": 0, "scanned": 0, "truncated": false}
+  }
+}
+```
+
+**The four counts, and which base each one is read against** (the R278 lesson, spelled out):
+
+| field | base | meaning |
+| --- | --- | --- |
+| `returned` | **this page** | how many rows this response carries |
+| `unread_returned` | **this page** | how many of those rows are unread |
+| `total` | **the whole set** | every candidate this caller can see, unread and read alike, not dismissed |
+| `unread_total` | **the whole set** | how many of those have no reader row yet |
+
+`total` and `unread_total` are page-independent and `state`-independent: paging to the last two
+rows does not make the set smaller, and filtering by `unread` does not change `total`. "Whole set"
+means the whole set **inside the candidate window**, not the whole table: each source contributes
+at most `SOURCE_WINDOW` (50) candidates and the alert leg carries its own `LIMIT 100`, so when any
+source was trimmed, `is_exact` is `false` and both totals are honest lower bounds rather than a
+claim of completeness. `scanned` says how many rows that source actually looked at.
+
+### Lifecycle: two writable states, one direction
+
+`unread` is not a state that is ever written -- it is the absence of a row, which is why reading
+the list leaves the table untouched. `read` and `dismissed` are the only two values
+`notification_states.state` takes (the CHECK in 0016 and `contracts.NOTIFICATION_STATES` are kept
+equal by `tests/test_r299_notification_states.py`). Advancement is one-way: `read` may become
+`dismissed`, `dismissed` never returns to `read`, because a page flip must not reopen something a
+reader already refused to look at. A dismissed row leaves the list **and** both totals; a read row
+stays in the list and leaves only `unread_total`.
+
+Writes take `{"ids": [<notification id>, ...]}` and nothing else -- 1 to 50 ids after de-duplication,
+`extra="forbid"`, so `recipient`, `username` and `department` in the body are each a 422. The
+recipient is always taken from the session, never from the client: this table's entire meaning is
+"who actually saw what".
+
+```json
+{"action": "dismiss", "requested": 2, "changed": 1,
+ "results": [{"id": "alert:701", "state": "dismissed", "changed": true, "reason": "applied"},
+             {"id": "approval:sess-x", "state": null, "changed": false,
+              "reason": "notification_not_addressable"}]}
+```
+
+Both actions are idempotent, and the receipt says so rather than merely not failing: the second
+`dismiss` of the same id answers the same `state` with `changed: false`.
+
+### Errors (verbatim `detail` strings, no new wording invented)
+
+| status | body | who can see it |
+| --- | --- | --- |
+| 401 | `{"detail":"authentication_required"}` | anonymous callers, on all three routes |
+| 422 | `{"detail":"validation_error"}` | out-of-range `state`/`limit`/`offset`, unparseable body, unregistered field, empty or oversized `ids`, malformed id |
+| 503 | `{"detail":"storage_unavailable"}` | 0016 has not been applied; the whole answer refuses rather than reporting "nothing unread" |
+
+There is deliberately no 403 and no 404 on this resource. Someone else's notification and a
+notification that never existed answer the same way -- `200` with `state: null` and
+`reason: "notification_not_addressable"`, `changed: false`, no row written -- because a status-code
+difference between those two would be an existence oracle over other people's ids (the same stance
+`GET /api/v1/alerts/{id}` takes with its single 404).
+
+### Audit
+
+Every refused write books one line through the existing `app.common.audit.record_audit` path:
+`action="resource:view"`, `outcome="denied"`, `resource=<notification id>`,
+`reason="notification_not_addressable"`. Nothing is written for a successful state change -- the
+state row is itself the record of that act, and a second copy of it in a journal is exactly the
+parallel book this ticket forbids.
+
+### Registered, not fixed
+
+1. **There is no event stream in this slice.** The document rows are derived from catalog state --
+   "the set that is retrievable for you right now" -- not from a timestamped "indexing finished"
+   event. On first boot of this feature a long-indexed document therefore surfaces as one unread
+   row per person who can see it, and `created_at` is the version row's time, not the moment the
+   index job completed. A real `notification` event table would be a fourth ledger; it is out of
+   scope here by the ticket's own wording.
+2. **Approval candidates are not re-verified against the graph.** `GET /api/v1/hitl/pending` does
+   not re-run `check_interrupt` per row either, and this read deliberately matches that stance. A
+   session resolved out of band closes its ledger row, so the next read agrees; the row does not
+   linger in the inbox, because the inbox never kept a copy.
+3. **No delegate, no administrator override.** Nobody can mark someone else's inbox, and there is
+   no "unread for my department" roll-up. Both would require answering on behalf of a person who
+   has not looked.
+
+Verification status: pinned offline. The PostgreSQL leg of `notification_states` is exercised with
+a fake connection that answers `to_regclass` with NULL and with the same migration runner the
+first-boot family uses; a live-PostgreSQL run is still outstanding on this machine.

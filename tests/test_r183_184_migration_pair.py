@@ -44,9 +44,10 @@ NEW_PATH = MIGRATIONS_DIR / NEW_FILENAME
 #: tests/test_r120_clean_install_first_boot.py、tests/test_r190_status_failed_domain.py 同族）。
 #: 本单落 0012 时尾号就是 0012；R190 排了 0013（放开挂起台账 status 的取值域）之后尾号归它，
 #: R251 排了 0014（告警台账的处置列）之后尾号归它，R256 排了 0015（给 dataset_versions 补上
-#: 版本自己那一份 classification / department_ids）之后尾号归它。本件连名带断言一起改口 ——
+#: 版本自己那一份 classification / department_ids）之后尾号归它，R299 排了 0016（通知中心的读者
+#: 生命周期表 notification_states）之后尾号归它。本件连名带断言一起改口 ——
 #: 这是把钉子收紧一版，不是放宽。谁排下一号必须回到这里改这一格。
-CATALOG_TAIL_VERSION = "0015"
+CATALOG_TAIL_VERSION = "0016"
 
 #: 本单送的两枚列：R184 管告警台账的行级归属，R183 管挂起轮声明的档位。
 ALERTS_DEPARTMENT = ("alerts", "department")
@@ -358,9 +359,11 @@ def test_the_catalog_gains_exactly_one_version_and_the_loader_accepts_it():
     assert [version for version in versions if version > NEW_VERSION] == [
         "0013",
         "0014",
+        "0015",
         CATALOG_TAIL_VERSION,
     ], (
-        "0012 之后只许站着被指名的那三枚前滚迁移（R190 的 0013、R251 的 0014 与 R256 的 0015），"
+        "0012 之后只许站着被指名的那四枚前滚迁移（R190 的 0013、R251 的 0014、"
+        "R256 的 0015 与 R299 的 0016），"
         "多一枚就得回到这里指名：" + str(versions)
     )
     assert NEW_FILENAME in on_disk

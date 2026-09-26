@@ -284,7 +284,7 @@ def test_task0_left_the_migrations_directory_alone():
 
     尾号那一格与 tests/test_document_catalog_sync.py 的同名引信一起改口（R58 的先例：加一版
     就主动改这条，别让它静默失效）。R120 自己仍然一枚前滚迁移都没加，但 0010 之后现在确有
-    R46 的 0011、R183/R184 的 0012、R190 的 0013、R251 的 0014 与 R256 的 0015，所以钉法从"后面什么都没有"
+    R46 的 0011、R183/R184 的 0012、R190 的 0013、R251 的 0014、R256 的 0015 与 R299 的 0016，所以钉法从"后面什么都没有"
     换成"后面只许
     站着被指名的那几枚、且它们的账对得上"。
     """
@@ -295,7 +295,8 @@ def test_task0_left_the_migrations_directory_alone():
     assert sha256(on_disk.encode("utf-8")).hexdigest() == BASELINE_0010_SHA256
     assert manifest["0010_pgvector_chunks.sql"] == BASELINE_0010_SHA256
     assert registered.checksum == BASELINE_0010_SHA256
-    # 0010 之后只站着五枚：R46 的 0011、R183/R184 的 0012、R190 的 0013、R251 的 0014、R256 的 0015。
+    # 0010 之后只站着六枚：R46 的 0011、R183/R184 的 0012、R190 的 0013、R251 的 0014、R256 的 0015、
+    # R299 的 0016（通知中心的读者生命周期表 notification_states）。
     # 本单没加前滚迁移；别人加了就必须回到这里指名——枚数与名字一起点，静默多一枚就不是"别人加了"而是"没人看过"。
     forward = [item for item in mig.MIGRATIONS if item.version > "0010"]
     assert [item.version for item in forward] == [
@@ -304,8 +305,10 @@ def test_task0_left_the_migrations_directory_alone():
         "0013",
         "0014",
         "0015",
+        "0016",
     ], (
-        "the only forward migrations past 0010 are R46's, R183/R184's, R190's, R251's and R256's: "
+        "the only forward migrations past 0010 are R46's, R183/R184's, "
+        "R190's, R251's, R256's and R299's: "
         + str([item.version for item in forward])
     )
     assert forward[0].name == "document_activity_signals", forward[0].name
@@ -313,6 +316,7 @@ def test_task0_left_the_migrations_directory_alone():
     assert forward[2].name == "pending_approvals_status_includes_failed", forward[2].name
     assert forward[3].name == "alert_disposal_columns", forward[3].name
     assert forward[4].name == "dataset_version_scope_columns", forward[4].name
+    assert forward[5].name == "notification_states", forward[5].name
     path_0011 = MIGRATIONS_DIR / "0011_document_activity_signals.sql"
     on_disk_0011 = path_0011.read_text(encoding="utf-8")
     registered_0011 = forward[0].checksum
