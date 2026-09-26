@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from app.common import audit as audit_log
 from app.common import auth
-from app.common.authorization import authorize_request, principal_from_request
+from app.common.authorization import DEPARTMENT_SELF_REPORT_DENIED, authorize_request, principal_from_request
 from app.common.permissions import ACTION_MANAGE_USERS
 from app.common.sso import extract_sso_identity, validate_sso_headers
 from app.memory.profile import get_profile, upsert_profile
@@ -240,10 +240,29 @@ async def get_my_profile(request: Request):
 
 @router.put("/profile")
 async def update_my_profile(data: UpdateProfileRequest, request: Request):
+    """存自己的职位与偏好；``department`` 在这一格是只读派生值，自助写不了。
+
+    R296：部门归属的唯一事实源是 ``users`` 那一行，写入口是 R290 的
+    ``PUT /api/v1/users/department``（只有持 ``users:manage`` 的管理员过得去，本人也过不去）。
+    这一支过去把员工自报的部门存进 ``user_profiles.department``，而 ``get_profile`` 又拿它盖住
+    权威值、再顺着画像块拼进 prompt——那是第二份真相。
+
+    判据②：请求里**出现** ``department``（空串也算）就整发拒，不收下再丢，也不「其余字段照存、
+    这一格当它不存在」。错误码复用 ``app/common/authorization.py`` 里已有的
+    ``department_override_denied``，不新造裸码：那枚码的后端登记与前端归一本来就齐。
+    """
+    if "department" in data.model_fields_set:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": DEPARTMENT_SELF_REPORT_DENIED,
+                "message": "画像里的 department 是只读派生值，员工自助改不了；"
+                           "要挪部门请用 PUT /api/v1/users/department（需要 users:manage）",
+            },
+        )
     username = getattr(request.state, "username", "")
     ok = upsert_profile(
         username,
-        department=data.department,
         position=data.position,
         preferences=data.preferences or [],
     )

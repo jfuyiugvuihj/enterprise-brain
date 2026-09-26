@@ -149,7 +149,10 @@ def test_profile_save_and_load_fallback_to_memory_without_postgres(monkeypatch):
 
     saved = profile.get_profile("offline-user", fallback={"username": "offline-user"})
 
-    assert saved["department"] == "QA"
+    # R296 由总控落笔改口：画像存储不再携带「部门」这一格真相——员工自助可写的
+    # user_profiles.department 已降为只读派生，权威值只来自 users。上面那句传参照旧保留，
+    # 因为它现在测的是「传进来的 department 不得被回读成事实」；旧断言钉的正是本单要拆掉的东西。
+    assert "department" not in saved
     assert saved["position"] == "tester"
     assert saved["preferences"] == ["concise"]
 

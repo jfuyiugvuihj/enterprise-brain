@@ -2002,6 +2002,60 @@ None of the three is fixed here: the cache, session and profile layers belong to
 domains. Verification status: the PostgreSQL branch is pinned with a fake table that recognises
 exactly the one new `UPDATE`; a live-PostgreSQL run is still outstanding on this machine.
 
+## The profile store stops carrying a department: `PUT /api/v1/profile` (2026-09-26, R296)
+
+R290 registered this as residual 3 of `PUT /api/v1/users/department`. This section closes it; the text
+of that section is left as written.
+
+### Single source of truth
+
+`users.department` is the only authoritative department. `Principal` is built from that row
+(`app/agents/contracts.py::Principal.from_user`), and since this ticket the profile read path takes its
+department from the same row: `app/memory/profile.py::get_profile` no longer selects the `department`
+column of `user_profiles`, and neither the PostgreSQL leg nor the in-memory leg merges it back. Moving
+someone with `PUT /api/v1/users/department` therefore shows up in `GET /api/v1/profile` and in the model
+context on the next call - there is no second copy left to catch up.
+
+### `PUT /api/v1/profile` refuses a department
+
+`department` is read-only here. A body that **contains the key at all** - `"department": ""` included -
+is refused as a whole request:
+
+| status | body |
+| --- | --- |
+| 403 | `{"detail":{"code":"department_override_denied","message":"..."}}` |
+
+Nothing is written on such a request: `position` and `preferences` are not saved either, because "accept
+the field, then quietly drop it, and store the rest" is exactly how a second truth comes back with a
+friendly error message. A client that serializes its whole form must stop sending the field. A body
+without `department` behaves as before and returns `{"status":"ok"}`.
+
+The code is not invented here: it is `DEPARTMENT_SELF_REPORT_DENIED` (`app/common/authorization.py`),
+already carried by `tests/test_error_code_vocabulary.py::BARE_CODES_OUTSIDE_THE_ENUM` and already folded
+by `frontend/src/lib/errcodes.js::LEGACY_ALIASES`. Frontend: show it with the same wording as every other
+refused self-report - "the department you sent is not writable here" - not as a generic permission
+failure, and no retry button (a resend of the same body is refused again).
+
+### The prompt keeps its line
+
+`app/agents/nodes.py::load_memory` derives the department from `users` at that moment
+(`_authoritative_department`), falling back to the request's `Principal` snapshot only when the row cannot
+be read. The splice itself is untouched: `compose_profile_context` still emits the `department:` line, so
+closing the second truth does not remove context the answer needs.
+
+### The legacy column: kept, no longer read, no longer written
+
+`user_profiles.department` keeps every value already stored. This ticket deletes nothing.
+`upsert_profile` dropped the column from the `INSERT` list and from the `ON CONFLICT DO UPDATE` set, so
+saving a profile neither overwrites an old value with a new claim nor nulls it out.
+
+Cleanup guidance for the owner (`migrations/**` is not this ticket's domain, nothing below was executed):
+
+1. No production path reads or writes the column any more, so `ALTER TABLE user_profiles DROP COLUMN
+   department` is behaviour-neutral whenever the owner decides to take it.
+2. Until then the column may still hold values that contradict `users.department`. No API surfaces them,
+   so anything reading the table directly - a customer SQL query, a future report - must treat `users` as
+   the standard, and `user_profiles` as position and preferences only.
 ## Notification Inbox (2026-09-26, R299)
 
 One inbox, three existing ledgers, no new account of work. This resource answers the question the

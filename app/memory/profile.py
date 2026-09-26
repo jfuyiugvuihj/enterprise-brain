@@ -98,20 +98,43 @@ def _ensure():
     _initialized = True
 
 
+#: R296：``users`` 那一行是部门归属的唯一事实源（``Principal`` 也是从它造的，见
+#: ``app/agents/contracts.py`` 的 ``Principal.from_user``）。``user_profiles.department``
+#: 是历史留下的第二份真相：员工曾经经 ``PUT /api/v1/profile`` 自助写它，而它又会**盖住** ``users``
+#: 的权威值。从今天起读路径不再取它、写路径不再喂它；表里已经存下的旧值一个字都不动（本单不删数据），
+#: 清理口径写在 ``docs/api/contract-v1.md`` 的 R296 一节，由业主决定。
+LEGACY_DEPARTMENT_FIELD = "department"
+
+
+def _without_legacy_department(stored: dict) -> dict:
+    """剥掉画像存储里那列遗留的部门，其余字段照旧返回。
+
+    做成两条读腿共用的一枚函数，而不是只在 SELECT 里少写一列：PG 那一支靠不选它，内存那一支靠丢键，
+    共用同一条口径，旧值才不会从另一条腿漏回画像与 prompt。
+    """
+    return {key: value for key, value in stored.items() if key != LEGACY_DEPARTMENT_FIELD}
+
+
 def get_profile(user_id: str, fallback: dict | None = None) -> dict:
+    """读画像；返回里的 ``department`` 只可能来自 ``fallback``。
+
+    ``fallback`` 是调用方从 ``users`` 现取的那一行（``app/api/v1/auth.py`` 的 GET 走
+    ``auth.get_user``，``app/agents/nodes.py`` 的 load_memory 走同一张表），不是画像存储里的值。
+    ``user_profiles`` 那一列遗留值一个字都不进返回值。
+    """
     profile = dict(fallback or {})
     if not _database_available():
-        profile.update(_MEM_PROFILES.get(user_id, {}))
+        profile.update(_without_legacy_department(_MEM_PROFILES.get(user_id, {})))
         return profile
     try:
         _ensure()
         with _conn() as conn:
             row = conn.execute(
-                "SELECT department, position, preferences, updated_at FROM user_profiles WHERE user_id = %s",
+                "SELECT position, preferences, updated_at FROM user_profiles WHERE user_id = %s",
                 (user_id,),
             ).fetchone()
         if row:
-            stored = dict(row)
+            stored = _without_legacy_department(dict(row))
             if stored.get("preferences"):
                 stored["preferences"] = json.loads(stored["preferences"])
             profile.update({k: v for k, v in stored.items() if v not in (None, "")})
@@ -121,6 +144,17 @@ def get_profile(user_id: str, fallback: dict | None = None) -> dict:
 
 
 def upsert_profile(user_id: str, department: str = "", position: str = "", preferences: list | None = None) -> bool:
+    """存画像。``department`` 是遗留参数，本函数不再把它写进任何存储。
+
+    为什么留着参数而不同时删掉：生产调用点只有 ``PUT /api/v1/profile``，而它从今天起对带
+    ``department`` 的请求整发拒（R296 判据②），值永远到不了这里；真有人往这格塞非空值就只落一行
+    警告——既不静默，也不逼内部调用点在一次改动里同时长两处。
+
+    表里已经存下的旧值既不覆盖也不清空：覆盖等于替业主删数据，继续喂又会长回第二份真相，所以这一列
+    今天的准确说法是「没人写、也没人读」。清理它属于数据迁移，归业主。
+    """
+    if department:
+        logger.warning("[Profile] department is no longer stored (R296): users holds the authoritative value")
     if not _database_available() and _is_production_environment():
         logger.error(
             "[Profile] production profile store is not durable; write refused "
@@ -128,8 +162,8 @@ def upsert_profile(user_id: str, department: str = "", position: str = "", prefe
         )
         return False
     if not _database_available():
+        # 内存表与 PG 那一支同口径：department 不进存储（R296）。
         _MEM_PROFILES[user_id] = {
-            "department": department,
             "position": position,
             "preferences": list(preferences or []),
             "updated_at": datetime.now(_tz).isoformat(),
@@ -142,15 +176,14 @@ def upsert_profile(user_id: str, department: str = "", position: str = "", prefe
         with _conn() as conn:
             conn.execute(
                 """
-                INSERT INTO user_profiles (user_id, department, position, preferences, updated_at)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO user_profiles (user_id, position, preferences, updated_at)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT (user_id) DO UPDATE
-                SET department = EXCLUDED.department,
-                    position = EXCLUDED.position,
+                SET position = EXCLUDED.position,
                     preferences = EXCLUDED.preferences,
                     updated_at = EXCLUDED.updated_at
                 """,
-                (user_id, department or None, position or None, payload, now),
+                (user_id, position or None, payload, now),
             )
             conn.commit()
         return True

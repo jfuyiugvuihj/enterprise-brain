@@ -1647,6 +1647,37 @@ def _memory_user_id(state) -> str:
     return str(principal_user_id or state.get("user_id") or "").strip()
 
 
+def _authoritative_department(state) -> str:
+    """R296：画像与 prompt 里的部门只认 ``users`` 那一行。
+
+    ``AgentState``（``app/agents/state.py``）里并没有 ``department`` 这一格，所以
+    ``state.get("department")`` 恒为空：过去 prompt 里那一行 ``department:`` 实际只剩
+    ``user_profiles`` 那列员工自助可写的遗留值。这里改成现取 ``users``；读不到（库不通、账号不在）
+    才退回请求进来时那份 Principal 快照——快照同样是 ``users`` 那一行的投影。
+
+    它只喂画像块的标注与 prompt 拼接。授权判定从来不看画像，本函数不参与任何范围计算。
+    """
+    principal = state.get("principal")
+    if isinstance(principal, dict):
+        username = str(principal.get("username") or "").strip()
+        snapshot = str(principal.get("department") or "")
+    else:
+        username = str(getattr(principal, "username", "") or "").strip()
+        snapshot = str(getattr(principal, "department", "") or "")
+    if not username:
+        return snapshot
+    try:
+        from app.common import auth
+
+        row = auth.get_user(username)
+    except Exception as exc:
+        logger.warning(f"[LoadMemory] users lookup skipped: {exc}")
+        return snapshot
+    if not row:
+        return snapshot
+    return str(row.get("department") or "")
+
+
 def load_memory(state) -> dict:
     """召回长期记忆注入 state"""
     user_id = _memory_user_id(state)
@@ -1666,7 +1697,7 @@ def load_memory(state) -> dict:
     profile = get_profile(
         user_id,
         fallback={
-            "department": state.get("department") or "",
+            "department": _authoritative_department(state),
             "role": state.get("role") or "",
         },
     )
