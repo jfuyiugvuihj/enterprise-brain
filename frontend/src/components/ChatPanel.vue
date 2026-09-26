@@ -849,7 +849,15 @@ const QUEUE_POLL_MS = 3000
 // dead 的脸不在这里另立：读数交给 lib/provenance.js 的 queueFace，它那句
 // 「这一轮在后台执行失败，没有产出答案」本来就写着管「failed 与后端给的其它状态」，
 // 原因仍走 normalizeError 那一份口径，本面板不当第三套判断，也不新增字典条目。
-const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired', 'dead']
+// R260 · 名单补进 R254 那枚新终态：awaiting_approval。挂起在等人批准的那一轮不再报 done
+// （主树 8f89def；契约 docs/api/contract-v1.md 的 Long Task Status 一节），漏它的代价和漏
+// dead 那一次一模一样：计时器永不停，每 3 秒打一枪直到看门狗到点，屏上还被换成到点那张
+// 「已转后台，稍后可查回」的脸 —— 而那一轮的真实处境是【停在等人拍板，不点它不会自己好】。
+// 契约那句话是这一格的判据：这枚状态对轮询是终态、对这一轮不是终态。停表说的是「不会有
+// 新读数自己冒出来」，不是「这一轮办完了」：POST /api/v1/approve 还能把它推动，不必重发问题。
+// 所以停表那一下必须改口，而且两句话都不许说（既不说失败、也不承诺稍后会好）；措辞住在
+// lib/provenance.js 的 queueFace，本面板不当第三套判断，能点的那件东西走既有那一屏。
+const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired', 'dead', 'awaiting_approval']
 
 // 看门狗的另一半：前台等待有上限，盯到点就收表，并标注「已转后台，稍后可查回」。
 // 到点 = 界面不再当场盯着，【不是】判定这一轮失败。任务此刻在不在跑、跑没跑完，
@@ -1066,6 +1074,10 @@ function watchQueueTurn(key, requestId) {
         position: Number.isFinite(Number(status.data?.position)) ? Number(status.data.position) : null,
         failure: status.data?.failure || null,
         result: typeof status.data?.result === 'string' ? status.data.result : '',
+        // R254 交回的可批准把手：后端只在 done / awaiting_approval 两枚状态下给这一格，
+        // 挂起那一轮的 result 恒为 null（契约：notice 是说明，不是正文）。这里只做
+        // 「读到才带下来」，一律不解读 —— 说什么、给不给入口，都在 lib/provenance.js。
+        approval: status.data?.approval && typeof status.data.approval === 'object' ? status.data.approval : null,
       }
       queueReads.value = storeBag(queueReads, key, read)
       queueFaults.value = storeBag(queueFaults, key, null)
@@ -1224,6 +1236,25 @@ function retryTurn(index) {
   if (!question.trim()) return
   input.value = question
   send()
+}
+
+/**
+ * 挂起待批准那一轮唯一能点的东西：把用户送到【既有】那一屏去（路由 name: approval，
+ * 屏上挂的就是 HitlPendingPanel，行是 HitlPendingRow，批准发的是 POST /approve）。
+ *
+ * 为什么不在这里替后端把 decide_body 发出去：批准这件事的归属判定在服务端
+ * （_authorize_session_request），既有那一屏已经走通了那扇门并把它的所有收尾脸都画全了
+ * （办完 / 没办成 / 批过而那一轮跑挂了）。在这里再抄一份 approve() 就是第二套批准路径，
+ * 两套口径各说各的话是本仓点过名的病。后端交回的 decide_method / decide_path / decide_body
+ * 原样留在这一轮的读数里（见上面那份 read.approval），要做就地批准的下一单从那儿接，
+ * 不必再改契约。
+ * 这一枚只做跳转、不做判定：面板本身就是挂在路由上的屏，路由实例恒在；裸渲染（单测里
+ * 没有路由上下文）取不到时这一格只是不动作，界面上那句话仍然说得出真相。
+ */
+function openApprovalTurn(action) {
+  if (!action || action.kind !== 'hitl-pending') return
+  if (!router) return
+  router.push({ name: 'approval' })
 }
 
 // ==================== Markdown ====================
@@ -1412,6 +1443,7 @@ function renderMd(raw) {
                     :face="queueFaceOf(msg, i)"
                     :stats="queueStatsOf()"
                     @retry="retryTurn(i)"
+                    @action="openApprovalTurn"
                   />
                   <!-- 档位那张脸：读的是响应头给的本轮真读数，不是选择框的当前值。
                        用户中途改选择框不会回改已落定的那一轮；后端没发读数就整条不画。 -->
