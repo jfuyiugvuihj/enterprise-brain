@@ -1,0 +1,284 @@
+ Container enterprise-brain-backend-run-cc95c8229db8 Creating 
+ Container enterprise-brain-backend-run-cc95c8229db8 Created 
+
+##### STEP 00 :: 身份与环境（脱敏）
+now_utc=2026-09-26T04:00:51Z
+34b5f5592b9f
+uid=10001(brain) gid=10001(brain) groups=10001(brain)
+DATABASE_URL=postgresql://enterprise_brain:***@postgres:5432/enterprise_brain
+CHROMA_DIR=（未设，默认 ./chroma_db）
+EMBEDDING_MODEL=nomic-embed-text EMBEDDING_DIMENSION=768
+VECTOR_DUAL_WRITE=on OLLAMA_BASE_URL=http://ollama:11434
+APP_ENV=production  PERSISTENCE_BACKEND=postgres
+python 3.11.16 | chromadb 1.5.9 | psycopg 3.3.5
+BUILD_INFO=revision=75d9a6da3a42f627e68d1f26a07366f341510be8 built_at=2026-09-25T05:56:41Z 
+
+##### STEP 05 :: 判据5 · 镜像脚本 vs 工作树脚本（现场取 sha256）
+9e0e81cfa4fa719f8e7645461177adafd54feae982655ba7a14b2be8b8be42eb  /app/scripts/compare_vector_recall.py
+9e0e81cfa4fa719f8e7645461177adafd54feae982655ba7a14b2be8b8be42eb  /tree/scripts/compare_vector_recall.py
+SAME-BLOB：镜像里那枚与树上那枚逐字节同一，读数不降级
+2230b2b45be18bfbb19f2f58a5ba55a5b36b444060886a30dcf073a81d678bab  /tree/tests/fixtures/business_evaluation_100.jsonl
+fd89f5f7dcfe666f3f5d5dd573d111d50c9dcc4f5fcec2ebc8766d82a8c2fb0b  /tree/tests/fixtures/business_evaluation_30.jsonl
+{"id":"doc-01","tier":"问答","category":"文档问答","question":"住宿费�
+{"id":"doc-02","tier":"问答","category":"文档问答","question":"差旅报�
+{"id":"doc-03","tier":"问答","category":"文档问答","question":"超住宿�
+
+##### STEP 10 :: 生产卷快照：先取活目录清单（只 stat，不打开 chromadb）
+/app/chroma_db 4096 1790329917 2026-09-25 17:51:57.039176592 +0800
+/app/chroma_db/chroma.sqlite3 123052032 1790329917 2026-09-25 17:51:57.039176592 +0800
+/app/chroma_db/0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/data_level0.bin 128232676 1790299798 2026-09-25 09:29:58.130907161 +0800
+/app/chroma_db/0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/header.bin 100 1790299798 2026-09-25 09:29:58.130907161 +0800
+/app/chroma_db/0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/index_metadata.pickle 118132 1790299798 2026-09-25 09:29:58.138907582 +0800
+/app/chroma_db/0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/length.bin 159692 1790299798 2026-09-25 09:29:58.134907372 +0800
+/app/chroma_db/0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/link_lists.bin 345604 1790299798 2026-09-25 09:29:58.138907582 +0800
+47a262ffc50416af4af6ef5f40a6f7bb73f7f7cd8261f4c6133059e8703989ea chroma_db/0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/data_level0.bin
+b2b1943ab2920c09ddb7b0be01536c4d0b1bcddcf7779c2adf2ecd8749e9becd chroma_db/0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/header.bin
+eb9badf7990881e638f84c52f46dc8c074d8de0d0fdc5be81ed371be27772ef8 chroma_db/0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/index_metadata.pickle
+6fdd7375f72f3b810b4f7392a0013977748a8002119c2ec153e984966cfdc784 chroma_db/0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/length.bin
+2c1cc2e4319a90efe501eec6131e95f4ca08d4a474f9c3b5e44868347ebe24e7 chroma_db/0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/link_lists.bin
+6fe0bd9753af4f6c7b105b2c7f3369132ae205ceb1d720625f3cebbfaa360653 chroma_db/chroma.sqlite3
+
+##### STEP 11 :: cp -a 造快照（纯读源）
+cp rc=0 用时 0s
+total 119996
+drwxr-xr-x 2 brain brain      4096 Sep 18 21:52 0c4b1056-e0c4-44f8-98fa-6b88d22c2a51
+-rw-r--r-- 1 brain brain 123052032 Sep 25 17:51 chroma.sqlite3
+
+##### STEP 12 :: 快照字节级等同证明：逐文件 sha256 对活目录
+活目录文件数=6 快照文件数=6
+SHA256-IDENTICAL：快照逐文件与生产卷同一枚，Chroma 腿读的就是生产卷
+
+##### STEP 20 :: Chroma 侧全零普查（前置三查·第2查）：rebuild_index --status --json 指快照
+EXIT=0 :: rebuild_index --status --json
+{"census_documents": 100, "census_elapsed_seconds": 0.143, "census_measurable": true, "census_non_sequence_vectors": 0, "census_page_size": 200, "census_pages_read": 6, "census_reason": "", "census_report_path": "/drv/census_chroma_full.json", "census_source": "/tmp/p3snap#enterprise_docs", "census_store_vectors": 1008, "census_vectors_read": 1008, "codes": ["embedding_scope_unknown"], "cross_dimension_vector_documents": [], "cross_dimension_vector_documents_total": 0, "cross_dimension_vectors_before": 0, "documents": 100, "documents_needing_rebuild": 0, "drifted": true, "indexes": 129, "scope": "nomic-embed-text/768", "stale_documents": [], "unknown_scope_versions": ["document:browser-e2e-policy-237.txt:v3f400820d21444abaeb2c7ef59416d1c", "document:browser-e2e-rv-237.txt:va2b37f060a3f4a82b2ffbe12a8ec7c78", "document:r8-scope-0b665a63.txt:v6b2791fbe2594836a3023ed0c284f54d", "document:r8-scope-4f311c41.txt:vc85a8954178e42b6b43e714f01388157", "document:r8-scope-8f193cfe.txt:v633470d43022409cbb125363476fd92a"], "unmeasurable_documents": [], "unmeasurable_documents_total": 0, "zero_vector_documents": [], "zero_vector_documents_total": 0, "zero_vectors_before": 0}
+
+  census_measurable                  True
+  census_reason                      
+  zero_vectors_before                0
+  cross_dimension_vectors_before     0
+  census_store_vectors               1008
+  census_vectors_read                1008
+  census_pages_read                  6
+  census_source                      /tmp/p3snap#enterprise_docs
+  census_page_size                   200
+  zero_vector_documents(前10)       []
+
+##### STEP 30 :: 判据2 · 两腿来源自证 + PG 侧全零普查
+EXIT=0 :: harness prove
+=== PG 腿 · 连接对象自证 ===
+  client dsn      : postgresql://enterprise_brain:***@postgres:5432/enterprise_brain
+  object          : psycopg.Connection
+  info.host       : 'postgres'  (compose 服务名)
+  info.port       : 5432
+  info.dbname     : 'enterprise_brain'   info.user: 'enterprise_brain'
+  read_only       : True
+  server  current_database=enterprise_brain current_user=enterprise_brain
+  server  inet_server_addr=172.18.0.7/32 : 5432   (guc port=5432)
+  server  data_directory=/var/lib/postgresql/data
+  server  hba_file      =/var/lib/postgresql/data/pg_hba.conf
+  server  databases     =enterprise_brain,postgres,template0,template1
+  server  server_version=16.15 (Debian 16.15-1.pgdg12+2)  vector extension=0.8.6
+  server  SYSTEM_IDENTIFIER=7685285828163473446   <- 这一枚唯一标识‘哪一台 PostgreSQL’
+  trap    容器内 127.0.0.1:5432 connect_ex=111 (REFUSED —— 宿主野库在容器网内不可达，结构上连不到)
+  trap    getent postgres -> 172.18.0.7
+=== vector_scope（库里唯一口径） ===
+  {"embedding_model": "nomic-embed-text", "dimension": 768, "distance_function": "l2", "column_type": "vector(768)"}
+  算符映射：l2 -> <-> （canonical=l2）
+=== PG 腿 · 真读到库没有 ===
+  chunk_vectors=1008  chunks=1008  embedding IS NULL=0  index_version_id IS NULL=0
+  vector_dims: min=768 max=768 distinct=1 （声明 768）
+  全零向量普查（PG 侧，零值按 vector_scope.dimension 现拼）= 0
+  全零逐行清单前 20 条：（空）
+=== Chroma 腿 · 来源自证 ===
+  目录（快照，生产卷的字节级副本）: /tmp/p3snap
+  生产卷原目录（本进程从未打开）  : /app/chroma_db
+  快照文件 6 枚 / 251908236 字节
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/data_level0.bin          128232676  mtime=2026-09-25T01:29:58.130907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/header.bin                     100  mtime=2026-09-25T01:29:58.130907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/index_metadata.pickle       118132  mtime=2026-09-25T01:29:58.138908Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/length.bin                  159692  mtime=2026-09-25T01:29:58.134907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/link_lists.bin              345604  mtime=2026-09-25T01:29:58.138908Z
+    chroma.sqlite3                                                123052032  mtime=2026-09-26T04:00:55.169590Z
+  chromadb 1.5.9
+  collection.name='enterprise_docs'  count()=1008  get(ids) 全量=1008
+  collection.metadata=None
+  回读一枚 2025-2026中国企业协同办公市场研究报告.txt_0 -> 宽度=768 metadata={'filename': '2025-2026中国企业协同办公市场研究报告.txt', 'chunk_index': 0, 'hash': 'cc1a0df9542bd4e92dc7798ae2a35bf5', 'classification': 1, 'department': ''}
+[32m  [真读到库] 两腿各自计数与差集稍后由官方脚本出数；此处先自证目录=/tmp/p3snap[0m
+  U1 实测：space=l2 来源=measured 样本=64 探针=2 命中=['l2'] reason=-
+=== 判据 1 现场值 ===
+  0010 已建            : 见 vector_scope 行 + schema_migrations（脚本外另行取）
+  PG 侧向量计数非零    : 1008
+  PG 全零普查          : 0
+  Chroma 侧计数        : 1008
+  两侧 canonical 距离  : pg=l2 chroma=l2 一致
+[prov] 已落 /tmp/p3_prov.json
+[prove] OK
+
+##### STEP 40 :: 第一轮：语料级差集（官方脚本，--skip-questions）
+EXIT=0 :: compare --skip-questions
+-- 口径：nomic-embed-text / 768 维 / l2 --
+-- U1：collection 距离=l2（来源=measured，样本=64 枚，探针=2 枚）--
+pg_vectors                       1008
+chroma_vectors                   1008
+chunks_rows                      1008
+chunks_with_backfilled_embedding 1008
+index_version_id_null            0
+all_zero_rows                    0
+only_in_pg                       0
+only_in_chroma                   0
+wrong_width                      0
+-- 逐题对比已跳过（--skip-questions）--
+结论已写出：/tmp/p3_drift.json
+
+##### STEP 50 :: 第二轮：真 top-k 逐题对照（官方脚本，105 题，k=5）
+EXIT=1 :: compare --fixture business_evaluation_100
+-- 口径：nomic-embed-text / 768 维 / l2 --
+-- U1：collection 距离=l2（来源=measured，样本=64 枚，探针=2 枚）--
+pg_vectors                       1008
+chroma_vectors                   1008
+chunks_rows                      1008
+chunks_with_backfilled_embedding 1008
+index_version_id_null            0
+all_zero_rows                    0
+only_in_pg                       0
+only_in_chroma                   0
+wrong_width                      0
+-- 逐题 top-5（共 105 题）--
+business_evaluation_100.jsonl doc-01 DIFF first_diff_rank=2
+    chroma: ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '差旅费报销细则_2026版.txt_0', '深度学习入门：基于Python的理论与实现.pdf_436', '公司年会流程_2025年度.txt_1']
+    pg    : ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '深度学习入门：基于Python的理论与实现.pdf_510', '差旅费报销细则_2026版.txt_0', '深度学习入门：基于Python的理论与实现.pdf_436']
+business_evaluation_100.jsonl doc-02 DIFF first_diff_rank=0
+    chroma: ['深度学习入门：基于Python的理论与实现.pdf_290', '深度学习入门：基于Python的理论与实现.pdf_188', '深度学习入门：基于Python的理论与实现.pdf_288', '销售话术培训_应对话术集.txt_1', '深度学习入门：基于Python的理论与实现.pdf_200']
+    pg    : ['深度学习入门：基于Python的理论与实现.pdf_510', '深度学习入门：基于Python的理论与实现.pdf_290', '深度学习入门：基于Python的理论与实现.pdf_502', '深度学习入门：基于Python的理论与实现.pdf_188', '深度学习入门：基于Python的理论与实现.pdf_288']
+business_evaluation_100.jsonl doc-03 DIFF first_diff_rank=2
+    chroma: ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '差旅费报销细则_2026版.txt_0', '企业管理制度手册.txt_4', '公司年会流程_2025年度.txt_1']
+    pg    : ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '深度学习入门：基于Python的理论与实现.pdf_510', '差旅费报销细则_2026版.txt_0', '企业管理制度手册.txt_4']
+business_evaluation_100.jsonl doc-04 OK   first_diff_rank=None
+    chroma: ['GB-T 22239-2019 信息安全技术等保三级要求.txt_4', 'GB-T 22239-2019 信息安全技术等保三级要求.txt_3', 'GB-T 22239-2019 信息安全技术等保三级要求.txt_0', '档案管理办法.txt_0', '客户数据保护政策_正式稿.txt_0']
+    pg    : ['GB-T 22239-2019 信息安全技术等保三级要求.txt_4', 'GB-T 22239-2019 信息安全技术等保三级要求.txt_3', 'GB-T 22239-2019 信息安全技术等保三级要求.txt_0', '档案管理办法.txt_0', '客户数据保护政策_正式稿.txt_0']
+business_evaluation_100.jsonl doc-05 DIFF first_diff_rank=0
+...(全文在 /drv/50_recall.log)
+    pg    : ['深度学习入门：基于Python的理论与实现.pdf_419', '深度学习入门：基于Python的理论与实现.pdf_536', '案例_广东省人民医院.txt_2', '六级作文模板.docx_2', '深度学习入门：基于Python的理论与实现.pdf_52']
+business_evaluation_100.jsonl report-10 OK   first_diff_rank=None
+    chroma: ['深度学习入门：基于Python的理论与实现.pdf_536', '深度学习入门：基于Python的理论与实现.pdf_387', '深度学习入门：基于Python的理论与实现.pdf_419', '市场营销策略_2026版.txt_2', '深度学习入门：基于Python的理论与实现.pdf_52']
+    pg    : ['深度学习入门：基于Python的理论与实现.pdf_536', '深度学习入门：基于Python的理论与实现.pdf_387', '深度学习入门：基于Python的理论与实现.pdf_419', '市场营销策略_2026版.txt_2', '深度学习入门：基于Python的理论与实现.pdf_52']
+business_evaluation_100.jsonl report-11 OK   first_diff_rank=None
+    chroma: ['案例_比亚迪电池事业部.txt_0', '制度与口径登记表.txt_0', '制度与口径登记表.txt_3', '制度与口径登记表.txt_4', '员工培训与发展管理办法.txt_2']
+    pg    : ['案例_比亚迪电池事业部.txt_0', '制度与口径登记表.txt_0', '制度与口径登记表.txt_3', '制度与口径登记表.txt_4', '员工培训与发展管理办法.txt_2']
+business_evaluation_100.jsonl report-12 DIFF first_diff_rank=0
+    chroma: []
+    pg    : ['深度学习入门：基于Python的理论与实现.pdf_52', '中国网络安全法_相关条款摘要.txt_2', '深度学习入门：基于Python的理论与实现.pdf_50', '深度学习入门：基于Python的理论与实现.pdf_202', '深度学习入门：基于Python的理论与实现.pdf_375']
+-- 汇总：50/105 题 top-5 不一致 --
+结论已写出：/tmp/p3_recall105.json
+
+##### STEP 60 :: 判据4 · 同源反证（钉）
+EXIT=0 :: harness samesource
+=== Chroma 腿 · 来源自证 ===
+  目录（快照，生产卷的字节级副本）: /tmp/p3snap
+  生产卷原目录（本进程从未打开）  : /app/chroma_db
+  快照文件 6 枚 / 251908236 字节
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/data_level0.bin          128232676  mtime=2026-09-25T01:29:58.130907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/header.bin                     100  mtime=2026-09-25T01:29:58.130907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/index_metadata.pickle       118132  mtime=2026-09-25T01:29:58.138908Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/length.bin                  159692  mtime=2026-09-25T01:29:58.134907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/link_lists.bin              345604  mtime=2026-09-25T01:29:58.138908Z
+    chroma.sqlite3                                                123052032  mtime=2026-09-26T04:01:30.416307Z
+  chromadb 1.5.9
+  collection.name='enterprise_docs'  count()=1008  get(ids) 全量=1008
+  collection.metadata=None
+  回读一枚 2025-2026中国企业协同办公市场研究报告.txt_0 -> 宽度=768 metadata={'classification': 1, 'department': '', 'hash': 'cc1a0df9542bd4e92dc7798ae2a35bf5', 'filename': '2025-2026中国企业协同办公市场研究报告.txt', 'chunk_index': 0}
+[32m  [真读到库] 两腿各自计数与差集稍后由官方脚本出数；此处先自证目录=/tmp/p3snap[0m
+  U1 实测：space=l2 来源=measured 样本=64 探针=2 命中=['l2'] reason=-
+=== 判据 4 · 同源反证（题面取真跑前 10 题，同一 embedder） ===
+
+[real] 官方脚本：chromadb 引擎 vs pgvector 引擎
+  左腿 = chromadb/enterprise_docs | storage=chromadb:///tmp/p3snap#enterprise_docs
+  右腿 = pgvector/chunk_vectors | storage=postgres://172.18.0.7:5432/enterprise_brain#chunk_vectors
+[32m  两腿不同源（pgvector 引擎 vs chromadb 引擎）：mean_overlap=0.700 逐位相同 3/10[0m
+
+[chroma_vs_chromabrute] 把 PG 腿换成同一份 Chroma 快照上的 numpy 全库暴力（误判 #43 第三行的形状）
+  左腿 = chromadb/enterprise_docs | storage=chromadb:///tmp/p3snap#enterprise_docs
+  右腿 = numpy-bruteforce@chroma-snapshot | storage=chromadb:///tmp/p3snap#enterprise_docs
+[31m  🔴 两侧同源（storage 同一个）：mean_overlap=0.700 逐位相同 3/10 —— 这个 1.0 是同一份数据自己比自己，不构成任何切读证据，读数作废[0m
+
+[pg_vs_pgnumpy] 把 Chroma 腿换成 pgvector 同一张表上的 numpy 全库暴力
+  左腿 = numpy-bruteforce@chunk_vectors | storage=postgres://172.18.0.7:5432/enterprise_brain#chunk_vectors
+  右腿 = pgvector/chunk_vectors | storage=postgres://172.18.0.7:5432/enterprise_brain#chunk_vectors
+[31m  🔴 两侧同源（storage 同一个）：mean_overlap=1.000 逐位相同 10/10 —— 这个 1.0 是同一份数据自己比自己，不构成任何切读证据，读数作废[0m
+[samesource] 两枚同源控制均被认出，真跑那一格判为两腿不同源 —— 反证钉成立
+
+##### STEP 70 :: 判据3 · overlap / Jaccard 汇总与逐题清单
+EXIT=0 :: harness metrics
+{
+ "canonical_distance": {
+  "chroma_resolved": [
+   "l2"
+  ],
+  "vector_scope": "l2",
+  "spelling_unified_before_compare": true
+ },
+ "k": 5,
+ "questions": 105,
+ "mean_overlap": 0.7238095238095237,
+ "mean_jaccard": 0.6829931972789115,
+ "exact_order_match": 55,
+ "exact_order_rate": 0.5238095238095238,
+ "questions_with_overlap_1": 55,
+ "questions_with_overlap_0": 21,
+ "first_diff_rank_hist": {
+  "0": 32,
+  "1": 8,
+  "2": 5,
+  "3": 5,
+  "None": 55
+ },
+ "drift": {
+  "pg_vectors": 1008,
+  "chroma_vectors": 1008,
+  "only_in_pg": 0,
+  "only_in_chroma": 0,
+  "wrong_width": 0,
+  "all_zero_rows": 0,
+  "index_version_id_null": 0,
+  "chunks_rows": 1008,
+  "chunks_with_backfilled_embedding": 1008
+ },
+ "provenance": {
+  "pg": {
+   "label": "pgvector/chunk_vectors",
+   "storage": "postgres://172.18.0.7:5432/enterprise_brain#chunk_vectors",
+   "detail": {
+    "system_identifier": "7685285828163473446",
+    "data_directory": "/var/lib/postgresql/data"
+   }
+  },
+  "chroma": {
+   "label": "chromadb/enterprise_docs",
+   "storage": "chromadb:///tmp/p3snap#enterprise_docs",
+   "detail": {
+    "count": 1008,
+    "dir": "/tmp/p3snap",
+    "width": 768
+   }
+  }
+ }
+}
+[metrics] 逐题清单 105 行 -> /tmp/p3raw/per-question-k5.txt
+
+##### STEP 80 :: 空读/降级必须当场报错：两枚故意打错的路径
+EXIT=1 :: 故意指一个不存在的目录
+[前置不满足] Chroma 目录不存在：/tmp/definitely-not-here（不要新建）
+ls: cannot access '/tmp/should_not_exist.json': No such file or directory
+EXIT=1 :: 故意用错的 collection 名（库名 enterprise_brain 不是集合名）
+[前置不满足] 取不到 collection 'enterprise_brain_wrongname'：Collection [enterprise_brain_wrongname] does not exist
+ls: cannot access '/tmp/should_not_exist2.json': No such file or directory
+
+##### STEP 90 :: 收尾：生产目录全程没被动过 / 工作树只读挂载
+LIVE-UNCHANGED：mtime/size 一字未动
+LIVE-SHA-UNCHANGED：生产卷字节在我整轮窗口内没变
+touch: cannot touch '/tree/.r264-write-test': Read-only file system
+TREE-READONLY：写工作树被拒（零改树由挂载强制）
+ls: cannot access '/tree/.r264-write-test': No such file or directory
+
+##### STEP 99 :: driver 结束
+done_utc=2026-09-26T04:02:25Z

@@ -1,0 +1,185 @@
+=== Chroma 腿 · 来源自证 ===
+  目录（快照，生产卷的字节级副本）: /tmp/p3snap
+  生产卷原目录（本进程从未打开）  : /app/chroma_db
+  快照文件 6 枚 / 251908236 字节
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/data_level0.bin          128232676  mtime=2026-09-25T01:29:58.130907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/header.bin                     100  mtime=2026-09-25T01:29:58.130907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/index_metadata.pickle       118132  mtime=2026-09-25T01:29:58.138908Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/length.bin                  159692  mtime=2026-09-25T01:29:58.134907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/link_lists.bin              345604  mtime=2026-09-25T01:29:58.138908Z
+    chroma.sqlite3                                                123052032  mtime=2026-09-26T04:07:43.527553Z
+  chromadb 1.5.9
+  collection.name='enterprise_docs'  count()=1008  get(ids) 全量=1008
+  collection.metadata=None
+  回读一枚 2025-2026中国企业协同办公市场研究报告.txt_0 -> 宽度=768 metadata={'classification': 1, 'filename': '2025-2026中国企业协同办公市场研究报告.txt', 'department': '', 'hash': 'cc1a0df9542bd4e92dc7798ae2a35bf5', 'chunk_index': 0}
+[32m  [真读到库] 两腿各自计数与差集稍后由官方脚本出数；此处先自证目录=/tmp/p3snap[0m
+  U1 实测：space=l2 来源=measured 样本=64 探针=2 命中=['l2'] reason=-
+=== Chroma 空 top-k 逐题诊断（判据3 的红因） ===
+
+[EMPTY] doc-09  len=768 nan=0 inf=0 norm=22.444981 min=-3.432082 max=2.748011
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['采购管理制度_最新.txt_2', '深度学习入门：基于Python的理论与实现.pdf_286', '深度学习入门：基于Python的理论与实现.pdf_436', '深度学习入门：基于Python的理论与实现.pdf_48', '深度学习入门：基于Python的理论与实现.pdf_114']
+    pgvector 引擎 top5-> ['采购管理制度_最新.txt_2', '深度学习入门：基于Python的理论与实现.pdf_286', '深度学习入门：基于Python的理论与实现.pdf_436', '深度学习入门：基于Python的理论与实现.pdf_48', '深度学习入门：基于Python的理论与实现.pdf_114']
+
+[EMPTY] doc-13  len=768 nan=0 inf=0 norm=22.169822 min=-3.1836 max=2.363553
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_7']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_7']
+
+[EMPTY] metric-04  len=768 nan=0 inf=0 norm=22.437902 min=-3.123872 max=2.488413
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_4']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_4']
+
+[EMPTY] metric-05  len=768 nan=0 inf=0 norm=22.437902 min=-3.123872 max=2.488413
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_4']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_4']
+
+[EMPTY] metric-10  len=768 nan=0 inf=0 norm=22.606931 min=-4.026699 max=2.271646
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '深度学习入门：基于Python的理论与实现.pdf_286', '员工培训与发展管理办法.txt_2', 'IT安全管理制度V3.1.txt_6']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '深度学习入门：基于Python的理论与实现.pdf_286', '员工培训与发展管理办法.txt_2', 'IT安全管理制度V3.1.txt_6']
+
+[EMPTY] metric-11  len=768 nan=0 inf=0 norm=22.606931 min=-4.026699 max=2.271646
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '深度学习入门：基于Python的理论与实现.pdf_286', '员工培训与发展管理办法.txt_2', 'IT安全管理制度V3.1.txt_6']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '深度学习入门：基于Python的理论与实现.pdf_286', '员工培训与发展管理办法.txt_2', 'IT安全管理制度V3.1.txt_6']
+
+[EMPTY] metric-13  len=768 nan=0 inf=0 norm=22.214863 min=-3.141908 max=2.259363
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['员工培训与发展管理办法.txt_2', '深度学习入门：基于Python的理论与实现.pdf_534', '案例_比亚迪电池事业部.txt_0', '制度与口径登记表.txt_3', '员工手册_2025正式版.txt_2']
+    pgvector 引擎 top5-> ['员工培训与发展管理办法.txt_2', '深度学习入门：基于Python的理论与实现.pdf_534', '案例_比亚迪电池事业部.txt_0', '制度与口径登记表.txt_3', '员工手册_2025正式版.txt_2']
+
+[EMPTY] metric-18  len=768 nan=0 inf=0 norm=21.139951 min=-3.381186 max=2.170462
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['员工培训与发展管理办法.txt_2', '制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_6', 'IT安全管理制度V3.1.txt_6']
+    pgvector 引擎 top5-> ['员工培训与发展管理办法.txt_2', '制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_6', 'IT安全管理制度V3.1.txt_6']
+
+[EMPTY] metric-19  len=768 nan=0 inf=0 norm=21.043097 min=-3.336991 max=2.241378
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['员工培训与发展管理办法.txt_2', '制度与口径登记表.txt_3', 'IT安全管理制度V3.1.txt_6', '知识产权与专利管理制度.txt_2', '安全生产管理制度.txt_5']
+    pgvector 引擎 top5-> ['员工培训与发展管理办法.txt_2', '制度与口径登记表.txt_3', 'IT安全管理制度V3.1.txt_6', '知识产权与专利管理制度.txt_2', '安全生产管理制度.txt_5']
+
+[EMPTY] data-08  len=768 nan=0 inf=0 norm=22.018496 min=-3.367174 max=2.380188
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '供应商管理制度_含评估表.txt_1', '深度学习入门：基于Python的理论与实现.pdf_534', '合同管理办法_法务版.txt_1']
+    pgvector 引擎 top5-> ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '供应商管理制度_含评估表.txt_1', '深度学习入门：基于Python的理论与实现.pdf_534', '合同管理办法_法务版.txt_1']
+
+[EMPTY] insight-02  len=768 nan=0 inf=0 norm=22.355031 min=-2.995118 max=2.121097
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '案例_比亚迪电池事业部.txt_2', '深度学习入门：基于Python的理论与实现.pdf_52', '深度学习入门：基于Python的理论与实现.pdf_286', '深度学习入门：基于Python的理论与实现.pdf_202']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '案例_比亚迪电池事业部.txt_2', '深度学习入门：基于Python的理论与实现.pdf_52', '深度学习入门：基于Python的理论与实现.pdf_286', '深度学习入门：基于Python的理论与实现.pdf_202']
+
+[EMPTY] insight-06  len=768 nan=0 inf=0 norm=22.279448 min=-3.375783 max=2.500099
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '深度学习入门：基于Python的理论与实现.pdf_288', '深度学习入门：基于Python的理论与实现.pdf_286', '制度与口径登记表.txt_0', '深度学习入门：基于Python的理论与实现.pdf_510']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '深度学习入门：基于Python的理论与实现.pdf_288', '深度学习入门：基于Python的理论与实现.pdf_286', '制度与口径登记表.txt_0', '深度学习入门：基于Python的理论与实现.pdf_510']
+
+[EMPTY] chart-04  len=768 nan=0 inf=0 norm=22.043127 min=-3.003806 max=2.668406
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '制度与口径登记表.txt_2', '制度与口径登记表.txt_10', '制度与口径登记表.txt_4']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '制度与口径登记表.txt_2', '制度与口径登记表.txt_10', '制度与口径登记表.txt_4']
+
+[EMPTY] approval-06  len=768 nan=0 inf=0 norm=21.890429 min=-3.587764 max=1.921396
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['销售部2026年Q2会议纪要.txt_2', '深度学习入门：基于Python的理论与实现.pdf_534', '员工培训与发展管理办法.txt_2', '安全生产管理制度.txt_5', '知识产权与专利管理制度.txt_2']
+    pgvector 引擎 top5-> ['销售部2026年Q2会议纪要.txt_2', '深度学习入门：基于Python的理论与实现.pdf_534', '员工培训与发展管理办法.txt_2', '安全生产管理制度.txt_5', '知识产权与专利管理制度.txt_2']
+
+[EMPTY] scope-01  len=768 nan=0 inf=0 norm=21.964223 min=-3.316404 max=2.452568
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['深度学习入门：基于Python的理论与实现.pdf_286', '中国制造业数字化转型白皮书_2025.txt_1', '企业管理制度手册.txt_3', '深度学习入门：基于Python的理论与实现.pdf_375', '深度学习入门：基于Python的理论与实现.pdf_289']
+    pgvector 引擎 top5-> ['深度学习入门：基于Python的理论与实现.pdf_286', '中国制造业数字化转型白皮书_2025.txt_1', '企业管理制度手册.txt_3', '深度学习入门：基于Python的理论与实现.pdf_375', '深度学习入门：基于Python的理论与实现.pdf_289']
+
+[EMPTY] scope-03  len=768 nan=0 inf=0 norm=21.611473 min=-3.240156 max=2.357471
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['知识产权与专利管理制度.txt_0', '离职员工告别信_模板.txt_0', '财务管理制度_V2.0.txt_0', '考勤与假期管理办法.txt_0', '知识产权与专利管理制度.txt_2']
+    pgvector 引擎 top5-> ['知识产权与专利管理制度.txt_0', '离职员工告别信_模板.txt_0', '财务管理制度_V2.0.txt_0', '考勤与假期管理办法.txt_0', '知识产权与专利管理制度.txt_2']
+
+[EMPTY] scope-05  len=768 nan=0 inf=0 norm=21.237997 min=-2.869131 max=2.487873
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['知识产权与专利管理制度.txt_0', '财务管理制度_V2.0.txt_0', '差旅费报销细则_2026版.txt_0', '考勤与假期管理办法.txt_0', '离职员工告别信_模板.txt_0']
+    pgvector 引擎 top5-> ['知识产权与专利管理制度.txt_0', '财务管理制度_V2.0.txt_0', '差旅费报销细则_2026版.txt_0', '考勤与假期管理办法.txt_0', '离职员工告别信_模板.txt_0']
+
+[EMPTY] scope-06  len=768 nan=0 inf=0 norm=23.06048 min=-3.223603 max=2.219507
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '制度与口径登记表.txt_2', '深度学习入门：基于Python的理论与实现.pdf_286', '深度学习入门：基于Python的理论与实现.pdf_215']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '制度与口径登记表.txt_2', '深度学习入门：基于Python的理论与实现.pdf_286', '深度学习入门：基于Python的理论与实现.pdf_215']
+
+[EMPTY] tool-01  len=768 nan=0 inf=0 norm=21.799525 min=-2.954814 max=2.385377
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['市场营销策略_2026版.txt_2', '深度学习入门：基于Python的理论与实现.pdf_563', '深度学习入门：基于Python的理论与实现.pdf_226', '深度学习入门：基于Python的理论与实现.pdf_527', '深度学习入门：基于Python的理论与实现.pdf_224']
+    pgvector 引擎 top5-> ['市场营销策略_2026版.txt_2', '深度学习入门：基于Python的理论与实现.pdf_563', '深度学习入门：基于Python的理论与实现.pdf_226', '深度学习入门：基于Python的理论与实现.pdf_527', '深度学习入门：基于Python的理论与实现.pdf_224']
+
+[EMPTY] tool-04  len=768 nan=0 inf=0 norm=22.054486 min=-3.216995 max=2.152311
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['深度学习入门：基于Python的理论与实现.pdf_286', '中国网络安全法_相关条款摘要.txt_2', '深度学习入门：基于Python的理论与实现.pdf_52', '六级作文模板.docx_2', '深度学习入门：基于Python的理论与实现.pdf_106']
+    pgvector 引擎 top5-> ['深度学习入门：基于Python的理论与实现.pdf_286', '中国网络安全法_相关条款摘要.txt_2', '深度学习入门：基于Python的理论与实现.pdf_52', '六级作文模板.docx_2', '深度学习入门：基于Python的理论与实现.pdf_106']
+
+[EMPTY] report-12  len=768 nan=0 inf=0 norm=22.296401 min=-3.020562 max=2.372977
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['深度学习入门：基于Python的理论与实现.pdf_52', '中国网络安全法_相关条款摘要.txt_2', '深度学习入门：基于Python的理论与实现.pdf_50', '深度学习入门：基于Python的理论与实现.pdf_202', '深度学习入门：基于Python的理论与实现.pdf_375']
+    pgvector 引擎 top5-> ['深度学习入门：基于Python的理论与实现.pdf_52', '中国网络安全法_相关条款摘要.txt_2', '深度学习入门：基于Python的理论与实现.pdf_50', '深度学习入门：基于Python的理论与实现.pdf_202', '深度学习入门：基于Python的理论与实现.pdf_375']
+
+[CONTROL-OK] doc-01  len=768 nan=0 inf=0 norm=23.176601 min=-3.590548 max=3.132627
+    chroma.query k=5  -> 5 条 ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '差旅费报销细则_2026版.txt_0', '深度学习入门：基于Python的理论与实现.pdf_436', '公司年会流程_2025年度.txt_1']
+    chroma.query k=50 -> 50 条 ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '差旅费报销细则_2026版.txt_0']
+    chroma 距离       -> [236.3281, 381.8177, 399.8828, 400.7935, 401.5963]
+    同库暴力精确 top5 -> ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '深度学习入门：基于Python的理论与实现.pdf_510', '差旅费报销细则_2026版.txt_0', '深度学习入门：基于Python的理论与实现.pdf_436']
+    pgvector 引擎 top5-> ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '深度学习入门：基于Python的理论与实现.pdf_510', '差旅费报销细则_2026版.txt_0', '深度学习入门：基于Python的理论与实现.pdf_436']
+
+[CONTROL-OK] doc-02  len=768 nan=0 inf=0 norm=23.266629 min=-3.617509 max=2.699517
+    chroma.query k=5  -> 5 条 ['深度学习入门：基于Python的理论与实现.pdf_290', '深度学习入门：基于Python的理论与实现.pdf_188', '深度学习入门：基于Python的理论与实现.pdf_288', '销售话术培训_应对话术集.txt_1', '深度学习入门：基于Python的理论与实现.pdf_200']
+    chroma.query k=50 -> 50 条 ['深度学习入门：基于Python的理论与实现.pdf_290', '深度学习入门：基于Python的理论与实现.pdf_188', '深度学习入门：基于Python的理论与实现.pdf_288']
+    chroma 距离       -> [348.5849, 354.8425, 356.6015, 357.6382, 358.1939]
+    同库暴力精确 top5 -> ['深度学习入门：基于Python的理论与实现.pdf_510', '深度学习入门：基于Python的理论与实现.pdf_290', '深度学习入门：基于Python的理论与实现.pdf_502', '深度学习入门：基于Python的理论与实现.pdf_188', '深度学习入门：基于Python的理论与实现.pdf_288']
+    pgvector 引擎 top5-> ['深度学习入门：基于Python的理论与实现.pdf_510', '深度学习入门：基于Python的理论与实现.pdf_290', '深度学习入门：基于Python的理论与实现.pdf_502', '深度学习入门：基于Python的理论与实现.pdf_188', '深度学习入门：基于Python的理论与实现.pdf_288']
+
+[CONTROL-OK] doc-03  len=768 nan=0 inf=0 norm=23.190594 min=-3.629545 max=2.976538
+    chroma.query k=5  -> 5 条 ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '差旅费报销细则_2026版.txt_0', '企业管理制度手册.txt_4', '公司年会流程_2025年度.txt_1']
+    chroma.query k=50 -> 50 条 ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '差旅费报销细则_2026版.txt_0']
+    chroma 距离       -> [234.3651, 387.8939, 401.81, 402.2548, 405.8729]
+    同库暴力精确 top5 -> ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '深度学习入门：基于Python的理论与实现.pdf_510', '差旅费报销细则_2026版.txt_0', '企业管理制度手册.txt_4']
+    pgvector 引擎 top5-> ['browser_acceptance_policy.txt_0', '差旅费报销细则_2026版.txt_2', '深度学习入门：基于Python的理论与实现.pdf_510', '差旅费报销细则_2026版.txt_0', '企业管理制度手册.txt_4']

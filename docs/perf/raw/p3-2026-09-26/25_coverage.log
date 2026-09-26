@@ -1,0 +1,44 @@
+评测集 must_contain 出处覆盖度复算
+  归一化口径 : NFKC -> strip_all_whitespace -> casefold（题面与语料两侧同规则；substring_within_single_document）
+  计行规则   : row_counts_as_missing_if_any_term_missing
+  题源       : 105 行 / 121 个 must_contain 词条
+  语料       : documents/*.txt（95 篇，主口径）
+
+  >> 查无出处的行 = 29
+  >> 查无出处的词 = 29
+  口径指纹（§2.2）: 行数 == 词条数，与主规则一致
+
+  缺出处的题号（29 条）：
+    approval-03 approval-05 chat-02 chat-08 chat-09 chat-11 chat-12 data-07 data-08 data-12 doc-07 doc-14 doc-15 doc-17 insight-05 insight-06 insight-07 report-03 report-07 report-08 report-09 scope-03 scope-04 scope-06 tool-03 unsupported-01 unsupported-02 unsupported-03 unsupported-04
+
+  逐条：
+    approval-03	无需超额审批
+    approval-05	需补开发票
+    chat-02	之后
+    chat-08	不叠加
+    chat-09	不矛盾
+    chat-11	800元
+    chat-12	无法确认
+    data-07	前五
+    data-08	小计
+    data-12	变化率
+    doc-07	计发
+    doc-14	离职结算
+    doc-15	不需要打印
+    doc-17	公司抬头
+    insight-05	长期未处理
+    insight-06	超标率
+    insight-07	不确定性
+    report-03	一页纸
+    report-07	审批路径
+    report-08	未索引
+    report-09	继续生成
+    scope-03	超出可见范围
+    scope-04	需单独授权
+    scope-06	不可以
+    tool-03	重新生成
+    unsupported-01	无法确认
+    unsupported-02	无法确认
+    unsupported-03	无法确认
+    unsupported-04	无法确认
+已写出 C:\Users\fengx\AppData\Local\Temp\p3r264\evidence_missing.json（29 条）

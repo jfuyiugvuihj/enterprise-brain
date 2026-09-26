@@ -1,0 +1,13 @@
+-- 口径：nomic-embed-text / 768 维 / l2 --
+-- U1：collection 距离=l2（来源=measured，样本=64 枚，探针=2 枚）--
+pg_vectors                       1008
+chroma_vectors                   1008
+chunks_rows                      1008
+chunks_with_backfilled_embedding 1008
+index_version_id_null            0
+all_zero_rows                    0
+only_in_pg                       0
+only_in_chroma                   0
+wrong_width                      0
+-- 逐题对比已跳过（--skip-questions）--
+结论已写出：/tmp/p3_drift.json

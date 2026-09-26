@@ -1,0 +1,48 @@
+=== PG 腿 · 连接对象自证 ===
+  client dsn      : postgresql://enterprise_brain:***@postgres:5432/enterprise_brain
+  object          : psycopg.Connection
+  info.host       : 'postgres'  (compose 服务名)
+  info.port       : 5432
+  info.dbname     : 'enterprise_brain'   info.user: 'enterprise_brain'
+  read_only       : True
+  server  current_database=enterprise_brain current_user=enterprise_brain
+  server  inet_server_addr=172.18.0.7/32 : 5432   (guc port=5432)
+  server  data_directory=/var/lib/postgresql/data
+  server  hba_file      =/var/lib/postgresql/data/pg_hba.conf
+  server  databases     =enterprise_brain,postgres,template0,template1
+  server  server_version=16.15 (Debian 16.15-1.pgdg12+2)  vector extension=0.8.6
+  server  SYSTEM_IDENTIFIER=7685285828163473446   <- 这一枚唯一标识‘哪一台 PostgreSQL’
+  trap    容器内 127.0.0.1:5432 connect_ex=111 (REFUSED —— 宿主野库在容器网内不可达，结构上连不到)
+  trap    getent postgres -> 172.18.0.7
+=== vector_scope（库里唯一口径） ===
+  {"embedding_model": "nomic-embed-text", "dimension": 768, "distance_function": "l2", "column_type": "vector(768)"}
+  算符映射：l2 -> <-> （canonical=l2）
+=== PG 腿 · 真读到库没有 ===
+  chunk_vectors=1008  chunks=1008  embedding IS NULL=0  index_version_id IS NULL=0
+  vector_dims: min=768 max=768 distinct=1 （声明 768）
+  全零向量普查（PG 侧，零值按 vector_scope.dimension 现拼）= 0
+  全零逐行清单前 20 条：（空）
+=== Chroma 腿 · 来源自证 ===
+  目录（快照，生产卷的字节级副本）: /tmp/p3snap
+  生产卷原目录（本进程从未打开）  : /app/chroma_db
+  快照文件 6 枚 / 251908236 字节
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/data_level0.bin          128232676  mtime=2026-09-25T01:29:58.130907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/header.bin                     100  mtime=2026-09-25T01:29:58.130907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/index_metadata.pickle       118132  mtime=2026-09-25T01:29:58.138908Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/length.bin                  159692  mtime=2026-09-25T01:29:58.134907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/link_lists.bin              345604  mtime=2026-09-25T01:29:58.138908Z
+    chroma.sqlite3                                                123052032  mtime=2026-09-26T04:00:55.169590Z
+  chromadb 1.5.9
+  collection.name='enterprise_docs'  count()=1008  get(ids) 全量=1008
+  collection.metadata=None
+  回读一枚 2025-2026中国企业协同办公市场研究报告.txt_0 -> 宽度=768 metadata={'filename': '2025-2026中国企业协同办公市场研究报告.txt', 'chunk_index': 0, 'hash': 'cc1a0df9542bd4e92dc7798ae2a35bf5', 'classification': 1, 'department': ''}
+[32m  [真读到库] 两腿各自计数与差集稍后由官方脚本出数；此处先自证目录=/tmp/p3snap[0m
+  U1 实测：space=l2 来源=measured 样本=64 探针=2 命中=['l2'] reason=-
+=== 判据 1 现场值 ===
+  0010 已建            : 见 vector_scope 行 + schema_migrations（脚本外另行取）
+  PG 侧向量计数非零    : 1008
+  PG 全零普查          : 0
+  Chroma 侧计数        : 1008
+  两侧 canonical 距离  : pg=l2 chroma=l2 一致
+[prov] 已落 /tmp/p3_prov.json
+[prove] OK

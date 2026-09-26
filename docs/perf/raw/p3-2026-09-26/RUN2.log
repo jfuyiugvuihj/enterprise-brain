@@ -1,0 +1,121 @@
+ Container enterprise-brain-backend-run-c8c14ee58446 Creating 
+ Container enterprise-brain-backend-run-c8c14ee58446 Created 
+
+##### 00 :: 复核生产卷：与第一回合的 sha 是否同一枚
+now_utc=2026-09-26T04:07:15Z
+FRESH: 生产卷自第一回合起一字未动，两轮读的是同一份数据
+
+##### 01 :: 再造快照并逐文件对账
+SNAPSHOT-BYTE-EXACT
+
+##### 10 :: A · 两侧向量值是否同一枚（官方脚本没比的那一格）
+EXIT=0 values
+=== Chroma 腿 · 来源自证 ===
+  目录（快照，生产卷的字节级副本）: /tmp/p3snap
+  生产卷原目录（本进程从未打开）  : /app/chroma_db
+  快照文件 6 枚 / 251908236 字节
+  chromadb 1.5.9
+  collection.name='enterprise_docs'  count()=1008  get(ids) 全量=1008
+  collection.metadata=None
+  回读一枚 2025-2026中国企业协同办公市场研究报告.txt_0 -> 宽度=768 metadata={'hash': 'cc1a0df9542bd4e92dc7798ae2a35bf5', 'department': '', 'chunk_index': 0, 'filename': '2025-2026中国企业协同办公市场研究报告.txt', 'classification': 1}
+[32m  [真读到库] 两腿各自计数与差集稍后由官方脚本出数；此处先自证目录=/tmp/p3snap[0m
+  U1 实测：space=l2 来源=measured 样本=64 探针=2 命中=['l2'] reason=-
+=== 判据3 附加格 · 两侧向量值是否同一枚（官方脚本只比 id 集合，不比数值） ===
+  pg 侧 1008 枚 / chroma 侧 1008 枚 / id 交集 1008
+  逐枚完全相等 = 0   存在差异 = 1008
+  最大逐元素绝对差 = 2.1679687467468511e-07   （涉及 深度学习入门：基于Python的理论与实现.pdf_243）
+  差值最大的 5 枚：[{"id": "深度学习入门：基于Python的理论与实现.pdf_243", "max_abs_diff": 2.1679687467468511e-07}, {"id": "深度学习入门：基于Python的理论与实现.pdf_446", "max_abs_diff": 2.1148681650373646e-07}, {"id": "深度学习入门：基于Python的理论与实现.pdf_167", "max_abs_diff": 2.0220947227755914e-07}, {"id": "深度学习入门：基于Python的理论与实现.pdf_390", "max_abs_diff": 1.7849731470676033e-07}, {"id": "深度学习入门：基于Python的理论与实现.pdf_404", "max_abs_diff": 1.6540527347785883e-07}]
+
+##### 20 :: B · 自召回：两引擎各自的 ANN vs 同数据精确扫描（105 题）
+EXIT=0 selfrecall
+=== Chroma 腿 · 来源自证 ===
+  目录（快照，生产卷的字节级副本）: /tmp/p3snap
+  生产卷原目录（本进程从未打开）  : /app/chroma_db
+  快照文件 6 枚 / 251908236 字节
+  chromadb 1.5.9
+  collection.name='enterprise_docs'  count()=1008  get(ids) 全量=1008
+  collection.metadata=None
+  回读一枚 2025-2026中国企业协同办公市场研究报告.txt_0 -> 宽度=768 metadata={'department': '', 'hash': 'cc1a0df9542bd4e92dc7798ae2a35bf5', 'filename': '2025-2026中国企业协同办公市场研究报告.txt', 'chunk_index': 0, 'classification': 1}
+[32m  [真读到库] 两腿各自计数与差集稍后由官方脚本出数；此处先自证目录=/tmp/p3snap[0m
+  U1 实测：space=l2 来源=measured 样本=64 探针=2 命中=['l2'] reason=-
+=== 自召回：引擎自己的 ANN 输出 vs 同一份数据的精确扫描（判据6 的定性依据） ===
+  统一拼法：canonical(pg)=l2  chroma 实测=l2  -> 用 l2 排
+[emb] 25/105  1.3s
+[emb] 50/105  1.5s
+[emb] 75/105  1.6s
+[emb] 100/105  1.7s
+  —— 现网 Chroma 引擎 vs 它自己那份数据的精确解
+  chroma(hnsw) vs exact        mean_overlap=0.7238  mean_jaccard=0.6830  逐位相同=55/105  零重叠=21
+  —— pgvector 引擎 vs 它自己那份数据的精确解
+  pg(hnsw) vs exact            mean_overlap=1.0000  mean_jaccard=1.0000  逐位相同=105/105  零重叠=0
+  —— 两份数据各自的精确解互相（数据面是否等价，与引擎无关）
+  exact(chroma) vs exact(pg)   mean_overlap=1.0000  mean_jaccard=1.0000  逐位相同=105/105  零重叠=0
+  —— 两个引擎的实际输出互相（= 判据3 的读数）
+  chroma(hnsw) vs pg(hnsw)     mean_overlap=0.7238  mean_jaccard=0.6830  逐位相同=55/105  零重叠=21
+
+##### 30 :: C · Chroma 空 top-k 逐题诊断
+EXIT=0 emptydiag
+=== Chroma 腿 · 来源自证 ===
+  目录（快照，生产卷的字节级副本）: /tmp/p3snap
+  生产卷原目录（本进程从未打开）  : /app/chroma_db
+  快照文件 6 枚 / 251908236 字节
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/data_level0.bin          128232676  mtime=2026-09-25T01:29:58.130907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/header.bin                     100  mtime=2026-09-25T01:29:58.130907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/index_metadata.pickle       118132  mtime=2026-09-25T01:29:58.138908Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/length.bin                  159692  mtime=2026-09-25T01:29:58.134907Z
+    0c4b1056-e0c4-44f8-98fa-6b88d22c2a51/link_lists.bin              345604  mtime=2026-09-25T01:29:58.138908Z
+    chroma.sqlite3                                                123052032  mtime=2026-09-26T04:07:43.527553Z
+  chromadb 1.5.9
+  collection.name='enterprise_docs'  count()=1008  get(ids) 全量=1008
+  collection.metadata=None
+  回读一枚 2025-2026中国企业协同办公市场研究报告.txt_0 -> 宽度=768 metadata={'classification': 1, 'filename': '2025-2026中国企业协同办公市场研究报告.txt', 'department': '', 'hash': 'cc1a0df9542bd4e92dc7798ae2a35bf5', 'chunk_index': 0}
+[32m  [真读到库] 两腿各自计数与差集稍后由官方脚本出数；此处先自证目录=/tmp/p3snap[0m
+  U1 实测：space=l2 来源=measured 样本=64 探针=2 命中=['l2'] reason=-
+=== Chroma 空 top-k 逐题诊断（判据3 的红因） ===
+
+[EMPTY] doc-09  len=768 nan=0 inf=0 norm=22.444981 min=-3.432082 max=2.748011
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['采购管理制度_最新.txt_2', '深度学习入门：基于Python的理论与实现.pdf_286', '深度学习入门：基于Python的理论与实现.pdf_436', '深度学习入门：基于Python的理论与实现.pdf_48', '深度学习入门：基于Python的理论与实现.pdf_114']
+    pgvector 引擎 top5-> ['采购管理制度_最新.txt_2', '深度学习入门：基于Python的理论与实现.pdf_286', '深度学习入门：基于Python的理论与实现.pdf_436', '深度学习入门：基于Python的理论与实现.pdf_48', '深度学习入门：基于Python的理论与实现.pdf_114']
+
+[EMPTY] doc-13  len=768 nan=0 inf=0 norm=22.169822 min=-3.1836 max=2.363553
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_7']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_7']
+
+[EMPTY] metric-04  len=768 nan=0 inf=0 norm=22.437902 min=-3.123872 max=2.488413
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_4']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_4']
+
+[EMPTY] metric-05  len=768 nan=0 inf=0 norm=22.437902 min=-3.123872 max=2.488413
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_4']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_2', '制度与口径登记表.txt_0', '制度与口径登记表.txt_10', '制度与口径登记表.txt_4']
+
+[EMPTY] metric-10  len=768 nan=0 inf=0 norm=22.606931 min=-4.026699 max=2.271646
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '深度学习入门：基于Python的理论与实现.pdf_286', '员工培训与发展管理办法.txt_2', 'IT安全管理制度V3.1.txt_6']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '深度学习入门：基于Python的理论与实现.pdf_286', '员工培训与发展管理办法.txt_2', 'IT安全管理制度V3.1.txt_6']
+
+[EMPTY] metric-11  len=768 nan=0 inf=0 norm=22.606931 min=-4.026699 max=2.271646
+    chroma.query k=5  -> 0 条 []
+    chroma.query k=50 -> 0 条 []
+    chroma 距离       -> []
+    同库暴力精确 top5 -> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '深度学习入门：基于Python的理论与实现.pdf_286', '员工培训与发展管理办法.txt_2', 'IT安全管理制度V3.1.txt_6']
+    pgvector 引擎 top5-> ['制度与口径登记表.txt_3', '制度与口径登记表.txt_0', '深度学习入门：基于Python的理论与实现.pdf_286', '员工培训与发展管理办法.txt_2', 'IT安全管理制度V3.1.txt_6']
+
+
+##### 90 :: 收尾：生产卷仍与开局同一枚
+LIVE-UNCHANGED-AGAIN
+done_utc=2026-09-26T04:08:10Z
