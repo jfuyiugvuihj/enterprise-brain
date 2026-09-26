@@ -1796,7 +1796,9 @@ textarea:focus-visible {
   font-size: 20px;
 }
 
-.workspace-tools > button:hover {
+/* R307 第二棒残留：顶栏退出按钮原语化后，本枚选择器 (0,2,1) 被 .ui-button--ghost:hover:not(:disabled) (0,3,0) 压掉，hover 文字色从 #5beaff 掉成 --text-2。正解在此处补一枚 .ui-button 限定把特异性抬到 (0,3,1)，零新色值；旧 selector 保留，非原语按钮不受影响。全站没有任何一枚 token 等于 #5beaff，故不许改用 token。 */
+.workspace-tools > button:hover,
+.workspace-tools > button.ui-button:hover {
   color: #5beaff;
 }
 
