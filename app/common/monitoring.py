@@ -261,6 +261,27 @@ def build_health_snapshot(performance: dict | None = None) -> dict:
         "model_budget": _subsystem_state(
             "app.common.model_budget", "model_budget_readout"
         ),
+        # R330 判据①（跟进单 §84 五 / 采纳计划书 P5）：app/rag/pg_store.py 那三本只读观测账
+        # （vector_mirror_diagnostics / vector_corpus_diagnostics / vector_read_diagnostics）
+        # 交出来时在 app/** 里零消费者——和上面 search_shape 修的是同一个病的第二次。切读单在途、
+        # 退役单排在后面，而运维在客户机上没有任何出口能回答「这一问读的是哪条腿、绕行过几次、为什么绕」。
+        # 形状照 R165：走 _subsystem_state 这同一枚入口，绝不另写一枚包装——另开一套聚合口径就是
+        # 第二份会过期的数字（理由见上面 248-249 那段注释）。节名照 search_shape 的取法：函数名去掉
+        # _diagnostics 后缀，不是出口起的别名；节内键名逐字照抄 pg_store 的返回字段，不翻译、不改名、
+        # 不重排——运维在响应体里读到的，与记账那一侧给出的，必须是同一张表。
+        # 三本账都只读进程内 dict，不开 socket、不问向量库、不导 psycopg：pg_store.py:126 那条注释
+        # 就是这本账能零 IO 的原因——NUL 字面量宁可在这里抄一份，也不把 pypdf 拖进只读观测进程。
+        # 刻意不并进 problems：「这次读的是遗留腿」是配置事实，不是当下故障。同一页的 embedding /
+        # hot_index / search_shape / model_budget 全都守着这条纪律（见上面 252-253）。
+        "vector_mirror": _subsystem_state(
+            "app.rag.pg_store", "vector_mirror_diagnostics"
+        ),
+        "vector_corpus": _subsystem_state(
+            "app.rag.pg_store", "vector_corpus_diagnostics"
+        ),
+        "vector_read": _subsystem_state(
+            "app.rag.pg_store", "vector_read_diagnostics"
+        ),
         "problems": problems,
     }
 
