@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,7 +52,15 @@ def test_document_upload_has_progress_fallback_when_browser_hides_total_size():
         encoding="utf-8"
     )
 
-    assert "import { ref, reactive, onMounted, onUnmounted, computed } from 'vue'" in source
+    # 🔴 总控落笔（09-26 第四格）：这一格原来钉的是**整行 import 字面量**，于是谁给 DocPanel.vue 多加一枚
+    #    组合式（R288 加了 onDeactivated/watch 并排序）或只是换行内顺序，它就红——而它真正要保护的只是
+    #    「进度定时器所依赖的那五枚组合式仍在用」。改成具名集合判定：五枚缺一即红，多几枚与任意顺序都活。
+    #    只准变硬不变软：断言数量从 1 条变 2 条，且 import 语句整个消失时同样红（旧写法那时才刚要红）。
+    vue_import = re.search(r"import\s*\{([^}]*)\}\s*from\s*'vue'", source)
+    assert vue_import is not None, "DocPanel.vue 不再有 vue 的具名 import：进度/定时器所依赖的组合式无处可寻"
+    imported = {name.strip() for name in vue_import.group(1).split(",") if name.strip()}
+    missing = {"ref", "reactive", "onMounted", "onUnmounted", "computed"} - imported
+    assert not missing, f"DocPanel.vue 的 vue import 少了这几枚组合式：{sorted(missing)}"
     # 重指向：队列项改由工厂产出，但仍是 reactive（进度定时器依赖它的响应式）
     #   DocPanel.vue:50 function createUploadItem(file) / :51 return reactive({ / :151 调用点
     assert "function createUploadItem(file) {" in source
