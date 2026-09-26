@@ -37,13 +37,19 @@ const R288_FILES = [
  * 六枚之外的欠账棘轮（2026-09-26 现取）：DashboardPanel.vue 属排队单 R291／R293 写域，
  * 本单只读不写；App.vue 与 SourceCard.vue 不在本单点名的六枚里。这三处一枚都不许加，
  * 减了就把这个数字改小 —— 改大必须在本单回执里点名说明。
+ *
+ * R307 收口（2026-09-26）：SourceCard.vue 三枚已真接 ./ui 的 UiButton，本行 3 → 0，合计 20 → 17。
+ * App.vue 的 8 枚原样留着，不是没收工：src/__tests__/r278-topbar.test.js 的判据⑤量具
+ * 直接读 App.vue 源码并要求 `<button` 计数 >= 8（:149），顶栏那一段还要求恰好一枚
+ * `<button`（:169）与 `class="logout-link"` 的字面形状（:193/:212）—— 接原语必红，
+ * 而那件文件不在 R307 写域。红字原文见 R307 回执，等总控裁定后由后续单一起收。
  */
 const DEBT_RATCHET = {
   'App.vue': 8,
   'components/DashboardPanel.vue': 9,
-  'components/SourceCard.vue': 3,
+  'components/SourceCard.vue': 0,
 }
-const DEBT_TOTAL_RATCHET = 20
+const DEBT_TOTAL_RATCHET = 17
 
 const formatRows = rows => rows.map(row => row.file + '  ' + row.count + ' 枚').join('\n')
 const formatDialogs = rows => rows.map(row => row.file + ':' + row.line + '  ' + row.raw).join('\n')

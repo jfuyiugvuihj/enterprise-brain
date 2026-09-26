@@ -29,6 +29,7 @@ import {
   signalLabel,
 } from '../lib/feedback.js'
 import { classificationLabel, formatDayStamp, scoreLabel } from '../lib/provenance.js'
+import { UiButton } from './ui'
 
 defineProps({
   face: {
@@ -88,13 +89,15 @@ const effectiveMoment = row => formatDayStamp(row?.effectiveDate)
 
     <ul v-if="face.searchable" class="source-list" data-testid="source-list">
       <li v-for="(row, index) in face.rows" :key="row.sourceId || `${row.filename}-${index}`" class="source-row">
-        <button
-          type="button"
+        <UiButton
           class="source-open"
+          variant="ghost"
+          size="sm"
+          type="button"
           data-testid="source-open"
           :aria-label="`打开原文：${row.filename}`"
           @click="emit('preview', row)"
-        >{{ row.filename }}</button>
+        ><span class="source-open__text">{{ row.filename }}</span></UiButton>
         <span v-if="row.chunkIndex !== null" class="source-meta" data-testid="source-chunk">第 {{ row.chunkIndex + 1 }} 段</span>
         <span v-if="scoreLabel(row)" class="source-meta" data-testid="source-score">{{ scoreLabel(row) }}</span>
         <span v-if="classificationLabel(row.classification)" class="source-meta" data-testid="source-classification">{{ classificationLabel(row.classification) }}</span>
@@ -111,24 +114,28 @@ const effectiveMoment = row => formatDayStamp(row?.effectiveDate)
           :aria-label="FEEDBACK_GROUP_LABEL"
           :data-phase="markOf(row).phase"
         >
-          <button
-            type="button"
+          <UiButton
             class="source-mark source-mark--accept"
+            variant="secondary"
+            size="sm"
+            type="button"
             data-testid="source-feedback-accept"
             :disabled="propsOf(row, SIGNAL_ACCEPTED).disabled"
             :aria-pressed="propsOf(row, SIGNAL_ACCEPTED).pressed"
             :aria-label="ariaOf(row, SIGNAL_ACCEPTED)"
             @click="markSignal(row, SIGNAL_ACCEPTED)"
-          >{{ labelOf(SIGNAL_ACCEPTED) }}</button>
-          <button
-            type="button"
+          >{{ labelOf(SIGNAL_ACCEPTED) }}</UiButton>
+          <UiButton
             class="source-mark source-mark--reject"
+            variant="secondary"
+            size="sm"
+            type="button"
             data-testid="source-feedback-reject"
             :disabled="propsOf(row, SIGNAL_REJECTED).disabled"
             :aria-pressed="propsOf(row, SIGNAL_REJECTED).pressed"
             :aria-label="ariaOf(row, SIGNAL_REJECTED)"
             @click="markSignal(row, SIGNAL_REJECTED)"
-          >{{ labelOf(SIGNAL_REJECTED) }}</button>
+          >{{ labelOf(SIGNAL_REJECTED) }}</UiButton>
           <span v-if="noticeOf(row).headline" class="source-feedback-state" data-testid="source-feedback-state">{{ noticeOf(row).headline }}</span>
           <span v-if="noticeOf(row).detail" class="source-feedback-detail" data-testid="source-feedback-detail">{{ noticeOf(row).detail }}</span>
         </span>
@@ -214,6 +221,30 @@ const effectiveMoment = row => formatDayStamp(row?.effectiveDate)
 .source-open:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* R307 · 裸按钮接 UiButton 之后的基线复位。原语给每一档都配了 min-height 与 hover 皮肤，
+   而这三枚在 R150/R195 定稿时是「行内链接 + 小胶囊」：既不撑到控件高，也不换 hover 底色。
+   下面四条只把它们改回既有 token 值，一枚裸色值都不添；位置刻意排在 [disabled] 与
+   [aria-pressed='true'] 那几条之前 —— 点亮态与灰态照旧压过 hover，与接原语前同一张脸。 */
+.source-open,
+.source-mark {
+  min-height: 0;
+}
+
+.source-open__text {
+  text-decoration: underline;
+}
+
+.source-open:hover {
+  color: var(--accent);
+  background: none;
+}
+
+.source-mark:hover {
+  border-color: var(--border-2);
+  background: var(--surface-2);
+  color: var(--text-2);
 }
 
 .source-meta {
