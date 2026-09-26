@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { DEFAULT_SCREEN, FEED_SCREEN, cachedScreens, navigation, screenRouteIds } from './router'
 import { focusScreenMain, navItems, nextNavItem } from './router/nav-focus'
 import { resetSessions } from './lib/sessions'
+import { UiButton } from './components/ui'
 import {
   clearSession,
   errorDetail,
@@ -336,9 +337,16 @@ onUnmounted(() => {
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="10.5" width="17" height="10.5" rx="2.5" /><path d="M7.5 10.5V7a4.5 4.5 0 0 1 9 0v3.5" /></svg>
                 </span>
                 <input v-model="loginPass" data-testid="login-password" :type="showPassword ? 'text' : 'password'" placeholder="请输入密码" autocomplete="current-password" required />
-                <button class="login-control__ghost" type="button" :aria-label="showPassword ? '隐藏密码' : '显示密码'" @click="showPassword = !showPassword">
+                <UiButton
+                  class="login-control__ghost"
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+                  @click="showPassword = !showPassword"
+                >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" /><circle cx="12" cy="12" r="3" /></svg>
-                </button>
+                </UiButton>
               </span>
             </label>
 
@@ -350,13 +358,25 @@ onUnmounted(() => {
                 </span>
                 <span>记住我</span>
               </label>
-              <button class="login-link" type="button" data-testid="login-forgot" @click="openForgotPassword">忘记密码？</button>
+              <UiButton
+                class="login-link"
+                variant="ghost"
+                size="sm"
+                type="button"
+                data-testid="login-forgot"
+                @click="openForgotPassword"
+              >忘记密码？</UiButton>
             </div>
 
-            <button class="login-submit" type="submit" data-testid="login-submit">
+            <UiButton
+              class="login-submit"
+              variant="primary"
+              type="submit"
+              data-testid="login-submit"
+            >
               进入工作台
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg>
-            </button>
+            </UiButton>
           </form>
 
           <p class="login-card__foot">没有账号？联系管理员在工作台内开通</p>
@@ -376,7 +396,15 @@ onUnmounted(() => {
 
       <div v-if="showForgotDialog" class="login-dialog-backdrop" data-testid="login-forgot-dialog">
         <section class="login-dialog" role="dialog" aria-modal="true" aria-labelledby="forgot-title">
-          <button class="login-dialog__close" data-testid="login-forgot-close" type="button" aria-label="关闭" @click="closeForgotPassword">×</button>
+          <UiButton
+            class="login-dialog__close"
+            variant="ghost"
+            size="sm"
+            data-testid="login-forgot-close"
+            type="button"
+            aria-label="关闭"
+            @click="closeForgotPassword"
+          >×</UiButton>
           <h2 id="forgot-title">忘记密码？</h2>
           <p>这是私有化部署系统，密码由企业管理员统一管理。</p>
           <label class="login-dialog__account">
@@ -384,7 +412,12 @@ onUnmounted(() => {
             <input v-model="forgotUsername" autocomplete="username" placeholder="请输入需要找回的账号" />
           </label>
           <p class="login-dialog__note">请联系管理员在用户管理中重置该账号密码，重置后即可返回此页面登录。</p>
-          <button class="login-dialog__action" type="button" @click="closeForgotPassword">返回登录</button>
+          <UiButton
+            class="login-dialog__action"
+            variant="primary"
+            type="button"
+            @click="closeForgotPassword"
+          >返回登录</UiButton>
         </section>
       </div>
     </main>
@@ -406,9 +439,10 @@ onUnmounted(() => {
           </span>
         </div>
         <nav ref="navEl" class="nav-list" data-testid="navigation" @keydown="onNavKeydown">
-          <button
+          <UiButton
             v-for="item in navigation"
             :key="item.id"
+            variant="ghost"
             type="button"
             :class="['nav-item', { active: route.name === item.id }]"
             :data-testid="`nav-${item.id}`"
@@ -420,7 +454,7 @@ onUnmounted(() => {
               <path :d="item.icon" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <span class="nav-label">{{ item.label }}</span>
-          </button>
+          </UiButton>
         </nav>
       </aside>
 
@@ -433,7 +467,15 @@ onUnmounted(() => {
                  判据钉在 src 下的顶栏用例 r278-topbar 里。 -->
             <span class="user-avatar">{{ username.slice(0, 1).toUpperCase() || 'A' }}</span>
             <span class="identity"><strong>{{ username }}</strong><span>{{ roleLabel }}</span></span>
-            <button class="logout-link" type="button" :aria-label="logoutLabel" :title="logoutLabel" @click="doLogout">⌄</button>
+            <UiButton
+              class="logout-link"
+              variant="ghost"
+              size="sm"
+              type="button"
+              :aria-label="logoutLabel"
+              :title="logoutLabel"
+              @click="doLogout"
+            >⌄</UiButton>
           </div>
         </header>
 
@@ -461,14 +503,16 @@ onUnmounted(() => {
       >
         <span class="auth-toast-icon" aria-hidden="true">{{ toast.tone === 'warn' ? '⏰' : '🔒' }}</span>
         <span class="auth-toast-text">{{ toast.message }}</span>
-        <button
+        <UiButton
           type="button"
           class="auth-toast-close"
+          variant="ghost"
+          size="sm"
           aria-label="关闭提示"
           @click="toast = null"
         >
           ×
-        </button>
+        </UiButton>
       </div>
     </Transition>
   </div>
@@ -523,4 +567,164 @@ onUnmounted(() => {
   opacity: 0;
   transform: translateY(8px);
 }
+/* ==========================================================================
+ * R307 第二棒 · 上面那八枚裸 <button> 接进 ./ui 的 UiButton 之后的基线复位
+ *
+ * 原语给每一档都配了控件高、内距、字重、hover 皮肤与焦点环，而这八枚在 R148 / R169 /
+ * R278 定稿时各有自己的脸。这里只补「原语会改、而 theme.css 与本文件上面那些旧规则
+ * 一个字都没写」的那几格，一条裸色值都不添 —— 全部走 theme.css 已有的 var(--*)。
+ *
+ * 为什么这样写就够（打包顺序是这件事的前提，别在没核对顺序之前改下面的权重）：
+ *   main.js 先 import App.vue、后 import ./assets/theme.css，UiButton.css 又随组件走，
+ *   所以级联里落地的先后是 UiButton.css → 本文件的 scoped 样式 → theme.css；同权重后来者胜。
+ *     · theme.css 已经声明过的属性（display / color / background / border / padding /
+ *       font-size / font-weight / min-height / transition …）一处都不必重复：它必然压得过原语；
+ *     · 本文件的选择器刻意停在「一枚类名 + scoped 属性」＝(0,2,0) 与
+ *       「一枚类名 + :hover / :active + scoped 属性」＝(0,3,0) 这两档：
+ *       刚好赢过原语的 .ui-button--*:hover:not(:disabled)＝(0,3,0)（同权重而本文件在后），
+ *       却仍然输给 theme.css 的 .reference-workbench .nav-item.active 与窄屏那几条响应式规则
+ *       —— 复位不许把点亮态、侧栏窄屏版式压掉，那才是这八枚今天真正的脸。
+ * ==========================================================================*/
+
+/* 原语把默认插槽包进一层 .ui-button__label：这一层得从布局里撤掉，图标与文字才回到
+   按钮这根 flex 轴上，与接原语前同一排布（侧栏的 svg+文字、主按钮的文字+箭头都在这一格）。
+   子组件内部的节点拿不到 scoped 属性，所以走仓里既有的 :deep() 写法。 */
+:deep(.ui-button__label) {
+  display: contents;
+}
+
+/* 焦点环仍是全站那一句（theme.css 的 button:focus-visible）：原语给的 --accent + 2px
+   会把登录卡、侧栏与顶栏这一圈青蓝换成另一种颜色与偏移。 */
+.login-control__ghost:focus-visible,
+.login-link:focus-visible,
+.login-submit:focus-visible,
+.login-dialog__close:focus-visible,
+.login-dialog__action:focus-visible,
+.nav-item:focus-visible,
+.logout-link:focus-visible,
+.auth-toast-close:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+}
+
+/* 登录卡「显示密码」那枚：theme.css 给的是 44×满高的格子，字级走全站那一句
+   button { font: inherit }；原语的 sm 档把字号、字重、行高、内距、控件高一起换掉了。
+   下面这些复原值取真浏览器实测（Chromium，1440×900，改前那一版打包件）：
+   padding: 1px 6px 是 UA 给 <button> 的默认内距 —— theme.css 这一枚没写 padding，
+   改屏上就是这一格；接原语之后由 .ui-button 的 0 12px 顶上来，只能在这里写死它。 */
+.login-control__ghost {
+  font: inherit;
+  min-height: auto;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 0;
+  gap: 0;
+}
+
+.login-control__ghost:hover {
+  background: none;
+}
+
+/* 「忘记密码？」是一枚行内文字链：改前 display: block，行高是祖先那一档 1.65 乘自己的
+   13px＝21.45px（实测高 21.4375px）；原语给的是 flex 居中的 18px 小盒。 */
+.login-link {
+  display: block;
+  min-height: auto;
+  border-radius: 0;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.login-link:hover {
+  color: var(--accent-hover);
+  background: none;
+}
+
+/* 主按钮：改前的内距同样是 UA 那 1px 6px，盒子高由 theme.css 的 height 定，
+   原语的 min-height: 40px 与 0 16px 都不属于它；行高取回继承那一档（15×1.65）。 */
+.login-submit {
+  min-height: 0;
+  padding: 1px 6px;
+  line-height: inherit;
+}
+
+/* 主按钮按下那一下：theme.css 只写了 transform 与内阴影，底色不写就会被原语换成
+   --accent-press（比原来的 --accent-hover 深一档）。 */
+.login-submit:active {
+  background: var(--accent-hover);
+}
+
+/* 弹窗右上角的 ×：28×28 的方块，改前是 display: block 加 UA 内距 —— 盒子大小不变，
+   但 × 落点由这两格决定：原语的 flex 居中会把它从左上挪到正中。 */
+.login-dialog__close {
+  display: block;
+  min-height: auto;
+  padding: 1px 6px;
+  font-weight: inherit;
+  transition: none;
+  gap: 0;
+}
+
+.login-dialog__close:hover {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+/* 「返回登录」今天没有按下态也没有过渡，原语给了 translateY(1px) 与 --accent-press。 */
+.login-dialog__action {
+  min-height: 0;
+  line-height: inherit;
+  transition: none;
+}
+
+.login-dialog__action:active {
+  background: var(--accent);
+  transform: none;
+}
+
+/* 侧栏那七枚（v-for 一处开标签）：theme.css 的脸是左对齐的菜单条目，原语默认居中。
+   窄屏那几条 .reference-workbench .nav-item 响应式规则权重不低于这里，照旧把它们摆回居中。
+   font-size 走继承（实测改前 16px）：条目里的字都在 .nav-label 自己身上，这一格不改也看不出来，
+   但「看不出来」不是「不一样」，照实测复原。 */
+.nav-item {
+  font-size: inherit;
+  justify-content: flex-start;
+  font-weight: inherit;
+  line-height: normal;
+}
+
+.nav-item:hover {
+  color: var(--text);
+}
+
+/* 顶栏的 ⌄ 与提示条的 ×：改前都是无框无底的 block 小控件 + UA 内距 1px 6px。
+   ⌄ 那一枚实测宽 20px＝8px 字形 + 12px 内距，原语把内距撤掉就缩成 8px；
+   × 那一枚实测 19.81×18px。两枚的行高不同源：⌄ 改前就是 normal（继承链上没人写行高），
+   × 由本文件上面那条 .auth-toast-close 的 line-height: 1 定（实测 16px）——
+   所以 × 那一枚不许在这里写 line-height，写了会把它的盒子从 18px 撑成 22px。 */
+.logout-link,
+.auth-toast-close {
+  display: block;
+  min-height: auto;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 0;
+  font-weight: inherit;
+  transition: none;
+  gap: 0;
+}
+
+.logout-link {
+  line-height: normal;
+}
+
+.logout-link:hover {
+  background: transparent;
+}
+
+.auth-toast-close:hover {
+  color: var(--muted);
+  background: transparent;
+}
+
 </style>

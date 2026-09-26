@@ -31,6 +31,10 @@
  *      这一步只换「模板怎么落地」，不换「谁存态、谁说话」。编译器不在位时当场报错，不静默退化。
  *      （运行时编译出的 render 形如 function(_ctx,_cache){with(_ctx){...}}，而 <script setup>
  *      的绑定被 __isScriptSetup 挡在公共代理之外，所以 _ctx 由夹具给一枚读真绑定的作用域。）
+ *   4) R307 第二棒补的一格：夹具的 components 里得有真 UiButton。少这一枚，全套仍然绿，
+ *      但绿的是解析不到的桩件（跑一版就有 30 条 "Failed to resolve component: UiButton"），
+ *      甲乙两腿要按的那两枚按钮也就不是原语渲染出的那一格。补上之后 stderr 归零，
+ *      两腿断言的仍是同一件事：跨轮不许带锁（乙1/乙2/乙3）、按帧追加不许丢锁（乙4）。
  */
 import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -45,6 +49,7 @@ vi.mock('../../lib/http', async (importOriginal) => {
 import { http } from '../../lib/http'
 import { sourcesFace } from '../../lib/provenance'
 import SourceCard from '../SourceCard.vue'
+import { UiButton } from '../ui'
 
 const source = name => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const panel = source('ChatPanel.vue')
@@ -66,8 +71,12 @@ function renderScope(instance) {
   const empty = {}
   const { setupState, props } = instance
   const names = new Set([...Object.keys(setupState || {}), ...Object.keys(props || {})])
+  // $slots / $attrs 这些 public 属性也要答 has：真 UiButton 的模板读 $slots.icon，
+  // 漏了这一支，运行时编译出的 render 会在 with 块里找不到它们而抛 ReferenceError（手法同 r307）。
+  // 名单以外的（含闭包里的 _Vue 与 _createElementVNode 那类 helper）一律答 false，照上面的交代。
+  const PUBLIC_KEYS = /^\$(slots|attrs|props|el|data|setupState|emit|options|refs|root|parent|nextTick)$/
   return new Proxy(empty, {
-    has: (_target, key) => typeof key === 'string' && names.has(key),
+    has: (_target, key) => typeof key === 'string' && (names.has(key) || PUBLIC_KEYS.test(key)),
     get: (_target, key) => {
       if (typeof key !== 'string') return undefined
       if (setupState && hasOwn(setupState, key)) return setupState[key]
@@ -88,10 +97,39 @@ function clientCard() {
     __name: 'R197ClientSourceCard',
     props: SourceCard.props,
     emits: SourceCard.emits,
+    // R307 第二棒：SourceCard 的三枚按钮自 R307 起是 ./ui 的 UiButton。运行时编译器按名字
+    // 解析组件，这一层不注册它就退成一枚解析不到的桩（<uibutton> 自定义元素照样吃得到
+    // data-testid / disabled / onClick，于是甲乙丙丁全绿，绿的却不是原语那一格）。
+    // 注册真身之后本件断言的东西一件没变：键与实例复用仍然是它盯的那件事。
+    components: { UiButton: clientUiButton() },
     setup: SourceCard.setup,
     render(_ctx, _cache) {
       // 用 getCurrentInstance() 而不是 this.$：后者会往 stderr 里塞一枚
       // "Property '$' was accessed via 'this'" 的警告，别人的日志不该替夹具背这个。
+      return compiled(renderScope(getCurrentInstance()), _cache)
+    },
+  }
+}
+
+/**
+ * 原语也得客户端化（R307 第二棒）：node 里 vite 给 UiButton 编出的只有 ssrRender，
+ * 直接把它注册进客户端夹具会报「Missing render function」，卡片那一格干脆什么都不画
+ * —— 实测屏上 0 枚按钮，甲乙两腿全红。所以这里用与 clientCard 同一手法补一枚 render：
+ * 模板、props、setup 全取 components/ui/UiButton.vue 的产品真身，夹具不另造一套按钮。
+ */
+function clientUiButton() {
+  if (typeof compile !== 'function') {
+    throw new Error('R197 夹具：解析到的 vue 构建里没有运行时编译器（compile），本族的机制腿跑不了，请人工核对，不要静默跳过')
+  }
+  const template = /<template>([\s\S]*)<\/template>/.exec(source('ui/UiButton.vue'))
+  if (!template) throw new Error('R197 夹具：components/ui/UiButton.vue 里取不到 <template>')
+  const compiled = compile(template[1])
+  return {
+    __name: 'R197ClientUiButton',
+    props: UiButton.props,
+    emits: UiButton.emits,
+    setup: UiButton.setup,
+    render(_ctx, _cache) {
       return compiled(renderScope(getCurrentInstance()), _cache)
     },
   }

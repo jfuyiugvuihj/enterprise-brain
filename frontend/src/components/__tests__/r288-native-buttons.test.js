@@ -39,17 +39,19 @@ const R288_FILES = [
  * 减了就把这个数字改小 —— 改大必须在本单回执里点名说明。
  *
  * R307 收口（2026-09-26）：SourceCard.vue 三枚已真接 ./ui 的 UiButton，本行 3 → 0，合计 20 → 17。
- * App.vue 的 8 枚原样留着，不是没收工：src/__tests__/r278-topbar.test.js 的判据⑤量具
- * 直接读 App.vue 源码并要求 `<button` 计数 >= 8（:149），顶栏那一段还要求恰好一枚
- * `<button`（:169）与 `class="logout-link"` 的字面形状（:193/:212）—— 接原语必红，
- * 而那件文件不在 R307 写域。红字原文见 R307 回执，等总控裁定后由后续单一起收。
+ * R307 第二棒收口（同日）：App.vue 那 8 枚也接完了，本行 8 → 0，合计 17 → 9。
+ *   挡在前一棒的那把「用源码正则当验收」的刀已经改口：src/__tests__/r278-topbar.test.js
+ *   现在量的是渲染产物（挂一次真壳层、数屏上真的 <button>、逐枚读它挂的 onClick），
+ *   不再数 App.vue 源码里的 `<button` 开标签；四条各自改口的理由与原意逐条写在那件文件里。
+ *   DashboardPanel.vue 那 9 枚按派工留给下一棒，这一格一枚都不许多长出来。
  */
 const DEBT_RATCHET = {
-  'App.vue': 8,
+  'App.vue': 0,
   'components/DashboardPanel.vue': 9,
   'components/SourceCard.vue': 0,
 }
-const DEBT_TOTAL_RATCHET = 17
+// 9 = 现取 DashboardPanel.vue 9 枚，贴边。任何一格改大、合计改大，乙组那条与下面两枚一起红。
+const DEBT_TOTAL_RATCHET = 9
 
 const formatRows = rows => rows.map(row => row.file + '  ' + row.count + ' 枚').join('\n')
 const formatDialogs = rows => rows.map(row => row.file + ':' + row.line + '  ' + row.raw).join('\n')
@@ -130,5 +132,31 @@ describe('乙 · G20：判据点名的六枚文件裸按钮归零，且真的接
     expect(countNativeButtons('<button\n  class="x"\n>删</button>')).toBe(1)
     expect(countNativeButtons('<UiButton label="删" />')).toBe(0)
     expect(countNativeButtons('<!-- <button>注释里不画上屏</button> -->')).toBe(0)
+  })
+
+  // R307 第二棒补的两条：上面那条只说「现取不许超过上限」，那把刀对「上限自己被人抬上去」是软的 ——
+  // 谁把 DEBT_RATCHET 的格位或合计改大，那条立刻就不红了。下面两条盯的就是数字本身。
+  it('棘轮自己不许变大：三格位与合计，改大当场红（读的是本件这份数字）', () => {
+    const self = readSrc(join('components', '__tests__', 'r288-native-buttons.test.js'))
+    const perFile = rel => {
+      const m = new RegExp("'" + rel + "':\\s*(\\d+)").exec(self)
+      expect(m, '找不到 ' + rel + ' 这一格棘轮（那行被改了形状或被摘了）').toBeTruthy()
+      return Number(m[1])
+    }
+    expect(perFile('App.vue'), 'App.vue 的格位被改大（R307 第二棒已收到 0）').toBeLessThanOrEqual(0)
+    expect(perFile('components/DashboardPanel.vue'), 'DashboardPanel 的格位被改大（它归 R291/R293）').toBeLessThanOrEqual(9)
+    expect(perFile('components/SourceCard.vue'), 'SourceCard 的格位被改大（R307 已收到 0）').toBeLessThanOrEqual(0)
+    const totalLine = /const DEBT_TOTAL_RATCHET = (\d+)/.exec(self)
+    expect(totalLine, '合计棘轮那一行被改了形状或被摘了').toBeTruthy()
+    expect(Number(totalLine[1]), '全仓裸按钮合计棘轮被改大（现取就是 DashboardPanel 那 9 枚，贴边）').toBeLessThanOrEqual(9)
+  })
+
+  it('棘轮与现取对得上：欠账表里 App.vue 与 SourceCard 都不许再出现，合计一格不差等于上限', () => {
+    const rows = scanNativeButtons(SRC_ROOT)
+    const files = rows.map(row => row.file)
+    expect(files, 'App.vue 又长出裸 <button> 了').not.toContain('App.vue')
+    expect(files, 'SourceCard.vue 又长出裸 <button> 了').not.toContain('components/SourceCard.vue')
+    const total = rows.reduce((sum, row) => sum + row.count, 0)
+    expect(total, '现取合计与棘轮对不上：\n' + formatRows(rows)).toBe(DEBT_TOTAL_RATCHET)
   })
 })
