@@ -49,10 +49,14 @@ CORPUS_XLSX_SHEETS = 1
 CORPUS_XLSX_ROWS = 10
 CORPUS_XLSX_COLUMNS = 7
 
-#: 实测：一枚 144 行 / 37 段的真 CSV，最长段 450 字。这个数比 SEGMENT_CHAR_BUDGET 多 2，
-#: 原因写在 app/rag/spreadsheets.py 的 docstring（`tables.parts()` 的余量算法），
-#: 是**复用件**的既有缺陷，本单只记账不改（tables.py 是禁域）。
-CORPUS_CSV_WIDEST_SEGMENT = 450
+#: 实测（R331 把 `tables.parts()` 的余量按 `_assemble()` 实发的带段号锚预留之后重取）：一枚
+#: 144 行 / 38 段的真 CSV，最长段 442 字，**在本模块自己声明的上界 448 之下**。修之前是
+#: 37 段 / 最长 450 字（> 448）：那笔假账的原因（`parts()` 用不带段号的 `anchor()` 算余量）
+#: 今天仍写在 app/rag/spreadsheets.py 的 docstring 里——那枚文件本单禁改，落笔归总控。
+#: 37 -> 38 是修余量的必然结果：装不下的那一行多切一段，一行不许多、锚一枚不许少；
+#: 判据与不变量钉在 tests/test_r331_segment_ceiling.py。这两格是算出来的账，不是愿望。
+CORPUS_CSV_SEGMENTS = 38
+CORPUS_CSV_WIDEST_SEGMENT = 442
 
 #: 跟进单 §102 第二节写域图：这三枚文件本轮由别人独占，本单只读不改。
 READ_ONLY_DOMAINS = ("app/rag/loader.py", "app/documents/file_security.py", "app/rag/tables.py")
@@ -478,20 +482,23 @@ def test_the_sheet_name_cannot_fake_an_extra_anchor_field(tmp_path) -> None:
 
 
 def test_every_segment_of_a_long_table_is_re_anchored() -> None:
-    """判据④: 长表交回的是**多段带锚的块**，不是一坨无锚点长串。37 段 = 37 枚锚。"""
+    """判据④: 长表交回的是**多段带锚的块**，不是一坨无锚点长串。38 段 = 38 枚锚，段段 ≤ 448。"""
     found = spreadsheets.load_spreadsheet(CORPUS_CSV)
     segments = found.text.split(BLOCK_SEPARATOR)
 
     assert found.row_count == CORPUS_CSV_ROWS - 1
-    assert len(segments) == sum(len(block.parts()) for block in found.blocks) > 5
+    assert len(segments) == sum(len(block.parts()) for block in found.blocks) == CORPUS_CSV_SEGMENTS > 5
     assert len(r305_anchors(found.text)) == len(segments), "一枚段一枚锚：锚既不缺席也不野涨"
     widest = max(len(segment) for segment in segments)
     assert widest == CORPUS_CSV_WIDEST_SEGMENT, (
-        f"实测最长段变成 {widest}：这条账记的是 tables.parts() 用不带段号的 anchor() 算余量的"
-        "缺陷（R305 已回报总控，禁域不自改）。它变了就说明那一边动过，两边的账都得重核。"
+        f"实测最长段变成 {widest}：这条账记的是 tables.parts() 现装的余量口径下真件最长那段的"
+        "实测长度（R331 按实发的带段号锚预留之前是 450）。它变了就说明那一边又动过装箱，两边的账都得重核。"
     )
-    assert SEGMENT_CHAR_BUDGET < widest < 499, "仍在 500 的上游尺与 499 的丢锚线之内，但已超本模块那把 448"
+    assert widest <= SEGMENT_CHAR_BUDGET, f"最长段 {widest} 超了本模块自己声明的上界 {SEGMENT_CHAR_BUDGET}"
     for segment in segments:
+        assert len(segment) <= SEGMENT_CHAR_BUDGET, (
+            f"段超本模块声明的上界：{len(segment)} > {SEGMENT_CHAR_BUDGET}（R331：上界对每一段成立）"
+        )
         assert len(segment) <= tables.CHUNK_SIZE_CHARS, f"段超上游那把尺：{len(segment)}"
         lines = segment.split("\n")
         assert (ANCHOR_JOIN + "表") in lines[0], f"段首不是锚：{lines[0]!r}"

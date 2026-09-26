@@ -211,23 +211,47 @@ class TableBlock:
         return sum(len(line) + 1 for line in lines if line)
 
     def parts(self, budget: int = SEGMENT_CHAR_BUDGET) -> list[tuple[str, ...]]:
-        """Group row lines so that anchor + header + separator + rows stays inside the ruler."""
-        frame = len(self.header_line) + len(self.separator_line) + len(self.anchor()) + 6
-        cap = max(64, budget - frame)
-        units: list[list[str]] = []
-        for index, row in enumerate(self.rows):
-            line = self.row_lines[index]
-            units.append([line] if len(line) <= cap else _degrade_row(self.header, row, cap))
-        groups: list[list[str]] = [[]]
-        used = 0
-        for unit in units:
-            for line in unit:
-                if groups[-1] and used + len(line) + 1 > cap:
-                    groups.append([])
-                    used = 0
-                groups[-1].append(line)
-                used += len(line) + 1
-        return [tuple(group) for group in groups if group]
+        """Group row lines so every segment _assemble() prints stays inside the ruler.
+
+        What is reserved is what gets printed: header + separator + the widest anchor this
+        block can carry + the caption line the first segment carries + the 4 characters a
+        degraded continuation line can overshoot its own cap by. The widest anchor is the
+        numbered one, because _assemble() prints anchor(i, total) and not anchor(): reserving
+        the unnumbered width left the "（i/j段）" label out of the budget, so a long table came
+        back wider than this module's own ceiling -- measured on data/报销明细表.csv, 450
+        against SEGMENT_CHAR_BUDGET = 448. Same 口径 as _header_only(), which has always
+        reserved anchor(99, 99); the loop below only widens that reservation for a block big
+        enough to print more parts than two digits, so the ceiling holds for every part
+        number.
+        """
+        widest = 99
+        while True:
+            cap = max(
+                64,
+                budget
+                - len(self.header_line)
+                - len(self.separator_line)
+                - len(self.anchor(widest, widest))
+                - len(self.caption_line)
+                - 6,
+            )
+            units: list[list[str]] = []
+            for index, row in enumerate(self.rows):
+                line = self.row_lines[index]
+                units.append([line] if len(line) <= cap else _degrade_row(self.header, row, cap))
+            groups: list[list[str]] = [[]]
+            used = 0
+            for unit in units:
+                for line in unit:
+                    if groups[-1] and used + len(line) + 1 > cap:
+                        groups.append([])
+                        used = 0
+                    groups[-1].append(line)
+                    used += len(line) + 1
+            packed = [tuple(group) for group in groups if group]
+            if len(packed) <= widest:
+                return packed
+            widest = len(packed)
 
     def _assemble(self, groups: list[tuple[str, ...]]) -> str:
         """Put an anchor -- and only an anchor -- on top of every group of lines."""
