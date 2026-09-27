@@ -133,8 +133,12 @@ export const ALERTS_LIMIT_NOTE = '后端只回传最近 100 条告警，更早�
  * 后者保住判据②那一族 —— 连不上服务、未知码、没有码、结构不对，再点一次是有意义的，
  * 不许把这枚修复做成「一律 false」的反方向假绿。
  * 这里一个码名都不列：名单在 lib/errcodes.js 的三张表里，取数层再抄一份就是第二本账。
+ *
+ * R375 判据①：写路径（disposalFailureView 的 error 那一档、lib/notifications.js 的 writeFailureView）
+ * 复用本文件这一枚函数，屏上不再另立第二把尺 —— 同一类错误读的时候说 false、写的时候说 true，
+ * 正是 R368 判据③要消灭的那种分裂。导出它是为了让那一处写点吃到这同一行判据，不是新开一条通道。
  */
-function failureRetryable(err) {
+export function failureRetryable(err) {
   return dictionaryAdjudicatesRetry(err) ? isRetryable(err) : true
 }
 
@@ -562,6 +566,9 @@ export const INVALID_ID_FAILURE = {
  *   conflict 点这一下之前状态刚被别人改过：处置只认固定的跳转，关闭是终态
  *   rejected 只可能来自转派。目标那四格里有一格没过，后端刻意不说是哪一格（防用户名枚举，:548-556）
  * reload 为真时面板会重读列表：屏上那一版已经不作数了，别拿旧的一格继续点。
+ * error 那一档的 retryable 跟字典走（R375 判据①，复用本文件 failureRetryable 那一行）：
+ * 后端点名了码 ⇒ 字典说 false 屏上就不许挂「再试这一件」；字典没为这一枚码说话（没有码 /
+ * 未知码 / 只按状态兜底 / 断网）⇒ 仍给重试，与读路径 readFailureView 的 error 档逐字同形。
  */
 export function disposalFailureView(err, action) {
   const code = errorCodeOf(err)
@@ -581,7 +588,7 @@ export function disposalFailureView(err, action) {
   if (code === 'validation_error' && action === 'assign') {
     return { face: 'rejected', title: DISPOSAL_FAILURE_TITLES.rejected, description: '对方得同时满足两件事：自己管得了告警，且这一条在他的可见范围里。查无此人、账号停用、没有这项权限、看不到这一条——后端回的是同一句话，不说是哪一格是刻意的，分开答就成了一条试用户名的口子。请核对登录用户名后再派。', codeLabel: label, retryable: false, reload: false }
   }
-  return { face: 'error', title: DISPOSAL_FAILURE_TITLES.error, description: errorDetail(err, DISPOSAL_FAILURE_TITLES.error), codeLabel: label, retryable: true, reload: false }
+  return { face: 'error', title: DISPOSAL_FAILURE_TITLES.error, description: errorDetail(err, DISPOSAL_FAILURE_TITLES.error), codeLabel: label, retryable: failureRetryable(err), reload: false }
 }
 
 /**

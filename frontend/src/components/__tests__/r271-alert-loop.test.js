@@ -37,6 +37,7 @@ import {
   UNATTRIBUTED_DEPARTMENT,
   UNRECORDED,
 } from '../../lib/alerts'
+import { ERROR_CODES } from '../../lib/errcodes'
 import InsightPanel from '../InsightPanel.vue'
 
 const source = name => readFileSync(new URL('../' + name, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
@@ -433,7 +434,7 @@ const FAILURE_SPECS = [
   { name: 'error', status: 500, code: 'internal_error', action: 'ack' },
 ]
 
-async function failureFace(spec, failTimes) {
+async function failureFace(spec, failTimes, makeError) {
   const rows = spec.action === 'assign' ? [rawRow({ assignee: '', assigned_by: '', assigned_at: '' })] : [rawRow()]
   // failTimes 只给「再试一次」那一枚用例用：第一发必被拒、第二发放行，才看得出重试真把动作重发了一次。
   let remaining = failTimes === undefined ? Infinity : failTimes
@@ -442,7 +443,7 @@ async function failureFace(spec, failTimes) {
     failPost: () => {
       if (remaining <= 0) return null
       remaining -= 1
-      return httpError(spec.status, spec.code)
+      return makeError ? makeError() : httpError(spec.status, spec.code)
     },
   })
   const row = bindings.alerts.value[0]
@@ -502,7 +503,14 @@ describe('R271 判据③ · 处置的六张脸互不顶替，且一张都不许�
     const lost = await failureFace(FAILURE_SPECS[0])
     expect(visibleText(actionStrip(lost.page, 'alert-action-failure'))).toContain('登录状态已失效')
     expect(lost.page).not.toContain('data-testid="ui-error-retry"')
-    const broken = await failureFace(FAILURE_SPECS[5], 1)
+    // R375 判据①改口（本件唯一一处，改前⇒改后与理由都写在这里）：
+    // 改前：FAILURE_SPECS[5]（500 + 后端点名 internal_error）屏上硬编 retryable:true ⇒ 给「再试这一件」。
+    // 改后：同一枚形状跟字典走 ⇒ false，那颗按钮收掉（下一段 named 钉住它）。
+    // 为什么新值是真话：ERROR_CODES.internal_error.retryable 当场写着 false，而读路径同一格早已由
+    // R368 丁钉成 false（r368-retryable-source.test.js 丁组「500 internal_error ⇒ 改前 true／改后 false」、
+    // insight-alerts.test.js「500 不给重试、断网才给」），写路径留着 true 就是同一屏两种口径。
+    // 「真坏了才给重试」这一维没有失效，只是挪到字典没说话的那一族形状上（下面 broken 用的就是它）。
+    const broken = await failureFace(FAILURE_SPECS[5], 1, () => ({ request: {}, message: 'Network Error' }))
     expect(broken.bindings.actionFailure.value.retryable).toBe(true)
     expect(broken.page).toContain('data-testid="ui-error-retry"')
     // 再试一次真把同一枚动作重发出去，而不是只擦掉那条红字。
@@ -511,6 +519,13 @@ describe('R271 判据③ · 处置的六张脸互不顶替，且一张都不许�
     expect(broken.server.posts.map(post => post.url)).toEqual(['/alerts/7/ack', '/alerts/7/ack'])
     expect(broken.bindings.actionFailure.value).toBe(null)
     expect(broken.bindings.actionReceipt.value.kind).toBe('done')
+    // R375 只增不减：后端点名 internal_error 那一格现在跟着字典，脸与句子一个字都不动，只收按钮。
+    const named = await failureFace(FAILURE_SPECS[5])
+    expect(named.bindings.actionFailure.value.face).toBe('error')
+    expect(named.bindings.actionFailure.value.retryable).toBe(ERROR_CODES.internal_error.retryable)
+    expect(named.bindings.actionFailure.value.retryable).toBe(false)
+    expect(named.bindings.actionFailure.value.description).toBe(ERROR_CODES.internal_error.message)
+    expect(named.page).not.toContain('data-testid="ui-error-retry"')
   })
 
   it('404 与 409 会说「屏上这一版不作数」并顺手重读；403 不重读', async () => {

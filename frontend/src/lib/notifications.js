@@ -21,7 +21,7 @@
  */
 import { errorDetail, http, PERMISSION_DENIED } from './http'
 import { errorCodeLabel, errorCodeOf } from './errcodes'
-import { formatStamp, readFailureView, SHAPE_FAILURE_DESCRIPTION } from './alerts'
+import { failureRetryable, formatStamp, readFailureView, SHAPE_FAILURE_DESCRIPTION } from './alerts'
 
 /** 三条路由：一条读，两条写（notifications.py:171 / :194 / :200）。 */
 export const INBOX_PATH = '/notifications'
@@ -284,9 +284,13 @@ export function shapeFailureViewOf() {
   return { face: 'error', title: READ_FAILED_TITLE, description: SHAPE_FAILURE_DESCRIPTION, codeLabel: '', retryable: true }
 }
 
-/** 一次写失败的人话：同样只出自词典，只是说的不是「读不到」而是「这次动作没成」。 */
+/**
+ * 一次写失败的人话：同样只出自词典，只是说的不是「读不到」而是「这次动作没成」。
+ * retryable 同出一把尺（R375 判据①）：吃 lib/alerts.js 那一枚 failureRetryable，本层不自判码、
+ * 不再硬编 true —— 503 storage_unavailable 这种「跑完迁移才会变」的失败，点多少次都是同一枚 503。
+ */
 export function writeFailureView(err, fallback = WRITE_FAILED_FALLBACK) {
-  return { title: '这次动作没能改成', description: errorDetail(err, fallback), codeLabel: errorCodeLabel(err), retryable: true }
+  return { title: '这次动作没能改成', description: errorDetail(err, fallback), codeLabel: errorCodeLabel(err), retryable: failureRetryable(err) }
 }
 
 /**
