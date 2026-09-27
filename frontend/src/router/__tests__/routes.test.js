@@ -38,6 +38,7 @@ import DocPanel from '../../components/DocPanel.vue'
 import FeedPanel from '../../components/FeedPanel.vue'
 import GraphPanel from '../../components/GraphPanel.vue'
 import InsightPanel from '../../components/InsightPanel.vue'
+import TracePanel from '../../components/TracePanel.vue'
 import { FOCUSABLE_SELECTOR } from '../../components/ui/focus-trap.js'
 import {
   DEFAULT_SCREEN,
@@ -71,6 +72,9 @@ const SCREENS = [
   // R316 追加一枚屏（判据⑤：只准加不许减）——下面两条精确名单里那个数组各多一项，
   // 断言强度一分未降：仍然是逐字 toEqual 的定长名单，多一枚少一枚都红。
   ['/admin', 'admin', AdminPanel],
+  // R399 判据①（甲案）再加一枚屏：与 /admin 同一条形状（是一屏、不是一级入口、只长进管理员那一份
+  // 入口清单）。写法不变：仍然只往同一枚定长名单里加一项，多一枚少一枚都红。
+  ['/traces', 'traces', TracePanel],
 ]
 
 /** 老屏名：不再是屏，但仍然是入口（总览的卡片与 @goto 还指着它们）。 */
@@ -120,10 +124,10 @@ describe('R104 判据 1 · 一级屏一屏一路由，导航是它的派生视�
     // R315 判据④ 换号理由：「交成果」进一级入口，名单加一项就是六枚；断言强度未降——
     // 仍然逐字相等，多一枚、少一枚、换顺序三种走法都当场红，没有改成 toContain / >=。
     expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
-    // 屏的全集比一级多图谱与「账号与角色」两枚（R316：管理员屏也不派生一级入口）；
-    // 屏之外的入口（老屏名）不许被当成屏。原断言 = ['graph', ...LEGACY]，新断言只是往
+    // 屏的全集比一级多图谱、「账号与角色」与「运行留痕」三枚（R316 与 R399：管理员屏都不派生
+    // 一级入口）；屏之外的入口（老屏名）不许被当成屏。原断言 = ['graph', ...LEGACY]，新断言只是往
     // 同一枚定长名单里加一项，toEqual 的逐字相等与「不许多一枚」都还在。
-    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['graph', 'admin', ...LEGACY_FEED_NAMES])
+    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['graph', 'admin', 'traces', ...LEGACY_FEED_NAMES])
     expect(LEGACY_FEED_NAMES).toEqual(['docs', 'data'])
     // 一屏一条路由：地址、组件、标题都不许多也不许少
     expect(screenRoutes.map(route => route.path)).toEqual(SCREENS.map(entry => entry[0]))
@@ -296,9 +300,9 @@ describe('R104 判据 3 · 切屏不丢会话，也不改别人家的重挂载�
   it('其余屏照旧每次进来重挂载：没有被塞进 keep-alive 名单', () => {
     const names = screenRoutes.map(route => route.component.name || route.component.__name)
     // R316：屏的面板名单加一枚 AdminPanel（定长 toEqual 未改成包含式，强度不降）。
-    // R315：再加一枚 ArtifactsPanel —— 同样只往同一枚定长名单里加一项，没换成包含式：
+    // R315 加 ArtifactsPanel、R399 加 TracePanel —— 同样只往同一枚定长名单里加一项，没换成包含式：
     // 壳改名、多一枚、少一枚，这条都会红（顺序 = 路由表顺序）。
-    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'InsightPanel', 'ApprovalPanel', 'ChatPanel', 'ArtifactsPanel', 'GraphPanel', 'AdminPanel'])
+    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'InsightPanel', 'ApprovalPanel', 'ChatPanel', 'ArtifactsPanel', 'GraphPanel', 'AdminPanel', 'TracePanel'])
     expect(names.filter(name => cachedScreens.includes(name))).toEqual(['ChatPanel'])
   })
 })

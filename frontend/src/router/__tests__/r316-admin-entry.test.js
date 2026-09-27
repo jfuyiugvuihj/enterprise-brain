@@ -68,26 +68,36 @@ describe('R316④ · /admin 是一屏，而且是真落点', () => {
 })
 
 describe('R316④ · 入口该由谁派生', () => {
-  it('管理员独占屏的入口清单就一枚，字段齐，可及名称取的是同一格 meta.title', () => {
-    expect(administratorNavigation).toHaveLength(1)
+  // R316 定下这一格时清单里就一枚；R399 判据①（甲案）交出第二枚「运行留痕」，走的是同一枚
+  // administratorOnly 声明。断言强度未降：名单仍是定长 toEqual（顺序 = 路由表顺序），
+  // 多一枚、少一枚、把别人的入口混进来都当场红，没换成包含式。
+  it('管理员独占屏的入口清单就这两枚，字段齐，可及名称取的是同一格 meta.title', () => {
+    expect(administratorNavigation).toHaveLength(2)
+    expect(administratorNavigation.map(item => item.id)).toEqual(['admin', 'traces'])
     const item = administratorNavigation[0]
     expect(item).toEqual({ id: 'admin', label: '账号与角色', icon: adminRoute.meta.icon })
     expect(item.label, '入口没有可及名称').toBeTruthy()
     expect(item.icon).toMatch(/^M/)
+    const traceRoute = routes.find(route => route.name === 'traces')
+    expect(administratorNavigation[1]).toEqual({ id: 'traces', label: '运行留痕', icon: traceRoute.meta.icon })
   })
 
   it('角色不对就一枚都不派生：staff / manager / auditor / 没有角色，四档拿到的都是同一份 navigation', () => {
     for (const role of ['staff', 'manager', 'auditor', '', undefined, null, 'Admin', 'ADMIN']) {
       expect(navigationForRole(role), `角色 ${String(role)} 拿到了不该看见的入口`).toEqual(navigation)
-      expect(navigationForRole(role).map(item => item.id)).not.toContain('admin')
+      const ids = navigationForRole(role).map(item => item.id)
+      expect(ids).not.toContain('admin')
+      // R399：第二枚管理员屏走的是同一张嘴，员工侧同样派生不出来（不是「画出来再藏起来」）。
+      expect(ids).not.toContain('traces')
     }
   })
 
-  it('系统管理员那一档只多这一枚：加一入口，一级屏那五枚一枚未减', () => {
+  it('系统管理员那一档只多这两枚：加入口，一级屏那六枚一枚未减', () => {
+    // R399 往同一份清单里加第二枚入口：写法不变，仍是定长 toEqual 与「navigation 那一截原样在前」。
     const forAdmin = navigationForRole(ADMINISTRATOR_ROLE)
-    expect(forAdmin.map(item => item.id)).toEqual([...screenIds, 'admin'])
+    expect(forAdmin.map(item => item.id)).toEqual([...screenIds, 'admin', 'traces'])
     expect(forAdmin.slice(0, navigation.length)).toEqual(navigation)
-    expect(forAdmin).toHaveLength(navigation.length + 1)
+    expect(forAdmin).toHaveLength(navigation.length + 2)
   })
 
   it('ADMINISTRATOR_ROLE 就是后端那枚角色名，不是前端新造的词', () => {

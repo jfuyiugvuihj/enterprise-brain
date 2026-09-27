@@ -289,14 +289,18 @@ describe('R315 判据⑥ · 六枚一级屏真的可达', () => {
     expect(navigation[navigation.length - 1]).toEqual({ id: 'artifacts', label: '交成果', icon: artifactsRoute.meta.icon })
   })
 
-  it('按角色派生入口那把尺子带上它：其余角色就这六枚，管理员那一档只多 admin 一枚', () => {
+  // R399 往「管理员那一档」再加一枚入口（运行留痕）：换的是名单本身，不是断言强度 —— 其余角色
+  // 那六枚仍然定长逐字相等，管理员那一档仍然逐字相等且只多管理员屏那一族，没换成包含式。
+  it('按角色派生入口那把尺子带上它：其余角色就这六枚，管理员那一档只多 admin 与 traces 两枚', () => {
     for (const role of ['staff', 'manager', 'auditor', 'editor', '', undefined, null]) {
       expect(navigationForRole(role).map(item => item.id), '角色 ' + String(role) + ' 看到的入口不是这六枚').toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
     }
     const forAdmin = navigationForRole(ADMINISTRATOR_ROLE)
-    expect(forAdmin.map(item => item.id)).toEqual([...(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts']), 'admin'])
-    expect(forAdmin).toHaveLength(navIds.length + 1)
-    expect(navigationForRole('staff').map(item => item.id)).not.toContain('admin')
+    expect(forAdmin.map(item => item.id)).toEqual([...(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts']), 'admin', 'traces'])
+    expect(forAdmin).toHaveLength(navIds.length + 2)
+    const staffIds = navigationForRole('staff').map(item => item.id)
+    expect(staffIds).not.toContain('admin')
+    expect(staffIds).not.toContain('traces')
   })
 
   it('深链 /artifacts 直接进能渲染：解析到这一屏，HTML 与直接渲染那枚壳逐字相同', async () => {
@@ -326,8 +330,9 @@ describe('R315 判据⑥ · 六枚一级屏真的可达', () => {
     expect(LEGACY_FEED_NAMES).toEqual(['docs', 'data'])
     expect(LEGACY_FEED_NAMES).not.toContain('artifacts')
     expect(routes.filter(route => route.meta?.screen && LEGACY_FEED_NAMES.includes(String(route.name)))).toHaveLength(0)
-    // 屏的全集里，非一级的只有图谱与「账号与角色」，再加上那两枚老屏名 —— 定长逐字相等。
-    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['graph', 'admin', 'docs', 'data'])
+    // 屏的全集里，非一级的只有图谱、「账号与角色」与 R399 的「运行留痕」，再加上那两枚老屏名
+    // —— 定长逐字相等，多一枚少一枚都红。
+    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['graph', 'admin', 'traces', 'docs', 'data'])
     expect(artifactsRoute.redirect, '「交成果」不该是重定向，它是一屏').toBeUndefined()
   })
 
