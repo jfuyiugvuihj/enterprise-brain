@@ -18,6 +18,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { navigation, routes, screenRouteIds } from '../router'
+import AdminPanel from '../components/AdminPanel.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 
 const read = rel => readFileSync(new URL(rel, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
@@ -65,6 +66,30 @@ describe('R103 · 图谱的一级入口已撤下', () => {
     expect(new Set(gotoTargets)).not.toContain('graph')
     expect(new Set(navigationIds)).not.toContain('graph')
     // 落点必须落在真实存在的屏上，否则「无入口」这条结论本身就不可信。
+    for (const target of gotoTargets) {
+      expect(screenRouteIds, `${target} 不是一屏路由`).toContain(target)
+    }
+  })
+})
+describe('R316 判据④⑤ · 「账号与角色」是一屏，但今天对任何角色都派生不出一级入口', () => {
+  it('一级导航仍是那五枚：新增那一屏没挤进去，一枚也没被挤出去', () => {
+    // 本文件第一条那条定长 toEqual 一字未改；这里只是再钉一次「admin 不在名单里」。
+    // 加断言而不放宽任何既有条：多一枚入口、少一枚入口，两枚钉子都会红。
+    expect(navigationIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat'])
+    expect(navigationIds).not.toContain('admin')
+  })
+
+  it('但它是真屏真落点：路由表里有 /admin，挂的确实是 AdminPanel，文件也还在', () => {
+    const admin = screenRoutes.find(route => route.name === 'admin')
+    expect(admin, '路由表里没有「账号与角色」这一屏了').toBeTruthy()
+    expect(admin.path).toBe('/admin')
+    expect(admin.component, 'admin 路由挂的不是 AdminPanel').toBe(AdminPanel)
+    expect(existsSync(new URL('../components/AdminPanel.vue', import.meta.url))).toBe(true)
+  })
+
+  it('侧栏派生不出的那一枚，goto 也不许从后门绕进去（与图谱同一条规矩）', () => {
+    expect(new Set(gotoTargets)).not.toContain('admin')
+    expect(new Set(navigationIds)).not.toContain('admin')
     for (const target of gotoTargets) {
       expect(screenRouteIds, `${target} 不是一屏路由`).toContain(target)
     }

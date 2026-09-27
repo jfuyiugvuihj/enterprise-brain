@@ -26,6 +26,7 @@ import { describe, expect, it } from 'vitest'
 import { h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 import { navigation, routes, screenIds } from '../index.js'
+import AdminPanel from '../../components/AdminPanel.vue'
 import { FEED_TABS } from '../feed-tabs.js'
 
 const read = rel => readFileSync(new URL(rel, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
@@ -64,6 +65,23 @@ function withoutComments(text) {
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/(^|[\s;:{}])\/\/[^\n]*/g, '$1')
 }
+
+describe('R316 判据⑤ · 追加的那一枚屏不改计划书那笔账，也不自带第二份屏名', () => {
+  it('§四 的定名名单一格未增（admin 不是一级入口），屏名仍然全站唯一', () => {
+    // 原断言一个字未改：screenIds 仍是那五枚；这里只补一条对新增屏的口径。
+    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat'])
+    expect(PLAN_TITLES).not.toHaveProperty('admin')
+    const admin = routes.find(route => route.name === 'admin')
+    expect(admin.meta.title).toBe('账号与角色')
+    const titles = screenRoutes.map(route => route.meta.title)
+    expect(new Set(titles).size, '两屏共用了同一个屏名').toBe(titles.length)
+  })
+
+  it('新增屏页内不写第二份屏名：页级标题那三枚的账一格未动', async () => {
+    const html = await renderToString(h(AdminPanel))
+    expect(pageTitleOf(html), 'AdminPanel 里又写了一句屏名').toBe('')
+  })
+})
 
 describe('R136 判据① · 计划书 §四 的定名落在 meta.title 上', () => {
   it('一级屏就这五枚，名字逐字对上计划书（一枚不许多、不许少）', () => {

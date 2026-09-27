@@ -24,6 +24,7 @@
  */
 import { createRouter, createWebHistory } from 'vue-router'
 
+import AdminPanel from '../components/AdminPanel.vue'
 import ApprovalPanel from '../components/ApprovalPanel.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import DashboardPanel from '../components/DashboardPanel.vue'
@@ -96,6 +97,18 @@ export const routes = [
     component: GraphPanel,
     meta: { screen: true, title: '知识图谱', primary: false },
   },
+  // R316 判据① · 「账号与角色」是一屏，但今天不派生一级入口：判据④ 要求员工侧看不见它，
+  // 而侧栏是 navigation 的派生视图，壳层今天还不认识角色（见下面 navigationForRole 那段）。
+  // primary:false 给的是「地址是真的、入口还没接线」这个准确状态：/admin 深链直达渲染
+  // AdminPanel，staff 走进去看到的是「这一屏不向你开放」那张脸（后端 403），不是空列表。
+  // administratorOnly 这一格是给入口用的声明，不是第二套权限判定：能不能读仍然只在服务端
+  // 那道 ACTION_MANAGE_USERS 闸上（app/api/v1/auth.py:93 与 app/common/policy.py:44/:95）。
+  {
+    path: '/admin',
+    name: 'admin',
+    component: AdminPanel,
+    meta: { screen: true, title: '账号与角色', icon: 'M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20c0-3 2.2-4.8 5-4.8s5 1.8 5 4.8M15 8h6M15 12h6M15 16h4', primary: false, administratorOnly: true },
+  },
   // R136 判据② · 老地址不许白屏：/docs、/data 是合屏之前的两屏，存量链接与总览往
   // @goto 发的落点今天仍指着这两个名字。这一组由 FEED_TABS 派生，于是「加第三枚标签」
   // 与「老链接指向哪」是同一件事，不会只改到一半。它们不是屏（不带 meta.screen），
@@ -128,6 +141,29 @@ export const navigation = routes.filter(isPrimaryScreen).map(route => ({
 
 /** 一级屏 id（= navigation 的 id 列）。 */
 export const screenIds = navigation.map(item => item.id)
+
+/** 平台唯一的「这台机器上的系统管理员」判定读的是角色名本身：app/common/policy.py:44 的
+ *  _ADMINISTRATOR_ROLES 就只有这一枚，users:manage 也只登记在它名下（permissions.py:15）。 */
+export const ADMINISTRATOR_ROLE = 'admin'
+
+/**
+ * 管理员独占屏的入口清单：与 navigation 同一张路由表派生，写法同一条，只是多认一格
+ * meta.administratorOnly。今天它还没有消费方 —— App.vue 的侧栏仍按 navigation 渲染，
+ * 把入口接上去需要改那枚刚被 R333 动过的壳层，边界由总控裁定（R316 判据④ 的回执里报的
+ * 就是这一格）；判据钉在 src/router/__tests__/r316-admin-entry.test.js。
+ */
+export const administratorNavigation = routes
+  .filter(route => isScreen(route) && route.meta.administratorOnly === true)
+  .map(route => ({ id: route.name, label: route.meta.title, icon: route.meta.icon }))
+
+/**
+ * 某个角色该看见的侧栏入口：角色不对就一枚都不派生（不是「画出来再藏起来」）。
+ * 这一格只管入口可见性，不管能不能读 —— 读不读得到只在服务端那道闸上说，屏上那五张脸
+ * 就是它的答案；所以这里既不复用 permissions，也不在前端建第二套权限表。
+ */
+export function navigationForRole(role) {
+  return String(role || '') === ADMINISTRATOR_ROLE ? [...navigation, ...administratorNavigation] : navigation
+}
 
 /**
  * 一个落点（goto 目标 / 深链名字）在不在表上，看这一枚：屏的全集，含非一级的图谱，

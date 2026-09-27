@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { DEFAULT_SCREEN, FEED_SCREEN, cachedScreens, navigation, screenRouteIds } from './router'
+import { DEFAULT_SCREEN, FEED_SCREEN, cachedScreens, navigationForRole, screenRouteIds } from './router'
 import { focusScreenMain, navItems, nextNavItem } from './router/nav-focus'
 import { resetSessions } from './lib/sessions'
 import { UiButton } from './components/ui'
@@ -445,7 +445,7 @@ onUnmounted(() => {
         </div>
         <nav ref="navEl" class="nav-list" data-testid="navigation" @keydown="onNavKeydown">
           <UiButton
-            v-for="item in navigation"
+            v-for="item in navigationForRole(userRole)"
             :key="item.id"
             variant="ghost"
             type="button"

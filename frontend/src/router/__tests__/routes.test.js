@@ -26,6 +26,7 @@ import { describe, expect, it } from 'vitest'
 import { h } from 'vue'
 import { createMemoryHistory } from 'vue-router'
 import { renderToString } from '@vue/server-renderer'
+import AdminPanel from '../../components/AdminPanel.vue'
 import ApprovalPanel from '../../components/ApprovalPanel.vue'
 import ChatPanel from '../../components/ChatPanel.vue'
 import DashboardPanel from '../../components/DashboardPanel.vue'
@@ -61,6 +62,9 @@ const SCREENS = [
   ['/chat', 'chat', ChatPanel],
   // 图谱是屏，但不是一级入口：它只有一条非一级路由，深链进得来。
   ['/graph', 'graph', GraphPanel],
+  // R316 追加一枚屏（判据⑤：只准加不许减）——下面两条精确名单里那个数组各多一项，
+  // 断言强度一分未降：仍然是逐字 toEqual 的定长名单，多一枚少一枚都红。
+  ['/admin', 'admin', AdminPanel],
 ]
 
 /** 老屏名：不再是屏，但仍然是入口（总览的卡片与 @goto 还指着它们）。 */
@@ -108,8 +112,10 @@ describe('R104 判据 1 · 一级屏一屏一路由，导航是它的派生视�
     expect(screenIds).toEqual(navigation.map(item => item.id))
     // R136 判据② · 一级屏五枚：文档 + 数据 合成「喂料」，侧栏于是少一项，不是多一项
     expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat'])
-    // 屏的全集只比一级多图谱一枚；屏之外的入口（老屏名）不许被当成屏
-    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['graph', ...LEGACY_FEED_NAMES])
+    // 屏的全集比一级多图谱与「账号与角色」两枚（R316：管理员屏也不派生一级入口）；
+    // 屏之外的入口（老屏名）不许被当成屏。原断言 = ['graph', ...LEGACY]，新断言只是往
+    // 同一枚定长名单里加一项，toEqual 的逐字相等与「不许多一枚」都还在。
+    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['graph', 'admin', ...LEGACY_FEED_NAMES])
     expect(LEGACY_FEED_NAMES).toEqual(['docs', 'data'])
     // 一屏一条路由：地址、组件、标题都不许多也不许少
     expect(screenRoutes.map(route => route.path)).toEqual(SCREENS.map(entry => entry[0]))
@@ -124,6 +130,14 @@ describe('R104 判据 1 · 一级屏一屏一路由，导航是它的派生视�
       expect(screenRoutes.some(route => route.name === item.id), item.id).toBe(true)
     }
     expect(navigation.map(item => item.id)).not.toContain('graph')
+  })
+
+  it('R316 追加的「账号与角色」是一屏，但不是第六枚一级入口（screenIds 一枚未增）', () => {
+    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat'])
+    expect(navigation.map(item => item.id)).not.toContain('admin')
+    expect(screenRouteIds).toContain('admin')
+    const admin = screenRoutes.find(route => route.name === 'admin')
+    expect(admin.meta.primary, 'R316 那一屏被挂成了默认一级').toBe(false)
   })
 
   it('meta.title 必填：每一屏都有顶栏要的人话标题', () => {
@@ -271,7 +285,8 @@ describe('R104 判据 3 · 切屏不丢会话，也不改别人家的重挂载�
 
   it('其余屏照旧每次进来重挂载：没有被塞进 keep-alive 名单', () => {
     const names = screenRoutes.map(route => route.component.name || route.component.__name)
-    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'InsightPanel', 'ApprovalPanel', 'ChatPanel', 'GraphPanel'])
+    // R316：屏的面板名单加一枚 AdminPanel（定长 toEqual 未改成包含式，强度不降）
+    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'InsightPanel', 'ApprovalPanel', 'ChatPanel', 'GraphPanel', 'AdminPanel'])
     expect(names.filter(name => cachedScreens.includes(name))).toEqual(['ChatPanel'])
   })
 })
