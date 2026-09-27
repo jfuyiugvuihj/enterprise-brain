@@ -33,7 +33,9 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts/rehearse_eval_window.py"
 SCRIPT_REL = "scripts/rehearse_eval_window.py"
-BASE = "HEAD"
+#: 基点必须是一枚不可变 sha，不许写 "HEAD"：R379 并树 `aafb4b0` 之后 HEAD 那份就是**改后**的尺子（blob 253ffce7，与工作树逐字相等），"覆盖前抓不到"这一句会在本钉落树的那一刻自己变成假话。
+#: 285e265 = 本单施工基点，那份尺子的 blob 是 c290244b（"收尾" 只有 5 处，改后 19 处）。
+BASE = "285e265"
 ORCH = "app/agents/orchestrator.py"
 
 #: 三把刀：两支持刀各一，外加"摘掉档位判别"这一把只有 R42 会红的。
@@ -62,6 +64,10 @@ def load_base(module_name: str, tmp_root: Path):
     """把基点那份取出来当**素材**跑一遍（R346：冻结的历史只准当素材，不上等号）。"""
     text = subprocess.run(["git", "show", f"{BASE}:{SCRIPT_REL}"], cwd=str(REPO),
                           capture_output=True, check=True).stdout.decode("utf-8")
+    #: 防漂移自校验（总控 09-27 补，事故 #58）：基点那份若与工作树那份字节相同，「覆盖前抓不到」就是空话，本家族会静静地变红。
+    assert text.replace("\r\n", "\n") != SCRIPT.read_text(encoding="utf-8-sig").replace("\r\n", "\n"), (
+        f"BASE={BASE} 那份与工作树那份字节相同 \u21d2 基点漂到了改后的尺子，" "「覆盖前抓不到」这句会变成自我矛盾"
+    )
     path = tmp_root / "base_rehearse.py"
     path.write_text(text.replace("\r\n", "\n"), encoding="utf-8", newline="")
     module = load_script(module_name, path)
