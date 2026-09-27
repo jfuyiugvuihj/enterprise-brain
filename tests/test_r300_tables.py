@@ -13,7 +13,12 @@ test_anchor_is_the_first_line_*（锚丢即红）、test_pdf_text_does_not_repea
 ⑥ 表不等于正文 -> test_table_only_document_has_text_and_no_prose。
 
 反证的牙不是嘴上说的：收尾时把 app/rag/tables.py 临时改坏七次，每次都跑完整本用例、跑完即
-还原，并核对源文件 sha256 回到 7acaa33c0568e8ee...（字节不变）。39 枚用例的真实读数：
+还原，并核对源文件与**记名锚点提交现算的 git blob** 一致（字节不变；锚点与派生尺子见本文件
+末尾「现场 B」一节，与 tests/test_r304_table_wiring.py 同源，不另造第二本账）。这一格从前抄着
+一串十六进制（7acaa33c…）：那是 58111c9（R331 动过 tables.py）之前那一份的 **checkout 层（CRLF）**
+摘要，自 58111c9 起就不是今天的文件内容，而它写在散文里不是断言，所以永远不会红，只会骗下一位
+照抄的人——期望值因此改成现算，🔴 不许就地重录一枚今天的 hex。
+下面 (a)-(g) 是当时那 39 枚用例的反证读数（历史账，枚数以当时为准）：
   (a) docx 解析交回空集           -> 11 红    (b) pdf 解析交回空集          -> 19 红
   (c) docx 入口退回只发正文       ->  2 红    (d) pdf 入口退回只发正文       ->  4 红
   (e) 来源锚摘掉                 -> 10 红    (f) 正文不扣表框(同表吐两次)   ->  4 红
@@ -25,6 +30,7 @@ test_anchor_is_the_first_line_*（锚丢即红）、test_pdf_text_does_not_repea
 from __future__ import annotations
 
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -37,6 +43,18 @@ from app.rag.tables import (
     CHUNK_OVERLAP_CHARS,
     CHUNK_SIZE_CHARS,
     SEGMENT_CHAR_BUDGET,
+)
+
+# 现场 B（R364）：本文件 docstring 那句「跑完即还原，核对源文件 sha256」的期望值改成派生。
+# 尺子与锚点**都用 R304/R352 那一把**（同一条锚、同一套 blob 层换算），不在本文件另造第二本账；
+# 名字带 r304_ 前缀的都不是 test_* ⇒ 导进来不会被 pytest 当成本文件的用例再跑一遍。
+from test_r304_table_wiring import (  # noqa: E402
+    TABLES_ANCHOR_SHA,
+    TABLES_BLOB_PATH,
+    r304_git,
+    r304_git_blob,
+    r304_tables_digest_at,
+    r304_tables_digest_on_disk,
 )
 
 
@@ -940,3 +958,115 @@ def _r300_document(case: str, tmp_path: Path):
     cells = [["Region", "Q1", "Q2"], ["East", "", "12"], ["", "13", "14"]]
     path = r300_write_pdf([r300_draw_table(60, 700, cells, open_h=((1, 0),))], tmp_path / "r300_merged.pdf")
     return tables.extract_document(path)
+
+
+# ============================================== 现场 B（R364）：手抄指纹换成派生（docstring 那句话的债）
+#
+# 本文件 docstring 承诺「反证跑完即还原，并核对源文件字节不变」。那句话从前抄着一串 sha256，
+# 而它不是断言 —— 58111c9（R331）合法改过 app/rag/tables.py 之后，它继续绿着讲假话。下面四枚钉
+# 把这句承诺变成真断言：期望值从**记名锚点提交**（TABLES_ANCHOR_SHA，与 R304/R352 同一条锚）现算，
+# 比较一律落在 **git blob 层（LF）**，盘上那份先归一。
+#
+# 三枚自校钉一枚都不许省，因为它们各堵一种"派生被写过期"的形状：锚点不在树上（读一枚愿望）、
+# 锚点没改过这枚文件（指名指错人）、锚点交出的字节与父提交相同（派生退化成同义反复）。
+# 第四枚（最后一枚）用一枚**真冒充者**当场演一遍：内容逐字节相同而没动过这枚文件的提交，三枚钉
+# 必须把它拒了 —— 它自己绿，才说明前三枚在量东西。
+
+#: 派生钉量的那枚文件，用正相对仓根的名字写（与 docstring 里那句「源文件」同一枚，见最后一枚钉）。
+TABLES_REL = "app/rag/tables.py"
+
+#: 找冒充者时沿 HEAD 祖先链往上扫的枚数（今天的树里第一枚 HEAD 就够；留余量是给合并提交）。
+IMPOSTOR_SCAN_LIMIT = 40
+
+
+def _commit_touches_tables(rev):
+    """这枚提交的改动清单里有没有 TABLES_REL（`--name-only`，与工作树行尾无关）。"""
+    listed = {
+        line.strip().replace("\\", "/")
+        for line in r304_git("show", "--pretty=format:", "--name-only", rev).splitlines()
+        if line.strip()
+    }
+    return TABLES_REL in listed
+
+
+def _anchor_disqualified_reasons(rev):
+    """三枚自校钉，交回**不合格理由**名单（空名单 = 三枚全过）。
+
+    做成名单而不是三条 assert：冒充者那枚反证钉要能指名道姓说清是哪一枚咬住了它，
+    否则"红了"和"因为对的原因红了"还是两回事。
+    """
+    reasons = []
+    ancestor = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", rev, "HEAD"],
+        capture_output=True,
+        cwd=str(REPO_ROOT),
+    )
+    if ancestor.returncode != 0:
+        reasons.append("%s 不在 HEAD 的祖先链上：这枚提交没进树，读它等于读一枚愿望" % rev[:7])
+    if not _commit_touches_tables(rev):
+        reasons.append("%s 的提交清单里没有 %s：它不是那枚「有意改动」，指名指错了人" % (rev[:7], TABLES_REL))
+    if r304_tables_digest_at(rev) == r304_tables_digest_at(rev + "^"):
+        reasons.append("%s 交出的 %s 与它的父提交相同：这枚提交没动过它，不配当锚点" % (rev[:7], TABLES_REL))
+    return reasons
+
+
+def _identical_impostor_rev():
+    """现算一枚冒充者：在祖先链上、与锚点**逐字节相同**、但自己没改过这枚文件的提交。"""
+    anchor = r304_tables_digest_at(TABLES_ANCHOR_SHA)
+    revs = r304_git("rev-list", "--max-count=%d" % IMPOSTOR_SCAN_LIMIT, "HEAD").split()
+    for rev in revs:
+        if r304_tables_digest_at(rev) == anchor and not _commit_touches_tables(rev):
+            return rev
+    raise AssertionError(
+        "沿 HEAD 往上 %d 枚里找不到一枚「与锚点 %s 同字节而没动过 %s」的提交："
+        "要么锚点已经落后于树（先去看 test_the_tables_module_is_still_the_bytes_the_anchor_shipped），"
+        "要么扫描余量要给大一点 —— 这枚反证钉不许改成恒真。" % (IMPOSTOR_SCAN_LIMIT, TABLES_ANCHOR_SHA, TABLES_REL)
+    )
+
+
+def test_the_restored_bytes_are_the_ones_the_named_anchor_shipped():
+    """docstring 那句「跑完即还原」的正腿：盘上那份归一到 blob 层以后，等于锚点提交现算的那份。"""
+    assert re.fullmatch(r"[0-9a-f]{7,40}", TABLES_ANCHOR_SHA), "锚点得是一枚提交名，不是一串指纹：%r" % TABLES_ANCHOR_SHA
+    anchor_blob = r304_git_blob(TABLES_ANCHOR_SHA)
+    assert b"\r" not in anchor_blob, "git blob 层应当恒 LF：层口径变了，下面这枚比较不再有意义"
+    assert r304_tables_digest_on_disk() == r304_tables_digest_at(TABLES_ANCHOR_SHA), (
+        "app/rag/tables.py 与锚点提交 %s 不等（都按 blob 层现算）。两条路二选一："
+        "① 改动是有意的 ⇒ 把 TABLES_ANCHOR_SHA 往前挪到你那枚提交并写清是谁改的；"
+        "② 改动未经授权 ⇒ 先取证再还原。🔴 不许在本文件重录一枚今天的 hex，那只是把 R364 治过的雷再埋一遍。"
+        % TABLES_ANCHOR_SHA
+    )
+
+
+def test_the_anchor_of_the_restoration_claim_passes_its_three_self_check_nails():
+    """三枚自校钉落在真锚点上：一枚都不许省，也不许有事后拿 `>=` 糊过去。"""
+    reasons = _anchor_disqualified_reasons(TABLES_ANCHOR_SHA)
+    assert not reasons, "锚点 %s 不自校：%s" % (TABLES_ANCHOR_SHA, " / ".join(reasons))
+
+
+def test_a_commit_with_identical_bytes_does_not_qualify_as_the_anchor():
+    """反证钉（常驻）：拿"内容恰好相同"的另一枚提交冒充锚点，三枚自校钉必须当场拒了它。
+
+    这一枚自己绿，才证明上面那枚不是同义反复 —— 派生最省事的糊法是随便指一枚同字节的提交，
+    字节比对照样绿，而锚点已经不再读任何东西。
+    """
+    impostor = _identical_impostor_rev()
+    assert r304_tables_digest_at(impostor) == r304_tables_digest_at(TABLES_ANCHOR_SHA), (
+        "%s 与锚点不同字节：它不是「内容恰好相同的冒充者」，这枚反证的前提没了" % impostor[:7]
+    )
+    reasons = _anchor_disqualified_reasons(impostor)
+    assert reasons, "冒充者 %s 三枚自校钉全过：那三枚钉量不到任何东西了" % impostor[:7]
+    assert " %s " % TABLES_REL in " ".join(reasons) or any(TABLES_REL in reason for reason in reasons), (
+        "拒它的理由没落在「这枚提交没改过这枚文件」上，红得不是地方：%s" % reasons
+    )
+
+
+def test_the_derived_nail_measures_the_file_the_prose_names():
+    """派生钉量的文件 == docstring 里那句「源文件」== 本件一直在测的那枚模块 == R304 量的那枚。
+
+    防的是"钉与账对不上"：两枚件共用一条锚，就得共用同一枚靶子，否则锚点推进时只有一枚件会红。
+    """
+    assert MODULE_SOURCE == REPO_ROOT / TABLES_REL, (
+        "MODULE_SOURCE（%s）与派生钉量的 %s 不是同一枚文件" % (MODULE_SOURCE, TABLES_REL)
+    )
+    assert TABLES_REL == TABLES_BLOB_PATH, "两枚件量的不是同一枚文件：r300=%s / r304=%s" % (TABLES_REL, TABLES_BLOB_PATH)
+    assert (REPO_ROOT / TABLES_REL).exists(), TABLES_REL

@@ -6,6 +6,18 @@ from pathlib import Path
 from fastapi import UploadFile
 import pytest
 
+# 现场 A（R364）：下面那枚「上传腿」钉原来把 app/api/v1/chat.py 的**一行原文**抄进测试。
+# 那是本仓第五枚同族雷（前四枚的形状：抄行号 / 抄迁移尾号 / 抄一行源文本 / 抄一枚十六进制指纹，
+# 账见 tests/test_r346_line_ledger_is_derived_not_copied.py 与 tests/test_r351_stale_ledger_teeth.py）。
+# 手抄的账每演进一次就红一次（R306 第二棒 6d00d70 给同一处加了 display_name= 就是那一次），而它红的
+# 时候看起来像「上传路由坏了」。正解不是把字面量改成今天的样子（那是把雷重新埋一遍），是换成形状判据。
+# 尺子用 R298 自己那把，不另造第二把；它的牙与「参数表演进不许多红一枚」由
+# tests/test_r364_shape_ruler_teeth.py（常驻反证）与 tests/fixtures/r364_refutation_driver.py（盘上真刀）盯。
+from test_r298_ocr_channel import (  # noqa: E402
+    CHAT_SOURCE,
+    assert_upload_leg_parses_off_the_event_loop,
+)
+
 
 def test_upload_rejects_a_client_path_before_writing_files(tmp_path, monkeypatch):
     from app.api.v1 import chat
@@ -113,15 +125,17 @@ def test_upload_keeps_document_when_optional_metadata_store_is_down(tmp_path, mo
 
 
 def test_upload_moves_blocking_parsing_and_indexing_off_the_event_loop():
-    from pathlib import Path
+    """上传腿的阻塞解析必须离开事件循环：形状判据，参数表允许演进（R364 现场 A）。
 
-    source = (Path(__file__).resolve().parents[1] / "app" / "api" / "v1" / "chat.py").read_text(encoding="utf-8")
-
-    # R306 施工口四：这一格钉的是「阻塞的解析必须离开事件循环」，换绑到新的那一行原文上。
-    # 标准没降：新串是旧串的超集（同一个 to_thread、同一枚 load_document、同一个 file_path），
-    # 只是多钉了 `display_name=` 这一格——把它摘掉本件同样红。
-    assert "await asyncio.to_thread(load_document, file_path, display_name=inspection.display_filename)" in source
-    assert "await asyncio.to_thread(" in source
+    三件事同时成立才算绿：① 上传路由里**恰好一枚** ``await asyncio.to_thread(load_document, ...)``；
+    ② 交给解析器的路径是本函数里 ``str(...)`` 绑出来的落盘路径；③ 被调的 ``load_document`` 真出自
+    ``app.rag.loader``（AST 判模块级导入，不是子串）。摘掉 to_thread（退回同步解析）、把被调符号换成
+    loader 以外的东西、多长一枚第二处调用，三样都当场红；给那一行加一枚新 kwarg 或换掉变量名不红。
+    """
+    assert_upload_leg_parses_off_the_event_loop(CHAT_SOURCE)
+    # 最粗的一条兜底，与上面三件事无关：整本 chat.py 连线程出口都没了就是彻底跑偏。
+    # 这条子串不指名任何被调符号，因此它不随参数表演进——抄写不在它身上。
+    assert "await asyncio.to_thread(" in CHAT_SOURCE
 
 
 def test_upload_schedules_bm25_rebuild_without_waiting_for_it(tmp_path, monkeypatch):
