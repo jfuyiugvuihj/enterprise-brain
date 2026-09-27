@@ -14,8 +14,11 @@
  *
  * 为什么第 ③ 条只看 panel-head 的 h3：ChatPanel 的 <h1>企业智脑</h1> 是空态里的品牌字、
  * DashboardPanel 的 <h2> 是卡片小节的标题，都不是屏名。把规则定成「任何 h 级标题」等于
- * 把两种东西混进一枚断言，下一次改文案就会红得莫名其妙。今天带页级屏名的屏就三枚，
- * 用例同时钉死这个枚数：第四枚偷偷加一句屏名，或这三枚里有谁把标题删了，都会红。
+ * 把两种东西混进一枚断言，下一次改文案就会红得莫名其妙。R136 写下这条时带页级屏名的屏是三枚，
+ * R315 交出第四枚「交成果」：它凭什么不是从顶栏读 —— 计划书把它的入口名定成员工嘴里的动词，
+ * 员工从侧栏进来第一眼要看见的是同一句字（跟进单「说人话」硬规矩③），于是页内照既有唯一画法补一句
+ * <h3>，并由下面的同源用例真渲染逐字比对 meta.title，而不是允许它另起一名。
+ * 用例同时钉死这个枚数：第五枚偷偷加一句屏名，或这四枚里有谁把标题删了，都会红。
  *
  * 反证（跑完即还原）：
  *   把任一 meta.title 改回旧名（'异常与告警' → '洞察'）→ ①定名 与 ③页内同源 同时红。
@@ -42,6 +45,10 @@ const PLAN_TITLES = {
   chat: '问一句',
   insights: '异常与告警',
   approval: '审批与待办',
+  // R315 判据① 追加：这一枚的出处不是 §四 那张表，而是 docs/frontend-plan-2026-09-14.md:132
+  // 工作区映射表里那一行「（新增）『交成果』」—— 后端依赖 B-1 / R2 今天都已交付，屏才有资格落地；
+  // 员工用词那一头见 docs/handoff/2026-09-15-backend-followup-requests.md:2099 硬规矩③。
+  artifacts: '交成果',
 }
 
 /** 合屏之前与改名之前的旧屏名：一律不得再作任何一屏的 meta.title。 */
@@ -67,9 +74,10 @@ function withoutComments(text) {
 }
 
 describe('R316 判据⑤ · 追加的那一枚屏不改计划书那笔账，也不自带第二份屏名', () => {
-  it('§四 的定名名单一格未增（admin 不是一级入口），屏名仍然全站唯一', () => {
-    // 原断言一个字未改：screenIds 仍是那五枚；这里只补一条对新增屏的口径。
-    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat'])
+  it('§四 的定名名单没被 admin 挤进去（R315 只加了「交成果」那一行），屏名仍然全站唯一', () => {
+    // R316 当年这条钉的是「screenIds 仍是那五枚」；R315 判据④ 把一级入口换成六枚，加的就是 artifacts。
+    // 换的是名单本身，不是断言强度：仍然逐字相等、仍然多一枚少一枚都红；admin 那一格两条原样留着。
+    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
     expect(PLAN_TITLES).not.toHaveProperty('admin')
     const admin = routes.find(route => route.name === 'admin')
     expect(admin.meta.title).toBe('账号与角色')
@@ -77,15 +85,17 @@ describe('R316 判据⑤ · 追加的那一枚屏不改计划书那笔账，也�
     expect(new Set(titles).size, '两屏共用了同一个屏名').toBe(titles.length)
   })
 
-  it('新增屏页内不写第二份屏名：页级标题那三枚的账一格未动', async () => {
+  it('admin 这一屏页内不写第二份屏名：它没有页级标题（R315 也没给它补一句）', async () => {
     const html = await renderToString(h(AdminPanel))
     expect(pageTitleOf(html), 'AdminPanel 里又写了一句屏名').toBe('')
   })
 })
 
 describe('R136 判据① · 计划书 §四 的定名落在 meta.title 上', () => {
-  it('一级屏就这五枚，名字逐字对上计划书（一枚不许多、不许少）', () => {
-    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat'])
+  it('一级屏就这六枚，名字逐字对上计划书（一枚不许多、不许少）', () => {
+    // R315 判据④ 往同一枚定长名单里加一项（artifacts），并往 PLAN_TITLES 加那一行出处；
+    // 两条 toEqual 的写法一字未改，名字与 meta.title 仍然是逐字对账，没降成包含式。
+    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
     expect(screenIds.map(id => byName.get(id).meta.title)).toEqual(
       screenIds.map(id => PLAN_TITLES[id]),
     )
@@ -129,8 +139,11 @@ describe('R136 判据① · 顶栏与侧栏都是 meta.title 的派生视图', (
 })
 
 describe('R136 判据① · 页内标题与 meta.title 同源（真渲染比对）', () => {
-  /** 带页级屏名的屏：今天三枚。第四枚要加，先想清楚它凭什么不是从顶栏读。 */
-  const WITH_PAGE_TITLE = ['insights', 'approval', 'graph']
+  /**
+   * 带页级屏名的屏：R136 定下三枚，R315 交出第四枚「交成果」（凭什么不是从顶栏读，见文件头那段）。
+   * 第五枚要加，先想清楚它凭什么不是从顶栏读 —— 名单仍然定长逐字相等，加了不许漏、漏了不许多。
+   */
+  const WITH_PAGE_TITLE = ['insights', 'approval', 'graph', 'artifacts']
 
   it('每一屏渲染出来的页级标题与 meta.title 逐字相等', async () => {
     for (const route of screenRoutes) {
@@ -144,14 +157,16 @@ describe('R136 判据① · 页内标题与 meta.title 同源（真渲染比对�
     }
   })
 
-  it('页级标题的枚数钉死：三枚有、两枚没有（喂料与总览与问一句靠顶栏说名字）', async () => {
+  it('页级标题的枚数钉死：四枚有、三枚没有（喂料与总览与问一句靠顶栏说名字）', async () => {
     const withTitle = []
     for (const route of screenRoutes) {
       const html = await renderToString(h(route.component))
       if (pageTitleOf(html)) withTitle.push(String(route.name))
     }
+    // R315 判据④ 换号：三枚 → 四枚，加的是 artifacts（理由写在 WITH_PAGE_TITLE 那段），
+    // toEqual 与 toHaveLength 两枚都保留、都没换成包含式 —— 第五枚偷偷加标题照样当场红。
     expect(withTitle.sort()).toEqual(WITH_PAGE_TITLE.slice().sort())
-    expect(withTitle).toHaveLength(3)
+    expect(withTitle).toHaveLength(4)
   })
 
   it('「喂料」这一屏不自带页级标题：屏名只有顶栏一处，标签文案说的是内容', async () => {

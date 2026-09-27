@@ -26,6 +26,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import AdminPanel from '../components/AdminPanel.vue'
 import ApprovalPanel from '../components/ApprovalPanel.vue'
+import ArtifactsPanel from '../components/ArtifactsPanel.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import DashboardPanel from '../components/DashboardPanel.vue'
 import FeedPanel from '../components/FeedPanel.vue'
@@ -86,6 +87,20 @@ export const routes = [
     name: 'chat',
     component: ChatPanel,
     meta: { screen: true, title: '问一句', icon: 'M5 6h14v10H9l-4 4zM8 10h8M8 13h5', keepAlive: true },
+  },
+  // R315 判据①④ · 「交成果」是一屏，也是第六枚一级入口：员工嘴里说的是「我上次做的那份东西」，
+  // 不是「数据面板的第 N 个区块」。屏名沿用 docs/frontend-plan-2026-09-14.md:132 那张工作区映射表里
+  // 那一行（新增「交成果」，后端依赖 B-1 / R2 —— 两条今天都已交付），写法逐字照下面 /admin 那枚先例：
+  // 字面 path + 字面 name + meta.screen / meta.title / meta.icon，不自造第三种形状。
+  // 与 /admin 的差别只有一格：这一屏对所有人都派生入口，所以既不写 primary:false 也不写
+  // administratorOnly —— 侧栏是 navigation 的派生视图，App.vue 一个字节都不必动（判据⑥）。
+  // 壳是薄壳：GET /artifacts 那一发、分页、刷新、删除、打开、四张脸全在 ArtifactList.vue 里，本单对
+  // 那枚文件零改动；「喂料 → 数据」那一屏也继续挂着它，两屏同一份账（判据②③）。
+  {
+    path: '/artifacts',
+    name: 'artifacts',
+    component: ArtifactsPanel,
+    meta: { screen: true, title: '交成果', icon: 'M7 3h7l4 4v14H7zM14 3v5h5M10 17v-4M13 17v-7M18 17h3' },
   },
   // D13①（计划书 §6.1）撤的是图谱的一级入口，不是功能：它的定位早已裁定为「候选断言采集表」
   // 而非推理引擎（docs/design/knowledge-graph-positioning.md），摆在侧栏一级就是误导使用者。

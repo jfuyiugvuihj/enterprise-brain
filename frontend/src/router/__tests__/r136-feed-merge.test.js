@@ -169,8 +169,11 @@ describe('R136 判据③ · 图谱维持非一级，功能一项没撤', () => {
     expect(graph.meta.primary, '图谱被挂回一级导航了').toBe(false)
     expect(navigation.map(item => item.id)).not.toContain('graph')
     expect(screenIds).not.toContain('graph')
-    // 一级屏就是五枚，没多没少；图谱仍然在屏的全集里，所以深链不是走通配兜底
-    expect(screenIds).toHaveLength(5)
+    // 一级屏枚数：R136 合屏之后是五枚，R315 判据④ 交出第六枚「交成果」之后是六枚。
+    // 这条钉的本事是「图谱没被塞回一级」，枚数只是它的顺带读数 —— 换成 6 是加一项不是放宽：
+    // 仍是定长 toHaveLength，多一枚少一枚都红；上面那两条 not.toContain('graph') 一条没删，
+    // 下面那条 screenRouteIds 仍含 graph 一条没动 —— 图谱仍然在屏的全集里，深链不是走通配兜底。
+    expect(screenIds).toHaveLength(6)
     expect(screenRouteIds).toContain('graph')
   })
 

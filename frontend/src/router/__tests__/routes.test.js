@@ -13,10 +13,12 @@
  * 三条反证（跑完即还原，不留在树里）：
  *   删掉 routes 里任意一枚一级路由       → 本文件「路由表 = 导航集合」与深链那两组当场红。
  *   App.vue 重新留一条 activeTab.value =  → 「App.vue 里没有第二套真源」红。
- *   图谱路由 meta.primary 翻成可派生      → 「一级导航就是这五枚」红（本文件与 navigation.test.js 各一处）。
+ *   图谱路由 meta.primary 翻成可派生      → 「一级导航就是这六枚」红（本文件与 navigation.test.js 各一处）。
  *
  * R136 改动的口径（合屏之后哪些数字变了，逐条在这里对账，不留暗改）：
  *   一级屏 6 → 5：文档与数据并成「喂料」两标签一屏，/docs、/data 降级为老地址重定向。
+ *   R315 判据④ 再把它改口成 5 → 6：「交成果」是真屏（ArtifactList.vue 早在树里，只是没有自己的位置），
+ *   今天有了地址与一级入口。凡钉「一级屏五枚」的定长名单一律逐字加一项，没降成 toContain / >=，也没删条。
  *   「goto 目标必须是一级屏」→「goto 落点必须可达，且跳完落在一级屏上」。后者更硬：
  *   前者只看静态名单，后者连重定向后的落点一起看，老屏名从入口掉出去一定红。
  *   「App.vue 不许 import 面板组件」的覆盖面从 7 块扩到 8 块（喂料的两块标签面板也算面板）。
@@ -28,6 +30,7 @@ import { createMemoryHistory } from 'vue-router'
 import { renderToString } from '@vue/server-renderer'
 import AdminPanel from '../../components/AdminPanel.vue'
 import ApprovalPanel from '../../components/ApprovalPanel.vue'
+import ArtifactsPanel from '../../components/ArtifactsPanel.vue'
 import ChatPanel from '../../components/ChatPanel.vue'
 import DashboardPanel from '../../components/DashboardPanel.vue'
 import DataPanel from '../../components/DataPanel.vue'
@@ -60,6 +63,9 @@ const SCREENS = [
   ['/insights', 'insights', InsightPanel],
   ['/approval', 'approval', ApprovalPanel],
   ['/chat', 'chat', ChatPanel],
+  // R315 判据①⑥ 追加一枚屏：/artifacts 深链直达要真渲染出那枚壳，同时它也是一级入口。
+  // 下面两条定长名单（screenIds 与面板名）各多一项，写法仍是逐字 toEqual，多一枚少一枚都红。
+  ['/artifacts', 'artifacts', ArtifactsPanel],
   // 图谱是屏，但不是一级入口：它只有一条非一级路由，深链进得来。
   ['/graph', 'graph', GraphPanel],
   // R316 追加一枚屏（判据⑤：只准加不许减）——下面两条精确名单里那个数组各多一项，
@@ -110,8 +116,10 @@ async function routerAt(location) {
 describe('R104 判据 1 · 一级屏一屏一路由，导航是它的派生视图', () => {
   it('路由表 = 导航集合：一级屏与派生出的导航项逐条对得上', () => {
     expect(screenIds).toEqual(navigation.map(item => item.id))
-    // R136 判据② · 一级屏五枚：文档 + 数据 合成「喂料」，侧栏于是少一项，不是多一项
-    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat'])
+    // R136 判据② · 一级屏五枚：文档 + 数据 合成「喂料」，侧栏于是少一项，不是多一项。
+    // R315 判据④ 换号理由：「交成果」进一级入口，名单加一项就是六枚；断言强度未降——
+    // 仍然逐字相等，多一枚、少一枚、换顺序三种走法都当场红，没有改成 toContain / >=。
+    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
     // 屏的全集比一级多图谱与「账号与角色」两枚（R316：管理员屏也不派生一级入口）；
     // 屏之外的入口（老屏名）不许被当成屏。原断言 = ['graph', ...LEGACY]，新断言只是往
     // 同一枚定长名单里加一项，toEqual 的逐字相等与「不许多一枚」都还在。
@@ -132,8 +140,10 @@ describe('R104 判据 1 · 一级屏一屏一路由，导航是它的派生视�
     expect(navigation.map(item => item.id)).not.toContain('graph')
   })
 
-  it('R316 追加的「账号与角色」是一屏，但不是第六枚一级入口（screenIds 一枚未增）', () => {
-    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat'])
+  it('R316 的「账号与角色」仍不派生一级入口；第六枚是 R315 的「交成果」', () => {
+    // 这条原钉「screenIds 一枚未增」（五枚）。R315 补进第六枚是判据④ 要求的加，不是放宽：
+    // 名单换成六枚后仍逐字相等，admin 那四条断言一字未动 —— 它依旧 primary:false、依旧不在导航里。
+    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
     expect(navigation.map(item => item.id)).not.toContain('admin')
     expect(screenRouteIds).toContain('admin')
     const admin = screenRoutes.find(route => route.name === 'admin')
@@ -285,8 +295,10 @@ describe('R104 判据 3 · 切屏不丢会话，也不改别人家的重挂载�
 
   it('其余屏照旧每次进来重挂载：没有被塞进 keep-alive 名单', () => {
     const names = screenRoutes.map(route => route.component.name || route.component.__name)
-    // R316：屏的面板名单加一枚 AdminPanel（定长 toEqual 未改成包含式，强度不降）
-    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'InsightPanel', 'ApprovalPanel', 'ChatPanel', 'GraphPanel', 'AdminPanel'])
+    // R316：屏的面板名单加一枚 AdminPanel（定长 toEqual 未改成包含式，强度不降）。
+    // R315：再加一枚 ArtifactsPanel —— 同样只往同一枚定长名单里加一项，没换成包含式：
+    // 壳改名、多一枚、少一枚，这条都会红（顺序 = 路由表顺序）。
+    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'InsightPanel', 'ApprovalPanel', 'ChatPanel', 'ArtifactsPanel', 'GraphPanel', 'AdminPanel'])
     expect(names.filter(name => cachedScreens.includes(name))).toEqual(['ChatPanel'])
   })
 })

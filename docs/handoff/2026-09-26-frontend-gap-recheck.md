@@ -289,7 +289,7 @@
 
 - 症状：图和报告只藏在「喂料 → 数据」标签底下，员工找不回来。
 - 文件：`frontend/src/router/index.js`（加一枚 `path:'/artifacts'`、`meta:{screen:true,title:'交成果'}`）＋ 新 `frontend/src/components/ArtifactsScreen.vue`（薄封装，只 import `ArtifactList`）＋ 改三枚导航钉 `src/__tests__/navigation.test.js:50`、`src/router/__tests__/routes.test.js:110`（连带 `:112`）、`src/router/__tests__/r136-screen-names.test.js:70`。**`ArtifactList.vue` 一字不改**（R291 持有 `:394/:463`），只挂不改 ⇒ 不相撞。
-- 判据要点：侧栏派生出第六枚入口而 `App.vue` 零 diff（`git diff --name-only` 必须不含 `App.vue`）；新 URL 直达可渲染；`meta.title` 与页内屏名逐字相等；`r141-lane-choice.test.js`、`r136-feed-merge.test.js` 不得改判。
+- 判据要点：侧栏派生出第六枚入口而 `App.vue` 零 diff（`git diff --name-only` 必须不含 `App.vue`）；新 URL 直达可渲染；`meta.title` 与页内屏名逐字相等；`r141-lane-choice.test.js` 不得改判。🔴 本行原写「`r136-feed-merge.test.js` 不得改判」，09-27 由总控改口：那枚钉的本事是「图谱没被塞回一级」，`toHaveLength` 的枚数只是顺带读数——交出第六枚屏就必然要动它，R315 按「精确改号、定长不降成包含式」处理（5→6，两条 `not.toContain('graph')` 与 `screenRouteIds` 含 graph 一字未动），与 R316 动 `navigation.test.js`/`r136-screen-names.test.js` 同一姿势。从这里生效：禁的是**放宽**（改成 `toContain`/`>=`/删断言），不是禁枚数随屏数长。
 - 估时 0.75 人日。
 
 ### R316 · 管理屏骨架 · 用户与我的归属（G10，第一片）
