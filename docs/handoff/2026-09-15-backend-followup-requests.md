@@ -3942,3 +3942,37 @@ R400 判据：① 三处手抄行号账改**运行时派生**（锚点 token 现
 
 09-27 22:0x 那一格（提交 `75cfbbc`、看板 §4DE 第八节）写着"本班定死 A① 以整表 p95 为准"。🔴 **作废并撤回**：该口径早在 **09-20 21:3x** 已由总控代业主裁定并钉进计划书 §6 的 A 行（原文："90 s 只约束**问答类**…**不得**拿问答类过判整表过，也**不得**拿整表不过判阶段 A 全不过。每轮跑分必须同时公布三组数"，标注"可推翻"），分析/报告类阈值另立于阶段 B，而阶段 B 已于 09-24 整体移出 V1 ⇒ **整表今天没有 V1 阈值**。现行账：A① 成立（run7p1 问答档 p95 68.0 s ≤ 90 s），整表 127.1 s 与 分析/报告档只公布、不判绿不判红。业主项⑦ 不再重开：要给整表设阈值=立新阈值，须改计划书判据与阶段归属，不许用"换口径"翻绿或翻红。
 新铁规（与 R346/R351 那族"抄一句源文本"并列，但这次管的是总控）：**任何"本班裁定 X"落笔前必须 `git grep` 该判据现文并把行号+原文抄进回执，抄不出来不许写"裁定"。** 另订正一处：`75cfbbc` 正文里"跟进单 789701 B"是估算值，实测落盘 **789995 B**；提交正文的字节数一律写盘后现取。
+
+### 116 第十一格续（09-27 22:3x-23:0x·总控线，主树 `09b5c74` → `69e0035`）：三枚改做的判据正文 + 四枚候选单立案
+
+看板 §4DF 记结论与本班两枚总控自伤（#63 假账、#64/#65 投递），本节只落**执行层要照做的判据**。
+
+#### 116.1 R398 改做（一枚看守钉，其余三格已收下）
+- 病灶：`tests/test_r398_three_guard_ledgers.py::test_the_live_ledger_has_exactly_one_in_flight_citation_today`（`:292`）把「今天在途引用恰一枚」写成死数 ⇒ 一枚看守钉因为**别人的单正常并树**而红（R400 已把 `docs/perf/r387-label-lineage-2026-09-27.md` 并入主树 `69e0035`，清单变空 `[]`）。主树亲跑九枚件 = 162 passed / 1 failed，唯一红就是它。
+- 判据：去掉计数断言，改成**蕴含关系**——对每一枚「被计划书/runbook 引用却不在盘上」的路径，必须在看板找到**逐字包含该完整路径字符串**的一行，且该行同时带「未并树/在途/退回/复工」四个状态词之一，否则红；清单为空即绿（不许反过来断言非空）。
+- 关掉它自报的残留口子：放行**不得**建立在「路径名里带在途单号」的子串匹配上（`.../rXXX-...` 会误放行错字路径）；匹配键必须是完整路径字符串，单号只可用于定位看板行，不得单独构成放行理由。
+- 影子道补齐四格：(a) 看板有完整路径行 + 状态词 + 文件缺席 ⇒ 绿；(b) 看板改口「已并树」而文件缺席 ⇒ 红；(c) 文件到位 ⇒ 绿；(d) **路径写错一个字**（仍带单号、看板无此完整串）⇒ 必须红。K-c/K-d/K-e 三把刀保持咬合，`py_compile` rc=0。禁加豁免名单、禁 `skip`、禁改成「数一变就放行」。
+- 交付只回这一枚文件的 sha256 前 16 + 行数 + 命令原文与四格各自读数。`tests/test_r132_*` 恒基点 sha16 `0d72017eb333cb0f` 不许动。
+
+#### 116.2 R397 改做（两本账派生化，第三本拒给它）
+- 它交回的账：`raise HTTPException(status_code=503, ...)` 出口 6⇒8（新增 `list_sessions`/`get_session`，reason 均为 `storage_unavailable`）；`_require_migrated_tables` 现查调用点 2⇒3；模块级窄接法名单 `[("ask", F)]`⇒`[("ask", F), ("list_sessions", F), ("get_session", F)]`；R391 `K4b_new_code` 的「变异之后 7 枚」→ 9。
+- 🔴 判据：以上四格**一律不许抄成新的死数**（抄新死数=把债从 3 搬到 4，下一枚加 503 出口的单又会红，本仓为这病开了 R346/R351/R377/R396/R400 一整族）。必须从 `app/api/v1/chat.py` 现场派生：AST 现查 503 出口的宿主函数名、AST 现数 `to_regclass` 调用点、同一枚派生取窄接法名单；R391 那把改成**不变式**（变异后可见枚数必多于改前 + 新码必在名单里）。派生取不到锚点必须当场红，**静默跳过=假绿**（K2 形状）。
+- 只许动 `tests/test_r384_migrations_first_refuses_at_the_ask_exit.py`、`tests/test_r391_upload_refusal_reaches_the_exit.py`（这两本无人持有）。🔴 禁碰 `tests/test_r377_*`（R396 持有，两枚 Agent 同改一枚文件＝真写域冲突）；其 `:419` 的 `== 3` 已另令 R396 派生化，两边合起来自动绿。
+- 契约不许自己追加：主树由总控做尾部直连（取它那份 `bytes[396838:]` 当 tail，因主树已被 R398 的 +12 B 定点替换占住中部）。
+- 已裁定不做（勿自行扩大）：把两枚 `to_regclass` 合成请求级闸（糊掉判据④可见性，等真机窗量过）；`document_version_history` 先读后判 ⇒ 转 R404。
+
+#### 116.3 R396 追加两令
+- 令一：`tests/test_r377_migrations_first_family_is_contained_at_the_store_layer.py:419` `assert chat.count("_require_migrated_tables(") == 3` 改为从 `scripts/r396_anchor_ledger.py` 现读派生（账上记「哪几枚」而非「几枚」），并保留「每枚调用点都在生产分支里」那一半；刀=影子 `chat.py` 多插一枚合法调用点⇒派生后仍绿 / 函数改名⇒当场喊「锚点找不到」。
+- 令二（验收门，硬的）：本班 22:5x 实取它树内 `app/documents/catalog.py` numstat **`1 0`**（基点 792 行⇒盘上 793 行），多加的一行是 `# R396 K1 knife: temporary line, restored byte-for-byte at the end.`（`@@ -321,2 +321,3 @@`，`_database_available()` 上方）。🔴 K1 变异**不得落真盘**——它自己那台机器文件头已写明「量具收 `sources`（rel -> 源码文本）作参数，反证刀在内存里插行，盘上一个字节不动」，且真盘插行会在门里造成「同一 HEAD 两次不同结果」的假红。交付前必须三条逐字附读数：`git diff --numstat 49489c3 -- app` **空输出**；`git status --porcelain` 全量（应只剩 `M test_r377_*` / `M test_r383_catalog_*` / `?? scripts/r396_anchor_ledger.py` / `?? tests/test_r396_line_numbers_are_derived_not_copied.py` 四行）；`python -m py_compile tests/test_r396_line_numbers_are_derived_not_copied.py` rc=0 + 本件全绿原文（上一班它实取 280 行、`SyntaxError: unterminated string literal (line 264)`）。**`catalog.py` 还剩 1 行差异就整单不收。**
+- 事实核对：`app/documents/catalog.py` 基点 `49489c3` 实取 905 CRLF（903 完整行 + 末行无终止符），别把行数当「账未变」的证据，要证就拿内容 diff 证。
+
+#### 116.4 候选单立案（只立案不派，槽位现满）
+- **R402** 手抄账余族第二刀：`tests/test_r377_*` 对 `app/memory/profile.py`、`app/memory/long_term.py` 的行号仍是冻结常量（R392 撑长 43/41 行时被迫现场重取十枚）。写域与 R396 同文件 ⇒ 🔴 **必须排在 R396 结案之后**，不得并行。
+- **R403** `getattr(psycopg, "connect")` 棘轮盲区：本班实测 `app/` + `scripts/` **无真实调用站点** ⇒ 严重度只有「尺子拦不住」，暂不立单，留档。
+- **R404** `GET /documents/{filename}/versions` 先读后判（R397 ⑥ 移交）：判定输入七样（`owner_id`/`department`/`department_ids`/`classification`/`visibility`/`version_id`/`status`）全读自 `versions[0]`（`app/api/v1/chat.py:627`，调用点 `:653`），故「先判后读」不是白送；改法=以 latest 行作 scope 判定、`decision.allowed` 之后再取全量、空账 404 排到判定之后；代价=多读一行 `document_versions` + `record_audit` 的 `resource_scope` 一起挪。🔴 真差异不在次序而在**判定过程记不记审计台账**（`_authorize_document_request` 记，版本历史不记）。
+- **R405** `scripts/r382_chroma_space.py:48` 以 `sqlite3.connect(..., mode=ro)` 直开引擎文件，AST 尺子只认 chromadb 工厂故看不见；「WAL 下只读打开会不会新建/回写 `-shm`/`-wal`」**至今无人测过**（R398 ⑨ 上报，本单不背）。
+- **R406** `app/documents/catalog.py:358` docstring 自含禁语「只认 ... 前缀」：禁语闸今天只扫契约故不红，扫描面一旦扩到 `app/**` 即撞（属 R394/R395 写域，R398 ⑨ 移交）。
+
+#### 116.5 本班两枚总控自伤（详看板 §4DF 一、七）
+- #63：上一班声称「并树 R400 = `9304a48`、gitee 已同步」，实测该对象不存在、8 枚一直 untracked 躺在主树 ⇒ 任何「已并树 <sha>」必须 `git cat-file -t` 取证后落笔；本班已真并树为 `69e0035`。
+- #64/#65：投递调用先后犯两错——同时传 `message`+`items`（校验当场拒，取证零写入后重投）、以及**带 `model`/`reasoning_effort` 覆盖**（`Peirce`@R401 落地 1 秒死于 `at_` 消息 id 污染，零写入，已 close 并改 `Herschel` 重投）。🔴 新铁规：投递**只允许 `message` 单参数**。
