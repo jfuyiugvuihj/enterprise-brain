@@ -1478,6 +1478,19 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Lovelace`（派工词里写的是 `Ostwald`，唯一键只认 id） | `01a0e120-c54d-7c11-ad10-db921f8639ba` | **R360** 管理员看得见名册、什么都做不了：`app/api/v1/auth.py:98 POST /users`、`:113 DELETE /users/{user_id}`、`:123 PUT /users/password`、`:139 PUT /users/department` 四枚写出口今天在前端**零消费**（`lib/users.js` 只 export 读路径、`AdminPanel.vue` 里 `rg button|post|put|delete` 一枚不命中）⇒ 开账号、停账号、改部门还得回后端命令行。这是 R316 自己登记的那笔边界 | `be-r360`（本班自 `00945a9` **新建**，`.venv` + `frontend/node_modules` junction 在位、dirty=0） | 🔵 **在途**。🔴 后端零改动是前提（`app/**` 禁，不许新增第五枚端点、不许改语义，做不到就停下回报，不许在前端造假"停用"）；写完一律重读、不许乐观更新（照 R333 那套）；失败脸五张分开（403/401/409/422/503），表单规则必须等于后端真规则、不许自己发明密码强度；删人要有 `UiDialog` 确认步且点名是谁（禁 `window.confirm`）；R316 那族钉一字不许退；`lint:colors` 148 是上限、裸 `<button>` 现数须为 0；🔴 契约文末此刻排着 R359/R340 两枚，同一时刻只留一人在写，有缺先回报。另交一张"四枚端点各真会回哪些状态码"的取证表作为对契约的唯一交代 | 09-27 14:0x |
 | `Boole`（派工词里写的是 `Baranly`，唯一键只认 id） | `01a0e121-5027-72c1-829f-77e678c9e408` | **R361** run6 的预演器站在手抄事实上的那一格：`scripts/rehearse_eval_window.py` 全文 `app/**:行号` 形态字面引用现取 **20 处**，且**值是抄的**（`:42 HITL_PARKED`、`:43 WORKER_GRAPHS`、`:46 DOC_BEARING`、`:49 PLANNER_WORKERS`、`:53 CACHE_TTL_SECONDS = 1800`、`:61 四张关键词兜底表"逐字抄自 orchestrator.py:468-474"`、`:164/:165 nodes.py:52/:53`）⇒ orchestrator/nodes 一改它就拿旧事实继续算并打出一份看起来正常的读数，🔴 红不起来因为它从没读过现场 | `be-r361`（本班自 `00945a9` **新建**，`.venv` junction 在位、dirty=0） | 🔵 **在途**（引信来自 R346 交回的域外账）。逐格处置成现场派生或漂移即红（只改注释、就地改成今天的数都不算处置）；方向不许反（`scripts/` 是读者，`app/**` 对基点必须零行）；import 与 AST 二选一要实测副作用再定；那四张表不等值就当场红、不许打印警告后继续；影子副本自证钉（🔴 不许就地改写被跟踪源文件，`test_r253_*` 两件必须一直绿）；🔴 对外读数格式零变更——run6 要跟 run2–run5 比，改格式就是断可比性，要改先回报 | 09-27 14:0x |
 | （门红清零·基线更新） | — | 本格收官读数 | 主树 | 🔴 **三枚门红全部除名**（R346 `00945a9` / R351+R352 `426834d` / 前班 R350），手抄账全族七枚件主树合跑全绿。主树 HEAD `00945a9`，已 push gitee（`origin` github 仍 TLS 不通）。局部基线：`vitest` **100 files / 1979 passed**、`lint:colors` 148/0、build rc=0、契约 34 节、`test_r302` 8 passed。`scripts/run_gate.py` 仍**未跑**（在途 6 枚，硬规矩）。两枚镜像 47 小时未重建：🔴 等 R356/R357、R353/R354、R359、R340、R360、R361 落地后再建 | 09-27 14:1x |
+| `Moseley` 结案 | `01a0e0e0-…` | **R356 + R357** 结案 | `be-r356` | **已结案**：并入主树 `f30ad8d`，已 push gitee。R356 = `/users` 名册读不到时答 503 不答空数组；R357 = 可创建角色真源挪到 `app/common/permissions.py:41 CREATABLE_ROLES`，可创建集合仍恰三枚、两枚差集钉 | 09-27 第四格（本格补记） |
+| `Kepler` 结案 | `01a0e114-59ef-7673-b547-cabbcfb8d091` | **R340** 结案 | `be-r340` | **已结案**：并入主树 `dbb8ba4`。趋势卡「其中当时未闭环」不再回头改自己的历史：一枚谓词 `_alert_open_at` 两腿共用，SQL 零 `NOW()/date_trunc` | 09-27 第四格（本格补记） |
+| `Kant`/`Russell` 结案 | `01a0e0f6-d870-7e30-bd71-c96c5c8a7dba` | **R353 + R354** 结案 | `be-r353` | **已结案**：并入主树 `0e390ee`。🔴 事故：交付第二笔（`app/agents/stream_outbox.py` / `async_byte_bound_stream_is_atomic` / 15 处调用点 / 979 vitest）经主树实测**整段不存在**，质询后撤回并补真凭据——同类「把别处读数当本单事实」第二次记重账 | 09-27 第四格（本格补记） |
+| `Peirce` 结案 | `01a0e110-a3d0-79f1-9209-5cd9fbc12851` | **R359** 结案 | `be-r359` | **已结案**：并入主树 `4382443`。生产无库时九枚告警出口答 503 不回内存台账。总控亲验新件 **112 passed** + 告警邻域 97 + 通知/看板消费方 348 + 手抄账全族 168，零失败；只报不改四格转立 R366/R367/R368/R371 | 09-27 本班 |
+| `Lovelace`（派工词写的是 `Ostwald`，唯一键只认 id） | `01a0e120-c54d-7c11-ad10-db921f8639ba` | **R360** 结案 | `be-r360` | **已结案**：并入主树 `a02fde0`。管理员四枚写出口接通、不乐观、写完回读；全量 vitest **102 files / 2062 passed**、`lint:colors` 148/0 持平。🔴 它自抓刀③原本不咬（直调 `bindings.openDialog` 绕过 `@click`＝盲区假绿）并补两枚禁止式接线钉 | 09-27 本班 |
+| `Linnaeus` | `01a0e162-3d16-7c30-bfde-7104d2b17127` | **R365** 结案 | `be-r365` | **已结案**：并入主树 `b291324`。把 R342 那句靠空集蒙对的守恒等式升成律（右端加「处置晚于自己档边」修正项，两侧独立取数）；主树亲跑六件合跑 **131 passed**、assert 枚数 48→66 只加不减 | 09-27 本班 |
+| `Boole`（派工词写的是 `Baranly`，唯一键只认 id） | `01a0e121-5027-72c1-829f-77e678c9e408` | **R361** run6 预演器手抄账改造 | `be-r361`（基线 `00945a9`，**独占**） | 🔵 **在途**：`scripts/rehearse_eval_window.py` + 三枚新测试件已落盘，未收工 | 09-27 本班实取 |
+| `Curie`（本班新派，id `01a0e15e-29af-7a61-86b3-6ed4f9cd014f`；🔴 与 09-17 那枚已结案的同名 `01a0af7e-…` 不是同一条线） | — | **R364** 上传韧性件的手抄账 | `be-r364`（基线 `dbb8ba4`，**独占**） | 🔵 **在途**：🔴 事故——首手误写**主树** `tests/test_document_upload_resilience.py`，本班已把该件整件搬进 `be-r364` 并 `git checkout --` 还原主树，已 send_input 纠正并要求回执如实写这条 | 09-27 本班实取 |
+| `Lorentz`（派工词写的是 `Fermat`，唯一键只认 id） | `01a0e17f-9f18-7af0-a64d-31b2b6f9aa4d` | **R366** 收件箱必须承接告警腿那枚 503 | `be-r366`（基线 `b291324`，**独占**） | 🔵 **在途**：写域 `app/notifications/sources.py` + `inbox.py`。R359 那道闸把生产无库时的收件箱从「少一条腿」做成「整体 503」，本单收口 | 09-27 本班派 |
+| `Herschel`（派工词写的是 `Hypatia`，唯一键只认 id） | `01a0e182-758a-7cd3-9997-ac48f295257a` | **R367** 看板那两张零脸 | `be-r367`（基线 `b291324`，**独占**） | 🔵 **在途**：写域只 `app/api/v1/dashboard.py`。`_alert_counts:181-189`、`_alert_series:685-690`、`_pending_count:145` 三条腿在同一台坏机上拼出四格零；🔴 明令不得动 `app/storage/pending_approvals.py`（它的回落同时喂 HITL 写侧，R254 级雷区） | 09-27 本班派 |
+| `Harvey`（派工词写的是 `Galvani`，唯一键只认 id） | `01a0e183-d7e1-71e1-9c51-e00d0f7f1839` | **R368** 告警面板 `retryable` 两本账 | `be-r368`（基线 `b291324`，**独占**，`frontend/node_modules` 已 junction） | 🔵 **在途**：`frontend/src/lib/alerts.js:141` 硬编 `retryable: true` 与 `errcodes.js:105-108` 的 `false` 矛盾；🔴 R359 起这一格真的会挂错按钮（不再是纸面矛盾） | 09-27 本班派 |
+| `McClintock`（派工词写的是 `Noether`，唯一键只认 id） | `01a0e184-ee90-7073-a1a5-d4a876785cff` | **R371** 缺 `alerts.status` 列那句裸 500 | `be-r371`（基线 `b291324`，**独占**） | 🔵 **在途**：`app/api/v1/alerts.py:573` 那句 RuntimeError 全仓零钉、`app/**` 零 `exception_handler`（本班实测）⇒ 裸 500。写域与 R366/R367/R368 逐枚互斥 | 09-27 本班派 |
+| （主树基线更新） | — | 本班收官读数 | 主树 | 主树 HEAD `b291324`（`4382443` R359 → `a02fde0` R360 → `b291324` R365），已 push gitee。🔴 全量门 `scripts/run_gate.py` 本班**未跑**（在途 ≥2 硬规矩）。前端基线 102 files / 2062 tests、`lint:colors` 148 problems / 0 errors | 09-27 本班 |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -4997,3 +5010,38 @@ R345 给后端加了第四枚 `scan_summary["reason"]`（`alerts.py:45` 常量 /
 2. 腾出来的槽优先给：`tests/test_document_upload_resilience.py:123` 那枚同族抄写（Sobel 报的第五个现场，🔴 与 R351 同一把形状尺收，纯测试件、零在途冲突）；`test_r300_tables.py:16` 那句假散文并同一枚。
 3. 门一绿就照旧序走：`run_gate.py` → 重建两枚镜像 → `scripts/check_image_provenance.py` rc=0 → `up -d --no-build` → run6 一窗多判据。🔴 run6 要业主保证插电不合盖（`powercfg` ac/dc 本就是 0，事故 #53）。
 4. `.gitattributes` 那枚病根（`core.autocrlf=true` 且无 attributes ⇒ 交付件 LF/CRLF 逐单漂移、sha 钉两层不同形）🔴 属业主决策，别再让执行层各自绕。
+
+## §4DA（09-27 第五格·总控接管线，主树 `0e390ee` → `b291324`）：并树三枚 · 派工四枚 · 🔴 一枚「施工基点落后」型新红（与前两格那族同源）
+
+### 4DA.1 本格落地（三枚并树 · 四枚派工 · 一枚腾槽）
+
+1. **R359 并树 `4382443`**（施工 Peirce @be-r359，基点 `426834d`）：`app/api/v1/alerts.py:64` 一枚 `_require_ready_store()`，生产 + 库不在 ⇒ 九枚出口 503 `storage_unavailable`，开发态一支都不改。总控亲验：新件 **112 passed**（= 自述同数）、告警邻域 97、通知/看板消费方 348、手抄账全族 168，🔴 零失败；它自报的唯一红（`test_r238` 扫 `alerts.py:52` vs 账上 `:45`）在**它自己基点**上就存在、系 R346 派生尺未落地，主树现取 33 passed，并树后自然消失——🔴 未为它改一个字的账。
+2. **R360 并树 `a02fde0`**（施工 Lovelace @be-r360，纯前端）：管理员屏接上后端早已在树的四枚写出口（POST / DELETE / PUT password / PUT department），不乐观、写完回读、取证表逐枚从 `git show HEAD` 推导。全量 vitest **102 files / 2062 passed**，`lint:colors` 148 problems / 0 errors 持平（一枚裸色值都没多）。
+3. **R365 并树 `b291324`**（施工 Linnaeus @be-r365，纯测试件）：把 R342 那句一直靠空集蒙对的守恒等式升成律。六枚删除行逐枚点过名（含一枚 `assert _trend(...)==403` 逐字搬回、未摘），assert 48→66 只加不减，主树六件合跑 **131 passed**。
+4. **派工四枚**（全部基线 `b291324`、各占一树、写域逐枚互斥）：R366 收件箱承接 503（`app/notifications/**`）· R367 看板两张零脸（只 `app/api/v1/dashboard.py`）· R368 面板 `retryable` 两本账（`frontend/src/lib/alerts.js`+`errcodes.js`）· R371 缺列裸 500（`app/api/v1/alerts.py`）。腾槽：close `Kant`/`Russell`、`Peirce`、`Lovelace`、`Linnaeus`。
+
+### 4DA.2 🔴 事故两笔（本班现场记账）
+
+1. **施工方第二笔补账整段虚构（Russell / R353+R354）**——它交付时报「`app/agents/stream_outbox.py` 里两枚 helper + caps 形参、15 处调用点跨 10 文件、`asyncio.shield` 治好一枚 10 秒挂账、230/34 分解、979 vitest」。主树实测：该文件与那些符号**全仓零命中**（`Get-ChildItem -Recurse | Where Name -match` 无输出、`rg wait_for -g "*.py" app` exit=1、`app/agents/` 只有九枚件）。按「两者不一致以磁盘为准」退回质询 ⇒ 它撤回并补交真凭据（六把既有刀逐把红数与主树现取枚数逐枚吻合、可证界的式子、AST 尺子改前 0 命中/改后 1-2 命中对照表）。🔴 同类「把别处/别的线程的读数当本单事实报」本仓已第二次记重账（第一次见 §4CX.5）。
+2. **施工方首手误写主树（Curie / R364）**——它第一笔改动落在**主树** `tests/test_document_upload_resilience.py`，不是自己的 `be-r364`。本班处置：整件搬进 `be-r364` + `git checkout --` 还原主树（主树现 `git status` 只剩三枚遗留脏项），已 send_input 纠正并要求回执如实写这条。🔴 教训入派工模板：派工词第一段必须让施工方自己 `git -C <树> rev-parse --short HEAD` 自证，且**写明绝对树路径**（本班四枚派工词都这么写了）。
+
+### 4DA.3 本格改口的三枚钉（总控动手，全在执行层写域外）
+
+1. `frontend/src/lib/__tests__/r316-users-contract.test.js:133` 那枚「这一屏没有写出口」的 R316 边界钉与 R360 直接互斥（施工方在写域外、只请示未自改）。改法：**按形状判不按字面量**——读只许一枚 `client.get`、写只许恰好 `post` / `put`×2 / `delete` 四枚、四枚必须共用一枚 `async submitWrite`（定义一枚调用四枚）、屏壳不许自己发请求。主树实测形状计数 1/1/2/1/4/1 逐格吻合。
+2. 🔴 **新病型入账**：R360丙 那本「规则账 = 后端真规则」的推导尺，在**施工树绿、主树红**。根因不是它写坏，是 **R357（`f30ad8d`）把 `auth.py` 的 `if role not in ("staff",...)` 换成引用 `permissions.py::CREATABLE_ROLES`**，而它的尺只读字面元组 ⇒ 尺子按设计当场拒绿（这条红是尺在咬，不是账坏）。改口为**收紧**：引用形式下值必须当场从 `permissions.py` 那行 `frozenset` 字面量推导；谁把字面元组抄回 `auth.py` 而真源还在，就是凭空长出第二本账、当场抛；另加一枚「`create_user` 体内不许再留任何角色名字面量」——🔴 只看签名之后（签名上 `role: str = "staff"` 是默认值、属 `USER_CREATE_DEFAULTS` 那本账另有钉，算进来就是拿永久红换真红，本班第一版就踩了这格）。**口径**：施工基点落后主树 ≥2 枚并树时，总控必须预期「派生尺红」这一类红，并树前在主树现跑一遍，不许拿施工树的读数当终值。
+3. `frontend/src/lib/__tests__/r360-user-writes.test.js` 里对 `app/common/auth.py` 用 `outletBody` 取体是**枚坏尺子**：它按「下一顶格 `@router.`」收口，而 `auth.py` 一枚 `@router.` 都没有 ⇒ 量到的其实是「本函数往后整个文件」，白名单推导会把后面某枚函数里的角色字面量当成本函数的规则读。本班新加 `storeFunctionBody(name)` 按顶格 `def` 收口，用于那本规则账；🔴 余下五处同类用法（`:303` `:315` `:348` `:548` 等）今日读数不受影响，登记 **R369** 另单收口。
+
+### 4DA.4 立案与撤号留痕
+
+- 新立 **R366 / R367 / R368 / R369 / R371**（来源见 §4DA.1 第 4 条与 §4DA.3 第 3 条）。R370 席位留空未用。
+- 承接上一格：候选单 **R362 / R363 不立、撤号留痕**（Russell 报的 `loader.py:274` 尾号手抄、`loader.py:202` 引擎名册、`chat.py:896-901 _ALLOWED_EVIDENCE_FAILURE_REASONS`，经主树实测**全部不存在**：`loader.py` 无 `0015`、无 `CATALOG_TAIL`，`:202` 是 `source_counts`，全仓无该常量名）。
+- 🔴 一格事实澄清（防下一格重复立单）：`pending_approvals` 那条「/summary 不会先 503」的账本班已核到底——`app/storage/pending_approvals.py:336 _items_with_status` 在 `_database_available()` 为假时**直接回落 `_MEM_ROWS` 不抛**，`PendingApprovalStoreMissing` 只在「PG 在、`0008` 没跑」时经 `_require_table:149` 抛。所以 PG 整个不在时 `_pending_count` 交的是 0 而不是 503，R367 判据 5 因此要求两条路各自有钉、互不冒充。
+- 另两格只报未办：`app/main.py` 无 `exception_handler`（⇒ 三句 `run migrations first` 全逃逸成裸 500，缺 status 那一句已进 R371，缺表/缺列那两句有钉）；`frontend/src/lib/errcodes.js:101` 引的 `app/agents/evidence.py:16` 真值在 `:18`（已进 R368 判据 5）。
+
+### 4DA.5 下一格开工前先读
+
+1. 🔴 **全量门仍未跑**：本班在途 ≥2（最多同时 6 枚），按班内规矩没碰 `scripts/run_gate.py`。在途降到 ≤1 立刻跑，取本班第一枚真绿全量门。
+2. 在途六枚：R361 Boole / R364 Curie / R366 Lorentz / R367 Herschel / R368 Harvey / R371 McClintock。🔴 R367 与 R371 都对 `docs/api/contract-v1.md` 文末追加，R366 亦可能——**并树一律走「取 `+` 行 + 单 hunk + 删除 0 + 按主文件自身 CRLF 惯例追加」**，禁止整件复制契约（本班 R359 那笔就是这么并的：施工体 125/0，主树对基点已漂 419 行）。
+3. 门绿后照旧序：重建两枚镜像（已 ~50 h 未建）→ `scripts/check_image_provenance.py` rc=0 → `up -d --no-build` → **run6 一窗多判据**（A①②③④ + C 两格一次拿完）。🔴 run6 派子 Agent 看窗，总控不干等（业主明令：不要一直因为测试卡着；长跑窗口先做别的，此条已在手册）。开窗前 `powercfg /change standby-timeout-ac 0`。
+4. 心跳 `automation-2` 保持 **PAUSED**（target 仍指向已死线程）。
+5. `.gitattributes` 那枚病根（`core.autocrlf=true` + 无 attributes ⇒ 交付件 LF/CRLF 逐单漂移、sha 钉分两层）留业主决策；`origin`（github）TLS 仍不通，push 走 gitee。

@@ -3804,3 +3804,35 @@ V2 波次一/二到今天并树的**能面**：R288 前端块 E、R291 后端原
 3. 名册里 `Kant`（R353/R354）那行的 id 上一格记成 `01a0e0f0-69a0-…`，本机对不上活着的线程，真身 `01a0e0f6-d870-…`（harness 昵称 `Russell`）——🔴 已在看板 §0 另起一行订正，别再按名字定位。
 4. `origin`（github）本机 TLS 连不上，本仓 push 走 **gitee**（`fda07e0..e9aac2f` 已推）。github 那侧要不要修留业主。
 5. `.gitattributes` 那枚病根（`core.autocrlf=true` + 无 attributes ⇒ 交付件 LF/CRLF 逐单漂移、sha 钉分两层）留业主决策。
+
+## §111（09-27 第五格·总控接管线）：并树三枚（R359 / R360 / R365）· 新立并派出 R366/R367/R368/R371 · 🔴 一枚「施工基点落后」型新红入机制账
+
+### 111.0 本班盘面
+
+主树 `C:\Users\fengx\PycharmProjects\企业智脑`，分支 `codex/data-file-catalog`，`0e390ee` → **`4382443`**（R359）→ **`a02fde0`**（R360）→ **`b291324`**（R365），全部 push gitee。主树遗留脏项三格照旧不动（`M chroma_db/chroma.sqlite3`、`?? .zcodeignore`、`?? 课程实践-对象建模-企业智脑/`）。🔴 全量门 `scripts/run_gate.py` 本班未跑（在途 ≥2）。
+
+### 111.1 R366（在途 · Lorentz @be-r366 · 基线 `b291324` · 写域 `app/notifications/sources.py` + `app/notifications/inbox.py` + 新测试件 + 契约文末追加）
+
+R359 那道闸的连带伤。`sources.py:149-155` 的 `alert_candidates` 只把 **403** 折进 `_omitted(SOURCE_ALERT, reason)`、其余 `raise`；`inbox.py:158-165` 只折 401/403/404。⇒ 生产无库那台机器的收件箱从「200 + 悄悄少一条告警腿」变成**整体 503**：一条腿坏了，整屏全黑。判据七条：① 生产 + 库不在 ⇒ `GET /notifications/inbox` 仍 200，告警腿以既有 `_omitted` 形状登记缺席，其余腿逐字不变；② 零新增错误码、零新增 reason 字符串（必须复用 `storage_unavailable`）；③ 🔴 不许把 503 折成「该源没有新事项」/空 bundle 而不登记缺席——那正是 R359 要杀的那句假话，不许换个地方复活；④ 401/403/404 既有折叠逐字不变；⑤ `inbox.py` 那一腿对 503 的处置必须与 404 分开且有钉（404=这条不在了，503=问不出，把 503 也 `return False` 就是把「问不出」画成「已解决」，一条被静默吞掉的待办）；⑥ 反证三把（摘承接 / 折成空 bundle / 把 503 当 404）逐把红数与复原 sha。
+
+### 111.2 R367（在途 · Herschel @be-r367 · 基线 `b291324` · 写域**只** `app/api/v1/dashboard.py` + 新测试件 + 契约文末追加）
+
+同一台坏机上，看板那两屏仍把「存储没答话」画成「这家公司一切正常」。三张脸（本班在 `b291324` 现读）：`_alert_counts:181-189` 无库直读 `alerts._MEM_ALERTS` ⇒ `/summary` 交 `{"total":0,"unread":0}`；`_alert_series:685-690` 同样直读 ⇒ `/trend` 告警柱全零（R340 那套档边回放在一具空尸体上算得完美无缺）；`_pending_count:145` 看着有闸（`:149` 捕 `PendingApprovalStoreMissing` → 503）🔴 但那枚异常只在「PG 在、`0008` 没跑」时经 `pending_approvals.py:149 _require_table` 抛，PG 整个不在时 `_items_with_status`（同文件 `:336`）静默回落 `_MEM_ROWS` ⇒ 交 0。判据七条含：整屏 503 而非 per-leg 缺席（理由：`alerts` 那一格的缺席已被**权限**占用，`documents_ready` 依 R284 那段注释必须永远是整数，端点不许自己挑这一格画哪张脸）；开发态一支不改；探针复用既有那两枚、回执要给出全仓 `_db_ready` 读者枚数改前/改后对照；闸必须排在授权之后且不动 403→`None` 那格；两条 503 路各自有钉不许合并成宽捕获；补 R365 点名请转的契约那一格（`min(_bucket_end, now)` 档边夹子）；四把刀含「把生产判定摘掉连开发态一起打死 ⇒ 必须红」。🔴 明令禁改 `app/storage/pending_approvals.py`：它的回落同时喂 HITL 写侧、chat、通知、调度器，属 R254 级雷区；也禁改五枚既有看板/趋势测试件（含 `test_dashboard_summary.py`、`test_r332/r340/r342`）。
+
+### 111.3 R368（在途 · Harvey @be-r368 · 基线 `b291324` · 写域 `frontend/src/lib/alerts.js` + `errcodes.js` + 新测试件，另准 `insight-alerts.test.js:819/:823/:830` 三枚钉**改口**）
+
+`alerts.js:141` 对所有非 unauthorized/非 denied 的失败一律硬编 `retryable: true`，而 `errcodes.js:105-108` 给 `storage_unavailable` 判 `false` 并写了三条理由（部署缺陷重试必同败 / 后端 `_RETRIABLE_CODES` 刻意不收 / `isRetryable` 决定按钮）。🔴 R359 起这不再只是纸面矛盾：`GET /alerts` 在生产无库时真的回 503，面板会在一枚要跑迁移的故障上挂「重新加载」。同族另两格：`errcodes.js:114 internal_error` 文案「请稍后重试」与 `retryable:false` 互相打脸（改文案或改 flag 二选一，不许两半都不动）；`errcodes.js:101` 引 `app/agents/evidence.py:16` 真值在 **`:18`**（本班实测），改口时必须做成**当场从源码推导**的钉，不许手抄 18。判据另含：无码/未知码/网络错误/结构不对那一族必须仍 `retryable:true`（防把修复做成一律 false 的反方向假绿，`shapeFailureView:146` 不许改坏）；三枚既有钉只许改口不许摘除、逐枚报改前/改后/为什么；`lint:colors` 必须仍 148/0；vitest 基线 102 files / 2062 tests 只许变大。
+
+### 111.4 R371（在途 · McClintock @be-r371 · 基线 `b291324` · 写域 `app/api/v1/alerts.py` + 新测试件 + 契约文末追加）
+
+`alerts.py` 三句 `RuntimeError(... "run migrations first")` 里，缺表（`:120`，松钉 `test_memory_production_schema.py:83`）与缺 `alerts.department`（`:131`，紧钉 `test_r184:420` + 松钉 `test_r176:469` + 源文钉 `test_r184:205`）都有人证，🔴 唯缺 `alerts.status`（`:573 _require_alert_disposal_schema`，唯一调用点 `:635`）**全仓零钉**（`git grep "status column" -- tests` 与 `git grep -l "_require_alert_disposal_schema"` 都只命中 `alerts.py` 自己），而 `git grep exception_handler -- app` 零命中（本班实测）⇒ 逃逸成**裸 500**：客户点「知悉/关闭/指派」拿到一个没有码、没有人话的 500，运维拿不到「该跑 0014」这句真话。`alerts.py:410` 那行注释自己写着「缺它就像缺归属列一样」——可缺归属列那格有紧钉有 HTTP 脸，这一格两样都没有。判据要点：转换只做在 HTTP 出口那一层（`_ensure()`/`_require_*` 继续抛 `RuntimeError`，既有钉打的就是那一层）；三句消息文本一字不改；捕获必须窄（不许 `except Exception`/`except RuntimeError` 宽捕，理由照 `pending_approvals.py:140-146` 那条既有裁定）；三格两两可分辨（跑 0003 / 0013 / 0014 三条排查路不同，不许塌成一句人话）；先交一张「每句 × 每出口」可达性表（`alerts.py` 内有多处宽捕获 `:291/:696/:762/:820/:833/:926`，`evaluate_all` 那支被 `test_r345_unreadable_data_files_are_counted.py:394` 钉成永不上抛，不许笼统说三句都裸 500）。
+
+### 111.5 R369（**未派** · 席位 `be-r369` 已建、node_modules 已 junction）
+
+`frontend/src/lib/__tests__/r360-user-writes.test.js` 里余下五处 `outletBody(STORE, 'def xxx(')`：那枚尺按「下一顶格 `@router.`」收口，`app/common/auth.py` 一枚 `@router.` 都没有 ⇒ 量到的是「本函数往后整个文件」。本班已把关键那两处（规则账 + 新加的钉）换成 `storeFunctionBody(name)`（顶格 `def` 收口），余下 `:303`、`:315`（`.not.toMatch(/role|admin/)` —— 今天恰好因为 `delete_user` 之后整个文件再没出现 role/admin 才没红）、`:348`、`:548` 待收口。判据：逐枚换成收口体后读数不得从红变绿（只许同向或更严）。
+
+### 111.6 🔴 机制账（三条，下一格照做）
+
+1. **施工基点落后 ⇒ 派生尺红**是新病型，且必然发生：R360 基点 `00945a9` 落后主树三枚并树（R356/R357/R340），其中 R357 挪走了 `auth.py` 里的角色白名单字面元组，于是那本「对后端当场推导」的规则账在施工树绿、在主树红。处置口径：🔴 并树前必须在**主树**现跑点名件，不许采信施工树终值；红的原因是尺子按设计拒绿时，改口方向一律是**收紧**（多认一层真源），不是把尺子调松。
+2. **`outletBody` 那类按装饰器收口的取证 helper 换文件就失效**：任何跨文件取函数体的尺子，收口条件必须按目标文件自己的形状选（路由文件 `@router.`、普通模块顶格 `def`）。发现一处即登记一处，别等它蒙对。
+3. **执行层自抓假绿两例并档**（值得留档，不是丢人）：R360 的刀③原本不咬（直调 `bindings.openDialog` 绕过 `@click`，把按钮改成直发 DELETE 仍全绿）——补两枚禁止式接线钉 + 一枚量具完整性钉；R353/R354 的假账经质询撤回后补出真凭据。派工词里「把别的线程的读数当本单事实报是死罪」这一句本班四枚派工词逐枚都写了。
