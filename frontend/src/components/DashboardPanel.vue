@@ -1,16 +1,32 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { api } from '../lib/api'
-import { canReadAlerts, documentsFailureView, loadDashboardSummary, SUMMARY_DENIED_TITLE, SUMMARY_FAILED_TITLE, summaryScopeNote, summaryTiles } from '../lib/dashboard'
+import {
+  canReadAlerts,
+  documentsFailureView,
+  loadDashboardSummary,
+  loadDashboardTrend,
+  SUMMARY_DENIED_TITLE,
+  SUMMARY_FAILED_TITLE,
+  summaryScopeNote,
+  summaryTiles,
+  TREND_BUCKET_OPTIONS,
+  TREND_DEFAULT_BUCKETS,
+  TREND_DEFAULT_PERIOD,
+  TREND_FACE_LOADING,
+  trendBlankView,
+  trendFailureFace,
+  trendHasNumbers,
+} from '../lib/dashboard'
 import { errorDetail, isPermissionDenied } from '../lib/http'
 import { alertsNotOpenView, ALERTS_EMPTY_DESCRIPTION, fetchAlerts, mapAlertRow, readFailureView, shapeFailureView } from '../lib/alerts'
-import { UiEmptyState, UiErrorState, UiLoadingState } from './ui'
+import { UiButton, UiEmptyState, UiErrorState, UiLoadingState, UiSelect } from './ui'
 
 // R267：这一屏的输入全部来自服务端。
 //   一、不再向 /dashboard 自备 rows：那条算法端点算的是客户端送上来的数，自造的 rows 送进去
 //       只会把假话换成「服务端算出来的假话」。四个数字只读服务端那条总览聚合回执。
-//   二、「数据趋势」要的是服务端按期间汇总的时间序列，聚合今天没有回这个键，所以这一格画空态，
-//       不画假线、不放假刻度（宁缺不假）。
+//   二、「数据趋势」读服务端 R332 那条按期间汇总的序列：取到就摆数字，取不到就说取不到，
+//       那几期真的零新增就摆一串服务端说出来的 0 —— 三张脸谁也不许顶替谁，也不画假线。
 //   三、「异常与风险」读服务端告警账本，行本身不做二次加工，也不按等级自己造优先级。
 const emit = defineEmits(['goto'])
 const loading = ref(true)
@@ -36,6 +52,15 @@ const documents = ref([])
 // R274（X-6）：文档目录那一发只归这一格的脸。它和整屏的 error 是两个变量——
 // 改前它冒到 loadDashboard 的 catch，于是「最新文档没读到」会把四个数字和异常卡一起拖走。
 const documentsFailure = ref(null)
+// R341：「数据趋势」这一格的取数与脸全部自持。它不并进 loadDashboard 那三条 GET ——
+// 那一腿的计数钉的是「四个数字只从聚合来、告警那一发只在有权限时发」，与这一格无关；
+// 这一格失败也只换这一格的脸（R274 · X-6 同一条规矩），不把整屏拖进错误态。
+const trendPeriod = ref(TREND_DEFAULT_PERIOD)
+const trendBuckets = ref(TREND_DEFAULT_BUCKETS)
+const trendView = ref(trendBlankView())
+// token 闸门（沿用 R314 的手法）：切窗口、重新加载时迟到的回包一律丢掉，
+// 上一份 series 不许挂在屏上冒充这一份的结果。
+let trendToken = 0
 
 // 总览只摆最近几行；完整列表与处置在各自的屏里。
 const RISK_ROW_LIMIT = 4
@@ -53,6 +78,15 @@ const quickActions = [
 ]
 
 const scopeNote = computed(() => summaryScopeNote(summary.value?.generatedFor))
+// 这一格有没有服务端回传的数字，决定上面那块诚实牌挂不挂；判据在 lib，面板不长第二处。
+const trendReal = computed(() => trendHasNumbers(trendView.value))
+const trendFailure = computed(() => trendFailureFace(trendView.value))
+const trendLoading = computed(() => trendView.value.face === TREND_FACE_LOADING)
+// 卡头那一句跟着真实状态走：取到了就说服务端回的那几期，没取到就只说这一格要什么数，
+// 不替服务端预支一个窗口长度。
+const trendHeadNote = computed(() => (trendReal.value
+  ? `${trendView.value.windowLabel}的新增条目数，不是金额`
+  : '按期间汇总的新增条目数，不是金额'))
 // R14-A1：标签、数值、副文案与口径提示全部来自聚合响应，这里只补图标、配色与点击落点。
 // 原先每张卡还自带一条画死的迷你折线与柱状装饰：那不是数据，是假的趋势暗示，一并删掉。
 const tileLooks = {
@@ -217,6 +251,32 @@ async function loadRiskRows() {
   }
 }
 
+/**
+ * 期间序列的取数：参数原样交给服务端，窗口长度不由前端截断；每一发都先把屏清成 loading，
+ * 于是「正在取下一份」与「上一份的结果」不可能同时在屏上。
+ */
+async function loadTrend() {
+  const mine = ++trendToken
+  trendView.value = trendBlankView(TREND_FACE_LOADING)
+  const next = await loadDashboardTrend({ period: trendPeriod.value, buckets: trendBuckets.value })
+  if (mine !== trendToken) return
+  trendView.value = next
+}
+
+function setTrendPeriod(period) {
+  if (period === trendPeriod.value) return
+  trendPeriod.value = period
+  loadTrend()
+}
+
+function setTrendBuckets(value) {
+  const count = Number(value)
+  if (count === trendBuckets.value) return
+  // 越界的档位不夹、不猜：交给 lib 那一层的参数守门，它会给「参数没有被接受」那张脸。
+  trendBuckets.value = Number.isNaN(count) ? value : count
+  loadTrend()
+}
+
 async function lookupMetric() {
   // 这个 catch 原先把错误整个吞掉，于是「查失败了」和「还没查」都长成
   // 「查询指标口径后显示证据」那一句空话——R1(c) 要拆的就是这种同脸。
@@ -241,9 +301,17 @@ async function lookupMetric() {
   }
 }
 
+// 整屏重取：四个数字那一腿与这一格各自取各自的数，趋势这一发排在聚合成功之后 ——
+// 聚合都读不到时整屏是错误脸，那一格本来也不在屏上。
+async function reloadScreen() {
+  await loadDashboard()
+  if (!error.value) await loadTrend()
+}
+
 onMounted(async () => {
   await loadDashboard()
   await lookupMetric()
+  await loadTrend()
 })
 </script>
 
@@ -257,14 +325,16 @@ onMounted(async () => {
       :retryable="!denied"
       retry-text="重新加载"
       :busy="loading"
-      @retry="loadDashboard"
+      @retry="reloadScreen"
     />
 
     <template v-else>
       <!-- 诚实牌：这一屏还有哪一格不是真数据，就用这一句说给员工听；实现细节不上屏（G13）。 -->
-      <aside class="demo-flag-row" data-testid="dashboard-demo-flag">
+      <!-- 诚实牌只在这一格还没有服务端数字时挂着：R332 已经把按期间汇总的序列交出来了，
+           再写「服务端还没提供」就是替服务端说谎；数字一上屏，这块牌自己收掉。 -->
+      <aside v-if="!trendReal" class="demo-flag-row" data-testid="dashboard-demo-flag">
         <span class="demo-flag">演示数据</span>
-        <span class="demo-note">「数据趋势」这一格还没有可信的来源：服务端还没提供按期间汇总的经营数据，所以这里不画线、也不放金额刻度。上面四个数字、下面的异常行、文档行与口径出处都读自服务端，按登录者可见范围计算。</span>
+        <span class="demo-note">「数据趋势」这一格此刻还没有服务端回传的数字：没有数字就不画线、也不放金额刻度。上面四个数字、下面的异常行、文档行与口径出处都读自服务端，按登录者可见范围计算。</span>
       </aside>
 
       <section class="kpi-grid" data-testid="dashboard-kpis" aria-describedby="dashboard-scope-note">
@@ -292,17 +362,86 @@ onMounted(async () => {
       <p id="dashboard-scope-note" class="demo-note kpi-scope" data-testid="dashboard-scope-note">{{ scopeNote }}</p>
 
       <section class="dashboard-main-grid">
-        <article class="reference-card trend-card" data-testid="dashboard-trend-card" data-unwired="trend">
+        <article class="reference-card trend-card" data-testid="dashboard-trend-card">
           <header class="reference-card-head">
             <div>
               <h2>数据趋势</h2>
-              <p>需要服务端按期间汇总的经营数据</p>
+              <p>{{ trendHeadNote }}</p>
             </div>
-            <button type="button" @click="emit('goto', 'data')">去上传数据 ›</button>
+            <UiButton size="sm" variant="ghost" label="去上传数据 ›" @click="emit('goto', 'data')" />
           </header>
-          <p class="demo-note" data-testid="dashboard-trend-empty">
-            服务端还没有回传按期间汇总的时间序列，这一格就空着：不画线，也不放一个像真的金额刻度。等经营趋势的聚合补上，这里才会长出数字。
-          </p>
+          <div class="trend-window-tools" data-testid="dashboard-trend-tools">
+            <UiButton
+              size="sm"
+              variant="ghost"
+              label="按月"
+              :aria-pressed="trendPeriod === 'month' ? 'true' : 'false'"
+              @click="setTrendPeriod('month')"
+            />
+            <UiButton
+              size="sm"
+              variant="ghost"
+              label="按周"
+              :aria-pressed="trendPeriod === 'week' ? 'true' : 'false'"
+              @click="setTrendPeriod('week')"
+            />
+            <UiSelect
+              size="sm"
+              :block="false"
+              label="窗口"
+              :model-value="trendBuckets"
+              :options="TREND_BUCKET_OPTIONS"
+              @change="setTrendBuckets"
+            />
+          </div>
+          <UiLoadingState v-if="trendLoading" :label="trendView.text" size="sm" :rows="2" dense />
+          <div v-else-if="trendFailure" class="trend-failure" data-testid="dashboard-trend-failed">
+            <UiErrorState
+              :title="trendView.title"
+              :description="trendView.description"
+              :retryable="trendView.retryable"
+              retry-text="重新加载"
+              dense
+              @retry="loadTrend"
+            />
+          </div>
+          <p v-else-if="!trendReal" class="demo-note" data-testid="dashboard-trend-empty">{{ trendView.text }}</p>
+          <div v-else class="trend-body" data-testid="dashboard-trend-ready">
+            <div class="trend-scroll">
+              <table class="trend-table" data-testid="dashboard-trend-table">
+                <caption class="trend-caption">
+                  新增条目数 · {{ trendView.windowLabel }} · 服务端自报时区 {{ trendView.timeZone }}
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">期间</th>
+                    <th scope="col">新增文档（条）</th>
+                    <th scope="col">其中已解析（条）</th>
+                    <th scope="col">新增数据集（个）</th>
+                    <th v-if="trendView.alertsColumn" scope="col">新增告警（条）</th>
+                    <th v-if="trendView.alertsColumn" scope="col">其中未闭环（条）</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in trendView.rows" :key="row.bucket" data-testid="dashboard-trend-row">
+                    <th scope="row">{{ row.label }}</th>
+                    <td class="trend-cell-count">
+                      <span class="trend-bar" aria-hidden="true"><i :style="{ width: row.documentsWidth }"></i></span>
+                      <b data-testid="dashboard-trend-documents">{{ row.documents }}</b>
+                    </td>
+                    <td class="trend-cell-count" data-testid="dashboard-trend-ready-count">{{ row.documentsReady }}</td>
+                    <td class="trend-cell-count" data-testid="dashboard-trend-datasets">{{ row.datasets }}</td>
+                    <td v-if="trendView.alertsColumn" class="trend-cell-count" data-testid="dashboard-trend-alerts">{{ row.alerts }}</td>
+                    <td v-if="trendView.alertsColumn" class="trend-cell-count" data-testid="dashboard-trend-alerts-open">{{ row.alertsOpen }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="demo-note trend-alerts-note" data-testid="dashboard-trend-alerts-note">{{ trendView.alertsNote }}</p>
+            <ul class="trend-notes" data-testid="dashboard-trend-notes">
+              <li v-for="(note, index) in trendView.notes" :key="index">{{ note }}</li>
+            </ul>
+          </div>
         </article>
 
         <article class="reference-card risk-card" data-testid="dashboard-risk-card">

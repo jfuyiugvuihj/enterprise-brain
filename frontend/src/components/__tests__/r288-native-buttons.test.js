@@ -44,14 +44,16 @@ const R288_FILES = [
  *   现在量的是渲染产物（挂一次真壳层、数屏上真的 <button>、逐枚读它挂的 onClick），
  *   不再数 App.vue 源码里的 `<button` 开标签；四条各自改口的理由与原意逐条写在那件文件里。
  *   DashboardPanel.vue 那 9 枚按派工留给下一棒，这一格一枚都不许多长出来。
+ *   R341 收了第一棒（2026-09-26）：卡头「去上传数据 ›」接上 ./ui 的 UiButton，本行 9 → 8，
+ *   合计 9 → 8。这是**降债不是放宽**——棘轮的值变小意味着要求变严，两格都同向改小。
  */
 const DEBT_RATCHET = {
   'App.vue': 0,
-  'components/DashboardPanel.vue': 9,
+  'components/DashboardPanel.vue': 8,
   'components/SourceCard.vue': 0,
 }
-// 9 = 现取 DashboardPanel.vue 9 枚，贴边。任何一格改大、合计改大，乙组那条与下面两枚一起红。
-const DEBT_TOTAL_RATCHET = 9
+// 8 = 现取 DashboardPanel.vue 8 枚（R341 收掉卡头那一枚），贴边。任何一格改大、合计改大，乙组那条与下面两枚一起红。
+const DEBT_TOTAL_RATCHET = 8
 
 const formatRows = rows => rows.map(row => row.file + '  ' + row.count + ' 枚').join('\n')
 const formatDialogs = rows => rows.map(row => row.file + ':' + row.line + '  ' + row.raw).join('\n')
@@ -144,11 +146,11 @@ describe('乙 · G20：判据点名的六枚文件裸按钮归零，且真的接
       return Number(m[1])
     }
     expect(perFile('App.vue'), 'App.vue 的格位被改大（R307 第二棒已收到 0）').toBeLessThanOrEqual(0)
-    expect(perFile('components/DashboardPanel.vue'), 'DashboardPanel 的格位被改大（它归 R291/R293）').toBeLessThanOrEqual(9)
+    expect(perFile('components/DashboardPanel.vue'), 'DashboardPanel 的格位被改大（R341 已收到 8）').toBeLessThanOrEqual(8)
     expect(perFile('components/SourceCard.vue'), 'SourceCard 的格位被改大（R307 已收到 0）').toBeLessThanOrEqual(0)
     const totalLine = /const DEBT_TOTAL_RATCHET = (\d+)/.exec(self)
     expect(totalLine, '合计棘轮那一行被改了形状或被摘了').toBeTruthy()
-    expect(Number(totalLine[1]), '全仓裸按钮合计棘轮被改大（现取就是 DashboardPanel 那 9 枚，贴边）').toBeLessThanOrEqual(9)
+    expect(Number(totalLine[1]), '全仓裸按钮合计棘轮被改大（现取就是 DashboardPanel 那 8 枚，贴边）').toBeLessThanOrEqual(8)
   })
 
   it('棘轮与现取对得上：欠账表里 App.vue 与 SourceCard 都不许再出现，合计一格不差等于上限', () => {
