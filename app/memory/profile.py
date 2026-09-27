@@ -98,6 +98,57 @@ def _ensure():
     _initialized = True
 
 
+#: 「该由 migrations 建的那枚表不在」在本模块只有一句话术：``_ensure`` 生产分支那一句。判定只认
+#: 它的前缀，不认「任何异常」——把宽捕获整体翻成拒答等于替真正的 bug 打掩护（同 R371 的裁定）。
+MIGRATION_REQUIRED_PREFIX = "user_profiles table is required in production"
+#: 排查路径：两张脸共用出口那一侧已有的 503 ``storage_unavailable``（零新增错误码），能把它们
+#: 分辨开的只有下面那两行日志。
+MIGRATION_REQUIRED_HINT = "migrations/0003_legacy_runtime_tables.sql"
+
+
+class ProfileStoreUnavailable(RuntimeError):
+    """画像存储拒答。这不等于「画像存不下」，更不等于「这家公司没有画像」。
+
+    形状照 ``app/common/auth.py::UserStoreUnavailable``（R356）：判定留在存储层，出口那一侧只做
+    一次窄翻译。存储层自己一枚 HTTP 异常都不发起，那是出口的活儿（同 R376 的裁定）。
+    """
+
+
+def _schema_needs_migrations(exc: BaseException) -> bool:
+    """这枚异常是不是「画像表还没建」：只认 ``_ensure`` 抛出的那一句前缀，其余一概不认。"""
+    return str(exc).startswith(MIGRATION_REQUIRED_PREFIX)
+
+
+def require_ready_store(operation: str, *, migrations_missing: bool = False) -> None:
+    """生产环境 + 画像存储未就绪 = 这一格拒答，不许悄悄回一句「保存失败」。
+
+    判的两件事都是本模块既有的读数，一枚都不新造：库在不在取 ``_database_available()``（:39，
+    本模块唯一那枚 ``_db_ready`` 读者，总数由 ``tests/test_r246_honest_readiness_claims.py`` 按
+    AST 管着），是不是生产取 ``_is_production_environment()``（:44，与
+    ``app/api/v1/alerts.py:61`` 同一把尺）。两支同时成立才拒。
+
+    ``migrations_missing`` 是同一道门上的第二种「没就绪」：库连着、旗标也在 True，可 ``_ensure()``
+    已经现查到 ``user_profiles`` 不在。R383 之前这两格在出口答的是同一句 ``画像保存失败`` + 500，
+    而「存储没迁移」与「存储没起」是两条完全不同的排查路（一条跑 migrations/0003，一条查
+    DATABASE_URL 与 PG 进程），一句话盖住两张脸就是本单要修的病灶。
+
+    开发/裸机/离线那一支一个字都不改：``_database_available()`` 为假且不是生产时，画像照旧落
+    ``_MEM_PROFILES`` 并答 ``True``，``PUT /api/v1/profile`` 照旧 200。
+    """
+    if (_database_available() and not migrations_missing) or not _is_production_environment():
+        return
+    if migrations_missing:
+        logger.warning(
+            f"[Profile] 生产库缺该由迁移建的画像表，这一格拒答而不是回一句保存失败: operation={operation} "
+            f"code=storage_unavailable migration={MIGRATION_REQUIRED_HINT}"
+        )
+    else:
+        logger.warning(
+            f"[Profile] 生产环境画像存储没起，这一格拒答而不是回一句保存失败: operation={operation} "
+            "code=storage_unavailable（PG 未起）"
+        )
+    raise ProfileStoreUnavailable(operation)
+
 #: R296：``users`` 那一行是部门归属的唯一事实源（``Principal`` 也是从它造的，见
 #: ``app/agents/contracts.py`` 的 ``Principal.from_user``）。``user_profiles.department``
 #: 是历史留下的第二份真相：员工曾经经 ``PUT /api/v1/profile`` 自助写它，而它又会**盖住** ``users``
@@ -188,5 +239,7 @@ def upsert_profile(user_id: str, department: str = "", position: str = "", prefe
             conn.commit()
         return True
     except Exception as exc:
+        if _schema_needs_migrations(exc):
+            require_ready_store("profile write", migrations_missing=True)
         logger.warning(f"[Profile] save failed: {exc}")
         return False

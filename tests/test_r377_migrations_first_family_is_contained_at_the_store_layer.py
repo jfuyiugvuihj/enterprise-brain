@@ -30,6 +30,12 @@ store 层，没有任何一枚能把这句 RuntimeError 递到 HTTP 出口，四
 2. 效力边界：本件全部跑在**替身台账**上。替身只求值「`to_regclass('public.x')` 这一次现查怎么答」，
    不求值任何真实 SQL、不碰真库、不起容器。所以本件证明的是「出口在读到缺表时答什么」，
    **不**证明「跑 migrations 真能把那一格补出来」。
+
+🔴 R383 已经把上面那条「只报不改」的 ① 与 ② 落地了（`app/documents/catalog.py` 配了一道自己的
+闸——它的 HTTP 出口在 `app/api/v1/chat.py`，那一枚不在 R383 写域；`app/memory/profile.py` 抛具名
+拒答、`app/api/v1/auth.py` 做一次窄翻译）。本件里三枚「现场量测」因此改口，台账行号一并重取；
+R377 当年那句判定（这句错逃不到 HTTP 出口）在 `app/common/auth.py` 与 `app/memory/long_term.py`
+两枚上仍然成立，一字未动。逐枚改口清单写在 R383 的回执里，本文件不重写历史。
 """
 from __future__ import annotations
 
@@ -56,7 +62,8 @@ RAISE_SITES = {
         'raise RuntimeError("users table is required in production; run migrations first")',
     ),
     "app/documents/catalog.py": (
-        516,
+        # R383 现读：这一句在 :578（闸与两行日志插在 :344 那把已有的生产尺之后，行号跟着挪）。
+        578,
         'raise RuntimeError("document_versions table is required in production; '
         'run migrations first")',
     ),
@@ -75,23 +82,25 @@ RAISE_SITES = {
 #: 都必须落在列出的那枚 catch-all handler 的 `try` 里面（AST 判，见下面的形状钉）。
 GUARD_BY_MODULE = {
     "app/common/auth.py": (257, 478),
-    "app/documents/catalog.py": (552, 700, 722, 754, 819),
+    "app/documents/catalog.py": (616, 768, 794, 829, 902),
     "app/memory/long_term.py": (176, 192),
-    "app/memory/profile.py": (141, 190),
+    "app/memory/profile.py": (192, 241),
 }
 
 #: 每枚模块里 `_ensure()` / `_create_schema()` 的直接调用点行数（`app/**` 全仓现读）。
 CALL_SITES = {
     "app/common/auth.py": (255, 475),
-    "app/documents/catalog.py": (545, 671, 710, 742, 807),
+    "app/documents/catalog.py": (609, 739, 782, 817, 890),
     "app/memory/long_term.py": (165, 183),
-    "app/memory/profile.py": (130, 173),
+    "app/memory/profile.py": (181, 224),
 }
 
 GUARDED_FUNCTIONS = frozenset({"_ensure", "_create_schema"})
 _REGCLASS = re.compile(r"to_regclass\('public\.(\w+)'\)", re.IGNORECASE)
 
 ADMIN = "r377-admin"
+#: R383 起三枚现读出口都答这一枚码；本件零新增错误码，它来自 `app/agents/contracts.py` 的枚举。
+STORAGE_CODE = "storage_unavailable"
 ACCOUNT = {"id": "u-r377", "username": ADMIN, "role": "admin", "department": "", "status": "active"}
 
 
@@ -251,10 +260,32 @@ def test_each_module_carries_exactly_one_of_those_sentences(relative):
 
 
 # ============================ 第 2 节判据 2：没有 HTTP 出口——四枚模块既无 HTTPException 也无 503
+#: R383 之后这四枚不再同质：`app/documents/catalog.py` 领到了它自己的那道闸（它的 HTTP 出口在
+#: `app/api/v1/chat.py`，本单不许动，所以闸只能长在模块里）。其余三枚仍然一枚 HTTP 出口都不许有。
+GATE_503_EXIT = {"app/documents/catalog.py": 405}
+
+
 @pytest.mark.parametrize("relative", sorted(RAISE_SITES))
 def test_none_of_the_four_modules_owns_an_http_exit(relative):
-    """判据 2 的前提：这四枚是 store 层，闸门一枚都没有，所以「现造一枚闸」不在许可范围内。"""
+    """R377 的前提「四枚都是 store 层、闸门一枚都没有」已被 R383 改掉一半：改口逐枚收紧。
+
+    目录那一枚从「不许有 503」改成「全模块恰好一枚 503，且必须抛在 ``_require_ready_store`` 的最
+    后一行」——闸只准有一扇，侧门一枚都不许长（同 R359 给 alerts 钉的那条口径）。其余三枚（含
+    ``app/memory/profile.py``：它把拒答交回 ``app/api/v1/auth.py`` 翻译，自己一枚 HTTP 异常都不
+    发起）逐字保持原判。
+    """
     tree = _tree(relative)
+
+    if relative in GATE_503_EXIT:
+        exits = _raise_sites(tree, "503")
+        assert exits == [GATE_503_EXIT[relative]], f"{relative} 的 503 抛出点应当恰好一枚，实测 {exits}"
+        gate = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "_require_ready_store"
+        )
+        assert gate.lineno <= exits[0] <= gate.end_lineno, "那道 503 不在闸的函数体里：闸被复制了"
+        return
 
     assert "HTTPException" not in _source(relative), f"{relative} 里出现了 HTTPException：本件的判定作废"
     assert _raise_sites(tree, "503") == [], f"{relative} 长出了 503 抛出点：改判前请先重取可达性"
@@ -394,35 +425,50 @@ def _headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {auth.create_token(ADMIN)}"}
 
 
-def test_the_missing_document_versions_table_answers_200_empty_and_never_500(
+def test_the_missing_document_versions_table_refuses_503_not_200_empty(
     production, recorder, monkeypatch
 ):
-    """catalog.py:516 被 :722 那枚 catch-all 吃掉 ⇒ 回落本地台账，答 200 空集（判不可达，也记下真症状）。"""
+    """R383 改口（本件基点记的是病灶脸：``:516`` 被 ``:722`` 吃掉 ⇒ 200 空集）。
+
+    从「200 + `{"documents": []}`」改成「503 + `storage_unavailable`」：那句 200 把「这一格问不
+    出」说成「这家公司没有知识文档」，是 R359/R356/R332 同一条裁定禁的形状。方向只收紧不放宽——
+    两枚出口现在必须逐字答同一枚码，且回落本地台账那一格在生产已经不许发生。
+    可达性证据换了承载：R377 用 ``current listing fallback`` 那行 warning 证明抛点走到过，今天
+    闸在回落之前就拒了，所以证据换成闸自己那行带 ``migration=`` 的日志（同一枚现查的结论）。
+    """
     sink = _catalog_store(monkeypatch, recorder)
     client = _login_client()
 
     listing = client.get("/api/v1/documents", headers=_headers())
     catalog_view = client.get("/api/v1/documents/catalog", headers=_headers())
 
-    assert listing.status_code == 200, listing.text
-    assert catalog_view.status_code == 200, catalog_view.text
-    assert listing.json() == {"documents": []}
-    assert catalog_view.json() == {"documents": []}
+    assert listing.status_code == 503, listing.text
+    assert catalog_view.status_code == 503, catalog_view.text
+    assert listing.json() == {"detail": STORAGE_CODE}
+    assert catalog_view.json() == {"detail": STORAGE_CODE}
     assert BARE_500_BODY not in listing.text + catalog_view.text
-    assert sink.mentions("current listing fallback"), "抛点没在请求期间走到：可达性判定缺证据"
-    assert any(SENTENCE in line for _level, line in sink.lines), sink.lines
+    assert {"documents": []} not in (listing.json(), catalog_view.json())
+    assert sink.mentions("current listing fallback") == [], "生产还回落到本地台账 = 闸没咬住"
+    assert sink.mentions("code=storage_unavailable migration="), sink.lines
 
 
-def test_the_missing_document_versions_table_says_404_not_500_on_version_history(
+def test_the_missing_document_versions_table_says_503_not_404_on_version_history(
     production, recorder, monkeypatch
 ):
+    """R383 改口：这一格今天答的是 404 ``resource_not_found``——比空集更像一句确定的假话。
+
+    「这个文档没有版本历史」与「目录问不出」是两件事；`app/api/v1/chat.py:4343` 那句
+    `if not versions: raise 404` 只有在本模块交出空表时才会响，而它今天响的原因就是那次回落。
+    """
     sink = _catalog_store(monkeypatch, recorder)
 
     response = _login_client().get("/api/v1/documents/r377-missing.pdf/versions", headers=_headers())
 
-    assert response.status_code == 404, response.text
-    assert response.json() == {"detail": "resource_not_found"}
-    assert sink.mentions("history fallback"), sink.lines
+    assert response.status_code == 503, response.text
+    assert response.json() == {"detail": STORAGE_CODE}
+    assert "resource_not_found" not in response.text
+    assert sink.mentions("history fallback") == [], "生产还回落 = 这一条腿的闸没咬住"
+    assert sink.mentions("code=storage_unavailable migration="), sink.lines
 
 
 # ============================================================ 现场量测：profile.py 读 200 / 写 500(有码)
@@ -452,13 +498,14 @@ def test_the_missing_user_profiles_table_reads_200_without_the_stored_columns(
     assert any(SENTENCE in line for _level, line in sink.lines), sink.lines
 
 
-def test_the_missing_user_profiles_table_writes_an_authored_500_from_the_route_not_a_bare_one(
+def test_the_missing_user_profiles_table_refuses_503_not_the_authored_500(
     production, recorder, monkeypatch
 ):
-    """PUT /profile 那枚 500 是 `app/api/v1/auth.py:281` 自己写的 `HTTPException`。
+    """R383 改口（本件基点记的是病灶脸：路由自己写的那句 500 ``画像保存失败``）。
 
-    store 层（本单写域）在这一格只把错误咽下并 `return False`；要改那一格得改路由 + 给
-    `app/memory/profile.py` 现造一枚闸，两样都越出本单，已进「只报不改」。
+    那句 500 把「存储没迁移」「存储没起」「真的写砸了」三件事压成一句它自己都不知道原因的话。
+    现在前两格各自拒答 503 ``storage_unavailable``（两行日志分头说清排查路），500 只留给第三格。
+    store 层仍然一枚 HTTP 异常都不发起：它抛具名拒答，出口那一次窄翻译在 `app/api/v1/auth.py`。
     """
     sink = _profile_store(monkeypatch, recorder)
 
@@ -466,11 +513,12 @@ def test_the_missing_user_profiles_table_writes_an_authored_500_from_the_route_n
         "/api/v1/profile", json={"position": "boss", "preferences": ["r377"]}, headers=_headers()
     )
 
-    assert response.status_code == 500, response.text
-    assert response.json() == {"detail": "画像保存失败"}, "裸 500 的响应体不是这个：那说明捕获面被摘过"
+    assert response.status_code == 503, response.text
+    assert response.json() == {"detail": STORAGE_CODE}, "那句 500 还在答：捕获面没换成拒答"
+    assert "画像保存失败" not in response.text
     assert BARE_500_BODY not in response.text
-    assert sink.mentions("save failed"), sink.lines
-    assert any(SENTENCE in line for _level, line in sink.lines), sink.lines
+    assert sink.mentions("save failed") == [], "缺表那一格还咽下去 = 两格又并回一张脸"
+    assert sink.mentions("code=storage_unavailable migration="), sink.lines
 
 
 # ========================================================== 现场量测：long_term.py 没有 HTTP 脸

@@ -6,7 +6,12 @@ from app.common import auth
 from app.common.authorization import DEPARTMENT_SELF_REPORT_DENIED, authorize_request, principal_from_request
 from app.common.permissions import ACTION_MANAGE_USERS
 from app.common.sso import extract_sso_identity, validate_sso_headers
-from app.memory.profile import get_profile, upsert_profile
+from app.memory.profile import (
+    ProfileStoreUnavailable,
+    get_profile,
+    require_ready_store,
+    upsert_profile,
+)
 
 router = APIRouter()
 
@@ -272,11 +277,20 @@ async def update_my_profile(data: UpdateProfileRequest, request: Request):
             },
         )
     username = getattr(request.state, "username", "")
-    ok = upsert_profile(
-        username,
-        position=data.position,
-        preferences=data.preferences or [],
-    )
+    # R383：两张存储的脸从此各自留名，不再共用下面那句「画像保存失败」。判定留在存储层
+    # （``app/memory/profile.py::require_ready_store``），出口这一侧只做一次窄翻译，形状照 R356 的
+    # ``except auth.UserStoreUnavailable``——路由不许自己反推存储状态，那是第二本账。
+    # 顺序：department 的 403 在前（判据：权限的答案先于存储的答案），拒答在任何一次写之前。
+    try:
+        require_ready_store("profile write")
+        ok = upsert_profile(
+            username,
+            position=data.position,
+            preferences=data.preferences or [],
+        )
+    except ProfileStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
     if not ok:
+        # 走到这里只剩一种可能：存储自报「就绪」，这一写却没成。只有这一格配得上那句「保存失败」。
         raise HTTPException(status_code=500, detail="画像保存失败")
     return {"status": "ok"}

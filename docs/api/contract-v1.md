@@ -4661,3 +4661,114 @@ code (3), invent a second probe (1), narrow the import-time catch-all (1), build
 Physical lines: `app/api/v1/chat.py` +30 / -2 -- the named class, its raise, and the one exit that folds
 them. `tests/test_r377_...` +13 / -8 -- one reworded assertion, zero pins deleted. `tests/test_r384_...`
 +545 / -0 new.
+## Asking the store and getting nothing is not the same claim as having nothing (2026-09-27, R383)
+
+R377 measured this cell and deliberately left it alone: on a customer machine where PostgreSQL is
+reachable but `document_versions` was never created, `app/documents/catalog.py` let each of its five
+`_ensure()` call sites be swallowed by the catch-all sitting under it and fall back to the local
+ledger. The outlets answered `200 {"documents": []}` for `GET /api/v1/documents` and
+`GET /api/v1/documents/catalog`, and `404 resource_not_found` for
+`GET /api/v1/documents/{filename}/versions`. None of those three sentences is a refusal -- each states
+a fact about the knowledge base, and the fact is invented. A screen that reads `documents: []`
+literally says 「这家公司没有知识文档」; the store never said that, it said 「这一格问不出」. This
+section retires that reading, together with the write half R377 could not reach: at this base
+`record_document_version()` handed back its metadata and `delete_document_versions()` handed back
+`None`, so both write legs reported success for rows no table holds.
+
+`app/documents/catalog.py::_require_ready_store` (`:362`, its single `503` exit at `:405`) is the gate,
+and it reads two numbers this module already owned: `_database_available()` (`:322`, still the only
+`_db_ready` reader in the file -- the reader census is held by
+`tests/test_r246_honest_readiness_claims.py`) and `_is_production_environment()` (`:344`, the same ruler
+`app/api/v1/alerts.py:61` exposes and R367 / R376 borrowed), so `app/**` still holds eight definitions
+of it and this ticket added none. Zero new error codes, zero new reason words, zero new status tiers:
+both storage gaps answer `503 storage_unavailable`, the code `/users` (R356), `/dashboard` (R332),
+alerts (R359 / R371) and notifications (R299 / R366 / R373 / R376) already answer with.
+
+### The faces, and which one is allowed to say what
+
+| Situation | Outlet answer | What separates it | Held by |
+| --- | --- | --- | --- |
+| table not migrated (`document_versions` absent, store up) | `503 storage_unavailable` on both legs | gate logs `migration=migrations/0003_legacy_runtime_tables.sql` | `tests/test_r383_catalog_refuses_a_store_that_is_not_there.py` |
+| store never came up (`_db_ready` false), write leg | `503 storage_unavailable` | gate logs 「PG 未起」, and `_conn` is never reached | same file |
+| store never came up (`_db_ready` false), read leg | `200` plus the local sidecar -- byte for byte what the base answered | the sidecar is this module's second real book, not `_MEM_ALERTS` | same file, as a deliberate boundary |
+| caller may not see the row | `401 authentication_required` / per-row `restricted` | unchanged -- not one authorization line moved | `app/main.py` middleware, `app/api/v1/restricted.py` |
+| development, bare metal, offline | `200` plus the local ledger | the gate does not bite outside a production environment | six existing families, same counts |
+
+The conversion is narrow on purpose. Only the one sentence `_ensure()` raises in its production branch
+(`MIGRATION_REQUIRED_PREFIX`, `:351`) becomes a refusal; every other exception still takes the
+warning-and-fallback path it always took, because laundering an arbitrary failure into `503` would
+cover for a real bug. A refusal also refuses to read: `_local_version_rows()` is not consulted once,
+and the `SELECT to_regclass(...)` probe is the only statement the module sends.
+
+The entry gate stands on three write legs only, and that asymmetry was measured, not decided at the
+desk. A draft of this fix gated `current_documents()` and `list_document_versions()` at entry as well;
+it folded 「库没起」 into the same `503` and went red on seven pins that were not ours to move -- five in
+`tests/test_r367_dashboard_refuses_a_store_that_is_not_there.py`, two in
+`tests/test_r366_inbox_keeps_its_legs_when_the_alert_store_refuses.py` -- both of which pin a production
+machine whose PostgreSQL is down still answering its overview screens from the sidecar. That is the
+designed second book (`app/documents/catalog.py:24-29`), and its rows are real, which is precisely what
+`app/api/v1/alerts.py` does not have: `_MEM_ALERTS` is empty on every customer machine, so a refusal
+there can only ever be laundered into 「这家客户没有异常」. So the read legs keep the fallback and lose
+only the missing-table lie, which the catch-alls now refuse after the probe has read the gap.
+
+Write legs follow the same ruling. `peek_next_document_version()` gates at entry, so a production
+upload that cannot be catalogued is refused at `app/api/v1/chat.py:4059` before a byte is written,
+before the indexer is touched and before a version number is minted -- that is the write face R383 can
+reach without entering `chat.py`. `record_document_version()` and `delete_document_versions()` raise
+the same refusal at their own boundary, and `delete_document_versions()` no longer prunes the local
+mirror before the store has answered, so a refusal leaves both persistence paths exactly as they were.
+What still lies, and is registered rather than patched: `app/api/v1/chat.py:3671` catches
+`Exception` around `record_document_version()`, so on the upload route this module's refusal is eaten
+and the receipt still says the version was registered.
+
+### 画像的两张存储脸，和那一格判不动的读
+
+`PUT /api/v1/profile` answered the same `500 {"detail": "画像保存失败"}` whether `user_profiles` was
+missing or the database was down (`app/api/v1/auth.py:281` at the base). That sentence is not merely
+unhelpful, it is a claim the code cannot support: it asserts a save failure while knowing nothing about
+why. Both storage gaps now answer `503 storage_unavailable`, and two log lines name the two different
+repair paths -- one is a migration, the other is `DATABASE_URL` and the PostgreSQL process. The `500`
+stays, and after this ticket it means exactly one thing: the store called itself ready and the write
+still failed.
+
+`app/memory/profile.py` raises no HTTP exception of its own -- it raises `ProfileStoreUnavailable`
+(`:109`, shaped like R356's `auth.UserStoreUnavailable`) and `app/api/v1/auth.py` translates that one
+named type once (`except ProfileStoreUnavailable`, nothing wider). The route does not rebuild the
+refusal from the storage state: deriving it from `profile_storage_state()` would be a second
+hand-copied ledger, and `tests/test_r356_users_refusal_face.py:319` already forbids that shape for
+`user_storage_state`. `upsert_profile()` keeps its boolean contract for direct callers, so
+`tests/test_deployment_guards.py:501` (`upsert_profile(...) is False`, next to the real guarantee
+`_MEM_PROFILES == {}`) stays green word for word.
+
+`GET /api/v1/profile` was measured, argued over, and left alone. In the same missing-table state it
+answers `200` with only what `users` really holds: no `position`, no `preferences`, no `updated_at`.
+That is a partial answer, not an empty collection -- it never claims no profile exists, and R377 had
+already pinned 「不许冒充读成了 PG」. Turning it into a refusal would also put a `503` inside
+`app/agents/nodes.py:1697`, where `load_memory` builds the prompt: 「这一轮带不带职位偏好」 would become
+「这一轮答不出来」, a different and worse bug than the one this ticket was cut for. The face is now
+pinned as a deliberate boundary rather than as an oversight.
+
+### Evidence
+
+`tests/test_r383_catalog_refuses_a_store_that_is_not_there.py` (27 pins) walks the missing-table and
+store-down legs from the routes and from the module boundary, pins the two log sentences apart, pins
+that a refusal reads neither ledger nor database, pins the upload leg writing zero bytes, pins the
+non-production leg (six spellings of `APP_ENV`) still answering from the local sidecar, pins the
+production store-down read leg answering from that same sidecar while the write leg in the identical
+state refuses, and pins the shape: one `503` exit and no `500` in `app/documents/catalog.py`, one
+`_db_ready` reader, eight production rulers in `app/**`, and the code already in
+`app/agents/contracts.py`.
+`tests/test_r383_profile_two_storage_faces.py` (21 pins) does the same for the profile legs, including
+that the department `403` still stands in front of the storage refusal and that anonymous callers never
+meet the storage answer. `tests/test_r377_migrations_first_family_is_contained_at_the_store_layer.py`
+still holds 26 pins; three measured faces and one shape pin were retaken for these two modules, which is
+the change of claim R377 itself registered as 「越出本单写域」 -- the retake tightens (「恰好一枚 503，
+且必须在闸里」 replaces 「一枚都不许有」), the line-number ledgers were re-read from this base, and
+nothing was deleted or loosened. All offline: no service, no PostgreSQL, no model port, no `chroma_db/`
+write.
+
+Physical lines: `app/documents/catalog.py` +87 / -1 -- one gate, its narrow schema classifier, five
+catch-all conversions, three write-entry calls and the ordering note in `delete_document_versions`.
+`app/memory/profile.py` +53 / -0 -- one gate, its named refusal, and the narrow conversion in
+`upsert_profile`'s handler. `app/api/v1/auth.py` +20 / -6 -- the import block, one pre-check, one narrow
+translation, and the comments that used to describe one face now describing three.

@@ -5,6 +5,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from app.common.logger import logger
 from app.documents.index_policy import (
     INDEX_STATUSES,
@@ -343,6 +345,66 @@ def _is_production_environment() -> bool:
     return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
 
 
+#: 「该由 migrations 建的那枚表不在」在本模块只有一句话术：``_ensure`` 生产分支那一句。判定
+#: 只认它的前缀，不认「任何异常」——把宽捕获整体翻成 503 等于替真正的 bug 打掩护（同
+#: ``app/api/v1/alerts.py:137`` 的 ``_migrations_first_at_http_exit``，R371 的裁定）。
+MIGRATION_REQUIRED_PREFIX = "document_versions table is required in production"
+#: 这一格的排查路径：响应侧共用仓里已有的那一枚 503 ``storage_unavailable``（零新增错误码），
+#: 能把「表还没迁移」与「库没起」两张脸分辨开的只有下面那两行日志。
+MIGRATION_REQUIRED_HINT = "migrations/0003_legacy_runtime_tables.sql"
+
+
+def _schema_needs_migrations(exc: BaseException) -> bool:
+    """这枚异常是不是「目录表还没建」：只认 ``_ensure`` 抛出的那一句前缀，其余一概不认。"""
+    return str(exc).startswith(MIGRATION_REQUIRED_PREFIX)
+
+
+def _require_ready_store(operation: str, *, migrations_missing: bool = False) -> None:
+    """生产环境 + 目录存储未就绪 = 这一条腿拒答，不许回落本地台账（R383）。
+
+    判的两件事都是本模块既有的读数，一枚都不新造、也不另算一遍：库在不在取
+    ``_database_available()``（全模块唯一那枚 ``_db_ready`` 读者；读者总数由
+    ``tests/test_r246_honest_readiness_claims.py`` 按 AST 管着，这里多引一处它当场红），是不是
+    生产取 ``_is_production_environment()``（与 ``app/api/v1/alerts.py:61`` 同一把尺）。两支同时
+    成立才拒。
+
+    ``migrations_missing`` 是同一道门上的第二种「没就绪」：库连着、旗标也翻到了 True，可
+    ``_ensure()`` 已经现查到 ``document_versions`` 不在。它不新增判定，只是把那次现查的结论递给
+    这道已有的闸——全模块那道 503 仍然只在这儿抛出。
+
+    为什么不许退成「200 + 本地台账」：客户机上那一屏照字面把 ``{"documents": []}`` 画成「这家
+    公司没有知识文档」，而现场事实是「这一格问不出」。把问不出说成没有，与 ``/users``（R356）、
+    ``/dashboard``（R332）、告警（R359）、通知（R299）是同一条裁定，文档目录是这条链上最后还在
+    沉默回空的那一环。
+
+    为什么开发/裸机/离线三条腿一个字都不改：本地台账回落是设计而不是 bug——``_ensure()`` 在非生产
+    分支就地补 DDL，离线部署由 JSON sidecar 供数，那一支的回包形状、行数、排序逐字保持。本单分开
+    的是三张脸，不是一律 503：把开发态一起打死同样是在说假话，只不过反着说。
+
+    两扇门不是一扇门：``peek_next_document_version`` / ``record_document_version`` /
+    ``delete_document_versions`` 三枚写口排在授权之后、在任何一次读写之前先过这道闸——权威库不在位
+    时写不成却说成了，才是本单要治的病。两枚读口（``current_documents`` /
+    ``list_document_versions``）**不设入口闸**：PostgreSQL 不在位时 JSON sidecar 是本模块设计内的
+    第二本真账（见文件头那两行注释），那一支交出去的是盘上真实的行，不是
+    ``app/api/v1/alerts.py`` 里客户机上恒为空的 ``_MEM_ALERTS``。读侧要改的只有「库连着、表却不在」
+    那一格：它由五枚 catch-all 现查之后带 ``migrations_missing`` 走进这道闸——拒答的仍是这一句，
+    只是排在那次现查之后。
+    """
+    if (_database_available() and not migrations_missing) or not _is_production_environment():
+        return
+    if migrations_missing:
+        logger.warning(
+            f"[Docs] 生产库缺该由迁移建的目录表，这一条腿拒答而不是回落本地台账: operation={operation} "
+            f"code=storage_unavailable migration={MIGRATION_REQUIRED_HINT}"
+        )
+    else:
+        logger.warning(
+            f"[Docs] 生产环境目录存储没起，这一条腿拒答而不是回落本地台账: operation={operation} "
+            "code=storage_unavailable（PG 未起）"
+        )
+    raise HTTPException(status_code=503, detail="storage_unavailable")
+
+
 def _path_is_readable(value) -> bool:
     """Report whether a recorded storage path still points at a real file."""
     raw = str(value or "").strip()
@@ -539,6 +601,8 @@ def _ensure():
 
 
 def peek_next_document_version(filename: str) -> int:
+    # 上传路径在落盘之前先问这一格要版本号：闸排在这里，生产缺库就整发拒，一字节都不落。
+    _require_ready_store("version peek")
     if not _database_available():
         return next_document_version(_local_version_rows(filename), filename)
     try:
@@ -550,6 +614,8 @@ def peek_next_document_version(filename: str) -> int:
             ).fetchall()
         return next_document_version([dict(row) for row in rows], filename)
     except Exception as exc:
+        if _schema_needs_migrations(exc):
+            _require_ready_store("version peek", migrations_missing=True)
         logger.warning(f"[Docs] version lookup fallback: {exc}")
         return next_document_version(_local_version_rows(filename), filename)
 
@@ -663,6 +729,8 @@ def record_document_version(
         index_reason=index_reason,
     )
 
+    # 生产而库没起：整发拒，连本地镜像都不写——只落在 sidecar 上的「已登记」缺一本真账。
+    _require_ready_store("version record")
     _record_local_version(metadata)
 
     if not _database_available():
@@ -698,11 +766,15 @@ def record_document_version(
             )
             conn.commit()
     except Exception as exc:
+        if _schema_needs_migrations(exc):
+            _require_ready_store("version record", migrations_missing=True)
         logger.warning(f"[Docs] version record fallback: {exc}")
     return metadata
 
 
 def current_documents() -> list[dict]:
+    # 读侧入口不闸：库没起时这一条腿交的是设计内的 sidecar（上面那段判据），一字未改。
+    # 「库连着、表却不在」那一格由下面的 catch-all 现查之后带 migrations_missing 进闸。
     if not _database_available():
         rows = _local_version_rows()
     else:
@@ -720,6 +792,8 @@ def current_documents() -> list[dict]:
                     ).fetchall()
                 ]
         except Exception as exc:
+            if _schema_needs_migrations(exc):
+                _require_ready_store("current listing", migrations_missing=True)
             logger.warning(f"[Docs] current listing fallback: {exc}")
             rows = _local_version_rows()
 
@@ -732,6 +806,7 @@ def current_documents() -> list[dict]:
 
 
 def list_document_versions(filename: str) -> list[dict]:
+    # 与 current_documents 同一口径：入口不闸，缺表那一格由下面的 catch-all 现查之后拒答。
     if not _database_available():
         return _public_rows(
             _apply_index_policy(
@@ -752,6 +827,8 @@ def list_document_versions(filename: str) -> list[dict]:
             ).fetchall()
         return _public_rows(_apply_index_policy([dict(row) for row in rows]))
     except Exception as exc:
+        if _schema_needs_migrations(exc):
+            _require_ready_store("history listing", migrations_missing=True)
         logger.warning(f"[Docs] history fallback: {exc}")
         return _public_rows(
             _apply_index_policy(
@@ -799,9 +876,15 @@ def delete_document_versions(filename: str, storage_paths=()) -> None:
     point at files no longer on disk while ``document_versions`` reads clean. Cleaning it
     here - rather than in one more caller - is why this function is the one the delete
     route already trusts.
+
+    R383：拒答不许留下半件事。本地镜像的清理排在两次现查之后，生产库里表不在时这一格整发拒，
+    ``document_versions`` 与本地 sidecar 都原样不动——今天删掉本地那一半却说「没删成」，等于把
+    一条还能重试的记录先抹了。离线那一支的净效果没变（清完即返回），只是位置跟着两条持久化路径
+    的同一条口径走。
     """
-    _drop_local_versions(filename, storage_paths)
+    _require_ready_store("version deletion")
     if not _database_available():
+        _drop_local_versions(filename, storage_paths)
         return
     try:
         _ensure()
@@ -817,4 +900,7 @@ def delete_document_versions(filename: str, storage_paths=()) -> None:
                 )
             conn.commit()
     except Exception as exc:
+        if _schema_needs_migrations(exc):
+            _require_ready_store("version deletion", migrations_missing=True)
         logger.warning(f"[Docs] version deletion fallback: {exc}")
+    _drop_local_versions(filename, storage_paths)
