@@ -155,7 +155,7 @@ export function alertTileView(face) {
  * alerts 键在不在。
  *
  * 后端 app/api/v1/dashboard.py:318-320 只在 _alert_counts() 没返回 None 时才写这一键，而它判的
- * 正是 GET /alerts 那同一条权限门（dashboard.py:90 与 alerts.py:925 都走 _require_alert_management），
+ * 正是 GET /alerts 那同一条权限门（dashboard.py:247 与 alerts.py:1085 都走 _require_alert_management），
  * staff 与 auditor 的角色集里没有 alerts:manage（app/common/permissions.py:13/:16）。
  * 于是键缺席 ⇒ 那一发 GET /alerts 每次必 403：前端不发它就是，这一条改的是前端行为，
  * 不是后端的权限口径 —— staff 不管告警是产品定的。
@@ -346,18 +346,18 @@ export function documentsFailureView(err) {
  * R341 · 「数据趋势」那一格的期间序列客户端（GET /dashboard/trend）
  *
  * R332 把这条路由交出来之后，这一屏就没有任何理由再替服务端说「还没回传」。这一层的
- * 三条规矩，与 app/api/v1/dashboard.py 的模块说明和 docs/api/contract-v1.md:2509 那一节
+ * 三条规矩，与 app/api/v1/dashboard.py 的模块说明和 docs/api/contract-v1.md:2517 那一节
  * 一一对应，改任何一条都要两边一起改：
  *   一、数字只从这条路由来。前端不按 created_at 自己切期、不从 /summary 反推、也不把两本
  *       账混着加总；period 与 buckets 原样做成查询参数交给服务端，窗口长度不由前端截断。
  *   二、「读不到 / 没权限 / 那几期真的零新增」是三张不同的脸。告警那两列用 hasOwnProperty
- *       分辨缺席（docs/api/contract-v1.md:2616：整键缺席是权限，不是数字），不用 ?? 0 与
+ *       分辨缺席（docs/api/contract-v1.md:2624：整键缺席是权限，不是数字），不用 ?? 0 与
  *       || 0 —— 在无权限的账号上画一个 0，等于用一条不是告警列表的路由去读告警账本。
  *   三、回包形状读不出就是失败，不降级成空态。存储读不出时服务端整格失败、没有部分序列，
  *       参数不合法是另一张脸；两张脸都不新增错误码，只读 lib/errcodes.js 既有那本字典。
  *
  * 序列之和与那四个数字本来就不该相等：series 只覆盖窗口这几期新产生的行，聚合数的是全部
- * 可见行（docs/api/contract-v1.md:2600）。所以这一层没有任何「对平」断言，界面也不许出现。
+ * 可见行（docs/api/contract-v1.md:2608-2609）。所以这一层没有任何「对平」断言，界面也不许出现。
  * ========================================================================== */
 
 /** 期间序列端点：无 body、不接 rows，参数只走查询串。 */

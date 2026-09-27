@@ -22,9 +22,10 @@
  *   丁 渲染无关性：剥掉注释后的可执行部分与基点逐字节相等，行数也相等 —— 改口不许挪任何人的行号，
  *      后端与 docs 里都有账按行号指着这一族前端文件，丁组钉的就是那些账不许被我的改口挪走。
  *
- * 越界未做（只登记不修，见 R416 回执 §⑨）：LEDGER 里 debt: true 的 5 枚是别人名下的失效坐标，
- * 本件钉的是「它们今天仍然对不上」；这个枚数由甲组最后一枚用例现读 LEDGER 与这句自述对账 ——
- * 改一行台账不改这句自述，当场红。
+ * 越界登记（R416 记下 5 枚，R420 逐枚改口收完）：LEDGER 里 debt: true 的 0 枚 —— 台账上每一枚数字今天
+ * 都由 finders 在目标文件里当场推导对上；这个枚数由甲组最后一枚用例现读 LEDGER 与这句自述对账，
+ * 改一行台账不改这句自述，当场红。同一枚用例从 R420 起是**棘轮**：debt 数必须等于 0 —— 新登记一枚越界
+ * 坐标要先经总控批准才许入账，不再允许「先记着以后修」，那等于放一枚假坐标过夜，第二天没人认得它。
  *
  * 真源一律 git show <ref>:<path>，与 r411 丁组、r368 戊组同一口径：工作树可能停在分支点，
  * 拿它对账等于永远绿的假绿。读不到就抛错让测试红，禁止 skip。
@@ -98,7 +99,7 @@ const roleLine = role => '^\\s{4}"' + role + '":\\s*frozenset'
 /**
  * 对账姿势只有一种：逐行。注释写的每一枚数字都必须等于当场推导的那一行，被引那一行本身还必须
  * 真写着锚串（contains / notContains）。markdown 里的引用也一样数到行 —— 「落在同一节里」不算对上。
- * debt: true —— 这枚不归 R416 写域，钉的是「它今天仍然对不上」；修好了本条会红
+ * debt: true —— R420 起停用：这一族登记要先经总控批准才许入账，甲组那枚棘轮钉死 LEDGER 里一枚都不许有
  */
 const LEDGER = [
   {
@@ -222,56 +223,62 @@ const LEDGER = [
     id: '乙-11 contract-v1 交给 /dashboard/trend 的那一节',
     file: DASHBOARD,
     cited: 'docs/api/contract-v1.md',
-    numbers: [2509],
+    numbers: [2517],
     finders: [{ label: 'R332 · trend 那一节的标题行',
       pattern: '^## The overview page grows a period',
       contains: ['dashboard/trend', 'R332'] }],
-    debt: true,
-    note: '越界未做：注释把「那一节」定在 2509，而 2509 落在上一节（R310 owner 的 Pins 清单）里；本节标题行由本条当场推导，推导值见失败消息。写域不在 R416，登记待派。',
+    note: 'R416 登记为越界未做，R420 已改口收口：手抄那一枚落在上一节（R310 owner 的 Pins 清单）里，本节标题行由本条 finders 当场推导。',
   },
   {
     id: '乙-12 contract-v1「整键缺席是权限」那一句',
     file: DASHBOARD,
     cited: 'docs/api/contract-v1.md',
-    numbers: [2616],
+    numbers: [2624],
     finders: [{ label: '无告警权就拿不到 alerts 与 alerts_open 那一行',
       pattern: '\\*\\*A caller without alert rights',
       contains: ['the keys are absent', 'alerts_open'] }],
-    debt: true,
-    note: '越界未做：注释停在 2616，那一行讲的是 401/403 那条腿；「整键缺席是权限，不是数字」那句由本条当场推导，推导值见失败消息。写域不在 R416，登记待派。',
+    note: 'R416 登记为越界未做，R420 已改口收口：改口那一枚讲的是 401/403 那条腿；「整键缺席是权限，不是数字」那一句由本条 finders 当场推导。',
   },
   {
     id: '乙-13 contract-v1「序列之和 != 卡片总数」那一句',
     file: DASHBOARD,
     cited: 'docs/api/contract-v1.md',
-    numbers: [2600],
-    finders: [{ label: 'Series totals are not the tile totals 那一行',
-      pattern: '\\*\\*Series totals are not the tile totals',
-      contains: ['sum(bucket.documents)', 'visible row'] }],
-    debt: true,
-    note: '越界未做：2600 讲的是 503／没有部分序列那一颗子弹，「序列之和 != 卡片总数」那句由本条当场推导，推导值见失败消息。写域不在 R416，登记待派。',
+    numbers: [2608, 2609],
+    finders: [
+      { label: 'Series totals are not the tile totals 那一行',
+        pattern: '\\*\\*Series totals are not the tile totals',
+        contains: ['sum(bucket.documents)'] },
+      { label: '/summary 数的是全部可见行那一行',
+        pattern: 'counts every visible row',
+        contains: ['visible row', '/summary'] },
+    ],
+    note: 'R416 登记为越界未做，R420 已改口收口：改口那一枚讲的是 503／没有部分序列那颗子弹；「序列之和 != 卡片总数」那句话说的事跨两行，所以两端各钉一枚 finder，半句对上不算对上。',
   },
   {
     id: '乙-14 _alert_counts 走的那条告警门',
     file: DASHBOARD,
     cited: 'dashboard.py',
-    numbers: [90],
+    numbers: [247],
     finders: [{
       label: '_alert_counts 里那一发 _require_alert_management',
       pattern: '_require_alert_management\\(request',
       after: '^def _alert_counts\\(',
+      contains: ['alerts_api._require_alert_management(request)'],
     }],
-    debt: true,
-    note: '越界未做：90 那行今天写着 alert_row_scope_sql，_require_alert_management 在 _alert_counts 内部。写域不在 R416，登记待派。',
+    note: 'R416 登记为越界未做，R420 已改口收口：改口那一枚今天写着 alert_row_scope_sql。注释那句说的是「走那道门」= 调用点，故本条钉 _alert_counts 内部那一发，不钉定义。',
   },
   {
     id: '乙-15 GET /alerts 的那条告警门',
     file: DASHBOARD,
     cited: 'alerts.py',
-    numbers: [925],
-    finders: [{ label: '_require_alert_management 的定义', pattern: '^def _require_alert_management\\(' }],
-    debt: true,
-    note: '越界未做：925 今天是一次巡检里的空行，与告警门无关（定义在 382，GET /alerts 那发在 1085）。写域不在 R416，登记待派。',
+    numbers: [1085],
+    finders: [{
+      label: 'GET /alerts 处理函数里那一发 _require_alert_management',
+      pattern: '_require_alert_management\\(request',
+      after: '^async def list_alerts\\(',
+      contains: ['principal = _require_alert_management(request, ALERT_LEDGER_RESOURCE)'],
+    }],
+    note: 'R416 登记为越界未做，R420 已改口收口：改口那一枚是巡检里的空行。注释那句「都走 _require_alert_management」说的是调用点，本条与乙-14 同一口径钉 GET /alerts 处理函数内那一发——定义是另一枚位置，两边不许各指一处。',
   },
 ]
 
@@ -395,7 +402,9 @@ describe('R416 甲 · 两枚文件里的 path:line 一枚都不许落在账外',
     expect(claim, 'header 里那句 debt 自述被改没了：删 prose 不算把账摘掉').toBeTruthy()
     const debtCount = LEDGER.filter(entry => entry.debt).length
     expect(Number(claim[1]), 'header 自述 debt ' + claim[1] + ' 枚，现读 LEDGER 是 ' + debtCount + ' 枚：改台账就得改这句').toBe(debtCount)
-    expect(debtCount, 'debt 已清零却还留着这句自述：越界登记收完了就把 header 一起改口').toBeGreaterThan(0)
+    // R420 收紧成棘轮：越界登记从「先记着以后修」改成「进门先经总控批准」。
+    // 要新增一条 debt，先拿到批准再来动这一行；放宽它等于回到 R416 之前的老病 —— 假坐标在册上过夜。
+    expect(debtCount, 'LEDGER 里攒了 ' + debtCount + ' 枚 debt 登记：R420 起越界坐标必须先经总控批准才许入账，不再允许先记着以后修').toBe(0)
   })
 })
 

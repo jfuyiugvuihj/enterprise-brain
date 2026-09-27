@@ -1,7 +1,7 @@
 /**
  * R267 · 块 A 判据④（G13）的反证钉：屏幕正文里不许出现源码路径与 HTTP 路由
  *
- * 缺口清单 §4.2 的取证口径：DashboardPanel.vue:175 那句 `.demo-note` 把
+ * 缺口清单 §4.2 的取证口径（锚 1142c27 的历史坐标，今日该行已不是这一句）：DashboardPanel.vue:175 那句 `.demo-note` 把
  * 「前端常量 src/devFixtures/dashboard-demo.js」和「GET /api/v1/dashboard/summary」
  * 直接印在了员工屏幕上。这条判据的修法只有两种许可：删掉技术细节，或挪进 `<details>`——
  * 但 `<details>` 的正文同样是 DOM 里的可见文本，所以本件的取证一律覆盖整段渲染产物，

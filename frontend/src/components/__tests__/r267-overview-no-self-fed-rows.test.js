@@ -50,7 +50,7 @@ function axiosError(status, detail) {
   return { response: { status, data: { detail } } }
 }
 
-/** 无告警读权：后端把整个键省掉（app/api/v1/dashboard.py:137-139），不是给 0 也不是给 null。 */
+/** 无告警读权：后端把整个键省掉（app/api/v1/dashboard.py:318-320），不是给 0 也不是给 null。 */
 function summaryBodyWithoutAlerts() {
   const body = summaryBody()
   delete body.alerts

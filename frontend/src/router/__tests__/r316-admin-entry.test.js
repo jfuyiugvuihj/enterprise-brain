@@ -10,7 +10,7 @@
  *     接线只改一处，不在壳层里再抄一份「谁能看见什么」。
  *
  * 为什么入口规则只认角色名一枚，而不在前端建第二套权限表：能不能读只在服务端那道
- * ACTION_MANAGE_USERS 闸上说（app/api/v1/auth.py:93、app/common/policy.py:44/:95、
+ * ACTION_MANAGE_USERS 闸上说（app/api/v1/auth.py:106、app/common/policy.py:44/:95、
  * app/common/permissions.py:15 只有 admin 名下有这一项），前端把它抄一份就是两份真源。
  * 最后那枚钉子钉的是「接线之后仍然不许在壳层里长出一张权限表」。
  */
