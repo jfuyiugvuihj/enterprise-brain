@@ -3745,3 +3745,22 @@ V2 波次一/二到今天并树的**能面**：R288 前端块 E、R291 后端原
 - 恢复：`resume_agent`（批量，不算投递）+ `send_input` 每 block 一枚，复投同一枚同一树。🔴 禁止改用 `spawn_agent` 重来，那会造出同单双 Agent（事故 #14 那一类，已记五次）。
 - 复投词四件套：说明是中断不是判据没过 / 把它的盘上残局 numstat 原文抄回去 / 命令它先自证没停在半套并报"已翻几枚、未翻几枚" / 句末写"重复送达按一次处理"。
 - 本次残局逐枚现取：`be-r306` 11 件（含 `chat.py 1/1`）·`be-r336` 两件+新尺子·`be-r314` 两 vue+新钉·`be-r339` 驱动器 178/30·`be-r333` 零改动·`be-r338` 一枚临时件。无一枚停在"摘刀未还原"，但也无一枚自证过，故一律先要自证。
+
+## §109（09-27 第二格·总控）：并树三枚（R347 / R337 / R349）+ 自办 R355 · 新立案 R351-R357 · 🔴 五枚门红的机制账见看板 §4CX
+
+**本格结案（判据正文在此，派工摘要在看板 §0）**
+
+- **R347**（`5084fdf`，Volta）：上传回执 `pdf_extraction.degradation_note` 不再按页复述同一条原因。具名常量 `PDF_DEGRADATION_PAGE_LIST_CAP = 10`（`app/api/v1/chat.py:3855`），同因分组、页码只列前十枚并以「等 N 页」收口；300 页同因现场 6802 -> **62 chars**。🔴 `app/rag/loader.py` 逐字零改动（逐页那本账仍是唯一事实源，不许有人把「哪几页坏了」问不出来）；键集合与基点逐字相同（10 枚）。遗留 ⇒ **R353**（400 枚各不相同 reason 时长度不有界，走恒等路径原样搬尺子句）。
+- **R337**（`aefa3ce`，Harvey）：数据集两处出口（`app/api/v1/data.py` 上传回执 / `/preview`）第一次都答 `owner_id`，🔴 全文件只许一套读法——AST 尺子禁 `.owner_id` 直读、要求同源 helper 恰好一次且**参数原文**是手上那枚对象。零新增查询（`get_active_by_filename` 25 == 25、`authorization_decision` 21 == 21）。`classification` 按判据**刻意不补**并有钉住现状（预览是行级内容视图，把文件级密级并列在已过滤的行旁边会被读成「这些行是 X 密级」——要不要摊是总控/业主裁定）。遗留 ⇒ **R354**（`data.py:434` delete 路由为审计载荷仍直读 `record.owner_id`，可携带注册表原始 `""`）。
+- **R349**（`87cc617`，Singer）：迁移尾号从八份手抄收成**一枚定义 + 八处 import**（真源 `tests/test_r349_catalog_tail_ledger.py:42/:43`）。🔴 引信不许拆：假 `0017_*.sql` 进门 ⇒ 只红在它那一枚自校验钉，消息直接端出「下一步只有一处可改」；也不许把常量写成 `MIGRATIONS[-1]` 派生式（尾号账会跟着现实浮动）。连续性那半条一枚未摘（三处 `range(1, int(CATALOG_TAIL_VERSION) + 1)`）。`test_r120_clean_install_first_boot.py:303` 那六枚**保留字面量**——名册每行配一枚主题点名，收进 import 等于摘掉「下一版必须回来指名」。明写三枚废钉（`versions == sorted(versions)` 两半由 loader 保证、`>= "0009"` 恒真）只报不摘。
+- **R355**（`d01d282`，总控自办）：见看板 §4CX.4。前端 `SCAN_REASON_MESSAGES` 补 `all_data_files_unreadable`，并把 `insight-alerts.test.js:962` 那枚手抄名单改成**同源派生**（读 `git show` 的 git 对象而不是工作树副本，🔴 解析不到就抛红、不许退化成空对账；比对仍是双向逐字相等）。
+
+**在途六枚（写域已在看板 §0 逐行登记，此处只记判据要点）**
+
+- **R346**（Mencius）：`test_r238_bare_connect_ratchet.py` 那枚按**行号**钉 `monitoring.py` 的常量必须改成派生——「手抄今天的账」一律从 `readings(pristine)` 派生再冻结，🔴 冻结的 `HISTORICAL` 只准当历史素材读，不许出现在任何与现场比对的等号两侧；不许手改 45->52、不许 skip/xfail、不许删件。第一笔交付因新钉自己犯了同一种病被退回。
+- **R351 + R352**（Sobel）：`test_r298_ocr_channel.py:243` 抄 `chat.py` 字面文本 ⇒ 换**形状判据**（保护「字节真的交给 `load_document` 解析、且解析在 `asyncio.to_thread` 里」，参数表允许演进；摘调用 / 改同步 await 两种变异都必须红，🔴 不许放宽成"文件里提到 `load_document` 就算绿"）。`test_r304_table_wiring.py:747` 抄 `tables.py` 的 sha256 ⇒ 期望值不再抄裸 hex，改成 `sha256(git show <ANCHOR_SHA>:app/rag/tables.py)` 现算，`ANCHOR_SHA` 是具名常量（本单取 `58111c9`，即 R331 那次有意改动）；🔴 另加漂移自校钉：锚点挪到不含该改动的提交（`72a9bdc`）必须红、挪到 `58111c9` 必须绿，证明锚点是被读的而不是装饰；不许就地重录今天的 hex。硬判据：`git diff --numstat aefa3ce -- app/` 必须为空。
+- **R342**（Galton）：一枚 legacy 空 `created_at` 不该把整张「数据趋势」卡打死成 503。🔴 三张脸必须分开——①登记行根本没记时间 ⇒ 新的「无期间」显式出口；②可见列表里文件名没有 active 行（两次读互相矛盾）⇒ **继续拒答**并有钉证明仍拒答；③时间记了但解析不出来 ⇒ 单列。守恒等式「各桶之和 + 无期间 = `/summary` 同一人同一范围」必须仍然成立且被实测钉住；真 `storage_unavailable` 仍是 503；零新增错误码、零迁移；🔴 前端只搬运服务端给的数，绝不在浏览器里算第二本账。
+- **R356 + R357**（Moseley）：`app/common/auth.py:535-536` 把 `_memory_store_denied("user listing")` 翻译成 `return []`——同一个事实写侧答 `production_user_store_unavailable`、读侧伪装成"这家公司没有用户"，而 `GET /users` 的消费端（R316 新屏）只能画「回包里没有行」。要求：路由答仓里已有的 `503 storage_unavailable`（🔴 零新增错误码，前端那张 503 脸逐字等这个词），「真没用户」与「存储不可用」两张脸各有一枚钉且措辞不共用，调用点必须逐处显式处理、不许让异常从缝里漏成 500。R357：角色名单四本账（`permissions.py` 4 枚 / `auth.py:552` 3 枚 / `auth.py:599` 3 枚 / `sso.py:4` 3 枚 / `rbac.py:31` 3 枚）收成一处真源 + 三处 import，🔴 **本单不放宽准入**（可创建集合仍是三枚），"auditor 为什么不在里面"改成两枚「差集恰好 auditor 一枚」的钉 + 一句人话理由；`clearance_for()` 那个 `.get(role or "staff", 1)` 的静默兜底**只记事实不改行为**（密级口径 = H13，业主未定）；零新配置项——🔴 不许用 `ALLOW_AUDITOR_ROLES` 这种开关把决定藏进环境变量。
+- **R316**（Sartre）／**R348**（Hume）：两枚前端单，判据与退回项逐条见看板 §0 对应行 + §4CX.5。R348 的契约那一格已退回（改了 R344 历史行、且没写自己那一节），留档一句：**杀历史假话的合法位置是新节开头，不是历史节正文**。
+
+**下一格开工前先读**：门里还差 R346 + R351 + R352 三枚才算真绿；🔴 新规矩「并树动过 `app/**` 行数或被 sha/行号钉着的生产件 ⇒ 主树点名跑 `test_r238`/`test_r251`/`test_r304`/`test_r298`/`test_r32`」；派工一律要逐枚列点名件读数，总数不收；事故号已改记 **#53**（休眠那一格），别再顺着上一班的 #21 写。
