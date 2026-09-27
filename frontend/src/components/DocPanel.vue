@@ -952,7 +952,7 @@ onDeactivated(stopUploadPoll)
     <div class="panel-hd">
       <div class="panel-hd-left">
         <span>📁</span>
-        <strong>知识库</strong>
+        <strong>喂料</strong>
         <span class="badge">{{ docs.length }}</span>
       </div>
 
