@@ -43,16 +43,20 @@ const R288_FILES = [
  *   挡在前一棒的那把「用源码正则当验收」的刀已经改口：src/__tests__/r278-topbar.test.js
  *   现在量的是渲染产物（挂一次真壳层、数屏上真的 <button>、逐枚读它挂的 onClick），
  *   不再数 App.vue 源码里的 `<button` 开标签；四条各自改口的理由与原意逐条写在那件文件里。
- *   DashboardPanel.vue 那 9 枚按派工留给下一棒，这一格一枚都不许多长出来。
- *   R341 收了第一棒（2026-09-26）：卡头「去上传数据 ›」接上 ./ui 的 UiButton，本行 9 → 8，
- *   合计 9 → 8。这是**降债不是放宽**——棘轮的值变小意味着要求变严，两格都同向改小。
+ *   DashboardPanel.vue 那一格当时按派工留给下一棒（2026-09-26，其时本行 9）；R341 收了第一棒：
+ *   卡头「去上传数据 ›」接上 ./ui 的 UiButton，那一棒本行 9 → 8、合计 9 → 8。这是**降债不是放宽**
+ *   ——棘轮的值变小意味着要求变严，两格都同向改小。上面两句都是当时那一棒的账，不是今天的现值；
+ *   这一格一枚都不许多长出来。
+ *   改口（2026-09-28 · R410 并树 @ 73dd85f）：余下 8 枚已全接进 ./ui 的 UiButton，本行 8 → 0、
+ *   合计 8 → 0；两格现值由本仓唯一量具 r288-native-button-scan.js 现扫现取（欠账表为空、合计 0）。
  */
 const DEBT_RATCHET = {
   'App.vue': 0,
   'components/DashboardPanel.vue': 0,
   'components/SourceCard.vue': 0,
 }
-// 8 = 现取 DashboardPanel.vue 8 枚（R341 收掉卡头那一枚），贴边。任何一格改大、合计改大，乙组那条与下面两枚一起红。
+// 0 = 现取全仓 0 枚（R410 @ 73dd85f 收掉 DashboardPanel.vue 最后 8 枚；2026-09-28 由本仓唯一量具
+//     r288-native-button-scan.js 现扫现取，欠账表为空），归零贴边。任何一格改大、合计改大，乙组那条与下面两枚一起红。
 const DEBT_TOTAL_RATCHET = 0
 
 const formatRows = rows => rows.map(row => row.file + '  ' + row.count + ' 枚').join('\n')
@@ -146,11 +150,11 @@ describe('乙 · G20：判据点名的六枚文件裸按钮归零，且真的接
       return Number(m[1])
     }
     expect(perFile('App.vue'), 'App.vue 的格位被改大（R307 第二棒已收到 0）').toBeLessThanOrEqual(0)
-    expect(perFile('components/DashboardPanel.vue'), 'DashboardPanel 的格位被改大（R341 已收到 8）').toBeLessThanOrEqual(8)
+    expect(perFile('components/DashboardPanel.vue'), 'DashboardPanel 的格位被改大（R410 @ 73dd85f 已收到 0）').toBeLessThanOrEqual(0)
     expect(perFile('components/SourceCard.vue'), 'SourceCard 的格位被改大（R307 已收到 0）').toBeLessThanOrEqual(0)
     const totalLine = /const DEBT_TOTAL_RATCHET = (\d+)/.exec(self)
     expect(totalLine, '合计棘轮那一行被改了形状或被摘了').toBeTruthy()
-    expect(Number(totalLine[1]), '全仓裸按钮合计棘轮被改大（现取就是 DashboardPanel 那 8 枚，贴边）').toBeLessThanOrEqual(8)
+    expect(Number(totalLine[1]), '全仓裸按钮合计棘轮被改大（量具现取全仓 0 枚，贴边）').toBeLessThanOrEqual(0)
   })
 
   it('棘轮与现取对得上：欠账表里 App.vue 与 SourceCard 都不许再出现，合计一格不差等于上限', () => {
