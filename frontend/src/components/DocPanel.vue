@@ -1647,7 +1647,11 @@ onDeactivated(stopUploadPoll)
 /* ===== 上传密级这一格（R313 格一） =====
    色值只引 theme.css 里已有的 token（--muted / --surface-2 / --line-strong），本单不新增、
    不改值：lint:colors 的 148 枚告警已顶满，多一枚就是违约（判据①）。
-   控件形状照 ChatPanel 的 .lane-picker（原生 select 已有先例，不新造一档控件高度）。 */
+   控件形状照 ChatPanel 里那枚档位选择器（原生 select 已有先例，不新造一档控件高度）。
+   措辞改口的理由（R350，2026-09-27）：这一格与档位语义毫无关系，只是抄形状；而
+   tests/test_r32_lane_contract.py:659 拿 \blane\b 全仓扫「提档位的发货源件」，必须逐名
+   等于 R141 那份名单——一句无关注释里的 CSS 类名把它顶红了（本格第四枚门红）。正解是改
+   这句无关注释，不是往名单里加一件根本不发货的源件（那才是真放宽）。 */
 .classification-bar {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   margin: 0 0 8px; font-size: 11px;
