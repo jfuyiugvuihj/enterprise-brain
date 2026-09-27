@@ -11,6 +11,7 @@
 import os
 import json
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from itertools import islice
 from pathlib import Path
@@ -61,8 +62,47 @@ def _is_production_environment() -> bool:
     return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
 
 
-def _require_ready_store(operation: str) -> None:
+class AlertSchemaNotMigratedError(RuntimeError):
+    """生产库里该由 migrations 建的那枚表/列不在——本模块三句 "run migrations first" 的唯一类型。
+
+    故意做成 ``RuntimeError`` 的子类而不是替换它，也没有新造第二份基类语义（同
+    ``app/storage/pending_approvals.py:140`` 那条既有裁定）：写侧的既有断言钉的就是基类
+    （``pytest.raises(RuntimeError, match=...)``：``tests/test_memory_production_schema.py:83``、
+    ``tests/test_r184_alerts_department_column.py:420``、``tests/test_r176_alert_row_scope.py:469``），
+    具名化只许加一层，不许把旧账弄红。三句消息文本一个字都不改，改的只有「谁能接住它」。
+
+    存在的意义是让 **HTTP 出口** 能只接这一种错：把任何 RuntimeError 都翻成 503，等于替真正的
+    bug 打掩护——驱动缺失、以及本件 ``_dispose_alert`` 那句「写成了却读不回来」都会跟着洗白。
+    """
+
+
+#: 三格缺口的排查路各不相同，日志必须分开说：缺表跑 0003、缺归属列跑 0012、缺处置列跑 0014。
+#: 键与上面那三句消息的开头逐字对齐，值是 migrations/ 目录里真存在的文件名（有钉对账存在性，
+#: 也判「三格解析出的迁移两两不同」）。响应侧三格共用同一枚 503 ``storage_unavailable``
+#: （零新增错误码是本单硬规矩），能把它们分辨开的只有这一行日志。
+MIGRATION_REQUIRED_HINTS: dict[str, str] = {
+    "alert_rules table": "migrations/0003_legacy_runtime_tables.sql",
+    "alerts table": "migrations/0003_legacy_runtime_tables.sql",
+    "alerts.department column": "migrations/0012_alert_and_pending_approval_attribution_columns.sql",
+    "alerts.status column": "migrations/0014_alert_disposal_columns.sql",
+}
+
+
+def migration_hint_for(message: str) -> str:
+    """这一句 "run migrations first" 该去看哪一枚迁移文件；认不出来就明说 unknown。"""
+    for schema_object, migration in MIGRATION_REQUIRED_HINTS.items():
+        if message.startswith(f"{schema_object} "):
+            return migration
+    return "unknown"
+
+
+def _require_ready_store(operation: str, *, migrations_missing: bool = False) -> None:
     """生产环境 + 存储未就绪 = 这一条腿拒答，不许退回进程内台账（R359）。
+
+    ``migrations_missing``（R371）是同一道门上的第二种「没就绪」：库连着、旗标也翻到了 True，
+    可 ``_ensure()`` / ``_require_alert_disposal_schema`` 已经现查到该由 migrations 建的表或列
+    不在。它不新增判定，只是把那次现查的结论递给这道已有的闸——全模块那枚 503 仍然只在这儿
+    抛出（``tests/test_r359_alerts_refuse_a_store_that_is_not_there.py`` 按 AST 数 503 出口）。
 
     判的两件事都是本件既有的读数，一枚都不新造、也不另算一遍: 库在不在取
     ``_database_available()``（本模块唯一那枚探针），是不是生产取
@@ -84,13 +124,40 @@ def _require_ready_store(operation: str) -> None:
     读写之前: 先答「你是谁、这件事你能不能做」，再答「这台机器的库在不在」。反过来就把 401 /
     403 与 503 之差做成了一枚「这家客户起没起 PG」的探针，而那不是调用方的信息。
     """
-    if _database_available() or not _is_production_environment():
+    if (_database_available() and not migrations_missing) or not _is_production_environment():
         return
     logger.warning(
         f"[Alert] 生产环境存储未就绪，这一条腿拒答而不是回内存台账: operation={operation} "
         "code=storage_unavailable（PG 未起或迁移未跑）"
     )
     raise HTTPException(status_code=503, detail="storage_unavailable")
+
+
+@contextmanager
+def _migrations_first_at_http_exit(operation: str):
+    """把「生产库没迁移」这一类错在 **HTTP 出口** 翻成已有的那道 503，而不是裸 500（R371）。
+
+    只接 ``AlertSchemaNotMigratedError`` 一种：判据要求转换做窄，宽捕获（``except Exception`` /
+    ``except RuntimeError``）会把真正的 bug 一起翻成 503，替它打掩护。
+
+    只做在出口这一层：``_ensure()`` 与 ``_require_alert_disposal_schema()`` 继续抛
+    ``RuntimeError``——既有钉打的就是那一层（``pytest.raises``），把它们改成 ``HTTPException``
+    就是改别人的账。这里也不新抛第二枚 503：它把结论交给 ``_require_ready_store``，
+    全模块那道存储门仍然只有一扇。
+
+    开发态一个字都不改：``_ensure()`` 的非生产分支就地补 DDL 自愈，``_require_alert_disposal_schema``
+    在非生产直接 return，两格都到不了这里；万一到了（只有消息同族而环境不是生产），闸门不回话，
+    原样 ``raise`` 上抛——那一格不是部署缺口，不许被洗成 503。
+    """
+    try:
+        yield
+    except AlertSchemaNotMigratedError as exc:
+        logger.warning(
+            f"[Alert] 生产库缺该由迁移建的表/列，出口按存储拒答而不是裸 500: operation={operation} "
+            f"code=storage_unavailable migration={migration_hint_for(str(exc))} reason={exc}"
+        )
+        _require_ready_store(operation, migrations_missing=True)
+        raise
 
 
 #: 处置闭环（R251）落在 alerts 行上的八枚列，自建库（非生产）就地补的 DDL。逐枚写死而不是拼
@@ -117,7 +184,9 @@ def _ensure():
             for table_name in ("alert_rules", "alerts"):
                 row = conn.execute(f"SELECT to_regclass('public.{table_name}') AS table_name").fetchone()
                 if not row or row["table_name"] is None:
-                    raise RuntimeError(f"{table_name} table is required in production; run migrations first")
+                    raise AlertSchemaNotMigratedError(
+                        f"{table_name} table is required in production; run migrations first"
+                    )
             # 行级归属依赖 alerts.department。生产库的 schema 只由 migrations 负责，本件
             # 不在这儿偷偷 ALTER，所以缺列要像缺表一样当场讲清楚，而不是让读路径撞一个
             # ``column "department" does not exist`` 的 500。
@@ -127,7 +196,7 @@ def _ensure():
             ).fetchone()
             # 有行就是列在，没行就是列缺 —— 只认这一件事，不猜驱动返回的键名。
             if not column:
-                raise RuntimeError(
+                raise AlertSchemaNotMigratedError(
                     "alerts.department column is required in production; run migrations first"
                 )
             _initialized = True
@@ -570,7 +639,9 @@ def _require_alert_disposal_schema(conn) -> None:
         (ALERT_DISPOSAL_SCHEMA_COLUMN,),
     ).fetchone()
     if not column:
-        raise RuntimeError("alerts.status column is required in production; run migrations first")
+        raise AlertSchemaNotMigratedError(
+            "alerts.status column is required in production; run migrations first"
+        )
 
 
 def _refuse_alert_disposal(principal, code: str, status_code: int) -> None:
@@ -961,14 +1032,15 @@ async def create_rule(data: RuleCreate, request: Request = None):
         _MEM_NEXT_RULE_ID += 1
         _MEM_RULES.append(rule)
         return {"id": rule["id"], "status": "ok"}
-    _ensure()
-    with _conn() as conn:
-        cur = conn.execute(
-            "INSERT INTO alert_rules (name, metric, op, threshold) VALUES (%s, %s, %s, %s) RETURNING id",
-            (data.name, data.metric, data.op, data.threshold),
-        )
-        rid = cur.fetchone()["id"]
-        conn.commit()
+    with _migrations_first_at_http_exit("create_rule"):
+        _ensure()
+        with _conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO alert_rules (name, metric, op, threshold) VALUES (%s, %s, %s, %s) RETURNING id",
+                (data.name, data.metric, data.op, data.threshold),
+            )
+            rid = cur.fetchone()["id"]
+            conn.commit()
     return {"id": rid, "status": "ok"}
 
 
@@ -978,9 +1050,10 @@ async def list_rules(request: Request = None):
     _require_ready_store("list_rules")
     if not _database_available():
         return {"rules": [dict(rule) for rule in _MEM_RULES]}
-    _ensure()
-    with _conn() as conn:
-        rows = conn.execute("SELECT * FROM alert_rules ORDER BY id").fetchall()
+    with _migrations_first_at_http_exit("list_rules"):
+        _ensure()
+        with _conn() as conn:
+            rows = conn.execute("SELECT * FROM alert_rules ORDER BY id").fetchall()
     return {"rules": [dict(r) for r in rows]}
 
 
@@ -992,10 +1065,11 @@ async def delete_rule(rule_id: int, request: Request = None):
         before = len(_MEM_RULES)
         _MEM_RULES[:] = [rule for rule in _MEM_RULES if rule["id"] != rule_id]
         return {"status": "ok" if len(_MEM_RULES) < before else "not_found"}
-    _ensure()
-    with _conn() as conn:
-        cur = conn.execute("DELETE FROM alert_rules WHERE id = %s", (rule_id,))
-        conn.commit()
+    with _migrations_first_at_http_exit("delete_rule"):
+        _ensure()
+        with _conn() as conn:
+            cur = conn.execute("DELETE FROM alert_rules WHERE id = %s", (rule_id,))
+            conn.commit()
     return {"status": "ok" if cur.rowcount else "not_found"}
 
 
@@ -1022,15 +1096,16 @@ async def list_alerts(request: Request):
             )
         )
         return {"alerts": visible}
-    _ensure()
-    predicate, params = alert_row_scope_sql(principal)
-    sql = " ".join(
-        part
-        for part in ("SELECT * FROM alerts", predicate, "ORDER BY id DESC LIMIT 100")
-        if part
-    )
-    with _conn() as conn:
-        rows = conn.execute(sql, params).fetchall()
+    with _migrations_first_at_http_exit("list_alerts"):
+        _ensure()
+        predicate, params = alert_row_scope_sql(principal)
+        sql = " ".join(
+            part
+            for part in ("SELECT * FROM alerts", predicate, "ORDER BY id DESC LIMIT 100")
+            if part
+        )
+        with _conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
     return {"alerts": [dict(r) for r in rows]}
 
 
@@ -1058,9 +1133,10 @@ async def get_alert(alert_id: int, request: Request):
     principal = _require_alert_management(request, ALERT_LEDGER_RESOURCE)
     _require_ready_store("get_alert")
     if _database_available():
-        _ensure()
-        with _conn() as conn:
-            row = _alert_row_from_connection(conn, principal, alert_id)
+        with _migrations_first_at_http_exit("get_alert"):
+            _ensure()
+            with _conn() as conn:
+                row = _alert_row_from_connection(conn, principal, alert_id)
     else:
         row = _alert_row_from_memory(principal, alert_id)
     if row is None:
@@ -1076,7 +1152,9 @@ async def acknowledge_alert(alert_id: int, request: Request):
     等于把台账上唯一那句关于认领的话改成最后一个人的。要改的是转派，不是重写确认。
     """
     principal = _require_alert_management(request, ALERT_DISPOSAL_RESOURCE)
-    return {"alert": _dispose_alert(principal, alert_id, ALERT_ACTION_ACK)}
+    with _migrations_first_at_http_exit("acknowledge_alert"):
+        alert = _dispose_alert(principal, alert_id, ALERT_ACTION_ACK)
+    return {"alert": alert}
 
 
 @router.post("/alerts/{alert_id}/close")
@@ -1087,7 +1165,9 @@ async def close_alert(alert_id: int, request: Request):
     在台账上多写一笔他没做过的事。关完之后这一条就不再是任何动作的合法起点。
     """
     principal = _require_alert_management(request, ALERT_DISPOSAL_RESOURCE)
-    return {"alert": _dispose_alert(principal, alert_id, ALERT_ACTION_CLOSE)}
+    with _migrations_first_at_http_exit("close_alert"):
+        alert = _dispose_alert(principal, alert_id, ALERT_ACTION_CLOSE)
+    return {"alert": alert}
 
 
 @router.post("/alerts/{alert_id}/assign")
@@ -1098,4 +1178,6 @@ async def assign_alert(alert_id: int, data: AlertAssignCreate, request: Request)
     都没有它。接手的本人仍然要自己确认一次，确认人才算落在他身上。
     """
     principal = _require_alert_management(request, ALERT_DISPOSAL_RESOURCE)
-    return {"alert": _dispose_alert(principal, alert_id, ALERT_ACTION_ASSIGN, data.assignee)}
+    with _migrations_first_at_http_exit("assign_alert"):
+        alert = _dispose_alert(principal, alert_id, ALERT_ACTION_ASSIGN, data.assignee)
+    return {"alert": alert}

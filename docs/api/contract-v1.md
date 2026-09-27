@@ -4237,3 +4237,104 @@ of copying (`test_every_production_name_refuses`) and the byte shape of every fi
   `get_alert` directly (R359's own registration). Recorded here only so the next reader does not
   look for a fourth leg: the inbox is not built on `/dashboard`, and nothing in this section
   changes what the inbox answers.
+
+## A store that still needs its migrations answers 503 as well (2026-09-27, R371)
+
+The section above closed with one sentence left unpinned and unfaced. `app/api/v1/alerts.py` carries three
+`RuntimeError(... "run migrations first")` refusals -- positions read from base `b291324`: `:120` a missing
+table (`alert_rules` / `alerts`), `:131` a missing `alerts.department`, `:573` a missing `alerts.status`.
+(The `:88 / :98 / :541` in the paragraph above are those same three sentences as of R359's own base; the
+roster of sentences has not changed.) Two of them had test pins. The third -- `_require_alert_disposal_schema`,
+whose single call site was `_dispose_alert:635`, i.e. exactly the 「处置一条告警」 action -- had **zero pins in
+the repository** (`git grep "status column" -- tests` and `git grep -l "_require_alert_disposal_schema"` both
+hit `alerts.py` alone), and `git grep exception_handler -- app` hit nothing, so any of the three escaping to an
+HTTP exit left FastAPI to produce an anonymous `500`: no stable code, no human sentence, and no 「run 0014」
+for the operator. `alerts.py:410` said the status leg behaves 「像缺归属列一样」; the department leg had both a
+tight pin and an HTTP face, the status leg had neither. That gap is what this section closes.
+
+### The translation lives at the exit, not in the probe
+
+Positions in this subsection are read from `app/api/v1/alerts.py` as delivered by this ticket.
+`_migrations_first_at_http_exit(operation)` (`:137`) is the whole mechanism: a context manager wrapped around
+the schema-touching statements inside the eight route functions that can reach one of the three sentences. It
+catches **one** type and hands the conclusion to the gate that already exists:
+
+- `AlertSchemaNotMigratedError` (`:65`) is the new name of exactly those three sentences. It is a subclass of
+  `RuntimeError`, not a replacement -- the same ruling `app/storage/pending_approvals.py:140` already records:
+  the existing assertions pin the base class (`pytest.raises(RuntimeError, match=...)`), so naming may only
+  add a layer. **The three message texts are byte for byte unchanged**; the tight pin that matches a whole
+  sentence (`tests/test_r184_alerts_department_column.py:420`) still matches.
+- `_ensure()` (`:178`, raising at `:187` and `:199`) and `_require_alert_disposal_schema()` (`:632`,
+  raising at `:642`) keep raising
+  `RuntimeError`. They are the probe layer, and that is where the existing pins live. Converting there would
+  be rewriting somebody else's ledger.
+- The refusal is `503 storage_unavailable`, produced by the **existing** `_require_ready_store` gate (`:99`),
+  now reachable through its `migrations_missing=True` keyword. The module still contains exactly one
+  `status_code=503` raise point and it is still inside that gate: R371 borrowed the door, it did not build a
+  second one. **Zero new error codes** -- the same word is already emitted by `app/api/v1/dashboard.py:150`,
+  `app/api/v1/notifications.py:161`, `app/api/v1/chat.py:3037` and R359's gate, and 「the tables and columns
+  are not there yet」 is exactly what that code already means.
+- The capture is narrow on purpose (`tests/test_r371_the_conversion_is_narrow_and_stays_at_the_exit.py` pins
+  the shape, `tests/test_r371_migrations_first_answers_503_not_500.py` pins the behaviour). A missing driver,
+  or `_dispose_alert`'s 「wrote a row that cannot be read back」 (`:733`), is still a plain `RuntimeError` and
+  still leaves a 500: translating every runtime error into 503 would hand a real bug an infrastructure alibi.
+- 401 and 403 still come first. Every conversion sits after `_require_alert_management`, so an anonymous or
+  staff-level caller still gets `authentication_required` / `permission_denied`, never a status code that
+  leaks whether this install has run its migrations.
+
+### Which sentence reaches which exit (evidence, not a blanket claim)
+
+「All three sentences produce a bare 500」 would be false. Nine exits, three gaps:
+
+| Exit | missing table (`:120` at base) | missing `alerts.department` (`:131`) | missing `alerts.status` (`:573`) |
+| --- | --- | --- | --- |
+| `POST /alerts/rules` `create_rule` | bare 500 -> `503` | bare 500 -> `503` | not on this path (200) |
+| `GET /alerts/rules` `list_rules` | bare 500 -> `503` | bare 500 -> `503` | not on this path (200) |
+| `DELETE /alerts/rules/{id}` `delete_rule` | bare 500 -> `503` | bare 500 -> `503` | not on this path (200) |
+| `GET /alerts` `list_alerts` | bare 500 -> `503` | bare 500 -> `503` | not on this path (200) |
+| `GET /alerts/{id}` `get_alert` | bare 500 -> `503` | bare 500 -> `503` | not on this path (200) |
+| `POST /alerts/{id}/ack` `acknowledge_alert` | bare 500 -> `503` | bare 500 -> `503` | **bare 500, unpinned -> `503`** |
+| `POST /alerts/{id}/close` `close_alert` | bare 500 -> `503` | bare 500 -> `503` | **bare 500, unpinned -> `503`** |
+| `POST /alerts/{id}/assign` `assign_alert` | bare 500 -> `503` | bare 500 -> `503` | **bare 500, unpinned -> `503`** |
+| `POST /alerts/check` `check_now` | swallowed at `:891` (`except Exception`, falls back to memory rules) | swallowed at `:891` | not on this path (200) |
+
+`check_now` deliberately got no conversion: its `_ensure()` sits inside `evaluate_all`, whose broad catch is
+pinned 「never raises」 by `tests/test_r345_unreadable_data_files_are_counted.py:394`, and the sweep's own
+storage face is the R359 gate. Wrapping it would have installed a door that can never be reached. On the same
+broken install the sweep still dies further down, at `alerts.py:928` (`SELECT * FROM alert_rules`), with a
+driver error -- that is not one of the three sentences, so it is registered below instead of being folded
+into this ticket.
+
+### The three gaps stay three different jobs
+
+All three now answer the same `503 storage_unavailable` (a closed enumeration, zero new codes), so the
+response is not what separates them. What does is the sentence and, on the operator's side, one log line per
+refusal naming the migration file: `MIGRATION_REQUIRED_HINTS` (`:83`) maps 「`alert_rules` / `alerts` table」
+to `migrations/0003_legacy_runtime_tables.sql`, 「`alerts.department` column」 to
+`migrations/0012_alert_and_pending_approval_attribution_columns.sql`, 「`alerts.status` column」 to
+`migrations/0014_alert_disposal_columns.sql`; an unrecognised sentence logs `migration=unknown` rather than
+staying silent. Two corrections, both read off the repository rather than off the ticket: the department
+column is **0012**, not 0013 (0013 is the `pending_approvals` status vocabulary), and the 「nothing pins the
+missing-table sentence」 claim in the section above was already stale at `b291324` --
+`tests/test_memory_production_schema.py:83` pins it for `app.api.v1.alerts` through the `_ensure()`
+parametrization at `:72` (loosely: `match="run migrations first"`, which is also why that sentence is the one
+sentence in this family that may not be reworded by a message-text pin).
+
+### What did not move
+
+- `_ensure()`'s development branch (`:204` onward): a self-built catalogue still repairs itself in place
+  (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`), answers 200, and never sees this
+  ticket's face. What is separated is two faces, not one blanket 503 -- the same ruling as R359.
+- The three message texts, the row-scope predicate, the disposal state machine, the audit ledger, and every
+  existing pin pointed at the probe layer.
+- Registered, not touched: `check_now`'s driver-level failure (`alerts.py:928`); the two direct awaits of
+  `list_alerts` / `get_alert` inside `app/notifications/`, which on this install now propagate a `503`
+  HTTPException where they used to propagate a `RuntimeError` (both fold only 401/403/404, so the status code
+  of the alert leg reaches the inbox either way -- that module is R366's write set); the dashboard's alert
+  tiles, which read `_MEM_ALERTS` directly and therefore still show 「0 条告警」 on this install (R367's write
+  set). All three are one-line changes in files this ticket may not write.
+
+Evidence layer: every case in both new test files runs against an in-memory catalogue stand-in. No PostgreSQL,
+no container, no model port was touched -- so these pins prove 「what the exit answers when the probe reads a
+missing table or column」, and do not prove that the migrations themselves create those objects. That leg
+belongs to `tests/test_r184_alerts_department_column.py` and `tests/test_r251_alert_disposal_migration.py`.
