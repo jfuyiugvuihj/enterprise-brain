@@ -416,8 +416,20 @@ def test_the_background_turn_answers_the_owner_end_to_end(monkeypatch, tmp_path)
     from app.main import app
     from tests.test_r37_report_lane_enqueue import _ask, _data_objects, _install as _install_api, _switch, USERNAME as ENQUEUE_USERNAME
 
+    from app.common import auth as real_auth
+
     queue = ReliableQueue(FakeRedis(), name="r37-e2e", lease_seconds=30)
     api = _install_api(monkeypatch, tmp_path, queue=queue)
+    # 入队件那份 auth 桩比 R295（并树 d194d99）更早：那一单起，队列读侧的归属判定
+    # （``chat.queue_task_owner_user_id``）要先问一句"用户库此刻是哪一档"。桩答不出这一问，
+    # 端到端就在读侧炸成 AttributeError。这里补的是**本进程的真读数**——直接委托给
+    # ``app.common.auth``，替场景挑一档是把量具掰弯，答"没有这一问"是假话。
+    monkeypatch.setattr(
+        api.chat.auth,
+        "user_storage_state",
+        staticmethod(real_auth.user_storage_state),
+        raising=False,
+    )
     _switch(monkeypatch, "1")
     monkeypatch.setattr(chat, "_session_database_available", lambda: True)
 

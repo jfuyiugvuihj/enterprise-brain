@@ -35,7 +35,14 @@ except ModuleNotFoundError:  # pragma: no cover
 from app.agents.contracts import ModelTier
 from app.agents.state import AgentState, _merge_dicts
 from app.approval.assistant import build_precheck
-from app.agents.tools import search_docs, analyze_data, query_data, generate_chart, export_report
+from app.agents.tools import (
+    PRINCIPAL_PROVENANCE_KEY,
+    search_docs,
+    analyze_data,
+    query_data,
+    generate_chart,
+    export_report,
+)
 from app.agents.planner import build_task_plan
 from app.agents.nodes import (
     DECLARED_LANE_KEY,
@@ -641,6 +648,10 @@ def _make_worker_wrapper(graph, name: str):
             "department",
             "data_filename",
             "principal",
+            # R294 把签名长在 configurable 上而不是 Principal 字段里，它与 `principal` 是一对：
+            # 只搬身份不搬出处，交进子图的那份 config 就自相矛盾（一枚没人作证的 dict）。今天
+            # 这一发靠 langchain 的父 config 合并兜住，兜不住的是显式搬运本身，故成对搬。
+            PRINCIPAL_PROVENANCE_KEY,
             "request_id",
             "trace_id",
             "task_id",

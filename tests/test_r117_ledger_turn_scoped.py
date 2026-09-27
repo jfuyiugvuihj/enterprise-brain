@@ -21,12 +21,34 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import create_react_agent
 
 from app.agents import orchestrator, tools
+from app.agents.contracts import Principal
 from app.agents.state import AgentState
 from app.common.model_budget import estimate_text_tokens
 from app.rag.retrieval_pipeline import DOC_HIT_CONTENT_CHARS, context_pack_room
 
 #: 一份资料里的关键数字：判据 a 用它钉"第 4 轮仍然读得到本轮那份料"。
 KEY_FIGURE = "600"
+
+
+def _principal() -> Principal:
+    """本轮身份：交**在场请求那一臂**的真形状（一枚 ``Principal``），不交手抄 dict。
+
+    R294（并树 ``70fef378``）之后 ``configurable["principal"]`` 只认两种投影：在场请求直接下发
+    的 ``Principal`` 对象，与后台 worker 在消费时刻从用户库现取、逐维核过漂移之后交回的那一份
+    dict（后者靠随行键 ``principal_provenance=consumption-time`` 自证出处）。本件是**在场**装配
+    ——父图由测试直接 ``invoke``，等价于 ``app/api/v1/chat.py`` 那条把 ``Principal`` 放进
+    ``user_ctx`` 的路——所以交前者。一枚没人作证的 dict 在这里会被工具闸判拒，那是 R294 自己的
+    判据（``tests/test_r294_principal_freeze.py`` 钉着，本单不放宽，另由
+    ``tests/test_r395_worker_identity_handoff.py::test_an_unsigned_frozen_dict_is_still_refused_by_name``
+    从工具出口这一侧再钉一次）；本件量的是"装箱账按轮记"，它需要的是身份**在**，不是身份来路不明。
+    """
+    return Principal(
+        user_id="u-r117",
+        username="r117",
+        roles=["staff"],
+        department="财务部",
+        status="active",
+    )
 
 #: ``[PromptPack]`` 那一行的字段名（判据 c）：一枚不许改名，run3/run4 的日志口径要连续。
 PACK_FIELDS = (
@@ -161,13 +183,7 @@ def _nested_session(calls_per_turn=1, rounds=4):
                 "request_id": "req-%s-%d" % (thread_id, turn),
                 "trace_id": "trace-%s-%d" % (thread_id, turn),
                 "task_id": "task-%s-%d" % (thread_id, turn),
-                "principal": {
-                    "user_id": "u-r117",
-                    "username": "r117",
-                    "roles": ["staff"],
-                    "department": "财务部",
-                    "status": "active",
-                },
+                "principal": _principal(),
             }
         }
         state = parent.invoke(
@@ -223,13 +239,7 @@ def _tool_config(**overrides):
         "username": "r117",
         "role": "staff",
         "department": "财务部",
-        "principal": {
-            "user_id": "u-r117",
-            "username": "r117",
-            "roles": ["staff"],
-            "department": "财务部",
-            "status": "active",
-        },
+        "principal": _principal(),
         "worker": "doc",
     }
     conf.update(overrides)
