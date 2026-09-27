@@ -34,6 +34,52 @@ ENV_SAMPLES = (ROOT / ".env.example", ROOT / "deploy" / ".env.server.example")
 #: 手册按设计要提到业主机器上才有的文件。它们不进仓，所以不能拿仓库存在性去要求它们。
 OPERATOR_SIDE = frozenset({"deploy/.env.server", ".env"})
 
+#: 工单状态的唯一事实源：看板。这里**只读**它，不另抄一份名单——本仓"手抄账腐烂"已经复发到
+#: 第七次（看板 §4CX.2），所以"某一枚引用暂时不在树里"这件事不许靠测试件里的名单记账，
+#: 只许拿看板现查。
+BOARD = ROOT / "docs" / "handoff" / "2026-09-15-orchestration-board.md"
+#: 看板把"这一枚东西还没并树"写成什么样。四个状态词就是口径的全部：并树那一行落地后会
+#: 改写或另起一行，现查跟着变口，不需要谁回来改本件——所以本件**不记账面数量**，只守蕴含：
+#: 盘上没有的路径想被放行，必须能在看板里找到一行逐字含这枚完整路径、且同一行挂着状态词之一。
+#: （09-27 总控把"数量恰好一枚"那种写法退回：那是把今天的快照冒充不变量，别的单正常并树就
+#: 会把看守钉染红，本仓为这一族已经立规七次。）
+UNMERGED_MARKERS = ("未并树", "在途", "退回", "复工")
+#: 🔴 放行的匹配键是**完整路径字符串本身**，不是路径里那段单号。从 ``…/r387-…md`` 里抠出
+#: R387、再去认"看板有没有一行 R387 挂着在途"，会把同样带 rNNN 的**错字路径**一起放过去
+#: （R398 回执 ⑨ 自报的那道口子，本班按总控裁定关掉；单号只配用来说清那一行是谁的账）。
+#: §8 之后引用仓库路径的两种形状：字面路径，以及 ``tests/test_r377_*.py`` 那种省略式（glob）。
+#: 通配符必须**留在捕获里**：上一版字符类不收 ``*``，于是把 ``tests/test_r330_*.py`` 切成
+#: ``tests/test_r330_`` 再拿去问现实——那枚残缺前缀文档里根本没写过，红的是解析口径，不是事实。
+PATH_CITATION = re.compile(
+    r"`((?:app|scripts|migrations|tests|docs|deploy)/[A-Za-z0-9_./?*+-]+)")
+
+
+def _citation_is_glob(token: str) -> bool:
+    return any(char in token for char in "*?")
+
+
+def _citation_resolves(token: str) -> bool:
+    """字面路径按字面核；glob 按 glob 核：一枚都指不到就算不存在，不许当成"通配符免检"。
+
+    glob 的落点不要求是文件：``app/**`` 那种整棵目录的写法也是合法引用。本仓 .venv 实测
+    （python 3.11.7）``ROOT.glob("app/**")`` 给 40 枚目录、0 枚文件，拿 ``is_file()`` 卡它
+    会把一条真话判成假话；反过来，指不到任何东西的 glob 仍然算不存在（R398 刀 K-d）。
+    """
+    if _citation_is_glob(token):
+        return next(iter(ROOT.glob(token)), None) is not None
+    return (ROOT / token).exists()
+
+
+def _in_flight_board_line(token: str) -> str | None:
+    """盘上没有的这枚路径，看板有没有逐字记它？记着且挂着未并树状态词才交回那一行，否则 None。
+
+    匹配键是整串路径（``token in line``），不是路径里的单号：一字之差的错字路径借不到放行，
+    而文件一旦到位，存在性自己就把这一格判绿——两头都不需要谁回来删登记（R398 影子道 (d)/(c)）。
+    """
+    for line in BOARD.read_text(encoding="utf-8-sig").splitlines():
+        if token in line and any(marker in line for marker in UNMERGED_MARKERS):
+            return line
+    return None
 
 def _load_script():
     spec = importlib.util.spec_from_file_location("r120_compare_vector_recall", SCRIPT_PATH)
@@ -234,17 +280,30 @@ def test_the_runbooks_command_prefix_is_the_one_compose_documents():
 
 
 def test_every_repository_path_named_in_the_runbook_exists():
-    """文案缺陷的同一族守卫：手册里写出来的文件/脚本路径，必须真在仓里。"""
-    pattern = re.compile(
-        r"`((?:app|scripts|migrations|tests|docs|deploy)/[A-Za-z0-9_./-]+)")
-    referenced = {match.group(1) for match in pattern.finditer(_runbook())}
+    """文案缺陷的同一族守卫：手册里写出来的文件/脚本路径，必须真在仓里。
+
+    三种形状分开核，一种都不免检：
+      · 字面路径 —— 必须存在；业主机器上才有的那批（``OPERATOR_SIDE``）除外；
+      · 省略式 glob（``tests/test_r330_*.py`` 那种）—— 按通配符核，必须指得到至少一枚真文件；
+      · 字面路径不在盘上 —— 只许一种理由放行：看板里有一行**逐字含这枚完整路径**、同一行挂着
+        "未并树/在途/退回/复工"之一（在途单的交付件，09-27 的 R387 就是这一格）。清单为空就是
+        绿：本件不为"今天该有几枚在册"立任何断言，那是一枚会随别人并树腐烂的快照。
+    """
+    referenced = {match.group(1) for match in PATH_CITATION.finditer(_runbook())}
     assert referenced, "手册里一个仓库路径都没提到，说明这条守卫被掏空了"
 
-    missing = sorted(
-        relative for relative in referenced
-        if relative not in OPERATOR_SIDE and not (ROOT / relative).exists()
+    absent = sorted(
+        token for token in referenced if token not in OPERATOR_SIDE and not _citation_resolves(token)
     )
-    assert not missing, "§8 引用了不存在的路径：" + repr(missing)
+    uncorroborated = [token for token in absent if _in_flight_board_line(token) is None]
+    assert not uncorroborated, (
+        "§8 引用了不存在的路径：" + repr(uncorroborated)
+        + " —— 要么把文件并树，要么在看板里逐字记下这枚完整路径并挂上未并树状态词；"
+        "路径写错一个字也借不到放行（匹配键是整串路径，不是路径里的单号）"
+    )
+    for token in absent:
+        line = _in_flight_board_line(token) or ""
+        print(f"R120 路径账·按看板逐字记账放行：{token} ← {line[:72]}")
 
 
 def test_the_runbook_keeps_the_read_path_out_of_this_ticket():

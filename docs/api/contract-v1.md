@@ -5011,7 +5011,7 @@ r384 的门账钉一起点名，四连先例的守卫在替本单把关）。
 
 **格**：R391 并树时逐枚点名"只报不改"的那一格（上一节末尾第一条），本单治它。
 `app/documents/catalog.py` 的 `record_document_version` 尾段 `:768-772` 只把 `_schema_needs_migrations`
-（`:357`，只认 `:578` 那一句前缀）那一支带进闸，其余**任何**写失败——锁等待超时、约束冲突、断连、磁盘满、
+（`:357`，判的是 `:578` 抛出的那一句开头）那一支带进闸，其余**任何**写失败——锁等待超时、约束冲突、断连、磁盘满、
 权限——只 `logger.warning` 之后 `return metadata`（`:772`）。后果：文件已落盘、正文已进索引、`:734` 已写
 本地 sidecar，而权威表 `document_versions` 零行，出口照旧 200 且回执带 `status:"ok"` 与版本号。R391 那枚
 `except HTTPException: raise`（`app/api/v1/chat.py:3705`）接不到它——因为这一格**根本没抛**。
