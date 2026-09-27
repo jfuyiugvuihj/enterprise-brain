@@ -44,6 +44,7 @@ from fastapi.testclient import TestClient
 
 from app.common import auth
 from app.documents import catalog
+from scripts import r396_anchor_ledger as anchor_ledger
 from app.main import app
 
 REPO = Path(__file__).resolve().parents[1]
@@ -54,8 +55,19 @@ GATE_MISSING_TABLE = "code=storage_unavailable migration="
 GATE_NO_STORE = "code=storage_unavailable（PG 未起）"
 REGCLASS = re.compile(r"to_regclass\('public\.(\w+)'\)", re.IGNORECASE)
 PROBE_STATEMENT = "SELECT to_regclass('public.document_versions') AS table_name"
-#: 闸在全模块唯一那枚 503 的行号（现读；它挪了位就说明闸被人复制或搬走，本件立刻红）。
-GATE_EXIT_LINE = 405
+#: 🔴 R396 起这两本账一个行号都不抄：每格是一枚锚点 token（符号名 + 该符号内唯一的语句形状），
+#: 行号由 `scripts/r396_anchor_ledger.py` 现读，形状钉见
+#: `tests/test_r396_line_numbers_are_derived_not_copied.py`。闸挪位照样绿；闸被复制或被搬走 =
+#: 锚点读不到/读多枚，本件当场红并点名锚点（不是静默跳过）。
+GATE_EXIT_ANCHORS = ("http_raise:_require_ready_store:503",)
+#: 五枚 `_ensure()` 调用点：逐格一 token，记「哪一枚 scope 里的那一枚调用」。
+ENSURE_CALL_ANCHORS = (
+    "call:peek_next_document_version:_ensure",
+    "call:record_document_version:_ensure",
+    "call:current_documents:_ensure",
+    "call:list_document_versions:_ensure",
+    "call:delete_document_versions:_ensure",
+)
 
 ADMIN = "r383-admin"
 ACCOUNT = {"id": "u-r383", "username": ADMIN, "role": "admin", "department": "", "status": "active"}
@@ -127,6 +139,10 @@ def _source(relative: str) -> str:
 def _tree(relative: str) -> ast.Module:
     return ast.parse(_source(relative))
 
+
+def _anchor_lines(cells: tuple[str, ...], relative: str = CATALOG_REL) -> tuple[int, ...]:
+    """🔴 行号一律现读：把锚点账喂给 R396 那台机器，交回它与现场相等的那几行（零抄数）。"""
+    return anchor_ledger.derive_ledger(anchor_ledger.read_sources(relative), relative, cells)
 
 def _function(tree: ast.Module, name: str):
     for node in ast.walk(tree):
@@ -473,11 +489,14 @@ def test_an_anonymous_caller_never_meets_the_storage_answer(world):
 
 # ============================================ 判据②：闸只借现成的，形状一枚都不许多长
 def test_the_module_owns_exactly_one_storage_exit():
+    """全模块恰好一枚 503，且它就是账上那枚锚点读出来的闸里那一格。"""
     tree = _tree(CATALOG_REL)
     exits = _raise_sites_with_status(tree, 503)
 
-    assert exits == [GATE_EXIT_LINE], f"目录模块那道 503 应当恰好一枚且在闸里，实测 {exits}"
-    gate = _function(tree, "_require_ready_store")
+    assert exits == list(_anchor_lines(GATE_EXIT_ANCHORS)), (
+        f"目录模块那道 503 应当恰好一枚且在闸里，实测 {exits}"
+    )
+    gate = _function(tree, anchor_ledger.anchor_symbol(GATE_EXIT_ANCHORS[0]))
     assert gate is not None and gate.lineno <= exits[0] <= gate.end_lineno, "那道 503 不在闸的函数体里"
     assert _raise_sites_with_status(tree, 500) == [], "目录模块不许自己写 500"
 
@@ -530,7 +549,12 @@ def test_the_migrations_first_conversion_is_narrow():
 
 
 def test_every_ensure_call_site_still_ends_in_a_named_refusal():
-    """五枚调用点仍然一枚不少地被 catch-all 兜着，且每枚都排好了「现查到缺表就先拒」。"""
+    """五枚调用点仍然一枚不少地被 catch-all 兜着，且每枚都排好了「现查到缺表就先拒」。
+
+    🔴 R396 起这本账不抄行号：`ENSURE_CALL_ANCHORS` 逐格记「哪一枚 scope 里的那枚 `_ensure()`」，
+    行号在这里现读，再与 `_ensure` 落点所在 try 的 catch-all 逐格配对。少一枚调用点、多一枚裸调用点、
+    闸没抢在回落之前，三样都当场红——只是红的依据从「数字对不上」换成了「账与现场对不上」。
+    """
     tree = _tree(CATALOG_REL)
     guarded: dict[int, int] = {}
     for node in ast.walk(tree):
@@ -545,7 +569,14 @@ def test_every_ensure_call_site_still_ends_in_a_named_refusal():
             if direct and call.func.id == "_ensure":
                 guarded[call.lineno] = inner
 
-    assert sorted(guarded) == [609, 739, 782, 817, 890], guarded
+    ledger_calls = _anchor_lines(ENSURE_CALL_ANCHORS)
+    assert list(ledger_calls) == sorted(ledger_calls), (
+        f"调用点账不按源码序：{list(ledger_calls)}——逐格配对靠源码序，别打乱"
+    )
+    assert sorted(guarded) == sorted(ledger_calls), {
+        "锚点现读": sorted(ledger_calls),
+        "现场扫出": sorted(guarded),
+    }
     refusing: list[int] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ExceptHandler) and node.lineno in set(guarded.values()):
@@ -558,3 +589,6 @@ def test_every_ensure_call_site_still_ends_in_a_named_refusal():
                 refusing.append(node.lineno)
 
     assert sorted(refusing) == sorted(set(guarded.values())), refusing
+    assert [guarded[line] for line in ledger_calls] == sorted(refusing), (
+        "调用点与拒答 handler 交叉接线了：账上第 i 枚调用点没落在第 i 枚拒答 handler 里"
+    )
