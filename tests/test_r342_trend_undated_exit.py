@@ -18,13 +18,18 @@
 - **丙 · 真不可用还是 503。** 被拒的响应里没有 ``series``，也没有 ``undated``：一张画不出来的
   卡不许降级成「0 条 + 无期间 N」。读依赖抛的错原样往外传。
 - **丁 · 零新增错误码、零迁移。** 只有 200 / 422 / 503 三张既有脸，``detail`` 逐字不变。
+- **戊 · 「各档之和 + 无期间 == 当下未处置的行数」不是律。** R340 把 ``alerts_open`` 换成按
+  各档自己那一刻回放之后，这句只在「所有有期间的行都住在最新那一档」的种子里恰好成立（最新
+  那一档还没收口，它的地平线就是请求瞬间，新旧读法在那几枚行上同数）。R365 把世界补真 ——
+  一枚上月创建、本月才知悉，一枚知悉时刻落在自己那一档收口之前 —— 再把这句升成一条由同枚
+  种子现算派生的等式（见 ``_assert_alerts_open_conserves`` 与那几枚 R365 具名钉）。
 
 世界与夹具直接取自 ``tests/test_r332_dashboard_trend.py``（含三枚 autouse 桩），因为这一件量的
 正是「同一枚行、同一位调用者、同一次读」——换一套夹具，守恒就对不到那一本账上。
 """
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from app.agents.contracts import Principal
@@ -32,6 +37,7 @@ from app.agents.contracts import Principal
 import pytest
 
 from tests.test_r332_dashboard_trend import (  # noqa: F401  (夹具是导入进来的，不是复制的)
+    SHANGHAI,
     SUMMARY_PATH,
     _headers,
     _month_label,
@@ -46,6 +52,17 @@ from tests.test_r332_dashboard_trend import (  # noqa: F401  (夹具是导入进
     memory_alerts,
     offline_catalog,
     seed_alerts,
+)
+
+#: PG 腿的替身与「带处置三列的行」都取自 R340 那一件，不在这里复制第二台。
+from tests.test_r340_replayable_alerts_open import (  # noqa: F401  (同上：导入，不是复制的)
+    _body,
+    _created,
+    _memory_leg,
+    _prev_month_anchor,
+    _sql_leg,
+    _stamp,
+    alarm,
 )
 
 #: 三本账在响应里各自的那几格。``alerts`` / ``alerts_open`` 只在有告警读权时出现。
@@ -309,6 +326,137 @@ def test_a_book_that_raises_is_still_not_folded_into_a_count(client, monkeypatch
 # ----------------------------------------------------------- 守恒 · 各桶之和 + 无期间 = 总览
 
 
+# ------------------------------------- R365 · 把「各档之和 + 无期间」那句巧合升成真律
+
+
+#: 本件种进趋势卡的两枚行，名字即判据：一枚跨档处置，一枚的处置时刻落在自己那一档收口之前。
+CROSS_MONTH_MESSAGE = "上月创建_本月才知悉"
+LATEST_BUCKET_MESSAGE = "本月创建_知悉时刻落在本档收口之前"
+
+#: 守恒式两边共用这一枚账号，与 ``_summary`` 的默认调用者同一个。
+FINANCE_MANAGER = Principal.from_user({
+    "id": "finance-manager", "username": "finance-manager",
+    "role": "manager", "department": "finance",
+})
+
+
+def _visible_alert_rows(alerts_api) -> list[dict]:
+    """本次可见的那些行：可见性仍用 ``GET /alerts`` 那把尺，本件不另立归属口径。"""
+    return [row for row in alerts_api._MEM_ALERTS
+            if alerts_api.alert_row_visible(FINANCE_MANAGER, row)]
+
+
+def _present_open_rows(alerts_api) -> list[dict]:
+    """当下这一秒按告警面板那把 status 尺算「未处置」的那些行 —— 旧那句守恒的整条右端。"""
+    return [row for row in _visible_alert_rows(alerts_api)
+            if alerts_api.alert_row_status(row) == alerts_api.ALERT_STATUS_OPEN]
+
+
+def _month_edge(start: date) -> datetime:
+    """``start`` 那一档收口的瞬间：下个月 1 号 00:00（上海墙上时间）。
+
+    测试自己按日历推一遍（承 R340 的「日历测试自己算一遍」），不把实现里的 ``_bucket_end``
+    搬过来再与它自己对一次：那样等式两侧就成了同一个表达式。``start`` 恒为某月 1 号，所以
+    「加 31 天再回到 1 号」在 28/29/30/31 天的月里都恰好走到下一档。这一枚尺由
+    ``test_the_test_side_month_edge_walks_one_period`` 自己量：本件施工时它错过一次（写成
+    「加 4 天」会退回本档 1 号），而它错了不只是红，是红得像实现的问题。
+    """
+    following = (start + timedelta(days=31)).replace(day=1)
+    return datetime(following.year, following.month, 1, tzinfo=SHANGHAI)
+
+
+class _BucketClockRow:
+    """一枚本件种下的告警：它归哪一档、那一档的地平线在哪、什么时候被人处置，全部现算。"""
+
+    def __init__(self, message: str, created: datetime, disposed: datetime) -> None:
+        self.message = message
+        self.created = created
+        self.disposed = disposed
+
+    @property
+    def bucket_start(self) -> date:
+        """``period=month`` 下这一枚行所属那一档的起点，由它自己的 ``created`` 决定。"""
+        return self.created.date().replace(day=1)
+
+    @property
+    def horizon(self) -> datetime:
+        """档边与当下取更早的一枚：最新那一档还没收口，它的地平线就是「现在」。"""
+        return min(_month_edge(self.bucket_start), _now())
+
+    @property
+    def disposed_after_horizon(self) -> bool:
+        return self.disposed >= self.horizon
+
+
+def _bucket_clock_rows() -> tuple[_BucketClockRow, ...]:
+    """种子表：同一份 datetime 既用来播种，也用来现算等式右端，两处都不许手填常数。
+
+    - ``CROSS_MONTH_MESSAGE`` 上月创建、本月才有人知悉：旧口径（按请求时刻的 status 数）
+      一枚都不数它，新口径把它留在上月那一档 —— 两种读法因此在测试世界里真的分得开。
+    - ``LATEST_BUCKET_MESSAGE`` 本月创建，知悉时刻落在「当下」与「本档收口」正中：最新那一
+      档的档边还没到，它的地平线必须是当下。取中点而不是「今天再加一天」，是为了月末最后
+      一天跑也不跨档。
+    """
+    now = _now()
+    inside, _ = _shanghai_instants()
+    edge = _month_edge(inside.date().replace(day=1))
+    return (
+        _BucketClockRow(CROSS_MONTH_MESSAGE, _prev_month_anchor(), now),
+        _BucketClockRow(LATEST_BUCKET_MESSAGE, inside, now + (edge - now) / 2),
+    )
+
+
+def _bucket_clock_world(alarm, alerts_api) -> tuple[_BucketClockRow, ...]:
+    """把上面那张表落到台账上，并把同一份表交回：摘掉种子里任何一枚，等式两边一起动。"""
+    rows = _bucket_clock_rows()
+    for row in rows:
+        alarm(row.message, created_at=_created(row.created),
+              status=alerts_api.ALERT_STATUS_ACKNOWLEDGED,
+              acknowledged_at=_stamp(row.disposed))
+    return rows
+
+
+def _rows_the_bucket_clock_adds(rows, body, alerts_api) -> int:
+    """等式右端那枚修正量：只有按「自己那一刻」回放才数得到的行数，由种子现算派生。
+
+    一枚行要同时满足三条才算：① 它有期间，而且所在那一档在本次响应的窗口里；② 按告警面板
+    那把 status 尺它今天不算未处置（旧口径正因为如此才数不到它）；③ 它的处置时刻落在自己
+    那一档的地平线之后。三条都在这里量，不留给任何一枚测试写死。
+    """
+    window = {point["start"] for point in body["series"]}
+    status_of = {str(row.get("message")): alerts_api.alert_row_status(row)
+                 for row in _visible_alert_rows(alerts_api)}
+    counted = 0
+    for row in rows:
+        assert row.message in status_of, f"{row.message} 不在可见的行里：本件的种子没落到台账上"
+        if row.bucket_start.isoformat() not in window:
+            continue
+        if status_of[row.message] == alerts_api.ALERT_STATUS_OPEN:
+            continue
+        assert row.disposed_after_horizon, f"{row.message} 的处置时刻不再晚于自己那档的地平线"
+        counted += 1
+    return counted
+
+
+def _assert_alerts_open_conserves(alerts_api, rows, body, open_now: int, label: str):
+    """本件的等式本体（写一次，几枚钉共用）：
+
+    ``sum(各档 alerts_open) + undated.alerts_open == 当下未处置的行数 + 只有回放才数得到的行数``
+
+    左端是一次 HTTP 读数，右端是把台账逐行数出来的两笔账，两侧不是同一个表达式。第一笔右端
+    项正是 R342 原来那句守恒的整条右端，所以旧那句在这里没被摘掉，只是降成一条特例：修正量
+    为 0 时两边同解。
+    """
+    replayed = _rows_the_bucket_clock_adds(rows, body, alerts_api)
+    bucketed = sum(point["alerts_open"] for point in body["series"])
+    undated_open = _undated(body)["alerts_open"]
+
+    assert bucketed + undated_open == open_now + replayed, (
+        f"{label}：各档回放 {bucketed} + 无期间 {undated_open} ≠ "
+        f"当下未处置 {open_now} + 处置晚于自己档边 {replayed}")
+    return bucketed, undated_open, open_now, replayed
+
+
 def test_a_day_with_no_legacy_rows_still_reconciles_with_the_summary(client, dataset_store,
                                                                     document_store):
     inside, _ = _shanghai_instants()
@@ -326,12 +474,16 @@ def test_a_day_with_no_legacy_rows_still_reconciles_with_the_summary(client, dat
 
 def test_the_three_books_all_reconcile_with_what_summary_reports(client, dataset_store,
                                                                 seed_alerts, catalog_rows,
-                                                                monkeypatch):
+                                                                alarm, monkeypatch):
     """判据甲要求的实测：混一世界（有期间的 + 无期间的 + 已处置的）三本账逐条对平。
 
     ``sum(buckets) + undated == /summary 对同一位调用者同一范围报的数``。告警那一本没有
     ``/summary`` 的对偶列（``alerts_open`` 是当前状态投影，R332 裁定 ②），所以它跟「本次可见
     的行数」对，用的仍是 ``GET /alerts`` 那把谓词，不是这一件自己另算的账。
+
+    R365：``alerts_open`` 那一行原来跟「本次可见且当下未处置的行数」直接对等，那只在这枚种子
+    里成立 —— 所有有期间的行都住在最新那一档。现在世界里有了跨档处置的行，这句换成一条现算
+    派生的等式（``_assert_alerts_open_conserves``），旧那句是它修正量为 0 时的特例。
     """
     from app.api.v1 import alerts as alerts_api
 
@@ -349,6 +501,7 @@ def test_the_three_books_all_reconcile_with_what_summary_reports(client, dataset
     seed_alerts("legacy open alarm", created_at="", department="finance")
     seed_alerts("legacy acked alarm", created_at="   ", department="finance",
                 status="acknowledged")
+    bucket_clock = _bucket_clock_world(alarm, alerts_api)
 
     body = _trend(client, buckets=60).json()
     summary = _summary(client)
@@ -366,11 +519,121 @@ def test_the_three_books_all_reconcile_with_what_summary_reports(client, dataset
                                                                                      row)]
     open_rows = [row for row in visible if alerts_api.alert_row_status(row)
                  == alerts_api.ALERT_STATUS_OPEN]
-    assert sum(point["alerts_open"] for point in body["series"]) + undated["alerts_open"] == (
-        len(open_rows)
-    )
+    _assert_alerts_open_conserves(alerts_api, bucket_clock, body, len(open_rows), "三本账对平")
     assert undated == {"documents": 2, "documents_ready": 1, "datasets": 1,
                        "alerts": 2, "alerts_open": 1}
+
+
+def test_the_test_side_month_edge_walks_one_period():
+    """钉⓪：先量本件自己那把日历尺，再量等式。
+
+    等式右端用的是测试这一侧的日历：本件的 ``_month_edge`` 与从 R340 那件导入来的
+    ``_prev_month_anchor``，不是实现里的 ``_bucket_end``。这一枚尺错一格，等式就跟着错，
+    而且错得像实现的问题 —— 上面的 ``_month_edge`` 施工时写过「加 4 天回到 1 号」，
+    那一版退回本档 1 号，量的就是这种错。
+    """
+    cursor = date(2026, 1, 1)
+    for _ in range(36):  # 含 28/29/30/31 天四种月长（2028 是闰年）
+        following = date(cursor.year + (cursor.month == 12), cursor.month % 12 + 1, 1)
+        edge = _month_edge(cursor)
+        assert edge.date() == following, f"{cursor} 那一档的档边算成了 {edge}"
+        assert (edge.hour, edge.minute, edge.second) == (0, 0, 0), edge
+        cursor = following
+    assert cursor == date(2029, 1, 1), cursor
+
+
+def test_a_disposal_after_its_own_bucket_edge_really_landed_in_the_world(client, alarm):
+    """钉①：跨档处置确实进过世界 —— 摘掉 ``_bucket_clock_rows`` 里那枚 seed，这一枚先红。
+
+    上月那一档里只住着「上月创建、本月才知悉」这一枚行，而它今天已经不是 ``open``：按请求
+    时刻的 status 数，这一档该报 0 枚未处置；R340 的回放报 1 枚。这一枚钉要量的就是「新旧
+    两种读法在测试世界里真的分开了」这件事本身，不是等式。
+    """
+    from app.api.v1 import alerts as alerts_api
+
+    _bucket_clock_world(alarm, alerts_api)
+    previous = _prev_month_anchor()
+    body = _body(client, buckets=60)
+
+    assert _month_label(previous.date()) != _month_label(_now().date()), "两档得真的是两档"
+    late = [row for row in _visible_alert_rows(alerts_api)
+            if row.get("message") == CROSS_MONTH_MESSAGE]
+    assert len(late) == 1, f"{CROSS_MONTH_MESSAGE} 没进世界：本件的种子被摘掉了"
+    assert alerts_api.alert_row_status(late[0]) == alerts_api.ALERT_STATUS_ACKNOWLEDGED, (
+        "这枚行今天仍是 open：新旧读法就没分开，这一枚钉量的不是跨档处置")
+    # 这一档总共只住一枚行，而那枚行今天已经不是 open：按请求时刻的 status 数，这里该是
+    # (1, 0)；响应报 (1, 1)，量的就是「按自己那一刻回放」真的发生了。
+    previous_bucket = _series(body)[_month_label(previous.date())]
+    assert (previous_bucket["alerts"], previous_bucket["alerts_open"]) == (1, 1), (
+        f"上月那一档读成 {previous_bucket['alerts']} 行 / "
+    f"{previous_bucket['alerts_open']} 枚未处置：跨档处置没有进世界")
+
+
+def test_the_present_status_equation_is_not_a_law(client, alarm):
+    """钉②：跨档处置一进世界，「各档之和 + 无期间 == 当下未处置的行数」这句必然不成立。
+
+    下一位要是再把旧那句当律抄回守恒式，这一枚先红，并且报出方向：左端比右端多出的正是那些
+    「处置时刻晚于自己档边」的行 —— 新口径把它们留在自己那一档，旧口径一枚都不数。旧那句在
+    本件补真之前恰好成立，是因为那时的种子里有期间的行全住在最新那一档，而最新一档的地平线
+    就是当下。
+    """
+    from app.api.v1 import alerts as alerts_api
+
+    rows = _bucket_clock_world(alarm, alerts_api)
+    body = _body(client, buckets=60)
+    open_now = len(_present_open_rows(alerts_api))
+
+    bucketed, undated_open, _same, replayed = _assert_alerts_open_conserves(
+        alerts_api, rows, body, open_now, "钉②")
+
+    assert replayed >= 1, "修正量为 0：新旧读法没分开，本件要还的那笔债根本没被种进世界"
+    assert bucketed + undated_open != open_now, (
+        f"旧那句等式又成立了（左右都是 {open_now}）：跨档处置的行不在世界里，"
+        "而它不是律，不许被抄回守恒式")
+
+
+def test_no_bucket_replays_more_open_rows_than_it_has(client, alarm):
+    """钉③：R340 的界在补真的世界里仍然成立 —— 每档 ``0 ≤ alerts_open ≤ alerts``。"""
+    from app.api.v1 import alerts as alerts_api
+
+    _bucket_clock_world(alarm, alerts_api)
+    previous = _prev_month_anchor()
+    body = _body(client, buckets=60)
+    filled = [point for point in body["series"] if point["alerts"]]
+
+    assert filled, "一档都没有行，这条界就成了恒真"
+    for point in filled:
+        assert 0 <= point["alerts_open"] <= point["alerts"], f"该档未处置数越界：{point}"
+    cross = _series(body)[_month_label(previous.date())]
+    assert cross["alerts_open"] == cross["alerts"], "上界不许只是画在纸上的界"
+    assert sum(point["alerts_open"] for point in body["series"]) + (
+        _undated(body)["alerts_open"]) <= len(_visible_alert_rows(alerts_api)), (
+        "回放不许凭空造行：各档之和加无期间仍被同一个可见行数封顶")
+
+
+def test_both_legs_replay_the_same_seed_and_obey_the_same_law(client, alarm, monkeypatch):
+    """R365 判据：补真的世界与新的等式都得两腿同种子同读数，不许哪一腿自己算一套。
+
+    PG 腿的替身沿用 ``tests/test_r340_replayable_alerts_open.py`` 那一台：只认
+    ``alert_row_scope_sql`` 生成的那三种析取支，并按 ``SELECT`` 清单逐列投影 —— 这一腿少读
+    一枚处置列，交回的行就少一个键，下面的等号当场红，不靠 docstring 说。
+    """
+    from app.api.v1 import alerts as alerts_api
+
+    rows = _bucket_clock_world(alarm, alerts_api)
+
+    _memory_leg(alerts_api, monkeypatch)
+    offline = _body(client, buckets=60)
+    open_now = len(_present_open_rows(alerts_api))
+    _assert_alerts_open_conserves(alerts_api, rows, offline, open_now, "离线腿")
+
+    _sql_leg(alerts_api, list(alerts_api._MEM_ALERTS), monkeypatch)
+    postgres = _body(client, buckets=60)
+    _assert_alerts_open_conserves(alerts_api, rows, postgres, open_now, "PG 腿")
+
+    assert offline["series"], "空序列会让下面那条等号变成恒真"
+    assert postgres["series"] == offline["series"], "同一份种子在两条腿上长出了两个数"
+    assert postgres["undated"] == offline["undated"]
 
 
 def test_no_row_is_counted_twice(client, dataset_store, catalog_rows):
