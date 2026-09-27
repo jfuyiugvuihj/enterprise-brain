@@ -3306,3 +3306,100 @@ the tally exists.
 - `tests/test_r337_owner_receipt_cost_and_knives.py` (7): the two-world reconciliation above, plus
   five knives -- unowned -> `""`, bypass the helper, add a lookup, drop the preview owner, drop the
   upload owner -- each run inside a shadow window and re-run green after it closes.
+
+## The preview asks the relation table about one document: the client leg of `?document=` (2026-09-27, R348)
+
+The last bullet of the R344 section above no longer describes today's tree, and it is kept exactly as that
+ticket wrote it. It records what R344 promised at the time: no frontend file was touched, and
+`DocumentPreviewModal.vue` still pulled the whole browsable listing and filtered in the browser. R348 is the
+follow-up that section already named, and its line-number references (`:239`, `:96-120`, `:58-61`, `:106`) are
+the coordinates of that day and stay that way on purpose -- rewriting history lines would leave the contract
+with no provenance. Today's coordinates are below.
+
+### The read, and the shape it must keep
+
+`frontend/src/components/DocumentPreviewModal.vue` reads the relation table through exactly one `api.get`, and
+that call builds its URL in exactly one place:
+
+- `:138-140` `relationsListingUrl(name)` returns `/knowledge-graph/relations?document=` plus the name through
+  `encodeURIComponent`. One path, one parameter, and its name is `document`.
+- `:519-522` `fetchRelationRows(documentName)` is the only caller: `api.get(relationsListingUrl(documentName))`.
+  The file holds no second relation read; `GraphPanel.vue:31` keeps its unparameterized listing because that
+  screen has no current document to ask about.
+- `:151` `readDocumentRelations` hands the name it was given straight to the fetch leg, so what goes out is the
+  registered name of the document on screen.
+
+The client sends that name **verbatim**: percent-encoding only, never `documentIdentityKey`. Stripping
+whitespace or folding case before the request would put two identity standards on the wire at once, and the
+server's `document_identity_key` would then be comparing a value the client had already edited. The store's
+blank-name guard (`:183-186`) is what keeps an empty `?document=` from ever being sent: an empty identity key
+matches nothing server-side, so it must never be used as a way of asking for everything.
+
+Both legs that open a document share this one read -- the preview the parent opened (`:626` from the watcher,
+`:641` from `onMounted`) and the R343 jump-to-the-other-end leg (`:611-612`). One opened document, one relation
+read; not two reads, and not a second filter parameter. The three late-response token gates are byte-identical
+to what R343 left: relations `:189`, preview jump `:370`, catalog `:448`.
+
+### The client comparison is now a belt, and a belt has to be the same ruler
+
+`relationsAboutDocument` (`:100-128`) still drops rows whose two ends do not name this document. It is no
+longer the only filter, so keeping it is only honest while it judges the way the server does: two rulers that
+disagree lose rows in silence, and the screen then offers 「登记的关联里，没有文档名与这篇相同的」 for what is
+actually a mismatch between the ends. That is pinned twice, both times by reading the server's own evidence
+off disk rather than by a copy of it, in
+`frontend/src/components/__tests__/r348-document-scoped-relations.test.js`:
+
+- 乙 · 反证 3（其一） `:164-168` and （其二） `:170-177`: the 27 paired samples and the 6+6 same/different
+  pairs of `tests/test_r344_document_identity_normalization.py` are parsed at test time and fed to the
+  frontend `documentIdentityKey`; every reading has to match the column that pin was measured against a real
+  JS engine. The frontend carries no list of its own -- a hand-copied second table would be a third ruler.
+- 乙 · 同判 `:179-200`: those 27 names are laid out as a 27x27 listing, the server-side keep/drop is derived
+  from the table readings with the empty-key-matches-nothing rule `app/knowledge_graph/service.py` applies, and
+  the row keys the client keeps have to equal that list for each of the 27 choices of the current document.
+
+Keeping the belt instead of deleting it is also what makes an older server harmless: on a deployment that
+predates R344, `?document=` is an unknown query parameter and gets ignored, so the response is the full
+listing -- and the belt is then the only thing between that listing and the screen.
+
+### Server-side narrowing did not merge any faces
+
+`[]` means the document has no registered relations and stays `empty`; `:152` asks only whether the payload is
+an array, never whether it has a length. A throw, a wrong shape and a 403 stay `failed`, with `denied` its own
+branch. idle / loading / failed / empty / matched are still five, pinned by `r314-related-docs.test.js` (37
+cases, one of them reworded below) and by 丙 · 反证 4 of the R348 file.
+
+### Pins
+
+- `frontend/src/components/__tests__/r314-related-docs.test.js:463-488` -- the case that used to forbid any
+  query parameter became a shape criterion rather than being deleted or skipped: one `api.get` in the file,
+  one place where the URL is built, exactly one filter parameter and it must be `document`, no `source_entity=`
+  (the subject-only leg, blind to this document in the object position -- the very reason the full pull
+  existed), no second parameter, no `post/put/delete/patch`. Five assertions became twelve; the two `not.toMatch`
+  lines that still describe the truth were kept word for word.
+- `frontend/src/components/__tests__/r343-open-related-document.test.js:614-629` -- the same stale literal turned
+  out to be pinned a second time, in the request-budget case. Reworded the same way; case count unchanged (38).
+- `frontend/src/components/__tests__/r348-document-scoped-relations.test.js` (14): 甲 the name goes out verbatim,
+  percent-encoded and un-normalised, and one open is one read; 乙 the two-ruler readings above; 丙 read count,
+  parameter count, the faces, and the late-response race.
+- Reversal readings, each run against the real source and restored byte for byte, with the sha256 of the
+  pristine buffer re-checked after every run: `document=` back to `source_entity=` -> 6 red; the frontend ruler
+  loses its case folding -> 8 red; one row of the R344 table edited to keep `U+FEFF` -> 2 red, and those two are
+  the 乙 pair, which is what shows the belt pin is fed by the server table rather than by a copy; `[]` routed
+  into `failed` -> 4 red; `failed` routed into `empty` -> 4 red; the relations token gate removed -> 3 red; a
+  second relation read added on the jump leg -> 3 red.
+- Suite: 96 files / 1882 passed against a base of 95 / 1868 (one new file, fourteen new pins, zero
+  regressions); `npm run lint:colors` still 148 problems / 0 errors with no new colour value; `npm run build`
+  exit 0; the three contract pins `tests/test_r302_docs_utf8_guard.py`, `tests/test_r132_contract_followup_sync.py`
+  and `tests/test_r156_sse_event_surface_sync.py` re-run after this section was appended.
+
+### What this ticket does not claim
+
+- Nothing about backend behaviour is claimed or changed here. `app/**` was read-only for this ticket; this is
+  the client leg of the parameter R344 already documented.
+- No test in this repo executes the URL that actually leaves the browser. There is no jsdom, and
+  `fetchRelationRows` lives in `<script setup>`, which SSR never lets reach the network
+  (`DocumentPreviewModal.vue:639-641`). The builder and the name forwarding are run for real; the last
+  centimetre of wiring is held by the shape pins and by the second-read reversal above. It is registered here
+  as a known edge for the real-browser pass, and the answer is not to install a DOM.
+- The identity standard itself is R344's, unchanged: `document_identity_key` and `documentIdentityKey` are the
+  two ends of one ruler, and this section adds no third.

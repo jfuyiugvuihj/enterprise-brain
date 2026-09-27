@@ -16,7 +16,7 @@
  *   1 把读失败伪装成空 → 甲组「读失败那一发」与丙组分支表同时红；
  *   1b 失败那一支改画空态组件 → 丙组「反证 1b」红；
  *   2 认文档从整名改成「包含」→ 甲组「差一个字符就不挂」与「扩展名参与」两枚红；
- *   3 取数换成带主体过滤参数的第二套读法 → 丙组「读法只有一把」红；
+ *   3 取数换成第二枚读法或第二枚过滤参数（含只筛主体的 source_entity= 旧腿）→ 丙组「反证 3」红；
  *   4 摘掉换文档的迟到回包闸门 → 甲组「迟到的回包丢掉」红；
  *   5 无权限与真坏了共用一张脸（denied 恒 false）→ 甲组「403 与真坏了是两张脸」红；
  *   6 英文眉标抄回屏头 → 丙组「GraphPanel 的英文眉标已清」红；
@@ -460,11 +460,29 @@ describe('丙 · 分支表（判据③，源码形状）：五枚面各占一支
 })
 
 describe('丙 · 取数与不重算（判据①④，源码形状）', () => {
-  it('🔴 反证 3：读法只有一把 —— api.get 全文件一枚，就是那张关系表', () => {
+  // 🔴 这枚钉原本写的是「不许带过滤参数」，理由写在注释里：后端那道主体过滤筛不到客体位，
+  // 所以只能全量拉回浏览器里筛。R344 把服务端那腿补成任一端命中之后，理由当场没了，这两条
+  // not.toMatch 反过来拦住正确的做法。R348 按判据②把它改口成形状判据 —— 不删、不 skip：
+  // 读法仍只有一枚、只造得出一个 URL、过滤参数只许 document 一枚、旧腿不许回来。
+  it('🔴 反证 3（R348 改口）：关系表读法全文件恰一枚，且只带 document 这一枚过滤参数', () => {
     expect(MODAL.match(/api\.get\(/g)).toHaveLength(1)
-    expect(MODAL).toContain("api.get('/knowledge-graph/relations')")
-    // 不带过滤参数：后端那道主体过滤会漏掉本篇在客体位的关系，所以取全量再在客户端筛
-    expect(MODAL).not.toMatch(/api\.get\([^)]*\?/)
+    // 唯一的取数出口：那一枚 get 只许把 URL 交给 relationsListingUrl 造，别处不许再拼一套
+    expect(MODAL).toContain('api.get(relationsListingUrl(documentName))')
+    expect(MODAL.match(/api\.get\([A-Za-z$_]/g)).toHaveLength(1)
+    // 查询串只许在一处拼出来：调用点再串一枚 & 参数就是第二套口径
+    expect(MODAL.match(/\/knowledge-graph\/relations\?/g)).toHaveLength(1)
+    expect(MODAL).not.toMatch(/&(?:relation|source_entity)=/)
+    const builder = MODAL.match(/export function relationsListingUrl\(name\) \{([\s\S]*?)\n\}/)
+    expect(builder, '关系表的 URL 只许有 relationsListingUrl 这一枚出处').not.toBeNull()
+    const url = builder[1].match(/`([^`]*)`/)
+    expect(url, '那一枚读法的 URL 是个模板字面量').not.toBeNull()
+    const [path, query] = url[1].split('?')
+    expect(path).toBe('/knowledge-graph/relations')
+    // 过滤参数恰一枚，而且只能是 document：第二枚就是第二套口径
+    expect((query ?? '').split('&').filter(Boolean).map(pair => pair.split('=')[0])).toEqual(['document'])
+    // 值只许过 encodeURIComponent：登记名原文上线，前端先归一再发就是两把尺子并存
+    expect(url[1]).toBe("/knowledge-graph/relations?document=${encodeURIComponent(String(name ?? ''))}")
+    // 🔴 旧腿不许回来：source_entity= 只筛主体，会漏掉本篇在客体位的关系，正是当初全量拉的理由
     expect(MODAL).not.toMatch(/source_entity=/)
     expect(MODAL).not.toMatch(/\bapi\.(post|put|delete|patch)\(/)
   })

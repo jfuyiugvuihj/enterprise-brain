@@ -611,9 +611,13 @@ describe('丙 · 契约、闸门与预算（判据②③⑥⑧，源码形状）
     expect(marker).not.toMatch(/\.(?:pdf|docx|xlsx)|endsWith|startsWith/)
   })
 
-  it('请求预算：关联表仍是一枚 get，新腿只有 request 三发，名单一次打开只读一回', () => {
+  it('请求预算：关联表仍是一枚 get（R348 起带 ?document=），新腿只有 request 三发，名单一次打开只读一回', () => {
     expect(MODAL.match(/api\.get\(/g)).toHaveLength(1)
-    expect(MODAL).toContain("api.get('/knowledge-graph/relations')")
+    // 🔴 与 r314 的反证 3 同一件事的改口：那一枚 get 现在把本篇登记名的原文交给服务端筛。
+    // 形状判据一条没松 —— 读法仍只有一枚，跳转腿（openRelatedDocument → readRelatedDocs）
+    // 也不许多出第二枚关系读法，更不许多带第二枚过滤参数。
+    expect(MODAL).toContain('api.get(relationsListingUrl(documentName))')
+    expect(MODAL).toContain("`/knowledge-graph/relations?document=${encodeURIComponent(")
     expect(MODAL.match(/api\.request\(/g)).toHaveLength(3)
     expect(MODAL).toContain("url: '/documents/catalog'")
     expect(MODAL.match(/documentNames\.load\(/g)).toHaveLength(1)

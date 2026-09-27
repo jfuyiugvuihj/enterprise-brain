@@ -46,10 +46,13 @@ function scopeRowCount(value) {
  * 四条口径，逐条对上工单判据：
  *   ① 认文档只认整名（去空白、ASCII 大小写折叠后逐字相等）。「员工手册」与「员工手册.pdf」
  *      是两篇文档，差一个字也不许挂到这篇头上（判据②）；认不出来就走空那一支。
- *   ② 取数只有 GET /knowledge-graph/relations 一把读法，与 GraphPanel 同源：不带查询参数取
- *      全量，再在客户端按已取回的行筛。后端那道主体过滤是「整名相等且只筛主体」，拿它按文档
- *      过滤会漏掉本篇出现在客体位的关系，所以筛在客户端而不另发明第二套读法（判据①）。
- *      密级与部门一律不在这里重算，本屏只显示服务端裁过之后交回来的行（判据④）。
+ *   ② 取数只有 GET /knowledge-graph/relations 一把读法，与 GraphPanel 同一个路径：R348 起带上
+ *      ?document=，值是本篇登记名的原文（判据①）。服务端那一腿命中任一端，所以这篇出现在
+ *      客体位的关系也照样回来 —— 这正是 R344 之前只能全量拉回浏览器里筛的原因。发出去的名字
+ *      一律不归一：归一是服务端那把尺子的活，前端先归一遍就是两套口径同时活着。客户端那道整名
+ *      判定留着当 belt，它与服务端那把尺子逐条同判（钉在 R344 的成对样本上，见 r348 件），哪天
+ *      不同判当场红，而不是静默把行丢成「没有关联」。密级与部门一律不在这里重算，本屏只显示
+ *      服务端裁过之后交回来的行（判据④）。
  *   ③ idle / loading / failed / empty / matched 各说各的话，读失败绝不落到 empty 那一支
  *      （判据③，与 GraphPanel 里「取不到就摆失败态」同一条不变量）。
  *   ④ 界面不产出任何统计量与推断：只把行摊开，不数「共几条」，不猜某条关系成不成立（判据⑤）。
@@ -128,13 +131,24 @@ export function relationsAboutDocument(filename, relations) {
 const RELATED_DOCS_IDLE = { face: 'idle', rows: [], message: '', denied: false }
 
 /**
+ * 关系表那一枚读法的 URL（R348）：只带本篇登记名的原文，且只带这一枚过滤参数。
+ * 只做 URL 编码，不做归一 —— 去空白与折叠大小写是服务端 document_identity_key 的活，
+ * 前端要是先归一再发，同一篇文档就有了两把尺子；服务端那腿按任一端命中，客体位也认。
+ */
+export function relationsListingUrl(name) {
+  return `/knowledge-graph/relations?document=${encodeURIComponent(String(name ?? ''))}`
+}
+
+/**
  * 读一次「这篇文档的关联」：出口只有 failed / empty / matched 三种。
  * fetchRelations 抛错、以及回的东西根本不是数组，都算 failed —— 把读失败画成「没有关联」
  * 是本项目反复被抓的那类假话，所以这里从返回值上就把两支分开，不给它们共用一张脸。
+ * R348：登记名原文递给取数腿，筛由服务端做。服务端筛过之后交回空数组说的是「这篇没登记过
+ * 关联」，那一支仍是 empty；读失败与形状不对仍是 failed。两件事不许因为「后端会筛」就并成一支。
  */
 export async function readDocumentRelations(filename, fetchRelations) {
   try {
-    const list = await fetchRelations()
+    const list = await fetchRelations(filename)
     if (!Array.isArray(list)) {
       return { ...RELATED_DOCS_IDLE, face: 'failed', message: '关系列表返回的数据结构不对，未能加载。' }
     }
@@ -211,8 +225,9 @@ export function createRelatedDocsStore({ ref, fetchRelations }) {
  *   ⑥ 密级与部门仍然不在这里重算（判据⑥）：名单与预览都是服务端裁过之后交回来的东西，界面
  *      只比名字，不读、不判、不筛任何可见范围。
  *   ⑦ 取数代价（判据⑧）：目录一次「打开」只读一回，且只在真出现「对端不是这篇」的行时才读；
- *      跳一次 = 对端预览一发（PDF 再多一发正文，与父组件同一形状）+ 关联表那一发全量（新的
- *      一篇要有自己的关联，与父组件换文档同价）。关联表按文档筛是 R344 的事，这一格不碰后端。
+ *      跳一次 = 对端预览一发（PDF 再多一发正文，与父组件同一形状）+ 关联表那一发（R348 起带
+ *      ?document=，一篇只有一发，多出来的那一枚过滤参数是服务端那腿）。新的一篇要有自己的关联，
+ *      与父组件换文档同价：读法仍旧只有一枚，不许多出第二枚，也不许多带第二枚过滤参数。
  */
 
 /** 后端在册的可预览种类只有这两枚（app/documents/preview.py），其余一律算读不到。 */
@@ -498,10 +513,11 @@ const rowScopeNote = computed(() => rowScopeVisibleNote(props.rowScope))
 // 预览那一行的产物字节与本格装上之前逐字相同（R191 判据②）。
 const rowScopeSuffix = computed(() => (rowScopeNote.value ? ` · ${rowScopeNote.value}` : ''))
 
-// R314 · 「依据 / 相关制度」这一格。取数与 GraphPanel 同一把读法：不带参数取全量，
-// 交回来的 relations 原样交给客户端按文档名筛，这里不发明第二套取数口径。
-async function fetchRelationRows() {
-  const response = await api.get('/knowledge-graph/relations')
+// R314 · 「依据 / 相关制度」这一格，R348 收口：还是 GraphPanel 那枚读法、那一发，只是第一次
+// 把本篇登记名的原文带给服务端（relationsListingUrl 只做 URL 编码，归一是服务端的尺子）。
+// 客户端那道整名判定留着当 belt，它与服务端同判由 r348 件拿 R344 的成对样本逐条钉死。
+async function fetchRelationRows(documentName) {
+  const response = await api.get(relationsListingUrl(documentName))
   return response?.data?.relations
 }
 
