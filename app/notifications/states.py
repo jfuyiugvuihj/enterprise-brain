@@ -5,9 +5,13 @@
 部门、密级列，所以这里不可能长出一本和第二账竞争的影子台账（0016 文件头逐条记了这个理由）。
 
 两条腿的选法与 app/storage/pending_approvals.py 同一条：PG 就绪时读写 notification_states，
-否则退到进程内账本，开发态与全量回归因此不需要数据库。差别只有一个 —— **只要真在跟 PG 说话，
+否则退到进程内账本，开发态与全量回归因此不需要数据库。差别有两条 —— **只要真在跟 PG 说话，
 表就必须在**：缺表抛具名 NotificationStateStoreMissing，由出口翻成 503，而不是往内存悄悄降级。
-把「表没迁移」洗成「这个人没有已读记录」，正好是本期判据⑥要防的那类假绿。
+把「表没迁移」洗成「这个人没有已读记录」，正好是本期判据⑥要防的那类假绿。第二条是 R376 添的，
+只管写腿：**生产模式下库没就绪，这一格根本不许写**。进程内那本账在客户机上随进程一起消失，
+重启之后屏上那句「已读」会回到「未读」，而当初的回执是 200 加 changed: true —— 落不了库是这台
+机器的现状，把落不了库说成落了库才是假话。开发与裸机（APP_ENV 不是生产）那条退路一个字没动，
+它今天仍是合法后端；读腿也不在本单射程内，见 _require_writable_store 最后一段。
 
 时间戳只有一枚时钟（_now），两条腿共用，拼写因此逐字相同；这是 0014 为处置列立过的口径，
 不在这里再发明一次。推进规则也不在这里：唯一一处是 contracts.advance_state，本文件两条腿都
@@ -27,6 +31,8 @@ except ImportError:  # pragma: no cover
     psycopg = None
     dict_row = None
 
+from app.api.v1 import alerts as alerts_api
+from app.common.logger import logger
 from app.db.connection import open_connection_with_policy, parse_database_settings
 from app.notifications.contracts import advance_state
 
@@ -46,6 +52,10 @@ _NOW = lambda: datetime.now(timezone(timedelta(hours=8)))  # noqa: E731 - 只有
 
 class NotificationStateStoreMissing(RuntimeError):
     """0016 没跑：这张表不在，于是「谁读过什么」没有任何真话可说。
+
+    R376 起这一枚类型载两张脸，因为客户读到的是同一句话：``_require_table`` 判「表没迁移」，
+    ``_require_writable_store`` 判「生产机器上库整个不在」。刻意不另开第二型 —— 出口只接一种
+    错那一格（app/api/v1/notifications.py 的两处 except）因此一个字都不必跟着改。
 
     具名而不是裸 RuntimeError：出口只接这一种错就翻 503。把任何一次异常都洗成「存储不可用」，
     等于替真正的 bug 打掩护 —— pending_approvals 那一族早就吃过这个亏。
@@ -79,6 +89,43 @@ def _require_table(conn) -> None:
             f'{TABLE} table is required; run migrations first ('
             'migrations/0016_notification_states.sql)'
         )
+
+
+def _require_writable_store(operation: str) -> None:
+    """生产环境 + 库未就绪 ⇒ 这一格生命周期拒写，也不许说写了（R376）。
+
+    判的两件事都是本件既有的读数，一枚都不新造：库在不在取本模块唯一那枚
+    ``_database_available()``（``_db_ready`` 的读者数因此一枚没长，test_r246 那本账按 AST 管）；
+    是不是生产取 ``alerts_api._is_production_environment()`` —— 与 app/api/v1/dashboard.py（R367）
+    借的是同一枚尺，本包 import 那模块已有多处（inbox.py、sources.py 各一枚），零新增定义、
+    零新增依赖环。两支同时成立才拒，缺一支就照旧走。
+
+    为什么只管写腿：内存那本账（``_ROWS``）随进程消失。客户点「标记已读」，回执 200 +
+    changed: true，进程一重启那条已读就回来了 —— 本单治的就是这两句话对不上。判据是「没落库」
+    这件事要么是一个错误，要么是一格显式标注的缺席，不许既 200 又 changed: true。
+
+    抛的是本件既有那一枚具名错：出口 app/api/v1/notifications.py:159 的 except 已经在接它，
+    翻成 503 ``storage_unavailable`` —— 零新增错误码、零新增 reason 词、出口一字不改。
+
+    调用点排在授权与可寻址性之后（出口 ``_apply`` 先答 401 / 403 / not_addressable），排在
+    ``read_state``、``_now()`` 与任何一次 ``_conn`` 之前：先答「你是谁、这一枚你管不管得着」，
+    再答「这台机器还记不记得话」，最后才谈写。反过来就把 503 与 401 之差做成一枚探针。
+
+    开发态一字不改（``APP_ENV`` 不是生产即直接 return）：那条内存腿今天仍是合法后端，全量回归
+    也靠它跑，把开发支一起打死同样是说假话，只不过反着说。读腿 ``recipient_states`` /
+    ``read_state`` 本单同样不翻脸 —— R366 刚为「生产无库时的收件箱」追认过 200 加逐腿缺席那一格
+    （契约 R366 一节），而登记这格缺席的落点在 app/notifications/inbox.py，另有人在改。
+    """
+    if _database_available() or not alerts_api._is_production_environment():
+        return
+    logger.warning(
+        f'[R376] 生产环境存储未就绪，生命周期这一格拒写而不是写进内存: operation={operation} '
+        'code=storage_unavailable（PG 未起或迁移未跑，写进内存即重启失忆）'
+    )
+    raise NotificationStateStoreMissing(
+        f'{TABLE} cannot be written in production without PostgreSQL ('
+        'migrations/0016_notification_states.sql)'
+    )
 
 
 def recipient_states(recipient: str) -> dict[str, str]:
@@ -130,12 +177,18 @@ def apply_state(recipient: str, notification_id: str, requested: str) -> dict[st
     返回值里 'changed' 说的是「这一次有没有改动那本账」：重复点同一枚动作恒为 False，而
     'state' 恒等于最终结论。两者分开是判据④要的形状 —— 客户端要能分辨「我刚才划掉了它」
     与「它早就被划掉了」，而这两个答案的 'state' 是同一个词。
+
+    还有一句 R376：这一格落不了库就一个字都不写，也不回 changed。生产而库未就绪 ⇒
+    _require_writable_store 抛具名错，由出口答它已有的那一码 503 storage_unavailable；
+    于是 'changed': True 这句话从今天起只在**真写过了某本账**的世界里出现。
     """
     person = str(recipient or '')
     identifier = str(notification_id or '')
     if not person or not identifier:
         raise ValueError('recipient and notification_id are both required')
 
+    # 排在任何一次读写之前：内存腿与 PG 腿都不许被这次拒答碰过一字节（连 _now 都不读）。
+    _require_writable_store('apply_state')
     current = read_state(person, identifier)
     final = advance_state(current, requested)
     changed = final != current
@@ -144,6 +197,8 @@ def apply_state(recipient: str, notification_id: str, requested: str) -> dict[st
 
     moment = _now()
     if not _database_available():
+        # 走到这里只剩两种世界：库就绪，或者不是生产 —— 上面那道闸已经把「生产 + 无库」
+        # 那一格拒在门外，所以这一支内存腿今天只可能来自开发与裸机。
         with _LOCK:
             existing = _ROWS.get((person, identifier))
             recorded = existing['recorded_at'] if existing else moment

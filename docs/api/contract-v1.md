@@ -4480,3 +4480,85 @@ Out of this ticket's write set, registered rather than fixed:
   to `_MEM_ROWS` without raising, so the approval leg answers 「nothing pending」 on a customer machine with no
   database. `PendingApprovalStoreMissing` only fires when the process thinks the store is ready and the table
   is gone -- same asymmetry R367 registered for the dashboard tiles.
+
+## A write that cannot be stored must not say it was (2026-09-27, R376)
+
+R366 registered this cell instead of fixing it: `app/notifications/states.py` chose its leg by
+`_database_available()` alone, so on a customer machine whose PostgreSQL is not up, `POST
+/api/v1/notifications/read` and `POST /api/v1/notifications/dismiss` wrote the process-local `_ROWS`
+overlay, answered `200`, and reported `changed: true` for a row no table ever held. Restart the
+process and that notification is unread again. The missing store is the situation; the receipt was
+the lie. (This closes the write half of 「`app/notifications/states.py` has no production branch」,
+registered at the foot of the R366 section; the read half is registered again below, deliberately.)
+
+`app/notifications/states.py::_require_writable_store` (`:94`, called at `:191`) is the gate, and it
+reads two numbers this module already had: `_database_available()` (`:65`, still the one `_db_ready`
+reader in this file) and `_is_production_environment()` borrowed from `app/api/v1/alerts.py:60` --
+the same ruler `app/api/v1/dashboard.py` borrows (R367), so `app/**` still holds eight definitions of
+it and this ticket added none. Both halves must hold before anything is refused; states.py itself
+reads no `APP_ENV` and compares no spelling of it.
+
+### The three worlds, per face
+
+| world | what the write does | HTTP face | is anything recorded |
+| --- | --- | --- | --- |
+| store ready (`_db_ready` true), any `APP_ENV` | one `INSERT ... ON CONFLICT (notification_id, recipient) DO UPDATE` plus `commit()` against `notification_states` | `200`, `results[].changed` true on the first mark and false on a repeat | yes -- the table |
+| production, store not ready | nothing: `_ROWS` is not written, `read_state` is not called, `_now()` is not read, `_conn()` is not called | `503 {"detail": "storage_unavailable"}` | no |
+| development / bare machine, store not ready | the process-local overlay, exactly as since R299 | byte-for-byte the base answer: `200`, `changed: true`, `reason: "applied"` | process memory, which is legitimate there |
+
+**Zero new error codes, zero new reason words.** The refusal is the exception this outlet already
+translates -- `NotificationStateStoreMissing` (`states.py:53`), caught at
+`app/api/v1/notifications.py:159` for the two writes and at `:190` for the list, turned into the
+`503 storage_unavailable` this module has emitted since R299. The outlet did not change by a byte:
+no third `except` type, no new `detail`, no new receipt key. `reason` is still exactly two words --
+`applied` and `notification_not_addressable` -- and 「nothing was recorded」 is not a third one: a
+storage refusal is an error, never a footnote smuggled inside a 200.
+
+### What the gate does not fold
+
+Ordering is unchanged and pinned. 401 (`authentication_required`) and the per-id
+`notification_not_addressable` are both answered before the storage question is asked, and the
+storage refusal is not folded into either: a call over someone else's notification id still answers
+`200` with that per-id receipt on a production machine whose store is down, because a permission
+answer must not double as a probe for whether this customer has PostgreSQL up. One addressable id in
+a batch is enough to refuse the whole call -- there is no 「200 with a half-written batch」 here, and
+there cannot be, since the other half could not have been written either.
+
+The read legs are left alone on purpose, which is a visible seam rather than an oversight:
+`recipient_states` (`:131`) and `read_state` (`:157`) still take the overlay in that world, so
+`GET /api/v1/notifications` keeps answering `200` exactly as R366 ratified. What changed is that the
+two legs can no longer contradict each other. Before: 「I recorded it」 on the write and 「nobody has
+read anything」 after a restart. Now: 「this machine cannot record it」 on the write, and an empty
+overlay on the read that is finally the truth -- nothing was recorded, and nothing could be. Still
+unsaid, registered rather than fixed:
+
+- A customer whose PostgreSQL was healthy at boot and dies mid-life keeps reading `200`, everything
+  unread, while the `notification_states` rows sit on the dead server: the lifecycle leg has no
+  「this cell is not supplying data」 field of its own. Adding one belongs where R366 put the alert
+  leg's -- `app/notifications/inbox.py`, via `_omitted` -- and that file is another ticket's write
+  set. It would need no new code either.
+- `tests/test_r366_inbox_keeps_its_legs_when_the_alert_store_refuses.py::test_the_other_legs_keep_their_writes_while_the_alert_leg_refuses`
+  still asserts the base face -- `200`, `changed: true`, a row in `_ROWS` for an approval
+  notification on that same production-without-a-store machine -- and the R366 sentence 「dismissing
+  an approval row still answers 200 with `changed: true`」 (`:4021-4022`) says the same thing. Both
+  are precisely the claim this section retires, and both are outside this ticket's write set, so
+  they are listed for correction by their owner rather than adjusted to green here.
+
+### Evidence
+
+`tests/test_r376_notifications_refuse_a_store_that_is_not_there.py` (30 pins) walks both worlds from
+the route and from the storage layer directly: the refusal and the emptiness of `_ROWS`, the counters
+that prove no connection, clock or ledger read precedes the gate, the inequality of one same request
+across the two worlds, the ready-store case that still records and still tells a first mark from a
+repeat, four production spellings and six non-production spellings of `APP_ENV`, and the 401 /
+not-addressable faces that must not move. `tests/test_r376_gate_shape_pins.py` (24 pins) judges shape
+off the AST: one `_db_ready` reader in this file, eight production rulers in `app/**` and none of
+them here, no `getenv("APP_ENV")`, no `HTTPException` in the storage layer, the outlet's
+`(status_code, detail)` and `except` rosters unchanged, the two folded status rosters derived
+separately (`401/403/404` in `can_address`, `403/503` in `alert_candidates`), the gate ordered before
+`read_state` / `_now` / the `_ROWS` write, and `_ROWS.clear()` inside `reset_for_testing` still in
+place. All offline: no service, no PostgreSQL, no model port, no `chroma_db/` write.
+
+Physical lines: `app/notifications/states.py` +57 / -2 -- one gate, its call site, and the two
+docstrings that used to describe one difference now describing two. `app/api/v1/notifications.py`
++0 / -0.

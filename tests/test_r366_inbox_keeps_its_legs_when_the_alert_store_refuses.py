@@ -598,22 +598,29 @@ def test_dismissing_a_row_that_is_genuinely_gone_answers_the_not_addressable_rec
     assert result["changed"] is False and result["state"] is None
 
 
-def test_the_other_legs_keep_their_writes_while_the_alert_leg_refuses(client, world, monkeypatch):
-    """整页不许黑：写侧同样只有告警那一腿吃 503，另两腿照常落状态。"""
+def test_the_write_leg_refuses_too_when_the_store_is_not_there(client, world, monkeypatch):
+    """生产 + 无库：写侧不许说"改了"。整页不黑那半句归读腿，见 :317 与 :332。
+
+    🔴 R376 改口（09-27，总控 Aristotle 落笔，写域外，与 R368 那五枚同族）：本枚原名
+    `test_the_other_legs_keep_their_writes_while_the_alert_leg_refuses`，断的是
+    `_produce` 世界里 POST dismiss 一枚审批号 ⇒ 200 + `changed: True` + 行落进
+    `state_store` 的进程内 `_ROWS`。那张回执正是 R376 奉命消灭的假话本身——库里一行都没写，
+    屏上说"已改"，进程重启即失忆。改名是因为原名字叙述的裁定已经不成立，留着假名字比留着
+    假注释更糟；旧 nodeid 与新 nodeid 的对应记进并树 commit。
+    强度只升不降：断言从"一条腿黑"变成"写侧一条都不许黑着落账"，且加钉 `_ROWS` 恒空。
+    原那半句正面的"另两腿照常落状态"没有丢，由
+    tests/test_r376_notifications_refuse_a_store_that_is_not_there.py 的
+    `test_development_without_a_store_answers_exactly_as_before`（两枚参数格）在开发世界独立接管。
+    """
     _produce(monkeypatch)
 
     response = client.post(
         DISMISS_PATH, headers=_headers(FINANCE_MANAGER), json={"ids": [APPROVAL_NOTIFICATION_ID]}
     )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["results"] == [
-        {"id": APPROVAL_NOTIFICATION_ID, "state": "dismissed", "changed": True, "reason": "applied"}
-    ]
-    assert state_store.recipient_states(FINANCE_MANAGER) == {APPROVAL_NOTIFICATION_ID: "dismissed"}
-
-
-# ================================================ 结构钉：不新造探针、不新增码的出口、不换依赖
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"] == STORAGE_CODE
+    assert state_store.recipient_states(FINANCE_MANAGER) == {}
 
 
 def test_the_two_files_gained_no_second_storage_probe():
