@@ -7,7 +7,7 @@
 
 ## 技术栈
 - 后端: FastAPI + LangGraph + **RAG 检索（读路径当前仍走 Chroma 遗留件，正在切往 PGVector，见下条）**
-- 向量库定案: **PostgreSQL + PGVector 是生产向量库（业主 2026-09-24 定案，不再变更）**；Chroma = **退役中的遗留件**，只作为尚未切换完的读路径存在，**新代码一律不得新增 Chroma 依赖或新的 Chroma 写点**。其余存储：本地文件存储 + Redis。切换进度唯一事实源 = `docs/handoff/2026-09-17-pgvector-adoption-plan.md`（今天真实位置：双写已开且 NUL 缺陷 R130 已修、全库 1008 枚向量在位、读路径仍在 Chroma、切读单 R59 在途）
+- 向量库定案: **PostgreSQL + PGVector 是生产向量库（业主 2026-09-24 定案，不再变更）**；Chroma = **退役中的遗留件**，只作为尚未切换完的读路径存在，**新代码一律不得新增 Chroma 依赖或新的 Chroma 写点**。其余存储：本地文件存储 + Redis。切换进度唯一事实源 = `docs/handoff/2026-09-17-pgvector-adoption-plan.md`（今天真实位置：双写已开且 NUL 缺陷 R130 已修、全库 1008 枚向量在位、**切读的码已全部并树**（R59 块1 `bee9d01` + 块2 `dbc2047`，开关是 `INDEX_BACKEND`，翻默认不再需要改代码），但**默认未翻、读路径仍在 Chroma**——卡在计划书 §P4/§9 那两句话：切读前一格「服务内端到端走真库」的读数还没人跑过（R382 在途），且 `INDEX_BACKEND=pgvector` 属业主侧 `.env` 动作）
 - 模型: 第一版只管理本机 Ollama；远程模型回退必须显式开启，默认关闭
 - 前端: Vue 3 + Element Plus
 - 数据: pandas + matplotlib

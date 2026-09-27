@@ -1363,6 +1363,15 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Leibniz`（**与前几班同名者无关**） | `01a0d179-7b8e-7b23-b53f-06db621d23ce` | **R205a**（接手 `Fermat`） | `be-r205a`（基点 `cf3bca6`，**独占**） | 🔵 **在途**。前任 9 passed / 1 failed，红的正是判据① 那枚；重点改源头 `scripts/collect_evaluation_answers.py::_latency_ms` | 11:42:41 |
 | `Euler`（**与 R62 那枚同名者无关**） | `01a0d179-f793-71c2-b690-18016e8ac489` | **R208** 错误字典措辞 + 别名覆盖面 | `be-r208`（本班自建 worktree，基点 `a218fa6`，**独占**） | 🔵 **在途**。写域只有 `frontend/src/lib/**`；要动 `ChatPanel.vue` 须先停下报告（R48 排队等它） | 11:42:41 |
 | `Nietzsche`（上一班那枚，R207） | `01a0d13f-d7ee-7651-a3e2-205c0d1cdfec` | R207 吞吐重标定 | `be-r207`（基点 `8636ca4`） | 🔴 **零落盘**（11:0x 实取 `git status` 全空、无未跟踪件）⇒ 待复投；它要**独占模型**，只能排在 R203 / R59b 交回之后 | 11:42:41 |
+| ``Boole`→`Baranly`` | `01a0e121-5027-72c1-829f-77e678c9e408` | **R361** 量窗尺 54 枚出处引用去手抄 | `be-r361`（基线 `00945a9`，**独占**） | **已结案**：并树 `285e265`；五件对基点零漂移整件复制、sha 逐枚相等；主树 13 枚点名件 + 四枚 r361（21/15/10/6=52）全绿；`--summary` 三项读数本班现场复核为真（advice 64/41、rewrite 12、2.57 h/4.80 h） | 16:16:12 |
+| ``Noether`` | `01a0e1b2-0ccf-7e22-aab1-b7bd20fc4251` | **R373** 收件箱两条腿不许把拒答画成没有 | `be-r373`（基线 `796540e`，**独占**） | **已结案**：并树 `6b80c00`；两枚 app 件零漂移，契约按尾部 12013 B 切片追加（h2 恰 +1、标题全文唯一）；十枚点名件逐枚同数 = **322 passed**；四把刀 12/7/2/3 红且进出 sha 恒等；自报三格未达标照单入账 | 16:16:12 |
+| ``Nash`` | `01a0e1ba-389b-7f93-9543-4d12b0517973` | **R376** 落不了库的写不许说落了 | `be-r376`（基线 `796540e`，**独占**） | **已结案**：并树 `0d4f5ec`；states.py 零漂移，契约尾部 6578 B 切片追加；`notifications.py` 自证 0 增 0 删；九枚点名件同数 + 本班补跑其树上不存在的两枚 r367（29/23）；总控落笔一枚写域外改口（r366:601 改名并收紧） | 16:16:12 |
+| ``Lagrange`` | `01a0e1cb-ed52-73a3-b60d-f03658df8927` | **R377** R371 那把出口转换的推广 | `be-r377`（基线 `07356f1`，**独占**） | 🔴 **在途**：写域 `app/common/auth.py`、`app/documents/catalog.py`、`app/memory/{long_term,profile}.py`；判不可达即一个字不改 | 16:16:12 |
+| ``Helmholtz`` | `01a0e1de-c417-7873-a062-1a4c1993693b` | **R378** R218 那把尺把挑脸谓词收成停子（主干自带红） | `be-r378`（基点 `285e265`，**独占**） | 🔴 **在途**：写域 `scripts/r218_switch_rehearsal.py` + `tests/test_r218_lane_flip_stop_sets.py`；本班已在 HEAD 干净 worktree 复现该红与 R361 无关 | 16:16:12 |
+| ``Euler`` | `01a0e1df-6b6d-7fb3-b308-dd8b9ecd97e0` | **R379** 量窗尺自己的四格空气读数 | `be-r379`（基点 `285e265`，**独占**） | 🔴 **在途**：写域 `scripts/rehearse_eval_window.py` + 四枚 r361 + 一切 import 该件的用例；输出契约字段名/顺序/单位零变 | 16:16:12 |
+| ``Confucius`` | `01a0e1e0-7286-7ed1-8137-d581c1ccdac6` | **R380** 后端英文原话不许占人话位 | `be-r380`（基点 `285e265`，**独占**） | 🔴 **在途**：写域 `frontend/src/lib/{errcodes,http}.js` + 新钉；禁改 `*.vue` 与 alerts/notifications/dashboard.js；防线只准有一处 | 16:16:12 |
+| ``Leibniz`` | `01a0e1ed-403d-7701-8008-caeaeea71739` | **R381** 通知出口的 `PendingApprovalStoreMissing` 翻译 | `be-r381`（基点 `0d4f5ec`，**独占**） | 🔴 **在途**：写域 `app/api/v1/notifications.py` + 新钉；R373/R376 两班独立点同一格；零新增码、503 抛出点仍恰两枚 | 16:16:12 |
+| ``Planck`` | `01a0e1ed-f625-75d3-b96e-e385e4e96852` | **R382** 切读前格①/格②读数（服务内端到端走真库） | `be-r382`（基点 `0d4f5ec`，**独占**） | 🔴 **在途**：只准进程内设 `INDEX_BACKEND=pgvector`、只准写 `eb_r59_sandbox`；默认值与 `.env` 一律不动 | 16:16:12 |
 
 | `Leibniz`（新，与前几班同名者无关） | `01a0d179-7b8e-7b23-b53f-06db621d23ce` | R205a | `be-r205a` | **已结案**：并入主树 `0997489`；总控用 run6 原件复核平均 351121.8 ms 逐位相同、剔三枚待机污染后诚实均值 49535 ms；它交来的"开钉"被裁成改注释 | 13:20 |
 | `Euler`（新） | `01a0d179-f793-71c2-b690-18016e8ac489` | R208 | `be-r208` | **已结案**：并入主树 `424199c`；npm 1042/52、lint:colors 148/0 errors、build EXIT=0；🔴 收窄那一刀总控裁**收口周不落**（属 R48 写域且是用户可见行为改判），另记两笔过覆盖只记不判 | 13:20 |
@@ -5045,3 +5054,42 @@ R345 给后端加了第四枚 `scan_summary["reason"]`（`alerts.py:45` 常量 /
 3. 门绿后照旧序：重建两枚镜像（已 ~50 h 未建）→ `scripts/check_image_provenance.py` rc=0 → `up -d --no-build` → **run6 一窗多判据**（A①②③④ + C 两格一次拿完）。🔴 run6 派子 Agent 看窗，总控不干等（业主明令：不要一直因为测试卡着；长跑窗口先做别的，此条已在手册）。开窗前 `powercfg /change standby-timeout-ac 0`。
 4. 心跳 `automation-2` 保持 **PAUSED**（target 仍指向已死线程）。
 5. `.gitattributes` 那枚病根（`core.autocrlf=true` + 无 attributes ⇒ 交付件 LF/CRLF 逐单漂移、sha 钉分两层）留业主决策；`origin`（github）TLS 仍不通，push 走 gitee。
+
+
+## §4DB（09-27 第七格·总控线 Aristotle，主树 `7a03d9f` → `0d4f5ec`）：并树三枚 · 派工六枚 · 🔴 事故编号撞号一次（本班按看板实取改号 #54）
+
+### 一、本格并树（三枚，全部整件复制前先做基点漂移取证）
+- **R361 `285e265`**：量窗尺 `scripts/rehearse_eval_window.py` 的 54 枚出处引用去手抄（本班派工词写「20 处」，施工实测 46 行/54 枚，认账）。两格内容变化经本班主树现场复核为真：打印出处 `orchestrator.py:729-841`→`:808-946` 且 `rg "808|946"` 在该件零命中（派生非抄写）；`rewrite_triggered 5→12`、`advice {69,36}→{64,41}`、整窗 `2.49/4.73 h`→`2.57/4.80 h`。另现场读到「金标无出处 29 条」与在册那 29 条改题账吻合。
+- **R373 `6b80c00`**：收件箱审批腿/文档腿的「账本拒答」不再画成「没有东西」；十枚点名件 322 passed 逐枚同数。
+- **R376 `0d4f5ec`**：生产无库时 `apply_state` 不再写进程内 `_ROWS` 还回 `changed:true`，改 503 拒答；开发/裸机一字未改，`migrations/**` 零改动。
+
+### 二、总控落笔的写域外改口（一枚，先记账再落笔，与 R368 那五枚同族）
+`tests/test_r366_inbox_keeps_its_legs_when_the_alert_store_refuses.py:601` 那枚钉断的正是 R376 奉命消灭的假脸（`_produce` 世界 POST dismiss ⇒ 200 + `changed:True` + 行落 `_ROWS`）：改前主树实测 1 failed / 23 passed，改后 **24 passed 枚数不变**，方向是收紧（写侧一条都不许黑着落账，另加 `_ROWS=={}` 钉）。原名字叙述的裁定已不成立故改名 `test_the_write_leg_refuses_too_when_the_store_is_not_there`，旧→新 nodeid 对应记在这里；它正面那半句由 R376 新件 `test_development_without_a_store_answers_exactly_as_before` 两枚参数格接管，本班不重复造同断言。
+🔴 本班自己踩的一次字节雷并当场返工：改口脚本把插入段落写成 LF（loneLF 25），随后按本仓幂等式 `
+→
+→
+` 归一，复验 loneLF/loneCR 恒 0、无 BOM、U+FFFD 0。这条入派工模板（第 7 节手法第 3 条早已写过"禁 `Replace("
+","
+")`"，落笔方是总控本人也一样咬）。
+
+### 三、🔴 事故与机制账
+- **事故 #54（本班新记，🔴 编号更正）**：`McClintock`（R371 施工）用 `Stop-Process` 按「启动时间 < 10 分钟」筛杀进程，同机多枚 Agent 在跑 ⇒ 可能误杀邻居且事后无法核实。处置：自 R377 起一切派工词必带「杀进程只准按自己记录的 PID」。🔴 本班接手摘要里把它记成「事故 #15」是**撞号**——看板 `事故 #` 实取已用至 **#53**，#15 早于 09-17 记给 `Peirce`（R56 重复体，同类第六次）。按实取改号为 #54，不改事实方向。
+- 施工方越界两笔（各跑过一次不带文件参数的 pytest）：`Fermat`、`McClintock`。
+- 本班派工词计数错累计三格并逐格认账：R361「20 处」→实测 54 枚；R369「4 处」→实测 5 处；R375 把 `notifications.js:284` 误算成写路径、又漏报 `alerts.js:163`。R373 另两处：「全仓 tests 零命中」不成立（实为「通知那四件零命中」，`rg` 4 命中）、那枚裸 500 连 `internal_error` 信封都不是。R376 一处：派工词点名的两枚 r367 件在其基点 `796540e` **不存在**（`merge-base --is-ancestor b073d93 HEAD` exit 1）⇒ 今后点名复跑件之前先核基点祖先关系。
+
+### 四、改上一班的账（只追加，不回改上面任何一行）
+本班接手时收到一份摘要，其中「`03e499b` 那格 §4DA.2 记的『总控已把 Curie/R364 改动整件搬进 `be-r364` 并还原主树』按施工方现场取证不成立」这一条，🔴 **改口文字其实已写在 `03e499b` 的 commit message 里、但没有写回看板正文**——本格按看板惯例补这一行，事实以 `03e499b` 记录的那份为准：搬运那一刻 `be-r364` 里是未改的原始版（porcelain 全空），现场 A 的改造是施工方后来用带守卫的绝对路径工具重新落的地。
+
+### 五、🔴 全量门与本格未做的格子
+`python scripts/run_gate.py`（`-n 8 --dist loadfile`，实测 247 s→85 s 级）**本格未跑**——在途 6 枚，未到「在途 ≤1」的条件。已知会红的一枚：`test_r218_lane_flip_stop_sets`（主干自带，非任何人在途引入，本班已在 HEAD 的干净 worktree 复现），已派 R378 收窄那把尺。🔴 预警保留：上一班在争用下曾自报 13 failed（点名 r117×8、r120×1、r218×1、r256×1、r37×1、r38×1），门若复现先分清争用假红还是真环境红（r120/r256 需 docker/真 PG；本班新建的 `eb_r59_sandbox` 库可能影响枚举真库的件）。
+
+### 六、镜像（落后账）
+只有 `migrate` 服务带 `build:` 段（`docker compose build backend` 报「No services to build」）。本班已构建过一次：ID `09c204241d9b`、戳 `revision=b073d93`。🔴 该戳到今天已落后 **六枚**（R371/R375/R361/R373/R376 及其间），全部并树完后必须再 build 一次（那时是快路径，只重跑 COPY 层）；未做：`scripts/check_image_provenance.py` rc=0、`up -d --no-build`、run6。前端镜像 `enterprise-brain-frontend:local` 本格未动。
+
+### 七、pgvector（业主两次追问的那条线，本格推进的是"读数"不是"口号"）
+- 本格前：§9.3 格③（HNSW `vector_l2_ops` m16/efc100、`ef_search` 40、20 枚自询向量 × 5 次取中位、exact 腿 `enablescan=off`）已量完：recall@5 vs exact = **1.0（五档全等）**，延迟 0.26–1.16 ms，零空腿。🔴 两条边界随文：1008 枚太小不可外推客户真尺寸；自询向量使 recall 偏乐观。
+- 本格：R90b「首装必停」第一次在真库上量到（不给 `EMBEDDING_MODEL/EMBEDDING_DIMENSION` 时 `scripts/migrate.py` 对空库具名拒答、RC=1、事务回滚、残留 0 表）；沙盒 `eb_r59_sandbox` 的 `0001→0016` 整链跑通、`vector_scope` 与生产逐格相同、1008 枚真向量只读搬入（仅 `department`/`classification` 合成，各 252 枚）。
+- 🔴 切读的**码早就在树上**（R59 块1 `bee9d01`、块2 `dbc2047`，`app/rag/indexing.py:43` 注释自己写着 moving the read path no longer needs a code change，开关 `:57`），今天仍不切的理由是计划书 §P4 与 §9 那两句话：**默认未翻、格① 端到端零读数**。本格把格①/格② 派成 **R382**（只准进程内设开关、只准写沙盒库），做完这一格切读就只剩"翻哪个默认"一个动作。生产现状实取：`head=0013`、`chunk_vectors=1008`、`VECTOR_DUAL_WRITE=on`、`APP_ENV=production`、🔴 **无 `INDEX_BACKEND`** ⇒ 读路径确实仍在 Chroma（遗留件，仍在提供读服务，既不是最终架构也没下线）。
+
+### 八、必须业主本人（本格一律未代做）
+`deploy/.env.server` 任何编辑（含翻 `INDEX_BACKEND=pgvector`、`VECTOR_DUAL_WRITE` 停不停）· A① 整表 vs 分档 p95 口径 · 29 条 `must_contain` 改题（动评测集要单独批）· `REPORT_LANE_VIA_QUEUE` · H13/U5 密级口径 · hitl 18/105 分母 · 删除清单（先沙盒模拟）· `DROP COLUMN` 时机 · xlrd 拒绝收回 · github remote TLS · `.gitattributes` 病根 · run6 期间插电不合盖不断网 · 心跳 `automation-2` 仍 PAUSED 且 target 指向死线（改到本线程用 `automation_update`，字段 `mode` + `targetThreadId` 驼峰）。
