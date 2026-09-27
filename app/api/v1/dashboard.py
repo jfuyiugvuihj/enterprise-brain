@@ -43,6 +43,14 @@ Design constraints this module is built around:
   defect keeps its shape. No new error code is introduced, and the alert table keeps the
   behaviour of its own route (a bootstrap failure there stays a server error, exactly as
    ``GET /alerts`` answers it).
+- **The overview screens refuse a store that is not there (R367).** On a production host
+  without PostgreSQL the two alert legs above read ``alerts._MEM_ALERTS`` and the ledger leg
+  reads ``pending_approvals._MEM_ROWS``, both permanently empty there, so ``/summary``
+  answered four zeroes and ``/trend`` an all-zero series. ``_refuse_unaccounted_screen``
+  closes that: production plus a missing store is ``503 storage_unavailable`` for the whole
+  response, the development branch keeps every memory row exactly as it was, and each call
+  site sits behind the authorization answer of the leg it guards. Same family as ``/users``
+  (R356), ``GET /alerts`` (R359) and the inbox (R299).
 - **The trend series cuts periods out of stored time columns (R332).**
   ``GET /dashboard/trend`` is a second route in this module and it shares that whole
   permission story: the same ``intelligence._authorized`` analyze gate, the same
@@ -142,8 +150,83 @@ async def _dataset_count(request: Request) -> int:
     return len(listing["files"])
 
 
+def _refuse_unaccounted_screen(
+    route: str,
+    leg: str,
+    *,
+    database_available: bool,
+) -> None:
+    """Production without the store behind one leg of this screen refuses the screen (R367).
+
+    R359 lit this doorway for ``GET /alerts`` (``alerts.py::_require_ready_store``) and
+    registered the part it could not reach: both overview routes read the alert ledger
+    *themselves* (``_alert_counts`` and ``_alert_series`` fall back onto
+    ``alerts_api._MEM_ALERTS``), and ``_pending_count`` reaches the HITL ledger through
+    ``pending_approvals.open_items``, whose no-database branch walks ``_MEM_ROWS`` without a
+    sound. On a customer host whose PostgreSQL is not up both of those tables are permanently
+    empty, so ``/summary`` handed over four zeroes and ``/trend`` an all-zero line:
+    「这家公司一切正常」, read out of a store that never answered. A tile may not translate a
+    deployment gap into a business all-clear; R13 already ruled that for the ledger *table*,
+    and this closes the same hole for the ledger *being absent*.
+
+    Why the whole screen rather than one quiet tile: neither route owns a usable 「this column
+    does not supply data」 shape. ``alerts`` is the only conditional key in ``/summary``, and
+    absence is already its permission answer (a 403 on the alert gate deletes the key), so
+    lending absence to 「the storage did not answer」 would put two things back on one face. The
+    other tiles are pinned the other way: R284 wrote into the route body that
+    ``documents_ready`` is always an integer, because this endpoint does not get to pick which
+    of the two faces a quiet day shows by leaving the key out. ``/trend`` is stricter still - a
+    bucket of ``0`` asserts that nothing was created in that period, and R332 already refuses a
+    *partial* series. So the response as a whole answers ``503 storage_unavailable``, the same
+    family as ``/users`` (R356), ``GET /alerts`` (R359), the inbox (R299) and the missing ledger
+    table (R13). Zero new error codes: the literal is the one this module already emits.
+
+    Two questions, both asked somewhere else. 「Is this a customer install?」 is
+    ``alerts_api._is_production_environment()`` - the same ``APP_ENV`` reader the R359 gate
+    uses, so this module opens no third probe book. 「Is the store up?」 is the answer the
+    caller's own leg gives: ``alerts_api._database_available()`` for the alert leg,
+    ``pending_approvals._database_available()`` for the ledger, because the leg that is about to
+    be read is the leg that owes the answer. This function reads neither
+    ``app.common.auth._db_ready`` nor ``os.getenv``: R246 counts the ``_db_ready`` readers off
+    the AST, and one more there would make that ledger a lie.
+
+    The development leg is not tightened. On bare metal the in-process store is today's
+    legitimate backend - ``alerts_api._ensure()`` even builds its tables - so every row, count
+    and ordering that branch returns stays verbatim; killing it would be the same lie told
+    backwards. ``tests/test_r367_dashboard_refuses_a_store_that_is_not_there.py`` pins both
+    directions.
+
+    Every call site sits behind its leg's authorization answer and in front of any read: an
+    anonymous or unqualified caller still gets 401/403, and a caller the alert gate refuses still
+    gets the 403-shaped absence of the key. Hoisting the gate above them would turn the
+    difference between 401/403 and 503 into a probe for whether this customer started
+    PostgreSQL, which is not the caller's information.
+    """
+    if database_available or not alerts_api._is_production_environment():
+        return
+    logger.warning(
+        f"[Dashboard] 生产环境存储未就绪，整屏拒答而不是数进程内台账: "
+        f"route={route} leg={leg} code=storage_unavailable（PG 未起或迁移未跑）"
+    )
+    raise HTTPException(status_code=503, detail="storage_unavailable")
+
+
 def _pending_count(principal) -> int:
-    """Open HITL ledger rows owned by the caller (the R13 read, unchanged)."""
+    """Open HITL ledger rows owned by the caller (the R13 read, unchanged).
+
+    R367 adds the half the catch below cannot see: with no database at all
+    ``pending_approvals.open_items`` walks ``_MEM_ROWS`` and answers 「nothing awaiting
+    approval」 instead of raising, so only the gate above can tell that face from a quiet
+    queue. The catch stays as it was and stays the only exception type translated - it answers
+    a different failure (PostgreSQL is up, migration ``0008`` has not run), and widening it to
+    ``RuntimeError`` would cover for real bugs: a missing driver travels that same path on
+    purpose, which is the ruling written on ``PendingApprovalStoreMissing`` itself.
+    """
+    _refuse_unaccounted_screen(
+        "dashboard_summary",
+        "pending_approvals",
+        database_available=pending_approvals._database_available(),
+    )
     try:
         rows = pending_approvals.open_items(owner_user_id=str(principal.user_id or ""))
     except pending_approvals.PendingApprovalStoreMissing as exc:
@@ -166,6 +249,14 @@ def _alert_counts(request: Request) -> dict | None:
         if exc.status_code == 403:
             return None
         raise
+
+    # R367: the authorization answer above has already been given - a 403 left through the
+    # ``return None`` with its key deleted - so this is the second question, asked with the
+    # alert leg's own probe. Production plus no store means the memory branch below would
+    # count a permanently empty table and call the result health.
+    _refuse_unaccounted_screen(
+        "dashboard_summary", "alerts", database_available=alerts_api._database_available()
+    )
 
     if alerts_api._database_available():
         alerts_api._ensure()
@@ -201,6 +292,11 @@ async def dashboard_summary(request: Request, response: Response):
     ``documents`` and ``documents_ready`` are always present and always integers;
     ``alerts`` stays the only conditional key, and only there because declining to
     answer is the permission answer for that tile.
+
+    R367 adds one face to that story, and it is the screen's, not the tile's: on a production
+    host whose store is not there this route answers ``503 storage_unavailable`` for the whole
+    body, because 「a tile that got no data」 has no shape here that is not already somebody
+    else's answer - see ``_refuse_unaccounted_screen``. The development body is unchanged.
     """
     principal = intelligence._authorized(request, ACTION_ANALYZE, "dashboard_summary")
     # Every tile in here is a per-principal authorization answer, so a cached 200 is
@@ -676,6 +772,14 @@ def _alert_series(
     if principal is _ALERTS_DENIED:
         return None
 
+    # R367: same order as ``_alert_counts`` - denial already answered by returning ``None``
+    # (the alert keys disappear from every bucket), the storage answer comes after it. Without
+    # this gate the bars below are replayed off an empty in-process table and the chart
+    # reports a company with nothing to look at.
+    _refuse_unaccounted_screen(
+        "dashboard_trend", "alerts", database_available=alerts_api._database_available()
+    )
+
     if alerts_api._database_available():
         alerts_api._ensure()
         predicate, params = alerts_api.alert_row_scope_sql(principal)
@@ -745,6 +849,12 @@ async def dashboard_trend(
     a period, a visible file with no active registry row, and any read that raises all keep
     failing the whole response, which is what keeps
     ``sum(buckets) + undated == /summary`` true rather than merely hopeful.
+
+    R367 puts the alert leg behind the same doorway as ``/summary``: on a production host with
+    no store this route answers ``503 storage_unavailable`` rather than drawing those zeroes as
+    a series. A quiet bucket stays a real zero, and the newest bucket keeps the clamp written
+    in ``_alert_series`` - closed periods replay against their own edge, and only the bucket
+    that has not closed replays against 当下.
     """
     principal = intelligence._authorized(request, ACTION_ANALYZE, "dashboard_trend")
     # Same reason as on /summary: each bucket is scoped to the caller, so a cached body is

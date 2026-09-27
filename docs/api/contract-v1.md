@@ -4067,3 +4067,173 @@ Out of this ticket's write set, registered rather than fixed:
   which is the honest server answer wearing the dishonest client face. And `frontend/src/lib/alerts.js:141`
   hardcodes `retryable: true` on its generic failure branch where `frontend/src/lib/errcodes.js:105` says
   `storage_unavailable` is not retryable. Both are R368 (frontend write set).
+
+
+## The overview screens refuse a store that is not there (2026-09-27, R367)
+
+R359 closed one face of this bug and registered the other two in its own 「Registered, not
+fixed」: `app/api/v1/dashboard.py` does not go through `GET /alerts` -- it reads the alert ledger
+itself. So on the same broken customer host (PostgreSQL not up, or the migrations not run) the
+overview still answered in numbers that had no source:
+
+| Screen | Leg | Production + no store, before | After |
+| --- | --- | --- | --- |
+| `GET /api/v1/dashboard/summary` | `_alert_counts` -> `alerts._MEM_ALERTS` | `200` with `"alerts": {"total": 0, "unread": 0}` | `503 storage_unavailable` |
+| `GET /api/v1/dashboard/summary` | `_pending_count` -> `pending_approvals.open_items` -> `_MEM_ROWS` | `200` with `"pending_approvals": 0` | `503 storage_unavailable` |
+| `GET /api/v1/dashboard/trend` | `_alert_series` -> `alerts._MEM_ALERTS` | `200`, every `alerts` / `alerts_open` bar at `0` | `503 storage_unavailable` |
+
+Those are the same sentence told three times: 「这家公司一切正常」, printed out of a store that
+never answered. `_MEM_ALERTS` and `_MEM_ROWS` are process-local containers, empty on a customer
+machine by construction, and nothing on either screen separates 「the ledger is empty」 from
+「the ledger is not there」. R340 makes that worse rather than better on the trend card: the
+bucket-edge replay is arithmetically perfect on an empty ledger, so a chart that looks like the
+most careful possible reading of the past is the loudest possible lie about a deployment gap.
+
+### One gate, three legs
+
+`app/api/v1/dashboard.py::_refuse_unaccounted_screen(route, leg, *, database_available)` is the
+whole addition, called from exactly three places -- `_pending_count`, `_alert_counts`,
+`_alert_series` -- and from nowhere else. It asks two questions the repository already knew how
+to ask, and restates neither:
+
+- 「Is this a customer install?」 -- `alerts_api._is_production_environment()`, the same `APP_ENV`
+  reader R359 uses. `dashboard.py` defines no second one, reads no `APP_ENV`, no `os.getenv`, and
+  holds no copy of the environment roster.
+- 「Is the store up?」 -- the answer of the leg that is about to be read:
+  `alerts_api._database_available()` on the two alert legs,
+  `pending_approvals._database_available()` on the ledger leg. Those two probes are the module
+  boundaries this ticket is allowed to see; `dashboard.py` still is not a reader of
+  `app.common.auth._db_ready`, which is what keeps `app/common/auth.py`'s reader ledger -- and
+  `tests/test_r246_honest_readiness_claims.py`, which counts it off the AST -- untouched.
+- Both true => `503 storage_unavailable`. **Zero new error codes**: it is the literal this module
+  already emits for the ledger table (`_pending_count`, R13) and for an unreadable period
+  (`_trend_unreadable`, R332), and it is already a member of `ErrorEnvelope.code`.
+
+The whole screen refuses rather than one tile going quiet, and that is a shape argument, not a
+mood: neither route owns a usable 「this column did not supply data」 face. `alerts` is the only
+conditional key in `/summary`, and its absence is already somebody else's answer -- a 403 from
+`_require_alert_management` deletes the key (R188/R332), so borrowing absence for 「the storage
+did not answer」 would put two things back on one face. The other tiles are pinned from the
+opposite side: R284 wrote into the route body that `documents` and `documents_ready` are always
+present and always integers, because this endpoint does not get to pick which of two faces a
+quiet day shows by leaving the key out. `/trend` is stricter still: a bucket of `0` asserts that
+nothing was created in that period, and R332 already refused a *partial* series. So the response
+as a whole answers 503, which is the family ruling of `/users` (R356), `GET /alerts` (R359), the
+notification inbox (R299) and the missing ledger table (R13).
+
+### The order the questions are asked in
+
+The gate is the second question everywhere it stands. `intelligence._authorized` is still the
+first act of both routes, so an anonymous caller gets 401 and a caller without
+`resource:analyze` gets 403 on a host with no database exactly as they did on a host with one --
+otherwise the difference between 401/403 and 503 becomes a probe for whether this customer
+started PostgreSQL, and that is not the caller's information.
+
+Inside the alert legs the same rule holds one layer down: `_alert_counts` resolves
+`_require_alert_management` first and keeps its 403 -> `None` -> key-deleted shape untouched, and
+`_alert_series` keeps `_alert_management_principal` -> `_ALERTS_DENIED` -> `None` untouched. A
+staff caller on a machine whose alert store is missing therefore still gets a 200 without the
+alert keys, provided the tile beside it can answer. The ledger leg is not alert-scoped, and never
+was: R13 already refuses the whole screen for a staff caller whose ledger table is missing, and
+this ticket's gate is the same width as the read it replaces.
+
+### What did not move
+
+- **Development and bare metal: nothing.** The in-process store is today's legitimate backend
+  there -- `alerts._ensure()` still builds its tables on that branch -- so the 200 body keeps its
+  keys, its row counts and its ordering verbatim, including the `alerts` key for a caller who
+  passes the alert gate. The behaviour file pins that body by equality, in both routes, because a
+  ticket that killed the development leg would be telling the same lie backwards.
+- **The `PendingApprovalStoreMissing` catch stays**, at the same place, as the only exception type
+  translated, with `raise ... from exc` intact. The two ledger refusals are two doors and the
+  pins keep them apart: no store at all => the new gate, and `open_items` is never entered;
+  store up but migration `0008` not run => that catch, and `open_items` is entered once. Widening
+  it to `except RuntimeError` is refused on purpose -- a missing driver travels that same path,
+  which is the reason the named exception exists.
+- No key was added to either response, none was removed, no request parameter changed, no cache
+  header moved. `/trend` grew no ledger leg: it does not count pending approvals, so it refuses
+  nothing on the store it never reads.
+- `documents` / `documents_ready` / `datasets` keep their own owners: this ticket gates only the
+  legs it was assigned, and the document and dataset books answer through
+  `chat.list_document_catalog` and `data.list_data_files` as before.
+
+### The newest bucket edge (the paragraph R365 asked to have on paper)
+
+`alerts_open` counts, per bucket, the rows created in that bucket that were still undisposed **at
+that bucket's own closing instant** (R340). The rule that makes the newest bucket honest has been
+in `app/api/v1/dashboard.py` since R340 and never had a contract line; it is here now, in the
+same words the code uses:
+
+- the clock is read **once per request** -- `now = _trend_now()` -- not once per row, so one
+  response cannot contain two different answers to 「what is still open now」;
+- a bucket's horizon is `min(_bucket_end(period, start), now)`: clamping with `min` is what stops
+  the newest bar from being replayed against an instant that has not happened yet;
+- so every **closed** bucket replays against its own edge, and only the bucket that has not
+  closed yet -- the newest one -- replays against 当下;
+- consequence, and the reason the two overview numbers still agree: the newest bar's
+  `alerts_open` is what `/summary` reports as open today, while every earlier bar keeps the value
+  its own rows had at the end of that earlier period. A disposal that lands exactly on a bucket
+  edge belongs to the bucket beside it, because `_bucket_start` is half-open `[start, end)` and
+  the disposal comparison uses `>=` for the same reason -- the two comparisons cannot disagree
+  about which period an instant belongs to;
+- an undated row has no bucket edge to replay against, so its `alerts_open` stays the present
+  reading (R342 判据己, unchanged).
+
+### Pins
+
+`tests/test_r367_dashboard_refuses_a_store_that_is_not_there.py` -- behaviour, both directions:
+the three legs refuse in production (`test_summary_refuses_when_the_alert_store_is_not_there`,
+`test_trend_refuses_when_the_alert_store_is_not_there`,
+`test_summary_refuses_when_the_ledger_store_is_not_there`,
+`test_a_tile_that_did_answer_does_not_rescue_the_screen`,
+`test_the_refusal_wears_the_code_the_repo_already_ships`), the development body is unchanged
+(`test_development_still_counts_the_memory_ledgers_verbatim`,
+`test_development_still_draws_the_memory_alert_bars`,
+`test_every_non_production_name_keeps_answering`), the refusal comes after the permission answer
+(`test_an_anonymous_caller_still_hears_the_permission_answer`,
+`test_a_caller_without_analyze_rights_still_hears_the_permission_answer`,
+`test_a_denied_alert_caller_still_loses_the_key_rather_than_the_screen`), and the two ledger doors
+stay apart (`test_the_missing_ledger_table_still_refuses_through_the_pre_existing_catch`,
+`test_the_two_ledger_refusals_are_two_different_doors`,
+`test_the_pre_existing_catch_still_names_the_migration_it_waits_for`,
+`test_any_other_ledger_failure_keeps_its_own_shape`).
+
+`tests/test_r367_gate_shape_pins.py` -- shape: no second probe book
+(`test_the_module_defines_no_second_production_or_storage_probe`,
+`test_the_module_reads_neither_the_readiness_flag_nor_the_environment`,
+`test_the_three_probes_the_gate_uses_already_existed_at_the_base`), one gate with three legs and
+no side door (`test_the_gate_is_one_function_called_from_exactly_three_legs`,
+`test_the_module_opens_exactly_the_storage_doors_it_names`,
+`test_every_refusal_word_is_the_one_the_repo_already_ships`), the ordering
+(`test_every_gate_call_sits_behind_its_leg_authorization`,
+`test_the_alert_legs_still_answer_denial_before_storage`,
+`test_the_pending_leg_gates_before_it_touches_the_ledger`,
+`test_the_routes_authorize_before_any_leg_that_can_refuse`), the exact catch
+(`test_the_r13_catch_is_still_the_exact_named_type`,
+`test_the_module_translates_no_broad_exception_anywhere`), this section's own text
+(`test_the_new_section_states_the_two_faces_and_why_absence_was_not_available`,
+`test_the_new_section_carries_the_bucket_edge_paragraph_r365_asked_for`), and the append rule
+(`test_the_contract_appends_one_section_and_deletes_nothing`,
+`test_the_bucket_edge_words_in_the_contract_match_the_code`). The two probes this ticket refuses
+to re-derive are named where they bite
+(`test_the_gate_asks_the_production_question_through_the_existing_reader`,
+`test_each_leg_hands_the_gate_its_own_storage_probe`,
+`test_the_gate_reads_nothing_before_it_decides`), as is the environment roster it borrows instead
+of copying (`test_every_production_name_refuses`) and the byte shape of every file it touched
+(`test_the_files_this_ticket_touched_keep_the_repo_line_ending`).
+
+### Registered, not fixed
+
+- **`/summary` answers 503 before `/trend` can be asked the same question twice.** Both routes are
+  covered, but by different legs: `/trend` has no ledger tile, so a production host whose *only*
+  missing store is the HITL ledger still answers `/trend` with a full series. That is the honest
+  shape -- that screen does not count approvals -- and it is written down because the asymmetry
+  otherwise looks like an oversight.
+- **The `RuntimeError("... is required in production; run migrations first")` bootstrap failures
+  inside `alerts._ensure()`** stay a 500 on both screens when PostgreSQL is up and the schema is
+  not, exactly as R359 registered them for `GET /alerts`. This ticket moved no error shape; only
+  the `storage_unavailable` doorway is new here, and only for 「no store at all」.
+- **`app/notifications/sources.py` calls the dashboard legs?** No -- it calls `list_alerts` /
+  `get_alert` directly (R359's own registration). Recorded here only so the next reader does not
+  look for a fourth leg: the inbox is not built on `/dashboard`, and nothing in this section
+  changes what the inbox answers.
