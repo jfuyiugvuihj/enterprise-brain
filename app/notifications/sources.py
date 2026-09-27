@@ -50,6 +50,11 @@ ALERT_LEG_PAGE = 100
 #: 排序缺省值：created_at 读不到时沉到最旧，不参与编造一个时间。
 _SORT_FALLBACK = '-'
 
+#: 存储拒答时这一格的说法。本文件不发明这个词：它就是 ErrorEnvelope.code 里那一枚，也是
+#: chat / dashboard / 通知出口三处对同一件事已经在吐的那一枚，R366 已经用它登记过告警腿。
+#: 三枚源的 reason 词表因此一枚都没有长，兜底写的字面量也只剩这一处。
+STORAGE_UNAVAILABLE = 'storage_unavailable'
+
 
 @dataclass
 class SourceBundle:
@@ -111,9 +116,20 @@ async def approval_candidates(principal) -> SourceBundle:
     这一格刻意不向图复核（check_interrupt）。看板早就把这条口径写死并钉了用例：不复核的那本账
     只能高估、不会低估，所以收件箱里多挂一条其实已经办完的待办，与看板上多数一条是同一种偏差。
     要把这一格变精确的是 R289（复核过的聚合数），不在本期里顺手做半截。
+
+    R373 接的是这一腿的存储拒答。`_require_table` 在「PG 起着而那张表不在」时吐领域异常
+    `PendingApprovalStoreMissing`，本文件此前一个字都不接，于是整页收件箱撞成裸 500：一条腿
+    问不出，其余两格一起没了。现在折进同一枚 `_omitted`，说法取那本账对同一件事已经给出的
+    那一枚码，与 chat / dashboard / 通知出口三处同源，零新增错误码、零新增 reason 词。
+    捕获只认这一枚具名类型 —— 它是 RuntimeError 的子类，而驱动缺失那枚裸 RuntimeError、SQL 层
+    的列错与连接错都不是它的实例，所以那些错照旧上抛，本文件不替真正的 bug 打掩护。
     """
     owner = str(getattr(principal, 'user_id', '-') or '-')
-    records = pending_approvals.open_items(owner_user_id=owner)
+    try:
+        records = pending_approvals.open_items(owner_user_id=owner)
+    except pending_approvals.PendingApprovalStoreMissing:
+        # R373：账本缺表是「这一格问不出」，不是「这一格没有新事项」，两张脸各自留名。
+        return _omitted(SOURCE_APPROVAL, STORAGE_UNAVAILABLE)
     items: list[Notification] = []
     for record in records:
         session_id = str(getattr(record, 'session_id', '-') or '-')
@@ -161,7 +177,7 @@ async def alert_candidates(request) -> SourceBundle:
             return _omitted(SOURCE_ALERT, reason)
         if exc.status_code == 503:
             # R366：存储拒答折成「这一格不供数」，不折成「这里真的没有东西」。
-            reason = exc.detail if isinstance(exc.detail, str) else 'storage_unavailable'
+            reason = exc.detail if isinstance(exc.detail, str) else STORAGE_UNAVAILABLE
             return _omitted(SOURCE_ALERT, reason)
         raise
     rows = [dict(row) for row in (payload.get('alerts') or [])]
@@ -202,8 +218,21 @@ async def document_candidates(request) -> SourceBundle:
     authorization_decision，所以「同部门不同密级」那一格在这里是结构性做不到的越权 —— 能到得了
     这一行的，本来就是他在文档屏上看得见的文档。这里只再问一句这篇进索引了没有，用的还是
     catalog 自己写下的那一格。
+
+    R373 给这一腿补的是同一道边界：这一本账一旦回 503（仓里对「存储问不出」已有的那一枚答案，
+    R359 给告警腿装的闸就是这个形状），这里折成缺席登记，其余两条腿逐字照读；401 那一支一字
+    未动，仍按它本来的脸走出口，也不与存储那一支并成一支。今天这一腿的存储失败还没长到 503
+    那一格 —— catalog 在更深处把 SQL 失败折成了本地扫描，那是另一单的事，本文件不越过自己去
+    另装一枚探针。
     """
-    payload = await chat_api.list_document_catalog(request)
+    try:
+        payload = await chat_api.list_document_catalog(request)
+    except HTTPException as exc:
+        if exc.status_code == 503:
+            # R373：与告警腿同构的折叠，reason 取那本账自己给出的那一枚；其余状态码原样上抛。
+            reason = exc.detail if isinstance(exc.detail, str) else STORAGE_UNAVAILABLE
+            return _omitted(SOURCE_DOCUMENT, reason)
+        raise
     rows = [dict(row) for row in (payload.get('documents') or [])]
     items: list[Notification] = []
     for row in rows:

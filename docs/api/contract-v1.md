@@ -4338,3 +4338,145 @@ Evidence layer: every case in both new test files runs against an in-memory cata
 no container, no model port was touched -- so these pins prove 「what the exit answers when the probe reads a
 missing table or column」, and do not prove that the migrations themselves create those objects. That leg
 belongs to `tests/test_r184_alerts_department_column.py` and `tests/test_r251_alert_disposal_migration.py`.
+
+## Either remaining leg may refuse without taking the inbox down (2026-09-27, R373)
+
+R366 folded the alert leg and named the other two as the same black. This section closes those two, in the shape
+R366 left. The inbox has **one outlet for three legs** -- `app/notifications/inbox.py::collect` awaits the three
+sources in sequence and is pinned to degrade nothing itself -- so a leg that raises still takes the whole page
+with it, and the customer reads 「the notification feature is broken」 while the real sentence (a table is
+missing) stays in the log.
+
+What the two legs actually do was measured on the base bytes, not read off the callee's signature:
+
+- **approval.** `sources.py::approval_candidates` and `inbox.py::can_address` each called
+  `pending_approvals.open_items` with no handler at all. `open_items` reaches
+  `_items_with_status` (`app/storage/pending_approvals.py:390 -> :371`) which calls `_require_table`, and
+  `_require_table:152` raises the domain error `PendingApprovalStoreMissing` (defined `:140`, deliberately a
+  **subclass of `RuntimeError`**, not `Exception`). There is no `exception_handler` anywhere under `app/**`
+  (`git grep -n exception_handler app` -> exit 1), so the page did not even answer in an envelope:
+  `GET /api/v1/notifications` returned a **bare 500** with the plain-text body `Internal Server Error`, and
+  `POST /api/v1/notifications/dismiss` the same. The same ledger and the same missing table on another screen
+  answer `503 storage_unavailable` -- `app/api/v1/chat.py:3034` and `app/api/v1/dashboard.py:149` -- so one
+  fact used to speak 503 in one place and 500 in this one.
+- **document.** Both files also called `chat_api.list_document_catalog` with no handler. Measured: that call
+  cannot today raise a storage error into the inbox, because `app/documents/catalog.py:709-724` wraps the SQL
+  leg in `except Exception` and falls back to a local directory scan. So a missing table or column surfaces
+  here as `sources.document` = `included: true`, `reason_code: ok`, `scanned: 0` -- not a 500, but the exact
+  face this file has been refusing since R299: 「scanned, and clean」. Registered below, not fixed here; what
+  this ticket closes is the boundary one level up -- if that ledger answers 503, this leg folds an absence and
+  the other two keep reading.
+
+### The read side: same door, two more legs
+
+| leg | catches | folded into | folded roster, pinned off the AST |
+| --- | --- | --- | --- |
+| approval | `pending_approvals.PendingApprovalStoreMissing` -- that type only | `_omitted(SOURCE_APPROVAL, STORAGE_UNAVAILABLE)` | 「this cell is not supplying data, because that table is not there」 |
+| document | `HTTPException` whose `status_code == 503` | `_omitted(SOURCE_DOCUMENT, exc.detail)`, non-string detail falls back to the same word | exactly `{503}` |
+| alert | (R366, untouched) | `_omitted(SOURCE_ALERT, ...)` | exactly `{403, 503}` |
+
+The absence is registered through the `_omitted` helper that already existed. Five keys, none added, none
+dropped: `sources.approval` = `{"included": false, "reason_code": "storage_unavailable", "candidates": 0,
+"scanned": 0, "truncated": false}`, and `sources.document` in the same shape.
+
+**Zero new error code, zero new reason string.** The word folded in is `storage_unavailable`, already emitted by
+`app/api/v1/chat.py:3037`, `app/api/v1/dashboard.py:150` and `app/api/v1/notifications.py:161` for exactly this
+fact, and already a member of `app/agents/contracts.py::ErrorEnvelope.code`. R373 hoists the literal R366 had
+written inline into one module constant `STORAGE_UNAVAILABLE` (`app/notifications/sources.py:56`) so the three
+fold sites reference one definition; the literal's occurrence count inside that file is 1 before this ticket and
+1 after it, and a pin reads that count off the file rather than trusting the prose. Every value any leg can put
+in `reason_code` is checked against `ErrorEnvelope`, not against this ticket's own strings: the reachable set is
+exactly `ok` / `permission_denied` / `storage_unavailable`.
+
+**An absence and a quiet ledger stay two sentences**, one pin per leg, each reading one seeded world twice.
+Approval: 「the ledger is answering and this owner has nothing pending」 = `included: true, reason_code: ok,
+candidates: 0, scanned: 0` against 「the table is gone」 = `included: false, reason_code: storage_unavailable`.
+Document: 「this mailbox really has nothing indexed」 (a second recipient over the same seeded directory)
+against 「the catalog refused」. Neither is folded into the other; `is_exact` is not flipped to `False` to make
+an absence look counted for, and a refused read writes no reader state.
+
+**The permission branch is not merged with the storage branch.** The document leg's roster is *derived* and
+pinned to exactly `{503}`: a `403` or `401` out of that ledger still propagates with its own status and detail
+and is never dressed as 「this cell is not supplying data」; the alert leg's tuple in `can_address` is still
+`401, 403, 404`, edited by nobody here; a `staff` caller still reads `permission_denied` on the alert tile even
+while the approval ledger is missing. Knives 1 and 3 redden on this: merging `403` into the document roster
+reddens the face pin and the roster pin, and lifting the approval fold back out reddens ten.
+
+### The write side: 「cannot ask」 is not 「not yours」
+
+`app/notifications/inbox.py:151` asks 「is this round still pending for this person」. With the table gone, the
+honest answer is 「cannot be asked」, so the branch re-raises the domain error -- a bare `raise`, pinned off the
+AST (its statement body is exactly one `Raise` with no expression, and `can_address` carries exactly three
+handlers: the `int(source_id)` guard, this one, and R366's `HTTPException` one). Returning `False` would render
+a still-pending approval as `notification_not_addressable` and close the todo -- the same silent swallow R366
+refused for a still-open alert. The document branch gained **no** handler at all, pinned structurally: a 503 or
+401 out of the catalog propagates, it is not folded into 「not addressable」.
+
+What the customer sees on that path is still a `500`: the outlet `app/api/v1/notifications.py` translates only
+`NotificationStateStoreMissing` into `503 storage_unavailable` (`:159` in `_apply`, `:190` in
+`list_notifications`) and translating a second ledger's error is that file's call, outside this ticket's write
+set -- registered below. The pins therefore assert 「not a 200, no `results` receipt, no reader state written」
+instead of hardcoding `500`: when the outlet adds its two lines, nothing here turns red, and the laundering
+knife (4) still reddens three.
+
+### Evidence and boundaries
+
+`tests/test_r373_the_two_remaining_legs_answer_absence.py` -- 39 pins, all offline (no service, no PostgreSQL,
+no model port, no `chroma_db/` write). Three legs are seeded once -- one pending approval round, one open alert,
+one indexed document. 「That table is gone」 is produced the way `tests/test_hitl_pending.py:697 _no_table`
+produces it: `_database_available()` true and a stub connection whose `to_regclass` answers `NULL`, so the
+exception under test is the ledger's own and not a substitute. 「The catalog refused」 is produced by the one
+face that ledger can emit -- a `503` whose `detail` is the code itself -- and this ticket says plainly that
+`chat.py` does not emit it yet, which is why the document-leg pin is a boundary and not a bug reproduction.
+
+Four knives, run **on disk** against these very bytes and restored by sha256 -- `sources.py`
+`c00354a8ddf2b77e23c0568758b37a9e22cd8b6e1ab92d50d57445ab76b1c59a`, `inbox.py`
+`828e691cc8e94e82e79e88b866e265473f0e39cf9791c0c9e0d5bd659c34d991`, each re-measured after every knife and
+equal to the entry reading. The same four knives are also permanent pins inside the new file, run through
+`tests/_temp_edit_overlay.py` so a regression run can re-cut them without touching disk:
+
+- (1) lifting the new approval fold out of `approval_candidates` reddens **12**: the 200 itself, the omitted
+  shape, the two-legs-at-once reading, the other-legs-unchanged reading, the count arithmetic, the refused read
+  that must write no state, the two-faces comparison, the code-equality pin, the reason-table pin, the
+  literal-count pin, the typed-catch AST pin, and the permission-face pin (a black page cannot show the
+  permission face either -- that last one is this ticket's whole argument in a single red).
+- (2) folding the refusal into 「an empty bundle with no registered absence」 reddens **7**: the 200 reading,
+  the two-legs-at-once reading, the omitted shape, the two-faces comparison whose whole job is to keep 「not
+  supplying data」 apart from 「nothing here」, the code-equality pin, the literal-count pin, and the
+  permission-face pin. The page answers 200 under this mutant, and the lie is that it answers 「nothing
+  pending」.
+- (3) putting `403` into the document leg's roster reddens **2**: the roster pin and the face pin that reads a
+  `403` as a `403`.
+- (4) making the approval write branch answer `False` reddens **3**: the direct-call pin, the AST pin, and the
+  end-to-end pin that refuses a quiet receipt.
+
+In the same window as every knife, the seven neighbours named in the ticket ran together --
+`test_r366_inbox_keeps_its_legs_when_the_alert_store_refuses`, `test_r299_notification_inbox`,
+`test_r299_notification_states`, `test_r303_notification_pins`, `test_r359_alerts_refuse_a_store_that_is_not_there`,
+`test_r142_error_code_table_sync`, `test_error_code_vocabulary` -- **236 passed, 0 failed**, under all four
+mutants. Nothing here was passed over, skipped, or widened to reach that number.
+
+Physical lines: `app/notifications/sources.py` +32 / -3, `app/notifications/inbox.py` +12 / -1. The three
+deleted lines are R366's fallback literal (hoisted to the shared constant) and the two call sites this ticket
+wrapped in a `try`; no expectation, no fold, and no status code that was already there moved.
+
+Out of this ticket's write set, registered rather than fixed:
+
+- `app/documents/catalog.py:709-724`: the SQL leg of the document catalog is wrapped in `except Exception` and
+  falls back to `_local_version_rows()`, and the offline leg at `:707` is not inside any `try` at all. So a
+  missing `document_versions` table, a missing column, or a dead connection reads as a normal 200 whose
+  `sources.document` says 「scanned」. This is the R359 disease one layer down, and no inbox-side fix can
+  reach it without a second storage probe, which R366 pins away.
+- `app/api/v1/notifications.py:159` and `:190`: the outlet translates `NotificationStateStoreMissing` and
+  nothing else. Adding `pending_approvals.PendingApprovalStoreMissing` beside it would turn the write-side
+  `bare 500` above into the `503 storage_unavailable` the rest of the repository already speaks.
+- The named-type boundary this ticket keeps also leaves two cells black on purpose: `_conn()`
+  (`app/storage/pending_approvals.py:104`) raises a plain `RuntimeError` when the driver is absent, and a
+  pre-0012 ledger answers `UndefinedColumn` at `:372` -- neither is an instance of the domain error, so
+  neither is folded, and a pin requires that the driver case still reaches the customer as a 500. Widening the
+  catch is not the fix: the ledger itself would have to name those states, and `pending_approvals.py` is under
+  a standing do-not-touch.
+- `app/storage/pending_approvals.py:336`: when PostgreSQL is not there at all, `_items_with_status` falls back
+  to `_MEM_ROWS` without raising, so the approval leg answers 「nothing pending」 on a customer machine with no
+  database. `PendingApprovalStoreMissing` only fires when the process thinks the store is ready and the table
+  is gone -- same asymmetry R367 registered for the dashboard tiles.

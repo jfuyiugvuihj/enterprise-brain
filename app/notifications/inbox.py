@@ -148,7 +148,16 @@ async def can_address(principal, request, notification_id: str) -> bool:
 
     if source_type == SOURCE_APPROVAL:
         owner = str(getattr(principal, 'user_id', '-') or '-')
-        return bool(pending_approvals.open_items(owner_user_id=owner, session_id=source_id))
+        try:
+            rows = pending_approvals.open_items(owner_user_id=owner, session_id=source_id)
+        except pending_approvals.PendingApprovalStoreMissing:
+            # R373：写侧与告警腿那枚 503 同一条口径 —— 「问不出」不是「这条已经不在了」。这里回
+            # False 会把一轮还挂着的审批画成已解决，那条待办就被静默吞掉，所以原样上抛，不在这
+            # 里替存储拒答换脸。出口今天只翻译生命周期台账那一枚缺表错（见 notifications.py 的
+            # NotificationStateStoreMissing 那两支），把这枚账本缺表错一起答成 503 是出口那一格
+            # 的活，不在本文件写域内，已具名上报总控。
+            raise
+        return bool(rows)
 
     if source_type == SOURCE_ALERT:
         try:
@@ -179,6 +188,8 @@ async def can_address(principal, request, notification_id: str) -> bool:
         filename, marker, version = str(source_id).rpartition('#v')
         if not marker or not filename or not version:
             return False
+        # R373：这一腿一字不接 —— 存储拒答（503）与鉴权拒答（401）本来就该按各自那张脸上抛到
+        # 出口，把它折成 False 就是替一条还看得见的事项画成「它不在了」。
         payload = await chat_api.list_document_catalog(request)
         for row in payload.get('documents') or []:
             if str(row.get('filename') or '-') != filename:
