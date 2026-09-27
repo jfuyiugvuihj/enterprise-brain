@@ -10,9 +10,38 @@
 `test_r99_budget_selfconsistency` / `test_r204_budget_refusal` / `test_r204_single_call_ceiling`
 三族既有钉 ⇒ 本件**不重复钉数**，只钉三件事：今天的七档读数不许因这一改而变、两旗永不同时为真、
 以及本件自己的牙在不在。
-"""
 
-from scripts.rehearse_eval_window import budget_table
+R379 格四改的是本件**怎么拿到** ``budget_table``：从前一句 ``from scripts.rehearse_eval_window
+import budget_table`` 会先认 ``scripts/__pycache__`` 里那枚过期字节码，现在按源码文本现编译。
+判据一枚没动，读的是同一份现场。
+"""
+import importlib.util
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+SCRIPT = REPO / "scripts/rehearse_eval_window.py"
+
+
+def load_script(module_name: str, path: Path):
+    """按源码文本现编译加载预演件。
+
+    🔴 R379 格四：从前这一件是 ``from scripts.rehearse_eval_window import budget_table``——
+    那条路先认 ``scripts/__pycache__/rehearse_eval_window.cpython-311.pyc``。Windows 的 mtime
+    只到秒、改版前后又常常同尺寸，过期 .pyc 能通过校验，于是钉子读到刀版本的字节码而盘上是
+    干净的（反向就是把刀吃成假绿）。``compile()`` 只吃当下这份文本，缓存这条路整个不存在。
+    不许换回 ``spec.loader.exec_module``：常驻钉
+    ``tests/test_r379_stale_bytecode_cannot_lie.py`` 会把退回的那一侧当场读红。
+    """
+    spec = importlib.util.spec_from_file_location(module_name, str(path))
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    exec(compile(path.read_text(encoding="utf-8-sig"), str(path), "exec"), module.__dict__)
+    return module
+
+
+budget_table = load_script("r217_rehearsal_target", SCRIPT).budget_table
 
 FLOORS = (1, 64, 128, 200, 255, 256, 257, 511, 512, 833, 834, 835, 1000, 1536, 2000, 4096)
 

@@ -37,6 +37,7 @@ READ_SOURCES = (
     "app/api/v1/chat.py",
     "app/common/cache.py",
     "app/common/model_handler.py",
+    "app/common/model_budget.py",     # R379 格一：地板默认值的真身住在这里
     "app/quality/eval.py",
     "scripts/eval_transport_ask_v2.py",
 )
@@ -59,6 +60,17 @@ def mod():
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_the_shadow_tree_covers_every_source_the_ruler_reads(mod):
+    """影子树少了哪一枚现场，尺子在那一枚上就天生是瞎的（R379 加格子时踩过一次）。
+
+    只钉集合相等：``REPO_RELS`` 是预演件读现场的全部路径，这张名单是它的影子副本——两边
+    必须一枚不差地长在一起，否则新加一枚读数就会让下面每一格报"读不到现场源码"。
+    """
+    assert set(READ_SOURCES) == set(mod.REPO_RELS.values()), (
+        "影子树与预演件的现场清单不等："
+        + str(sorted(set(READ_SOURCES) ^ set(mod.REPO_RELS.values()))))
 
 
 def build_shadow(tmp_path: Path, edits=()) -> Path:

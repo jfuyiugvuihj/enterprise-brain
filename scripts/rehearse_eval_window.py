@@ -106,12 +106,16 @@ REPO_RELS = {
     "chat": "app/api/v1/chat.py",
     "cache": "app/common/cache.py",
     "model_handler": "app/common/model_handler.py",
+    "model_budget": "app/common/model_budget.py",
     "eval": "app/quality/eval.py",
     "transport": "scripts/eval_transport_ask_v2.py",
 }
 
 #: 本件允许留在“等值比对”抄本一侧的格（判据丁）。其余事实没有抄本，只有现场读数。
-COPY_CELLS = ("KW_CHART", "KW_DATA", "KW_EXPORT", "KW_DOC", "CACHE_KEY_PROSE")
+#: CALIBRATED_FLOOR_TOKENS 是 R379 加的一枚：它抄的不是"现场的值"，是**一次跑分实测的标定条件**
+#  ——那把尺子（每题 37.3 s）没有代码事实源，只能自带抄本，再钉回现场真身上等值比对。
+COPY_CELLS = ("KW_CHART", "KW_DATA", "KW_EXPORT", "KW_DOC", "CACHE_KEY_PROSE",
+              "CALIBRATED_FLOOR_TOKENS")
 
 
 class FactError(RuntimeError):
@@ -153,11 +157,33 @@ BUILTINISH = frozenset(
 )
 
 
+def module_binding(node):
+    """模块级赋值的 ``(名字, 右端)``；``A = 1`` 与 ``A: tuple[str, ...] = (...)`` 同一种读法。
+
+    🔴 R379：只认 ``ast.Assign`` 会把带类型注解的常量整格读不动（orchestrator 里那枚
+    ``_SIDE_EFFECT_LEGS`` 就是注解写法），那是一枚假红——现场什么都没改，尺子先瞎了。
+    """
+    if isinstance(node, ast.Assign):
+        if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
+            return None
+        return node.targets[0].id, node.value
+    if (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+            and node.value is not None):
+        return node.target.id, node.value
+    return None
+
+
+def _binding_name(node) -> str:
+    """模块级赋值语句左边那枚名字（``A = ...`` 与 ``A: T = ...`` 两种写法），取不到交回空串。"""
+    binding = module_binding(node)
+    return binding[0] if binding else ""
+
+
 def module_assign_node(tree: ast.Module, name: str, rel: str) -> ast.expr:
     for node in tree.body:
-        if (isinstance(node, ast.Assign) and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name) and node.targets[0].id == name):
-            return node.value
+        binding = module_binding(node)
+        if binding and binding[0] == name:
+            return binding[1]
     raise FactError(f"{rel} 里 {name} 不再是模块级赋值：这一格失去了事实源")
 
 
@@ -192,21 +218,22 @@ def module_constants(tree: ast.Module, names, rel: str) -> dict:
     pending = set(names)
     for _ in range(8):
         for node in tree.body:
-            if (isinstance(node, ast.Assign) and len(node.targets) == 1
-                    and getattr(node.targets[0], "id", "") in pending):
-                pending |= (load_names(node.value) - BUILTINISH - set(ns))
+            binding = module_binding(node)
+            if binding and binding[0] in pending:
+                pending |= (load_names(binding[1]) - BUILTINISH - set(ns))
         for node in tree.body:
-            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            binding = module_binding(node)
+            if not binding:
                 continue
-            target = node.targets[0]
-            if not isinstance(target, ast.Name) or target.id not in pending or target.id in ns:
+            name, value = binding
+            if name not in pending or name in ns:
                 continue
-            if load_names(node.value) - set(ns) - BUILTINISH:
+            if load_names(value) - set(ns) - BUILTINISH:
                 continue
             try:
-                ns[target.id] = eval(compile(ast.Expression(node.value),
-                                             f"<literal:{rel}:{target.id}>", "eval"),
-                                     {"__builtins__": {}}, dict(ns))
+                ns[name] = eval(compile(ast.Expression(value),
+                                        f"<literal:{rel}:{name}>", "eval"),
+                                {"__builtins__": {}}, dict(ns))
             except Exception:
                 continue
         pending -= set(ns)
@@ -217,13 +244,18 @@ def module_constants(tree: ast.Module, names, rel: str) -> dict:
     return ns
 
 
-def exec_module_functions(rel: str, names, root=None) -> dict:
+def exec_module_functions(rel: str, names, root=None, extra=None) -> dict:
     """把现场那几枚函数的**源码本身**搬进一个干净命名空间跑，不 import 那枚模块。
 
     用于 chat.py：它模块级就造 DocumentRetriever / ModelHandler（顺手连库，实测还会把所在树
     的 chroma_db 写脏一次、被 R134 闸门点名），import 不动；而它的判定规则又不能手抄，
     于是只搬函数源码 + 它引用的模块级纯常量。读不动 = 红，不猜。
+
+    ``extra`` 只给一种名字用：事实源在**别棵树**上的（R379：orchestrator 里那枚
+    ``kb_leg_for_caliber`` 引用 nodes.py 的口径词表，在本树解不成常量）。传进来的必须
+    自己也是现场读数，不许是手打字——两侧同名不同值当场红。
     """
+    extra = dict(extra or {})
     tree = source_tree(rel, root)
     fns = [one_function(tree, name, rel) for name in names]
     params = {a.arg for fn in fns for a in fn.args.args}
@@ -231,7 +263,12 @@ def exec_module_functions(rel: str, names, root=None) -> dict:
     need = set()
     for fn in fns:
         need |= load_names(fn) - bound_names(fn) - local
-    seed = module_constants(tree, need, rel)
+    declared = {bound for node in tree.body if (bound := _binding_name(node))}
+    overlap = sorted(declared & set(extra))
+    if overlap:
+        raise FactError(f"{rel} 里这些名字本树就有赋值，不该由 extra 带入第二份：{overlap}")
+    seed = module_constants(tree, need - set(extra), rel)
+    seed.update({key: value for key, value in extra.items() if key in need})
     src = "\n".join([f"{key} = {value!r}" for key, value in sorted(seed.items())]
                     + [ast.unparse(fn) for fn in fns])
     ns: dict = {}
@@ -471,15 +508,54 @@ def read_kw_tables(root=None) -> dict:
     return out
 
 
+def _route_outer_if(host):
+    """route_main 里"计划优先 / 关键词兜底"那一分岔：定位不到就交回 None，由调用方红。"""
+    for node in host.body:
+        if isinstance(node, ast.If) and "planned_workers" in ast.unparse(node.test):
+            return node
+    return None
+
+
+def _route_tail(host, rel):
+    """route_main 分岔**之后**的收尾两支（R206a 补 doc、R42 弃权轮补 doc）。
+
+    🔴 R379 格三：基点的等值门只切到分派两支为止，这两支不在门里——现场在后面还会改派
+    腿，镜像却停在前面，那 105 题 diffs=0 属巧合。两段各按一枚锚点定位（一条调用名、一个
+    判据名），现场把这两段搬走、删掉或换了先后，这里红，而不是悄悄少切一段。
+    """
+    outer = _route_outer_if(host)
+    if outer is None:
+        raise FactError(f"{rel}::route_main 找不到『计划优先/关键词兜底』那一分岔")
+    index = host.body.index(outer)
+
+    def first(predicate, what):
+        for position in range(index + 1, len(host.body)):
+            if predicate(host.body[position]):
+                return position
+        raise FactError(f"{rel}::route_main 分岔之后找不到『{what}』那一段：收尾两支的形状改了")
+
+    caliber = first(lambda node: "kb_leg_for_caliber" in ast.unparse(node),
+                    "R206a 口径题补读腿")
+    # R42 那一支的锚点是 abstained——这条规则的定义就是"只接管弃权轮"（现场那句
+    # if not workers and abstained and ...）。锚点不许吃 classify_route：反证刀摘掉的正是它。
+    r42 = first(lambda node: isinstance(node, ast.If)
+                and "abstained" in ast.unparse(node.test), "R42 弃权轮补派 doc")
+    if r42 <= caliber:
+        raise FactError(f"{rel}::route_main 收尾两支的先后换了（R206a 必须在 R42 之前）")
+    return host.body[caliber:r42 + 1]
+
+
+def route_tail_statements(root=None):
+    rel = REPO_RELS["orchestrator"]
+    return _route_tail(one_function(source_tree(rel, root), "route_main", rel), rel)
+
+
 def read_route_branch_slices(root=None):
     """切 route_main 的分派两段（计划优先支 / 关键词兜底支）成可调用对象。"""
     rel = REPO_RELS["orchestrator"]
 
     def outer_if(host):
-        for node in host.body:
-            if isinstance(node, ast.If) and "planned_workers" in ast.unparse(node.test):
-                return node
-        return None
+        return _route_outer_if(host)
 
     tables = ("chart_kw", "data_kw", "export_kw", "doc_kw")
     kw = exec_statement_block(
@@ -489,6 +565,105 @@ def read_route_branch_slices(root=None):
         rel, "route_main", lambda host: (outer_if(host).body if outer_if(host) else []),
         ["planned_workers", "intent_text", *tables], root)
     return kw, plan
+
+
+#: 收尾两支要多带三枚现场名字：规则本体、日志出口、档位判别器。
+TAIL_PARAMS = ("abstained", "kb_leg_for_caliber", "logger", "classify_route", "LANE_QA")
+
+
+class _RouteLogSink:
+    """切片里的 ``logger.info`` 落地处：本件不 import orchestrator，日志一律收进这只桶。
+
+    它不是事实源，只是让现场那两句日志语句能在本进程里跑一遍——桶里攒了什么不做判据
+    （攒多少随环境漂，格五那一条）。
+    """
+
+    def __init__(self) -> None:
+        self.lines: list = []
+
+    def info(self, message) -> None:
+        self.lines.append(str(message))
+
+    def warning(self, message) -> None:
+        self.lines.append(str(message))
+
+
+ROUTE_LOG_SINK = _RouteLogSink()
+
+
+def read_route_tail_slices(root=None):
+    """切"分派那一支 + 收尾两支"整段：等值门由此覆盖 route_main 定派腿的全部四段。"""
+    rel = REPO_RELS["orchestrator"]
+    tables = ("chart_kw", "data_kw", "export_kw", "doc_kw")
+    kw = exec_statement_block(
+        rel, "route_main",
+        lambda host: ((_route_outer_if(host).orelse if _route_outer_if(host) else [])
+                      + _route_tail(host, rel)),
+        ["workers", "intent_text", "planned_workers", *tables, *TAIL_PARAMS], root)
+    plan = exec_statement_block(
+        rel, "route_main",
+        lambda host: ((_route_outer_if(host).body if _route_outer_if(host) else [])
+                      + _route_tail(host, rel)),
+        ["planned_workers", "intent_text", *tables, *TAIL_PARAMS], root)
+    return kw, plan
+
+
+def read_side_effect_legs(root=None) -> tuple:
+    """R206a 那条"副作用腿不改派"的腿表（现场 ``_SIDE_EFFECT_LEGS``，带注解的模块级常量）。"""
+    rel = REPO_RELS["orchestrator"]
+    value = literal_of(module_assign_node(source_tree(rel, root), "_SIDE_EFFECT_LEGS", rel),
+                       "_SIDE_EFFECT_LEGS", rel)
+    if not isinstance(value, tuple) or not all(isinstance(item, str) for item in value):
+        raise FactError(f"{rel}::_SIDE_EFFECT_LEGS 不再是字符串元组：副作用腿那一格读不动")
+    return tuple(value)
+
+
+def read_caliber_markers(root=None) -> tuple:
+    """口径词表 = 现场 ``KB_CALIBER_MARKERS`` 那枚赋值表达式本身，不抄第三张表。
+
+    它由 nodes.py 里两张已裁定闭集求并而来，``module_constants`` 解不动那种 ``tuple(
+    dict.fromkeys(...))`` 写法（只吃字面量之间的运算），所以这里搬**表达式本身**进干净 ns
+    跑，再与进程里 import 到的同名对象交叉核对——只看 import 那一侧对影子副本的漂移是瞎的
+    （``read_offline_texts`` 同一形状，同一理由）。
+    """
+    rel = REPO_RELS["nodes"]
+    tree = source_tree(rel, root)
+    value = module_assign_node(tree, "KB_CALIBER_MARKERS", rel)
+    ns: dict = module_constants(tree, load_names(value) - BUILTINISH, rel)
+    exec(compile("KB_CALIBER_MARKERS = " + ast.unparse(value),
+                 f"<rehearsal:{rel}::KB_CALIBER_MARKERS>", "exec"), ns)
+    out = tuple(ns["KB_CALIBER_MARKERS"])
+    if not out:
+        raise FactError(f"{rel}::KB_CALIBER_MARKERS 解出来是空表：口径补派那一支失去了词表")
+    if root is None and out != tuple(KB_CALIBER_MARKERS):
+        raise FactError(
+            f"{rel}::KB_CALIBER_MARKERS 源码侧与 import 侧不等："
+            f"源码={as_text(out)} 进程={as_text(tuple(KB_CALIBER_MARKERS))}"
+            "（字节码过期或 sys.path 指到别棵树，去看现场再跑）")
+    return out
+
+
+def read_caliber_rule(root=None):
+    """"口径题的读腿没出门就补一条"这条规则的本体 = 现场 ``kb_leg_for_caliber`` 源码。"""
+    rel = REPO_RELS["orchestrator"]
+    return exec_module_functions(rel, ("kb_leg_for_caliber",), root,
+                                 extra={"KB_CALIBER_MARKERS": read_caliber_markers(root)}
+                                 )["kb_leg_for_caliber"]
+
+
+def read_min_answer_default(root=None) -> int:
+    """``MODEL_MIN_ANSWER_TOKENS`` 的默认值真身（现场那枚模块级整数字面量）。
+
+    🔴 R379 格一：从前 --summary 那一行的两侧都是同一个运行期读数，"DEFAULT" 半句永远
+    读不出漂移。真身住在本件本来就 import 的轻件里，从这里现读才算读到默认值。
+    """
+    rel = REPO_RELS["model_budget"]
+    value = literal_of(module_assign_node(source_tree(rel, root),
+                                          "DEFAULT_MIN_ANSWER_TOKENS", rel),
+                       "DEFAULT_MIN_ANSWER_TOKENS", rel)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise FactError(f"{rel}::DEFAULT_MIN_ANSWER_TOKENS 不再是整数字面量：{value!r}")
+    return int(value)
 
 
 def read_rewrite_rule(root=None):
@@ -770,6 +945,11 @@ FACT_READERS = {
     "ANSWER_CACHE_SPAN": lambda root=None: symbol_span(REPO_RELS["cache"], "_answer_key", root),
     "APPROVAL_WORKER_SPAN": lambda root=None: symbol_span(
         REPO_RELS["orchestrator"], "_approval_worker_node", root),
+    # R379 格一：地板的默认值真身。它以前只以"运行期读数"的身份出现一次，抄本那一侧是空气。
+    "MIN_ANSWER_TOKENS_DEFAULT": read_min_answer_default,
+    # R379 格三：route_main 收尾两支（R206a 口径补 doc / R42 弃权补 doc）的两枚输入。
+    "SIDE_EFFECT_LEGS": read_side_effect_legs,
+    "CALIBER_MARKERS": read_caliber_markers,
 }
 
 FACT_ANCHORS = {
@@ -809,6 +989,12 @@ FACT_ANCHORS = {
     "ROUTE_BRANCHES": "app/agents/orchestrator.py::route_main 分派两段的源码切片",
     "INTENT_TEXT_RULE": "app/agents/orchestrator.py::_intent_text +::_DOC_REFERENCE",
     "CACHE_KEY_PROSE": "app/common/cache.py::_answer_key/_hash/_scope_part",
+    "MIN_ANSWER_TOKENS_DEFAULT": "app/common/model_budget.py::DEFAULT_MIN_ANSWER_TOKENS",
+    "SIDE_EFFECT_LEGS": "app/agents/orchestrator.py::_SIDE_EFFECT_LEGS",
+    "CALIBER_MARKERS": "app/agents/nodes.py::KB_CALIBER_MARKERS",
+    "CALIBER_RULE": "app/agents/orchestrator.py::kb_leg_for_caliber 源码切片",
+    "ROUTE_TAIL_SLICES": "app/agents/orchestrator.py::route_main 分岔之后到 R42 那一段的源码切片",
+    "CALIBRATED_FLOOR_TOKENS": "app/common/model_budget.py::DEFAULT_MIN_ANSWER_TOKENS",
 }
 
 
@@ -868,6 +1054,15 @@ def copy_drift(root=None) -> list:
         if copy != live:
             lines.append(f"{cell} 抄本与现场 {FACT_ANCHORS['KW_TABLES']} 不等"
                          f"（{live_name}）{diff_terms(copy, live)}")
+    floor_live = facts["MIN_ANSWER_TOKENS_DEFAULT"]
+    calib = COPIES["CALIBRATED_FLOOR_TOKENS"]
+    if calib != floor_live:
+        lines.append(
+            f"CALIBRATED_FLOOR_TOKENS 抄本与现场 "
+            f"{FACT_ANCHORS['MIN_ANSWER_TOKENS_DEFAULT']} 不等："
+            f"从 {calib} 变到 {floor_live}（每题 {MEASURED_SECONDS_PER_CALL} s 那把尺子是在"
+            f"{calib} tok 地板上量到的；地板改了要么重测再登记，要么把这一格改成派生——"
+            "不许只把抄本改成今天的数）")
     shape = facts["CACHE_KEY_SHAPE"]
     claim = f"md5(scope)[:{shape['width_scope']}]+md5(问题.strip())[:{shape['width_hash']}]"
     copy = COPIES["CACHE_KEY_PROSE"]
@@ -880,24 +1075,40 @@ def copy_drift(root=None) -> list:
 
 
 def branch_equivalence(rows, root=None) -> list:
-    """本件那两套镜像分支与现场切片必须逐题同形（规则和词表都不抄第二份）。"""
+    """本件的镜像分支与现场切片必须逐题同形（规则和词表都不抄第二份）。
+
+    四段一起量：分派那两支（计划优先 / 关键词兜底）与 R379 补进来的收尾那两支
+    （R206a 口径补 doc / R42 弃权补 doc）。收尾那一圈吃的是"分派结果 + 收尾"整段切片，
+    所以动分派段会两格一起红、只动收尾段则只有收尾那一格红——红话各自点名出处。
+    """
     kw_live, plan_live = read_route_branch_slices(root)
+    kw_final, plan_final = read_route_tail_slices(root)
     tables = read_kw_tables(root)
     order = ("chart_kw", "data_kw", "export_kw", "doc_kw")
+    caliber = (read_caliber_rule(root), ROUTE_LOG_SINK, classify_route, LANE_QA)
     lines = []
     for row in rows:
         question, planned = str(row["question"]), plan_workers(str(row["question"]))
         intent = _intent(question)
-        mine = kw_path_workers(question, planned)
-        live = kw_live([], intent, planned, *[tables[name] for name in order])
-        if mine != live:
-            lines.append(f"{row['id']} 关键词兜底路 本件={as_text(mine)} 现场={as_text(live)}"
-                         f"（{FACT_ANCHORS['ROUTE_BRANCHES']}）")
-        mine = plan_path_workers(planned, question)
-        live = plan_live(planned, intent, *[tables[name] for name in order])
-        if mine != live:
-            lines.append(f"{row['id']} 计划优先路 本件={as_text(mine)} 现场={as_text(live)}"
-                         f"（{FACT_ANCHORS['ROUTE_BRANCHES']}）")
+        cells = [tables[name] for name in order]
+        kw_mine = kw_path_workers(question, planned)
+        plan_mine = plan_path_workers(planned, question)
+        for label, mine, live in (
+                ("关键词兜底路", kw_mine, kw_live([], intent, planned, *cells)),
+                ("计划优先路", plan_mine, plan_live(planned, intent, *cells))):
+            if mine != live:
+                lines.append(f"{row['id']} {label} 本件={as_text(mine)} 现场={as_text(live)}"
+                             f"（{FACT_ANCHORS['ROUTE_BRANCHES']}）")
+        # 收尾两支（R379 格三）：本件 = 镜像分派 + 镜像收尾；现场 = 分岔到 R42 的整段切片
+        tail = [True, *caliber]        # intent_text 已在分派那五个入参里，收尾只多带五枚
+        for label, mine, live in (
+                ("收尾·关键词路", route_final_workers(intent, list(kw_mine), True),
+                 kw_final([], intent, planned, *cells, *tail)),
+                ("收尾·计划优先路", route_final_workers(intent, list(plan_mine), True),
+                 plan_final(planned, intent, *cells, *tail))):
+            if mine != live:
+                lines.append(f"{row['id']} {label} 本件={as_text(mine)} 现场={as_text(live)}"
+                             f"（{FACT_ANCHORS['ROUTE_TAIL_SLICES']}）")
     return lines
 
 
@@ -1019,11 +1230,13 @@ if str(REPO_ROOT) not in sys.path:
 
 from app.agents.contracts import ModelTier  # noqa: E402
 from app.agents.nodes import (  # noqa: E402
-    _OfflineModel,
+    KB_CALIBER_MARKERS,
+    LANE_QA,
     OFFLINE_ANALYSIS_ANSWER,
     OFFLINE_GENERIC_ANSWER,
     OFFLINE_REIMBURSEMENT_ANSWER,
     OFFLINE_STREAM_CHUNK,
+    _OfflineModel,
     build_task_plan,
     classify_route,
 )
@@ -1058,6 +1271,8 @@ REWRITE_TRIGGERS = FACTS["REWRITE_PREFIXES"]        # 现场词表，判定见 _
 DOC_REFERENCE = re.compile(FACTS["DOC_REFERENCE_PATTERN"], re.IGNORECASE)
 LIVE_REWRITE_RULE = read_rewrite_rule()             # chat.py 那两枚判定函数本身
 LIVE_INTENT_TEXT = read_intent_text_rule()          # orchestrator.py 那次剥离文档引用
+#: R206a“口径题补读腿”那条规则本身（源码切片，见 CALIBER_RULE）：本件不抄它的词表与边界。
+LIVE_KB_LEG_FOR_CALIBER = read_caliber_rule()
 INTERRUPT_BEFORE = FACTS["INTERRUPT_BEFORE"]                # (腿列表, 它引用的符号名)
 INTERRUPT_LEGS, INTERRUPT_BEFORE_SYMBOL = INTERRUPT_BEFORE
 APPROVAL_ANCHOR = FACTS["APPROVAL_WORKER_SPAN"]
@@ -1079,6 +1294,10 @@ KW_DOC = [
 ]
 #: --summary 那句缓存口径摘要的抄本，钉在 cache.py 的 _answer_key/_hash/_scope_part 上。
 CACHE_KEY_PROSE = "md5(scope)[:12]+md5(问题.strip())[:12]"
+#: 🔴 下面那把每题秒数的尺子（MEASURED_SECONDS_PER_CALL）是在"地板 = 1536 tok"这一档上量出来的
+#: （跟进单§42 表#6）。这一枚抄本没有代码事实源可抄，但它钉在真身上：现场把
+#: DEFAULT_MIN_ANSWER_TOKENS 改到别处，本件当场红并停住读数——重测之后再登记，别改判据。
+CALIBRATED_FLOOR_TOKENS = 1536
 
 COPIES = {
     "KW_CHART": KW_CHART,
@@ -1086,6 +1305,7 @@ COPIES = {
     "KW_EXPORT": KW_EXPORT,
     "KW_DOC": KW_DOC,
     "CACHE_KEY_PROSE": CACHE_KEY_PROSE,
+    "CALIBRATED_FLOOR_TOKENS": CALIBRATED_FLOOR_TOKENS,
 }
 
 # --- 实测输入：代码里没有事实源，不派生也不钉 ---------------------------------
@@ -1136,11 +1356,14 @@ def load_rows() -> list:
 def load_checker():
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location(
-        "check_eval_evidence_coverage", REPO_ROOT / "scripts" / "check_eval_evidence_coverage.py")
+    path = REPO_ROOT / "scripts" / "check_eval_evidence_coverage.py"
+    spec = importlib.util.spec_from_file_location("check_eval_evidence_coverage", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    # 🔴 R379 格四同族：``spec.loader.exec_module`` 会先认 ``scripts/__pycache__`` 里那枚过期
+    # .pyc（Windows mtime 只到秒、改版前后又常常同尺寸），无出处那 29 条就会是旧字节码算出来的。
+    # 现读源文本 compile 出来跑，缓存这条路整个不存在。
+    exec(compile(path.read_text(encoding="utf-8-sig"), str(path), "exec"), module.__dict__)
     return module
 
 
@@ -1234,6 +1457,26 @@ def plan_path_workers(planned: list, question: str) -> list:
         workers.append("chart")
     elif "export" not in workers and any(kw in intent for kw in KW_EXPORT):
         workers.append("export")
+    return workers
+
+
+def route_final_workers(intent: str, workers: list, abstained: bool) -> list:
+    """route_main 分岔之后的收尾两支：R206a 口径补 doc、R42 弃权轮补 doc —— 本件的镜像。
+
+    🔴 R379 格三：从前门里只有分派那两支，这两支没进等值比对。两支的**规则**这里一枚字都不抄：
+    补哪条腿由现场 ``kb_leg_for_caliber`` 自己算（源码搬进来的 LIVE_KB_LEG_FOR_CALIBER），
+    要不要补由现场 ``classify_route`` 判（import 侧那枚函数本身 + 它自己的档位表）。
+    本函数只镜像 route_main 里那两段 if 的形状，形状与现场切片的等值由
+    ``branch_equivalence()`` 拿 105 题逐题比对（动现场那两支之一 ⇒ 当场红）。
+
+    ``abstained`` 是本件建模的那一局：supervisor 既没派发也没给正文。计划优先那一路
+    进来时 workers 必非空，R42 那一支在它自己那句 ``not workers`` 上短路，不靠这个入参。
+    """
+    filled = LIVE_KB_LEG_FOR_CALIBER(intent, workers)
+    if filled != workers:
+        workers = filled
+    if not workers and abstained and classify_route(intent).lane == LANE_QA:
+        workers = ["doc"]
     return workers
 
 
@@ -1419,7 +1662,9 @@ def summary(rows: list, table: list, missing: dict, pdf_rows: int, corpus_txt: i
     except Exception:
         subprocess_out = "unknown"
     print(f"baseline={subprocess_out} rows={len(table)}")
-    print(f"MODEL_MIN_ANSWER_TOKENS 现值={floor_now}  DEFAULT={floor_now}")
+    # R379 格一：两侧不同源。现值 = 这一次跑真正拿来算的地板（调用方给的读数）；
+    # DEFAULT = 现场那枚默认值真身（app/common/model_budget.py 的模块级字面量，AST 现读）。
+    print(f"MODEL_MIN_ANSWER_TOKENS 现值={floor_now}  DEFAULT={FACTS['MIN_ANSWER_TOKENS_DEFAULT']}")
     # 上一行的三元表达式会整条吞掉 no_provenance_rows（本件 09-20 实跑所见），拆成两行。
     print(f"no_provenance_rows={len(missing)}（主口径 corpus=documents/*.txt {corpus_txt} 篇）")
     print("no_provenance_rows_pdf_caliber="
@@ -1428,8 +1673,12 @@ def summary(rows: list, table: list, missing: dict, pdf_rows: int, corpus_txt: i
     print("no_provenance_ids=" + " ".join(sorted(missing)))
     print(f"tier_counts=" + json.dumps({t: count(lambda i, t=t: i['tier'] == t)
                                         for t in ('问答', '分析', '报告')}, ensure_ascii=False))
-    print(f"advice=" + json.dumps({t: count(lambda i, t=t: i['advice'] == t)
-                                   for t in ('照跑', '人工盯')}, ensure_ascii=False) + " 跳过=0（见 note:coverage）")
+    advice_counts = {t: count(lambda i, t=t: i['advice'] == t) for t in ('照跑', '人工盯')}
+    # R379 格二：跳过数从前是写死的 0（一句主张，不是读数）。现在从实际行集合算：
+    # 落在两档之外的每一行都算跳过，行集合一动它跟着动。
+    skipped = len(table) - sum(advice_counts.values())
+    print("advice=" + json.dumps(advice_counts, ensure_ascii=False)
+          + f" 跳过={skipped}（见 note:coverage）")
     print(f"parked_any={len(parked_any)} {parked_any}")
     print(f"parked_only={len(parked_only)} {parked_only}")
     print(f"no_doc_leg={len(no_doc)} {no_doc}")
@@ -1602,7 +1851,9 @@ def main(argv=None) -> int:
     missing, pdf_rows, corpus_txt = provenance(args.pdf_caliber)
     table = build_table(rows, missing)
     budgets = budget_table(args.floor)
-    floor_now = min_answer_tokens()
+    # R379 格一：现值 = 这一次跑真正拿来算的那枚地板。给了 --floor 却不改这一格，摘要就会
+    # 一边按 2048 算预算、一边宣称"现值=1536"——同一行里两枚数字讲的是两次跑。
+    floor_now = args.floor if args.floor is not None else min_answer_tokens()
 
     if args.csv:
         keys = list(table[0].keys())
