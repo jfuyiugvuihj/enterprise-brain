@@ -44,18 +44,32 @@ export const ALERTS_DENIED_NOTE = '无权限查看告警'
 export const ALERTS_UNREADABLE_NOTE = '告警计数读不出来'
 
 /**
- * 文档卡那一句副文案（R274 · X-3）。
+ * 文档卡那一句副文案（R274 · X-3；末了三节由 R411 归真）。
  *
  * 这一句原先是写死的：只要文档数大于 0 就报「都解析完了」那类好消息。可「目录里有 N 篇」
  * 与「N 篇都解析完了」是两件事，一篇都没解析完时那句好话照样成立——R267 把面板里行级的解析
  * 状态归了真，漏的就是 lib 这一层。现在这句话只从聚合回执里的「已解析篇数」来（前端读作
- * documents_ready），四种走法四种说法，谁也不许顶替谁：
- *   一篇都没有      -> 「还没有文档」
- *   回执没带这个数  -> 「已解析篇数未记录」（线上今天就是这一张脸）
- *   两数相等        -> 「全部已解析」
- *   还有没解析完的  -> 「N 篇还没解析完」
- * 已解析篇数比总数还大是一次坏掉的回执，不是一句好消息，所以那一档只说「对不上」。
- * 🚫 后端补上这一数之前，这一格不许换成另一句写死的好话：宁可说没记录。
+ * documents_ready），五种走法五种说法，谁也不许顶替谁：
+ *   一篇都没有        -> 「还没有文档」
+ *   任一枚数读不出来  -> 「已解析篇数未记录」
+ *   两数相等          -> 「全部已解析」
+ *   还有没解析完的    -> 「N 篇还没解析完」
+ *   已解析比总数还大  -> 「已解析篇数与总数对不上」
+ * 五档是五次独立的判断：「读不出来」与「确实没有」不共用一张脸，坏掉的回执也不挑一句好听的。
+ *
+ * R411 归真的第一笔：这一档的旧稿（:54 / :58 / :66-67 / :176，原文只在 git 里活着，见
+ * `git show 9e817e1:frontend/src/lib/dashboard.js`）把自己写成线上今天的样子，还替服务端许过
+ * 一次愿——那句原文只活在那一版里，本件不复读。两头都不成立：R284 起服务端把这一格无条件
+ * 写进聚合回执——
+ * app/api/v1/dashboard.py 的 payload 字面量里就是 "documents_ready": documents_ready 这一行，
+ * 它上方注释原文 "this key is never conditional"；同一段里的 alerts 那一键要等一个 if 才补进
+ * 去，两枚键的条件性在源码里就分着长短。所以线上今天走的必然是上面三档「有数」的脸之一。
+ *
+ * 那它为什么必须留着：落到这一档只剩一种形状——这一格缺席，或缺回来的值读不出非负整数。
+ * parseSummaryPayload 少 documents / datasets / pending_approvals 任意一枚就整块判失败，唯独
+ * 把这一数留成 null 走这张脸，所以它是一枚活的契约违约脸，不是死分支。摘掉它，一份缺列的
+ * 回执就会被画成「全部已解析」：那是用一句新假话去换一句旧假话。
+ * 🚫 无论哪一档都不许退回一句写死的好话：宁可说没记录。
  */
 export const DOCUMENTS_EMPTY_NOTE = '还没有文档'
 export const DOCUMENTS_UNRECORDED_NOTE = '已解析篇数未记录'
@@ -64,7 +78,8 @@ export const DOCUMENTS_MISMATCH_NOTE = '已解析篇数与总数对不上'
 
 const DOCUMENTS_COUNTED_HINT = '按你有权查看的文档目录计数，不是全租户文档总数。'
 const DOCUMENTS_UNRECORDED_HINT = '文档篇数与「其中已解析多少篇」是两件事：这份聚合回执只回了前者，'
-  + '所以这一格不说已解析，只说没记录。等后端把已解析篇数一起回传，这里自己换说法。'
+  + '后者没读出一个数，所以这一格不说已解析，也不拿「还没有文档」冒充读到了零。'
+  + '两个数同一批由服务端交回来，缺了后一句就是这一份回执不合契约，请联系管理员核对。'
 const DOCUMENTS_READY_HINT = '已解析篇数与文档总数同一口径，都按你当前的可见范围计算。'
 const DOCUMENTS_MISMATCH_HINT = '回执里已解析的篇数比文档总数还大，这两个数不可能同时成立，所以这一格不下结论。'
 
@@ -173,7 +188,10 @@ export function parseSummaryPayload(payload) {
   return {
     generatedFor: typeof payload.generated_for === 'string' ? payload.generated_for : '',
     documents,
-    // R274（X-3）：「其中已解析多少篇」。后端今天还没回这一数，缺席就是 null，不折成 0。
+    // R274（X-3）：「其中已解析多少篇」。R284 起服务端把这一格恒写进聚合回执
+    // （app/api/v1/dashboard.py 的 payload 里就有 "documents_ready": documents_ready），
+    // 所以取不到数只剩「这一份回执不合契约」一种解释：留 null 走「未记录」那张脸，
+    // 既不折成 0，也不并进「还没有文档」那张空态。
     documentsReady: countOf(payload.documents_ready),
     datasets,
     pendingApprovals,
