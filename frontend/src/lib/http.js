@@ -170,10 +170,12 @@ export function isPermissionDenied(err) {
  * （现场：app/common/authorization.py:94-99 回的 department_override_denied）。
  * 现在真正的防线在字典侧：errcodes.js::dictionaryClaims() 那一处分流 —— 码被字典收编 ⇒
  * 信封 message 不参与人话位竞争，原文改由 normalizeError() 的 rawMessage 报告（判据①）。
+ * R380 把同一条原则铺到第二个形状（裸串 detail），防线仍然全在字典侧：errcodes.js::
+ * proseIsForHumans() 是全仓唯一问「这句后端原话能不能给人看」的地方，句子出处也仍只有字典一处。
  * 本函数因此仍然不设第二道防线：句子出处只有一处，防英文的地方也只有一处。
  * 钉在 __tests__/r281-dictionary-voice.test.js：把「英文原句优先」改回去必红，把那句假注释
- * 写回这段注释也必红。
- *
+ * 写回这段注释也必红。再加一枚形状钉 __tests__/r380-detail-voice.test.js：防线被抄进本函数
+ * （这里长出第二处过滤）当场判红 —— 全仓只准有一道防英文的闸。
  * 合并前这里是自己映射的，还会把形状 2 的码名原样 return（面板把它直插进 UiErrorState 的
  * description，等于把 permission_denied 当人话画上屏）——那条运行时漏码一并收掉。
  */

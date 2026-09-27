@@ -32,6 +32,15 @@
  * 后端原文一个字符都不丢：它一律进 normalizeError() 的 rawMessage，通道只这一条
  * （为什么不去扩「错误码：xxx」那条小字，理由写在 clampResult 的注释里）。
  *
+ * R380 判据①③（2026-09-27）把同一条原则铺到**第二个形状**：形状 1 的裸串 detail 既不是码名、
+ * 也不在任何一张表里时，过去一律原样当人话（下面那两道 return），于是未捕获 500 的
+ * "Internal Server Error" 这类框架英文直接印上屏。现在那两道 return 只读 proseIsForHumans()
+ * 一个答案：含中日韩文字 ⇒ 照旧直出（auth.py:75 那句一分未退）；不含 ⇒ 走 STATUS_CODES[status]
+ * 的字典句，没有状态码可归类才回兜底句，原文进 rawMessage。
+ * 防英文的地方由此仍然只有一处，且全在字典侧：分流「字典认不认得这枚码」= dictionaryClaims()，
+ * 分流「后端这句话能不能给人看」= proseIsForHumans()。消费侧（lib/http.js::errorDetail 与一切
+ * .vue）一道防线都不设，判据②钉在 __tests__/r380-detail-voice.test.js。
+ *
  * 码表对账（A-6 ③ 起读真源；B-5 ④ 那三列手抄账整体作废，缘由见看板 §4L.5）：
  *   列 A  真源 = app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举。errcodes.test.js 用
  *         execFileSync("git", ["show", "<ref>:<path>"]) 读 git 对象，绝不 readFileSync 工作树：
@@ -304,9 +313,36 @@ const CODE_PATTERN = /^[a-z][a-z0-9_]*$/
 /** 夹带码名的三种野外形状：error_code=X（app/api/v1/chat.py:998）与括号里的 X（lib/sessions.js:376-380 那批） */
 const EMBED_CODE = /error_code=([a-z][a-z0-9_]+)|（([a-z][a-z0-9_]+)）|[(]([a-z][a-z0-9_]+)[)]/g
 
+/**
+ * 中文人话的形状：串里出现任一中日韩文字或全角标点即算。刻意不带 g ——
+ * 带 g 的正则与 .test() 共用 lastIndex 会串状态（上面 EMBED_CODE 那条每次都得手动复位）。
+ */
+const CJK_VOICE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\uf900-\ufaff\uac00-\ud7af]/
+
 /** 稳定码的形状：小写字母开头的 snake_case。中文散文一律不算码 */
 function isCodeShape(value) {
   return typeof value === 'string' && CODE_PATTERN.test(value.trim())
+}
+
+/**
+ * 人话位的最后一道闸（R380 判据③）：后端给的这枚裸串像不像一句写给**人**看的话。
+ * 只问一件事 —— 有没有中日韩文字。不问语种清单、不量句子长度、不养英文黑名单：那三样都会
+ * 把闸口变成第二本需要人维护的账，防英文的地方也就跟着多出账本来。
+ *   有 ⇒ 这就是后端写给人看的句子，原样占人话位。逐枚出处（现测表在 r380-shape-table.test.js）：
+ *        auth.py:75「用户名或密码错误」、:130 / :179「用户不存在」、:222「SSO 未启用或请求未通过
+ *        验证」、:225「缺少 SSO 身份头」、:281「画像保存失败」；alerts.py:1020「非法操作符: …」；
+ *        common/auth.py:603-744 那批「用户名和密码不能为空」「原密码错误」；
+ *        common/authorization.py:23「权限不足: …」。中英混排同样含中文，误杀不到它。
+ *   没有 ⇒ 这枚裸串不可能是后端为这一发备下的话。取证：app/** 118 个 py 文件里 73 枚 ASCII-only
+ *        的 detail 字面量逐枚数过，全部是 snake_case 码名（走上面 :457 那一档：兜底句 +
+ *        「错误码：xxx」小字），压根到不了这一行；真落到这一行的 ASCII 散文只有框架与代理生成
+ *        的 HTTP 原话 —— app 里没有 @exception_handler，未捕获异常由 Starlette 回
+ *        "Internal Server Error"，另有 "Not Found" / "Method Not Allowed" / "Too Many Requests" /
+ *        "Bad Gateway" 与 nginx 502 正文。这些句子说的就是本发状态码本身，STATUS_CODES[status]
+ *        那句中文是同一层信息：换过去只把语种摆正，不降信息量，原文照旧进 rawMessage。
+ */
+function proseIsForHumans(text) {
+  return CJK_VOICE.test(String(text ?? ''))
 }
 
 function cleanText(value) {
@@ -387,8 +423,11 @@ function resolveProse(token) {
  *      明令不许的第二条并列通道。数据侧多一枚字段是加法语义，渲染侧改那条小字是改判语义。
  *   ② 为什么照记不误、即便它与 message 同字（未知码那一档两格都会是同一句英文）：
  *      这一格回答的是「后端回了什么」，让消费方无条件读得到，不必先自己复算这一发走了哪条分支。
- *   ③ 为什么只有信封形状有它：形状 1 的裸串、形状 3 的 422 数组、传输层错误都没有
- *      message 这一格，那句人话本来就在人话位上，再抄一份只会造出第二个说法。
+ *   ③ 形状 1 的裸串为什么今天也有了它（R380 改口）：这一条原来写的是「只有信封形状有它，形状 1
+ *      的裸串那句人话本来就在人话位上，再抄一份只会造出第二个说法」。那半句只在裸串真是给人看的
+ *      句子时成立；裸串是 HTTP 英文原话时它被 proseIsForHumans() 拦在人话位之外，而它仍然是后端
+ *      回来的原文 —— 不开这一格它就凭空消失，与「后端原文一个字符都不丢」相抵。
+ *      形状 3 的 422 数组与传输层错误照旧没有这一格：那两族压根没有 message 那一格可言。
  * @returns {{ code: string, rawCode: string, message: string, rawMessage: string, retryable: boolean }}
  */
 function clampResult({ code = '', rawCode = '', message = '', rawMessage = '', retryable = false }) {
@@ -405,7 +444,10 @@ function clampResult({ code = '', rawCode = '', message = '', rawMessage = '', r
 /**
  * 码名/散文 → { code, rawCode, message, rawMessage, retryable }。
  * 查不到即兜底句；枚举外的原样串只进 rawCode，绝不进 code。
- * 这条通道不碰 rawMessage：它拿到的本来就是单个码名/散文串，没有「信封 message」这一格。
+ * rawMessage 在这一条通道上只有一个写点：散文尾那一道闸（proseIsForHumans 拦下来的那句框架
+ * 英文）。这里原来写的是「这条通道不碰 rawMessage：它拿到的本来就是单个码名/散文串，没有
+ * 「信封 message」这一格」—— 那半句在裸串是中文时仍然成立，在裸串是 HTTP 英文原话时不成立：
+ * 它同样是一句后端原文，被闸下来之后总得有出口。按事实改口，理由见 clampResult 注释第③条。
  */
 function resolveCode(raw, status) {
   const token = cleanText(raw)
@@ -436,22 +478,17 @@ function resolveCode(raw, status) {
     })
   }
 
-  // 后端把码名夹在正文里直出的句子：先摘码名再归类，摘完认得就用字典句（唯一真相源），
-  // 认不下就把摘干净的句子当人话、码名留进 rawCode 供「错误码：xxx」小字排查。
+  // 后端把码名夹在正文里直出的句子：先摘码名再归类，摘完认得就用字典句（唯一真相源）；
+  // 认不下不再自己直出人话，而是把摘干净的句子连同码名交给下面那一道散文闸统一裁决
+  //（R380 判据②：裸串这一形状的人话位只有一个判定点，闸只有一道）。
   const embedded = token && !isCodeShape(token) ? extractEmbeddedCode(token) : null
-  if (embedded) {
-    if (isEnumCode(embedded.code)) {
-      const known = ERROR_CODES[embedded.code]
-      return clampResult({ code: embedded.code, rawCode: embedded.code, message: known.message, retryable: known.retryable })
-    }
-    const fallbackStatus = STATUS_CODES[status]
-    return clampResult({
-      code: fallbackStatus || '',
-      rawCode: embedded.code,
-      message: embedded.text,
-      retryable: Boolean(fallbackStatus && ERROR_CODES[fallbackStatus].retryable),
-    })
+  if (embedded && isEnumCode(embedded.code)) {
+    const known = ERROR_CODES[embedded.code]
+    return clampResult({ code: embedded.code, rawCode: embedded.code, message: known.message, retryable: known.retryable })
   }
+  // 人话候选与可报告的码名提示：没有内嵌码时就是原串本身，取值与改判前逐字相同。
+  const voice = embedded ? embedded.text : token
+  const codeHint = embedded ? embedded.code : token
 
   const statusKey = STATUS_CODES[status]
   if (token && isCodeShape(token)) {
@@ -463,17 +500,28 @@ function resolveCode(raw, status) {
       retryable: Boolean(statusKey && ERROR_CODES[statusKey].retryable),
     })
   }
+  // 散文位：人话位的最后一个入口。防英文只在这一处发生（R380 判据②③），上面那道内嵌码没摘
+  // 明白的句子也走这同一道闸；两道 return 只读同一个答案，不各判各的；被拦下的原文走 rawMessage。
+  const humanVoice = proseIsForHumans(voice)
+  const rejectedProse = humanVoice ? '' : voice
   if (statusKey) {
-    // 有状态码可归类：散文原样就是人话，直接当 message 用（如 auth.py「用户名或密码错误」）
+    // 中文人话直出（auth.py:75 那类）；HTTP 英文原话退给字典的状态句
     return clampResult({
       code: statusKey,
-      rawCode: token,
-      message: token || ERROR_CODES[statusKey].message,
+      rawCode: codeHint,
+      message: humanVoice ? voice : ERROR_CODES[statusKey].message,
+      rawMessage: rejectedProse,
       retryable: Boolean(ERROR_CODES[statusKey].retryable),
     })
   }
-  // 既不认识又没有状态码可归类：散文原样留着当人话，但没有码可报；未知码才回兜底句
-  return clampResult({ code: '', rawCode: token, message: token && !isCodeShape(token) ? token : FALLBACK_MESSAGE, retryable: false })
+  // 没有状态码可归类：认得下的中文照旧直出（只是没有码可报），认不下的英文只剩兜底句 + rawMessage
+  return clampResult({
+    code: '',
+    rawCode: codeHint,
+    message: humanVoice ? voice : FALLBACK_MESSAGE,
+    rawMessage: rejectedProse,
+    retryable: false,
+  })
 }
 
 /**
