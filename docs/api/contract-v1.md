@@ -3201,3 +3201,108 @@ Three things did not move, each pinned by `tests/test_r347_degradation_note_merg
 
 Physical lines: `app/api/v1/chat.py` 4690 -> 4761 (+75 / -4). `app/rag/loader.py` untouched.
 This section is appended and deletes nothing.
+
+
+## The preview and the upload receipt also name their owner (2026-09-27, R337)
+
+R310 gave `GET /api/v1/data-files` an `owner_id` and stopped there. Two sibling exits of the same
+surface never followed: `POST /api/v1/upload-excel` answered `dataset_id` / `version_id` /
+`classification` with no owner, and `GET /api/v1/data-files/{filename}/preview` answered
+`dataset_id` / `version_id` -- neither owner, nor classification. V2 asks for a stable ID *and an
+owner* on every resource; a field that names an owner on one of three exits is half a clause.
+R337 adds two keys and nothing else: no new lookup, no second permission chain, no new row, no new
+column, no new error code.
+
+### `POST /api/v1/upload-excel` -> `owner_id` and `GET /api/v1/data-files/{filename}/preview` -> `owner_id`
+
+| key | type | presence | meaning |
+| --- | --- | --- | --- |
+| `owner_id` | string / null | always, on a 200 body | the account that owns the row, or `null` when nobody is on record |
+
+Both answers come from the record the route already holds. The upload receipt reads the
+`DatasetRecord` that `dataset_registry.register(...)` just returned, in the same statement that
+reads its `dataset_id`; the preview reads the record `_authorized_dataset` handed back a few lines
+above. Neither opens a query to get it.
+
+### Where the value comes from
+
+Both sites call the one reader, `app/api/v1/data.py::_dataset_row_owner_id`, and its docstring is
+the rule. This section deliberately does not re-copy that wording: a second paraphrase is exactly
+how two surfaces start to disagree about one field. The reader is checked against the document
+catalogue's own `_is_unowned` predicate over a corpus of values
+(`tests/test_r310_dataset_row_owner.py`), and `tests/test_r337_owner_receipt_on_both_exits.py`
+(`owner_shape_violations`) checks that both new exits obtain the value through that reader and
+nowhere else -- an inline `record.owner_id` at either site is red even when it happens to produce
+the same string, because then the rule lives in two places and only one of them gets fixed.
+
+Why `null` rather than `""` is worth a ticket: `""` is a value a client can drop straight into a
+table cell, and an empty cell reads the same as "the record has no owner column" and the same as
+"nobody looked". `null` is the only spelling that says *this row was looked at, and nobody is on
+record for it*. A renderer writing `owner || '—'` cannot tell those three apart; a renderer testing
+`owner === null` can. That is why "unowned is `null`, never `""`, never 未分配" is a contract line
+and not a style preference.
+
+### Three faces, and they must not be folded into each other
+
+- **The row exists and has no owner on record.** The body carries the key and answers
+  `"owner_id": null`. Decided by `_dataset_row_owner_id`.
+- **The caller may not see this row.** There is no body to hold a key: the preview answers 403 with
+  the policy's own reason, and the catalogue counts the row under `restricted` without naming it.
+  Decided by `app/common/policy.py`, before anyone reads an owner.
+- **The registry never heard of this row.** The preview answers 404 `resource_not_found`; a
+  request-less catalogue listing still carries the key and answers `null`. Decided by
+  `_authorized_dataset` / `get_active_by_filename`.
+
+The first and the third answer `null` in this field -- that equivalence was R310's ruling, and it is
+pinned -- and they remain distinguishable by the key next to them: the row the registry never heard
+of has no `dataset_id`. What none of the three may ever do is answer `""`. A record object that
+carries no owner column at all (in-process fakes; the registry fills the column on every row it
+reads) is given the first face's answer as well, so that an ownership field can never surface as a
+500 `dataset_preview_failed` -- a missing field reported as a server fault would be a lie about
+which layer broke.
+
+### Cost, measured rather than asserted
+
+`tests/test_r337_owner_receipt_cost_and_knives.py` runs two identical worlds through the shadow root
+of `tests/_temp_edit_overlay.py`: one with the delivered source, one in which both owner reads are
+physically removed -- the `957c7d2` shape, not a recollection. Reported numbers: 13 exit cells (five
+catalogue listings, seven previews, one upload receipt) whose bodies are byte-identical with the
+owner key stripped, and `get_active_by_filename` 25 / `authorization_decision` 21 on both sides.
+One knife in that file re-adds a registry lookup inside the owner read; the bodies stay identical
+and only the tally moves (25 -> 33, one extra lookup per preview cell), which is the whole reason
+the tally exists.
+
+### Registered, not fixed (outside this write set)
+
+- **The preview exit still answers no `classification`, and R337 did not add one.** The catalogue
+  row may carry it and the preview may not, and the difference is defensible today: the catalogue
+  row describes the *object* (name, size, mtime, ids, classification), while the preview is a
+  row-scoped view of *content* whose honest-empty and refused-row shapes are pinned by R170/R180 --
+  putting a file-level classification next to filtered rows invites the reading "these rows are
+  classified X", which is not what the field means. It is also an asymmetry inside one product:
+  the upload receipt next to it does answer `classification`. Whether registration fields belong on
+  a preview surface is a ruling for 总控/业主, not a tail to be trimmed by an owner ticket, so
+  `test_the_two_exits_answer_exactly_the_documented_registration_keys` pins the current shape and
+  goes red the moment anyone adds it silently.
+- `app/api/v1/data.py::delete_data_file` still spells the owner for its audit summary as
+  `record.owner_id` (`:434`) instead of the shared reader. It is an audit payload, not a response
+  exit, so it can carry the registry's raw `""` for an unowned row today; unifying it changes what
+  lands in the audit log, which is a different surface and a different ticket.
+- Physical-line citations moved again: `app/api/v1/data.py` is 575 -> 599 lines (+26 / -2). The
+  reader R336 restated as `:76-94` now reads `:78-103`; the catalogue's owner line `:267` now reads
+  `:276`. These are line-number notes, not contracts -- the shapes they point at are unchanged, and
+  `tests/test_r186_row_scope_contract.py` reads them off the AST.
+
+### Pins
+
+- `tests/test_r337_owner_receipt_on_both_exits.py` (9): the upload receipt names the uploader
+  through the real route table; the preview names the owner the registry holds, for every account
+  and every file it may open; the three exits never disagree about one row's owner; both new sites
+  read it only through the shared helper (AST, `owner_shape_violations`); the two exits answer
+  exactly the documented registration keys; an unowned row answers `null` on the wire and never a
+  blank; a record without an owner column answers `null` instead of a 500; the three faces stay
+  three; and R310's line anchors still hit `data.py` exactly once, so that ticket's four knives
+  still land.
+- `tests/test_r337_owner_receipt_cost_and_knives.py` (7): the two-world reconciliation above, plus
+  five knives -- unowned -> `""`, bypass the helper, add a lookup, drop the preview owner, drop the
+  upload owner -- each run inside a shadow window and re-run green after it closes.

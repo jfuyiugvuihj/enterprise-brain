@@ -87,8 +87,17 @@ def _dataset_row_owner_id(record) -> str | None:
     未分配. A row the registry never heard of (``record is None``) has no owner to state and answers
     ``None`` as well -- the key is present on every row, because "nobody is on record" and "this
     surface does not speak about owners" are different answers.
+
+    R337 gives one more shape that same answer: a record object carrying no owner column at all (a
+    hand-built row, never one ``app/storage/datasets.py`` produces -- it fills ``owner_id`` for every
+    row it reads) is nobody-on-record too, and answers ``None``. It must not raise: inside the preview
+    route an ``AttributeError`` would surface as a 500 `dataset_preview_failed`, which reports a
+    missing ownership field as a server fault.
     """
-    value = None if record is None else record.owner_id
+    try:
+        value = None if record is None else record.owner_id
+    except AttributeError:
+        return None
     if value is None or str(value).strip() == "":
         return None
     return str(value)
@@ -319,11 +328,15 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
             raise HTTPException(status_code=403, detail=OWNER_SCOPE_REQUIRED) from exc
         raise
     preview = build_dataframe_preview(df, filename)
+    # R337: 上传回执也是资源出口，owner 只能走目录列表那一枚同源 helper。取值用一枚局部名，是为了让
+    # 「读的就是手上这枚 dataset」在形状上也是一眼可读的一件事；不开第二次查询，也不长第二条权限链。
+    owner_id = _dataset_row_owner_id(dataset)
     preview.update(
         {
             "dataset_id": dataset.dataset_id,
             "version_id": dataset.version_id,
             "classification": dataset.classification,
+            "owner_id": owner_id,
         }
     )
 
@@ -364,7 +377,18 @@ async def preview_data_file(filename: str, request: Request, response: Response)
             )
         preview = build_dataframe_preview(scoped_df, record.filename)
         preview["row_scope"] = row_scope
-        preview.update({"dataset_id": record.dataset_id, "version_id": record.version_id})
+        # R337: the preview names its owner with the same single reader the catalogue row above uses,
+        # over the record already in hand -- no second lookup, no second permission chain.
+        # `classification` is deliberately NOT added here: whether registration fields belong on a
+        # preview surface is an open ruling, not an oversight (docs/api/contract-v1.md, R337).
+        owner_id = _dataset_row_owner_id(record)
+        preview.update(
+            {
+                "dataset_id": record.dataset_id,
+                "version_id": record.version_id,
+                "owner_id": owner_id,
+            }
+        )
         return preview
     except HTTPException:
         raise
