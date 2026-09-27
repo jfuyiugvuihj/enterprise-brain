@@ -586,9 +586,15 @@ async function openSession(id) {
 // 模板里一个字都不显示 —— 员工看到的数与页面上选的表对不上时无从纠正。现在这一格有三件事：
 // ① 选择框上屏，看得见「下一轮将把哪张表发出去」；② 就地可改，改的就是下一轮真正发出去的那一份
 // （send 的默认参数读的就是它）；③ 每一轮回答下面画回【那一轮发出去时带的表】。
-// 🔴 措辞的边界：这三句说的都是「界面发出去的东西」。「后端这一轮真正用了哪张表」今天不在线上
-// 任何一格里（canonical 回执与 done 帧都没那一枚字段），所以界面不说那句话，只报自己发出的依据；
-// 要说出服务端那一份，需要后端在终态读数里带 data_filename —— 已写进转出项。
+// 🔴 措辞的边界（R415 改口）：这一屏现在有两句，各说各的事，一句都不替另一句背书。
+// 「本轮发问带的表」＝界面发出去的那一份（发依据）；「这一轮算数用的表」＝服务端在【终态帧】里
+// 报回来的那一份（读数，三态见下面 serverDataOf）。两件事在调用方没点名、或一轮算了多张时不同。
+// 🔴 服务端那一半的出处是 app/api/v1/chat.py::terminal_data_filename（R414；三态语义：正好一枚交
+// 文件名，零枚与多枚都交空串），并树状态待总控核 —— 主树今天没有它。而且线上到屏上那一截今天
+// 还断着，断点不在 R414：终态帧唯一的解码处是 lib/sessions.js 里 createStreamReducer 的
+// request.completed 分支，它今天只抄 awaiting_hitl 与 awaiting_steps，data 的其余键丢掉。补齐它是
+// 那里两行的事，而 lib/** 不在本单写域（Singer 名下），已具名报总控请裁。
+// 三态各钉一枚、外加「缺席不许拿发依据填」那枚反向钉：components/__tests__/r415-server-data-readout.test.js。
 // 清单是 lazy 读的：挂载期一枚请求都不发（r260 己1 钉着），伸手才读。
 
 const dataFiles = ref([])
@@ -652,6 +658,43 @@ function dataTableOf(msg) {
   if (!msg || msg.role !== 'assistant') return ''
   if (typeof msg.dataFilename !== 'string') return ''
   return msg.dataFilename ? `本轮发问带的表：${msg.dataFilename}` : '本轮没指定数据表'
+}
+
+/**
+ * R415 · 服务端那一份读数上屏：三态各有名字，一句都不替另一句背书。
+ *
+ *   报名字  终态帧交来一枚非空字符串 ⇒ 这一轮正好用了一份，报那一份的文件名；
+ *   说不准  交来的是空串 ⇒ 后端明说「这一格说不清」。R414 的口径里零枚（这轮没跑数据）与
+ *           多枚（调用方没点名，于是可见数据集全算了）在线上就是同一枚空串，所以界面也只说
+ *           「说不准」，不替它挑一种 —— 挑了就是猜。
+ *   不画    终态帧没这一格（旧后端、比树落后的镜像，以及 R414 并树之前的今天）⇒ 整句不出现。
+ *
+ * 🔴 为什么「不画」而不是回落到上面那句发依据：msg.dataFilename 说的是界面刚才点的那一张，
+ * 拿它填这一格就是把发依据冒充成用表读数 —— 本单存在的理由，不做。为什么不写「服务端未告知」：
+ * 那句话说的是【这一版构建】没有这一格，不是【这一轮】的读数，而今天真机每一轮都撞上它；把一枚
+ * 部署事实挂成每轮的结论，与同屏 lane-readout 的既定口径（后端没发读数就整条不画）也是拧着的。
+ * 空串与缺席必须分得开：前者有一句、后者一句都没有，所以这里只在【亲眼读到字符串】时才有话。
+ */
+function serverDataOf(msg, index) {
+  if (!msg || msg.role !== 'assistant') return ''
+  const live = readTurn(serverDataReads, msg, index)
+  const read = typeof live === 'string' ? live
+    : (typeof msg.serverDataFilename === 'string' ? msg.serverDataFilename : null)
+  if (read === null) return ''
+  if (read === '') return '这一轮说不准是哪张表：服务端没报出唯一的一张（可能没跑数据，也可能不止一份一起算了）'
+  return `这一轮算数用的表：${read}`
+}
+
+/**
+ * 把终态帧那一格抄进这一轮：表里那份管当场重渲染，消息对象那份管随会话落盘与刷新复原。
+ * 🔴 只在读到字符串时才写：undefined／null／非字符串一律不写，也就是留在「不画」那一态 ——
+ * 把缺席写成空串会说成「说不准」（后端明明没说话），写成请求值就是说假话。
+ */
+function adoptServerDataRead(turn, msg, result) {
+  const read = result?.state?.terminalDataFilename
+  if (typeof read !== 'string') return
+  serverDataReads.value = storeBag(serverDataReads, turn, read)
+  if (msg) msg.serverDataFilename = read
 }
 
 // ==================== 图表解析 ====================
@@ -864,6 +907,8 @@ async function send(dataFilename = activeDataFilename.value) {
     } else if (result.stopped !== 'hitl' && !aiMsg.content) {
       aiMsg.content = '本轮没有返回内容。'
     }
+    // R415：终态帧里服务端报的那一份表，跟在流之后抄 —— 它在最后一帧才到场。
+    adoptServerDataRead(turn, aiMsg, result)
     // 「命中缓存但来源已改版」这句只能真读 GET /documents/{filename}/versions 才说得出。
     // 放在流结束之后而不是 onCache 里：sources 帧在 text 之后到，先查会拿着空清单误报。
     await checkCacheStaleness(turn, aiMsg)
@@ -987,6 +1032,8 @@ async function approve(approved) {
     } else if (!aiMsg.content) {
       aiMsg.content = approved ? '已确认，但本轮没有返回内容。' : '已拒绝该动作。'
     }
+    // R415：批准续跑的那一轮与 /ask 同一格读数（R414 两条腿各一处），同一个抄法。
+    adoptServerDataRead(turn, aiMsg, result)
     syncActive()
     await scrollBottom()
   } catch (err) {
@@ -1024,6 +1071,7 @@ function handleKeydown(e) {
 const sourceReads = ref({})   // sources 帧的出处读数
 const cacheReads = ref({})    // text 帧上那三枚缓存字段
 const headlineReads = ref({})   // answer.headline 的首屏线索卡读数（R48）
+const serverDataReads = ref({}) // R415 · 终态帧报回来的用表读数：一枚名字／空串／没这一格（不画）
 const unseenReads = ref({})   // 本轮发出、界面尚未认领的事件名
 const queueReads = ref({})    // GET /queue/status/{id} 的最近一次读数
 const queueFaults = ref({})   // 排队状态这一次没读回来时的原始错误
@@ -1902,6 +1950,11 @@ function renderMd(raw) {
                        去的那一份】，后端真正用了哪张表今天不在线上任何一格里，界面不猜。 -->
                   <p v-if="dataTableOf(msg)" class="lane-readout" role="status"
                      data-testid="data-table-readout">{{ dataTableOf(msg) }}</p>
+                  <!-- R415 · 与上面那句并存，但来源不同轨：这一句读的是服务端在终态帧里报回来的
+                       那一份（三态各有名字）。字段没来就整条不画 —— 那一格宁可空着，也绝不拿上面
+                       那句发依据填它。线上到屏上那一截今天还断着（断点与本单写域见文件头 R415）。 -->
+                  <p v-if="serverDataOf(msg, i)" class="lane-readout" role="status"
+                     data-testid="server-data-readout">{{ serverDataOf(msg, i) }}</p>
                   <!-- 档位那张脸：读的是响应头给的本轮真读数，不是选择框的当前值。
                        用户中途改选择框不会回改已落定的那一轮；后端没发读数就整条不画。 -->
                   <p v-if="laneFaceText(laneFaceOf(msg, i))" class="lane-readout" role="status"
