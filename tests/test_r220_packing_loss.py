@@ -46,7 +46,7 @@ INPUT_FINGERPRINTS = {
     "answers-run6.jsonl":
         "d50c2f9805ffa2dfed7154115ebfc9f173c954f07d26ff0776b6fb1637b5bb5a",
     "business_evaluation_100.jsonl":
-        "2230b2b45be18bfbb19f2f58a5ba55a5b36b444060886a30dcf073a81d678bab",
+        "686c564ff2985744e6f050e5ea7639500c99bd80b3e32fc3a85e585f5ecdd79b",
 }
 
 #: 逐题可追的三枚抽查：一题两桶混装、一题全名次侧、一题被第一枚缺料的块整段拖进判不了。

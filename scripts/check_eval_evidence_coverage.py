@@ -15,7 +15,7 @@
 
 【三条硬规矩】
     1. 只读取证：零模型调用、零网络、零连库、零起服务、零改动仓库内容。产物只在显式指定的
-       --json 路径上落盘。
+       --json / --provenance 路径上落盘。
     2. 口径不商量：判据全在下面「口径常量」区块里，以显式常量 + 注释表达。要换口径请用开关
        （--include-pdf / --include-csv），不要改常量。
     3. fail-closed：输入规模与本口径钉死的期望值不一致时**拒绝给数**，非 0 退出并打印它实际
@@ -27,6 +27,7 @@
 【用法】
     python scripts/check_eval_evidence_coverage.py
     python scripts/check_eval_evidence_coverage.py --json _r94/no_provenance_r0.json
+    python scripts/check_eval_evidence_coverage.py --provenance _r401tmp/anchor_provenance.json
     python scripts/check_eval_evidence_coverage.py --include-pdf
 """
 from __future__ import annotations
@@ -223,16 +224,20 @@ def corpus_scope(directory: Path, pattern: str) -> list[Path]:
     return sorted(directory / name for name in names)
 
 
-def load_corpus(
+def _corpus_entries(
     root: Path,
     *,
     include_pdf: bool = False,
     include_csv: bool = False,
-) -> dict[str, str]:
-    """按口径装载语料，返回 {文件标签: 归一化后的文本}。
+) -> list[tuple[str, Path, str]]:
+    """按口径装载语料，返回 [(文件标签, 仓内相对路径, 原始文本)]。
 
     主口径（两个开关都不开）只读 documents/*.txt 的 git 跟踪集，且必须正好
     EXPECTED_CORPUS_TXT_COUNT 篇；工作树里没跟踪的残片不算语料（见 corpus_scope）。
+
+    R401 抽出这一层是为了「派生出处」：出处地址必须落在**原始字节**上（行号、归一化后
+    字节区间都得从同一份文本现算），所以取证件得同时留得住原文，不能只留归一化后的残骸。
+    归一化规则一个字没动 —— 主口径 load_corpus() 现在只是本函数的一层薄包装。
     """
     corpus_dir = root / CORPUS_DIR_REL
     if not corpus_dir.is_dir():
@@ -247,16 +252,144 @@ def load_corpus(
                 len(txt_files), EXPECTED_CORPUS_TXT_COUNT, corpus_dir, UPDATE_BOTH_PLACES
             )
         )
-    loaded = [(path.name, decode_text_bytes(path.read_bytes())) for path in txt_files]
+    entries = [
+        (path.name, path.relative_to(root), decode_text_bytes(path.read_bytes()))
+        for path in txt_files
+    ]
     if include_pdf:
         for path in corpus_scope(corpus_dir, PDF_GLOB):
-            loaded.append(("{0} [PDF 备选口径]".format(path.name), read_pdf_text(path)))
+            entries.append(
+                (
+                    "{0} [PDF 备选口径]".format(path.name),
+                    path.relative_to(root),
+                    read_pdf_text(path),
+                )
+            )
     if include_csv:
         for path in corpus_scope(root / DATA_DIR_REL, DATA_CSV_GLOB):
-            loaded.append(
-                ("{0} [CSV 备选口径]".format(path.name), decode_text_bytes(path.read_bytes()))
+            entries.append(
+                (
+                    "{0} [CSV 备选口径]".format(path.name),
+                    path.relative_to(root),
+                    decode_text_bytes(path.read_bytes()),
+                )
             )
-    return {label: normalize(text) for label, text in loaded}
+    return entries
+
+
+def load_corpus(
+    root: Path,
+    *,
+    include_pdf: bool = False,
+    include_csv: bool = False,
+) -> dict[str, str]:
+    """R94 原口径读法：{文件标签: 归一化后的文本}。判据与返回值一字节未改。"""
+    return {
+        label: normalize(raw)
+        for label, _path, raw in _corpus_entries(
+            root, include_pdf=include_pdf, include_csv=include_csv
+        )
+    }
+
+
+def load_corpus_raw(
+    root: Path,
+    *,
+    include_pdf: bool = False,
+    include_csv: bool = False,
+) -> dict[str, tuple[Path, str]]:
+    """R401 派生读法：{文件标签: (仓内相对路径, 原始文本)}。读的文件集与主口径同一个。"""
+    return {
+        label: (path, raw)
+        for label, path, raw in _corpus_entries(
+            root, include_pdf=include_pdf, include_csv=include_csv
+        )
+    }
+
+
+def find_term_positions(term: str, normalized_text: str) -> list[tuple[int, int]]:
+    """一个词条在**归一化后文本**里的全部 (utf-8 字节起点, 字节长度) 区间。
+
+    地址口径写死在这里，因为它就是甲案的凭据格式：偏移量数的是 normalize() 输出串再
+    encode("utf-8") 的字节，不是原始文件的字节 —— 原始文件里同一个词挨不挨空白/全半角
+    都不固定，归一化之后的串才是可复算的地址（与 §1.4 的三步规则同一把尺）。
+    utf-8 自同步 ⇒ 命中必落在字符边界；真解不开或解回来的不是这个词，当场 StructureDrift，
+    绝不吐一个「看着对」的位置给下游当出处。
+    """
+    needle = normalize(term)
+    if not needle:
+        return []
+    encoded = normalized_text.encode("utf-8")
+    needle_bytes = needle.encode("utf-8")
+    positions: list[tuple[int, int]] = []
+    cursor = 0
+    while True:
+        index = encoded.find(needle_bytes, cursor)
+        if index < 0:
+            return positions
+        chunk = encoded[index : index + len(needle_bytes)]
+        try:
+            decoded = chunk.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise StructureDrift(
+                "归一化字节区间 {0}+{1} 解不出 utf-8：位置口径与文本对不上，派生作废（{2}）".format(
+                    index, len(needle_bytes), exc
+                )
+            )
+        if decoded != needle:
+            raise StructureDrift(
+                "归一化字节区间 {0}+{1} 解回来是 {2!r}，不是词条 {3!r}：utf-8 自同步假设破了".format(
+                    index, len(needle_bytes), decoded, needle
+                )
+            )
+        positions.append((index, len(needle_bytes)))
+        cursor = index + len(needle_bytes)
+
+
+def derive_term_provenance(term: str, corpus_raw: dict[str, tuple[Path, str]]) -> list[dict]:
+    """从语料**现取**一个词条的出处：篇路径 + 命中的原始行号 + 归一化后 utf-8 字节区间。
+
+    这是 R401 甲案「禁手抄」的执行体：锚词的出处只能由本函数产出。它不判断"该不该算出处"
+    （那是 §1.5 的 MATCH_MODE 与 §1.7 的语料集，一个字没改），它只回答"这个词在语料的哪里"。
+    同一词命中多篇/多行时全部如实列出，由调用方选，选完还得被 tests/test_r401_* 复算一遍。
+    """
+    needle = normalize(term)
+    records = []
+    for label in sorted(corpus_raw):
+        path, raw = corpus_raw[label]
+        positions = find_term_positions(term, normalize(raw))
+        if not positions:
+            continue
+        lines = [
+            number
+            for number, line in enumerate(raw.splitlines(), start=1)
+            if needle and needle in normalize(line)
+        ]
+        records.append(
+            {
+                "term": term,
+                "path": path.as_posix(),
+                "label": label,
+                "raw_line_numbers": lines,
+                "normalized_byte_ranges": [
+                    {"start": start, "length": length} for start, length in positions
+                ],
+            }
+        )
+    return records
+
+
+def derive_provenance_for_rows(rows: list[dict], corpus_raw: dict[str, tuple[Path, str]]) -> dict:
+    """题源里每一个 must_contain 词条的派生出处，按词条去重后一次性算完。"""
+    seen: list[str] = []
+    visited = set()
+    for row in rows:
+        for term in row[MUST_CONTAIN_FIELD]:
+            key = str(term)
+            if key not in visited:
+                visited.add(key)
+                seen.append(key)
+    return {term: derive_term_provenance(term, corpus_raw) for term in seen}
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +506,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="把 data/*.csv 也算作出处。同为备选口径；主口径排除（§1.7），实测结果不变。",
     )
     parser.add_argument(
+        "--provenance",
+        type=Path,
+        default=None,
+        help="R401 派生能力：把题源里每个 must_contain 词条在语料里的**现取出处**（篇路径 + "
+        "命中的原始行号 + 归一化后 utf-8 字节区间）以 UTF-8 JSON 写到该路径。它只回答"
+        "「这个词在语料的哪里」，不改动 §1.4/§1.5/§1.7 任何判据，也不影响出数。",
+    )
+    parser.add_argument(
         "--json",
         type=Path,
         default=None,
@@ -393,6 +534,12 @@ def main(argv: list[str] | None = None) -> int:
         rows = load_rows(root / FIXTURE_REL)
         corpus = load_corpus(root, include_pdf=args.include_pdf, include_csv=args.include_csv)
         missing = find_missing_terms(rows, corpus)
+        provenance = None
+        if args.provenance is not None:
+            corpus_raw = load_corpus_raw(
+                root, include_pdf=args.include_pdf, include_csv=args.include_csv
+            )
+            provenance = derive_provenance_for_rows(rows, corpus_raw)
     except StructureDrift as exc:
         print("FAIL-CLOSED：拒绝出数（输入与本脚本钉死的主口径不一致）", file=sys.stderr)
         print(str(exc), file=sys.stderr)
@@ -414,6 +561,18 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(missing, ensure_ascii=False, indent=1), encoding="utf-8"
         )
         print("已写出 {0}（{1} 条）".format(target, len(missing)))
+    if args.provenance is not None:
+        provenance_target: Path = args.provenance
+        if provenance_target.parent and not provenance_target.parent.exists():
+            provenance_target.parent.mkdir(parents=True, exist_ok=True)
+        provenance_target.write_text(
+            json.dumps(provenance, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+        print(
+            "已写出派生出处 {0}（{1} 个词条；只读语料现算，判据未动）".format(
+                provenance_target, len(provenance)
+            )
+        )
     return EXIT_OK
 
 

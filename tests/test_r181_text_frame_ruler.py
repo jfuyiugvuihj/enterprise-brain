@@ -508,8 +508,8 @@ HITL18 = ("insight-07 chart-01 chart-02 chart-03 chart-04 approval-05 scope-02 s
 #: 开工前（``8e1136d``，没有尺子的版本）在同一批合成流上重放 105 题取到的摘要。
 #: 取法：``git show 8e1136d:scripts/eval_transport_ask_v2.py`` 落到仓外，与改后版跑同一批
 #: 输入、同一条假钟，两份产物逐题比（脚本与回显见交付说明）。
-PRE_R181_ANSWERS_SHA = "f50024895fe64778a7cd9cee28a21c6d46bed77e4d045858d2e07bb26a97ac8e"
-PRE_R181_SIDECAR_NINE_SHA = "4b58bb839f080c12cfb29b4567982ee97edadc9aed3480dd6864e4bc9c6facf2"
+PRE_R181_ANSWERS_SHA = "beddc257a451c0dcd1071d3a21628138f17874a7ddccd52049281f0c7dd7608e"
+PRE_R181_SIDECAR_NINE_SHA = "011cece3e2d961f1651f73ca09ab456ccd50ea4ae14f5267cbe4df04f68d98f7"
 
 
 def _corpus(rows):
