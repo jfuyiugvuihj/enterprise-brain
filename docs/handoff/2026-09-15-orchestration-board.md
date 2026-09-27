@@ -1542,6 +1542,12 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Kierkegaard` | `01a0e413-4677-7c91-87cb-a6b3218eb4f4` | **R415** 「本轮数据表」那一句改口报服务端那一份（gap-recheck §2.3 G03 那半格；`ChatPanel.vue:591` 自述待办；三态=一枚/空串/字段缺席，🔴 不许拿请求值冒充服务端值） | `be-r415`（基点 **`abbb317`**，总控预配 + Junction 探活 True，开工 porcelain 0，**独占**） | 🔵 02:1x 一次投递（零 model 覆盖）。🔴 **验收排在 R414 并树之后**（数据源在它那儿），故派工词逐字写明"你现在无法证明服务端真会回这一格，未证清单要原样列"；禁 `app/**`（尤其 `chat.py`）与 `contract-v1.md`（Heisenberg 名下）、`lib/**`+`r267`/`r316`/`r416`（Singer）、`DocPanel`/`router`/`r136`/`r237`/`r313`（Hume）。`r169`/`r268` 那三枚请求体钉一字不动且须仍绿 | 02:1x |
 | `Bohr` | `01a0e413-fb53-7522-8acc-e87716b1493e`（id 从 spawn 回执现取，非手敲） | **R417** 批量建号量具要能开混合角色（V2 验收目标 `roadmap:277`「10～30 名内部用户」与 `:278` 跨密级越权 0 的**唯一量具前置**；gap-recheck §2.3 第 19 行判**未落**，凭据 `provision_bulk_accounts.py:114` 把 `"role": "staff"` 写死，上一班总控已独立抽查为真） | `be-r417`（该树系上一班预配后**从未派工**、总控 02:1x 从 `9e817e1` checkout 到 **`abbb317`**，porcelain 0，**独占**） | 🔵 02:1x 一次投递（零 model 覆盖）。三格硬要求：不给 `--roles` 时**逐字节保持今天行为**且要可证明；auditor 那一档**必须诚实失败**（不许静默降级成 staff、dry-run 阶段就拒、点名 `CREATABLE_ROLES` 与 H13 未裁）；凭证与计划输出要带角色。🔴 禁 `rbac.py`/`permissions.py`/`auth.py`/`sso.py`（R413 名下且 H13 未裁＝不许替它编一档密级）；🔴 禁 `seed_workspace.py`/`workspace-seed.json`（防它"顺手帮"语料换属主，那与本班 R414(a) 裁定正相反）；全程零 `--apply`、零真机建号、不跑全量门 | 02:1x |
 | （主树基线更新·第十二格续·第十一集） | — | 本班收官读数 | 主树 | HEAD 仍 **`abbb317`**（其后只有看板这一笔待提交），脏项 = 永久四枚，`4344e6d..abbb317` 已推 gitee。🔴 槽位上限 6、**现占 5**（`Heisenberg`R414／`Singer`R420／`Hume`R421／`Kierkegaard`R415／`Bohr`R417），留 1 空槽不再投。后端全量门仍欠一次（上一枚读数 `7492/50/2` 属 `0d723b4`，此后已并七笔含 `chat.py` +51/−12）⇒ 五枚在途可能自跑测试，本机可用内存现取 **15.1 GB / 31.6 GB**，门排在在途落定之后。`be-r415`/`be-r417` 两棵新树已建（Junction 探活），`be-r417` 复用上一班预配的空树并 checkout 到 `abbb317`（当时 porcelain 0、`rev-list` 无独有提交）。心跳 `automation-2` 仍 PAUSED 指向死线（业主要求不启用） | 02:1x |
+| `Singer` 结案 | `01a0e408-d6ce-7b22-9308-93634cd38df6` | **R420** 结案 | `be-r420`（基点 `abbb317`） | ✅ 并树 `5f3680c`（`ee21a06..5f3680c` 已推 gitee）。主树亲跑 118 files / 2450 tests 全绿、`lint:colors` 148/0、后端点名件 31 passed、`debt: true` 现取零命中。🔴 **欠的半刀由总控补**：计划书 §4 表 P4 那一格与 §3 那行同病（Singer 把「等 R35 结案」换成「等 R294 并树」，而 R294 早已并树 `70fef378`、R59 两块切读码更早就全在树 `bee9d01`+`dbc2047`＋旋钮 `ed9f8b0`，四枚 `merge-base --is-ancestor` 本席现取均 rc=0）⇒ 提交 `66cf807` 订正两行：翻默认不再需要改代码，欠的只剩 §13 未验格与业主翻 `INDEX_BACKEND`（`env_file:` 走 recreate 不是 build）。 |
+| `Bohr` 结案 | `01a0e413-fb53-7522-8acc-e87716b1493e`（id 从 spawn 回执现取） | **R417** 结案 | `be-r417`（基点 `abbb317`） | ✅ 并树 `f65d42e`。总控验收（不采信自述）：写集 `abbb317..HEAD` 零漂移、numstat 182/12 逐枚相等、主树亲跑九枚件 rc=0 全绿、干跑 rc=0 零 socket；odometer 单角色退化可证。🔴 顺手修掉一台在任何真栈上必然 100% 假红的量具：`app/api/v1/auth.py:84` 答 `token` 不应答 `access_token`、`:254` 画像套在 `profile` 里（本席现读两处均对上）。请裁四条已裁：修复留 R417／空 `--departments` 由 ZeroDivisionError 改 exit 3 认可／exit 3 待并入 runbook（另记）／`v2-gap-recheck-2` 那行台账改口由总控动手。 |
+| `Kierkegaard` 结案 | `01a0e413-4677-7c91-87cb-a6b3218eb4f4` | **R415** 结案 | `be-r415`（基点 `abbb317`） | ✅ 并树 `ac84f1a`。主树亲跑 `npm run test` = **119 files / 2460 tests** 全绿（基点 118/2450 ＋ 本单一枚件 10 枚，既存零增删）、`lint:colors` 恒 148/0，与 R420 收紧后的 debt=0 棘轮一起跑过。三态各钉（一枚＝报名字／空串＝说不准／缺席＝整句不画），裁并存不裁替换。🔴 结案口径＝**读取位到位、屏上今天仍一枚都不显示**：`lib/sessions.js:478` 只抄 `awaiting_hitl`/`awaiting_steps`，终态帧 `data` 其余键全丢。那一刀不给是避撞不是遗漏：`app/api/v1/chat.py:2472` 那条注释正钉着 `sessions.js:486-492`，插行会让在途的 R414 自带假坐标 ⇒ 拆成 **R424**（sessions.js 两行＋那枚坐标＋`ChatPanel.vue:1950` 改口），排 R414 并树之后。 |
+| （主树基线更新·第十三格·第一集） | — | 本班收官读数 | 主树 | 主树 HEAD **`ac84f1a`**（`5f3680c`→`66cf807` 计划书两行订正→`f65d42e` 并 R417→`ac84f1a` 并 R415），四枚 `git cat-file -t` 现取 = commit。🔴 **`66cf807` 起这三笔尚未 push gitee**（`ee21a06..5f3680c` 已推）。脏项 = 永久四枚。槽位上限 6、**现占 4**（`Heisenberg`R414／`Hume`R421／`Turing`R425／`Ohm`R426）。🔴 后端全量门仍欠一次：上一枚读数 `7492 passed / 50 skipped / 2 xfailed / 0 failed` 属 `0d723b4`，此后已并 R396…R420＋R417＋R415，且 R414 动 `chat.py`＋`contract-v1.md` ⇒ 并树动契约前后端两道门都要跑（#72）。 |
+| `Turing`（新派·同名不同人，唯一键只认 id） | `01a0e432-e922-7280-9daf-8cdf18d5d809`（id 从 spawn 回执现取） | **R425** 计划书 R50「低峰」半句：把已建好的 `scripts/rebuild_index.py --apply --incremental --time-budget-seconds N` 接进 `app/scheduler/jobs.py:14-20` 的 `register_jobs()`（今天只 declare `alert_check`＋`daily_report`）；顺带清结案单 §3.2 第 7 条——`LOCAL_MODEL_KEEP_ALIVE` 至今没进 `.env.example`（`app/common/model_config.py:30-31`，本席现读 `DEFAULT_KEEP_ALIVE_SECONDS = 5 * 60`） | `be-r417`（基点 **`ac84f1a`**，总控 `checkout -f`＋`clean -fdq` 复用 Bohr 用毕的树，dirty=0／rev-list=0 现取；此树无 `.venv`，解释器指主树） | 🔵 在途。**判据② 是这一单的全部风险**：缺省必须不排（私有化＝一台机器一个企业，装机即半夜自己打模型重嵌不可接受），且开关关时**不许 `add_job`**，不是「加了再在回调里 return」。配置面走 R408 新口径：`.env.example` 里只写注释掉的出厂默认，生效位赋值不许出现。禁 `chat.py`／`app/agents/**`／`app/common/**` 既有文件／`frontend/**`／`migrations/**`（D9 排在窗后）／两本台账。不许跑全量门。 |
+| `Ohm`（新派·同名不同人，唯一键只认 id） | `01a0e434-e821-7283-84f7-1055200d9126`（id 从 spawn 回执现取） | **R426** 纯账面亲验单：`docs/handoff/2026-09-26-v1-frontend-gap-list.md` 逐行在 `ac84f1a` 现场重判（只认磁盘字节与命令输出，拿不出证据的原样留着）＋ 拔掉 `frontend/src/router/__tests__/r316-admin-entry.test.js:4-10` 那段已假的叙述 | `be-r415`（基点 **`ac84f1a`**，总控复用 Kierkegaard 用毕的树，dirty=0／rev-list=0，`frontend\node_modules` Junction 探活 True） | 🔵 在途。🔴 那枚 header 的行号牵连 `r416-comments-cite-live-coordinates.test.js` 的 LEDGER（现引用 `r316-admin-entry.test.js:13` 钉 `auth.py:106`），挪位就停手报本席，**不许自己伸手改 `r416`**；debt 必须为 0；产品码非注释字节一枚不许动；禁 `frontend/src/components/**`（`Hume`R421 在途 DocPanel／r136／r237／r313／panel-states）。 |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -5429,3 +5435,56 @@ R345 给后端加了第四枚 `scan_summary["reason"]`（`alerts.py:45` 常量 /
 
 - 🔴 **#75 无边界的全局串替换会顺手改掉史官的笔迹**：我给本班新写的几行改时间戳（落笔时写成了还没到的 `02:2x`/`02:3x`，正是 #73 那枚病），用了全局 replace，`git diff` 逐行看变更清单才发现它**顺带改了三枚既有行**的时间格（`Lovelace`R396 结案行、`Ampere`R397 结案行、`Heisenberg`R414 派工行）。处置：**不恢复原假值，改成真值**——`git log --date=format:%H:%M` 现取 `744ba33` = **01:31**、`c0c4bcd` = **01:32**，R414 那次派工出自记录它的提交 `ab38589` = **01:37**；原记的 `02:2x` 三枚全是笔迹超前（上一班交接摘要里"约 02:40"那类数同样对不上）。🔴 立规：**改账必须限定在本次插入的行范围内；全局替换之后、提交之前必过一遍 `git diff` 变更行清单**。
 - **另一枚**：新派 `Bohr` 那一行我把 agent_id 写成了前一枚（`Kierkegaard`）的 id，还想用"以 spawn 回执为准"一句话盖过去——已改成回执现取值 `01a0e413-fb53-7522-8acc-e87716b1493e`。上一班为同形状（手敲残缺 id 害下一班 `wait_agent` 命不中）记过账；**抄错与敲错是同一枚病：id 只许从回执复制，不许凭记忆写第二遍。**
+
+
+## 4DI 第十三格（09-28 03:0x·总控线·主树 `5f3680c` → `ac84f1a`）：推备份 · 补上一班欠的半刀 · 并三枚 · 派两枚 · 🔴 抓出一张过期作战图
+
+### 一、接班第一件事是备份，不是干活
+
+- 上一格收官时 HEAD `5f3680c` **一枚都没推**。本机是唯一副本这笔账挂在 H6 上，所以本格第一发就是 `git push gitee codex/data-file-catalog` ⇒ `ee21a06..5f3680c` 落地，`git rev-parse --short gitee/codex/data-file-catalog` 现取回读 = `5f3680c`。github 那侧 TLS 不通，gitee 是唯一的备份，不是镜像。
+- 第二件事 `close` 掉已并树的 `Singer` 腾槽；第三件事补它欠的半刀。
+
+### 二、R420 欠的那半刀：过期账换成另一枚过期账
+
+- `5f3680c` 里计划书那一格写的是「执行层，**等 R294 并树**」。这句是上一格从「等 R35 结案」改过来的——**改对了一半**：R294 也早在 09-26 17:33 就并树 `70fef378`。本席现取 `git merge-base --is-ancestor` 四枚（`70fef378`／`bee9d01`／`dbc2047`／`ed9f8b0`）全部 rc=0 ⇒ R59 两块切读的码＋旋钮全在树上，**翻默认不再需要改任何代码**，那一行不再有任何前置在等人。
+- 同一枚病灶在 §3 P4 那行还有一份（「今天真实的堵点是 R294 正在改 `chat.py:2132`」）。两行一起改，提交 `66cf807`，numstat `2 2`；字节不变量复验：CRLF 529／loneCR 0／bareLF 0／无 BOM／文件仍无末行换行——与改动前逐枚相等。
+- 🔴 教训：**「把过期账换成另一枚过期账」比留着原句更危险**，因为它看起来刚被订正过。订正一句排期账之前先跑一次 `merge-base`，不能只换一个名字。
+
+### 三、并树三枚（总控亲自复跑，不采信执行层自述）
+
+- **R417 批量建号量具混合角色** ⇒ `f65d42e`。本席亲跑：九枚件 rc=0（那一发 170 passed）、干跑 `exit 0` 且零 socket、写集 `abbb317..HEAD` 对新钉与那枚脚本**零漂移**、numstat 182/12 相等、odometer 在 `len(roles)==1` 时逐字退化回旧式（代数可证）。结案口径：量具能造混合角色了，🔴 **V2 那条「10～30 名内部用户」仍不能判落**——没人跑过 `--apply`（业主动作），auditor 那一档还等 R413/H13。
+- **R415 聊天屏服务端数据读数** ⇒ `ac84f1a`。本席亲跑 `npm run test` **119 files / 2460 tests** 全绿（基点 118/2450 ＋ 本单 1 枚件 10 枚，既存零增删）、`lint:colors` **148 problems / 0 errors**，且是与 R420 收紧后的 debt=0 棘轮一起跑过的。结案口径：读取位到位，**屏上今天一枚都不显示**——病没好，本单只是让它不可能被读成「已经好了」。
+- 顺带把 `lint:colors` 那本账订正一次：`frontend/package.json` 今天是 **`--max-warnings=148`**，业主与旧账里反复出现的 334 是错的（`Hume` 现读纠正，本席复核同意）。
+
+### 四、sessions.js 那一刀为什么没跟着 R415 并（拆成 R424）
+
+- 施工层请裁要两行：`lib/sessions.js` 的 `request.completed` 那一支补上终态帧的 `data_filename`。这确实是这一格真正的断点（现读：那一支只抄 `awaiting_hitl`／`awaiting_steps`）。
+- 🔴 但不给：`app/api/v1/chat.py:2472` 那条注释此刻正钉着 `frontend/src/lib/sessions.js:486-492`，而 `chat.py` 在 `Heisenberg`/R414 的写域里、正在途。从 `:478` 插行必然把那枚坐标挪位 ⇒ R414 交回那天自带一枚假坐标，正是 R416/R420 两枚单在治的病。**串行的是文件，不是功能名。**
+- ⇒ **R424** 立案（sessions.js 两行＋`chat.py:2472` 那枚坐标＋`ChatPanel.vue:1950` 那句「后端真正用了哪张表今天不在线上任何一格里」改口——那句被 `r268:226` 用牙钉着，要等数据真到屏上才成假话），排 R414 并树之后。丙组 `r415-...test.js:308` 那枚「断点今天真断着」的钉子留着，它会在 R424 落地那天自己报红——这正是要的形状。
+
+### 五、🔴 抓出一张过期作战图：本席差点把已经修完的活儿再派一遍
+
+- 本格为了排下一枚前端单，去 `docs/handoff/2026-09-26-v1-frontend-gap-list.md` 找活，逐条实测后**三行是过期账**（凭据取到行）：
+  - **G02／T2「每篇文档都写已解析、指标永远高可信」**：`rg -n 已解析|高可信 frontend/src/components/DashboardPanel.vue` **零命中**；那几句话今天住在 `frontend/src/lib/dashboard.js:75-84`，且是从聚合回执派生的三张脸（`已解析篇数未记录`／`全部已解析`／`已解析篇数与总数对不上`），配套在册钉 `components/__tests__/r274-documents-tile-truth.test.js`。
+  - **T11「前端只判一枚健康码」**：`frontend/src/lib/health.js:24-25` 今天两枚码都在（`MODEL_NOT_AVAILABLE`／`EMBEDDING_MODEL_MISSING`），文件头 `:7` 自陈这枚单就是 R268/G07 治的。
+  - **G04「换台电脑问过的话全不见了」**：`frontend/src/lib/sessions.js:874` 起是「会话名单从服务器取回并与本地合并」，屏上入口在 `components/ChatPanel.vue:1751` `session-pull`、`:1761` `session-pull-face`。
+- 今天仍然没证掉的：**T10／G03「在对话里知道这一问用的是哪张表并能改」**——`activeDataFilename` 在 `ChatPanel.vue` 全是脚本态（`:249/:609/:632/:728-732/:813`），有没有一枚模板把它画出来给人改，交 `Ohm`/R426 现场判。
+- 所以这一格把 R426 整单立成「复验并改口」而不是「照着派活」：**过期的作战图比空白更危险**，它会让总控把已完成的事再排一遍波次，还会让两枚 Agent 去修同一枚早就好了的屏。
+
+### 六、本格新派两枚（写集互斥已核）
+
+- `Turing`/**R425** @ `be-r417`（基点 `ac84f1a`，复用 Bohr 用毕的树）：见 §0 该行判据。`rebuild_index.py` 的增量道与时间预算今天已经在码里（`:31` 用法行、`:786-787` 签名），欠的只是排程那一头。
+- `Ohm`/**R426** @ `be-r415`（复用 Kierkegaard 用毕的树）：gap list 逐行现场重判＋拔掉 `r316-admin-entry.test.js:4-10` 那段假叙述。本席已现读那半段证据链：`router/index.js:123-126` 的 `/admin` 带着 `meta.screen:true`＋`administratorOnly:true`、`:187-189` 派生进管理员清单、`:196-197` 按角色发口、`App.vue:4` import＋`:448` 侧栏那枚 `v-for`——而这枚文件自己的用例 `:74`／`:95`／`:116` 证的正是「今天已接上」。**注释和断言在同一枚文件里互相打脸。**
+
+### 七、R421 六条请裁的落笔（裁完待交回验收）
+
+- ① 授权动 `frontend/src/components/__tests__/panel-states.test.js:322/:325` 两行（写集 4→5 枚，numstat 必须 2/2，其余一字不动）；⑥ `:361` 死文案「一并改口＋附可达性证据链」采纳，那四处 `raiseNotice` 调用点坐标一律 live coordinate；② **可以抽**成 `frontend/src/lib/__tests__/screen-names-catalog.js`（不带 `.test.js`、只放词表不放断言、两枚在册件都 import、新钉要有「只改一处会红」的牙），也可反裁不抽并写理由；③ `DataPanel.vue` 纳入只读禁令这条**留**；④ 另外那四处「知识库」句**不并本单**——`app/documents/index_policy.py:259` 与 `lib/errcodes.js:103/:122` 被 `tests/test_r142_error_code_table_sync.py` 跨语言钉着 ⇒ 立 **R422**；`DashboardPanel.vue:127`（被 `r267-overview-real-status:121` 钉）与 `ChatPanel.vue:320` ⇒ 立 **R423**。两枚**待派未派**。
+
+### 八、下一格顺序（照抄可执行）
+
+1. 🔴 **`git push gitee codex/data-file-catalog`**——`66cf807`／`f65d42e`／`ac84f1a` 与看板这一笔都还没推，接班第一件事就是它。
+2. 逐枚收在途：`Hume`R421、`Heisenberg`R414（只看 (b)(c)，(a) 若还留着字整格退回；树里 22+ 枚 `tmp_*` 按多余字节退回）、`Turing`R425、`Ohm`R426。R414 并树要**两道门都跑**。
+3. R414 并完 ⇒ 立刻投 **R424**。
+4. 在途清零 ⇒ 补跑全量后端门 `python scripts/run_gate.py`（本机 `-n 7 --dist loadfile`，稳态 218 s，别按首跑 437 s 判回归）。门红先分诊：串行→干净 worktree→归因；不许带已知红并树。
+5. 门绿 ⇒ `docker compose build migrate` → `python scripts/check_image_provenance.py` rc=0 → `docker compose up -d --no-build` → `powercfg /change standby-timeout-ac 0` → 开**一扇多判据真机窗**（A①②③④＋C 两格＋D 三格一次拿完）。🔴 派子 Agent 看窗，总控不干等；窗内硬禁：并树、跑测试、动容器、打模型。runbook P-10/P-12：重建后必须重跑 seed，C 桶 5 条依赖那张报销明细在位。
+6. 记账：跟进单 §118。清理 `%TEMP%\r420_shadow`、`r420_tmp`、`r408_k0_*`、`r421_*`、`r415_knife`、`r415_probe`、`r417_*`（递归删被本机策略拦下，要 `cmd /c rmdir /s /q`）；用毕删 `be-r408`/`be-r410`/`be-r412`/`be-r416`/`be-r419`/`be-r396`/`be-r397`/`be-r420`。
