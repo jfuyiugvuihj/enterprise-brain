@@ -292,7 +292,7 @@ describe('R360甲 · 四枚出口逐枚接通，且后端一个字没动', () =>
     })
 
     it(`${endpoint.outlet}：被拒时后端说的是那几句话，界面上不替它编原因`, () => {
-      const body = outletBody(API, endpoint.decorator) + outletBody(STORE, endpoint.outlet === USER_WRITE_PASSWORD ? 'def change_password(' : endpoint.outlet === USER_WRITE_DEPARTMENT ? 'def update_department(' : endpoint.outlet === USER_WRITE_DELETE ? 'def delete_user(' : 'def create_user(')
+      const body = outletBody(API, endpoint.decorator) + storeFunctionBody(endpoint.outlet === USER_WRITE_PASSWORD ? 'change_password' : endpoint.outlet === USER_WRITE_DEPARTMENT ? 'update_department' : endpoint.outlet === USER_WRITE_DELETE ? 'delete_user' : 'create_user')
       for (const sentence of endpoint.rejectSentences) {
         expect(body, `后端源码里再没有「${sentence}」这一说了，取证表要重新取`).toContain(sentence)
       }
@@ -316,7 +316,7 @@ describe('R360甲 · 四枚出口逐枚接通，且后端一个字没动', () =>
 
   it('重名不是 409：后端把它算在 400 那一档（表里 absentCodes 已经钉住这枚出口发不出 409）', () => {
     expect(API).not.toMatch(/status_code=409/)
-    expect(outletBody(STORE, 'def create_user(')).toContain('psycopg.errors.UniqueViolation')
+    expect(storeFunctionBody('create_user')).toContain('psycopg.errors.UniqueViolation')
     expect(outletBody(API, '@router.post("/users")')).toContain('raise HTTPException(status_code=400, detail=msg)')
   })
 
@@ -328,7 +328,7 @@ describe('R360甲 · 四枚出口逐枚接通，且后端一个字没动', () =>
     expect(API).not.toMatch(/@router\.(put|patch|post)\("\/users\/(disable|activate|status)/)
     const deleteBody = outletBody(API, '@router.delete("/users/{user_id}")')
     expect(deleteBody).not.toContain('principal')
-    expect(outletBody(STORE, 'def delete_user(')).not.toMatch(/role|admin/)
+    expect(storeFunctionBody('delete_user')).not.toMatch(/role|admin/)
   })
 })
 
@@ -361,7 +361,7 @@ describe('R360甲 · 请求体键名等于后端模型字段名', () => {
 
   it('值不做二次加工：后端只对部门 strip（:182），用户名与密码它一个字都不改', () => {
     expect(createBody({ username: ' baiye ' }).username).toBe(' baiye ')
-    expect(outletBody(STORE, 'def create_user(')).not.toMatch(/username\.strip|password\.strip/)
+    expect(storeFunctionBody('create_user')).not.toMatch(/username\.strip|password\.strip/)
     expect(outletBody(API, '@router.put("/users/department")')).toContain('data.department.strip()')
   })
 
@@ -598,7 +598,7 @@ describe('R360丙 · 那本规则账等于后端真规则（辛④的正面钉�
     const body = ruleFunctionBody(code)
     expect(body).not.toMatch(/RegExp|\.test\(|\/\^/)
     expect(body).not.toMatch(/\d/)
-    expect(outletBody(STORE, 'def create_user(')).not.toMatch(/len\(username\)|username\.(isalpha|startswith|strip)/)
+    expect(storeFunctionBody('create_user')).not.toMatch(/len\(username\)|username\.(isalpha|startswith|strip)/)
   })
 
   it('可创建的角色比可读到角色少一枚：auditor 读得到、开不出（对 auth.py:552 与 permissions.py）', () => {
