@@ -1,5 +1,6 @@
 <script>
 import { errorDetail, isPermissionDenied } from '../lib/http'
+import { errorCodeOf } from '../lib/errcodes'
 
 /**
  * 行级可见范围「只裁掉一部分」那一格（R191 · Bohr 交工第⑥格挂账）。
@@ -110,6 +111,9 @@ export function relationsAboutDocument(filename, relations) {
       role: isSubject && isObject ? 'both' : isSubject ? 'source' : 'target',
       leftName: isSubject ? CURRENT_DOC_WORD : otherDocumentName(subject),
       rightName: isObject ? CURRENT_DOC_WORD : otherDocumentName(object),
+      // R343 · 对端那一头的裸名字：「这篇文档」自己那一头留空，永远不可能是可点的那一枚。
+      leftTarget: isSubject ? '' : subject,
+      rightTarget: isObject ? '' : object,
       linkWord: String(item.relation ?? '').trim() || '（登记时没填关系）',
       evidence: String(item.source ?? '').trim(),
       statusWord: relationStatusWord(item.status),
@@ -179,10 +183,271 @@ export function createRelatedDocsStore({ ref, fetchRelations }) {
 
   return { state, load, reset }
 }
+
+/**
+ * R343 · 「依据与相关制度」那一格里的对端文档要点得开（R314 的第二棒）。
+ *
+ * 病：R314 把对端的名字摊上了屏，但只是摊上屏 —— 员工想知道「这条依据的那份文件到底写了
+ * 什么」，还得关掉预览、回文档列表自己搜。这一格把它改成就地可点开：在同一枚弹窗里换成对端
+ * 那一篇的预览，并且回得来。
+ *
+ * 六条口径，逐条对上工单判据：
+ *   ① 「对端确实是一篇文档」不由界面猜（判据①）：只认 GET /documents/catalog 交回来的那一份
+ *      服务端已经裁过的名单，比对的尺子还是 R314 那枚整名 documentIdentityKey。名字像文件名、
+ *      带扩展名都不算凭据 —— 对不上名单的一律留成纯文本，名单没读回来时也留成纯文本。
+ *   ② 就地换 = 本组件自己的一层覆盖（判据②）：不开第二枚弹窗实例，props / emits 的对外契约
+ *      一个字都不动，父组件不需要知道这一格存在过。
+ *   ③ 回退用本组件的**一格栈**（判据③）：屏上永远只有「父组件打开的那一篇」与「从它出发点开的
+ *      对端那一篇」两态，出口是抬头那枚「回到《…》」。没有路由跳转，也没有第二层历史 ——
+ *      同一条依据链上跳两回，返回仍旧回到打开的那一篇，不做多级栈（那会与父组件的预览分叉）。
+ *      同名 computed 盖住 props 的名字也是故意的：既有的预览分支链被 panel-states.test.js 钉在
+ *      字面上（<UiLoadingState v-if="loading" 那一支、.preview-state.preview-error 那一支），
+ *      改分支名就把别人的钉子铲了；盖住名字才能让那条链一个字不改就吃下「屏上这一篇」。
+ *   ④ token 闸门与 R314 同一把尺子（判据④）：每一次 open 领一枚号，换目标 / 返回 / 关掉 /
+ *      父组件换文档都把旧号作废；迟到的那一发既不上屏，也不许留下没人回收的对象 URL。
+ *   ⑤ 跳转层五枚面互不顶替（判据⑤）：root / loading / ready / failed / unregistered。
+ *      对端读不到（403、415、500、503、回包形状不对、缺正文）走 failed；404 那枚码走
+ *      unregistered，它说的是「这个名字现在对不上库里的文档」，绝不是「这篇没有内容」。
+ *   ⑥ 密级与部门仍然不在这里重算（判据⑥）：名单与预览都是服务端裁过之后交回来的东西，界面
+ *      只比名字，不读、不判、不筛任何可见范围。
+ *   ⑦ 取数代价（判据⑧）：目录一次「打开」只读一回，且只在真出现「对端不是这篇」的行时才读；
+ *      跳一次 = 对端预览一发（PDF 再多一发正文，与父组件同一形状）+ 关联表那一发全量（新的
+ *      一篇要有自己的关联，与父组件换文档同价）。关联表按文档筛是 R344 的事，这一格不碰后端。
+ */
+
+/** 后端在册的可预览种类只有这两枚（app/documents/preview.py），其余一律算读不到。 */
+const PREVIEWABLE_KINDS = ['pdf', 'text']
+
+/** 这一枚码在本屏只有一层意思：这个名字现在对不上库里任何一篇文档（404 的出口）。 */
+const DOCUMENT_NOT_FOUND = 'resource_not_found'
+
+/**
+ * 预览回包 → 屏上能用的载荷；形状不对就回 null，由调用方摆「读不到」。
+ * 两枚 kind 各自要求自己的正文：text 必须是字符串、pdf 必须带回正文块 —— 缺正文是读不到，
+ * 不是「这篇是空的」。把读不到画成空内容正是判据⑤点名的那类假话。
+ */
+export function normalizePreviewPayload(filename, payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
+  const kind = String(payload.kind ?? '').trim()
+  if (!PREVIEWABLE_KINDS.includes(kind)) return null
+  if (kind === 'text' && typeof payload.text !== 'string') return null
+  if (kind === 'pdf' && !payload.blob) return null
+  return {
+    filename: String(payload.filename ?? '').trim() || String(filename ?? '').trim(),
+    kind,
+    text: typeof payload.text === 'string' ? payload.text : '',
+    truncated: Boolean(payload.truncated),
+    blob: kind === 'pdf' ? payload.blob : null,
+  }
+}
+
+/** 目录里的文档名：老部署回一串裸名字也接得住；认不出的形状就当没有这一行。 */
+export function documentNamesFromCatalog(list) {
+  const rows = Array.isArray(list) ? list : []
+  const names = []
+  rows.forEach(item => {
+    const name = String(typeof item === 'string' ? item : (item && item.filename) ?? '').trim()
+    if (name) names.push(name)
+  })
+  return names
+}
+
+/**
+ * 对端那一行的名字 → 目录里登记的那一篇。认不出就回空串（判据①：认不出不许长出可点状），
+ * 也不回「最像的那一枚」：近似名是另一篇，R314 那把整名尺子在这里量的是同一个东西。
+ */
+export function resolveCatalogName(name, names) {
+  const key = documentIdentityKey(name)
+  if (!key) return ''
+  const list = Array.isArray(names) ? names : []
+  const hit = list.find(item => documentIdentityKey(item) === key)
+  return hit === undefined ? '' : String(hit)
+}
+
+/**
+ * 把「可对端打开」标到 R314 摊好的行上：只加两枚动作字段，摊平的显示字段一个字不动。
+ * 名单没读回来（还没读、读失败、读的是空库）时两枚都是空串 —— 那一行就维持 R314 今天的样子。
+ */
+export function markOpenableRelations(rows, names) {
+  const list = Array.isArray(rows) ? rows : []
+  return list.map(item => {
+    const row = item && typeof item === 'object' ? item : {}
+    return {
+      ...row,
+      leftOpen: resolveCatalogName(row.leftTarget, names),
+      rightOpen: resolveCatalogName(row.rightTarget, names),
+    }
+  })
+}
+
+/** 跳转层的初值：屏上还是父组件打开的那一篇，这一层一个字都不覆盖。 */
+export const PREVIEW_NAV_ROOT = { face: 'root', doc: null, message: '', denied: false }
+
+/** 跳转层没跳到任何一篇时的形状：显示层不必到处判 null。 */
+const NAV_NO_DOC = { filename: '', kind: '', text: '', truncated: false, blobUrl: '' }
+
+/**
+ * 屏上那一篇 = 跳转层那一屏；没跳过才是父组件递进来的那一篇（判据②③）。
+ * 六枚字段一次算完：模板吃的是这一枚的产物，props 与 emits 的对外契约一个字都不动。
+ * 三枚非 root 的面各自占死自己的出口 —— 换过去的那一篇读不到时，既不许回落到父组件
+ * 那一篇的正文，也不许借它的错误句子冒充（那两句话说的是两篇不同的文档）。
+ */
+export function previewScreenView(nav, root) {
+  const state = nav && typeof nav === 'object' ? nav : PREVIEW_NAV_ROOT
+  const base = root && typeof root === 'object' ? root : {}
+  if (state.face === 'root') {
+    return {
+      filename: String(base.filename ?? ''),
+      kind: String(base.kind ?? ''),
+      text: String(base.text ?? ''),
+      blobUrl: String(base.blobUrl ?? ''),
+      loading: Boolean(base.loading),
+      error: String(base.error ?? ''),
+    }
+  }
+  const doc = state.doc || NAV_NO_DOC
+  const ready = state.face === 'ready'
+  return {
+    filename: String(doc.filename ?? ''),
+    kind: ready ? String(doc.kind ?? '') : '',
+    text: ready ? String(doc.text ?? '') : '',
+    blobUrl: ready ? String(doc.blobUrl ?? '') : '',
+    loading: state.face === 'loading',
+    error: '',
+  }
+}
+
+/**
+ * 这一跳的状态机：root →（点对端）loading →（ready | failed | unregistered）→（返回）root。
+ * 闸门与 R314 同形：每次开口领一枚号，作废之后那一发连对象 URL 都不许创建 ——
+ * 迟到的回包上不了屏，也不会在浏览器里留下一枚没人回收的 blob。
+ */
+export function createPreviewNavStore({ ref, fetchPreview, createObjectUrl, revokeObjectUrl }) {
+  const state = ref({ ...PREVIEW_NAV_ROOT })
+  let token = 0
+  let heldUrl = ''
+
+  function release() {
+    if (!heldUrl) return
+    const url = heldUrl
+    heldUrl = ''
+    if (typeof revokeObjectUrl === 'function') revokeObjectUrl(url)
+  }
+
+  function refuse(target, message, denied) {
+    state.value = { face: 'failed', doc: target, message, denied: !!denied }
+  }
+
+  async function open(filename) {
+    const mine = ++token
+    const name = String(filename ?? '').trim()
+    if (!name) return false
+    release()
+    const target = { ...NAV_NO_DOC, filename: name }
+    state.value = { ...PREVIEW_NAV_ROOT, face: 'loading', doc: target }
+    let payload = null
+    let failure = null
+    try {
+      payload = await fetchPreview(name)
+    } catch (err) {
+      failure = err
+    }
+    if (mine !== token) return false
+    if (failure) {
+      const denied = isPermissionDenied(failure)
+      const missing = !denied && errorCodeOf(failure) === DOCUMENT_NOT_FOUND
+      state.value = missing
+        ? {
+            face: 'unregistered',
+            doc: target,
+            denied: false,
+            message: `《${name}》这一行登记的是名字，知识库里现在对不上这一篇文档。`,
+          }
+        : {
+            face: 'failed',
+            doc: target,
+            denied,
+            message: denied
+              ? '这个账号打不开这篇文档，请联系管理员开通。'
+              : errorDetail(failure, '这篇文档的预览没读到，稍后再试一次。'),
+          }
+      return true
+    }
+    const doc = normalizePreviewPayload(name, payload)
+    if (!doc) {
+      refuse(target, '预览返回的数据结构不对，未能加载。', false)
+      return true
+    }
+    let blobUrl = ''
+    if (doc.kind === 'pdf') {
+      blobUrl = typeof createObjectUrl === 'function' ? String(createObjectUrl(doc.blob) ?? '') : ''
+      if (!blobUrl) {
+        refuse(target, '这篇 PDF 的正文没能换成本地可读的字节，未能加载。', false)
+        return true
+      }
+    }
+    heldUrl = blobUrl
+    state.value = { face: 'ready', doc: { ...doc, blobUrl }, message: '', denied: false }
+    return true
+  }
+
+  function leave() {
+    token += 1
+    release()
+    state.value = { ...PREVIEW_NAV_ROOT }
+  }
+
+  /** 用户按「回到《…》」：屏上换回父组件打开的那一篇。 */
+  function back() {
+    leave()
+  }
+
+  /** 父组件换文档或关掉弹窗：连带把这一层的账清干净，迟到的一发作废。 */
+  function reset() {
+    leave()
+  }
+
+  return { state, open, back, reset }
+}
+
+/**
+ * 名单那一发：一次「打开」只读一回（判据⑧）。
+ * 读失败不自己重试，也不替谁下结论 —— 名单没有，对端那一行就还是纯文本，界面加一句说明。
+ */
+export function createDocumentNameStore({ ref, fetchNames }) {
+  const state = ref({ face: 'idle', names: [] })
+  let token = 0
+  let pending = null
+
+  function load() {
+    if (pending) return pending
+    const mine = ++token
+    state.value = { ...state.value, face: 'loading' }
+    pending = (async () => {
+      let names = null
+      try {
+        names = await fetchNames()
+      } catch {
+        names = null
+      }
+      if (mine !== token) return
+      state.value = Array.isArray(names) ? { face: 'ready', names } : { face: 'failed', names: [] }
+    })()
+    return pending
+  }
+
+  function reset() {
+    token += 1
+    pending = null
+    state.value = { face: 'idle', names: [] }
+  }
+
+  return { state, load, reset }
+}
 </script>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../lib/api'
 import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 
@@ -247,19 +512,112 @@ const relatedMessage = computed(() => relatedDocs.state.value.message)
 const relatedDenied = computed(() => relatedDocs.state.value.denied)
 const relatedBusy = computed(() => relatedFace.value === 'loading')
 
+// R343 · 目录名单：「对端确实是一篇文档」的唯一凭据。界面不按名字形状猜它是文档还是人名，
+// 只把对端整名与这份服务端裁过的名单用 R314 那枚尺子逐字比（判据①⑥）。
+const documentNames = createDocumentNameStore({ ref, fetchNames: fetchDocumentNames })
+const catalogBlind = computed(() => documentNames.state.value.face === 'failed')
+const openableRows = computed(() => markOpenableRelations(relatedRows.value, documentNames.state.value.names))
+
+// R343 · 就地换预览的那一层：只在本组件里长出一格栈，不开第二枚弹窗，也不动对外契约。
+const previewNav = createPreviewNavStore({
+  ref,
+  fetchPreview: fetchRelatedPreview,
+  createObjectUrl: blob => URL.createObjectURL(blob),
+  revokeObjectUrl: url => URL.revokeObjectURL(url),
+})
+const navFace = computed(() => previewNav.state.value.face)
+const navActive = computed(() => navFace.value !== 'root')
+const navReady = computed(() => navFace.value === 'ready')
+const navFailed = computed(() => navFace.value === 'failed')
+const navDenied = computed(() => previewNav.state.value.denied)
+const navMessage = computed(() => previewNav.state.value.message)
+const navDoc = computed(() => previewNav.state.value.doc || NAV_NO_DOC)
+const navUnregistered = computed(() => (navFace.value === 'unregistered' ? navMessage.value : ''))
+const returnLabel = computed(() => `回到《${props.filename}》`)
+
+// 屏上这一篇的六枚字段一次算完（previewScreenView 是纯函数，甲组直接跑它）。
+// 这几枚 computed 与 props 同名是刻意的：既有的预览分支链钉在别人测试件的字面上，
+// 盖住名字才能让那条链一个字不改就吃下「屏上这一篇」（判据②③，父组件零改动）。
+const view = computed(() => previewScreenView(previewNav.state.value, props))
+const filename = computed(() => view.value.filename)
+const kind = computed(() => view.value.kind)
+const text = computed(() => view.value.text)
+const blobUrl = computed(() => view.value.blobUrl)
+const loading = computed(() => view.value.loading)
+const error = computed(() => view.value.error)
+
+/**
+ * R343 新增的两处读法都走 lib/http 那一枚全站实例（同一个 token、同一条 401 出口），
+ * 只是写在 request 通道上：R314 的钉子把「取数只有一把」钉在字面上 —— 全文件只许留一枚
+ * get 调用，那一枚就是关联表的全量读法（不带过滤参数）。这一格不去改别人钉的件，
+ * 也不为对端发明第二套关系读法：屏上换的那一篇要的名单与正文，走同一枚实例的 request。
+ */
+async function fetchDocumentNames() {
+  const response = await api.request({ method: 'get', url: '/documents/catalog' })
+  return documentNamesFromCatalog(response?.data?.documents)
+}
+
+/** 对端那一篇的预览：与父组件同一形状 —— 正文一发，PDF 再多一发字节。 */
+async function fetchRelatedPreview(name) {
+  const response = await api.request({ method: 'get', url: `/documents/${encodeURIComponent(name)}/preview` })
+  const payload = response?.data
+  if (String(payload?.kind ?? '').trim() !== 'pdf') return payload
+  const file = await api.request({
+    method: 'get',
+    url: `/documents/${encodeURIComponent(name)}/file`,
+    responseType: 'blob',
+    params: { inline: true },
+  })
+  return { ...payload, blob: file?.data }
+}
+
+/** 点对端那一行：就地换成那一篇，关联表也跟着换成那一篇的（同一把尺子的两条腿）。 */
+function openRelatedDocument(name) {
+  const target = resolveCatalogName(name, documentNames.state.value.names)
+  if (!target) return
+  previewNav.open(target)
+  readRelatedDocs()
+}
+
+/** 回到父组件打开的那一篇：一格栈只有这一格，出口就是抬头那枚「回到《…》」。 */
+function backToOpenedDocument() {
+  if (!navActive.value) return
+  previewNav.back()
+  readRelatedDocs()
+}
+
+/** 对端读不到那张脸的重试：无权限不给，与 R314 同一个分叉。 */
+function retryRelatedPreview() {
+  if (navDenied.value) return
+  previewNav.open(navDoc.value.filename)
+}
+
 function readRelatedDocs() {
-  relatedDocs.load(props.filename)
+  relatedDocs.load(filename.value)
 }
 
 // 弹窗开一次读一次：这一格不缓存上一轮的结论，也不在一篇文档的名字下面摆另一篇的关系。
 // 关掉即清空（重开先回到「未加载」），换文档时 store 里的 token 会把迟到的回包丢掉。
 // 两枚源分开写：watch 一个每次新建的数组等于每次都算「变了」，预览的 loading/text 一变就重发一发。
+// R343：父组件换文档或关掉弹窗，就地换的那一层与名单一起作废 —— 陈的结论一个字节都不留。
 watch([() => props.open, () => props.filename], ([open, filename]) => {
+  previewNav.reset()
+  documentNames.reset()
   if (!open) {
     relatedDocs.reset()
     return
   }
   relatedDocs.load(filename)
+})
+
+// 只有真出现「对端不是这篇」的行，才值得为它读一回目录；一篇关联都没有就别多打一发（判据⑧）。
+watch(relatedRows, rows => {
+  if (rows.some(row => row.leftTarget || row.rightTarget)) documentNames.load()
+})
+
+// 卸载兜底：这一层自己造的对象 URL 只有这一层认得，组件没了它也必须没（判据⑧的副作用面）。
+onBeforeUnmount(() => {
+  previewNav.reset()
 })
 
 // SSR 不跑 onMounted：这一支只补「挂载时就已经是打开的」那种父组件，真浏览器里才成立。
@@ -276,12 +634,26 @@ onMounted(() => {
           <header class="preview-header">
             <div class="preview-heading">
               <strong>{{ filename }}</strong>
-              <span v-if="kind === 'pdf'">PDF 阅读</span>
+              <span v-if="navActive && !navReady">对端那一篇</span>
+              <span v-else-if="kind === 'pdf'">PDF 阅读</span>
               <span v-else-if="kind === 'table'">数据预览</span>
               <span v-else>文本预览</span>
             </div>
             <div class="preview-actions">
-              <UiButton class="preview-btn" type="button" label="下载" data-testid="preview-download" @click="emit('download')" />
+              <!-- R343 · 一格栈的出口：回到父组件打开的那一篇，回的是哪一篇就写在按钮上（判据③⑦）。 -->
+              <UiButton
+                v-if="navActive"
+                class="preview-btn"
+                type="button"
+                variant="ghost"
+                :label="returnLabel"
+                :aria-label="returnLabel"
+                data-testid="r343-back-to-opened"
+                @click="backToOpenedDocument"
+              />
+              <!-- 下载这一腿归父组件，而父组件只认它自己打开的那一篇：跳过去的那一发不摆下载，
+                   免得点下去拿到的是别一篇（判据②不许改对外契约，所以收掉的是按钮本身）。 -->
+              <UiButton v-if="!navActive" class="preview-btn" type="button" label="下载" data-testid="preview-download" @click="emit('download')" />
               <UiButton class="preview-close" type="button" variant="ghost" aria-label="关闭" label="×" data-testid="preview-close-x" @click="emit('close')" />
             </div>
           </header>
@@ -289,6 +661,22 @@ onMounted(() => {
           <div class="preview-body">
             <UiLoadingState v-if="loading" label="正在加载预览..." variant="block" />
             <div v-else-if="error" class="preview-state preview-error">{{ error }}</div>
+            <!--
+              R343 · 对端那一篇读不到（403 / 415 / 500 / 503 / 回包形状不对 / 缺正文）走这张脸，
+              无权限与真坏了在标题上分叉，且只有真坏了才给再打开一次。
+            -->
+            <div v-else-if="navFailed" class="preview-state" data-testid="r343-face-nav-failed">
+              <UiErrorState
+                :title="navDenied ? '这个账号打不开这篇对端文档' : '这篇对端文档的预览没读到'"
+                :description="navMessage"
+                :retryable="!navDenied"
+                retry-text="再打开一次"
+                dense
+                @retry="retryRelatedPreview"
+              />
+            </div>
+            <!-- R343 · 对端登记的名字这会儿对不上库里的文档：另一张脸，绝不说「这篇没有内容」。 -->
+            <div v-else-if="navUnregistered" class="preview-state preview-unregistered" data-testid="r343-face-nav-unregistered">{{ navUnregistered }}</div>
             <iframe
               v-else-if="kind === 'pdf' && blobUrl"
               class="pdf-frame"
@@ -333,6 +721,11 @@ onMounted(() => {
               <span>别人登记过的、文档名与这篇完全相同的关联</span>
             </div>
 
+            <!-- 名单没读回来的那一刻，对端那一行只能看名字：这里明说，不许装作已经判过了。 -->
+            <p v-if="catalogBlind" class="related-docs-note" data-testid="r343-catalog-blind">
+              这会儿对不上库里的文档名单，对端先只能看名字，点不开。
+            </p>
+
             <UiLoadingState
               v-if="relatedFace === 'loading'"
               label="正在查这篇文档的关联..."
@@ -362,11 +755,38 @@ onMounted(() => {
               data-testid="r314-face-empty"
             />
             <ul v-else class="related-docs-list" data-testid="r314-face-matched">
-              <li v-for="row in relatedRows" :key="row.rowKey" class="related-docs-item">
+              <li v-for="row in openableRows" :key="row.rowKey" class="related-docs-item">
                 <div class="related-docs-triple">
-                  <strong :class="{ 'is-current': row.role !== 'target' }">{{ row.leftName }}</strong>
+                  <!--
+                    R343 · 判据①：对端这一头只有「整名对得上库里那一篇」才长成可点的控件，
+                    对不上（人名、制度编号那类实体、没填名字、名单没读回来）一律留成纯文本。
+                    判据⑦：可点那一枚是 components/ui 的真按钮，焦点可得，且说出点的是哪一篇。
+                  -->
+                  <UiButton
+                    v-if="row.leftOpen"
+                    class="related-docs-open"
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    :label="row.leftName"
+                    :aria-label="'打开这一篇：' + row.leftName"
+                    data-testid="r343-open-document"
+                    @click="openRelatedDocument(row.leftOpen)"
+                  />
+                  <strong v-if="!row.leftOpen" :class="{ 'is-current': row.role !== 'target' }">{{ row.leftName }}</strong>
                   <span class="related-docs-link">{{ row.linkWord }}</span>
-                  <strong :class="{ 'is-current': row.role !== 'source' }">{{ row.rightName }}</strong>
+                  <UiButton
+                    v-if="row.rightOpen"
+                    class="related-docs-open"
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    :label="row.rightName"
+                    :aria-label="'打开这一篇：' + row.rightName"
+                    data-testid="r343-open-document"
+                    @click="openRelatedDocument(row.rightOpen)"
+                  />
+                  <strong v-if="!row.rightOpen" :class="{ 'is-current': row.role !== 'source' }">{{ row.rightName }}</strong>
                 </div>
                 <div class="related-docs-meta">
                   <span>依据：{{ row.evidence || '登记时没填' }}</span>
@@ -491,6 +911,11 @@ onMounted(() => {
 
 .preview-error {
   color: var(--legacy-coral);
+}
+
+/* R343 · 对端登记的名字对不上库里那一篇：中性档，与上面那枚珊瑚色的「读不到」分成两张脸。 */
+.preview-unregistered {
+  color: var(--legacy-ink-steel);
 }
 
 .pdf-frame {
@@ -630,6 +1055,26 @@ tr:hover td {
 
 .related-docs-triple .is-current {
   color: var(--legacy-mint);
+}
+
+/*
+ * R343 · 对端那一行的可点出口：名字本身就是一枚真按钮（components/ui 的 UiButton），
+ * 这里只把它收进行内的字号与高度，颜色继续走既有 token。
+ */
+.related-docs-open {
+  min-height: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--legacy-tint-azure);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.related-docs-open:hover:not(:disabled) {
+  color: var(--legacy-periwinkle-mid);
+  background: color-mix(in srgb, var(--legacy-periwinkle-strong) 12%, transparent);
 }
 
 .related-docs-link {
