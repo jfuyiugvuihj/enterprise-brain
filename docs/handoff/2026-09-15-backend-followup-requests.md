@@ -3852,3 +3852,25 @@ R359 那道闸的连带伤。`sources.py:149-155` 的 `alert_candidates` 只把 
 
 ### 112.3 一格需要业主裁定才能修（本班不派、不动）
 `app/storage/pending_approvals.py`（standing do-not-touch）里那三态今天在全仓任何出口都仍然是**裸 500 或假干净**：`:104` 驱动缺失的裸 `RuntimeError`、`:372` pre-0012 库的 `UndefinedColumn`、`:336` 无 PG 时静默回落 `_MEM_ROWS`（⇒ 审批腿答"没有待办"这句假话，与 R367 为看板记的是同一条不对称）。R373 与 R376 两班各自独立复核过：**唯一不引入第二本账的修法是让账本自己把这三态具名化**，而那要动这张禁改文件。请业主裁：开禁一次（只开这三处），还是接受"生产无 PG 时审批腿说'没有待办'"这句话留在屏上。
+## §113（09-27 第八格·总控线）：R380 交回的三格入册 · 名册欠账补记 · 在途六枚判据指针
+
+### 一、R380（并树 `5ba73bd`）交回、按「另立单/待业主定口径」入账的三格
+① **英文残留五格已钉进封闭名单 `ENGLISH_SLOTS`**：C2/C5/C7/E6（信封带未登记码或压根无 `code` + 英文 message）、D4（422 且 `loc:[]`）、F5（本地 `new Error("Request aborted")` 走 `resolveTransport:610`）。收它们必须动 `fromEnvelope`/`fromValidation`/`resolveTransport`，等于**造第二处防线**或放宽 R281 判据③；判据⑤不许、K4 那把刀实测会红（12 红）⇒ 本班**不开单**，记为待业主定口径。
+② **二阶后果（真问题）**：被这道闸拦下的英文现在改从 R291 的折叠详情区出口——`frontend/src/components/ui/error-detail.js:rawDetailOf` 对 500 会把 `Internal Server Error` 画给**运维**看（401/403 那族按 R291 口径③仍沉默）。施工方写明「要详情区也沉默只有一行（不给 `rejectedProse` 写 `rawMessage`），但那与『后端原文一个字符都不丢』相抵」。⇒ 本班裁定**保持现状**（原文进可展开的详情区、不进人话位，正是 R281 判据①那条通道的用途），标「口径已定·可推翻」；业主若要求「运维也不许看见框架英文」再改那一行。
+③ **D2（422 中文模板句尾贴 pydantic 英文原因）刻意保留**——那是唯一的具体线索，不算残留。
+
+### 二、R380 派工词两处被现场纠正（并入本笔账，教训同族）
+- `{detail:"Internal Server Error"}`·500 真走的是 **`errcodes.js:471`**，`:476` 只服务 STATUS_CODES 未在册档（507 / status 0 / 405 / 418）——**两档都是病灶，派工词只点了一处**，认账。
+- 🔴 `lint:colors` 的预算是 `frontend/package.json` 里的 **`--max-warnings=148`**，**不是 334**（旧文档那句作废，看板 §4DC 与本节同步改口）。
+
+### 三、名册欠账补记
+`Boyle`/R383、`Descartes`/R384、`Bohr`/R385 三枚投递后只写进了接手摘要、**没回写 §0 名册**（同族错第三次：R227 那行是第八班漏的、R294 那行是上班漏的）。已在看板 **§4DC 第二节**补三行，并把 R377/R378/R380 三行改「已结案」。在途六枚：Euler R379 / Leibniz R381 / Planck R382 / Boyle R383 / Descartes R384 / Bohr R385——已到上限 6，本格不投第 7 枚。
+
+### 四、事故 #55（补记，正文此前只在 `96179ff` 提交里）
+`Lagrange` 复跑 R377 时 splat 写错 ⇒ 一次**不带文件参数**的 pytest 扇出全树，争用下假红一片、白烧 token。回写两条纪律：点名件逐枚单跑且**必须带路径参数**；全量门只走 `python scripts/run_gate.py`。事故号按看板实取续到 **#55**（接手摘要里那句「#15」是撞号，#15 早属 Peirce R56 重复体）。
+
+### 五、下一格可直接派（等空位，各自等谁写死在这里）
+- `app/notifications/inbox.py:100` 生命周期腿：生产+无库时仍读内存空账、读侧没有「这一格不供数」字段 ⇒ 收件箱画成「全部未读」（R376 只报不改 ①，R373 并树后仍未治，落点 `inbox.py` 今天空闲）。
+- **R372** 全局手抄账尺：🔴 必须排在 R381 之后（R381 会动 `app/api/v1/notifications.py` 的行号），且它会扫 `tests/test_r218_lane_flip_stop_sets.py` ⇒ 也必须排在 **R379** 之后。
+- `tests/test_r300_tables.py:21` 那句 (a)-(g) 历史账重录（出自 39 枚时代、今天 43 枚）。
+- **R376 欠的第四把刀**（`if _database_available() and False:`）：它的等价论证本班已接受，但按「未做」入账，不销。
