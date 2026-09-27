@@ -3162,3 +3162,42 @@ rows. Concretely:
   `assert private.relation_id not in ids` naming the withheld record rather than a length; `source_entity`
   normalised as well -> 4 red (`test_the_subject_leg_still_demands_the_whole_registered_name_verbatim`), which
   is the pin that keeps the old parameter's meaning frozen.
+
+## The upload receipt says one reason once, not once per page (2026-09-27, R347)
+
+`pdf_extraction.degradation_note` keeps its key and its two tiers, and stops repeating itself.
+The per-page book in `app/rag/loader.py` is untouched and is still the source of truth
+(`degradation_notes` -- one entry per degraded page -- and `degradation_sentence`, which joins
+all of them with the full-width semicolon). That join is what made the receipt unreadable: a
+400-page scan that failed for one reason got that same sentence recited 400 times, and R338
+measured the shape (`4853 chars truncated`). The merge therefore happens **only in the receipt
+layer**, in `app/api/v1/chat.py::_pdf_extraction_cell`, reading `report.pages` -- 同因合并只发生在
+回执层，逐页真源账没变.
+
+| today's shape | |
+| --- | --- |
+| group | degraded pages sharing a byte-for-byte identical `page.note` form one group; different reasons stay different sentences (no normalization, no fuzzy match: `栅格化失败 RuntimeError` and `识别失败 RuntimeError` are two sentences) |
+| order | groups in order of first appearance, page numbers ascending -- the same order `report.pages` has |
+| sentence | `第1、2、3页：{reason}`, joined with `；`, preceded by the tier head and `：` |
+| page cap | `chat.PDF_DEGRADATION_PAGE_LIST_CAP = 10` page numbers per group |
+| over the cap | `第1、2、…、10页，另有 290 页未列出：{reason}` -- `N` is the true remainder for that group (`len(pages) - len(shown)`), never the length of the truncated list |
+| no repetition | when every group holds one page, the receipt ships `report.degradation_sentence` verbatim: the merge only compresses repetition, it does not re-render the ruler (R301's "if the ruler changes its wording, the receipt changes with it" still holds) |
+| no degradation | empty string `""` -- not `null`, not a polite invention. `page_count: 0` and "pages exist, nothing degraded" remain two different readings |
+
+Three things did not move, each pinned by `tests/test_r347_degradation_note_merges_by_reason.py`:
+
+1. **The two tiers are still two sentences.** The head comes from `ocr_available`: `false` opens
+   with `ocr.ENGINE_UNAVAILABLE_NOTE` ("本地 OCR 引擎不可用，扫描页未识别文字"), `true` opens with
+   `loader.DEGRADATION_NOTE_PREFIX` ("扫描页 OCR 降级"). R347 merged pages, not tiers -- R338's
+   knife 1 measured what happens when they are squeezed into one sentence (9 pins red).
+2. **The reason is copied, never rewritten.** No translation, no polish, no "很抱歉", no stripped
+   punctuation: the segment after `页：` equals `page.note` character for character, colons inside
+   the reason included.
+3. **Nothing is lost and no key moved.** `ocr_degraded_page_numbers` is still the full list of
+   degraded pages (the merge truncates the *sentence*, not the *account*), `source_counts` is
+   `report.source_counts` word for word -- `blank` and `ocr-empty` are not merged -- and the key
+   set of `_pdf_extraction_cell` is byte-identical to the one at base `c5c3c41`. Only the text
+   inside `degradation_note` got shorter.
+
+Physical lines: `app/api/v1/chat.py` 4690 -> 4761 (+75 / -4). `app/rag/loader.py` untouched.
+This section is appended and deletes nothing.

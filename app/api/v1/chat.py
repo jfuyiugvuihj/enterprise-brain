@@ -32,7 +32,15 @@ from app.common import reliable_queue
 from app.common.audit import record_audit
 from app.storage import pending_approvals
 from app.common.authorization import principal_from_request
-from app.rag.loader import PAGE_SOURCE_OCR_DEGRADED, DocumentExtraction, extract_document_with_reports, load_document
+from app.rag import ocr as ocr_channel
+from app.rag.loader import (
+    DEGRADATION_NOTE_PREFIX,
+    PAGE_SOURCE_OCR_DEGRADED,
+    DocumentExtraction,
+    PdfExtractionReport,
+    extract_document_with_reports,
+    load_document,
+)
 from app.documents.preview import build_document_preview
 from app.rag.retriever import DocumentRetriever
 from app.rag.filters import (
@@ -3838,12 +3846,75 @@ def _unpublished_index_outcome(filename: str, version: int, reason: str) -> dict
     }
 
 
+#: 回执层里，同一枚降级原因最多枚举几枚页码（R347 判据①）。
+#:
+#: 为什么是 10：这一格是一句给人扫读的散文，不是能点开的页码列表。前端
+#: ``DocPanel.vue`` 那枚 ``PDF_PAGE_LIST_CAP = 12`` 钉的是 chips 的排布宽度，且那一格
+#: 下面还有整页账可以展开；回执这一格没有展开态，越长越读不下去，所以刻意比它紧一档。
+#: 10 枚三位数页码（含顿号）约 38 字符，加句头与一枚 reason 后整句稳在 100 字符以内。
+PDF_DEGRADATION_PAGE_LIST_CAP = 10
+
+
+def _degradation_reason_groups(report: PdfExtractionReport) -> list[tuple[str, list[int]]]:
+    """把降级页按 **reason 原文逐字相同** 归堆（R347 判据①④）。
+
+    键就是 ``page.note`` 本身：不归一化、不截断、不比相似词 —— 合并按字面相等，所以
+    「这一页没跑成」与「另一页因为别的原因没跑成」永远各说各的句。堆序 = 各 reason 首次
+    出现的页序，堆内页码升序（与 ``report.pages`` 同序），客户读到的还是「从前往后」。
+    """
+    pages_by_reason: dict[str, list[int]] = {}
+    for page in report.pages:
+        if page.source != PAGE_SOURCE_OCR_DEGRADED:
+            continue
+        pages_by_reason.setdefault(page.note, []).append(page.page_number)
+    return list(pages_by_reason.items())
+
+
+def _degradation_segment(reason: str, page_numbers: list[int]) -> str:
+    """一堆页码产出一句；超限收口，「另有 N 页未列出」的 N 是真剩余数（判据①）。
+
+    ``len(page_numbers)`` 是这一堆的真枚数，``shown`` 只是画下来的那几枚：N 一律由
+    真枚数减去画下来的枚数，绝不拿 ``shown`` 的长度冒充总数。
+    """
+    shown = page_numbers[:PDF_DEGRADATION_PAGE_LIST_CAP]
+    omitted = len(page_numbers) - len(shown)
+    label = "、".join(str(number) for number in shown)
+    tail = f"，另有 {omitted} 页未列出" if omitted else ""
+    return f"第{label}页{tail}：{reason}"
+
+
+def _receipt_degradation_note(report: PdfExtractionReport) -> str:
+    """上传回执的降级说明：同一枚 reason 只说一遍，页码枚举有上限（R347）。
+
+    三条边界：
+
+    ① 合并发生在这一层，不在 loader：``degradation_notes`` / ``degradation_sentence``
+       是逐页真源账（R298 / R301 钉着），这里只读不改，也不许它替本格说话。
+    ② 没有同因复述 ⇒ 尺子那句原样搬（``report.degradation_sentence``），本格一个字不加工，
+       R301 那条「尺改口，回执跟着改口」的等式继续成立。
+    ③ 合的是页，不是档：``ocr_available`` 为假走 ``ocr.ENGINE_UNAVAILABLE_NOTE``，为真走
+       ``loader.DEGRADATION_NOTE_PREFIX``，两档句头各自留着（R298 那一族）。
+    ④ reason 原文只抄不改：句子里那一段就是 ``page.note``，不翻译、不润色、不剥标点。
+    """
+    groups = _degradation_reason_groups(report)
+    if not groups:
+        return ""
+    if all(len(numbers) == 1 for _reason, numbers in groups):
+        return report.degradation_sentence
+    head = DEGRADATION_NOTE_PREFIX if report.ocr_available else ocr_channel.ENGINE_UNAVAILABLE_NOTE
+    return f"{head}：" + "；".join(
+        _degradation_segment(reason, numbers) for reason, numbers in groups
+    )
+
+
 def _pdf_extraction_cell(extraction: DocumentExtraction | None) -> dict | None:
     """这一次上传的 PDF 提取读数（R301 判据①②③⑤）。
 
     三个「只」：只搬 :class:`PdfExtractionReport` 已经有的读数，逐页来源用现成的
-    ``source_counts``，不新造第二套词表；降级说明只抄 ``degradation_sentence`` 那一把尺
-    （R298 已经把「引擎不可用」与「引擎在、只是这一页没跑成」分成两档，这里一个字不改口）；
+    ``source_counts``，不新造第二套词表；降级说明用的料只出自 ``degradation_sentence``
+    那一把尺（R298 已经把「引擎不可用」与「引擎在、只是这一页没跑成」分成两档，句头照
+    ``ocr_available`` 各走各的，reason 原文一个字不改口）；R347 在这一层只把「同一枚
+    reason 被逐页复述」折成一句，页码枚举有上限，见 :func:`_receipt_degradation_note`；
     只报读数 —— 「这一页 OCR 没跑成」与「这一页没有内容」是两件事，本格只说前者，后者由
     ``source_counts`` 里的 ``blank`` 与 ``ocr-empty`` 各自说话，不合并、不引申。
 
@@ -3870,7 +3941,7 @@ def _pdf_extraction_cell(extraction: DocumentExtraction | None) -> dict | None:
         "ocr_degraded_page_numbers": [
             page.page_number for page in report.pages if page.source == PAGE_SOURCE_OCR_DEGRADED
         ],
-        "degradation_note": report.degradation_sentence,
+        "degradation_note": _receipt_degradation_note(report),
     }
 
 
