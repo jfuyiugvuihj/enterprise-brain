@@ -28,10 +28,13 @@ def main() -> int:
     url = os.getenv("DATABASE_URL", "")
     report["database_url_masked"] = mask(url)
 
-    import psycopg
     from psycopg.rows import dict_row
 
-    with psycopg.connect(url, row_factory=dict_row) as conn:
+    from app.db.connection import open_connection, parse_database_settings
+
+    settings = parse_database_settings(url)
+    with open_connection(settings) as conn:
+        conn.row_factory = dict_row  # psycopg3: cursors inherit the connection factory
         ident = conn.execute(
             "SELECT current_database() AS db, current_user AS usr, "
             "inet_server_addr()::text AS server, "
@@ -82,7 +85,7 @@ def main() -> int:
     report["chroma_key_sample"] = [
         f"{m.get('filename')}#{m.get('chunk_index')}" for m in metas[:5]
     ]
-    with psycopg.connect(url) as conn:
+    with open_connection(settings) as conn:
         pg_keys = {
             f"{a}#{b}" for a, b in conn.execute(
                 "SELECT filename, chunk_index FROM chunk_vectors"
@@ -96,7 +99,7 @@ def main() -> int:
     report["keys_shared"] = len(pg_keys & chroma_keys)
     report["keys_pg_only"] = len(pg_keys - chroma_keys)
     report["keys_chroma_only"] = len(chroma_keys - pg_keys)
-    with psycopg.connect(url) as conn:
+    with open_connection(settings) as conn:
         pg_ids = {r[0] for r in conn.execute("SELECT vector_id FROM chunk_vectors").fetchall()}
     report["ids_shared"] = len(pg_ids & set(chroma_ids))
 

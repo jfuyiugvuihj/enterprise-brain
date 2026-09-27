@@ -65,12 +65,12 @@ def main() -> int:
     url = os.getenv("DATABASE_URL", "")
     out_path = os.getenv("R382_JSON_OUT", "/work/out/r382_compare.json")
 
-    import psycopg
-
+    from app.db.connection import open_connection, parse_database_settings
     from app.rag import indexing, pg_store
     from app.rag.retriever import DocumentRetriever, EmbeddingError, OllamaEmbeddings
 
-    with psycopg.connect(url) as conn:
+    settings = parse_database_settings(url)
+    with open_connection(settings) as conn:
         db = conn.execute("SELECT current_database()").fetchone()[0]
         total = conn.execute("SELECT count(*) FROM chunk_vectors").fetchone()[0]
     if db != SANDBOX_DB:
@@ -114,7 +114,7 @@ def main() -> int:
                 latency[arm].append(elapsed)
             best[arm] = result
 
-        with psycopg.connect(url) as conn:
+        with open_connection(settings) as conn:
             with conn.transaction():
                 conn.execute("SET LOCAL enable_indexscan = off")
                 conn.execute("SET LOCAL enable_indexonlyscan = off")

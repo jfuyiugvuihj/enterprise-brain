@@ -59,13 +59,13 @@ def exact_topk(matrix, ids, vector, k):
 
 
 def main() -> int:
-    import psycopg
-
+    from app.db.connection import open_connection, parse_database_settings
     from app.rag import pg_store
     from app.rag.retriever import DocumentRetriever, OllamaEmbeddings
 
     url = os.getenv("DATABASE_URL", "")
-    with psycopg.connect(url) as conn:
+    settings = parse_database_settings(url)
+    with open_connection(settings) as conn:
         db = conn.execute("SELECT current_database()").fetchone()[0]
     if db != SANDBOX_DB:
         raise SystemExit(f"ABORT: attached to {db!r}")
@@ -77,7 +77,7 @@ def main() -> int:
     legacy_ids = [str(item) for item in (legacy.get("ids") or [])]
     legacy_matrix = np.asarray(legacy.get("embeddings"), dtype=np.float32)
 
-    with psycopg.connect(url) as conn:
+    with open_connection(settings) as conn:
         mirrored_ids = []
         mirrored_rows = []
         for vector_id, text in conn.execute(

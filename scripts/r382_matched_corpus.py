@@ -22,7 +22,6 @@ import json
 import os
 
 import numpy as np
-import psycopg
 
 SANDBOX_DB = "eb_r59_sandbox"
 TOP_K = 5
@@ -62,7 +61,9 @@ def make_principal(department: str, clearance: int):
 
 
 def pg_label_map(url: str) -> dict:
-    with psycopg.connect(url) as conn:
+    from app.db.connection import open_connection, parse_database_settings
+
+    with open_connection(parse_database_settings(url)) as conn:
         return {str(vector_id): (department, int(classification)) for vector_id, department,
                 classification in conn.execute(
                     "SELECT vector_id, department, classification FROM chunk_vectors")}
@@ -223,8 +224,10 @@ def scoped_store(collection, principals, vectors, top_k) -> dict:
 
 
 def main() -> int:
+    from app.db.connection import open_connection, parse_database_settings
+
     url = os.getenv("DATABASE_URL", "")
-    with psycopg.connect(url) as conn:
+    with open_connection(parse_database_settings(url)) as conn:
         db = conn.execute("SELECT current_database()").fetchone()[0]
     if db != SANDBOX_DB:
         raise SystemExit(f"ABORT: attached to {db!r}")

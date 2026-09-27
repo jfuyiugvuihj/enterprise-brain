@@ -18,6 +18,13 @@ import os
 import re
 import sys
 import urllib.parse
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.db.connection import open_connection, parse_database_settings  # noqa: E402
 
 SANDBOX_DB = "eb_r59_sandbox"
 
@@ -36,12 +43,12 @@ def swap_db(url: str, database: str) -> str:
 
 
 def read_pg(url: str, label: str) -> dict:
-    import psycopg
-
     out: dict = {"engine": label, "database_url_masked": mask(url)}
-    # Read-only is imposed at connect time so no statement can ever run writable,
-    # and transaction_read_only below is the on-paper proof that it took.
-    with psycopg.connect(url, options="-c default_transaction_read_only=on") as conn:
+    # Read-only comes from the boundary before the first statement runs, so no
+    # statement can ever be writable; transaction_read_only below is the on-paper
+    # proof it took (psycopg3 opens every transaction as BEGIN READ ONLY).
+    with open_connection(parse_database_settings(url)) as conn:
+        conn.read_only = True
         ident = conn.execute(
             "SELECT current_database() AS db, current_user AS usr, "
             "current_setting('transaction_read_only') AS read_only, "

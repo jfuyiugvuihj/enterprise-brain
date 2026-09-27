@@ -68,9 +68,9 @@ def make_principal(department: str, clearance: int):
 
 
 def database_identity(url: str) -> dict:
-    import psycopg
+    from app.db.connection import open_connection, parse_database_settings
 
-    with psycopg.connect(url) as conn:
+    with open_connection(parse_database_settings(url)) as conn:
         row = conn.execute("SELECT current_database() AS db, current_user AS usr").fetchone()
         count = conn.execute("SELECT count(*) FROM chunk_vectors").fetchone()[0]
     return {"db": row[0], "usr": row[1], "vectors": count}
