@@ -22,10 +22,23 @@
  *
  * 判据⑧：搜索那一格仍【没有】接——全站没有一枚诚实的全局检索端点，接了就是回到假控件。
  * 这里只接通知这一枚。
+ *
+ * R385 接上的是欠着的那半张脸：后端从 R366（a9762df）起在响应里带一台缺席台账（`sources`，
+ * 每格 {included, reason_code, candidates, scanned, truncated}），本组件此前一个字都没读它。
+ * 于是 PG 迁移没跑齐时，员工在这儿看到的只是「少了几条通知」——屏上没有一句话告诉他
+ * 「审批那一格今天没答」。两脸在这儿分开画，与后端那一刀同判据：
+ *   账本在答而 candidates=0 -> 还是原来那张「现在没有要看的通知」，本件一个字都不许多；
+ *   账本 included=false      -> 多一行「某某账本这次没答上来：…」，中性色 + role=status，
+ *                              不红、不弹、不打断读屏（判据②：不许把员工吓走）。
+ * 句子出自本文件下面那张 LEDGER_COPY（判据③：一张表、一处写法，面板与读屏念的是同一串字）；
+ * 为什么这张表长在这儿而不是 lib/notifications.js —— 取证见下面 LEDGER_COPY 那一段：那一枚文件
+ * 的导出面与每一枚既有函数体被 R375 的 scope 钉逐字冻在 796540e，台账在那一层无路可走。
+ * 未读数、分页、徽标一条都不经台账（判据④）：缺席格既不算成 0 条未读，它的 candidates 也不进合计。
  */
-import { errorDetail } from '../lib/http'
+import { errorDetail, http } from '../lib/http'
 import {
   ALL_FILTER,
+  INBOX_PATH,
   INBOX_PAGE_LIMIT,
   bellLabel,
   badgeText,
@@ -34,9 +47,9 @@ import {
   isShapeFailure,
   markAllUnread,
   markRead,
+  normalizeInbox,
   panelSummary,
   readFailureViewOf,
-  readInbox,
   shapeFailureViewOf,
   writeFailureView,
 } from '../lib/notifications'
@@ -49,6 +62,186 @@ export const PANEL_TITLE = '通知'
 export const EMPTY_TITLE = '现在没有要看的通知'
 export const EMPTY_DESCRIPTION = '这一格是那三本既有账的投影：挂起待办、异常告警、已入库文档。'
   + '这里为空只说明现在没有可读回来的条目，不等于公司一切正常，也不等于这一格坏了。'
+
+/* ==========================================================================
+ * R385 · 缺席台账：GET /notifications 那台 sources 的唯一读取处与唯一文案处
+ * ======================================================================== *
+ * 后端从 R366（a9762df）起在响应里带一台台账：`sources` 是按 source_type 索引的对象，
+ * 每一格五枚 {included, reason_code, candidates, scanned, truncated}（键名逐枚见
+ * docs/api/contract-v1.md R299 一节末尾「The five keys of one sources.<source>
+ * projection」；生产者 = app/notifications/inbox.py::build_inbox 那一行 as_projection）。
+ * 它把两件事分得很清，本件照抄这一刀，一格都不许并：
+ *   included=true  / reason=ok / candidates=0 -> 这本账在答，确实没有那类事项（今天那张脸）；
+ *   included=false / reason=<那本账自己的码>  -> 这一格今天不供数，屏上的条数里没有它。
+ * 在这一单之前，前端一个字节都没读它：PG 迁移没跑齐、或某一腿被 403 拒答时，员工在小铃铛里
+ * 看到的只是「少了几条通知」，屏上没有一句话告诉他审批那一格没答——他会以为没人找他审批。
+ *
+ * 判据③「句子出处只有一处」：屏上的话全部出自下面这张 LEDGER_COPY，它在本件自有，
+ * 与状态名解耦——键是后端交回来的状态名（只用来分流），值里一枚状态名都没有（判据②，
+ * 与 R268 / R281 / R380 同一条口：后端原话不许占人话位）。为什么不搬进 lib/errcodes.js：
+ * 字典的键是 ErrorEnvelope.code 的封闭枚举（与后端 contracts 不多不少，由码表对账钉住），
+ * 而这一格不是错误信封——它是三本账各自的读数，多的是「哪一格」这一维，少的是状态码与
+ * retryable。搬进字典就得给三腿各造组合码，那是 R380「零新增码」先例的反面。
+ *
+ * 判据⑥：这张表为什么长在本文件而不是 lib/notifications.js —— 三枚既有钉把那条路钉死了，
+ * 逐枚现跑取证（都在 r375-write-retryable-dict.test.js / r333-notification-inbox.test.js）：
+ *   1) 「导出面只多出一枚 failureRetryable」对 notifications.js 断言 added 恒为空：
+ *      任何新导出（sourceCells / LEDGER_LEGS…）当场红；
+ *   2) 「除这两枚之外的每一枚导出与基线同 sha」把 notifications.js 里每一枚既有函数体
+ *      逐字冻在 REF=796540e：改 normalizeInbox / readInbox / bellLabel 任何一枚即红；
+ *   3) 「取数层没有第二本错误码账」现量 notifications.js 代码体的码名集合恰为
+ *      ['storage_unavailable']：本件的 reason 分流一旦出现 permission_denied /
+ *      principal_inactive 就当场红（本单实跑过，报数在交回里）。
+ *   另有一枚 r333 把 normalizeInbox 的返回值钉死成八枚键，台账搭不上车。
+ * 四枚钉都不许改（不在本单写域，改别人的钉得先由总控裁定），所以本件自己做这一次读：
+ * 借的还是 lib/http.js 那枚共享实例、lib/notifications.js 自己那三枚常量，
+ * 计数账仍旧整包交给 lib 的 normalizeInbox 去算——本件一行都没抄它的算法，只多解析
+ * 那一台它交不出来的台账。要把它挪回取数层，得先由总控放宽上面第 1、2、3 枚，已在交回里具名报。
+ * ======================================================================== */
+
+/** 每一格账本的人话名。键 = 后端 contracts.py::NOTIFICATION_SOURCES 的取值；枚数与取值集合由
+ *  r385-ledger-contract.test.js 现读后端真源对账（多一格、少一格、名字漂了都当场红）。 */
+export const LEDGER_LEGS = {
+  approval: '审批账本',
+  alert: '告警账本',
+  document: '文档账本',
+}
+
+/** 契约里「这本账答上了」的那一枚取值：它不是缺席，屏上一格字都不许多。 */
+export const LEDGER_ANSWERED = 'ok'
+
+/** 第四格真来了而本件还不认识它：宁可说一句笼统的真话，也不把后端那枚键直插人话位。 */
+const LEG_UNKNOWN = '有一格账本'
+
+/** 下面三句是「为什么没答」的人话，逐枚对应后端真会交出来的那一枚 reason（取证见甲组用例）。 */
+const CAUSE_STORE = '它要的数据表在这台机器上还没准备好，要管理员把数据库迁移跑过才会恢复'
+const CAUSE_DENIED = '这个账号没有看它的权限，要问企业管理员'
+const CAUSE_INACTIVE = '这个账号已经停用，那一格不认它'
+/** 表里没登记的原因：说一句短的实话，既不猜它为什么，也不把状态名端给人看。 */
+const CAUSE_UNKNOWN = '它没说明原因'
+
+/** 句子的两头：头说「谁没答」，尾把那两脸的分界钉在句子里——不含它 ≠ 那一类真的没有。 */
+const LEDGER_HEAD = '这次没答上来：'
+const LEDGER_TAIL = '。现在这些通知里不含它那一类，不代表那一类事情真的没有。'
+
+/** 后端 reason_code -> 人话。键的合法性由 __tests__/r385-ledger-contract.test.js 现读后端真源判：
+ *  一枚都不许是本件自造的状态名，也不许漏掉后端今天真会交出来的那几枚。 */
+export const LEDGER_CAUSES = {
+  storage_unavailable: CAUSE_STORE,
+  permission_denied: CAUSE_DENIED,
+  principal_inactive: CAUSE_INACTIVE,
+}
+
+const hasLedgerKey = (table, key) => Object.prototype.hasOwnProperty.call(table, key)
+const ledgerText = (value) => (value == null ? '' : String(value))
+
+/** 这一格屏上叫什么。表里没有的键一律走笼统名：这里没有第四枚人话名可编。 */
+export function ledgerLegName(sourceType) {
+  const key = ledgerText(sourceType)
+  return hasLedgerKey(LEDGER_LEGS, key) ? LEDGER_LEGS[key] : LEG_UNKNOWN
+}
+
+/** 这一格为什么没答。表里没有的原因退到笼统句，绝不回读后端那枚状态名。 */
+export function ledgerReasonCopy(reasonCode) {
+  const key = ledgerText(reasonCode)
+  return hasLedgerKey(LEDGER_CAUSES, key) ? LEDGER_CAUSES[key] : CAUSE_UNKNOWN
+}
+
+/** 一格的屏上原句：本件唯一一处拼这句话的地方（判据③）。答上了的那一格交回空句。 */
+export function absenceCopy(cell) {
+  if (!cell || cell.included === true) return ''
+  return ledgerLegName(cell.sourceType) + LEDGER_HEAD + ledgerReasonCopy(cell.reasonCode) + LEDGER_TAIL
+}
+
+/**
+ * 响应里那台台账 -> 逐格读数。三条口径：
+ *   · 只遍历响应【真有的】那些键：后端少交一格就是少一格，本件不替它补齐三格（补=自造账本）；
+ *   · included 只认严格 true，其余一律算没答——与 lib 里 isExact 那条同一种 fail-closed：
+ *     把这格读成「答上了」正是本单要修的假话，读成「没答」至多让员工去核一次；
+ *   · sources 整格缺失 / 不是对象 = 读不到台账，交回空表：那三格账本不因此长出一句话来。
+ */
+export function ledgerCells(payload) {
+  const ledger = payload && typeof payload === 'object' ? payload.sources : null
+  if (!ledger || typeof ledger !== 'object' || Array.isArray(ledger)) return []
+  const cells = []
+  for (const sourceType of Object.keys(ledger)) {
+    const cell = ledger[sourceType]
+    if (!cell || typeof cell !== 'object' || Array.isArray(cell)) continue
+    cells.push({
+      sourceType,
+      included: cell.included === true,
+      reasonCode: ledgerText(cell.reason_code),
+      candidates: cell.candidates,
+      scanned: cell.scanned,
+      truncated: cell.truncated === true,
+    })
+  }
+  return cells
+}
+
+/** 台账里没答上的那些格——屏上要说话的就是它们。 */
+export function silentCells(cells) {
+  return (Array.isArray(cells) ? cells : []).filter(cell => cell && cell.included !== true)
+}
+
+/** 逐格原句 -> 屏上清单。顺序就是响应里那些键的顺序，本件不重排、不补格。 */
+export function absenceLines(cells) {
+  return silentCells(cells).map(absenceCopy).filter(Boolean)
+}
+
+/**
+ * 台账数字的算术只在这一处（判据④）。两条不许：
+ *   · 缺席格的 candidates / scanned 一枚都不进合计——那一格交回的 0 说的是「问不出」，
+ *     不是「数出来是 0」，并进去就是替它宣布了一次数出来的结果；
+ *   · 合计不参与徽标。徽标永远只读后端全集口径 unread_total（那是 normalizeInbox 的事）。
+ * 数不出来的格子按未知处理并把 exact 落成 false：下界不许冒充精确数（契约 R299 同一条口）。
+ */
+export function ledgerSums(cells) {
+  let candidates = 0
+  let scanned = 0
+  let answeredLegs = 0
+  let silentLegs = 0
+  let exact = true
+  for (const cell of Array.isArray(cells) ? cells : []) {
+    if (!cell) continue
+    if (cell.included !== true) {
+      silentLegs += 1
+      continue
+    }
+    answeredLegs += 1
+    const counted = typeof cell.candidates === 'number' && Number.isFinite(cell.candidates) && cell.candidates >= 0 ? Math.floor(cell.candidates) : null
+    const looked = typeof cell.scanned === 'number' && Number.isFinite(cell.scanned) && cell.scanned >= 0 ? Math.floor(cell.scanned) : null
+    if (counted === null || looked === null) exact = false
+    candidates += counted === null ? 0 : counted
+    scanned += looked === null ? 0 : looked
+  }
+  return { candidates, scanned, answeredLegs, silentLegs, exact }
+}
+
+/**
+ * 读屏那一句的唯一装配口（判据②⑦）：lib 的 bellLabel 只管未读数那一半（它被钉冻结了，
+ * 一个字都没改），这里把缺席那几句逐字并到后面。空清单时交回原句——一个字符都不多。
+ */
+export function bellAriaLabel(base, lines) {
+  const notes = (Array.isArray(lines) ? lines : []).filter(Boolean)
+  return notes.length ? base + '；' + notes.join('；') : base
+}
+
+/**
+ * 一次读取 = 一个请求，交回两样东西：计数账（lib 算）与台账（本件解析）。见上方取证段。
+ */
+export async function readInboxPage() {
+  const response = await http.get(INBOX_PATH, {
+    params: { state: ALL_FILTER, limit: INBOX_PAGE_LIMIT, offset: 0 },
+  })
+  const payload = response && response.data
+  const cells = ledgerCells(payload)
+  return {
+    page: normalizeInbox(payload),
+    absence: absenceLines(cells),
+    ledger: ledgerSums(cells),
+  }
+}
 
 /**
  * 面板画哪一张脸的唯一出口（与 HitlPendingPanel.vue 的 pendingFace 同一形状）：
@@ -95,6 +288,10 @@ import UiLoadingState from './ui/UiLoadingState.vue'
 
 const inbox = shallowRef(null)
 const rows = shallowRef([])
+// R385 判据②：那台缺席台账的两格派生值。初值【空】就是「还不知道」——
+// 「还没读到」不是「有一格没答」，所以这一格既不常驻，也不许在正常态长出一句「系统正常」。
+const absence = shallowRef([])
+const ledger = shallowRef(null)
 // 初值就是在读：一次都没读过的时候，这一格不配替后端宣布「没有通知」（判据③⑥的命门）。
 const loading = shallowRef(true)
 const failure = shallowRef(null)
@@ -109,7 +306,11 @@ const panelEl = shallowRef(null)
 const unread = computed(() => (inbox.value ? inbox.value.unread : null))
 const isExact = computed(() => Boolean(inbox.value && inbox.value.isExact))
 const badge = computed(() => badgeText(unread.value, { isExact: isExact.value }))
-const ariaLabel = computed(() => bellLabel(unread.value, { isExact: isExact.value, failed: Boolean(failure.value) }))
+// 徽标只看 unread / isExact 这两格，台账一格都不参与（判据④）：缺席只往读屏里加句子，绝不动数字。
+const ariaLabel = computed(() => bellAriaLabel(
+  bellLabel(unread.value, { isExact: isExact.value, failed: Boolean(failure.value) }),
+  absence.value,
+))
 const summary = computed(() => panelSummary(inbox.value))
 const face = computed(() => inboxFace({ loading: loading.value, failure: failure.value, rowCount: rows.value.length }))
 const hasUnread = computed(() => unread.value !== null && unread.value > 0)
@@ -118,13 +319,18 @@ async function refresh() {
   loading.value = true
   failure.value = null
   try {
-    const page = await readInbox({ state: ALL_FILTER, limit: INBOX_PAGE_LIMIT, offset: 0 })
+    const read = await readInboxPage()
+    const page = read.page
     inbox.value = page
     rows.value = page.rows
+    absence.value = read.absence
+    ledger.value = read.ledger
   } catch (err) {
     // 读不到就承认读不到：旧数字一律清掉，不许留着上一轮的读数冒充这一次。
     inbox.value = null
     rows.value = []
+    absence.value = []
+    ledger.value = null
     failure.value = readFailureCard(err)
   } finally {
     loading.value = false
@@ -209,6 +415,7 @@ onMounted(() => {
 })
 
 defineExpose({
+  absence,
   ariaLabel,
   bellEl,
   badge,
@@ -217,6 +424,7 @@ defineExpose({
   face,
   failure,
   inbox,
+  ledger,
   loading,
   markEverything,
   markOne,
@@ -288,6 +496,27 @@ defineExpose({
       <p v-if="writeFailure" class="notif__note" role="status" data-testid="notification-write-note">
         {{ writeFailure.title }}：{{ writeFailure.description }}
       </p>
+
+      <!-- R385 判据②③④：这一格说的是「哪本账没答」，不是「有没有通知」，两脸分开画。
+           句子逐字出自本件上面那两张表（LEDGER_LEGS 与 LEDGER_CAUSES），这里不写第二份；
+           中性色 + role="status"（不是 role="alert"）：不许把员工吓走，也不许打断读屏。
+           它在面板自己的 grid 里占一行（下面那条 list/empty 被推着走），不遮正文（判据⑦）。
+           data-ledger-* 是台账自己的算术，只合计答上了的那几格，只给机器读，不占人话位。 -->
+      <ul
+        v-if="absence.length"
+        class="notif__note notif__ledger"
+        role="status"
+        data-testid="notification-ledger"
+        :data-ledger-silent="absence.length"
+        :data-ledger-candidates="ledger ? ledger.candidates : ''"
+      >
+        <li
+          v-for="(line, index) in absence"
+          :key="'ledger-' + index"
+          class="notif__ledger-item"
+          data-testid="notification-ledger-item"
+        >{{ line }}</li>
+      </ul>
 
       <UiLoadingState
         v-if="face === 'loading'"
@@ -465,6 +694,22 @@ defineExpose({
   background: var(--surface-3);
   border-left: 3px solid var(--warning);
   border-radius: var(--r-sm);
+  font-size: var(--t-xs);
+}
+
+/* 只借上面那条既有 .notif__note 的底色与警示边：本块一个新色值都不开（判据⑤色值预算）。
+   刻意不用 position:absolute —— 面板是 grid，这一行走位，把下面的清单往下推，不遮正文。 */
+.notif__ledger {
+  display: grid;
+  gap: var(--s-1);
+  margin: 0;
+  padding: var(--s-2);
+  list-style: none;
+}
+
+.notif__ledger-item {
+  margin: 0;
+  color: var(--text-1);
   font-size: var(--t-xs);
 }
 
