@@ -214,6 +214,24 @@ def test_the_cache_key_prose_is_pinned_to_the_live_shape(tmp_path, mod):
 # ==================== ③ 只插行不改值 ====================
 
 
+#: ③ 的插行锚点。影子改的这枚字节串与派生基准行扫的必须是同一枚，所以全文只写这一次。
+ANCHOR_DEF = "def _approval_worker_node(state: AgentState, config) -> dict:"
+
+
+def live_anchor_line(rel: str, anchor: str) -> int:
+    """在**盘上现读**锚点行号 —— 本件不许把行号抄成常数。
+
+    这是独立于尺子的第二把量具：报告里的旧值必须等于它，否则 ③ 退化成自证。
+    抄死过一次的下场记在这里：R395 并树 ``0ab5f1f`` 给 orchestrator.py 加了 11 行，
+    把 _approval_worker_node 从 808 推到 819，于是 09-28 全量门里一枚**尺子行为完全正确**
+    的用例被判成红 —— 病不在被量的东西，在抄下来的那个数。
+    """
+    rows = (REPO / rel).read_text(encoding="utf-8-sig").replace("\r\n", "\n").splitlines()
+    hits = [index for index, row in enumerate(rows, start=1) if row == anchor]
+    assert len(hits) == 1, f"锚点在盘上不是唯一命中，插行判据失去基准：{hits}"
+    return hits[0]
+
+
 def test_inserting_lines_moves_only_the_span_ledger(tmp_path, mod):
     """在被读函数上方插 300 行噪声：值账一字不动，行跨度那一格自己跟上。
 
@@ -222,11 +240,16 @@ def test_inserting_lines_moves_only_the_span_ledger(tmp_path, mod):
     """
     rel = "app/agents/orchestrator.py"
     pad = "\n".join(f"# R361 影子噪声 第 {index} 行" for index in range(300))
-    root = build_shadow(tmp_path, [(rel, "def _approval_worker_node(state: AgentState, config) -> dict:",
-                                    pad + "\ndef _approval_worker_node(state: AgentState, config) -> dict:")])
+    root = build_shadow(tmp_path, [(rel, ANCHOR_DEF, pad + "\n" + ANCHOR_DEF)])
+    base = live_anchor_line(rel, ANCHOR_DEF)
     report = mod.drift_between(REPO, root)
     assert names(report) == ["APPROVAL_WORKER_SPAN"], report
     line = report[0]
-    assert " -> " in line and ":808" in line.split(": ", 1)[1].split(" -> ")[0], line
-    assert "app/agents/orchestrator.py:%d" % (808 + 300) in line, line
+    cells = [cell.strip("'") for cell in line.split(": ", 1)[1].split(" -> ")]
+    assert len(cells) == 2 and all(rel in cell for cell in cells), line
+    spans = [[int(part) for part in cell.rsplit(":", 1)[1].split("-")] for cell in cells]
+    assert [start for start, end in spans] == [base, base + 300], (
+        f"插 300 行后行跨度没跟着基准 {base} 走：尺子仍然是抄的：{line}")
+    assert spans[0][1] - spans[0][0] == spans[1][1] - spans[1][0], (
+        "插行把函数自身的长度也改了：那是尺子算错跨度，不是行号跟上：" + line)
     assert mod.copy_drift(root) == [], "插行把等值钉插红了：那是假红，本单要根治的就是它"
