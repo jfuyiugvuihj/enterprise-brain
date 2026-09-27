@@ -68,11 +68,13 @@ RAISE_SITES = {
         'run migrations first")',
     ),
     "app/memory/long_term.py": (
-        69,
+        # R392 现读：这一句跟着插到文件头那行 import 一起下挪一枚（69 -> 70），抛点仍然恰好一枚。
+        70,
         'raise RuntimeError("memories table is required in production; run migrations first")',
     ),
     "app/memory/profile.py": (
-        83,
+        # R392 现读：画像那枚读数的取证函数插在它前面，行号整块下挪 43（83 -> 126），抛点仍然恰好一枚。
+        126,
         'raise RuntimeError("user_profiles table is required in production; '
         'run migrations first")',
     ),
@@ -83,16 +85,16 @@ RAISE_SITES = {
 GUARD_BY_MODULE = {
     "app/common/auth.py": (257, 478),
     "app/documents/catalog.py": (616, 768, 794, 829, 902),
-    "app/memory/long_term.py": (176, 192),
-    "app/memory/profile.py": (192, 241),
+    "app/memory/long_term.py": (217, 233),  # R392 现读：随读路取证函数下挪
+    "app/memory/profile.py": (235, 284),  # R392 现读：同上
 }
 
 #: 每枚模块里 `_ensure()` / `_create_schema()` 的直接调用点行数（`app/**` 全仓现读）。
 CALL_SITES = {
     "app/common/auth.py": (255, 475),
     "app/documents/catalog.py": (609, 739, 782, 817, 890),
-    "app/memory/long_term.py": (165, 183),
-    "app/memory/profile.py": (181, 224),
+    "app/memory/long_term.py": (206, 224),  # R392 现读：remember / recall 两枚调用点随之下挪
+    "app/memory/profile.py": (224, 267),  # R392 现读：get_profile / upsert_profile 同上
 }
 
 GUARDED_FUNCTIONS = frozenset({"_ensure", "_create_schema"})

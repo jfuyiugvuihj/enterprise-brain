@@ -5054,3 +5054,27 @@ r384 的门账钉一起点名，四连先例的守卫在替本单把关）。
 `app/documents/catalog.py` 每把刀的进/出 sha256 逐趟相等）：K1 摘掉① 11 红／K2 放宽成"任何一发都拒"
 3 红且 R391 另红 5 枚（既有件自己也守住这条边界）／K3 删掉可读者证 4 红／K4 只把日志喊成 `error` 不改脸
 11 红／K5 把写失败吞进迁移族 9 红。逐把红面点名，记在 R394 回执⑥。
+
+## R392 健康报不许替一张没在位的表背书（2026-09-27）
+
+`/health/details` 逐腿回答「这一腿存在哪」，读的是 `app/common/monitoring.py:17-23` 那张五枚表。
+在此之前，生产环境里「PostgreSQL 起着、但迁移没跑全（缺 `memories` 或 `user_profiles`）」这一格上，
+`memories` 与 `user_profiles` 两条腿答的是 `storage_mode: "postgres"`、`durable: true`——而同一台机器
+同一时刻 `PUT /api/v1/profile` 答 `503 storage_unavailable`、`remember()` 交回 false。两张嘴对同一格
+说相反的话，而健康报是客户装机第一眼读的那一张。
+
+从今天起「声称 postgres / durable」必须拿一次**对该腿同名那张表**的现查当凭据（`to_regclass('public.<表>')`，
+全仓唯一一处问句在 `app/common/table_presence.py`）。三值里只有「在」配得上 durable：
+
+| 现查结果 | `storage_mode` | `durable` | `protection` | `detail` |
+| --- | --- | --- | --- | --- |
+| 表在位 | `postgres` | `true` | `none` | 与既往一致，一字未改 |
+| 表不在（迁移没跑） | `unavailable` | `false` | `read_only` | 点名那张表 + 指到 `migrations/0003_legacy_runtime_tables.sql` |
+| 问不到（连不上/没答） | `unavailable` | `false` | `read_only` | 说「数据库没回答」，**不**说迁移 |
+
+三条边界：① **零新增档位、零新增错误码、零新增键**——`unavailable` 与 `read_only` 都是
+`docs/deployment/memory-fallback-and-multi-instance-boundaries.md:26-33` 早已为这两腿批下的「生产缺后端时」
+口径，差别只在它从今天起也覆盖「后端在、表没迁移」那一格。② 于是 `problems` 里 `memories_read_only`、
+`user_profiles_read_only`（既有词表，见同档 `:54`）会在这一格首次出现。③ **启动不受影响**：
+`app/common/monitoring.py:150` 那道闸只按 `protection == "refuse_start"` 拒起，而这只有 `users` 一腿用；
+写路径一行未改，开发 / 裸机 / 离线三张脸一字未动。

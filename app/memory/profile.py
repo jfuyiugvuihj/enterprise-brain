@@ -4,6 +4,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from app.common.logger import logger
+from app.common.table_presence import ABSENT, PRESENT, UNKNOWN, probe_table
 
 _tz = timezone(timedelta(hours=8))
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
@@ -45,15 +46,57 @@ def _is_production_environment() -> bool:
     return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
 
 
+#: 「连得上库」与「该由迁移建的那枚表在位」是两件事，生产这一格两件都得问。问句与 NULL 判法只
+#: 有一处，即 `app/common/table_presence.py`；本模块不再另写一套查表的办法。三值里只有 PRESENT
+#: 配得上 durable，另两值各自一句人话，档位一枚都不新长（都落回本模块已有的 unavailable + read_only）。
+UNWARRANTED_DETAILS = {
+    ABSENT: (
+        "user_profiles is not in the database; run migrations/"
+        "0003_legacy_runtime_tables.sql before profiles can be stored"
+    ),
+    UNKNOWN: "the database did not answer whether user_profiles is there; profile writes are refused",
+}
+
+
+def _table_warrant() -> str:
+    """「画像表由 PG 服务」这句声称拿什么背书：生产环境现查那张表，其余一字不改。
+
+    为什么只有生产去问：开发态的画像写在同一个库里，表由 `_ensure()` 在第一次写时建起来；那三张脸
+    （开发 / 裸机 / 离线）各有既有的钉，本单不碰。生产恰恰相反——那里没有任何东西会替谁建表，
+    「旗标说就绪」与「这张表在」之间只隔着一次没跑完的迁移，所以只有那一格需要一句现查。
+    """
+    if not _is_production_environment():
+        return PRESENT
+    return probe_table(_conn, "user_profiles")
+
+
 def profile_storage_state() -> dict:
-    """Report where user profiles are actually stored."""
+    """Report where user profiles are actually stored.
+
+    R392 治的是这一格。`_database_available()` 回答的是「这个进程连得上 PostgreSQL」：它读的是
+    `app/common/auth.py` 那枚 `_db_ready`，而那枚旗标的凭据是 `users` 表的现查，一步都没查过
+    `user_profiles`。于是在「生产 + 旗标为真 + 迁移没跑全」这一格上，健康报答「user_profiles 由 PG
+    服务、durable: True」，同一时刻 `PUT /api/v1/profile` 正因为 R383 那道闸答 503
+    `storage_unavailable`——一台机器两张嘴对同一格说相反的话，而健康报是客户装机第一眼读的那一张。
+    从今天起「声称 postgres / durable」必须拿那次现查当凭据；问不出来就照问不出来的样子说，既不
+    说在，也不假装不在。
+    """
     if _database_available():
+        warrant = _table_warrant()
+        if warrant == PRESENT:
+            return {
+                "storage_mode": "postgres",
+                "durable": True,
+                "shared_across_processes": True,
+                "protection": "none",
+                "detail": "user_profiles table served by PostgreSQL",
+            }
         return {
-            "storage_mode": "postgres",
-            "durable": True,
-            "shared_across_processes": True,
-            "protection": "none",
-            "detail": "user_profiles table served by PostgreSQL",
+            "storage_mode": "unavailable",
+            "durable": False,
+            "shared_across_processes": False,
+            "protection": "read_only",
+            "detail": UNWARRANTED_DETAILS[warrant],
         }
     if _is_production_environment():
         return {

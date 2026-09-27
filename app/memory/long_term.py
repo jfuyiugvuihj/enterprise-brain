@@ -6,6 +6,7 @@ from functools import lru_cache
 import numpy as np
 
 from app.common.logger import logger
+from app.common.table_presence import ABSENT, PRESENT, UNKNOWN, probe_table
 
 try:
     import psycopg
@@ -98,15 +99,55 @@ def _ensure():
     _initialized = True
 
 
+#: 「memories 这张表在不在」的三值凭据，问句与 NULL 判法只有一处（`app/common/table_presence.py`）。
+#: 只有 PRESENT 配得上 durable；另两值各说一句人话，档位一枚都不新长——都落回本模块已有的
+#: unavailable + read_only，那正是这一格对写入做的事。
+UNWARRANTED_DETAILS = {
+    ABSENT: (
+        "memories is not in the database; run migrations/"
+        "0003_legacy_runtime_tables.sql before memories can be stored"
+    ),
+    UNKNOWN: "the database did not answer whether memories is there; memory writes are refused",
+}
+
+
+def _table_warrant() -> str:
+    """「memories 表由 PG 服务」这句声称拿什么背书：生产环境现查那张表，其余一字不改。
+
+    与 `app/memory/profile.py` 同一口径——开发态的表由 `_init()` 在第一次写时建，那三张脸（开发 /
+    裸机 / 离线）各有既有的钉，本单不碰；生产里没有任何东西会替谁建表。
+    """
+    if not _is_production_environment():
+        return PRESENT
+    return probe_table(_conn, "memories")
+
+
 def memory_storage_state() -> dict:
-    """Report whether recalled memories are durable or this process only."""
+    """Report whether recalled memories are durable or this process only.
+
+    R392 治的是五枚读数里最空的那一格：修前这一支只问 `psycopg is not None`——一枚**驱动导入成功
+    与否**的事实，既没连过库，也没查过表。于是生产 + 迁移没跑全这一格上，健康报答「memories 由 PG
+    服务、durable: True」，而同一时刻 `_init()` 每写一次都在「该由迁移建表」那句 RuntimeError 上抛一次，
+    `remember()` 把它咽进 except、交回 False，`recall()` 交回空表：这台机器一条长期记忆都没存下，
+    健康报却把它记进了 durable 名单。从今天起这句声称要有那次现查当凭据；问不出来就照问不出来的
+    样子说。
+    """
     if psycopg is not None:
+        warrant = _table_warrant()
+        if warrant == PRESENT:
+            return {
+                "storage_mode": "postgres",
+                "durable": True,
+                "shared_across_processes": True,
+                "protection": "none",
+                "detail": "memories table served by PostgreSQL",
+            }
         return {
-            "storage_mode": "postgres",
-            "durable": True,
-            "shared_across_processes": True,
-            "protection": "none",
-            "detail": "memories table served by PostgreSQL",
+            "storage_mode": "unavailable",
+            "durable": False,
+            "shared_across_processes": False,
+            "protection": "read_only",
+            "detail": UNWARRANTED_DETAILS[warrant],
         }
     if _is_production_environment():
         return {
