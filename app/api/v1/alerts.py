@@ -61,6 +61,38 @@ def _is_production_environment() -> bool:
     return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
 
 
+def _require_ready_store(operation: str) -> None:
+    """生产环境 + 存储未就绪 = 这一条腿拒答，不许退回进程内台账（R359）。
+
+    判的两件事都是本件既有的读数，一枚都不新造、也不另算一遍: 库在不在取
+    ``_database_available()``（本模块唯一那枚探针），是不是生产取
+    ``_is_production_environment()``（就在上面）。两支同时成立才拒，回的必须是仓里
+    已有的那一码 —— ``app/api/v1/dashboard.py:143``、``app/api/v1/notifications.py:161``、
+    ``app/api/v1/chat.py:3037`` 三处出口都是 503 ``storage_unavailable``，本单零新增错误码。
+
+    为什么不许退成「200 + 空数组」: ``_MEM_ALERTS`` 是客户机上永远为空的那张进程内表，
+    于是每一次存储拒答都长成「这家公司现在没有异常」的样子，而那一屏照字面画的就是这句
+    话（``frontend/src/lib/alerts.js`` 的 ALERTS_EMPTY_TITLE）。读侧不许把存储拒答翻译成
+    空集 —— 与 ``/users``（R356）、``/dashboard``（R332）、通知（R299）是同一条裁定，
+    告警是这四条里最后还在沉默回空的那一条。
+
+    为什么开发态一个字都不改: 裸机与开发环境里内存 store 今天就是合法后端（``_ensure()``
+    还替它就地建表），那一支的回包形状、行数、排序逐字保持。本单分开的是两张脸，不是一律
+    503 —— 把开发态一起打死同样是在说假话，只不过反着说。
+
+    调用点一律排在授权之后（``_require_alert_management``）、排在 ``_ensure()`` 与任何一次
+    读写之前: 先答「你是谁、这件事你能不能做」，再答「这台机器的库在不在」。反过来就把 401 /
+    403 与 503 之差做成了一枚「这家客户起没起 PG」的探针，而那不是调用方的信息。
+    """
+    if _database_available() or not _is_production_environment():
+        return
+    logger.warning(
+        f"[Alert] 生产环境存储未就绪，这一条腿拒答而不是回内存台账: operation={operation} "
+        "code=storage_unavailable（PG 未起或迁移未跑）"
+    )
+    raise HTTPException(status_code=503, detail="storage_unavailable")
+
+
 #: 处置闭环（R251）落在 alerts 行上的八枚列，自建库（非生产）就地补的 DDL。逐枚写死而不是拼
 #: 字符串：「与 migrations/0014 逐枚同名同默认值」这件事由 tests/test_r251_alert_disposal.py 对着
 #: 迁移目录判等，不靠注释维持。生产库的补法只归 migrations，本件在那条分支里只查不建。
@@ -574,7 +606,11 @@ def _dispose_alert(principal, alert_id: int, action: str, assignee: str = "") ->
 
     有库那条腿把 1 锁进事务（``FOR UPDATE``），守卫之后才拼 UPDATE，写完 commit 再从同一条
     归属谓词读回来 —— 交回的不是「我以为写成什么样」，是库里现在什么样。
+
+    R359 另加一条前置：生产环境而库不在 ⇒ 503，三条处置写口一起过这道闸。写成「200 +
+    处置后的行」而实际只落进内存，等于在台账上留下一笔谁都无法复核的处置。
     """
+    _require_ready_store(f"dispose_{action}")
     if not _database_available():
         row = _alert_row_from_memory(principal, alert_id)
         if row is None:
@@ -911,6 +947,7 @@ async def create_rule(data: RuleCreate, request: Request = None):
     _require_alert_management(request, ALERT_RULES_RESOURCE)
     if data.op not in OPS:
         raise HTTPException(status_code=400, detail=f"非法操作符: {data.op}")
+    _require_ready_store("create_rule")
     if not _database_available():
         global _MEM_NEXT_RULE_ID
         rule = {
@@ -938,6 +975,7 @@ async def create_rule(data: RuleCreate, request: Request = None):
 @router.get("/alerts/rules")
 async def list_rules(request: Request = None):
     _require_alert_management(request, ALERT_RULES_RESOURCE)
+    _require_ready_store("list_rules")
     if not _database_available():
         return {"rules": [dict(rule) for rule in _MEM_RULES]}
     _ensure()
@@ -949,6 +987,7 @@ async def list_rules(request: Request = None):
 @router.delete("/alerts/rules/{rule_id}")
 async def delete_rule(rule_id: int, request: Request = None):
     _require_alert_management(request, ALERT_RULES_RESOURCE)
+    _require_ready_store("delete_rule")
     if not _database_available():
         before = len(_MEM_RULES)
         _MEM_RULES[:] = [rule for rule in _MEM_RULES if rule["id"] != rule_id]
@@ -966,8 +1005,11 @@ async def list_alerts(request: Request):
 
     两条腿共用 ``alert_row_scope_departments`` 这一份判定：无库时在内存行上跑谓词，有库时把
     条件带进 SQL。谁都不许在 ``LIMIT 100`` 之后再筛，也不许换个部门集合另算一套。
+
+    R359 在此之前先过一道闸：生产环境而库不在 ⇒ 拒答。下面那一支回的空台账只属于开发态。
     """
     principal = _require_alert_management(request, ALERT_LEDGER_RESOURCE)
+    _require_ready_store("list_alerts")
     if not _database_available():
         visible = list(
             islice(
@@ -996,6 +1038,7 @@ async def list_alerts(request: Request):
 async def check_now(request: Request):
     """手动触发一次巡检"""
     principal = _require_alert_management(request, ALERT_LEDGER_RESOURCE)
+    _require_ready_store("check_now")
     scan_scope: dict = {}
     triggered = evaluate_all(principal=principal, scan_summary=scan_scope)
     return {"triggered": triggered, "scan_scope": scan_scope}
@@ -1013,6 +1056,7 @@ async def get_alert(alert_id: int, request: Request):
     一区分，别人就能拿状态码之差试出「这条告警在不在」。
     """
     principal = _require_alert_management(request, ALERT_LEDGER_RESOURCE)
+    _require_ready_store("get_alert")
     if _database_available():
         _ensure()
         with _conn() as conn:

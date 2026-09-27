@@ -3822,3 +3822,128 @@ write "the journal now says null everywhere".
 Physical lines: `app/api/v1/data.py` 599 -> 600 (+2 / -1). The audit event schema, the stable-code
 register, and the delete response body are unchanged.
 
+
+## The alert surface refuses a store that is not there (2026-09-27, R359)
+
+`app/api/v1/alerts.py` was the last of the four customer-visible read surfaces still answering a storage
+refusal with an empty collection. R356 ruled it for `GET /users`; `/dashboard` already answers
+`503 storage_unavailable` (`app/api/v1/dashboard.py:143`) and so does the inbox
+(`app/api/v1/notifications.py:161`). What `GET /api/v1/alerts` did instead, on a customer machine whose
+PostgreSQL is not up or whose migrations have not run: read the process-local `_MEM_ALERTS` -- which is
+always empty on such a host -- and answer `200 {"alerts": []}`. The panel drew that literally
+(`frontend/src/lib/alerts.js::ALERTS_EMPTY_TITLE`, 「当前没有触发中的告警」). A deployment gap was being
+translated into a business all-clear, on the one screen that may not say the wrong thing.
+
+### One gate, two faces
+
+`app/api/v1/alerts.py::_require_ready_store(operation)` (`:64`) is the whole addition. It asks two questions
+the module already knew how to ask, and answers a third:
+
+- 「Is the store there?」 -- `_database_available()` (`:55`), the module's only reader of
+  `app.common.auth._db_ready`. **No second probe, and no new reader of that flag**: `app/common/auth.py:231`
+  keeps that count, and `tests/test_r246_honest_readiness_claims.py` counts it off the AST.
+- 「Is this a production install?」 -- `_is_production_environment()` (`:60`), unchanged, still the only
+  `APP_ENV` read in the module.
+- Both true => `raise HTTPException(status_code=503, detail="storage_unavailable")`. **Zero new error
+  codes**: the same word the three exits above already emit, already a member of `ErrorEnvelope.code`,
+  already given a sentence by `frontend/src/lib/errcodes.js` (`retryable: false` -- a migration has to be
+  run, retrying the request cannot produce it).
+
+The development leg is **not** tightened, deliberately. On bare metal the in-process store is today's
+legitimate backend -- `_ensure()` builds tables for it -- so that branch's response, its shape, its row
+count and its ordering are byte for byte what they were before this section. What changed is that the two
+faces are now separable: 「this install has no database」 and 「this company has no anomalies」 no longer
+render as the same screen. A ticket that killed the development leg would be telling the opposite lie, and
+`tests/test_r359_alerts_refuse_a_store_that_is_not_there.py` has pins pointed at both directions.
+
+### Every leg passes it: the nine exits
+
+| # | Exit | Function (line) | Answer before, production + no store | Answer after |
+| --- | --- | --- | --- | --- |
+| 1 | `GET /api/v1/alerts` | `list_alerts` (`:1003`), gate at `:1012` | `200 {"alerts": []}` | `503 storage_unavailable` |
+| 2 | `GET /api/v1/alerts/{id}` | `get_alert` (`:1050`), gate at `:1059` | `404 resource_not_found` -- a row that exists in PostgreSQL is reported as missing | `503 storage_unavailable` |
+| 3 | `GET /api/v1/alerts/rules` | `list_rules` (`:976`), gate at `:978` | `200 {"rules": []}` | `503 storage_unavailable` |
+| 4 | `POST /api/v1/alerts/check` | `check_now` (`:1038`), gate at `:1041` | `200 {"triggered": [], "scan_scope": {...}}` -- a sweep that could not store anything | `503 storage_unavailable`, and `evaluate_all` is not entered |
+| 5 | `POST /api/v1/alerts/rules` | `create_rule` (`:946`), gate at `:950` | `200 {"id": n, "status": "ok"}` -- 「ok」 against a row that exists only in this process | `503 storage_unavailable` |
+| 6 | `DELETE /api/v1/alerts/rules/{id}` | `delete_rule` (`:988`), gate at `:990` | `200 {"status": "ok" \| "not_found"}` against the same process-local list | `503 storage_unavailable` |
+| 7 | `POST /api/v1/alerts/{id}/ack` | `acknowledge_alert` (`:1072`) -> `_dispose_alert` (`:598`), gate at `:613` | `200` with a 「disposal」 written onto a memory row, or `404` for a row the store holds | `503 storage_unavailable` |
+| 8 | `POST /api/v1/alerts/{id}/close` | `close_alert` (`:1083`) -> same helper | same | `503 storage_unavailable` |
+| 9 | `POST /api/v1/alerts/{id}/assign` | `assign_alert` (`:1094`) -> same helper | same | `503 storage_unavailable` |
+
+Exits 7-9 share one helper, so they share one gate call -- three separate calls would be three doors to
+forget. The gate sits **after** `_require_alert_management` in all nine and **before** `_ensure()` /
+`_conn()` in all nine: an unauthorised caller gets 401/403 as before and can never use the status code of a
+refusal to learn whether this customer has started PostgreSQL.
+
+### What did not move
+
+- The development branch of every leg: `_MEM_ALERTS` / `_MEM_RULES` reads and writes, `alert_row_visible`
+  row scope, the `islice(..., 100)` page, the reversed ordering, `alert_ledger_row`'s eight disposal columns.
+- `evaluate_all` (`:814`) itself. It is shared with the scheduler (`app/scheduler/jobs.py`), it is pinned
+  never to raise by `tests/test_r345_unreadable_data_files_are_counted.py`, and it has no HTTP response to
+  lie about -- the sweep's HTTP face is `check_now`, which is gated.
+- `daily_report`, the row-scope predicate pair, the disposal state machine, the audit ledger
+  (`_audit_alert_denial` records refusals of *permission*, and a 503 is not one: this ticket adds no audit
+  row and logs one `logger.warning` naming which leg refused).
+- The three error codes already used by the disposal exits (`resource_not_found` / `conflict` /
+  `validation_error`) and every status code in this module.
+
+### Pins
+
+- `tests/test_r359_alerts_refuse_a_store_that_is_not_there.py` (112): the nine exits refusing one by one;
+  no read leg answering an empty collection; no write leg answering success or writing to memory; the
+  refusal landing before any `_conn()` / `_ensure()`; every production spelling (`production`, `prod`,
+  `PRODUCTION`, ` Production `) refusing and every non-production one answering; the development leg's
+  exact 200 payload, its 100-row cap and its column set; production *with* a store still answering all
+  nine from the store and never from memory; 401/403 unchanged; the refusal carried by direct calls too;
+  and three structural pins -- the route roster, 「every route reaches the gate along the call graph」,
+  and 「the gate is wired after the authorization gate」 off the AST.
+- Error-code accounting (判据丁): a R332-shaped AST pin now reads every static `detail=` in `alerts.py`,
+  resolving module-level constants as well, and asserts each is an `ErrorEnvelope.code` member. The
+  interpolated one (`create_rule`'s 400 「非法操作符: ...」) and the parameterised ones
+  (`decision.reason_code`, `_refuse_alert_disposal(code=...)`) are pinned as a closed roster of exactly
+  those three sites, so a fourth `detail` cannot hide from the table; the codes that arrive as arguments
+  are checked at their call sites instead. `tests/test_r142_error_code_table_sync.py` and
+  `tests/test_error_code_vocabulary.py` were run and needed no edit -- zero new codes is what makes that
+  true, and it is checked, not asserted.
+- Five knives were run on disk against `app/api/v1/alerts.py` and restored by sha256
+  (`8cb54e349391828d8340673284fa1dfa49b0d040d0e3320da3184cc23af6e2cd`, re-verified after every knife). Both
+  directions are covered: neutering the gate reddens **41**; refusing in development too reddens **23** in
+  this file **and 47 across five pre-existing alert files** (`test_alert_route_authorization`,
+  `test_alert_scan_scope`, `test_r176_alert_row_scope`, `test_r251_alert_disposal`,
+  `test_r345_unreadable_data_files_are_counted`); opening every side door but the list reddens **40**;
+  letting the write legs pretend success reddens **19**; moving the gate in front of the authorization
+  gate reddens **2** (one behavioural, one AST). Knives 1, 3 and 4 leave the pre-existing family green
+  -- today's net has no cell for 「production without a store」, which is the hole this ticket closes.
+
+### Registered, not fixed
+
+- **`app/notifications/sources.py:151`** folds only `403` into a named 「this leg is omitted」 answer and
+  re-raises anything else, and `app/notifications/inbox.py:161` folds only `401/403/404` in `can_address`.
+  Both call these legs *directly* (`list_alerts` / `get_alert`), which is the single-definition contract this
+  section keeps -- so on a production host without a store the inbox now answers `503 storage_unavailable`
+  instead of a 200 whose alert leg was silently empty. Defensible, but the narrower answer is available:
+  `_omitted(SOURCE_ALERT, "storage_unavailable")` is one line in that owner's file, and `frontend/**` plus
+  that module are outside this ticket's write set. Ruled by the controller, not here.
+- **`app/api/v1/dashboard.py:174-182`** (`_alert_counts`) reads `alerts._MEM_ALERTS` itself whenever
+  `_database_available()` is false, so the overview page's 「N 条告警」 tile is still `{"total": 0,
+  "unread": 0}` on the same broken install -- it never goes through `GET /alerts`, so this gate cannot reach
+  it. Same for the trend tile's alert leg (`:477`). That file is R342's write set.
+- **Three `RuntimeError("... is required in production; run migrations first")`** in this module (`:88`
+  table missing, `:98` `alerts.department`, `:541` `alerts.status`) still surface as a bare 500
+  `internal_error`, which `frontend/src/lib/errcodes.js:114` renders as 「请稍后重试」 -- a deployment gap
+  described as a transient. Evidence for the controller, unadjudicated here: only the `:98` sentence is
+  pinned by message text (`tests/test_r184_alerts_department_column.py:420`, plus a looser
+  `match="run migrations first"` at `tests/test_r176_alert_row_scope.py:469` and a source-text pin at
+  `tests/test_r184_alerts_department_column.py:205`). **Nothing pins `:88` or `:541`** -- the phrase exists in
+  `tests/test_r98_checkpointer_backend.py:279` and `tests/test_bootstrap_admin.py:107`, but those drive other
+  modules. So two of the three sentences could be reworded today without a test noticing.
+- `create_rule`'s interpolated `detail` stays as-is: changing it is a response-body change, not a
+  storage-face change. Pinned as an exact roster of three sites so it cannot quietly grow a fourth.
+- **The alerts screen will offer 「重新加载」 for this 503.** `frontend/src/lib/alerts.js::readFailureView`
+  hardcodes `retryable: true` on its generic error branch (`:141`) while `frontend/src/lib/errcodes.js:105`
+  says `storage_unavailable` is `retryable: false` -- the alerts panel is the one place the two disagree,
+  and `isRetryable(err)` already exists for it to read (that is what `ApprovalPanel.vue:173` does). One
+  line, in a file this ticket may not touch. The empty-state copy needs nothing: a 200 with an empty list
+  now genuinely means 「this store answered, and it holds nothing」, which is what
+  ALERTS_EMPTY_DESCRIPTION already says.
