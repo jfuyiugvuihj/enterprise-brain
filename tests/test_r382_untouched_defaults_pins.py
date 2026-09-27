@@ -3,7 +3,7 @@
 
 本单是取证单，不是改架构的单，所以它的验收里有几条"今天成立、但下一个人可以悄悄做掉"的
 约束：出厂默认仍是 chroma（`app/rag/indexing.py` 那一行）、没有任何配置面被本班偷偷接上
-pgvector 读（一切 `.env*`/compose/deploy 里 `INDEX_BACKEND` 零命中）、本班自己的测量件只允许
+pgvector 读（一切 `.env*`/compose/deploy 里不许有一行把它赋成非 chroma 的生效位赋值；09-28 随 R408 收窄：注释掉的样例不算）、本班自己的测量件只允许
 进程内翻开关且必须收尾（只经 `os.environ` 赋值 + `pop`/`del`）、对遗留引擎只允许动元数据
 不允许动向量（`upsert(`/`.add(`/`.delete(` 零命中）、报告是拼出来的而不是手抄出来的
 （占位符不残留）。这些都不该靠本单报告的自述维持，所以钉成静态件。
@@ -61,12 +61,37 @@ def test_factory_default_still_reads_from_the_retiring_engine() -> None:
     )
 
 
-def test_no_deployment_surface_mentions_the_switch() -> None:
-    """配置面零命中：切读至今是一次都没落盘的动作，本班也没替它落盘。"""
+#: 生效位赋值。行首只允许空白或 YAML 短横，键名后紧跟 = 或 :，注释行不算——
+#: 这一枚是 09-28 收窄的产物，形状本身就是判据，所以写成常量而不是塞进函数里。
+EFFECTIVE_SET = re.compile(r"(?m)^[ \t]*(?:-[ \t]+)?" + SWITCH + r"[ \t]*[=:][ \t]*(.*)$")
+
+
+def effective_value(rest: str) -> str:
+    """把赋值行右侧收成一个值：剥掉行尾注释与引号。空串表示"赋了个空值"。"""
+    return rest.split(" #", 1)[0].strip().strip("\x27\x22")
+
+
+def test_no_deployment_surface_switches_the_read_backend() -> None:
+    """配置面不许有一行生效位赋值把读后端翻走；注释里提一句键名不算落盘。
+
+    09-28 第十二格续·收窄记录（总控裁定，随 R408 并树落地）：本钉原本一律「键名零命中」，
+    于是连 `# INDEX_BACKEND=chroma` 这种**注释掉的、值就是出厂默认**的样例都判红，
+    配置面因此永远不许对这一枚闸说一句人话——R408 实测 BASE 16 passed / AFTER 1 failed，
+    冲突属实（影子树复现，不是采信自述）。放开的是"提一嘴"，没放开的是"翻默认"：
+    **任何一行真赋值都必须把值写回 chroma**，写 pgvector、写空、写错别字一律当场红。
+    同口径另有 R408 那枚行为化钉从真函数嘴里咬住（read_backend() 缺省仍是 chroma、
+    pgvector_reads_enabled() 为假），两把不互相替代。对 `INDEX_BACKEND_DEFAULT`
+    的那两枚断言一字未动，"出厂默认没被翻"这句话仍然由它把关。
+    """
     surfaces = config_surfaces()
     assert surfaces, "没找到任何配置面文件，本钉无从判定"
-    dirty = [p.relative_to(REPO).as_posix() for p in surfaces if SWITCH in read(p)]
-    assert not dirty, "这些配置面出现了 " + SWITCH + "（本单一律不许落盘）：" + str(dirty)
+    switched = []
+    for path in surfaces:
+        for match in EFFECTIVE_SET.finditer(read(path)):
+            value = effective_value(match.group(1))
+            if value != "chroma":
+                switched.append(path.relative_to(REPO).as_posix() + " -> " + repr(value))
+    assert not switched, "这些配置面把读后端真的翻了（生效位赋值不是 chroma）：" + str(switched)
 
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
