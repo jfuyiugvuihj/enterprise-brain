@@ -19,6 +19,15 @@ state 与 changed 两格。
 对不上号的 id 不写、不建、也不解释：回执只说 not_addressable。别人的通知与根本不存在的通知是
 同一张脸，这一格不给枚举编号留缝。判定本身在 app/notifications/inbox.py::can_address，它把问题
 原样转给那三本账自己的读路径，本文件不参与裁权限。
+
+写侧那两枚动作（POST /notifications/read 与 /dismiss，同走 _apply）翻译两类具名错：生命周期
+台账（NotificationStateStoreMissing）与审批账本（PendingApprovalStoreMissing），两张脸同一句
+503 storage_unavailable。R381 之前那一支只接前一枚，后一枚由 inbox.can_address 具名上抛、穿过
+出口就撞上裸 500 纯文本 —— 那本账缺表与这本账缺表说的是同一句运维真话（去跑 migrations/0008）。
+读侧那一支仍只接生命周期一枚：审批那本账的缺表早在 sources.approval_candidates 里折成逐腿缺席，
+今天没有任何抛出链走到读出口，把一枚问不出的腿再折成整页 503 只是替那张脸多留一条后门。缺列与
+驱动缺失那两格也仍原样上抛：靠报错文案把它们认出来再折进 503，就是替真 bug 打掩护，那是另一本
+账（三格排查路与本单边界见 docs/api/contract-v1.md 的 R381 一节）。
 """
 from __future__ import annotations
 
@@ -45,6 +54,7 @@ from app.notifications.inbox import (
     can_address,
     writable_state,
 )
+from app.storage import pending_approvals
 
 router = APIRouter()
 
@@ -156,8 +166,14 @@ async def _apply(request: Request, action: Literal['read', 'dismiss']) -> dict[s
                     'reason': REASON_APPLIED,
                 }
             )
-    except state_store.NotificationStateStoreMissing as exc:
-        # 只接这一种错：把任何一次异常都翻成 503，等于替真正的 bug 打掩护（与看板同一条纪律）。
+    except (
+        state_store.NotificationStateStoreMissing,
+        pending_approvals.PendingApprovalStoreMissing,
+    ) as exc:
+        # 只接这两枚具名错：生命周期那一本与审批那一本，各自都缺表。把任何一次异常都
+        # 翻成 503，等于替真正的 bug 打掩护（与看板同一条纪律）。审批那一枚由 inbox.can_address
+        # 具名上抛（R373 的裁定是「不许静默吞」，不是「不许有正确出口」），出口此前只接生命周期
+        # 那一枚，于是这张脸在客户机上是裸 500 纯文本 —— 答成 503 才是那句可执行的运维真话。
         raise HTTPException(status_code=503, detail='storage_unavailable') from exc
 
     return {
@@ -187,6 +203,8 @@ async def list_notifications(
             limit=cleaned_limit,
             offset=cleaned_offset,
         )
+    # 只接生命周期那一枚：审批那本账缺表在 sources.approval_candidates 已折成逐腿缺席，今天走不到
+    # 这一支；把它接进来等于给「整页黑」多留一条后门（tests/test_r381_* 与 R373 的刀一共钉这一格）。
     except state_store.NotificationStateStoreMissing as exc:
         raise HTTPException(status_code=503, detail='storage_unavailable') from exc
 

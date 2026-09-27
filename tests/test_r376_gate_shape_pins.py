@@ -9,7 +9,8 @@
   `app/api/v1/alerts.py::_is_production_environment`。全仓那八枚定义一枚都不许多长；states.py
   自己既不许 `os.getenv("APP_ENV")`，也不许写死 `"production"` 字面量。
 - 错误码零新增 —— 拒答走既有那一枚具名错，出口 `app/api/v1/notifications.py` 的两支 except
-  今天就在把它翻成 503 `storage_unavailable`，所以出口一个字都不必改；`detail` 的取值集合、
+  今天就在把它翻成 503 `storage_unavailable`，所以本件出口一个字都没改（R381 之后写侧那一支
+  多接一枚具名类型，名单钉随之一同改口，等号判法未松）；`detail` 的取值集合、
   `reason` 的词表、成功回执的键集合，本件一枚都不许多长。
 - 判据④：401 那一支与 `notification_not_addressable` 那一支逐格保持。收件箱侧那两张折叠名单
   （`inbox.py::can_address` 的 401/403/404、`sources.py::alert_candidates` 的 403/503）各自从
@@ -54,15 +55,16 @@ OUTLET_ERROR_FACES = {
     (503, STORAGE_CODE),
 }
 
-#: 出口在基点上就有的异常型名单（多接一种 = 替真 bug 打掩护，少接一种 = 换了脸）。
-#: `_ids_from_body` 那三支客户端形状错 + 读写两支出口各自翻译那枚具名错。
-OUTLET_HANDLER_ROSTER = [
-    "Exception",
-    "NotificationIdError",
-    "NotificationStateStoreMissing",
-    "NotificationStateStoreMissing",
-    "ValidationError",
-]
+#: 出口的异常型名单（多接一种 = 替真 bug 打掩护，少接一种 = 换了脸）。
+#: `_ids_from_body` 那三支客户端形状错 + 两支出口各自翻译的存储拒答。本件交工时读写两支各只接一枚
+#: 生命周期错（五枚），R381 只在**写侧**那一支多接了审批账本那枚具名错（六枚）—— 等号判法一字未松，
+#: 改的是右侧名单本身，那格改动与它的判据见 docs/api/contract-v1.md 的 R381 一节。
+LIFECYCLE_TYPE = "NotificationStateStoreMissing"
+OUTLET_HANDLER_ROSTER = sorted(
+    ["Exception", "NotificationIdError", "ValidationError"]
+    + [LIFECYCLE_TYPE]
+    + [LIFECYCLE_TYPE, "PendingApprovalStoreMissing"]
+)
 
 #: 生命周期那一层的顶层函数名单，含本单新添的那一枚闸（顺序即读法）。
 STATES_MODULE_ROSTER = [
@@ -124,8 +126,9 @@ def _handler_types(tree: ast.AST) -> list[str]:
     names: list[str] = []
     for handler in ast.walk(tree):
         if isinstance(handler, ast.ExceptHandler) and handler.type is not None:
-            types = handler.type if isinstance(handler.type, ast.Tuple) else [handler.type]
-            names.extend(getattr(node, "attr", "") or getattr(node, "id", "") for node in types)
+            # R381 修形：`except (A, B)` 的 `handler.type` 是一枚 ast.Tuple，按它自己迭代会炸。
+            nodes = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+            names.extend(getattr(node, "attr", "") or getattr(node, "id", "") for node in nodes)
     return sorted(names)
 
 
@@ -267,6 +270,14 @@ def test_the_outlet_emits_no_new_error_face():
 
 
 def test_the_outlet_still_translates_exactly_one_exception_type():
+    """出口承接名单（R381 改口：等号右侧从五枚长成六枚，判法一字未松）。
+
+    函数名与它那一格都保留原样：它钉的是「生命周期那枚具名错被读写两支各接一次」，那一格一枚没少。
+    R381 只把审批账本那枚错接进**写侧**那一支，读侧那支没接 —— 那枚错今天走不到读出口
+    （`sources.py::approval_candidates` 早已把它折成逐腿缺席），接进去等于把 R373 刀一在读出口量到的
+    裸 500 洗成 503，钝掉别人那扇反证窗。改的只有等号右侧那份名单；`==` 判法、两支存储出口各恰一枚
+    503、detail 恒为 `storage_unavailable` 三格判据一字未动。
+    """
     tree = _tree(OUTLET_PY)
 
     assert _handler_types(tree) == OUTLET_HANDLER_ROSTER, (
@@ -275,10 +286,9 @@ def test_the_outlet_still_translates_exactly_one_exception_type():
     handlers = [
         handler for handler in ast.walk(tree)
         if isinstance(handler, ast.ExceptHandler)
-        and handler.type is not None
-        and getattr(handler.type, "attr", "") == "NotificationStateStoreMissing"
+        and LIFECYCLE_TYPE in _handler_types(handler)
     ]
-    assert len(handlers) == 2, f"接这枚错的 except 应为两支（一读一写），实测 {len(handlers)}"
+    assert len(handlers) == 2, f"接那枚生命周期错的 except 应为两支（一读一写），实测 {len(handlers)}"
     for handler in handlers:
         raises = [
             call for call in ast.walk(handler)

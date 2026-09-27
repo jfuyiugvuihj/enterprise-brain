@@ -4772,3 +4772,152 @@ catch-all conversions, three write-entry calls and the ordering note in `delete_
 `app/memory/profile.py` +53 / -0 -- one gate, its named refusal, and the narrow conversion in
 `upsert_profile`'s handler. `app/api/v1/auth.py` +20 / -6 -- the import block, one pre-check, one narrow
 translation, and the comments that used to describe one face now describing three.
+
+## The write exit answers the approval ledger the same way it answers its own (2026-09-27, R381)
+
+R373 ruled that a write side which cannot ask must not answer: `app/notifications/inbox.py::can_address`
+catches `pending_approvals.PendingApprovalStoreMissing` by name and re-raises it bare, and that ruling
+stands untouched here -- this section does not add one handler to that file. What it does add is the
+other half of the same sentence. An exit that refuses to swallow the refusal still has to say something
+true, and until today it said nothing at all: the exception walked out of `app/api/v1/notifications.py`
+past the `except` clause that only translated the lifecycle ledger, met `app/**`'s zero exception
+handlers, and reached the customer as a bare `500` with `content-type: text/plain` and the body
+`Internal Server Error` -- no code, no reason word, and no 「run migrations/0008」 for the operator.
+Measured at base, not inferred: both write exits answered `500 text/plain Internal Server Error`.
+
+### Reachability first: what actually escapes the two write exits
+
+Measured at base `0d4f5ec` on this tree by driving the routes, not by reading comments. Every row below
+has a live throw chain or says why it does not; chains that cannot be produced are not folded.
+
+| Exception (named) | Thrown at | Exit today (base) | Treated here |
+| --- | --- | --- | --- |
+| `PendingApprovalStoreMissing` | `app/storage/pending_approvals.py:152` via `_items_with_status:371` via `open_items:390`, reached from `inbox.py:152`, re-raised bare at `inbox.py:159` | `POST /notifications/read` and `/notifications/dismiss`: bare `500` text/plain. `GET /notifications`: `200` + `included: false` (already folded at `sources.py:130`) | yes -- the only row this section folds |
+| `psycopg.errors.UndefinedColumn` (table present, column missing) | `app/storage/pending_approvals.py:372` | bare `500` on all three exits | no, stays bare |
+| `RuntimeError('PostgreSQL driver is unavailable')` | `app/storage/pending_approvals.py:104` | bare `500` on all three exits | no, stays bare |
+| `NotificationIdError` (a stored row holds a word this repo does not know) | `app/notifications/contracts.py:106` via `advance_state`, called at `states.py:193` | bare `500` | no, stays bare |
+| `HTTPException(503)` from the alert leg | re-raised bare at `inbox.py:176` (R366) | `503` JSON `{"detail": "storage_unavailable"}` through Starlette's own handler | already an exit face |
+| `HTTPException(401 / 403 / 503)` from the document leg | `inbox.py:193`, deliberately unhanded (R373) | its own status, JSON | untouched |
+| `HTTPException(422)` / `HTTPException(401)` from the write body, the read-side state/page cleaners, and the auth guard | the nine faces the module raises before any `try`: `:98 / :105 / :109 / :114 / :120` (`_ids_from_body`), `:80 / :86 / :88` (`_clean_state_filter`, `_clean_page`), `:73` (`_principal_or_401`) -- all base numbering | `422` / `401` JSON | untouched -- they sit before the `try`, and the row lists all nine so it is a count, not a sample |
+| `NotificationStateStoreMissing` | `states.py:88` (no table) and `states.py:125` (production without a store, R376) | `503 storage_unavailable` | already translated |
+| `ValueError('recipient and notification_id are both required')` | `states.py:188` | unreachable: `recipient` falls back to `'-'`, and ids are validated non-empty before the call | n/a |
+| `ValueError('unsupported notification action: ...')` | `inbox.py:211` | unreachable: `action` is a literal from the two routes | n/a |
+| `RuntimeError('unknown notification source in bundles: ...')` | `inbox.py:77` | unreachable: `parse_notification_id` admits exactly three sources | n/a |
+
+### The fold: one named type, in one clause, and no new face
+
+`notifications.py:159` in `_apply` (base numbering; it sits at `:169` after this section's import and
+docstring) -- the clause behind `POST /notifications/read` and `POST /notifications/dismiss` -- now names
+two types instead of one. `notifications.py:190` in `list_notifications` (now `:208`) still names exactly
+one, unchanged from base. Nothing else about the shape moved:
+
+- `status_code=503` raise points in the module: still exactly two, one per clause, both with
+  `detail='storage_unavailable'` and both chained `from exc`.
+- Zero new error codes, zero new reason words, zero new status tiers. `storage_unavailable` is the code
+  `chat.py:3037`, `dashboard.py:233` and `alerts.py` already answer for this same condition, and it is a
+  member of `ErrorEnvelope.code`; the `(status_code, detail)` face set of the module is unchanged.
+- No broad catch. The one `except Exception` in this file is still the R299 site inside `_ids_from_body`
+  (illegal JSON and oversize share one 422 face); this section adds none, and `RuntimeError` -- the
+  parent of both folded types -- is deliberately not in the roster.
+- The read clause stayed narrow on purpose, and this is the one place where a "harmless extra name" was
+  considered and refused. No throw chain reaches it today: `sources.py:130` already turns that refusal
+  into a per-leg absence, so `GET /notifications` answers `200` with
+  `sources.approval == {"included": false, "reason_code": "storage_unavailable", ...}`. Catching the
+  ledger type there as well would do two things, both bad: it would fold a leg-level refusal into a
+  page-level 503 that the leg fold was written to avoid, and it would erase the face R373 measures from
+  the other side -- its knife one deletes the `sources.py` fold and asserts that the read exit goes bare
+  `500`, which is the evidence that the fold is load-bearing. Widening this clause makes that window
+  read `503` and dulls a counter-evidence window this ticket does not own. Judgment ① says a fold list
+  admits exactly the types with a live chain, so the name is not on this clause's list.
+  Two pins hold the boundary from both ends: `test_the_read_exit_call_itself_lets_that_ledger_refusal_through`
+  (a direct call still lets the ledger type through while it answers the lifecycle type with 503) and
+  `test_the_ledger_type_is_folded_at_the_write_exit_only` (the AST reads "two names in `_apply`, one name
+  in `list_notifications`). Knife five is the mirror of both: widen the read clause and they go red.
+
+### Three grids stay bare 500, and the exit does not guess about them
+
+The three diagnostic paths of one missing ledger are still three different readings, which is the point
+of keeping them apart:
+missing table names itself (`pending_approvals.py:152`, `states.py:88`), a missing column is a
+`psycopg.errors.UndefinedColumn` raised by the database at `pending_approvals.py:372`, and a missing
+driver is a bare `RuntimeError` at `pending_approvals.py:104` (structurally unreachable while
+`_retry_readiness_probe()` is the only writer of `_db_ready` and refuses to set it without a driver --
+but reachable the moment that invariant moves, and pinned as bare anyway). A third row joins those two:
+`advance_state` refusing a stored word it does not recognise (`contracts.py:106`) is data corruption,
+not an unready store, and washing it into `503 storage_unavailable` would hand the operator a
+「go run a migration」 prescription for a row no migration owns.
+
+No one of those three is folded, and none will be folded at this layer by matching text. Recognising them
+through `type(exc).__name__` or through substrings such as `does not exist` would open a second ledger
+beside the named types -- every future SQL error carrying that phrase would silently become a storage
+answer, and the exit would start hiding real bugs. Each of those grids belongs to the ledger that raises
+it: name the exception there (as R373 did for the missing table), or answer it where the query happens.
+
+### What did not move
+
+`app/notifications/inbox.py`, `app/notifications/sources.py`, `app/notifications/states.py`,
+`app/storage/pending_approvals.py` and `app/api/v1/alerts.py`: zero bytes. R373's write-side ruling is
+pinned from the AST in this ticket too -- the approval clause in `can_address` still has exactly one
+statement body, a bare `Raise` with no expression -- and R376's gate still refuses a production write
+that cannot be stored. 401 and 422 keep their own faces, an id that is not yours still gets its own
+`notification_not_addressable` receipt with 200, a refusal writes no row and emits no per-item result,
+and a refusal is not recorded as a denial in the audit ledger.
+
+Net +18 lines on the outlet also moves the prose coordinates other files quote, and those files are
+not in this write domain, so the drift is named here instead of being edited: `inbox.py:174` and
+`alerts.py:110` point at `notifications.py:161`, which after this section sits at `:177`; `states.py:107`
+points at `:159`, now `:169`; `frontend/src/lib/notifications.js:26` quotes the three routes as
+`:171 / :194 / :200`, now `:187 / :212 / :218`; and the docstrings of `test_r359_*:8` and `test_r371_*:16`
+repeat `:161`. Nothing behavioural moved -- each is a comment carrying a line number, and no test asserts
+any of those strings (the closest pin, `test_r359_*:958`, asks the module for the literal
+`'storage_unavailable'`, which is still there twice).
+
+One existing pin had to change its statement, and it is named here rather than quietly adjusted:
+`tests/test_r376_gate_shape_pins.py::test_the_outlet_still_translates_exactly_one_exception_type`. Its
+name is untouched -- the格 it judges, "the lifecycle type is caught by both exits, one clause each", is
+still true and still judged with `==`, one 503 per clause and a `storage_unavailable` literal. What moved
+is the list on the right-hand side of that equal sign, `OUTLET_HANDLER_ROSTER`, five names to six by
+exactly this one named type, and the clause filter under it, which read `handler.type.attr` and now reads
+a handler's type list -- a clause naming two types has no single attribute to read. Its `_handler_types`
+helper also had to be repaired: it iterated `ast.Tuple` instead of `.elts`, which is fine while no
+`except` in the file lists two types and a hard error the moment one does -- a reader that crashes on the
+shape cannot audit it. Nothing was deleted, skipped, xfailed or widened from `==` to `in`; the file still
+collects the same 24 clauses and they are green at delivery.
+
+### Evidence
+
+`tests/test_r381_outlet_answers_the_absent_approval_ledger.py` (32 collected) drives both write exits and
+the read exit through `TestClient`: the 503 face and its JSON body, the empty `notification_states`
+ledger and the missing `results` key, a mixed batch that refuses before it records, the audit ledger that
+gains no denial, the 200-plus-absent-leg read side, the not-addressable receipt that keeps its own face,
+the happy path that still answers per item, the read exit still letting the ledger type through when it
+is called directly, and the two grids plus the corruption row that stay bare 500. Five counter-evidence
+windows run in the same file against the shadow root (`tests/_temp_edit_overlay.py` -- tracked bytes stay
+read-only in and out, sha256 equal): knife one removes the folded type from the write clause (8 reds --
+five behaviour faces plus three shape pins), knife two turns the refusal into an empty receipt (8 reds,
+two of them R373's family -- `_check_dismiss_survives_the_refusal` run on its own, and
+`_r373_dismiss_writes_nothing`, this file's recomposition of it with that window's `status >= 500` line
+added on top), which is what makes the fold non-silent, knife three merges `NotificationIdError` into
+the storage clause (4 reds, one of them the corruption row that must not be handed a migration
+prescription), knife four merges 401 into a
+503 (3 reds), knife five widens the read clause (4 reds: the three shape pins plus the direct-call face
+that says the read exit does not catch this type). One caveat is pinned rather than hidden: `app.main`
+registered `list_notifications` at import time, so a window that rewrites that clause is invisible to
+`TestClient` -- which is exactly why knife five's behaviour victim is the direct call, and why the
+HTTP-level read face is listed among that window's greens.
+`tests/test_r381_outlet_shape_pins.py` (21 collected) judges the shape off the AST through the same
+current-view reader: the six-name roster read twice (against the literal and against what is on disk),
+two storage clauses with one 503 each and no `return`, the fold sitting in `_apply` and nowhere else, the
+count of 503 raise points, the single broad catch still parked in `_ids_from_body`, the two types being
+siblings rather than parent and child, `inbox.py`'s clause untouched, the import spelled exactly as
+`chat.py` and `dashboard.py` spell it, and the byte shape of every delivered file.
+
+Physical lines: `app/api/v1/notifications.py` +20 / -2 -- one import, one docstring paragraph, the write
+clause widened by one named type, its comment rewritten to say which two ledgers it now answers for, and
+two comment lines on the read clause saying why it does not grow one. The two test files are new: 768 and
+398 physical lines. `tests/test_r376_gate_shape_pins.py` +25 / -15 (the改口 above). This section is appended at the
+end of the file as one hunk, `+150 / -1`: the one removed line is R376's last line
+`+0 / -0.`, which the file carried **without a line terminator** at base `0d4f5ec`, and the hunk re-adds
+it byte for byte before starting here (`\ No newline at end of file` marks it in the diff). No content
+was deleted; the missing terminator is the same hygiene gap R371 recorded for its own append, and it is
+closed here rather than passed on.
