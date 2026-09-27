@@ -288,11 +288,24 @@ describe('R307b 乙 · 渲染产物：接原语之后屏上还是那些控件，
 
   it('地基：每一枚渲染出的 button 都带 ui-button 基类与档位类（解析不到的桩没有这两格）', async () => {
     const { buttons } = await shell(STAFF)
-    expect(buttons.length, '工作台一枚控件都没渲染出来，下面所有逐枚对照都会退成空集').toBe(navigation.length + 1)
+    // 枚数基线随真实屏上的控件长一格（R333，2026-09-27，总控裁定一走 ②不走 ①）：顶栏
+    // .workspace-tools 自 R333 起合法多出一枚【接了原语】的按钮 —— components/NotificationBell.vue
+    // 的触发件（./ui 的 UiButton，data-testid="notification-trigger"）。这一行【仍然是精确相等】：
+    // 换成 toBeGreaterThanOrEqual 才是放宽，它抓不到「侧栏少接了一枚」这种倒退，本仓规矩是能精确就精确。
+    // 多出来的那一枚「是谁」由下面三条具名钉住，不许退成「随便多一枚都算对」。
+    expect(buttons.length, '工作台一枚控件都没渲染出来，下面所有逐枚对照都会退成空集').toBe(navigation.length + 2)
     buttons.forEach(item => {
       expect(item.classes, '这一枚不是 UiButton 渲染的：' + item.attrs).toContain(' ui-button ')
       expect(/ui-button--(primary|secondary|ghost|danger)/.test(item.classes), '档位类没算出来：' + item.attrs).toBe(true)
     })
+    // 具名一：多出来那一枚必须是通知 —— 按类名只数到一枚，可及名称以「通知」开头。
+    const bell = byClass(buttons, 'notif__bell')
+    expect(bell, '顶栏多出来那一枚不是通知（notif__bell 没渲染出来，枚数就不该长这一格）').toHaveLength(1)
+    expect(bell[0].ariaLabel, '这一枚的可及名称不是「通知」开头：多出来的不是通知那一枚').toMatch(/^通知/)
+    // 具名二：它走的是原语，不是又长出一枚裸 <button>（r288 的合计棘轮 9 枚同时盯着这一格）。
+    expect(bell[0].testid, '通知那一枚没有自报家门').toBe('notification-trigger')
+    // 具名三：把通知这一枚摘干净就退回原基线 —— 这一格与 navigation.length + 1 之间的差只有它。
+    expect(buttons.filter(item => !item.classes.includes(' notif__bell ')), '除通知那一枚之外不是「侧栏 + 退出」的原样').toHaveLength(navigation.length + 1)
   })
 
   it('工作台那一屏：侧栏 navigation.length 枚 + 顶栏一枚退出，data-testid 逐枚对得上', async () => {

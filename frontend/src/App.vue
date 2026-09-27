@@ -5,6 +5,7 @@ import { DEFAULT_SCREEN, FEED_SCREEN, cachedScreens, navigation, screenRouteIds 
 import { focusScreenMain, navItems, nextNavItem } from './router/nav-focus'
 import { resetSessions } from './lib/sessions'
 import { UiButton } from './components/ui'
+import NotificationBell from './components/NotificationBell.vue'
 import {
   clearSession,
   errorDetail,
@@ -67,6 +68,10 @@ const roleLabel = computed(() => userRole.value === 'admin' ? '管理员' : '普
  *   · GET /dashboard/summary 那一格虽是全集长度，却不向图复核，它自己模块头写着「可能高估、
  *     绝不会少报」——拿它摆徽标就是把已经办完的事说成还等着拍板；
  *   · 徽标要在人点开之前就有数，只能每屏挂载时多发一次请求去猜，这笔代价不该由壳层背。
+ * R333（2026-09-26）把上面那段对「通知」的判据改了一半：摘它的理由是「今天没有一句诚实的
+ * 条数可摆」，而 R299 的 GET /notifications 交回的是【全集】未读总数（unread_total，窗口裁过时
+ * is_exact=false，两个总数只算下界）。所以顶栏现在摆得动这枚徽标，也只剩这里能摆。
+ * 搜索那一枚的判据一字未动：全站仍没有一枚诚实的全局检索端点，那一格继续空着（判据⑧）。
  * 真待办的正脸在侧栏那一屏（components/hitl/HitlPendingPanel.vue 读同一本账），入口不在这枚钮上。
  */
 // 退出那枚原先只画一个「⌄」：读屏念出来只有「按钮」，看着像下拉箭头，按下去却是登出。
@@ -465,6 +470,12 @@ onUnmounted(() => {
             <!-- R278 · G16①②：这里原先摆着两枚按了没反应的按钮（搜索、通知），一并摘掉。
                  为什么不接半截、今天为什么没有一枚诚实的条数可摆，账记在上面 script 里那段；
                  判据钉在 src 下的顶栏用例 r278-topbar 里。 -->
+<!-- R333 · 通知这一格接回来了：不是新增玩法，是把 R278 当年欠的那格补齐。
+     当年摘它的理由是「今天没有一句诚实的条数可摆」，R299 用 GET /notifications 的
+     全集未读口径（unread_total，另带 is_exact 说明是不是下界）把那句话推翻了；
+     搜索那一枚仍不接——它到今天也没有诚实出处，接了就是回到假控件（判据⑧）。
+     判据钉在 src/lib/notifications.js、src/components/NotificationBell.vue 与 r333 用例里。 -->
+<NotificationBell />
             <span class="user-avatar">{{ username.slice(0, 1).toUpperCase() || 'A' }}</span>
             <span class="identity"><strong>{{ username }}</strong><span>{{ roleLabel }}</span></span>
             <UiButton

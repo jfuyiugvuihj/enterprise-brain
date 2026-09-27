@@ -15,6 +15,12 @@
  *      （契约 docs/api/contract-v1.md 的 HITL Pending Listing 一节明写不得当总数用），
  *      GET /dashboard/summary 那一格不向图复核、自己写着「可能高估」，而徽标要在人点开之前
  *      就有数——只能每屏挂载多发一次请求去猜。所以壳层不摆数，也不自己第二本账。
+ *   ② 通知：【这一条已由 R333 改口（2026-09-26，总控授权）——上面那句「今天没有一句诚实的
+ *      条数可摆」是本件写下时的事实，今天不再成立】R299 的 GET /notifications 按【全集】交回
+ *      未读总数（unread_total；窗口裁过时 is_exact=false，两个总数只算下界），顶栏这一格今天
+ *      有真数字可摆，所以 R333 是把当年欠的那格接回来，不是加新玩法。本件对通知那一枚的判据
+ *      相应从「源码里不许出现」换成「出现就必须已接线」——逐条理由与新旧断言写在那枚用例上方
+ *      的注释里，要求没降。搜索那一枚的判据一字未动：它到今天也没有诚实出处（判据⑧）。
  *
  * 三条腿（沿用本仓口径：node 环境，无 jsdom / @vue/test-utils）：
  *   ① 真产物 = 跑真 App.vue 的 setup() 并以 App.ssrRender 出真 HTML，断言屏上那枚按钮叫什么；
@@ -52,7 +58,8 @@ vi.mock('../lib/http', async (importOriginal) => {
 
 import App from '../App.vue'
 import { navigation } from '../router'
-import { UiButton } from '../components/ui'
+import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from '../components/ui'
+import NotificationBell from '../components/NotificationBell.vue'
 
 const source = readFileSync(new URL('../App.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const TOKEN_KEY = 'eb_token'
@@ -235,9 +242,28 @@ function clientify(label, rel, sfc, extraComponents) {
 
 /** 原语走真身：档位类名（ui-button--ghost 那一套）必须是它自己算出来的，不是夹具捏的。 */
 const ClientUiButton = clientify('R278ClientUiButton', '../components/ui/UiButton.vue', UiButton)
+/**
+ * 铃铛的面板要用到的三张状态原语同样走真身：这一腿里只要有一枚没注册，模板就退化成
+ * 「解析不认识的标签」，画不出东西也报不出错——挂载腿数到几枚，全看注册表齐不齐。
+ */
+const ClientUiLoadingState = clientify('R278ClientUiLoadingState', '../components/ui/UiLoadingState.vue', UiLoadingState)
+const ClientUiErrorState = clientify('R278ClientUiErrorState', '../components/ui/UiErrorState.vue', UiErrorState, { UiButton: ClientUiButton })
+const ClientUiEmptyState = clientify('R278ClientUiEmptyState', '../components/ui/UiEmptyState.vue', UiEmptyState, { UiButton: ClientUiButton })
+/**
+ * R333（2026-09-27，总控裁定二）：这一枚必须注册进来。
+ * 它没注册的时候，本件的挂载腿根本画不出铃铛，「顶栏那一段恰好一枚按钮」是靠这枚盲区才绿的
+ * ——假绿。注册之后那一腿数的是屏上真有几种控件，判据⑤的逐枚对照才名副其实。
+ */
+const ClientNotificationBell = clientify('R278ClientNotificationBell', '../components/NotificationBell.vue', NotificationBell, {
+  UiButton: ClientUiButton,
+  UiLoadingState: ClientUiLoadingState,
+  UiErrorState: ClientUiErrorState,
+  UiEmptyState: ClientUiEmptyState,
+})
 /** 壳层的客户端版本：面板位（RouterView / KeepAlive）换成空桩 —— 本件看的是壳层，不是任何一屏。 */
 const ClientApp = clientify('R278ClientApp', '../App.vue', App, {
   UiButton: ClientUiButton,
+  NotificationBell: ClientNotificationBell,
   RouterView: { __name: 'R278RouterViewStub', render: () => null },
   KeepAlive: { __name: 'R278KeepAliveStub', render: () => null },
   Transition: {
@@ -361,27 +387,87 @@ describe('R278 判据⑤ · 逐枚对照：App.vue 里没有一枚按了没反�
     expect(dead.map(node => node.tag + ' ' + String(node.props.class || '')), '这些按钮没有任何可追的行为').toEqual([])
   })
 
-  it('改造前那两枚假控件（搜索、通知）不在源码里了', () => {
+  /**
+   * R333 改口（2026-09-26，授权人：总控）。原断言逐字是三行：
+   *   expect(code).not.toMatch(/aria-label="搜索"/)
+   *   expect(code).not.toMatch(/aria-label="通知"/)
+   *   expect(code).not.toMatch(/class="bell"/)
+   * 为什么允许动中间那一条：当年摘它的理由写在本件文件头 :14——「今天没有一句诚实的『条数』可摆」
+   * （GET /hitl/pending 的 count 只是一页过滤后的长度）。R299 把这句话推翻了：
+   * GET /notifications 按【全集】交回 unread_total（窗口裁过时 is_exact=false，两个总数只算下界），
+   * 所以顶栏这一格今天有真数字可摆。R333 就是来把当年欠的那格接回来。
+   * 换绑之后要求没降、只更硬（每条各自盯一件事，摘掉任一条接线本件当场红）：
+   *   · 搜索那一枚的判据【一字未动】：它到今天也没有诚实出处，接了就回到假控件（判据⑧）；
+   *   · 老那枚死控件的形状（class="bell"）仍然一律不许出现；
+   *   · 通知那一枚从「源码里不许出现」换成「出现就必须是活的」：壳层必须真摆它、必须有可追的
+   *     点击与按键行为、可及名称必须带着未读那句可读表达、数字必须出自后端全集口径那一格字段
+   *     （页内条数在 lib 源头就不往上交），且渲染产物里那一枚必须是真的 <button>。
+   */
+  it('改造前那两枚假控件：搜索仍不许出现；通知这一枚若长出脸来，必须已接线', async () => {
+    const read = rel2 => withoutComments(readFileSync(new URL(rel2, import.meta.url), 'utf8').replace(/\r\n/g, '\n'))
+    const bell = read('../components/NotificationBell.vue')
+    const inbox = read('../lib/notifications.js')
+    // ① 搜索那一枚：原判据一字未动，两处都不许出现（顺手动 = 回到假控件，判负）
     expect(code).not.toMatch(/aria-label="搜索"/)
-    expect(code).not.toMatch(/aria-label="通知"/)
+    expect(bell).not.toMatch(/aria-label="搜索"/)
+    expect(bell).not.toMatch(/搜索|检索/)
+    // ② 老那枚死控件的形状仍然不许出现在壳层里
     expect(code).not.toMatch(/class="bell"/)
+    // ③ 通知这一枚：出现了就必须是活的 —— 壳层确实摆了它（顶栏那一段的唯一挂载点）
+    expect(code).toMatch(/<NotificationBell \/>/)
+    //    有可追的行为：点击可开、按键可关（写着 aria-label 却按不动的那种仍然算死控件）
+    expect(bell).toMatch(/@click="togglePanel"/)
+    expect(bell).toMatch(/@keydown="onKeydown"/)
+    //    有真实条数出处：徽标那一枚只可能读后端全集口径那一格；页内长度在源头就不往上交
+    expect(inbox).toMatch(/const unread = countOrUnknown\(payload\.unread_total\)/)
+    expect(inbox).toMatch(/\n\s+unread,\n/)
+    expect(inbox).not.toMatch(/returned:/)
+    expect(bell).toMatch(/badgeText\(unread\.value/)
+    //    画相：渲染出的顶栏里那一枚是真 <button>，带可及名称（未读那句可读表达）与展开语义
+    const { topbar } = await renderWorkspace({ [TOKEN_KEY]: 'jwt-live', [USER_KEY]: 'baiye', [ROLE_KEY]: 'staff' })
+    const trigger = /<button[^>]*notif__bell[^>]*>/.exec(topbar)
+    expect(trigger, '顶栏那枚铃铛没渲染成真 button（要么没摆，要么解析成了不认识标签）').toBeTruthy()
+    expect(trigger[0]).toContain('ui-button')
+    expect(trigger[0]).toMatch(/aria-label="通知[^"]*"/)
+    expect(trigger[0]).toContain('aria-expanded="false"')
+    expect(trigger[0]).toContain('aria-controls="notification-panel"')
   })
 })
 
-describe('R278 判据①② · 顶栏这一行的形状', () => {
-  it('顶栏只剩一枚按钮，而且它就是退出（挂到真节点上，再真按一次）', async () => {
+describe('R278 判据①② · 顶栏这一行的形状（R333 改口：这一行今天是两枚）', () => {
+  /**
+   * 改口（2026-09-27，总控裁定二）。原断言逐字是这四行：
+   *   expect(tools, '顶栏那一段不是恰好一枚按钮').toHaveLength(1)
+   *   expect(hasNodeClass(tools[0], 'logout-link'), '顶栏那一枚不是退出').toBe(true)
+   *   expect(String(tools[0].props['aria-label']), '顶栏那一枚念不出「退出登录」').toContain('退出登录')
+   *   expect(typeof tools[0].props.onClick, '顶栏那一枚按不动（原意就是 @click="doLogout"）').toBe('function')
+   * 为什么必须改：上面 :238 那批注册补齐之前，这一腿根本画不出铃铛，toHaveLength(1) 是靠
+   * 「Failed to resolve component: NotificationBell」这枚夹具盲区才绿的 —— 假绿。注册补齐之后
+   * 屏上真有两条控件，那一枚钉的是夹具的缺口，不是产品的形状。
+   * 要求没降反升：枚数从「一枚」换成「恰好两枚且逐枚具名对位」（第一枚 notif__bell、第二枚
+   * logout-link，顺序也钉），两枚各自都要有可追行为（onClick 是函数），通知那一枚还要交出以
+   * 「通知」开头的可及名称与 aria-expanded="false"，退出那一枚的名称与真按一次登出的效果一字
+   * 未动。摘掉挂载点、换掉类名、把 @click 摘了、把 aria-label 里的「通知」改掉 —— 全都当场红。
+   * 判据⑧不受影响：搜索那一格仍然不许出现（:391 与庚组各钉一次）。
+   */
+  it('顶栏那一段恰好两枚：R333 接回来的通知铃铛 + 退出，两枚都按得动（再真按一次退出）', async () => {
     const { root, store, buttons } = await mountShell({ [TOKEN_KEY]: 'jwt-live', [USER_KEY]: 'baiye', [ROLE_KEY]: 'staff' })
     const tools = buttonsUnder(root, 'workspace-tools')
-    expect(tools, '顶栏那一段不是恰好一枚按钮').toHaveLength(1)
-    expect(hasNodeClass(tools[0], 'logout-link'), '顶栏那一枚不是退出').toBe(true)
-    expect(String(tools[0].props['aria-label']), '顶栏那一枚念不出「退出登录」').toContain('退出登录')
-    expect(typeof tools[0].props.onClick, '顶栏那一枚按不动（原意就是 @click="doLogout"）').toBe('function')
-    // 「@click="doLogout"」的等价物：真按一次 —— 令牌从 localStorage 走掉，顶栏那一枚也跟着下屏。
-    tools[0].props.onClick({})
+    expect(tools, '顶栏那一段不是恰好两枚按钮（通知 + 退出）').toHaveLength(2)
+    expect(hasNodeClass(tools[0], 'notif__bell'), '顶栏第一枚不是 R333 那枚通知铃铛（notif__bell）').toBe(true)
+    expect(hasNodeClass(tools[1], 'logout-link'), '顶栏第二枚不是退出（logout-link）').toBe(true)
+    expect(typeof tools[0].props.onClick, '通知那一枚按不动（@click="togglePanel" 是它的活）').toBe('function')
+    expect(String(tools[0].props['aria-label']), '通知那一枚念不出以「通知」开头的句子').toMatch(/^通知/)
+    expect(String(tools[0].props['aria-expanded']), '通知那一枚没把展开语义交给读屏').toBe('false')
+    expect(typeof tools[1].props.onClick, '退出那一枚按不动（原意就是 @click="doLogout"）').toBe('function')
+    expect(String(tools[1].props['aria-label']), '顶栏那一枚念不出「退出登录」').toContain('退出登录')
+    // 「@click="doLogout"」的等价物：真按一次 —— 令牌从 localStorage 走掉，顶栏那两枚一起下屏。
+    tools[1].props.onClick({})
     await nextTick()
     await nextTick()
     expect(store.has(TOKEN_KEY), '按了退出，令牌还留在本地').toBe(false)
     expect(buttons().some(node => hasNodeClass(node, 'logout-link')), '按了退出，顶栏那枚还钉在屏上').toBe(false)
+    expect(buttons().some(node => hasNodeClass(node, 'notif__bell')), '按了退出，通知那一枚还钉在工作台的顶栏上').toBe(false)
     expect(walk(root).some(node => hasNodeClass(node, 'login-v2')), '按了退回去的得是登录页').toBe(true)
   })
 
@@ -392,6 +478,13 @@ describe('R278 判据①② · 顶栏这一行的形状', () => {
     expect(code).not.toMatch(/dashboard/)
     expect(code).not.toMatch(/http\.get\(|authedFetch\(/)
     // 「N 条」这种总数口径一枚都不许出现在顶栏那一段里
+    // 口径先说清楚（R333，2026-09-27）：这一枚钉的是【未加载态】的顶栏。renderWorkspace 走 SSR，
+    // 而 SSR 不跑 onMounted，那一格在这里必然还没有数字 —— 别把它读成「加载之后也不许摆数」，
+    // 那正好是 R299 之后要的反面：徽标就在人点开之前摆出后端全集口径的那一个数。
+    // 加载后的口径钉在别处，逐条是：components/__tests__/r333-notification-bell.test.js:201
+    // （全集 42 与页内 3 行不许互换）、:213（下界只说「至少」）、:222（0 与未知两张脸）、
+    // :233（可见数字 aria-hidden，读屏只走 aria-label 那一句），以及同件庚组 :650（真壳层的
+    // SSR 那一段只许说「还没读出来」，一个数字都不许凭空摆）。
     const { topbar } = await renderWorkspace({ [TOKEN_KEY]: 'jwt-live', [USER_KEY]: 'baiye', [ROLE_KEY]: 'staff' })
     expect(topbar).not.toMatch(/\d+\s*(?:条|个|枚)/)
     expect(topbar).not.toMatch(/(?:待办|待审批|等你拍板)/)
