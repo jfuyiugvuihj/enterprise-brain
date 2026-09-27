@@ -340,6 +340,156 @@ def frontend_deadline_cost_reading(text: str, body: str, poll_ms: int) -> dict:
         reading["waste_seconds"] = deadline_ms / 1000.0
     return reading
 
+
+# --- R378 起：这把尺按【形状】收停表动作，不按"哪一行引用了名单"收 ---------------------------
+#: 立件口径（判据 = 形状，不是位置）：一枚命中算不算"停子"，看它的**形状** ——
+#:   a) 命中处被一枚 ``if`` / ``while`` / ``for`` 的圆括号包住（它是一枚判定），**且**这条
+#:      判定的动作里打了零参 ``stop*()``（``ChatPanel.vue:1351`` 的 ``const stop`` 与 :1356 的
+#:      ``stopAtDeadline`` 就是这一族的收表动作），或
+#:   b) 命中那一行本身就是给这一族轮询上表：``setInterval(tick, ...)``。
+#:
+#: 为什么必须收窄（R378）：原收法按字面 ``QUEUE_SETTLED.includes`` 搜行，于是 ``90c15bb``
+#: （R268，09-26）在 ``queueFaceOf`` 里新增的那格**挑脸谓词** ——
+#: ``} else if (read && !QUEUE_SETTLED.includes(read.status)`` —— 被收成了第三枚"停子"。
+#: 它读的是同一枚名单，动作却是 ``face = queueCancelPendingFace()``，一枚表都没停 ⇒
+#: 名单从两枚变三枚 = 读数说谎，而 ``tests/test_r218_lane_flip_stop_sets.py:151`` 那两枚
+#: 冻结名单当场过期。修的是尺子：不许把名单改成三枚（把假读数钉死），也不许按行号或函数名
+#: 🔴 把 :1309 排除掉（例外名单就是下一班的红）—— 同一枚真停子形状落在文件里任何一格都必须收到。
+_SETTLED_PROBE = "QUEUE_SETTLED.includes"
+#: 停表动作的名字形状：``stop()`` / ``stopAtDeadline()`` 这类零参调用，不看它定义在哪一行。
+_STOP_ACTION = re.compile(r"\bstop[A-Za-z0-9_]*\s*\(\s*\)")
+#: 上表那一行的形状（与 ``_CITATIONS`` 里那枚时钟抄本同源）。
+_POLL_CLOCK_ACTION = re.compile(r"\bsetInterval\s*\(\s*tick\b")
+#: 判定头：命中处外侧那枚圆括号前站着这三个词之一，才算"一条判定"。
+_GUARD_KEYWORDS = ("if", "while", "for")
+_OPENERS = "([{"
+_CLOSERS = ")]}"
+
+
+def _code_view(text: str) -> tuple:
+    """一次扫描交回 (只含代码的文本, 括号配对表)。
+
+    形状判定必须先分清"代码里的括号"与"注释/字符串里的括号"：一句
+    ``// QUEUE_SETTLED.includes(s) stop()`` 不是停表动作，一枚模板字面量里的 ``{``
+    也不是块开头。替换成空格而不是删掉，为的是下标与原文件逐位对齐（行号才报得准）。
+    """
+    mask = bytearray(b"\x01") * len(text)
+    length = len(text)
+    index = 0
+
+    def blank(stop: int) -> None:
+        mask[index:stop] = b"\x00" * (stop - index)
+
+    while index < length:
+        ch = text[index]
+        pair = text[index + 1:index + 2]
+        if ch == "/" and pair == "/":
+            found = text.find("\n", index)
+            stop = length if found < 0 else found
+            blank(stop)
+            index = stop
+        elif ch == "/" and pair == "*":
+            found = text.find("*/", index + 2)
+            stop = length if found < 0 else found + 2
+            blank(stop)
+            index = stop
+        elif ch in "\"'`":
+            stop = index + 1
+            while stop < length:
+                if text[stop] == "\\":
+                    stop += 2
+                    continue
+                quote = text[stop]
+                stop += 1
+                if quote == ch or (quote == "\n" and ch != "`"):
+                    break
+            blank(stop)
+            index = stop
+        else:
+            index += 1
+    # 换行逐位保留：非代码字符换成空格，行边界不许被吃掉，否则行号就报歪。
+    code = "".join(ch if mask[at] or ch == "\n" else " " for at, ch in enumerate(text))
+    pairs, stack = {}, []
+    for at, ch in enumerate(code):
+        if ch in _OPENERS:
+            stack.append(at)
+        elif ch in _CLOSERS and stack and _OPENERS.index(code[stack[-1]]) == _CLOSERS.index(ch):
+            pairs[stack.pop()] = at
+    return code, pairs
+
+
+def _guard_close(code: str, pairs: dict, at: int):
+    """包住命中处的那枚**判定**右括号下标；命中处不在判定里就交回 None。
+
+    从最里层往外一层层走：``if (f(QUEUE_SETTLED.includes(s))) stop()`` 这种把名单套在普通
+    调用里的，也要能找到外面那枚 ``if``。赋值/参数/三元里读名单 ⇒ 一路走到头也不是判定。
+    """
+    probe = at
+    while True:
+        enclosing = [(opener, closer) for opener, closer in pairs.items()
+                     if opener < probe < closer and code[opener] == "("]
+        if not enclosing:
+            return None
+        opener, closer = min(enclosing, key=lambda pair: pair[1] - pair[0])
+        keyword = re.search(r"(\w+)$", code[:opener].rstrip())
+        if keyword is not None and keyword.group(1) in _GUARD_KEYWORDS:
+            return closer
+        probe = opener
+
+
+def _action_text(code: str, pairs: dict, cond_close: int) -> str:
+    """判定右括号之后的那一截**动作**：花括号块取块内，单句读到语句结束（可换行）。
+
+    ``if (cond) { stop() }`` 与 ``if (cond) stop()`` 与 ``if (cond)\\n  stop()`` 三形都要吃到
+    ``stop()``；``if (cond) { face = ... }`` 吃回来的是 ``face = ...``，里面没有停表调用。
+    """
+    length = len(code)
+    index = cond_close + 1
+    while index < length and code[index].isspace():
+        index += 1
+    if index < length and code[index] == "{" and index in pairs:
+        return code[index + 1:pairs[index]]
+    start, depth, consumed = index, 0, False
+    while index < length:
+        ch = code[index]
+        if ch in _OPENERS:
+            depth += 1
+        elif ch in _CLOSERS:
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0 and ch == ";":
+            index += 1
+            break
+        elif depth == 0 and ch == "\n" and consumed:
+            break
+        consumed = consumed or not ch.isspace()
+        index += 1
+    return code[start:index]
+
+
+def frontend_stop_actions(text: str) -> list:
+    """前端这一族轮询的**停表动作**清单，逐枚交 ``[行号, 原文]``（原文 = 命中所在那一行）。
+
+    只认形状（见本段开头的 ``_SETTLED_PROBE`` 说明），不认行号、不认函数名、不认文件里
+    这一段在谁身上。行号留着证先后，内容一律由形状判 —— 这是 ``90c15bb`` 那一格挑脸
+    谓词打进来的雷：按字面搜就会把"读名单"当成"停表"。
+    """
+    code, pairs = _code_view(text)
+    lines = text.splitlines()
+    rows = {}
+    for match in re.finditer(re.escape(_SETTLED_PROBE), code):
+        closer = _guard_close(code, pairs, match.start())
+        if closer is None or not _STOP_ACTION.search(_action_text(code, pairs, closer)):
+            continue
+        line = text[:match.start()].count("\n") + 1
+        rows.setdefault(closer, (line, lines[line - 1].strip()))
+    for match in _POLL_CLOCK_ACTION.finditer(code):
+        line = text[:match.start()].count("\n") + 1
+        rows.setdefault(("clock", match.start()), (line, lines[line - 1].strip()))
+    return [list(row) for row in sorted(rows.values())]
+
+
 def frontend_stop_vocabulary(root: Path) -> dict:
     """前端那族停轮子：``QUEUE_SETTLED``（状态名单）+ ``QUEUE_POLL_STOPPERS``（HTTP 回执）
     + 到点自停那半条（R221 起装进 ``watchQueueTurn``：数同一枚时钟的枚数，到点收表）。
@@ -368,8 +518,9 @@ def frontend_stop_vocabulary(root: Path) -> dict:
             "poll_ms": poll_ms,
             # 停表动作逐枚取证：连**原文**一起交，别只交行号 —— 只钉行号的话，别人在这枚
             # 文件上沿插一行就把本件打成假红（这正是本单第 ② 件要修的这类地雷）。
-            "stop_actions": [[n, line.strip()] for n, line in enumerate(text.splitlines(), 1)
-                             if "QUEUE_SETTLED.includes" in line or "setInterval(tick" in line],
+            # 🔴 R378 起这一格按**形状**收（``frontend_stop_actions``），不按"哪一行引用了名单"收：
+            # 按字面搜把 ``queueFaceOf`` 那格挑脸谓词也收成了第三枚停子 —— 它读同一枚名单，一枚表没停。
+            "stop_actions": frontend_stop_actions(text),
             "deadline_tokens_seen": {tok: body.count(tok) for tok in DEADLINE_TOKENS},
             "no_deadline": not any(tok in body for tok in DEADLINE_TOKENS),
             "deadline_ms": cost["deadline_ms"],

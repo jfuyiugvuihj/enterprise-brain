@@ -27,6 +27,11 @@ R245 改钉（09-25，总控预授权）—— 翻掉的钉逐行交代，一行
     ``assert cell["verdict"] == R.RED`` → ``== R.GREEN``，它是 :91 那枚钉的 verdict 半边，
     留着 RED 等于把本单刚退休的旧口径再钉一遍；原 ``:83-85`` 与 ``:168-170`` 两段注释叙述的
     就是那枚已经消失的残红，留假话在钉里比改注释更糟。**断言一枚没删。**
+R378 加钉（09-27，总控派工）—— 本件【一枚既有断言都没动】：:151 那两枚冻结名单今天
+  仍然逐字有效，红的是量具本体（``scripts/r218_switch_rehearsal.py`` 原按字面
+  ``QUEUE_SETTLED.includes`` 搜"前端停表动作"，把 ``90c15bb``（R268）在 ``queueFaceOf``
+  里新增的**挑脸谓词**收成了第三枚停子）。本班只在文件末尾加形状钉：真停子摆在任何一行
+  都必须收成停子，假停子（读名单却不收表）摆在任何一行都不许收 —— 判据 ②③④。
 🔴 反证只加不减：既有断言一枚不删、不放宽。
 """
 import re
@@ -389,3 +394,126 @@ def test_counter_evidence_deadline_token_drift_is_caught(tmp_path):
     assert cell["readings"]["frontend_deadline_gaps"] == []
     assert cell["verdict"] == R.RED
     assert cell["problems"] == ["frontend_deadline_cost_reading_contradicts_no_deadline"]
+
+
+# --- R378 反证钉（判据 ②③④）：这把尺按【形状】收停表动作，不按位置收 -------------------------
+#:
+#: 缺陷本体：``90c15bb``（R268，09-26）在 ``queueFaceOf`` 里新增一格**挑脸谓词** ——
+#: ``} else if (read && !QUEUE_SETTLED.includes(read.status)`` —— 而 ``scripts/r218_switch_rehearsal.py``
+#: 原收法按字面 ``QUEUE_SETTLED.includes`` 搜"前端停表动作"，于是把这一格纯显示逻辑收成了
+#: 第三枚停子，:151 那两枚冻结名单当场过期（本班在 HEAD ``285e265`` 的干净 worktree 里复现：
+#: 1 failed / 9 passed，红就落在 ``test_cell_is_red_because_a_final_status_is_never_stopped``）。
+#: 修的是量具：``frontend_stop_actions`` 从此只看形状（一枚判定的动作是 ``stop*()``，或上表那一行）。
+#: 🔴 名单仍是两枚，一枚不许多收；本班既有断言一枚都没删、没放宽，只往下面加。
+#:
+#: 下面几枚钉一起把"按形状判、不按位置判"钉死：写死行号的修法被第 1、3 枚咬，
+#: "把 :1309 写进排除名单"的修法被第 1、4 枚咬，退回按字面搜行的修法被第 1、4 枚咬。
+
+#: 真停子那一行的原文（逐字，含缩进：本钉拿它做"换形状"的锚点）。
+STOP_LINE_TEXT = "      if (QUEUE_SETTLED.includes(read.status)) stop()"
+#: 90c15bb 挑脸那一格的原文（三行：条件跨两行 + 动作是 face，一枚表都没停）。
+FACE_BRANCH_TEXT = ("  } else if (read && !QUEUE_SETTLED.includes(read.status)\n"
+                    "    && (read.status === 'cancel_requested' || (cancel && cancel.phase === 'requested'))) {\n"
+                    "    face = queueCancelPendingFace()\n")
+#: 同一格的【真停子形状】：块形。换上去之后这一格真的会收表。
+STOP_BRANCH_BLOCK = ("  } else if (QUEUE_SETTLED.includes(read.status)) {\n"
+                     "    stop()\n")
+#: 判据 ② 点名的那一形：单行停子。
+STOP_BRANCH_LINE = "  if (QUEUE_SETTLED.includes(read.status)) stop()\n"
+
+
+def test_a_real_stop_shape_at_the_face_cell_is_collected(tmp_path):
+    """判据 ②（形状自证，真跑）：把挑脸那一格换成真停子形状 ⇒ 读数必须当场跟着变。
+
+    🔴 位置一字未动 —— 还是第 1309 行那一格、还在 ``queueFaceOf`` 里，变的只有形状。尺子真要
+    按形状判，就必须在这儿把它收成停子：
+      - 写死行号（"停子 = 1381 与 1400"）⇒ 这里收不到新那枚 ⇒ 本钉红；
+      - 按行号/函数名排除 :1309 的例外名单 ⇒ 这里同样收不到 ⇒ 本钉红；
+      - 把名单改成三枚（今天的假读数钉死）⇒ 本钉红在"恰好三枚"上（原件今天只有两枚）。
+    顺带答判据 ④ 的第二问：换这一格只许动 ``frontend_stop_actions`` 一枚读数，D 格其余读数
+    （名单、HTTP 终止回执、截止三跳、抄本漂移……）一枚都不许多漂。
+    """
+    live_cell = R.cell_lane_flip(REPO)
+    assert [x[1] for x in live_cell["readings"]["frontend_stop_actions"]] == [
+        "if (QUEUE_SETTLED.includes(read.status)) stop()",
+        "entry.timer = setInterval(tick, QUEUE_POLL_MS)"], "起点不是一枚假读数，本钉就空了"
+    cell = _panel_cell(tmp_path, lambda text: text.replace(FACE_BRANCH_TEXT, STOP_BRANCH_BLOCK, 1))
+    actions = cell["readings"]["frontend_stop_actions"]
+    assert [x[1] for x in actions] == [
+        "} else if (QUEUE_SETTLED.includes(read.status)) {",
+        "if (QUEUE_SETTLED.includes(read.status)) stop()",
+        "entry.timer = setInterval(tick, QUEUE_POLL_MS)"]
+    assert actions[0][0] < actions[1][0] < actions[2][0]
+    drifted = {key for key in live_cell["readings"]
+               if live_cell["readings"][key] != cell["readings"][key]}
+    assert drifted == {"frontend_stop_actions"}, f"同一格换形状打脏了别的读数：{sorted(drifted)}"
+    # 多收成一枚真停子不是红：本格判的是"名单收不收得住每一枚终态"，清单由 :151 与本钉管。
+    assert cell["verdict"] == R.GREEN
+    assert cell["problems"] == []
+
+
+def test_the_same_stop_shape_at_another_place_is_collected_too(tmp_path):
+    """判据 ②（位置独立性第二半条）：同一枚形状挪到别的一格（别的函数、别的行）⇒ 照样收成停子。
+
+    插到 ``applyQueuedAnswer`` 之前 —— 与轮询停表、与挑脸谓词都不相干的一格，用的正是判据 ②
+    点名的单行形状。尺子只要还在按"这枚命中在第几行、落在哪个函数"判，这里必红。
+    """
+    cell = _panel_cell(tmp_path, lambda text: text.replace(
+        "function applyQueuedAnswer(key, answer) {\n",
+        STOP_BRANCH_LINE + "function applyQueuedAnswer(key, answer) {\n", 1))
+    actions = cell["readings"]["frontend_stop_actions"]
+    assert [x[1] for x in actions] == [
+        "if (QUEUE_SETTLED.includes(read.status)) stop()",
+        "if (QUEUE_SETTLED.includes(read.status)) stop()",
+        "entry.timer = setInterval(tick, QUEUE_POLL_MS)"]
+    drifted = {key for key in R.cell_lane_flip(REPO)["readings"]
+               if R.cell_lane_flip(REPO)["readings"][key] != cell["readings"][key]}
+    assert drifted == {"frontend_stop_actions"}
+
+
+def test_downgrading_the_real_stopper_moves_the_reading_back(tmp_path):
+    """判据 ②/④ 的反向半条：把真停子换成挑脸形状 ⇒ 那一枚必须从清单里掉出去。
+
+    这条专打"认行号不认内容"：还是 1381 那一行，只是动作不再是 ``stop()`` ⇒ 尺子不许再收它，
+    清单掉到只剩上表那一行（其余读数一枚不漂，包括"这族有没有截止"那几枚）。
+    """
+    cell = _panel_cell(tmp_path, lambda text: text.replace(
+        STOP_LINE_TEXT,
+        "      if (read && !QUEUE_SETTLED.includes(read.status))\n"
+        "        face = queueFace(read)", 1))
+    actions = cell["readings"]["frontend_stop_actions"]
+    assert [x[1] for x in actions] == ["entry.timer = setInterval(tick, QUEUE_POLL_MS)"]
+    live_cell = R.cell_lane_flip(REPO)
+    drifted = {key for key in live_cell["readings"]
+               if live_cell["readings"][key] != cell["readings"][key]}
+    assert drifted == {"frontend_stop_actions"}
+    # 今天的口径：名单没漂 ⇒ 本格不因"少一枚停子"换色（少的是显示逻辑，名单仍收全六枚终态）。
+    assert cell["verdict"] == R.GREEN
+
+
+#: 形状对照表（判据 ②）：``(该不该被收成停子, 一段最小前端代码)``。
+#: True 的四形是同一件事的四种写法（单行 / 块 / 条件跨行 / 轮询闭包内）；
+#: False 的四形都读同一枚名单，却没有一枚表被它们停（挑脸、赋值、注释、字符串）。
+_SHAPE_CASES = (
+    (True, "if (QUEUE_SETTLED.includes(read.status)) stop()\n"),
+    (True, "if (QUEUE_SETTLED.includes(read.status)) {\n  stop()\n}\n"),
+    (True, "if (QUEUE_SETTLED.includes(\n    read.status))\n  stop()\n"),
+    (True, "const stop = () => {}\nsetInterval(() => {\n"
+           "  if (QUEUE_SETTLED.includes(read.status)) stop()\n}, QUEUE_POLL_MS)\n"),
+    (False, "} else if (read && !QUEUE_SETTLED.includes(read.status)\n"
+            "    && (read.status === 'cancel_requested')) {\n  face = queueCancelPendingFace()\n"),
+    (False, "const settled = QUEUE_SETTLED.includes(read.status)\nif (settled) render()\n"),
+    (False, "// if (QUEUE_SETTLED.includes(read.status)) stop()\n"),
+    (False, "const note = 'if (QUEUE_SETTLED.includes(read.status)) stop()'\n"),
+)
+
+
+@pytest.mark.parametrize("expected, snippet", _SHAPE_CASES)
+def test_the_shape_table_is_judged_by_shape(expected, snippet):
+    """判据 ②（逐形对判）：名单被读进判定不等于停表，注释与字符串更不是代码。
+
+    这一枚是"按形状"四个字的清单化证据：同一串 ``QUEUE_SETTLED.includes`` 摆在八种位置，
+    只有动作真收表的那四形进清单。任一格改成"文件里出现了这串字就算"⇒ 本钉红在那一格上。
+    """
+    rows = [row for row in R.frontend_stop_actions(snippet) if "QUEUE_SETTLED" in row[1]]
+    assert bool(rows) is expected, f"形状判错了：expected={expected} rows={rows}"
