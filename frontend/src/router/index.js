@@ -114,11 +114,11 @@ export const routes = [
     meta: { screen: true, title: '知识图谱', primary: false },
   },
   // R316 判据① · 「账号与角色」是一屏，但今天不派生一级入口：判据④ 要求员工侧看不见它，
-  // 而侧栏是 navigation 的派生视图，壳层今天还不认识角色（见下面 navigationForRole 那段）。
-  // primary:false 给的是「地址是真的、入口还没接线」这个准确状态：/admin 深链直达渲染
-  // AdminPanel，staff 走进去看到的是「这一屏不向你开放」那张脸（后端 403），不是空列表。
-  // administratorOnly 这一格是给入口用的声明，不是第二套权限判定：能不能读仍然只在服务端
-  // 那道 ACTION_MANAGE_USERS 闸上（app/api/v1/auth.py:93 与 app/common/policy.py:44/:95）。
+  // 而侧栏是 navigation 的派生视图 —— 壳层认得出角色这一条今天已经接上了：App.vue 侧栏那枚
+  // v-for 吃的就是 navigationForRole(userRole)，判据钉在 src/router/__tests__/r316-admin-entry.test.js。
+  // primary:false 给的是「它不占一级入口、只长进管理员那一份清单」这个准确状态：/admin 深链直达
+  // 渲染 AdminPanel，staff 走进去看到的是「这一屏不向你开放」那张脸（后端 403），不是空列表。
+  // administratorOnly 只声明入口，不是第二套权限判定：能不能读仍然只在服务端那道 ACTION_MANAGE_USERS 闸上（app/api/v1/auth.py:106 与 app/common/policy.py:44/:95）。
   {
     path: '/admin',
     name: 'admin',

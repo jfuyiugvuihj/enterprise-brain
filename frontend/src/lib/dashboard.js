@@ -154,7 +154,7 @@ export function alertTileView(face) {
  * 这一屏有没有告警读取权（R285 · X-2）。判据与告警数字位用的是同一枚事实：聚合回执里
  * alerts 键在不在。
  *
- * 后端 app/api/v1/dashboard.py:137-139 只在 _alert_counts() 没返回 None 时才写这一键，而它判的
+ * 后端 app/api/v1/dashboard.py:318-320 只在 _alert_counts() 没返回 None 时才写这一键，而它判的
  * 正是 GET /alerts 那同一条权限门（dashboard.py:90 与 alerts.py:925 都走 _require_alert_management），
  * staff 与 auditor 的角色集里没有 alerts:manage（app/common/permissions.py:13/:16）。
  * 于是键缺席 ⇒ 那一发 GET /alerts 每次必 403：前端不发它就是，这一条改的是前端行为，
