@@ -189,6 +189,58 @@ export function absenceLines(cells) {
   return silentCells(cells).map(absenceCopy).filter(Boolean)
 }
 
+/* ==========================================================================
+ * R388 · 生命周期那本账自己也会不供数：状态这一格的缺席走同一道闸、同一族句式
+ * ======================================================================== *
+ * 后端从 R388 起在响应里多交一格 state_ledger：{included, reason_code,
+ * unknown_total, unknown_returned}（生产者 = app/notifications/inbox.py::build_inbox，
+ * 形状与上面那台 sources 同族，键名逐枚见 docs/api/contract-v1.md R388 一节）。它说的是
+ * 「谁读过、谁划掉过」这一本账今天答不答得上——客户机上 PG 没起、或 0016 没跑时答不上。
+ *
+ * 为什么这一格由本件读、而不并进上面那台台账：sources 的键集合等于后端 NOTIFICATION_SOURCES
+ * 那三枚，由 __tests__/r385-ledger-contract.test.js 现读后端真源钉死（一枚不多一枚不少），
+ * 把第四格塞进 LEDGER_LEGS 当场红。所以这里借的还是同一条闸（included 只认严格 true）与同一族
+ * 句式（那一格的名字 + 那个原因的人话），只换尾巴那一句：它丢的不是「少了几条通知」，是
+ * 「谁读过什么」这本账，员工要听到的是后者，不是「这些全是新的」。
+ *
+ * 判「答没答」的信号只有一个来源：响应里那一格。本件不猜、也不拿未读数反推（反推就是第二本
+ * 账）；那一格整个缺席（旧后端）= 还不知道，一句字都不许多。它说「没答」时，逐行那枚「未读」
+ * 也不许再画——那正是本单治的假话本身。
+ * ======================================================================== */
+
+/** 生命周期那一格在屏上叫什么。它不进 LEDGER_LEGS：那张表的键集合钉给后端那三枚源。 */
+const STATE_LEG_NAME = '已读状态账本'
+
+/** 尾巴换一句：这一格不供数丢的不是某一类事项，是「谁读过什么」这本账。 */
+const STATE_LEG_TAIL = '。这一屏里的未读数数不清：读过、划掉过的都还可能在这里，不代表它们全都是新的。'
+
+/**
+ * 响应里那一格 -> 本件内部的读数。三条口径与 ledgerCells 同一把尺：只遍历真有的那一格、
+ * included 只认严格 true（fail-closed）、整格缺席交回 null（那是「还不知道」，不是「没答」）。
+ * 两枚 unknown_* 原样留着，本件一枚都不拿它们做徽标算术。
+ */
+export function stateLedgerCell(payload) {
+  const cell = payload && typeof payload === 'object' ? payload.state_ledger : null
+  if (!cell || typeof cell !== 'object' || Array.isArray(cell)) return null
+  return {
+    included: cell.included === true,
+    reasonCode: ledgerText(cell.reason_code),
+    unknownTotal: cell.unknown_total,
+    unknownReturned: cell.unknown_returned,
+  }
+}
+
+/** 这一格的屏上原句：答上了、或整格读不到，都交回空句。全件唯一一处拼这句话的地方（判据③）。 */
+export function stateLedgerCopy(cell) {
+  if (!cell || cell.included === true) return ''
+  return STATE_LEG_NAME + LEDGER_HEAD + ledgerReasonCopy(cell.reasonCode) + STATE_LEG_TAIL
+}
+
+/** 逐行那枚「未读」还能不能说：只有那一格在场且说「没答」才是不能说；读不到不算知道。 */
+export function stateWordsKnown(cell) {
+  return cell === null || cell.included === true
+}
+
 /**
  * 台账数字的算术只在这一处（判据④）。两条不许：
  *   · 缺席格的 candidates / scanned 一枚都不进合计——那一格交回的 0 说的是「问不出」，
@@ -236,10 +288,16 @@ export async function readInboxPage() {
   })
   const payload = response && response.data
   const cells = ledgerCells(payload)
+  const stateCell = stateLedgerCell(payload)
+  // 状态那一格的话排在三格源账之后：本件不重排、不补格，只在末尾并上它自己那一句。
+  const lines = absenceLines(cells)
+  const stateNote = stateLedgerCopy(stateCell)
+  if (stateNote) lines.push(stateNote)
   return {
     page: normalizeInbox(payload),
-    absence: absenceLines(cells),
+    absence: lines,
     ledger: ledgerSums(cells),
+    stateLedger: stateCell,
   }
 }
 
@@ -292,6 +350,8 @@ const rows = shallowRef([])
 // 「还没读到」不是「有一格没答」，所以这一格既不常驻，也不许在正常态长出一句「系统正常」。
 const absence = shallowRef([])
 const ledger = shallowRef(null)
+// R388：状态那一格答没答，是逐行那枚「未读」的唯一依据；null = 还不知道（旧后端同此）。
+const stateLedger = shallowRef(null)
 // 初值就是在读：一次都没读过的时候，这一格不配替后端宣布「没有通知」（判据③⑥的命门）。
 const loading = shallowRef(true)
 const failure = shallowRef(null)
@@ -305,6 +365,8 @@ const panelEl = shallowRef(null)
 // 徽标与读屏句子的数字出处只有一个：后端全集未读。inbox 为 null 就是「未知」，不是 0。
 const unread = computed(() => (inbox.value ? inbox.value.unread : null))
 const isExact = computed(() => Boolean(inbox.value && inbox.value.isExact))
+// 判「这一屏还能不能说未读」只看响应里那一格，不拿未读数反推（反推=第二本账）。
+const stateUnknown = computed(() => !stateWordsKnown(stateLedger.value))
 const badge = computed(() => badgeText(unread.value, { isExact: isExact.value }))
 // 徽标只看 unread / isExact 这两格，台账一格都不参与（判据④）：缺席只往读屏里加句子，绝不动数字。
 const ariaLabel = computed(() => bellAriaLabel(
@@ -325,12 +387,14 @@ async function refresh() {
     rows.value = page.rows
     absence.value = read.absence
     ledger.value = read.ledger
+    stateLedger.value = read.stateLedger === undefined ? null : read.stateLedger
   } catch (err) {
     // 读不到就承认读不到：旧数字一律清掉，不许留着上一轮的读数冒充这一次。
     inbox.value = null
     rows.value = []
     absence.value = []
     ledger.value = null
+    stateLedger.value = null
     failure.value = readFailureCard(err)
   } finally {
     loading.value = false
@@ -548,7 +612,8 @@ defineExpose({
           <p v-if="row.detail" class="notif__row-detail">{{ row.detail }}</p>
           <p class="notif__row-meta">
             <span v-if="row.createdAt">{{ row.createdAt }}</span>
-            <span v-if="!row.read" class="notif__row-state">未读</span>
+            <!-- R388：状态那本账没答时，「未读」这两个字没有依据，宁可不画。 -->
+            <span v-if="!row.read && !stateUnknown" class="notif__row-state">未读</span>
           </p>
           <div class="notif__row-actions">
             <UiButton

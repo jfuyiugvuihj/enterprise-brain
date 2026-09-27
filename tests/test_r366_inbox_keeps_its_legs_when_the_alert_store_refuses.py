@@ -204,6 +204,19 @@ def _rows_of(body: dict, source: str) -> list:
     return [row for row in body["notifications"] if row["source_type"] == source]
 
 
+def _source_cells(body: dict, source: str) -> list:
+    """那一腿的行，逐格**去掉生命周期那一列**。R388 之后两世界对平的是它。
+    `state` 那一列由本文件另外两枚断言管：dev 答 'unread'，生产无库答 null。"""
+    return [
+        {key: value for key, value in row.items() if key != "state"}
+        for row in _rows_of(body, source)
+    ]
+
+
+def _state_column(body: dict, source: str) -> list:
+    return [row["state"] for row in _rows_of(body, source)]
+
+
 def _request(username: str):
     """一枚够用的 Request 投影：授权那一层只读 `state.username`（app/common/authorization.py:34-47）。"""
     return SimpleNamespace(state=SimpleNamespace(principal=None, username=username), headers={})
@@ -375,7 +388,13 @@ def test_an_absence_and_a_quiet_ledger_are_two_different_faces(client, world, mo
 
 
 def test_the_other_two_legs_keep_reading_the_same_words(client, world, monkeypatch):
-    """判据甲：告警腿折出去之后，其余各腿的投影与逐行读数一个字都不许变。"""
+    """判据甲：告警腿折出去之后，其余各腿的投影与逐行读数一个字都不许变。
+
+    R388 在这一枚里留了一格例外，而且只有那一格：`state` 那一列。dev 世界里生命周期那本账在答
+    （每条都有 'unread' 这个依据），生产而库不在位那一格它答不上（同一枚交回 null）。所以两世界的
+    对平从这一列的外面量起，源账给的那几列照旧逐字相等；而 `state` 那一列反过来钉「两世界必须不
+    同」——那是本单的形状，不是对平的破口。
+    """
     _develop(monkeypatch)
     dev = _inbox(client).json()
     _produce(monkeypatch)
@@ -390,11 +409,19 @@ def test_the_other_two_legs_keep_reading_the_same_words(client, world, monkeypat
     assert sorted(prod["sources"]) == sorted(dev["sources"]) == ["alert", "approval", "document"]
     for source in ("approval", "document"):
         assert prod["sources"][source] == dev["sources"][source], source
-        assert _rows_of(prod, source) == _rows_of(dev, source), source
+        assert _source_cells(prod, source) == _source_cells(dev, source), source
+        # 生命周期那一列：两世界必须不同，且不同得刚刚好——不是少几条，是每一枚都没了依据。
+        assert _state_column(dev, source) == ["unread"] * len(_rows_of(dev, source)), source
+        assert _state_column(prod, source) == [None] * len(_rows_of(prod, source)), source
 
 
 def test_the_counts_move_by_exactly_the_rows_the_refusal_took_away(client, world, monkeypatch):
-    """判据甲/丙：计数只按告警那几枚动；`is_exact` 不许被顺手翻成 False（那是一句新的假话）。"""
+    """判据甲/丙：计数只按告警那几枚动；`is_exact` 不许被顺手翻成 False（那是一句新的假话）。
+
+    未读那两枚今天不跟着这条减法比，而且是故意的（R388）：prod 那一格里生命周期那本账没答，
+    数不清的条目一枚都不算未读，于是它比 dev 少的不是「告警那一条」而是「全部」。少在哪里由
+    `state_ledger` 那两枚 unknown 说出去，不许读模型自己拿减法猜。
+    """
     _develop(monkeypatch)
     dev = _inbox(client).json()
     _produce(monkeypatch)
@@ -402,8 +429,20 @@ def test_the_counts_move_by_exactly_the_rows_the_refusal_took_away(client, world
     taken = len(_rows_of(dev, "alert"))
 
     assert taken == 1
-    for key in ("total", "unread_total", "returned", "unread_returned"):
+    for key in ("total", "returned"):
         assert prod[key] == dev[key] - taken, key
+    # 两枚未读计数：dev 那本账在答（此刻确实全未读），prod 那本账没答 ⇒ 0，且差额全数记在 unknown。
+    assert (dev["unread_total"], dev["unread_returned"]) == (dev["total"], dev["returned"])
+    assert dev["state_ledger"] == {
+        "included": True, "reason_code": "ok", "unknown_total": 0, "unknown_returned": 0,
+    }
+    assert (prod["unread_total"], prod["unread_returned"]) == (0, 0), "未知被算成未读了"
+    assert prod["state_ledger"] == {
+        "included": False,
+        "reason_code": STORAGE_CODE,
+        "unknown_total": prod["total"],
+        "unknown_returned": prod["returned"],
+    }
     assert prod["is_exact"] is dev["is_exact"] is True
     assert (prod["state"], prod["limit"], prod["offset"]) == (
         dev["state"],
@@ -580,7 +619,10 @@ def test_dismissing_an_alert_while_the_store_refuses_answers_503_and_writes_noth
 
     assert response.status_code == 503, response.text
     assert response.json() == {"detail": STORAGE_CODE}
-    assert state_store.recipient_states(FINANCE_MANAGER) == {}, "拒答之余还偷偷写下一行"
+    # R388 之后这一格交回的是 None（这本账压根答不上），不是 {}（答上了、确实没有行）。
+    # 「没偷偷写下一行」那半句改由 _ROWS 直接管——它才是那本会被偷偷写脏的账。
+    assert state_store.recipient_states(FINANCE_MANAGER) is None, "拒答之余还交回一本空账冒充「没读过」"
+    assert state_store._ROWS == {}, "拒答之余还偷偷往内存腿写了一行"
 
 
 def test_dismissing_a_row_that_is_genuinely_gone_answers_the_not_addressable_receipt(client, world, monkeypatch):
@@ -620,7 +662,9 @@ def test_the_write_leg_refuses_too_when_the_store_is_not_there(client, world, mo
 
     assert response.status_code == 503, response.text
     assert response.json()["detail"] == STORAGE_CODE
-    assert state_store.recipient_states(FINANCE_MANAGER) == {}
+    # 同上（R388）：读腿在这一格说「答不上」，内存腿仍是空的。
+    assert state_store.recipient_states(FINANCE_MANAGER) is None
+    assert state_store._ROWS == {}
 
 
 def test_the_two_files_gained_no_second_storage_probe():

@@ -433,26 +433,45 @@ def test_one_recordable_id_is_enough_to_refuse_the_whole_call(prod_no_store):
 
 
 def test_the_inbox_still_answers_while_the_write_leg_refuses(prod_no_store):
-    """读侧不跟着翻脸（R366 追认的那一格），但它说的必须是同一句『什么都没记下』。"""
+    """读侧不跟着翻脸（R366 追认的那一格），但它说的必须是同一句『这一格问不出』（R388）。
+
+    基点上这一枚断的是 `== {}` 加逐条 `"unread"`：写侧刚说完「落不了库」，读侧就替这台机器宣布
+    「这个人什么都没读过、每一条都是新的」。同一件事两张脸，正是本单治的病。今天两半都反着钉：
+    整页照答 200（不许把还答得着的文档腿、告警腿一起打死），而状态那一格交回显式的未知。
+    """
     write = _post(prod_no_store.client, READ_PATH, [MINE])
     read = prod_no_store.client.get(INBOX_PATH, headers=_headers())
 
     assert write.status_code == 503
     assert read.status_code == 200, read.text
     body = read.json()
-    assert state_store.recipient_states(READER) == {}
-    assert [row["state"] for row in body["notifications"]] == ["unread"]
-    assert body["unread_total"] == body["total"] == 1
+    assert state_store.recipient_states(READER) is None, "读腿还在那一格交回内存空账"
+    assert state_store._ROWS == {}
+    assert [row["state"] for row in body["notifications"]] == [None]
+    assert body["total"] == body["returned"] == 1, "条目本身被状态那一格一起抹掉了"
+    assert body["unread_total"] == body["unread_returned"] == 0, "未知被算成了未读：徽标虚高就是这一格"
+    assert body["state_ledger"] == {
+        "included": False,
+        "reason_code": STORAGE_CODE,
+        "unknown_total": 1,
+        "unknown_returned": 1,
+    }
 
 
 def test_a_refusal_leaves_no_reader_state_for_the_read_leg_to_remember(prod_no_store):
-    """基点上那对矛盾（写侧说改了、重启后读侧说没有）从此不可能再拼出来。"""
+    """基点上那对矛盾（写侧说改了、重启后读侧说没有）从此不可能再拼出来。
+
+    R388 把下半句也钉住了：读侧此刻说的不是「没有」，是「问不出」——所以它既不留下 `_ROWS`
+    里那次虚构的已读，也不许拿 `{}` 替这台机器宣布「每一条都是新的」。
+    """
     _post(prod_no_store.client, DISMISS_PATH, [MINE])
     state_store.reset_for_testing()
 
-    assert state_store.recipient_states(READER) == {}, "内存腿里还留着一次『成功』的已读"
+    assert state_store._ROWS == {}, "内存腿里还留着一次『成功』的已读"
+    assert state_store.recipient_states(READER) is None, "读腿把内存那本账当答案交回来了"
     after = prod_no_store.client.get(INBOX_PATH, headers=_headers())
-    assert [row["state"] for row in after.json()["notifications"]] == ["unread"]
+    assert [row["state"] for row in after.json()["notifications"]] == [None]
+    assert after.json()["unread_total"] == 0
 
 
 # ------------------------------------------------- 现读：本件的读数不靠注释维持

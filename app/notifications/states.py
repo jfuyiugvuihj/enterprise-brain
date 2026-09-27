@@ -11,7 +11,12 @@
 只管写腿：**生产模式下库没就绪，这一格根本不许写**。进程内那本账在客户机上随进程一起消失，
 重启之后屏上那句「已读」会回到「未读」，而当初的回执是 200 加 changed: true —— 落不了库是这台
 机器的现状，把落不了库说成落了库才是假话。开发与裸机（APP_ENV 不是生产）那条退路一个字没动，
-它今天仍是合法后端；读腿也不在本单射程内，见 _require_writable_store 最后一段。
+它今天仍是合法后端。
+R376 只管了这一格的下半张脸（不许说「写了」），本文件剩下的那条腿由 R388 治（不许说「没读过」）：
+同一格世界里读腿从前交回那本内存空账，于是收件箱把每一条通知都判成未读 —— 员工明明读过、明明
+划掉过，徽标还是满的。这与「把问不出说成没有」是同句病，只不过反过来说成「全是新的」。今天两张
+脸分开：答上了的交 dict（`{}` 说的是「查过，确实没有行」），答不上的交 `None`，由读模型
+app/notifications/inbox.py 登记成「这一格不供数」那一格；列表照读，不跟着整页 503。
 
 时间戳只有一枚时钟（_now），两条腿共用，拼写因此逐字相同；这是 0014 为处置列立过的口径，
 不在这里再发明一次。推进规则也不在这里：唯一一处是 contracts.advance_state，本文件两条腿都
@@ -104,7 +109,8 @@ def _require_writable_store(operation: str) -> None:
     changed: true，进程一重启那条已读就回来了 —— 本单治的就是这两句话对不上。判据是「没落库」
     这件事要么是一个错误，要么是一格显式标注的缺席，不许既 200 又 changed: true。
 
-    抛的是本件既有那一枚具名错：出口 app/api/v1/notifications.py:159 的 except 已经在接它，
+    抛的是本件既有那一枚具名错：出口 app/api/v1/notifications.py 的两支 except 已经在接它（坐标按树取：
+    基点 b498c88 读 :159/:190，R381 并树后的 903765b 读 :169-170/:208），
     翻成 503 ``storage_unavailable`` —— 零新增错误码、零新增 reason 词、出口一字不改。
 
     调用点排在授权与可寻址性之后（出口 ``_apply`` 先答 401 / 403 / not_addressable），排在
@@ -112,9 +118,15 @@ def _require_writable_store(operation: str) -> None:
     再答「这台机器还记不记得话」，最后才谈写。反过来就把 503 与 401 之差做成一枚探针。
 
     开发态一字不改（``APP_ENV`` 不是生产即直接 return）：那条内存腿今天仍是合法后端，全量回归
-    也靠它跑，把开发支一起打死同样是说假话，只不过反着说。读腿 ``recipient_states`` /
-    ``read_state`` 本单同样不翻脸 —— R366 刚为「生产无库时的收件箱」追认过 200 加逐腿缺席那一格
-    （契约 R366 一节），而登记这格缺席的落点在 app/notifications/inbox.py，另有人在改。
+    也靠它跑，把开发支一起打死同样是说假话，只不过反着说。
+
+    读腿 ``recipient_states`` / ``read_state`` 判的是这同一格条件（R388 落的那一刀），但处置
+    刻意不一样，而且必须不一样：R366 已经为「生产无库时的收件箱」追认过 200 加逐腿缺席那一格
+    （契约 R366 一节），列表那三本账答得出来的照答，把读腿也翻成抛错就是替一格问不出打死整页。
+    于是 ``recipient_states`` 交回 ``None`` 这一枚显式的「答不上」，由读模型登记成缺席那一格；
+    ``read_state`` 是单枚读，它唯一的调用方 ``apply_state`` 在这一格早就被本闸拒在门外，没有
+    照答的页面要保，所以照本闸抛同一枚具名错——零新增错误码，出口 `app/api/v1/notifications.py`
+    那两支 except 今天就在接它。
     """
     if _database_available() or not alerts_api._is_production_environment():
         return
@@ -128,17 +140,33 @@ def _require_writable_store(operation: str) -> None:
     )
 
 
-def recipient_states(recipient: str) -> dict[str, str]:
+def recipient_states(recipient: str) -> dict[str, str] | None:
     """这个收件人手上的全部生命周期行，notification_id -> 可写状态。
 
     一次读整份，不在 SQL 里按状态裁：「未读」在这一层根本没有行（0016），所以任何
     'WHERE state = ...' 都数不出未读，只会把结论推到别处去再算一遍。页与计数由读模型裁。
+
+    R388 起这一枚函数交三张脸，一枚都不许多并：
+      ``dict`` —— 这本账答上了，逐条给出；空 dict 说的是「查过了，这个人确实没有行」。
+      ``None`` —— 这本账**答不上来**：生产机器上 PG 没起（或 0016 没跑）。此刻关于「谁读过什么」
+      这台机器没有一句真话可说，而 `{}` 与 `None` 是两句话：并成一枚，收件箱就把每一条都判成
+      未读（`inbox.py` 拿 `{}` 逐条比），员工读过的痕迹在屏上一格不剩 —— 那正是本单治的病。
+    判的仍是 ``_require_writable_store`` 那两支既有读数（`_database_available()` 与借来的那把
+    生产尺 `alerts_api._is_production_environment()`），本文件一枚新尺、一枚新码都没造。
     """
     person = str(recipient or '')
     if not person:
         return {}
 
     if not _database_available():
+        if alerts_api._is_production_environment():
+            # 生产而库不在位：那本内存账在客户机上恒为空，交回去就是替这台机器宣布「这个人
+            # 什么都没读过」。列表那一格照答，缺席由读模型登记，这里不抛错也不装成空账。
+            logger.warning(
+                '[R388] 生产环境存储未就绪，生命周期这一格答不上而不是交回内存空账: '
+                'code=storage_unavailable（PG 未起或迁移未跑，空账会被读成「全是新的」）'
+            )
+            return None
         with _LOCK:
             return {
                 key[1]: dict(value)['state']
@@ -155,8 +183,19 @@ def recipient_states(recipient: str) -> dict[str, str]:
 
 
 def read_state(recipient: str, notification_id: str) -> str | None:
-    """单枚通知在这个收件人手上的状态；没有行就是 None（unread）。"""
+    """单枚通知在这个收件人手上的状态；没有行就是 None（unread）。
+
+    这一枚 `None` 说的是「有账，而这一枚没有行」，即未读，所以它**不能**兼作「问不出」——
+    兼了就是把问不出洗成一次未读，与整页 503 之间没有第三种说法可挑。生产而库不在位那一格
+    R388 起抛本件既有那枚具名错（与 ``_require_writable_store`` 同一型、同一族出口，零新增码）；
+    唯一的调用方 `apply_state` 在这一格本来就被那道闸拒在门外，所以这一支今天不改任何回执形状。
+    """
     if not _database_available():
+        if alerts_api._is_production_environment():
+            raise NotificationStateStoreMissing(
+                f'{TABLE} cannot be read in production without PostgreSQL ('
+                'migrations/0016_notification_states.sql)'
+            )
         with _LOCK:
             stored = _ROWS.get((str(recipient), str(notification_id)))
         return str(stored['state']) if stored else None

@@ -5078,3 +5078,198 @@ r384 的门账钉一起点名，四连先例的守卫在替本单把关）。
 `user_profiles_read_only`（既有词表，见同档 `:54`）会在这一格首次出现。③ **启动不受影响**：
 `app/common/monitoring.py:150` 那道闸只按 `protection == "refuse_start"` 拒起，而这只有 `users` 一腿用；
 写路径一行未改，开发 / 裸机 / 离线三张脸一字未动。
+
+## A read that cannot be answered must not be read as an empty ledger (2026-09-27, R388)
+
+R376 fixed one half of one face and registered the other half as still owed, in this file's own words: the
+lifecycle ledger 「has no 「this cell is not supplying data」 field of its own」 and adding one 「would need
+no new code either」 (`contract-v1.md:4535-4539`). This section closes that residual and nothing else that
+section left open.
+
+The write leg already refuses: on a production machine whose PostgreSQL is down, `apply_state` raises
+`NotificationStateStoreMissing` and the outlet answers `503 storage_unavailable`. The read leg was never
+touched, and that is a different lie, pointed the other way. `recipient_states` fell through to the
+process-local `_ROWS` overlay, which on such a machine is *always* empty; `inbox.py` then compared every
+notification against `{}` and `stored.get(item.id) or STATE_UNREAD` called every row `unread`. An employee
+who has read and dismissed items sees a full badge, because `unread_total` counted items this machine has
+no evidence about. 「Cannot ask」 was delivered as 「everything is new」.
+
+### Which face lives where
+
+`app/notifications/states.py::recipient_states` now answers with two shapes and they may not be merged: a `dict`
+means 「the ledger answered」 (an empty one says 「asked, and this person really has no rows」), and `None` means
+「this machine cannot answer at all」. The condition judged is the same pair of readings the write gate already
+borrows -- `_database_available()` plus one call to `alerts_api._is_production_environment()` -- so this ticket
+adds no second gate: three call sites of that ruler in the file, zero definitions of it, and still exactly one
+`_db_ready` reader, all derived off the AST rather than off prose. The development / bare-metal branch is
+untouched character for character; the overlay is a legitimate backend there, and killing it would be the same
+lie told backwards.
+
+`read_state` is a single-item read whose only caller is `apply_state`, and in that world the write gate already
+refuses before it. There is no page to keep answering, so it raises the same named error instead of returning
+`None` -- `None` there already means 「no row, therefore unread」, and letting it double as 「cannot ask」 would
+launder one question into the other. **Zero new error code**: two `except` handlers for that type already sit in
+`app/api/v1/notifications.py` -- on this ticket's base `b498c88` they read `:159` and `:190`; on `903765b` the
+same two handlers open at `:169-170` (R381 folded the first into a two-type tuple whose named type is on `:170`)
+and at `:208`. The *count* is the claim, not the line number:
+`tests/test_r388_read_leg_answers_absence.py` reads that count off the AST of every file under `app/**` instead
+of trusting this sentence. That outlet file is outside this ticket's write set: `git diff --numstat` reads
++0 / -0 on it, as on `tests/test_r376_gate_shape_pins.py`.
+
+### The list keeps answering
+
+`GET /api/v1/notifications` still answers `200` and still lists every leg that can answer, which is R376's
+ruling one cell over: one cell does not supply data, the other cells keep serving. A whole-page `503` was
+weighed and rejected -- it would take the document leg and the approval leg down with a question only the
+lifecycle ledger cannot answer, and it is the shape `R366` already ratified away.
+
+One object is added to that response, isomorphic with the `sources` projections beside it (the
+`as_projection()` family, `app/notifications/sources.py:74-81`):
+
+```json
+{
+  "state_ledger": {
+    "included": false,
+    "reason_code": "storage_unavailable",
+    "unknown_total": 2,
+    "unknown_returned": 2
+  }
+}
+```
+
+Five names, every one already in use: `state_ledger`, `included`, `reason_code`, `unknown_total`,
+`unknown_returned`. `reason_code` takes one of exactly two registered values -- `ok`, the default of the
+`SourceBundle` dataclass (`app/notifications/sources.py:70`, read off that dataclass by a pin, not copied), and
+`storage_unavailable` -- the constant already defined at `app/notifications/sources.py:56`, already carried by the
+three source legs (`sources.py:132`, `:180`, `:233`), already emitted as a 503 by the two notification outlets
+(`app/api/v1/notifications.py:161`/`:191` at base `b498c88`, `:177`/`:209` at `903765b`), and a member of
+`ErrorEnvelope.code` (`app/agents/contracts.py:254`). `unknown_total` / `unknown_returned` follow
+the same 全集 / 本页 split as `total` / `returned`, and -- like the `candidates` of a refused source -- they
+enter no sum anywhere.
+
+### What a row says when the ledger does not
+
+`notifications[].state` is `null` in that world, **not a fourth state word**: the `notification_states` CHECK
+(`migrations/0016_notification_states.sql:72-73`) and `contracts.NOTIFICATION_STATES` both refuse it,
+`STATE_FILTERS` does not offer it, and the write leg can never produce it. `unread_total` and `unread_returned`
+count only rows with evidence of being unread, so both read `0` there; `?state=unread` and `?state=read` answer
+an empty page, while `?state=all` still lists the rows. The `0` says 「cannot be counted」 and `state_ledger` is
+where that is said out loud. The invariant is `unknown_total` in `{0, total}` and `unknown_returned` in
+`{0, returned}` -- that ledger answers for every row or for none of them, never for part -- and in the
+all-unread fixture world the two halves add back (`unread_total + state_ledger.unknown_total == total`, same
+over the page), which is what those pins assert. `is_exact` is not flipped to make an absence look counted for.
+
+### What does not move
+
+`apply_state` and `can_address` answer exactly as they did: the same four receipt keys, the same idempotency,
+one INSERT and one commit against a ready store, and `can_address` still answers from the three source ledgers'
+own read paths without consulting the lifecycle ledger at all (pinned in both worlds). A ready PostgreSQL whose
+`notification_states` table is missing still answers a whole-page `503 storage_unavailable` -- that face is a
+different question from 「no store」 and was deliberately not folded into the new absence; an unrelated error out
+of that layer is still a bug, not an absence.
+
+### On screen
+
+`frontend/src/components/NotificationBell.vue` reads the new cell through the same gate and the same
+sentence family R385 built for `sources` (a leg name, then 「这次没答上来：」, then the registered reason, then
+a tail): 「已读状态账本这次没答上来：它要的数据表在这台机器上还没准备好，要管理员把数据库迁移跑过才会恢复。
+这一屏里的未读数数不清：读过、划掉过的都还可能在这里，不代表它们全都是新的。」 When that cell says it did not
+answer, the per-row 「未读」 marker is not drawn -- there is no evidence behind those two characters there.
+When the cell is *absent* (an older backend), the component adds no character at all and draws what it drew
+before: 「not present」 is not 「did not answer」. No key was added to `LEDGER_LEGS`, whose key set is pinned
+equal to `NOTIFICATION_SOURCES` by `frontend/src/__tests__/r385-ledger-contract.test.js`; the four pins that
+freeze `frontend/src/lib/notifications.js` (its export surface, every function body in it, its error-code
+set, and the eight keys of `normalizeInbox`) were not relaxed, and the unread badge stays owned by that
+layer -- this ticket changes no unread arithmetic on either side of the wire.
+
+### Evidence
+
+One cell this ticket does **not** close is registered rather than deleted, and it is registered as
+`@pytest.mark.xfail(strict=True, reason=...)` -- `test_the_badge_layer_can_eventually_say_it_cannot_count`.
+Three reasons, the same three the owner stated: the gate stays green today; `xfailed` is never counted into
+`passed`, so no reader can mistake it for a pass; and `strict=True` means the moment the badge layer really
+learns to read that cell, pytest reports `XPASS(strict)` as an error and forces someone to strike the entry --
+a stronger alarm than a bare red, because bare reds get ignored. Two companion pins watch the registration
+itself: one fails if the marker loses `strict`, loses its named blockers, or grows a sibling `xfail` / `skip`;
+one fails if `notifications.js` ever does learn the field, which is the strike-the-entry signal. The blocker
+names the same four pins this ticket was handed and the same four R385 recorded in its receipt (merged as
+`39e2b22`): in `frontend/src/lib/__tests__/r375-write-retryable-dict.test.js` the baseline tag
+`REF = '796540e'` sits at `:38`, `:236` requires every other declaration in that lib to hash byte-for-byte as
+it did at that baseline, and `:262` demands an empty `added` list for `notifications.js` -- not one new export;
+`frontend/src/lib/__tests__/r333-notification-inbox.test.js:143` freezes the eight keys of `normalizeInbox`.
+`:95` counts the error-code names in that same layer and points the same way, so it is named as a fifth and not
+used as the fourth. R385 measured, knife six: 「它一红就连既有 r333-notification-bell 咬 6 枚」 -- routing the
+badge numbers through the component bites those six. This ticket therefore leaves the badge owned by that layer,
+which cannot yet say 「cannot count」 and so still shows `0`.
+
+`tests/test_r388_read_leg_answers_absence.py` (56 pins: 55 pass, 1 strict xfail; offline) walks both worlds from one seeded three-leg
+world: the two read faces, `{}` against `None`, the single-item read that must raise rather than answer
+`None`, no connection opened on the way to saying 「cannot answer」, the ready-store and missing-table faces
+unmoved, `apply_state` receipt-for-receipt and `can_address` parametrized over three identifiers in both
+worlds. Shape is judged off the AST: one production ruler borrowed three times and never defined, one
+`_db_ready` reader, no `HTTPException` / `detail=` in the storage layer, and the `except` roster that catches
+that named error still exactly the two handlers in the outlet. Five counter-evidence knives for the read leg
+live in that file: each opens a window in the shadow root of `tests/_temp_edit_overlay.py` (the base bytes are
+copied to a temp file, mutated there, `compile()`-checked, exec'd into the imported module), names the face
+that must redden inside the window, demands the development cell stay green in that same window, and compares
+the tracked file's sha256 on entry and on exit -- no mutant ever reaches the disk this ticket ships from. The
+cross-suite counts were then measured three times independently, in throwaway `git clone`s of this tree, with the
+same five anchors replayed on that clone's own files (`tests/test_r388_read_leg_answers_absence.py`,
+`tests/test_r299_notification_inbox.py`,
+`tests/test_r366_inbox_keeps_its_legs_when_the_alert_store_refuses.py`,
+`tests/test_r373_the_two_remaining_legs_answer_absence.py`,
+`tests/test_r376_notifications_refuse_a_store_that_is_not_there.py`; a clone's baseline reads 183 passed +
+1 xfailed + 0 failed). All three agreed -- the last against the bytes shipped here: memory fallback 22 red
+(r388 16 / r366 4 / r376 2), unknown counted as unread 13 red (9 / 2 / 2), absence raised into the whole page
+29 red (16 / 11 / 2),
+`read_state` answering `None` 4 red, missing-table gate folded 5 red (3 here + 2 in
+`tests/test_r299_notification_inbox.py::test_a_missing_migration_refuses_the_inbox_instead_of_a_quiet_empty_answer`
+and its write-side twin). `tests/test_r299_notification_inbox.py` and
+`tests/test_r373_the_two_remaining_legs_answer_absence.py` stayed green under all five of those knives, which
+is the other half of the ruling: nothing that can answer got taken down with the cell that cannot. Every
+window restored its file byte-for-byte. The pass that measured the bytes this ticket ships read this tree as
+`4e16426ef388e92d` (`app/notifications/states.py`) and `dd204c797ad0b517` (`app/notifications/inbox.py`)
+on entry and on exit of all five knife windows.
+`frontend/src/__tests__/r388-state-ledger-render.test.js` (22 pins) reads the four wire names out of
+`inbox.py` rather than copying them and judges the screen off `renderToString`: the sentence is drawn, the
+row marker is not, an answered cell leaves the panel byte-identical to an older backend, and no state name,
+key name or reason code reaches visible text. Two of those pins are the screen's own counter-evidence (knife
+ding, on-screen half): a sentence that does interpolate the raw words, and a normal state that grows one extra
+line, are both rendered and caught by the same scanners -- which is what proves the two `not.toContain` /
+byte-equality pins have teeth instead of passing vacuously. Those three mutations were then replayed on disk
+in a shadow copy of `frontend/` (72 pins collected there: these 22 + R385's 23 + the lib's 27; shadow baseline
+0 red): dropping the `stateUnknown` guard from the row marker reddens 1 pin, interpolating the raw reason code
+into the sentence reddens 7, letting the answered state grow one extra sentence reddens 13 -- and 8 of those 13
+land in `frontend/src/__tests__/r385-ledger-render.test.js`, which is the collateral proof that this ticket did
+not move the neighbouring face. `frontend/src/components/NotificationBell.vue` read `d197ae4082172261` on entry
+and on exit of that window; no shadow byte reached this tree.
+
+Sibling assertions corrected in the same pass, because they had frozen the buggy face and are not in
+another ticket's write set: `tests/test_r366_inbox_keeps_its_legs_when_the_alert_store_refuses.py` (24 pins,
+count unchanged) carried four such assertion sites -- base `:583` and `:623` each read
+`recipient_states(...) == {}`, base `:393` compared whole prod rows against dev rows whose `state` was
+`"unread"`, and base `:405` looped `unread_total` / `unread_returned` into the two-world subtraction. The same
+face sits in `tests/test_r376_notifications_refuse_a_store_that_is_not_there.py` (30 pins, count unchanged) at
+five sites inside two pins -- base `:443` `== {}`, `:444` and `:455` `== ["unread"]`, `:445`
+`unread_total == total == 1`, `:453` `== {}`. All nine now name the absence instead, each with a separate
+`_ROWS == {}` witness so 「nothing was written behind the refusal」 stays pinned. The second bullet of R376's registered list names
+`test_the_other_legs_keep_their_writes_while_the_alert_leg_refuses`; no test of that name exists at base
+`b498c88` (`git grep` -> one hit, a docstring mention at `tests/test_r366_...:605`), so it is reported here
+as already retired rather than silently reopened. Still unsaid after this ticket, registered rather than
+fixed: a store that was healthy at boot and dies mid-life is judged by the same two readings, so this
+absence can appear and disappear between two reads of one mailbox; and the badge number itself is still the
+lib's, which cannot say 「unknown」 without relaxing those four pins. Neither is claimed as done.
+
+Physical lines, read off `git diff --numstat b498c88`: `app/notifications/states.py` +46 / -7,
+`app/notifications/inbox.py` +50 / -7, `app/notifications/contracts.py` +10 / -1,
+`frontend/src/components/NotificationBell.vue` +67 / -2,
+`tests/test_r366_inbox_keeps_its_legs_when_the_alert_store_refuses.py` +50 / -6,
+`tests/test_r376_notifications_refuse_a_store_that_is_not_there.py` +26 / -7. The two new files are untracked,
+so their size is read off the files themselves: `tests/test_r388_read_leg_answers_absence.py` 1230 lines,
+`frontend/src/__tests__/r388-state-ledger-render.test.js` 434 lines. This file reads +196 / -1 -- self-referential
+by exactly the length of this paragraph, and re-measured with these words in it -- and the one deleted line is its
+own last line: at base `b498c88` that line carried no line terminator, so appending anything to the file
+necessarily re-terminates it. No historical character changed: pinned by
+`tests/test_r388_read_leg_answers_absence.py::test_the_contract_appends_one_section_and_deletes_nothing`, which
+folds CRLF to LF on both sides and asserts the base blob is a prefix of the shipped bytes.
+`app/api/v1/notifications.py`, `app/notifications/sources.py` and every frozen lib file +0 / -0.

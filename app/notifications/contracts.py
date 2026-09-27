@@ -31,8 +31,17 @@ STATE_READ = 'read'
 STATE_DISMISSED = 'dismissed'
 NOTIFICATION_STATES: tuple[str, ...] = (STATE_READ, STATE_DISMISSED)
 
-#: 读端点交回给客户端的那一格取值：三枚里恒取其一，unread 由「没有行」算出来。
+#: 读端点交回给客户端的那一格取值：状态这本账答得上来时，三枚里恒取其一，unread 由「没有行」算出来。
 STATE_UNREAD = 'unread'
+
+#: 状态那本账**答不上来**时那一格的取值（R388）。它是 JSON 里的 `null`，不是第四枚状态词：
+#: 0016 的 CHECK 与 ``NOTIFICATION_STATES`` 两枚封闭集都不认它，写腿也永远写不出它。它和
+#: ``STATE_UNREAD`` 的分别是「问不出」与「没读过」的分别 —— unread 是这本账在答、而这一枚没有
+#: 行，unknown 是这本账今天压根没答。读模型拿它把 `unread_total` / `unread_returned` 里那些
+#: 数不清的条目摘出去（不许把未知算成未读），再把这一格缺席登记在 `state_ledger` 上，形状与
+#: ``app/notifications/sources.py::SourceBundle.as_projection`` 那台台账同族：``included`` 说
+#: 答没答，``reason_code`` 说为什么，一枚新码都不许有。
+STATE_UNKNOWN = None
 
 #: 单向格：dismissed 是读者这一侧的终态，读过一次的可以再划掉，划掉的不许被「标为已读」
 #: 悄悄放回收件箱 —— 否则一次翻页就能替别人重开他已经拒绝看的条目。
