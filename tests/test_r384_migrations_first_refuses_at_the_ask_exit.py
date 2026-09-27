@@ -28,6 +28,12 @@ r"""R384 · `run migrations first` 在 `chat.py` 的三枚调用点：逐格实�
   `_ensure_*` / `_require_migrated_tables` 调用点，不在表里，故只报。
 - 效力边界：替身台账只回答"那一次现查怎么答"，所以本件证明的是**出口读到缺表时答什么**，不证明
   "跑 migrations 真能把那一格补出来"。
+- 🔴 R391 追加的更正（不删本件原始读数，只登记它过期）：上面可达性表里 `_upsert_document` 那一行写的
+  "`POST /upload` 实测 200"，从今天起不再是同一构造下整发上传的脸 —— 那一具替身台账里版本腿也会具名拒答，
+  而 R391 不再让 `chat.py::_record_uploaded_version` 吃掉它，出口答 503。归属腿那一支的容忍一字未动
+  （本件 `test_the_upload_metadata_leg_still_answers_200_when_documents_is_missing` 仍在数那一句 warning
+  恰一枚、现查仍恰好走过 `documents`），改的只有"存储自己报过脸之后不许再盖成功回执"。新的钉：
+  `tests/test_r391_upload_refusal_reaches_the_exit.py`（R391，基点即本 commit）。
 """
 from __future__ import annotations
 
@@ -540,10 +546,15 @@ def test_the_import_time_probe_sits_inside_a_bare_pass_handler():
 
 
 def test_the_upload_metadata_leg_still_answers_200_when_documents_is_missing(monkeypatch, tmp_path):
-    """只报不改（判据④）：`_upsert_document` 那一格今天被宽捕获吃掉，出口答 200。
+    """R384 存档、R391 判口：这一格的状态码从 200 变成 503，而 `metadata sync failed` 那一句仍恰好一枚。
 
-    这一枚钉的是**今天的样子**，不是裁定。真正的病是反方向的（存储现查到缺表，出口却说「收好了」），
-    那是 catalog/profile 那一族的账；本单碰它就是写域冲突，所以只把量到的状态码钉住存档。
+    R384 写这枚件时只能登记「今天的样子」（它自己就写着「钉的是今天的样子，不是裁定」），并把真正的病
+    报给总控。R391 是治那一格的班：`_record_uploaded_version` 不再吃掉 catalog 具名抛出的那枚 503，
+    于是版本腿拒答时出口答 503。函数名里那个 200 保留，是为了对齐 R384 回执与名册，不作数。
+
+    本枚要钉的两件事一件没松：① 归属腿（`_upsert_document` / `documents` 表）的既有容忍一字未动 ——
+    下面那条 `metadata sync failed` 仍恰好一枚、现查仍恰好走过 `documents`；② 版本腿自己报出的拒答
+    不再被翻译成成功回执。两者是同一发请求里的两支，R391 分得很清，也只折后一支。
     """
     from app.agents import tools
 
@@ -576,7 +587,7 @@ def test_the_upload_metadata_leg_still_answers_200_when_documents_is_missing(mon
         headers=_headers(),
     )
 
-    assert response.status_code == 200, response.text
+    assert response.status_code == 503, response.text  # R391：原为 200（那一枚假回执），见上面 docstring
     assert ledger.probed_tables == [DOCUMENTS_TABLE]
     swallowed = recorder.mentions(SENTENCE)
     assert len(swallowed) == 1, swallowed

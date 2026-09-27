@@ -4921,3 +4921,88 @@ end of the file as one hunk, `+150 / -1`: the one removed line is R376's last li
 it byte for byte before starting here (`\ No newline at end of file` marks it in the diff). No content
 was deleted; the missing terminator is the same hygiene gap R371 recorded for its own append, and it is
 closed here rather than passed on.
+
+## R391 · 上传这条腿：存储的具名拒答必须走到 HTTP 出口（`POST /upload`，2026-09-27）
+
+**一句话**：`_record_uploaded_version` 今天会在版本腿被存储**具名拒答**之后照旧返回一份本地推导的
+metadata，于是 `POST /upload` 答 200 并回执一个从没落进 `document_versions` 的版本号。本单把那一枚
+拒答原样交给出口：同一发现场现在答 **503 `storage_unavailable`**。改的是"吃掉它"，不是"翻译它"。
+
+**先更正两格口径（都量过，不是照抄派工词）**
+
+1. 派工说"那一闸在上传这条腿上从来没到过 HTTP 出口"——**只对一半**。生产 + 缺 `document_versions`
+   与生产 + 库没起这两格，上传今天在出口**就是** 503 且一字节不落：`chat.py:4087` 的
+   `peek_next_document_version` 排在落盘之前，而它自己带着 R383 那道闸（`catalog.py:605`，缺表时经
+   `:617-618` 再进一次）。四枚调用点（`:4140 / :4166 / :4216 / :4305`）在态 B、C 逐枚实测 503 + 零文件。
+2. R383 回执写的具名类 `CatalogStoreNotMigrated` **全仓零命中**（`rg` rc=1）。落树字节里 catalog 只有
+   一枚 `raise HTTPException(status_code=503, detail="storage_unavailable")`（`catalog.py:405`），且
+   全模块 `HTTPException` 抛出点恰此一枚、长在 `_require_ready_store` 体内（本单钉住）。所以"具名穿透"
+   今天只能实现成"接 `HTTPException` 这一种、体内只有 `raise`"——改 `catalog.py` 造一枚新类会撞禁写域。
+
+**修前 ⇒ 修后（替身台账，零真库、零服务、零模型端口）**
+
+| 态 | `:4140` | `:4166` | `:4216` | `:4305` | 修前 ⇒ 修后 |
+| --- | --- | --- | --- | --- | --- |
+| A 生产·迁移齐 | 500 parse | 200 skipped/excluded | 200 ok/indexed | 200 skipped/excluded | 同 ⇒ 同 |
+| B 生产·缺表 | 503 | 503 | 503 | 503 | 同 ⇒ 同 |
+| C 生产·库没起 | 503 | 503 | 503 | 503 | 同 ⇒ 同 |
+| **D 生产·版本腿才拒** | 500 | **200 ok** | **200 ok** | **200 skipped** | 🔴 四枚假回执 ⇒ **503 ×4** |
+| E/F/G 开发·裸机·离线 | 500 | 200 | 200 | 200 | 同 ⇒ 同（逐格钉死） |
+
+D 态不需要 patch 任何 chat 内部量，所以它就是生产现场，入口是一枚**时间窗**而不是旗标竞态：
+`_db_ready`（`auth.py:467`）在 R230 之后运行期只许 False→True、永不反向（`auth.py:237`），
+"chat 以为库在而 catalog 以为库不在"结构上走不到。真序是：`peek:4087` 撞上一次连接失败
+（`catalog._conn` 的 `connect_timeout=1`）⇒ `catalog.py:616-620` 按既有设计回落本地台账推版本号 ⇒
+上传继续（解析＋索引，秒级）⇒ 版本腿 `catalog.py:733` 的闸放行、`:734` 写完 sidecar、`:739` `_ensure()`
+现查出表不在 ⇒ `:769-770` 带 `migrations_missing` 进闸 ⇒ `:405` 抛那枚 503 ⇒ 落到 `chat.py:3699`
+的 `except Exception` 上被吃掉 ⇒ `return metadata:3701` ⇒ 回执 `status:"ok"`。同一发请求里日志连着两句：
+闸自己说 `operation=version record code=storage_unavailable`，出口说
+`[Docs] version record failed: 503: storage_unavailable`。
+
+**两份 dict 差哪几格（为什么这枚谎在协议上不可见）**：被吃掉那支交出 5 格
+（`version / size_bytes / parse_status / index_status / index_reason`），真落库交出 11 格，少
+`filename / classification / department / owner_id / storage_path / created_at`；共有的五格逐格等值，
+而 `_document_upload_result:4038-4040` 只读其中三格 ⇒ **回执上看不出来**。`:4236` 的
+`_document_resource_scope` 确实读少了的那几格，但下游 `_document_publication:3782-3791` 只取
+`visibility / department_ids / status` 三格，两份 dict 里都没有、两边同样落默认值 ⇒
+授权投影今天没被本单改变（如实记，不冒充战果）。
+
+**改法与账**：`chat.py` `+10 -0` 纯追加一枚 `except HTTPException: raise`。零新增错误码、零新增 reason、
+零新增 status 档位；`status_code=503` 抛出点**仍恰 6 枚**、归属名单一字未改（新增的是穿透，不是抛出点），
+所以 `tests/test_r384_*` 的门账钉不需要改口，只有那枚自称"钉的是今天的样子"的存档钉随裁定改口
+（`test_the_upload_metadata_leg_still_answers_200_when_documents_is_missing` 断言 200 ⇒ 503，
+函数名保留以对齐 R384 回执；它真正要登记的"归属腿仍容忍、`metadata sync failed` 仍恰一枚"一字未松）。
+**归属腿（`_upsert_document` 那一支）连同那句 warning 一字未动**：`tests/test_r391_*` 拿基点
+`903765b` 的 blob 现算三支 except 形状再逐支比对，只允许多出一支 `passthrough`。
+
+**文件留不留：留。** 与 `:4136-4139`（解析失败留文件答 500）同向、与 `:4211-4213`（索引失败删文件并 500）
+反向。两枚先例的分界不在"留不留"，在**哪一层失败**：`:4211` 是摄取自己失败、索引里一份都没有；本单这一格
+是摄取全部成功、只有台账拒绝落行，而 `:4216` 那一支正文已在索引里——删文件会造出"索引里有、盘上没、
+两本账都没行"的三份不一致，并把平台故障的成本折进客户的数据。代价如实登记：迁移补齐后重试会在盘上留下
+前一发的孤儿文件，今天没有任何一条腿会去索引它（结转见回执⑥）。
+
+**只报不改（本单量到、治它要撞禁写域或越出范围）**
+
+- `catalog.py:768-772`：版本腿的 catch-all 对**非迁移族**的写失败（`UndefinedTable`、超时、权限）只
+  `logger.warning` 之后 `return metadata`，出口照旧 200 且**连一枚具名拒答都没有**。本单的穿透接不到它，
+  因为那一格根本没抛。靶在 `app/documents/catalog.py`（禁写域）。
+- `catalog.py:616-620`：peek 回落本地台账推版本号 ⇒ 客户机重启或 sidecar 丢失后从 `1` 重来，而
+  `catalog.py:743-753` 发的是 `INSERT ... ON CONFLICT (filename, version) DO UPDATE` ⇒ 旧版本行的
+  `storage_path / created_at / parse_status` 被新版本覆盖（本件实测到那条 ON CONFLICT 语句）。
+- `chat.py:3673` 那扇 `if catalog_database_available()` 的门本身：同一发请求里它在 peek 之后才读，
+  读到 False 就走本地腿并答 200 —— 与 D 态同族，但这一格连拒答都没有。
+
+**钉与刀**：`tests/test_r391_upload_refusal_reaches_the_exit.py` 49 枚（判据①的三态×四枚调用点矩阵、
+判据②的三支形状对基点逐支相等、门账 6 枚、穿透体内只有 `raise`、真 bug 仍答 200、离线腿零 SQL、
+非生产三态逐格表）。四把盘上刀 + 一把内存刀，进出 sha256 逐趟相等
+（`chat.py` 恒 `1a4839d70e4a4fb2…`，`app/documents/catalog.py` 全程 `f0b84e264e07b7a4…` 一字未动）：
+K1 摘掉穿透 12 红（本件 11 + r384 存档钉 1）／K2 放宽成 `Exception` 6 红（含新增那枚面级牙
+`test_a_real_bug_in_the_version_leg_still_answers_the_pinned_200`）／K3 让闸对所有环境都咬 16 红
+（本件 13 + `test_document_upload_resilience` 1 + `test_document_delete_catalog` 2 —— 与 R383 刀2 同数，
+"开发支不许打死"这条边界再次被既有件自己守住）／K4a 只补一句 `logger.error` 不改脸 13 红／
+K4b 现造一枚新码 `catalog_store_not_migrated` 16 红（`tests/test_r142_error_code_table_sync.py` 与
+r384 的门账钉一起点名，四连先例的守卫在替本单把关）。
+
+**客户端可见变化**：`POST /upload` 在"存储拒答"这一格从 200 变 503，信封沿用已批准的
+`{"detail": "storage_unavailable"}`，**没有新码**。业主侧事实：客户机上一次偶发的连接超时 +
+迁移没跑齐，过去表现为"上传成功但目录里查无此版本"，现在表现为上传失败。

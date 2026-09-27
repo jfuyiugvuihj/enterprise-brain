@@ -3662,6 +3662,12 @@ def _record_uploaded_version(
     unreachable would lose a document the caller can no longer address. What is lost
     instead is attribution, and an unattributed row is treated as legacy -- visible to
     the management level only -- rather than as public.
+
+    R391: that defence belongs to the metadata leg alone. When the version ledger itself
+    refuses by name -- the store gate in ``app/documents/catalog.py`` answers production plus
+    a store that is not there with its own 503 -- there is no row at all, in the table or in
+    the local mirror, so nothing is left to be legacy. Swallowing that refusal would answer a
+    receipt claiming a registration which never happened, so it is re-raised, not translated.
     """
     metadata = {
         "version": version,
@@ -3696,6 +3702,10 @@ def _record_uploaded_version(
                 index_status=index_status,
                 index_reason=index_reason,
             )
+        except HTTPException:
+            # 存储自己已经报过脸了（R383 那道闸：生产 + 目录存储没起 = 具名 503）。吃掉它就是把
+            # 「这一版没落账」翻译成 200，所以原样上抛，由出口作答；本模块不新增第二枚 503。
+            raise
         except Exception as exc:
             logger.warning(f"[Docs] version record failed: {exc}")
             return metadata
