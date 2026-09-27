@@ -3490,3 +3490,59 @@ route reports the shape it finds, it does not repair it.
 - Frontend (R341 files, 改口 by addition only): `parseTrendPayload` requires the `undated` object, refuses to
   invent zeros, and never derives a number from it; `DashboardPanel.vue` renders the sentence the server's numbers
   produced; `r267-overview-no-self-fed-rows.test.js` pins that the browser keeps no second book.
+
+## Listing accounts: the three faces of `GET /api/v1/users` (2026-09-27, R356)
+
+This route answers with one of three faces, and they are three different claims. Before this ticket
+the second one was rendered as the third. In production with the process-local user table -- the
+condition `_memory_store_denied("user listing")` in `app/common/auth.py`, i.e. `APP_ENV=production`
+and no reachable PostgreSQL -- the read path returned `[]`, so a client that asked "who works here"
+was told "nobody". That sentence is about the company, not about storage, and it was false. The write
+path sitting in the same module had always answered honestly
+(`(False, "production_user_store_unavailable")`): one fact, two faces, one of them a lie.
+
+| Face | When it happens | Provenance |
+|---|---|---|
+| `403 {"detail":"权限不足: users:manage (permission_denied)"}` | Authenticated but no `users:manage`. The gate still runs before anything is read, so somebody who cannot manage accounts cannot use this route to learn whether the store is up. | `authorize_request` (`app/common/authorization.py:50-57`) called at `app/api/v1/auth.py:101`; pinned by `tests/test_r356_users_refusal_face.py::test_the_authorization_gate_still_runs_before_the_roster_is_read`, and on the gate side by `tests/test_r290_department_endpoint.py` / `tests/test_authorization_api.py` |
+| `503 {"detail":"storage_unavailable"}` | The store refused to answer. Not "no accounts", not "some accounts are hidden": the roster cannot be read. | `app/api/v1/auth.py:102-105` catches `app.common.auth.UserStoreUnavailable`, raised at `app/common/auth.py:581-583`; pinned by `test_the_route_answers_503_when_the_user_store_refuses_the_roster` and `test_a_refusal_is_never_rendered_as_an_empty_roster` |
+| `200 {"users": []}` | The store answered and the roster really is empty -- a clean installation, or every account deleted. This face must stay reachable, otherwise "refused" would be the only answer a client ever sees. | `tests/test_r356_users_refusal_face.py::test_a_clean_store_answers_200_with_zero_rows`; the five keys of every row (`id`, `username`, `role`, `department`, `created_at`) are unchanged and pinned by `test_the_roster_projection_still_answers_the_five_keys_r316_reads` |
+
+The refused face and the empty face share no wording, and that is a contract rather than a style
+choice: `test_the_three_faces_share_no_words` compares the three bodies byte for byte. A client must
+render 503 as "the roster cannot be read right now" (fix `DATABASE_URL`, run the migrations, wait for
+the store and retry), never as "this company has no accounts".
+
+**Zero new error codes.** `storage_unavailable` is already a member of
+`app/agents/contracts.py::ErrorEnvelope.code` and already sits in the table under
+`## REST Error Envelope`; this route reuses that word verbatim because the client-side 503 face keys
+off exactly it. `tests/test_r142_error_code_table_sync.py` and
+`tests/test_error_code_vocabulary.py` are unchanged and green, and
+`test_the_refusal_face_uses_a_code_the_repository_already_registers` re-reads the enum from the AST so
+this section cannot name a code the backend does not have.
+
+### Registered, not fixed (outside this write set)
+
+- **`auth.list_users()` still answers `[]` when the caller does not say which face it wants.** That
+  legacy reading is pinned by three tickets that are not this one's to edit:
+  `tests/test_r229_auth_semantics.py:88`, `tests/test_deployment_guards.py:288`,
+  `tests/test_r230_db_ready_selfheal.py:54` -- and that last file also compares
+  `type(result) is type([])` at `:577`, so it is itself an anti-"empty enough to pass" pin. Flipping
+  the default is a 改口 of another ticket's assertions and belongs to 总控, not to an execution layer
+  quietly rewriting its neighbours.
+- What this ticket does instead is make the refusal *sayable*, and make silence impossible to re-grow
+  by accident: `list_users(denial=auth.DENIAL_RAISES)` raises `auth.UserStoreUnavailable`, and
+  `test_every_production_call_site_asks_for_the_truthful_shape` scans `app/**` and goes red if a
+  roster read does not name the shape it wants. Today there is exactly one such read, the route.
+- Physical line numbers are the lines at delivery; the shapes they point at are the contract.
+
+### One line on roles, because `role` is contract-visible (R357)
+
+R357 changes no answer any client can see. The set of roles that may be created or assigned is still
+exactly `staff / manager / admin` -- one definition now (`CREATABLE_ROLES`,
+`app/common/permissions.py:41`) instead of three hand-copied lists, imported by `app/common/auth.py`
+(create, SSO re-assign) and `app/common/sso.py`. `auditor` stays in `ROLE_PERMISSIONS` and stays *not*
+creatable, with the reason stated where a reader will meet it: it has no clearance tier yet
+(`app/common/rbac.py:31`), and the tier question is H13, still with 业主. So `POST /api/v1/users` with
+`"role": "auditor"` still answers `400 非法角色: auditor`, and an `X-SSO-Role: auditor` header still
+lands on `staff` (`tests/test_r357_single_role_roster.py`). No switch was added: nothing in this
+family reads an environment variable.

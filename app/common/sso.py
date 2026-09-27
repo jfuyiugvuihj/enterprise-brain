@@ -1,7 +1,12 @@
 import os
 import secrets
 
-ALLOWED_ROLES = {"staff", "manager", "admin"}
+from app.common.permissions import CREATABLE_ROLES
+
+#: R357：这枚名字只是**再导出**，不是第二份名单——真源在 `app/common/permissions.py`
+#: 的 `CREATABLE_ROLES`。`tests/test_r357_single_role_roster.py` 按 `is` 判它（不是 `==`）：
+#: 另抄一份集合照样相等，却不再同源，而那正是本单要根治的病。
+ALLOWED_ROLES = CREATABLE_ROLES
 
 
 def sso_enabled() -> bool:

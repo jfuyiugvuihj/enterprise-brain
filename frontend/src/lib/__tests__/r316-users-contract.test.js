@@ -144,7 +144,15 @@ describe('R316① · 后端出口与闸口（本屏只用读的那一枚）', ()
     const handler = /@router\.get\("\/users"\)[\s\S]*?\n\n\n/.exec(api)
     if (!handler) throw new Error('app/api/v1/auth.py 里解析不到 GET /users 那枚出口：闸口对账落空，改的必须是这里。')
     expect(handler[0]).toContain('authorize_request(request, ACTION_MANAGE_USERS, resource_name="users")')
-    expect(handler[0]).toContain('auth.list_users()')
+    // R356 把这一处从裸 `auth.list_users()` 换成显式表态的读法：读不到名册时抛
+    // `UserStoreUnavailable`，路由答 503 `storage_unavailable` —— 本文件那张 USERS_FACE_STORAGE
+    // 到这一笔才有真的生产者（在此之前「生产环境 + 进程内内存表」那一格回的是 200 空数组，界面
+    // 画出来的是「这家公司没有用户」，一句假话）。断言按形状不按字面量（口径同 R351 那把尺子）：
+    // 参数表以后再演进不该让这一格假红，但「不表态就把拒答读成空名册」必须红。
+    expect(handler[0]).toMatch(/auth\.list_users\([^)]*\bdenial\s*=\s*auth\.DENIAL_RAISES\s*\)/)
+    expect(handler[0]).toMatch(
+      /except\s+auth\.UserStoreUnavailable[\s\S]*?status_code=503[\s\S]*?"storage_unavailable"/,
+    )
     expect(handler[0]).toContain('{"users": users}')
   })
 

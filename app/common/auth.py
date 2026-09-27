@@ -531,8 +531,62 @@ def get_token_from_request(request: Request) -> str | None:
     return None
 
 
-def list_users() -> list[dict]:
+# R357 的真源 import——这一行停在这里不是随手挑的位置：本仓有一枚「按物理行号」记账的尺子
+#（tests/test_r238_bare_connect_ratchet.py:855 断言 app/common/auth.py:301 就是那枚真
+# 裸 connect 落点）：在它上方多塞一行，那枚落点就会被读成「凭空多了一枚」。
+# 那枚文件不在本单写域，所以这一行停在 301 之下、与本单新增的 R356/R357 两格并排
+#（口径同 app/main.py:138：中途 import 带 noqa: E402 并在旁边写下理由）。
+from app.common.permissions import CREATABLE_ROLES  # noqa: E402 - 理由见上面五行
+
+#: `list_users(denial=...)` 撞上「生产环境 + 进程内内存表」那道闸时的两种形状（R356）。
+#: 用两枚具名常量而不是布尔开关：读代码的人要在场名上看见"这张脸长什么样"，而
+#: `tests/test_r356_users_refusal_face.py` 里那把形状尺子按名字判"生产代码里唯一的
+#: 一处调用必须选 `DENIAL_RAISES`"。默认那枚仍然把拒答读成空名册，那是 R229/R230/
+#: 部署守卫三枚外来钉逐字钉住的 default-deny 读数，本单不越域去摘（见 `list_users` docstring）。
+DENIAL_LEGACY_EMPTY_ROSTER = "legacy_empty_roster"
+DENIAL_RAISES = "raises"
+_DENIAL_SHAPES = (DENIAL_LEGACY_EMPTY_ROSTER, DENIAL_RAISES)
+
+
+class UserStoreUnavailable(RuntimeError):
+    """The user store refused to answer; that is not the same claim as "nobody is here".
+
+    R356：`_memory_store_denied()` 的 docstring 自己写着"Every caller keeps its previous
+    default-deny behaviour"。写侧那几张脸确实保留了——`create_user` / `upsert_sso_user` /
+    `change_password` 答的是 `production_user_store_unavailable`，那是实话；而读侧把同一个
+    事实翻译成 `[]`，声称的是"这家公司没有用户"。同一个事实两张脸，其中一张是假话。
+    本枚异常只干一件事：让读侧也能说实话。
+    """
+
+    def __init__(self, operation: str) -> None:
+        super().__init__(f"production user store refused {operation}")
+        self.operation = operation
+
+
+def list_users(*, denial: str = DENIAL_LEGACY_EMPTY_ROSTER) -> list[dict]:
+    """读出名册；撞上「存储拒答」那一格时对外说什么，由 `denial` 决定（R356）。
+
+    两种脸必须分开，这是本单存在的全部理由，两枚各自有钉，共用一句措辞都不许：
+      · 干净的库（名册真的零行）→ 200 `{"users": []}`；
+      · 生产环境 + 进程内内存表（`_memory_store_denied("user listing")` 为真）→ 路由答
+        503 `storage_unavailable`，靠的就是 `denial=DENIAL_RAISES` 这一格抛出的异常。
+
+    `denial` 的默认值为什么还是遗留那一枚（本单最该写清楚的一格，别读成"开关可以随便传"）：
+    `auth.list_users()` 无参调用返回 `[]` 今天是三枚外来钉逐字钉住的读数——
+    `tests/test_r229_auth_semantics.py:88`、`tests/test_deployment_guards.py:288`、
+    `tests/test_r230_db_ready_selfheal.py:54`（后者 `:577` 还按 `type(result) is type([])`
+    判，所以任何"看着像空的哨兵"都过不了它，那枚钉本身就在反对伪装）。摘那三枚钉等于改
+    别的单写下的断言，越出本单写域，交总控落笔。本单先把对外那张脸接对，并留下尺子：
+    `app/**` 里任何一处 `list_users()` 调用都必须显式选 `DENIAL_RAISES`，新长一处没选就红。
+
+    传错形状不当成"退回旧行为"处理：直接 `ValueError`。把未知值静默读成空名册，正是本单
+    要杀掉的那件事，不能靠新增它的另一种写法来收尾。
+    """
+    if denial not in _DENIAL_SHAPES:
+        raise ValueError(f"未知的 denial 形状: {denial!r}，只认 {_DENIAL_SHAPES}")
     if _memory_store_denied("user listing"):
+        if denial == DENIAL_RAISES:
+            raise UserStoreUnavailable("user listing")
         return []
     if _using_memory_store():
         return [
@@ -549,7 +603,7 @@ def create_user(username: str, password: str, role: str = "staff", department: s
         return False, "用户名和密码不能为空"
     if len(password) < 6:
         return False, "密码至少 6 位"
-    if role not in ("staff", "manager", "admin"):
+    if role not in CREATABLE_ROLES:  # R357：真源在 app/common/permissions.py，本处只 import
         return False, f"非法角色: {role}"
 
     if _memory_store_denied("user creation"):
@@ -596,7 +650,7 @@ def get_user(username: str) -> dict | None:
 def upsert_sso_user(username: str, role: str = "staff", department: str | None = None) -> tuple[bool, str]:
     if not username:
         return False, "用户名不能为空"
-    if role not in ("staff", "manager", "admin"):
+    if role not in CREATABLE_ROLES:  # R357：与 create_user 共用同一枚真源，不是两份名单
         role = "staff"
 
     if _memory_store_denied("SSO user sync"):

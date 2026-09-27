@@ -89,9 +89,20 @@ async def login(data: LoginRequest):
 
 @router.get("/users")
 async def list_users(request: Request):
-    """列出所有用户"""
+    """列出所有用户。
+
+    R356：名册取不到时答 503 `storage_unavailable`，不答 `{"users": []}`。「这家公司没有
+    用户」和「用户存储还没答话」是两件事，伪装成前者是一句假话。错误体逐字沿用仓里已有的
+    那一枚码（`app/agents/contracts.py::ErrorEnvelope.code`），本单零新增错误码。
+
+    闸的顺序一字未动：先 `authorize_request(..., ACTION_MANAGE_USERS)`，权限不过的人仍然
+    拿原来那句 403，问不到名册的人才拿 503。响应体形状除新增的错误面之外也没动。
+    """
     authorize_request(request, ACTION_MANAGE_USERS, resource_name="users")
-    users = auth.list_users()
+    try:
+        users = auth.list_users(denial=auth.DENIAL_RAISES)
+    except auth.UserStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
     return {"users": users}
 
 
