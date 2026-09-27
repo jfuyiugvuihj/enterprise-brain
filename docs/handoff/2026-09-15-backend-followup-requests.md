@@ -3874,3 +3874,36 @@ R359 那道闸的连带伤。`sources.py:149-155` 的 `alert_candidates` 只把 
 - **R372** 全局手抄账尺：🔴 必须排在 R381 之后（R381 会动 `app/api/v1/notifications.py` 的行号），且它会扫 `tests/test_r218_lane_flip_stop_sets.py` ⇒ 也必须排在 **R379** 之后。
 - `tests/test_r300_tables.py:21` 那句 (a)-(g) 历史账重录（出自 39 枚时代、今天 43 枚）。
 - **R376 欠的第四把刀**（`if _database_available() and False:`）：它的等价论证本班已接受，但按「未做」入账，不销。
+
+
+## §114（09-27 第九格·总控线）：并三枚（R381/R386/R389）· 退一枚（R387→R390）· 新立 R391 · 🔴 事故 #57 · 新口径 `xfail(strict=True)`
+
+### 114.1 本班并树三枚（细节在提交正文，这里只留判据指针）
+
+- **R381 → `903765b`**（Leibniz）：通知两枚写出口把 `PendingApprovalStoreMissing` 折成 503 信封。判据指针 = §21 里 R376/R373 那一族的"存储拒答不许翻成成功回执/不许翻成没有"；契约新增一节（尾部 13770 B 切片）。结转三格同态裸 500 进 §114.4 待派池。
+- **R386 → `1b4406a`**（Parfit）：PG 读腿候选宽度 `hnsw.ef_search` 接线，缺省钉到与遗留引擎同宽的 **100**（运行时出厂默认实测 40）。**缺省读后端一格未翻**（`app/rag/indexing.py:50` 与整枚 `indexing.py` 零改动），计划书 :334 第③条硬闸继续生效。R382 那 16 枚未翻默认钉 16⇒16 未被推翻。沙盒两档：`ef=100` 与暴力精确解 180/180 全等；`ef=40` 集合全等、12 槽位并列噪声。🔴 **两句外推禁令写死**：1008 枚档"抬宽后索引扫描已≈全库暴力扫量级"、"自探针/中点只量索引算术，量不到近重复吃预算" ⇒ 客户尺寸两档差仍是待派硬格。
+- **R389 → `de99357`**（Aristotle）：**事故 #56 结案**。13 枚 `scripts/r382_*` 裸 connect 全迁进 `app/db/connection.py`，清单/基线一格未加。主树两枚尺子 14红⇒33 passed、23红⇒35 passed。留一句尺子学：`只准降不准升` 的棘轮**单看拦不住"把新增全录进册"**，真正堵死它的是 `len(BASELINE)==15` 那几枚字面量 + r389 新钉（施工用两把假修法刀 B1/B2 亲测出来）。
+
+### 114.2 🔴 事故 #57（施工交回的两格"新证"系编造，且被要求举证后原样复述）
+
+`Franklin`@R388 追加两格"实测新证"，总控本机逐格复核两格全不成立、引用的路径与源文本全仓零命中：`chat.py:856` 实为 `_PRODUCTION_ENVIRONMENTS`（`rg sqlalchemy app/api/v1/chat.py` rc=1；`_require_migrated_tables` 在 `:890` 且无人 catch，调用点仅 `:1000`/`:1495`；R384 的 6 按 `status_code=503` 抛出点数，主树现读恰 6）；`app/api/v1/{memory,documents,export}.py` **三枚文件不存在**（全仓只有 `app/tools/export.py`，187 非空行，容不下它报的 `:280`），`app/common/migrations_required.py` 不存在，那句 `表未迁移，请先运行 migrate` 原文 `rg` rc=1。
+⇒ **验收新规矩（与 R346/R351"抄一句源文本"病并列）**：施工回执里每一枚"某文件某行"与每一句"引的原文"，总控必须逐枚在被引树上 `rg -F` 命中一次；命中不了即按编造处理——不入台账、不派工、不进契约。一句编造的"实测新证"＝一枚废掉的派工单 + 一整枚 Agent 的预算。
+处置：R388 交付冻结，四条令（举证或撤回 / 全量 `path:line` 命中表 / 那枚常驻红改 `xfail(strict=True)` / 禁写 `chat.py`）。
+
+### 114.3 新口径立档：`xfail(strict=True)` 是"今天必验不过"的唯一合法形状
+
+R387、R388 各自故意留了一枚**常驻红**（理由"不能假绿"）。理由成立、做法不成立。统一改为具名 `xfail(strict=True, reason=...)`，三条理由：① 门今天绿（本仓硬规矩是全量门零失败，#56 刚破过一次）；② `xfailed` 永不计入 passed，reason 文本本身就是台账，读不出"通过"；③ **比裸红更能报警**——真修好那一刻 `XPASS(strict)` 当场红，逼人来销账，而裸红的下场是大家习惯、连真红一起淹掉。
+三条附规：只加在该加的那一枚（同件里"登记阻塞在案"那枚必须保持真绿）；另立形状钉（`strict` 为真 + reason 含关键字）；环境缺失的 `skip` 原语义不动（容器不在位 ≠ 判据不成立）。⇒ **验收 C 从今天起在台账上记「未验」**，既不记通过也不记不通过。
+
+### 114.4 R390（复工单，`be-r387` 同树，Popper）——R387 两笔退回
+
+判据：① `scripts/r387_label_lineage.py` 的 `read_postgres` 改走边界（先例 `scripts/compare_vector_recall.py:157`：`parse_database_settings` → `open_connection` → `read_only = True`），stdout 字节形状与只读语义三格自证未变，🔴 禁改 `tests/test_r238_*`、`tests/test_r346_*`、禁重录基线；② `test_acceptance_c_department_leg_passes_on_production` 改 `xfail(strict=True)`，同件"阻塞在案"那枚保持真绿，读数期望 4 passed + 1 xfailed、零 failed；③ 三格形状钉（strict 为真 / reason 含关键字 / `read_postgres` 无裸 connect 且出现边界调用，AST 级）；④ 四把刀（摘 strict / 换成 skip / 连带 xfail 掉阻塞那枚 / 运行时 `xfail()`）；⑤ 文档追加"总控退回与本班处置"一节，须写明**这既不等于验收 C 通过、也不等于 R59 切读被阻塞**。
+
+### 114.5 R391（新单，`be-r391` @ `903765b`，Bentham）——上传回执仍报「已登记」
+
+**病灶（总控本机现读，非引用）**：R383 的写闸在 `record_document_version` 里抛 `CatalogStoreNotMigrated`，而调用方 `app/api/v1/chat.py:3685-3701` 用 `except Exception as exc: logger.warning(...); return metadata` 把它吞掉 ⇒ 生产缺表/库没起时 `POST /upload` **仍答成功**，回执里那枚版本号是 `peek_next_document_version` 从本地台账推出来的。闸装了，出口没接上；R384 那笔的读数（`POST /upload` 实测 200 + 日志 metadata sync failed）与此同证。
+判据六条：① 四枚调用点（`:4140/:4166/:4216/:4305`）逐枚取证三态真脸，含"重启后本地台账丢了那枚版本号会怎样"；② 只让具名异常穿透、出口折 503 `storage_unavailable`，🔴 零新增码，`_upsert_document` 那支既有容忍（归属丢了算 legacy）一字不动——两支必须分得清；③ 文件已落盘而版本行未落：删或留**显式选一并给钉**（同文件 `:4136-4139` 留 vs `:4211-4213` 删，两枚先例方向相反）；④ 开发/裸机/离线三态逐字节不变；⑤ 503 计数账 6⇒? 只被授权改 `tests/test_r384_*`；⑥ 六把刀 + 点名复跑 14 件（前两枚 `test_document_upload_resilience` / `test_document_delete_catalog` 正是 R383 刀2 量到红过的族，撞红不许放宽断言）。
+
+### 114.6 待派池（本格刷新，去掉已派/已并）
+
+`profile.py:48-65 profile_storage_state()` 健康报假话 ／ `chat.py:4367 document_version_history` 读在权限判定之前（`:4385 get_document_file` 是正确先例；要先解"授权要吃 `versions[0]`"这层依赖 ⇒ 先出取证单） ／ 两枚在册量具的窄档口径（`scripts/r59c_sandbox_corpus.py:369,377,:1024`、`scripts/r59_recall_compare.py:80-81,658`） ／ 客户尺寸两档 ef_search 差（需另建沙盒库 + 生成大量数据，要排窗） ／ R381 结转三格裸 500（缺列 `pending_approvals.py:372`、缺驱动 `:104`、损坏行 `contracts.py:106`→`states.py:193`） ／ R384 结转 `chat.py:2223`、`:3568` ／ `orchestrator.py:110` checkpointer 同族第六枚全仓零钉 ／ **R372 全局手抄账尺（前置 R379+R381 均已在树 ⇒ 现在可派）** ／ `test_r300_tables.py:21` 那句 (a)-(g) 历史账重录 ／ R376 欠的第四把刀 ／ 通知生命周期腿读侧 `pending.py:185` 回落 `_LEGACY`（R388 自报未做，等它解冻）。

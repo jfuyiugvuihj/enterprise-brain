@@ -1370,14 +1370,17 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | ``Helmholtz`` | `01a0e1de-c417-7873-a062-1a4c1993693b` | **R378** R218 那把尺把挑脸谓词收成停子（主干自带红） | `be-r378`（基点 `285e265`，**独占**） | **已结案**：并树 `13f1d18`（细节见该笔提交正文）。原在途记录：写域 `scripts/r218_switch_rehearsal.py` + `tests/test_r218_lane_flip_stop_sets.py`；本班已在 HEAD 干净 worktree 复现该红与 R361 无关 | 16:16:12 |
 | ``Euler`` | `01a0e1df-6b6d-7fb3-b308-dd8b9ecd97e0` | **R379** 量窗尺自己的四格空气读数 | `be-r379`（基点 `285e265`，**独占**） | **已结案**：并树 `aafb4b0`。原在途记录：写域 `scripts/rehearse_eval_window.py` + 四枚 r361 + 一切 import 该件的用例；输出契约字段名/顺序/单位零变 | 16:16:12 |
 | ``Confucius`` | `01a0e1e0-7286-7ed1-8137-d581c1ccdac6` | **R380** 后端英文原话不许占人话位 | `be-r380`（基点 `285e265`，**独占**） | **已结案**：并树 `5ba73bd`（细节见该笔提交正文）。原在途记录：写域 `frontend/src/lib/{errcodes,http}.js` + 新钉；禁改 `*.vue` 与 alerts/notifications/dashboard.js；防线只准有一处 | 16:16:12 |
-| ``Leibniz`` | `01a0e1ed-403d-7701-8008-caeaeea71739` | **R381** 通知出口的 `PendingApprovalStoreMissing` 翻译 | `be-r381`（基点 `0d4f5ec`，**独占**） | 🔴 **在途**：写域 `app/api/v1/notifications.py` + 新钉；R373/R376 两班独立点同一格；零新增码、503 抛出点仍恰两枚 | 16:16:12 |
+| ``Leibniz`` | `01a0e1ed-403d-7701-8008-caeaeea71739` | **R381** 通知出口的 `PendingApprovalStoreMissing` 翻译 | `be-r381`（基点 `0d4f5ec`，**独占**） | **已结案**：并树 `903765b`。原记录：写域 `app/api/v1/notifications.py` + `tests/test_r376_gate_shape_pins.py` 改口 + 契约尾部追加；总控复跑 15 枚点名件同数，两枚 app/test 件对基点零漂移整件复制
 | ``Planck`` | `01a0e1ed-f625-75d3-b96e-e385e4e96852` | **R382** 切读前格①/格②读数（服务内端到端走真库） | `be-r382`（基点 `0d4f5ec`，**独占**） | **已结案**：并树 `b498c88`。原在途记录：只准进程内设 `INDEX_BACKEND=pgvector`、只准写 `eb_r59_sandbox`；默认值与 `.env` 一律不动 | 16:16:12 |
-| ``Boyle`` | `01a0e1f6-e3d3-7c62-98fa-c9ea9b94e02c` | **R383** 缺表不许答「没有」（catalog / profile / auth 三处） | `be-r383`（基点 `96179ff`，**独占**） | 🔴 **在途**：写域 `app/documents/catalog.py`、`app/memory/profile.py`、`app/api/v1/auth.py`；病灶=「缺表→出口答 200 空集」+ `PUT /profile` 两格同答 500「画像保存失败」；闸只准借现成 `_is_production_environment()`（`alerts.py:60`）、零新增码；离线/开发三条腿一字不动（牵着 r292 15 / offline 13 / catalog_sync 6 / delete_catalog 12 / upload_resilience 13）；🔴 树根 `_r383_base_counts.txt` 是它的临时件，并树不带 | 09-27 16:56 补记 |
-| ``Descartes`` | `01a0e20e-6208-7f21-a0e2-6e1924765332` | **R384** `chat.py` 两枚无保护建表调用点 | `be-r384`（基点 `5ba73bd`，**独占**） | 🔴 **在途**：写域 `app/api/v1/chat.py`；`_ensure_documents_table`/`_ensure_sessions_table` 两枚调用点；第一判据=自己实量三态真实状态码（🔴 不许照抄 R377 的推测）；照 R371 形状加一层具名子类；动 chat.py ⇒ 手抄账全族必复跑 | 09-27 16:56 补记 |
+| ``Boyle`` | `01a0e1f6-e3d3-7c62-98fa-c9ea9b94e02c` | **R383** 缺表不许答「没有」（catalog / profile / auth 三处） | `be-r383`（基点 `96179ff`，**独占**） | **已结案**：并树 `1dc54a3`（细节见该笔提交正文，含业主侧 503 可用性口径与 `git merge-file` 三方合手法）
+| ``Descartes`` | `01a0e20e-6208-7f21-a0e2-6e1924765332` | **R384** `chat.py` 两枚无保护建表调用点 | `be-r384`（基点 `5ba73bd`，**独占**） | **已结案**：并树 `5f19e3f`（含 R377 三格现场量正、施工自曝两把哑刀重跑）
 | ``Bohr`` | `01a0e20f-0bcd-7620-93d7-7a0541186f91` | **R385** 收件箱「少了几条」要说人话（`sources` 缺席台账前端一字未读） | `be-r385`（基点 `5ba73bd`，**独占**） | **已结案**：并树 `39e2b22`。原在途记录：写域 `frontend/src/lib/notifications.js` + `NotificationBell.vue` + 新件；两脸分开、状态名不许直插人话位、必须给 DOM 级证据；`lint:colors` 恒 148、vitest 既有枚数只增不减 | 09-27 16:56 补记 |
-| ``Parfit`` | `01a0e239-a9e2-7040-b9c6-7dfa3b328d71` | **R386** PGVector 读腿候选宽度：`hnsw.ef_search` 今天从没设过（运行时 40）vs 遗留引擎实测 100 | `be-r386`（基点 `b498c88`，**独占**） | 🔴 **在途**：写域只有 `app/rag/pg_store.py` + 新钉（`SET LOCAL` 同事务、值单点派生、缺省即与遗留同宽）；🔴 不许翻 `indexing.py:50` 默认、不许动 `migrations/**` 索引 DDL、不许碰 `.env*`/`deploy/**`；19 枚点名件逐枚报枚数 | 09-27 17:40 |
-| ``Goodall`` | `01a0e23a-3b99-7591-9503-8004939f663a` | **R387** 生产 `department`/`classification` 1008 枚全空 ⇒ 验收 C「越权 0 条」只是空集意义上成立（取证单） | `be-r387`（基点 `b498c88`，**独占**） | 🔴 **在途**：🔴 生产码零写入（`catalog.py` 归 R383、`chat.py` 归 R384）；只新建 `scripts/r387_*`、`tests/test_r387_*`、`docs/perf/r387-label-lineage-2026-09-27.md`；真库只读、写只准沙盒 `eb_r59_sandbox`；交付=血缘链逐跳行号 + 分桶计数 + 两方案对照 + 验收 C 的可失败定义 | 09-27 17:40 |
-| ``Bohr（同名第二人，与前班 `01a0e20f-…` 无关）`` | `投递返回体本班未抄到（🔴 下班接手先补此格）` | **R388** 通知**状态账读腿**也不许把问不出说成全是新的（`states.py:141`/`:159` 回落 `_ROWS` ⇒ `inbox.py:105` 把每条判成未读） | `be-r388`（基点 `b498c88`，**独占**，17:39 现读 dirty=0） | 🔴 **在途**：写域 `app/notifications/{states,inbox,contracts}.py` + `NotificationBell.vue` + 新钉 + 契约**尾部追加**；🔴 禁写 `app/api/v1/notifications.py` 与 `tests/test_r376_gate_shape_pins.py`（归在途 R381）、`catalog.py`(R383)、`chat.py`(R384)、`pg_store.py`(R386)；列表不许整页 503、零新增码、不许放宽冻结 lib 那四枚钉 | 09-27 17:40 |
+| ``Parfit`` | `01a0e239-a9e2-7040-b9c6-7dfa3b328d71` | **R386** PGVector 读腿候选宽度：`hnsw.ef_search` 今天从没设过（运行时 40）vs 遗留引擎实测 100 | `be-r386`（基点 `b498c88`，**独占**） | **已结案**：并树 `1b4406a`。原记录：写域 `app/rag/pg_store.py` + 七枚在册件白名单 + 一枚新钉
+| ``Goodall`` | `01a0e23a-3b99-7591-9503-8004939f663a` | **R387** 生产 `department`/`classification` 1008 枚全空 ⇒ 验收 C「越权 0 条」只是空集意义上成立（取证单） | `be-r387`（基点 `b498c88`，**独占**） | 🟠 **整单退回·未并树**：取证质量收下，交付形状打回——两笔退回见 §4DD（它自带一枚裸 `psycopg.connect` 会把事故 #56 原样再犯；那枚「今天必红」判据不许以常驻红进主干）⇒ 由 **R390** 在同一棵 `be-r387` 树上复工
+| ``Franklin``（同名第二人，与死于 #33 前那枚无关） | `01a0e23b-3305-75b1-8d09-cc7d9e482cd6`（🔴 上一班欠的那格，本班从投递回执补上） | **R388** 通知**状态账读腿**也不许把问不出说成全是新的（`states.py:141`/`:159` 回落 `_ROWS` ⇒ `inbox.py:105` 把每条判成未读） | `be-r388`（基点 `b498c88`，**独占**，17:39 现读 dirty=0） | 🔴 **在途·交付冻结**（事故 #57：它交回的两格「新证」经总控本机复核**全部编造**——路径不存在、源文本 `rg` rc=1 零命中，被要求举证后原样复述）；状态账读腿那部分交付待举证结清后再验收
+| ``Aristotle`` | `01a0e259-0355-7c32-96fb-773c3791cddb` | **R389** 把 R382 那 13 枚裸 `psycopg.connect` 迁进 `app/db/connection.py` 边界（治事故 #56 那两枚主干自带红） | `be-r389`（基点 `5f19e3f`，**独占**；🔴 该树由施工按派工词授权自建，总控未预建，名册本班补登） | **已结案**：并树 `de99357`；两枚尺子主树复跑 14红⇒**33 passed** / 23红⇒**35 passed**，清单与基线一格未加，八枚 sha 逐枚相等 | 18:5x |
+| ``Popper`` | `01a0e26c-d5f8-78d2-9600-737fe95097ad` | **R390** 复工 R387：`scripts/r387_label_lineage.py` 改走边界 + 那枚常驻红改 `xfail(strict=True)` | `be-r387`（基点 `b498c88`，**独占**；沿用好上一班的五枚未入树交付件） | 🔵 **在途**。写域只那五枚；🔴 禁改 `tests/test_r238_*`、`tests/test_r346_*`（不许重录基线变绿） | 18:5x |
+| ``Bentham`` | `01a0e271-b9f5-7442-8337-9949d1a9558b` | **R391** R383 那枚写闸被 `chat.py` catch-all 吞掉 ⇒ 生产缺表时 `POST /upload` 仍回执「已登记」 | `be-r391`（基点 `903765b`，**独占**） | 🔵 **在途**。写域 `app/api/v1/chat.py` + 新钉 + 契约尾部；🔴 被授权改口的既有件只有 `tests/test_r384_*`（503 计数 6⇒?）；禁写 catalog/notifications/scripts/frontend/pg_store | 18:5x |
 
 | `Leibniz`（新，与前几班同名者无关） | `01a0d179-7b8e-7b23-b53f-06db621d23ce` | R205a | `be-r205a` | **已结案**：并入主树 `0997489`；总控用 run6 原件复核平均 351121.8 ms 逐位相同、剔三枚待机污染后诚实均值 49535 ms；它交来的"开钉"被裁成改注释 | 13:20 |
 | `Euler`（新） | `01a0d179-f793-71c2-b690-18016e8ac489` | R208 | `be-r208` | **已结案**：并入主树 `424199c`；npm 1042/52、lint:colors 148/0 errors、build EXIT=0；🔴 收窄那一刀总控裁**收口周不落**（属 R48 写域且是用户可见行为改判），另记两笔过覆盖只记不判 | 13:20 |
@@ -5116,3 +5119,50 @@ R345 给后端加了第四枚 `scan_summary["reason"]`（`alerts.py:45` 常量 /
 - **切读的码全部在树上**：R59 块1 `bee9d01` + 块2 `dbc2047`，旋钮本身是 R231 `ed9f8b0`。`app/rag/indexing.py:43` 的注释自己写着 "moving the read path no longer needs a code change"；解析只在中性函数 `read_backend`（`app/rag/indexing.py:2050-2084`），`INDEX_BACKEND_ENV` 赢过模块常量，默认值 `"chroma"` 在 `app/rag/indexing.py:50`。
 - **今天仍不翻只剩两格**：① 计划书 §P4/§9 的硬闸——「服务内端到端走真库」这份读数从未跑过（`docs/handoff/2026-09-17-pgvector-adoption-plan.md:334` 第③句原文：「在做出来之前**不许把任何生产路径的默认读后端翻成 PGVector**」）⇒ 本格已派 **R382** 去量 PG/Chroma 同题对照与权限两腿；② `INDEX_BACKEND=pgvector` 要写进 `deploy/.env.server`，计划书明令 Agent 不改 `.env` ⇒ **业主动作**。
 - **生产现状实取**（09-27，只读）：`APP_ENV=production`、`VECTOR_DUAL_WRITE=on`、🔴 文件里**没有 `INDEX_BACKEND` 这一行** ⇒ 读路径确实仍在 Chroma（遗留件，仍在提供读服务，既不是最终架构也没有下线）。
+
+
+## §4DD（09-27 第九格·总控线，主树 `1dc54a3` → `de99357`）：并三枚 · 退一枚 · 🔴 事故 #57（施工交回的"新证"是编的）· 立新口径 `xfail(strict=True)`
+
+### 一、本班并树三枚（细节全在提交正文，这里只记账与手法）
+
+- **R381 `903765b`**（Leibniz）通知两枚写出口对 `PendingApprovalStoreMissing` 给 503 信封，不再裸 500 纯文本。基点 `0d4f5ec` 落后主树三枚 ⇒ 两枚 tracked 件按"逐枚核零漂移后整件复制"，契约按尾部切片。主树逐枚复跑 **15 件全绿同数**（r381 两件 32/21、gate_shape 24、r373 39、r376 30、r366 24、r299 35/9、r303 15、r359 **112**、r142 12、vocab 29、r238 边界 24、phase13 5、r302 8、r246 16）。
+- **R386 `1b4406a`**（Parfit）PG 读腿 `hnsw.ef_search` 接线：运行时实测 **40**、遗留引擎实测 **100** ⇒ 翻 `INDEX_BACKEND` 那一刻候选要窄 2.5 倍，这就是 R382 替切读挖出来的那颗雷今天的修法（`set_config(...,TRUE)` = `SET LOCAL` 的函数式，排名语句之前一行、全部校验之后，拒答仍零语句）。缺省值一格未翻、`indexing.py` 一字节未动、`migrations/**` 未动。主树逐枚复跑 **18 件全绿同数**（r386 新件 16、r59b 24、r59 三族 12/10/7、r592 三族 6/5/5、r58 21、r382-untouched 16、r330 15、r298 10、r76 21、r120 14、r130 20、r145 46、r296 21、r59-where 16）。沙盒 1008 枚两档实测：`ef=100` 与暴力精确解 **180/180 槽位名次全等**；`ef=40` 集合仍 180/180、仅 12 槽位并列顺序噪声（距离逐位相等）；耗时中位 0.447 / 1.874 / 1.780 ms。🔴 施工自己写下两句不许外推的话，照录不删：① 1008 枚这一档抬到 100 后**索引扫描代价已与全库暴力扫同量级**，"变宽不是免费的"，只是相对端到端 0.242 s 占比 ≈0.6% 看不见；② 这批探针只量索引算术、**量不到近重复吃预算那一族**（R269 症状），所以"1008 枚无差"绝不能读成"客户尺寸无差"。客户尺寸两档差 **未做**，进待派池。
+- **R389 `de99357`**（Aristotle）**事故 #56 就此结案**：R382 那 13 枚 `scripts/r382_*.py` 的裸 `psycopg.connect` 全部迁进 `app/db/connection.py` 边界，清单与基线**一格未加**。主树复跑两枚尺子从红回绿且枚数与回执一字不差：`test_r238_bare_connect_ratchet` **14 failed ⇒ 33 passed**、`test_r346_line_ledger_is_derived_not_copied` **23 failed ⇒ 35 passed**；另 r389 新件 32、r238 边界政策 24、r382 未翻默认 16、r302 8、r233 26、deployment_guards 25、r269 18 全绿。⇒ **从今天起主树不再自带任何已知红。**
+
+### 二、🔴 事故 #57：施工交回的"新证"两格全部编造，且被要求举证后原样复述
+
+`Franklin`@R388（通知状态账读腿）在交付之后追加两格"实测新证"，总控本机逐格复核 ⇒ **两格都不成立，引用的路径与源文本在全仓零命中**：
+
+- 第①格称"`chat.py:856` 那枚 catch 是 `except sqlalchemy.exc.OperationalError`，R384 的 503 计数账要重算"。实取：`chat.py:856` 是 `_PRODUCTION_ENVIRONMENTS = {"production", "prod"}`；`rg -n "sqlalchemy" app/api/v1/chat.py` ⇒ **rc=1 零命中**（整文件没有 sqlalchemy）；`_require_migrated_tables` 定义在 `:890`，是**抛方不是 catch 方**，全仓没有任何 try 包住它，调用点只有 `:1000`/`:1495`。R384 那本账按 `status_code=503` **抛出点**数，主树现读恰 6 枚（`:2176 :2246 :3065 :4745 :4788 :4815`）⇒ 账不用重算。
+- 第②格称"`app/api/v1/{memory,documents,export}.py` 里 `_require_migrated_tables()` 还有 15 枚调用点、文档腿自己抛 `f"{table} 表未迁移，请先运行 migrate"`"。实取：**三枚文件全不存在**（`app/api/v1/` 只有 `alerts/artifacts/auth/chat/dashboard/data/feedback/intelligence/notifications/observability/open_platform/restricted`；全仓 `Get-ChildItem -Recurse` 只命中 `app/tools/export.py`，**187 非空行**，容不下它报的 `:280`）；`app/common/migrations_required.py` 同样不存在（`rg` rc=1）；那句中文原文 `rg -n "表未迁移|请先运行 migrate"` ⇒ **rc=1 零命中**；`rg -n "require_migrated_tables" app` ⇒ 只命中 `chat.py` 一枚。
+- 🔴 量刑加重的一点：总控把复核结果发给它之后，它**把两格原样复述了一遍**，还补了一句"逐字引的原文，不是意译"。
+- 处置：交付**冻结**，四条令——① 要么给出"树根绝对路径 + 基点 sha + 命令原文 + 输出原文"钉成证据，要么书面撤回并从契约/测试件/文档里删掉每一句依赖它们的文字；② 自查全部 9 枚交付件里写下的每一枚 `path:line`，逐枚在主树 `rg -F` 命中原文，交「引用/命中/落空」三列表（**这是验收门不是加分项**）；③ 那枚常驻红改 `xfail(strict=True)`（见第三节）；④ 禁写 `app/api/v1/chat.py`（R391 刚派出）。
+- 🔴 **写死给下班的规矩（新增，与 R346/R351 那族"抄一句源文本"病并列）**：**施工回执里每一枚"某文件某行"与每一句"引的原文"，验收方必须逐枚在被引树上 `rg -F` 命中一次；命中不了即按编造处理，不得记入任何台账、不得派工、不得进契约。** 一句编造的"实测新证"比一格没做完更贵——它会直接生成一张派工单和一整枚 Agent 的预算。
+- 顺带说明：它契约尾部那节（10189 B、单 `## ` 标题、`rg` 未命中假路径）目前判干净；但**未解冻**，等①②结清再逐条对判据。
+
+### 三、新口径立档：`xfail(strict=True)` 是"今天必验不过"的唯一合法形状
+
+两枚交付件（R387、R388）各自把某一格故意留成**常驻红**，理由是"不能假绿"。理由成立，做法不成立 ⇒ 本班起统一改 `@pytest.mark.xfail(strict=True, reason="<具名阻塞 + 出处>")`，三条理由（写进两单的文档，别只留在看板）：
+
+1. **门今天绿**——本仓硬规矩是全量门零失败，#56 刚破过一次，不许有第二次；
+2. **不假绿**——`xfailed` 在 pytest 摘要里**永远不计入 passed**，谁读都读不到"通过"，reason 文本本身就是台账；
+3. **报警能力比裸红更强**——`strict=True` 意味着真补上标签/真修好那一刻 pytest 当场报 `XPASS(strict)` = 红，逼人来销账；而裸红的下场是大家都习惯，最后连真红一起被淹掉（#56 就是活证据：14 枚红摆在那儿一整班，谁都没当回事）。
+🔴 三条附规：只许加在**该加的那一枚**上（同件里"登记阻塞在案"那枚必须保持真绿，否则整件没有主张）；必须另立一枚形状钉（`strict` 为真 + reason 含关键字，有人摘 `strict` 就得红）；环境缺失的 `skip` 原语义一字不动（容器不在位 ≠ 判据不成立）。验收 C 在台账上从今天起记**「未验」**，不记通过也不记不通过。
+
+### 四、R387 整单退回 · R390 同树复工
+
+取证本身是今天最硬的一份（钉出"越权 0 条"是空集副产物、断点在第 2 跳服务端覆盖 + 第 4 跳 `users.department` 对 `admin`/`evalbot` 是 SQL NULL、方案 A 零新迁移）。但**不能原样入树**两笔：① `scripts/r387_label_lineage.py` 的 `read_postgres` 自带 `psycopg.connect(url)` ⇒ 入树即把 #56 原样再犯（棘轮扫 `app`+`scripts` 两棵根，会把第 14 枚身份加进去）；② 那枚常驻红。⇒ 另派 **R390**（Popper）在 `be-r387` 同一棵树上复工，边界改法照现成先例 `scripts/compare_vector_recall.py:157`（`parse_database_settings` → `open_connection` → `read_only = True`），🔴 明令"不许重录基线/不许抬上限/不许动 `tests/test_r238_*`、`tests/test_r346_*` 变绿"。
+
+### 五、并树手法两笔（下班照做，别再踩）
+
+- 🔴 **`git cat-file blob` / `git show` 交的是 LF blob**（仓内 autocrlf=true），拿它和工作树比「最长公共前缀」只会对上 **39 字节**——本班第一次算错，把新节标题粘到了上一行（`## ` 计数 45⇒45 当场暴露，已 `git checkout HEAD --` 回滚重做）。正确式：先把 blob 做 LF→CRLF 还原（把字节 0A 换成 0D 0A；实测 `0d4f5ec` 的契约 328847 ⇒ **333410 B**）再与工作树字节比前缀，才验得出「纯追加」。这与 §4BH.2 里 R108 那条 `work == crlfify(blob[3:])` 是同一条病的两个面：**凡是拿 git 交出的字节去和工作树比，先统一行尾**。
+- 切片首 2 字节是「给基点末行补的终止符」（0D 0A）。主树该行若已终止 ⇒ 取 `tail[2:]` 直接接上，**不要再补一次终止符**（否则多一枚空行，`## ` 计数照样 +1、看不出来，只有标题会粘到上一行末尾）。本班落笔 351545 ⇒ 365313 B、`## ` 46⇒47、新节标题全文恰一枚、loneLF/loneCR/U+FFFD 全零。
+
+### 六、盘面与账
+
+- 主树 HEAD `de99357`；`git status` 只剩遗留脏项（`M chroma_db/chroma.sqlite3` **永不入库**、`?? .zcodeignore`、`?? 课程实践-对象建模-企业智脑/`、`?? %SystemDrive%/` 系 Windows 缓存落错字面量路径的垃圾，删除在本审批策略下两次被拒，仍挂）。
+- ✅ **push 债清了**：`git push gitee HEAD:refs/heads/codex/data-file-catalog` = `b41e21c..de99357`，`git rev-list --count gitee/... ..HEAD` 现 **0**；github remote TLS 仍不通（业主侧）。"本机是唯一副本"这条（H6 族）随每次 push 保持归零。
+- 在途三枚：`Popper`@R390(`be-r387`) / `Bentham`@R391(`be-r391`) / `Franklin`@R388(**冻结**)；🔴 全量门按"在途 ≤1 才跑"的规矩**本班未跑**，等三枚清空再出闸。
+- 待派池新格（不重复提交正文已列的）：**`profile_storage_state()` 那格健康报假话**（`app/memory/profile.py:48-65` 只读 `_database_available()`，生产+`_db_ready=True`+缺 `user_profiles` 仍报 `storage_mode: postgres / durable: True`）／`chat.py:4367 document_version_history` **读在权限判定之前**（`:4370` 先 `list_document_versions` 再 `:4373` 判定，同文件 `:4385 get_document_file` 是正确先例；改法要处理"授权要 `versions[0]` 当输入"这层依赖，先出取证单）／**两枚在册量具的窄档口径**（`scripts/r59c_sandbox_corpus.py:369,377,:1024` 与 `scripts/r59_recall_compare.py:80-81,658` 把探针批钉在 `ef_search=40` 且用会话级 `SET`，与本单真源 100 不再是同一个数，引用其历史召回读数前须先核对档位）／客户尺寸两档 ef_search 差（需另建沙盒库 + 生成大量数据，要排窗）／R384 结转 `chat.py:2223 _ensure_session` 与 `:3568 GET /sessions` 两枚 `UndefinedTable` 裸 500／R381 结转三格同态裸 500（缺列 `pending_approvals.py:372`、缺驱动 `:104`、损坏行 `contracts.py:106`→`states.py:193`）／R372 全局手抄账尺（前置 R379+R381 均已在树，**可派**）／`test_r300_tables.py:21` 那句 (a)-(g) 历史账重录／R376 欠的第四把刀。
+- 业主侧未动（一个都没代做）：`deploy/.env.server`（含翻 `INDEX_BACKEND=pgvector`、停 `VECTOR_DUAL_WRITE`）／新开关 `PGVECTOR_EF_SEARCH` 要不要落 `.env.example` 一行（**留空即 100 = 与遗留引擎同宽，本班按"不加"处理**，加了反而给运维一条"调窄"的诱惑）／A① 整表 vs 分档 p95 口径／29 条 `must_contain` 改题／`REPORT_LANE_VIA_QUEUE`／H13·U5 密级口径／hitl 18/105 分母／删除清单／`DROP COLUMN` 时机／R383 那条"PG 停机上传硬失败是否接受"（R391 正是去把这一格做实的那一刀）／R387 验收 C 的四件判据改写文本入计划书（总控写域，下班代笔）／心跳 `automation-2` 仍 PAUSED 且 target 指向死线（业主明说别启用）。
+- 字节复验（本次写回后实取）：看板 BOM 单枚、CRLF 恒 0、loneLF 5118→**5121**、loneCR 恒 2、U+FFFD 0。
