@@ -111,6 +111,50 @@ def _resolve_store_path(store_path: "str | Path | None" = None) -> "str | None":
     return resolved or None
 
 
+#: The code points ECMAScript ``\s`` matches: ``WhiteSpace`` plus ``LineTerminator``,
+#: transcribed from the spec rather than borrowed from Python, because the two sets are not
+#: the same set. Python's ``re.\s`` and ``str.isspace()`` both add ``U+001C``-``U+001F`` and
+#: ``U+0085``, and both leave out ``U+FEFF``. Reading a document name through Python's set
+#: would delete characters the client keeps and keep one the client deletes: a second
+#: identity standard, which is exactly the failure where the server answers "same 篇" for
+#: two names the browser counts apart, and stays silent on a name the browser would match.
+#: ``tests/test_r344_document_identity_normalization.py`` pins those divergences against
+#: readings taken from a real JS engine.
+_JS_WHITESPACE_CODE_POINTS = frozenset(
+    {
+        0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x00A0, 0x1680,
+        0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF,
+        *range(0x2000, 0x200B),  # U+2000-U+200A; U+200B is Cf, not whitespace, in either end
+    }
+)
+
+#: ``str.translate`` table: delete exactly the code points above, keep every other character.
+_DELETE_JS_WHITESPACE = {code_point: None for code_point in _JS_WHITESPACE_CODE_POINTS}
+
+
+def document_identity_key(value: "object | None") -> str:
+    """One entity name, in the only shape this host compares document names in.
+
+    Byte for byte the client's ``documentIdentityKey``
+    (frontend/src/components/DocumentPreviewModal.vue:58): drop every ECMAScript ``\\s``
+    character, then lowercase. Whitespace carries no identity in a document name here --
+    the same row registered with a full-width space inside it, or exported with a BOM in
+    front of it, is still the same 篇 -- and neither does ASCII case, which is why
+    ``差旅管理办法.PDF`` and ``差旅管理办法.pdf`` have to answer as one document.
+
+    ``.lower()`` and not ``.casefold()``: JS ``toLowerCase()`` leaves ``ß`` alone while
+    casefold expands it to ``ss``, so a casefolded server would recognise pairs the browser
+    refuses, and the two ends would stop agreeing about which 篇 a row belongs to.
+
+    This is the comparison shape only. It is never written onto a record: what a caller
+    stored in ``source_entity`` / ``target`` goes back out exactly as it was registered.
+    """
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    return text.translate(_DELETE_JS_WHITESPACE).lower()
+
+
 @dataclass
 class Relation:
     relation_id: str
@@ -526,6 +570,11 @@ class KnowledgeGraph:
         colleague in the same department passes it for a record they do not own, which is
         what the review exit needs and what tests/test_knowledge_graph.py pins. A caller
         that is about to *show* the list calls ``browse`` instead.
+
+        No ``document`` leg here, on purpose (R344): the either-end filter exists to let a
+        client ask "what is registered about this 篇", which is a question about what may be
+        *shown*. Answering it from the scope leg would hand records that ``can_browse``
+        withholds to whoever renders the answer.
         """
         return self._listing(source_entity, relation, principal=principal, may_see=self.can_read)
 
@@ -534,18 +583,53 @@ class KnowledgeGraph:
         source_entity: str | None = None,
         relation: str | None = None,
         *,
+        document: str | None = None,
         principal: Principal | None = None,
     ) -> list[dict]:
         """The relations this principal may be shown, honouring each record's visibility.
 
         The only enumeration exit with a production caller, and the one whose answer is
         allowed to reach a client; see ``can_browse`` for what it narrows and why.
-        """
-        return self._listing(source_entity, relation, principal=principal, may_see=self.can_browse)
 
-    def _listing(self, source_entity, relation, *, principal, may_see) -> list[dict]:
+        ``document`` (R344) narrows the listing to the rows that name this document on
+        *either* end -- ``source_entity`` or ``target`` -- compared through
+        ``document_identity_key``. It exists because a policy that a document only ever
+        appears as the object of a relation (《差旅管理办法》 --依据--> 《员工手册》: the
+        handbook sits in ``target``) is invisible to a subject-only filter, so the client
+        had to pull every relation the tenant may browse and filter it in the browser.
+        Passing ``source_entity`` alongside ``document`` intersects them (AND), it does not
+        replace either; a row that names the document on both ends is listed once.
+        A ``document`` that normalises to the empty string matches nothing, which is what
+        the client's own reader does with a blank name.
+        """
+        return self._listing(
+            source_entity, relation, principal=principal, document=document, may_see=self.can_browse
+        )
+
+    def _listing(
+        self, source_entity, relation, *, principal, may_see, document: str | None = None
+    ) -> list[dict]:
+        """Shared scan behind the two legs; ``may_see`` is asked about every candidate row.
+
+        The entity filters narrow *which* rows are candidates. They never decide whether the
+        principal may see one: ``may_see`` runs on every row that survives them, so a filter
+        can only ever remove records, never release one -- the reason a document filter is
+        safe to put in front of the wire at all.
+        """
         if principal is None:
             return []
+        document_key = None if document is None else document_identity_key(document)
+
+        def _names_document(item: Relation) -> bool:
+            if document_key is None:
+                return True
+            if not document_key:
+                return False
+            return (
+                document_identity_key(item.source_entity) == document_key
+                or document_identity_key(item.target) == document_key
+            )
+
         with self._lock:
             self._sync_from_store()
             return [
@@ -553,6 +637,7 @@ class KnowledgeGraph:
                 for item in self._relations.values()
                 if (source_entity is None or item.source_entity == source_entity)
                 and (relation is None or item.relation == relation)
+                and _names_document(item)
                 and may_see(item, principal)
             ]
 

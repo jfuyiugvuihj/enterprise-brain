@@ -246,9 +246,26 @@ async def add_relation(data: RelationRequest, request: Request):
 
 
 @router.get("/knowledge-graph/relations")
-async def list_relations(source_entity: str | None = None, relation: str | None = None, request: Request = None):
+async def list_relations(
+    source_entity: str | None = None,
+    relation: str | None = None,
+    request: Request = None,
+    document: str | None = None,
+):
+    """Enumerate the relations this caller may be shown.
+
+    ``source_entity`` keeps the semantics it has always had: the whole registered name,
+    character for character (app/knowledge_graph/service.py::_listing). ``document`` is the
+    R344 addition and does not widen it -- the new parameter asks either end of a row, and
+    asks it through the document-identity normalisation, so it is a different question and
+    gets a different name. Give both and they intersect.
+
+    ``document`` sits after ``request`` in the signature on purpose: callers in this repo
+    (and in tests) pass the request positionally as the third argument, and query-parameter
+    order in the response contract is not decided by signature order.
+    """
     principal = _authorized(request, ACTION_VIEW, "knowledge_graph_relation")
-    return {"relations": _graph.browse(source_entity, relation, principal=principal)}
+    return {"relations": _graph.browse(source_entity, relation, document=document, principal=principal)}
 
 
 @router.post("/provenance/summary")

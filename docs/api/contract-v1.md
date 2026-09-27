@@ -3021,3 +3021,144 @@ all-clear. Adding that one key is a one-line follow-up for the frontend owner.
   exactly why the value-only pin was not enough.
 - Physical lines: `app/api/v1/alerts.py` 1012 -> 1055 (+48 / -5). No other tracked file changed; this section is
   appended and deletes nothing.
+
+## The relation listing can be asked about a document on either end: `GET /api/v1/knowledge-graph/relations?document=` (2026-09-27, R344)
+
+`app/knowledge_graph/service.py::_listing` filtered this enumeration one way only:
+`item.source_entity == source_entity` -- the subject end, and the whole registered name character for
+character. A document that a relation names as its **object** was therefore unreachable from the server:
+《差旅管理办法》 `--依据-->` 《员工手册》 registers the handbook in `target`, so
+`?source_entity=员工手册` answers empty for it. That is why `frontend/src/components/DocumentPreviewModal.vue:239`
+fetches this route with **no** query parameter and filters the rows in the browser (`:96-120`), and why its own
+comment (`:48-50`) states the reason out loud. This section adds the server-side leg the client was compensating
+for. `source_entity` is not modified, `relation` is not modified, and the response body is not modified.
+
+### Query parameters of `GET /api/v1/knowledge-graph/relations`
+
+| Parameter | Compares against | Rule | Absent means |
+| --- | --- | --- | --- |
+| `source_entity` | `Relation.source_entity` | whole registered name, verbatim -- **unchanged by R344**, still not normalised | no filter |
+| `relation` | `Relation.relation` | verbatim -- unchanged | no filter |
+| `document` | `Relation.source_entity` **or** `Relation.target` | either end may match; both ends are compared through `document_identity_key` below | no filter |
+
+- It is an **addition**, not a replacement: `?document=` alone leaves the subject leg out of the picture, and
+  `?source_entity=` alone behaves exactly as it did before this ticket.
+- Given **together they intersect (AND)**. `?source_entity=部门预算&document=员工手册` returns nothing when the
+  only row naming the handbook has 《差旅管理办法》 as its subject -- the new parameter does not override the old
+  one, and the old one does not override the new one. Neither parameter widens the other.
+- A row that names the document on **both** ends is listed **once** (self-referential registrations included);
+  the filter narrows candidate rows, it does not join the row to itself.
+- A `document` whose identity key is empty -- `?document=`, or a name made only of whitespace -- matches
+  **nothing**, which is what the client's own reader does with a blank name
+  (`DocumentPreviewModal.vue:106` `if (!key) return []`). It is not treated as "no filter".
+- `document` sits after `request` in the route signature (`app/api/v1/intelligence.py:248`) on purpose: existing
+  callers in this repo and its tests pass the request object positionally as the third argument.
+
+### The identity standard is the client's, transcribed -- not Python's `re.\s`
+
+`document_identity_key` (`app/knowledge_graph/service.py`) is the server-side twin of `documentIdentityKey`
+(`frontend/src/components/DocumentPreviewModal.vue:58-61`), which is
+
+```javascript
+const text = String(value ?? '').replace(/\s+/g, '')
+return text.toLowerCase()
+```
+
+and this is the Python, in full, as it stands:
+
+```python
+_JS_WHITESPACE_CODE_POINTS = frozenset(
+    {
+        0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x00A0, 0x1680,
+        0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF,
+        *range(0x2000, 0x200B),
+    }
+)
+_DELETE_JS_WHITESPACE = {code_point: None for code_point in _JS_WHITESPACE_CODE_POINTS}
+
+def document_identity_key(value):
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    return text.translate(_DELETE_JS_WHITESPACE).lower()
+```
+
+The set is spelled out rather than taken from `re.sub(r"\s+", "", ...)` or `str.split()`, because those are not
+the same set. Both readings below are measured: the JS column is
+`node -e "String(v).replace(/\s+/g, '').toLowerCase()"` and `/\s/.test(...)`, the Python column is
+`re.match(r"\s", chr(cp))` and `chr(cp).isspace()` swept over the whole plane.
+
+| Code point | ECMAScript `\s` | Python `\s` / `isspace()` | What `?document=` does |
+| --- | --- | --- | --- |
+| `U+FEFF` BOM | matches | **does not** | deletes it: `\ufeff员工手册.pdf` and `员工手册.pdf` are one 篇 |
+| `U+0085` NEL | does not | **matches** | keeps it: it is part of the name at both ends |
+| `U+001C`-`U+001F` | do not | **match** | keep them |
+| `U+200B` ZWSP | does not | does not | keeps it: `员工\u200b手册` is a different name from `员工手册` |
+| `U+00A0`, `U+2000`-`U+200A`, `U+2028`, `U+2029`, `U+202F`, `U+205F`, `U+3000` | match | match | delete them, including the full-width space typed into a registered name |
+
+`.lower()`, and never `.casefold()`: `'ß'.toLowerCase()` is `'ß'` while `'ß'.casefold()` is `'ss'`, and
+`'İ'.toLowerCase()` is `'i\u0307'` -- two code points. A casefolded server would recognise document pairs the
+browser refuses, which is a second standard, which is the failure this section exists to prevent. The pair table
+in `tests/test_r344_document_identity_normalization.py` carries the JS readings row by row, and
+`test_the_whitespace_set_is_the_ecmascript_one_and_not_python_s` pins the two set differences code point by code
+point so that swapping in `\s` cannot pass quietly.
+
+The comparison is **whole name only, both directions**. `员工手册` must never pick up `员工手册.pdf`,
+`员工手册补充规定`, or `员工`, and `员工手册.pdf` must never pick up `员工手册`: `includes`, `startswith`
+and any other prefix or substring rule are refused here, and are pinned red by named cases.
+
+### Authorisation does not move, and the new leg is not a bypass
+
+`_listing` remains one scan with one predicate order: entity filters decide *which rows are candidates*,
+`may_see` then decides *whether this principal may be shown each candidate*. The document leg only ever removes
+rows. Concretely:
+
+- `may_see` is `can_browse` (`app/knowledge_graph/service.py:480-520`) and runs on **every** candidate row that
+  survives the entity filters, including rows matched through `target`. Skipping it for filtered rows is pinned
+  red by name, not by row count.
+- `principal is None` still returns `[]` before any filtering.
+- `staff` 密级下的行为 is the same reading as without the filter, because nothing in the clearance or visibility
+  math was touched: every relation is written `visibility="private"` with `classification` capped at its author's
+  clearance, so `discloses_to` gives a private row to its author or to an administrator and to nobody else --
+  a `staff` colleague in the same department browsing `?document=员工手册` gets an empty listing, and the author
+  of that row gets the row. `discloses_to` has no line changed in this ticket.
+- **The division of labour between `query()` and `browse()` stands** (`service.py:516-544`): `query` is the scope
+  answer and must never be rendered; `browse` is the exit allowed to reach a client. `document` was added to
+  `browse` only. `KnowledgeGraph.query` takes no `document` parameter, and
+  `test_the_scope_leg_still_has_no_document_parameter` pins that so the new filter can never become a way of
+  getting a withheld row onto a screen.
+- The response shape is unchanged: `{"relations": [Relation.to_dict()...]}`, one key at the top, no new key, no
+  renamed key, no dropped key, and the `document` parameter is never echoed back into a record.
+
+### What this ticket does not claim
+
+- No migration, no new table, no index, no storage format change (判据⑥). The listing is still the JSON store's
+  in-memory dictionary scan it was. If the row count ever makes that scan the wrong answer, that is a separate
+  ticket to be argued; it is reported here and deliberately not acted on.
+- The frontend is **not** changed by this ticket -- `DocumentPreviewModal.vue` still pulls the full browsable
+  listing and filters client-side. Switching it to `?document=` is a follow-up that belongs to the frontend
+  write set, and this section documents the leg it would use.
+- No promotion, verification, or classification behaviour is claimed here: only enumeration.
+
+### Pins
+
+- `tests/test_r344_document_identity_normalization.py` (43): 27 paired samples whose expected readings were
+  taken from a real JS engine, 6 same-document pairs, 6 different-document pairs, the whitespace-set identity
+  including both Python divergences, the `.lower()`-not-`.casefold()` pair (`ß`, `İ`), the blank-name key, and
+  idempotence of the key.
+- `tests/test_r344_relations_document_filter.py` (40): either-end hit and the old leg's blindness in the same
+  case (刀A), both-ends-lists-once, the route on the wire through `TestClient`, 7 spelling-variant rows (刀B),
+  9 one-character-off rows (刀C), 5 verbatim-`source_entity` rows (判据③), the AND intersections with
+  `source_entity` and with `relation`, anonymous `[]`, the withheld private row named by `relation_id` (刀D),
+  a spy that proves `can_browse` was asked about the row the document leg matched (刀D second half), the
+  cross-department and `staff` legs, the administrator leg, `query`'s signature, the response shape measured
+  from `dataclasses.fields(Relation)`, and the fact that the new leg still rides the one existing scan.
+- Reversal readings, each run against the real source and restored byte for byte (sha256 verified against the
+  pristine copy after every run): subject-only predicate -> 13 red; `==` instead of the identity key -> 7 red
+  (`test_a_registration_spelling_variant_answers_as_the_same_document`, every parameter); `includes` -> 4 red
+  and `startswith` -> 4 red (the two directions of
+  `test_a_name_one_character_off_does_not_answer`); `and may_see(...)` dropped -> 15 red across this file and
+  `tests/test_r177_relation_visibility_read_path.py`, and the first assertion to fail is
+  `assert private.relation_id not in ids` naming the withheld record rather than a length; `source_entity`
+  normalised as well -> 4 red (`test_the_subject_leg_still_demands_the_whole_registered_name_verbatim`), which
+  is the pin that keeps the old parameter's meaning frozen.
