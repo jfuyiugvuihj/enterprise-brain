@@ -3546,3 +3546,162 @@ creatable, with the reason stated where a reader will meet it: it has no clearan
 `"role": "auditor"` still answers `400 非法角色: auditor`, and an `X-SSO-Role: auditor` header still
 lands on `staff` (`tests/test_r357_single_role_roster.py`). No switch was added: nothing in this
 family reads an environment variable.
+
+## 「其中当时未闭环」: `alerts_open` is now counted at its own bucket edge (2026-09-27, R340)
+
+One column of `GET /api/v1/dashboard/trend` changes口径. The key, its type, its absence rule, its sibling in
+`undated` and every other column do not: this section adds no column, renames nothing, deletes nothing.
+
+### What the old reading was, and why it misled while telling the truth
+
+Two sentences are retired by this section, quoted verbatim so a reader who meets them above knows which one
+is standing:
+
+| Retired sentence | Where it stood |
+| --- | --- |
+| 「截至今日仍未处置」 | `app/api/v1/dashboard.py`, the R332-era docstring of `_alert_series` |
+| 「of those, the rows whose `status` is `open` as of this request」 | the point-key table of the R332 section, the `alerts_open` row |
+
+The column counted 「那一档新增的行里，到本次请求这一刻 `status` 还是 `open` 的」 -- a present state plotted on a
+past creation axis. The label was honest and the chart still was not: a bar for last week carrying three
+unhandled alarms lost one the moment somebody clicked 确认 today, and nothing on the screen said that a past
+period would rewrite itself. An employee reads that bar as 「上周还剩 3 件没处理」, which is the one sentence the
+number was never saying. Labelling a当下投影 「截至今日」 is disclosure, not correction -- which is why this is a
+口径 change with a wording change attached, and not a wording change.
+
+The material to answer properly has been in the same table since migration 0014: `alerts.py` stamps
+`acknowledged_at` / `closed_at` on every disposal, from one server clock (`_alert_disposal_now`, which exists
+precisely so that `NOW()` never grows into the disposal clock).
+
+### The new口径, written out
+
+    alerts_open(B) = |{ row : created_at in B and undisposed_at(row, min(close(B), now)) }|
+
+    undisposed_at(row, t)  ⟺  alert_row_status(row) == "open"  or  disposal_instant(row) >= t
+    disposal_instant(row)  =  the earliest readable value among { acknowledged_at, closed_at }
+                              (blank / NULL / absent key / unparseable ⟹ no instant)
+    close(B)               =  midnight Asia/Shanghai of the first day after B, i.e. _bucket_start of the
+                              next bucket -- the same half-open [start, close) a row is bucketed by, so
+                              a disposal landing exactly on the edge belongs to the bucket beside it
+
+The answer is computed by one function, `app/api/v1/dashboard.py::_alert_open_at`, and it is the only place
+this module decides 「处置过没有」. `alert_row_status` is still the only status judgment in the platform: this
+module reads no `status` key of its own and compares against no status literal.
+
+| Edge (判据甲) | Seed | What that bucket answers |
+| --- | --- | --- |
+| ① acknowledged inside the bucket | created 2nd of last month, acked 20th of last month | does not count it |
+| ② acknowledged after the bucket | created last month, acked today | **counts it** -- the row the old reading dropped |
+| ③ never disposed | created last month, still `open` | counts it |
+| ④ closed | the same two readings taken from `closed_at`, or from `acknowledged_at` when that came first | ①/② |
+
+`disposal_instant` is the *earliest* of the two clocks, not the one matching the current status: a row
+acknowledged in February was already answered at the end of February even if it was closed in March.
+
+**转派 is not a disposal.** `assigned_at` is not a disposal column and `_alert_open_at` never consults it: a
+reassignment says 「现在归他」, not 「有人决定了」, so a row that was only handed over still has nobody who
+answered it. Counting `assigned_at` would let one 转派 empty a bucket and report 「0 件未处置」 for a week in
+which nobody did anything.
+
+### Two storage legs, one predicate
+
+Bucketing has been Python-side on both legs since R332, because `created_at` is `TEXT` holding three shapes
+and `date_trunc` over it would hand the PostgreSQL leg a period rule the offline leg does not have. R340 does
+not open that exception for the disposal clock either:
+
+- `_ALERT_SERIES_SQL` reads `created_at, status, acknowledged_at, closed_at` -- the clock travels with the row;
+- no `date_trunc`, no `AT TIME ZONE`, no `NOW()`, no `to_timestamp` and no second parser appear in any SQL
+  statement of this module (`test_the_replay_uses_no_second_time_parser` scans the SQL string literals and the
+  one `fromisoformat` call site);
+- the legs differ only in where the rows come from, and `alert_row_scope_sql` is still the row-scope cut.
+  `test_both_legs_answer_the_same_series_on_the_same_seed` compares the whole response body -- every bucket,
+  `undated`, key absence included -- over three worlds x month/week x a department-scoped manager and an
+  administrator, against a PostgreSQL double that recognises only the three canonical disjuncts and projects
+  exactly the columns named in the `SELECT`.
+
+### The newest bucket, and `undated`, stay today's reading
+
+- The last bucket of the window has not closed, so its horizon is `min(close(B), now)` = the request instant.
+  Today's bar therefore still equals the open count `/summary` reports for the same caller, and the overview
+  does not split into two口径 beside each other. Only closed buckets replay.
+- `undated.alerts_open` is **not** changed by this ticket, and that is a decision rather than an omission
+  (判据己): a row that recorded no period has no 「该档结束那一刻」 -- there is no bucket edge to replay it
+  against. Inventing an anchor (the request instant, a file mtime, the ledger's newest row) would open a
+  second口径 under the name of 「顺手统一」. The consequence a reader should know: a disposal today can lower
+  the `undated` cell, and cannot lower any closed bucket. The pin that holds the line is a row whose
+  `acknowledged_at` is stamped *after* the request instant -- the one shape where present reading and replay
+  disagree -- and `undated` still answers the present reading (`test_the_undated_open_cell_keeps_the_present_reading`).
+
+### Old rows, empty clocks, and the faces that did not move
+
+- A row predating migration 0014 carries no `status` and no disposal time. `alert_row_status` answers `open`
+  for it and the alert panel says the same thing on the same row, so the bucket counts it (判据丁:
+  `test_a_pre_0014_row_shows_the_same_face_as_the_alert_panel`, which reads the row through `GET /alerts`).
+- Empty string, `NULL` and an absent key are one face on both legs, and neither leg raises for them.
+- A `acknowledged_at` that is not a time leaves the row with no readable clock; it falls back to the present
+  reading and answers 200. R340 opens **no** new refusal: the 422 `validation_error` and 503
+  `storage_unavailable` faces are byte-identical to the base version, `tests/test_r142_error_code_table_sync.py`
+  and `tests/test_error_code_vocabulary.py` are untouched, and no migration or backfill runs.
+
+### Conservation, stated for the new column
+
+R342's law does not move, because the `alerts` column does not move: `sum(bucket.alerts) + undated.alerts`
+still equals the rows this caller's scope covers, which is what `/summary` reports. `alerts_open` gets its own
+law, and it is a bound rather than a second total -- the replayed column counts a row in the bucket it was
+born in, as of that bucket's edge, so summing it across buckets answers no present-tense question and the
+client must not do it:
+
+    0 <= bucket.alerts_open <= bucket.alerts                      (every bucket, pinned)
+    sum(bucket.alerts_open) + undated.alerts_open <= visible rows  (= the same total as above)
+
+The upper bound is reachable, not decorative: a bucket in which nobody disposed anything answers
+`alerts_open == alerts` (`test_the_upper_bound_is_reachable`). The 「某档 alerts_open > alerts」 overhang is
+pinned red in every seeded world.
+
+### The screen says what the server now computes
+
+改口 ships in the same ticket as the arithmetic (判据乙), so no surface keeps the retired sentence while the
+server has moved:
+
+| Surface | Was | Is |
+| --- | --- | --- |
+| `frontend/src/components/DashboardPanel.vue` column header | 「其中未闭环（条）」 | 「其中当时未闭环（条）」 |
+| `frontend/src/lib/dashboard.js` `TREND_ALERTS_OPEN_NOTE` | 「按这次请求时刻的处置状态计算……事后回看可能对不上」 | 「按每一档自己结束的那一刻计算……不会回头改写它」, plus the two admissions below |
+| `frontend/src/lib/dashboard.js` `TREND_ALERTS_DENIED_NOTE` | names the column 「其中未闭环」 | names it 「其中当时未闭环」 |
+
+The note also states the two exceptions out loud rather than leaving them to be inferred: the newest bucket
+has not closed and is measured at the request instant, and the 「没有期间」 cell is still today's reading. The
+R341 card pins are updated in the same breath and now *refuse* the old wording
+(`r341-trend-card.test.js` asserts 「事后回看」 never reaches the screen), and
+`r341-trend-contract.test.js` pins the sentence literally -- comparing a constant against its own name cannot
+prove the words moved.
+
+### What this does not claim
+
+- Historical bars already drawn will read *higher* than they did, for any bucket whose rows were disposed
+  after it closed. That is the same set of rows being counted honestly for the first time, not data being
+  rewritten; the ticket writes no row.
+- A disposal stamped after the request instant (hand-written row, clock skew -- `_alert_disposal_now` cannot
+  produce it) reads as 「尚未处置」 at every earlier instant, so today's bar can sit one above the panel's open
+  count while such a stamp is in the table. Stated rather than patched, because clamping the future stamp
+  would be a second opinion about which clock is wrong.
+- `/summary`'s `alerts` tile and `GET /alerts` are untouched: `unread` is still 「how many of my visible rows
+  are unread」 and the ledger still shows the current `status`. Only the trend column moved.
+- Nothing about replayability of `documents` / `documents_ready` / `datasets` is claimed here -- those three
+  count creations, which never change. `alerts_open` was the one column whose value depended on when you asked.
+
+### Pins
+
+- `tests/test_r340_replayable_alerts_open.py` (47): the four edges ①--④ plus 「acknowledged then closed
+  replays from the earlier stamp」 and 「a reassignment is not a disposal」; the symptom itself
+  (`test_acknowledging_today_does_not_rewrite_any_closed_bucket`, which requires the whole series to come back
+  byte-identical after a 确认); today's bar equals today's open count; the Monday edge and its half-open
+  tie-break; the two-leg equality over three worlds x two periods x two readers; the `SELECT` list; the
+  no-second-parser scan; the pre-0014 face read through `GET /alerts`; the no-second-status-rule AST pin;
+  blank/NULL/absent/garbled as one face on both legs; the per-bucket bound and the visible-total bound; the
+  `undated` cell keeping the present reading; contract-and-screen改口; key set unchanged; 422 unchanged;
+  detail-literal set equal to the base version read out of `git show e9aac2f`.
+- `tests/test_r332_dashboard_trend.py` and `tests/test_r342_trend_undated_exit.py`: 46 passed, unedited. The
+  R342 conservation measurements do not move because the `alerts` column did not move, and its `alerts_open`
+  equation still holds for its own seed -- every dated row in that seed lives in the newest bucket, whose
+  horizon *is* the request instant.

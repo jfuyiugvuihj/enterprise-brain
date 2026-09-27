@@ -278,7 +278,7 @@ describe('R341④ · 整键缺席不等于 0', () => {
     await bindings.loadTrend()
     const html = await panelHtml(bindings)
     expect(html).not.toContain('新增告警（条）')
-    expect(html).not.toContain('其中未闭环（条）')
+    expect(html).not.toContain('其中当时未闭环（条）')
     expect(html).not.toContain('data-testid="dashboard-trend-alerts"')
     expect(html).not.toContain('data-testid="dashboard-trend-alerts-open"')
     expect(html).toContain(TREND_ALERTS_DENIED_NOTE)
@@ -288,14 +288,18 @@ describe('R341④ · 整键缺席不等于 0', () => {
     expect(html.match(/<td/g)).toHaveLength(6)
   })
 
-  it('有告警读权那一档：两列在位并逐格画服务端给的数，未闭环那一列附一句不可回放', async () => {
+  it('有告警读权那一档：两列在位并逐格画服务端给的数，未闭环那一列附一句「按每一档自己结束的那一刻」', async () => {
     const bindings = await mountedPanel({})
     await bindings.loadTrend()
     const html = await panelHtml(bindings)
     expect(html).toContain('新增告警')
-    expect(html).toContain('其中未闭环')
+    expect(html).toContain('其中当时未闭环')
     expect(html.match(/data-testid="dashboard-trend-alerts"/g)).toHaveLength(2)
-    expect(html).toContain('事后回看')
+    expect(html).toContain('不会回头改写它')
+    // R340 改的是口径本身：服务端改算「当时」之后，屏上再留「按这次请求时刻的处置状态 / 事后回看」
+    // 就成了新造的假话。旧那两句逐字钉死为「不许出现」，把标签退回旧写法当场红。
+    expect(html).not.toContain('事后回看')
+    expect(html).not.toContain('这次请求时刻的处置状态')
     expect(html).not.toContain(TREND_ALERTS_DENIED_NOTE)
   })
 

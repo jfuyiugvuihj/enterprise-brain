@@ -419,7 +419,7 @@ onMounted(async () => {
                     <th scope="col">其中已解析（条）</th>
                     <th scope="col">新增数据集（个）</th>
                     <th v-if="trendView.alertsColumn" scope="col">新增告警（条）</th>
-                    <th v-if="trendView.alertsColumn" scope="col">其中未闭环（条）</th>
+                    <th v-if="trendView.alertsColumn" scope="col">其中当时未闭环（条）</th>
                   </tr>
                 </thead>
                 <tbody>

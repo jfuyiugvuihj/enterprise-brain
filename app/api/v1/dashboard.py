@@ -58,6 +58,10 @@ Design constraints this module is built around:
   response - a value that was recorded but is not a period, and a file the listing calls
   visible while the registry holds no active row for it - and a read that raises still
   propagates unchanged.
+  ``alerts_open`` is the one column drawn from a second clock (R340): 「这一档新增、到这一档结束
+  那一刻仍未处置」, replayed from ``acknowledged_at`` / ``closed_at`` rather than from the status
+  read at request time, so a past bar stops rewriting itself after the fact. The bucket still
+  open has not closed and replays up to the request instant; a reassignment is not a disposal.
 """
 from datetime import date, datetime, timedelta, timezone
 
@@ -254,7 +258,13 @@ _TREND_MAX_BUCKETS = 60
 
 #: Read row by row, not page by page, and with no ownership clause of its own: the predicate
 #: comes from ``alerts.alert_row_scope_sql``, exactly as in ``_ALERT_COUNT_SQL``.
-_ALERT_SERIES_SQL = "SELECT created_at, status FROM alerts"
+#:
+#: The two disposal columns travel with the row since R340: 「这一档当时还没人处置」 is answered
+#: from the disposal clock, so a projection carrying only ``created_at`` and ``status`` would
+#: hand the PostgreSQL leg rows it cannot answer that question with, and the two legs would
+#: disagree without any of it raising. ``assigned_at`` is not selected and never consulted -
+#: being handed to somebody is not a disposal.
+_ALERT_SERIES_SQL = "SELECT created_at, status, acknowledged_at, closed_at FROM alerts"
 
 #: Denial cannot be spelled ``None`` here, because ``None`` is already the answer for "this
 #: caller may read alerts and nothing arrived in the window". Same reason ``_alert_counts``
@@ -327,6 +337,20 @@ def _trend_period(value: object) -> tuple[str, datetime | None]:
     return _TREND_GARBLED, None
 
 
+def _trend_instant(moment: datetime) -> datetime:
+    """Put one parsed time value on the trend clock, and nowhere else.
+
+    An offset on the value is honoured (converted, not re-read); a missing offset is read as
+    Shanghai wall time. This is the single place that rule lives, so the instant a row is
+    bucketed by and the instant its disposal is compared against are cut on the same wall -
+    two comparisons made on two different walls would replay a bucket wrong by an hour and
+    still look like arithmetic.
+    """
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=_TREND_TIME_ZONE)
+    return moment.astimezone(_TREND_TIME_ZONE)
+
+
 def _trend_moment(
     value: object, *, source: str, ident: object
 ) -> tuple[str, datetime | None]:
@@ -365,10 +389,7 @@ def _trend_moment(
         raise _trend_unreadable(source, ident)
     if kind == _TREND_UNDATED:
         return _TREND_UNDATED, None
-    moment = parsed
-    if moment.tzinfo is None:
-        moment = moment.replace(tzinfo=_TREND_TIME_ZONE)
-    return _TREND_RECORDED, moment.astimezone(_TREND_TIME_ZONE)
+    return _TREND_RECORDED, _trend_instant(parsed)
 
 
 def _month_start(day: date, back: int) -> date:
@@ -385,6 +406,19 @@ def _week_start(day: date, back: int) -> date:
 def _bucket_start(period: str, day: date) -> date:
     """Which bucket a Shanghai calendar day falls in, keyed by that bucket's first day."""
     return _month_start(day, 0) if period == "month" else _week_start(day, 0)
+
+
+def _bucket_end(period: str, start: date) -> datetime:
+    """The instant ``start``'s bucket stops being an open period: midnight after its last day.
+
+    Walking one step forward with the same two step functions that cut the buckets
+    (``back=-1``) is the point: the edge a row was bucketed out of and the edge its disposal is
+    compared against are then one edge, computed once. Half-open ``[start, end)``, matching
+    ``_bucket_start``: a disposal landing on the first instant of the next period belongs to
+    the next period, not to the bucket it is being replayed against.
+    """
+    edge = _month_start(start, -1) if period == "month" else _week_start(start, -1)
+    return _trend_instant(datetime(edge.year, edge.month, edge.day))
 
 
 def _bucket_label(period: str, start: date) -> str:
@@ -530,6 +564,71 @@ def _alert_management_principal(request: Request):
         raise
 
 
+#: The two columns that hold 「有人处置过这一行」的时刻: the ack and close actions of
+#: ``alerts.ALERT_DISPOSAL_WRITE_COLUMNS`` stamp ``acknowledged_at`` and ``closed_at``. That
+#: equality with the write set is measured, not held up by this comment
+#: (``test_the_disposal_clock_excludes_the_assignment_column``). ``assigned_at`` is absent on
+#: purpose (R340 判据甲) - a reassignment says 「现在归他」, not 「有人决定了」, and counting it
+#: would let one 转派 empty a bucket.
+_ALERT_DISPOSAL_MOMENT_COLUMNS: tuple[str, ...] = ("acknowledged_at", "closed_at")
+
+
+def _alert_disposal_moment(row: dict) -> datetime | None:
+    """The first instant anybody disposed of this row, or ``None`` when its clock says nobody did.
+
+    The minimum over the two disposal columns, not "the column that matches the current
+    status": a row acknowledged in February and closed in March was dealt with as of the end
+    of February, and asking only ``closed_at`` would keep drawing it as open in a bucket where
+    somebody had already answered it.
+
+    Three shapes answer ``None`` rather than raising, because R340 opens no second refusal
+    face (判据庚) and the two legs must never disagree about one row (判据丁): the column is
+    absent, ``NULL``, empty or whitespace - 「没记过处置时间」, which is exactly what migration
+    0014 fills the 存量行 with - and a recorded value that is not a time. The last of those
+    leaves the row with no readable clock, so it falls back to the present reading, which is
+    the face ``GET /alerts`` already shows for it.
+    """
+    moments: list[datetime] = []
+    for column in _ALERT_DISPOSAL_MOMENT_COLUMNS:
+        kind, parsed = _trend_period(row.get(column))
+        if kind == _TREND_RECORDED:
+            moments.append(_trend_instant(parsed))
+    return min(moments) if moments else None
+
+
+def _alert_open_at(row: dict, as_of: datetime) -> bool:
+    """「这一行到 ``as_of`` 那一刻仍未处置」 - the one predicate both legs run (判据丙).
+
+    The status *face* is never re-derived here: ``alerts.alert_row_status`` stays the only
+    status judgment in the platform, so a row predating migration 0014 - no ``status``, no
+    disposal clock - answers ``open`` exactly as the alert panel answers it, and this module
+    adds no second rule for it (判据丁).
+
+    Four edges, named by 判据甲, all of them replayable:
+
+    - ① acknowledged inside the bucket: its clock falls strictly before the bucket edge, so
+      the bucket does not count it;
+    - ② acknowledged only *after* the bucket: the clock is later than the edge, so the bucket
+      still counts it. This is the row the present-status read lost, and the reason the chart
+      could rewrite its own past;
+    - ③ never disposed: ``status`` is ``open``, so it was open at every earlier instant too;
+    - ④ closed: the same two readings, taken from ``closed_at`` (or from ``acknowledged_at``
+      when that came first).
+
+    A disposal landing exactly on the bucket edge is a disposal in the bucket *beside* it:
+    ``>=`` here is the same half-open ``[start, end)`` ``_bucket_start`` already uses for
+    ``created_at``, so the two comparisons cannot disagree about which period an instant
+    belongs to. A reassignment appears in none of the branches: ``assigned_at`` is not a
+    disposal column.
+    """
+    if alerts_api.alert_row_status(row) == alerts_api.ALERT_STATUS_OPEN:
+        return True
+    disposed_at = _alert_disposal_moment(row)
+    if disposed_at is None:
+        return False
+    return disposed_at >= as_of
+
+
 def _alert_series(
     request: Request, period: str
 ) -> tuple[dict[date, tuple[int, int]], dict[str, int]] | None:
@@ -542,21 +641,36 @@ def _alert_series(
     light and, worse, the alert ledger read through a route that is not ``GET /alerts`` -
     reachable with one ``ACTION_ANALYZE`` call, which is request R1 reopened.
 
-    ``alerts_open`` is a present status drawn onto a past creation period: the rows created
-    in that bucket whose ``status`` is ``open`` as of this request, read through
-    ``alerts.alert_row_status`` so a row predating migration 0014 answers the same ``open``
-    the alert panel answers. An alarm acknowledged last week therefore lowers last week's
-    number, and the contract words the column as 「截至今日仍未处置」 for that reason.
+    ``alerts_open`` is replayable (R340): the rows created in that bucket that were still
+    undisposed *as of that bucket's own closing instant*, answered by ``_alert_open_at`` out
+    of ``acknowledged_at`` / ``closed_at``. An alarm created last week and acknowledged last
+    Friday keeps its place in last week's bar; one acknowledged inside the bucket leaves it;
+    one nobody has touched is still counted. The status face stays
+    ``alerts.alert_row_status``, so a row predating migration 0014 answers the same ``open``
+    the alert panel answers - this module owns no second status rule.
 
-    The bucketing happens in Python on both legs rather than in SQL: ``created_at`` is
-    ``TEXT`` holding the three shapes ``_trend_moment`` documents, and ``date_trunc`` over it
-    would hand the PostgreSQL leg a period rule the offline leg does not have - the split
-    ``alerts.py:441-450`` exists to keep out of the disposal clock.
+    The newest bucket has not closed, so its horizon is the request instant: today's bar is
+    still the open count ``/summary`` reports today, which is what keeps the two numbers on
+    the overview from splitting into two 口径. Only closed buckets replay.
+
+    Bucketing *and* the replay predicate happen in Python on both legs rather than in SQL:
+    ``created_at`` is ``TEXT`` holding the three shapes ``_trend_moment`` documents, and
+    ``date_trunc`` over it would hand the PostgreSQL leg a period rule the offline leg does
+    not have. R340 does not open that exception for the disposal clock either: no SQL time
+    function and no second parser appear here, the legs differ only in where the rows come
+    from, and ``_ALERT_SERIES_SQL`` selects the two disposal columns so both legs hand
+    ``_alert_open_at`` the same row. ``NOW()`` stays out of the disposal clock, which is the
+    reason ``alerts.py:441-450`` stamps those columns from one server clock.
 
     A ledger row that recorded no time is undated rather than a month with nothing in it
-    (R342), and it is counted in both columns: ``sum(buckets) + undated`` then equals the
-    number of rows - and of open rows - the caller's scope covers. A row whose value was
-    recorded but is not a period still refuses the whole response.
+    (R342), and it is counted in both columns. 「该档结束那一刻」 does not exist for such a row,
+    so its ``alerts_open`` stays the present reading and R340 does not quietly extend the new
+    rule to it (判据己, and the contract says why). The ``alerts`` conservation of R342 is
+    untouched: ``sum(buckets) + undated`` still equals the rows the caller's scope covers. The
+    open column is bounded by that law rather than equal to a second total - it can never
+    exceed the rows in its own bucket, and only reaches today's open count when no dated row
+    was disposed after its own bucket closed. A row whose value was recorded but is not a
+    period still refuses the whole response.
     """
     principal = _alert_management_principal(request)
     if principal is _ALERTS_DENIED:
@@ -578,19 +692,27 @@ def _alert_series(
     totals: dict[date, int] = {}
     open_counts: dict[date, int] = {}
     undated = {"alerts": 0, "alerts_open": 0}
+    # Read the clock once per request: every closed bucket replays against its own edge, and
+    # only the bucket still open replays against 当下. Clamping with ``min`` is what stops the
+    # newest bar from being replayed against an instant that has not happened yet.
+    now = _trend_now()
+    horizon: dict[date, datetime] = {}
     for row in rows:
         kind, moment = _trend_moment(
             row.get("created_at"), source="alerts", ident=row.get("id")
         )
-        still_open = alerts_api.alert_row_status(row) == alerts_api.ALERT_STATUS_OPEN
         if kind == _TREND_UNDATED:
+            # 判据己: this row has no bucket edge to replay against, so it keeps the present
+            # reading. R340 changes the dated column and leaves this one exactly where it was.
             undated["alerts"] += 1
-            if still_open:
+            if alerts_api.alert_row_status(row) == alerts_api.ALERT_STATUS_OPEN:
                 undated["alerts_open"] += 1
             continue
         start = _bucket_start(period, moment.date())
         _bump(totals, start)
-        if still_open:
+        if start not in horizon:
+            horizon[start] = min(_bucket_end(period, start), now)
+        if _alert_open_at(row, horizon[start]):
             _bump(open_counts, start)
     bucketed = {start: (total, open_counts.get(start, 0)) for start, total in totals.items()}
     return bucketed, undated

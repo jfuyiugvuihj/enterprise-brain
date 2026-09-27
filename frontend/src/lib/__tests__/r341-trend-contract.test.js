@@ -194,13 +194,26 @@ describe('R341④ · 整键缺席不等于 0', () => {
     }
   })
 
-  it('有权限那一档：两列照数画，并附一句「未闭环不可回放」的口径', () => {
+  it('有权限那一档：两列照数画，并附一句「未闭环按当时回放」的口径', () => {
     const view = parseTrendPayload(adminPayload())
     expect(view.alertsState).toBe(ALERT_STATE_COUNTED)
     expect(view.alertsColumn).toBe(true)
     expect(view.rows.map(row => row.alerts)).toEqual(['1', '4'])
     expect(view.rows.map(row => row.alertsOpen)).toEqual(['0', '2'])
     expect(view.alertsNote).toBe(TREND_ALERTS_OPEN_NOTE)
+  })
+
+  // R340 · 口径句子逐字钉：这一句是员工判断「上周那根柱子会不会自己变矮」的唯一依据。
+  // 上一枚 it 拿常量名对常量名，证不了措辞有没有跟着服务端翻面，所以这里钉字面。
+  it('R340 · 未闭环那一列的句子说的是「每一档自己结束的那一刻」，不再承认当下投影', () => {
+    expect(TREND_ALERTS_OPEN_NOTE).toContain('每一档自己结束的那一刻')
+    expect(TREND_ALERTS_OPEN_NOTE).toContain('不会回头改写它')
+    // 最新那一档没有「已经结束的那一刻」可回放，句子必须自己承认它按当下算。
+    expect(TREND_ALERTS_OPEN_NOTE).toContain('最新那一档还没结束')
+    expect(TREND_ALERTS_OPEN_NOTE).not.toMatch(/这次请求时刻的处置状态计算|事后回看/)
+    // 列名与那一格的口必须一致：标签改了句子没改（或反之）都算屏上留假话。
+    expect(TREND_ALERTS_DENIED_NOTE).toContain('其中当时未闭环')
+    expect(TREND_ALERTS_OPEN_NOTE).toContain('其中当时未闭环')
   })
 
   it('键在位但读不出数：整列只画横杠，并按「读不出」说，不冒充 0', () => {
