@@ -49,11 +49,11 @@ const R288_FILES = [
  */
 const DEBT_RATCHET = {
   'App.vue': 0,
-  'components/DashboardPanel.vue': 8,
+  'components/DashboardPanel.vue': 0,
   'components/SourceCard.vue': 0,
 }
 // 8 = 现取 DashboardPanel.vue 8 枚（R341 收掉卡头那一枚），贴边。任何一格改大、合计改大，乙组那条与下面两枚一起红。
-const DEBT_TOTAL_RATCHET = 8
+const DEBT_TOTAL_RATCHET = 0
 
 const formatRows = rows => rows.map(row => row.file + '  ' + row.count + ' 枚').join('\n')
 const formatDialogs = rows => rows.map(row => row.file + ':' + row.line + '  ' + row.raw).join('\n')

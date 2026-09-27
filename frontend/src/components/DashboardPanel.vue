@@ -338,10 +338,11 @@ onMounted(async () => {
       </aside>
 
       <section class="kpi-grid" data-testid="dashboard-kpis" aria-describedby="dashboard-scope-note">
-        <button
+        <UiButton
           v-for="item in kpis"
           :key="item.id"
           type="button"
+          variant="secondary"
           :class="['reference-kpi', `tone-${item.tone}`]"
           :data-testid="`dashboard-kpi-${item.id}`"
           :data-alert-state="item.state"
@@ -357,7 +358,7 @@ onMounted(async () => {
             <strong>{{ item.value }}</strong>
             <em>{{ item.delta }}</em>
           </span>
-        </button>
+        </UiButton>
       </section>
       <p id="dashboard-scope-note" class="demo-note kpi-scope" data-testid="dashboard-scope-note">{{ scopeNote }}</p>
 
@@ -448,7 +449,14 @@ onMounted(async () => {
         <article class="reference-card risk-card" data-testid="dashboard-risk-card">
           <header class="reference-card-head">
             <div><h2>异常与风险</h2><p>服务端告警账本里最近的记录</p></div>
-            <button type="button" @click="emit('goto', 'insights')">查看全部 ›</button>
+            <UiButton
+              type="button"
+              size="sm"
+              variant="ghost"
+              label="查看全部 ›"
+              data-testid="dashboard-goto-insights"
+              @click="emit('goto', 'insights')"
+            />
           </header>
           <UiErrorState
             v-if="alertFailure"
@@ -461,10 +469,11 @@ onMounted(async () => {
             @retry="loadRiskRows"
           />
           <div v-else-if="alertRows.length" class="risk-list">
-            <button
+            <UiButton
               v-for="(item, index) in alertRows"
               :key="item.id || `row-${index}`"
               type="button"
+              variant="secondary"
               class="risk-item"
               data-testid="dashboard-risk-row"
               @click="emit('goto', 'insights')"
@@ -476,7 +485,7 @@ onMounted(async () => {
               </span>
               <span class="risk-copy"><strong>{{ item.message }}</strong></span>
               <span class="risk-time">{{ item.createdAt }}</span>
-            </button>
+            </UiButton>
             <p class="demo-note">{{ RISK_ROWS_NOTE }}</p>
           </div>
           <UiEmptyState v-else title="当前没有异常线索" :description="ALERTS_EMPTY_DESCRIPTION" dense />
@@ -487,7 +496,14 @@ onMounted(async () => {
         <article class="reference-card list-card">
           <header class="reference-card-head">
             <h2>最新文档</h2>
-            <button type="button" @click="emit('goto', 'docs')">查看全部 ›</button>
+            <UiButton
+              type="button"
+              size="sm"
+              variant="ghost"
+              label="查看全部 ›"
+              data-testid="dashboard-goto-docs"
+              @click="emit('goto', 'docs')"
+            />
           </header>
           <UiErrorState
             v-if="documentsFailure"
@@ -499,7 +515,15 @@ onMounted(async () => {
             @retry="loadDocumentRows"
           />
           <div v-else-if="documents.length" class="reference-list">
-            <button v-for="item in documents.slice(0, 3)" :key="documentName(item)" type="button" class="reference-list-row" data-testid="dashboard-doc-row" @click="emit('goto', 'docs')">
+            <UiButton
+              v-for="item in documents.slice(0, 3)"
+              :key="documentName(item)"
+              type="button"
+              variant="secondary"
+              class="reference-list-row"
+              data-testid="dashboard-doc-row"
+              @click="emit('goto', 'docs')"
+            >
               <span class="row-icon">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6" /></svg>
               </span>
@@ -508,7 +532,7 @@ onMounted(async () => {
                 <small data-testid="dashboard-doc-index">{{ indexStatusText(item) }}</small>
               </span>
               <span class="chip" data-testid="dashboard-doc-parse">{{ parseStatusText(item) }}</span>
-            </button>
+            </UiButton>
           </div>
           <UiEmptyState v-else title="上传制度或业务文档后显示在这里" dense />
         </article>
@@ -516,7 +540,14 @@ onMounted(async () => {
         <article class="reference-card list-card evidence-card">
           <header class="reference-card-head">
             <h2>知识证据</h2>
-            <button type="button" @click="emit('goto', 'chat')">查看全部 ›</button>
+            <UiButton
+              type="button"
+              size="sm"
+              variant="ghost"
+              label="查看全部 ›"
+              data-testid="dashboard-goto-chat"
+              @click="emit('goto', 'chat')"
+            />
           </header>
           <UiErrorState
             v-if="evidenceError"
@@ -541,18 +572,32 @@ onMounted(async () => {
           <UiEmptyState v-else title="查询指标口径后显示证据" :description="evidenceHintText" dense />
           <div class="evidence-query">
             <input v-model="metricQuery" placeholder="查询指标口径" @keyup.enter="lookupMetric" />
-            <button type="button" @click="lookupMetric">查询</button>
+            <UiButton
+              type="button"
+              size="sm"
+              variant="primary"
+              label="查询"
+              data-testid="dashboard-metric-lookup"
+              @click="lookupMetric"
+            />
           </div>
         </article>
 
         <article class="reference-card quick-card">
           <header class="reference-card-head"><h2>快速操作</h2></header>
           <div class="quick-grid">
-            <button v-for="item in quickActions" :key="item.id" type="button" @click="emit('goto', item.id)">
+            <UiButton
+              v-for="item in quickActions"
+              :key="item.id"
+              type="button"
+              variant="secondary"
+              data-testid="dashboard-quick-action"
+              @click="emit('goto', item.id)"
+            >
               <span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="item.icon" /></svg>
               </span>{{ item.label }}
-            </button>
+            </UiButton>
           </div>
         </article>
       </section>
@@ -570,5 +615,90 @@ onMounted(async () => {
 .reference-kpi[data-alert-state='denied'] .kpi-copy em,
 .reference-kpi[data-alert-state='unreadable'] .kpi-copy em {
   color: var(--ink-soft);
+}
+
+/* ==========================================================================
+ * R410 · 上面这八枚裸 <button> 接进 ./ui 的 UiButton 之后的基线复位
+ *
+ * 原语给每一档都配了盒子（flex 居中、控件高、字族字重行高、1px 边框、焦点环），
+ * 而这一屏这八枚在 theme.css 里各有自己那一格脸（.reference-kpi / .risk-item /
+ * .reference-list-row / .quick-grid button / .reference-card-head button /
+ * .evidence-query button）。这里只补【原语会改、而 theme.css 对这同一个元素一个字
+ * 都没写】的那几格，一条裸色值都不添：唯一的色名是 var(--cyan)，全站那一句焦点环。
+ *
+ * 权重一律停在「一枚类名 + scoped 属性」＝(0,2,0)，或再带一档 (0,3,0)/(0,4,0)：
+ * 刚好赢过原语的 .ui-button (0,1,0) 与 .ui-button--*:hover:not(:disabled) (0,3,0)，
+ * 而 theme.css 打在后面的那些规则（.reference-workbench .reference-kpi 与窄屏那几条
+ * 响应式）同权重而它在后，仍然压得住本块 —— 复位不许把点亮态与窄屏版式顶掉。
+ *
+ * 卡头那三枚「查看全部 ›」与「查询」刻意【不】写复位：theme.css 的
+ * .reference-card-head button (0,1,1) / .evidence-query button (0,1,1) 已经把
+ * padding / color / background / font-size / font-weight 五格自己声明过了，重复一遍
+ * 就是拿 (0,2,0) 去顶 theme.css；档位照 R341 落在同一屏里已经上屏的那三枚原语
+ * （卡头「去上传数据 ›」与「按月 / 按周」）同一档，四枚卡头按钮从此长得一样。
+ * ==========================================================================*/
+
+/* 一、原语把默认插槽包进一层 .ui-button__label。这一层要从布局里撤掉，图标、正文、
+   状态格才回到按钮自己那根 flex / grid 轴上，与接原语前同一排布。子组件内部的节点拿不到
+   scoped 属性，走仓里既有的 :deep() 写法（App.vue 与 DataPanel.vue 同一条手法）。 */
+.reference-kpi :deep(.ui-button__label),
+.risk-item :deep(.ui-button__label),
+.reference-list-row :deep(.ui-button__label),
+.quick-grid :deep(.ui-button__label) {
+  display: contents;
+}
+
+/* 二、撤掉那一层之后，「这一行的第二格是纵向堆叠」那条 theme.css 规则
+   （.reference-list-row > span:nth-child(2)）落在 wrapper 上、第二格反而没人管了：
+   nth-child 认的是 DOM 树不是布局树，display: contents 撤不掉它。原样接回第二格。 */
+.reference-list-row :deep(.ui-button__label > span:nth-child(2)) {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+/* 三、theme.css 的 .quick-grid button span 管的是那一格图标（18px 与图标色）。插槽
+   那一层现在也是 button 的后代 span，会把这两值吃进去再往下传给文字。撤掉的只是布局盒，
+   继承链得接回按钮：文字仍是按钮那一档 10px 与那一层正文色，图标那一格不受影响。 */
+.quick-grid :deep(.ui-button__label) {
+  color: inherit;
+  font-size: inherit;
+}
+
+/* 四、原语会改、theme.css 对这四处一个字都没写的四格：主轴排布、字族、字重、行高。
+   这一屏的按钮原本全走 theme.css 那句 button { font: inherit }，这里逐条接回 inherit；
+   justify-content 接回 normal（flex 那一枚等于 flex-start，grid 那三枚等于 stretch 轴起点）。 */
+.reference-kpi,
+.risk-item,
+.reference-list-row,
+.quick-grid .ui-button {
+  justify-content: normal;
+  font-family: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+/* 五、两枚行控件：theme.css 没给它们写 min-height，原语那一档 40px 会把行顶高两像素；
+   快速操作那一枚是 grid，原语的 align-items: center 会把两行摆进拉伸过的行轨里。 */
+.risk-item,
+.reference-list-row {
+  min-height: auto;
+}
+
+.quick-grid .ui-button {
+  align-items: stretch;
+}
+
+/* 六、焦点环仍指全站那一句（theme.css 的 button:focus-visible：--cyan / 3px）：原语给的
+   --accent + 2px 会把这一屏的键盘焦点换成另一种颜色与另一种偏移。卡头那三枚按
+   data-testid 前缀点名，不连 R341 那一枚一起改脸。 */
+.reference-kpi:focus-visible,
+.risk-item:focus-visible,
+.reference-list-row:focus-visible,
+.quick-grid .ui-button:focus-visible,
+.evidence-query .ui-button:focus-visible,
+.reference-card-head .ui-button[data-testid^="dashboard-goto"]:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
 }
 </style>
