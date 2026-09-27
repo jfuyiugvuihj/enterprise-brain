@@ -438,6 +438,7 @@ onMounted(async () => {
               </table>
             </div>
             <p class="demo-note trend-alerts-note" data-testid="dashboard-trend-alerts-note">{{ trendView.alertsNote }}</p>
+            <p class="demo-note trend-undated-note" data-testid="dashboard-trend-undated-note">{{ trendView.undatedNote }}</p>
             <ul class="trend-notes" data-testid="dashboard-trend-notes">
               <li v-for="(note, index) in trendView.notes" :key="index">{{ note }}</li>
             </ul>

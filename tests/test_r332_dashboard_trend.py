@@ -406,19 +406,24 @@ def test_a_quiet_period_answers_with_a_real_zero(client, document_store):
     assert len(quiet) == 11, "the other periods are stated empty, not omitted"
 
 
-def test_a_dataset_row_with_no_recorded_time_refuses_the_whole_series(client, dataset_store):
-    """反证面之二：账读不出来不许折成 0，也不许悄悄少一格。
+def test_a_dataset_row_with_no_recorded_time_is_counted_as_undated(client, dataset_store):
+    """R342 判据甲把这一格翻了面：从「整条序列拒答」改成「数出来」。
 
-    ``created_at`` empty is what a legacy sidecar import leaves behind
-    (``datasets.py:763``), so this is a real row shape on a real upgraded install.
+    原断言（一字未留）：503 + detail=storage_unavailable + 响应里没有 series。它把「legacy
+    行没记时间」与「某本账真读不出来」当成同一件事，代价是一格缺时间的旧行打死整张卡。
+    新断言：200，且这一档必须落在 ``undated.datasets`` 里、值恰为 1，series 仍在且那一档
+    不进任何桶。为何不更弱：旧的三行只证「服务端没数它」，新的三行证的是「服务端数到几枚、
+    并且没有偷偷把它折进 0 或删键」——把 undated 写 0、整键缺席、或者继续拒答，三种都当场红。
+    两本账真读不出来那两枚（registry 行消失 / 记了但解析不出）仍钉 503，那一族一字未动。
     """
     dataset_store("legacy.csv", owner="finance-manager", department="finance", created_at="")
 
     response = _trend(client)
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == "storage_unavailable"
-    assert "series" not in response.json()
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert body["undated"]["datasets"] == 1, "无期间那一格被折回 0 或整键删掉了"
+    assert sum(point["datasets"] for point in body["series"]) == 0
 
 
 def test_a_document_row_with_an_unparseable_time_refuses_the_whole_series(client, document_store):
@@ -430,8 +435,14 @@ def test_a_document_row_with_an_unparseable_time_refuses_the_whole_series(client
     assert response.json()["detail"] == "storage_unavailable"
 
 
-def test_an_alert_row_with_no_time_refuses_the_whole_series(client, seed_alerts):
-    """A ledger row nobody stamped is not a month with nothing in it."""
+def test_an_alert_row_with_no_time_is_counted_as_undated(client, seed_alerts):
+    """同上一格：无期间的告警行现在要数得出来，不再打死整张卡。
+
+    原断言：503 + detail=storage_unavailable。新断言：200 + ``undated`` 两列各为 1
+    （``alerts`` 数这份台账里没期间的行，``alerts_open`` 数其中仍未处置的），且没有一行被
+    塞进任何时间桶。原句「A ledger row nobody stamped is not a month with nothing in it」
+    说的还是对的，只是修法换了：不数它比错数它更糟。
+    """
     from app.api.v1 import alerts
 
     seed_alerts("undated alarm", created_at=_now().isoformat(timespec="seconds"))
@@ -439,8 +450,10 @@ def test_an_alert_row_with_no_time_refuses_the_whole_series(client, seed_alerts)
 
     response = _trend(client)
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == "storage_unavailable"
+    assert response.status_code == 200, response.json()
+    body = response.json()
+    assert (body["undated"]["alerts"], body["undated"]["alerts_open"]) == (1, 1)
+    assert sum(point["alerts"] for point in body["series"]) == 0
 
 
 def test_a_book_that_raises_is_not_folded_into_zero(client, monkeypatch):

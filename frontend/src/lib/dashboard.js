@@ -421,6 +421,33 @@ export const TREND_READY_NOTE = '「其中已解析」与上面文档卡同一�
  * 参数原样交给服务端。非法值不发那一发请求 —— 前端没有权力替服务端猜一个合法值，
  * 也不许把 61 期悄悄夹成 60 期：那是把用户要问的窗口换成另一个窗口。
  */
+/** 「没有期间」那一格的口径（R342）：数只从服务端搬，这一层一个都不自己算。 */
+const TREND_UNDATED_BOOKS = [
+  ['documents', '文档', '条'],
+  ['datasets', '数据集', '个'],
+  ['alerts', '告警', '条'],
+]
+
+/** 服务端一格都没报缺时间：这一句与「那几期真的零新增」是两句话。 */
+export const TREND_UNDATED_CLEAR_NOTE = '服务端没有报出「没有时间」的行：窗口里每一行的期间都读得出来。'
+
+const TREND_UNDATED_TAIL = '条没有时间，未计入上面任何一期：那是「那一格没有记录」，不是「这一期没有新增」。'
+
+/**
+ * 把 undated 三本账折成一句人话。只搬运：这里不出现任何加减，也不拿总览的数字减一遍
+ * （R333/R341 同一条纪律：浏览器里多一本账，就是同一个问题多一个答案）。
+ */
+export function trendUndatedNote(undated) {
+  if (!undated || typeof undated !== 'object' || Array.isArray(undated)) return ''
+  const parts = TREND_UNDATED_BOOKS
+    .map(([key, label, unit]) => [label, unit, countOf(undated[key])])
+    .filter(([, , value]) => value !== null && value > 0)
+    .map(([label, unit, value]) => `${formatSummaryCount(value)} ${unit}${label}`)
+  return parts.length ? `另有 ${parts.join('、')}${TREND_UNDATED_TAIL}` : TREND_UNDATED_CLEAR_NOTE
+}
+
+export const TREND_UNDATED_KEYS = TREND_UNDATED_BOOKS.map(([key]) => key)
+
 export function trendRequestParams({ period = TREND_DEFAULT_PERIOD, buckets = TREND_DEFAULT_BUCKETS } = {}) {
   if (!TREND_PERIODS.includes(period)) return null
   const raw = typeof buckets === 'number' || typeof buckets === 'string' ? String(buckets).trim() : ''
@@ -503,6 +530,18 @@ export function parseTrendPayload(payload) {
     rows.push(row)
   }
 
+  // R342 · 「没有期间」那一格：整块缺席、三本核心账读不出数，都是回包坏了，不降级成 0。
+  const undated = payload.undated
+  if (!undated || typeof undated !== 'object' || Array.isArray(undated)) return null
+  const undatedCounts = {}
+  for (const key of ['documents', 'documents_ready', 'datasets']) {
+    const value = countOf(undated[key])
+    if (!hasOwn(undated, key) || value === null) return null
+    undatedCounts[key] = value
+  }
+  const undatedAlerts = ['alerts', 'alerts_open'].filter(key => hasOwn(undated, key))
+  for (const key of undatedAlerts) undatedCounts[key] = countOf(undated[key])
+
   const alertsFace = trendColumnFace(series, 'alerts')
   const openFace = trendColumnFace(series, 'alerts_open')
   const columnState = alertsFace === openFace ? alertsFace : ALERT_STATE_UNREADABLE
@@ -521,6 +560,9 @@ export function parseTrendPayload(payload) {
   }
 
   const allZero = rows.every(row => row.documents === 0 && row.documentsReady === 0 && row.datasets === 0)
+  // 桶里带告警列，undated 就得带满两枚；桶里不带（没权限），undated 也不许带——多出来就是把告警账本递出去了。
+  if (columnState === ALERT_STATE_DENIED ? undatedAlerts.length !== 0 : undatedAlerts.length !== 2) return null
+
   const notes = [TREND_UNIT_NOTE, TREND_BAR_NOTE, TREND_READY_NOTE, TREND_WINDOW_NOTE]
   notes.push(`窗口按服务端自报的时区 ${timeZone} 截日历，不是协调世界时。`)
   if (allZero) notes.push(TREND_ZERO_NOTE)
@@ -539,6 +581,8 @@ export function parseTrendPayload(payload) {
     alertsState: columnState,
     alertsColumn: columnState !== ALERT_STATE_DENIED,
     alertsNote,
+    undated: undatedCounts,
+    undatedNote: trendUndatedNote(undated),
     allZero,
     windowLabel: payload.period === TREND_PERIOD_WEEK ? `最近 ${buckets} 周` : `最近 ${buckets} 个月`,
     notes,
@@ -584,6 +628,7 @@ export function trendErrorView(err) {
     rows: [],
     notes: [],
     alertsNote: '',
+    undatedNote: '',
   }
 }
 
@@ -601,6 +646,7 @@ function malformedTrendView() {
     rows: [],
     notes: [],
     alertsNote: '',
+    undatedNote: '',
   }
 }
 
@@ -624,6 +670,7 @@ export function trendBlankView(face = TREND_FACE_NEVER) {
     rows: [],
     notes: [],
     alertsNote: '',
+    undatedNote: '',
   }
 }
 

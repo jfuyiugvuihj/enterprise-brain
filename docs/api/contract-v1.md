@@ -3403,3 +3403,90 @@ cases, one of them reworded below) and by 丙 · 反证 4 of the R348 file.
   as a known edge for the real-browser pass, and the answer is not to install a DOM.
 - The identity standard itself is R344's, unchanged: `document_identity_key` and `documentIdentityKey` are the
   two ends of one ruler, and this section adds no third.
+
+
+## The trend names its holes: `undated`, and three faces that used to share one 503 (2026-09-27, R342)
+
+`GET /api/v1/dashboard/trend` gains one top-level key. `app/api/v1/dashboard.py` stops treating 「这一枚行没有期间」
+as a reason to refuse the whole response, and the R341 card that now reads this route (`TREND_PATH`,
+`frontend/src/lib/dashboard.js:346`) says the hole out loud instead of disappearing.
+
+| Key | Type | Nullable | Says |
+| --- | --- | --- | --- |
+| `undated` | object | no | per-book counts of rows **inside this caller's visible scope** whose stored period was never recorded |
+
+`undated` carries `documents`, `documents_ready`, `datasets`, and -- only for a caller with alert rights --
+`alerts`, `alerts_open`. The name was set upstream: board §4CV, R332 ruling ③ asked for 「显式 `undated` 出口」, and
+`app/api/v1/dashboard.py::_TREND_UNDATED` is that same word, used both as the classifier's face and as the
+response key, so the reading of a row and the number the card renders cannot drift apart. It is a sibling of
+`series`, never another bucket: 「有多少条没有期间」 is a different question from 「这一期新增了几条」.
+
+**The law this shape exists to keep.** Per book and per caller:
+
+    sum(bucket[key] for bucket in series) + undated[key] == the number /summary reports for the same key
+
+holds whenever the window covers the corpus (`/summary` counts every visible row; `series` counts the window --
+R332's 「Series totals are not the tile totals」 still applies to the *dated* rows). `tests/test_r342_trend_undated_exit.py`
+measures both sides rather than asserting the arithmetic in prose: `test_the_three_books_all_reconcile_with_what_summary_reports`
+seeds dated + undated + disposed rows and reconciles four keys against the live `/summary` of the same caller, and
+`test_no_row_is_counted_twice` pins the other direction (a row may not land in a bucket *and* in `undated`).
+A `0` in a bucket still means 「这一期真的没有新增」; it is never a stand-in for a missing period, and the client is
+forbidden to compute the difference itself -- the browser moves these numbers and never re-derives them.
+
+### Three faces, classified before anything decides (`_trend_period` -> `_trend_moment`)
+
+| Face | Stored shape | Answer | Evidence the shape is real |
+| --- | --- | --- | --- |
+| **undated** | nothing was recorded: `None`, `""`, whitespace | `200`, `undated[key] += 1` | `app/storage/datasets.py:763` feeds the legacy sidecar import through `_timestamp_text(None)` -> `""` (`datasets.py:60-72`); the register path itself takes `created_at = previous.created_at or now` (`datasets.py:921`) |
+| **garbled** | recorded, but not a period (unparseable text, or neither text nor `datetime`) | `503 storage_unavailable`, unchanged | `document_versions.created_at` is `TEXT NOT NULL` with **no `DEFAULT`** (`app/documents/catalog.py:528`, `migrations/0003_legacy_runtime_tables.sql:46`), so a cell can hold anything a writer put there |
+| **contradiction** | a file `data.list_data_files` reports visible that the registry holds **no active row** for | `503 storage_unavailable`, unchanged | two reads of one book disagreeing is a defect, not a footnote; `_dataset_series` still raises before counting anything |
+
+The split is the point (判据 乙). Washing the second face into `undated` would launder a consistency failure into a
+sentence about missing time; R332's pins `test_a_visible_file_whose_registry_row_vanished_refuses_the_series` and
+`test_a_document_row_with_an_unparseable_time_refuses_the_whole_series` stay green, and R342 adds named pins for each
+face on each of the three legs (`..._still_refuses_the_whole_series`, `..._still_refuses`,
+`test_a_non_text_non_datetime_period_still_refuses`). No `except` clause in this module catches a whole book:
+`_document_series`, `_dataset_series` and `_alert_series` contain no `except` at all -- each row is classified, then
+the caller decides, and a read that raises propagates untouched (判据 丙).
+
+### What this overturns, and why in the open
+
+This section **retires** one sentence and one bullet of the record above it:
+
+- `app/api/v1/dashboard.py::dashboard_trend` used to say 「the response is either every period or no response」
+  (line 510-512 of the base). It now says the response is never *partial*, and lists the two faces that still refuse
+  it. A row with no recorded period is not a read that failed, so it is counted and named instead.
+- 「The two faces of nothing」 above (R332) listed **three** triggers of the 503, the first being 「`created_at` empty」.
+  That first trigger is no longer true: empty is `undated`. The other two (unparseable, vanished active row) still are.
+
+Nothing is deleted from those paragraphs, per this repository's append-only contract: supersession is stated here,
+next to the citation it supersedes, which is how R337 / R344 / R347 handled the same situation. The 判据 the R332
+docstring derived from the refusal also survives, because it was never about refusing for its own sake:
+
+- 「dropping the row makes the series total less than `/summary` reports for the same caller」 -- kept, and now honoured
+  by *naming* the hole rather than by rejecting the answer: the equation above is exactly that invariant, with
+  `undated` as the term that used to be missing.
+- 「filling the hole with `0` is the face the client already refuses to render」
+  (`frontend/src/lib/dashboard.js:32`, 「不会用旧数字或 0 顶上」) -- kept: no bucket gains a phantom row, and
+  `undated` never absorbs a real count into zero (`test_the_undated_count_is_never_written_as_the_zero_it_replaced`).
+
+### Permission, codes, migrations
+
+`undated` follows the alert-absence rule of the buckets exactly: a caller without alert rights gets **no** `alerts`
+and **no** `alerts_open` key in `undated` either -- a `0` there would be the alert ledger read through a route that
+is not `GET /alerts`, reachable with one `ACTION_ANALYZE` call (request R1). Zero new error codes (`503
+storage_unavailable` and `422 validation_error` only, `detail` literals uninterpolated, so
+`test_the_route_opens_no_error_code_outside_the_ratified_enum` stays green), zero migrations, zero backfill: the
+route reports the shape it finds, it does not repair it.
+
+### Pins
+
+- `tests/test_r342_trend_undated_exit.py` (20): the block is always present and starts at zero; a legacy dataset row
+  answers `200` with `undated.datasets == 1` and no bucket absorbed; blank and whitespace are one face; an undated
+  row moves neither a dated row nor the newest-recorded winner when one file has several rows; alerts count in both
+  of their columns by disposition; documents count in both of theirs; the four conservation measurements against
+  `/summary`; `undated` is a sibling of `series` and never a bucket key; the three faces stay three; a raising read
+  still propagates; a staff caller gets no alert keys in either place; the analyze gate still runs first.
+- Frontend (R341 files, 改口 by addition only): `parseTrendPayload` requires the `undated` object, refuses to
+  invent zeros, and never derives a number from it; `DashboardPanel.vue` renders the sentence the server's numbers
+  produced; `r267-overview-no-self-fed-rows.test.js` pins that the browser keeps no second book.

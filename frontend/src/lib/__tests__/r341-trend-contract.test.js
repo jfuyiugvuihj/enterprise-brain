@@ -45,6 +45,8 @@ import {
   TREND_MALFORMED_TITLE,
   TREND_PATH,
   TREND_STORAGE_TITLE,
+  TREND_UNDATED_CLEAR_NOTE,
+  trendUndatedNote,
   TREND_ZERO_NOTE,
   trendBlankView,
   trendBucketLabel,
@@ -79,6 +81,7 @@ function adminPayload(overrides = {}) {
     buckets: 2,
     time_zone: 'Asia/Shanghai',
     series: adminSeries(),
+    undated: { documents: 0, documents_ready: 0, datasets: 0, alerts: 0, alerts_open: 0 },
     ...overrides,
   }
 }
@@ -91,7 +94,10 @@ function staffPayload() {
     delete copy.alerts_open
     return copy
   })
-  return adminPayload({ series })
+  const undated = { ...adminPayload().undated }
+  delete undated.alerts
+  delete undated.alerts_open
+  return adminPayload({ series, undated })
 }
 
 function ok(data) {
@@ -336,3 +342,55 @@ describe('R341 · 八张脸互斥，读不到与没取过各归各', () => {
     }
   })
 })
+
+describe("R342 · 「没有期间」那一格是回包的一部分，不是可选装饰", () => {
+  const undatedOf = over => ({ ...adminPayload().undated, ...over })
+
+  it("整块缺席就是读不出数：不许当成「一律有期间」，也不许当成 0", () => {
+    const bare = { ...adminPayload() }
+    delete bare.undated
+    expect(parseTrendPayload(bare)).toBe(null)
+    expect(parseTrendPayload(adminPayload({ undated: null }))).toBe(null)
+    expect(parseTrendPayload(adminPayload({ undated: [] }))).toBe(null)
+  })
+
+  it("三本核心账缺任意一枚、或形状读不出数，都算回包坏了", () => {
+    for (const key of ["documents", "documents_ready", "datasets"]) {
+      const missing = undatedOf({})
+      delete missing[key]
+      expect(parseTrendPayload(adminPayload({ undated: missing }))).toBe(null)
+      expect(parseTrendPayload(adminPayload({ undated: undatedOf({ [key]: "" }) }))).toBe(null)
+      expect(parseTrendPayload(adminPayload({ undated: undatedOf({ [key]: -1 }) }))).toBe(null)
+    }
+  })
+
+  it("桶里没有告警列时 undated 也不许带告警键：那等于把告警账本递给没权限的账号", () => {
+    const leak = staffPayload()
+    leak.undated = undatedOf({ alerts: 3, alerts_open: 3 })
+    expect(parseTrendPayload(leak)).toBe(null)
+    const short = adminPayload()
+    delete short.undated.alerts_open
+    expect(parseTrendPayload(short)).toBe(null)
+  })
+
+  it("读得出来就逐字搬进视图：一个数都不许多算，也不许少算", () => {
+    const view = parseTrendPayload(adminPayload({ undated: undatedOf({ datasets: 4, alerts: 2, alerts_open: 1 }) }))
+    expect(view.undated).toEqual({ documents: 0, documents_ready: 0, datasets: 4, alerts: 2, alerts_open: 1 })
+    expect(view.rows.map(row => row.datasets)).toEqual([0, 3])
+    expect(view.notes).toHaveLength(5)
+  })
+
+  it("文案：一格里都没有才说「没有报出」，有 N 就说 N，绝不把 N 写成 0", () => {
+    expect(trendUndatedNote(undatedOf({}))).toBe(TREND_UNDATED_CLEAR_NOTE)
+    const note = trendUndatedNote(undatedOf({ documents: 2, datasets: 3, alerts: 1 }))
+    expect(note).toContain("另有")
+    expect(note).toContain("没有时间")
+    expect(note).toContain("未计入上面任何一期")
+    expect(note).toContain("2 条文档")
+    expect(note).toContain("3 个数据集")
+    expect(note).toContain("1 条告警")
+    expect(note).not.toMatch(/另有 0|^0 /)
+    expect(trendUndatedNote(null)).toBe("")
+  })
+})
+

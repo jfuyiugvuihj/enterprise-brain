@@ -52,9 +52,12 @@ Design constraints this module is built around:
   row's own ``created_at``. Never from a file mtime - ``data.list_data_files`` answers
   ``modified_at`` off ``path.stat()``, which is exactly why the period is not read from that
   key. Never from a page length - ``_document_counts``' docstring is the standing tombstone.
-  And a row whose period cannot be read fails the whole response instead of disappearing
-  from the series or being filled with ``0``: a series that quietly loses a row totals less
-  than ``/summary`` reports for the same caller, which is one question answered twice.
+  A row that recorded no period is not a failed read: R342 counts those rows in ``undated``
+  and the series still answers one question, because ``sum(buckets) + undated`` is what
+  ``/summary`` reports for the same caller and the same scope. Two faces keep refusing the
+  response - a value that was recorded but is not a period, and a file the listing calls
+  visible while the registry holds no active row for it - and a read that raises still
+  propagates unchanged.
 """
 from datetime import date, datetime, timedelta, timezone
 
@@ -265,21 +268,69 @@ def _trend_now() -> datetime:
 
 
 def _trend_unreadable(source: str, ident: object) -> HTTPException:
-    """One row whose period cannot be read refuses the entire response.
+    """The two faces that still refuse the whole response (R332, narrowed by R342).
 
     ``503 storage_unavailable`` is this module's existing face for "a book cannot be
-    accounted for" (``_pending_count`` translates exactly that failure today); no new error
-    code is opened here. The two quiet alternatives are both worse. Dropping the row makes
-    the series total less than ``/summary`` reports for the same caller and the same scope -
-    one question, two answers. Filling the hole with ``0`` is the face the client already
-    refuses to render: ``frontend/src/lib/dashboard.js:32``, 「不会用旧数字或 0 顶上」.
+    accounted for" (``_pending_count`` translates exactly that failure today), so no new
+    error code is opened here. R332 routed three row shapes through here; R342 releases one
+    of them - a row that recorded no period at all is counted in ``undated`` instead -
+    because that shape is what our own write paths leave behind: a legacy sidecar import
+    becomes ``_timestamp_text(None)`` -> ``""`` (``app/storage/datasets.py:763``). A
+    predictable hole in one row does not get to blacken every card on the overview.
+
+    What is left here is a failure of accountability, and it stays a refusal:
+
+    - the value was recorded but is not a period - unparseable text, or a shape that is
+      neither text nor a datetime. Guessing a month for it would move a row between buckets;
+    - a file ``data.list_data_files`` reports visible that the registry carries no active row
+      for. Two reads of one book contradicting each other is a defect, and washing it into
+      ``undated`` would turn a consistency failure into a footnote.
+
+    Neither face may be dropped silently and neither may be filled with ``0``: dropping makes
+    the buckets total less than ``/summary`` reports for the same caller and scope, and ``0``
+    is the face the client already refuses to render -
+    ``frontend/src/lib/dashboard.js:32``, 「不会用旧数字或 0 顶上」.
     """
     logger.warning(f"[Dashboard] trend period unreadable: source={source} row={ident}")
     return HTTPException(status_code=503, detail="storage_unavailable")
 
 
-def _trend_moment(value: object, *, source: str, ident: object) -> datetime:
-    """Turn one stored time column into a moment in ``_TREND_TIME_ZONE``.
+#: The three faces one stored time value can show, classified before anything decides to
+#: refuse, so that 「this row never recorded a time」 and 「this row recorded something that is
+#: not a time」 cannot be folded into one answer again. ``_TREND_UNDATED`` doubles as the
+#: response key carrying those counts: one word, one meaning, so the reading of a row and
+#: the number the card renders cannot drift apart.
+_TREND_RECORDED = "recorded"
+_TREND_UNDATED = "undated"
+_TREND_GARBLED = "garbled"
+
+
+def _trend_period(value: object) -> tuple[str, datetime | None]:
+    """Sort one stored time value into a face, without deciding what the face is worth.
+
+    This is a classifier, not a decision - which is the whole point of R342. ``None`` and
+    blank text mean 「nothing was recorded」; anything else that will not parse means
+    「something was recorded and it is not a period」. The caller picks the consequence.
+    """
+    if isinstance(value, datetime):
+        return _TREND_RECORDED, value
+    if value is None:
+        return _TREND_UNDATED, None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return _TREND_UNDATED, None
+        try:
+            return _TREND_RECORDED, datetime.fromisoformat(text)
+        except ValueError:
+            return _TREND_GARBLED, None
+    return _TREND_GARBLED, None
+
+
+def _trend_moment(
+    value: object, *, source: str, ident: object
+) -> tuple[str, datetime | None]:
+    """``(face, moment)`` for one stored time column, in ``_TREND_TIME_ZONE``.
 
     The three books write three shapes today and each keeps its own meaning:
 
@@ -301,20 +352,23 @@ def _trend_moment(value: object, *, source: str, ident: object) -> datetime:
     ``app/storage/datasets.py::_timestamp_text`` is the existing normaliser for "the driver
     hands back a datetime, the JSON import hands back a string"; this function accepts what
     it produces instead of opening a second parser, which is also why the datetime branch is
-    first rather than an afterthought.
+    first rather than an afterthought. That same normaliser is what turns a missing
+    timestamp into ``""`` on the legacy import path, and R342 reads that row as
+    ``_TREND_UNDATED`` rather than as a failure.
+
+    Only ``_TREND_GARBLED`` refuses here. ``_TREND_UNDATED`` comes back without a moment and
+    the caller counts the row in ``undated`` - which is why every book below has to declare
+    an undated exit rather than inherit one blanket ``except``.
     """
-    if isinstance(value, datetime):
-        moment = value
-    elif isinstance(value, str) and value.strip():
-        try:
-            moment = datetime.fromisoformat(value.strip())
-        except ValueError:
-            raise _trend_unreadable(source, ident) from None
-    else:
+    kind, parsed = _trend_period(value)
+    if kind == _TREND_GARBLED:
         raise _trend_unreadable(source, ident)
+    if kind == _TREND_UNDATED:
+        return _TREND_UNDATED, None
+    moment = parsed
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=_TREND_TIME_ZONE)
-    return moment.astimezone(_TREND_TIME_ZONE)
+    return _TREND_RECORDED, moment.astimezone(_TREND_TIME_ZONE)
 
 
 def _month_start(day: date, back: int) -> date:
@@ -365,8 +419,10 @@ def _bump(counts: dict[date, int], key: date) -> None:
     counts[key] = counts.get(key, 0) + 1
 
 
-async def _document_series(request: Request, period: str) -> tuple[dict[date, int], dict[date, int]]:
-    """``(documents, documents_ready)`` per bucket, out of the one catalog read of ``/summary``.
+async def _document_series(
+    request: Request, period: str
+) -> tuple[dict[date, int], dict[date, int], dict[str, int]]:
+    """``(documents, documents_ready, undated)``, out of the one catalog read of ``/summary``.
 
     Same call, same rows, same ``_PARSE_STATUS_READY`` literal as ``_document_counts``: the
     tile beside this chart and the chart itself cannot answer two scopes, because there is
@@ -375,23 +431,40 @@ async def _document_series(request: Request, period: str) -> tuple[dict[date, in
     unparsed here too. This route does not get to look more optimistic than the tile about
     the same document; ``docs/api/contract-v1.md`` says why in one place and repeats it
     rather than restating a second, friendlier reading.
+
+    A row whose ``created_at`` recorded nothing joins neither bucket and joins ``undated``
+    instead, in both of its columns, so ``sum(buckets) + undated`` is what
+    ``_document_counts`` reports for the same caller. Offline that hole is hard to reach -
+    ``catalog._local_row`` substitutes ``_file_mtime`` into the row itself - but the TEXT
+    column carries no ``DEFAULT`` (``migrations/0003_legacy_runtime_tables.sql:46``), so an
+    empty cell is a stored shape, not a hypothetical. A recorded value that is not a period
+    still refuses the whole response.
     """
     catalog = await chat.list_document_catalog(request)
     totals: dict[date, int] = {}
     ready: dict[date, int] = {}
+    undated = {"documents": 0, "documents_ready": 0}
     for row in catalog["documents"]:
-        moment = _trend_moment(
+        kind, moment = _trend_moment(
             row.get("created_at"), source="documents", ident=row.get("filename")
         )
+        parsed_ready = row.get("parse_status") == _PARSE_STATUS_READY
+        if kind == _TREND_UNDATED:
+            undated["documents"] += 1
+            if parsed_ready:
+                undated["documents_ready"] += 1
+            continue
         start = _bucket_start(period, moment.date())
         _bump(totals, start)
-        if row.get("parse_status") == _PARSE_STATUS_READY:
+        if parsed_ready:
             _bump(ready, start)
-    return totals, ready
+    return totals, ready, undated
 
 
-async def _dataset_series(request: Request, period: str) -> dict[date, int]:
-    """Datasets per bucket: the visibility of ``list_data_files``, the clock of its registry row.
+async def _dataset_series(
+    request: Request, period: str
+) -> tuple[dict[date, int], dict[str, int]]:
+    """Datasets per bucket plus the visible files that recorded no period at all.
 
     ``data.list_data_files`` is the scope and nothing else decides it - the very call
     ``_dataset_count`` makes, so a file the caller may not list cannot enter a bucket either.
@@ -401,11 +474,22 @@ async def _dataset_series(request: Request, period: str) -> dict[date, int]:
     check consulted a few lines earlier (``data.py:212``).
 
     The registry is read once (``active_records()``) rather than once per file, and several
-    rows for one name resolve to the newest registration by the same rule
-    ``DatasetRegistry.get_active_by_filename`` applies (``datasets.py:1039-1049``). A visible
-    file with no active row is a contradiction between the two reads, and an active row with
-    no recorded ``created_at`` - what a legacy sidecar import leaves behind - is a row with no
-    period. Neither is an empty bucket, so both go through ``_trend_unreadable``.
+    rows for one name resolve to the newest *recorded* registration by the same rule
+    ``DatasetRegistry.get_active_by_filename`` applies (``datasets.py:1039-1049``): ``""``
+    sorts below every ISO timestamp, so an undated row can never win a bucket. The unit this
+    counts is the visible file, not the registry row.
+
+    R342 separates the two faces that used to share one refusal here (判据 乙):
+
+    - every active row for a visible file recorded nothing - what a legacy sidecar import
+      leaves behind (``datasets.py:763``, ``_timestamp_text(None)`` -> ``""``) - is one
+      undated file, and it goes to ``undated``;
+    - a visible file the registry carries **no active row for at all** is two reads of one
+      book contradicting each other. That stays ``_trend_unreadable``: an agreement failure
+      must not be laundered into a footnote about missing time.
+
+    A recorded value that will not parse is the third face and refuses as before, because
+    each row is classified by ``_trend_moment`` before this loop decides anything.
     """
     listing = await data.list_data_files(request=request)
     recorded: dict[str, list[object]] = {}
@@ -413,16 +497,22 @@ async def _dataset_series(request: Request, period: str) -> dict[date, int]:
         recorded.setdefault(str(record.filename), []).append(record.created_at)
 
     counts: dict[date, int] = {}
+    undated = {"datasets": 0}
     for item in listing["files"]:
         filename = str(item.get("filename") or "")
         values = recorded.get(filename)
         if not values:
             raise _trend_unreadable("datasets", filename)
-        moments = [
-            _trend_moment(value, source="datasets", ident=filename) for value in values
-        ]
+        moments = []
+        for value in values:
+            kind, moment = _trend_moment(value, source="datasets", ident=filename)
+            if kind == _TREND_RECORDED:
+                moments.append(moment)
+        if not moments:
+            undated["datasets"] += 1
+            continue
         _bump(counts, _bucket_start(period, max(moments).date()))
-    return counts
+    return counts, undated
 
 
 def _alert_management_principal(request: Request):
@@ -440,15 +530,17 @@ def _alert_management_principal(request: Request):
         raise
 
 
-def _alert_series(request: Request, period: str) -> dict[date, tuple[int, int]] | None:
-    """``{bucket: (alerts, alerts_open)}``, or ``None`` when this caller may not read alerts.
+def _alert_series(
+    request: Request, period: str
+) -> tuple[dict[date, tuple[int, int]], dict[str, int]] | None:
+    """``({bucket: (alerts, alerts_open)}, undated)``, or ``None`` when alerts are denied.
 
     Two layers, same as ``_alert_counts``: the ``_require_alert_management`` gate first, then
     the row-scope predicate - passing the gate is not a licence for the company-wide total.
-    ``None`` means the ``alerts`` keys disappear from every bucket. A ``0`` there would tell
-    a staff account "no alarms this month", which is a false green light and, worse, the
-    alert ledger read through a route that is not ``GET /alerts`` - reachable with one
-    ``ACTION_ANALYZE`` call, which is request R1 reopened.
+    ``None`` means the ``alerts`` keys disappear from every bucket *and* from ``undated``: a
+    ``0`` there would tell a staff account "no alarms this month", which is a false green
+    light and, worse, the alert ledger read through a route that is not ``GET /alerts`` -
+    reachable with one ``ACTION_ANALYZE`` call, which is request R1 reopened.
 
     ``alerts_open`` is a present status drawn onto a past creation period: the rows created
     in that bucket whose ``status`` is ``open`` as of this request, read through
@@ -460,6 +552,11 @@ def _alert_series(request: Request, period: str) -> dict[date, tuple[int, int]] 
     ``TEXT`` holding the three shapes ``_trend_moment`` documents, and ``date_trunc`` over it
     would hand the PostgreSQL leg a period rule the offline leg does not have - the split
     ``alerts.py:441-450`` exists to keep out of the disposal clock.
+
+    A ledger row that recorded no time is undated rather than a month with nothing in it
+    (R342), and it is counted in both columns: ``sum(buckets) + undated`` then equals the
+    number of rows - and of open rows - the caller's scope covers. A row whose value was
+    recorded but is not a period still refuses the whole response.
     """
     principal = _alert_management_principal(request)
     if principal is _ALERTS_DENIED:
@@ -480,13 +577,23 @@ def _alert_series(request: Request, period: str) -> dict[date, tuple[int, int]] 
 
     totals: dict[date, int] = {}
     open_counts: dict[date, int] = {}
+    undated = {"alerts": 0, "alerts_open": 0}
     for row in rows:
-        moment = _trend_moment(row.get("created_at"), source="alerts", ident=row.get("id"))
+        kind, moment = _trend_moment(
+            row.get("created_at"), source="alerts", ident=row.get("id")
+        )
+        still_open = alerts_api.alert_row_status(row) == alerts_api.ALERT_STATUS_OPEN
+        if kind == _TREND_UNDATED:
+            undated["alerts"] += 1
+            if still_open:
+                undated["alerts_open"] += 1
+            continue
         start = _bucket_start(period, moment.date())
         _bump(totals, start)
-        if alerts_api.alert_row_status(row) == alerts_api.ALERT_STATUS_OPEN:
+        if still_open:
             _bump(open_counts, start)
-    return {start: (total, open_counts.get(start, 0)) for start, total in totals.items()}
+    bucketed = {start: (total, open_counts.get(start, 0)) for start, total in totals.items()}
+    return bucketed, undated
 
 
 @router.get("/trend")
@@ -507,9 +614,15 @@ async def dashboard_trend(
     ``ACTION_ANALYZE``, and the answer is no more cacheable: every bucket is a
     per-principal authorization result, so one stored 200 is another department's company.
 
-    A bucket of ``0`` asserts that nothing new was created in that period. It is never a
-    stand-in for a read that failed, which is why all three books are read before a single
-    point is assembled: the response is either every period or no response.
+    A bucket of ``0`` asserts that nothing new was created in that period, and it is never a
+    stand-in for a read that failed: all three books are still read before a single point is
+    assembled. R342 retires the tail of that sentence - "the response is either every period
+    or no response" - because a row that recorded no period is not a failed read: it is
+    counted in ``undated`` beside the buckets and the card says so out loud. What the
+    response is still never allowed to be is a *partial* series. A recorded value that is not
+    a period, a visible file with no active registry row, and any read that raises all keep
+    failing the whole response, which is what keeps
+    ``sum(buckets) + undated == /summary`` true rather than merely hopeful.
     """
     principal = intelligence._authorized(request, ACTION_ANALYZE, "dashboard_trend")
     # Same reason as on /summary: each bucket is scoped to the caller, so a cached body is
@@ -522,9 +635,23 @@ async def dashboard_trend(
         raise HTTPException(status_code=422, detail="validation_error")
 
     starts = _bucket_starts(period, buckets)
-    documents, documents_ready = await _document_series(request, period)
-    datasets = await _dataset_series(request, period)
+    documents, documents_ready, undated_documents = await _document_series(request, period)
+    datasets, undated_datasets = await _dataset_series(request, period)
     alerts = _alert_series(request, period)
+    alert_counts: dict[date, tuple[int, int]] | None = None
+    undated_alerts: dict[str, int] = {}
+    if alerts is not None:
+        alert_counts, undated_alerts = alerts
+
+    # ``undated`` is a sibling of ``series``, never another bucket: 「有多少条没有期间」 answers a
+    # different question from 「这一期新增了几条」, and folding the two together would let a row
+    # with no period be drawn as if it had landed in some period. Denied callers get no
+    # alert keys here either - the same absence rule the buckets carry.
+    undated: dict[str, int] = {**undated_documents, **undated_datasets, **undated_alerts}
+    if any(undated.values()):
+        # One line per response that had to name a hole. The card is honest about the number,
+        # which is not the same as the operator being able to find out which book leaks.
+        logger.info(f"[Dashboard] trend rows without a period: {undated}")
 
     series: list[dict] = []
     for start in starts:
@@ -535,8 +662,8 @@ async def dashboard_trend(
             "documents_ready": documents_ready.get(start, 0),
             "datasets": datasets.get(start, 0),
         }
-        if alerts is not None:
-            total, still_open = alerts.get(start, (0, 0))
+        if alert_counts is not None:
+            total, still_open = alert_counts.get(start, (0, 0))
             point["alerts"] = total
             point["alerts_open"] = still_open
         series.append(point)
@@ -547,4 +674,5 @@ async def dashboard_trend(
         "buckets": buckets,
         "time_zone": _TREND_TIME_ZONE_NAME,
         "series": series,
+        "undated": undated,
     }

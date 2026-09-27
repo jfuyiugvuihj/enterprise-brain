@@ -27,6 +27,7 @@ import { SUMMARY_PATH } from '../../lib/dashboard'
 
 const source = name => readFileSync(new URL(name, import.meta.url), 'utf8').replace(/\r?\n/g, '\n')
 const panelSource = () => source('../../components/DashboardPanel.vue')
+const libSource = () => source('../../lib/dashboard.js')
 
 /** 后端 dashboard-demo.js 那三枚常量的全部数值与标题：它们再回到这一屏就是假话回来了。 */
 const DEMO_FOOTPRINTS = [
@@ -224,3 +225,16 @@ describe('R267② · 没有真数据就不画线，异常卡接真账', () => {
     expect(html).toContain('data-testid="dashboard-kpi-datasets"')
   })
 })
+
+describe('R342 · 「没有期间」那一格同样不许长出第二本账', () => {
+  it('undated 只做搬运：面板与 lib 都不拿它进任何算式，面板只渲染 lib 折好的那一句', () => {
+    // 只看代码腿：模板里那个 class 名本来就带 trend-undated-note，不是算式。
+    const panel = panelSource().split('</scr' + 'ipt>')[0]
+    for (const s of [panel, libSource()]) {
+      expect(s).not.toMatch(/undated\w*(\.\w+)?\s*[-+*/]|[-+*/]\s*undated\w*/)
+    }
+    expect(panelSource()).toMatch(/trendView\.undatedNote/)
+    expect(panelSource()).toMatch(/data-testid="dashboard-trend-undated-note"/)
+  })
+})
+

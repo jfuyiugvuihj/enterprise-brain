@@ -32,6 +32,7 @@ import {
   TREND_MALFORMED_TITLE,
   TREND_PATH,
   TREND_STORAGE_TITLE,
+  TREND_UNDATED_CLEAR_NOTE,
   TREND_ZERO_NOTE,
 } from '../../lib/dashboard'
 
@@ -66,6 +67,7 @@ function adminTrend(overrides = {}) {
     time_zone: 'Asia/Shanghai',
     // 五枚数字两两不同：任何一格被别的字段顶掉（含「已解析并入总数」那一类合并），逐格对序立刻红。
     series: [point('2026-08', 2, 1, 3, 4, 0), point('2026-09', 6, 4, 1, 2, 2)],
+    undated: { documents: 0, documents_ready: 0, datasets: 0, alerts: 0, alerts_open: 0 },
     ...overrides,
   }
 }
@@ -77,7 +79,10 @@ function staffTrend() {
     delete copy.alerts_open
     return copy
   })
-  return { ...adminTrend(), series }
+  const undated = { ...adminTrend().undated }
+  delete undated.alerts
+  delete undated.alerts_open
+  return { ...adminTrend(), series, undated }
 }
 
 function zeroTrend() {
@@ -461,3 +466,52 @@ describe('R341②③⑧ · 数字只来自趋势回执、单位说人话、图�
     return bindings
   }
 })
+
+describe('R342 · 那一格要替服务端把「没有时间」说出来', () => {
+  async function trendHtml(data) {
+    const bindings = await mountedPanel({ trend: { status: 200, data } })
+    await bindings.loadTrend()
+    return panelHtml(bindings)
+  }
+
+  it('服务端报了 N 条：卡上逐字出现这一句，且 N 不被写成 0', async () => {
+    const html = await trendHtml(adminTrend({
+      undated: { documents: 2, documents_ready: 0, datasets: 3, alerts: 1, alerts_open: 1 },
+    }))
+    const from = html.indexOf('data-testid="dashboard-trend-undated-note"')
+    expect(from).toBeGreaterThan(-1)
+    const block = html.slice(from, html.indexOf('</p>', from))
+    expect(block).toContain('没有时间')
+    expect(block).toContain('未计入上面任何一期')
+    expect(block).toContain('2 条文档')
+    expect(block).toContain('3 个数据集')
+    expect(block).not.toMatch(/另有 0/)
+  })
+
+  it('一根柱子都不许多画：无期间那一格不新增表格列、不改逐格读数', async () => {
+    const html = await trendHtml(adminTrend({
+      undated: { documents: 5, documents_ready: 1, datasets: 2, alerts: 1, alerts_open: 1 },
+    }))
+    expect(trendCells(html)).toEqual(['2', '1', '3', '4', '0', '6', '4', '1', '2', '2'])
+    expect(html.match(/<td/g)).toHaveLength(10)
+    expect(html.match(/<th scope="col"/g)).toHaveLength(6)
+  })
+
+  it('服务端一格都没报缺时间：说「没有报出」，不说「另有 0 条」，也不整列不吭声', async () => {
+    const html = await trendHtml(adminTrend())
+    expect(html).toContain('data-testid="dashboard-trend-undated-note"')
+    expect(html).toContain(TREND_UNDATED_CLEAR_NOTE)
+    expect(html).not.toContain('另有 0')
+  })
+
+  it('没告警权那一档：这一句里也不许出现告警的份数', async () => {
+    const data = staffTrend()
+    data.undated = { ...data.undated, datasets: 7 }
+    const html = await trendHtml(data)
+    const from = html.indexOf('data-testid="dashboard-trend-undated-note"')
+    const block = html.slice(from, html.indexOf('</p>', from))
+    expect(block).toContain('7 个数据集')
+    expect(block).not.toContain('告警')
+  })
+})
+
