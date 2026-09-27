@@ -10,8 +10,10 @@
    test_a_scanned_page_and_a_bordered_table_*、test_the_scanned_table_boundary_*；
 ⑤ 预算触顶不许静默 -> test_a_bounded_walk_reports_*、test_the_docx_ceiling_*、
    test_every_truncation_kind_*；
-⑦ 零新增依赖、tables.py 一个字节都不许改 -> test_no_new_dependency_*、
-   test_the_tables_module_is_still_*。
+⑦ 零新增依赖、tables.py 一个字节都不许改 -> test_no_new_dependency_*、test_the_tables_module_is_still_*
+   （R352 甲案：这一格从「手抄一枚 hex」改成「派生自记名锚点提交」，另加四条腿 ->
+   test_no_commit_after_the_anchor_*、test_the_anchor_*、test_the_ruler_measures_the_git_blob_layer_*；
+   牙：不挪锚点的新提交红、锚点挪到不含该改动的提交红、checkout 层与 blob 层混比红）。
 
 fixture 全部由本文件现造（PDF 是手写最小合法字节串，DOCX 由 python-docx 生成），仓库里不
 因此多出任何二进制；扫描页那一枚复用 tests/fixtures/r298_scanned_pages.pdf（只读）。
@@ -25,6 +27,7 @@ import inspect
 import io
 import logging
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -42,8 +45,36 @@ SCANNED_PDF = FIXTURES / "r298_scanned_pages.pdf"
 #: 流水线本体，测试自己包一层上限时用这一枚（monkeypatch 叠 monkeypatch 会套住上一枚）。
 R304_EXTRACT_DOCUMENT = tables.extract_document
 
-#: R300 交工时的字节指纹（判据⑦：本单一律不许碰它）。
-TABLES_SHA256 = "7acaa33c0568e8eec13c992823a55dbf134d3f7f870ecacc6c73ff011b4266dd"
+# ---------------------------------------------------------------- 判据⑦ 的账（R352 甲案：派生 + 记名锚点）
+#
+# 旧账长这样（R304 原钉）：
+#     TABLES_SHA256 = "7acaa33c0568e8eec13c992823a55dbf134d3f7f870ecacc6c73ff011b4266dd"
+#     digest = hashlib.sha256((REPO_ROOT / "app" / "rag" / "tables.py").read_bytes()).hexdigest()
+# 那是一枚**手抄的十六进制**。R331（提交 58111c9：表格装箱预算按实发预留）合法改了
+# app/rag/tables.py，改的人没重录，账就烂在这枚钉上 —— 钉红的是别人的合法改动，门跟着红
+# （主树实测 1 failed / 20 passed）。手抄指纹的毛病从来不是"抄错了"，是"抄完那一瞬之后
+# 没有任何人欠你一次重抄"。
+#
+# 甲案的改法：期望值不再手抄，而是**现算** `git show <锚点提交>:app/rag/tables.py` 的摘要。
+# 锚点的语义写在名字旁边：**最后一次有意改动 tables.py 的那枚提交**。谁再改它，就把这枚具名
+# 常量往前挪到自己那枚提交上 —— 重录从"改一串别人看不懂的数字"变成"指名道姓说清是谁改的"，
+# 可审；而不挪锚点的改动照样当场红（两条腿：盘上一枚、树里一枚）。
+#
+# 🔴 比的是哪一层（本机实测，别猜）：本仓 core.autocrlf=true 且没有 .gitattributes ⇒
+#   工作树 = CRLF：app/rag/tables.py 实测 40601 bytes / 968 枚 CRLF / 0 枚孤立 CR；
+#   git blob = LF：同一枚内容在树里实测 39633 bytes / 0 枚 CR。
+#   两层摘要实测不同：blob 层 27e697d90ba0b300…，checkout 层 e13a2878654c302b…
+#   ⇒ 裸比字节必假红。本件一律按 **git blob 层（LF）** 比：盘上那份先换算回 blob 层再取摘要。
+#   顺带把旧账的来源钉死（这就是为什么换层不是多此一举）：7acaa33c… 正是 R300 那枚 blob 被
+#   checkout 成 CRLF 之后的摘要，sha256(git show 72a9bdc:app/rag/tables.py → CRLF) 实测等于它
+#   —— 旧钉记的是 checkout 层，换到 blob 层之后 Linux / autocrlf=input / 容器里 checkout
+#   成 LF 的机器读出的是同一个数。
+TABLES_BLOB_PATH = "app/rag/tables.py"
+
+#: 锚点提交 = 最后一次**有意**改动 tables.py 那枚文件（R331：表格装箱预算按实发预留）。
+TABLES_ANCHOR_SHA = "58111c9"
+#: 漂移对照锚（判据③）：R300 初次进树那枚，**不含** R331 的改动。用来证明锚点是被读的。
+TABLES_PRE_ANCHOR_SHA = "72a9bdc"
 NUL = chr(0)
 PAGE_HEIGHT = 792.0
 ROW_HEIGHT = 22.0
@@ -740,11 +771,124 @@ def test_the_wiring_asks_the_loader_for_its_prose_exactly_once(tmp_path):
 # ------------------------------------------------------------------ ⑦ 纪律
 
 
-def test_the_tables_module_is_still_the_bytes_r300_shipped():
-    """判据⑦：app/rag/tables.py 一个字节都不许改。"""
-    digest = hashlib.sha256((REPO_ROOT / "app" / "rag" / "tables.py").read_bytes()).hexdigest()
+def r304_git_blob(rev, rel=TABLES_BLOB_PATH):
+    """取 **git blob 层**的字节：`git show <rev>:<rel>`，按仓根定位，与工作树行尾无关。"""
+    out = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "show", "%s:%s" % (rev, rel)],
+        capture_output=True, cwd=str(REPO_ROOT),
+    )
+    assert out.returncode == 0, (
+        "git show %s:%s 读不到（判据⑦ 的期望值是从提交里派生的，这枚件要读 git 历史）：%s"
+        % (rev, rel, (out.stdout + out.stderr).decode("utf-8", "replace")[-200:])
+    )
+    return out.stdout
 
-    assert digest == TABLES_SHA256, f"tables.py 被改过：{digest}"
+
+def r304_blob_layer(raw):
+    """把 checkout 落盘的字节换算回 blob 层：CRLF -> LF，并且拒绝"第三种行尾"混进来。"""
+    lf = raw.replace(b"\r\n", b"\n")
+    assert b"\r" not in lf, "工作树里有孤立的 CR（既不是 CRLF 也不是 LF）：这层换算的前提没了"
+    return lf
+
+
+def r304_tables_digest_at(rev):
+    """锚点/HEAD/对照提交那一枚 tables.py 的 blob 层摘要（现算，不抄）。"""
+    return hashlib.sha256(r304_git_blob(rev)).hexdigest()
+
+
+def r304_tables_digest_on_disk():
+    """盘上那份的 blob 层摘要 —— 判据⑦ 比的两个数都出自这一层。"""
+    return hashlib.sha256(r304_blob_layer((REPO_ROOT / TABLES_BLOB_PATH).read_bytes())).hexdigest()
+
+
+def r304_git(*args):
+    out = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", cwd=str(REPO_ROOT),
+    )
+    assert out.returncode == 0, "git %s 失败：%s" % (" ".join(args), (out.stdout + out.stderr)[-200:])
+    return out.stdout
+
+
+def test_the_tables_module_is_still_the_bytes_the_anchor_shipped():
+    """判据⑦：盘上这份 tables.py 必须逐字节等于**记名锚点提交**交出的那一份（blob 层）。
+
+    与旧钉同强度、不同出身：旧钉拿 read_bytes() 比一串手抄 hex，这枚拿"换算回 blob 层的盘上
+    字节"比"从锚点提交现算的字节"。R331 之后 tables.py 又被人改了一枚而不挪锚点 ⇒ 当场红。
+    """
+    expected = r304_tables_digest_at(TABLES_ANCHOR_SHA)
+    actual = r304_tables_digest_on_disk()
+    assert actual == expected, (
+        "app/rag/tables.py 与锚点提交 %s 不等（盘上 blob 层 %s != 锚点 %s）。两条路二选一："
+        "① 这次改动是有意的 ⇒ 把 TABLES_ANCHOR_SHA 往前挪到你那枚提交（顺手在上面的注释里写清"
+        "是谁改的、为什么）；② 这次改动不是本单授权的 ⇒ 先 git status --porcelain 取证再还原。"
+        "🔴 不许就地重录一枚今天的 hex：那只是把这枚钉的寿命续到下一次改动。"
+        % (TABLES_ANCHOR_SHA, actual[:16], expected[:16])
+    )
+
+
+def test_no_commit_after_the_anchor_has_touched_the_tables_module():
+    """第二条腿盯**树里**：HEAD 那枚 blob 也必须还是锚点那份。
+
+    两枚腿各堵一种形状：上面那枚堵"工作树被改了没还原"（R339 那一族事故：摘刀留在盘上），
+    这一枚堵"提交了改动却不挪锚点"——后者在有人 checkout 回干净工作树时仍要红。
+    """
+    head = r304_tables_digest_at("HEAD")
+    anchor = r304_tables_digest_at(TABLES_ANCHOR_SHA)
+    assert head == anchor, (
+        "HEAD 里的 app/rag/tables.py（%s）已经不是锚点提交 %s 那一份（%s）了：动它的提交没被记名。"
+        "把 TABLES_ANCHOR_SHA 改成那枚提交，别改判据。" % (head[:16], TABLES_ANCHOR_SHA, anchor[:16])
+    )
+
+
+def test_the_anchor_is_read_not_decorated():
+    """判据③：派生不许变成同义反复 —— 锚点换成不含该改动的提交，必须读出另一个数。
+
+    TABLES_PRE_ANCHOR_SHA（72a9bdc，R300 初次进树）交的 tables.py **不含** R331 的装箱预留。
+    今天有人图省事把锚点写成它，第一枚钉当场红；这枚钉把那件事预先演一遍：它自己绿就说明
+    "两枚提交读出来是两个数、而盘上那份等于锚点那枚"——锚点在被读，不是装饰。
+    """
+    pre = r304_tables_digest_at(TABLES_PRE_ANCHOR_SHA)
+    anchor = r304_tables_digest_at(TABLES_ANCHOR_SHA)
+    assert pre != anchor, (
+        "锚点与对照提交读出同一个数（%s）：派生腿根本没读那枚提交 ⇒ 判据⑦ 已经变成同义反复" % pre[:16]
+    )
+    assert anchor == r304_tables_digest_on_disk(), "锚点读出的数与盘上那份不等：第一枚钉的理由在这儿也得成立"
+
+
+def test_the_anchor_commit_really_is_the_one_that_changed_the_file():
+    """锚点不许是一枚"内容碰巧相同"的提交：它得真在树上、真改过这枚文件。"""
+    ancestor = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "merge-base", "--is-ancestor", TABLES_ANCHOR_SHA, "HEAD"],
+        capture_output=True, cwd=str(REPO_ROOT),
+    )
+    assert ancestor.returncode == 0, "锚点 %s 不在 HEAD 的祖先链上：这枚提交没进树" % TABLES_ANCHOR_SHA
+    listed = {line.strip().replace("\\", "/") for line in
+              r304_git("show", "--pretty=format:", "--name-only", TABLES_ANCHOR_SHA).splitlines() if line.strip()}
+    assert TABLES_BLOB_PATH in listed, (
+        "锚点 %s 的提交清单里没有 %s：它不是那枚「有意改动」，指名指错了人" % (TABLES_ANCHOR_SHA, TABLES_BLOB_PATH)
+    )
+    assert r304_tables_digest_at(TABLES_ANCHOR_SHA) != r304_tables_digest_at(TABLES_ANCHOR_SHA + "^"), (
+        "锚点交出的 tables.py 与它的父提交相同：这枚提交没动过它，不配当「最后一次有意改动」"
+    )
+
+
+def test_the_ruler_measures_the_git_blob_layer_not_the_checkout():
+    """钉死"比的是哪一层"：blob 层恒 LF；本机 checkout 层是 CRLF ⇒ 两层摘要必然不同。
+
+    本仓 core.autocrlf=true 且没有 .gitattributes（实测 git config 读出 true，仓库根没有
+    .gitattributes）。哪天有人给这枚件加"直接 read_bytes() 跟 git show 比"的写法，这枚先红：
+    它量的是不同层。反之，若这台机器 checkout 成了 LF（autocrlf=input），枚内那条 if 自动不
+    触发 —— 判据不依赖某台机器的行尾，只依赖"比的是 blob 层"这一条。
+    """
+    raw = (REPO_ROOT / TABLES_BLOB_PATH).read_bytes()
+    blob = r304_git_blob(TABLES_ANCHOR_SHA)
+    assert b"\r" not in blob, "锚点那枚 blob 里出现了 CR：git blob 层应当恒 LF，本件的层口径变了"
+    assert r304_blob_layer(raw) == blob, "盘上那份换算到 blob 层以后与锚点不同：见第一枚钉的处置说明"
+    if b"\r\n" in raw:
+        assert hashlib.sha256(raw).hexdigest() != hashlib.sha256(blob).hexdigest(), (
+            "工作树明明有 CRLF，checkout 层与 blob 层却读出同一个数：这枚层口径钉量不到东西了"
+        )
 
 
 def test_the_wiring_adds_no_dependency():

@@ -15,6 +15,7 @@ r"""R298 判据②⑤⑥ · OCR 只能在本地、降级必须说明原因、出
 """
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import logging
@@ -33,6 +34,143 @@ CHAT_SOURCE = (REPO_ROOT / "app" / "api" / "v1" / "chat.py").read_text(encoding=
 NUL = "\x00"
 DIRTY_OCR_TEXT = "密级" + NUL + "内部资料" + NUL + " 编号 2026-0926"
 CLEAN_OCR_TEXT = "密级内部资料 编号 2026-0926"
+
+
+#: 上传腿交给解析器的那枚符号（判据 6(a) 的落点，也是本文件唯一一枚「函数身份」字面量）。
+LOADER_SYMBOL = "load_document"
+
+
+def _upload_routes(tree):
+    """按**路由路径**认上传那条腿（装饰器第一枚实参里带 upload），不按函数名认。
+
+    函数改名是明账、URL 才是契约：把 upload_document 改成别的名字不该让这把尺子失明。
+    """
+    routes = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            continue
+        for dec in node.decorator_list:
+            if not isinstance(dec, ast.Call) or not dec.args:
+                continue
+            first = dec.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str) and "upload" in first.value:
+                routes.append(node)
+                break
+    return routes
+
+
+def _thread_parse_calls(fn, symbol):
+    """找函数里那些 ``await asyncio.to_thread(<symbol>, path, ...)`` -> [(await 节点, 路径实参)]。
+
+    只认 asyncio.to_thread 这一条出口：写成 ``await load_document(...)``（在事件循环里同步解析）
+    就不匹配 —— 本单要留的那颗牙正长在这里。
+    """
+    found = []
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Await) or not isinstance(node.value, ast.Call):
+            continue
+        callee = node.value.func
+        if not isinstance(callee, ast.Attribute) or callee.attr != "to_thread":
+            continue
+        if not isinstance(callee.value, ast.Name) or callee.value.id != "asyncio":
+            continue
+        args = node.value.args
+        if not args or not isinstance(args[0], ast.Name) or args[0].id != symbol:
+            continue
+        found.append((node, args[1] if len(args) > 1 else None))
+    return found
+
+
+def _str_bound_locals(fn):
+    """函数里被 ``名字 = str(...)`` 绑过的局部名：交给解析器的必须是**落盘路径字符串**。"""
+    bound = set()
+    for node in ast.walk(fn):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "str"
+        ):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bound.add(target.id)
+    return bound
+
+
+def _loader_imports(tree):
+    """chat.py 模块级从 ``app.rag.loader`` 引进来的名字集合（防一枚同名局部函数顶包）。"""
+    names = set()
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "app.rag.loader":
+            names.update(alias.asname or alias.name for alias in node.names)
+    return names
+
+
+def upload_leg_parse_handoffs(source):
+    """形状尺：上传路由里那些「把落盘字节交给 load_document 解析、且解析跑在线程里」的调用。
+
+    交回 ``[(路由函数, await 节点, 路径实参)]``。参数表（symbol 之后的任意实参与关键字）、持有路径的
+    变量名、赋值左侧、外层分支形状全不在射程里 —— 它们都是可演进的，R306 加的 display_name= 是第一例。
+    """
+    routes = _upload_routes(ast.parse(source))
+    assert routes, "chat.py 里认不出一枚装饰器路径带 upload 的路由：这把尺子的前提没了"
+    handoffs = []
+    for route in routes:
+        for await_node, path_arg in _thread_parse_calls(route, LOADER_SYMBOL):
+            handoffs.append((route, await_node, path_arg))
+    return handoffs
+
+
+def upload_leg_assign(source):
+    """交回 ``(tree, Assign 节点)``：上传腿里那枚「正文 = await asyncio.to_thread(load_document, ...)」。
+
+    与 :func:`upload_leg_parse_handoffs` 同一把尺子、**同一棵树** —— 牙件（
+    ``tests/test_r351_stale_ledger_teeth.py``）要在这棵树上换掉那枚表达式再 ``ast.unparse``，
+    两枚各自 parse 出来的树之间节点对不上号，所以这里连树一起交回，不另造第二把尺子。
+    """
+    tree = ast.parse(source)
+    routes = _upload_routes(tree)
+    assert routes, "chat.py 里认不出一枚装饰器路径带 upload 的路由：这把尺子的前提没了"
+    hits = []
+    for route in routes:
+        for await_node, _path_arg in _thread_parse_calls(route, LOADER_SYMBOL):
+            for node in ast.walk(route):
+                if isinstance(node, ast.Assign) and node.value is await_node:
+                    hits.append(node)
+    assert len(hits) == 1, f"上传腿那枚解析赋值的枚数应为 1，实测 {len(hits)} 枚：尺子的落点不唯一了"
+    return tree, hits[0]
+
+
+def assert_upload_leg_parses_off_the_event_loop(source):
+    """R351 的钉子本体：把「抄 chat.py 某行的字面文本」换成形状判据。
+
+    旧形状（R298 原钉，红在别人的合法改动上）::
+
+        assert "content = await asyncio.to_thread(load_document, file_path)" in CHAT_SOURCE
+
+    换成三件事：1 上传腿里**恰好一枚** ``await asyncio.to_thread(load_document, ...)``；2 它收到的
+    路径是本函数里 ``str(...)`` 绑出来的落盘路径（不是 UploadFile 对象、不是字面量）；3 被调的那枚
+    ``load_document`` 真出自 ``app.rag.loader``。摘掉调用 / 改成不走线程 / 换成直接读文本三种变异
+    照样红，而加参数不红（牙的实跑读数见 tests/test_r351_stale_ledger_teeth.py 与 R351 回执）。
+    """
+    tree = ast.parse(source)
+    handoffs = upload_leg_parse_handoffs(source)
+    assert len(handoffs) == 1, (
+        f"上传腿里「在线程里调 {LOADER_SYMBOL} 解析」的调用应有 1 枚，实测 {len(handoffs)} 枚："
+        "是被摘掉了、改成在事件循环里同步解析了，还是换成直接读文本绕过解析了？"
+    )
+    route, await_node, path_arg = handoffs[0]
+    assert isinstance(path_arg, ast.Name), (
+        f"chat.py:{await_node.lineno} 交给解析器的路径实参得是一枚局部变量，"
+        f"实测 {ast.dump(path_arg)[:60]}"
+    )
+    assert path_arg.id in _str_bound_locals(route), (
+        f"chat.py:{await_node.lineno} 传给解析器的 {path_arg.id} 不是本函数里 str(...) 绑出来的落盘路径："
+        "解析没落在「存到哪就读哪」这条腿上"
+    )
+    assert LOADER_SYMBOL in _loader_imports(tree), (
+        f"chat.py 模块级不再从 app.rag.loader 导入 {LOADER_SYMBOL}：同名调用不算真解析"
+    )
 
 
 @contextlib.contextmanager
@@ -240,7 +378,12 @@ def test_counter_evidence_a_pure_image_pdf_without_ocr_is_a_failed_parse():
     assert eligibility.reason == index_policy.REASON_NO_TEXT
     # 落库那一行的映射（禁域只读核对：这行改口了，上面这半截结论就不成立）
     assert 'parse_status="failed" if eligibility.reason == REASON_NO_TEXT else "ready",' in CHAT_SOURCE
-    assert "content = await asyncio.to_thread(load_document, file_path)" in CHAT_SOURCE
+    # R351：这一格原来抄的是 chat.py 的字面文本，而 R306 早给同一处加了 display_name=
+    # —— 字面文本一动，钉红的是别人的合法改动。换成形状判据：这条上传腿真的把落盘字节
+    # 交给 load_document 解析，且解析跑在 asyncio.to_thread 里，参数表允许演进。
+    # 牙（三种变异照样红、且比「文件里提到 load_document 就算绿」强）逐把实跑在
+    # tests/test_r351_stale_ledger_teeth.py，读数见 R351 回执。
+    assert_upload_leg_parses_off_the_event_loop(CHAT_SOURCE)
 
 
 def test_counter_evidence_d_disabled_engine_yields_a_sentence_not_silence(monkeypatch):
