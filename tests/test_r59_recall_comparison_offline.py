@@ -214,6 +214,12 @@ class _SqlitePg:
             return _OneRow(self.scope_row)
         if "pg_attribute" in statement:
             return _OneRow(self.column_type)
+        if statement == pg_store._APPLY_HNSW_EF_SEARCH_SQL:
+            # R386：读腿在排名 SQL 之前定一次 HNSW 候选宽度。sqlite 没有 set_config，本离线件也
+            # 不该有自己的宽度口径，所以这句照单收下、且不记进 statements——记进去就会被 _search
+            # 的"这是不是那条排名 SQL"判定读成一条没认得的语句。管它该不该发的钉在
+            # tests/test_r386_hnsw_ef_search_is_set_before_the_ranking_sql.py。
+            return _Rows([])
         self.statements.append((statement, bound))
         return _Rows(self._search(statement, bound))
 

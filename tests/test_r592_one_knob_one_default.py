@@ -178,6 +178,12 @@ class _PgDouble:
     def execute(self, sql, params=None):
         statement = str(sql)
         self.statements.append((statement, params))
+        if statement == pg_store._APPLY_HNSW_EF_SEARCH_SQL:
+            # R386：读腿在排名 SQL 之前，会在同一笔事务里把 HNSW 候选宽度定一次。本假件只登记、
+            # 不解读——这行该不该发、发在事务内还是事务外、值取自哪一枚真源，全部由
+            # tests/test_r386_hnsw_ef_search_is_set_before_the_ranking_sql.py 钉住；在这儿再判
+            # 一遍就是 R380 那族"防线只有一处"的病。
+            return _Result(scalar="")
         if "vector_scope" in statement:
             return _Result(scalar=self.scope_row)
         if "pg_attribute" in statement:

@@ -637,6 +637,46 @@ _READ_CORPUS_SQL = ("SELECT " + ", ".join(_READ_COLUMNS)
 #: The only scope columns the retrieval gate speaks, and the SQL type each needs.
 _SCOPE_COLUMNS = {"classification": "integer", "department": "text"}
 
+# ===================================================== HNSW candidate width (R386)
+#:
+#: pgvector answers an HNSW search from a candidate list whose width it reads from a GUC,
+#: and the server ships that GUC narrower than the width the retiring engine answers with.
+#: The evidence is in this tree, twice: migrations/0010_pgvector_chunks.sql:40-46 records
+#: the measured legacy configuration (its ef_search), and app/rag/loader.py:247 quotes the
+#: same number while explaining why near-duplicates starve a search. Nothing in app/** ever
+#: set the GUC: `rg -n ef_search app/ migrations/` returns only those two comments. So
+#: flipping INDEX_BACKEND alone would have narrowed every semantic read by itself, and this
+#: block is what makes that flip width-preserving by code rather than by luck or by a note.
+#:
+#: One source, one reader -- the R380 rule, a defence written in two places is a defence
+#: that drifts. :data:`HNSW_EF_SEARCH_DEFAULT` is the only spelling of the number in this
+#: file, :func:`_apply_hnsw_ef_search` is the only place it becomes SQL, and
+#: :func:`search_vectors` is its only caller. Anything else that wants the number -- a test,
+#: a script, a doc -- asks :func:`configured_hnsw_ef_search`; the guard test goes one step
+#: further and derives the retiring engine's width from 0010's own comment instead of
+#: retyping it, so a second copy of the digits is a red test, not a style complaint.
+ENV_HNSW_EF_SEARCH = "PGVECTOR_EF_SEARCH"
+
+#: The knob's absent spelling, i.e. what an install that never heard of this ticket gets:
+#: the width the retiring engine is measured to answer with. "Unset" and "set like the old
+#: engine" are therefore the same statement, which is the whole point of the ticket.
+HNSW_EF_SEARCH_DEFAULT = 100
+
+#: pgvector's own spelling of the GUC, and the one statement that carries it.
+#:
+#: A bare ``SET`` would leave the value on the *session*: a connection that outlives this
+#: read -- a pool, a reused handle, a script that keeps asking -- would answer the next
+#: caller at a width nobody asked for. ``set_config(name, value, is_local)`` with
+#: ``is_local`` = TRUE is ``SET LOCAL`` in function form: PostgreSQL documents a local
+#: setting as rolled back at the end of the current transaction, and the read leg never
+#: commits (:func:`read_topk` closes the connection over an implicit BEGIN, which is what
+#: makes the locality load-bearing rather than decorative). The function form is not a
+#: preference either: ``SET`` takes no bind parameter, so a bare SET would have to paste
+#: the number into the statement text -- the second copy of the digits this section forbids.
+#: The GUC's own bounds are PostgreSQL's to enforce; see :func:`configured_hnsw_ef_search`.
+HNSW_EF_SEARCH_GUC = "hnsw.ef_search"
+_APPLY_HNSW_EF_SEARCH_SQL = "SELECT set_config(%s, %s, TRUE)"
+
 #: Read-leg stable codes. They live here -- like REASON_VECTOR_MIRROR_TEXT_UNENCODABLE
 #: above -- precisely so they stay out of retriever's R21 degradation-code set, which a
 #: test compares key for key.
@@ -757,6 +797,56 @@ def _read_row_dict(row):
     return dict(zip(names, row))
 
 
+def configured_hnsw_ef_search(environ=None) -> int:
+    """The HNSW candidate width a PG read asks for: the operator's knob, else the pinned one.
+
+    Resolved at call time, never frozen at import -- the same reason ``read_backend()``
+    resolves ``INDEX_BACKEND`` when it is asked rather than once at load: a deployment that
+    says something after the module was imported has to be heard, and a test that moves the
+    knob must not have to reload a product module to be believed.
+
+    An unusable value falls back to :data:`HNSW_EF_SEARCH_DEFAULT` with a warning, which is
+    how ``indexing._configured_dimension`` already treats an unusable width. The fallback is
+    not a guess: that default *is* the width the retiring engine answers with, so a typo in
+    the knob costs a setting that did not take effect, never an answer narrower than the
+    engine it is replacing. No upper bound lives here on purpose -- the GUC bounds are
+    PostgreSQL's to enforce, and a value the server refuses raises inside this transaction,
+    where app/rag/retriever.py already turns any read-leg exception into a named bypass.
+    The bound it enforces is the server's own and is worth measuring rather than assuming:
+    0.8.6 in the R59 sandbox answers `set_config('hnsw.ef_search', '0', TRUE)` with
+    "0 is outside the valid range for parameter hnsw.ef_search (1 .. 1000)".
+    """
+    source = os.environ if environ is None else environ
+    raw = str(source.get(ENV_HNSW_EF_SEARCH, "") or "").strip()
+    if not raw:
+        return HNSW_EF_SEARCH_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            f"[Index] {ENV_HNSW_EF_SEARCH}={raw!r} 不是整数，HNSW 候选宽度按本构建的默认值走")
+        return HNSW_EF_SEARCH_DEFAULT
+    if value < 1:
+        logger.warning(
+            f"[Index] {ENV_HNSW_EF_SEARCH}={value} 不可用（这一档只收正整数），"
+            "HNSW 候选宽度按本构建的默认值走")
+        return HNSW_EF_SEARCH_DEFAULT
+    return value
+
+
+def _apply_hnsw_ef_search(connection) -> int:
+    """Set the candidate width for the rest of *this* transaction and report what was set.
+
+    One call site, :func:`search_vectors`, on the connection that is about to run the
+    ranking SQL: a width set on another connection, or set after the scan started, buys
+    nothing. Setting it locally is what keeps a reused or pooled connection from carrying
+    one request's width into the next one, so the value's lifetime is the read's lifetime.
+    """
+    value = configured_hnsw_ef_search()
+    connection.execute(_APPLY_HNSW_EF_SEARCH_SQL, (HNSW_EF_SEARCH_GUC, str(value)))
+    return value
+
+
 def search_vectors(*, connection, vector_table: str, distance_function: str,
                    query_vector, k: int, where=None) -> list:
     """Top-k over chunk_vectors with the caller's scope filter inside the SQL.
@@ -764,6 +854,12 @@ def search_vectors(*, connection, vector_table: str, distance_function: str,
     The query vector travels as pgvector's text form (:func:`_vector_literal`), because
     psycopg has no adapter for the type -- the same route the writer takes, so a read can
     never be measuring an encoding that was not stored.
+
+    The ranking statement is also preceded, on this same connection and inside this same
+    transaction, by :func:`_apply_hnsw_ef_search`. That ordering is the ticket: the same SQL
+    with a different candidate width is a different question, and the response does not say
+    which question was asked. It runs after every validation below, so a refusal still
+    reaches the server as zero statements.
     """
     if vector_table != DEFAULT_VECTOR_TABLE:
         raise VectorReadRejectedError(
@@ -782,6 +878,7 @@ def search_vectors(*, connection, vector_table: str, distance_function: str,
            + " %s::vector AS distance FROM " + vector_table
            + (" WHERE " + clause if clause else "")
            + " ORDER BY embedding " + operator + " %s::vector LIMIT %s")
+    _apply_hnsw_ef_search(connection)
     rows = connection.execute(sql, (literal, *params, literal, limit)).fetchall()
     return [_read_row_dict(row) for row in rows]
 
