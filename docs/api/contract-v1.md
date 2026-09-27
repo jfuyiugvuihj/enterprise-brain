@@ -3947,3 +3947,123 @@ refusal to learn whether this customer has started PostgreSQL.
   line, in a file this ticket may not touch. The empty-state copy needs nothing: a 200 with an empty list
   now genuinely means 「this store answered, and it holds nothing」, which is what
   ALERTS_EMPTY_DESCRIPTION already says.
+
+## The alert leg may refuse without taking the inbox down with it (2026-09-27, R366)
+
+R359 put `_require_ready_store()` in front of the nine alert exits, and that direction stands -- this section
+walks none of it back. What it closes is the collision R359 itself registered under 「Registered, not fixed」:
+`app/notifications/sources.py::alert_candidates` and `app/notifications/inbox.py::can_address` call those
+endpoints *directly* (the single-definition choice R299 made, so the resource gate, the row predicate and the
+row projection each keep exactly one definition), and each of the two folded only a narrow set of statuses --
+the read leg folded `403`, `can_address` folded `401, 403, 404`. The new `503` fell straight through both and
+out of the route. On a customer machine whose PostgreSQL is not up, `GET /api/v1/notifications` therefore went
+from 「200 whose alert leg is quietly empty」 to a whole-page `503 storage_unavailable`: one leg could not be
+asked, so all three tiles went dark. That is a worse answer than the one R359 replaced, because it destroys
+the two readings that were still true.
+
+### The read side: one absence, registered in the shape that already existed
+
+`app/notifications/sources.py:162` adds a second folded status beside the first, in the same one-line shape.
+Nothing else in the function moved:
+
+| status | what happens | what the caller reads |
+| --- | --- | --- |
+| `403` | folded into `_omitted(SOURCE_ALERT, exc.detail)` | 「you have no right to this class of ledger」 -- `reason_code: permission_denied`, the branch R299 wrote, byte for byte untouched |
+| `503` | folded into `_omitted(SOURCE_ALERT, exc.detail)`, non-string detail falls back to the literal `storage_unavailable` | 「this cell is not supplying data, because the store will not answer」 -- `reason_code: storage_unavailable`, new in R366 |
+| anything else | re-raised | unchanged: a 500 stays a 500, it is not folded into anybody's absence |
+
+The refused leg's projection is exactly what `_omitted` already produced -- `sources.alert` =
+`{"included": false, "reason_code": "storage_unavailable", "candidates": 0, "scanned": 0, "truncated":
+false}` -- five keys, none added, none dropped.
+
+**「This cell is not supplying data」 and 「there is really nothing here」 stay two sentences.** The 503 is not
+folded into an empty bundle, not into `items=[]` with `included: true`, not into 「no new items」. Doing that
+would move the lie R359 was written to kill into the inbox instead of killing it. The pin reads one seeded
+world twice -- 「the only open alert has been closed, store answering」 against 「store refusing」 -- and
+requires the two projections to differ, and a second pin requires that the refused leg does not launder
+`_MEM_ALERTS` into a 200 (the row is absent *and* the reason says why).
+
+**Zero new error codes, zero new reason strings.** The value carried is the one the alert module emitted; the
+fallback literal is `storage_unavailable`, already emitted at `app/api/v1/dashboard.py:150`,
+`app/api/v1/notifications.py:161`, `app/api/v1/chat.py:3037`, `app/api/v1/auth.py:105`, and already a member
+of `app/agents/contracts.py::ErrorEnvelope.code`. No fourth ledger such as `alerts_unavailable` exists.
+Neither file gained a probe of its own -- no read of `_db_ready`, no second `_database_available()`, no new
+`HTTPException` outlet -- and that is pinned off the AST rather than promised, because 「the same three faces
+the alert leg can carry」 is checked against `ErrorEnvelope`, not against this file's own literals.
+
+Everything else on the page reads the same words it read before this ticket, in the same seeded world: the
+`approval` and `document` leg projections and their row payloads, `is_exact`, `state`, `limit`, `offset`.
+`total` / `unread_total` / `returned` / `unread_returned` each move by exactly the number of alert rows the
+refusal took away -- no more, no less -- and `is_exact` is not flipped to `False` to make the absence 「look
+counted for」: the absence has its own field, and a cut window has another.
+
+### The write side: `can_address` is not allowed to guess
+
+`app/notifications/inbox.py:161` sees the same status and deliberately does **not** fold it. That leg answers a
+question -- 「is this alert still open, and may this person act on it」 -- and the two possible 「no」 answers
+are not interchangeable:
+
+- `404` is 「this row is not there any more」. The leg returns `False`, which is the right verb: the todo is
+  over. `401` and `403` share that face on purpose (R299: someone else's alert and a nonexistent alert must
+  not look different, or alert numbers become probeable). That tuple is still `401, 403, 404`, edited by
+  nobody in this ticket, and its branch is a different statement from the one below.
+- `503` is 「this machine cannot ask right now」. The leg re-raises, and the route answers
+  `503 {"detail": "storage_unavailable"}` -- the code `POST /notifications/read` and `/dismiss` already emit
+  when their own state ledger is missing.
+
+`503` must not share that return `False` with `404`. Folding it would print 「not addressable」 on the receipt of a todo that is
+still open somewhere the server cannot currently see, and a swallowed todo is the same translation error one
+level down: 「cannot ask」 drawn as 「resolved」. The separation is pinned twice over -- once off the AST (the
+`503` branch body is one bare `raise`; the `404` branch body is `return False`; the two are not the same
+node; a fifth status in either list reddens the roster) and once end to end (a dismissal of an open alert on
+that machine gets a 503 and writes no reader state; a dismissal of a genuinely gone alert gets a 200 whose
+per-id receipt says `notification_not_addressable`). The other two legs keep working while the alert leg
+refuses: in that same production-without-a-store world, dismissing an approval row still answers 200 with
+`changed: true`.
+
+Why the write side keeps a refusal while the read side folds one: they answer different questions. The list
+page can say 「this class is not supplying data, here are the other two」 and stay useful. A write cannot
+verify what it is about to overwrite, and there is no partial success to hand back -- 「I could not check」 is
+the only honest receipt, and it is a code the route already speaks.
+
+### Evidence and boundaries
+
+`tests/test_r366_inbox_keeps_its_legs_when_the_alert_store_refuses.py` (24 pins, all offline: no service, no
+PostgreSQL, no model port, no `chroma_db/` write). Three legs are seeded once -- an approval round, one open
+alert, one indexed document -- and 「no store」 is produced the way a customer machine produces it, by
+`APP_ENV=production` meeting a `_db_ready` that is false, so the gate under test is R359's own and not a
+substitute. Three knives were then run on disk against these very bytes and restored by sha256 --
+`sources.py` `0c618dadfe463f49792b397ab86d16a1acaae0a9ed3af9add691ab847ec28545`, `inbox.py`
+`75f97367c1d2a02fe90c390c9aae8109bf50c9d3ef9429b91466f1f550bd8423`, both re-measured after every knife:
+
+- (1) lifting the `503` out of `alert_candidates` reddens **11** of the 24 new pins: the 200 itself, the
+  omitted shape, the two-faces comparison, the count arithmetic, the code-equality pin, the AST roster.
+  The 162 pre-existing pins in `test_r299_notification_inbox`, `test_r303_notification_pins` and
+  `test_r359_...` stay green -- that net has no cell for 「production inbox without a store」, which is the
+  hole this ticket closes, not a coincidence.
+- (2) folding the `503` into 「an empty bundle with no registered absence」 reddens **8**, including the two
+  pins whose entire job is to keep 「not supplying data」 apart from 「nothing here」. Not passed over.
+- (3) letting `can_address` treat `503` like `404` (one merged branch, `return False`) reddens **3**: the
+  AST branch-roster pin, the direct-call pin, and the end-to-end pin that reads the 503 receipt instead of
+  a 「not addressable」 line.
+
+Physical lines: `app/notifications/sources.py` +11 / -0, `app/notifications/inbox.py` +7 / -0.
+`app/api/v1/alerts.py` is not touched by this ticket -- the gate, its nine call sites and their position behind
+the authorization gate are R359's, unchanged.
+
+Out of this ticket's write set, registered rather than fixed:
+
+- `app/notifications/states.py` has no production branch. With `_database_available()` false, both
+  `recipient_states` (`:94-100`) and `apply_state` (`:146-155`) read and write `_ROWS`, the process-local
+  overlay, whatever `APP_ENV` says. So the 200 this section promises keeps 「who has read what」 in a table
+  that dies with the process, and the write receipt will still report `changed: true` against it. That is the
+  same class of sentence R299 pinned for the three business ledgers, in the one notification file that was
+  not in scope here.
+- The overview page still answers `{"total": 0, "unread": 0}` for the alert tile on exactly this machine:
+  `app/api/v1/dashboard.py:181-189` reads `alerts._MEM_ALERTS` itself instead of going through `GET /alerts`,
+  so R359's gate cannot reach it (same for the trend tile's alert leg). R367.
+- `frontend/src/lib/notifications.js` never reads the `sources` projection at all -- `git grep included
+  frontend/src` is empty on the day this section lands -- so a folded absence is rendered as 「fewer rows」,
+  which is the honest server answer wearing the dishonest client face. And `frontend/src/lib/alerts.js:141`
+  hardcodes `retryable: true` on its generic failure branch where `frontend/src/lib/errcodes.js:105` says
+  `storage_unavailable` is not retryable. Both are R368 (frontend write set).

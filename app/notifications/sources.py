@@ -145,12 +145,23 @@ async def alert_candidates(request) -> SourceBundle:
 
     staff 走到这里会被 list_alerts 内的资源级闸门拒成 403。处理方式沿用看板那一条：这一格不供
     数并说出原因，而不是回一枚 0 —— 0 会长成「你们部门今天很平安」那张脸。
+
+    R359 之后同一枚端点还会吐出第二张脸：生产环境而 PG 不在位时 `_require_ready_store()` 回
+    503 `storage_unavailable`。这一支今天原样上抛，于是整页收件箱跟着黑掉 —— 一条腿问不出，
+    其余几格也一并没了。这里把它折成同一枚 `_omitted`，理由码取那本账自己给出的那一枚（读
+    `exc.detail`，它不是字符串才兜底写 `storage_unavailable`），零新增错误码、零新增 reason 词。
+    「这一格不供数」与「这一类今天没有事」仍然是两张脸；403 那一支一个字都没动，权限的答案
+    与存储的答案各自留名，不许被一次顺手统一并进同一格。
     """
     try:
         payload = await alerts_api.list_alerts(request)
     except HTTPException as exc:
         if exc.status_code == 403:
             reason = exc.detail if isinstance(exc.detail, str) else 'permission_denied'
+            return _omitted(SOURCE_ALERT, reason)
+        if exc.status_code == 503:
+            # R366：存储拒答折成「这一格不供数」，不折成「这里真的没有东西」。
+            reason = exc.detail if isinstance(exc.detail, str) else 'storage_unavailable'
             return _omitted(SOURCE_ALERT, reason)
         raise
     rows = [dict(row) for row in (payload.get('alerts') or [])]

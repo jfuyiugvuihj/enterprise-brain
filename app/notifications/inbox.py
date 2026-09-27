@@ -158,6 +158,13 @@ async def can_address(principal, request, notification_id: str) -> bool:
         try:
             payload = await alerts_api.get_alert(alert_id, request)
         except HTTPException as exc:
+            if exc.status_code == 503:
+                # R366：503 与 404 说的是两句不同的话。404 是「这条已经不在了」，回 False 正好
+                # 把它从这本账上关掉；503 是「这台机器此刻问不出」，回 False 就等于把一条还开着
+                # 的告警画成已解决 —— 一条被静默吞掉的待办。所以原样上抛，由出口答它既有那一码
+                # 503 `storage_unavailable`（app/api/v1/notifications.py:161 本来就在吐它），不在这
+                # 里替存储拒答换脸。读侧同一条口径见 sources.py::alert_candidates。
+                raise
             if exc.status_code in (401, 403, 404):
                 # 三种脸在这里同形是刻意的：别人的告警与不存在的告警不许长出两张脸，那是枚举
                 # 别人的告警编号用的。理由码在审计里，不在响应里。
