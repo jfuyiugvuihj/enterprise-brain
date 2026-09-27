@@ -50,6 +50,10 @@ J-5 **降级不算通过**：PG 腿若整个拒答退回 Chroma（app/rag/pg_sto
     ``ScopeFilterUntranslatable`` -> ``_pgvector_hits`` 交回 None），读数必须显式标
     ``fell_back``，并按"这一臂没量到"处理 —— 拿退回 Chroma 的读数冒充 PG 侧，就是误判 #43 重演。
     腿凭证取自 scripts/r59c_recall_compare.py 的 ``answered_by`` 增量，同一条纪律。
+
+    R393（候选宽度口径）：本件生成的探针批不再自带宽度数字 —— 缺省现场向生产读腿那一枚
+    唯一真源取，且只在事务内生效。经本件在 2026-09-27 之前取过的探针读数站在哪一档不可知，
+    引用它们必须带 docs/perf/r393-tool-width-drift-2026-09-27.md 里那句限定。
 """
 from __future__ import annotations
 
@@ -366,15 +370,81 @@ def emit_sql(corpus: dict, matrix: dict, *, database: str, table: str) -> dict:
             "03_chunks.sql": "".join(inserts), "04_indexes.sql": index,
             "99_rollback.sql": rollback}
 
-def emit_probe_queries(corpus: dict, matrix: dict, *, table: str, ef_search: int = 40) -> str:
+#: ------------------------------------------------------------------ 候选宽度（R393）
+#:
+#: 这批探针踩在哪一档 HNSW 候选宽度上，过去由本件自带的一个数字决定，而那个数字不等于
+#: 生产读腿钉下去的那一档。现在缺省现场向唯一真源取（app.rag.pg_store
+#: .configured_hnsw_ef_search()，R386 立的读取点）：本文件一个候选宽度数字都不许出现，
+#: 注释也不例外 —— 数字抄进第二处就一定会漂，而漂了没人量得到。两档各是多少、哪些历史
+#: 读数因此站不上生产口径，见 docs/perf/r393-tool-width-drift-2026-09-27.md。
+TRUE_SOURCE = "app.rag.pg_store.configured_hnsw_ef_search"
+#: pgvector 的 GUC 只在库被这条会话用过之后才存在于这条会话（实测：全新会话读它当场
+#: unrecognized）。整批探针跑在 BEGIN ... ROLLBACK 之间，设定只在事务内生效，跑完不残留。
+LOAD_VECTOR_PROBE_SQL = "SELECT NULL::vector IS NULL"
+
+
+def probe_ef_source():
+    """取候选宽度的唯一真源模块；取不到就明确报错退出，绝不退回一个自定的数。"""
+    try:
+        from app.rag import pg_store
+    except Exception as exc:
+        raise SystemExit(
+            "[前置不满足] 探针的候选宽度取不到唯一真源 " + TRUE_SOURCE + "（import 失败："
+            + type(exc).__name__ + " " + str(exc)[:160] + "）—— 本件不许自带宽度，拒出料")
+    if getattr(pg_store, "configured_hnsw_ef_search", None) is None:
+        raise SystemExit("[前置不满足] 这棵树里没有 " + TRUE_SOURCE
+                         + "：候选宽度没有真源可读，本件不许自带宽度，拒出料")
+    return pg_store
+
+
+def resolve_probe_ef_search(explicit=None):
+    """定这批探针踩哪一档：显式给了用给的那一档，没给就现场向唯一真源取。交回 (值, 来历)。"""
+    if explicit is not None:
+        return int(explicit), "CLI --ef-search（人为指定，非生产口径）"
+    value = probe_ef_source().configured_hnsw_ef_search()
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SystemExit("[前置不满足] 唯一真源 " + TRUE_SOURCE + " 交回的不是整数（"
+                         + type(value).__name__ + "）：候选宽度不可知，拒出料")
+    return int(value), TRUE_SOURCE + "（现场取，与生产读腿同一次调用）"
+
+
+def render_apply_width_sql(width) -> str:
+    """把真源那条参数化 SQL 落成批单里的字面语句：形状来自真源，本件只填两枚参数。
+
+    本件不自己写设定函数那一串，也不自己写那个局部标记：真源哪天改口（换函数、换作用域），
+    这里的占位符对不上就当场炸，而不是安静地生成一批站在别的档上的探针。
+    """
+    pg_store = probe_ef_source()
+    sql = str(pg_store._APPLY_HNSW_EF_SEARCH_SQL)
+    if sql.count("%s") != 2:
+        raise SystemExit("[前置不满足] 真源的设定语句不再是两枚参数（" + sql[:160]
+                         + "）：本件不许猜它的形状，拒出料")
+    return sql.replace("%s", "'{}'", 1).replace("%s", "'{}'", 1).format(
+        pg_store.HNSW_EF_SEARCH_GUC, int(width))
+
+
+def emit_probe_queries(corpus: dict, matrix: dict, *, table: str, ef_search=None) -> str:
     """只读探针：把产品读腿那条 SQL 逐 principal 逐题打一遍，交回 vector_id 顺序。
 
     这**不是**批单的一部分（不建不改），但它是 ③ 的取数口：总控在沙盒库上跑这一段，
     把结果按 cell 存成 JSON，再交给本件 verify 判 J-1〜J-5。SQL 形状照抄
     app/rag/pg_store.py:search_vectors（算符由 distance_function 决定，不猜）。
+
+    🔴 这一批踩在哪一档候选宽度上（R393）：缺省跟随唯一真源，并且只在**一笔事务内**生效
+    —— 整批 BEGIN ... ROLLBACK，设定走 set_config(..., TRUE)。会话级 SET 不在此列：它会
+    一直留在这条连接上，把后面每一次读数都染成同一档。开头那条 vector 类型探测不是装饰：
+    库没被这条会话用过之前，下面那条设定只会立一枚 pgvector 根本不读的占位参数（实测：它
+    照样念回那个数），等库被别的语句带起来时占位值又被出厂档顶掉。探测在前，设定才有见证。
     """
+    width, width_source = resolve_probe_ef_search(ef_search)
     lines = ["-- R59c 沙盒只读探针（零写入；生成件）corpus_sha=" + matrix["corpus_sha"],
-             "SET hnsw.ef_search = {0};".format(int(ef_search)), ""]
+             "-- HNSW 候选宽度 = {0}；来历 = {1}".format(width, width_source),
+             "-- 作用域 = 事务内：整批 BEGIN ... ROLLBACK，设定只在笔内有效，跑完不残留",
+             "BEGIN;",
+             LOAD_VECTOR_PROBE_SQL + ";",
+             "-- 先让库存在于这条会话：没加载时下面那条设定只会立一枚 pgvector 不读的占位参数",
+             render_apply_width_sql(width) + ";",
+             ""]
     for cell in matrix["cells"]:
         levels, departments = _parse_filter(cell["filters"])
         clause = []
@@ -395,6 +465,8 @@ def emit_probe_queries(corpus: dict, matrix: dict, *, table: str, ef_search: int
                          "LIMIT {5};".format(cell["principal"], expected["qid"], table, where,
                                               _sql_literal(probe_vector), expected["top_k"]))
         lines.append("")
+    lines.append("-- 收尾：结束这笔事务，事务内的候选宽度设定随之消失（本批零写入，回滚即可）")
+    lines.append("ROLLBACK;")
     return "\n".join(lines) + "\n"
 
 
@@ -527,16 +599,33 @@ def read_service_run(path: Path, arm: str, matrix: dict) -> dict:
 
 
 def read_probe_csv_run(path: Path, matrix: dict) -> dict:
-    """读 psql 探针结果（cell,qid,vector_id,... 四列）成同一形状。"""
+    """读 psql --csv 探针结果成 verify 要的 {principal: {qid: [vector_id...]}}。
+
+    🔴 不按「第一行就是表头」读（R393）。这一批在排名 SELECT 之前还排着 BEGIN、库探测、
+    事务内设定三句，`psql --csv` 会把命令标签和它们的单列输出一起打进来（实测顺序：
+    `BEGIN` / `?column?` / `t` / `set_config` / `<那一档的值>` / 表头 / 数据行 / ... /
+    `ROLLBACK`），而且每回一条排名 SELECT 都会再打一遍自己的表头。拿第一行当表头，
+    `row.get("cell")` 就永远是 None，每一条真读数都会被读没 —— 而「零读数」在 verify
+    里长得和「没跑」一模一样，这条腿从生下来就没被真读数喂过。
+    认行的唯一凭据是矩阵自己：第一列是该 principal 的字面标签、第二列是它名下的 qid，
+    其余行（标签、单列值、表头）一律跳过。一条都没认出来就当场报错，不许交回空桶。
+    """
     import csv
+    known = {}
+    for cell in matrix["cells"]:
+        known[str(cell["principal"])] = {str(item["qid"]) for item in cell["expected"]}
     buckets = {}
     with Path(path).open(encoding="utf-8-sig", newline="") as handle:
-        for row in csv.DictReader(handle):
-            cell = str(row.get("cell") or "")
-            qid = str(row.get("qid") or "")
-            if not cell or not qid:
+        for row in csv.reader(handle):
+            if len(row) < 3:
                 continue
-            buckets.setdefault(cell, {}).setdefault(qid, []).append(str(row.get("vector_id")))
+            cell, qid = str(row[0]), str(row[1])
+            if cell not in known or qid not in known[cell]:
+                continue
+            buckets.setdefault(cell, {}).setdefault(qid, []).append(str(row[2]))
+    if not buckets:
+        raise SystemExit("[前置不满足] 探针读数文件里一条真读数都没认出来：" + str(path)
+                         + " —— 这一臂没有读数，判不了（不许当成零命中）")
     return buckets
 
 
@@ -578,7 +667,9 @@ def emit_batch(matrix: dict, sql_files: dict, corpus: dict, *, database: str) ->
               "2. `psql -d {0} -f sql/01_scope.sql`、`02_table.sql`、`03_chunks.sql`、"
               "`04_indexes.sql`（按此序）".format(database),
               "3. `psql -d {0} -f sql/99_rollback.sql` 先在**另一份**同名沙盒上演练一遍回滚".format(database),
-              "4. 跑只读探针 `sql/probes.sql` -> `--probe-csv` 交给 `verify`",
+              "4. 跑只读探针 `sql/probes.sql` -> `--probe-csv` 交给 `verify`：这一批踩在哪一档"
+              "HNSW 候选宽度上写在文件头注释里，来历是生产读腿的唯一真源；整批跑在一笔事务内，"
+              "跑完不残留在连接上（要换档就显式给 `--ef-search`，批头会写明那是人为指定的）",
               "5. 若要在服务层量（含 Chroma 侧），走 `documents/*.txt` + `POST /api/v1/upload`，"
               "上传账号必须是本批单列出的 principal —— 生产读路径的 department 来自 **principal**"
               "（app/api/v1/chat.py:3445 那一行 `department = principal.department`），"
@@ -734,11 +825,24 @@ def run_selfcheck(*, verbose: bool = False) -> int:
          and forward.count("ON CONFLICT") >= len(corpus["chunks"]),
          "guard_hits={0} inserts={1}".format(forward.count("current_database()"),
                                              forward.count("ON CONFLICT")))
+    import re
     probes = emit_probe_queries(corpus, matrix, table=TABLE)
-    _pin(pins, "S12 只读探针零写入：没有 INSERT/CREATE/DROP，只有 SELECT + SET",
+    ranking = [line for line in probes.splitlines() if line.startswith("SELECT '")]
+    width_now = resolve_probe_ef_search()[0]
+    head = probes.splitlines()
+    _pin(pins, "S12 只读探针零写入：只有排名 SELECT 每回一条，设定只活在事务内",
          all(token not in probes for token in ("INSERT", "CREATE ", "DROP"))
-         and probes.count("SELECT ") == sum(len(cell["expected"]) for cell in matrix["cells"]),
-         "selects={0}".format(probes.count("SELECT ")))
+         and len(ranking) == sum(len(cell["expected"]) for cell in matrix["cells"])
+         and "\nBEGIN;\n" in probes and probes.rstrip().endswith("ROLLBACK;")
+         and "set_config(" in probes and not re.search(r"SET\s+hnsw", probes, re.I)
+         and head[0].startswith("-- R59c") and LOAD_VECTOR_PROBE_SQL in probes,
+         "selects={0} head={1}".format(len(ranking), head[3][:40]))
+    _pin(pins, "S12b 探针宽度只有一个真源：批里那一档 == 现场向真源取的那一档",
+         ("HNSW 候选宽度 = {0}；".format(width_now)) in probes
+         and TRUE_SOURCE in probes
+         and ("HNSW 候选宽度 = {0}；".format(width_now + 1)) not in probes
+         and resolve_probe_ef_search(width_now + 1)[0] == width_now + 1,
+         "width={0}".format(width_now))
 
     # S13〜S15 跨件接口：拿 scripts/r59c_recall_compare.py 的**真实产物形状**喂进 verify
     import importlib.util
@@ -1021,7 +1125,11 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--queries", type=int, default=12)
     plan.add_argument("--sandbox-db", default=SANDBOX_DB_DEFAULT)
     plan.add_argument("--table", default=TABLE)
-    plan.add_argument("--ef-search", type=int, default=40)
+    #: 缺省不再是本件自带的那一档，而是现场跟随生产读腿的唯一真源（R393 判据①）：
+    #: 自带的那一档是 pgvector 的出厂档，量出来的不是生产那一档。
+    plan.add_argument("--ef-search", type=int, default=None,
+                      help="显式把探针批的 HNSW 候选宽度钉成这一档，批头会写明它是人为"
+                           "指定的，不可与生产口径混读；不填 = 现场跟随 " + TRUE_SOURCE)
     plan.set_defaults(func=cmd_plan)
     check = sub.add_parser("verify", help="判 J-1〜J-5：两侧读数 vs 精确解 vs 允许集")
     check.add_argument("--matrix", required=True)

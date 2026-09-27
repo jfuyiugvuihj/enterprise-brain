@@ -10,6 +10,11 @@
 
   1. 能拿去对差的数：逐题集合重合度、名次位移、两侧各走多远才拿到第一名；
   2. 🔴 "PG 交回 0 条" 与 "PG 根本没读到" 分家：产物里两个字段、退出码两个值。
+  3. 🔴 这一腿踩在哪一档 HNSW 候选宽度上（R393）：以前 --pg-ef-search 不填就是"用库里的
+     默认"，而库里那个默认是 pgvector 的出厂档，不等于生产读腿钉下去的那一档。现在缺省
+     跟随唯一真源，并且这一格读不到数就当场作废整轮读数，不再吞成一句 errors 字符串留在
+     产物角落里。历史读数站在哪一档不可知的清单与限定语见
+     docs/perf/r393-tool-width-drift-2026-09-27.md。
      R158 那 24/135 题就是会被粗心工具印成"两侧一致"的形状——两个空列表相等。
 
 --pg-mode：
@@ -59,6 +64,82 @@ EXIT_MATCHED = 0
 EXIT_DIFFERS = 1
 EXIT_PRECONDITION = 2
 EXIT_PG_NOT_ASKED = 3
+#: ---------------------------------------------------------------- 候选宽度（R393）
+#:
+#: HNSW 的候选宽度在这两枚量具里只有一个来源：生产读腿那一枚真源
+#: （app.rag.pg_store.configured_hnsw_ef_search()，R386 立的读取点）。本件过去没有这条
+#: 约束：--pg-ef-search 不填被写成"用库里的默认"，而库里那一档是 pgvector 的出厂档，
+#: **不等于**生产读腿钉下去的那一档。两档各是多少、哪些历史读数因此站不上生产口径，全部
+#: 记在 docs/perf/r393-tool-width-drift-2026-09-27.md —— 本文件里一个候选宽度数字都不许
+#: 出现，注释也不例外：数字抄进第二处，就一定会漂，而漂了没人量得到。
+TRUE_SOURCE = "app.rag.pg_store.configured_hnsw_ef_search"
+#: pgvector 的 GUC 只在库被这条会话用过之后才存在于这条会话。实测：全新会话里读它当场
+#: "unrecognized configuration parameter"，先发一条 vector 类型的语句之后才答得出来。
+#: NULL::vector 这一形不需要任何数字，也不会像空向量那样反过来报错。
+ENSURE_VECTOR_LIB_SQL = "SELECT NULL::vector IS NULL"
+#: 为什么探测必须在设定之前（实测）：库没加载时 set_config 照样"成功"，SHOW 也照样把那个
+#: 数念回来 —— 但那只是 PostgreSQL 给两段式名字立的占位参数，pgvector 根本不读它；等库被
+#: 后面某条语句带起来，占位值又被出厂档顶掉。唯一的见证是 pg_settings：占位时它一枚行都
+#: 没有，加载之后才有行。所以本件先探测、再查目录，两种读法都对得上才算填上了数。
+#: 带 missing_ok 的读法：库没加载时交回 NULL，于是"读不到"第一次成为一枚看得见的值，
+#: 而不是被 except 吞掉之后留在取证格里的一枚空格。本件不再发裸 SHOW。
+READ_SETTING_SQL = "SELECT current_setting(%s, TRUE)"
+PG_SETTING_SQL = ("SELECT setting, source, boot_val, reset_val, context,"
+                  " min_val, max_val FROM pg_settings WHERE name = %s")
+#: 取证格"来源"那一栏的取值，与真库自己交回的 source 一一对应（三态均实测）。
+ORIGIN_FACTORY = "library-factory"
+ORIGIN_SESSION = "session-level-leftover"
+ORIGIN_TRANSACTION = "transaction-local"
+WIDTH_FROM_CLI = "cli-explicit"
+WIDTH_FROM_TRUE_SOURCE = "true-source"
+
+
+class EngineWidthUnreadable(RuntimeError):
+    """候选宽度这一格填不上数：整轮读数作废。
+
+    过去这一格的失败被吞进 errors 字符串，正文留空，读数照印 —— 那枚取证格于是长期
+    空转且无人察觉（R393 判据②）。口径空着不是"少一条信息"，是"这份数不能用"，所以它
+    必须炸在主流程里，而不是安静地躺在产物角落。
+    """
+
+
+def _first_value(row):
+    """一条只回一枚值的语句，交回那枚值；行是元组还是字典都认。"""
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return next(iter(row.values()), None)
+    return row[0]
+
+
+def pg_store_true_source():
+    """取唯一真源所在的那枚模块；取不到就明确报错退出，绝不退回一个自定的数。"""
+    try:
+        from app.rag import pg_store
+    except Exception as exc:
+        raise SystemExit(
+            "[前置不满足] 候选宽度取不到唯一真源 " + TRUE_SOURCE + "（import 失败："
+            + type(exc).__name__ + " " + str(exc)[:160] + "）—— 本件不许自带宽度，读数作废")
+    if getattr(pg_store, "configured_hnsw_ef_search", None) is None:
+        raise SystemExit("[前置不满足] 这棵树里没有 " + TRUE_SOURCE
+                         + "：候选宽度没有真源可读，本件不许自带宽度，读数作废")
+    return pg_store
+
+
+def resolve_ef_search(explicit=None) -> int:
+    """定这一腿踩哪一档：显式给了就用给的那一档，没给就现场向唯一真源取。
+
+    现场取，不在 import 期取：真源自己说的是"被问到才定档"（旋钮可以在模块加载之后才
+    改口），本件跟着它，不另立第二枚常量。取值边界分别由真源与 PostgreSQL 自己守，这里
+    不抄第三处：服务端拒的值会在钉下去时当场抛错，取证格随即作废整轮读数。
+    """
+    if explicit is not None:
+        return int(explicit)
+    value = pg_store_true_source().configured_hnsw_ef_search()
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SystemExit("[前置不满足] 唯一真源 " + TRUE_SOURCE + " 交回的不是整数（"
+                         + type(value).__name__ + "）：候选宽度不可知，读数作废")
+    return value
 
 
 def parse_args(argv=None):
@@ -77,8 +158,13 @@ def parse_args(argv=None):
                         default="live")
     parser.add_argument("--no-pg-exact", dest="pg_exact", action="store_false",
                         help="不跑真库精确 top-k（判据③量 HNSW 近似性用；默认跑）")
-    parser.add_argument("--pg-ef-search", type=int, default=0,
-                        help="把 hnsw.ef_search 设成这个值再跑 live 腿；0 = 用库里的默认")
+    #: 这一档缺省不再是"用库里的默认"。库里那一档是 pgvector 的出厂档，不等于生产读腿
+    #: 钉下去的那一档 —— 把两者混为一谈，正是这批历史读数站错口径的原因（R393 判据③）。
+    parser.add_argument("--pg-ef-search", type=int, default=None,
+                        help="显式把 HNSW 候选宽度钉成这一档再跑 live 腿；产物与终端都会"
+                             "写明它是人为指定的，只能当扫参照，不可与生产口径混读。"
+                             "不填 = 现场跟随生产真源 " + TRUE_SOURCE
+                             + "（那不等于库里的出厂档）")
     parser.add_argument("--no-chroma-exact", dest="chroma_exact", action="store_false",
                         help="不在 Chroma 快照上算精确 top-k（判据②的归因腿；默认跑）")
     #: 生产读路径恒带权限谓词（app/rag/filters.py 那两份形状）。不带 where 的读数只能证明
@@ -165,13 +251,50 @@ def read_matrix(collection, *, page_size: int = 200):
     return ids, rows, ""
 
 
+def apply_hnsw_ef_search(connection, *, width: int, ledger=None) -> str:
+    """把候选宽度钉进**当前这笔事务**，再把真库自己认的那一档读回来核对。
+
+    钉法逐字取自生产读腿：pg_store._APPLY_HNSW_EF_SEARCH_SQL 就是
+    "SELECT set_config(%s, %s, TRUE)" —— 事务内局部，出了这笔事务就消失，不留在这条
+    连接上。会话级 SET 是另一回事：它一直留着，把后面每一次读数都染成同一档（R393
+    判据③），本件从此不再用它，也不再自己抄一遍 SQL 文本。
+    钉完必核：真库认的与要钉的对不上，就是这一腿的口径不可信，读数作废。
+    """
+    pg_store = pg_store_true_source()
+    guc = pg_store.HNSW_EF_SEARCH_GUC
+    wanted = str(int(width))
+    try:
+        connection.execute(pg_store._APPLY_HNSW_EF_SEARCH_SQL, (guc, wanted))
+        observed = _first_value(connection.execute(READ_SETTING_SQL, (guc,)).fetchone())
+    except EngineWidthUnreadable:
+        raise
+    except Exception as exc:
+        raise EngineWidthUnreadable(
+            guc + " 钉不进这笔事务（" + type(exc).__name__ + " " + str(exc)[:160]
+            + "）：这一腿踩在哪一档不可知，读数作废") from exc
+    if observed is None or str(observed) != wanted:
+        raise EngineWidthUnreadable(
+            "真库认的 " + guc + "=" + str(observed)[:160] + " 与本件要钉的 " + wanted
+            + " 不一致：这一腿的口径不可信，读数作废")
+    if ledger is not None:
+        ledger["applied_reads"] = int(ledger.get("applied_reads") or 0) + 1
+        ledger["observed"] = str(observed)
+        ledger["origin"] = ORIGIN_TRANSACTION
+    return str(observed)
+
+
 def pg_live_topk(connection, *, vector_table: str, operator: str, literal: str, k: int,
-                 clause: str = "", clause_params=()):
+                 clause: str = "", clause_params=(), width: int = None, ledger=None):
     """live 腿：真库 chunk_vectors 上的 top-k。表名与算符都过白名单，不做字符串注入。
 
     ``clause`` 只允许由 app/rag/pg_store.sql_scope_filter 交回 —— 也就是生产读腿将要发的那
     同一段 SQL。在这里另抄一份"看着一样的 WHERE"就是量具与实现两套口径，白测。
+
+    ``width`` 给出时，排名语句**之前**先在当前这笔事务里把它钉下去（apply_hnsw_ef_search）。
+    顺序要紧：先定档再排名，反了就等于拿上一档的索引量这一档的召回。
     """
+    if width is not None:
+        apply_hnsw_ef_search(connection, width=width, ledger=ledger)
     rows = connection.execute(
         "SELECT vector_id, embedding " + operator + " %s::vector AS distance"
         " FROM " + vector_table +
@@ -194,6 +317,10 @@ def pg_exact_topk(connection, *, vector_table: str, operator: str, literal: str,
     这一腿只为判据③存在：同一条连接、同一批向量、同一个算符，只把 HNSW 挪开，量出来的
     就是「近似索引会不会改名次」这一格本身，不用拿别的工具的身份来替它作证。
     进出都显式复位，不给下一题留脏设置。
+
+    这一腿不钉候选宽度（不传 width）：它关掉了索引扫描，候选宽度对它不适用 —— 给它钉一档
+    只会让产物里多出一格来历不明的数。它比的是"索引腿与精确腿差多少"，索引腿那一档记在
+    engine.width.read_txn 里，由 :func:`pg_live_topk` 逐条排名语句自己钉、自己读回。
     """
     connection.execute("SET enable_indexscan = off")
     connection.execute("SET enable_indexonlyscan = off")
@@ -303,9 +430,128 @@ def array_topk(ids, array, query, *, k: int):
     return [(ids[position], float(squared[position])) for position in order[:k]]
 
 
-def pg_engine_facts(connection, *, tool, vector_table: str) -> dict:
-    """把「这一腿踩在哪套口径上」照抄成真库原文：判据③要的是取证，不是转述。"""
-    facts = {"scope_row": None, "indexes": [], "hnsw_ef_search": "", "errors": {}}
+def read_hnsw_width(connection, *, tool, requested_width: int, width_source: str) -> dict:
+    """把"这一腿踩在哪一档"量成真库自己交回的数，不是转述，更不许留空。
+
+    三格分开记，任何一格读不出来都作废整轮读数：
+      session_baseline  本件碰这条连接之前它本来踩在哪一档（含真库自报的 source 与出厂值）
+      read_txn          排名语句所在那笔事务里，本件实际钉下去并被读回来的那一档
+      after_read_txn    读数事务结束后的残留检查：会话级设定会在这里露馅
+
+    第一步必须是"让库存在于这条会话"：GUC 在库被加载之前根本不存在。过去这一格能不能
+    填上数，全靠它前面有没有哪条不相干的语句顺手把库带起来（实测：读 pg_indexes 里 hnsw
+    那行的 indexdef 会去调索引 AM 的 handler，于是顺带加载了库；btree 那几行不会），那是
+    运气，不是口径。这里自己做，不依赖任何一条不相干的读数。
+    """
+    pg_store = pg_store_true_source()
+    guc = pg_store.HNSW_EF_SEARCH_GUC
+    cell = {"guc": guc, "readable": False,
+            "true_source": int(pg_store.configured_hnsw_ef_search()),
+            "requested": int(requested_width), "requested_source": width_source,
+            "apply_sql": str(pg_store._APPLY_HNSW_EF_SEARCH_SQL),
+            "session_baseline": {}, "read_txn": {}, "after_read_txn": {}}
+    try:
+        probed = _first_value(connection.execute(ENSURE_VECTOR_LIB_SQL).fetchone())
+        if str(probed).strip().lower() not in ("true", "t"):
+            raise EngineWidthUnreadable(
+                "vector 类型探测没答上来（交回 " + repr(probed)[:160] + "）")
+        row = connection.execute(PG_SETTING_SQL, (guc,)).fetchone()
+        if row is None:
+            raise EngineWidthUnreadable(
+                "pg_settings 里没有 " + guc + " 这一行：这条会话里库没加载，或库里没装它")
+        setting = str(tool._row(row, "setting", 0))
+        source = str(tool._row(row, "source", 1))
+        boot = str(tool._row(row, "boot_val", 2))
+        reset = str(tool._row(row, "reset_val", 3))
+        context = str(tool._row(row, "context", 4))
+        low = str(tool._row(row, "min_val", 5) or "")
+        high = str(tool._row(row, "max_val", 6) or "")
+        live = _first_value(connection.execute(READ_SETTING_SQL, (guc,)).fetchone())
+    except EngineWidthUnreadable:
+        raise
+    except Exception as exc:
+        raise EngineWidthUnreadable(
+            guc + " 取证格读不出（" + type(exc).__name__ + " " + str(exc)[:160]
+            + "）：这一腿踩在哪一档不可知，读数作废") from exc
+    #: 两种读法必须给出同一个数：一条读目录，一条读后端自己的答案。对不上就是这条连接在
+    #: 骗人（或者本件与它之间还隔着别的会话级设定），不能只拿其中一栏当口径。
+    if live is None or str(live) != setting:
+        raise EngineWidthUnreadable(
+            guc + " 的两种读法对不上：pg_settings=" + setting[:160] + " current_setting="
+            + str(live)[:160] + "：这一腿的档不可信，读数作废")
+    if source == "default" and setting == boot:
+        origin = ORIGIN_FACTORY
+    elif source == "session":
+        origin = ORIGIN_SESSION
+    else:
+        origin = "server-source:" + source
+    cell["session_baseline"] = {"value": setting, "source": source, "boot_val": boot,
+                                "reset_val": reset, "context": context, "min_val": low,
+                                "max_val": high, "origin": origin}
+    cell["read_txn"] = {"applied_reads": 0, "observed": None, "origin": "not-applied-yet"}
+    cell["after_read_txn"] = {"value": None, "session_baseline": setting, "residue": None}
+    cell["readable"] = True
+    return cell
+
+
+def check_session_residue(connection, *, cell: dict) -> dict:
+    """读数事务结束之后再看一次这条连接的档：事务内的设定应当已跟着事务一起消失。
+
+    这一格是"本件有没有把自己弄脏"的检查：会话级 SET 不会消失，它会把后面每一次读数都
+    染成同一档。缺了这格，污染只能靠读代码的人自觉 —— 而它过去正是这么漏掉的。
+    """
+    pg_store = pg_store_true_source()
+    guc = pg_store.HNSW_EF_SEARCH_GUC
+    baseline = str(cell["session_baseline"]["value"])
+    try:
+        observed = _first_value(connection.execute(READ_SETTING_SQL, (guc,)).fetchone())
+    except Exception as exc:
+        raise EngineWidthUnreadable(
+            "读数结束后读不回 " + guc + "（" + type(exc).__name__ + " " + str(exc)[:160]
+            + "）：这条连接有没有被本件弄脏不可知，读数作废") from exc
+    residue = observed is not None and str(observed) != baseline
+    cell["after_read_txn"] = {"value": (None if observed is None else str(observed)),
+                              "session_baseline": baseline, "residue": bool(residue)}
+    if residue:
+        cell["residue_warning"] = ("🔴 读数事务结束后 " + guc + " 仍停在 "
+                                   + str(observed)[:160] + "，不是进来时的 " + baseline
+                                   + "：这一腿的设定残留到了连接上（会话级），"
+                                   "后面的读数不能与这一腿混读")
+        print(cell["residue_warning"])
+    return cell
+
+
+def width_summary(cell: dict) -> str:
+    """把候选宽度那一格压成一行给人读：三档缺一档就如实写不可知，不猜。"""
+    base = cell.get("session_baseline") or {}
+    read = cell.get("read_txn") or {}
+    after = cell.get("after_read_txn") or {}
+    parts = [
+        "本腿要踩 " + str(cell.get("requested")) + "（来源 "
+        + str(cell.get("requested_source")) + "）",
+        "唯一真源 " + str(cell.get("true_source")),
+        "进来时 " + str(base.get("value") or "不可知") + "（" + str(base.get("origin"))
+        + "；真库自报 source=" + str(base.get("source")) + "、出厂 "
+        + str(base.get("boot_val")) + "、服务端界 " + str(base.get("min_val"))
+        + ".." + str(base.get("max_val")) + "）",
+        "排名事务内读回 " + str(read.get("observed") or "未钉") + " x"
+        + str(read.get("applied_reads")) + " 次",
+        "读数结束后 " + str(after.get("value") or "读不回")
+        + ("（🔴 残留在连接上）" if after.get("residue") else "（无残留）"),
+    ]
+    return " | ".join(parts)
+
+
+def pg_engine_facts(connection, *, tool, vector_table: str, width: int,
+                    width_source: str) -> dict:
+    """把「这一腿踩在哪套口径上」照抄成真库原文：判据③要的是取证，不是转述。
+
+    scope_row / indexes 两格失败仍进 errors（它们是背景，不是这一腿的档）；🔴 候选宽度
+    那一格失败**不留角落**：read_hnsw_width 直接抛 EngineWidthUnreadable，主流程按"前置
+    不满足"退出。过去正是这一条被吞成一句错误串、正文留空，取证格才长期空转（R393 判据②）。
+    """
+    facts = {"scope_row": None, "indexes": [], "hnsw_ef_search": "", "errors": {},
+             "width": {}}
     try:
         cursor = connection.execute(
             "SELECT schema_version, embedding_model, dimension, distance_function,"
@@ -328,11 +574,11 @@ def pg_engine_facts(connection, *, tool, vector_table: str) -> dict:
                             for row in rows]
     except Exception as exc:
         facts["errors"]["indexes"] = type(exc).__name__ + " " + str(exc)[:160]
-    try:
-        facts["hnsw_ef_search"] = str(tool._scalar(
-            connection.execute("SHOW hnsw.ef_search").fetchone()))
-    except Exception as exc:
-        facts["errors"]["hnsw_ef_search"] = type(exc).__name__ + " " + str(exc)[:160]
+    facts["width"] = read_hnsw_width(connection, tool=tool, requested_width=width,
+                                     width_source=width_source)
+    #: 字段名沿用归档产物里那一枚（docs/testing/r59b-recall-comparison 那份 JSON 里它记的
+    #: 就是这条连接进来时的档），但从此不许为空：真要空的话，上面已经炸了。
+    facts["hnsw_ef_search"] = facts["width"]["session_baseline"]["value"]
     return facts
 
 
@@ -648,15 +894,33 @@ def build_result(args) -> tuple:
         pass
 
     corpus_before = {}
+    read_width = None
+    width_ledger = None
     if pg_status["state"] == "read_live":
         pg_status["drift"] = pg_drift(tool=tool, connection=connection,
                                       collection=collection, vector_table=vector_table,
                                       scope=scope)
-        pg_status["engine"] = pg_engine_facts(connection, tool=tool,
-                                              vector_table=vector_table)
-        if args.pg_ef_search:
-            connection.execute("SET hnsw.ef_search = %s", (int(args.pg_ef_search),))
-            pg_status["engine"]["hnsw_ef_search_applied"] = str(int(args.pg_ef_search))
+        #: 先定档，再取证：取证格要把"这一腿要钉的那一档"一起记进产物，事后补记就成了
+        #: 转述。不填时这一档来自唯一真源，与生产读腿同一次调用、同一个算法。
+        explicit_width = getattr(args, "pg_ef_search", None)
+        width_source = (WIDTH_FROM_CLI if explicit_width is not None
+                        else WIDTH_FROM_TRUE_SOURCE)
+        read_width = resolve_ef_search(explicit_width)
+        try:
+            pg_status["engine"] = pg_engine_facts(
+                connection, tool=tool, vector_table=vector_table, width=read_width,
+                width_source=width_source)
+        except EngineWidthUnreadable as exc:
+            #: 口径这一格填不上，整轮读数作废。过去它只留一句错误串，正文照印，没人发现。
+            return ({"meta": {"pg_leg": pg_status, "engine_width_error": str(exc)},
+                     "error": str(exc)}, EXIT_PRECONDITION)
+        width_ledger = pg_status["engine"]["width"]["read_txn"]
+        #: 这一腿踩在哪一档，产物之外也要喊一次：只躺在 JSON 里那一格，跑的人看不见。
+        print("-- HNSW 候选宽度：%s --" % width_summary(pg_status["engine"]["width"]))
+        if width_source == WIDTH_FROM_CLI:
+            print("[🔴 显式越权] 这一腿被钉在人为指定的一档，不是生产真源那一档"
+                  "（真源此刻=" + str(pg_status["engine"]["width"]["true_source"])
+                  + "）：这份读数只能当扫参照，不能当生产口径下的召回结论")
         if pg_status["drift"].get("only_in_pg") or pg_status["drift"].get("only_in_chroma"):
             print("[警告] 镜像有差集，逐题读数量到的是\"没同步\"与\"两库不同\"的混合体")
 
@@ -718,7 +982,8 @@ def build_result(args) -> tuple:
         if pg_status["state"] == "read_live":
             pg = pg_live_topk(connection, vector_table=vector_table, operator=operator,
                               literal=literal, k=k, clause=filter_clause,
-                              clause_params=filter_params)
+                              clause_params=filter_params,
+                              width=read_width, ledger=width_ledger)
             if args.pg_exact:
                 pg_exact = pg_exact_topk(connection, vector_table=vector_table,
                                          operator=operator, literal=literal, k=k,
@@ -776,7 +1041,11 @@ def build_result(args) -> tuple:
     #: 那一格就成了假保险。
     pg_after = None
     if connection is not None:
+        #: 先结束读数那笔事务，再看这条连接上还剩什么：事务内的设定应当跟着一起消失，
+        #: 会话级设定不会。这一格量的就是"本件有没有把后面的读数弄脏"。
         connection.commit()
+        if width_ledger is not None:
+            check_session_residue(connection, cell=pg_status["engine"]["width"])
         pg_after = connection.execute("SELECT count(*) FROM " + vector_table).fetchone()
         connection.close()
     corpus_after = {"chroma_vectors": int(collection.count()),
@@ -901,6 +1170,10 @@ def render_markdown(result: dict) -> str:
                         pg["distance_function"], pg["column_type"]))
     if pg.get("drift"):
         lines.append("| 镜像差集 | %s |" % json.dumps(pg["drift"], ensure_ascii=False))
+    width_cell = (pg.get("engine") or {}).get("width") or {}
+    if width_cell:
+        #: 候选宽度单独立一行：它是这批读数的坐标系，只躺在 JSON 里就等于没有。
+        lines.append("| 🔴 HNSW 候选宽度 | %s |" % width_summary(width_cell))
     if pg.get("engine"):
         lines.append("| 真库口径原文 | %s |" % json.dumps(pg["engine"], ensure_ascii=False))
     if meta.get("corpus_stability"):
@@ -951,7 +1224,9 @@ def main(argv=None) -> int:
     args = parse_args(argv)
     try:
         result, code = build_result(args)
-    except SystemExit as exc:
+    except (SystemExit, EngineWidthUnreadable) as exc:
+        #: 候选宽度填不上（EngineWidthUnreadable）与前置不满足同罪：这份读数不能用，
+        #: 而不是"少一格信息"。它必须在这条路上被丢掉，不许带着空口径继续印表。
         print(str(exc))
         return EXIT_PRECONDITION
     if result is None:
