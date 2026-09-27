@@ -367,12 +367,24 @@ describe('R388 丙 · 判据③⑦：那句话画得上屏，逐行那枚「未�
 describe('R388 丁 · 判据②：那一格在契约里有名字，且历史一字未动', () => {
   const heading = '## A read that cannot be answered must not be read as an empty ledger (2026-09-27, R388)'
 
-  it('本单那一节写在文末，且全文恰一枚：历史节一个字都没被改过形状', () => {
+  // 改口（2026-09-28 · 总控动手，R397 并树 c0c4bcd 之后）：这一格原来钉的是「本单那一节必须写在文末」，
+  // 可契约是 append-only 的公共面——`## R397` 就是长在它之后的第一笔合法追加，那半句
+  // 前提天生撑不过下一笔追加。它真正要挡的从来不是「后面有东西」，而是「有人把新的一节插进历史中间」。
+  // 所以判据换成钉住它**前面**那一节是谁：插队在前必红，后来单往末尾追加不再撞这一格。
+  // 追加处那枚空行照旧要，全文枚数照旧要——一条牙没卸，只是把「我是最后一节」换成「我的前身是谁」。
+  const predecessor = '## R392 健康报不许替一张没在位的表背书（2026-09-27）'
+
+  it('本单那一节全文恰一枚，且紧跟在它那一枚前身之后：插进历史必红，往末尾追加不算插队', () => {
     expect(contractMd.split(heading).length - 1, '本单那一节的枚数不对').toBe(1)
     const at = contractMd.indexOf(heading)
     expect(at, '本单那一节根本不在契约里').toBeGreaterThan(0)
-    // 「在文末」量的是形状不是字节数：本单那一节之后不许再有任何一枚 ## 标题
-    expect(contractMd.indexOf('\n## ', at + heading.length), '本单那一节后面还压着别节：它是插进历史里的').toBe(-1)
+    // 🔴 先在「我前面那段」里找，别拿 fromIndex 去排除自己：`lastIndexOf('\n## ', at - 1)`
+    // 会把本单自己那一节找回来（那一枚 `\n` 正好在 at-1），我第一版就是这么红的。
+    const before = contractMd.slice(0, at)
+    const prev = before.lastIndexOf('\n## ')
+    expect(prev, 'R388 那一节前面没有历史节了：它跑到文件开头去了').toBeGreaterThan(-1)
+    expect(before.slice(prev + 1, before.indexOf('\n', prev + 1)),
+      '有人把新的一节插进了 R388 与它的前身之间：那是改写历史，不是追加').toBe(predecessor)
     expect(contractMd.slice(0, at).endsWith('\n\n'), '追加处缺那枚空行：历史最后一行被顶掉了').toBe(true)
   })
 
