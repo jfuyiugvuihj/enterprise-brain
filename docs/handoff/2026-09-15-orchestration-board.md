@@ -1533,6 +1533,11 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | （主树基线更新·第十一格续·第八集） | — | 本班收官读数 | 主树 | 主树 HEAD **`73dd85f`**（`0d723b4` 修 r361 假红 → `73dd85f` 并树 R410），两笔均已 push gitee、`git cat-file -t` 现取 = commit。🔴 **全量门复跑读数 `7492 passed / 50 skipped / 2 xfailed / 0 failed`（217.96 s，`-n 7 --dist loadfile`）**＝本班主树**零已知红**。两笔新账：**① 上一班那句「R418 收掉最后一枚已知红」是引用了没复跑的读数**——00:44 那扇门实测 2 failed，其中 `tests/test_r361_*:230-231` 串行仍红，病根是它把 `_approval_worker_node` 起始行**抄死成 808**，而 `0ab5f1f`(R395) 已给它 +11 行推到 819（逐笔实测：`HEAD~8` 及更早 808、`HEAD~7=0ab5f1f` 起 819）⇒ 假红在 `0ab5f1f` 当天就已种下、被漏跑掩到本班；修法不走「808 换 819」，改成盘上现读锚点 + 加一条「插行只准移动起点、不许改变函数自身跨度长度」的更强不变具。**② `tests/test_r379_stale_bytecode_cannot_lie.py` 只在并发下发红**：串行复跑绿、本班 01:0x 那扇 `-n 7` 复跑也绿 ⇒ **间歇假红、未归因**（`run_gate.py` 未设 `PYTHONDONTWRITEBYTECODE`，全仓 `pycache_prefix`/`dont_write_bytecode` 零命中），🔴 不记为已修、下次门红先分诊。R397 并树前置取证已复核：四枚交付件 sha16 逐枚相等、`chat.py` 等三枚相对基点零漂移、`contract-v1.md` 公共前缀 **373615** 与尾巴 **8997 B 纯 CRLF** 在今天的树上复算成立（合并后 405847 B、`## ` 51⇒52、主树内容是合并结果的前缀＝纯追加不覆盖）。槽位账：上限 6，现占 4（`Lovelace`R396/`Anscombe`R408/`Dirac`R416/`Carver`R412）＋ `Mendel`R419 ＝ 5，🔴 仍留 1 空槽给 **R414**（其基点必须是并完 R397 的主树 HEAD）。 | 01:5x |
 | `Ampere` 结案 | `01a0e31c-3fa8-…`（原文见 §0 上一集该行） | **R397** 结案 | `be-r397` | ✅ **02:2x 并树 `c0c4bcd`**（已推 gitee）。四枚在册件 sha16 逐枚相等；契约走尾巴直连（现算 373615 / 8997 B 纯 CRLF / 405847 B / `^## R397` 唯一 / 主树是合并结果的前缀＝纯追加不覆盖）。总控亲跑 6 枚件 **234 passed / 0 failed** | 02:2x |
 | `Heisenberg` | `01a0e3ee-b340-7930-a78d-8853749dad78` | **R414** `chat.py` 三格合一：(a) 空部门上传拒收 422 `department_scope_required`（R387 修法 A2，前置 R384 已并）／(b) 终态不回 `data_filename`／(c) docstring 里那枚字面 `’` | `be-r414`（基线 **`c0c4bcd`**，detached、交树 0 脏） | 🟡 **本班 02:2x 新派·在途**。写域 `chat.py` + `contract-v1.md`(纯追加) + `tests/test_r414_*`；🔴 禁 `catalog.py`/`auth.py`（被 R396 派生账 `_CONTRACT` 记着）。(a) 带三格**停手条件**：种子路径 / 105 题跑分窗 / 同名 upsert——只要有一条会被拒收打死就不许改默认行为，交回取证给我裁；🔴 明令不接受「加开关默认关」那种折中。所有行号一律现读（派工册里的 `:4083` 与案卷里的 `:4078`/`:1365`/`:373` 都已过期） | 02:2x |
+| `Carver` 结案 | `01a0e3c0-3a65-72a1-a7d9-855c1f261513` | **R412** 结案 | `be-r412` | ✅ 并树 `4344e6d`（01:48，已推 gitee）：喂料屏页内主标题换成 `meta.title` 的值，一屏一名收口。总控主树亲跑 `npm run test` **117 files / 2429 tests 全绿**、`lint:colors` 148 problems / 0 errors。它那四把反证刀未逐把复现 ⇒ 结论只到「账实相符 + 门绿 + 写域合规」。余下三枚「知识库」`:361`/`:501`/`:1151` 加病根（屏名钉只认一种画法）⇒ 另立 **R421** 派 `Hume`。02:0x 已 close 腾槽 | 02:04 |
+| `Anscombe`（第二人）结案 | `01a0e3b7-5b0b-7f51-94fd-0b4b0ed85fe6` | **R408** 结案 | `be-r408`（基点 `5621e8d`） | ✅ 两笔并树：`2a54db3`（七枚文件按字节相等：`.env.example` +22／`deploy/.env.server.example` +23／`AGENTS.md` 1-1／计划书 §13 16-3／两张波次纸 +46-15、+40-11／新钉 15 枚用例）加 `abbb317`（请裁 #4 那半句「并重建镜像」总控改口：`env_file:` 在容器创建那刻解析，正解 `--force-recreate`，同口径早有 `test_r255_env_documents_the_conversion.py:80` 钉着）。🔴 请裁 #1 那处冲突我独立复现（影子树 `%TEMP%\r408_k0_0249` 拿未改口的本钉跑 AFTER 配置面 = 1 failed / 15 passed）后采纳最小改案：`test_r382_untouched_defaults_pins.py` 的键名零命中收窄为「不许有生效位赋值」，牙检五向（未动 16 passed／注释成 chroma 16 passed／`pgvector` 红／空值红／YAML 冒号形红）。请裁 #2、#3 接受，#5 昵称复用押后，#6 两处计划书滞后 ⇒ 并入 **R420**。02:0x 已 close 腾槽 | 02:04 |
+| `Singer` | `01a0e408-d6ce-7b22-9308-93634cd38df6` | **R420** 假坐标第二刀：`lib/dashboard.js` 注释里 5 枚 debt 坐标（`contract-v1.md:2509`/`:2616`/`:2600`、`dashboard.py:90`、`alerts.py:925`）改口，摘 `r416-comments-cite-live-coordinates.test.js` 的 debt 账（header 自述枚数同步、`:398` 棘轮由 `>0` 改 `=0`），同族余下 `r267-overview-no-self-fed-rows:53`、`r267-overview-no-tech-note:4`、`r316-admin-entry:13`、`r316-users-contract:6`/`:203` 逐枚现读，加计划书 §12.三「R386 在途」与 §4 表「等 R35 结案」两处滞后 | `be-r420`（基点 **`abbb317`**，总控预配 detached 加 `frontend/node_modules` Junction，探活 `vitest/package.json` = True，开工 porcelain 0，**独占**） | 🔵 02:0x 一次投递（`spawn_agent`，零 model 覆盖，本 block 只此一枚）。禁域点名：`theme.css`／`contract-v1.md`／`router/index.js`／`DocPanel.vue`／`r136`／`r237`／`r313`（Hume 名下）／`app/**`／两份台账。判据：门全绿用例数不减、lint 不超基点、`numstat` 出现可执行行变更即没收工、牙检逐把报数、带 commit 锚的历史坐标不算欠账不许改 | 02:04 |
+| `Hume` | `01a0e409-8906-7110-834c-636fdb848f46` | **R421** 喂料屏余下三枚「知识库」退屏名（`:361` 死文案／`:501`／`:1151`，牵动 `r237-r49-index-face` 2 红与 `r313-restricted-tally` 3 红 ⇒ 按同口径改口在册件，不许删断言求绿）加**病根**：`r136-screen-names` 的 `WITH_PAGE_TITLE` 只认 `header.panel-head h3` 一种画法，而全仓主标题实测三式（DocPanel 用 `div.panel-hd > strong`、ChatPanel 用 `[data-testid=chat-screen-name]`） | `be-r421`（基点 **`abbb317`**，总控预配 加 Junction 探活，开工 porcelain 0，**独占**） | 🔵 02:0x 第二枚 block 单投（零 model 覆盖）。🔴 与 `Singer` 写集互斥已核：它禁 `lib/**` 与 `r267`/`r316`/`r416` 三族，`Singer` 禁 `DocPanel.vue`/`r136`/`router/index.js`。主货是这张屏不再可能悄悄长出第二个屏名；四把牙含 R412 那把 `meta.title` 联动，做退步即失败。`DataPanel` 无主标题格与 badge `docs.length` 口径＝越界发现只报不改 | 02:04 |
+| （主树基线更新·第十二格续·第十集） | — | 本班收官读数 | 主树 | 主树 HEAD **`abbb317`**（`2a54db3` 并树 R408 → `abbb317` AGENTS.md 改口），两笔均 `git cat-file -t` = commit、均已 push gitee（`4344e6d..abbb317`）。脏项 = 永久四枚（`M chroma_db/chroma.sqlite3`、`?? %SystemDrive%/`、`?? .zcodeignore`、`?? 课程实践-对象建模-企业智脑/`）。🔴 **门账**：后端全量门本班未跑，上一枚读数 `7492 / 50 skipped / 2 xfailed / 0 failed（217.96 s）` 属 `0d723b4`，此后已并 R410/R396/R397/R419/R416/R412/R408 七笔（含 `chat.py` +51/−12）⇒ 排在在途落定之后补跑，不许引用旧数当本班读数。前端门在 `4344e6d` = 117/2429 全绿、lint 148/0。点名件本班主树现跑：`r231`×2 + `r276` + `r382` + `r393`×3 + `r592`×3 = **146 passed**；`test_r408_*` = **15 passed**；`r408 + r276 + r255` = **44 passed**；`check_vector_wording.py` rc=0（22 枚文档）、`check_no_bom.py` rc=0（1095 枚）。槽位：上限 6，现占 **3**（`Heisenberg`R414／`Singer`R420／`Hume`R421）。容器实测全栈 Up 27 h、后端镜像 `256cb9a65fc3` 落后主树一大截 ⇒ 重建排门绿之后（正解 `docker compose build migrate`；`build backend` 报 No services to build）。🔴 **本班自纠一枚**：接手摘要里的时间戳与 `git log --date=format` 实测不符（摘要称 `4344e6d` 为 18:49/02:40，实测 01:48），此后凡时间一律现取 | 02:04 |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -5350,3 +5355,69 @@ R345 给后端加了第四枚 `scan_summary["reason"]`（`alerts.py:45` 常量 /
 
 - **#70 上一班写的「门已 0 红」不可引用，只能引用「我这一班跑出来的那串数」**。今天那枚假红恰好证明了这句话的含金量：种下于 `0ab5f1f`，跨了整整一班没人发现，因为大家都以为账是清的。凡是"待复跑确认"的句子，接班第一格就去把数取回来，别当成已发生。
 - **#71 `Select-String` 默认大小写不敏感**：我用 `TEMP` 搜本机路径夹带，五处命中全是 `template` 里的 "TEMP"。报"发现夹带/不存在"之前先加 `-CaseSensitive` 复算，否则会把虚惊写进验收结论（这跟"报某物不存在前先确认自己在哪一层查"是同一条纪律的两个面）。
+
+## 4DH 第十二格续（09-28 02:0x·总控线·主树 `4344e6d` → `abbb317`）：裁 R408 那处正面冲突 + 改一句骗业主的账面话 + 连派两枚前端
+
+### 一、接手前提（本格是新线程接管，不是续跑）
+
+- 本格从一条已死线程的交接摘要接手。🔴 **教训 #73：摘要里的时间戳不可信**——它称 `4344e6d` 产生于"18:49"、本班交接发生于"02:40"，而 `git log --date=format` 实测 `4344e6d` = **09-28 01:48**、`abbb317` = 01:59，交接发生时表钟 02:04。摘要里**凡时间一律重取**（`Get-Date` / `git log`），别拿它排窗口、别拿它算"某物多久没动"。摘要里的**事实陈述**（HEAD、脏项、写集、numstat）本格逐条实测后全部成立，只有时间戳这一族是假的。
+- 主树 HEAD 起步 `4344e6d`、脏项 = 永久四枚，与摘要一致（本班 01:5x 现取）。
+
+### 二、R408 那处冲突：裁定、取证、牙
+
+病是这一句：`tests/test_r382_untouched_defaults_pins.py:64` 拿"配置面**提过键名**就红"当判据，于是 `.env.example` 与 `deploy/.env.server.example` 里连 `# INDEX_BACKEND=chroma`（**注释掉的、值就是出厂默认**）都不许写。后果不是难看，是**这一枚闸在客户唯一看得见的两处配置面上永远没有解释**——业主想知道"我能不能改成 pgvector、改了会怎样"，纸上一个字都不能说，说了就红。
+
+执行层给的方案（把模板落点改到别处）本席**否掉**：那只会再制造一次"无可抄落点"。采纳它的最小改案并落地：
+
+- 判据形状从「键名零命中」收窄为「**不许有生效位赋值把读后端翻走**」：注释行不算，任何真赋值（`KEY=` / `export KEY=` / YAML `- KEY:`）的值必须逐字等于 `chroma`，写 `pgvector`、写空、写错别字一律当场红。
+- 🔴 **没有用任何同形字、零宽字符或改名去绕开旧检查**——那会是一次假绿。改的是判据，不是把判据糊过去。
+- 同口径另有一枚**行为化**钉从真函数嘴里咬住（`read_backend()` 缺省仍是 chroma、`pgvector_reads_enabled()` 为假），两把不互相替代；对 `INDEX_BACKEND_DEFAULT` 的两枚断言一字未动，"出厂默认没被翻"这句话仍由它把关。
+
+取证与牙（全部本席亲自跑，不采信自述）：
+
+| 格 | 手法 | 读数 |
+|---|---|---|
+| 冲突真实 | 影子根 `%TEMP%\r408_k0_0249\repo`（只放配置面 + `app/rag/indexing.py` + `scripts/r382_*.py` + `docs/perf/r382-*.md` + 本钉）拿**未改口**的钉跑 AFTER 配置面 | **1 failed / 15 passed**，红的正是那一格 |
+| 改口后放行 | 同一影子根换新钉，配置面原样 | **16 passed** |
+| 牙① 注释放行 | `# INDEX_BACKEND=chroma` 取消注释 | **16 passed** |
+| 牙② 真翻必红 | 取消注释成 `pgvector` | **1 failed** |
+| 牙③ 空值必红 | `INDEX_BACKEND=` | **1 failed** |
+| 牙④ YAML 形必红 | `INDEX_BACKEND: pgvector` | **1 failed** |
+| 复原 | 影子配置面写回原字节 | sha256 前 12 位相等，byte-equal True |
+
+主树复跑：`test_r408_*` **15 passed**；点名件 `r231`×2 + `r276` + `r382` + `r393`×3 + `r592`×3 = **146 passed**；`check_vector_wording.py` rc=0；`check_no_bom.py` rc=0（1095 枚）。并树后 numstat 逐枚等于执行层自报（22-0／23-0／1-1／16-3／46-15／40-11／新钉 467 行）。
+
+它另两格请裁本席裁定入册：**#2**（新钉读 `git log --all` 会接受兄弟支的并树）**先接受**——收紧成"必须是 HEAD 祖先"会让这一格在总控并树之前一直红，R410 今天正是此例，它已按实标注 `is-ancestor` rc=1；**#3**（两张波次纸会随时间自己变红）**接受**，代价明写进看板口径：**红点不再只等于"代码坏了"，也可能等于"账面滞后"**，分诊时先分清是哪一类再谈回归；**#5**（昵称复用）押后，名册唯一键只认 `agent_id` 已够用；**#6** 两处计划书滞后 ⇒ 并入 R420。
+
+### 三、那句骗业主的话：`AGENTS.md` 叫业主"重建镜像"
+
+`AGENTS.md` 里"翻 `INDEX_BACKEND` 属业主动作"后面挂着半句**并重建镜像**。现读三处证它反话：`docker-compose.yml:15-17` 的 `x-runtime` 把 `deploy/.env.server` 挂成 `env_file:`，backend/worker/scheduler 各自引用；`Dockerfile` 里 `COPY`/`ADD` 任何 `.env` **零命中**；带 `build:` 的只有 `migrate`（`:110`）与 `frontend`（`:254`）两格 ⇒ `docker compose build backend` 当场报 No services to build。同口径其实早在册：`tests/test_r255_env_documents_the_conversion.py:80` 钉的就是 `--force-recreate`，runbook P-8 也在 09-21 自判过宽改窄（跟进单 §70）——**只有 AGENTS.md 这一处还在说旧话，而它正好写在业主待办那一格里**：照它做白等一次 build，照 `docker restart` 做则改了等于没改。这笔账的执行层也报过（请裁 #4），是本席动手改口，`abbb317`。
+
+🔴 **教训 #74（本席自己这一笔里差点写进去的错）**：我第一版改口句子里写"全仓**只有** `migrate` 一格带 `build:`"，`rg -n "build:"` 现取 = `:110` 与 `:254` 两枚 ⇒ 那句全称量词是错的，`frontend` 也带。提交前自查抓回（8398 → 8540 字节重改一遍）。**句子里每一个"只有/全部/从不"都必须先跑一遍对应命令再落笔**，这条对总控派工词同样成立。
+
+### 四、补记上一班漏进看板的一条（#72）
+
+`docs/api/contract-v1.md` 是**跨栈共享面**：前端 `frontend/src/__tests__/r388-state-ledger-render.test.js:375` 直接读它并断言"R388 那一节必须写在文末"。上一班在 `c0c4bcd`（并树 R397）往契约**末尾追加** `## R397`，把那一格顶红（`expected 379896 to be -1`），当时只跑了后端 6 枚件没跑前端门。修法在 `4d98d99`：保留"全文恰一枚／`at>0`／追加处空行"，把"我是最后一节"换成钉住**自己的前身**那一节标题——插队在前必红，往末尾追加不算插队。**这条上一班只写进了提交正文、没写进看板，本格补号 #72。** 🔴 由此得一条并树规矩：**动到 `contract-v1.md` 的并树，后端门与前端门必须都跑**。
+
+### 五、本格两枚新派（写集互斥已核）
+
+| 单 | Agent / id | 树 @ 基点 | 写域 | 为什么它现在能派 |
+|---|---|---|---|---|
+| **R420** | `Singer` `01a0e408-d6ce-7b22-9308-93634cd38df6` | `be-r420` @ `abbb317`（Junction 探活 True、porcelain 0） | `lib/dashboard.js`（只注释）＋ `r416-*` 在册件（LEDGER/header 自述/棘轮）＋ `r267`×2 ＋ `r316`×2 ＋ 新钉 ＋ 计划书 §12/§4 表 | R416 登记的 5 枚 debt 坐标不归它写域，收口单就是这一张；R416 已并树 ⇒ 次序约束解除 |
+| **R421** | `Hume` `01a0e409-8906-7110-834c-636fdb848f46` | `be-r421` @ `abbb317`（同上） | `DocPanel.vue` ＋ `r237-r49-index-face` ＋ `r313-restricted-tally` ＋ `r136-screen-names` ＋ 新钉 | R412 只收了主标题那一枚，余下三枚与病根它按"只交新钉"停过手 ⇒ 现在补授权 |
+
+- 🔴 两枚互斥已逐文件核过：`Singer` 禁 `DocPanel.vue`/`r136`/`router/index.js`，`Hume` 禁 `lib/**` 与 `r267`/`r316`/`r416` 三族。两枚都禁 `theme.css` 与 `contract-v1.md`。
+- 派工词里本席给的行号**一律标了"只当线索"**，要求它们按锚串现读、与派工词不符就照自己的并如实报（#68 的正面姿势）。
+- 槽位账：上限 6，现占 3（`Heisenberg`R414 / `Singer`R420 / `Hume`R421）；`Anscombe`、`Carver` 本席已 close 腾槽。一个 block 一枚投递，本班两枚 spawn 零补投、零 model 覆盖。
+
+### 六、R414 在途（🔴 停手条件未交回，不许并树）
+
+02:0x 现取 `be-r414`：`M app/api/v1/chat.py` **numstat 55/1** ＋ 三枚新钉 `tests/test_r414_a_department_free_upload.py` / `_b_terminal_data_filename.py` / `_c_upload_prose.py` ＋ 五枚 tmp 脚本。🔴 它已经把 (a) 那格**改成了默认行为**（拒收），而派工词写的是三格**停手条件**：先取证"种子路径 `scripts/seed_workspace.py`／105 题跑分窗／同名 upsert 会不会被空部门拒收打死"，有一条会被打死就不许改默认。**交回时必须先看到那份取证**，否则本席按违约退回。它 tmp 审计件最后写入时刻 01:41:55，看起来做了动作——本席会自己复算那三格，不采信它一句"已核"。
+
+### 七、下一格顺序（照抄可执行）
+
+1. 收 `Singer`/`Hume` 交回 → 逐条对判据 → 影子树复现它的牙 → 主树亲跑前端门（`npm run test` + `lint:colors` 对基点枚数）→ 达标代提交、不达标退回。
+2. 收 `Heisenberg` R414 → 🔴 先看三格取证 → 若 (a) 会打死种子/跑分/同名 upsert 任一腿，整格退回只留 (b)(c)。它动 `chat.py` 与 `contract-v1.md` ⇒ **后端门与前端门都得跑**。
+3. 🔴 补跑全量后端门 `python scripts/run_gate.py`（本机 `-n 7 --dist loadfile`，约 218 s）：自 `0d723b4` 那次 7492/50/2 之后已并七笔，含 `chat.py` +51/−12。门红先分诊（串行 → 干净树 → 归因），🔴 三枚在途可能自跑测试，跑门前先看内存与负载（09-24 那次 `-n 16` + 5 枚 Agent 把机器打死重启）。
+4. 门绿 → `docker compose build migrate`（`build backend` 会报错）→ `python scripts/check_image_provenance.py` rc=0 → `docker compose up -d --no-build` → `powercfg /change standby-timeout-ac 0` → 开**一扇多判据真机窗**（A①②③④ + C 两格 + D 三格一次拿完），🔴 **派子 Agent 看窗，总控不干等**。
+5. 记账：跟进单 §117；清理 `%TEMP%\r397\`、`r398*`、`r401_*`、`r408_k0_010822`、`r409\`、`r410*`、`r412*`、`r416*`、`r419\`、`be-r401\_r401tmp\`、`be-r411\tmp\`、`git worktree remove gate-bisect-a`；用毕删 `be-r408`/`be-r410`/`be-r412`/`be-r416`/`be-r419`/`be-r396`/`be-r397`。
