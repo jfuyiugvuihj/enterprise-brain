@@ -3855,6 +3855,18 @@ def _unpublished_index_outcome(filename: str, version: int, reason: str) -> dict
 PDF_DEGRADATION_PAGE_LIST_CAP = 10
 
 
+#: 回执层里，降级说明最多逐条列出几枚 **不同的** 降级原因（R353 判据①）。
+#:
+#: 为什么还要第二枚上限：R347 治的是「同一句复述 300 遍」，它把同因的页折成一句；而 400 枚
+#: **各不相同**的 reason 每堆只有一枚页，走的正是下面那条恒等路径 —— 尺子句原样搬，复述没了，
+#: 长度仍然跟着原因类数线性涨，等于把旧问题从「同一句复述」换成「300 句各说一遍」。这一格是给人
+#: 扫读的散文，不是能点开的列表：页级明细在 ``app/rag/loader.py`` 的逐页真源账里（R298 / R301
+#: 钉着），多列几类原因不增加任何可点开的信息，所以按 R347 同一口径收口 —— 逐条列前
+#: ``PDF_DEGRADATION_REASON_GROUP_CAP`` 类，其余只报枚数，并如实说「另有 N 类原因未逐条列出」。
+#: 收口之后整句长度与类数无关，只剩「另有 N 类」里 N 的位数随 N 取对数涨。
+PDF_DEGRADATION_REASON_GROUP_CAP = 10
+
+
 def _degradation_reason_groups(report: PdfExtractionReport) -> list[tuple[str, list[int]]]:
     """把降级页按 **reason 原文逐字相同** 归堆（R347 判据①④）。
 
@@ -3883,28 +3895,45 @@ def _degradation_segment(reason: str, page_numbers: list[int]) -> str:
     return f"第{label}页{tail}：{reason}"
 
 
-def _receipt_degradation_note(report: PdfExtractionReport) -> str:
-    """上传回执的降级说明：同一枚 reason 只说一遍，页码枚举有上限（R347）。
+def _degradation_groups_tail(omitted_groups: int) -> str:
+    """原因类数超限时补那一句话（R353 判据②）。
 
-    三条边界：
+    ``omitted_groups`` 是**没逐条列出的**类数（``len(groups) - len(shown_groups)``），不是画下来的
+    类数；一枚都没省略就是空串，不许造「另有 0 类」。省略号不许冒充说完了：这里只有真剩余数，
+    没有修辞，也不许把「这一档有退化」这件事跟着一起省略掉。
+    """
+    return f"；另有 {omitted_groups} 类原因未逐条列出" if omitted_groups else ""
+
+
+def _receipt_degradation_note(report: PdfExtractionReport) -> str:
+    """上传回执的降级说明：同一枚 reason 只说一遍，页码与原因类数各有上限（R347 / R353）。
+
+    五条边界：
 
     ① 合并发生在这一层，不在 loader：``degradation_notes`` / ``degradation_sentence``
        是逐页真源账（R298 / R301 钉着），这里只读不改，也不许它替本格说话。
     ② 没有同因复述 ⇒ 尺子那句原样搬（``report.degradation_sentence``），本格一个字不加工，
-       R301 那条「尺改口，回执跟着改口」的等式继续成立。
+       R301 那条「尺改口，回执跟着改口」的等式继续成立 —— 但只在类数没超上限时成立：恒等那一支
+       本身就是「把所有原因各说一遍」，400 枚不同的原因走它就是 400 句，所以 R353 把它一起封顶
+       （见⑤），超限那一档改由本格用同一套句子模板重画，不另造措辞。
     ③ 合的是页，不是档：``ocr_available`` 为假走 ``ocr.ENGINE_UNAVAILABLE_NOTE``，为真走
        ``loader.DEGRADATION_NOTE_PREFIX``，两档句头各自留着（R298 那一族）。
     ④ reason 原文只抄不改：句子里那一段就是 ``page.note``，不翻译、不润色、不剥标点。
+    ⑤ 原因类数也有上限（R353）：超过 ``PDF_DEGRADATION_REASON_GROUP_CAP`` 类只逐条列前若干类，
+       其余以「另有 N 类原因未逐条列出」收口，N 是真剩余数。封顶截的是**这一句话**：逐页真源账与
+       ``ocr_degraded_page_numbers`` 一枚不少，「哪几页坏了」照样问得出来，不许有人顺手把「这一档
+       有退化」整个省略掉。
     """
     groups = _degradation_reason_groups(report)
     if not groups:
         return ""
-    if all(len(numbers) == 1 for _reason, numbers in groups):
+    shown_groups = groups[:PDF_DEGRADATION_REASON_GROUP_CAP]
+    omitted_groups = len(groups) - len(shown_groups)
+    if not omitted_groups and all(len(numbers) == 1 for _reason, numbers in groups):
         return report.degradation_sentence
     head = DEGRADATION_NOTE_PREFIX if report.ocr_available else ocr_channel.ENGINE_UNAVAILABLE_NOTE
-    return f"{head}：" + "；".join(
-        _degradation_segment(reason, numbers) for reason, numbers in groups
-    )
+    body = "；".join(_degradation_segment(reason, numbers) for reason, numbers in shown_groups)
+    return f"{head}：{body}{_degradation_groups_tail(omitted_groups)}"
 
 
 def _pdf_extraction_cell(extraction: DocumentExtraction | None) -> dict | None:

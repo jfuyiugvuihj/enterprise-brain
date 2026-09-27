@@ -3705,3 +3705,120 @@ prove the words moved.
   R342 conservation measurements do not move because the `alerts` column did not move, and its `alerts_open`
   equation still holds for its own seed -- every dated row in that seed lives in the newest bucket, whose
   horizon *is* the request instant.
+
+## The receipt caps reason classes too, and the delete audit reads its owner through the one helper (2026-09-27, R353 / R354)
+
+Two half-finished clauses from the previous shift, closed in one go. Neither adds a key, a code, a lookup,
+a row, or a column.
+
+### R353 · `pdf_extraction.degradation_note` has a second cap, and the over-cap face says so
+
+R347 merged the pages: `chat.PDF_DEGRADATION_PAGE_LIST_CAP = 10` page numbers per reason group, 300 pages
+of one reason down from 6,802 characters to 62. It left one face open. When every degraded page carries a
+*different* reason, each group holds one page, the merge compresses nothing, and the note took the identity
+path: `report.degradation_sentence` shipped verbatim. That is no longer repetition, but it is still a
+length that grows one sentence per reason class -- 400 distinct reasons, 400 sentences. The old problem
+had only moved from "the same sentence 300 times" to "300 sentences, once each".
+
+| today's shape | |
+| --- | --- |
+| class cap | `chat.PDF_DEGRADATION_REASON_GROUP_CAP = 10` reason groups listed one by one, declared next to the page cap and written the same way |
+| over the cap | the first `M` groups are rendered by the same `_degradation_segment` template R347 introduced, then the note closes with `；另有 N 类原因未逐条列出` |
+| `N` | the true remainder (`len(groups) - len(shown_groups)`), never the number that was drawn, and never zero: at or under the cap the tail is the empty string, not `另有 0 类` |
+| no fake finish | no ellipsis, no `等等`, no `以此类推`. An omission has to be counted, because "we stopped listing" and "there is nothing more" read the same to a client that trusts this field |
+| identity path | `report.degradation_sentence` is still shipped verbatim, and is now only reachable when nothing was omitted *and* every group holds one page -- the case R347 measured as "the merge has nothing to compress" |
+| still two tiers | the head still comes from `ocr_available`: `loader.DEGRADATION_NOTE_PREFIX` or `ocr.ENGINE_UNAVAILABLE_NOTE`. Capping classes does not squeeze the tiers into one sentence |
+
+The bound is computed, not observed. `_note_char_bound` in
+`tests/test_r353_degradation_note_caps_reason_classes.py` adds the pieces up: the fixed head, one `：`, at
+most `M` segments, `M-1` `；` separators, and the closing sentence. Each segment is itself a maximum built
+from the code's own literals -- `第`, up to `cap` page numbers each as wide as the widest page number in
+the account, `、` separators, `页`, the `，另有 n 页未列出` tail at its widest digit count, `：`, and the
+widest reason string. Every term is a maximum over the account being rendered, so the inequality holds for
+any input rather than for today's corpus. Two of its teeth are the unglamorous ones: widening either cap
+has to widen the bound, and growing only the *omitted* class count has to move it by the digits of `N` and
+nothing else. A `len(note) < 5000` reading would have recorded one measurement and rotted the first time
+the sentence template changed, so there is none in the file.
+
+What the bound does **not** claim, said here so nobody reads it as a constant: it is a bound per class, so
+one pathologically long reason still contributes its own length. The cap bounds *how many reasons get
+recited*, not how long a reason the loader may write -- which is exactly the shape R347's page cap already
+had.
+
+`app/rag/loader.py` is untouched, line for line. The per-page account is still the only source of truth:
+`degradation_notes` keeps one entry per degraded page and `ocr_degraded_page_numbers` is still the complete
+list of broken pages, so "which pages failed" stays askable after the cap. That is the clause R347 wrote
+(逐页那本账仍是唯一事实源，不许有人顺手把「哪几页坏了」永久问不出来), and a length cap that let the whole
+note go silent would have quietly repealed it. Knife 3 of this ticket sets the class cap to 1 and re-reads
+the page-level book for exactly that reason: the receipt gets shorter, the page account does not lose an
+entry.
+
+Physical lines: `app/api/v1/chat.py` 4761 -> 4790 (+36 / -7). `app/rag/loader.py` untouched.
+This section is appended and deletes nothing.
+
+### R354 · `DELETE /api/v1/data-files/{filename}` reads its owner through the same helper
+
+R337 wired `_dataset_row_owner_id` into the two exits it named (the upload receipt, `/preview`) and forbade
+a direct `.owner_id` at those two sites. A third reader of the same fact sat outside that net because it
+answers into the audit journal rather than into a response: `delete_data_file` built its `before_summary`
+from a direct `record.owner_id`, so a legacy row whose registry cell holds the raw `""` answered `null` in
+the receipt and `""` in the journal. Two books, one fact -- and the empty-string one is the book that gets
+queried during an incident review.
+
+The delete leg now assigns through the same reader, in the same shape as the other two exits:
+
+```
+owner_id = _dataset_row_owner_id(record)
+before = {
+    "filename": record.filename,
+    "owner_id": owner_id,
+    ...
+```
+
+| what moved | what did not |
+| --- | --- |
+| `before_summary.owner_id` for an unowned row: `""` -> `null` | the audit event schema: the same five keys in the same order (`filename`, `owner_id`, `department_ids`, `classification`, `size_bytes`) |
+| one more reader of the one helper | no new stable code, no new HTTP status, no change to the delete response body |
+| the ruler got stricter | no second owner-reading implementation, and no fresh registry lookup opened to feed the audit cell |
+
+**In the journal, an unowned row is now `null`, not the empty string.** `audit._summarize` keeps the key
+and projects the value as JSON `null`, so "nobody is on record" is one answer on both books. The key is
+not dropped: an absent cell reads as "this row was never looked at", which is a different claim from "no
+owner'. Nothing in this repository reads that cell as an empty string; the only consumer of
+`before_summary` in a test asserts a *non-empty* owner (`tests/test_resource_delete_cascade.py`) and is
+unaffected. Reported, not fixed: a deployment whose own tooling pinned `before_summary.owner_id == ""` for
+legacy rows needs a data question answered first, and this section does not pretend to have answered it.
+
+One asymmetry is left standing on purpose, and this section must not be read as claiming full coverage.
+The *third* book is `resource_scope`: `app/common/audit.py::_project_scope` drops keys whose value is
+blank, so for an unowned row `resource_scope` has no `owner_id` cell at all. `before_summary` and
+`resource_scope` therefore still answer "who owns this" differently -- `null` versus "absent". Unifying
+them is another ticket with its own ruler;
+`tests/test_r354_delete_audit_shares_the_owner_reader.py` pins today's reading so the next shift cannot
+write "the journal now says null everywhere".
+
+### The ruler upgrade, and how strictness was measured instead of asserted
+
+`tests/test_r337_owner_receipt_on_both_exits.py` grew a second layer; nothing was removed from the first:
+
+- `EXIT_SHAPE` gains a third entry, `delete_data_file` (source object `record`, the five audit keys in
+  order). The `upload_excel` and `preview_data_file` rows are unchanged, word for word.
+- `module_owner_read_violations` is new and scans the whole module: any `.owner_id` attribute read, or any
+  `["owner_id"]` subscript read or write, outside `_dataset_row_owner_id` is a violation, and any
+  owner-keyed dict literal must fill that cell from a direct call of the helper or from a name holding its
+  return value. The first layer asked "did the two named exits use the helper"; the second asks "is there
+  any path anywhere that reads an owner without it". That is the promotion this ticket was given, and it
+  is a superset of the old question, not a replacement.
+- Strictness is read off disk, not argued: the base text of `app/api/v1/data.py` (`git show a7ac040:...`)
+  must produce violations naming `delete_data_file` and `record.owner_id` while the delivered text
+  produces none; and the old two-exit roster, replayed against that same base text, reports zero. That
+  gap is exactly what this ticket closed, so the fix cannot be re-described as "a pin was already there".
+- The six R337 knives were re-run one by one after the upgrade and read the same as before it (6 / 6 / 2 /
+  8 / 1, plus the reconciliation case, which still compares 13 bodies byte for byte and still reads
+  `get_active_by_filename 25 == 25` and `authorization_decision 21 == 21`), and the four R310
+  counter-evidence anchors still hit `data.py` exactly once each. "Only tightened, never loosened" is
+  those readings; no assertion in that file was deleted.
+
+Physical lines: `app/api/v1/data.py` 599 -> 600 (+2 / -1). The audit event schema, the stable-code
+register, and the delete response body are unchanged.
+

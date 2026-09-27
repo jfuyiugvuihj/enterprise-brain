@@ -63,14 +63,25 @@ VIEWERS = ("alice", "bob", "carol", "root")
 FRESH = "r337-fresh.csv"
 FRESH_BODY = "department,note\n%s,fresh-row\n" % DEPT_FINANCE
 
-#: 两枚出口「应当长什么样」：手上那枚对象的名，与登记字段清单（顺序就是响应里的顺序）。
+#: 出口「应当长什么样」：手上那枚对象的名，与登记字段清单（顺序就是响应里的顺序）。
+#:
+#: R354 把第三枚读点加进来 —— ``delete_data_file`` 的**审计载荷**。它不是响应面，但它对同一件事
+#: （这一行的主人是谁）答的是另一本账：回执答 ``null``、审计答注册表里那枚原始 ``""``。加判不减判：
+#: ``upload_excel`` 与 ``preview_data_file`` 两行判据一个字没动。
 EXIT_SHAPE = {
     "upload_excel": {
         "source": "dataset",
         "keys": ["dataset_id", "version_id", "classification", "owner_id"],
     },
     "preview_data_file": {"source": "record", "keys": ["dataset_id", "version_id", "owner_id"]},
+    "delete_data_file": {
+        "source": "record",
+        "keys": ["filename", "owner_id", "department_ids", "classification", "size_bytes"],
+    },
 }
+
+#: 同源 helper 的名：全模块唯一一枚合法的 owner 读法（R354 判据⑤）。
+OWNER_READER = "_dataset_row_owner_id"
 
 
 def _body_of(filename: str) -> str:
@@ -237,6 +248,90 @@ def owner_shape_violations(source: str) -> list[str]:
             violations.append(
                 "%s 的登记字段换了：%s（预期 %s）" % (route, got["registration_keys"], expect["keys"])
             )
+    return violations
+
+
+def _owner_read_nodes(tree):
+    """全模块扫「读 owner」的位置：属性读与下标读两种形状都算，写（Store）也算。
+
+    helper 自己的身子由调用方摘掉 —— 那枚 ``record.owner_id`` 是口径的唯一出处，不是第二套读法。
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "owner_id":
+            yield node, ast.unparse(node)
+        elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and (
+            node.slice.value == "owner_id"
+        ):
+            yield node, ast.unparse(node)
+
+
+def module_owner_read_violations(source: str) -> list[str]:
+    """R354 判据⑤：尺子从「点名的出口只许一处 helper」升级成「任何读 owner 的路径都必须经它」。
+
+    与 ``owner_shape_violations`` 的关系是**叠上去**，不是替换：那五行判据一个字不动，本函数补的是
+    「没被点名的地方」——
+
+      · 除 helper 自己的身子以外，任何 ``X.owner_id`` / ``X["owner_id"]`` 都是违规（读与写都算）：
+        无主 = ``None`` 那套口径只许活在一处，别处再取一次就多长一套口径，改一处漏一处；
+      · 任何带 ``owner_id`` 键的字典 —— 响应面与审计载荷一视同仁 —— 填的值必须是 helper 的读数：
+        或直接叫 helper，或正是接住 helper 返回值的那枚名字；
+      · helper 不在了 = 尺子当场抛红，不许静默退化成「全模块零违规」。
+    """
+    tree = ast.parse(source)
+    helper = next(
+        (
+            node for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == OWNER_READER
+        ),
+        None,
+    )
+    assert helper is not None, "data.py 里找不到 %s：这把尺子当场失效" % OWNER_READER
+    inside_helper = {id(node) for node in ast.walk(helper)}
+    scope_of = {}
+    for function in [
+        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]:
+        for leaf in ast.walk(function):
+            scope_of.setdefault(id(leaf), function.name)
+    violations: list[str] = []
+
+    for node, spelled in _owner_read_nodes(tree):
+        if id(node) in inside_helper:
+            continue
+        holder = scope_of.get(id(node), "<模块顶层>")
+        if holder == OWNER_READER:
+            continue
+        violations.append(
+            "%s：在 helper 之外读了 owner（%s）—— 同一件事只许一枚读法，两本账迟早分家" % (holder, spelled)
+        )
+
+    for function in [
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and function is not helper
+    ]:
+        accepted = {
+            ast.unparse(target)
+            for node in ast.walk(function)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and ast.unparse(node.value.func) == OWNER_READER
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        for item in [
+            node for node in ast.walk(function)
+            if isinstance(node, ast.Dict)
+            and any(key is not None and getattr(key, "value", None) == "owner_id" for key in node.keys)
+        ]:
+            keys = [key.value for key in item.keys]
+            value = item.values[keys.index("owner_id")]
+            spelled = ast.unparse(value)
+            direct = isinstance(value, ast.Call) and ast.unparse(value.func) == OWNER_READER
+            if not (direct or spelled in accepted):
+                violations.append(
+                    "%s：owner_id 这一格填的是 %r，不是同源 helper 的读数（可接受：直接叫 helper，或 %s）"
+                    % (function.name, spelled, sorted(accepted) or "无")
+                )
     return violations
 
 
@@ -532,3 +627,39 @@ def test_the_r310_counter_evidence_anchors_still_hit_data_py_exactly_once():
             "R310 的锚点 %s 在 data.py 里命中 %r 处（要求恰好 1 处）：那一把刀今天起砍不动了"
             % (name, counts.get(name))
         )
+
+# ============================ R354 追加：尺子从「点名的出口」升级成「任何读 owner 的路径」
+
+
+def test_the_naming_roster_itself_is_pinned():
+    """点名表（判据⑤的半边）：三枚读点一枚不许悄悄退回 —— 删一行就等于把尺子改松。"""
+    assert sorted(EXIT_SHAPE) == ["delete_data_file", "preview_data_file", "upload_excel"], (
+        "EXIT_SHAPE 的成员换了：%s。本单是往尺子里**加**判据，减判据要另立单并带上裁据" % sorted(EXIT_SHAPE)
+    )
+
+
+def test_any_owner_read_in_the_module_goes_through_the_shared_reader():
+    """判据⑤：全模块扫 —— 除 helper 自己的身子以外，一处读 owner 的地方都不许有第二套口径。
+
+    与 ``owner_shape_violations`` 的关系是叠加：那五行按出口点名判「怎么取」，本钉判「有没有别处
+    也在取」。delete 那一腿今天正是从这一格补上的（审计载荷直读 ``record.owner_id``，可携带注册表
+    里那枚原始 ``""``）。
+    """
+    violations = module_owner_read_violations(DATA_PY.read_text(encoding="utf-8"))
+
+    assert violations == [], "交付体不合规：" + "；".join(violations)
+
+
+def test_the_delete_leg_reads_the_owner_the_same_way_as_the_two_exits():
+    """判据⑤的下半句：delete 那一腿与两处出口吃同一套判据（同源一次、来源是手上那枚 record、字段逐字）。"""
+    shape = owner_read_shape(DATA_PY.read_text(encoding="utf-8"))["delete_data_file"]
+    expect = EXIT_SHAPE["delete_data_file"]
+
+    assert shape["direct_attribute_reads"] == [], shape["direct_attribute_reads"]
+    assert shape["helper_call_count"] == 1, shape["helper_call_count"]
+    assert shape["helper_argument"] == expect["source"], shape["helper_argument"]
+    assert shape["helper_keyword_args"] == [], shape["helper_keyword_args"]
+    assert shape["registration_keys"] == expect["keys"], shape["registration_keys"]
+    assert shape["owner_key_value"] == shape["assigned_to"] == "owner_id", (
+        "审计那一格填的不是刚读出来的那枚值：%r / %r" % (shape["owner_key_value"], shape["assigned_to"])
+    )

@@ -429,9 +429,10 @@ async def delete_data_file(filename: str, request: Request):
     principal = principal_from_request(request)
     path = Path(record.storage_path)
     size_before = path.stat().st_size if path.is_file() else None
+    owner_id = _dataset_row_owner_id(record)
     before = {
         "filename": record.filename,
-        "owner_id": record.owner_id,
+        "owner_id": owner_id,
         "department_ids": list(record.department_ids),
         "classification": record.classification,
         "size_bytes": size_before,
