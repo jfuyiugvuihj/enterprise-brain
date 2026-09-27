@@ -249,7 +249,7 @@ describe('甲 · 判据① dead 是后端真会交出来的终态：必须停表
     const html = await renderToString(h(QueueFace, { face: faceOfTurn(turn), stats: null }))
     expect(html).toContain('data-testid="queue-face"')
     expect(html).toContain('这一轮在后台执行失败，没有产出答案')
-    expect(html).toContain('系统内部出现异常，请稍后重试。')
+    expect(html).toContain('系统内部出现异常，这一发请求没能完成；这一类故障要由服务端排查，请联系管理员。')
     expect(html, '给人看的句子里不许夹 snake_case 码名（V6 裸码闸门同一条口径）')
       .not.toMatch(/[\u4e00-\u9fff][^<>]*\b[a-z][a-z0-9]*(_[a-z0-9]+)+/)
   })

@@ -185,7 +185,7 @@ describe('乙 · 463 操作脸：错误对象是 lib/artifacts.js 真身重建�
     const hit = RAW_RE.exec(html)
     expect(hit, '详情区没长出来').not.toBeNull()
     expect(hit[1]).toBe(BACKEND_EXPIRY)
-    expect(html).toContain('系统内部出现异常，请稍后重试。')
+    expect(html).toContain('系统内部出现异常，这一发请求没能完成；这一类故障要由服务端排查，请联系管理员。')
   })
 
   it('密级那一发不显示原文：这一处接的是真身，拦住它的也是真身', async () => {

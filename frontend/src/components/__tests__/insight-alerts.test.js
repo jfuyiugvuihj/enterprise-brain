@@ -812,11 +812,11 @@ describe('W7 lib/alerts.js · 判脸与归码矩阵（R1 裁定 (c) 的逻辑全
     expect(view.description).toContain('请联系管理员开通')
   })
 
-  it('readFailureView · 500 与连不上服务：都归 error 并给重试', () => {
+  it('readFailureView · 500 与连不上服务：都归 error，500 不给重试、断网才给', () => {
     const broken = readFailureView(httpError(500, 'internal_error'), failureArgs)
     expect(broken.face).toBe('error')
     expect(broken.title).toBe(FAILED_TITLE)
-    expect(broken.retryable).toBe(true)
+    expect(broken.retryable).toBe(false)
     expect(broken.description).toContain('系统内部出现异常')
     const offline = readFailureView({ request: {}, message: 'Network Error' }, failureArgs)
     expect(offline.face).toBe('error')
@@ -827,7 +827,7 @@ describe('W7 lib/alerts.js · 判脸与归码矩阵（R1 裁定 (c) 的逻辑全
   it('readFailureView · 权限范围判不出来不是「没权限」：403 + resource_scope_missing 归 error', () => {
     const missing = readFailureView(httpError(403, 'resource_scope_missing'), failureArgs)
     expect(missing.face).toBe('error')
-    expect(missing.retryable).toBe(true)
+    expect(missing.retryable).toBe(false)
     expect(missing.description).toContain('判断不了你能不能看')
     expect(missing.codeLabel).toBe('')
     const scoped = readFailureView(httpError(403, 'department_scope_denied'), failureArgs)

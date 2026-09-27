@@ -229,12 +229,12 @@ describe('R285④ · 四张脸两两不等（G4）', () => {
     }
   })
 
-  it('canReadAlerts 为 false 与「读了但失败」是两句话，而且一个给重试一个不给', async () => {
+  it('canReadAlerts 为 false 与「读了但失败」是两句话，两句都不给重试', async () => {
     const notOpen = alertsNotOpenView(RISK_ARGS)
     const broken = readFailureView(axiosError(500, 'internal_error'), RISK_ARGS)
     expect(notOpen.description).not.toBe(broken.description)
     expect(notOpen.retryable).toBe(false)
-    expect(broken.retryable).toBe(true)
+    expect(broken.retryable).toBe(false)
     expect(notOpen.face).toBe('denied')
     expect(broken.face).toBe('error')
   })

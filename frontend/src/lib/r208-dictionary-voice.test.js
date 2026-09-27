@@ -106,7 +106,7 @@ describe('甲 · 判据① 停表那一屏不许同时说「再试试」和「�
   })
 
   it('这条判据不瞎：把「稍后再试」那一族塞进名单就当场点名', () => {
-    const wide = ['rate_limited', 'queue_unavailable', 'model_unavailable', 'internal_error']
+    const wide = ['rate_limited', 'queue_unavailable', 'model_unavailable']
     expect(retryLaterViolations(wide)).toEqual(wide)
   })
 

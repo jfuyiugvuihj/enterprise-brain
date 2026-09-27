@@ -193,7 +193,7 @@ describe('R168 判据① · 四种响应画出四张不复制的脸（真 loadPe
     expect(new Set([unauthorized.title, storage.title, broken.title]).size).toBe(3)
     expect(storage.title).toBe(STORAGE_TITLE)
     expect(storage.retryable).toBe(false)
-    expect(broken.retryable).toBe(true)
+    expect(broken.retryable).toBe(false)
     // 「表没建」要说得让人能去修：句子指迁移，不给一个空转的重试按钮。
     expect(STORAGE_DESCRIPTION).toMatch('迁移')
 

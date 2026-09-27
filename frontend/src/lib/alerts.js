@@ -10,13 +10,15 @@
  *  ② 「无权限」与「空列表」必须是两张脸（看板 §4F.5 裁定 (c)）。空列表是 200 响应，
  *     压根走不到失败判定；403 是失败，永远不许被降级成「当前没有触发中的告警」。
  *     同理，401（登录失效）与 500 / 结构不对（服务坏了）也是各自独立的脸。
- *  ③ 文案只出自 lib/errcodes.js 的字典（resolveCode 的公开通道：normalizeError 与 errorText）。
+ *  ③ 文案与「重试」那颗按钮的取值都只出自 lib/errcodes.js 的字典（R368 判据①：界面这一侧不许有
+ *     第二本错误码账）。字典的公开读数通道：normalizeError / errorText / isRetryable /
+ *     dictionaryAdjudicatesRetry —— 屏上那一格要么是字典说过的值，要么是「字典没说过」那一条兜底。
  *     后端码名不进正文，未知码走 errorCodeLabel 的「错误码：xxx」小字通道。
  *
  * 这里不放任何演示常量：洞察页原先的手填阈值表单加 devFixtures 三行假数据，把「待关注」
  * 说成了真实异常。W7 起这条链路只认服务端回来的行。
  */
-import { errorCodeLabel, errorCodeOf, errorText } from './errcodes'
+import { dictionaryAdjudicatesRetry, errorCodeLabel, errorCodeOf, errorText, isRetryable } from './errcodes'
 import { errorDetail, http, PERMISSION_DENIED } from './http'
 
 /** 三条固定路径。列表与规则各自只有一条取数路径，不许在面板里再拼一遍。 */
@@ -123,10 +125,25 @@ export const ALERTS_FEED_LIMIT = 100
 export const ALERTS_LIMIT_NOTE = '后端只回传最近 100 条告警，更早的记录不在这一屏。'
 
 /**
+ * 「重新加载」那颗按钮的唯一生产者（R368 判据①）。
+ *
+ * 屏上这一格不许自己判码：字典在册的码 ⇒ 用字典为它备好的那一格取值；字典没为这一枚码说话 ⇒ true。
+ * 前者修掉的是「storage_unavailable 挂重试」那一处指错路 —— R359 之后 GET /alerts 在生产无库时真的
+ * 回 503 storage_unavailable，而那是跑完迁移才会变的部署缺陷，点多少次都是同一枚 503；
+ * 后者保住判据②那一族 —— 连不上服务、未知码、没有码、结构不对，再点一次是有意义的，
+ * 不许把这枚修复做成「一律 false」的反方向假绿。
+ * 这里一个码名都不列：名单在 lib/errcodes.js 的三张表里，取数层再抄一份就是第二本账。
+ */
+function failureRetryable(err) {
+  return dictionaryAdjudicatesRetry(err) ? isRetryable(err) : true
+}
+
+/**
  * 读取失败 -> UiErrorState 的入参。三档脸共用一个出口，差别全在字段里：
  *   unauthorized 登录失效：句子出自字典，重试没用（回登录由 lib/http.js 统一处理）
  *   denied      没权限：说清去哪申请，不给重试按钮
- *   error       真坏了：给「重新加载」
+ *   error       真坏了：字典在册的码跟着字典决定给不给「重新加载」；字典没说过的那一族（没有码 /
+ *               未知码 / 只按 HTTP 状态兜底归类 / 连不上服务）仍然给 —— 再点一次对这一族是有意义的
  */
 export function readFailureView(err, { deniedTitle, failedTitle }) {
   const code = errorCodeOf(err)
@@ -138,7 +155,7 @@ export function readFailureView(err, { deniedTitle, failedTitle }) {
   if (face === 'denied') {
     return { face, title: deniedTitle, description: errorDetail(err, errorText(code)) + PERMISSION_WHERE, codeLabel: label, retryable: false }
   }
-  return { face, title: failedTitle, description: errorDetail(err, failedTitle), codeLabel: label, retryable: true }
+  return { face, title: failedTitle, description: errorDetail(err, failedTitle), codeLabel: label, retryable: failureRetryable(err) }
 }
 
 /** 结构不对的失败：没有错误对象可归码，一律按「坏了」给重试，绝不画成空态。 */

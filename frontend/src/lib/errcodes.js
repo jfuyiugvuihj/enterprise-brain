@@ -98,7 +98,7 @@ export const ERROR_CODES = {
   // 另一回事，运维修的不是同一个故障，合并成一句就会把两条排查路都指错。
   // retryable 判 false，三条理由：
   //   ① 它是部署缺陷，前端重试同一个请求必然同样失败，直到有人把迁移跑完；
-  //   ② 后端自己也没把它当可重试错 —— app/agents/evidence.py:16 的 _RETRIABLE_CODES 收了
+  //   ② 后端自己也没把它当可重试错 —— app/agents/evidence.py:18 的 _RETRIABLE_CODES 收了
   //      model_unavailable / retrieval_unavailable / task_timeout / rate_limited / queue_unavailable
   //      五档，刻意没有这一档；
   //   ③ isRetryable 决定界面挂不挂「重试」按钮，给一个必须运维介入的故障挂重试只会让人反复点。
@@ -111,7 +111,21 @@ export const ERROR_CODES = {
   unsupported_file: { message: '这个文件类型系统暂不支持，请换一种格式再传。', retryable: false },
   parse_failed: { message: '文件内容没能解析成功，请检查文件是否损坏或受保护。', retryable: false },
   index_publish_failed: { message: '文件已收到，但没能进入知识库，请稍后重试。', retryable: true },
-  internal_error: { message: '系统内部出现异常，请稍后重试。', retryable: false },
+  // R368 判据③（裁定：改文案，flag 一分不动）：这一格原句写着「请稍后重试」而 flag 是 false，两句互相打脸。
+  // 改哪一半按「哪一半更接近事实」定，三条一手取证（一律 git show HEAD 现读，不采信注释）：
+  //   ① 后端对这一枚码明确说了不可重试：app/agents/evidence.py:18 的 _RETRIABLE_CODES 五档里没有
+  //      internal_error，而 :317 与 :425 两枚信封出口写的是 retryable=error_code in _RETRIABLE_CODES
+  //      ⇒ 后端自己发出来的信封里这一枚就是 False，字典那句 false 才是与后端同源的那一半；
+  //   ② 上面 row_scope_denied 那段的理由②已经把「字典写 true、信封写 false ⇒ 同一个码两种说法」列为
+  //      缺陷，把这一枚 flag 翻成 true 造的就是那一处分裂 —— 所以动的只能是句子；
+  //   ③ 翻 flag 还会顺手改掉全站每一屏 500 的按钮归属（isRetryable 是那颗「重试」的唯一生产者），
+  //      那是跨屏的 UX 改判，不在本单范围里。
+  // 句子按文案政策只说「哪件事没做成 + 谁能修」，不再口头邀请「等一会儿再试」；句子里也不指界面控件：
+  // 已知码不走「错误码：xxx」小字（errorCodeLabel 对它一律回空串），写「把这枚错误码报给管理员」
+  // 就是在指一格不存在的东西 —— 那正是 R270 判据① G19 踩过的那条缝。
+  // 全称律钉子：r368-retryable-source.test.js 拿 r208 那一族正则扫遍三张表 —— 凡字典判
+  // retryable:false 的码，句子都不许再承诺「稍后重试」那一族字样（R208 对停表名单裁过的同一条律，只是不限那一族码）。
+  internal_error: { message: '系统内部出现异常，这一发请求没能完成；这一类故障要由服务端排查，请联系管理员。', retryable: false },
 
   invalid_filename: { message: '文件名不合法，请重命名后再试。', retryable: false },
   unsupported_chart_type: { message: '这种图表类型暂不支持，请换一种图表。', retryable: false },
@@ -501,9 +515,18 @@ function dictionaryClaims(raw) {
  *
  * retryable 仍由信封覆盖字典默认值：那是机器读的开关，不是给人看的句子，不在这次改判范围内。
  */
+/**
+ * 信封那一格里码名的唯一读法：SSE 与下载错误体用的是 error_code，不是 code
+ * （app/api/v1/chat.py 的 request.failed 与 artifacts 的 blob 体），两个都要认。
+ * fromEnvelope 与 dictionaryAdjudicatesRetry 共用这一条，取码的地方不许有第二份。
+ */
+function envelopeCode(envelope) {
+  return envelope.code ?? envelope.error_code
+}
+
 function fromEnvelope(envelope, status) {
   // 后端在 SSE 与下载错误体里用的是 error_code，不是 code（chat.py:1013、artifacts 的 blob 体），两个都要认
-  const wireCode = envelope.code ?? envelope.error_code
+  const wireCode = envelopeCode(envelope)
   const resolved = resolveCode(wireCode, status)
   const backendMessage = cleanText(envelope.message)
   const claimed = dictionaryClaims(wireCode)
@@ -700,6 +723,45 @@ export function formatError(err) {
 /** 展示层据此决定是否挂「重试」按钮 */
 export function isRetryable(err) {
   return Boolean(toResult(err).retryable)
+}
+
+/**
+ * 后端自己点名的那一格原码。三种形状（裸串 / 信封 / 422 数组）一律先过 pickPayload() 收敛，
+ * 这里只读它收敛好的 detail，不复制第二遍 normalizeError 的分流；信封那一格走 envelopeCode()，
+ * 与 fromEnvelope 同一条 lookup。422 数组与「压根没有错误体」都回空串：那一发后端没点名，
+ * 字典也就没为它判过 retryable（判据②那一族因此整族留在「界面自己说可以再点一次」这一侧）。
+ */
+function backendNamedToken(err) {
+  const payload = pickPayload(err)
+  if (!payload) return ''
+  const detail = payload.detail
+  if (Array.isArray(detail)) return ''
+  if (detail && typeof detail === 'object') return cleanText(envelopeCode(detail))
+  return cleanText(detail)
+}
+
+/**
+ * 字典有没有对「这一发失败」给过自己的 retryable 判定 —— 屏上那颗「重试」按钮的唯一上游问句（R368 判据①）。
+ *
+ * true  ⇒ 这一发的码在字典在册（枚举本尊 / LEGACY_ALIASES 归一 / PROSE_ALIASES 散文 / 正文内嵌且认得出
+ *         枚举码），字典为它备好了 retryable 取值 ⇒ 界面那一格跟着它走（storage_unavailable 那类必须有人
+ *         跑迁移才变得了的故障，从此不再挂重试）；
+ * false ⇒ 字典没为这一枚码说话：压根没有码、后端回了收不下的码名、只靠 STATUS_CODES[状态] 兜底归类、
+ *         传输层断网。「再点一次有没有意义」在这一族里是界面层的判断，不是码表的属性 —— 连不上服务时
+ *         再点一次就是有意义的（R368 判据②）。
+ *
+ * 分流只认两条 lookup，都不新造账：backendNamedToken() 借的是 pickPayload() 那三种形状的收敛处，
+ * dictionaryClaims() 是 fromEnvelope 抢人话位时用的同一条谓词（查表顺序一致，三张表之外不许有第二本账）。
+ * 后端没点名 ⇒ 这一发的 code 只可能来自 STATUS_CODES[状态] 兜底、传输层归类或 422 数组，字典对它没有判定。
+ */
+export function dictionaryAdjudicatesRetry(errOrResult) {
+  const result = toResult(errOrResult)
+  if (isNormalized(errOrResult)) {
+    return result.rawCode ? dictionaryClaims(result.rawCode) : isEnumCode(result.code)
+  }
+  const token = backendNamedToken(errOrResult)
+  if (token) return dictionaryClaims(token)
+  return false
 }
 
 /** 码表查询：已知码返回原文案，未知返回兜底句 */
