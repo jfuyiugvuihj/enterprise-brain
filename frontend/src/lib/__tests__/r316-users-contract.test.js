@@ -130,14 +130,25 @@ describe('R316① · 列只认后端真发的那五枚键', () => {
     expect(row).toEqual({ id: '7', username: 'baiye', role: 'admin', department: 'finance', created_at: '2026-09-01T10:00:00+08:00' })
   })
 
-  it('读路径只有 GET /users 一枚：这一屏没有写出口，也没有第二条取数路径', () => {
+  it('读路径只有 GET /users 一枚；写路径恰好后端已有的那四枚', () => {
     expect(USERS_PATH).toBe('/users')
     expect(USERS_ROWS_KEY).toBe('users')
     const text = libSource()
-    expect(text).not.toMatch(/client\.post|client\.delete|client\.put|http\.post|http\.delete|http\.put/)
+    // R316 当年这一格钉的是「这一屏没有写出口」，禁的是字面量。R360 把后端早就长在树上的
+    // 那四枚写出口接上了，所以这一格不能退回成「有 post 就红」——那会把正确的接线判成违规。
+    // 改按形状判：读只许一枚 GET，写只许恰好 post / put×2 / delete 这四枚，多一枚少一枚都红。
+    expect([...text.matchAll(/client\.get\(/g)].length, '取数路径只许一枚 client.get').toBe(1)
+    expect([...text.matchAll(/client\.post\(/g)].length).toBe(1)
+    expect([...text.matchAll(/client\.put\(/g)].length).toBe(2)
+    expect([...text.matchAll(/client\.delete\(/g)].length).toBe(1)
+    // 四枚写腿不许各长一套记账：共用同一枚 submitWrite（不乐观 + 写完回读），定义一枚、调用四枚
+    expect([...text.matchAll(/return submitWrite\(/g)].length).toBe(4)
+    expect([...text.matchAll(/async function submitWrite\(/g)].length).toBe(1)
+    // 屏壳自己发请求 = 把判脸逻辑复制成第二套，这一格管的是「只有一个出口」而不只是「有出口」
+    expect(panelSource()).not.toMatch(/client\.(get|post|put|delete)\(/)
   })
 })
-describe('R316① · 后端出口与闸口（本屏只用读的那一枚）', () => {
+describe('R316① · 后端出口与闸口（本屏读用第一枚，R360 起写用另外四枚）', () => {
   const api = showAtRef('app/api/v1/auth.py')
 
   it('GET /users 确实过 ACTION_MANAGE_USERS 这一道闸，所以 staff 拿到的天然是 403', () => {

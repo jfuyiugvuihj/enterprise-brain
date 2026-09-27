@@ -1,13 +1,14 @@
 /**
- * R316 · 「账号与角色」这一屏的唯一取数点与判脸点（只读 GET /users）
+ * R316 · 「账号与角色」这一屏的唯一取数点与判脸点；R360 起它也是四枚写出口的唯一接线点
  *
- * 这一格只做一件事：把服务端名册里真有的人列出来。开通与停用账号是另一枚单，
- * 本文件不接 POST /users，也不接 DELETE /users/{id}，一行都不接。
+ * 读只做一件事：把服务端名册里真有的人列出来。写只做后端已有的那四枚（开通 / 删除 / 改密码 /
+ * 改部门），后端没给的能力这里不造 —— 它只有「删除」没有「停用」，屏上就只说删除。
  *
- * 后端零改动，口径逐字跟着源码走（取证行号 = 主树 42a4e9e）：
- *   出口  app/api/v1/auth.py:90-95  GET /users 回 {"users": auth.list_users()}；
- *         :93 的 authorize_request(request, ACTION_MANAGE_USERS, "users") 与 :101 / :116
- *         两枚写出口过的是同一道闸 —— 本单只用第一枚。
+ * 后端零改动，口径逐字跟着源码走（读路径取证 = 主树 4382443）：
+ *   出口  app/api/v1/auth.py:90  GET /users，:106 回 {"users": users}（R356 起名册取不到
+ *         时答 503 storage_unavailable，不答 {"users": []}）；authorize_request(request,
+ *         ACTION_MANAGE_USERS, resource_name="users") 与 :98 POST / :113 DELETE / :123 PUT
+ *         password / :139 PUT department 四枚写出口过的是同一道闸 —— 读写五腿共用一枚判定。
  *   列名  app/common/auth.py:543  SELECT id, username, role, department, created_at；
  *         内存表那一腿（:538-541）回同一组键，created_at 给空串。
  *   闸口  app/common/authorization.py:50-57  无 Principal → 401 authentication_required，
@@ -229,4 +230,410 @@ export async function loadUsers(client = http) {
   const status = Number(response?.status ?? 0) || 0
   if (status !== 200) return usersErrorView({ response, status })
   return parseUsersPayload(response.data) || usersMalformedView()
+}
+
+// ============================================================================
+// R360 · 四枚写出口：本文件唯一的一次越界，越的是 R316 结案时自己登记的那笔边界
+// ============================================================================
+/**
+ * 上面那半份文件只读（GET /users）。这一半接 app/api/v1/auth.py 里早就在树的四枚写出口，
+ * 逐枚对应关系是现取的（取证行号 = 本仓 HEAD 的 app/api/v1/auth.py）：
+ *   POST   /users                  :98-110   开通账号，回 {"status":"ok","message":...}
+ *   DELETE /users/{user_id}        :113-120  删账号，按编号定位，回 {"status":"ok"}
+ *   PUT    /users/password         :123-134  改密码，回 {"status":"ok","message":...}
+ *   PUT    /users/department       :139-204  改部门归属，回 status/username/department/changed/message
+ *
+ * 后端零改动是本单前提：这里不新增第五枚出口、不改任何一枚的语义、状态码或请求体，
+ * 后端做不到的事（「停用」这一档它没有；管理员替人重置密码它要 old_password）一律只报不造。
+ * 四枚出口各自真会回哪些码，逐条写在 r360-user-writes.test.js 那张取证表里，本文件不重述一遍
+ * —— 一处叙述就是两本账，那张表才是唯一说法。
+ *
+ * 三条纪律：
+ *  ① 不乐观（判据乙）：写完一律由面板重新调 loadUsers() 读名册，本层不提供也不许任何人用
+ *     「本地把那一行改掉」的第二本账（手法与 lib/notifications.js 的「全部已读」同一套：
+ *     写完重读，屏上那几行永远只可能来自后端回包）。
+ *  ② 失败脸逐枚分开、各有出处（判据丙）：判据只走 errorCodeOf 与 HTTP status 两枚通道，
+ *     本模块一枚码都不新增、一张脸都不新造句子的人话位（句子仍归 lib/errcodes.js 那本字典）。
+ *     🔴 503 那一档不挂重试按钮，三条理由逐字出自 lib/errcodes.js:99-107：
+ *        ① 它是部署缺陷，前端重试同一个请求必然同样失败，直到有人把迁移跑完；
+ *        ② 后端自己也没把它当可重试错 —— app/agents/evidence.py:18 的 _RETRIABLE_CODES 收了
+ *           model_unavailable / retrieval_unavailable / task_timeout / rate_limited / queue_unavailable
+ *           五档，刻意没有这一档；
+ *        ③ isRetryable 决定界面挂不挂「重试」按钮，给一个必须运维介入的故障挂重试只会让人反复点。
+ *     本层把这三条推广到全部写失败脸（retryable 恒 false）：要再来一次就走表单本身那一枚提交钮，
+ *     不在失败脸上再开第二个入口 —— 写请求重放发的就是同一发写。
+ *  ③ 表单侧规则只准等于后端真规则（判据丙）：那本账是 USER_FORM_RULES，四个值逐枚抄自
+ *     app/common/auth.py，r360 的契约钉拿 git show 与源码逐格对。后端没有的规则这里一律记 null，
+ *     不许长出一枚前端自己的密码强度、角色白名单或部门字符集。
+ */
+
+/** 四枚出口的名字：面板按它分派，回执按它说话，测试按它逐枚验。 */
+export const USER_WRITE_CREATE = 'create'
+export const USER_WRITE_DELETE = 'delete'
+export const USER_WRITE_PASSWORD = 'password'
+export const USER_WRITE_DEPARTMENT = 'department'
+
+/** 四条路径，与上面那四枚出口一一对号。读路径仍然只有 USERS_PATH 一枚，没有第二条。 */
+export const USER_CREATE_PATH = USERS_PATH
+export const USER_PASSWORD_PATH = '/users/password'
+export const USER_DEPARTMENT_PATH = '/users/department'
+/** DELETE 的路径带编号（auth.py:113 声明的是 user_id: int），所以这里是一个构造函数而不是常量。 */
+export const USER_DELETE_PATH_PREFIX = `${USERS_PATH}/`
+
+/**
+ * 请求体键名逐字取自后端那三枚模型：CreateUserRequest（:39-43）、ChangePasswordRequest（:46-49）、
+ * UpdateDepartmentRequest（:52-56）。键名是契约，值不做二次加工：后端对用户名与密码都不做
+ * strip（只有部门在 :182 由后端自己 strip），所以前端一个字符都不动 —— 动了就是替后端改了规则。
+ */
+export const USER_BODY_KEYS = {
+  username: 'username',
+  password: 'password',
+  role: 'role',
+  department: 'department',
+  oldPassword: 'old_password',
+  newPassword: 'new_password',
+}
+
+/** 表单里那几格的字段名（前端词汇，与请求体键名刻意不同名，防的是「屏上直出蛇形键」那一族）。 */
+export const USER_FORM_FIELDS = {
+  username: 'username',
+  role: 'role',
+  password: 'password',
+  department: 'department',
+  oldPassword: 'oldPassword',
+  newPassword: 'newPassword',
+}
+
+/**
+ * 表单侧唯一的一本规则账。四个数逐枚对源码，三个 null 逐枚对「后端确实没有这条规则」：
+ *   :548-549  用户名或密码为空 -> 拒（所以 required 只有这一枚出处）
+ *   :550-551  len(password) < 6 -> 拒
+ *   :668-669  len(new_password) < 6 -> 拒
+ *   :552-553  role 不在 ("staff", "manager", "admin") -> 拒
+ * username / department 的字符集与长度：后端一个字都没写，所以这里记 null，不发明。
+ * 老密码没有「不能为空」这一条规则（:666 走的是校验原密码对不对），所以这里也不设 required。
+ */
+export const USER_FORM_RULES = {
+  usernameRequired: true,
+  passwordRequired: true,
+  passwordMinLength: 6,
+  newPasswordMinLength: 6,
+  creatableRoles: ['staff', 'manager', 'admin'],
+  usernamePattern: null,
+  departmentPattern: null,
+}
+
+/**
+ * 能创建的角色，比能读到的角色少一枚。
+ * USER_ROLES 那四枚对的是 app/common/permissions.py 的角色集，而 auth.py:552 的白名单里没有
+ * auditor —— 名册里读得到审计人员，界面上却开不出这一枚账号，这一格差别只能照后端说。
+ */
+export const USER_CREATABLE_ROLES = USER_FORM_RULES.creatableRoles
+
+/** 后端 CreateUserRequest 那两枚默认值（auth.py:22-23：role 默认 staff、department 默认空串）：表单起点照它抄，不自己挑一枚。 */
+export const USER_CREATE_DEFAULTS = { role: 'staff', department: '' }
+
+/** 预检没过时的那几句话：说的是本账那几个值，不是第二份判定。 */
+export const USER_RULE_HINTS = {
+  usernameRequired: '账号名不能是空的。',
+  passwordRequired: '密码不能是空的。',
+  passwordTooShort: `密码至少要 ${USER_FORM_RULES.passwordMinLength} 位。`,
+  newPasswordTooShort: `新密码至少要 ${USER_FORM_RULES.newPasswordMinLength} 位。`,
+  roleUnknown: '角色要在后端认得的那几枚里挑。',
+}
+
+/** 请求体三枚构造器：纯函数，不碰屏上任何东西，键名逐字等于后端模型字段名。 */
+export function createBody(form = {}) {
+  return {
+    [USER_BODY_KEYS.username]: String(form[USER_FORM_FIELDS.username] ?? ''),
+    [USER_BODY_KEYS.password]: String(form[USER_FORM_FIELDS.password] ?? ''),
+    [USER_BODY_KEYS.role]: String(form[USER_FORM_FIELDS.role] ?? ''),
+    [USER_BODY_KEYS.department]: String(form[USER_FORM_FIELDS.department] ?? ''),
+  }
+}
+
+export function passwordBody(form = {}) {
+  return {
+    [USER_BODY_KEYS.username]: String(form[USER_FORM_FIELDS.username] ?? ''),
+    [USER_BODY_KEYS.oldPassword]: String(form[USER_FORM_FIELDS.oldPassword] ?? ''),
+    [USER_BODY_KEYS.newPassword]: String(form[USER_FORM_FIELDS.newPassword] ?? ''),
+  }
+}
+
+/**
+ * department 这一枚键每次都必须出现：后端把「缺席 / null」读成「这轮没说」（auth.py:171-180 那半条
+ * 分支一个字都不写，回 changed: false），显式空串才读成「清空归属」。少发一枚键就是把「没改」
+ * 提交成「改过了」——那一格 R290 的注释专门钉过，本层照它的口径整发都带上。
+ */
+export function departmentBody(form = {}) {
+  return {
+    [USER_BODY_KEYS.username]: String(form[USER_FORM_FIELDS.username] ?? ''),
+    [USER_BODY_KEYS.department]: String(form[USER_FORM_FIELDS.department] ?? ''),
+  }
+}
+
+/**
+ * DELETE 按编号定位（auth.py:113 的路径参数是 user_id）。名册这一行没给编号就构造不出路径：
+ * 空串是唯一允许的「不行」，前端不替后端猜一个 id，也不发一枚注定 422 的请求。
+ */
+export function userDeletePath(row) {
+  const id = textOf(row && typeof row === 'object' ? row.id : '')
+  return id ? `${USER_DELETE_PATH_PREFIX}${encodeURIComponent(id)}` : ''
+}
+
+/** 表单预检：只读 USER_FORM_RULES 那本账。本函数体内不许出现数字字面量、正则或账外的判断。 */
+export function userFormRuleViolations(kind, form = {}) {
+  const errors = {}
+  const username = String(form[USER_FORM_FIELDS.username] ?? '')
+  const password = String(form[USER_FORM_FIELDS.password] ?? '')
+  const newPassword = String(form[USER_FORM_FIELDS.newPassword] ?? '')
+  const role = String(form[USER_FORM_FIELDS.role] ?? '')
+  if (kind === USER_WRITE_CREATE) {
+    if (USER_FORM_RULES.usernameRequired && !username) errors[USER_FORM_FIELDS.username] = USER_RULE_HINTS.usernameRequired
+    if (USER_FORM_RULES.passwordRequired && !password) {
+      errors[USER_FORM_FIELDS.password] = USER_RULE_HINTS.passwordRequired
+    } else if (password.length < USER_FORM_RULES.passwordMinLength) {
+      errors[USER_FORM_FIELDS.password] = USER_RULE_HINTS.passwordTooShort
+    }
+    if (!USER_FORM_RULES.creatableRoles.includes(role)) {
+      errors[USER_FORM_FIELDS.role] = '角色要在后端认得的那几枚里挑。'
+    }
+  }
+  if (kind === USER_WRITE_PASSWORD && newPassword.length < USER_FORM_RULES.newPasswordMinLength) {
+    errors[USER_FORM_FIELDS.newPassword] = USER_RULE_HINTS.newPasswordTooShort
+  }
+  return errors
+}
+
+/** 写这一族自己的三张脸（其余四张与读路径同名同句：denied / unauthorized / storage / failed）。 */
+export const USERS_FACE_CONFLICT = 'conflict'
+export const USERS_FACE_NOT_FOUND = 'not_found'
+export const USERS_FACE_INVALID = 'invalid'
+/** 后端回了 200 但这一发的结论读不出来：它不是成功，也不是「名册里没有账号」。 */
+export const USERS_FACE_WRITE_OK = 'ok'
+
+export const USERS_CONFLICT_TITLE = '这一步和名册现在的样子撞了'
+export const USERS_CONFLICT_MESSAGE = '后端说这一发与名册里已有的东西冲突，所以什么都没改。'
+export const USERS_NOT_FOUND_TITLE = '名册里找不到这一枚账号'
+export const USERS_NOT_FOUND_MESSAGE = '后端回的是「找不到这一枚账号」：它不是说这一屏不向你开放，也不是说名册里一个账号都没有。'
+export const USERS_INVALID_TITLE = '后端没有收下这一发'
+export const USERS_INVALID_MESSAGE = '这一步没做成，后端按它自己的规则拒了这一次提交，原因就在下面那句里。'
+export const USERS_WRITE_FAILED_TITLE = '这一步没成交'
+export const USERS_WRITE_FAILED_MESSAGE = '这一发写请求没成，名册上有没有改动以重新读回来的那几行为准。'
+/** 200 但没有 status: ok —— 这一张说的是「读不出结论」，绝不当成成功（判据乙的另一半）。 */
+export const USERS_WRITE_MALFORMED_TITLE = '后端回了成功状态，但这一发的结论读不出来'
+export const USERS_WRITE_MALFORMED_MESSAGE = '这一发的回包里认不出「成了」这句话，所以屏上不说它成功了；'
+  + '名册随后重新读过一次，那几行才是此刻的事实。'
+/** 这一行没有编号：DELETE /users/{user_id} 没法定位它。 */
+export const USERS_UNADDRESSABLE_TITLE = '名册里这一枚账号没有编号'
+export const USERS_UNADDRESSABLE_MESSAGE = '删除按编号走（后端那枚出口的路径参数就是编号），这一行没给编号，'
+  + '前端不替它猜一个，所以这一枚账号今天删不了。'
+
+/**
+ * 一次写失败 -> 一张脸。分派只认 errorCodeOf 与 HTTP status 两枚出处，与 usersErrorView 同一手法；
+ * 优先级也与它一致：先认「没权限 / 登录失效」，再认存储，才轮到冲突、找不到、没收下。
+ */
+export function userWriteFaceOf(err) {
+  const code = errorCodeOf(err)
+  const status = Number(err && err.response && err.response.status ? err.response.status : (err && err.status) || 0) || 0
+  if (code === PERMISSION_DENIED) return USERS_FACE_DENIED
+  if (code === 'authentication_required') return USERS_FACE_UNAUTHORIZED
+  if (code === 'storage_unavailable' || status === 503) return USERS_FACE_STORAGE
+  if (code === 'conflict') return USERS_FACE_CONFLICT
+  if (code === 'resource_not_found') return USERS_FACE_NOT_FOUND
+  if (code === 'validation_error') return USERS_FACE_INVALID
+  return USERS_FACE_FAILED
+}
+
+/** 每张写失败脸的标题与人话兜底句：唯一一处映射，面板与测试都读它，不各自再抄一份。 */
+const USER_WRITE_FACE_COPY = {
+  [USERS_FACE_DENIED]: {
+    title: USERS_DENIED_TITLE,
+    fallback: errorText(PERMISSION_DENIED),
+    where: USERS_DENIED_WHERE,
+  },
+  [USERS_FACE_UNAUTHORIZED]: { title: USERS_UNAUTHORIZED_TITLE, fallback: USERS_UNAUTHORIZED_MESSAGE, where: '' },
+  [USERS_FACE_STORAGE]: { title: USERS_STORAGE_TITLE, fallback: USERS_STORAGE_MESSAGE, where: '' },
+  [USERS_FACE_CONFLICT]: { title: USERS_CONFLICT_TITLE, fallback: USERS_CONFLICT_MESSAGE, where: '' },
+  [USERS_FACE_NOT_FOUND]: { title: USERS_NOT_FOUND_TITLE, fallback: USERS_NOT_FOUND_MESSAGE, where: '' },
+  [USERS_FACE_INVALID]: { title: USERS_INVALID_TITLE, fallback: USERS_INVALID_MESSAGE, where: '' },
+  [USERS_FACE_FAILED]: { title: USERS_WRITE_FAILED_TITLE, fallback: USERS_WRITE_FAILED_MESSAGE, where: '' },
+}
+
+/**
+ * 后端那四枚出口的成功回包共有形状：{"status": "ok"}（auth.py:120），三枚还多带一句 message
+ * （:110 / :134 / :198-203）。认「成了」只认这一枚键的这一枚值，别的形状一律走「读不出结论」那张脸。
+ */
+export const USER_WRITE_OK_KEY = 'status'
+export const USER_WRITE_OK_VALUE = 'ok'
+
+export const USERS_UNCHANGED_TITLE = '后端说这一发什么都没改'
+export const USERS_UNCHANGED_MESSAGE = '回包是 200，但它明写 changed=false：这一发没有改动任何东西。'
+  + '最常见的原因是填进去的值与它原来记的本来就是同一个，或是这一发压根没带上那一格。'
+
+/** 读不出结论那一张：它既不是成功，也不是「名册里没有账号」。 */
+export function userWriteMalformedReceipt(kind, target) {
+  return {
+    face: USERS_FACE_MALFORMED,
+    kind,
+    target,
+    title: USERS_WRITE_MALFORMED_TITLE,
+    description: USERS_WRITE_MALFORMED_MESSAGE,
+    codeLabel: '',
+    retryable: false,
+    changed: null,
+  }
+}
+
+/** 这一行没编号：一张独立的脸，不降级成「删除失败」，也不假装删掉了。 */
+export function userUnaddressableView(row) {
+  const source = row && typeof row === 'object' ? row : {}
+  const target = textOf(source.username) || textOf(source.id)
+  return {
+    face: USERS_FACE_MALFORMED,
+    kind: USER_WRITE_DELETE,
+    target,
+    title: USERS_UNADDRESSABLE_TITLE,
+    description: USERS_UNADDRESSABLE_MESSAGE,
+    codeLabel: '',
+    retryable: false,
+    changed: null,
+  }
+}
+
+/** 一次写失败 -> 一张脸。句子出处与读路径完全同一本字典，这里只决定标题与兜底场景话。 */
+export function userWriteErrorView(err) {
+  const face = userWriteFaceOf(err)
+  const copy = USER_WRITE_FACE_COPY[face]
+  const dictionaryOwn = face === USERS_FACE_DENIED || face === USERS_FACE_UNAUTHORIZED || face === USERS_FACE_STORAGE
+  return {
+    face,
+    title: copy.title,
+    description: errorDetail(err, copy.fallback) + copy.where,
+    codeLabel: dictionaryOwn ? '' : errorCodeLabel(err),
+    // 写失败一律不挂重试（三条理由见本段开头那三条，逐字出自 lib/errcodes.js:99-107）：
+    // 要再来一次走表单那一枚提交钮，重放一发的本来就是同一发写。
+    retryable: false,
+    changed: null,
+  }
+}
+
+/** 成功回包 -> 回执。target 是这一发点名的人，回执与确认句都靠它，绝不写「确定吗」那种空话。 */
+export function userWriteReceiptView(kind, target, payload) {
+  const envelope = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null
+  if (!envelope || textOf(envelope[USER_WRITE_OK_KEY]) !== USER_WRITE_OK_VALUE) {
+    return userWriteMalformedReceipt(kind, target)
+  }
+  if (kind === USER_WRITE_DEPARTMENT) {
+    if (typeof envelope.changed !== 'boolean') return userWriteMalformedReceipt(kind, target)
+    if (!envelope.changed) {
+      return {
+        face: USERS_FACE_WRITE_OK,
+        kind,
+        target,
+        title: USERS_UNCHANGED_TITLE,
+        description: USERS_UNCHANGED_MESSAGE,
+        codeLabel: '',
+        retryable: false,
+        changed: false,
+      }
+    }
+    return {
+      face: USERS_FACE_WRITE_OK,
+      kind,
+      target,
+      title: '归属已经改写',
+      // 那句归属取的是回包自己给的 department，不是表单里填的那一个：后端会 strip，也会把空串落成「无归属」。
+      description: `后端这一发回的是 200：${target} 现在的归属是「${departmentText(envelope.department)}」。`,
+      codeLabel: '',
+      retryable: false,
+      changed: true,
+    }
+  }
+  const COPY = {
+    [USER_WRITE_CREATE]: { title: '账号已开通', description: `后端这一发回的是 200：${target} 已按这一发的角色与归属写进名册。` },
+    [USER_WRITE_DELETE]: { title: '账号已删除', description: `后端这一发回的是 200：${target} 那一行已删除。这一步不可逆。` },
+    [USER_WRITE_PASSWORD]: { title: '密码已改写', description: `后端这一发回的是 200：${target} 的登录密码已按这一发提交的新密码改写。` },
+  }
+  const copy = COPY[kind] || { title: '这一步已成交', description: `后端这一发回的是 200：${target}。` }
+  return {
+    face: USERS_FACE_WRITE_OK,
+    kind,
+    target,
+    title: copy.title,
+    description: copy.description,
+    codeLabel: '',
+    retryable: false,
+    changed: true,
+  }
+}
+
+/**
+ * 写完重读之后的那一次对表（判据乙的第二半）。
+ *
+ * 比的两侧都是【后端回包】：一侧是这一发写的回话，另一侧是随后那一次 GET 读回来的名册。
+ * 这里不改本地任何一行，也不替后端圆场：后端说了 200 而重新读回的名册不支持它，屏上就必须
+ * 同时摆出这两句话 ——「看着像成功了」的残影正是这一格要防的东西。
+ */
+export function userWriteReadback(kind, target, roster, sent = {}) {
+  const NO_ROSTER = '名册这一次没读回来，所以上面那句只说后端对这一发的回话，不代表屏上此刻有几行。'
+  const rows = roster && Array.isArray(roster.rows) ? roster.rows : []
+  // 空名册是一次【读回来了的】结果（删掉最后一枚账号就该是它），只有真没读回来才对表说不了。
+  if (usersFailureFace(roster)) return { consistent: false, note: NO_ROSTER }
+  const found = rows.some(row => textOf(row.username) === textOf(target))
+  if (kind === USER_WRITE_CREATE && !found) {
+    return { consistent: false, note: `后端这一发回的是 200，但重新读回的名册里没有 ${target} 这一枚账号。` }
+  }
+  if (kind === USER_WRITE_DELETE && found) {
+    return { consistent: false, note: `后端这一发回的是 200，但重新读回的名册里 ${target} 还在。` }
+  }
+  if ((kind === USER_WRITE_PASSWORD || kind === USER_WRITE_DEPARTMENT) && !found) {
+    return { consistent: false, note: `后端这一发回的是 200，但重新读回的名册里已经找不到 ${target} 这一枚账号。` }
+  }
+  if (kind === USER_WRITE_DEPARTMENT && found) {
+    const after = textOf(sent[USER_FORM_FIELDS.department])
+    const row = rows.find(item => textOf(item.username) === textOf(target))
+    if (textOf(row.department) !== after) {
+      return { consistent: false, note: '后端这一发回的是 200，但重新读回的名册里这一枚的归属与这一发提交的不是同一个值。' }
+    }
+  }
+  return { consistent: true, note: '名册已按后端回包重新读过，屏上那几行就是这一次读回来的结果。' }
+}
+
+/**
+ * 四枚出口的调用层：返回的永远是回执（成功脸 / 失败脸 / 读不出结论脸），不抛给面板 ——
+ * 与 loadUsers 同一条纪律，这一屏没有第二块内容可以被一次失败拖走。
+ */
+async function submitWrite(kind, target, send) {
+  let response
+  try {
+    response = await send()
+  } catch (err) {
+    return { ...userWriteErrorView(err), kind, target }
+  }
+  const status = Number(response && response.status ? response.status : 0) || 0
+  if (status !== 200) return { ...userWriteErrorView({ response, status }), kind, target }
+  return userWriteReceiptView(kind, target, response && response.data)
+}
+
+export function submitCreateUser(form, client = http) {
+  const body = createBody(form)
+  return submitWrite(USER_WRITE_CREATE, body[USER_BODY_KEYS.username], () => client.post(USER_CREATE_PATH, body))
+}
+
+export function submitPasswordChange(form, client = http) {
+  const body = passwordBody(form)
+  return submitWrite(USER_WRITE_PASSWORD, body[USER_BODY_KEYS.username], () => client.put(USER_PASSWORD_PATH, body))
+}
+
+export function submitDepartmentChange(form, client = http) {
+  const body = departmentBody(form)
+  return submitWrite(USER_WRITE_DEPARTMENT, body[USER_BODY_KEYS.username], () => client.put(USER_DEPARTMENT_PATH, body))
+}
+
+export function submitDeleteUser(row, client = http) {
+  const target = textOf(row && typeof row === 'object' ? row.username : '')
+  const path = userDeletePath(row)
+  if (!path) return Promise.resolve(userUnaddressableView(row))
+  return submitWrite(USER_WRITE_DELETE, target, () => client.delete(path))
 }
