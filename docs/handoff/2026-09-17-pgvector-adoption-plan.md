@@ -430,3 +430,34 @@
 ### 四、新立 R330（待投）：PG 那本账要在出口读得到
 
 `vector_read_diagnostics()`／`vector_corpus_diagnostics()` 今天在 `app/**` **零消费者**（只有测试读），而 `search_shape` 早在 R165 就接上了 `/health/details`（`app/common/monitoring.py:254`）。回滚是个要人操作的动作——运维看不见「这一问是谁答的、切读命中了几条、上一次旁路是什么」，回滚点就没有可操作性。写域锁 `app/common/monitoring.py` + 新 `tests/test_r330_*.py`（与 R165 同一条出口，不许另开一屏）；判据含「不许新增第二本账，只投影既有 diagnostics」。排在 R59 块2 之后、R60 之前。
+
+## 11. 09-27 第四格·总控落笔：live-PG 第一次有当天读数 + 两格文档改口 + 🔴 一条被推翻的怀疑（登记防重复）
+
+### 一、当天现取的 live-PG 读数（本机容器，只读 SELECT，零写入）
+
+本节此前那份 1008 是 09-21 双写窗留下的账，今天容器起来了才有资格说"现在"。读数（`docker exec enterprise-brain-postgres-1 psql -U enterprise_brain -d enterprise_brain`）：
+
+| 项 | 今天 | 出处 |
+|---|---|---|
+| `chunk_vectors` 行数 | **1008** | `select count(*) from chunk_vectors` |
+| `chunks` 行数 | **1008**（两本账等枚，无双写缺口） | `select count(*) from chunks` |
+| `embedding is null` | **0** | 同上第二枚查询 |
+| `vector_scope` | **恰一行**：`schema_version=1` / `embedding_model=nomic-embed-text` / `dimension=768` / `distance_function=l2` | `select ... from vector_scope` |
+| pgvector 扩展 | `0.8.6` | `pg_extension` |
+| 向量索引 | `chunk_vectors_embedding_idx` USING **hnsw** (`vector_l2_ops`) WITH m=16 / ef_construction=100 | `pg_indexes` |
+| 其余索引 | pkey、`unique(filename, chunk_index)`、以及 `filename`/`department`/`classification`/`index_version_id` 四枚 btree | 同上 |
+
+容器侧：七枚容器 `Up 14 hours`，backend/worker/scheduler/redis/postgres/ollama 全 healthy。两枚镜像仍是 **47 小时**未重建（🔴 等本轮六枚在途落地后再建）。
+
+### 二、🔴 一条本班自己提出又自己推翻的怀疑（写下来是为了别第三遍）
+
+本班看到 `app/rag/retriever.py:892` 是 `get_or_create_collection("enterprise_docs")`——**没有**显式传 `hnsw:space`，于是怀疑：Chroma 走集合默认（该版本默认多为 cosine），而 PG 侧 scope 写的是 `l2` ⇒ 两边不同序 ⇒ 切读会悄悄换掉 top-k 排序。
+
+这条**不成立**，已被前班实测堵死，证据在 `migrations/0010_pgvector_chunks.sql:36-56`：本 build（chromadb 1.5.9 / python 3.11）用与 `retriever.py` 完全相同的调用形状实测，返回 `{'hnsw': {'space': 'l2', 'ef_construction': 100, 'max_neighbors': 16, ...}}`——🔴 默认就是 **l2**，与 pgvector 的 `<->` + `vector_l2_ops` 同侧；且 `scripts/compare_vector_recall.py` 在比任何排序之前会**重新断言**这个值（因为它是一个代码仍可改掉的 per-collection 默认）。索引参数 m/ef_construction 也不是拍的，是照抄实测的 `max_neighbors=16`/`ef_construction=100`，两台引擎配成一样。⇒ **不立单**。这条踩到的仍是本仓那条老规矩：报"某物不一致"之前先查它有没有被后续实测处理过。
+
+顺带量到一件从没记过的数（它不是缺陷，是**读数口径**）：库里向量**非单位化**——`vector_norm(embedding)` min **17.10** / max **23.40** / avg **20.07**（768 维）。所以：① l2 的绝对数值只在 l2 这一侧有意义，🔴 任何人将来把 PG 换成 `<=>`(cosine) 或直接把 Chroma 的距离数值当阈值用，都会跨口径；② H20（距离下限口径）业主仍未裁，那一格今天不因本读数而关闭，反而更该由业主定——因为 17–23 这个带宽说明"小于某个绝对距离就算不相关"这类阈值在我们的数据上根本站不住。
+
+### 三、两格文档改口（本节原样抄回去就是把话说过期）
+
+1. 上面 §四 那行"🆕 **新立 R330（待投）**"已过期：**R330 已并树** `eec7ced`（09-26 21:01）。今天复核落在 `app/common/monitoring.py:265`、`:280`、`:283`——`vector_mirror_diagnostics`／`vector_corpus_diagnostics`／`vector_read_diagnostics` 三本账现在真的投影到 `/health/details` 那一条出口，没有另开第二本。回滚可操作性那一格从此有读处。
+2. §8「今天真实位置」那行写"读路径仍在 Chroma"——今天**仍然成立**（`app/rag/indexing.py:50` 现取 `INDEX_BACKEND_DEFAULT = "chroma"`），但同一段里那句"读路径 R59 在途"要说细：R59 块1（`bee9d01`）与块2（`dbc2047`）都已并树、结案口径是"接线实现与端点凭据到位、🔴 默认未翻、不宣布切读完成"。真正没跑的仍是 **P3 那份 135 题召回对照**（要模型，属业主窗口），所以 §9/§10 那两节的结论一个字不改：**不许把任何生产路径的默认读后端翻成 PGVector**。
