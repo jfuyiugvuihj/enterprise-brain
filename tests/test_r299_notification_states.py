@@ -31,6 +31,7 @@ from test_r120_clean_install_first_boot import (
     _declared_from_the_sample,
 )
 from test_r183_184_migration_pair import _COMMENT_LINE
+from test_r349_catalog_tail_ledger import CATALOG_TAIL_VERSION
 
 REPO = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = REPO / 'migrations'
@@ -108,8 +109,13 @@ def _vocab(sql: str) -> set[str]:
 def test_0016_is_registered_as_the_catalog_tail_and_loads():
     versions = [item.version for item in mig.MIGRATIONS]
 
-    assert versions == [f'{number:04d}' for number in range(1, len(versions) + 1)], versions
-    assert versions[-1] == NEW_VERSION
+    assert versions == [
+        f'{number:04d}' for number in range(1, int(CATALOG_TAIL_VERSION) + 1)
+    ], versions
+    assert NEW_VERSION in versions, '本件的主题版 0016 不许被人从目录里摘走'
+    assert versions[-1] == CATALOG_TAIL_VERSION, (
+        '尾号数字只在 tests/test_r349_catalog_tail_ledger.py 写死一枚；改口去那一处，别改本件'
+    )
     registered = next(item for item in mig.MIGRATIONS if item.version == NEW_VERSION)
     assert registered.name == NEW_NAME
     assert mig.discover_migrations() == mig.MIGRATIONS, '清单校验不过的目录不该被 loader 认下来'

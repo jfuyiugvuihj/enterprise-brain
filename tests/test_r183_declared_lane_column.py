@@ -26,7 +26,6 @@ from test_r183_184_migration_pair import (  # noqa: T401  共用同一份离线 
     LANE_TARGETS,
     NEW_VERSION,
     PENDING_LANE,
-    CATALOG_TAIL_VERSION,
     added_column_specs,
     executable_statements,
     first_adding_spec,
@@ -37,6 +36,7 @@ from test_r183_184_migration_pair import (  # noqa: T401  共用同一份离线 
     schema_through,
     statement_literal,
 )
+from test_r349_catalog_tail_ledger import CATALOG_TAIL_VERSION
 
 REPO = Path(__file__).resolve().parents[1]
 PRE = "0011"

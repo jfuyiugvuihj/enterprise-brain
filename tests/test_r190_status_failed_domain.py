@@ -49,6 +49,7 @@ from test_r183_184_migration_pair import (  # noqa: T401  共用同一份离线 
     statement_head,
     writes_rows,
 )
+from test_r349_catalog_tail_ledger import CATALOG_TAIL_VERSION
 
 REPO = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = REPO / "migrations"
@@ -59,16 +60,15 @@ CONSTRAINT_NAME = "pending_approvals_status_check"
 
 #: 0008：这枚 CHECK 的出生地，也是"存量行过去被什么关着"的基准。
 BASE_VERSION = "0008"
-#: 🔴 目录尾号引信（与 tests/test_document_catalog_sync.py、tests/test_r46_activity_signals.py、
-#: tests/test_r120_clean_install_first_boot.py、tests/test_r251_alert_disposal_migration.py 同族）：
-#: 谁排下一号，必须回到这里连名带断言一起改口。改口是收紧，不是放宽。
-#: R251 排了 0014（告警台账的处置列），尾号归它；本单的主题仍然是 0013 那一枚，所以 NEW_VERSION
-#: 不再等于尾号 —— 本件判的始终是「0013 放开的域 == 代码侧那两份」，把 0014 卷进来只会让
-#: alerts 的 CHECK 冒充 pending_approvals 的词表。R256 排了 0015（给 dataset_versions 补
-#: 版本自己的 classification / department_ids）之后尾号归它，R299 排了 0016（通知中心的读者生命周期
-#: 表 notification_states）之后尾号归它；本件的主题与判法一概不随之改变。
-#: 尾号仍然由上面那条断言逐字钉住。
-CATALOG_TAIL_VERSION = "0016"
+#: 🔴 目录尾号：**本件不再手抄**。数字只在 tests/test_r349_catalog_tail_ledger.py 写死一枚，
+#: 上面那行 import 它（同族：test_document_catalog_sync、test_r46_activity_signals、
+#: test_r120_clean_install_first_boot、test_r183_184_migration_pair、
+#: test_r251_alert_disposal_migration）。谁排下一号就去那一枚文件连名带主题一起改口 ——
+#: 改口是收紧，不是放宽；本件判据 1 仍然拿账本逐字钉住尾号，只是数字不再抄在这里。
+#: 本件的主题仍然是 0013 那一枚，所以 NEW_VERSION 不等于尾号 —— 本件判的始终是「0013 放开的
+#: 域 == 代码侧那两份」，把 0014（R251 告警台账的处置列）卷进来只会让 alerts 的 CHECK 冒充
+#: pending_approvals 的词表；尾号后来走到 0015（R256 的 scope 两列）与 0016（R299 的
+#: notification_states），本件的主题与判法一概不随之改变。
 NEW_VERSION = "0013"
 NEW_FILENAME = "0013_pending_approvals_status_includes_failed.sql"
 NEW_NAME = "pending_approvals_status_includes_failed"
@@ -462,9 +462,12 @@ def test_the_catalog_gains_exactly_one_version_and_the_loader_accepts_it():
     versions = [item.version for item in MIGRATIONS]
     on_disk = sorted(path.name for path in MIGRATIONS_DIR.glob("*.sql"))
 
-    assert versions == [f"{number:04d}" for number in range(1, len(versions) + 1)], versions
+    assert versions == [
+        f"{number:04d}" for number in range(1, int(CATALOG_TAIL_VERSION) + 1)
+    ], versions
     assert versions[-1] == CATALOG_TAIL_VERSION, (
-        "本单只排一枚新号；下一版必须回到这里改口（收紧，不是放宽）：" + str(versions[-1])
+        "目录尾号账本过期（唯一账本：tests/test_r349_catalog_tail_ledger.py，去那一处改口，"
+        "别改本件）—— 本件只排过 0013 一枚新号，收紧不是放宽：" + str(versions[-1])
     )
     assert NEW_FILENAME in on_disk
     assert next(item for item in MIGRATIONS if item.version == NEW_VERSION).name == NEW_NAME

@@ -3,6 +3,8 @@ import re
 
 from fastapi.testclient import TestClient
 
+from test_r349_catalog_tail_ledger import CATALOG_TAIL_VERSION
+
 
 def test_doc_panel_uses_catalog_endpoint():
     source = Path("frontend/src/components/DocPanel.vue").read_text(encoding="utf-8")
@@ -164,12 +166,19 @@ def test_the_offline_migration_plan_loads_every_version_through_0016():
     通知中心的读者生命周期表 notification_states）这七次一样主动改这条，而不是让它静默失去意义。
     0012 那一枚由总控落笔（R58 先例：该写域在施工方之外），0013、0014、0015 与
     0016 这四枚由施工方本人改口——尾号引信留在哪一版手里，下一版就归谁动。
+    R349 起尾号数字不在本件手抄：它只在 tests/test_r349_catalog_tail_ledger.py 写死一枚，同族件一律 import；
+    那一枚文件里另有一枚自校验引信，专抓「新排了一版却没在任何地方登记过」，所以改口只改那一处。
     """
     from app.db.migrations import MIGRATIONS, discover_migrations, migration_plan
 
     versions = [migration.version for migration in MIGRATIONS]
     assert versions == sorted(versions) and len(set(versions)) == len(versions)
-    assert versions[-1] == "0016"
+    assert versions == [
+        f"{number:04d}" for number in range(1, int(CATALOG_TAIL_VERSION) + 1)
+    ], versions
+    assert versions[-1] == CATALOG_TAIL_VERSION, (
+        "尾号账本过期：去改 tests/test_r349_catalog_tail_ledger.py 那两枚字面量，别改本件"
+    )
     assert [migration.version for migration in migration_plan({})] == [
         migration.version for migration in MIGRATIONS
     ]

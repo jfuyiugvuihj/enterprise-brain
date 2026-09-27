@@ -25,6 +25,7 @@ from app.api.v1 import feedback
 from app.common.auth import create_token
 from app.main import app
 from app.rag import retriever as rt
+from test_r349_catalog_tail_ledger import CATALOG_TAIL_VERSION
 
 REPO = Path(__file__).resolve().parents[1]
 MIGRATIONS = REPO / "migrations"
@@ -808,14 +809,17 @@ def test_the_migrations_stay_one_to_one_with_the_manifest_after_0016():
     告警台账的处置列）；0015 那枚由 R256 施工方本人改口（dataset_versions 的 scope 两列）；0016 那枚
     由 R299 施工方本人改口（notification_states：读者生命周期覆盖层，不是第二本通知台账）：
     这是把钉子收紧一版，不是放宽。
+    R349 起这枚尾号数字从 tests/test_r349_catalog_tail_ledger.py import，不再在本件手抄：同族那几份账已经收敛成一枚
+    定义 + N 处 import，「连名带断言一起改口」从此只在那一枚文件里做一次。
     """
     manifest = json.loads((MIGRATIONS / "manifest.json").read_text(encoding="utf-8"))
     on_disk = sorted(path.name for path in MIGRATIONS.glob("*.sql"))
 
     assert sorted(manifest) == on_disk, "SQL 文件与 manifest.json 必须一一对应"
     assert "0011_document_activity_signals.sql" in on_disk
-    assert not [name for name in on_disk if name.split("_")[0] > "0016"], (
-        "尾号 0016（R299 给通知中心落的读者生命周期表）之外不许有没人指名的号"
+    assert not [name for name in on_disk if name.split("_")[0] > CATALOG_TAIL_VERSION], (
+        f"尾号 {CATALOG_TAIL_VERSION}（数字只写在 tests/test_r349_catalog_tail_ledger.py，改口去那一处）之外"
+        "不许有没人指名的号；真要排下一版，就去账本把版本号与主题名一起改口并指名主题"
     )
     assert len({name.split("_")[0] for name in on_disk}) == len(on_disk), "版本号不许重复"
 

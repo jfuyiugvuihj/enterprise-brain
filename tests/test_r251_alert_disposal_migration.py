@@ -65,6 +65,7 @@ from test_r183_184_migration_pair import (
     statement_head,
     writes_rows,
 )
+from test_r349_catalog_tail_ledger import CATALOG_TAIL_NAME, CATALOG_TAIL_VERSION
 
 REPO = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = REPO / "migrations"
@@ -76,14 +77,15 @@ LANDED_FILENAME = "0014_alert_disposal_columns.sql"
 LANDED_PATH = MIGRATIONS_DIR / LANDED_FILENAME
 PRIOR_VERSION = "0013"
 
-#: 🔴 目录尾号引信（与 tests/test_document_catalog_sync.py、tests/test_r46_activity_signals.py、
-#: tests/test_r120_clean_install_first_boot.py、tests/test_r183_184_migration_pair.py、
-#: tests/test_r190_status_failed_domain.py 同族）。本件的主题是 0014，所以 ``LANDED_VERSION``
-#: 永远写 0014；但 T-1 那句「目录连续到几号」判的是目录的事实，跟着尾号走。R256 排了 0015
-#: （给 dataset_versions 补上版本自己那一份 classification / department_ids）之后尾号归它，
-#: 于是这里分成两枚常量：改口的只有 CATALOG_TAIL_*，本件重放的仍然是 0001..0014。
-CATALOG_TAIL_VERSION = "0015"
-CATALOG_TAIL_NAME = "dataset_version_scope_columns"
+#: 🔴 目录尾号：本件今天红的那一枚就在这两行 —— 0015 / dataset_version_scope_columns 是
+#: R256 那份手抄的账，R299 排了 0016（notification_states）之后没人替它改口，门就红了。
+#: 数字从此不在这里抄：CATALOG_TAIL_VERSION 与 CATALOG_TAIL_NAME 一律从 tests/test_r349_catalog_tail_ledger.py
+#: import（同族：test_document_catalog_sync、test_r46_activity_signals、
+#: test_r120_clean_install_first_boot、test_r183_184_migration_pair、
+#: test_r190_status_failed_domain）。谁排下一号去那一枚文件连名带主题一起改口，别改本件。
+#: 本件的主题是 0014，所以 ``LANDED_VERSION`` 永远写 0014；T-1 那句「目录连续到几号」判的是
+#: 目录的事实，跟着账本走 —— 主题版与尾号分成两条钉是收紧（多了一条「主题版必须还在目录
+#: 里」），不是把引信拆掉；本件重放的仍然是 0001..0014。
 
 TARGET_TABLE = "alerts"
 #: 八枚处置列的名单**取自产品代码**（``ALERT_DISPOSAL_DEFAULTS`` 的键序），本文件一枚都不抄。
@@ -386,8 +388,12 @@ def test_the_catalog_is_contiguous_and_ends_at_the_named_tail():
     ], versions
     assert versions == sorted(versions), "loader 登记的版次序不单调：首装的次序就不是它"
     assert LANDED_VERSION in versions, "本件的主题版被人从目录里摘走了"
-    assert versions[-1] == CATALOG_TAIL_VERSION
-    assert MIGRATIONS[-1].name == CATALOG_TAIL_NAME
+    assert versions[-1] == CATALOG_TAIL_VERSION, (
+        "尾号账本过期：去改 tests/test_r349_catalog_tail_ledger.py 那两枚字面量，别改本件"
+    )
+    assert MIGRATIONS[-1].name == CATALOG_TAIL_NAME, (
+        "尾号那一版的主题名与账本对不上：同样只在 tests/test_r349_catalog_tail_ledger.py 改，别改本件"
+    )
     assert next(item for item in MIGRATIONS if item.version == LANDED_VERSION).name == (
         LANDED_FILENAME[: -len(".sql")].split("_", 1)[1]
     )

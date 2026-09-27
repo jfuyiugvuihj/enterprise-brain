@@ -33,9 +33,9 @@ from app.common.identity import Principal
 from app.storage import pending_approvals as store
 from app.storage.sessions import SessionRegistry
 from test_r190_status_failed_domain import (  # noqa: T401  共用同一份离线 DDL 重放，词表不外抄
-    CATALOG_TAIL_VERSION,
     status_domain_through,
 )
+from test_r349_catalog_tail_ledger import CATALOG_TAIL_VERSION  # 目录尾号唯一账本
 
 SESSION_ID = "r175-crash"
 OWNER = "u-r175"

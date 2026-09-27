@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 from app.db.migrations import MIGRATIONS, discover_migrations
+from test_r349_catalog_tail_ledger import CATALOG_TAIL_VERSION
 
 REPO = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = REPO / "migrations"
@@ -40,14 +41,14 @@ NEW_VERSION = "0012"
 NEW_FILENAME = "0012_alert_and_pending_approval_attribution_columns.sql"
 NEW_PATH = MIGRATIONS_DIR / NEW_FILENAME
 
-#: 🔴 目录尾号引信（与 tests/test_document_catalog_sync.py、tests/test_r46_activity_signals.py、
-#: tests/test_r120_clean_install_first_boot.py、tests/test_r190_status_failed_domain.py 同族）。
-#: 本单落 0012 时尾号就是 0012；R190 排了 0013（放开挂起台账 status 的取值域）之后尾号归它，
-#: R251 排了 0014（告警台账的处置列）之后尾号归它，R256 排了 0015（给 dataset_versions 补上
-#: 版本自己那一份 classification / department_ids）之后尾号归它，R299 排了 0016（通知中心的读者
-#: 生命周期表 notification_states）之后尾号归它。本件连名带断言一起改口 ——
-#: 这是把钉子收紧一版，不是放宽。谁排下一号必须回到这里改这一格。
-CATALOG_TAIL_VERSION = "0016"
+#: 🔴 目录尾号：**本件不再手抄**。数字只在 tests/test_r349_catalog_tail_ledger.py 写死一枚，
+#: 上面那行 import 它（同族：test_document_catalog_sync、test_r46_activity_signals、
+#: test_r120_clean_install_first_boot、test_r190_status_failed_domain、
+#: test_r251_alert_disposal_migration）。本单落 0012 时尾号就是 0012；R190 排了 0013（放开挂起
+#: 台账 status 的取值域）、R251 排了 0014（告警台账的处置列）、R256 排了 0015（给
+#: dataset_versions 补上版本自己那一份 classification / department_ids）、R299 排了 0016（通知
+#: 中心的读者生命周期表 notification_states）之后，尾号一路走到账本当前那一枚。下一号仍要去
+#: 账本改口，本件判据 9 那条断言与下面那份名册会替门盯着：0012 之后只许站着被点名的那几枚。
 
 #: 本单送的两枚列：R184 管告警台账的行级归属，R183 管挂起轮声明的档位。
 ALERTS_DEPARTMENT = ("alerts", "department")
@@ -351,10 +352,13 @@ def test_the_catalog_gains_exactly_one_version_and_the_loader_accepts_it():
     versions = [item.version for item in MIGRATIONS]
     on_disk = sorted(path.name for path in MIGRATIONS_DIR.glob("*.sql"))
 
-    assert versions == [f"{number:04d}" for number in range(1, len(versions) + 1)], versions
+    assert versions == [
+        f"{number:04d}" for number in range(1, int(CATALOG_TAIL_VERSION) + 1)
+    ], versions
     assert NEW_VERSION in versions, "本单的两枚列必须由已登记的 0012 送出"
     assert versions[-1] == CATALOG_TAIL_VERSION, (
-        "目录尾号引信（来历见 CATALOG_TAIL_VERSION）：要加第三枚列请回到 0012 里加"
+        "目录尾号引信（数字只写在 tests/test_r349_catalog_tail_ledger.py，改口去那一处）："
+        "要加第三枚列请回到 0012 里加"
     )
     assert [version for version in versions if version > NEW_VERSION] == [
         "0013",
