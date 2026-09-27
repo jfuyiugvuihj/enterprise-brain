@@ -896,6 +896,21 @@ def _require_migrated_tables(conn, *table_names: str) -> None:
             )
 
 
+def _require_sessions_read_schema(conn, *table_names: str) -> None:
+    """读腿的现查闸：只有「生产 + 该由迁移建的表不在」这一格开口，别的一律不发。
+
+    R397。`_list_sessions` / `_get_session_messages` / `get_session` 的 session 腿从前直接把
+    `psycopg.errors.UndefinedTable` 原样抛出，两张读腿的出口都是裸 500 纯文本。这一枚让读腿在发
+    语句之前先过一次 `_require_migrated_tables` 那同一句现查，抛出来的还是族里唯一那枚具名错
+    （抛出方仍然只有它一个），出口因此只需接一种。
+
+    非生产一格都不许变：开发与裸机照旧由 `_ensure_sessions_table()` 就地补 DDL 自愈，离线那两支
+    连连接都不发；缺表以外的故障（驱动缺失）走的是另一条腿，本闸不认、也不替它打掩护。
+    """
+    if _is_production_environment():
+        _require_migrated_tables(conn, *table_names)
+
+
 def _ensure_session(session_id: str, user_id: str = "") -> dict:
     now = datetime.now(_tz).isoformat()
     if not _session_database_available():
@@ -955,6 +970,7 @@ def _list_sessions() -> list[dict]:
             result.append(item)
         return sorted(result, key=lambda item: item["updated_at"], reverse=True)
     with _sess_conn() as conn:
+        _require_sessions_read_schema(conn, "sessions", "session_messages")
         rows = conn.execute(
             """SELECT s.*,
                (SELECT COUNT(*) FROM session_messages WHERE session_id = s.id AND role = 'user') as msg_count
@@ -967,6 +983,7 @@ def _get_session_messages(session_id: str) -> list[dict]:
     if not _session_database_available():
         return [dict(message) for message in _MEM_SESSION_MESSAGES.get(session_id, [])]
     with _sess_conn() as conn:
+        _require_sessions_read_schema(conn, "session_messages")
         rows = conn.execute(
             "SELECT role, content, steps, created_at FROM session_messages WHERE session_id = %s ORDER BY id",
             (session_id,),
@@ -3595,10 +3612,20 @@ def _history_scope_face(messages, principal, session_id: str) -> tuple[list[dict
 @router.get("/sessions")
 async def list_sessions(request: FastAPIRequest):
     principal = _session_principal_or_error(request)
+    try:
+        sessions = _list_sessions()
+    except ChatSchemaNotMigratedError as exc:
+        # R397：与写腿 ask 同一枚具名错、同一个码（行号会漂，故这里只点名字不点行号）。
+        # 只接这一种：驱动缺失那类 RuntimeError 照旧往上抛，不许顺手洗成 503。
+        logger.warning(
+            "[Sessions] 生产库缺该由迁移建的会话表，出口按存储拒答而不是裸 500: "
+            f"route=list_sessions code=storage_unavailable reason={exc}"
+        )
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
     return {
         "sessions": [
             session
-            for session in _list_sessions()
+            for session in sessions
             if session_registry.is_owned_by(session.get("id", ""), principal)
         ]
     }
@@ -3609,17 +3636,29 @@ async def get_session(session_id: str, request: FastAPIRequest):
     principal = _authorize_session_request(request, session_id)
     # R295 判据①：归属之外再重过一遍作用域闸门。换的是不在范围内的**那一轮**的脸，
     # 会话不清空——读的人仍然看得见这一轮存在过，只是它今天不给看。
-    msgs, withheld = _history_scope_face(
-        _get_session_messages(session_id), principal, session_id
-    )
-    if not _session_database_available():
-        return {
-            "session": _MEM_SESSIONS.get(session_id),
-            "messages": msgs,
-            "withheld_turns": withheld,
-        }
-    with _sess_conn() as conn:
-        row = conn.execute("SELECT * FROM sessions WHERE id = %s", (session_id,)).fetchone()
+    # R397：两条读腿各自过闸，缺哪枚表由哪枚腿指名。现读取证的次序：messages 腿在 session 腿
+    # 之前跑，所以它先拒时 session 腿一条语句都不发；只有 `session_messages` 在、`sessions` 不在
+    # 这一格，才是 messages 腿读完了、session 腿自己拒。两格都不许留下半张屏。
+    try:
+        msgs, withheld = _history_scope_face(
+            _get_session_messages(session_id), principal, session_id
+        )
+        if not _session_database_available():
+            return {
+                "session": _MEM_SESSIONS.get(session_id),
+                "messages": msgs,
+                "withheld_turns": withheld,
+            }
+        with _sess_conn() as conn:
+            _require_sessions_read_schema(conn, "sessions")
+            row = conn.execute("SELECT * FROM sessions WHERE id = %s", (session_id,)).fetchone()
+    except ChatSchemaNotMigratedError as exc:
+        # 同一枚形状、同一个码；接的是闸的具名错，不是 `UndefinedTable`，也不是别的 RuntimeError。
+        logger.warning(
+            "[Sessions] 生产库缺该由迁移建的会话表，出口按存储拒答而不是裸 500: "
+            f"route=get_session code=storage_unavailable reason={exc}"
+        )
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
     return {
         "session": dict(row) if row else None,
         "messages": msgs,

@@ -402,42 +402,77 @@ def _detail_of(node: ast.Raise):
     raise AssertionError("那枚 503 没有 detail")
 
 
-def test_the_module_now_opens_exactly_six_503_raises_each_named():
-    """判据③：新增 503 出口必须逐枚点名给理由。本单只新增一枚（`ask`），其余五枚是存量。
+#: ── R397：下面四本账改成从 `app/api/v1/chat.py` 现场派生，不再抄今天的数 ──────────────
+#: 为什么不是为了让门绿：`== 6` 与那份手抄名单是 R384 交付当天的**现场**，抄进钉里就成了下一班的假红
+#: ——本仓为同一枚病开过 R346 / R351 / R377 / R396 / R400 一整族单。R397 合法地把两枚会话读腿折成
+#: 503，名单因此 6 ⇒ 8；把数改成 8 只是把债从 6 搬到 8。所以名单与枚数一律由 AST 现查，账上只留
+#: **每一枚为什么许在这里**那一句人写的理由——理由是人写的，枚数不是。
+#: 极性两头都不许溜：长出未登记理由的出口算红，在册出口被拆掉也算红；一枚都数不到 ⇒ 当场红
+#: （尺子自己瞎了不是免检理由，K2 形状，R396 刚为这个挨过退单）。
+STORAGE_EXIT_REASONS: dict[str, tuple[str, str]] = {
+    "_enqueue_ask_turn": ("dict:code+message", "存量：Redis 挂了交 queue_unavailable 的 dict 信封，与存储拒答分家"),
+    "ask": (STORAGE_CODE, "R384：写腿缺该由迁移建的表，裸 500 折成已有的那一码"),
+    "cancel_queued_request": ("dict:code+message", "存量：队列腿"),
+    "hitl_pending": (STORAGE_CODE, "存量：R384 之前本模块唯一那枚 storage_unavailable 出口"),
+    "queue_stats": ("dict:code+message", "存量：队列腿"),
+    "queue_status": ("dict:code+message", "存量：队列腿"),
+    # R397：两枚会话读腿。这里加的是条目与理由，不是某一行的数。
+    "get_session": (STORAGE_CODE, "R397：`GET /sessions/{id}` 两条读腿共用一枚窄接法"),
+    "list_sessions": (STORAGE_CODE, "R397：`GET /sessions` 缺表那一格从裸 500 折成已有的那一码"),
+}
+#: 现查闸的在册持有者（子集判：新加一枚持有者不出声，在册那几枚被拆掉算红）。
+PROBE_HOLDER_ANCHORS = (
+    "_require_sessions_read_schema",  # R397：两枚会话读腿共用那一枚
+    "_ensure_documents_table",        # R384 在册
+    "_ensure_sessions_table",         # R384 在册
+)
+#: 接这一族具名错的转换点：R384 起于一枚，R397 给两枚会话读腿各接一枚。
+FAMILY_CONVERSION_SITES = ("ask", "get_session", "list_sessions")
 
-    两件事分别钉：**枚数**与**归属**。只钉名单会漏掉「同一枚函数里再长一门」——那是反证刀
-    K8 试出来的洞，补强之后那把刀同时咬两枚。
+
+def _exits_by_owner(tree: ast.Module | None = None) -> dict[str, list]:
+    """现场派生 `{宿主函数名: [那一枚那些 503 的 detail 形状]}`：名单与枚数都从这里来。"""
+    by_owner: dict[str, list] = {}
+    for name, node in _status_sites(_tree() if tree is None else tree, 503):
+        by_owner.setdefault(name, []).append(_detail_of(node))
+    return {owner: sorted(shapes, key=str) for owner, shapes in by_owner.items()}
+
+
+def test_the_module_now_opens_exactly_six_503_raises_each_named():
+    """判据③：每一枚 503 出口都得有一枚在册的**理由**，理由来自 R384 / R391 / R397 三单。
+
+    名单与枚数都改成派生（AST 现查 `HTTPException(status_code=503)` 的宿主函数名），账上只留
+    「这一枚为什么许在这里」。为什么不是为了让门绿：这格仍然同时钉两头极性——长出一枚没登记
+    理由的出口算红，在册那枚被人拆掉也算红；派生一枚都数不到还是红，不搞「没数到所以不判」。
+    函数名里的 `exactly_six` 是 R384 当天的读数，留名只因契约按名字指它（改名要总控重登记）。
     """
     sites = _status_sites(_tree(), 503)
-    owners = sorted(name for name, _node in sites)
+    by_owner = _exits_by_owner()
 
-    assert len(sites) == 6, [f"{name}:{node.lineno}" for name, node in sites]
-    assert owners == sorted([
-        "_enqueue_ask_turn",      # 存量：QueueConnectionError -> 503 {"code": "queue_unavailable", ...}
-        "ask",                    # ← 本单新增的唯一一枚：缺表从裸 500 折成已有的那一码
-        "cancel_queued_request",  # 存量
-        "hitl_pending",           # 存量：本模块此前唯一那枚 storage_unavailable 出口
-        "queue_stats",            # 存量
-        "queue_status",           # 存量
-    ]), owners
+    assert sites, "chat.py 里一枚 503 都数不到：尺子自己瞎了，不是没有出口要判"
+    unregistered = sorted(set(by_owner) - set(STORAGE_EXIT_REASONS))
+    withdrawn = sorted(set(STORAGE_EXIT_REASONS) - set(by_owner))
+    assert not unregistered, f"新长出 503 出口而没有在册理由：{unregistered}"
+    assert not withdrawn, f"在册的 503 出口被拆掉了：{withdrawn}"
+    assert sorted(by_owner) == sorted(STORAGE_EXIT_REASONS), sorted(by_owner)
 
 
 def test_the_five_storage_exits_that_predate_this_ticket_are_untouched():
-    """五枚存量出口里，`detail` 的字面量一枚都不许跟着本单动：只有 `ask` 那一枚是新的。"""
-    sites = _status_sites(_tree(), 503)
-    by_owner: dict[str, list] = {}
-    for name, node in sites:
-        by_owner.setdefault(name, []).append(_detail_of(node))
+    """在册出口的 `detail` 形状逐枚不许跟着别的单动：只有派生名单里那句理由能解释它。
 
-    assert sorted(by_owner["ask"]) == [STORAGE_CODE], by_owner["ask"]
-    legacy = {name: details for name, details in by_owner.items() if name != "ask"}
-    assert legacy == {
-        "_enqueue_ask_turn": ["dict:code+message"],
-        "hitl_pending": [STORAGE_CODE],
-        "cancel_queued_request": ["dict:code+message"],
-        "queue_stats": ["dict:code+message"],
-        "queue_status": ["dict:code+message"],
-    }, legacy
+    为什么不是为了让门绿：把那份手抄 dict 换成一份新抄的四枚名单，只是把债从 6 搬到 8。名字里的
+    `five` 同 `exactly_six` 一样是 R384 当天的现场读数，留名只为契约按名指它。真正在
+    判的是逐格形状：队列那四枚必须**继续**交 `{"code", "message"}` 那套 dict 信封——「存储问不
+    出」与「Redis 不在」是两张脸，不许被这一族折成同一枚字符串码；`ask` / `hitl_pending` 与
+    R397 那两枚读腿必须继续交 `storage_unavailable`。比的是**列表**不是集合，所以「同一枚函数
+    里再长一门」（反证刀 K8 试出来的那个洞）仍然算改了形状。
+    """
+    live = _exits_by_owner()
+
+    assert live, "一枚 503 出口都派生不到：尺子瞎了，不许读成「没有要判的出口」"
+    for owner, (shape, _why) in STORAGE_EXIT_REASONS.items():
+        assert live.get(owner) == [shape], (owner, live.get(owner), shape)
+    assert sorted(live) == sorted(STORAGE_EXIT_REASONS), (sorted(live), sorted(STORAGE_EXIT_REASONS))
 
 
 def test_the_new_exit_reuses_the_existing_code_verbatim():
@@ -490,12 +525,24 @@ def test_only_the_probe_raises_the_family():
 
 
 def test_every_probe_call_site_sits_inside_a_production_branch():
-    """两处现查都只可能在生产分支被走到 —— 出口那枚 503 因此不需重判环境，也不会替非生产打掩护。"""
+    """调用点由 AST 现数，在册持有者一枚不许丢；每一处仍必须只可能在生产分支被走到。
+
+    为什么不是为了让门绿：`== 2` 是 R384 当天的现场，R397 给两枚会话读腿新接了一枚闸
+    （`_require_sessions_read_schema`），调用点因此**合法地**变成 3 枚——写死 3 只是把债搬一格。
+    改成两句派生账：持有者名单必须覆盖锚点，以及每一枚调用点都仍走在 `_is_production_environment()`
+    里面。加闸不出声（新持有者只要还在生产分支里就不算本格的账），拆闸、把闸搬到非生产、一枚
+    调用点都数不到，三样都算红。
+    """
     tree = _tree()
     calls = [node for node in ast.walk(tree)
              if isinstance(node, ast.Call) and getattr(node.func, "id", "") == PROBE]
+    call_ids = {id(node) for node in calls}
+    holders = {scope.name for scope in _function_scopes(tree)
+               for node in ast.walk(scope) if id(node) in call_ids}
 
-    assert len(calls) == 2, [node.lineno for node in calls]
+    assert calls, f"全模块数不到一处 `{PROBE}(` 调用点：闸没了，缺表那一格又变回裸 500"
+    missing = sorted(set(PROBE_HOLDER_ANCHORS) - holders)
+    assert not missing, f"在册的现查持有者不见了：{missing}"
     for call in calls:
         guards = [node for node in ast.walk(tree)
                   if isinstance(node, ast.If) and node.lineno <= call.lineno <= (node.end_lineno or node.lineno)
@@ -595,13 +642,28 @@ def test_the_upload_metadata_leg_still_answers_200_when_documents_is_missing(mon
 
 
 def test_the_conversion_is_narrow_at_the_module_level_too():
-    """除出口那一枚之外，全模块不许出现第二处接这个族的 `except`（否则转换就不止一处）。"""
+    """接这一族具名错的转换点也是派生名单：不许多、不许少、每处仍只接一种、只交一个码。
+
+    为什么不是为了让门绿：R384 只有 `ask` 一枚，R397 给两枚会话读腿各接一枚，把
+    `[("ask", FAMILY)]` 换成硬写三枚的名单同样是抄现场。名单来自 AST 现查，账上只留锚点名。
+    发现那一步用 `FAMILY in ast.unparse(node.type)`，所以宽捕获（`except
+    (ChatSchemaNotMigratedError, RuntimeError):` 一类）会被现查一并抓出来而不是被放过——那正是
+    判据②要挡的事；一枚都数不到 ⇒ 出口回到裸 500 ⇒ 当场红。
+    """
     handlers = [
-        (scope.name, ast.unparse(node.type))
+        (scope.name, node)
         for scope in _function_scopes(_tree())
         for node in ast.walk(scope)
         if isinstance(node, ast.ExceptHandler) and node.type is not None
         and FAMILY in ast.unparse(node.type)
     ]
+    names = sorted(owner for owner, _node in handlers)
 
-    assert handlers == [("ask", FAMILY)], handlers
+    assert handlers, f"全模块没有一处接 `{FAMILY}` 的 except：缺表那一格又变回裸 500"
+    assert names == sorted(FAMILY_CONVERSION_SITES), names
+    for owner, node in handlers:
+        assert ast.unparse(node.type) == FAMILY, (owner, ast.unparse(node.type))
+        body = " ".join(ast.unparse(stmt) for stmt in node.body)
+        assert body.count("raise HTTPException") == 1, (owner, body)
+        assert STORAGE_CODE in body, (owner, body)
+        assert body.count("logger.warning") == 1, (owner, body)

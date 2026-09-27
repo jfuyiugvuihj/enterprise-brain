@@ -80,6 +80,12 @@ version) DO UPDATE`（`catalog.py:743-753`）⇒ 旧版本那行的 `storage_pat
 重试会在盘上留下前一发的孤儿文件，今天没有任何一条腿会去索引它。钉：`test_the_stored_file_survives_...`。
 
 盘上卫生：本件对被跟踪文件零写口（`tmp_path` 替身台账），变异全部在内存里（R253 口径）。
+
+🔴 R397 追加的更正（不删本件原始读数，只登记它过期）：上面判据②那句「`status_code=503` 抛出点仍**恰
+6 枚**」从今天起不再成立——R397 把 `GET /sessions` 与 `GET /sessions/{id}` 两枚读腿折成 503，门账
+6 ⇒ 8。本件的口径因此改成**派生**：名单由 AST 现查，钉「R391 的两枚宿主函数不在名单里」加「基点在册
+的出口一枚没被拆」，不再钉枚数；K4b 那把也从「变异之后恰 7 枚」换成「变异必须长出一枚词汇表之外的新
+detail」这一枚不变式。R391 那一发穿透本身一字未动。
 """
 import ast
 import re
@@ -103,6 +109,12 @@ CHAT_REL = "app/api/v1/chat.py"
 CATALOG_REL = "app/documents/catalog.py"
 FUNCTION = "_record_uploaded_version"
 GATE = "_require_ready_store"
+
+#: R391 自己的两枚宿主函数。本单的口径是「新增的是穿透，不是 503」，所以钉的不是门账今天有几枚，
+#: 而是这两枚名字**不许出现在** AST 现查出来的 503 出口名单里（派生口径见下面那格的 docstring）。
+#: 为什么不是为了让门绿：`== 6` 是 R391 当天的现场，R397 把两枚会话读腿折成 503 之后门账已是 8 枚，
+#: 换成 `== 8` 只是把同一笔债搬到下一单——枚数交给派生，账上只留「谁不许长出口」这句人写的理由。
+R391_OWNED_EXIT_HOSTS = {FUNCTION, "upload_document"}
 UPLOAD_PATH = "/api/v1/upload"
 ADMIN = "r391-admin"
 ACCOUNT = {"id": "u-r391", "username": ADMIN, "role": "admin", "department": "finance", "status": "active"}
@@ -353,6 +365,36 @@ def raise_sites(text: str, status: int) -> list[tuple[str, int]]:
                             and keyword.value.value == status:
                         owners.append((scope.name, node.lineno))
     return owners
+def details_of_503(text: str) -> set[str]:
+    """现查 `chat.py` 全部 503 出口的 detail 形状（字面量取值，非常量取 AST 归一文面）。
+
+    为什么不是为了让门绿：反证刀 K4b 的旧口径是「变异之后门账 == 7」，那是一枚绝对数，R397 之后
+    门账已是 8 枚——写 9 也只是把债搬到下一单。改成派生集合的差：变异必须**长出一枚新的 detail**，
+    而那枚新 detail 必须落在 `ErrorEnvelope` 已批准词汇表之外，否则这枚哨兵就是哑的。派生数不到
+    东西时当场红，不静默免检。
+    """
+    tree_ = ast.parse(text)
+    shapes: set[str] = set()
+    for scope in ast.walk(tree_):
+        if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(scope):
+            if not (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)):
+                continue
+            if getattr(node.exc.func, "id", "") != "HTTPException":
+                continue
+            keywords = {kw.arg: kw.value for kw in node.exc.keywords}
+            status = keywords.get("status_code")
+            if not (isinstance(status, ast.Constant) and status.value == 503):
+                continue
+            detail = keywords.get("detail")
+            if detail is None:
+                shapes.add("<no-detail>")
+            elif isinstance(detail, ast.Constant):
+                shapes.add(str(detail.value))
+            else:
+                shapes.add(ast.unparse(detail))
+    return shapes
 
 
 def store_gate_detail() -> str:
@@ -562,13 +604,23 @@ def test_the_attribution_warning_line_is_still_there_verbatim():
 
 
 def test_the_503_ledger_stays_at_six_with_the_same_owners():
-    """判据③：本单不新增抛出点 —— 门账仍是 6 枚、归属名单一字不改（新增的是穿透，不是 503）。"""
-    sites = raise_sites(working_text(CHAT_REL), 503)
-    owners = sorted(name for name, _line in sites)
-    assert len(sites) == 6, sorted(sites)
-    assert owners == sorted(["_enqueue_ask_turn", "ask", "cancel_queued_request",
-                             "hitl_pending", "queue_stats", "queue_status"]), owners
-    assert owners == sorted(name for name, _line in raise_sites(base_text(CHAT_REL), 503)), "基点名单漂了"
+    """判据③：R391 不新增 503 出口——钉的是「名单里没有我」，不是名单今天有几枚。
+
+    为什么不是为了让门绿：`== 6` 是 R391 当天的现场，R397 合法把两枚会话读腿折成 503 之后它必然
+    过期，换成 `== 8` 只是把债搬到下一单。这格因此改成两句派生账：① 本单自己的两枚宿主函数
+    （`R391_OWNED_EXIT_HOSTS`）在派生名单里一枚都不许出现——那才是「新增的是穿透，不是 503」；
+    ② 名单只许变长不许变短，基点在册的出口被拆掉 = 有人顺手动了别人的出口。两头派生到空集都当场
+    红，不搞「没数到所以免检」。函数名里的 `at_six` 是旧读数，留名只因契约按名字指它（改名要总控重登记）。
+    """
+    live = {name for name, _line in raise_sites(working_text(CHAT_REL), 503)}
+    base = {name for name, _line in raise_sites(base_text(CHAT_REL), 503)}
+
+    assert live, "chat.py 一枚 503 都数不到：尺子自己瞎了，不是没有出口要判"
+    assert base, f"基点 {BASE} 的 chat.py 一枚 503 都数不到：派生的另一头也瞎了"
+    owned = sorted(live & R391_OWNED_EXIT_HOSTS)
+    assert not owned, f"R391 的腿自己长出了 503 出口：{owned}"
+    withdrawn = sorted(base - live)
+    assert not withdrawn, f"R391 那天在册的出口被拆掉了：{withdrawn}"
 
 
 def test_no_error_code_or_status_tier_was_invented():
@@ -664,7 +716,19 @@ def test_the_ruler_sees_every_way_this_fix_could_be_faked(label):
     if label == "K2_widened":
         assert facts["version_tolerance"][0] == "Exception", facts["version_tolerance"]
     if label == "K4b_new_code":
-        assert len(raise_sites(mutate(working_text(CHAT_REL)), 503)) == 7, "门账没长说明变异没落地"
+        # 派生不变式，不抄绝对数：门账今天 8 枚，写死 7 或 9 都会随下一次加出口假红。
+        # 要的是两件事：这把刀确实改出了新出口，且改出来的那枚 detail 不在已批准词汇表里。
+        before = working_text(CHAT_REL)
+        after = mutate(before)
+        assert len(raise_sites(after, 503)) > len(raise_sites(before, 503)), "门账没长说明变异没落地"
+        invented = details_of_503(after) - details_of_503(before)
+        assert invented, "变异落地却没带出新 detail：这把刀没咬到东西"
+        approved = set(get_args(ErrorEnvelope.model_fields["code"].annotation))
+        assert approved, "已批准词汇表派生到空集：尺子瞎了，不是没有码要判"
+        assert invented - approved, (
+            f"K4b 造出来的 detail 全在已批准词汇表里（{sorted(invented)}）："
+            "这枚哨兵已经证不了「零新增错误码」，换一把没在册的码，别删格"
+        )
 
 
 def test_the_ruler_is_not_vacuous_on_the_honest_source():

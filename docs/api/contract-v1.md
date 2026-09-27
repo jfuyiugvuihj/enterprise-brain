@@ -5273,3 +5273,101 @@ necessarily re-terminates it. No historical character changed: pinned by
 `tests/test_r388_read_leg_answers_absence.py::test_the_contract_appends_one_section_and_deletes_nothing`, which
 folds CRLF to LF on both sides and asserts the base blob is a prefix of the shipped bytes.
 `app/api/v1/notifications.py`, `app/notifications/sources.py` and every frozen lib file +0 / -0.
+
+## R397 · 会话读腿的两张裸 500 脸折成 503（`GET /sessions` 与 `GET /sessions/{session_id}`，2026-09-27）
+
+**一句话**：R384 只折了写腿 `ask` 那一格，结转的账上留着两枚**读**腿。生产 + PostgreSQL 在位 +
+`sessions` / `session_messages` 该由迁移建而没建，这两枚出口交出去的是裸 500 `text/plain`
+`Internal Server Error`：屏上没有可重试的码，日志里没写缺哪枚表。本单只治这两格，写腿一个字未动。
+读数一律取自 `TestClient(app, raise_server_exceptions=False)` 对一具替身台账（它只回答「这一次
+`to_regclass('public.x')` 找不找得到」与「对不在的账发 DML 得像 PG 一样失败」）：零真库、零服务、零模型端口。
+
+**先更正两格派工口径（现读，不照抄）**
+
+- 「驱动缺失 `_sess_conn:104`」行号已漂走：`:104` 今天是 `MAX_DOCUMENT_UPLOAD_BYTES` 的收括号，那句
+  `RuntimeError("PostgreSQL driver is unavailable")` 在 `app/api/v1/chat.py:861`。
+- 「`_get_session_messages` 在 `SELECT * FROM sessions` 之前已经跑过，哪一条先炸要现读」——现读结论：
+  两枚账都缺时**是 messages 腿先炸，且它先炸那一发里 session 腿连一次现查都不做**（台账只记到 1 句）；
+  只有「`session_messages` 在、`sessions` 单独缺」这一格才是 messages 腿读完、session 腿自己拒（台账 2 句）。
+
+**改了什么**
+
+- 一枚读腿共用的闸 `_require_sessions_read_schema(conn, *tables)`（`:899`）：非生产一格语句都不发；生产
+  就把现查转手给既有那枚 `_require_migrated_tables`（`:890`）——抛出方仍然只有它一枚，
+  `ChatSchemaNotMigratedError` 的消息文本、基类、点名次序一个字节未改。
+- 三条读语句各查自己将要读的那本账：`_list_sessions`（`:973`，两枚都查，因为它那一句 SQL 同时引用
+  `sessions` 与 `session_messages`）、`_get_session_messages`（`:986`，只查 `session_messages`）、
+  `get_session` 的 session 腿（`:3653`，只查 `sessions`）。「分别可拒」的根据就在这里：谁缺谁指名。
+- 两枚出口各一枚窄接法：`list_sessions` `:3617` / `:3624`，`get_session` `:3655` / `:3661` ⇒
+  `HTTPException(503, detail="storage_unavailable")`，原句进 `logger.warning`（带 `route=` 与 `code=`），
+  形状照抄写腿 `ask` 的 `:2255` / `:2263`。
+
+**修前 ⇒ 修后（同一具替身台账，两枚出口逐格对照）**
+
+| 格 | `GET /sessions` | `GET /sessions/{id}` |
+| --- | --- | --- |
+| 生产·两枚账都缺 | `500 text/plain` ⇒ **503 `storage_unavailable`**（点名 `sessions`） | `500 text/plain`（1 句）⇒ **503**（messages 腿拒，session 腿零语句） |
+| 生产·只缺 `session_messages` | `500` ⇒ **503**（点名 `session_messages`） | `500` ⇒ **503**（仍是 messages 腿先拒） |
+| 生产·只缺 `sessions` | `500` ⇒ **503**（点名 `sessions`） | `500`（2 句都发过）⇒ **503**（messages 读完，session 腿拒） |
+| 生产·两枚账都在 | `200 {"sessions": []}` ⇒ 同 | `200 {session, messages, withheld_turns}` ⇒ 同 |
+| 开发·缺表 | `500 text/plain` ⇒ **同**（闸只认生产，这一格本单不接管） | `500` ⇒ **同**（现查零次） |
+| 离线（`_session_database_available()` 为假） | 内存表 `200` ⇒ 同，零语句 | 内存表 `200` ⇒ 同，零语句 |
+| 驱动缺失（`:861`） | `500 text/plain` ⇒ **同**（不许洗） | `500 text/plain` ⇒ **同** |
+
+**判据②那两格没被洗，是有钉的**：闸落在 `with _sess_conn()` **里面**，驱动没起来就到不了闸，两枚读腿对
+`RuntimeError("PostgreSQL driver is unavailable")` 交回的还是那张裸 500；`_ensure_session` 那句
+`an authenticated user_id is required to persist a session`（`:923`）是写腿的话，两枚读腿根本不经过它，
+而两枚新接法各只接 `ChatSchemaNotMigratedError` 一种。拒答那一格交回的 body 只有 `detail` 一枚键——
+"读到的 messages 配一句拒答"那种半张屏不存在。
+
+**门账从 6 枚长到 8 枚（本单新增的正是这两枚 HTTP 出口，名单要总控重登记）**：错误码、reason 词、status
+档位仍然零新增——两枚新出口的 `detail` 与 `ask`、`hitl_pending` 那两枚是同一个字符串字面量（
+`ast.literal_eval` 判，不是引号匹配；钉在
+`tests/test_r397_read_legs_refuse_a_missing_table.py::test_the_new_exits_reuse_the_existing_code_verbatim`）。
+但 `chat.py` 里 `raise HTTPException(status_code=503, ...)` 的**枚数与归属名单**确实变了：
+`_enqueue_ask_turn` / `ask` / `cancel_queued_request` / **`get_session`** / `hitl_pending` /
+**`list_sessions`** / `queue_stats` / `queue_status`（8 枚），现查调用点 2 枚 ⇒ 3 枚。因此下面三件为
+「本单不新增出口」而写的账必须按各自口径重登记（本件不代改他单的钉，禁域）：
+`tests/test_r384_migrations_first_refuses_at_the_ask_exit.py` 的
+`test_the_module_now_opens_exactly_six_503_raises_each_named`、
+`test_the_five_storage_exits_that_predate_this_ticket_are_untouched`、
+`test_every_probe_call_site_sits_inside_a_production_branch`、
+`test_the_conversion_is_narrow_at_the_module_level_too`；
+`tests/test_r391_upload_refusal_reaches_the_exit.py` 的
+`test_the_503_ledger_stays_at_six_with_the_same_owners` 与
+`test_the_ruler_sees_every_way_this_fix_could_be_faked[K4b_new_code]`（后者把"变异之后 7 枚"写成了绝对数）；
+`tests/test_r377_migrations_first_family_is_contained_at_the_store_layer.py` 的
+`test_the_two_out_of_write_set_modules_are_still_report_only`（`chat.count("_require_migrated_tables(")` 3 ⇒ 4）。
+改的是账上的名单，不是任何一张脸。
+
+Physical lines, read off `git diff --numstat 49489c3`: `app/api/v1/chat.py` +51 / -12; the pins live in the
+new untracked file `tests/test_r397_read_legs_refuse_a_missing_table.py`. This file is a tail append only:
+`git show 49489c3:docs/api/contract-v1.md` is a byte prefix of the shipped bytes, `## ` 行首枚数 51 ⇒ 52，
+中段一个字节未改（钉在 `test_the_contract_appends_one_section_and_deletes_nothing`）。
+`app/notifications/**`、`app/documents/**`、`app/rag/**`、`app/agents/**`、`frontend/**`、`deploy/**` 与本单的
+写腿 `ask` 全部 +0 / -0。
+
+### 登记未修（本单只报不改那一格：`GET /documents/{filename}/versions` 的读/判次序）
+
+现读口径一律给两个坐标（左 = 基点 `49489c3`，右 = 本单交回树；本单在 `:899` 之后插了行，`:899` 之前两坐标重合）。
+
+- **真实次序**：`:4380 / :4419` 先 `versions = list_document_versions(filename)`，`:4381-:4382 / :4420-:4421`
+  空账即 `404 resource_not_found`，到 `:4383 / :4422` 才 `_document_authorization_decision(...)`。
+  上一班记的 `:4367 / :4373` 两枚行号今天 `rg -F` 落空（`:4367` 是 `@router.get("/documents/catalog")`，
+  `:4373` 是 `restricted_summary(...)` 那一行）——账上的坐标漂了，读数本身没错。
+- 🔴 **判定需要那一行当输入，"先判后读"不是白送**：`_document_authorization_decision`（`:653`）把
+  `version` 交给 `_document_resource_scope`（`:627`），而 scope 的 `owner_id` / `department` /
+  `department_ids` / `classification` / `visibility` / `version_id` / `status` 七样全部读自那一行。
+  要真"先判后读"，只有两条路：按 filename-only 判定（归属与密级都判不出来，权限口径当场塌），或
+  "读→判→再读"（多一发查询，且 `404`/`403` 那层存在性回声一个字都没消）。
+- **对照先例也不是先判后读**：`get_document_file`（`:4395-:4396 / :4434-:4435`）走
+  `_authorize_document_request`（`:749`），里面同样先 `_latest_document_version(filename)`（`:761`）、
+  空则 `404`（`:762-:763`），`:765` 才判定 —— 与版本历史那一支同形，只是包进了助手。所以派工那句
+  "`:4385 get_document_file` 是正确先例"落空：`:4385` 今天是一枚 `raise HTTPException(403, ...)`。
+  两枚出口的真差异不在次序，在**有没有把判定过程记进审计台账**（`_authorize_document_request` 记
+  `record_audit`，版本历史那一支不记）。
+- **建议的修法（另派一单，别与本单并树）**：把版本历史的判定输入齐到 `_authorize_document_request`
+  那一枚——以 latest 行作 scope 判定、`decision.allowed` 之后再取全量 `list_document_versions`，
+  空账的 `404` 排在判定之后。代价写清：多读一行版本（同一张 `document_versions`，一次 SELECT），
+  且 `record_audit` 的 `resource_scope` 要一起挪进判定那一支，否则审计台账会少一格；`tests/test_r394_*`
+  与 `app/documents/catalog.py` 都在别人账上，属禁域。本单一根手指没动这一格。
