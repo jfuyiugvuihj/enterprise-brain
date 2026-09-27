@@ -24,6 +24,16 @@ R261（2026-09-26）：账记的是"谁"，不是"第几行"。R254 往 ``app/ap
 代价写清楚，别指望它偷偷过关：函数**改名**会挪身份（那是明账，改一行就绿）；同一作用域
 内多枚靠 ``#N`` 区分，删掉前一枚会让后一枚补位——那本来就该重记一次账。
 
+R346（2026-09-27）：账自己跟上，别让人抄。行号退出账本以后，它在本件里只剩两条正当用途——
+给人带路（``_located()``）与当事故重放的道具。可"道具"那一半又长回了手抄的样子：旧 :540 拿
+现场扫描比一枚抄下来的 ``monitoring.py:381``，于是 R330 并进 21 行就把全量门染红了，一红两班
+（本仓 09-26 一天里第二枚"门红了两班没人发现"，第一枚是 R339 @957c7d2）。现在行号账由符号账
+现算（``line_ledger()``），手抄十五格降级成纯历史 ``HISTORICAL_LINE_LEDGER``，只被
+``drift_report()`` 逐格回答"哪一格漂了几行"，不再进任何断言；``auth.py`` 那两枚手抄行号同笔
+改成现算。三枚硬钉与"插 481 行旧账必红"那出戏一格没松，变的只是"漂了就改个数字"→
+"漂了自己跟上，且报得出漂了几行"。看守这枚区分的牙在
+tests/test_r346_line_ledger_is_derived_not_copied.py。
+
 扫过哪些形状（AST，不是文本匹配）：
 1. ``psycopg.connect(...)`` / ``psycopg2.connect(...)`` —— 属性调用，含 ``**kwargs`` 写法；
 2. ``import psycopg as pg`` 之后的 ``pg.connect(...)`` —— 起别名一样抓；
@@ -94,10 +104,18 @@ BASELINE = (
     "scripts/audit_vector_mirror_sets.py::PsycopgReader._ensure#0",  # self._connection = psycopg.connect(self._dsn, autocommit=False, ...)
 )
 
-#: 2026-09-26 @c70548a 的实测读数。这是 R238…R254b 那段历史的**账，不是判据**：没有任何
-#: 钉拿它比生产代码，它只被 R254 事故重放那一枚用例引用，用来说明旧口径为什么必然把
-#: "往上加行"读成"迁走一枚 + 新长一枚"。
-LEGACY_LINE_LEDGER = (
+#: 2026-09-26 @c70548a 的实测读数，与 ``BASELINE`` **逐格同序**：第 i 格就是第 i 枚符号身份
+#: 在旧口径（``path:line``）下的写法。它是 R238…R254b 那段历史的**账，不是判据**——R346 起本
+#: 文件里再没有任何断言拿它比生产代码（比一次就红一次：下面 ``monitoring.py:381`` 那一格被
+#: R330 并树（eec7ced）在该落点上方进的 21 行顶成 ``:402``，全量门就此连红两班没人点过）。
+#: 那两条"随之改口"的注（567→575、596→662）是同一枚地雷前两次被手拆留下的痕迹：每并一次树
+#: 它就响一次，而拆法一直是再抄一个新数字。抄不动了，所以：
+#:   * 活账改由 ``line_ledger()`` 从符号身份**现算**（出路 a）；
+#:   * 这十五格只留两件事——给 ``drift_report()`` 当参照，逐格回答"哪一格漂了几行"（出路 b）；
+#:     以及给 R254 事故重放当"旧口径"的道具，那半现在也用派生腿。
+#:   * 它仍然被钉：路径口径（插行动不到路径，迁移或新长一枚动得到），牙在
+#:     tests/test_r346_line_ledger_is_derived_not_copied.py。
+HISTORICAL_LINE_LEDGER = (
     "app/agents/orchestrator.py:167",
     "app/api/v1/alerts.py:45",
     "app/api/v1/chat.py:854",
@@ -117,6 +135,68 @@ LEGACY_LINE_LEDGER = (
     "app/storage/persistence.py:662",
     "scripts/audit_vector_mirror_sets.py:428",
 )
+
+
+def line_ledger(sources, baseline=BASELINE):
+    """行号账 = 符号账的**派生投影**（R346 出路 a）：每一格的行号现场算出来，不手抄。
+
+    这一枚走 ``符号身份 → 本轮扫描里的那一枚 → 它现在的 路径:行号``；另一条腿
+    ``readings(sources, identity=line_number_identity)`` 走 ``落点 → 行号``。两条腿互相算不
+    出对方，所以它们相等不是同义反复，而是"账与现场确实对得上"。被记账那棵文件上方进几行，
+    这本账自己跟过去：门不再替"谁加了 21 行"上色，而真迁移、真多写照样卡得住。
+    """
+    sites = booked(sources)
+    stale = sorted(entry for entry in baseline if entry not in sites)
+    fresh = sorted(set(sites) - set(baseline))
+    assert not (stale or fresh), (
+        f"行号账派生不出来：符号账里有 {stale} 现场扫不到（多半是已迁走没删账）；"
+        f"现场有 {fresh} 不在符号账里（多半是新长一枚）。带路：{_located(stale + fresh, sites)}"
+    )
+    cells = {sites[entry].location: entry for entry in baseline}
+    assert len(cells) == len(baseline), (
+        f"{len(baseline)} 枚符号身份挤进了不到 {len(baseline)} 个 路径:行号："
+        "行号当身份必然丢格（这正是 R261 把它逐出账本的理由），要改的是现场写法，不是口径"
+    )
+    return cells
+
+
+def drift_report(sources, historical=HISTORICAL_LINE_LEDGER, baseline=BASELINE):
+    """历史行号账逐格翻译到今天：报"哪个文件哪一格漂了几行"，而不是只报集合不等（出路 b）。
+
+    允许漂——往上插行本来就会漂，漂几行都不红，红的是**说不通**的那一格：它在符号账里找不到，
+    或者找到的那一枚已经跑到别的文件去了（换文件＝迁移或新长，那是真该重记的账，不是噪声）。
+    """
+    assert len(historical) == len(baseline), (
+        f"历史行号账 {len(historical)} 格、符号账 {len(baseline)} 格，两本不同序了："
+        "真迁走一枚要把历史里同号那一行一起删（明账，删一行就绿）"
+    )
+    sites = booked(sources)
+    rows, unexplained = [], []
+    for cell, identity in zip(historical, baseline):
+        path, _, number = cell.rpartition(":")
+        assert path == identity.partition("::")[0], f"历史账与符号账逐格错位：{cell} vs {identity}"
+        hit = sites.get(identity)
+        if hit is None:
+            unexplained.append(f"{cell}（{identity}）现场扫不到这一枚")
+        elif hit.rel != path:
+            unexplained.append(f"{cell}（{identity}）已不在 {path}，今天落在 {hit.location}")
+        else:
+            rows.append({"cell": cell, "identity": identity, "path": path,
+                         "recorded": int(number), "line": hit.line,
+                         "drift": hit.line - int(number)})
+    assert not unexplained, "历史行号账里有说不通的格子：" + "；".join(unexplained)
+    return rows
+
+
+def drift_lines(rows):
+    """``drift_report()`` 的人话版：只列真漂了的格，一格一行，两个数与净漂移都带上。"""
+    return [
+        "{identity}: {path}:{recorded} -> 今天第 {line} 行（上方净 {sign}{drift} 行）".format(
+            identity=row["identity"], path=row["path"], recorded=row["recorded"],
+            line=row["line"], sign="+" if row["drift"] > 0 else "", drift=row["drift"],
+        )
+        for row in rows if row["drift"]
+    ]
 
 class Hit(NamedTuple):
     """一枚落点。记账用 ``identity``，报位置用 ``line``，两件事从此分开。"""
@@ -537,11 +617,16 @@ def test_the_r254_incident_replays_green_under_the_new_ledger_and_red_under_the_
     after = booked(crowded)[victim.identity]
     assert after.line == victim.line + 481, (victim, after)
 
-    assert readings(sources, identity=line_number_identity) == set(LEGACY_LINE_LEDGER)
+    # 两本账同时成立（R346）：这一格以前写的是 ``== set(HISTORICAL_LINE_LEDGER)``，也就是拿
+    # 现场扫描比十五枚**手抄**行号。R330 在 monitoring.py 那枚落点上方进 21 行，:381 漂成
+    # :402，全量门当场红了——事故重放没红，是它的道具红了。现在道具由符号账现算，
+    # 而重放本身一格没松：旧口径仍然必须把"插 481 行"读成"迁走一枚 + 新长一枚"。
+    ledger = set(line_ledger(sources))
+    assert ledger == readings(sources, identity=line_number_identity)
     old_after = readings(crowded, identity=line_number_identity)
-    assert old_after != set(LEGACY_LINE_LEDGER)
-    assert sorted(set(LEGACY_LINE_LEDGER) - old_after) == [f"{rel}:{victim.line}"]
-    assert sorted(old_after - set(LEGACY_LINE_LEDGER)) == [f"{rel}:{victim.line + 481}"]
+    assert old_after != ledger
+    assert sorted(ledger - old_after) == [f"{rel}:{victim.line}"]
+    assert sorted(old_after - ledger) == [f"{rel}:{victim.line + 481}"]
 
 # ------------------------------------------------- 判据②：凭空多写一枚，红，且点名到行
 EXTRA_SITE = "import psycopg\n\n\ndef r261_extra_site(url):\n    return psycopg.connect(url)\n"
@@ -848,11 +933,27 @@ def test_prose_mentions_are_not_sites():
 
 
 def test_the_real_prose_site_is_not_double_counted():
-    """实测：auth.py 第 364 行那句散文没有进清单，进的只有它 301 行那次真调用。"""
-    locations = {hit.location for hit in booked(repo_sources()).values()}
+    """实测：auth.py 的 docstring 里那句 ``psycopg.connect`` 没进清单，进的是真调用那一枚。
 
-    assert "app/common/auth.py:364" not in locations, sorted(locations)
-    assert "app/common/auth.py:301" in locations
+    R346 把这枚钉里两处手抄行号（真调用 ``auth.py:301``、散文 ``auth.py:364``）也改成现算：
+    它们是第二枚同类雷——正向那半句只要有人在 auth.py 上方加一行就照 R254 的样子假红，
+    负向那半句则会悄悄变成永真（行号漂走以后 "not in" 再也抓不到东西）。改成数
+    "文本里提了几处 / AST 数出几枚"之后，插多少行都动不到它，而 grep 与 AST 的差别照钉。
+    """
+    rel = "app/common/auth.py"
+    sources = repo_sources()
+    own = sorted((hit for hit in booked(sources).values() if hit.rel == rel),
+                 key=lambda hit: hit.line)
+    lines = sources[rel].splitlines()
+
+    assert [hit.identity for hit in own] == ["app/common/auth.py::_raw_conn#0"], own
+    text_lines = {index for index, line in enumerate(lines, start=1) if "psycopg.connect" in line}
+    site_lines = {hit.line for hit in own}
+
+    assert len(site_lines) == 1, (site_lines, own)
+    assert "psycopg.connect" in lines[own[0].line - 1], own[0].location
+    assert text_lines - site_lines, f"auth.py 里那句散文（docstring 的 psycopg.connect）不见了：{sorted(text_lines)}"
+    assert len(text_lines) > len(site_lines), (sorted(text_lines), sorted(site_lines))
 
 
 def test_this_file_is_invisible_to_itself():
