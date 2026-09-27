@@ -3764,3 +3764,43 @@ V2 波次一/二到今天并树的**能面**：R288 前端块 E、R291 后端原
 - **R316**（Sartre）／**R348**（Hume）：两枚前端单，判据与退回项逐条见看板 §0 对应行 + §4CX.5。R348 的契约那一格已退回（改了 R344 历史行、且没写自己那一节），留档一句：**杀历史假话的合法位置是新节开头，不是历史节正文**。
 
 **下一格开工前先读**：门里还差 R346 + R351 + R352 三枚才算真绿；🔴 新规矩「并树动过 `app/**` 行数或被 sha/行号钉着的生产件 ⇒ 主树点名跑 `test_r238`/`test_r251`/`test_r304`/`test_r298`/`test_r32`」；派工一律要逐枚列点名件读数，总数不收；事故号已改记 **#53**（休眠那一格），别再顺着上一班的 #21 写。
+
+## §110（09-27 第三格·总控）：并树两枚（R351+R352 / R342）· 🔴 撤销候选单 R358（前提被实测推翻）· 新立并派出 R359/R340
+
+本节只追加，不改上面任何一行。落笔人：总控。看板对应节 = **§4CY**。
+
+### 一、本格结案两枚（判据正文，摘要见看板 §0 那两行结案）
+
+- **R351 + R352**（并树 `426834d`）：本案的全部意义是"手抄账改成派生"，🔴 不是"把今天红的那行改成今天绿的值"。两把尺子的正文——① 字面文本 ⇒ **形状判据**：上传路由里恰好一枚 `await asyncio.to_thread(load_document, …)`、路径出自本函数 `str(...)` 绑定、被调符号真出自 `app.rag.loader`；参数表不在射程内，所以将来再加参数不红。② 手抄 sha ⇒ **记名锚点提交现算**：期望值 = `sha256(git show <锚点>:app/rag/tables.py)`，比较一律落 **git blob 层（LF）**；配三枚常驻自校钉（锚点在 HEAD 祖先链上、`--name-only` 含该文件、它相对父提交确实改过这枚文件）。这里要留档的一条经验：旧那串 `7acaa33c…` 实测是 **checkout 层**指纹（CRLF 之后的字节），本仓 `core.autocrlf=true` 且无 `.gitattributes` ⇒ 同一个文件两层两个 sha，抄哪一层必须写死。
+- **R342**（并树 `e9aac2f`）：`/dashboard/trend` 的三张脸——"这一格没记时间"（⇒ 200 且数进顶层 `undated`）／"两次读互相矛盾"（⇒ 仍 503，且响应里既无 `series` 也无 `undated`）／"记了但解析不出"（⇒ 单列一支，仍 503）。🔴 守恒要量出来不许论证：`各桶之和 + undated == /summary 同一人可见行数`，另配反向钉（一枚行不许既进桶又进 `undated`）。
+
+### 二、🔴 撤销候选单 R358（上一格记它"无主可占、槽一空就投"，本格实测推翻三条前提）
+
+症状原句：「`frontend/src/lib/alerts.js::faceOf` 分不清『存储没就绪』与『形状读不出』」。本格的三条现取证据：
+
+1. `storage_unavailable` 在告警这条腿上**从没出现过**——全仓 rg 该码的出口只有 `app/agents/contracts.py:254`、`app/agents/evidence.py:25`、`app/api/v1/chat.py:3037`、`app/api/v1/dashboard.py:143`/`:278`、`app/api/v1/feedback.py:167`/`:169`、`app/api/v1/notifications.py:161`/`:191`，🔴 `app/api/v1/alerts.py` 零命中。它没有库时走 `alerts.py:971` 那条内存腿（＝本节四 R359 那一格），不发 503。给一条发不出的错误码在前端加一档脸，就是给不可达分支写代码。
+2. "结构不对只有『坏了』一张脸"是**已裁定的现状**：`frontend/src/components/__tests__/insight-alerts.test.js:838-843` 的具名钉逐字这么写，且连带钉 `faceOf({failed:true, code:"", rowCount:0}) === "error"`。要翻它得走改判流程，不能当 bug 顺手改。
+3. 唯一真打起来的那条（`lib/alerts.js:141` 对所有非 401/403 一律 `retryable: true`，与 `lib/errcodes.js:114` 的 `internal_error: retryable false` 矛盾）也被 `insight-alerts.test.js:815-825` 那枚具名钉**故意**裁过（"500 与连不上服务：都归 error 并给重试"）。这一格要么连同 `internal_error` 那句"请稍后重试"自身的矛盾一起走改判，要么不动。
+
+结论：**R358 不立、不派、不占号**（号留着别再被别人占）。从这里生效：① `lib/errcodes.js` 与 `lib/alerts.js` 的 `retryable` 口径差 = **已知待改判**，下一格别再当新发现报；② 若 R359 之后 `/alerts` 真会发 503，storage 那一档脸必须同批补上，届时另立单号并引本节。
+
+### 三、新立并派出两枚（判据正文）
+
+- **R359**（`01a0e110-a3d0-79f1-9209-5cd9fbc12851` @`be-r359`，基点 `426834d`，锁 `app/api/v1/alerts.py`）：`alerts.py:971` 在 `_database_available()` 为假时直接 `return {"alerts": visible}`，`visible` 读的是 `:37` 那张进程内 `_MEM_ALERTS` ⇒ 客户机 PG 没起／迁移没跑时是 **200 + 空数组**，前端于是画 `lib/alerts.js:112` 那句"这一屏读的是服务端告警表"。**存储拒答被翻译成"这家公司现在没有异常"**，而这是四张屏里唯一一句"你今天没事"的话。判据：甲 生产该有库而没有 ⇒ 503 `storage_unavailable`（🔴 零新增错误码）；乙 🔴 开发态内存 store 是今天合法的后端，那一支回包形状/行数/排序逐字不变——判据是"两张脸分开"不是"一律 503"，必须有钉把"开发态也打死成 503"当场咬红；丙 四条读腿 + 三条写腿一起过闸（只修列表留三扇侧门＝不达标），写腿不许在存储没就绪时装"成功"；丁 `detail` 字面量进本模块枚举（照 R332 那把 AST 钉），`test_r142`/`test_error_code_vocabulary` 不许搬；戊 不许新增第二份"库在不在"判定、不许新增 `_db_ready` 读者（`app/common/auth.py:231` 那本"7 处读者各一枚"的账）；己 前端零改动（要改文案只报不改）。附带要求先取证 `alerts.py:88`/`:98`/`:541` 那三枚 `RuntimeError("… run migrations first")` 有没有被用例钉着消息原文——那是"部署缺口被说成可重试的偶发故障"的第二格，🔴 先查再裁，不许自裁红针。
+- **R340**（`01a0e114-59ef-7673-b547-cabbcfb8d091` @`be-r340`，基点 `e9aac2f`，锁 `app/api/v1/dashboard.py` + 前端趋势标签）：`dashboard.py:545-549` 的 docstring 自己承认 `alerts_open` 数的是"到本次请求这一刻还是 open"（`:585` `still_open = alert_row_status(row) == ALERT_STATUS_OPEN`）⇒ **不可回放**：今天确认一枚上周的告警，上周那根柱子自己矮。契约现写「截至今日仍未处置」算诚实，但把当下投影画在既往时间轴上仍然会被读成"上周还有 3 件没处理"。处置时间列真在（`acknowledged_at`/`closed_at`，`migrations/0014`），这一格有条件算真。判据：甲 换成"该档新增且到该档结束那一刻仍未处置"，四格边界（档内确认／档后确认／从未处置／已关闭）各有具名钉，🔴 转派不算处置；乙 口径变了 ⇒ 契约措辞与前端那一格标签（`frontend/src/lib/dashboard.js`、`DashboardPanel.vue`）🔴 同一笔交付一起改口，列名不许改不许加第二枚并列列；丙 两条腿（PG／内存）同一把谓词 + 一枚比等号的钉，SQL 腿做不到就停下回报、不许静默搬回 Python；丁 0014 之前的老行沿用 `alerts.alert_row_status`，不许在本模块新写一份 status 判定，空串与 `NULL` 同形；戊 R342 刚落的守恒式一字不许放松、新列要有自己的守恒式（不许某档 `alerts_open > alerts`）；己 🔴 `undated` 里那一格"只能按今日算"的语义不许顺手跟着变（无期间的行没有"该档结束那一刻"可言），要变先回报；庚 错误码零新增；辛 五把刀里"退回 present status""两腿分叉""只改服务端不改契约"三把必须真咬。
+
+### 四、本格由总控动手改口的两枚旧钉
+
+`tests/test_r332_dashboard_trend.py:409`/`:433`（R342 写域外，执行层按规矩只报不改）：
+
+- 原断言：`status_code == 503` + `detail == "storage_unavailable"` + `"series" not in body`。
+- 新断言：件名换 `…_is_counted_as_undated`；`status_code == 200` + `body["undated"]["datasets"] == 1`（告警那枚是 `(undated["alerts"], undated["alerts_open"]) == (1, 1)`）+ 那一档不进任何桶。
+- 🔴 为何不更弱：旧的三行只证"服务端没数它"，新的证"数到几枚、并且没被偷偷折回 0 或整键删掉"——写 0／键缺席／继续拒答三种都当场红。"两本账真读不出来"那一族（registry 行消失、记了但解析不出）🔴 一字未动，仍钉 503。理由逐条写进 docstring，不靠本节转述。
+
+### 五、下一格前置（本格没做完的，按序）
+
+1. 🔴 六枚在途满格（R346 / R356+R357 / R353+R354 / R315 / R359 / R340）——收一枚才腾一枚。腾出的槽优先给 `tests/test_document_upload_resilience.py:123` 那枚同族抄写（第 5 个现场，与 R351 同一把形状尺收，纯测试件零冲突）+ `tests/test_r300_tables.py:16` 那句假散文并同一枚。
+2. 门红账：开工 3 failed → 本格 **1 failed**（只剩 `test_r238`，R346 在途）。`scripts/run_gate.py` 本格仍未跑（在途 ≥2）。
+3. 名册里 `Kant`（R353/R354）那行的 id 上一格记成 `01a0e0f0-69a0-…`，本机对不上活着的线程，真身 `01a0e0f6-d870-…`（harness 昵称 `Russell`）——🔴 已在看板 §0 另起一行订正，别再按名字定位。
+4. `origin`（github）本机 TLS 连不上，本仓 push 走 **gitee**（`fda07e0..e9aac2f` 已推）。github 那侧要不要修留业主。
+5. `.gitattributes` 那枚病根（`core.autocrlf=true` + 无 attributes ⇒ 交付件 LF/CRLF 逐单漂移、sha 钉分两层）留业主决策。
