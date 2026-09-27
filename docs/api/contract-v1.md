@@ -5006,3 +5006,51 @@ r384 的门账钉一起点名，四连先例的守卫在替本单把关）。
 **客户端可见变化**：`POST /upload` 在"存储拒答"这一格从 200 变 503，信封沿用已批准的
 `{"detail": "storage_unavailable"}`，**没有新码**。业主侧事实：客户机上一次偶发的连接超时 +
 迁移没跑齐，过去表现为"上传成功但目录里查无此版本"，现在表现为上传失败。
+
+## R394 · 版本腿的「非迁移族」写失败：拒答不许静默成「已登记」（`POST /upload`，2026-09-27）
+
+**格**：R391 并树时逐枚点名"只报不改"的那一格（上一节末尾第一条），本单治它。
+`app/documents/catalog.py` 的 `record_document_version` 尾段 `:768-772` 只把 `_schema_needs_migrations`
+（`:357`，只认 `:578` 那一句前缀）那一支带进闸，其余**任何**写失败——锁等待超时、约束冲突、断连、磁盘满、
+权限——只 `logger.warning` 之后 `return metadata`（`:772`）。后果：文件已落盘、正文已进索引、`:734` 已写
+本地 sidecar，而权威表 `document_versions` 零行，出口照旧 200 且回执带 `status:"ok"` 与版本号。R391 那枚
+`except HTTPException: raise`（`app/api/v1/chat.py:3705`）接不到它——因为这一格**根本没抛**。
+
+**改法（只改一张脸，全文件行数零漂移）**：非迁移族走**同族既有那一档**——`_require_ready_store("version record")`
+（`:362`；全模块唯一那枚 `raise HTTPException(status_code=503, detail="storage_unavailable")` 在 `:405`）。
+闸里多一枚关键字参数 `write_failed`（默认 `False`，其余四枚调用点一字不动），与 `migrations_missing` 并列成
+同一扇门上的第三种「没就绪」；日志分三张脸（缺迁移 / 这一发写失败 / PG 未起），**状态码与 detail 一字未改**。
+零新增错误码、零新增 reason、零新增 status 档位（`tests/test_r142_error_code_table_sync.py` 12 枚与
+`tests/test_error_code_vocabulary.py` 29 枚同时绿）。那枚底层异常仍然记账，只是排在闸**之前**
+（`:769`，`[Docs] version record not written: {exc}`）：生产那一发的日志因此是「因由 + 拒答脸」两句，
+非生产那一发仍是「因由 + 回落本地台账」一句。
+
+**客户端可见变化**：只有 W1 那一格——生产 + `document_versions` 在位 + 那一发 INSERT 被打回，
+`POST /upload` 从 `200 {"status":"ok","version":N,…}` 变 `503 {"detail":"storage_unavailable"}`，
+回执里 `version`/`status`/`stored_name` 一起消失。业主侧事实：过去表现为"上传成功但目录里查无此版本"，
+现在表现为上传失败；文件仍留在盘上（与 R391 同一条裁定：不替客户的机器做删除决定）。
+
+**不许漂的六格**（逐格现场量，改前=改后同形状）：迁移族仍走 `migrations_missing` 那张脸（R391 的 D 态，
+`code=storage_unavailable migration=` 那句一字未动，且不混进新脸的 `write_failed=true`）；
+`_database_available()` 为假那一支（`:736-737`）照旧交本地台账、一次连接都不发；非生产的写失败照旧 200
+回落 sidecar；归属腿 `_upsert_document` 的宽捕获（`RuntimeError("db down")` 那条既有裁定，
+`tests/test_document_upload_resilience.py:103`）一字未动；生产 + 一切正常照旧 200 且真的落行。
+
+**两本账的裂缝是可读的**：拒答那一句同时点名两本账——sidecar 镜像写在前面（`:734`）、`document_versions`
+这一发零行（`commit()` 从没发生）。🔴 **不回滚 sidecar**：那枚镜像是当前唯一不需要迁移就能落地的持久处
+（（`:182-184`）），删它等于把"文件收了、账没落"改成"文件收了、两本账都没"，三份不一致变四份。
+
+**撞号覆盖那一格仍未治（判据④只复核）**：`:603-620` 的 peek 在 SELECT 撞上连接失败时回落本地台账推
+`max+1` ⇒ `:747` 发的是 `ON CONFLICT (filename, version) DO UPDATE` ⇒ 旧行的
+`storage_path/created_at/parse_status` 被覆盖。本件复核它今天仍然成立，并记清它与①的分界：那条语句
+**成功执行并 commit**，`except` 根本不进 ⇒ ①不拒它、也治不了它。治它要动 peek 的回落口径（号必须从真库
+现取）或给 `document_versions` 加"拒绝回退号"的约束 ⇒ 继续只报不改。
+
+**钉与刀**：`tests/test_r394_version_write_failure_refuses_at_the_exit.py` 21 枚 = 面 11（W1 三枚、迁移族、
+设计内降级两枚、非生产、归属腿、健康对照、两本账、撞号）+ 形状 4（新脸只一枚且只在版本腿、闸仍只一扇 503、
+`_db_ready` 读者仍只一枚、两本账都在拒答句里）+ 常驻内存牙 6（五种改法各咬一格 + 一枚真树对照）。
+同一枚件在**真·基点** `64b3f3c` 那一份 `catalog.py` 上跑 = 14 failed / 7 passed，而 R391 那 49 枚在同一面上
+一枚都不红 ⇒ 本病真实存在、既有件看不见它。五把盘上真刀走影子副本道（真树全程只读，被跟踪文件零改写，
+`app/documents/catalog.py` 每把刀的进/出 sha256 逐趟相等）：K1 摘掉① 11 红／K2 放宽成"任何一发都拒"
+3 红且 R391 另红 5 枚（既有件自己也守住这条边界）／K3 删掉可读者证 4 红／K4 只把日志喊成 `error` 不改脸
+11 红／K5 把写失败吞进迁移族 9 红。逐把红面点名，记在 R394 回执⑥。

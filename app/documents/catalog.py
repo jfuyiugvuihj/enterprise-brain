@@ -359,7 +359,7 @@ def _schema_needs_migrations(exc: BaseException) -> bool:
     return str(exc).startswith(MIGRATION_REQUIRED_PREFIX)
 
 
-def _require_ready_store(operation: str, *, migrations_missing: bool = False) -> None:
+def _require_ready_store(operation: str, *, migrations_missing: bool = False, write_failed: bool = False) -> None:
     """生产环境 + 目录存储未就绪 = 这一条腿拒答，不许回落本地台账（R383）。
 
     判的两件事都是本模块既有的读数，一枚都不新造、也不另算一遍：库在不在取
@@ -368,9 +368,9 @@ def _require_ready_store(operation: str, *, migrations_missing: bool = False) ->
     生产取 ``_is_production_environment()``（与 ``app/api/v1/alerts.py:61`` 同一把尺）。两支同时
     成立才拒。
 
-    ``migrations_missing`` 是同一道门上的第二种「没就绪」：库连着、旗标也翻到了 True，可
-    ``_ensure()`` 已经现查到 ``document_versions`` 不在。它不新增判定，只是把那次现查的结论递给
-    这道已有的闸——全模块那道 503 仍然只在这儿抛出。
+    ``migrations_missing`` 与 ``write_failed`` 是同一道门上的另外两种「没就绪」（R394）：库连着、
+    旗标也翻到了 True，可 ``_ensure()`` 现查到 ``document_versions`` 不在，或者那一发 INSERT 自己被打回。
+    两者说的是同一件事——这一发的权威台账没落行。判定一枚都不新造，那道 503 也仍只在本闸抛出。
 
     为什么不许退成「200 + 本地台账」：客户机上那一屏照字面把 ``{"documents": []}`` 画成「这家
     公司没有知识文档」，而现场事实是「这一格问不出」。把问不出说成没有，与 ``/users``（R356）、
@@ -390,18 +390,18 @@ def _require_ready_store(operation: str, *, migrations_missing: bool = False) ->
     那一格：它由五枚 catch-all 现查之后带 ``migrations_missing`` 走进这道闸——拒答的仍是这一句，
     只是排在那次现查之后。
     """
-    if (_database_available() and not migrations_missing) or not _is_production_environment():
+    refused = migrations_missing or write_failed
+    if (_database_available() and not refused) or not _is_production_environment():
         return
     if migrations_missing:
-        logger.warning(
-            f"[Docs] 生产库缺该由迁移建的目录表，这一条腿拒答而不是回落本地台账: operation={operation} "
-            f"code=storage_unavailable migration={MIGRATION_REQUIRED_HINT}"
-        )
+        lead, hint = "生产库缺该由迁移建的目录表", f"code=storage_unavailable migration={MIGRATION_REQUIRED_HINT}"
+    elif write_failed:
+        lead = "生产环境这一发的权威台账写失败（sidecar 镜像排在前面已写、document_versions 这一发零行）"
+        hint = "code=storage_unavailable write_failed=true"
     else:
-        logger.warning(
-            f"[Docs] 生产环境目录存储没起，这一条腿拒答而不是回落本地台账: operation={operation} "
-            "code=storage_unavailable（PG 未起）"
-        )
+        lead, hint = "生产环境目录存储没起", "code=storage_unavailable（PG 未起）"
+    # 三张脸共用这一句出口，一字不改的是状态码与 detail；把三格分开的只有 lead / hint 两段文字。
+    logger.warning(f"[Docs] {lead}，这一条腿拒答而不是回落本地台账: operation={operation} {hint}")
     raise HTTPException(status_code=503, detail="storage_unavailable")
 
 
@@ -766,9 +766,9 @@ def record_document_version(
             )
             conn.commit()
     except Exception as exc:
-        if _schema_needs_migrations(exc):
-            _require_ready_store("version record", migrations_missing=True)
-        logger.warning(f"[Docs] version record fallback: {exc}")
+        logger.warning(f"[Docs] version record not written: {exc}")
+        _require_ready_store("version record", migrations_missing=_schema_needs_migrations(exc),
+                             write_failed=True)
     return metadata
 
 
