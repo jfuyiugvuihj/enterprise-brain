@@ -399,6 +399,7 @@ export const SCAN_REASON_MESSAGES = {
   tenant_data_dir_unavailable: '服务端还没有配置可用的租户数据目录，本轮巡检没有任何数据可读。',
   no_data_files: '数据目录里没有可分析的数据文件，本轮巡检没有判定点。',
   no_permitted_datasets: '你的账号可见范围内没有可分析的数据文件，本轮巡检没有判定点。',
+  all_data_files_unreadable: '本轮扫到的数据文件没有一个能读出来，所以本轮没有任何一条规则拿到数据（这不代表没有异常）。',
 }
 
 export function checkOutcomeView(data) {

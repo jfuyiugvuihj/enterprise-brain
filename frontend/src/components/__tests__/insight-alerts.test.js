@@ -390,6 +390,42 @@ function backendRoutes() {
   return routes
 }
 
+/**
+ * R355 · 巡检理由从后端真源派生，不再手抄名单。
+ * 上一版这里抄死三枚名字，R345 给后端加了 all_data_files_unreadable 却没人回来加第四行，
+ * 于是界面把「一个文件都读不出来」画成「后端没有说明本轮的扫描范围」——那是替后端说了假话。
+ * 手法与 backendRoutes() 同源：读 git 对象而不是工作树副本；解析不出理由一律抛红，
+ * 禁止退化成空对账（一枚都不认，比认错一枚更糟）。
+ */
+function backendScanReasons() {
+  let text
+  try {
+    text = execFileSync('git', ['show', BACKEND_REF + ':' + BACKEND_ALERTS], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+  } catch (cause) {
+    throw new Error('读不到后端真源 ' + BACKEND_REF + ':' + BACKEND_ALERTS + '（git show 失败：' + cause.message + '）。巡检理由对账不许降级。')
+  }
+  if (!text || !text.trim()) throw new Error('git show ' + BACKEND_REF + ':' + BACKEND_ALERTS + ' 返回空内容，无法对账。')
+  const lines = text.split(/\r?\n/)
+  const consts = new Map()
+  for (const line of lines) {
+    const top = /^([A-Z][A-Z0-9_]{2,})\s*=\s*["']([a-z0-9_]+)["']\s*$/.exec(line)
+    if (top) consts.set(top[1], top[2])
+  }
+  const reasons = new Set()
+  for (const line of lines) {
+    const assign = /^\w+\[\s*["']reason["']\s*\]\s*=\s*(.+?)\s*$/.exec(line.trim())
+    if (!assign) continue
+    for (const lit of assign[1].match(/["']([a-z0-9_]+)["']/g) || []) reasons.add(lit.replace(/["']/g, ''))
+    for (const ident of assign[1].match(/\b[A-Z][A-Z0-9_]{2,}\b/g) || []) {
+      if (!consts.has(ident)) {
+        throw new Error('后端把 ' + ident + ' 当巡检理由，但这一版解析不出它的字面值：形状变了要同步改这里，不许让对账退化成漏项。')
+      }
+      reasons.add(consts.get(ident))
+    }
+  }
+  if (!reasons.size) throw new Error('解析不到任何 ["reason"] 赋值：后端形状变了，要同步改这里的解析，不许让它退化成空对账。')
+  return [...reasons].sort()
+}
 const flush = async () => {
   for (let round = 0; round < 8; round += 1) await new Promise(resolve => { setTimeout(resolve, 0) })
 }
@@ -959,9 +995,27 @@ describe('W7 lib/alerts.js · 判脸与归码矩阵（R1 裁定 (c) 的逻辑全
       expect(view.title + view.detail).not.toMatch(ZERO_CLAIM)
     }
     expect(checkOutcomeView({ triggered: [{ id: 1 }], scan_scope: { reason: 'no_data_files' } }).kind).toBe('hit')
-    expect(Object.keys(SCAN_REASON_MESSAGES).sort()).toEqual(['no_data_files', 'no_permitted_datasets', 'tenant_data_dir_unavailable'])
+    // R355：这一行原来是手抄的三枚名字，后端加了第四枚它照样绿——那才是病根。
+    // 改成双向逐字相等：后端少给一枚、前端多留一枚，都红。
+    expect(Object.keys(SCAN_REASON_MESSAGES).sort()).toEqual(backendScanReasons())
   })
 
+  it('R355 · 「一个文件都没读出来」不许借用「后端没有说明扫描范围」那张脸', () => {
+    const view = checkOutcomeView({
+      triggered: [],
+      scan_scope: { reason: 'all_data_files_unreadable', evaluated_files: [], unreadable_files: ['a.pdf', 'b.xls'] },
+    })
+    expect(view.kind).toBe('no-target')
+    expect(view.detail).toBe(SCAN_REASON_MESSAGES.all_data_files_unreadable)
+    // 后端把两张脸分开了，界面就不许再说成同一句话。
+    expect(view.detail).not.toBe(SCAN_REASON_MESSAGES.no_data_files)
+    expect(view.detail).not.toBe(SCAN_REASON_MESSAGES.no_permitted_datasets)
+    // 真·没说明那张保守脸必须还在，且与这一张不同：摘掉字典里那一条，这一枚会先红。
+    const unknown = checkOutcomeView({ triggered: [], scan_scope: {} })
+    expect(unknown.kind).toBe('unknown')
+    expect(unknown.detail).not.toBe(view.detail)
+    expect(view.title + view.detail).not.toMatch(ZERO_CLAIM)
+  })
   it('emptyRuleForm / validateRuleForm：四格全空起步，阈值留空不许静默变成 0', () => {
     expect(emptyRuleForm()).toEqual({ name: '', metric: '', op: 'lt', threshold: '' })
     const blank = validateRuleForm(emptyRuleForm())
