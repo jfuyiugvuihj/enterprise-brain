@@ -871,11 +871,29 @@ def _is_production_environment() -> bool:
     return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
 
 
+class ChatSchemaNotMigratedError(RuntimeError):
+    """生产库里该由 migrations 建的那枚表不在——本模块那句 "run migrations first" 的唯一类型。
+
+    故意做成 ``RuntimeError`` 的子类而不是替换它，与 ``app/api/v1/alerts.py`` 里同族那枚具名错同一把
+    形状：两处 ``_require_migrated_tables`` 调用点今天都落在既有的宽捕获里（模块导入期那一枚
+    ``except Exception: pass``，与上传记 metadata 那一枚 ``except Exception as exc``），换掉基类就会
+    连带改那两格的既有回话，而它们不在本单判据内。具名化只许加一层。
+
+    存在的意义是让 **HTTP 出口** 能只接这一种错：把任何 ``RuntimeError`` 都翻成 503，等于替真正的
+    bug 打掩护 —— ``_sess_conn`` 那句「驱动缺失」与 ``_ensure_session`` 那句「缺 user_id」都是同
+    基类而不同罪的邻居。三格的排查路也靠这一层名字分开：只有「该由迁移建的表不在」才叫这一个。
+
+    消息文本一个字节都不改，改的只有「谁能接住它」。
+    """
+
+
 def _require_migrated_tables(conn, *table_names: str) -> None:
     for table_name in table_names:
         row = conn.execute(f"SELECT to_regclass('public.{table_name}') AS table_name").fetchone()
         if not row or row["table_name"] is None:
-            raise RuntimeError(f"{table_name} table is required in production; run migrations first")
+            raise ChatSchemaNotMigratedError(
+                f"{table_name} table is required in production; run migrations first"
+            )
 
 
 def _ensure_session(session_id: str, user_id: str = "") -> dict:
@@ -2215,7 +2233,17 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     # R32：先验取值再动手。这一行必须在建表、绑会话、落库、入队、模型之前，
     # 非法档位留下的是零副作用，而不是"跑了一半再告诉调用方字段写错了"。
     _require_valid_lane(request)
-    _ensure_sessions_table()
+    try:
+        _ensure_sessions_table()
+    except ChatSchemaNotMigratedError as exc:
+        # 生产库没跑 migrations 时这一格今天交出去的是裸 500 纯文本（实测：app/** 零 exception_handler），
+        # 屏上没有可重试的码，日志里也没有「缺哪枚表」。折成本模块已有的那一码拒答，原句写进日志；
+        # 其余 RuntimeError（驱动缺失、缺 user_id）一律不接，不许把它们洗成 503。
+        logger.warning(
+            "[Ask] 生产库缺该由迁移建的会话表，出口按存储拒答而不是裸 500: "
+            f"route=ask code=storage_unavailable reason={exc}"
+        )
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
     try:
         session_registry.bind(thread_id, request_principal)
     except PermissionError as exc:

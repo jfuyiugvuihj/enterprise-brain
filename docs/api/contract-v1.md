@@ -4562,3 +4562,102 @@ place. All offline: no service, no PostgreSQL, no model port, no `chroma_db/` wr
 Physical lines: `app/notifications/states.py` +57 / -2 -- one gate, its call site, and the two
 docstrings that used to describe one difference now describing two. `app/api/v1/notifications.py`
 +0 / -0.
+
+## A chat turn that still needs its migrations answers 503 too (2026-09-27, R384)
+
+R371 folded the `alerts.py` refusals, R377 walked the four store-layer siblings and judged all four
+contained. Two cells were left unread: the `chat.py` ones R377 named without probing. This section probes
+them. Every face below is read off `TestClient(app, raise_server_exceptions=False)` against a substitute
+ledger that answers only 「does this one `to_regclass('public.x')` lookup find the table」 and 「a write
+against an absent ledger fails like PostgreSQL fails」 (`psycopg.errors.UndefinedTable`). Nothing here
+evaluates real SQL, opens a database, starts a service or touches a model port. Sentence: **one of the
+three cells could actually reach an HTTP exit, and exactly that one changed.**
+
+### The three call sites, measured before anything was edited
+
+Base positions are read from `5ba73bd`; `app/**` still holds zero exception handlers (re-scanned off the
+AST in `tests/test_r384_migrations_first_refuses_at_the_ask_exit.py`, not off a substring -- this ticket
+learned the hard way that its own source comment mentions that very phrase).
+
+| call site | who raises | who catches | what the catch hands out | production, ledger missing | development | offline |
+| --- | --- | --- | --- | --- | --- | --- |
+| `_ensure_documents_table()` at import, `:1000` | `:878` (`documents` absent) | its own `except Exception: pass` (`:1001`) | nothing: the import continues, the comment says the table is built lazily at upload | raises once, eaten, `reload` succeeds (measured in a fresh process; zero exit touched) | builds it in place, never raises | never entered: `:998` `if catalog_database_available():` short-circuits, substitute ledger records **zero statements** |
+| `_ensure_documents_table()` inside `_upsert_document`, `:1020` | `:878` (`documents` absent) | `_record_uploaded_version` `:3655` `except Exception as exc` + `logger.warning` | **`200`** from `POST /api/v1/upload`: the file is stored, the metadata row is not, and the log carries `metadata sync failed: ... run migrations first` | measured `200` | builds it, then writes the row | takes `record_local_document_version` |
+| `_ensure_sessions_table()` inside `ask()`, `:2218` | `:878` (`sessions`, then `session_messages`) | **nobody** | -- | **before: `500` `text/plain` `Internal Server Error`** / after: `503 {"detail":"storage_unavailable"}` | self-heals with `CREATE TABLE IF NOT EXISTS`, passes the gate | gate returns on its first line, zero connections |
+
+That first `500` is the whole subject of this ticket: an anonymous plain-text 500 is what a customer sees
+when they have PostgreSQL up and have not run the migrations, and the traceback is the only place the
+answer 「which table, and what do I run」 exists -- which is exactly what a 500 logs and a 503 does not.
+So the exit that removed the traceback also writes the sentence back: one `logger.warning` line carrying
+`code=storage_unavailable` and the original `reason=sessions table is required in production; run
+migrations first`.
+
+### One layer of naming, folded at the existing exit
+
+`ChatSchemaNotMigratedError` (`app/api/v1/chat.py:874`) is a subclass of `RuntimeError`, not a
+replacement -- same ruling R371 recorded for `alerts.py`, and for the same reason: the two cells above
+are caught by `except Exception`, and both `tests/test_document_upload_resilience.py` and the import
+path assert through that layer. The message text is byte-for-byte the sentence it always was.
+
+`ask()` now wraps exactly that one call, catches exactly that one type, and hands the conclusion to the
+503 this module already emits (`hitl_pending`, `:3037` at base / `:3065` as delivered). Counting the
+module's `raise HTTPException(status_code=503, ...)` sites by AST: **five before, six after**, and the
+one addition is named, with its reason, in `test_the_module_now_opens_exactly_six_503_raises_each_named`
+(`_enqueue_ask_turn` / `hitl_pending` / `queue_status` / `cancel_queued_request` / `queue_stats` are the
+five that were already there; `ask` is this ticket's). **Zero new error codes, zero new reason words,
+zero new status tiers**: the new detail is the same string object-level equal to the existing exit's
+(`ast.literal_eval`, not a quote-matched substring). The four queue exits keep their
+`{"code": "queue_unavailable", ...}` shape, so 「the store cannot answer」 and 「Redis is not there」 are
+still two faces, and they are still distinguishable from 「this deployment never enabled PostgreSQL」 --
+which stays `200` on the process-local session tables and answers nothing at all on the gate.
+
+Nothing was folded into a `200`. The refusal is ordered before `session_registry.bind`, before
+`_ensure_session`, before `_save_message`, before the queue and before the model, so a refused turn
+leaves zero side effects (pinned, not asserted in prose).
+
+### Judged, and left alone on purpose
+
+- `:1000` and `:1020` are **unreachable as a 500** -- each is already eaten inside the module, one by a
+  bare `pass`, one by a warning that is a deliberate ruling: dropping an upload because a metadata table
+  is unreachable would lose a document the caller can no longer address. Converting either into a 503
+  would have to pass through `app/documents/catalog.py`, which is another ticket's write set, so this
+  ticket registers them instead of fixing them. Both faces are now pinned as measured (including the
+  `200`), so whoever does change them changes a number and not a rumour.
+- The `200` on upload is the same disease R356/R359/R332 ruled on: the store refused to answer, and the
+  response says 「stored, owned, parse ready」. It is not an empty set -- it is a receipt for a row that
+  was never written. That is registered here, in the outlet that produces it, and not fixed.
+
+### Registered, still not faced (out of this ticket's table, measured anyway)
+
+- `_ensure_session()` inside `ask()` (base `:2223`): with the gate stubbed out, production plus a missing
+  `sessions` answers **`500` `text/plain`**. It is raised by `INSERT INTO sessions` as
+  `UndefinedTable`, not by the `run migrations first` lookup, so it is not a cell of this table; the
+  gate stands in front of it and still does, so this ticket did not uncover it either.
+- `GET /api/v1/sessions` with the same missing ledger: measured **`500` `text/plain`**, same
+  `UndefinedTable` family. `_list_sessions()` is not an `_ensure_*` / `_require_migrated_tables` call
+  site, so it is listed, not treated.
+- `app/agents/orchestrator.py:110` (`PostgresSaver checkpointer is required in production; run
+  migrations first`) is the sixth sibling of this sentence and has no pin of its own in the repository.
+  Not this ticket's file, not this ticket's write set.
+- One existing pin had to be reworded to survive this legal change:
+  `tests/test_r377_migrations_first_family_is_contained_at_the_store_layer.py::test_the_two_out_of_write_set_modules_are_still_report_only`
+  used to compare the `chat.py` raise against a **copied source line**, which is the fourth member of the
+  family R346 / R351 / R364 named. It now counts the sentence instead of the statement shape -- the claim
+  it was actually making (that sentence appears exactly once in `chat.py`) is unchanged, and the type and
+  exit shape moved into this ticket's file.
+
+### Evidence
+
+`tests/test_r384_migrations_first_refuses_at_the_ask_exit.py` (25 pins): the 503 and its exact body, the
+per-table diagnosis (a missing `session_messages` names `session_messages`, not `sessions`), the refusal
+ordered before every side effect, development self-heal passing the gate, offline opening no connection,
+a fully-migrated production turn still passing, a missing driver still answering the bare 500 it always
+answered (the anti-laundering pin), the message reconstructed from its template rather than copied, and
+the AST roster of the six 503 exits. Eight counter-evidence knives were run against the delivered file
+and restored byte-for-byte (sha256 in == out): strip the conversion (9 of this ticket's pins red), widen
+the catch to `Exception` (3), reword the sentence (6), replace the base class (5), invent a new error
+code (3), invent a second probe (1), narrow the import-time catch-all (1), build a second 503 door (1).
+
+Physical lines: `app/api/v1/chat.py` +30 / -2 -- the named class, its raise, and the one exit that folds
+them. `tests/test_r377_...` +13 / -8 -- one reworded assertion, zero pins deleted. `tests/test_r384_...`
++545 / -0 new.

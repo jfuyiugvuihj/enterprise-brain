@@ -291,17 +291,22 @@ def test_every_call_site_is_swallowed_by_the_named_handlers(relative):
 
 
 def test_the_two_out_of_write_set_modules_are_still_report_only():
-    """`orchestrator.py` / `chat.py` 两枚不在本单写域：这里只登记事实，一根手指都不动。"""
+    """`orchestrator.py` / `chat.py` 两枚不在本单写域：这里只登记事实，一根手指都不动。
+
+    R384 改口（只报先行，改的就是下面这一枚断言的口径）：原件把 `chat.py` 那枚 `raise` 的**整行
+    原文**抄进断言，正是 R346 / R351 点名的"抄一句源文本当判据"那族病。R384 把那一枚 raise 折成
+    同族具名子类 `ChatSchemaNotMigratedError`（消息文本一个字节没改，改的只有类型与换行形状），
+    原断言就把一次合法改动判成事故。本件真正要登记的从来不是那行的形状，而是**那一句在 `chat.py`
+    里仍然只有一枚**，所以判据换成句子计数。类型与出口形状由 R384 自己的件逐枚钉着
+    （`tests/test_r384_migrations_first_refuses_at_the_ask_exit.py`），一条都没松。
+    """
     orchestrator = _source("app/agents/orchestrator.py")
     chat = _source("app/api/v1/chat.py")
     checkpoint = "PostgresSaver checkpointer is required in production; run migrations first"
-    session_raise = (
-        'raise RuntimeError(f"{table_name} table is required in production; '
-        'run migrations first")'
-    )
 
     assert orchestrator.count(checkpoint) == 1, "checkpointer 那一句被复制了：可达性账要重取"
-    assert chat.count(session_raise) == 1, "chat 那一句被复制了：可达性账要重取"
+    assert chat.count("table is required in production; run migrations first") == 1, (
+        "chat 那一句被复制了：可达性账要重取")
     assert chat.count("_require_migrated_tables(") == 3, "chat 的调用点数目变了：可达性账要重取"
 
 

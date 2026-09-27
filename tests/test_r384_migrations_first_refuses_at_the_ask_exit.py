@@ -1,0 +1,596 @@
+# -*- coding: utf-8 -*-
+r"""R384 · `run migrations first` 在 `chat.py` 的三枚调用点：逐格实量之后只治一格。
+
+接单线索来自 R377（`96179ff`）的"只报不改 ③"。它只读到调用链、没跑探针，所以本件的第一交付物
+是**现场状态码**：一律取自 ``TestClient(app, raise_server_exceptions=False)``，替身台账只对
+「`to_regclass('public.x')` 这一次现查怎么答」与「缺表时 DML 怎么失败」作答，一个字都不求值真 SQL、
+不连真库、不起服务、不碰模型端口。三态（库在且迁移齐 / PG 在但表缺 / PG 整个不在）各量一遍。
+
+## 判据① 可达性表（行号在本单基点 `5ba73bd` 现取；形状一律走 AST 派生，不抄数）
+
+| 调用点 | 抛出方 | 谁捕获 | 捕获后交出什么 | 生产·表缺 | 开发 | 离线 | 钉 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `_ensure_documents_table()` @ 模块导入期 | `:878` 现查缺 `documents` | 同一 `try` 的 ``except Exception: pass`` | 什么都不交，导入继续（原注释：上传时再懒建表） | 抛过一次、被吃、`reload` 实测成功（零出口） | 就地建表，不抛 | 外层 `if catalog_database_available()` 根本不进门（实测零语句） | 本件 |
+| `_ensure_documents_table()` @ `_upsert_document` 内 | `:878` 同上 | `_record_uploaded_version` 的 ``except Exception as exc`` + `logger.warning` | **200**：文件收下、metadata 那一行没落 | `POST /upload` 实测 **200**，日志一句 `metadata sync failed: ... run migrations first` | 建表后正常落行 | 走 `record_local_document_version` 那一腿 | 本件存档，判据④只报不改 |
+| `_ensure_sessions_table()` @ `ask()` | `:878` 现查缺 `sessions` / `session_messages` | **没人**（`app/**` 零 `exception_handler`，本件重新扫过） | —— | 修前实测 **500** `text/plain` `Internal Server Error`；修后 **503** `{"detail":"storage_unavailable"}` | 就地补 DDL 自愈，越过闸（哨兵 418） | 闸第一行 `return`，一次连接都不发 | 本件 |
+
+🔴 R377 踩过的坑写在前面：它原判"这几枚会逃成裸 500"，实测方向是反的（吞掉之后交 200 空集）。
+本单不复用那个结论。量下来三枚里**只有一枚今天真会裸 500** —— `ask()` 那一格，所以只治那一格；
+另两枚逃不出去，判不可达，一个字不改（连"顺手也折成 503"都不做：那会推翻
+`tests/test_document_upload_resilience.py` 钉着的「元数据库挂了也不丢文件」裁定，越出判据）。
+
+## 只报不改（本单量到、但不在判据①那张表里的相邻形状）
+
+- `_ensure_session()` @ `ask()`：把 `_ensure_sessions_table` 换成桩单量一格，生产 + 缺表 ⇒ **500**
+  `text/plain`。抛它的是 `INSERT INTO sessions` 的 `UndefinedTable`，不是 `:878` 那句现查，所以不在
+  "这一族"的账上；今天它被前面那道闸挡着（闸先抛），本单改完仍是闸先答 503，那一格不会因此露出来。
+- `GET /sessions`：生产 + 缺表 ⇒ 实测 **500** `text/plain`（同一个 `UndefinedTable` 族）。它不是
+  `_ensure_*` / `_require_migrated_tables` 调用点，不在表里，故只报。
+- 效力边界：替身台账只回答"那一次现查怎么答"，所以本件证明的是**出口读到缺表时答什么**，不证明
+  "跑 migrations 真能把那一格补出来"。
+"""
+from __future__ import annotations
+
+import ast
+import re
+from pathlib import Path
+
+import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from psycopg import errors
+
+from app.api.v1 import chat
+from app.common import auth
+from app.main import app
+
+REPO = Path(__file__).resolve().parents[1]
+CHAT_REL = "app/api/v1/chat.py"
+CHAT = REPO / CHAT_REL
+PROBE = "_require_migrated_tables"
+FAMILY = "ChatSchemaNotMigratedError"
+SENTENCE = "run migrations first"
+STORAGE_CODE = "storage_unavailable"
+BARE_500_BODY = "Internal Server Error"
+
+#: 只在测试里出现的哨兵：证明请求**越过了**那道现查闸，而不是被闸拒答。产品侧一个字节都不认识它
+#: （判据③不许新增 status 档位，所以 418 绝对不许出现在 app/** —— 由形状钉复核 503 名单）。
+PASSED_GATE = "R384-PAST-THE-GATE"
+PASSED_GATE_STATUS = 418
+
+ASK_PATH = "/api/v1/ask"
+UPLOAD_PATH = "/api/v1/upload"
+ADMIN = "r384-admin"
+ACCOUNT = {"id": "u-r384", "username": ADMIN, "role": "admin", "department": "", "status": "active"}
+
+SESSIONS_LEDGER = {"sessions", "session_messages"}
+DOCUMENTS_TABLE = "documents"
+
+_REGCLASS = re.compile(r"to_regclass\('public\.(\w+)'\)", re.IGNORECASE)
+_CREATE_TABLE = re.compile(r"CREATE TABLE IF NOT EXISTS (\w+)", re.IGNORECASE)
+_DML_TARGET = re.compile(r"(?:FROM|INTO|UPDATE)\s+([A-Za-z_]\w*)", re.IGNORECASE)
+#: 替身台账认识的几本账：不在目录里的账，DML 必须像真 PG 一样失败，否则"被宽捕获吃掉"那两格
+#: 量到的就不是线上那张脸。
+KNOWN_LEDGERS = {"sessions", "session_messages", DOCUMENTS_TABLE, "document_versions", "users"}
+
+
+def _sentence(table_name: str) -> str:
+    """那句现查的话：`<表> table is required in production; run migrations first`。
+
+    拼出来而不是抄源码那一句：抄来的行号/行文本每演进一次红一次（R346/R351 那族病）。这里要钉
+    的是「一个字节都没改」，不是那一行的字面量。
+    """
+    return f"{table_name} table is required in production; {SENTENCE}"
+
+
+class SubstituteLedger:
+    """只对「目录里现在有没有这一枚」作答的替身台账：不连库、不求值真 SQL。
+
+    缺表时对 DML 抛**真的** ``psycopg.errors.UndefinedTable``（与真 PG 同一枚异常类）。
+    """
+
+    def __init__(self, tables=(), label="ledger"):
+        self.tables = {str(name).lower() for name in tables}
+        self.label = label
+        self.statements: list[str] = []
+        self.commits = 0
+        self._rows: list[dict] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=()):
+        text = " ".join(str(sql).split())
+        self.statements.append(text)
+        found = _REGCLASS.search(text)
+        if found:
+            name = found.group(1).lower()
+            self._rows = [{"table_name": name if name in self.tables else None}]
+            return self
+        created = _CREATE_TABLE.search(text)
+        if created:
+            self.tables.add(created.group(1).lower())
+            self._rows = []
+            return self
+        referenced = _DML_TARGET.search(text)
+        if referenced:
+            name = referenced.group(1).lower()
+            if name in KNOWN_LEDGERS and name not in self.tables:
+                raise errors.UndefinedTable('relation "%s" does not exist' % name)
+        self._rows = []
+        return self
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        return None
+
+    def close(self):
+        return None
+
+    @property
+    def probed_tables(self) -> list[str]:
+        return [m.group(1) for s in self.statements if (m := _REGCLASS.search(s))]
+
+    @property
+    def created_tables(self) -> list[str]:
+        return [m.group(1) for s in self.statements if (m := _CREATE_TABLE.search(s))]
+
+
+class LogRecorder:
+    """把出口那几行日志留下来：三格分不分得开，今天只有这一处证据。"""
+
+    def __init__(self):
+        self.lines: list[tuple[str, str]] = []
+
+    def _record(self, level, message, *args, **kwargs):
+        self.lines.append((level, str(message)))
+
+    def debug(self, message, *args, **kwargs):
+        self._record("debug", message, *args, **kwargs)
+
+    def info(self, message, *args, **kwargs):
+        self._record("info", message, *args, **kwargs)
+
+    def warning(self, message, *args, **kwargs):
+        self._record("warning", message, *args, **kwargs)
+
+    def error(self, message, *args, **kwargs):
+        self._record("error", message, *args, **kwargs)
+
+    def exception(self, message, *args, **kwargs):
+        self._record("exception", message, *args, **kwargs)
+
+    def mentions(self, needle: str) -> list[str]:
+        return [text for _level, text in self.lines if needle in text]
+
+
+def _headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {auth.create_token(ADMIN)}"}
+
+
+def _pass_the_gate(*args, **kwargs):
+    """哨兵：越过闸之后的一切都不在本单判据里，所以让它在下一行就报一枚只有测试认识的码。"""
+    raise HTTPException(status_code=PASSED_GATE_STATUS, detail=PASSED_GATE)
+
+
+def _ask_client(monkeypatch, *, env: str, pg_up: bool, tables, stub_conn: bool = True,
+                stub_ensure_session: bool = True):
+    """架一具离线的 `/ask`：真中间件、真路由、真闸；只有闸后面那一行是哨兵。"""
+    monkeypatch.setattr(
+        auth, "get_user", lambda username: dict(ACCOUNT) if username == ADMIN else None)
+    monkeypatch.setattr(chat, "_session_database_available", lambda: pg_up)
+    ledger = SubstituteLedger(tables)
+    if stub_conn:
+        monkeypatch.setattr(chat, "_sess_conn", lambda: ledger)
+    recorder = LogRecorder()
+    monkeypatch.setattr(chat, "logger", recorder)
+    if stub_ensure_session:
+        monkeypatch.setattr(chat, "_ensure_session", _pass_the_gate)
+    monkeypatch.setenv("APP_ENV", env)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post(
+        ASK_PATH,
+        json={"message": "今年的销售额是多少", "session_id": "s-r384",
+              "idempotency_key": f"idem-{env}-{pg_up}-{len(tables)}"},
+        headers=_headers(),
+    )
+    return response, ledger, recorder
+
+
+# ================= 现场状态码：`/ask` 那一格（本单唯一治的一格） =================
+def test_production_with_a_missing_sessions_table_refuses_with_503(monkeypatch):
+    """判据①：生产 + 库在 + 表缺 —— 修前实测裸 500 `text/plain`，本单治好这一格。"""
+    response, ledger, recorder = _ask_client(
+        monkeypatch, env="production", pg_up=True, tables=set())
+
+    assert response.status_code == 503, response.text
+    assert response.json() == {"detail": STORAGE_CODE}
+    assert ledger.probed_tables == ["sessions"], "现查闸没走到就没资格谈折 503"
+    assert recorder.mentions(SENTENCE), "原句折进 503 之后必须还在日志里"
+
+
+def test_the_refusal_is_no_longer_the_bare_500_plain_text_face(monkeypatch):
+    """裸 500 的病灶是「无码 + 纯文本」：这一格两样都不许留下。"""
+    response, _ledger, _recorder = _ask_client(
+        monkeypatch, env="production", pg_up=True, tables=set())
+
+    assert response.status_code != 500
+    assert response.text != BARE_500_BODY
+    assert "application/json" in response.headers["content-type"]
+
+
+def test_the_log_line_names_the_missing_table_and_the_code(monkeypatch):
+    """判据③：缺表 / 缺列 / 库没起三格排查路要分得开 —— 缺表这一格得说得出缺哪枚。"""
+    _response, _ledger, recorder = _ask_client(
+        monkeypatch, env="production", pg_up=True, tables=set())
+
+    lines = recorder.mentions("code=" + STORAGE_CODE)
+    assert len(lines) == 1, lines
+    assert "sessions table" in lines[0], lines[0]
+
+
+def test_a_missing_session_messages_table_is_a_distinct_answer(monkeypatch):
+    """两枚账分开查：只有 `sessions` 在、`session_messages` 不在时，指名的必须是后者。"""
+    response, ledger, recorder = _ask_client(
+        monkeypatch, env="production", pg_up=True, tables={"sessions"})
+
+    assert response.status_code == 503
+    assert ledger.probed_tables == ["sessions", "session_messages"]
+    assert recorder.mentions("session_messages table"), recorder.lines
+
+
+def test_the_refusal_precedes_every_side_effect(monkeypatch):
+    """拒答必须排在绑会话、落库、入队、模型之前：留下的是零副作用，不是跑了一半。"""
+    calls: list[str] = []
+
+    def _spy(*args, **kwargs):
+        calls.append("bind")
+
+    monkeypatch.setattr(chat.session_registry, "bind", _spy)
+    response, _ledger, _recorder = _ask_client(
+        monkeypatch, env="production", pg_up=True, tables=set())
+
+    assert response.status_code == 503
+    assert calls == [], "闸拒答之前已经动了会话注册表"
+
+
+def test_development_still_heals_the_ledgers_and_passes_the_gate(monkeypatch):
+    """开发态一个字都不改：就地补 DDL 自愈，闸放行，本单不许把它一起打死。"""
+    response, ledger, recorder = _ask_client(
+        monkeypatch, env="development", pg_up=True, tables=set())
+
+    assert response.status_code == PASSED_GATE_STATUS, response.text
+    assert SESSIONS_LEDGER <= set(ledger.created_tables), ledger.statements
+    assert ledger.probed_tables == [], "非生产那一腿不该做现查"
+    assert not recorder.mentions(SENTENCE)
+
+
+def test_the_offline_world_never_opens_a_connection(monkeypatch):
+    """库整个不在：闸第一行就 `return`，一次连接都不许发，也就永远不答 503。"""
+    response, ledger, _recorder = _ask_client(
+        monkeypatch, env="production", pg_up=False, tables=set())
+
+    assert response.status_code == PASSED_GATE_STATUS, response.text
+    assert ledger.statements == [], ledger.statements
+
+
+def test_a_fully_migrated_production_turn_still_passes(monkeypatch):
+    """不许过度拒答：两枚账都在位时，闸只查不拒，也不在运行期提交 DDL。"""
+    response, ledger, _recorder = _ask_client(
+        monkeypatch, env="production", pg_up=True, tables=set(SESSIONS_LEDGER))
+
+    assert response.status_code == PASSED_GATE_STATUS, response.text
+    assert ledger.probed_tables == ["sessions", "session_messages"]
+    assert ledger.created_tables == []
+
+
+def test_a_missing_driver_is_still_a_bare_500_and_not_a_503(monkeypatch):
+    """反洗白：同基类的邻居（驱动缺失）不许被折成 503 —— 那不是「迁移没跑」。"""
+    monkeypatch.setattr(chat, "psycopg", None)
+    response, _ledger, _recorder = _ask_client(
+        monkeypatch, env="production", pg_up=True, tables=set(SESSIONS_LEDGER),
+        stub_conn=False)
+
+    assert response.status_code == 500, response.text
+    assert response.text == BARE_500_BODY
+
+
+# ================= 具名化本身：只加一层，话一个字不改 =================
+def test_the_family_is_one_layer_over_runtime_error():
+    assert issubclass(chat.ChatSchemaNotMigratedError, RuntimeError)
+    assert chat.ChatSchemaNotMigratedError is not RuntimeError
+
+
+@pytest.mark.parametrize("table_name", [DOCUMENTS_TABLE, "sessions", "session_messages"])
+def test_the_probe_raises_the_family_with_the_unchanged_sentence(table_name):
+    """现查缺表 ⇒ 具名族 + 逐字原句（既有的宽捕获与旧账都还接得住）。"""
+    ledger = SubstituteLedger(set())
+
+    with pytest.raises(chat.ChatSchemaNotMigratedError) as caught:
+        chat._require_migrated_tables(ledger, table_name)
+
+    assert str(caught.value) == _sentence(table_name)
+    assert isinstance(caught.value, RuntimeError), "基类一换就会弄红别人的旧账"
+
+
+def test_the_probe_says_nothing_when_the_table_is_there():
+    ledger = SubstituteLedger({DOCUMENTS_TABLE})
+
+    assert chat._require_migrated_tables(ledger, DOCUMENTS_TABLE) is None
+
+
+def test_the_documents_probe_still_raises_the_family(monkeypatch):
+    """`_ensure_documents_table` 那一格今天也被同一句抛过：本单不改它的回话，但要有钉。"""
+    ledger = SubstituteLedger(set())
+    monkeypatch.setattr(chat, "_sess_conn", lambda: ledger)
+    monkeypatch.setenv("APP_ENV", "production")
+
+    with pytest.raises(RuntimeError) as caught:
+        chat._ensure_documents_table()
+
+    assert type(caught.value) is chat.ChatSchemaNotMigratedError
+    assert str(caught.value) == _sentence(DOCUMENTS_TABLE)
+
+
+# ================= 判据③：门那一侧的形状（新增一枚，逐枚点名） =================
+def _tree() -> ast.Module:
+    return ast.parse(CHAT.read_text(encoding="utf-8"))
+
+
+def _functions(tree: ast.Module) -> dict[str, ast.AST]:
+    return {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _function_scopes(tree: ast.Module) -> list[ast.AST]:
+    return [node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def _status_sites(tree: ast.Module, status: int) -> list[tuple[str, ast.Raise]]:
+    """`[(所属函数, raise 节点)]`：按 AST 数 `raise HTTPException(status_code=<status>, ...)`。"""
+    found: list[tuple[str, ast.Raise]] = []
+    for scope in _function_scopes(tree):
+        for node in ast.walk(scope):
+            if not (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)):
+                continue
+            if getattr(node.exc.func, "id", "") != "HTTPException":
+                continue
+            for keyword in node.exc.keywords:
+                if keyword.arg == "status_code" and isinstance(keyword.value, ast.Constant) \
+                        and keyword.value.value == status:
+                    found.append((scope.name, node))
+    return found
+
+
+def _detail_of(node: ast.Raise):
+    """取 detail 的**值/形状**而不是它的字面量写法：单双引号不算改口，值变了才算。
+
+    队列那几枚的 detail 是一枚运行期拼出来的 dict（``{"code": exc.code, ...}``），字面量求值吃不
+    下，所以那一支回它的键名集合 —— 本单要分开的正是「同一枚字符串码」与「另一套 dict 信封」。
+    """
+    for keyword in node.exc.keywords:
+        if keyword.arg != "detail":
+            continue
+        value = keyword.value
+        if isinstance(value, ast.Constant):
+            return value.value
+        if isinstance(value, ast.Dict):
+            keys = sorted(ast.literal_eval(key) for key in value.keys)
+            return "dict:" + "+".join(keys)
+        return ast.unparse(value)
+    raise AssertionError("那枚 503 没有 detail")
+
+
+def test_the_module_now_opens_exactly_six_503_raises_each_named():
+    """判据③：新增 503 出口必须逐枚点名给理由。本单只新增一枚（`ask`），其余五枚是存量。
+
+    两件事分别钉：**枚数**与**归属**。只钉名单会漏掉「同一枚函数里再长一门」——那是反证刀
+    K8 试出来的洞，补强之后那把刀同时咬两枚。
+    """
+    sites = _status_sites(_tree(), 503)
+    owners = sorted(name for name, _node in sites)
+
+    assert len(sites) == 6, [f"{name}:{node.lineno}" for name, node in sites]
+    assert owners == sorted([
+        "_enqueue_ask_turn",      # 存量：QueueConnectionError -> 503 {"code": "queue_unavailable", ...}
+        "ask",                    # ← 本单新增的唯一一枚：缺表从裸 500 折成已有的那一码
+        "cancel_queued_request",  # 存量
+        "hitl_pending",           # 存量：本模块此前唯一那枚 storage_unavailable 出口
+        "queue_stats",            # 存量
+        "queue_status",           # 存量
+    ]), owners
+
+
+def test_the_five_storage_exits_that_predate_this_ticket_are_untouched():
+    """五枚存量出口里，`detail` 的字面量一枚都不许跟着本单动：只有 `ask` 那一枚是新的。"""
+    sites = _status_sites(_tree(), 503)
+    by_owner: dict[str, list] = {}
+    for name, node in sites:
+        by_owner.setdefault(name, []).append(_detail_of(node))
+
+    assert sorted(by_owner["ask"]) == [STORAGE_CODE], by_owner["ask"]
+    legacy = {name: details for name, details in by_owner.items() if name != "ask"}
+    assert legacy == {
+        "_enqueue_ask_turn": ["dict:code+message"],
+        "hitl_pending": [STORAGE_CODE],
+        "cancel_queued_request": ["dict:code+message"],
+        "queue_stats": ["dict:code+message"],
+        "queue_status": ["dict:code+message"],
+    }, legacy
+
+
+def test_the_new_exit_reuses_the_existing_code_verbatim():
+    """零新增错误码、零新增 reason：新出口的 detail 与既有出口逐字相同。"""
+    tree = _tree()
+    ask_503 = [node for name, node in _status_sites(tree, 503) if name == "ask"]
+    pending_503 = [node for name, node in _status_sites(tree, 503) if name == "hitl_pending"]
+
+    assert len(ask_503) == 1 and len(pending_503) == 1
+    assert _detail_of(ask_503[0]) == _detail_of(pending_503[0]) == STORAGE_CODE
+
+
+def test_no_status_tier_was_invented_in_this_ticket():
+    """本单不许长出新的 status 档位：哨兵 418 只许活在测试里，`app/**` 一个字节都不认。"""
+    hits: list[str] = []
+    for path in (REPO / "app").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if PASSED_GATE in text or f"status_code={PASSED_GATE_STATUS}" in text:
+            hits.append(str(path))
+
+    assert hits == [], hits
+
+
+def test_the_ask_conversion_catches_exactly_one_type():
+    """宽捕获会把真 bug 一起洗成 503：出口只许接 `ChatSchemaNotMigratedError` 一种。"""
+    route = _functions(_tree())["ask"]
+    handlers = [node for node in ast.walk(route)
+                if isinstance(node, ast.ExceptHandler) and node.type is not None]
+    matching = [node for node in handlers if ast.unparse(node.type) == FAMILY]
+
+    assert len(matching) == 1, [ast.unparse(node.type) for node in handlers]
+    bodies = [ast.unparse(stmt) for stmt in matching[0].body]
+    assert sum("raise HTTPException" in text for text in bodies) == 1, bodies
+    assert sum(STORAGE_CODE in text and "raise HTTPException" in text for text in bodies) == 1, bodies
+    assert sum("logger.warning" in text for text in bodies) == 1, bodies
+
+
+def test_only_the_probe_raises_the_family():
+    """具名族只有一个抛出方：出口之外不许有人自己举它（否则「只接一种」就失去含义）。"""
+    raisers = [
+        (scope.name, node.lineno)
+        for scope in _function_scopes(_tree())
+        for node in ast.walk(scope)
+        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+        and getattr(node.exc.func, "id", "") == FAMILY
+    ]
+
+    assert len(raisers) == 1, raisers
+    assert raisers[0][0] == PROBE, raisers
+
+
+def test_every_probe_call_site_sits_inside_a_production_branch():
+    """两处现查都只可能在生产分支被走到 —— 出口那枚 503 因此不需重判环境，也不会替非生产打掩护。"""
+    tree = _tree()
+    calls = [node for node in ast.walk(tree)
+             if isinstance(node, ast.Call) and getattr(node.func, "id", "") == PROBE]
+
+    assert len(calls) == 2, [node.lineno for node in calls]
+    for call in calls:
+        guards = [node for node in ast.walk(tree)
+                  if isinstance(node, ast.If) and node.lineno <= call.lineno <= (node.end_lineno or node.lineno)
+                  and "_is_production_environment" in ast.unparse(node.test)]
+        assert guards, f"{PROBE} 的调用点 :{call.lineno} 跑出了生产分支"
+
+
+def test_the_module_still_relies_on_no_global_safety_net():
+    """本单结论的前提是「全局没有兜底翻译」：有人真挂一枚 handler，这张表就得重画。
+
+    判的是 AST 上的名字与装饰器，不是源码子串 —— 本单自己在出口写的那句注释里就出现过
+    `exception_handler` 这个词，拿子串判会把自己读成假阳性（现场踩过一次，改的就是这里）。
+    """
+    hits: list[str] = []
+    for path in (REPO / "app").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        named = {
+            node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+        } | {
+            node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+        }
+        if any("exception_handler" in token for token in named):
+            hits.append(str(path.relative_to(REPO)))
+
+    assert hits == [], hits
+
+
+# ================= 判不可达的两格：钉住今天这张脸，一个字不改 =================
+def test_the_import_time_probe_sits_inside_a_bare_pass_handler():
+    """导入期那一枚调用点被 ``except Exception: pass`` 吃在原地：形状必须留着。
+
+    那枚 `try` 嵌在模块级 `if catalog_database_available():` 里面，所以整棵树扫，不只看 `tree.body`。
+    """
+    guarded = [
+        (node, handler)
+        for node in ast.walk(_tree()) if isinstance(node, ast.Try)
+        for handler in node.handlers
+        if ast.unparse(handler.type) == "Exception"
+        and any(isinstance(call, ast.Call)
+                and getattr(call.func, "id", "") == "_ensure_documents_table"
+                for call in ast.walk(node))
+    ]
+
+    assert len(guarded) == 1, guarded
+    _node, handler = guarded[0]
+    assert len(handler.body) == 1 and isinstance(handler.body[0], ast.Pass), (
+        "吃掉它的那一枚不再是 pass：这一格的回话变了，可达性表要重画")
+
+
+def test_the_upload_metadata_leg_still_answers_200_when_documents_is_missing(monkeypatch, tmp_path):
+    """只报不改（判据④）：`_upsert_document` 那一格今天被宽捕获吃掉，出口答 200。
+
+    这一枚钉的是**今天的样子**，不是裁定。真正的病是反方向的（存储现查到缺表，出口却说「收好了」），
+    那是 catalog/profile 那一族的账；本单碰它就是写域冲突，所以只把量到的状态码钉住存档。
+    """
+    from app.agents import tools
+
+    ledger = SubstituteLedger(set())
+    recorder = LogRecorder()
+    monkeypatch.setattr(
+        auth, "get_user", lambda username: dict(ACCOUNT) if username == ADMIN else None)
+    monkeypatch.setattr(chat, "DOCUMENTS_DIR", str(tmp_path))
+    monkeypatch.setattr(chat, "catalog_database_available", lambda: True)
+    monkeypatch.setattr(chat, "_sess_conn", lambda: ledger)
+    monkeypatch.setattr(chat, "peek_next_document_version", lambda filename: 1)
+    monkeypatch.setattr(chat, "load_document", lambda path, display_name=None: "abc")
+    monkeypatch.setattr(chat, "logger", recorder)
+
+    class FakeRetriever:
+        def add_document(self, filename, content, classification, department):
+            return True, "indexed"
+
+        def list_documents(self):
+            return []
+
+    monkeypatch.setattr(chat, "retriever", FakeRetriever())
+    monkeypatch.setattr(tools, "rebuild_bm25", lambda: None)
+    monkeypatch.setenv("APP_ENV", "production")
+
+    response = TestClient(app, raise_server_exceptions=False).post(
+        UPLOAD_PATH,
+        files={"file": ("r384-note.txt", "短文本 不入库".encode("utf-8"), "text/plain")},
+        data={"classification": "1", "department": ""},
+        headers=_headers(),
+    )
+
+    assert response.status_code == 200, response.text
+    assert ledger.probed_tables == [DOCUMENTS_TABLE]
+    swallowed = recorder.mentions(SENTENCE)
+    assert len(swallowed) == 1, swallowed
+    assert swallowed[0].startswith("[Docs] metadata sync failed"), swallowed[0]
+
+
+def test_the_conversion_is_narrow_at_the_module_level_too():
+    """除出口那一枚之外，全模块不许出现第二处接这个族的 `except`（否则转换就不止一处）。"""
+    handlers = [
+        (scope.name, ast.unparse(node.type))
+        for scope in _function_scopes(_tree())
+        for node in ast.walk(scope)
+        if isinstance(node, ast.ExceptHandler) and node.type is not None
+        and FAMILY in ast.unparse(node.type)
+    ]
+
+    assert handlers == [("ask", FAMILY)], handlers
