@@ -3,6 +3,8 @@
 
 - 告警规则 CRUD（数值比较）
 - evaluate_all(): 读经营数据 → 逐规则判定 → 触发则写告警 + AI 归因
+  R345：读不开的数据文件不再一声不响 —— 本轮摘要点名每一份跳过的文件与异常类名，
+  一份都没读成功时说的是「读不到」，不是「无异常」
 - daily_report(): 汇总关键指标生成日报文本；处置闭环（R251）：确认 / 转派 / 关闭 —— 状态机、处置人与时间落库、处置后按新状态读回
 导入不硬依赖 Postgres（懒建表）。
 """
@@ -36,6 +38,11 @@ _MEM_ALERTS: list[dict] = []
 _MEM_NEXT_RULE_ID = 1
 _initialized = False
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
+
+#: 巡检「有文件、但一份都没读成功」那一格的 reason 词。与 _scan_data_files 已有的
+#: tenant_data_dir_unavailable / no_data_files / no_permitted_datasets 同一族写法（内部摘要词，
+#: 不是对外错误码：它只出现在 scan_summary 里，谁都不许把它塞进 HTTPException 的 detail）。
+ALL_DATA_FILES_UNREADABLE = "all_data_files_unreadable"
 
 OPS = {"gt": lambda a, b: a > b, "lt": lambda a, b: a < b,
        "gte": lambda a, b: a >= b, "lte": lambda a, b: a <= b}
@@ -682,8 +689,20 @@ def _tenant_data_root() -> Path | None:
 
 
 def _data_file_extensions() -> set[str]:
-    extensions = getattr(_data_api_module(), "DATA_FILE_EXTENSIONS", None)
-    return {str(ext).lower() for ext in (extensions or {".csv", ".xlsx", ".xls"})}
+    """告警巡检认哪些后缀: 现读 R336 那把单一事实源, 本件不留第二份手抄。
+
+    上一版这里写的是 getattr(data_api, "DATA_FILE_EXTENSIONS", None)，拿不到就兜一份手抄字面量。
+    那枚回退今天走不到（data.py 一定回值），它是**死的可见的**: 谁改了 data.py 的导入路径、或者
+    _data_api_module() 递不出那一格，巡检就悄悄恢复扫 .xls —— 而 R336 刚刚关掉读它的那条腿
+    （load_excel 现在先吐 UnsupportedDataFile），名单与读腿从此各漂各的。
+    真源只有一处: app/tools/excel.py::DATA_READ_ENGINES 那张「后缀 -> 用什么引擎读」的声明表，
+    对外名单是 accepted_data_file_extensions()，data.py 的 DATA_FILE_EXTENSIONS 收口闸读的就是同一枚调用。
+    名单为空 = 这台机器上一种可读的数据格式都没有，那本次巡检就按「无数据文件」处理并写明原因
+    （见 _scan_data_files），绝不拿一份可能过期的手抄名单继续算。
+    """
+    from app.tools.excel import accepted_data_file_extensions
+
+    return {str(ext).lower() for ext in accepted_data_file_extensions()}
 
 
 def _directory_data_files(root: Path) -> list[Path]:
@@ -771,11 +790,31 @@ def evaluate_all(principal=None, scan_summary: dict | None = None) -> list[dict]
     # 落章用的部门：每份数据自己登记的归属（登记表不可用时为空表）。
     dataset_departments = _dataset_department_index()
     dfs: list[tuple[str, object]] = []
+    unreadable: list[dict[str, str]] = []
     for data_path in data_paths:
         try:
             dfs.append((data_path.name, load_excel(str(data_path))))
-        except Exception:
-            continue
+        except Exception as exc:
+            # R345: 读不开的那一份必须留下名字与原因。旧实现是裸的一句 except Exception: continue，
+            # 于是「这个月没有异常」与「这个月的数据一份都没读出来」在屏上是同一张脸 —— 读不到被
+            # 伪装成零，正是本仓最忌的那类病。摘要只放文件名与异常类名: str(exc) 常常带着服务端绝对
+            # 路径（FileNotFoundError 就是），而这份摘要是要出网的（_scan_data_files 只放 path.name，
+            # 同一条理由）。栈留在日志里，不吞。
+            unreadable.append({"filename": data_path.name, "error": type(exc).__name__})
+            logger.warning(
+                f"[Alert] 数据文件读不开，本次巡检跳过这一份: file={data_path.name} "
+                f"error={type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
+    if scan_summary is not None and data_paths:
+        # 「评估了几份 / 跳了几份 / 为什么」这三格只在真有过读取尝试时长出来: 一份都没扫到时，
+        # 上面 _scan_data_files 的 reason 已经把话说完，这里不许替它编一个假的 0。
+        # evaluated_files 也从「扫到了哪些」收窄成「真读进来、真拿去判定了哪些」: 那才是这个名字的意思。
+        scan_summary["evaluated_files"] = [dataset_name for dataset_name, _ in dfs]
+        scan_summary["unreadable_files"] = unreadable
+        if not dfs:
+            # 有文件、却一份都没读成功: 这不叫「没有异常」，这是一次没做成的巡检。
+            scan_summary["reason"] = ALL_DATA_FILES_UNREADABLE
 
     if _database_available():
         with _conn() as conn:
@@ -848,7 +887,13 @@ def daily_report() -> str:
     for data_path in data_paths:
         try:
             df = load_excel(str(data_path))
-        except Exception:
+        except Exception as exc:
+            # R345 同一格: 日报今天不改文案（那是另一枚单的口径），但不再一声不响地少一份数据。
+            logger.warning(
+                f"[Alert] 日报读不开这一份数据，本期不计入它: file={data_path.name} "
+                f"error={type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
             continue
         numeric_columns = df.select_dtypes(include=["number"]).columns
         for metric_column in list(numeric_columns)[:5]:

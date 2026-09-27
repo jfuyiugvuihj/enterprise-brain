@@ -2921,3 +2921,103 @@ repository). No error code was added anywhere in this ticket.
   new string is a superset of the old one, so the pin is strictly stronger, and it now turns red if
   the display name is dropped.
 
+## The alert sweep stops hiding the files it could not open (2026-09-27, R345)
+
+R336 ratified one fact for 「which suffix does this platform accept」 and 「which engine reads it」:
+`app/tools/excel.py::DATA_READ_ENGINES`, with `app/api/v1/data.py::DATA_FILE_EXTENSIONS` derived from it by
+`accepted_data_file_extensions()`. R336 registered, in its own 「Registered, not fixed」 list, that a **third**
+copy of that list was still sitting in the alert sweep, and that the sweep swallowed every read failure. This
+section closes that registered item; the bullet above it stays as written history, and this paragraph supersedes it.
+
+### The third hand-copied extension list is gone
+
+`app/api/v1/alerts.py::_data_file_extensions` used to read
+
+    extensions = getattr(_data_api_module(), "DATA_FILE_EXTENSIONS", None)
+    return {str(ext).lower() for ext in (extensions or {".csv", ".xlsx", ".xls"})}
+
+The fallback branch is dead today (`data.py` always answers) but it was **visible dead code, and the format it
+put back on the sweep list is exactly the one R336 refused to read**. Whoever next changes `data.py`'s import
+path, or hits a module that cannot hand over that attribute, would have restored a sweep over `.xls` while the
+read leg `load_excel` now refuses it first: two books, each drifting on its own. The function is now one call
+and no fallback at all:
+
+    from app.tools.excel import accepted_data_file_extensions
+
+    return {str(ext).lower() for ext in accepted_data_file_extensions()}
+
+That is the same call `data.py` takes, so the sweep, the upload gate and the read leg ask one table. If the
+declaration table were ever emptied, the sweep finds no files and `scan_scope.reason` says `no_data_files` --
+an unusable list is reported as 「no data to evaluate」, never as a possibly stale hand copy. `no extension
+literal` is pinned off the AST, so the pin bites the next copy rather than today's value.
+
+### `scan_scope` now names the files it could not read
+
+`POST /api/v1/alerts/check` returns `scan_scope`, and `app/api/v1/alerts.py::evaluate_all` fills it:
+
+| Key | Shape | Contract |
+| --- | --- | --- |
+| `data_dir_configured` | bool | unchanged from P1-3 |
+| `scoped_to_principal` | bool | unchanged from P1-3 |
+| `evaluated_files` | list of file names | narrowed to the files that were **actually loaded and fed to the rules**; a file that could not be read is no longer counted as evaluated |
+| `unreadable_files` | list of `{"filename": ..., "error": <exception class name>}` | **new**: every file the sweep scoped in and could not read, named |
+| `reason` | str | unchanged `tenant_data_dir_unavailable` / `no_data_files` / `no_permitted_datasets`, plus `all_data_files_unreadable` |
+
+- **读不到 ≠ 无异常.** Files were scoped in but none could be read => `reason` is
+  `all_data_files_unreadable`, `evaluated_files` is `[]`, and `unreadable_files` names every one of them. That
+  is a different sentence from `no_data_files` (the directory really holds nothing), and neither one is
+  「no anomaly found」. Before R345 both cases looked identical on screen: `except Exception: continue` left
+  `reason` empty and `evaluated_files` listing files that were never opened.
+- The two counting cells appear **only when the sweep actually tried to read at least one file**. When nothing
+  was found the three existing `reason` values already say the whole thing, and the summary keeps the exact
+  four-key shape P1-3's pins assert -- no invented zeros.
+- `len(evaluated_files) + len(unreadable_files)` equals the number of files scoped in for this sweep.
+- **No server path leaves the process.** `evaluated_files` and `unreadable_files[*]["filename"]` carry
+  basenames only and `error` carries an exception class name, never `str(exc)`: `FileNotFoundError` writes the
+  absolute path into its own message, and this payload goes to the customer's browser. Same rule as
+  `_scan_data_files` (and the same one `chat.py::_pdf_extraction_cell` follows). The full text plus the stack
+  go to the server log: `logger.warning(..., exc_info=True)` naming the file and the exception class.
+- `app/api/v1/alerts.py::daily_report` held the same bare `except Exception: continue`. Its report text is
+  unchanged (wording is another ticket's call), but it no longer swallows the stack: the skipped file is named
+  in the log with its exception class.
+
+### What did not move
+
+Alert judgment is word for word untouched: rule selection, `hit`, thresholds, `_metric_value`, the E1-11
+per-sweep dedupe, `alert_owner_department` / `_dataset_department_index` stamping, `alert_row_scope_sql` and
+`alert_row_visible` row scope, and the `_permitted_dataset_files` authorization loop. No error code and no bare
+code is added -- `all_data_files_unreadable` is an internal summary word; it appears in `scan_scope` only, never
+as an `HTTPException` `detail`, and both scanners
+(`tests/test_r142_error_code_table_sync.py`, `tests/test_error_code_vocabulary.py`) stayed green. The one
+customer-visible follow-up this ticket may not do itself: `frontend/src/lib/alerts.js::SCAN_REASON_MESSAGES`
+does not carry a Chinese sentence for the new token yet (`frontend/**` is another agent's write set), so the
+face falls through to its conservative `unknown` reading -- 「既不说有异常，也不说一切正常」 -- rather than an
+all-clear. Adding that one key is a one-line follow-up for the frontend owner.
+
+### Pins
+
+- `tests/test_r345_alert_sweep_shares_the_extension_source.py` (7): AST says no extension-shaped string literal
+  survives anywhere in `alerts.py`, and `_data_file_extensions` returns a call on `accepted_data_file_extensions`
+  with no container literal in its return; sweep / declaration table / upload gate are one fact today; the sweep
+  set **and** `_directory_data_files` follow the declaration table when a row is added and when `.csv` is
+  removed (an import-time snapshot fails this, which is the point); every extension the sweep scans is one the
+  read leg actually opens; plus the in-test mirror proving the old fallback shape would be caught.
+- `tests/test_r345_unreadable_data_files_are_counted.py` (13): one unreadable file is named with its exception
+  class while its readable sibling is still judged; the two cells add up to the files found; every file
+  unreadable is *not* reported as an all-clear, including end to end through `POST /api/v1/alerts/check` with a
+  registered `.xls` (the exact shape R336 registered); the log carries file + class + stack, in the sweep and
+  in `daily_report`; a path-bearing exception leaks nothing into `scan_scope`; nothing was found => no counting
+  cell is invented; department stamp and rule hit are untouched; the token is not in the closed enum and not in
+  any `detail`; `evaluate_all` still never raises; and the AST refuses a bare `except ...: continue` in the sweep.
+- Four knives were run on disk against `app/api/v1/alerts.py` and restored by sha256 (control readings before
+  and after matched: `542d393ffd99fda1`): reverting the extension leg to the base two lines reddens 5 pins in
+  the first file; reverting the read-failure leg to a bare `continue` reddens 9 in the second while all 8 of
+  `tests/test_r345_alert_scan_scope.py` stay green (the existing pins do not forbid the new cells); the same
+  mutation, probed against a directory whose every file fails, answers
+  `{'data_dir_configured': True, 'evaluated_files': ['empty.csv', 'fake.xlsx'], 'reason': '', ...}` -- the
+  all-clear face -- where the shipped code answers `reason='all_data_files_unreadable'`, `evaluated_files=[]`
+  and names both files with `EmptyDataError` / `BadZipFile`; replacing the live call with an import-time
+  snapshot reddens 3 (the shape pin plus both direction teeth) while 「one fact today」 stays green -- which is
+  exactly why the value-only pin was not enough.
+- Physical lines: `app/api/v1/alerts.py` 1012 -> 1055 (+48 / -5). No other tracked file changed; this section is
+  appended and deletes nothing.
