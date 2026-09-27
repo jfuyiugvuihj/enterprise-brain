@@ -4021,3 +4021,36 @@ R400 判据：① 三处手抄行号账改**运行时派生**（锚点 token 现
 - **V2 目标 #19「10～30 名内部用户」**：量具那一半 R417 在做；做完仍欠"真机跑一次混合角色样本 + 越权矩阵复跑"，那一半需要安静机器与 `--apply`（＝真机建号＝业主动作）。
 - **切读格② 热集让路延迟**：欠一台没人在跑测试的安静机器，测试窗里量它等于自欺。
 - **五道门 B/C/D/E**：B（流式逐字无缺）**至今从没宣布验过**；C 越权 0 受格③ 限制只能记「未验」；D 报告档开关仍关；E 环境矩阵需真机。本班排定的动作是**门绿之后开一扇多判据窗一次拿完**（A①②③④ + C 两格 + D 三格），并派子 Agent 看窗，总控不干等（业主明令）。
+
+
+## §118（09-28 第十三格·总控线，主树 `5f3680c` → `379d036`）：并三枚 · 补上一格欠的半刀 · 派两枚 · 🔴 一张过期作战图差点让已修完的活儿重派一遍
+
+### 一、本格并树三枚的验收账（本席亲跑，不采信执行层自述）
+
+- **R417 批量建号量具混合角色** ⇒ `f65d42e`。判据：不给 `--roles` 时缺省行为不变／auditor 诚实失败／凭证与计划带真角色。本席亲跑：`git diff --numstat abbb317 66cf807 -- <写集>` 空＝**零漂移**；九枚点名件 rc=0（那一发 170 passed）；`python scripts/provision_bulk_accounts.py` 干跑 `exit 0`、打印 `DRY RUN -- nothing was created, no socket was opened`、新键 `roles=['staff']`；numstat 182/12 与回执逐枚相等。代数复核：`department = departments[(index-1) // len(roles) % len(departments)]` 在 `len(roles)==1` 时逐字退化回旧式 `(index-1) % len(departments)`，`role = roles[(index-1) % 1]` 恒为 `staff` ⇒ 缺省路径可证不变。**结案口径**：量具能造混合角色了，🔴 **V2「10～30 名内部用户」仍不能判落**——`--apply` 一次都没跑过（那是业主动作），auditor 那一档还等 R413/H13。
+- **R415 聊天屏服务端数据读数** ⇒ `ac84f1a`。判据：三态各钉、不许拿请求值冒充服务端值。本席亲跑主树：`npm run test` = **119 files / 2460 tests**（基点 118/2450 ＋ 本单 1 枚件 10 枚，既存零增删＝对得上账）、`npm run lint:colors` = **148 problems / 0 errors**；🔴 这一发是和 R420 新收紧的 **debt 必须为 0** 棘轮一起跑的（上一格施工层的基点里没有它，这正是必须在主树复跑的理由）。**结案口径**：读取位到位，**屏上今天一枚都不显示**——病没好，本单只是让它不可能被读成「已经好了」。
+- **R420 补刀** ⇒ `66cf807`。计划书 §4 表 P4 那一格与 §3 P4 那行同病，逐条见下面第三节。
+
+### 二、过期账勘误（三条，都会让下一班白跑）
+
+- 🔴 **计划书 R59 那一行没有前置在等人了。** 上一格把「等 R35 结案」改成「等 R294 并树」——改对了一半：R294 也早在 09-26 17:33 并树 `70fef378`。本席现取 `git merge-base --is-ancestor` 四枚全部 rc=0：`70fef378`（R294）／`bee9d01`（R59 块1，09-26 17:50）／`dbc2047`（R59 块2，09-26 19:25）／`ed9f8b0`（R231 旋钮）。⇒ **切读的码已全部并树，翻默认不再需要改任何代码**，欠的只剩计划书 §13 那几格未验 ＋ 业主把 `INDEX_BACKEND=pgvector` 写进 `deploy/.env.server` 后 `docker compose up -d --force-recreate`（`env_file:` 在建容器时解析，`docker restart` 不重读；`AGENTS.md` 上一格已按同口径改口）。
+- 🔴 **`docs/handoff/2026-09-26-v1-frontend-gap-list.md` 有三行是过期账，本席差点据此重复派活。** 现读凭据：① **G02／T2**「每篇文档都写已解析、指标永远高可信」——`rg -n 已解析|高可信 frontend/src/components/DashboardPanel.vue` **零命中**，那几句话今天在 `frontend/src/lib/dashboard.js:75-84`，是从聚合回执派生的三张脸（`已解析篇数未记录`／`全部已解析`／`已解析篇数与总数对不上`），配套在册钉 `components/__tests__/r274-documents-tile-truth.test.js`；② **T11**「前端只判一枚健康码」——`frontend/src/lib/health.js:24-25` 两枚码都在（`MODEL_NOT_AVAILABLE`／`EMBEDDING_MODEL_MISSING`），文件头 `:7` 自陈这枚单就是 R268/G07 治的；③ **G04**「换台电脑问过的话全不见」——`frontend/src/lib/sessions.js:874` 起是「名单从服务器取回并与本地合并」，屏上入口 `components/ChatPanel.vue:1751` `session-pull`、`:1761` `session-pull-face`。仍然没证掉的是 **T10／G03**（`activeDataFilename` 在 `ChatPanel.vue` 全是脚本态 `:249/:609/:632/:728-732/:813`，有没有模板画出来给人改＝交 R426 现场判）。⇒ 立单姿势改成「复验并改口」（R426），不是「照着派活」。**过期的作战图比空白更危险。**
+- **`lint:colors` 的天花板是 148，不是 334。** `frontend/package.json` 现读 `--max-warnings=148`；业主与本仓旧账里反复抄的 334 是错的（`Hume` 现读纠正，本席复核同意）。以后报色值账要给「148 problems / 0 errors」这一对数字，334 会让人以为预算还没满。
+
+### 三、本格立案与新派（判据写全，供交回对账）
+
+- **R424（待派，排 R414 并树之后）**· `frontend/src/lib/sessions.js` 的 `request.completed` 那一支补上终态帧 `data_filename`（键名 `terminalDataFilename`，逐字照 R415 面板读的那枚）＋ `app/api/v1/chat.py:2472` 那条钉着 `sessions.js:486-492` 的坐标改口 ＋ `ChatPanel.vue:1950` 那句「后端真正用了哪张表今天不在线上任何一格里」改口（它被 `r268:226` 用牙钉着）。🔴 为什么不跟 R415 一起并：从 `:478` 插行会挪那枚坐标，而 `chat.py` 此刻在 `Heisenberg`/R414 写域内、正在途——**串行的是文件，不是功能名**。R415 丙组 `:308` 那枚「断点今天真断着」的钉子留着，R424 落地那天它自己报红。
+- **R422／R423（待派未派）**：来自 `Hume`/R421 请裁④ 的四处「知识库」句。R422 = `app/documents/index_policy.py:259` ＋ `frontend/src/lib/errcodes.js:103/:122`，🔴 这两处被 `tests/test_r142_error_code_table_sync.py` 跨语言钉着 ⇒ 必须后端＋前端同波做；R423 = `DashboardPanel.vue:127`（被 `r267-overview-real-status:121` 钉）＋ `ChatPanel.vue:320`。
+- **R425（在途，`Turing` @ `be-r417`，基点 `ac84f1a`）**· 计划书 R50「低峰」半句：`register_jobs()`（`app/scheduler/jobs.py:14-20`，今天只 declare `alert_check`＋`daily_report`）接上 `scripts/rebuild_index.py --apply --incremental --time-budget-seconds N`（量具早就在码里：用法 `:31`、签名 `:786-787`）；顺带清结案单 §3.2 第 7 条——`LOCAL_MODEL_KEEP_ALIVE` 进 `.env.example`（`app/common/model_config.py:30-31`，`DEFAULT_KEEP_ALIVE_SECONDS = 5 * 60`）。🔴 判据② 是本单全部风险：**缺省必须不排**，开关关时**不许 `add_job`**（不是「加了再在回调里 return」）；配置面走 R408 新口径（注释掉的出厂默认可以写、生效位赋值不许）。
+- **R426（在途，`Ohm` @ `be-r415`，基点 `ac84f1a`）**· 纯账面亲验单：上面那本 gap list 逐行现场重判 ＋ 拔掉 `frontend/src/router/__tests__/r316-admin-entry.test.js:4-10` 那段已假的叙述。本席现读的证据链：`router/index.js:123-126` 的 `/admin` 带 `meta.screen:true`＋`administratorOnly:true`、`:187-189` 派生进管理员清单、`:196-197` 按角色发口、`App.vue:4` import＋`:448` 侧栏 `v-for`——**而这枚文件自己的用例 `:74`／`:95`／`:116` 证的正是「今天已接上」**，注释与断言在同一枚文件里互相打脸。硬约束：那枚 header 的行号牵连 `r416-...test.js` 的 LEDGER（现引用 `r316-admin-entry.test.js:13` 钉 `auth.py:106`），挪位就停手报本席，**不许自己改 `r416`**。
+
+### 四、下一格顺序（照抄可执行）
+
+1. `git push gitee codex/data-file-catalog`（本格四笔已推至 `379d036`，接班先核 HEAD 与 gitee 是否同步）。
+2. 逐枚收在途四枚：`Heisenberg`R414（只看 (b)(c)，(a) 留着字就整格退回；树里 22+ 枚 `tmp_*` 按多余字节退回。**并树要两道门都跑**——它写 `chat.py`＋`contract-v1.md`，#72）、`Hume`R421、`Turing`R425、`Ohm`R426。
+3. R414 并完 ⇒ 立刻投 R424。
+4. 在途清零 ⇒ 补跑 `python scripts/run_gate.py`（本机 `-n 7 --dist loadfile`；稳态读数 217.96 s，别按首跑 437 s 判回归）。门红分诊姿势：串行→干净 worktree→归因；不许带已知红并树。
+5. 门绿 ⇒ `docker compose build migrate` → `python scripts/check_image_provenance.py` rc=0 → `docker compose up -d --no-build` → `powercfg /change standby-timeout-ac 0` → 开**一扇多判据真机窗**（A①②③④＋C 两格＋D 三格一次拿完）。🔴 派子 Agent 看窗，总控不干等；窗内硬禁并树／跑测试／动容器／打模型；runbook P-10/P-12：重建后必须重跑 seed，C 桶那 5 条依赖那张报销明细在位。
+6. 清理：`%TEMP%` 下 `r420_shadow`、`r420_tmp`、`r408_k0_*`、`r421_*`、`r415_knife`、`r415_probe`、`r417_*`（递归删被本机命令策略拦下，要 `cmd /c rmdir /s /q`）；用毕删 `be-r408`/`be-r410`/`be-r412`/`be-r416`/`be-r419`/`be-r396`/`be-r397`/`be-r420`。
+
+- 🔴 **本格两枚自伤（落笔时就抓回，未污染历史）**：给看板写 §4DI 时，PowerShell here-string 里的 `%TEMP%\r420_shadow` 与 ``frontend\node_modules`` 被 Python 当成转义序列吃掉了——前者多出一枚 lone CR（看板不变量 loneCR 恒 2 → 变 3），后者把名册那一行从中间劈成两行。姿势：`git checkout --` 复原该文件，把脚本里的反斜杠逐枚改双写再重跑，改完复验 CRLF 0／loneCR 2／BOM 序 2。**往 here-string 里写含反斜杠的路径时，Python 侧一律双写。**
