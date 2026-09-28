@@ -14,10 +14,10 @@
  *
  * 甲组直接把三种值交给消息对象（SSR 出真 HTML，断的是屏上那句话的文本，不是函数返回值）；
  * 乙组跑真 send()，把「lib → 面板」那一格交接（result.state.terminalDataFilename）接出来验；
- * 丙组钉今天真实的那一格：**真**的读取器吃到一枚带 data_filename 的终态帧之后，屏上仍然不许多出
- * 那一句 —— 因为终态帧唯一的解码处 lib/sessions.js 的 request.completed 分支今天把 data 的其余
- * 键丢掉，而 lib/** 不在本单写域。这枚钉子是【会自己报红的断点标记】：R414 并树 + 那两行补齐
- * 之后它会红，那时候该改口的是它，不是把甲组那句假话放回来。
+ * 丙组钉的是【线上到屏上那一整截】：lib 不做桩（只把 mocked 的 consumeSseStream 接回真实现）跑真 send()，
+ * 终态帧带文件名 → 屏上报那一个名字；空串 → 说不准；整格缺席 → 那一行一枚字都不画；读数还须随会话落盘。
+ * R415 交单时这一组钉的是反面（lib 的 request.completed 分支把 data 的其余键丢掉 ⇒ 屏上不许凭空报名字），
+ * 并自陈为【会自己报红的断点标记】：接线那一格落地那天它自己红，该改口的是它 —— 现在它改了，甲组没动。
  * 丁组钉本单没碰请求方向：发出去的那一发 body 里 data_filename 照旧（与 r169/r268 同一件事）。
  *
  * 反证怎么算红：把 serverDataOf 里空串那一支改成交回请求值 → 甲2 红；把缺席那一支也写成句子
@@ -304,16 +304,65 @@ describe('乙 · 流结束之后把读数抄进这一轮（接缝验法：交过
   })
 })
 
-describe('丙 · 断点今天真断着（这枚钉子会自己报红，不许拿它当已通）', () => {
-  it('真读取器吃到带 data_filename 的终态帧之后，屏上仍然不许凭空报名字', async () => {
-    const real = await vi.importActual('../../lib/sessions.js')
-    messages.value = [{ role: 'user', content: '各区域最高销售额', mid: 'a1' }]
-    const aiMsg = { role: 'assistant', content: '', steps: [], mid: 'a2', dataFilename: '报销明细表.csv' }
-    messages.value.push(aiMsg)
-    await real.consumeSseStream(sseResponse([terminalFrameWithRead]), aiMsg, {})
-    expect(serverReadout(await render()), '线上带了那一格而 lib 没抄出来：屏上就得不吭声').toEqual([])
-    expect(aiMsg.serverDataFilename, 'lib 的 request.completed 分支今天把 data 的其余键丢掉').toBeUndefined()
+describe('丙 · 线上到屏上那一整截（lib 不做桩，只把 consumeSseStream 接回真实现）', () => {
+  it('终态帧带文件名 → 屏上报的就是那一个名字，而不是界面发出去的那一张', async () => {
+    const { aiMsg } = await realTurn(terminalFrameWithRead)
+    const html = await render()
+    expect(serverReadout(html), '线上那一格到屏上这一句必须接得住').toEqual(['这一轮算数用的表：sales.xlsx'])
+    expect(aiMsg.serverDataFilename).toBe('sales.xlsx')
+    expect(aiMsg.dataFilename, '发依据与用表读数各说各的事，一句不替另一句背书').toBe('报销明细表.csv')
   })
+
+  it('终态帧交空串 → 屏上说不准，一个字都不许从发依据里借', async () => {
+    await realTurn(sseFrame('request.completed', {
+      request_id: 'req-1', sequence: 2, data: { session_id: 'r415-session', data_filename: '' },
+    }))
+    const lines = serverReadout(await render())
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('说不准')
+    expect(lines[0], '空串那一格不是「刚才点的那一张」').not.toContain('报销明细表.csv')
+  })
+
+  it('终态帧整格缺席 → 那一行一枚字都不画；缺席也不许写成「说不准」', async () => {
+    const { aiMsg } = await realTurn(sseFrame('request.completed', {
+      request_id: 'req-1', sequence: 2, data: { session_id: 'r415-session' },
+    }))
+    expect(serverReadout(await render())).toEqual([])
+    expect('serverDataFilename' in aiMsg, '后端没说话，界面也不许替它宣布「说不准」').toBe(false)
+    expect(sentReadout(await render())).toEqual(['本轮发问带的表：报销明细表.csv'])
+  })
+
+  it('读数随会话落盘：刷新回来仍报同一个名字，复原的不是现猜的', async () => {
+    const { real } = await realTurn(terminalFrameWithRead)
+    // 真 send() 收尾自己就走 syncActive() + persist()，这里只模拟刷新：内存 store 清空，
+    // 正文只剩 localStorage 那一枚 —— 复原得回来才算那一格真落了盘。
+    real.sessions.value = []
+    real.messages.value = []
+    real.restoreActive(real.loadSessions())
+    const aiMsg = real.messages.value.filter(item => item.role === 'assistant').pop()
+    expect(aiMsg.serverDataFilename, '随会话落盘的那一份没回来：刷新一次就读不到服务端读数了').toBe('sales.xlsx')
+    expect(serverReadout(await render())).toEqual(['这一轮算数用的表：sales.xlsx'])
+  })
+
+  // 挂具放在最后一枚用例之后：函数声明提到整个 describe 作用域，而 307/308 那两行的位置
+  // 是台账按行号指着这枚断点标记的（跟进单写的是「R415 丙组 :308」），不许被本单挪走。
+  /**
+   * 真帧 → 真读取器 → 真 send()：线上到屏上的整条腿都不做桩。
+   * 返回那一轮的 assistant 消息与真模块（落盘那一枚要拿真模块自己那一份 store 模拟刷新）。
+   */
+  async function realTurn(frame) {
+    const real = await vi.importActual('../../lib/sessions.js')
+    consumeSseStream.mockImplementation(
+      (response, msg, handlers) => real.consumeSseStream(response, msg, handlers),
+    )
+    authedFetch.mockResolvedValue(sseResponse([frame]))
+    const panel0 = await mountPanel()
+    panel0.state.input = '各区域最高销售额是多少？'
+    await panel0.state.send('报销明细表.csv')
+    await settled()
+    const aiMsg = messages.value.filter(item => item.role === 'assistant').pop()
+    return { aiMsg, real }
+  }
 })
 
 describe('丁 · 请求方向那一格没被本单碰', () => {

@@ -2512,7 +2512,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     # 前提已经翻面（``app/agents/nodes.py`` 的生成腿在满足准入条件的那一发
                     # 改走流式，片真从这里进来），而"双重下发"当年之所以成立、今天之所以
                     # 不成立，都是同一件事——**片带的是增量、帧带的是累计全文**：
-                    #   · 屏上：``frontend/src/lib/sessions.js:486-492`` 三条分支——同文帧走
+                    #   · 屏上：``frontend/src/lib/sessions.js:524-531`` 三条分支——同文帧走
                     #     ``segments.includes(chunk)`` 直接 ignored，覆盖帧走 covering 整段替换
                     #     ``msg.content``，只有"既不同文也不覆盖"才追加。累计语义天然落在前两
                     #     条上：一条腿流完再落终答，屏上始终只有一份正文，末片帧与收尾帧同文

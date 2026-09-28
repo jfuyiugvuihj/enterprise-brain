@@ -314,10 +314,10 @@ const LANE_HEADER_SOURCE = 'x-lane-source'
 const LANE_HEADER_DECLARED = 'x-declared-lane'
 const LANE_NAMES = { qa: '问答档', analysis: '分析档', report: '报告档' }
 // 档位在界面上的承诺，与 nodes.LANE_WORKERS 那张表同一方向（只写人话，不写腿名清单）：
-// 读的是「选了会怎样」，不是替后端宣布它跑了什么。
+// 读的是「选了会怎样」，不替后端宣布它跑了哪条腿，也不拿屏上不存在的「知识库」当对象名（R423）。
 const LANE_PROMISES = {
   '': '按问题内容自动挑一条最省的路',
-  qa: '只查知识库回答，不算数、不出图、不产文件',
+  qa: '只用文字回答，不算数、不出图、不产文件',
   analysis: '允许进数据分析与图表，但不产文件',
   report: '一定走导出这一腿（会先请你确认）',
 }
@@ -589,12 +589,12 @@ async function openSession(id) {
 // 🔴 措辞的边界（R415 改口）：这一屏现在有两句，各说各的事，一句都不替另一句背书。
 // 「本轮发问带的表」＝界面发出去的那一份（发依据）；「这一轮算数用的表」＝服务端在【终态帧】里
 // 报回来的那一份（读数，三态见下面 serverDataOf）。两件事在调用方没点名、或一轮算了多张时不同。
-// 🔴 服务端那一半的出处是 app/api/v1/chat.py::terminal_data_filename（R414；三态语义：正好一枚交
-// 文件名，零枚与多枚都交空串），并树状态待总控核 —— 主树今天没有它。而且线上到屏上那一截今天
-// 还断着，断点不在 R414：终态帧唯一的解码处是 lib/sessions.js 里 createStreamReducer 的
-// request.completed 分支，它今天只抄 awaiting_hitl 与 awaiting_steps，data 的其余键丢掉。补齐它是
-// 那里两行的事，而 lib/** 不在本单写域（Singer 名下），已具名报总控请裁。
-// 三态各钉一枚、外加「缺席不许拿发依据填」那枚反向钉：components/__tests__/r415-server-data-readout.test.js。
+// 🔴 服务端那一半的出处是 app/api/v1/chat.py::terminal_data_filename（R414 已并树；三态语义：
+// 正好一枚交文件名，零枚与多枚都交空串）。线上到屏上那一截由 R424 接上：终态帧唯一的解码处是
+// lib/sessions.js 里 createStreamReducer 的 request.completed 分支，它除 awaiting_hitl／
+// awaiting_steps 之外把 data_filename 抄成 state.terminalDataFilename，且只在【亲眼读到字符串】
+// 时才写这一枚键（读不到就整格缺席，与下面 serverDataOf 的「不画」同一态）；面板再走
+// adoptServerDataRead 抄进这一轮。三态与「不许拿发依据填」的钉：r415 与 r424 两件用例。
 // 清单是 lazy 读的：挂载期一枚请求都不发（r260 己1 钉着），伸手才读。
 
 const dataFiles = ref([])
@@ -1947,12 +1947,12 @@ function renderMd(raw) {
                     @cancel="cancelQueuedTurn(msg, i)"
                   />
                   <!-- R268 · G03：这一轮发出去时带的是哪张表。与档位那句同一形状：读的是【发出
-                       去的那一份】，后端真正用了哪张表今天不在线上任何一格里，界面不猜。 -->
+                       去的那一份】（发依据）；服务端真正用了哪张表由下面那一格报，两句各说各的事。 -->
                   <p v-if="dataTableOf(msg)" class="lane-readout" role="status"
                      data-testid="data-table-readout">{{ dataTableOf(msg) }}</p>
                   <!-- R415 · 与上面那句并存，但来源不同轨：这一句读的是服务端在终态帧里报回来的
                        那一份（三态各有名字）。字段没来就整条不画 —— 那一格宁可空着，也绝不拿上面
-                       那句发依据填它。线上到屏上那一截今天还断着（断点与本单写域见文件头 R415）。 -->
+                       那句发依据填它。线上到屏上那一截已由 R424 接线（接线点见文件头 R415/R424）。 -->
                   <p v-if="serverDataOf(msg, i)" class="lane-readout" role="status"
                      data-testid="server-data-readout">{{ serverDataOf(msg, i) }}</p>
                   <!-- 档位那张脸：读的是响应头给的本轮真读数，不是选择框的当前值。

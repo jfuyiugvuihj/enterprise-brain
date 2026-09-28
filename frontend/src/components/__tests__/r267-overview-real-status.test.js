@@ -118,7 +118,7 @@ describe('R267③-a · 最新文档的解析与索引状态读后端字段', () 
       { filename: 'u.pdf', parse_status: 'ready', index_status: 'unknown' },
     ]
     const { html } = await loadedPanel({ catalogRows: rows })
-    expect(docRows(html).map(row => row.index)).toEqual(['已入知识库索引', '未索引', '索引状态未知'])
+    expect(docRows(html).map(row => row.index)).toEqual(['已入检索索引', '未索引', '索引状态未知'])
     const { html: legacyHtml } = await loadedPanel({ catalogRows: [{ filename: 'old.pdf', parse_status: 'ready' }] })
     expect(docRows(legacyHtml)[0].index).toBe('索引状态未记录')
   })

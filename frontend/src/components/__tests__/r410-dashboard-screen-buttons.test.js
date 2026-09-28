@@ -147,7 +147,7 @@ const EXPECTED = [
   { own: 'risk-row', primitive: 'slot', variant: 'secondary', size: 'md', theme: 'risk-item', testid: 'dashboard-risk-row', type: 'button', disabled: false, text: '差旅报销单超 3 日未审批2026-09-25 09:12', goto: 'insights' },
   { own: 'risk-row', primitive: 'slot', variant: 'secondary', size: 'md', theme: 'risk-item', testid: 'dashboard-risk-row', type: 'button', disabled: false, text: '库存周转天数 42 大于阈值 302026-09-26 02:40', goto: 'insights' },
   { own: 'goto-docs', primitive: 'slot', variant: 'ghost', size: 'sm', theme: '', testid: 'dashboard-goto-docs', type: 'button', disabled: false, text: '查看全部 ›', goto: 'docs' },
-  { own: 'doc-row', primitive: 'slot', variant: 'secondary', size: 'md', theme: 'reference-list-row', testid: 'dashboard-doc-row', type: 'button', disabled: false, text: 'a.pdf已入知识库索引已解析', goto: 'docs' },
+  { own: 'doc-row', primitive: 'slot', variant: 'secondary', size: 'md', theme: 'reference-list-row', testid: 'dashboard-doc-row', type: 'button', disabled: false, text: 'a.pdf已入检索索引已解析', goto: 'docs' },
   { own: 'doc-row', primitive: 'slot', variant: 'secondary', size: 'md', theme: 'reference-list-row', testid: 'dashboard-doc-row', type: 'button', disabled: false, text: 'b.pdf未索引正在解析', goto: 'docs' },
   { own: 'doc-row', primitive: 'slot', variant: 'secondary', size: 'md', theme: 'reference-list-row', testid: 'dashboard-doc-row', type: 'button', disabled: false, text: 'c.pdf索引状态未记录排队待解析', goto: 'docs' },
   { own: 'goto-chat', primitive: 'slot', variant: 'ghost', size: 'sm', theme: '', testid: 'dashboard-goto-chat', type: 'button', disabled: false, text: '查看全部 ›', goto: 'chat' },

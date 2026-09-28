@@ -475,10 +475,10 @@ export function createStreamReducer(msg, state) {
       switch (event) {
         case 'request.started':
           return { action: 'ignored' }
-        case 'request.completed':
-          state.terminal = state.terminal || 'completed'
+        case 'request.completed': state.terminal = state.terminal || 'completed'
           state.awaitingHitl = !!data.awaiting_hitl
           state.pendingSteps = Array.isArray(data.awaiting_steps) ? data.awaiting_steps : []
+          if (typeof data.data_filename === 'string') state.terminalDataFilename = data.data_filename
           return { action: 'terminal' }
         case 'request.failed':
           state.terminal = state.terminal || 'failed'

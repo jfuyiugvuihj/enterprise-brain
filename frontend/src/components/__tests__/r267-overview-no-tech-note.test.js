@@ -143,7 +143,7 @@ describe('R267④ · 屏幕上读不到源码路径与 HTTP 路由', () => {
   it('后端字段名与取值一律洗成中文：屏上出现的是「已解析」「代码语义注册表」这种说法', async () => {
     const text = visibleText(await loadedHtml())
     expect(text).toContain('已解析')
-    expect(text).toContain('已入知识库索引')
+    expect(text).toContain('已入检索索引')
     expect(text).toContain('代码语义注册表')
     expect(text).not.toMatch(/pending|parsing|ready|failed|indexed|excluded/)
   })

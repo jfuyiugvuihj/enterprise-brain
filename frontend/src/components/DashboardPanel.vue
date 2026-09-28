@@ -124,7 +124,7 @@ function parseStatusText(row) {
 // index_status 是另一件事，而且契约允许整个键缺席（索引状态这一列落地之前入库的行根本没判过）。
 // 缺席只能读成「没记录过」：画成「未索引」就是替后端做了一个它没做过的决定。
 const INDEX_STATUS_TEXT = {
-  indexed: '已入知识库索引',
+  indexed: '已入检索索引', // 说的是这一篇能不能被检索到；屏上没有一格叫「知识库」（R423）
   excluded: '未索引',
   unknown: '索引状态未知',
 }
