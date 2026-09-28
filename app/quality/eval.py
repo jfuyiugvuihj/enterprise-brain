@@ -165,6 +165,286 @@ def format_approval_line(report: dict) -> str:
     )
 
 
+# ===== R438：correctness 的两把尺（R401 丙案扣除接线）================================
+#
+# 跟进单 §115.8 的 R401 判了丙案：那些「锚词在语料里查无出处」的题**保留题面、锚词不动**，
+# 只从 correctness 的分母里**点名**出去。裁定当时只落了账与可跑子集夹具，判分器没接线
+# （tests/test_r401_unscorable_rows_are_named_not_dropped.py:14-15 自己写明「未接线」）。
+# 本段把那根线接上，两把尺同时出，一把都不许藏：
+#   尺一 answer_correctness                  分母 = 全部题数，算法与语义一字未动 ⇒ run2..run9 可比
+#   尺二 answer_correctness_scorable_subset  分母 = 全部题数 − 丙案点名扣除数
+# 🔴 进分母的枚数只能派生，不能手抄：唯一读点是 row_disposition()，读的是题源里 R401 落下的
+#    r401.disposition；派生不到锚点就当场 ScorabilityDerivationError。静默退回全题分母＝假绿。
+# 🔴 扣除必须逐枚点名：id + 为什么今天不可考 + 缺的那个词 + 去向，文本原样从 R401 的记录里读，
+#    本段不另写一套理由（另写一套＝第二本账）。
+
+#: 题源上 R401 处置标记的字段名，与 scripts/r401_anchor_provenance.py:MARKER_FIELD 同一把尺。
+SCORABILITY_MARKER_FIELD = "r401"
+DISPOSITION_KEY = "disposition"
+#: 丙＝题目保留、锚词不动、只从 correctness 分母点名扣除；甲/乙已在 R401 单内处置完，照旧计分。
+UNSCORABLE_DISPOSITION = "丙"
+#: 认得的处置值全集，与 scripts/r401_anchor_provenance.py:DISPOSITIONS 同一把尺。
+KNOWN_DISPOSITIONS = ("甲", "乙", "丙")
+#: 第二把尺在报告里的键名：唯一构造点是 evaluate_evaluation_set，唯一读者是判分器与观测出口
+#: （app/api/v1/observability.py 与 scripts/run_quality_evaluation.py 都从这里取名字，不抄清单）。
+SUBSET_RULER_KEY = "answer_correctness_scorable_subset"
+#: 装着两把尺分母账（三数 + 点名清单）那一格的键名，同上。
+SCORABLE_SUBSET_REPORT_KEY = "scorable_subset"
+
+
+class ScorabilityDerivationError(RuntimeError):
+    """丙案扣除的锚点读不出来：宁可不出这份报告，也不许静默按全部题数出分母。"""
+
+
+def _plain_id(row: dict) -> str:
+    """题号的宽读法：没有就回空串，要不要因此报错由点名那一腿决定（分子分母闸不猜题号）。"""
+    return str(row.get("id", "") or "").strip()
+
+
+def row_disposition(row: dict) -> str | None:
+    """现读这一枚题在题源里带的 R401 处置（甲/乙/丙）；没带标记就是 None。
+
+    🔴 全仓唯一读点：扣除清单、进分母数、可判子集的分子全部从这一格长出来。摘掉它，两把尺
+    就塌回一把——tests/test_r438_* 的刀a 钉的正是这一格。
+    带着标记却读不出一个认得的处置值 ⇒ 当场报错：把「读不到」当成「不用扣」就是假绿。
+    """
+    marker = row.get(SCORABILITY_MARKER_FIELD)
+    if marker is None:
+        return None
+    if not isinstance(marker, dict):
+        raise ScorabilityDerivationError(
+            f"{_plain_id(row)} 行的 {SCORABILITY_MARKER_FIELD} 标记不是对象，读不出处置：{marker!r}")
+    disposition = marker.get(DISPOSITION_KEY)
+    if disposition is None:
+        raise ScorabilityDerivationError(
+            f"{_plain_id(row)} 行带着 {SCORABILITY_MARKER_FIELD} 标记却没有 {DISPOSITION_KEY}"
+            " ⇒ 丙案账断在题源上，不许按全部题数出分母")
+    disposition = str(disposition).strip()
+    if disposition not in KNOWN_DISPOSITIONS:
+        raise ScorabilityDerivationError(
+            f"{_plain_id(row)} 行的处置值 {disposition!r} 不在 {'/'.join(KNOWN_DISPOSITIONS)} 里"
+            " ⇒ 分母派生不到锚点")
+    return disposition
+
+
+def _named_id(row: dict) -> str:
+    row_id = _plain_id(row)
+    if not row_id:
+        raise ScorabilityDerivationError("有一枚判丙的题没有题号 ⇒ 扣除没法点名，这份报告不出")
+    return row_id
+
+
+def unscorable_row_ids(rows: list[dict]) -> list[str]:
+    """计数腿：今天判丙的题号，逐枚现读，不抄名单。"""
+    return [_named_id(row) for row in rows if row_disposition(row) == UNSCORABLE_DISPOSITION]
+
+
+def unscorable_records(rows: list[dict]) -> list[dict]:
+    """点名腿：逐枚被扣题的 id / 为什么今天不可考 / 缺的词 / 去向，文本从 R401 的记录里原样读。
+
+    🔴 这里一行都不许「另写一套理由」：reason / missing_term / pool 就是
+    scripts/r401_anchor_provenance.py 的 --apply 落进题源的那份账，读它就是读那本账。
+    丙案的铁规是题保留、锚词不动 ⇒ 那个查无出处的词必须还挂在 must_contain 上；谁把锚词置空
+    或把理由抹平，这里当场报错（R401 判据②明令禁的那两条捷径）。
+    """
+    named_rows = []
+    for row in rows:
+        if row_disposition(row) != UNSCORABLE_DISPOSITION:
+            continue
+        marker = row[SCORABILITY_MARKER_FIELD]
+        row_id = _named_id(row)
+        anchors = [str(term) for term in (row.get("must_contain") or [])]
+        reason = str(marker.get("reason") or "").strip()
+        destination = str(marker.get("pool") or "").strip()
+        missing_term = str(marker.get("missing_term") or "").strip()
+        if not reason or not destination:
+            raise ScorabilityDerivationError(
+                f"{row_id} 判丙却没被点名（reason/pool 缺一枚）"
+                " ⇒ 报告里会出现「分母扣了却没人知道扣了谁」")
+        if not missing_term or missing_term not in anchors:
+            raise ScorabilityDerivationError(
+                f"{row_id} 判丙但锚词被动过了：「{missing_term}」不在 must_contain {anchors} 里"
+                " ⇒ 丙案不换锚词，置空锚词换分母是 R401 判据②禁的那条捷径")
+        named_rows.append({
+            "id": row_id,
+            "disposition": UNSCORABLE_DISPOSITION,
+            "missing_term": missing_term,
+            "reason": reason,
+            "destination": destination,
+            "question": str(row.get("question") or ""),
+        })
+    return named_rows
+
+
+def derive_scorability(rows: list[dict]) -> dict:
+    """两把尺的分母账：全部题数 / 点名扣除数 / 进分母数 + 逐枚点名，三个数全是现算。
+
+    计数腿与点名腿各走一遍再互相对账：任何一枚丙案题只被计数没被点名（或反过来），三数算式
+    就破 ⇒ 当场报错，不许出一份「扣了分母但点不出人」的报告。
+    """
+    deducted_ids = unscorable_row_ids(rows)
+    named_rows = unscorable_records(rows)
+    if sorted(record["id"] for record in named_rows) != sorted(deducted_ids):
+        raise ScorabilityDerivationError(
+            f"扣除账对不上：点名 {len(named_rows)} 枚 vs 丙案 {len(deducted_ids)} 枚"
+            " ⇒ 有题被扣了分母却没被点名")
+    total_rows = len(rows)
+    deducted_n = len(deducted_ids)
+    denominator_rows = total_rows - deducted_n
+    if denominator_rows < 0 or denominator_rows != total_rows - deducted_n:
+        raise ScorabilityDerivationError(
+            f"进分母数 {denominator_rows} ≠ 全部 {total_rows} − 扣除 {deducted_n} ⇒ 三数算式破了")
+    block = {
+        "total_rows": total_rows,
+        "deducted_n": deducted_n,
+        "denominator_rows": denominator_rows,
+        "deducted_ids": deducted_ids,
+        "deducted_rows": named_rows,
+        "rule": (
+            "answer_correctness_scorable_subset 的分母 = 全部 {0} 题 − 丙案点名扣除 {1} 题 = {2}；"
+            "answer_correctness / evidence_coverage / total 仍按全部 {0} 题（题没删、锚词没动）。"
+            .format(total_rows, deducted_n, denominator_rows)
+        ),
+        "basis": (
+            "处置值由 app.quality.eval.row_disposition() 现读题源里的 r401.disposition，"
+            "逐枚理由与去向原样取自同一份 R401 记录（scripts/r401_anchor_provenance.py 落的账），"
+            "分母账里没有一枚手抄数字"
+        ),
+    }
+    if not denominator_rows:
+        block["note"] = (
+            f"全部 {total_rows} 题都判丙 ⇒ 可判子集为空，这一把尺报 None 而不是 0.0"
+            "（0.0 会被读成「一道题都没答对」，那是假话）")
+    return block
+
+
+def correctness_subset_ruler(results: list[dict], scorability: dict) -> dict:
+    """可判子集那把尺：分子与分母从同一份点名清单里长出来，不许一只脚踩在全集上。
+
+    两道同源闸：① 进分子的题数必须等于分母账上的枚数；② 分子不许大过分母
+    （「分子按全部题数、分母按可判子集」这种越界读数比值会大于 1）。
+    任何一道不通 ⇒ 当场报错，这份报告不出。
+    """
+    deducted_ids = {record["id"] for record in scorability["deducted_rows"]}
+    scorable = [item for item in results if _plain_id(item["row"]) not in deducted_ids]
+    if len(scorable) != scorability["denominator_rows"]:
+        raise ScorabilityDerivationError(
+            f"可判子集读出 {len(scorable)} 枚，分母账上是 {scorability['denominator_rows']} 枚"
+            " ⇒ 分子分母不同源")
+    correct_n = sum(bool(item["correct"]) for item in scorable)
+    if correct_n > len(scorable):
+        raise ScorabilityDerivationError(
+            f"可判子集分子 {correct_n} 越出分母 {len(scorable)}"
+            " ⇒ 有题没进分母却在算分，两把尺不同源")
+    return {
+        "correct_n": correct_n,
+        SUBSET_RULER_KEY: round(correct_n / len(scorable), 4) if scorable else None,
+    }
+
+
+def scorability_metrics(report: dict, *, list_limit: int | None = None) -> dict:
+    """把第二把尺与它的分母账读成「可进出口」的读数面：键名从报告那一格自己长出来。
+
+    🔴 判据⑨：出口不许抄一份键名清单当第二本账（本仓为这病开了 R346/R351/R377/R396/R400 一整族）。
+    规则只有一条 —— 逐格读 `scorable_subset`：
+      * 数值格（三数与 correct_n）→ `scorable_subset_<该格键名>`；
+      * 字符串清单（逐枚点名的题号）→ `scorable_subset_<该格键名>`，逐枚照发；条数超过调用方给的
+        上限就当场红——截断出口等于「少报了几枚还照旧报 ok」，正是判据⑨禁的静默少一格；
+      * 对象清单（逐枚理由与去向）→ 不搬进出口，只与扣除数对账（长文本留在报告文件里）；
+      * 尺本身 → 用 SUBSET_RULER_KEY 原名：判分器怎么写，出口就怎么读。
+    🔴 派生不到锚点当场红，不许静默少一格：尺与账只有一半、三数算式破、点名清单与扣除数
+       对不上、分母为零却报了数、比值大于 1、格内格外的尺不是同一个数 —— 一律报错。
+    旧形状（本单接线之前入库的那批件根本没有第二把尺）返回空面：那是「那一把尺
+    今天不存在」，不是「少了一格」，不许把它当分叉炸掉 —— 已入库的报告还得照样看得见。
+    """
+    block = report.get(SCORABLE_SUBSET_REPORT_KEY)
+    has_block = isinstance(block, dict)
+    has_ruler = SUBSET_RULER_KEY in report
+    if has_ruler != has_block:
+        raise ScorabilityDerivationError(
+            "第二把尺与它的分母账只有一半（尺{0}／账{1}）⇒ 形状分叉的报告不许进出口".format(
+                "在" if has_ruler else "不在", "在" if has_block else "不在"))
+    if not has_block:
+        return {}
+
+    def _count(name: str) -> int:
+        value = block.get(name)
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ScorabilityDerivationError(f"分母账上「{name}」读不出整数：{value!r}")
+        return value
+
+    total_rows = _count("total_rows")
+    deducted_n = _count("deducted_n")
+    denominator_rows = _count("denominator_rows")
+    if denominator_rows < 0 or denominator_rows != total_rows - deducted_n:
+        raise ScorabilityDerivationError(
+            f"出口重算三数：{total_rows} − {deducted_n} ≠ {denominator_rows} ⇒ 账上的算式是破的")
+
+    roster = block.get("deducted_ids")
+    named = block.get("deducted_rows")
+    if deducted_n and not isinstance(roster, list):
+        raise ScorabilityDerivationError(f"扣了 {deducted_n} 枚却点不出名单 ⇒ 账在尺不在")
+    if isinstance(roster, list) and len(roster) != deducted_n:
+        raise ScorabilityDerivationError(
+            f"点名清单 {len(roster)} 枚 ≠ 扣除数 {deducted_n} ⇒ 有题被扣了分母却没被点名")
+    if isinstance(named, list) and len(named) != deducted_n:
+        raise ScorabilityDerivationError(
+            f"逐枚点名记录 {len(named)} 枚 ≠ 扣除数 {deducted_n} ⇒ 清单与账不同源")
+
+    metrics: dict = {}
+    ruler = report.get(SUBSET_RULER_KEY)
+    if ruler is not None:
+        try:
+            number = float(ruler)
+        except (TypeError, ValueError) as error:
+            raise ScorabilityDerivationError(f"第二把尺读不成数：{ruler!r}") from error
+        if not math.isfinite(number) or not 0.0 <= number <= 1.0:
+            raise ScorabilityDerivationError(
+                f"第二把尺 {number} 越出 [0, 1] ⇒ 分子踩在了全部题数上")
+        metrics[SUBSET_RULER_KEY] = number
+    elif denominator_rows:
+        raise ScorabilityDerivationError(
+            f"分母是 {denominator_rows} 枚却没有读数 ⇒ 静默少一格，这份出口不认")
+    if SUBSET_RULER_KEY in block and block[SUBSET_RULER_KEY] != ruler:
+        raise ScorabilityDerivationError(
+            f"账里那把尺（{block[SUBSET_RULER_KEY]!r}）与报告抬头那把（{ruler!r}）不是同一个数")
+
+    prefix = f"{SCORABLE_SUBSET_REPORT_KEY}_"
+    for key, value in block.items():
+        if key == SUBSET_RULER_KEY or isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and math.isfinite(value):
+            metrics[f"{prefix}{key}"] = value
+        elif isinstance(value, list) and value and all(isinstance(item, str) for item in value):
+            if list_limit is not None and len(value) > list_limit:
+                raise ScorabilityDerivationError(
+                    f"点名清单 {len(value)} 枚超出出口条数上限 {list_limit}"
+                    " ⇒ 截断就是少报几枚还报 ok ⇒ 本出口不认，宁可落 unreadable")
+            metrics[f"{prefix}{key}"] = list(value)
+    return metrics
+
+
+def format_correctness_rulers(report: dict) -> str:
+    """把两把尺读成一行（CLI 用）：与出口共用 `scorability_metrics`，谁也不许拼第二遍。
+
+    🔴 这一行只许**追加**：历史那四格（evaluated / correctness / evidence / p95_ms）的写法与顺序
+       不动 —— runbook §7-C 认的是「stdout 以 evaluated= 开头」与那串既有 token。第二把尺挂行尾。
+       派生不到就当场红：只印一把尺交活，正是判据①禁的那个形状。
+    """
+    metrics = scorability_metrics(report)
+    if not metrics:
+        raise ScorabilityDerivationError(
+            "这份报告没有可判子集那一格 ⇒ 第二把尺无从可报，只许两把尺同报")
+    ruler = metrics.get(SUBSET_RULER_KEY)
+    ruler_text = f"{SUBSET_RULER_KEY}=" + ("n/a" if ruler is None else f"{ruler:.4f}")
+    prefix = f"{SCORABLE_SUBSET_REPORT_KEY}_"
+    ledger = " ".join(
+        f"{key[len(prefix):]}={value}"
+        for key, value in metrics.items()
+        if key.startswith(prefix) and not isinstance(value, list))
+    return f"{ruler_text} {SCORABLE_SUBSET_REPORT_KEY}[{ledger}]"
+
+
 # ===== R205a：时延记账（跟进单 §93.9）=============================================
 #
 # run6 正式报告里 latency_ms.average = 351 121 ms 比逐题最大值（诚实的 272.2 s）还大。
@@ -404,6 +684,11 @@ def evaluate_evaluation_set(path: str | Path, answer_fn, *, approval_ledger: str
     R205a：`latency_ms` 那一格不再由「载荷里有什么就算什么」决定，改由
     `aggregate_latency_ms` 对着帧账逐发记账（跟进单 §93.9 ①）；账本读不出来就当场
     `LatencyAccountingError`，这份报告不出。
+
+    R438：correctness 同时出两把尺（判据①）。`answer_correctness` 的分母与算法一字未动 ⇒
+    历史报告可比；`answer_correctness_scorable_subset` 按可判子集出，分母由题源里的 R401
+    处置标记现算（`derive_scorability`），逐枚被扣题在 `scorable_subset.deducted_rows` 里
+    点名。派生不到锚点同样当场 `ScorabilityDerivationError`，这份报告不出。
     """
     rows = [
         json.loads(line)
@@ -415,6 +700,8 @@ def evaluate_evaluation_set(path: str | Path, answer_fn, *, approval_ledger: str
     ledger: dict[str, dict] = {}
     if approval_ledger is not None:
         ledger = load_approval_ledger(approval_ledger)
+    # 🔴 分母账先派再取答案：扣除账断在题源上也要在打模型之前炸（与时延记账同一纪律）。
+    scorability = derive_scorability(rows)
     results = []
     for row in rows:
         result = answer_fn(row)
@@ -464,9 +751,12 @@ def evaluate_evaluation_set(path: str | Path, answer_fn, *, approval_ledger: str
         bucket["evidence_coverage"] = round(evidence / total, 4) if total else 0.0
         bucket["total"] = total
 
+    # 两把尺同出一源：全题那把按既有算法，可判子集那把在同一批 results 上派生。
+    subset = correctness_subset_ruler(results, scorability)
     report = {
         "total": len(rows),
         "answer_correctness": ratio([item["correct"] for item in results]),
+        SUBSET_RULER_KEY: subset[SUBSET_RULER_KEY],
         "evidence_coverage": ratio([item["evidence_ok"] for item in results]),
         "unsupported_claim_rate": round(
             sum(bool(item["provenance"]["unsupported_claims"]) for item in results)
@@ -476,6 +766,7 @@ def evaluate_evaluation_set(path: str | Path, answer_fn, *, approval_ledger: str
         if results
         else 0.0,
         "category_metrics": category_metrics,
+        SCORABLE_SUBSET_REPORT_KEY: {**scorability, **subset},
         "latency_ms": aggregate_latency_ms(latency_spans),
     }
     if approval_ledger is not None:

@@ -30,6 +30,8 @@ from app.common import audit as audit_log
 from app.common.authorization import principal_from_request
 from app.common.permissions import ACTION_AUDIT, ACTION_VIEW
 from app.common.policy import authorization_decision
+#: 两把尺的出口读数面由判分器自己派生（键名不在这抄第二份清单，见 R438 判据⑨）。
+from app.quality.eval import ScorabilityDerivationError, scorability_metrics
 from app.rag.debug import run_retrieval_debug
 from app.rag.filters import RetrievalScopeError
 from app.trace.store import TraceStoreError
@@ -77,6 +79,10 @@ _SCOPE_ERROR_STATUS = {
 }
 _REPORT_RATIO_KEYS = ("answer_correctness", "evidence_coverage", "unsupported_claim_rate")
 _REPORT_LATENCY_KEYS = ("count", "average", "p95")
+#: 🔴 这里没有第二把尺的键名清单，也不是漏了 —— `_report_metrics` 逐格读报告里那一格自己的键
+#: （`app.quality.eval.scorability_metrics`），抄一份清单就是第二本账（R346/R351/R377/R396/R400
+#: 那一族病的形状）。派生不到锚点当场红，见 R438 判据⑨。
+#: 旧入库件（没有第二把尺那两格）走同一条路：那一把尺今天不存在，不是少了一格。
 
 
 class ApiError(BaseModel):
@@ -429,6 +435,7 @@ def _report_metrics(payload: dict[str, Any]) -> dict[str, Any]:
                 number = _finite_float(latency[key])
                 if number is not None:
                     metrics[f"latency_{key}"] = number
+    metrics.update(scorability_metrics(payload, list_limit=MAX_LIST_ITEMS))
     return metrics
 
 
@@ -456,7 +463,15 @@ def _report_summary(path: Path, *, source: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return record
     record["status"] = "ok"
-    record["metrics"] = _report_metrics(payload)
+    try:
+        record["metrics"] = _report_metrics(payload)
+    except ScorabilityDerivationError:
+        # 两把尺的分母账只有一半、三数算式破、清单与扣除数对不上 ⇒ 这一份文件的读数面整体
+        # 不可信。按既有词汇表落 `unreadable`（docs/api/contract-v1.md:1773 只有 ok / unreadable /
+        # too_large，本单不造新词、不加新键）：宁可少一份指标，不许多一格假的。
+        record["status"] = "unreadable"
+        record["metrics"] = {}
+        return record
     categories = payload.get("category_metrics")
     record["category_count"] = len(categories) if isinstance(categories, dict) else 0
     return record
