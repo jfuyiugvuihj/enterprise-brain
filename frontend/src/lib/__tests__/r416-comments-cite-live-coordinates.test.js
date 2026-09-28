@@ -143,7 +143,7 @@ const LEDGER = [
     id: '乙-4 侧栏那枚 v-for 的真位置',
     file: ROUTER,
     cited: 'App.vue',
-    numbers: [448],
+    numbers: [472],
     finders: [{
       label: 'v-for="item in navigationForRole(userRole)"',
       pattern: 'v-for="item in navigationForRole\\(userRole\\)"',
@@ -173,7 +173,7 @@ const LEDGER = [
     id: '乙-6 replay_path 在后端哪一行',
     file: ROUTER,
     cited: 'app/api/v1/observability.py',
-    numbers: [579],
+    numbers: [594],
     finders: [{ label: 'replay_path 那一格', pattern: '"replay_path":\\s*f"/api/v1/traces/', contains: ['replay_path'] }],
   },
   {

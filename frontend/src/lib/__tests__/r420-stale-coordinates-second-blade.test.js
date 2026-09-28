@@ -173,7 +173,7 @@ const LIVE = [
     id: 'L-5 侧栏接线那两行的真位置（r316 入口注释）',
     file: ADMIN_ENTRY,
     cited: 'App.vue',
-    numbers: [4, 448],
+    numbers: [4, 472],
     finders: [
       { label: '壳层 import navigationForRole 那一行', pattern: "^import \\{ DEFAULT_SCREEN, FEED_SCREEN, cachedScreens, navigationForRole", contains: ['navigationForRole'] },
       { label: '侧栏那枚 v-for', pattern: 'v-for="item in navigationForRole\\(userRole\\)"', contains: ['navigationForRole(userRole)'] },

@@ -41,6 +41,29 @@ let unsubscribeAuth = null
 let toastTimer = null
 const toast = shallowRef(null)
 
+// R452 · G07 残格「全站降级横幅」。尺子只有 lib/health.js 那两把：modelState() 定三态，
+// runtimeFaces() 逐族出话；壳层这里不复算 problems、不并格、不新造第二把尺，只挂载与渲染。
+// 读数只在进工作台那一刻取一次，走 health.js 那份 60 秒缓存 —— 七屏共用同一份，没有第二发，
+// 也没有轮询与任何 timer。三态各自画在哪一行、反证怎么算红，记在模板那一段注释与 r452 用例里。
+// 这枚 import 刻意落在 27 行之后：App.vue:27 是在册坐标（r420 L-6 现读对账钉着它），本单不许
+// 把它顶下去；<script setup> 的 import 由编译器提到模块顶层，位置不改变语义。
+import { fetchRuntimeHealth, modelState, modelStatusText, runtimeFaces } from './lib/health.js'
+
+const BANNER_NO_READING = '这台机器的健康读数此刻取不到：界面既不能说它一切正常，也不能说它哪里在降级。'
+const BANNER_NO_READING_NEXT = '过一会儿重新登录再看一次；一直读不到，请让管理员确认这台机器上的服务都起来了。'
+
+const healthRead = shallowRef({ tried: false, health: null })
+const bannerKind = computed(() => (healthRead.value.tried ? modelState(healthRead.value.health) : 'waiting'))
+const bannerShows = computed(() => bannerKind.value !== 'waiting' && bannerKind.value !== 'ready')
+const bannerUnknown = computed(() => bannerKind.value === 'unknown')
+const bannerFaces = computed(() => runtimeFaces(healthRead.value.health))
+const bannerTitle = computed(() => (bannerUnknown.value ? BANNER_NO_READING : modelStatusText(healthRead.value.health)))
+
+/** 一发读取：取到取不到都算「试过了」；取不到由横幅上那第三张脸说话，既不借用正常也不借用降级。 */
+async function readRuntimeHealth() {
+  healthRead.value = { tried: true, health: await fetchRuntimeHealth() }
+}
+
 // R104：侧栏那几项与「点下去渲染谁」都从 src/router 的一张路由表派生，这里不再手写第二份。
 // 图谱的非一级落点（/graph）也在那张表上，D13① 撤的是一级入口而不是功能。
 // R136：屏名同样只在那张表上写一遍（meta.title），顶栏与侧栏都是它的派生视图。
@@ -116,6 +139,7 @@ async function enterWorkspace() {
   isLoggedIn.value = true
   stopExpiryWatch?.()
   stopExpiryWatch = startExpiryWatch()
+  readRuntimeHealth()
   // 登录不改地址，所以不会触发下面的切屏 watch；焦点由这里自己收尾到工作区主区。
   await nextTick()
   focusScreenMain(workspaceEl.value)
@@ -490,6 +514,30 @@ onUnmounted(() => {
           </div>
         </header>
 
+        <!-- R452 · G07 残格：全站降级横幅（登录后整站常驻，切到哪一屏都在）。
+             病灶：逐族降级那张脸（lib/health.js 的 runtimeFaces）今天只有对话一屏在消费，员工切到
+             总览 / 喂料 / 告警 / 审批任何一屏，「这台机器没配检索模型」「推理没走加速设备」「某几格跑在
+             只读保护下」一个字都看不见——答案质量崩了却没有一句解释。
+             三态分开（判据①）：
+               · ready（一切如常）→ 这一段一枚字都不画，也不留占位高度，布局不因「也许有横幅」而顶来顶去；
+               · degraded / down → 逐族一句：族名、那一格的话、下一步各自都在，全部由 lib/health.js 那
+                 一把尺给；壳层不并格 —— 把几族并成一句泛话就是假话（判据⑥第三把刀钉的就是这个形状）。
+               · unknown（读数取不到）→ 第三句人话：既不画成正常，也不画成降级，界面只说自己不知道。
+             读取纪律（判据②）：读数只在进工作台那一刻取一次，走 lib/health.js 那份 60 秒缓存，七屏共用
+             同一份；这里不轮询、没有 timer，也不往屏上多长一枚控件，所以卸载无账要清。 -->
+        <div v-if="bannerShows" class="runtime-banner" :class="`runtime-banner--${bannerKind}`"
+             role="status" data-testid="degradation-banner" :data-kind="bannerKind">
+          <p class="runtime-banner__title" data-testid="degradation-banner-title">{{ bannerTitle }}</p>
+          <p v-if="bannerUnknown" class="runtime-banner__note">{{ BANNER_NO_READING_NEXT }}</p>
+          <ul v-if="bannerFaces.length" class="runtime-banner__faces" data-testid="degradation-banner-faces">
+            <li v-for="face in bannerFaces" :key="face.kind + (face.id || '')"
+                class="runtime-banner__face" :data-kind="face.kind" data-testid="degradation-banner-face">
+              <strong class="runtime-banner__face-label">{{ face.label }}</strong>
+              <span class="runtime-banner__face-text">{{ face.headline }}{{ face.detail }}</span>
+            </li>
+          </ul>
+        </div>
+
         <section class="panel-slot" data-testid="panel-slot">
           <RouterView v-slot="{ Component }">
             <!-- 对话面板切走不卸载：进行中的回答流、输入草稿与滚动位置都得留着（改造前靠 v-show）。
@@ -736,6 +784,71 @@ onUnmounted(() => {
 .auth-toast-close:hover {
   color: var(--muted);
   background: transparent;
+}
+
+/* ==========================================================================
+ * R452 · 全站降级横幅。判据⑤：这一段一枚裸色值都不添 —— 新色值只准在 theme.css 落地，
+ * 组件文件里出现井号色值或 rgb 系函数就撞 lint:colors（本单要求它恒 148 warnings / 0 errors）。
+ * 正常态整段不渲染，所以这里不留占位高度；降级与「读数取不到」共用一张纸，只换左边那一根
+ * 色条：员工先认出「这台机器在跟自己说话」，再读到底哪一格不对劲。
+ * ==========================================================================*/
+.runtime-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--amber);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel-2);
+  color: var(--text);
+  font-size: var(--t-sm);
+  box-shadow: var(--shadow-sm);
+}
+
+/* 读数取不到不是坏消息，是一张不知道的脸：色条换成中性那一档，不许借降级那根橙条。 */
+.runtime-banner--unknown {
+  border-left-color: var(--muted);
+}
+
+.runtime-banner__title,
+.runtime-banner__note {
+  margin: 0;
+}
+
+.runtime-banner__title {
+  font-weight: 600;
+}
+
+.runtime-banner__note {
+  color: var(--muted);
+}
+
+/* 逐族出话：一族一行，族名与那一格的话两格都在（并成一行就丢族名）。 */
+.runtime-banner__faces {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.runtime-banner__face {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.runtime-banner__face-label {
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.runtime-banner__face-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
 }
 
 </style>

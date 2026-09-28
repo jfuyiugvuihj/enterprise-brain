@@ -127,13 +127,13 @@ export const routes = [
   },
   // R399 判据①（甲案）· 「运行留痕」是一屏，写法逐字照上面 /admin 那一枚先例：primary:false 派生不出
   // 一级入口，administratorOnly:true 让它只长进管理员那一份入口清单（administratorNavigation 就是
-  // App.vue:448 侧栏那枚 v-for 的真源，加这一屏不改壳层一个字 —— 这一条由 R309 复核在 §G11 里翻案并留证据）。
+  // App.vue:472 侧栏那枚 v-for 的真源，加这一屏不改壳层一个字 —— 这一条由 R309 复核在 §G11 里翻案并留证据）。
   // 为什么不挂一级：这一屏读的三枚出口过的是审计那一项权限 —— audit:read 只登记在 admin 与 auditor
   // 名下（app/common/permissions.py:15 与 :16），staff 与 manager 那两档没有（:13 与 :14），给员工
   // 摆一枚按下去只会说「不向你开放」的按钮，
   // 就是 R32 明令禁的假控件；管理员那一档多出来的是入口，读不读得到仍然只在服务端那道闸上说。
   // 编号也从这格地址上带进来：/traces?trace=<编号> 是真落点，接的就是后端在
-  // app/api/v1/observability.py:579 自己写出的那一格 replay_path 里的编号；不带 query 就是清单脸。
+  // app/api/v1/observability.py:594 自己写出的那一格 replay_path 里的编号；不带 query 就是清单脸。
   {
     path: '/traces',
     name: 'traces',

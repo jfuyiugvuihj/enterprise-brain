@@ -16,14 +16,14 @@
 
   入口形状（判据① 走的是甲案）：这一屏是一「屏」，但不占一级入口 —— 逐字照 R316 的 /admin 先例：
   primary:false 派生不出一级导航项，administratorOnly:true 让它只长进管理员那一份入口清单
-  （router/index.js 的 administratorNavigation 就是 App.vue:448 侧栏那枚 v-for 的真源，加这一屏
+  （router/index.js 的 administratorNavigation 就是 App.vue:472 侧栏那枚 v-for 的真源，加这一屏
   不改壳层一个字；这一条由 R309 复核在 §G11 里翻案并留了证据）。为什么不挂一级：这三枚出口过的是
   审计那一项权限（app/common/permissions.py:15 与 :16），员工与部门负责人账号打进来拿回来的是 403；
   给他们在侧栏摆一枚按下去只会说「不向你开放」的按钮，就是 R32 明令禁的假控件。
 
   编号从哪儿来（判据① 要交代的就是这一格）：只有两条路。① 从甲那一格里点 —— 那份清单是服务端给的；
   ② 从地址上带进来 —— /traces?trace=<编号> 是真落点，接的就是后端在
-  app/api/v1/observability.py:579 自己写出来的那一格 replay_path 里的编号。屏上没有一处「手输编号」
+  app/api/v1/observability.py:594 自己写出来的那一格 replay_path 里的编号。屏上没有一处「手输编号」
   的框：把编号做成输入框当主路，等于拿一场
   人肉猜数游戏冒充查询闭环。本仓点过名的反面教材就是 GraphPanel 那几枚手输框：今天现读
   :85-88 四枚 <input> 仍在原位，09-26 复核（docs/handoff/2026-09-26-frontend-gap-recheck.md §G12:167
