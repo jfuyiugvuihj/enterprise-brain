@@ -5617,3 +5617,53 @@ cd C:\Users\fengx\PycharmProjects\be-r414; & "C:\Users\fengx\PycharmProjects\企
 - 已清：跟进单 §122 已 commit（`a07e7c3`）；R427 欠的那格注释行号已补（`fefd747`，字节数 31155 不变，`r293` 件 16 passed）；R437 已并树（`c18043f`）。
 - 欠（按序）：① R435 那本 507 行文档并树；② 重建前后端镜像 + 五道现读（provenance／`verify_container_stack --skip-build`／`seed_workspace --check`／`check_corpus_parity`／Redis 先 PONG 再数 `answer:*`）；③ R428 格② 热集让路（必须容器内跑，宿主 5432 有野 PG ⇒ PG 腿会静默降级成 numpy 估算腿＝假绿）；④ run9c＝D 三格首验；⑤ R434「WAL 四本假账」改口；⑥ R433 禁语闸扩面／R440 问答档口径／R441（135 行只作 R429 输入）；⑦ R438、R429、R439、R404、R436、R422 依序并树。
 - 🔴 并树硬时序重申：**R438 与 R439 都必须排在 run9c 之后**（一枚改判分器语义、一枚改终答拾取，都是改测量条件）。R434 那一格若成立，run9 的**全部延迟数**要按「测量环境当时到底有没有并发」重述——这条不许拖到翻默认之后。
+
+## §4DM. 本班（09-28 第十八格·总控线，主树 `227949e` → `1036d59`）：run9c 队列道首验三格读数 · 🔴 事故 #67（执行层整文件写断，原记 #15 是撞号）· R434 四处改口落仓 · push 半通（gitee 成／github 仍被本机代理掐）· 四枚并投名册实取
+
+### 一、§0 名册（本班 15:2x 现读 porcelain，id 为准）
+| 工单 | Agent / id | 工作树 @ 基点 | 写域 | 状态（现读） | 时刻 |
+|---|---|---|---|---|---|
+| **R445**（R429 复工） | `Hubble` `01a0e6c9-051a-75d3-a025-6df50397d31b` | `be-r445` @ `227949e` | `app/agents/tools.py` + `app/rag/retrieval_pipeline.py`（仅 room/装箱 helper）+ 新钉 `tests/test_r445_*` + `scripts/r445_pack_forensics.py` | 🔵 在途，porcelain **干净**＝未落盘 | 15:2x |
+| **R447** | `Franklin` `01a0e6c6-9c8a-7900-b0b8-49d5188ebfdd` | `be-r447` @ `227949e` | `scripts/eval_transport_ask_v2.py` + `scripts/eval_lane_readout.py` + 新钉 | 🔵 在途，`eval_transport_ask_v2.py` **140/21** 已落盘，读out 件与新钉未落 | 15:2x |
+| **R448** | `Goodall` `01a0e6c9-fbf2-7553-9f18-41910d71e981`（第二令子线 `01a0e6d3-d71c-7703-b887-f3b1a95f6765`） | `be-r448` @ `227949e` | 写域已改判放开 `deploy/queue_worker.py`（仍禁 `app/**`、`deploy/.env*`）+ 新钉 `tests/test_r448_*` | 🔵 在途，`deploy/queue_worker.py` **103/4** 已落盘，新钉未落 | 15:2x |
+| **R449**（R444 复工） | `Plato` `01a0e6c9-725a-74d1-8e83-05b4b4c43c14` | `be-r449` @ `227949e` | 起嵌套 pytest 的在册件传 `--basetemp` 进父 `tmp_path` + 新钉；🔴 禁碰 `scripts/run_gate.py` | 🔵 在途，porcelain **干净**＝未落盘 | 15:2x |
+| **R405 + R432** | `Zeno` `01a0e5a8-c099-7ed3-98cd-16a71088966a` | `be-r405` @ `9f9d452` | `scripts/r432_ef_compare.py`、`scripts/r432_sandbox_corpus.py`、`tests/test_r405_readonly_sqlite_open_has_a_file_footprint.py`、`tests/test_r432_offline_guards.py` | 🟡 四枚新件 11:53 前全在盘、未 commit（合规），`wait_agent` 仍非终态。本班**不 close**（事故 #67 的教训：产物只在盘上时收槽位＝拿不回） | 15:2x |
+| 已结案可 close | `Darwin`(R435) / `Galileo`(R437) / `Hypatia`(R439) | — | — | ✅ 均已 close | — |
+| `be-r404` | （`Nietzsche` 已 close） | @ `9f9d452` | `app/documents/catalog.py` + `test_r404_*` + `test_r406_*` | 🟡 本班判定**暂不并**：在册改动只有两句措辞（属 R406 禁语族），钉单跑 13 passed 疑空转，须先按跟进单 §120 第六节三条硬注复核方向乙 | — |
+
+槽位账：五枚在途＝实证上限，投第 6 枚即被拒。本班零新建投递、零 model/reasoning 覆盖、一 block 一次投递。🔴 投递失联账：`Poincare`(R429)/`Euclid`(R438)/`Noether`(R444) 三枚 id 在本席处 `wait_agent` 一律 `not_found` ⇒ **回执不可取，验收只能按盘面取证**。
+
+### 二、run9c＝队列道报告档首验（13:57:42 起、14:19:13 收，`COLLECT_EXIT=0`，20/20 零重试）
+- 送测面从**当前** `tests/fixtures/business_evaluation_100.jsonl` 现取 `tier=报告` 20 行（`report-01..12` + `metric-16..19` + `tool-01..04`）；🔴 没用 09-25 那本 `docs/testing/bank-run8p2-subset20.jsonl`（与现题面逐行不等）。真走队列道（`kind=queued_*`、`queue.polls` 6..124）。
+- **D-1 报告档 100% 可查回＝8/20**：`queued_polled` 8／`queued_awaiting_approval` 11／`queued_dead` 1。那 11 枚**不是取不回**，是量具在队列道一步没走批准轮（`scripts/eval_transport_ask_v2.py:1029-1038` 读到 `awaiting_approval` 就 `_stop(...,"",...)`；`_resolve_hitl` 只挂在同步流道 `kind=="hitl"` 那一支 `:1141-1162`）⇒ 立 **R447**（本席读量具，不读产品）。可读面在位：`approval_present=true`／`approval_steps=["export"]`／`approval_ledger_status=awaiting`／`approval_notice_chars=37`。
+- **D-2 usage＝19/19 structured 行齐**：Σprompt 69,434／Σcompletion 13,691／Σtotal 83,125，账本 `postgres_model_calls`，`authoritative` 全 true。`tool-04` 全零是**真零**（`model_calls=0`，闸前一次没调）；`report-04` 是 `shape=no_keys` ⇒ 说不出，**不许读成零**。
+- **D-3 出处随答案＝不成立**：可读面 7/19 `sources_present=true`，但交回评分器那一份 `answers.evidence`／`sidecar.evidence_n` **20 枚全空**；流内 `sources` 事件 0/20（队列道 `text_frames=0` 是设计）⇒ A② 本格判不了，逐字流式仍归同步道。
+- 🔴 `report-04` 死于装箱顶：同一 `request_id=9bf335ef…c929` 连吃三发 `context_limit_exceeded`（`prompt_tokens` 2691/2693/2695 + `declared_max_tokens=1536` ⇒ `required_n_ctx` 4227~4231 > `MODEL_CONTEXT_TOKENS=4096`，`over_by_tokens` 131/133/135），第四发才判 dead，`wait_ms=373712 / polls=124`。真解只有一句：**抬窗口要和 `num_ctx` 配套 + 容器 recreate**（业主侧，见第五节）。
+- 判词原件已双份：`%TEMP%\handoff18\readout-run9c.txt` ＋ **`E:\eb-offload\evalrun-2026-09-28-run9c\`**（本班新落：answers/sidecar/frames/fixture/corpus_before/run9c.ps1/log/done/readout 共 9 件）。🔴 读判只认 `scripts/eval_lane_readout.py`（已落仓 `38286f7`），量具取不到就 rc=2 明写「取不到，不编数」。
+
+### 三、🔴 事故 #67（新族：执行层产物整文件写断）
+- `be-r429/app/agents/tools.py` **整文件 84,529 字节全 NUL**（mtime 12:25:14＝上一班会话中断那一刻前后）。git 侧不可恢复：当天 `.git/objects` 只有 11 枚松散对象、全是本席 12:19 那笔 commit 的产物，逐枚 `cat-file -t/-s` 查过，没有它的 blob ⇒ 死号不复用，复工立 **R445**。
+- 幸存两件（AST OK，只当输入）：`scripts/r429_pack_forensics.py`（206 行/10,606 B）、`tests/test_r429_pack_priority.py`（453 行/23,614 B，sha16 `1666547DAA444ADF`）。
+- **入规**：并树前给每枚在册件做「是不是文本」体检——`git diff` 报 `Bin`、numstat 出现 `- -` 就是信号，**别只数 numstat**（`- -` 混在正常件里极易漏）。
+- **撞号订正**：跟进单 §124 原把本族记成「事故 #15」，而全局 #15 早于 09-17 §4AI.4（同 block 双投 R56）与 09-26 §4CO（五枚集体冻结）用掉；现取看板最大 **#66**／跟进单最大 **#64** ⇒ 正式改号 **#67**（`1036d59`）。同坑 §4CO 已踩过一次，入规：**事故号一律现取两本在册文档最大值 +1，不许凭摘要记忆落号**。
+
+### 四、本班落地（sha 现取，逐笔 `git cat-file -t` = commit）
+- `897ac56` R434 四处改口：`scripts/r387_label_lineage.py`／`audit_vector_mirror_sets.py`／`audit_r160_department_columns.py`／`diag_r162_chroma_zero_rows.py` 都把遗留向量库的日志模式说成 WAL，今天现读该库 header byte18/19 = 1/1 ＝ legacy rollback journal，根本不产生 `-wal`/`-shm`。只改说法不改行为（numstat 1/1·3/3·3/3·1/1）。🔴 连带：计划书 §9.3 第 5 格「mtime 随只读进程前进」应降「待证」，**仍未落笔**。
+- `8c39166` 跟进单 §124 落账（35/1）。本班先修了一处自伤：写 §124 时把该文件写成**以换行结尾**，而它的铁规是文件尾无 newline（HEAD 版结尾是 `。`）——裁掉尾部 `\r\n` 才提交；裁后 loneCR 恒 1534／bareLF 恒 26／U+FFFD 恒 7／控制字符集仍 {0x0C}，`test_r302_docs_utf8_guard` 那本账没动。
+- `1036d59` 事故编号订正（#15→#67，字节级替换不动行尾）。
+- 门账：`227949e`＋R434 现树全量门 **7790 passed / 50 skipped / 2 xfailed / exit=0**（`-n 7`，241.8 s，14:58:59 起 15:03:02 收）。🔴 主树自 `b4ce04e` 起门曾是红的（上一班并树没跑门、交接时未知）⇒ 入规 **每枚并树后必跑门，不跑不写交接账**。
+
+### 五、H 闸门与真账（本班实取）
+- 🟢 **gitee 侧 push 通了**：`git push gitee HEAD:refs/heads/codex/data-file-catalog` = `0cc8c00..8c39166`，`git ls-remote gitee` 现读 `refs/heads/codex/data-file-catalog` = `8c39166…` ⇒ **「本机是唯一副本」这条从本班起不成立**，H6 的 gitee 半边可关（看板 `§4DL` 那句「H6 关闸」是按 github 记的，这里分家写清）。
+- 🔴 **github 侧仍断**：`git push origin …` = `TLS connect error: error:0A000126:SSL routines::unexpected eof`。`http.proxy=http://127.0.0.1:7897` 端口在听（PID 4684）⇒ 掐的是**代理上游**；`C:\Windows\System32\drivers\etc\hosts` 里还有一整排 `127.0.0.1 github.com / api.github.com / githubusercontent.com …`。**修代理与清 hosts 属业主本人**，本席一个字节没动。
+- 镜像账：容器 14:50:43 重建并 recreate 到 `227949e`，env 逐格比对只 `HOSTNAME` 变，五道现读全绿（provenance MATCH／`verify_container_stack --skip-build` 22 passed／`seed_workspace --check` documents=100／`check_corpus_parity` PASS／Redis PONG + `answer:*`=0）。🔴 之后 HEAD 进到 `1036d59`，但那三笔只碰 `scripts/` 与 `docs/`、**`app/**` 零改动** ⇒ provenance 现在会因 label≠HEAD 不 rc=0，属**账面不一致不是运行不一致**；下一次真重建排在 `R448`（动 `deploy/queue_worker.py`）并树那天。
+- 只等业主本人（本席一个都没代做）：抬 `MODEL_CONTEXT_TOKENS` ≥4231（建议 8192）＋ Ollama `num_ctx` 同值 ＋ `docker compose --env-file deploy/.env.server up -d --force-recreate`（🔴 `MODEL_MIN_ANSWER_TOKENS=1536` 不许动；`deploy/.env.server` 走 compose `env_file:`，容器创建那刻才解析，`docker restart` 不重读）／修代理与 hosts／`INDEX_BACKEND=pgvector` 入 `deploy/.env.server`／A1 补 `users.department`／A3 密级回填／H13 未裁（⇒ R413 不许投）／改评测集题面（D10 甲那步单独批）／`pyproject.toml` 全局 `xfail_strict`。
+- 🔴 心跳 `automation-2` **保持永久 PAUSED**（业主 09-28 原话「别开这个人工提醒会影响对话，之前有好几个这么死了」），仅 `target_thread_id` 指向本线，不许改回 ACTIVE、不许另建第二条。
+
+### 六、下一格顺序（照抄可执行）
+1. 等 `Hubble`/`Franklin`/`Goodall`/`Plato` 交回逐条对判据（R445＝跟进单 §121 第二节；R449＝§123 第四节；R447/R448＝判据全文见跟进单 §124 第五节 + `%TEMP%\handoff18\brief-R44{5,7,8,9}.md`），总控亲跑门，达标才代提交。
+2. 并树硬序：**R438 已并（`227949e`）⇒ R447 可动**；R445 动 `tools.py`/`retrieval_pipeline.py`；R448 动 `deploy/queue_worker.py` ⇒ **并完必须重建镜像**（3–6 s 全缓存，`docker build -f Dockerfile -t enterprise-brain:local --build-arg APT_MIRROR=… --build-arg GIT_SHA=<短sha> --build-arg BUILT_AT=<ISO> .` 后 `up -d --no-build` + provenance）。
+3. 🔴 R447 改的是**量具**（`eval_transport_ask_v2.py`）⇒ 并它前后，D 三格读数不可跨版本比；重跑窗口要显式记「量具 sha」。
+4. 单号账：R445/R447/R448/R449 已用，**R446 故意跳过**（`docs/handoff/2026-09-20-unblock-map.md:136`：`R446` 会被 `--grep='R44'` 子串误命中），**R450 起空闲**（乙案＝`app/agents/orchestrator.py:1464` 交出结构化码，排 orchestrator 那一族之后）。
+5. R428 格② 热集让路（判据＝跟进单 §120 第四节）：必须 `docker exec -e INDEX_BACKEND=pgvector -i enterprise-brain-backend-1 /usr/local/bin/python - < 脚本`（宿主 5432 有野 PG ⇒ PG 腿会静默降级成 numpy 估算腿＝假绿），只写 `eb_r59_sandbox`，默认值与 `.env` 一字不动。
+6. 🔴 本班新学一格规矩（已写进跟进单 §124 第六节）：**单跑/手挑组合＝假红制造机**。import 后端 app 的件单跑必炸 `AssertionError: Artifact of type=precompile already registered`（torch 双导入）；`tests/test_r409_plan_table_is_derived.py` 单跑 4 failed 而门内绿，A/B 同法（把改动 `git checkout` 掉再单跑，同样 4 failed）证与改动无关 ⇒ 验收只认 `scripts/run_gate.py`。
