@@ -4498,3 +4498,61 @@ github 代理与 hosts · `deploy/.env.server` 任何编辑（含 `INDEX_BACKEND
 
 ### 八、只等业主本人（本席一件没代做）
 `deploy/.env.server` 任何编辑（含 `INDEX_BACKEND=pgvector`＝容器 `up -d --force-recreate`）· A1 `users.department` 回填＋A3 密级标签回填＋H13 未裁 · R440 整表与分档 p95 口径 · R433 禁语闸扩面 · 改评测集题面（D10 甲单独批）· 抬 `MODEL_CONTEXT_TOKENS`≥4231 与 Ollama `num_ctx` 配套 · github 代理/hosts · 删 `%TEMP%\r414_stash\`、`?? %SystemDrive%/`、`?? -`。心跳两枚仍 `PAUSED`（业主「别开人工提醒」那道令有效）。
+
+## §133（09-28 第二十二格·**接班线**，主树 `5939b38`→`3dcc288`；本席全程 qwen3.8-flash 单模型、未做任何切换，心跳两枚仍 PAUSED 未动）：云端形状窗第一次跑到底 33/33 · 🔴 P-18 那把量具第二次以「假零」骗过操作员（#73）· 开窗空烧 46 分钟（#74）· 三枚缺陷立案 R462/R463/R464 · 格③ 与 C 门的真账：1008 枚向量零部门标签、classification 全为 1
+
+### 一、本班是接班班
+上一条总控线死于同一类 provider 消息 id 污染（`Invalid 'id' … at_` / `Invalid 'call_id'`），本席**没读它的对话**，下面每条结论都来自磁盘或现网实测。开场只读 AGENTS.md 与四份 handoff。本席新出事故三笔（#73／#74／#75），都在第七节。
+
+### 二、开窗前掐掉的两枚假账（都是上一格留下的，本席现取推翻）
+1. 🔴 **P-18「开窗前 flush Redis 的 answer:*」是假零**（事故 **#73**，同类第二次）。驱动把口令取成 `EB_EVAL_PASSWORD`——那是跑分账号 `evalbot` 的口令（看板 §3108 定档），Redis 要的是 `REDIS_PASSWORD`，两枚名字相近而用途不同。各连一次实测：`REDIS_PASSWORD len=32 → PING=PONG，answer:* 实有 10 枚`；`EB_EVAL_PASSWORD len=24 → NOAUTH Authentication required. + AUTH failed: WRONGPASS，而 … | wc -l 报 0`。⇒ 判据那句「开窗前该数必须为 0」**当场"成立"，库里 10 枚缓存一枚没动**。runbook 第 484 行早就写明"先看 PING 回 PONG 再看计数，回 WRONGPASS 的那个数无论是不是 0 都不算数"——判据只住在纸上、每班手写驱动，所以每班重踩。治法＝**R461 把 P-18 硬化成仓内 fail-closed 量具**（第三节）。
+2. 🔴 **云端形状窗抄了本地窗口 4096**。本席上一格在驱动里设 `MODEL_CONTEXT_TOKENS=4096`，而 `deploy/compose.cloud-eval.yaml` 自己写着 "the cloud leg is not bound by local VRAM"；更要紧的是那一行只改宿主进程，env 在容器创建那一刻定死 ⇒ `docker exec` 现读容器内仍是 4096。后果现取：第一窗 `doc-19 kind=error_event / answer_chars=21`，容器日志原文 `required_n_ctx=4114 … error_code=context_limit_exceeded`，同段 `[PromptPack] leg=doc room_total=1198 candidates=4 fitted=0 dropped=4` ⇒ 那一发的"形状"是兜底句，根本没有流可验。第二窗以 `--force-recreate` 把 16384 真灌进容器，同一题当场变 `ok / 640 字 / 16 帧`。
+3. 🔴 顺手订正一笔假账：§132 记「相 1 `REPORT_LANE_VIA_QUEUE` 未设＝默认关（已现读确认）」——本席现读容器 env `REPORT_LANE_VIA_QUEUE=on`，它来自 `deploy/.env.server`，那一格读的是宿主进程层、不是容器层。所以本班只开了一扇窗，两相那一刀没有发生。
+
+### 三、三枚并树（本席亲验后代的提交）
+- **R457 并树 `6fd09dd`**（`Wegener`@be-r457，基点 623f924；判据 §131 五）：给 `expires_at` 那枚没人读的字段装执行腿——每日 02:30 一枚 cron，缺省即开、不造第二枚开关。落点是判据① 的一次**合法偏离**：腿挂在 `start_scheduler()` 与 `run_forever()` 两枚 host 的公共把手上，不进 `register_jobs()` 名册，因为那本名册被 R425 那族在册钉按「缺省恰两枚」全等钉死（钉的是 `alert_check`＋`daily_report`），一笔单不许改另一笔单的断言；施工带外量过搬进去那一版＝R425 红 15＋本件红 5。偏离留下的缝由 `assert_every_host_mounts_the_sweep()` 那枚 AST 结构钉堵死。时刻 02:30 是现读避开的（`index_rebuild_config.py:64 DEFAULT_AT="03:30"`、日报 8:00）。诚实边界（这格没收）：清扫清的是内容不是行，tombstone 抹正文与操作人而台账行数仍随写入增长，真正的 DELETE 属部署 runbook。
+- **R461 并树 `7ede1ba`**（`Volta`@be-r461，基点 5939b38）：`scripts/eval_window_answer_cache_gate.py` 一枚 fail-closed 量具——口令只从 `deploy/.env.server` 的 `REDIS_PASSWORD` 取（进程环境一律不读）；第一道牙 `PING≠PONG ⇒ rc=2 且一个枚数都不报`；`--check` 只判不清；clear 只点名删合形的 `answer:*`，`RedisCli._run` 层直接拒发 FLUSHALL/FLUSHDB；清后复扫非 0 ⇒ rc=1；其它键族计数任一变少 ⇒ rc=1。**真机三态本席补跑**（施工按令未动容器，只交回替身读数）：`--check` 拦住库里 16 枚 `verdict: FAIL rc=1` → clear 点名 DEL 回 `removed=16`、`enterprise-brain=109` 清前清后不变 → 复检 `0 枚 PASS rc=0`。判据⑤ 未接线＝施工停手正确（`eval_cloud_window_readout.py` 头部自述「只读、离线、零网络、零容器」，加一次真连就是改行为），本席裁定**不接**，今天的接线点是 runbook §2 那一行与清单第 8 步。
+- **R458 并树 `3dcc288`**（`Nash`@be-r458，基点 09c968f；业主 D13 已授权动 `frontend/**`；判据 §132 五）：面板挂载那一条由 `fetchRuntimeHealth({force:true})` 改成 `sharedRuntimeHealth()`，员工伸手才发的「再看一次」落在 runtime-faces 之后（`data-testid=runtime-recheck`，30 秒退场、`onUnmounted` 清 timer）。两枚在册件改动本席逐条裁为成立：`r268-chat-panel-shell` 是 `<UiButton>` 恰数 12→13 且新按钮进 required 名单（方向变严，仍是"恰好"不是上限）；`r260-queue-awaiting-approval` 在 `beforeEach` 补 `resetRuntimeHealthCache()` 而原断言一字未动——该文件 571 行那本端点账确实含 `/health/details`、228 行挂的确实是真 `ChatPanel.setup` ⇒ 这是把缓存前置状态显式化，不是放宽断言。三枚壳层棘轮（r307b×2／r288）与 `lib/**`、`theme.css` 一字未动（本席现读 diff 证实）。残留一格没闭也不许抄成闭了：丙5 实量到 2 发（壳层那一发还在路上时面板挂上来），根因 `lib/health.js:31-41` 只有私有 `cached`/`cachedAt`、对外没有"在不在路上"的读数 ⇒ 另立 **R465**。
+
+### 四、云端形状窗第一次跑到底（21:53:34→22:34:38，41 分 04 秒）
+- `collect rc=0`、`collected=33 of 33`，`answers/sidecar/frames` 各 33 行（365 575／31 361／290 778 B）。
+- `sentinel=0`、`attempt>1=0` ⇒ 零哨兵零重试。
+- `kind` 分布 `ok=20 / approved_ok=11 / error_event=2` ⇒ **R447 那笔「队列读到 awaiting_approval 就一步没走、批准端点一次不打的病」第一次在真窗里批得动**，§131 四那句"下一扇窗的批准轮该真批得动"成立。
+- `missing_chars` **33 枚全 0**、`extra_chars` 除两枚 error 外全 0 ⇒ 逐字保真这一格在云腿上也成立。
+- 事件面：`text 804 / heartbeat 140 / step 61 / request.started 44 / done 43 / request.completed 42 / sources 42 / status 33 / answer.headline 13 / hitl 11 / request.failed 2 / error 2`。
+- 🔴 口径自证：本窗只交形状格（`frame_shape`／`event_surface`／`queue_readback`／`usage_fields_present`／`approval_gate_shape`／`escalation_annotation`／`retry_sentinel_shape`／`answer_shape`／`citation_shape`／`error_class_shape` 这 10 枚，取自 `scripts/eval_cloud_window_readout.py --json` 的 28 格表），时延与分数 18 枚一律不取；窗内确有 `Feynman` 跑过定向 pytest（pid 46304）与一枚 `r454_teeth6.py`（pid 35920）⇒ 本窗一切时延数字不作验收读数。
+
+### 五、三枚立案（判据写死）＋ 两格不立案照实说
+- **R462**（P1）：`report-11` 交回「本轮未产出任何结论，请重试或补充数据范围。」，容器日志原文 `执行失败: keys must be str, int, float, bool or None, not tuple` ⇒ **有人拿 tuple 当 dict 的键去做 JSON 序列化**，与模型无关、与云端无关。判据：复现那一发的调用栈并点名是哪一处的字典，修成字符串键，再给一枚会红的钉（只兜异常不算修）。
+- **R463**：`22:25:23` 现读 `prompt_tokens=14928 + declared_max_tokens=1536 ⇒ required_n_ctx=16464 > MODEL_CONTEXT_TOKENS=16384 ⇒ context_limit_exceeded`，同段 `max_coherent_n_ctx=18064 window_coherent=yes` ⇒ PromptPack 按「窗口−预留」算 room 塞到 14 928，装箱阶段**没有把该档 `declared_max_tokens` 计入扣减**，于是自己塞完再由自己那道守卫拒发。判据：room 的算式与预算守卫必须同源，给一枚跨 `analysis`/`report`/`code` 三档的参数化钉，形状是"装箱产物再大一枚 token 就当场少塞一片，而不是等到发请求前被拒"。
+- **R464**：批准续跑那一路的片账断裂——6 枚 `approved_ok` 带 `uncorrected_breaks`（`tool-04 2`/`report-02 2`/`report-04 1`/`report-09 1`/`report-10 1`/`report-12 1`），且 `text_frames > max_stream_frames` 的有 `chart-01 2>1`/`report-02 4>2`/`report-04 15>13`/`report-09 3>2`/`report-10 4>3`/`report-12 95>93`。本机 run9 也报过同族三枚（`chart-01`/`report-02`/`tool-04`，见 §130 二 R456 那笔"两枚数"订正）⇒ **不是云端特有**。判据：同一轮里跨批准闸只能有一枚终答流；摘掉这格守卫即红，红话点名"第二枚流"。
+- 不立案照实说①：`report-06` = `task_timeout`（`MODEL_REQUEST_TIMEOUT=120s`、`read_seconds=58.4`、provider 超时改离线回复）属**时延口径**，R440 的整表/分档口径未裁之前不立案（§132 与本席都钉着"口径定死之前阶段 A 不许翻绿"）。
+- 不立案照实说②：`REPORT_LANE_VIA_QUEUE=on` 已在容器里，但 33 枚 `queue` 字段**全空**、`queue_readback` 无读数 ⇒ **D 格（报告档可查回）这一窗仍然没验到**，谁抄成验过都是假话；下一窗要么证明 transport 真走 `/api/v1/requests`，要么改由真容器端点验。
+
+### 六、格③ 与 C 门的真账（今天第一次量清；只读 psql，未改任何一行数据）
+`chunk_vectors` **1008 枚全部 `department=''`**、`classification` 全为整数 `1`；`documents` 105 枚里 102 枚空、3 枚是 R8 夹具的 `R8甲部`；`users` 三枚里 `dataowner|财务部|staff`，而 `admin` 与 `evalbot` 的 department **都是空的**。三条后果写死：① 🔴 **C 门「越权 0 条」在当前数据下是空集，不是隔离正确**；② pgvector 格③ 欠的确实不是代码（R400 `69e0035`＋R409 `5621e8d` 在树），是业主侧 A1/A3 回填＋H13 未裁；③ **`R414` 的 (a) 格（空部门上传照收）早已随 `18ca560` 并树并整格退回**——交接账里那句"要新立一枚治 upload 空部门"是**重复立案**，本席撤销该计划并在此留痕。本席可代做的中间态（等业主一句话）：给演示库打**合成部门标签**（文档分档归属＋`evalbot`/`admin` 各归一部），它只证「隔离行为正确」、**不证客户隔离**，据 AGENTS.md 那句"沙盒合成标签不许拿来翻绿"，格③ 仍记未验；好处是把 C 门从空集变成有牙的行为测试。
+另：列类型现读 `documents`/`document_versions`/`chunk_vectors` 的 `classification` 是 **integer**，而 `datasets`/`dataset_versions`/`resource_versions` 是 **text**——同一枚词住在两种类型上，任何"按空串判空"的尺子在 integer 上会 `invalid input syntax for type integer: ""` 当场炸（本席踩过一次，写进来给下一班）。
+
+### 七、号账与事故（本笔现取）
+- 号账：文档纸面最大 R 号仍停在 **R458**，而实际已用到 **R461**——`R459`/`R460`/`R461` 三单的派工上一格**没写进看板也没写进跟进单**（本笔补记，见名册）。🔴 **R462 起空闲**，本笔新立 R462/R463/R464/R465/R466。
+- 事故：纸面最大 `#71`；**#72**（一枚执行体被上游 429 Too Many Requests 打断，`Laplace`/R459；上一格只落交接账未落纸，本笔补记，处置＝`resume_agent`＋一枚 `send_input` 唤回原身，未换新身体、未同号双投；入规：并发上限收到 ≤4，再撞 429 不许硬重试）；**#73**＝P-18 假零（第二节 1，同类第二次）；**#74**＝开窗驱动用 `powershell -File` 包了一层 PS1，21:32:51 起 46 分钟里日志只有 `PHASE1_START` 与 `PHASE1_END rc=`（空白），零请求发出而账面看着"在跑"——正解是 `Start-Process` 分离起 python 前景脚本＋日志，别再包 ps1；**#75**＝本席并 R457 时**先并树后复跑**，违反「复跑达标才代提交」，事后 132 passed 补证达标、无产物损失，纪律改口为"复跑在任何一次 `git add` 之前"。
+- 施工交回带出的两笔在册欠账（本席裁定另立）：**R465**＝`lib/health.js` 缺 in-flight 读数（R458 丙5）；**R466**＝`r353`/`r373`/`r388` 那一族反证钉仍用 `execs_module=True` 把变异 exec 进活模块，靠 `--dist loadfile` 侥幸不撞（R457 施工最初就因此撞出 5 枚假红并改了隔离变异模块）。
+- 名册两处错账就地订正（看板 §0 第 1565／1566 行）：R455 那行写的 `Ohm`/`01a0e7e3-01df-7033-8c3b-d17453281248` 本席现取 not_found——那发是 §131 事故 #70 里被服务端当场拒掉的投递、根本没生成身体，真身 `Schrodinger`/`01a0e7e1-9707-74a0-bcf0-6451c3501da9`；R456 那行 id 末段 `f11ab1404a70` 是错字，真值 `…f11ab14d70a0`。另补记 `Zeno`/`01a0e5a8`（R405＋R432）**从未进过 §0 名册**：不 wait／不 close／不并树，其产物一律不采信。
+
+### 八、只等业主本人（本席一件没代做）
+A1 `users.department` 回填（现值实测 `admin`/`evalbot` 皆空）＋ A3 密级标签回填（现值实测 1008/1008 全为 `1`）＋ H13 未裁 ⇒ 这三格不做，pgvector 格③ 与 C 门谁翻绿都是假话；要不要在演示库打合成标签（只证行为、不证客户隔离），等业主一句话。余同 §132 八：`deploy/.env.server` 任何编辑与容器 `--force-recreate`、R440 整表/分档 p95 口径、R433 禁语闸扩面、改评测集题面（D10 甲单独批；按 id 选子集不改题不受此限）、抬 `MODEL_CONTEXT_TOKENS` 与 Ollama `num_ctx` 配套（🔴 今天又添一枚真机凭据：`required_n_ctx=16464 > 16384`，抬到 16k 档照样在发请求前被拒）、github 代理/hosts、删 `%TEMP%\r414_stash\` 与主树 `?? %SystemDrive%/`、`?? -`。
+
+### 九、下一格顺序
+1. 全量门复跑（本席亲跑，新基线见第十节）→ push → `git rev-parse --short @{u}` 现读对账。
+2. 机器安静时投 **R428**（pgvector 格② 热集让路，判据 §120 四；必须 `docker exec -e INDEX_BACKEND=pgvector -i enterprise-brain-backend-1 /usr/local/bin/python - < 脚本`，宿主 5432 有野 PG＝直连假绿；驱动件 `%TEMP%\evalrun\r428-driver.md` 本席现取在位 3098 B）与 **R143**（recall 对账，要 embed ⇒ 打 Ollama）。
+3. 收 `Feynman`/R454 第二补令、`Laplace`/R459、`Halley`/R460 补令三笔交回；`Volta`/`Wegener`/`Nash` 已结案并 close 让槽。
+4. R462（要 `app/**` 内的栈取证）／R463（写域 `app/agents/contracts.py` 与 PromptPack 那一路）／R464（写域 `app/api/v1/chat.py` 收端，与 R459 同一条流式道 ⇒ 二者写域相交，不得同时并树）按写域定先后。
+5. 下一扇云窗可以试并发：容器里 `MODEL_MAX_CONCURRENCY=1` 在云腿上没有本地显存那条理由（那是 14B 吃满显存换来的），抬到 3–4 可把 33 题压到约三分之一墙钟。🔴 但这是**未证的判断不是测量**：要先证明多路并发流式不会让片账串台（每题独立 sink 与 session），证明之前不许改。
+6. 开窗第一动作从现在起是 `python scripts/eval_window_answer_cache_gate.py --check`（rc 必须 0），不再手写清缓存命令。
+
+### 十、门账
+- 门 PID 47128 于 22:39:15 起，22:47:24 收，`run_gate` 末尾自报 `xdist -n 4 --dist loadfile: 489.5 s, exit=0`（并发数由 `scripts/run_gate.py` 按空闲内存自选，本席未写死 `-n`）。日志 `%TEMP%\handoff23-gate.log`，同名 `.err` 恒 0 B。
+- 读数 **8237 passed / 50 skipped / 2 xfailed / 2269 warnings in 476.23s**，与逐号期望账完全对上：接班基线 8172 ＋ R457 的 29 枚 ＋ R461 的 36 枚 = 8237，零回归、零新增 skip、零新增 fail。
+- 🔴 这枚数是**并树之后的确认数，不是并树前的放行数**：本席并 R457 时先并树后复跑，已记事故 #75，纪律改口为「全量复跑必须发生在任何一次 `git add` 之前」。下一席不许把这条数抄成「并树前门是绿的」。
+- 三道隔离闸的自证读数全零：`LOCAL_MODEL_NAME = '__eb_test_disabled__'`（conftest 哨兵在位）、`blocked connect attempts to host model port: 0`、`offline discovery stub calls (no socket opened): 0`；R134 那格工作树 Chroma 写回闸门报 PersistentClient 调用 0 次／落点被改道 0 次／写回告警用例 0 枚（会话基线 7 个文件）。工作树里 `M chroma_db/chroma.sqlite3` 是登记在案的永久脏项，与本门无关，未提交未删除。
+- 墙钟账不跨格比较：本格 `-n 4`／489.5 s 与上一账本 `-n 6`／302.16 s 的差来自自选并发数与机器负载不同（本格后段有 Feynman 的定向 pytest 与 r454 驱动件在跑），既不是回归也不是提速证据。判回归只按同一 HEAD 的复跑枚数。
