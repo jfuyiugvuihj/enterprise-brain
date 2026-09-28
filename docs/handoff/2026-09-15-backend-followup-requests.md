@@ -4327,3 +4327,35 @@ R425 的执行腿被 `tests/test_r22_rebuild_cli.py:202` 封死（R235 同型第
 - pgvector 翻默认仍挡三格：格② 热集让路＝**R428**（判据 §120 四，驱动件 `%TEMP%\evalrun\r428-driver.md`，必须容器内跑：宿主 5432 有野 PG，否则 PG 腿静默降级成 numpy 估算腿＝假绿；只写 `eb_r59_sandbox`）——要安静机器，现四枚在途争用，本席没派；格④ 客户尺寸两档差＝R432（Zeno 在途）；格③ 生产标签＝纯业主（A1 `users.department` 回填 + A3 密级回填 + H13 未裁）。
 - 只等业主：R440 问答档 p95 口径（n 必带）· R433 禁语闸扩面 · D15 乙案落笔 · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）+ Ollama `num_ctx` 同值 + `up -d --force-recreate` 同批（`MODEL_MIN_ANSWER_TOKENS=1536` 不许动）· `deploy/.env.server` 任何编辑（含 `INDEX_BACKEND=pgvector`）· github 代理与 hosts · 改评测集题面（D10 甲那一步单独批）· 删 `%TEMP%\r414_stash\` 与 `?? %SystemDrive%/`。
 - 本席的本机教譯（不是事故，但下班别踩）：`mcp__node_repl__js` 连续两次在**全程几十字符**的调用上整口 300 s 超时（一次读看板切片、一次字节账现读），与 payload 大小无关⇒ 本机 kernel 不可信；字节账与文件写入一律改用 PowerShell（`[System.IO.File]::ReadAllBytes` 逐字节数 13/10）· 取文件内容用 rg 行号（它只按 `\n` 分行）而不要用 `Get-Content` 行号（它连孤独 CR 也当换行，两套号码在这本跟进单上差一千多行）· `Get-ChildItem -Filter 'test_r11[0-9]*.py'` 在本机找不到存在的文件，改用 `rg --files tests --glob` 。
+
+
+## §128（09-28 第十九格续·总控线，主树 `83c9586`）：R451 并树账与门账 7873 · 🔴 run9 实测耗时把"3–5 小时"推翻 · 覆盖度现读 19 枚把"55 条"推翻 · 新立 R453 与 R454 判据正文 · 电源与废窗
+
+### 一、R453 判据正文：云端形状窗的接线件（业主 09-28 令：「云端你用现在模型的 key 就是了」）
+- 底座现读@主树 `83c9586`（施工落笔前自己取，行号会漂）：模型腿**本来就是 OpenAI 兼容**——`app/agents/nodes.py:18` `from langchain_openai import ChatOpenAI`，provider 判定在 `nodes.py:1159`（`:11434` 出现在 base_url 里＝`ollama`，否则 `local-openai-compatible`）；配置面只有三枚 env：`LOCAL_MODEL_BASE_URL`（`app/common/model_config.py:259-261`，回落 `OLLAMA_BASE_URL` 再回落 `127.0.0.1:11434`）· `LOCAL_MODEL_NAME`（`:264`，回落 `OLLAMA_MODEL`）· `LOCAL_MODEL_API_KEY`（`:277`，缺省 `local`）。原生腿打到没有 `/api/chat` 的服务端时走 `_NativeChatUnsupported` 一支，本进程后续非流式调用退回兼容腿（`app/common/model_handler.py:577-590`）⇒ 云端可用，代价是每进程一次废探针，不改正确性。
+- 判据① 新增 `deploy/compose.cloud-eval.yaml`：只覆盖 backend 的上述三枚 env 与 `MODEL_CONTEXT_TOKENS`（云端不吃本机显存，窗口该放开；本机配套抬窗仍属业主）。🔴 **密钥一律以 `${LOCAL_MODEL_API_KEY}` 形式从进程环境注入，文件里出现任何形似密钥的字面量（`sk-`/长随机串）＝没收工**；反证钉一把：往该文件塞一串假 `sk-` ⇒ 当场红。
+- 判据② 默认路径零影响：不带 `-f` 时 backend 的 env 集合必须与今天逐格相同——把 `docker compose --env-file deploy/.env.server config` 的 backend env 段做成 sha 基线钉住。任何"顺手把默认也指到云端"的写法一律退回（AGENTS.md：远程模型回退必须显式开启，默认关闭）。
+- 判据③ **口径标签是可验的，不是态度**：云端窗交回的每一格读数必须带 `caliber=cloud-shape`，且必须**拒绝**与时延/分数类格同段出现（`p95`／端到端／逐类分数／`correctness`）。驱动器或读数器里凡把 `caliber=cloud-shape` 与那些格写在同一段就红（反证钉）。时延与分数类只能本机全量出（`MODEL_CONTEXT_TOKENS`/`num_ctx`/硬件都不同，拿云端数冒充本地数就是造假）。
+- 判据④ 禁域：不改 `deploy/.env.server`（业主文件，一个字节不许碰）· 不改评测集（`tests/test_evaluation_report.py` 钉着）· 不动 `MODEL_MIN_ANSWER_TOKENS=1536` · 不动 `app/**` · 不动 `frontend/**` · 不碰 `scripts/eval_transport_ask_v2.py`（量具，sha 要单列）。
+- 写域：`deploy/compose.cloud-eval.yaml`（新）· `scripts/eval_cloud_window_readout.py`（新：把"哪些格能云端读、哪些必须本地"打成一张机器表，不许写在散文里）· 新钉 `tests/test_r453_*`。施工不得跑全量门、不得动容器、不得打模型（开窗由总控执行）。施工 `09-28` 派工代号与 agent_id 见看板 §0 名册。
+
+### 二、R454 判据正文：一窗多判据的窗口计划器与形状子集（业主 09-28 令：「1 和 3 按你的推荐来」）
+- 病灶：今天五道门的格是**分扇窗**跑的（run9 相 1 全量串行、run9c 只跑队列道 20 枚），一扇窗只拿一两格就收工，剩下的格下一班再开一次窗——同一批题被反复重放，墙钟全花在重复上。
+- 判据① 新 bank `docs/testing/bank-shape-subset-30.jsonl`：30 题分层，🔴 **只准按 id 从在册 105 题里选，一个字都不许改**（题面/`must_contain`/期望全原样搬运）；11 个族每族至少 2 枚，`approval` 与 `report` 两族各至少 3 枚（形状窗最贵的两格）。反证钉：塞一枚不在 105 里的 id ⇒ 红；改动任一字 ⇒ 红。
+- 判据② 新 `scripts/eval_window_planner.py`：输入＝本班要判的格集合（A② 流式逐字／C-越权与缓存标注／D-可查回与 usage／零重试零哨兵），输出＝**一扇窗**的题序、每格归属、需要几次批准、哪些格这台机拿不了。硬判据：同一批格只允许出现一次开窗； planner 必须点名「分数与时延类格不在形状窗范围内」。
+- 判据③ 读数表 `docs/testing/shape-window-readout-2026-09-28.md` 由 planner 生成骨架：**没拿到的格一律写「未验」**，不写 0、不写「应该没问题」、不抄上一班（计划书 §6 那句「别再抄上一班逐类不退化」同理适用）。
+- 写域：`docs/testing/bank-shape-subset-30.jsonl`（新）· `scripts/eval_window_planner.py`（新）· `docs/testing/shape-window-readout-2026-09-28.md`（新）· 新钉 `tests/test_r454_*`。禁：`docs/testing/evaluation-bank*` 与评测集本体（`tests/test_evaluation_report.py` 钉死）· `deploy/**`（R453 名下）· `app/**` · `frontend/**` · `docs/handoff/**` · `scripts/run_gate.py`。施工不得跑全量门、不得打模型、不得动容器。可失败钉 ≥ 4 把（塞外来 id／改题面一字／一格开两窗／把未验格写成过）。
+
+### 三、本班账面（sha 与门账全部现取，不采信自述）
+- `83c9586` **R451 并树**（施工 `Ohm`，基点 `7532652`）：数据腿「未闭合小节标题」壳，选形＝甲（标题与 JSON 正文并成一枚不可分单元，装箱那一层一字未动）。两枚件 sha16 等值 `49C76C4E4B0B7A4C`（84,661 B）／`051C0E384119EB3A`（20,600 B／441 行／11 枚用例）；定向十枚件总控亲跑 **211 passed**；全量门 **7873 passed / 50 skipped / 2 xfailed / exit=0**（`-n 5`，pytest 305.35 s，18:06:28→18:11:20，枚数账 7862+11＝7873）。🔴 两格负面读数入册：E1（摘合并）与 E4（存活退回前缀长度）这两形**五枚在册件一枚都拦不住**（各 159 passed），判据④今天唯一的牙是本单新钉 `tests/test_r451_open_section_header.py:417`。
+- 🔴 **run9 实测耗时把「3–5 小时」这句推翻**（凭据＝`docs/testing/sidecar-run9.jsonl` 现场重算，105 枚逐行）：首枚 `ts` 09:18:32、末枚 11:09:45 ⇒ **跨度 111.2 分钟**；`sum(wall_ms)=112.0 分钟`（题间几乎零空转，串行成立）；`p50 45.8 s`／`p95 140.9 s`／`max 300.1 s`（撞 300 s 那枚）。分族合计：`report` 12 枚 18.6 分 · `insight` 7 枚 15.5 · `chart` 4 枚 8.2 · `metric` 19 枚 17.4 · `chat` 12 枚 13.2 · `data` 12 枚 12.6 · `doc` 19 枚 10.5 · `approval` 6 枚 6.0 · `scope` 6 枚 5.0 · `tool` 4 枚 3.0 · `unsupported` 4 枚 2.1；**带审批轮的 18 枚合计 31.0 分钟**——这一格正是「评测窗里不许再等人点头」那条授权（09-28 业主「1 和 3 按你的推荐来」）省下来的地方。⚠️ 别把这句读成「全量可以抽」：时延类判据要样本 ≥100，只有形状类格可以走子集。
+- 🔴 **覆盖度现读把「55 条 must_contain 无出处」这句也推翻**（凭据＝`python scripts/check_eval_evidence_coverage.py` 本班亲跑）：题源 105 行／121 枚锚词，语料 `documents/*.txt` 95 篇（主口径），**查无出处＝19 行／19 词**；两把尺同时出数，语义口径（R437 词边界）＝**20**，与件口径分歧 1 枚——`tool-02` 的锚词 `Word` 在语料里 7 处命中全被 `password`／`your_password`／`myopassword123` 吞掉，从未独立成词 ⇒ 件口径那句「有出处」是裸子串替它说的假话。那句「55」是 09-17 的账，R36 扩集与 R437 之后已经掉到 19，下一班别照抄。
+
+### 四、电源与那扇废掉的窗（本机教诲，不占事故号）
+- 事实：17:18:17/17:18:33 与 18:02:25–27 两次 `Kernel-Power` 42/107/566 ⇒ 机器自己睡过去两次，R451 那扇全量门窗从预期的 300 s 拖到 2958 s，四枚 xdist worker 同时 `node down: Not properly terminated`，退出码 `0xC000013A` ⇒ **纸上既没有枚数也没有 rc，只能整扇作废重跑**。上一班记的「昨晚 23:45 到今早 08:04 机器休眠，四枚 Agent 被冻一整夜」是同一族病，这次抓到的是硬凭据。
+- 本班处置：先按 runbook 那条开窗前置把 AC/DC 睡眠与休眠设成永不（`0x00000000`），窗跑完业主 09-28 令「别设为永眠」⇒ **已改回 AC 900 s／DC 300 s**（现读 `0x384`／`0x12c`），休眠超时保持 0（不设）。Windows 不保存电源设置的历史值，业主原值本班没记录，这点如实认。
+- 🔴 下一格起效的规矩（写死，别再动电源方案）：**开窗防睡一律用进程级 `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)`**，随驱动进程活着、窗收即撤，不改业主的电源方案；`powercfg /change ... 0` 只作为"业主在场时明确要跑长窗"的临时动作，跑完立刻恢复。
+
+### 五、授权台账与只等业主
+- 业主 09-28 已授权（本席按推荐边界执行）：① 评测窗内**自动批准**——只允许打在评测容器＋评测账号那一条路径上，生产/演示路径一个字不碰，且读数表必须记下批准次数与批准人；② 云端形状窗**用现有密钥**（`CODEX_API_KEY_BAILIAN`，长度 115 已现读；密钥不进仓库、不进命令行历史，只从进程环境注入）；③ 跑分口径＝**日常形状类走分层子集＋云端，分数与时延类必须本机全量**（每冻结点一次）。
+- 只等业主本人（本席一件没代做）：github 代理与 hosts · `deploy/.env.server` 任何编辑（含 `INDEX_BACKEND=pgvector`＝容器 recreate 不是镜像重建）· A1 `users.department` 回填＋A3 密级标签回填＋H13 未裁（pgvector 格③）· R440 整表/分档 p95 口径 · R433 禁语闸扩面 · 改评测集题面（D10 甲那一步单独批，本班的子集**不改题**不受此限）· 抬本机 `MODEL_CONTEXT_TOKENS` 与 Ollama `num_ctx` 配套 · 删 `%TEMP%\r414_stash\` 与 `?? %SystemDrive%/`。心跳 `automation-2` 保持 `PAUSED`、`target_thread_id` 指本线。
