@@ -4083,3 +4083,79 @@ R400 判据：① 三处手抄行号账改**运行时派生**（锚点 token 现
 
 ### 六、决策 D15（待业主裁）
 R425 的执行腿被 `tests/test_r22_rebuild_cli.py:202` 封死（R235 同型第一撞、R425 第二撞）。甲＝改 R22 判据 3（连两枚反证钉，动的是「没有任何自动路径会重算向量」这条对客户可承诺的性质）；乙＝书面接受「窗口排程＋`status=refused`＋人工执行」。**总控建议乙**。
+
+## §120（09-28 第十五格·总控线，主树 `9f9d452`，run9 真机窗**窗内**落笔）：run9 前置自证 + 窗内抓到的三条病立案 R429/R430/R431 + 🔴 WAL 假账立案 R434 + pgvector 翻默认三格现状 + R404/R406 裁定
+
+> 本节把上一格只躺在 `%TEMP%\evalrun\` 的草案（本机唯一副本）落到版本控制里。判据正文以下面这些为准，窗后的看板 §4DK 只补读数不补判据。
+
+### 一、run9 点火自证（09:17:43 @ 主树 `9f9d452`，量具 `scripts/eval_transport_ask_v2.py`，账号 `evalbot`，`EVAL_BASE_URL=http://127.0.0.1:8001`＝与 run6/7/8 同口径，不许换）
+- 前置逐格现取后才点火：`check_image_provenance.py` rc=0（镜像 label `9f9d452`）／Redis **先 `PONG` 再计数** `answer:*`=0／`corpus_before.csv` 97 枚 SHA256／dry-run `collected=105 of 105`／保活 PID 58120 常驻 + `ka.txt` 稳态 `SET=0x80000003`／`standby-timeout-ac 0x0`。
+- 证据件全在 `%TEMP%\evalrun\`：`sidecar-run9.jsonl`、`sidecar-run9-frames.jsonl`、`answers-run9.jsonl`（**采集器只在覆盖闸全过时才写字节，中途不存在是正常的**）、`run9.log`、`run9.done`（`exit=<rc> at <时刻>`）。
+- 🔴 器件现读（推翻旧账，接班别抄）：`ollama ps` = `qwen3.5:9b` **100% GPU／ctx 4096**；`nvidia-smi` = RTX 4060 Laptop 8 GB／用 5.6 GB／util 25%。旧班那句「推理在本机 CPU」**过期**。`OLLAMA_NUM_PARALLEL` 未设 ⇒ Ollama 侧同样压并行。
+- 🔴 多开跑分窗**物理无收益**：`MODEL_MAX_CONCURRENCY=1`（`app/common/model_budget.py:59`、`docker-compose.yml:166`）+ `OLLAMA_NUM_PARALLEL` 未设 + `/ask` 每用户 10 次/分钟 ⇒ 并发只把 p95 洗成排队时延。要提速走两轨：**串行＝时延窗**（p95），**并发＝内容窗**（correctness/evidence/unsupported_claim，明写不出 p95），日常＝20 题快评子集（同形状件 `docs/testing/bank-run8p2-subset20.jsonl`）。
+
+### 二、窗内抓到的三条病（立案，判据写死）
+- **R429 · `context_limit_exceeded` 装箱族**（run9 第一枚命中：`metric-02`，`kind=error_event`、`prompt_tokens=2687`、`[PromptPack] room_total=1198 room_left=32 candidates=4 fitted=0 dropped=4`）⇒ 4096 硬顶第一次咬到跑分。判据：把「整箱塞不进就整批丢」（`fitted=0 dropped=4` 一条不留）改成有依据的形状——先取证 `app/agents/` 里 PromptPack 装箱决策与 `room_total` 算式（`app/agents/contracts.py:157` 那一族），再定「丢到什么程度算诚实」。可失败钉：`MODEL_CONTEXT_TOKENS` 缺省态下同一题必须**仍**报 `context_limit_exceeded`，不许把错误码洗成兜底文案（`app/agents/nodes.py:379-387` 那条注释是纪律）。输入＝run9 全窗 `error_code=context_limit_exceeded` 题号清单。
+- **R430 · `rewrite_payload_unparseable`（P-15 族）**：现读 3 次／15 分钟，正文 189／235 字、前 80 字像未闭合 JSON。判据：先定性「截断」还是「模型没按 schema 出」，再决定收紧解析或加一次重试。计数**原样进报告抬头**，不许归一化成 0。
+- **R431 · `[R149]` 流式片段与终答不同源**（`pieces=37 cumulative=410 final=865 leg=data dropped=17`）：🔴 **不是界面残损**——`app/api/v1/chat.py:2692` 下面那段（R210）已把「半截真话＋离线话术」改发成一次纠正替换（借 `step` running 置 `_correcting` → `sessions.js:521-523` 整段替换），**屏上正文是完整的**。真含义＝那一发 provider 死在半路、正文不是流式来的。判据：按 `leg/call/dropped` 三格做全窗归因分布；若集中在 `leg=data`，查那条腿的 tap 准入（`app/agents/nodes.py:355`/`:613` 记名的就是它）。与 R203 交回单对账，别重开已结的案。
+- 上一格本席说过「[R149] 不治则 A② 结构上不可能绿」——**那句说重了，本节就地改口**，改按「降级答」单独归因。
+
+### 三、🔴 R434 · 「WAL」四本假账（总控亲读，本格立案）
+- 事实：`chroma_db/chroma.sqlite3` 文件头 **byte18=1／byte19=1＝legacy rollback journal，不是 WAL**；目录里**无 `-wal`/`-shm` 附属件**（只有 6,262,784 B 一枚，mtime 09-27 16:20:38）。
+- 仓里四处按 WAL 说话：`scripts/r387_label_lineage.py:5`（「PersistentClient 会推进 mtime 与 WAL」）、`scripts/audit_vector_mirror_sets.py:37`（「也会落 WAL/SHM」）、`scripts/audit_r160_department_columns.py:390`（「只读模式下 WAL 帧可能未合并，行数可能偏小」＝**诊断结论**）、`scripts/diag_r162_chroma_zero_rows.py:122/:484/:486`（「WAL 残留行数」）。
+- 判据：逐处现读 `PRAGMA journal_mode` 返回值，把「库不是 WAL」与「Chroma 内部那张 `queue` 表」分清楚；**改口不许顺手改行为**。`:390` 那枚结论在非 WAL 下要么重证要么删。
+- 连带：pgvector 计划书 §9.3 第 5 格那句「`chroma.sqlite3` 的 mtime 会随只读进程前进」今天**不复现**（run9 从 09:17 起反复读它，宿主侧 mtime 仍是 09-27 16:20:38）。可能是容器读的是另一份卷/副本，也可能那句本就写错；等 `Zeno`/R405 那把只读足迹探针给数再定性——**在此之前这句按「待证」读，谁都不许当已知事实抄**。
+
+### 四、pgvector 翻默认的真实前置（今天现读，别再拿「等业主」当挡箭牌）
+- 码侧欠 0 行：R59 块1 `bee9d01`／块2 `dbc2047`／旋钮 R231 `ed9f8b0`／宽度上线 R386 `1b4406a`／量具归源 R393 `f509f36`／标签账运行时派生 R400 `69e0035` + 批准材料 R409 `5621e8d`（`merge-base --is-ancestor` 本席自核 rc=0）。
+- 只剩三格：**② 热集让路代价**＝R428（总控收窗后自清）／**④ 客户尺寸两档差**＝R432（业主已授权在 `eb_r59_sandbox` 造几万枚合成向量，`r432_` 前缀，分批 checkpoint）／**③ 生产标签**（A1 `users.department` + A3 密级回填 + H13 口径，纯业主）。
+- **R428 判据**：切读态下 `app/rag/retriever.py:1494 hot_hits = self._hot_hits(...)` 整层让路（原因码 `app/rag/hot_index.py:78 REASON_READ_BACKEND_SWITCHED`），要两侧读数——`INDEX_BACKEND` 缺省(chroma) vs 进程内 `pgvector`，逐档给延迟分布与命中分布（让路前后 hot 层命中条数、总召回名次重合）。姿势照 R382：**只在进程内**设后端，只准写 `eb_r59_sandbox`，默认值与 `.env` 一字不动；**必须在 backend 容器里跑**（计划书 §9.4：宿主 5432 可能挂着野 PG，会把 PG 腿静默降级成 numpy 估算腿＝假绿）。跑法 `docker exec -e INDEX_BACKEND=pgvector -i enterprise-brain-backend-1 /usr/local/bin/python - < 脚本`。
+- 动作本身：`INDEX_BACKEND=pgvector` 写进 `deploy/.env.server` + `docker compose --env-file deploy/.env.server up -d --force-recreate`（**recreate 不是 build，`docker restart` 不重读 `env_file`**）＝业主动作。
+- 顺序硬约束：**run9/run9b 必须在 Chroma 腿上跑完才许切**，否则 A/C/D 全作废重跑（runbook §14）。
+
+### 五、R427 交回带来的两本账改口 + R436 立案
+- `Fermat` 抓出总控派工词两处错：① `DocumentModal.vue` **不存在**，真身 `DocumentPreviewModal.vue` ⇒ 入规：**派工词里的文件名必须先 `git ls-files` 点过名再写**；② R422 借名句坐标不是 `errcodes.js:70/157/313`，真身 `:103 retrieval_unavailable` + `:122 index_publish_failed`（§119 第四节已按真身落笔，本格主树现读复核一致）。
+- **R436 立案（待派，排 R421+R427 并树之后）**：借名屏同族被在册钉挡路五处（`GraphPanel.vue:122`、`ApprovalPanel.vue:91/:110/:210/:276`），要动须先授权改六本钉（`panel-states`／`v7-fake-data`／`r247`／`r277`／`r237-r40`／`r168`）。判据直接引 `r427` 丁组那枚棘轮（现扫=5，多一枚＝回退，少一枚＝该重开）。
+- R427 扩两枚（同笔、零插删行、只改注释数字）：`r293-cancel-requested-persist.test.js:35`（真值 `:786` 对 `:793-798`）与 `:46`（真值 `:1365`）。
+
+### 六、R404／R406 裁定（`Nietzsche` 交回后本席下的）
+- 🔴 **R404 派工词错在符号落点**：`document_version_history` 真身在 `app/api/v1/chat.py:4471`（现读：`:4473` 先 `list_document_versions()` → `:4474-4475` 无版本即 404 → `:4476` 才判权限 → `:4477` 拒答 raise，**这条腿一条审计都不写**），`app/documents/catalog.py` 里根本没这枚符号。账记总控。不撤单、不派第二双手（`chat.py` 在 `Heisenberg` 名下）；影子件 + 7 把刀留 `be-r404` 等 `chat.py` 腾手。
+- 落码方向裁**乙**：catalog 补 `ORDER BY version DESC LIMIT 1` 单行读，保住「文件没了就是 404」这句实话。三条硬注（转手时逐字进派工词）：① 乙之下 `tests/test_document_route_authorization.py:302` patch 的是 **`chat` 命名空间里那个名字**（import 块 `chat.py:67`，`:73`＝`list_document_versions`），换符号后 patch 拦不到 ⇒ 红在 404 看着像回归；交付必须**同时**换 patch 名 + 给那枚桩补 `storage_path`，`assert response.status_code == 403` 一字不动。② 影子件 `tests/test_r404_version_history_judges_before_it_lists.py` 有**三处必须随乙重新指向**否则假绿：`STAGED_NEW`、`_audit_state()` 的目标函数、K1–K7 锚点。③ 乙保住的两张脸按现读认下来：台账有行而文件已没 ⇒ 判定仍读那一行；无台账行 ⇒ 判定之前先 404。④ 另需给 `docs/handoff/2026-09-26-v1-frontend-gap-list.md:158` 抄着的 `chat.py:4829` 随同笔改口。
+- **R406 收下**：`catalog.py:349/:358` 禁语归零（2/2 行中性，906→906 行），六处手抄坐标零漂。禁语闸扫描面现读**只有 `docs/api/contract-v1.md` 一本**（正则 `test_r132_contract_followup_sync.py:41`、用例 `:350`、读数 `:352`）。剩 `app/memory/profile.py:161` ⇒ **R433 扩面单**（`tests/**` 5 本 9 处、`docs/**` 3 本 6 处）。窗后本席亲跑它那 6 行表：`21 passed` → 五本邻居件 `0 failed` → 两本 route 件 `0 failed` → `run_gate.py` 预期 `7743/50/2 xfailed exit=0` → `rg app/**` 恰 `profile.py:161` 一枚 → `git diff --numstat` = `2 2`。
+
+### 七、R435 · 评测集 `must_contain` 出处归因（`Lussac`/`01a0e5c3-30df-7922-8eb0-1fb8f8c780cc`@`be-r435` 在途）
+那本「105 题里 55 条搜不到出处」多半**已过期**，令它先重算。四桶＝归一化可救／同义表述／语料真缺／题面矛盾。只准写 `docs/perf/eval-must-contain-lineage-2026-09-28.md`，**不碰评测集与 `scripts/`**（评测集被 `tests/test_evaluation_report.py` 钉着，改题面要业主单独批）。
+
+### 八、AGENTS.md 那两条改口（本格动手）
+- 「全量回归门 `-n 8`」**已被推翻**：`run_gate.py` 按空闲内存自选（今天 `-n 6`／302.16 s／基线 `7722 passed / 50 skipped / 2 xfailed / exit=0`）。§4DI 那句「`-n 7`，稳态 218 s」同样过期。入规：**门的并发数由量具自选，纸上不写死 `-n`；判回归按同机复跑数，不按首跑数。**
+- 看板里 run6 那类「死号」引用随同笔改口（历史读数只在§史一节保留）。
+
+### 九、收窗后动作册（12 步，照抄可执行；草案原文 `%TEMP%\evalrun\post-window-ops.md`）
+0 收窗自证（`run9.done` 必须 `exit=0`、sidecar 105 行、判读件到齐）→ 1 总控亲跑 `run_quality_evaluation.py --output docs/testing/evaluation-report.json`（期望 `evaluated=105`）→ 2 `answers-run9.jsonl` + 两份 sidecar + 报告**同批并树**（显式列路径）→ 3 卫生自查 + 语料 `Compare-Object` 必须空 → 4 并树 R424/R423 → 5 并树 R427 → 6 重建镜像 + provenance + `verify_container_stack --skip-build` + `seed_workspace --check` + parity → 7 run9b（A② 报告档 12 题，`REPORT_LANE_VIA_QUEUE=off`）→ 8 R428 → 9 R432 → 10 欠账复跑（`Nietzsche` 6 行表／`Heisenberg` 五把驱动器／`Hume` 落地即投 R422）→ 11 记账（看板 §4DK + 名册行 splice 保留 BOM）→ 12 push 后 `git rev-parse --short @{u}` 现读对账。
+## §121（09-28 第十五格续·总控线，主树 `9f9d452`，run9 窗内）：R429 投递未落地（`agent thread limit reached`）＋判据正文全量入册＋本班三次派工词自纠
+
+### 一、投递事故登记（不是补投理由）
+- 10:5x 对 **R429** 发 `spawn_agent` ⇒ harness 当场报 **`collab spawn failed: agent thread limit reached`**。
+- 按仓规（先例见跟进单 §115.8 R401 那一格、事故 #64/#65）：**报错＝未落地**，不当场补投。零写入取证：`git -C be-r429 status --porcelain -uall` **空输出**、`git -C be-r429 rev-list --count 18ca560..HEAD`＝**0**。
+- 🔴 槽位账订正：`close_agent` 之后槽位**不是立刻回收**（`Heisenberg`/`Darwin` 已 close 仍占），本席按「5 枚在途＝还能投一枚」算错一次。规矩：**投前现读并发数，别按 close 记录推**；投失败一律退回本节这一类「写进跟进单 + 业主手动开线」。
+- `be-r429` 那棵树是上一格预配的，基点 **`18ca560` 而不是 `9f9d452`** ⇒ 转手前必须重建或 `git checkout --detach 9f9d452`，否则交付基点与账不符。
+
+### 二、R429 判据正文（可直接逐字当派工词用）
+**病灶**：run9 真机窗第一次被 4096 硬顶咬到——`metric-02` 结局 `kind=error_event`、`error_code=context_limit_exceeded`、`prompt_tokens=2687`，同一发装箱台账 `[PromptPack] room_total=1198 room_left=32 candidates=4 fitted=0 dropped=4`。`MODEL_CONTEXT_TOKENS=4096` 扣掉 `MODEL_MIN_ANSWER_TOKENS=1536` ⇒ 能装资料的 room 约 2,560，同轮此前已吃掉 1,166，剩 32 时**整批 4 条候选一条不留**，屏上是「这个问题我处理不了」。
+**① 取证（做不完不许改代码，每条结论带 `文件:行`＋原文）**
+- 装箱口 `app/agents/tools.py:851 _pack_into_prompt_room(config, *, leg, units, keep_first_truncated=False)`；`_pack_ledger`/`_pack_ledger_key`（`:656`）＝**同一轮跨腿共享**账本；room 由 `app/rag/retrieval_pipeline.py` 的 `context_pack_room()` + 三枚预留常量（`CONTEXT_HISTORY_RESERVE_TOKENS`／`CONTEXT_SHELL_RESERVE_TOKENS`／`CONTEXT_PACK_TIER`）决定。
+- 🔴 三条调用点今天**全部**传 `keep_first_truncated=True`：`:993`（`leg="doc"`）／`:1233`（`leg="data"`）／`:1329`（`leg="query"`）。判断门槛是否可达**必须查调用点，不许只看签名**（本仓为这病开过一整族单；本席自己也栽过一次 `Form(1)`）。
+- `PACK_MIN_STUB_BODY_TOKENS`（`:638` 那组注释与常量）与 `stub=kept`/`stub=refused`（`:626`）：`room_left=32` 裁出的桩正文必低于门槛 ⇒ 走 `stub=refused`，这才是 `fitted=0` 的真路径。**要用行号证出来，不许停在推测**。
+- 腿序：`units` 名次降序、「装箱只从尾部裁」（`:855-857` 注释）⇒ 同轮 doc/data/query 的**消耗顺序**是谁定的，把 `metric-02` 相关 `[PromptPack]` 行按时刻列出（取不到就明写「今天取不到」）。
+**② 落码（把「整箱塞不进就整批丢」改成有依据的形状，硬约束如下）**
+- 装不下时必须有优先序：宁可少装到装满为止，不许在还有更靠前资料未装时归零；也不许发明第二套排序（排序归检索腿）。
+- 🔴 **禁止**把 `context_limit_exceeded` 洗成兜底文案（`app/agents/nodes.py:379-387` 那条注释是纪律）；「不装」这个决定必须继续可见。
+- 台账字段一枚不许改名/删除：`room_total`/`room_left`/`candidates`/`fitted`/`dropped`/`truncated`/`stub` 是在册面，被 `scripts/perf_probe_run5_ledger.py:52/:167/:467/:627-654` 那族与 `tests/test_r122_*` 钉着；可加新字段，改语义不行。
+- 不许动 `MODEL_CONTEXT_TOKENS`／`MODEL_MIN_ANSWER_TOKENS` 的**默认值**（配置＋显存＋镜像重建是业主侧配套动作，只改一头要么没用要么把机器撑爆）；若判断真解必须动配置，写进「要业主的那一句」，别自己动手。
+**③ 可失败钉 ≥6 把**：a) 缺省 ctx 态下构造「room 近乎耗尽」同一发 ⇒ 必须**仍**报 `context_limit_exceeded`（不许兜底、不许静默少装还报 `ok`）；b) 摘掉优先序 ⇒ 红；c) `fitted=0` 且 `candidates>0` 而 `room_left` 足以装进最短那一条 ⇒ 红（今天的病形状，钉成不复发）；d) 台账字段改名或漏打一行 `[PromptPack]` ⇒ 红；e) 桩正文低于门槛仍交出空桩 ⇒ 红；f) 三腿同轮重复装箱时账本被绕过（同一 `key` 累计值不涨）⇒ 红。
+**写域**：只 `app/agents/tools.py`、`app/rag/retrieval_pipeline.py`（仅 room/预留/装箱 helper）、新钉 `tests/test_r429_*`、新只读取证件 `scripts/r429_pack_forensics.py`（读不出要指名、不许静默跳过）。禁 `app/agents/nodes.py`、`app/agents/contracts.py`（`CONTEXT_LIMIT_CODE` 在 `:102`，只读引用）、`app/api/**`、`app/common/model_budget.py`、`frontend/**`、`docs/**`、评测集与 `tests/test_evaluation_report.py`、`chroma_db/**`、`deploy/**`、`.env*`、`pyproject.toml`。禁新增 Chroma 依赖/写点。
+**时序**：🔴 不许在 run9/run9b 计分完成之前并树（会改测量条件）；并树时刻总控定。执行层禁 commit，窗内禁跑 pytest/门/模型/容器。
+
+### 三、R437 派工词里的两处自纠（先取证后落笔）
+- 派工词引用「覆盖度工具今天 0.2 s／`--include-pdf` 3.79 s／`--provenance` 2.55 s」＝**转抄 `Darwin`/R435 的读数**，本席只在主树亲跑过缺省态（19 枚，0.2 s 量级）。三枚口径的秒数按「待复跑」读，窗后总控亲跑再定判据数。
+- 派工词写 `be-r437`「无 `node_modules`，本单不需要」＝本席现读 `Test-Path` 取的，成立；但 `be-r429` 那句「基点 `9f9d452`」是本席**没现读**就写的（实际 `18ca560`）⇒ 入规重申：**派工词里的基点 sha 与工作树路径必须 `git rev-parse` 现取，一个都不许抄上一格**。

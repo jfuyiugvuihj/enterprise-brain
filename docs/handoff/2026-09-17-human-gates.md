@@ -357,3 +357,9 @@ index reached = 0
 | **D14**| 业主已批**甲** | 本班**自按**：前置 17 条全过，但冒烟题证明产品在拿离线模板冒充答案（runbook §14），**R98 / R99 并树后立即开**|
 
 ### D12 执行记录（业主授权总控执行；先模拟，再动手；**只搬不删**）
+
+## H10 结案并**永久关闸**（09-28 第十五格·总控线 `01a0af5c`，业主 11:0x 原话：「别开这个人工提醒，会影响对话，之前有好几个这么死了」）
+- 🔴 **本节把 :96-105 那一段 H10 的旧账作废**（那段还写着 `automation-2 status=ACTIVE`、`targetThreadId=01a0acfb…`，两处都已过期）：今天的真值是 **`status = "PAUSED"`、`rrule = FREQ=HOURLY;INTERVAL=1`、`notification_policy = failed_runs_only`、`target_thread_id = 01a0af5c-e4ce-7830-a9b9-5e83d27bc4ff`（本席 11:0x 用 `automation_update` 只改了归属，**没有启用**）**——磁盘现读为凭**。
+- **为什么永久不许再开**：`01a09dda`、`01a0acfb` 两条总控线都死于同一类故障——心跳把新的一轮消息打进一条**已经混进别家 provider 消息 id** 的历史里，此后每一次请求都被服务端当场拒（`Invalid 'id': message id must be a string starting with 'msg_', got 'at_...'`／`Invalid 'call_id': call_id is required for function_call_output.`），1 秒内失败、换模型也修不好，只能开新线程接手。09-28 18:50／19:50／20:04／20:30 四次空撞就是活证。**心跳不是便利，是拿线程的命换的。**
+- **替代机制（从现在起按这个走）**：需要"叫人"的时刻由**业主自己发一句"继续"**唤醒本线；总控把待办写进本节下方那张表与看板 §0，靠**磁盘上的账**交接，不靠定时投递。任何一格都**不许**以"提醒不方便"为理由把 `automation-2` 改回 ACTIVE，也不许另建第二条心跳；真要撤销，由业主本人在应用里删。
+- **H6 那格从此谁来盯**：`git rev-parse --abbrev-ref --symbolic-full-name '@{u}'` 的心跳盯梢取消 ⇒ 改为**每格接班第一件事**：现读 `git status -sb` 首行与 `git rev-parse --short @{u}`，落后就当场 push（standing 授权：「push 你现在就可以提交」）。这一格由接班纪律承担，不再由定时任务承担。

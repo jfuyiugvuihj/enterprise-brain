@@ -5524,3 +5524,49 @@ R425 把「低峰重建」排上日历，但执行腿被 `tests/test_r22_rebuild
 - 在途三枚：`Heisenberg`（R414 反证刀改形）、`Hume`（R421 重做 `DocPanel.vue` 7/5 ＋ `panel-states.test.js:322/:325` ＋ 裁定② 二选一）、`Beauvoir`（R424＋R423 并派，基点 `18ca560`）。
 - 备份：本班已推 `c3d386c..eae26e5`；本班新笔随后推。
 - 下一格：① 收三枚交付、逐条对判据、本席亲跑；② R424 并完 ⇒ 投 R422；③ 开窗前置（本班已启动）：`docker compose build migrate` → `check_image_provenance.py` rc=0 → `up -d --no-build` → `powercfg /change standby-timeout-ac 0` → 重跑 seed（P-10/P-12）→ 一扇多判据真机窗（A①②③④＋C＋D 一次拿完）。🔴 Docker context 现实测 = **`desktop-linux`**（不是 docker VM）⇒ 推理落在本机 CPU，且语料与数据集都在这个 context 的命名卷里，**窗口只能在这台开**；换 context 去要 GPU 就不是同一批卷，别当省事的路。
+
+## §4DK. 本班（09-28 第十五格·总控线，主树 `9f9d452`，**run9 真机窗窗内**）：R435 交回把一本旧账推翻 · 名册与在途实取 · 🔴 两枚已交付件的窗后复跑命令落纸（不许只活在对话里）· AGENTS.md 那格 `-n` 已改口
+
+### 一、§0 名册（本班实取，id 为准；昵称以 harness 回执为准）
+| 工单 | Agent / id | 工作树 @ 基点 | 写域 | 状态 | 时刻 |
+|---|---|---|---|---|---|
+| **R438** | `Euclid` `01a0e5ea-ffcd-7d01-8a54-e2018438c14a` | `be-r438` @ `9f9d452`（**独占**） | `app/quality/eval.py` + 新钉 `tests/test_r438_*`（+ 可选新 `scripts/r438_correctness_denominator.py`） | 🔵 在途（10:5x 单枚 spawn，零补投）。**接线单**：R401 丙案 19 枚的 correctness 分母扣除今天仍没进判分器。🔴 不许在 run9 计分前并树（并树时刻由总控定） | 10:5x |
+| **R437** | `Galileo` `01a0e5ec-fda9-7fd2-b21d-08ff19783f14` | `be-r437` @ `9f9d452`（**独占**，无 `node_modules`，本单不需要） | `scripts/check_eval_evidence_coverage.py` + 新钉 `tests/test_r437_*`（`test_r94` 仅许把死数改派生） | 🔵 在途（10:5x 单枚 spawn，零补投、零 model 覆盖）：治量具裸子串假阳性（`tool-02` 的 `Word` 被 `password` 里的 `word` 顶掉），双口径并报（件 19／语义 20）。禁碰评测集与 `tests/test_evaluation_report.py` | 10:5x |
+| **R414 反证刀改形** | `Heisenberg` `01a0e3ee-b340-7930-a78d-8853749dad78` | `be-r414` @ `c0c4bcd` | `chat.py`+契约+3 枚件+`tests/fixtures/r414_refutation_driver.py`（6 项 dirty） | ✅ **已交回并 close**（腾槽给 `Euclid`）。读数全部在 09:17 开窗**之前**取完，不受本窗污染；窗后复跑见第三节 | 10:4x |
+| **R421** | `Hume` `01a0e409-8906-7110-834c-636fdb848f46` | `be-r421` @ `abbb317` | `DocPanel.vue` 7/7 + `panel-states.test.js` 2/2 + 三枚在册件 + 新钉 `r421-feed-one-name.test.js` | ✅ **已交回并 close**；四格请裁在第四节，窗后复跑见第三节 | 10:4x |
+| **R435** | `Darwin` `01a0e5c3-30df-7922-8eb0-1fb8f8c780cc` | `be-r435` @ `9f9d452` | 只新建 `docs/perf/eval-must-contain-lineage-2026-09-28.md`（507 行） | ✅ **已交回**（跟踪文件零改动、未 commit）⇒ 待并树；下一格接手 R437（量具假阳性）| 10:44 |
+| **R427** | `Fermat` `01a0e5a7-8613-7273-81b8-3f597800ddc7` | `be-r427` @ `9f9d452` | 7 改 + 1 新（前端借名屏族 + 死坐标三枚 + `tests/test_r210_*` docstring） | 🔵 在途（10:33 仍在写），交付后总控亲跑前端门＋全量门 | — |
+| **R405 + R432** | `Zeno` `01a0e5a8-c099-7ed3-98cd-16a71088966a` | `be-r405` @ `9f9d452` | 新 `scripts/r432_sandbox_corpus.py` + `tests/test_r405_readonly_sqlite_open_has_a_file_footprint.py` | 🔵 在途（10:27 在写）。R432 造料只准打 `eb_r59_sandbox`、`r432_` 前缀、分批 checkpoint，**窗内一发不许打模型** | — |
+| run9 看窗 | `Bernoulli` `01a0e599-5c2c-7523-8565-236c05354100` | 无写域（只读取证） | `%TEMP%\evalrun\run9-readout.md` | 🔵 在途：kind 直方图按语义分家（`approved_ok` 是 HITL 正当终态不是失败）+ 出处塌方与空壳答逐枚点名 | — |
+| `be-r404` | （`Nietzsche` 已 close） | @ `9f9d452` | `app/documents/catalog.py` + 影子件 `test_r404_*` + `test_r406_*` | 🟡 **产物在盘、等 `chat.py` 腾手**（`chat.py` 由 `Heisenberg`/R414 持有过，现虽 close，R404 落码方向裁乙，转手须带跟进单 §120 第六节那三条硬注） | — |
+| 已结案（本格外） | `Beauvoir` `01a0e46a-…` | `be-r424` @ `18ca560` | R424+R423，14 枚路径 | ✅ 已交回、**未并树**（主树现读 `sessions.js` 里 `terminalDataFilename` 0 命中＝未并树的凭据，不是未做的凭据）⇒ 窗后动作册第 4 步 | 已 close |
+
+槽位账：上限 6；本班 close `Heisenberg` → spawn `Euclid`，一 block 一枚投递、零补投、零 model/reasoning 覆盖。
+
+### 二、🔴 R435 把一本旧账推翻（总控主树亲跑复核，不是采信自述）
+- 本席主树现跑 `python scripts/check_eval_evidence_coverage.py`（0.2 s，只读）＝**缺出处的题 19 枚 / 19 词**：`chat-02 chat-09 chat-11 chat-12 data-07 data-08 doc-15 doc-17 insight-05 insight-06 insight-07 report-03 report-07 report-08 report-09 tool-03 unsupported-01 unsupported-02 unsupported-04`。🔴 **旧账「55 条搜不到出处」（以及 29 条）今天不成立**——那是 `9f2f869`／`9626b7d` 两棵树的读数。凡引用「55」的地方一律改口。
+- 夹具里 `"disposition"` 现读：**丙 19 / 甲 7 / 乙 3**。⇒ 丙 19 与覆盖度工具那 19 枚同源同数（指纹一致）。
+- 🔴 **R401 的丙案分母扣除没接线**：`rg disposition app/**` 零命中（只有 `content_disposition` 那族无关命中），`app/quality/eval.py:401` 明写「分母不因为甲案而变（判据 4）：`total` 与 `answer_correctness` 恒按全部题数算」⇒ **那 19 枚照常进 105 分母**。这一格就是 `Euclid`/R438。
+- 🔴 **量具假阳性 1 枚**：`tool-02` 的 `must_contain:["Word"]` 被判「有出处」，唯一命中形是 `password` 里的 `word`（夹具第 91 行本席现读；语料侧命中 `documents/MYO_API接口文档_V1.txt:18` 等）⇒ 件口径 19 不动、**语义口径今天 20**。立案 **R437**（下一枚投出的单）。
+- 🔴 **丙-2 那 11 枚「补语料」补不出来**（会话行为/产品行为/输出格式/数据列），把它当「补语料批」是本轮最容易批错的。另 `insight-06` 不止缺城市列——`费用报销管理制度V2.1.txt:10` 的「其他城市 350」与 `差旅费报销细则_2026版.txt:13-15` 的 400/300 **阈值本身互斥**，题目当前不可判。
+- 基线只给了上界与算式（假阴 ≤ 19/105＝18.10 pp，语义口径 19.05 pp），**没给净数**——净数要 run9 的 answers 与 correct 位离线重放，本席收窗后算。
+
+### 三、两枚已交付件的**窗后复跑命令**（对话会死，命令必须落纸）
+**R414 反证驱动器（cwd 必须留在 `be-r414`，误在主树跑会当场 `AssertionError: ... .git 不是一枚 worktree 指针文件`，那是设计不是缺陷）**
+```powershell
+cd C:\Users\fengx\PycharmProjects\be-r414; & "C:\Users\fengx\PycharmProjects\企业智脑\.venv\Scripts\python.exe" tests\fixtures\r414_refutation_driver.py; "rc=$LASTEXITCODE"
+```
+期望（与 08:41:22 那份一致）：`[对照刀] 23 passed / 红了 0 枚`；`刀 B 6 failed,17 passed`（carries / names_the_file / not_an_echo / approve_lane / analyzed_nothing / multi_dataset）；`刀 C 3 failed,20 passed`（sentence / docstring / no_literal_unicode_escape）；`刀 D 2 failed,21 passed`（multi_dataset + tristate，「正好一枚」那一态四枚照旧绿）；`刀 A (a) 件 3 failed,5 passed`（status / same_name_twice / no_registered_code 红，五枚停手条件派生钉绿）+ `影子形状钉 1 passed`；每把 `副本已销毁 仍存在: False` + 8 枚 sha256 相等；`真树写口记账（必须为空）: 0 枚`；**rc=0**。
+**R421（cwd `be-r421\frontend`）**：`npm run test` 期望 `118 files / 2446 tests`；`npm run lint:colors` 与 `npm run lint` 期望 **148 problems / 0 errors**（恒基点）；七枚件合跑期望 `137 passed`（逐枚 10/20/13/44/19/14/**17**）；影子树牙检 `%TEMP%\r421_op\teeth.mjs` 九场：baseline `149 passed`、k1 `12 failed/137`、k2 `13 failed/136`、k3a `3/146`、k3b `6/143`、k4 `2/147`、k5 `5/144`、k6a `2/147`、k6b `1/148`、k7 `1/148`、teeth8 `10 failed/139`，每场复位后必须回到 149。盘态：`git rev-list --count abbb317..HEAD`＝0、porcelain 只剩它那 6 枚。
+🔴 影子树 `%TEMP%\r421_op\r421_K0_pristine` 与 `%TEMP%\r421_op` 属**本机唯一副本**，收窗后先复跑再谈清理，别按「临时目录」顺手删。
+
+### 四、`Hume`/R421 四格请裁（总控落笔，窗后）
+① `DocPanel.vue` 7/7 而非 7/5（多两行全是注释）换来三枚别人在册坐标零改口（`r412:7→:955`、`r338:5→:528-533`、`r247:7→panel-states:221`）⇒ **接受**，代价写清：注释也占坐标。② 裁定②「屏名词表外提」它选**不抽**，理由是本席认下来的三条（抽表必改 `r412`／两枚钉吃同一词表则词表被缩就**两枚同时瞎**／`r412` 文件头立场是「现读路由表不抄清单」），替代机制＝`r421戊` 三条腿 + 刀六b 实测拦截 ⇒ **收下**。③ `ChatPanel.vue:1813`「合并目标 live、基点不 live」的记账口径 ⇒ 按**合并态**记，并在 `numstat` 旁边注明基点态。④ 台账三处坐标会被 `r136` +64 行指错（`2026-09-26-frontend-gap-recheck.md:156/:291→r136:70`、`:225` 那句「三枚」）⇒ **本席窗后改口**，执行层未越界，不记事故。
+
+### 五、器件与口径的三条改口（本班现读）
+1. `ollama ps`＝`qwen3.5:9b` **100% GPU／ctx 4096**；`nvidia-smi`＝RTX 4060 Laptop 8 GB／用 5.6 GB／util 25% ⇒ 旧账「推理在本机 CPU」**作废**。`OLLAMA_NUM_PARALLEL` 未设 ⇒ Ollama 侧同样压并行。
+2. AGENTS.md 那格「`-n 8 --dist loadfile`，实测 247 s → 85 s」**已改口**：并发数由 `run_gate.py` 按空闲内存自选，纸上不写死 `-n`；同树两跑实测自选到 `-n 6`／302.16 s／基线 `7722 passed / 50 skipped / 2 xfailed / exit=0`。§4DI 那句「`-n 7`／218 s」同样过期。
+3. 🔴 「`chroma.sqlite3` 的 mtime 随只读进程前进」（计划书 §9.3 第 5 格）**今天不复现**＋「WAL」四本假账 ⇒ 立案 R434，全文见跟进单 §120 第三节；在 `Zeno`/R405 那把只读足迹探针给数之前，这句一律按**待证**读。
+
+### 六、run9 窗内进度（本班现取，非终值）
+09:17:43 点火 → 10:36 **74/105** → 10:45 **83/105**，`sidecar` 零重试、零哨兵。尾巴聚着队列道报告题与 HITL 审批题（`insight-07` 单枚 291.6 s、`chart-02` 224.7 s）。终值、四条验收与逐枚归因写在 §4DL（收窗后开）。
