@@ -3,9 +3,9 @@
  *
  * 病灶（第一棒留下的那一格）：员工按下「不排了」拿到【非终态】回执（后端那一格叫
  * cancel_requested）时，状态只进内存里的 queueReads，不落 msg.queue，于是刷新或换回这条会话时
- * queueReads 是空的，ChatPanel.vue:1309 那条守卫的前置 read && 整条跳过，:1317 就把落盘那一格
+ * queueReads 是空的，ChatPanel.vue:1357 那条守卫的前置 read && 整条跳过，:1365 就把落盘那一格
  * （还是 queued）原样交给 queueFace —— 屏幕把「已登记取消」改口画回「排队中」。
- * 第一棒补上了写点（ChatPanel.vue:1506-1511），本件钉的就是这条写点真的能办事。
+ * 第一棒补上了写点（ChatPanel.vue:1554-1559），本件钉的就是这条写点真的能办事。
  *
  * 为什么必须走真路径（而不是手搭一枚 historyTurn('cancel_requested')）：手搭就是把病灶当成
  * 前提写进夹具，写点摘掉也照样绿 —— 那正是第一棒被指出的假绿风险。本件全程没有手搭：
