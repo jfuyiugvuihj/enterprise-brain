@@ -40,6 +40,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -175,13 +176,28 @@ def test_r163_nail_bites_when_the_table_is_renamed_or_duplicated() -> None:
 # ==================== 判据①：真 pytest 跑一次的磁盘取证 ====================
 
 
-def _run_nail(cwd: Path, target: str) -> subprocess.CompletedProcess[str]:
+def r449_nested_basetemp(parent_scratch: Path) -> Path:
+    """R449：每一枚嵌套 pytest 会话只用自己的 basetemp，落点必须在父件 scratch 之内。
+
+    不传 --basetemp 时子会话落进 `%TEMP%\\pytest-of-<user>` 那枚共享根（跟进单 §123 第四节）：
+    每枚会话收尾都要剪该根下的旧编号目录（默认只留最近 3 枚，`.lock` 一过期照剪不误），
+    并发时父会话正在用的 tmp_path 就有被剪掉的一天 —— 那是门自己造的假红，不是产品缺陷。
+    判据①（子 basetemp 必须是父 scratch 的子目录）由
+    tests/test_r449_nested_pytest_basetemp_contract.py 机检，漏一处当场点名。
+    """
+    root = Path(parent_scratch) / "r449-nested-basetemp"
+    root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="child-", dir=str(root)))
+
+
+def _run_nail(cwd: Path, target: str, parent_scratch: Path) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env.pop("PYTEST_CURRENT_TEST", None)
     return subprocess.run(
         [
             sys.executable, "-m", "pytest", target, "-k", NAIL_SELECTOR,
             "-q", "--no-header", "-p", "no:randomly", "-p", "no:cacheprovider",
+            "--basetemp", str(r449_nested_basetemp(parent_scratch)),
         ],
         cwd=str(cwd), capture_output=True, text=True, env=env, timeout=900,
     )
@@ -189,7 +205,8 @@ def _run_nail(cwd: Path, target: str) -> subprocess.CompletedProcess[str]:
 
 def test_r163_teeth_proven_by_a_real_pytest_run(tmp_path) -> None:
     """塞进用例的 skip 让钉由真 pytest 报红；仓库原件全程没被写过，所以它仍然是绿的。"""
-    green = _run_nail(REPO_ROOT, str(MATRIX_PATH))
+    green = _run_nail(REPO_ROOT, str(MATRIX_PATH), tmp_path)
+    assert tmp_path.is_dir(), "R449：嵌套会话把父件的 tmp_path 剪掉了（子会话必须自带 --basetemp）"
     assert green.returncode == 0 and "1 passed" in green.stdout, (
         "仓库里那枚钉今天必须绿：" + (green.stdout + green.stderr)[-2500:]
     )
@@ -198,7 +215,8 @@ def test_r163_teeth_proven_by_a_real_pytest_run(tmp_path) -> None:
     softened, number = _inject(statement, kind)
     softened_path = tmp_path / MATRIX_PATH.name
     softened_path.write_text(softened, encoding="utf-8")
-    red = _run_nail(tmp_path, softened_path.name)
+    red = _run_nail(tmp_path, softened_path.name, tmp_path)
+    assert tmp_path.is_dir(), "R449：第二枚嵌套会话同样不许动父件 tmp_path"
     out = red.stdout + red.stderr
     assert red.returncode != 0, "把 " + marker + " 塞进用例之后那枚钉居然还绿：" + out[-2500:]
     assert "1 failed" in out and "no tests ran" not in out, out[-2500:]

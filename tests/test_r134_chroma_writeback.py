@@ -35,6 +35,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -439,14 +440,34 @@ def _child_environment(tmp_path: Path, repo_root: str, report: Path) -> dict:
     return env
 
 
-def _run_child_pytest(repo_root: str, args: list[str], env: dict, cwd: str | None = None) -> object:
+def r449_nested_basetemp(parent_scratch: Path) -> Path:
+    """R449：每一枚嵌套 pytest 会话只用自己的 basetemp，落点必须在父件 scratch 之内。
+
+    不传 --basetemp 时子会话落进 `%TEMP%\\pytest-of-<user>` 那枚共享根（跟进单 §123 第四节）：
+    每枚会话收尾都要剪该根下的旧编号目录（默认只留最近 3 枚，`.lock` 一过期照剪不误），
+    并发时父会话正在用的 tmp_path 就有被剪掉的一天 —— 那是门自己造的假红，不是产品缺陷。
+    判据①（子 basetemp 必须是父 scratch 的子目录）由
+    tests/test_r449_nested_pytest_basetemp_contract.py 机检，漏一处当场点名。
+    """
+    root = Path(parent_scratch) / "r449-nested-basetemp"
+    root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="child-", dir=str(root)))
+
+
+def _run_child_pytest(
+    repo_root: str, args: list[str], env: dict, parent_scratch: Path, cwd: str | None = None
+) -> object:
     """枚 -q 交给调用方：要断言终端抬头（钉子装没装的直接证据）就得留着默认 verbosity。
 
     缓存 Provider 关掉，免得子进程去写 .pytest_cache；cwd 能换，用来复现「在子目录里拿
     相对路径起 pytest」这一类起法（app/rag/retriever.py:394 的默认值是相对 cwd 的）。
     """
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *args],
+        [
+            sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
+            "--basetemp", str(r449_nested_basetemp(parent_scratch)),
+            *args,
+        ],
         cwd=cwd or repo_root,
         env=env,
         capture_output=True,
@@ -493,7 +514,9 @@ def test_a_path_argument_outside_tests_still_loads_the_pins(
         chroma_writeback_guard.repo_root,
         ["--collect-only", "-p", "r134_child_probe", "app/common/audit.py"],
         _child_environment(tmp_path, chroma_writeback_guard.repo_root, report_path),
+        tmp_path,
     )
+    assert tmp_path.is_dir(), "R449：嵌套会话把父件的 tmp_path 剪掉了（子会话必须自带 --basetemp）"
     problems = chroma_writeback_guard.diff(before, chroma_writeback_guard.snapshot(store))
     assert completed.returncode in {0, 5}, completed.stdout[-3000:] + completed.stderr[-3000:]
     assert "R134 chroma sandbox:" in completed.stdout, (
@@ -528,7 +551,9 @@ def test_a_relative_path_from_a_subdirectory_still_loads_the_pins(
         ["-q", "--collect-only", "-p", "r134_child_probe", "common/audit.py"],
         _child_environment(tmp_path, chroma_writeback_guard.repo_root, report_path),
         cwd=str(Path(chroma_writeback_guard.repo_root) / "app"),
+        parent_scratch=tmp_path,
     )
+    assert tmp_path.is_dir(), "R449：从子目录起的那枚嵌套会话同样不许动父件 tmp_path"
     problems = chroma_writeback_guard.diff(before, chroma_writeback_guard.snapshot(store))
     output = completed.stdout + completed.stderr
     try:

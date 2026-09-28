@@ -202,13 +202,31 @@ def edit_copy(shadow: Path, rel: str, pairs: Sequence[Tuple[str, str]]) -> None:
     path.write_bytes(text.encode("utf-8"))
 
 
+def r449_nested_basetemp(parent_scratch: Path) -> Path:
+    """R449：每一枚嵌套 pytest 会话只用自己的 basetemp，落点必须在父件 scratch 之内。
+
+    不传 --basetemp 时子会话落进 `%TEMP%\\pytest-of-<user>` 那枚共享根（跟进单 §123 第四节）：
+    每枚会话收尾都要剪该根下的旧编号目录（默认只留最近 3 枚，`.lock` 一过期照剪不误），
+    并发时别人正在用的 tmp_path 就有被剪掉的一天 —— 那是门自己造的假红，不是产品缺陷。
+    本件的父 scratch 就是影子副本根，所以子会话的残骸跟着副本一起 rmtree，一处都不留在 %TEMP%。
+    判据①由 tests/test_r449_nested_pytest_basetemp_contract.py 机检，漏一处当场点名。
+    """
+    root = Path(parent_scratch) / "r449-nested-basetemp"
+    root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="child-", dir=str(root)))
+
+
 def run_pytest(shadow: Path, targets: Sequence[str]) -> dict:
-    """在副本根里跑（cwd 就是副本根），读数与在真树里跑同形。"""
+    """在副本根里跑（cwd 就是副本根），读数与在真树里跑同形。
+
+    R449：子会话自带 --basetemp（落在副本根之内），别去剪共享根里别人的 tmp_path。
+    """
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider"]
-        + list(targets),
+        [sys.executable, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider",
+         "--basetemp", str(r449_nested_basetemp(shadow))] + list(targets),
         cwd=str(shadow), capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
+    assert shadow.is_dir(), "R449：嵌套会话把影子副本根弄没了"
     out = result.stdout or ""
     names = re.findall(r"^FAILED [^:]+::(\w+)", out, re.M)
     message = "\n".join(line[2:].rstrip() for line in out.splitlines() if line.startswith("E   "))
