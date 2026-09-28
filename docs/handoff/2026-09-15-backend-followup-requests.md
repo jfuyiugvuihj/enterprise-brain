@@ -4209,7 +4209,7 @@ R425 的执行腿被 `tests/test_r22_rebuild_cli.py:202` 封死（R235 同型第
 ### 六、投递与槽位（本班新增实证）
 - 本班未新建投递。在途＝`Poincare`(R429) / `Hypatia`(R439) / `Euclid`(R438 扩批⑨⑩) / `Zeno`(R405+R432) 四枚；`Galileo`(R437) 已交回并 close、已并树。
 - 沿用 §122 那条入规：**投前必须留一枚余量**，投失败一律入册不补投。R444 与 R443 反证钉是接下来两枚可派单（写域互不相交，可并行）。
-## §124（09-28 第十八格·总控线 `Franklin`/`Hubble`/`Goodall`/`Plato` 四枚并投，主树 `38286f7`→`227949e`）：run9c 收窗＝D 三格第一次判得动 · 🔴 队列道 11/20 停在审批闸而量具一步没走 · be-r429 整文件写断（事故 #15）· R438 并树 · R434 四处改口 · push 被本机代理掐断
+## §124（09-28 第十八格·总控线 `Franklin`/`Hubble`/`Goodall`/`Plato` 四枚并投，主树 `38286f7`→`227949e`）：run9c 收窗＝D 三格第一次判得动 · 🔴 队列道 11/20 停在审批闸而量具一步没走 · be-r429 整文件写断（事故 #67）· R438 并树 · R434 四处改口 · push 被本机代理掐断
 
 ### 一、run9c＝队列道报告档首验（13:57:42 起，14:19:13 收，`COLLECT_EXIT=0`，20/20，零重试）
 - 送测面：`%TEMP%\evalrun\fixture-report20-run9c.jsonl` ＝ 本席按**当前** `tests/fixtures/business_evaluation_100.jsonl` 现取 `tier=报告` 20 行（`report-01..12` + `metric-16..19` + `tool-01..04`）。🔴 没用 09-25 那本 `docs/testing/bank-run8p2-subset20.jsonl`——它与现题面逐行不等，用它就是判错题。
@@ -4224,7 +4224,7 @@ R425 的执行腿被 `tests/test_r22_rebuild_cli.py:202` 封死（R235 同型第
 
 ### 三、真机咬出来的两枚缺陷
 - **P1 装箱顶在队列道能把整枚报告档打成 dead**：`report-04` 同一 `request_id=9bf335ef3b954f3681ab2d9bc159c929` 连吃三发 `context_limit_exceeded`（14:06:33 / 14:08:37 / 14:10:46；`tier=analysis`、`prompt_tokens=2691/2693/2695` + `declared_max_tokens=1536` ⇒ `required_n_ctx=4227~4231` > `MODEL_CONTEXT_TOKENS=4096`、`over_by_tokens=131/133/135`），第四发才判 dead，队列侧 `wait_ms=373712 / polls=124`。⇒ 装箱本体＝**R445**（R429 复工）；白烧三发＝**R448**。🔴 抬 `MODEL_CONTEXT_TOKENS` 仍是业主侧配套（`.env` + Ollama `num_ctx` + recreate 必须同批），本席一枚默认值都没动。
-- **事故 #15（执行层产物写断，新族）**：`be-r429/app/agents/tools.py` **整文件 84,529 字节全 NUL**（mtime 12:25:14＝上一班会话中断那一刻前后）。不可恢复：当天 `.git/objects` 只有 11 枚松散对象、全是本席 12:19 那笔 commit 的产物，没有它的 blob（逐枚 `cat-file -t/-s` 查过）。幸存两件（`r429_pack_forensics.py` 206 行／`test_r429_pack_priority.py` 453 行，AST OK）只当输入。⇒ 入规：**并树前必给每枚在册件做一次「是不是文本」体检**（`git diff` 报 `Bin` 就是信号），别只数 numstat。
+- **事故 #67（执行层产物写断，新族）**：`be-r429/app/agents/tools.py` **整文件 84,529 字节全 NUL**（mtime 12:25:14＝上一班会话中断那一刻前后）。不可恢复：当天 `.git/objects` 只有 11 枚松散对象、全是本席 12:19 那笔 commit 的产物，没有它的 blob（逐枚 `cat-file -t/-s` 查过）。幸存两件（`r429_pack_forensics.py` 206 行／`test_r429_pack_priority.py` 453 行，AST OK）只当输入。⇒ 入规：**并树前必给每枚在册件做一次「是不是文本」体检**（`git diff` 报 `Bin` 就是信号），别只数 numstat。
 - **投递失联账**：`Poincare`(R429)／`Euclid`(R438)／`Noether`(R444) 三枚 id 在本席处 `wait_agent` 一律 `not_found`（上一班 close 或线程换代）⇒ **回执不可取，验收只能按盘面取证**。这是"执行层自述不可采信"的加强版：连自述都拿不到时，判据必须逐条从 diff 与新件里读。
 
 ### 四、本班并树与收口
@@ -4234,7 +4234,7 @@ R425 的执行腿被 `tests/test_r22_rebuild_cli.py:202` 封死（R235 同型第
 - **push 断在本机**：`git push` 三发全 `TLS connect error: unexpected eof`；`git config` 走 `http.proxy=http://127.0.0.1:7897`（端口在听、PID 4684）⇒ 掐的是**代理上游**；另 `hosts` 里整排 `127.0.0.1 github.com/api.github.com/...`（浏览器侧也走不了）。兜底＝增量 bundle `E:\eb-offload\bundles\eb-unpushed-38286f7.bundle`（`git bundle verify` 通过，含 `0cc8c00..38286f7`）。🔴 **H6 重新开闸**，等业主把代理修好。
 
 ### 五、本班派工（一 block 一枚，零补投）
-- `Hubble` **R445**（`be-r445` @ `227949e`）＝R429 复工（死号不复用，见事故 #15）：`app/agents/tools.py` + `app/rag/retrieval_pipeline.py`（仅 room/装箱 helper）+ 新钉。
+- `Hubble` **R445**（`be-r445` @ `227949e`）＝R429 复工（死号不复用，见事故 #67）：`app/agents/tools.py` + `app/rag/retrieval_pipeline.py`（仅 room/装箱 helper）+ 新钉。
 - `Franklin` **R447**（`be-r447` @ `227949e`）＝队列道批准轮 + 出处随答案：`scripts/eval_transport_ask_v2.py`、`scripts/eval_lane_readout.py` + 新钉。
 - `Goodall` **R448**（`be-r448` @ `227949e`）＝确定性拒绝不重试三发：默认写域 `app/common/reliable_queue.py` + 新钉（定位若在别处先回报再动）。
 - `Plato` **R449**（`be-r449` @ `227949e`）＝R444 复工：起嵌套 pytest 的在册件传 `--basetemp` 进父 `tmp_path`，🔴 禁碰 `scripts/run_gate.py`、禁打串行标记回避。
@@ -4243,3 +4243,4 @@ R425 的执行腿被 `tests/test_r22_rebuild_cli.py:202` 封死（R235 同型第
 ### 六、本席新学的一格规矩：单跑 = 假红制造机
 - `tests/test_r438_*` 单跑 7 failed、门内全绿；`tests/test_observability_routes.py` 与 `tests/test_r135_s1_model_budget_facts.py` **单独跑必炸** `AssertionError: Artifact of type=precompile already registered`（torch 双导入，与本仓代码无关）；`tests/test_r409_plan_table_is_derived.py` 单跑 4 failed——本席做了 A/B（把我的 8 处改口 `git checkout` 掉再单跑，**同样 4 failed**）⇒ 与改动无关。
 - ⇒ 规矩：**import 后端 app 的件，单跑/手挑组合的读数一律不作验收依据**；验收只认 `scripts/run_gate.py`。要判"我这次改动有没有弄坏东西"，用 **A/B 同法**（还原改动→同法重跑→对比），别拿一次单跑的红去立案。
+- 🔴 **编号订正（本班续，09-28 15:2x）**：本节三处「事故 #15」是**撞号**——全局 #15 早在 09-17 §4AI.4（同一 block 内发两条 `spawn_agent`，R56 派了两遍，同类第六次）与 09-26 §4CO（五枚施工 Agent 集体冻结）用掉，现取看板 `事故 #` 最大 **66**、跟进单最大 **64** ⇒ 本族（执行层产物整文件写断）正式记 **事故 #67**。同族前科＝§4CO 那笔「本班接手摘要里把它记成事故 #15 是撞号」，同一个坑第二次踩：编号一律现取最大值 +1，不许凭摘要记忆落号。
