@@ -5,7 +5,7 @@ import os
 import json
 import re
 from collections import OrderedDict
-from typing import NamedTuple
+from typing import Any, NamedTuple
 import inspect
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
@@ -1351,6 +1351,53 @@ def _llm_pandas_code(df, query: str) -> str:
     return code.strip()
 
 
+#: R462 · safe_query 交回的查询结果里，pandas 多级索引会落成 tuple 键：
+#: app/tools/excel.py:476 的 Series.to_dict()（df.groupby(['区域','季度'])['销售额'].sum()
+#: 那一族）与 app/tools/excel.py:474 的 DataFrame.to_dict(orient="records")
+#: （df.groupby('区域').agg({'销售额': ['sum','mean']}) 那一族）。元组不是 JSON 合法的键，
+#: 而 json.dumps 的 default= 只作用于**值**，对键一律当场抛
+#: keys must be str, int, float, bool or None, not tuple（实测加 default=str 一个字都救不了，
+#: 所以那不是修法）。造键那两行不在本单写域，本函数是本条腿唯一的 JSON 契约出口，
+#: 于是在序列化之前把层级元组展成字符串键：逐层原样保序，用 _TUPLE_KEY_SEPARATOR 连接。
+#: 🔴 非 tuple 键与所有值原样交回，没有 tuple 键的负载出来的结构与改前完全相等。
+_TUPLE_KEY_SEPARATOR = " | "
+
+
+def _flatten_query_key(key: Any) -> Any:
+    """层级元组展成字符串键；其余键型原样不动。"""
+    if not isinstance(key, tuple):
+        return key
+    return _TUPLE_KEY_SEPARATOR.join(str(part) for part in key)
+
+
+def _flatten_query_tuple_keys(value: Any) -> Any:
+    """递归展平查询结果里的 tuple 键，供 _query_data 那一次 json.dumps 之前用（R462）。
+
+    只重建 dict 与 list 两类容器，标量与非 tuple 键原样交回：今天全部在绿路径（单级 groupby、
+    纯数字、平面 records 键）交出去的结构与改前逐枚相等，本单不顺手改它们的形状。
+
+    🔴 两枚不同的原键若展成同一枚字符串就当场抛，不合并、不覆盖、不吞异常。静默去重等于
+    交出一枚看着正常、实际混了两行的键——跟进单 §133 判据要的是"修成字符串键"，
+    不是"让它别炸"。
+    """
+    if isinstance(value, dict):
+        flat: dict[Any, Any] = {}
+        origin: dict[Any, Any] = {}
+        for key, item in value.items():
+            normalized = _flatten_query_key(key)
+            if normalized in origin and origin[normalized] != key:
+                raise ValueError(
+                    "查询结果的层级键展平后撞成同一枚字符串，拒绝合并："
+                    f"{origin[normalized]!r} 与 {key!r} 都展成 {normalized!r}"
+                )
+            origin[normalized] = key
+            flat[normalized] = _flatten_query_tuple_keys(item)
+        return flat
+    if isinstance(value, list):
+        return [_flatten_query_tuple_keys(item) for item in value]
+    return value
+
+
 def _query_data(query: str, config: RunnableConfig) -> str:
     from app.common.rbac import filter_dataframe_rows_with_scope
     from app.tools.excel import load_excel, safe_query
@@ -1397,7 +1444,10 @@ def _query_data(query: str, config: RunnableConfig) -> str:
         if res.get("error") is None:
             result = res["result"]
             if not isinstance(result, str):
-                result = json.dumps(result, ensure_ascii=False, default=str)
+                # R462：多级索引的结果带 tuple 键，先在契约出口展平成字符串键，再序列化。
+                result = json.dumps(
+                    _flatten_query_tuple_keys(result), ensure_ascii=False, default=str
+                )
             # R112：查询结果是一整块（只有一条候选），装箱装不下时只能裁这块的尾巴（带可见
             # 截断标记），连标记都装不下就换那一句指名"本题数据结果超出本机上下文"的话。
             # R445 按名次扫的救援在这一条候选上与旧读法同形：交得出就是它自己的整条或桩。
