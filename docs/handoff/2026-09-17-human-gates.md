@@ -59,14 +59,12 @@
 - **触发条件（可叫人）**：`git worktree list | Measure-Object -Line` 只剩 1 行，且 `git status` 里 `chroma_db/**` 仍为 `M`。
 - **不做的代价**：每次 `git status` 长期脏 ⇒ 真实未提交改动被埋在里面，误提交 191 MB 二进制只是一次手滑。
 
-## H6 一次都没 push 过（**这条最容易被"等忙完再说"拖死**） —— 仅用户本人
-- **当前**：`codex/data-file-catalog` **无 upstream**（`git rev-parse --abbrev-ref '@{u}'` → fatal），
-  而远端**两个都在**：`origin` = github、`gitee`。**全部历史只在这一块盘上。**
-- **为什么不能我推**：需要凭据，且 push 是对外动作。
-- **触发条件**：**没有"等阶段完成"这回事**——任何一次提交了成体系的工作（例如今天 `3f10b26` 的 1390 行文档）
-  即为触发点。心跳若发现 `HEAD` 比上次记录新且仍无 upstream，应当叫人。
-- **核对命令**：`git rev-parse --abbrev-ref --symbolic-full-name '@{u}'`（fatal ⇒ 未配 upstream）。
-- **不做的代价**：磁盘或机器故障 ⇒ 代码、全部文档、两周协作记录**一起没了**。这一项的风险高于其它所有项。
+## H6 备份半边——✅ 09-28 本班关闸（gitee 已推平），🔴 github 半边仍只等业主
+- **09-28 现读（第十八格续，主树 `4d04f89`）**：本分支**有 upstream**＝`gitee/codex/data-file-catalog`，本席按 :365 那条 standing 授权（「push 你现在就可以提交」）连推三发全成：`0cc8c00..8c39166`、`870fb67..4d04f89` 等；`git ls-remote gitee refs/heads/codex/data-file-catalog` 现读＝`4d04f89…`、`git rev-list --count @{u}..HEAD`＝**0**、`git status -sb` 首行不再显示 ahead ⇒ 原句那句 **「全部历史只在这一块盘上」从今天起是假话**，本清单风险最高那一格按 gitee 口径**关闸**。
+- 🔴 **仍欠的一半＝github 那一头，只有业主能修**：`git push origin HEAD:refs/heads/codex/data-file-catalog` 现报 `TLS connect error: error:0A000126:SSL routines::unexpected eof`。取证：`http.proxy=http://127.0.0.1:7897` 端口**在听**（PID 4684）⇒ 掐断的是**代理上游**，不是 git；且 `C:\Windows\System32\drivers\etc\hosts` 里还留着整排 `127.0.0.1 github.com / api.github.com / githubusercontent.com …`（这条排曾经是把 github 指向本机）。**修代理与清 hosts 本席一个字节没动**（改 `hosts` 属改环境，业主侧）。
+- **为什么这半边还值得留**：gitee 那份是同一分支的镜像，但它不是业主原本约定的对外仓；两仓都在（`git remote -v` 现读 `origin`＝github、`gitee`＝gitee）⇒ 只要其中一头落后 0 枚，「机器没了就全没了」就不成立；要恢复的是**第二份异地副本**，不是第一份。
+- **接班纪律（今天第三次救回这条，别再靠定时任务）**：每格开工第一件事现读 `git status -sb` 首行与 `git rev-parse --short @{u}`，落后就当场推；收班前再推一次并现读 `rev-list --count @{u}..HEAD`＝0。心跳 `automation-2` **保持永久 PAUSED**（业主 09-28 原话「别开这个人工提醒会影响对话，之前有好几个这么死了」），H6 由上面这条纪律承担。
+- **原句存档（09-15 写下时的真态，留作反证）**：「`codex/data-file-catalog` **无 upstream**（`git rev-parse --abbrev-ref '@{u}'` → fatal），而远端**两个都在**……**全部历史只在这一块盘上**」；当时的顾虑是「需要凭据、且 push 是对外动作」⇒ 09-21 :365 已改成 standing 授权 + 接班自查，本班据该授权执行并留痕。
 
 ## H7 三件套已过期，但 AGENTS.md 仍要求据其判断完成度 —— 需你定口径
 - **当前**：`task_plan.md` / `progress.md` / `findings.md` 最后修改 **2026-09-16 10:01**
