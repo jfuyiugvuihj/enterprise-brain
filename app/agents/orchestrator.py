@@ -49,9 +49,10 @@ from app.agents.nodes import (
     KB_CALIBER_MARKERS,
     LANE_QA,
     STREAM_PIECE_SINK_KEY,
+    _AnswerPieceTap, _config_with_tap,
     _make_model, classify_intent, classify_route, decide_workers, declared_lane_from_config,
-    normalize_declared_lane, respond, load_memory, plan, reflect_node, resolve_turn_lane,
-    route_reflect, synthesize,
+    is_offline_reply_text, normalize_declared_lane, respond, load_memory, plan, reflect_node,
+    resolve_turn_lane, route_reflect, synthesize,
 )
 from app.agents.evidence import (
     aggregate_agent_result,
@@ -343,7 +344,65 @@ def _prior_dispatch_decision(turn_messages: list):
     return None
 
 
-def main_agent_node(state: AgentState) -> dict:
+#: 主 Agent 直答那一发在本轮片段出口上的腿名。它刻意不叫任何 worker 的名字：收端
+#: (``app/api/v1/chat.py::_AnswerPieceStream.frame_for``) 拿 ``worker`` 与 ``worker_results``
+#: 比对来判断"这条腿的字落定了没有"，而 supervisor 永远不是 ``worker_results`` 的键 ⇒ 这一发
+#: 之后若还有一条腿开口，收端走的就是它那三条规则里"少发"的那一侧。
+SUPERVISOR_ANSWER_LEG = "supervisor"
+
+
+def _supervisor_answer_tap(state: AgentState, config):
+    """直答那一发要不要接上 R31 的片段出口：接就交回 ``(tap, 这一发要用的 config)``。
+
+    不接一律交回 ``(None, None)``，那一发退回单参数 ``invoke``——请求体与今天逐字节相同。
+    三格同时成立才接：
+
+    ① 本轮注册了 ``stream_piece_sink``。只有 ``chat._ask_stream`` 注册它，队列道、审批续跑、
+      离线直调都没有 ⇒ 那些道上连一枚回调都不多挂。
+    ② 本轮还没派过活（本轮消息里没有 ``dispatch`` 决策）。派完之后回到 supervisor 的那一发
+      写的是**汇总**，而终答由 ``synthesize`` 从 ``worker_results`` 折出来 ⇒ 那一发的正文不是
+      终答的前缀，接进来只会在 ``prefix_breaks`` 上露馅；run9 的 ``data-09`` 卡的正是那一发
+      （``docs/perf/a2-single-frame-attribution-2026-09-28.md`` §7.1 明写那一格本单分不开）。
+    ③ ``worker_results`` 为空。与②是同一条事实的两半：一枚看消息、一枚看账本，``redo`` 那一圈
+      里两者不同步，两道都得守着。
+
+    接的是 R203 生产者那套现成的东西，不是第二套实现：同一枚 ``_AnswerPieceTap``——尺寸闸与
+    空档闸用的还是 R31 那枚 ``StreamPieceMerger``（20 字／100 ms／4 字地板，一格没动），T1
+    工具轮、T2 滚动留一、T3 半截字不充末片全在类里；本函数只多做一件事，就是把这枚 tap 挂进
+    **这一发**的 ``callbacks``。为什么不在 ``configurable`` 里补一枚 ``worker`` 让
+    ``nodes.answer_leg_stream_target`` 自己放行：那枚名单是 ``doc``／``data``／``chart`` 三条
+    **工作腿**的归因名，主 Agent 直答不是其中任何一条；借名进名单＝往日志的 ``leg=`` 与
+    ``StreamPiece.worker`` 里塞一枚假腿名，那是归因造假，不是接线。
+    """
+    configurable = (config or {}).get("configurable") or {}
+    sink = configurable.get(STREAM_PIECE_SINK_KEY)
+    if not callable(sink):
+        return None, None
+    if state.get("worker_results"):
+        return None, None
+    _question, turn_messages = _current_turn(state)
+    if _prior_dispatch_decision(turn_messages) is not None:
+        return None, None
+    tap = _AnswerPieceTap(
+        config, sink, worker=SUPERVISOR_ANSWER_LEG, call_id=uuid4().hex[:12]
+    )
+    return tap, _config_with_tap(config, tap)
+
+
+def _answer_leg_publishes_tail(resp) -> bool:
+    """交回来的这一发还是不是刚才那串字的延伸：是才许把收尾的尾巴放出去（T3 的结清判据）。
+
+    两种交回都不是延伸：工具轮（provider 死在半路时 ``_OfflineModel`` 顶上的正是那一发——
+    content 为空、带 dispatch，``is_offline_reply_text`` 对空串认不出来，所以两半都得查）；
+    以及离线话术那一句预制的话。半截字冒充答案的最后一块，收端就会把死掉的流当成终答的
+    前缀——与 nodes.py 里那枚 tap 自己 ``abandon`` 的裁定同一条。
+    """
+    return not getattr(resp, "tool_calls", None) and not is_offline_reply_text(
+        getattr(resp, "content", "")
+    )
+
+
+def main_agent_node(state: AgentState, config=None) -> dict:
     all_msgs = state.get("messages", [])
 
     # 短期记忆：R33 起确定性裁剪，零模型。旧写法在这里多发一发 COMPRESS 往返，让本机模型
@@ -409,7 +468,25 @@ def main_agent_node(state: AgentState) -> dict:
             logger.info("[Supervisor] 确定性计划命中 → 复读第 1 发 dispatch，跳过第二发模型往返")
             return {"messages": [replay]}
 
-    resp = main_model.invoke([sys_msg, current_user_msg])
+    tap, answer_leg_config = _supervisor_answer_tap(state, config)
+    resp = main_model.invoke(
+        [sys_msg, current_user_msg],
+        **(
+            {"config": answer_leg_config, "stream_options": {"include_usage": True}}
+            if tap is not None
+            else {}
+        ),
+    )
+    if tap is not None:
+        # T3 的结清点落在调用方，因为"交回来的这一发还是不是模型刚才那串字"只有这里看得见：
+        # invoke 正常返回才 close()（把手里那片与收尾残余放出去），否则 abandon（残余整片丢弃，
+        # 与 nodes.py 里那枚 tap 自己在 provider 报错时的处置同一条裁定）。invoke 当场抛
+        # （预算拒发那一形）时两枚都不调，pending 永不落地 ⇒ 与 metric-02／scope-02 那两枚
+        # 空读同形，一片都不许多发。
+        if _answer_leg_publishes_tail(resp):
+            tap.close()
+        else:
+            tap.abandon("provider_fallback")
 
     tools = getattr(resp, "tool_calls", None) or []
     if tools:
