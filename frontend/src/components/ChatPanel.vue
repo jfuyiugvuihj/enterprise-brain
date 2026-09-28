@@ -228,6 +228,11 @@ export function buildDeepDeps(query) {
     switchTo: switchSession,
   }
 }
+// R458 · 判据①：这一枚必须住在模块顶层的 <script> 里，而不是 <script setup> —— 后者每挂一枚面板
+// 实例就重开一份私货。它记的是「全站这一发还在路上」，与是哪一枚面板在问无关（lib/health.js 那份
+// 60 秒缓存同样是模块级单例，同一个道理）。
+let panelRuntimeRead = null
+
 </script>
 
 <script setup>
@@ -777,8 +782,85 @@ const modelStateText = computed(() => modelStatusText(runtimeHealth.value))
 // 名单逐格说（lib/health.js 一族一句，六族六张脸）。这里只做挂载，本面板不当第二套判断。
 const runtimeFaceList = computed(() => runtimeFaces(runtimeHealth.value))
 
-async function refreshRuntimeHealth() {
-  runtimeHealth.value = await fetchRuntimeHealth({ force: true })
+// ==================== R458 · 判据①：面板不再是全站第二处「绕开缓存」的读取点 ====================
+//
+// 改前（本单基点 09c968f 的现读：本文件那三行 refreshRuntimeHealth 与挂载期那一句）：挂载
+// 那一句写的是 force 那一档，穿掉的正是 lib/health.js 那 60 秒缓存 —— 于是壳层进工作台刚打完
+// 一发（App.vue 的 readRuntimeHealth，R452 已收成「进工作台恰好一发」），面板一挂上又自己去
+// 问第二遍：一个人站在柜台前问两遍同一件事。这一格改成【与全站同一份读数】：缓存里已经有一发
+// 就直接用它，面板自己并发挂载（切屏来回、快进快出）也只留一发在路上；穿透缓存这一档今天只剩
+// 一个入口，就是下面那枚「再看一次」，由员工伸手才按得动（判据②）。
+
+/** 同一份读数的唯一入口：60 秒缓存热着就一枚请求都不发；冷着也只有一发在路上。 */
+function sharedRuntimeHealth() {
+  if (panelRuntimeRead) return panelRuntimeRead
+  const own = fetchRuntimeHealth().then((read) => {
+    if (panelRuntimeRead === own) panelRuntimeRead = null
+    return read
+  })
+  panelRuntimeRead = own
+  return own
+}
+
+async function refreshRuntimeHealth({ force = false } = {}) {
+  const read = force ? await fetchRuntimeHealth({ force: true }) : await sharedRuntimeHealth()
+  runtimeHealth.value = read
+  return read
+}
+
+// ==================== R458 · 判据②：「再看一次」这一格 ====================
+//
+// 纪律照本文件 session-pull 那一族（serverPull / pullServerSessions）：挂载期一枚请求都不发，
+// 伸手才发；sending 期间按不动第二枚；落到哪一格就说哪一格的话。这行字不许长期赖在屏上冒充
+// 「当前状态」，所以给它一枚会自己退场的 timer —— 卸载时清干净，切屏来回不留尾巴（判据②）。
+// 判定不复算：借的还是 lib/health.js 那两把尺（modelState / runtimeFaces），面板不立第三套。
+
+const RECHECK_FACE_HOLD_MS = 30_000
+const runtimeRecheck = ref({ phase: 'idle', outcome: '' })
+let recheckFaceTimer = null
+
+function clearRecheckFaceTimer() {
+  if (!recheckFaceTimer) return
+  clearTimeout(recheckFaceTimer)
+  recheckFaceTimer = null
+}
+
+/** 那句话过期就收回 idle：屏上留着的是「刚才那一刻」，不是「现在」。 */
+function retireRecheckFace() {
+  clearRecheckFaceTimer()
+  if (runtimeRecheck.value.phase === 'sending') return
+  runtimeRecheck.value = { phase: 'idle', outcome: '' }
+}
+
+/** 读数「长得一不一样」只由既有那两把尺算，面板不碰后端键名。 */
+function healthSignature(read) {
+  const faces = runtimeFaces(read).map(face => face.kind + (face.id || '')).join(',')
+  return modelState(read) + '|' + faces
+}
+
+function runtimeRecheckFace(state) {
+  if (!state || state.phase === 'idle') return null
+  if (state.phase === 'sending') return { tone: 'info', text: '正在再看一次这台机器此刻的状态……' }
+  if (state.outcome === 'unreachable') {
+    return {
+      tone: 'warn',
+      text: '这一刻没问到这台机器的状态：界面不猜它是好是坏，上面那行读数维持原样。过一会儿再看一次；一直读不到，请让管理员确认这台机器上的服务都起来了。',
+    }
+  }
+  const now = modelStatusText(runtimeHealth.value)
+  if (state.outcome === 'same') return { tone: 'info', text: `再看一次，读到的还是那一份：${now}。` }
+  return { tone: 'info', text: `再看一次，这一台机器的状态是：${now}。` }
+}
+
+async function recheckRuntimeHealth() {
+  if (runtimeRecheck.value.phase === 'sending') return
+  clearRecheckFaceTimer()
+  const before = healthSignature(runtimeHealth.value)
+  runtimeRecheck.value = { phase: 'sending', outcome: '' }
+  const read = await refreshRuntimeHealth({ force: true })
+  const outcome = read === null ? 'unreachable' : (healthSignature(read) === before ? 'same' : 'changed')
+  runtimeRecheck.value = { phase: 'done', outcome }
+  recheckFaceTimer = setTimeout(retireRecheckFace, RECHECK_FACE_HOLD_MS)
 }
 
 onMounted(() => {
@@ -805,6 +887,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopQueueWatches()
+  // R458 · 判据②：伸手那一格留下的 timer 必须跟着面板一起收掉，不许在卸载后自己醒过来。
+  clearRecheckFaceTimer()
   window.removeEventListener('chat-ask', onChatAsk)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   flushScroll()
@@ -1832,6 +1916,29 @@ function renderMd(raw) {
            class="runtime-face" data-testid="runtime-face" :data-kind="face.kind">
           {{ face.headline }}{{ face.detail }}
         </p>
+      </div>
+
+      <!-- R458 · 判据②：「再看一次」这一枚入口长在消费读数的这张脸上，不长在壳层（壳层那三枚
+           控件棘轮一字未动，App.vue 那一枚文件也一枚未改）。纪律照本文件 session-pull 那一族：挂载期一枚
+           请求都不发，员工伸手才发；读数没回来的那一刻按不动第二枚；那行字带一枚会自己退场的
+           timer，卸载时清干净。文案只说人话：路径、方法、后端码名一个字都不上屏（判据④）。 -->
+      <div class="runtime-recheck" data-testid="runtime-recheck">
+        <UiButton
+          class="runtime-recheck-btn"
+          size="sm"
+          data-testid="runtime-recheck-button"
+          title="再看一次这台机器此刻的状态"
+          :loading="runtimeRecheck.phase === 'sending'"
+          @click="recheckRuntimeHealth"
+        >再看一次</UiButton>
+        <p
+          v-if="runtimeRecheckFace(runtimeRecheck)"
+          class="runtime-recheck-face"
+          role="status"
+          :data-tone="runtimeRecheckFace(runtimeRecheck).tone"
+          :data-phase="runtimeRecheck.phase"
+          data-testid="runtime-recheck-face"
+        >{{ runtimeRecheckFace(runtimeRecheck).text }}</p>
       </div>
 
       <div class="chat-messages" ref="chatEl" @scroll.passive="onScroll">
@@ -2896,6 +3003,23 @@ function renderMd(raw) {
 }
 .runtime-face {
   margin: 0;
+}
+
+/* R458 · 「再看一次」贴在上一串降级脸的同一格里：间距与字号全走 token，色一枚裸值都不添。 */
+.runtime-recheck {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) 24px;
+  border-bottom: 1px solid var(--line);
+}
+.runtime-recheck-face {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+.runtime-recheck-face[data-tone='warn'] {
+  color: var(--amber);
 }
 
 .lane-readout {

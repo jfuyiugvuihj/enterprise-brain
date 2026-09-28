@@ -261,13 +261,17 @@ describe('乙 · G20 这一屏的按钮一律接原语，控件不再各写各�
       'sidebar-toggle', 'new-session', 'session-pull', 'session-del', 'deep-link-retry',
       'hitl-approve-chat', 'hitl-reject', 'chat-data-table-reload', 'chat-cancel-confirm-yes',
       'chat-cancel-confirm-no', 'chat-cancel', 'chat-send',
+      // R458（判据②）：员工伸手才发的「再看一次」那一枚，连同枚数一起进账。
+      'runtime-recheck-button',
     ]
     for (const testId of required) {
       expect(panel, `接线时把 ${testId} 这枚控件弄丢了`).toMatch(
         new RegExp(`<UiButton[\\s\\S]{0,320}?data-testid="${testId}"`),
       )
     }
-    expect(panel.match(/<UiButton\b/g)).toHaveLength(12)
+    // R458：12 → 13，加的就是上面那枚 runtime-recheck-button。这一格钉的是【恰好】而不是上限：
+    // 丢一枚、多一枚、新控件不带 testid，都照样红。
+    expect(panel.match(/<UiButton\b/g)).toHaveLength(13)
   })
 
   it('HITL 那两枚的既有形状没被洗掉：块 C 读的就是这一行源码字面量', () => {

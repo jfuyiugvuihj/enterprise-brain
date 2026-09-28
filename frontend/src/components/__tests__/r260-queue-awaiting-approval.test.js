@@ -40,6 +40,10 @@ import QueueFace from '../QueueFace.vue'
 import { TOKEN_KEY } from '../../lib/http'
 import { http } from '../../lib/http'
 import { queueFace } from '../../lib/provenance'
+// R458（判据①）：面板挂载期那一发不再穿透 lib/health.js 的 60 秒缓存，于是「本文件里第几次挂载
+// 才发得出健康读数」变成缓存状态的事。己1 那本端点账要的是【每一枚挂载都真打过自家端点】，所以这里
+// 像 r268-runtime-faces / chat-model-status 一样每枚用例清一次缓存，把它显式化 —— 账目一字未改。
+import { resetRuntimeHealthCache } from '../../lib/health.js'
 import { activeId, messages } from '../../lib/sessions'
 
 const source = f => readFileSync(new URL(f, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
@@ -261,6 +265,7 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.useFakeTimers()
+  resetRuntimeHealthCache()
   messages.value = []
   activeId.value = ''
 })
