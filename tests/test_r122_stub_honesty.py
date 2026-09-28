@@ -285,17 +285,27 @@ def _many_column_frame():
 
 
 def test_data_leg_refuses_an_unreadable_stub(monkeypatch, pack_log):
-    """analyze_data 腿：room 只剩几十枚时，第一段的文件名尾巴不是分析结论。"""
+    """analyze_data 腿：room 只剩几十枚时，交出去的必须是整条，不许是裁出来的空壳桩。
+
+    🔴 R445 之后这一发的**结局**换了：从前「第一名装不下 ⇒ 整批归零」正是跟进单 §121③c
+    点名的病形状（本具花琣 parts[0] 是 40 列那一行的文件名头，room=40 必然装不下），
+    今天救援按原名次扫到第一条交得出去的整段（实测 fitted=1 packed_tokens=9
+    truncated=0 stub=none），那句「本轮检索预算已用尽」当场不再出现。本钉守的仍是 R122
+    那一件事，一个字没松：**裁不出够读的桩就不许交桩** —— 摘掉
+    PACK_MIN_STUB_BODY_TOKENS 那道门槛，被裁的第一段（带截断标记）当场红。
+    另记一笔真缺陷（不是本钉的对象，新单 R451）：数据腿的 parts 把「小节标题」与
+    「它的正文」切成两条，标题可以单独被交出去（“数据样本(前15行)”后面一个字没有）
+    —— 那是 R112 装箱切分自带的形状，前缀填装那一支同样够得着，不由本单治。
+    """
     excel = _patch_data_leg(monkeypatch, _many_column_frame())
     monkeypatch.setattr(excel, "profile_dataframe", lambda df: {"rows": int(df.shape[0]), "columns": [{"name": c, "dtype": "float64"} for c in df.columns]})
     _pin_room(monkeypatch, 40)
 
     out = tools._analyze_data("按金额指标1排名", _tool_config(step_id="r122:worker:data")[0])
 
-    assert out.startswith("本轮检索预算已用尽，未取回新料"), out
-    assert MARK not in out and "金额指标1" not in out, out
     line = _pack_lines(pack_log, "data")[-1]
-    assert line["stub"] == "refused" and int(line["fitted"]) == 0, line
+    assert line["truncated"] == "0" and line["stub"] != "kept", line
+    assert MARK not in out and "金额指标1" not in out, out
 
 
 def test_query_leg_refuses_an_unreadable_stub(monkeypatch, pack_log):

@@ -616,8 +616,10 @@ _STEP_PACK_LEDGER_MAX = 256
 #: ``search_for_principal`` 认不认 ``context_pack``，按实现类缓存一次签名检查。
 _retrieval_pack_support: "OrderedDict[str, bool]" = OrderedDict()
 
-#: 一条都装不下时留给"必须保住的那一条"的截断标记。宁可让模型看到最高分那条的前半段，
+#: 整批一条都装不下时，留给"裁过头的那一条"的截断标记。宁可让模型看到某一条真料的前半段，
 #: 也不要真机那种 evidence_n=0 的整题空手；标记本身也计进 room，不留暗账。
+#: R445 以前这一条写的是"最高分那条"：救援只裁 ``units[0]``，第一名太长、第三名很短时
+#: 第三名压根没被试过——那是本单修的硬顶。名次顺序仍然一个字没动，只是往下扫到装满为止。
 PACK_TRUNCATION_MARK = "…（上下文装箱截断）"
 #: R122 给上面那句"宁可看到前半段"补了一条下限：只有**裁出来的正文够读**才交（见
 #: ``PACK_MIN_STUB_BODY_TOKENS``）。半条命中是好事，只剩几个字的正文不是——那是一条看着
@@ -625,7 +627,7 @@ PACK_TRUNCATION_MARK = "…（上下文装箱截断）"
 
 #: ``[PromptPack]`` 台账新字段 ``stub=`` 的三枚取值（R122 判据 ③）。🔴 台账既有字段一枚
 #: 不改名、不改相对顺序（run3/run4 的日志口径要连续），这一枚只新增，插在 ``truncated=`` 之后。
-PACK_STUB_NONE = "none"        # 这一发没有"桩"这件事：整批装下了，或连标记都裁不出来
+PACK_STUB_NONE = "none"        # 这一发没有"桩"这件事：整批装下了，或交出去的是整条，或连标记都裁不出来
 PACK_STUB_KEPT = "kept"        # 桩达标，交出去了（与 ``truncated=1`` 同现）
 PACK_STUB_REFUSED = "refused"  # 桩低于门槛没交，改说「本轮检索预算已用尽」那句人话
 
@@ -766,6 +768,12 @@ class _PackedUnits(list):
     ``list`` 语义一个字都不变（判空、``join``、按下标取都一样），所以三条腿的返回串照旧
     拼；多出来的这几个字段是给调用方把"真送出去的那几条"翻译给证据袋与 span summary 用的，
     免得那边为了知道丢了几条再算一遍。
+
+    ``source_indexes``：``self[i]`` 来自原 ``units`` 的第几名。前缀填装时它就是 ``0..n-1``
+    （与旧读法逐字等价），R445 的救援交的是名次更后面那一条，没有这一枚，调用方会把
+    "第 4 名送出去了"读成"第 1 名送出去了"，证据袋当场认错人。它是**纯 Python 属性**：
+    ``[PromptPack]`` 台账的字段一枚不新增、不改名、不改顺序（``tests/test_r117_ledger_turn_scoped.py``
+    与 ``tests/test_r122_stub_honesty.py`` 钉着精确字段序）。
     """
 
     def __init__(
@@ -778,8 +786,13 @@ class _PackedUnits(list):
         room_left: int = 0,
         stub: str = PACK_STUB_NONE,
         ledger_used: int = 0,
+        source_indexes: "list[int] | None" = None,
     ) -> None:
         super().__init__(units)
+        #: 送出去的每一段对应回原 units 的名次；缺省＝前缀（按下标一一对应）。
+        self.source_indexes: "list[int]" = (
+            list(range(len(units))) if source_indexes is None else list(source_indexes)
+        )
         self.dropped_count = int(dropped_count)
         self.truncated_count = int(truncated_count)
         self.packed_tokens = int(packed_tokens)
@@ -803,14 +816,18 @@ def _empty_pack_text(leg: str, candidates: int, packed: _PackedUnits) -> str:
 
 
 def _pack_kept_hits(hits: list, units: list, fitted: list) -> list:
-    """把真送出去的那几段翻译回 hit：装箱只裁尾巴，所以 ``fitted`` 恒为 ``units`` 的前缀。
+    """把真送出去的那几段翻译回 hit：按 ``source_indexes`` 认名次，装箱只裁尾巴。
 
-    被 ``_fit_unit_to_room`` 裁过尾的那一条（只可能是第一条）按**实际送出的正文**交给证据袋，
-    免得 ``excerpt`` 与 ``content_sha256`` 说"模型读过整段"而它其实只读到裁过的那一截。认不出
-    这种前缀关系就退回原条并留一行警告：宁可正文少诚实一点，也不许少记一条模型真读过的来源。
+    前缀填装时 ``fitted`` 恒为 ``units`` 的前缀，名次就是下标（逐字沿用旧读法）；R445 的救援
+    可能交的是名次更后面那一条，所以这里必须按 ``source_indexes`` 取，不许再拿 ``enumerate``
+    的下标当名次。
+
+    被 ``_fit_unit_to_room`` 裁过尾的那一条按**实际送出的正文**交给证据袋，免得 ``excerpt`` 与
+    ``content_sha256`` 说"模型读过整段"而它其实只读到裁过的那一截。认不出这种前缀关系就退回
+    原条并留一行警告：宁可正文少诚实一点，也不许少记一条模型真读过的来源。
     """
     kept: list = []
-    for index, unit in enumerate(fitted):
+    for unit, index in zip(fitted, getattr(fitted, "source_indexes", range(len(fitted)))):
         original = units[index]
         if unit == original:
             kept.append(hits[index])
@@ -818,7 +835,8 @@ def _pack_kept_hits(hits: list, units: list, fitted: list) -> list:
         sent = unit[: -len(PACK_TRUNCATION_MARK)] if unit.endswith(PACK_TRUNCATION_MARK) else unit
         if not original.startswith(sent):
             logger.warning(
-                "[PromptPack] 装箱前缀不变量被打破（第 %s 段不是裁尾片段）：证据袋按原条记", index + 1
+                "[PromptPack] 装箱前缀不变量被打破（名次 %s 那一条不是裁尾片段）：证据袋按原条记",
+                index + 1,
             )
             kept.append(hits[index])
             continue
@@ -854,10 +872,21 @@ def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: boo
     ``units`` 必须已按优先级从高到低排好（检索腿回来的顺序就是 RRF/重排分数降序，数据腿
     按文件与结论的既有顺序）：装箱只从尾部裁，不在这里重新发明排序。
 
-    ``keep_first_truncated``（R122 加了门槛）：整批一条都装不下时，本来会裁最高分那一条的
-    尾巴当桩交出去。桩的正文短于 ``PACK_MIN_STUB_BODY_TOKENS`` 就不交了——那一发是空手，
-    ``stub=refused`` 入账，由调用方说「本轮检索预算已用尽」。达标才交，交出去照旧记
-    ``truncated=1 stub=kept``。
+    ``keep_first_truncated``（R122 加了门槛，R445 改成按名次扫）：整批一条都装不下时开启救援，
+    按 ``units`` 的**原名次**从头扫到装满为止——名次高优先于内容短，交不出去的跳过而不是重排
+    （排序归检索腿，这里不发明第二套）。名字保留 R112 的叫法，但它今天保的**不是** ``units[0]``
+    那一条：改前只裁第一名，第一名太长、后面的短料够房时照样 ``fitted=0``，run9 真机 135 枚空手
+    里有 13 枚的 ``room_left`` 已经够它那一条腿最便宜的整条（取证＝``scripts/r445_pack_forensics.py``
+    的 RULER／VERDICT 两格）。
+
+    门槛只管桩、不管整条：装得下的完整料本来就由 ``pack_prefix_by_rank`` 无门槛交付，救援沿用
+    同一读法，不给整条另立一把尺（``PACK_MIN_STUB_BODY_TOKENS`` 拦的是空壳桩，不是短料）。桩照旧
+    裁不出够读的正文就不交。每一候选都试过仍一件交不出去，那一发才是空手，``stub=refused``
+    （裁得出桩但不够读）或 ``stub=none``（连标记都装不下）入账，由调用方说对应那一句人话。
+
+    前缀填装非空那一支的行为逐字不变（名次就是下标）；救援那一支 ``dropped`` 是「除送出去的
+    那些名次以外的全部」，所以 ``fitted + dropped == candidates`` 这条账不因为打洞而失真。打洞
+    必须带名次账（``source_indexes``），否则证据袋会把第 4 名读成第 1 名。
     """
     from app.rag.retrieval_pipeline import (
         CONTEXT_HISTORY_RESERVE_TOKENS,
@@ -878,18 +907,50 @@ def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: boo
         fitted, dropped, packed_tokens = pack_prefix_by_rank(units, room)
         truncated = 0
         stub = PACK_STUB_NONE
+        #: 名次账：前缀填装就是 0..n-1，救援那一支换成真正送出去的那几名。
+        source_indexes = list(range(len(fitted)))
         if not fitted and units and keep_first_truncated:
-            head = _fit_unit_to_room(str(units[0]), room)
-            if head:
-                if _stub_body_tokens(head, str(units[0])) >= PACK_MIN_STUB_BODY_TOKENS:
-                    fitted, dropped, truncated = [head], units[1:], 1
-                    packed_tokens = text_pack_tokens(head)
-                    stub = PACK_STUB_KEPT
+            #: 救援那一支：按原名次扫到装满为止。left 是这一支自己的房账，走完就是这一发交出的
+            #: 总额（packed_tokens 进到这里的初值是 0——前缀填装空手时它必然是 0）。
+            rescued: list = []
+            source_indexes = []
+            left = room
+            trimmable = False
+            for index, unit in enumerate(units):
+                text = str(unit)
+                if not text.strip():
+                    #: 全空白的一条交出去就是一条读不出结论的空壳，与 R122 拦桩同一件事，不算可用料。
+                    continue
+                cost = text_pack_tokens(text)
+                if cost <= left:
+                    rescued.append(unit)
+                    source_indexes.append(index)
+                    packed_tokens += cost
+                    left -= cost
+                    continue
+                head = _fit_unit_to_room(text, left)
+                if not head:
+                    continue
+                if _stub_body_tokens(head, text) >= PACK_MIN_STUB_BODY_TOKENS:
+                    cost = text_pack_tokens(head)
+                    rescued.append(head)
+                    source_indexes.append(index)
+                    truncated += 1
+                    packed_tokens += cost
+                    left -= cost
                 else:
-                    # R122 判据 ①②：低于门槛的桩不交，宁可这一发空手说人话，也不许把一条看着像
-                    # 证据、其实只剩几个字的空壳当检索结果交出去。没送出去就不记账（不记假消耗）。
-                    stub = PACK_STUB_REFUSED
-            # head 为空＝连截断标记都装不下：照旧空手，由调用方说「本题料超窗」那一句
+                    trimmable = True
+            if rescued:
+                fitted = rescued
+                #: 打洞了，所以按名次取补集：dropped 仍是「没送出去的那些」，枚数对得上账。
+                kept_set = set(source_indexes)
+                dropped = [u for i, u in enumerate(units) if i not in kept_set]
+                stub = PACK_STUB_KEPT if truncated else PACK_STUB_NONE
+            elif trimmable:
+                # R122 判据 ①②：低于门槛的桩不交，宁可这一发空手说人话，也不许把一条看着像
+                # 证据、其实只剩几个字的空壳当检索结果交出去。没送出去就不记账（不记假消耗）。
+                stub = PACK_STUB_REFUSED
+            # trimmable 为假＝每一候选连截断标记都装不下：照旧空手，由调用方说「本题料超窗」那一句
         if key and packed_tokens:
             _pack_ledger[key] = used + packed_tokens
             _pack_ledger.move_to_end(key)
@@ -914,6 +975,7 @@ def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: boo
         room_left=room,
         stub=stub,
         ledger_used=used,
+        source_indexes=source_indexes,
     )
 
 
@@ -986,8 +1048,9 @@ def search_docs(query: str, config: RunnableConfig) -> str:
             content = d["content"][:DOC_HIT_CONTENT_CHARS]
             result_parts.append(f"[{i}] 来源:{source} 相关度:{score}\n{content}")
 
-        # R112：装箱之后才是发给模型的返回串。装不下丢名次最低的整条；整批都装不下才裁最高分
-        # 那一条的正文尾巴（``keep_first_truncated``），连一帧都装不下时才说人话并留下账。
+        # R112：装箱之后才是发给模型的返回串。装不下丢名次最低的整条；整批都装不下才开救援
+        # （``keep_first_truncated``）：按名次往下找第一条交得出去的料，整条装得下交整条、装不下
+        # 裁它的正文尾巴，R445 之前这里只试第一名，第一名太长就整批空手。
         # R122：那条尾巴短到读不出结论（正文不足 ``PACK_MIN_STUB_BODY_TOKENS``）就不交了，改说
         # 「本轮检索预算已用尽」——半条命中是证据，六个字不是。三条腿共用这一枚门槛。
         fitted = _pack_into_prompt_room(
@@ -1228,15 +1291,19 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
     # R112：这段直接进 prompt，而且多文件时是"每文件 概览 + 结论 + 15 行样本 JSON"顺着
     # 往后可无限长。装箱按既有顺序从尾部裁——先掉的必然是样本 JSON 那种大块，其次才是
     # 后一个文件；一条都装不下时说清是本题数据结果超窗，不静默（判据 2/3）。
-    # R122：整批装不下时会裁 parts[0] 当桩，桩的正文不够门槛就不交，改说「预算用尽」——
-    # 第一个文件的文件名那一行不是分析结论，模型读不出数。
+    # R122：整批装不下时开救援裁桩，桩的正文不够门槛就不交，改说「预算用尽」——第一个文件的
+    # 文件名那一行不是分析结论，模型读不出数。R445：救援按名次找第一条交得出去的料，所以交出来
+    # 的可能是后面某个文件的整段，下面那句「这个文件的第一段还在不在送出的那些里」必须按名次判。
     fitted = _pack_into_prompt_room(
         config, leg="data", units=parts, keep_first_truncated=True
     )
     # R112 复验第 2 条（与 doc 腿同一读法）：装箱没送出去的那个文件，证据袋不许说模型读过它。
-    # 存活线就是前缀长度——装箱只裁尾巴，所以"这个文件的第一段还在前缀里"等价于它进了 prompt。
+    # 存活线以前是前缀长度（"装箱只裁尾巴 ⇒ 第一段还在前缀里"）；R445 的救援会交名次更后面的
+    # 那一段，前缀长度当场认错文件，所以改按 ``source_indexes`` 判"它的第一段真被送出去了"。
+    # 前缀填装那一支里两种读法逐字等价（名次就是下标）。
+    _kept_indexes = set(fitted.source_indexes)
     for _ds_fname, _ds_df, _ds_index in pending_datasets:
-        if _ds_index < len(fitted):
+        if _ds_index in _kept_indexes:
             _record_dataset_evidence(config, _ds_fname, _ds_df)
         else:
             logger.info(
@@ -1322,8 +1389,9 @@ def _query_data(query: str, config: RunnableConfig) -> str:
             result = res["result"]
             if not isinstance(result, str):
                 result = json.dumps(result, ensure_ascii=False, default=str)
-            # R112：查询结果是一整块，装箱装不下时只能裁这块的尾巴（带可见截断标记），
-            # 连标记都装不下就换那一句指名"本题数据结果超出本机上下文"的话。
+            # R112：查询结果是一整块（只有一条候选），装箱装不下时只能裁这块的尾巴（带可见
+            # 截断标记），连标记都装不下就换那一句指名"本题数据结果超出本机上下文"的话。
+            # R445 按名次扫的救援在这一条候选上与旧读法同形：交得出就是它自己的整条或桩。
             # R122：裁出来那一截的正文不够门槛也不交——"📊 x.xlsx 查询结果:"加三个字不是答案。
             query_text = f"📊 {fname} 查询结果:\n{result}"
             fitted = _pack_into_prompt_room(
