@@ -4159,3 +4159,19 @@ R425 的执行腿被 `tests/test_r22_rebuild_cli.py:202` 封死（R235 同型第
 ### 三、R437 派工词里的两处自纠（先取证后落笔）
 - 派工词引用「覆盖度工具今天 0.2 s／`--include-pdf` 3.79 s／`--provenance` 2.55 s」＝**转抄 `Darwin`/R435 的读数**，本席只在主树亲跑过缺省态（19 枚，0.2 s 量级）。三枚口径的秒数按「待复跑」读，窗后总控亲跑再定判据数。
 - 派工词写 `be-r437`「无 `node_modules`，本单不需要」＝本席现读 `Test-Path` 取的，成立；但 `be-r429` 那句「基点 `9f9d452`」是本席**没现读**就写的（实际 `18ca560`）⇒ 入规重申：**派工词里的基点 sha 与工作树路径必须 `git rev-parse` 现取，一个都不许抄上一格**。
+## §122（09-28 第十五格续二·总控线，主树 `2154318`）：R439 投递未落地（第二次撞 `agent thread limit reached`）＋判据正文入册 · run9 之后新立的三格 · 槽位账实证
+### 一、投递登记（不补投）
+- 11:2x 对 **R439** 发 `spawn_agent` ⇒ `collab spawn failed: agent thread limit reached`。零写入取证：`C:\Users\fengx\PycharmProjects\be-r439` **不存在**（本席当场没建目录，故无残留）。按 §121 同一口径记「未落地」，**腾出槽位后一次投出，全仓只此一投**（先例＝R401）。
+- 🔴 **槽位账订正（本席今天第二次撞，账必须改）**：harness 上限**不是**「6 枚在途」。实测：`Fermat`(R427)＋`Zeno`(R405/R432)＋`Euclid`(R438)＋`Galileo`(R437)＋`Carver`(R429)＝**5 枚在途时投第 6 枚就被拒**；`close_agent` 返回的槽位**不立刻回收**（`Bernoulli` 11:1x close 后腾出的那位当场只够投 `Carver`/R429 一枚）。⇒ 入规：**投前必须留一枚余量，别把在途数当上限算**；投失败一律落本节，不当场补投。
+- 销账：**R429 已于 11:1x 投出**＝`Carver` `01a0e606-6223-7c92-8ee9-81a92a842ba7`@`be-r429`（基点本席当场 `git checkout --detach 2154318` 重配，porcelain 空）。§121 那节「待派」状态作废，判据正文仍按 §121 第二节为唯一事实源。
+
+### 二、R439 判据正文（P1，可直接逐字当派工词；工作树＝新建 `be-r439` @ `2154318`）
+**病灶（run9 真机窗实测）**：两道题的**终答就是包装标签本身**——`chart-01` `kind=approved_ok` 终答 16 字＝`【chart Agent 返回】`（批准前那一发是 37 字「本轮在「📈 生成图表」前等待你确认…」，批准后正文没接回来）；`data-09` `kind=ok` 终答 15 字＝`【data Agent 返回】`。两枚判分＝错。⇒ **内部标签当答案交给客户**。
+**已知落点（总控主树现读，转手前必须复核）**：拼装口 `app/agents/orchestrator.py:736`（`f"【{name} Agent 返回】\n{agent_result.answer}"`）与 `:956`（`approval` 腿同形状）⇒ `agent_result.answer` 为空时 content 只剩标签＋换行；终答拾取口 `app/api/v1/chat.py:2968` 与 `:3537` 两处 `if content.startswith("【") and "Agent 返回】" in content[:50]: continue`。🔴 关键问题＝**哪一道路径上这条 `continue` 没兜住**（流式累积／`answer_candidates` 为空／`/approve` 那一路／`worker_results` 回写那一路），判断分支可达性**必须查调用点，不许只看签名**。
+**判据**：① 取证先于改码——`docs/testing/sidecar-run9-frames.jsonl` 里这两发的 `text_frames`/`cumulative`/`max_stream_frames` 逐帧读数 + 「谁把那 16 字当终答」的 `文件:行`＋原文，取不到明写「今天取不到」。② **两条腿都要守**：a) 标签永远不许成为交给客户的终答，拾不到正文时走**具名结局**；b) 拼装侧不许再造「只剩标签」的 message——正文空就是空（`status` 与结局码原样，不许把空答案洗成成功，也不许填客套话）。缺一不算修完。③ 🔴 不许把错误洗成兜底文案（纪律见 `app/agents/nodes.py:379-387` 与 `context_limit_exceeded` 那一族）；要新增结局码就把码名/人话档位/是否 retryable 写进回执，**契约本体由总控落笔**。④ 在册面不许改：`worker_results`/`agent_results` 键名、`step.finished` 载荷、`【… Agent 返回】` 内部标记格式（`:2968`/`:3537` 与多枚在册件靠它识别）。⑤ 可失败钉 ≥5 把：空正文还让标签上屏⇒红；摘掉任一层守卫⇒红（不许只靠一层）；把空正文洗成客套话⇒红；正文正常时既有用例不许有回归；`/ask` 与 `/approve` **两路各自**都得有牙，只钉一路⇒红。⑥ 不许动 `orchestrator.py` 的调度决策/检查点/HITL 闸，扩范围先报告。
+**写域**：只 `app/api/v1/chat.py`、`app/agents/orchestrator.py`、新钉 `tests/test_r439_*`。🔴 与在途写域互斥已核：`app/agents/tools.py`＋`app/rag/retrieval_pipeline.py`＝`Carver`/R429；`app/quality/eval.py`＝`Euclid`/R438；`frontend/**`＝`Fermat`/R427 与 `Hume`/R421（本笔正并树中）；`docs/**`＝总控。时序：run9b 之前不许并树（改终答拾取＝改测量条件）。
+**连带**：`chat.py` 交到 R439 名下之后，**R404 继续等**（影子件与 7 把刀留 `be-r404`，落码方向已裁乙，转手须带 §120 第六节三条硬注）。
+
+### 三、run9 之后另立的两格
+- **R440 · 问答档 p95 125.2 s 归因与口径**（A① 今天**不许翻绿**）：`docs/testing/run9-readout-2026-09-28.md` A1 段现读——整表 n=105 p95 **154.5 s**；问答档 n=50 p95 **125.2 s**（>90 s）；`chat-11` wall_ms＝**300108.2 ms**，恰等于 `EVAL_QUEUE_STALL_SECONDS` 停表帽（`scripts/eval_transport_ask_v2.py:153`，默认 300 s，理由见 `:147-151`）⇒ 这一枚是**停表不是慢答**。判据：把「停表帽命中的题」单列一格报数（不许从 p95 里悄悄摘掉，也不许混进「正常慢答」里当成模型问题），并**把两格口径钉死**：上一班那句「问答档 n=64 p95 61.0 s」与本格「n=50 p95 125.2 s」是**不同母集**，谁都不许抄谁，计划书 A 行落笔必须带母集数。
+- **R441 · `[PromptPack] fitted=0 且 dropped>0` 整窗 135 行（全在 `tier=analysis`）**：本格不另开执行腿，作为 **R429 的输入**（`Carver` 已收 §121 派工词，本行只补一句「孤例不成立、analysis 档是常态」）。🔴 谁都不许把 135 这个数字抄成 R429 的结案判据——结案按 §121 第二节 ③ 那六把刀。
