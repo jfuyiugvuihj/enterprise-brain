@@ -116,7 +116,7 @@ export function sourcesFace(sources) {
       kind: 'none',
       tone: 'muted',
       headline: '本轮没有检索到可用文档',
-      reason: '下面的回答不来自知识库。要按制度或既有资料回答，请先确认文档已上传并解析完成，再重新提问。',
+      reason: '下面这句回答没有配上一处可点开的资料出处。要按制度或既有资料回答，请先确认文档已上传并解析完成，再重新提问。',
       hiddenLine: '',
       searchable: false,
     }

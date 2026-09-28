@@ -290,7 +290,7 @@ async function mountLoop({ turns, activeId, expr }) {
   await nextTick()
   return {
     root,
-    /** 切会话 = restoreActive() 那样整份换掉 messages.value（sessions.js:814）。 */
+    /** 切会话 = restoreActive() 那样整份换掉 messages.value（sessions.js:128）。 */
     async switchTo(nextTurns, nextActiveId) {
       list.value = nextTurns
       session.value = nextActiveId

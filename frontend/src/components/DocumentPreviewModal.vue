@@ -376,7 +376,7 @@ export function createPreviewNavStore({ ref, fetchPreview, createObjectUrl, revo
             face: 'unregistered',
             doc: target,
             denied: false,
-            message: `《${name}》这一行登记的是名字，知识库里现在对不上这一篇文档。`,
+            message: `《${name}》这一行登记的是名字，服务端现在对不上这一篇文档。`,
           }
         : {
             face: 'failed',

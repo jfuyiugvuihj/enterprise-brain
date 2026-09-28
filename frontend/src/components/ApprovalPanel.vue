@@ -93,7 +93,7 @@ const failureTitle = computed(() => {
 })
 const failureCopy = computed(() => {
   if (degraded.value) {
-    return '现在从知识库里取不到比的那个数，所以这一屏说不出超没超标。它不是「没有超标」，也不是「还在跑」，是此刻取不到；知识库恢复后点「重新预审」再取一次。'
+    return '这一屏没有拿到比的那个数，所以说不出超没超标。它不是「没有超标」，也不是「还在跑」，是此刻取不到；取到那个数之后再点「重新预审」，那一发才是新读数。'
   }
   return error.value
 })
@@ -194,7 +194,7 @@ onMounted(submitCheck)
     <header class="panel-head">
       <div>
         <h3>审批与待办</h3>
-        <p>这是一台报销政策自查工具：填一组参数，看金额按【服务端从知识库取到的标准】算是否超标，并拿到下一步建议。它不办理审批。</p>
+        <p>这是一台报销政策自查工具：填一组参数，看金额按【服务端随结论回给这一屏的标准】算是否超标，并拿到下一步建议。它不办理审批。</p>
         <p>真正在等你拍板的事在上方那一块：每一笔都能就地定夺，也能跳回产生它的那一轮对话。
           拍过板而那一轮中途跑挂了的也在同一块单独说一句：它不会再回来等你拍第二次，也不会被记成你的否决。</p>
       </div>
@@ -237,7 +237,7 @@ onMounted(submitCheck)
           <label><span>费用类型</span><input v-model="form.expense_type" /></label>
         </div>
         <p class="source-hint" data-testid="approval-standard-source-hint">
-          这一格没有「标准」输入框，也没有「证据」输入框：比的那个数和它的出处都由服务端从知识库里取，界面不持有它，也就无从改它。
+          这一格没有「标准」输入框，也没有「证据」输入框：比的那个数和它的出处都随结论由服务端回给这一屏，界面不持有它，也就无从改它。
         </p>
         <div class="actions">
           <UiButton class="primary-btn" variant="primary" :loading="loading" :label="loading ? '正在自查' : '重新自查'" data-testid="run-approval" @click="submitCheck(true)" />

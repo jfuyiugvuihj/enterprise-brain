@@ -120,7 +120,7 @@ onMounted(loadRelations)
         <UiEmptyState
           v-else-if="!relations.length"
           title="知识库里还没有已登记的关系"
-          description="关系是从已登记的制度与指标里长出来的，先有一条就能看到连线。"
+          description="这一格列的是已登记的关系；要添一条，用上面「新增关系」。"
         />
         <div v-else class="relation-list">
           <article v-for="item in relations" :key="item.relation_id" class="relation-item">
