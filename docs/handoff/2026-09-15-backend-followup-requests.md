@@ -4054,3 +4054,32 @@ R400 判据：① 三处手抄行号账改**运行时派生**（锚点 token 现
 6. 清理：`%TEMP%` 下 `r420_shadow`、`r420_tmp`、`r408_k0_*`、`r421_*`、`r415_knife`、`r415_probe`、`r417_*`（递归删被本机命令策略拦下，要 `cmd /c rmdir /s /q`）；用毕删 `be-r408`/`be-r410`/`be-r412`/`be-r416`/`be-r419`/`be-r396`/`be-r397`/`be-r420`。
 
 - 🔴 **本格两枚自伤（落笔时就抓回，未污染历史）**：给看板写 §4DI 时，PowerShell here-string 里的 `%TEMP%\r420_shadow` 与 ``frontend\node_modules`` 被 Python 当成转义序列吃掉了——前者多出一枚 lone CR（看板不变量 loneCR 恒 2 → 变 3），后者把名册那一行从中间劈成两行。姿势：`git checkout --` 复原该文件，把脚本里的反斜杠逐枚改双写再重跑，改完复验 CRLF 0／loneCR 2／BOM 序 2。**往 here-string 里写含反斜杠的路径时，Python 侧一律双写。**
+
+## §119（09-28 第十四格·总控）：R414 主货并树验收账 + R424/R423 并派判据正文 + R422 压单理由 + 本席两处假判据改口
+
+### 一、本格落树三笔（主树亲跑，不采信自述）
+| 笔 | 内容 | 读数 |
+|---|---|---|
+| `046c5ce` | 修主树自带的那枚红：r397 两格契约断言换成子序列＋只增形状 | **31 passed / rc=0** |
+| `18ca560` | 并树 R414 主货：`chat.py` 55/1、契约 57/0、a/b/c 636 行 | **54 passed / rc=0** |
+| `f08dd7f` | 重落地 `docs/perf/r387-label-lineage-2026-09-27.md` §1 那张行号账（被 R414 打漂 6 跳）＋ §1 正文三处手抄引用 | **61 passed / 1 xfailed / rc=0** |
+- 🔴 修后全量门 **7722 passed / 50 skipped / 2 xfailed / exit=0**（302.16 s，`-n 6 --dist loadfile`）＝今天的树第一张全门绿票。前端门 `18ca560` **EXIT=0**、`lint:colors` **148/0**。
+
+### 二、R414 反证刀改形（未进门，单独补投）
+主树实测 **5 枚 ERROR**：模块 fixture 断言 `.git` 是 worktree 指针文件（主树 `.git` 是目录），而 `testpaths=tests` 会把它收进常驻门。仓规定形：盘上真刀 = `tests/fixtures/r364_refutation_driver.py`（`:37` 跑法行、`stage_shadow()` 同款拦截），常驻门 = `tests/test_r364_shape_ruler_teeth.py`（`:18` 指回驱动器）。⇒ 落点定名 `tests/fixtures/r414_refutation_driver.py`，执行层改形中；旧件**未删**，在 `%TEMP%\r414_stash\`。契约那一节已改写成今天真话并明写「进树前反证刀一格未证」。
+
+### 三、R424 ＋ R423 并派（`Beauvoir` @ `be-r424`，基点 `18ca560`）判据正文
+- **为什么并派**：两枚单都要改 `ChatPanel.vue`（R424 改 `:1949-1955` 那段，R423 改 `:320`）⇒ 同一枚文件就是写域冲突，必须同一双手；判据分开交付、分开报数。
+- **R424 断点现读**：后端三态出口已到位（`chat.py:361 terminal_data_filename`，`/ask` 终态 `:2795`、`/approve` 终态 `:3439`；正好一枚＝名字／零枚与多枚＝空串）；前端读取位已到位（`ChatPanel.vue:678-686 serverDataOf` 三张脸、`:1956-1957` `data-testid="server-data-readout"`、`:694` 读 `result?.state?.terminalDataFilename`、`:682` 兜底 `msg.serverDataFilename`）。🔴 断在中间：`frontend/src/lib/sessions.js:478-482` 的 `case 'request.completed'` 今天只抄 `awaiting_hitl`/`awaiting_steps`，终态帧其余键全丢 ⇒ 屏上那一行一枚字都不画。
+- 判据：① `data_filename` 抄成 `state.terminalDataFilename`，**只在字符串在场时才写键**（`undefined`/`null`/非字符串不写＝留在「不画」态；写成空串＝替后端宣布「说不准」；写成请求值＝更假的假话），消息对象那一份同纪律（要随会话落盘、刷新可复原）；② 三态端到端各有牙，摘掉 ① 那一行新钉当场红并点名（反证要真跑）；③ `:1949-1950` 那句「后端真正用了哪张表今天不在线上任何一格里」从今天起是假话 ⇒ 改口，同行钉 `r268-data-table.test.js:226` 与文件头 `:12`、`:1953-1955` 那段 R415 注解**同一笔一起改**；④ 坐标三枚不许漂：`chat.py:2515`（引 `sessions.js:486-492`）、`tests/test_frontend_request_cancel.py:11-12`（引 `:191`/`:201`）、`tests/test_data_file_catalog.py:73`（引 `:402`）——后两枚的**断言是内容级**（`assert "export function abortStream()" in sessions`），插行不弄红它们，注释才会变死坐标；`r416`＋`r420` 那把 debt 尺今天已收紧成必须为 0；⑤ `terminal_data_filename` 与两枚出口行号不许改（契约引它），碰见 chat.py 别的过期引用只报不改。
+- **R423**：`DashboardPanel.vue:126-131` 的 `indexed: '已入知识库索引'`（被 `r267-overview-real-status.test.js:121` 逐字钉）与 `ChatPanel.vue:320` 的 `LANE_PROMISES.qa`「只查知识库回答…」——同一族屏名病（`Hume`/R421 在喂料屏治的就是它）。交付要带**可达性证据链**（模板行号＋`data-testid` 或渲染断言），拿不出就别改那句；不许放宽在册钉。
+- 禁域：`DocPanel.vue`、`panel-states.test.js`、`r237-r49-index-face.test.js`、`r313-restricted-tally.test.js`、`r136-screen-names.test.js`、`r421-feed-one-name.test.js`（`Hume`/R421）＋ `index_policy.py`、`errcodes.js`、`test_r142`（R422）＋ `docs/api/contract-v1.md`（只总控落笔）。天花板：`lint:colors` 恒 148/0；运行时零外部请求。
+
+### 四、R422 压单（不是遗漏）
+`index_policy.py:259` 的前端孪生是 `DocPanel.vue:501`，正躺在 `Hume`/R421 写域 ⇒ 两双手改同一枚字符串必然分叉。**压到 R421 并树之后**。现读附证：`errcodes.js:103/:122` 那两句没被任何在册前端件当「读表」断言钉着（那四处全是自带字面量喂 mock），落地时不必连改。
+
+### 五、本席两处假判据（`Ohm`/R426 抓）＋ 入规
+「`rg 已解析|高可信 DashboardPanel.vue` 零命中」＝假判据（现读 3 命中：`:111` 注释、`:115` `PARSE_STATUS_TEXT.ready`、`:420` 表头；可用凭据是 `rg -n 高可信 frontend/src` → 5 命中全在 `r267-overview-real-status.test.js:130/:148`）；「`r416` 的 LEDGER 引用 `r316-admin-entry.test.js:13`」＝不成立（真对账那五行的是 `r420` 的 `ADMIN_ENTRY`）。⇒ **入规：「某字符串零命中」不是判据，除非同时报出用的是哪一层的哪个名字**。
+
+### 六、决策 D15（待业主裁）
+R425 的执行腿被 `tests/test_r22_rebuild_cli.py:202` 封死（R235 同型第一撞、R425 第二撞）。甲＝改 R22 判据 3（连两枚反证钉，动的是「没有任何自动路径会重算向量」这条对客户可承诺的性质）；乙＝书面接受「窗口排程＋`status=refused`＋人工执行」。**总控建议乙**。
