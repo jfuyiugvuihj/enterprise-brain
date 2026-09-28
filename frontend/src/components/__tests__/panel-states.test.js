@@ -319,10 +319,10 @@ describe('DocumentPreviewModal · 预览进行态吃原语（A-5-4）', () => {
 
 
 describe('DocPanel · 一条提示条拆成「哪种事没成」+ 两处空态', () => {
-  it('SSR 首屏：空知识库画原语，两句话一字不改，emoji 图标交给原语的内置图标', async () => {
+  it('SSR 首屏：空列表画原语，两句话一字不改，emoji 图标交给原语的内置图标', async () => {
     const html = await render(DocPanel)
     expect(html).toContain('data-testid="ui-empty-state"')
-    expect(html).toContain('知识库是空的')
+    expect(html).toContain('这里还没有文档')
     expect(html).toContain('上传公司制度、手册或数据开始')
     expect(html).not.toContain('class="empty"')
     expect(html).not.toContain('📭')

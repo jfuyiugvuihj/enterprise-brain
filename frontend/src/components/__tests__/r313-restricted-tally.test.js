@@ -150,7 +150,11 @@ function blockByTestId(html, id) {
   return out
 }
 
-const EMPTY_FACE = '知识库是空的'
+// R421 改口（同一口径，断言一字未减）：这枚常数钉的是【文档标签那一格空脸的原文】，不是屏名。
+// 换它的原因正是那句原文里带着一枚被裁定退下的叫法 ——「知识库」（跟进单 G17，R412 已裁定它不作这屏的名）。
+// 本件真正钉的两件事一个字没动：有 restricted 时空脸不许上屏、没有 restricted 时空脸必须上屏。
+// 下面所有断言都从这枚常数取字，所以改这一处就够，不在用例里抄第二份原文。
+const EMPTY_FACE = '这里还没有文档'
 const RESTRICTED_FACE = 'documents-restricted'
 /** 后端那一句原话（app/api/v1/restricted.py::DOCUMENT_TEMPLATE，count 换成 2）：照搬，不另写。 */
 const BACKEND_MESSAGE = '有 2 份文档存在，但不在当前账号的可见范围内；如需访问，请联系管理员核对你的部门归属与文档的部门、密级标注。'
@@ -180,7 +184,7 @@ beforeEach(() => {
 // ==================== 甲 · 那句假话被换掉 ====================
 
 describe('R313 格二 甲 · 「有 N 份存在但你看不见」必须给正脸', () => {
-  it('库里被挡掉 2 份 ⇒ 屏上说「还有 2 份文档没有列在这里」，且不再说「知识库是空的」', async () => {
+  it('库里被挡掉 2 份 ⇒ 屏上说「还有 2 份文档没有列在这里」，且不说空脸那一句', async () => {
     await openedWith({ documents: [], restricted: { count: 2, reason_codes: ['department_scope_denied'], message: BACKEND_MESSAGE } })
     const html = await faceRender('R313A1')
     const text = plainText(html)
@@ -257,7 +261,7 @@ describe('R313 格二 乙 · 只认正整数，其余一律不编话', () => {
     }
   })
 
-  it('0 / 负数 / NaN / 缺席 / 非对象 ⇒ 这一格不存在，「知识库是空的」才许说话', async () => {
+  it('0 / 负数 / NaN / 缺席 / 非对象 ⇒ 这一格不存在，空脸那一句才许说话', async () => {
     for (const junk of [0, -5, NaN, Infinity, null, undefined, 'abc', {}, [], '有 3 份']) {
       await openedWith({ documents: [], restricted: junk })
       const html = await faceRender('R313B3')
@@ -301,7 +305,9 @@ describe('R313 格二 丙 · 上一轮的话不属于这一轮', () => {
     expect(text).toContain('文档列表')
     expect(text).toContain('没加载出来')
     expect(text, '请求失败却把上一轮的 N 留在屏上').not.toContain('还有 2 份')
-    expect(text, '失败时说「知识库是空的」是第二句假话，但更不许整块白屏').toContain('知识库')
+    // 原钉的是 toContain('知识库')：那是拿一枚屏名当「屏上还有东西」的代理字 —— 既比事实松（任何一句带
+    // 这个词的话都能蒙过），又正好撞上 R421 要退下去的那一枚。换成现读空脸原文：钉的还是「失败时不白屏」。
+    expect(text, '失败时空脸那一句仍在（第二句假话不许可，但更不许整块白屏）').toContain(EMPTY_FACE)
     spy.mockRestore()
   })
 
@@ -310,7 +316,8 @@ describe('R313 格二 丙 · 上一轮的话不属于这一轮', () => {
     await openedWith({}, true)
     const html = await faceRender('R313C3')
     const text = plainText(html)
-    expect(text).toContain('知识库')
+    // 同上：这一格要的是「首屏失败也还剩一张能读的脸」，读的是空脸原文本身，不是一枚屏名。
+    expect(text).toContain(EMPTY_FACE)
     expect(blockByTestId(html, RESTRICTED_FACE)).toHaveLength(0)
     expect(text).not.toContain('还有')
     spy.mockRestore()

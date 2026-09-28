@@ -209,17 +209,21 @@ describe('甲 · 判据②本体：excluded 行必须画出一张带原因的脸
     expect(notice[0].text).not.toContain(reason)
   })
 
+  // R421 改口（同一口径，断言一字未减）：本件原钉的是「兜底那一句的字面量」。它钉的事实没换过 ——
+  // 未知码与缺字段那一格仍要给人话、不带数字、不带裸码名、不许 undefined；换掉的只是那句人话里的
+  // 一个词：屏名「知识库」从这屏的文案里退下去了（这一屏叫什么由路由 meta.title 一个人说，R412/R421），
+  // 兜底句今天说「未进入检索索引」，钉的还是同一段文字所在的同一个位置。
   it('excluded 但没带原因码：仍然有脸，不许因为读不出原因就整格消失', async () => {
     await mountPanel([row({ index_status: 'excluded', index_reason: '' })])
     const html = await screen()
     expect(byTestId(html, 'doc-index-status')).toHaveLength(1)
-    expect(byTestId(html, 'doc-index-reason')[0].text).toContain('未进入知识库索引')
+    expect(byTestId(html, 'doc-index-reason')[0].text).toContain('未进入检索索引')
   })
 
   it('原因码是字典里没有的新码：给人话兜底，不给 undefined', async () => {
     await mountPanel([row({ index_status: 'excluded', index_reason: 'a_reason_nobody_registered_yet' })])
     const text = byTestId(await screen(), 'doc-index-reason')[0].text
-    expect(text).toContain('未进入知识库索引')
+    expect(text).toContain('未进入检索索引')
     expect(text).not.toContain('undefined')
   })
 

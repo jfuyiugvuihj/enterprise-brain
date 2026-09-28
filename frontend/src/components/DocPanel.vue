@@ -351,14 +351,14 @@ const docs = ref([])
 // R313 格二 · 「有 N 份存在，但你看不见」那一格。读的是 GET /documents/catalog 成功体里的
 // restricted（app/api/v1/chat.py:4235；形状只出自 app/api/v1/restricted.py 那一份 —— R200）。
 // 后端早就把这句话发出来了，界面此前一个字都不提，权限不足的员工站在有资料的库里听到的仍是
-// 「知识库是空的」—— 那是会让人去重复上传、去找管理员的假话，不是措辞洁癖。
+// 「知识库是空的」（R313 当时屏上的原话；今天这一格写的是「这里还没有文档」）—— 那是会让人去重复上传、去找管理员的假话，不是措辞洁癖。
 // 这里只取 count 与 message 两格：restricted_summary 本来就不点名资源，界面这边一枚也不补。
 const restricted = ref(null)
 // 本面板自己的失败提示；401 不在这里判，统一交给 lib/http.js 的响应拦截。
 const notice = ref('')
 // notice 以前是一句话，外加一个不管发生什么都「重新加载列表」的按钮。
-// 现在把「哪一种事没成」和「重载列表是不是真的补救动作」分开带，交给 UiErrorState 呈现。
-const noticeTitle = ref('知识库这一步没有完成')
+// 现在把「哪一种事没成」和「重载列表是不是真的补救动作」分开带，交给 UiErrorState 呈现。下面这枚初值因此从不上屏，链路逐枚现读：屏上那一格吃 noticeTitle（DocPanel.vue:965「:title="noticeTitle"」），而它受 v-if 管（DocPanel.vue:964「v-if="notice"」）；noticeTitle 全件只有一处写者，就在 raiseNotice 之内（DocPanel.vue:365「noticeTitle.value = title」，函数头 DocPanel.vue:364「function raiseNotice(title, detail, retryable) {」），它的四枚调用点各自都带标题 —— DocPanel.vue:563「raiseNotice('文档列表没加载出来'」、DocPanel.vue:624「raiseNotice('文件没能下载'」、DocPanel.vue:807「raiseNotice('部分文档没能删除'」、DocPanel.vue:809「raiseNotice('删除没有完成'」；notice 的另一枚写者只把这条提示撤下来（DocPanel.vue:371「notice.value = ''」），撤下来时那一格压根不在屏上。坐标现读自主树 c3d386c，动到那几行请连带改这枚锚。
+const noticeTitle = ref('这一步没有完成')
 const noticeRetry = ref(false)
 
 function raiseNotice(title, detail, retryable) {
@@ -489,7 +489,7 @@ function createUploadItem(file) {
 // 两枚字面量与 retrievalFace 共用模块作用域里的那一份，不在这里再声明一遍。
 
 // 后端把「为什么没入索引」编成了稳定码（app/documents/index_policy.py），这里只把码念成
-// 人话：句子不带数字，也不带码名——实测长度与阈值归服务端那句 notice 说，界面不另算一份。
+// 人话：句子不带数字，也不带码名——实测长度与阈值归服务端那句 notice 说，界面不另算一份。兜底这一句也不点屏名：服务端那句兜底长在 app/documents/index_policy.py:259（锚串 return "该文档未进入），它将来叫什么由 R422 那一单收口，本单一字不碰；界面这边不跟着报第三个名字。坐标现读自主树 c3d386c。
 const INDEX_REASON_TEXT = {
   no_text_content: '解析出来是空的，正文里没有可检索的文字',
   below_minimum_size: '正文太短，承载不了可检索的信息',
@@ -498,7 +498,7 @@ const INDEX_REASON_TEXT = {
   unchanged_content: '同名文档内容未变化，索引沿用了已有版本',
   index_refused: '索引层拒绝了这份正文',
 }
-const INDEX_REASON_UNKNOWN = '该文档未进入知识库索引'
+const INDEX_REASON_UNKNOWN = '该文档未进入检索索引'
 
 /** 三态分明：excluded 才有脸，indexed 不涂，键 absent 是 R49 之前入库的历史行。
  *  契约（catalog.py 的 public_document_row）明写客户端不许靠字段消失去推断，也不许把
@@ -1145,10 +1145,10 @@ onDeactivated(stopUploadPoll)
 
     <!-- 文档列表 -->
     <div class="doc-list" data-testid="document-list">
-      <!-- R313 · 格二：「知识库是空的」只在【真的一枚都没有】时才许说出口。
+      <!-- R313 · 格二：空脸那一句只在【真的一枚都没有】时才许说出口；原文不复述进这枚注释（SSR 会留着注释，复述就把 panel-states 那枚 toContain 喂成假绿）。
            后端在同一个成功体里另挂了 restricted（app/api/v1/chat.py:4235）=「有，但你看不见」，
            那是与「没有」正相反的一句话，两句不许同时站在这块屏上（与 DataPanel 判据 1④ 同一条）。 -->
-      <UiEmptyState v-if="docs.length === 0 && !restrictedNotice" title="知识库是空的" description="上传公司制度、手册或数据开始" />
+      <UiEmptyState v-if="docs.length === 0 && !restrictedNotice" title="这里还没有文档" description="上传公司制度、手册或数据开始" />
       <UiEmptyState v-else-if="docs.length > 0 && filteredDocs.length === 0" :title="noMatchTitle" dense />
 
       <TransitionGroup name="list" tag="div">
