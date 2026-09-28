@@ -4359,3 +4359,41 @@ R425 的执行腿被 `tests/test_r22_rebuild_cli.py:202` 封死（R235 同型第
 ### 五、授权台账与只等业主
 - 业主 09-28 已授权（本席按推荐边界执行）：① 评测窗内**自动批准**——只允许打在评测容器＋评测账号那一条路径上，生产/演示路径一个字不碰，且读数表必须记下批准次数与批准人；② 云端形状窗**用现有密钥**（`CODEX_API_KEY_BAILIAN`，长度 115 已现读；密钥不进仓库、不进命令行历史，只从进程环境注入）；③ 跑分口径＝**日常形状类走分层子集＋云端，分数与时延类必须本机全量**（每冻结点一次）。
 - 只等业主本人（本席一件没代做）：github 代理与 hosts · `deploy/.env.server` 任何编辑（含 `INDEX_BACKEND=pgvector`＝容器 recreate 不是镜像重建）· A1 `users.department` 回填＋A3 密级标签回填＋H13 未裁（pgvector 格③）· R440 整表/分档 p95 口径 · R433 禁语闸扩面 · 改评测集题面（D10 甲那一步单独批，本班的子集**不改题**不受此限）· 抬本机 `MODEL_CONTEXT_TOKENS` 与 Ollama `num_ctx` 配套 · 删 `%TEMP%\r414_stash\` 与 `?? %SystemDrive%/`。心跳 `automation-2` 保持 `PAUSED`、`target_thread_id` 指本线。
+## §129（09-28 第二十格·总控线，主树 `4cd0a1c`→`d8e1a68`）：R453/R454 投出回执 · 🔴 R404 并树门 11 红整单退回（两族根因逐条落账） · 事故 #68 记在派工词那把尺上 · 新立 R455 判据正文 · 本机 ascii 编码自伤
+
+### 一、本班账面（sha 与门账全部现取，不采信自述）
+- 投出两笔，各占一个 block、一 block 一次投递、均未带 model 覆盖：R453＝`01a0e78f-ecb8-7460-93c4-cc2cf7840eb3`@`be-r453`（基点 `4cd0a1c`）· R454＝`01a0e790-52cd-79c3-a86a-194a2aa81d52`@`be-r454`（同基点）。两枚树建好时 dirty=0，本班 18:41–18:44 现场已各自长出 `scripts/eval_cloud_window_readout.py`／`deploy/compose.cloud-eval.yaml`／`scripts/eval_window_planner.py`／`docs/testing/bank-shape-subset-30.jsonl`——落盘即在工作，不是空转。
+- `d8e1a68` 看板 §0 名册补两行（列数各 7 枚竖线，BOM 首三字节 239,187,191 现读，loneCR 恒 2，bareLF 5707→5709 恰等于新增两行，文件尾无 newline，size 1,295,255→1,296,773）。🔴 本笔**前身是 `378ec95`，提交语被啃成一片 `?`**：根因＝用 `Set-Content -Encoding ascii` 把生成脚本落盘，中文在进 Python 之前就死了，与 §127 那族 here-string→Python 丢字同根同族。处置＝`git commit --amend -F <UTF-8 文件>` 覆盖，`378ec95` 从未 push ⇒ 历史干净。入规补死一句：**长中文正文（含提交语）一律 UTF-8 直写盘，禁任何 ascii 编码中转；提交后必须 `git log -1 --format=%B` 现读一遍再走**。
+- push：`4cd0a1c` 已推 gitee（`83c9586..4cd0a1c`，`@{u}..HEAD` 现读 0）· `d8e1a68` 与本笔跟进单随本班收官一并推。
+- 电源账（业主 09-28 令「别设为永眠」）：现读 AC `0x384`＝900 s／DC `0x12c`＝300 s，休眠保持 0——**本班起不再动电源方案**。防睡改进程级：门脚本 `Add-Type` 调 `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)`，随门进程活着、收窗即撤（母版 `%TEMP%\handoff18f\gate-r404.ps1`，下一扇窗照抄）。
+- 门账基线不变：主树内容＝`4cd0a1c` ＋ 名册两行 ⇒ **7873 passed / 50 skipped / 2 xfailed** 仍是在册基线。别抄更早的 7862／7849／7832／7809，也别把本班那扇 11 红的门读成新基线。
+
+### 二、🔴 R404 验收＝主货达标、转手账差两族，整单退回（未并树）
+- 怎么做的：`be-r404` 基点 `11c97bd` 与主树 `4cd0a1c` 之间，`chat.py`／`catalog.py`／`test_document_route_authorization.py` 三枚**零改动**（`git diff --numstat 11c97bd 4cd0a1c --` 现取为空）⇒ 可整档搬运不会盖别人的手。先镜像 `E:\eb-offload\r404-2026-09-28\`（原件 sha16 `3D9666E8EBBF94CC`／`4CD0ADDB43EEE749`／`A734AFB009C7060B`），再搬三枚在册改动＋四枚新钉（`C4C7DA434A605D98`／`D66C6B41693EFC2E`／`65B6C2D57F8B365D`／`CC19D5B550E553B2`；那枚 `tests/test_r406_banned_phrase_pin_covers_the_unseen_module.py` 按 §126 结论②**不随本单取**）。定向复跑 **97 passed**；打这扇端点的四枚在册件（含 `test_response_hygiene.py` 与 R377/R383 两本读者账）另跑 **73 passed**；总控独立反证＝亲改产码把 `latest_document_version` 换回全量读 ⇒ **3 failed／35 passed**。全量门 `python scripts/run_gate.py`（自选 `-n 5`，316.78 s，18:36:49→18:42:16）＝ **11 failed / 7895 passed / 50 skipped / 2 xfailed / exit=1** ⇒ 当场判退回，主树逐字节倒回干净态（`git status` 现读只剩永久脏项），四枚新钉移 `%TEMP%\handoff18f\revert-r404\` 留档——是移走不是删，货一行没丢。
+- 过了什么（返工时别重做）：catalog 侧 `list_document_versions(filename, limit=…)`＋`latest_document_version` 单行读；端点判定只读那一行；无台账行先 404；判定过程走 `record_audit` 那一条唯一通路记一笔 `allowed`／`denied`；`test_document_route_authorization.py` 那处桩换符号并补 `storage_path`，`assert ... == 403` 一字未动。两张脸按现读分开（台账有行而盘上文件已没 ⇒ 判定仍读那一行）。四枚新钉自带 K1–K8 与 teeth a/b/c/d，形状对得上 §126 二的判据下限。
+- 🔴 A 族 3 红＝`tests/test_r154_provenance_surface.py:315` 那枚桩没跟着换符号（它桩 `chat.list_document_versions`，判定腿如今先走 `latest_document_version` ⇒ 落真台账取不到行 ⇒ 404 抢在响应正文之前，`published_at` 三格断言压根没跑）。账记总控派工词：硬注① 那句「现读 8 处 patch」只数了 `test_document_route_authorization.py` 一本。⇒ **入规：凡"换符号"类改动，patch 面一律按 `rg -n "<旧符号>"` 全仓点名，不许按文件数、不许引上一班的枚数。**
+- 🔴 B 族 8 红＝`tests/test_r387_label_ruler_teeth.py` 七枚＋`tests/test_r400_derived_ledger_shift_and_silence_pins.py::test_only_the_hops_that_cite_the_shifted_file_go_red`：那一枚 import 把 `chat.py` 整档顶 +1，派生坐标账当场咬住（表 `:4212-4214` vs 现读 `:4213-4215`、`:4230` vs `:4231`、`:3786-3870` vs `:3787-3871`、`:3917-3965` vs `:3918-3966`）。正解只有一条：`python scripts/r387_label_lineage.py --emit-doc-cells` 重落地＋表下正文跟着改，禁手改数字。⇒ 这一族红是**好消息**：那套钉把「并树打漂行号」从下一班的考古题变成了当场红，本席今天靠它省了一次追账。
+- C 格＝硬注④（`docs/handoff/2026-09-26-v1-frontend-gap-list.md` 那三枚手抄坐标：现读@`4cd0a1c` 是 `:4213`／`:4932`／`:3715`，叠 R404 后＝`:4214`／`:4950`／`:3716`，总控现场 `rg` 取）执行层没做。🔴 **根因不怪执行层**：硬注④ 写在派工词的「硬注」段、没进「判据下限」清单，执行层照下限自查抓不到 ⇒ 入规：**派工词每条硬注必须逐条转写成判据下限的可勾选条目，否则等于没写**。同一族坑今天第二次（第一次＝§124 那本行号账被 R439 并树打漂）。这一格本席不代做（写域已随返工交回 Carson），随返工一并落地；旧那张钉在 `4037868` 的对账表属历史读数，原样不追改，新账另起一段。
+- 🔴 **事故 #68（同类第一枚，记在总控派工词上，不记执行层）**：R404 派工词把「换符号」的 patch 面按**单本文件枚数**写死（8 处），漏了第二本文件 ⇒ 一扇 316.78 s 的全量门白跑，验收退回。落笔前两本在册文档 `事故 #` 最大值现取＝**67**（跟进单 84 枚命中、看板 199 枚命中），本笔取 68。
+
+### 三、新立 R455 判据正文：把「手抄后端坐标」这一族结构性关掉
+- 病灶：`docs/handoff/2026-09-26-v1-frontend-gap-list.md` 的 T2 :31／G04 :156／G06 :158／G08 :160／§遗留 :323 五处行内引用＋文末两张对账表，抄的全是 `app/api/v1/chat.py:NNNN` 这种行号。为它今天返工两笔（上一班 `46a82b6` 重落地三枚、本班 R404 硬注④ 又漂一次）。R387/R400 已经把标签血缘那张表改成运行时派生，**同一把尺没覆盖这本缺口单**。
+- 判据①：新增一枚派生件（`scripts/r455_gapdoc_coordinates.py`，或复用 `scripts/r387_label_lineage.py` 的派生道——二选一，**不许新写第二把正则**），按**符号**定位三枚锚：`classification: int = Form(1)` 所在签名的行区间、`@router.post("/queue/{request_id}/cancel")` 那行、`@router.get("/sessions")` 那行；输出与缺口单那一格逐字节等值的字符串。
+- 判据②：新钉 `tests/test_r455_*` ≥ 3 把——(a) 往 `chat.py` 顶部插一枚空行 ⇒ 那三枚坐标当场红并点名「跑 emit 重落地」；(b) 手改表里任一数字凑绿 ⇒ 红；(c) 把符号写错层（例如引 `_ensure_session` 而不是 `GET /sessions` 路由本体）⇒ 红，这一把专治 §126 那句「写下时就查错了层」。
+- 判据③：文末历史对账表原样不追改（`ac84f1a`／`4037868` 那两张都是当年现读）；`chat.py:3933` 那枚继续留着，它是在替「这枚已经漂了」那句反证说话；真正该改的是 `frontend/src/components/DocPanel.vue:103` 那行注释，归前端线，本单不碰 `frontend/**`。
+- 写域：`scripts/r455_gapdoc_coordinates.py`（新）＋新钉 `tests/test_r455_*`＋`docs/handoff/2026-09-26-v1-frontend-gap-list.md`（**只准改「坐标」那一列，散文不许动**）。禁：`app/**`·`frontend/**`·评测集·`.env*`·`deploy/**`·跟进单与看板（总控写域）·`scripts/r387_label_lineage.py` 本体（要复用它就 import，不改它）。不得跑全量门、不得动容器、不得打模型。
+- 槽位账：实证上限 5 格，本班五格占满（`Carson`/R404 返工 · `Einstein`/R452 · `Zeno`/R405+R432 · 本班新派的 R453 与 R454）⇒ **哪一格先腾出即投 R455**（它不依赖真机、不抢内存，是此刻最便宜的推进）。号账：R453／R454 已用，R450 仍预留（乙案＝`app/agents/orchestrator.py` 交出结构化码），**R455 本笔新立**，R456 起空闲。
+
+### 四、`Zeno`/R405+R432 的处置（别把它当成在途，也别当成作废）
+- 现读：`be-r405` 四枚件在盘 `10:40`／`11:48`／`11:51`／`11:53`，此后 **7 小时零写字节**；`01a0e5a8-c099-7ed3-98cd-16a71088969a` 只出现在看板 §4 那三张在途表里（`:5550`／`:5596`／`:5641`），**从未进 §0 名册**。⇒ 按名册那条硬规矩，本席对它既不能 `wait` 也不能 `send_input`，更不会去 `close`（事故 #67 那条教训仍然有效）。
+- 处置：那四枚件（`scripts/r432_sandbox_corpus.py`、`scripts/r432_ef_compare.py`、`tests/test_r405_readonly_sqlite_open_has_a_file_footprint.py`、`tests/test_r432_offline_guards.py`）**不冒充任何人的交回执**，也不并进主树。R432 那一格（客户尺寸两档 `hnsw.ef_search` 差）改由 R453/R454 腾槽后新派一枚施工**按盘面判据复做**，凭据只认新身体自己现场取的读数。本笔不动它一个字节。
+
+### 五、只等业主本人（本席一件没代做）
+github 代理与 hosts · `deploy/.env.server` 任何编辑（含 `INDEX_BACKEND=pgvector`＝容器 `up -d --force-recreate`，不是镜像重建）· A1 `users.department` 回填＋A3 密级标签回填＋H13 未裁（pgvector 格③）· R440 整表／分档 p95 口径 · R433 禁语闸扩面 · 改评测集题面（D10 甲那一步单独批；§128 二那枚 30 题子集**不改题**，不受此限）· 抬本机 `MODEL_CONTEXT_TOKENS` 与 Ollama `num_ctx` 配套 · 删 `%TEMP%\r414_stash\`、`?? %SystemDrive%/` 与主树那枚 `?? -`（**本班新增**：731 B，18:18:32 落盘，内容是 must_contain 归因读数的一截 JSON，上一格某条命令把 `-` 当文件名重定向出来的垃圾，本席没权限删，也没拿它当任何凭据）。心跳 `automation-2` 保持 `PAUSED`、`target_thread_id` 指本线。
+
+### 六、下一格接手顺序
+1. 收 `Carson`/R404 返工：逐条对 A/B/C 三格＋总控亲跑全量门，达标才代提交；并树那一笔同时重落地缺口单那三枚坐标（历史表不追改）。
+2. 收 `Einstein`/R452（`frontend/**` 唯一写主，17:06 后盘面未再动，判据正文 §127 二；天花板＝`lint:colors` 恒 148 warnings／0 errors、零外部请求、`npm run build` EXIT=0）。
+3. 槽位一腾即投 R455（§129 三判据正文已完备，派工词直接抄）。
+4. 机器安静时投 **R428** 拿 pgvector 格② 热集让路读数（判据 §120 四；必须 `docker exec -e INDEX_BACKEND=pgvector -i enterprise-brain-backend-1 /usr/local/bin/python …`，宿主 5432 上有野 PG ⇒ 直连就是假绿）。
+5. 反查一笔旧账：`R26` 09-17 就记了结案，但并树痕迹本席仍没查到——下一格按 `git log` 现取符号归因，别再写「疑为空转」。
