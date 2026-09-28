@@ -18,6 +18,7 @@ import sys
 import time
 import signal
 from contextlib import nullcontext
+from typing import get_args
 from uuid import uuid4
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,6 +35,16 @@ from app.common.reliable_queue import (
 )
 from app.common.logger import logger, setup_logging
 from app.trace.records import record_agent_result
+
+#: R448 判据①②：认码的那一把尺与白名单的两枚锚全部从在册出处 import 进来，本文件
+#: 一个面值都不抄、也不写第二把 `in` 匹配。三枚都是轻件（现测 import 共 <0.5 s，
+#: 不落 torch 也不落 chromadb），所以不必照本文件对 `app.api.v1.chat` 那笔延后的理由
+#: 延后——那一笔延后是因为 17 s 起子链外加一次向量库写，这里两样都没有。
+from app.common.model_budget import context_error_code
+from app.agents.contracts import CONTEXT_LIMIT_CODE, ErrorEnvelope
+#: 反面清单在 evidence 里是私有名。本单只读引用它，因为它是唯一一份在册的"可重试"说法，
+#: 而 contracts.py 对 CONTEXT_LIMIT_CODE 的那句注释正是拿它做对照的（不许改它）。
+from app.agents.evidence import _RETRIABLE_CODES
 
 setup_logging()
 
@@ -458,6 +469,88 @@ def _save_background_turn(session_id: str, content: str) -> None:
         )
 
 
+# ==================== R448：确定性拒绝不该重试三发 ====================
+
+
+def _derive_deterministic_refusal_codes() -> frozenset[str]:
+    """现读"再发一次也必然同因"的那一组码；锚读不通就报错停手，不静默退档。
+
+    两枚锚的语义都在别人手里，本文件只是把它们对齐（判据②）：
+
+      正面 —— ``app/agents/contracts.py:102`` 的 ``CONTEXT_LIMIT_CODE``，它的在册注释
+      ``app/agents/contracts.py:247-250`` 明写「它不是可重试的错（同一个提示词永远装
+      不下），所以不进 evidence._RETRIABLE_CODES」。这一族今天只此一枚，面值由常量带来。
+      反面 —— ``app/agents/evidence.py:18`` 的 ``_RETRIABLE_CODES``，在册的"可重试"清单，
+      这里用作否决：同一枚码同时出现在正反两处，就是锚漂了，队列没资格替契约挑一个。
+
+    还有一条下限：锚必须在 ``ErrorEnvelope.code`` 那枚封闭词表里，否则它压根不是公开稳定码，
+    拿它判终态等于往台账里写野词（枚面值在 ``app/agents/contracts.py:252`` 的封闭枚举里，
+    返回它的那一句在 ``app/agents/contracts.py:204``）。
+
+    三条里任何一条读不成都抛。退成"全部可重试"就是本单要治的那枚缺陷本身（run9c 实测
+    同一枚拒绝连吃三发，373.7 s 里约 248 s 是纯白烧）；退成"全部不可重试"则把还能救的
+    轮次必然判死。两样都不许发生，所以两样都不给路。
+    """
+    enum_codes = frozenset(get_args(ErrorEnvelope.model_fields["code"].annotation))
+    retriable_codes = frozenset(_RETRIABLE_CODES)
+    anchors = tuple(
+        code.strip()
+        for code in (CONTEXT_LIMIT_CODE,)
+        if isinstance(code, str) and code.strip()
+    )
+    if not anchors:
+        raise RuntimeError(
+            "[R448] 确定性拒绝白名单的锚读不出来（CONTEXT_LIMIT_CODE 为空或非字符串），"
+            "本 worker 拒绝启动：静默退成'全部可重试'或'全部不可重试'都是假话"
+        )
+    for code in anchors:
+        if code not in enum_codes:
+            raise RuntimeError(
+                f"[R448] 锚 {code!r} 不在 ErrorEnvelope.code 的封闭词表里，"
+                "它不是公开稳定码，无权拿它判终态"
+            )
+        if code in retriable_codes:
+            raise RuntimeError(
+                f"[R448] 锚 {code!r} 同时出现在 evidence._RETRIABLE_CODES 里，"
+                "正面锚与反面清单已互相矛盾，本单无权替它们裁定"
+            )
+    return frozenset(anchors)
+
+
+#: import 期就把账立住：锚漂了就是 worker 起不来，而不是跑到某一轮才悄悄少判一枚。
+DETERMINISTIC_REFUSAL_CODES = _derive_deterministic_refusal_codes()
+
+
+def report_failure_record(error: object) -> dict:
+    """把报告档那一发失败拆成交回队列的记录：原码留着，确定性拒绝补一枚显式终局判定。
+
+    改前这里有两枚缺陷，都在同一枚记录上（本文件改前 :527 与 :540 两处同形字面量）：
+
+      ① 码无条件写成兜底值 —— 真机 run9c 的台账因此读成「未产生业务结论: internal_error」，
+      而同一条 request_id 的 ``[ModelBudget]`` 那行明明说着 prompt_tokens=2695 装不进 4096；
+      业主运维读到的是一枚兜底码，不是那三个数字。
+      ② 缺 ``error["retryable"]`` —— 本文件的 ``is_non_retryable_error`` 只认末句那枚显式
+      ``False``，缺这一键就是"还能救"，于是同一枚发请求前就干净拒绝的错被打了三发。
+
+    认码只许用 ``app/common/model_budget.py:1021-1023`` 的 ``context_error_code`` 这一把尺
+    （键于 :357-366 ``CONTEXT_ERROR_FRAGMENTS``），本文件不写第二把 ``in`` 匹配。尺认不出来
+    就仍旧交回兜底值，且**不写** ``retryable`` 这一键 —— 其余一切码的重试次数、退避、终态与
+    日志文案逐字节与改前相等（判据⑤ 的下半句）。
+    """
+    recognised = context_error_code(
+        error if isinstance(error, BaseException) else Exception(str(error))
+    )
+    record = {
+        "status": "failed",
+        "error": {"code": recognised or "internal_error", "message": str(error)},
+    }
+    if recognised in DETERMINISTIC_REFUSAL_CODES:
+        # 契约自己的语义就是"重试也不会变"，这里把它显式写出来交回 R81 那条闸门：
+        # 首发落 dead，一个名额不占，原码留在台账与日志里。
+        record["error"]["retryable"] = False
+    return record
+
+
 def _fail_report_turn(queue, request_id, record, *, session_id, write_back) -> bool:
     """这一轮没产出业务结论：终态与原因码仍旧走队列原有的那套，历史只在真终态补一行。"""
     code = str((record.get("error") or {}).get("code") or record.get("status") or "internal_error")
@@ -524,20 +617,27 @@ def _process_report_lane_turn(
         return _fail_report_turn(
             queue,
             request_id,
-            {"status": "failed", "error": {"code": "internal_error", "message": str(exc)}},
+            # R448：这一支与下面 stream_error 那一支是同一枚洗码形状（兜底码写死在
+            # 字面量里、同样不带 retryable、同一个消费者 _fail_report_turn），所以
+            # 一并交回认码那一个处。
+            report_failure_record(exc),
             session_id=session_id,
             write_back=write_back,
         )
 
     duration_ms = int((time.monotonic() - started) * 1000)
     if stream_error:
-        # 这枚 error 事件不带契约的 retryable 判定，队列没资格替契约宣布终局：
-        # 交回 fail_or_retry 按名额判，重试用完才 dead（与 R81 同一口径）。
+        # R448：编排那枚 error 事件只带句子不带码（app/agents/orchestrator.py:1464
+        # yield {"error": str(e)}），改前这里因此无条件写兜底码且不写 retryable，于是
+        # "发请求前就干净拒绝"的那一发被当成可重试打了三回。现在交回 report_failure_record：
+        # 用在册那把尺认回原码，命中白名单的一族就按契约自己的语义补一枚显式 retryable=False，
+        # 首发走 R81 那条闸门落 dead；其余码仍旧不带这个键，仍旧交回 fail_or_retry 按名额判，
+        # 重试用完才 dead（与 R81 同一口径）——那一支的记录形状与本单改前逐字节相等。
         logger.error(f"[QueueWorker] request_id={request_id} 报告档后台报错: {stream_error}")
         return _fail_report_turn(
             queue,
             request_id,
-            {"status": "failed", "error": {"code": "internal_error", "message": stream_error}},
+            report_failure_record(stream_error),
             session_id=session_id,
             write_back=write_back,
         )
