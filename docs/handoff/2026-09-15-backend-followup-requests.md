@@ -4456,3 +4456,45 @@ github 代理与 hosts · `deploy/.env.server` 任何编辑（含 `INDEX_BACKEND
 3. 腾出槽位即投 R456（判据正文 §130 二，写域不含 `app/**`；树 `be-r456` 已建于 `c2e6546`，branch `codex/be-r456`，dirty 0）。
 4. 槽位再腾即投 R457（本格新立，判据见本格第五节）。
 5. 机器安静时投 R428 拿 pgvector 格②（必须容器内跑，宿主 5432 有野 PG）。
+
+## §132（09-28 第二十一格续·总控线，主树 `223fa97`→记账笔）：R452 并树与两组活坐标收口 · 🔴 前端门那枚「一直红」的红因归 R438 · 事故 #71（施工越界改 `docker-compose.yml` 且值是坏的） · 云端形状窗前置现读 · 新立 R458
+
+### 一、R452 并树（施工 `Einstein`/`01a0e72a-43c9-7960-9510-e5b188514a76`@`be-r452`，基点 `7532652`，落树 `223fa97`）
+- 主货验收＝业主 D13 授权的 `frontend/**` 首枚：`App.vue` 净 113/0 ＋ 新钉 `components/__tests__/r452-degradation-banner.test.js`（458 行 26 枚用例）。三态分开（正常／降级／取不到读数）里最值钱的是第三态：既不画成正常也不画成降级，且正常态整段节点从 SSR 产物里消失（`v-if` 不是 `v-show`）⇒ 不留占位高度。请求次数那一判据＝进工作台恰好一发、切遍每一屏不重发、静置 1.5 秒不发第二发、再登录吃 60 秒缓存，全档零 `setInterval`。
+- 🔴 **并树原子性**（本笔最该学的一格）：`App.vue` 插进 113 行 ⇒ 侧栏那枚 v-for 从 `:448` 漂到 `:472`（本席 `rg` 现读逐字对上），而 `r416` 乙-4／`r420` L-5 两枚钉读的是 `git show HEAD:` 的 `App.vue` ⇒ 注释与 `numbers` 不同笔就当场红 2 枚。本席按此**同一笔**改五处：`router/index.js:130`、`router/__tests__/r316-admin-entry.test.js:117`、`lib/__tests__/r420-...:176` 的 `numbers:[4,448]`、`lib/__tests__/r416-...:146` 的 `numbers:[448]`、`components/TracePanel.vue:19`。并前定向六枚件 **140 passed／2 failed**（红正是那两枚中间态）、并完复跑 **142 passed／0 failed**。🔴 同名的另一枚 448 不动：`__tests__/r380-shape-table.test.js:287` 与 `r380-detail-voice.test.js:7` 说的是 `errcodes.js`，`ChatPanel.vue:448` 又是另一本文件——**同一枚数字不等于同一枚坐标**。
+- 🔴 **顺带挖出一枚今天一直红的门**：红因不在这单。R438 并树 `227949e`（09-28 14:48）把 `app/api/v1/observability.py` 推了 15 行，`replay_path` 从 `:579` 漂到 `:594`，而 `router/index.js:136`、`components/TracePanel.vue:26` 两行注释加 `r416` 乙-6 的 `numbers:[579]` 没人跟着改 ⇒ 前端 `npm test` 从 14:48 起就红着，本席从 Einstein 那句「基点自带 1 failed」追到现场数行才定位。本笔同批收三处，收完 **npm test 124 files／2546 passed（0 failed）**·`lint:colors` 恒 **148 problems（0 errors）**·`build` **EXIT=0**。**入规**：动 `app/api/v1/**` 的并树必须连带跑前端那本活坐标钉——后端门绿不代表前端坐标门绿，这一族 R438 那次是漏了，不是无人知道。
+- 未落地那两格（施工如实报，本席裁见本第五节）：判据② 的「伸手刷新入口」被三枚在册控件棘轮挡住（`r307b:215` 钉 `App.vue` 里 `<UiButton` 恰 8 枚、`:296` 钉渲染枚数＝`navigation.length+2`、`r288:54`/`:152` 钉 `App.vue` 裸 `<button>` 归零）；另 `ChatPanel.vue:781` 那发 `fetchRuntimeHealth({ force: true })` 在 `:784-785` 挂载期绕开缓存，是全站第二处读取点，属 R268/R424 名下。⇒ 「一次读取多处复用」今天**只在壳层成立，全站不成立**，这句话别再被抄成已完成。
+
+### 二、🔴 事故 #71（施工越界写被总控在并树前抓到；新入规＝派工词必须写明「漂移造在哪一层」）
+- 落笔前两本在册文档 `事故 #` 最大值现取＝70 ⇒ 本笔记 **#71**。
+- 现读形状：`be-r453` 长出一枚**不在写域里**的 tracked 改动 `docker-compose.yml`，1/1，内容是把 `LOCAL_MODEL_BASE_URL: http://ollama:11434/v1` 改成 `http://ollama:11434 /v1`（中间多一枚空格）。这值一旦并树＝每个容器模型腿的 base_url 不合法，且是运行时才炸的形状。
+- 归因（按最可能的读法记，不替施工圆）：它多半在验判据② 那枚「不带 `-f` 时 backend env 必须与今天逐格相同」的 sha 基线钉，靠**改仓库原件**制造漂移来看钉红不红。这一形本身违反在册规矩——`tests/test_r253_no_test_rewrites_a_tracked_file.py` 就是钉「测试不许原地改写被跟踪文件」的，仓里早备着临时副本那条道。
+- 处置：① 已下退回令（一 block 一次投递），要它 `git checkout -- docker-compose.yml` 并把倒回后的 `git diff --numstat` 空输出当凭据交回；② 🔴 无论它倒不倒，**总控并树硬不取这枚文件**（写域外的 tracked 改动一律不进主树，这一条从「靠施工自律」改成「靠总控路径清单」，本席只 `git add` 显式列出的那几枚）；③ 入规给派工词：凡判据形如「摘守卫必须红」，必须同时写明**漂移造在哪一层**——造在原件上＝越界，造在临时副本里才是本仓的形（事故 #68 记的是派工词没数全 patch 面，本枚记的是派工词没规定造漂移的地方，同族）。
+
+### 三、云端形状窗的前置现读（本席 20:1x 零成本实测，开窗前别再猜）
+- 密钥来源（业主 09-28 原话「云端你用现在模型的 key 就是了」）：进程环境里 `CODEX_API_KEY_BAILIAN`（现取长度 115）对 `~/.codex/config.toml` 的 `model_providers.bailian`，base_url `https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`；另有 `DASHSCOPE_API_KEY`（长度 35）走 `dashscope.aliyuncs.com/compatible-mode/v1`。两把都只从**进程环境**注入，一枚都不许落进仓库。
+- `/models` 现读：token-plan 那把回 16 枚，**含 `qwen3.8-flash`**（另有 `qwen3.8-max`／`qwen3.7-max`／`glm-5.2`／`deepseek-v4-pro` 等）；dashscope 那把回 261 枚。⇒ 开窗用 `qwen3.8-flash` 不必改模型名。
+- 流式腿形状（一枚 8-token 探针，非计时非跑分）：`/chat/completions` 带 `stream:true` 回 17 行 `data:`、有 `delta`、有 `[DONE]` ⇒ **SSE 可用**，A② 那格在云端量得出片数。要紧的两格：① 该端点**先流 `reasoning_content` 再流 `content`**（探针实测 reasoning 22 枚 token 单走一路）；② 不带 `stream_options.include_usage` 时**每一片 `usage` 都是 null**，带上就末片回真数（现读 `prompt_tokens:66 / completion_tokens:26 / reasoning_tokens:22 / cached_tokens:0`）。
+- 🔴 上面那格**不是缺陷**，代码早备着：`app/agents/nodes.py:840-857 _answer_leg_tap` 在流式且调用方没写 `stream_options` 时自动补 `{"include_usage": True}`（注释原文「R149b 具名的第二条硬前置（计量不许回 NULL）」）。⇒ D-usage 那格在云端能拿到数，**别为它再立项**。片账那一侧也核过：`visible_chunk_text`（`app/agents/nodes.py:371-394`）只取 `chunk.content`，reasoning 那一路进不来 ⇒ 开窗首轮仍要用 sidecar 现验一次「`text_frames` 没被 reasoning 片灌水」，量具不骗人就靠这一验。
+
+### 四、run9 那 18 枚「没批」的归因更正（本席现取符号，别再抄成产品缺陷）
+- run9 收窗时 `hitl` 族 18/105 停在「没答完却占 correctness 分母」。本席现读 `git show --name-only 5ef6bc0`（R447 并树，09-28）：改动全在宿主量具侧——`scripts/eval_transport_ask_v2.py`、`scripts/eval_lane_readout.py`、`tests/_r259_queue_ruler.py`、`tests/test_r259_awaiting_approval_stops_the_watch.py`、`tests/test_r447_queue_approval_round_and_evidence.py`，**没有一枚 `app/**`**。⇒ ① 队列道读到 `awaiting_approval` 就一步没走、批准端点一次不打的病是 **R447 治的**（新 kind `queued_approved`）；② run9 跑在 09:4x–11:3x，R447 并树在其后 ⇒ 那 18 枚是**测在一枚已修的宿主缺陷之前**，不是产品不批；③ 下一扇窗的批准轮该真批得动，`hitl` 那一格的分母占用会自己收窄（D10 甲那一步改题仍单独等业主批）。
+- 🔴 顺手纠自己一枚查错层：本席先用 `docker exec … grep queued_approved /app/deploy/queue_worker.py` 回 0 枚，差点记成「镜像里没有批准腿」——那 kind 属宿主量具，镜像里查不到是应当。规矩重申：报「某物不存在」之前先说清在哪一层查、用的是不是这一层的名字。
+
+### 五、裁定 R458（本席自裁，业主已给「除非一定要我出手否则你自己完成」那道授权）
+- 要治的两格＝R452 未落地那两格。**裁定＝不动 `App.vue`、不放宽那三枚在册棘轮**，理由：`r307b`/`r288` 那三枚钉的是「壳层控件预算」，为加一枚刷新按钮去开例外＝把 R32 明令禁的假控件那一族从另一头撬开；而「再看一次」这个动作本来就长在**读数消费那张脸上**，不长在壳层。
+- 判据：① `ChatPanel.vue:781` 挂载期那发 `fetchRuntimeHealth({ force: true })` 改为**不发**（壳层已发一发，面板复用缓存）；② 「再看一次」入口落在既有 `runtime-faces` 那一区（`ChatPanel.vue:778`/`:1830-1832`），员工伸手才发、卸载清 timer、挂载期零请求——照 `ChatPanel.vue:553 → :1751 session-pull` 那一族纪律；③ 🔴 全站 `GET /health/details` 的发数：任意「登录→进工作台→切遍每一屏→静置」序列里 **≤1 发**，只有员工伸手那一发才允许第 2 发；④ 屏上零技术注脚照 r267/r452 的 SSR 真 HTML 做法；⑤ 三门天花板＝`npm test` 只许加不许退、`lint:colors` 恒 148 warnings／0 errors、`npm run build` EXIT=0。
+- 写域：`frontend/src/components/ChatPanel.vue` ＋ 新钉 `frontend/src/components/__tests__/r458-*`。禁 `App.vue`（刚漂过 113 行，别再动）·`lib/**` 与那三枚棘轮件（不许放宽在册断言）·`assets/theme.css`（零新色值）·`app/**`。
+
+### 六、V1 剩余量的机器口径（本席今日现取，别再手搓清单）
+- `python scripts/audit_plan_ticket_ledger.py`@`e3fd74b` 现读：三档 **LANDED 21 · PARTIAL 19 · ZERO 3**，`RESULT=PASS（0 条违规，在册 43 号逐条自证）`。🔴 ZERO 那三枚里 `R39`（裁定不建）与 `R144` 都属**号账错位**：`R144` 的活其实 09-21 就以 `R148 e065fad` 落了（地球图＋字体本地化＋工作台四层背景，两张 webp 在树、`theme.css:5-6` 两行 `@fontsource-variable` import、`:1196`/`:1253-1254` 那两段都在），审计尺按 C4「提交信息含本单号」判它零产物；⇒ 按「产物在树」这一格真欠只有 **`R143`** 一枚（双写窗第⑦步 recall 对账，要非跑分窗＋机器空闲，因为要 embed 就打 Ollama）。改口已落计划书 §6 那行读数更新。
+- 前端缺口单 `docs/handoff/2026-09-26-v1-frontend-gap-list.md` 现读：G 族基本全「已落」，只剩两格 🟡 半（G03「问出来的数和页面上选的表对不上」界面那半已收／管理员管理屏那格半收）＋ R458 这一格新欠。
+
+### 七、下一格顺序
+1. 收 `Leibniz`/R453 与 `Feynman`/R454 两笔返工（叠加跑一扇门、分两枚提交）；并 R453 时🔴 **硬不取 `docker-compose.yml`**，并 R454 时只取他那六枚（快照副本与 `.pytest_cache/` 不并）。
+2. 两笔并完 ⇒ 先 `docker build` 一次（补 R451 的 `tools.py` 与 R404 的 `app/**`，随这批一并，别再欠着）→ `up -d --no-build` → 五道现读 → 再开**第一扇云端形状窗**（前置见本第三节；`--preflight` rc 必须 0；`caliber=cloud-shape` 与时延／分数格同段出现即整批作废）。
+3. 在途两枚（R455／R456）之外，`R457`（审计留存执行腿，判据 §131 五）与 `R458`（本第五节）按槽位与写域排先后，谁的写域空谁先动。
+4. 机器安静时那两枚要真容器内跑：R428（pgvector 格② 热集让路）与 R143（recall 对账预跑），宿主 5432 有野 PG，直连即假绿。
+
+### 八、只等业主本人（本席一件没代做）
+`deploy/.env.server` 任何编辑（含 `INDEX_BACKEND=pgvector`＝容器 `up -d --force-recreate`）· A1 `users.department` 回填＋A3 密级标签回填＋H13 未裁 · R440 整表与分档 p95 口径 · R433 禁语闸扩面 · 改评测集题面（D10 甲单独批）· 抬 `MODEL_CONTEXT_TOKENS`≥4231 与 Ollama `num_ctx` 配套 · github 代理/hosts · 删 `%TEMP%\r414_stash\`、`?? %SystemDrive%/`、`?? -`。心跳两枚仍 `PAUSED`（业主「别开人工提醒」那道令有效）。
