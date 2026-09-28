@@ -102,9 +102,9 @@
 
 ## C 两格
 - sidecar kind 计数（全 105 题）：{'ok': 85, 'error_event': 2, 'approved_ok': 18}
-- C1 缓存命中：kind 含 cache 的计数=0（应为 0）；判据出处 scripts/eval_transport_ask_v2.py:1106-1109（命中即 raise 停窗，正常读数就是「一份都不存在」）
+- C1 缓存命中：kind 含 cache 的计数=0（应为 0）；判据出处 scripts/eval_transport_ask_v2.py:1205-1208（命中即 raise 停窗，正常读数就是「一份都不存在」）
 - C1 旁证：run9.log / run9.err 中『命中答案缓存』字样命中行数见「现读补记」
-- C2 unsupported_claim_rate=0.0（评分件 evaluation-report-run9.json 的 unsupported_claim_rate 键；算法 app/quality/eval.py:471-477）
+- C2 unsupported_claim_rate=0.0（评分件 evaluation-report-run9.json 的 unsupported_claim_rate 键；算法 app/quality/eval.py:761-767）
 - C2 分数不退化：本轮 correctness=0.5619 evidence=0.7905 vs run7 0.5333 / 0.7905
 
 ## hitl 格（口径现算，不抄 run5 的 18/105）
@@ -112,7 +112,7 @@
 - approval_rounds>0 计数=18；approval_http_status 非空计数=18（值分布={'200': 18}）
 - pre_kind=hitl（停在闸上的题）计数=18 题号=['chart-01', 'chart-02', 'chart-03', 'chart-04', 'insight-07', 'report-02', 'report-04', 'report-05', 'report-07', 'report-09', 'report-10', 'report-11', 'report-12', 'scope-05', 'tool-01', 'tool-02', 'tool-03', 'tool-04']
 - kind=hitl 残留（批准没走完）计数=0 题号=无
-- 没答完却占 correctness 分母（分母恒=105，见 app/quality/eval.py:401-402）：sentinel=True 0 题 + kind 属未答完族 2 题 ⇒ 并集 2/105 题号=['metric-02', 'scope-02']
+- 没答完却占 correctness 分母（分母恒=105，见 app/quality/eval.py:681-682）：sentinel=True 0 题 + kind 属未答完族 2 题 ⇒ 并集 2/105 题号=['metric-02', 'scope-02']
 - answers 件里正文为空或含哨兵的题数=0 题号=无
 - 甲案旧口径那把尺（pre_approval_ruler，评分件）：{"total": 105, "answer_correctness": 0.5714, "evidence_coverage": 0.7905, "substituted_rows": 18, "basis": "卡闸的题按侧车 pre_answer / pre_evidence_n 计分＝run2..run5 口径；分母不变"}
 - 批准账本那把尺（approval_ledger，评分件）：{"hitl_pre_n": 18, "hitl_pre_ids": ["chart-01", "chart-02", "chart-03", "chart-04", "insight-07", "report-02", "report-04", "report-05", "report-07", "report-09", "report-10", "report-11", "report-12", "scope-05", "tool-01", "tool-02", "tool-03", "tool-04"], "approved_final_n": 18, "approved_final_ids": ["chart-01", "chart-02", "chart-03", "chart-04", "insight-07", "report-02", "report-04", "report-05", "report-07", "report-09", "report-10", "report-11", "report-12", "scope-05", "tool-01", "tool-02", "tool-03", "tool-04"], "approval_failed_n": 0, "approval_failed_ids": [], "ledger_rows": 105, 
@@ -179,7 +179,7 @@
   - 停在审批闸上 kinds=['hitl', 'queued_awaiting_approval', 'approval_failed'] 计数=0 题号=无
   - 零字节或错误正文 kinds=['blank', 'cancelled', 'error_event', 'queued_dead', 'queued_cancelled', 'queued_done_no_bytes', 'stalled'] 计数=2 题号=['metric-02', 'scope-02']
 - sidecar 里根本不存在的题（未落账=丢题）：无
-- 🔴 correctness 分母的口径（不靠形容词）：`app/quality/eval.py:468-469` 的 `total=len(rows)`、`answer_correctness=ratio(correct)` 分母恒为全部 105 题，`app/quality/eval.py:401-402` 原话「分母不因为甲案而变：卡闸的题现在拿真终答进分母」⇒ **没有任何一枚 kind 被从分母里剔除**；kind 的差别只在分子上——`FINAL_OK` 那三枚带真正文进 `_is_correct`（eval.py:67-73），`GATED`/`ZERO` 那两族带的是哨兵串或错误串，只能判错不能判对。run2..run5 的 18/105 那一格是「拿批准前那一帧计分」，它在 `pre_approval_ruler`（eval.py:117-148）里，不在主分母上。
+- 🔴 correctness 分母的口径（不靠形容词）：`app/quality/eval.py:757-758` 的 `total=len(rows)`、`answer_correctness=ratio(correct)` 分母恒为全部 105 题，`app/quality/eval.py:681-682` 原话「分母不因为甲案而变：卡闸的题现在拿真终答进分母」⇒ **没有任何一枚 kind 被从分母里剔除**；kind 的差别只在分子上——`FINAL_OK` 那三枚带真正文进 `_is_correct`（eval.py:67-73），`GATED`/`ZERO` 那两族带的是哨兵串或错误串，只能判错不能判对。run2..run5 的 18/105 那一格是「拿批准前那一帧计分」，它在 `pre_approval_ruler`（eval.py:117-148）里，不在主分母上。
 - 旧口径那一把尺读数：substituted_rows=18 pre_correctness=0.5714 pre_evidence=0.7905
 - `/approve` 那一腿：approved=True 18 枚；approval_rounds>0 18 枚（轮数分布={1: 18}）；approval_http_status 非空 18 枚（值分布={'200': 18}）；approval_error 非空 0 枚；kind=approval_failed 0 枚 题号=无
 
