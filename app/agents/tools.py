@@ -1269,11 +1269,20 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                     error_code="internal_error",
                 )
 
-            # 返回前 15 行数据用于图表
+            # 返回前 15 行数据用于图表。
+            # R451：标题与它的正文必须是同一枚 unit，不许切成两条。切成两条时装箱按整条取舍，
+            # 前缀填装那一支与 R445 的名次救援那一支都够得着这一形状：标题那条装得下、JSON 那条
+            # 装不下 ⇒ 交出去的是一段以 "数据样本(前15行)" 收尾的话，承诺了 15 行样本
+            # 而后面一个字节都没有。并成一枚以后 "正文没装下" 与 "标题也没出去" 是同一件事，两条支
+            # 用同一把尺，判定只留在这一处，装箱那一层一个字都不必知道小节语法。
+            # 这不是新规矩，是把这一层本来就有的规矩补齐：_answer_query 的排名/统计/分组/预览四段
+            # 各自都是 "\n".join(lines) 出来的一整条，样本是唯一把标题切出去的那一支。
             try:
                 sample = df.head(15).to_dict(orient="records")
-                parts.append("--- 数据样本(前15行) ---")
-                parts.append(json.dumps(sample, ensure_ascii=False, default=str))
+                parts.append(
+                    "--- 数据样本(前15行) ---\n"
+                    + json.dumps(sample, ensure_ascii=False, default=str)
+                )
             except Exception:
                 pass
         except Exception as e:
