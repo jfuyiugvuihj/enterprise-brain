@@ -361,3 +361,16 @@ index reached = 0
 - **为什么永久不许再开**：`01a09dda`、`01a0acfb` 两条总控线都死于同一类故障——心跳把新的一轮消息打进一条**已经混进别家 provider 消息 id** 的历史里，此后每一次请求都被服务端当场拒（`Invalid 'id': message id must be a string starting with 'msg_', got 'at_...'`／`Invalid 'call_id': call_id is required for function_call_output.`），1 秒内失败、换模型也修不好，只能开新线程接手。09-28 18:50／19:50／20:04／20:30 四次空撞就是活证。**心跳不是便利，是拿线程的命换的。**
 - **替代机制（从现在起按这个走）**：需要"叫人"的时刻由**业主自己发一句"继续"**唤醒本线；总控把待办写进本节下方那张表与看板 §0，靠**磁盘上的账**交接，不靠定时投递。任何一格都**不许**以"提醒不方便"为理由把 `automation-2` 改回 ACTIVE，也不许另建第二条心跳；真要撤销，由业主本人在应用里删。
 - **H6 那格从此谁来盯**：`git rev-parse --abbrev-ref --symbolic-full-name '@{u}'` 的心跳盯梢取消 ⇒ 改为**每格接班第一件事**：现读 `git status -sb` 首行与 `git rev-parse --short @{u}`，落后就当场 push（standing 授权：「push 你现在就可以提交」）。这一格由接班纪律承担，不再由定时任务承担。
+
+## H13 结案 ＋ A1/A3 裁定（09-28 第二十三格·总控线；授权来源＝业主 09-28 原话「这个你自己决定然后你自主推进路线」；**本裁定可推翻**）
+
+- **H13 裁定＝甲**：未标注密级的上传按 1 级（最低公开）入库，**写进契约**，不再当缺陷报。
+- **依据是今天现读，不是 D4 那行的旧转述**：`app/rag/indexing.py:995` 的 `scope_metadata()` 里 `"classification": _scope_int(self.classification, 1)` ⇒ 走正式入库道的每条 chunk 必带具体密级，缺省落 1 级。而 `app/rag/retrieval_pipeline.py:440`（R57 的 fail-closed）已经把 `meta.get("classification", 1)` 改成 `meta.get("classification")` ⇒ **缺键行不再被凭空补成 1 级**；`app/rag/filters.py:50-52` 的 `allows()` 对 `int(None)` 落进 `except TypeError` 返回 False ⇒ 绕过入库道直写的行永远不可见。
+- 🔴 **D4 那行「依据：密级维度已有 `app/rag/filters.py:42` 兜底」就地作废**：`:42` 是 `DocumentRetrievalScope` 的 `filters: dict` 字段（NamedTuple 的成员声明），不是兜底逻辑，真正的兜底在 `:47-52` 的 `allows()`。行号会漂、符号不会 ⇒ 本条按符号记账。
+- **为什么不选乙**：乙（未标注即不可见）要先做一次存量密级回填，否则当场效果是全库集体从检索结果里消失——今天实测存量形状是 `chunk_vectors` 1008/1008 `department=''`、`classification` 全为整数 `1`，`documents` 105 枚里 102 枚部门为空。那比"密级偏低"更坏，且回填属改数据。
+- **代价与交付物绑死（＝新立 R467）**：带真实密级的客户文档若未标注就全员可见。三件一起做：① `docs/api/contract-v1.md` 明写「缺省密级 = 1 级 = 本客户全员可检索」；② 上传界面上那句人话（V 线判据本来就不许屏上出现 `classification=1` 这类技术串）；③ 交付前检查项：客户首灌前逐库确认密级标注策略。
+- **连带解锁 R413（auditor 开不出账号）**：H13 未裁前不许投（`app/common/permissions.py:32-39` 那段自述就是为「不许把未决问题偷换成静默默认值」写的，硬派＝逼执行层造一档假密级）。今天一并裁：**`auditor` 的密级档位 = 3，与 `admin` 同档**。人话理由：审计员读不到机密件就是假审计，而"读得到但改不动"靠的是权限集不是密级档。`ROLE_CLEARANCE` 现读 `{staff:1, manager:2, admin:3}`，加 `"auditor": 3` 是最小改动，`permissions.py:36-38` 那两枚差集钉（`ROLE_PERMISSIONS - CREATABLE_ROLES` 与 `- ROLE_CLEARANCE` 恰好 `{auditor}`）仍然成立。人日按 **1** 计（不是 0.3，因为裁的是同 admin 档而非同 staff 档）。
+- **A1（`users.department` 回填）裁定＝不在真库做，改沙盒**：给跑分账号 `evalbot` 设部门会让 105 题里的跨部门题集体崩掉，A④「逐类不退化」就此失去可比性；`admin` 那格按 `filters.py:36-39` 的现读语义本来就该是 `departments=None`（不受部门限制），补一个部门字符串反而是把它降级。⇒ 由新立 **R469** 用在册的 `scripts/r59c_sandbox_corpus.py` 跑五档 principal × 部门/密级矩阵（J-2 判据现成），把检索侧那格从空集变成有牙读数，**演示库一行不动**。
+- **A3（生产密级标签回填）裁定＝交付阶段按客户真实密级做，不进 V1/V2 代码路径**：合成标签只证行为、不证客户隔离（沙盒那 252 枚已经钉过这条口径），拿它翻绿格③ 是假话。
+- **`MODEL_CONTEXT_TOKENS` 裁定＝今天不动**：两头实测恰好一致（容器内现读 `context_limit 4096 / source code-default`；Ollama 侧 `OLLAMA_CONTEXT_LENGTH` 与 `OLLAMA_NUM_CTX` 均未设 ⇒ 走运行时默认，模型原生 262 144）。抬它必须与 Ollama 运行时窗口同批动并按客户显存量（算术地板：`window_plan(8192)=coherent`、`(16384)=coherent`、`(32768)=not coherent`，`maximum_coherent_context_tokens=18064`）。盲抬＝R255 那句「改一头就把断言变成假话」的陷阱。⇒ 降级为**交付前配置项**，写进部署清单。
+- **仍然只有业主本人能做（本席一件没代做）**：github 代理与 hosts · 删 `%TEMP%\r414_stash\`、`?? %SystemDrive%/`、`?? -` 这些垃圾 · 第二验证机 `ssh vm` 的 sshd（192.168.254.128:22 仍 `Connection closed` ⇒ run6／浏览器九环／E1–E6 全挤本机串行）· 心跳两枚是否启用（现读仍 `PAUSED`，业主「别开人工提醒」那道令有效）。

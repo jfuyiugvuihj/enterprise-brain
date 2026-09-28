@@ -4556,3 +4556,53 @@ A1 `users.department` 回填（现值实测 `admin`/`evalbot` 皆空）＋ A3 �
 - 🔴 这枚数是**并树之后的确认数，不是并树前的放行数**：本席并 R457 时先并树后复跑，已记事故 #75，纪律改口为「全量复跑必须发生在任何一次 `git add` 之前」。下一席不许把这条数抄成「并树前门是绿的」。
 - 三道隔离闸的自证读数全零：`LOCAL_MODEL_NAME = '__eb_test_disabled__'`（conftest 哨兵在位）、`blocked connect attempts to host model port: 0`、`offline discovery stub calls (no socket opened): 0`；R134 那格工作树 Chroma 写回闸门报 PersistentClient 调用 0 次／落点被改道 0 次／写回告警用例 0 枚（会话基线 7 个文件）。工作树里 `M chroma_db/chroma.sqlite3` 是登记在案的永久脏项，与本门无关，未提交未删除。
 - 墙钟账不跨格比较：本格 `-n 4`／489.5 s 与上一账本 `-n 6`／302.16 s 的差来自自选并发数与机器负载不同（本格后段有 Feynman 的定向 pytest 与 r454 驱动件在跑），既不是回归也不是提速证据。判回归只按同一 HEAD 的复跑枚数。
+
+## §134（09-28 第二十三格·总控线 `9c21490`→在途，qwen3.8-flash 单模型未切换，心跳两枚仍 PAUSED）：门 8237 落地 · 记账与 push 首次闭环 · 镜像真重建并滚容器 · 五道现读全过 · 🔴 H13 结案并连带解锁 R413 · 新立 R467/R469
+
+### 一、门与账（本格第一优先：前任一死这两笔就没人收）
+- 门 PID 47128：22:39:15 起，22:47:24 收，`run_gate` 自选 `-n 4 --dist loadfile`，489.5 s／pytest 476.23 s，**8237 passed／50 skipped／2 xfailed／exit=0** ＝ 接班基线 8172＋R457 的 29＋R461 的 36，逐号对上、零回归。🔴 并树后确认数，不是并树前放行数（#75）。
+- 跟进单 §133 全文落仓（938 370→955 643 B／CRLF 4 473→4 531／loneCR 恒 1 534／bareLF 恒 26／U+FFFD 恒 7／文件尾无 newline）；看板新开 §4DQ（1 315 513→1 322 502 B／5 750→5 766 行／LF 本／BOM 保住／禁语零命中）。
+- ✅ **H6 那格今天闭了**：代提交 `9c21490` 并 push，`5939b38..9c21490`，`rev-parse --short @{u}` 现读 == HEAD，`rev-list --count @{u}..HEAD` = **0**。这条主树第一次不再是唯一副本。
+
+### 二、镜像与容器（业主授权总控自做）
+- 🔴 **先证伪再报**：2 秒建完一枚后端镜像不可信 ⇒ 本席把镜像里的 `app/scheduler/jobs.py` 用 `docker create`+`docker cp` 抠出来跟主树逐字对，R457 那枚 02:30 清扫腿确实在里面；层账实取 `#6–#12 CACHED`（依赖层）＋`#13–#16 DONE`（新 COPY 层）⇒ **真更新，不是 `docker compose build backend` 那种静默空跑**。
+- 新镜像 `9f0fc19accdd`，label `org.opencontainers.image.revision=9c21490`；`check_image_provenance.py` → `provenance gate: PASS`。⚠️ 它那句 `DOCS-ONLY ... touched nothing the image carries` 是措辞坑：判词只比"label 到 HEAD 的待并提交"，label 已等于 HEAD 时恒为 DOCS-ONLY，**不证明代码进过镜像**。要证代码进没进，只能像本席那样抠文件比字节。⇒ 记一笔，属 `scripts/` Halley 写域外，另立单再说（本格不改）。
+- `docker compose --env-file deploy/.env.server up -d --no-build --force-recreate backend worker scheduler` ⇒ 三枚容器滚到新镜像，七容器全在。**踩坑**：不带 `--env-file deploy/.env.server` 时 compose 因 `POSTGRES_USER`/`REDIS_PASSWORD` 插值失败当场拒不启动（H12 早记过，本席又踩一次）。
+- 五道现读全过：`check_image_provenance` PASS ｜ `verify_container_stack --skip-build` **22 passed／0 failed** ｜ `seed_workspace.py --check` `RESULT ok documents=100 datasets=1`（WARN：4 行只在卷里，重装会丢） ｜ `check_corpus_parity` `verdict: PASS`（disk=97 live=100 manifest=100 non_corpus=1 tracked=97，同一枚 4 行 WARN） ｜ `eval_window_answer_cache_gate.py --check` **rc=0**，`PING=PONG` 之后读到 `answer:* = 0 枚`（dbsize=109，旁证 `enterprise-brain=109` 未变）⇒ R461 那枚量具第一次有真机读数。
+- ⚠️ **环境形态变化（照实报）**：本席这次 recreate **不带** `-f deploy/compose.cloud-eval.yaml` ⇒ 后端回到默认本机形态：`LOCAL_MODEL_NAME=qwen3.5:9b`、`MODEL_CONTEXT_TOKENS` 未设（容器内现读 `context_limit 4096 source=code-default`）、`INDEX_BACKEND` 未设。交接账 §1 那句「容器现读 16384／qwen3.8-flash」是云窗叠加层的遗留态被当成了默认态，**本格作废该转述**。按 R453 口径，时延与分数只能在默认这一档出，所以这一步是对的；下一扇云窗须重新带那个 `-f` 且四枚 env 逐枚设进进程环境。
+
+### 三、H13 结案与连带效应（全文在 human-gates 最后一节，此处只登记号账）
+- **H13＝甲**（未标注密级按 1 级入库，写进契约，不再当缺陷报），依据今天现读 `indexing.py:995` ＋ `retrieval_pipeline.py:440` ＋ `filters.py:50-52`；**D4 那行「`filters.py:42` 兜底」的转述就地作废**（`:42` 是 NamedTuple 字段声明，不是逻辑）。授权来源：业主 09-28 原话「这个你自己决定然后你自主推进路线」，**可推翻**。
+- **解锁 R413** 并一并裁 `auditor` 密级档 = **3（与 admin 同档）**，人日 1。写域 `app/common/rbac.py`＋`app/common/permissions.py`＋两枚差集钉＋`frontend/src/lib/users.js:48` 与其钉 `lib/__tests__/r360-user-writes.test.js:604-608`。与在途四枚写集零交集。
+- **A1 裁定＝不在真库回填部门**：给 `evalbot` 设部门会让 105 题跨部门族集体崩，A④ 失去可比性；`admin` 该走 `filters.py:36-39` 的 `departments=None` 语义而不是补一个部门串。改由 **R469** 用在册 `scripts/r59c_sandbox_corpus.py` 在沙盒跑五档 principal × 部门/密级矩阵（J-2 判据现成），把检索侧「跨密级命中 0 条」从空集变成有牙读数，**演示库一行不动**。
+- **A3 裁定＝客户真实密级在交付阶段做，不进 V1/V2 代码路径**：合成标签只证行为、不证客户隔离，拿它翻绿格③ 是假话。
+- **`MODEL_CONTEXT_TOKENS` 裁定＝今天不动**（两头实测都是 4096），降级为交付前配置项；地板数据一并记下：`window_plan(8192)=coherent`／`(16384)=coherent`／`(32768)=not coherent`／`maximum_coherent_context_tokens=18064`／模型原生 context length 262 144。
+
+### 四、号账与在途（本笔现取）
+- 新立：**R467**（H13/甲 的契约与上传界面三件交付物；写域 `docs/api/contract-v1.md`＋上传那一屏的文案＋新钉）、**R469**（pgvector 沙盒标签矩阵窗，把 C 门检索侧从空集变有牙；只动沙盒表）。号现取：`R467`/`R469` 在 `AGENTS.md docs/ specs/ tests/ scripts/ app/` 全仓零命中，`R468` 有 1 处命中 ⇒ 跳过不用。
+- 在途四枚＝`Feynman`/R454 第二补令（`be-r454`@`4cd0a1c`）· `Laplace`/R459 直答腿接片段出口（`be-r459`@`49555eb`）· `Halley`/R460 第三补令（`be-r460`@`49555eb`）· **`Mendel`/R462**（`be-r462`@`9c21490`，tuple 当 dict 键那枚 P1；派工词已硬禁「顺手加 `default=str`」这种掩盖真因的修法）。
+- 已让槽：`Volta`/R461（交回在手，判据⑤ 未接线与真机腿零读数两格已在本格补齐——本席补跑 `--check` rc=0 与清缓存三态）。
+- 已预配待投：**R463**（树 `be-r463`@`9c21490`，落点 `app/common/model_budget.py` 的 `prompt_room_tokens` 没给该档声明的输出留位）· **R464**（树 `be-r464`@`9c21490`，批准续跑片账断裂；🔴 与 R459 是同一条流式道，不得同时并树）· **R413**·**R467**·**R469**。
+- 事故纸面到 #75（本席前任所用），本席新增 **#76**：把云窗叠加层的容器态当成默认态记账（见第二节 ⚠️ 那格）。
+
+## §135（09-28 第二十四格·总控线，主树 `1e87fa8`→`72bdf96`→`2e9c127`→`bba0a0f`；qwen3.8-flash 单模型未切换；心跳两枚磁盘现读仍 `PAUSED`，本席未动）：治掉一枚「落地即自毁」的件（事故 #77）· R459 与 R462 并树 · 满格四枚同跑 · 新立 R471
+
+### 一、先订正上一格那扇门（本席不动它就是不诚实）
+- §134 一、那句「门 PID 47128…**8237 passed／exit=0**＝接班基线」记的是 **22:47 那一扇**，它后面还并了 `7f061f3`（R454 第二补令）与 `1e87fa8`（R460 第三补令）两笔代码。本席 23:21:31 收的第一扇门真值＝**11 failed／8313 passed／50 skipped／2 xfailed／exit=1**（`run_gate` 自选 `-n 6 --dist loadfile`／426.1 s）⇒ §134 与 §4DR 里所有「合跑 163 passed／118 passed」都只是**并树前**的放行数，不是落地后的确认数。
+- 11 枚全在 R460 自己那两枚件里（`tests/test_r460_run9_coordinates_are_derived.py` 6 枚＋`tests/test_r460_hand_fudged_numbers_and_wrong_layers_both_redden.py` 5 枚）。根因＝那件拿 `blob_at("HEAD", READOUT_REL)` 当「改前凭据」，docstring 自述「`HEAD` = 本单基点，落地之前」——这个前提只在并树**之前**成立，并树那一刻 `HEAD` 前移，「改前」与「改后」变成同一本，断言读到 `{'app/quality/eval.py:681-682'}` 而期望 `{'app/quality/eval.py:401-402'}` ⇒ **件在自己落地那一刻自毁**。不是竞态、不是工作树被改写（本席逐条现取：`git merge-base --is-ancestor 49555eb HEAD` rc=0；`git show 49555eb:docs/testing/run9-readout-2026-09-28.md` 与 `HEAD` 那本 hash 不等）。
+- 🔴 这一族的病名：**拿会随时间失效的东西当不变量**。同族先例两枚在册：`046c5ce`（并树后 `assert shipped.startswith(base)` 变假 ⇒ 换子序列断言）、`4d98d99`（契约 append-only 那格 `==` 改 `>=`）。区别只在这一枚是**执行层的件**、而它的自毁要等总控并完树才现形，所以「施工态点名跑绿＋总控并树前主树点名跑绿」两道都没能拦住它。
+- 修法＝`head_book()`→`pre_landing_book()`（读新常量 `PRE_LANDING_REV = "49555eb"`）、`printed_at_head()`→`printed_before_landing()`、四处调用点与另一枚件的 docstring 同步，另加一枚钉「落脚点自己」的牙：`test_the_pre_landing_book_is_pinned_and_is_not_the_head_book()` 同时要求基点在祖先链上、且那一本 ≠ `HEAD` 那一本——谁再把落脚点挪回 `HEAD`，当场红。已并树 `72bdf96`。
+
+### 二、本格两枚并树（都遵守 #75：复跑发生在任何一次 `git add` 之前）
+- **R459 → `2e9c127`**（施工 `Laplace`/`01a0e820-bbf7-7ce2-ad22-7a3efdcad8ac`，树 `be-r459`@`49555eb`，写域 `app/agents/orchestrator.py` 81/4 ＋ 两枚新钉 78,265 B）。本席先证漂移再覆盖，搬后 sha256 逐枚同值（`D7AE9CBC8AFB…`／`4742E548FA6F…`／`087E8DD24F8D…`），原件镜像 `E:\eb-offload\R459-2026-09-28\`。亲跑 13 枚件合跑 **174 passed／0 failed**（36.95 s）。判据④ 两枚读数：生产侧片数=4／首片 31.0 ms；收侧真 `/api/v1/ask`（夹具 run9 `chat-09`／541 字）片数=16／首片 63.0 ms／`frame_calls=16`／`frames_written=17`，三格对齐 `pieces == frame_calls == len(frames_written) - 1 == SSE text 帧数` 且 `dropped=0`、`closed=False`。🔴 不闭的两格：`_frame_verdict` 豁免过宽（见三、R471）；收侧前缀链钉只覆盖 `doc-07`/`chat-03`/`chat-06` 三例。
+- **R462 → `bba0a0f`**（施工 `Mendel`/`01a0e881-b1ed-7683-b1db-ecdadb960248`，树 `be-r462`@`9c21490`，写域 `app/agents/tools.py` 52/2 ＋ 两枚新钉 185／108 行）。真抛点＝那一发 `json.dumps(result, ensure_ascii=False, default=str)`（改前 `:1400`／改后 `:1447`），**不是** `reliable_queue.py` 那五处 dumps；造键在 `app/tools/excel.py:474`（`DataFrame.to_dict(orient="records")`）与 `:476`（`Series.to_dict()`，来自 `df.groupby(['区域','季度'])['销售额'].sum()`）⇒ tuple 当 dict 键。🔴 施工已证 `default=str` 对键一个字都救不了（`default=` 只作用于值）。修法＝契约出口递归展平（`_TUPLE_KEY_SEPARATOR = " | "`）＋origin 碰撞守卫当场 `ValueError`，不合并/不覆盖/不咽，无 `skipkeys`、无 try/except。亲跑 8 枚件合跑 **187 passed／0 failed**（15.51 s）。六把反证（施工）：摘调用点 3 红含 traceback 原文／`skipkeys=True` 3 红／try-except 咽 3 红／摘碰撞守卫 2 红／键一律 `str()` 化 14 红／只展平最外层 1 红。
+- 🔴 R462 留下的三格诚实边界不许抄成闭了：① 展平后**层级名拿不回来**（`index.names` 在 `to_dict()` 那一刻已丢，要 `区域=华北` 那种带维度的键得动 `app/tools/excel.py`，另立一格）；② `app/agents/tools.py:1281` 那 15 行样本裹在 `try/except: pass` 里，同族 MultiIndex 负载**不炸而是静默丢掉整段样本**（未改未证，另一族病）；③ report-11 那一发的模型表达式原文没拿到，属两族中哪一族是推断。
+
+### 三、号账·事故·写域
+- **新立 R471**：病＝`_frame_verdict` 里 R215 的受控纠正替换把「正文出现两遍」豁免成绿（实测 `prefix_breaks=1, corrective_replacements=1, uncorrected_breaks=0`）。写域＝`app/api/v1/chat.py` 的 verdict 计算＋R215 那三枚在册钉的判据；判据＝造一形「摘光三格前置导致正文两遍」的夹具，`verdict` 必须读 False，且 R215 原有三枚钉不许改宽。人日 0.5。号现取：`R471` 上一格已证 `AGENTS.md docs/ specs/ tests/ scripts/ app/` 全仓零命中。
+- **事故 #77**＝本格那一枚 R460 自毁件（上一格立案的 11 枚门红由本格收，登记在本节，不在别处）。纸面事故最大号从 #76 进到 **#77**。
+- **写域让位（只按写集说话，不按功能名）**：R463 落点也在 `app/agents/tools.py` ⇒ 与 R462 相交，R462 已在 `bba0a0f`，本席把 `be-r463` 重新配到 `bba0a0f`，开工条件是 §0 名册并发数降到 3 以下（现读 4）；R464 与 R459 同一条流式道 ⇒ R459 已并完，本席才投 `Archimedes`/R464。**R470**（重启演练，V2 #21）与本席正在用的容器真库是同一份资源，且会打断 `Huygens`/R469 的读数 ⇒ 本格零动容器。
+- **满格四枚**：`Peirce`/R413（`be-r413`，V2 #5 权限统一）· `Huygens`/R469（`be-r469`，V2 #18 格③ 沙盒标签矩阵）· `Pascal`/R467（`be-r467`，H13 三件契约交付物，23:3x 投）· `Archimedes`/R464（`be-r464`，23:4x 投）。🔴 上限 4 的理由是 provider 429（事故 #72），不是 CPU。已 close 让槽：`Laplace`、`Mendel`。派工一律无 model 覆盖、一个 block 只一次投递。
+- **§0 名册欠账（本席补记）**：`Mendel`/R462、`Peirce`/R413、`Huygens`/R469、`Pascal`/R467、`Archimedes`/R464 五枚**上一格没写进名册**，只写在 §4DR 散文里——名册是派工唯一事实源，散文不能代替它。本格已在 §0 表尾补齐五枚（含结案两枚），行用 splice 写回，看板仍是纯 LF 本、BOM 保住。
+- **卫生**：`be-r459` 树 `?? data/..persistence.json.lock`（0 字节、非 .gitignore 命中）本席不删（删文件属业主）。⚠️ `tests/test_r459_supervisor_answer_leg_streams.py` 是 LF 本，`git add` 时 git 提示会被换成 CRLF ⇒ 与 §4DQ 那格同族（`core.autocrlf=true` 且无 `.gitattributes`），若下一扇门在这一枚上出**形态**假红，按「按内容比＋断在盘件行尾不混排」处理，不许新建 `.gitattributes`、不许改 git 配置。
+- **`frontend/node_modules` junction**：本席给 `be-r467` 新接了一枚（`.bin/vitest` 现读在位，`vitest` 包在位）⇒ 前端门可在该树自跑；junction 不随单并树。
