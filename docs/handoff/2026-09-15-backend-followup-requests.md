@@ -4288,3 +4288,43 @@ R425 的执行腿被 `tests/test_r22_rebuild_cli.py:202` 封死（R235 同型第
 - ⇒ 入规一句：**引用行号必须带「哪个 commit 的现读」，能引符号就别引行号。** 这是今天第二次踩同一族（第一次＝§124 那本行号账被 R439 并树打漂、门红了一整班）。
 - ⇒ 入规一句：**引用行号必须带「哪个 commit 的现读」，能引符号就别引行号。** 这是今天第二次踩同一族（第一次＝§124 那本行号账被 R439 并树打漂、门红了一整班）。
 - 🔴 **本班两枚自伤（都在提交前抓回，未污染历史）**：① 追加 §126 时又把这枚文件写成**以换行结尾**——同一格坑上一班（§124）刚踩过一次，根因＝正文以 `\n` 收尾还照原样 append。规矩补死：**尾部追加一律「append 完立刻把结尾的 `\r\n` 裁干净，提交前现读 `endsNL=false`」**。② 计数写成 `text.match(/x/).length` 拿到的永远是 1（非全局 `match` 返回的是第一枚匹配数组），差点把「本文反引号枚数」记成 1；凡计数一律 `match(/x/g) || []`。③ 还有一次 `replace` 锚点选了「行首前缀」，把下一行的尾巴挤进了新 bullet——**改行要么整行 splice、要么锚点取到行尾**。④ **最重的一笔（仍是提交前抓回）**：为了改末尾两行，我用 `split(/\r\n|\n/)+join("\r\n")` 把整文件归一化，**当场把历史上那 26 枚裸 LF 全洗成 CRLF**＝污染 26 行无关内容、diff 立刻变脏。处置＝`git checkout -- docs/handoff/2026-09-15-backend-followup-requests.md` 回到 `870fb67` 态（869,708 B／bareLF 26／loneCR 1534／尾无 newline），再按「只追加自己的行、逐行 CRLF」重做。规矩补死：**改 CRLF 件不许整文件 join 归一化，只能按行 splice 或纯尾部追加；动手前先现读 bareLF 基线，动手后必须等值，不等值就回退重来。** 现读恒量（本笔之后）：size 869,708→876,005、loneCR 恒 1534／bareLF 恒 26／U+FFFD 恒 7／控制字符集仍 {0x0C}／文件尾无 newline，sha 见提交语。
+
+## §127（09-28 第十九格续·总控线，主树 `7532652`）：三笔并树验收账（R447 · R445＋改口一枚 R122 钉 · R449）· 新立 R451 与 R452 判据正文 · 镜像重建与容器栈五道现读
+
+### 一、R451 判据正文：数据腿交出去的那一段不许是「未闭合小节标题」
+
+- 病灶（本席现读@主树 `7532652`，行号会漂、施工落笔前自己取）：`app/agents/tools.py` 数据腿把自己那段报告切成多条 unit 时，**小节标题与它的正文是两条**——紧邻的两发 append：先 `parts.append("--- 数据样本(前15行) ---")`（`7532652` 现读在 `:1275`）、再 `parts.append(json.dumps(sample, ensure_ascii=False, default=str))`。装箱的**两条支都够得着**这一形状（前缀填装一支从来如此；R445 名次救援一支今天也如此），于是可以只交标题那条、把 JSON 样本记进 `dropped`。员工与模型读到的是「承诺了前 15 行样本」而后面一个字节样本都没有。
+- 归因写死：这是 R112 装箱切分自带的形状，**不是 R445 新增**（本席把它立成单，也不把它记到 R445 账上）。R445 的钉 e 拦的是裁出来的短桩，拦不住一整条「标题壳」；今天在册的 `tests/test_r122_stub_honesty.py::test_data_leg_refuses_an_unreadable_stub` 正好读到这一枚（room=40·fitted=1·packed_tokens=9·交回 `数据分析结果:\n--- 数据样本(前15行) ---`）。
+- 要什么：装箱交出去的那一段不许是「以未闭合小节标题收尾、而它的正文被丢掉」的壳；**两条支必须同一把尺**，不许只治救援那一支。
+- 判据① 修法由施工取证后选形：甲＝数据腿构造 units 时就把标题与它的正文并成一枚不可分单元（一处判定，最贴病根）；乙＝装箱处认「开放标题」这一形状。必须写明另一形为什么不行，不许两形都做。
+- 判据② 不许把「装得下的有料整条」一起杀掉——那是§121③c 刚治好的病形状换个格子复发；`tests/test_r445_pack_priority.py` 的钉 b/c 当场会红。「长度门槛只管桩不管整条」这条口径不许动（`PACK_MIN_STUB_BODY_TOKENS` 不许改值、不许挪去管整条）。
+- 判据③ `[PromptPack]` 台账字段一枚不改名、不改序、不加行（R122 判据③，钉 d 在册盯着）。判据④ 证据袋存活线继续按名次判（`_PackedUnits.source_indexes`，R112 复验第 2 条），不许退回前缀长度。判据⑤ 可失败钉 ≥ 4 把（摘守卫壳又交出来 / 放宽到连有料整条都不交 / 动台账字段 / 存活判据退回前缀长度），逐把给摘守卫时的真实红数。
+- 写域：只 `app/agents/tools.py`（数据腿 units 构造与/或 `_pack_into_prompt_room`、`_pack_kept_hits` 那一段）· 新钉 `tests/test_r451_*`。禁：五枚在册件（`test_r122_stub_honesty.py` / `test_r445_pack_priority.py` / `test_r112_prompt_packing.py` / `test_r116_measured_room.py` / `test_r220_packing_loss.py`，要求它们不退化；若必须改口，停手回报由总控落笔）、`app/rag/**`、`app/api/v1/**`（Carson/R404 名下）、`docs/**`、`frontend/**`、`.env*`、`deploy/**`、`chroma_db/**`、评测集、`scripts/run_gate.py`。施工 `Ohm`/`01a0e729-7282-7852-b155-467d18695d3a` @ `be-r451`（基点 `7532652`）。
+
+### 二、R452 判据正文：G07 残格「全站降级横幅」（业主已授权动 `frontend/**`，D13）
+
+- 病灶（本席现读@主树 `7532652`）：逐族降级的脸早在册——`frontend/src/lib/health.js:214 computeFace`、`:241 export function runtimeFaces(health)`、`:65-66` 读 `storage.read_only_protected`、`:284` `degraded/ready`；消费点**只有聊天那一屏**：`components/ChatPanel.vue:242` import、`:778 runtimeFaceList`、屏上 `:1830-1832` `data-testid="runtime-faces"`。本席现读 `rg -n runtimeFaces frontend/src/App.vue` → **EXIT 1**（这一格自 09-26 记账到今天没动过，不是过期账）。员工切到总览／文档／告警／审批任何一屏，「这台服务器没配 embedding·没开 GPU·存储被切成只读」一个字都看不见。
+- 判据① 三态分开：正常 / 降级 / **取不到健康读数**；取不到既不许画成正常也不许画成降级，正常态不许留占位高度把布局顶来顶去。② 一发都不许多打：一次读取多处复用，不许每屏各发一发 `GET /health/details`，不许挂载即轮询，刷新入口必须是员工伸手（同 `ChatPanel.vue:553 pullServerSessions → :1751 session-pull` 那一族纪律），卸载/退出要清 timer。③ 屏上一枚都不许出现源码路径·HTTP 路由名·英文稳定码（计划书 §2 硬判据；反证形按 `components/__tests__/r267-overview-no-tech-note.test.js` 的 SSR 真 HTML 做法，别写只测字符串包含的假牙）。
+- 判据④ 不许放宽任何在册断言；`App.vue` 的既有在册坐标（`router/index.js:130` 注释引 `App.vue:448`、`router/__tests__/r316-admin-entry.test.js:117` 提到批准动 `App.vue:4` 与 `:448`）若被打漂，同一笔重落地引用它的在册件，或给出「没漂」的现读证明。⑤ 三条硬天花板：新色值只准进 `frontend/src/assets/theme.css`（`npm run lint:colors` 必须**恒 148 warnings / 0 errors**）；运行时零外部请求；`npm run build` EXIT=0。⑥ 可失败钉 ≥ 3 把（摘横幅 / 把取不到画成正常 / 逐族脸被合并成一句泛话）。
+- 写域：只 `frontend/src/App.vue`·`frontend/src/assets/theme.css`（本单横幅必需的少量 token）· 新钉 `frontend/src/components/__tests__/r452-*.test.js`。禁：`frontend/src/lib/**`（`health.js` 只准 import 只读引用）、其余 `frontend/src/components/**` 既有件、后端 `app/**`、`docs/**`、起服务·动容器·打模型。施工 `Einstein`/`01a0e72a-43c9-7960-9510-e5b188514a76` @ `be-r452`（基点 `7532652`，`frontend\node_modules` 已做指向主树的 Junction，`node_modules\vitest\package.json` 探活 True）。
+
+### 三、本席三笔并树（sha 与门账全部现取，不采信自述）
+
+- `5ef6bc0` **R447**（施工 Franklin，详本节下一条与看板 §4DN）：队列道批准轮 · 出处随答案交回 · `scripts/eval_transport_ask_v2.py` 147/4 与 `scripts/eval_lane_readout.py` 57/4 · 新钉 686 行。本席另把 4 枚在册 R259 钉收口（假出口不认 `/api/v1/approve`）：`tests/_r259_queue_ruler.py` 37/5（`approvals` 形参 · approve 分支 · `only(path)`/`approve_reads` · `drive_queue` 缺省一枚恢复流，缺省那一枞只交正文不交 sources），`tests/test_r259_awaiting_approval_stops_the_watch.py` 13/4（挂起那枚用例改口三行 + 补一枚 `approve_reads==1`；停表读数仍留在 `pre_kind` 与帧账 `queue.final`，`:137-143` 一字未改）。门 **7832 passed / 50 skipped / 2 xfailed / exit=0**（pytest 314.89 s，16:18 之前的 15:58:39 起 16:04:06 收，枚数账 7809+23）。
+- `11c97bd` **R445**（施工 Hubble，R429 复工）：装箱救援按原名次扫到装满为止（`app/agents/tools.py` 98/30）· 新取证件 `scripts/r445_pack_forensics.py` 782/0 · 新钉 `tests/test_r445_pack_priority.py` 456/0（17 枚用例、六把钉）。本席改口一枚在册钉：`tests/test_r122_stub_honesty.py` 14/4，`test_data_leg_refuses_an_unreadable_stub` 删掉「预算已用尽」那句结局断言与 `stub==refused/fitted==0`，换成 `truncated=="0"` + `stub!="kept"`，`MARK not in out` 与「金额指标1 not in out」两枚原样留着——**牙现验过**：把 `PACK_MIN_STUB_BODY_TOKENS` 从 60 临时拨到 0 ⇒ 该枚当场红（1 failed in 1.57 s），随后按 sha256 还原 `tools.py` 到 `8632039EFC84704D` 复绿。门 **7849 passed / 50 skipped / 2 xfailed / exit=0**（397.32 s，同机另有两枚在途争用，枚数账 7832+17）。
+- `7532652` **R449**（施工 Plato，R444 复工）：六处嵌套 pytest 各自把子 `--basetemp` 收进父 scratch 子目录 + 每处补「父 scratch 全程存在」显式断言（六枚在册件合计 +132/−14）· 新钉两枚（13 枚用例）。施工明写「原样没能复现 620 s 那一红的删除者」（`_pytest` `LOCK_TIMEOUT` 是 3 天、`tmp_path_retention_count` 默认 3，活会话 `.lock` mtime 新鲜就被剪枝跳过）⇒ 本单是**结构性消除共享根通道 + 复发时点名**，不写成「已根治」。门 **7862 passed / 50 skipped / 2 xfailed / exit=0**（275.10 s / -n 4，枚数账 7849+13）。
+- 三笔均：施工侧与主树逐字节等值（sha16 逐枚见看板 §4DN）· 每枚先做「是不是文本」体检（NUL 全 0，事故 #67 入规）· R449 八枚原件先镜像 `E:\eb-offload\r449-2026-09-28\` 才动主树。
+
+### 四、镜像与容器栈（本席已做完，别再挂在业主名下）
+
+- 重建（R448 动了 `deploy/**`·R447 动了打进镜像的 `scripts/**`：`Dockerfile:82` 那行 `COPY --chown=10001:10001 scripts ./scripts`；R445 动了 `app/**`）：`docker build -f Dockerfile -t enterprise-brain:local --build-arg APT_MIRROR=mirrors.tuna.tsinghua.edu.cn --build-arg GIT_SHA=7532652 --build-arg BUILT_AT=2026-09-28T16:38:55+08:00 .` → EXIT=0，2.7 s（全缓存，跑得快不代表没重建，取决于层指纹）。
+- `docker compose --env-file deploy/.env.server up -d --no-build` → EXIT=0，backend “Healthy”；`scripts/check_image_provenance.py` → **MATCH -- image revision equals 7532652，PASS，rc=0**；`scripts/verify_container_stack.py --skip-build` → **22 passed / 0 failed**；`scripts/seed_workspace.py --check` → RESULT ok（documents=100 datasets=1 owners=1，plan 96 already in / 0 to upload）；`scripts/check_corpus_parity.py` → **verdict PASS**（disk=97 live=100 manifest=100 non_corpus=1 tracked=97）。
+- 🔴 预留的一格照旧是事实，别报成已治：两道 `WARN` 同时点名四行只存在于容器命名卷的语料（`browser_acceptance_policy.txt`·六级作文模板.docx·深度学习入门…pdf·深度学习技术栈学习路线.pdf）⇒ **重装即丢**，本席没法从磁盘重建它们（取证口径：`seed_workspace --check` 与 `check_corpus_parity` 同时报出）。
+- push 已做（业主 standing 授权，非代做决策）：`git push gitee HEAD:refs/heads/codex/data-file-catalog` → `4d04f89..7532652`，随后现读 `git rev-list --count @{u}..HEAD` → **0**。github 那侧仍等业主修代理/清 hosts，本席一个字节没动。
+
+### 五、下一格接手顺序
+
+- 在途四枚：`Carson`/R404（`chat.py` + `catalog.py`，判据 §126 二）· `Ohm`/R451 · `Einstein`/R452 · `Zeno`/R405+R432（四枚新件 11:53 前在盘、非终态，**别 close**，事故 #67 教训）。槽位帐：实证上限 5 枚，本席已 close `Goodall`·`Franklin`·`Hubble`·`Plato` 四枚。
+- pgvector 翻默认仍挡三格：格② 热集让路＝**R428**（判据 §120 四，驱动件 `%TEMP%\evalrun\r428-driver.md`，必须容器内跑：宿主 5432 有野 PG，否则 PG 腿静默降级成 numpy 估算腿＝假绿；只写 `eb_r59_sandbox`）——要安静机器，现四枚在途争用，本席没派；格④ 客户尺寸两档差＝R432（Zeno 在途）；格③ 生产标签＝纯业主（A1 `users.department` 回填 + A3 密级回填 + H13 未裁）。
+- 只等业主：R440 问答档 p95 口径（n 必带）· R433 禁语闸扩面 · D15 乙案落笔 · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）+ Ollama `num_ctx` 同值 + `up -d --force-recreate` 同批（`MODEL_MIN_ANSWER_TOKENS=1536` 不许动）· `deploy/.env.server` 任何编辑（含 `INDEX_BACKEND=pgvector`）· github 代理与 hosts · 改评测集题面（D10 甲那一步单独批）· 删 `%TEMP%\r414_stash\` 与 `?? %SystemDrive%/`。
+- 本席的本机教警（不是事故，但下班别踩）：`mcp__node_repl__js` 连续两次在**全程几十字符**的调用上整口 300 s 超时（一次读看板切片、一次字节账现读），与 payload 大小无关⇒ 本机 kernel 不可信；字节账与文件写入一律改用 PowerShell（`[System.IO.File]::ReadAllBytes` 逐字节数 13/10）· 取文件内容用 rg 行号（它只按 `\n` 分行）而不要用 `Get-Content` 行号（它连孤独 CR 也当换行，两套号码在这本跟进单上差一千多行）· `Get-ChildItem -Filter 'test_r11[0-9]*.py'` 在本机找不到存在的文件，改用 `rg --files tests --glob` 。
