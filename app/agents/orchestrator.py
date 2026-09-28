@@ -620,6 +620,55 @@ def route_main(state: AgentState, config=None):
     logger.info(f"[Route] dispatch → {workers}")
     return ["main_tools"] + [Send(w, state) for w in workers]
 
+# ==================== 内部交接标记（R439） ====================
+
+#: 子 Agent 的正文交回 supervisor 时披的是**内部**记号，格式在册（``app/api/v1/chat.py``
+#: 的两处候选拾取与多枚既有测试凭它识别"这是编排层的中转文字"）：
+#: ``【<worker> Agent 返回】\n<正文>``。
+#: 🔴 它永远不许成为交回客户的那一句话。run9 真机窗实测：chart-01 的终答 16 个字、data-09
+#: 的终答 15 个字，逐字等于这枚标记本身（正文丢了），客户屏上只剩一句没用的包装标签。
+AGENT_RETURN_MARKER_TAIL = "Agent 返回】"
+
+
+def agent_return_marker(worker: str) -> str:
+    """内部交接标记本身：``【<worker> Agent 返回】``。"""
+    return f"【{worker} {AGENT_RETURN_MARKER_TAIL}"
+
+
+def agent_answer_body(text) -> str:
+    """把内部交接标记从一段文字上摘掉，只交回正文。
+
+    认法与 ``app/api/v1/chat.py`` 既有的两处候选拾取同一把尺：整段以 ``【`` 开头、且前 50 字
+    里出现 ``Agent 返回】``。不带这枚标记的文字按既有口径 ``strip()`` 原样交回；只剩标记的
+    那一发交回**空串**——那一发没有正文，标签不是答案。
+    """
+    value = str(text or "").strip()
+    if not value.startswith("【") or AGENT_RETURN_MARKER_TAIL not in value[:50]:
+        return value
+    cut = value.index(AGENT_RETURN_MARKER_TAIL) + len(AGENT_RETURN_MARKER_TAIL)
+    return value[cut:].strip()
+
+
+def agent_return_message(worker: str, answer: str):
+    """正文非空才包装成交接消息；正文为空（或只剩空白）交回 ``None``。
+
+    交回 ``None`` 时这一发**不往 ``messages`` 里追加任何东西**，也不在那里留一句客套话：
+    ``worker_results`` 与 ``agent_results`` 照旧落账，``status`` 与结局码一个字不改——
+    空正文在 ``app/agents/evidence.py`` 的 ``_terminal_status`` 里本来就是
+    ``("failed", "internal_error")``，那是装配层的事实，不该被包装标签盖掉。客户侧由
+    ``app/api/v1/chat.py`` 的具名结局接手。
+    """
+    body = str(answer or "")
+    if not body.strip():
+        return None
+    return AIMessage(content=f"{agent_return_marker(worker)}\n{body}")
+
+
+def _agent_result_error_code(agent_result) -> str:
+    """日志归因用：读 ``AgentResult.error.code``，没有错误信封时交回空串。"""
+    return str(getattr(getattr(agent_result, "error", None), "code", "") or "")
+
+
 # ==================== Worker Wrapper（传 thread_id） ====================
 
 def _make_worker_wrapper(graph, name: str):
@@ -733,9 +782,25 @@ def _make_worker_wrapper(graph, name: str):
         return {
             "worker_results": {**state.get("worker_results", {}), name: agent_result.answer},
             "agent_results": {**state.get("agent_results", {}), name: agent_result.model_dump(mode="json")},
-            "messages": [AIMessage(content=f"【{name} Agent 返回】\n{agent_result.answer}")],
+            "messages": _worker_handoff_messages(name, agent_result),
         }
     return node
+
+
+def _worker_handoff_messages(name: str, agent_result) -> list:
+    """worker 腿交回父图的那条收尾消息；正文为空时一条都不给（R439）。
+
+    单独成一枚函数是为了让"摘掉这层守卫"成为一件显眼的事：直挂点在 ``messages`` 那一格，
+    换成空列表就是本单要杀的病灶，``tests/test_r439_*`` 当场红。
+    """
+    wrapper = agent_return_message(name, agent_result.answer)
+    if wrapper is None:
+        logger.warning(
+            f"[R439] {name} 子 Agent 交回空正文 → 不包装内部交接标记 "
+            f"status={agent_result.status} error_code={_agent_result_error_code(agent_result)}"
+        )
+        return []
+    return [wrapper]
 
 
 # ==================== 取消协同退出（R12） ====================
@@ -953,7 +1018,7 @@ def _approval_worker_node(state: AgentState, config) -> dict:
     return {
         "worker_results": {**state.get("worker_results", {}), "approval": agent_result.answer},
         "agent_results": {**state.get("agent_results", {}), "approval": agent_result.model_dump(mode="json")},
-        "messages": [AIMessage(content=f"【approval Agent 返回】\n{agent_result.answer}")],
+        "messages": _worker_handoff_messages("approval", agent_result),
     }
 
 
@@ -1099,13 +1164,22 @@ def run_orchestrator_result(user_message: str, thread_id: str = "default", *, us
 
 
 def _final_of(result) -> str:
-    final_answer = str(result.get("final_answer") or "").strip()
+    # R439：这一格是队列道与旧公共 API 的终答拾取口，读的是 ``synthesize`` 写进
+    # ``final_answer`` 的那一段，而 ``synthesize`` 在没有正文时会退回收尾消息本身
+    # （``app/agents/nodes.py`` 的 ``if not final`` 那一圈）——那里披的就是内部交接标记。
+    # 所以两条出口都必须先摘标记再取正文：摘完为空说明这一发没有正文。
+    final_answer = agent_answer_body(result.get("final_answer"))
     if final_answer:
         return final_answer
     msgs = result.get("messages", [])
     if msgs:
         last = msgs[-1]
-        return last.content if hasattr(last, "content") else str(last)
+        body = agent_answer_body(last.content if hasattr(last, "content") else str(last))
+        if body:
+            return body
+    # 下面这句默认文案是本函数改前就有的既有取值，不是本单新造的客套话：这里只许把
+    # "拾到一句内部标记"改判成"什么都没拾到"，不许顺手换一句更好听的人话。
+    logger.warning("[R439] 终答拾取口没拾到正文（只剩内部交接标记或本轮无产出）→ 沿用既有默认取值")
     return "处理失败"
 
 

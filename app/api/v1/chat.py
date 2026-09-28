@@ -1770,21 +1770,57 @@ def _select_final_answer(
     worker_results: dict | None = None,
     candidates: list[str] | None = None,
 ) -> str:
-    """Choose the authoritative answer after the graph has finished."""
+    """Choose the authoritative answer after the graph has finished.
+
+    R439：三条来源都先过 :func:`_answer_body` 摘内部交接标记。``【<worker> Agent 返回】``
+    是编排层交给 supervisor 的中转记号，不是答案：只剩标记的那一发摘完就是空，一律不许成为
+    交回客户的终答（run9 真机窗 ``kind=ok`` 的 data-09 交回 15 个字、``kind=approved_ok`` 的
+    chart-01 批准续跑之后交回 16 个字，逐字等于标记本身，正文丢了）。
+
+    三条来源都为空时交回空串——本函数不填任何句子。空串由调用方的具名结局
+    （``no_answer_produced``）接手，那里既有 ``request.failed`` 也有 ``terminal_state=no_answer``，
+    不是一句静默的空话，也不许在这里洗成"看起来答过了"。
+    """
     worker_results = worker_results or {}
     worker_answers = [
-        str(value).strip()
-        for value in worker_results.values()
-        if str(value).strip()
+        body
+        for body in (_answer_body(value) for value in worker_results.values())
+        if body
     ]
     if worker_answers:
         return "\n\n".join(worker_answers)
-    if str(final_answer).strip():
-        return str(final_answer).strip()
+    body = _answer_body(final_answer)
+    if body:
+        return body
     for candidate in reversed(candidates or []):
-        if str(candidate).strip():
-            return str(candidate).strip()
+        body = _answer_body(candidate)
+        if body:
+            return body
     return ""
+
+
+def _answer_body(text) -> str:
+    """摘掉内部交接标记之后剩下的正文；本文件三条出口共用这一枚口径（R439）。
+
+    尺子住在 ``app/agents/orchestrator.py`` 的 ``agent_answer_body`` 里——标记是那一层造
+    的，拆法也只该有一套；这里再枚举一遍字面就是第二套平行实现。走函数内导入与本文件既有的
+    ``from app.agents.orchestrator import check_interrupt`` 同一条路子，不给导入期添新边。
+    """
+    from app.agents.orchestrator import agent_answer_body
+
+    return agent_answer_body(text)
+
+
+def _recorded_final_answer(current: str, incoming) -> str:
+    """把图这一发交来的 ``final_answer`` 收进本轮读数。
+
+    与改前逐字同义的两格：交来空值就留着上一发（原来是 ``if data.get("final_answer")``
+    那一句门槛），交来正文收下（规范化与收尾的 :func:`_select_final_answer` 同一条）。
+    R439 多守的一格：只剩内部交接标记的那一发**不收**。``synthesize`` 在没有正文时会退回
+    收尾消息本身，而那条消息披的就是这枚标记——收进来就等于把「【data Agent 返回】」当
+    本轮终答的候选。``/ask`` 与 ``/approve`` 两条腿各自都从这里过，少一处就是给标签开门。
+    """
+    return _answer_body(incoming) or current
 
 
 select_final_answer = _select_final_answer
@@ -2395,6 +2431,17 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     answer_scope = answer_cache_scope(request_principal, username=username)
     use_answer_cache = bool(answer_scope)
     cached = get_cached_answer(rewritten_msg, scope=answer_scope) if use_answer_cache else None
+    if cached and not _answer_body(cached):
+        # R439：缓存里躺着一句只剩内部交接标记的条目——改前的树真产过（run9 的 data-09 交回
+        # 15 个字，收尾把那句当终答写进了 ``cache_answer``），后来说不出这句话从哪来。
+        # 一律按未命中处理：宁肯重算一遍再走具名结局，也不许把编排层的中转文字顶着
+        # 「📋 缓存命中」那张脸交给客户，也不许让它落进会话历史（下面的 ``_save_message``
+        # 在命中腿里）。这一格只判"还能不能读"，不替缓存做清理决定。
+        logger.error(
+            f"[ASK] session={thread_id[:8]}... 缓存条目只剩内部交接标记，按未命中处理 "
+            f"cached_chars={len(cached)}"
+        )
+        cached = None
     if cached:
         # 命中的答案同样落进会话历史，这一步与未命中路径的存档动作保持一致。
         _save_message(thread_id, "assistant", cached)
@@ -2869,8 +2916,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             worker_results = data.get("worker_results", {})
             if worker_results:
                 latest_worker_results = dict(worker_results)
-            if data.get("final_answer"):
-                latest_final_answer = str(data["final_answer"])
+            latest_final_answer = _recorded_final_answer(
+                latest_final_answer, data.get("final_answer")
+            )
             # R41：边跑边收证据，不在收尾时反推。取消/失败分支不会读到这个字典，
             # 所以"没有产出可见答案的一轮"也绝不会发出来源事件。
             agent_results = data.get("agent_results")
@@ -3517,8 +3565,9 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             worker_results = data.get("worker_results", {})
             if worker_results:
                 latest_worker_results = dict(worker_results)
-            if data.get("final_answer"):
-                latest_final_answer = str(data["final_answer"])
+            latest_final_answer = _recorded_final_answer(
+                latest_final_answer, data.get("final_answer")
+            )
             # R41/R55：边跑边收证据，不在收尾时反推。取消/超时/抛错三条分支都走不到发
             # sources 的那一段，所以"没有产出可见答案的一轮"绝不会发出来源事件。
             agent_results = data.get("agent_results")
