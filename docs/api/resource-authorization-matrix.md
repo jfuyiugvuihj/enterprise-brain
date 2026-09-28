@@ -68,7 +68,7 @@ frontend agent confirms migration to the frozen contract.
 
 The paragraph above is the requirement. This section is current evidence, so a
 reader no longer has to infer status from the requirement text alone. Line numbers
-refer to the working tree on 2026-09-13 and must be re-audited after the next merge.
+refer to the working tree on 2026-09-13 and must be re-audited after the next merge. One exception: the queue-worker row below was re-audited on 2026-09-28 at main tree 1648361, where the function name - not the number - is the durable anchor.
 
 | Boundary | Code | Evidence that it actually rejects |
 |---|---|---|
@@ -76,7 +76,7 @@ refer to the working tree on 2026-09-13 and must be re-audited after the next me
 | Knowledge graph write/confirm/query | `app/knowledge_graph/service.py:51`, `:96`, `:120` | `tests/test_knowledge_graph.py` |
 | Agent tools without a Principal | `app/agents/tools.py:24`, `:53`, `:61`, `:325`, `:372`, `:450`, `:513`, `:539` | rejected with `error_code=authorization_required`; the rejection text is returned as an error string, never as a business conclusion |
 | Orchestrator worker results | `app/agents/orchestrator.py:277`, `:368`, `:389`, `:525`, `:593` | `tests/test_agent_result_records.py`, `tests/test_approval_worker_honesty.py` |
-| Queue worker identity | `deploy/queue_worker.py:73` (refuses a payload with no Principal), `:79` (`thread_id = session_id or "queue:<request_id>"`) | `tests/test_redis_worker_recovery.py` asserts `failure.last_error == "authorization_required"` and that no conclusion leaves the process |
+| Queue worker identity | `deploy/queue_worker.py` `_process_reserved()`: `:810` (a payload with no owning Principal is refused via `queue.fail_or_retry(request_id, "authorization_required")`), `:832` (`thread_id = session_id or f"queue:{request_id}"`) - 2026-09-28 read at `1648361`; R448 had shifted the previously cited `:73`/`:79`, which were already wrong before it | `tests/test_redis_worker_recovery.py` asserts `failure.last_error == "authorization_required"` and that no conclusion leaves the process |
 | Amount handling | `app/approval/assistant.py:6` `Decimal`, `:11` two-place quantisation, `:14` `to_decimal()` | a missing policy standard stays `unknown` instead of being invented |
 | Metric semantics versioning | `app/semantics/registry.py:11` `semantic-registry-v1`, exposed via `match_metric_context()` | `tests/test_business_semantics.py`, plus the route assertion at `tests/test_intelligence_route_authorization.py:188` |
 | Persistence requires an owner | `app/storage/persistence.py` (`ValueError` when a record has no owner) | `tests/test_postgres_execution_persistence.py` |
