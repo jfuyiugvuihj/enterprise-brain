@@ -89,7 +89,9 @@
    两件事各自有名：(a) kind 词汇表自 R222 起多出 ``queued_*`` 九枚（``queued_polled`` /
    ``queued_done_no_bytes`` / ``queued_cancelled`` / ``queued_dead`` / ``queued_expired`` /
    ``queued_failed`` / ``queued_stalled`` / ``queued_deadline`` / ``queued_no_status``），
-   自 R259 起再多一枚 ``queued_awaiting_approval``（挂起在等人批准的那一轮）⇒ 共十枚；
+   自 R259 起再多一枚 ``queued_awaiting_approval``（挂起在等人批准的那一轮）⇒ 共十枚，
+   自 R447 起再多一枚 ``queued_approved``（队列道那轮挂起被批准到终答）⇒ 共十一枚；
+   🔴 新这一枚只活在停表**之后**的那一层：``_poll_queue`` 交的停表词表与那十枚读数一字未动。
    旧轮次一枚也不可能有
    （本树实取：run6 帧账 kind 只有 ``ok`` / ``approved_ok`` / ``error_event``，run7 只有
    ``ok`` / ``approved_ok``）；(b) 到达时刻与 ``queue`` 那几格自 R223 / R222 起才存在，旧帧账
@@ -109,6 +111,31 @@
     那枚函数上：说不出 ⇒ None（不拿 0 或空表冒充「查过，是零」）、载荷在位而解不开 ⇒ 另一枚
     形状、``authoritative: false`` ⇒ 原样进账。🔴 五枚既有终态的 kind 与语义一字未改；sidecar
     那一行的键集、帧账那一行的键集一个字没多（读数只长在 ``queue`` 那一格里）。
+12. R447（09-28）队列道终局：批准轮必须走、出处必须随答案交回。R259 让量具**认得**那枚
+    ``awaiting_approval`` 就停表（修掉了约 55 min 白烧），但它停在那一格上**一步没走** ——
+    run9c 真机实测 20 枚报告档里 11 枚交回 ``queued_awaiting_approval`` + 空正文，而可读面
+    ``approval_present=true`` / ``approval_steps=["export"]`` / ``approval_ledger_status="awaiting"``
+    / ``approval_notice_chars=37`` 四格全在账上，批准端点一次都没打。今天三件事：
+    ① 队列道读到挂起 ⇒ 按同一契约批准到终答（``POST /api/v1/approve``，同一 session_id、同一
+      Bearer token，走法复用 ``_resolve_hitl``，不新造第二套）；取不到终答记 ``approval_failed``
+      （正文空、出处空、sentinel=true），R123 甲案口径一字不变。legacy 那一路一起治：旧行的
+      ``result`` 逐字就是那句 37 字挂起文案，而可读面的 ``answer_is_park_notice`` 是服务端
+      现算的真读数（R254 兼容节）⇒ 「取回了一份字」不等于「取回了一份终答」，那一枚也进批准轮。
+      🔴 那句挂起文案一个字都不许进交回评分器的正文面（R254 判据① 口径不变）。
+    ② 批到终答落新 kind ``queued_approved``：与既有十枚 ``queued_*`` 一枚都不混，不冒充
+      ``queued_polled``（那枚说的是「从队列 ``result`` 取回了一份字」），也不冒充同步道的
+      ``approved_ok``（那枚说的是「同步流道挂起后被批准」）。
+    ③ 出处随答案交回：后台那一轮的 ``sources`` 只活在 ``/queue/status`` 的终态载荷里（前台回执流
+      一帧 sources 都没有：run9c 实测「流内 sources 事件 0/20」），而 ``_terminal_readout`` 从前
+      只把**枚数**折进取回账 ⇒ 7 枚可读面 ``sources_n>0`` 的题 ``answers.evidence`` 全空。今天把
+      那一身行搬进交回评分器的 ``evidence``（行形与同步道那枚 ``sources`` 事件同源同形：
+      ``app/api/v1/chat.py::queue_turn_sources`` 用的就是 ``_collect_document_sources`` +
+      ``_authorized_source_rows``，不新增放行分支）。出处行**不进帧账**：帧账的口径一直是计数与
+      指纹进账、客户正文不进账（R181 的 ``last_frame_sha`` 同办）。
+    🔴 同步流道那四枚 kind（``ok`` / ``approved_ok`` / ``hitl`` / ``error_event``）的读数与字段
+    逐字节不变：run2..run9 的可比性不许打断。sidecar 那一行的键集、帧账那一行的键集一个字没多。
+    队列道 ``first_token_at`` 仍为 null（后台那一程的首字观测不到；批准腿的到达时刻只进帧账的
+    ``events`` / ``stream_clock``，不冒充 ``first_token_at`` 那一列的第二种零点）。
 
    本文件的行号引用会随 ``app/api/v1/chat.py`` 漂移。09-23 在本树实取：``chat.py:1364`` 今天落在
    ``_complete_pending_steps`` 的收尾里（``return completed`` 在 :1363），「/ask 只发一条整段 text」
@@ -173,6 +200,10 @@ DECLARE_LANE_TIER = os.getenv("EVAL_DECLARE_LANE_TIER", "").strip()
 LANE_BY_TIER = {"报告": "report", "分析": "analysis", "问答": "qa"}
 APPROVAL_FAILED_SENTINEL = os.getenv(
     "EVAL_APPROVAL_FAILED_SENTINEL", "<approval-failed-no-terminal-answer>")
+#: R447 判据②：队列道那一轮挂起被批准到终答之后落的 kind。它与既有十枚 ``queued_*`` 一枚都
+#: 不混，也不冒充同步道的 ``approved_ok``（那一枚说的是「同步流道挂起后被批准」）。
+#: 写在这里而不写进 ``_poll_queue`` 的停表族里：停表那一层说的还是「一步没走」那句真话。
+QUEUED_APPROVED_KIND = "queued_approved"
 SIDECAR = Path(os.getenv("EVAL_SIDECAR") or str(Path(__file__).with_name("collect-sidecar.jsonl")))
 #: R181 判据② 的帧证据件：一题一行，join 键 ``id``（外加 attempt / session_id）。
 #: 落点由 frame_ledger_path() 现算 —— 钉在 import 期会绕过"事后重绑 SIDECAR"的仓外纪律
@@ -198,6 +229,7 @@ _LAST_CALL = 0.0
 _BLANKS = 0
 _PARKED = 0  # R259：本进程里挂起在等人批准的题数（与 _BLANKS 分账，见 transport）
 _APPROVAL_FAILURES = 0
+_QUEUED_APPROVED = 0  # R447：队列道那一路批到终答的题数（与上面两枚分账）
 
 
 def _open(path, payload=None, method="POST"):
@@ -548,7 +580,8 @@ def _arrival_readings(frames):
     readings = {"frames": list(frames.get("frame_arrivals") or []),
                 "events": events,
                 "stream_clock": list(frames.get("clocks") or []),
-                "queue": dict(frames.get("queue") or {})}
+                # R447：只给 transport 的那一格不落帧账（键集一字不许多，出处行不抄进第二份件）。
+                "queue": _ledger_queue_cell(frames.get("queue"))}
     readings.update(_first_screen_reading(events))
     return readings
 
@@ -740,11 +773,16 @@ def _approve_once(session_id):
         return _consume(resp, out)
 
 
-def _resolve_hitl(row_id, session_id, steps, frames=None):
+def _resolve_hitl(row_id, session_id, steps, frames=None, success_kind="approved_ok"):
     """R123 甲案：把挂起轮批准到终答（判据 1），拿不到终答就照实记 approval_failed（判据 3）。
 
     ``frames`` 是 R181 判据② 那一题的帧账本：恢复流的帧并进同一本账（不传就现造一本，
     单测可以只管这一条流）。评分口径一个字没动。
+
+    ``success_kind``（R447 判据②）只改**批到终答那一枚的名字**：缺省 ``approved_ok`` 就是
+    同步流道那一路，逐字节不变；队列道传 ``QUEUED_APPROVED_KIND``，为的是「哪条道批的」在
+    ``kind`` 那一列上读得出来 —— 批到终答不等于从队列 ``result`` 取回了一份字，两枚不互冒充。
+    失败那一支仍然叫 ``approval_failed``：两条道共用同一枚失败名，R123 甲案的口径不分家。
 
     返回 dict：交回采集器的 answer/evidence/first_token_at/steps/kind/sentinel，加侧车用的
     approved/rounds/http_status/error。🔴 每一条失败分支都不返回批准前的 park 文本 ——
@@ -786,7 +824,7 @@ def _resolve_hitl(row_id, session_id, steps, frames=None):
         if text.strip():
             return {"answer": text, "evidence": list(out["evidence"]),
                     "first_token_at": out["first_token_at"], "steps": steps,
-                    "kind": "approved_ok", "sentinel": False, "approved": approved,
+                    "kind": success_kind, "sentinel": False, "approved": approved,
                     "rounds": rounds, "http_status": http_status, "error": ""}
         error = "approve 200 仍无终答：" + (out["error_text"].strip() or "恢复流里没有 text 事件")
         break
@@ -913,6 +951,61 @@ def _terminal_readout(body):
     return readout
 
 
+# ==================== R447：出处随答案交回（判据③） ====================
+
+#: 取回账里**只给 transport 用**的那一格。出处行是要交给评分器的那一份正文，不抄进第二份
+#: 证据件：帧账的口径一直是「计数与指纹进账、客户正文不进账」（``last_frame_sha`` 同办）。
+#: 🔴 它不进 ``TERMINAL_SLOTS`` —— 那一格的键集是 R259 的形状账，一多一少都算改尺；它也不进
+#: sidecar 那一行（``tests/test_r123_hitl_approval.py:243`` 把除九键之外的键集钉成甲案七键子集）。
+TRANSPORT_ONLY_QUEUE_KEYS = ("sources_rows",)
+
+
+def _reportable_source_rows(body):
+    """把 ``/queue/status`` 载荷里那一身出处行搬出来（判据③ 的搬运，不裁决、不补零）。
+
+    只在**载荷真说了话**的形状下取（``SOURCES_READABLE_SHAPES``）：legacy / no_keys /
+    unreadable / not_terminal 四枚形状说不出自己有没有出处 ⇒ 回空表说的是「这一行没交行」，
+    它与「查过了，零枚」在 ``terminal.sources_n`` 那一格上仍然是两件事（口径① 一字不省）。
+    行本身在服务端已过一遍 ``isinstance(row, dict)``（``chat.py::queue_terminal_readout``），
+    所以 ``len(rows)`` 与 ``sources_n`` 逐枚相等 —— 这枚相等由 ``tests/test_r447_*`` 钉住。
+    """
+    if not _sources_are_reportable(_terminal_shape(body)):
+        return []
+    rows = body.get("sources")
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def _queue_evidence(book, stream_evidence=()):
+    """出处随答案交回：可读面真交了行就用它那一身行，说不出就退回流内那一份。
+
+    🔴 不拿空表冒充「查过了，零枚」，也绝不从正文反推出处。队列道后台那一轮没有前台
+    ``sources`` 事件（run9c 实测「流内 sources 事件 0/20」），所以 ``stream_evidence`` 在那一路
+    上恒为空 —— 那正是从前 20 枚 ``answers.evidence`` 全空的来路。
+    """
+    cell = (book or {}).get("terminal") or {}
+    if _sources_are_reportable(cell.get("shape")):
+        return list((book or {}).get("sources_rows") or [])
+    return list(stream_evidence or [])
+
+
+def _bytes_are_the_park_notice(book):
+    """取回的那一份字**逐字就是**那句挂起文案吗（判据① 后半段那把闸）。
+
+    认的是服务端现算的真读数 ``answer_is_park_notice``（``is_hitl_park_notice`` 按
+    ``hitl_park_text`` 现构造再逐字比），不是量具自己猜文案；``None`` 说的是这一行说不出 ⇒
+    不算命中。run8 相 2 那 11 枚 legacy 行就是这个形状：``result`` 位置上是那句 37 字文案。
+    """
+    return bool(((book or {}).get("terminal") or {}).get("answer_is_park_notice"))
+
+
+def _ledger_queue_cell(book):
+    """落帧账的那一份取回账：摘掉只给 transport 用的那一格（帧账键集一字不许多）。"""
+    cell = dict(book or {})
+    for key in TRANSPORT_ONLY_QUEUE_KEYS:
+        cell.pop(key, None)
+    return cell
+
+
 #: R222 判据①：五枚终态各一枚 kind，外加三枚「没读到终局」各一枚。全部与 ``ok`` 不同名，
 #: 全部可以在 sidecar / 帧账的 ``kind`` 那一列上直接统计（那一列的名字与顺序未动）。
 #: 🔴 ``done`` 沿用 ``queued_polled`` 这个名字：``tests/test_r181_text_frame_ruler.py:322``
@@ -950,6 +1043,9 @@ def _poll_queue(request_id):
     kind = ``queued_awaiting_approval``，正文空串 —— 它与 ``queued_polled``（取回了一份字）、
     ``queued_done_no_bytes``（跑完了没正文）三枚互不冒充。上面五枚终态的 kind 与语义一个字
     没动（判据⑤）：新加一枚不等于可以重排旧的。
+    🔴 R447：这一层说的仍然只是**停表读数**（「一步没走」），它不再是这一题的结局 ——
+    ``transport`` 读到这一枚就读 ``queue.terminal.approval`` 那枚把手，把批准轮走到终答，
+    批到落 ``queued_approved``、批不到落 ``approval_failed``。停表词表与读表次数一字未动。
 
     ``取回账`` 是那一段观测的账（轮了几次 / 抖了几次 / 重登几次 / 等了多久 / 最后读到什么），
     由 ``transport`` 折进帧账的 ``queue`` 那一格。🔴 它不进 sidecar（那一行的键集被
@@ -1020,6 +1116,8 @@ def _poll_queue(request_id):
             stalled_at = now + QUEUE_STALL_SECONDS  # 用本轮那枚表戳起算，不再读一次
         if status == "done":
             book["terminal"] = _terminal_readout(body)  # R259 判据②：终态读数进账
+            # R447 判据③：出处那一身行只给 transport（落帧账前由 _ledger_queue_cell 摘掉）。
+            book["sources_rows"] = _reportable_source_rows(body)
             result = body.get("result")
             if isinstance(result, str) and result.strip():
                 return _stop("queued_polled", result, "done", now)
@@ -1034,6 +1132,7 @@ def _poll_queue(request_id):
             # =「跑完了但没正文」，本枚 =「一步没走、在等人批准」——不许并进前两枚的任何一枚。
             # 🔴 正文交空串：契约里这一枚的 ``result`` 恒为 null，那句 37 字挂起文案只从
             # ``queue.terminal.approval_*`` 读数里露脸，一个字都不许当正文交回评分器（R254 判据①）。
+            # 批准轮在这一枚停表**之后**由 transport 走（R447 判据①），这一层一枚都不许多打。
             book["terminal"] = _terminal_readout(body)
             return _stop("queued_awaiting_approval", "", "awaiting_approval", now)
         if status in ("cancelled", "dead", "expired", "failed"):
@@ -1074,7 +1173,7 @@ def transport(row):
     吐出的字节。R123 甲案之后 HITL 等待文案不再是这一题的终答：先按契约批准，拿真终答回来；
     批准失败记 approval_failed，不拿挂起那一帧的半截文本冒充答案。
     """
-    global _TOKEN, _BLANKS, _APPROVAL_FAILURES, _PARKED
+    global _TOKEN, _BLANKS, _APPROVAL_FAILURES, _PARKED, _QUEUED_APPROVED
     row_id = str(row.get("id", ""))
     last_error = None
     for attempt in range(1, ATTEMPTS + 1):
@@ -1118,25 +1217,38 @@ def transport(row):
             # 取回那一程的账折进帧账的 queue 那一格。
             kind, answer, frames["queue"] = _poll_queue(out["queued"].get("request_id"))
             first_token_at = None  # 后台跑的首字观测不到 ⇒ null（采集器允许 null，禁止估算）
+            if kind == "queued_polled":
+                # R447 判据③：出处随答案交回。后台那一轮的 sources 只活在 `/queue/status` 的
+                # 终态载荷里（前台回执流一帧 sources 都没有），从前没人把它搬到交回评分器的
+                # 那一份 evidence 上 ⇒ run9c 实测 7 枚可读面 sources_n>0 的题 evidence 全空。
+                evidence = _queue_evidence(frames["queue"], out["evidence"])
         # 🔴 走过队列道就不许再被前台那枚 error 帧或那枚 cancelled 帧换掉 kind：后端已经
         # 明说过这一轮的结局，拿一条没送达的旁证去改写它，量的就不是同一件事了。
         if not answer.strip() and out["error_text"].strip() and not from_queue:
             answer, kind, evidence = out["error_text"], "error_event", []
-        if not answer.strip():
+        # ===== R447 判据①：队列道读到 awaiting_approval ⇒ 批准轮必须走 =====
+        # 停表那一层说的还是真话（``queued_awaiting_approval`` 与它的十枚同族一字不改，见
+        # ``_poll_queue``），但「一步没走」从今天起不等于结局：契约把那一轮的批准把手交在
+        # ``queue.terminal.approval`` 里，而 POST /api/v1/approve 要的 session_id 就是本题 /ask
+        # 用的那一枚（归属谓词与同步道同一枚），走法复用 ``_resolve_hitl``，不新造第二套。
+        # 第二枚要进批准轮的是 legacy 那一路：旧行的 ``result`` 逐字就是那句 37 字挂起文案，
+        # 而可读面的 ``answer_is_park_notice`` 是服务端现算的真读数（R254 兼容节）⇒
+        # 「取回了一份字」不等于「取回了一份终答」。🔴 那句文案一个字都不许进评分器。
+        pending_approval = kind == "queued_awaiting_approval" or (
+            kind == "queued_polled" and _bytes_are_the_park_notice(frames["queue"]))
+        if pending_approval:
+            # R259 的白烧闸口径不动：挂起的一轮是**产品结局**，一枚都不喂 ``_BLANKS``
+            # （算进去的后果是 09-25 那窗 11/20 挂 HITL 在第 6 枚就停窗、整轮不出报告）。
+            _PARKED += 1
+        if not answer.strip() and not pending_approval:
             if not from_queue:
                 kind = "cancelled" if out["cancelled"] else "blank"
-            if kind == "queued_awaiting_approval":
-                # R259：挂起的一轮是**产品结局**，不是零字节系统性故障 —— 与下面那枚
-                # ``_APPROVAL_FAILURES`` 同一条口径（批准失败不进 ``_BLANKS``）。算进白烧闸的后果
-                # 是 09-25 那窗（11/20 挂 HITL）在第 6 枚就停窗、整轮不出报告：比白烧更坏的假象。
-                _PARKED += 1
-            else:
-                _BLANKS += 1
-                if _BLANKS > MAX_BLANKS:
-                    raise RuntimeError(
-                        row_id + ": 零字节题数已超 " + str(MAX_BLANKS) + " 题 ⇒ 系统性故障，停窗，"
-                        "不出报告。差因看 sidecar 与 docker logs。")
-            # 哨兵照旧：空正文 + 出处清空 + sentinel=true（挂起那一轮真的一字节都没吐出来）。
+            _BLANKS += 1
+            if _BLANKS > MAX_BLANKS:
+                raise RuntimeError(
+                    row_id + ": 零字节题数已超 " + str(MAX_BLANKS) + " 题 ⇒ 系统性故障，停窗，"
+                    "不出报告。差因看 sidecar 与 docker logs。")
+            # 哨兵照旧：空正文 + 出处清空 + sentinel=true（这一轮真的一字节都没吐出来）。
             answer, evidence, sentinel = BLANK_SENTINEL, [], True
         elif out["hitl"]:
             kind = "hitl"
@@ -1145,21 +1257,33 @@ def transport(row):
                  "pre_evidence_n": len(evidence), "approved": False, "approval_rounds": 0,
                  "approval_http_status": None, "approval_error": ""}
         steps = out["steps"]
-        if kind == "hitl":
-            extra["pre_answer"] = str(answer)  # 旧口径重算要的那一帧原文（判据 2）
-            resolved = _resolve_hitl(row_id, out["session_id"], steps, frames)
+        if kind == "hitl" or pending_approval:
+            if kind == "hitl":
+                extra["pre_answer"] = str(answer)  # 旧口径重算要的那一帧原文（判据 2）
+            # 🔴 队列道一枚都不写 ``pre_answer``：挂起的那一轮交回的是零字节，legacy 那一路
+            # 交回的是那句挂起文案 —— 两者都没有「批准前那一帧原文」要留，把文案抄进侧车就是
+            # R254 刚拆掉的那枚谎换个格子复发。旧口径那一列在队列道上读 ``kind`` 与 ``pre_kind``。
+            resolved = _resolve_hitl(row_id, out["session_id"], steps, frames,
+                                     success_kind=(QUEUED_APPROVED_KIND if pending_approval
+                                                   else "approved_ok"))
             answer = resolved["answer"]
             evidence = resolved["evidence"]
-            first_token_at = resolved["first_token_at"]
             steps = resolved["steps"]
             kind = resolved["kind"]
             sentinel = resolved["sentinel"]
+            if not pending_approval:
+                # 同步道：批准那条流的首字就是本题的首字。队列道那一格留 null —— 后台那一程的
+                # 首字观测不到（本文件抬头第 3 条），批准腿的到达时刻只进帧账的 ``events`` /
+                # ``stream_clock``，不冒充 ``first_token_at``（那会把两种零点混进同一列）。
+                first_token_at = resolved["first_token_at"]
             extra.update({"approved": resolved["approved"],
                           "approval_rounds": resolved["rounds"],
                           "approval_http_status": resolved["http_status"],
                           "approval_error": resolved["error"]})
             if kind == "approval_failed":
                 _APPROVAL_FAILURES += 1  # 不进 _BLANKS：批准失败是产品结局，不是零字节系统性故障
+            elif kind == QUEUED_APPROVED_KIND:
+                _QUEUED_APPROVED += 1  # R447：队列道批到终答的题数（收窗自查那一格）
         payload = {"answer": answer, "evidence": evidence, "first_token_at": first_token_at,
                    "thinking_chars": None,  # HTTP 侧看不见隐藏思维链 ⇒ null，禁止估算
                    "tool_calls": steps}
@@ -1179,4 +1303,5 @@ def summary():
             "approval_failed_sentinel": APPROVAL_FAILED_SENTINEL,
             "approval_failures_this_process": _APPROVAL_FAILURES,
             "awaiting_approval_turns": _PARKED,  # R259：挂起题数（不喂白烧闸）
+            "queued_approved_turns": _QUEUED_APPROVED,  # R447：其中批到终答的题数
             "frame_ledger": str(frame_ledger_path())}  # R181 判据② 的证据件落点（收窗自查用）

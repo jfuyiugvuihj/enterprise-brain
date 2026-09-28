@@ -11,6 +11,13 @@
 ② `usage` 里 null 照 null 记，一枚都不折算成零；`authoritative=false` 原样进账。
 ③ 判据阈值全部现场派生，期望数一个都不手抄。
 
+R447 在本件上多开两格（同一套诚实口径，一条不省）：
+· 批准轮走没走（判据①）：``queued_approved`` / ``approval_failed`` / 仍停在
+  ``queued_awaiting_approval`` 三枚分开数，逐枚点名差在哪。第三枚非空就是「批准轮没走」。
+· 出处随答案交回（判据③）：可读面 ``sources_n>0`` 的题逐枚与 ``answers.evidence`` 的枚数对判。
+  🔴 这一格只认**交出去的那一份**：可读面说了三枚而 answers 交了零枚 ⇒ 不达标，不拿可读面的
+  读数冒充「已交回」，也不静默补零。answers 里压根没这一行 ⇒ 明写「取不到，不编数」。
+
 用法：
     python scripts/eval_lane_readout.py --label run9c
 """
@@ -30,6 +37,10 @@ if hasattr(sys.stdout, "reconfigure"):  # Windows 控制台默认 GBK，中文�
 
 USAGE_SLOTS = ("prompt_tokens", "completion_tokens", "total_tokens", "model_calls",
                "authoritative", "ledger")
+#: R447 判据①/② 的三枚读数名（与量具同源，本件只数不裁决之外的东西）。
+KIND_PARKED = "queued_awaiting_approval"      # 停表读数：一步没走（R447 之后应当读作零枚）
+KIND_APPROVED = "queued_approved"             # 队列道挂起 → 批准到终答
+KIND_APPROVAL_FAILED = "approval_failed"      # 批准轮走了而没取到终答
 SHAPES = ("structured", "legacy", "unreadable", "no_keys", "not_terminal")
 
 
@@ -124,6 +135,20 @@ def main(argv=None) -> int:
     print("- structured 行数=%d/%d ｜ 其中 answer_present=true=%d ｜ 挂起文案枚数=%d 题号=%s ｜ answer_present 不为 true=%s" % (
         len(structured), len(frames), present, len(parked), parked or "无", absent or "无"))
     print("- 送出去的答案里被判空/哨兵=%s" % (sorted(str(r["id"]) for r in frames if r.get("sentinel")) or "无"))
+    # R447 判据①：挂起读数之后那三件事是三件事，一枚都不许并。
+    approved_ids = sorted(str(r["id"]) for r in frames if str(r.get("kind")) == KIND_APPROVED)
+    failed_ids = sorted(str(r["id"]) for r in frames if str(r.get("kind")) == KIND_APPROVAL_FAILED)
+    still_parked = sorted(str(r["id"]) for r in frames if str(r.get("kind")) == KIND_PARKED)
+    print("- 批准轮（R447）：批到终答=%d 题号=%s ｜ 批准失败=%d 题号=%s ｜ 仍停在挂起读数（批准轮没走）=%d 题号=%s" % (
+        len(approved_ids), approved_ids or "无", len(failed_ids), failed_ids or "无",
+        len(still_parked), still_parked or "无"))
+    if still_parked:
+        print("🔴 判据①：上面这些题读到 awaiting_approval 就交了空正文 —— 批准轮一步没走。")
+    for rid in failed_ids:
+        record = sidecar.get(rid) or {}
+        print("  - %s 批准失败：rounds=%s http=%s error=%s" % (
+            rid, record.get("approval_rounds"), record.get("approval_http_status"),
+            str(record.get("approval_error") or "")[:120] or "（侧车没这一格，取不到，不编数）"))
     print(stat_line("polls", [(r.get("queue") or {}).get("polls") for r in frames]))
     print(stat_line("wait_ms", [(r.get("queue") or {}).get("wait_ms") for r in frames]))
     blips = [(str(r["id"]), (r.get("queue") or {}).get("blips")) for r in frames if (r.get("queue") or {}).get("blips")]
@@ -179,21 +204,49 @@ def main(argv=None) -> int:
     print("- answers.evidence 为空的题号=%s" % (ev_ans or "无"))
     src_events = sum(1 for r in frames if any(e.get("event") == "sources" for e in (r.get("events") or [])))
     print("- 流内 sources 事件出现过的枚数=%d/%d（🔴 这一格属**流内层**，与可读面那两层不许互抄）" % (src_events, len(frames)))
+    # R447 判据③：出处要**随答案**交回。可读面说 N 枚的题，交出去的那一份必须正好 N 枚。
+    gaps = []
+    for r in structured:
+        count = ((r["queue"]["terminal"]).get("sources_n"))
+        if not isinstance(count, int) or count <= 0:
+            continue  # 读数为零或说不出：这一枚不构成「该交回几枚」的义务（说不出 ≠ 零枚）
+        rid = str(r["id"])
+        if rid not in answers:
+            gaps.append((rid, count, "answers 里没这一行（取不到，不编数）"))
+            continue
+        got = len(answers[rid].get("evidence") or [])
+        if got != count:
+            gaps.append((rid, count, got))
+    print("- 出处交回对判（可读面 sources_n>0 ↔ answers.evidence 枚数）：对不上=%d 逐枚=%s" % (
+        len(gaps), gaps or "无"))
+    print("- 判词：%s" % ("🔴 判据③ 不达标 —— 可读面交了出处而评分器没拿到" if gaps
+                        else "达标 —— 可读面说了几枚，交出去的就是几枚"))
+    side_vs_ans = [(str(r["id"]), r.get("evidence_n"),
+                    len((answers.get(str(r["id"])) or {}).get("evidence") or []) if str(r["id"]) in answers else None)
+                   for r in frames
+                   if str(r["id"]) in answers
+                   and int(r.get("evidence_n") or 0) != len(answers[str(r["id"])].get("evidence") or [])]
+    print("- 侧车 evidence_n ↔ answers.evidence 枚数不等=%s（两本账说的必须同一件事）" % (side_vs_ans or "无"))
+    approved_evidence = [(str(r["id"]), len((answers.get(str(r["id"])) or {}).get("evidence") or []))
+                         for r in frames if str(r.get("kind")) == KIND_APPROVED]
+    print("- 批准腿交回的出处枚数（可读面在挂起那一枚上说 0，两格不许互抄）=%s" % (approved_evidence or "无"))
     print()
 
     print("### 逐枚一行（判词要能追到题号）")
-    print("| id | kind | final | shape | state | ans_present | park | sources_n | total_tokens | model_calls | evidence_n | ans_chars | polls | wait_ms |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    print("| id | kind | final | shape | state | ans_present | park | sources_n | total_tokens | model_calls | evidence_n | ans_chars | polls | wait_ms | ans_ev | appr_rounds |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in sorted(frames, key=lambda x: str(x["id"])):
         q = r.get("queue") or {}
         t = q.get("terminal") or {}
         u = t.get("usage") or {}
-        print("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
+        print("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
             r.get("id"), r.get("kind"), q.get("final"), t.get("shape"), t.get("state"),
             t.get("answer_present"), t.get("answer_is_park_notice"), t.get("sources_n"),
             u.get("total_tokens"), u.get("model_calls"),
             (sidecar.get(str(r["id"])) or {}).get("evidence_n"), r.get("answer_chars"),
-            q.get("polls"), q.get("wait_ms")))
+            q.get("polls"), q.get("wait_ms"),
+            len((answers.get(str(r["id"])) or {}).get("evidence") or []) if str(r["id"]) in answers else None,
+            (sidecar.get(str(r["id"])) or {}).get("approval_rounds")))
     return 0
 
 

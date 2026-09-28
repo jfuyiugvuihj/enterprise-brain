@@ -30,6 +30,8 @@ from tests import _r259_queue_ruler as Q
 REPO_ROOT = Q.REPO_ROOT
 SCRIPT_PATH = Q.SCRIPT_PATH
 PARKED_KIND = Q.PARKED_KIND
+#: R447 判据②：队列道那一轮挂起被批准到终答之后落的 kind（与量具常量在用例里逐字对判）。
+QUEUED_APPROVED_KIND = "queued_approved"
 #: 取回账里那一族读数：五枚既有终态 + 本单新终态 + 三枚没读到终局 = 十枚 kind。
 ALL_QUEUE_KINDS = ("queued_polled", "queued_done_no_bytes", PARKED_KIND,
                    "queued_cancelled", "queued_dead", "queued_expired", "queued_failed",
@@ -127,13 +129,20 @@ def test_the_five_existing_terminal_kinds_are_unchanged(adapter, status):
 # ==================== ① + 落盘：kind 与取回账一起进两份证据件 ====================
 
 def test_a_parked_turn_lands_in_both_artifacts_without_laundering_the_notice(adapter):
-    """挂起的一轮：两份证据件都认得它，而那句 37 字挂起文案一个字都不进正文面。"""
+    """挂起的一轮：两份证据件都认得它，而那句 37 字挂起文案一个字都不进正文面。
+
+    🔴 自 R447 判据① 起这一枚的**结局**换了：量具读到 ``awaiting_approval`` 就真打一发
+    ``/api/v1/approve``，批到终答 ⇒ ``kind`` 落 ``queued_approved``；而**停表读数**照旧留在
+    ``pre_kind`` 与帧账 ``queue.final`` 两格里 ——「一步没走」那句话今天还是真话，只是不再
+    等于结局。本件其余用例（键集账、白烧闸账）判的都是这一腿走完之后的账，一字未改口。
+    """
     payload, fake, sidecar, frames = Q.drive_queue(adapter, [Q.parked_body()] * 5)
     record, row = sidecar[0], frames[0]
-    assert payload["answer"] == adapter.BLANK_SENTINEL  # 零字节 ⇒ 哨兵照旧，不冒充答案
+    assert payload["answer"] == Q.ANSWER  # R447：交回评分器的是恢复流的终答，不再是零字节哨兵
     assert payload["evidence"] == [] and payload["first_token_at"] is None
-    assert record["kind"] == row["kind"] == PARKED_KIND
-    assert record["sentinel"] is True and record["pre_kind"] == PARKED_KIND
+    assert record["kind"] == row["kind"] == adapter.QUEUED_APPROVED_KIND == QUEUED_APPROVED_KIND
+    assert record["sentinel"] is False and record["pre_kind"] == PARKED_KIND
+    assert len(fake.approve_reads) == 1, "批准轮没走 ⇒ R447 判据① 在这一枚用例上脱钩了"
     assert row["queue"]["final"] == "awaiting_approval"
     assert row["queue"]["terminal"]["state"] == "awaiting_approval"
     assert len(fake.queue_reads) == 1

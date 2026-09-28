@@ -56,6 +56,12 @@ FRAME_ROW_KEYS = JOIN_KEYS | FRAME_READING_KEYS | ARRIVAL_READING_KEYS
 QUEUED_STREAM = [("queued", {"type": "queued", "request_id": "req-1"}),
                  ("done", {"type": "done"})]
 
+#: R447 判据① 之后队列道读到挂起会真打一发 ``/api/v1/approve``。缺省那枚恢复流只交正文、
+#: 不交 ``sources`` 事件：R259 的两枚形状账（``evidence`` 为空、sidecar 键集不许多）判的就是
+#: 「批准腿没交出处」这一枚形状，出处长在批准流里什么样由 R447 自己带夹具。
+APPROVAL_PATH = "/api/v1/approve"
+APPROVED_STREAM = [("text", {"content": ANSWER}), ("done", {"type": "done"})]
+
 
 def load(name):
     """按文件名单独加载量具（与 R222 / R181 同一族做法：一次一份，互不串进程态）。"""
@@ -151,12 +157,14 @@ class Transport:
     """假出口，签名与真的 ``_open(path, payload, method)`` 逐位相同。
 
     ``statuses`` 逐发交回状态载荷；读完还不停就抛 ``AssertionError`` ⇒ 「这一枚终态停住表」
-    是真被量到的，不是脚本刚好耗尽。
+    是真被量到的，不是脚本刚好耗尽。``approvals`` 同办（R447 判据①）：批准流逐发交回，
+    空表时打过来就抛「这一枚结局不该打批准轮」—— 少打与多打都红，不会漂到别的断言上。
     """
 
-    def __init__(self, ask_events=(), statuses=()):
+    def __init__(self, ask_events=(), statuses=(), approvals=()):
         self.ask_events = list(ask_events)
         self.statuses = list(statuses)
+        self.approvals = list(approvals)
         self.paths = []
         self.payloads = []
         self.logins = 0
@@ -176,6 +184,13 @@ class Transport:
             if not isinstance(item, dict):
                 return FakeResponse(str(item).encode("utf-8"))
             return FakeResponse(json.dumps(item, ensure_ascii=False).encode("utf-8"))
+        if path == APPROVAL_PATH:
+            if not self.approvals:
+                raise AssertionError("这一枚结局不该打批准轮：" + path)
+            item = self.approvals.pop(0)
+            if isinstance(item, BaseException):
+                raise item
+            return FakeResponse(lines=sse(item))
         if path == "/api/v1/ask":
             return FakeResponse(lines=sse(self.ask_events))
         raise AssertionError("本单不该打这一发：" + path)
@@ -187,6 +202,17 @@ class Transport:
     @property
     def asked(self):
         return [b for p, b in zip(self.paths, self.payloads) if p == "/api/v1/ask"]
+
+    def only(self, path):
+        """按路径数发数：R447 之后「批准轮打了几发」必须看得见，不能只数状态读。
+
+        读数从 ``paths`` 现算，一次表都不读 ⇒ 假钟的格数不受这一枚影响。
+        """
+        return [p for p in self.paths if p == path]
+
+    @property
+    def approve_reads(self):
+        return self.only(APPROVAL_PATH)
 
 
 def poll(module, statuses, request_id="req-1"):
@@ -204,10 +230,16 @@ def read_jsonl(path):
             path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def drive_queue(module, statuses, row_id="doc-01", ask_events=None):
-    """走真 ``transport`` 的完整一题：前台回执入队 → 轮询取回 → 两份证据件落盘。"""
+def drive_queue(module, statuses, row_id="doc-01", ask_events=None, approvals=None):
+    """走真 ``transport`` 的完整一题：前台回执入队 → 轮询取回 →（挂起就批准）→ 两份证据件落盘。
+
+    ``approvals`` 自 R447 起有缺省值：量具读到 ``awaiting_approval`` 会真打一发
+    ``/api/v1/approve``，所以喂挂起载荷的用例必须有一枚恢复流可拿 —— 给空表等于判「这一枚
+    结局不该打批准轮」，那是判据本身，不该由夹具替它说话。要判「不该打」的用例自己传 ``()``。
+    """
     events = QUEUED_STREAM if ask_events is None else ask_events
-    fake = Transport(ask_events=events, statuses=list(statuses))
+    streams = [APPROVED_STREAM] if approvals is None else list(approvals)
+    fake = Transport(ask_events=events, statuses=list(statuses), approvals=streams)
     module._open = fake
     payload = module.transport({"id": row_id, "question": "Q3 营收多少？"})
     return payload, fake, read_jsonl(module.SIDECAR), read_jsonl(module.frame_ledger_path())
