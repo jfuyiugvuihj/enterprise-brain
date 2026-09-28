@@ -4175,3 +4175,37 @@ R425 的执行腿被 `tests/test_r22_rebuild_cli.py:202` 封死（R235 同型第
 ### 三、run9 之后另立的两格
 - **R440 · 问答档 p95 125.2 s 归因与口径**（A① 今天**不许翻绿**）：`docs/testing/run9-readout-2026-09-28.md` A1 段现读——整表 n=105 p95 **154.5 s**；问答档 n=50 p95 **125.2 s**（>90 s）；`chat-11` wall_ms＝**300108.2 ms**，恰等于 `EVAL_QUEUE_STALL_SECONDS` 停表帽（`scripts/eval_transport_ask_v2.py:153`，默认 300 s，理由见 `:147-151`）⇒ 这一枚是**停表不是慢答**。判据：把「停表帽命中的题」单列一格报数（不许从 p95 里悄悄摘掉，也不许混进「正常慢答」里当成模型问题），并**把两格口径钉死**：上一班那句「问答档 n=64 p95 61.0 s」与本格「n=50 p95 125.2 s」是**不同母集**，谁都不许抄谁，计划书 A 行落笔必须带母集数。
 - **R441 · `[PromptPack] fitted=0 且 dropped>0` 整窗 135 行（全在 `tier=analysis`）**：本格不另开执行腿，作为 **R429 的输入**（`Carver` 已收 §121 派工词，本行只补一句「孤例不成立、analysis 档是常态」）。🔴 谁都不许把 135 这个数字抄成 R429 的结案判据——结案按 §121 第二节 ③ 那六把刀。
+## §123（09-28 第十七格·总控线，主树 `c18043f`）：A② 口径改口全 105 · D 三格分家（前一格有一处查错层）· 新立 R443/R444 · 门账与并树队列
+### 一、A② 判据范围从今天起 = 全 105（上一格那套 93 作废，凭据现读）
+- 病灶：判读件 `%TEMP%\evalrun\r9_readout.py:131/133` 抬头写「两套范围都给」，实现只给了剔 `report-01..12` 那一套；排除理由「报告题走队列道」被同件 :53-54 自己的数据否掉——12 枚报告题队列格键数全 0、`(1,1)` 枚数 0/12、`text_frames` 15..50 全在位。
+- 现读凭据（`python scripts/eval_frame_caliber_readout.py`，落仓件，读 `docs/testing/sidecar-run9-frames.jsonl` 105 行/105 唯一题号）：全 105 口径 `text_frames>1`=94、空读=2、**缺字 `missing_chars>0`=0 枚**、`prefix_breaks>0`=7、**真断流 `uncorrected_breaks>0`=2 枚（`report-02`、`tool-04`）**、`criterion_two_holds=True`=91。剔报告档那套＝82 / 2 / 0 / 5 / 1 / 80。
+- 🔴 代价不是纸面的：按 93 枚算，`report-02` 那枚真断流（`prefix_breaks` 与 `uncorrected_breaks` 双非零）落在判据范围之外，A② 少报一枚坏形，而少的这枚在报告档＝D 行要验的那一档。⇒ 口径错误会**吞掉它自己声称要防的那类缺陷**，这类「范围由抬头决定」的量具从此一律落仓 + 钉。
+- A② 判读＝**不翻绿**（三样挡着的按名字点清：两枚真断流、`chart-01`/`data-09` 属 R439 的标签当终答、R149 装箱那族按上一格改口原样保留）。**run9b 作废**（全 105 已从现有件算全，不必换件重跑）。
+
+### 二、D 三格分家：其中一格「0/12」是查错了层，另一格今天已有真机读数
+- **流内层**（帧账 `events` 的事件名）：`sources` 在流里出现＝**102/105**，报告档 **12/12**；`answer.headline` 72/105（报告档缺 `report-11`）；`request.completed` 102、`done` 104、`request.failed` 3、`hitl` 18。⇒ 计划书 §6 D 行「`sources` 事件在流里出现」本格**第一次有真机读数**，不许再抄 0/12。
+- **队列可读面层**（`GET /queue/{id}` 响应体的 `usage` 六枚槽 + `sources_present`，实现 `scripts/eval_transport_ask_v2.py:803-831`）：报告档 12 枚队列格键数全 0 ⇒ 这一层**从没被测过**（请求压根没入队），既不许读成「测了不过」，也不许拿流内 102 枚翻它的绿。
+- 🔴 `usage` 另有一层量具事实要说死：帧账 `events` 只存事件名与时刻、**不存载荷**，「流里读不到 usage」＝量具不采载荷，**不许读成「模型没报 usage」**。要量 `usage` 只有队列可读面一条路 ⇒ 归 **run9c**（改名＝D 三格首验，12 枚报告题 + `EVAL_DECLARE_LANE_TIER=报告`）。
+
+### 三、R443（本席自办已落一半，欠反证钉）· 帧账口径读出件落仓
+- 已落：`scripts/eval_frame_caliber_readout.py`（只读/离线/零模型/零容器；两套范围并列 + 排除条件本身做成读数 + 流内/队列两层分家；期望数全部现算，不手抄题数）。取不到件时 rc=2 明写「取不到，不编数」。
+- 欠：**反证钉** `tests/test_r443_*`，最小刀形三把——① 摘掉「剔报告档」那套只留一套 ⇒ 红；② 把队列格键数硬填成非 0（伪造「走队列道」形状）⇒ 判词必须翻成「排除成立」且 (1,1) 那一半仍红，两半不一致即红；③ 换成空件/缺件 ⇒ 必须 rc≠0 且明写取不到，不许退化成 0 枚通过。判据全文＝本节，写域只 `tests/test_r443_*.py`。
+- 🔴 范围声明：本件**不改**收窗量具 `eval_transport_ask_v2.py` 的任何落盘字段，只读现有帧账；把它做成收窗内新增格属扩范围，须另立单。
+
+### 四、R444（本班新立，P1·门可靠性）· 全量门在 xdist 下会因嵌套 pytest 剪 `pytest-of-*/pytest-NNNN` 根目录而偶发假红
+- 现场（本席亲跑，主树 `c18043f` 工作态，`python scripts/run_gate.py` 自选 `-n 6`）：**620.9 s，1 failed / 7744 passed / 50 skipped / 2 xfailed，exit=1**。唯一红＝`tests/test_r163_matrix_teeth.py::test_r163_teeth_proven_by_a_real_pytest_run`，报错 `FileNotFoundError: ...pytest-of-fengx\pytest-7401\popen-gw5\test_r163_teeth_proven_by_a_re0\test_r159_cross_scope_matrix.py`——**目录在 `tmp_path.write_text` 之前已经不在**。
+- 反证（同树串行）：`python -m pytest -q -p no:cacheprovider --tb=line -o addopts= tests/test_r163_matrix_teeth.py` ⇒ **44 passed / 17.57 s**。⇒ 与本树代码无关，属并发形状；枚数账也对得上（7722+23＝7745＝7744 passed+1 failed，23 正是 R437 新增枚数）。
+- 根因（按 `tests/test_r163_matrix_teeth.py:178-187` 现读）：`_run_nail` 起嵌套 pytest 时**不传 `--basetemp`**，嵌套会话因此落在同一个 `%TEMP%\pytest-of-fengx\pytest-NNNN` 根里；pytest 开跑会剪该根的旧编号目录（默认只留最近 3 枚）。`-n 6` 下 6 个 worker + 多枚起嵌套 pytest 的件（`test_r134_*`、`test_r163_matrix_teeth` 等）会把根里的编号快速推高，剪掉**父会话正在用的那一枚 tmp_path**。⇒ 这是**结构性假红**，与「首跑税」不同源：它能让任何一笔并树背上不存在的缺陷。
+- 判据（修法在根因上，不许靠重跑糊过去）：① 每一处起嵌套 pytest 的件必须把子会话的 basetemp 收进**父件自己的 `tmp_path` 子目录**（`--basetemp=`），并显式证明父 `tmp_path` 全程存在；② 逐枚点名仓内所有起嵌套 pytest 的件（现读至少含 `tests/test_r134_*`、`tests/test_r163_matrix_teeth.py`，其余由执行层 `rg -n "subprocess.*pytest" tests` 点名，一个都不许漏）；③ 反证：摘掉任一处 `--basetemp` ⇒ 该件在 `-n` 下必须能复现红（复现不出＝钉是假的，退回）；④ 🔴 不许改 `_run_nail` 的超时/选择器/`-k` 语义，也不许把 teeth 改成串行标记来回避——串行标记是绕过，不是修；⑤ 判据数不许手抄，`-n` 自选由 `scripts/run_gate.py` 决定，本单只在**并发态**证明它不再吞 tmp。
+- 🔴 本单写域＝`tests/test_r163_matrix_teeth.py`、其余起嵌套 pytest 的测试件、新钉 `tests/test_r444_*`。**不碰 `scripts/run_gate.py`**（那是门的形状，改它须总控亲自动）。
+
+### 五、门账与并树队列（本席亲跑，全 `exit` 现读）
+- `c18043f` 态全量门：**7744 passed / 50 skipped / 2 xfailed / exit=1**（唯一红已按第四节归因为并发假红并串行证绿）。定向前值＝`eede938` 态 **7722/50/2xf**（上一格亲跑 `-n 6` 270.8 s）。
+- 定向：R437 五件合跑 **78 passed**（23+22+12+9+12，与执行层自报逐枚对上——自报一律不采信，但数可以拿来对账）。
+- 前端：`fefd747` 态 `r293-cancel-requested-persist.test.js` **16 passed**（本格只改注释行号，字节数 31155 不变）。
+- 并树队列现状（写域互不相交，顺序有硬约束）：**R437 已并（`c18043f`）**；待并＝R435（`Darwin`，只一本 `docs/perf/eval-must-contain-lineage-2026-09-28.md`，零冲突，随时可并）→ R438（`Euclid`，🔴 必须排在 run9c 之后，它改判分器语义）→ R429（`Poincare`）→ R439（`Hypatia`，🔴 改终答拾取＝改测量条件，也排 run9c 之后）→ R404（等 `chat.py` 腾手）→ R436（被六本在册钉挡路）→ R422（现可派）。
+- 镜像：label 仍停在 `9f9d452` ⇒ provenance 与 `2154318`/`6ef6ddc`/`eede938`/`a07e7c3`/`fefd747`/`c18043f` **已不一致**，`scripts/check_image_provenance.py` 现在跑必不 rc=0。本班窗口前必须重建（后端正解 `docker compose build migrate`，`build backend` 静默空跑＝假更新）。
+
+### 六、投递与槽位（本班新增实证）
+- 本班未新建投递。在途＝`Poincare`(R429) / `Hypatia`(R439) / `Euclid`(R438 扩批⑨⑩) / `Zeno`(R405+R432) 四枚；`Galileo`(R437) 已交回并 close、已并树。
+- 沿用 §122 那条入规：**投前必须留一枚余量**，投失败一律入册不补投。R444 与 R443 反证钉是接下来两枚可派单（写域互不相交，可并行）。

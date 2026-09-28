@@ -1,4 +1,4 @@
-﻿# 前端并行开工看板（2026-09-15）
+﻿前端并行开工看板（2026-09-15）
 
 **规则**：每条对话 / 每个子 Agent 开工前只读 §1 找自己那一行 + §4 看闸门颜色。**闸门不绿就不许做任何写操作**，只许只读准备。
 **翻绿的唯一凭据是 commit**：翻闸人自己提交、自己把 commit 号写进 §4，并在自己 worktree 里 `git merge --ff-only codex/data-file-catalog` 让全树看到。**不靠记忆、不靠默契、不靠"我觉得做完了"。**
@@ -5570,3 +5570,50 @@ cd C:\Users\fengx\PycharmProjects\be-r414; & "C:\Users\fengx\PycharmProjects\企
 
 ### 六、run9 窗内进度（本班现取，非终值）
 09:17:43 点火 → 10:36 **74/105** → 10:45 **83/105**，`sidecar` 零重试、零哨兵。尾巴聚着队列道报告题与 HITL 审批题（`insight-07` 单枚 291.6 s、`chart-02` 224.7 s）。终值、四条验收与逐枚归因写在 §4DL（收窗后开）。
+
+---
+
+## §4DL. 本班（09-28 第十七格·总控线，主树 `c18043f`）：A② 口径改口=全 105（前一格那套 93 作废）· 🔴 D 行有一格是查错了层、其实已有真机读数 · R437 并树 · H6 关闸 · 新立 R443/R444（门会自己造假的红）
+
+### 一、§0 名册（本班实取，id 为准；昵称以 harness 回执为准）
+| 工单 | Agent / id | 工作树 @ 基点 | 写域 | 状态 | 时刻 |
+|---|---|---|---|---|---|
+| **R437** | `Galileo` `01a0e5ec-fda9-7fd2-b21d-08ff19783f14` | `be-r437` @ `9f9d452` | `scripts/check_eval_evidence_coverage.py` + 新钉 `tests/test_r437_*` | ✅ **已交回、已验收、已并树 `c18043f`**，agent 已 close | 11:5x |
+| **R429** | `Poincare`（回执名 `Carver`）`01a0e606-6223-7c92-8ee9-81a92a842ba7` | `be-r429` @ `2154318` | `app/agents/tools.py` + `app/rag/retrieval_pipeline.py` + 新钉 + `scripts/r429_pack_forensics.py` | 🔵 在途，12:0x 现读 `be-r429` **porcelain 干净**＝尚未落盘 | — |
+| **R439** | `Hypatia` `01a0e611-e2e6-7fc1-bbfa-19e9de1e6cef` | `be-r439` @ `6ef6ddc`（带 `node_modules` Junction） | `app/api/v1/chat.py` + `app/agents/orchestrator.py` + 新钉 | 🔵 在途，12:0x 现读 **porcelain 干净**＝尚未落盘 | — |
+| **R438** | `Euclid` `01a0e5ea-ffcd-7d01-8a54-e2018438c14a` | `be-r438` @ `9f9d452` | `app/quality/eval.py` + `scripts/r438_correctness_denominator.py` + 新钉（主件已交回） | 🔵 在途（11:33 追加扩批⑨`observability.py:78` 白名单派生／⑩`run_quality_evaluation.py` 第二把尺上 CLI）。🔴 **并树必须排 run9c 之后**（它改判分器语义） | — |
+| **R405 + R432** | `Zeno` `01a0e5a8-c099-7ed3-98cd-16a71088966a` | `be-r405` @ `9f9d452` | `scripts/r432_sandbox_corpus.py`、`scripts/r432_ef_compare.py`、`tests/test_r405_readonly_sqlite_open_has_a_file_footprint.py`、`tests/test_r432_offline_guards.py` | 🔵 在途，12:0x 现读四枚新件已在盘（未 commit，合规） | — |
+| **R435** | `Darwin` `01a0e5c3-30df-7922-8eb0-1fb8f8c780cc` | `be-r435` @ `9f9d452` | 只新建 `docs/perf/eval-must-contain-lineage-2026-09-28.md`（507 行） | ✅ 已交回并 close，**待并树**（零写域冲突，随时可并） | — |
+| `be-r404` | （`Nietzsche` 已 close） | @ `9f9d452` | `app/documents/catalog.py` + `test_r404_*` + `test_r406_*` | 🟡 产物在盘、等 `chat.py` 腾手（现由 `Hypatia`/R439 持有）；落码方向裁乙，转手须带跟进单 §120 第六节三条硬注 | — |
+
+槽位账（沿用 §122 入规）：5 枚在途时投第 6 枚即被拒、close 后槽位不立刻回收 ⇒ **投前留一枚余量**。本班零新建投递（四枚在途），零 model/reasoning 覆盖。
+
+### 二、A② 本格改口：判据范围＝全 105，不是 93（凭据落仓可复跑）
+- 排除理由（「报告题走队列道 ⇒ 不计入」）不成立：`docs/testing/sidecar-run9-frames.jsonl` 里 12 枚报告题**队列格键数全 0**、`(text_frames,max_stream_frames)=(1,1)` 枚数 **0/12**、帧数 15..50 全在位 ⇒ 这一窗报告档走的是**同步流式道**。
+- 全 105 读数：`text_frames>1`=94、空读=2、**缺字=0 枚**、`prefix_breaks>0`=7、**真断流=2 枚（`report-02`、`tool-04`）**、`criterion_two_holds=True`=91。93 那套=82/2/0/5/1/80。
+- 🔴 代价：**`report-02` 那枚真断流被前一格的口径挡在判据范围之外**——范围一错，A② 少报一枚坏形，少的正好在 D 行要验的那一档。判读件躺在 `%TEMP%` 不可钉是根因，故本席落仓 `scripts/eval_frame_caliber_readout.py`（两套并列 + 排除条件本身做成读数）。
+- A② 结论＝**不翻绿**（两枚真断流 + `chart-01`/`data-09` 那两枚标签当终答属 R439 + R149 装箱族按上一格改口原样保留）；**run9b 作废**（不必换件重跑）。
+
+### 三、D 行三格分家：有一格「0/12」是查错了层
+- **流内层**（帧账 `events` 事件名）：`sources` 在流里出现＝**102/105**，报告档 **12/12**；`answer.headline` 72/105（报告档缺 `report-11`）；`request.completed` 102／`done` 104／`request.failed` 3／`hitl` 18。⇒ 计划书 §6 D 行那句「`sources` 事件在流里出现」**今天第一次有真机读数**，0/12 那句作废。
+- **队列可读面层**（`GET /queue/{id}` 响应体 `usage` 六枚槽 + `sources_present`，`scripts/eval_transport_ask_v2.py:803-831`）：键数全 0 ⇒ 这层**从没被测过**（没入队），既不是「测了不过」，也不许拿流内 102 枚翻它的绿 ⇒ 归 **run9c＝D 三格首验**。
+- 🔴 `usage` 的量具事实：帧账 `events` 只存事件名与时刻、**不采载荷**，「流里读不到 usage」＝量具不采，**不许读成「模型没报 usage」**。
+- 本席自纠：前一格那句「`sources_n` 0/12」是**在错误的层找一个不存在的键名**。仓规那条「报『不存在』前先确认在哪一层、用的是不是这层的正确名字」**对总控自己同样成立**，不是只约束执行层。
+
+### 四、门账（本席亲跑，全 exit 现读）+ 🔴 新立 R444：门会自己造出一枚假的红
+- `c18043f` 态 `python scripts/run_gate.py`（自选 `-n 6`）：**620.9 s，1 failed / 7744 passed / 50 skipped / 2 xfailed，exit=1**。枚数账对得上：7722 + 23（R437 新增）= 7745 = 7744 passed + 1 failed。
+- 唯一红＝`tests/test_r163_matrix_teeth.py::test_r163_teeth_proven_by_a_real_pytest_run`，`FileNotFoundError: %TEMP%\pytest-of-fengx\pytest-7401\popen-gw5\...\test_r159_cross_scope_matrix.py`——`tmp_path.write_text` 之前目录已经不在。
+- 反证＝同树串行：`--tb=line -o addopts= tests/test_r163_matrix_teeth.py` ⇒ **44 passed / 17.57 s**。⇒ 与本树代码无关。
+- 根因（`tests/test_r163_matrix_teeth.py:178-187` 现读）：`_run_nail` 起嵌套 pytest **不传 `--basetemp`**，子会话落进同一个 `pytest-of-fengx\pytest-NNNN` 根；pytest 开跑剪该根旧编号目录（默认留最近 3 枚），`-n 6` + 多枚起嵌套 pytest 的件把编号推得快 ⇒ **剪掉父会话正在用的 tmp_path**。这是结构性假红，与「首跑税」不同源。
+- 🔴 不许用「改成串行标记」回避（那是绕过不是修）；修法＝每一处嵌套 pytest 都把子 basetemp 收进父件 `tmp_path` 子目录。判据全文＝跟进单 §123 第四节。**R443 反证钉**（第三节）同日新立，两枚写域互不相交、可并行。
+
+### 五、H 闸门与账号
+- ✅ **H6 关闸**：`2154318`/`6ef6ddc`/`1eeee66`/`eede938`/`a07e7c3`/`fefd747`/`c18043f` 已全部 push，`git rev-list --left-right --count @{u}...HEAD` = **0 0**（11:38 现读）。
+- 🟡 **镜像 provenance 已不一致**：容器 label 仍 `9f9d452`，`scripts/check_image_provenance.py` 现在跑必不 rc=0。本班开窗前必须重建（后端 `docker compose build migrate`；前端也要重建，R421/R424/R427 全在屏上）。
+- 只等业主本人（本席一个都没代做）：`deploy/.env.server` 任何编辑（含翻 `INDEX_BACKEND=pgvector`）、A1 补 `users.department`、A3 密级回填、H13 密级口径（未裁 ⇒ R413 不许投）、改评测集题面、`pyproject.toml` 全局 `xfail_strict`、删 `%TEMP%\r414_stash\` 与 `?? %SystemDrive%/`。
+- 🔴 心跳 `automation-2` **永久 PAUSED**（业主 09-28 原话「别开这个人工提醒会影响对话，之前有好几个这么死了」）。替代机制＝业主发「继续」唤醒；接班第一件事自查 upstream（原 H6 的活）。任何一格不许改回 ACTIVE，也不许另建第二条心跳。
+
+### 六、本格外还欠的、以及本班已清的
+- 已清：跟进单 §122 已 commit（`a07e7c3`）；R427 欠的那格注释行号已补（`fefd747`，字节数 31155 不变，`r293` 件 16 passed）；R437 已并树（`c18043f`）。
+- 欠（按序）：① R435 那本 507 行文档并树；② 重建前后端镜像 + 五道现读（provenance／`verify_container_stack --skip-build`／`seed_workspace --check`／`check_corpus_parity`／Redis 先 PONG 再数 `answer:*`）；③ R428 格② 热集让路（必须容器内跑，宿主 5432 有野 PG ⇒ PG 腿会静默降级成 numpy 估算腿＝假绿）；④ run9c＝D 三格首验；⑤ R434「WAL 四本假账」改口；⑥ R433 禁语闸扩面／R440 问答档口径／R441（135 行只作 R429 输入）；⑦ R438、R429、R439、R404、R436、R422 依序并树。
+- 🔴 并树硬时序重申：**R438 与 R439 都必须排在 run9c 之后**（一枚改判分器语义、一枚改终答拾取，都是改测量条件）。R434 那一格若成立，run9 的**全部延迟数**要按「测量环境当时到底有没有并发」重述——这条不许拖到翻默认之后。
