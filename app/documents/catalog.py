@@ -805,14 +805,17 @@ def current_documents() -> list[dict]:
     return _public_rows(_apply_index_policy(ordered))
 
 
-def list_document_versions(filename: str) -> list[dict]:
+def list_document_versions(filename: str, limit: int | None = None) -> list[dict]:
     # 与 current_documents 同一口径：入口不闸，缺表那一格由下面的 catch-all 现查之后拒答。
+    # R404：``limit`` 只改「读几行」，不改「读哪一本账」。带 limit 时 SQL 仍是同一句
+    # ``ORDER BY version DESC``，只在尾部多挂一枚 ``LIMIT %s``；不带 limit 的那一支逐字不变。
     if not _database_available():
         return _public_rows(
             _apply_index_policy(
-                _ordered_by_current_version(_local_version_rows(filename))
+                _ordered_by_current_version(_local_version_rows(filename))[:limit]
             )
         )
+    limit_clause = "LIMIT %s" if limit is not None else ""
     try:
         _ensure()
         with _conn() as conn:
@@ -822,8 +825,8 @@ def list_document_versions(filename: str) -> list[dict]:
                 FROM document_versions
                 WHERE filename = %s
                 ORDER BY version DESC
-                """,
-                (filename,),
+                {limit_clause}""",
+                (filename,) if limit is None else (filename, limit),
             ).fetchall()
         return _public_rows(_apply_index_policy([dict(row) for row in rows]))
     except Exception as exc:
@@ -832,9 +835,27 @@ def list_document_versions(filename: str) -> list[dict]:
         logger.warning(f"[Docs] history fallback: {exc}")
         return _public_rows(
             _apply_index_policy(
-                _ordered_by_current_version(_local_version_rows(filename))
+                _ordered_by_current_version(_local_version_rows(filename))[:limit]
             )
         )
+
+
+def latest_document_version(filename: str) -> dict | None:
+    """R404：台账里最新的那一行 = 单行读（``ORDER BY version DESC LIMIT 1``）。
+
+    权限判定只需要这一行，所以这一枚一次都不取全量。它借 ``list_document_versions``
+    同一枚 scope 里的同一句 SQL，只带上 ``limit=1``：本模块的存储读者、``_ensure()``
+    调用点与 catch-all 的配对一枚都没多（那两本账由 R377／R383 按 AST 数着）。
+
+    两张脸按现读分开，不许混着记：
+
+      * 台账有行、盘上的文件已经没了：照样交回那一行。文件在不在是下载与预览那条腿的事
+        （``app/api/v1/chat.py`` 的 ``_latest_document_version`` 才问 ``os.path.exists``），
+        判定不替它说话——「有这份文档，但你没权看」与「盘上那份文件不见了」是两句话。
+      * 台账没有行：交回 ``None``，由调用方在判定之前答 404，不进判定。
+    """
+    rows = list_document_versions(filename, limit=1)
+    return rows[0] if rows else None
 
 
 def _logical_documents_table_exists(conn) -> bool:

@@ -294,23 +294,29 @@ def test_legacy_unowned_document_is_hidden_from_staff(monkeypatch):
     assert listed[0]["ownership"] == "legacy"
 
 
-def test_document_version_history_denies_cross_department_principal(monkeypatch):
+def test_document_version_history_denies_cross_department_principal(monkeypatch, tmp_path):
+    """R404（乙）落码以后，判定读的是 catalog 的单行读，桩必须跟着换到那枚新符号上。
+
+    旧桩打在 ``list_document_versions`` 上：换符号以后它拦不到判定这条腿，那一发读会落到
+    真台账（测试态拿不到 ``finance.txt`` 的行）⇒ 路由在判定之前就答 404，红得像是「404 回归」。
+    ``storage_path`` 是真台账每行都有的列（``_SELECT_COLUMNS`` 里就写着），桩不给就是假形状。
+    """
     from app.api.v1 import chat
     from app.main import app
 
+    stored_file = _stored(tmp_path, "finance.txt")
     _accounts(monkeypatch, {"hr-manager": _user("hr-manager", "hr")})
     monkeypatch.setattr(
         chat,
-        "list_document_versions",
-        lambda name, *args, **kwargs: [
-            {
-                "filename": name,
-                "version": 1,
-                "classification": 2,
-                "department": "finance",
-                "owner_id": "finance-owner",
-            }
-        ],
+        "latest_document_version",
+        lambda name, *args, **kwargs: {
+            "filename": name,
+            "version": 1,
+            "storage_path": stored_file,
+            "classification": 2,
+            "department": "finance",
+            "owner_id": "finance-owner",
+        },
     )
 
     response = TestClient(app).get(

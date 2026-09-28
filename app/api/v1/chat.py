@@ -70,6 +70,7 @@ from app.documents.catalog import (
     public_document_row,
     _database_available as catalog_database_available,
     delete_document_versions,
+    latest_document_version,
     list_document_versions,
     peek_next_document_version,
     record_document_version,
@@ -4519,12 +4520,29 @@ async def list_document_catalog(request: FastAPIRequest):
 @router.get("/documents/{filename}/versions")
 async def document_version_history(filename: str, request: FastAPIRequest):
     principal = _document_principal_or_error(request)
-    versions = list_document_versions(filename)
-    if not versions:
+    # R404（乙）：判定只读台账最新那一行（catalog 单行读），一次都不取全量；全量读排在
+    # 判定之后，只喂响应正文。两张脸按现读认下来：台账有行而盘上文件已没 ⇒ 判定仍读那一行；
+    # 无台账行 ⇒ 判定之前先 404。
+    latest = latest_document_version(filename)
+    if not latest:
         raise HTTPException(status_code=404, detail="resource_not_found")
-    decision = _document_authorization_decision(principal, filename, versions[0], ACTION_VIEW)
+    decision = _document_authorization_decision(principal, filename, latest, ACTION_VIEW)
+    # 判定过程落审计台账：走的还是 record_audit 那一条唯一通路（本文件不许有第二枚日志器），
+    # 动词按门分——这一扇门读版本历史，记它自己判定用的 resource:view，与下载／删除那两扇门
+    # 各自的动词并列，不新造码；文档正文一个字都不进台账。
+    record_audit(
+        principal,
+        ACTION_VIEW,
+        "allowed" if decision.allowed else "denied",
+        filename,
+        decision.reason_code,
+        request_id=principal.request_id or None,
+        resource_scope=_document_resource_scope(filename, latest),
+        policy_version=decision.policy_version,
+    )
     if not decision.allowed:
         raise HTTPException(status_code=403, detail=decision.reason_code)
+    versions = list_document_versions(filename)
     return {
         "filename": filename,
         # R154 判据②：``index_versions.published_at`` 到这里才有出口。版本行的公开投影

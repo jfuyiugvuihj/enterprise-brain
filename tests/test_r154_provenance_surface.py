@@ -313,6 +313,9 @@ def test_an_unreadable_registry_costs_a_field_not_the_endpoint(monkeypatch, tmp_
 
 def _version_rows(chat, monkeypatch, rows):
     monkeypatch.setattr(chat, "list_document_versions", lambda _filename, *_a, **_k: list(rows))
+    # R404（A 族）：判定腿现在先走单行读，桩跟着换符号。
+    # 交回的是同一批行里的第一行：真形状、带 ``storage_path``，不新造一行。
+    monkeypatch.setattr(chat, "latest_document_version", lambda _filename, *_a, **_k: (list(rows) or [None])[0])
 
 
 def _stored_version(filename="policy.txt", version=3):
