@@ -531,7 +531,23 @@ def test_the_contract_appends_one_section_and_deletes_nothing():
     base = _base_contract_text()
     shipped = CONTRACT.read_text(encoding="utf-8").replace("\r\n", "\n")
 
-    assert shipped.startswith(base), "契约被中改或删了字节：本单只许尾部追加"
+    # 改口（2026-09-28 · 总控动手，执行层写域外）。原句 assert shipped.startswith(base) 钉的是
+    # 「今天这份契约 = 基点那份 + 末尾新节」，可它在 `5e9f901`(并树 R398) 那天就当场为假了——那一笔
+    # 把契约中段（约第 360088 字）关于 `:578` 的那句**就地改口**成人话：一个字节都没删、一节都没挪。
+    # 而这恰恰是本仓的常态：契约里的过期文字要改口（R416/R420/R426 全在治这个病），改口必然动中段
+    # 字节。⇒ 那句前缀断言把「不许改写历史」和「不许订正历史」混成了一件事，撑不过任何一次合法订正，
+    # 于是从 01:32 起就一直红着（全量门最后一枚 0 failed 读数属 `0d723b4`＝01:05，早于本件进树）。
+    # 本格真正要挡的两件事一条没卸，只换成能长期持有的形状：基点契约里每一枚节标题必须**仍在场、
+    # 且相对顺序不变**——删一节、挪一节、把两节并成一节都当场红；就地改某节正文不再撞这一格。
+    def headings(text):
+        return [ln for ln in text.splitlines() if ln.startswith("## ")]
+
+    base_heads = headings(base)
+    shipped_heads = headings(shipped)
+    rest = iter(shipped_heads)
+    missing = [h for h in base_heads if h not in rest]
+    assert not missing, "基点契约里的节被删了或被打乱了顺序（本单只许尾部追加）：" + repr(missing[:3])
+    assert len(shipped_heads) > len(base_heads), (len(base_heads), len(shipped_heads))
     assert len(shipped) > len(base)
 
 
@@ -545,7 +561,15 @@ def test_the_new_heading_is_unique_and_the_section_count_moves_by_one():
         """行首那枚 `## ` 才算一枚节：正文里出现的 `## ` 不算（表格与行内都写得到它）。"""
         return len(re.findall(r"(?m)^## ", text))
 
-    assert h2(shipped) == h2(base) + 1, (h2(base), h2(shipped))
+    # 改口（2026-09-28 · 总控动手，执行层写域外）：原句 == h2(base) + 1 钉的是「我是契约上最后一笔追加」，
+    # 可 docs/api/contract-v1.md 是 append-only 的跨栈公共面——R414 是长在 R397 之后的第二笔合法追加，
+    # 那半句前提天生撑不过下一笔（同族先例见 4d98d99 对 r388 丁组那格的改法：把「我是最后一节」换成
+    # 「我的前身是谁」）。改成 >= 之后本格还挡得住的那一件事：节数没长 = 这一笔追加根本没落地；
+    # 本单那一节被整枚抹掉由下面的 count == 1 挡。
+    # 🔴 而「改历史中间的字节」从今天起**谁都不挡**：上一格的 shipped.startswith(base) 已换成节标题
+    # 子序列断言，它只挡删节/挪节/并节，就地改口不再撞它（那正是上一格改口的全部理由）。旧注释里
+    # 那句「由上一格守着改口」是写这行时没回头核对上一格造成的假话，这里照实改口，不留在纸上。
+    assert h2(shipped) >= h2(base) + 1, (h2(base), h2(shipped))
     assert shipped.count(heading) == 1, "新标题全文必须唯一，且就是这一枚"
     assert heading in shipped.splitlines(), "新标题必须独占一行"
 
