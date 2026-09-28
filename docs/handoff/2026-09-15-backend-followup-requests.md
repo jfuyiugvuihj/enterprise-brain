@@ -4413,3 +4413,46 @@ github 代理与 hosts · `deploy/.env.server` 任何编辑（含 `INDEX_BACKEND
 - 判据②：新钉 `tests/test_r456_*` ≥ 3 把——(a) 用 `TestClient`＋假流驱动器复现「整轮只发一片 `text`」的形状，钉住它当场红；(b) 反证：把驱动器改成逐片发 ⇒ 同一枚钉绿；(c) 兜底句那枚形状钉：`kind=error_event` 的轮次**不许**被读成「答完 21 字」（与 `run9-readout-2026-09-28.md:115` 那句「没答完却占 correctness 分母」同一格，口径归 R438/R401，本单不改分母）。
 - 写域：`docs/perf/a2-single-frame-attribution-2026-09-28.md`（新）＋新钉 `tests/test_r456_*`。禁：`app/**`·`frontend/**`·评测集本体·`deploy/**`·`scripts/eval_transport_ask_v2.py` 与一切在册量具·跟进单与看板。不得跑全量门、不得动容器、不得打模型。
 - 号账（本笔现取）：R453／R454 已用于本班两笔投递 · R455 已用于 §129 三那枚坐标派生单 · **R456 本笔新立** · R457 起空闲。事故号下一个 **#69**。
+
+## §131（09-28 第二十一格·总控线，主树 `73a87e1`→`c2e6546`）：R404 返工达标并树 · 🔴 门账基线改口 7873→7906 · 事故 #70（派工词带 reasoning_effort 覆盖被当场拒） · R453/R454 名册接口冻结 · R26 陈年账销账 · 新立 R457（审计留存只有定义没有执行腿）
+
+### 一、R404 并树（施工 `Carson`/`Boole`，`01a0e721-fd15-7b33-99ad-aa9f35823097`@`be-r404`，基点 `4cd0a1c`）
+- 三族转手账现场复算（不采信自述）：A 族 `tests/test_r154_provenance_surface.py:318` 纯 3/0 新增一枚桩（`latest_document_version`，交回 `(list(rows) or [None])[0]`＝真形状带 `storage_path`），旧断言一字未动；B 族 `docs/perf/r387-label-lineage-2026-09-27.md` 表第 3 格由 `scripts/r387_label_lineage.py --emit-doc-cells` 现读写回（总控亲跑 12 格，漂的 6 格＝hop 1/2/5/6/8/10，与施工读数逐枚同值）；C 格 `docs/handoff/2026-09-26-v1-frontend-gap-list.md` 文末另起第二笔对账表，三枚坐标总控独立 `rg` 现取＝`:4214`／`:4950`／`:3716`，与落笔值逐字节等值，钉在 `4037868` 的历史表原样未追改（现读 `**:4213**`／`**:4932**`／`**:3715**` 各恰好一枚）。
+- 十枚件合跑（主树解释器、`-o addopts= -p no:cacheprovider`）＝**148 passed / RC=0**；全量门 `python scripts/run_gate.py`＝**7906 passed / 50 skipped / 2 xfailed / exit=0**（自选 `-n 5`，pytest 264.94 s，run_gate 273.5 s）。枚数账 7873＋33＝7906 等值（33＝四枚 `tests/test_r404_*` 的用例数）。🔴 **门账基线从今天起＝7906**，别抄 7873／7862／7849。
+- 并树前原件镜像 `E:\eb-offload\R404-2026-09-28\`（13 枚＋`r404-tracked.diff`）。🔴 `tests/test_r406_banned_phrase_pin_covers_the_unseen_module.py` 仍不随单并（现跑 4 failed／4 passed，红句点名 `app/documents/catalog.py:349/358` 那两枚按 §126 结论② 还原的原措辞），留在 `be-r404` 树上不动它。
+- 提交语走 `mcp__node_repl__js` 的 `fs.writeFileSync(...,"utf8")` 落 `%TEMP%\r404msg.txt`（1,710 B，`「」` 1/1、`（）` 7/7、U+FFFD 0），`git commit -F` 后现读提交体完好 ⇒ 上一班那条「长中文正文禁 ascii 中转」的规矩这条路走通了。
+- 动的是 `app/**` ⇒ 镜像仍落后主树，按规矩随下一批并树一并重建，本格不单独重建。
+
+### 二、🔴 事故 #70（同类第一枚，记在派工参数那把尺上）
+- 落笔前两本在册文档 `事故 #` 最大值现取＝69 ⇒ 本笔记 **#70**。
+- 事故形状：投 R455 那一发 `spawn_agent` 带了 `reasoning_effort` 覆盖，被当场拒（原文 `Reasoning effort medium is not supported for model qwen3.8-flash`，而它下面那行 `Supported reasoning efforts:` 是空的）。这是**投递失败**，不是执行层失败。
+- 处置按老规矩走完三步：① 现验 `be-r455` 盘面零写入、HEAD 仍 `c2e6546` ⇒ 证实没有第二枚身体被生成；② 只删那一枚参数重投一发，落 `01a0e7e3-01df-7033-8c3b-d17453281248`；③ 一格一投，未破「同 block 禁双投」。
+- 入规（与「不得带 model 覆盖」并列，同族）：**派工一律不得带 `model` 覆盖，也不得带 `reasoning_effort` 覆盖**。前任死于往同一线程塞不同 provider 的消息 id，本枚死于往子线塞它没被验证过的模型参数——都是「模型参数不许由总控口头指定」这一条的两个面。
+
+### 三、R453/R454 的接口冻结（本格已下三道令）
+- 🔴 交集实测 0：R453 名册＝低层读数格，R454 计划器＝7 枚判据格（`A2-stream-verbatim`／`C-overprivilege`／`C-cache-annotation`／`D-report-retrievable`／`D-usage-nonzero`／`D-sources-in-stream`／`zero-retry-zero-sentry`），两本表谁也不认谁 ⇒ 开窗读数必被对面判红。修法（已投 R454 返工令）：每枚判据格挂 `r453_cells`，名册**只能 import 对面表**得到，禁第二份抄写清单（把 10 枚名字硬编码进测试也算抄），表外一格即红；真证不了的格进 `unattainable_here` 点名缺哪枚读数，禁硬凑映射。
+- 依赖快照：总控把 R453 那本 `scripts/eval_cloud_window_readout.py` 逐字节复制进 `be-r454` 供对面 import 自检，现值 sha256 `1A0C91FFB725FEB4C68A13F16D7EE3858DDF36DFDD3CAEFD3FCC6F012A62853F`／22,308 B。🔴 那枚快照不随 R454 并树，合并取 Leibniz 本。
+- 名册 25→28：R453 新加 `answer_char_count`／`citation_count_value`／`usage_token_values` 三枚，都落在本机专属那一侧（合总控既有裁定「形状可云端、数值必本机」），云端可读仍是那 10 枚、枚名未变 ⇒ 已下**冻结令**：那 10 枚名字不再增删改；**任何按总数写的断言一律改按集合断**。
+- R453 返工判据重申：`tests/test_r453_cloud_eval_override.py:263` 那枚把「工作树里有未跟踪条目」判成越界 ⇒ 主树常年挂着 `?? %SystemDrive%/` 与 `?? -` 这类永久脏项，并树即永久红。正解＝只判本单声明的交付清单。另按事故 #69 那道令补「`pytest` 空参数当场拒绝」的钉。
+
+### 四、R26 那笔陈年账销掉（顺带纠 §129 六.5 的重复账）
+- 现取符号：R26a `11f9b1f`（feat `118801e`）· R26b `6ee2f79`（feat `af027ce`），`git merge-base --is-ancestor` 两枚对 HEAD 都 rc=0 ⇒ 全在主干。
+- 🔴 这笔**不是本班才查清的**：`c571083`（09-21 16:09）原文就写着「陈年账 R26 查清结案……上一班按单号字面 grep 判它没动过是方法错 ⇒ 补规矩『查并树要连拆单子号一起查』」。§129 六.5 把它重新列成欠账属**重复账**，本笔销，并补一句：反查旧账先按单号族 `--grep`（含拆单子号与 feat 行），只 grep 主号＝明知故犯。
+
+### 五、新立 R457 判据正文：审计台账的留存只有定义、没有执行腿
+- 病灶（本席现读@`c2e6546`，行号会漂、施工落笔前自己取）：`app/common/audit.py:43` `DEFAULT_RETENTION_DAYS = 180`、`:573` 每笔事件都写 `expires_at`、`:662` 有 `purge_expired_audit_events()`；🔴 而 `rg -n purge_expired_audit_events` 全仓命中**只有 `tests/test_audit_persistence.py` 那六处**（28／445／451／460／630／640），**零生产调用点** ⇒ `expires_at` 是一枚没人读的字段，台账只增不减。
+- 调度位在 `app/scheduler/jobs.py:21 register_jobs()`，现读只挂两枚 job：`daily_report`（cron 8:00）与 `offpeak_rebuild_window`。
+- 放大腿刚被 R404 加速：`app/api/v1/chat.py:4533` 起，`GET /documents/{filename}/versions` **allowed 也落一笔**；而 `frontend/src/components/ChatPanel.vue:1585` 真读这一扇核对「命中缓存但来源已改版」（同文件 `:912` 与 `:1566` 两处注释自证这是员工动作不是后台轮询）⇒ 台账行数随核对次数线性增长。
+- 内存侧那格不是遮羞布也不是解药：`:49 MAX_VIEW_EVENTS = 20000` 加 `:481 _events[:] = merged[-MAX_VIEW_EVENTS:]` 只兜住**视图**，且 `view_complete` 会如实报「视图不完整」，兜不住磁盘。
+- 判据：① 给留存装执行腿（在 `register_jobs()` 里注册一枚 sweep；若论证不该挂 scheduler，就写明替代触发者是谁）；② 摘掉执行腿 ⇒ 反证钉当场红并点名「这枚字段没人读」；③ `purge_expired_audit_events(dry_run=True)` 的预览语义一字不许动（在册件 `tests/test_audit_persistence.py:445` 钉着）；④ 视图 20,000 那格与 `view_complete` 语义不动；⑤ 🔴 **不许**顺手把 `/versions` 改成「只记 denied」——那是 §126 结论② 刚定的「合法读也留账」，要改另裁一笔。
+- 写域：`app/scheduler/jobs.py` ＋ 新钉 `tests/test_r457_*`（＋若落点在 `deploy/scheduler.py` 的注册道）。禁：`app/api/v1/chat.py`·`app/common/audit.py` 的字段语义·`frontend/**`·评测集·`.env*`·`deploy/.env.server`·跟进单与看板。不得跑全量门、不得动容器、不得打模型。
+
+### 六、只等业主本人（本席一件没代做）
+`deploy/.env.server` 任何编辑（含 `INDEX_BACKEND=pgvector`，那是**容器** `up -d --force-recreate` 不是镜像重建）· A1 `users.department` 回填＋A3 密级标签回填＋H13 未裁 · R440 整表与分档 p95 口径 · R433 禁语闸扩面 · 改评测集题面（D10 甲那一步单独批）· 抬 `MODEL_CONTEXT_TOKENS`≥4231 与 Ollama `num_ctx` 配套 · github 代理/hosts · 删 `%TEMP%\r414_stash\` 与主树 `?? %SystemDrive%/`、`?? -`（731 B 写坏的垃圾）。心跳 `automation-2` 与 `autodl` 现读都 `status = "PAUSED"`，本席没动它（业主「别开人工提醒」那道令仍有效）。
+
+### 七、下一格顺序
+1. 收 `Feynman`/R454 返工（crosswalk 已见盘面：`scripts/eval_window_planner.py` 38,629→52,460 B）与 `Leibniz`/R453 返工 ⇒ 叠加跑一扇门、分两枚提交；🔴 并 R454 只取他那六枚，快照副本与 `.pytest_cache/` 不并。
+2. 收 `Einstein`/R452：本班已下交回令（甲＝按 §127 二逐条给数字；乙＝说清卡在哪）。补一格他没报过的硬坐标——他往 `App.vue` 插了 113 行，`frontend/src/router/index.js:130` 那条注释引的 `App.vue:448` 会不会漂。1.9 小时零写入仍不报 ⇒ 按 `Zeno` 那一族的处置换身体复做。
+3. 腾出槽位即投 R456（判据正文 §130 二，写域不含 `app/**`；树 `be-r456` 已建于 `c2e6546`，branch `codex/be-r456`，dirty 0）。
+4. 槽位再腾即投 R457（本格新立，判据见本格第五节）。
+5. 机器安静时投 R428 拿 pgvector 格②（必须容器内跑，宿主 5432 有野 PG）。
