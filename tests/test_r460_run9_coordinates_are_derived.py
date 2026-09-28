@@ -68,6 +68,11 @@ LIVE_LABELS = tuple(item["label"] for item in TOOL.READOUT_CITES)
 #: 读数本落地那一笔（run9 收窗）。这是一枚**提交名**，不是行号：本件用它只问「同一截码在不在」，
 #: 从不问「它在第几行」—— 那一问的答案由锚现读给出。
 RUN9_MERGE = "2154318"
+#: 🔴 本单落地**之前**那一版的基点。旧抄数必须从这里现取，不许从 `HEAD` 取：`HEAD` 会随并树前移，
+#: 而并树之后的 `HEAD` 里那本已经写着改后的坐标 —— 拿它当「改前」，本件就在自己落地那一刻自毁
+#: （09-28 全量门实测 11 枚红就是这么来的，事故 #77：施工态与并树前的复跑都读不到这一红，因为那时
+#: `HEAD` 恰好还是基点，前提成立；前提一过期，红的不是产品，是这枚件选错了落脚点）。
+PRE_LANDING_REV = "49555eb"
 #: 影子树里插的那一行：它只活在 tmp_path 里，盘上那一棵一个字没动。
 PAD_LINE = ""
 
@@ -339,17 +344,17 @@ def blob_at(rev: str, rel: str) -> str:
     return out.stdout.decode("utf-8")
 
 
-def head_book() -> str:
-    """并树那一版的读数本（`HEAD` = 本单基点，落地之前）：旧抄数从这里现取，本件不手打。
+def pre_landing_book() -> str:
+    """本单落地**之前**那一版的读数本：旧抄数从这里现取，本件不手打，也不问 `HEAD`。
 
     🔴 `git show` 端出来的是 blob（LF 切口），工作树那本是 CRLF：这里只把切口对齐成工作树的形状，
     行数与每一行的字节都不受影响 —— 判据⑤那笔字节账读的是这本 CRLF 的。
     """
-    return blob_at("HEAD", READOUT_REL).replace("\r\n", "\n").replace("\n", "\r\n")
+    return blob_at(PRE_LANDING_REV, READOUT_REL).replace("\r\n", "\n").replace("\n", "\r\n")
 
 
-def printed_at_head(label: str) -> str:
-    return TOOL.read_cell(head_book(), cite(label))
+def printed_before_landing(label: str) -> str:
+    return TOOL.read_cell(pre_landing_book(), cite(label))
 
 
 def test_the_run9_window_merge_is_a_real_commit_on_this_tree() -> None:
@@ -360,6 +365,22 @@ def test_the_run9_window_merge_is_a_real_commit_on_this_tree() -> None:
     ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", RUN9_MERGE, "HEAD"],
                               cwd=str(REPO), capture_output=True, text=True, errors="replace")
     assert ancestor.returncode == 0, RUN9_MERGE + " 不在本树的祖先里：" + ancestor.stderr
+
+
+def test_the_pre_landing_book_is_pinned_and_is_not_the_head_book() -> None:
+    """🔴 这枚牙钉的是「对照本的落脚点」本身：基点必须在祖先链上，且那一本必须与 `HEAD` 那本不同。
+
+    为什么要有这一枚：上一版把「改前」写成 `HEAD`，于是它只在自己未落地时成立 —— 并树那一刻 `HEAD`
+    前移，「改前」与「改后」变成同一本，判据④⑤ 与那枚互斥钉一起自毁（门实测 11 枚红）。这一枚把那个
+    前提变成可失败的断言：谁再把落脚点挪回 `HEAD`，或者这一格哪天被回退成同一本，当场红。
+    """
+    ancestor = subprocess.run(["git", "merge-base", "--is-ancestor", PRE_LANDING_REV, "HEAD"],
+                              cwd=str(REPO), capture_output=True, text=True, errors="replace")
+    assert ancestor.returncode == 0, PRE_LANDING_REV + " 不在本树的祖先里：" + ancestor.stderr
+    assert blob_at(PRE_LANDING_REV, READOUT_REL) != blob_at("HEAD", READOUT_REL), (
+        "「改前」那一本与 HEAD 那一本逐字节相同 —— 落脚点已经跟着并树前移了，"
+        "拿它当改前就是让本件在落地那一刻自毁（事故 #77）"
+    )
 
 
 @pytest.mark.parametrize("key", SITE_KEYS)
@@ -377,7 +398,7 @@ def test_each_anchor_block_is_the_same_code_the_run9_merge_carried(key: str, tmp
     target.write_bytes(body.encode("utf-8"))
 
     then = TOOL.resolve_site(key, shadow)
-    quoted = {printed_at_head(item["label"]) for item in TOOL.READOUT_CITES if item["key"] == key}
+    quoted = {printed_before_landing(item["label"]) for item in TOOL.READOUT_CITES if item["key"] == key}
     assert quoted == {then["cell"]}, key + " 那枚锚在收窗那一笔里读不出当年抄的数：" + str((then["cell"], quoted))
     assert block_of(key, shadow) == block_of(key), key + " 那块码在两版之间字不同：这不属于「文件被撑长」那一族"
     now = TOOL.resolve_site(key, REPO)
@@ -391,13 +412,13 @@ def test_the_landing_moved_no_byte_but_the_five_coordinate_tokens() -> None:
 
     行数一枚不许变、其余各行的字节一枚不许动 —— 这一枚是「只搬坐标、不搬事实」的机器读法。
     """
-    then_rows, now_rows = head_book().split("\r\n"), readout_text().split("\r\n")
+    then_rows, now_rows = pre_landing_book().split("\r\n"), readout_text().split("\r\n")
     assert len(then_rows) == len(now_rows), "落地改了行数：本单只许改那一串字"
     anchors = sorted({index for index, row in enumerate(now_rows)
                       for item in TOOL.READOUT_CITES if item["row"] in row})
     moved = [index for index, (before, after) in enumerate(zip(then_rows, now_rows)) if before != after]
     assert moved == anchors, "改了行：改的 " + str(moved) + " 与在册行锚 " + str(anchors) + " 不同序"
-    assert masked(head_book()) == masked(readout_text()), "动的不止坐标那一串字"
+    assert masked(pre_landing_book()) == masked(readout_text()), "动的不止坐标那一串字"
 
 
 def test_the_live_book_is_already_at_the_derived_state() -> None:
@@ -443,7 +464,7 @@ def test_no_live_coordinate_is_double_registered_as_history() -> None:
     assert frozen & (set(cells.values()) | slots) == set(), "同一枚坐标躺在两张表里（判据③）"
     assert TOOL.registered_conflicts(text, cells) == []
     for label in LIVE_LABELS:
-        stale = printed_at_head(label)
+        stale = printed_before_landing(label)
         assert stale not in frozen, label + " 改口前那枚旧抄数还被登记成历史：" + stale
         assert stale not in readout_text(), label + " 的旧抄数今天还印在书上：那一格没落地"
 

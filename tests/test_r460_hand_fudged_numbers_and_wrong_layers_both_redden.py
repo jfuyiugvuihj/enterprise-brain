@@ -4,7 +4,7 @@
 (b) **手改表里任一数字凑绿**：把某一枚行内引用的坐标按「净 +1」的算术挪一下、把另一枚锚的现读
     抄过来顶替、或把本单改掉之前的那枚旧抄数原样贴回去 —— 三种都是「看着像今天」的数，
     本件必须红在那一格的名字上。旧抄数不在本件里手打：逐枚从并树那一版的读数本现取
-    （`ledger.printed_at_head`），下一班把这单重跑一遍，这组数会跟着历史走，不会烂在纸上。
+    （`ledger.printed_before_landing`，落脚点是本单落地前的基点而不是 `HEAD`），下一班把这单重跑一遍，这组数会跟着历史走，不会烂在纸上。
 
 (c) **把符号写错层**：这一把专治本单病灶本身。
     · 「分母恒=105」那句的正解是 `evaluate_evaluation_set` docstring 里的判据 4；本单发现时那一格
@@ -141,7 +141,7 @@ def test_copying_the_sibling_coordinate_into_the_wrong_cell_goes_red() -> None:
 @pytest.mark.parametrize("item", TOOL.READOUT_CITES, ids=lambda item: item["label"])
 def test_the_pre_r460_hand_copied_number_reddens_again(item: dict) -> None:
     """🔴 刀②b-3：把本单（含补令）改掉之前的那枚手抄数原样贴回去 —— 这一形就是病灶，不许复活。"""
-    stale = ledger.printed_at_head(item["label"])
+    stale = ledger.printed_before_landing(item["label"])
     assert ledger.derived()[item["key"]] != stale, "现读已经等于旧抄数：这一刀没砍在数上"
     report = TOOL.compare(root=REPO, text=ledger.mutate_cell(live_text(), item["label"], stale))
     red = [entry for entry in report["red"] if item["label"] in entry]
