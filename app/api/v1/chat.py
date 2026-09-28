@@ -325,6 +325,49 @@ def _collect_document_sources(agent_results: dict, sink: dict) -> None:
                 sink.setdefault(row["source_id"], row)
 
 
+def _dataset_evidence_filename(evidence: dict) -> str:
+    """一条 dataset 证据上"这份数是从哪个文件算的"那一格。
+
+    两枚来源，顺序写死：``locator.filename`` 是 ``app/agents/evidence.py::record_dataset``
+    落下的结构化那一格，``source_name`` 是同一枚函数旁边那份人读的名字。两者都出自工具
+    边界，不从正文反推。取 basename 与 ``app/agents/tools.py`` 选中那一份时的口径一致。
+    """
+    locator = evidence.get("locator")
+    filename = ""
+    if isinstance(locator, dict):
+        filename = str(locator.get("filename") or "")
+    filename = filename or str(evidence.get("source_name") or "")
+    return os.path.basename(filename.strip())
+
+
+def _collect_dataset_filenames(agent_results: dict, sink: list[str]) -> None:
+    """把一次流式回报里所有 worker 实际拿去算的数据集文件名汇进 sink，逐枚去重。
+
+    ``_collect_document_sources`` 第一句就把自己写成"文档证据"收集器，dataset 那一批一个字
+    都不往上传，于是"这一轮的数字是从哪份文件算的"在 HTTP 出口问不出来。本件只补那一格的
+    读数：只搬运、不判定、不碰可见性，也不新增第二道放行分支。
+    """
+    for record in (agent_results or {}).values():
+        if not isinstance(record, dict):
+            continue
+        for evidence in record.get("evidence") or []:
+            if not isinstance(evidence, dict) or evidence.get("source_type") != "dataset":
+                continue
+            filename = _dataset_evidence_filename(evidence)
+            if filename and filename not in sink:
+                sink.append(filename)
+
+
+def terminal_data_filename(dataset_files: list[str]) -> str:
+    """终态那一帧的 ``data_filename``：正好一枚才说得出"用的哪份文件"。
+
+    零枚（这一轮根本没跑数据）与多枚（调用方没点名，于是可见的数据集全算了）都不许被一枚
+    标量冒充成"就是这一份"，两种情况一律交空串。空串说的是"这一格说不清"，不是"用的是
+    一份空文件"。
+    """
+    return dataset_files[0] if len(dataset_files) == 1 else ""
+
+
 def _authorized_source_rows(rows: dict, principal) -> tuple[list[dict], str]:
     """用与旧 ``/chat`` 同一个 ``scope.allows`` 复核每条来源，返回可见行与理由码。
 
@@ -2534,6 +2577,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         # "每一枚片都不带"。要改就改这一枚变量，帧与帧不可能再分叉。
         live_cache_fields: dict | None = None
         source_rows: dict[str, dict] = {}
+        # R414(b)：这一轮实际拿去算的数据集文件名。与 source_rows 同一批证据、同一个生命
+        # 周期——kind=="event" 的 chunk 汇进来，kind=="done" 的收尾读它。
+        dataset_files: list[str] = []
         # R48：首屏线索卡一轮只发一枚。置真的唯一条件是「这一刻已经有看得见的一行」。
         headline_emitted = False
         # R154 判据③：本轮答案有没有真的落进缓存，落清单时只认这一枚标记（判据的门槛与
@@ -2745,6 +2791,8 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     status="completed",
                     data={
                         "session_id": thread_id,
+                        # R414(b)：这一轮的数字是从哪份数据文件算的，终态必须说得出。
+                        "data_filename": terminal_data_filename(dataset_files),
                         "worker_count": len(latest_worker_results),
                         "elapsed": elapsed_total,
                         "answer_length": len(full_text),
@@ -2828,6 +2876,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             agent_results = data.get("agent_results")
             if isinstance(agent_results, dict):
                 _collect_document_sources(agent_results, source_rows)
+                _collect_dataset_filenames(agent_results, dataset_files)
                 # R48 路线甲：本轮第一批**看得见**的来源一到手就发首屏线索卡，一轮只发一枚。
                 # 三条硬边界都收在这十几行里：走 canonical 信封（绝不骑 text 道）、正文一格
                 # 都不写（载荷只有来源行与两枚计数）、没有可见行就一枚都不发（宁缺毋造——
@@ -3218,6 +3267,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         initial_count = -1
         # R55：来源取证复用 /ask 那一个收集器与同一种 sink，收尾时只读不反推。
         source_rows: dict[str, dict] = {}
+        # R414(b)：与 /ask 同一个收集器、同一个 sink，这里也只读不反推。
+        dataset_files: list[str] = []
 
         # canonical 信封事件从这一条起与 /ask 的第一条
         # canonical_sse_event("request.started") 同构：同一个构造器、同一套
@@ -3384,6 +3435,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     status="completed",
                     data={
                         "session_id": request.session_id,
+                        # R414(b)：批准续跑的那一轮与 /ask 同一格读数。
+                        "data_filename": terminal_data_filename(dataset_files),
                         "worker_count": len(latest_worker_results),
                         "elapsed": round(time.time() - start_time, 1),
                         "answer_length": len(full_text),
@@ -3471,6 +3524,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             agent_results = data.get("agent_results")
             if isinstance(agent_results, dict):
                 _collect_document_sources(agent_results, source_rows)
+                _collect_dataset_filenames(agent_results, dataset_files)
             if initial_count < 0:
                 initial_count = len(msgs)
 
@@ -4119,7 +4173,7 @@ async def upload_document(file: UploadFile = File(...),
     The document scope is decided here rather than accepted from the form: retrieval
     matches a document against the departments of the caller asking, so a document that
     lands without one can never be found by anyone, and a department chosen by the
-    client would let a caller publish into somebody else\u2019s results. The uploader''s own
+    client would let a caller publish into somebody else's results. The uploader's own
     department is what the datasets and artifacts registries already use.
     """
     principal = principal_from_request(request) if request is not None else None

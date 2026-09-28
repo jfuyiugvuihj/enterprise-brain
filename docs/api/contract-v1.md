@@ -5371,3 +5371,60 @@ new untracked file `tests/test_r397_read_legs_refuse_a_missing_table.py`. This f
   空账的 `404` 排在判定之后。代价写清：多读一行版本（同一张 `document_versions`，一次 SELECT），
   且 `record_audit` 的 `resource_scope` 要一起挪进判定那一支，否则审计台账会少一格；`tests/test_r394_*`
   与 `app/documents/catalog.py` 都在别人账上，属禁域。本单一根手指没动这一格。
+
+## R414 · 数据问答那一条腿：终态那一帧必须说得出「这一轮用的是哪份数据文件」（`POST /ask` 与 `POST /approve` 的 `request.completed`，2026-09-28）
+
+**一句话**：数据问答这一轮实际拿去算的是哪份数据文件，改前在终态那一帧里问不出来 —— 屏上没有、审计台账里也
+没有，事后谁也无法证明「这个数是从哪份文件算的」。本单只补这一格读数，既不改任何一枚既有键的名字，也不改
+它的语义。
+
+**改前读数（AST 现读自基点 `c0c4bcd`，坐标按函数名现取，行号只是这一次的量）**
+
+- 两枚构造处：`app/api/v1/chat.py` 里 `ask` 与 `approve` 各自那枚 `status="completed"` 的 canonical
+  `request.completed`，交回树里 `terminal_data_filename(dataset_files)` 落在 `:2795` 与 `:3439`。
+- 改前两处的 `data` 键集合逐枚是：`session_id / worker_count / elapsed / answer_length / awaiting_hitl /
+  awaiting_steps` —— **里面没有 `data_filename`**。这一格是「确实不回」，不是「回了个空串」。
+- 另一处口径要分清：`AskRequest.data_filename` 是**请求方向**的键（调用方点名要用哪份，`/ask` 的入参），
+  本单这枚是**响应方向**的键（服务端说实际用了哪份）。两枚同名不同义，改后也仍不同义：响应那一格**不许**
+  被读成请求那一格的回声 —— 声明 A、实际算了 B，答回来的必须是 B。
+
+**`terminal_data_filename` 的三态**（本单新增的公开名，`app/api/v1/chat.py:361`）
+
+| 本轮真正算过的数据文件枚数 | `data_filename` 的值 | 这一格说的是 |
+| --- | --- | --- |
+| 正好一枚 | 那枚文件的名字 | 这一轮的数就是这份文件算出来的 |
+| 零枚（这一轮没跑数据） | `""` | 没跑，所以没有哪一份 |
+| 两枚及以上 | `""` | 说不清是哪一份，所以一枚都不点名 |
+
+🔴 **空串说的是「说不清」或「没跑」，不是「用了一份空文件」**：调用方不许把 `""` 折算成任何一份具体的文件，
+也不许拿它当「数据文件那一格已经核对过」的凭据。要区分零枚与多枚，读的是本轮的证据行，不是这一格。
+
+**取数口径**：值只出自 dataset 那一族证据行（`source_type == "dataset"`），文件名先读 `locator.filename`、
+回落到 `source_name`，两枚都出自工具边界 `app/agents/evidence.py::record_dataset`，取 basename；**不从正文
+反推，也不新增第二道放行分支**。收集器 `_collect_dataset_filenames`（`:343`）与 R55 那本 `source_rows`
+**同生命周期、同口径**：`kind == "event"` 的 chunk 汇入，`kind == "done"` 的收尾只读不反推。
+
+**屏上今天不会变**（这一格不是像素验收，别拿它当验收）：前端今天**不读**终态这一格 ——
+`frontend/src/components/ChatPanel.vue:591` 挂着的是一句待办注释（「要说出服务端那一份，需要后端在终态读数
+里带 `data_filename`」），同文件 `:806` 那枚同名字段是**请求体**方向的。所以本单是把前端欠着的那半补给齐：
+从这一格起后端答得出，界面什么时候开始说那句话属前端另一单，本单一寸像素都没改，也不声称改过。
+
+**今天还没接的两格（只登记，本单不动）**：legacy `done` 帧与队列终态帧仍**不带** `data_filename`。原因不是
+遗漏，是它们在 `tests/test_r254_sync_lane_terminal.py` 里被按名钉住了键集合（`:151` 那枚
+`test_the_done_frame_never_leaves_a_key_off` 用的是**相等**，`:175` 钉的是队列终态比共用那几格多出的恰好
+三枚）。要拓宽就得连改那枚在册件，而它在本单写域之外 —— 已作为请裁项交回总控，没有自行扩张。
+
+**钉**（本单全部新件，命名前缀 `test_r414_`）：`tests/test_r414_b_terminal_data_filename.py` 钉住「终态那一帧
+的键集合里有 `data_filename`，且值等于本轮实际使用的那枚文件名」，连同零枚/多枚两态与两枚方向不许混；
+`tests/test_r414_c_upload_prose.py` 钉 `upload_document` 那句散文里没有字面 `\u2019`、也没有 `''` 双写撇号；
+`反证刀**不在常驻门里**：这类件要复刻一棵能 ``import app`` 的副本根，只在执行层工作树里跑；09-28 首版把它写成
+``tests/test_r414_refutation_knives.py`` 落在 ``tests/`` 里，主树实测 5 枚 ERROR（``testpaths=tests`` 会把它收进门），
+已按本仓既有定规挪到**脚本驱动器道**——同形件 = ``tests/fixtures/r364_refutation_driver.py`（跑法
+``.venv\Scripts\python.exe tests\fixtures\r364_refutation_driver.py``），门里那份「不需要镜像整棵树」的形状见
+``tests/test_r364_shape_ruler_teeth.py:18`。五把刀 = 对照刀 / 摘掉本单那一格 / 退回漏网转义 / 把三态改坏一枚 /
+在副本里补上未落地的那格，真树全程只读，出门逐枚复对 sha256。🔴 R414 那枚驱动器**落点定名
+``tests/fixtures/r414_refutation_driver.py``、重做中**：它进树之前，本节只有 a/b/c 三枚件的读数在门里，反证刀一格未证。
+
+Physical lines, read off `git diff --numstat c0c4bcd`: `app/api/v1/chat.py` +55 / -1（那枚 `-1` 是 (c) 那一行
+散文的同行替换）。本文件是**尾部追加**：本单对它的写入只有本节，删 0 行；它不自称文末最后一节 —— 后来的
+单子会接着往它后面长，`## ` 行首枚数随每一次追加 +1（这一枚计数不属于本节，写进 prose 就是下一班的过期坐标）。
