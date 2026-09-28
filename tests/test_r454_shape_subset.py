@@ -12,10 +12,14 @@
 烤出来的——id 冒号后面多了一个空格、行尾从 CRLF 变成 LF，20 行里与本体字节等值的是 **0 行**。
 按判据①的口径，那件今天就是一枚假子集；本文件把它变成可跑的数，不留在散文里。
 
-反证两把（本文件后四枚用例）：
+反证三把（本文件末尾若干枚用例）：
 - 塞一枚不在 105 里的 id ⇒ 红；把"在册 105"这层成员检查摘掉 ⇒ 同一枚变异溜过去
   ⇒ 红来自成员检查这一被测行为，不是 JSON 形状的巧合。
 - 改动任一字 ⇒ 红；而只看 id 的检查对它是**瞎的** ⇒ 红来自逐字节比对这一步。
+- 把整张子集的行尾重新烤成另一种形态／造出 CRLF+LF 混排 ⇒ 红。这一把是 09-28 第二枚
+  补令新加的牙：期望行尾**从本体现取**（`_bank_eol()`），本件不写死 CRLF——本仓
+  `core.autocrlf=true` 且无 `.gitattributes`，tracked 件在施工树/主树/新检出树里
+  字节形态可以不同，写死形态等于把判据①钉在 git 的检出动作上。
 
 全程离线：只读仓内文本文件，零模型、零网络、零容器。
 """
@@ -63,6 +67,23 @@ def _subset_lines():
     return [line for line in SUBSET_PATH.read_bytes().splitlines(keepends=True) if line.strip()]
 
 
+def _bank_eol():
+    """本体行尾形态现取：子集唯一合法的行尾约定就是它，本件不写死 CRLF。
+
+    为什么必须现取：本体这枚 tracked 件在本仓是 `i/lf w/crlf`，同一份内容在
+    「施工树／主树／新检出工作树」三处行尾可以不同。写死 CRLF 就是把判据①的钉
+    扎在 git 的检出动作上——红不红取决于谁怎么检出，而不是有没有人手改过题面。
+    """
+    forms = planner.eol_forms(BANK_PATH.read_bytes())
+    assert forms["mixed"] is False, forms
+    return forms
+
+
+def _eol_unit():
+    "本体现取那种约定对应的行终止符。"
+    return b"\r\n" if _bank_eol()["label"] == "CRLF" else b"\n"
+
+
 def _ids(lines):
     return [json.loads(line.decode("utf-8"))["id"] for line in lines]
 
@@ -82,7 +103,7 @@ def test_the_bank_is_still_the_in_register_one_hundred_and_five():
 
 
 def test_subset_is_exactly_thirty_rows_and_every_row_is_verbatim():
-    "判据①主断言：30 行，逐行字节等值于本体同一枚 id 那一行（含行尾 CRLF）。"
+    f"判据①主断言：{SUBSET_SIZE} 行，逐行字节等值于本体同一枚 id 那一行（整行含行尾一起比；行尾形态与本体现取同形）。"
     subset = SUBSET_PATH.read_bytes()
     lines = _subset_lines()
     assert len(lines) == SUBSET_SIZE, len(lines)
@@ -95,16 +116,33 @@ def test_subset_is_exactly_thirty_rows_and_every_row_is_verbatim():
     assert all(line in bank_set for line in lines)
 
 
-def test_subset_keeps_the_compact_serialisation_and_the_crlf_endings():
-    """反面先例的形状检查：重序列化会把紧凑分隔符烤成带空格的写法，把 CRLF 烤成 LF。
+def test_subset_keeps_the_compact_serialisation_and_the_banks_own_eol():
+    """反面先例的形状检查：重序列化会把紧凑分隔符烤成带空格的写法，把行尾烤成另一种形态。
 
     这一枚不靠"看起来一样"，直接数分隔符与行尾——上一代子集就是在这儿漏掉的。
+    期望行尾从 `_bank_eol()` 现取：两枚件同处一棵树就同形，等值判断与检出侧无关；
+    这里只钉「整件只此一种约定」＋「枚数＝行数」，钉死形态那一版已按补令改掉。
     """
     raw = SUBSET_PATH.read_bytes()
-    assert raw.count(b"\r\n") == SUBSET_SIZE, raw.count(b"\r\n")
-    assert raw.count(b"\n") == SUBSET_SIZE, "混进裸 LF ⇒ 行尾被重新烤过"
+    forms = planner.eol_forms(raw)
+    unit = _eol_unit()
+    assert forms["mixed"] is False, forms
+    assert forms["label"] == _bank_eol()["label"], (forms, _bank_eol())
+    assert raw.count(unit) == SUBSET_SIZE, (unit, raw.count(unit))
+    assert raw.count(b"\n") == SUBSET_SIZE, "\n 枚数与行数不等 ⇒ 行尾被重新烤过"
     assert raw.count(b'"id": ') == 0, "出现带空格的 id 分隔符 ⇒ 行被重序列化过"
-    assert raw.endswith(b"\r\n")
+    assert raw.endswith(unit)
+
+
+def test_the_subset_and_the_bank_share_one_eol_convention():
+    """子集与本体各只此一种行尾约定，且两枚件同形——判据①"字节级等值"的形态前提。
+
+    compare_subset 已把 `bank_eol`/`subset_eol` 报成量，读数列之外这本账也落在盘上。
+    """
+    report = planner.compare_subset(_bank_lines(), SUBSET_PATH.read_bytes())
+    assert report["bank_eol"]["mixed"] is False, report["bank_eol"]
+    assert report["subset_eol"]["mixed"] is False, report["subset_eol"]
+    assert report["bank_eol"]["label"] == report["subset_eol"]["label"], report
 
 
 def test_subset_ids_are_unique_and_stay_in_bank_order():
@@ -196,7 +234,7 @@ def _ghost_line():
         "must_contain": ["编的"],
         "requires_evidence": False,
     }
-    return json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\r\n"
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8") + _eol_unit()
 
 
 def _subset_with_a_foreign_swap():
@@ -281,3 +319,56 @@ def test_counter_evidence_an_id_only_check_is_blind_to_the_changed_character():
     assert report["equal"] == SUBSET_SIZE - 1
     with pytest.raises(planner.SubsetError):
         planner.validate_subset(_bank_lines(), rebuilt)
+
+
+# ==================== 反证钉 3：行尾被重新烤过 ⇒ 红（09-28 第二枚补令） ====================
+
+
+def test_counter_evidence_a_rebaked_eol_subset_turns_red():
+    """整张子集的行尾烤成另一种形态 ⇒ 红；而 id 一个都没变。
+
+    这把牙标出判据①"字节级等于本体那几行"的实位：行尾也是字节。摘掉
+    `validate_subset` 里「子集与本体同形」那一步，红话里就不再有「不同形」；
+    摘掉 compare_subset 的整行字节比对，33 行会全部读成等值——两种摘法都留不下凭据。
+    """
+    raw = SUBSET_PATH.read_bytes()
+    flipped = (planner.normalise_eol(raw) if b"\r\n" in raw
+               else raw.replace(b"\n", b"\r\n"))
+    assert planner.eol_forms(flipped)["label"] != planner.eol_forms(raw)["label"]
+    assert planner.eol_forms(flipped)["mixed"] is False, planner.eol_forms(flipped)
+    with pytest.raises(planner.SubsetError) as caught:
+        planner.validate_subset(_bank_lines(), flipped)
+    message = str(caught.value)
+    assert "不同形" in message, message
+    report = planner.compare_subset(_bank_lines(), flipped)
+    assert report["equal"] == 0, report["equal"]
+    assert report["foreign"] == [], report["foreign"]
+    assert _ids(flipped.splitlines(keepends=True)) == _ids(_subset_lines())
+
+
+def test_counter_evidence_a_mixed_eol_subset_turns_red():
+    """故意混排（一半 CRLF 一半 LF）⇒「只此一种约定」那一形必须点名混排。
+
+    混排不是 git 检出能造出来的形态：检出侧整件同一种展开，所以混排＝有人在盘上
+    动过手。摘掉 `validate_subset` 里 `subset_eol["mixed"]` 那一支，这一枚就只剩
+    "与本体不等值"那种含混的红，混排本身没人记账。
+    """
+    lines = _subset_lines()
+    unit = _eol_unit()
+    other = b"\n" if unit == b"\r\n" else b"\r\n"
+    mixed = b"".join(
+        line.rstrip(b"\r\n") + (unit if index % 2 == 0 else other)
+        for index, line in enumerate(lines)
+    )
+    forms = planner.eol_forms(mixed)
+    assert forms["mixed"] is True, forms
+    assert _ids(mixed.splitlines(keepends=True)) == _ids(lines), "造料把 id 改动了"
+    with pytest.raises(planner.SubsetError) as caught:
+        planner.validate_subset(_bank_lines(), mixed)
+    message = str(caught.value)
+    assert "混排" in message, message
+    # 「只此一种约定」这一句只由混排那一支产出：形态不同的那一支报的是「不同形」。
+    # 少了这一句断言，摘掉混排守卫后会由 label 里的"混排"二字蒙过去——钉子自己没牙。
+    assert "只此一种约定" in message, message
+    assert "CRLF" in message and "LF" in message, message
+    assert planner.compare_subset(_bank_lines(), mixed)["foreign"] == [], message

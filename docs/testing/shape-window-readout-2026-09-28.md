@@ -10,12 +10,15 @@
 | 形状子集 | `docs/testing/bank-shape-subset-30.jsonl` | `823ec81ff11b6345` | 13172 | 33 枚分层子集（本体 105 枚在册），逐行字节等值于本体 |
 | 批准算料 | `docs/testing/sidecar-run9.jsonl` | `cb972fd93fa915c0` | 56568 | 上一窗逐枚 `approval_rounds`，批准次数由它算 |
 
+- 落盘行尾：本表由 planner 以 **LF** 整张重写（常量 `READOUT_NEWLINE`＝`\n`）。本仓 `core.autocrlf=true` 且无 `.gitattributes`，检出侧会把这行以下的 LF 展成 CRLF——那是 git 的动作，不是人手改。所以「不许手改」按内容比（先把 `\r\n` 归一成 `\n`），并且比之前要求行尾只此一种约定：CRLF/LF 混排＝有人手改，必须红。
+
 ## 二、子集逐行比对（判据①的凭据）
 
 - 子集行数：33；与本体**字节级等值**：33/33
 - 外来 id（不在本体 105 枚里）：0 枚
 - 被改动的行：0 枚
-- 比对口径：`splitlines(keepends=True)` 取原始字节行，本体行尾是 CRLF，整行含行尾一起比——所以「重序列化加个空格」也算改题。
+- 比对口径：`splitlines(keepends=True)` 取原始字节行，本体行尾现取 `CRLF`（形态随检出态变化，本仓无 `.gitattributes`），整行含行尾一起比——所以「重序列化加个空格」「行尾被重新烤过」都算改题。
+- 行尾形态（现取）：本体 `CRLF`（CRLF 105 枚／裸 LF 0 枚），子集 `CRLF`（CRLF 33 枚／裸 LF 0 枚）。子集是 `--emit-subset` 用 `write_bytes` 逐字节搬运本体那几行，行尾跟着本体走；两枚件都只许一种约定，混排＝有人在盘上动过手。本表自己的落盘行尾见 §一。
 
 ## 三、11 族分布（分层账）
 

@@ -81,15 +81,29 @@ def _mutate_one_reading(markdown, cell_id, replacement):
 # ==================== 判据③主断言 ====================
 
 
-def test_the_in_tree_readout_is_byte_for_byte_what_the_planner_emits(tmp_path):
-    """读数表不是手抄的：CLI 再生一次，与盘上那件逐字节相同。"""
-    target = tmp_path / "regen.md"
+def _regenerated_bytes(tmp_path, name="regen.md"):
+    """让 CLI 把整张表再生一次到 tmp_path：返回（再生件字节，stdout 原文）。"""
+    target = tmp_path / name
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), "--out", str(target)],
         cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, result.stderr[-800:]
-    assert target.read_bytes() == READOUT_PATH.read_bytes(), "盘上那件与 planner 再生不同 ⇒ 有人手改过读数表"
+    return target.read_bytes(), result.stdout
+
+
+def test_the_in_tree_readout_matches_the_planner_by_content(tmp_path):
+    """读数表不是手抄的：CLI 再生一次，与盘上那件**按内容**等值。
+
+    原来这枚钉拿 read_bytes() 死比字节，红不红取决于谁怎么检出的：本仓 core.autocrlf=true
+    且无 .gitattributes，git 入库把 CRLF 归一成 LF、检出又展回 CRLF（09-28 总控在 5939b38
+    的检出树里实测本件 i/lf w/crlf，主树里同一份却是 LF）。所以量错了——手改判据要看内容，
+    行尾只许在「整件只此一种约定」这一步上钉死（混排＝有人手改，仍然红）。
+    """
+    emitted, _stdout = _regenerated_bytes(tmp_path)
+    verdict = planner.readout_is_unedited(READOUT_PATH.read_bytes(), emitted)
+    assert verdict["disk"]["mixed"] is False and verdict["emitted"]["mixed"] is False, verdict
+    assert verdict["emitted"]["label"] == "LF", verdict
 
 
 def test_the_generated_skeleton_passes_its_own_validator():
@@ -345,3 +359,81 @@ def test_counter_evidence_stripping_the_coverage_line_turns_red():
     with pytest.raises(planner.ReadoutError) as caught:
         planner.validate_readout(markdown, plan)
     assert planner.COVERAGE_MARKER in str(caught.value), str(caught.value)
+
+
+# ==================== 行尾形态钉（第二枚补令的病灶） ====================
+#
+# 同一份内容在四种形态下的读数。判据是「按内容等值」＋「整件只此一种行尾约定」，
+# 不是「字节等于我机器上那一形」——后者会把 git 的检出动作记成有人手改。
+
+
+def _mix_eol(raw_lf: bytes) -> bytes:
+    """故意造一枚 CRLF/LF 混排的行尾形态（只在临时样本上造，不碰在盘件）。"""
+    out = []
+    for index, line in enumerate(raw_lf.splitlines(keepends=True)):
+        out.append(line.rstrip(b"\n") + (b"\r\n" if index % 2 == 0 else b"\n"))
+    return b"".join(out)
+
+
+@pytest.mark.parametrize("form", ["as_in_tree", "lf", "crlf", "mixed"])
+def test_the_four_eol_forms_read_as_they_should(tmp_path, form):
+    emitted, _stdout = _regenerated_bytes(tmp_path)
+    content = planner.normalise_eol(READOUT_PATH.read_bytes())
+    if form == "as_in_tree":
+        sample = READOUT_PATH.read_bytes()
+    elif form == "lf":
+        sample = content
+    elif form == "crlf":
+        sample = content.replace(b"\n", b"\r\n")
+    else:
+        sample = _mix_eol(content)
+    if form == "mixed":
+        with pytest.raises(planner.ReadoutError) as caught:
+            planner.readout_is_unedited(sample, emitted)
+        message = str(caught.value)
+        assert "行尾混排" in message, message
+        assert "手改" in message, message
+        assert "CRLF" in message and "LF" in message, message
+        return
+    verdict = planner.readout_is_unedited(sample, emitted)
+    expected = {"as_in_tree": planner.eol_forms(READOUT_PATH.read_bytes())["label"],
+                "lf": "LF", "crlf": "CRLF"}[form]
+    assert verdict["disk"]["label"] == expected, verdict
+    assert verdict["disk"]["mixed"] is False, verdict
+
+
+def test_counter_evidence_a_hand_edit_under_expanded_eol_still_turns_red(tmp_path):
+    """行尾归一不许把「改了内容」洗白：改一个字，LF 形红，套上 CRLF 展开照样红。"""
+    emitted, _stdout = _regenerated_bytes(tmp_path)
+    tampered = emitted.replace("不抄上一班".encode("utf-8"), "已抄上一班".encode("utf-8"), 1)
+    assert tampered != emitted, "没改到那一枚字，用例本身要重开"
+    with pytest.raises(planner.ReadoutError) as caught:
+        planner.readout_is_unedited(tampered, emitted)
+    message = str(caught.value)
+    assert "归一行尾" in message and "不等" in message, message
+    expanded = planner.normalise_eol(tampered).replace(b"\n", b"\r\n")
+    assert planner.eol_forms(expanded)["label"] == "CRLF"
+    with pytest.raises(planner.ReadoutError):
+        planner.readout_is_unedited(expanded, emitted)
+
+
+def test_the_planner_reports_its_own_write_newline_and_keeps_it_single(tmp_path):
+    """补令②：写盘那道的行尾口径要定死，还要报出来——不许靠「在我机器上正好」过关。"""
+    emitted, stdout = _regenerated_bytes(tmp_path)
+    assert planner.READOUT_NEWLINE == "\n", repr(planner.READOUT_NEWLINE)
+    forms = planner.eol_forms(emitted)
+    assert forms["crlf"] == 0 and forms["bare_lf"] > 0 and forms["label"] == "LF", forms
+    assert "readout 落盘行尾" in stdout, stdout
+    assert "在盘件现取" in stdout, stdout
+    assert planner.EOL_STATEMENT in READOUT_PATH.read_text(encoding="utf-8")
+
+
+def test_counter_evidence_dropping_the_newline_statement_turns_red():
+    """口径写在盘上，就得钉它在：抹掉那一句，validate_readout 当场红。"""
+    plan = _plan()
+    markdown = READOUT_PATH.read_text(encoding="utf-8")
+    stripped = markdown.replace(planner.EOL_STATEMENT, "", 1)
+    assert stripped != markdown and planner.EOL_STATEMENT not in stripped
+    with pytest.raises(planner.ReadoutError) as caught:
+        planner.validate_readout(stripped, plan)
+    assert "行尾" in str(caught.value), str(caught.value)

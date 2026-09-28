@@ -43,6 +43,18 @@ READOUT_REL = "docs/testing/shape-window-readout-2026-09-28.md"
 #: 而两本账的交集今天实测＝0 枚（总控 09-28 现取），真开窗时对面会把本计划判红。
 R453_ROSTER_REL = "scripts/eval_cloud_window_readout.py"
 
+#: `--out` 落盘的行尾口径：固定 LF。为什么定死——本仓 `core.autocrlf=true` 且没有
+#: `.gitattributes`，git 入库时把 CRLF 归一成 LF、检出时又展回 CRLF，所以「同一份内容
+#: 在不同工作树里字节不同」是常态，不是有人手改的证据（09-28 总控在 `5939b38` 的检出树里
+#: 实测 `docs/testing/shape-window-readout-2026-09-28.md` = i/lf w/crlf）。生成物只由本件
+#: 写，所以行尾只此一种约定；「不许手改读数表」那一判据因此按**内容**比，不按原始字节死比。
+READOUT_NEWLINE = "\n"
+#: 上面这套口径要落在读数表自己身上，`validate_readout()` 按这句核对它在不在（丢了就红）。
+EOL_STATEMENT = ("落盘行尾：本表由 planner 以 **LF** 整张重写（常量 `READOUT_NEWLINE`＝`\\n`）。"
+                 "本仓 `core.autocrlf=true` 且无 `.gitattributes`，检出侧会把这行以下的 LF 展成 "
+                 "CRLF——那是 git 的动作，不是人手改。所以「不许手改」按内容比（先把 `\\r\\n` "
+                 "归一成 `\\n`），并且比之前要求行尾只此一种约定：CRLF/LF 混排＝有人手改，必须红。")
+
 FAMILY_FLOOR = 2
 #: 返工令第 5 条：report 族配额 3 抬到 12——D 三格要跑满报告档那 12 枚，
 #: 与 runbook「两相一窗」相 2 的 12 枚同口径；approval 仍按原判据①留 3 枚。
@@ -448,6 +460,31 @@ class MachineProfile:
         return out
 
 
+def eol_forms(raw: bytes) -> dict:
+    """数一枚件里有几种行尾：返回 CRLF 枚数、裸 LF 枚数与「只此一种」的口径名。
+
+    为什么要把它做成量具级函数：本仓靠代码侧扛行尾（无 .gitattributes），同一份内容的
+    字节形态在「施工树／主树／新检出工作树」三处可以不一样。行尾只此一种约定是生成物
+    的属性，混排才说明有人在盘上动过手；内容对不对由归一行尾之后的字节说了算。
+    """
+    crlf = raw.count(b"\r\n")
+    bare_lf = raw.count(b"\n") - crlf
+    if crlf and bare_lf:
+        label = "CRLF/LF 混排"
+    elif crlf:
+        label = "CRLF"
+    elif bare_lf:
+        label = "LF"
+    else:
+        label = "空件（零行）"
+    return {"crlf": crlf, "bare_lf": bare_lf, "mixed": bool(crlf and bare_lf), "label": label}
+
+
+def normalise_eol(raw: bytes) -> bytes:
+    r"""把 CRLF 归一成 LF：行尾展开（git 的 autocrlf 动作）不该改变一枚件的身份。"""
+    return raw.replace(b"\r\n", b"\n")
+
+
 def sha256_16(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
 
@@ -476,7 +513,11 @@ def line_id(raw: bytes) -> str:
 
 
 def load_bank_lines(path: Path) -> list:
-    """按 keepends 读原始字节行：本体是 CRLF，一个字都不许在转换里漂掉。"""
+    """按 keepends 读原始字节行：行尾跟着本体走，一个字都不许在字符串往返里漂掉。
+
+    本体在本仓是 `i/lf w/crlf` 那一族件：行尾形态由检出态决定，不写死在这里，
+    这里只写死一件事——不做文本模式转换。比对口径见 `compare_subset`。
+    """
     raw = path.read_bytes()
     return [line for line in raw.splitlines(keepends=True) if line.strip()]
 
@@ -572,7 +613,11 @@ def emit_subset(bank_lines: list, picked: list) -> bytes:
 
 
 def compare_subset(bank_lines: list, subset_raw: bytes) -> dict:
-    """逐行比对「子集那一行 == 本体那一行」，字节级，含行尾 CRLF。"""
+    """逐行比对「子集那一行 == 本体那一行」，字节级，整行含行尾一起比。
+
+    行尾形态不在这里写死：子集与本体同处一棵树就同形，等值判断与谁怎么检出这架无关。
+    形态只此一种约定由 `validate_subset` 那一步钉（混排/不同形点名说明）。
+    """
     index = bank_index(bank_lines)
     subset_lines = [line for line in subset_raw.splitlines(keepends=True) if line.strip()]
     seen = []
@@ -609,6 +654,10 @@ def compare_subset(bank_lines: list, subset_raw: bytes) -> dict:
         "bank_bytes": sum(len(line) for line in bank_lines),
         "evidence_bytes": 0,
         "equal": sum(1 for row in rows if row["equal"]),
+        # 行尾形态：本体是 i/lf w/crlf 的那一族件，子集靠 write_bytes 逐字节搬运本体行，
+        # 所以子集的约定必须与本体一致；两枚件都只许一种约定，混排＝有人在盘上动过手。
+        "bank_eol": eol_forms(b"".join(bank_lines)),
+        "subset_eol": eol_forms(subset_raw),
         "foreign": foreign,
         "mutated": mutated,
         "duplicates": duplicates,
@@ -629,6 +678,19 @@ def validate_subset(bank_lines: list, subset_raw: bytes, size: int = SUBSET_SIZE
         problems.append("子集里有行与本体不等值（改了一个字也算改）：" + "、".join(report["mutated"]))
     if report["duplicates"]:
         problems.append("子集里 id 重复：" + "、".join(sorted(set(report["duplicates"]))))
+    bank_eol, subset_eol = report["bank_eol"], report["subset_eol"]
+    if subset_eol["mixed"]:
+        problems.append(
+            f"子集行尾混排：CRLF {subset_eol['crlf']} 枚＋裸 LF {subset_eol['bare_lf']} 枚并存。"
+            "子集只许由 --emit-subset 用 write_bytes 逐字节搬运本体行，全件只此一种约定")
+    elif bank_eol["mixed"]:
+        problems.append(
+            f"题源本体自己就行尾混排（CRLF {bank_eol['crlf']} 枚＋裸 LF "
+            f"{bank_eol['bare_lf']} 枚）：本单不改本体，先把本体漂了这件事报出来")
+    elif subset_eol["label"] != bank_eol["label"]:
+        problems.append(
+            f"子集行尾形态（{subset_eol['label']}）与本体（{bank_eol['label']}）不同形："
+            "行尾跟着本体走，重烤过就不再是同一把尺")
     for fam, floor in _floors():
         got = report["families"].get(fam, 0)
         if got < floor:
@@ -881,6 +943,8 @@ def render_readout(plan: dict, *, bank_rel: str, subset_rel: str, evidence_rel: 
     lines.append(f"| 批准算料 | `{evidence_rel}` | `{window['evidence_sha16']}` | "
                  f"{comparison['evidence_bytes']} | 上一窗逐枚 `approval_rounds`，批准次数由它算 |")
     lines.append("")
+    lines.append("- " + EOL_STATEMENT)
+    lines.append("")
     lines.append("## 二、子集逐行比对（判据①的凭据）")
     lines.append("")
     lines.append(f"- 子集行数：{comparison['count']}；与本体**字节级等值**：{comparison['equal']}/"
@@ -889,8 +953,15 @@ def render_readout(plan: dict, *, bank_rel: str, subset_rel: str, evidence_rel: 
                  + ("" if not comparison["foreign"] else "：" + "、".join(comparison["foreign"])))
     lines.append(f"- 被改动的行：{len(comparison['mutated'])} 枚"
                  + ("" if not comparison["mutated"] else "：" + "、".join(comparison["mutated"])))
-    lines.append("- 比对口径：`splitlines(keepends=True)` 取原始字节行，本体行尾是 CRLF，"
-                 "整行含行尾一起比——所以「重序列化加个空格」也算改题。")
+    lines.append(f"- 比对口径：`splitlines(keepends=True)` 取原始字节行，本体行尾现取 "
+                 f"`{comparison['bank_eol']['label']}`（形态随检出态变化，本仓无 `.gitattributes`），"
+                 "整行含行尾一起比——所以「重序列化加个空格」「行尾被重新烤过」都算改题。")
+    lines.append(f"- 行尾形态（现取）：本体 `{comparison['bank_eol']['label']}`"
+                 f"（CRLF {comparison['bank_eol']['crlf']} 枚／裸 LF {comparison['bank_eol']['bare_lf']} 枚），"
+                 f"子集 `{comparison['subset_eol']['label']}`"
+                 f"（CRLF {comparison['subset_eol']['crlf']} 枚／裸 LF {comparison['subset_eol']['bare_lf']} 枚）。"
+                 "子集是 `--emit-subset` 用 `write_bytes` 逐字节搬运本体那几行，行尾跟着本体走；"
+                 "两枚件都只许一种约定，混排＝有人在盘上动过手。本表自己的落盘行尾见 §一。")
     lines.append("")
     lines.append("## 三、11 族分布（分层账）")
     lines.append("")
@@ -1047,6 +1118,37 @@ def render_readout(plan: dict, *, bank_rel: str, subset_rel: str, evidence_rel: 
 FORBIDDEN_READING_TOKENS = ("✅", "PASS", "pass", "过", "成立", "没问题", "应该", "绿")
 
 
+def readout_is_unedited(disk_raw: bytes, emitted_raw: bytes) -> dict:
+    """「不许手改读数表」这一判据的可跑形态：按内容比，不按 git 检出的行尾形态比。
+
+    两步入序不能反：
+    ① 在盘件行尾只此一种约定。planner 每次整张重写只会出 `READOUT_NEWLINE` 那一种；
+       CRLF/LF 混排只可能是有人在盘上动过手 ⇒ 红，话里点名混排那一形。
+    ② 归一行尾（`\\r\\n`→`\\n`）之后与 planner 的输出等值。检出端 `core.autocrlf=true`
+       把 LF 展成 CRLF 是 git 的动作，不是手改，所以这一步先归一再比；归一后仍不等
+       ＝改的是内容 ⇒ 红，话里点名内容那一形。
+    """
+    disk_eol = eol_forms(disk_raw)
+    if disk_eol["mixed"]:
+        raise ReadoutError(
+            f"在盘读数表行尾混排：CRLF {disk_eol['crlf']} 枚＋裸 LF {disk_eol['bare_lf']} 枚并存。"
+            f"planner 每回整张重写只会出 {READOUT_NEWLINE!r} 一种行尾，混排＝有人在盘上手改过")
+    emitted_eol = eol_forms(emitted_raw)
+    if emitted_eol["mixed"]:
+        raise ReadoutError(
+            f"planner 再生出来的那一份自己就混排（CRLF {emitted_eol['crlf']} 枚＋裸 LF "
+            f"{emitted_eol['bare_lf']} 枚）：写盘这道的行尾口径没定死，红")
+    if normalise_eol(disk_raw) != normalise_eol(emitted_raw):
+        first = next((index for index in range(min(len(disk_raw), len(emitted_raw)))
+                      if normalise_eol(disk_raw)[index] != normalise_eol(emitted_raw)[index]),
+                     min(len(disk_raw), len(emitted_raw)))
+        raise ReadoutError(
+            f"在盘读数表归一行尾（盘上 {disk_eol['label']}／再生件 {emitted_eol['label']}）之后"
+            f"仍与 planner 的输出不等：第一个差在字节 {first}。行尾展开不算手改，"
+            f"内容不等才算——读数表必须生成，不许手写")
+    return {"disk": disk_eol, "emitted": emitted_eol}
+
+
 def validate_readout(markdown: str, plan: dict) -> dict:
     """未验格被写成过 ⇒ 红。同时核对窗数、范围声明、自动批准边界句。"""
     problems = []
@@ -1097,6 +1199,8 @@ def validate_readout(markdown: str, plan: dict) -> dict:
                if line.startswith("- " + COVERAGE_MARKER) and cell_id in line]
         if not hit:
             problems.append(f"格 {cell_id} 的{COVERAGE_MARKER}那一行没落进读数表：空引用假绿没人记账")
+    if EOL_STATEMENT not in markdown:
+        problems.append("读数表少了落盘行尾口径那一句：行尾由谁定、混排算不算手改，没写在盘上")
     if SCOPE_SENTENCE not in markdown:
         problems.append(f"读数表少了那句硬点名：{SCOPE_SENTENCE}")
     if AUTO_APPROVE_SENTENCE not in markdown:
@@ -1182,7 +1286,7 @@ def main(argv=None) -> int:
         picked=picked,
     )
     validate_readout(markdown, plan)
-    Path(args.out).write_text(markdown, encoding="utf-8", newline="\n")
+    Path(args.out).write_text(markdown, encoding="utf-8", newline=READOUT_NEWLINE)
     if args.json:
         print(json.dumps(plan, ensure_ascii=False, indent=2))
     else:
@@ -1190,6 +1294,9 @@ def main(argv=None) -> int:
         print(f"windows=1 phases={len(window['phases'])} plays={window['question_plays']} "
               f"approvals={window['approvals_planned_total']} "
               f"unattainable={len(plan['unattainable_here'])} out={len(plan['out_of_scope_cells'])}")
+        on_disk = eol_forms(Path(args.out).read_bytes())
+        print(f"readout 落盘行尾={READOUT_NEWLINE!r}（生成物唯一约定；检出端 autocrlf 展成 CRLF 不算手改）"
+              f"，在盘件现取 {on_disk['label']}：CRLF={on_disk['crlf']} 枚、裸 LF={on_disk['bare_lf']} 枚")
     return 0
 
 
