@@ -5,6 +5,9 @@
 - **行号口径**：以下所有 `文件:行` 一律锚 commit `8613dc7`，不锚工作树（主树是共享树，行号会漂）。
 - **实测时间**：2026-09-26 11:48 (+08:00)，`node v24.13.0` / `npm 11.6.2`。
 - **不引用旧结论**：计划书 §6.1 的状态词全部按今天的源码重核（§3），每条缺口都带 `文件:行` 或命令输出。
+- **R426 现场重判**（2026-09-28，锚 commit `ac84f1a`，工作树 `be-r415`）：§1 的 T 表、§3 的八项对账、§4 的三条硬判据、§6 的 G 表已逐行在这棵树上重取一遍，**判定改了的行就地改写**，证据前一律标 `现读@ac84f1a`；拿不出磁盘字节或命令+EXIT 的行原样留着，进 §10 未证清单。
+- **两枚行号锚并存**：没带锚的 `文件:行` 仍是 R265 基点 `8613dc7` 上的当时取证（今天多数已漂，别照抄去派工）；带 `@ac84f1a` 的是 R426 当场推导的 live coordinate。
+- 🔴 **改口 ≠ 销账**：下面把若干行由「无 / 半」改判为「已落」，收益只是**让下一班不再重复派已经修完的活**；V1 门槛是否达标仍由总控按验收记录裁定，本文不构成达标凭据。
 
 ---
 
@@ -13,7 +16,8 @@
 八项对账里 **三格状态词已过期**（自研 UI 原语、三屏 SLO 契约、图谱降级承接），三条硬判据里 **一条今天实测不成立**（界面无技术注解：3 处技术文案确实上屏）。
 - 从员工视角看今天**办得完**的：提问拿答案并看到出处、点开原文核对、批待办、被拒绝时看得懂人话。
 - 今天**办不完**的四件事：我传的文档到底能不能被问到 / 我报的数据是谁传的 / 告警看到了怎么办完 / 换台机器我的历史在哪。
-- 缺口 **20 条（P1 十一条）**，按写集归成 **8 块**，合计约 **12–12.5 人日**；只做 P1 约 **9 人日**。
+- 缺口 **20 条（P1 十一条）**，按写集归成 **8 块**，合计约 **12–12.5 人日**；只做 P1 约 **9 人日**。（R265 当时读数）
+- 🔴 **R426 现读（`ac84f1a`）改写这一句**：上面「今天办不完的四件事」今天**办得完三件** —— 文档能不能被问到有正脸（G01）、告警看到了能就地办完（G05）、换台机器问过的话点一下就回得来（G04）；剩「我报的数据是谁传的」**半**：文档行已画上传者，数据文件行后端已回 `owner_id` 而界面一枚都不画。§6 那 20 枚的现读汇总（已落 / 半 / 未落 各几枚）见 §10.1。
 
 ---
 
@@ -23,19 +27,19 @@
 
 | # | 员工要办的事 | 判定 | 半在哪 / 证据 |
 |---|---|---|---|
-| T1 | 提问 → 拿答案 → 看到出处并点开核对原文 | **有** | 出处卡可点：`frontend/src/components/SourceCard.vue:91-97`（按钮文案「打开原文：文件名」→ 抛 preview 事件），预览与下载走受控接口：`ChatPanel.vue:1181`、`:1211`；首屏线索卡带密级：`AnswerHeadlineCard.vue:90`；来源反馈信号：`SourceCard.vue:114-131` |
-| T2 | 上传文档 → 知道「多久能被问到」 | **半** | 未索引有脸、**已索引没有脸**：`DocPanel.vue:99-105`（注释即裁定「indexed 不涂」），模板只在 excluded 时画状态：`:460-464`；上传结束后只在收尾时刷一次列表，不轮询：`:206-246`；`POST /upload` 的 classification Form 字段前端从不发：`app/api/v1/chat.py:3768` |
-| T3 | 查自己报的数据（我传过什么、谁的） | **半** | 数据文件行的全部字段是 `filename/size/size_label/modified_at/extension/dataset_id/version_id/classification`（`app/api/v1/data.py:221-236`）——**没有归属人**，界面无从显示「我传的」；文档行后端已给 `owner_id`/`size_bytes`/`parse_status`（`app/documents/catalog.py:236-238`），界面一行都不显示（`DocPanel.vue:444-465`） |
-| T4 | 看图与报告（成果找回） | **半** | 对话内图 ✅（`ChatPanel.vue:1420` 挂 ChartViewer，带 Bearer 取 blob：`lib/artifacts.js:43`）；成果列表 ✅ 存在但**只有一个挂载点：喂料 → 数据标签之下**（`DataPanel.vue:451`，全仓 ArtifactList 无第二处引用）；计划书 §2 的「交成果」独立视图 0 屏：`router/index.js:52-99` |
-| T5 | 处理待批 | **有** | 真挂起账本 + 分页 + 期限 + 失败轮：`components/hitl/HitlPendingPanel.vue:592-683`、`HitlPendingRow.vue:117`（「超过 … 就不再算挂着」）；对话内同一个 resolver：`ChatPanel.vue:1472-1473` |
-| T6 | 处理告警 | **半** | 能读列表 / 改规则 / 手跑一次巡检：`lib/alerts.js:22-24`、`InsightPanel.vue:8-11`。**不能确认、不能关闭、不能指派、看不到单条详情**：`app/api/v1/alerts.py:961,982,993,1004` 四枚端点在前端 **0 消费者**；`mapAlertRow` 只取 5 个键（`lib/alerts.js:168-178`），而 alerts 表早已有 `status / acknowledged_by / acknowledged_at / closed_by / assignee / assigned_at`（`app/api/v1/alerts.py:114-121`）→ 两个人处理同一条告警，彼此看不见 |
-| T7 | 被拒时知道下一步做什么 | **半** | 好的那半：稳定码一律洗成人话且带下一步（`lib/errcodes.js:135`、`lib/provenance.js:130`），失败与空态两张脸（`InsightPanel.vue:13-17`、`lib/alerts.js:164-166`）。坏的那半见 **G09 / G13 / G19**：`department_scope_required` 那句「请先选择部门范围」（`lib/errcodes.js:105`）指向**界面上不存在的**部门选择器 |
-| T8 | 登录 / 换密码 / 找回账号 | **半** | 全屏登录 ✅（§4.1）；「忘记密码」弹窗把员工指向「管理员在**用户管理**中重置」（`App.vue:348`），而**这一屏不存在**（§4.3：`GET /users` 前端 0 消费者）；`PUT /users/password`、`GET/PUT /profile`（`app/api/v1/auth.py:115,155,163`）前端 0 消费者 → 员工改不了自己密码，也看不到自己的部门归属，而部门恰恰决定他能不能问出答案 |
-| T9 | 换个地方接着问（历史跟着人走） | **半** | 会话列表**只从 localStorage 组装**（`lib/sessions.js:93-113`），退出时整包清空（`App.vue:183-197` + `lib/sessions.js:176-191`）；`GET /sessions` 今天已经回 `id/title/created_at/updated_at/msg_count`（`app/api/v1/chat.py:920-937`、表结构 `:1473-1479`），前端只把它用于**深链回放**（`ChatPanel.vue:226`）与**待办归属核对**（`HitlPendingPanel.vue:422`）→ 换机器 / 清缓存 / 被 401 踢下去的那一刻，后端还在的会话一条都回不来 |
-| T10 | 在对话里知道「这一问用的是哪张表」并能改 | **无** | `activeDataFilename` 全仓只出现在脚本态（`lib/sessions.js:20,70,87,129,137,186,861`、`ChatPanel.vue:245,485-489,567,574,599`），**没有一个模板引用它** → 计划书 §2 的「数据上下文选择器常驻顶栏」与 J4 断点（`docs/frontend-plan-2026-09-14.md:80-83`）今天仍未销 |
-| T11 | 机器不健康时别骗我 | **半** | 前端只判一枚码：`lib/health.js:57`。后端还会说 `embedding_model_missing`（`app/common/monitoring.py:146`）、`queue_unavailable`（`:133`）、`*_read_only`（`:131`），并单列 `model.inference_compute / _detail / _error_code`（`:215-217`）→ 前端 **0 消费者**：embedding 不在时顶栏仍是绿点 +「本地模型就绪」（`lib/health.js:62-66`）。这正是计划书 §6.1 那行「缺 embedding / 无 GPU 两张脸」的 today 状态 |
+| T1 | 提问 → 拿答案 → 看到出处并点开核对原文 | **有**（判定不变，坐标改现读） | 现读@ac84f1a：出处按钮 `frontend/src/components/SourceCard.vue:92-100`（`data-testid="source-open"` → `emit('preview', row)`）；面板接法 `frontend/src/components/ChatPanel.vue:1937` → `openSourcePreview` `:1608` → 预览弹窗挂载 `:2085`；每行密级 `SourceCard.vue:103`、首屏线索卡 `frontend/src/components/AnswerHeadlineCard.vue:90`；一次出处一次评价 `SourceCard.vue:109-135` |
+| T2 | 上传文档 → 知道「多久能被问到」 | **有**（09-26 那句「已索引没有脸」= 过期账） | 现读@ac84f1a：indexed 有正脸 `frontend/src/components/DocPanel.vue:34`（`retrievable: 已可检索`），唯一出口 `:62`；上传回执之后开一轮有限轮询 `:681` → `armUploadPoll` `:883`，盯满一整轮仍没结果那一格给人工出口「再读一次」`:858`、`:1188-1190`；密级随上传发出 `:650`（`form.append(classification, …)`），后端 `Form(1)` 只是缺省（现读 `app/api/v1/chat.py:4110`） |
+| T3 | 查自己报的数据（我传过什么、谁的） | **半**（半的地方换了） | 现读@ac84f1a：**文档行已画真值**——`DocPanel.vue:147` `ownerTruth` 与模板那一格 `:1195-1202`，三句话只读 catalog 已有的 `owner_id`/`size_bytes`/`parse_status`；**数据文件行仍缺一张脸**——后端今天回归属人（`app/api/v1/data.py:276` `owner_id`，R310/R337 之后），而 `rg -n owner frontend/src/components/DataPanel.vue` → **EXIT 1 零命中** ⇒ 这一格是零后端的前端读数题，不是后端字段题（旧账那半句已过期） |
+| T4 | 看图与报告（成果找回） | **有**（09-26 那句「独立视图 0 屏」= 过期账） | 现读@ac84f1a：「交成果」是一枚一级屏——`frontend/src/router/index.js:100-105`（`path: /artifacts` + `meta.title: 交成果`，未写 `primary:false` ⇒ 由 `:167` 派生得出侧栏入口），薄壳 `frontend/src/components/ArtifactsPanel.vue:28`/`:44` 挂 `ArtifactList`；「喂料 → 数据」那一屏继续挂它（`frontend/src/components/DataPanel.vue:454`）；对话内图 `ChatPanel.vue:238`/`:1920`，取图走带 Bearer 的共享实例 `frontend/src/lib/artifacts.js:62`。残格：列表行里取不到「这一问」的键——`cd frontend; rg -n session_id ../app/api/v1/artifacts.py` → **EXIT 1**；`rg -n request_id ../app/api/v1/artifacts.py` → 1 命中，但那枚是删除审计的入参（`app/api/v1/artifacts.py:109` `request_id=principal.request_id or None,`），不是列表字段；列表行的字段全集 = `app/api/v1/artifacts.py:151-165` `_artifact_row()` 叠 `app/storage/artifacts.py:237-244` `public_payload()`，两本里都没有 `session_id`／`request_id` ⇒ 「按这一问找回那份成果」仍做不到（旧账里这半句仍然对） |
+| T5 | 处理待批 | **有**（判定不变，坐标改现读） | 现读@ac84f1a：真挂起账本 + 分页 + 期限 + 失败轮 `frontend/src/components/hitl/HitlPendingPanel.vue:592`（`data-face`）、`:100`（`expiresAt`）、`:684`（`loadMore`）；对话内同一枚 resolver `frontend/src/components/ChatPanel.vue:1003`（`POST /approve`） |
+| T6 | 处理告警 | **有**（09-26 那句「不能确认关闭指派」= 过期账；带一枚残格） | 现读@ac84f1a：确认 / 关闭 / 指派三枚已接——`frontend/src/lib/alerts.js:230` `ALERT_DISPOSAL_COLUMNS`、`:526` `disposeAlert`，消费点 `frontend/src/components/InsightPanel.vue:349`；处置写的列与后端 `app/api/v1/alerts.py:450-451` `ALERT_DISPOSAL_WRITE_COLUMNS` 同一本账。残格：单条详情 `GET /alerts/{alert_id}`（`app/api/v1/alerts.py:1124`）**前端仍 0 消费者**（`rg -n "alerts/\[" frontend/src` → **EXIT 1**）⇒ 每办一次都重读整页列表；已立案 R286，不占新号 |
+| T7 | 被拒时知道下一步做什么 | **有**（09-26 那句「指向不存在的部门选择器」= 过期账） | 现读@ac84f1a：部门那一句已改成做得到的下一步——`frontend/src/lib/errcodes.js:149`「请联系管理员补上你的部门归属，或改用已登记部门的账号」；审批屏不再替员工填别人的部门 `frontend/src/components/ApprovalPanel.vue:45-54`（`ownDepartment` 只读本人），演示常量里已无部门 `frontend/src/devFixtures/approval-demo.js:11` |
+| T8 | 登录 / 换密码 / 找回账号 | **半**（半的地方换了） | 现读@ac84f1a：登录页那句「请联系管理员在用户管理中重置」（`frontend/src/App.vue:419`）**不再指向空气**——管理屏已在树：`frontend/src/router/index.js:122-127`（`/admin`「账号与角色」）+ `frontend/src/components/AdminPanel.vue`，写口 `frontend/src/lib/users.js:277-281`（`/users`、`/users/password`、`/users/department`）。仍缺的那半是**员工自助**：`GET/PUT /profile`（`app/api/v1/auth.py:241`、`:249`）前端 0 消费者（`rg -n "/profile" frontend/src` → **EXIT 1**），改自己密码、看自己部门归属仍然只能找管理员 |
+| T9 | 换个地方接着问（历史跟着人走） | **有**（09-26 那句「只从 localStorage 组装」= 过期账） | 现读@ac84f1a：`frontend/src/lib/sessions.js:888` `serverSessionRow`、`:924` `readBackendSessionList`、`:940` `mergeServerSessions`（并集不是覆盖；`fromServer`/`bodyFetched` 两格把「名单回来了、正文还欠着」与「这条没内容」分开记）；屏上有入口 `frontend/src/components/ChatPanel.vue:553` `pullServerSessions` → `:1751` `data-testid="session-pull"`、`:1761` `session-pull-face`，挂载期一枚请求都不发、伸手才读。退出仍整包清本地态：那是这一格的设计前提（`sessions.js:881-883` 明写它只依赖服务端读数 + 内存 store），不是漏洞 |
+| T10 | 在对话里知道「这一问用的是哪张表」并能改 | **半**（09-26 判「无」= 过期账） | 现读@ac84f1a：**模板真把它画出来给人改了**——`ChatPanel.vue:2013-2025`（`本轮数据表` label + `<select data-testid="chat-data-table-select" :value="activeDataFilename" @change="chooseDataTable(...)">` + 重读清单 `:2030`），改的就是下一轮真正发出去的那一份（`send` 默认参数读它 `:813`/`:820`）；逐轮回显「那一轮带了哪张表」`:1951-1952` + `dataTableOf` `:657`；服务端用表那一句的脸也在屏上：`:1956-1957` `data-testid="server-data-readout"` + `serverDataOf` `:678`。**仍断的两格**：终态帧唯一解码处 `frontend/src/lib/sessions.js:478-482` 只抄 `awaiting_hitl`/`awaiting_steps`，`data` 其余键丢掉；且 `rg -n terminal_data_filename app` → **EXIT 1**（R414 未并这棵树）⇒ 屏上那句今天只出「不画」这一态 |
+| T11 | 机器不健康时别骗我 | **有**（09-26 那句「前端只判一枚码」= 过期账；带一枚残格） | 现读@ac84f1a：`frontend/src/lib/health.js:24-26` 三枚码齐（`model_not_available` / `embedding_model_missing` / `queue_unavailable`），`:108-110` 各自派脸，`:253-254` 按 `problems[]` 逐族出脸，`:56-66` 读 `model.inference_compute*` 与 `storage.read_only_protected`（对端 `app/common/monitoring.py:131`、`:133`、`:146`、`:215-218`）；消费点 `ChatPanel.vue:242`/`:778` → 屏上 `:1830-1832` `data-testid="runtime-faces"`。残格：全站降级横幅仍没有——`rg -n runtimeFaces frontend/src/App.vue` → **EXIT 1**，脸目前只长在对话那一屏 |
 
-> 计划书 §2 承诺「5 主视图 + 1 管理视图」：主视图 5 枚在树（总览 / 喂料 / 异常与告警 / 审批与待办 / 问一句，`router/index.js:58-87`），**管理视图整屏不存在**（见 G10）。
+> 现读@ac84f1a：一级屏 **6 枚**（总览 / 喂料 / 异常与告警 / 审批与待办 / 问一句 / 交成果，`frontend/src/router/index.js:56-105`），另有三枚非一级落点——`/graph`（`:110-114`）、`/admin`「账号与角色」（`:122-127`）、`/traces`「运行留痕」（`:137-141`）；后两枚带 `administratorOnly:true`，只派生进管理员那一份入口清单（`:187-189` 与 `:196-197`）。⇒ R265 那句「管理视图整屏不存在」已过期。
 ---
 
 ## 2. 判据② · 缺口怎么补（只给文件清单与字段，不写实现）
@@ -50,16 +54,18 @@
 
 | 项 | 计划书停在 | 今天的实真 | 证据 |
 |---|---|---|---|
-| 洞察 →「异常与告警」 | 已完成 | ✅ **已完成** | `frontend/src/router/index.js:73` 定名；页内同名 `InsightPanel.vue:243`；数据源已是真链 `lib/alerts.js:22-24` |
-| 审批 →「报销自查」 | 已完成 | ✅ **已完成，且定名已二次更正** | 这一屏今天叫「审批与待办」（`router/index.js:81`，理由见 `:78-80` 的 R174③ 注释）；「报销」二字不得再作任何一屏的名字已被钉成用例：`components/__tests__/r174-screen-name.test.js:38-45` |
-| 四张脸分开（无权限/空/降级/错误） | 已完成；缺 embedding / 无 GPU 两张脸仍未分 | ❌ **那半张今天仍缺（计划书这句今天仍然对）** | `lib/health.js:57` 只认 model_not_available；embedding_model_missing（`app/common/monitoring.py:146`）与 model.inference_compute 三键（`:215-217`）前端 0 消费者 → **G07** |
-| Element Plus 移除 | 已完成 | ✅ **已完成** | 命令 `cd frontend; rg -c element-plus package.json` → **0 命中**；依赖清单实读 `frontend/package.json:12-25` |
-| **自研 UI 原语（写「进行中」）** | 进行中 | ⚠️ **状态词对、内容已换：不是没写完，是写完了没接线** | 12 枚原语在树（命令 `cd frontend; (Get-ChildItem src/components/ui/Ui*.vue).Count` → 12）；**零屏幕消费者 4 枚**：UiTable / UiUpload（只被 `ui/` 自身与用例引用）、UiDialog / UiToastHost（全仓只剩 `assets/theme.css:116` 提过一次）。裸 button 计数：ChatPanel 10、DashboardPanel 9、DocPanel 5、DataPanel 5、GraphPanel 2 → 接线缺口并入 **G20**（记在块 E/块 F 写集里，不另立单） |
-| **图谱撤一级入口** | 已完成 | ✅ 撤入口已完成 / ❌ **降级承接没建** | 撤：`router/index.js:97` primary:false，导航派生 `:123`。承接：计划书 `docs/frontend-plan-2026-09-14.md:129` 承诺的「文档预览里的 依据 / 相关制度 子视图」在 `DocumentPreviewModal.vue` **0 命中**（命令 `cd frontend; rg 依据|相关制度 src` 命中全落在 errcodes/devFixtures 注释里）；`GraphPanel.vue:84-95` 仍是四个输入框 + 关系列表 → **G12** |
-| 前端路由 | 已完成 | ✅ **已完成** | `router/index.js` 是屏↔URL 唯一真源、侧栏导航是它的派生视图（`:123-128`）；`App.vue:409` KeepAlive 的 cachedScreens 由路由表算出（`router/index.js:152-154`） |
-| **三屏 SLO 契约（写「未做」）** | 未做·已拆两半（R105 甲/乙） | ⚠️ **已过期：甲半已完成，乙半仍挂，另有一格从没记过** | 甲半：契约段已进 `docs/api/contract-v1.md:1539`（Three-Tier SLO Contract, 2026-09-20, R105 甲半），闸在 `app/api/v1/observability.py:727`（MIN_SLO_SAMPLES = 100）+ `:1041`（slo_readout）+ `:1130`（GET /slo）。乙半：lane_attribution_absent 仍逐条挂在 blocker（`:895,906,940,949,969,1115`）。**没记过的那格**：GET /slo 与 GET /stage-latency 在前端 0 消费者（命令 `cd frontend; rg -F stage-latency src` → 无命中，exit 1）→ **G10**
+| 洞察 →「异常与告警」 | 已完成 | ✅ **已完成**（坐标改现读） | 现读@ac84f1a：定名 `frontend/src/router/index.js:76`（`meta.title: 异常与告警`）；页内同名 `frontend/src/components/InsightPanel.vue:423`/`:426`（`header.panel-head` 里的 `<h3>`）；数据源是真链 `frontend/src/lib/alerts.js:25-27`（`/alerts`、`/alerts/rules`、`/alerts/check`） |
+| 审批 →「报销自查」 | 已完成 | ✅ **已完成，且定名已二次更正** | 现读@ac84f1a：这一屏叫「审批与待办」（`frontend/src/router/index.js:84`）；「报销」二字不得再作任何一屏的名字已由在册用例钉着：`frontend/src/components/__tests__/r174-screen-name.test.js:33-34`（常数）与 `:43`（枚用例）|
+| 四张脸分开（无权限/空/降级/错误） | 已完成；缺 embedding / 无 GPU 两张脸仍未分 | ✅ **那半张今天已长出脸**（09-26 判 ❌ = 过期账） | 现读@ac84f1a：embedding 与算力两张脸都在 `frontend/src/lib/health.js`——`:25-26` 两枚码、`:108-110` 分派、`:214` `computeFace`、`:241`/`:253-254` `runtimeFaces` 逐族出脸，`:56-66` 读 `model.inference_compute*` 四键与 `storage.read_only_protected`；消费点 `ChatPanel.vue:778` → 屏上 `:1830-1832`。计划书那行「缺 embedding / 无 GPU 两张脸」今天**不再成立**（归因 `90c15bb`·R268/G07）；仍欠的那一格是全站降级横幅（`rg -n runtimeFaces frontend/src/App.vue` → EXIT 1）⇒ 见 G07 残格 |
+| Element Plus 移除 | 已完成 | ✅ **已完成**（今天仍为真） | 现读@ac84f1a：`cd frontend; rg -c element-plus package.json` → **EXIT 1（0 命中）**；依赖清单实读 `frontend/package.json:15-24`（vue / vue-router / axios / dompurify / markdown-it / 两枚 fontsource / lucide-vue-next） |
+| **自研 UI 原语（写「进行中」）** | 进行中 | ✅ **已完成，但完成的内容换了**：不是没写完，也不是「写完没接线」，是**接线已收口、只剩两枚原语无人消费** | 现读@ac84f1a：12 枚原语在树（`cd frontend; (Get-ChildItem src/components/ui/Ui*.vue).Count` → 12）；零消费者从四枚降到**两枚**——`UiTable` 已被 `components/AdminPanel.vue`、`components/TracePanel.vue` 消费，`UiDialog` 已被 `AdminPanel.vue` 消费，仍零消费者的只剩 `UiUpload` 与 `UiToastHost`（`rg -l UiUpload UiToastHost frontend/src -g "!src/components/ui/**" -g "!*.test.js"` → 只剩 `assets/theme.css` 提过 UiToastHost）；裸 `<button>` 债务**归零**：`frontend/src/components/__tests__/r288-native-buttons.test.js:60` `DEBT_TOTAL_RATCHET = 0`，同件 `:54-56` 逐枚写着 `App.vue: 0`、`components/DashboardPanel.vue: 0`、`components/SourceCard.vue: 0` ⇒ R265 那句「裸 button 计数 ChatPanel 10、DashboardPanel 9…」与并入 G20 的账都已过期 |
+| **图谱撤一级入口** | 已完成 | ✅ 撤入口已完成 / ✅ **降级承接今天已建**（09-26 判 ❌ = 过期账） | 现读@ac84f1a：撤——`frontend/src/router/index.js:114` `primary:false`，导航由 `:161`/`:167` 派生；承接——文档预览里长出「依据 / 相关制度」那一格：`frontend/src/components/DocumentPreviewModal.vue:40`（R314 判据自述）、`:100` `relationsAboutDocument`、`:138-139` 取数 URL 走 `GET /knowledge-graph/relations`；`GraphPanel.vue` 那枚英文眉标也已摘（`rg -n class="eyebrow">[A-Za-z ]+< frontend/src --glob "*.vue"` → **EXIT 1 零命中**）⇒ G12 与这一行都该改口 |
+| 前端路由 | 已完成 | ✅ **已完成**（坐标改现读） | 现读@ac84f1a：`router/index.js` 是屏↔URL 唯一真源，侧栏是它的派生视图（`:161` `isPrimaryScreen` → `:167` `navigation` → `:174` `screenIds`；管理员那一份由 `:187-189` + `:196-197` 派生）；`frontend/src/App.vue:497` `<KeepAlive :include="cachedScreens">`，`cachedScreens` 由路由表算出（`router/index.js:220`）|
+| **三屏 SLO 契约（写「未做」）** | 未做·已拆两半（R105 甲/乙） | ⚠️ **状态词仍过期，但界面那一腿今天补了一半** | 现读@ac84f1a：甲半——契约段在 `docs/api/contract-v1.md:1547`（`## Three-Tier SLO Contract (2026-09-20, R105 甲半)`），闸在 `app/api/v1/observability.py:727`（`MIN_SLO_SAMPLES = 100`）+ `:1041`（`slo_readout`）；乙半——`lane_attribution_absent` 仍逐条挂在 blocker（同文件 8 枚命中，`:763` 是定义那格）⇒ 仍挂。**R265 记的那格「GET /slo 与 GET /stage-latency 前端 0 消费者」今天只对一半**：`/stage-latency` 已有消费者（`frontend/src/lib/traces.js:46` `STAGE_LATENCY_PATH`，屏在 `frontend/src/components/TracePanel.vue:10` + 路由 `frontend/src/router/index.js:137-141`）；`/slo` 仍 0（`rg -n -F "SLO_PATH" frontend/src` 与 `rg -n -F "'/slo'" frontend/src` 各 → **EXIT 1**。🔴 取证口径：裸 `rg -n "/slo" frontend/src` 今天交回 15 行，但枚枚都是模板里的 `</slot>` 误命中，拿它下判会判反）|
 
-**对账净结论**：八项 = ✅ 五项、❌ 一项（四张脸那半张）、⚠️ 两项状态词过期（自研原语、SLO 甲半）。另有两笔计划书自己没记的账：**图谱降级承接**（G12）与 **SLO 读出面在界面上一处都没有**（G10）。
+**R265 当时的对账净结论**：八项 = ✅ 五项、❌ 一项（四张脸那半张）、⚠️ 两项状态词过期。
+
+**R426 现读@ac84f1a 重算**：八项 = ✅ **七项**、⚠️ **一项**（SLO：甲半已完、乙半仍挂、界面腿补了 `/stage-latency` 那一半），❌ 归零。R265 点名的两笔「计划书自己没记的账」今天各自结案：图谱降级承接（G12）**已建**、SLO 读数面的运行留痕那一屏（G10 的一半）**已在树**——仍欠的是 `/slo` 那一格，见 §6 G10 现读。
 ---
 
 ## 4. 判据④ · 计划书 §2 三条硬判据实测
@@ -68,19 +74,18 @@
 
 ### 4.1 全屏登录 → ✅ 成立
 
-- 结构上互斥：登录是 `App.vue:230` 的 `main v-if=!isLoggedIn`，工作台是 `App.vue:353` 的 `v-else`，**未登录时工作台整棵子树不挂载**，面板与请求都不会发。
-- 铺满视口：`assets/theme.css:1154-1164` `.login-v2 { position: relative; display: grid; grid-template-rows: auto 1fr auto; min-height: 100dvh; overflow: hidden }`，外层 `.app-root { min-height: 100dvh }`（`theme.css:174-176`）。
+- 现读@ac84f1a：结构上互斥——登录是 `frontend/src/App.vue:274` 的 `main v-if="!isLoggedIn"`，工作台是 `:429` 的 `v-else`，**未登录时工作台整棵子树不挂载**，面板与请求都不会发。
+- 现读@ac84f1a：铺满视口——`frontend/src/assets/theme.css:1154` 起 `.login-v2`（`display: grid` + `min-height: 100dvh` + `overflow: hidden`），外层 `.app-root { min-height: 100dvh }`。
 - 视觉回归已有件：`frontend/tests/visual/login-viewports.spec.js`（五档视口，含 3440×1440 与 1280×720）。
 
-### 4.2 界面不得出现「来自 xx 接口」类技术注解 → ❌ 不成立（3 处确实上屏）
+### 4.2 界面不得出现「来自 xx 接口」类技术注解 → ✅ **今天成立**（09-26 判 ❌ = 过期账；原判据与当时读数照录如下）
 
 取证命令与命中数（在 `frontend/` 下跑）：
 
 ```bash
 rg -n --no-heading "(src/[A-Za-z0-9_./-]+\.js|GET /[a-z]|POST /[a-z])" src/components --glob "*.vue"   # 命中 29
 ```
-- 29 命中里 26 处在源码注释（写给人看的实现说明，不上屏）
-- 肉眼逐条筛后**确实渲染给员工**的是 3 处：
+- R265 当时：29 命中里 26 处在源码注释（写给人看的实现说明，不上屏）；肉眼逐条筛后**确实渲染给员工**的是 3 处（下表为**病灶存档**，行号锚 `8613dc7`，今天已不在这些行）：
 
 | # | 位置 | 上屏原文（片段） | 为什么算违规 |
 |---|---|---|---|
@@ -88,14 +93,16 @@ rg -n --no-heading "(src/[A-Za-z0-9_./-]+\.js|GET /[a-z]|POST /[a-z])" src/compo
 | 2 | `frontend/src/components/ApprovalPanel.vue:168` | 「预审参数…来自前端常量 **src/devFixtures/approval-demo.js**…」 | 同上（源码路径） |
 | 3 | `frontend/src/components/ApprovalPanel.vue:182` | 「挂起待办这一屏读的是服务端挂起账本（**GET /hitl/pending**）…」 | 同上（路由名） |
 
-- 三处全在 `<template>` 内、无条件渲染分支里（`DashboardPanel.vue:171` 起是加载成功分支），`data-testid` 分别叫 `dashboard-demo-flag` / `approval-demo-flag` / `approval-scope-note`。
-- 对照组（说明这判据别的屏做得到）：`SourceCard.vue`、`QueueFace.vue`、`lib/errcodes.js` 一律把后端原串收进视图模型再说话，未知码只允许「错误码：xxx」小字（`components/ui/README.md:27`，并由 `lib/no-bare-code.test.js` 全仓扫）→ **G13**。
+- R265 当时：三处全在 `<template>` 内、无条件渲染分支里，`data-testid` 分别叫 `dashboard-demo-flag` / `approval-demo-flag` / `approval-scope-note`。
+- 🔴 **R426 现读@ac84f1a：这一格已收口，那条 rg 命令今天不能当判据用**——三枚 `data-testid` 仍然在屏上，但屏幕上说的话里已经没有源码路径与路由名：`frontend/src/components/DashboardPanel.vue:335-338`（诚实牌全文只说「这一格还没有服务端回传的数字」）、`frontend/src/components/ApprovalPanel.vue:208-211`（逐字交代哪些是演示常量、部门填的是本人登记的）与 `:219-228`（自查范围说明，无一条 `GET /` 与 `.js`）；`GET /hitl/pending` 那两句今天挪进了 `:204` 的注释。反证钉在册：`frontend/src/components/__tests__/r267-overview-no-tech-note.test.js`（R426 实跑 5 passed，判据是 SSR 出的真 HTML，不是源码正则）。旧那句「裸 rg 命中数」今天涨到 60 行（实现注释变多），**用它判上屏会判反**——这条方法学改口请下一班务必照抄。
+- 对照组（说明这判据别的屏做得到）：`SourceCard.vue`、`QueueFace.vue`、`lib/errcodes.js` 一律把后端原串收进视图模型再说话，未知码只允许「错误码：xxx」小字（`frontend/src/components/ui/README.md`，并由 `frontend/src/lib/no-bare-code.test.js` 全仓扫）⇒ **G13 已落，别再派**。
 
-### 4.3 管理视图对 staff 不可见 → ✅ 形式成立（因为这一屏根本不存在）
+### 4.3 管理视图对 staff 不可见 → ⚠️ **判据今天必须重测才成立**（R265 那句「因为这一屏根本不存在」= 过期账）
 
-- 命令 `cd frontend; rg -n users src` → 3 命中，全部在测试/用例里，**`GET/POST/DELETE /users`、`PUT /users/password`、`GET/PUT /profile`、`GET /audit/events`、`GET /evaluations`、`GET /traces/{id}`、`POST /retrieval/debug` 前端 0 消费者**；路由表里也没有管理屏（`router/index.js:52-99`）。
-- 结论：这条判据今天**平凡为真**，但它是靠「没做」为真的，不是靠「藏好」为真 —— 一旦补管理屏就必须重测。
-- 同时暴露两笔：**(a)** 登录页把员工指向不存在的用户管理（`App.vue:348`，见 G10）；**(b)** 现有唯一一处角色控制仍读客户端态：`App.vue:82` `userRole.value = localStorage.getItem(ROLE_KEY) || staff`，派给「喂料」屏后 `DocPanel.vue:37` 用它开批量删除。角色集只决定按钮可见性，后端一律真判（`app/api/v1/alerts.py:925` 等），**越权面为零**，但这就是计划书 J5 说过的**假权限**（`docs/frontend-plan-2026-09-14.md:85`）：员工改一下 `eb_role` 就能看见管理员选择框。
+- 现读@ac84f1a：管理屏**已经在树**，R265 那条读数的两条腿都断了——`GET/POST/DELETE /users`、`PUT /users/password`、`PUT /users/department` 有消费者（`frontend/src/lib/users.js:36`、`:277-281`、`:223` `loadUsers`，屏在 `frontend/src/components/AdminPanel.vue`，路由 `frontend/src/router/index.js:122-127`）；`GET /traces/{id}` 与 `GET /stage-latency` 也有消费者（`frontend/src/lib/traces.js:46`、`:48`，屏 `frontend/src/components/TracePanel.vue`，路由 `:137-141`）。仍 0 消费者的只剩 `GET /audit/events`、`GET /evaluations`、`GET /slo`、`GET/PUT /profile`、`POST /retrieval/debug`（`rg -n "/profile" frontend/src` → **EXIT 1**；`rg -n -F "audit/events" frontend/src` → **EXIT 1**、`rg -n -F "evaluations" frontend/src` → **EXIT 1**、`/slo` 见 §3 那两支具名探针）。另两枚命中不是消费者：`rg -n -F "retrieval/debug" frontend/src` → 2 命中全是注释（`frontend/src/App.vue:61`、`frontend/src/__tests__/r278-topbar.test.js:12`），一枚调用点都没有。🔴 含 `|` 的正则（`"/slo"` 那一族）在本仓会误命中 `</slot>`，别当判据用）。
+- 结论改口：这条判据今天**不再靠「没做」为真**，而是靠「入口按角色派生 + 服务端真判」为真：`navigationForRole(role)` 只对 `admin` 那一档追加 `administratorNavigation`（`router/index.js:187-189`、`:196-197`），staff / manager / auditor / 无角色四档拿到的都是同一份 `navigation`，`/admin` 与 `/traces` 两枚入口一枚都派生不出来——这一格由在册用例钉着：`frontend/src/router/__tests__/r316-admin-entry.test.js` 的「角色不对就一枚都不派生」与「壳层真的按角色派生入口」。
+- 🔴 但「员工看不见」这一半今天是**客户端判据**：侧栏吃的 `userRole` 来自登录回包写进 localStorage 的 `eb_role`（`frontend/src/App.vue:111`、`:184`；`frontend/src/lib/http.js:10`、`:52`），员工自己改这一格就能长出管理入口——计划书 J5 说的那类**假权限**，病灶从「喂料屏的选择框」扩到了「管理入口」。挡它的是服务端那道闸：staff 走进去拿到的是 403 那张脸（`frontend/src/lib/users.js:62` `USERS_FACE_DENIED`、`:162-166` 分派，`frontend/src/components/AdminPanel.vue:300`/`:320` 用 `UiErrorState` 画它），不是空列表；真源 `app/api/v1/auth.py:106` 那发 `ACTION_MANAGE_USERS`。
+- R265 那两笔暴露项今天各自的下场：**(a)** 登录页那句「请联系管理员在用户管理中重置」（现读 `frontend/src/App.vue:419`）**不再指向空气**（管理屏已在树）⇒ G10 的那半句过期；**(b)** 客户端角色仍被消费：`frontend/src/App.vue:54` 把 `userRole` 只喂给喂料屏，`frontend/src/components/DocPanel.vue:382` `isAdmin` 仍由它派生、`:1111` 用它开批量删除——这一格**照旧**，是计划书 J5 那笔没销的账。
 
 ---
 
@@ -118,7 +125,18 @@ rg -n --no-heading "(src/[A-Za-z0-9_./-]+\.js|GET /[a-z]|POST /[a-z])" src/compo
 ## 5.1 附带实测：产物零远程请求（判据「内网别给我看转圈的字体」）
 
 - 命令：`cd frontend; rg -o -n "https?://[^ ,);]" dist/assets/index-*.css` → **1 命中**，值为 `http://www.w3.org/2000/svg`（SVG 命名空间字符串，不发请求）。
-- 结论：**零远程字体/CDN 请求** ✅（与 R148 记录一致，今天仍成立）。
+- 结论：**零远程字体/CDN 请求** ✅（与 R148 记录一致，今天仍成立）。（R426 现读：这一行要构建产物才取得到，本单按硬约束没跑 `npm run build`，故照原样留着，未重取。）
+
+## 5.2 R426 现取（2026-09-28 +08:00，锚 `ac84f1a`，工作树 `be-r415`：全量自 `Start at 03:19:51` 逐跑同数，最后一次 `Start at 03:38:32`）
+
+| 项 | 命令 | 读数（原文） |
+|---|---|---|
+| 单测全量 | `cd frontend; npm run test` | **Test Files 119 passed (119)** ／ **Tests 2460 passed (2460)** ／ 退出码 0，零 failed、零新增 skip。全量逐跑同数、退出码皆 0（`03:19:51` 起至 `03:38:32`，Duration 只在 5.80–6.03 s 之间抖）⇒ 与总控给的基点读数 **119 files ／ 2460 tests** 逐字相同，本单两枚改动没动任何计数（没有一枚用例读本文：`rg -ln 2026-09-26-v1-frontend-gap-list frontend/src` 唯一命中是注释 `src/lib/__tests__/r270-department-voice.test.js:4`） |
+| 色值门 | `cd frontend; npm run lint:colors` | **148 problems (0 errors, 148 warnings)**，退出码 0 —— 与基点读数 148 逐字相同，未新增裸色值；末次 `03:38:39`，逐次同数，退出码皆 0 |
+| 点名复跑 | `cd frontend; npx vitest run src/lib/__tests__/r416-comments-cite-live-coordinates.test.js src/lib/__tests__/r420-stale-coordinates-second-blade.test.js src/router/__tests__/r316-admin-entry.test.js` | **3 files ／ 59 tests passed**`Start at 03:20:04`／Duration 519ms，改头注前后各跑一次，两次同数）⇒ 改 `r316-admin-entry.test.js:4-10` 没挪动那两本坐标账 |
+
+- 落笔顺序自陈（自指，写明不装）：**判定与证据的落笔全部收在 03:35 之前**；那之后本节改的只有时间戳与本条说明这类账面文字，而每次改完都复跑一次全量与色值门，枚枚同数。所以本节任何一行都可能晚于它所引的那次跑，但没有任何一行**判定**晚于 03:35。总控要复核不必信这句话：改口落笔之后重跑 `cd frontend; npm run test` 与 `npm run lint:colors`，两数仍应是 **119 files ／ 2460 tests** 与 **148 problems（0 errors）**——本文没有任何用例读它（见上表括注），账面文字改不动计数。
+- 没跑的：`npm run build`、`npm run test:e2e`、`python scripts/run_gate.py`（全量门归总控）、任何 `pytest`、任何容器／服务操作。
 ---
 
 ## 6. 缺口清单（20 枚 + 2 枚记账项）
@@ -126,40 +144,42 @@ rg -n --no-heading "(src/[A-Za-z0-9_./-]+\.js|GET /[a-z]|POST /[a-z])" src/compo
 优先级口径：**P1 = 挡 V1 门槛或构成屏上假话**，P2 = 明显缺口但不挡 V1，P3 = 打磨。
 「动」只列文件，不写实现；字段标 **已有** 表示零后端改动（读路径或请求体里今天就有）。
 
+🔴 **R426 读法（2026-09-28）**：下面三张表的「现状证据」列已逐行在 `ac84f1a` 上重取。判定改了的地方就地写明旧账是哪一句；**判「已落」的行，它的「动」列只作历史归因用，不是待办**。现读汇总（已落／半／未落各几枚）在 §10.1，未证清单在 §10.2，越界发现（只报不改）在 §10.3。
+
 ### P1（11 枚）
 
 | # | 员工视角的症状 | 现状证据 | 动（文件） | 要哪个接口字段 |
 |---|---|---|---|---|
-| **G01** | 传完文档只知道「上传完成」，**不知道这篇能不能被问到** | `DocPanel.vue:99-105` 裁定 indexed 不涂；模板只在 excluded 画脸 `:460-464`；收尾只刷一次列表 `:206-246` | `components/DocPanel.vue`；`components/__tests__/r237-r49-index-face.test.js`、`panel-states.test.js` | **已有**：catalog 行 `index_status=indexed`、`parse_status`（`app/documents/catalog.py:238-257`）。缺的是一枚「已可检索」正脸，不是字段 |
-| **G02** | 总览上每篇文档都写着「已解析」、指标口径永远「高可信」 | 写死字串：`DashboardPanel.vue:281-282`（每行都标 知识库 · 已解析 / 已解析）、`:307`（`<b>高可信</b>`） | `components/DashboardPanel.vue`；`components/__tests__/dashboard-summary.test.js`、`v7-fake-data.test.js` | **已有**：`parse_status`/`index_status`（catalog）、`definition_source` 与 `context.warning` 与 `provenance`（`app/api/v1/intelligence.py:283-290`） |
-| **G03** | 问出来的数和页面上选的表**对不上，也无从纠正**（J4） | `activeDataFilename` 无任何模板引用（引用面见 §1 T10） | `components/ChatPanel.vue`（回显 + 就地改表）、`App.vue`（若按计划书放顶栏常驻）、`lib/sessions.js`（只读）；用例 `components/__tests__/r174-*`、`panel-states.test.js` | 上行已有 `data_filename`（`ChatPanel.vue:599`）；**回显要后端补**：canonical `sources`/done 帧里带本轮真正用的 `data_filename`（今天流里没有） |
-| **G04** | 换台电脑 / 被登出一次，**问过的话全不见了**（后端其实还在） | 列表只从 localStorage 组装 `lib/sessions.js:93-113`；退出整包清 `App.vue:183-197` | `components/ChatPanel.vue`（会话侧栏加「从服务器取回」）、`lib/sessions.js`（列表合并读取）；用例 `lib/sessions-error-text.test.js`、`components/__tests__/r174-replay-ownership.test.js` | **已有**：`GET /sessions` 回 `id/title/created_at/updated_at/msg_count`（`app/api/v1/chat.py:920-937`）→ 零后端改动 |
-| **G05** | 告警看到了**没法办**：不能确认、不能关闭、不能指派，也看不出别人是不是已经办过 | 四枚端点 0 消费者（`app/api/v1/alerts.py:961,982,993,1004`）；`mapAlertRow` 只取 5 键（`lib/alerts.js:168-178`），注释仍写「后端六列」（`:164`，实为 13 列） | `lib/alerts.js`、`components/InsightPanel.vue`；用例 `components/__tests__/insight-alerts.test.js` | **已有**：`GET /alerts` 行里 `status/acknowledged_by/acknowledged_at/closed_by/closed_at/assignee/assigned_at`（`app/api/v1/alerts.py:114-121`）+ `POST /alerts/{id}/ack|close|assign` |
-| **G06** | 被排队那一轮**只能干等**，界面没有「不排了」 | QueueFace 只有 retry 与 action 两枚按钮（`QueueFace.vue:38-56`）；`POST /queue/{request_id}/cancel`（`app/api/v1/chat.py:4380`）**前端 0 消费者**；现「中断本次回答」走的是另一条腿 `/ask/{session}/cancel`（`ChatPanel.vue:692`） | `components/QueueFace.vue`、`components/ChatPanel.vue`；用例 `__tests__/r198-queue-poll-stop.test.js`、`r202-queue-poll-stop-authz.test.js`、`r221-queue-deadline.test.js`、`r260-queue-awaiting-approval.test.js` | **已有**：request_id 已在 queued 回执里（`lib/sessions.js:389-397`），cancel 端点已在契约 |
-| **G07** | 模型/embedding 不在时界面**仍然报绿**，答案质量崩了却没有解释 | `lib/health.js:57` 只认 model_not_available；`embedding_model_missing`（`app/common/monitoring.py:146`）、`queue_unavailable`（`:133`）、`*_read_only`（`:131`）、`model.inference_compute*`（`:215-217`）全部无人读 | `lib/health.js`、`components/ChatPanel.vue`（状态位文案）、`App.vue`（若做全站降级横幅，与 G16 同写集）；用例 `components/__tests__/chat-model-status.test.js` | **已有**：`GET /health/details` 的 `problems[]` 与 `model.inference_compute / _detail / _error_code / _age_seconds`、`embedding`（`app/common/monitoring.py:228-244`）。「无 GPU 那张脸」缺的是**码**：inference_compute_error_code 已有具名读数，前端接上即可，不必后端新造 |
-| **G08** | 上传时**没人问密级**，全库默认 1 级；员工想给一份资料加密级，界面没有地方 | 表单只 append file：`DocPanel.vue:216-217`；后端 `classification: int = Form(1)`（`app/api/v1/chat.py:3768`）；department 由服务端按 principal 定（`:3785`，这是对的，别动） | `components/DocPanel.vue`（+ 顺带把 UiUpload 接上，见 G20）；用例 `components/ui/__tests__/upload-rules.test.js`、`panel-states.test.js`、`r151-legacy-colors.test.js`（若动样式） | **已有**：`POST /upload` 的 `classification` Form。**建议同时给一枚读回**：上传回执里回 `classification` 与最终 `department`（今天回的是 status/message） |
-| **G09** | 普通员工一进「审批与待办」就看到**「没有权限做审批预审」**——真实原因是界面替他填了别人的部门 | 表单默认值取演示常量 `ApprovalPanel.vue:16,33`（`approval-demo.js:11-14` 里 department 市场部），挂载即自动预审 `:146`（并被用例钉着：`r237-r40-standard-auto.test.js:400`）；后端拒收他人部门 403 `department_override_denied`（`app/common/authorization.py:84-100`）；前端把这一枚 403 一律画成无权限（`ApprovalPanel.vue:138-140`，用例 `r237-r40-standard-auto.test.js:387-399`） | `components/ApprovalPanel.vue`、`devFixtures/approval-demo.js`；用例 `r237-r40-standard-auto.test.js`、`r247-approval-mount-dedupe.test.js`；`lib/errcodes.js`（把 department_override_denied 收进字典，今天 0 命中） | **已有**：登录响应 `department`（`lib/http.js:53` 已存 eb_department）；后端 `verify_department_self_report` 允许「重复自己」或留空（`authorization.py:89-90`）→ 界面只要不替员工填别人的部门就成立 |
-| **G14** | 总览上有一条**画着金额的折线图**和一张「异常与风险」清单，数全是前端常量编的；这一屏还继续把自己造的 rows 送给后端算 | `DashboardPanel.vue:6` 引入三枚演示常量、`:125-128` 仍 `POST /dashboard` 送 `rows: demoRows, insights: demoInsights`、`:206-248` 折线卡（纵轴刻度 `:221-223` 由演示常量算出）、`:250-267` 异常卡；判据：计划书 §11「B-7 未落地时没有趋势线」（`:568`）+ J7 裁定（`docs/frontend-plan-2026-09-14.md:116`、`:568`）；`GET /dashboard/summary` 今天只有计数、没有时间序列（`app/api/v1/dashboard.py:3,56,60-74`） | `components/DashboardPanel.vue`、`devFixtures/dashboard-demo.js`；用例 `components/__tests__/v7-fake-data.test.js`（`:70-72` 钉引用面清单、`:104` 钉 demo-flag 计数）、`dashboard-summary.test.js` | 趋势要 **B-7 最小聚合**：`/dashboard/summary` 需新增 `trend[]`（元素 `period/department/metric/value`，今天无此键）。**B-7 落地前先删卡画空态**，不留假线 |
-| **G13** | 员工在屏幕上读到**源码路径与 HTTP 路由**（违反 §2 硬判据） | 三处上屏：`DashboardPanel.vue:175`、`ApprovalPanel.vue:168`、`ApprovalPanel.vue:182`（取证与筛法见 §4.2） | `components/DashboardPanel.vue`、`components/ApprovalPanel.vue`；用例 `components/__tests__/v7-fake-data.test.js:104`（钉 demo-flag 计数）、`r237-r40-standard-auto.test.js:403-405`（丁3 钉「这块仍挂牌」） | 无需接口 |
+| **G01** | 传完文档只知道「上传完成」，**不知道这篇能不能被问到** | ✅ **已落**（现读@ac84f1a）：`DocPanel.vue:34` 有正脸 `retrievable: 已可检索`，唯一出口 `:62`；`:681` 上传回执之后开一轮有限轮询、`:883` 是 `armUploadPoll` 定义，盯满一整轮仍没结果那一格给人工出口「再读一次」（`:858`、`:1188-1190`）。R265 那三行旧证据（`:99-105`／`:460-464`／`:206-246`）已过期 ⇒ **勿再派** | `components/DocPanel.vue`；`components/__tests__/r237-r49-index-face.test.js`、`panel-states.test.js` | **已有**：catalog 行 `index_status=indexed`、`parse_status`（`app/documents/catalog.py:238-257`）。缺的是一枚「已可检索」正脸，不是字段 |
+| **G02** | 总览上每篇文档都写着「已解析」、指标口径永远「高可信」 | ✅ **已落**（现读@ac84f1a）：两枚写死字串都不在生产码里——每行解析态走 `DashboardPanel.vue:112-122` 的四档 + 未知脸，模板 `:532`／`:534` 画的是 `indexStatusText(item)` 与 `parseStatusText(item)`；口径那一格改读回执字段 `:291-292`（`definition_source`／`provenance`），屏上 `:569` 那枚「已按制度核对」要 `provenance.verified_against_documents === true`（`:152`）才挂；`rg -n 高可信 frontend/src` → 5 命中全在 `components/__tests__/r267-overview-real-status.test.js`（`:130`／`:148` 是反向钉）。「已解析几篇」那一句今天有三张脸（`lib/dashboard.js:75-84`：未记录／全部已解析／对不上），派生自聚合回执里的 `documents_ready`（同文件 `:191-195`）⇒ **勿再派**。在册钉：`components/__tests__/r274-documents-tile-truth.test.js`、`r267-overview-real-status.test.js` | `components/DashboardPanel.vue`；`components/__tests__/dashboard-summary.test.js`、`v7-fake-data.test.js` | **已有**：`parse_status`/`index_status`（catalog）、`definition_source` 与 `context.warning` 与 `provenance`（`app/api/v1/intelligence.py:283-290`） |
+| **G03** | 问出来的数和页面上选的表**对不上，也无从纠正**（J4） | 🟡 **半**（现读@ac84f1a，半的地方换了）：界面那一半已收——选择器 `ChatPanel.vue:2013-2025`（`:value="activeDataFilename"` + `@change="chooseDataTable(...)"`）、逐轮回显「那一轮发出去带了哪张表」`:1951-1952`；服务端那一半今天**两格都欠**：① `rg -n terminal_data_filename app` → **EXIT 1**（R414 未并这棵树，终态帧里没有这一格）；② 终态帧唯一解码处 `lib/sessions.js:478-482` 只抄 `awaiting_hitl`／`awaiting_steps`，`data` 其余键丢掉 ⇒ 屏上 `server-data-readout`（`ChatPanel.vue:1956-1957`，`serverDataOf` `:678`）今天恒走「不画」那一态。三态各自的名字与「不许拿发依据填」那枚反向钉在册：`components/__tests__/r415-server-data-readout.test.js`。**这一行仍是活，但要的是后端终态帧 + lib 两行，不是界面** | `components/ChatPanel.vue`（回显 + 就地改表）、`App.vue`（若按计划书放顶栏常驻）、`lib/sessions.js`（只读）；用例 `components/__tests__/r174-*`、`panel-states.test.js` | 上行已有 `data_filename`（`ChatPanel.vue:599`）；**回显要后端补**：canonical `sources`/done 帧里带本轮真正用的 `data_filename`（今天流里没有） |
+| **G04** | 换台电脑 / 被登出一次，**问过的话全不见了**（后端其实还在） | ✅ **已落**（现读@ac84f1a）：`lib/sessions.js:888` `serverSessionRow`、`:924` `readBackendSessionList`、`:940` `mergeServerSessions`（并集不是覆盖；`fromServer` + `bodyFetched` 两格把「名单回来了、正文还欠」与「这条没内容」分开记），屏上入口 `ChatPanel.vue:553` → `:1751` `data-testid="session-pull"`、`:1761` `session-pull-face`，挂载期零请求、伸手才读。旧那两行（`sessions.js:93-113` 只从 localStorage 组装、退出即回不来）过期 ⇒ **勿再派**；退出仍整包清本地态，那是这一格自述的设计前提（`sessions.js:881-883`），不是漏洞 | `components/ChatPanel.vue`（会话侧栏加「从服务器取回」）、`lib/sessions.js`（列表合并读取）；用例 `lib/sessions-error-text.test.js`、`components/__tests__/r174-replay-ownership.test.js` | **已有**：`GET /sessions` 回 `id/title/created_at/updated_at/msg_count`（`app/api/v1/chat.py:920-937`）→ 零后端改动 |
+| **G05** | 告警看到了**没法办**：不能确认、不能关闭、不能指派，也看不出别人是不是已经办过 | ✅ **已落·带一枚残格**（现读@ac84f1a）：确认／关闭／指派三枚处置已接——`lib/alerts.js:230` `ALERT_DISPOSAL_COLUMNS`、`:526` `disposeAlert`，消费点 `components/InsightPanel.vue:349`；处置写的列与后端 `app/api/v1/alerts.py:450-451` `ALERT_DISPOSAL_WRITE_COLUMNS` 同一本账 ⇒ R265 那句「四枚端点 0 消费者」过期。残格只剩单条详情：`GET /alerts/{alert_id}`（`app/api/v1/alerts.py:1124`）仍 0 消费者（`rg -F "alerts/[" frontend/src` → **EXIT 1**）⇒ 每办一次都重读整页列表；**已立案 R286，不占新号** | `lib/alerts.js`、`components/InsightPanel.vue`；用例 `components/__tests__/insight-alerts.test.js` | **已有**：`GET /alerts` 行里 `status/acknowledged_by/acknowledged_at/closed_by/closed_at/assignee/assigned_at`（`app/api/v1/alerts.py:114-121`）+ `POST /alerts/{id}/ack|close|assign` |
+| **G06** | 被排队那一轮**只能干等**，界面没有「不排了」 | ✅ **已落**（现读@ac84f1a）：`components/QueueFace.vue:71-78` 画那枚「不排了」，给不给由 `face.cancellable` 决定（同文件 `:14-15` 写着「对着已落定的一轮、对着挂起等人拍板的一轮说不排了都是假话」）；落点走排队那条腿 `ChatPanel.vue:1489` → `:1511`（`POST /queue/{request_id}/cancel`，后端路由现读 `app/api/v1/chat.py:4829`），与输入框旁「中断本次回答」`/ask/{session}/cancel`（`:944`）各管一头 ⇒ **勿再派** | `components/QueueFace.vue`、`components/ChatPanel.vue`；用例 `__tests__/r198-queue-poll-stop.test.js`、`r202-queue-poll-stop-authz.test.js`、`r221-queue-deadline.test.js`、`r260-queue-awaiting-approval.test.js` | **已有**：request_id 已在 queued 回执里（`lib/sessions.js:389-397`），cancel 端点已在契约 |
+| **G07** | 模型/embedding 不在时界面**仍然报绿**，答案质量崩了却没有解释 | ✅ **已落·带一枚残格**（现读@ac84f1a）：`lib/health.js:24-26` 三枚码齐、`:56-66` 读 `model.inference_compute*` 四键与 `storage.read_only_protected`、`:108-110` 分派、`:214` `computeFace`、`:241`/`:253-254` `runtimeFaces` 逐族出脸（对端 `app/common/monitoring.py:131`、`:133`、`:146`、`:215-218`）；消费点 `ChatPanel.vue:242`/`:778` → 屏上 `:1830-1832` `data-testid="runtime-faces"` ⇒ 旧那行「`health.js:57` 只判一枚码、embedding 不在仍报绿」过期。残格：全站降级横幅仍没有（`rg -n runtimeFaces frontend/src/App.vue` → **EXIT 1**），写域在 `App.vue` ⇒ 本行不算全清 | `lib/health.js`、`components/ChatPanel.vue`（状态位文案）、`App.vue`（若做全站降级横幅，与 G16 同写集）；用例 `components/__tests__/chat-model-status.test.js` | **已有**：`GET /health/details` 的 `problems[]` 与 `model.inference_compute / _detail / _error_code / _age_seconds`、`embedding`（`app/common/monitoring.py:228-244`）。「无 GPU 那张脸」缺的是**码**：inference_compute_error_code 已有具名读数，前端接上即可，不必后端新造 |
+| **G08** | 上传时**没人问密级**，全库默认 1 级；员工想给一份资料加密级，界面没有地方 | ✅ **已落**（现读@ac84f1a）：上传表单问密级且真发得出——`DocPanel.vue:650` `form.append('classification', String(item.classification))`（建 `FormData` 的时刻 `:642-643`，注释 `:386` 写明为什么必须在建那一刻读下拉），档位措辞走全站那一份 `:394-401` → `classificationLabel`；后端那枚 `Form(1)` 现读在 `app/api/v1/chat.py:4110` ⇒ R265 那句「表单只 append file」过期，**勿再派**（读回那一格是否已回 `classification` 本单未重取，见 §10.2） | `components/DocPanel.vue`（+ 顺带把 UiUpload 接上，见 G20）；用例 `components/ui/__tests__/upload-rules.test.js`、`panel-states.test.js`、`r151-legacy-colors.test.js`（若动样式） | **已有**：`POST /upload` 的 `classification` Form。**建议同时给一枚读回**：上传回执里回 `classification` 与最终 `department`（今天回的是 status/message） |
+| **G09** | 普通员工一进「审批与待办」就看到**「没有权限做审批预审」**——真实原因是界面替他填了别人的部门 | ✅ **已落**（现读@ac84f1a）：界面不再替员工填别人的部门——`ApprovalPanel.vue:45-47` `ownDepartment` 只读本人（`DEPARTMENT_KEY`），`:54` 起点 = `{ ...demoForm, department: ownDepartment() }`，演示常量今天没有 department 这一格（`devFixtures/approval-demo.js:11` 自述 R277 起拿掉）⇒ 病根已治、**勿再派**。两格照实登记：`import { demoForm } ... :16` 仍在（其余初始值仍吃常量），挂载即自动预审也仍在（`:58` 注释 + `:189` `onMounted(submitCheck)`），但它今天不再制造「假无权限」那一张脸 | `components/ApprovalPanel.vue`、`devFixtures/approval-demo.js`；用例 `r237-r40-standard-auto.test.js`、`r247-approval-mount-dedupe.test.js`；`lib/errcodes.js`（把 department_override_denied 收进字典，今天 0 命中） | **已有**：登录响应 `department`（`lib/http.js:53` 已存 eb_department）；后端 `verify_department_self_report` 允许「重复自己」或留空（`authorization.py:89-90`）→ 界面只要不替员工填别人的部门就成立 |
+| **G14** | 总览上有一条**画着金额的折线图**和一张「异常与风险」清单，数全是前端常量编的；这一屏还继续把自己造的 rows 送给后端算 | ✅ **已落**（现读@ac84f1a）：三枚演示常量（`demoRows`、`demoInsights`、`demoTrendShape`）已不在生产码（`cd frontend; rg -n -e demoRows -e demoInsights -e demoTrendShape src` → 2 命中全是反证钉：`src/components/__tests__/insight-alerts.test.js:446`、`src/components/__tests__/r267-overview-no-self-fed-rows.test.js:106`；`Test-Path frontend/src/devFixtures/dashboard-demo.js` → **False**；同一条 `rg` 今天交回 5 行，其中生产码里唯一还在 import 的是 `ApprovalPanel.vue:16` 那枚 `demoForm`，余下四行是注释与上线前清空告示（`src/lib/alerts.js:18`、`src/assets/theme.css:761`、`src/devFixtures/README.md:1` 与 `:11`）；`insights-demo.js` 文件还在但已清空成一纸告示，全仓无一枚 import（`devFixtures/README.md:17` 自述 R287））；自备 rows 那条腿也断了（`DashboardPanel.vue:26` 自述、`lib/dashboard.js:21-22` 只留 `SUMMARY_PATH`，反向钉 `components/__tests__/r267-overview-no-self-fed-rows.test.js:106`）；趋势卡走空态：`:335-338` 诚实牌 + `:366` `dashboard-trend-card` + `:409` `dashboard-trend-empty`，没有服务端数字就不画线、不放金额刻度 ⇒ **勿再派**。R265 那句「B-7 未落地」也已过期：`app/api/v1/dashboard.py:825` 有 `@router.get("/trend")`（R340／R342 并树，前端读数 `acc092e` R341） | `components/DashboardPanel.vue`、`devFixtures/dashboard-demo.js`；用例 `components/__tests__/v7-fake-data.test.js`（`:70-72` 钉引用面清单、`:104` 钉 demo-flag 计数）、`dashboard-summary.test.js` | 趋势要 **B-7 最小聚合**：`/dashboard/summary` 需新增 `trend[]`（元素 `period/department/metric/value`，今天无此键）。**B-7 落地前先删卡画空态**，不留假线 |
+| **G13** | 员工在屏幕上读到**源码路径与 HTTP 路由**（违反 §2 硬判据） | ✅ **已落**（现读@ac84f1a）：那三处上屏的技术注解已改口成人话，源码路径与路由名都退进注释——`DashboardPanel.vue:337`、`ApprovalPanel.vue:210`、`:221-228`；反证钉在册（`components/__tests__/r267-overview-no-tech-note.test.js`，R426 实跑 5 passed，判据是 SSR 真 HTML）。🔴 取证方法一并改口：裸 `rg` 命中数今天涨到 60 行（实现注释变多），**拿它判「上屏」会判反**，见 §4.2 ⇒ **勿再派** | `components/DashboardPanel.vue`、`components/ApprovalPanel.vue`；用例 `components/__tests__/v7-fake-data.test.js:104`（钉 demo-flag 计数）、`r237-r40-standard-auto.test.js:403-405`（丁3 钉「这块仍挂牌」） | 无需接口 |
 
 ### P2（5 枚）
 
 | # | 症状 | 证据 | 动 | 字段 |
 |---|---|---|---|---|
-| **G10** | 管理员**没有任何管理屏**：用户/改密/审计/评测/SLO/检索调试全都在后端躺着；而登录页已经把员工指向「用户管理」 | `rg users src` → 0 消费者（§4.3）；`GET /slo`、`GET /stage-latency`、`GET /audit/events`、`GET /evaluations`、`GET /traces/{id}`、`POST /retrieval/debug` 前端 0 消费者；文案落点 `App.vue:348` | 新屏 `components/AdminPanel.vue`（或按能力拆两三枚）、`router/index.js`（加一条 primary 屏 + 角色可见性判定）、`App.vue`（入口与派生导航）、`lib/` 新只读模块；用例 `router/__tests__/routes.test.js`、`src/__tests__/navigation.test.js` | 已有端点即可开工（只读优先：audit/events、slo、evaluations）；**先要一枚后端读回**：`GET /users` 是否已回 `department`（决定管理屏能不能真把 G19 那句「选部门范围」办成） |
-| **G11** | 图和报告**藏在「喂料 → 数据」标签底下**，员工找不回来 | ArtifactList 唯一挂载点 `DataPanel.vue:451`；路由表无成果屏 `router/index.js:52-99` | `router/index.js`、`components/DataPanel.vue`（摘出挂载）、`components/ArtifactList.vue`（提为屏时改页头与筛选）、`App.vue`（导航派生）；用例 `components/__tests__/artifact-list.test.js`、`router/__tests__/routes.test.js` | **已有**：`GET /artifacts` 分页（`app/api/v1/artifacts.py:168`），前端已按 `artifactTypeLabel` 分类型（`ArtifactList.vue:36-48`）。若要「按会话找回」需 `request_id`/`session_id` 进列表行 |
-| **G16** | 顶栏两枚**按了没反应**的按钮（搜索、通知），退出那颗是个「⌄」看不出是退出 | `App.vue:394-401`：两枚 button 无 @click，退出按钮无可及名称（内容只有 ⌄）——计划书 §11「顶栏无死控件；退出按钮有可及名称」（`docs/frontend-plan-2026-09-14.md:592`）今天不成立 | `App.vue`；用例 `src/__tests__/navigation.test.js` 或新增顶栏件 | 通知若要真数：`GET /hitl/pending` 的 `count`（**不能当总数用**，契约 `docs/api/contract-v1.md` HITL 一节明写它是一页长度）；搜索今天**无全局检索端点**，建议先摘控件而不是接半截 |
-| **G19** | 被部门问题拒绝时，界面叫用户**去做一件界面里做不到的事** | 文案 `lib/errcodes.js:105`「请先选择部门范围，再生成这项结果。」；全站无部门选择器（`rg 部门 src/components` 只剩报销自查那一格输入框） | `lib/errcodes.js`（改成能做到的下一步：找管理员核对部门归属）、`lib/errcodes.test.js`、`lib/r208-alias-coverage.test.js`、`lib/no-bare-code.test.js` | 无需接口。真要给「选择部门范围」的能力属后端语义（Principal 的部门集），归 G10 一并裁 |
-| **G20** | 「自研原语」写完了但**接线没收口**：4 枚原语零消费者，5 块屏仍在裸写按钮 | 零消费者：UiTable / UiUpload / UiDialog / UiToastHost（§3 行 5 命令）；裸 button 计数 ChatPanel 10、DashboardPanel 9、DocPanel 5、DataPanel 5、GraphPanel 2 | 分屏接线，各自落在所在块写集里（H/D/E/F）；用例 `components/ui/__tests__/components.test.js`、`states.test.js` | 无需接口 |
+| **G10** | 管理员**没有任何管理屏**：用户/改密/审计/评测/SLO/检索调试全都在后端躺着；而登录页已经把员工指向「用户管理」 | 🟡 **半**（09-26 那行「管理员**没有任何管理屏**」= 过期账；现读@ac84f1a）：两枚管理屏已在树——「账号与角色」`router/index.js:122-127` + `components/AdminPanel.vue`（读 `lib/users.js:223` `loadUsers`，写 `:277-281` 三枚路径 + `:626` 改密），「运行留痕」`:137-141` + `components/TracePanel.vue`（读 `lib/traces.js:46`、`:48`）。今天仍 0 消费者的只剩 `GET /slo`、`GET /audit/events`、`GET /evaluations`、`GET/PUT /profile`、`POST /retrieval/debug` ⇒ 剩那一格才是活，而且它不需要新后端 | 新屏 `components/AdminPanel.vue`（或按能力拆两三枚）、`router/index.js`（加一条 primary 屏 + 角色可见性判定）、`App.vue`（入口与派生导航）、`lib/` 新只读模块；用例 `router/__tests__/routes.test.js`、`src/__tests__/navigation.test.js` | 已有端点即可开工（只读优先：audit/events、slo、evaluations）；**先要一枚后端读回**：`GET /users` 是否已回 `department`（决定管理屏能不能真把 G19 那句「选部门范围」办成） |
+| **G11** | 图和报告**藏在「喂料 → 数据」标签底下**，员工找不回来 | ✅ **已落**（现读@ac84f1a）：成果有独立一级屏——`router/index.js:100-105`（`/artifacts`，`meta.title: 交成果`，未写 `primary:false` ⇒ `:167` 派生得出侧栏入口），薄壳 `components/ArtifactsPanel.vue:28`/`:44` 只 import `ArtifactList`（那枚文件一字未动），「喂料 → 数据」那一屏继续挂它（`DataPanel.vue:454`）⇒ **勿再派**。残格照实登记：`cd frontend; rg -n session_id ../app/api/v1/artifacts.py` → **EXIT 1**；`rg -n request_id ../app/api/v1/artifacts.py` → 1 命中而那枚是删除审计的入参（`app/api/v1/artifacts.py:109`），列表行字段全集（`app/api/v1/artifacts.py:151-165` + `app/storage/artifacts.py:237-244`）里两把键都没有 ⇒ 「按这一问找回那份成果」仍要后端先给键。🔴 R426 自纠（不是改 R265 的账）：本单草稿的上一版把这枚 `rg` 记成 EXIT 1，是假读数，已换成字段全集当判据 | `router/index.js`、`components/DataPanel.vue`（摘出挂载）、`components/ArtifactList.vue`（提为屏时改页头与筛选）、`App.vue`（导航派生）；用例 `components/__tests__/artifact-list.test.js`、`router/__tests__/routes.test.js` | **已有**：`GET /artifacts` 分页（`app/api/v1/artifacts.py:168`），前端已按 `artifactTypeLabel` 分类型（`ArtifactList.vue:36-48`）。若要「按会话找回」需 `request_id`/`session_id` 进列表行 |
+| **G16** | 顶栏两枚**按了没反应**的按钮（搜索、通知），退出那颗是个「⌄」看不出是退出 | ✅ **已落**（现读@ac84f1a）：搜索那枚死控件按 R278 摘着（理由今天仍然对：全站没有一枚诚实的全局检索端点，`App.vue:60-63`），通知这一格 R333 已用**真数**接回来——`App.vue:473-478` `<NotificationBell />`（件 `components/NotificationBell.vue`，出口 `lib/notifications.js:27-29`，徽标只吃全集未读 `unread_total`）；退出那枚有可及名称：`App.vue:80-82` `logoutLabel`（含「当前是谁」）→ 模板 `:486-487` `:aria-label`／`:title` ⇒ **勿再派** | `App.vue`；用例 `src/__tests__/navigation.test.js` 或新增顶栏件 | 通知若要真数：`GET /hitl/pending` 的 `count`（**不能当总数用**，契约 `docs/api/contract-v1.md` HITL 一节明写它是一页长度）；搜索今天**无全局检索端点**，建议先摘控件而不是接半截 |
+| **G19** | 被部门问题拒绝时，界面叫用户**去做一件界面里做不到的事** | ✅ **已落**（现读@ac84f1a）：`lib/errcodes.js:149` 那句已是做得到的下一步（「联系管理员补上你的部门归属，或改用已登记部门的账号」）；旧句 `rg -n 请先选择部门范围 frontend/src` → 6 命中**全在测试内**（`lib/errcodes.test.js:236` 历史叙述、`lib/__tests__/r270-department-voice.test.js:5` 注释、`:34`/`:53` 反向钉、`components/ui/__tests__/components.test.js:52`/`:59` 夹具串），生产码 0 命中 ⇒ **勿再派** | `lib/errcodes.js`（改成能做到的下一步：找管理员核对部门归属）、`lib/errcodes.test.js`、`lib/r208-alias-coverage.test.js`、`lib/no-bare-code.test.js` | 无需接口。真要给「选择部门范围」的能力属后端语义（Principal 的部门集），归 G10 一并裁 |
+| **G20** | 「自研原语」写完了但**接线没收口**：4 枚原语零消费者，5 块屏仍在裸写按钮 | ✅ **已落**（现读@ac84f1a）：裸按钮债已归零——`components/__tests__/r288-native-buttons.test.js:60` `DEBT_TOTAL_RATCHET = 0`，同件 `:54-56` 逐枚写着 `App.vue: 0`、`components/DashboardPanel.vue: 0`、`components/SourceCard.vue: 0`（R410 收的最后八枚已在树）；零消费者原语从四枚降到**两枚**：`UiTable`／`UiDialog` 已被 `AdminPanel.vue:68`/`:336`/`:345` 与 `TracePanel.vue:73`/`:261` 真消费，仍无人接的只剩 `UiUpload` 与 `UiToastHost` ⇒ R265 那串「裸 button 计数」过期、**勿再派**；剩那两枚要不要接线属 `components/ui/**` 那一层的裁定 | 分屏接线，各自落在所在块写集里（H/D/E/F）；用例 `components/ui/__tests__/components.test.js`、`states.test.js` | 无需接口 |
 
 ### P3（4 枚）
 
 | # | 症状 | 证据 | 动 |
 |---|---|---|---|
-| **G12** | 图谱降级承诺的承接面不存在：一级入口撤了，「文档预览里的 依据 / 相关制度」没建，/graph 变成只能手输三元组的表单页 | `router/index.js:97` primary:false（撤 ✅）；`DocumentPreviewModal.vue` 无依据/相关制度 0 命中；`GraphPanel.vue:84-95` 仍是四输入框 + 列表；生产未配 `KNOWLEDGE_GRAPH_STORE_PATH` 时写入必拒（计划书 `2026-09-17-perf-architecture-plan.md:393`） | `components/DocumentPreviewModal.vue`、`components/GraphPanel.vue`（复用其行读法）；用例 `panel-states.test.js`、`__tests__/r191-modal-row-scope.test.js`（弹窗形状） |
-| **G15** | 删除文档 / 删除会话用**浏览器原生 confirm**，与全站两步确认并存 | `DocPanel.vue:281`、`ChatPanel.vue:448`（原生 confirm 全仓仅这 2 处，`rg confirm\(`）；同一仓已有两步确认状态机：`lib/alerts.js:201-205`、`ArtifactList.vue:141-153` | `components/DocPanel.vue`、`components/ChatPanel.vue`（接 UiDialog，见 G20） |
-| **G17** | 同一屏两个名字：路由叫「问一句」页内叫「智能问答」，路由叫「喂料」页内叫「知识库」 | `router/index.js:87` vs `ChatPanel.vue:1324`；`router/index.js:67` vs `DocPanel.vue:335`。R136/R174 那条病（页内与顶栏各写一份）今天只钉住了审批一屏：`r174-screen-name.test.js:58-62` 只对 approval 断言 | `ChatPanel.vue`、`DocPanel.vue`（文案）+ 把 `components/__tests__/r174-screen-name.test.js` 的断言从 1 屏扩到 5 屏（这条一扩，四块屏立刻自证） |
-| **G18** | 屏头挂英文装饰字（Approval / Alerts / Knowledge Graph），员工读到的是半中半英 | `ApprovalPanel.vue:153`、`InsightPanel.vue:242`、`GraphPanel.vue:76`（样式 `theme.css:178-184` .eyebrow） | 三块屏各一行文案；**不许顺手改 theme.css**（写集独占见 §7） |
+| **G12** | 图谱降级承诺的承接面不存在：一级入口撤了，「文档预览里的 依据 / 相关制度」没建，/graph 变成只能手输三元组的表单页 | ✅ **已落**（现读@ac84f1a）：承接面已建在文档预览里——`components/DocumentPreviewModal.vue:40`（R314 判据自述「依据／相关制度」这一格）、`:100` `relationsAboutDocument`、`:138-139` 取数 URL 走 `GET /knowledge-graph/relations`（登记名原文递给取数腿，筛由服务端做，R348）、`:149-160` `readDocumentRelations` 把 `failed`／`empty`／`matched`／`denied` 四支分开（读失败不冒充「没有关联」）；在册钉 `components/__tests__/r314-related-docs.test.js` ⇒ **勿再派**。残格：R314 判据要点里那句「没配 `KNOWLEDGE_GRAPH_STORE_PATH` 时要说『这台服务器没开图谱』而不是『没有依据』」本单**没证**——两枚件里现取「没开」与「未开启」两串只命中一枚无关注释（`DocumentPreviewModal.vue:130`），见 §10.2 | `components/DocumentPreviewModal.vue`、`components/GraphPanel.vue`（复用其行读法）；用例 `panel-states.test.js`、`__tests__/r191-modal-row-scope.test.js`（弹窗形状） |
+| **G15** | 删除文档 / 删除会话用**浏览器原生 confirm**，与全站两步确认并存 | ✅ **已落**（现读@ac84f1a）：生产码里原生弹窗**真调用 0 枚**——现取「原生 confirm／alert／prompt」那一族扫描（`rg -n window.confirm frontend/src` 加同族两支，排除 `__tests__`）的 3 枚命中全在注释（`DataPanel.vue:70`、`ArtifactList.vue:19`、`AdminPanel.vue:342`）；删除走两步内联确认（`DocPanel.vue:1236` `isPendingDelete(pendingDelete, rowDeleteKey(row.filename))`）⇒ **勿再派** | `components/DocPanel.vue`、`components/ChatPanel.vue`（接 UiDialog，见 G20） |
+| **G17** | 同一屏两个名字：路由叫「问一句」页内叫「智能问答」，路由叫「喂料」页内叫「知识库」 | ✅ **已落**（现读@ac84f1a）：旧那两枚病名都归一了——「问一句」页内 `ChatPanel.vue:1813` `data-testid="chat-screen-name"` 与 `meta.title` 逐字相等（R268）；「喂料」屏那第三枚名字（页内「知识库」）由 R412 收掉，今天页内写的是 `DocPanel.vue:955` `<strong>喂料</strong>`，在册钉 `components/__tests__/r412-one-screen-one-name.test.js`（它同时钉「一屏只许一处主标题」「不许抄出第二处」）⇒ **勿再派**。标签条仍叫「文档／数据」那是内容标签不是屏名（`router/feed-tabs.js:28-29`，R136 判据① 已裁定，不算回归） | `ChatPanel.vue`、`DocPanel.vue`（文案）+ 把 `components/__tests__/r174-screen-name.test.js` 的断言从 1 屏扩到 5 屏（这条一扩，四块屏立刻自证） |
+| **G18** | 屏头挂英文装饰字（Approval / Alerts / Knowledge Graph），员工读到的是半中半英 | ✅ **已落**（现读@ac84f1a）：`rg -n 'class="eyebrow">[A-Za-z ]+<' frontend/src --glob "*.vue"` → **EXIT 1 零命中**，最后那枚 `Knowledge Graph` 眉标已随 R314 摘掉（另两枚 09-26 时就已没了）⇒ **勿再派** | 三块屏各一行文案；**不许顺手改 theme.css**（写集独占见 §7） |
 
 ### 记账项（不算缺口，别派工）
 
@@ -220,9 +240,17 @@ rg -n --no-heading "(src/[A-Za-z0-9_./-]+\.js|GET /[a-z]|POST /[a-z])" src/compo
 | ⑤ 三组数实测并注时间戳 | **做到（缓存隔离部分做到）** | §5：vitest 58 files / 1160 tests / 0 failed @11:48:04；build exit 0 @11:48:16–17；lint:colors **148 / 0 errors** @11:48:22。缓存：`--cacheDir` 在 vitest 5 不存在（实跑 CACError），改用 `--fsModuleCachePath`；`node_modules/.vite/vitest/…/results.json` 因 junction 仍与另一枚 Agent 共用（11:57:04 有他人写入），已判定不影响全量读数 |
 | ⑥ 可派工拆解 + 还差哪几枚、几人日 | **做到** | §7：8 块（A–H）+ 4 处全局独占 + 并行/串行排法；**合计 ≈12–12.5 人日，P1 部分 ≈9 人日** |
 
-**总数**：缺口 **20 条**，其中 **P1 十一条**（G01、G02、G03、G04、G05、G06、G07、G08、G09、G13、G14）、P2 五条（G10、G11、G16、G19、G20）、P3 四条（G12、G15、G17、G18），另有记账两条 G21/G22 不派工。
+**总数（R265 当时账）**：缺口 **20 条**，其中 **P1 十一条**（G01、G02、G03、G04、G05、G06、G07、G08、G09、G13、G14）、P2 五条（G10、G11、G16、G19、G20）、P3 四条（G12、G15、G17、G18），另有记账两条 G21/G22 不派工。🔴 R426 现读的三态汇总见 §10.1——这一句里的「缺口枚数」今天已经不能当派工量用。
 
-### 建议先派的三枚
+### 建议先派的三枚（🔴 R426 现读@ac84f1a：这三枚**全部已并树**，照抄这张表派工就是给同一枚单派第二个人）
+
+| 顺序 | 派哪块（=单号落点） | R426 现读：这一枚今天在哪 |
+|---|---|---|
+| 1 | 块 B（G09 + G13 审批那两处） | **已落**：G09 见 `ApprovalPanel.vue:45-54` + `devFixtures/approval-demo.js:11`；G13 见 `ApprovalPanel.vue:208-211`/`:219-228`（屏上已无源码路径与路由名） |
+| 2 | 块 A（G14 + G02 + G13 总览那处） | **已落**：`devFixtures/dashboard-demo.js` 已不在树（`Test-Path` → False），趋势卡走空态 `DashboardPanel.vue:335-338`/`:409`，文档卡三张脸在 `lib/dashboard.js:75-84` |
+| 3 | 块 D 的 D1 半（G04 + G03） | **G04 已落**（`lib/sessions.js:888`/`:924`/`:940` + `ChatPanel.vue:1751`）；**G03 仍半**，缺的两格今天写明在后端终态帧与 `lib/sessions.js:478-482`，不在界面 |
+
+**R265 当时的理由（存档，锚 `8613dc7`；这三行理由点名的病灶，今天三处都已改口，见上面那张表）**：
 
 | 顺序 | 派哪块（=单号落点） | 为什么是它 |
 |---|---|---|
@@ -263,3 +291,51 @@ cd frontend; rg -n "/ack|/close|/assign|/users|/profile|/slo|stage-latency|queue
 cd frontend; rg -n "ROLE_KEY|isAdmin = computed" src/App.vue src/components/DocPanel.vue
 cd frontend; rg -n "confirm\(" src -g "!*.test.js"
 ```
+
+---
+
+## 10. R426 现场重判（2026-09-28 · 锚 `ac84f1a` · 工作树 `be-r415`）
+
+性质：**纯账面亲验单**。写集两枚——本文与 `frontend/src/router/__tests__/r316-admin-entry.test.js`（只改头注 `:4-10` 那七行的文字；行数与行序未动，`:13` 仍居原位）。零代码改动、零 commit。判据只认两样：磁盘字节（`文件:行`，当场取）与命令输出（含 EXIT 码）。
+
+### 10.1 §6 那 20 枚的现读三态
+
+- **已落 18 枚**：G01、G02、G04、G05、G06、G07、G08、G09、G11、G12、G13、G14、G15、G16、G17、G18、G19、G20。其中四枚各带一枚**已写在该行**的残格：G05（`GET /alerts/{alert_id}` 仍 0 消费者，已立案 R286）、G07（全站降级横幅仍没有，写域 `App.vue`）、G11（列表行无 `request_id`／`session_id` ⇒ 按会话找回仍缺）、G12（「这台服务器没开图谱」那句没证）。
+- **半 2 枚**：G03（缺的两格在后端终态帧 + `lib/sessions.js:478-482`，不在界面）、G10（两枚管理屏已在树，仍没脸的是 `/slo`、`/audit/events`、`/evaluations`、`/profile`、`/retrieval/debug`）。
+- **未落 0 枚**。G21／G22 两枚记账项照旧（本单没重取，见 §10.2 第 4 条）。
+- 🔴 这一节是**逐行证据的汇总**，不是达标判定：改口的收益只是让下一班不再重复派已经修完的活；V1 门槛归总控按 `docs/handoff/2026-09-23-v1-acceptance-record.md` 裁。
+
+### 10.2 未证清单（拿不出磁盘字节或命令＋EXIT 的，一律没改口）
+
+1. §1 的 T1 与 T5：判定「有」沿用 R265，本单只把坐标改成现读，没重跑端到端（出处点开→原文核对→批准落账这条链没实测过渲染）。
+2. §4.3 的「越权面为零」那半句：本单只现读到 `app/api/v1/alerts.py:382` 是 `_require_alert_management` 的定义处，没逐条复核 R265 点名的后端授权行号（`alerts.py:925` 之类已漂），故该结论原样留着。
+3. R265 §9.4 的三处待验项（`GET /users` 是否回 `department`、`POST /upload` 回执是否回 `classification`、`GET /alerts/{id}` 与三枚处置端点的请求体形状）：本单没起服务、没打后端 ⇒ 全部未证。第 2 枚里 `GET /users` 那一格有旁证（`frontend/src/lib/users.js` 的角色与部门词表），但旁证不等于读回。
+4. G21／G22：计划书 §2 与 §11 的指路是否仍过期、`docs/current-functionality-2026-09-10.md:335-349` 那笼统口径，本单都没重取。
+5. §5.1 产物零远程请求：要 `npm run build` 才取得到，本单按硬约束没跑构建 ⇒ 那两行原样留着（见 §5.2 末行）。
+6. §7 八块清单（A–H）与人日估算：本单**没逐块重判**，只把 §8「建议先派的三枚」标了作废并重给现读落点。派工前请按 §6 现读列重新切块——那八块里有六块的缺口已经不在。
+7. §3 表 SLO 那行的乙半：`lane_attribution_absent` 今天仍有 8 枚命中（`app/api/v1/observability.py:763` 起），但本单没逐条读那六枚 blocker 的形状 ⇒ 「仍挂」这句沿用。
+8. G12 那句「没配 `KNOWLEDGE_GRAPH_STORE_PATH` 时要说『这台服务器没开图谱』」：两枚件里现取「没开」与「未开启」只命中一枚无关注释（`DocumentPreviewModal.vue:130`），没证。
+9. 「界面无技术注解」这条今天只跑到「在册反证钉全绿 + 三处上屏原文逐条读到已改口」这一层（SSR 真 HTML 判据在 `r267-overview-no-tech-note.test.js`），没做全仓渲染扫描复现。
+
+### 10.3 越界发现（只报不改）
+
+1. 🔴 **派工词里那枚证据在这棵树上没复现**：`rg -n "已解析|高可信" frontend/src/components/DashboardPanel.vue` → **3 命中**（`:111` 是记下旧假话的注释、`:115` 是四档 `PARSE_STATUS_TEXT` 里的 `ready: 已解析`、`:420` 是表头「其中已解析（条）」）。**结论方向不变**（那三处都是从回执派生的脸，不是「每行写死已解析」），但别拿这条命令当判据；要用的是 `rg -n 高可信 frontend/src` → 5 命中全在 `components/__tests__/r267-overview-real-status.test.js`（`:130`／`:148` 为反向钉）。
+2. `frontend/src/components/DocPanel.vue:103` 注释手抄的后端坐标已漂：它写 `app/api/v1/chat.py:3933`，现读 `classification: int = Form(1)` 在 `app/api/v1/chat.py:4110`。该件在 `components/**`（Hume／R421 名下），本单未动。
+3. 派工词说「`r416` 的 LEDGER 引用着 `r316-admin-entry.test.js:13`」——**这枚耦合不存在**：`r416` 甲组只扫 `router/index.js` 与 `lib/dashboard.js`（`scanCitations(ROUTER)`／`scanCitations(DASHBOARD)`），它对 r316 那枚件的唯一耦合是丙组要求 router 注释点名一枚在册用例（`r416:458-477`）。真正逐枚对账 r316 里 `path:line` 的是 `frontend/src/lib/__tests__/r420-stale-coordinates-second-blade.test.js`（`ADMIN_ENTRY` 名下五条：`auth.py:106`、`policy.py:44/:95`、`permissions.py:15`、`App.vue:4/448`、`App.vue:27`）。本单按更硬的那条执行：头注改写后**行数与行序一字节未动**（`:13` 今天仍写着 `app/api/v1/auth.py:106`），也没往那枚件里新增任何 `path:line` 引用 ⇒ 两本账都不必改口，`r416`＋`r420`＋`r316` 现跑 59 枚全绿。
+4. `frontend/package.json:20` 挂着 `lucide-vue-next` 依赖，而 `frontend/src/components/ui/README.md:4` 写着「本目录不 import `lucide-vue-next`（图标暂用内联 SVG）」：`rg -n lucide frontend/src` 的命中全在注释，生产码 0 import。是死依赖还是待接线本单不判。
+5. `docs/handoff/2026-09-27-v2-gap-recheck-2.md`（R407，锚 `5e9f901`）是**第三本**前端账，且比 R309 更接近今天：它已写下 G08／G10／G11／G12／G18 已落、G03 半、G17 半（R412 在途）、G20 半（棘轮 8）。本单现读与之**唯一分歧**是 G17 与 G20——那两枚在 `ac84f1a` 上都已经并树落地（`DocPanel.vue:955` 与 `r288-native-buttons.test.js:60` 棘轮 0）。总控若要定「谁是派工唯一事实源」，请把这三本一起裁，别让下一班挑一本抄。
+
+### 10.4 两本账对不上的地方（点名，不选边）
+
+| 项 | R265（本文当时） | R309 复评（锚 `9344028`） | R426 现读（锚 `ac84f1a`） | 差在哪 |
+|---|---|---|---|---|
+| G02／T2 | 半：屏上写死「已解析／高可信」 | 已完成 | 有（已落） | R309 与今天一致；R265 过期 |
+| G10 | 「管理员没有任何管理屏」 | 「无」＋派 R316 | 半：`AdminPanel` 与 `TracePanel` 两屏已在树（R316／R399 并树） | 🔴 R309 那句 `Test-Path AdminPanel.vue → False` 今天不成立——**两本都不能照抄去派工** |
+| G16 | 顶栏两枚死控件、退出无可及名称 | 已完成，但注「通知那格理由今天软了一半，要摆正脸得动 `App.vue` ⇒ 撞 R307」 | 已落：`App.vue:473-478` 已摆上 `NotificationBell`（R333 并树），退出钮有 `logoutLabel`（`:486-487`） | R309 那半句也已过期；今天欠的不是接线 |
+| G17 | 半：路由「喂料」／页内「知识库」 | 半：三名并存，派 R313 | 已落：`DocPanel.vue:955` 写「喂料」，钉在 `r412-one-screen-one-name.test.js` | R412 已并树，两本的「半」都不再是今天 |
+| G20 | 半：4 枚原语零消费者、五屏裸按钮 | 半：棘轮 20 只准降 | 已落：棘轮 0（`r288-native-buttons.test.js:60`），零消费者原语只剩 2 枚 | 同上，R410 已并树 |
+| G03／T10 | 无：界面根本没画 | 半：界面已画，缺「服务端回显出处」 | 半：界面已画且逐轮回显，**缺的两格是** `lib/sessions.js:478-482` 丢 `data` 其余键 ＋ `rg -n terminal_data_filename app` → EXIT 1 | 三本都说「半」但缺的不是同一格：照 R265 派会去补一件已补好的东西，照 R309 派会漏掉那两行解码处 |
+| G05 | 半：四枚端点 0 消费者 | 已完成（带残格 R286） | 已落（残格同 R309：`alerts.py:1124` 仍 0 消费者） | 一致；R265 过期 |
+| G12 | 无：承接面不存在 | 无（派 R314） | 已落：`DocumentPreviewModal.vue:40`／`:100`／`:138-139`／`:149-160`（R314 并树），只欠那句「这台服务器没开图谱」的取证 | R309 的「无」今天过期 |
+
+- 两本账**方法学**上的一处冲突，值得总控定口径：R309 判定「已完成」用的是 `rg` 命中 + 提交归因（读码），本单同一格用的是磁盘字节 + 在册反证钉 + 命令 EXIT。两者都不等于真机渲染——R265 §9.3 那句「任何真机渲染类判据只给源码证据，不宣布真机已过」今天仍然适用，本文所有「已落」都只到这一层。
