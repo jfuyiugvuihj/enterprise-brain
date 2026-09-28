@@ -119,7 +119,7 @@ def open_ro_sqlite(db: Path) -> sqlite3.Connection:
 # ==================== sqlite 侧的段账 ====================
 
 def sqlite_census(db: Path) -> dict:
-    """段、检查点、元数据键、WAL 残留、HNSW 配置——全是从库自己的表里读的。"""
+    """段、检查点、元数据键、队列残留（`embeddings_queue`，🔴 R434 改口：这不是 SQLite WAL）、HNSW 配置——全是从库自己的表里读的。"""
     out: dict = {"ok": False}
     try:
         con = open_ro_sqlite(db)
@@ -481,9 +481,9 @@ def main(argv=None) -> int:
                                         for s in sql["segments"]],))
     print("created_at 按日  : %s" % (sql["created_at_days"],))
     print("hnsw 配置(JSON)  : %s" % (sql["hnsw_config"] or "未记录"))
-    print("WAL 残留行数     : %d" % sql["wal_rows"])
+    print("队列残留行数(embeddings_queue，非 WAL) : %d" % sql["wal_rows"])
     for seq, op, ident, vec in sql["wal_tail"]:
-        print("   WAL seq=%s op=%s id=%s vector=%s" % (seq, op, ident, vec))
+        print("   队列 seq=%s op=%s id=%s vector=%s" % (seq, op, ident, vec))
 
     cohorts = cohort_table(db)
     print("== 分布表：created_at 按日 / document_id 按文件 / seq 洞 ==")

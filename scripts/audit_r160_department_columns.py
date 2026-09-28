@@ -387,7 +387,7 @@ def audit_sqlite(path: Path) -> tuple:
     errors: list = []
     sidecars = [p.name for p in path.parent.glob(path.name + "-*") if p.is_file()]
     if sidecars:
-        notes.append(f"存在附属文件 {sidecars}：只读模式下 WAL 帧可能未合并，行数可能偏小")
+        notes.append(f"存在附属文件 {sidecars}：只读模式下这些附属文件里的内容不会被合入主库，行数可能偏小（🔴 R434 改口：该库是 legacy rollback journal，附属文件不是 WAL 帧）")
     try:
         con = sqlite3.connect(uri_ro(path), uri=True)
     except Exception as exc:  # noqa: BLE001

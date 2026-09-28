@@ -2,7 +2,7 @@
 
 本件**只读**，而且是按构造只读：
 ① PostgreSQL 侧每条语句都是 SELECT，并在会话上先压 `default_transaction_read_only = on`；
-② 遗留向量库侧不走 `chromadb.PersistentClient`（它会推进 `chroma.sqlite3` 的 mtime 与 WAL），
+② 遗留向量库侧不走 `chromadb.PersistentClient`（它会推进 `chroma.sqlite3` 的 mtime；🔴 该库今天实测跑的是 legacy rollback journal（header byte18/19 = 1/1），根本不产生 WAL），
    走 `sqlite3` 的 `file:...?mode=ro` URI —— AGENTS.md 明令 Chroma 是退役中的遗留件，
    本单一枚新的 Chroma 写点都不许造。
 ③ 附 `--expect-database` 闸门：连上的库名与预期不符就停手，不把别人的库读成生产。

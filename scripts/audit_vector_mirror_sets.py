@@ -33,8 +33,8 @@ embedder 产出），所以它那一半在别的单子在跑真机实测时不�
      出现任何 DML / DDL / 事务控制词 ⇒ 当场拒发，一个字节都不到服务端。
   2. 每个会话都以 `BEGIN; SET TRANSACTION READ ONLY;` 开头、以 `ROLLBACK;` 结尾。就算白名单
      漏了什么，服务端也会用 25006 把那一笔挡回去。
-  3. Chroma 侧先整目录拷到临时副本再打开（`chromadb.PersistentClient` 对 sqlite 即使只读
-     也会落 WAL/SHM），仓库里那份 `chroma_db/` 从头到尾只被读、只被哈希；报告里带
+  3. Chroma 侧先整目录拷到临时副本再打开（`chromadb.PersistentClient` 对 sqlite 即使意图只读
+     也会开写口），仓库里那份 `chroma_db/` 从头到尾只被读、只被哈希；报告里带
      `chroma_source.sha256_before/after` 两枚清单，跑完自己比。
 
 退出码（沿用第⑦步那一份口径，别再造第二套）：
@@ -503,7 +503,7 @@ def file_manifest(directory: Path) -> dict:
 def copy_chroma_source(source: Path, work_root: str | None) -> tuple[Path, Path]:
     """把整目录拷进临时区，之后所有打开动作只对着副本。
 
-    为什么非要拷：`chromadb.PersistentClient` 即使只是 get，也会在 sqlite 上落 -wal/-shm，
+    为什么非要拷：`chromadb.PersistentClient` 即使只是 get，也会在 sqlite 上开写口（🔴 R434 改口：该库 header byte18/19 = 1/1 ＝ legacy rollback journal，落的是 `-journal` 那一族，不是 `-wal`/`-shm`；今天实测 `chroma_db/` 下没有 `-wal`/`-shm` 侧文件），
     并把元数据 schema 往它自己认得的版本迁移一次 —— 那对仓库里被 git 跟踪的 `chroma_db/`
     就是写。工单那条红线（业主正在处置那批脏文件）靠这个函数满足，不靠"我只读"的声明。
     """
