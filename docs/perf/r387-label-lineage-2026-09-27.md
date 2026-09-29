@@ -38,20 +38,20 @@
 
 | # | 这一跳是什么 | 站点（现读行号） | 载体 | 性质 |
 |---|---|---|---|---|
-| 1 | 接口收到什么 | `app/api/v1/chat.py:4213-4215` | `upload_document(file, classification=Form(1), department=Form(""))` | 默认值兜底 |
-| 2 | **服务端立刻丢掉客户端那一格** | `app/api/v1/chat.py:4231` | `department = str(getattr(principal, "department", "") or "")` | **硬编覆盖** |
+| 1 | 接口收到什么 | `app/api/v1/chat.py:4363-4365` | `upload_document(file, classification=Form(1), department=Form(""))` | 默认值兜底 |
+| 2 | **服务端立刻丢掉客户端那一格** | `app/api/v1/chat.py:4381` | `department = str(getattr(principal, "department", "") or "")` | **硬编覆盖** |
 | 3 | 主体的部门从哪来 | `app/common/authorization.py:34` → `app/agents/contracts.py:38` | `Principal.department = str(user.get("department") or "")` | 默认值兜底 |
 | 4 | **账号的部门又是谁写的** | `app/common/auth.py:434-442`、`:445-464` | `_bootstrap_admin_department() = os.getenv("AUTH_DEPARTMENT", "")` → `INSERT INTO users(…, department)` | 默认值兜底（断点） |
-| 5 | `classification` 走的是另一条路 | `app/api/v1/chat.py:4214` → `:4359` / `:4373` / `:4387` / `:4462` | 形参原样下传，**没有被覆盖** | 真值 |
-| 6 | 目录行（逻辑文档） | `app/api/v1/chat.py:3787-3871` → `:1084-1119`（`:1102` / `:1113`） | `INSERT INTO documents(filename, classification, department, …)`，`department or None` | 默认值兜底 |
+| 5 | `classification` 走的是另一条路 | `app/api/v1/chat.py:4364` → `:4509` / `:4523` / `:4537` / `:4612` | 形参原样下传，**没有被覆盖** | 真值 |
+| 6 | 目录行（逻辑文档） | `app/api/v1/chat.py:3937-4021` → `:1084-1119`（`:1102` / `:1113`） | `INSERT INTO documents(filename, classification, department, …)`，`department or None` | 默认值兜底 |
 | 7 | 目录行（版本） | `app/documents/catalog.py:623-652`、`:692-766`（`:644` / `:743-745` / `:759`） | `_record_uploaded_version` → `record_document_version` → `INSERT INTO document_versions(…, department, …)` | 默认值兜底 |
-| 8 | 索引载体 | `app/api/v1/chat.py:3918-3966` → `app/rag/indexing.py:938-939`、`:990-999` | `DocumentIndexPublication(classification=…, department=…)` → `scope_metadata()` | 默认值兜底 |
+| 8 | 索引载体 | `app/api/v1/chat.py:4068-4116` → `app/rag/indexing.py:938-939`、`:990-999` | `DocumentIndexPublication(classification=…, department=…)` → `scope_metadata()` | 默认值兜底 |
 | 9 | `chunks` 表（发布账） | `app/rag/indexing.py:1001-1018`、`:1275` | `IndexChunk.metadata = scope_metadata()` | 默认值兜底 |
-| 10 | 遗留引擎元数据（今天仍在服务的读路径） | `app/api/v1/chat.py:4355-4361` → `app/rag/retriever.py:1323-1324`、`:1363-1367` | `add_document(…, department` 或 `None)` → `"department": department or ""` | 默认值兜底 |
+| 10 | 遗留引擎元数据（今天仍在服务的读路径） | `app/api/v1/chat.py:4505-4511` → `app/rag/retriever.py:1323-1324`、`:1363-1367` | `add_document(…, department` 或 `None)` → `"department": department or ""` | 默认值兜底 |
 | 11 | `chunk_vectors.department` 是谁写的那一格 | `app/rag/pg_store.py:305-404`（`:373`）→ `:87-99` | `str(values.get("department") or "")`，`values` = **第 10 跳那份元数据** | 默认值兜底 |
 | 12 | 读侧谓词（越权判定的出处） | `app/rag/filters.py:130-145` → `app/rag/pg_store.py:705-790`（`:738-740`） | `{"$and": [classification $in …, department $in …]}` → `sql_scope_filter` | 真值 |
 
-**第一个把真值丢掉的那一跳 = 第 2 跳（`app/api/v1/chat.py:4231`）。** 严格说它丢的是"客户端自报值"，而那本来就该丢（理由在 `app/api/v1/chat.py:4223-4227` 的 docstring 与 `frontend/src/components/DocPanel.vue:647-648`：检索按【来问的人】的部门匹配文档，放客户端挑部门等于允许往别人的结果里投稿）。所以这条链上**真正的断点在第 4 跳**：`:4088` 覆盖上去的那枚值，源头是 `users.department`，而那枚列在生产上是 `NULL`。
+**第一个把真值丢掉的那一跳 = 第 2 跳（`app/api/v1/chat.py:4381`）。** 严格说它丢的是"客户端自报值"，而那本来就该丢（理由在 `app/api/v1/chat.py:4373-4377` 的 docstring 与 `frontend/src/components/DocPanel.vue:647-648`：检索按【来问的人】的部门匹配文档，放客户端挑部门等于允许往别人的结果里投稿）。所以这条链上**真正的断点在第 4 跳**：`:4088` 覆盖上去的那枚值，源头是 `users.department`，而那枚列在生产上是 `NULL`。
 
 三格要说清的细节：
 

@@ -1766,6 +1766,116 @@ class _AnswerPieceStream:
         self.base = _settled_answer_text(worker_results)
 
 
+class _ApprovedAnswerStream:
+    """R464：批准续跑这一路的终答流闸门——同一轮跨批准闸只认一枚终答流。
+
+    病历（跟进单 §133 五，09-28 云端窗六枚 ``approved_ok`` 带 ``uncorrected_breaks``、
+    六枚 ``text_frames > max_stream_frames``；本机 run9 十八枚 ``approved_ok`` 全中后一格）：
+    挂起轮已经把本轮的终答交上屏——``/ask`` 收尾那一枚帧与 ``_save_message`` 落进会话历史
+    的那一行逐字相同——批准后图把同一条生成腿**重跑一遍**，``/approve`` 于是又交出一枚整段
+    正文，收尾再交一枚 ``full_text``。屏上此刻站着的是挂起轮那一份，而
+    ``frontend/src/lib/sessions.js`` 每次 ``consumeSseStream`` 都从空 ``segments`` 起步
+    （:442），既不同文也不覆盖的那一枚走的是**追加**分支（:529）：客户把同一轮的答案读两遍。
+    帧账上读出来正是那两格——一枚正文在一轮里出现两遍（``text_frames > max_stream_frames``
+    且逐帧指纹重合），以及批准腿自己那条流里的原始 ``prefix_breaks``（run9 ``tool-04``
+    239→232、``report-02`` 整段→收尾，两枚都 ``corrective_replacements == 0``）。
+
+    三条规则，与 :class:`_AnswerPieceStream` 同源：帧只走 :func:`text_sse_frame`，
+    换源只走 R210 那对 ``CORRECTION_STEP_*``（``scripts/eval_transport_ask_v2.py::
+    _is_correction_arm`` 认的就是这一枚脸），本类不另造第二套片账、不自记帧序号。
+
+    1. **先比字**（刀 A 摘这一格）：与屏上那一份**逐字**相同 ⇒ 不发帧、不武装，也**不消耗**
+       :attr:`arm_pending`。这一格是"第二枚流不再被发出"：屏上此刻站的就已经是交付的那份字，
+       少发这一枚不丢任何一个字；而同屏那份字还站在屏上，所以本腿后面若交出一枚**不同**的
+       正文，仍旧必须整段替换而不是追加 —— 比字命中时不许把武装用掉（这一格的牙：
+       ``test_r464_...::test_d5_knife_c_spending_the_arming_on_a_replay_goes_red``，正向读数 B7）。
+    2. **中间整段只在接得上时才发**：非收尾的正文必须以屏上那一份为前缀，否则它是另一条流
+       的脑袋——拦下来记进 :attr:`held` 并由调用方大声告警，不静默。收尾那一枚是本轮**交付**
+       的那份字，它有权换源。
+    3. **比过字、确实不同，才换源**（刀 B 摘这一格）：``frontend/src/components/ChatPanel.vue:1076``
+       批准时接着写的是挂起轮那条消息，而 ``sessions.js:442`` 每发 ``consumeSseStream`` 都把
+       ``segments`` 从空表起步 —— 挂起轮的正文不在这条流的记账里。所以本腿里与屏上**不同**的
+       那一枚帧一旦走普通帧出口，就落进 :529 的追加分支，客户于是把两份不同的字读成一段拼接。
+       它必须带 R210 那对 step 出门，屏上整段替换。
+       🔴 武装的资格只来自本类比过字这一格：挂起轮那次 HTTP 里的 ``prefix_breaks`` 只说明
+       "这条流断过"，**不**说明"下一枚正文与屏上不同"，拿它当理由就是不比字就武装。
+       🔴 这一格不是"把 verdict 放宽"：豁免住在量具那一侧，本类改的是线上到底发过什么。
+
+    🔴 本类只决定"这一枚正文发不发、以什么形状发"。它不参与 :func:`_select_final_answer`、
+    ``_save_message``、``sources``、``done`` 任何一格的取值：交回客户的正文一个字都不变。
+    """
+
+    def __init__(self, on_screen: str = "") -> None:
+        #: 屏上此刻站着的那一份正文：初值＝挂起轮交回的那一行，此后随放行帧单调前移。
+        self.on_screen = on_screen
+        #: 屏上已经有正文 ⇒ 本腿第一枚**与屏上不同**的帧不许走追加分支，必须整段替换（规则 3）。
+        self.arm_pending = bool(on_screen)
+        #: 拦下来的"第二枚流"正文，只记账不发帧；调用方在收尾时把它报进日志。
+        self.held: list[str] = []
+        #: 因为逐字同屏而没有发出去的枚数。
+        self.suppressed = 0
+        #: 本轮真换源的枚数：只在比过字、确实不同那一格 +1（规则 3）。同屏轮恒 0。
+        self.replacements = 0
+        #: 真发出去的帧枚数，与 :func:`text_sse_frame` 一一对应。
+        self.emitted = 0
+
+    def _same_as_screen(self, body: str) -> bool:
+        """比字：这一枚正文与屏上此刻那一份逐字相同吗。本类唯一的判据，不看别的。"""
+        return body == self.on_screen
+
+    def decide(self, body: str, *, terminal: bool) -> str:
+        """先比字，再决定：``skip`` 不发 / ``emit`` 顺着屏上那一份继续发 / ``replace`` 换源整段替换。"""
+        if not body:
+            return "skip"
+        # 规则 1（刀 A 摘这一格）：先比字。逐字同屏 ⇒ 不发、不武装、不吃 arm_pending。
+        if self._same_as_screen(body):
+            self.suppressed += 1  # 本轮已经有这一份字在屏上，不发第二枚流
+            return "skip"
+        continuing = body.startswith(self.on_screen) and not self.arm_pending
+        if continuing:
+            self.on_screen = body  # 同一条流的延续：帧与帧首尾相接，原始账不会长坏形
+            self.emitted += 1
+            return "emit"
+        if not terminal:
+            self.held.append(body)  # 规则 2：另一条流的脑袋——拦下并记账，不静默
+            return "skip"
+        # 规则 3（刀 B 摘这一格）：走到这里已经比过字 —— 这一枚与屏上**不同**，本轮终答换了
+        # 源，只能带 R210 那对 step 整段替换；同屏那一枚在上面就被拦下了，不配武装。
+        self.arm_pending = False
+        self.replacements += 1
+        self.on_screen = body
+        self.emitted += 1
+        return "replace"
+
+
+def _round_screen_answer(session_id: str) -> str:
+    """本轮屏上此刻站着的那一份正文＝会话历史里最后一条 ``assistant`` 行。
+
+    为什么只读这一行：挂起轮的收尾帧与它同源（``/ask`` 的 done 分支先 ``_save_message``
+    再发同一份 ``full_text``），而 ``frontend/src/components/ChatPanel.vue:1076`` 批准时
+    接着写的就是这条消息（``messages[messages.length - 1]``）。"客户端真见过什么"只有这一
+    处事实源；图状态里没有这件事，从 ``worker_results`` 反推等于造第二套口径。
+
+    读不到就当屏上没有正文：闸门退化成"本腿照旧发帧"，交付的正文一个字节都不许少交。
+    🔴 代价写在 ``tests/test_r464_one_terminal_answer_stream_per_round.py::
+    test_b5_the_unreadable_history_degrades_to_sending_the_body_anyway``：那一枚同文帧会落进
+    ``sessions.js:529`` 的追加分支，重复正文随之**回到屏上**。两害相权宁可让屏上重读一遍，
+    也不许把本轮交付的正文扣下来不发 —— 这一格由会话历史可读性兜着，不由守卫兜着。
+    """
+    try:
+        rows = _get_session_messages(session_id)
+    except Exception:  # 会话库不可用/表没迁：这是读侧降级，不是失败
+        logger.warning(f"[R464] 会话历史读不到，批准腿按屏上无正文处理 session={session_id}")
+        return ""
+    for row in reversed(rows):
+        if str(row.get("role") or "") != "assistant":
+            continue
+        content = str(row.get("content") or "")
+        if content:
+            return content
+    return ""
+
+
 def _select_final_answer(
     final_answer: str = "",
     worker_results: dict | None = None,
@@ -3314,6 +3424,32 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         latest_final_answer = ""
         answer_candidates: list[str] = []
         initial_count = -1
+        # R464：批准续跑这一路只许交一枚终答流。屏上此刻站着的那一份正文来自挂起轮
+        # （会话历史最后一条 assistant 行，与挂起轮收尾帧同源），本腿不再发它第二遍；
+        # 真要换源就带 R210 那对 step 显式记账，而不是让客户把同一轮的答案读两遍。
+        # 读账排在 _save_message 之前：这一轮自己那一行还不能当"屏上已有的正文"。
+        answer_stream = _ApprovedAnswerStream(_round_screen_answer(request.session_id))
+
+        async def _emit_answer(body: str, *, terminal: bool):
+            """闸门放行才发帧：``emit`` 顺着屏上那份继续发，``replace`` 武装整段替换。
+
+            帧只走 :func:`text_sse_frame`（与挂起轮、命中道、逐片道同一枚构造器，字面
+            与本单改前那两行 f-string 逐字节相同）；武装只走 :data:`CORRECTION_STEP_TOOL`
+            那对既有 step，与 ``/ask`` 的断流守卫同一张脸 —— 本单不造第二套片账。
+            """
+            verdict = answer_stream.decide(body, terminal=terminal)
+            if verdict == "skip":
+                return
+            correction = {"type": "step", "tool": CORRECTION_STEP_TOOL,
+                          "label": CORRECTION_STEP_LABEL}
+            if verdict == "replace":
+                yield sse_event("step", {**correction, "status": "running"})
+                await asyncio.sleep(0)
+            yield text_sse_frame(body)
+            if verdict == "replace":
+                yield sse_event("step", {**correction, "status": "done",
+                                         "elapsed": round(time.time() - start_time, 1)})
+            await asyncio.sleep(0)
         # R55：来源取证复用 /ask 那一个收集器与同一种 sink，收尾时只读不反推。
         source_rows: dict[str, dict] = {}
         # R414(b)：与 /ask 同一个收集器、同一个 sink，这里也只读不反推。
@@ -3418,9 +3554,19 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     request.session_id,
                     pending_approvals.RESUMED if request.approved else pending_approvals.REFUSED,
                 )
+                # R464：拦下来的"第二枚流"必须说得出拦了谁、为什么，静默拦等于没拦。
+                if answer_stream.held:
+                    logger.error(
+                        f"[R464] session={request.session_id[:8]}... 批准腿拦下 "
+                        f"{len(answer_stream.held)} 枚非延续整段（第二枚流）："
+                        f"屏上正文 {len(answer_stream.on_screen)} 字，"
+                        f"拦下的字数={[len(body) for body in answer_stream.held]}"
+                    )
+                # R464 判据②：收尾这一枚才是本轮**交付**的那份字。逐字同屏 ⇒ 不发第二枚
+                # 流；换源 ⇒ 带 R210 那对 step 出门。改的是线上真发过什么，不是 verdict 口径。
                 if full_text and full_text not in ai_reply:
-                    yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': full_text}, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(0)
+                    async for chunk in _emit_answer(full_text, terminal=True):
+                        yield chunk
                 # R55 判据④：批准后图可能又停在下一个 HITL 节点。先问真实的挂起状态，再
                 # 决定这一轮算"完成（含新挂起）"还是"什么都没产出"——与 /ask 里读 check_interrupt 的那一支
                 # 用同一个 check_interrupt，不凭正文猜。
@@ -3589,8 +3735,12 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     if content not in ai_reply:
                         ai_reply.append(content)
                         answer_candidates.append(content)
-                        yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': content}, ensure_ascii=False)}\n\n"
-                        await asyncio.sleep(0)
+                        # R464：整段回放帧同样过闸门。落在中途而不接得上屏上正文的那一枚，
+                        # 是另一条流的脑袋 —— 发出去就是屏上拼接，不发则收尾那一枚替它说话。
+                        # ``ai_reply``/``answer_candidates`` 照旧收下这一份字：交回的正文、
+                        # ``_select_final_answer`` 与会话历史都不因闸门改一个字节。
+                        async for chunk in _emit_answer(content, terminal=False):
+                            yield chunk
                     break
 
     return StreamingResponse(
