@@ -702,6 +702,71 @@ function adoptServerDataRead(turn, msg, result) {
   if (msg) msg.serverDataFilename = read
 }
 
+/**
+ * R510 · 终态帧其余四枚键的屏侧脸：与上面 adoptServerDataRead 同一手法，一枚键一张脸。
+ *
+ * 后端今天在两枚出口都交出这四枚（/ask 与 /approve 各自的 request.completed，现读
+ * app/api/v1/chat.py 那两处 data 字面），lib 侧自 R501 起也整份交回了
+ * （result.state.terminalRead.data），唯独屏上一行都没读 —— 本单补的就是这一格。
+ *
+ * 🔴 三形各一张脸，两两不许并：
+ *   给了   后端交了这一格 ⇒ 报那一枚值。0 也是值（这一轮真的一枚工因都没起），照实说，
+ *          不许把 0 当成「没读到」；
+ *   空值   后端交了这一格，但交回来的是空串／null ⇒ 明说「它开了口，没给内容」；
+ *   缺席   这一格压根没来 ⇒ 整句不出现。今天真有三个这种场合：缓存命中那一腿压根不发
+ *          request.completed（app/api/v1/chat.py 的 cached_response() 只发 status/text/
+ *          sources/done），队列终态载荷不带这几枚键，比树落后的镜像同理。
+ * 空值与缺席必须分开：前者有一句、后者一句都没有 —— 与 r415 为 data_filename 钉的三态同口径。
+ * 🔴 缺席也不许回落到本地现成的数：会话号界面自己就有（activeId），答案长度本地也数得出
+ * （msg.content.length），耗时界面自己也能掐表。拿它们填这一格就是把「我发出去的／我算的」
+ * 冒充成「后端报回来的」。四枚各一句，不许揉成一句「本轮读数」：揉在一起就没法说清
+ * 哪一枚缺席、哪一枚给了空值。
+ */
+const TERMINAL_READ_SHAPES = {
+  session_id: { label: '这一轮后端报的会话号', unit: '' },
+  worker_count: { label: '这一轮后端报的分析工因数', unit: ' 枚' },
+  elapsed: { label: '这一轮后端报的耗时', unit: ' 秒' },
+  answer_length: { label: '这一轮后端报的答案长度', unit: ' 个字符' },
+}
+const TERMINAL_READ_KEYS = Object.keys(TERMINAL_READ_SHAPES)
+
+/** 一枚键的一张脸：给了报值／给了空值明说空值／整格缺席返回空串（模板那条 v-if 就不画）。 */
+function terminalReadFace(msg, index, key) {
+  if (!msg || msg.role !== 'assistant') return ''
+  const live = readTurn(terminalReads, msg, index)
+  const bag = live || (msg.terminalReadData && typeof msg.terminalReadData === 'object' ? msg.terminalReadData : null)
+  if (!bag || !Object.prototype.hasOwnProperty.call(bag, key)) return ''
+  const shape = TERMINAL_READ_SHAPES[key]
+  const value = bag[key]
+  if (value === '' || value === null) return shape.label + '：后端这一格交回的是空值（它开了口，但没给内容）'
+  return shape.label + '：' + value + shape.unit
+}
+
+function terminalSessionFace(msg, index) { return terminalReadFace(msg, index, 'session_id') }
+function terminalWorkerFace(msg, index) { return terminalReadFace(msg, index, 'worker_count') }
+function terminalElapsedFace(msg, index) { return terminalReadFace(msg, index, 'elapsed') }
+function terminalAnswerFace(msg, index) { return terminalReadFace(msg, index, 'answer_length') }
+
+/**
+ * 把终态帧那四枚键抄进这一轮：袋里那份管当场重渲染，消息对象那份管随会话落盘与刷新复原。
+ * 🔴 只抄【亲眼在场】的键：data 里没有这一枚就不写进袋子，让它留在「缺席」那一态 ——
+ * 把缺席写成空串或 null 会说成「后端交了空值」（后端明明没说话），写成请求值就是说假话。
+ * undefined 也不写：那是键在而值没构造出来，与后端真交了空值不是同一件事，屏上无话可说。
+ */
+function adoptTerminalReads(turn, msg, result) {
+  const data = result?.state?.terminalRead?.data
+  if (!data || typeof data !== 'object') return
+  const kept = {}
+  for (const key of TERMINAL_READ_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(data, key)) continue
+    if (data[key] === undefined) continue
+    kept[key] = data[key]
+  }
+  if (!Object.keys(kept).length) return
+  terminalReads.value = storeBag(terminalReads, turn, kept)
+  if (msg) msg.terminalReadData = { ...kept }
+}
+
 // ==================== 图表解析 ====================
 
 // 图表以 ![标题](/api/v1/artifacts/<id>/content) 的形式出现在回答里，该地址需要携带 Bearer
@@ -993,6 +1058,7 @@ async function send(dataFilename = activeDataFilename.value) {
     }
     // R415：终态帧里服务端报的那一份表，跟在流之后抄 —— 它在最后一帧才到场。
     adoptServerDataRead(turn, aiMsg, result)
+    adoptTerminalReads(turn, aiMsg, result)
     // 「命中缓存但来源已改版」这句只能真读 GET /documents/{filename}/versions 才说得出。
     // 放在流结束之后而不是 onCache 里：sources 帧在 text 之后到，先查会拿着空清单误报。
     await checkCacheStaleness(turn, aiMsg)
@@ -1118,6 +1184,7 @@ async function approve(approved) {
     }
     // R415：批准续跑的那一轮与 /ask 同一格读数（R414 两条腿各一处），同一个抄法。
     adoptServerDataRead(turn, aiMsg, result)
+    adoptTerminalReads(turn, aiMsg, result)
     syncActive()
     await scrollBottom()
   } catch (err) {
@@ -1156,6 +1223,7 @@ const sourceReads = ref({})   // sources 帧的出处读数
 const cacheReads = ref({})    // text 帧上那三枚缓存字段
 const headlineReads = ref({})   // answer.headline 的首屏线索卡读数（R48）
 const serverDataReads = ref({}) // R415 · 终态帧报回来的用表读数：一枚名字／空串／没这一格（不画）
+const terminalReads = ref({}) // R510 · 终态帧那四枚键的读数：只装后端真交回来的键，没交的键整格缺席
 const unseenReads = ref({})   // 本轮发出、界面尚未认领的事件名
 const queueReads = ref({})    // GET /queue/status/{id} 的最近一次读数
 const queueFaults = ref({})   // 排队状态这一次没读回来时的原始错误
@@ -2062,6 +2130,14 @@ function renderMd(raw) {
                        那句发依据填它。线上到屏上那一截已由 R424 接线（接线点见文件头 R415/R424）。 -->
                   <p v-if="serverDataOf(msg, i)" class="lane-readout" role="status"
                      data-testid="server-data-readout">{{ serverDataOf(msg, i) }}</p>
+                  <!-- R510 · 终态帧其余四枚键：一枚键一张脸，四句并排但不揉成一句。
+                       后端给了才画；给了空值就明说空值；这一格没来就整条不出现（与上面那一格、与同屏
+                       lane-readout 同一口径）。四枚都不拿本地现成的数回填：会话号有 activeId、答案长度
+                       数得出 msg.content.length、耗时自己能掐表，那些都不是后端报回来的读数。 -->
+                  <p v-if="terminalSessionFace(msg, i)" class="lane-readout" role="status" data-testid="terminal-session-readout">{{ terminalSessionFace(msg, i) }}</p>
+                  <p v-if="terminalWorkerFace(msg, i)" class="lane-readout" role="status" data-testid="terminal-worker-readout">{{ terminalWorkerFace(msg, i) }}</p>
+                  <p v-if="terminalElapsedFace(msg, i)" class="lane-readout" role="status" data-testid="terminal-elapsed-readout">{{ terminalElapsedFace(msg, i) }}</p>
+                  <p v-if="terminalAnswerFace(msg, i)" class="lane-readout" role="status" data-testid="terminal-answer-readout">{{ terminalAnswerFace(msg, i) }}</p>
                   <!-- 档位那张脸：读的是响应头给的本轮真读数，不是选择框的当前值。
                        用户中途改选择框不会回改已落定的那一轮；后端没发读数就整条不画。 -->
                   <p v-if="laneFaceText(laneFaceOf(msg, i))" class="lane-readout" role="status"
