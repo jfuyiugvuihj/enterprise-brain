@@ -5665,3 +5665,39 @@ Registered only, and enforced by nothing today: no retrieval, no preview, and no
 - 没动 `app/rag/filters.py`、`app/agents/contracts.py`、`app/common/rbac.py`、`app/documents/catalog.py`、`app/api/v1/chat.py`、`frontend/**` 一个字：档位的算法仍然只在检索闸门那一处，角色到档位的映射仍然只在 `ROLE_CLEARANCE`。本节只是终于把一枚封顶之后的档位交给它们。
 - 没让这枚字段长出可测量的效果 —— 那条传输链的角色还是钉死的 `staff`，1 级还是底。要把「关掉某一级」做成一件真能下单的事，缺的是角色档本身的位置，不是这里再写一遍 `min`。
 - 没动容器、没打模型、没碰真库；向量库读后端翻不翻默认与本单无关，仍是 `docs/handoff/2026-09-17-pgvector-adoption-plan.md` 那一格的账。
+## R495 · 会话归属键的命名空间是**声明**，不是 SELECT 恰好少一列：一处真源、一枚算式、换命名空间当场拒（`app/storage/sessions.py` ＋ `app/common/auth.py`，2026-09-29）
+
+### 口径
+
+私有化那台机器上，会话归属只认一把尺；而这把尺「今天等于用户名」这件事，写在一处、可 grep、可钉：
+
+- **真源**：`app/storage/sessions.py::SESSION_OWNER_NAMESPACE = "username"`——全仓唯一一处把「JSON 台账按哪套键认人」写成字面。
+- **算式**：`app/storage/sessions.py::session_owner_key(principal)`——全仓唯一一处把一枚 principal 变成台账里的 `owner_id`。写腿（`bind`，含重绑同一枚会话那道旧闸门）与读腿（`is_owned_by`）都只从这一处取键：命名空间要么两头一起换，要么一起不换。
+- **声明**：`app/common/auth.py::USER_LOOKUP_COLUMNS` / `USER_LOOKUP_SQL`——查人交出哪些列。`app/agents/contracts.py::Principal.from_user` 取的是 `user["id"] or user["username"]`，所以这枚列名声明一列一列地决定归属键属于哪套命名空间；内存表与 PostgreSQL 两支从此共用同一份投影（`_project_user_row`），库里多出一列不再能悄悄改写主体身份。
+- 🔴 **算式仍只一枚**。本单没有把尺子换成 `principal.username`：那会改掉 `is_owned_by` 对 bigint 形主体的判定，而那一格由 `tests/test_r484_session_read_leg_owner_filter.py:406` 钉着（「台账竟然认得 bigint 那套 namespace」＝结论要重写）。R495 做的是把那枚**既有**算式的来源写成声明、只留一处、换掉当场拒。
+
+### 执法点
+
+命名空间被换掉不许静默。两处执法、一处只出证词：
+
+- 写腿 `SessionRegistry.bind()`：这枚 principal 的归属键不在 `SESSION_OWNER_NAMESPACE` 声明的那套里，而台账上已经有一行恰好按该主体的**用户名**写着 `owner_id`（同一个人此刻两套键）⇒ 抛 `SessionOwnerNamespaceError`，台账字节零改动。对外不是新码：`app/api/v1/chat.py` 写腿本来就把 `bind()` 的 `PermissionError` 折成 403 `permission_denied`，本错类是它的子类。
+- 读腿 `SessionRegistry.is_owned_by()`：判定仍交回 `False`——不是你的会话要像不存在一样（`GET /api/v1/sessions/{id}` 404 `resource_not_found`、`GET /api/v1/sessions` 不进出口、admin 不豁免，这一格一字未改），但落一条 ERROR 证词，把「命名空间漂了」与「这个人确实没有会话」在日志里分开。
+- 证词本体 `SessionRegistry._owner_key_drift()`：只报成因（两套键的名字与行数，不落用户名），不参与归属判定，因此不是第二把尺。
+
+### 对外可见行为
+
+无变化。三档会话归属（admin / evalbot / staff）改前改后逐枚相等：在库里 1020 枚（admin 336＋evalbot 656＋五枚孤儿名 28）、台账 1027 行（admin 343 对库里 336，7 枚 ghost 绑定永不进出口）这份形状副本上，真路由 `GET /api/v1/sessions` 的出口成员逐枚等于在册内核 `scripts/r484_session_read_leg_ledger.py::visible_ids` 的读数；台账 JSON 仍是 `session_id / owner_id / status / created_at` 四列，`created_at` 之外改前改后两份字节同形；`GET /sessions/{id}` 与五扇门（delete／cancel／hitl/pending／approve）的状态码与 detail 一个都没改；**没有新对外码**。
+
+### 凭据（判据②③④；行号一律运行时派生，本段只认函数名与文本锚点）
+
+- 新增常驻闸 `tests/test_r495_session_owner_namespace_is_declared.py`（15 枚）：命名空间字面声明全仓恰好一处；归属键算式全仓恰好一处且 `app/storage/sessions.py` 里 `str(principal.user_id)` 归零、除算式自己之外零处读 `principal.user_id`；判归属的比较式只两枚（读腿一枚、重绑闸门一枚）；拿**真** `auth.create_user`/`auth.get_user` 造出的主体必须属于声明的那套命名空间（真源对账，不是文本比对）；列名声明与它拼出的 SQL 不得分叉、`get_user` 里不许手写第二句 SELECT；命名空间被换掉时写腿必须抛 `SessionOwnerNamespaceError` 且台账字节恒定；这枚错类必须落进 chat.py 既有的 `except PermissionError` → `permission_denied`，同时 `app/**` 里不许出现新的 `detail=` 字面；读腿保留 `False` 但必须留证词，而「确实没有会话」那一形必须一个字都不落；整套键一致时归属照常成立；外来主体什么都学不到；基点那份台账文件今天仍原样读回、不长新列。
+- 新增行为不变面件 `tests/test_r495_owner_filter_is_unchanged_before_after.py`（6 枚）：`git show HEAD:app/storage/sessions.py` 现取的**旧尺**与今天的尺在同一份台账字节上逐枚相等，并与 R484 内核三方对账；真路由出口等于内核读数；三档读数必须 336 / 656 / 0、孤儿 28 枚零外泄、台账超集 7 枚零放大；改前改后写出的台账 JSON 逐字节同形。
+- 反证三刀（走 R253 影子根：变异只落 `%TEMP%` 副本，被跟踪文件全程只读，出门核对 `restored=True`／`shadow_clean=True`）：**刀一** 列名声明补 `"id"` ⇒ 8 枚件 129 钉夹具上 **2 枚红**（真源 SELECT 对账、真 principal 形状），运行期同刻**响**：`raised='SessionOwnerNamespaceError'`、`read_back=False`、ERROR 证词 2 行、台账字节恒定。**刀二** 读腿判定改恒真 ⇒ **31 枚红**／95 passed（本单 7＋R484 11＋`test_session_ownership_guards` 2＋`test_session_route_authorization` 2＋R295 1＋R179 8）。**刀三** `app/storage/sessions.py` 整片退回基点那份字 ⇒ **5 枚红**，全在「声明唯一／算式唯一／比较式唯一／写腿拒／读腿证词」这五格，**行为一格没红**（其余 121 枚照绿）——这正是病根本来的形状：显式化被摘掉之后出口一切如常，没人能从不改的行为看出承重墙被拆了。刀三另带两枚反向约束：SELECT 对账那一格必须绿（牵连它就是刀身越界），外来主体那一格必须绿（摘显式化不许顺手把闸门改松）。三把刀在常驻态各有一枚 `test_counter_evidence_*`，不开环境变量也在件内开窗跑同一套判据，该红的没红就当场 `pytest.fail`。
+
+### 本节没做的事（不许读成已收）
+
+- 没把 `is_owned_by` 在漂移时改成报错：那一格 `False` 是别人的在册牙（R484:406），本单不许磨。⇒ 出口今天仍可能 200 + `[]`，只是从此被三件同时看着：写腿拒、两枚常驻钉红、每次误判一条 ERROR。「**出口自己会响**」这一格没做到。
+- 没给台账加列、没写迁移、没碰 `data/.session-metadata.json` 一个字节；也没做「把两套键混写过的那份台账搬回一套」的手续——今天写腿只**拒**，不搬。
+- 没动 `app/api/v1/chat.py`：队列归属回读那格（`str(claimed_id) != str(live.user_id)`）吃的是同一枚 `principal.user_id`，SELECT 补 id 时它同样翻命名空间，读数落 `QUEUE_OWNER_STALE`（判失效，不是泄漏）。那一本账不在本段口径里。
+- 没动 `app/agents/contracts.py:34`——「一枚字段两套身份」的翻译点本体在那里。要根治得让 `Principal` 自己说清哪一列是身份、哪一列是标签；本段只把会话这一侧的后果接住。
+- `app/storage/artifacts.py`、`app/storage/datasets.py`、`app/knowledge_graph/service.py` 各自也在用 `str(principal.user_id)` 当 owner 列。那是另外三本账，R495 的真源只管会话台账；本段不替它们定命名空间，也不声称它们已同源。

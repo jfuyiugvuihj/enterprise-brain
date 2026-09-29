@@ -633,18 +633,45 @@ def create_user(username: str, password: str, role: str = "staff", department: s
         return False, f"用户 '{username}' 已存在"
 
 
+#: R495 · 查人这句 SELECT 交出哪些列，从此是一枚**声明**，不是巧合。
+#: `app/agents/contracts.py::Principal.from_user` 取的是
+#: `user.get("id") or user.get("username")`，所以这枚列名声明一列一列地决定了
+#: `principal.user_id` 到底属于哪套键；而会话台账（`app/storage/sessions.py`
+#: 的 `SESSION_OWNER_NAMESPACE`）声明的归属键是**用户名**，全仓唯一的算式是
+#: `session_owner_key()`。两边一旦各说各话，`GET /api/v1/sessions` 会对全员回
+#: 200 + `[]`，所以这条对账由 `tests/test_r495_session_owner_namespace_is_declared.py`
+#: 拿这里的真源现读着盯：要补 `id`，必须与台账迁移、`SESSION_OWNER_NAMESPACE` 改值
+#: 同单进行，否则写腿当场抛 `SessionOwnerNamespaceError`、常驻钉当场红。
+USER_LOOKUP_COLUMNS: tuple[str, ...] = ("username", "role", "department")
+USER_LOOKUP_SQL = (
+    "SELECT " + ", ".join(USER_LOOKUP_COLUMNS) + " FROM users WHERE username = %s"
+)
+
+
+def _project_user_row(row) -> dict | None:
+    """把查人的结果收敛到 `USER_LOOKUP_COLUMNS` 声明的那几列：内存表与 PG 两支共用一把尺。
+
+    R495 之前两支各写各的字面（PG 支交给 `dict(row)`，内存支手抄三列），于是「归属键今天
+    等于用户名」纯由那句 SQL 的形状决定。现在两支都只认这一枚列名声明：库里多出一列也不会
+    悄悄改掉主体的身份，要改就得改声明，而声明是要与台账命名空间对账的那一枚。
+    """
+    if row is None:
+        return None
+    record = dict(row)
+    return {column: record[column] for column in USER_LOOKUP_COLUMNS if column in record}
+
+
 def get_user(username: str) -> dict | None:
     if _memory_store_denied("user lookup"):
         return None
     if _using_memory_store():
-        row = _MEM_USERS.get(username)
-        return {"username": row["username"], "role": row["role"], "department": row["department"]} if row else None
+        return _project_user_row(_MEM_USERS.get(username))
     with _get_conn() as conn:
         row = conn.execute(
-            "SELECT username, role, department FROM users WHERE username = %s",
+            USER_LOOKUP_SQL,
             (username,),
         ).fetchone()
-    return dict(row) if row else None
+    return _project_user_row(row)
 
 
 def upsert_sso_user(username: str, role: str = "staff", department: str | None = None) -> tuple[bool, str]:
