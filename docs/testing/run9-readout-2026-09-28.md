@@ -102,7 +102,7 @@
 
 ## C 两格
 - sidecar kind 计数（全 105 题）：{'ok': 85, 'error_event': 2, 'approved_ok': 18}
-- C1 缓存命中：kind 含 cache 的计数=0（应为 0）；判据出处 scripts/eval_transport_ask_v2.py:1205-1208（命中即 raise 停窗，正常读数就是「一份都不存在」）
+- C1 缓存命中：kind 含 cache 的计数=0（应为 0）；判据出处 scripts/eval_transport_ask_v2.py:1322-1325（命中即 raise 停窗，正常读数就是「一份都不存在」）
 - C1 旁证：run9.log / run9.err 中『命中答案缓存』字样命中行数见「现读补记」
 - C2 unsupported_claim_rate=0.0（评分件 evaluation-report-run9.json 的 unsupported_claim_rate 键；算法 app/quality/eval.py:761-767）
 - C2 分数不退化：本轮 correctness=0.5619 evidence=0.7905 vs run7 0.5333 / 0.7905

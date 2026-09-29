@@ -11,7 +11,7 @@
 - **昨日底**：`PROBE_PATH` 里那枚 `rows`，渲染时现读原件，本件不隔夜存这份数。
 - **写入点**：现场扫 `app/**` 与 `scripts/**` 的源码得到「哪枚文件哪枚函数往里写」，再顺调用链往上爬，看这条道今天挂在哪个产品面（HTTP 路由 / `add_job`）。🔴 扫不到就写没找到，绝不写「应该由某个定时任务写」。
 - 路由串按装饰器原文交回（**不含** router 前缀），坐标一律现扫：🔴 本文件一枚行号都不是抄的。　**裁定只有三词**：`no_seed_path` / `legitimately_empty` / `needs_owner`；裁定与现扫互为牙齿，谁漂了 `validate()` 报哪一格。
-- 取数时刻 `2026-09-29T12:39:47+08:00`；服务端 PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 6…。
+- 取数时刻 `2026-09-29T20:23:26+08:00`；服务端 PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 6…。
 
 结论一句话：八枚里没有一枚是「码写完了等着跑」——3 枚今天压根没有走得通的写入道，2 枚只能等业主录入，3 枚按设计就该空着等一次真实行为。
 <!-- R483-TABLE-BEGIN -->
@@ -24,7 +24,7 @@
 | `notification_states` | 0 | 0 | 0 | None | `app/notifications/states.py:258 · apply_state`, `app/notifications/states.py:213 · apply_state` | `migrations/0016_notification_states.sql:63` | `legitimately_empty` |
 | `calculation_runs` | 0 | 0 | 0 | None | 没找到 | `migrations/0002_execution_data_lineage.sql:52` | `no_seed_path` |
 | `metric_definitions` | 0 | 0 | 0 | None | `app/semantics/registry.py:742 · _insert_statement`, `app/semantics/registry.py:751 · _insert_statement` ＋2 处 | `migrations/0002_execution_data_lineage.sql:72` | `no_seed_path` |
-| `retrieval_traces` | 0 | 0 | 0 | None | `app/storage/persistence.py:415`, `app/trace/projections.py:321 · project_retrieval` | `migrations/0002_execution_data_lineage.sql:170` | `no_seed_path` |
+| `retrieval_traces` | 0 | 0 | 0 | None | `app/storage/persistence.py:417`, `app/trace/projections.py:321 · project_retrieval` | `migrations/0002_execution_data_lineage.sql:170` | `no_seed_path` |
 | `user_profiles` | 0 | 0 | 0 | None | `app/memory/profile.py:273 · upsert_profile`, `app/memory/profile.py:240 · upsert_profile` | `migrations/0003_legacy_runtime_tables.sql:83` | `needs_owner` |
 | `document_activity_signals` | 0 | 0 | 0 | None | `app/api/v1/feedback.py:49`, `app/api/v1/feedback.py:147 · record_document_signal` | `migrations/0011_document_activity_signals.sql:24` | `legitimately_empty` |
 
@@ -94,7 +94,7 @@
 
 - 今日现读 0 行（昨日底 0 行，Δ 0），主键 `retrieval_trace_id` 顶值 `None`。
 - 结构出处：`migrations/0002_execution_data_lineage.sql:170`；表名在 app/ 与 scripts/ 里现扫到 17 行、8 枚文件。
-- 写入点（现扫）：`app/storage/persistence.py:415`（write_by_registry）、`app/trace/projections.py:321 · project_retrieval`（declared_writer）。
+- 写入点（现扫）：`app/storage/persistence.py:417`（write_by_registry）、`app/trace/projections.py:321 · project_retrieval`（declared_writer）。
 - 这条道今天没挂在任何产品面 HTTP 路由上（现扫零枚）。
 - 🔴 现扫确实爬到一枚脸，但它是**调试面**，按本单显式豁免不算产品道：`POST /retrieval/debug ← app/api/v1/observability.py:528 · retrieval_debug`。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
@@ -108,9 +108,9 @@
 - 今日现读 0 行（昨日底 0 行，Δ 0），主键 `user_id` 顶值 `None`。
 - 结构出处：`migrations/0003_legacy_runtime_tables.sql:83`；表名在 app/ 与 scripts/ 里现扫到 19 行、5 枚文件。
 - 写入点（现扫）：`app/memory/profile.py:273 · upsert_profile`（sql_write）、`app/memory/profile.py:240 · upsert_profile`（declared_writer）。
-- 这条道今天挂在产品面上：`PUT /profile ← app/api/v1/auth.py:258 · update_my_profile`。
+- 这条道今天挂在产品面上：`PUT /profile ← app/api/v1/auth.py:281 · update_my_profile`。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
-- 从写句往上爬过的坐标：`app/api/v1/auth.py:258 · update_my_profile`、`app/memory/profile.py:240 · upsert_profile`。
+- 从写句往上爬过的坐标：`app/api/v1/auth.py:281 · update_my_profile`、`app/memory/profile.py:240 · upsert_profile`。
 - 入口只在测试里被引到：`tests/test_deployment_guards.py`、`tests/test_offline_runtime_fallbacks.py`、`tests/test_r296_department_is_read_only_derived.py`、`tests/test_r377_migrations_first_family_is_contained_at_the_store_layer.py`，另有 2 枚（按判据④，那不算产品有一行真数据）。
 - 该走哪条写入道：app/memory/profile.py::upsert_profile ← app/api/v1/auth.py 的 PUT /api/v1/profile。
 - 裁定理由：这格里该躺的是员工自报的职位与偏好，只能业主侧录。department 那一列已被 R296 钉成只读派生值，写入道今天明确不收它——所以「回填 department」不算这条道的填法。
@@ -127,7 +127,7 @@
 - 裁定理由：只有采纳 / 驳回一次才加一次计数，演示库没有真人点过。读侧今天把「读成功而零行」当作一种独立状态记账（app/rag/retriever.py 的活动先验诊断格为此留了名目），所以零行不等于读不到。
 
 ## 三、V2 三条自述：今天有没有一行真数据
-- **#11 告警闭环**：今天**没有一行真数据** —— 现读 `alert_rules` 0 行、`alerts` 0 行。代码侧不是空转：`add_job` 现扫到 1 枚注册（连触发参数与行号进上面那张表），`enterprise-brain-scheduler-1` 日志尾部现数到 26 次 `evaluate_all` executed successfully（间隔现读 `0:05:00`）。⇒ 挡在这条链前面的是业主一条启用规则，不是缺码。
+- **#11 告警闭环**：今天**没有一行真数据** —— 现读 `alert_rules` 0 行、`alerts` 0 行。代码侧不是空转：`add_job` 现扫到 1 枚注册（连触发参数与行号进上面那张表），`enterprise-brain-scheduler-1` 日志尾部现数到 14 次 `evaluate_all` executed successfully（间隔现读 `0:05:00`）。⇒ 挡在这条链前面的是业主一条启用规则，不是缺码。
 - **#17 通知基础能力**：今天**没有一行行为数据** —— 现读 `notification_states` 0 行。收件箱本身有账可列（现读 `pending_approvals` 177 行、`documents` 105 行、`users` 3 行），但没有任何一次已读/忽略落表；告警那一枚候选源今天恒交白卷（`alerts` 0 行）。⇒ 接口与前端正脸在树，端到端行为读数为零，这句只能报 (乙)。
 - **#3 CalculationRun（执行数据血缘）**：今天**没有一行真数据** —— 现读 `calculation_runs` 0 行，且表名在 `app/` 与 `scripts/` 里现扫 0 处引用（连读路径都没长）。⇒ 「每个 Artifact 绑 DatasetVersion、CalculationRun、MetricDefinition」那句仍是后续目标；同一句里的 `metric_definitions` 现读 0 行、`retrieval_traces` 现读 0 行（库里 `retrieval.completed` 事件 0 条）。
 
@@ -162,7 +162,7 @@
       "2026-09-29"
     ],
     "rc": 0,
-    "successful_sweeps_in_tail": 26,
+    "successful_sweeps_in_tail": 14,
     "trigger_interval": "0:05:00"
   },
   "command": "docker exec enterprise-brain-postgres-1 psql -U enterprise_brain -d enterprise_brain -At -v ON_ERROR_STOP=1 -c \"SET default_transaction_read_only = on\" -c \"<SELECT>\"",
@@ -250,7 +250,7 @@
     "server_addr": "local",
     "version": "PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit"
   },
-  "taken_at": "2026-09-29T12:39:47+08:00",
+  "taken_at": "2026-09-29T20:23:26+08:00",
   "trace_event_types": {
     "agent.result.recorded": 42,
     "model.finished": 3616,
@@ -268,7 +268,7 @@
 }
 ```
 <!-- R483-READOUT-END -->
-读数出处：`enterprise-brain-postgres-1` / 库 `enterprise_brain` / 账号 `enterprise_brain` / 服务端地址 `local` / PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 6…；取数时刻 `2026-09-29T12:39:47+08:00`。🔴 宿主 127.0.0.1:5432 上另有野 PG，本件从不直连它。
+读数出处：`enterprise-brain-postgres-1` / 库 `enterprise_brain` / 账号 `enterprise_brain` / 服务端地址 `local` / PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 6…；取数时刻 `2026-09-29T20:23:26+08:00`。🔴 宿主 127.0.0.1:5432 上另有野 PG，本件从不直连它。
 <!-- R483-TABLE-END -->
 
 ## 六、怎么重跑（同一把尺子，两面对）
