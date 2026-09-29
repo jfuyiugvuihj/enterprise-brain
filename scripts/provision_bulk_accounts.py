@@ -7,7 +7,7 @@ password from the credentials file instead of resetting it.
 
     python scripts/provision_bulk_accounts.py --count 50
     python scripts/provision_bulk_accounts.py --count 50 --apply --token "$env:EB_ADMIN_TOKEN"
-    python scripts/provision_bulk_accounts.py --count 30 --roles staff manager admin
+    python scripts/provision_bulk_accounts.py --count 30 --roles staff manager admin auditor
 
 --roles rotates over the sample the way --departments does, with one difference: the role
 cycles on every account and a department only advances once a whole round of roles is done,
@@ -15,12 +15,14 @@ so len(roles) x len(departments) consecutive accounts cover every pairing instea
 "manager" to one department forever. Without --roles every account is "staff", which is byte
 for byte what this tool sent before the flag existed.
 
-A role the deployment cannot create -- "auditor" today -- is refused in the dry run with exit
-code 3 (PLAN_ERROR_EXIT) and not one request sent. This tool does not invent the classification
-tier such a role is missing (that is H13, undecided by the owner), does not widen
-CREATABLE_ROLES, and does not quietly build the account as staff instead: a sample where three
-of four tiers are really one tier is worse than not measuring, because it reads like four tiers
-were measured.
+A role the deployment cannot create is refused in the dry run with exit code 3 (PLAN_ERROR_EXIT)
+and not one request sent. Until R413 that role was "auditor": this tool will not invent the
+classification tier such a role is missing (that was H13, undecided by the owner -- it closed on
+2026-09-28 as level 1 for unlabelled documents, and H13 resolved auditor to tier 3, next to admin),
+it will not widen CREATABLE_ROLES, and it will not quietly build the account as staff instead: a
+sample where four tiers are really three is worse than not measuring, because it reads like four
+tiers were measured. Today every role in ROLE_PERMISSIONS is also creatable, so that rail says
+nothing -- and it still fires for a role nobody knows, or for the two ledgers drifting apart again.
 """
 from __future__ import annotations
 
@@ -146,8 +148,10 @@ def plan_errors(roles: list[str], departments: list[str], creatable=None, known=
     """Every reason this sample must never go out, in words. An empty list means "carry on".
 
     creatable/known are parameters only so a test can watch the tool follow its truth source
-    instead of a copy of it; the defaults are the real ones, and R413 (with H13) owns whether
-    auditor is inside them. This tool answers to that roster, it does not amend it.
+    instead of a copy of it; the defaults are the real ones, and R413 (H13 closed 2026-09-28,
+    auditor resolved to tier 3) is what put auditor inside them. This tool answers to that
+    roster, it does not amend it -- and the gap branch below still fires if ROLE_CLEARANCE and
+    CREATABLE_ROLES ever drift apart again.
     """
     creatable = CREATABLE_ROLES if creatable is None else frozenset(creatable)
     known = ROLE_PERMISSIONS if known is None else known
@@ -167,11 +171,13 @@ def plan_errors(roles: list[str], departments: list[str], creatable=None, known=
             errors.append("role " + repr(role) + " has a permission set but is not in"
                           " CREATABLE_ROLES (app/common/permissions.py), so POST /api/v1/users would"
                           " refuse it and this tool will not paper over that answer. Roles standing in"
-                          " that gap today: " + (", ".join(stuck) or "(none)") + ". They stand there"
-                          " because a role with no tier in ROLE_CLEARANCE (app/common/rbac.py) can be"
-                          " created but cannot be resolved to a classification level, and the"
-                          " classification policy is H13: the owner has not decided it. So no tier gets"
-                          " invented here, no admission roster gets widened here, and no account gets"
+                          " that gap today: " + (", ".join(stuck) or "(none)") + ". Until R413 that gap"
+                          " is where auditor stood: the classification policy (H13) had not been decided,"
+                          " so a role with no tier in ROLE_CLEARANCE (app/common/rbac.py) could be created"
+                          " but never resolved to a level. H13 closed on 2026-09-28 (unlabelled documents"
+                          " are level 1) and auditor was resolved to tier 3, so a role sitting in this"
+                          " gap today means those two ledgers have drifted apart again. Either way no tier"
+                          " gets invented here, no admission roster gets widened here, and no account gets"
                           " quietly created as staff instead -- a sample that lies about who is who is"
                           " worse than no sample.")
         else:
@@ -224,8 +230,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--apply", action="store_true", help="actually create the accounts")
     args = parser.parse_args(argv)
 
-    # 先判样本，再谈计划，最后才谈 socket：auditor 这种建不出的角色必须在干跑就撞墙，不许跑到
-    # 第 37 枚账号才喊，更不许降级成 staff 继续跑（R417 判据②）。
+    # 先判样本，再谈计划，最后才谈 socket：词表外的角色、以及权限面与准入面重新分家的角色，必须在
+    # 干跑就撞墙，不许跑到第 37 枚账号才喊，更不许降级成 staff 继续跑（R417 判据②；R413 落地后 auditor
+    # 已经在准入面里，这条支路今天为下一枚没档位的新角色留着）。
     refusals = plan_errors(args.roles, args.departments)
     if refusals:
         print("REFUSED -- the sample was rejected before anything was sent; no socket was opened.")

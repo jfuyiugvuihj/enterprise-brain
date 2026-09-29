@@ -21,14 +21,14 @@
   被隐藏的行数不静默：既进返回帧的 ``df.attrs[ROW_SCOPE_ATTR]``，也打一条 WARNING 日志。
   用例见 ``tests/test_rbac_department_fail_closed.py``。
 
-密级维度不在本单范围内：``fillna(1)``（缺密级按最低档处理）属 H13，等业主定口径，这里一个字没改。
+密级维度：H13 已于 2026-09-28 结案＝甲（``docs/handoff/2026-09-17-human-gates.md`` 最后一节），未标注密级按 1 级（最低公开）入库从此是契约而不是缺陷，所以 ``fillna(1)`` 这一格原样保留、不再是待裁项；同批裁定 ``auditor`` 的密级档位 = 3、与 ``admin`` 同档（审计员读不到机密件就是假审计，「读得到但改不动」由权限集管、不由档位管），由 R413 落进下面那枚 ``ROLE_CLEARANCE``。
 """
 
 import os
 
 from app.common.logger import logger
 
-ROLE_CLEARANCE = {"staff": 1, "manager": 2, "admin": 3}
+ROLE_CLEARANCE = {"staff": 1, "manager": 2, "admin": 3, "auditor": 3}
 ROW_DEPARTMENT_COLUMNS = ("department", "dept", "部门", "所属部门")
 ROW_CLASSIFICATION_COLUMNS = ("classification", "密级", "security_level")
 

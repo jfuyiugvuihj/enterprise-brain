@@ -1,4 +1,4 @@
-"""R417 · 批量建号量具要造得出混合角色样本，而 auditor 那一档必须诚实失败。
+"""R417 · 批量建号量具要造得出混合角色样本，而 auditor 那一档曾经必须诚实失败（R413 已落地）。
 
 病（凭据）：docs/version-roadmap-and-next-week-plan-2026-09-22.md:277-278 要「10～30 名内部
 用户」与「跨部门和跨密级越权命中为 0」，而 scripts/provision_bulk_accounts.py 唯一的建号点把
@@ -11,7 +11,7 @@
 |---|---|
 | ① 默认路径逐字节不变 | test_without_the_flag_keeps_the_original_rotation / test_default_apply_requests_match_the_pre_flag_tool |
 | ② 轮换规则有牙（不许把角色与部门绑死） | test_roles_and_departments_are_not_welded_together / test_the_same_arguments_always_produce_the_same_sample |
-| ③ auditor 当场拒、零请求 | test_auditor_is_refused_without_a_single_request / test_auditor_refusal_holds_under_apply / test_the_refusal_asks_the_true_roster_not_a_copy |
+| ③ 建不出的角色当场拒、零请求（R413 之后这一格换成两枚：四档真放行 + 词表外仍拒 + 回退反证） | test_the_fourth_tier_is_admitted_in_the_dry_run_without_a_socket / test_the_fourth_tier_is_really_built_under_apply / test_the_refusal_still_holds_under_apply_for_a_role_nobody_knows / test_a_silent_downgrade_to_staff_is_still_not_a_way_out / test_the_refusal_asks_the_true_roster_not_a_copy / test_the_gap_message_tells_the_h13_ruling_instead_of_an_undecided_policy |
 | ④ 干跑零 socket | autouse 把 urlopen 打雷 + test_dry_run_opens_no_socket_and_sends_nothing |
 | ⑤ 凭证带真角色 | test_credentials_file_records_the_real_role |
 | ⑥ 动手前看得清形状 | test_plan_output_shows_the_sample_shape / test_the_plan_cannot_lie_about_the_sample |
@@ -43,8 +43,11 @@ def _load(name: str):
 
 bulk = _load("provision_bulk_accounts")
 
-#: 今天建得出的三档（auditor 归 R413 与 H13，本文件不替它编档位）。
+#: R52 到 R413 之前建得出的三档。今天仍留着它：判据①那几格钉的是「三档轮换的形状没被第四枚改掉」，
+#: 而它同时是 R413 的**反证形状**（把真源回退成这三枚，拒绝支路就该重新开口）—— 不是第四份名单。
 THREE_TIERS = ["staff", "manager", "admin"]
+#: R413（H13 结案＝甲、auditor 认 3 档）之后真源认的四档；这一枚从真源现推，本文件不抄第二份。
+FOUR_TIERS = sorted(CREATABLE_ROLES)
 
 
 class StubApi:
@@ -263,38 +266,79 @@ def test_the_tool_asks_the_roster_instead_of_having_one_of_its_own():
     assert 'DEFAULT_ROLES = ["staff"]' in source, "缺省值要留在点名的地方，且只有这一枚"
 
 
-# ------------------------------------------- 判据③：auditor 那一档必须诚实失败（牙检②）
+# ----------------- 判据③（R413 改口）：建得出的档要真建得出，建不出的仍要在发请求之前就拒掉
 
 
-def test_auditor_is_refused_without_a_single_request(tmp_path, install, capsys):
+def test_the_fourth_tier_is_admitted_in_the_dry_run_without_a_socket(tmp_path, install, capsys):
+    """R413 落地后的干跑读数：四档全认、exit 0、一 socket 都不开、凭证一枚不留。"""
     stub = install()
-    code = bulk.main(_dry(tmp_path, ["--count", "30", "--roles", "staff", "manager", "admin", "auditor"]))
+    code = bulk.main(_dry(tmp_path, ["--count", "30", "--roles"] + FOUR_TIERS))
     out = capsys.readouterr().out
+    plan = _plan(out)
 
-    assert code == bulk.PLAN_ERROR_EXIT == 3, "退出码要可判定，且与建号失败(1)、argparse 用法错(2)分家"
-    assert stub.calls == [], "拒样本之前一次请求都不许发出去"
-    assert not Path(_credentials(tmp_path)).exists(), "被拒的样本不许留下凭证文件"
-    assert "REFUSED" in out and "auditor" in out
-    assert "CREATABLE_ROLES" in out, "原因必须点名它撞的是哪一枚真源"
-    assert "H13" in out, "原因必须写明密级口径是业主未裁的 H13，不是本单偷懒"
+    assert code == 0, out
+    assert "REFUSED" not in out, "auditor 已经在 CREATABLE_ROLES 里，干跑不许再拒它"
+    assert plan["roles"] == FOUR_TIERS, plan["roles"]
+    assert set(plan["sample_shape"]["roles"]) == set(FOUR_TIERS), plan["sample_shape"]
+    assert stub.calls == [], "干跑一枚请求都不许发出去"
+    assert not Path(_credentials(tmp_path)).exists(), "干跑不许留下凭证文件"
     assert "no socket was opened" in out
 
 
-def test_auditor_refusal_holds_under_apply(tmp_path, install):
-    """牙：干跑就该拒，不许打到第 37 枚账号才喊。"""
+def test_the_fourth_tier_is_really_built_under_apply(tmp_path, install):
+    """R413 的交付面（桩后）：--apply 真把 auditor 那一档发出去建了，凭证记下的是真角色。"""
     stub = install()
-    assert bulk.main(_apply(tmp_path, ["--count", "50", "--roles", "auditor"])) == bulk.PLAN_ERROR_EXIT
+    assert bulk.main(_apply(tmp_path, ["--count", "8", "--roles"] + FOUR_TIERS, name="r417_four.json")) == 0
+
+    roles = [c["payload"]["role"] for c in stub.calls if c["path"] == "/api/v1/users"]
+    assert set(roles) == set(FOUR_TIERS), "四档每一档都得真发过一次建号请求"
+    saved = _saved(tmp_path, name="r417_four.json")
+    assert "auditor" in {row["role"] for row in saved.values()}, saved
+
+
+def test_the_refusal_still_holds_under_apply_for_a_role_nobody_knows(tmp_path, install):
+    """牙（原样保留，换的只是谁站上这一格）：词表外的角色必须在任何请求之前拒掉。
+
+    R417 那天站这一格的是 auditor；R413 把它接进真源之后，这一格换成一枚谁都不认的角色，
+    「不许打到第 37 枚账号才喊」这条性质一点没松。
+    """
+    stub = install()
+    assert bulk.main(_apply(tmp_path, ["--count", "50", "--roles", "auditor", "developer"])) \
+        == bulk.PLAN_ERROR_EXIT
     assert stub.calls == []
     assert not Path(_credentials(tmp_path)).exists()
 
 
-def test_a_silent_downgrade_to_staff_is_not_a_way_out(tmp_path, install, capsys):
-    """不许把建不出的那一档悄悄降级成 staff 继续跑：那是一份"看着四档、其实三档"的假样本。"""
+def test_a_silent_downgrade_to_staff_is_still_not_a_way_out(monkeypatch, tmp_path, install, capsys):
+    """反证形状：把准入面回退成 R413 之前的三枚，auditor 必须当场拒，且绝不降成 staff 继续跑。
+
+    今天真源四枚都在册，这一格跑不出来，所以走 `plan_errors` 留给测试的那枚注入位（口径同
+    `test_the_refusal_asks_the_true_roster_not_a_copy`）把真源缩回去 —— 它钉的是这台量具的拒绝
+    支路还活着，不是「auditor 建不出」这条已经翻过去的旧账。
+    """
+    monkeypatch.setattr(bulk, "CREATABLE_ROLES", frozenset(THREE_TIERS))
     stub = install()
     assert bulk.main(_apply(tmp_path, ["--count", "6", "--roles"] + THREE_TIERS + ["auditor"])) \
         == bulk.PLAN_ERROR_EXIT
     assert [c["payload"]["role"] for c in stub.calls if c["path"] == "/api/v1/users"] == []
     assert "staff=6" not in capsys.readouterr().out
+
+
+def test_the_gap_message_tells_the_h13_ruling_instead_of_an_undecided_policy():
+    """文案钉：那句「权限面有、准入面没有」的拒绝话今天必须说 H13 已结案，不许再装未裁。
+
+    支路为下一枚没档位的新角色留着，所以话必须说对：结案的日子、档位出自 `ROLE_CLEARANCE`、
+    以及「不编档位、不放宽准入、不降档偷偷建」那三条一个都不许少。
+    """
+    errors = bulk.plan_errors(["auditor"], bulk.DEFAULT_DEPARTMENTS, creatable=frozenset(THREE_TIERS))
+
+    assert len(errors) == 1, errors
+    text = " ".join(errors)
+    assert "auditor" in text and "CREATABLE_ROLES" in text and "ROLE_CLEARANCE" in text
+    assert "H13" in text, "口径出处必须点名 H13"
+    assert "2026-09-28" in text, "结案的日子必须写在话里，读的人才知道这不是又一枚默认值"
+    assert "has not decided" not in text, "不许继续宣称业主未裁：那是 R413 之前的话"
+    assert bulk.plan_errors(["auditor"], bulk.DEFAULT_DEPARTMENTS) == [], "真源今天认 auditor，这支路该沉默"
 
 
 def test_the_refusal_asks_the_true_roster_not_a_copy(monkeypatch):

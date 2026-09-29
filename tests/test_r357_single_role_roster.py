@@ -1,4 +1,4 @@
-"""R357 · 角色名单四本手抄账收成一枚真源；`auditor` 的缺席必须问得出原因。
+"""R357 · 角色名单四本手抄账收成一枚真源；`auditor` 的缺席必须问得出原因（R413 已回答，见下）。
 
 病（四本账，行号为修前一手现场）：
 
@@ -14,16 +14,15 @@
 `test_r304` sha 账、R345/R337/R355 告警巡检扩展名账），本单是第五回。
 
 🔴 正解不是「把四处都改成 4」：那只是把四枚雷重新埋一遍，还顺手放宽了谁能被建号。本单做的是
-**一处真源 + 三处 import**（判据⑦），可创建集合今天仍是 `staff / manager / admin` 三枚
-（判据⑧：多一枚少一枚都红），而 `auditor` 不在里面的**唯一合法理由**写成一条显式断言加一句
-人话：它还没有密级档位（`rbac.py:31`），密级口径 = **H13，业主未定**。两枚差集钉
-（`ROLE_PERMISSIONS - CREATABLE_ROLES` 与 `ROLE_PERMISSIONS - ROLE_CLEARANCE`，都必须**恰好**
-`{"auditor"}`）盯着的就是这件事：谁给 auditor 补了档位，这两枚钉会同时要求他回答「要不要让它
-可创建」，而不是让名单悄悄漂移。
-
-本文件刻意不做的事（判据⑨，H13 未决期间一格都不许动）：不给 `clearance_for()` 加 `raise`、
-不给 `auditor` 编档位、不加日志、不改可观察行为。它只**记事实**：今天 auditor 走的确实是
-`.get` 兜底拿到 1 档，这一格是取证，不是裁定。
+**一处真源 + 三处 import**（判据⑦）。判据⑧那一格由 R413 改口：H13 已于 2026-09-28 结案＝甲
+（未标注密级按 1 级入库，写进契约），同批裁定 `auditor` 的密级档位 = 3、与 `admin` 同档，可创建
+集合因此从三枚涨到四枚 —— auditor 不再是「有权限集、没档位」的那一枚。两枚差集钉跟着从**恰好
+`{"auditor"}`** 换成**恰好空集**：R357 那天它们盯着「补了档位就得回答准入问题」，今天这个问题已
+经回答，于是同一枚钉改盯「三本账不许再漂」，多一枚少一枚照样红。🔴 强度不许降：把 `== set()`
+松成 `<= {"auditor"}` 那种收法照样能把漂移洗白 —— 钝刀的两个方向当场都不红（R413 交回账里的
+K5 反证读数）。判据⑨那四条（不给 `clearance_for()` 加 `raise`、不加日志、不改可观察行为）
+一个字没废：R413 只往 `ROLE_CLEARANCE` 加了一格，`.get(role or "staff", 1)` 那枚兜底原样在位，
+继续替没在册的角色说话 —— 只是 auditor 从此不再需要它替自己说话，这一格从「取证」变成「裁定落地」。
 
 判据⑪那把「全仓不许长出第二份名单」的尺子，口径与盲区都写在这里（明写，不装没有）：
 
@@ -33,8 +32,10 @@
   `tests/_r250_route_client.py:14` 是测试桩的用户表形状。把它们收进 import 等于摘掉「这个用例
   逐枚点名叫过谁」，而判据⑧要的正是不点名不许过。
 * **只认「一整枚常量容器恰好就是那几枚角色名」**：`set` / `list` / `tuple` 字面量，以及
-  `set(...)` / `frozenset(...)` 包住的那一枚。判据用的两枚形状由真源现推（`ROLE_PERMISSIONS`
-  的键集、`CREATABLE_ROLES` 自己），本文件不另抄一份名单当尺子。
+  `set(...)` / `frozenset(...)` 包住的那一枚。形状由真源现推（`ROLE_PERMISSIONS` 的键集、
+  `CREATABLE_ROLES` 自己），再加一枚 **R413 之前的旧准入形状**：真源涨到四枚以后，手抄的三元组
+  就不在任何一本账的形状里了，那把尺会当场变钝（R413 实测把这条红交回过总控）—— 所以旧形状必须
+  继续算违规：抄回来的不是「另一本名单」，是一句今天已经是假话的名单。
 * **dict 不算名单**：`ROLE_PERMISSIONS`（角色→权限）与 `ROLE_CLEARANCE`（角色→档位）是两本
   各自独立的账，判据⑧要判的恰是它们的**差集**；把它们收成一枚就是替 H13 做决定。这是盲区，
   明写在这里。
@@ -56,17 +57,23 @@ SSO_REL = "app/common/sso.py"
 RBAC_REL = "app/common/rbac.py"
 SCAN_ROOTS = ("app", "scripts", "deploy")
 
-#: 判据⑧的边界账：这一枚三元组**不是第四份名单**，它唯一的作用是「多一枚少一枚都算越界」。
-#: 所以它必须写死；真源若漂了，本文件必须连这句理由一起改口，不许悄悄对齐成真源的新值。
-TODAYS_ADMISSION = frozenset({"staff", "manager", "admin"})
+#: 判据⑧的两枚边界账：它们**不是第四份、第五份名单**，唯一的作用是「多一枚少一枚都算越界」。
+#: 所以必须写死；真源再漂，本文件必须连这句理由一起改口，不许悄悄对齐成真源的新值。
+#: `ADMISSION_AT_R357` 还兼着尺子的一枚形状（见 `_roster_shapes`）：把旧三元组抄回生产代码要红。
+ADMISSION_AT_R357 = frozenset({"staff", "manager", "admin"})
+#: R413 落地那天（H13 结案＝甲、auditor 认 3 档）的准入形状，判据⑧的越界账改到这一枚。
+ADMISSION_AFTER_R413 = frozenset({"staff", "manager", "admin", "auditor"})
 
 
 # ------------------------------------------------------------------ 判据⑪：尺子本体
 
 
-def _roster_shapes() -> tuple[frozenset, frozenset]:
-    """"一整枚名单"的两种形状：权限面的键集与可创建集合，全部由真源现推。"""
-    return frozenset(ROLE_PERMISSIONS), CREATABLE_ROLES
+def _roster_shapes() -> tuple[frozenset, ...]:
+    """「一整枚名单」的形状账：权限面键集与可创建集合（两枚由真源现推），加 R413 前的旧准入形状。
+
+    第三枚不是第四本名单，是尺子：真源涨到四枚以后，只靠前两枚就咬不到手抄回来的三元组了。
+    """
+    return frozenset(ROLE_PERMISSIONS), CREATABLE_ROLES, ADMISSION_AT_R357
 
 
 def _container_elements(node):
@@ -101,6 +108,7 @@ def _roster_literals(source: str, rel: str) -> list[dict]:
 
     shapes = _roster_shapes()
     found = []
+    seen = set()
     for node in ast.walk(tree):
         elts = _container_elements(node)
         if elts is None or id(node) in sanctioned:
@@ -109,6 +117,12 @@ def _roster_literals(source: str, rel: str) -> list[dict]:
         if not names or len(names) != len(elts):
             continue
         if frozenset(names) in shapes:
+            # frozenset({...}) 这种写法会被 ast.walk 走两遍（Call 与它包着的 Set）：同一行同一
+            # 形状只记一枚，「手抄了一份」读起来才是一枚命中；去重不摘任何违规，只去重复计数。
+            key = (node.lineno, frozenset(names))
+            if key in seen:
+                continue
+            seen.add(key)
             found.append({"file": rel, "line": node.lineno, "names": sorted(names)})
     return found
 
@@ -135,12 +149,17 @@ def test_no_module_in_production_code_carries_a_second_role_roster():
 def test_the_scanner_is_not_blind_and_the_true_source_still_counts_as_one():
     """反空转（同 `test_r142` 的对照组纪律）：解析不到不许降级成恒真。
 
-    ① 合成源码里塞一份手抄三元组 ⇒ 尺子必须报；② 真源自己那一枚必须**不**报，否则「零命中」
-    永远读不出来。全程只在内存里解析，不落任何文件（R253 那条「测试不许写被跟踪文件」）。
+    三格缺一不可：① 手抄的**三元组**（R413 之前的旧准入形状）必须报 —— 真源涨到四枚以后这一格
+    差点变成假绿，是 R413 交回来的红；② 手抄的**四元组**（今天的形状）必须报；③ 真源自己那一枚
+    必须**不**报，否则「零命中」永远读不出来。全程只在内存里解析，不落任何文件（R253）。
     """
-    planted = "GUESSED = ('staff', 'manager', 'admin')\n"
-    hits = _roster_literals(planted, "app/common/synthetic_r357.py")
-    assert [hit["names"] for hit in hits] == [sorted(TODAYS_ADMISSION)], hits
+    narrow = _roster_literals("GUESSED = ('staff', 'manager', 'admin')\n", "app/common/synthetic_r357.py")
+    assert [hit["names"] for hit in narrow] == [sorted(ADMISSION_AT_R357)], narrow
+
+    wide = _roster_literals(
+        "GUESSED = frozenset({'auditor', 'manager', 'staff', 'admin'})\n", "app/common/synthetic_r413.py"
+    )
+    assert [hit["names"] for hit in wide] == [sorted(ADMISSION_AFTER_R413)], wide
 
     true_source = (REPO / PERMISSIONS_REL).read_text(encoding="utf-8")
     assert _roster_literals(true_source, PERMISSIONS_REL) == [], "真源把自己判红了"
@@ -227,36 +246,52 @@ def test_sso_reexports_the_true_source_instead_of_keeping_a_second_ledger():
     assert _roster_literals((REPO / SSO_REL).read_text(encoding="utf-8"), SSO_REL) == []
 
 
-# ------------------------------------------------------------------ 判据⑧：差集恰好 auditor 一枚
+# ------------------------------------ 判据⑧（R413 改口）：三本账同集，差集恰好空集
 
 
-def test_the_permission_ledger_is_exactly_one_role_wider_than_the_admission_ledger():
-    """差集钉 1：恰好一枚，多一枚少一枚都红（`>=` 是钝刀，见反证刀 4）。"""
+def test_the_admission_ledger_is_the_same_set_as_the_permission_ledger():
+    """差集钉 1（R413 改口）：从「恰好 auditor 一枚」换成「恰好空集」，双向都判，多一枚少一枚都红。
+
+    🔴 不许松成 `gap <= {"auditor"}`：那种形状下「准入面把 auditor 漏掉」当场不红，正是 R357
+    当年判过的钝刀（>= 那一族），今天照旧算洗白。
+    """
     wider = set(ROLE_PERMISSIONS) - set(CREATABLE_ROLES)
+    narrower = set(CREATABLE_ROLES) - set(ROLE_PERMISSIONS)
 
-    assert wider == {"auditor"}, f"权限面比准入宽出的不是恰好 auditor 一枚：{sorted(wider)}"
+    assert wider == set(), f"三本账今天必须同集，权限面比准入宽出的不是空集：{sorted(wider)}"
+    assert narrower == set(), f"准入面反过来比权限面宽出 {sorted(narrower)}：权限面没登记的角色建不出才是对的"
 
 
-def test_the_permission_ledger_is_exactly_one_role_wider_than_the_clearance_ledger():
-    """差集钉 2：与密级面比也是恰好一枚。两枚钉同时红 = 「补了档位就得回答准入问题」。"""
+def test_the_clearance_ledger_is_the_same_set_as_the_permission_ledger():
+    """差集钉 2（R413 改口）：与密级面比也是恰好空集，双向都判。
+
+    R357 那天这枚钉与上一枚同时红就是「有人补了档位却没回答准入」；今天两枚一起改成同集账，
+    谁让「有档位」与「可创建」再分家（漏一枚或多一枚，任一向），两枚钉里至少一枚当场红。
+    """
     wider = set(ROLE_PERMISSIONS) - set(ROLE_CLEARANCE)
+    narrower = set(ROLE_CLEARANCE) - set(ROLE_PERMISSIONS)
 
-    assert wider == {"auditor"}, f"权限面比密级面宽出的不是恰好 auditor 一枚：{sorted(wider)}"
-
-
-def test_admission_is_unchanged_still_exactly_the_three_accounts_today():
-    """判据⑧「本单不放宽准入」：可创建集合与开工那天逐字相同，多一枚少一枚都算越界。"""
-    assert CREATABLE_ROLES == TODAYS_ADMISSION, sorted(CREATABLE_ROLES)
+    assert wider == set(), f"三本账今天必须同集，权限面比密级面宽出的不是空集：{sorted(wider)}"
+    assert narrower == set(), f"密级面反过来比权限面宽出 {sorted(narrower)}：给没在册的角色配档位是假档位"
 
 
-def test_the_gap_has_one_reason_and_it_is_the_missing_clearance_tier():
-    """把那句人话写成断言：auditor 不在准入集合里，是因为它没有密级档位，不是因为谁偏好。
+def test_admission_is_exactly_the_four_roles_r413_admitted():
+    """判据⑧的越界账改到 R413 那天：与落地那天逐字相同，多一枚少一枚都算越界。
 
-    `CREATABLE_ROLES == frozenset(ROLE_CLEARANCE)` 说的是「有档位才可创建」这条同一性：它一红
-    就说明有人补了档位却没在这里回答准入问题，或者反过来放了个没档位的角色进来。
+    第二行钉的是方向：R413 是**加一枚**，不是换一枚也不是缩回去 —— 旧三元组必须是今天的真子集。
+    """
+    assert CREATABLE_ROLES == ADMISSION_AFTER_R413, sorted(CREATABLE_ROLES)
+    assert ADMISSION_AT_R357 < CREATABLE_ROLES, "准入面不许缩回 R413 之前的三枚形状"
+
+
+def test_the_same_identity_now_holds_because_h13_answered_it():
+    """那句人话的对面：auditor 既在准入集合里，也在密级面里，档位是裁的 3，不是随手一档。
+
+    `CREATABLE_ROLES == frozenset(ROLE_CLEARANCE)` 说的还是「有档位才可创建」这条同一性 —— 今天
+    它由两枚账同时满足；谁补了档位不回答准入、或放了枚没档位的进来，这一枚当场红。
     """
     assert CREATABLE_ROLES == frozenset(ROLE_CLEARANCE), (sorted(CREATABLE_ROLES), sorted(ROLE_CLEARANCE))
-    assert "auditor" not in ROLE_CLEARANCE
+    assert ROLE_CLEARANCE["auditor"] == ROLE_CLEARANCE["admin"] == 3, "H13 裁的是 3 档，与 admin 同档"
 
 
 def test_the_true_source_states_its_reason_in_human_language():
@@ -281,19 +316,34 @@ def test_no_new_switch_was_buried_in_the_environment():
     assert buried == [], f"角色准入被塞进环境变量了：{buried}（全量读数 {sorted(set(read))}）"
 
 
-# ------------------------------------------------------------------ 判据⑧/⑨：准入行为与事实记录
+# -------------------------------------------- 判据⑧/⑨（R413 改口）：准入行为与兜底形状
 
 
-def test_an_auditor_still_cannot_be_created_and_the_message_is_unchanged():
-    """行为面零放宽：`非法角色: auditor` 这句原文与拒答本身都不许漂。"""
-    refused = auth.create_user("r357-ghost", "pass1234", role="auditor")
+def test_an_auditor_is_created_and_an_unknown_role_keeps_the_unchanged_refusal(monkeypatch):
+    """改口的行为面：auditor 建得出来；`非法角色: <role>` 那句原文与拒答本身一个字没漂。
 
-    assert refused == (False, "非法角色: auditor"), refused
+    开发态 + 受控内存表（口径同下一条），不碰库、不碰模型、不发 HTTP。
+    """
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setattr(auth, "_MEM_USERS", {})
+    monkeypatch.setattr(auth, "_using_memory_store", lambda: True)
+
+    admitted = auth.create_user("r357-auditor", "pass1234", role="auditor")
+
+    assert admitted == (True, "创建成功"), admitted
+    assert auth.get_user("r357-auditor")["role"] == "auditor"
+
+    refused = auth.create_user("r357-ghost", "pass1234", role="developer")
+
+    assert refused == (False, "非法角色: developer"), refused
 
 
 @pytest.mark.parametrize("role", sorted(CREATABLE_ROLES))
-def test_the_three_admissible_roles_are_still_the_only_ones_that_pass_validation(role, monkeypatch):
-    """逐枚点名：三枚准入角色仍然建得出来（开发态 + 受控内存表，不碰库、不碰模型）。"""
+def test_the_admissible_roles_are_still_the_only_ones_that_pass_validation(role, monkeypatch):
+    """逐枚点名：真源里的每一枚准入角色都建得出来（开发态 + 受控内存表，不碰库、不碰模型）。
+
+    参数吃真源，所以 R413 加第四枚时这里自动多一格；少一格就是准入面与权限面重新分家。
+    """
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setattr(auth, "_MEM_USERS", {})
     monkeypatch.setattr(auth, "_using_memory_store", lambda: True)
@@ -304,24 +354,26 @@ def test_the_three_admissible_roles_are_still_the_only_ones_that_pass_validation
     assert auth.get_user("r357-ok")["role"] == role
 
 
-def test_sso_cannot_assign_a_role_without_a_tier_either():
-    """`X-SSO-Role: auditor` 今天被降成 staff——既有行为，本单一字未动，钉住它没漂。"""
-    assert sso.normalize_role("auditor") == "staff"
+def test_sso_assigns_an_auditor_and_still_downgrades_a_role_the_roster_does_not_know():
+    """`X-SSO-Role: auditor` 不再被降成 staff；降级那一支仍在位，只是不再替 auditor 说话。"""
+    assert sso.normalize_role("auditor") == "auditor"
     identity = sso.extract_sso_identity({"X-SSO-User": "r357-sso", "X-SSO-Role": "auditor"})
 
-    assert identity["role"] == "staff", identity
+    assert identity["role"] == "auditor", identity
+    assert sso.normalize_role("developer") == "staff", "词表外仍须降级：这条不许跟着改口一起松掉"
 
 
-def test_an_auditor_still_lands_on_the_staff_tier_by_the_silent_fallback():
-    """判据⑨的取证钉：今天 auditor 走的确实是 `.get` 兜底拿到 1 档。
+def test_the_auditor_tier_is_the_ruling_now_and_the_fallback_still_catches_the_rest():
+    """R357 那格取证钉的对面：auditor 今天在册拿 3 档，`.get` 兜底只替没在册的角色说话。
 
-    🔴 这一格**记录事实，不做裁定**：密级口径属 H13，业主未定，本单不许替它编档位、不许改成
-    raise、不许加日志（下一条把「没加」也钉住）。等谁真的给 auditor 定了档位，这一枚会当场红
-    ——那时该讨论的是 H13，不是一个可以顺手带过的默认值。
+    🔴 这一格从「记录事实」变成「裁定落地」（H13 已于 2026-09-28 结案＝甲，auditor = 3 与 admin
+    同档）。兜底本身照旧不许改成 raise、不许加日志 —— 下一条把「形状没动」钉住；没在册的角色
+    今天仍然静默拿 1 档，那一格 R413 没替谁决定。
     """
-    assert ROLE_CLEARANCE.get("auditor") is None
-    assert clearance_for("auditor") == 1
-    assert allowed_levels("auditor") == [1]
+    assert ROLE_CLEARANCE["auditor"] == 3
+    assert clearance_for("auditor") == 3
+    assert allowed_levels("auditor") == [1, 2, 3]
+    assert clearance_for("developer") == 1, "兜底那一支不许顺手改成 raise"
 
 
 def test_clearance_for_still_swallows_quietly_and_that_is_pinned_as_unchanged():

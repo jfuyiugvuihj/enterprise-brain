@@ -22,20 +22,20 @@ def permissions_for_role(role: str) -> frozenset[str]:
 
 
 # ---------------------------------------------------------------------------
-# R357：「可创建 / 可指派」的角色集 —— 全仓唯一一份定义。
+# R357：「可创建 / 可指派」的角色集 —— 全仓唯一一份定义；R413（H13 结案）把它补成四枚。
 #
 # 为什么真源长在这一格：这枚文件已经是角色词汇表的事实源（`ROLE_PERMISSIONS`），
 # "哪些角色建得出、指派得动"是它的子集，两本账并排摆在同一屏里，"差的到底是哪一枚"
 # 才读得出来。`app/common/auth.py`（建号与改派两处）与 `app/common/sso.py`（SSO 头里的
 # 角色）一律 import 这一枚，不许再各自抄一份名单 —— 那三行手抄字面量是 R357 的病根。
 #
-# `auditor` 为什么不在可创建集合里（判据⑧要求写成一句人话，不许靠一份没来源的三元组
-# 碰运气）：`app/common/rbac.py:31` 的 `ROLE_CLEARANCE` 只给 staff / manager / admin 三枚
-# 档位，**auditor 到今天还没有密级档位**。密级口径是 H13，业主未定，本单不许替它编一档，
-# 也不许把一个没档位的角色放进可创建集合 —— 建得出、却算不出他能看哪一档数据，那是把
-# 一个未决问题偷换成一个静默的默认值。两枚差集钉（`ROLE_PERMISSIONS - CREATABLE_ROLES`
-# 与 `ROLE_PERMISSIONS - ROLE_CLEARANCE`，两边都必须**恰好** {"auditor"}，多一枚少一枚都红）
-# 就是为了让这件事问得出来：谁给 auditor 补了档位，这两枚钉会同时要求他回答
-# "要不要让它可创建"，而不是让名单悄悄漂移。
+# `auditor` 为什么 R357 那天不在、R413 起在（判据⑧要求写成一句人话，不许靠一份没来源的
+# 四元组碰运气）：R357 开单那天 `app/common/rbac.py:31` 的 `ROLE_CLEARANCE` 只给 staff /
+# manager / admin 三枚档位，**auditor 没有密级档位**，而密级口径是 H13、业主未裁 —— 谁都不
+# 许替它编一档，把一个没档位的角色放进可创建集合就是拿一枚静默默认值顶替未决问题。H13 已于
+# 2026-09-28 结案＝甲，同批裁定 auditor 的密级档位 = 3、与 admin 同档：审计员读不到机密件就是
+# 假审计，「读得到但改不动」靠的是上面 `ROLE_PERMISSIONS` 那一行权限集，不是密级档。两枚差集
+# 钉跟着改口到按新现实仍然可失败的形状：`CREATABLE_ROLES`、`ROLE_CLEARANCE`、`ROLE_PERMISSIONS`
+# 三者键集两两差集都必须**恰好**是空集，多一枚少一枚都红（`tests/test_r413_auditor_role_admission.py`）。
 # ---------------------------------------------------------------------------
-CREATABLE_ROLES: frozenset[str] = frozenset({"staff", "manager", "admin"})
+CREATABLE_ROLES: frozenset[str] = frozenset({"staff", "manager", "admin", "auditor"})

@@ -9,6 +9,11 @@
 再加一格删：同部门的 manager 没有 ``resource:delete`` 就撤不掉别人的产物，而这一格今天走的
 是**新的写路径**（``soft_delete`` 直接改表列），所以它既是权限钉也是落库钉。
 
+🔴 R413（09-28，H13 结案＝甲，``auditor`` 补到 3 档）之后本文件改了一格读数、留了一格牙：
+``peer-auditor`` 对同部门 internal 件从 ``clearance_insufficient`` 变成 ``department_scope_match``
+—— 这就是裁定的实效（审计员读不到机密件就是假审计）；而「密级不足」那一族没被摘掉，它挪到
+``peer-staff``（1 档 < 2）身上继续咬，两条腿一枚都不许少。
+
 库是假的（``tests.test_r248_artifact_table_source._FakePostgres``，范式抄 R229），本文件一枚
 哨兵再钉一遍：真连接一概开不出来。
 """
@@ -25,6 +30,7 @@ ACCOUNTS = {
     "owner-manager": ("manager", "finance"),
     "peer-manager": ("manager", "finance"),
     "peer-auditor": ("auditor", "finance"),
+    "peer-staff": ("staff", "finance"),
     "hr-manager": ("manager", "hr"),
     "finance-admin": ("admin", "finance"),
 }
@@ -143,12 +149,14 @@ def test_the_scope_policy_reads_is_the_scope_the_table_holds(store):
         ("owner-manager", True, "owner_match"),
         ("peer-manager", True, "department_scope_match"),
         ("hr-manager", False, "department_scope_denied"),
-        ("peer-auditor", False, "clearance_insufficient"),
+        ("peer-auditor", True, "department_scope_match"),
+        ("peer-staff", False, "clearance_insufficient"),
         ("finance-admin", True, "administrator_scope"),
     ],
 )
 def test_view_cells_match_the_standard_source(store, username, expected_allowed, expected_reason):
-    """五格视图判据：码子逐字来自 ``authorization_decision``，本单不发明新码。"""
+    """六格视图判据（R413 起 auditor 那一格翻成放行，密级不足那一格交给 staff）：码子逐字来自
+    ``authorization_decision``，本单不发明新码。"""
     from app.common.rbac import ROLE_CLEARANCE, clearance_for
 
     record = _put(store, "revenue.png")
@@ -178,11 +186,15 @@ def test_same_department_peer_opens_it_and_cross_department_peer_does_not(store,
 
 
 def test_insufficient_clearance_is_denied_on_both_legs(store, client, users):
-    """同一条 internal 挡 auditor（档位 1 < 2），一条 confidential 挡 manager（2 < 3）。"""
+    """同一条 internal 挡 staff（档位 1 < 2），一条 confidential 挡 manager（2 < 3）。
+
+    R413 之前这枚钉的左边那条腿是 auditor（那时它静默拿 1 档）；auditor 补到 3 档以后这条腿
+    不再有东西可挡，**换**到 staff 而不是删 —— 密级维度必须一直有枚角色被它挡在门外。
+    """
     internal = _put(store, "internal.png")
     confidential = _put(store, "confidential.png", classification="confidential")
 
-    for username, artifact in (("peer-auditor", internal), ("peer-manager", confidential)):
+    for username, artifact in (("peer-staff", internal), ("peer-manager", confidential)):
         response = client.get(
             f"/api/v1/artifacts/{artifact.artifact_id}/content", headers=_headers(username)
         )

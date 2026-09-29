@@ -601,12 +601,12 @@ describe('R360丙 · 那本规则账等于后端真规则（辛④的正面钉�
     expect(storeFunctionBody('create_user')).not.toMatch(/len\(username\)|username\.(isalpha|startswith|strip)/)
   })
 
-  it('可创建的角色比可读到角色少一枚：auditor 读得到、开不出（对 auth.py:552 与 permissions.py）', () => {
+  it('可创建的角色与可读到的角色同集：auditor 读得到、也开得出（R413，对 permissions.py::CREATABLE_ROLES）', () => {
     expect(USER_ROLES).toContain('auditor')
-    expect(USER_CREATABLE_ROLES).not.toContain('auditor')
-    expect(USER_CREATABLE_ROLES).toEqual(['staff', 'manager', 'admin'])
-    expect(userFormRuleViolations(USER_WRITE_CREATE, { username: 'a', password: 'abcdef', role: 'auditor' }).role)
-      .toBe(USER_RULE_HINTS.roleUnknown)
+    expect(USER_CREATABLE_ROLES).toEqual(['staff', 'manager', 'admin', 'auditor'])
+    expect([...USER_CREATABLE_ROLES].sort()).toEqual([...USER_ROLES].sort())
+    expect(userFormRuleViolations(USER_WRITE_CREATE, { username: 'a', password: 'abcdef', role: 'auditor' }).role).toBeUndefined()
+    expect(userFormRuleViolations(USER_WRITE_CREATE, { username: 'a', password: 'abcdef', role: 'superuser' }).role).toBe(USER_RULE_HINTS.roleUnknown)
   })
 
   it('预检只说后端那几条：六位、非空、白名单，除此之外一枚都不拦', () => {

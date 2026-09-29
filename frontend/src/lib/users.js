@@ -309,7 +309,7 @@ export const USER_FORM_FIELDS = {
  *   :548-549  用户名或密码为空 -> 拒（所以 required 只有这一枚出处）
  *   :550-551  len(password) < 6 -> 拒
  *   :668-669  len(new_password) < 6 -> 拒
- *   :552-553  role 不在 ("staff", "manager", "admin") -> 拒
+ *   角色白名单  role 不在 CREATABLE_ROLES（真源 = app/common/permissions.py，R357 起只有这一本账）-> 拒
  * username / department 的字符集与长度：后端一个字都没写，所以这里记 null，不发明。
  * 老密码没有「不能为空」这一条规则（:666 走的是校验原密码对不对），所以这里也不设 required。
  */
@@ -318,15 +318,15 @@ export const USER_FORM_RULES = {
   passwordRequired: true,
   passwordMinLength: 6,
   newPasswordMinLength: 6,
-  creatableRoles: ['staff', 'manager', 'admin'],
+  creatableRoles: ['staff', 'manager', 'admin', 'auditor'],
   usernamePattern: null,
   departmentPattern: null,
 }
 
 /**
- * 能创建的角色，比能读到的角色少一枚。
- * USER_ROLES 那四枚对的是 app/common/permissions.py 的角色集，而 auth.py:552 的白名单里没有
- * auditor —— 名册里读得到审计人员，界面上却开不出这一枚账号，这一格差别只能照后端说。
+ * 能创建的角色，R413 起与能读到的角色同集：R357 那天 auditor 只有权限面、没有密级档位，屏上
+ * 是「读得到、开不出」；H13 于 2026-09-28 结案＝甲，auditor 补到 3 档（与 admin 同档），后端那枚
+ * CREATABLE_ROLES 认了它，这一格差别就没了 —— 屏上跟着后端说，不在这里留一枚旧的拒绝。
  */
 export const USER_CREATABLE_ROLES = USER_FORM_RULES.creatableRoles
 
