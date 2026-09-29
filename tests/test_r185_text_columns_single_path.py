@@ -66,7 +66,7 @@ def _patch_data_leg(monkeypatch, frame) -> None:
     from app.storage import datasets as dataset_storage
 
     monkeypatch.setattr(tools, "_authorized_dataset_files", lambda config: ([("部门销售.xlsx", "p")], None))
-    monkeypatch.setattr(dataset_storage.dataset_registry, "get_active_by_filename", lambda filename: None)
+    monkeypatch.setattr(dataset_storage.DatasetRegistry, "get_active_by_filename", lambda self, filename: None)
     monkeypatch.setattr(tools, "_record_dataset_evidence", lambda config, filename, df: None)
     monkeypatch.setattr(excel, "load_excel", lambda path: frame)
     monkeypatch.setattr(

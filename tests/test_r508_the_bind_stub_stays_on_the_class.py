@@ -39,6 +39,7 @@ target 是**类**时才用 `target.__dict__.get(name)` 取旧值，对实例它�
 2. **静态禁止**：契约名（=凡打在 app 类上的桩名）与 app 模块级单例名全部从源码**派生**，不写死名单；
    把契约名打在 `chat.session_registry` 这类**模块级单例**上直接红。另有一格冻结账：打在测试局部对象上的
    同族形状今天恰有三枚（r103 两枚 + r106 一枚，写进纸上排队，本单不碰），多第四枚就红。
+   （R516 已把那三枚 `upsert` 改到类目标，这张冻结账随之清空，两半判据都还在。）
 3. **反证刀**：把三枚里任意一枚退回实例桩 ⇒ 上面的审计与静态格必须当场红，红句原文交回；变异只落
    `tests/_temp_edit_overlay.py` 那台影子根，盘上的被跟踪文件全程只读，出门逐枚核对 sha16 报
    `restored=True`。
@@ -94,11 +95,11 @@ SITES = (
      ('    monkeypatch.setattr(SessionRegistry, "bind", lambda self, *_a, **_k: None)',)),
 )
 
-#: 同族在册债的冻结账（本单写域外，只在纸上点名）：(文件, 属性名)。第四枚进来就红。
-KNOWN_LOCAL_DEBTS = frozenset({
-    ("tests/test_r103_graph_unconfigured_exit.py", "upsert"),
-    ("tests/test_r106_open_platform_unconfigured_exit.py", "upsert"),
-})
+#: 同族在册债的冻结账（本单写域外，只在纸上点名）：(文件, 属性名)。多一枚就红。
+#: R516 把纸上 §3 结论 2 那三枚 `upsert` 改到了类目标（见 `test_r516_the_dataset_stubs_stay_on_
+#: the_class.py` 的 SITES 第 10-12 枚），这张账随之按事实清空：账空了以后，任何一枚新的「契约名
+#: 打在局部对象上」照样红在 `fresh` 那一半，而 `seen == 账` 那一半保证它不许偷偷变短——只清账，不摘牙。
+KNOWN_LOCAL_DEBTS = frozenset()
 
 
 # ----------------------------------------------------------- 把手：源码形状与影子形状

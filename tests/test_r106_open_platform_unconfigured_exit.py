@@ -102,6 +102,8 @@ def _production_without_a_store(registry, monkeypatch):
 
 def _production_with_a_store_that_refuses_the_write(registry, monkeypatch, tmp_path):
     """The opposite fact: the store exists and was opened, then would not take the row."""
+    from app.storage.persistence import JsonPersistenceAdapter
+
     monkeypatch.setenv("APP_ENV", "production")
     path = tmp_path / "apps.json"
     monkeypatch.setenv("OPEN_PLATFORM_APP_STORE_PATH", str(path))
@@ -112,7 +114,7 @@ def _production_with_a_store_that_refuses_the_write(registry, monkeypatch, tmp_p
     def fail_upsert(*args, **kwargs):
         raise OSError("simulated disk failure")
 
-    monkeypatch.setattr(store, "upsert", fail_upsert)
+    monkeypatch.setattr(JsonPersistenceAdapter, "upsert", fail_upsert)
     return registry
 
 

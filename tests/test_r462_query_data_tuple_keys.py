@@ -67,7 +67,7 @@ def _run_query_leg(monkeypatch, code):
 
     monkeypatch.setenv("MODEL_CONTEXT_TOKENS", "8192")
     monkeypatch.setattr(tools, "_authorized_dataset_files", lambda config: ([("费用明细.xlsx", "p")], None))
-    monkeypatch.setattr(dataset_storage.dataset_registry, "get_active_by_filename", lambda filename: None)
+    monkeypatch.setattr(dataset_storage.DatasetRegistry, "get_active_by_filename", lambda self, filename: None)
     monkeypatch.setattr(tools, "_record_dataset_evidence", lambda config, filename, df: None)
     monkeypatch.setattr(excel, "load_excel", lambda path: FRAME)
     monkeypatch.setattr(

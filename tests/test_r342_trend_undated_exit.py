@@ -173,8 +173,8 @@ def test_several_rows_for_one_file_let_the_newest_recorded_one_win(client, datas
     dataset_store("finance.csv", owner="finance-manager", department="finance",
                   created_at=inside.astimezone(timezone.utc).isoformat())
     monkeypatch.setattr(
-        data.dataset_registry, "active_records",
-        lambda: [
+        "app.storage.datasets.DatasetRegistry.active_records",
+        lambda self: [
             SimpleNamespace(filename="finance.csv", created_at=""),
             SimpleNamespace(filename="finance.csv",
                             created_at=inside.astimezone(timezone.utc).isoformat()),

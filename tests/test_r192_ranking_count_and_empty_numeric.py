@@ -388,7 +388,7 @@ def _run_analyze(frame, query: str, config=None, answer=None) -> str:
         setattr(owner, name, value)
 
     install(tools, "_authorized_dataset_files", lambda cfg: ([(PROBE_FILE, "p")], None))
-    install(dataset_storage.dataset_registry, "get_active_by_filename", lambda filename: None)
+    install(dataset_storage.DatasetRegistry, "get_active_by_filename", lambda self, filename: None)
     install(tools, "_record_dataset_evidence", lambda cfg, filename, df: None)
     install(excel, "load_excel", lambda path: frame)
     install(

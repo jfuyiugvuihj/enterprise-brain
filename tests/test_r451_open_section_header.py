@@ -138,7 +138,7 @@ def _patch_data_leg(monkeypatch, frames, recorded=None):
     by_path = {f"path-{index}": frame for index, (_, frame) in enumerate(frames)}
     files = [(fname, f"path-{index}") for index, (fname, _) in enumerate(frames)]
     monkeypatch.setattr(tools, "_authorized_dataset_files", lambda config: (files, None))
-    monkeypatch.setattr(dataset_storage.dataset_registry, "get_active_by_filename", lambda filename: None)
+    monkeypatch.setattr(dataset_storage.DatasetRegistry, "get_active_by_filename", lambda self, filename: None)
     monkeypatch.setattr(excel, "load_excel", lambda path: by_path[path])
     monkeypatch.setattr(
         rbac,
