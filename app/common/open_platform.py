@@ -56,44 +56,53 @@ STORAGE_REFUSAL_UNCONFIGURED = "open_platform_unconfigured"
 STORAGE_REFUSAL_WRITE_FAILED = "storage_read_only"
 
 
-#: ``max_clearance`` is recorded and consulted by nothing. No path in this application
-#: compares it with a document's classification, and no Principal receives it -- the
-#: only reads of the stored figure anywhere in ``app/`` are the report paths that
-#: publish this sentence beside the number: ``list_applications`` here, and two reads
-#: inside ``register_open_application`` in ``app/api/v1/open_platform.py``. That
-#: readout is re-taken from the AST by tests/test_r478_no_closed_gate_as_placeholder.py,
-#: so it is a measurement rather than a recollection. Inventing a comparison here
-#: would install a second, unpublished clearance policy in the place that is honest
-#: about not having one, and what is ours to fix is the appearance: a number sitting
-#: in a registry reads like a control.
+#: ``max_clearance`` is a ceiling, and ``open_audit_principal`` in this module is the one
+#: place its figure is weighed. That function clamps the clearance of every subject an
+#: open-platform call is journalled, department-guarded, and retrieved with:
 #:
-#: What changed on 2026-09-29 is only the reason this file gives. The note below used
-#: to hang the missing comparison on decision H13 and say the owner still had to rule
-#: on it. H13 closed 2026-09-28 as option A -- an unlabelled upload enters at
-#: classification level 1, and that is now contract text (
-#: docs/handoff/2026-09-17-human-gates.md, final section 「H13 结案 ＋ A1/A3 裁定」;
-#: docs/api/contract-v1.md, section R467) -- and that ruling is about the default
-#: classification of an upload, never about an application's registered tier. Nobody is
-#: holding this field. Whether it should ever become a control is a product decision
-#: booked outside this file; until one is taken, every surface here says the stored
-#: number decides nothing.
-MAX_CLEARANCE_ENFORCED = False
-MAX_CLEARANCE_EFFECT = "registered_only"
+#:     subject tier = min(role tier, max(1, registered figure))
+#:
+#: The order of the two operands is the whole of the control. This figure can lower a
+#: subject and can never raise one, so registering a 5 for an application whose role sits
+#: at level 1 grants nothing, and registering a 1 revokes nothing the role did not already
+#: allow. A row which carries no figure -- one written before this field existed -- answers
+#: the same way a 0, a negative, or a figure which is not an integer does: the
+#: clamp falls back to ``MINIMUM_CLEARANCE``. That is the same floor ``_record_from_payload`` already gives an
+#: old row (``int(payload.get("max_clearance") or 1)``, then ``max(1, ...)``), so the store
+#: rebuild and the ceiling cannot hold two opinions about what an unreadable figure means,
+#: and an unreadable registry is the narrowest one rather than the widest.
+#:
+#: What the clamp takes away today is a possibility, not a measurable result. Every subject
+#: on this transport is built with role ``staff`` by ``verify_open_request``, and
+#: ``app/common/rbac.py::ROLE_CLEARANCE`` puts staff at level 1, which is already the floor,
+#: so no caller can observe a difference by rewriting this figure. Saying that out loud is
+#: the point: an administrator who lowers the number to shut an application out of a tier
+#: has to be told that the number is not that knob until the role tier itself rises above
+#: it. Level 1 is the floor because H13 closed 2026-09-28 as option A, which enters an
+#: unlabelled document at level 1 (docs/handoff/2026-09-17-human-gates.md,
+#: 「H13 结案 ＋ A1/A3 裁定」; docs/api/contract-v1.md, section R467).
+#: Sources: docs/api/contract-v1.md, section R482.
+MAX_CLEARANCE_ENFORCED = True
+#: The single direction this figure is allowed to move a subject in.
+MAX_CLEARANCE_EFFECT = "ceiling_only"
 MAX_CLEARANCE_NOTE = (
-    "registered value only: no retrieval, no preview, and no Principal reads this "
-    "field; the only readers of the stored figure anywhere in this application are the "
-    "report paths that publish this sentence beside it. Nothing compares it with a "
-    "document's classification, and no decision is outstanding for it -- the gate this "
-    "note used to quote (H13) closed 2026-09-28 as option A, which rules the default "
-    "classification of an unlabelled upload and says nothing about a registered "
-    "application: a higher value buys nothing and a lower one blocks nothing. Sources: "
-    "docs/api/contract-v1.md, section R478 and the closing entry in "
-    "docs/handoff/2026-09-17-human-gates.md."
+    "ceiling only: open_audit_principal in app/common/open_platform.py reads this figure "
+    "and clamps the subject an open-platform call is journalled, department-guarded, and "
+    "retrieved with to the lower of the role tier and this figure, min(role tier, "
+    "max(1, registered)). It can lower a subject and can never raise one, so registering a "
+    "higher figure grants no access. A missing figure, a 0, a negative, and anything which "
+    "is not an integer all fail closed to level 1, the same floor "
+    "_record_from_payload gives a row written before this field existed. Every call on "
+    "this transport is built as role "
+    "staff, whose tier is level 1 -- already the floor -- so no caller can measure a "
+    "change by rewriting this figure today. Level 1 is the floor because H13 closed "
+    "2026-09-28 as option A: an unlabelled document enters at level 1. Sources: "
+    "docs/api/contract-v1.md, section R482."
 )
 
 
 def clearance_registration(max_clearance: Any) -> dict[str, Any]:
-    """Report one registered clearance together with the fact that it decides nothing.
+    """Report one registered clearance together with the arithmetic which applies it.
 
     Written once so the registration response, the application list, and the request
     model cannot give three different answers about the same field.
@@ -397,8 +406,9 @@ def register_application(app_name: str, *, allowed_actions: list[str], allowed_d
     process disappears on restart and is invisible to the other workers, which would
     silently break every signed request that another instance issued.
 
-    ``max_clearance`` is stored and consulted by nothing: see
-    ``clearance_registration``, which the registration and list responses carry.
+    ``max_clearance`` is a ceiling: ``open_audit_principal`` applies it to every
+    subject built from this row, and ``clearance_registration`` -- which the registration
+    and list responses carry -- publishes the arithmetic beside the stored figure.
 
     Two applications may share a name, and this is the function that decides what that
     means: every call registers a new application with its own id and its own secret, and
@@ -538,22 +548,66 @@ def open_user_claim_fields(claim: str) -> dict[str, Any]:
     }
 
 
+#: The tier a subject falls back to when a registered ceiling cannot be read. It is the
+#: same level ``_record_from_payload`` already gives a row written before this field
+#: existed, and level 1 is the tier H13 closed 2026-09-28 as option A enters an
+#: unlabelled document at.
+MINIMUM_CLEARANCE = 1
+
+
+def _registered_tier(value: Any) -> int:
+    """Clamp one figure which may only ever lower a subject: unreadable means the floor.
+
+    Four shapes say nothing about a tier and all four answer the same way -- the key is
+    absent, the figure is 0, it is negative, or it is not an integer at all (a float, a
+    string, ``None``, a bool). The default is not a guess about the stored row:
+    ``_record_from_payload`` rebuilds a registry row as ``int(payload.get("max_clearance")
+    or 1)`` and then ``max(1, ...)``, so a row written before the field existed already
+    enters the registry at level 1 and ``asdict`` hands that integer to every subject built
+    from it. The shapes rejected here are the rows which never came through that rebuild --
+    a hand-built registry row in a test, or a future transport assembling its own -- and
+    they are answered the way the rebuild answers an absent figure: the minimum tier. A
+    ceiling which cannot be read has to narrow, never open.
+    """
+    usable = isinstance(value, int) and not isinstance(value, bool)
+    return max(MINIMUM_CLEARANCE, value) if usable else MINIMUM_CLEARANCE
+
+
 def open_audit_principal(principal: Principal, app_record: dict[str, Any]) -> Principal:
     """The subject to write in the journal for one verified open-platform call.
 
-    Same id, same role, same department, one different username: ``actor`` comes from
-    the registry row the signature authenticated, so no header decides who is blamed.
-    The Principal ``verify_open_request`` hands back deliberately keeps the claimed
-    name, because two transports read it today -- ``tests/test_open_platform.py`` and
-    R67's pinned "the index is asked as the verified caller" -- and nothing behind it
-    decides a scope. The department comes from the grant, the id from the signature,
-    the clearance from the role, and never from a header. Attribution is the one thing
-    the claim could reach, so attribution is what changes.
+    Same id, same role, same department, one different username: ``actor`` comes from the
+    registry row the signature authenticated, so no header decides who is blamed. The
+    Principal ``verify_open_request`` hands back deliberately keeps the claimed name,
+    because two transports read it today -- ``tests/test_open_platform.py`` and R67's
+    pinned "the index is asked as the verified caller" -- and nothing behind it decides a
+    scope. The department comes from the grant, the id from the signature, and never from
+    a header. Attribution is the one thing the claim could reach, so attribution is what
+    changes.
+
+    R482 hung the registered ceiling on this same subject, which makes this function the
+    one place in the application where that figure is weighed:
+
+        clearance = min(principal.clearance, max(1, registered figure))
+
+    The first operand is the tier the role grants (``app/agents/contracts.py``
+    ``Principal.from_user`` takes it from ``app/common/rbac.py`` ``clearance_for``), so the
+    figure can only ever lower it; the second falls to ``MINIMUM_CLEARANCE`` whenever it
+    cannot be read, which is what makes a damaged row narrower rather than wider. This is
+    deliberately not a second classification rule: ``app/rag/filters.py``
+    ``resolve_document_retrieval_scope`` stays the only algorithm which turns a tier into
+    the levels a query may read, and it is handed the tier this line settled on.
     """
+    update = {
+        "clearance": min(
+            principal.clearance,
+            _registered_tier((app_record or {}).get("max_clearance", MINIMUM_CLEARANCE)),
+        )
+    }
     actor = str((app_record or {}).get("actor") or "")
-    if not actor:
-        return principal
-    return principal.model_copy(update={"username": actor})
+    if actor:
+        update["username"] = actor
+    return principal.model_copy(update=update)
 
 
 def verify_open_request(headers: dict[str, Any], body: str, required_action: str) -> tuple[Principal, dict]:
@@ -623,6 +677,13 @@ def verify_open_request(headers: dict[str, Any], body: str, required_action: str
         )
         raise
     principal = principal.model_copy(update={"department": department})
+    # R482: the subject this function hands back carries the registered ceiling too, not
+    # only the one the journal is filed under. open_audit_principal stays the single place
+    # the figure is weighed, so the leg which asks the index and the leg which guards a
+    # department are handed the same tier the row records; the claimed username goes back
+    # because two clients already read that label and nothing behind it decides a scope.
+    audited = open_audit_principal(principal, app_record)
+    principal = audited.model_copy(update={"username": principal.username})
     record_audit(
         open_audit_principal(principal, app_record),
         f"open:{required_action}",

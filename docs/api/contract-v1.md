@@ -5624,3 +5624,44 @@ git diff --numstat（本单六枚被跟踪文件，全部只增行与改注释/�
 - 🔴 没有把 `max_clearance` 接进 Principal、没有让它真的开始算数 —— 那是 **R479** 的账（总控 09-29 已把两枚单分开走）。本节与那两枚串说的都是「今天没在执行」：改口删掉的是一句假话，添上的不是谎话。把「没接进判定」写成「已生效」同样是假话，常驻闸的 `FORBIDDEN_CLAIMS` 也钉着这一格。
 - 写域之外仍欠的同族表述（本席现读，交总控裁，本单不越界）：`tests/test_r78_unearned_claims.py` 文件级 docstring 的 `:9`（仍把这枚字段写成一件等人办的事）与 `:26`（说的是 H18，那一问今天确实还开着，不算假话）、`app/api/v1/data.py:197`、`app/trace/durability.py:179`（讲的是审计事件的文件序号还没有被表确认，与密级无关）、`app/common/permissions.py:34`（同一注释块 `:35` 已点名结案，属历史叙述，靠白名单那一格豁免）。后三处已进常驻闸的台账或白名单，每天都必须在盘上仍然命中。
 
+
+## R482 · 注册表里那枚 `max_clearance` 从今天起是天花板：执法点一枚、只降不升、缺省收到 1 级（`app/common/open_platform.py`，2026-09-29）
+
+**一句话**：`## R478` 那一节把「这枚登记值没有任何 Principal 读」从一句假话改口成一句实话；本节把那句实话送进退役 —— 从今天起有人读它，而读它的那一行就是给它封顶的那一行。方向由总控 09-29 已裁，本节按判据落地，不重开口径。
+
+**为什么这一节只往文末长**：本契约 append-only（前缀钉与「只追加不删」钉见 `## R478` 第二节所列三枚），本节只有新增行、零删除行，`## R478` 与更早各节一个字没动。
+
+### 今天真的形状（判定一枚、读数三处，全在 `app/common/open_platform.py`）
+
+- **执法点唯一**：`open_audit_principal(principal, app_record)` 把 `clearance` 与 `username` 一起交进 `model_copy(update=...)`，算式是 `min(角色档, max(1, 登记档))`。第一个操作数是角色档 —— 由 `app/agents/contracts.py::Principal.from_user` 走 `app/common/rbac.py::clearance_for(role)` 取来，本单一个字没动那两个文件。两枚操作数的顺序就是这件控制的全部：登记值只能把主体往下压，抬不起来。
+- **交给谁**：`verify_open_request()` 注册回执与放行审计那两行、`app/api/v1/open_platform.py` 的 `/insights`（`:159`）、`/approval/preview`（`:199`）、`/dashboard/summary`（`:268`）三枚调用面上的 `verify_department_self_report`，以及 `/approval/preview` 问索引那条腿（`resolve_standard_from_knowledge_base`）—— 拿到的都是封顶之后的同一枚主体，档位算法仍然只有 `app/rag/filters.py::resolve_document_retrieval_scope` 那一处，本单没去那里加第二把尺。
+- **缺省一律 fail-closed 收到最小档**：缺键、`0`、负数、非整数（浮点、字符串、`None`、布尔）四种读不出档位的形状全部落到 `MINIMUM_CLEARANCE = 1`。「旧行沿用角色档」这个选项本节否掉了，理由与出处写进 `_registered_tier` 的 docstring：建行那条链早就这么收 —— `_record_from_payload()` 读 `int(payload.get("max_clearance") or 1)` 再 `max(1, ...)`，一枚字段出生之前写的旧行本来就落在 1 级，`asdict()` 之后交出来的必然是整数。沿用角色档会让一枚读不出档位的注册表行比一枚明确登记了 1 级的行更宽，那是反的。
+- **今天还没有可测量的效果，两枚对外串把这层写明**：这条传输链把角色钉死成 `staff`（`verify_open_request` 里写死），而 `ROLE_CLEARANCE["staff"] = 1` 就是底，所以 `min(1, 登记档)` 恒等于 1 —— 把数字调大抬不高任何人，把数字调小也拦不住任何一级。封顶拿掉的是「注册表能把主体抬高」这一种可能，不是一件今天能测出来的差别。写明这一格，正是为了不让下一班把「数字调小」读成关掉某一级的旋钮：那要等角色档本身升到 1 级以上，这一格才长出可测量的牙。
+
+### 两枚对外串与常量同时改口（判据②）
+
+- `MAX_CLEARANCE_ENFORCED`：`False` → **`True`**。这一枚不是措辞，是今天真的形状：`open_audit_principal` 读这枚登记值并据此改写主体的档位。
+- `MAX_CLEARANCE_EFFECT`：`"registered_only"` → **`"ceiling_only"`**。
+- `MAX_CLEARANCE_NOTE`（逐字进注册回执与应用列表的响应体）与 `ApplicationRegisterRequest.max_clearance` 那枚 `description=`（逐字进 OpenAPI）改口成今天真发生的形状：谁读它（`open_audit_principal`）、封顶怎么算（`min(角色档, max(1, 登记档))`）、缺省怎么收（四种形状落到 1 级）、今天为什么量不出来（角色钉死 `staff` = 底）。两枚串里绝迹的字面量：`classification_blocked`（在册常驻闸 `tests/test_r472_h13_closed_wording.py:260` 咬它），以及「待业主／未裁／open decision」这一族回潮措辞 —— 常驻闸的 `FORBIDDEN_CLAIMS` 与 `WAITING_WORDS` 两格也一并盯着。
+- 🔴 **本节作废 `## R478` 那句在今天的状态**：那句 "no Principal reads this field"（连带同句里的 "nothing compares it"、"a higher value buys nothing and a lower one blocks nothing"）自本节起过期，两枚对外串与 `## R478`「本节没做的事」第一格都由本节接替。作废不等于销毁：两枚退役原串逐字引在下面两道围栏里，一字未改，供下一班对账（口径与 `## R467`／`## R478` 同一套 —— 围栏里是留档，围栏外才是断言面）。
+
+```text
+registered value only: no retrieval, no preview, and no Principal reads this field; the only readers of the stored figure anywhere in this application are the report paths that publish this sentence beside it. Nothing compares it with a document's classification, and no decision is outstanding for it -- the gate this note used to quote (H13) closed 2026-09-28 as option A, which rules the default classification of an unlabelled upload and says nothing about a registered application: a higher value buys nothing and a lower one blocks nothing. Sources: docs/api/contract-v1.md, section R478 and the closing entry in docs/handoff/2026-09-17-human-gates.md.
+```
+
+```text
+Registered only, and enforced by nothing today: no retrieval, no preview, and no Principal reads it; the only readers are the report paths that print this disclaimer. Nothing compares it with a document's classification, and no decision is outstanding for it -- the gate this description used to quote (H13) closed 2026-09-28 as option A, which is about the default classification of an unlabelled upload, not this registry. Changing this value changes no result: a higher number grants no access and a lower one revokes none. docs/api/contract-v1.md, section R478.
+```
+
+### 凭据（判据③④⑤；函数名与行区间一律运行时派生，零枚硬编码行号）
+
+- `tests/test_r78_unearned_claims.py` 两枚钉换锚：锚从「它说自己没被执行」换成「它说得出封顶怎么算」。子串枚数 5 → **8**（两枚各自），红话同步改口：`is False` 三处换成 `is True`，「登记值只进报告面」那枚 AST 凭据换成「三处读数 + 恰好一枚判定，且写作 `min`」。强度只升 —— 删掉的断言零枚。
+- 新增常驻闸 `tests/test_r482_registered_ceiling_is_the_ceiling.py`：甲 只降不升（角色 3 档＋登记 1 档 ⇒ 读到 1 档；角色 1 档＋登记 3 档 ⇒ 仍是 1 档；再对 staff/manager/admin × 六种登记值做全域扫描）；乙 封顶后的档位喂进真闸门，`classification_levels` 逐枚等于 `range(1, capped + 1)`，管理员与部门两条支都量；丙 缺键／0／负 各自一枚、各自红在自己那一条上，另加一枚「非整数不炸只收」；丁 两枚对外串 + `MAX_CLEARANCE_ENFORCED` 三者同源，且串里点名的那枚函数自己真的读这枚字段（`inspect.getsourcelines` 现取行区间）。
+- `tests/test_r478_no_closed_gate_as_placeholder.py` 的尺子同批**加宽**（只加不减）：读数面从「只认 `record.max_clearance` 这一种属性取用」加到也认字典键取用（`row.get("max_clearance", ...)` / `row["max_clearance"]`），判定面从「比较／if／三元／assert」加到 `min`/`max`。不加宽，执法点这一枚取用就在尺子眼里不存在，「读数面」会退化成一张自证的空表。台账格新登记 `CEILING_READS` 两处（`_record_from_payload`、`open_audit_principal`）与 `REPORTED_READ_COUNT = 3`；`NOTE_CONFESSION`／`DESCRIPTION_CONFESSION` 两格换到封顶口径。断言一枚没少，只是从「零枚判定」换成「恰好这一枚判定」。
+- 反证三刀（走 R253 影子根：变异只落 `%TEMP%` 副本，被跟踪文件全程只读；`python tests/../` 复跑法见常驻闸文件头）：**刀一** 摘掉 `clearance` 那一格 `update` ⇒ 新件 11 枚行为钉红 8 枚，加 `tests/test_r478_..._placeholder.py` 的格乙共 **9 枚红**；绿的 3 枚是「不许抬高」那一族与响应体字面同源那一枚，它们只对放宽敏感，摘掉封顶当然不会放宽 —— 这一格绿是本刀的对照组，不是漏量。**刀二** 把 `min(` 换成 `max(` ⇒ 11 枚行为钉红 10 枚，加格乙（判定面现读不再是 `min`）共 **11 枚红**。**刀三** 执法已开而 `MAX_CLEARANCE_ENFORCED` 仍留 `False` ⇒ **5 枚红**：`tests/test_r78_unearned_claims.py` 换锚后的两枚对外串钉、新件的口径同源钉与响应体钉、格乙。三刀的刀刀见血都写在 `tests/test_r482_registered_ceiling_is_the_ceiling.py` 的三枚 `test_counter_evidence_*` 里，落下去不红就当场 `pytest.fail`。
+
+### 本节没做的事（不许读成已收）
+
+- 没动 `app/rag/filters.py`、`app/agents/contracts.py`、`app/common/rbac.py`、`app/documents/catalog.py`、`app/api/v1/chat.py`、`frontend/**` 一个字：档位的算法仍然只在检索闸门那一处，角色到档位的映射仍然只在 `ROLE_CLEARANCE`。本节只是终于把一枚封顶之后的档位交给它们。
+- 没让这枚字段长出可测量的效果 —— 那条传输链的角色还是钉死的 `staff`，1 级还是底。要把「关掉某一级」做成一件真能下单的事，缺的是角色档本身的位置，不是这里再写一遍 `min`。
+- 没动容器、没打模型、没碰真库；向量库读后端翻不翻默认与本单无关，仍是 `docs/handoff/2026-09-17-pgvector-adoption-plan.md` 那一格的账。

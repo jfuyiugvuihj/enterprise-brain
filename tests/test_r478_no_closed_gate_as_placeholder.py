@@ -125,25 +125,24 @@ OUT_OF_DOMAIN_LEDGER = (
 )
 #: 两枚对外可见的串今天必须说的事实（r78 的换锚与本件的同步钉共用这一份清单）。
 NOTE_CONFESSION = (
-    "no retrieval",
-    "no principal reads this field",
-    "the only readers",
-    "nothing compares it",
-    "contract-v1.md, section r478",
-    "buys nothing",
-    "blocks nothing",
+    "ceiling only",
+    "open_audit_principal",
+    "min(role tier, max(1, registered))",
+    "can never raise one",
+    "fail closed to level 1",
+    "grants no access",
+    "contract-v1.md, section r482",
     "closed 2026-09-28",
 )
 DESCRIPTION_CONFESSION = (
-    "registered only",
-    "no principal reads it",
-    "the only readers",
-    "nothing compares it",
-    "contract-v1.md, section r478",
-    "changes no result",
+    "ceiling, not a grant",
+    "open_audit_principal",
+    "min(role tier, max(1, this figure))",
+    "can narrow that subject",
+    "fail closed to level 1",
     "grants no access",
     "revokes none",
-    "closed 2026-09-28",
+    "contract-v1.md, section r482",
 )
 WAITING_WORDS = ("pending", "undecided", "unratified", "awaiting", "open decision", "owner-open")
 
@@ -333,33 +332,81 @@ class _SpanEdit(overlay.ShadowEdit):
         return mutant
 
 
+#: 这枚登记值在源码里的两种存在形状：属性（数据类那一行）与字典键（``asdict`` 摊平之后）。
+FIGURE_KEY = "max_clearance"
+_LOOKUP_METHODS = frozenset({"get", "pop", "setdefault"})
+
+
+def _figure_key_read_nodes(tree):
+    """把「以字典键的形态读走这枚登记值」的形状挑出来：``row["max_clearance"]`` 与 ``row.get("max_clearance", ...)``。
+
+    R482 加宽了这一格。原来的尺子只认 ``ast.Attribute``（``record.max_clearance``），而执法点
+    ``open_audit_principal`` 拿到的是 ``asdict`` 摊平之后的字典，取的是键——不加宽，这格对唯一
+    那枚真正按这枚字段行事的路径是瞎的，「读数面」就退化成一张自证的空表。
+    字典字面量里那枚同名输出键（``"max_clearance": value``）不算读数：那是发布，不是取用。
+    """
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+            if node.slice.value == FIGURE_KEY:
+                out.append(node.slice)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in _LOOKUP_METHODS and node.args:
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and first.value == FIGURE_KEY:
+                    out.append(first)
+    return out
+
+
+def _function_owners(tree):
+    """节点 -> 它站在哪一枚函数里：读数报的是路径与函数名，行号会漂，名字不会。"""
+    owners = {}
+    for owner in ast.walk(tree):
+        if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in ast.walk(owner):
+                owners[id(child)] = owner.name
+    return owners
+
+
 def _max_clearance_reads():
-    """AST 现读：全树里谁把这枚登记值当属性取出来用，取出来站在哪枚函数里。"""
+    """AST 现读：全树里谁把这枚登记值取出来用——属性取用与字典键取用两种形状都量。"""
     out = []
     for rel in _app_files():
         tree = ast.parse(overlay.authoritative_text(rel))
-        for owner in ast.walk(tree):
-            if not isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for node in ast.walk(owner):
-                if isinstance(node, ast.Attribute) and node.attr == "max_clearance":
-                    out.append((rel, owner.name, node.lineno))
+        owners = _function_owners(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr == FIGURE_KEY:
+                out.append((rel, owners.get(id(node), "<module>"), node.lineno))
+        for node in _figure_key_read_nodes(tree):
+            out.append((rel, owners.get(id(node), "<module>"), node.lineno))
     return out
 
 
 def _max_clearance_comparisons():
-    """读数有没有走进判定结构（比较 / if / 断言）——那是行为，不是文字。"""
+    """读数有没有走进判定结构——那是行为，不是文字。
+
+    R482 之后判定这枚字段的写法是一枚 ``min``（封顶只降不升就是这个形状），所以判定面从
+    「比较 / if / 断言」加宽到这两枚内建函数：不加宽，「把取小换成取大」那一刀就量不出来，
+    而判据⑤要求的正是那一刀。
+    """
     verdicts = (ast.Compare, ast.If, ast.IfExp, ast.Assert)
     out = []
     for rel in _app_files():
         tree = ast.parse(overlay.authoritative_text(rel))
+        owners = _function_owners(tree)
+        held = {id(node) for node in _figure_key_read_nodes(tree)}
         for node in ast.walk(tree):
-            if not isinstance(node, verdicts):
+            weighing = (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                        and node.func.id in {"min", "max"})
+            if not weighing and not isinstance(node, verdicts):
                 continue
             for child in ast.walk(node):
-                if isinstance(child, ast.Attribute) and child.attr == "max_clearance":
-                    out.append((rel, node.lineno, type(node).__name__))
+                if (isinstance(child, ast.Attribute) and child.attr == FIGURE_KEY) or id(child) in held:
+                    label = node.func.id if weighing else type(node).__name__
+                    out.append((rel, owners.get(id(node), "<module>"), label))
+                    break
     return out
+
 
 
 def _base_note():
@@ -547,6 +594,17 @@ REPORT_ONLY_READS = (
     ("app/api/v1/open_platform.py", "register_open_application"),
     ("app/common/open_platform.py", "list_applications"),
 )
+#: 报告路径那两处一共三枚读数（``register_open_application`` 两枚、``list_applications`` 一枚），
+#: 09-29 现读；枚数变了就是有人新长了报告面或者改了参数名，两种都得让格乙报。
+REPORTED_READ_COUNT = 3
+#: R482 新登记的两处：一处把存进来就读不出的旧行收到最小档，一处拿它给主体封顶。
+#: 判定面（``min``）也只在执法点这一枚，格乙那枚钉直接把这条算式对进去。
+CEILING_READS = (
+    ("app/common/open_platform.py", "_record_from_payload"),
+    ("app/common/open_platform.py", "open_audit_principal"),
+)
+STORE_REBUILD_READS = 1
+CEILING_ENFORCEMENT_READS = 1
 
 
 # ==================== 格甲 · 假指针绝迹 ====================
@@ -621,16 +679,26 @@ def test_the_published_description_confesses_the_measured_fact():
 
 
 def test_the_stored_figure_is_still_read_only_for_reporting():
-    """判据②的凭据常驻化：这枚登记值今天只有报告用途的三处读数，零枚判定结构。"""
+    """判据②的凭据常驻化：读数面与判定面都必须在册，且与常量、两句对外串同一口径。
+
+    名字里的 ``read_only_for_reporting`` 是 R478 的口径（那时全 ``app/`` 只有报告路径取用这枚
+    登记值，判定结构零枚），R482 起作废，本钉改量今天的三格：报告读数仍是原来那两处、判定这枚
+    字段的表达式恰好一枚且写作 ``min``、常量与 effect 与对外两句同源。尺子在钉之上一起加宽
+    （字典键取用与 ``min``/``max`` 现在都算），所以「摘掉执法那一格」与「取小换成取大」两刀都
+    有地方落。断言一枚没少，只是从「零枚判定」换成「恰好这一枚判定」。
+    """
     reads = _max_clearance_reads()
     sites = sorted(set((rel, owner) for rel, owner, _line in reads))
-    assert sites == sorted(REPORT_ONLY_READS), (
+    assert sites == sorted(REPORT_ONLY_READS + CEILING_READS), (
         "取用这枚登记值的路径变了（现读 " + str(sites) + "）——对外那句话与注释都得跟着改，不许只改一边")
-    assert len(reads) == 3, "读数枚数变了：" + repr(reads)
-    compared = _max_clearance_comparisons()
-    assert not compared, "有路径开始拿这枚登记值做判定了：" + repr(compared) + "——那是 R479 的账"
-    assert open_platform.MAX_CLEARANCE_ENFORCED is False, "这枚字段今天自称没在执行；常量改了，串就得跟着改"
-    assert open_platform.MAX_CLEARANCE_EFFECT == "registered_only", "对外那句 effect 变了"
+    assert len(reads) == REPORTED_READ_COUNT + STORE_REBUILD_READS + CEILING_ENFORCEMENT_READS, (
+        "读数枚数变了：" + repr(reads))
+    weighed = _max_clearance_comparisons()
+    assert weighed == [("app/common/open_platform.py", "open_audit_principal", "min")], (
+        "判定这枚登记值的表达式不再是执法点那一枚 min：" + repr(weighed) + "——封顶的算法长出第二处了")
+    assert open_platform.MAX_CLEARANCE_ENFORCED is True, (
+        "执法点在拿这枚字段给主体封顶，常量还说自己没在执行：口径分裂")
+    assert open_platform.MAX_CLEARANCE_EFFECT == "ceiling_only", "对外那句 effect 变了"
 
 
 def test_the_ledger_entries_still_bite():

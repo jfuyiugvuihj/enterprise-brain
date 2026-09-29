@@ -302,14 +302,16 @@ class ApplicationRegisterRequest(BaseModel):
     """What an administrator grants an application.
 
     ``allowed_departments`` is enforced: it is the only set an open-platform call may
-    speak for, since no header or body adds to it (R71). ``max_clearance`` is not. It is
-    stored, returned, and read by nothing except the report paths which print the
-    disclaimer beside it, and no decision is outstanding for it: the gate this model
-    used to quote (H13) closed 2026-09-28 as option A, which rules the default
-    classification of an unlabelled upload and says nothing about a registered
-    application tier. Registering a 5 grants no access and registering a 1 revokes
-    none, so both responses say that beside the number instead of leaving it to be
-    inferred.
+    speak for, since no header or body adds to it (R71). ``max_clearance`` is enforced the
+    same one-way way: ``open_audit_principal`` in ``app/common/open_platform.py`` clamps
+    the subject every open-platform call is journalled, department-guarded, and retrieved
+    with to ``min(role tier, max(1, this figure))``, so the figure can lower that subject
+    and can never raise it, and a missing figure, a 0, a negative or a non-number falls
+    back to level 1. Registering a 5 therefore grants no access. On today's role map it
+    revokes nothing either -- every call on this transport is built as role ``staff``,
+    whose tier is level 1, which is already the floor -- so the clamp bites the day the
+    role tier rises above it rather than the day somebody notices. Both responses say all
+    of that beside the number instead of leaving it to be inferred.
     """
 
     app_name: str
@@ -318,15 +320,17 @@ class ApplicationRegisterRequest(BaseModel):
     max_clearance: int = Field(
         default=3,
         description=(
-            "Registered only, and enforced by nothing today: no retrieval, no preview, "
-            "and no Principal reads it; the only readers are the report paths that "
-            "print this disclaimer. Nothing compares it with a document's "
-            "classification, and no decision is outstanding for it -- the gate this "
-            "description used to quote (H13) closed 2026-09-28 as option A, which is "
-            "about the default classification of an unlabelled upload, not this "
-            "registry. Changing this value changes no result: a higher number grants "
-            "no access and a lower one revokes none. docs/api/contract-v1.md, "
-            "section R478."
+            "Ceiling, not a grant: open_audit_principal clamps the subject an "
+            "open-platform call is journalled, department-guarded, and retrieved with to "
+            "min(role tier, max(1, this figure)), so a lower value can narrow that subject "
+            "and a higher one grants no access. A missing figure, a 0, a negative and "
+            "anything which is not an integer all fail closed to level 1, the same floor the "
+            "registry rebuild gives a row written before this field existed. Every call "
+            "on this transport "
+            "is built as role staff, whose tier is level 1 -- already that floor -- so no "
+            "caller can measure a difference by rewriting this figure today: registering a "
+            "5 grants no access and registering a 1 revokes none. Sources: "
+            "docs/api/contract-v1.md, section R482."
         ),
     )
     description: str = ""
@@ -364,9 +368,10 @@ def _registration_refusal_reason() -> str:
 async def register_open_application(data: ApplicationRegisterRequest, request: Request):
     """Register an open-platform application; the secret is returned exactly once.
 
-    The answer repeats what was granted and, beside ``max_clearance``, says that the
-    number decides nothing today: an administrator who registers a clearance and is
-    told nothing further will assume it took effect.
+    The answer repeats what was granted and, beside ``max_clearance``, publishes the
+    arithmetic which applies it: an administrator who registers a clearance and is told
+    nothing further will assume it took effect, and one who lowers it to shut an
+    application out of a tier has to be told how far that reaches today.
     """
     principal = _require_admin(request, "open_platform_application")
     try:
@@ -417,8 +422,9 @@ async def list_open_applications(request: Request):
     """List registered applications without their secrets.
 
     Each row states what it grants and what it withholds: ``max_clearance`` travels
-    with the label ``clearance_registration`` gives it, because a stored number that
-    enforces nothing is otherwise indistinguishable from a control.
+    with the label ``clearance_registration`` gives it, because a stored number is
+    otherwise indistinguishable from the control it is applied as -- which direction it
+    moves a subject, and which tier an unreadable figure falls back to.
     """
     _require_admin(request, "open_platform_application")
     return {"applications": list_applications(), "storage": app_registry_storage_state()}

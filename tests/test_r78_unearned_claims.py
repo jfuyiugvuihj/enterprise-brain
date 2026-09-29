@@ -5,10 +5,12 @@ identity, while the registry already held the server's own answer. This file clo
 remaining shapes of the same bug, where the surface says one thing and the code does
 another:
 
-* ``max_clearance`` is registered, stored, listed, and read by nobody. Whether a level 2
-  application may read a level 3 chunk is open decision **H13**, the owner's to make; the
-  honest move today is to stop the field from reading like a control and to pin that a
-  different value changes nothing. Not to invent a comparison.
+* ``max_clearance`` is a ceiling, and R482 put it on the subject: ``open_audit_principal``
+  clamps every open-platform principal to ``min(role tier, registered figure)``, which can
+  lower a subject and cannot raise one, and falls back to level 1 whenever the stored figure
+  cannot be read. What this file holds is the outward half of that deal -- the two published
+  sentences have to state the arithmetic, and a figure which is documented as a ceiling has
+  to be measured failing to widen anything.
 * ``X-Open-User`` is a claim, not a credential: ``build_request_signature`` covers
   ``app_id.timestamp.body``, and that base string is frozen by wire compatibility, so this
   header is signed exactly as much as the department header was. The claim stays -- a
@@ -62,6 +64,7 @@ from app.common.open_platform import (
     verify_open_request,
 )
 from app.common.policy import is_administrator
+from app.common.rbac import clearance_for
 from app.main import app
 from app.storage.persistence import JsonPersistenceAdapter
 
@@ -245,6 +248,30 @@ CLEARANCE_STATEMENT_KEYS = (
     "max_clearance_note",
 )
 
+#: R482: what the two outward sentences have to say now that the figure is applied. Each
+#: tuple is the shared anchor for one surface, and both are longer than the five-substring
+#: anchor this file used to hold while the field was inert.
+CEILING_ARITHMETIC = (
+    "ceiling only",
+    "open_audit_principal",
+    "min(role tier",
+    "can never raise one",
+    "fail closed to level 1",
+    "grants no access",
+    "role staff",
+    "contract-v1.md, section r482",
+)
+CEILING_DOCUMENTATION = (
+    "ceiling, not a grant",
+    "open_audit_principal",
+    "min(role tier, max(1, this figure))",
+    "can narrow that subject",
+    "fail closed to level 1",
+    "grants no access",
+    "revokes none",
+    "contract-v1.md, section r482",
+)
+
 
 def _bump_stored_clearance(store: Path, app_id: str, value: int) -> int:
     """Rewrite the one figure an administrator could rewrite, and nothing else about the row."""
@@ -258,6 +285,13 @@ def _bump_stored_clearance(store: Path, app_id: str, value: int) -> int:
 
 
 def test_the_registration_response_labels_the_clearance_it_stores():
+    """R482 anchor: the outward sentence has to state how the ceiling is computed.
+
+    The anchor used to be "the field confesses that nothing reads it". That sentence is
+    false today, so the anchor moved to the arithmetic: eight substrings, which is more
+    than the five this case used to require, and a same-source check that the constant and
+    the response body say the same thing.
+    """
     issued = _register_through_the_api(
         app_name="r78-honest",
         allowed_actions=["query"],
@@ -268,16 +302,17 @@ def test_the_registration_response_labels_the_clearance_it_stores():
     for key in CLEARANCE_STATEMENT_KEYS:
         assert key in issued, key
     assert issued["max_clearance"] == 5
-    assert issued["max_clearance_effect"] == "registered_only"
-    assert issued["max_clearance_enforced"] is False
+    assert issued["max_clearance_enforced"] is open_platform.MAX_CLEARANCE_ENFORCED is True, (
+        "the receipt and the constant split on whether the ceiling applies: the body says "
+        "one thing, MAX_CLEARANCE_ENFORCED says the other"
+    )
+    assert issued["max_clearance_effect"] == open_platform.MAX_CLEARANCE_EFFECT
     note = issued["max_clearance_note"]
-    assert "no retrieval" in note.lower(), note
-    assert all(phrase in note.lower() for phrase in (
-        "no principal reads this field", "nothing compares it",
-        "buys nothing", "blocks nothing", "closed 2026-09-28",
-    )), (
-        "the field has to confess that nothing reads or compares it, and name the "
-        "ruling that already closed -- not a decision somebody is still holding: " + note
+    missing = [phrase for phrase in CEILING_ARITHMETIC if phrase not in note.lower()]
+    assert not missing, (
+        "the sentence in the response body no longer states how the ceiling is computed, "
+        "which tier a missing figure falls back to, or that it can only go down (missing: "
+        + repr(missing) + "): " + note
     )
 
 
@@ -298,32 +333,51 @@ def test_the_application_list_labels_the_same_field_the_same_way():
         assert key in row, key
     assert row["max_clearance"] == 2
     assert row["max_clearance_effect"] == issued["max_clearance_effect"]
-    assert row["max_clearance_enforced"] == issued["max_clearance_enforced"] is False
+    assert row["max_clearance_enforced"] == issued["max_clearance_enforced"] is True
     assert row["max_clearance_note"] == issued["max_clearance_note"]
 
 
 def test_the_api_documentation_says_the_same_thing_to_the_client_that_reads_it():
-    """A response field can be dropped by a UI; the published contract cannot be unread."""
+    """A response field can be dropped by a UI; the published contract cannot be unread.
+
+    R482 anchor: eight substrings describing the clamp, where it happens, and what an
+    unreadable figure falls back to -- plus two stale claims which may not survive in the
+    published route descriptions.
+    """
     schema = app.openapi()
 
     properties = schema["components"]["schemas"]["ApplicationRegisterRequest"]["properties"]
     description = properties["max_clearance"]["description"]
-    assert "registered only" in description.lower(), description
-    assert "changes no result" in description.lower(), description
-    assert all(phrase in description.lower() for phrase in (
-        "no principal reads it", "nothing compares it",
-        "grants no access", "revokes none", "closed 2026-09-28",
-    )), (
-        "OpenAPI has to publish that nothing reads or compares this figure, and name "
-        "the ruling that already closed -- not one it waits on: " + description
+    assert open_platform.MAX_CLEARANCE_ENFORCED is True, (
+        "the published field text describes a live clamp while MAX_CLEARANCE_ENFORCED says "
+        "the figure is not applied: one of the two has to move, not this assertion")
+    missing = [phrase for phrase in CEILING_DOCUMENTATION if phrase not in description.lower()]
+    assert not missing, (
+        "OpenAPI no longer publishes how this figure caps a subject, in which function, "
+        "and to which tier it falls back (missing: " + repr(missing) + "): " + description
+    )
+    assert "registered only" not in description.lower(), (
+        "the published field still describes itself as registration-only, which is the "
+        "sentence R482 retired: " + description
     )
     for verb in ("post", "get"):
-        documented = schema["paths"]["/api/v1/apps"][verb]["description"]
+        documented = schema["paths"]["/api/v1/apps"][verb]["description"].lower()
         assert "max_clearance" in documented, verb
+        for stale in ("decides nothing", "enforces nothing", "inert"):
+            assert stale not in documented, (verb, stale)
 
 
 def test_the_registered_clearance_changes_nothing_a_caller_can_measure(tmp_path, monkeypatch):
-    """The claim ``max_clearance`` makes, tested the only way it can be: change it, measure."""
+    """The claim ``max_clearance`` makes, tested the only way it can be: change it, measure.
+
+    What R482 changed is *why* the answer does not move. It used to be that no subject ever
+    received the figure. Now every subject this transport hands out carries
+    ``min(role tier, registered)``, and the role an open-platform call is built with is
+    ``staff``, whose tier is level 1 -- which is also ``MINIMUM_CLEARANCE``. So a registered
+    5 cannot lift a subject above a registered 1, and no conclusion can move. Both halves
+    are measured here: the answer stays identical, and the subject the index is asked with
+    now carries the clamp.
+    """
     store = tmp_path / "apps.json"
     monkeypatch.setenv("OPEN_PLATFORM_APP_STORE_PATH", str(store))
     configure_app_store(str(store))
@@ -333,11 +387,14 @@ def test_the_registered_clearance_changes_nothing_a_caller_can_measure(tmp_path,
         allowed_departments=[CALLER_DEPARTMENT],
         max_clearance=1,
     )
-    _install_index(monkeypatch, hits=STANDARD_CHUNKS)
+    index = _install_index(monkeypatch, hits=STANDARD_CHUNKS)
 
     before = _preview(_body(), app_info=app_info)
 
     assert before.status_code == 200, before.text
+    asked = index.calls[-1]["principal"]
+    floor = open_platform.MINIMUM_CLEARANCE
+    assert asked.clearance == min(clearance_for(asked.role), 1) == floor, asked.clearance
 
     assert _bump_stored_clearance(store, app_info["app_id"], 5) == 5
     clear_app_registry()
@@ -347,14 +404,23 @@ def test_the_registered_clearance_changes_nothing_a_caller_can_measure(tmp_path,
     after = _preview(_body(), app_info=app_info)
 
     assert after.status_code == 200, after.text
-    assert after.json() == before.json(), "a figure documented as inert moved a conclusion"
+    assert after.json() == before.json(), "a figure documented as a ceiling moved a conclusion"
+    lifted = index.calls[-1]["principal"].clearance
+    assert lifted == floor, (
+        "a registered figure above the role tier raised the subject the index is asked "
+        "with, which is the one direction this ceiling is documented as unable to take"
+    )
 
 
-def test_a_higher_registered_clearance_never_reaches_the_subject_that_would_have_to_use_it(tmp_path, monkeypatch):
-    """The other half: enforcement needs a Principal, and the registry has never handed it one.
+def test_a_higher_registered_clearance_cannot_lift_the_subject_above_its_role(tmp_path, monkeypatch):
+    """Where the ceiling lands: on the subject itself, and only ever downwards.
 
-    Clearance on the subject comes from the role, so a value that reached it would show up
-    here before it ever reached a document.
+    R478's version of this case read "the registry has never handed a Principal the figure",
+    and measured that two stored values produced one identical subject. That sentence is
+    retired: the figure does reach the subject now, through ``open_audit_principal``. The
+    measurement is the same and the property it proves is the stronger one -- the subject
+    settles on ``min(role tier, registered)``, so a registered 5 lifts nothing over a
+    registered 1 and the whole ``model_dump`` still matches.
     """
     store = tmp_path / "apps.json"
     monkeypatch.setenv("OPEN_PLATFORM_APP_STORE_PATH", str(store))
@@ -370,24 +436,60 @@ def test_a_higher_registered_clearance_never_reaches_the_subject_that_would_have
 
     low, _low_record = verify_open_request(headers, body, required_action="approval")
 
-    assert low.clearance == 1, low.clearance
+    role_tier = clearance_for(low.role)
+    assert low.clearance == min(role_tier, 1) == open_platform.MINIMUM_CLEARANCE, low.clearance
     assert _bump_stored_clearance(store, app_info["app_id"], 5) == 5
     clear_app_registry()
     load_app_registry()
 
     high, _high_record = verify_open_request(headers, body, required_action="approval")
 
+    assert high.clearance == min(role_tier, 5) == low.clearance
     assert high.model_dump() == low.model_dump()
-    assert high.clearance == low.clearance
     assert high.clearance_label == low.clearance_label
 
 
-def test_max_clearance_is_written_down_by_exactly_two_files_and_decided_by_neither():
-    """Source, not sentiment: the field may live in a registry and a response, nowhere else.
+def _weighing_sites() -> list:
+    """Every ``min``/``max`` in ``app/`` whose subtree still holds the stored figure.
 
-    ``H13`` will eventually put a comparison somewhere. When it does it belongs in the one
-    policy that already decides classification, with a ruling attached to it -- not in the
-    module that stores credentials, which is what this case refuses.
+    R482 made the ceiling real, so the honest census is no longer "nothing weighs this" but
+    "exactly one expression weighs it, and it weighs it downwards". Read out of the tree: the
+    figure counts as touched only where a module literally holds the stored key or reads the
+    attribute off a row -- a parameter named ``max_clearance`` is a hand-off, not a verdict.
+    """
+    out = []
+    for path in _app_sources():
+        rel = path.relative_to(REPO).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        owners = {}
+        for owner in ast.walk(tree):
+            if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for child in ast.walk(owner):
+                    owners[id(child)] = owner.name
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+                continue
+            if node.func.id not in {"min", "max"}:
+                continue
+            touched = any(
+                (isinstance(child, ast.Attribute) and child.attr == "max_clearance")
+                or (isinstance(child, ast.Constant) and child.value == "max_clearance")
+                for child in ast.walk(node)
+            )
+            if touched:
+                out.append((rel, owners.get(id(node), "<module>"), node.func.id))
+    return sorted(out)
+
+
+def test_max_clearance_is_written_down_by_exactly_two_files_and_weighed_in_one_function():
+    """Source, not sentiment: two modules may name the field, exactly one may weigh it.
+
+    R478 registered this census as "decided by neither". R482 retired that half, so the case
+    pins three things instead of one: no third module names the field, the weighing is still
+    written without an ``if``, a comparison, or an assertion -- so a second opinion cannot be
+    parked beside it -- and exactly one ``min``/``max`` touches the stored figure, which is
+    the clamp in ``open_audit_principal`` and is written with ``min``. Function names and
+    operator names are read out of the tree at run time; no line number is quoted here.
     """
     holders = sorted(
         path.relative_to(REPO).as_posix()
@@ -417,6 +519,12 @@ def test_max_clearance_is_written_down_by_exactly_two_files_and_decided_by_neith
                 offenders.append(f"{name}:{node.lineno}")
 
     assert offenders == [], offenders
+
+    weighed = _weighing_sites()
+    assert weighed == [("app/common/open_platform.py", "open_audit_principal", "min")], (
+        "the registered figure is weighed at a place this case has not registered, or is "
+        "weighed upwards instead of downwards: " + repr(weighed)
+    )
 
 
 # --------------------------------------------- ② a name the caller typed is not a subject
