@@ -135,7 +135,7 @@ const LIVE = [
     id: 'L-2 能不能读只在服务端那道 users:manage 闸上（r316 入口注释）',
     file: ADMIN_ENTRY,
     cited: 'app/api/v1/auth.py',
-    numbers: [106],
+    numbers: [107],  // R494 把 app/api/v1/auth.py 从 296 行拉到 319 行，真闸 authorize_request(..., ACTION_MANAGE_USERS) 从 106 漂到 107，r316 那句注释跟着改口。改的是登记名单本身，断言强度未动。
     finders: [{
       label: 'list_users 里那一发 authorize_request(..., ACTION_MANAGE_USERS)',
       pattern: 'authorize_request\\(request, ACTION_MANAGE_USERS',
