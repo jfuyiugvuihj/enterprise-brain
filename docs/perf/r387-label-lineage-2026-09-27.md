@@ -34,7 +34,14 @@
 现读生成 —— 重落地跑 `python scripts/r387_label_lineage.py --emit-doc-cells`，**不许手改这张表**。
 `chat.py` 再被并树撑长时，本表跟着走、不需要人回来改；锚块一旦不再唯一（那一格被删、被改名、或被人插了一段
 长得像的代码），`tests/test_r387_label_ruler_teeth.py` 会自己红并端出「表里印 X、现读 Y」与差了几格。
-本表之下的正文（含 §2–§7）里的行号是 R387/R390 当时那一次的读数，属**历史账**，不随并树更新 ⇒ 要现读只看本表。
+本表之下的正文里，一枚行号只有**三种身份**，逐枚当场可判——不留「整片都是历史账」这种可以被人当挡箭牌的口径：
+ 甲（**当下声称**）＝同一行、或同一表格列的表头，带着「现读」字样且说的是此刻盘上源码的坐标（§3 方案 A 那一格、
+   §8.7 凭据那一格、§9.3 最后一列）。这类坐标只许取自 `--emit-doc-cells`／`resolve_site` 的成品串，并且每一格都必须
+   有一枚常驻钉拿着它跟现场派生值对账：§1 表＝teeth，§9.3 最后一列＝R492，表外正文的单点声称＝R490。
+   🔴 写不出这枚钉，就不许写「现读」两个字。
+ 乙（**成对叙述**）＝同一句里「旧 ／ 新」两枚标号同时夹着坐标（§8.7 那次重锚留下的账）。
+ 丙（**历史操作账**）＝记的是当时那一次的读数与动作（§8.7 漂移账、§9.4 与 §9.6 的派工词对照账、已交回的旧读数）。
+乙丙两格原样留档、不随并树更新 ⇒ 要今天的坐标看 §1 那张表或 §9.3 最后一列，别拿它们当现读。
 
 | # | 这一跳是什么 | 站点（现读行号） | 载体 | 性质 |
 |---|---|---|---|---|
@@ -694,13 +701,13 @@ r346 `35 passed`、r302 `8 passed` —— 与本班树逐枚同值。
 后的连续固定串）现读；`LINEAGE_TEMPLATES` / `HOP_DOC_CELLS` 里只留 `{hopN}` 占位符；文档表里那格由
 `--emit-doc-cells` 重落地。🔴 r346 与 r238 两枚件本班一个字未动。
 
-| 派工词点的病 | 现在的锚（key） | 锚首行 token（唯一命中，逐枚现读） | 本班现读 |
+| 派工词点的病 | 现在的锚（key） | 锚首行 token（唯一命中，逐枚现读） | 本班现读＝左列锚 key 经 `resolve_site` 现场派生（R492 钉逐格对账，漂一枚即红） |
 |---|---|---|---|
-| 服务端强制覆盖那一格（旧账冻在 `3656..3719`） | `hop2` | `department = str(getattr(principal, "department", "") or "")` | `app/api/v1/chat.py:4088` |
-| 同一格的 docstring 理由段 | `hop2n` | `The document scope is decided here rather than accepted from the form: retrieval` | `:4080-4084` |
-| 接口形参默认值那一格（旧账冻在 `3644..3719` 起端） | `hop1` | `async def upload_document(file: UploadFile = File(...),` → `department: str = Form(""),` | `:4070-4072` |
-| 密级下传那四格（旧账冻在 `1534..1620` 一族） | `hop5f` `hop5g` `hop5h` `hop5i` `hop5j` | `classification: int = Form(1),` / `classification,`+`department or None,` / `if ok:` 起六行块 / `classification=classification,`+两行 / `classification=classification,`+`department=department,`+`scope=…` | `:4071` / `:4216` / `:4230` / `:4244` / `:4319` |
-| 目录账区间（旧账冻在 `748..763` 那格） | `hop6` + `hop6b`/`hop6c`/`hop6n` | `async def upload_document…` 区间终点 / `INSERT INTO documents(` / `department or None,` / `_version_metadata` 收尾 | `:3644-3728` → `:1023-1058`（`:1041` / `:1052`） |
+| 服务端强制覆盖那一格（旧账冻在 `3656..3719`） | `hop2` | `department = str(getattr(principal, "department", "") or "")` | `app/api/v1/chat.py:4381` |
+| 同一格的 docstring 理由段 | `hop2n` | `The document scope is decided here rather than accepted from the form: retrieval` | `:4373-4377` |
+| 接口形参默认值那一格（旧账冻在 `3644..3719` 起端） | `hop1` | `async def upload_document(file: UploadFile = File(...),` → `department: str = Form(""),` | `:4363-4365` |
+| 密级下传那四格（旧账冻在 `1534..1620` 一族） | `hop5f` `hop5g` `hop5h` `hop5i` `hop5j` | `classification: int = Form(1),` / `classification,`+`department or None,` / `if ok:` 起六行块 / `classification=classification,`+两行 / `classification=classification,`+`department=department,`+`scope=…` | `:4364` / `:4509` / `:4523` / `:4537` / `:4612` |
+| 目录账区间（旧账冻在 `748..763` 那格） | `hop6` + `hop6b`/`hop6c`/`hop6n` | `async def upload_document…` 区间终点 / `INSERT INTO documents(` / `department or None,` / `_version_metadata` 收尾 | `:3937-4021` → `:1084-1119`（`:1102` / `:1113`） |
 | 部门名册那一格（`list_user_departments`） | 🔴 **本单 46 枚锚里没有它** | 全仓 `app/**` 读不出这个符号（见 §9.6 落空账） | — |
 
 同一文件的多个站点**逐格一枚锚**（不共用），并由 `test_multi_site_hops_give_every_site_its_own_anchor`
