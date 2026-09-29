@@ -2,7 +2,7 @@
  * R315 · 「交成果」归位：一枚早就在树里的组件拿到自己的位置，而它自己一个字节都没被改
  *
  * 这枚文件量的五件事，各有各自的出处（判据编号沿用总控派工）：
- *  ② 🔴 ArtifactList.vue 对本基点 d609165 零改动 —— 锚点按记名提交现算，不就地重录今天的值；
+ *  ② 🔴 ArtifactList.vue 对本基点 dc47119（R509 并树那一笔，授权动它的单号写在下面）零改动 —— 锚点按记名提交现算，不就地重录今天的值；
  *     壳也不许「顺手」给它加 prop：挂载那一枚标签必须仍然不带任何属性。
  *  ③ 🔴 不许把它从 DataPanel.vue 摘掉：数据那一屏继续有它，两屏共用一枚组件 = 同一份账。
  *  ⑤ 🔴 壳不许长出第二本账 —— 尺子写成形状判据（扫壳源码，命中即红）。理由照 R316 判据③：
@@ -46,7 +46,7 @@ import {
 } from '../../router/index.js'
 
 /** 本单基点：总控派工指定的那一枚提交。判据② 的锚记的是这个名字，不是抄下来的 sha。 */
-const BASE_COMMIT = 'd609165'
+const BASE_COMMIT = 'dc47119'
 const ARTIFACT_LIST_REL = 'frontend/src/components/ArtifactList.vue'
 const DATA_PANEL_REL = 'frontend/src/components/DataPanel.vue'
 
