@@ -852,14 +852,9 @@ counts are equal or only part of the frame is visible and `code` stays the empty
   the department dimension really hid them. The rows exist; they are outside this account's
   visibility. This is the only member of the domain that carries a `message`.
 * `no_visible_rows` - the frame came back empty and the row layer **deliberately declines to say
-  why**. The department dimension had not hidden a row, so what clears the frame is the other
-  row-level dimension: classification. Its blank-cell reading is **ratified now, not open** -
-  H13 is closed, owner ruled 甲 (2026-09-28, see `## R467` at the end of this file) - so an empty
-  classification cell is level 1, and level 1 clears every account (`app/common/rbac.py`,
-  `filter_dataframe_rows` -> `fillna(1)`). A frame that reaches this code was therefore cleared
-  by rows **carrying an explicit classification value this account's clearance does not cover**. The
-  layer still names no cause: `app/agents/tools.py::_row_scope_reason` translates the department
-  counters only, and dressing an unmeasured cause up as a permission call is what R62/R64 ruled out.
+  why**. The department dimension had not hidden a row, so the clearing came from some other,
+  unratified dimension (classification is H13, owner-open). Guessing a cause here would present an
+  unratified dimension as a permission call, which R62/R64 ruled out.
 * `""` - nothing for this layer to report: a normal answer (some or all rows visible), or a table
   that genuinely has no rows. A genuinely empty table is *not* a permission event; it stays with
   the R170 `profile.empty` marker, and consumers must not dress it in visibility wording.
@@ -3547,11 +3542,7 @@ exactly `staff / manager / admin` -- one definition now (`CREATABLE_ROLES`,
 `app/common/permissions.py:41`) instead of three hand-copied lists, imported by `app/common/auth.py`
 (create, SSO re-assign) and `app/common/sso.py`. `auditor` stays in `ROLE_PERMISSIONS` and stays *not*
 creatable, with the reason stated where a reader will meet it: it has no clearance tier yet
-(`ROLE_CLEARANCE`, `app/common/rbac.py:31`). That is **not** H13 reopened: H13 closed as 甲 on
-2026-09-28 and settled only what level an *unlabelled* upload ingests at (`## R467` at the end of
-this file) - it gave `auditor` no tier, and `ROLE_CLEARANCE` still lists three roles. Whether
-`auditor` gets one, and which, is the owner's call and this ticket does not make it. So
-`POST /api/v1/users` with
+(`app/common/rbac.py:31`), and the tier question is H13, still with 业主. So `POST /api/v1/users` with
 `"role": "auditor"` still answers `400 非法角色: auditor`, and an `X-SSO-Role: auditor` header still
 lands on `staff` (`tests/test_r357_single_role_roster.py`). No switch was added: nothing in this
 family reads an environment variable.
@@ -5437,11 +5428,12 @@ new untracked file `tests/test_r397_read_legs_refuse_a_missing_table.py`. This f
 Physical lines, read off `git diff --numstat c0c4bcd`: `app/api/v1/chat.py` +55 / -1（那枚 `-1` 是 (c) 那一行
 散文的同行替换）。本文件是**尾部追加**：本单对它的写入只有本节，删 0 行；它不自称文末最后一节 —— 后来的
 单子会接着往它后面长，`## ` 行首枚数随每一次追加 +1（这一枚计数不属于本节，写进 prose 就是下一班的过期坐标）。
+
 ## R467 · 密级这一维结案入契约：缺省＝1 级＝公开，而「缺键」不是「缺 1」（`POST /upload` 与检索闸门，2026-09-28）
 
-**一句话**：业主已把 H13 裁定为**甲** —— 未标注密级的上传按 **1 级（最低公开）** 入库。这一格从今往后是写进契约的产品口径，不再是一条待修的缺陷；本节把三句话说死，并把契约里那两处「H13 还悬着」的过期表述**就地改口**（退役原句逐字引在下面，免得下一班把它们当新发现再报一遍）。
+**一句话**：业主已把 H13 裁定为**甲** —— 未标注密级的上传按 **1 级（最低公开）** 入库。这一格从今往后是写进契约的产品口径，不再是一条待修的缺陷；本节把三句话说死，而契约里那两处「H13 还悬着」的过期表述**原句一个字都不动**——本仓有八枚在册钉（`test_r388`／`test_r340`／`test_r373`／`test_r366`／`test_r367`／`test_r354` 两枚／`test_r414_b`）钉着这本契约「文末之前每一个字都不许动，只许往文末长」，连旁插都不许（09-29 本席实测：就地改口 8 枚红，插一段作废声明照样 8 枚红）。所以本节把两处原句逐字引在下面并当场宣布作废，免得下一班把它们当新发现再报一遍。
 
-**为什么这一节长在文末**：本契约的成文规矩是每单一节、按时间往文末长（在册钉 `tests/test_r397_read_legs_refuse_a_missing_table.py::test_the_contract_appends_one_section_and_deletes_nothing` 钉的正是「只许尾部追加，不许删节挪节」）。而这三条口径同时被三处读者消费 —— 写侧（`POST /upload` 的缺省）、读侧（检索闸门）、界面（上传那一屏的那句话）—— 塞进任何一处都只喂得饱一枚读者。所以本节独立长在文末，两处旧表述就地改口并各自点名本节，三个读者都走得进来。
+**为什么这一节长在文末**：本契约的成文规矩是每单一节、按时间往文末长（在册钉 `tests/test_r397_read_legs_refuse_a_missing_table.py::test_the_contract_appends_one_section_and_deletes_nothing` 钉的正是「只许尾部追加，不许删节挪节」）。而这三条口径同时被三处读者消费 —— 写侧（`POST /upload` 的缺省）、读侧（检索闸门）、界面（上传那一屏的那句话）—— 塞进任何一处都只喂得饱一枚读者。所以本节独立长在文末，两处旧表述原位不动、由本节逐字引用后宣布作废，三个读者都走得进来。
 
 ### 裁定与它裁到的范围
 

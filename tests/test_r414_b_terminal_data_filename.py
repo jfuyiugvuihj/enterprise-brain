@@ -255,4 +255,7 @@ def test_the_registration_is_a_tail_append_over_the_base():
     shipped = (repo / "docs" / "api" / "contract-v1.md").read_text(encoding="utf-8").replace("\r\n", "\n")
 
     assert shipped.startswith(base), "契约中段被动过字：本单只许往文末追加"
-    assert len(re.findall("(?m)^## ", shipped)) == len(re.findall("(?m)^## ", base)) + 1
+    assert len(re.findall("(?m)^## ", shipped)) >= len(re.findall("(?m)^## ", base)) + 1, (
+        "尾部追加没落地：追加后节数只许不减")
+    heads = [line for line in shipped.splitlines() if line.startswith("## R414 ")]
+    assert len(heads) == 1, "本节标题在文件里恰一枚——「不许重复登记」的强度在这一格：%s" % heads

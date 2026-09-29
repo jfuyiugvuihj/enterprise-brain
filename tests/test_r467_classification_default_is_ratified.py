@@ -3,12 +3,15 @@ r"""R467 判据① · 密级这一维的缺省与缺键必须写进契约，而�
 
 背景（现读自 `9c21490`）：业主已把 H13 裁定为**甲** —— 未标注密级的上传按 1 级（最低公开）入库。
 这一格从此是写进契约的口径，不再是缺陷；契约里那两处「H13 还悬着」的表述（`row_scope.code` 值域
-那一格的 `owner-open`、R357 讲 `auditor` 那一段的 `still with 业主`）随结案已成假话，本单就地改口。
+那一格的 `owner-open`、R357 讲 `auditor` 那一段的 `still with 业主`）随结案已成假话。
+🔴 但契约是 append-only：本单对那两句**一个字都不动**，改由文末的 `## R467` 一节逐字引用并
+宣布作废（09-29 实测：就地改口、或紧邻插一段作废声明，两种都会打红 8 枚在册钉）。
 
 四组判据逐枚对位（本件零手抄常数：每一枚数字都从真源现抠）：
 
-  · 甲 「H13 未决」字样在契约**活散文**里命中 0 条。逐字引文只许待在 ``` 围栏里 ——
-    「引文不是断言」沿用 R276 那枚口径钉的分法；把原句搬回活散文，本钉当场红。
+  · 甲 「H13 未决」的字样只许以**已登记作废的退役原句**形态存在：命中必须落在本节逐字引用的那一段里，
+    且 `## R467` 之后一处都不许有，且本节必须真带着逐字引文与作废声明 —— 三格缺一格就红。
+    逐字引文只许待在 ``` 围栏里 ——「引文不是断言」沿用 R276 那枚口径钉的分法。
   · 乙 契约明写 `缺省密级 = 1 级`，那个数字与四枚真源逐枚等值：路由缺省
     `classification: int = Form(n)`、入库缺省 `_scope_int(self.classification, n)`、
     界面缺省 `DEFAULT_UPLOAD_CLASSIFICATION`、以及 `1 级 = 本客户全员可检索` 那枚锚句里的级数。
@@ -133,9 +136,64 @@ def _sha(path: Path) -> str:
 
 # ==================== 甲 · 「H13 未决」的字样必须绝迹 ====================
 
+def _paragraph_blocks(text: str) -> list:
+    """围栏外按空行切成段落块，回 [(首行号, 行数, 段内全文), ...]。
+
+    行号口径与 `_prose_lines` 一致；段内全是连续非空行，所以首行号往后数行数
+    正好是它占的那几行。
+    """
+    blocks, buf = [], []
+    start = None
+    for number, line in _prose_lines(text):
+        if line.strip() == "":
+            if buf:
+                blocks.append((start, len(buf), "\n".join(buf)))
+            buf, start = [], None
+        else:
+            if start is None:
+                start = number
+            buf.append(line)
+    if buf:
+        blocks.append((start, len(buf), "\n".join(buf)))
+    return blocks
+
+
 def test_no_open_question_wording_survives_in_the_live_prose():
-    hits = _open_question_hits(_contract_text())
-    assert hits == [], "契约活散文里还有「H13 未决」的写法（假话）：" + repr(hits[:4])
+    """「H13 还悬着」的字样只许以**已登记作废的退役原句**形态存在，且绝不许长在节之后。
+
+    契约是 append-only：`_test_r397_...::test_the_contract_appends_one_section_and_deletes_nothing`
+    与 `_test_r414_b_...::test_the_registration_is_a_tail_append_over_the_base` 两枚在册钉要求
+    「基点逐字做前缀、只往文末长」，历史段落里那些过期表述一个字都动不得（09-29 本席实测：
+    就地改口、或紧邻插一段作废声明，两种都会打红 8 枚钉）。所以本钉不能要求「全文零命中」——
+    那等于逼下一班去改历史。判据换成三格，缺任何一格都红：
+      甲 每枚命中都必须落在「本节逐字引用并宣布作废的那一段」里 ⇒ 新增一处没人认领的
+          open 问句就红；
+      乙 `## R467` 那一节之后一处命中都不许有 ⇒ 本节自己把口径又悬回去就红；
+      丙 本节确实把那两枚原句逐字引了进来、并写了作废声明 ⇒ 删掉声明就红（甲格失去依据）。
+    """
+    text = _contract_text()
+    heads = [number for number, line in enumerate(text.split("\n"), 1)
+             if line.startswith(SECTION_HEAD)]
+    assert len(heads) == 1, "契约里 %s 命中 %d 处（要求恰好 1 处）：%s" % (
+        SECTION_HEAD, len(heads), heads)
+    section_start = heads[0]
+    hits = _open_question_hits(text)
+
+    after = [(number, pattern, line) for number, pattern, line in hits if number >= section_start]
+    assert not after, "%s 这一节自己把口径悬回去了：" % SECTION_HEAD + repr(after[:3])
+
+    allowed = set()
+    for start, size, joined in _paragraph_blocks(text):
+        if any(quote in joined for quote in RETIRED_QUOTES):
+            allowed.update(range(start, start + size))
+    stray = [(number, pattern, line) for number, pattern, line in hits if number not in allowed]
+    assert not stray, "契约活散文里冒出没人认领的「H13 未决」写法：" + repr(stray[:3])
+
+    section = _r467_section(text)
+    for quote in RETIRED_QUOTES:
+        assert quote in section, "本节没有逐字引用这枚退役原句，甲格失去依据：%r" % quote[:50]
+    assert "作废" in section and "逐字引" in section, (
+        "本节丢了作废声明：那两段过期表述又会被下一班当成新发现")
 
 
 def test_the_retired_sentences_are_still_quoted_verbatim_in_fences():
@@ -235,7 +293,10 @@ def test_the_contract_quotes_the_very_sentence_the_screen_renders():
 
 # ==================== 反证刀 ====================
 
-LIVE_NEW_LINE = ("  row-level dimension: classification. Its blank-cell reading is **ratified now, not open** -")
+#: 文末那一枚锚句（契约 append-only，追加只发生在文件最末；中段插字会被别的钉先咬住）。
+LIVE_TAIL_ANCHOR = "不是执行层可以顺手替 H13 补的第二刀。"
+#: 假装下一班又在文末写回一句没人认领的 open 问句。
+LIVE_NEW_LINE = "- 密级这一维的口径仍属 H13，业主未裁，本单不许替它编一档。"
 LIVE_DEFAULT_BULLET = "**缺省密级 = 1 级**（锚句：`缺省密级 = 1 级`）"
 LIVE_PUBLIC_BULLET = "**未标注入库即视为公开**（锚句：`未标注入库即视为公开`）"
 LIVE_MISSING_KEY_BULLET = "**密级缺键（不是缺 1）在检索侧永不可见**（锚句：`缺键` + `永不可见`）"
@@ -301,14 +362,14 @@ def _print_tally(knife: str, red: list, green: list) -> None:
 
 
 def test_counter_evidence_1_owner_open_back_in_live_prose_goes_red():
-    """刀1：把退役原句搬回活散文 ⇒ 「未决字样」那枚当场红，其余照旧绿。"""
+    """刀1：往契约**文末**追加一句没人认领的 open 问句 ⇒ 「未决字样」那枚红，其余照旧绿。"""
     tracked = _sha(CONTRACT)
     must_red = ("test_no_open_question_wording_survives_in_the_live_prose",)
-    with _window([(LIVE_NEW_LINE, "  some " + RETIRED_QUOTES[0])]) as info:
+    with _window([(LIVE_TAIL_ANCHOR, LIVE_TAIL_ANCHOR + "\n\n" + LIVE_NEW_LINE)]) as info:
         red, green = _tally()
         assert set(must_red) <= set(red), "刀1 没咬住：红的是 %s" % red
         assert _sha(CONTRACT) == tracked, "被跟踪的契约在反证窗里被改过"
-        _print_tally("刀1 owner-open 回活散文", red, green)
+        _print_tally("刀1 文末追加 open 问句", red, green)
     assert info["restored"] and info["shadow_clean"], info
     assert _sha(CONTRACT) == tracked
 
