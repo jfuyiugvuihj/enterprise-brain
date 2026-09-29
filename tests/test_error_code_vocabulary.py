@@ -54,12 +54,26 @@ RATIFIED = {
 # 「密级拦截」那一枚码 R64 **不建**，理由有两条，两条都得有人钉着：
 # 1) 今天没有任何 emit 点 —— 行级判定的唯一出处 app/common/rbac.py 不判密级（密级维度沿用
 #    旧实现），``Principal.max_clearance`` 全仓只存不用（见台账 R78①）；
-# 2) 业主尚未裁口径（H13）。
+# 2) 这一维的拒绝今天**已经有在册码承担**，再造一枚同义码就没有 emit 点可指：
+#    ``app/rag/filters.py::DocumentRetrievalScope.allows`` 走不通时，由同一 NamedTuple 的
+#    ``refusal_code`` 报 ``clearance_insufficient``（越档）或 ``resource_scope_missing``
+#    （密级元数据读不出来）；``app/common/policy.py::authorization_decision`` 用的是同一套词。
+#    两枚都登记在下面那张裸码表里。
+# 口径出处（R472 改口，取代上面旧写法里那两条「等业主」的说法）：密级口径已于 2026-09-28
+# 裁定＝甲 —— 出处 ``docs/handoff/2026-09-17-human-gates.md`` 最后一节「H13 结案 ＋ A1/A3 裁定」，
+# 口径本身写进契约 ``docs/api/contract-v1.md`` 的「## R467」节（缺省密级＝1 级＝本客户全员
+# 可检索，缺键行才永不可见）。🔴 那枚裁定裁的是「未标注的上传按几级入库」，它**没有**新建
+# 一枚拦截码，也没有给这枚欠账码配上 emit 点：本表今天仍然登记为零 emit 点，不许读成已实现。
 # 硬加进封闭枚举只有两种下场：被 test_no_ratified_code_is_invented 判红，或者逼出一个人造
-# emit 点去哄测试 —— 后者是本项目最重的一种作弊。等 H13 裁完、app/** 里真出现吐这个码的
-# 那一行，再把它从这张表移进 RATIFIED 并按裁定评审；这张表就是「移进来之前先有出处」的门。
+# emit 点去哄测试 —— 后者是本项目最重的一种作弊。哪天真在 app/** 里写出吐这个码的那一行，
+# 再把它从这张表移进 RATIFIED 并按契约「## R467」节的口径评审；这张表就是「移进来之前先有
+# 出处」的门。牙在 test_a_deferred_code_stays_out_of_the_enum_until_it_has_an_emit_point。
 DEFERRED_CODES = {
-    "classification_blocked": "H13（密级口径未裁）+ R78①（max_clearance 只存不用）",
+    # 键与值都有钉（tests/test_r472_h13_closed_wording.py）：把值改写成「已实现」也会红。
+    "classification_blocked": "零 emit 点：密级拒绝已由 clearance_insufficient / "
+                              "resource_scope_missing 两枚在册码承担（app/rag/filters.py::refusal_code）"
+                              "+ R78①（max_clearance 只存不用）；口径出处 2026-09-28 裁定＝甲"
+                              "（human-gates 最后一节「H13 结案 ＋ A1/A3 裁定」／契约 R467）",
 }
 
 # ==================== 登记：有 emit 点、但按裁定不进枚举的裸码（R142 立的账） ====================
@@ -171,7 +185,11 @@ BARE_CODES_OUTSIDE_THE_ENUM = {
     "clearance_insufficient": {
         "emitter": "app/common/policy.py::authorization_decision",
         "folds_into": "permission_denied",
-        "why": "同上族：密级维度那一刀。H13 未裁之前它连语义边界都还是旧的（见 R78①）。",
+        "why": "同上族：密级维度那一刀。这一维的口径已于 2026-09-28 裁定＝甲（出处 human-gates "
+               "最后一节「H13 结案 ＋ A1/A3 裁定」；口径写进契约 docs/api/contract-v1.md 的"
+               "「## R467」节）；它留在封闭枚举外是因为「按什么维度拒的」这套独立词汇——并进 "
+               "permission_denied 会让客户端分不出维度。语义与折法一个字没动"
+               "（``Principal.max_clearance`` 仍只存不用，见 R78①）。",
     },
     "resource_scope_missing": {
         "emitter": "app/common/policy.py::authorization_decision",
@@ -293,12 +311,19 @@ def test_no_bare_error_code_lives_inside_a_string_literal_in_chat_py():
 
 @pytest.mark.parametrize("code", sorted(DEFERRED_CODES))
 def test_a_deferred_code_stays_out_of_the_enum_until_it_has_an_emit_point(code):
-    """登记不是注释：口径没裁、出处没有，就既不许进枚举，也不许已经在吐这个码。
+    """登记不是注释：还没有 emit 点、拒绝已由在册码承担，就既不许进枚举，也不许已经在吐这个码。
 
-    两头都钉。哪天 H13 裁完、真写出了 emit 点，这条会红着提醒下一个人把码移进
-    RATIFIED 并删掉这条登记，而不是让他重新查一遍"这枚码为什么不在枚举里"。
+    两头都钉。哪天 app/** 里真写出吐这个码的那一行，这条会红着提醒下一个人把码移进
+    RATIFIED 并删掉这条登记，再按契约 ``docs/api/contract-v1.md``「## R467」节那一枚口径评审
+    （密级已于 2026-09-28 裁定＝甲，出处 ``docs/handoff/2026-09-17-human-gates.md`` 最后一节
+    「H13 结案 ＋ A1/A3 裁定」——裁的是缺省入库档位，不是新建一枚拦截码），
+    而不是让他重新查一遍"这枚码为什么不在枚举里"。
     """
-    assert code not in _enum_codes(), f"{code} 的口径仍待 H13 裁定，不许先进封闭枚举"
+    assert code not in _enum_codes(), (
+        f"{code} 还没有 emit 点（密级拒绝已由 clearance_insufficient / resource_scope_missing "
+        f"两枚在册码承担），不许先进封闭枚举——口径出处 2026-09-28 裁定＝甲"
+        f"（human-gates 最后一节「H13 结案 ＋ A1/A3 裁定」／契约 R467）"
+    )
 
     sources = [path for path in (_REPOSITORY / "app").rglob("*.py")]
     hits = [
@@ -307,4 +332,7 @@ def test_a_deferred_code_stays_out_of_the_enum_until_it_has_an_emit_point(code):
         if code in path.read_text(encoding="utf-8")
     ]
 
-    assert hits == [], f"{code} 已经有出处了：{hits}，该移进 RATIFIED 并按 H13 的裁定评审"
+    assert hits == [], (
+        f"{code} 已经有出处了：{hits}，该移进 RATIFIED 并按契约「## R467」节评审"
+        f"（密级口径 2026-09-28 裁定＝甲，human-gates 最后一节「H13 结案 ＋ A1/A3 裁定」）"
+    )

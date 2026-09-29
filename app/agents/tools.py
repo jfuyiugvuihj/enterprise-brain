@@ -114,8 +114,13 @@ _NO_VISIBLE_ROWS_CODE = "no_visible_rows"
 # 数据集准入闸（app/common/policy.py::authorization_decision）的内部 reason → 公开码。
 # 全仓只此一份，放在翻译层：policy/rbac 的判定一个字都不改，内部词表改名也不许破坏公开契约。
 # 没进这张表的 reason（含 clearance_insufficient）一律说成 permission_denied：那只是
-# 「这份资源对你没有授权」这个事实本身，不含更细的判断。密级口径属 H13（业主未裁），
-# 本单不许借映射表替它下结论，也不为它新增枚举成员。
+# 「这份资源对你没有授权」这个事实本身，不含更细的判断。密级这一维今天不是悬案：
+# 密级口径已于 2026-09-28 裁定＝甲（出处 docs/handoff/2026-09-17-human-gates.md 最后一节
+# 「H13 结案 ＋ A1/A3 裁定」；口径已写进契约 docs/api/contract-v1.md 的「## R467」节），
+# 而这一维的拒绝由 authorization_decision 现成的两枚在册裸码承担——越档回
+# clearance_insufficient、密级元数据缺失回 resource_scope_missing，与检索侧
+# app/rag/filters.py::DocumentRetrievalScope.refusal_code 同一套词。翻译层不为它另开一码，
+# 也不替它新增枚举成员。
 _POLICY_DENIAL_CODES = {
     "authentication_required": "authentication_required",
     "principal_inactive": "account_unavailable",
@@ -1142,7 +1147,10 @@ def search_docs(query: str, config: RunnableConfig) -> str:
 # ---- R62：行级口径「为什么看不见」的文案层 ------------------------------------
 # 判定的唯一出处是 app/common/rbac.py::filter_dataframe_rows，本层一行都不重判：
 # reason_code 与计数字段全部来自 rbac.filter_dataframe_rows_with_scope 的元数据
-# （键名 rbac.ROW_SCOPE_ATTR）。密级维度属 H13（业主未裁口径），这里既不动它、也不对它下结论。
+# （键名 rbac.ROW_SCOPE_ATTR）。密级口径已于 2026-09-28 裁定＝甲（出处
+# docs/handoff/2026-09-17-human-gates.md 最后一节「H13 结案 ＋ A1/A3 裁定」；口径已写进契约
+# docs/api/contract-v1.md 的「## R467」节），但本层的计数器只有部门那一维，所以密级这一维
+# 这里既不动它、也不替它报因由。
 _NO_VISIBLE_ROWS = "当前账号没有可见数据行"
 _QUERY_DENIED_HEAD = "查询未完成：这些数据文件的行不在当前账号的可见范围内，本轮没有向你展示任何一行。"
 _QUERY_DENIED_HINT = "若这些数据本该对你可见，请让管理员核对你的部门归属，以及这些文件的部门标注。"
@@ -1164,7 +1172,11 @@ def _row_scope_reason(info: dict | None) -> str:
     if reason == "department_column_missing":
         # 这一支必须空手回去。``rows_hidden_by_department`` 在 ``department_column_missing`` 下**恒为 0**
         # （rbac 只在「表有部门列」的路径上记部门维度的隐藏行），也就是部门维度一行都没藏过，
-        # 这帧是被另一个维度清空的——而那个维度的口径属 H13（业主未裁），本单明文不许对它下结论。
+        # 这帧是被另一个维度清空的——而本层只翻译部门维度的计数器（契约
+        # docs/api/contract-v1.md 的「## R467」节把这一支的理由正是这么改口的：换掉的只是
+        # 理由，这一支仍然不报因由）。密级口径已于 2026-09-28 裁定＝甲（出处
+        # docs/handoff/2026-09-17-human-gates.md 最后一节「H13 结案 ＋ A1/A3 裁定」），
+        # 它不在本层的计数器里，所以照样不许对它下结论。
         # 判据①的正解＝说不清因由就不说：写成「本表没有部门列……过滤后一行不剩」是把别的维度的账
         # 挂到部门列上（张冠李戴），且 ``rows_in`` 还是那道过滤**之前**的计数，连数都不对。
         # 本层自己在 department_scope 分支立的同一规矩（部门维度没藏过就不下结论）不许在这里绕过。
@@ -1212,7 +1224,10 @@ def _row_scope_line(filename: str, info: dict | None) -> str:
 # 上面那张表把「为什么看不见」翻译给人看，这里把同一件事翻译成给机器看的码。两边都只读
 # rbac 的 reason_code，且都必须先过 _row_scope_reason：文案空手回去的那一支（表本来就是
 # 空的、因由根本不在部门维度上），码也一律落到 no_visible_rows——只说「本轮没有可见行」
-# 这个事实，不替没裁的维度下结论。判据源只有一个，码与人话不可能各说各话。
+# 这个事实，不替本层没有计数器的维度下结论（密级口径已于 2026-09-28 裁定＝甲，出处
+# docs/handoff/2026-09-17-human-gates.md 最后一节「H13 结案 ＋ A1/A3 裁定」；口径已写进契约
+# docs/api/contract-v1.md 的「## R467」节，那里明写这一支仍然只报 no_visible_rows、不报因由）。
+# 判据源只有一个，码与人话不可能各说各话。
 _ROW_SCOPE_PUBLIC_CODES = {
     "department_scope": _ROW_SCOPE_DENIED_CODE,
     "authorization_unavailable": _ROW_SCOPE_DENIED_CODE,
