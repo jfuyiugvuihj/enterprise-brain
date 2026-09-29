@@ -55,7 +55,10 @@ ARTIFACT_RESOURCE_TYPE = "artifact"
 #: The sidecar this registry used to own. Read once at construction; never written again.
 LEGACY_METADATA_NAME = ".artifact-metadata.json"
 
-#: The columns of ``artifacts``, exactly as migration 0001 declares them.
+#: The columns of ``artifacts``: the twelve migration 0001 declares plus the two generation
+#: lineage columns migration 0017 adds, in table order (the PostgreSQL adapter's INSERT names
+#: this tuple in this order, and ``tests/test_r256_artifact_deleted_at_lands.py`` compares the
+#: two positionally).
 #: ``tests/test_r248_artifact_column_alignment.py`` compares this tuple, the field set of
 #: :class:`ArtifactRecord` and the ``CREATE TABLE`` text against each other, so a column
 #: the code never writes and a field no column can hold are both a red instead of a
@@ -73,7 +76,19 @@ ARTIFACT_COLUMNS = (
     "deleted_at",
     "created_at",
     "metadata",
+    "session_id",
+    "request_id",
 )
+
+#: The two generation-lineage columns, and the only place in this repository that spells them
+#: as *keys*. A writer hands its values to :meth:`ArtifactRegistry.register` as keyword
+#: arguments; a reader gets them back through :meth:`ArtifactRecord.lineage_payload`. There is
+#: therefore exactly one assembly for this pair, which
+#: ``tests/test_r509_artifact_lineage_writer_source.py`` holds by AST instead of by memory.
+#: ``NULL`` on a column means "this deployment never recorded which turn produced this", and
+#: the surface answers that by leaving the key out entirely - never by publishing an empty
+#: string, which the UI would read as "there is a source cell and it is blank" (R503 SS3.1).
+ARTIFACT_LINEAGE_COLUMNS = ("session_id", "request_id")
 
 #: The scope dimensions the ``artifacts`` table has no column for. They travel inside the
 #: ``metadata`` jsonb, which is the only place this table can hold them - inventing a
@@ -122,6 +137,31 @@ def _to_iso(value: Any) -> str | None:
     return None if parsed is None else parsed.isoformat()
 
 
+def _lineage_value(value: Any) -> str | None:
+    """One recorded lineage value, or ``None`` for "nobody recorded it".
+
+    Blank collapses to ``None`` rather than to ``""`` because the table is nullable and the
+    surface promises exactly two answers: the row names the generating turn, or the key is
+    absent. Two spellings of "unrecorded" is how a third one - "there was no question" -
+    starts looking legitimate.
+    """
+    text = str(value or "").strip()
+    return text or None
+
+
+def normalize_lineage(carrier: Mapping[str, Any] | None = None, **values: Any) -> dict[str, str | None]:
+    """Project any carrier onto the two canonical lineage names - the single assembly.
+
+    Accepts whatever the caller already has in hand (a stored row, a record, or two keyword
+    arguments) and answers the same dict: both names, each folded by :func:`_lineage_value`.
+    Nothing is invented and nothing is dropped: a caller that wants only the recorded keys
+    filters on the value, which is what :meth:`ArtifactRecord.lineage_payload` does.
+    """
+    source = dict(carrier or {})
+    source.update(values)
+    return {name: _lineage_value(source.get(name)) for name in ARTIFACT_LINEAGE_COLUMNS}
+
+
 def _as_mapping(value: Any) -> dict[str, Any]:
     """Read the ``metadata`` column whichever shape the backend used (jsonb, text, dict)."""
     if isinstance(value, Mapping):
@@ -165,6 +205,8 @@ class ArtifactRecord:
     status: str
     created_at: str
     source_version_id: str | None = None
+    session_id: str | None = None
+    request_id: str | None = None
     expires_at: str | None = None
     deleted_at: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -243,6 +285,21 @@ class ArtifactRecord:
             "expires_at": self.expires_at,
         }
 
+    def lineage_payload(self) -> dict[str, str]:
+        """Which turn generated this row, as far as the table knows it.
+
+        Keys are omitted when the column is NULL: "not recorded" has to look different from
+        "recorded as nothing", and an empty string or a placeholder would let a screen draw one
+        face for two different facts. The names come from
+        :data:`ARTIFACT_LINEAGE_COLUMNS` through :func:`normalize_lineage`, so a caller cannot
+        get a lineage key that this module has not stored.
+        """
+        return {
+            name: value
+            for name, value in normalize_lineage(vars(self)).items()
+            if value is not None
+        }
+
 
 class InProcessArtifactStore:
     """Rows held for the life of the process, for callers that decline durable storage.
@@ -316,6 +373,8 @@ def _to_row(record: ArtifactRecord) -> dict[str, Any]:
         "expires_at": record.expires_at,
         "deleted_at": record.deleted_at,
         "created_at": record.created_at,
+        "session_id": record.session_id,
+        "request_id": record.request_id,
         # 深拷贝：``dict(metadata)`` 只挡一层，部门列表仍会与记录共享同一枚对象。
         "metadata": deepcopy(record.metadata),
     }
@@ -441,6 +500,7 @@ class ArtifactRegistry:
                 status=str(raw.get("status") or ""),
                 created_at=_to_iso(raw.get("created_at")) or "",
                 source_version_id=str(raw["source_version_id"]) if raw.get("source_version_id") else None,
+                **normalize_lineage(raw),
                 expires_at=_to_iso(raw.get("expires_at")),
                 deleted_at=_to_iso(raw.get("deleted_at")),
                 metadata=scope,
@@ -519,8 +579,18 @@ class ArtifactRegistry:
         classification: str = "internal",
         visibility: str = "private",
         source_version_id: str | None = None,
+        session_id: str | None = None,
+        request_id: str | None = None,
         expires_at: datetime | None = None,
     ) -> ArtifactRecord:
+        """Store the bytes' row, and - when the caller knows them - the turn that made them.
+
+        ``session_id`` / ``request_id`` are the two migration 0017 columns. They are optional
+        on purpose: a caller that cannot name the generating turn must produce a row that says
+        so, which is why an empty value collapses to ``None`` here instead of being stored as
+        ``""``. They are never read off the *reading* principal; that is the accessing call's
+        identity, and putting it on the row is the false lineage R503 blade K2 names.
+        """
         if principal.status != "active" or not principal.user_id:
             raise PermissionError("active principal is required to create an artifact")
         if not artifact_type.strip():
@@ -545,6 +615,7 @@ class ArtifactRegistry:
             resource_type=ARTIFACT_RESOURCE_TYPE,
             resource_id=artifact_id,
             source_version_id=source_version_id,
+            **normalize_lineage(session_id=session_id, request_id=request_id),
             storage_key=str(path),
             content_sha256=_hash_file(path),
             status="active",
@@ -653,6 +724,8 @@ def register_artifact(
     classification: str = "internal",
     visibility: str = "private",
     source_version_id: str | None = None,
+    session_id: str | None = None,
+    request_id: str | None = None,
     expires_at: datetime | None = None,
 ) -> ArtifactRecord:
     return artifact_registry.register(
@@ -662,5 +735,7 @@ def register_artifact(
         classification=classification,
         visibility=visibility,
         source_version_id=source_version_id,
+        session_id=session_id,
+        request_id=request_id,
         expires_at=expires_at,
     )

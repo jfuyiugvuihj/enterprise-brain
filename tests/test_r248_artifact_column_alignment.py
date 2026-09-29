@@ -1,10 +1,10 @@
 """R248 J-2 —— 列对齐静态钉：``ArtifactRecord`` 的字段集与 ``artifacts`` 的列集双向相等。
 
 防的是"表里有 owner 列、代码从来不写"这种假接入。所以两头都比：
-表里有、记录里没有 → 红；记录里有、表里装不下 → 也红。靶子是迁移原文
-``migrations/0001_core_resource_versions.sql`` 自己，不是任何人的转述——本单一枚新迁移
-都不建、``migrations/manifest.json`` 一个字都不改（那两样归 R251），所以这枚钉读到的
-列集就是今天要落的那张表。
+表里有、记录里没有 → 红；记录里有、表里装不下 → 也红。靶子是迁移原文自己，不是任何人的转述：``migrations/0001_core_resource_versions.sql``
+的 ``CREATE TABLE`` 加上 ``migrations/0017_artifact_generation_lineage.sql`` 的
+``ADD COLUMN``（R509 的两枚血缘列），两枚合起来才是今天真要落的那张表。列集只从 DDL
+派生，不从任何一份代码抄——否则「记录里有、表里没有」这一半就永远红不了。
 
 再加一枚动态钉：真发给库的 ``INSERT`` 点了哪些列。静态相等只证明"名字对得上"，
 它证明不了"值真的写出去"。
@@ -21,9 +21,16 @@ from app.storage.persistence import PostgresPersistenceAdapter
 
 REPO = Path(__file__).resolve().parents[1]
 MIGRATION = REPO / "migrations" / "0001_core_resource_versions.sql"
+#: R509 的加列迁移：ALTER TABLE ... ADD COLUMN 也是这张表的一部分，漏读它，这枚钉就会把
+#: 两枚真列当成「记录里有、表里装不下」的假接入。
+LINEAGE_MIGRATION = REPO / "migrations" / "0017_artifact_generation_lineage.sql"
 TABLE_BLOCK = re.compile(
     r"CREATE TABLE IF NOT EXISTS artifacts \((?P<body>.*?)\n\);",
     re.DOTALL | re.IGNORECASE,
+)
+ADDED_COLUMN = re.compile(
+    r"ALTER TABLE IF EXISTS artifacts\s+ADD COLUMN IF NOT EXISTS (?P<name>\w+)",
+    re.IGNORECASE,
 )
 CONSTRAINT_WORDS = ("primary", "unique", "foreign", "constraint", "check", "exclude")
 
@@ -56,7 +63,23 @@ def _artifact_columns():
             "DEFAULT" in upper,
         )
     assert declarations, "解析出来一枚列都没有，是解析的问题而不是表的问题"
+    declarations.update(_added_columns())
     return declarations
+
+
+def _added_columns():
+    """0017 往 artifacts 追加的列：{列名: (NOT NULL, 有 DEFAULT)}，同样只从 DDL 读。
+
+    枚数不写死在这里——写死就变成第二份账。今天它是两枚（session_id、request_id），
+    两枚都可空、都没有 DEFAULT，所以 :func:`test_required_fields_line_up_with_not_null_columns`
+    要求对应的字段必须自带默认值，NULL 才读得回来。
+    """
+    sql = LINEAGE_MIGRATION.read_text(encoding="utf-8")
+    added = {}
+    for name in ADDED_COLUMN.findall(sql):
+        assert name not in added, f"追加列重复了：{name}"
+        added[name] = (False, False)
+    return added
 
 
 def _fields():

@@ -12,7 +12,7 @@ r"""R349 · 「目录尾号」的唯一账本：一枚字面量 + N 处 import�
 0017 会**静默通过**，那是比今天这种手抄更危险的假绿。所以本文件同时是形状钉 ——
 派生式、以及别处再抄一份字面量，两件事都由下面的用例抓红。
 
-现号：0016，主题 notification_states（R299 给通知收件箱落的读者生命周期表，不是第二本通知台账）。
+现号：0017，主题 artifact_generation_lineage（R509 给 artifacts 落下的两枚可空生成血缘列 session_id / request_id，存量行全 NULL，不回填、不给默认值）。
 
 改口流程（新排一枚迁移时照着走）：
   1. 只改本文件的 CATALOG_TAIL_VERSION 与 CATALOG_TAIL_NAME 这两枚字面量，再把上面"现号"那一行
@@ -39,8 +39,8 @@ LEDGER_MODULE = Path(__file__).name
 TESTS_DIR = Path(__file__).resolve().parent
 
 #: 🔴 目录尾号。整个测试套件只许在这里写死一次，其余件一律 import。
-CATALOG_TAIL_VERSION = "0016"
-CATALOG_TAIL_NAME = "notification_states"
+CATALOG_TAIL_VERSION = "0017"
+CATALOG_TAIL_NAME = "artifact_generation_lineage"
 
 #: 上面那段 docstring 是"这一版的主题"的落点，判据②的失败消息把人送回这里。
 _LEDGER_DOC = __doc__ or ""

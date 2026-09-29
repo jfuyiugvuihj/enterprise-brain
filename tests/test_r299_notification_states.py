@@ -163,7 +163,7 @@ def test_the_migration_ships_no_row_writing_and_nothing_dropped():
 
 
 def test_a_clean_first_boot_applies_every_version_through_0016(monkeypatch):
-    """空账 + 真 runner：0016 必须被 apply 并且按同一枚摘要记进账本。
+    """空账 + 真 runner：0016 必须被 apply 并且按同一枚摘要记进账本（目录尾号另有其主）。
 
     借 r120 那台替身而不是自己搓一枚：它会为认不出的语句报错，也不会替谁把"没跑到"说成"跑过了"。
     0010 那两枚 embedding 声明由夹具补齐 —— 首装到不了 0016 的唯一正当原因必须是本版的错。
@@ -177,7 +177,10 @@ def test_a_clean_first_boot_applies_every_version_through_0016(monkeypatch):
     applied = mig.apply_migrations(session, COMPOSE_DEFAULT_DATABASE)
 
     assert [item.version for item in applied] == [item.version for item in mig.MIGRATIONS]
-    assert session.applied[-1] == NEW_VERSION, session.applied
+    # R509 排了 0017 之后，"本版的 0016 被 apply" 与 "它是目录尾号" 是两件事，必须分开钉：
+    # 尾号只由 tests/test_r349_catalog_tail_ledger.py 那枚账本判，本件判自己那一版真落进了库。
+    assert NEW_VERSION in session.applied, session.applied
+    assert session.applied[-1] == CATALOG_TAIL_VERSION, session.applied
     recorded = session.ledger[NEW_VERSION]
     assert recorded == next(item.checksum for item in mig.MIGRATIONS if item.version == NEW_VERSION)
     created = [sql for sql in session.executed_sql if 'CREATE TABLE IF NOT EXISTS notification_states' in sql]

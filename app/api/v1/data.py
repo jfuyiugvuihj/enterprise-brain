@@ -511,10 +511,18 @@ def _authorized_principal(request: Request, action: str):
 
 
 def _artifact_response(path: str, artifact_type: str, principal) -> dict:
+    """Register one generated file and answer with its delivery URLs.
+
+    The request identity is the generating request's own (R509): this route has no
+    conversation behind it, so it records a request and leaves the session unrecorded rather
+    than inventing one. The registry, not this function, decides how those two names are
+    spelled and stored.
+    """
     artifact = artifact_storage.register_artifact(
         path,
         artifact_type=artifact_type,
         principal=principal,
+        request_id=principal.request_id,
     )
     return {
         "path": artifact.content_url,

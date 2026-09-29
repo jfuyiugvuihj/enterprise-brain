@@ -16,6 +16,9 @@
  *      axios 实例挂 Authorization）。content_url / download_url 一律不进 <img :src>、
  *      <a :href> 或 window.open —— 那些请求不带 Authorization，会把 401/403 伪装成
  *      「图坏了」（ChartViewer.vue:8-10 同一条判据）。界面上出现过的地址只有 blob: 地址。
+ *   ④ 来源那一格（R509）两张脸不并成一格：后端登记过就报出那一轮/那一笔请求，没登记就明说
+ *      「没有登记它是哪一次产生的」。这一格只读列表行的 session_id / request_id 两枚可空列
+ *      （migrations/0017），不借创建时间、owner 或访问者身份猜一个来源。
  *   ③ 删除是两步内联确认，不用 window.confirm：第一次点击把按钮变成「确认删除？」，第二次
  *      点击才发 DELETE。状态机是 advanceDelete() 这个纯函数，点另一行只会把待确认挪到那一行
  *      （返回 arm 而不是 execute），所以一次错位点击不可能删掉没点过的行。DataPanel 的数据
@@ -66,10 +69,34 @@ export function artifactExpiryText(value) {
   return stamp ? '有效期至 ' + stamp.slice(0, 10) : ''
 }
 
+/**
+ * 「这一条是哪一次产生的」那一格的两张脸（R509）。
+ *
+ * 两枚键在后端是**可空列**（migrations/0017），没登记就整格缺席，所以这里只有两种可能：
+ *   登记过 -> 说得出是哪一次问答 / 哪一笔请求，报的是行里那两枚原值；
+ *   没登记 -> 明说「没有登记」，不画「—」、不画 0、不画空串，也不借创建时间或 owner 猜一轮。
+ * 两张脸必须由 face 分开，模板按 face 分支渲染，谁都不许顶替谁。
+ */
+export const LINEAGE_UNRECORDED_TEXT = '这一条没有登记它是哪一次产生的'
+
+export function lineageView(source) {
+  const row = source && typeof source === 'object' ? source : {}
+  const session = typeof row.sessionId === 'string' ? row.sessionId.trim() : ''
+  const request = typeof row.requestId === 'string' ? row.requestId.trim() : ''
+  if (!session && !request) {
+    return { face: 'unrecorded', text: LINEAGE_UNRECORDED_TEXT, title: LINEAGE_UNRECORDED_TEXT }
+  }
+  const parts = []
+  if (session) parts.push('问答 ' + session)
+  if (request) parts.push('请求 ' + request)
+  const text = '来自 ' + parts.join(' · ')
+  return { face: 'lineage', text, title: text }
+}
+
 /** 后端行 -> 视图模型。snake_case 字段名只在这一个函数里出现，模板里全是视图字段。 */
 export function mapArtifactRow(row) {
   const source = row && typeof row === 'object' ? row : {}
-  return {
+  const view = {
     artifactId: String(source.artifact_id || ''),
     filename: String(source.filename || '未命名产物'),
     typeRaw: String(source.artifact_type || ''),
@@ -78,6 +105,12 @@ export function mapArtifactRow(row) {
     downloadUrl: String(source.download_url || ''),
     createdAt: formatArtifactTime(source.created_at),
     expiryText: artifactExpiryText(source.expires_at),
+    sessionId: String(source.session_id || ''),
+    requestId: String(source.request_id || ''),
+  }
+  return {
+    ...view,
+    lineage: lineageView(view),
   }
 }
 
@@ -440,6 +473,12 @@ defineExpose({ loadArtifacts, reload })
               {{ item.createdAt }}
               <template v-if="item.expiryText">· {{ item.expiryText }}</template>
             </span>
+            <span
+              class="artifact-source"
+              :class="'artifact-source--' + item.lineage.face"
+              :title="item.lineage.title"
+              data-testid="artifact-lineage"
+            >{{ item.lineage.text }}</span>
           </span>
           <span class="artifact-actions">
             <UiButton
@@ -571,6 +610,21 @@ defineExpose({ loadArtifacts, reload })
 .artifact-meta {
   color: var(--text-3);
   font-size: var(--t-xs);
+}
+
+/* 来源那一格：两张脸共用一个尺寸，只靠字重与层次区分，不新增任何色值。 */
+.artifact-source {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.artifact-source--lineage {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.artifact-source--unrecorded {
+  font-style: italic;
 }
 
 .artifact-actions {

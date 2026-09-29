@@ -317,6 +317,8 @@ _TABLES = {
             "deleted_at",
             "created_at",
             "metadata",
+            "session_id",
+            "request_id",
         ),
     ),
     "trace_events": _PostgresTable(

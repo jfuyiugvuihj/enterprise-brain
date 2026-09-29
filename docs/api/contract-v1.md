@@ -5798,3 +5798,49 @@ R414 那节文末登记的「今天还没接的两格」（legacy `done` 与队�
   本单交的是后端侧的字节，屏上要多接两道读数属前端线一手。
 
 本节没有新增错误码、没有新增外部请求、没有新增 Chroma 依赖或写点，也没有改动任何一枚在册件。
+
+
+## R509 · Artifact listing rows and generation lineage: `GET /api/v1/artifacts`
+
+Page through the artifacts this caller may open, newest first. One row is
+`app/api/v1/artifacts.py::_artifact_row`: `artifact_id`, `artifact_type`, `content_url`,
+`download_url`, `expires_at`, `filename`, `owner_id`, `department_ids`, `classification`,
+`visibility`, `created_at`, `source_version_id`. Membership is `authorization_decision` with
+`resource:view`, the same call the content route makes, so a row is listed exactly when it can
+be fetched.
+
+Two more keys join the row **only when the registry has them**: `session_id` and `request_id`
+(`migrations/0017_artifact_generation_lineage.sql`, two nullable columns; no backfill, no
+default). They answer 「这张图是哪一次问答、哪一笔请求产生的」from the row itself, recorded at
+generation by the writer that made it:
+
+* the Agent tool path (`app/agents/tools.py::_register_artifact`) records the conversation its
+  `configurable.thread_id` names plus the request `span_identity()` already resolved;
+* the direct `POST /data/chart` / `POST /data/export` path (`app/api/v1/data.py`) records the
+  generating request from the route Principal and leaves the session unrecorded, because a
+  direct call has no conversation to name.
+
+**Both keys are absent, never null, when nothing was recorded.** Absence is the only spelling
+of 「本机没有登记这一条是哪一次产生的」: it is not the same answer as `0`, as `""`, or as
+「没有问答」, and a client must not fold the two into one face. Existing rows are all in the
+unrecorded shape, and every row a deployment wrote before this migration stays there.
+
+The two keys come off the artifact's own row and never off the reading caller: a row that
+names its generating turn names the same turn for every subject allowed to see it. These keys
+open no new authorization judgement — a caller that can see the row can see them.
+`audit_events.request_id` continues to record the *accessing or deleting* call, never the
+generating one, and is not a substitute. `source_version_id` answers a different question
+(which dataset version) and is still `null` for every artifact generated today: neither
+production writer feeds it.
+
+`metadata` is unchanged and stays a closed set of five scope keys (`artifact_type`, `filename`,
+`department_ids`, `classification`, `visibility`); lineage never travels through it, and the
+read path still drops any key outside that allow list.
+
+Backend evidence: `tests/test_r509_artifact_lineage_lands.py` (23, in-memory app + existing
+`FakePostgres` double, no service, no real database, no model port) — both faces of the row,
+blank collapses to absent, the columns really land in the INSERT and survive a second
+registry, an old row reads back as the same old row, the five-key allow list untouched, and an
+AST gate that the two names are assembled in `app/storage/artifacts.py` only. Frontend:
+`frontend/src/components/__tests__/r509-artifact-lineage-face.test.js` (10) plus the two
+mounted faces added to `r503-artifact-lineage-face.test.js`.

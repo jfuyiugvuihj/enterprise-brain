@@ -19,7 +19,7 @@ from app.agents.evidence import (
     record_document_hits,
     record_tool_status,
 )
-from app.trace.spans import start_tool_call
+from app.trace.spans import span_identity, start_tool_call
 
 
 def _get_user_context(user: dict | None = None) -> dict:
@@ -250,6 +250,21 @@ def _artifact_urls(path: str, artifact_type: str, config) -> tuple[str, str] | N
     return artifact.content_url, artifact.download_url
 
 
+def _tool_turn(config) -> tuple:
+    """(会话号, 请求号) for the turn that is running this tool, or (None, None).
+
+    Both legs already exist on the request path: ``thread_id`` is what the orchestrator names
+    the conversation (``app/agents/orchestrator.py`` puts it in ``configurable``), and
+    ``span_identity`` is the existing resolver for the request. This function reads them, it
+    does not re-declare them; a background or direct call that carries neither produces a row
+    that records nothing, which is the honest answer and not a placeholder to fill in.
+    """
+    conf = (config or {}).get("configurable", {}) or {}
+    session = str(conf.get("thread_id") or "").strip()
+    request = str(span_identity(config).get("request_id") or "").strip()
+    return (session or None, request or None)
+
+
 def _register_artifact(path: str, artifact_type: str, config):
     """Register a generated file and record it as evidence for this execution."""
     principal = _artifact_principal(config)
@@ -257,10 +272,13 @@ def _register_artifact(path: str, artifact_type: str, config):
         return None
     from app.storage import artifacts as artifact_storage
 
+    turn_session, turn_request = _tool_turn(config)
     artifact = artifact_storage.register_artifact(
         path,
         artifact_type=artifact_type,
         principal=principal,
+        session_id=turn_session,
+        request_id=turn_request,
     )
     record_artifact(
         bag_from_config(config),

@@ -149,7 +149,14 @@ MAX_LIST_LIMIT = 100
 
 
 def _artifact_row(record) -> dict:
-    """One artifact as the list reports it: delivery URLs plus the scope it belongs to."""
+    """One artifact as the list reports it: delivery URLs, its scope, and its generation lineage.
+
+    The two lineage keys come from ``record.lineage_payload()``, i.e. from the artifact row's
+    own ``session_id`` / ``request_id`` columns (R509 / migration 0017) - never off the reading
+    Principal, which would make the same row claim a different source for every visitor. A
+    column that is NULL publishes no key at all, so "this deployment never recorded which turn
+    produced it" stays visibly different from "it was produced by the empty string".
+    """
     row = record.public_payload()
     row.update(
         {
@@ -162,6 +169,7 @@ def _artifact_row(record) -> dict:
             "source_version_id": record.source_version_id,
         }
     )
+    row.update(record.lineage_payload())
     return row
 
 
