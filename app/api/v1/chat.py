@@ -1003,6 +1003,21 @@ def _save_message(session_id: str, role: str, content: str, steps: list | None =
 
 
 def _list_sessions() -> list[dict]:
+    """整表捞会话行，每行带一枚 ``msg_count``（该会话的用户消息数）。
+
+    R497：从前这一句写成 ``SELECT s.*, (SELECT COUNT(*) FROM session_messages WHERE ...) as
+    msg_count FROM sessions s``——外层零谓词整表进 Python，选中列里那枚相关子查询按行求值，
+    库里 1020 行就是 1020 枚 ``COUNT``。现在换成**一枚** ``GROUP BY`` 预聚合再 ``LEFT JOIN``，
+    没命中的行由 ``COALESCE`` 补 0，读到的数与从前逐枚相等（凭据见
+    ``docs/testing/r497-session-list-read-leg-2026-09-29.md``）。
+
+    🔴 归属一个字都没有前推：外层仍然零 owner/部门谓词，拦人的仍是 ``GET /sessions`` 里那枚
+    台账终审 ``session_registry.is_owned_by``。库里那枚 owner 列与台账 ``owner_id``
+    今天逐枚一致只是数据态（无 FK、无解绑口，R484 已把「偶然承重」记成在册风险），前推出去的
+    筛子只会把「台账说这人所有」的行吃掉。在册牙
+    ``tests/test_r484_session_read_leg_owner_filter.py::test_the_read_leg_has_no_owner_predicate_in_sql``
+    同时把这格钉成静态形状，本单不许动它。
+    """
     if not _session_database_available():
         result = []
         for session in _MEM_SESSIONS.values():
@@ -1016,9 +1031,16 @@ def _list_sessions() -> list[dict]:
     with _sess_conn() as conn:
         _require_sessions_read_schema(conn, "sessions", "session_messages")
         rows = conn.execute(
-            """SELECT s.*,
-               (SELECT COUNT(*) FROM session_messages WHERE session_id = s.id AND role = 'user') as msg_count
-               FROM sessions s ORDER BY s.updated_at DESC"""
+            """WITH user_turn_counts AS (
+                   SELECT session_id, COUNT(*) AS msg_count
+                   FROM session_messages
+                   WHERE role = 'user'
+                   GROUP BY session_id
+               )
+               SELECT s.*, COALESCE(m.msg_count, 0) AS msg_count
+               FROM sessions s
+               LEFT JOIN user_turn_counts m ON m.session_id = s.id
+               ORDER BY s.updated_at DESC"""
         ).fetchall()
         return [dict(r) for r in rows]
 
