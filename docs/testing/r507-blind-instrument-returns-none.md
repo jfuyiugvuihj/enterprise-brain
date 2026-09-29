@@ -105,3 +105,23 @@ REPEAT_DELIVERY_UNMEASURED) or 0) == 0`` 读这枚证词，``None`` 与 0 同权
   ``test_a5`` 原文 ``AssertionError: assert None == 0``；``test_a7`` 原文 ``assert None == 0``。
 - 两形各回什么（同一输入并排，``8857a8d`` vs 终态）：摘瞎 ``0`` → ``None``；指纹在位且无重合 ``0`` → ``0``；
   跨流重发 ``1`` → ``1``；同流同文 ``0`` → ``0``；``[]``/``None`` 入参 ``0`` → ``0``。
+## 10. 总控裁定：另一半今天落了码（09-29 19:5x，总控自修）
+
+本席裁定**放行**执行层列的两处禁碰件，理由是今晚那扇窗要用它们出数：
+`R513` 的 A② 判读口径明写「用 `scripts/r239_stream_gap_offline_audit.py --frames <新帧账>` 出数」，
+而 run10 的读数是要进永久记录的——让一把已知会摇假零的尺去写 run10 的纸，等于把事故 #73 那一族
+再抄一遍。禁碰是**对执行层**的隔离纪律，不是对本席的禁令；本席自己动它，同时把纸一起改口。
+
+* 落码：`cross_stream_repeat_frames` 在「帧表非空且一枚逐帧指纹都没有」时 `return None`，
+  口径与 `eval_transport_ask_v2._cross_stream_repeats:717-719` 逐字同形。
+  两形照旧分家：拿到指纹且确实没重合 ⇒ 仍回 `0`；真有跨流重发 ⇒ 仍回枚数。
+* 改口：`tests/test_r506_a2_ledger_required_keys.py` 那枚现状钉按它自己写的话倒向新口径，
+  函数名 `..._today_reads_zero_not_none` -> `..._now_reads_none`，三形各一枚断言（摘瞎 `None` /
+  干净 `0` / 真重合 `>=1` + `cross_stream_repeat_ids` 非空），强度只升不降。
+  汇总那一格 `cross_stream_repeat_unmeasurable` 由 0 -> 1 是同一笔改口的应有之义。
+* 未动：第七枚合取的判法一字未改（`recomputed_ledger` 里 `in (None, 0)` 两值同权），
+  所以本单**不重判任何当年读数**——执行层已逐行对判在册四份账 `old != new` = 0 行。
+* 反证已现跑：落码前 b6b 那枚当场红 `assert 0 is None`（摘掉判器那两行它就复现假零），
+  落码后 6 枚读者件 **66 passed**（r506_a2_ledger / r506_a2_single_frame / r507 / r471 / r239 / r215）。
+* 残余分歧照旧挂号（本单不治）：空读形 `[]` 在 v2 回 `0`（钉在 `test_r471_...:449`，不在写域）、
+  在判器回 `None`；`scripts/eval_frame_caliber_readout.py:61/:82` 那半把同口径分身未治。

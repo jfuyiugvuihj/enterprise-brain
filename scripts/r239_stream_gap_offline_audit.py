@@ -152,6 +152,10 @@ def cross_stream_repeat_frames(row):
     records = row.get("frames")
     if not isinstance(records, list) or not records:
         return None
+    # R507（总控自修，与 eval_transport_ask_v2._cross_stream_repeats 同口径）：帧在而一枚逐帧指纹
+    # 都拿不到 = 量具被摘瞎那一窗，本格从没量过，交回 None；摘掉这两行它会摇一枚假零冒充量过。
+    if not any(str(record.get("sha") or "") for record in records):
+        return None
     earliest = {}
     repeats = 0
     for record in records:

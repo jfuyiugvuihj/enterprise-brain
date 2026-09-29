@@ -159,23 +159,40 @@ def test_b8_arrival_less_ledger_reports_unmeasurable_not_a_clean_schedule():
     assert check["min_increment_chars"] is None
     assert check["max_gap_ms"] is None
     assert audit.summarize([audit.judge_row(legacy)])["schedule_measurable_rows"] == 0
-def test_b6b_the_blind_instrument_shape_today_reads_zero_not_none():
-    """🔴 缺口现状钉（R506 读数件 §5 第 5 条）：``frames`` 列在、逐帧却一枚指纹都不带那一形，
-    判器今天读 **0**（读作「量过了，没重合」），而它的 docstring 承诺的是回 ``None``（没量过）。
 
-    承诺写在 ``scripts/r239_stream_gap_offline_audit.py:147-150`` 那段 docstring（「或有这一列却
-    一枚逐帧指纹都不带 ⇒ 回 ``None``」），落码在 :153-167：只有「``frames`` 不是列表 / 是空列表」
-    才 ``return None``，循环里 ``if not sha: continue`` 把没指纹的帧直接跳过，末尾交回 ``repeats``。
-    后果：那一形会**通过**第七枚合取（``recomputed_ledger`` 里 ``in (None, 0)`` 两值都算过），
-    与 :149 那句「不许报 0 冒充量过」相反。run9 没吃到它 —— ``metric-02``/``scope-02`` 交回的是
-    **空列表**（``None``），所以 ``重合量不出=2`` 今天是对的；但「量具被摘瞎」那一窗会读成一片绿。
 
-    判器是禁改件，所以这里只把**今天真实读回的数字**钉住，并把矛盾摆到明面。谁改了判器让
-    它按 docstring 交回 ``None``，这枚钉会当场红 —— 那是它该有的反应：逼着纸与尺一起改。
+def test_b6b_the_blind_instrument_shape_now_reads_none():
+    """R507 收口钉：``frames`` 列在、逐帧却一枚指纹都不带那一形，判器交回 ``None``（没量过）。
+
+    这一枚原本是 R506 立的**缺口现状钉**，它钉住当时的假零并明写：「谁改了判器让它按 docstring
+    交回 ``None``，这枚钉会当场红 —— 那是它该有的反应：逼着纸与尺一起改」。R507 由执行层治了
+    ``scripts/eval_transport_ask_v2.py`` 里的 ``_cross_stream_repeats``，另一半（本判器
+    ``cross_stream_repeat_frames``）由总控 09-29 同族另笔治掉 ⇒ 纸与尺一起改口：函数名、断言、
+    下面那格汇总账一起倒向新口径。
+
+    🔴 强度只升不降：倒向不是把「读 0」换成「读 None」就完事。另两形必须同时钉住在位——
+    拿到指纹且确实没有跨流重合 ⇒ 仍回 **0**（不许倒打一耙成没量过）；拿到指纹且真有跨流重发 ⇒
+    仍回 **枚数并点名题号**。三形分家：谁把 R507 那两行摘掉只瞎摘瞎形，另两形当场红。
+
+    第七枚合取的判法一字未动（``recomputed_ledger`` 里 ``in (None, 0)`` 两值同权）：本单改的是
+    纸面可分辨度，不重判任何当年读数——在册四份账 run6/run7/run8p2/run9 逐行对判 ``old != new``
+    = 0 行，凭据见 ``docs/testing/r507-blind-instrument-returns-none.md``。
     """
     blind = full_row(frames=[{"stream": 0, "at": 1, "chars": 20, "elapsed_ms": 12.0},
                              {"stream": 0, "at": 2, "chars": 40, "elapsed_ms": 40.0}])
 
-    assert audit.cross_stream_repeat_frames(blind) == 0, "现状：无指纹那一形读 0，不读 None"
-    assert audit.recomputed_ledger(blind) is True, "后果：第七枚合取放它过去了"
-    assert audit.summarize([audit.judge_row(blind)])["cross_stream_repeat_unmeasurable"] == 0
+    assert audit.cross_stream_repeat_frames(blind) is None, "摘瞎形：没量过就是没量过，不许报 0 冒充量过"
+    assert audit.recomputed_ledger(blind) is True, "第七枚合取对 None 与 0 同权：不追加定罪也不洗白"
+    assert audit.summarize([audit.judge_row(blind)])["cross_stream_repeat_unmeasurable"] == 1, \
+        "摘瞎那一形必须计进『没量过』那一格，否则汇总又把它读回一片绿"
+
+    clean = full_row(frames=[{"stream": 0, "at": 1, "chars": 20, "elapsed_ms": 12.0, "sha": "aaaa"},
+                             {"stream": 0, "at": 2, "chars": 40, "elapsed_ms": 40.0, "sha": "bbbb"}])
+    assert audit.cross_stream_repeat_frames(clean) == 0, "证词在位且确实没重合 ⇒ 必须回 0，不许赖成没量过"
+    assert audit.summarize([audit.judge_row(clean)])["cross_stream_repeat_unmeasurable"] == 0
+
+    repeat = full_row(frames=[{"stream": 0, "at": 1, "chars": 20, "elapsed_ms": 12.0, "sha": "cccc"},
+                              {"stream": 1, "at": 2, "chars": 20, "elapsed_ms": 40.0, "sha": "cccc"},
+                              {"stream": 1, "at": 3, "chars": 40, "elapsed_ms": 60.0, "sha": "dddd"}])
+    assert audit.cross_stream_repeat_frames(repeat) >= 1, "证词在位且真重合 ⇒ 枚数必须照实"
+    assert audit.summarize([audit.judge_row(repeat)])["cross_stream_repeat_ids"], "真重合必须点名题号"
