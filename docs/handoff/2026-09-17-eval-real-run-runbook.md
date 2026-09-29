@@ -495,3 +495,12 @@ sys.exit(1 if flags else 0)
 2. 🔴 **`VECTOR_DUAL_WRITE` 现值是 `on`，不是 `off`**。`docker-compose.yml:161/204/241` 里的 `${VECTOR_DUAL_WRITE:-off}` 只是**未赋值时的默认**，覆盖点在 `deploy/.env.server:56`。⇒ 前置第 5 步的 `--env-file deploy/.env.server` 不但不能省，开窗前还必须先现读一次并把值抄进报告抬头；**「我以为是 off」这种推断式读数从今天起不算凭据**（同一形状的错误本仓已第三次）。
 3. 🔴 **本窗的检索腿是 Chroma，而现网 Chroma 已知带病**：105 题 k=5 里 **21 题空 top-5**、1008 枚自探针 **138 枚取不到自己**（R264 报告 §3 与 `docs/perf/raw/p3-2026-09-26/chroma-unreachable-vectors.json`）。⇒ 三条后果：① A④ 逐类分数与 C 两格的读数必须**标注「读路径 = Chroma 遗留件」**，不许当作 PG 读路径的验收；② 若业主窗内临时决定切读，**A/C/D 全部读数作废重跑**，不许新旧混报；③ 那 21 题若本轮又空命中，是**已知缺陷复现，不是新回归**——逐格判读按这个数分开归因（根因在途单 R269 正在定）。
 4. **收窗判读补一条**：R269 落地前 `scripts/compare_vector_recall.py` 的**退出码不可全信**——九处「前置不满足」（`:100/:135/:148/:156/:166/:181/:185/:190/:376`）全部返回 **1**，与「1 = 有差异」撞车；空库时还把真因（0 枚样本）报成「两边排序天然不同」。看到 rc=1 先读 stderr 第一行再定性。
+
+## 订正五（2026-09-29 第三十格·总控自修·R511）：P-19 从此有在册工具，且「订正二」那条判据是半对的
+
+- 前置第 10 格从前只能靠 `%TEMP%\ka.txt` 里一枚仓外手写进程的读数自证。09-29 现取：那枚文件**不存在**、仓内 `rg -ln "SetThreadExecutionState|ES_CONTINUOUS" scripts/` **零命中** ⇒ 这一格今天是「没人量」，不是「量过且过」。⇒ 工具落进仓内：`python scripts/window_keep_awake.py --loop --interval 240`（开窗期常驻）／`--once`（单发）／`--check`（判器，退出码 0/1），牙在 `tests/test_r511_p19_keep_awake_lock.py`（主树 `.venv` 现跑 **10 passed**）。
+- 🔴 **「订正二」要再订正一次**：`SetThreadExecutionState` 交回的是**上一次**的执行需求位（MSDN: returns the previous execution request flags；0＝失败）。所以第一次调用的正常成功值**恰好就是** `0x80000000`；「稳态回 `0x80000003`」只在 `--loop` 第二次以后成立（上一次设的就是它）。订正二里「只有回 0 才是失败」这半句对，但它顺手否掉 `0x80000000` 的那半句会把好锁读成死锁。⇒ 在册判据改成一句话：**返回值非 0 即成功，此外不看位**；「锁还挂着吗」由 stamp 文件 mtime 判（`MAX_STAMP_AGE_SECONDS = 300`，240 s 一续留 60 s 余量）。
+- 🔴 一枚一手坑（写代码的人下次别再来一遍）：ctypes 不声明 `restype`/`argtypes` 时 `0x80000003` 被当有符号 int 传、API 交回 `None`，本件第一版因此把成功读成失败。牙 `test_d1_the_ctypes_signature_is_declared` 现在盯着它——签名声明不是讲究，是这枚锁能不能挂上的开关。
+- 这把锁是**进程存活期内的临时锁**：`--loop` 退出或被杀即回到该机原有电源配置，本件一行电源设置都没改（业主 09-29 明令「别设为永眠」）。`powercfg /query STANDBYIDLE` 现取 AC=0 是上一班留下的既有状态，本件不重复动；但按 §10 原话，单独拿它当 P-19 通过仍是假绿。
+- 开窗前置第 10 格的**新写法**（不许再抄 `%TEMP%\ka.txt`）：开窗前 `--check` 必须 rc=0；开窗期常驻进程活着与否以 stamp 的 mtime 为唯一凭据，`--check` 那句红话会点名是「文件不存在」／「API 交回 0」／「超过 300 秒没续」哪一种。
+
