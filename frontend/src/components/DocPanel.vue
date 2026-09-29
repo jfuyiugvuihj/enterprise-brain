@@ -402,9 +402,9 @@ const classificationChoices = computed(() => UPLOAD_CLASSIFICATION_LEVELS.map(le
   isDefault: level === DEFAULT_UPLOAD_CLASSIFICATION,
 })))
 
-/** 选择框旁边那一句：只说这一屏真做得到的事。部门那一格归服务端（chat.py 的 docstring 明写理由）。 */
+/** 选择框旁边那一句（R467 判据②）：只说这一屏真做得到的事 —— 这一发带的是哪一档、**不选会怎样**（默认档 = 密级 1 级 = 不设密级门槛，全公司的人都读得到），部门那一格归服务端（chat.py 的 docstring 明写理由）。 */
 const classificationNote = computed(() =>
-  `这一发按 ${classificationWords(uploadClassification.value)} 上传 · 部门由服务端按你的账号判定`)
+  `这一发按 ${classificationWords(uploadClassification.value)} 上传 · 不选就是默认档 ${classificationWords(DEFAULT_UPLOAD_CLASSIFICATION)}：不设密级门槛，全公司的人都读得到（部门由服务端按你的账号判定）`)
 
 /**
  * 后端在成功体里说「有 N 份文档存在，但不在当前账号的可见范围内」，界面此前一个字都不提。

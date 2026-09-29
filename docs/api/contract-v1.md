@@ -852,9 +852,14 @@ counts are equal or only part of the frame is visible and `code` stays the empty
   the department dimension really hid them. The rows exist; they are outside this account's
   visibility. This is the only member of the domain that carries a `message`.
 * `no_visible_rows` - the frame came back empty and the row layer **deliberately declines to say
-  why**. The department dimension had not hidden a row, so the clearing came from some other,
-  unratified dimension (classification is H13, owner-open). Guessing a cause here would present an
-  unratified dimension as a permission call, which R62/R64 ruled out.
+  why**. The department dimension had not hidden a row, so what clears the frame is the other
+  row-level dimension: classification. Its blank-cell reading is **ratified now, not open** -
+  H13 is closed, owner ruled 甲 (2026-09-28, see `## R467` at the end of this file) - so an empty
+  classification cell is level 1, and level 1 clears every account (`app/common/rbac.py`,
+  `filter_dataframe_rows` -> `fillna(1)`). A frame that reaches this code was therefore cleared
+  by rows **carrying an explicit classification value this account's clearance does not cover**. The
+  layer still names no cause: `app/agents/tools.py::_row_scope_reason` translates the department
+  counters only, and dressing an unmeasured cause up as a permission call is what R62/R64 ruled out.
 * `""` - nothing for this layer to report: a normal answer (some or all rows visible), or a table
   that genuinely has no rows. A genuinely empty table is *not* a permission event; it stays with
   the R170 `profile.empty` marker, and consumers must not dress it in visibility wording.
@@ -3542,7 +3547,11 @@ exactly `staff / manager / admin` -- one definition now (`CREATABLE_ROLES`,
 `app/common/permissions.py:41`) instead of three hand-copied lists, imported by `app/common/auth.py`
 (create, SSO re-assign) and `app/common/sso.py`. `auditor` stays in `ROLE_PERMISSIONS` and stays *not*
 creatable, with the reason stated where a reader will meet it: it has no clearance tier yet
-(`app/common/rbac.py:31`), and the tier question is H13, still with 业主. So `POST /api/v1/users` with
+(`ROLE_CLEARANCE`, `app/common/rbac.py:31`). That is **not** H13 reopened: H13 closed as 甲 on
+2026-09-28 and settled only what level an *unlabelled* upload ingests at (`## R467` at the end of
+this file) - it gave `auditor` no tier, and `ROLE_CLEARANCE` still lists three roles. Whether
+`auditor` gets one, and which, is the owner's call and this ticket does not make it. So
+`POST /api/v1/users` with
 `"role": "auditor"` still answers `400 非法角色: auditor`, and an `X-SSO-Role: auditor` header still
 lands on `staff` (`tests/test_r357_single_role_roster.py`). No switch was added: nothing in this
 family reads an environment variable.
@@ -5428,3 +5437,64 @@ new untracked file `tests/test_r397_read_legs_refuse_a_missing_table.py`. This f
 Physical lines, read off `git diff --numstat c0c4bcd`: `app/api/v1/chat.py` +55 / -1（那枚 `-1` 是 (c) 那一行
 散文的同行替换）。本文件是**尾部追加**：本单对它的写入只有本节，删 0 行；它不自称文末最后一节 —— 后来的
 单子会接着往它后面长，`## ` 行首枚数随每一次追加 +1（这一枚计数不属于本节，写进 prose 就是下一班的过期坐标）。
+## R467 · 密级这一维结案入契约：缺省＝1 级＝公开，而「缺键」不是「缺 1」（`POST /upload` 与检索闸门，2026-09-28）
+
+**一句话**：业主已把 H13 裁定为**甲** —— 未标注密级的上传按 **1 级（最低公开）** 入库。这一格从今往后是写进契约的产品口径，不再是一条待修的缺陷；本节把三句话说死，并把契约里那两处「H13 还悬着」的过期表述**就地改口**（退役原句逐字引在下面，免得下一班把它们当新发现再报一遍）。
+
+**为什么这一节长在文末**：本契约的成文规矩是每单一节、按时间往文末长（在册钉 `tests/test_r397_read_legs_refuse_a_missing_table.py::test_the_contract_appends_one_section_and_deletes_nothing` 钉的正是「只许尾部追加，不许删节挪节」）。而这三条口径同时被三处读者消费 —— 写侧（`POST /upload` 的缺省）、读侧（检索闸门）、界面（上传那一屏的那句话）—— 塞进任何一处都只喂得饱一枚读者。所以本节独立长在文末，两处旧表述就地改口并各自点名本节，三个读者都走得进来。
+
+### 裁定与它裁到的范围
+
+- **裁定**：H13 = 甲。原始问句 = `docs/handoff/2026-09-17-human-gates.md` 的 D4 行（「未标注密级的上传按『1 级=最低公开』入库，是有意的吗」）；裁定送达本单：总控线 2026-09-28 现读。
+- **它没裁的东西**（别顺着本节往外推，每一格都现读自 `9c21490`）：
+  - 没给 `auditor` 补密级档位：`ROLE_CLEARANCE`（`app/common/rbac.py`）今天仍只有 `staff / manager / admin` 三枚；
+  - 没让第 4 档变得可达：没有任何角色的 clearance 够得着它，所以上传界面只放 `UPLOAD_CLASSIFICATION_LEVELS = [1, 2, 3]`；
+  - 没改任何一行代码：本单对 `app/**` 零写入，改口只发生在文字上。
+
+### 三条口径（契约可见，逐枚点名真源）
+
+1. **缺省密级 = 1 级**（锚句：`缺省密级 = 1 级`），也就是 **未标注入库即视为公开**（锚句：`未标注入库即视为公开`）—— 没有任何一次入库会因为「没点密级」而搜不到，它换来的是这一维不设门槛。第一现场是 API 契约层的缺省值 `classification: int = Form(1)`（`app/api/v1/chat.py::upload_document`），不是索引层的兜底；`DocumentPublication.scope_metadata()` 随后把这枚值随**每一条 chunk** 落库（`app/rag/indexing.py`，`_scope_int(self.classification, 1)`）。行级那一维同色：`app/common/rbac.py::filter_dataframe_rows` 对密级列 `fillna(1)`。
+2. **1 级 = 本客户全员可检索**（锚句：`1 级 = 本客户全员可检索`）。检索档位是 `frozenset(range(1, principal.clearance + 1))`（`app/rag/filters.py::_resolve_document_retrieval_scope`），而 clearance 最低为 1 —— `clearance_for` 对**任何**角色（含不在 `ROLE_CLEARANCE` 里的那些）都回 ≥ 1 ⇒ 没有任何账号的档位集合会漏掉 1。🔴 **这句话只管密级这一维**：部门维是另一道独立的闸门（非管理员要 `department` 匹配，账号没有部门时一行都不给），「全员可检索」**不等于**「全员可读到别人部门的文档」。
+3. **密级缺键（不是缺 1）在检索侧永不可见**（锚句：`缺键` + `永不可见`）。`app/rag/retrieval_pipeline.py` 的 BM25 语料行写的是 `meta.get("classification")`，**不带**第二枚实参 `, 1` 那个缺省 —— 缺键交回 `None`，`DocumentRetrievalScope.allows()` 的 `int(None)` 落进它自己的 `except TypeError` 返回 `False`。PGVector 读腿同色：语料把 NULL 原样保留（`app/rag/pg_store.py` 那句 `Kept as NULL, not filled with 1`），排名语句里 `classification = ANY(...)` 对 NULL 天然出局（同文件 `sql_scope_filter` 的 docstring 明写两枚引擎「谁被允许看什么」不因后端而变）。**谁能造出缺键行**：遗留件与外部直写的行 —— 现行 `scope_metadata()` 每条 chunk 都写具体密级，所以这一族是纵深防御，不是现行漏权；但契约不许任何读侧把它洗回 1 级，那正是 R57 修掉的成因。
+
+### 界面上那句话（判据②的同源处）
+
+上传那一屏选择框旁边的说明句必须把这枚缺省说成人话，且屏上**零技术串**（`classification=1` 这类字面量一律不许上屏）。今天上屏的那一句：
+
+```text
+这一发按 密级 1 级 上传 · 不选就是默认档 密级 1 级：不设密级门槛，全公司的人都读得到（部门由服务端按你的账号判定）
+```
+
+句里「密级 N 级」那一段出自全站唯一那份措辞 `classificationLabel`（`frontend/src/lib/provenance.js`），本单没有第二套词汇；档位数字与 `DEFAULT_UPLOAD_CLASSIFICATION` 同源，而它与上面第 1 条那枚 `Form(1)` 由 `tests/test_r467_classification_default_is_ratified.py`（判据①）与 `frontend/src/components/__tests__/r467-upload-default-plainwords.test.js`（判据②）两头钉住。
+
+### 本节改口的两句（逐字引，引文在围栏里 = 引文不是断言）
+
+**退役原句 ①**（站在 `## Dataset Row-Level Visibility` 里 `row_scope.code` 值域的 `no_visible_rows` 那一支）：
+
+```text
+unratified dimension (classification is H13, owner-open).
+```
+
+- 为什么今天成假话：H13 = 甲 已经裁了这枚维度按几级入库，它不再是「没裁的维度」。
+- **行为一个字没变**：这一支仍然只报 `no_visible_rows`、仍然不报因由。换掉的只是理由 —— 现在成立的理由是「`app/agents/tools.py::_row_scope_reason` 只翻译部门维度的计数器」，不是「那枚维度还没人拿主意」。
+
+**退役原句 ②**（站在 `## Listing accounts: the three faces of GET /api/v1/users` 里 R357 讲 `auditor` 那一段）：
+
+```text
+(`app/common/rbac.py:31`), and the tier question is H13, still with 业主.
+```
+
+- 为什么今天成假话：甲裁的是「未标注入库按几级」，它没有替 `auditor` 定档位。把 auditor 的档位记在 H13 名下，等于让下一班以为这件事已经有人拿着。
+
+### 今天没动的三处旧表述（只登记，本单写域之外，已作为请裁项交回总控）
+
+`app/common/permissions.py`（`CREATABLE_ROLES` 上方那段注释）、`app/common/rbac.py` 模块头、`app/agents/tools.py::_row_scope_reason` 里 `department_column_missing` 那一支的注释，今天仍把密级口径写成「等业主定」的形状；`tests/test_error_code_vocabulary.py` 也把 `classification_blocked` 登记在同一族里。逐字如下：
+
+```text
+密级口径是 H13，业主未定，本单不许替它编一档
+密级维度不在本单范围内：``fillna(1)``（缺密级按最低档处理）属 H13，等业主定口径，这里一个字没改。
+而那个维度的口径属 H13（业主未裁），本单明文不许对它下结论
+```
+
+🔴 本单硬禁 `app/**` 与在册测试件，一枚字都没改。要么改口，要么把它们改判成「auditor 档位」这一笔独立的账 —— 那是总控的裁定，不是执行层可以顺手替 H13 补的第二刀。
+
