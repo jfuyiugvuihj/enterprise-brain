@@ -5,8 +5,14 @@
 本件把这句话从自觉变成钉：
   ① 静态（AST）：import 只许在 stdlib 白名单里，网络/HTTP/DB/文件复制那一族一枚都不许出现；
      `subprocess` 只许 `run`，且 argv 首元素必须是字面量 "git"；不许出现 `open(` 与任何写盘 API；
-  ② 动态：把 `subprocess.run` 换成留痕的假手，跑一遍完整读数，逐条核它只调过 git log / git ls-files；
+  ② 动态：把 `subprocess.run` 换成留痕的假手，跑一遍完整读数，逐条核它只调过白名单里的查询；
   ③ 白名单本身：尺子内部那道 `ALLOWED_GIT` 闸要真咬人 —— 递一枚 `git status` 进去必须当场拒。
+
+R498 加档要新用一枚 `git check-ignore`（纯查询）。加档不许把「只读」这条闸变松，所以本件同批升级：
+  ④ 白名单逐字点名（三枚查询，一枚都不许多），且白名单与写动词表必须不相交；
+  ⑤ 一枚写动词都不许走到 git：递 `commit/checkout/restore/add/clean/reset/gc/apply/worktree/push…`
+     进去必须当场 SourceError，且假手记录到的子进程数为 0（拒在闸口，不是拒在 git）；
+  ⑥ `check-ignore` 只许走 `--stdin` 送路径，且整把尺跑完仍只发白名单里的子命令。
 
 另附一枚口径钉：docs 证据窗只吃 docs/**，不许顺手把 tests/ 的自述当账面证据。
 """
@@ -67,9 +73,23 @@ def imported_names(tree):
 # ① 静态
 # ---------------------------------------------------------------------------
 
+#: git 里会动盘/动历史的动词：一枚都不许出现在白名单里，一枚都不许走到子进程。
+WRITE_VERBS = (
+    "add", "amend", "apply", "checkout", "cherry-pick", "clean", "commit", "clone", "fetch",
+    "gc", "init", "merge", "mv", "notes", "pull", "push", "rebase", "reset", "restore", "rm",
+    "switch", "tag", "worktree", "bisect", "filter-branch", "rerere", "stash",
+)
+
+
 def test_the_import_list_is_bounded(r491):
     assert imported_names(TREE) <= ALLOWED_IMPORTS, "多出来的 import 得先证明它不写盘不联网"
-    assert r491.ALLOWED_GIT == ("log", "ls-files")
+    assert r491.ALLOWED_GIT == ("check-ignore", "log", "ls-files")
+
+
+def test_the_whitelist_is_all_queries_and_names_each_one(r491):
+    """白名单逐字点名：加一枚就少一枚，不许漂着。"""
+    assert sorted(r491.ALLOWED_GIT) == ["check-ignore", "log", "ls-files"]
+    assert [one for one in WRITE_VERBS if one in r491.ALLOWED_GIT] == []
 
 
 def test_no_write_or_network_api_appears_in_the_source():
@@ -130,12 +150,49 @@ def test_a_disallowed_git_subcommand_is_refused(r491):
     assert "越界子命令" in str(caught.value)
 
 
+@pytest.mark.parametrize("verb", WRITE_VERBS)
+def test_no_write_verb_ever_reaches_git(r491, monkeypatch, verb):
+    """白名单升级只加查询动词：任何写动词都得拦在闸口，且一次子进程都不许起。"""
+    seen = []
+    monkeypatch.setattr(r491.subprocess, "run", lambda argv, *a, **k: seen.append(argv))
+    ruler = r491.Ruler(REPO_ROOT)
+    with pytest.raises(r491.SourceError):
+        ruler.git(verb, "--help")
+    assert seen == [], "写动词走到 git 了：" + repr(seen)
+
+
 def test_the_ledger_layer_is_git_and_it_is_not_a_disk_listing(r491):
     """双层核验的第一层必须真是 git 的账：在册件在里面，编译产物不许混进来。"""
     tracked = r491.Ruler(REPO_ROOT).tracked()
     assert "conftest.py" in tracked and "pyproject.toml" in tracked
     assert not [one for one in tracked if one.startswith("__pycache__/") or one.endswith(".pyc")]
     assert "docs/handoff/2026-09-15-backend-followup-requests.md" in tracked
+
+
+def test_check_ignore_is_asked_over_stdin_not_over_argv(r491, monkeypatch):
+    """`check-ignore` 的路径走 stdin 送：argv 里不许出现被核的件名（也不许带任何写词）。"""
+    seen = []
+    real = subprocess.run
+
+    def spy(argv, *args, **kwargs):
+        seen.append((tuple(str(one) for one in argv), kwargs.get("input")))
+        return real(argv, *args, **kwargs)
+
+    monkeypatch.setattr(r491.subprocess, "run", spy)
+    ruler = r491.Ruler(REPO_ROOT)
+    evidence = ruler.ignore_evidence("__pycache__/probe.cpython-311.pyc")
+    assert evidence and evidence.startswith(".gitignore:"), "现读 .gitignore 该收住 __pycache__：got " + repr(evidence)
+    argv, payload = seen[-1]
+    sub = argv[argv.index("-C") + 2]
+    assert sub == "check-ignore", "这格问的不是 check-ignore：" + " ".join(argv)
+    assert "--stdin" in argv and "__pycache__/probe.cpython-311.pyc" not in " ".join(argv)
+    assert payload and payload.startswith(b"__pycache__/"), "路径该走 stdin 送，got " + repr(payload)
+    assert not [one for one in argv if one in WRITE_VERBS]
+
+
+def test_a_tree_without_git_keeps_the_fake_account_red(r491, tmp_path):
+    """读不到 check-ignore 就回 None：降噪只在拿得出凭据时发生，宁可不降噪也不放行假账。"""
+    assert r491.Ruler(tmp_path).ignore_evidence("anything/weird.pyc") is None
 
 
 def test_the_docs_window_does_not_borrow_tests_as_paper_evidence(r491):

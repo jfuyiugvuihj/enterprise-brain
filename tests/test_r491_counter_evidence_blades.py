@@ -6,7 +6,9 @@
 
   K1 摘掉 (a) 的 MISSING 判定 → 「盘上无库里无」读成 OK → #90 那族假账全放行；
   K2 摘掉 (b) 的越界判定     → 999999 行也读成 IN_RANGE → 行号档变摆设；
-  K3 把 (c) 三档塌成「账面有提及就算 HAS_COMMIT」→ PAPER_ONLY 消失 → #88 那族蒙混过关。
+  K3 把 (c) 六档塌成「被提及就算 HAS_COMMIT」→ MENTION_ONLY 那一格消失 → #88 与 R498 两族一起蒙混过关。
+     （R498 之后 K3 的锚点从三档版 ticket_status 迁到六档版；落地形状那几把刀另立
+      tests/test_r498_blades_split_mention_from_landing.py，本件只管这三把。）
 
 每把刀跑同一套探针（探针 = 判据①②里那些真实读数），红几枚逐把报数；
 对照 = 真件跑同一套，必须一枚都不红。
@@ -22,6 +24,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "dispatch_preflight.py"
 SOURCE = SCRIPT.read_text(encoding="utf-8")
+
+#: NEVER_FILED 探针池（与 tests/test_r491_ticket_ledger_keeps_three_tiers.py 同料，两边各自选各的）。
+PROBE_POOL = ("R902", "R903", "R980", "R981", "R990", "R991")
 
 FAKE = "tests/test_r387_teeth.py"
 FAKE2 = "tests/test_r400_derived.py"
@@ -40,8 +45,8 @@ BLADES = {
         "if False:",
     ),
     "K3_collapse_three_tiers": (
-        "        if commits:\n            return HAS_COMMIT, commits, paper",
-        "        if commits or paper:\n            return HAS_COMMIT, commits, paper",
+        "        if landed:\n            shapes =",
+        "        landed = landed or mentioned\n        if landed:\n            shapes =",
     ),
 }
 
@@ -86,15 +91,26 @@ def probe_line_bounds_read_both_ways(ctx):
 
 
 def probe_three_tiers_do_not_collapse(ctx):
-    report = ctx["ruler"].check("已并树 R478，账面号 R475，从没立过 R901。")
+    report = ctx["ruler"].check("已并树 R478，正文提过 R475，账面号 R476，从没立过 {0}。".format(
+        ctx["probe"]))
     statuses = [row["status"] for row in report["numbers"]]
-    assert statuses == [ctx["HAS_COMMIT"], ctx["PAPER_ONLY"], ctx["NEVER_FILED"]], statuses
+    assert statuses == [ctx["HAS_COMMIT"], ctx["MENTION_ONLY"], ctx["PAPER_ONLY"],
+                        ctx["NEVER_FILED"]], statuses
 
 
 def probe_unfiled_number_reads_red(ctx):
-    report = ctx["ruler"].check("给 R901 派一枚活。")
+    report = ctx["ruler"].check("给 {0} 派一枚活。".format(ctx["probe"]))
     assert report["numbers"][0]["status"] == ctx["NEVER_FILED"]
     assert report["red"] == 1 and report["exit_code"] == 1
+
+
+def clean_probe(ruler):
+    """从没立过的探针号现选：提交记录与 docs/** 两路都读不到才算干净。"""
+    index = ruler.paper_index()
+    for one in PROBE_POOL:
+        if ruler.records(one) == [] and one not in index:
+            return one
+    raise AssertionError("探针池 {0} 全被抄脏，换一批不落账的号".format(PROBE_POOL))
 
 
 def probe_external_path_is_reported_but_not_fatal(ctx):
@@ -115,12 +131,15 @@ PROBES = (
 
 def context(namespace):
     """一个命名空间配一枚 Ruler：同一把刀下的探针共用读数，不重复跑 git。"""
+    ruler = namespace["Ruler"](REPO_ROOT)
     return {
-        "ruler": namespace["Ruler"](REPO_ROOT),
+        "ruler": ruler,
+        "probe": clean_probe(ruler),
         "MISSING": namespace["MISSING"],
         "OUT_OF_RANGE": namespace["OUT_OF_RANGE"],
         "IN_RANGE": namespace["IN_RANGE"],
         "HAS_COMMIT": namespace["HAS_COMMIT"],
+        "MENTION_ONLY": namespace["MENTION_ONLY"],
         "PAPER_ONLY": namespace["PAPER_ONLY"],
         "NEVER_FILED": namespace["NEVER_FILED"],
         "NOT_IN_REPO": namespace["NOT_IN_REPO"],
