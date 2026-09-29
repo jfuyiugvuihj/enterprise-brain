@@ -44,7 +44,7 @@
 | 4 | **账号的部门又是谁写的** | `app/common/auth.py:434-442`、`:445-464` | `_bootstrap_admin_department() = os.getenv("AUTH_DEPARTMENT", "")` → `INSERT INTO users(…, department)` | 默认值兜底（断点） |
 | 5 | `classification` 走的是另一条路 | `app/api/v1/chat.py:4364` → `:4509` / `:4523` / `:4537` / `:4612` | 形参原样下传，**没有被覆盖** | 真值 |
 | 6 | 目录行（逻辑文档） | `app/api/v1/chat.py:3937-4021` → `:1084-1119`（`:1102` / `:1113`） | `INSERT INTO documents(filename, classification, department, …)`，`department or None` | 默认值兜底 |
-| 7 | 目录行（版本） | `app/documents/catalog.py:623-652`、`:692-766`（`:644` / `:743-745` / `:759`） | `_record_uploaded_version` → `record_document_version` → `INSERT INTO document_versions(…, department, …)` | 默认值兜底 |
+| 7 | 目录行（版本） | `app/documents/catalog.py:626-655`、`:695-769`（`:647` / `:746-748` / `:762`） | `_record_uploaded_version` → `record_document_version` → `INSERT INTO document_versions(…, department, …)` | 默认值兜底 |
 | 8 | 索引载体 | `app/api/v1/chat.py:4068-4116` → `app/rag/indexing.py:938-939`、`:990-999` | `DocumentIndexPublication(classification=…, department=…)` → `scope_metadata()` | 默认值兜底 |
 | 9 | `chunks` 表（发布账） | `app/rag/indexing.py:1001-1018`、`:1275` | `IndexChunk.metadata = scope_metadata()` | 默认值兜底 |
 | 10 | 遗留引擎元数据（今天仍在服务的读路径） | `app/api/v1/chat.py:4505-4511` → `app/rag/retriever.py:1323-1324`、`:1363-1367` | `add_document(…, department` 或 `None)` → `"department": department or ""` | 默认值兜底 |
@@ -56,7 +56,7 @@
 三格要说清的细节：
 
 - **`department` 与 `classification` 不同命。** `classification` 一路是"真值搬运"（第 5 跳），`department` 一路是"服务端替主体作答"（第 2 跳）。密级今天全 = 1 不是通路坏了 —— `R313` 起前端真的把它发出去（`DocPanel.vue:649-650`）—— 而是**这 1008 枚早于 R313，或出自不带这一格的通路**（`upload_all.py` / `scripts/seed_workspace.py`）。通路是通的，从没被真值喂过。
-- **空值在同一趟里换了两种写法**：`chat.py:1113` 落 `None`、`catalog.py:644` 落 `""`、`catalog.py:759` 又落 `None`、`retriever.py:1365` 落 `""`、`pg_store.py:373` 落 `""`。第 11 跳因此只能"跟着空"，不能"救回来"。
+- **空值在同一趟里换了两种写法**：`chat.py:1113` 落 `None`、`catalog.py:647` 落 `""`、`catalog.py:762` 又落 `None`、`retriever.py:1365` 落 `""`、`pg_store.py:373` 落 `""`。第 11 跳因此只能"跟着空"，不能"救回来"。
 - **第 12 跳决定了这件事的严重性**：`filters.py:135-139` 对没有部门的非管理员主体直接 raise；`filters.py:119-128` 对管理员**根本不发部门谓词**（`departments=None`）；`pg_store.py:738-740` 对 `$in` 里出现空串**拒答不猜**。⇒ 生产上部门这条腿今天有三种形态：对管理员无约束、对无部门账号是拒答、对有部门账号是恒空集 —— 三种都**不是**"部门隔离生效"。
 
 ---
