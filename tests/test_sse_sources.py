@@ -281,7 +281,7 @@ def test_sources_event_reaches_a_real_http_client_over_asgi_transport(monkeypatc
     from app.common.auth import create_token
 
     patch_offline(monkeypatch, tmp_path, SCENARIOS["success"](fake_retriever_hits()))
-    monkeypatch.setattr(chat.session_registry, "bind", lambda *a, **k: None)
+    monkeypatch.setattr(SessionRegistry, "bind", lambda self, *_a, **_k: None)
 
     async def fetch():
         transport = httpx.ASGITransport(app=__import__("app.main", fromlist=["app"]).app)

@@ -78,7 +78,8 @@ def _ask(monkeypatch, streamed, pending):
     monkeypatch.setattr(chat, "_rewrite_followup", lambda session_id, message: message)
     monkeypatch.setattr(chat, "_ensure_sessions_table", lambda: None)
     monkeypatch.setattr(chat, "_ensure_session", lambda *a, **k: {"id": "hitl-contract-test"})
-    monkeypatch.setattr(chat.session_registry, "bind", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.storage.sessions.SessionRegistry.bind", lambda self, *_a, **_k: None)
     saved: list[tuple] = []
     monkeypatch.setattr(chat, "_save_message", lambda *a, **k: saved.append(a))
 

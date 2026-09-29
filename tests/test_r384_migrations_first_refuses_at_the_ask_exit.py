@@ -263,7 +263,8 @@ def test_the_refusal_precedes_every_side_effect(monkeypatch):
     def _spy(*args, **kwargs):
         calls.append("bind")
 
-    monkeypatch.setattr(chat.session_registry, "bind", _spy)
+    monkeypatch.setattr(
+        "app.storage.sessions.SessionRegistry.bind", lambda self, *_a, **_k: _spy())
     response, _ledger, _recorder = _ask_client(
         monkeypatch, env="production", pg_up=True, tables=set())
 
