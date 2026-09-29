@@ -78,7 +78,11 @@ def test_the_ruler_now_has_teeth_on_both_shapes_at_once():
     assert cell["readings"]["verdict_reads"] == {
         "reads_prefix_breaks": False,          # 判绿腿已从原始账移走（R215 的那一次换读法）
         "reads_uncorrected_breaks": True,
-        "verdict_key_set": ["extra_chars", "last_frame_covers_answer", "max_stream_frames",
+        # R471 丙案：合取从六枚升到七枚，名单跟着升 —— 只这一处（总控 09-29 返工令第 2 项）。
+        # 新那枚 cross_stream_repeat_frames 是判定那一刻从行内逐帧指纹**现场派生**的证词，
+        # 帧账里没有这一列（键集那四枚在册钉一个字不改），但尺子确实读了它，名单漏一格就是假牙。
+        "verdict_key_set": ["cross_stream_repeat_frames", "extra_chars",
+                            "last_frame_covers_answer", "max_stream_frames",
                             "missing_chars", "text_frames", "uncorrected_breaks"]}
     # 原始账那一格仍在账上，别丢 —— 但它现在由键集钉，不再由一句散文同时喂两格
     assert "prefix_breaks" in cell["readings"]["reading_keys"]

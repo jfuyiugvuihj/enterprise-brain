@@ -136,6 +136,27 @@
     逐字节不变：run2..run9 的可比性不许打断。sidecar 那一行的键集、帧账那一行的键集一个字没多。
     队列道 ``first_token_at`` 仍为 null（后台那一程的首字观测不到；批准腿的到达时刻只进帧账的
     ``events`` / ``stream_clock``，不冒充 ``first_token_at`` 那一列的第二种零点）。
+13. R471（09-29）判据② 补上「正文出现两遍」那一腿：六枚合取对**跨流重复送达**全读绿 ——
+    批准腿把挂起轮已经交上屏的那份正文又发一遍时，``_fold_frames`` 的前缀单调只在同一条流内判，
+    那一枚重发在原始账上常常一枚坏形都不长（run9 在册原件里 ``chart-04`` / ``insight-07`` 两枚
+    正是 ``prefix_breaks == 0``），于是六枚合取一枚都不拦：``uncorrected_breaks == 0``、不缺字、
+    不多字、末帧覆盖终答、帧数与单流最大帧数都 >1 —— 而客户在屏上把同一轮的答案读两遍
+    （成因逐字抄自 ``app/api/v1/chat.py::_ApprovedAnswerStream`` 那页病历）。今天合取里加第七枚
+    ``cross_stream_repeat_frames == 0``：口径在 ``_cross_stream_repeats``，沿到达顺序逐枚比 R223
+    那一列**逐帧指纹**（帧账里既有的 ``frames``），一枚非空帧的字若在更早的一条流里出现过就记一次
+    重复送达。🔴 丙案（总控 09-29 裁定一）：这一格**不落成新列** —— 帧账一行的键集是四枚在册钉
+    「对判，不是子集」的闸（``tests/test_r181_text_frame_ruler.py:433`` ／
+    ``tests/test_r223_frame_arrival_clock.py:612`` ／
+    ``tests/test_r259_awaiting_approval_stops_the_watch.py:162`` ／ ``tests/_r259_queue_ruler.py:54``），
+    不许为一枚派生数去开这一列。证词只在判定那一刻由 ``_record_frames`` 从行内指纹现场派生后交给
+    尺子；复算那一路（r239 与 caliber readout）同样现场派生，两边都不往账上添一枚字。
+    🔴 只算跨流：同一条流里「末片帧与收尾帧同文」是 ``app/api/v1/chat.py`` 自己写明的既有形状
+    （一条腿流完再落终答，covering 分支整段替换 ⇒ 屏上始终只有一份正文）；run9 那 105 行里 66 行
+    带这一形、其中 64 行在册读绿 ⇒ 把它一起定罪是误伤，不是治尺。
+    🔴 本腿不吃 ``prefix_breaks``，R215「豁免只把坏形分家」那枚恒等式一字不动，原始账一格不漂。
+    方向是**变严**：R471 之前的帧账不存这格证词，本尺因此**不重判**当年读数（与
+    ``scripts/r239_stream_gap_offline_audit.py`` 拿老账退回 ``prefix_breaks`` 同一条纪律）。
+    口径、影响面与立案项见 ``docs/testing/r471-verdict-caliber-2026-09-29.md``。
 
    本文件的行号引用会随 ``app/api/v1/chat.py`` 漂移。09-23 在本树实取：``chat.py:1364`` 今天落在
    ``_complete_pending_steps`` 的收尾里（``return completed`` 在 :1363），「/ask 只发一条整段 text」
@@ -659,6 +680,48 @@ def _corrective_readings(frames, answer):
     return {"corrective_replacements": granted, "uncorrected_breaks": total - granted}
 
 
+def _cross_stream_repeats(frame_records):
+    """R471 判据② 的重复送达账：这一轮里有几枚正文是「后一条流把先前发过的那份字又发一遍」。
+
+    🔴 入参是**行内既有那一列** R223 逐帧指纹（``_arrival_readings`` 交回的 ``frames``，落盘之后就是
+    帧账的同一格），本函数只从它**现场派生**，自己**不落成新列**（丙案，总控 09-29 裁定一：帧账一行
+    的键集是「对判不是子集」的闸，不许为一枚派生数去改那四枚在册钉）。派生不出＝这一格今天没量过，
+    调用方按 ``REPEAT_DELIVERY_UNMEASURED`` 读，🔴 不重判当年的读数。
+
+    病根逐字抄自产品自己那页病历（``app/api/v1/chat.py::_ApprovedAnswerStream``）：批准腿把同一条
+    生成腿重跑一遍，于是又交出一枚整段正文，而屏上此刻站的已经是挂起轮那一份；
+    ``frontend/src/lib/sessions.js::consumeSseStream`` 每次从空 ``segments`` 起步，那枚同文帧落的
+    正是**追加**分支 —— 客户把同一轮的答案读两遍。帧账上的形状就是病历点名的那一格：
+    ``text_frames > max_stream_frames`` 且**逐帧指纹重合**。🔴 后者在 R471 之前一枚都没人量，
+    所以那一形在六枚合取上全读绿：重发常常连一枚坏形都不长（前缀单调只在同一条流内判）。
+
+    口径：沿折进账的到达顺序逐枚走，一枚非空帧的指纹若在**更早的一条流**里出现过，记一次。
+    三条边界都是故意的，不许顺手放宽：
+      * 🔴 只算跨流。**总控裁定原话（2026-09-29，署名总控）**：「同一条流内末片帧与收尾帧同文」
+        不判成「出现两遍」：R215 那四条例外（末帧／本轮至多一枚／紧邻 arm／逐字等于终答）裁的就是
+        这一形，收它等于推翻在册裁定；且 A② 要治的是缺字与断流，跨流重复才是 R464 治的批准腿病形。
+        （工程侧旁证：``app/api/v1/chat.py`` 那条 covering 注释 —— 一条腿流完再落终答，屏上始终只有
+        一份正文，整段替换之后屏上没有第二份；把它一起定罪会误伤 run9 那 64 行在册绿。）
+      * 空帧（``chars == 0``）不携带任何正文，谈不上重复，不参与。
+      * 指纹只用 R223 逐帧那一列（``frames[].sha``）里的现成读数，本函数**只派生不另数**：
+        把 ``_count_text_frame`` 摘瞎，逐帧那一列跟着空，这一枚证词一起归零 —— 与
+        ``tests/test_r223_frame_arrival_clock.py`` 那条「派生而非另起一把尺」同一纪律。
+    """
+    earliest = {}
+    repeats = 0
+    for record in frame_records or []:
+        if int(record.get("chars") or 0) <= 0:
+            continue  # 空帧没有正文，谈不上「出现两遍」
+        sha = str(record.get("sha") or "")
+        if not sha:
+            continue  # 没指纹就没证词：不许拿缺证词当证据（与 R215 判据① 同一条纪律）
+        stream = int(record.get("stream") or 0)
+        if sha in earliest and stream > earliest[sha]:
+            repeats += 1  # 同一份字在更早的一条流里已经上过屏：本轮第二次送达
+        earliest[sha] = min(stream, earliest.get(sha, stream))
+    return repeats
+
+
 def _frame_readings(frames, answer):
     """判据② 的四枚读数，外加逐字比对用的两枚指纹。🔴 没有任何一枚进评分。
 
@@ -666,6 +729,13 @@ def _frame_readings(frames, answer):
     评分，也不动前面那几格的取值口径。🔴 帧账一行的键集自本单起多这两格，那份键集钉在
     ``tests/test_r181_text_frame_ruler.py`` 的 ``FRAME_READING_KEYS`` —— 那枚文件不在本单
     写域，两个名字由总控补进去（少补一个就是当场红，不会静默漏过）。
+
+    R471 的第七枚合取**不进本函数的返回值**（丙案，总控 09-29 裁定一）：这一枚证词由
+    ``_cross_stream_repeats`` 在判定那一刻从行内既有那一列逐帧指纹现场派生，所以帧账一行的键集
+    一格不多 —— ``FRAME_READING_KEYS``／``OLD_CELLS``／``_r259_queue_ruler`` 那三份名单与四枚
+    「键集是对判」的在册钉全部原样不动，本函数自己的形状也一格未改。新口径在账上的唯一可见处
+    是它折出来的 ``criterion_two_holds``；名单只有一处随本单升级 ——
+    ``tests/test_r218_ruler_self_calibration.py:81`` 的 ``verdict_key_set`` 从 6 枚升到 7 枚。
 
     ``missing_chars`` / ``extra_chars`` 都是「终答相对末帧」：前者＝末帧里终答没写到的字，
     后者＝终答里末帧没带出来的字，共同前缀是分界，所以两侧分叉时两枚各记自己那半。
@@ -684,6 +754,7 @@ def _frame_readings(frames, answer):
             # R215：坏形分家 —— 哪几枚是收尾那次受控纠正替换，哪几枚是没被救回来的真断流。
             "corrective_replacements": corrective["corrective_replacements"],
             "uncorrected_breaks": corrective["uncorrected_breaks"],
+
             "missing_chars": len(last) - shared,
             "extra_chars": len(answer) - shared,
             "last_frame_covers_answer": last.startswith(answer),
@@ -696,6 +767,15 @@ def _frame_readings(frames, answer):
             # 判据② 要的是后者。挂起轮 + 批准轮各一帧时 text_frames=2 而 max_stream_frames=1。
             "max_stream_frames": int(frames["max_stream_frames"]),
             "per_stream": list(frames["per_stream"])}
+
+
+#: 判定视图里读不到 ``cross_stream_repeat_frames`` 这枚证词时的缺省：0 枚，读作「这一格今天没量过」。
+#: 🔴 谁会读不到？(a) R471 之前那四次收窗（run2→run9）落盘的老行 —— 当年的读数一律**不重判**，
+#: 既没资格追加定罪，也不许把当年的红字洗白（同 ``scripts/r239_stream_gap_offline_audit.py`` 拿老账
+#: 退回 ``prefix_breaks`` 那一条纪律）；(b) 任何只带读数、不带逐帧指纹的复算入口。R471 之后的新账
+#: 由 ``_record_frames`` 在判定那一刻从行内那一列逐帧指纹现场派生（丙案：不落成新列）⇒ 每一扇
+#: 新窗都吃得到这一腿，而那四份在册原件的读数一格不改。
+REPEAT_DELIVERY_UNMEASURED = 0
 
 
 def _frame_verdict(readings):
@@ -714,13 +794,33 @@ def _frame_verdict(readings):
     并写着「``missing_chars > 0`` 在这一格算一致」—— 纸由总控改。实测影响面：run6 那 105 行
     的 ``criterion_two_holds`` 逐行不变（``tests/test_r215_recomputing_run6_frames.py`` 复算 0 漂），
     R181 那件重放的绿行数也不变；末帧比终答多字的形状从今天起读 False。
+
+    ⚠️ 口径变更二（R471，方向同样是**变严**）：合取里再加第七枚 ``cross_stream_repeat_frames == 0``
+    —— 同一轮里**后一条流把先前已经发过的那份正文又发一遍**，就不算「流式逐字无缺」。这一形
+    不吃 R215 那枚豁免，也不靠豁免才拦得住：``_fold_frames`` 的前缀单调只在同一条流内判，跨流重发
+    常常一枚坏形都不长（run9 在册原件里 ``chart-04``／``insight-07`` 两枚正是 ``prefix_breaks == 0``、
+    ``missing_chars``／``extra_chars`` 同为 0、末帧覆盖终答、``uncorrected_breaks == 0``）—— 六枚合取
+    全读绿，而屏上摆着两份答案。🔴 本腿不动 ``prefix_breaks``，也不动「豁免只把坏形分家」那枚
+    恒等式。🔴 丙案（总控 09-29 裁定一）：这枚证词**不是帧账的一格** —— 本尺只读调用方在判定那一刻
+    递进来的派生值（``_record_frames`` 从行内既有那一列 R223 逐帧指纹派生），所以帧账一行的键集一格
+    不多，那四枚「键集是对判，不是子集」的在册钉一个字不改。R471 之前那四扇窗的老行递不进证词
+    ⇒ 当年读数一律**不重判**（缺省见 ``REPEAT_DELIVERY_UNMEASURED``；离线复算件
+    ``scripts/r239_stream_gap_offline_audit.py`` 同口径：派生不出就照当年的读数交回）。
+    实测影响面（09-29 现取 ``docs/testing/sidecar-run9-frames.jsonl`` 那 105 行的逐帧指纹，逐档）：
+    问答 50 枚 0 翻｜分析 35 枚翻 2（``chart-04``／``insight-07``）｜报告 20 枚 0 翻
+    （``tool-04`` 本来就红）；``text_frames > max_stream_frames`` 那 18 枚换源形里其余 15 枚交的是
+    新字，一枚不误伤。逐档表、不重判那句的完整理由与立案项见
+    ``docs/testing/r471-verdict-caliber-2026-09-29.md``。
     """
     return bool(readings["text_frames"] > 1
                 and readings["max_stream_frames"] > 1
                 and readings["uncorrected_breaks"] == 0
                 and readings["missing_chars"] == 0
                 and readings["extra_chars"] == 0
-                and readings["last_frame_covers_answer"])
+                and readings["last_frame_covers_answer"]
+                # R471：正文在同一轮里出现两遍 ⇒ 不算「流式逐字无缺」。老账缺证词时读默认值。
+                and int(readings.get("cross_stream_repeat_frames",
+                                     REPEAT_DELIVERY_UNMEASURED) or 0) == 0)
 
 
 def _record_frames(row_id, kind, attempt, session_id, frames, answer, sentinel):
@@ -733,8 +833,15 @@ def _record_frames(row_id, kind, attempt, session_id, frames, answer, sentinel):
            "session_id": session_id, "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
     readings = _frame_readings(frames, answer)
     # R223 / R222：到达时刻与取回账作为**新列**并进这一行（上面那枚函数一字未动）。
-    row.update(_arrival_readings(frames))
+    arrivals = _arrival_readings(frames)
+    row.update(arrivals)
     row.update(readings)
+    # R471 丙案（总控 09-29 裁定一）：第七枚合取的证词**不落成新列**，判定这一刻从行内既有那一列
+    # R223 逐帧指纹（``arrivals["frames"]``，也就是落盘之后的 ``row["frames"]``）现场派生，只交给尺子。
+    # 🔴 顺序是有意的：这一行必须排在 ``row.update(readings)`` **之后** —— 排到前面那枚证词就会被写进
+    # 落盘行，撞上 test_r181:433 / test_r223:612 / test_r259_awaiting_approval:162 / _r259_queue_ruler:54
+    # 那四枚「键集是对判」的闸，而这一列今天不许开（丙案）。
+    readings["cross_stream_repeat_frames"] = _cross_stream_repeats(arrivals["frames"])
     row["criterion_two_holds"] = _frame_verdict(readings)
     target = frame_ledger_path()
     target.parent.mkdir(parents=True, exist_ok=True)

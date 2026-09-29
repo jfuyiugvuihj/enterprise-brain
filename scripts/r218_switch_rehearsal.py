@@ -842,6 +842,14 @@ def _readings_keys(func) -> set:
                 and node.value.id == "readings" and isinstance(node.slice, ast.Constant)
                 and isinstance(node.slice.value, str)):
             keys.add(node.slice.value)
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get" and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "readings" and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)):
+            # R471：``readings.get("...")`` 同样是取用。尺子为了不吃老账的 KeyError 而改用 get 时，
+            # 这一格不许把那条腿从名单里溜走 —— 名单漏一格，``verdict_reads`` 就成了假牙。
+            keys.add(node.args[0].value)
     return keys
 
 
@@ -852,6 +860,10 @@ def verdict_reads(adapter) -> dict:
     所以 ``reads_prefix_breaks`` 必须 False —— 原始账并没有消失，它仍在 ``_frame_readings``
     的返回值键集里，那一格由 ``ruler_generation`` 的 ``has_r181`` 单独钉着（变严：两枚分开钉，
     任何一枚漂了就红，不再靠一句散文同时喂两格）。
+
+    R471 起 ``verdict_key_set`` 也吃 ``readings.get("...")`` 那种取用：判据② 加的第七枚
+    （``cross_stream_repeat_frames == 0``）为了不吃 R471 之前那四份老账的 KeyError，写的就是
+    ``get`` 带缺省。名单要是只认方括号，这一枚新腿就会从 ``verdict_reads`` 的证词里静默溜走。
     """
     keys = _readings_keys(adapter._frame_verdict)
     return {"reads_prefix_breaks": "prefix_breaks" in keys,

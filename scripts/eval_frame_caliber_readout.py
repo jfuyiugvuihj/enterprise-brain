@@ -37,6 +37,8 @@ RAW_CELLS = (
     "max_stream_frames",
     "prefix_breaks",
     "uncorrected_breaks",
+    # R471 的第七枚合取**不在这一列**：那枚证词不落成新列（丙案，总控 09-29 裁定一），
+    # 由下面的 ``derived_repeats`` 从行内既有那一列 R223 逐帧指纹现场派生。
     "missing_chars",
     "extra_chars",
 )
@@ -54,6 +56,41 @@ def load_rows(path: str) -> list[dict]:
             if previous is None or int(row.get("attempt") or 0) >= int(previous.get("attempt") or 0):
                 rows[row["id"]] = row
     return list(rows.values())
+
+
+def _repeats_of_records(records: list[dict]) -> int:
+    """从一行的 R223 逐帧指纹里数「后一条流把先前发过的那份正文又发一遍」有几枚。
+
+    口径逐字同 ``scripts/eval_transport_ask_v2.py::_cross_stream_repeats``：只算跨流（同一条流里
+    末片帧与收尾帧同文**不算**出现两遍 —— 总控裁定），空帧不参与，没有指纹不参与。
+    """
+    earliest: dict[str, int] = {}
+    repeats = 0
+    for record in records:
+        if int(record.get("chars") or 0) <= 0:
+            continue
+        sha = str(record.get("sha") or "")
+        if not sha:
+            continue
+        stream = int(record.get("stream") or 0)
+        if sha in earliest and stream > earliest[sha]:
+            repeats += 1
+        earliest[sha] = min(stream, earliest.get(sha, stream))
+    return repeats
+
+
+def derived_repeats(rows: list[dict]):
+    """R471 丙案：第七枚合取的证词在账里**不存在**，本件读数时从行内既有那一列现场派生。
+
+    返回 ``None``＝这份账派生不出：没有 ``frames`` 那一列（R223 并树之前开的窗，run6/run7 即此形），
+    或者那一列枚枚为空（量具被摘瞎那一形，run8p2 即此形）⇒ 照实明写，不许报 0 冒充量过；
+    返回 ``[(题号, 枚数)]``＝这份账量得出。🔴 两样都不许拿去改写当年的 ``criterion_two_holds``
+    （不重判，口径见 docs/testing/r471-verdict-caliber-2026-09-29.md）。
+    """
+    if not any(row.get("frames") for row in rows):
+        return None
+    return [(str(row["id"]), _repeats_of_records(row.get("frames") or []))
+            for row in rows if _repeats_of_records(row.get("frames") or []) > 0]
 
 
 def event_tally(rows: list[dict]) -> collections.Counter:
@@ -77,8 +114,21 @@ def caliber_block(title: str, rows: list[dict]) -> None:
             over_one = sum(1 for row in rows if int(row.get(cell) or 0) > 1)
             zero = sum(1 for row in rows if int(row.get(cell) or 0) == 0)
             print("- %s >1 枚数=%d/%d ｜ =0（空读）枚数=%d" % (cell, over_one, total, zero))
+        elif not any(cell in row for row in rows):
+            # 🔴 R471 之前开的窗不存这格证词：读不到就明写读不到，不许报 0 冒充量过
+            # （在册尺对老账同样不重判，口径见 docs/testing/r471-verdict-caliber-2026-09-29.md）。
+            print("- %s 这一格在这份账里不存在（R471 之前的窗）⇒ 不重判当年读数" % cell)
         else:
             print("- %s >0 枚数=%d 题号=%s" % (cell, len(offenders), offenders or "无"))
+    repeats = derived_repeats(rows)
+    if repeats is None:
+        # 🔴 账里没有逐帧指纹（R223 并树之前的窗）：读不到就明写读不到，不许报 0 冒充量过。
+        print("- cross_stream_repeat_frames（R471 第七枚，派生格）这份账不带 R223 逐帧指纹"
+              " ⇒ 这一格在这份账里派生不出（R471 之前的窗）⇒ 不重判当年读数")
+    else:
+        print("- cross_stream_repeat_frames（R471 第七枚，🔴 派生自 frames 列，不落成新列）"
+              " >0 枚数=%d 题号=%s" % (len(repeats), repeats or "无"))
+        print("  - 逐枚重合数=%s ｜ 本件不据此改写 criterion_two_holds（当年读数不重判）" % repeats)
     holds = sum(1 for row in graded if row["criterion_two_holds"])
     failing = sorted(row["id"] for row in graded if row["criterion_two_holds"] is False)
     print("- criterion_two_holds=True 枚数=%d/%d（在册合取口径=_frame_verdict）" % (holds, total))
