@@ -5790,12 +5790,12 @@ R414 那节文末登记的「今天还没接的两格」（legacy `done` 与队�
   更深一层：缓存条目当年就**没有落账** dataset 读数（`_cache_source_manifest` 只存文档证据行），
   所以那一轮的用表读数今天无从读回——补发一枚终态帧也填不出这一格。修法要么给缓存条目加一枚
   只读派生键，要么在命中道补发终态并明写「无从核对」，两者都要先量影响面，属独立立案，不归本单。
-* **`deploy/queue_worker.py` 的三处 `chat.build_queue_terminal(...)` 调用还没传 `dataset_files`**（本单写域不含该文件），
-  所以队列道今天交的还是「没这一格」的形状：载荷键已备好，读数是空的。要让队列道真的说得出用的哪份文件，
-  需要在那三处把 `_collect_dataset_filenames` 的 sink 交进来——一处一线，不新增第二份收集器。
-* **前端解码处今天只读 canonical 那一发**：`frontend/src/lib/sessions.js` 里 `done` 分支只置终止状态、
-  不读载荷键（`:574-576`），`/queue/status` 的读数只喂排队那张脸（`components/ChatPanel.vue`、`lib/provenance.js`）。
-  本单交的是后端侧的字节，屏上要多接两道读数属前端线一手。
+* **`deploy/queue_worker.py` 三处 `chat.build_queue_terminal(...)` 调用「还没传 `dataset_files`」——这句是 R504 交单时的登记，已由 R514 并树（`333d728`）改口**：
+  现读三处调用在 `:703 / :749 / :913`，各在 `:711 / :757 / :921` 递进 `dataset_files=dataset_files`；收集只走在册那枚 `_collect_dataset_filenames`（现读 `:681` 报告档两腿共用、`:912` 老腿），一处一线，没有第二份收集器。
+  零枚与多枚一律折成空串，`attach_terminal_data_filename` 于是不落载荷键 = 队列终态里整格缺席（那枚键集仍由 `tests/test_r254_sync_lane_terminal.py` 按名以相等钉住，不往里补空串那一格）。
+* **前端解码处「只读 canonical 那一发、`done` 分支不读载荷键」——这句同样是 R504 的登记，已由 R512 并树（`131df9b`）改口**：今天两枚解码处，
+  canonical `request.completed` 读 `data.data_filename`（现读 `frontend/src/lib/sessions.js:481`），legacy `done` 分支读 `payload.data_filename`（现读同文件 `:575`，那一支 `:574-576` 未漂）：非空才抄、空串不覆盖不补造、缺席一字不动，先到者胜。
+  屏侧读者仍只 `adoptServerDataRead`（`components/ChatPanel.vue:698-703`，两处调用点 `:1060`／`:1186` 都走 SSE 流道）；`/queue/status` 的读数仍只喂排队那张脸（`queueReads` 现读 `ChatPanel.vue:1228`、`lib/provenance.js:247`）⇒ 队列那一格屏侧还没读者。坐标现取 `85572c1`。
 
 本节没有新增错误码、没有新增外部请求、没有新增 Chroma 依赖或写点，也没有改动任何一枚在册件。
 

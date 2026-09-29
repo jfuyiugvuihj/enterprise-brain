@@ -595,8 +595,8 @@ async function openSession(id) {
 // 「本轮发问带的表」＝界面发出去的那一份（发依据）；「这一轮算数用的表」＝服务端在【终态帧】里
 // 报回来的那一份（读数，三态见下面 serverDataOf）。两件事在调用方没点名、或一轮算了多张时不同。
 // 🔴 服务端那一半的出处是 app/api/v1/chat.py::terminal_data_filename（R414 已并树；三态语义：
-// 正好一枚交文件名，零枚与多枚都交空串）。线上到屏上那一截由 R424 接上：终态帧唯一的解码处是
-// lib/sessions.js 里 createStreamReducer 的 request.completed 分支，它除 awaiting_hitl／
+// 正好一枚交文件名，零枚与多枚都交空串）。线上到屏上那一截由 R424 接上，R512（并树 `131df9b`）之后解码处两枚：
+// `lib/sessions.js` 里 createStreamReducer——canonical＝`request.completed` 分支（:481）、legacy＝`done` 分支（:575，非空才抄、先到者胜）。前者除 awaiting_hitl／
 // awaiting_steps 之外把 data_filename 抄成 state.terminalDataFilename，且只在【亲眼读到字符串】
 // 时才写这一枚键（读不到就整格缺席，与下面 serverDataOf 的「不画」同一态）；面板再走
 // adoptServerDataRead 抄进这一轮。三态与「不许拿发依据填」的钉：r415 与 r424 两件用例。

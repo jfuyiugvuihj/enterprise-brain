@@ -180,13 +180,15 @@ R501 已把「帧没到」与「帧到了但那一格没给」钉成两张脸（
 
 ## 9. 没做到（明写，别读成已收）
 
-1. 🔴 **队列道的读数今天仍然交不出来**：`build_queue_terminal` 的键已备好，但三处调用方
+1. 🔴 **队列道的读数当时仍然交不出来**（R504 交单口径；今天已治，见本条末订正）：`build_queue_terminal` 的键已备好，但三处调用方
    `deploy/queue_worker.py:695 / :740 / :897` 都还没把 `_collect_dataset_filenames` 的 sink 传进来
    （那枚文件不在本单写域）。所以队列这一腿交的是「形状在位、读数为空」= 载荷里没有那一格。
    一处一线、不新增第二份收集器，改法已在契约 R504 节登记。
-2. 🔴 **屏上那一格仍只由 canonical 那一发驱动**：`frontend/src/lib/sessions.js:574-576` 的 `done` 分支只置
+   🔴 **R517 订正（2026-09-29）**：这一腿已由 R514 并树（`333d728`）治完——现读 `deploy/queue_worker.py` 三处调用在 `:703 / :749 / :913`，各在 `:711 / :757 / :921` 递进 `dataset_files=dataset_files`，收集只走在册那枚 `chat._collect_dataset_filenames`（`:681` 报告档两腿共用、`:912` 老腿），一处一线、没添第二份收集器；零枚与多枚折成空串 ⇒ 整格缺席。上面那三枚坐标（`:695 / :740 / :897`）是交单当时的现读，今天已漂，按「不改历史读数」原样留着。
+2. 🔴 **屏上那一格当时仍只由 canonical 那一发驱动**（R504 交单口径；legacy 那一发今天已接上，见本条末订正）：`frontend/src/lib/sessions.js:574-576` 的 `done` 分支只置
    终止状态、不读载荷键；`/queue/status` 的读数只喂排队那张脸（`components/ChatPanel.vue:1499` 的 `queueReads`
    与 `lib/provenance.js:247`）。本单交的是后端侧字节，两道新读数要上屏属前端线一手（写域禁碰 `frontend/**`）。
+   🔴 **R517 订正（2026-09-29）**：legacy 那一发已由 R512 并树（`131df9b`）接上——现读 `sessions.js:575` 把 `payload.data_filename` 抄成 `state.terminalDataFilename`（那一支 `:574-576` 未漂，漂的是「不读载荷键」那半句），非空才抄、空串不覆盖不补造、缺席一字不动，先到者胜；屏侧读者仍只 `adoptServerDataRead`（`ChatPanel.vue:698-703`）。`/queue/status` 那一腿今天仍只喂排队那张脸：`queueReads` 现读 `ChatPanel.vue:1228`（上面那枚 `:1499` 已漂）、`lib/provenance.js:247` 未漂——队列那一格屏侧还没读者。
 3. 没跑 `scripts/run_gate.py` 全量门（明令），也没有全量绿票数字；AGENTS 那条「dirty 一遍＋commit 后干净树复跑」
    的第二遍本单交不了（本席不许 commit），同名件的干净树对照数也没在树外另起工作树去取。
 4. 腿 3 的影响面没量（见 §8）；§5 的三把刀只跑在册终态三枚件那 65 枚，没跑全量的反证面。

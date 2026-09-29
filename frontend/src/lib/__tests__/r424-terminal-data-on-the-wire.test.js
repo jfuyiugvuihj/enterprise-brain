@@ -93,7 +93,7 @@ describe('乙 · 只有终态帧那一个出口做这一手，同帧另两格照
     expect(state[WIRE_KEY]).toBe('sales.xlsx')
   })
 
-  it('legacy done 帧（非 canonical）不造读数：旧后端那一格今天仍然只能「不画」', async () => {
+  it('legacy done 帧（非 canonical）不补造读数：载荷里没那一格 ⇒ 键根本不存在，屏上仍是「不画」', async () => {
     const msg = { role: 'assistant', content: '', steps: [] }
     const state = createStreamState()
     const reduce = createStreamReducer(msg, state)
