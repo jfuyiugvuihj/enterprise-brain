@@ -5527,3 +5527,100 @@ tests/test_r78_unearned_claims.py:307  assert "H13" in description, description
 - **订正**：那笔行为变更从今天起挂 **R482**。判据与串行条件一个字不变：落树前必须现读三件事（哪些在册件会因它改口、既有注册应用的缺省档会不会因此读不到东西、`app/rag/filters.py` 与 PG／Chroma 两条读腿用的是不是同一套档位算式），🔴 并且必须排在 R478 之后——R478 正持有 `app/common/open_platform.py` 与 `app/api/v1/open_platform.py` 的写域，同树两枚 Agent 抢同一枚文件就是真写域冲突。
 - **上一节仍然成立的部分**（本节不推翻它，只补号）：它列的「今天已改口两处」与「还欠四处」逐格对得上盘上现读；它写的那句「把没做的事说成在等审批」仍是 R482 要治的东西。
 - **业主侧那一格没变**：演示库要不要打合成标签、`users.department` 与密级标签的回填，仍按计划书 §13 那句读——合成标签只证行为、不证客户隔离，不许拿它替越权那一格翻绿。
+
+## R478 · 「有人正拿着」这个形状从 `app/**` 与两枚对外串里清掉：四处改口 + 两枚钉换锚 + 一枚常驻闸（零行为变更，2026-09-29）
+
+**一句话**：`## R472` 文末登记的四格假指针今天全部改口，四处文字现在说的都是同一件事 —— **这一格今天没有任何人在拿着**；其中最重的两枚不是注释，而是逐字进响应体、逐字进 OpenAPI 的对外串。`tests/test_r78_unearned_claims.py` 里那两枚把闸门号钉进对外串的断言今天换了锚，强度只升不降；新增常驻闸 `tests/test_r478_no_closed_gate_as_placeholder.py` 把这个形状钉成长期失败面。H13 已于 2026-09-28 结案＝甲，两枚对外串的旧句子从今天起作废，原文在本节围栏里逐字留档 —— 口径与在册钉 `tests/test_r467_classification_default_is_ratified.py::test_no_open_question_wording_survives_in_the_live_prose` 同一套：围栏里是留档，围栏外才是断言面。
+
+**为什么这一节只往文末长**：本契约 append-only，三枚在册钉各钉一角 —— `tests/test_r414_b_terminal_data_filename.py:257` 与 `tests/test_r388_read_leg_answers_absence.py:871` 的 `startswith(基点)` 前缀钉、`tests/test_r397_read_legs_refuse_a_missing_table.py::test_the_contract_appends_one_section_and_deletes_nothing` 的「只追加不删」。本节只有新增行、零删除行；历史段落与 `## R467`／`## R472` 两节一个字没动。
+
+### 四处改口（逐枚点名；全部只换理由文字与对外串，判定行为一个字节都没动）
+
+- **甲** `app/common/rbac.py::filter_dataframe_rows` 的 docstring：改前把密级那一维写成「沿用原实现」，后面挂一枚已经结案的闸门号；改后写的是这一格今天照契约办事 —— 密级列缺值的行按 1 级（最低公开）参加比较，裁定出处 `docs/handoff/2026-09-17-human-gates.md` 最后一节（`:365` 起）与契约 `## R467` 节，同节明写行级 `fillna(1)` 与它同色。同一枚文件里「模块头说结案、函数文档串说等口径」的自相矛盾今天收掉：模块头 `:24` 一个字没动，`fillna(1)` 那一行代码也没动。
+- **乙** `app/agents/contracts.py` 的行级码注释块（`## R472` 记在 `:341`，本席 09-29 现读 `:340`，同一天里漂过一行）：改前那半句把这一维说成还挂在人手里，今天不再成立；改后写的是这一维的拒绝**已由两枚在册码承担** —— 越档回 `clearance_insufficient`、密级元数据缺失回 `resource_scope_missing`，本层再造一枚同义码就没有 emit 点可指。理由从「有人正拿着」换成「零 emit 点」，并点名裁定出处与契约出处；`row_scope_denied` 那枚枚举成员一个字节没动。
+- **丙** `app/documents/catalog.py::_local_row` 注释块（`## R472` 记在 `:437`）：改前把「不改这一行」的理由之一写成「顺带替业主裁掉那一问」；那一问今天有答案，这条理由撑不住了，本节把它摘掉，只留真剩下的那一条 —— 这个键**一词两用**：既进判定，又逐字出现在 `/documents/catalog` 的响应体里（`_visible_document_rows` 用 `public_document_row` 原样透出整行）。要治得先把「参与判定的值」与「用于展示的值」拆开，那是单独一单（R57 订正令另立的拟号 R58）。`"classification": stored.get("classification", 1)` 这一行没动。
+- **丁** 🔴 最重的两处，而且它们**不是注释**：`app/common/open_platform.py:82` 的 `MAX_CLEARANCE_NOTE` 与 `app/api/v1/open_platform.py:320` 里 `ApplicationRegisterRequest.max_clearance` 那枚 `description=`。前者逐字进 `clearance_registration()` 的响应体（`app/common/open_platform.py:95` 定义、`:109` 落进 `max_clearance_note`；注册回执 `app/api/v1/open_platform.py:410` 与应用列表 `app/common/open_platform.py:272` 都带它），后者逐字进 OpenAPI。两枚串改后说的是同一份事实：**没有任何路径比较这枚登记值，注册它不改变任何结果**，并点名出处。两处上方的模块注释与模型文档串一起改口，注释里把凭据的取法写死（下一格）。
+
+### 判据②那枚凭据（09-29 现读；从今天起由常驻闸每跑一遍重取一遍）
+
+围栏里是读数本体，改一个字节就红：
+
+```text
+$ rg -n "\.max_clearance" app/        # 全 app/ 里取用这枚登记值的只有三处，全是报告用途
+app/api/v1/open_platform.py:377   register_open_application —— 把值存进注册表
+app/api/v1/open_platform.py:410   register_open_application —— 回执里原样报回去
+app/common/open_platform.py:272   list_applications —— 列表行里原样报回去
+AST 现读：这枚属性落进比较 / if / 三元 / assert 结构的次数 = 0
+MAX_CLEARANCE_ENFORCED = False        # 常量没改：这枚字段今天没在执行
+MAX_CLEARANCE_EFFECT = "registered_only"
+```
+
+出处：`app/common/open_platform.py::clearance_registration`（同一份报告口径写一次，回执、列表、请求模型三处共用）；常驻闸 `tests/test_r478_no_closed_gate_as_placeholder.py::test_the_stored_figure_is_still_read_only_for_reporting` 每跑一遍就重取一遍，读数变了而文字没跟着改 ⇒ 当场红。
+
+### 两枚对外可见的串：旧句子作废，新句子逐字如下
+
+改前那两句（本节逐字引，只作历史留档；从今天起作废，不许再抄回对外面）：
+
+```text
+registered value only: no retrieval, no preview, and no Principal reads this field. The clearance comparison rule is pending the owner's ruling (open decision H13); until it lands, a higher value buys nothing and a lower one blocks nothing.
+```
+
+```text
+Registered only, and enforced by nothing today: no retrieval, no preview, and no Principal reads it. The clearance comparison rule is pending the owner's ruling (open decision H13). Changing this value changes no result.
+```
+
+改后那两句（同一份事实，只是不再挂在一枚已经结案的闸门号上）：
+
+```text
+registered value only: no retrieval, no preview, and no Principal reads this field; the only readers of the stored figure anywhere in this application are the report paths that publish this sentence beside it. Nothing compares it with a document's classification, and no decision is outstanding for it -- the gate this note used to quote (H13) closed 2026-09-28 as option A, which rules the default classification of an unlabelled upload and says nothing about a registered application: a higher value buys nothing and a lower one blocks nothing. Sources: docs/api/contract-v1.md, section R478 and the closing entry in docs/handoff/2026-09-17-human-gates.md.
+```
+
+```text
+Registered only, and enforced by nothing today: no retrieval, no preview, and no Principal reads it; the only readers are the report paths that print this disclaimer. Nothing compares it with a document's classification, and no decision is outstanding for it -- the gate this description used to quote (H13) closed 2026-09-28 as option A, which is about the default classification of an unlabelled upload, not this registry. Changing this value changes no result: a higher number grants no access and a lower one revokes none. docs/api/contract-v1.md, section R478.
+```
+
+### `tests/test_r78_unearned_claims.py` 那两枚钉换了锚（强度只升不降）
+
+那两枚钉就是把假话钉活的钉子 —— 它们硬断对外可见的串里带着闸门号：
+
+```text
+tests/test_r78_unearned_claims.py:275  assert "H13" in note, "the field has to say which ruling it is waiting for, not just that it waits"
+tests/test_r78_unearned_claims.py:307  assert "H13" in description, description
+```
+
+改后的锚是一枚今天仍然成立的事实：两枚串必须自白「没有 Principal 读它 / 没有任何东西比较它 / 高一档买不通、低一档拦不住 / 那枚闸门已于 2026-09-28 结案」，红话同步改口说清它锚的到底是哪一格。断言面从 1 枚子串换成 5 枚子串的合取 ⇒ 只升不降。反证读数（写进常驻闸，落下去就是当场红）：把 `MAX_CLEARANCE_NOTE` 与 `description=` 改写成「检索与预览都按这一档过滤」的假实现口吻，那两枚钉一枚都跑不掉。
+
+### 新增常驻闸 `tests/test_r478_no_closed_gate_as_placeholder.py`
+
+- 已结案名单**现读**自 `docs/handoff/2026-09-17-human-gates.md`（一行里同时出现「H`数字`」与结案标记即算结案），今天读出来的是 H9／H10／H11／H12／H13／H17／H19；本件不抄死表 —— 死表正是本单要治的病，名单读空就是尺子瞎了，当场红。
+- 尺子分两档：甲档带闸门号（正反两种语序都量），乙档不带号（「没裁的维度」「口径等闸门」「替业主裁」「unratified」「pending the owner」这些形状 —— 上一席靠窄尺漏掉的正是这一格）。在册钉 `tests/test_r472_h13_closed_wording.py:45` 那四枚正则本件照抄、只把 H13 放宽成任意一枚闸门号，并常驻核对「本件的形状集是它的超集」（基线与盘上各量一遍）。
+- 单元粒度：注释块与文档串按整块豁免（后面点名结案覆盖前面的历史叙述），对外可见的字符串字面量只许自证 —— 隔壁注释写得再清楚，也不替响应体里那句话背书。另有一格丙：提到一枚已结案的号，那枚单元必须自己点名它已结案。
+- 写域外的同族遗留三处进台账（`app/api/v1/data.py`、`app/api/v1/chat.py`、`app/trace/durability.py`），每一枚都必须今天仍然命中：修好了不摘牌就红 —— 防止台账长成第二张死表。
+- 反证四刀各咬一格：刀一 `MAX_CLEARANCE_NOTE` 回插基点旧句（引文从基点 commit 现抠，零手抄）；刀二 `description=` 回插基点旧句；刀三 把两枚串改写成假实现口吻 ⇒ 上面那两枚钉当场红；刀四 摘掉白名单「结案」那一格 ⇒ 尺子必须多报一枚，不报就是空转（事故 #83：刀照基线造，不照改后的自己造）。
+
+### 零行为变更凭据（判据⑥，两路自证）
+
+```text
+file                          | ast.dump 逐字相等 | 抹平字符串字面量后相等
+app/agents/contracts.py       | True              | True
+app/documents/catalog.py      | True              | True
+app/common/rbac.py            | False             | True
+app/common/open_platform.py   | False             | True
+app/api/v1/open_platform.py   | False             | True
+
+git diff --numstat（本单六枚被跟踪文件，全部只增行与改注释/串）
+5       1       app/agents/contracts.py
+15      6       app/api/v1/open_platform.py
+28      9       app/common/open_platform.py
+5       1       app/common/rbac.py
+6       3       app/documents/catalog.py
+14      2       tests/test_r78_unearned_claims.py
+```
+
+「抹平字符串字面量」＝把 AST 里每一枚 `ast.Constant` 的 str 值换成空串再比 `ast.dump`（docstring 也是字符串字面量，甲格那一处改口就落在这层）；注释本来不进 AST，所以乙／丙两格 raw `ast.dump` 逐字相等。⇒ `app/**` 除注释与字符串字面量外零改动；`git diff` 里所有删除行都落在注释、docstring 与那两枚对外串上。
+
+### 本节没做的事（不许读成已收）
+
+- 🔴 没有把 `max_clearance` 接进 Principal、没有让它真的开始算数 —— 那是 **R479** 的账（总控 09-29 已把两枚单分开走）。本节与那两枚串说的都是「今天没在执行」：改口删掉的是一句假话，添上的不是谎话。把「没接进判定」写成「已生效」同样是假话，常驻闸的 `FORBIDDEN_CLAIMS` 也钉着这一格。
+- 写域之外仍欠的同族表述（本席现读，交总控裁，本单不越界）：`tests/test_r78_unearned_claims.py` 文件级 docstring 的 `:9`（仍把这枚字段写成一件等人办的事）与 `:26`（说的是 H18，那一问今天确实还开着，不算假话）、`app/api/v1/data.py:197`、`app/trace/durability.py:179`（讲的是审计事件的文件序号还没有被表确认，与密级无关）、`app/common/permissions.py:34`（同一注释块 `:35` 已点名结案，属历史叙述，靠白名单那一格豁免）。后三处已进常驻闸的台账或白名单，每天都必须在盘上仍然命中。
+

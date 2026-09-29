@@ -303,10 +303,13 @@ class ApplicationRegisterRequest(BaseModel):
 
     ``allowed_departments`` is enforced: it is the only set an open-platform call may
     speak for, since no header or body adds to it (R71). ``max_clearance`` is not. It is
-    stored, returned, and read by nothing -- the rule that would compare it against a
-    document's classification is still the owner's to make (open decision H13) -- so
-    registering a 5 grants no access and registering a 1 removes none. Both responses
-    say that beside the number instead of leaving it to be inferred.
+    stored, returned, and read by nothing except the report paths which print the
+    disclaimer beside it, and no decision is outstanding for it: the gate this model
+    used to quote (H13) closed 2026-09-28 as option A, which rules the default
+    classification of an unlabelled upload and says nothing about a registered
+    application tier. Registering a 5 grants no access and registering a 1 revokes
+    none, so both responses say that beside the number instead of leaving it to be
+    inferred.
     """
 
     app_name: str
@@ -316,8 +319,14 @@ class ApplicationRegisterRequest(BaseModel):
         default=3,
         description=(
             "Registered only, and enforced by nothing today: no retrieval, no preview, "
-            "and no Principal reads it. The clearance comparison rule is pending the "
-            "owner's ruling (open decision H13). Changing this value changes no result."
+            "and no Principal reads it; the only readers are the report paths that "
+            "print this disclaimer. Nothing compares it with a document's "
+            "classification, and no decision is outstanding for it -- the gate this "
+            "description used to quote (H13) closed 2026-09-28 as option A, which is "
+            "about the default classification of an unlabelled upload, not this "
+            "registry. Changing this value changes no result: a higher number grants "
+            "no access and a lower one revokes none. docs/api/contract-v1.md, "
+            "section R478."
         ),
     )
     description: str = ""

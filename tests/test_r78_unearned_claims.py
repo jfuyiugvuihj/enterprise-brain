@@ -272,7 +272,13 @@ def test_the_registration_response_labels_the_clearance_it_stores():
     assert issued["max_clearance_enforced"] is False
     note = issued["max_clearance_note"]
     assert "no retrieval" in note.lower(), note
-    assert "H13" in note, "the field has to say which ruling it is waiting for, not just that it waits"
+    assert all(phrase in note.lower() for phrase in (
+        "no principal reads this field", "nothing compares it",
+        "buys nothing", "blocks nothing", "closed 2026-09-28",
+    )), (
+        "the field has to confess that nothing reads or compares it, and name the "
+        "ruling that already closed -- not a decision somebody is still holding: " + note
+    )
 
 
 def test_the_application_list_labels_the_same_field_the_same_way():
@@ -304,7 +310,13 @@ def test_the_api_documentation_says_the_same_thing_to_the_client_that_reads_it()
     description = properties["max_clearance"]["description"]
     assert "registered only" in description.lower(), description
     assert "changes no result" in description.lower(), description
-    assert "H13" in description, description
+    assert all(phrase in description.lower() for phrase in (
+        "no principal reads it", "nothing compares it",
+        "grants no access", "revokes none", "closed 2026-09-28",
+    )), (
+        "OpenAPI has to publish that nothing reads or compares this figure, and name "
+        "the ruling that already closed -- not one it waits on: " + description
+    )
     for verb in ("post", "get"):
         documented = schema["paths"]["/api/v1/apps"][verb]["description"]
         assert "max_clearance" in documented, verb

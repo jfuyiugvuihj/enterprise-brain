@@ -57,19 +57,38 @@ STORAGE_REFUSAL_WRITE_FAILED = "storage_read_only"
 
 
 #: ``max_clearance`` is recorded and consulted by nothing. No path in this application
-#: compares it with a document's classification, and no Principal receives it. Whether a
-#: level 2 caller may read a level 3 chunk is the owner's ruling to make -- open
-#: decision H13, undecided -- and inventing one here would install a second,
-#: unpublished clearance policy in the place that is supposed to be honest about not
-#: having one. What is ours to fix is the appearance: a number sitting in a registry
-#: reads like a control, so every surface that shows it now says that it decides
-#: nothing until the owner rules.
+#: compares it with a document's classification, and no Principal receives it -- the
+#: only reads of the stored figure anywhere in ``app/`` are the report paths that
+#: publish this sentence beside the number: ``list_applications`` here, and two reads
+#: inside ``register_open_application`` in ``app/api/v1/open_platform.py``. That
+#: readout is re-taken from the AST by tests/test_r478_no_closed_gate_as_placeholder.py,
+#: so it is a measurement rather than a recollection. Inventing a comparison here
+#: would install a second, unpublished clearance policy in the place that is honest
+#: about not having one, and what is ours to fix is the appearance: a number sitting
+#: in a registry reads like a control.
+#:
+#: What changed on 2026-09-29 is only the reason this file gives. The note below used
+#: to hang the missing comparison on decision H13 and say the owner still had to rule
+#: on it. H13 closed 2026-09-28 as option A -- an unlabelled upload enters at
+#: classification level 1, and that is now contract text (
+#: docs/handoff/2026-09-17-human-gates.md, final section 「H13 结案 ＋ A1/A3 裁定」;
+#: docs/api/contract-v1.md, section R467) -- and that ruling is about the default
+#: classification of an upload, never about an application's registered tier. Nobody is
+#: holding this field. Whether it should ever become a control is a product decision
+#: booked outside this file; until one is taken, every surface here says the stored
+#: number decides nothing.
 MAX_CLEARANCE_ENFORCED = False
 MAX_CLEARANCE_EFFECT = "registered_only"
 MAX_CLEARANCE_NOTE = (
     "registered value only: no retrieval, no preview, and no Principal reads this "
-    "field. The clearance comparison rule is pending the owner's ruling (open decision "
-    "H13); until it lands, a higher value buys nothing and a lower one blocks nothing."
+    "field; the only readers of the stored figure anywhere in this application are the "
+    "report paths that publish this sentence beside it. Nothing compares it with a "
+    "document's classification, and no decision is outstanding for it -- the gate this "
+    "note used to quote (H13) closed 2026-09-28 as option A, which rules the default "
+    "classification of an unlabelled upload and says nothing about a registered "
+    "application: a higher value buys nothing and a lower one blocks nothing. Sources: "
+    "docs/api/contract-v1.md, section R478 and the closing entry in "
+    "docs/handoff/2026-09-17-human-gates.md."
 )
 
 

@@ -434,9 +434,12 @@ def _local_row(filename: str, version: int, storage_path, stored: dict) -> dict:
         # (3) 不改的真实理由是这个键一词两用：它既是判定输入，又逐字出现在
         # /documents/catalog 的响应体里（_visible_document_rows 用 public_document_row 原样
         # 透出整行，dashboard 概览就调这个端点）。把兜底直接换成 None 会让缺 sidecar 密级的
-        # 行既不可见、目录列同时变空，一次改动跨两个关注点，还顺带替业主裁掉 H13（未标密级
-        # 的上传算公开还是算不可见）。正解是把"参与判定的值"与"用于展示的值"拆开，需要单独
-        # 设计：已按 R57 订正令另立新单（拟号 R58）交总控，本单不实现。论证见 R57 报告站点④。
+        # 行既不可见、目录列同时变空，一次改动跨两个关注点——到今天就只剩这一条理由。原先
+        # 挂在后面的那半句（这么改等于替未标注密级的上传定口径）已经撑不住了：那一问 2026-09-28
+        # 结案＝甲，出处 docs/handoff/2026-09-17-human-gates.md 最后一节「H13 结案 ＋ A1/A3 裁定」，
+        # 口径已写进契约 docs/api/contract-v1.md 的「## R467」节，本注释不再拿它当挡箭牌。
+        # 正解是把"参与判定的值"与"用于展示的值"拆开，需要单独设计：已按 R57 订正令另立新单
+        # （拟号 R58）交总控，本单不实现。论证见 R57 报告站点④。
         "classification": stored.get("classification", 1),
         "department": stored.get("department") or "",
         "owner_id": stored.get("owner_id"),

@@ -337,7 +337,11 @@ class ErrorEnvelope(BaseModel):
         # emit 点在 app/agents/tools.py 的行级文案层旁边，逐码出处钉在
         # tests/test_error_code_vocabulary.py::RATIFIED。
         # 密级拦截那一枚**不在这里**：密级维度今天没有任何 emit 点（rbac 不判密级，
-        # max_clearance 只存不用），业主口径亦未裁（H13）⇒ 硬加进枚举必然被
+        # max_clearance 只存不用），而这一维的拒绝今天已由两枚在册码承担——越档回
+        # clearance_insufficient、密级元数据缺失回 resource_scope_missing，本层再造一枚
+        # 同义码就没有 emit 点可指（口径出处 docs/handoff/2026-09-17-human-gates.md 最后一节
+        # 「H13 结案 ＋ A1/A3 裁定」：H13 已于 2026-09-28 结案＝甲；口径已写进契约
+        # docs/api/contract-v1.md 的「## R467」节）⇒ 硬加进枚举必然被
         # test_no_ratified_code_is_invented 判红，或者逼出假 emit 点。登记见同一个测试文件。
         "row_scope_denied",
         "no_visible_rows",
