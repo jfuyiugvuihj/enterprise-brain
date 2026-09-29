@@ -88,7 +88,9 @@ describe('R399 甲 · /traces 是一屏，写法逐字照 /admin 先例', () => 
   })
 
   it('它进的是管理员那一份入口清单，顺序 = 路由表顺序；员工与 auditor 拿不到', () => {
-    expect(administratorNavigation.map(item => item.id)).toEqual(['admin', 'traces'])
+    // R505 往同一份清单再加三枚（服务等级目标 / 评测报告 / 审计事件）：换的是名单本身，
+    // 不是断言强度 —— 仍然定长逐字相等、仍然按路由表顺序，下面两枚 not.toContain 一字未动。
+    expect(administratorNavigation.map(item => item.id)).toEqual(['admin', 'traces', 'slo', 'evaluations', 'audit-events'])
     const staffIds = navigationForRole('staff').map(item => item.id)
     const auditorIds = navigationForRole('auditor').map(item => item.id)
     expect(staffIds, '员工侧栏长出管理员屏的入口 = 一枚按下去只会说「不向你开放」的假控件').not.toContain('traces')

@@ -291,16 +291,21 @@ describe('R315 判据⑥ · 六枚一级屏真的可达', () => {
 
   // R399 往「管理员那一档」再加一枚入口（运行留痕）：换的是名单本身，不是断言强度 —— 其余角色
   // 那六枚仍然定长逐字相等，管理员那一档仍然逐字相等且只多管理员屏那一族，没换成包含式。
-  it('按角色派生入口那把尺子带上它：其余角色就这六枚，管理员那一档只多 admin 与 traces 两枚', () => {
+  // R505 再往同一档加三枚（服务等级目标 / 评测报告 / 审计事件）：走的还是上面那条先例 ——
+  // 加长的是名单本身，断言一字不降（仍是定长逐字相等 + 定长计数 + 逐枚 not.toContain），
+  // 没有一枚换成包含式；非管理员那一档仍然一枚管理员屏都拿不到。
+  const ADMIN_ONLY_SCREEN_IDS = ['admin', 'traces', 'slo', 'evaluations', 'audit-events']
+  it('按角色派生入口那把尺子带上它：其余角色就这六枚，管理员那一档只多管理员屏那一族', () => {
     for (const role of ['staff', 'manager', 'auditor', 'editor', '', undefined, null]) {
       expect(navigationForRole(role).map(item => item.id), '角色 ' + String(role) + ' 看到的入口不是这六枚').toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
     }
     const forAdmin = navigationForRole(ADMINISTRATOR_ROLE)
-    expect(forAdmin.map(item => item.id)).toEqual([...(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts']), 'admin', 'traces'])
-    expect(forAdmin).toHaveLength(navIds.length + 2)
+    expect(forAdmin.map(item => item.id)).toEqual([...(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts']), ...ADMIN_ONLY_SCREEN_IDS])
+    expect(forAdmin).toHaveLength(navIds.length + ADMIN_ONLY_SCREEN_IDS.length)
     const staffIds = navigationForRole('staff').map(item => item.id)
-    expect(staffIds).not.toContain('admin')
-    expect(staffIds).not.toContain('traces')
+    for (const adminOnlyId of ADMIN_ONLY_SCREEN_IDS) {
+      expect(staffIds, '员工侧栏长出了管理员屏入口：' + adminOnlyId).not.toContain(adminOnlyId)
+    }
   })
 
   it('深链 /artifacts 直接进能渲染：解析到这一屏，HTML 与直接渲染那枚壳逐字相同', async () => {
@@ -330,9 +335,9 @@ describe('R315 判据⑥ · 六枚一级屏真的可达', () => {
     expect(LEGACY_FEED_NAMES).toEqual(['docs', 'data'])
     expect(LEGACY_FEED_NAMES).not.toContain('artifacts')
     expect(routes.filter(route => route.meta?.screen && LEGACY_FEED_NAMES.includes(String(route.name)))).toHaveLength(0)
-    // 屏的全集里，非一级的只有图谱、「账号与角色」与 R399 的「运行留痕」，再加上那两枚老屏名
-    // —— 定长逐字相等，多一枚少一枚都红。
-    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['profile', 'graph', 'admin', 'traces', 'docs', 'data'])
+    // 屏的全集里，非一级的只有图谱、「账号与角色」、R399 的「运行留痕」与 R505 的三枚管理员屏，
+    // 再加上那两枚老屏名 —— 定长逐字相等，多一枚少一枚都红。
+    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['profile', 'graph', 'admin', 'traces', 'slo', 'evaluations', 'audit-events', 'docs', 'data'])
     expect(artifactsRoute.redirect, '「交成果」不该是重定向，它是一屏').toBeUndefined()
   })
 

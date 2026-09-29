@@ -27,12 +27,15 @@ import { createRouter, createWebHistory } from 'vue-router'
 import AdminPanel from '../components/AdminPanel.vue'
 import ApprovalPanel from '../components/ApprovalPanel.vue'
 import ArtifactsPanel from '../components/ArtifactsPanel.vue'
+import AuditEventsPanel from '../components/AuditEventsPanel.vue'
 import ChatPanel from '../components/ChatPanel.vue'
 import DashboardPanel from '../components/DashboardPanel.vue'
+import EvaluationsPanel from '../components/EvaluationsPanel.vue'
 import FeedPanel from '../components/FeedPanel.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import InsightPanel from '../components/InsightPanel.vue'
 import ProfilePanel from '../components/ProfilePanel.vue'
+import SloPanel from '../components/SloPanel.vue'
 import TracePanel from '../components/TracePanel.vue'
 
 // 「喂料」的标签清单与它名下的老地址是同一条记录的两张脸，只写在 feed-tabs.js 一遍；
@@ -153,6 +156,36 @@ export const routes = [
     name: 'traces',
     component: TracePanel,
     meta: { screen: true, title: '运行留痕', icon: 'M4 7h16M4 12h10M4 17h6M14 12l3 3 5-6', primary: false, administratorOnly: true },
+  },
+  // R505 判据 A · 「服务等级目标」是一屏：GET /api/v1/slo 这条读腿今天在前端零消费者，而它交的全是
+  // 欠账 —— 三档的每一个数字格都写着「欠样本」或「不可测」，目标值整格待填。写法逐字照上面 /admin 与
+  // /traces 那两枚先例：primary:false 派生不出一级入口，administratorOnly:true 让它只长进管理员那一份
+  // 入口清单（administratorNavigation 就是 App.vue 侧栏那枚 v-for 的真源，加这三屏不改壳层一个字）。
+  // 这一屏上没有任何一处能把样本闸调低：那一枚下限写在服务端，能调低的下限不是下限。
+  {
+    path: '/slo',
+    name: 'slo',
+    component: SloPanel,
+    meta: { screen: true, title: '服务等级目标', icon: 'M4 18a8 8 0 1 1 16 0M12 18l4-5', primary: false, administratorOnly: true },
+  },
+  // R505 判据 B · 「评测报告」是一屏，但它不跑分：那条出口自己就写着 runs_on_request=false，
+  // 屏上把这句原话、它给的理由与那句只在命令行上敲的命令一起端出来，零枚「立即运行」按钮。
+  // 同一条先例，同一个理由：它先要系统管理员角色，再要评测读取这一项权限，员工侧摆一枚只会说
+  // 「不向你开放」的按钮就是 R32 明令禁的假控件。
+  {
+    path: '/evaluations',
+    name: 'evaluations',
+    component: EvaluationsPanel,
+    meta: { screen: true, title: '评测报告', icon: 'M5 6h5M5 12h5M5 18h5M13 6l2 2 3-3M13 12l2 2 3-3M13 18l2 2 3-3', primary: false, administratorOnly: true },
+  },
+  // R505 判据 C · 「审计事件」是一屏，而且只读：那条出口自己写着它永不写入一枚 allowed 事件。
+  // 这一屏把「这一页是全部还是头一段」摆在明面上 —— 三枚计数、一枚截断旗与那格上限逐格印，
+  // 排序也照服务端给的那一句说。入口形状与上面两屏同一条先例，过的仍是审计那一项权限。
+  {
+    path: '/audit/events',
+    name: 'audit-events',
+    component: AuditEventsPanel,
+    meta: { screen: true, title: '审计事件', icon: 'M12 4l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V7zM9 12l2 2 4-4', primary: false, administratorOnly: true },
   },
   // R136 判据② · 老地址不许白屏：/docs、/data 是合屏之前的两屏，存量链接与总览往
   // @goto 发的落点今天仍指着这两个名字。这一组由 FEED_TABS 派生，于是「加第三枚标签」

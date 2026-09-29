@@ -31,14 +31,17 @@ import { renderToString } from '@vue/server-renderer'
 import AdminPanel from '../../components/AdminPanel.vue'
 import ApprovalPanel from '../../components/ApprovalPanel.vue'
 import ArtifactsPanel from '../../components/ArtifactsPanel.vue'
+import AuditEventsPanel from '../../components/AuditEventsPanel.vue'
 import ChatPanel from '../../components/ChatPanel.vue'
 import DashboardPanel from '../../components/DashboardPanel.vue'
 import DataPanel from '../../components/DataPanel.vue'
 import DocPanel from '../../components/DocPanel.vue'
+import EvaluationsPanel from '../../components/EvaluationsPanel.vue'
 import FeedPanel from '../../components/FeedPanel.vue'
 import GraphPanel from '../../components/GraphPanel.vue'
 import InsightPanel from '../../components/InsightPanel.vue'
 import ProfilePanel from '../../components/ProfilePanel.vue'
+import SloPanel from '../../components/SloPanel.vue'
 import TracePanel from '../../components/TracePanel.vue'
 import { FOCUSABLE_SELECTOR } from '../../components/ui/focus-trap.js'
 import {
@@ -80,6 +83,12 @@ const SCREENS = [
   // R399 判据①（甲案）再加一枚屏：与 /admin 同一条形状（是一屏、不是一级入口、只长进管理员那一份
   // 入口清单）。写法不变：仍然只往同一枚定长名单里加一项，多一枚少一枚都红。
   ['/traces', 'traces', TracePanel],
+  // R505 判据 A/B/C 再加三枚屏（目标账 / 评测报告 / 审计事件）：三枚都是「是一屏、不是一级入口、
+  // 只长进管理员那一份入口清单」，写法与 R316 / R399 同一形状 —— 下面那两条定长名单各加三项，
+  // toEqual 与 toHaveLength 一枚都不动，也没换成包含式：多一项、少一项、换顺序，照样当场红。
+  ['/slo', 'slo', SloPanel],
+  ['/evaluations', 'evaluations', EvaluationsPanel],
+  ['/audit/events', 'audit-events', AuditEventsPanel],
 ]
 
 /** 老屏名：不再是屏，但仍然是入口（总览的卡片与 @goto 还指着它们）。 */
@@ -129,10 +138,12 @@ describe('R104 判据 1 · 一级屏一屏一路由，导航是它的派生视�
     // R315 判据④ 换号理由：「交成果」进一级入口，名单加一项就是六枚；断言强度未降——
     // 仍然逐字相等，多一枚、少一枚、换顺序三种走法都当场红，没有改成 toContain / >=。
     expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
-    // 屏的全集比一级多图谱、「账号与角色」与「运行留痕」三枚（R316 与 R399：管理员屏都不派生
-    // 一级入口）；屏之外的入口（老屏名）不许被当成屏。原断言 = ['graph', ...LEGACY]，新断言只是往
-    // 同一枚定长名单里加一项，toEqual 的逐字相等与「不许多一枚」都还在。
-    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['profile', 'graph', 'admin', 'traces', ...LEGACY_FEED_NAMES])
+    // 屏的全集比一级多图谱、「账号与角色」、「运行留痕」与 R505 那三枚管理屏（R316 / R399 / R505：
+    // 管理员屏都不派生一级入口）；屏之外的入口（老屏名）不许被当成屏。原断言 = ['graph', ...LEGACY]，
+    // 新断言只是往同一枚定长名单里加项，toEqual 的逐字相等与「不许多一枚」都还在。
+    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(
+      ['profile', 'graph', 'admin', 'traces', 'slo', 'evaluations', 'audit-events', ...LEGACY_FEED_NAMES],
+    )
     expect(LEGACY_FEED_NAMES).toEqual(['docs', 'data'])
     // 一屏一条路由：地址、组件、标题都不许多也不许少
     expect(screenRoutes.map(route => route.path)).toEqual(SCREENS.map(entry => entry[0]))
@@ -307,7 +318,8 @@ describe('R104 判据 3 · 切屏不丢会话，也不改别人家的重挂载�
     // R316：屏的面板名单加一枚 AdminPanel（定长 toEqual 未改成包含式，强度不降）。
     // R315 加 ArtifactsPanel、R399 加 TracePanel —— 同样只往同一枚定长名单里加一项，没换成包含式：
     // 壳改名、多一枚、少一枚，这条都会红（顺序 = 路由表顺序）。
-    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'InsightPanel', 'ApprovalPanel', 'ChatPanel', 'ArtifactsPanel', 'ProfilePanel', 'GraphPanel', 'AdminPanel', 'TracePanel'])
+    // R505 再往这枚定长名单里加三项（顺序 = 路由表顺序），仍然逐字相等，没降成包含式。
+    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'InsightPanel', 'ApprovalPanel', 'ChatPanel', 'ArtifactsPanel', 'ProfilePanel', 'GraphPanel', 'AdminPanel', 'TracePanel', 'SloPanel', 'EvaluationsPanel', 'AuditEventsPanel'])
     expect(names.filter(name => cachedScreens.includes(name))).toEqual(['ChatPanel'])
   })
 })

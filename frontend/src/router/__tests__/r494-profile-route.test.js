@@ -68,8 +68,11 @@ describe('R494 乙 · 它今天的状态：可深链，不占一级入口', () =
     expect(profileRoute.meta.primary).toBe(false)
   })
 
-  it('它也不是管理员独占屏：administratorNavigation 那一截一枚没多（还是 /admin 与 /traces 两枚）', () => {
-    expect(administratorNavigation.map(item => item.id)).toEqual(['admin', 'traces'])
+  // R505 换号：管理员那一截从两枚长成五枚（多出的是目标账 / 评测报告 / 审计事件三枚管理屏）。
+  // 换的是名单本身，不是强度 —— 仍然定长 toEqual、仍然「多一枚少一枚都红」，
+  // 而这一条要钉的事一字未动：profile 不在那一截里，它自己也不是管理员独占屏。
+  it('它也不是管理员独占屏：administratorNavigation 那一截里始终没有 profile 这一枚', () => {
+    expect(administratorNavigation.map(item => item.id)).toEqual(['admin', 'traces', 'slo', 'evaluations', 'audit-events'])
     expect(profileRoute.meta.administratorOnly).toBeUndefined()
   })
 

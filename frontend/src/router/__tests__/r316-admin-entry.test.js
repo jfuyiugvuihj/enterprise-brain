@@ -69,11 +69,12 @@ describe('R316④ · /admin 是一屏，而且是真落点', () => {
 
 describe('R316④ · 入口该由谁派生', () => {
   // R316 定下这一格时清单里就一枚；R399 判据①（甲案）交出第二枚「运行留痕」，走的是同一枚
-  // administratorOnly 声明。断言强度未降：名单仍是定长 toEqual（顺序 = 路由表顺序），
+  // administratorOnly 声明；R505 判据 A/B/C 再交出三枚（目标账 / 评测报告 / 审计事件），形状一字未改。
+  // 断言强度未降：名单仍是定长 toEqual（顺序 = 路由表顺序），
   // 多一枚、少一枚、把别人的入口混进来都当场红，没换成包含式。
-  it('管理员独占屏的入口清单就这两枚，字段齐，可及名称取的是同一格 meta.title', () => {
-    expect(administratorNavigation).toHaveLength(2)
-    expect(administratorNavigation.map(item => item.id)).toEqual(['admin', 'traces'])
+  it('管理员独占屏的入口清单就这五枚，字段齐，可及名称取的是同一格 meta.title', () => {
+    expect(administratorNavigation).toHaveLength(5)
+    expect(administratorNavigation.map(item => item.id)).toEqual(['admin', 'traces', 'slo', 'evaluations', 'audit-events'])
     const item = administratorNavigation[0]
     expect(item).toEqual({ id: 'admin', label: '账号与角色', icon: adminRoute.meta.icon })
     expect(item.label, '入口没有可及名称').toBeTruthy()
@@ -89,15 +90,19 @@ describe('R316④ · 入口该由谁派生', () => {
       expect(ids).not.toContain('admin')
       // R399：第二枚管理员屏走的是同一张嘴，员工侧同样派生不出来（不是「画出来再藏起来」）。
       expect(ids).not.toContain('traces')
+      // R505：那三枚新管理屏走的是同一张嘴，员工侧照样一枚都派生不出来。
+      expect(ids).not.toContain('slo')
+      expect(ids).not.toContain('evaluations')
+      expect(ids).not.toContain('audit-events')
     }
   })
 
-  it('系统管理员那一档只多这两枚：加入口，一级屏那六枚一枚未减', () => {
-    // R399 往同一份清单里加第二枚入口：写法不变，仍是定长 toEqual 与「navigation 那一截原样在前」。
+  it('系统管理员那一档只多这五枚：加入口，一级屏那六枚一枚未减', () => {
+    // R399 与 R505 往同一份清单里加入口：写法不变，仍是定长 toEqual 与「navigation 那一截原样在前」。
     const forAdmin = navigationForRole(ADMINISTRATOR_ROLE)
-    expect(forAdmin.map(item => item.id)).toEqual([...screenIds, 'admin', 'traces'])
+    expect(forAdmin.map(item => item.id)).toEqual([...screenIds, 'admin', 'traces', 'slo', 'evaluations', 'audit-events'])
     expect(forAdmin.slice(0, navigation.length)).toEqual(navigation)
-    expect(forAdmin).toHaveLength(navigation.length + 2)
+    expect(forAdmin).toHaveLength(navigation.length + 5)
   })
 
   it('ADMINISTRATOR_ROLE 就是后端那枚角色名，不是前端新造的词', () => {
