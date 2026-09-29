@@ -479,13 +479,13 @@ export function createStreamReducer(msg, state) {
           state.awaitingHitl = !!data.awaiting_hitl
           state.pendingSteps = Array.isArray(data.awaiting_steps) ? data.awaiting_steps : []
           if (typeof data.data_filename === 'string') state.terminalDataFilename = data.data_filename
-          return { action: 'terminal' }
+          state.terminalRead = { event: 'request.completed', seen: Object.keys(data), data: { ...data } }; return { action: 'terminal' }
         case 'request.failed':
-          state.terminal = state.terminal || 'failed'
+          state.terminal = state.terminal || 'failed'; state.terminalRead = { event: 'request.failed', seen: Object.keys(data), data: { ...data } }
           if (data.error_code) state.errorCode = String(data.error_code)
           return { action: 'failed' }
         case 'request.cancelled':
-          state.terminal = state.terminal || 'cancelled'
+          state.terminal = state.terminal || 'cancelled'; state.terminalRead = { event: 'request.cancelled', seen: Object.keys(data), data: { ...data } }
           return { action: 'cancelled' }
         case 'answer.headline':
           // R48 路线甲。整段替换而不是追加：本轮如果又来一枚卡（今天收端只认第一枚，发卡方
