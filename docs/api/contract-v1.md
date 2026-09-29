@@ -5753,3 +5753,48 @@ R383 已经把写路径的两张存储脸与「存储自报就绪却没写成」
 - 没起服务、没打后端真出口、没动容器、没打模型、没写库；上面那些形状全部来自内存 app 夹具与浏览器真仪器。
 - 没新增错误码，也没把档位的档位表抄进前端——屏上那句「第 1–N 级」的 N 只来自后端这一格。
 - 没量过这一屏让路延迟、没做浅色主题、零外部请求（无 `fonts.googleapis.com`、无 CDN、无图标库）。
+## R504 · 另两枚终态也交得出「这一轮用的是哪份数据文件」：legacy `done` 帧与队列终态载荷（`app/api/v1/chat.py`，2026-09-29）
+
+R414 那节文末登记的「今天还没接的两格」（legacy `done` 与队列终态不带 `data_filename`）从今天起收掉一格半：
+两处载荷在**真读得出那一份文件**时交出 `data_filename`，读不出就整格缺席。取值仍只有 R414 那枚
+`app/api/v1/chat.py::terminal_data_filename` 一个来源，本单不新增第二份名字拼装，也不新增字段名。
+
+### 键与三态（逐枚点名，与 R414 同一本账）
+
+| 出口 | `data_filename` 的形状 | 说不清时 |
+| --- | --- | --- |
+| canonical `request.completed`（`/ask` 正文道、`/approve` 续跑道，R414 在册） | 键在位，值 = 本轮实际算过的那一枚文件名 | 键在位、值为空串（零枚与两枚及以上都交空串） |
+| legacy `event: done`（`done_sse_frame` 唯一构造点，经 `done_frame_for_turn` 收 `dataset_files`） | 键在位，值同上 | **整格缺席**：键根本不出现 |
+| 队列终态载荷（`build_queue_terminal` 新增 `dataset_files` 参数） | 键在位，值同上 | **整格缺席** |
+| `GET /api/v1/queue/status/{request_id}` 的终态读数（`queue_terminal_readout`） | 载荷里有这一格才照说 | 载荷里没有 ⇒ 读数里也不出现这一格（「照载荷说，一格都不添」的原口径不变） |
+
+两形不许并脸：legacy `done` 与队列终态的键集合是被 `tests/test_r254_sync_lane_terminal.py` 按名以**相等**
+钉住的，往里补一格空串就是改宽那道钉；因此「这一轮真没跑数据」与「这一轮算过多枚、说不清」在这一帧上
+都是**没这一格**，而 canonical 那一发说的是「有这一格，但它说不清」。读的人要区分这两种说法时，
+去读同轮的 `request.completed`，不要拿缺席猜成因。
+
+### 三条禁令（本单执法点写在钉里）
+
+1. 不许补造：零枚与多枚一律不发，`terminal_data_filename` 交空串时挂载件不落键
+   （`tests/test_r504_terminal_frames_carry_data_filename.py::test_a_turn_that_computed_from_nothing_leaves_the_cell_absent`）。
+2. 不许反手抄：`data_filename` 是**响应方向**（服务端真算了哪份），`AskRequest.data_filename` 是**请求方向**
+   （调用方点了哪份），两枚同名不同义；`user_ctx["data_filename"] = request.data_filename` 仍然只喂图，
+   没有任何一枚终态帧拿它填格（同文件 `test_the_declared_field_never_becomes_the_answer`
+   与 `test_the_request_direction_cell_stays_where_it_was`）。
+3. 不许第二处拼名字：AST 面钉住全文件把值交给这一格的五处及其归属函数，其中交终态值的三处
+   必须直接调 `terminal_data_filename`（同文件 `test_every_terminal_value_for_the_cell_comes_from_the_one_registered_function`）。
+
+### 今天仍然欠的那一手（🔴 本单未治，只登记）
+
+* **答案缓存命中那一腿仍然整枚不发 `request.completed`**，屏上「本轮用哪张表」那一格因此在命中轮永远空着。
+  更深一层：缓存条目当年就**没有落账** dataset 读数（`_cache_source_manifest` 只存文档证据行），
+  所以那一轮的用表读数今天无从读回——补发一枚终态帧也填不出这一格。修法要么给缓存条目加一枚
+  只读派生键，要么在命中道补发终态并明写「无从核对」，两者都要先量影响面，属独立立案，不归本单。
+* **`deploy/queue_worker.py` 的三处 `chat.build_queue_terminal(...)` 调用还没传 `dataset_files`**（本单写域不含该文件），
+  所以队列道今天交的还是「没这一格」的形状：载荷键已备好，读数是空的。要让队列道真的说得出用的哪份文件，
+  需要在那三处把 `_collect_dataset_filenames` 的 sink 交进来——一处一线，不新增第二份收集器。
+* **前端解码处今天只读 canonical 那一发**：`frontend/src/lib/sessions.js` 里 `done` 分支只置终止状态、
+  不读载荷键（`:574-576`），`/queue/status` 的读数只喂排队那张脸（`components/ChatPanel.vue`、`lib/provenance.js`）。
+  本单交的是后端侧的字节，屏上要多接两道读数属前端线一手。
+
+本节没有新增错误码、没有新增外部请求、没有新增 Chroma 依赖或写点，也没有改动任何一枚在册件。

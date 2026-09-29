@@ -369,6 +369,23 @@ def terminal_data_filename(dataset_files: list[str]) -> str:
     return dataset_files[0] if len(dataset_files) == 1 else ""
 
 
+def attach_terminal_data_filename(payload: dict, dataset_files: list[str] | None) -> dict:
+    """把「这一轮真算过哪份数据文件」按在册口径挂进终态载荷，说不清就整格不发（R504）。
+
+    取值只有 `terminal_data_filename` 一枚来源：本件不拼第二份名字，也不拿
+    `AskRequest.data_filename`（请求方向：调用方点了哪份）顶它（响应方向：服务端真算了哪份），
+    契约 R414 节已写死两枚不许互相冒充。零枚与多枚时 `terminal_data_filename` 交空串，本件
+    于是**整格缺席**——legacy `done` 与队列终态的键集被在册件
+    `tests/test_r254_sync_lane_terminal.py` 按名以**相等**钉住，往里补一枚空串就是改宽那道钉；
+    而在册那两发 canonical `request.completed` 是「键在位、值可为空串」。「这一帧压根没这一格」
+    与「这一帧说了：说不清」是两句话，本单不并脸、不补造。
+    """
+    data_filename = terminal_data_filename(list(dataset_files or []))
+    if data_filename:
+        payload["data_filename"] = data_filename
+    return payload
+
+
 def _authorized_source_rows(rows: dict, principal) -> tuple[list[dict], str]:
     """用与旧 ``/chat`` 同一个 ``scope.allows`` 复核每条来源，返回可见行与理由码。
 
@@ -2249,16 +2266,20 @@ def build_queue_terminal(
     sources_error: str = "",
     usage: dict | None = None,
     approval: dict | None = None,
+    dataset_files: list[str] | None = None,
 ) -> dict:
     """队列终态载荷的唯一构造点（判据①②③共用同一份形状）。
 
     `terminal_state` 只认两枚能进队列的形状，别的一律 raise：队列的状态键由它推导，构造点
     与落库点之间不存在第二份口径。
+
+    `dataset_files` 是 R504 加的第八格：只在真读得出那一份时出现（同一枚 `terminal_data_filename`），
+    读不出就整格缺席；既有键名与语义一字未动。
     """
     if terminal_state not in (TERMINAL_STATE_ANSWERED, TERMINAL_STATE_AWAITING_APPROVAL):
         raise ValueError(f"queue terminal cannot carry terminal_state={terminal_state!r}")
     rows = list(sources or [])
-    return {
+    payload = {
         "schema": reliable_queue.TERMINAL_SCHEMA,
         "terminal_state": terminal_state,
         "answer_present": bool(answer_present),
@@ -2272,6 +2293,7 @@ def build_queue_terminal(
         "usage": usage,
         "approval": approval,
     }
+    return attach_terminal_data_filename(payload, dataset_files)
 
 
 def is_hitl_park_notice(text: str) -> bool:
@@ -2297,6 +2319,7 @@ def done_sse_frame(
     sources_error: str = "",
     usage: dict | None = None,
     approval: dict | None = None,
+    dataset_files: list[str] | None = None,
 ) -> str:
     """legacy `event: done` 那一帧的唯一构造点（判据②③⑤）。
 
@@ -2306,20 +2329,20 @@ def done_sse_frame(
     `sources_present` 留在旁边，是为了让「本轮没有出处」与「出处没读出来」两种形状在只带
     这一帧的旧客户端上也各说各的话；`sources_error` 与队列终态里同名那一格同一本账——
     非空说的是「这一格压根没读出来」，它和「读出来是空表」不是同一句话。
+    `data_filename` 是 R504 加的第八格，与队列终态同一枚构造口径：只在真读得出那一份时出现，
+    `terminal_data_filename` 交空串就整格缺席。
     """
-    return sse_event(
-        "done",
-        {
-            "type": "done",
-            "terminal_state": terminal_state,
-            "answer_present": bool(answer_present),
-            "sources_present": bool(sources_present),
-            "sources": [row for row in (sources or []) if isinstance(row, dict)],
-            "sources_error": str(sources_error or ""),
-            "usage": usage,
-            "approval": approval,
-        },
-    )
+    payload = {
+        "type": "done",
+        "terminal_state": terminal_state,
+        "answer_present": bool(answer_present),
+        "sources_present": bool(sources_present),
+        "sources": [row for row in (sources or []) if isinstance(row, dict)],
+        "sources_error": str(sources_error or ""),
+        "usage": usage,
+        "approval": approval,
+    }
+    return sse_event("done", attach_terminal_data_filename(payload, dataset_files))
 
 
 def done_frame_for_turn(
@@ -2330,11 +2353,16 @@ def done_frame_for_turn(
     intr: dict | None,
     visible_rows: list[dict] | None,
     sources_error: str = "",
+    dataset_files: list[str] | None = None,
 ) -> str:
     """跑完一轮的三条出口（/ask 正文、/approve 续跑、答案缓存命中）共用的 done 帧。
 
     `sources_error` 只有缓存命中那一支会非空：那一轮的正文来自另一轮的账，出处清单可能
     根本没记下（条目早于清单），这时能说的是「无从核对」，不是「没有出处」。
+
+    `dataset_files` 是 R504 多收的一枚读数：谁把这一轮的 dataset 证据交给它，那一轮的 done
+    才说得出用的哪份文件。缓存命中那一支今天**不交**（命中轮的用表读数当年没有落账，本单
+    未治，见 docs/testing/ 的 R504 读数件），于是那一帧那一格整枚缺席。
     """
     if intr:
         state = TERMINAL_STATE_AWAITING_APPROVAL
@@ -2350,6 +2378,7 @@ def done_frame_for_turn(
         sources_error=sources_error,
         usage=read_model_call_usage(request_id),
         approval=approval,
+        dataset_files=dataset_files,
     )
 
 
@@ -2915,6 +2944,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                         answer_present=False,
                         sources_present=False,
                         usage=read_model_call_usage(request_id),
+                        dataset_files=dataset_files,
                     )
                     await asyncio.sleep(0)
                     break
@@ -3013,6 +3043,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     full_text=full_text,
                     intr=intr,
                     visible_rows=visible_rows,
+                    dataset_files=dataset_files,
                 )
                 await asyncio.sleep(0)
                 break
@@ -3621,6 +3652,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                         answer_present=False,
                         sources_present=False,
                         usage=read_model_call_usage(request_id),
+                        dataset_files=dataset_files,
                     )
 
                     await asyncio.sleep(0)
@@ -3693,6 +3725,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     full_text=full_text,
                     intr=intr,
                     visible_rows=visible_rows,
+                    dataset_files=dataset_files,
                 )
                 await asyncio.sleep(0)
                 break
@@ -4990,6 +5023,12 @@ def queue_terminal_readout(
             "terminal_note": "",
         }
     )
+    # R504：载荷里有这一格才照说，没有就整格缺席——「这一行发布于 R504 之前」与「那一轮
+    # 真没跑数据」在这扇读面上都不许补一枚空串洗成「说了空话」，更不许拿请求方向的声明值
+    # 顶它。取值原样搬运，不重新判定。
+    data_filename = data.get("data_filename")
+    if isinstance(data_filename, str) and data_filename:
+        readout["data_filename"] = data_filename
     return readout
 
 
