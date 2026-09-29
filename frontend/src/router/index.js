@@ -132,7 +132,7 @@ export const routes = [
   // v-for 吃的就是 navigationForRole(userRole)，判据钉在 src/router/__tests__/r316-admin-entry.test.js。
   // primary:false 给的是「它不占一级入口、只长进管理员那一份清单」这个准确状态：/admin 深链直达
   // 渲染 AdminPanel，staff 走进去看到的是「这一屏不向你开放」那张脸（后端 403），不是空列表。
-  // administratorOnly 只声明入口，不是第二套权限判定：能不能读仍然只在服务端那道 ACTION_MANAGE_USERS 闸上（app/api/v1/auth.py:106 与 app/common/policy.py:44/:95）。
+  // administratorOnly 只声明入口，不是第二套权限判定：能不能读仍然只在服务端那道 ACTION_MANAGE_USERS 闸上（app/api/v1/auth.py:107 与 app/common/policy.py:44/:95）。
   {
     path: '/admin',
     name: 'admin',
