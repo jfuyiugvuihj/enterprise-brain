@@ -671,6 +671,14 @@ def _process_report_lane_turn(
     visible_sources: list = []
     scope_reason = ""
     sources_error = ""
+    # R514：这一轮真算过哪份数据文件，与上面那枚 usage 同一格——在两腿分叉之前一次取好，
+    # 挂起腿与正文腿共用同一份读数。取数只走 `chat` 在册的那一枚唯一收集器
+    # `_collect_dataset_filenames`（R504 §9 判据①登记的改法：一处一线、不新增第二份收集器），
+    # 读的是 `_drain_report_stream` 已经收回来的那只证据袋：纯内存搬运，一次索引台账都不打，
+    # 所以它与上面那句「挂起这一轮不取出处」不冲突——那句话说的是 `queue_turn_sources` 要走
+    # `_authorized_source_rows` 现取检索范围，不是这里。
+    dataset_files: list[str] = []
+    chat._collect_dataset_filenames(agent_results, dataset_files)
 
     if parked:
         # 挂起记三笔账：审批面板一行待办、队列一个**非 done** 终态、会话历史一句话，缺一笔
@@ -700,6 +708,7 @@ def _process_report_lane_turn(
             scope_reason_code="",
             sources_error="",
             usage=usage,
+            dataset_files=dataset_files,
             approval=chat.hitl_approval_handle(
                 session_id=session_id or thread_id, parked=parked
             ),
@@ -745,6 +754,7 @@ def _process_report_lane_turn(
             scope_reason_code=scope_reason,
             sources_error=sources_error,
             usage=usage,
+            dataset_files=dataset_files,
         )
         published = queue.complete(request_id, answer, terminal=terminal)
 
@@ -894,6 +904,12 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
             {"orchestrator": record}, principal_payload
         )
         answer = str(record.get("answer") or "")
+        # R514：这条老腿的证据袋就是上面那只 `record`——`run_orchestrator_queue` 已经把各
+        # worker 的 evidence 合进同一枚 canonical 记录，所以这里交的是与出处同一只袋子、
+        # 同一个键名形状 {"orchestrator": record}（R254 判据②早已拿它喂 `queue_turn_sources`）。
+        # 取数同样只走那枚在册收集器，本文件不拼第二份名字；零枚与多枚一律不传，整格缺席。
+        dataset_files: list[str] = []
+        chat._collect_dataset_filenames({"orchestrator": record}, dataset_files)
         terminal = chat.build_queue_terminal(
             terminal_state=chat.TERMINAL_STATE_ANSWERED,
             answer_present=bool(answer),
@@ -902,6 +918,7 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
             scope_reason_code=scope_reason,
             sources_error=sources_error,
             usage=usage,
+            dataset_files=dataset_files,
         )
         if not queue.complete(request_id, answer, terminal=terminal):
             logger.info(
