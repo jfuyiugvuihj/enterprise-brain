@@ -706,10 +706,20 @@ def _cross_stream_repeats(frame_records):
       * 指纹只用 R223 逐帧那一列（``frames[].sha``）里的现成读数，本函数**只派生不另数**：
         把 ``_count_text_frame`` 摘瞎，逐帧那一列跟着空，这一枚证词一起归零 —— 与
         ``tests/test_r223_frame_arrival_clock.py`` 那条「派生而非另起一把尺」同一纪律。
+
+    🔴 R507 两形分开（落码向本段承论对齐，不再摇假零）：
+    帧在而一枚逐帧指纹都拿不到（量具被摘瞎那一窗）⇒ 回 ``None``：这一格今天**没量过**，不许报 0 冒充量过
+    （事故 #73 那一族假零：摘瞎窗口读成「量过了且没重合」）。拿到了指纹且确实没有跨流重合⇒ 才回 0。
+    尺子对 ``None`` 与 0 同样不追加定罪也不洗白（``_frame_verdict`` 缺省 ``REPEAT_DELIVERY_UNMEASURED``），但纸面上两形必须分家。
+    入参不是帧表或枚数为零（空读那一形）仍照在册现状回 0：那一形钉在
+    ``tests/test_r471_second_copy_of_the_answer_body_is_not_a_pass.py:449``，不在本单写域（残余分歧见 ``docs/testing/r507-blind-instrument-returns-none.md``）。
     """
+    records = list(frame_records or [])
+    if records and not any(str(rec.get("sha") or "") for rec in records):
+        return None  # R507 两形分开（一）：帧在而无一枚指纹 ⇒ 未量，不许报 0 冒充量过
     earliest = {}
     repeats = 0
-    for record in frame_records or []:
+    for record in records:
         if int(record.get("chars") or 0) <= 0:
             continue  # 空帧没有正文，谈不上「出现两遍」
         sha = str(record.get("sha") or "")
