@@ -167,7 +167,7 @@
 **A2 代码动作（一枚，等 R384）**：`POST /upload` 在 `principal.department` 为空时**拒收**（422 同族码，`department_scope_required` 已在册，`scripts/seed_workspace.py:4-5` 就是它），而不是静默落 `""`。这一格缺的不是传参，是**拒收**：今天 `chat.py:4078` 把空值一路放行到 `:1365` / `:373`， producing 一库"检索永远命中不到"的文档。
 **回填**：**需要** —— 不回填，那 1008 枚永远空。回填 = 写生产数据 = 业主动作，必须先量后批：量具 `scripts/r387_backfill_estimate.py`，读数见 §2.3（`74` 枚文档 / `923` 枚 chunk 可规则回填，`26` 枚 / `85` 枚必须人工裁决）。🔴 本件 `writes_issued=0`，一行都没写。
 **新迁移**：**不需要**。列、默认、COMMENT、索引都在 `migrations/0010_pgvector_chunks.sql` 里现成（`:141` 列、`:163-164` 那句 COMMENT、`:374-375` / `:387-388` 两枚 prefilter 索引）。
-**动 `app/documents/catalog.py` 吗**：**方案 A 不动**。`department` 早就在参数链上（`:644` / `:759`），A1/A2 都不需要新写口。⚠ 一旦要加"按文档改部门"的写入口（业主若要求"部门随文档而不是随人"），就必须等 **R383（`Boyle`）并完**。
+**动 `app/documents/catalog.py` 吗**：**方案 A 不动**。`department` 早就在参数链上（现读 `:647` / `:762`），A1/A2 都不需要新写口。⚠ 一旦要加"按文档改部门"的写入口（业主若要求"部门随文档而不是随人"），就必须等 **R383（`Boyle`）并完**。
 
 ### 方案 B（更对，但更贵 · 文档部门改由资源归属决定，不再寄生在上传人身上）
 
@@ -520,7 +520,7 @@ cd C:\Users\fengx\PycharmProjects\be-r390
 - **一处区间长度变了（本节唯一一处区间描述）**：`app/documents/catalog.py:626-698` → `:692-766`，旧 73 行 / 新 75 行，
   整窗匹配零命中 = 真改写而不是搬家。窗内只多两行：`:732-733` 那支 `_require_ready_store("version record")` 与它的注释；
   `:769-770` 的 `_schema_needs_migrations` 分支落在终点之外。区间端点仍取同一格 —— 起点 `def record_document_version(`，
-  终点 `conn.execute(...)` 的收尾括号（旧 `:698` / 新 `:766`），凭据 `INSERT INTO document_versions` 现读在 `:743`。
+  终点 `conn.execute(...)` 的收尾括号（旧 `:698` / 新 `:766`），凭据 `INSERT INTO document_versions` 现读在 `:746`。
 - **表与脚本同批**：§1 那张血缘表与 `LINEAGE_HOPS` 的 site 串逐枚等值（脚本 12 跳的 cite 集 ⊆ 文档同行 cite 集；
   文档多出的内层 cite `:1041` / `:1052` / `:644` / `:743-745` / `:759` 按同一张映射表取）。改一头留一头就是给下一班埋第二把假尺。
 - **历史读数不随重锚改**：§8.1 那条「改前 `scripts/r387_label_lineage.py:358`」与 §8.4 刀 K4b 那条「leg `:168`」是当时那一次的

@@ -43,7 +43,7 @@
 | **A④** 逐类不退化 | `口径冲突 0.4211 → 0.3158`（19 题掉 2 题），其余十族零退步、五族进步 | ❌ 第二次由本判据抓到真退化（首次 run4 `doc-19`）⇒ **不许拿"总分涨了"抵账**，需归因单 |
 | **C** 检索与缓存 | 越权格 **未验**（判据出处：计划书 `docs/handoff/2026-09-17-pgvector-adoption-plan.md` §13「任一不满足即记「未验」，不得记通过」。09-29 生产现读——`chunk_vectors` 全库 1008 枚而 `department` 非空 0 枚、`classification` 仅 1 档，`users` 3 行里 admin 与 evalbot 的 department 均为 NULL ⇒ 主体侧与语料侧分子分母都是空集，「越权 0 条」只是空集上的读数、不构成通过证据；R193 矩阵与 R194 两格同形收口用的是沙盒 eb_r59_sandbox 的合成标签，只证隔离**行为**、不证**客户隔离**（现读 `docs/testing/r469-sandbox-scope-readout-2026-09-28.md`），依 §13 不许拿它替本格翻绿；标签血缘的码已并树（R400/R409），A1（改沙盒做）与 A3（落交付阶段）已按 `docs/handoff/2026-09-17-human-gates.md` 裁定分流，不记本单欠账）；剩「缓存命中显式标注」「评测集分数不退化」两格 | 🟡 部分，未翻绿 |
 | **D** 后台化与观测 | 报告档可查回／`usage` 非零／`sources` 在流里——**三格从未宣布验过**；`REPORT_LANE_VIA_QUEUE` 现网默认关 | 🔴 0 格 |
-| **B / E** | 见计划书 §6 的 09-24 门的归属裁定 | ⚪ **移出 V1 门槛**（B=部署档位标定，物理前提在第一版硬件上不成立；E=上线实施清单，其越权格已由 C 覆盖） |
+| **B / E** | 见计划书 §6 的 09-24 门的归属裁定 | ⚪ **移出 V1 门槛**（B=部署档位标定，物理前提在第一版硬件上不成立；E=上线实施清单，其越权格**随 C 一起记「未验」**，不替它翻绿：判据出处仍是计划书 `docs/handoff/2026-09-17-pgvector-adoption-plan.md` §13「任一不满足即记「未验」，不得记通过」，那四件判据今天仍不成立（唯一成立的「越权 = 0」只在空集上有读数）——C 那一格已由 R481 改口（并树 `6907cff`），E 引用 C 就只能引用 C 现在的口径；🔴 此格属 R481 写域之外的补漏，总控 2026-09-29 裁定） |
 
 **🔴 事故 #40（机器侧）与一处读数陷阱**：09-23 23:34 → 09-24 07:40 整机掉进待机 **8 h 6 min**，而 `STANDBYIDLE` 的 AC 值实测一直是 `0x0` ⇒ **runbook「开窗前 `powercfg /change standby-timeout-ac 0`」那条前置是假绿**（第二次发生）。本班已改挂常驻 `SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED|ES_DISPLAY_REQUIRED)`（返回 `0x80000000`）；时延读数以逐题帧账 `wall_ms` 为准，**`evaluation-report.json` 的 `latency_ms.average=351 121 ms` 大于逐题最大值 ⇒ 被冻结污染，不采信**（`scripts/collect_evaluation_answers.py:128-135` 的实测兜底把 8 小时整段吃了进去）。
 

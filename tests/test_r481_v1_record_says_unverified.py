@@ -16,6 +16,17 @@
   ⑥ 牙（只在内存里变异，盘上一字不写）：改回 ✅、改回「已结清」、摘掉出处、
      抹掉理由措辞、把 §13 那句判据摘掉 —— 各红各的，不许陪红。
 
+🔴 R490 把上面 ② 那把窄牙升成整本扫描（本单只加不减：①–⑥ 的 test 与 assert 一枚未删、一条未放宽）。
+   上游判据（`docs/handoff/2026-09-29-v2-gap-recheck-3.md` 里 R481 那格的②）要的是「凡出现『越权』
+   且不带『未验』即红」，本件作者当年**故意没照写实现**——那会在 `B / E` 那一格假红（它当时还写着
+   「其越权格已由 C 覆盖」）。R490 已把那一格改成与 §13 同口径，借口就此消失，于是补上三格：
+   ⑦ 整本「越权 ⇒ 未验」配对：凡提到「越权」的段（表格一行算一格，正文按空行／列表项分段）必须自带「未验」；
+   ⑧ 同一格里的通过口径一律算红：✅、「已结清」，外加「覆盖」——越权格只能被验掉，不能被别人的格子
+      「覆盖」掉（那正是 R490 从 `B / E` 那一格摘掉的句子）；
+   ⑨ `B / E` 那一格的越权腿与 C 同判据：必须写明出处是那本计划书、必须指回 §13、必须端得出**从 §13
+      现读回来**的那句判据原句（与 ③ 同源，不抄数）。
+   新增牙：抹掉 B / E 的「未验」、把它改回「已由 C 覆盖」、给它挂上 ✅ —— 各红各的，C 行的钉不许陪红。
+
 🔴 行号一律运行时派生（同族先例：R400 把三处行号账改成运行时派生）：本件不出现任何
    写死的行号，全部按锚点／标题位置现读；读数与措辞一律从计划书现读回来比对，不手抄。
 """
@@ -29,6 +40,8 @@ RECORD_REL = "docs/handoff/2026-09-23-v1-acceptance-record.md"
 PLAN_REL = "docs/handoff/2026-09-17-pgvector-adoption-plan.md"
 
 C_ROW_PREFIX = "| **C** 检索与缓存 |"
+#: R490：越权口径的第二处引用就在 B / E 那一格 —— 行号同样按前缀现读派生，不写死。
+E_ROW_PREFIX = "| **B / E** |"
 CONCLUSION_HEADING = "## 6. 一句话结论"
 PLAN_HEADING_PREFIX = "## 13."
 OVERREACH = "越权"
@@ -44,6 +57,14 @@ LF = chr(10)
 #: ④ 那把同源牙：C 行的理由必须说清「空集」与「不构成通过证据」，而这两句本来就是
 #    §13 的原话 —— 列在这里只是提出候选，真正的同源判定是「§13 正文里读得到」那一条。
 REASON_ECHOES = ("空集", "不构成通过证据", "沙盒", "客户隔离")
+
+#: ⑧ 通过口径的三种写法：✅ 与「已结清」是 R481 立的旧账，「覆盖」是 R490 补的那一形 ——
+#: 「其越权格已由 C 覆盖」读起来就是「已覆盖」，而 C 那一格今天已经不绿了。
+CLOSURE_WORDS = (CHECKMARK, SETTLED, "覆盖")
+
+#: 「段」的边界：markdown 表格行每行自成一格；列表项与标题各起一段，段内续行算同一句主张。
+LIST_ITEM = re.compile(r"^\s*(?:\d+[.)]|[-*+\u2022])\s+")
+HEADING = re.compile(r"^#+\s")
 
 
 def read(rel):
@@ -61,6 +82,44 @@ def one_hit(rows, matcher, what, offset=0):
 
 def c_row(rows):
     return one_hit(rows, lambda t: t.startswith(C_ROW_PREFIX), "C 行")
+
+
+def e_row(rows):
+    return one_hit(rows, lambda t: t.startswith(E_ROW_PREFIX), "B / E 行")
+
+
+def segments(rows):
+    """把整本切成「段」并派生每段的起始行号（本件不写死任何坐标）。"""
+    out, index = [], 0
+    while index < len(rows):
+        if not rows[index].strip():
+            index += 1
+            continue
+        start = index
+        index += 1
+        if rows[start].lstrip().startswith("|"):
+            out.append((start + 1, rows[start]))
+            continue
+        while index < len(rows) and rows[index].strip() \
+                and not rows[index].lstrip().startswith("|") \
+                and not LIST_ITEM.match(rows[index]) and not HEADING.match(rows[index]):
+            index += 1
+        out.append((start + 1, "\n".join(rows[start:index])))
+    return out
+
+
+def book_defects(rows):
+    """⑦⑧：整本「越权 ⇒ 未验」配对；越权那一格里的任何通过口径都算红。"""
+    out = []
+    for no, text in segments(rows):
+        if OVERREACH not in text:
+            continue
+        if UNVERIFIED not in text:
+            out.append("第 " + str(no) + " 行起的那一段提到越权却没带「" + UNVERIFIED + "」")
+        for word in CLOSURE_WORDS:
+            if word in text:
+                out.append("第 " + str(no) + " 行起的那一段把越权与「" + word + "」写在了一起")
+    return out
 
 
 def conclusion_line(rows):
@@ -157,6 +216,67 @@ def swap_in_cell(new_fragment, old_fragment=UNVERIFIED, count=1):
 
 def test_overreach_cells_read_unverified():
     assert wording_defects(read(RECORD_REL)) == []
+
+
+def swap_prefixed_cell(prefix, new_fragment, old_fragment=UNVERIFIED, count=1):
+    """牙的公共道（R490）：按行前缀定位那一格，只在内存里换片段，盘上一字不写。"""
+    rows = read(RECORD_REL)
+    no, text = one_hit(rows, lambda t: t.startswith(prefix), prefix)
+    assert old_fragment in text, "变异落不了地：" + prefix + " 读不到片段 " + old_fragment
+    patched = list(rows)
+    patched[no - 1] = text.replace(old_fragment, new_fragment) if count == 0 else text.replace(old_fragment, new_fragment, 1)
+    assert patched[no - 1] != text, "变异没改动那一格"
+    return patched
+
+
+def e_row_defects(rows):
+    """⑨：B / E 的越权格必须与 C 端同一句判据；引用别人的格子不能替它翻绿。"""
+    no, text = e_row(rows)
+    out = []
+    if PLAN_REL not in text:
+        out.append("B / E 行没写明越权格的判据出自哪本纸（第 " + str(no) + " 行）")
+    if SECTION_MARK not in text:
+        out.append("B / E 行没把越权格指回计划书 " + SECTION_MARK + "（第 " + str(no) + " 行）")
+    if plan_criterion() not in text:
+        out.append("B / E 行端不出从计划书现读回来的那句判据原句（第 " + str(no) + " 行）")
+    return out
+
+
+def test_the_whole_book_pairs_overreach_with_unverified():
+    """⑦⑧（R490 升级）：不再是「同行同标记」那把窄牙，而是整本配对。"""
+    rows = read(RECORD_REL)
+    assert book_defects(rows) == []
+    assert any(OVERREACH in text for _no, text in segments(rows)), \
+        "整本扫描读不到任何越权口径：这一格今天没在量东西"
+
+
+def test_the_b_e_row_carries_the_same_verdict_as_the_c_row():
+    assert e_row_defects(read(RECORD_REL)) == []
+
+
+def test_teeth_f_the_e_row_losing_unverified_goes_red_alone():
+    rows = swap_prefixed_cell(E_ROW_PREFIX, "已核", count=0)
+    assert book_defects(rows), "把 B / E 行的「未验」全抹掉竟然不红"
+    assert e_row_defects(rows), "B / E 行丢了「未验」竟然没被点名"
+    assert provenance_defects(rows) == [], "B / E 行变异把 C 行出处钉也打红了（陪红＝信号作废）"
+    assert reason_defects(rows) == [], "B / E 行变异把 C 行理由同源钉也打红了"
+
+
+def test_teeth_g_the_covered_by_c_sentence_goes_red():
+    rows = swap_prefixed_cell(E_ROW_PREFIX, "已由 C 覆盖",
+                              old_fragment="随 C 一起记「未验」**，不替它翻绿")
+    assert any("覆盖" in item for item in book_defects(rows)), \
+        "把 B / E 那一格改回「已由 C 覆盖」竟然不红"
+    assert provenance_defects(rows) == [], "「已由 C 覆盖」变异把 C 行出处钉打红了"
+    assert reason_defects(rows) == [], "「已由 C 覆盖」变异把 C 行理由同源钉打红了"
+
+
+def test_teeth_h_a_green_mark_on_the_e_row_is_caught_twice():
+    rows = swap_prefixed_cell(E_ROW_PREFIX, CHECKMARK, old_fragment="\u26aa", count=0)
+    assert any(CHECKMARK in item for item in book_defects(rows)), "B / E 行挂上 ✅ 竟然不红（整本那把）"
+    assert any("越权与通过标记" in item for item in wording_defects(rows)), \
+        "B / E 行挂上 ✅ 竟然不红（窄牙那把；红句只报行号与形状，不回显标记）"
+    assert e_row_defects(rows) == [], "✅ 变异把 B / E 的出处钉也打红了（陪红＝信号作废）"
 
 
 def test_the_cell_points_back_at_plan_section_13():
