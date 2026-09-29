@@ -45,6 +45,7 @@ from psycopg import errors
 from app.api.v1 import chat
 from app.common import auth
 from app.main import app
+from app.storage import sessions as session_storage
 
 REPO = Path(__file__).resolve().parents[1]
 CHAT_REL = "app/api/v1/chat.py"
@@ -172,7 +173,13 @@ def _world(monkeypatch, *, env: str, pg_up: bool, tables, driver_missing: bool =
         monkeypatch.setattr(chat, "_sess_conn", lambda: ledger)
     recorder = LogRecorder()
     monkeypatch.setattr(chat, "logger", recorder)
-    monkeypatch.setattr(chat.session_registry, "is_owned_by", lambda *_a, **_k: True)
+    # R499 · 归属谓词只许在类上接管：往实例上 setattr，pytest 9.1.1 的 undo 会把
+    # 打桩前那枚 bound method 写回实例 __dict__，从此永久遮蔽类属性，把后面一切
+    # 在类上打桩的件（tests/test_r179_chat_denials.py）弄成顺序假红。
+    monkeypatch.setattr(
+        session_storage.SessionRegistry, "is_owned_by", lambda self, *_a, **_k: True)
+    assert "is_owned_by" not in chat.session_registry.__dict__, (
+        "单例上长出了一份就地抄的影子：类上的打桩再也够不到它")
     monkeypatch.setattr(chat, "_MEM_SESSIONS", {})
     monkeypatch.setattr(chat, "_MEM_SESSION_MESSAGES", {})
     monkeypatch.setenv("APP_ENV", env)
