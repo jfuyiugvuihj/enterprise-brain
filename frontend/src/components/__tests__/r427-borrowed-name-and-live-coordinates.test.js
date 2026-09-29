@@ -326,9 +326,26 @@ describe('R427戊 · 五处死坐标引用逐枚对账：声称的数字必须�
   it('r293:53 那条通道五枚坐标逐枚相等（:' + UNMOUNTED.line + ' -> :' + FLUSH.line + ' -> :' + SCROLL.line + ' -> :' + SYNC.line + ' -> :' + PERSIST.line + '）', () => {
     expect(R293).toContain('ChatPanel.vue:' + UNMOUNTED.line + ' onUnmounted -> :' + FLUSH.line + ' flushScroll -> lib/sessions.js:' + SCROLL.line)
     expect(R293).toContain('rememberScroll -> :' + SYNC.line + ' syncActive -> :' + PERSIST.line + ' persist')
-    expect(UNMOUNTED.lines[UNMOUNTED.line - 1 + 4].trim()).toBe('flushScroll()')
-    expect(FLUSH.lines[FLUSH.line - 1 + 5].trim()).toBe('rememberScroll()')
-    expect(SCROLL.lines[SCROLL.line - 1 + 6].trim()).toBe('syncActive()')
+    // 🔴 这三格原来钉的是「函数头 + 一枚写死的行距」（+4 / +5 / +6）。行距是别人插一行就会失效的东西：
+    // 09-28 的 R458 在 onUnmounted 块里加了一发 clearRecheckFaceTimer()，+4 当场被打成假红（本席现取 flushScroll() 在 :894）。
+    // 改口成按块形状推导——「这一发的函数体里必须恰好有那一枚调用」：调用消失即红，挪远挪近不红。强度只升不降。
+    const callsIn = (head, callee) => {
+      let depth = 0
+      const body = []
+      for (let i = head.line - 1; i < head.lines.length; i++) {
+        const line = head.lines[i]
+        if (i > head.line - 1) body.push(line)
+        for (const ch of line) {
+          if (ch === '{') depth += 1
+          else if (ch === '}') depth -= 1
+        }
+        if (i > head.line - 1 && depth <= 0) break
+      }
+      return body.filter((l) => l.trim() === callee).length
+    }
+    expect(callsIn(UNMOUNTED, 'flushScroll()'), 'onUnmounted 那一块里 flushScroll() 必须恰好一发（摘掉它这一格就要红）').toBe(1)
+    expect(callsIn(FLUSH, 'rememberScroll()'), 'flushScroll 那一块里 rememberScroll() 必须恰好一发').toBe(1)
+    expect(callsIn(SCROLL, 'syncActive()'), 'rememberScroll 那一块里 syncActive() 必须恰好一发').toBe(1)
     expect(SCROLL.lines[SCROLL.line - 1 + 6]).toContain('syncActive')
     expect(SYNC.lines[PERSIST.line - 1].trim()).toBe('persist()')
     expect(R293).not.toMatch(/ChatPanel\.vue:767/)
@@ -365,13 +382,13 @@ describe('R427戊 · 五处死坐标引用逐枚对账：声称的数字必须�
     expect(R293).toMatch(/走 :\d+ 的 queueFace\(msg\.queue\)/)
   })
 
-  it('旧值今天确实指着别处（本单不是猜的）：814 是空行、:767 不是 onUnmounted、:702 不是 flushScroll、:743 是 scrollSaveTimer、:1317 是字典句函数头', () => {
+  it('旧值今天确实指着别处（本单不是猜的；而且只断「那一行不是它声称的那一格」，不断「那一行具体是什么」——后者会被下一笔并树的形态改动打成假红，本组今天就是被 :743 与 :1317 那两枚具体字面量绊倒的）：814 仍是空行、:767 不是 onUnmounted、:702 不是 flushScroll、:743 不是 restoreQueuedTurns、:1317 不是 queueFace 那一腿', () => {
     expect(headLines(SESSIONS)[813].trim(), 'sessions.js:814 今天不再是空行：那枚旧坐标已经换了事').toBe('')
     expect(headLines(CHAT)[766]).not.toMatch(/onUnmounted/)
     expect(headLines(CHAT)[701]).not.toMatch(/flushScroll/)
-    expect(headLines(CHAT)[742].trim(), 'ChatPanel.vue:743 今天又指着 restoreQueuedTurns 了：那枚旧坐标已经换了事').toBe('scrollSaveTimer = null')
+    expect(headLines(CHAT)[742], 'ChatPanel.vue:743 今天又指着 restoreQueuedTurns 了：那枚旧坐标已经换了事').not.toMatch(/restoreQueuedTurns\(\)/)
     expect(headLines(CHAT)[747]).not.toMatch(/loadSessions\(\)/)
     expect(headLines(CHAT)[754]).not.toMatch(/restoreActive\(/)
-    expect(headLines(CHAT)[1316].trim(), 'ChatPanel.vue:1317 今天又指着 queueFace 了：那枚旧坐标已经换了事').toBe('function dictionarySentence(result) {')
+    expect(headLines(CHAT)[1316], 'ChatPanel.vue:1317 今天又指着 queueFace 了：那枚旧坐标已经换了事').not.toMatch(/queueFace\(msg\.queue\)/)
   })
 })

@@ -3,9 +3,9 @@
  *
  * 病灶（第一棒留下的那一格）：员工按下「不排了」拿到【非终态】回执（后端那一格叫
  * cancel_requested）时，状态只进内存里的 queueReads，不落 msg.queue，于是刷新或换回这条会话时
- * queueReads 是空的，ChatPanel.vue:1357 那条守卫的前置 read && 整条跳过，:1365 就把落盘那一格
+ * queueReads 是空的，ChatPanel.vue:1441 那条守卫的前置 read && 整条跳过，:1449 就把落盘那一格
  * （还是 queued）原样交给 queueFace —— 屏幕把「已登记取消」改口画回「排队中」。
- * 第一棒补上了写点（ChatPanel.vue:1554-1559），本件钉的就是这条写点真的能办事。
+ * 第一棒补上了写点（ChatPanel.vue 里那一格 `msg.queue = { ...(msg.queue || {}), requestId, status: receipt.status }`，按符号点名不写行号——行号会漂、符号不会），本件钉的就是这条写点真的能办事。
  *
  * 为什么必须走真路径（而不是手搭一枚 historyTurn('cancel_requested')）：手搭就是把病灶当成
  * 前提写进夹具，写点摘掉也照样绿 —— 那正是第一棒被指出的假绿风险。本件全程没有手搭：
@@ -32,7 +32,7 @@
  *         （switchSession 里 restoreActive 会整份重新赋值 messages）把这一轮换回屏上 —— 而
  *         「换回会话」本来就是病灶句子里点名的一半，一并进了实测范围。
  *     二、onMounted 里 restoreQueuedTurns() 排在 loadSessions() / restoreActive() 之前
- *         （ChatPanel.vue:786 对 :793-798）→ 刷新那一轮 messages 还是空的，这一轮没有重新盯表。
+ *         （ChatPanel.vue:868 对 :875-880）→ 刷新那一轮 messages 还是空的，这一轮没有重新盯表。
  *         所以丙2 钉的是「一枪读数都没打」：落盘那一格是屏幕唯一的依据。
  * 时钟是假的（一格 3 秒 = QUEUE_POLL_MS），网络层假在一处：lib/http 的 http / authedFetch。
  *
@@ -43,14 +43,14 @@
  *  刀三 顺手把 stopQueueWatch() / syncActive() 加回这一格
  *        -> 只红 2 枚：乙4（表被停）+ 乙5（updatedAt 被顶到侧栏最前）—— 这一格的差别就是本单的全部意义
  *  刀四 面板取脸入口分叉出自持的第二份措辞  -> 红 4 枚：乙1 丙3 丁1 丁3
- *        （丁2 仍绿：刷新那一腿走 :1365 的 queueFace(msg.queue)，本来就没经过面板自持那一份）
+ *        （丁2 仍绿：刷新那一腿走 :1449 的 queueFace(msg.queue)，本来就没经过面板自持那一份）
  *  16 枚里 4 枚（甲1 甲2 甲4 乙3）四把刀都摘不红，是有意的分工：它们钉的是「路径真不真」
  *  （模板编不编得出来 / requestId 只来自真 queued 帧 / 走没走排队那条腿 / 登记后还给不给第二枚取消钮），
  *  与措辞、落盘无关，红不到它们不算漏。
  *
  * 一处诚实账（刀一之下丙组为什么不红 —— 现取，不是推测）：摘掉那一发 persist() 之后，按下当刻
  * writes 里一条 cancel_requested 都没有、盘上仍是 queued；但卸载之后再读盘已经是 cancel_requested。
- * 掩盖它的是这条通道：ChatPanel.vue:806 onUnmounted -> :740 flushScroll -> lib/sessions.js:153
+ * 掩盖它的是这条通道：ChatPanel.vue:888 onUnmounted -> :745 flushScroll -> lib/sessions.js:153
  * rememberScroll -> :63 syncActive -> :76 persist —— syncActive 把内存里那整包 msg.queue 带上盘，
  * 而刀一只摘了写点的后半发（persist），前半发 msg.queue = ... 还在。真浏览器里 F5 走的是
  * visibilitychange / pagehide 那条同构通道，同样可能顺带落住 —— 但「顺带」不等于「当场」：进程被强杀、
