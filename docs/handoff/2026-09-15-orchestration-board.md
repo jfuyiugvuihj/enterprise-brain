@@ -1596,6 +1596,18 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Pascal` | `01a0eccf-9b5c-7c93-b636-954a04a2ff69` | **R507**（总控新立，源出 R506）`cross_stream_repeat_frames` 无指纹帧交回 0 而非 `None`＝**量具假零** | `be-r501`（复位到 `8857a8d`） | 🟡 在途（19:2x 投出）；只改那一处语义＋同笔把 R506 那枚「钉今天错着」的现状钉倒向新口径；禁碰 `scripts/r239_*` | 19:2x |
 | `Huygens` | `01a0ecd0-4e70-7450-91ac-d7980bfe532e` | **R508**（总控新立，源出 R499）`bind` 同族实例影子债（三枚件改到类目标）＋全仓扫描表 | `be-r500`（复位到 `8857a8d`） | 🟡 在途（19:2x 投出）；两形复跑都要绿；写域外一枚不碰 | 19:2x |
 | `Kepler` | `01a0ecd0-a14d-7620-bd49-8a419b72c7ea` | **R510**（总控新立，源出 R501 屏侧）`ChatPanel.vue` 给 `terminalRead` 四枚键各一张脸，缺席不补造 | `be-r502`（19:3x 由本席**改道**：原本席把 `be-r501` 同时写进了 R507 与 R510 两条派工词，事故 #102；改道时现取 `be-r501` dirty=0 ⇒ 零损害） | 🟡 在途（19:3x 投出）；三形分开＋刀≥3；`r415/r424/r150` 反向钉一枚不改 | 19:3x |
+| `Newton` | `01a0ec59-cfc5-7a00-a1f0-8f7d033708a1` | **R498**（结案） | `be-r498` | ✅ **已结案并树 `eef9481`**：dirty/干净两态各 **209 passed**（48.64 s／45.58 s）；八把刀各摘一腿 | 20:50 |
+| `Pascal` | `01a0eccf-9b5c-7c93-b636-954a04a2ff69` | **R507**（结案） | `be-r501` | ✅ **已结案并树 `a5bf01a`**（v2 那半）＋总控自修另一半 `84b7d25`（判器 r239 同口径＋b6b 倒向 None，改名不改强度，第七枚合取一字未动）；6 枚读者件 **66 passed** | 20:50 |
+| `Linnaeus` | `01a0eccb-2d60-7033-a06f-afa3d62785b8` | **R504**（结案） | `be-r497` | ✅ **已结案并树 `60a8e01`**：dirty 201 passed＝干净态复跑 **201 passed/48.61 s**；唯一挂载件 `attach_terminal_data_filename`，六枚 done 出口逐枚点名 | 20:50 |
+| `Sartre` | `01a0eccf-4249-72b3-91e0-e80e2fd7cf62` | **R509**（结案） | `be-r494` | ✅ **已结案并树 `dc47119`**＋r315 锚点配套 `de3f858`：后端 **92 passed**，前端锚点推进后 **136 files/2734 tests 全绿**；与 R504 同文件尾追加做了**真合并**（禁 `git merge-file`，见 §4DY.2） | 20:50 |
+| `Huygens` | `01a0ecd0-4e70-7450-91ac-d7980bfe532e` | **R508**（结案） | `be-r500` | ✅ **已结案并树 `22db481`**：两态各 **127 passed/4 skipped**；全仓 73 枚同族逐枚定性（今天会炸 0 枚），余账立 **R516** | 20:50 |
+| `Kepler` | `01a0ecd0-a14d-7620-bd49-8a419b72c7ea` | **R510**（结案） | `be-r502` | ✅ **已结案并树 `793fcce`**＋换锚 `8746d3f`：屏侧四枚终态读数脸；活坐标五处重锚后 **135 files/2721 tests 全绿** | 20:50 |
+| `Maxwell` | `01a0ecfa-a586-7a73-a15c-4475b44bb668` | **R512**（结案） | `be-r512` | ✅ **已结案并树 `131df9b`**：G03 屏侧 legacy `done` 采纳载荷，净零行守住 `:128/:529`；23 枚新钉＋三把刀；前端 **137/2757 全绿** | 20:50 |
+| `Chandrasekhar` | `01a0ecfb-4db0-7951-966d-7e94580215e5` | **R514**（结案） | `be-r514` | ✅ **已结案并树 `333d728`**：队列道三处传 `dataset_files`；dirty 15 枚点名件 **327 passed**＝执行层自报逐字同数 | 20:50 |
+| `Cicero` | `01a0ed33-4b70-74e3-91fe-0d1846f9c796` | **R505**（本班新立，G10 三枚 0 消费者管理屏） | `be-r505`（基点 `85572c1`，**独占**；`frontend/node_modules` 挂主树 Junction） | 🟡 在途（20:4x 投出，一个 block 只此一次）；写域 `frontend/src/lib/` 三枚取数模块＋三枚新屏＋`router/index.js`＋`App.vue` 派生导航；禁碰 `app/**`、`tests/**`、`ChatPanel.vue`、`sessions.js`；判据 A/B/C/D 全文 `.tmpfix/r505_dispatch.txt` | 20:50 |
+| `Boyle` | `01a0ed33-649c-7370-a258-38c81239af32` | **R515**（本班新立，R507 残余同口径分身假零） | `be-r515`（基点 `85572c1`，**独占**） | 🟡 在途（20:4x 投出）；写域只有 `scripts/eval_frame_caliber_readout.py`＋它自己的在册件＋自写读数件；先探针后动手 | 20:50 |
+| `Heisenberg` | `01a0ed33-8116-7371-aaf6-5a58da1163d0` | **R516**（本班新立，R508 名册第二批 8＋3 枚） | `be-r516`（基点 `85572c1`，**独占**） | 🟡 在途（20:4x 投出）；写域 9 枚 tests 件＋r508 名册 doc；断言与枚数一字不许动；🔴 明令不许动 `contract-v1.md`（归 R517） | 20:50 |
+| `Anscombe` | `01a0ed33-9892-79c3-8784-78ee69bb3149` | **R517**（本班新立，R512/R514 并树后的改口账四格） | `be-r517`（基点 `85572c1`，**独占**） | 🟡 在途（20:4x 投出）；写域 `contract-v1.md`＋`docs/testing/r504-*.md`＋`ChatPanel.vue`（🔴 净零行）＋`r424` 用例标题；纯改口零新增行为；不跑全量前端套件（与 R505 争同一份缓存） | 20:50 |
 
 
 
@@ -5902,3 +5914,63 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 
 - 🔴 **事故 #102 全文（本席一手，写给下一班）**：`spawn` R507 与 R510 两条派工词里，本席把 `be-r501` 写了两次。抓出来的方式不是靠自觉，是本席投完后照例 `git -C <每棵树> status --porcelain` 复取了一遍：`be-r501` 为空、`be-r502` 刚复位也为空 ⇒ 两枚 Agent 都还没写，改道 R510→`be-r502` 后冲突归零。教训两条：① #98 那条「三元组自核」本席是在**投出之后**才补的，等于没做——自核必须在 `spawn` 之前、且用现取输出而不是脑子里的映射；② 同一 block 内连着想投两枚时，先把树号列表打印出来逐位对，再投。
 - 排队（一枚都不许现在投）：**R505**＝G10 三枚 0 消费者管理屏＋三屏 SLO 乙半（写域含 `router/index.js`＋`App.vue`，现由 R494 已并树释放 ⇒ 下一枚槽一空可投，但它要碰 `App.vue`，与 `Kepler` 的 `ChatPanel.vue` 不同文件，可并）。R511 候选＝R503 提的 `calculation_runs` 生产方取证（`rg -n calculation_run app` 命中 0，缺的不是列是生产方）。
+
+## §4DY. 本班（09-29 第三十一格·总控线第四班接手，主树 `bcad2a8`→`793fcce`→`8746d3f`→`eef9481`→`a5bf01a`→`84b7d25`→`60a8e01`→`dc47119`→`de3f858`→`22db481`，已 push 平／单模型未切换／心跳两枚仍 `PAUSED` 一枚没碰）：八枚并树 · 🔴 两笔同文件尾追加相撞的真合并 · 一次 LF 污染 · P-8 每并一枚 `app/**` 就得重走
+
+### 4DY.1 并树账（总控亲跑，两次数字都交）
+
+| 单号 | 执行层 | 并树号 | dirty 态 | 干净态复跑 |
+| --- | --- | --- | --- | --- |
+| R510 屏侧四枚终态读数脸 | `Kepler` | `793fcce` | 135 files/2721 tests | 换锚前 3 红 → 换锚后 135/2721 全绿 |
+| R510 换锚（r427 戊组） | 总控 | `8746d3f` | — | 135/2721 全绿 |
+| R498 派工尺第四档+档三升七档 | `Newton` | `eef9481` | 209 passed/48.64 s | **209 passed/45.58 s** |
+| R507 摘瞎形交回 None（v2 那半） | `Pascal` | `a5bf01a` | 读者面 75 passed | 见下 |
+| R507 另一半（判器 r239 + b6b 倒向） | 总控自修 | `84b7d25` | 6 枚读者件 66 passed | — |
+| R504 G03 后端 legacy done/队列终态 | `Linnaeus` | `60a8e01` | 201 passed | **201 passed/48.61 s** |
+| R509 artifacts 血缘两枚可空列 | `Sartre` | `dc47119` + `de3f858` | 后端 92 passed／前端 2 红（r315 锚点） | 前端 **136 files/2734 tests 全绿** |
+| R508 `bind` 同族实例影子债 | `Huygens` | `22db481` | 两形 exit=0 | **127 passed/4 skipped** |
+
+### 4DY.2 本班三笔机械事实（写给下一班，别再现取一遍）
+
+1. 🔴 **两枚 Agent 同尾追加同一文件时禁用 `git merge-file`**：R504 与 R509 各向 `docs/api/contract-v1.md` 纯尾追加 46 行，`merge-file` 在 EOF 同一位置报 1 处冲突，还把整篇行尾改写成 LF ⇒ 对 HEAD 的 diff 变成 5803 行全改。正解：回滚 → 按「公共前缀（LF 归一化比行）+ 主树尾段 + 源树尾段」拼，落盘统一 CRLF，净增就是 46/0。
+2. 🔴 **执行层交来的整批字节可能是纯 LF**：R509 那 21 枚文件磁盘上 `CRLF=0`，撞上 `r315-artifacts-screen.test.js` 第三枚「工作树必须纯 CRLF」当场红（本仓 `core.autocrlf=true`，检出惯例是 CRLF）。归一化是总控的活，不是执行层的；并树前先扫一遍 EOL 再铺。
+3. **活坐标钉「并树即自毁」是设计而不是事故**：`r427` 戊组按 `git show HEAD:<path>` 现读 ⇒ 树里永远绿、并树后才红。R510 给 `ChatPanel.vue` 加 76 行，五处声称行号 868/875-880→933/940-945、1441/1449→1509/1517、888/745→953/810 一起换锚。**派工词里凡要让 Agent 改 `ChatPanel.vue`/`sessions.js`，必须先告诉它锚点在哪、改动只能落在被锚行之下**（R512 派工词已这么写）。
+
+### 4DY.3 名册（本班终态·派工唯一事实源，id 一律 harness 现取）
+
+- 在途两枚：`Maxwell`/`01a0ecfa-a586-7a73-a15c-4475b44bb668`＝**R512**（`be-r512@60a8e01`，写域 `frontend/src/lib/sessions.js` 的 `case 'done'` 那一支 + 新钉 + 读数件；禁碰 `ArtifactList.vue`/`contract-v1.md`/`app/**`）· `Chandrasekhar`/`01a0ecfb-4db0-7951-966d-7e94580215e5`＝**R514**（`be-r514@60a8e01`，写域 `deploy/queue_worker.py` 三处 `build_queue_terminal` 传 `dataset_files`；它在镜像里，晚了不等它开窗）。
+- 已结案让槽：`Newton`/R498、`Pascal`/R507、`Linnaeus`/R504、`Sartre`/R509、`Huygens`/R508、`Kepler`/R510。
+- 排队不投：**R505**（G10 三枚 0 消费者屏＋三屏 SLO 乙半，写域含 `router/index.js`＋`App.vue`）、**R515**（`scripts/eval_frame_caliber_readout.py:61/:82` 那半把同口径分身仍摇假零，R507 残余）、**R511 候选**（`calculation_runs` 缺的是生产方不是列，`rg -n calculation_run app` 命中 0）。
+
+### 4DY.4 开窗前置现状（本班现取）
+
+- 第二验证机 `192.168.254.128:22` **仍整机不可达**（20:00 `ssh -o ConnectTimeout=6` rc=255）⇒ 今晚仍是单机串行，这是墙钟的物理上限，不是派工能修的。
+- R509 带进 `migrations/0017`（两枚可空列，`ADD COLUMN IF NOT EXISTS`，无 DEFAULT／无 UPDATE／无删除）⇒ **镜像必须先 build 才有这枚文件**，随后 `scripts/migrate.py` 上真库，否则重建成品后 artifacts 的 INSERT 会撞缺列。顺序定死：并树 → `GIT_SHA` → build → migrate → `up -d --force-recreate` → P-8 尺 → 全量门 → 开窗。
+- 待业主（一条都不代做）：R440 整表口径；**A② 三口径（甲/乙/丙）**；A 桶 3 组金标矛盾＋29 条 `must_contain` 改题；R487 建 30 枚演示账号；R58 恢复演练；一张真扫描件；`INDEX_BACKEND=pgvector` 翻默认（`deploy/.env.server` 现读无这行）＋`up -d --force-recreate`；第二验证机。
+
+## §4DZ. 本班（09-29 第三十二格·本席第五班接手，主树 `333d728`→`85572c1`；单模型未切换；心跳两枚仍 `PAUSED` 一枚没碰；峰值并发自觉压到 4）：全量门 52 枚红治到 0 · 派生坐标格子重同步一笔并树 · 四枚新投 R505/R515/R516/R517 · 镜像重建并上 0017 · P-8/P-18 双 PASS
+
+### 4DZ.1 接手即治的 52 枚红（这是上一班留的坑，红因逐枚现取验证过，别当成回归）
+
+- 首跑 `-n 7`／582 s／**52 failed, 9093 passed, 50 skipped, 2 xfailed** ⇒ 绝大多数是「派生坐标格子过期」：本班 6 枚并树（R507 +11 行、R504/R509 撑长 `chat.py`）把钉在文档里的行号账推陈旧。**每枚钉都自报唯一出路，一枚都没手改数字**：`r460 --land`、`r483 --sync`、`r387 --emit-doc-cells` 落 `docs/perf/r387-label-lineage-2026-09-27.md` §1 表第三格与 §9.3 五格、正文三处行号，加 `docs/handoff/2026-09-26-v1-frontend-gap-list.md` 三格。
+- `r180`／`r499`／`r50` **不是回归**：单跑与同进程合跑全绿（28 passed／20 passed，rc=0）⇒ 纯 xdist 串扰。
+- `r461` 反证刀咬空的真因是 runbook **尾部多了一枚空行**（`…\r\n\r\n`）使 `raw[:-2]` 仍以 CRLF 收尾，「文件尾」那一格量不到 ⇒ 剥掉即 9 passed。🔴 教训写进派工纪律：**反证刀咬空，先怀疑被量对象的形状，别怀疑刀**。
+- 最后一枚 `test_r276_vector_wording_pin` 的红落在 `docs/perf/r387-label-lineage-2026-09-27.md:948`，码 `chroma_declared_final_or_production_architecture`：原句「…任何 Chroma 依赖或写点（**生产向量库＝**PGVector…」里 `Chroma`→24 字窗口→`生产`→`向量库` 三环俱在，被尺子读成「把 Chroma 写成生产架构」。改法＝把括号内语序倒过来（「向量库定案＝PGVector，Chroma 只是退役中的遗留件」），**没改尺、没删含义、没动行号**；24 枚文档全过。
+- 收尾并树 `85572c1`：12 枚在册件现取 **233 passed / 1 xfailed / 0 failed**（dirty 与已提交态同一集合）。
+
+### 4DZ.2 本班投出四枚（一个 block 只一次投递，四枚分四个 block，零枚重复投递）
+
+- `Cicero`/`01a0ed33-4b70-74e3-91fe-0d1846f9c796`＝**R505**（`be-r505@85572c1`，G10 三枚 0 消费者只读端点各补一屏：`/slo` `observability.py:1145`、`/evaluations` `:1159`、`/audit/events` `:1198`；写域 `frontend/src/lib/` 三枚取数模块＋三枚新屏＋`router/index.js`＋`App.vue` 派生导航；该树 `frontend/node_modules` 已挂指主树的 Junction）。
+- `Boyle`/`01a0ed33-649c-7370-a258-38c81239af32`＝**R515**（`be-r515@85572c1`，R507 残余同口径分身 `scripts/eval_frame_caliber_readout.py:61/:82` 那一形仍摇假零）。
+- `Heisenberg`/`01a0ed33-8116-7371-aaf6-5a58da1163d0`＝**R516**（`be-r516@85572c1`，R508 名册第二批：`dataset_registry` 一族 8 枚＋upsert 打在实例上 3 枚，改到类目标）。
+- `Anscombe`/`01a0ed33-9892-79c3-8784-78ee69bb3149`＝**R517**（`be-r517@85572c1`，R512/R514 并树后成假话的四格改口；🔴 `ChatPanel.vue` 净零行；`contract-v1.md` 只归它一枚，R516 明令不许动 ⇒ 杜绝 §4DY.2 那一族同尾相撞）。
+- 写域互斥已逐枚两两核过（前端屏／scripts／tests＋名册 doc／契约 doc＋一枚注释行）；判据全文落 `.tmpfix/r50x_dispatch.txt` 四份，号账落跟进单 §138。
+
+### 4DZ.3 开窗前置（本席一手现取，写给下一班直接接）
+
+- 镜像：`GIT_SHA=85572c1` → `docker compose --env-file deploy/.env.server -f docker-compose.yml build migrate` rc=0（层缓存，秒级）→ `run --rm --no-deps migrate` rc=0 **applied=1** → `schema_migrations` head 现取 **0017**（0016/0015 在后）→ `up -d --no-build` rc=0，backend/worker/scheduler 全 healthy。
+- **P-8 现取 PASS**：`check_image_provenance.py --expect-container` 交 `tree 85572c1 (build inputs clean)`／`image label …=85572c1`／`BUILD_INFO revision=85572c1`／verdict **MATCH**，rc=0。🔴 H12 那句「重建属业主侧、Agent 不得代做」已被业主本班口头授权覆盖（「后端镜像重建你能做的话就你来」），代做的凭据就是这几行原文。
+- P-18 `--check` rc=0：`answer:* = 0 枚（dbsize=87）`，PING 过之后读到的 0 ⇒ 可开窗。P-19 `--check` 现在 **FAIL（锁 6284 s 没续）**＝预期形状，它得由开窗那一班自己起 `--loop --interval 240` 常驻之后才绿；🔴 电源一律不动（业主明令「别设为永眠」，手册那句 `powercfg` 已作废，P-19 换成进程内临时锁）。
+- `seed_workspace.py --check` rc=0（`documents=100 datasets=1 owners=1`），但带一条 WARN：**四枚在册件盘上没有文件**（`browser_acceptance_policy.txt`、`六级作文模板.docx`、`深度学习入门：基于Python的理论与实现.pdf`、`深度学习技术栈学习路线.pdf`），盘上 97 枚。🔴 本席已核这四枚在评测夹具里**零命中**（`rg -c` 于 `tests/fixtures/business_evaluation_100.jsonl` 无输出）⇒ 不是 run10 的干扰源，属演示库卫生账，另立单不挤窗口。
+- 第二验证机 `192.138` 那格照旧不可达，单机串行仍是墙钟物理上限。
+- 待业主（一条都不代做）：R440 整表口径裁定、**A② 三口径（甲/乙/丙）**、A 桶 3 组金标矛盾＋29 条 `must_contain` 改题、R487 建 30 枚演示账号、R58 恢复演练、一张真扫描件、`INDEX_BACKEND=pgvector` 翻默认（要的是**容器 recreate** 不是镜像 rebuild）、第二验证机 sshd。push 已授权，本班已把 `131df9b`/`333d728`/`85572c1` 平到 gitee。
