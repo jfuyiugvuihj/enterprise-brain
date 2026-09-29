@@ -3,8 +3,9 @@
 
 「改前」不是回忆，也不是我自己另写的一份算式：
 
-* 影子根外面那枚基点文件由 `git show HEAD:app/storage/sessions.py` 现取（本单未 commit，
-  HEAD 即基点 438d67d），用 `importlib` 单独载成一枚私有模块 ⇒ 今天生产代码用的那把**旧尺**；
+* 影子根外面那枚基点文件由 `git show 438d67d:app/storage/sessions.py` 现取（锚 sha 写死，
+  不锚 HEAD——本单并树后 HEAD 含本单，锚 HEAD 会当场自毁，见 `PRISTINE_BASE` 旁那段），
+  用 `importlib` 单独载成一枚私有模块 ⇒ 今天生产代码用的那把**旧尺**；
 * 出口成员集合另取 R484 交回的那枚纯函数内核 `scripts/r484_session_read_leg_ledger.py::
   visible_ids` 算一遍 ⇒ 纸上判据与真闸门用的是同一把尺，不分叉；
 * 再把真路由 `GET /api/v1/sessions` 跑一遍 ⇒ 三样读数一枚不差才算「行为不变面」成立。
@@ -107,15 +108,27 @@ def _write_ledger(path, ledger_rows: list):
     )
 
 
+#: 「改前」锚在 R495 的基点 sha 上，不锚 HEAD。本单并入主干之后 HEAD 就含本单了：锚 HEAD 现取的
+#: 那份字里已经写着 SESSION_OWNER_NAMESPACE，于是 fixture 的「改前不成立」当场炸 5 枚 error，
+#: 刀三换上的替换文本又与原文一模一样 ⇒ 空转（09-29 并树 8d228be 后干净树实测 1 failed / 5 errors，
+#: 事故 #96 同族第二例，由「并树后必须干净态复跑」这条新规当场抓获）。
+PRISTINE_BASE = "438d67d"
+
+
 def _pristine_text(rel: str) -> str:
+    """从 git 对象库现取**基点锚 sha** 那份字：刀三与「改前／改后」对照都用它。"""
     out = subprocess.run(
-        ["git", "show", "HEAD:" + rel],
+        ["git", "show", PRISTINE_BASE + ":" + rel],
         cwd=str(REPO),
         capture_output=True,
         text=True,
         encoding="utf-8",
     )
-    assert out.returncode == 0, "git show HEAD:%s 失败：%s" % (rel, out.stderr)
+    assert out.returncode == 0, "git show %s:%s 失败：%s" % (PRISTINE_BASE, rel, out.stderr)
+    if rel == SESSIONS_REL:
+        assert "SESSION_OWNER_NAMESPACE" not in out.stdout, (
+            "锚 sha %s 交回的 %s 已经带着 R495 的显式真源：锚漂了或历史被改写，"
+            "本件的「改前」与刀三的替换文本都不成立" % (PRISTINE_BASE, rel))
     return out.stdout
 
 
@@ -124,7 +137,8 @@ def pristine():
     """基点那份 `app/storage/sessions.py` 单独载成一枚私有模块：今天生产代码用的那把旧尺。"""
     text = _pristine_text(SESSIONS_REL)
     assert "SESSION_OWNER_NAMESPACE" not in text, (
-        "git show HEAD:%s 交回的已经不是基点那份字了：本件的「改前」不成立" % SESSIONS_REL
+        "git show %s:%s 交回的已经不是基点那份字了：本件的「改前」不成立"
+        % (PRISTINE_BASE, SESSIONS_REL)
     )
     directory = Path(tempfile.mkdtemp(prefix="r495-pristine-"))
     target = directory / "r495_pristine_sessions_src.py"
@@ -348,3 +362,24 @@ def test_the_owner_gate_is_identical_in_both_namespaces(tmp_path, pristine):
         assert new_registry.is_owned_by("r495-%s-0" % username, stranger) is False, (
             "档=%s 外来主体读到了别人的会话：闸门被显式化改松了" % username
         )
+
+
+def test_the_pristine_anchor_is_an_ancestor_and_the_two_forms_really_differ() -> None:
+    """本件的对照不许长成自证：锚必须在 HEAD 历史里，且「改前 blob」与「在册 blob」必须两形。
+
+    锚一旦漂到本单之后，或者历史被改写，「改前改后逐枚相等」就变成拿同一份字跟自己比——
+    那种情况下本件全绿也是空转，所以这一格要单独有牙（事故 #96／#97 同族的正面闸）。
+    """
+    anc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", PRISTINE_BASE, "HEAD"], cwd=str(REPO),
+        capture_output=True, text=True, encoding="utf-8")
+    assert anc.returncode == 0, (
+        "锚 sha %s 不在 HEAD 的历史里（%s）：历史被改写，本件的基点账作废"
+        % (PRISTINE_BASE, (anc.stderr or "").strip()[:120]))
+    base_text = _pristine_text(SESSIONS_REL)
+    live_text = overlay.authoritative_text(SESSIONS_REL)
+    assert base_text != live_text, "锚那份字与在册那份字一模一样：改前改后的对照是空转"
+    assert "SESSION_OWNER_NAMESPACE" not in base_text, (
+        "锚那份字里已经有 R495 的声明：本件的「改前」不成立")
+    assert "SESSION_OWNER_NAMESPACE" in live_text, (
+        "在册那份字里没有 R495 的声明：本单被回退了，而本件只会拿两份同样的字自证")

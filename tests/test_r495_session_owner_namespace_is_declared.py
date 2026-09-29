@@ -474,16 +474,27 @@ def test_the_namespace_word_is_not_reinvented_in_the_user_store():
 # ============================================================================
 
 
+#: 「改前」锚在 R495 的基点 sha 上，不锚 HEAD。本单并入主干之后 HEAD 就含本单了：锚 HEAD 现取的
+#: 那份字里已经写着 SESSION_OWNER_NAMESPACE，于是 fixture 的「改前不成立」当场炸 5 枚 error，
+#: 刀三换上的替换文本又与原文一模一样 ⇒ 空转（09-29 并树 8d228be 后干净树实测 1 failed / 5 errors，
+#: 事故 #96 同族第二例，由「并树后必须干净态复跑」这条新规当场抓获）。
+PRISTINE_BASE = "438d67d"
+
+
 def _pristine_text(rel: str) -> str:
-    """从 git 对象库里现取基点那份字：刀三要用它整片换掉新增的显式真源。"""
+    """从 git 对象库现取**基点锚 sha** 那份字：刀三与「改前／改后」对照都用它。"""
     out = subprocess.run(
-        ["git", "show", "HEAD:" + rel],
+        ["git", "show", PRISTINE_BASE + ":" + rel],
         cwd=str(REPO),
         capture_output=True,
         text=True,
         encoding="utf-8",
     )
-    assert out.returncode == 0, "git show HEAD:%s 失败：%s" % (rel, out.stderr)
+    assert out.returncode == 0, "git show %s:%s 失败：%s" % (PRISTINE_BASE, rel, out.stderr)
+    if rel == SESSIONS_REL:
+        assert "SESSION_OWNER_NAMESPACE" not in out.stdout, (
+            "锚 sha %s 交回的 %s 已经带着 R495 的显式真源：锚漂了或历史被改写，"
+            "本件的「改前」与刀三的替换文本都不成立" % (PRISTINE_BASE, rel))
     return out.stdout
 
 
