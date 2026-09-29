@@ -58,12 +58,23 @@ def load_rows(path: str) -> list[dict]:
     return list(rows.values())
 
 
-def _repeats_of_records(records: list[dict]) -> int:
+def _repeats_of_records(records: list[dict]) -> int | None:
     """从一行的 R223 逐帧指纹里数「后一条流把先前发过的那份正文又发一遍」有几枚。
 
-    口径逐字同 ``scripts/eval_transport_ask_v2.py::_cross_stream_repeats``：只算跨流（同一条流里
-    末片帧与收尾帧同文**不算**出现两遍 —— 总控裁定），空帧不参与，没有指纹不参与。
+    口径逐字同 ``scripts/eval_transport_ask_v2.py::_cross_stream_repeats``（🔴 以 R507 并树后的那一份
+    为准，本件不自创第二套）：只算跨流（同一条流里末片帧与收尾帧同文**不算**出现两遍 —— 总控裁定），
+    空帧不参与。
+
+    🔴 R507 两形分开，R515 补的正是这枚同口径分身（``docs/testing/r507-blind-instrument-returns-none.md``
+    §4.B 与 §6 第 4 条挂号的那半把没治的）：帧在而一枚逐帧指纹都拿不到（量具被摘瞎那一形）⇒ 回
+    ``None``＝这一格在这一行**没量过**，不许报 0 冒充量过（事故 #73 那一族假零）；拿到了指纹且确实
+    没有跨流重合 ⇒ 才回 0。入参不是帧表或枚数为零（空读那一形）照在册现状回 0，与
+    ``_cross_stream_repeats:717-719`` 同脸 —— 那一形钉在
+    ``tests/test_r471_second_copy_of_the_answer_body_is_not_a_pass.py:449``，不在本单写域。
     """
+    records = list(records or [])
+    if records and not any(str(record.get("sha") or "") for record in records):
+        return None  # R507 两形分开（一）：帧在而无一枚指纹 ⇒ 未量，不许报 0 冒充量过
     earliest: dict[str, int] = {}
     repeats = 0
     for record in records:
@@ -79,18 +90,37 @@ def _repeats_of_records(records: list[dict]) -> int:
     return repeats
 
 
+def account_fingerprints(rows: list[dict]) -> int:
+    """整份账里现存的 R223 逐帧指纹枚数（``frames[].sha``）。本件**只数现成读数，一枚不另数**。"""
+    return sum(1 for row in rows for record in (row.get("frames") or [])
+               if str(record.get("sha") or ""))
+
+
+def unmeasured_rows(rows: list[dict]) -> list[str]:
+    """「帧在而这一行一枚逐帧指纹都拿不到」的题号（R515）：这些行压根没参与判定。"""
+    return [str(row["id"]) for row in rows
+            if _repeats_of_records(row.get("frames") or []) is None]
+
+
 def derived_repeats(rows: list[dict]):
     """R471 丙案：第七枚合取的证词在账里**不存在**，本件读数时从行内既有那一列现场派生。
 
     返回 ``None``＝这份账派生不出：没有 ``frames`` 那一列（R223 并树之前开的窗，run6/run7 即此形），
-    或者那一列枚枚为空（量具被摘瞎那一形，run8p2 即此形）⇒ 照实明写，不许报 0 冒充量过；
-    返回 ``[(题号, 枚数)]``＝这份账量得出。🔴 两样都不许拿去改写当年的 ``criterion_two_holds``
+    或者那一列枚枚为空（量具被摘瞎那一形，run8p2 即此形），🔴 或者帧在、枚枚有字而整份账连一枚逐帧
+    指纹都没参与（摘瞎的另一张脸，R515 起与前两形同权明写）⇒ 三形一律照实明写量不到，不许报 0
+    冒充量过；
+    返回 ``[(题号, 枚数)]``＝这份账量得出（至少一枚逐帧指纹参与了判定，🔴 干净才交 0 枚）。
+    🔴 两样都不许拿去改写当年的 ``criterion_two_holds``
     （不重判，口径见 docs/testing/r471-verdict-caliber-2026-09-29.md）。
     """
     if not any(row.get("frames") for row in rows):
         return None
-    return [(str(row["id"]), _repeats_of_records(row.get("frames") or []))
-            for row in rows if _repeats_of_records(row.get("frames") or []) > 0]
+    if not account_fingerprints(rows):
+        # R515（口径逐字同 R507 并树后的 ``_cross_stream_repeats:717-719``）：帧在而整份账无一枚指纹
+        # ⇒ 这一格没量过。旧落码在这一形交回一张每行都是 0 的表，读的人把「没量过」当成「量过且干净」。
+        return None
+    counts = [_repeats_of_records(row.get("frames") or []) for row in rows]
+    return [(str(row["id"]), value) for row, value in zip(rows, counts) if value]
 
 
 def event_tally(rows: list[dict]) -> collections.Counter:
@@ -122,13 +152,19 @@ def caliber_block(title: str, rows: list[dict]) -> None:
             print("- %s >0 枚数=%d 题号=%s" % (cell, len(offenders), offenders or "无"))
     repeats = derived_repeats(rows)
     if repeats is None:
-        # 🔴 账里没有逐帧指纹（R223 并树之前的窗）：读不到就明写读不到，不许报 0 冒充量过。
-        print("- cross_stream_repeat_frames（R471 第七枚，派生格）这份账不带 R223 逐帧指纹"
-              " ⇒ 这一格在这份账里派生不出（R471 之前的窗）⇒ 不重判当年读数")
+        # 🔴 账里没有一枚参与判定的逐帧指纹（R223 并树之前的窗，或量具被摘瞎那一形）：读不到就明写
+        # 读不到，不许报 0 冒充量过（R507/R515 两形分开）。
+        print("- cross_stream_repeat_frames（R471 第七枚，派生格）这份账连一枚 R223 逐帧指纹都没参与"
+              " ⇒ 这一格在这份账里派生不出（R223 并树之前的窗，或量具被摘瞎那一形）⇒ 不重判当年读数")
     else:
         print("- cross_stream_repeat_frames（R471 第七枚，🔴 派生自 frames 列，不落成新列）"
               " >0 枚数=%d 题号=%s" % (len(repeats), repeats or "无"))
         print("  - 逐枚重合数=%s ｜ 本件不据此改写 criterion_two_holds（当年读数不重判）" % repeats)
+        blind = unmeasured_rows(rows)
+        if blind:
+            # R515：混合账（有的行有指纹、有的行被摘瞎）不许把上面那枚 0 读成全账干净。
+            print("  - 🔴 行内未量（帧在而无一枚逐帧指纹）题数=%d 题号=%s ⇒ 这些行没参与判定，"
+                  "上面那枚枚数只属于有指纹的行" % (len(blind), blind))
     holds = sum(1 for row in graded if row["criterion_two_holds"])
     failing = sorted(row["id"] for row in graded if row["criterion_two_holds"] is False)
     print("- criterion_two_holds=True 枚数=%d/%d（在册合取口径=_frame_verdict）" % (holds, total))
