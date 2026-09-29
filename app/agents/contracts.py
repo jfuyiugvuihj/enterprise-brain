@@ -105,6 +105,32 @@ OUTPUT_TRUNCATED_CODE = "model_output_truncated"
 MODEL_BUDGET_MARKER = "[ModelBudget]"
 
 
+def prompt_room(context_limit_tokens: int, declared_max_tokens: int) -> int:
+    """How large a prompt may be when an answer of ``declared_max_tokens`` shares the window.
+
+    R463 judgement (1) is about *where this is computed*. The window holds prompt plus answer,
+    so the room left for material is the window minus the tier's own declared output cap -- and
+    that one subtraction used to be written four times in four shapes:
+
+    * ``ModelBudget.input_budget_tokens``                ``max(1, context_limit_tokens - max_tokens)``
+    * ``ModelBudget.context_window_code``                 ``prompt + max_tokens <= context_limit_tokens``
+    * ``ModelContextLimitExceeded.prompt_room_tokens``    ``max(1, context_limit - declared_max_tokens)``
+    * ``WindowPlan.prompt_room_tokens``                   ``max(0, context_limit - declared_max_tokens)``
+
+    The packing path consumed the first and the pre-request guard evaluated the second, so
+    nothing made the two agree except that somebody had retyped the same algebra. 跟进单 §133 五
+    read a prompt of ``prompt_tokens=14928`` built against ``MODEL_CONTEXT_TOKENS=16384`` and
+    refused as ``required_n_ctx=16464``: the leg that fills a prompt and the leg that refuses
+    one were arguing about a number neither of them owned. Every reader now goes through here.
+
+    Deliberately a *strict* difference, not ``max(1, ...)``: a tier that declares an answer
+    larger than its window must be told that nothing fits, while the timeout arithmetic beside
+    it needs a positive number to divide by. That floor belongs to
+    :attr:`ModelBudget.input_budget_tokens`, which now derives from this function.
+    """
+    return int(context_limit_tokens) - int(declared_max_tokens)
+
+
 class ModelBudget(BaseModel):
     """One tier's explicit output cap plus the timeout budget that cap implies.
 
@@ -161,9 +187,38 @@ class ModelBudget(BaseModel):
         return self
 
     @property
+    def prompt_room_tokens(self) -> int:
+        """The prompt size THIS tier's own declared cap leaves inside the window.
+
+        This is the available amount, computed once (see :func:`prompt_room`). The pre-request
+        guard judges against it and the packing path fills against it, so a payload the packer
+        delivered is never refused for being too big by the guard downstream: the only way a
+        packed prompt can still collide is if the prompt *outside* the payload is bigger than
+        the number the packer was handed -- which is why :meth:`pack_room_tokens` takes it.
+        """
+        return prompt_room(self.context_limit_tokens, self.max_tokens)
+
+    @property
     def input_budget_tokens(self) -> int:
-        """The largest prompt this tier may send and still fit its own output cap."""
-        return max(1, int(self.context_limit_tokens) - int(self.max_tokens))
+        """The largest prompt this tier may send and still fit its own output cap.
+
+        The ``max(1, ...)`` is here for the clock, which divides by this number; the window
+        judgement uses :attr:`prompt_room_tokens` and keeps the strict difference.
+        """
+        return max(1, self.prompt_room_tokens)
+
+    def pack_room_tokens(self, prefix_tokens: int) -> int:
+        """What one packed payload may occupy in a prompt billed by THIS tier.
+
+        The only door from the packing side to the window (R463 judgement (1)). The number it
+        subtracts from is the guard's own :attr:`prompt_room_tokens`; the number handed in is
+        the rest of that prompt -- measured with ``estimate_text_tokens`` by a caller that can
+        see the whole message list, or the pinned reserves beside the packing code by a tool
+        leg that never sees the system segment. Either way the largest prompt the packer can
+        emit is a subset of what :meth:`context_window_code` accepts, because both read one
+        line of arithmetic instead of two copies of it.
+        """
+        return max(0, self.prompt_room_tokens - max(0, int(prefix_tokens)))
 
     def prefill_seconds(self, prompt_tokens: int | None = None) -> float:
         tokens = self.input_budget_tokens if prompt_tokens is None else max(0, int(prompt_tokens))
@@ -196,10 +251,16 @@ class ModelBudget(BaseModel):
 
         ``None`` also means "prompt size unknown", which is why the guard judges a number
         rather than guessing at a message list.
+
+        R463: the judgement is ``prompt <= prompt_room_tokens``, the same number the packing
+        path filled against. ``prompt + cap <= window`` and ``prompt <= window - cap`` are the
+        same integer statement, so nothing about which call is refused changes -- what changes
+        is that there is now one place that computes the boundary rather than two that retype
+        it, and the packing path can no longer be one token out of agreement with this guard.
         """
         if prompt_tokens is None:
             return None
-        if int(prompt_tokens) + int(self.max_tokens) <= int(self.context_limit_tokens):
+        if int(prompt_tokens) <= self.prompt_room_tokens:
             return None
         return CONTEXT_LIMIT_CODE
 

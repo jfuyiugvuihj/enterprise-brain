@@ -48,6 +48,7 @@ from app.agents.contracts import (
     OUTPUT_TRUNCATED_CODE,
     ModelBudget,
     ModelTier,
+    prompt_room,
 )
 
 from app.common.logger import logger
@@ -114,7 +115,10 @@ class ModelContextLimitExceeded(RuntimeError):
         self.required_context_tokens = self.prompt_tokens + self.declared_max_tokens
         #: 差额: the distance the window is short, in tokens.
         self.over_by_tokens = max(0, self.required_context_tokens - self.context_limit_tokens)
-        self.prompt_room_tokens = max(1, self.context_limit_tokens - self.declared_max_tokens)
+        #: R463: the same subtraction the guard and the packing path use, read through
+        #: ``contracts.prompt_room`` -- this object explains a refusal, so it must quote the very
+        #: number that produced it, not a re-derivation that can drift from it.
+        self.prompt_room_tokens = max(1, prompt_room(self.context_limit_tokens, self.declared_max_tokens))
         #: The same numbers the guard used, read together with the budget around them.
         self.plan = window_plan(budget)
         super().__init__(
@@ -529,8 +533,13 @@ class WindowPlan:
 
     @property
     def prompt_room_tokens(self) -> int:
-        """What this window leaves for the prompt once this tier's answer is reserved."""
-        return max(0, self.context_limit_tokens - self.declared_max_tokens)
+        """What this window leaves for the prompt once this tier's answer is reserved.
+
+        R463: read through ``contracts.prompt_room`` rather than restating the subtraction.
+        The docstring of this class spells the arithmetic ``prompt_room = n_ctx - max_tokens``;
+        that line now has one referent in code instead of three.
+        """
+        return max(0, prompt_room(self.context_limit_tokens, self.declared_max_tokens))
 
     @property
     def decode_seconds(self) -> float:

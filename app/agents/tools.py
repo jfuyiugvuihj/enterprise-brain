@@ -594,6 +594,13 @@ _pipeline_lock = threading.Lock()
 #   ① 把真的要塞回模型的字符串装进本轮剩余的 room；
 #   ② 把"丢几条、装进几条、装箱后 prompt 多少 token"打成一行 ``[PromptPack]`` 账。
 #
+# 🔴 R463 把「可用量由哪一处算」这件事收了口：``window - 该档 declared_max_tokens`` 全仓只
+# 写在 ``app/agents/contracts.py::prompt_room`` 那一处，装箱读的 ``ModelBudget.pack_room_tokens``
+# 与发请求前那道守卫读的 ``ModelBudget.context_window_code`` 都是它的下游。以前这两格是各自
+# 抄了一遍减法（``input_budget_tokens`` 与 ``context_window_code`` 里的 ``prompt+cap<=window``），
+# 装箱塞到边界＝守卫的边界，纯靠两笔算式碰巧同值；跟进单 §133 五 那发 ``prompt_tokens=14928``
+# 被自己下游判拒成 ``required_n_ctx=16464``，撞的就是这条缝。
+#
 # 为什么还要一枚累加的账：同一个 worker 步里模型可以一次并发发好几发工具调用（DOC_PROMPT
 # 自己就写着"一次想好几个搜索方向，同时搜多个关键词"），每一发的返回串都会留在 prompt 里。
 # 只按"单发别超过 room"装，两发各自装满照样撞墙——真机 doc-12 那枚 prompt_tokens=3897
@@ -733,6 +740,37 @@ def context_pack_room_public() -> int:
     return context_pack_room()
 
 
+def pack_profile_tier(profile: str | None = None):
+    """把装箱档位名翻译成"这一串最终由哪一档买单"，缺省＝在册的 ``analysis``。
+
+    🔴 R463 判据 ①：room 扣的必须是**买单那一档自己声明的** ``declared_max_tokens``，所以
+    装箱侧先得说清自己装出来的串最终由哪一发请求送出。以前这里没有可说的档位——调用点一律
+    走 ``context_pack_room()`` 的缺省，等于替全仓认下了 ``CONTEXT_PACK_TIER`` 那一枚写死的
+    ``"analysis"``。
+
+    ``report`` 不是 ``ModelTier`` 的成员，它是产品道（``app/agents/nodes.py`` 的
+    ``LANE_REPORT``），所以走 ``LANE_TIERS`` 那座既有的桥：今天桥另一头是
+    ``ModelTier.ANALYSIS``（``app/api/v1/observability.py`` 的 ``bridge_note`` 把这件事写在册
+    钉里，"analysis and report share ModelTier.ANALYSIS"），桥上改了这里跟着改，本处不抄第二份。
+    """
+    from app.agents.contracts import ModelTier
+    from app.rag.retrieval_pipeline import CONTEXT_PACK_TIER
+
+    name = str(profile or CONTEXT_PACK_TIER)
+    try:
+        return ModelTier(name)
+    except ValueError:
+        pass
+    from app.agents.nodes import LANE_TIERS
+
+    if name in LANE_TIERS:
+        return LANE_TIERS[name]
+    raise ValueError(
+        f"unknown pack profile {profile!r}: not a ModelTier and not a lane in LANE_TIERS "
+        f"({', '.join(sorted(tier.value for tier in ModelTier))} / {', '.join(sorted(LANE_TIERS))})"
+    )
+
+
 def _no_room_text(leg: str, candidates: int) -> str:
     """裁无可裁时工具自己说的那一句：指名是本题检索料/数据结果超出本机上下文。
 
@@ -866,7 +904,9 @@ def _retrieval_supports_context_pack(pipeline) -> bool:
     return cached
 
 
-def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: bool = False) -> list:
+def _pack_into_prompt_room(
+    config, *, leg: str, units, keep_first_truncated: bool = False, profile: str | None = None
+) -> list:
     """按名次把 ``units`` 装进本轮剩余 room，打一行的账，返回装进去的那几段。
 
     ``units`` 必须已按优先级从高到低排好（检索腿回来的顺序就是 RRF/重排分数降序，数据腿
@@ -887,19 +927,32 @@ def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: boo
     前缀填装非空那一支的行为逐字不变（名次就是下标）；救援那一支 ``dropped`` 是「除送出去的
     那些名次以外的全部」，所以 ``fitted + dropped == candidates`` 这条账不因为打洞而失真。打洞
     必须带名次账（``source_indexes``），否则证据袋会把第 4 名读成第 1 名。
+
+    ``profile``（R463）：这一串最终由哪一档买单，缺省 ``analysis``（四条 worker 腿在装配期就
+    按它出牌）。它只决定**扣哪一档自己声明的** ``declared_max_tokens``，不改名次、不改门槛、
+    不改台账字段。room 不再由本处或 ``retrieval_pipeline`` 各算一遍，而是问 ``ModelBudget
+    .pack_room_tokens``——发请求前那道守卫判拒用的正是同一枚数（``app/agents/contracts.py``
+    的 ``prompt_room``），所以装箱装到边界就是守卫的边界：再大一枚 token 当场少塞一片，而不是
+    塞完之后由下游那道守卫把整发拒掉（跟进单 §133 五：装箱交出的 14 928 枚题面，加上该档
+    自己声明的输出顶，恰好是判拒读数 ``required_n_ctx=16464 > MODEL_CONTEXT_TOKENS=16384``）。
     """
+    from app.common.model_budget import model_tier_budget
     from app.rag.retrieval_pipeline import (
         CONTEXT_HISTORY_RESERVE_TOKENS,
         CONTEXT_PACK_TIER,
         CONTEXT_SHELL_RESERVE_TOKENS,
         PROMPT_PACK_MARKER,
-        context_pack_room,
         pack_prefix_by_rank,
         text_pack_tokens,
     )
 
     units = list(units)
-    room_total = context_pack_room()
+    profile = str(profile or CONTEXT_PACK_TIER)
+    tier = pack_profile_tier(profile)
+    #: 装箱看不见的那半截 prompt（system 段＋题面＋壳＋两轮历史），两枚实测预留就是它的现值。
+    #: 它同时进 room 与台账的 ``prompt_estimate_tokens``：一处算，两处读，不许再各抄一遍。
+    prefix_reserve = CONTEXT_SHELL_RESERVE_TOKENS + CONTEXT_HISTORY_RESERVE_TOKENS
+    room_total = model_tier_budget(tier).pack_room_tokens(prefix_reserve)
     key = _pack_ledger_key(config)
     with _pack_lock:
         used = _pack_ledger.get(key, 0) if key else 0
@@ -957,14 +1010,17 @@ def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: boo
             while len(_pack_ledger) > _STEP_PACK_LEDGER_MAX:
                 _pack_ledger.popitem(last=False)
         billed = used + packed_tokens
-    reserve = CONTEXT_SHELL_RESERVE_TOKENS + CONTEXT_HISTORY_RESERVE_TOKENS
     #: 账本身份名＝键前缀（step/request/task/thread/off），``[PromptPack]`` 的字段一枚不改名。
+    #: ``tier=`` 今天交的是**买单那一档的名字**（由 ``profile`` 决定，缺省即在册的 ``analysis``），
+    #: 字段名与相对顺序一枚没动（``tests/test_r117_ledger_turn_scoped.py`` 与
+    #: ``tests/test_r445_pack_priority.py`` 钉着）；``prompt_estimate_tokens`` 与 room 用的是同一
+    #: 枚 ``prefix_reserve``，这两格从此不可能互相打脸。
     ledger_kind = key.split(":", 1)[0] if key else "off"
     logger.info(
-        f"{PROMPT_PACK_MARKER} leg={leg} tier={CONTEXT_PACK_TIER} room_total={room_total} "
+        f"{PROMPT_PACK_MARKER} leg={leg} tier={profile} room_total={room_total} "
         f"room_left={room} candidates={len(units)} fitted={len(fitted)} dropped={len(dropped)} "
         f"truncated={truncated} stub={stub} packed_tokens={packed_tokens} ledger_packed_tokens={billed} "
-        f"prompt_estimate_tokens={reserve + billed} ledger={ledger_kind} "
+        f"prompt_estimate_tokens={prefix_reserve + billed} ledger={ledger_kind} "
         f"dropped_labels={_pack_dropped_labels(dropped)}"
     )
     return _PackedUnits(
