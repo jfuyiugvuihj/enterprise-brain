@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 /** R416 的基点。谁改这两枚文件的代码，就带着这两枚常量一起改口（总控裁定后换锚）。 */
-const BASE = '5621e8d'
+const BASE = '6e62379'
 
 const ROUTER = 'frontend/src/router/index.js'
 const DASHBOARD = 'frontend/src/lib/dashboard.js'
@@ -117,7 +117,7 @@ const LEDGER = [
     id: '乙-2 /admin 读的那道 users:manage 闸',
     file: ROUTER,
     cited: 'app/api/v1/auth.py',
-    numbers: [106],
+    numbers: [107],  // R494 把 app/api/v1/auth.py 从 296 行拉到 319 行，真闸 authorize_request(..., ACTION_MANAGE_USERS) 跟着从 106 漂到 107。改的是登记名单本身（仍逐行对账），断言强度未动。
     finders: [{
       label: 'list_users 里那一发 authorize_request(..., ACTION_MANAGE_USERS)',
       pattern: 'authorize_request\\(request, ACTION_MANAGE_USERS',
