@@ -18,6 +18,16 @@
  * 第四条是 R268 加的：降级不是只有一张红脸。`modelState()` 多出来那一档 `degraded` 说的是
  * 「模型权重在，但这一台机器有别的东西不对」——既不并入 `down`（那句讲的是权重），
  * 更不是 `ready`（那是一句假话）。
+ *
+ * R465 补的是「这一发在不在路上」对外没有读数这一格。改前（本单基点 d824b10 现读 :31-41）这枚模块
+ * 只有私有 `cached` / `cachedAt` 两格，它们讲的是【落地之后有没有货】，没有一格讲【此刻有没有一发
+ * 在路上】。于是壳层那一发还没回来时面板就挂上来（App.vue:64 与 ChatPanel.vue:795 两处伸手），第二格
+ * 查缓存查到的只是「没有」，只能自己再发一发 —— R458 丙5 把这枚数实量成 2 发。
+ * 现在多一枚模块级 `inFlight`：同一时刻只允许一发在路上，后来的伸手等同一枚在飞的 promise；落地与
+ * 失败都从同一个 `finally` 过，槽位一定清干净（不清就泄漏成「永远在飞」，界面此后一次也问不到新读数，
+ * 那比多发一发更坏）。
+ * `force` 穿的是那 60 秒缓存，不是「允许第二发同时在路上」：员工按「再看一次」那一刻若已经有一发在飞，
+ * 那一发就是它要的答案——它比缓存里那份新，最多多等一次 8 秒超时。
  */
 import { http } from './http.js'
 
@@ -30,15 +40,40 @@ const CACHE_MS = 60_000
 
 let cached = null
 let cachedAt = 0
+// 在飞那一发：null = 此刻没有请求在路上。R465 之前这枚槽位根本不存在，「同时伸手」才数得出两发。
+let inFlight = null
 
 export function resetRuntimeHealthCache() {
   cached = null
   cachedAt = 0
+  inFlight = null
+}
+
+/** 此刻有没有一发读数在路上；有就把那一枚 promise 交出去，后来的伸手等它，不另开一枪（判据①）。 */
+export function runtimeHealthReadInFlight() {
+  return inFlight
 }
 
 export async function fetchRuntimeHealth({ force = false } = {}) {
+  // 这一行就是 single-flight 本身：先看在飞、再看缓存，两格都查完才轮到「发不发」。摘掉它判据① 当场红。
+  if (inFlight) return inFlight
   const now = Date.now()
   if (!force && cached && now - cachedAt < CACHE_MS) return cached
+  const read = probeOnce(now)
+  inFlight = read
+  try {
+    return await read
+  } finally {
+    // 落地或失败都要清槽位；比对身份再清，免得把别人刚挂上的那一枚一起抹掉（泄漏 = 界面永远问不到新读数）。
+    if (inFlight === read) inFlight = null
+  }
+}
+
+/**
+ * 真打网络的那一发，只在没有同路人的时候才被叫起来。它自己不 reject：读不到就交回 null，
+ * 由界面画「状态未知」那第三张脸（老规矩 1 与 3）。
+ */
+async function probeOnce(now) {
   try {
     const res = await http.get('/health/details', { timeout: 8000 })
     const body = res?.data
@@ -70,6 +105,7 @@ export async function fetchRuntimeHealth({ force = false } = {}) {
     return cached
   } catch {
     // 一次读不到不代表模型坏了，但也不代表它是好的：交给「未知」那张脸。
+    // 🔴 失败一律把缓存作废（判据②）：留着旧读数再盖一枚新时间戳，就是拿一份过期读数冒充「刚刚问过了」。
     cached = null
     cachedAt = 0
     return null
