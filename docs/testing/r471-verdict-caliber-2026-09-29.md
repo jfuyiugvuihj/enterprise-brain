@@ -93,7 +93,7 @@ _frame_verdict(readings) 今天合取七枚：
 | `scripts/r218_switch_rehearsal.py:829 _readings_keys` / `:856 verdict_reads` | 读代码取 `_frame_verdict` 到底读哪几格 | 名单 6 名 → **7 名**（`:829` 起多收 `readings.get(...)` 取用） |
 | `scripts/r218_switch_rehearsal.py:900 frame_shape` | 三种坏形形状的 verdict | 口径随真源升七枚；本单的三种形都不重发正文 ⇒ 读数不变（在册 `test_r218` 9 枚照绿为凭） |
 | `scripts/eval_frame_caliber_readout.py:35 RAW_CELLS` | 逐档摊开的原始格 | **没加新格**（丙案：那一格不在账上） |
-| `scripts/eval_frame_caliber_readout.py:61/:82` `_repeats_of_records`/`derived_repeats` | 读数时从行内 `frames` 现场派生第七枚 | 本单新增；`:126/:129` 明写「派生不出 ⇒ 不重判当年读数」 |
+| `scripts/eval_frame_caliber_readout.py:61/:105` `_repeats_of_records`/`derived_repeats` | 读数时从行内 `frames` 现场派生第七枚 | 本单新增；`:154-158` 明写「派生不出 ⇒ 不重判当年读数」 |
 | `scripts/r239_stream_gap_offline_audit.py:84 LEDGER_CONJUNCTS` | 在册合取名单副本 | 六枚 → **七枚** |
 | `scripts/r239_stream_gap_offline_audit.py:138 cross_stream_repeat_frames` | 同一枚证词的独立复算 | 本单新增；派生不出回 `None` |
 | `scripts/r239_stream_gap_offline_audit.py:188/:202 recomputed_ledger` | 「账与尺同代」的复算腿 | 加第七枚（`None` 不参与定罪） |

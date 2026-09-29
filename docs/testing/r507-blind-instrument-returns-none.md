@@ -46,7 +46,7 @@ REPEAT_DELIVERY_UNMEASURED) or 0) == 0`` 读这枚证词，``None`` 与 0 同权
 **B. 同名口径的独立分身（各自一套落码，不调用 A，但共享同一枚缺陷）**
 - ``scripts/r239_stream_gap_offline_audit.py:138``（离线复算判器，🔴 本单禁碰件）：:153 只对「非列表 / 空列表」
   回 ``None``，:161 ``if not sha: continue`` 跳完之后 :167 ``return repeats`` ⇒ 摘瞎形今天仍读 0。
-- ``scripts/eval_frame_caliber_readout.py:61``（``_repeats_of_records``）与 :82（``derived_repeats``）：只有「整份账
+- ``scripts/eval_frame_caliber_readout.py:61``（``_repeats_of_records``）与 :105（``derived_repeats``）：只有「整份账
   一枚帧都没有」才回 ``None``（:91）；「帧在而无指纹」那形会交回一张每行都是 0 的表，照样是假零。
 
 **C. 判器那枚读数的下游（本单没改它，列出来是为了别把绿灯读成已治）**
@@ -124,4 +124,4 @@ REPEAT_DELIVERY_UNMEASURED) or 0) == 0`` 读这枚证词，``None`` 与 0 同权
 * 反证已现跑：落码前 b6b 那枚当场红 `assert 0 is None`（摘掉判器那两行它就复现假零），
   落码后 6 枚读者件 **66 passed**（r506_a2_ledger / r506_a2_single_frame / r507 / r471 / r239 / r215）。
 * 残余分歧照旧挂号（本单不治）：空读形 `[]` 在 v2 回 `0`（钉在 `test_r471_...:449`，不在写域）、
-  在判器回 `None`；`scripts/eval_frame_caliber_readout.py:61/:82` 那半把同口径分身未治。
+  在判器回 `None`；`scripts/eval_frame_caliber_readout.py:61/:105` 那半把同口径分身未治。🔴 订正（09-29 第五班）：本节写下时它确实未治，R515 已把它并树（403db3d）——「frames 列在、枚枚有字但无一枚逐帧指纹」那一形今天交 None 不交 0，条件与 R507 并树后的 _cross_stream_repeats:717-719 逐字同形。
