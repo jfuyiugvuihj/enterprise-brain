@@ -112,3 +112,34 @@
 - **历史层依赖总控的提交号格式**：subject 开头那枚 `RNNN`（两式：`R453 并树…`／`并树 R453 …`）。格式一漂，
   这枚钉是红而不是静默通过（`名册为空 ⇒ 喊「静默空响」那一支），届时改 `LEADING_TICKET`，不许关掉它。
 - **没动的两格**：`ENVIRONMENT_NOISE` 那本名册、`RETIRED_ALLOWED_PREFIXES` 旧值，与本次返工无关，原样留着。
+
+## 返工（09-29 17:5x，总控自修；先例＝#77 由总控动手修成 `72bdf96`）：第三枚「落地即自毁」的钉
+
+- **病与凭据**：`tests/test_r496_forbidden_pin_scope.py::test_the_real_tree_reads_its_own_construction_fingerprint`
+  无条件 `assert fingerprint`。本单并树（`ec5dfef`）之后，总控在**干净主树**现跑
+`1 failed / 15 passed`，原文「AssertionError: R496 正在改这枚件，施工指纹却读空：那下面三枚
+  「本单在施工」的断言全是空响」＋ `assert []`（件内 :238）。它指控的是「总控把本单提交了」这件合法的事，
+  与本单要治的那两枚冒名判红同一种病（同族：#77／R491 探针那一格）。
+- **返工时又量出一格（同族病）**：原那两条**无闸门裸读数**断言（禁域零脏／在册零改）挂在真树上同样会咬假红——
+`docs/testing` 本身就在 `FORBIDDEN_PATHS` 里，而总控每一次并树都要往那儿写验收凭据；
+`frontend/**` 更直接：R494 并树窗里 `M frontend/src/router/index.js` 会让它当场翻红。
+  盘面脏是别人的手，不是本单的罪证——这正是 R496 立单的论题，本枚常驻钉不能自己违背它。
+- **改形**：三条永真 ＋ 两形各一刀。
+  永真＝实质层三面（评测集／回归门／override，与盘面无关）＋ 历史层（名册非空、挂号提交零越界）
+  ＋ 闸门形状（两枚活体钉在这棵树读的指纹必须等于 `construction_fingerprint`，不许各拿一把尺）。
+  形甲（指纹非空）＝归因只认在册交付件或写域前缀下的新未跟踪钉，且闸门读数必须等于裸读数，
+  裸禁域／裸在册必须零脏（＝原那两条断言，只是移进态分支，一条没删）。
+  形乙（指纹读空）＝空读必须「合法」：交付件已在 HEAD ＋ 盘上齐件 ＋ **同一把尺在影子根里对着一只真手
+  必须当场读得出指纹**（正控内置在本枚钉里，尺一瞎就红，不许拿「已并树」当遮羞布）。
+  原「被治件必在指纹里」那一句不是被删而是**换了层**：那是历史事实，由
+`test_r453_cloud_eval_override.py::test_counter_evidence_the_landing_roster_is_two_way_and_not_vacuous`
+  那枚「名册落点并集 ⊇ DELIVERED_FILES」的常驻钉守着。
+- **强度只升（AST 现取，HEAD blob 对磁盘内容）**：`def test_` 8→8（LOST=[]，一枚在册 test 没删），
+  test 函数体内 `assert` 34→42，降级命中 `pytest.skip`／`warnings.warn`／`@pytest.mark.skip`／`xfail` 全 0。
+- **现跑读数（总控亲跑，主树解释器＋cwd＝主树）**：分支＝形乙，`fingerprint=[]`，`forbidden_dirt_reading=([], [])`，`registered_dirt_reading=([], [])`，
+`deliverables_tracked_in_head=True`，`missing_on_disk=[]`；影子端正控
+`construction_fingerprint=['M deploy/compose.cloud-eval.yaml']` 且 `tracked_in_head(control)=True`。
+- **机械事实（供后续班用）**：本仓 `core.autocrlf=true` 且无 `.gitattributes` ⇒ **库内 blob 是 LF、盘面是 CRLF**
+  （现取 `git show HEAD:tests/test_r496_forbidden_pin_scope.py` = crlf 0／lf 251）。
+  所以「源树磁盘字节 ↔ 主树磁盘字节逐枚等值」是有效对照，而「HEAD blob ↔ 磁盘字节」对文本件永远差一层 EOL，
+  只可用于 AST／计数类对照，不许当成等值判据。

@@ -230,16 +230,36 @@ def test_a_foreign_signed_commit_never_enters_the_roster(tmp_path: Path) -> None
     real_tree_untouched()
 
 
-# ------------------------------------------------------------------ 真树自身的读数（现取，报数用）
-def test_the_real_tree_reads_its_own_construction_fingerprint() -> None:
-    """真树（R496 正在改被治件）⇒ 指纹必为真、禁域必无脏、三层各读一次现账。"""
+# ------------------------------------------------------------------ 真树自身的读数（现取，两形都要有牙）
+def test_the_real_tree_reads_its_own_construction_fingerprint(tmp_path: Path) -> None:
+    """真树读数改形：先判态再取证，施工态与已并树态都不许空响（事故 #96 的返工）。
+
+    病（09-29 本单自己并树现场 `ec5dfef`，凭据＝总控干净树现跑 `1 failed / 15 passed`，
+    原文 `AssertionError: R496 正在改这枚件，施工指纹却读空`，件内 :238）：这一枚原来无条件
+    `assert fingerprint`，把「本单此刻正在施工」当永真判据。施工期被治件是 `M` ⇒ 绿；总控一提交，
+    交付件进 HEAD、盘面干净 ⇒ 指纹合法读空，这枚钉当场翻红并**永久红**——它指控的正是「总控把本单
+    提交了」这一件合法的事，与本单要治的那两枚冒名判红是同一种病（同族 #77／R491 探针）。
+    返工时又量出第二格：原那两枚**无闸门裸读数**断言（禁域零脏／在册零改）挂在真树上同样会咬假红——
+    `docs/testing` 本身就在禁域里，而总控每一次并树都要往那儿写凭据；`frontend/**` 更不必说。
+    盘面脏是别人的手，不是本单的罪证，这正是 R496 立单的论题，本枚钉自己不能违背它。
+
+    今天改形（三条永真 + 两形各一刀）：
+      永真·实质层：评测集／回归门／override 三面与盘面无关，任何树同一读数；历史层名册非空且零越界。
+      永真·闸门形状：两枚活体钉在这棵树上读的指纹必须等于 `construction_fingerprint`，不许各读一把。
+      形甲·本单此刻有手 ⇒ 归因只认本单自己的名字（在册交付件或写域前缀下的新未跟踪钉），
+            且裸读数必须与闸门读数一致，禁域／在册裸读数一枚都不许落在本单名下。
+      形乙·此刻无人施工 ⇒ 空读必须是「合法的空」：交付件已在 HEAD、盘上齐件，并且同一把尺在影子根里
+            对着一只真手必须当场读得出指纹——读不出就是尺漂了，不许拿「已并树」当遮羞布。
+    原「被治件必在指纹里」那一句不是被删，是**换了层**：它讲的是历史事实，由
+    `test_counter_evidence_the_landing_roster_is_two_way_and_not_vacuous` 那枚
+    「名册落点并集 ⊇ DELIVERED_FILES」的常驻钉守着，与盘面脏态无关、任何树同一读数。
+    """
     entries = mod.git_status_porcelain(mod.REPO)
     fingerprint = mod.construction_fingerprint(entries)
-    assert fingerprint, (
-        "R496 正在改这枚件，施工指纹却读空：那下面三枚「本单在施工」的断言全是空响")
-    assert mod.dirty_forbidden_paths(entries) == [], mod.dirty_forbidden_paths(entries)
-    assert mod.registered_modifications(entries) == [], mod.registered_modifications(entries)
-    assert "tests/test_r453_cloud_eval_override.py" in ",".join(fingerprint)
+    raw_forbidden = mod.dirty_forbidden_paths(entries)
+    raw_registered = mod.registered_modifications(entries)
+    gated, breaches = mod.forbidden_dirt_reading(mod.REPO)
+    reg_gated, reg_breaches = mod.registered_dirt_reading(mod.REPO)
     roster = mod.ticket_landing_commits()
     assert len(roster) >= 1, "真树读不到本单号的挂号提交"
     assert mod.signed_commit_overreach() == [], mod.signed_commit_overreach()
@@ -248,4 +268,38 @@ def test_the_real_tree_reads_its_own_construction_fingerprint() -> None:
                                        mod.jsonl_rows(mod.EVAL_30_REL)) == []
     assert mod.regression_gate_breaches(mod.read(mod.RUN_GATE_FILE), mod.read(mod.PYPROJECT_FILE)) == []
     assert mod.foreign_surface_reaches(mod.read(mod.OVERRIDE), mod.override_document()) == []
+    assert gated == fingerprint, "禁域那枚活体钉换了尺：%s vs %s" % (gated, fingerprint)
+    assert reg_gated == fingerprint, "在册那枚活体钉换了尺：%s vs %s" % (reg_gated, fingerprint)
+    if fingerprint:
+        joined = ",".join(fingerprint)
+        named = [rel for rel in mod.DELIVERED_FILES if rel in joined]
+        prefix_nails = [hit for hit in fingerprint if hit.startswith("?? tests/test_r453_")]
+        assert named or prefix_nails, (
+            "形甲：指纹非空却没一枚落在本单名下（既不是在册交付件也不是写域新钉）："
+            "归因把别人家的手记给了本单：%s" % fingerprint)
+        assert breaches == raw_forbidden, (
+            "形甲：本单在施工，闸门却把禁域裸读数改掉了——闸门只该管归因，不该藏脏：%s vs %s"
+            % (breaches, raw_forbidden))
+        assert reg_breaches == raw_registered, (
+            "形甲：在册裸读数被闸门改掉：%s vs %s" % (reg_breaches, raw_registered))
+        assert raw_forbidden == [], (
+            "形甲：本单在这棵树施工，禁域却读出脏态——本单名下越界：%s" % raw_forbidden)
+        assert raw_registered == [], (
+            "形甲：本单在这棵树施工，在册件却读出改动——本单名下越界：%s" % raw_registered)
+    else:
+        assert breaches == [] and reg_breaches == [], (
+            "形乙：本单在这棵树零写入，两枚活体钉却还在指控：%s / %s" % (breaches, reg_breaches))
+        assert mod.deliverables_tracked_in_head(mod.REPO), (
+            "施工指纹读空而交付件又不在 HEAD：这枚钉答不出「本单在不在这棵树施工」——"
+            "形乙只允许在「本单已并树」这一态成立")
+        missing = [rel for rel in mod.DELIVERED_FILES if not (mod.REPO / rel).is_file()]
+        assert missing == [], "形乙：指纹读空且盘上缺交付件：%s" % missing
+        control = mod.shadow_repo(tmp_path / "live-hand", SEED)
+        drift(control, "deploy/compose.cloud-eval.yaml")
+        hand = mod.construction_fingerprint(mod.git_status_porcelain(control))
+        assert any("deploy/compose.cloud-eval.yaml" in hit for hit in hand), (
+            "真树指纹读空却自称「本单已并树」，可同一把尺在影子根里对着一只真手也读空："
+            "这枚钉是空响，施工态与并树态它根本分不开")
+        assert mod.deliverables_tracked_in_head(control), (
+            "影子端正控里交付件不在 HEAD：那把尺读到的指纹证明不了形乙的空读是合法的空")
     real_tree_untouched()
