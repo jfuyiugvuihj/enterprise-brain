@@ -571,8 +571,8 @@ export function createStreamReducer(msg, state) {
       case 'cancelled':
         state.terminal = state.terminal || 'cancelled'
         return { action: 'cancelled' }
-      case 'done':
-        if (!state.terminal) state.terminal = 'completed'
+      case 'done': if (!state.terminal) state.terminal = 'completed'
+        if (typeof payload?.data_filename === 'string' && payload.data_filename && !state.terminalDataFilename) state.terminalDataFilename = payload.data_filename
         return { action: 'terminal' }
       case 'queued': {
         // 排队那张脸的起点。回执只给 request_id，位次与结果必须另读 /queue/status/{id}（判据④）。
