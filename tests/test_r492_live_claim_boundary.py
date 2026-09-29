@@ -39,8 +39,10 @@ LIVE_MARK = r490.LIVE_MARK
 OWNED = (("## 1. ", "test_r387_label_ruler_teeth.py"),
          ("### 9.3 ", "test_r492_s93_column_matches_derived.py"))
 
-#: ② 在册欠账：自称现读、可那枚符号压根没有锚，所以无处对账。今天恰一枚（§9.6 的落空账）。
-KNOWN_UNPINNED = (("9.6", "app/api/v1/chat.py"),)
+#: ② 在册欠账：自称现读、可那枚符号压根没有锚，所以无处对账。R493 起账面**零枚**——原先唯一在册那一枚
+#:    （§9.6 的 `chat_ask_entry` 落空账）已按乙案降回丙类历史操作账（血缘纸 §9.8），纸上不再自称现读。
+#:    清零是两头一起收的：账先清而纸没清、或纸先清而账没清，下面那枚对账牙都当场红。
+KNOWN_UNPINNED: tuple = ()
 
 #: ④ §1 表旁那句自守：三格身份 + 每一格谁来钉。
 GUARD_HEAD = "本表之下的正文"
@@ -244,10 +246,27 @@ def test_teeth_c_a_table_row_still_needs_its_own_file() -> None:
 
 
 def test_teeth_d_an_empty_ledger_exposes_the_debt() -> None:
-    _defects, _checked, gaps, _untracked = scan(read_doc())
-    empty_defects, _c, _g, untracked = scan(read_doc(), ledger=())
-    assert gaps, "今天读不出任何欠账：那本账是空转的"
-    assert len(untracked) == len(gaps) and untracked, "把账清空竟然不红：在册那一格根本没在拦东西"
+    """收口之后重铸的牙：账面清零是真的清零，而那本名单仍然拦得住东西。
+
+    旧形拿"纸上今天恰有一枚欠账"当量具，欠账一治好它必红——那是牙的形状跟着账走。两问现在各归各：
+    ① 盘上这本书读得出零枚无主现读坐标，且名单也是空的，两边必须一起为零；② 在内存里造一枚对不上
+    派生值的现读坐标，名单空着它必须红，给它记上名它必须只登记不红（名单是真豁免口，不是装饰）。
+    """
+    rows = read_doc()
+    _defects, _checked, gaps, untracked = scan(rows)
+    assert KNOWN_UNPINNED == (), "账面写着清零，可名单里还剩 " + str(KNOWN_UNPINNED)
+    assert gaps == [], "名单说清零了，可纸上还读得出欠账：" + str(gaps)
+    assert untracked == [], "账外长出无主现读坐标：" + str(untracked)
+    spans, _failures = r490.derived_spans()
+    path = "app/rag/indexing.py"
+    ghost = 1 + max(high for _low, high in _pool(spans, path))
+    probe = "另见 " + path + ":" + str(ghost) + " 那一格" + LIVE_MARK + "。"
+    seeded = append_probe(rows, probe)
+    _d, _c, seeded_gaps, seeded_untracked = scan(seeded)
+    assert seeded_gaps and seeded_untracked, "造一枚无主现读坐标竟然不红：那本账是空转的"
+    carried = tuple(seeded_untracked[0])
+    _d2, _c2, _g2, tracked = scan(seeded, ledger=(carried,))
+    assert tracked == [], "在册那一格根本没在拦东西：给它记上名竟然还红"
 
 
 def test_teeth_e_backsliding_the_guard_is_caught() -> None:
