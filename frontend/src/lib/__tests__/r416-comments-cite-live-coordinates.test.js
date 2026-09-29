@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 /** R416 的基点。谁改这两枚文件的代码，就带着这两枚常量一起改口（总控裁定后换锚）。 */
-const BASE = '6e62379'
+const BASE = '0f12a17'
 
 const ROUTER = 'frontend/src/router/index.js'
 const DASHBOARD = 'frontend/src/lib/dashboard.js'
