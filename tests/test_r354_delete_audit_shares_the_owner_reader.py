@@ -39,6 +39,7 @@ from pathlib import Path
 
 from app.common import audit
 from tests import _temp_edit_overlay as overlay
+from tests import test_r466_mutation_does_not_leak_into_live_module as r466
 from tests.test_r337_owner_receipt_on_both_exits import (
     EXIT_SHAPE,
     LEGACY,
@@ -132,7 +133,8 @@ class _R354Edit(overlay.ShadowEdit):
     """一扇 R354 的反证窗：锚点命中不是恰好一处，变异整片不落影子；文本先过 compile()。"""
 
     tag = "r354"
-    execs_module = True
+    #: 🔴 R466：变异只落影子副本，不 exec 进活模块——见 _window 的说明。
+    execs_module = False
 
     def __init__(self, path: Path, edits) -> None:
         super().__init__(path)
@@ -189,9 +191,16 @@ RENAMED_FIELD = "\n".join([
 
 @contextmanager
 def _window(edits):
+    """开一扇窗：变异只落影子副本，窗内只把变了的那几枚顶层绑定装进 app.api.v1.data，出门逐枚装回。
+
+    🔴 R466：旧姿势 execs_module=True 会把变异后的整份码体 exec 进活模块（本席现取 19 枚顶层把手
+    全部换新身体），且那次 exec 在 __enter__ 里、_WINDOWS.append 之后，它一炸就没有 __exit__ 还原。
+    姿势件与 test_r457_audit_retention_execution_leg.py:169-242 同一族。
+    """
     module = overlay.module_of(DATA_REL)
-    assert module is not None, "app.api.v1.data 还没被导入，exec 无处可落"
-    with _R354Edit(DATA_PY, edits) as info:
+    assert module is not None, "app.api.v1.data 还没被导入，改绑无处可落"
+    with _R354Edit(DATA_PY, edits) as info, \
+            r466.install_mutation(module, DATA_PY, info.read_text()):
         yield info
 
 

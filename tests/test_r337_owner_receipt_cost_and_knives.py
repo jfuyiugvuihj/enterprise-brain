@@ -35,6 +35,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from tests import _temp_edit_overlay as overlay
+from tests import test_r466_mutation_does_not_leak_into_live_module as r466
 from tests.test_r337_owner_receipt_on_both_exits import (
     FRESH_BODY,
     VIEWERS,
@@ -104,7 +105,8 @@ class _R337Edit(overlay.ShadowEdit):
     """一扇 R337 的反证窗：锚点命中不是恰好一处，整片变异就不落影子；变异文本先过 compile()。"""
 
     tag = "r337"
-    execs_module = True
+    #: 🔴 R466：变异只落影子副本，不 exec 进活模块——见 _window 的说明。
+    execs_module = False
 
     def __init__(self, path: Path, edits) -> None:
         super().__init__(path)
@@ -127,10 +129,16 @@ class _R337Edit(overlay.ShadowEdit):
 
 @contextmanager
 def _window(edits):
-    """开一扇窗，把变异 exec 进 app.api.v1.data，出门由基类逐字节还原视图。"""
+    """开一扇窗：变异只落影子副本，窗内只把变了的那几枚顶层绑定装进 app.api.v1.data，出门逐枚装回。
+
+    🔴 R466：旧姿势 execs_module=True 会把变异后的整份码体 exec 进 sys.modules 里那枚模块（19 枚
+    顶层把手全部换新身体），且那次 exec 在 __enter__ 里，它一炸就没有 __exit__ 还原。姿势件与
+    test_r457_audit_retention_execution_leg.py:169-242 同一族；窗内 _rebind 装的夹具世界不再被洗掉。
+    """
     module = overlay.module_of(DATA_REL)
-    assert module is not None, "app.api.v1.data 还没被导入，exec 无处可落"
-    with _R337Edit(DATA_PY, edits) as info:
+    assert module is not None, "app.api.v1.data 还没被导入，改绑无处可落"
+    with _R337Edit(DATA_PY, edits) as info, \
+            r466.install_mutation(module, DATA_PY, info.read_text()):
         yield info
 
 

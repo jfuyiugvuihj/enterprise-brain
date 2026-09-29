@@ -40,6 +40,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests import _temp_edit_overlay as overlay
+from tests import test_r466_mutation_does_not_leak_into_live_module as r466
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_PY = ROOT / "app" / "api" / "v1" / "data.py"
@@ -148,7 +149,8 @@ class _R310Edit(overlay.ShadowEdit):
     """一扇 R310 的反证窗：锚点命中不是恰好一处，整片变异就不落盘；变异文本先过 compile()。"""
 
     tag = "r310"
-    execs_module = True
+    #: 🔴 R466：变异只落影子副本，不 exec 进活模块——见 _window 的说明。
+    execs_module = False
 
     def __init__(self, path: Path, edits) -> None:
         super().__init__(path)
@@ -172,10 +174,17 @@ class _R310Edit(overlay.ShadowEdit):
 
 @contextmanager
 def _window(edits):
-    """开一扇窗，把变异 exec 进 app.api.v1.data，出门由基类逐字节还原视图。"""
+    """开一扇窗：变异只落影子副本，窗内只把变了的那几枚顶层绑定装进 app.api.v1.data，出门逐枚装回。
+
+    🔴 R466：旧姿势 execs_module=True 会把变异后的整份码体 exec 进 sys.modules 里那枚模块——
+    本席现取 19 枚顶层把手逐枚换新身体；而那次 exec 在 __enter__ 里、_WINDOWS.append 之后，
+    变异体在顶层就跑炸时 __exit__ 根本不会执行，活模块留下半份变异码。姿势件与
+    test_r457_audit_retention_execution_leg.py:169-242 同一族：模块体不重跑，没点名的名字连身份都不动。
+    """
     module = overlay.module_of(overlay.rel_of(DATA_PY))
-    assert module is not None, "app.api.v1.data 还没被导入，exec 无处可落"
-    with _R310Edit(DATA_PY, edits) as info:
+    assert module is not None, "app.api.v1.data 还没被导入，改绑无处可落"
+    with _R310Edit(DATA_PY, edits) as info, \
+            r466.install_mutation(module, DATA_PY, info.read_text()):
         yield info
 
 

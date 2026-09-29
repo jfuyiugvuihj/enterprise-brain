@@ -42,6 +42,7 @@ from app.main import app
 from app.notifications import states as state_store
 from app.storage import pending_approvals as hitl_store
 from tests import _temp_edit_overlay as overlay
+from tests import test_r466_mutation_does_not_leak_into_live_module as r466
 from tests import test_r373_the_two_remaining_legs_answer_absence as r373
 from tests import test_r381_outlet_shape_pins as shape
 
@@ -473,7 +474,8 @@ class _R381Edit(overlay.ShadowEdit):
     """
 
     tag = "r381"
-    execs_module = True
+    #: 🔴 R466：变异只落影子副本，不 exec 进活模块——见 _mutate 的说明。
+    execs_module = False
 
     def __init__(self, path: Path, patches) -> None:
         super().__init__(path)
@@ -496,8 +498,18 @@ class _R381Edit(overlay.ShadowEdit):
 
 @contextmanager
 def _mutate(path: Path, patches):
-    assert overlay.module_of(overlay.rel_of(path)) is not None, "被改模块还没导入，exec 无处可落"
-    with _R381Edit(path, patches) as info:
+    """开一扇窗：变异只落影子副本，窗内只把**变了的那几枚顶层绑定**装进活模块，出门逐枚装回。
+
+    🔴 R466：旧姿势 execs_module=True 把变异后的整份码体 exec 进 sys.modules 那枚模块——本席现取
+    8 枚顶层把手逐枚换新身体，且那次 exec 在 __enter__ 里、_WINDOWS.append 之后，它一炸就没有
+    __exit__ 还原。现在模块体不重跑：直调那一支（:409 那枚钉，走的正是模块字典上的名字）照样吃到
+    变异，而 HTTP 那一支仍旧吃不到——:412-415 记的那格形状与本件同寿，不是本单改出来的。姿势件与
+    test_r457_audit_retention_execution_leg.py:169-242 同一族。
+    """
+    outlet = overlay.module_of(overlay.rel_of(path))
+    assert outlet is not None, "被改模块还没导入，改绑无处可落"
+    with _R381Edit(path, patches) as info, \
+            r466.install_mutation(outlet, path, info.read_text()):
         yield info
 
 

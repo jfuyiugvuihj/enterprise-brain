@@ -39,6 +39,7 @@ from app.notifications import sources as sources_module
 from app.notifications import states as state_store
 from app.storage import pending_approvals as hitl_store
 from tests import _temp_edit_overlay as overlay
+from tests import test_r466_mutation_does_not_leak_into_live_module as r466
 
 REPO = Path(__file__).resolve().parents[1]
 CONTRACT = REPO / "docs" / "api" / "contract-v1.md"
@@ -176,7 +177,10 @@ class _R303Edit(overlay.ShadowEdit):
     """
 
     tag = "r303"
-    execs_module = True
+    #: 🔴 R466：变异只落影子副本，不 exec 进活模块。整份码体重跑会把 sources.py 每一枚顶层
+    #: 函数换成新身体（本席现取：9 枚把手身份全换），而那次 exec 在 __enter__ 里——它一炸就
+    #: 没有 __exit__ 来还原。改绑走 r466.install_mutation，只碰变了的那几枚名字。
+    execs_module = False
 
     def __init__(self, path: Path, old_lines, new_lines) -> None:
         super().__init__(path)
@@ -197,17 +201,24 @@ class _R303Edit(overlay.ShadowEdit):
 
 @contextmanager
 def _mutate(path: Path, old_lines, new_lines, rebind=()):
-    """开一扇反证窗，并把「谁 import 了这一格」指到变异版上，出门逐格还原。
+    """开一扇反证窗：变异只落影子副本，窗内只把**变了的那几枚顶层绑定**装进活模块，出门逐枚装回。
 
     rebind 讲清的是 import 语句那次一次性拷贝这件事：sources.py 换掉的 alert_candidates 不会自己
     爬进 inbox 的命名空间，所以窗内指过去、退出时按快照装回去。盘上那枚文件全程只读。
+
+    🔴 R466：旧姿势是 ``execs_module = True``——开窗那一刻把变异后的整份码体 exec 进 sys.modules
+    里那枚活模块。姿势件在本仓 ``r466.install_mutation``，与 ``test_r457_*:169-242`` 同一族：
+    模块体不重跑，没变的名字连对象身份都不动；变了的名字在 finally 里逐枚装回原对象。
     """
     mutated_module = overlay.module_of(overlay.rel_of(path))
-    assert mutated_module is not None, _name_of(path) + " 对应的模块还没被导入，exec 无处可落"
-    snapshots = [(target, attr, getattr(target, attr)) for target, attr in rebind]
-    with _R303Edit(path, old_lines, new_lines) as info:
+    assert mutated_module is not None, _name_of(path) + " 对应的模块还没被导入，改绑无处可落"
+    with _R303Edit(path, old_lines, new_lines) as info, \
+            r466.install_mutation(mutated_module, path, info.read_text()) as mutant:
+        snapshots = [(target, attr, getattr(target, attr)) for target, attr in rebind]
         for target, attr, _before in snapshots:
-            setattr(target, attr, getattr(mutated_module, attr))
+            assert attr in mutant, (
+                "窗内要改绑的 %s 不在本扇窗改动的顶层绑定里（实取 %s）：这把刀空转" % (attr, sorted(mutant)))
+            setattr(target, attr, mutant[attr])
         try:
             yield info
         finally:
@@ -578,22 +589,47 @@ def test_counter_evidence_c_a_batch_rollback_breaks_the_partial_success_pin(clie
 
 
 def test_the_counter_evidence_window_touches_no_tracked_file():
-    """反证窗自己的纪律：三枚被改文件的 sha256 全程恒定，窗内也只有那一枚文件在窗里。"""
+    """反证窗自己的纪律：三枚被改文件的 sha256 全程恒定，窗内也只有那一枚文件在窗里。
+
+    🔴 R466 把窗内/窗尾两半都改写实了。旧写法只比对象身份（``is`` / ``is not``），而那两格读的
+    正好是 ``execs_module = True`` 一次全模块重跑顺手造出来的形状：窗内 ``is`` 成立既证明不了
+    变异在被执行，窗尾 ``is not`` 成立也只是因为旧码体被又跑了一遍、长出了第二枚同名对象——它
+    甚至不是盘上那一枚。现在窗内比**码体指纹**（消费者指的函数必须等于影子副本那份码，且只准
+    改动的那几枚绑定换身体），窗尾比**每一枚顶层把手的身份与码体都回到开窗前那一枚**。
+    """
     targets = (SOURCES_PY, NOTIFICATIONS_PY, STATES_PY)
     before = {path: _tracked_sha(path) for path in targets}
+    untouched = r466.live_view(sources_module)
+    disk_text = SOURCES_PY.read_bytes().decode("utf-8")
+    mutated = None
 
     with _mutate(
         SOURCES_PY,
         ["        truncated=truncated or len(rows) >= ALERT_LEG_PAGE,"],
         ["            truncated=truncated,"],
         rebind=[(inbox_module, "alert_candidates")],
-    ):
+    ) as info:
         assert overlay.open_windows() == (overlay.rel_of(SOURCES_PY),)
-        assert inbox_module.alert_candidates is sources_module.alert_candidates
+        shadow_codes = r466.compiled_view(info.read_text(), str(SOURCES_PY))
+        mutated = r466.changed_bindings(disk_text, info.read_text())[0]
+        assert mutated == ["alert_candidates"], "本扇窗改动的顶层绑定与锚点不符：实取 %s" % (mutated,)
+        assert r466.fn_digest(inbox_module.alert_candidates) == shadow_codes["alert_candidates"], (
+            "消费者跑的不是影子副本那份码：变异没被执行，这把刀是钝的"
+        )
+        churned = r466.identity_diff(untouched, r466.live_view(sources_module))
+        assert set(churned) <= set(mutated), (
+            "窗内活模块换了没被点名的把手身体：变异 exec 进了整份码体：%s" % (churned,)
+        )
 
     assert {path: _tracked_sha(path) for path in targets} == before, "盘上被跟踪文件被动过一字节"
-    assert inbox_module.alert_candidates is not sources_module.alert_candidates, (
-        "消费者还指着变异版：出窗没还原"
+    assert inbox_module.alert_candidates is sources_module.alert_candidates, (
+        "消费者没装回活模块那一枚：出窗没还原"
+    )
+    assert r466.diff_view(untouched, r466.live_view(sources_module)) == [], (
+        "出窗后 sources 还有码体是变异的：反证窗把变异漏在活模块上了"
+    )
+    assert r466.identity_diff(untouched, r466.live_view(sources_module)) == [], (
+        "出窗后 sources 还有顶层把手没回到开窗前那一枚：整份码体被重跑过"
     )
 
 # ------------------------------------------------- 判据④的口径句：数字会漂，那句警告不许漂

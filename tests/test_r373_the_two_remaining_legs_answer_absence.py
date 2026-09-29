@@ -72,6 +72,7 @@ from app.notifications import sources as sources_module
 from app.notifications import states as state_store
 from app.storage import pending_approvals as hitl_store
 from tests import _temp_edit_overlay as overlay
+from tests import test_r466_mutation_does_not_leak_into_live_module as r466
 
 REPO = Path(__file__).resolve().parents[1]
 #: 本单的记名锚点：与现场读数比等号的是它，不是「工作树 vs HEAD」那一类会随提交变空的差集。
@@ -1007,7 +1008,9 @@ class _R373Edit(overlay.ShadowEdit):
     """
 
     tag = "r373"
-    execs_module = True
+    #: 🔴 R466：变异只落影子副本，不 exec 进活模块（整份码体重跑会把每一枚顶层把手换新身体，
+    #: 而那次 exec 在 __enter__ 里，它一炸就没有 __exit__ 还原）。改绑走 r466.install_mutation。
+    execs_module = False
 
     def __init__(self, path: Path, old_lines, new_lines) -> None:
         super().__init__(path)
@@ -1026,13 +1029,24 @@ class _R373Edit(overlay.ShadowEdit):
 
 @contextmanager
 def _mutate(path: Path, old_lines, new_lines, rebind=()):
-    """开一扇反证窗，把「谁 import 了这一格」指到变异版上，出门逐格还原。"""
+    """开一扇反证窗：变异只落影子副本，窗内只把**变了的那几枚顶层绑定**装进活模块，出门逐枚装回。
+
+    旧姿势是 execs_module=True：开窗那一刻把变异后的整份码体 exec 进 sys.modules 里那枚模块，
+    于是每一枚顶层函数都换新身体（本席现取：sources 9 枚、inbox 7 枚全换），且那次 exec 在
+    __enter__ 里、_WINDOWS.append 之后——变异体在顶层就跑炸时 __exit__ 不会执行，活模块留下半份
+    变异码、_WINDOWS 也记着这扇窗，overlay 从此把影子副本的变异当成「当前该算数的那份字节」。
+    r466.install_mutation 与 test_r457_audit_retention_execution_leg.py:169-242 同一族姿势。
+    rebind 那一层照旧：import 语句那次一次性拷贝不会自己爬进消费者的命名空间。
+    """
     mutated_module = overlay.module_of(overlay.rel_of(path))
-    assert mutated_module is not None, f"{path.name} 还没被导入，exec 无处可落"
-    snapshots = [(target, attr, getattr(target, attr)) for target, attr in rebind]
-    with _R373Edit(path, old_lines, new_lines) as info:
+    assert mutated_module is not None, f"{path.name} 还没被导入，改绑无处可落"
+    with _R373Edit(path, old_lines, new_lines) as info, \
+            r466.install_mutation(mutated_module, path, info.read_text()) as mutant:
+        snapshots = [(target, attr, getattr(target, attr)) for target, attr in rebind]
         for target, attr, _before in snapshots:
-            setattr(target, attr, getattr(mutated_module, attr))
+            assert attr in mutant, (
+                f"窗内要改绑的 {attr} 不在本扇窗改动的顶层绑定里（实取 {sorted(mutant)}）：这把刀空转")
+            setattr(target, attr, mutant[attr])
         try:
             yield info
         finally:
