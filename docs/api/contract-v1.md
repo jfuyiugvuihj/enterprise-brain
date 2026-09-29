@@ -5490,3 +5490,33 @@ unratified dimension (classification is H13, owner-open).
 
 🔴 本单硬禁 `app/**` 与在册测试件，一枚字都没改。要么改口，要么把它们改判成「auditor 档位」这一笔独立的账 —— 那是总控的裁定，不是执行层可以顺手替 H13 补的第二刀。
 
+## R472 · 上一节文末那格「今天没动的三处旧表述」从今天起是过期登记（`app/agents/tools.py` 与错误码词表已改口，2026-09-29）
+
+**一句话**：`## R467` 那一节在文末登记了三处旧表述，写明「本单写域之外，只登记」。今天其中两处已经改口（施工 `Dalton`，并树 `3dbf80e`），剩下几处仍在盘上，已另立 **R478**。本节不改历史段落，只把这本账对齐今天的现实——否则下一班读到「三处都没动」会把它当新发现再报一遍（同族病见看板 §4DT 事故 #82）。
+
+**今天改口的两处（逐枚点名；全部只换理由文字，判定行为一个字没动）**
+
+- `app/agents/tools.py` 四处：映射表 `_POLICY_DENIAL_CODES` 上方注释块、R62 行级文案层的层头、`_row_scope_reason` 里 `department_column_missing` 那一支、`_ROW_SCOPE_PUBLIC_CODES` 上方。凭据＝AST 同形（基点版与工作树版 `ast.dump` 逐字相等）⇒ 非注释字节零改动。
+- `tests/test_error_code_vocabulary.py`：`DEFERRED_CODES` 的登记值、`clearance_insufficient` 的 `why`、那枚守卫自己的 docstring、两枚 assert 的红话。改口后的真理由是「这一维的拒绝今天已由 `clearance_insufficient` 与 `resource_scope_missing` 两枚在册码承担，欠账码仍是**零 emit 点**」，不是「已实现」。现读凭据：`rg classification_blocked app/` = **0 命中**，并且这一格从今天起是常驻闸（`tests/test_r472_h13_closed_wording.py:260` 扫 `app/**` 全树，谁写出这枚码名谁当场红）。
+
+**还欠的那几处（本席 09-29 现读，全部在 `app/**`，随 R478 治）**
+
+1. `app/common/rbac.py::filter_dataframe_rows` 的 docstring 把密级那一维写成「沿用原实现、口径等闸门」；而同文件的模块头 `:24` 已经写明该闸门 2026-09-28 结案＝甲——同一枚文件里两句话自相矛盾。
+2. `app/agents/contracts.py:341` 行级码注释块里那句「业主口径亦未裁」——今天它是假话，那一问 09-28 已经裁了。
+3. `app/documents/catalog.py:437` 把「不改这一行」的理由之一写成「否则顺带替业主裁掉那一问」。那一问今天已经有答案，这条理由撑不住了；真剩下的理由是那个键**一词两用**（既进判定，又逐字出现在 `/documents/catalog` 的响应体里），那是设计问题不是口径问题。
+4. 🔴 最重的一处，而且**它不是注释**：`app/common/open_platform.py:62` 与 `:72`、`app/api/v1/open_platform.py:307` 与 `:320`。`MAX_CLEARANCE_NOTE` 逐字进 `clearance_registration()` 的响应体（注册回执 `app/common/open_platform.py:253` 与应用列表都带它），`description=` 逐字进 OpenAPI 文档。它们把「应用注册的 `max_clearance` 没有任何路径去比较」这件事实，挂在一枚**已经结案的闸门号**上，读起来像「这件事有人正拿着」——而今天没有任何人拿着它。这正是本仓最忌讳的那类假话：把没做的事说成在等审批。
+
+**为什么那四枚对外可见的串今天还在吐这句话（R478 必须先治这一格，否则改口必红）**
+
+在册钉把闸门号钉进了对外可见的字符串里：
+
+```text
+tests/test_r78_unearned_claims.py:275  assert "H13" in note, "the field has to say which ruling it is waiting for, not just that it waits"
+tests/test_r78_unearned_claims.py:307  assert "H13" in description, description
+```
+
+⇒ 那两枚钉**要求**响应体与 OpenAPI 里带着闸门号，于是把一句过期话钉活了。R478 的正解不是删断言，是把断言的锚换成一枚今天仍然成立的事实（这一维没有比较规则，也没有任何人拿着它），并让红话说清它锚的到底是哪一格。断言的强度只许升不许降：改完之后，把那句话改写成「这一维已经由某处代码在执行」必须照样红。
+
+**不受影响的一格（现读）**：`rg max_clearance_note frontend/src` = **0 命中**。屏上没有这句话，改它只动 API 响应体与 OpenAPI，不动界面。
+
+**本节欠自己的一笔（不许读成已收）**：应用注册档位到底要不要变成真控制，是一项产品决定，不是文字问题。总控 09-29 裁定分两枚单走——**R478** 先做零行为变更的假指针清账（含契约再追加一节）；**R479** 做「把 `max_clearance` 接进 Principal、让它真的算数」的行为变更。R479 落树前必须现读三件事：哪些在册件会因它改口、既有注册应用的缺省档会不会因此读不到东西、`app/rag/filters.py` 与 PG／Chroma 两条读腿用的是不是同一套档位算式。
