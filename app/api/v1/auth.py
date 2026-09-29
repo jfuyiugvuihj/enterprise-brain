@@ -5,6 +5,7 @@ from app.common import audit as audit_log
 from app.common import auth
 from app.common.authorization import DEPARTMENT_SELF_REPORT_DENIED, authorize_request, principal_from_request
 from app.common.permissions import ACTION_MANAGE_USERS
+from app.common.rbac import clearance_for
 from app.common.sso import extract_sso_identity, validate_sso_headers
 from app.memory.profile import (
     ProfileStoreUnavailable,
@@ -248,9 +249,31 @@ async def sso_login(request: Request):
 
 @router.get("/profile")
 async def get_my_profile(request: Request):
+    """``users`` 那一行 + 画像存储真读到的列，外加一枚**只读派生**的 ``clearance``（R494）。
+
+    为什么补这一格：员工在界面上问「我能读到哪几级文档」，今天无处可查——检索闸门
+    （``app/rag/filters.py`` 的 ``classification_levels``，取的就是 ``principal.clearance``）
+    早就算得出这个数，只是从没交给界面。这一格只做「把已经算得出的事说出去」：值现场
+    取自档位唯一真源 ``app/common/rbac.py::clearance_for(role)``，出口这一侧不写第二份
+    档位表，也不换尺。
+
+    ``role`` 取 ``base``（``auth.get_user`` 现取的 ``users`` 那一行），不取合并后的画像：
+    画像那两腿（PG 的 SELECT、进程内内存表）只有 ``position`` / ``preferences`` /
+    ``updated_at``，角色归属的事实源只有一处，跟着 ``base`` 走才不会让「谁说了算」变两本账。
+
+    🔴 读不到 role 就整格不出现，绝不猜一枚 1。``clearance_for`` 的兜底是
+    ``ROLE_CLEARANCE.get(role or "staff", 1)``（``tests/test_r357_single_role_roster.py`` 把它
+    作为「不许顺手改成 raise」的现状钉着），所以空 role 喂进去**照样**回 1——那个 1 是给
+    「知道这人是 staff」准备的缺省，不是给「根本读不到这人的角色」准备的答案。界面把它画成
+    「你能读到第 1 级」就是句假话；``app/agents/contracts.py::Principal.from_user`` 也会把同一枚
+    缺省冻进身份。所以本格的判据是「有没有读到 role」，不是「能不能凑出一个数」。
+    """
     username = getattr(request.state, "username", "")
     base = auth.get_user(username) or {"username": username}
     profile = get_profile(username, fallback=base)
+    role = str(base.get("role") or "").strip()
+    if role:
+        profile["clearance"] = clearance_for(role)
     return {"profile": profile}
 
 

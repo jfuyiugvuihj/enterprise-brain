@@ -332,7 +332,7 @@ describe('R315 判据⑥ · 六枚一级屏真的可达', () => {
     expect(routes.filter(route => route.meta?.screen && LEGACY_FEED_NAMES.includes(String(route.name)))).toHaveLength(0)
     // 屏的全集里，非一级的只有图谱、「账号与角色」与 R399 的「运行留痕」，再加上那两枚老屏名
     // —— 定长逐字相等，多一枚少一枚都红。
-    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['graph', 'admin', 'traces', 'docs', 'data'])
+    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(['profile', 'graph', 'admin', 'traces', 'docs', 'data'])
     expect(artifactsRoute.redirect, '「交成果」不该是重定向，它是一屏').toBeUndefined()
   })
 

@@ -5701,3 +5701,55 @@ Registered only, and enforced by nothing today: no retrieval, no preview, and no
 - 没动 `app/api/v1/chat.py`：队列归属回读那格（`str(claimed_id) != str(live.user_id)`）吃的是同一枚 `principal.user_id`，SELECT 补 id 时它同样翻命名空间，读数落 `QUEUE_OWNER_STALE`（判失效，不是泄漏）。那一本账不在本段口径里。
 - 没动 `app/agents/contracts.py:34`——「一枚字段两套身份」的翻译点本体在那里。要根治得让 `Principal` 自己说清哪一列是身份、哪一列是标签；本段只把会话这一侧的后果接住。
 - `app/storage/artifacts.py`、`app/storage/datasets.py`、`app/knowledge_graph/service.py` 各自也在用 `str(principal.user_id)` 当 owner 列。那是另外三本账，R495 的真源只管会话台账；本段不替它们定命名空间，也不声称它们已同源。
+## R494 · 员工自己那一屏：`GET /api/v1/profile` 交出一枚只读派生的档位，`/profile` 从今天起有脸（`app/api/v1/auth.py` + `frontend/**`，2026-09-29）
+
+**一句话**：档位的数今天仍然算得出来（`app/rag/filters.py` 的 `classification_levels` 取的就是 `principal.clearance`），缺的从来不是算法，而是「把已经算得出的事说给界面」。本节补那一格读数，再给员工一张自查屏：我是谁（角色）、我在哪个部门（而且为什么我自己改不了）、我能读到哪几级文档。
+
+**为什么这一节只往文末长**：本契约 append-only（`## R478` 第二节所列三枚前缀钉与「只追加不删」钉），本节只有新增字节，`## R482` 与更早各节一个字节没动。
+
+### 对外形状：`GET /api/v1/profile` 的 `profile` 里多一枚 `clearance`
+
+- **只读派生，不是存储列**：值现场取自档位唯一真源 `app/common/rbac.py::clearance_for(role)`。出口这一侧不写第二份档位表、不换尺；`app/rag/filters.py` 与 `app/common/rbac.py` 一个字没动。这一格也写不进去——写路径仍然只有 `position` 与 `preferences`。
+- **角色只读 `users` 那一行**（`app/common/auth.py::get_user` 现取的 `username, role, department` 三列），不读合并后的画像：画像那两腿（PG 的 SELECT、进程内内存表）只有 `position` / `preferences` / `updated_at`，角色归属的事实源只有一处，跟着 `users` 那一行走，「谁说了算」才不会变两本账。
+- **读不到 `role` 就整格不出现，绝不猜一枚 1**：`clearance_for` 的兜底是 `ROLE_CLEARANCE.get(role or "staff", 1)`，空角色喂进去照样回 1——那个 1 是给「知道这人是 staff」准备的缺省，不是给「根本没读到这个人的角色」准备的答案。回执缺这一格（或空串）就是「这台服务器没把档位告诉我」，界面据此说这句话，不许用文案糊一个数上去。词表外的角色不在此列：那是「读到了 role」，取值一律交给真源自己的答案，出口不改写它的形状。
+
+### 前端：`/profile` 四格逐格有出处
+
+路由一条（`/profile`，`meta.title` 「我的账号」，`meta.primary:false`）、屏一枚（`frontend/src/components/ProfilePanel.vue`）、取数与判脸只有一处（`frontend/src/lib/profile.js`），屏上不再第二次 `fetch`。
+
+| 格 | 取值 | 可写 |
+| --- | --- | --- |
+| 用户名 | `profile.username` | 否 |
+| 角色 | `profile.role`，文字走全站那一份角色词表 | 否 |
+| 部门 | `profile.department`，缺失画出「未登记」 | 否（只读，出路写在格下方） |
+| 档位 | `profile.clearance` 到位才画「你能读到第 1–N 级」；缺席就画「这台服务器没把档位告诉我」 | 否 |
+
+部门那一格的人话出路照抄 `## The profile store stops carrying a department` 与 `app/api/v1/auth.py` 里 R296 那段注释：要挪部门请找管理员，走 `PUT /api/v1/users/department`，需要 `users:manage`。
+
+### 三张失败脸不许塌成一句「保存失败」
+
+R383 已经把写路径的两张存储脸与「存储自报就绪却没写成」分开留名（`app/api/v1/auth.py`），本节把它们交给界面，一张一句、各自的下一步：
+
+| 形状 | 含义 | 界面 |
+| --- | --- | --- |
+| 403 `department_override_denied` | 这一发请求里出现了 `department` 这枚键（空串也算出现，判据是 `model_fields_set`），整发拒，`position` 也不会写 | 「部门这一格不归你写」＋找管理员的出路；不给重试钮（同一串 body 再发还是拒） |
+| 503 `storage_unavailable` | 画像存储还没就绪（迁移没跑／库读不到） | 「这台服务器的画像存储还没就绪，这一发没写进去」 |
+| 500 `画像保存失败` | 存储自报就绪，这一发仍没写成 | 原句照抄，不与上面两张合并 |
+
+### 写路径的请求体：键名只可能有两枚，第三枚是一发 403
+
+`profileWriteBody(form)` 只抄 `position` / `preferences` 两键，签名接受任意形状的表单，永远不把 `department` 带出门。这一格不靠自觉：契约钉把 `department` 塞进表单再逐键比对，屏的钉把真仪器按下保存、再把发出去的 body 逐键比对。
+
+### Evidence
+
+后端：`tests/test_r494_profile_clearance_is_derived.py`（13 枚，全程离线内存夹具，零服务、零真库、零模型端口）——逐角色对真源、与检索闸门同一把尺、读不到 role 整格缺席、词表外角色交给真源、出口不长第二份档位表（AST 闸）、写路径无 `department` 往返。前端：`frontend/src/lib/__tests__/r494-profile-contract.test.js`（23 枚）、`frontend/src/components/__tests__/r494-profile-screen.test.js`（23 枚，真 setup 跑真产物）、`frontend/src/router/__tests__/r494-profile-route.test.js`（11 枚）。档位取值一脉不写数字。前端那枚台账钉对 `app/common/auth.py` 的字段清单**读两形**：基点 `5b8d767` 那句字面 SELECT，与主树 `8d228be`（R495 并树）把它搬成声明之后的 `USER_LOOKUP_COLUMNS` + `", ".join(...)` 那一形；两形都押不中就抛，不降级成一张空账。
+
+- 🔴 本席 09-29 二次核验补的那一格：`r494-profile-screen.test.js` 那条屏名钉原先只数页头，「页头之外再报一次屏名」这把刀第一跑**零红**＝假绿，已当场补严成「整屏那句屏名只许出现一次 ＋ 标题位里含屏名者只许一处」，复跑同一把刀红 1 枚。这一格改的是本单自己的新钉，在册钉一枚没动。
+
+### 本节没做的事（不许读成已收）
+
+- 没给这一屏挂侧栏入口：`meta.primary:false`，今天只有深链。入口归总控——它要动的是 `App.vue` 与导航派生那一族在册钉，不在本单写域。
+- 没动 `app/rag/filters.py`、`app/common/rbac.py`、`app/memory/profile.py`、`app/common/auth.py`、`app/agents/contracts.py` 一个字：档位算法仍只在检索闸门那一处，角色到档位的映射仍只在 `ROLE_CLEARANCE` 那一处。
+- 没起服务、没打后端真出口、没动容器、没打模型、没写库；上面那些形状全部来自内存 app 夹具与浏览器真仪器。
+- 没新增错误码，也没把档位的档位表抄进前端——屏上那句「第 1–N 级」的 N 只来自后端这一格。
+- 没量过这一屏让路延迟、没做浅色主题、零外部请求（无 `fonts.googleapis.com`、无 CDN、无图标库）。

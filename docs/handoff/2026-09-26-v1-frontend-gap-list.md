@@ -301,7 +301,7 @@ cd frontend; rg -n "confirm\(" src -g "!*.test.js"
 ### 10.1 §6 那 20 枚的现读三态
 
 - **已落 18 枚**：G01、G02、G04、G05、G06、G07、G08、G09、G11、G12、G13、G14、G15、G16、G17、G18、G19、G20。其中四枚各带一枚**已写在该行**的残格：G05（`GET /alerts/{alert_id}` 仍 0 消费者，已立案 R286）、G07（全站降级横幅仍没有，写域 `App.vue`）、G11（列表行无 `request_id`／`session_id` ⇒ 按会话找回仍缺）、G12（「这台服务器没开图谱」那句没证）。
-- **半 2 枚**：G03（缺的两格在后端终态帧 + `lib/sessions.js:478-482`，不在界面）、G10（两枚管理屏已在树，仍没脸的是 `/slo`、`/audit/events`、`/evaluations`、`/profile`、`/retrieval/debug`）。
+- **半 2 枚**：G03（缺的两格在后端终态帧 + `lib/sessions.js:478-482`，不在界面）、G10（两枚管理屏已在树；🔴 **R494 现读@5b8d767 把这一格改口**：`/profile` 从今天起有脸——路由 `frontend/src/router/index.js` 的 `name: 'profile'` 一条 + 屏 `frontend/src/components/ProfilePanel.vue` + 唯一取数点 `frontend/src/lib/profile.js`，四格（用户名／角色／部门／档位）逐格真接 `GET /api/v1/profile`，档位那格吃后端新交的只读派生 `profile.clearance`；部门一格只读并写明出路，三张失败脸（403 `department_override_denied`／503 `storage_unavailable`／500 画像保存失败）分开留名；🔴 这一屏今天只有深链，`meta.primary:false` ⇒ 侧栏入口未挂，挂不挂归总控。仍没脸的是 `/slo`、`/audit/events`、`/evaluations`、`/retrieval/debug`）。
 - **未落 0 枚**。G21／G22 两枚记账项照旧（本单没重取，见 §10.2 第 4 条）。
 - 🔴 这一节是**逐行证据的汇总**，不是达标判定：改口的收益只是让下一班不再重复派已经修完的活；V1 门槛归总控按 `docs/handoff/2026-09-23-v1-acceptance-record.md` 裁。
 

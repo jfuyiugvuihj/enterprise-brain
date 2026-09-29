@@ -199,8 +199,10 @@ describe('R136 判据① · 页内标题与 meta.title 同源（真渲染比对�
    * （R268 丙组早就硬写在页内、逐字对账 meta.title 的那一句）。这两枚不是本单新长的屏名，是这枚钉
    * 今天才看见的既有屏名：名单从四枚换成六枚，换的是可见性，不是断言强度。
    * 第七枚要加，先想清楚它凭什么不是从顶栏读 —— 名单仍然定长逐字相等，加了不许漏、漏了不许多。
+   * R494 交出第七枚：profile 的页级屏名来自 ProfilePanel.vue 自己那一句页头，不是从顶栏读的，
+   * 而且它与 meta.title 逐字相等由上一枚钉盯着；这里仍然只往同一枚定长名单加一项，没换成包含式。
    */
-  const WITH_PAGE_TITLE = ['insights', 'approval', 'graph', 'artifacts', 'feed', 'chat']
+  const WITH_PAGE_TITLE = ['insights', 'approval', 'graph', 'artifacts', 'feed', 'chat', 'profile']
 
   it('每一屏渲染出来的页级标题与 meta.title 逐字相等（三式都算，同时命中两式也算红）', async () => {
     for (const route of screenRoutes) {
@@ -215,7 +217,7 @@ describe('R136 判据① · 页内标题与 meta.title 同源（真渲染比对�
     }
   })
 
-  it('页级标题的枚数钉死：六枚有、三枚没有（总览与账号与留痕靠顶栏说名字）', async () => {
+  it('页级标题的枚数钉死：七枚有、三枚没有（总览与账号与留痕靠顶栏说名字）', async () => {
     const withTitle = []
     for (const route of screenRoutes) {
       const html = await renderToString(h(route.component))
@@ -225,7 +227,7 @@ describe('R136 判据① · 页内标题与 meta.title 同源（真渲染比对�
     // 理由写在 WITH_PAGE_TITLE 那段）。两次换的都是名单本身：toEqual 与 toHaveLength 两枚都保留、
     // 都没换成包含式 —— 第七枚偷偷加一句标题，或这六枚里有谁把标题删了，照样当场红。
     expect(withTitle.sort()).toEqual(WITH_PAGE_TITLE.slice().sort())
-    expect(withTitle).toHaveLength(6)
+    expect(withTitle).toHaveLength(7)
   })
 
   it('「喂料」这一屏只说一句屏名：页内那一句逐字等于 meta.title，标签文案说的是内容', async () => {

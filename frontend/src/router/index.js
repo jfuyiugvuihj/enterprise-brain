@@ -32,6 +32,7 @@ import DashboardPanel from '../components/DashboardPanel.vue'
 import FeedPanel from '../components/FeedPanel.vue'
 import GraphPanel from '../components/GraphPanel.vue'
 import InsightPanel from '../components/InsightPanel.vue'
+import ProfilePanel from '../components/ProfilePanel.vue'
 import TracePanel from '../components/TracePanel.vue'
 
 // 「喂料」的标签清单与它名下的老地址是同一条记录的两张脸，只写在 feed-tabs.js 一遍；
@@ -102,6 +103,19 @@ export const routes = [
     name: 'artifacts',
     component: ArtifactsPanel,
     meta: { screen: true, title: '交成果', icon: 'M7 3h7l4 4v14H7zM14 3v5h5M10 17v-4M13 17v-7M18 17h3' },
+  },
+  // R494 判据② · 「我的账号」是一屏：员工嘴里那三句话（我是谁、我在哪个部门、我能读到哪几级文档）
+  // 今天在界面上无处可查 —— 路由表里就没有这一格，缺口清单的 G10 因此记「半」。这一屏的四格逐格来自
+  // GET /profile 的回执，取数与判脸全在 src/lib/profile.js 一处，屏壳自己不做第二本账。
+  // 为什么这一条不写 meta.icon 也不挂一级入口：本单写域不含侧栏那几枚定长名单钉（一级屏从六枚变七枚要
+  // 同时改口 navigation.test.js 与 r315 / r399 / r136 那四枚在册件），所以先按 /graph 那一枚先例落
+  // 「真地址、可深链、不占一级」这一格准确状态：primary:false 派生不出导航项，入口要不要挂归总控裁定，
+  // 挂着一枚没人接的 icon 才是这里该防的死数据。
+  {
+    path: '/profile',
+    name: 'profile',
+    component: ProfilePanel,
+    meta: { screen: true, title: '我的账号', primary: false },
   },
   // D13①（计划书 §6.1）撤的是图谱的一级入口，不是功能：它的定位早已裁定为「候选断言采集表」
   // 而非推理引擎（docs/design/knowledge-graph-positioning.md），摆在侧栏一级就是误导使用者。
