@@ -303,11 +303,15 @@ def _cached_token_count(usage: Any, response: Any) -> int | None:
       292 of 543, 257 of 769, plus one honest 0 of 116.
     * ``usage["prompt_tokens_details"]["cached_tokens"]`` -- the same field on an OpenAI-shaped
       ``usage`` mapping that never passed LangChain's renamer.
-    * ``response.cached_tokens`` -- the seam for the native leg. The frame has the number;
-      ``app/common/model_handler.py:394-395`` copies only ``prompt_eval_count`` and
-      ``eval_count`` into ``ModelReply``, so today nothing ever sets it. Widening that copy is
-      outside this ticket's write domain and R146 hands it back instead; when it lands, this
-      function needs no second change to meter it.
+    * ``response.cached_tokens`` -- the seam for the native leg, and the seam is connected:
+      ``app/common/model_handler.py:613`` reads ``prompt_eval_cached_count`` off the ``done``
+      frame and ``:631`` hands it to ``ModelReply``, which grows the attribute only when the
+      server counted one (``:248`` defaults the parameter to ``None``, ``:266-267`` assigns
+      it only when that parameter is not ``None``). What this bullet used to claim -- that
+      ``model_handler.py:394-395`` copied only ``prompt_eval_count`` and ``eval_count``, so
+      nothing ever set it -- was R38's true sentence, and R43a superseded it on 2026-09-22:
+      ``:394-395`` is ``default_model_budget()`` today. Nothing in this function needs a
+      second change to meter the field.
 
     ``None`` means "there is no reading", and the caller drops the key rather than writing a
     zero. ``prompt_eval_count - cached`` and every similar subtraction is arithmetic done to a
@@ -355,10 +359,21 @@ def model_token_counts(response: Any) -> dict[str, Any]:
       ``app/common/model_handler.py`` and never reaches this function. Its readings -- and
       ``docs/perf/raw/prodpath.jsonl`` -- are what prove the server reports a cached count on
       a non-streaming call, which is the half R38 got wrong.
-    * native leg ``/api/chat`` -- the ``done`` frame reports ``prompt_eval_cached_count``. So
-      the server is not the gap; :func:`_cached_token_count` is ready for it, and the missing
-      copy is ``app/common/model_handler.py:394-395``. Do not read a native round's absent key
-      as "no cache": it is "this process dropped the field before it got here".
+    * native leg ``/api/chat`` -- the ``done`` frame reports ``prompt_eval_cached_count``
+      and this process no longer drops it: ``app/common/model_handler.py:613`` reads it,
+      ``:631`` puts it on the reply, and :func:`_cached_token_count` meters it. The copy R38
+      named as missing at this spot, ``model_handler.py:394-395``, was written by R43a, and
+      those two lines are ``default_model_budget()`` now. An absent key on a native round
+      therefore means the frame did not count a cached prefix -- never "the cache did not hit",
+      and no longer "a field this process threw away". R523 then built the landing side:
+      ``0018_prompt_cache_tokens.sql`` adds ``model_calls.cached_tokens`` (nullable, no default,
+      no backfill), ``app/trace/schema.py`` declares it, ``app/trace/projections.py`` hands it to
+      the row, and the PostgreSQL adapter's own column tuple
+      (``app/storage/persistence.py``) names it, so the INSERT the adapter builds carries it.
+      What that closes is a round trip on the checked-in in-memory double
+      ``tests/_r250_fake_postgres.py`` -- it proves the value travels out of this process into
+      the row and comes back, not that the shipping host's cache hits anything: a measured
+      ``cached_tokens`` for product traffic is still owed by the next open-window readout.
     * compatible leg, **streaming** -- the answer leg, and the one this bullet list exists to
       describe: its frames carry no ``usage`` object at all, so nothing about tokens is
       measurable from a stream, neither the two counters nor a cached count. That is why

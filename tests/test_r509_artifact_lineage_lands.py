@@ -434,12 +434,23 @@ def test_the_migration_adds_two_nullable_columns_and_nothing_else():
 
 
 def test_the_migration_is_registered_and_loads():
+    """0017 在册、且排在它后面的只有已指名的那一版。
+
+    本件原来钉的是「``MIGRATIONS[-1] is entry``：0017 必须是当前最新一版」——那一格由 R523
+    的 0018（``prompt_cache_tokens``）按先例改口：末位主张交给唯一账本
+    ``tests/test_r349_catalog_tail_ledger.py``，这里只钉「我这一版之后站着谁」。多一枚前滚
+    迁移仍会在这里红，逼回来指名，不许静默通过。
+    """
     from app.db.migrations import MIGRATIONS
 
     entry = next((item for item in MIGRATIONS if item.name == "artifact_generation_lineage"), None)
     assert entry is not None, "0017 没进迁移册：loader fail closed，客户机上这两枚列根本不存在"
     assert entry.version == "0017", entry.version
-    assert MIGRATIONS[-1] is entry, "0017 必须是当前最新一版，否则并树顺序错了"
+    following = MIGRATIONS[MIGRATIONS.index(entry) + 1:]
+    assert [(item.version, item.name) for item in following] == [("0018", "prompt_cache_tokens")], (
+        "0017 之后只许站着 R523 的 0018 prompt_cache_tokens，多一枚就得回这里指名："
+        + str([(item.version, item.name) for item in following])
+    )
 
 
 def test_no_new_chroma_writepoint_and_no_classification_blocked():

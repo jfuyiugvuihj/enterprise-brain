@@ -2,7 +2,11 @@
 
 Three copies of the same list exist and the point of this file is that they cannot drift:
 
-1. ``migrations/0002_execution_data_lineage.sql`` -- what the database actually has;
+1. ``migrations/0002_execution_data_lineage.sql`` -- what the database actually has,
+   plus every ``ALTER TABLE ... ADD COLUMN`` later migrations append to those tables
+   (0018 adds ``model_calls.cached_tokens``; R509 set the precedent in
+   ``tests/test_r248_artifact_column_alignment.py`` -- reading only the CREATE would
+   make this pin judge the shape of a two-year-old table);
 2. ``app.trace.schema.TRACE_TABLE_COLUMNS`` -- what the trace plane writes and reads;
 3. ``app.storage.persistence._TABLES`` -- the columns the adapter puts into its SQL.
 
@@ -34,11 +38,31 @@ from tests._r250_fake_postgres import FakePostgres
 from tests._r250_run_fixture import emit_full_run
 
 MIGRATION = Path("migrations/0002_execution_data_lineage.sql")
+MIGRATIONS_DIR = Path("migrations")
+#: 后续迁移往这六张表上追加的列，形状与 0002 里的出生同等有效。
+_ALTER_ADD = re.compile(
+    r"ALTER TABLE IF EXISTS (?P<table>\w+)\s+ADD COLUMN IF NOT EXISTS (?P<name>\w+)",
+    re.S,
+)
 _CREATE = re.compile(
     r"CREATE TABLE IF NOT EXISTS (?P<name>\w+) \((?P<body>.*?)\n\);",
     re.S,
 )
 _CONSTRAINT_WORDS = ("primary key", "unique", "check", "foreign key", "constraint", "exclude")
+
+
+def _added_columns() -> dict[str, list[str]]:
+    """Column names appended by later migrations, in file order -- nothing hard-coded.
+
+    The count is deliberately not written into this file: whoever adds another column to a
+    trace table in 0019, 0020... lands here automatically, which is the whole point of reading
+    DDL instead of copying a list.
+    """
+    added: dict[str, list[str]] = {}
+    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        for match in _ALTER_ADD.finditer(path.read_text(encoding="utf-8")):
+            added.setdefault(match.group("table"), []).append(match.group("name"))
+    return added
 
 
 def _ddl_columns() -> dict[str, tuple[str, ...]]:
@@ -55,6 +79,13 @@ def _ddl_columns() -> dict[str, tuple[str, ...]]:
                 continue
             columns.append(stripped.split()[0].lower())
         tables[match.group("name")] = tuple(columns)
+    for table, names in _added_columns().items():
+        if table in tables:
+            # ADD COLUMN appends: the physical order of a column the table grew later is the
+            # order both schema.py and persistence.py put it in.
+            tables[table] = tables[table] + tuple(
+                name for name in names if name not in tables[table]
+            )
     return tables
 
 

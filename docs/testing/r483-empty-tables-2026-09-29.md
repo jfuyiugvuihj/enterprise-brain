@@ -24,7 +24,7 @@
 | `notification_states` | 0 | 0 | 0 | None | `app/notifications/states.py:258 · apply_state`, `app/notifications/states.py:213 · apply_state` | `migrations/0016_notification_states.sql:63` | `legitimately_empty` |
 | `calculation_runs` | 0 | 0 | 0 | None | 没找到 | `migrations/0002_execution_data_lineage.sql:52` | `no_seed_path` |
 | `metric_definitions` | 0 | 0 | 0 | None | `app/semantics/registry.py:742 · _insert_statement`, `app/semantics/registry.py:751 · _insert_statement` ＋2 处 | `migrations/0002_execution_data_lineage.sql:72` | `no_seed_path` |
-| `retrieval_traces` | 0 | 0 | 0 | None | `app/storage/persistence.py:417`, `app/trace/projections.py:321 · project_retrieval` | `migrations/0002_execution_data_lineage.sql:170` | `no_seed_path` |
+| `retrieval_traces` | 0 | 0 | 0 | None | `app/storage/persistence.py:418`, `app/trace/projections.py:324 · project_retrieval` | `migrations/0002_execution_data_lineage.sql:170` | `no_seed_path` |
 | `user_profiles` | 0 | 0 | 0 | None | `app/memory/profile.py:273 · upsert_profile`, `app/memory/profile.py:240 · upsert_profile` | `migrations/0003_legacy_runtime_tables.sql:83` | `needs_owner` |
 | `document_activity_signals` | 0 | 0 | 0 | None | `app/api/v1/feedback.py:49`, `app/api/v1/feedback.py:147 · record_document_signal` | `migrations/0011_document_activity_signals.sql:24` | `legitimately_empty` |
 
@@ -94,7 +94,7 @@
 
 - 今日现读 0 行（昨日底 0 行，Δ 0），主键 `retrieval_trace_id` 顶值 `None`。
 - 结构出处：`migrations/0002_execution_data_lineage.sql:170`；表名在 app/ 与 scripts/ 里现扫到 21 行、9 枚文件。
-- 写入点（现扫）：`app/storage/persistence.py:417`（write_by_registry）、`app/trace/projections.py:321 · project_retrieval`（declared_writer）。
+- 写入点（现扫）：`app/storage/persistence.py:418`（write_by_registry）、`app/trace/projections.py:324 · project_retrieval`（declared_writer）。
 - 这条道今天没挂在任何产品面 HTTP 路由上（现扫零枚）。
 - 🔴 现扫确实爬到一枚脸，但它是**调试面**，按本单显式豁免不算产品道：`POST /retrieval/debug ← app/api/v1/observability.py:528 · retrieval_debug`。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。

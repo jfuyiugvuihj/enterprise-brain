@@ -304,6 +304,9 @@ def project_span(
                 "duration_ms": _first(payload.get("duration_ms"), current.get("duration_ms")),
                 "input_tokens": _first(summary.get("input_tokens"), current.get("input_tokens")),
                 "output_tokens": _first(summary.get("output_tokens"), current.get("output_tokens")),
+                # 0018. A key the summary does not carry stays NULL, because spans.py drops
+                # it when the reply reported nothing; _first keeps a reported 0 as 0.
+                "cached_tokens": _first(summary.get("cached_tokens"), current.get("cached_tokens")),
                 "metadata": {"worker": payload.get("worker") or current.get("worker")},
             }
         )

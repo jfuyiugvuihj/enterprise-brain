@@ -365,10 +365,11 @@ def test_the_catalog_gains_exactly_one_version_and_the_loader_accepts_it():
         "0014",
         "0015",
         "0016",
+        "0017",
         CATALOG_TAIL_VERSION,
     ], (
-        "0012 之后只许站着被指名的那五枚前滚迁移（R190 的 0013、R251 的 0014、"
-        "R256 的 0015、R299 的 0016 与账本尾号那一枚＝R509 的 0017），"
+        "0012 之后只许站着被指名的那六枚前滚迁移（R190 的 0013、R251 的 0014、"
+        "R256 的 0015、R299 的 0016、R509 的 0017 与账本尾号那一枚＝R523 的 0018），"
         "多一枚就得回到这里指名：" + str(versions)
     )
     assert NEW_FILENAME in on_disk

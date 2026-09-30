@@ -27,6 +27,7 @@ import pytest
 
 from app.common.model_handler import ModelReply
 from app.trace import spans
+from app.trace.schema import TRACE_TABLE_COLUMNS as TRACE_COLUMNS
 from app.trace.spans import (
     REFUTED_CACHED_TOKEN_CLAIM,
     model_token_counts,
@@ -289,11 +290,13 @@ def test_the_metered_cached_count_reaches_the_persisted_event(tmp_path, monkeypa
     assert booked, "事件行里也得有这枚数，否则只是内存里过了个手"
 
 
-def test_the_model_calls_row_still_has_no_column_for_it(tmp_path, monkeypatch):
-    """把交回的那半笔钉成事实：``model_calls`` 表没有 cached 列，所以那一行仍然只有两枚计数。
+def test_the_model_calls_row_carries_the_column_now(tmp_path, monkeypatch):
+    """本件原本钉的是"表里还没有那一列"，那一版形状由 R523 收掉：改口按 R146 自己的预告走。
 
-    这不是"没做到"的遮羞布，是**下一名单据以动工**的钉子：谁给 ``model_calls`` 加了列，
-    这条用例就该红，届时把这条用例一起改掉，而不是让它悄悄过期。
+    原 docstring 写的是「谁给 ``model_calls`` 加了列，这条用例就该红，届时把这条用例一起改掉，
+    而不是让它悄悄过期」——0018（``migrations/0018_prompt_cache_tokens.sql``）落下
+    ``model_calls.cached_tokens`` 之后它正是那样红的（R523 交工报告 §4）。今天这条钉反过来判：
+    服务端报了数，行上就必须带着那一格，而且不许藏进 ``metadata`` 里当第二本账。
     """
     from app.agents.contracts import Principal
     from app.storage.persistence import JsonPersistenceAdapter
@@ -316,7 +319,12 @@ def test_the_model_calls_row_still_has_no_column_for_it(tmp_path, monkeypatch):
     row = store.persistence.list("model_calls")[0]
     assert cached not in (None, -1)
     assert row["input_tokens"] == prompt and row["output_tokens"] == completion, row
-    assert "cached_tokens" not in row, "列还没有：这一格要动 migrations 与 store.py，本单写域外"
+    assert row["cached_tokens"] == cached, (
+        "0018 之后列已经有了：报了数却不上行，就是 R523 判据②拦的那种「值在门口被丢掉」"
+    )
+    assert "cached_tokens" in TRACE_COLUMNS["model_calls"], (
+        "列名必须还在 trace 声明集里：表加了列而契约没跟上，就是三份副本又漂开"
+    )
     assert "cached_tokens" not in json.dumps(row.get("metadata") or {}), row
 
 

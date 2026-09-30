@@ -5906,3 +5906,26 @@ never copied.
 口径与散文同源由 `tests/test_r526_slot_caliber_closure.py::test_the_contract_row_and_the_module_are_the_same_words`
 逐字对拍；两把反证刀（偷填数字无凭据 / 观测面与散文分家）在
 `tests/test_r526_counter_evidence_teeth.py`，每把都先在影子端正控跑绿再咬。
+
+## Cached-count carrier for `model_calls`, and the reading it does not yet carry
+
+This section is additive, and it voids one dated sentence in the `blockers[]` table above. That
+table still carries the row `native_leg_reports_no_cached_tokens` with the phrase
+「`model_calls` has no cached column」: **that phrase is void from this section onward** -- the
+column exists, and the source of truth for the cached-count shape is this section rather than the
+old row. What the row keeps right, and why it is not simply deleted: the refuted marker name has
+to stay in that table and in the spans module, because the honesty test written before this
+ticket pins the literal.
+
+The carrier: a `model_calls` row has one nullable column for the cached count the model itself
+reported. It stores only what a response reported. A response that reported nothing stays `NULL`
+-- 「this call could not say」, never a cache-hit rate -- while a response that reported zero
+stores zero: the two faces stay distinguishable all the way into the ledger, because the column
+has no default, nothing was backfilled, and no code path subtracts one token count from another
+to invent the third. Streaming answer legs carry no usage object at all, so their rows are
+legitimately `NULL`.
+
+What this section does **not** assert is any measured figure for product traffic: whether the
+open-window tier really lands a non-zero cached count is a reading owed by the next open-window
+run (run10). Until that run reports it, every non-`NULL` value in that column is a per-call
+report -- not an average, not a hit rate, and not a claim about the customer's cache.

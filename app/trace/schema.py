@@ -101,6 +101,11 @@ TRACE_TABLE_COLUMNS: dict[str, tuple[str, ...]] = {
         "output_tokens",
         "error_code",
         "metadata",
+        #: 0018_prompt_cache_tokens.sql. The cached count this call reported, as the server
+        #: named it. The column is nullable and carries no default: "this reply never said"
+        #: and "the server said 0" are two different facts, and a projection that forgets the
+        #: key is refused here rather than writing the second fact as the first.
+        "cached_tokens",
     ),
     "retrieval_traces": (
         "retrieval_trace_id",

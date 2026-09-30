@@ -412,6 +412,7 @@ _TABLES = {
             "output_tokens",
             "error_code",
             "metadata",
+            "cached_tokens",
         ),
     ),
     "retrieval_traces": _PostgresTable(
