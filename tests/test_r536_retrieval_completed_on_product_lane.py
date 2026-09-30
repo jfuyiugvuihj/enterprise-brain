@@ -453,9 +453,13 @@ def test_a_dead_trace_backend_does_not_break_the_answer():
 
 def test_a_lone_retrieval_event_seeds_the_run_row_completed_and_says_so():
     """现状钉（不是愿望）：留痕是某一枚 trace 的第一枚事件时，``project_run`` 会把那枚 run
-    直接种成 ``completed``。``/ask`` 碰不到这一支（orchestrator 的 ``request.started`` 一定在先），
-    ``/approve`` 的第三处出口排在 ``_run`` 提交之后 ⇒ 有竞窗口。治它要动 chat.py 那处出口的
-    次序，越出本单写域 ⇒ 写进读数纸交回总控，不在这里偷偷改行为。"""
+    直接种成 ``completed``。``/ask`` 碰不到这一支（orchestrator 的 ``request.started`` 一定在先）。
+
+    🔴 09-30 **R551 改口**（本文件唯一被点名授权改动的一枚）：``/approve`` 那一格**原先**的竞窗口
+    ——第三处出口排在 ``_run`` 提交之后——已经从产品道治掉：chat.py 把 ``request.started`` 上移到
+    提交之前。产品道凭据在 ``tests/test_r551_resumed_lane_seeds_before_executor.py``（顺序两形
+    ＋失败轮不许显示 ``completed``）。本枚钉**留下不走**：它钉的是投影层语义本身——谁先落第一枚
+    事件谁就定这枚 run 的种子，这条规则一个字都没改，改的只是谁先落。"""
     event = {
         "trace_id": TRACE_ID, "request_id": REQUEST_ID, "task_id": TASK_ID, "sequence": 1,
         "timestamp": "2026-09-30T09:30:00+08:00", "event_type": "retrieval.completed",

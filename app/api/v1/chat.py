@@ -3503,6 +3503,26 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             finally:
                 reset_retrieval_trace(trace_token)
 
+        # R551 顺序不变量：trace 的第三处出口（``request.started``）必须排在**把 _run 交给
+        # executor 之前**。``loop.run_in_executor`` 一交出去，工作线程立刻就动，它不等事件循环；
+        # 而 chat.py 这一支此后**再不往 trace 记任何 request.* 终态事件**：这一支的
+        # request.cancelled / request.failed / request.completed 全部只发帧，函数体内没有一处
+        # record_event（``run_interrupt_stream`` 自己也是一枚都不记，见 app/agents/orchestrator.py
+        # 里 run_with_stream 记、run_interrupt_stream 不记那道对照）——口径凭据见本单读数纸。
+        # ⇒ 谁第一个把这枚 trace 的 run 行种出来，谁就是它一辈子的结论。抢在前面的会是检索
+        # 留痕（``status=completed``），随后这枚 ``running`` 的 request.started 被
+        # ``app/trace/lifecycle.py:96`` 以 ``terminal_run_regression`` 拒掉 —— 那一轮后来真失败，
+        # ``agent_runs.status`` 也永远停在 ``completed``。与 /ask 同构：那条道的 request.started
+        # 记在图起跑之前（``app/agents/orchestrator.py`` 的 ``run_with_stream``）。
+        # 凭据：tests/test_r551_resumed_lane_seeds_before_executor.py（判据① 两形＋判据② 失败轮）。
+        _record_resumed_lane_trace(
+            lane_readout,
+            session_id=request.session_id,
+            owner_id=str(getattr(principal, "user_id", "") or ""),
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+        )
         loop = asyncio.get_running_loop()
         agent_future = loop.run_in_executor(_executor, _run)
         _reap_agent_worker(agent_future, session_id=request.session_id, stage="approve")
@@ -3555,15 +3575,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         # canonical 信封事件从这一条起与 /ask 的第一条
         # canonical_sse_event("request.started") 同构：同一个构造器、同一套
         # 三个 id、sequence 从 1 连续。legacy 事件全部照旧保留，canonical 是加在旁边。
-        # trace 那一处出口排在发帧之前：客户端在这一帧上断线也不该让事后取证先少一格。
-        _record_resumed_lane_trace(
-            lane_readout,
-            session_id=request.session_id,
-            owner_id=str(getattr(principal, "user_id", "") or ""),
-            request_id=request_id,
-            trace_id=trace_id,
-            task_id=task_id,
-        )
+        # trace 那一处出口已按 R551 上移到把 _run 交给 executor 之前（见上面那段注释）。
         yield canonical_sse_event(
             "request.started",
             request_id=request_id,
