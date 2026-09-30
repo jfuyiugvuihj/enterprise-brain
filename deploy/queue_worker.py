@@ -11,6 +11,9 @@ Layer 5 — 队列后台 Worker
 
 R37：载荷自己声明了 report 档的那一轮走**能挂起**的图，跑完把结论补写回会话历史
 （见 _process_report_lane_turn）；没声明档位的存量任务与本单之前逐字节相同。
+
+R548：报告腿的逐字片段汇在 worker 进程里有了可注册点（见 ReportLanePieceLedger）。
+投递面还没裁，所以片只进本轮账本、不外发；屏上与终态形状和 R548 之前逐字相同。
 """
 
 import os
@@ -412,12 +415,94 @@ def _stream_snapshot(event):
     return data
 
 
+#: R548 判据①：队列道报告腿的逐字片段账本上限。投递面（轮询面增量、或新起一条 tail SSE）
+#: 今天还没裁，所以账本只在**本轮**活着——攒够这么多片之后只计数、不再留片，免得一台长跑的
+#: worker 被一桩超大报告撑住内存。它不是第二套发布面，也不跨轮积累。
+QUEUE_PIECE_LEDGER_LIMIT = 512
+
+
+class ReportLanePieceLedger:
+    """``stream_piece_sink`` 落在队列道的收端：按到达顺序记账，一个字都不往外发。
+
+    R31 的片段汇在两枚在场跑道（``chat._ask_stream``、``chat._approve_stream``）上各有一条
+    活着的流收它；队列道两条都没有——入队那条 SSE 交完 ``queued`` 与 ``done`` 两枚帧就关，
+    worker 进程里根本没有一条流可投。所以本类补的是**可注册点**那一半，投递面仍旧欠着
+    （凭据与逐字对账：``docs/testing/r548-queue-lane-piece-sink-registration.md``）。
+
+    收端对片本身一律原样存：不合并、不改字、不重排、不"攒齐了拼成一枚"。判据① 要的
+    「与一次投喂一整篇可区分」，量的就是 ``pieces`` 的枚数与顺序——拼起来等值、分片数不等值。
+    """
+
+    def __init__(self, request_id: str = "", *, limit: int = QUEUE_PIECE_LEDGER_LIMIT) -> None:
+        self.request_id = request_id
+        self.limit = max(1, int(limit))
+        self.pieces: list = []
+        self.chars = 0
+        self.overflow = 0
+
+    def __call__(self, piece) -> None:
+        """收一片。它不许抛：``nodes.publish_stream_pieces`` 会把抛错记成警告并丢掉余下的片。"""
+        text = getattr(piece, "text", "")
+        if isinstance(text, str):
+            self.chars += len(text)
+        if len(self.pieces) < self.limit:
+            self.pieces.append(piece)
+        else:
+            self.overflow += 1
+
+    @property
+    def count(self) -> int:
+        """交回过的片数，含被上限截掉的那几枚：截断也如实计数，不许静默少报。"""
+        return len(self.pieces) + self.overflow
+
+    @property
+    def legs(self) -> tuple:
+        """这些片各自盖在哪条腿上（``StreamPiece.worker``）；没标注的归进空串那一格。"""
+        return tuple(sorted({str(getattr(piece, "worker", "") or "") for piece in self.pieces}))
+
+    def joined_text(self) -> str:
+        """逐字拼回：判据① 的「拼起来等值」读这里，不读任何一份副本。"""
+        parts = []
+        for piece in self.pieces:
+            text = getattr(piece, "text", "")
+            if isinstance(text, str):
+                parts.append(text)
+        return "".join(parts)
+
+
+def _log_report_lane_pieces(request_id: str, ledger) -> None:
+    """队列道逐片汇的唯一外部读数：一枚片都没收到就**一行都不留**。
+
+    这一行是 R548 留给真机窗的读点（本单不许跑端到端，见交工纸 §5）。既有日志面因此逐字
+    不变——只有真流到字的轮次多这一行；终态帧、``usage``、``sources``、审计行与错误码一字节
+    都不许多，那几样由本单的零外溢钉与 R37/R254/R514/R81/R448 的在册件共同守着。
+    """
+    if not ledger.count:
+        return
+    logger.info(
+        "[QueueWorker][R548] request_id={rid} 报告档逐片汇 {pieces} 枚 / {chars} 字 / "
+        "腿 {legs}{tail}".format(
+            rid=request_id,
+            pieces=ledger.count,
+            chars=ledger.chars,
+            legs="、".join(name or "未标注" for name in ledger.legs),
+            tail=" / 超上限丢弃 %d 枚" % ledger.overflow if ledger.overflow else "",
+        )
+    )
+
+
 def _drain_report_stream(
-    user_message, *, thread_id, principal, provenance, request_id, trace_id, task_id
+    user_message, *, thread_id, principal, provenance, request_id, trace_id, task_id,
+    stream_piece_sink=None,
 ):
     """跑完这一轮，收回顶层结论、契约记录，以及编排自己报的那句错。
 
     读法与同步路径一致：只认顶层命名空间的快照，final_answer 取最后一次非空值。
+
+    R548 只多交一枚**可注册点**：``stream_piece_sink`` 非 None 时把它交给编排入口的
+    同名形参，由 ``run_with_stream`` 塞进 ``configurable``——这一交就是 R31 差格 b 缺的
+    那半格（队列道今天有地方收片了）。传 None 时（全部既有直调）这一发的关键字与
+    改前逐字相同，config 里连键都不多加。
     """
     from app.agents.orchestrator import run_with_stream
 
@@ -431,6 +516,8 @@ def _drain_report_stream(
         request_id=request_id,
         trace_id=trace_id,
         task_id=task_id,
+        # R548：队列道唯一一枚片段汇注册点（交给编排入口；第二处一起就是第二套口径）。
+        stream_piece_sink=stream_piece_sink,
     ):
         if isinstance(event, dict) and event.get("error"):
             # 编排把异常收成一枚 error 事件而不是抛出来：这一轮到此为止。
@@ -601,6 +688,9 @@ def _process_report_lane_turn(
     task_id = f"task-{uuid4().hex}"
     started = time.monotonic()
 
+    # R548：本轮的逐字片段账本，就是队列道那枚可注册点的收端。投递面还没裁，所以片
+    # 只进账、随本轮退掉，一字节不进终态帧 / usage / sources / 审计行 / 错误码。
+    piece_ledger = ReportLanePieceLedger(request_id)
     try:
         final_answer, agent_results, stream_error = _drain_report_stream(
             user_message,
@@ -611,6 +701,7 @@ def _process_report_lane_turn(
             request_id=request_id,
             trace_id=trace_id,
             task_id=task_id,
+            stream_piece_sink=piece_ledger,
         )
     except Exception as exc:
         logger.error(f"[QueueWorker] request_id={request_id} 报告档后台执行异常: {exc}")
@@ -624,6 +715,8 @@ def _process_report_lane_turn(
             session_id=session_id,
             write_back=write_back,
         )
+
+    _log_report_lane_pieces(request_id, piece_ledger)
 
     duration_ms = int((time.monotonic() - started) * 1000)
     if stream_error:

@@ -16,6 +16,16 @@
    ``GET /api/v1/queue/status/{request_id}`` 回来（``docs/handoff/2026-09-30-plan-eight-tickets-recheck.md``
    §2 R31 差格 b、以及 R519 交工纸同一条事实）。就算 worker 进程注册了出口，也没有一条活着的流收它。
 
+**R548 改口（2026-09-30）**：上面第 3 条「这一支上没有可注册的地方」已经翻面——
+``deploy/queue_worker.py`` 现在有了一枚注册点（``_drain_report_stream`` 把本轮的
+``ReportLanePieceLedger`` 交给编排入口那枚同名形参；恰一枚，坐标与牙见
+``tests/test_r548_queue_lane_registers_the_piece_sink.py``）。第 1／2／4 条一字未动：入队
+那一条流仍旧只交两枚帧、仍旧零枚模型调用、仍旧在第二枚字符之前就关掉。所以本件的名字与
+结论都还成立，只改两格：③「有没有可注册点」，以及 ``verdict_for`` 里「存在注册点就算
+connected」——后者改成**只算投递面**（注册而不交付正是 R545 明令禁止的那一种洗绿）。
+逐字对账、当场红的原文与 sha256 台账在
+``docs/testing/r548-queue-lane-piece-sink-registration.md`` §6。
+
 🔴 与「把 not_applicable 偷写成已过」同源的那枚牙：本件把纸上的判定词与盘面事实**对判**（
 ``docs/testing/r524-stream-piece-sink-two-runways.md`` 的 ``r524-verdict`` 段）。纸改成"已过"、
 或盘面真接上了而纸还写着 ``not_applicable``，两向都当场红——上一班刚造出一枚永不匹配的死牙，这枚不是。
@@ -196,10 +206,20 @@ def queue_lane_facts(lane) -> dict:
 
 
 def verdict_for(facts: dict) -> str:
-    """纸上那一格该写哪个词，由盘面事实决定——不由任何人手填。"""
-    if facts["sink_points"] or facts["graph_runs"]:
-        return "connected"
-    if facts["text_frames"] > 1:
+    """纸上那一格该写哪个词，由盘面事实决定——不由任何人手填。
+
+    R548 改口（凭据与逐字对账见 ``docs/testing/r548-queue-lane-piece-sink-registration.md`` §6）。
+    改前三格里任一枚成立就判 ``connected``，其中第一格把「worker 里存在注册点」直接当成「这一支
+    接上了」。R548 之后那一格不再单独算数：注册点今天真的在了，而客户端那条 SSE 已经关掉、一个字
+    都收不到——把这种状态写成 ``connected`` 就是洗绿。判定只严不松：
+      · 这一支真在场跑了图（``graph_runs``）⇒ connected（与改前同一半）
+      · 这一支真发出第二枚字（``text_frames`` > 1）⇒ connected（与改前同一半）
+      · 只有注册点、没有收端 ⇒ not_applicable（**唯一**的收紧处，改前记 connected）
+
+    注册点那格的读数没被删：它仍旧留在 facts["sink_points"] 里，由
+    ``tests/test_r548_queue_lane_registers_the_piece_sink.py`` 反向钉着（把注册退回就红）。
+    """
+    if facts["graph_runs"] or facts["text_frames"] > 1:
         return "connected"
     return "not_applicable"
 
@@ -269,27 +289,53 @@ def test_the_stream_of_the_queued_lane_is_closed_before_any_piece_could_arrive(l
     assert len(chunks) == 2, chunks
 
 
-# ==================== 事实③ ④：这一支没有可注册的地方，真接点在写域外 ====================
+# ========= 事实③ ④：R548 之后注册点在 worker 那一侧；入队出口这一侧仍旧一字未动 =========
 
 
-def test_there_is_no_place_on_the_queued_lane_to_register_a_sink():
-    """派工词说「queued_response 不注册 sink，与 a 同族」；本钉把这句话钉成机器事实。"""
+def test_the_enqueue_exit_still_registers_no_sink__r548_moved_the_hook_to_the_worker():
+    """改口件（R548）：入队出口那一侧一字未松；worker 那一侧由「零枚」翻成「有且只在 deploy 下」。
+
+    改前整枚原文逐字留档（五条一字不删，只把最后那条的结论翻面）：
+
+        def test_there_is_no_place_on_the_queued_lane_to_register_a_sink():
+            # 派工词说「queued_response 不注册 sink，与 a 同族」；本钉把这句话钉成机器事实。
+            enqueue = _function_source(chat, "_enqueue_ask_turn")
+            assert "stream_piece_sink" not in enqueue
+            assert _sink_registration_points() == [], _sink_registration_points()
+
+    那条 ``== []`` 在 R548 落地之后必红：本机此刻在 run10 真机窗内，本单一律只写不跑，所以这里
+    交回的是**预期红形**（等窗后代跑复现），不是实取读数——应当读成
+    ``AssertionError: assert [] == ['deploy/queue_worker.py:<注册点行号>', ...]``。命令、预期读数
+    与 sha256 台账见 ``docs/testing/r548-queue-lane-piece-sink-registration.md`` §6。
+    改法只动「哪一侧有」这一格，强度不降反升：入队出口那一半的断言原样留着，新加的是「worker
+    侧必须有一枚」——R548 的注册被人退回，这枚同样红。
+    """
     enqueue = _function_source(chat, "_enqueue_ask_turn")
     assert "stream_piece_sink" not in enqueue
-    assert _sink_registration_points() == [], _sink_registration_points()
+    hits = _sink_registration_points()
+    assert not [hit for hit in hits if hit.startswith("app/")], hits
+    assert [hit for hit in hits if hit.startswith("deploy/queue_worker.py")], hits
 
 
-def test_the_real_hook_for_the_queue_lane_is_outside_this_ticket_write_domain():
+def test_the_real_hook_for_the_queue_lane_is_now_registered__r548():
     """差格 b 的真接点：``deploy/queue_worker.py`` 里那一发 ``run_with_stream``（本单白名单外）。
 
     本件**不 import 也不改**那枚文件（它会打真队列），只把坐标钉死：它是队列道唯一真打模型、
     也是唯一能注册出口的地方。要接上差格 b，得由总控改派一枚含 ``deploy/**`` 写域的单，
     并另定投递面（今天只有轮询面）。
+
+    R548（2026-09-30）把这一手接上了：注册点恰一枚，就在本函数点的那一发调用上；投递面仍旧
+    没裁，所以本件的名字与结论都留着，只把「白名单外」那一格改成「已在册」，并把最后那条断言
+    反了个方向——改前那条逐字留档在下面。
     """
     worker = WORKER_PATH.read_text(encoding="utf-8")
     hits = [n for n, line in enumerate(worker.splitlines(), 1) if "run_with_stream(" in line]
     assert len(hits) == 1, hits
-    assert "stream_piece_sink" not in worker
+    # 改前那一条（逐字留档；R548 之前它成立，之后它当场红）：
+    #     assert "stream_piece_sink" not in worker
+    assert "stream_piece_sink" in worker
+    # 一枚调用点配一枚注册关键字：多一枚就是第二套口径，由 R548 的 AST 钉按调用名点名。
+    assert worker.count("stream_piece_sink=stream_piece_sink,") == 1
 
 
 # ==================== 纸面与盘面对判：不许把 not_applicable 偷写成已过 ====================
