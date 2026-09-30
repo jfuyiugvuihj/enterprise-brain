@@ -100,11 +100,15 @@ worker_admission_list=unchanged
    （`check_rate_limit` 拒），帧名序列都是 `["queued", "done"]`，`text` 帧 **0** 枚。
 2. **零枚模型调用**：`_make_model` 被调用就当场抛（spy 直接 raise），实测 **0** 次；
    `run_with_stream` **0** 次；`done` 帧 `terminal_state=queued` / `answer_present=false` / `usage=null`。
-3. **没有可注册的地方**：`_enqueue_ask_turn` 源文（含嵌套的 `queued_response`）里 `stream_piece_sink`
-   **0** 命中；`deploy/queue_worker.py` 里 `stream_piece_sink` **0** 命中（现取
-   `git grep -c stream_piece_sink -- deploy/queue_worker.py` → rc=1 无匹配），而那一发
-   `run_with_stream(` 在该文件里只有一处（`_drain_report_stream`，行号由
-   `test_the_real_hook_for_the_queue_lane_is_outside_this_ticket_write_domain` 现取）。
+3. **可注册点今天已在树上（09-30 由 R548 补；本条前半句仍成立，后半句翻面）**：
+   `_enqueue_ask_turn` 源文（含嵌套的 `queued_response`）里 `stream_piece_sink` 仍然 **0** 命中——
+   入队那一支自己确实不收片；但 `deploy/queue_worker.py` 里现取 **5 行命中**（:425/:496/:502/:520/:704，
+   注册点 :520），`git grep -c stream_piece_sink -- deploy/queue_worker.py` 已由 rc=1 无匹配变 **rc=0**。
+   那一发 `run_with_stream(` 在该文件里仍只有一处（`_drain_report_stream` 那一腿，行号由
+   `test_the_real_hook_for_the_queue_lane_is_now_registered__r548` 现取；旧名
+   `..._is_outside_this_ticket_write_domain` 随改口作废）。🔴 这一格今天只欠**投递面**（见下一条），
+   不欠可注册点。原文那句「没有可注册的地方」在 R548 并树后就是假话，改口由总控代笔——
+   施工方按裁定没碰本纸，它只交回了坐标与原文。
 4. **投递面已关**：入队那条 SSE 在两枚 chunk 之后就 `StopAsyncIteration`，此后的读数只从轮询面
    `GET /api/v1/queue/status/{request_id}` 回来——即使 worker 进程注册了出口，也没有一条活着的流收它。
 

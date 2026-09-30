@@ -517,10 +517,13 @@ def test_the_wire_body_differs_only_in_the_two_transport_fields(monkeypatch):
 
 
 def test_a_round_without_a_sink_falls_back_to_todays_single_argument_call(monkeypatch):
-    """①的第一格：没注册出口的道（队列、审批续跑、离线直调）退回**单参数** invoke。
+    """①的第一格：没注册出口的道（审批续跑、离线直调，以及入队那一支本身）退回**单参数** invoke。
 
     这条不靠注释：`_SpyModel` 存的就是调用形状，`kwargs == {}` 才是今天那一发；请求体里
     ``stream`` 仍为假、``stream_options`` 一个都不许多带。
+
+    09-30 改口（R548 `f312eeb`）：`deploy/queue_worker.py` 今天已在 worker 进程注册一枚
+    收端，那是报告档后台那一道，不在本枚钉射程内；本钉量的仍是 `/ask` 道里摘不到出口的那一发。
     """
     plain = _run_round(monkeypatch, _text_frames(ANSWER, usage=USAGE), config=_round_config())
 
