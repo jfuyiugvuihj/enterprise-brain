@@ -357,8 +357,9 @@ def _supervisor_answer_tap(state: AgentState, config):
     不接一律交回 ``(None, None)``，那一发退回单参数 ``invoke``——请求体与今天逐字节相同。
     三格同时成立才接：
 
-    ① 本轮注册了 ``stream_piece_sink``。只有 ``chat._ask_stream`` 注册它，队列道、审批续跑、
-      离线直调都没有 ⇒ 那些道上连一枚回调都不多挂。
+    ① 本轮注册了 ``stream_piece_sink``。注册它的有两枚跑道：``chat._ask_stream``（R149）与``chat._approve_stream``
+      （R524 差格 a，批准之后的续跑道）。队列道与离线直调仍旧没有它，于是那些道上的字节与今天逐字相同。
+
     ② 本轮还没派过活（本轮消息里没有 ``dispatch`` 决策）。派完之后回到 supervisor 的那一发
       写的是**汇总**，而终答由 ``synthesize`` 从 ``worker_results`` 折出来 ⇒ 那一发的正文不是
       终答的前缀，接进来只会在 ``prefix_breaks`` 上露馅；run9 的 ``data-09`` 卡的正是那一发
@@ -1551,6 +1552,7 @@ def run_interrupt_stream(
     trace_id: str | None = None,
     task_id: str | None = None,
     cancel_event=None,
+    stream_piece_sink=None,
 ):
     """Resume a parked thread as the caller who owns it.
 
@@ -1558,6 +1560,14 @@ def run_interrupt_stream(
     their scope from ``configurable``. Resuming with only a thread id made every
     approved action fail closed with ``authorization_required``, so the graph kept
     running with no subject at all.
+
+    ``stream_piece_sink``（R31 差格 a）与 :func:`run_with_stream` 收的那一枚同名同形：一个可调用
+    对象，收到本轮真流出去的那些 :class:`app.agents.nodes.StreamPiece`。挂起**之前**那一轮里审批
+    腿没有字可流（正文由 ``build_precheck()`` / ``extract_standard()`` 确定性拼出，总控 09-29 已
+    记 ``not_applicable``），但批准之后**续跑**的这一轮会真去跑被挂起的那条腿：``_HITL_PARKED``
+    现读是 ``chart`` / ``export``，其中 ``chart`` 就坐在 ``nodes.ANSWER_LEG_STREAM_WORKERS`` 名单
+    里，那一发的字确实进得来出口。所以这一格不是装饰——不注册它，续跑轮里那些字今天一个字都到
+    不了收端。
     """
     request_id, trace_id, task_id = _execution_ids(request_id, trace_id, task_id)
     config = {
@@ -1572,6 +1582,13 @@ def run_interrupt_stream(
     if cancel_event is not None:
         # 同上：标记只进本次运行的 configurable，不进要被 checkpoint 序列化的 state。
         config["configurable"]["cancel_event"] = cancel_event
+    if stream_piece_sink is not None:
+        # R31 差格 a 的注册腿。理由与 run_with_stream 那一处逐字相同：回调不可序列化，进 state
+        # 就会在 PG checkpointer 路径上炸，configurable 才是本次运行的只读上下文。不传时一个键
+        # 都不多加，这一本 config 与改前逐字节相同（判据④）。两条跑道共用同一枚键名，节点侧那
+        # 两枚准入条件（``answer_leg_stream_target`` / ``_supervisor_answer_tap``）一字不改就认
+        # 得出它——本单不放宽任何准入，也不给 ``ANSWER_LEG_STREAM_WORKERS`` 添名字。
+        config["configurable"][STREAM_PIECE_SINK_KEY] = stream_piece_sink
     if approved:
         if _is_cancelled(cancel_event):
             # 连 resume 都不发起：被批准的节点从未获得开工授权，checkpoint 里的 next

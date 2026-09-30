@@ -41,12 +41,15 @@ def test_approve_stream_emits_worker_result_when_no_plain_ai_message(monkeypatch
     seen = {}
 
     def fake_run_interrupt_stream(
-        thread_id: str, approved: bool, user=None, cancel_event=None
+        thread_id: str, approved: bool, user=None, cancel_event=None, stream_piece_sink=None
     ):
         seen["thread_id"] = thread_id
         seen["user"] = user
         # /approve 必须把取消标记交给编排，否则工作线程永远停不下来（R12）。
         seen["cancel_event"] = cancel_event
+        # R524 差格 a：/approve 现在把续跑道的流式片段出口一并交下来。本假件一轮都不产片，
+        # 但出口必须按真签名收下——不收就是 TypeError，整条腿会被 _run 的 except 报成 error。
+        seen["stream_piece_sink"] = stream_piece_sink
         yield {"messages": [AIMessage(content="需要确认后生成图表")]}
         yield {
             "messages": [AIMessage(content="【chart Agent 返回】\n图表已生成：/static/chart.png")],
@@ -80,6 +83,8 @@ def test_approve_stream_emits_worker_result_when_no_plain_ai_message(monkeypatch
     principal = seen["user"]["principal"]
     assert principal.username == "admin"
     assert principal.user_id
+    # R524 差格 a 的账：出口确实从 /approve 交到了续跑道那一层（本轮无片，所以它一次都没被叫）。
+    assert callable(seen["stream_piece_sink"]), "/approve 没把续跑道的 sink 交下来"
 
 
 def test_run_interrupt_stream_config_carries_the_caller_principal(monkeypatch):

@@ -7,12 +7,15 @@ stream_piece_sink。子图仍然看得见它，靠的是 langgraph 把父运行�
 写着。test_the_worker_whitelist_never_mentioned_the_sink 钉的就是"白名单确实没抄这一格"，
 于是上面那枚用例绿着的时候，剩下的唯一解释就只有嵌套合并。
 
-两枚用例对着钉：注册了 sink 的那一轮必须流起来；没注册的（队列道、审批道、离线直调）请求体
-一个字都不许多。
+两枚用例对着钉：注册了 sink 的那一轮必须流起来；没注册的（队列道、离线直调）请求体一个字都
+不许多。🔴 审批道自 **R524** 起不在"没注册的"之列了（它注册了出口），这一格的分派改写在
+``test_the_resume_runway_now_registers_a_sink__r524`` 里逐格对账。
 
-后半部分是交回单里的**待证②**：approval 这条腿到底接不接得到出口。三枚结构钉把话说死——
-挂起那一轮它接得到（child_conf 整本拷贝父 configurable）却没有字可流，续跑那一道它结构上
-接不到；于是"审批腿没有逐字"是既定结论而不是漏网，写在这里而不是藏在注释里。
+后半部分是交回单里的**待证②**：approval 这条腿到底接不接得到出口。挂起那一轮它接得到
+（child_conf 整本拷贝父 configurable）却没有字可流——这一条到今天没变，也不许变：正文由
+``build_precheck()`` / ``extract_standard()`` 确定性拼出，全文零枚模型符号。续跑那一道
+**当年**结构上接不到，R524 已经把出口接上了；接上之后能不能上屏由 R464 那道闸说了算。
+"审批腿（挂起之前那一轮）没有逐字"仍是既定结论，而不是漏网。
 """
 
 import ast
@@ -266,21 +269,37 @@ def _function_source(module, name: str) -> str:
     raise AssertionError(f"{module.__name__} 里找不到 {name}，这条钉的前提变了")
 
 
-def test_the_resume_runway_has_no_place_to_register_a_sink():
-    """挂起之后从 ``/approve`` 续的那一跑道**结构上**接不到出口：签名不收、config 不塞。
+def test_the_resume_runway_now_registers_a_sink__r524_rewrites_the_verdict():
+    """R203 判据① 的第三枚结构钉由 **R524 改口**：续跑道今天收形参、塞 config、队列长第四种件。
 
-    三条各钉一段路，缺一条都不算证过：入口签名没有这一格 → 那本 config 不会塞它 →
-    审批道的队列词汇表里根本没有 piece 这一种件。三条同时成立，"审批续跑没有逐字"就不是
-    哪里漏了一行，而是这条路上没有可漏的格子；本单因此明写不判它为缺陷。
+    🔴 对账（派工词判据④："改前 ``git show 28e9d50:<path>`` 取档，不许手改历史读数"）：本枚钉在
+    基点 ``28e9d50`` 的原文四条断言逐字抄在下面，一字未改；那份取档件 sha256 =
+    ``725a8e7144ab5d35804da603f2d797bf4ac461cfd0f49c90c5ade9cd832d9dcd``、13248 字节、317 行，
+    命令与当场红的读数在 ``docs/testing/r524-stream-piece-sink-two-runways.md``：
+
+        params = inspect.signature(orchestrator.run_interrupt_stream).parameters
+        assert "stream_piece_sink" not in params, list(params)
+        assert nodes.STREAM_PIECE_SINK_KEY not in inspect.getsource(orchestrator.run_interrupt_stream)
+
+        resume = _function_source(chat, "_approve_stream")
+        assert nodes.STREAM_PIECE_SINK_KEY not in resume, "审批道自己注册了出口：这条结论要重写"
+        kinds = sorted(set(re.findall(r"result_queue\\.put\\(\\(\\"(\\w+)\\"", resume)))
+        assert kinds == ["done", "error", "event"], f"审批道长出了第四种件：{kinds}"
+
+    改口的不是证据，是结论：那四条今天三格翻面（签名收了、config 塞了、词汇表长出 ``piece``），
+    而"审批腿没有一发模型调用可流"那一格由
+    :func:`test_the_approval_leg_has_no_model_call_to_stream` 继续钉着——R524 没放宽
+    ``ANSWER_LEG_STREAM_WORKERS``，最后一行就是替它守着的。
     """
     params = inspect.signature(orchestrator.run_interrupt_stream).parameters
-    assert "stream_piece_sink" not in params, list(params)
-    assert nodes.STREAM_PIECE_SINK_KEY not in inspect.getsource(orchestrator.run_interrupt_stream)
+    assert "stream_piece_sink" in params, list(params)
+    assert nodes.STREAM_PIECE_SINK_KEY in inspect.getsource(orchestrator.run_interrupt_stream)
 
     resume = _function_source(chat, "_approve_stream")
-    assert nodes.STREAM_PIECE_SINK_KEY not in resume, "审批道自己注册了出口：这条结论要重写"
-    kinds = sorted(set(re.findall(r"result_queue\.put\(\(\"(\w+)\"", resume)))
-    assert kinds == ["done", "error", "event"], f"审批道长出了第四种件：{kinds}"
+    assert "stream_piece_sink=_piece_sink," in resume, "审批道的注册点没了：续跑道又断回结构上接不到"
+    kinds = sorted(set(re.findall(r'result_queue\.put\(\("(\w+)"', resume)))
+    assert kinds == ["done", "error", "event", "piece"], f"审批道的队列词汇表变了：{kinds}"
+    assert nodes.ANSWER_LEG_STREAM_WORKERS == frozenset({"doc", "data", "chart"})
 
 
 def test_the_approval_leg_has_no_model_call_to_stream():

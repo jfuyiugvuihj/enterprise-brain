@@ -3447,6 +3447,17 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         heartbeat_interval = float(os.getenv("SSE_HEARTBEAT_INTERVAL", "15"))
         result_queue: qmod.Queue = qmod.Queue()
 
+        def _piece_sink(piece) -> None:
+            """R31 差格 a：批准续跑腿的片入口，与 /ask 里的 ``_piece_sink`` 同一条形状。
+
+            与图事件共用一枚 ``result_queue`` 是有意的（同一条裁定）：FIFO 让"片早于终答"这个
+            顺序天然等于真实到达顺序，收端不必再开第二条同步通道，也不必排序或补时间戳。
+            """
+            if cancel_event.is_set():
+                # 停止之后不再往没人读的流里塞东西，与下面 ("event", ...) 同一裁定。
+                return
+            result_queue.put(("piece", piece))
+
         def _run():
             try:
                 for event in run_interrupt_stream(
@@ -3454,6 +3465,9 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     approved=request.approved,
                     user=user_ctx,
                     cancel_event=cancel_event,
+                    # R31 差格 a 的注册点。摘掉这一行，续跑轮里那些字一个字都到不了收端
+                    # （判据① 的凭据；判据④ 的"无人注册"那一支在 nodes 里，不在这条腿上）。
+                    stream_piece_sink=_piece_sink,
                 ):
                     if cancel_event.is_set():
                         return
@@ -3477,6 +3491,12 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         latest_final_answer = ""
         answer_candidates: list[str] = []
         initial_count = -1
+        # R31 差格 a 的收端账。折帧复用与 /ask 同一枚 _AnswerPieceStream（判据②③ 的三把尺住在
+        # 上游那枚 merger 里，这一支一个字都不裁），出门复用 R464 那道闸门，本单不另造第二套片账。
+        piece_count = 0
+        piece_frames = 0
+        piece_suppressed = 0
+        piece_stream = _AnswerPieceStream()
         # R464：批准续跑这一路只许交一枚终答流。屏上此刻站着的那一份正文来自挂起轮
         # （会话历史最后一条 assistant 行，与挂起轮收尾帧同源），本腿不再发它第二遍；
         # 真要换源就带 R210 那对 step 显式记账，而不是让客户把同一轮的答案读两遍。
@@ -3594,6 +3614,25 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 await asyncio.sleep(0.05)
                 continue
 
+            if kind == "piece":
+                # R31 差格 a 的收端那一支：片一到就折帧，不攒、不切、不等下一枚（与 /ask
+                # 同一条纪律）。折帧用同一枚 ``_AnswerPieceStream``，出门用同一道 R464 闸门，
+                # 判据③ 那三把尺住在上游 merger 里，这一支一个字都不裁。
+                piece_count += 1
+                frame_text = piece_stream.frame_for(data, latest_worker_results)
+                if frame_text is None:
+                    continue
+                if frame_text and answer_stream.on_screen.startswith(frame_text):
+                    # 屏上此刻站着的正文已经含着这一帧的全部字（run9 病历的常态：批准后续跑的
+                    # 就是挂起轮那条腿，同一个答案再流一遍）。再发一枚 = R464 要消灭的「客户把
+                    # 同一轮的答案读两遍」⇒ 一枚都不许上屏，只记账。
+                    piece_suppressed += 1
+                    continue
+                piece_frames += 1
+                async for chunk in _emit_answer(frame_text, terminal=False):
+                    yield chunk
+                continue
+
             if kind == "done":
                 full_text = _select_final_answer(
                     final_answer=latest_final_answer,
@@ -3614,6 +3653,18 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                         f"{len(answer_stream.held)} 枚非延续整段（第二枚流）："
                         f"屏上正文 {len(answer_stream.on_screen)} 字，"
                         f"拦下的字数={[len(body) for body in answer_stream.held]}"
+                    )
+                if piece_count:
+                    # R31 差格 a 的窗内凭据（判据⑥）：续跑轮真收到片才打这一行。五枚键名
+                    # ``pieces=`` / ``cumulative=`` / ``leg=`` / ``call=`` / ``dropped=`` 与 /ask
+                    # 那行在册读数（:2900-2908）逐字同名，本单不新造没人消费的键——R506/R518
+                    # 交回的「腿名只能读后端日志」那一格，认的就是这一族键。
+                    logger.info(
+                        f"[R149] session={request.session_id[:8]}... 批准续跑轮收到流式片段："
+                        f"pieces={piece_count} cumulative={len(piece_stream.last_frame)}"
+                        f" leg={piece_stream.worker or '-'} call={piece_stream.call_id or '-'}"
+                        f" dropped={piece_stream.dropped}"
+                        f"（逐片帧上屏 {piece_frames} 枚 / 屏上已含其字而只记账 {piece_suppressed} 枚）"
                     )
                 # R464 判据②：收尾这一枚才是本轮**交付**的那份字。逐字同屏 ⇒ 不发第二枚
                 # 流；换源 ⇒ 带 R210 那对 step 出门。改的是线上真发过什么，不是 verdict 口径。

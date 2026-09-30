@@ -555,12 +555,15 @@ def publish_stream_pieces(
 #:      可流、拼出来的散文也不是模型正文 —— "每枚帧都是终答的前缀"在这里无从谈起。
 #:      它的 child_conf 确实把本轮 sink 整本带进 configurable（:777 是全量拷贝），
 #:      名单挡它不是因为接不到，是因为接到了也没有字。
-#:   2. 挂起之后从 ``/approve`` 续的那一跑道**结构上接不到 sink**：
-#:      ``run_interrupt_stream``（orchestrator.py:1341-1350）不收这一格，config
-#:      （:1359-1367）也不塞，``chat._approve_stream`` 的队列只有 event/done/error 三件
-#:      （chat.py:2676-2682），收端循环（:2777 起）没有 piece 一支。
-#:      ⇒ 这一腿的逐字交付落在本单写域之外（要改的是续跑道那本 config），
-#:      且第 1 条已经说明改了也发不出字：明写不判为缺陷，也不默默漏掉。
+#:   2. 挂起之后从 ``/approve`` 续的那一跑道**当年结构上接不到 sink**——这一格已由 **R524**
+#:      接上（09-30 并树前的取证抄在下面，行号是 R203 当时的，早已漂移）：
+#:      ``run_interrupt_stream`` 当年不收这一格、config 也不塞，``chat._approve_stream`` 的队列
+#:      只有 event/done/error 三件、收端循环没有 piece 一支。今天四格翻了三格：形参收了、
+#:      config 塞了、队列长出了第四种件 ``piece``、收端也有 ``kind == "piece"`` 那一支。
+#:      名单仍旧挡住 approval 这条腿，而第 1 条说明它本来就一枚字都发不出——**名单不因 R524 放宽**。
+#:      ⇒ 续跑道上真正流得出字的是被挂起之后才跑的那条腿（``_HITL_PARKED`` 现读 chart / export，
+#:      其中 chart 在名单里）；逐片帧上不上屏由 R464 那道闸说了算，不由本单改。对账见
+#:      ``docs/testing/r524-stream-piece-sink-two-runways.md``。
 ANSWER_LEG_STREAM_WORKERS = frozenset({"doc", "data", "chart"})
 
 

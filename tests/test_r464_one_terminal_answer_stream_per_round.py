@@ -774,12 +774,43 @@ def test_this_file_never_borrows_the_rulers_verdict_as_evidence():
     assert "_is_correction_arm" not in borrowed, "认脸那格归量具自己，本件不替它判豁免"
 
 
-def test_the_guard_touches_exactly_two_yield_sites_in_the_approve_leg():
-    """作用域钉：守卫只吃 ``approve()`` 里那两枚整段正文 yield，别的一处都不碰。
+def test_the_guard_touches_three_yield_sites_in_the_approve_leg__r524_adds_the_piece_branch():
+    """作用域钉（R524 差格 a 改口）：守卫吃 ``approve()`` 里那三枚正文 yield，别的一处都不碰。
 
-    数的是 AST 里的实际调用点（不是行数、也不是注释）：``terminal=False`` 一枚（中途整段）
-    加 ``terminal=True`` 一枚（收尾）；``ask()`` 里零枚 ⇒ 挂起轮/命中道/逐片道不在写域内。
+    多出来那一枚是续跑道的逐片帧出口 ``_emit_answer(frame_text, terminal=False)``：R31 差格 a
+    把片接进**同一道** R464 闸门，正是本件自己那条同源纪律要求的形状——不另造第二套片账。
+    一格都没放宽：``ask()`` 里仍旧零枚，收尾那枚仍旧 ``terminal=True``，中途两枚仍旧 ``terminal=False``。
+
+    取档件：``git show 28e9d50:tests/test_r464_one_terminal_answer_stream_per_round.py``
+    = 59458 字节 / 1011 行 / LF / sha256
+    ``f78ae09e1067fa295a9f61efcfe588b79208b8c231f4d4cd2e96bc79f324fe57``；改前整枚钉逐字抄在下面
+    的注释块里（历史读数一字未改，改的是结论与枚数）。当场红的读数：``3 != 2``。
     """
+    # -------- 改前原文（28e9d50 取档，逐字，不许手改） --------
+# def test_the_guard_touches_exactly_two_yield_sites_in_the_approve_leg():
+#     """作用域钉：守卫只吃 ``approve()`` 里那两枚整段正文 yield，别的一处都不碰。
+#
+#     数的是 AST 里的实际调用点（不是行数、也不是注释）：``terminal=False`` 一枚（中途整段）
+#     加 ``terminal=True`` 一枚（收尾）；``ask()`` 里零枚 ⇒ 挂起轮/命中道/逐片道不在写域内。
+#     """
+#     tree = ast.parse(inspect.getsource(chat))
+#     funcs = {node.name: node for node in tree.body
+#              if isinstance(node, ast.AsyncFunctionDef)}
+#     approve_fn, ask_fn = funcs["approve"], funcs["ask"]
+#
+#     def _guard_calls(node):
+#         return [call for call in ast.walk(node)
+#                 if isinstance(call, ast.Call) and getattr(call.func, "id", "") == "_emit_answer"]
+#
+#     def _terminal_of(call):
+#         return next(ast.literal_eval(kw.value) for kw in call.keywords if kw.arg == "terminal")
+#
+#     inside = _guard_calls(approve_fn)
+#     assert len(inside) == 2, "批准腿的守卫调用点不是两枚"
+#     assert sorted(_terminal_of(call) for call in inside) == [False, True]
+#     assert _guard_calls(ask_fn) == [], "守卫越界进了 ask() ⇒ 越出本单写域"
+    # -------- 改前原文到此 --------
+
     tree = ast.parse(inspect.getsource(chat))
     funcs = {node.name: node for node in tree.body
              if isinstance(node, ast.AsyncFunctionDef)}
@@ -793,8 +824,8 @@ def test_the_guard_touches_exactly_two_yield_sites_in_the_approve_leg():
         return next(ast.literal_eval(kw.value) for kw in call.keywords if kw.arg == "terminal")
 
     inside = _guard_calls(approve_fn)
-    assert len(inside) == 2, "批准腿的守卫调用点不是两枚"
-    assert sorted(_terminal_of(call) for call in inside) == [False, True]
+    assert len(inside) == 3, "批准腿的守卫调用点不是三枚（中途整段 + 逐片 + 收尾）"
+    assert sorted(_terminal_of(call) for call in inside) == [False, False, True]
     assert _guard_calls(ask_fn) == [], "守卫越界进了 ask() ⇒ 越出本单写域"
 
 
