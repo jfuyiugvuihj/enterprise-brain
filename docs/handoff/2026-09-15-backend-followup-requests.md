@@ -4659,3 +4659,30 @@ A1 `users.department` 回填（现值实测 `admin`/`evalbot` 皆空）＋ A3 �
 - R517＝改口账（R512 `131df9b`／R514 `333d728` 并树后成假话的四格）：`docs/api/contract-v1.md:5796-5797`「done 分支不读载荷键」、`:5793-5795`「queue_worker 三处还没传 dataset_files」、`docs/testing/r504-g03-terminal-frames-data-filename.md` §9 同句、`frontend/src/components/ChatPanel.vue:598-599`「终态帧唯一的解码处」现在两处 ⇒ 🔴 净零行；`frontend/src/lib/__tests__/r424-terminal-data-on-the-wire.test.js:96` 用例标题过期而体仍真，只改名不动体。纯改口零新增行为。
 - 写域互斥已核：R505（`frontend/lib`＋三屏＋router＋App.vue）／R515（`scripts/eval_frame_caliber_readout.py`＋它自己的件＋新读数件）／R516（`tests/test_r112,r122,r185,r189,r342,r451,r462,r103,r106`＋名册 doc）／R517（`contract-v1.md`＋`r504` doc＋`ChatPanel.vue` 净零行＋`r424` 标题）四枚两两无交集；`contract-v1.md` 归 R517 一枚（R516 明令不许动，避免两枚同尾追加）。四棵树基点一律 `85572c1`，`be-r505` 的 `frontend/node_modules` 已挂指向主树的 Junction。
 - 本格并树一笔（总控自修，非派工）：`85572c1` 把本班 6 枚并树撑歪的派生坐标格子用各把尺子自己给的出路重同步（`r460 --land`／`r483 --sync`／`r387 --emit-doc-cells` 落 §1 表与 §9.3）＋ `docs/perf/r387-label-lineage-2026-09-27.md:948` 语序倒装让向量库口径尺不再把 Chroma 读成生产架构（没改尺、没删含义）＋ runbook 尾部空行剥掉（r461 反证刀咬空的真因）。12 枚在册件现取 **233 passed / 1 xfailed / 0 failed**。全量门上一格 52 枚红已治到 0。
+
+
+## §139（09-30 第八班续席·总控线，主树 `ff164c2`→`1a23445`→`7e1c221`→`f312eeb`→`e9f7ee8`→`b2d82a0`；单模型未切换；心跳两枚仍 `PAUSED` 一枚没碰）：波次五并树四枚＋总控改口两笔 · 🔴 事故：**两枚全新派工秒死**（同一条 provider 病，根因面比 09-27 那节记的更宽，已补进全局 `~/.codex/AGENTS.md`「派工防中毒」）· **R550／R551／R527 三单立案未落地，等业主手动开线**
+
+**本格已并树（验收数字全是总控主树亲跑，执行层自报一律单列）**
+
+- `1a23445` R538（`Archimedes`）前端三枚手抄坐标改派生：dirty 13 passed／clean 149 passed／整套前端 146 files 2946 tests 全绿／stylelint 148（预算 334）。
+- `7e1c221` R536（`Euler`）产品问答道发 `retrieval.completed`：三枚新件 26 passed；八枚邻件 208 passed／**1 failed**（唯一那枚红＝生成件 `docs/testing/r483-empty-tables-2026-09-29.md` 不再逐字节相符，是本单必然带来的改口，不是回归）；改口后 46 passed，并树后 clean 复跑 46 passed。
+- `f312eeb` R548（`Russell`）队列道注册点：纸 §4 那 20 枚合跑 dirty **430 passed**／clean **430 passed**，且这批跑在**已含 R536** 的组合树上（一枚数同时证两单共存）。成对性实测：只留码不改 R524 的口 = **4 failed**，改口落地 = **9 passed**。
+- `e9f7ee8` 总控改口笔（R548 点名、施工方按裁定未碰的两处他人写域散文）：`r524` 纸事实 3「没有可注册的地方」＋`test_r459:520` docstring 枚举里的「队列」。机器可读那格 `queue_lane=not_applicable` 一字节没动，27 passed 含 R548 三枚纸盘对判牙。
+- `b2d82a0` R523（`Kuhn`）`model_calls.cached_tokens` 落库＋迁移 0018：裁定点名四枚 **56 passed**（并树后 clean 仍 56）／15 枚合跑 **228 passed**（施工方正 228/146.31 s、反 228/156.00 s 同枚数）／生成件 `--check` **PASS problems=0**。契约**没走铺树器**（铺树器只会整枚覆盖，会吞掉 `81784da` 移位的 §4b），按它纸 §11 锚点做尾追加拼接，blob **23/0 纯追加**。
+
+🔴 **本席自曝一笔**（写给下一个接手的）：拼接契约时我先 `replace("\r\n","\n")` 归一、再拿归一后的串判 ` "\r\n" in m`，条件恒假 ⇒ 整枚 CRLF 契约被写成 lone LF，`tests/test_r367_gate_shape_pins.py::...keep_the_repo_line_ending[docs/api/contract-v1.md]` 当场红。恢复全 CRLF 后 blob 仍 23/0。**这枚红一度被我算进 R523 的账上**，提交正文与本格都写明是我的错。
+
+---
+
+**三单立案未落地（派工即报 `Invalid 'id': ... got 'at_...'`，取证 `dirty=0`＋`rev-list --count 基点..HEAD`=0＝真零写入；按规矩不补投）**
+
+- **R550｜治「空表归因器」爬不过事件投影那一跳。** 症状：`scripts/r483_empty_tables_triage.py` 认的「走得通的写入道」＝从**写语句往上爬到 HTTP 路由或 `add_job`**（见该件 `:255-258` 类注释、`:998-1005` 两枚自洽腿）。`retrieval_traces` 的写句是 `app/trace/projections.py::project_retrieval`，由 trace store 在收到 `retrieval.completed` 时**派发**，产品面没有一条路由直接写这张表 ⇒ 即便 R536 已把发射接进 `/ask` 与 `/approve`，量具仍读 `no_seed_path`。本席今日**故意没翻绿**（翻绿＝拿一把量不到的尺宣布达标），只把两句过期散文点名作废、把钉改成咬自洽，凭据 `git show 7e1c221` 正文。写域：`scripts/r483_empty_tables_triage.py`＋`tests/test_r483_*.py`＋生成件（只能 `--sync --live-from-doc` 让它自己变）＋新钉 `tests/test_r550_*.py`＋新纸 `docs/testing/r550-*.md`。判据：① 通用爬法（**不许为 `retrieval_traces` 写特例**，实现里出现这个表名当分支就没收工）；② `verdict` 翻绿只能由自洽腿逼出来，刀＝摘掉事件发射点那一腿必须重新报过期；③ 调试面豁免不许成后门（只被调试面发的仍须读 `no_seed_path`；豁免路由不存在须报 `unused_exemptions`）；④ 在册族不退化＋改口成对交两态；⑤ `--check` rc=0 且产物字节与 `--sync` 同源。
+- **R551｜批准续跑轮的 trace 抢跑（真伤害，不是记账错）。** 症状：`app/api/v1/chat.py` 的 `async def _approve_stream` 里 `:3507 agent_future = loop.run_in_executor(_executor, _run)` 在**前**、`:3559 _record_resumed_lane_trace(` 在**后**，中间无同步点。`app/trace/lifecycle.py:101 if terminal_event or not current:` 让一枚 trace 的**第一条事件就把 run 行种出来**，而 `project_run` 递的 `status` 就是 `completed`；抢跑之后 `:96 if is_terminal_status(current) and not is_terminal_status(requested)` 以 **`REFUSAL_TERMINAL_REGRESSION` 拒绝任何降级** ⇒ **那一轮后来失败也永远写着 `completed`**。对照：`/ask` 没这病（`app/agents/orchestrator.py:1337 run_with_stream`，`request.started` 记在 `:1421-1426`，图到 `:1435` 才起跑）。写域：只 `app/api/v1/chat.py`＋新钉＋新纸；**例外授权**一枚在册件 `tests/test_r536_retrieval_completed_on_product_lane.py::test_a_lone_retrieval_event_seeds_the_run_row_completed_and_says_so`（改口须成对交两态）。判据：① 顺序不变量（`request.started` 先于任何 `completed` 形事件，两形都测）；② **失败轮不许显示 `completed`**（本单正控核心，缺它不算修）；③ 反证刀 ≥4 把逐枚点名 victim；④ 不退化 `test_approve_canonical_events`／`test_r464`／`test_r203`／R536／R548／`test_r178` 那批；⑤ 零新稳定码／零新路由／零新字段。**明确不做**：给 `:3485-3492 run_interrupt_stream(` 补三枚 `request_id/trace_id/task_id`——那一改动 canonical 归属，会撞 `tests/test_approve_canonical_events.py` 一族与前端 `frontend/src/lib/sessions.js` 的 lastSequence 闸门，须单独裁（同病灶：今天图那批事件与调用方留痕挂在两枚 trace 上）。
+- **R527（代号 C）｜等 R523 并完才投——现已并完（`b2d82a0`），可投。** 写域含 `migrations/0019`（**已预分配，与 0018 不撞**，本席现取主树 `migrations/` 止于 0017 时核过）＋`app/trace/**`＋`migrations/manifest.json`＋`docs/api/contract-v1.md`。🔴 并它时契约**必须走尾追加/`git merge-file` 三-way**：主树文末现在是「§4b（`81784da` 移来）→ R523 那 23 行」，任何整枚覆盖都会回退这两笔。
+
+**交接三句话**
+
+1. 波次五还剩 R535（`Erdos`，上下文配套闸）／R547（`Hume`，C 门四件可失败判据量具）两枚在飞，均**真在写**（本席 18 分钟窗口实测 3 枚／6 枚），交回即并。
+2. 派工词坐标本席这班已错过两处（`model_budget.py:885/:442` 上一席写错、`perf-architecture-plan.md` 本席把 §13/§9.3 的血缘写错本名 `pgvector-adoption-plan.md`）⇒ **新线程开线时，凡派工词给的行号/文件名一律按该树现取重核**，别信散文。
+3. 丙窗（业主 09-30 裁「选丙」）还没开：P-8 FAIL（镜像 `4376448` vs 树 `b2d82a0`）、P-18 要真清零、keep-awake 要新起覆盖整窗那条；云端跑分**只能用标准 DashScope `qwen-plus`**，Token Plan 那枚 key 实测给三个词的问题报 63 prompt/28 completion（它偷偷加权，拿它跑分＝换一把不准的尺还说「量过了」）。
