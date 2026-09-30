@@ -19,7 +19,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, Mapping, NoReturn, Sequence
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -833,6 +833,72 @@ class SloTier:
     note: str = ""
 
 
+def _slo_bridge_note(members: Sequence[str], bridge: Mapping[str, str]) -> str:
+    """R533 judgement 1/2 : the bridge sentence spelled out of both rosters, never retyped.
+
+    Every count and every name below is a readout of ``members`` (the value side of
+    ``contracts.py`` ``ModelTier``) and ``bridge`` (the value side of ``nodes.py``
+    ``LANE_TIERS``): how many budget tiers are shared across lanes and which lanes land on them,
+    and how many budget tiers are named by no lane. A roster edit therefore moves this prose with
+    it, which is the class of defect the R526 skeleton exists to kill -- the branch this one
+    inherits from carried a hand-typed unlaned count here that neither roster ever supported,
+    while the contract said something else, and prose on both surfaces cannot be reconciled by
+    hand. Lanes and tiers spell a name the same way (``analysis``), so both sides of
+    every pair are labelled instead of being left to context.
+
+    Teeth: ``tests/test_r533_bridge_note_is_derived.py`` grows ``ModelTier`` with a shadow member
+    and re-reads :func:`slo_units` to watch the sentence move, then repoints a lane and watches
+    the shared half move with it.
+    """
+    roster = set(members)
+    lanes_by_tier: dict[str, list[str]] = {}
+    for lane, tier in bridge.items():
+        lanes_by_tier.setdefault(tier, []).append(lane)
+
+    shared = {tier: lanes for tier, lanes in lanes_by_tier.items() if len(lanes) > 1}
+    unlaned = [tier for tier in members if tier not in lanes_by_tier]
+    off_roster = sorted(tier for tier in lanes_by_tier if tier not in roster)
+
+    def spelled(names: Sequence[str]) -> str:
+        ticks = [f"`{name}`" for name in names]
+        if len(ticks) < 2:
+            return ", ".join(ticks)
+        return ", ".join(ticks[:-1]) + " and " + ticks[-1]
+
+    def tally(count: int, noun: str) -> str:
+        return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+    def agrees(count: int, singular: str, plural: str) -> str:
+        return singular if count == 1 else plural
+
+    if not shared and not unlaned and not off_roster:
+        return (
+            f"one-to-one: each of the {tally(len(bridge), 'product lane')} budgets on its own "
+            f"of the {len(members)} budget tiers"
+        )
+
+    halves: list[str] = []
+    if shared:
+        groups = "; ".join(
+            f"lanes {spelled(lanes)} on tier `{tier}`"
+            for tier, lanes in sorted(shared.items())
+        )
+        halves.append(
+            f"{tally(len(shared), 'budget tier')} of the {len(members)} "
+            f"{agrees(len(shared), 'is', 'are')} shared across lanes: {groups}"
+        )
+    if unlaned:
+        halves.append(
+            f"{tally(len(unlaned), 'budget tier')} of the {len(members)} "
+            f"{agrees(len(unlaned), 'is', 'are')} named by no lane: {spelled(unlaned)}"
+        )
+    if off_roster:
+        halves.append(
+            f"the bridge points at {spelled(off_roster)}, which the budget roster does not have"
+        )
+    return "not one-to-one: " + "; ".join(halves)
+
+
 def slo_units() -> dict[str, Any]:
     """① : the three units the phrase "三档" collides, read live from their owners.
 
@@ -842,12 +908,17 @@ def slo_units() -> dict[str, Any]:
     enumerations over three different things, and no member of one may be renamed to
     flatter another -- so the bridge is read out of ``LANE_TIERS`` here instead of being
     retyped, and the document table below is pinned against this by a test.
+
+    R533: the sentence this cell used to hand-type (``bridge_note``) is spelled out of both
+    rosters below it, so it cannot disagree with them or with the contract again.
     """
     from app.agents.contracts import ModelTier
     from app.agents.nodes import LANE_ANALYSIS, LANE_QA, LANE_REPORT, LANE_TIERS
     from app.common.stage_timing import CANONICAL_STAGES
 
     lanes = (LANE_QA, LANE_ANALYSIS, LANE_REPORT)
+    budget_members = [tier.value for tier in ModelTier]
+    lane_bridge = {lane: LANE_TIERS[lane].value for lane in lanes}
     return {
         "product_lane": {
             "owns_the_name": "app/agents/nodes.py (LANE_QA / LANE_ANALYSIS / LANE_REPORT)",
@@ -858,13 +929,10 @@ def slo_units() -> dict[str, Any]:
         "model_budget_tier": {
             "owns_the_name": "app/agents/contracts.py:69 ModelTier",
             "decided_by": "the call site that asks for budget",
-            "members": [tier.value for tier in ModelTier],
+            "members": budget_members,
             "this_is_the_unit_of_the_slo": False,
-            "bridge_from_product_lane": {lane: LANE_TIERS[lane].value for lane in lanes},
-            "bridge_note": (
-                "not one-to-one: analysis and report share ModelTier.ANALYSIS, and six of the "
-                "seven budget tiers belong to no lane at all"
-            ),
+            "bridge_from_product_lane": lane_bridge,
+            "bridge_note": _slo_bridge_note(budget_members, lane_bridge),
         },
         "ledger_stage": {
             "owns_the_name": "app/common/stage_timing.py CANONICAL_STAGES",
