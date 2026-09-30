@@ -995,6 +995,384 @@ def slo_tiers() -> tuple[SloTier, ...]:
     )
 
 
+# ==================== R526 · 乙半交接面：每枚数字格的口径三件（只钉口径，不落数）=====
+
+#: Which faces of the repository count as evidence at all. A readout that lived in a temporary
+#: directory is not evidence: the next machine cannot re-read it, which is precisely how run9's
+#: per-tier latency table went unpinnable (its 抬头 says 仓内零写入，产物全在 Temp）。
+#: 本单不新建第三枚凭据面，只点名在册的两枚（R453 的读数件面、perf 探针台账面）。
+SLO_EVIDENCE_DIRS: tuple[str, ...] = ("docs/perf/raw/", "docs/testing/")
+
+#: The spine every slot's 达成条件 shares: one denominator rule, one sample floor named by its
+#: constant (never by a copy of its number), one rank rule, one evidence requirement. Spelled
+#: once so no slot can quietly carry a second arithmetic; each slot contributes only its own
+#: denominator, which is what the contract §5 asks for -- a number is gated by the n of the
+#: distribution that number describes, not by the request count next to it.
+SLO_CALIBER_SPINE: tuple[str, ...] = (
+    "n(%s) >= MIN_SLO_SAMPLES，且分母就是这一格自己那枚分布的样本数",
+    "caliber=local-full：数值必本机（R453 裁定（b）），云端形状窗交回这一格即拒",
+    f"分位只按 {SLO_PERCENTILE_SOURCE} 取；仓内任何第二套排名都不算这格的凭据",
+    "原始读数件必须落在 " + " 或 ".join(SLO_EVIDENCE_DIRS) + " 之内，读数本里同时记下该件的 sha256",
+    "target 只由乙半按这三件写；p50_ms / p95_ms 永远由计算得出，手打的数不进 value 侧",
+    "上面缺一件 = 本格仍是「待真机样本」：未实测的秒数 = 不可承诺",
+)
+
+#: The last window whose artifacts are on disk, named so a slot's field can be checked against
+#: real bytes instead of against a promise. Reference only: no number is read out of it into any
+#: claim here or in the contract document.
+SLO_REFERENCE_WINDOW = "run9"
+
+#: The two quantiles each stage slot carries, by name. The contract says "one pair of slots per
+#: stage" and spells both keys; a third quantile would need a contract change first.
+SLO_STAGE_QUANTILES: tuple[str, ...] = ("p50_ms", "p95_ms")
+
+@dataclass(frozen=True)
+class SloSlotCaliber:
+    """The three legs one number slot has to stand on before it may carry a number.
+
+    🔴 本单交的是口径，不是数：量具是谁、原始读数落在哪一枚件的哪一格、什么条件才算填上。
+    ``may_fill_from_window`` is **derived** from those legs rather than waved as a flag, so a
+    slot cannot claim to be fillable while a leg is still missing -- which is 判据1/2 of R526
+    in one line: no instrument, no file, no condition, no number.
+
+    ``reader_landed`` / ``reader_path`` are the honest face of "the instrument exists but the
+    thing that turns its readouts into a percentile does not". 量具（采集器）在册 ≠ 读数件在册,
+    and run9 proved the difference matters: its per-tier table came from a throwaway script
+    outside the repository, so nothing could pin it.
+    """
+
+    slot: str
+    family: str
+    instrument: str
+    instrument_paths: tuple[str, ...]
+    raw_readout: str
+    raw_field: str
+    denominator: str
+    roster_cell: str
+    window_admissible: bool
+    reader_landed: bool
+    prerequisite: str
+    reader_path: str = ""
+    reference_readout: str = ""
+    reference_field: str = ""
+    blockers: tuple[str, ...] = ()
+
+    @property
+    def condition(self) -> str:
+        """The shared spine with this slot's denominator plugged in -- assembled, copied nowhere."""
+        return "；".join(
+            line % (self.denominator,) if "%s" in line else line for line in SLO_CALIBER_SPINE
+        )
+
+    @property
+    def may_fill_from_window(self) -> bool:
+        """Derived, never declared: every leg in place, and this window is where the sample is."""
+        return bool(
+            self.window_admissible
+            and self.reader_landed
+            and self.roster_cell
+            and not self.prerequisite
+            and self.raw_readout
+            and self.raw_field
+            and self.instrument
+            and self.instrument_paths
+        )
+
+#: 家族 A：三档端到端。分母是采集器逐发实测的那枚 ``wall_ms``，档位取服务端**生效档**，
+#: 不是评测夹具的声明档 -- 同一个 blocker（``lane_attribution_absent``）在台账面和采集器面
+#: 缺的是同一件事：没有一枚落盘的读数说得出这一发被判进了哪一档。
+_A_END_TO_END = (
+    "采集器 scripts/eval_transport_ask_v2.py 逐发 `wall_ms`；生效档由 "
+    "app/common/stage_timing.py::parse_r42_log_line 从后端 `[R42]` 日志行读回"
+    "（同类先例件 scripts/perf_probe_run5_ledger.py）"
+)
+_A_PATHS = (
+    "scripts/eval_transport_ask_v2.py",
+    "app/common/stage_timing.py",
+    "scripts/perf_probe_run5_ledger.py",
+)
+_A_RAW = "docs/testing/sidecar-{window}.jsonl（下一扇 = docs/testing/sidecar-run10.jsonl）"
+_A_FIELD = (
+    "`wall_ms`，join 键 `id`；🔴 档位取服务端生效档（`[R42] lane=`），不取评测夹具的 `tier` 列"
+    "——那一列是声明档，多轮改写会把两者分开"
+)
+_A_DENOM = "该生效档到达终态的请求数（失败与取消照计）"
+_A_READER = "scripts/eval_slo_lane_readout.py"
+_A_PREREQ = (
+    "还没有一枚在册读数件把 `wall_ms` × 生效档 join 之后按 SLO_PERCENTILE_SOURCE 出分位："
+    "run9 那张分档表出自 Temp 里的一次性手写件（`docs/testing/run9-readout-2026-09-28.md` 抬头"
+    "「仓内零写入，产物全在 …/Temp/evalrun」），不可钉、机器一崩就没 ⇒ 乙半先把读数件落仓并配牙，"
+    "再谈落数"
+)
+
+SLO_METRIC_CALIBER: dict[tuple[str, str], SloSlotCaliber] = {
+    ("qa", "end_to_end_p95_ms"): SloSlotCaliber(
+        slot="qa.end_to_end_p95_ms",
+        family="A-end-to-end",
+        instrument=_A_END_TO_END,
+        instrument_paths=_A_PATHS,
+        raw_readout=_A_RAW,
+        raw_field=_A_FIELD,
+        denominator=_A_DENOM,
+        roster_cell="p95_wall_ms",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path=_A_READER,
+        prerequisite=_A_PREREQ,
+        reference_readout="docs/testing/sidecar-run9.jsonl",
+        reference_field="wall_ms",
+    ),
+    ("analysis", "end_to_end_p95_ms"): SloSlotCaliber(
+        slot="analysis.end_to_end_p95_ms",
+        family="A-end-to-end",
+        instrument=_A_END_TO_END,
+        instrument_paths=_A_PATHS,
+        raw_readout=_A_RAW,
+        raw_field=_A_FIELD,
+        denominator=_A_DENOM,
+        roster_cell="p95_wall_ms",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path=_A_READER,
+        prerequisite=_A_PREREQ,
+        reference_readout="docs/testing/sidecar-run9.jsonl",
+        reference_field="wall_ms",
+    ),
+    ("report", "end_to_end_p95_ms"): SloSlotCaliber(
+        slot="report.end_to_end_p95_ms",
+        family="A-end-to-end",
+        instrument=_A_END_TO_END,
+        instrument_paths=_A_PATHS,
+        raw_readout=_A_RAW,
+        raw_field=_A_FIELD + "；队列道开着时还要说死「查回」那一段算不算进这一发",
+        denominator="该生效档到达终态的请求数（入队点算进去，失败与取消照计）",
+        roster_cell="p95_wall_ms",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path=_A_READER,
+        prerequisite=_A_PREREQ
+        + "；报告档另欠一枚：上一窗帧账里 `queue` 格逐行现读全为空 ⇒ 端到端含不含查回段"
+        "今天要由读数件自己声明，不许两义并存",
+        reference_readout="docs/testing/sidecar-run9.jsonl",
+        reference_field="wall_ms",
+    ),    ("qa", "first_text_p95_ms"): SloSlotCaliber(
+        slot="qa.first_text_p95_ms",
+        family="B-first-text",
+        instrument=(
+            "采集器帧账 scripts/eval_transport_ask_v2.py 的 `events[]` 逐事件 `elapsed_ms`"
+            "（基准 `stream_clock.request_sent_at`）；事件面读法件 scripts/eval_frame_caliber_readout.py"
+        ),
+        instrument_paths=("scripts/eval_transport_ask_v2.py", "scripts/eval_frame_caliber_readout.py"),
+        raw_readout="docs/testing/sidecar-{window}-frames.jsonl",
+        raw_field=(
+            "`events[]` 里第一枚 `event == 'text'` 的 `elapsed_ms`；🔴 不是 `first_visible_ms`"
+            "——那一格量的是第一个**可见**事件，上一窗帧账多数行的 `first_visible_event` 是 `step`"
+            " 而不是 `text`，两格不同量，拿它顶首屏就是第二套口径"
+        ),
+        denominator="该生效档里真出现 `text` 事件的流式请求数",
+        roster_cell="",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path="scripts/eval_slo_wire_readout.py",
+        prerequisite=(
+            "①R453 名册要先新增一枚首屏格：`first_visible_ms` 是别的东西，拿它顶这格＝走私；"
+            "②产品侧 wire 事件仍不落盘（blocker `wire_first_text_not_recorded`），本格的凭据是"
+            "采集器那一侧的外部观察，读数本必须这么署名；③还没有一枚按 `text` 挑第一枚的在册读数件"
+        ),
+        reference_readout="docs/testing/sidecar-run9-frames.jsonl",
+        reference_field="events",
+    ),
+    ("qa", "cache_hit_p95_ms"): SloSlotCaliber(
+        slot="qa.cache_hit_p95_ms",
+        family="D-cache-hit",
+        instrument=(
+            "认腿件 scripts/eval_transport_ask_v2.py（`kind` 含 cache 者才算命中腿）＋ 开窗纪律件 "
+            "scripts/eval_window_answer_cache_gate.py（P-18：开窗前 `answer:*` 必须归零）"
+        ),
+        instrument_paths=("scripts/eval_transport_ask_v2.py", "scripts/eval_window_answer_cache_gate.py"),
+        raw_readout="docs/perf/raw/{window}/cache-hit-probe.jsonl（🔴 另开一扇预热探针窗，不是跑分窗）",
+        raw_field="命中腿那一发的 `wall_ms`，同一行要带着说得出「这一发是命中」的 `kind` 证词",
+        denominator="该生效档的命中腿请求数",
+        roster_cell="",
+        window_admissible=False,
+        reader_landed=False,
+        reader_path="scripts/eval_cache_hit_probe.py",
+        prerequisite=(
+            "跑分窗按 P-18 必须零命中：命中即 raise 停窗（量具自己就这么写），上一窗的 `kind` 里"
+            "一枚 cache 都不存在 ⇒ 这格永远不可能由跑分窗填。要填它得先立一扇刻意预热、同题打两遍的"
+            "探针窗并另单认领；在那之前读「待真机样本」是正确答案，不是没干活"
+        ),
+        reference_readout="docs/testing/sidecar-run9.jsonl",
+        reference_field="kind",
+    ),
+    ("analysis", "progress_interval_p95_ms"): SloSlotCaliber(
+        slot="analysis.progress_interval_p95_ms",
+        family="C-progress-interval",
+        instrument=(
+            "采集器帧账 scripts/eval_transport_ask_v2.py 的 `events[]`：同一发内相邻两枚 `step`"
+            " 事件的 `elapsed_ms` 差"
+        ),
+        instrument_paths=("scripts/eval_transport_ask_v2.py",),
+        raw_readout="docs/testing/sidecar-{window}-frames.jsonl",
+        raw_field="相邻 `event == 'step'` 的 `elapsed_ms` 差，逐发取最大那一枚进分布",
+        denominator="相邻进度事件的 gap 数（不是题数）——§5 要的就是按这格自己那枚分布的 n 开门",
+        roster_cell="",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path="scripts/eval_slo_wire_readout.py",
+        prerequisite=(
+            "①名册没有「进度间隔」这一格；②`step.progress` 落盘的是图推进"
+            "（blocker `wire_step_events_are_not_recorded`），客户端看到的间隔今天只有采集器那一侧"
+            "的时间戳，读数本必须这么署名；③还没有算 gap 的在册读数件"
+        ),
+        reference_readout="docs/testing/sidecar-run9-frames.jsonl",
+        reference_field="events",
+    ),
+}
+#: 家族 E：逐段台账格（每档 × 每段 × 每分位一枚）。段名与分位名都来自 ``slo_tiers()`` 与
+#: ``SLO_STAGE_QUANTILES``，本表只说口径，不重列任何一枚名字。
+def _stage_caliber(lane: str, blockers: tuple[str, ...]) -> SloSlotCaliber:
+    return SloSlotCaliber(
+        slot=f"{lane}.stage",
+        family="E-stage",
+        instrument=(
+            "产品读口 GET /api/v1/stage-latency（app/api/v1/observability.py::read_stage_latency，"
+            "带 trace_id 时走持久化 trace 而不是进程滚动窗）＋ 离线分档道 "
+            "app/common/stage_timing.py::stage_latency_readout(lane_by_trace=…)"
+        ),
+        instrument_paths=("app/api/v1/observability.py", "app/common/stage_timing.py"),
+        raw_readout="docs/perf/raw/{window}/stage-latency.jsonl（每行 = 一 trace · 一段）",
+        raw_field=(
+            "该段那两枚分位，随行交回 `coverage_error_pct` 与 `gap_ms`；🔴 五段之和不等于该档"
+            "端到端，差由 coverage 那一格说，不许拿段和顶端到端"
+        ),
+        denominator="该生效档该段的样本数（逐段各开各的门，一枚过了不带动别的）",
+        roster_cell="",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path=_A_READER,
+        prerequisite=(
+            "①还没有一件窗内驱动把逐 trace 的 /stage-latency 读数落成 docs/perf/raw/ 件；"
+            "②名册里只有 `rewrite_leg_seconds` 覆盖 rewrite 一腿，其余四段无在册格 ⇒ 落数前先"
+            "补格或明写本格出自产品读口而非名册；"
+            "③生效档 join 未通 ⇒ 分档分段读数同样只能走 `lane_by_trace` 那条离线道，而它今天没有窗内驱动在调"
+        ),
+        reference_readout="",
+        reference_field="",
+        blockers=blockers,
+    )
+
+
+SLO_STAGE_CALIBER: dict[str, SloSlotCaliber] = {
+    "qa": _stage_caliber("qa", ("lane_attribution_absent",)),
+    "analysis": _stage_caliber("analysis", ("lane_attribution_absent",)),
+    "report": _stage_caliber("report", ("lane_attribution_absent", "export_leg_has_no_stage")),
+}
+def _slot_response_path(slot: str) -> str:
+    """Where the slot lives in the ``GET /api/v1/slo`` answer, spelled from the slot id.
+
+    The addressing template itself is the contract's (§4: ``tiers[lane].numbers.<name>`` and
+    ``tiers[lane].stage_numbers.<stage>.{p50_ms,p95_ms}``); a test rebuilds both from that prose
+    and compares, so the caliber cannot invent a fourth way to address a number slot.
+    """
+    parts = slot.split(".")
+    if len(parts) == 4 and parts[1] == "stage":
+        lane, _, stage, quantile = parts
+        return "tiers[%s].stage_numbers.%s.%s" % (lane, stage, quantile)
+    return "tiers[%s].numbers.%s" % (parts[0], ".".join(parts[1:]))
+
+
+def _caliber_record(entry: SloSlotCaliber, *, slot: str, blockers: tuple[str, ...]) -> dict[str, Any]:
+    """Render one slot's caliber. Blockers come from the contract object, never from a copy."""
+    return {
+        "slot": slot,
+        "response_path": _slot_response_path(slot),
+        "family": entry.family,
+        "instrument": entry.instrument,
+        "instrument_paths": list(entry.instrument_paths),
+        "raw_readout": entry.raw_readout,
+        "raw_field": entry.raw_field,
+        "denominator": entry.denominator,
+        "condition": entry.condition,
+        "roster_cell": entry.roster_cell,
+        "window_admissible": entry.window_admissible,
+        "reader_landed": entry.reader_landed,
+        "reader_path": entry.reader_path,
+        "prerequisite": entry.prerequisite,
+        "reference_readout": entry.reference_readout,
+        "reference_field": entry.reference_field,
+        "may_fill_from_window": entry.may_fill_from_window,
+        "target_status": SLO_TARGET_PENDING,
+        "target": None,
+        "percentile_source": SLO_PERCENTILE_SOURCE,
+        "blockers": [{"code": code, "detail": SLO_BLOCKERS[code]} for code in blockers],
+    }
+
+
+def slo_slot_caliber() -> dict[str, Any]:
+    """①/⑥ : every addressable number slot with its three legs, as data rather than prose.
+
+    The slot universe is **derived** from :func:`slo_tiers`: a metric slot per declared metric,
+    and ``stages x SLO_STAGE_QUANTILES`` slots per tier. So renaming a lane, a metric or a stage
+    on the contract object moves this readout with it, and any slot that loses its caliber lands
+    in ``uncalibrated`` -- which a test reads as red, because 乙半 cannot fill what has no
+    instrument, no file and no condition. ``orphan`` is the other direction: a caliber whose slot
+    no longer exists on the contract object (a rename that only edited one side).
+
+    🔴 This function publishes no measurement. ``target`` is ``None`` for every slot and
+    ``target_status`` is the pending constant, because the numbers belong to 乙半 and to the
+    window, not to a caliber table.
+    """
+    from app.common.stage_timing import CANONICAL_STAGES
+
+    slots: list[dict[str, Any]] = []
+    uncalibrated: list[str] = []
+    filled: set[str] = set()
+
+    for tier in slo_tiers():
+        for metric in tier.metrics:
+            slot = f"{tier.lane}.{metric.name}"
+            entry = SLO_METRIC_CALIBER.get((tier.lane, metric.name))
+            if entry is None:
+                uncalibrated.append(slot)
+                continue
+            slots.append(_caliber_record(entry, slot=slot, blockers=metric.blockers))
+            filled.add(slot)
+
+        stage_entry = SLO_STAGE_CALIBER.get(tier.lane)
+        for stage in tier.stages:
+            for quantile in SLO_STAGE_QUANTILES:
+                slot = f"{tier.lane}.stage.{stage}.{quantile}"
+                if stage_entry is None:
+                    uncalibrated.append(slot)
+                    continue
+                slots.append(_caliber_record(stage_entry, slot=slot, blockers=stage_entry.blockers))
+                filled.add(slot)
+
+    declared = {f"{lane}.{name}" for (lane, name) in SLO_METRIC_CALIBER}
+    declared |= {
+        f"{lane}.stage.{stage}.{quantile}"
+        for lane in SLO_STAGE_CALIBER
+        for stage in CANONICAL_STAGES
+        for quantile in SLO_STAGE_QUANTILES
+    }
+    return {
+        "schema": "r526.slo-caliber/1",
+        "document": "docs/api/contract-v1.md",
+        "section": "§4b",
+        "sample_floor": "MIN_SLO_SAMPLES",
+        "percentile_source": SLO_PERCENTILE_SOURCE,
+        "evidence_dirs": list(SLO_EVIDENCE_DIRS),
+        "spine": list(SLO_CALIBER_SPINE),
+        "reference_window": SLO_REFERENCE_WINDOW,
+        "quantiles": list(SLO_STAGE_QUANTILES),
+        "families": sorted({item["family"] for item in slots}),
+        "slots": slots,
+        "uncalibrated": uncalibrated,
+        "orphan": sorted(declared - filled),
+    }
+
+
 def _slo_stat(values: list[float], floor: int) -> dict[str, Any]:
     """One gated number. Percentiles come from ``PerformanceStats`` and nowhere else.
 
