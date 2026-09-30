@@ -107,7 +107,7 @@ def listable(tree: Path) -> list[tuple[str, str, str, str]]:
             rows.append((state, path, "-", "目录或缺文件，跳过"))
             continue
         found = detect(src.read_bytes())
-        conv = blob_convention(path)
+        conv = target_convention(path)[0]
         if conv is None:
             guess, note = sibling_convention(path)
             conv = guess or "?"
@@ -117,6 +117,29 @@ def listable(tree: Path) -> list[tuple[str, str, str, str]]:
         flag = "混合行尾!" if found == "mixed" else ""
         rows.append((state, path, found + "->" + conv, note + (" " + flag if flag else "")))
     return rows
+
+
+def target_convention(path: str):
+    """在册件一律按主树盘上现在那一版行尾归位，不按 blob。
+
+    为什么不是 blob：这台机 core.autocrlf=true 且没有 .gitattributes，检出出来的
+    在册件盘上是 CRLF（现取 git ls-files --eol：app/api/v1/chat.py = i/lf w/crlf）。
+    而被跟踪件里有一族钉直接读盘上那份文件、并拿 CR-LF 拼锚点去改它做反证——最典型就是
+    tests/test_r48_headline_never_enters_the_text_ledger.py 的 D1：_crlf(CALL_ANCHOR)。
+    上一班本器按 blob 把 chat.py 铺成纯 LF，那枚锚当场命中 0 处，r48 的 D1 反证红在
+    「找不到锚」上——那枚红是铺树器的形状造成的，不是执行层改坏了产品。
+    规则改成正解：盘上是什么行尾就铺成什么行尾；盘上没有这枚文件（新件）才退回
+    blob 惯例，再退回同目录多数决（平票仍拒绝搬）。
+    """
+    dst = ROOT / path
+    if dst.is_file():
+        found = detect(dst.read_bytes())
+        if found in ("crlf", "lf"):
+            return found, "盘上惯例 " + found
+    conv = conv = blob_convention(path)
+    if conv is not None:
+        return conv, "blob 惯例 " + conv + "（盘上读不到）"
+    return None, ""
 
 
 def apply_paths(tree: Path, paths: list[str]) -> int:
@@ -133,7 +156,7 @@ def apply_paths(tree: Path, paths: list[str]) -> int:
             print("REJECT " + path + " : 源文件行尾混合，先让执行层归一")
             failures += 1
             continue
-        conv = blob_convention(path)
+        conv, _why = target_convention(path)
         if conv is None:
             conv, note = sibling_convention(path)
             if conv is None:

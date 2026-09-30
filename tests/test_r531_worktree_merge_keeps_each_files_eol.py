@@ -12,6 +12,11 @@ blob 是 LF，而磁盘在 `core.autocrlf=true` 下检出成 CRLF；部分 `docs
  ④ 新件的惯例来自同目录同后缀在册件多数决，平票就拒绝搬（不许猜）；
  ⑤ `chroma_db/**` 这类永久脏项与临时目录默认不进清单。
 反证三把：K1 把 detect 的纯 LF 分支拆掉 / K2 让 normalize 无条件补尾换行 / K3 让平票默认选 CRLF。
+ ⑥ 🔴 在册件一律按「主树盘上现在那一版行尾」归位，不按 blob：这台机没有 .gitattributes 且
+    core.autocrlf=true，chat.py 的 blob 是 LF 而盘上是 CRLF，而 tests/test_r48_headline_never_enters_the_text_ledger.py
+    的 D1 反证是拿 CR-LF 拼锚点去改盘上那份文件做变异的——上一班按 blob 把它铺成纯 LF，那枚锚命中 0 处，
+    红的是铺树器不是执行层（09-30 实测：按盘上惯例重铺 R524 全部十枚后，r48 与 r464 连同 R524 三枚新件
+    合跑 83 passed / exit=0，两枚「红」当场消失）；新件盘上没有，才退回 blob 惯例、再退回同目录多数决。
 """
 import importlib.util
 from pathlib import Path
@@ -79,3 +84,30 @@ def test_f_permanent_junk_never_enters_the_list(tmp_path, monkeypatch):
     monkeypatch.setattr(merger, "blob_convention", lambda path: "lf")
     kept = [path for _, path, _, _ in merger.listable(tree)]
     assert kept == ["app/good.py", "docs/testing/ok.md"], kept
+
+
+def test_e_a_tracked_file_keeps_the_eol_it_has_on_disk_not_the_blob(tmp_path, monkeypatch):
+    """判据⑥：盘上 CRLF、blob LF 的在册件，铺完必须还是 CRLF（blob 惯例在这一格让位给盘上）。"""
+    root = tmp_path / "main"
+    (root / "app").mkdir(parents=True)
+    (root / "app" / "x.py").write_bytes(b"old\r\nlines\r\n")   # 主树盘上现状：CRLF
+    tree = tmp_path / "be-fake"
+    (tree / "app").mkdir(parents=True)
+    (tree / "app" / "x.py").write_bytes(b"new\r\ncontent\r\n")   # 执行层工作树：也是 CRLF
+    monkeypatch.setattr(merger, "ROOT", root)
+    monkeypatch.setattr(merger, "blob_convention", lambda path: "lf")   # blob 说 LF
+    assert merger.target_convention("app/x.py") == ("crlf", "盘上惯例 crlf")
+    assert merger.apply_paths(tree, ["app/x.py"]) == 0
+    assert (root / "app" / "x.py").read_bytes() == b"new\r\ncontent\r\n"
+
+
+def test_f_a_new_file_still_falls_back_to_the_blob_then_the_siblings(tmp_path, monkeypatch):
+    """判据⑥的另一半：盘上没有这枚文件时才轮到 blob 惯例，再退同目录多数决。"""
+    root = tmp_path / "main"
+    (root / "app").mkdir(parents=True)
+    monkeypatch.setattr(merger, "ROOT", root)
+    monkeypatch.setattr(merger, "blob_convention", lambda path: "lf")
+    assert merger.target_convention("app/new.py") == ("lf", "blob 惯例 lf（盘上读不到）")
+    monkeypatch.setattr(merger, "blob_convention", lambda path: None)
+    conv, note = merger.target_convention("app/new.py")
+    assert conv is None and note == ""
