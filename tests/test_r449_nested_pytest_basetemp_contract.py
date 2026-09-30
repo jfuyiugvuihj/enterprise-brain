@@ -51,6 +51,7 @@ ROSTER: dict[str, tuple[tuple[str, ...], int]] = {
     "tests/test_r163_matrix_teeth.py": (("parent_scratch",), 1),
     "tests/test_r449_nested_pytest_basetemp_contract.py": (("parent_scratch",), 1),
     "tests/test_r449_shared_temp_root_is_the_hazard.py": (("parent_scratch",), 2),
+    "tests/test_r516_the_dataset_stubs_stay_on_the_class.py": (("parent_scratch",), 1),
 }
 
 #: 判据③的豁免名单：只有本单的复现件能起不带 --basetemp 的嵌套会话，且必须自带笼子。

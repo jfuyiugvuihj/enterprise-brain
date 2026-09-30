@@ -263,9 +263,18 @@ def census_surface_b(dsn: str) -> dict:
 
 
 def _connect(dsn: str):
-    import psycopg
+    """走 `app/db/connection.py` 那枚边界，不在读数件里再盖一间小房子。
 
-    return psycopg.connect(dsn, connect_timeout=3)
+    R238 的裸 connect 棘轮只准降不准升（`tests/test_r238_bare_connect_ratchet.py`：
+    「边界之外裸 connect 从 15 枚涨到 16 枚」就是本件并树后点着的第一枚红）。两条出路里
+    「向总控申请入册」要把这枚永久记进账本，而本件要的只是「带 3 s 上限地开一条连接」——
+    边界已经供了这个能力，所以走迁移：`connect_timeout` 随 conninfo 一起交给边界，
+    行为与改前逐字相同（同一枚 psycopg 驱动、同一份超时），红面少一枚、账本不涨一格。
+    """
+    from app.db import connection as db_conn
+
+    sep = "&" if "?" in dsn else "?"
+    return db_conn.open_connection(db_conn.parse_database_settings(f"{dsn}{sep}connect_timeout=3"))
 
 
 # ==================== 2) reader：产品读取器在两枚真库上 ====================

@@ -573,8 +573,25 @@ def pytest_sessionfinish(session, exitstatus):
 """
 
 
+def r449_nested_basetemp(parent_scratch: Path) -> Path:
+    """R449：每一枚嵌套 pytest 会话只用自己的 basetemp，落点必须在父件 scratch 之内。
+
+    判据②要求在册件逐枚自带同形一件（照 `tests/test_r134_chroma_writeback.py` 那台）：
+    不传 `--basetemp` 时子会话落进 `%TEMP%\\pytest-of-<user>` 共享根，并发会互剪 tmp_path。
+    """
+    root = Path(parent_scratch) / "r449-nested-basetemp"
+    root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="child-", dir=str(root)))
+
+
 @functools.lru_cache(maxsize=1)
-def _nested_audit():
+def _r516_audit_scratch() -> Path:
+    """整族审计共用的父 scratch：只造一次，两枚读账用例拿到的是同一枚路径。"""
+    return Path(tempfile.mkdtemp(prefix="r516-audit-"))
+
+
+@functools.lru_cache(maxsize=1)
+def _nested_audit(parent_scratch: Path):
     """把 `REPLAY_FILES` 整跑在一枚子进程里：探针读身份（`vars()`），不读文本，也不赌次序。
 
     目标一律是仓内的被跟踪件——正控不放成临时文件（那会让内层会话的 rootdir 落到仓库外，
@@ -584,7 +601,8 @@ def _nested_audit():
     """
     targets = [str(REPO / rel) for rel in REPLAY_FILES] or [
         "%s::test_the_roster_names_twelve_sites_and_the_family_derives_three_names" % THIS_FILE]
-    workdir = Path(tempfile.mkdtemp(prefix="r516-audit-"))
+    assert targets, "空选择＝全量收集，本驱动器不收"
+    workdir = parent_scratch
     plugin_dir = workdir / "plugin"
     plugin_dir.mkdir()
     (plugin_dir / "r516_shadow_probe.py").write_text(PROBE_SOURCE, encoding="utf-8")
@@ -595,9 +613,11 @@ def _nested_audit():
     env["R516_AUDIT_JSON"] = str(audit_json)
     for noisy in ("PYTEST_CURRENT_TEST", "PYTEST_XDIST_WORKER", "PYTEST_XDIST_TESTRUNUID"):
         env.pop(noisy, None)
-    command = [sys.executable, "-m", "pytest", *targets,
-               "-q", "--no-header", "-p", "r516_shadow_probe", "-p", "no:cacheprovider"]
-    proc = subprocess.run(command, cwd=str(REPO), env=env, capture_output=True,
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", *targets,
+         "-q", "--no-header", "-p", "r516_shadow_probe", "-p", "no:cacheprovider",
+         "--basetemp", str(r449_nested_basetemp(parent_scratch))],
+        cwd=str(REPO), env=env, capture_output=True,
                           text=True, encoding="utf-8", errors="replace", timeout=2400)
     assert proc.returncode == 0, (
         "整跑这一族所在的件就没绿，审计腿不能在这种情况下报零：\n"
@@ -707,7 +727,7 @@ def test_the_replayed_files_leave_no_method_shadow_on_the_shared_singletons():
     量的是身份不是文本：`vars(obj) ∩ 类上本来就有的名字`。正控（那枚故意把桩打在实例上的件）排在
     最后跑，所以它既不遮蔽本单任何一枚类级桩，又单独证明这把尺子还在测量——它的读数由下面那格钉。
     """
-    report = _nested_audit()
+    report = _nested_audit(_r516_audit_scratch())
     leaks = _leaks(report)
     assert not leaks, RUNTIME_RED + "：\n" + "\n".join(
         "%s 跑完 %s 之后 %s(%s) 上多出方法影子 %r" % (
@@ -723,7 +743,7 @@ def test_the_runtime_leg_measured_what_it_claims():
     这格是第二把刀的靶子——把重放清单摘成空，这格当场红：它钉的是「量过什么」，不是「报了几枚」，
     所以摘腿与谎报 0 都过不去。
     """
-    report = _nested_audit()
+    report = _nested_audit(_r516_audit_scratch())
     assert report["identity_ok"] is True, "%s：探针读的那枚不是模块上的进程级单例" % LEG_RED
     ran = set(report["run"])
     assert ran >= set(report["replay_names"]), (

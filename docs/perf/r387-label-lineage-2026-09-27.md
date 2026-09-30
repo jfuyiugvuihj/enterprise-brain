@@ -48,20 +48,20 @@
 
 | # | 这一跳是什么 | 站点（现读行号） | 载体 | 性质 |
 |---|---|---|---|---|
-| 1 | 接口收到什么 | `app/api/v1/chat.py:4418-4420` | `upload_document(file, classification=Form(1), department=Form(""))` | 默认值兜底 |
-| 2 | **服务端立刻丢掉客户端那一格** | `app/api/v1/chat.py:4436` | `department = str(getattr(principal, "department", "") or "")` | **硬编覆盖** |
+| 1 | 接口收到什么 | `app/api/v1/chat.py:4469-4471` | `upload_document(file, classification=Form(1), department=Form(""))` | 默认值兜底 |
+| 2 | **服务端立刻丢掉客户端那一格** | `app/api/v1/chat.py:4487` | `department = str(getattr(principal, "department", "") or "")` | **硬编覆盖** |
 | 3 | 主体的部门从哪来 | `app/common/authorization.py:34` → `app/agents/contracts.py:38` | `Principal.department = str(user.get("department") or "")` | 默认值兜底 |
 | 4 | **账号的部门又是谁写的** | `app/common/auth.py:434-442`、`:445-464` | `_bootstrap_admin_department() = os.getenv("AUTH_DEPARTMENT", "")` → `INSERT INTO users(…, department)` | 默认值兜底（断点） |
-| 5 | `classification` 走的是另一条路 | `app/api/v1/chat.py:4419` → `:4564` / `:4578` / `:4592` / `:4667` | 形参原样下传，**没有被覆盖** | 真值 |
-| 6 | 目录行（逻辑文档） | `app/api/v1/chat.py:3992-4076` → `:1123-1158`（`:1141` / `:1152`） | `INSERT INTO documents(filename, classification, department, …)`，`department or None` | 默认值兜底 |
+| 5 | `classification` 走的是另一条路 | `app/api/v1/chat.py:4470` → `:4615` / `:4629` / `:4643` / `:4718` | 形参原样下传，**没有被覆盖** | 真值 |
+| 6 | 目录行（逻辑文档） | `app/api/v1/chat.py:4043-4127` → `:1123-1158`（`:1141` / `:1152`） | `INSERT INTO documents(filename, classification, department, …)`，`department or None` | 默认值兜底 |
 | 7 | 目录行（版本） | `app/documents/catalog.py:626-655`、`:695-769`（`:647` / `:746-748` / `:762`） | `_record_uploaded_version` → `record_document_version` → `INSERT INTO document_versions(…, department, …)` | 默认值兜底 |
-| 8 | 索引载体 | `app/api/v1/chat.py:4123-4171` → `app/rag/indexing.py:938-939`、`:990-999` | `DocumentIndexPublication(classification=…, department=…)` → `scope_metadata()` | 默认值兜底 |
+| 8 | 索引载体 | `app/api/v1/chat.py:4174-4222` → `app/rag/indexing.py:938-939`、`:990-999` | `DocumentIndexPublication(classification=…, department=…)` → `scope_metadata()` | 默认值兜底 |
 | 9 | `chunks` 表（发布账） | `app/rag/indexing.py:1001-1018`、`:1275` | `IndexChunk.metadata = scope_metadata()` | 默认值兜底 |
-| 10 | 遗留引擎元数据（今天仍在服务的读路径） | `app/api/v1/chat.py:4560-4566` → `app/rag/retriever.py:1323-1324`、`:1363-1367` | `add_document(…, department` 或 `None)` → `"department": department or ""` | 默认值兜底 |
+| 10 | 遗留引擎元数据（今天仍在服务的读路径） | `app/api/v1/chat.py:4611-4617` → `app/rag/retriever.py:1323-1324`、`:1363-1367` | `add_document(…, department` 或 `None)` → `"department": department or ""` | 默认值兜底 |
 | 11 | `chunk_vectors.department` 是谁写的那一格 | `app/rag/pg_store.py:305-404`（`:373`）→ `:87-99` | `str(values.get("department") or "")`，`values` = **第 10 跳那份元数据** | 默认值兜底 |
 | 12 | 读侧谓词（越权判定的出处） | `app/rag/filters.py:130-145` → `app/rag/pg_store.py:705-790`（`:738-740`） | `{"$and": [classification $in …, department $in …]}` → `sql_scope_filter` | 真值 |
 
-**第一个把真值丢掉的那一跳 = 第 2 跳（`app/api/v1/chat.py:4436`）。** 严格说它丢的是"客户端自报值"，而那本来就该丢（理由在 `app/api/v1/chat.py:4428-4432` 的 docstring 与 `frontend/src/components/DocPanel.vue:647-648`：检索按【来问的人】的部门匹配文档，放客户端挑部门等于允许往别人的结果里投稿）。所以这条链上**真正的断点在第 4 跳**：`:4088` 覆盖上去的那枚值，源头是 `users.department`，而那枚列在生产上是 `NULL`。
+**第一个把真值丢掉的那一跳 = 第 2 跳（`app/api/v1/chat.py:4487`）。** 严格说它丢的是"客户端自报值"，而那本来就该丢（理由在 `app/api/v1/chat.py:4479-4483` 的 docstring 与 `frontend/src/components/DocPanel.vue:647-648`：检索按【来问的人】的部门匹配文档，放客户端挑部门等于允许往别人的结果里投稿）。所以这条链上**真正的断点在第 4 跳**：`:4088` 覆盖上去的那枚值，源头是 `users.department`，而那枚列在生产上是 `NULL`。
 
 三格要说清的细节：
 
@@ -712,11 +712,11 @@ r346 `35 passed`、r302 `8 passed` —— 与本班树逐枚同值。
 
 | 派工词点的病 | 现在的锚（key） | 锚首行 token（唯一命中，逐枚现读） | 本班现读＝左列锚 key 经 `resolve_site` 现场派生（R492 钉逐格对账，漂一枚即红） |
 |---|---|---|---|
-| 服务端强制覆盖那一格（旧账冻在 `3656..3719`） | `hop2` | `department = str(getattr(principal, "department", "") or "")` | `app/api/v1/chat.py:4436` |
-| 同一格的 docstring 理由段 | `hop2n` | `The document scope is decided here rather than accepted from the form: retrieval` | `:4428-4432` |
-| 接口形参默认值那一格（旧账冻在 `3644..3719` 起端） | `hop1` | `async def upload_document(file: UploadFile = File(...),` → `department: str = Form(""),` | `:4418-4420` |
-| 密级下传那四格（旧账冻在 `1534..1620` 一族） | `hop5f` `hop5g` `hop5h` `hop5i` `hop5j` | `classification: int = Form(1),` / `classification,`+`department or None,` / `if ok:` 起六行块 / `classification=classification,`+两行 / `classification=classification,`+`department=department,`+`scope=…` | `:4419` / `:4564` / `:4578` / `:4592` / `:4667` |
-| 目录账区间（旧账冻在 `748..763` 那格） | `hop6` + `hop6b`/`hop6c`/`hop6n` | `async def upload_document…` 区间终点 / `INSERT INTO documents(` / `department or None,` / `_version_metadata` 收尾 | `:3992-4076` → `:1123-1158`（`:1141` / `:1152`） |
+| 服务端强制覆盖那一格（旧账冻在 `3656..3719`） | `hop2` | `department = str(getattr(principal, "department", "") or "")` | `app/api/v1/chat.py:4487` |
+| 同一格的 docstring 理由段 | `hop2n` | `The document scope is decided here rather than accepted from the form: retrieval` | `:4479-4483` |
+| 接口形参默认值那一格（旧账冻在 `3644..3719` 起端） | `hop1` | `async def upload_document(file: UploadFile = File(...),` → `department: str = Form(""),` | `:4469-4471` |
+| 密级下传那四格（旧账冻在 `1534..1620` 一族） | `hop5f` `hop5g` `hop5h` `hop5i` `hop5j` | `classification: int = Form(1),` / `classification,`+`department or None,` / `if ok:` 起六行块 / `classification=classification,`+两行 / `classification=classification,`+`department=department,`+`scope=…` | `:4470` / `:4615` / `:4629` / `:4643` / `:4718` |
+| 目录账区间（旧账冻在 `748..763` 那格） | `hop6` + `hop6b`/`hop6c`/`hop6n` | `async def upload_document…` 区间终点 / `INSERT INTO documents(` / `department or None,` / `_version_metadata` 收尾 | `:4043-4127` → `:1123-1158`（`:1141` / `:1152`） |
 | 部门名册那一格（`list_user_departments`） | 🔴 **本单 46 枚锚里没有它** | 全仓 `app/**` 读不出这个符号（见 §9.6 落空账） | — |
 
 同一文件的多个站点**逐格一枚锚**（不共用），并由 `test_multi_site_hops_give_every_site_its_own_anchor`
