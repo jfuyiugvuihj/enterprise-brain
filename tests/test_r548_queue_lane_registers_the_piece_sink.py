@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 
 from app.agents import nodes, orchestrator
+from app.trace import durability
 from deploy import queue_worker
 from tests.test_r203_sse_progressive_frames import CHUNK_SIZE
 from tests.test_r81_queue_terminal_retry import ENUM_CODES
@@ -163,8 +164,14 @@ def _install_graph_stream(monkeypatch, box: dict, *, answer: str = "", publish: 
     return box
 
 
-def _run_round(monkeypatch, tmp_path, *, name: str, publish: bool) -> dict:
-    """真跑一轮报告档后台执行（``process_one``），把发布面读数与日志一并交回来。"""
+def _run_round(monkeypatch, tmp_path, *, name: str, publish: bool,
+               reset_ledger: bool = True) -> dict:
+    """真跑一轮报告档后台执行（``process_one``），把发布面读数与日志一并交回来。
+
+    ``reset_ledger`` 这格不是可选项：``app/trace/durability.py`` 那枚重登节流计数是**进程全局**，同一枚 worker 里前头的件把它推过 ``_RELOG_EVERY`` 的整数倍，本单的日志面就凭空多一行（09-30 gate4/gate5/gate6 三门连红皆此）。R554 的牙拿它做正反两跑。
+    """
+    if reset_ledger:
+        durability.reset_durability_ledger()
     box: dict = {}
     ctx = _install_worker(monkeypatch, tmp_path, name=name)
     _install_graph_stream(monkeypatch, box, answer=ANSWER, publish=publish)
@@ -217,6 +224,9 @@ def _readout_lines(lines) -> list:
 #: 每轮必变的 id 以裸值出现在日志行里（`request_id=<uuid4().hex>` 那一形）。零外溢对判先把它们
 #: 归一再逐字比：文案与枚数一格都不许多，但"本轮是哪一枚请求"本来就不许当判据。
 _VOLATILE_ID = re.compile(r"\b[0-9a-f]{32}\b")
+
+#: 那行进程级重登告警的可辨名：名现读自 durability，文案一个字不抄。
+TRACE_RELOG = durability.LOCAL_FALLBACK_NAME
 
 
 def _normalized_log_lines(lines) -> list:
@@ -465,3 +475,61 @@ def test_the_report_lane_still_never_runs_the_graph_on_the_enqueue_side(lane):
     assert facts["graph_runs"] == 0, facts
     assert facts["event_names"] == ["queued", "done"], facts
     assert facts["done_payload"].get("terminal_state") == queue_lane.chat.TERMINAL_STATE_QUEUED
+
+
+# ==================== R554 的牙：那枚进程全局节流计数器不许替本单写日志面 ====================
+
+
+def _arm_trace_relog_counter():
+    """把进程内那枚"头一枚与每第 N 枚各重登一次"的计数器顶到边界前一格（N 现读，不抄数字）。"""
+    durability.reset_durability_ledger()
+    interval = getattr(durability, "_RELOG_EVERY")
+    for _ in range(interval - 1):
+        durability.note_local_fallback("r554_teeth_arm", "armed by the pin, no row written")
+    return durability.durability_status()["fallback_events"]
+
+
+_OCCURRENCES = re.compile(r"occurrences=(\d+)")
+
+
+def _relog_counts(lines) -> list:
+    """本窗口里那行进程级重登告警的计数字：归零与否，差别就写在这枚数上。"""
+    return [int(part.group(1)) for line in lines if TRACE_RELOG in line
+            for part in [_OCCURRENCES.search(line)] if part]
+
+
+def test_teeth_the_ledger_reset_is_what_keeps_the_relog_out(monkeypatch, tmp_path):
+    """摘掉归零 ⇒ 周期性重登那一行进窗口；装上归零 ⇒ 同一枚窗口读不到它。
+
+    这一格证的是"修复在承重"，不是把判据放宽：计数器不归零时本单的比较面里确实多出别人的那一行，
+    归零之后两族日志面才真的只由本片流决定。牙只在内存与进程账上造，盘上一字不写。
+    """
+    armed = _arm_trace_relog_counter()
+    assert armed >= 1, armed
+
+    interval = getattr(durability, "_RELOG_EVERY")
+
+    dirty = _run_round(monkeypatch, tmp_path, name="r554-teeth-no-reset",
+                       publish=True, reset_ledger=False)
+    crossed = [value for value in _relog_counts(dirty["log_lines"]) if value >= interval]
+    assert crossed, ("摘掉归零竟没让边界重登进窗口：本牙空响，没有可归因的进程级计数",
+                     _relog_counts(dirty["log_lines"]))
+
+    _arm_trace_relog_counter()
+    clean = _run_round(monkeypatch, tmp_path, name="r554-teeth-with-reset", publish=True)
+    assert [value for value in _relog_counts(clean["log_lines"]) if value >= interval] == [], \
+        _relog_counts(clean["log_lines"])
+    assert clean["ledger"].count == dirty["ledger"].count, (clean["ledger"].count, dirty["ledger"].count)
+
+
+def test_teeth_the_reset_leaves_the_round_ledger_alone(monkeypatch, tmp_path):
+    """归零只归那枚进程级计数器：本片流的账（枚数/字数/腿）一格不许跟着动。"""
+    _arm_trace_relog_counter()
+    with_reset = _run_round(monkeypatch, tmp_path, name="r554-neutral-a", publish=True)
+    _arm_trace_relog_counter()
+    without_reset = _run_round(monkeypatch, tmp_path, name="r554-neutral-b",
+                              publish=True, reset_ledger=False)
+    for key in ("result", "status", "history"):
+        assert with_reset[key] == without_reset[key], key
+    assert with_reset["ledger"].count == without_reset["ledger"].count
+    assert with_reset["ledger"].chars == without_reset["ledger"].chars
