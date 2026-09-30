@@ -100,7 +100,7 @@ export function shouldReadUploadAgain(faces, ticksDone, maxTicks) {
 
 // ==================== 上传密级（R313 格一） ====================
 /**
- * 默认值就是后端那一句 classification: int = Form(1)（app/api/v1/chat.py:3933）里的 1。
+ * 默认值就是后端那一句 classification: int = Form(1)（app/api/v1/chat.py:4470）里的 1。
  * 这一枚数字是「用户不动选择框」的唯一出口：表单带着 1 发出去，FastAPI 收到的分类与今天
  * （前端压根不发这一枚字段、由 Form 默认补上 1）逐字相同 —— 落库行、检索判定都不变，零行为变化。
  * 要挪这个默认只能连着后端那句一起挪：只改这里等于把默认悄悄换了位。
@@ -109,7 +109,7 @@ export const DEFAULT_UPLOAD_CLASSIFICATION = 1
 
 /**
  * 可选档位只放**今天真有人读得到**的那几档：1/2/3。出处是 app/common/rbac.py:31 的
- * ROLE_CLEARANCE = {staff:1, manager:2, admin:3} —— 检索按「主语 clearance >= 文档密级」判可见，
+ * ROLE_CLEARANCE = {staff:1, manager:2, admin:3, auditor:3} —— 检索按「主语 clearance >= 文档密级」判可见，
  * 所以上面这三档每一档都至少有一类账号看得见。
  * 后端词表里还有第 4 档（policy.py:25 core），但今天没有任何角色的 clearance 够得着它：把它放上
  * 下拉，等于让员工一键把自己的资料对全公司【含管理员】锁死，只剩 owner 通道能取回，而且界面上
