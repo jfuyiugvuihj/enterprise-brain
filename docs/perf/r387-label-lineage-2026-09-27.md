@@ -521,7 +521,7 @@ cd C:\Users\fengx\PycharmProjects\be-r390
 - **重锚方式是内容锚定，不是加减偏移**：取旧行原文在新树里唯一定位，再与 difflib 的位置映射交叉核对。
   照偏移算是必错的 —— `chat.py` 同一条链上有两段不同增量（区间起端那一段 +18、更靠后的那一段 +28）。
   🔴 这条自守今天升级为**一律不许手取**：见 §8.8，行号改由锚块派生。
-- **未漂移的引用逐枚现读、逐枚同值命中，故一字未改**：`app/common/authorization.py:34`、`app/agents/contracts.py:38`、
+- **未漂移的引用逐枚现读、逐枚同值命中，故一字未改**：`app/common/authorization.py:34`、`app/agents/contracts.py` 旧 `:38`→派生今值 `:39`（那一枚站点语义一字未动，只是 R535 `7c798e4` 在它上方新插一行 import 把它顶下一行）、
   `app/common/auth.py:434-442`/`:445-464`/`:455-456`/`:727-754`、`app/rag/indexing.py:938-939`/`:990-999`/`:1001-1018`/`:1275`/`:944`/`:969-981`、
   `app/rag/retriever.py:1323-1324`/`:1363-1367`/`:1365`、`app/rag/filters.py:119-128`/`:130-145`/`:135-139`、
   `frontend/src/components/DocPanel.vue:647-648`/`:649-650`、`migrations/0010_pgvector_chunks.sql:141`/`:163-164`/`:374-375`/`:387-388`/`:396-400`、
