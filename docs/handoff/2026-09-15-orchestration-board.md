@@ -1624,6 +1624,10 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Euler` | `01a0f08e-d177-7da2-8470-7e693860e70d` | **R536**（波次五首枚）产品问答道补发 `retrieval.completed` ⇒ `retrieval_traces` 从此有数据（V2 #12 缺格、#20 前置） | `be-r536`（基点 `81784da`，**独占**；写域＝`app/api/v1/chat.py` 检索腿＋`app/rag/retrieval_pipeline.py` 唯一发射点＋新钉/新纸；🔴 禁入 `app/trace/**`·`app/storage/persistence.py`·`migrations/**`·`docs/api/contract-v1.md`·`frontend/**`） | 🟡 在途 12:3x 投出：不许拿 `POST /retrieval/debug` 那一腿冒充产品道（`r483` 纸 `:104` 已钉死）；发射点必须唯一、第二处一起就红；窗内只写不跑 | 09-30 13:1x |
 | `Archimedes` | `01a0f08f-8e9f-7f73-a2b3-08d78990b998` | **R538**（波次五第二枚，业主 D13 授权动 `frontend/**`）前端三枚手抄后端坐标改派生 | `be-r538`（基点 `81784da`，**独占**；写域＝`notifications.js:26`／`DocPanel.vue:103`／`:112` 三处注释＋新钉；禁 `theme.css`·`App.vue`·任何后端件·配置文件） | 🟢 13:0x 已交回、待总控收窗后代跑：numstat `2/2`＋`1/1`、两枚源文件行数一字节未变；判据①② 静态达成（真值取自 `git show HEAD:app/**` 按锚串现读，钉里零坐标字面量），③④ 五把刀已上膛未扣＋stylelint 未实测；多收一枚 `DocPanel.vue:114` 的 `policy.py:25 core`（今天是对的，一并入钉）；摘刀还原用反向替换，勿 `git checkout --` | 09-30 13:1x |
 | `Pasteur` | `01a0f09f-1ccb-7d30-a716-ce38f1d3e0f6` | **run10 开窗执行员**（单号沿用 R513） | `be-eval95`（须 `--ff-only` 追平主树 `4376648`） | 🔴 **窗内 13:1x 起**：一窗多判据（A①②③④＋D 门三格＋C 门两格，A④ 对表 **run5** 不是 run9）。P-20 五格 PASS、`gpu_apps`＋`foreign_python` 两格 FAIL（外来 `anaconda3\python.exe train.py -o iters=60` 链式冒烟，12:28 那枚结束后 13:0x 又起 pid 13640）⇒ 按增补四预设 fallback 裁定**照样开窗、A① 的 p95 一律记「污染窗不采信」**，三枚 nvidia-smi 采样留证；污染期 >50% 就停手回报。窗内硬禁：并树／跑测试／动容器／打模型／碰 powercfg／拔电 | 09-30 13:1x |
+| `Kuhn` | `01a0efcf-5b50-7452-ba0b-0d10293efe52` | **R550**（复用线程续用）治 `scripts/r483_empty_tables_triage.py` 爬不过「事件发射→投影→写句」 | `be-r550`（现取基点 `59a9506`，**独占**） | 🟡 在途。22:5x 调度令（门在跑，禁 pytest／禁子进程量具，只许写盘取证）已 `send_input` 落地；写域＝`scripts/r483_*`＋`tests/test_r483_*`＋生成件＋新钉新纸，🔴 不含 `app/**`、明令**不许为 `retrieval_traces` 写表名特例**。截至本笔 23:5x 未交回。 |
+| `Hume` | `01a0f0e6-971f-77e2-b4e6-04cbb4ab703f` | **R551**（复用线程续用）`chat.py` 批准续跑轮 trace 抢跑 ⇒ 失败轮永远写 `completed` | `be-r551`（`merge --ff-only 4572aa8` rc=0，现取 `4572aa8`，**独占**） | 🟡 在途，23:5x 起 12 分钟独占自验窗（串行／`-o addopts=`／零 `-n`）。自曝一条要进派工纪律的事：**接手时盘上 `chat.py` 不是修复态而是 K1 变异残留**（上一段刀脚本 `finally` 没跑到），它按 `%TEMP%` 备援逐字节复原并复验 sha＋CRLF 计数＋AST 出口行序（`267490`→`268830` 字节，sha `903558d7…`→`b40c370c…`）。它还现取更正本席派工词一处坐标（R548 那族实为 2 枚件，它按 2 枚跑、没凑第三枚）。R547 结案账见 §4ED 第二节。 |
+| `Erdos` | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R552**（复用线程续用）`scripts/r531_worktree_merge.py` 对新件的行尾决策 | `be-r535`（现取基点 `05bec06`，**独占**，续用同一棵树） | 🟡 在途·**零写入**（它实话回报 `scripts/r531_worktree_merge.py` 一字未改，本席盘面复核一致）。追平被 git checkout 保护拦住 ⇒ 本席裁备份道（复制到仓外＋逐枚 sha256 记账→`restore --source=HEAD`→`merge --ff-only`→字节全等复验），🔴 明令禁 `reset --hard`／`clean -fd`。它把前提凿深一层：真因不是「猜错」，是 `sibling_convention()` 读的是 **blob 行尾**（`core.autocrlf=true` 下文本件 blob 恒 LF ⇒ 结构上只会答 LF）。本席独立复核：r536 新纸现取 `i/lf w/lf`、全仓 `w/lf` **314**、`core.autocrlf=true` 来源 system。裁定：钉「落盘＝**检出形态**」而非「一律 CRLF」；`sibling_convention()` 降级为诊断不删；`target_convention():139` 那格不动，但残留必须写成**在册欠账**。R535 结案账见 §4ED 第二节。 |
+| `Noether`／`Goodall` | `01a0f163-1ff4-7432-891b-…`／`01a0f163-c06e-7f53-af81-…` | R550／R551（**两枚秒死的 spawn，号作废不复用**） | `be-r550`／`be-r551`（建树后 `dirty=0`，零落盘） | 🔴 上一班那两枚「投出即 1 秒报 `Invalid id`」的新线程；零写入已取证，本席不当补投。🟢 **出路更正（本席现取）**：`send_input` 报 `agent ... not found` 的线程**不必等业主开线**——`Hume`／`Erdos` 双双 not found，`resume_agent` 之后 `send_input` 正常落地并交回长文。⇒ 上游那句「出路只有写进跟进单等新线程、或业主手动开线」改窄为：**已存在但已关闭的执行层线程可复活续用**；🔴 仍然不许 `spawn_agent` 开**全新**线程。 |
 
 
 
@@ -6076,3 +6080,94 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 8. **run10 开窗序列（照增补六/七）**：门绿 → `GIT_SHA=4376648` → `docker compose --env-file deploy/.env.server build migrate` → `up -d --no-build` → `check_image_provenance.py --expect-container` = **MATCH**（build inputs clean，120 枚被跟踪模块逐字节比过）→ P-20 五 PASS 两 FAIL → 投 `Pasteur`。⚠️ `docker compose build backend` 仍会静默空跑，别用。
 9. **⚠️ 本班一次自曝**：为查模型在不在位，本席在**宿主机**敲了 `ollama ps`，它顺手把桌面版 Ollama（`E:\Ollama` 0.33.2）拉起来——真正服务的是容器 `enterprise-brain-ollama-1`，`qwen3.5:9b`（＝`LOCAL_MODEL_NAME`）在容器里，宿主只有 `qwen2.5:14b`＋`nomic-embed-text`。**查服务层读数先确认自己在哪一层**，别拿宿主那层的模型名当缺证据。宿主那枚实例要不要收，本席没动（不动容器/不杀进程）。
 10. **业主侧（不堵 run10，堵 A① 与客户尺寸两格）**：外来 CUDA 训练链一停一开两次 ⇒ A① 的 p95 必须在**整窗无 GPU 竞争**时才有救；其余照旧：H13 未裁项、A1/A3 回填、`INDEX_BACKEND=pgvector` 翻默认（**`up -d --force-recreate` 不是 build**）、评测集 29 条 `must_contain` 改题授权、R487 三十枚演示账号、第二验证机 `192.168.254.128` 不可达、`MODEL_CONTEXT_TOKENS` 与 Ollama `num_ctx` 配套。
+
+
+
+## 4ED 第九班（09-30 18:0x–18:5x·总线·主树 `5f61bc7`→`59a9506`→`7c798e4`→`0e7ec69`→`d36736b`→`4572aa8`·单模型未切换·心跳两枚仍 `PAUSED` 一枚没碰）
+
+**一句话**：本班第一件落地的不是派工，是**给两枚执行层翻案**——上一班那桩「执行层越权跑全量门」是总控自己把一枚门读成了两枚；然后波次五收口三枚、把 25 枚门红里 21 枚的**坐标腐坏**一次重落，并挖出两枚会造假的机械缺陷。
+
+### 一、🔴 翻案（本板最值钱一条，凭据可复跑）
+
+`.venv\Scripts\python.exe` 每起一枚，Windows 上就长出一枚 `C:\Users\fengx\anaconda3\python.exe` **同名子进程**（`pyvenv.cfg` 的 `home = C:\Users\fengx\anaconda3`、`sys.base_prefix = C:\Users\fengx\anaconda3`）。现场实验＝本席自己那枚 `-n 6` 门的活体树：`46064(venv run_gate)→44100(anaconda run_gate)→19076(venv -m pytest)→48944(anaconda -m pytest)→6 对 worker(venv+anaconda)`。⇒
+
+- 旧账「17:22:09 同一秒两枚 `run_gate.py`（venv 一枚＋anaconda 一枚）、12 worker 抢 8 GB」**＝一枚门读成两枚、6 个 worker 数成 12 个**；「17:51:51 一枚外来 anaconda `-n 7` 门」＝本席 17:52 自己那枚（`gate2.log` 首行 `[run_gate] xdist -n 7`、mtime 17:52:52 同一分钟同一 `-n`）。
+- 两枚被冤枉的执行层各自交回自陈＋三条旁证（Hume：`.pytest_cache` mtime 停在 16:16:14、`nodeids` 只 180 枚、`scripts/__pycache__` 无 `run_gate` 的 pyc、命令清单只有显式件＋`-o addopts=`；Erdos：全程零 pytest，最长一枚是 `Wait-Process` 等门、零 CPU）。**本席独立核对后判定：越权跑门＝不成立，撤案。**
+- 那 24 分钟 99% 卡死的真因改记：**本席 `-n 6` 把空闲内存吃到 4.4 GB**（业主那枚 `train.py --device cuda` 17:44 起在占卡占内存），worker 全 0 CPU 空等、无套接字、日志冻结＝资源饿死不是死锁形状；同一 HEAD 改 `-n 4`＋**输出落文件不走 `Tee-Object`** 后 491 s 跑完。
+- **归因口径改死**：数门按「`-m pytest` 的枚数 ÷ 2」；引用任何「谁跑了门」之前先证明自己不是一枚门的两个壳。`~/.codex/AGENTS.md` 与本板同步这条。
+
+### 二、波次五收口（数字全是总控主树亲跑，dirty／clean 两态都点名交）
+
+| 单 | 并树 sha | 总控亲跑 |
+|---|---|---|
+| R535（`Erdos`，业主点名的「口子二」＝`MODEL_CONTEXT_TOKENS` 与运行时 `num_ctx` 配套自检闸） | `7c798e4` | 批1 两枚新件 dirty **60 passed**；批2＋批3 共 18 枚邻件 **322 passed**；干净树复跑 **60 passed**。`.env.example` 逐字节＝**纯注释追加、零删除、三枚缺省值一枚没动**（抬到 8192、并发 1→2 属业主侧且要配套容器重建，执行层一枚数字都没替业主改） |
+| R547（`Hume`，格③「欠什么」这一栏的账面改口） | `0e7ec69` | 两枚新钉＋R535 两枚＋`test_r469_readout_is_generated` 合跑 **108 passed**；干净树复跑 **33 passed**。量具三模式主树**逐句复现**：`--mode live --arm both` 两臂各 rc=2 点名 `ENV_DSN_UNSET`、`--mode shapes` 三形 rc=[2,1,1] 末行 `DEMONSTRATION_FIXTURE_NOT_A_MEASUREMENT`、`--mode reread` 状态 `SANDBOX_MEASURED_PRODUCTION_UNVERIFIED`（有牙格 5／越权 0／本可越界 200／池外 252／写入 72）。🔴 **一格绿没翻**，(a)(b)(c) 照旧「未验」，业主那句「合成标签只证行为、不证客户隔离」逐字在位 |
+| R534（`Singer`，V2 缺口按今天主树重验 308 行底稿） | `d36736b` | 文档族六枚件（r302／r491×2／r498／r349／**r367 行尾闸**）**154 passed**。它 §9 那句「V2 今天真正欠的码只有一枚＝R536」已随 `7e1c221` 兑现 ⇒ **波次六的活不在代码，在窗口与账面**；§5 那张「看起来缺其实已并树」表 12 行里有 5 行旧纸还写着「欠」，派工前必须先复跑它 |
+
+### 三、25 枚门红 = 21 枚坐标腐坏 ＋ 4 枚跨件污染（`4572aa8`）
+
+病根唯一：`7e1c221` 往 `app/api/v1/chat.py` 净插 24 行 ⇒ 其后每一枚手抄行号 +24（4469-4471→4493-4495、4470→4494、4479-4483→4503-4507、4487→4511、4043-4127→4067-4151、4615/4629/4643/4718→4639/4653/4667/4742）；`7c798e4` 再往 `app/agents/nodes.py` 插 106 行 ⇒ 血缘第 3 跳同腐。一笔之内**只走量具自己的成品串，一枚数字不手算**：`r387_label_lineage.py` 的 `LINEAGE_DOC_CELLS` 落血缘表 7 格＋`docs/perf/r387-label-lineage-2026-09-27.md` §9.3 那 8 格（逐格取自 `test_r492` 自己印出的「表里印 X、现读 Y」）＋表下正文 2 处；`r455_gapdoc_coordinates.py` 自带的 `land_cells` 落缺口单 5 格（`--emit-doc-cells` **只印不写**，写盘必须走 `land_cells`——§4EC 记过一次，本笔照做）。⇒ 坐标族五件 **95 passed / 2.92 s**。
+
+### 四、🔴 本班挖出两枚**会造假的机械缺陷**（都立单，不代修）
+
+1. **R552｜铺树器对新件的行尾按 siblings 猜，猜出来的是不稳定态。** `scripts/r531_worktree_merge.py` 对在册件按盘上行尾归位（它 docstring 里为 `test_r48` 的 D1 锚点专门改过，是对的），但新件退回 `sibling_convention()` 多数决——`docs/testing/`／`scripts/`／`tests/` 各抽 12 枚全是 LF，于是把新件铺成 LF；本仓 `core.autocrlf=true` 且**没有 `.gitattributes`** ⇒ 一次全新检出会把它们变回 CRLF。后果实测＝R547 那枚「纸的换行符必须成对」的钉 **12 枚红**，本席手工把 8 枚新件归成 CRLF 才并得动（手工归位恰恰是这枚铺树器存在的理由所要消灭的东西）。同一条形状今天咬了两次：`test_r469_readout_is_generated.py` 两枚在 worktree 里先天红＝同一个病。
+2. **R553（候选，尚未派）｜全量门里躺着跨件污染，这类病既能造假红也能造假绿。** `tests/test_r301_upload_readout.py` 在同一枚门里前 3 枚过、第 4 枚起 `NameError: name 'PDF_DEGRADATION_REASON_GROUP_CAP' is not defined`——而这枚名在 `app/api/v1/chat.py:4328` 明明在位。取证：单跑该件 **23 passed**；与同 worker 前一件 `test_r21_embedding_fail_closed.py` 合跑 **46 passed**；只在完整门的 gw2 序列上犯（门里那 4 枚在 45%）。⇒ 形状是「某枚件把 `chat` 模块全局弄缺了没还原」。头号嫌疑＝`tests/_temp_edit_overlay.py:146` 的 `exec(compile(text), module.__dict__)`（反证刀把改过的源文 exec 进**活体模块**）。缺一条 autouse 守卫：逐枚用例后比 `vars(chat)` 的键集合与 AST 声明的模块级名，缺了就当场点名是谁弄的。
+
+### 五、派工通道现状（下一班必须照这个打，别再试 spawn）
+
+- 🔴 **`spawn_agent` 开新线程＝必死**：投出 1 秒报 `Invalid 'id': message id must be a string starting with 'msg_', got 'at_...'`（本班现取两枚 errored 回执，request_id `d4ccbf94-…`／`a5426c7a-…`）。本席模型是 `bailian / qwen3.8-flash`（`config.toml` 现取 `model_provider = "bailian"`），子线程继承它 ⇒ 建树即死。两枚 errored 线程 18:4x 已 `close_agent` 腾槽，零落盘已取证（`be-r550`／`be-r551` 建好但 `dirty=0`）。
+- ✅ **复用已存在线程 `send_input` 完全正常** ⇒ 上一班「等业主手动开线」的三张单本班全部投出去了：R550→`Kuhn`、R551→`Hume`、R552→`Erdos`。三枚都带：写域、判据、`apply_patch` 坏＝here-string、判 EOL 必须在原始 bytes 上、时间闸（本席门期间不许起 pytest）、只交终局三样。**这条是本机并行开发今天唯一还能用的通道。**
+- 本班一枚排程错记在自己账上：给 `Kuhn`／`Hume` 的时间闸写的是 18:15–18:35，而门 18:43 才起重开 ⇒ 它们 18:35 后起的 pytest 与本席的门撞了同机内存（没造成假红，18:47 实测 6 枚 `-m pytest`＝三枚串行件与门同跑）。**今后时间闸一律「门 exit 之前」而不是写死分钟。**
+
+### 六、交下一班的四句
+
+1. `docs/handoff/2026-09-30-v2-gap-recheck-3.md` §5 那张「已并树」表复跑一遍再派工——**拿过期读数派工＝派重复单**，这条两天内第三次记。
+2. 生产臂那四件（`R547` 的 `--mode live --arm production`）**今天仍不代取**：宿主 5432 上是 §9.4 那台没有 `vector_scope` 的野 PG，而**镜像落后主树**——往容器里塞量具量的是旧代码，那读数会是假证据。等 `build migrate` 之后重取，别在重建之前取。
+3. 引用任何数字前先查有没有被后续实测推翻：`4572aa8` 的门数见本节末；`b86b9e2` 那句「62 行纯追加」是假账（常规 numstat **98/71**，只有 `--ignore-cr-at-eol` 才是 27/0——那 70 枚 lone LF 被落账写回抹平成 CRLF＝一笔没被声明的真 blob 改动），已 amend 成 `59a9506` 并写明。
+4. 心跳 `automation-2`／`autodl` 仍 `PAUSED`，`target_thread_id` 还指着死线程——**业主让它改到本线程或干脆别开**（业主明令开人工提醒会弄死线程，本班一枚没碰）。
+
+（门终数·`4572aa8`：`-n 4` 跑完 **21 failed ＋ 1 error ／ 9621 passed ／ 52 skipped ／ 2 xfailed ／ 471.87 s**，本班记账时尚未拆开那 15 枚内存性假红——拆分、凭据与治法见 §4EE 第一至三节，最终门数见 §4EE 第三节末行。）
+
+## 4EE 第九班续席（09-30 22:5x–09-30 深夜·总线·主树 `4572aa8`→`fd3df1f`→`f3f24b6`·单模型未切换·心跳两枚仍 `PAUSED` 一枚没碰）
+
+**一句话**：接班第一件事不是派工，是**把 21 枚门红拆开**——6 枚真红、15 枚内存性假红；其中一枚假红差点把 R337 的并树账改成「零提交」那样的假账。然后本席自己下地治掉最后那枚真红，门从 `21F＋1E` 走到 **exit=0**。
+
+### 一、🔴 21 枚门红拆开：6 真 ＋ 15 假（假红那族有现取凭据）
+
+- **假红 15 枚**＝同一枚门日志里的内存／提交电荷争用：`MemoryError` **19 次**、`OSError [WinError 1455] 页面文件太小` **2 次**、`OpenBLAS error: Memory allocation still failed after 10 retries` **3 次**；红面全落在「起子进程／冷导入／读整本大纸」那一族件上。反证：同一批 22 枚在安静机单跑，只红那 6 枚。
+- **真红 6 枚**＝一个根因：`7c798e4`（R535）在 `app/agents/contracts.py` 上方新插一枚 import 行，把 `Principal.department = ...` 那枚锚从 `:38` 顶到 `:39`；血缘纸 §1 表跟着派生走了、§8.7 表外正文那句「未漂移的引用逐枚现读」没走 ⇒ 同一本纸上并排两把尺。治法按 `test_r490` 自己的成对叙述口径写「旧 `:38`／派生今值 `:39`」，今值取自 `resolve_site` 现场交回。**为什么不能整行降回历史账**：`scan_doc()` 里 `if live and not settled` 会把「挂着目标文件现读坐标却一枚都没核」当场判红——两枚都贴历史标号等于这格今天没在量东西。并树 `fd3df1f`。
+- **🔴 一枚差点变成假账**：`test_r408_docs_say_what_the_tree_does.py` 在门里报「R337 现查零提交（`git log --all --grep=R337` 空读数），第 37 行没写「零提交」」，要的就是把 wave3／wave4 两本派工计划里 R337 的并树账改口。主树现取：同一枚 grep **6 枚命中**、`aefa3ce` 是 commit 且在 HEAD 祖先里。⇒ 那个空读数是 **git 子进程在内存饿死时起不来**，不是树里没提交。**立规矩：量具报「查无」之前，先证明它自己起得来。**（`AGENTS.md` 那句「报不存在前先确认在哪一层查」今天多一个失败形状：层对，工具没跑起来。）
+
+### 二、最后那枚真红是钉自己不干净（R554，本席亲修，`f3f24b6`）
+
+`test_r548_queue_lane_registers_the_piece_sink.py::test_the_published_readings_do_not_move_when_pieces_flow` 在 gate4／gate5／gate6 三门连红，多出来的那一行是 `app/trace/durability.py::note_local_fallback()` 的「头一枚与每第 `_RELOG_EVERY` 枚各重登一次」告警，而 `count` 是**进程全局**——同 worker 里前头的件把它推过边界，本单那句「日志面逐字相等」就凭空多一行，主语还是别人的 request_id。R548 只备了「warm-up 轮榨一次性告警」那一手，没覆盖周期性重登这一手：所以它在自己那枚干净进程里绿、在满门的第 100 枚边界上红。
+治：`_run_round()` 每轮前 `durability.reset_durability_ledger()`——这本是 r250／r257／r263／r272 那一族在册件的既有纪律（前后各括一次归零），R548 漏了；🔴 比较面一字不放宽。补两枚牙：不归零必见 `occurrences >= interval`、归零必不见（边界值现读自 durability，不抄 50），另钉「归零只归计数器，账（枚数／字数／终态／历史）一格不许跟着动」。凭据纸 `docs/testing/r554-gate-false-reds-and-the-relog-counter.md`。
+
+### 三、门数（全部总控主树亲跑，执行层零参与）
+
+| HEAD | 跑法 | 读数 |
+|---|---|---|
+| `4572aa8` | `-n 4`，隔壁两枚执行层同时在自验 | 21 failed ＋ 1 error ／ 9621 passed ／ 52 skipped ／ 2 xfailed ／ 471.87 s |
+| `4572aa8` | 安静机＋线程上限（`OMP`／`OPENBLAS`／`MKL`／`NUMEXPR`＝1）`-n 4` | **1 failed ／ 9638 passed ／ 57 skipped ／ 1 xfailed ／ 432.84 s（门 441.1 s）**，内存族三样计数全 **0** |
+| `f3f24b6` | 同配置，干净树复跑 | **9641 passed ／ 57 skipped ／ 1 xfailed ／ **0 failed** ／ 422.70 s（门 430.9 s），exit=0**，内存族三样计数仍全 **0** |
+
+🔴 未做的对照：安静机与线程上限**两个变量同时改**，没做单变量 A/B ⇒ 只许报「二者之一或共同」，不许写成「上限治好了它」。落 `R555` 候选：`scripts/run_gate.py` 的 `fit_workers()` 只看 `ullAvailPhys`、**不看提交电荷（`ullAvailPageFile`）**，而今天的失败形状恰恰是电荷耗尽（`run_gate.py:68` 现读 `min(8, free // 2)`）；线程上限要不要写进脚本，得在真实争用形状下取数——而那形状正是本板明令避免的撞机。
+
+### 四、主树「脏」的真相（别再照着 `git status` 派工）
+
+`git status --porcelain` 现取 23 行，其中 17 枚在册件 `git update-index --refresh` 报 `needs update`，但**逐枚 `git hash-object --path` 与 `HEAD:<path>` 全等**＝假脏（stat 缓存，零内容差）；真差只有 `chroma_db/chroma.sqlite3` 一枚，按规矩**永不提交**。另 5 枚 `??` 是本板自己造的壳：`%SystemDrive%/`、`-`（731 B）、`.tmpfix/`、`.zcodeignore`，以及业主的作业目录 `课程实践-对象建模-企业智脑/`。前四枚属**业主删除权**，本席一枚没碰。
+
+### 五、在途三枚（都走 `send_input`，本席一枚 `spawn` 都没试）
+
+- ✅ **新开的口子（推翻本板上游一条结论）**：`send_input` 报 `agent ... not found` 的线程**不必定死**——`Hume`（`01a0f0e6-…`）与 `Erdos`（`01a0f03c-…`）都是 not found，`resume_agent` 之后 `send_input` 正常落地并交回长文。⇒ 上一节那句「出路只有把单写进跟进单等新线程，或业主手动开线」要改窄：**已存在但已关闭的执行层线程可以复活续用**，业主开线不再是唯一出路。🔴 仍然不许试 `spawn_agent` 开**全新**线程（09-30 实测两枚双双秒死）。
+- `Kuhn`｜R550｜`be-r550`（`59a9506`）｜治 `scripts/r483_empty_tables_triage.py` 爬不过「事件发射→投影→写句」｜本席 22:5x 下调度令后未回，写域内 2 枚 `M`。
+- `Hume`｜R551｜`be-r551` 已 `merge --ff-only 4572aa8` rc=0｜`chat.py` 批准续跑轮 trace 抢跑 ⇒ 失败轮永远写 `completed`。它自曝一条本席要记进纪律的事：**接手时盘上那枚 `chat.py` 不是修复态而是 K1 变异残留**（上一段刀脚本 `finally` 没跑到），它按 `%TEMP%` 备援逐字节复原并复验 sha／CRLF 计数／AST 出口行序——**刀脚本的 `finally` 必须落备援校验**，否则残料会被下一班当产品读。它还报派工词坐标第三起不符（写「R548 那三件」现取只有 2 枚，它按 2 枚跑没凑第三枚）。欠四样全是 CPU 活，要 10–12 分钟独占窗。
+- `Erdos`｜R552｜`be-r535`（基点 `05bec06`，追平被 checkout 保护拦住，已裁备份道）｜它把本席派工词里那句前提**往下又凿了一层**：真因不是「按 siblings 猜错了」，是 `sibling_convention()` 统计的是 **blob 行尾**（`git show HEAD:<path>`），而 `core.autocrlf=true` 下文本件 blob 恒 LF ⇒ 那一格**结构上只会答 LF**，抽多少枚都一样。全仓普查：`i/lf w/crlf` 1048／`i/lf w/lf` 314／`i/lf w/mixed` 36／`-text` 72。🔴 本席独立复核其中三样：`docs/testing/r536-retrieval-trace-emission-2026-09-30.md` 现取 `i/lf w/lf`（同批 r535／r547 三枚新纸三枚钉全 `w/crlf`）、`w/lf` 总数 **314**（与它报的逐字相同）、`core.autocrlf=true` 来源 `file:C:/Program Files/Git/etc/gitconfig`（system，非 local）。裁定：批准它钉「新件落盘行尾＝**检出形态**」而不是「一律 CRLF」；`sibling_convention()` 降级为诊断不删；`target_convention():139` 那格它不动，本席批了，但要求把「blob 形态冒充检出形态」的残留写成**在册欠账**，不许报成已修好。
+
+### 六、下一班四句
+
+1. 🔴 门是**安静机**的函数：跑门之前先 `Get-CimInstance Win32_Process -Filter "Name like '%python%'"` 数一遍（记得 ÷2），有执行层在自验就排队，别同跑——本板两天内被同一枚病骗了三次（假红 15 枚、假「查无」1 枚、上一班那桩冤枉人的「越权跑门」）。
+2. 引用任何「某单零提交」之前，先证明 `git log --grep` 那枚子进程真的起得来。
+3. `R555`（门自选不看提交电荷＋线程上限的单变量对照）与 `R553`（跨件污染：`tests/_temp_edit_overlay.py` 把改过的源文 `exec` 进活体模块 ⇒ 既能造假红也能造假绿）都还**没派**，本板只有候选号。
+4. 心跳 `automation-2`／`autodl` 仍 `PAUSED`，`target_thread_id` 还指着死线程——业主明令人工提醒会弄死线程，本席一枚没碰。
+
