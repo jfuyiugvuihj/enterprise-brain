@@ -599,7 +599,7 @@ async function openSession(id) {
 // `lib/sessions.js` 里 createStreamReducer——canonical＝`request.completed` 分支（:481）、legacy＝`done` 分支（:575，非空才抄、先到者胜）。前者除 awaiting_hitl／
 // awaiting_steps 之外把 data_filename 抄成 state.terminalDataFilename，且只在【亲眼读到字符串】
 // 时才写这一枚键（读不到就整格缺席，与下面 serverDataOf 的「不画」同一态）；面板再走
-// adoptServerDataRead 抄进这一轮。三态与「不许拿发依据填」的钉：r415 与 r424 两件用例。
+// adoptServerDataRead 抄进这一轮；排队那一轮另有一条腿（R519 的 adoptQueueDataRead 读 /queue/status 的终态读数，同一格、同一落点）。三态与「不许拿发依据填」的钉：r415 与 r424 两件用例，队列道那一支在 r519。
 // 清单是 lazy 读的：挂载期一枚请求都不发（r260 己1 钉着），伸手才读。
 
 const dataFiles = ref([])
@@ -1542,6 +1542,32 @@ function applyQueuedAnswer(key, answer) {
   syncActive()
 }
 
+/**
+ * R519 · 队列道那一格的屏侧读者：`GET /queue/status/{id}` 的终态读数里有 `data_filename` 才抄。
+ *
+ * 上面那一支（同步道与批准续跑）读的是 SSE 终态帧，抄法叫 adoptServerDataRead；排队那一轮在
+ * `queued` 回执之后就离开了那条流，服务端「这一轮真算的是哪份文件」改由这扇轮询面交回来
+ * （app/api/v1/chat.py::queue_terminal_readout：载荷里有那一格才照说，没有就整格缺席）。落点与
+ * serverDataOf 读的是同一格，所以那一句不必认腿。
+ * 🔴 三态照旧，但队列这扇面只到场两态：报名字（读到非空字符串）与不画（整格缺席——R504 之前的
+ * 旧行、那一轮零枚或多枚，后端都不落这一枚键）。「说不准」在这里没有对应物：`terminal_data_filename`
+ * 交空串时挂载件就整格不落键，投影件又只搬非空的那一枚，所以本件收到空串同样不写 —— 写出去就是把
+ * 「后端没说话」说成「后端说了说不清」。上面那枚 `read` 刻意没多带这一格：它是排队脸的输入，
+ * 键集不该被本单扩宽。也不拿 msg.dataFilename（发依据）顶它。非空才抄、先到者胜，与 lib/sessions.js
+ * `done` 那一支同一条优先级：两枚同源，后到的不许给先到的改口。
+ */
+function adoptQueueDataRead(key, readout) {
+  const read = typeof readout?.data_filename === 'string' ? readout.data_filename : ''
+  if (!read) return
+  const index = messages.value.findIndex((msg, at) => turnKey(msg, at) === key)
+  if (index < 0) return
+  const msg = messages.value[index]
+  if (serverDataReads.value[key] || msg.serverDataFilename) return
+  serverDataReads.value = storeBag(serverDataReads, key, read)
+  msg.serverDataFilename = read
+  syncActive()
+}
+
 function watchQueueTurn(key, requestId) {
   if (!requestId) return
   if (queueWatches.some(item => item.key === key)) return
@@ -1578,6 +1604,8 @@ function watchQueueTurn(key, requestId) {
       queueReads.value = storeBag(queueReads, key, read)
       queueFaults.value = storeBag(queueFaults, key, null)
       if (read.status === 'done' && read.result) applyQueuedAnswer(key, read.result)
+      // R519：队列道那一格同样只在后端真交回来时才抄，缺席与空串一个字都不写。
+      adoptQueueDataRead(key, status.data)
       if (QUEUE_SETTLED.includes(read.status)) stop()
     } catch (err) {
       queueFaults.value = storeBag(queueFaults, key, err)
