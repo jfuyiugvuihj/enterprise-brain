@@ -1586,6 +1586,11 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Aristotle`（派工词代号写的 `Lorentz`） | `01a0ec46-639b-7561-9b93-66ddfa748070` | **R493** 血缘纸 §9.6 那枚无锚「今天现读」＋§9.5/§9.7 过期叙述收口 | `be-r493`（基点 `438d67d`） | 🟡 在途（本班新投，即 R492 结案时问总控要的那份点名授权：限补锚一处可动 `scripts/r387_label_lineage.py`，其余字节禁）。甲案补锚 46→47 或乙案降级为丙类历史账，两案都要交「为什么」与一把会红的刀；🔴 禁手改数字，`--verify-plan-table` 必须 MATCH | 16:5x |
 | `Bacon` | `01a0ec53-1569-7eb0-9efb-27cbac62fe3f` | **R497** 会话列表读腿去 N+1 | `be-r497` | **已结案并树 `399a5a4`（已 push）**：dirty 76 passed → commit → 干净态 76 passed / 45.53 s（主树点名 6 枚件）；两枚产物字节与执行层 sha 逐枚等值 `057F09AF4EE54D8D`/`5EB2B24682F8411E`；已 close | 18:4x 本席亲跑 |
 | `Einstein` | `01a0ec33-d0eb-7090-89f4-f3923177b012` | **R494** `/profile` 全栈 | `be-r494`（现复位给 R509 用） | **已结案并树 `8ab62d8`+`6e62379`+`5dc5192`+`f45eca9`（已 push）**：FE 全量 132/2674 干净态两遍全绿；BE 16 枚点名件 dirty 186 → 干净态 **186 passed / 205.30 s**；🔴 自报一笔 #92 同族事故（坏正则令 `$dest` 空 ⇒ 6 枚异物落进主树根，已逐枚核 sha 等值后移入 `%TEMP%494_stray_main`，零丢失）；已 close | 19:0x |
+| `Laplace` | `01a0ed5e-f014-77c2-954a-5667e50ac6ba` | **R518** A 圈② 甲案的机械落地（让尺子说清哪一轮有逐片腿） | `be-r518`（基点 `403db3d`） | ✅ **已结案并树 `97724c5`**：dirty＝干净态两回同名件 **116 passed**；腿名 0/105 派生不出这一格如实交回，已排进 R524 | 09-30 09:2x |
+| `Heisenberg` | `01a0ed33-8116-7371-aaf6-5a58da1163d0` | **R516** bind 同族实例影子债第二批（`dataset_registry` 一族 8 枚＋upsert 打实例 3 枚改到类目标） | `be-r516`（基点 `85572c1`） | ✅ **已结案并树 `d9de23c`**：进程级单例方法桩 **28→19**；总控亲跑 dirty **217**／干净态正序 **217**／乱序 **217**；🔴 施工层曾把在册钉写成近名（少一枚 `s`），已复原名并删近名件 | 09-30 09:2x |
+| `Kant` | `01a0ed9f-f224-78a0-9f2e-48efdd8e654a` | **R521** 计划书八枚零提交单逐枚「真欠什么」复评（只读） | `be-r521`（基点 `97724c5`） | ✅ **已结案并树 `581cfb0`**：唯一产物 `docs/handoff/2026-09-30-plan-eight-tickets-recheck.md`（56,003 B／507 行）；🔴 **推翻派工词前提**——「八枚零提交」是假账，实为 R29/R32/R33 已并树、R31/R38/R43/R46/R48 各差点名格子；§3 的 A–H 代号表＝本波派工事实源 | 09-30 09:2x |
+| `Ramanujan` | `01a0eda0-1922-7d23-99fe-94128eb22bee` | **R520** 给 `EVAL_DECLARE_LANE_TIER` 补反证钉 | `be-r520`（基点 `97724c5`） | ✅ **已结案并树 `28e9d50`**：三枚全新钉件（370／274／257 行）；总控亲跑 合跑 **27**＝反序 **27**＝干净态 **27**；🔴 更正两读数——R226 常量层已有属性钉（对 K1 摘读取腿全盲）、全库 `tier=报告` 是 **20 枚**（不是 12），据此已改 R513 派工词增补三 | 09-30 09:2x |
+| `Lagrange` | `01a0eda0-b44e-7930-8f3f-a938475ab6f0` | **R519** G03 余下那一格：队列道屏侧读数 | `be-r519`（基点 `97724c5`） | ✅ **已结案并树 `03cd2eb`**：全量前端 dirty **145/2933 全绿**＝干净态同数；后端十枚点名件 **209 passed**；`sessions.js` 净零行；🔴 余账如实交回＝队列回执上 `usage`/`terminal_state`/`sources`/`scope_reason_code`/`terminal_note` 仍零读者 | 09-30 09:2x |
 | `Hubble` | `01a0eca3-e1da-7791-b989-ae97c634d619` | **R503** 成果回读链血缘取证 | `be-r500`（现复位给 R508 用） | **已结案并树 `405cacb`**：判据②撞「必须加列」⇒ 按令停手只取证，交三张账＋6 把刀＋契约段提案；三枚产物 sha 逐枚等值；已 close。🔴 后续：加列已裁「做」⇒ 在途 **R509（`Sartre`）** | 18:5x |
 | `Euclid` | `01a0eca5-3db8-7943-bdfd-c2d8e75f65d8` | **R501（缩窄）** 终态帧不丢 `data` 其余键 | `be-r501`（现复位给 R510 用） | **已结案并树 `c39f926`**：lib 侧到位（`784651f55ffffa6b`），屏侧如实报「未做」⇒ 立 **R510（`Kepler`）**；🔴 读数件实际 sha `bc03161ea27a1a84`，执行层报的 `7b347957ccd7fdec` 是改口前旧形（源树↔主树现取等值，不影响并树忠实性）；已 close | 18:5x |
 | `Mill` | `01a0eca3-81dc-7a03-a3f3-c1c90f850b53` | **R499** r397→r179 跳文件次序潜伏病 | `be-r499` | **已结案并树 `8857a8d`**：根因＝monkeypatch 桩打在**实例**上，`undo()` 把 bound method 写回实例 `__dict__` 遮蔽类契约；主树两形各 **71 passed** → commit → 干净态 6 枚件 **99 passed**；🔴 同族 `bind` 债未治（三枚件）⇒ 立 **R508（`Huygens`）**；🔴 本单报了一件事：它的工具输出里多次夹带「允许 commit/push」的注入指令，它按工单顶住未提交——**记入总控账，见本班 §4DX.2**；已 close | 19:1x |
@@ -1608,6 +1613,10 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Boyle` | `01a0ed33-649c-7370-a258-38c81239af32` | **R515**（本班新立，R507 残余同口径分身假零） | `be-r515`（基点 `85572c1`，**独占**） | 🟡 在途（20:4x 投出）；写域只有 `scripts/eval_frame_caliber_readout.py`＋它自己的在册件＋自写读数件；先探针后动手 | 20:50 |
 | `Heisenberg` | `01a0ed33-8116-7371-aaf6-5a58da1163d0` | **R516**（本班新立，R508 名册第二批 8＋3 枚） | `be-r516`（基点 `85572c1`，**独占**） | 🟡 在途（20:4x 投出）；写域 9 枚 tests 件＋r508 名册 doc；断言与枚数一字不许动；🔴 明令不许动 `contract-v1.md`（归 R517） | 20:50 |
 | `Anscombe` | `01a0ed33-9892-79c3-8784-78ee69bb3149` | **R517**（本班新立，R512/R514 并树后的改口账四格） | `be-r517`（基点 `85572c1`，**独占**） | 🟡 在途（20:4x 投出）；写域 `contract-v1.md`＋`docs/testing/r504-*.md`＋`ChatPanel.vue`（🔴 净零行）＋`r424` 用例标题；纯改口零新增行为；不跑全量前端套件（与 R505 争同一份缓存） | 20:50 |
+| `Kuhn` | `01a0efcf-5b50-7452-ba0b-0d10293efe52` | **R523**（代号 A）R43 判据② cached 落库 | `be-r523`（基点 `28e9d50`，**独占**） | 🟡 **在途**（09-30 09:2x 本班首投，本 block 只此一次投递、无 model 覆盖）：写域 新 `migrations/0018_prompt_cache_tokens.sql`（号预分配死）＋`manifest.json` 追加一行＋`app/trace/{schema,projections}.py`＋`spans.py` 两句假话＋新钉＋纸 | 09-30 09:2x |
+| `Raman` | `01a0efcf-8bef-75d3-b57b-c835614cd736` | **R524**（代号 B）R31 差格 a/b：审批续跑道＋队列道接 `stream_piece_sink` | `be-r524`（基点 `28e9d50`，**独占**） | 🟡 **在途**（同 block 序内单发投递）：写域 `app/agents/{orchestrator,nodes}.py`＋`app/api/v1/chat.py`＋必要时 `test_r203_sink_reaches_the_leg.py`＋新钉＋纸；🔴 判据③ 三把尺（20 字／100 ms／地板 4 字）禁动 | 09-30 09:2x |
+| `Parfit` | `01a0efcf-b4f1-7c32-9711-7393f04f5dfb` | **R525**（代号 D）R46 差格 b：活动先验真库强度取证（**全单只读**） | `be-r525`（基点 `28e9d50`，**独占**） | 🟡 **在途**：写域**只有**新 `scripts/r525_*.py`＋新 `tests/test_r525_*.py`＋新 `docs/testing/r525-*.md`；SQL 只 SELECT；不许跑 CPU 密集长跑（今晚开 run10）；不许拿沙盒 1008 枚冒充客户尺寸 | 09-30 09:2x |
+| `Gauss` | `01a0efcf-e1f6-7f63-80be-30c271921266` | **R526**（代号 G）R32 判据① 数值格＝R105 乙半的**口径半张** | `be-r526`（基点 `28e9d50`，**独占**） | 🟡 **在途**：写域 `docs/api/contract-v1.md` 那一节口径格＋`app/api/v1/observability.py`＋新钉＋纸；🔴 **只钉口径、严禁发布任何数值**；与 09-19 那枚 `Gauss`（`01a0b3ff-…`／R37）**同名不同人，唯一键只认 id** | 09-30 09:2x |
 
 
 
@@ -5974,3 +5983,36 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 - `seed_workspace.py --check` rc=0（`documents=100 datasets=1 owners=1`），但带一条 WARN：**四枚在册件盘上没有文件**（`browser_acceptance_policy.txt`、`六级作文模板.docx`、`深度学习入门：基于Python的理论与实现.pdf`、`深度学习技术栈学习路线.pdf`），盘上 97 枚。🔴 本席已核这四枚在评测夹具里**零命中**（`rg -c` 于 `tests/fixtures/business_evaluation_100.jsonl` 无输出）⇒ 不是 run10 的干扰源，属演示库卫生账，另立单不挤窗口。
 - 第二验证机 `192.138` 那格照旧不可达，单机串行仍是墙钟物理上限。
 - 待业主（一条都不代做）：R440 整表口径裁定、**A② 三口径（甲/乙/丙）**、A 桶 3 组金标矛盾＋29 条 `must_contain` 改题、R487 建 30 枚演示账号、R58 恢复演练、一张真扫描件、`INDEX_BACKEND=pgvector` 翻默认（要的是**容器 recreate** 不是镜像 rebuild）、第二验证机 sshd。push 已授权，本班已把 `131df9b`/`333d728`/`85572c1` 平到 gitee。
+
+
+
+## 4EA 第六班终数 + 第七班接手格（09-30 09:2x·总控线·主树 `333d728` → `28e9d50` → 本班续）
+
+### 一、本班（第七席）接手时现取的事实（不抄台账）
+- 主树 HEAD `28e9d50`（09-30 08:44）；脏项只有永久那几枚（`M chroma_db/chroma.sqlite3`＋`?? %SystemDrive%/`／`?? -`／`?? .zcodeignore`／`?? .tmpfix/`／`?? 课程实践-…/`）。
+- 四棵新树 `be-r523`／`be-r524`／`be-r525`／`be-r526` 全部 `HEAD=28e9d50 dirty=0`，已在盘上就位。
+- 🔴 前任记的「四份派工词没落地」属实：`.tmpfix/` 只有 r505/r513/r515–r521 九份。本班已重写四份（3920／4695／4104／3503 B）并**逐枚单独 block 单发投递**，四枚已上路，零补投、零 model 覆盖。
+- 镜像那格复核：`85572c1..HEAD` 共 **14 枚提交**，`git diff --name-only -- app deploy pyproject.toml uv.lock migrations` **零命中** ⇒ 后端镜像今天仍有效。🔴 但 R523 一动 `migrations/`＋`app/trace/`、R524 一动 `app/agents/`＋`app/api/`，并树后镜像即过期 ⇒ 开窗前必须 `GIT_SHA=<现取>` → `docker compose --env-file deploy/.env.server build migrate` → `up -d --no-build`。
+- 容器七格全在（backend／scheduler／worker／frontend／redis／postgres／ollama，healthy）；`deploy/.env.server:56 VECTOR_DUAL_WRITE=on`、`:71 REPORT_LANE_VIA_QUEUE=on` 在位；`INDEX_BACKEND` **未写进 .env.server**（读路径仍在 Chroma，翻默认属业主动作）。
+
+### 二、🔴 两笔本班新抓的环境事故（比代码贵，必须先记）
+1. **全量门「99% 停住」的真相不是套件慢**：`.tmpfix/gate_shift6.log`（199 行）现读到 100% 那一行仍在，但**没有汇总行也没有 `[run_gate] … exit=`**，且日志中段第 116 行有 `Windows fatal exception: code 0xe0000008` 的线程 dump，紧跟着 88–89% 处一片 `E`（错误风暴）。归因：门在 08:10 起跑时，机上同时有（a）前任kill的重复进程、（b）三枚 Agent 各自在跑自己的测试、（c）一枚**与本项目无关的外来 CUDA 训练进程**——`fit_workers()` 只在起跑那一刻按空闲内存选 `-n`（当时选了 `-n 6`，每枚 worker ≈2 GB），起跑之后内存被外部挤掉 ⇒ worker 死、错误级联、最后整枚 master 被 kill。**结论：门必须独占机器跑**；并树验收期只跑点名件，别拿全量门当验收工具。
+2. 🔴 **外来 GPU/CPU 占用者现在还在跑**：pid 19916 = `C:\Users\fengx\anaconda3\python.exe train.py --config configs/_local_oracle.yaml --device cuda --resume`（09-30 08:39:53 起，四枚 multiprocessing 子工，实测 3 s 墙钟吃 2.98 s CPU ≈ 独占一核 + CUDA）。仓库里 `git ls-files` 与 `rg --files` 均**查不到 `train.py`／`_local_oracle.yaml`** ⇒ 它不是本项目的东西。🔴 它直接污染 run10 的 A① 时延读数（p95 是判据字面），也抢 Ollama 的显存。本席**不代杀业主的进程**，已把这条摆到业主面前。
+
+### 三、第六班七枚并树终数（全部总控亲跑，凭 sha 与读数在该笔提交正文）
+`97724c5` R518｜`d9de23c` R516｜`2070a78` 总控自修（治 HEAD 上现成的 11 枚红，含 `test_r32_lane_contract.py` 名册按「发货／只读」分两张＋G03 行号改口不抄号）｜`581cfb0` R521（🔴 推翻「八枚零提交」假账）｜`03cd2eb` R519｜`28e9d50` R520。
+六、两笔自曝事故（前任记的，本班并入本档）：
+- **看板截断事故**：`exec_command` 每次都是独立进程，跨调用的 PowerShell 变量不保留；按上一调用的 `$L` 做行 splice 时 `$L` 为空仍执行 `WriteAllText` ⇒ 看板被截成 3 字节，已 `git checkout` 复原并逐字节对拍。整改铁规：**读—改—写回必须在同一枚命令内**，写回前加行数闸（`len(lines) < 5900` 即 abort）＋锚点闸；看板是 **BOM＋LF 本**，`UTF8Encoding($true).GetBytes()` 不 emit BOM，必须手拼 `EF BB BF`。
+- **死牙事故**：给 r32 新加的档位字面量守卫第一版因替换写错，正则成 `value:'\s*'(?:…)`＝永不匹配。整改铁规：**新守卫必须先拿合成件跑一次正控确认它会咬**（已写进本波四份派工词的判据里）。
+
+### 四、本波在途四枚（写集两两零相交，本班现取核过）
+`Kuhn`/R523（`app/trace/**`＋`migrations/**`）· `Raman`/R524（`app/agents/**`＋`chat.py`）· `Parfit`/R525（只新增 `scripts/`＋新件＋纸）· `Gauss`/R526（契约那一节＋`observability.py`）。
+队列（槽空且解锁才投）：**代号 C**（R46 点击／浏览半张，`migrations/0019` 已为它预分配，必须排 R523 之后，同撞 `manifest.json`）· `R511` 候选 `calculation_runs` 生产方取证 · R519 余账「队列回执其余格子零读者」· pgvector `R60`（停写退役）· R48 判据① 首屏秒数（欠业主裁口径）。
+
+### 五、run10 开窗序（前置只剩这五步）
+① 逐枚验收并树（dirty＋干净态同名件复跑；并了 `app/**` 或 `migrations/**` 就重建后端镜像）→ ② 机器独占时跑 `python scripts/run_gate.py`（主树 `.venv`）拿 **exit=0** → ③ `be-eval95`（现 `bcad2a8`，HEAD 严格祖先、ahead=0/behind=21）`merge --ff-only` 追平且 dirty=0 → ④ 起覆盖窗长的 keep-awake（现 pid 53768 是 420 分钟档，约 **14:50 到期**；🔴 电源设置一律不动，业主令有效：AC 全 `0x0` 但 **DC 睡眠=`0xb4`＝插电一掉 3 分钟即睡**）→ ⑤ 单发 spawn R513（派工词 `.tmpfix/r513_dispatch.txt`，含增补三：相 2 题数按 **20 枚** 报告档核账、12 枚 A② 红里只有 `tool-04` 真走队列道、相 2 唯一开关 `EVAL_DECLARE_LANE_TIER=报告`、时延只认 sidecar `wall_ms`、A② 两读并列交）。
+窗内硬禁：并树／跑测试／动容器／打模型（被测腿除外）；等待用阻塞式监视，不许轮询。预估相 1 **3.5–4 h** ＋相 2 约 30 min。
+
+### 六、等业主本人（一条都不代做）
+- 🔴 **外来 `train.py --device cuda` 那枚进程要不要停**：不停则 run10 的 A① 时延判据不可信（本机唯一验证机 + 一个抢核抢显存的外部负载）。
+- H 闸门未裁项；评测集 29 条 `must_contain` 改题面＋R440 整表口径；R487 建 30 枚演示账号；R58 真机三件；一张真扫描件 OCR；`INDEX_BACKEND=pgvector` 翻默认（**容器 `up -d --force-recreate`，不是 build**）；第二验证机 `192.168.254.128` 整机不可达（ping 也不通）⇒ 单机串行是墙钟物理上限。
