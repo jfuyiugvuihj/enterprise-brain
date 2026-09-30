@@ -1,0 +1,4 @@
+﻿2026-09-30 12:50:25
+PID=49768
+SAMPLER_PID=System.Diagnostics.Process (Idle)
+SAMPLER_PID=23680
