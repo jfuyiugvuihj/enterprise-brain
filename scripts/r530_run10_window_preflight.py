@@ -70,15 +70,25 @@ def read_gpu_apps():
 
 
 def read_create_time(pid):
-    script = "(Get-Process -Id " + str(pid) + " -ErrorAction SilentlyContinue).StartTime.Ticks"
+    """进程创建时刻（UTC epoch 秒）。
+
+    🔴 别拿 `StartTime` 那串 ticks 去减 .NET epoch：Windows PowerShell 5.1 交回的是**本地**
+    DateTime，那样算等于把创建时刻往后挪一个时区（本机 +8 h）。09-30 run10 就栽在这格——
+    P-20 报「keep-awake 剩余 608 min」，同一时刻真值 123 min，本席据此在派工词里作废了
+    「约 14:50 到期」那句正确读数（增补五），开窗执行员又照那句去防，白折腾一趟。
+    改成同一枚时钟做差：PS 里 `(Get-Date) - $p.StartTime` 拿的是 elapsed，本侧再用
+    `now - elapsed` 换回 epoch，时区从头到尾不参与运算。
+    """
+    script = ("$p = Get-Process -Id " + str(pid) + " -ErrorAction SilentlyContinue; "
+              "if ($p) { [Math]::Round(((Get-Date) - $p.StartTime).TotalSeconds) }")
     code, out = run(["powershell", "-NoProfile", "-Command", script])
     if code != 0 or not out.strip():
         return 0.0
     try:
-        ticks = int(out.strip().splitlines()[-1])
+        elapsed = float(out.strip().splitlines()[-1])
     except ValueError:
         return 0.0
-    return (ticks - 621355968000000000) / 10000000.0
+    return time.time() - elapsed
 
 
 def read_env_flags():

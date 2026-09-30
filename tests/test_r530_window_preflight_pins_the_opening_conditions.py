@@ -170,3 +170,27 @@ def test_j_in_repo_is_case_insensitive_on_the_root():
     assert gate.in_repo(REPO_PY.upper()) is True
     assert gate.in_repo(FOREIGN_PY) is False
     assert gate.in_repo("") is False
+
+def test_r530_create_time_collects_with_one_clock_not_the_dotnet_epoch(monkeypatch):
+    """采集腿的牙（R549·总控自修）：本机时区_once_把 keep-awake 剩余时长虚报了 480 min。
+
+    两道：形状钉不许 `.Ticks` 与 .NET epoch 常数回到这件里；行为钉喂一枚「已经跑了 3600 s」
+    的假 PS 读数，要求换回的 epoch 落在 `now - 3600` 两秒之内——时区若回来，差值是 8 小时级。
+    """
+    import inspect
+
+    src = inspect.getsource(gate.read_create_time)
+    assert ".Ticks" not in src, "采集腿又拿本地 Ticks 当 UTC 换了"
+    assert "621355968000000000" not in src, ".NET epoch 常数回来了，keep-awake 又要虚报 8 小时"
+
+    calls = []
+
+    def fake_run(cmd):
+        calls.append(cmd)
+        return 0, "3600\r\n"
+
+    monkeypatch.setattr(gate, "run", fake_run)
+    monkeypatch.setattr(gate.time, "time", lambda: 1800000000.0)
+    started = gate.read_create_time(4242)
+    assert abs(started - (1800000000.0 - 3600.0)) <= 2.0, started
+    assert calls, "采集腿没走 PS 量具——读不到不等于零"
