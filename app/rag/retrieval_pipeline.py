@@ -7,8 +7,12 @@ import os
 import re
 import threading
 import urllib.request
+import hashlib
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
+from time import perf_counter
 import numpy as np
-from typing import Optional
+from typing import Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     from rank_bm25 import BM25Okapi
@@ -969,6 +973,10 @@ class RetrievalPipeline:
 
         ``context_pack`` 原样转给 :meth:`search`：装不装箱由调用方（结果会不会进 prompt）
         决定，本层不替它判断。
+
+        这一层还是产品问答道**唯一**的检索留痕发射点（R536）：每一发按 Principal 权限跑完的
+        检索交出一枚 ``retrieval.completed``，``retrieval_traces`` 因此才有产品数据可查。
+        发射实现在本文件末节，判据与口径全在那里。
         """
         scope = resolve_document_retrieval_scope(principal)
         # tier 不传时由 search() 读环境变量决定：调用方一行不改也能整条链路分档。
@@ -976,11 +984,25 @@ class RetrievalPipeline:
         # 决定的是"读哪一份术语目录"，不是"能看哪些文档"：registry 只允许调用者自己的行加
         # system 的共享行，principal 为 None 时退回只读共享行。
         owner_id = str(getattr(principal, "user_id", "") or "").strip() or None
+        started = perf_counter()
         found = self.search(
             query, top_k=top_k, where=scope.filters, pred=scope.allows, tier=tier,
             owner_id=owner_id, context_pack=context_pack,
         )
+        duration_ms = round((perf_counter() - started) * 1000, 2)
         record_retrieval_scope(principal, scope, hit_count=len(found[0]))
+        # R536：全仓唯一的产品道发射调用点（判据②由 tests/test_r536_single_emission_point.py 钉）。
+        # 函数自己判断这一发检索当时挂没挂问答身份：没挂就一个字都不写，所以挂在 RAG 调试面
+        # 那一腿上的在册发射器（app/rag/debug.py）不会因为这里多了一行而变成两行留痕。
+        record_retrieval_completed(
+            query=query,
+            hits=found[0],
+            scope=scope,
+            principal=principal,
+            top_k=top_k,
+            rewrites=found[1],
+            duration_ms=duration_ms,
+        )
         return found
 
 
@@ -1021,3 +1043,186 @@ def _retain_permitted(hits: list[dict], pred) -> list[dict]:
     if len(permitted) != len(hits):
         logger.info(f"权限预过滤: 召回 {len(hits)} 条 → 保留 {len(permitted)} 条")
     return permitted
+
+# ==================== 产品问答道的检索留痕（R536） ====================
+#
+# 症状（docs/handoff/2026-09-30-v2-gap-recheck-3.md §3 丙组 D 行与 §6 R536 行）：全仓发
+# ``retrieval.completed`` 的只有 ``app/rag/debug.py`` 那一枚 RAG 调试面，正常问答链一枚都不发
+# ⇒ ``retrieval_traces`` 永远 0 行，V2 第 12 句「每轮问答可回查检索」没有数据，C 门「检索留痕」
+# 那半格也永远从沙盒读数升级到不了生产读数。裁定原文在
+# docs/testing/r483-empty-tables-2026-09-29.md:104 —— no_seed_path 不是合法为空，是欠码；
+# 同一条裁定还钉着口径：🔴 不许拿 ``POST /retrieval/debug`` 那一腿冒充产品道。
+#
+# 这一节是全仓**唯一**的产品道发射实现，形状由 tests/test_r536_single_emission_point.py 钉死：
+#  ① 全仓 ``app/**`` 里发这枚事件的写法只许有两处 —— 本模块末节那一处，与在册遗留的
+#     ``app/rag/debug.py`` 那一处（那枚调试面不在本单写域，本模块不碰它）；
+#  ② 调用点只许有 ``RetrievalPipeline.search_for_principal`` 一处（本文件上面那一行）；
+#  ③ ``app/api/v1/chat.py`` 里不许长出第二套发射手，它只负责把身份挂上（见下）。
+# 事件名刻意写成字面量而不是常量：``scripts/r483_empty_tables_triage.py`` 那把现扫尺是按
+# ``event_type="<名字>"`` 的字面形状找发射点的，藏进常量就等于把新发射点对在册台账抹掉。
+#
+# 为什么要「先挂身份才发」：``retrieval_traces`` 的每一行都必须挂在某一轮问答的 trace 上，而
+# ``TraceStore.record_event`` 缺 ``trace_id`` 或 ``request_id`` 当场抛 ``validation_error``
+# （app/trace/store.py 那处入参校验）。检索发生在 ``app/agents/tools.py::search_docs`` 里 ——
+# 那一层的 ``config.configurable`` 带着三个 id，本层的函数拿不到，而 ``app/agents/**`` 不在本单
+# 写域。所以身份由持有问答请求的那一层（``app/api/v1/chat.py`` 的两枚 ``_run``）挂进来。
+# 为什么必须挂在工作线程里、而不是挂在端点函数里：chat.py 把图跑在
+# ``loop.run_in_executor(_executor, _run)``，那枚普通 ``ThreadPoolExecutor`` **不复制**调用方的
+# contextvar，在 ``ask()`` 里挂的值到不了工作线程；而 langgraph 自己的同步执行器会把上下文复制
+# 进节点线程（``langgraph/pregel/_executor.py`` 的 ``ctx = copy_context()`` 与
+# ``langchain_core`` 的 ``get_executor_for_config`` → langsmith ``ContextThreadPoolExecutor``），
+# 所以在 ``_run`` 函数体内挂，图里那条检索腿一定看得见。
+# 为什么用 contextvar 而不是 ``threading.local``：executor 的线程会被复用，一枚裸的线程局部值
+# 在「上一轮没走到收尾就被取消」时会把身份漏给下一个跑在同一枚线程上的请求；``Token`` 交回是
+# 结构性的，摘掉那一行就红（tests/test_r536_retrieval_completed_on_product_lane.py 的漏钉）。
+
+
+@dataclass(frozen=True)
+class RetrievalTraceContext:
+    """一轮问答交给检索留痕的三个 id。
+
+    只有 ``trace_id`` 与 ``request_id`` 是硬的（``record_event`` 收的那两格），``task_id``
+    可空 —— 与 ``app/agents/orchestrator.py`` 发 canonical 事件时用的三个 id 同一套形状。
+    """
+
+    trace_id: str
+    request_id: str
+    task_id: str = ""
+
+
+_RETRIEVAL_TRACE_CONTEXT: ContextVar[RetrievalTraceContext | None] = ContextVar(
+    "enterprise_brain_retrieval_trace_context", default=None
+)
+
+#: 一条检索留痕最多记几枚命中。产品道 top_k 远小于它，这道闸只挡未来把 top_k 放宽到几十的
+#: 调用方 —— 检索留痕不该把整份候选表抄进 ``trace_events`` 的 JSONB。
+TRACE_HIT_CAP = 20
+
+
+def current_retrieval_trace_context() -> RetrievalTraceContext | None:
+    """这一条执行上下文里挂着的问答身份；没有问答在跑就是 ``None``。"""
+    return _RETRIEVAL_TRACE_CONTEXT.get()
+
+
+def arm_retrieval_trace(
+    *, trace_id: str, request_id: str, task_id: str = ""
+) -> Token[RetrievalTraceContext | None] | None:
+    """把这一轮问答的身份挂进当前执行上下文，交回一枚可用于 :func:`reset_retrieval_trace` 的 token。
+
+    两枚硬身份缺任何一枚都**不挂**并交回 ``None``：留痕宁可不发，也不许把一轮问答挂到一枚
+    编出来的 trace 上，更不许在 ``record_event`` 里炸穿已经跑到手的检索结果。
+    """
+    resolved_trace = str(trace_id or "").strip()
+    resolved_request = str(request_id or "").strip()
+    if not resolved_trace or not resolved_request:
+        return None
+    return _RETRIEVAL_TRACE_CONTEXT.set(
+        RetrievalTraceContext(
+            trace_id=resolved_trace,
+            request_id=resolved_request,
+            task_id=str(task_id or "").strip(),
+        )
+    )
+
+
+def reset_retrieval_trace(token: Token[RetrievalTraceContext | None] | None) -> None:
+    """交回 :func:`arm_retrieval_trace` 的 token。没挂过就什么都不做。"""
+    if token is not None:
+        _RETRIEVAL_TRACE_CONTEXT.reset(token)
+
+
+def _retrieval_query_digest(query: str) -> str:
+    """``retrieval_traces.query_hash`` 是 ``CHAR(64) NOT NULL``（migrations/0002 那张表），
+    消费方 ``app/trace/projections.py::project_retrieval`` 把这格原样搬过去。
+
+    存摘要不存原文是有意的：题面是客户的业务话语，它不该因为「留一条检索痕」就被抄进另外两枚
+    表里；而回查要答的问题是「这一轮按哪一发查询检索的」，64 位摘要配上 trace 与命中清单就答得出。
+    """
+    return hashlib.sha256(str(query or "").encode("utf-8")).hexdigest()
+
+
+def _retrieval_hit_ledger(hits) -> list[dict]:
+    """命中清单的留痕形状：来源、块号、分数、密级、部门。
+
+    🔴 正文字符一个都不进。本轮证据袋已经带着 400 字摘录走 SSE 的 ``sources`` 帧
+    （``app/api/v1/chat.py::_document_source_row``），把正文再抄一份进 trace 只是同一份资料多存一处。
+    """
+    ledger = []
+    for hit in (hits or [])[:TRACE_HIT_CAP]:
+        if not isinstance(hit, dict):
+            continue
+        ledger.append(
+            {
+                "source": str(hit.get("source", "")),
+                "chunk_index": hit.get("chunk_index"),
+                "score": hit.get("_score"),
+                "classification": hit.get("classification"),
+                "department": str(hit.get("department", "") or ""),
+            }
+        )
+    return ledger
+
+
+def _product_trace_store() -> Any:
+    """懒取进程级 ``TraceStore``：与 ``app/agents/orchestrator.py`` 用的是同一枚单例
+    （``app/trace/store.py::default_trace_store``），所以检索留痕与 canonical 事件落在同一套表上。
+
+    懒 import 有两层理由：本模块的导入期不牵进 trace/store 那一串；测试可以就地换掉 store。
+    """
+    from app.trace.store import default_trace_store
+
+    return default_trace_store()
+
+
+def record_retrieval_completed(
+    *,
+    query: str,
+    hits: list[dict],
+    scope,
+    principal: Principal | None = None,
+    top_k: int | None = None,
+    rewrites: list[str] | None = None,
+    duration_ms: float | None = None,
+    trace_context: RetrievalTraceContext | None = None,
+    trace_store: Any = None,
+) -> dict | None:
+    """发一枚 ``retrieval.completed``，把它交回的全部入参对齐消费方 ``project_retrieval`` 现读的那几格。
+
+    返回交出的事件；**没挂身份就直接返回 ``None``**（离线脚本、裸调用、以及挂在
+    ``app/rag/debug.py`` 那枚调试面上的调用都属这一支），记账失败也返回 ``None`` 并留一行
+    WARNING —— 留痕哑了不许把已经答到手的轮次打断（``_record_trace`` 同一裁定），但也不许哑得
+    没人知道。
+
+    ``owner_id`` 走 ``principal.user_id``（与 ``search_for_principal`` 里术语目录命名空间、
+    ``app/agents/orchestrator.py`` 的 ``_owner_id_from`` 同一个口径），不是走挂上来的身份：
+    这行留痕回答的是「谁的检索」，主体换了 trace 也不能跟着换。缺主体时照发 —— ``TraceStore``
+    会以 ``REASON_OWNER_MISSING`` 拒绝并把它记进 fallback journal（R263 之后那本账只躺被拒的
+    行），所以「没有主体」是一条看得见的痕迹，不是一次静默的跳过。
+    """
+    context = trace_context if trace_context is not None else current_retrieval_trace_context()
+    if context is None:
+        return None
+    payload = {
+        "owner_id": str(getattr(principal, "user_id", "") or "").strip(),
+        "query_hash": _retrieval_query_digest(query),
+        "filters": dict(getattr(scope, "filters", None) or {}),
+        "hits": _retrieval_hit_ledger(hits),
+        # 这两格是「为什么这一发看得见这些」的因由，与 record_retrieval_scope 那条审计同源。
+        "scope_reason": str(getattr(scope, "reason_code", "") or ""),
+        "top_k": top_k,
+        "rewrite_count": len(rewrites or []),
+        "duration_ms": duration_ms,
+    }
+    store = trace_store if trace_store is not None else _product_trace_store()
+    try:
+        return store.record_event(
+            trace_id=context.trace_id,
+            request_id=context.request_id,
+            task_id=context.task_id,
+            event_type="retrieval.completed",
+            status="completed",
+            payload=payload,
+        )
+    except Exception as exc:  # noqa: BLE001 - 留痕是遥测，遥测不决定一轮问答的成败
+        logger.warning(f"[R536][Trace] 检索留痕没发出去: {type(exc).__name__}: {exc}")
+        return None

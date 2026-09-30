@@ -184,14 +184,22 @@ def test_the_rulings_are_recorded_with_their_author():
             assert spec["owner_ruling"] in DOC, table
 
 
-def test_retrieval_traces_is_no_seed_path_because_only_the_debug_face_feeds_it():
+def test_retrieval_traces_keeps_no_seed_path_only_because_the_gauge_cannot_cross_the_projection_hop():
+    """这枚钉钉的是「裁定与量具读数必须自洽」，不是「产品道没接通」。
+
+    R536 已把 retrieval.completed 接到产品问答道；本表仍读 no_seed_path，是因为现扫的爬法
+    跨不过事件投影那一跳（盲区，R550 治）。所以这里同时咬三格：裁定不许被顺手翻绿、
+    owner_ruling 里必须留着那句「已经过期」的自曝、豁免不许变成后门。
+    """
     spec = M.TRIAGE["retrieval_traces"]
-    assert spec["verdict"] == "no_seed_path", "总控 09-29 已改判，别再退回 legitimately_empty"
+    assert spec["verdict"] == "no_seed_path", (
+        "R550 并树（量具学会从事件发射点爬到产品脸）之前，本裁定由现扫的判据定死，"
+        "不许拿「R536 已接通」当理由提前翻绿——那等于拿一张量不到的尺宣布达标")
+    assert "已经过期" in spec["owner_ruling"], (
+        "owner_ruling 里那句「正常问答链一枚都不发」必须被点名作废；留着它就是本表在册的第二句假话")
     product = READINGS["analysis"]["retrieval_traces"]["product"]
     assert product["debug_only"], "豁免声明没扫到调试面，就成了后门"
     assert not product["unused_exemptions"], product["unused_exemptions"]
-    assert not product["routes"] and not product["jobs"], (
-        "retrieval_traces 一旦长出产品面路由/定时任务，本裁定要重下")
 
 
 def test_a_stripped_exemption_declaration_turns_the_ruling_red():

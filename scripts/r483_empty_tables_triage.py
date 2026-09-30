@@ -568,15 +568,23 @@ TRIAGE = {
         #: 现扫确实能爬到一枚 HTTP 面，但那是 RAG 调试面；本单显式声明它不算「喂产品数据的道」，
         #: 并把它挂在读数里给所有人看。豁免没用上（那枚路由不在了）就是一枚问题，不许当后门留着。
         "debug_only_surface": ("/retrieval/debug",),
-        "owner_ruling": "裁定出处：总控 2026-09-29 裁定——唯一发射点在 RAG 调试面"
+        "owner_ruling": "裁定出处：总控 2026-09-29 裁定——当时唯一发射点在 RAG 调试面"
                         "（" + "app/rag/debug.py" + " 发 retrieval.completed ← POST /retrieval/debug），"
-                        "正常问答链不发这枚事件 ⇒「有表、有写句、但没有喂它产品的道」，这就是 "
-                        "no_seed_path 的形状，不是合法为空。按 V2「每轮问答可回查检索」的目标态，这是欠码。",
+                        "正常问答链一枚都不发 ⇒「有表、有写句、但没有喂它产品的道」。**那半句话已经过期**："
+                        "R536（09-30 并树）把发射实现接到产品问答道，POST /ask 与 /approve 续跑轮现在都发"
+                        "这枚事件，实现在全仓唯一一处（app/rag/retrieval_pipeline.py::"
+                        "record_retrieval_completed）。裁定暂不翻：本量具认的「道」是从写语句往上爬到 HTTP"
+                        " 路由或 add_job，而本表写句在事件投影里（app/trace/projections.py::"
+                        "project_retrieval 由 trace store 派发），这一跳现扫爬不过去，所以它按自己的判据仍"
+                        "读 no_seed_path。**这是量具的盲区，不是产品道没接通**，治它另立 R550；本格在 R550 "
+                        "并树前不许被读成「问答不写这张表」，也不许被翻绿。",
         "lane": "app/trace/projections.py::project_retrieval（collection 走 _PostgresTable 注册）→ "
                 "app/trace/store.py 的投影落库；闸门是有人发 retrieval.completed 事件。",
-        "why": "全仓现扫下来，发这枚事件的只有一处：app/rag/debug.py（挂在 RAG 调试路由那一腿）。"
-               "正常问答链路的检索腿一枚都不发（app/agents 与 app/rag 里 event_type= 现扫可核），"
-               "所以问答跑得再多也不会给它加行。库里的 retrieval.completed 事件数由本表现读交回。",
+        "why": "本表现读只认两件事：写语句在不在、能不能从写句爬到产品脸。第一件在（"
+               "project_retrieval 注册在册）；第二件爬到的是调试面 /retrieval/debug——事件投影那一跳"
+               "不在现扫的爬法里，所以产品问答道今天虽然确实发这枚事件（R536 已并树），本表仍按判据读 "
+               "no_seed_path。库里 retrieval.completed 的事件数由本表现读交回，读出 0 不区分「没跑过窗」"
+               "与「道不通」，这一格要 R550 补上才量得准。",
     },
     "user_profiles": {
         "verdict": "needs_owner",

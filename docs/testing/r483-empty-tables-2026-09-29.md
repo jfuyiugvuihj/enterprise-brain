@@ -93,15 +93,16 @@
 ### `retrieval_traces` —— `no_seed_path`
 
 - 今日现读 0 行（昨日底 0 行，Δ 0），主键 `retrieval_trace_id` 顶值 `None`。
-- 结构出处：`migrations/0002_execution_data_lineage.sql:170`；表名在 app/ 与 scripts/ 里现扫到 17 行、8 枚文件。
+- 结构出处：`migrations/0002_execution_data_lineage.sql:170`；表名在 app/ 与 scripts/ 里现扫到 21 行、9 枚文件。
 - 写入点（现扫）：`app/storage/persistence.py:417`（write_by_registry）、`app/trace/projections.py:321 · project_retrieval`（declared_writer）。
 - 这条道今天没挂在任何产品面 HTTP 路由上（现扫零枚）。
 - 🔴 现扫确实爬到一枚脸，但它是**调试面**，按本单显式豁免不算产品道：`POST /retrieval/debug ← app/api/v1/observability.py:528 · retrieval_debug`。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
-- 从写句往上爬过的坐标：`app/api/v1/observability.py:528 · retrieval_debug`、`app/rag/debug.py:24 · run_retrieval_debug`、`app/rag/debug.py:72 · run_retrieval_debug`、`app/trace/projections.py:321 · project_retrieval`。
+- 从写句往上爬过的坐标：`app/agents/orchestrator.py:962 · _approval_worker_node`、`app/agents/tools.py:1085 · search_docs`、`app/api/v1/observability.py:528 · retrieval_debug`、`app/approval/assistant.py:225 · retrieve_expense_hits`、`app/mcp_server.py:120 · main`、`app/mcp_server.py:37 · _search_docs_text`，另有 7 枚。
+- 入口只在测试里被引到：`tests/test_r536_retrieval_completed_on_product_lane.py`（按判据④，那不算产品有一行真数据）。
 - 该走哪条写入道：app/trace/projections.py::project_retrieval（collection 走 _PostgresTable 注册）→ app/trace/store.py 的投影落库；闸门是有人发 retrieval.completed 事件。
-- 裁定理由：全仓现扫下来，发这枚事件的只有一处：app/rag/debug.py（挂在 RAG 调试路由那一腿）。正常问答链路的检索腿一枚都不发（app/agents 与 app/rag 里 event_type= 现扫可核），所以问答跑得再多也不会给它加行。库里的 retrieval.completed 事件数由本表现读交回。
-- 裁定出处：总控 2026-09-29 裁定——唯一发射点在 RAG 调试面（app/rag/debug.py 发 retrieval.completed ← POST /retrieval/debug），正常问答链不发这枚事件 ⇒「有表、有写句、但没有喂它产品的道」，这就是 no_seed_path 的形状，不是合法为空。按 V2「每轮问答可回查检索」的目标态，这是欠码。
+- 裁定理由：本表现读只认两件事：写语句在不在、能不能从写句爬到产品脸。第一件在（project_retrieval 注册在册）；第二件爬到的是调试面 /retrieval/debug——事件投影那一跳不在现扫的爬法里，所以产品问答道今天虽然确实发这枚事件（R536 已并树），本表仍按判据读 no_seed_path。库里 retrieval.completed 的事件数由本表现读交回，读出 0 不区分「没跑过窗」与「道不通」，这一格要 R550 补上才量得准。
+- 裁定出处：总控 2026-09-29 裁定——当时唯一发射点在 RAG 调试面（app/rag/debug.py 发 retrieval.completed ← POST /retrieval/debug），正常问答链一枚都不发 ⇒「有表、有写句、但没有喂它产品的道」。**那半句话已经过期**：R536（09-30 并树）把发射实现接到产品问答道，POST /ask 与 /approve 续跑轮现在都发这枚事件，实现在全仓唯一一处（app/rag/retrieval_pipeline.py::record_retrieval_completed）。裁定暂不翻：本量具认的「道」是从写语句往上爬到 HTTP 路由或 add_job，而本表写句在事件投影里（app/trace/projections.py::project_retrieval 由 trace store 派发），这一跳现扫爬不过去，所以它按自己的判据仍读 no_seed_path。**这是量具的盲区，不是产品道没接通**，治它另立 R550；本格在 R550 并树前不许被读成「问答不写这张表」，也不许被翻绿。
 
 ### `user_profiles` —— `needs_owner`
 

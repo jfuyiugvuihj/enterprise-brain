@@ -2705,6 +2705,15 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             result_queue.put(("piece", piece))
 
         def _run():
+            # R536：检索留痕的身份必须在**这一枚工作线程的执行上下文**里挂：
+            # chat.py 把图跑在 loop.run_in_executor(_executor, ...) 那枚普通线程池上，它不
+            # 复制调用方的 contextvar ⇒ 在端点函数体里挂等于没挂。理由与整套口径写在
+            # app/rag/retrieval_pipeline.py 末节（本单唯一的产品道发射实现）。
+            from app.rag.retrieval_pipeline import arm_retrieval_trace, reset_retrieval_trace
+
+            trace_token = arm_retrieval_trace(
+                trace_id=trace_id, request_id=request_id, task_id=task_id
+            )
             try:
                 for event in run_with_stream(
                     rewritten_msg,
@@ -2747,6 +2756,10 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             except Exception as e:
                 logger.exception(f"[ask] agent worker raised for session={thread_id}")
                 result_queue.put(("error", str(e)))
+            finally:
+                # 取消分支上面那枚 return 也走得到这里：executor 的线程会被复用，token 不交回
+                # 就是把本轮身份漏给下一个跑在同一枚线程上的请求。
+                reset_retrieval_trace(trace_token)
 
         loop = asyncio.get_running_loop()
         agent_future = loop.run_in_executor(_executor, _run)
@@ -3459,6 +3472,15 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             result_queue.put(("piece", piece))
 
         def _run():
+            # R536：检索留痕的身份必须在**这一枚工作线程的执行上下文**里挂：
+            # chat.py 把图跑在 loop.run_in_executor(_executor, ...) 那枚普通线程池上，它不
+            # 复制调用方的 contextvar ⇒ 在端点函数体里挂等于没挂。理由与整套口径写在
+            # app/rag/retrieval_pipeline.py 末节（本单唯一的产品道发射实现）。
+            from app.rag.retrieval_pipeline import arm_retrieval_trace, reset_retrieval_trace
+
+            trace_token = arm_retrieval_trace(
+                trace_id=trace_id, request_id=request_id, task_id=task_id
+            )
             try:
                 for event in run_interrupt_stream(
                     request.session_id,
@@ -3478,6 +3500,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     f"[approve] agent worker raised for session={request.session_id}"
                 )
                 result_queue.put(("error", str(e)))
+            finally:
+                reset_retrieval_trace(trace_token)
 
         loop = asyncio.get_running_loop()
         agent_future = loop.run_in_executor(_executor, _run)
