@@ -1613,10 +1613,14 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Boyle` | `01a0ed33-649c-7370-a258-38c81239af32` | **R515**（本班新立，R507 残余同口径分身假零） | `be-r515`（基点 `85572c1`，**独占**） | 🟡 在途（20:4x 投出）；写域只有 `scripts/eval_frame_caliber_readout.py`＋它自己的在册件＋自写读数件；先探针后动手 | 20:50 |
 | `Heisenberg` | `01a0ed33-8116-7371-aaf6-5a58da1163d0` | **R516**（本班新立，R508 名册第二批 8＋3 枚） | `be-r516`（基点 `85572c1`，**独占**） | 🟡 在途（20:4x 投出）；写域 9 枚 tests 件＋r508 名册 doc；断言与枚数一字不许动；🔴 明令不许动 `contract-v1.md`（归 R517） | 20:50 |
 | `Anscombe` | `01a0ed33-9892-79c3-8784-78ee69bb3149` | **R517**（本班新立，R512/R514 并树后的改口账四格） | `be-r517`（基点 `85572c1`，**独占**） | 🟡 在途（20:4x 投出）；写域 `contract-v1.md`＋`docs/testing/r504-*.md`＋`ChatPanel.vue`（🔴 净零行）＋`r424` 用例标题；纯改口零新增行为；不跑全量前端套件（与 R505 争同一份缓存） | 20:50 |
-| `Kuhn` | `01a0efcf-5b50-7452-ba0b-0d10293efe52` | **R523**（代号 A）R43 判据② cached 落库 | `be-r523`（基点 `28e9d50`，**独占**） | 🟡 **在途**（09-30 08:5x 本班首投，本 block 只此一次投递、无 model 覆盖）：写域 新 `migrations/0018_prompt_cache_tokens.sql`（号预分配死）＋`manifest.json` 追加一行＋`app/trace/{schema,projections}.py`＋`spans.py` 两句假话＋新钉＋纸 | 09-30 08:5x |
-| `Raman` | `01a0efcf-8bef-75d3-b57b-c835614cd736` | **R524**（代号 B）R31 差格 a/b：审批续跑道＋队列道接 `stream_piece_sink` | `be-r524`（基点 `28e9d50`，**独占**） | 🟡 **在途**（同 block 序内单发投递）：写域 `app/agents/{orchestrator,nodes}.py`＋`app/api/v1/chat.py`＋必要时 `test_r203_sink_reaches_the_leg.py`＋新钉＋纸；🔴 判据③ 三把尺（20 字／100 ms／地板 4 字）禁动 | 09-30 08:5x |
-| `Parfit` | `01a0efcf-b4f1-7c32-9711-7393f04f5dfb` | **R525**（代号 D）R46 差格 b：活动先验真库强度取证（**全单只读**） | `be-r525`（基点 `28e9d50`，**独占**） | 🟡 **在途**：写域**只有**新 `scripts/r525_*.py`＋新 `tests/test_r525_*.py`＋新 `docs/testing/r525-*.md`；SQL 只 SELECT；不许跑 CPU 密集长跑（今晚开 run10）；不许拿沙盒 1008 枚冒充客户尺寸 | 09-30 08:5x |
-| `Gauss` | `01a0efcf-e1f6-7f63-80be-30c271921266` | **R526**（代号 G）R32 判据① 数值格＝R105 乙半的**口径半张** | `be-r526`（基点 `28e9d50`，**独占**） | 🟡 **在途**：写域 `docs/api/contract-v1.md` 那一节口径格＋`app/api/v1/observability.py`＋新钉＋纸；🔴 **只钉口径、严禁发布任何数值**；与 09-19 那枚 `Gauss`（`01a0b3ff-…`／R37）**同名不同人，唯一键只认 id** | 09-30 08:5x |
+| `Kuhn` | `01a0efcf-5b50-7452-ba0b-0d10293efe52` | **R523**（代号 A）R43 判据② cached 落库＋0018 迁移 | `be-r523`（基点 `28e9d50`，**独占**；写域含 `migrations/manifest.json`＋`docs/api/contract-v1.md`，🔴 这两格 R527/R533 一律避让） | 🟡 在途：首笔交回只做完列＋projections/schema＋spans 三句假话可验部分，如实报「落库半段堵在 `app/storage/persistence.py:394` 列元组不含 cached_tokens⇒值被静默丢掉」；本班 10:0x 下第二道补令（扩白列元组、`EXPECTED_ADAPTER_GAP` 与那枚 xfail 转真端到端、12 枚在册改口、`r509:442` 改口、先补 persistence 再跑 `r483_empty_tables_triage --sync`、契约只准写「承载面就位／读数待 run10」、明令禁碰 `test_r469`） | 09-30 10:5x |
+| `Raman` | `01a0efcf-8bef-75d3-b57b-c835614cd736` | **R524**（代号 B）R31 审批续跑道接 `stream_piece_sink` | `be-r524`（基点 `28e9d50`） | **已结案并树 `05bec06`**：🔴 本班先误判撤单（铺树器按 blob 把 chat.py 铺成纯 LF，r48 的 D1 反证锚命中 0 处＋r464 作用域钉两枚红算成了它的错），由 `3b20e68` 治好铺树器后重铺十枚，总控亲跑 r48＋r464＋三枚新件＋r203＋approval_stream **83 passed / exit=0**；队列道那一格按实交回 not_applicable 带凭据，R31 差格 b 记「未达·写域外（queue_worker 注册点＋需契约裁定）」；它交回的一条 15 s 成因线索被总控证伪（适配器 1424 行、无 15 s 常数）⇒ 另立 **R532** 取证 | 09-30 10:5x |
+| `Parfit` | `01a0efcf-b4f1-7c32-9711-7393f04f5dfb` | **R525**（代号 D）活动先验真库强度取证（全单只读） | `be-r525`（基点 `28e9d50`） | **已结案并树 `0b44df1`**：八枚全新件、零删改在册件；总控主树亲跑 **68 passed / 2 skipped**（两枚 skip＝`R525_REAL_STORE=on` opt-in 真库闸，具名理由在件里）；判据①④ 不翻绿，未量三格 U1（需业主点采纳/驳回或授权非生产库打点）／U2（真 ANN 要能打 embedding 的窗）／U3（真并发打点要安静机器）原样入档；已 close | 09-30 10:5x |
+| `Gauss` | `01a0efcf-e1f6-7f63-80be-30c271921266` | **R526**（代号 G）R32 数值格的口径半张＝SLO 口径骨架 | `be-r526`（基点 `28e9d50`） | **已结案并树 `efc5c50`**：`observability.py` +378/-0 零新路由、契约 +63、两枚新件 19＋21 枚；总控亲跑 **40 passed**（与自报逐字同数）＋12 枚在册邻件 **256 passed / exit=0**；契约「待真机样本」现取 **20** 枚（它第一版报 15 已更正）；一格数值都没发＝正解；登记的 `bridge_note` six/five 矛盾由新单 **R533** 收；已 close | 09-30 10:5x |
+| `Boole` | `01a0f03b-78cf-73f0-9b17-442ab326ece3` | **R532**（本班新立）run9 四枚审批题 15.03 s 超时的真成因取证（R524 给的行号已证伪） | `be-r532`（基点 `05bec06`，**独占**；写域＝四枚新件，🔴 零已跟踪文件） | 🟡 在途 10:4x 投出：逐跳量「量具审批循环／服务端 approve 腿／挂起态／httpx 默认」各自等多久、上限写在哪，找得出 15 s 那个数才有资格立案 | 09-30 10:5x |
+| `Schrodinger` | `01a0f03b-d447-7d10-b752-0796872d9667` | **R533**（本班新立）`observability.py:864` 那句手写枚数改派生（six vs 契约 five） | `be-r533`（基点 `05bec06`，**独占**；写域＝`app/api/v1/observability.py`＋三枚新件） | 🟡 在途 10:4x 投出：🔴 明令禁碰 `docs/api/contract-v1.md`＋`migrations/manifest.json`（R523 在途写域），契约那句只交回成段原文由总控代笔；R526 两枚在册件须仍 40 passed | 09-30 10:5x |
+| `Singer` | `01a0f03b-f377-72f3-a919-30a23c4a6507` | **R534**（本班新立）V2 缺口按今天主树重验＋计划书 8 枚零提交逐枚现取（波次五底稿） | `be-r534`（基点 `05bec06`，**独占**；唯一写入＝一枚新文档） | 🟡 在途 10:4x 投出：09-27 那张 23 行表已被本班亲手推翻两行（`rbac.py:31` auditor 早在树上、`TracePanel.vue`＋`/traces` 路由已在树），拿过期读数派工＝派重复单；总控抽验 3 条，抽到假的整单退回 | 09-30 10:5x |
+| `Erdos` | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R535**（本班新立）`MODEL_CONTEXT_TOKENS` 与运行时 `num_ctx` 配套自检闸＋撞顶归因说人话 | `be-r535`（基点 `05bec06`，**独占**；写域＝`model_config.py`/`contracts.py`/`nodes.py`/`.env.example`＋三枚新件） | 🟡 在途 10:4x 投出：🔴 一枚缺省值都不许改（提到 8192／并发 1→2 属业主侧且要配套容器重建）；`context_limit_exceeded` 不许接进兜底文案（在册有钉）；判据①未做完不许写代码 | 09-30 10:5x |
 
 
 
@@ -6016,3 +6020,39 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 ### 六、等业主本人（一条都不代做）
 - 🔴 **外来 `train.py --device cuda` 那枚进程要不要停**：不停则 run10 的 A① 时延判据不可信（本机唯一验证机 + 一个抢核抢显存的外部负载）。
 - H 闸门未裁项；评测集 29 条 `must_contain` 改题面＋R440 整表口径；R487 建 30 枚演示账号；R58 真机三件；一张真扫描件 OCR；`INDEX_BACKEND=pgvector` 翻默认（**容器 `up -d --force-recreate`，不是 build**）；第二验证机 `192.168.254.128` 整机不可达（ping 也不通）⇒ 单机串行是墙钟物理上限。
+
+## 4EB 第七班续席（09-30 10:3x–11:0x·总控线·主树 `72d0419`→`0b44df1`→`efc5c50`→`3b20e68`→`05bec06`·单模型未切换·心跳两枚仍 PAUSED）：🔴 本班最大一笔不是并了几枚，是把一枚被冤枉的执行层捞回来
+
+**一、事故与纠正（下一班必读，这是形状事故不是判断事故）**
+
+- 上一班（本席自己的前一笔）把 R524 撤下退回，理由是「铺进主树后 r464 与 r48 两枚红」。🔴 现取证明**两枚红都是本席的铺树器造成的**：`scripts/r531_worktree_merge.py` 那版按「HEAD blob 的行尾」归位，而这台机 `core.autocrlf=true` 且**没有 `.gitattributes`**，所以 `app/api/v1/chat.py` 的 blob 是 LF、盘上是 CRLF（`git ls-files --eol` = `i/lf w/crlf`，盘上 CR=5199 LF=5199）。而 `tests/test_r48_headline_never_enters_the_text_ledger.py` 的 D1 反证是**读盘上那份文件、拿 CR-LF 拼锚点做变异**（`_crlf(CALL_ANCHOR)`）——按 blob 铺成纯 LF，锚命中 0 处，红的是量具形状。
+- 治法（`3b20e68`）：在册件一律按**盘上现在那一版行尾**归位；新件盘上没有，才退回 blob 惯例、再退回同目录多数决（平票仍拒搬）。牙两枚 `test_e`/`test_f`，反证刀 K4 把盘上分支摘成 `if False:` ⇒ `test_e` 单独红（1 failed, 7 passed），摘前摘后 sha256 逐字相同＝`72651c125067`。
+- 捞回来的账（`05bec06`）：按修正规则重铺 R524 全部十枚（三枚产品件落 CRLF、四枚新件落 LF、三枚在册件各按盘上惯例），主树亲跑 r48＋r464＋R524 三枚新件＋r203＋approval_stream = **83 passed / exit=0 / 50.32 s**，两枚红当场消失。**代价**：一枚执行层的活压了 40 分钟没并，且它被叫回来返工过一轮——凡「邻件红」先怀疑自己的工具，这条进本班交工。
+
+**二、本班并树四枚（全部总控亲跑，执行层零 commit）**
+
+- `0b44df1` R525（`Parfit`/`01a0efcf-b4f1-…`，树 `be-r525@28e9d50`，活动先验真库强度取证·全单只读）：八枚全新件零删改在册件，主树 **68 passed / 2 skipped**（两枚 skip＝`R525_REAL_STORE=on` opt-in 真库闸）。真库读数：台账 17 枚含 0011、`document_activity_signals` **0 行**、真库 top-40 独大那篇占 **27/40 席**、`chunk_vectors` 每篇 widest 586／avg 10.08／≥5 枚 26 篇；未量三格 U1/U2/U3 原样入档（U1 要业主点采纳/驳回，U2 要能打 embedding 的窗，U3 要安静机器）⇒ **判据①④ 不许据此翻绿**。
+- `efc5c50` R526（`Gauss`/`01a0efcf-e1f6-…`，SLO 口径骨架）：`observability.py` +378/-0 **零新路由**、契约 +63、两枚新件 19＋21 枚，主树 **40 passed**（与自报逐字同数）＋12 枚在册邻件 **256 passed / exit=0**；契约「待真机样本」现取 **20** 枚（它第一版报 15，按 20 入账）；一格数值都没发＝正解。它登记的 `bridge_note` six／契约 five 矛盾（基点自带，`observability.py:864`）另立 **R533** 收。
+- `3b20e68` 总控自修（铺树器行尾规则，见上一节）。
+- `05bec06` R524（`Raman`/`01a0efcf-8bef-…`，代号 B＝R31 审批续跑道接 `stream_piece_sink`）：`orchestrator.py` 调用点 5→**9**、`chat.py` 批准腿那一行六枚键与 /ask 侧同名、三枚在册件按判据④ 程序改口（`test_approval_stream` 假件签名／`test_r203` 负向钉／`test_r464` 批准腿作用域 2→3，🔴 ask() 侧仍旧零枚＝没放宽）。队列道那一格按实交回 `not_applicable` 带凭据（帧名只有 queued＋done、text 恒 0、无可注册点）⇒ **R31 差格 b 记「未达·写域外（`deploy/queue_worker.py::_drain_report_stream` ＋ 需契约裁定）」**，不许记成「已接通」。
+- 已 push `gitee HEAD:refs/heads/codex/data-file-catalog`（本班另计一笔），备份追到主树现取 HEAD。
+
+**三、run10 开窗状态（本班现取，别再凭上一班的账）**
+
+- 🔴 **GPU 已经空了**：`scripts/r530_run10_window_preflight.py` 现取 7 格里 **gpu_apps／foreign_python 双双 PASS**（业主那枚 `anaconda3 python train.py --device cuda --resume` 已自行结束，本班不必再求裁定），answer_cache PASS（`answer:* = 0`），keep_awake PASS（pid 51320 **剩余 734 min**，够一整窗，上一班台账写的「约 14:50 到期」作废），eval_tree PASS（`be-eval95` 干净可 --ff-only），env_flags PASS。
+- 🛑 唯一 FAIL = **provenance**：镜像落后，必须 `GIT_SHA=<现取 HEAD>` → `docker compose build migrate` → `up -d --no-build` → 复跑 P-8 到 PASS 才准开窗。本班序：全量门 → build → P-8 → 开窗。
+- 电源一律不动（业主令有效）；窗内硬禁：并树／跑测试／动容器／打模型。
+
+**四、本班派工（一波四枚，各占一树、写集两两零相交；峰值并发自设 5）**
+
+- `Boole`/R532 `01a0f03b-78cf-73f0-9b17-442ab326ece3`（`be-r532@05bec06`）：run9 那四枚审批题在 **15.03 s** 超时的**真成因**取证。🔴 R524 给的成因（`:1660` 设 900 s 而 `:1690` 只等 15 s）已被本席证伪：适配器主树 1424 行／`be-eval95` 1414 行，两个行号都不存在，env 常数只有 TIMEOUT=900、QUEUE_POLL=900、QUEUE_STALL=300、POLL_INTERVAL=3.0、MIN_GAP=7，**一枚 15 s 都没有**；`app/approval`／`chat.py`／`app/agents` grep `PENDING_TTL|expire|过期` 零命中 ⇒ 形状真、坐标假，另行立案，不拿它的行号入账。
+- `Schrodinger`/R533 `01a0f03b-d447-…`（`be-r533@05bec06`）：`bridge_note` 那句手写枚数改**派生**；🔴 明令禁碰 `docs/api/contract-v1.md`＋`migrations/manifest.json`（都在途 `Kuhn`/R523 写域里），契约那句只交回成段原文由本席代笔。
+- `Singer`/R534 `01a0f03b-f377-…`（`be-r534@05bec06`，唯一写入＝一枚新文档）：V2 缺口按**今天主树**重验 23 行＋计划书 8 枚零提交逐枚现取。本席亲手推翻旧表两行才立的这单：`app/common/rbac.py:31` 现取是 `{"staff": 1, "manager": 2, "admin": 3, "auditor": 3}`（09-27 表写「无 auditor」＝过期），`frontend/src/components/TracePanel.vue` 与路由 `/traces` 都已在树（09-27 表写「缺前端正脸」＝过期）。🔴 拿过期读数派工＝派重复单，这条与第一节同病。
+- `Erdos`/R535 `01a0f03c-07db-…`（`be-r535@05bec06`）：`MODEL_CONTEXT_TOKENS` 与运行时 `num_ctx` 的**配套自检闸**＋撞顶归因说人话（业主 09-30 点名的口子二）。🔴 一枚缺省值都不许改（提到 8192、并发 1→2 属业主侧且要配套容器重建），`context_limit_exceeded` 不许接进兜底文案（在册有钉）。
+- 待投不投：`R527`（代号 C＝R46 点击/浏览半张，`migrations/0019` 已预分配死）🔴 必须等 `Kuhn`/R523 并完——同撞 `manifest.json` 与 `contract-v1.md`；`Kuhn` 仍在其第二道补令上，写域已扩到 `app/storage/persistence.py`。
+
+**五、本班交下一班的三句话**
+
+1. 邻件变红先查自己的量具与铺树形状，再查执行层——这一条今天值一枚执行层的全部工时。
+2. 引用旧表读数前先现取一行：09-27 那张 V2 表今天至少两行是假的。
+3. 开窗只差一次 `build migrate`＋P-8 复跑，机器现在是干净的，别再让窗过夜。
