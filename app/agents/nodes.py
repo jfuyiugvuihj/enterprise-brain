@@ -23,11 +23,21 @@ from langchain_core.runnables import Runnable
 from app.common.logger import logger
 from app.common.model_config import (
     DEFAULT_KEEP_ALIVE_SECONDS,
+    check_context_pairing,
     get_local_model_settings,
+    observe_runtime_context_window,
+    record_runtime_context_window,
     resolve_keep_alive,
+    runtime_window_from_refusal,
 )
 from app.common.model_handler import KEEP_ALIVE_FIELD
-from app.agents.contracts import AgentResult, DEFAULT_MODEL_TIER, ModelTier
+from app.agents.contracts import (
+    CONTEXT_PAIRING_MARKER,
+    AgentResult,
+    DEFAULT_MODEL_TIER,
+    ModelTier,
+    context_refusal_attribution,
+)
 from app.common.model_budget import (
     NO_ANSWER_CODE,
     ModelContextLimitExceeded,
@@ -251,6 +261,102 @@ def reset_keep_alive_mode_log() -> None:
     """Let the next model built announce its residency window again. A test seam for the latch."""
     global _KEEP_ALIVE_MODE_LOGGED
     _KEEP_ALIVE_MODE_LOGGED = False
+
+
+#: Whether the context-window pairing has already been announced, and with which verdict. Same
+#: latch shape as ``_THINKING_MODE_LOGGED`` and ``_KEEP_ALIVE_MODE_LOGGED`` beside it, with one
+#: difference on purpose: it remembers the verdict it said rather than the fact that it said
+#: something, so a process that started before any model was resident announces the real pairing
+#: the moment a reading arrives instead of repeating "unread" at every graph build.
+_CONTEXT_PAIRING_ANNOUNCED: str | None = None
+
+
+def reset_context_pairing_log() -> None:
+    """Let the next model built announce its pairing again. A test seam for the latch above."""
+    global _CONTEXT_PAIRING_ANNOUNCED
+    _CONTEXT_PAIRING_ANNOUNCED = None
+
+
+def _log_context_pairing(base_url: str, budget) -> None:
+    """Say once, while the service starts, whether the claimed window and the served one agree.
+
+    R535 judgement 2. The hook is the one this file already uses to announce configuration at
+    build time (:func:`_log_thinking_mode`, :func:`_log_keep_alive_mode`), because that is the
+    path a process walks exactly once before it answers anything: ``_make_model`` runs per graph
+    at import time. No route is opened for it and none is needed -- the same verdict comes back
+    from ``app.common.model_config.check_context_pairing`` for any reader that already exists,
+    which is what the ticket asks for instead of a second对外出口.
+
+    What the two readings are, and why only one of them is ours: ``MODEL_CONTEXT_TOKENS`` is the
+    window this process computes against, while the window a request is served inside belongs to
+    the model server, which this product never tells what to load (no ``num_ctx`` goes into any
+    payload). The registry question is throttled and optional: a server that has not been asked,
+    or that answers with nothing resident, yields ``runtime_unread`` and one honest line naming
+    the single side that was read. That is neither an outage nor a pass, and it never prints as
+    either. Nothing here refuses to build the graph over a missing answer -- a startup self-check
+    that can take the service down would be a second bug, not a fix.
+    """
+    global _CONTEXT_PAIRING_ANNOUNCED
+    if budget is None:
+        return
+    try:
+        observe_runtime_context_window(base_url)
+        pairing = check_context_pairing(budget=budget)
+    except Exception as exc:  # noqa: BLE001 - the announcement observes, it never decides
+        logger.warning(f"{CONTEXT_PAIRING_MARKER} 配套自检未运行: {type(exc).__name__}")
+        return
+    if pairing.verdict == _CONTEXT_PAIRING_ANNOUNCED:
+        return
+    _CONTEXT_PAIRING_ANNOUNCED = pairing.verdict
+    (logger.warning if pairing.actionable else logger.info)(
+        f"{CONTEXT_PAIRING_MARKER} tier={pairing.tier}"
+        f" declared={pairing.declared_window_tokens}({pairing.declared_window_source})"
+        f" runtime={pairing.runtime_window_tokens}({pairing.runtime_window_source})"
+        f" verdict={pairing.verdict} delta={pairing.delta_tokens}"
+        f" room={pairing.prompt_room_tokens} cap={pairing.declared_max_tokens}"
+        f" min_answer={pairing.min_answer_tokens} {pairing.sentence}"
+    )
+
+
+def _harvest_runtime_window(exc: BaseException) -> None:
+    """Keep the window the server named when it refused, for the next pairing verdict.
+
+    A provider's answer to an over-long prompt states the server's own number --
+    ``request (4402 tokens) exceeds the available context size (4096 tokens)``, recorded at
+    ``docs/perf/raw/rate_prefill.jsonl`` -- so a collision is also a measurement: taken on the
+    request that was already in flight, at the moment it hurt, and reduced to one integer before
+    anything is written down. The text itself is not kept, which is the other half of R535
+    judgement 3: no customer document reaches the log through this path.
+    """
+    served = runtime_window_from_refusal(str(exc))
+    if served is not None:
+        record_runtime_context_window(served, source="provider_refusal")
+
+
+def _log_context_refusal(budget, prompt_tokens) -> None:
+    """Beside a refusal, name the two numbers that produced it and the two keys that fix them.
+
+    R535 judgement 3, and it moves no verdict: the request is still refused before it goes on
+    the wire, ``context_limit_exceeded`` is still the code it carries, and the offline sentence
+    is still not used -- ``tests/test_r30_context_limit_guard.py`` and
+    ``tests/test_r255_refusal_says_the_parameters_are_small.py`` are the pins that would notice
+    any of that changing. It gets its own marker because a second ``[ModelBudget]`` line for one
+    call would break the "one grep, one finding" property that same file pins.
+
+    ``prompt_tokens`` is a count from ``estimate_prompt_tokens``, never the text it counted, and
+    ``context_refusal_attribution`` accepts nothing else, so "the attribution must not carry
+    document content" is structural rather than a promise somebody keeps editing.
+    """
+    if budget is None:
+        return
+    try:
+        pairing = check_context_pairing(budget=budget)
+    except Exception as exc:  # noqa: BLE001 - a diagnosis must not change what is refused
+        logger.warning(f"{CONTEXT_PAIRING_MARKER} 配套自检未取到读数: {type(exc).__name__}")
+        pairing = None
+    attribution = context_refusal_attribution(budget, prompt_tokens, pairing)
+    if attribution:
+        logger.warning(f"{CONTEXT_PAIRING_MARKER} {attribution}")
 
 
 def _with_boundary_fields(call_kwargs: dict) -> dict:
@@ -880,7 +986,9 @@ class _ResilientModel(Runnable):
             # used here: it would record model_unavailable, and evidence._terminal_status
             # reports model_unavailable ahead of a failure, so the customer would read a
             # canned greeting while the real verdict -- this prompt does not fit n_ctx --
-            # stayed in a log line.
+            # stayed in a log line. The line added here changes what an operator can read,
+            # not which verdict this is: see _log_context_refusal.
+            _log_context_refusal(self.budget, prompt_tokens)
             slot.release()
             span.finish("failed", error_code=exc.code)
             raise
@@ -913,7 +1021,11 @@ class _ResilientModel(Runnable):
                 )
                 if self.budget is not None:
                     # Same code as the pre-flight verdict: one collision, one answer,
-                    # whether the window was measured here or refused by the server.
+                    # whether the window was measured here or refused by the server. The
+                    # server's own answer is also the only reading of its window that costs no
+                    # extra request, so it is kept before the verdict is re-raised.
+                    _harvest_runtime_window(exc)
+                    _log_context_refusal(self.budget, prompt_tokens)
                     slot.release()
                     span.finish("failed", error_code=provider_code)
                     raise ModelContextLimitExceeded(self.budget, prompt_tokens or 0) from exc
@@ -1043,6 +1155,7 @@ class _ResilientModel(Runnable):
                 budget_kwargs, verdict = self._budget_kwargs(prompt_tokens, stream=True)
                 kwargs = _with_boundary_fields({**budget_kwargs, **kwargs})
             except ModelContextLimitExceeded as exc:
+                _log_context_refusal(self.budget, prompt_tokens)
                 span.finish("failed", error_code=exc.code)
                 raise
             visible_total = 0
@@ -1067,6 +1180,8 @@ class _ResilientModel(Runnable):
                             stream=True,
                         )
                     )
+                    _harvest_runtime_window(exc)
+                    _log_context_refusal(self.budget, prompt_tokens)
                     span.finish("failed", error_code=provider_code)
                     raise ModelContextLimitExceeded(self.budget, prompt_tokens or 0) from exc
                 from app.trace.spans import error_code_for
@@ -1163,6 +1278,7 @@ def _make_model(tier: ModelTier | str = DEFAULT_MODEL_TIER, *, prompt=None):
     try:
         _log_thinking_mode(settings.base_url)
         _log_keep_alive_mode(settings.base_url)
+        _log_context_pairing(settings.base_url, budget)
         client_timeout = http_timeout(budget, prompt_tokens)
         primary = ChatOpenAI(
             base_url=settings.base_url,

@@ -11,9 +11,14 @@ import json
 import os
 import re
 import time
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import urlopen
+
+if TYPE_CHECKING:  # pragma: no cover - 只为类型与静态读数存在,运行时永不导入
+    #: ``check_context_pairing`` 交回的那一枚读数对象。它在 app/agents/contracts.py,而本模块
+    #: 是更早被导入的那一端,所以运行时的导入留在函数里(见下面的闸本体),这里只给类型与读数用。
+    from app.agents.contracts import ContextPairing
 
 _DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 _DISCOVERY_CACHE: tuple[float, str, str] | None = None
@@ -247,6 +252,210 @@ def inference_compute_state(now: float | None = None) -> dict:
         else None
     )
     return state
+
+
+#: ==================== R535: the runtime half of the context-window pair ==================
+#:
+#: The declared half of this pair is already read in exactly one place
+#: (``MODEL_CONTEXT_TOKENS`` through ``app.common.model_budget.context_limit_tokens``). The
+#: other half belongs to the model server, and three facts decide how it can be read here:
+#:
+#: * This product puts no ``num_ctx`` in any request payload -- the native leg sends
+#:   ``options.num_predict`` (``app/common/model_handler.py``) and the compatible leg sends
+#:   ``max_tokens`` (``app/agents/nodes.py``) -- so the window a request is served inside is
+#:   the server's own default, and no client-side edit of ours changes it.
+#: * A resident model reports the window it was loaded with. ``/api/ps`` carries
+#:   ``context_length``, measured on this host at ``docs/perf/raw/rate_all.jsonl`` line 2:
+#:   ``{"ollama": "0.34.0", "loaded": [{"name": "qwen3.5:9b", "context_length": 4096,
+#:   "size_vram": 0}]}`` -- read the same way by ``scripts/perf_probe_rate.py``.
+#: * When the pair disagrees hard enough to matter the server says its number out loud:
+#:   ``request (4402 tokens) exceeds the available context size (4096 tokens)``
+#:   (``docs/perf/raw/rate_prefill.jsonl``). Harvesting that costs no extra request, because
+#:   the collision is already on the wire.
+#:
+#: The shape follows the compute verdict above: an observation is *recorded* on a path that
+#: already talks to the registry and *read* from a cache, so a health poll never stampedes the
+#: model server. Absence stays absence -- ``/api/ps`` with nothing resident is "not observed",
+#: never zero, and never agreement.
+RUNTIME_WINDOW_PROBE_SUFFIX = "/api/ps"
+#: How stale one resident reading may get before another request is worth sending. Deliberately
+#: a constant and not an environment variable: R535 judgement (4) forbids this ticket from
+#: minting a knob, and the discovery path this rides already throttles at
+#: ``OLLAMA_DISCOVERY_TTL_SECONDS``.
+RUNTIME_WINDOW_TTL_SECONDS = 60.0
+_RUNTIME_WINDOW_CACHE: dict | None = None
+#: Wall-clock half of the record (for the log), and the monotonic half (for the throttle): the
+#: two keep the same clocks the discovery and compute caches above already keep.
+_RUNTIME_WINDOW_PROBE_AT: float | None = None
+
+#: The server's own words for "larger than what I loaded". Both ``n_ctx`` spellings require the
+#: colon form on purpose: this product writes its own refusal as ``n_ctx=<required>``
+#: (``app/common/model_budget.py``), so a pattern that accepted ``n_ctx=`` would read our own
+#: claim back as the server's answer and poison the pairing with the very number that caused
+#: the collision.
+_RUNTIME_WINDOW_PATTERNS = (
+    re.compile(r"available context size \(?(\d+)", re.IGNORECASE),
+    re.compile(r'n_ctx\\?"\s*:\s*(\d+)'),
+)
+
+
+def runtime_window_from_ps_payload(payload: dict | None) -> int | None:
+    """The widest window any resident model reports, or ``None`` when none does.
+
+    The widest, not the first: with two models loaded the guard's claim has to hold for the
+    leg that could actually serve it, and reporting a narrower window than the server holds
+    would dress up an ``env_above_runtime`` verdict that does not exist. An empty list is
+    "nothing resident", not "the server has no window", so it returns ``None``.
+    """
+    if not isinstance(payload, dict):
+        return None
+    widths = []
+    for model in payload.get("models") or []:
+        if not isinstance(model, dict):
+            continue
+        value = model.get("context_length")
+        if isinstance(value, bool) or not isinstance(value, int):
+            continue
+        if value > 0:
+            widths.append(value)
+    return max(widths) if widths else None
+
+
+def runtime_window_from_refusal(text: str) -> int | None:
+    """The number the server named when it refused a request for being too long.
+
+    Takes the provider's own answer and returns only the integer in it. That filter is also
+    the reason this may run on a path that must never copy a customer document into a log: an
+    int cannot carry content, and nothing here keeps the string it read.
+    """
+    if not text:
+        return None
+    for pattern in _RUNTIME_WINDOW_PATTERNS:
+        found = pattern.search(text)
+        if found:
+            value = int(found.group(1))
+            if value > 0:
+                return value
+    return None
+
+
+def record_runtime_context_window(tokens: int | None, *, source: str, observed_from: str = "") -> None:
+    """Remember one observation of the served window. Fresh evidence wins; absence is recorded
+    as absence, which the pairing gate then refuses to read as agreement."""
+    global _RUNTIME_WINDOW_CACHE
+    _RUNTIME_WINDOW_CACHE = {
+        "tokens": int(tokens) if tokens else None,
+        "source": source,
+        "observed_from": observed_from,
+        "observed_at": time.time(),
+    }
+
+
+def reset_runtime_context_window() -> None:
+    """Forget every observation of the served window: the test seam, and the operator's way to
+    make the process look again without restarting it."""
+    global _RUNTIME_WINDOW_CACHE, _RUNTIME_WINDOW_PROBE_AT
+    _RUNTIME_WINDOW_CACHE = None
+    _RUNTIME_WINDOW_PROBE_AT = None
+
+
+def runtime_context_window_state(now: float | None = None) -> dict:
+    """The last observed served window. Reading this never opens a socket.
+
+    Mirrors :func:`inference_compute_state` on purpose: "not probed" is reported as its own
+    shape rather than borrowed from either end of the claim, because a deployment that has not
+    looked yet is not a deployment whose server is narrow.
+    """
+    if _RUNTIME_WINDOW_CACHE is None:
+        return {
+            "tokens": None,
+            "source": "",
+            "observed_from": "",
+            "observed_at": None,
+            "age_seconds": None,
+            "detail": "not_probed",
+        }
+    state = dict(_RUNTIME_WINDOW_CACHE)
+    observed = state.get("observed_at")
+    state["age_seconds"] = (
+        round(max(0.0, (time.time() if now is None else float(now)) - float(observed)), 3)
+        if observed
+        else None
+    )
+    state.setdefault("detail", "observed" if state.get("tokens") else "unobserved")
+    return state
+
+
+def observe_runtime_context_window(
+    base_url: str,
+    *,
+    fetch=None,
+    now: float | None = None,
+    force: bool = False,
+) -> dict:
+    """Ask the model server what window it is serving, through the transport already here.
+
+    Never raises. This rides the startup path, and a self-check that can stop the service from
+    building its own graph would be a second bug, not a fix; an unreachable or unresponsive
+    registry leaves the reading absent, which the gate below reports as ``runtime_unread``.
+    """
+    global _RUNTIME_WINDOW_PROBE_AT
+    moment = time.monotonic() if now is None else float(now)
+    if not force and _RUNTIME_WINDOW_PROBE_AT is not None:
+        if moment - _RUNTIME_WINDOW_PROBE_AT < RUNTIME_WINDOW_TTL_SECONDS:
+            return runtime_context_window_state()
+    _RUNTIME_WINDOW_PROBE_AT = moment
+    url = _native_base_url(base_url) + RUNTIME_WINDOW_PROBE_SUFFIX
+    try:
+        payload = (fetch or _fetch_registry)(url)
+    except Exception as exc:  # noqa: BLE001 - absent beats wrong, and beats taking the service down
+        record_runtime_context_window(None, source=f"probe_failed:{type(exc).__name__}")
+        return runtime_context_window_state()
+    tokens = runtime_window_from_ps_payload(payload)
+    if tokens is None:
+        cached = _RUNTIME_WINDOW_CACHE or {}
+        if cached.get("tokens"):
+            # Nothing resident right now does not invalidate a window this process already saw.
+            # The alternative is a gate that forgets the server's number the moment its
+            # keep_alive window closes -- which is exactly when an operator is reading the log.
+            return runtime_context_window_state()
+        record_runtime_context_window(None, source="no_resident_model")
+        return runtime_context_window_state()
+    record_runtime_context_window(tokens, source=RUNTIME_WINDOW_PROBE_SUFFIX.lstrip("/"))
+    return runtime_context_window_state()
+
+
+def check_context_pairing(*, tier=None, budget=None, now: float | None = None) -> "ContextPairing":
+    """THE pairing gate (R535 judgement 2): both window readings in one call, one verdict.
+
+    The declared half comes from ``window_plan``, which is already the one object reading the
+    window, the clock and the queue together -- this gate quotes it rather than keeping a
+    second copy of any of those numbers. The served half comes from
+    :func:`runtime_context_window_state`, which opens no socket, so anything on a readiness
+    path can call this as often as it likes.
+
+    It answers both directions the ticket asks about: a claim wider than the server can hold
+    (``env_above_runtime`` -- 不配套, and the side that turns a free refusal into a burned
+    round trip) and a claim far narrower than the server (``runtime_above_env`` -- 白留着容量,
+    the side a customer with real-sized documents actually hits). Neither reading is a
+    judgement about which number an operator should pick; raising a default is a deployment
+    decision, and this ticket changes none of them.
+    """
+    from app.agents.contracts import evaluate_context_pairing
+    from app.common.model_budget import window_plan
+
+    plan = window_plan(budget if budget is not None else tier)
+    state = runtime_context_window_state(now=now)
+    return evaluate_context_pairing(
+        declared_window_tokens=plan.context_limit_tokens,
+        runtime_window_tokens=state.get("tokens"),
+        declared_window_source=plan.context_limit_source,
+        runtime_window_source=state.get("source") or state.get("detail") or "not_probed",
+        tier=str(getattr(plan.tier, "value", plan.tier)),
+        declared_max_tokens=plan.declared_max_tokens,
+        min_answer_tokens=plan.min_answer_tokens,
+        coherent_ceiling_tokens=plan.maximum_coherent_context_tokens,
+    )
 
 
 def get_local_model_settings(
