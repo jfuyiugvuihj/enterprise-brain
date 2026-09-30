@@ -41,6 +41,15 @@ R141_LANE_FRONTEND_SHIPMENTS = (
     "frontend/src/router/lane-choice.js",
 )
 
+#: R505（并树 0f12a17）把 SLO 三档屏带进树。那两枚只**读** lane 来显示：lib/slo.js 抄回执里的档位名、
+#: SloPanel.vue 把它印上屏（:data-lane 与 textOrUnrecorded(tier.lane)），两枚里零枚 JSON.stringify、
+#: 零枚档位字面量。名单按「发货／只读」分两张，不是放宽——下面那枚新断言把「读者一旦
+#: 开始序列化请求体或抄出第二套取值表就当场红」钉死，这是旧账完全没有的约束。
+R505_LANE_FRONTEND_READERS = (
+    "frontend/src/components/SloPanel.vue",
+    "frontend/src/lib/slo.js",
+)
+
 #: R105 甲半那段的位置（按 ``## `` 标题定位，别按行号——行号会为别人的一次编辑而漂）
 SLO_SECTION_TITLE = "## Three-Tier SLO Contract (2026-09-20, R105 甲半)"
 GATED_CELL = "gated: needs lane labels"
@@ -661,9 +670,17 @@ def test_the_tier_selector_is_only_real_while_the_tiers_really_diverge():
         if re.search(r"\blane\b", path.read_text(encoding="utf-8"), re.IGNORECASE)
     ]
     shipping = sorted(path for path in hits if "__tests__" not in Path(path).parts)
-    assert shipping == sorted(R141_LANE_FRONTEND_SHIPMENTS), (
-        f"前端提 lane 的发货源件与 R141 名单不符：实得 {shipping}，名单 {sorted(R141_LANE_FRONTEND_SHIPMENTS)}"
+    assert shipping == sorted(R141_LANE_FRONTEND_SHIPMENTS + R505_LANE_FRONTEND_READERS), (
+        "前端提 lane 的源件与名册不符：实得 %s；发货名单 %s；只读名单 %s"
+        % (shipping, sorted(R141_LANE_FRONTEND_SHIPMENTS), sorted(R505_LANE_FRONTEND_READERS))
     )
+    for reader in R505_LANE_FRONTEND_READERS:
+        reader_text = (REPO / reader).read_text(encoding="utf-8")
+        assert "JSON.stringify" not in reader_text, (
+            "只读名单上的 %s 开始序列化请求体了——那它就不该再待在只读名单里，"
+            "要改投发货名单并过 b 条那枚「引用唯一真源」的审" % reader)
+        assert not re.search(r"\{\s*value:\s*'(?:问答|分析|报告)'", reader_text), (
+            "%s 里出现档位字面量：那是被抄出的第二套取值表" % reader)
     assert len(hits) > len(shipping), "档位控件的用信件没了：读取方与告警面必须一起在场"
 
     panel = next(path for path in files if path.name == "ChatPanel.vue").read_text(encoding="utf-8")
