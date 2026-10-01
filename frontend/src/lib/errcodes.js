@@ -35,7 +35,7 @@
  * R380 判据①③（2026-09-27）把同一条原则铺到**第二个形状**：形状 1 的裸串 detail 既不是码名、
  * 也不在任何一张表里时，过去一律原样当人话（下面那两道 return），于是未捕获 500 的
  * "Internal Server Error" 这类框架英文直接印上屏。现在那两道 return 只读 proseIsForHumans()
- * 一个答案：含中日韩文字 ⇒ 照旧直出（auth.py:75 那句一分未退）；不含 ⇒ 走 STATUS_CODES[status]
+ * 一个答案：含中日韩文字 ⇒ 照旧直出（auth.py:81 那句一分未退）；不含 ⇒ 走 STATUS_CODES[status]
  * 的字典句，没有状态码可归类才回兜底句，原文进 rawMessage。
  * 防英文的地方由此仍然只有一处，且全在字典侧：分流「字典认不认得这枚码」= dictionaryClaims()，
  * 分流「后端这句话能不能给人看」= proseIsForHumans()。消费侧（lib/http.js::errorDetail 与一切
@@ -329,7 +329,7 @@ function isCodeShape(value) {
  * 只问一件事 —— 有没有中日韩文字。不问语种清单、不量句子长度、不养英文黑名单：那三样都会
  * 把闸口变成第二本需要人维护的账，防英文的地方也就跟着多出账本来。
  *   有 ⇒ 这就是后端写给人看的句子，原样占人话位。逐枚出处（现测表在 r380-shape-table.test.js）：
- *        auth.py:75「用户名或密码错误」、:130 / :179「用户不存在」、:222「SSO 未启用或请求未通过
+ *        auth.py:81「用户名或密码错误」、:130 / :179「用户不存在」、:222「SSO 未启用或请求未通过
  *        验证」、:225「缺少 SSO 身份头」、:281「画像保存失败」；alerts.py:1020「非法操作符: …」；
  *        common/auth.py:603-744 那批「用户名和密码不能为空」「原密码错误」；
  *        common/authorization.py:23「权限不足: …」。中英混排同样含中文，误杀不到它。
@@ -505,7 +505,7 @@ function resolveCode(raw, status) {
   const humanVoice = proseIsForHumans(voice)
   const rejectedProse = humanVoice ? '' : voice
   if (statusKey) {
-    // 中文人话直出（auth.py:75 那类）；HTTP 英文原话退给字典的状态句
+    // 中文人话直出（auth.py:81 那类）；HTTP 英文原话退给字典的状态句
     return clampResult({
       code: statusKey,
       rawCode: codeHint,

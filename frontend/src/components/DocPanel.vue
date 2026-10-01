@@ -199,7 +199,7 @@ export function stageTruth(row) {
 // ==================== 这一次上传的 PDF 提取读数（R338） ====================
 /**
  * 员工视角：屏上那句「上传完成」可能是真话，但不完整 —— 一份 12 页是扫描页、OCR 那一档没跑成的
- * PDF 传完之后，那 12 页的内容永远搜不到。这句话后端今天已经说出来了（app/api/v1/chat.py:3841
+ * PDF 传完之后，那 12 页的内容永远搜不到。这句话后端今天已经说出来了（app/api/v1/chat.py:4412
  * _pdf_extraction_cell，契约 docs/api/contract-v1.md:2342），界面整格丢掉。本格把它搬上屏。
  *
  * 🔴 形状只出自【刚回来的那一发】POST /upload 回执，它不落库：app/documents/catalog.py 对
@@ -210,12 +210,12 @@ export function stageTruth(row) {
  *
  * 三条最容易失手的口径：
  *   ① null ⇒ 整格不画（非 PDF / .docx / .txt 走这一支）。把 null 画成「0 页扫描」是把「没读过」
- *     伪装成「读过」：chat.py:3851 为同一理由禁止后端发 {}，界面这边同判。{} 后端不会发，真发来
+ *     伪装成「读过」：chat.py:4424 为同一理由禁止后端发 {}，界面这边同判。{} 后端不会发，真发来
  *     了也不当 null 兜 —— 那一格该说的是「读不到」，同样不是「0 页」。
  *   ② R298 的两档不合并：「引擎不可用」与「引擎在、这几页没跑成」在回执里是两枚不同的句头
  *     （ocr.ENGINE_UNAVAILABLE_NOTE 与 loader.DEGRADATION_NOTE_PREFIX）。界面只把 degradation_note
  *     原文搬上屏，一字不改口，也不重写成「OCR 未启用」那种把两档捏成一档的话。
- *   ③ source_counts 一枚桶一句话：blank 与 ocr-empty 各说各的（chat.py:3847 明写不合并、不引申）。
+ *   ③ source_counts 一枚桶一句话：blank 与 ocr-empty 各说各的（chat.py:4421 明写不合并、不引申）。
  */
 
 /**
@@ -669,7 +669,7 @@ async function uploadSingleFile(file) {
       item.phase = 'done'
     }
     item.msg = res.data.message || '上传完成'
-    // R338：把回执里那一格 PDF 提取读数搬上屏（形状见 app/api/v1/chat.py:3841）。
+    // R338：把回执里那一格 PDF 提取读数搬上屏（形状见 app/api/v1/chat.py:4412）。
     // 🔴 判据⑤：上面 item.status / item.progress / item.msg 那几行一字未动 —— 这一格是【追加】，
     // 不是替换。「上传完成」与「这几页 OCR 没跑成、永远搜不到」两句同时为真，少任何一句都是假话；
     // status 为 skipped 那一支也不因它变成成功：那一支照旧走上面那张 ⏭️ 脸，这里只补读数。

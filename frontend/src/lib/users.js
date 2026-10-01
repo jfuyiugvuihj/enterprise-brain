@@ -34,7 +34,7 @@ import { errorDetail, http, PERMISSION_DENIED } from './http'
 
 /** 这一屏唯一的一条请求路径。列表只此一条，写路径一枚都不接。 */
 export const USERS_PATH = '/users'
-/** 后端 auth.py:95 那一格回包里的数组键名。 */
+/** 后端 auth.py:112 那一格回包里的数组键名。 */
 export const USERS_ROWS_KEY = 'users'
 
 /**
@@ -277,7 +277,7 @@ export const USER_WRITE_DEPARTMENT = 'department'
 export const USER_CREATE_PATH = USERS_PATH
 export const USER_PASSWORD_PATH = '/users/password'
 export const USER_DEPARTMENT_PATH = '/users/department'
-/** DELETE 的路径带编号（auth.py:113 声明的是 user_id: int），所以这里是一个构造函数而不是常量。 */
+/** DELETE 的路径带编号（auth.py:131 声明的是 user_id: int），所以这里是一个构造函数而不是常量。 */
 export const USER_DELETE_PATH_PREFIX = `${USERS_PATH}/`
 
 /**
@@ -330,7 +330,7 @@ export const USER_FORM_RULES = {
  */
 export const USER_CREATABLE_ROLES = USER_FORM_RULES.creatableRoles
 
-/** 后端 CreateUserRequest 那两枚默认值（auth.py:22-23：role 默认 staff、department 默认空串）：表单起点照它抄，不自己挑一枚。 */
+/** 后端 CreateUserRequest 那两枚默认值（auth.py:28-29：role 默认 staff、department 默认空串）：表单起点照它抄，不自己挑一枚。 */
 export const USER_CREATE_DEFAULTS = { role: 'staff', department: '' }
 
 /** 预检没过时的那几句话：说的是本账那几个值，不是第二份判定。 */
@@ -373,7 +373,7 @@ export function departmentBody(form = {}) {
 }
 
 /**
- * DELETE 按编号定位（auth.py:113 的路径参数是 user_id）。名册这一行没给编号就构造不出路径：
+ * DELETE 按编号定位（auth.py:131 的路径参数是 user_id）。名册这一行没给编号就构造不出路径：
  * 空串是唯一允许的「不行」，前端不替后端猜一个 id，也不发一枚注定 422 的请求。
  */
 export function userDeletePath(row) {

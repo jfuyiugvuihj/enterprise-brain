@@ -58,7 +58,7 @@ const PLAN_TITLES = {
   approval: '审批与待办',
   // R315 判据① 追加：这一枚的出处不是 §四 那张表，而是 docs/frontend-plan-2026-09-14.md:132
   // 工作区映射表里那一行「（新增）『交成果』」—— 后端依赖 B-1 / R2 今天都已交付，屏才有资格落地；
-  // 员工用词那一头见 docs/handoff/2026-09-15-backend-followup-requests.md:2099 硬规矩③。
+  // 员工用词那一头见 docs/handoff/2026-09-15-backend-followup-requests.md:2114 硬规矩③。
   artifacts: '交成果',
 }
 

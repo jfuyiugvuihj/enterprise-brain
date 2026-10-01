@@ -128,7 +128,7 @@ const targetOptions = computed(() => rows.value.map(row => ({
 })))
 const chosenRow = computed(() => rows.value.find(row => row.username === targetName.value) || null)
 const hasTarget = computed(() => Boolean(chosenRow.value))
-/** 删除按编号走（auth.py:113 的路径参数就是编号）；这一行没编号就如实说删不了，不替它猜一个。 */
+/** 删除按编号走（auth.py:131 的路径参数就是编号）；这一行没编号就如实说删不了，不替它猜一个。 */
 const deletePath = computed(() => (chosenRow.value ? userDeletePath(chosenRow.value) : ''))
 const busy = computed(() => busyKind.value !== '')
 
@@ -141,7 +141,7 @@ function closeDialogs() {
 }
 
 /**
- * 打开一枚对话框：表单起点全部取后端默认值或后端已记的值（auth.py:22-23 给 role / department
+ * 打开一枚对话框：表单起点全部取后端默认值或后端已记的值（auth.py:28-29 给 role / department
  * 定的默认就是 staff 与空串），一个字符都不自己加工；预检错误位与上一次的回执一起清空。
  */
 function openDialog(kind) {

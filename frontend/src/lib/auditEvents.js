@@ -3,7 +3,7 @@
  *
  * 病（开工现取，基点 85572c1）：GET /api/v1/audit/events 在前端零消费者（rg -nF "/audit/events"
  * frontend/src 除 </slot> 那种误命中外 0 枚生产命中）。出口早就在树：
- * app/api/v1/observability.py:1198 那条 GET，读的是 app/common/audit.py:584 那份进程内视图。
+ * app/api/v1/observability.py:1644 那条 GET，读的是 app/common/audit.py:584 那份进程内视图。
  *
  * 🔴 这一屏存在的全部意义是判据 C：不许把截断藏起来。回包把这件事拆成六格交出来，本层逐格转达：
  *   filters（:1211-1215 构造，空串那一档后端自己剔掉了）、event_count（:1228 这一页几枚）、
@@ -30,7 +30,7 @@ import { errorCodeLabel, errorCodeOf, errorText } from './errcodes'
 import { PERMISSION_DENIED, errorDetail, http } from './http'
 import { countText } from './traces'
 
-/** 这一屏唯一的一条读腿：app/api/v1/observability.py:1198 那条 GET。 */
+/** 这一屏唯一的一条读腿：app/api/v1/observability.py:1644 那条 GET。 */
 export const AUDIT_EVENTS_PATH = '/audit/events'
 
 /** 后端写死的那一枚排序：observability.py:1232 的字面量，屏上原话印出来。 */

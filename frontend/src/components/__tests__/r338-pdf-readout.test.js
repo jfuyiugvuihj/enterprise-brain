@@ -1,7 +1,7 @@
 /**
  * R338 · 上传回执里那格「这几页 OCR 没跑成」上屏
  *
- * 病灶（行号在基点 466d8a1 现取）：app/api/v1/chat.py:3841 的 _pdf_extraction_cell 早就把【这一次
+ * 病灶（行号在基点 466d8a1 现取）：app/api/v1/chat.py:4412 的 _pdf_extraction_cell 早就把【这一次
  * 上传】的逐页读数交出来了（契约 docs/api/contract-v1.md:2342，R301），而 DocPanel.vue:528-533
  * 那一支只取 res.data.status 与 res.data.message —— pdf_extraction 整格没人读。于是员工传一份
  * 有 12 页扫描页、OCR 那一档没跑成的 PDF，屏上只留下一句「上传完成」：那 12 页的内容永远搜不到，
