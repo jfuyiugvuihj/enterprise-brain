@@ -35,7 +35,7 @@
 文件清单（两遍完全同一份）：`tests/test_r555_commit_charge_limits_the_gate.py`、`tests/test_r449_nested_pytest_basetemp_contract.py`、`tests/test_r453_cloud_eval_override.py`、`tests/test_r453_nested_pytest_selection_guard.py`、`tests/test_r496_forbidden_pin_scope.py`。
 
 - **dirty（已 apply 未 commit）**：**108 passed / 0 failed / 8 warnings / 34.63 s / rc=0**（`-p no:cacheprovider --no-header`，串行）。
-- **clean（`git commit` 之后同名件复跑）**：**待本纸随下一笔补记**（按看板 §0 那条"两态数字"的规矩，本笔提交后立刻复跑并把数落在这一格；只交 dirty 那一列的账，`fa1cf3e` 与 `09-29 R496` 各撞过一次）。
+- **clean（`git commit` 之后同名件复跑，落在 `75b227d`）**：**108 passed / 0 failed / 8 warnings / 55.49 s / rc=0**——与 dirty 那一遍**同数**（108），墙钟 34.63 s → 55.49 s 是这台机上 4 枚 Agent 同时在跑自己的测试，不是回归。🔴 两遍文件清单逐枚同一份，本笔不存在"只交 dirty 那一列"的欠账（`fa1cf3e` 与 09-29 R496 各撞过一次，本席不例外）。
 
 ## 五、这单不翻的格子（明写，不当成已修）
 
