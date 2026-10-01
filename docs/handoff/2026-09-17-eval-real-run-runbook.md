@@ -504,3 +504,26 @@ sys.exit(1 if flags else 0)
 - 🔴 一枚一手坑（写代码的人下次别再来一遍）：ctypes 不声明 `restype`/`argtypes` 时 `0x80000003` 被当有符号 int 传、API 交回 `None`，本件第一版因此把成功读成失败。牙 `test_d1_the_ctypes_signature_is_declared` 现在盯着它——签名声明不是讲究，是这枚锁能不能挂上的开关。
 - 这把锁是**进程存活期内的临时锁**：`--loop` 退出或被杀即回到该机原有电源配置，本件一行电源设置都没改（业主 09-29 明令「别设为永眠」）。`powercfg /query STANDBYIDLE` 现取 AC=0 是上一班留下的既有状态，本件不重复动；但按 §10 原话，单独拿它当 P-19 通过仍是假绿。
 - 开窗前置第 10 格的**新写法**（不许再抄 `%TEMP%\ka.txt`）：开窗前 `--check` 必须 rc=0；开窗期常驻进程活着与否以 stamp 的 mtime 为唯一凭据，`--check` 那句红话会点名是「文件不存在」／「API 交回 0」／「超过 300 秒没续」哪一种。
+
+
+## 订正六（2026-10-01 第十一班·总控自记·R561 判据⑤ 开窗现场亲自撞的两枚）
+
+本席不是来订正谁的，是来记自己撞的。两枚都会让一整扇窗白开，且失败方式**看着像成功**。
+
+1. **P-21（新增前置）：`build` 不带 `GIT_SHA`/`BUILT_AT` ⇒ 镜像里的 `BUILD_INFO` 老实写 `revision=unknown` ⇒ 任何容器侧量具判 `provenance=UNMEASURED` 并拒绝开窗（`rc=2`）。**
+   正确顺序（本席 23:37 实测，从发起到 `BUILD_INFO` 可读 ≈15 秒，依赖层全命中缓存）：
+   ```powershell
+   $env:GIT_SHA  = (git rev-parse HEAD)
+   $env:BUILT_AT = (Get-Date -Format "yyyy-MM-ddTHH:mm:sszzz")
+   docker compose --env-file deploy/.env.server build migrate
+   docker compose --env-file deploy/.env.server up -d --force-recreate backend worker scheduler
+   docker compose --env-file deploy/.env.server exec backend cat /app/BUILD_INFO   # 必须是 40 字符的 rev
+   ```
+   🔴 这一条**不是缺陷而是设计**：`Dockerfile` 末尾那句注释写得很明白——忘了传的操作员拿到的是真话 `unknown`，而不是一个看着可信的错 hash。谁都不许为了让量具闭眼过去而把 `unknown` 改成手抄的 sha。
+   顺带把 §17 那格「重建镜像（plain build，`compose build` 本机报 gRPC sharedkey）」**改窄**：10-01 23:37 本机 `docker compose --env-file deploy/.env.server build migrate` **正常出像**（新 id `8d484a6133dc`），那条 gRPC 报错属当时那台 Docker Desktop 的状态，别再照它绕回 plain build——plain build 不带 `compose` 那格的 `args:` 映射，更容易漏 `GIT_SHA`。`scripts/check_image_provenance.py`（P-8）与 R561 量具读的是同一路：容器内 `/app/BUILD_INFO` ＋ 镜像 OCI label。
+
+2. **P-22（新增前置）：容器 `--force-recreate` 之后先等 healthcheck 翻 `healthy` 再打发第一发。**
+   本席实测：recreate 完 **8 秒**发第一发 ⇒ `RemoteDisconnected: Remote end closed connection without response`，量具 `rc=2`。`backend` 的 `HEALTHCHECK` 是 `--start-period=45s --interval=20s`，所以正解是等 `docker compose ps` 那列出现 `healthy`（本席这次 29 秒），不要靠 `Start-Sleep 5` 猜。
+   🔴 这一枚的坏味道在于**它长得像产品故障**：`RemoteDisconnected` 很容易被读成「队列道挂了」，其实只是应用还没起来。任何窗口的第一发这类错先查容器健康态，再谈缺陷。
+
+3. **本席自己还撞过第三枚，形状是「追加脚本把整份原文又写了一遍」**：`open(P, "ab").write(raw.rstrip(...) + add)` —— `ab` 已经落在全篇之后，却又把 `raw` 再写一次 ⇒ 文件从 507 行变 1036 行、`git diff --numstat` 报 `529/0`（正好是原文行数＋新增段）。当场从自证打印里看出线数不对才回退。🔴 落一条口径：**凡"追加"写法，只准 `write(add)`；凡"重建"写法（从 `git show HEAD:` 起），只准配 `"w"`。两半各用一次就重复一遍**——与本板 §4AB 那条「解释器铁规」同源：**量具必须先证明自己的读数不是失败串**，写完立刻量一次总行数是不是"原行数＋新增行数"，别等下一班来发现文档长了两倍。
