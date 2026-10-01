@@ -201,3 +201,20 @@ provenance 那一路的实情（🔴 纸上必须写清，否则就是又一枚�
 3. 主树此刻的全量门交回 `13 failed`（`%TEMP%\gate_518314c_run1.log`，18:11:59，`-n 6`，exit=1）：红的是
    `tests/test_r455_*`（坐标族）／`test_r453*`／`tests/test_r449_nested_pytest_basetemp_contract.py`（两枚）／R548 的 z9c／R523 契约——
    全部属他席在途，不是本单的账，本席一枚未碰。
+
+
+## 十三、容器那一遍的读数（🔴 总控代跑，不是执行层自报）
+
+- **时刻**：2026-10-01 23:38:32 开窗 → 23:41:23 收窗，`rc=0`，`headline=PASS`（`wait_ms` 现取 230,802.9 ms ≈ 3 分 51 秒）。
+- **环境**：镜像 `enterprise-brain:local` 重建后 id `8d484a6133dc`，容器 `--force-recreate`（不是 `docker restart`，env_file 只在容器创建那一刻解析）；腿＝默认本机腿 `qwen3.5:9b` @ `http://ollama:11434/v1`；`REPORT_LANE_VIA_QUEUE=on`／`VECTOR_DUAL_WRITE=on`；题＝`report-01`，`final_kind=queued_polled`，76 发轮询，`approval_rounds=0`、`blips=0`、`relogins=0`。
+- **一格一句读数**（六格逐格，值取 `docs/perf/raw/r561-2026-10-01/summary.json`）：
+  · `provenance` **PASS**——两枚容器的 rev 与主树 HEAD **逐字符等 40**，走的是 `/app/BUILD_INFO` 那二路（`git rev-parse` 在容器里必然 128，`.git` 不进镜像）。
+  · `growing` **PASS**——`processing_ok_polls=20`，`chars` 从 21 一路涨到 1490（19 枚互不相同的值，`distinct_chars=19`），`cursors` 同步从 1 推到 23。⇒ **「不许到终态才一次给全」这一格第一次在容器＋真 Redis 上拿到读数**，不再是同进程夹具里的推断。
+  · `caps_zero` **PASS**——75 发带片段的轮询里 `max_discarded=0`／`max_truncated=0`，非零发数 0（账本 512／存储 1024 两枚上限都没碰到，这一题的字数远在下限内）。
+  · `terminal_no_pieces` **PASS**——终态那一发（第 76 发，`status=done`）键面 16 枚里没有片段键，非 `processing` 的每一发也没有 ⇒ 片段不是第二条流。
+  · `zero_bypass_unreadable_retry` **PASS**——`bypass=false`、`invented_reasons=[]`、`retried_polls=[]`、`unreadable_polls=[]`，且 `retry_measurable=true`（三枚都是**量到了**的 0，不是没量）。
+  · `poll_bookkeeping` **PASS**——终账 `queued_polled`（有正文那一型），零重登、零闪烁、零审批轮。
+- 🔴 **本席在这扇窗上撞了一次在册陷阱并记下来**：第一遍 `docker compose --env-file deploy/.env.server build migrate` **没带 `GIT_SHA`/`BUILT_AT`** ⇒ `/app/BUILD_INFO` 老实写着 `revision=unknown` ⇒ 量具判 `provenance=UNMEASURED` 并**拒绝开窗**（`rc=2`，"量不到不等于干净"）。正解是构建前 `$env:GIT_SHA=(git rev-parse HEAD)`；这条不是缺陷，是设计在起作用——忘传的操作员拿到的是真话 `unknown`，不是一个看着可信的错 hash。
+- 还撞了第二枚更普通的：容器刚 `--force-recreate` 完 8 秒就打第一发 ⇒ `RemoteDisconnected`，`rc=2`。正解是先等 healthcheck 翻 `healthy`（`start-period=45s`）再开窗。这两条都进 §五 P-21 那类前置清单，别再让下一班重新发现一次。
+- **口径边界（不许越读）**：这一遍只证**形状**（片段在容器里确实逐发递增、终态不带片段、上限没吃刀）。它**不是**时延读数，也不是 A② 的翻绿凭据——同一题在争用机上走了 230.8 s，而此刻本机有 4 枚 Agent 在跑自己的测试、GPU 上还有外来训练进程。A②（88/105）与 D 门（sources_present）两格**仍不翻绿**。
+- **结案效果**：R558 判据① 欠的那半张（容器＋真 Redis）与 R561 判据⑤ **同一笔账，两格一并清**。R558／R561 至此没有欠账。
