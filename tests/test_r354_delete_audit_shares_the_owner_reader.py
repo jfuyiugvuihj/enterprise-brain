@@ -273,13 +273,17 @@ def test_the_scope_projection_still_drops_a_blank_owner(monkeypatch, tmp_path):
     assert _delete(data, "root", LEGACY)["record_status"] == "deleted"
 
 
-def _rebind(data, registry, root) -> None:
-    """exec 会把模块顶层重跑一遍（DATA_DIR / dataset_registry 回到出厂值），窗内必须重装夹具。"""
-    data.DATA_DIR = str(root)
-    data.dataset_registry = registry
+def _rebind(data, registry, root, monkeypatch) -> None:
+    """exec 会把模块顶层重跑一遍（DATA_DIR / dataset_registry 回到出厂值），窗内必须重装夹具。
+
+    🔴 R563：这里过去是裸赋值，用例结束没人还原 ⇒ 同一枚 worker 上的下一模块会拿到一枚
+    指向已删临时目录的 registry。改走 monkeypatch：它按 setattr 顺序逐枚 undo。
+    """
+    monkeypatch.setattr(data, "DATA_DIR", str(root), raising=False)
+    monkeypatch.setattr(data, "dataset_registry", registry, raising=False)
 
 
-def _recapture(data, calls: list) -> None:
+def _recapture(data, calls: list, monkeypatch) -> None:
     """同一扇窗里再装一次审计收集器：exec 把 ``record_audit`` 也换回了真身，不重装就收不到账。"""
 
     def record(principal, action, outcome, resource="", reason="", **kwargs):
@@ -295,7 +299,7 @@ def _recapture(data, calls: list) -> None:
         )
         return dict(calls[-1])
 
-    data.record_audit = record
+    monkeypatch.setattr(data, "record_audit", record, raising=False)
 
 
 # ------------------------------------------------------------------ 判据⑥：schema / 码表 / 响应形状
@@ -361,8 +365,8 @@ def test_nothing_else_in_the_audit_moved_between_base_and_delivered(monkeypatch,
     _d2, registry_b, root_b = _wire(monkeypatch, dir_b)
     calls_base = _capture_audits(monkeypatch, data)
     with _window([(DELIVERED_READ, BASE_READ)]) as info:
-        _rebind(data, registry_b, root_b)
-        _recapture(data, calls_base)
+        _rebind(data, registry_b, root_b, monkeypatch)
+        _recapture(data, calls_base, monkeypatch)
         _delete(data, "root", LEGACY)
     assert info["restored"], "对账窗没还原"
 
@@ -511,8 +515,8 @@ def test_counter_evidence_1_reverting_the_delete_leg_goes_red(monkeypatch, tmp_p
     receipt_owner = _preview(data, "alice", LEGACY)["owner_id"]
 
     with _window([(DELIVERED_READ, BASE_READ)]) as info:
-        _rebind(data, registry, root)
-        _recapture(data, calls)
+        _rebind(data, registry, root, monkeypatch)
+        _recapture(data, calls, monkeypatch)
         assert receipt_owner is None, "回执那一侧先不是 null 了：夹具或既有码变了，本刀无从对照"
         _delete(data, "root", LEGACY)
         audit_owner = _completion(calls)["before_summary"]["owner_id"]
@@ -538,8 +542,8 @@ def test_counter_evidence_2_a_second_reader_that_is_right_anyway_goes_red(monkey
     calls: list = []
 
     with _window([(DELIVERED_READ, SECOND_READER)]) as info:
-        _rebind(data, registry, root)
-        _recapture(data, calls)
+        _rebind(data, registry, root, monkeypatch)
+        _recapture(data, calls, monkeypatch)
         _delete(data, "root", LEGACY)
         audit_owner = _completion(calls)["before_summary"]["owner_id"]
         violations = module_owner_read_violations(_delivered_source())
@@ -574,8 +578,8 @@ def test_counter_evidence_3_a_fresh_lookup_for_the_audit_cell_goes_red(monkeypat
     delivered = _delete_and_count(data, MINE, lookups)
 
     with _window([(DELIVERED_READ, FRESH_LOOKUP)]) as info:
-        _rebind(data, registry, root)
-        _recapture(data, [])
+        _rebind(data, registry, root, monkeypatch)
+        _recapture(data, [], monkeypatch)
         widened = _delete_and_count(data, LEGACY, lookups)
         shape = owner_shape_violations(_delivered_source())
         violations = module_owner_read_violations(_delivered_source())
@@ -601,8 +605,8 @@ def test_counter_evidence_4_renaming_the_audit_field_goes_red(monkeypatch, tmp_p
     calls: list = []
 
     with _window([(DELIVERED_READ, RENAMED_FIELD)]) as info:
-        _rebind(data, registry, root)
-        _recapture(data, calls)
+        _rebind(data, registry, root, monkeypatch)
+        _recapture(data, calls, monkeypatch)
         result = _delete(data, "root", LEGACY)
         before = _completion(calls)["before_summary"]
         shape = owner_shape_violations(_delivered_source())

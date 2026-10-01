@@ -121,8 +121,8 @@ def _wire(monkeypatch, tmp_path):
         registry.register(path, principal=_principal(OWNER_OF[filename]))
     (root / UNREGISTERED).write_text("department,note\n%s,STRAY-BODY\n" % DEPT_OPS, encoding="utf-8")
 
-    data.DATA_DIR = str(root)
-    data.dataset_registry = registry
+    # R563：原先这里先裸赋值再 monkeypatch.setattr——setattr 记下的"原值"已经被那两行裸赋值
+    # 顶成临时目录里的一枚 registry，undo 就还不回出厂值。删掉裸赋值，只留 monkeypatch。
     monkeypatch.setattr(data, "DATA_DIR", str(root))
     monkeypatch.setattr(data, "dataset_registry", registry)
     return data, registry, root

@@ -654,3 +654,130 @@ def model_endpoint_guard():
         offline_registry_fetch=MODEL_DISCOVERY_PIN.offline,
         model_config=MODEL_DISCOVERY_PIN.module,
     )
+
+
+# ==================== R563：活模块的顶层可调用绑定不得跨模块漏 ====================
+# 病（10-01 实测，同一条 traceback 连撞三遍门，受害者每次不一样所以前两遍被判成"共置假红"）：
+#   tests/test_r354_delete_audit_shares_the_owner_reader.py 的 _recapture/_rebind 用裸赋值
+#   data.record_audit = record 把一枚「假定 principal 不是 None」的假收集器装进活模块，
+#   用例结束没人还原。同一枚 worker（-n 6 --dist loadfile）上的下一模块撞上它：
+#   test_r180_row_scope_preview_and_catalog_honesty.py::test_preview_without_any_principal_fails_closed
+#   ⇒ AttributeError: 'NoneType' object has no attribute 'username' ⇒ 顺着 except Exception
+#   滑成 500 dataset_preview_failed（正是那枚用例注释里禁止的"把拒绝伪装成故障"）。
+#   取证：门 #4 的 %TEMP%\eb-r563-order-<pid>.log 记到 r180 与 r354 同进程；现场合跑两枚
+#   文件 100% 复现（r354+r180 = rc=1，报错逐字相同），r354 改用 monkeypatch 之后同跑 31 passed。
+# 治（两条一起，缺一不可）：
+#   ① 逐模块取一份活绑定基线，模块收工时比对；不等就在**凶手自己的 teardown 上红**并指名——
+#      红在被点名的人身上，这条才不会被下一班当成受害者的运气问题放过去。
+#   ② 同时把活模块还回基线：还回去不是为了免掉这一枚红，是为了别让下一模块替它挨打。
+#   只盯顶层**可调用**（函数与类）：这一族漏的就是假身收集器；DATA_DIR / dataset_registry 这类
+#   夹具重绑（r310／r337 的 _rebind）由 ② 一并还原，但不点名——那是既有的、按窗工作的形状。
+_EB_R563_MISSING = object()
+
+
+_EB_R563_WATCHED = (
+    "app.api.v1.data",
+    "app.api.v1.chat",
+    "app.common.audit",
+    "app.agents.orchestrator",
+    "app.rag.retrieval_pipeline",
+)
+
+
+def _eb_r563_snapshot():
+    """收下每一枚被盯模块当前的顶层**函数**绑定。
+
+    只收函数：这一族漏的就是假身收集器（`record_audit = 一枚假定参数形状的本地函数`）。
+    类不收——把整份源码重 exec 回盘上那一版会连带换掉类的身体，那是既有窗的做法，不是漏。
+    """
+    import types
+
+    out = {}
+    for name in _EB_R563_WATCHED:
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        out[name] = {
+            key: value
+            for key, value in vars(module).items()
+            if not key.startswith("__") and isinstance(value, types.FunctionType)
+        }
+    return out
+
+
+def _eb_r563_same(a, b):
+    """同一枚函数吗？先比对象，再比码体。
+
+    比码体而不是比身份：`r48` 那一扇窗把整份源码重新 exec 回活模块，出来的函数是新的对象、
+    旧的身体——那叫还原，不叫漏。真漏的形状是身体换了（`record` 那种就地定义的假身）。
+    """
+    if a is b:
+        return True
+    ca, cb = getattr(a, "__code__", None), getattr(b, "__code__", None)
+    if ca is None or cb is None or ca is cb:
+        return ca is cb
+    return (
+        ca.co_name == cb.co_name
+        and ca.co_qualname == cb.co_qualname
+        and ca.co_code == cb.co_code
+        and getattr(a, "__defaults__", None) == getattr(b, "__defaults__", None)
+    )
+
+
+def _eb_r563_live_module_guard(request):
+    """模块开工取基线；收工比对，漏了就先还回去、再指名道姓地红在本模块自己的 teardown 上。
+
+    🔴 红必须落在凶手自己的模块上：门 #2/#3/#4 三遍里红的是受害者（r466 两次、r180 一次），
+    每遍换个名字，于是前两遍被当成 xdist 共置假红放过去了；同一条 traceback 现场合跑 100% 复现。
+    """
+    before = _eb_r563_snapshot()
+    yield
+    after = _eb_r563_snapshot()
+    drift = []
+    for name, bindings in after.items():
+        base = before.get(name, {})
+        for key, value in bindings.items():
+            original = base.get(key)
+            if original is None or _eb_r563_same(original, value):
+                continue
+            drift.append(
+                "%s.%s：盘上那一版 %s.%s 被换成 %s.%s"
+                % (name, key, getattr(original, "__module__", "?"),
+                   getattr(original, "__qualname__", "?"), getattr(value, "__module__", "?"),
+                   getattr(value, "__qualname__", "?"))
+            )
+    if not drift:
+        return
+    for name, bindings in after.items():
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        for key, value in bindings.items():
+            original = before.get(name, {}).get(key)
+            if original is not None and not _eb_r563_same(original, value):
+                setattr(module, key, original)
+    pytest.fail(
+        "R563：本模块出门把活模块的顶层可调用绑定换成了自己的假身，没还回去。"
+        + chr(10) + chr(10).join("  - " + line for line in drift) + chr(10)
+        + "活模块已还回基线（下一模块不再当受害者），但红必须留在本模块自己身上：" + chr(10)
+        + "把裸赋值改成 monkeypatch.setattr(模块, 名字, 假身)，或 request.addfinalizer 还账。" + chr(10)
+        + "本条记档：跟进单 §145。上一班把同一形状误判成 xdist 共置假红，门 #2/#3/#4 各漂一次。",
+        pytrace=False,
+    )
+
+
+@pytest.fixture(autouse=True, scope="module")
+def eb_r563_live_module_callables_do_not_leak(request):
+    """R563 的在册钉子：本体拆成普通生成器，反证用例才 drive 得动（fixture 不许被直接调用）。"""
+    yield from _eb_r563_live_module_guard(request)
+
+
+@pytest.fixture
+def eb_r563_guard():
+    """把 R563 的钉子与快照器交给反证用例，用例不必去 import conftest。"""
+    return SimpleNamespace(
+        watched=_EB_R563_WATCHED,
+        snapshot=_eb_r563_snapshot,
+        missing=_EB_R563_MISSING,
+        body=_eb_r563_live_module_guard,
+    )
