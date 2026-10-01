@@ -142,7 +142,7 @@
 
 **干净树第一遍**（R558 已 commit 为 `5477645`，除 `chroma_db/chroma.sqlite3` 这枚按规矩永不提交的数据件外无内容差）：`153 passed / 68 warnings in 59.97 s`，rc=0，文件清单与上面那九枚逐枚相同（全 CRLF）。⇒ **两态数字对平**：dirty 153／clean 153，耗时 60.45 s 对 59.97 s，没有「并树即自毁」的钉。
 
-**前端两态**：dirty（R558 apply 未 commit）与第二遍之间夹了一枚真红，见 §4b——改口之后`npx vitest run` ⇒ **147 files / 2950 tests passed**，rc=0（9.97 s）。干净树复跑数字补在 §4b 末尾（同一笔提交内）。
+**前端两态**：dirty（R558 apply 未 commit）与第二遍之间夹了一枚真红，见 §4b——改口之后`npx vitest run` ⇒ **147 files / 2950 tests passed**，rc=0（9.97 s）。干净树第二遍（`b10a7d0`，本单全部改动已 commit、除 `chroma_db/chroma.sqlite3` 外无内容差）：`npx vitest run` ⇒ **147 files / 2950 tests passed**，rc=0（11.4 s，17:53 现取）⇒ **前端两态也对平**。
 
 ## 4b. 干净树第二遍抓到的那一枚红——是本单造成的，不是陈旧的（与 §4 那枚要分开记）
 

@@ -1629,6 +1629,10 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Erdos` | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R552**（复用线程续用）`scripts/r531_worktree_merge.py` 对新件的行尾决策 | `be-r535`（现取基点 `05bec06`，**独占**，续用同一棵树） | ✅ **已结案并树 `573ddd4`**：铺树器的行尾决策从「blob 惯例」换成「检出形态」。🔴 真因不是「按 siblings 猜错」，是 `sibling_convention()` 统计的是 **blob 行尾**（`git show HEAD:<path>`），而 `core.autocrlf=true` 下文本件 blob 恒 LF ⇒ 那一格**结构上只会答 LF**，抽多少枚都一样。裁定：钉「落盘＝检出形态」；`sibling_convention()` 降级为诊断不删；`target_convention():139` 那格不动，残留写成**在册欠账**。追平走「复制到仓外＋逐枚 sha256 记账→`restore --source=HEAD`→`merge --ff-only`→字节全等复验」，明令禁 `reset --hard`／`clean -fd`。 | 10-01 12:5x |
 | `Noether`／`Goodall` | `01a0f163-1ff4-7432-891b-…`／`01a0f163-c06e-7f53-af81-…` | R550／R551（**两枚秒死的 spawn，号作废不复用**） | `be-r550`／`be-r551`（建树后 `dirty=0`，零落盘） | 🔴 上一班那两枚「投出即 1 秒报 `Invalid id`」的新线程；零写入已取证，本席不当补投。🟢 **出路更正（本席现取）**：`send_input` 报 `agent ... not found` 的线程**不必等业主开线**——`Hume`／`Erdos` 双双 not found，`resume_agent` 之后 `send_input` 正常落地并交回长文。⇒ 上游那句「出路只有写进跟进单等新线程、或业主手动开线」改窄为：**已存在但已关闭的执行层线程可复活续用**；🔴 仍然不许 `spawn_agent` 开**全新**线程。 |
 | `Pasteur` | `01a0f09f-1ccb-7d30-a716-ce38f1d3e0f6` | **R557**（复用线程续用·只读复评）「计划书在册号 vs 主干真并树」全量机器账＋`R73`/`R26` 两笔陈账三态 | `be-eval95`（追平到 `a8e52f7`，**独占**；唯一写入＝一枚新文档 `docs/handoff/2026-10-01-ledger-recheck-4.md`） | 🟡 在途（10-01 13:0x 投出，一个 block 只此一次）。🔴 纯只读：不许改任何已跟踪文件、不许跑全量门、不许动容器、零 commit；取证方法照 `581cfb0`·R521 §0（HEAD 计数与 --all 计数逐号对平＋`cat-file -t`＋`merge-base --is-ancestor` 三件齐）。 | 10-01 13:1x |
+| `Kuhn`／`Erdos`／`Hume`／`Pasteur`（四枚**复用线程**） | `01a0efcf-…`／`01a0f03c-…`／`01a0f0e6-…`／`01a0f09f-…` | **R527／R555／R556／R557**（四枚待投单，判据全文＝跟进单 §141／§142） | `be-r550`／`be-r535`／`be-r551`／`be-eval95` | 🔴 **事故 #103 仍未解（本班 17:57x 三证复取）**：前三棵 `HEAD=a8e52f7`＋`dirty=0`＋`rev-list a8e52f7..HEAD=0`；第四棵 `be-eval95` 已被追平到 `be11e51`（`rev-list` 那 3 枚是主树自己的 `d84042f`→`7835a6a`→`be11e51`，**不是它的产物**），`R557` 那份唯一交付 `docs/handoff/2026-10-01-ledger-recheck-4.md` **磁盘上不存在** ⇒ 四枚单至今零落地。本机 python 7 枚全是外部 `train.py` 一族，无一枚从这四棵树长出。⇒ 出路只剩业主手动开线，本席按规矩**不补投**。 | 17:57 |
+| （总控亲修·非执行层） | — | **R558** 甲案投递面半张：队列道逐字片段接上既有轮询面 `GET /api/v1/queue/status/{id}` | `be-r558`（基点 `be11e51`，**独占**；经 `scripts/r531_worktree_merge.py --apply` 落主树） | ✅ **已结案并树**（三笔：`458a3d1` run11c 证据入库／`5477645` 码＋九枚件／`b10a7d0` 交工纸＋改口 r293 陈旧坐标）。七格判据逐格对账＝`docs/testing/r558-queue-lane-piece-delivery.md`；两态数字 **dirty 153／clean 153**（60.45 s 对 59.97 s）；前端 **147 files／2950 tests** 两遍全绿；stylelint **148 problems（0 errors）＝与 HEAD 复量同值**⇒零新增裸色值；`sessions.js` 净零行。🔴 判据① 只交到「同进程真路由真载荷」那一半，**容器＋真 Redis 的读数仍欠**（排下一次开窗）。 | 17:57 |
+| `Erdos` | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R560**（本班新立·待投）前端注释里手抄的后端坐标逐枚改运行时派生 | `be-r535`（现取 `a8e52f7`，**落后主树 8 枚**，投前先按 R552 那套逐字节追平；写域＝`frontend/**` 注释＋新钉） | 🟡 本班 17:57x 投出（一个 block 只 `send_input` 一次，报错不补投）。🔴 **窗内只写不跑**：本席的全量门在跑，不许起 pytest/vitest、不许动容器、零 commit。判据全文＝跟进单 §143 二。 | 17:57 |
+| （主树基线更新·本班第三格） | — | 本班收官读数 | 主树 | HEAD 走 `be11e51` → `458a3d1`（run11c 证据 12 枚件）→ `5477645`（R558 码，9 files `+1375/-8`）→ `b10a7d0`（交工纸＋r293 改口）。除 `chroma_db/chroma.sqlite3`（数据件，按规矩永不提交）外**无内容差**；另有 17 枚文件在 `git status` 里报 `M` 而 `git diff --numstat` 为空 ⇒ stat-cache 假脏，已逐枚验过，**不许拿它当「此刻盘面脏」的判据**。 | 17:57 |
 
 
 
@@ -6268,3 +6272,42 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 - 🟢 **据此更正 §4EE 第五节那句**（「报 not found 的线程不必定死，`resume`＋`send_input` 可续用」——那句不完整）：**不报错不等于活着**。新落地铁律：投递之后必须**现取三件之一**才算落地——① 该树 `dirty>0` 或 `rev-list <基点>..HEAD > 0`；② 机上有从该树长出来的子进程；③ 线程状态可查为 running。三件全无＝未落地，按规矩**不当场补投**，四枚单的判据全文已在跟进单 §141/§142，出路＝`resume` 之后仍零动作就等业主手动开线。
 - **环境变更（15:3x 现取）**：`nvidia-smi` 报 **0% 利用率／显存 1 MiB**、`Get-Process python*` **0 枚** ⇒ 那枚外来 CUDA 训练作业（pid 45224，12:22 起）**已自行离场** ⇒ run10 卡住的 `gpu_apps`＋`foreign_python` 两格障碍**解除**。Docker Desktop 于 ~15:26 重启（七枚容器 `Up 5 minutes`），镜像仍是 `5a6811d` 那份 ⇒ **落后主树六个提交**，开窗前必须 `docker compose --env-file deploy/.env.server build migrate`。
 - 🔴 **钟点订正（本席自己的错，写成规矩）**：本节与 §4EF/§4EG 里原来那些「16:2x／16:5x／17:0x」是**抄上一班手记里的钟点**，不是本班实测。真实时间轴按提交时间与文件 mtime 现取：`0dc40b1` 11:15 → `fa1cf3e` 11:56 → `f83372d` 12:31 → 门收窗 12:51（939.72 s，exit=0）→ `a8e52f7` 12:59 → `d84042f` 13:05 → `7835a6a` 15:30。已逐处改到真值，并落一条：**凡落笔时刻一律 `Get-Date` 现取，不许沿用任何上游班的钟点**（同一族病：拿别人量过的数当自己的读数）。
+
+
+## 4EH 第十班第三格（10-01 17:xx·总线·主树 `b10a7d0`·一枚在途·单模型未切换·心跳两枚仍 `PAUSED` 一枚没碰）：run11c 收窗、R558 并树、四枚死单复取
+
+本节只追加在文末，不改写任何既有行（本板 1 处 CRLF、3 处裸 CR，`rg` 与 `splitlines()` 口径差 3 格）。钟点一律 `Get-Date` 现取。
+
+### 一、run11c 云端形状窗｜两相都收窗（总控亲跑，exit=0 两次）
+
+- **相 1 同步道 105 题**：15:55:40 → 16:46:32。`kinds` = ok 86／approved_ok 15／approval_failed 4，零重试，`sentinel` 真值 4 枚**全落在那 4 枚 approval_failed**。
+- **相 2 队列道报告档 12 题**（`EVAL_DECLARE_LANE_TIER=报告`）：16:54:41 → **17:05:56**，`queued_polled 4 / queued_approved 8`，零哨兵零重试，12/12 逐枚 `queue` 键数 **10**，`terminal.schema=queue-terminal-v1`／`state=answered`／`answer_present` 真／`usage_present` 真（六枚槽全在）。⇒ **队列道第一次真走通**。
+- 两相之间跑 P-18 真清零：删 31 枚 `answer:*`（dbsize 118→87），其它键族清前＝清后＝87，`verdict: PASS` rc=0；语料 before/after 97 枚逐路径＋SHA256 **差 0**（两份 csv 同 sha `105e230d0905ae8a`）。
+- 判读件 `docs/perf/run11c-cloud-shape-readout-2026-10-01.md`（数字全部由 `readouts-cloud-shape.jsonl` 渲染），校验现跑 `scripts/eval_cloud_window_readout.py --readouts docs/perf/raw/run11c-2026-10-01/readouts-cloud-shape.jsonl` ⇒ **PASS／违规 0／rc=0**。证据 12 枚件入库 `docs/perf/raw/run11c-2026-10-01/`。
+- 🔴 **A② 不翻绿**：`text_frames>1` 104/105、`prefix_breaks>0` 64、`uncorrected_breaks>0` 13、缺字 4 枚（`chart-01/02/04`、`insight-07`）⇒ `criterion_two_holds` **88/105**。
+- 🔴 **D 门不翻绿**：`sources_present` 只有 **8/12**（`report-03/06/08` ev=0，`report-11` ev=0 但有 sources）。「报告档 100% 可查回」这句今天仍然不许抄成绿的。
+- worker 的云端腿是**临时件、不落仓**（`%TEMP%\evalrun11\compose.cloud-eval-worker.yaml`）——`deploy/compose.cloud-eval.yaml` 那枚在册钉明文规定它只碰 backend。收窗后 backend＋worker 已恢复默认本机腿（`qwen3.5:9b`／`http://ollama:11434/v1`／`local`），provenance **MATCH `be11e51` rc=0**。
+
+### 二、那 4 枚 approval_failed 不是投递面缺陷，是格③的真机读数（今天新落到账上的一条）
+
+- 四枚原文**逐枚相同**：`approve 200 仍无终答：artifact owner must have a department scope`（HTTP 全 200、`approved` 真、rounds 1）。
+- ⇒ 这就是计划书 §13 **格③／业主侧 A1（`users.department` 全空）**在现场的样子：批准把手给了 200，续跑到终态时被 owner scope 拦住。🔴 **代码都在树上，欠的是业主回填**，不是本院少写了一枚单。上一格窗口里这形状只出现在纸面推演，今天第一次拿到真机读数。
+
+### 三、R558 结案（总控亲修，三笔并树）
+
+- 甲案落地：片段从 worker 账本接上客户端每 3 s 就在读的那扇门，`stream_pieces` 只在 `processing` 下发，零新路由／零新稳定码／零新状态词，终态帧一字节未变；契约尾追加 `+48/-0`，逐键写齐形状／缺席语义／可否为空。
+- 两态数字成对：**dirty 153 passed／60.45 s** 与 **clean 153 passed／59.97 s**（同名九件逐枚点名）；前端 **147 files／2950 tests** 两遍全绿。反证六把刀逐枚咬住（干净副本 45 passed 起算）：刀1 `backfill` 专打「到终态一次给全」，victim 是判据① 那一枚；刀6 `unregister_sink` 13 枚红，victim 含在册的 R548／R524 两枚钉；收尾 6 枚 `RESTORED=True`、真树写口记账 0 枚。
+- 施工期抓到四处真缺陷（详见交工纸 §3）：`flush()` 正常路径从不 `_pending.clear()`（重复交字，当时 9 枚红的共同根因）；锚点工具把常量块**重复插了 3 遍**；`FakeRedis` **根本没有 `expire`**（无条件打会被 R548 那枚「日志面逐字相等」的在册钉抓红）；`since` 超出末序号必须回落 0，而不是给一个永久为空的 `text` 把屏冻住。
+- 🔴 **两枚「手抄坐标」钉今天各抓到一次，归因要分开写**：`DocPanel.vue` 注释写 `chat.py:4470` 而 HEAD 现取是 **4506**（先前若干笔后端并树推进的，**本单之前就已红**）；而 `r427 戊` 报红是**本单自己造成的**——那一发在 `ChatPanel.vue:1229` 插了一行，把 r293 注释里的守卫 `:1509`／`queueFace :1517` 整体推进 1。两处都按现读真值改口（只动注释、不动断言），并据此新立 **R560** 把这一族收干净。
+- 🔴 量具坑记一笔：`npx stylelint "src/**/*.css"` 在本机**匹配 0 枚文件、rc=0、看着像绿**（`theme.css` 在 `ignoreFiles` 里，其余 ui 件恰好零告警）。量色值只准用仓库自己那条 `{css,vue}`。
+
+### 四、事故 #103 复取（17:57x 现取，三证）
+
+- 三棵树 `be-r550`／`be-r535`／`be-r551`：`HEAD=a8e52f7`、`dirty=0`、`rev-list a8e52f7..HEAD=0`。第四棵 `be-eval95` 已追平到 `be11e51`（那 3 枚是主树自己的），`R557` 唯一交付那份 `docs/handoff/2026-10-01-ledger-recheck-4.md` **磁盘上不存在**。
+- 机上 python 7 枚全部属于外部 `anaconda3\python.exe train.py --config configs/_local_cl5.yaml --device cuda --resume`（**PID 15344**，15:50:42 起，GPU 93%／显存 7391 MiB）⇒ 无一枚从这四棵树长出。**四枚单至今零落地**，判据全文在跟进单 §141／§142，出路＝业主手动开线；本席不补投。
+- 🔴 由此再确认一次口径：本机并行度受 provider 支配——**`spawn_agent` 开新线程仍会秒死**（AGENTS.md「派工防中毒」那节）。本班对 `Erdos` 的 R560 只做一次 `send_input`，投后按三证现取，不达标就登记、不补投。
+
+### 五、下一次开窗的前置（唯一障碍在业主侧）
+
+- 本机时延/分数窗（A①／A③／A④ 那三格分数）仍被 `train.py` PID 15344 挡着：`scripts/r530_run10_window_preflight.py` 的 `gpu_apps`＋`foreign_python` 两格永远 FAIL，`correctness`／`evidence` 的 p95 会被它污染到不可采信。**总控不得代杀**，等业主停手。
+- 顺带欠一次容器内读数：R558 判据① 的「容器＋真 Redis」那一半（一题报告档，<2 分钟），随下一次开窗一并收，别为它单开一扇窗。
