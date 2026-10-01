@@ -3,7 +3,7 @@
  *
  * 病灶（第一棒留下的那一格）：员工按下「不排了」拿到【非终态】回执（后端那一格叫
  * cancel_requested）时，状态只进内存里的 queueReads，不落 msg.queue，于是刷新或换回这条会话时
- * queueReads 是空的，ChatPanel.vue:1509 那条守卫的前置 read && 整条跳过，:1517 就把落盘那一格
+ * queueReads 是空的，ChatPanel.vue:1510 那条守卫的前置 read && 整条跳过，:1518 就把落盘那一格
  * （还是 queued）原样交给 queueFace —— 屏幕把「已登记取消」改口画回「排队中」。
  * 第一棒补上了写点（ChatPanel.vue 里那一格 `msg.queue = { ...(msg.queue || {}), requestId, status: receipt.status }`，按符号点名不写行号——行号会漂、符号不会），本件钉的就是这条写点真的能办事。
  *
@@ -43,7 +43,7 @@
  *  刀三 顺手把 stopQueueWatch() / syncActive() 加回这一格
  *        -> 只红 2 枚：乙4（表被停）+ 乙5（updatedAt 被顶到侧栏最前）—— 这一格的差别就是本单的全部意义
  *  刀四 面板取脸入口分叉出自持的第二份措辞  -> 红 4 枚：乙1 丙3 丁1 丁3
- *        （丁2 仍绿：刷新那一腿走 :1517 的 queueFace(msg.queue)，本来就没经过面板自持那一份）
+ *        （丁2 仍绿：刷新那一腿走 :1518 的 queueFace(msg.queue)，本来就没经过面板自持那一份）
  *  16 枚里 4 枚（甲1 甲2 甲4 乙3）四把刀都摘不红，是有意的分工：它们钉的是「路径真不真」
  *  （模板编不编得出来 / requestId 只来自真 queued 帧 / 走没走排队那条腿 / 登记后还给不给第二枚取消钮），
  *  与措辞、落盘无关，红不到它们不算漏。
