@@ -53,26 +53,49 @@ class MemoryStatusEx(ctypes.Structure):
     ]
 
 
-def free_memory_gb() -> float:
-    """Available physical memory, or -1.0 when the question cannot be asked."""
+def memory_headroom_gb() -> tuple[float, float]:
+    """(free physical, free page-file) in GiB; -1.0 for either when it cannot be asked.
+
+    The second figure is the commit-charge headroom. It is not a nicer spelling of the first:
+    a process can hold several GB of committed memory that is not resident, so free physical RAM
+    can look healthy while the commit limit is already spent.
+    """
     try:
         stat = MemoryStatusEx()
         stat.dwLength = ctypes.sizeof(MemoryStatusEx)
         if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
-            return -1.0
-        return stat.ullAvailPhys / 1024 ** 3
+            return -1.0, -1.0
+        return stat.ullAvailPhys / 1024 ** 3, stat.ullAvailPageFile / 1024 ** 3
     except Exception:
-        return -1.0
+        return -1.0, -1.0
 
 
-def fit_workers() -> int:
-    """One worker of this suite costs about 2 GB (torch + pandas per interpreter)."""
-    free = free_memory_gb()
-    if free < 0:
-        return 4
-    if free < 4:
-        return 1
-    return max(2, min(8, int(free // 2)))
+def free_memory_gb() -> float:
+    """Available physical memory, or -1.0 when the question cannot be asked."""
+    return memory_headroom_gb()[0]
+
+
+def fit_workers() -> tuple[int, str]:
+    """Worker count from the *smaller* of free physical RAM and commit-charge headroom.
+
+    One worker of this suite costs about 2 GB of committed memory (torch + pandas per
+    interpreter). Asking only free physical RAM is the wrong single question: on 09-30 08:10 the
+    gate picked -n 6 from a healthy-looking physical figure, an outside CUDA trainer then spent
+    the commit charge while it was already running, and the workers died of 0xe0000008 with an
+    error cascade at 88-89% -- a charge-exhaustion shape that free physical memory cannot see.
+    Nothing here may fall back silently, so the reason string goes out on the [run_gate] line.
+    """
+    free_phys, free_page = memory_headroom_gb()
+    if free_phys < 0 or free_page < 0:
+        return 4, ("GlobalMemoryStatusEx gave no answer "
+                   f"(phys={free_phys:.1f} GB, commit={free_page:.1f} GB), defaulting to -n 4")
+    headroom = min(free_phys, free_page)
+    limiter = "commit charge" if free_page < free_phys else "free physical"
+    readings = f"phys {free_phys:.1f} GB, commit {free_page:.1f} GB"
+    if headroom < 4:
+        return 1, f"serial: headroom {headroom:.1f} GB is under one worker's 4 GB (limiter: {limiter}; {readings})"
+    return max(2, min(8, int(headroom // 2))), (
+        f"headroom {headroom:.1f} GB, 2 GB per worker (limiter: {limiter}; {readings})")
 
 
 def main() -> int:
@@ -83,7 +106,9 @@ def main() -> int:
     # Anything argparse does not own (paths, -k, -m, --lf, ...) goes straight to pytest, in order.
     opts, extra = parser.parse_known_args()
     if opts.workers <= 0:
-        opts.workers = fit_workers()
+        opts.workers, why = fit_workers()
+    else:
+        why = f"explicit -n {opts.workers}"
 
     cmd = [sys.executable, *BASE_ARGS, *extra]
     parallel = importlib.util.find_spec("xdist") is not None and not opts.serial and opts.workers > 1
@@ -94,7 +119,7 @@ def main() -> int:
         reason = "forced" if opts.serial else ("pytest-xdist is not installed" if opts.workers > 1 else "1 worker")
         mode = f"serial ({reason})"
 
-    print(f"[run_gate] {mode}", flush=True)
+    print(f"[run_gate] {mode} [{why}]", flush=True)
     print(f"[run_gate] $ {' '.join(cmd)}", flush=True)
     started = time.time()
     code = subprocess.call(cmd, cwd=ROOT)
