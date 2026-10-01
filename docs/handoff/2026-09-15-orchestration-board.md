@@ -6227,3 +6227,37 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 - 镜像落后主树：`5a6811d` 那份镜像 vs 今天 `f83372d`，带 `build:` 的只有 `migrate` 与 `frontend` 两格 ⇒ `docker compose --env-file deploy/.env.server build migrate`。属重操作，等本波并完再一次性做。
 - 🔴 陈账**订正一笔假话**（本席自己 §4EF 第六节上一版写的「`R76` 今天仍零提交」是错的）：现取 `git log --oneline -1 546a93b` ＝「并树 R76（Chandrasekhar/01a0c18c）：向量镜像表进发布链」，`git merge-base --is-ancestor 546a93b HEAD` **rc=0** ⇒ **R76 早在主干**，与跟进单 §73（`6bf0eeb`）那本账对得上。真欠的只有 `R73`（只有立案笔 `8d69ee6`，查无并树笔）与 `R26`（09-17 记了结案、并树痕迹待核）两笔，连同「计划书在册号 vs 主干真并树」的全量机器账，一起交给本波第四枚只读复评单 **R557**（`Pasteur`）——同一族病（把 `grep` 扑空当零提交）三天里犯了三次，见 `581cfb0`·R521 与 `7375390` 两笔自纠。
 - 新立候选：`compiled_view` 那把尺子的 **future-flags 偏差是否还有别处在用**（本波只治了 r466 一族，其余拿 plain `compile()` 量导入件的钉没扫）；`test_r48_..._lands_on_the_wire.py::_reload()` 与它类 docstring 那句「退出再 exec 回盘上的字」仍是旧口径。
+
+
+## 4EG 第十班第二格（10-01 17:0x·总线·主树 `d84042f`·四枚在途·单模型未切换·心跳两枚仍 `PAUSED` 一枚没碰）：一裁、一清账、一批待投
+
+本节只追加在文末，**不改写任何既有行的行号**（本板有 3 处裸 CR，`rg` 口径与 `splitlines()` 口径差 3 格，在途的 R557 正按行号取出处）。
+
+### 一、总控裁定｜R31 差格 b「投递面」＝**甲案**（队列道片段走既有轮询面，不新开 SSE 路由）
+
+待裁问题出自 `docs/testing/r548-queue-lane-piece-sink-registration.md` §8.3 第一行：注册点已建（R548 并树 `f312eeb`），但**片只进本轮 worker 内存账本，客户端一个字都收不到**；补齐要裁契约。
+
+- **甲案**：既有轮询面加**增量片段读数**（`app/api/v1/chat.py::build_queue_terminal` → 投影链 → 终态载荷），前端仍从 `watchQueueTurn` 那一路读（R519 已把 `data_filename` 接进这一路）。
+- **乙案**：新起一条 tail SSE 长连接。
+- **裁定＝甲**，四条理由：① `tests/test_r464_one_terminal_answer_stream_per_round.py` 那枚「每轮只准一条终态答案流」的在册闸，乙案必须动 canonical 归属（R551 结案时本席就明令那一处**单独裁、不许顺手改**）；② 甲案零新路由、零新稳定码，私有化下一台机一个企业，SSE 长连接数与 worker 数是绑死的，而队列道本来就跑在 `deploy/queue_worker.py` 独立进程里——回投 SSE 等于再造一层跨进程流转发；③ 甲案是可退的（加字段＝尾追加），乙案失败要撤路由；④ 账本上限 512 枚片那一格（超出只计数不留片、日志留痕）在甲案里能原样如实递回屏上。
+- 甲案前置：契约**只许尾追加或 `git merge-file` 三-way**（文末现为「§4b（`81784da` 移来）→ R523 那 23 行」）；`frontend/**` 已获业主 D13 授权；🔴 `frontend/src/lib/sessions.js` 要**净零行**（`test_r427_*`／`test_r424_*:160` 按行号与总行数取档）。
+- 落成待投单 **R558**，判据全文在跟进单 §142。
+
+### 二、V2 那三枚「半」的真面目（现取，别再当码债追）
+
+`docs/handoff/2026-09-30-v2-gap-recheck-3.md` §2.2/§2.3 三行逐字取回：**#13 OCR 与扫描 PDF／#17 通知端到端／#22 失败任务可定位重试**，三格「缺的那一格」写的分别是「**一份真扫描件跑通一次并留读数**」「`notification_states.rows = 0` 那格要被**真已读/忽略行为**证过一次（定性 `legitimately_empty`，合法空但没证过）」「**真机一次『失败→死信→带原因码可查』读数**」。
+
+⇒ 三格差的**都不是码**，是窗。建议号 R540（OCR 真件）、R545（死信原因码）已在册且明写「随 §7 那一次真机走查一起收」。
+⇒ 对业主的实用结论：**V2 剩余量主要是「开窗」，不是「写代码」**；而窗现在被两件事挡着——本机那枚外来 CUDA 训练进程（§0 名册 `Pasteur` 行）与镜像落后（要在本波并完之后一次性 `docker compose --env-file deploy/.env.server build migrate`）。真正还欠码的 V2 格子只有甲案那一格（R558）。
+
+### 三、下一批待投（槽位一腾出来就投，别让它排队）
+
+| 号 | 内容 | 写域要点 | 挡着什么 |
+|---|---|---|---|
+| **R558** | 甲案投递面半张（队列道片段增量读数上屏） | `app/api/v1/chat.py` 轮询面＋`app/common/reliable_queue.py`＋`deploy/queue_worker.py`＋契约尾追加＋`frontend/src/components/ChatPanel.vue`；🔴 `sessions.js` 净零行 | 等 `Kuhn`/R527 并完（同碰 `frontend/**` 与契约） |
+| **R559** | 把「在册号 vs 主干真并树」做成**机器闸**：不新建脚本，接进既有 `scripts/audit_plan_ticket_ledger.py`（它今天已在给逐号 `PARTIAL` 读数），＋一枚钉 | 只 `scripts/audit_plan_ticket_ledger.py`＋新钉＋凭据纸 | 等 R557 的纸交回（判据要从那张纸长出来） |
+| 总控自修三处 | `docs/testing/r524-*.md`、本板、`tests/test_r459_*.py:519` 三处陈旧手抄读数（R548 §8.3 第四行点名交总控落笔） | 含 `tests/**` ⇒ 🔴 必须等 `Hume`/R556 并完再动，否则撞它的写域 | 本波 |
+
+### 四、本班第二格欠自己的一笔（写在这里当闸）
+
+`fa1cf3e` 与 `f83372d` 之间那笔「只交 dirty 态读数」的错，今天又差点重演一次：追平三棵树时我的记账脚本把 `git status` 首行的前导空格 `strip()` 掉了，于是每棵树的**第一枚**已跟踪文件路径被吃掉一个字符，拿不存在的路径去 `hash-object` 得到两次相同的失败串，差点把「读不到」当成「相等」。已单独重取三枚（`chat.py`＝`6234ed8c`／`r531_worktree_merge.py`＝`f5c63332`／`r483` 纸＝`667270e8`），并把这条记进派工纪律：**凡是「比两枚东西相等」的量具，必须先证明两次读数都不是失败串**——同一族形状（`_MISSING` 对 `_MISSING` 自我认证）今天刚在 R553 甲腿里治过一枚。

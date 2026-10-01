@@ -4776,3 +4776,53 @@ A1 `users.department` 回填（现值实测 `admin`/`evalbot` 皆空）＋ A3 �
 5. `test_r48_*.py::_reload()` 与它类 docstring 那句「退出再 exec 回盘上的字」一并归真（它是本单范围内的残留，不再另立号）。
 6. 两遍数字（dirty／干净树）都要交，文件清单逐枚点名——`fa1cf3e` 那笔就是漏了第二遍才让一枚红活到今天。
 7. 禁全量门、禁并树、禁 `git add -A`、零 commit。
+
+
+## §142（10-01 第十班第二格·总控线，主树 `d84042f`）：两枚待投单的判据全文（R558 甲案投递面／R559 机器闸）——先写纸排队，槽位一腾出来就投
+
+派工唯一事实源仍是本文件＋看板 §0 名册。裁定过程与理由在看板 §4EG 第一、三节，本节只写**可失败判据**。
+执行层一律零 commit；不许 `git add -A`；不许跑全量门（本波四枚在飞）。
+
+### R558｜甲案投递面半张：队列道的片段读数要真上屏
+
+来历：`R31` 判据① 的「交付」那一半。R548（`f312eeb`）把 `stream_piece_sink` 的**可注册点**建进了 `deploy/queue_worker.py`，
+但片只进本轮 worker 内存账本，**客户端一个字都收不到**；R524 交工纸 §6.4 与本单 §8.3 都把这格登记为「在途/待裁」，
+今天总控裁定＝甲案（既有轮询面加增量读数，不新开 SSE 路由）。
+
+**写域**：`deploy/queue_worker.py`（把内存账本交回终态载荷）＋`app/common/reliable_queue.py`（`complete(terminal=)`/`terminal()` 那一对，
+不新建投递面）＋`app/api/v1/chat.py` 的轮询面读数链（`build_queue_terminal` → 投影 → 回执顶层）＋
+`docs/api/contract-v1.md`（🔴 **只许尾追加或 `git merge-file` 三-way**）＋`frontend/src/components/ChatPanel.vue`（R519 那条读者面的自然延伸）＋
+新钉 `tests/test_r558_*.py`、前端同名件＋凭据纸 `docs/testing/r558-*.md`。
+🔴 禁碰：`frontend/src/lib/sessions.js`（要**净零行**——`test_r427_*` 与 `test_r424_*:160` 按行号/总行数取档）、
+`frontend/src/assets/theme.css`、`app/agents/orchestrator.py`、`app/agents/nodes.py`、`app/api/v1/feedback.py`、`app/rag/retriever.py`、`scripts/run_gate.py`。
+
+**判据（七格）**：
+1. 端到端真读数：起一次 `REPORT_LANE_VIA_QUEUE=on` 的队列道轮询，客户端轮询回执里要能读到**递增**的片段读数
+   （不许「到终态才一次给全」），交原始 JSON 逐格点名；只测函数不测载荷不算。
+2. 零新路由、零新稳定码、零新字段越界：新增键必须在契约里逐键有名有姓（payload 形状、缺席语义、可否为空三件齐全）。
+3. 每轮一条答案流不倒退：`tests/test_r464_one_terminal_answer_stream_per_round.py`／`test_r203_sink_reaches_the_leg.py`／
+   `test_r524_sink_reaches_both_runways.py`／`test_r524_queue_lane_sends_no_second_character.py`／`test_r548_*` 两枚
+   全部复跑点名（这些就是「甲案没把队列道变成第二条流」的尺子）。
+4. 上限诚实：账本 512 枚片，超出**只计数不留片**，读数里必须带「超上限丢弃 N 枚」那一行，不许静默、不许把它读成「没有片段」。
+5. 屏上要有脸（不许「收了不画」的假接线）：`ChatPanel.vue` 那一路要真把片段增量画出来，且**零新增裸色值**（`package.json` 的预算 **148**）、零新组件；
+   `sessions.js` 前后逐字节全等（交 `git diff --stat` 空 与 行数/那两枚锚点原文三项）。
+6. 反证刀 ≥5 把，victim 必须是**在册钉本身**；其中一把必须是「把片段增量做成一次性全量回填」⇒ 判据① 那格要红（证明「递增」这个词有牙，不是散文）。
+7. 两态数字（dirty／干净树）都要交，文件清单逐枚点名含行尾形态；改口任何一枚在册钉都要成对交两态。
+
+### R559｜把「在册号 vs 主干真并树」做成机器闸（接进既有 `scripts/audit_plan_ticket_ledger.py`，不另起炉灶）
+
+来历：「把 `grep`/`git log --grep` 扑空当成零提交」三天内三次（`7375390`、`581cfb0`·R521、`d84042f` 本席自己）。
+R557（`Pasteur`）先交全量机器账的**纸**，本单把那本纸变成**能跑的钉**。
+🔴 本单**必须等 R557 并完**才投——判据要从那张纸长出来，不许先建钉再找尺子。
+
+**写域**：`scripts/audit_plan_ticket_ledger.py`（既有逐号读数器，今天已在给 `PARTIAL` 那类裁定）＋ 新钉 `tests/test_r559_*.py`＋凭据纸 `docs/perf/r559-*.md`。
+🔴 不新建第二枚平行审计脚本（本仓「不复制一套平行实现」是 AGENTS.md 明规）；不改计划书与跟进单的散文（那是事实源，闸只读它）。
+
+**判据（六格）**：
+1. 三态口径与 R557 那张纸逐字同形：**已并树**（存在并树笔且 `merge-base --is-ancestor` rc=0）／**部分落地**／**零提交**（HEAD 与 --all 两枝都 0），
+   只用这三个词，多一个词就是自创口径。
+2. **HEAD 计数与 --all 计数逐号对平**：不相等必须单独点名「有号在别枝」，这一格是 R521 §0 定的方法，实现里不许退化成一枝取数。
+3. 号段冲突要能当场红：同一号被两枚在途单占、或用了业主自用号（`R141`–`R144`）、或用了作废号（`R550`/`R551` 之前的 `Noether`/`Goodall` 秒死号、`R390`），闸必须报冲突而不是沉默。
+4. 每个在册号必须有**出处**（文件:行），出处取自计划书 §5.2／跟进单立案笔／看板 §0 名册三处并集；凭记忆列号一律算假账。
+5. 摘掉「对平」那一格必须红；把某枚并树笔手动摘成提及，闸必须从「已并树」翻成「零提交」——两枚刀都要实跑读数。
+6. 零 commit、禁全量门、两态数字都交。
