@@ -262,16 +262,51 @@ def read_back_the_column(engine, record_id):
     return row[0]
 
 
-def contract_cached_note(text: str) -> str:
-    """取出契约文末本单那一节（标题到文件结尾），供守卫与刀共用。
+#: 本单的工单号：判「本节之后躺着的节是不是更晚立案的」要用它。
+TICKET_NUMBER = 523
 
-    顺手钉两件事：这一节在整份文件里恰一枚，而且它是**最后一节** —— 契约只准纯追加，
-    把口径写回中间就是形状违规（在册先例：主树 ``81784da`` 把 R526 那节从中间搬到文末）。
+
+def _heading_ticket(heading: str) -> int | None:
+    """从一枚 `## ` 标题里取工单号；没有就回 None（尾追加必须自报号，见下面那一格）。"""
+    found = re.search(r"R(\d{2,4})", heading)
+    return int(found.group(1)) if found else None
+
+
+def contract_cached_note(text: str) -> str:
+    """取出契约里本单那一节（标题到下一枚 `## ` 之前），供守卫与刀共用。
+
+    顺手钉三件事：这一节在整份文件里恰一枚；本节之后**只许长更晚立案的单的节**；
+    而本节自己的正文里不许有读数（由调用方那枚 `find_unowed_numbers` 管）。
+
+    改口（2026-10-01 · 总控动手，执行层写域外）：原句是 `text.rindex("\n## ") == start`，
+    钉的是「我是契约上最后一节」。可 `docs/api/contract-v1.md` 是 append-only 的跨栈公共面，
+    而 `contract_is_pure_append` 又要求 HEAD 那版必须是新版的前缀（⇒ 本节的位子动不得）——
+    两枚钉合起来等于宣布「本契约从此不许再有任何 `## ` 级尾追加」，与总控 §142 裁定①
+    「契约只许尾追加」直接冲突，R558 那节（队列道逐字片段）就是长在本单之后的第一枚合法尾追加。
+    同族先例与口径照抄 ``tests/test_r397_read_legs_refuse_a_missing_table.py:571``
+    （09-28 总控对同一枚病的改法：把「我是最后一节」换成「我的前身是谁」）。
+    🔴 改成「本节之后不许有更早立案的节、也不许有不报号的节」之后，本格仍然挡得住原句想挡的那件事
+    （把口径写回中间＝前面那些 `R<523` 的节会有一枚跑到本节后面），而且比原句多挡一件：
+    尾追加不报工单号。旧句那条「本节必须永远在最后」从今天起不再成立，写在这里当账，不偷偷放宽。
     """
     assert text.count(CONTRACT_SECTION_HEADING) == 1, "本单那一节要么没写，要么写了两处"
     start = text.index("\n" + CONTRACT_SECTION_HEADING)
-    assert text.rindex("\n## ") == start, "本单那一节不在文末：契约只准纯追加"
-    return text[start + 1:]
+    body_from = start + 1 + len(CONTRACT_SECTION_HEADING)
+    nxt = re.search(r"(?m)^## ", text[body_from:])
+    if nxt is None:
+        return text[start + 1:]
+    end = body_from + nxt.start()
+    following = re.findall(r"(?m)^## .*$", text[end:])
+    stale = [h for h in following if (n := _heading_ticket(h)) is not None and n < TICKET_NUMBER]
+    assert not stale, (
+        "本单那一节之后躺着更早立案的节（口径被搬回中间了）：" + str([h[:48] for h in stale[:3]])
+    )
+    unnumbered = [h for h in following if _heading_ticket(h) is None]
+    assert not unnumbered, (
+        "契约文末长出没有工单号的节：尾追加必须自报号，本格才认得出它比本单晚 "
+        + str([h[:48] for h in unnumbered[:3]])
+    )
+    return text[start + 1:end]
 
 
 def contract_is_pure_append(text: str) -> bool:
@@ -492,22 +527,37 @@ def test_the_contract_note_keeps_the_declared_caliber():
 
 
 def test_the_append_teeth_bite_on_synthetic_poisons():
-    """两把合成刀：中间插一句 ⇒ 纯追加那格红；文末后再长一节 ⇒ 「最后一节」那格红。
+    """合成刀三把：中间插一句 ⇒ 纯追加那格红；更晚立案的尾追加 ⇒ 不许红且不被并进本段；
+    更早立案的节被挪到本节之后 ⇒ 「我的前身是谁」那格红；尾追加不报工单号 ⇒ 同样红。
 
     上一班的教训就写在这枚件里：正则永不匹配的牙不如不装。这里不动盘上文件，只拿内存副本判。
+    10-01 改口理由见 `contract_cached_note` 的 docstring（同族先例 r397:571）。
     """
     text = CONTRACT.read_text(encoding="utf-8")
     cut = len(text) // 2
     mid_edit = text[:cut] + "有人在中途加了一句\n" + text[cut:]
     assert not contract_is_pure_append(mid_edit), "中间改写没被抓住：这枚牙是死牙"
 
-    trailing = text + "\n## Somebody appended after us\n\ntext\n"
+    #: 合法那一形（今天盘上就长着）：更晚立案的尾追加不许红——原句把这形判红才是自毁。
+    later = text + "\n## R999 · somebody appended after us\n\ntext\n"
+    note = contract_cached_note(later)
+    assert "## R999" not in note, "尾追加被并进了本节正文：取节那一手没在下一枚 `## ` 前收口"
+
+    moved = text + "\n## R509 · a predecessor moved behind us\n\ntext\n"
     try:
-        contract_cached_note(trailing)
+        contract_cached_note(moved)
     except AssertionError as caught:
-        assert "不在文末" in str(caught), str(caught)
+        assert "搬回中间" in str(caught), str(caught)
     else:
-        raise AssertionError("文末又长了一节，而「最后一节」那格没红：死牙")
+        raise AssertionError("更早立案的节躺在本节之后而那一格没红：死牙")
+
+    unnamed = text + "\n## Somebody appended without a ticket number\n\ntext\n"
+    try:
+        contract_cached_note(unnamed)
+    except AssertionError as caught:
+        assert "没有工单号" in str(caught), str(caught)
+    else:
+        raise AssertionError("尾追加不报工单号而那一格没红：死牙")
 
 
 def test_the_contract_caliber_guard_bites_on_a_poisoned_note():

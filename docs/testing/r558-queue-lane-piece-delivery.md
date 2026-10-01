@@ -166,6 +166,24 @@
   前端今天已有 r427 那种「现读 HEAD 推导」的治法——**剩下的手抄处数应当排一枚单收干净**，别一单一单地撞。
 - **改口之后**：`npx vitest run` ⇒ 147 files / 2950 tests 全绿（rc=0，见上面前端两态那一行）。
 
+## 5b. 全量门抓到的 13 枚连带红（全是 R558 并树的账，总控代修，逐枚归因）
+
+门跑在 `518314c`（`-n 6 --dist loadfile`，`700.6 s`，`13 failed / 9695 passed / 52 skipped / 2 xfailed`）。
+🔴 13 枚红**没有一枚是投递面本身写错了**，全是「别的在册量具把 R558 的行号／字节／尾追加形状当成了自己的判据」：
+
+| 族 | 枚数 | 真因 | 治法（走工具与在册先例给的那条路，不手算） |
+|---|---|---|---|
+| `test_r455_gapdoc_coordinates_are_derived` ＋ `test_r455_hand_fudged_numbers_and_wrong_layers_both_redden` | 6 | R558 在 `app/api/v1/chat.py` 净插 `+24` 行 ⇒ 缺口单 G06 那一格印的 `chat.py:5248` 漂到 **5272** | 跑钉自己点名的 `python scripts/r455_gapdoc_coordinates.py --emit-doc-cells` 取现读值重落地（`upload_form=4506／queue_cancel=5272／sessions_route=4008`），复跑 `--check` **rc=0**、行内引用等值 **5/5** |
+| `test_r453_nested_pytest_selection_guard` | 2 | 本单新驱动件 `run_pytest()` 的目标来自 spread 而**没有空选择拒绝** ⇒ 空参数会回落成全量收集 | 补 `if not targets: raise AssertionError(…)`；补完「现场病灶 == 名册」重新相等，本件不再进 `UNGUARDED_DEBT` |
+| `test_r449_nested_pytest_basetemp_contract` | 2 | 同一枚驱动件的嵌套会话助手没按在册形状命名（`_nested_basetemp` ≠ `r449_nested_basetemp`），且新起的嵌套点没进名册 | 改名 `r449_nested_basetemp(parent_scratch)` ＋ 在 `ROSTER` 登记 `"tests/fixtures/r558_refutation_driver.py": (("shadow",), 1)`；登记后**重跑整台驱动器**：干净副本 45 passed、六把刀逐枚咬红、6 枚 `RESTORED=True`、真树写口记账 0 枚 |
+| `test_r548_counter_evidence_teeth::test_z9c` | 1 | R548 交工纸钉着 `deploy/queue_worker.py` 的进门指纹，而 R558 给那枚件 `+121/-5` ⇒ 纸一个数、盘另一个数 | 按钉的口径在 §7.1 台账**补一行 10-01 现读** `905d3a58b6a15aec…`；历史那行 `03be6d53…` 原样留着不追改 |
+| `test_r523_cached_count_lands` | 2 | 🔴 **这一族是全仓的形状缺陷，不是 R558 的错**：该件同时要求「HEAD 那版必须是新版的前缀」（`contract_is_pure_append`）与「本节必须是最后一节」（`rindex`）。两枚合起来等于宣布 append-only 的跨栈契约**从此不许再有第二枚 `## ` 尾追加**，与总控 §142 裁定①「契约只许尾追加」直接对冲——任何下一单都会撞 | 按同族在册先例改口（`tests/test_r397_read_legs_refuse_a_missing_table.py:571`，09-28 总控对同一枚病的原话：「把『我是最后一节』换成『我的前身是谁』」）：本节之后只许出现**更晚立案**的节，也不许多出不报工单号的节；取节改为在下一枚 `## ` 前收口。合成刀由两把增到四把（中途改写红／更晚尾追加**不许**红且不被并进本段／更早的节被挪到后面红／尾追加不报号红） |
+
+改口之后同一把尺复跑：**66 passed／16.49 s**（`test_r523`＋`test_r453`＋`test_r449`＋`test_r455` 两枚）与
+**170 passed／60.35 s**（`test_r548_counter_evidence_teeth` ＋ R558 那九枚同族），两批 rc=0。
+🔴 这 13 枚记在 R558 名下，不记在量具名下：本席并树前只复跑了同名九件与前端，**没有把「行号／字节／尾追加」这三族在册闸扫一遍**。
+下次并 `chat.py` 这种大件，门前的靶子应当是「凡引用过 `chat.py`/`queue_worker.py` 坐标或指纹的量具清单」，不是本单的同名件——这一条已写进派工纪律。
+
 ## 6. 不翻绿的话（一条都不许替它翻）
 
 - **A② 流式逐字无缺：不翻绿**。run11c 读数 `criterion_two_holds` 88/105、缺字 4 枚（`chart-01/02/04`、`insight-07`）、

@@ -183,7 +183,7 @@ def edit_copy(shadow: Path, rel: str, pairs: Sequence[tuple]) -> None:
     path.write_bytes(text.encode("utf-8"))
 
 # ------------------------------------------------------------------------ 嵌套跑
-def _nested_basetemp(parent_scratch: Path) -> Path:
+def r449_nested_basetemp(parent_scratch: Path) -> Path:
     """R449：每一枚嵌套 pytest 会话只用自己的 basetemp，落点必须在父件 scratch 之内。
 
     不传 `--basetemp` 时子会话落进 `%TEMP%\pytest-of-<user>` 那枚共享根，收尾会剪别人正在用的
@@ -198,9 +198,14 @@ def _nested_basetemp(parent_scratch: Path) -> Path:
 def run_pytest(shadow: Path, targets: Sequence[str]) -> dict:
     import re
 
+    if not targets:
+        # R453：一枚目标都没有时必须当场拒——pytest 拿到空参数会回落成全量收集，
+        # 在影子副本里那就是把整仓跑一遍，既慢又造出与本页无关的假红。
+        raise AssertionError("R453：run_pytest 收到空选择，拒绝回落到全量收集")
+
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider",
-         "--basetemp", str(_nested_basetemp(shadow))] + list(targets),
+         "--basetemp", str(r449_nested_basetemp(shadow))] + list(targets),
         cwd=str(shadow),
         capture_output=True,
         text=True,

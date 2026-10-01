@@ -47,6 +47,7 @@ ROSTER: dict[str, tuple[tuple[str, ...], int]] = {
     "tests/fixtures/r349_catalog_tail_probe_driver.py": (("shadow",), 1),
     "tests/fixtures/r356_r357_refutation_driver.py": (("shadow",), 1),
     "tests/fixtures/r364_refutation_driver.py": (("shadow",), 1),
+    "tests/fixtures/r558_refutation_driver.py": (("shadow",), 1),
     "tests/test_r134_chroma_writeback.py": (("parent_scratch",), 1),
     "tests/test_r163_matrix_teeth.py": (("parent_scratch",), 1),
     "tests/test_r449_nested_pytest_basetemp_contract.py": (("parent_scratch",), 1),

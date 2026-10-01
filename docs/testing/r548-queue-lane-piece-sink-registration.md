@@ -226,6 +226,7 @@ def test_there_is_no_place_on_the_queued_lane_to_register_a_sink():
 | 被跟踪件 | 进门 sha256（＝每把刀台账里的 before/after） |
 | --- | --- |
 | `deploy/queue_worker.py` | `03be6d53ea728d329d9a214b0992d76b921bc10143928d5bab5aae4789502b4d` |
+| `deploy/queue_worker.py`（**10-01 R558 之后的现读**，`test_z9c` 今天对的就是这一枚） | `905d3a58b6a15aecbe9fc62efff7362d1ca37641fce4ba41c05b17452032d4a7`（R558 给这枚件 `+121/-5`：`flush()` 收窗那一发与片段批次汇流；上面那行 `03be6d53…` 是 R548 进门那一刻的历史指纹，**原样留着不追改**） |
 | `tests/test_r548_queue_lane_registers_the_piece_sink.py` | `7f98aaf975e660ad5127900a61062b318c8afda98c13910c0c0af0d41ac22eb3`（§9.1 修完之后；修前 `9c339f69…`，21971→23076 字节） |
 | `tests/test_r524_queue_lane_sends_no_second_character.py` | `8f22e08c7873d105a6b3bd07094d8f7b2902232fe28ebbdf4ef49a250c8f347f` |
 | `app/agents/nodes.py`（本单未碰） | `657c8f30767b7e4c188887ecafefb3f21255efd884885f4d20fc729e603834d6` |

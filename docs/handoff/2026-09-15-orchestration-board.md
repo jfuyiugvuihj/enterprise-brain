@@ -1632,6 +1632,7 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Kuhn`／`Erdos`／`Hume`／`Pasteur`（四枚**复用线程**） | `01a0efcf-…`／`01a0f03c-…`／`01a0f0e6-…`／`01a0f09f-…` | **R527／R555／R556／R557**（四枚待投单，判据全文＝跟进单 §141／§142） | `be-r550`／`be-r535`／`be-r551`／`be-eval95` | 🔴 **事故 #103 仍未解（本班 17:57x 三证复取）**：前三棵 `HEAD=a8e52f7`＋`dirty=0`＋`rev-list a8e52f7..HEAD=0`；第四棵 `be-eval95` 已被追平到 `be11e51`（`rev-list` 那 3 枚是主树自己的 `d84042f`→`7835a6a`→`be11e51`，**不是它的产物**），`R557` 那份唯一交付 `docs/handoff/2026-10-01-ledger-recheck-4.md` **磁盘上不存在** ⇒ 四枚单至今零落地。本机 python 7 枚全是外部 `train.py` 一族，无一枚从这四棵树长出。⇒ 出路只剩业主手动开线，本席按规矩**不补投**。 | 17:57 |
 | （总控亲修·非执行层） | — | **R558** 甲案投递面半张：队列道逐字片段接上既有轮询面 `GET /api/v1/queue/status/{id}` | `be-r558`（基点 `be11e51`，**独占**；经 `scripts/r531_worktree_merge.py --apply` 落主树） | ✅ **已结案并树**（三笔：`458a3d1` run11c 证据入库／`5477645` 码＋九枚件／`b10a7d0` 交工纸＋改口 r293 陈旧坐标）。七格判据逐格对账＝`docs/testing/r558-queue-lane-piece-delivery.md`；两态数字 **dirty 153／clean 153**（60.45 s 对 59.97 s）；前端 **147 files／2950 tests** 两遍全绿；stylelint **148 problems（0 errors）＝与 HEAD 复量同值**⇒零新增裸色值；`sessions.js` 净零行。🔴 判据① 只交到「同进程真路由真载荷」那一半，**容器＋真 Redis 的读数仍欠**（排下一次开窗）。 | 17:57 |
 | `Erdos` | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R560**（本班新立·待投）前端注释里手抄的后端坐标逐枚改运行时派生 | `be-r535`（现取 `a8e52f7`，**落后主树 8 枚**，投前先按 R552 那套逐字节追平；写域＝`frontend/**` 注释＋新钉） | 🟡 本班 17:57x 投出（一个 block 只 `send_input` 一次，报错不补投）。🔴 **窗内只写不跑**：本席的全量门在跑，不许起 pytest/vitest、不许动容器、零 commit。判据全文＝跟进单 §143 二。 | 17:57 |
+| `Hume` | `01a0f0e6-971f-77e2-b4e6-04cbb4ab703f` | **R561**（本班新立）队列道片段读数的容器内复测（＝R558 判据① 欠的那一半） | `be-r551`（18:03:33 现取已 ff 追平 `518314c`，**独占**） | 🟡 在途：18:0x 一次 `send_input` 投出 ⇒ **18:29 复取已落地**（树上多一枚未跟踪 `scripts/r561_queue_lane_piece_readout.py`，正落在写域内）；「门跑期间只写不跑」已写进派工词。判据全文＝跟进单 §143 三。 | 18:29 |
 | （主树基线更新·本班第三格） | — | 本班收官读数 | 主树 | HEAD 走 `be11e51` → `458a3d1`（run11c 证据 12 枚件）→ `5477645`（R558 码，9 files `+1375/-8`）→ `b10a7d0`（交工纸＋r293 改口）。除 `chroma_db/chroma.sqlite3`（数据件，按规矩永不提交）外**无内容差**；另有 17 枚文件在 `git status` 里报 `M` 而 `git diff --numstat` 为空 ⇒ stat-cache 假脏，已逐枚验过，**不许拿它当「此刻盘面脏」的判据**。 | 17:57 |
 
 
@@ -6311,3 +6312,10 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 
 - 本机时延/分数窗（A①／A③／A④ 那三格分数）仍被 `train.py` PID 15344 挡着：`scripts/r530_run10_window_preflight.py` 的 `gpu_apps`＋`foreign_python` 两格永远 FAIL，`correctness`／`evidence` 的 p95 会被它污染到不可采信。**总控不得代杀**，等业主停手。
 - 顺带欠一次容器内读数：R558 判据① 的「容器＋真 Redis」那一半（一题报告档，<2 分钟），随下一次开窗一并收，别为它单开一扇窗。
+
+### 六、订正本节第四节那句（18:29 现取）＋门里 13 枚连带红的账
+
+- 🟢 **事故 #103 那句「出路只剩业主手动开线」对本班两枚新单不成立，要改窄**：`Erdos`（`be-r535`）在 **18:00:56**、`Hume`（`be-r551`）在 **18:03:33** 各自把树 `merge --ff-only 518314c` 追平，`be-r535` 现取 `dirty=8`（正在逐枚改 `AdminPanel.vue`／`DocPanel.vue`／`lib/auditEvents.js`／`lib/errcodes.js`… 的注释坐标），`be-r551` 已长出 `scripts/r561_queue_lane_piece_readout.py`。⇒ **`resume_agent` ＋ 一次 `send_input` 派 NEW 单，这两枚真活了**；而 `Kuhn`/R527 与 `Pasteur`/R557 两枚**旧单**至今仍是零产物、零落地（三证复取不变）。
+- 🔴 据此落到派工纪律上的一句：**「零落地」不是线程的终态判据，是投递那一刻的读数**。同一枚线程在被投递之后 `pending_init` 也可能几分钟后活过来动树——所以三证必须在投后**间隔取两次**（本班实测：投后 2-4 分钟才动树），第一次全空不许直接写成「只能业主开线」。上游 §4EG 那句结论按此改窄，不改写原文。
+- **门跑在 `518314c`：`13 failed / 9695 passed / 52 skipped / 2 xfailed`（`-n 6`，700.6 s，exit=1）**。逐枚归因与治法见 `docs/testing/r558-queue-lane-piece-delivery.md` §5b——13 枚全是 R558 并树的连带账：6 枚来自 `chat.py` 净插 `+24` 行把缺口单 G06 那一格弄漂（走钉自己点名的 `--emit-doc-cells` 重落地，`--check` 现 rc=0／5-5 等值），4 枚来自本单新驱动件缺「空选择拒绝」与没按 `r449_nested_basetemp` 命名/入册，1 枚来自 R548 纸上的 worker 进门指纹漂开，2 枚是**全仓形状缺陷**：`test_r523_cached_count_lands` 把「HEAD 必须是前缀」与「本节必须是最后一节」两枚钉同时钉死，等于宣布 append-only 的契约从此不许第二枚 `## ` 尾追加，与 §142 裁定① 直接对冲——已按同族先例 `r397:571`（09-28 总控原话「把『我是最后一节』换成『我的前身是谁』」）改口，合成刀由两把增到四把。
+- 🔴 本席自记一笔：并树前只复跑了同名九件与前端，**没扫「凡引用过 `chat.py`/`queue_worker.py` 坐标或指纹的量具」这一族闸**。今后并大件（`chat.py`／`orchestrator.py`／`retrieval_pipeline.py` 这种被大量手抄引用的一枚），门前靶子必须是那份**引用者清单**，不是本单同名件。
