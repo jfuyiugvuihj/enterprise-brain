@@ -12,7 +12,8 @@ r"""R253：反证钉的「影子根」——变异只落在 %TEMP% 里的副本�
   · 变异落到 ``%TEMP%`` 下一份 ``app/**`` 与契约的**副本**（影子根）里；只复制，不硬链接——
     硬链接共享 inode，穿过它 ``write_bytes`` 照样会改掉盘上那枚，那正是本单要根治的形状。
   · 需要「让变异真的被执行」的那几枚件，把影子根的字节 exec 进**同一个**模块对象的
-    ``__dict__``（``importlib.reload`` 本来也不换模块身份），退出时再 exec 回盘上的字。
+    ``__dict__``（``importlib.reload`` 本来也不换模块身份）；窗尾**不再重跑码体**，而是把命名空间
+    倒回进门那一刻的那张快照（R553：重跑会再造顶层类与顶层实例，身份就从此对不上号）。
   · 每扇窗进门都从盘上重取基线，所以崩在半路也不会把变异漏给下一扇窗。
 
 判据 ③ 的分工：这里搬走的只有「变异往哪儿落」，没有「变异是什么」。锚点、替换文本、还原核对、
@@ -20,9 +21,7 @@ r"""R253：反证钉的「影子根」——变异只落在 %TEMP% 里的副本�
 """
 from __future__ import annotations
 
-import ast
 import atexit
-import weakref
 import hashlib
 import os
 import shutil
@@ -138,139 +137,36 @@ def module_of(rel: str):
     return sys.modules.get(rel[:-3].replace("/", "."))
 
 
-def _reuse_class_identities(namespace: dict, before: dict) -> list:
-    """把重跑码体时新长出来的顶层类换回**同一枚类对象**：身体换新，身份不换。
-
-    来历（R553 乙腿）：一枚 ``execs_module = True`` 的反证窗重跑整份码体，于是每一枚顶层类都是
-    **新对象**，而场上早就存在的单例实例仍指着旧类 —— 盘上那行 ``session_registry = SessionRegistry()``
-    只在导入那一刻跑过一次。结果是模块属性上的 ``SessionRegistry`` 与 ``type(chat.session_registry)``
-    从此是两枚类，任何按类身份作保的件（``tests/test_r499_..._any_file_order.py`` 三门连红）排在
-    别人之后就当场红；窗尾那一次 exec 只会再造第三枚类，救不回来。这里把新身体逐枚装进旧类，
-    并把模块属性指回旧类：变异照样被执行（身体是新的），身份不再漂。
-
-    🔴 只在「同一枚类的重跑」上做：元类或基类换了就不是重跑，那种形状一律跳过 —— 宁可留着旧口径
-    的换身份，也不伪造一枚挂着旧名的假类。
-
-    交回 ``{新类对象: 旧类对象}``：紧跟着的实例还原要靠它认出「这一枚实例是刚被换掉的那枚类的
-    又一个产物」——那一枚新类已经不存在于模块属性上了，`type(new) is type(old)` 结构上不可能成立。
-    """
-    reused = []
-    class_map = {}
-    for name, old in list(before.items()):
-        if not isinstance(old, type):
-            continue
-        new = namespace.get(name)
-        if not isinstance(new, type) or new is old:
-            continue
-        if type(new) is not type(old) or new.__bases__ != old.__bases__:
-            continue
-        dropped = sorted(set(vars(old)) - set(vars(new)))
-        for attr, value in list(vars(new).items()):
-            if attr in ("__dict__", "__weakref__"):
-                continue
-            setattr(old, attr, value)
-        for attr in dropped:
-            if attr in ("__dict__", "__weakref__"):
-                continue
-            try:
-                delattr(old, attr)
-            except (AttributeError, TypeError):
-                pass
-        namespace[name] = old
-        reused.append(name)
-        class_map[new] = old
-    return class_map
-
-
-def _top_level_assignments(source: str) -> dict:
-    """``{名字: 那一行赋值的源码}``——只认顶层 `Name = ...` 与带注解的赋值。"""
-    out = {}
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return out
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    out[target.id] = ast.unparse(node)
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            out[node.target.id] = ast.unparse(node)
-    return out
-
-
-def _reuse_live_instances(namespace: dict, before: dict, previous_text: str, text: str,
-                         class_map: dict) -> list:
-    """把「赋值那行源码一字没改」的模块级实例换回场上那一枚：重跑同一行初始化换的是身份，不是值。
-
-    来历（R553 乙腿第二格）：反证窗重跑码体时，顶层那行 ``session_registry = SessionRegistry()``
-    会再造一枚实例并把模块属性指过去，而 ``chat.py`` 里 ``from app.storage.sessions import
-    session_registry`` 的旧绑定仍指着场上那一枚 ⇒ 两处读数从此不是同一个对象
-    （门里现取：``registry is session_storage.session_registry`` 红）。这里只在**源码没变**时留旧对象：
-    那意味着这一行重跑只是机械地又 new 了一枚同形的东西，身份才是被弄坏的那一格。
-    🔴 源码变了就绝不插手——那一行可能正是刀要执行的东西，替它留着旧值就是造一枚假绿。
-    """
-    if not previous_text:
-        return []
-    before_assigns = _top_level_assignments(previous_text)
-    after_assigns = _top_level_assignments(text)
-    reused = []
-    for name, old in list(before.items()):
-        if isinstance(old, type) or callable(old):
-            continue                      # 类由 _reuse_class_identities 管，函数与常量不该动
-        if name not in after_assigns or after_assigns.get(name) != before_assigns.get(name):
-            continue                      # 赋值行变了（或本就不是赋值来的）：这一格不归本函数插手
-        new = namespace.get(name)
-        if new is None or new is old or class_map.get(type(new)) is not type(old):
-            continue                      # 不是「同一枚类又被 new 了一个」：可能是别人造的，别插手
-        namespace[name] = old
-        reused.append(name)
-    return reused
-
-
-def previous_source(module) -> str:
-    """这枚模块**上一次**跑的字节：窗内 exec 过变异版就取变异版，从没 exec 过就取盘上的字。
-
-    身份还原需要的是「场上那些对象由哪份码造出来」，不是「盘上现在是什么」——
-    窗尾那一次重跑，对照文本必须是影子副本的变异版，否则会把「赋值行本来就变了」那一格误判成没变。
-    """
-    recorded = _INSTALLED.get(module)
-    if recorded:
-        return recorded
-    try:
-        path = Path(str(getattr(module, "__file__", "") or ""))
-    except OSError:
-        return ""
-    if not path.is_file():
-        return ""
-    try:
-        return path.read_bytes().decode("utf-8")
-    except (OSError, UnicodeDecodeError):
-        return ""
-
-
-#: 每枚被本件重跑过码体的模块：它上一次实际执行的是哪一份字节。
-_INSTALLED = weakref.WeakKeyDictionary()
-
-
 def install_source(module, text: str, filename) -> None:
     """把一份字节 exec 进**现有**模块对象的 ``__dict__``。
 
     ``importlib.reload`` 也不换模块身份（它在同一个 ``__dict__`` 上重跑码体），所以这里与它同形：
     凡是 ``from app.api.v1 import chat`` 的旧绑定一起看到新码，退出时再 exec 回盘上的字。
     ``co_filename`` 沿用被跟踪文件的路径，报错原文里的行列号与今天逐字同形。
-    顶层类的身份由 ``_reuse_class_identities`` 保住（R553 乙腿）：重跑码体不许把场上已有的单例
-    变成「上一枚类的孤儿实例」。
     """
-    before = dict(module.__dict__)
-    previous_text = previous_source(module)
     exec(compile(text, str(filename), "exec"), module.__dict__)
-    class_map = _reuse_class_identities(module.__dict__, before)
-    _reuse_live_instances(module.__dict__, before, previous_text, text, class_map)
-    try:
-        _INSTALLED[module] = text
-    except TypeError:      # 不是可弱引用的模块对象：记不上就只影响下一扇窗的对照文本，不假装成功
-        pass
+
+
+def restore_namespace(module, snapshot: dict) -> list:
+    """把一扇窗进门那一刻的活模块**按对象身份**装回去：该在的一枚不少，多出来的摘掉。
+
+    来历（R553 乙腿）：旧口径的窗尾是「再 exec 一遍盘上的字」。那一手救不回身份——
+    码体重跑会**再造**每一枚顶层类与每一行顶层初始化，于是
+      · ``type(chat.session_registry)`` 与模块属性上的 ``SessionRegistry`` 分成两枚类，
+      · 模块属性上的注册表与 ``chat`` 手里那一枚分成两枚实例，
+    门里三枚红（`tests/test_r499_..._any_file_order.py` 三门连红），报的是
+    ``assert X is X`` 却为假——两枚同名同模块的东西。窗尾那次 exec 只会再造第三枚，越救越远。
+    🔴 也不许改成「把新身体逐枚装进旧类」：零参 ``super()`` 读的是码体里那个 ``__class__`` 格，
+    把新类的方法定进旧类，第一次 ``super()`` 就 ``TypeError: super(type, obj): obj must be...``
+    （本席 10-01 第一版就这么把门跑成 109 枚红，两枚在册件当场点名）。
+    这里根本不再 exec：窗尾只是把命名空间倒回进门那一刻，身份与值都还是原来那些对象。
+    """
+    live = module.__dict__
+    for name in [k for k in list(live) if k not in snapshot]:
+        live.pop(name, None)          # 变异码体新造出来的名字：整片摘掉，不留影子
+    diverged = [name for name, value in snapshot.items() if live.get(name) is not value]
+    live.update(snapshot)
+    return diverged
 
 
 class EditInfo(dict):
@@ -316,6 +212,7 @@ class ShadowEdit:
         self.path = Path(path)
         self.rel = rel_of(self.path)
         self.info = EditInfo(self.path)
+        self._live_snapshot: dict = {}
 
     def mutate(self, text: str) -> str:
         raise NotImplementedError
@@ -335,13 +232,15 @@ class ShadowEdit:
         _WINDOWS.append(self.rel)
         module = self._module()
         if module is not None:
+            self._live_snapshot = dict(module.__dict__)      # R553：窗尾按这一张倒回，不再重跑码体
             install_source(module, edited, self.path)
         return self.info
 
     def __exit__(self, *_exc) -> bool:
         module = self._module()
         if module is not None:
-            install_source(module, self.path.read_bytes().decode("utf-8"), self.path)
+            diverged = restore_namespace(module, self._live_snapshot)
+            self.info["identity_diverged"] = sorted(diverged)
         if self.rel in _WINDOWS:
             _WINDOWS.remove(self.rel)
         SHADOW.ensure(self.rel)
