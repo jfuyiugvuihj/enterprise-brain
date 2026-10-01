@@ -13,7 +13,7 @@
 - 路由串按装饰器原文交回（**不含** router 前缀），坐标一律现扫：🔴 本文件一枚行号都不是抄的。　**裁定只有三词**：`no_seed_path` / `legitimately_empty` / `needs_owner`；裁定与现扫互为牙齿，谁漂了 `validate()` 报哪一格。
 - 取数时刻 `2026-09-30T11:38:08+08:00`；服务端 PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 6…。
 
-结论一句话：八枚里没有一枚是「码写完了等着跑」——3 枚今天压根没有走得通的写入道，2 枚只能等业主录入，3 枚按设计就该空着等一次真实行为。
+结论一句话：八枚里没有一枚是「码写完了等着跑」——2 枚今天压根没有走得通的写入道，2 枚只能等业主录入，4 枚按设计就该空着等一次真实行为。
 <!-- R483-TABLE-BEGIN -->
 
 ## 一、读数表（今日现读 / 昨日底 / 写入点现扫 / 裁定）
@@ -24,7 +24,7 @@
 | `notification_states` | 0 | 0 | 0 | None | `app/notifications/states.py:258 · apply_state`, `app/notifications/states.py:213 · apply_state` | `migrations/0016_notification_states.sql:63` | `legitimately_empty` |
 | `calculation_runs` | 0 | 0 | 0 | None | 没找到 | `migrations/0002_execution_data_lineage.sql:52` | `no_seed_path` |
 | `metric_definitions` | 0 | 0 | 0 | None | `app/semantics/registry.py:742 · _insert_statement`, `app/semantics/registry.py:751 · _insert_statement` ＋2 处 | `migrations/0002_execution_data_lineage.sql:72` | `no_seed_path` |
-| `retrieval_traces` | 0 | 0 | 0 | None | `app/storage/persistence.py:418`, `app/trace/projections.py:324 · project_retrieval` | `migrations/0002_execution_data_lineage.sql:170` | `no_seed_path` |
+| `retrieval_traces` | 0 | 0 | 0 | None | `app/storage/persistence.py:418`, `app/trace/projections.py:324 · project_retrieval` | `migrations/0002_execution_data_lineage.sql:170` | `legitimately_empty` |
 | `user_profiles` | 0 | 0 | 0 | None | `app/memory/profile.py:273 · upsert_profile`, `app/memory/profile.py:240 · upsert_profile` | `migrations/0003_legacy_runtime_tables.sql:83` | `needs_owner` |
 | `document_activity_signals` | 0 | 0 | 0 | None | `app/api/v1/feedback.py:49`, `app/api/v1/feedback.py:147 · record_document_signal` | `migrations/0011_document_activity_signals.sql:24` | `legitimately_empty` |
 
@@ -38,6 +38,8 @@
 - 这条道今天挂在产品面上：`POST /alerts/check ← app/api/v1/alerts.py:1113 · check_now`。
 - 定时任务这条道现扫到：`app/scheduler/jobs.py:37 → scheduler.add_job(evaluate_all, "interval", minutes=5,`。
 - 从写句往上爬过的坐标：`app/api/v1/alerts.py:1113 · check_now`、`app/api/v1/alerts.py:885 · evaluate_all`。
+- 本表这一跳不需要跨边：写句往上爬就直接见脸，或根本爬不到脸，两种都不靠事件标签撑道。
+- ⚠ 现扫在这一处 fail closed（解不开就不算通，宁可读成没道）：`调用点在模块级，接不上任何 def：app/api/v1/alerts.py:5`。
 - 入口只在测试里被引到：`tests/test_alert_scan_scope.py`、`tests/test_deployment_topology.py`、`tests/test_phase4_alerts.py`、`tests/test_r176_alert_row_scope.py`，另有 4 枚（按判据④，那不算产品有一行真数据）。
 - 该走哪条写入道：只有巡检命中才写：告警行唯一出处是 app/api/v1/alerts.py::evaluate_all 里那句 INSERT INTO alerts，规则集取自 alert_rules 里 enabled=TRUE 的行。上表另一枚 sql_write 是处置闭环的 UPDATE（确认 / 转派 / 关闭），它只改状态，不加行。
 - 裁定理由：这条道今天真在跑（现扫到的 add_job 注册 + scheduler 日志里的成功行数，两格都进本表），空的是它的上游：一枚启用规则都没有，逐规则判定无从命中。补一条业主规则它自己会长行，缺的不是码。无库时的代码兜底规则走的是内存表，不构成本表数据。
@@ -50,6 +52,7 @@
 - 这条道今天挂在产品面上：`POST /alerts/rules ← app/api/v1/alerts.py:1017 · create_rule`。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
 - 从写句往上爬过的坐标：`app/api/v1/alerts.py:1017 · create_rule`。
+- 本表这一跳不需要跨边：写句往上爬就直接见脸，或根本爬不到脸，两种都不靠事件标签撑道。
 - 入口只在测试里被引到：`tests/test_offline_runtime_fallbacks.py`、`tests/test_r359_alerts_refuse_a_store_that_is_not_there.py`、`tests/test_r371_the_conversion_is_narrow_and_stays_at_the_exit.py`（按判据④，那不算产品有一行真数据）。
 - 该走哪条写入道：app/api/v1/alerts.py::create_rule（HTTP 建规则那一腿）→ INSERT INTO alert_rules。
 - 裁定理由：规则的三要素（指标 / 运算符 / 阈值）就是一家企业的口径，代码替业主编一条就是假账。写入道在树且现扫得到路由，演示库从没建过规则 ⇒ 这 0 行是业主侧欠一次录入，不是欠码。
@@ -62,6 +65,7 @@
 - 这条道今天挂在产品面上：`POST /notifications/read ← app/api/v1/notifications.py:213 · mark_notifications_read`、`POST /notifications/dismiss ← app/api/v1/notifications.py:219 · dismiss_notifications`。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
 - 从写句往上爬过的坐标：`app/api/v1/notifications.py:136 · _apply`、`app/api/v1/notifications.py:213 · mark_notifications_read`、`app/api/v1/notifications.py:219 · dismiss_notifications`、`app/notifications/states.py:213 · apply_state`。
+- 本表这一跳不需要跨边：写句往上爬就直接见脸，或根本爬不到脸，两种都不靠事件标签撑道。
 - 入口只在测试里被引到：`tests/test_r299_notification_inbox.py`、`tests/test_r303_pg_upsert_leg.py`、`tests/test_r376_gate_shape_pins.py`、`tests/test_r376_notifications_refuse_a_store_that_is_not_there.py`，另有 1 枚（按判据④，那不算产品有一行真数据）。
 - 该走哪条写入道：app/notifications/states.py::apply_state（表名走本文件的 TABLE 常量拼进写句）→ POST /notifications/read 与 /notifications/dismiss 两条腿共用它。
 - 裁定理由：按设计只有真人点「已读 / 忽略」才写这一行，收件箱本身不开第四本账（三条源全从已有的账现读）。所以 0 行的准确说法是：铃铛挂上之后没人点过一次。要补的是端到端行为读数，不是接口。
@@ -73,6 +77,7 @@
 - 写入点（现扫）：**没找到**（app/ 与 scripts/ 里没有任何写这张表的语句）。
 - 这条道今天没挂在任何产品面 HTTP 路由上（现扫零枚）。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
+- 本表这一跳不需要跨边：写句往上爬就直接见脸，或根本爬不到脸，两种都不靠事件标签撑道。
 - 该走哪条写入道：没找到：app/ 与 scripts/ 里现扫不到任何一条写这张表的语句。
 - 裁定理由：结构在（现扫到的 CREATE TABLE 出处进本表），表名在 app/ 与 scripts/ 里一次都没出现，连读路径都没有。V2 第 3 句里「Artifact 绑 CalculationRun」那一格今天仍是后续目标，不是已有能力。
 
@@ -84,25 +89,28 @@
 - 这条道今天没挂在任何产品面 HTTP 路由上（现扫零枚）。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
 - 从写句往上爬过的坐标：`app/knowledge_graph/promotion.py:47 · promote_relation_to_definition`、`app/semantics/registry.py:791 · sync_code_definitions`、`app/semantics/registry.py:816 · register_metric_definition`。
+- 本表这一跳不需要跨边：写句往上爬就直接见脸，或根本爬不到脸，两种都不靠事件标签撑道。
 - 入口只在测试里被引到：`tests/test_business_semantics.py`、`tests/test_semantic_promotion.py`（按判据④，那不算产品有一行真数据）。
 - 该走哪条写入道：写句在树：app/semantics/registry.py::_insert_statement / ::_store_row（表名走 TABLE_NAME 常量）。入口是 register_metric_definition 与 sync_code_definitions。
 - 裁定理由：两条入口从产品面都爬不到：register_metric_definition 唯一的调用者是 app/knowledge_graph/promotion.py::promote_relation_to_definition，而后者在 app/ 与 scripts/ 里现扫零调用者；sync_code_definitions 同样零调用者。tests/ 里能调到它——按判据④那不算产品数据。读侧此刻靠代码兜底口径作答，所以这是「写的那半没接上」，不是整条链不存在。
 - 道断在：`app/knowledge_graph/promotion.py:47 · promote_relation_to_definition`（现扫调用者 0 枚：调用者或产品面一出现，这一句与 `validate()` 同时红）。
 - 裁定出处：总控 2026-09-29 裁定——本轮**不加 HTTP 面**（promotion 出口挂哪张脸属 V2 语义层的决定），保持 no_seed_path；本格不再挂待裁。
 
-### `retrieval_traces` —— `no_seed_path`
+### `retrieval_traces` —— `legitimately_empty`
 
 - 今日现读 0 行（昨日底 0 行，Δ 0），主键 `retrieval_trace_id` 顶值 `None`。
 - 结构出处：`migrations/0002_execution_data_lineage.sql:170`；表名在 app/ 与 scripts/ 里现扫到 21 行、9 枚文件。
 - 写入点（现扫）：`app/storage/persistence.py:418`（write_by_registry）、`app/trace/projections.py:324 · project_retrieval`（declared_writer）。
-- 这条道今天没挂在任何产品面 HTTP 路由上（现扫零枚）。
+- 这条道今天挂在产品面上：`POST /ask ← app/api/v1/chat.py:2483 · _run`、`POST /approve ← app/api/v1/chat.py:3425 · _run`。
 - 🔴 现扫确实爬到一枚脸，但它是**调试面**，按本单显式豁免不算产品道：`POST /retrieval/debug ← app/api/v1/observability.py:528 · retrieval_debug`。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
-- 从写句往上爬过的坐标：`app/agents/orchestrator.py:962 · _approval_worker_node`、`app/agents/tools.py:1085 · search_docs`、`app/api/v1/observability.py:528 · retrieval_debug`、`app/approval/assistant.py:225 · retrieve_expense_hits`、`app/mcp_server.py:120 · main`、`app/mcp_server.py:37 · _search_docs_text`，另有 7 枚。
-- 入口只在测试里被引到：`tests/test_r536_retrieval_completed_on_product_lane.py`（按判据④，那不算产品有一行真数据）。
-- 该走哪条写入道：app/trace/projections.py::project_retrieval（collection 走 _PostgresTable 注册）→ app/trace/store.py 的投影落库；闸门是有人发 retrieval.completed 事件。
-- 裁定理由：本表现读只认两件事：写语句在不在、能不能从写句爬到产品脸。第一件在（project_retrieval 注册在册）；第二件爬到的是调试面 /retrieval/debug——事件投影那一跳不在现扫的爬法里，所以产品问答道今天虽然确实发这枚事件（R536 已并树），本表仍按判据读 no_seed_path。库里 retrieval.completed 的事件数由本表现读交回，读出 0 不区分「没跑过窗」与「道不通」，这一格要 R550 补上才量得准。
-- 裁定出处：总控 2026-09-29 裁定——当时唯一发射点在 RAG 调试面（app/rag/debug.py 发 retrieval.completed ← POST /retrieval/debug），正常问答链一枚都不发 ⇒「有表、有写句、但没有喂它产品的道」。**那半句话已经过期**：R536（09-30 并树）把发射实现接到产品问答道，POST /ask 与 /approve 续跑轮现在都发这枚事件，实现在全仓唯一一处（app/rag/retrieval_pipeline.py::record_retrieval_completed）。裁定暂不翻：本量具认的「道」是从写语句往上爬到 HTTP 路由或 add_job，而本表写句在事件投影里（app/trace/projections.py::project_retrieval 由 trace store 派发），这一跳现扫爬不过去，所以它按自己的判据仍读 no_seed_path。**这是量具的盲区，不是产品道没接通**，治它另立 R550；本格在 R550 并树前不许被读成「问答不写这张表」，也不许被翻绿。
+- 从写句往上爬过的坐标：`app/agents/orchestrator.py:962 · _approval_worker_node`、`app/agents/tools.py:1085 · search_docs`、`app/api/v1/chat.py:2707 · _run`、`app/api/v1/chat.py:3474 · _run`、`app/api/v1/observability.py:528 · retrieval_debug`、`app/approval/assistant.py:225 · retrieve_expense_hits`，另有 29 枚。
+- 跨「发射点 → 订阅 / 投影 → 写句」那一跳的边（现扫，逐枚可复核）：`declared_event retrieval.completed：TRIAGE 声明 → app/rag/debug.py:24 · run_retrieval_debug`；`declared_event retrieval.completed：TRIAGE 声明 → app/rag/retrieval_pipeline.py:1177 · record_retrieval_completed`；`gate_token retrieval.completed：app/rag/retrieval_pipeline.py:1177 · record_retrieval_completed → app/rag/retrieval_pipeline.py:1107 · arm_retrieval_trace`；`publish retrieval.completed：app/trace/projections.py:353 · project_event → app/rag/debug.py:24 · run_retrieval_debug`；`publish retrieval.completed：app/trace/projections.py:353 · project_event → app/rag/retrieval_pipeline.py:1177 · record_retrieval_completed`；`event_guard retrieval.completed：app/trace/projections.py:382 → app/trace/projections.py:324 · project_retrieval`。
+- ⚠ 现扫在这一处 fail closed（解不开就不算通，宁可读成没道）：`调用点在模块级，接不上任何 def：scripts/r220_packing_loss.py:13`。
+- 入口只在测试里被引到：`tests/test_r536_retrieval_completed_on_product_lane.py`、`tests/test_r550_event_hop_climb_is_generic.py`（按判据④，那不算产品有一行真数据）。
+- 该走哪条写入道：app/trace/projections.py::project_retrieval（collection 走 _PostgresTable 注册）← 同文件 project_event 在 `if event_type == "retrieval.completed"` 守卫里派发 ← app/trace/store.py 收事件落投影；发这枚事件的是 app/rag/retrieval_pipeline.py::record_retrieval_completed，它缺 arm_retrieval_trace 挂进执行上下文的那枚身份就直接走开，所以闸门真挂在问答脸上。
+- 裁定理由：写入道今天两格都在：写句在（投影注册在册），产品面也在（现扫从问答道沿 retrieval.completed 这枚标签跨过来）。于是 0 行的准确说法是「这轮行为还没留下痕」，不再是「没人写」。库里那枚行数由本表现读交回，本段一个数字都不写；读出 0 也不再区分「没跑过窗」与「道不通」——这一格 R550 之前量不准，现在量得准。
+- 裁定出处：总控 2026-09-29 裁定——当时唯一发射点在 RAG 调试面（app/rag/debug.py 发 retrieval.completed ← POST /retrieval/debug），正常问答链一枚都不发 ⇒「有表、有写句、但没有喂它产品的道」。**那半句话已经过期**：R536（09-30 并树）把发射实现接到产品问答道（app/rag/retrieval_pipeline.py::record_retrieval_completed，挂点是 POST /ask 与 /approve 续跑轮）。当时本格仍暂不翻，理由是本量具认的「道」只从写语句往上爬到 HTTP 路由或 add_job，跨不过事件投影那一跳——那是量具的盲区。R550 已把这一跳补成通用的沿边传递（表名不当分支），所以裁定按现扫改口；改口的凭据不是本段散文，是 validate() 那两枚自洽腿与摘腿的刀。
 
 ### `user_profiles` —— `needs_owner`
 
@@ -112,6 +120,7 @@
 - 这条道今天挂在产品面上：`PUT /profile ← app/api/v1/auth.py:281 · update_my_profile`。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
 - 从写句往上爬过的坐标：`app/api/v1/auth.py:281 · update_my_profile`、`app/memory/profile.py:240 · upsert_profile`。
+- 本表这一跳不需要跨边：写句往上爬就直接见脸，或根本爬不到脸，两种都不靠事件标签撑道。
 - 入口只在测试里被引到：`tests/test_deployment_guards.py`、`tests/test_offline_runtime_fallbacks.py`、`tests/test_r296_department_is_read_only_derived.py`、`tests/test_r377_migrations_first_family_is_contained_at_the_store_layer.py`，另有 2 枚（按判据④，那不算产品有一行真数据）。
 - 该走哪条写入道：app/memory/profile.py::upsert_profile ← app/api/v1/auth.py 的 PUT /api/v1/profile。
 - 裁定理由：这格里该躺的是员工自报的职位与偏好，只能业主侧录。department 那一列已被 R296 钉成只读派生值，写入道今天明确不收它——所以「回填 department」不算这条道的填法。
@@ -124,6 +133,7 @@
 - 这条道今天挂在产品面上：`POST /feedback/document ← app/api/v1/feedback.py:182 · submit_document_feedback`。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
 - 从写句往上爬过的坐标：`app/api/v1/feedback.py:147 · record_document_signal`、`app/api/v1/feedback.py:182 · submit_document_feedback`。
+- 本表这一跳不需要跨边：写句往上爬就直接见脸，或根本爬不到脸，两种都不靠事件标签撑道。
 - 该走哪条写入道：app/api/v1/feedback.py::record_document_signal ← POST /feedback/document（前端正脸在 frontend/src/lib/feedback.js 与 components/SourceCard.vue）。
 - 裁定理由：只有采纳 / 驳回一次才加一次计数，演示库没有真人点过。读侧今天把「读成功而零行」当作一种独立状态记账（app/rag/retriever.py 的活动先验诊断格为此留了名目），所以零行不等于读不到。
 

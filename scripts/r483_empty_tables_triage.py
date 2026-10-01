@@ -224,6 +224,26 @@ KIND_ORDER = ("sql_write", "write_via_table_constant", "write_by_registry", "dec
 BFS_NODE_CAP = 60
 BFS_CALLERS_PER_NODE = 8
 
+# --------------------------------------------------------------------------- R550 三把尺
+#: 事件名的形状：本仓的事件类型一律 `<族>.<相位>`（`retrieval.completed` / `step.started`）。
+#: 只认带点的字面，于是 `SPAN_EVENT_TYPES` 那种「以表名当键」的字典不会把表名混成事件名。
+EVENT_LITERAL_RE = re.compile(r"""["']([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)["']""")
+#: 发射点：语句里写着 `event_type="x.y"`。守卫那两枚等号（`==`）不会被认成发射。
+EVENT_KWARG_RE = re.compile(r"""\bevent_type\s*=\s*["'](?P<event>[^"']+)["']""")
+#: 守卫：`if/elif event_type == "x.y":` 或 `if event_type in CONST:`，lhs 必须带 event/kind 字样。
+EVENT_GUARD_RE = re.compile(r"""^(?P<indent>[ \t]*)(?:if|elif)\s+.*\b(?P<lhs>\w*(?:event|kind)\w*)"""
+                            r"""\s*(?P<op>==|\bin\b)\s*(?P<rhs>[^:]+):\s*$""", re.I)
+#: 模块级事件常量（名字里带 EVENT）：守卫写成 `event_type in STEP_EVENT_TYPES` 时靠它展开。
+EVENT_CONST_RE = re.compile(r"""^(?P<name>[A-Z_][A-Z0-9_]*)\s*=\s*""")
+#: 闸门跳要同时成立三件：赋值、`is None` 就走、那枚 ContextVar 的 get / set。
+ASSIGN_RE = re.compile(r"""^(?P<indent>[ \t]*)(?P<var>[a-z_]\w*)\s*=\s*(?P<value>.+)$""")
+NONE_GUARD_RE = re.compile(r"""^[ \t]*if\s+(?P<var>[a-z_]\w*)\s+is\s+None\s*:\s*$""")
+CALL_NAME_RE = re.compile(r"""\b([a-z_][\w]*)\s*\(""")
+CONTEXT_GET_RE = re.compile(r"""\b(?P<var>[A-Za-z_]\w*)\.get\(\s*\)""")
+CONTEXT_SET_RE = re.compile(r"""\b(?P<var>[A-Za-z_]\w*)\.set\(""")
+#: 跨跳的名字：读数里逐枚点名这条道是哪条边接上的，不许与「直接调用」混成一叠。
+BRIDGE_KINDS = ("publish", "gate_token", "declared_event")
+
 
 def _is_self_file(rel: str) -> bool:
     return any(token in rel for token in SELF_TOKENS)
@@ -263,6 +283,11 @@ class SourceIndex:
         self.product = self._load(product_roots, ".py")
         self.migrations = self._load((MIGRATION_ROOT,), ".sql")
         self.tests = self._load((TEST_ROOT,), ".py")
+        self._event_constants = None
+        #: 只读缓存：闸门跳与调用者每枚节点都要扫全仓，不缓存就会把 --check 拖成几十秒。
+        self._def_cache = {}
+        self._callers_cache = {}
+        self._context_sets = None
 
     def _load(self, folders, suffix: str) -> dict:
         store = {}
@@ -333,14 +358,25 @@ class SourceIndex:
         return " / ".join(reversed(verbs))
 
     def definition(self, symbol: str):
-        """def <symbol>( 在 app/ 与 scripts/ 里的坐标；找不到返回 None（不猜）。"""
+        """def <symbol>( 在 app/ 与 scripts/ 里的坐标；找不到返回 None（不猜）。
+
+        🔴 同名函数跨模块重名时这里只认「按文件名排序的第一枚」——那是本件一直在用的口径，
+        沿边爬的 BFS 不用它：那一路由 (文件, def 行) 定节点，重名不会借到别人的脸。
+        """
+        if symbol in self._def_cache:
+            return self._def_cache[symbol]
         pattern = re.compile(r"^(?P<indent>[ \t]*)(?:async\s+)?def\s+" + re.escape(symbol)
                              + r"\s*\(")
+        found = None
         for rel, lines in sorted(self.product.items()):
             for i, line in enumerate(lines, 1):
                 if pattern.match(line):
-                    return Hit(rel, i, "declared_writer", symbol, line.strip())
-        return None
+                    found = Hit(rel, i, "declared_writer", symbol, line.strip())
+                    break
+            if found is not None:
+                break
+        self._def_cache[symbol] = found
+        return found
 
     # -------------------------------------------------------------- 写入点扫描
     def write_hits(self, table: str) -> list:
@@ -390,18 +426,43 @@ class SourceIndex:
     # -------------------------------------------------------------- 调用链上爬
     def callers(self, symbol: str) -> list:
         """谁在这个函数的名字后面写了左括号（import 行不算调用；定义行本身不算调用）。"""
+        #: `x.apply_state(` 这种带模块前缀的调用是真边，照旧算；局部同名的假边由 shadowed() 挡。
         call = re.compile(r"(?<!\w)" + re.escape(symbol) + r"\s*\(")
         definition = re.compile(r"(?:async\s+)?def\s+" + re.escape(symbol) + r"\s*\(")
         #: 别的类里恰好同名的 self.方法（app/trace/store.py 也有一枚 _apply），不是这条道。
         receiver = re.compile(r"(?<!\w)(?:self|cls)\." + re.escape(symbol) + r"\s*\(")
+        if symbol in self._callers_cache:
+            return self._callers_cache[symbol]
         hits = []
         for rel, lines in sorted(self.product.items()):
             for i, line in enumerate(lines, 1):
-                if IMPORT_RE.match(line) or definition.search(line) or receiver.search(line):
-                    continue
+                stripped = line.strip()
+                if (IMPORT_RE.match(line) or definition.search(line) or receiver.search(line)
+                        or stripped.startswith("#")):
+                    continue  # 注释与文档串里写着的名字不算调用者
                 if call.search(line):
+                    chain = self.enclosing_defs(rel, i)
+                    if chain and self.shadowed(rel, chain[0][1], symbol):
+                        continue  # 这枚名字在被调处那枚函数里是局部的（形参 / 局部绑定），不是那条道
                     hits.append(Hit(rel, i, "caller", self.symbol_at(rel, i), line.strip()))
+        self._callers_cache[symbol] = hits
         return hits
+
+    def shadowed(self, rel: str, def_line: int, name: str) -> bool:
+        """这枚名字在那枚函数体内是不是局部的：形参、`name = ...`、`for name in`、`as name`。
+
+        不做这层，`project_event(..., fetch=...)` 体内那句 `fetch(collection, ...)` 会被当成
+        「有人在调用全局的 fetch」，调用链就从这里借到一条根本不存在的边。放宽它=假绿，
+        收紧它最多是少认一条道（fail closed），所以这一刀只管往严里判。
+        """
+        signature = self.statement(rel, def_line)
+        if name in set(re.findall(r"(?<=[(,])\s*\*{0,2}([a-z_]\w*)\s*(?=\s*[:,)=])", signature)):
+            return True
+        local = re.compile(r"^\s*(?:" + re.escape(name) + r"\s*=|for\s+.*\b" + re.escape(name)
+                           + r"\b\s+in\b|with\s+.*\bas\s+" + re.escape(name) + r"\b)")
+        lines = self.lines_of(rel)
+        body = lines[def_line:min(len(lines), def_line + 400)]
+        return any(local.match(line) for line in body)
 
     def job_hits(self, symbol: str) -> list:
         """add_job(<symbol> —— 定时任务这条道只有被现扫到才算存在。"""
@@ -423,45 +484,123 @@ class SourceIndex:
         return names
 
     def surface(self, entries, events=()) -> dict:
-        """从写入函数往上爬到产品脸：HTTP 路由装饰器或 add_job；顺带留下爬过的脚印。"""
-        routes, jobs, trail, problems = [], [], [], []
+        """从写入点往上爬到产品脸：三条边都算数（R550 之前只有第一条）。
+
+        * `caller` —— 文本上写着 `<symbol>(` 的调用者，原有那一跳（`self.` 与定义行本身不算）；
+        * `publish` —— 一旦这条边被某枚事件守卫护着（消费点写 `if event_type == "x.y"`，或调用
+          语句里写着 `event_type="x.y"`），这枚标签的另一端就是「谁在发 x.y」。**标签沿边走**：
+          同一枚 dispatcher 里别的事件的分支不许借道过来，所以一枚表不会因为「有人发过别的事件」
+          就被认成有道。
+        * `gate_token` —— 这枚函数缺某枚 ContextVar 就 `return` / `raise`（闸门真的关着），那枚
+          ContextVar 的 `.set(` 处就是「谁把这一轮挂上来的」。
+        路由装饰器只写在最外层 def 头顶的那一族，由 :meth:`route_on_chain` 走出嵌套函数。
+        🔴 三条边一律 fail closed：守卫解不开、调用点落在模块级、发射点不在函数里，都只记
+        note 并**不**把这条道算通——宁可读成 no_seed_path，也不许靠放宽爬法把裁定推绿。
+        """
+        routes, jobs, trail, problems, notes, bridges = [], [], [], [], [], []
         queue = []
         for entry in entries:
             location = self.definition(entry)
-            if location is not None:
-                trail.append(location.location())
+            if location is None:
+                notes.append("入口现扫不到 def：" + entry)
+                continue
+            trail.append(location.location())
+            queue.append({"file": location.file, "line": location.line, "symbol": entry,
+                          "event": None, "hop": 0, "via": "entry", "side": "consume"})
         for event in events:
             for emitter in self.event_emitters(event):
                 trail.append(_fmt_location(emitter.file, emitter.line, emitter.symbol))
-                if emitter.symbol:
-                    queue.append((emitter.symbol, 0))
-        if not events:
-            queue += [(symbol, 0) for symbol in entries]
+                chain = self.enclosing_defs(emitter.file, emitter.line)
+                if not chain:
+                    notes.append("发射点不在任何函数里：" + _fmt_location(emitter.file, emitter.line))
+                    continue
+                queue.append({"file": emitter.file, "line": chain[0][1], "symbol": chain[0][0],
+                              "event": event, "hop": 0, "via": "declared_event", "side": "emit"})
+                bridges.append({"kind": "declared_event", "event": event, "var": "",
+                                "gate": "", "from": "TRIAGE 声明",
+                                "to": _fmt_location(emitter.file, chain[0][1], chain[0][0])})
         seen = set()
+        crossed = set()
         while queue:
-            symbol, hop = queue.pop(0)
-            if not symbol or symbol in seen or hop > 5:
+            node = queue.pop(0)
+            key = (node["file"], node["line"], node["event"])
+            if not node["symbol"] or key in seen or node["hop"] > 5:
                 continue
-            seen.add(symbol)
+            seen.add(key)
             if len(seen) > BFS_NODE_CAP:
                 problems.append("调用链超过 " + str(BFS_NODE_CAP) + " 枚节点，本单不敢全收")
                 break
-            for job in self.job_hits(symbol):
-                jobs.append({"file": job.file, "line": job.line, "text": job.text})
-            location = self.definition(symbol)
-            if location is not None:
-                trail.append(location.location())
-                route = self.route_above(location.file, location.line)
-                if route:
-                    routes.append({"file": location.file, "line": location.line,
-                                   "symbol": symbol, "route": route})
-                for caller in self.callers(symbol)[:BFS_CALLERS_PER_NODE]:
-                    if caller.symbol:
-                        queue.append((caller.symbol, hop + 1))
-        return {"routes": _dedupe(routes, "route"),
-                "jobs": _dedupe(jobs, "text"),
+            here = (node["file"], node["line"])
+            trail.append(_fmt_location(node["file"], node["line"], node["symbol"]))
+            for job in self.job_hits(node["symbol"]):
+                jobs.append({"file": job.file, "line": job.line, "text": job.text,
+                             "via": node["via"], "event": node["event"] or ""})
+            route, routed_line = self.route_on_chain(node["file"], node["line"])
+            if route:
+                routes.append({"file": node["file"], "line": routed_line,
+                               "symbol": node["symbol"], "route": route,
+                               "via": node["via"], "event": node["event"] or ""})
+            for caller in self.callers(node["symbol"])[:BFS_CALLERS_PER_NODE]:
+                chain = self.enclosing_defs(caller.file, caller.line)
+                if not chain:
+                    notes.append("调用点在模块级，接不上任何 def："
+                                 + _fmt_location(caller.file, caller.line))
+                    continue
+                if (caller.file, chain[0][1]) == here:
+                    continue
+                labels, blocked = self.dispatch_labels(caller.file, caller.line)
+                if node["event"] and labels and node["event"] not in labels:
+                    continue
+                if node["event"] and blocked:
+                    notes.append(node["event"] + " 这条边解不开，不算通：" + blocked)
+                    continue
+                carry = node["event"]
+                if not carry and len(labels) == 1:
+                    carry = next(iter(labels))
+                elif not carry and len(labels) > 1:
+                    notes.append("一处调用被多枚事件守卫，不带标签上爬："
+                                 + _fmt_location(caller.file, caller.line))
+                if carry and carry != node["event"]:
+                    bridges.append({"kind": "event_guard", "event": carry, "var": "", "gate": "",
+                                    "from": _fmt_location(caller.file, caller.line),
+                                    "to": _fmt_location(node["file"], node["line"], node["symbol"])})
+                queue.append({"file": caller.file, "line": chain[0][1], "symbol": chain[0][0],
+                              "event": carry, "hop": node["hop"] + 1, "via": "caller",
+                              "side": node["side"]})
+            # 🔴 只有「消费侧」的节点才需要跨到发射侧；已经在发射侧的节点再跨一次，就会把
+            # 全仓每一枚调用过 trace store 的脚本 main() 都算成这张表的道——那是假绿。
+            if node["event"] and node["side"] == "consume" and node["event"] not in crossed:
+                crossed.add(node["event"])
+                for emitter in self.event_emitters(node["event"]):
+                    chain = self.enclosing_defs(emitter.file, emitter.line)
+                    if not chain or (emitter.file, chain[0][1]) == here:
+                        continue
+                    bridges.append({"kind": "publish", "event": node["event"], "var": "",
+                                    "gate": "",
+                                    "from": _fmt_location(node["file"], node["line"], node["symbol"]),
+                                    "to": _fmt_location(emitter.file, chain[0][1], chain[0][0])})
+                    queue.append({"file": emitter.file, "line": chain[0][1], "symbol": chain[0][0],
+                                  "event": node["event"], "hop": node["hop"] + 1, "via": "publish",
+                                  "side": "emit"})
+            if node["side"] != "emit":
+                continue
+            for gate in self.gate_armers(node["file"], node["line"]):
+                for setter in gate["armers"]:
+                    to = _fmt_location(setter["file"], setter["armer_line"], setter["armer"])
+                    bridges.append({"kind": "gate_token", "event": node["event"] or "",
+                                    "var": gate["var"], "gate": gate["gate"],
+                                    "from": _fmt_location(node["file"], node["line"], node["symbol"]),
+                                    "to": to})
+                    queue.append({"file": setter["file"], "line": setter["armer_line"],
+                                  "symbol": setter["armer"], "event": node["event"],
+                                  "hop": node["hop"] + 1, "via": "gate_token",
+                                  "side": node["side"]})
+        return {"routes": _whole_dedupe(routes),
+                "jobs": _whole_dedupe(jobs),
                 "trail": sorted(set(trail)),
                 "nodes": len(seen),
+                "bridges": _whole_dedupe(bridges),
+                "notes": sorted(set(notes)),
                 "problems": problems}
 
     def event_emitters(self, event_type: str) -> list:
@@ -474,6 +613,214 @@ class SourceIndex:
                     hits.append(Hit(rel, i, "emitter", self.symbol_at(rel, i), line.strip()))
         return hits
 
+    # --------------------------------------------- R550 · 让事件标签沿边走的三把尺
+    def statement(self, rel: str, lineno: int, span: int = 16) -> str:
+        """从这一行起把整条语句接回来：括号没配平就继续往下并。
+
+        发射点写成一长串关键字参数（`store.record_event(` 与 `event_type="retrieval.completed"`
+        隔了四行），只看一行的话这一发就「不存在」——R550 之前它确实读不到。
+        """
+        lines = self.lines_of(rel)
+        if not 0 < lineno <= len(lines):
+            return ""
+        depth = 0
+        chunks = []
+        for i in range(lineno - 1, min(len(lines), lineno - 1 + span)):
+            line = lines[i]
+            chunks.append(line)
+            depth += (line.count("(") + line.count("[") + line.count("{")
+                      - line.count(")") - line.count("]") - line.count("}"))
+            if depth <= 0:
+                break
+        return NL.join(chunks)
+
+    def enclosing_defs(self, rel: str, lineno: int) -> list:
+        """从内到外列出包着这一行的 def，交回 `(名, def 行号, 缩进)`。
+
+        非有它不可：挂路由的那枚函数常常还套着一层内函数（`app/api/v1/chat.py` 里
+        `ask` 头顶写着 `@router.post("/ask")`，而真正调 `arm_retrieval_trace` 的是它体内的
+        `_run`）。只认最近那枚 def 就会把这一族脸全读成零枚——那是把盲区当结论。
+        """
+        lines = self.lines_of(rel)
+        if not 0 < lineno <= len(lines):
+            return []
+        target = lines[lineno - 1]
+        limit = len(target) - len(target.lstrip())
+        out = []
+        for i in range(lineno - 1, -1, -1):
+            match = DEF_RE.match(lines[i])
+            if not match:
+                continue
+            indent = len(match.group("indent"))
+            if indent < limit:
+                out.append((match.group("name"), i + 1, indent))
+                limit = indent
+                if indent == 0:
+                    break
+        return out
+
+    def route_on_chain(self, rel: str, def_line: int) -> tuple:
+        """这一处 def 头顶、或它外面任何一层 def 头顶的路由装饰器：交回 `(路由, 挂着它的 def 行)`。"""
+        route = self.route_above(rel, def_line)
+        if route:
+            return route, def_line
+        for _name, line, _indent in self.enclosing_defs(rel, def_line):
+            route = self.route_above(rel, line)
+            if route:
+                return route, line
+        return "", 0
+
+    def function_body(self, rel: str, def_line: int) -> list:
+        """一枚 def 的签名与函数体，走到下一枚同级或更外层的 def 为止。"""
+        lines = self.lines_of(rel)
+        if not 0 < def_line <= len(lines):
+            return []
+        match = DEF_RE.match(lines[def_line - 1])
+        if not match:
+            return []
+        indent = len(match.group("indent"))
+        body = []
+        for i in range(def_line - 1, len(lines)):
+            line = lines[i]
+            check = DEF_RE.match(line)
+            if check and i > def_line - 1 and len(check.group("indent")) <= indent:
+                break
+            body.append(line)
+        return body
+
+    def event_constants(self) -> dict:
+        """模块级名字里带 EVENT 的常量展开成事件名字面集；只算一次。"""
+        if self._event_constants is not None:
+            return self._event_constants
+        table = {}
+        for rel, _lines in sorted(self.product.items()):
+            for i, line in enumerate(self.lines_of(rel) or [], 1):
+                match = EVENT_CONST_RE.match(line)
+                if not match or "EVENT" not in match.group("name"):
+                    continue
+                literals = {item for item in EVENT_LITERAL_RE.findall(self.statement(rel, i))
+                            if "." in item}
+                if literals:
+                    table.setdefault(match.group("name"), set()).update(literals)
+        self._event_constants = table
+        return table
+
+    def dispatch_labels(self, rel: str, lineno: int) -> tuple:
+        """这一处调用点被哪些事件名护着：交回 `(标签集, 解不开的原因)`。
+
+        两路来源：本条语句里写着的 `event_type="x.y"`（发射点），与往上爬到的
+        `if/elif event_type == / in ...`（消费点的守卫）。守卫提到了 event/kind 却展开不出
+        任何字面（循环变量、以表名为键的字典……）就记一条「解不开」：调用方**必须**当成
+        跨不过去。宁可少认一条道，也不许把邻近的事件借来当自己的闸门。
+        """
+        lines = self.lines_of(rel)
+        if not 0 < lineno <= len(lines):
+            return set(), ""
+        blob = self.statement(rel, lineno)
+        labels = {item for item in EVENT_KWARG_RE.findall(blob) if "." in item}
+        blocked = ""
+        limit = len(lines[lineno - 1]) - len(lines[lineno - 1].lstrip())
+        consts = self.event_constants()
+        for i in range(lineno - 1, -1, -1):
+            line = lines[i]
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            indent = len(line) - len(line.lstrip())
+            if DEF_RE.match(line) and indent <= limit:
+                break
+            if indent >= limit:
+                continue
+            match = EVENT_GUARD_RE.match(line)
+            if match:
+                names = {item for item in EVENT_LITERAL_RE.findall(match.group("rhs")) if "." in item}
+                for token in re.findall(r"\b[A-Z][A-Z0-9_]*\b", match.group("rhs")):
+                    names |= {item for item in consts.get(token, ()) if "." in item}
+                if names:
+                    labels |= names
+                elif not blocked:
+                    blocked = "守卫引用了解不开的事件集：" + _fmt_location(rel, i + 1)
+                limit = indent
+            elif stripped.startswith(("for ", "while ", "try:", "else:")):
+                limit = indent
+        return labels, blocked
+
+    def dispatch_events(self, symbol: str) -> set:
+        """一枚函数被哪些事件名守卫着调用：声明与现扫对拍用的就是这一格。"""
+        out = set()
+        for caller in self.callers(symbol):
+            labels, _blocked = self.dispatch_labels(caller.file, caller.line)
+            out |= labels
+        return out
+
+    def context_set_sites(self) -> dict:
+        """`VAR.set(` 在全仓的出处，按变量名归堆：闸门跳要反查它，每枚节点重扫就太慢了。"""
+        if self._context_sets is not None:
+            return self._context_sets
+        table = {}
+        for rel, lines in sorted(self.product.items()):
+            for i, line in enumerate(lines, 1):
+                if line.strip().startswith("#"):
+                    continue
+                found = CONTEXT_SET_RE.search(line)
+                if found:
+                    table.setdefault(found.group("var"), []).append((rel, i))
+        self._context_sets = table
+        return table
+
+    def gate_armers(self, rel: str, def_line: int) -> list:
+        """闸门跳：这枚函数缺了某枚 ContextVar 就走开，那枚 ContextVar 是谁挂上来的。
+
+        🔴 三件同时成立才算一条边，缺一件就交回空：① `X = ... H()` 形状的赋值（或赋值行里
+        直接写 `VAR.get()`）；② 其后一枚 `if X is None:` 紧跟 return / raise；③ `H` 的体里写着
+        `VAR.get()`，而 `VAR.set(` 在产品码里现扫得到。放宽任何一件，量具就会把「模块里恰好
+        有个同名 get」说成产品道。
+        """
+        body = self.function_body(rel, def_line)
+        if not body:
+            return []
+        assigned = {}
+        for offset, line in enumerate(body):
+            match = ASSIGN_RE.match(line)
+            if match:
+                assigned.setdefault(match.group("var"), []).append(
+                    (offset, CALL_NAME_RE.findall(match.group("value")), match.group("value")))
+        gated = []
+        for offset, line in enumerate(body):
+            guard = NONE_GUARD_RE.match(line)
+            if not guard:
+                continue
+            if not any(re.match(r"^\s*(return|raise)\b", item) for item in body[offset + 1:offset + 3]):
+                continue
+            for var_offset, calls, value in assigned.get(guard.group("var"), []):
+                if var_offset < offset:
+                    gated.append((calls, value, def_line + offset))
+        out = []
+        for calls, value, gate_line in gated:
+            names = set()
+            for helper in calls:
+                location = self.definition(helper)
+                if location is None:
+                    continue
+                for line in self.function_body(location.file, location.line):
+                    found = CONTEXT_GET_RE.search(line)
+                    if found:
+                        names.add(found.group("var"))
+            direct = CONTEXT_GET_RE.search(value)
+            if direct:
+                names.add(direct.group("var"))
+            for target in sorted(names):
+                setters = []
+                for rel2, i in self.context_set_sites().get(target, []):
+                    chain = self.enclosing_defs(rel2, i)
+                    if chain:
+                        setters.append({"file": rel2, "line": i, "armer": chain[0][0],
+                                        "armer_line": chain[0][1]})
+                if setters:
+                    out.append({"var": target, "gate": _fmt_location(rel, gate_line),
+                                "armers": setters})
+        return out
+
     def references(self, table: str) -> dict:
         """这枚表名在 app/ 与 scripts/ 里到底出现过几次（一次都没有 = 连读路径都没长）。"""
         pattern = re.compile(r"\b" + re.escape(table) + r"\b")
@@ -483,6 +830,15 @@ class SourceIndex:
             if count:
                 files.append((rel, count))
         return {"files": files, "total": sum(count for _, count in files)}
+
+
+def _whole_dedupe(items: list) -> list:
+    """整枚字典去重后按内容排序：`via` / `event` 是身份的一部分，不许与同一路由的另一条边并成一格。"""
+    unique = []
+    for item in items:
+        if item not in unique:
+            unique.append(item)
+    return sorted(unique, key=lambda item: repr(sorted(item.items())))
 
 
 def _dedupe(items, key: str) -> list:
@@ -561,30 +917,33 @@ TRIAGE = {
                "不是整条链不存在。",
     },
     "retrieval_traces": {
-        "verdict": "no_seed_path",
+        #: 🔴 这一格今天由 `validate()` 逼出来，不由任何人宣布：量具学会沿事件标签跨「发射点 →
+        #: 订阅 / 投影 → 写句」之后（R550），现扫能从产品面走到这张表；裁 no_seed_path 就当场报
+        #: 「裁定过期」。摘掉发射那一腿，它会重新报「应改判 no_seed_path」——牙在 validate() 里。
+        "verdict": "legitimately_empty",
         "entries": ("project_retrieval",),
         "events": ("retrieval.completed",),
         "hit_kinds": ("write_by_registry", "declared_writer"),
-        #: 现扫确实能爬到一枚 HTTP 面，但那是 RAG 调试面；本单显式声明它不算「喂产品数据的道」，
-        #: 并把它挂在读数里给所有人看。豁免没用上（那枚路由不在了）就是一枚问题，不许当后门留着。
+        #: 现扫确实还爬到一枚调试面；它照旧被显式豁免，**不算**这张表的产品道。
         "debug_only_surface": ("/retrieval/debug",),
         "owner_ruling": "裁定出处：总控 2026-09-29 裁定——当时唯一发射点在 RAG 调试面"
                         "（" + "app/rag/debug.py" + " 发 retrieval.completed ← POST /retrieval/debug），"
                         "正常问答链一枚都不发 ⇒「有表、有写句、但没有喂它产品的道」。**那半句话已经过期**："
-                        "R536（09-30 并树）把发射实现接到产品问答道，POST /ask 与 /approve 续跑轮现在都发"
-                        "这枚事件，实现在全仓唯一一处（app/rag/retrieval_pipeline.py::"
-                        "record_retrieval_completed）。裁定暂不翻：本量具认的「道」是从写语句往上爬到 HTTP"
-                        " 路由或 add_job，而本表写句在事件投影里（app/trace/projections.py::"
-                        "project_retrieval 由 trace store 派发），这一跳现扫爬不过去，所以它按自己的判据仍"
-                        "读 no_seed_path。**这是量具的盲区，不是产品道没接通**，治它另立 R550；本格在 R550 "
-                        "并树前不许被读成「问答不写这张表」，也不许被翻绿。",
-        "lane": "app/trace/projections.py::project_retrieval（collection 走 _PostgresTable 注册）→ "
-                "app/trace/store.py 的投影落库；闸门是有人发 retrieval.completed 事件。",
-        "why": "本表现读只认两件事：写语句在不在、能不能从写句爬到产品脸。第一件在（"
-               "project_retrieval 注册在册）；第二件爬到的是调试面 /retrieval/debug——事件投影那一跳"
-               "不在现扫的爬法里，所以产品问答道今天虽然确实发这枚事件（R536 已并树），本表仍按判据读 "
-               "no_seed_path。库里 retrieval.completed 的事件数由本表现读交回，读出 0 不区分「没跑过窗」"
-               "与「道不通」，这一格要 R550 补上才量得准。",
+                        "R536（09-30 并树）把发射实现接到产品问答道（app/rag/retrieval_pipeline.py::"
+                        "record_retrieval_completed，挂点是 POST /ask 与 /approve 续跑轮）。当时本格"
+                        "仍暂不翻，理由是本量具认的「道」只从写语句往上爬到 HTTP 路由或 add_job，"
+                        "跨不过事件投影那一跳——那是量具的盲区。R550 已把这一跳补成通用的沿边传递"
+                        "（表名不当分支），所以裁定按现扫改口；改口的凭据不是本段散文，是 validate()"
+                        " 那两枚自洽腿与摘腿的刀。",
+        "lane": "app/trace/projections.py::project_retrieval（collection 走 _PostgresTable 注册）←"
+                " 同文件 project_event 在 `if event_type == \"retrieval.completed\"` 守卫里派发 ←"
+                " app/trace/store.py 收事件落投影；发这枚事件的是 app/rag/retrieval_pipeline.py::"
+                "record_retrieval_completed，它缺 arm_retrieval_trace 挂进执行上下文的那枚身份就"
+                "直接走开，所以闸门真挂在问答脸上。",
+        "why": "写入道今天两格都在：写句在（投影注册在册），产品面也在（现扫从问答道沿"
+               " retrieval.completed 这枚标签跨过来）。于是 0 行的准确说法是「这轮行为还没留下痕」，"
+               "不再是「没人写」。库里那枚行数由本表现读交回，本段一个数字都不写；读出 0 也不再"
+               "区分「没跑过窗」与「道不通」——这一格 R550 之前量不准，现在量得准。",
     },
     "user_profiles": {
         "verdict": "needs_owner",
@@ -783,6 +1142,17 @@ def render_per_table(readings: dict) -> list:
                 inline(item) for item in surface["trail"][:6])
                 + ("，另有 " + str(len(surface["trail"]) - 6) + " 枚"
                    if len(surface["trail"]) > 6 else "") + "。")
+        if surface["bridges"]:
+            lines.append("- 跨「发射点 → 订阅 / 投影 → 写句」那一跳的边（现扫，逐枚可复核）："
+                         + "；".join(inline(bridge["kind"] + " " + (bridge["event"] or "—")
+                                          + "：" + bridge["from"] + " → " + bridge["to"])
+                                     for bridge in surface["bridges"]) + "。")
+        else:
+            lines.append("- 本表这一跳不需要跨边：写句往上爬就直接见脸，或根本爬不到脸，"
+                         "两种都不靠事件标签撑道。")
+        for note in surface["notes"]:
+            lines.append("- ⚠ 现扫在这一处 fail closed（解不开就不算通，宁可读成没道）："
+                         + inline(note) + "。")
         test_refs = []
         for symbol in spec["entries"]:
             test_refs += readings["index"].test_refs(symbol)
@@ -1014,6 +1384,24 @@ def validate(readings: dict) -> list:
         for word in product["unused_exemptions"]:
             problems.append(table + " 声明了调试面豁免 " + word + "，但现扫爬不到那枚路由："
                             "豁免成了后门，要么删声明要么重裁")
+        #: R550 判据①：TRIAGE 里声明的事件名，必须与「现扫在写入点上游守卫到的」互证。
+        #: 声明多于现扫=有人凭散文把爬法写宽；现扫多于声明=标签漂了。两边都红。
+        declared = sorted(spec.get("events", ()))
+        derived = set()
+        for entry in spec["entries"]:
+            derived |= readings["index"].dispatch_events(entry)
+        if set(declared) != derived:
+            problems.append(table + " 声明的事件与现扫守卫到的不等：声明 " + repr(declared)
+                            + "，现扫 " + repr(sorted(derived))
+                            + "——事件标签漂了，跨跳那条道不作数")
+        #: R550 判据③：凡是跨了「发射点 -> 订阅 / 投影 -> 写句」这一跳的道，必须带着事件标签。
+        #: 一枚不带标签的 publish / gate_token / declared_event 边就是无主借道——那是后门，不是边。
+        for hop in surface["routes"] + surface["jobs"] + surface["bridges"]:
+            kind = hop.get("via") or hop.get("kind")
+            if kind in BRIDGE_KINDS and not hop.get("event"):
+                problems.append(table + " 有一条无主的跨跳边（via=" + str(kind)
+                                + "，不带事件标签）：" + str(hop.get("route")
+                                or hop.get("to") or hop))
         blocked = spec.get("blocked_at")
         if blocked:
             location = readings["index"].definition(blocked)

@@ -184,34 +184,42 @@ def test_the_rulings_are_recorded_with_their_author():
             assert spec["owner_ruling"] in DOC, table
 
 
-def test_retrieval_traces_keeps_no_seed_path_only_because_the_gauge_cannot_cross_the_projection_hop():
-    """这枚钉钉的是「裁定与量具读数必须自洽」，不是「产品道没接通」。
+def test_retrieval_traces_reads_legitimately_empty_because_the_gauge_now_crosses_the_hop():
+    """R550 改口（改前原文：`git show 4572aa8:tests/test_r483_empty_table_triage_is_derived.py`）。
 
-    R536 已把 retrieval.completed 接到产品问答道；本表仍读 no_seed_path，是因为现扫的爬法
-    跨不过事件投影那一跳（盲区，R550 治）。所以这里同时咬三格：裁定不许被顺手翻绿、
-    owner_ruling 里必须留着那句「已经过期」的自曝、豁免不许变成后门。
+    改前这枚钉钉的是「裁定与量具读数必须自洽」：量具跨不过事件投影那一跳，所以裁定只能读
+    no_seed_path。R550 把那一跳补成通用的沿边传递（表名不当分支）之后，现扫能从产品问答面
+    走到这张表，同一枚自洽腿反过来逼裁定改口。所以本件现在咬的是另一对判据：产品面必须真在、
+    跨过来的道必须带事件标签、调试面照旧不许冒充产品道、豁免必须用得上。
+    🔴「摘掉发射腿就重新报过期」这把刀不在本件——它跑在影子树上，见
+    tests/test_r550_counter_evidence_teeth.py；本件不许拿散文宣布那把刀存在。
     """
     spec = M.TRIAGE["retrieval_traces"]
-    assert spec["verdict"] == "no_seed_path", (
-        "R550 并树（量具学会从事件发射点爬到产品脸）之前，本裁定由现扫的判据定死，"
-        "不许拿「R536 已接通」当理由提前翻绿——那等于拿一张量不到的尺宣布达标")
+    assert spec["verdict"] == "legitimately_empty", (
+        "现扫能从产品面走到这张表时，裁 no_seed_path 就是假话；一旦发射腿被摘掉，"
+        "validate() 会重新报「应改判 no_seed_path」——那才是它该回去的时候")
     assert "已经过期" in spec["owner_ruling"], (
         "owner_ruling 里那句「正常问答链一枚都不发」必须被点名作废；留着它就是本表在册的第二句假话")
     product = READINGS["analysis"]["retrieval_traces"]["product"]
+    assert product["routes"], "现扫爬不到任何产品面，本裁定就该改回 no_seed_path"
+    assert all(route["event"] for route in product["routes"]), (
+        "跨过来的道必须带着事件标签——无主借道不算产品道")
     assert product["debug_only"], "豁免声明没扫到调试面，就成了后门"
     assert not product["unused_exemptions"], product["unused_exemptions"]
+def test_an_exemption_that_no_longer_matches_a_route_is_reported_as_a_back_door():
+    """R550 改口（改前原文同上）。
 
-
-def test_a_stripped_exemption_declaration_turns_the_ruling_red():
+    改前这枚咬的是「摘掉 debug_only_surface 声明 => 裁定过期」；在产品面真在的新形状下，摘声明
+    只是少一格豁免、裁定不再过期，那枚牙就成了死牙。豁免这一格今天该咬的是「声明了却用不上」：
+    把豁免换成一枚现扫爬不到的路由，validate() 必须当场报后门，不许静默通过（判据③）。
+    """
     original = M.TRIAGE["retrieval_traces"]["debug_only_surface"]
-    M.TRIAGE["retrieval_traces"]["debug_only_surface"] = ()
+    M.TRIAGE["retrieval_traces"]["debug_only_surface"] = ("/retrieval/never-scanned",)
     try:
         problems = M.validate(_fresh())
-        assert any("retrieval_traces" in item and "裁定过期" in item for item in problems), problems
+        assert any("retrieval_traces" in item and "豁免成了后门" in item for item in problems), problems
     finally:
         M.TRIAGE["retrieval_traces"]["debug_only_surface"] = original
-
-
 def test_metric_definitions_stays_blocked_at_the_promotion_exit():
     spec = M.TRIAGE["metric_definitions"]
     assert spec["verdict"] == "no_seed_path"
