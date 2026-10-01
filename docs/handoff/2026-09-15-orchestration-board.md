@@ -1628,6 +1628,7 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Hume` | `01a0f0e6-971f-77e2-b4e6-04cbb4ab703f` | **R551**（复用线程续用）`chat.py` 批准续跑轮 trace 抢跑 ⇒ 失败轮永远写 `completed` | `be-r551`（`merge --ff-only 4572aa8` rc=0，现取 `4572aa8`，**独占**） | ✅ **已结案并树 `62c8973`**：批准续跑轮不再抢跑，失败轮不再永远写 `completed`。🔴 它给全仓留下一笔坐标漂移——`app/api/v1/chat.py` 净插 **+12 行**（hunk `@@ -3505,0 +3506,20 @@` 与 `@@ -3558,9 +3578 @@`），凡在其后的手抄与派生坐标一并漂 ⇒ 门里 28 枚红中的 **21 枚属它**，已按各量具自己给的唯一出路重落地（`eaac6da`，零手算加减行号，`--check` rc 4→0）。另自曝一条要进派工纪律的事：接手时盘上 `chat.py` 不是修复态而是 K1 变异残留（上一段刀脚本 `finally` 没跑到），它按 `%TEMP%` 备援逐字节复原并复验 sha＋CRLF 计数＋AST 出口行序 ⇒ **刀脚本的 `finally` 必须落备援校验**，否则残料会被下一班当修复态接手。 | 10-01 16:2x |
 | `Erdos` | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R552**（复用线程续用）`scripts/r531_worktree_merge.py` 对新件的行尾决策 | `be-r535`（现取基点 `05bec06`，**独占**，续用同一棵树） | ✅ **已结案并树 `573ddd4`**：铺树器的行尾决策从「blob 惯例」换成「检出形态」。🔴 真因不是「按 siblings 猜错」，是 `sibling_convention()` 统计的是 **blob 行尾**（`git show HEAD:<path>`），而 `core.autocrlf=true` 下文本件 blob 恒 LF ⇒ 那一格**结构上只会答 LF**，抽多少枚都一样。裁定：钉「落盘＝检出形态」；`sibling_convention()` 降级为诊断不删；`target_convention():139` 那格不动，残留写成**在册欠账**。追平走「复制到仓外＋逐枚 sha256 记账→`restore --source=HEAD`→`merge --ff-only`→字节全等复验」，明令禁 `reset --hard`／`clean -fd`。 | 10-01 16:2x |
 | `Noether`／`Goodall` | `01a0f163-1ff4-7432-891b-…`／`01a0f163-c06e-7f53-af81-…` | R550／R551（**两枚秒死的 spawn，号作废不复用**） | `be-r550`／`be-r551`（建树后 `dirty=0`，零落盘） | 🔴 上一班那两枚「投出即 1 秒报 `Invalid id`」的新线程；零写入已取证，本席不当补投。🟢 **出路更正（本席现取）**：`send_input` 报 `agent ... not found` 的线程**不必等业主开线**——`Hume`／`Erdos` 双双 not found，`resume_agent` 之后 `send_input` 正常落地并交回长文。⇒ 上游那句「出路只有写进跟进单等新线程、或业主手动开线」改窄为：**已存在但已关闭的执行层线程可复活续用**；🔴 仍然不许 `spawn_agent` 开**全新**线程。 |
+| `Pasteur` | `01a0f09f-1ccb-7d30-a716-ce38f1d3e0f6` | **R557**（复用线程续用·只读复评）「计划书在册号 vs 主干真并树」全量机器账＋`R73`/`R26` 两笔陈账三态 | `be-eval95`（追平到 `a8e52f7`，**独占**；唯一写入＝一枚新文档 `docs/handoff/2026-10-01-ledger-recheck-4.md`） | 🟡 在途（10-01 16:5x 投出，一个 block 只此一次）。🔴 纯只读：不许改任何已跟踪文件、不许跑全量门、不许动容器、零 commit；取证方法照 `581cfb0`·R521 §0（HEAD 计数与 --all 计数逐号对平＋`cat-file -t`＋`merge-base --is-ancestor` 三件齐）。 | 10-01 16:5x |
 
 
 
@@ -6206,13 +6207,14 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 - 🔴 `spawn_agent` 从本线程开**全新**线程仍秒死（`Invalid 'id': message id must be a string starting with 'msg_', got 'at_...'`）。
 - 🟢 `resume_agent` ＋ `send_input` 续用**已存在**的执行层线程正常工作：本班 `Kuhn`／`Hume`／`Erdos` 三枚都靠这条道交回并树。⇒ 并行度上限＝**活着的旧线程数**，不是总控偷懒。一个 block 只投一次，投错不补投。
 
-### 五、本波三枚（写集两两零相交，全部 `send_input` 续用旧线程）
+### 五、本波四枚（写集两两零相交，全部 `send_input` 续用旧线程）
 
 | 单号 | 线程／树 | 欠的那一格 | 写域 |
 |---|---|---|---|
 | **R527**（代号 C） | `Kuhn`@`be-r550` | R46 判据里「**点击**」那半张：零实现、无具号认领单 | `migrations/0019_*.sql`（已预分配，与 0018 不撞）＋`migrations/manifest.json`＋`app/api/v1/feedback.py`＋`app/rag/retriever.py` 先验三函数＋`frontend/src/lib/feedback.js`／`SourceCard.vue` 埋点＋新钉＋新纸 |
 | **R555** | `Erdos`@`be-r535` | `run_gate.fit_workers()` 只看 `ullAvailPhys` 不看**提交电荷**，而门里真实失败形状是电荷耗尽；外加线程上限的**单变量 A/B**（上一班两个变量同时改，只许报「二者之一或共同」） | 只 `scripts/run_gate.py` ＋它自己的在册件＋新钉 |
 | **R556** | `Hume`@`be-r551` | 五扇 `execs_module = True` 的窗（r472 两扇／r478／r48／r495）迁到 `install_mutation` 新口径——今天这族病就是它们造的 | 只 `tests/**`（含 `tests/_temp_edit_overlay.py`），零产品码 |
+| **R557** | `Pasteur`@`be-eval95` | 「计划书在册号 vs 主干真并树」全量机器账＋`R73`／`R26` 两笔陈账三态（本席 §六 已因「把 `grep` 扑空当零提交」写错一次 `R76`） | 🔴 纯只读：唯一写入＝新文档 `docs/handoff/2026-10-01-ledger-recheck-4.md`，零已跟踪文件、零测试、零容器 |
 
 前置核对：代号 C 的串行锁 `R519 → C` 已解（`R519` 并树 `03cd2eb`）；`R523`（代号 A＝cached 落库＋0018）已并树 `b2d82a0` ⇒ A×C 那把 `manifest.json` 锁同解。B 那一族（R31 差格 a/b）已由 `R524`（批准腿）＋`R548`（队列道注册）落地，剩「投递面需先裁契约」那一格——**属总控裁定，不随本波投**。
 
@@ -6223,5 +6225,5 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 - pgvector：切读码全在树、默认未翻；格② 热集让路延迟欠一台安静机器；`R60` 停写退役排在切读之后。
 - 五道验收门：A① 问答档已过（换口径过的，整表 p95 仍 107.9 s）、A③ 过、A④ 有条件成立；**A② 流式逐字从没宣布验过**；B／C（越权 0 条）／D（报告档 100% 可查回，开关仍关）／E（E1–E6）**仍是 0**。
 - 镜像落后主树：`5a6811d` 那份镜像 vs 今天 `f83372d`，带 `build:` 的只有 `migrate` 与 `frontend` 两格 ⇒ `docker compose --env-file deploy/.env.server build migrate`。属重操作，等本波并完再一次性做。
-- 陈账：`R73`、`R76`（今天仍零提交）、`R26`（09-17 记了结案但查不到并树痕迹）。
+- 🔴 陈账**订正一笔假话**（本席自己 §4EF 第六节上一版写的「`R76` 今天仍零提交」是错的）：现取 `git log --oneline -1 546a93b` ＝「并树 R76（Chandrasekhar/01a0c18c）：向量镜像表进发布链」，`git merge-base --is-ancestor 546a93b HEAD` **rc=0** ⇒ **R76 早在主干**，与跟进单 §73（`6bf0eeb`）那本账对得上。真欠的只有 `R73`（只有立案笔 `8d69ee6`，查无并树笔）与 `R26`（09-17 记了结案、并树痕迹待核）两笔，连同「计划书在册号 vs 主干真并树」的全量机器账，一起交给本波第四枚只读复评单 **R557**（`Pasteur`）——同一族病（把 `grep` 扑空当零提交）三天里犯了三次，见 `581cfb0`·R521 与 `7375390` 两笔自纠。
 - 新立候选：`compiled_view` 那把尺子的 **future-flags 偏差是否还有别处在用**（本波只治了 r466 一族，其余拿 plain `compile()` 量导入件的钉没扫）；`test_r48_..._lands_on_the_wire.py::_reload()` 与它类 docstring 那句「退出再 exec 回盘上的字」仍是旧口径。
