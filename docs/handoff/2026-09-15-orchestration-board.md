@@ -6342,3 +6342,17 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 - **R562 退回**（`Erdos`，42 枚 ±等行／台账 516 条全带锚）：三条 named 冲突全列在名册行里。核心一句：它改口 `r293` 的坐标顶红 `r427 戊组` 4 枚、改口 `errcodes.js` 顶红 `r368 戊组`＋`r380 丁组`，而 `r560` 新钉的台账与盘面同源——**单独回退 `errcodes.js` 实测造出 20+ 枚红**（我试过），所以这单拆不出「半并」。已按规矩一次 `send_input` 退回并附复现口径，不补投第二遍。
 - **落一条闸（本班第二次撞同一条）**：并树或改口任何一枚**被别的钉引用坐标/字节**的文件（`chat.py`／`orchestrator.py`／`retrieval_pipeline.py`／`errcodes.js`／`r293`…），门前靶子必须是那份**引用者清单**——现取跑一遍「谁在注释或断言里点了这枚文件的名字加行号」，不是本单的同名件。R558 那 6 枚红、R560 那 1 枚陈旧红、R562 这三条冲突是同一笔账的三次利息。
 - **门 #5 作废重开的原因**（照实记，不掩盖）：22:35 那一遍 `run_gate.py` 因宿主可用内存被 `train.py`（PID 31276，22:26 起，`--device cuda`）压到 4 GB，自选成 **serial**（9,706 枚串行 ≈ 70 分钟），且它测的是 `c45225d` 之前的盘面——我 kill 掉重排。下一遍跑在本笔 HEAD，显式 `-n 4`（守卫常驻，红只可能落在凶手身上）。`scripts/run_gate.py` 实带 `-n WORKERS`／`--serial` 两枚开关，「不许把 -n 写进 pyproject」那条不变。
+
+### 九、第十一班第一格·总控线（22:5x 现取，主树 `82790a4`；单模型未切换；心跳两枚仍 `PAUSED` 一枚没碰）：三枚投递现取＋甲案裁定＋注册表整批掉线复取
+
+- 接班只读取证：`HEAD=82790a4`、`git diff --numstat` 只剩 `chroma_db/chroma.sqlite3`（数据件，按规矩永不提交）⇒ `git status` 那 18 枚 `M` 仍是 stat-cache 假脏，已逐枚验过，**不许拿它当「此刻盘面脏」的判据**；`gitee` 仍在 `be11e51`，本地领先 9 枚。
+- 🔴 **事故 #89 的形状今天原样复现一次**：本席 `wait_agent` 对 `Erdos`／`Hume` 一次返回 `not_found`——**那不是死亡证明**。逐枚 `resume_agent` 全部以 `pending_init` 接回，随后三枚 `send_input` 全部投递成功、无一条报错。口径重申：**失联先 `resume_agent` 再判死，且逐枚验**，别拿一次批量结果当死亡证明。
+- 三枚投递（一个 block 一枚，不补投）：
+  · `Erdos`／**R562 补令＋甲案裁定**（22:5x）——三条 named 冲突逐条写进补令；裁定走**甲**（改 `r427 戊组` 对账源、`r368 戊组` 推导锚、`r380 丁组` 冻结范围）；前置＝先 `merge --ff-only 82790a4`、**先复现本席那三枚红再动钉**，复现不出就停下报告；🔴 明令**不许拆半并**（本席实测单独回退 `errcodes.js` 造出 20+ 枚红）。
+  · `Hume`／**R556**（22:5x）——五扇 `execs_module = True` 旧姿势窗迁 `install_mutation`，写域只 `tests/**`、零产品码；随单交底：R563 那枚常驻守卫**不许对撞**，要交「迁移前后守卫各出手几次」的现取读数。
+  · `Kuhn`／**R527**（22:5x）——R46「点击」那半张：`migrations/0019`＋`app/api/v1/feedback.py`＋`app/rag/retriever.py` 先验三函数＋`frontend/src/lib/feedback.js`／`SourceCard.vue` 埋点，八格判据照 §141 原文一字未改，另补一条：🔴 新写的 `feedback.js` 里**不许留手抄后端 `file:line`**，否则顶红 R562。
+- 三枚写集两两零相交（`frontend/**` 注释＋台账钉 ／ `tests/**` 五扇窗＋新钉 ／ `migrations`＋`feedback.py`＋`retriever.py`＋`feedback.js`／`SourceCard.vue`），与本席主树零撞 ⇒ 本机并行度回到 3 枚，**不靠 `spawn`**（新线程仍秒死）。
+- 追平前置本席代查（省它们各一趟）：`be-r535` HEAD=`15a74a4`／dirty=42／`rev-list 15a74a4..HEAD`=0（**42 枚改动没丢**，已明令接着改别重来）；`be-r551` HEAD=`518314c`／落后 5／未跟踪 3 枚与 `82790a4` 树内**逐字节全等**（`git hash-object` 现取 `6e21fb24dad026d266c6934f7a6becb9e63afd1c`／`29e4e8c94a48f2493277cc416959f374bc196671`／`434b3a0d79451007c08d555411ab70e4dab8d42c`，对上才许删那三枚路径）；`be-r550` HEAD=`a8e52f7`／落后 12／dirty=0（与上一班「零落盘」三证一致）。
+- **门 #5 作废重开**的原因照实记（不掩盖，详见 §八 末格）：22:35 那一遍被 `train.py` 把可用内存压到 4 GB，`run_gate.py` 自选成 serial（≈70 分钟），且测的是 `c45225d` 之前的盘面。本席 kill 后按规矩**先把记账提交、再在最终 HEAD 上显式 `-n 4` 开门**；门内不并树、不跑测试、不动容器、不打模型。
+- 两枚旧单的账：`Kuhn`/R527 本班**已按新证据复投**（就是上面那枚）；`Pasteur`/R557 至今零产物、本班**未复投**（槽位先给这三枚）⇒ **R559 仍堵**在它后面（判据明写「必须等 R557 并完才投」）。
+- 本机外部负载现取：`C:\Users\fengx\anaconda3\python.exe train.py --config configs/_local_fog6.yaml --device cuda --resume`（**PID 49496**，22:40:16 起）——上一班记的 PID 31276 已换代。🔴 GPU 窗（本机时延/分数 A①③④ 与 run6）仍被它挡着，非本席所有、不代杀。
