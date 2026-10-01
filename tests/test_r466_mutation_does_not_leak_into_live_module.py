@@ -25,6 +25,23 @@ r"""R466：反证窗的变异不许漏在活模块上（共用姿势件 + 跨件
 
 判据③ 的牙在下面：顺序跑「A 件开反证窗」->「B 件读同一枚活函数」，B 必须读到原始码；
 再故意造一枚会漏变异的形状（``LeakyEdit``：出门不还原）证明这枚牙认得出。
+
+R553 第二版（10-01）改了基类的还原姿势，本件跟着改**一处口径**，没有放松任何一格。
+``_temp_edit_overlay.ShadowEdit.__exit__`` 不再把盘上的字重 exec 一遍，而是把命名空间倒回进门那一刻
+的快照 ⇒ 唯一还走「进门 exec 整份码体」那条路的 r48，出窗后**不再换身份**了。它原来那格
+``len(identity_diff(before, after)) == len(before["objects"])`` 量的正是「码体被重跑过」这件事本身，
+10-01 它红了，红的是登记，不是泄漏。于是 r48 的在册姿势改名 ``live_exec_snapshot``，出窗这一侧九枚
+同判（码体与身份都倒回开窗前，另加下面那格「点名的那几枚必须回到盘上那份码」——旧口径只有 r48 一支
+有这条，八枚影子窗一辈子没被量过），再留两格降级哨：``execs_module`` 仍须为真、窗内「整片换身份」
+那格原样不动，谁把这枚窗悄悄降级成影子改绑，本件当场红。
+
+同一版还订正一枚**尺子的编法**（与上面同因：都是拿盘上那份码当尺子时才会撞上）。本件文件头写着
+``from __future__ import annotations``，而 ``compiled_view`` 走不带 ``dont_inherit`` 的 plain
+``compile()``，那一位 future 会顺着调用帧掺进字节码（3.12+ 的 ``__annotate__`` 子码体跟着变形状）
+⇒ 拿它量「导入机器编出来的那份」时，10-01 现取 chat 139/139、data 19/19 枚整片假差；只把
+``co_flags`` 摘掉仍剩 4 枚真差（``_authorize_queue_task`` / ``_reap_agent_worker`` / ``approve`` /
+``delete_document``）。所以凡「盘上那份码」当尺子的那两格一律 ``dont_inherit=True``；窗内比影子副本
+那两格不动（``install_source`` 也是继承帧的编法，两边同形）。
 """
 from __future__ import annotations
 
@@ -176,10 +193,14 @@ def _codes_in(code: CodeType):
             yield from _codes_in(const)
 
 
-def compiled_view(text: str, filename: str) -> dict:
-    """把一份字节编成码体树，交回 限定名 -> 指纹：全程不 exec，装饰器掺不进来。"""
+def compiled_view(text: str, filename: str, dont_inherit: bool = False) -> dict:
+    """把一份字节编成码体树，交回 限定名 -> 指纹：全程不 exec，装饰器掺不进来。
+
+    ``dont_inherit=True`` 是要拿这份字节去量**导入机器编出来的那份**时用（模块 docstring 末段）；
+    默认沿旧形继承调用帧的 future flags，窗内比影子副本那两格靠的就是这一份同形。
+    """
     out = {}
-    for code in _codes_in(compile(text, filename, "exec")):
+    for code in _codes_in(compile(text, filename, "exec", 0, dont_inherit)):
         out[getattr(code, "co_qualname", code.co_name)] = _digest_code(code)
     return out
 
@@ -305,8 +326,10 @@ WINDOWS = (
      "posture": "shadow_swap"},
     {"key": "r48", "test_file": "tests.test_r48_headline_card_lands_on_the_wire",
      "target": "app.api.v1.chat", "edit": "_TempEdit", "opener": _open_r48,
-     "verdict": "有 finally（try/finally 在 with 之外，_reload() 无条件把盘上的字装回活模块）·已保证复原·本单不动只登记",
-     "posture": "live_exec_restored"},
+     "verdict": "进门照旧 exec 整份码体（窗内整片换身份，下面 else 支量着）·出窗由 R553 基类的"
+                "命名空间快照倒回，不再重跑码体·本件只登记不代改（它自己那枚 finally 里的 "
+                "_reload() 仍会重跑一遍盘上的字——那在本件之外，另立候选号）",
+     "posture": "live_exec_snapshot"},
 )
 
 
@@ -424,28 +447,33 @@ def test_a_refutation_window_leaves_no_mutation_on_the_live_module(row):
     after = live_view(target)
     assert overlay.open_windows() == (), "出窗没关干净：%s" % (overlay.open_windows(),)
     assert info["restored"] is True
-    if row["posture"] == "shadow_swap":
-        assert diff_view(before, after) == [], (
-            "%s 出窗后还在跑变异码体：漏在活模块上的名字 %s" % (row["key"], diff_view(before, after)))
-        assert identity_diff(before, after) == [], (
-            "%s 出窗后顶层把手没回到开窗前那一枚：模块体被重跑过（%s）"
-            % (row["key"], identity_diff(before, after)[:4]))
-    else:
-        # r48 的「复原」是把盘上的字再 exec 一遍，所以量它的尺子只能拿盘上那份码，不能拿开窗前那一份。
-        # 本席现取的原因：出窗后每一枚把手的 co_flags 都比开窗前多一枚 CO_FUTURE_ANNOTATIONS bit
-        # （实测 before=3 / after=16777219，差值 1<<24），而 co_consts 与 __doc__ 逐枚相等（doc_diff=0）。
-        # 那是 install_source 走不带 dont_inherit 的 plain compile()、从调用帧继承 future flags 的形状，
-        # 与「漏了变异」无关：这格代价正是那 8 枚本单要改掉旧姿势的理由。
-        assert codes_differ(after["codes"], disk_codes) == [], (
-            "%s 出窗后活模块跑的不是盘上那份码：还差在 %s" % (
-                row["key"], codes_differ(after["codes"], disk_codes)[:3]))
-        assert all(after["codes"].get(name) != shadow_codes[name] for name in swapped), (
-            "%s 出窗后还在跑变异码体：反证窗把变异漏在活模块上了" % row["key"])
-        assert len(identity_diff(before, after)) == len(before["objects"]), (
-            "%s 登记的还原形状变了：整模块重跑不再换身份，本件的口径要改写" % row["key"])
-        # 代价读数不写死在这里（它跟着编译帧的 future flags 与 chat.py 的把手数漂），要复核就复跑本件。
-        # 上面的 codes_differ 那格已经把「泄漏」与「代价」分开：漏变异是红，重跑码体只是身份换、
-        # 而盘上那份码对得上。
+    # --------------------------------------------------------------- 出窗这一侧：九枚同判
+    # R553 之后基类的窗尾是「把命名空间倒回进门那一刻」，两族姿势在这一侧形状相同，
+    # 而且都比旧口径严：旧的那一支只拿盘上那份码比，从没查过对象身份。
+    assert diff_view(before, after) == [], (
+        "%s 出窗后还在跑变异码体：漏在活模块上的名字 %s" % (row["key"], diff_view(before, after)))
+    assert identity_diff(before, after) == [], (
+        "%s 出窗后顶层把手没回到开窗前那一枚：模块体被重跑过（%s）"
+        % (row["key"], identity_diff(before, after)[:4]))
+    # 上面两格都是「相对开窗前」的：快照本身若更早地沾了变异，它照样绿。下面这格把尺子换成盘上那份码，
+    # 只量本扇窗点名的那几枚绑定——逐枚比整片会把别枚件在导入期合法换过的把手读成假红。
+    disk_as_imported = compiled_view(disk_text, str(path), dont_inherit=True)
+    shadow_as_imported = compiled_view(shadow_text, str(path), dont_inherit=True)
+    visible = [name for name in swapped if name in after["codes"]
+               and disk_as_imported.get(name) != shadow_as_imported.get(name)]
+    assert visible, (
+        "%s 点名的顶层绑定里一枚都没有「盘上 vs 影子」可读的差：这格漏变异检是空的（%s）"
+        % (row["key"], swapped[:3]))
+    stuck = codes_differ({key: after["codes"][key] for key in visible},
+                         {key: disk_as_imported[key] for key in visible})
+    assert not stuck, (
+        "%s 出窗后点名的这几枚没回到盘上那份码：%s" % (row["key"], stuck[:3]))
+    if row["posture"] != "shadow_swap":
+        # 降级哨（判据④ 刀一的第二颗牙）：上面三格对影子改绑同样成立，所以谁把这扇窗悄悄改成
+        # execs_module = False，三格不会响——响的是这一格，外加窗内「整片换身份」那一格。
+        assert edit_cls.execs_module is True, (
+            "%s 在册姿势是 %s，可它已经不再往活模块上 exec 整份码体：姿势被降级，本件口径要改写"
+            % (row["key"], row["posture"]))
 
 @pytest.mark.parametrize("shape", SELF_PROOF_SHAPES)
 def test_the_ruler_reddens_on_a_shape_that_leaves_its_mutation(shape):
@@ -462,6 +490,7 @@ def test_the_ruler_reddens_on_a_shape_that_leaves_its_mutation(shape):
     before = live_view(target)
     assert leaked_name in before["codes"], "自证要盯的那枚函数不在活模块上：%s" % (leaked_name,)
 
+    snapshot = dict(vars(target))           # R553：收场按这张快照倒回，见 finally 那段的说明
     scene["apply"]()
     try:
         dirty = live_view(target)
@@ -473,8 +502,16 @@ def test_the_ruler_reddens_on_a_shape_that_leaves_its_mutation(shape):
             shape + " 认出的名字对不上变异那份码体：这枚牙在瞎指")
         assert disk_text != scene["mutated"]
     finally:
-        overlay.install_source(target, disk_text, path)      # 收拾现场：本件也不许污染同一枚 worker
+        # 收拾现场：本件也不许污染同一枚 worker。🔴 这里原本走的是「把盘上的字再 exec 一遍」，
+        # 那一手只救码不救身份——install_source 造出第二枚 sources.alert_candidates，而消费者
+        # app.notifications.inbox 手里那枚还是旧的，同 worker 里排在后面的
+        # tests/test_r303_notification_pins.py::test_the_counter_evidence_window_touches_no_tracked_file
+        # 当场红（10-01 现取：HEAD 上把这两枚件放进同一个进程必红，门里不炸只是 --dist loadfile 的侥幸，
+        # 与 R553 乙腿同一族形状）。改成按进门那一刻的命名空间快照倒回。
+        overlay.restore_namespace(target, snapshot)
     assert diff_view(before, live_view(target)) == [], "自证收场没把活模块交回去：本件自己也在漏"
+    assert identity_diff(before, live_view(target)) == [], (
+        "自证收场把活模块的身份换过了：还原只到码、没到身份，消费者手里的旧绑定就此与生产者分家")
 
 
 def test_the_self_proof_is_registered_and_not_stripped():
