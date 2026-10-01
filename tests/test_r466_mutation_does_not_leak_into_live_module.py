@@ -108,6 +108,13 @@ def install_mutation(module, path, mutant_text: str) -> dict:
     )
     before_view = live_view(module)
     live_dict = vars(module)
+    #: 🔴 R553 甲腿：`live_view` 只收「带码体的那几枚」（顶层函数与类的方法），**常量与非可调用绑定
+    #: 从来不在它的 `objects` 里**。刀落在常量上时（r353 刀3 把 `CAP = 10` 换成 `CAP = 1`），窗尾从
+    #: `before_view["objects"]` 取不到 original，于是走 `live_dict.pop(name)`——把盘上本来就有的那枚
+    #: 常量整个从活模块上删了；而下一格 `assert live_dict.get(name, _MISSING) is original` 两边都是
+    #: `_MISSING`，`is` 成立 ⇒ 自我认证，泄漏检查看不见。还原面因此必须直接看 `live_dict`：
+    #: 窗内不在场上的名字才允许 pop，本来在场上的一律装回窗那一枚对象。
+    before_values = {name: (live_dict[name] if name in live_dict else _MISSING) for name in names}
     scratch = dict(live_dict)
     exec(compile(mutant_text, str(path), "exec"), scratch)   # 只进这份一次性字典
     installed = {}
@@ -119,7 +126,7 @@ def install_mutation(module, path, mutant_text: str) -> dict:
         yield installed
     finally:
         for name in names:
-            original = before_view["objects"].get(name, _MISSING)
+            original = before_values[name]
             if original is _MISSING:
                 live_dict.pop(name, None)
             else:
