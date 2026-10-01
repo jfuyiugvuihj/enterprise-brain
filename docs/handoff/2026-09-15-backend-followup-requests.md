@@ -4952,3 +4952,31 @@ R557（`Pasteur`）先交全量机器账的**纸**，本单把那本纸变成**�
 - `Hume`／**R556**、`Kuhn`／**R527** 按 §141 原文判据复投（**一字未改**），各补一条硬约束：R556 不许与 `c45225d` 那枚 `tests/conftest.py::_eb_r563_live_module_guard` 对撞，须交「迁移前后守卫各出手几次」的现取读数，且 `test_r563_live_module_callables_do_not_leak.py` 五枚一路须绿；R527 新写的 `frontend/src/lib/feedback.js` 里不许出现手抄的后端 `file:line`（R562 正在把这一族清零）。两枚同波禁起服务、禁打模型、禁全量门、零 commit。
 - 投递通道账：三枚全部 `send_input` 复用旧线程（**一枚都没 `spawn`**，新线程仍秒死）；`Erdos`／`Hume` 在本线程注册表一度 `not_found`，`resume_agent` 逐枚以 `pending_init` 接回 ⇒ 事故 #89 的形状今天复现一次，规矩照旧「失联先 resume 再判死、逐枚验」。
 - R559 仍堵：判据明写「必须等 R557 并完才投」，`Pasteur`/R557 至今零产物、本班未复投。
+
+## §147（10-01 第十一班第二格·总控线，主树 `1c8c64b`→`7fe1fe7`）：R555 亲做结案＋R561 判据⑤ 拿到读数＋R564 立案待投＋开窗前置两枚
+
+### 一、R555 与 R561 判据⑤（都已落地，凭据在纸）
+
+- **R555 已并树 `75b227d`**（总控亲做，非执行层自报）：`memory_headroom_gb()` 一次 `GlobalMemoryStatusEx` 问回 (物理空闲, 电荷余额)，`fit_workers()` 交回 `(枚数, 原因串)` 且**两者取小**，`main()` 把原因串打在 `[run_gate]` 那一行。新钉 8 枚（含两把影子刀：摘 `min(...)` ⇒ phys=20/commit=5 案例从 2 枚变 8 枚；摘「问不到数」的原因串 ⇒ 留痕当场没话可说）。两态数字成对：dirty 108 passed／34.63 s，clean 同数 108／55.49 s，同名五件清单逐枚点名在纸 §四。🔴 判据② 单变量 A/B 交数不交结论（8.27／9.17／同臂复跑 27.13 ⇒ 噪声带吞掉差值，必须安静机重量）。
+- **R561 判据⑤ 已代跑并回填 `7fe1fe7`**：六格全 PASS／rc=0，`growing` 21→1490 字 19 枚互异值、终态 16 枚键无片段键、`provenance` 走 `/app/BUILD_INFO` 与主树等 40 字符。⇒ **R558 判据① 欠的那半张与 R561 判据⑤ 是同一笔账，两格一并清，两单零欠账**。口径边界：只证形状，**不翻 A②（88/105）／不翻 D 门（8/12）**、不是时延读数。
+
+### 二、R564（立案·待投）——帧账要带腿名，甲案归因不再靠人对着表念
+
+来历：计划书 §6 追加节 09-29 甲案裁定欠的那把尺（`docs/handoff/2026-09-17-perf-architecture-plan.md:492` 原文点名「不许给 `FRAME_READING_KEYS` 加一枚没人消费的键」）＋ 跟进单 §141 里 R31 差格 c)。本席 23:4x 现跑在册量具坐实现状：`python scripts/r518_a2_lane_attribution.py --sidecar docs/perf/raw/run11c-2026-10-01/sidecar-run11c-p2.jsonl --answers docs/perf/raw/run11c-2026-10-01/answers-run11c-p2.jsonl` ⇒ 读 1 绿 94/105（红 11 枚逐枚点名）、读 2 守恒 105=93+0+2+1+9、甲案原文 93/93、严读 91/93（红 `report-02`/`tool-04`）、🔴 **腿名可派生行数 0/105**。
+
+**写域**：`scripts/eval_transport_ask_v2.py`（`_frame_readings` 现读 14 键，`:725` 起）＋`app/api/v1/chat.py` 里下发那一帧的**一处**（🔴 动它之前必须先现取**引用者清单**：谁在注释/断言里点了 `chat.py` 的名字＋行号——今天第三次撞这条）＋`docs/api/contract-v1.md`（**只许尾追加**，文末是「§4b→R523 那 23 行→R558 那 48 行」，整枚覆盖会回退）＋`tests/test_r181_text_frame_ruler.py` 的 `FRAME_READING_KEYS` 与 `tests/test_r223_frame_arrival_clock.py:612/:629/:633`（三处成对改口）＋`scripts/r518_a2_lane_attribution.py`（新键的**消费者**）＋新钉＋纸 `docs/perf/r564-*.md`。
+🔴 不许碰：`app/agents/**`、`frontend/**`（`Erdos`/R562 在途）、`tests/test_r47_*`／`r48`／`r495`／`r466`（`Hume`/R556 在途）、`migrations/**` 与 `app/api/v1/feedback.py`／`app/rag/retriever.py`（`Kuhn`/R527 在途）、`scripts/audit_plan_ticket_ledger.py`（R559 写域）。
+
+**判据（七格，逐格可失败）**：
+1. 新键必须有消费者：`腿名`/`worker` 那一格进了 `FRAME_READING_KEYS` 之后，`r518` 量具必须**拿它做分腿读**；把消费者摘掉 ⇒ `test_r181` 那枚甲案钉与「用了账里没有的键」那一族钉当场红（这是在册纪律，不是本单自创）。
+2. 三处键集钉成对改口、两态数字都交（`r181:433` 的 `set(got) == JOIN_KEYS | FRAME_READING_KEYS | ARRIVAL_READING_KEYS`、`r223:612` 与 `:629` 返回形状、`:633` 两层键集不相交）。**不许**把它们改成「子集」或删组。
+3. 契约逐键有名有姓：新键的形状／缺席语义／可否为空三件齐全，只许尾追加；`test_r523_cached_count_lands` 那枚跨栈契约钉必须仍 rc=0。
+4. 真机读数：下一次开窗在同一批 raw 上跑 `r518`，**腿名可派生行数必须从 0/105 涨上去**，且读 1 那 94/105 的分母守恒式仍成立（105 = in_scope + not_applicable + no_answer + self_added + undecidable，一枚都不许多也不许少）。涨不上去就明写未达，**不许把 9 枚 `undecidable` 并进「过」那一堆**。
+5. 倒退回「无腿名」必须可读：旧 raw（run9/run10/run11c 三批在册件）拿新量具跑，腿名那一格必须报「无此列」而不是崩、也不是当成 `not_applicable`。
+6. `chat.py` 那一处不许造第二条流：`tests/test_r464_one_terminal_answer_stream_per_round.py`／`test_r203_sink_reaches_the_leg.py`／`test_r524_*` 两枚／`test_r548_*` 逐枚复跑点名。
+7. 零 commit、禁全量门、禁并树、禁 `git add -A`；改口在册钉成对交两态。
+
+### 三、开窗前置两枚（本席今天亲自撞的，进 runbook 之前先在这张纸上生效）
+
+1. **`docker compose build` 必须先带血缘**：`$env:GIT_SHA=(git rev-parse HEAD)`、`$env:BUILT_AT=<现取>` 再 `docker compose --env-file deploy/.env.server build migrate`。不带 ⇒ `/app/BUILD_INFO` 写 `revision=unknown` ⇒ 任何容器侧量具判 `UNMEASURED` 并**拒绝开窗**（`rc=2`）。「量不到不等于干净」这条在设计上就该拦，别绕。
+2. **容器 `up -d --force-recreate` 之后先等 healthy 再打发**：`backend` 的 healthcheck `start-period=45s`，recreate 完 8 秒发第一发实测 `RemoteDisconnected`。
