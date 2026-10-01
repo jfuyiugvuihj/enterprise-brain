@@ -1,0 +1,12 @@
+{"id":"report-01","tier":"报告","category":"报告生成","question":"生成本月差旅费用分析周报","answer":"输出含部门汇总与异常的周报","must_contain":["周报"],"requires_evidence":true}
+{"id":"report-02","tier":"报告","category":"报告生成","question":"报告里要写清哪些指标口径？","answer":"列出指标口径与责任部门","must_contain":["口径","责任部门"],"requires_evidence":true}
+{"id":"report-03","tier":"报告","category":"报告生成","question":"把结论压缩成给管理层的一页纸","answer":"输出一页纸结论与依据","must_contain":["一页纸"],"requires_evidence":true,"r401":{"disposition":"丙","missing_term":"一页纸","reason":"「一页纸」是输出长度约束，不是语料事实；95 篇 0 命中，最接近的「摘要」不编码「一页」这个约束，换它 = 丢掉考点。","pool":"待派池：输出格式类题目该不该要求语料出处（判据问题）"}}
+{"id":"report-04","tier":"报告","category":"报告生成","question":"报告里每个数字都要能回溯","answer":"标注来源文件与定位","must_contain":["来源"],"requires_evidence":true}
+{"id":"report-05","tier":"报告","category":"报告生成","question":"这份报告多久能出？","answer":"报告档为后台生成，预计60至120秒","must_contain":["后台","预计"],"requires_evidence":false}
+{"id":"report-06","tier":"报告","category":"报告生成","question":"生成上季度经营复盘，含同比","answer":"输出复盘结论与同比变化","must_contain":["复盘","同比"],"requires_evidence":true}
+{"id":"report-07","tier":"报告","category":"报告生成","question":"超标项在报告里怎么呈现？","answer":"列示超标项与建议审批路径","must_contain":["审批路径"],"requires_evidence":true,"r401":{"disposition":"丙","missing_term":"审批路径","reason":"「审批路径」作为**报告栏目名**从没被任何一篇定义过（审批链条本身有据：细则:31）；要让它有据只能新补一篇《经营分析报告编制规范》，判据①禁止补语料。","pool":"待派池：业主是否要立《经营分析报告编制规范》"}}
+{"id":"report-08","tier":"报告","category":"报告生成","question":"能引用还没索引完的文档吗？","answer":"不能，未索引文档不入报告并需标注","must_contain":["未索引"],"requires_evidence":false,"r401":{"disposition":"丙","missing_term":"未索引","reason":"「未索引」是索引状态机的产品词；全语料「索引」仅产品技术手册:19 一处且指 Elasticsearch。客户文档不负责定义产品行为。本题三跑在得分但正文含拒答段，别当已清。","pool":"待派池：产品行为类断言的出处域 = 代码/接口契约，不是 documents/"}}
+{"id":"report-09","tier":"报告","category":"报告生成","question":"我关掉页面报告还会生成吗？","answer":"后台继续生成，完成后可查回","must_contain":["继续生成"],"requires_evidence":false,"r401":{"disposition":"丙","missing_term":"继续生成","reason":"「继续生成」问的是后台任务会不会随连接中断，纯产品行为；语料里无从出处。「后台」95 篇仅 1 处且指管理后台。","pool":"待派池：同 report-08（产品行为类断言出处域）"}}
+{"id":"report-10","tier":"报告","category":"报告生成","question":"报告生成失败了会提示吗？","answer":"给出失败终态与原因码","must_contain":["失败","原因"],"requires_evidence":false}
+{"id":"report-11","tier":"报告","category":"报告生成","question":"生成研发部与销售部费用对比报告","answer":"给出两部门差异与口径说明","must_contain":["差异"],"requires_evidence":true}
+{"id":"report-12","tier":"报告","category":"报告生成","question":"报告正文和表格数字对不上以哪个为准？","answer":"以数据源计算结果为准并说明差异原因","must_contain":["数据源"],"requires_evidence":true}
