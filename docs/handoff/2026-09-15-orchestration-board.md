@@ -1623,10 +1623,10 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Erdos` | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R535**（本班新立）`MODEL_CONTEXT_TOKENS` 与运行时 `num_ctx` 配套自检闸＋撞顶归因说人话 | `be-r535`（基点 `05bec06`，**独占**；写域＝`model_config.py`/`contracts.py`/`nodes.py`/`.env.example`＋三枚新件） | 🟡 **复工**：12:4x 查岗才知「零写入」的真因不是偷懒——本机 `apply_patch` 通道（`%LOCALAPPDATA%\codex\tmp\arg0\codex-arg0*.bat` 经 cmd `%*` 转发）把多行补丁**压平成一行**，四种写法四次全拒 `The last line of the patch must be *** End Patch`。已裁定走逐锚点替换器写盘＋🔴 新件必须 CRLF。判据① 取证已交回，含**三处纸面不符**要订正：两枚键都不在 `model_config.py`（家在 `model_budget.py:885/:442`）；键名是 `MODEL_MIN_ANSWER_TOKENS`；「先给答案留 1536 才剩 2560」那句**归因不成立**——守卫减的是本档声明输出顶，4096−1536=2560 与地板同数是巧合；「A100 80G 仍是 4096」仓内零实测，记未验 | 09-30 13:1x |
 | `Euler` | `01a0f08e-d177-7da2-8470-7e693860e70d` | **R536**（波次五首枚）产品问答道补发 `retrieval.completed` ⇒ `retrieval_traces` 从此有数据（V2 #12 缺格、#20 前置） | `be-r536`（基点 `81784da`，**独占**；写域＝`app/api/v1/chat.py` 检索腿＋`app/rag/retrieval_pipeline.py` 唯一发射点＋新钉/新纸；🔴 禁入 `app/trace/**`·`app/storage/persistence.py`·`migrations/**`·`docs/api/contract-v1.md`·`frontend/**`） | 🟡 在途 12:3x 投出：不许拿 `POST /retrieval/debug` 那一腿冒充产品道（`r483` 纸 `:104` 已钉死）；发射点必须唯一、第二处一起就红；窗内只写不跑 | 09-30 13:1x |
 | `Archimedes` | `01a0f08f-8e9f-7f73-a2b3-08d78990b998` | **R538**（波次五第二枚，业主 D13 授权动 `frontend/**`）前端三枚手抄后端坐标改派生 | `be-r538`（基点 `81784da`，**独占**；写域＝`notifications.js:26`／`DocPanel.vue:103`／`:112` 三处注释＋新钉；禁 `theme.css`·`App.vue`·任何后端件·配置文件） | 🟢 13:0x 已交回、待总控收窗后代跑：numstat `2/2`＋`1/1`、两枚源文件行数一字节未变；判据①② 静态达成（真值取自 `git show HEAD:app/**` 按锚串现读，钉里零坐标字面量），③④ 五把刀已上膛未扣＋stylelint 未实测；多收一枚 `DocPanel.vue:114` 的 `policy.py:25 core`（今天是对的，一并入钉）；摘刀还原用反向替换，勿 `git checkout --` | 09-30 13:1x |
-| `Pasteur` | `01a0f09f-1ccb-7d30-a716-ce38f1d3e0f6` | **run10 开窗执行员**（单号沿用 R513） | `be-eval95`（须 `--ff-only` 追平主树 `4376648`） | 🔴 **窗内 13:1x 起**：一窗多判据（A①②③④＋D 门三格＋C 门两格，A④ 对表 **run5** 不是 run9）。P-20 五格 PASS、`gpu_apps`＋`foreign_python` 两格 FAIL（外来 `anaconda3\python.exe train.py -o iters=60` 链式冒烟，12:28 那枚结束后 13:0x 又起 pid 13640）⇒ 按增补四预设 fallback 裁定**照样开窗、A① 的 p95 一律记「污染窗不采信」**，三枚 nvidia-smi 采样留证；污染期 >50% 就停手回报。窗内硬禁：并树／跑测试／动容器／打模型／碰 powercfg／拔电 | 09-30 13:1x |
-| `Kuhn` | `01a0efcf-5b50-7452-ba0b-0d10293efe52` | **R550**（复用线程续用）治 `scripts/r483_empty_tables_triage.py` 爬不过「事件发射→投影→写句」 | `be-r550`（现取基点 `59a9506`，**独占**） | 🟡 在途。22:5x 调度令（门在跑，禁 pytest／禁子进程量具，只许写盘取证）已 `send_input` 落地；写域＝`scripts/r483_*`＋`tests/test_r483_*`＋生成件＋新钉新纸，🔴 不含 `app/**`、明令**不许为 `retrieval_traces` 写表名特例**。截至本笔 23:5x 未交回。 |
-| `Hume` | `01a0f0e6-971f-77e2-b4e6-04cbb4ab703f` | **R551**（复用线程续用）`chat.py` 批准续跑轮 trace 抢跑 ⇒ 失败轮永远写 `completed` | `be-r551`（`merge --ff-only 4572aa8` rc=0，现取 `4572aa8`，**独占**） | 🟡 在途，23:5x 起 12 分钟独占自验窗（串行／`-o addopts=`／零 `-n`）。自曝一条要进派工纪律的事：**接手时盘上 `chat.py` 不是修复态而是 K1 变异残留**（上一段刀脚本 `finally` 没跑到），它按 `%TEMP%` 备援逐字节复原并复验 sha＋CRLF 计数＋AST 出口行序（`267490`→`268830` 字节，sha `903558d7…`→`b40c370c…`）。它还现取更正本席派工词一处坐标（R548 那族实为 2 枚件，它按 2 枚跑、没凑第三枚）。R547 结案账见 §4ED 第二节。 |
-| `Erdos` | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R552**（复用线程续用）`scripts/r531_worktree_merge.py` 对新件的行尾决策 | `be-r535`（现取基点 `05bec06`，**独占**，续用同一棵树） | 🟡 在途·**零写入**（它实话回报 `scripts/r531_worktree_merge.py` 一字未改，本席盘面复核一致）。追平被 git checkout 保护拦住 ⇒ 本席裁备份道（复制到仓外＋逐枚 sha256 记账→`restore --source=HEAD`→`merge --ff-only`→字节全等复验），🔴 明令禁 `reset --hard`／`clean -fd`。它把前提凿深一层：真因不是「猜错」，是 `sibling_convention()` 读的是 **blob 行尾**（`core.autocrlf=true` 下文本件 blob 恒 LF ⇒ 结构上只会答 LF）。本席独立复核：r536 新纸现取 `i/lf w/lf`、全仓 `w/lf` **314**、`core.autocrlf=true` 来源 system。裁定：钉「落盘＝**检出形态**」而非「一律 CRLF」；`sibling_convention()` 降级为诊断不删；`target_convention():139` 那格不动，但残留必须写成**在册欠账**。R535 结案账见 §4ED 第二节。 |
+| `Pasteur` | `01a0f09f-1ccb-7d30-a716-ce38f1d3e0f6` | **run10 开窗执行员**（单号沿用 R513） | `be-eval95`（须 `--ff-only` 追平主树 `4376648`） | ✅ **run10 作废（扇证据已落库 `5a6811d`）**：相 1 跑到 32/105 就按增补七的污染停手线收窗，四门一格都没量到——这本账的价值就在「没量到」四个字，**不许任何一格被读成「过」**。线程仍活，run11 继续 `send_input` 续用，不新开线程。🔴 **开窗前唯一的物理障碍在业主侧**：本机自 12:22 起有一枚外来 `anaconda3\python.exe train.py --config configs/_local_cl5.yaml --device cuda --resume`（pid 45224 ＋ 四枚 spawn 子进程，10-01 16:2x 现取仍在），它会让 `scripts/r530_run10_window_preflight.py` 的 `gpu_apps` ＋ `foreign_python` 两格永远 FAIL；总控不得代杀，等业主停手或改口。 | 10-01 16:2x |
+| `Kuhn` | `01a0efcf-5b50-7452-ba0b-0d10293efe52` | **R550**（复用线程续用）治 `scripts/r483_empty_tables_triage.py` 爬不过「事件发射→投影→写句」 | `be-r550`（现取基点 `59a9506`，**独占**） | ✅ **已结案并树 `bdcbc78`**：`surface()` 从一跳文本匹配改成带事件标签的 BFS，四条边（caller／publish／gate_token／declared_event）一律 fail-closed，标签沿边走 ⇒ `retrieval_traces` 不再读 `no_seed_path`。总控亲跑：dirty 34 passed ＋ 牙 8 passed／148.78 s ＋ `scripts/r483_empty_tables_triage.py --check` rc=0／problems=0 ＋ 干净树同名件复跑 **42 passed／208.79 s**；判据①「实现里不许出现表名分支」由总控自写 AST 脚本独立复验（13 枝爬法零处命中，不采信执行层自述）。代价按实记：全树扫描 9.4→15.0 s，六把影子树刀约 2.5 分钟。 | 10-01 16:2x |
+| `Hume` | `01a0f0e6-971f-77e2-b4e6-04cbb4ab703f` | **R551**（复用线程续用）`chat.py` 批准续跑轮 trace 抢跑 ⇒ 失败轮永远写 `completed` | `be-r551`（`merge --ff-only 4572aa8` rc=0，现取 `4572aa8`，**独占**） | ✅ **已结案并树 `62c8973`**：批准续跑轮不再抢跑，失败轮不再永远写 `completed`。🔴 它给全仓留下一笔坐标漂移——`app/api/v1/chat.py` 净插 **+12 行**（hunk `@@ -3505,0 +3506,20 @@` 与 `@@ -3558,9 +3578 @@`），凡在其后的手抄与派生坐标一并漂 ⇒ 门里 28 枚红中的 **21 枚属它**，已按各量具自己给的唯一出路重落地（`eaac6da`，零手算加减行号，`--check` rc 4→0）。另自曝一条要进派工纪律的事：接手时盘上 `chat.py` 不是修复态而是 K1 变异残留（上一段刀脚本 `finally` 没跑到），它按 `%TEMP%` 备援逐字节复原并复验 sha＋CRLF 计数＋AST 出口行序 ⇒ **刀脚本的 `finally` 必须落备援校验**，否则残料会被下一班当修复态接手。 | 10-01 16:2x |
+| `Erdos` | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R552**（复用线程续用）`scripts/r531_worktree_merge.py` 对新件的行尾决策 | `be-r535`（现取基点 `05bec06`，**独占**，续用同一棵树） | ✅ **已结案并树 `573ddd4`**：铺树器的行尾决策从「blob 惯例」换成「检出形态」。🔴 真因不是「按 siblings 猜错」，是 `sibling_convention()` 统计的是 **blob 行尾**（`git show HEAD:<path>`），而 `core.autocrlf=true` 下文本件 blob 恒 LF ⇒ 那一格**结构上只会答 LF**，抽多少枚都一样。裁定：钉「落盘＝检出形态」；`sibling_convention()` 降级为诊断不删；`target_convention():139` 那格不动，残留写成**在册欠账**。追平走「复制到仓外＋逐枚 sha256 记账→`restore --source=HEAD`→`merge --ff-only`→字节全等复验」，明令禁 `reset --hard`／`clean -fd`。 | 10-01 16:2x |
 | `Noether`／`Goodall` | `01a0f163-1ff4-7432-891b-…`／`01a0f163-c06e-7f53-af81-…` | R550／R551（**两枚秒死的 spawn，号作废不复用**） | `be-r550`／`be-r551`（建树后 `dirty=0`，零落盘） | 🔴 上一班那两枚「投出即 1 秒报 `Invalid id`」的新线程；零写入已取证，本席不当补投。🟢 **出路更正（本席现取）**：`send_input` 报 `agent ... not found` 的线程**不必等业主开线**——`Hume`／`Erdos` 双双 not found，`resume_agent` 之后 `send_input` 正常落地并交回长文。⇒ 上游那句「出路只有写进跟进单等新线程、或业主手动开线」改窄为：**已存在但已关闭的执行层线程可复活续用**；🔴 仍然不许 `spawn_agent` 开**全新**线程。 |
 
 
@@ -6171,3 +6171,57 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 3. `R555`（门自选不看提交电荷＋线程上限的单变量对照）与 `R553`（跨件污染：`tests/_temp_edit_overlay.py` 把改过的源文 `exec` 进活体模块 ⇒ 既能造假红也能造假绿）都还**没派**，本板只有候选号。
 4. 心跳 `automation-2`／`autodl` 仍 `PAUSED`，`target_thread_id` 还指着死线程——业主明令人工提醒会弄死线程，本席一枚没碰。
 
+## 4EF 第十班（10-01 12:3x–16:4x·总线·主树 `5a6811d`→`bdcbc78`→`eaac6da`→`0dc40b1`→`fa1cf3e`→`f83372d`·单模型未切换·心跳两枚仍 `PAUSED` 一枚没碰）：门从 28 枚红清到 0，最后一枚红的真相是「登记过期」不是「泄漏」
+
+### 一、并树五笔（执行层零 commit，全部总控代提交、逐枚显式列路径）
+
+| 提交 | 单号 | 一句话 |
+|---|---|---|
+| `bdcbc78` | **R550**（施工 `Kuhn`@`be-r550`，基点 `59a9506`） | 空表归因器 `scripts/r483_empty_tables_triage.py::surface()` 跨过「事件发射 → 订阅/投影 → 写句」那一跳：一跳文本匹配改成带事件标签的 BFS，四条边全 fail-closed。 |
+| `eaac6da` | 坐标重锚（总控亲修） | R551 `62c8973` 给 `app/api/v1/chat.py` 净插 +12 行 ⇒ 门里 28 枚红中的 **21 枚**是手抄/派生坐标漂，按各量具自己给的唯一出路重落地，零手算加减行号。 |
+| `0dc40b1` | **R553 v1**（🔴 作废留档） | 第一版治法（把新身体逐枚装进旧类／把顶层实例换回场上那一枚）**并树即推翻**：门里 115 failed／9574 passed／10 errors。保留在历史里当推翻记录，不删。 |
+| `fa1cf3e` | **R553 v2** | 窗尾不再重跑码体，改成把命名空间倒回进门那一刻的快照（`restore_namespace`）。零类手术、零模块体副作用。 |
+| `f83372d` | **R553 第三笔** | 门里最后一枚红 `[r48]` 的口径改写 ＋ 一枚**尺子的编法**订正 ＋ 判据③ 自证本体自己会污染同 worker。 |
+
+### 二、门数（`scripts/run_gate.py`，全部总控主树亲跑，执行层零参与）
+
+| HEAD | 跑法 | 读数 |
+|---|---|---|
+| `bdcbc78` | `-n 4` ＋ 线程上限 1 | 28 failed ／ 9655 passed ／ 52 skipped ／ 2 xfailed ／ 646.99 s |
+| `fa1cf3e` | 同上，安静一点 | 1 failed ／ 9689 passed ／ 52 skipped ／ 2 xfailed ／ 795.76 s（exit=1） |
+| **`f83372d`** | 自选 `-n 5 --dist loadfile` | 🟢 **0 failed ／ 9690 passed ／ 52 skipped ／ 2 xfailed ／ 939.72 s（xdist 段 958.2 s），exit=0** |
+
+🔴 与 AGENTS.md 里那枚旧绿票（`5963dfe` 时点 8479 passed／55 skipped）比，passed **+1211**、skipped **−3**——差值来自本班与上一班的并树增量，判回归一律按「同一 HEAD 的复跑数互比」，别拿历史枚数当尺。首跑税今天**没有**复现（本机第二跑仍 ~940 s，因为 `-n` 自选到 5 而不是 6）。
+
+### 三、`[r48]` 那枚红的三条真相（细节在 `docs/testing/r553-window-identity-leak-2026-10-01.md` §五）
+
+1. **红的是登记**：那格断言量的正是「窗尾把码体重跑了一遍」，而 R553 v2 之后不再重跑 ⇒ 必然红。已把在册姿势改名 `live_exec_snapshot`，出窗这一侧九枚同判 ＋ 两格降级哨（谁偷偷把这扇窗降级成影子改绑，本件当场红）。
+2. **尺子的编法错了**：`from __future__ import annotations` 会顺调用帧掺进 `compiled_view` 的 plain `compile()`（3.12+ 连 `__annotate__` 子码体一起变形）⇒ 拿它量「导入机器编出来的那份」时 chat 139/139、data 19/19 **整片假差**；只摘 `co_flags` 仍剩 4 枚真差。已加 `dont_inherit=True`，只给「以盘上那份码当尺子」的格用。
+3. **判据③ 的自证本体自己是加害者**：它收尾用 `install_source(disk_text)`，只救码不救身份 ⇒ 同 worker 里排在其后的 `test_r303_..._touches_no_tracked_file` 必红（**在未经改动的 HEAD 上实取 2 failed**）。门里不炸只是 `--dist loadfile` 的侥幸。
+
+🔴 本席自纠两条（写进纪律，不写进表扬）：① 上一笔 `fa1cf3e` 只交了 dirty 态读数，**漏了干净树复跑** ⇒ 门里剩一枚红混到今天；② 第一次修 `[r48]` 时把「摘掉 `co_flags`」当成归一化，方向对、手段不够，是第二遍跑红才逼出 `dont_inherit` 那一手。两遍数字（dirty／干净树）从今天起是并树的硬前置。
+
+### 四、执行层通道（再次现取，别改回去）
+
+- 🔴 `spawn_agent` 从本线程开**全新**线程仍秒死（`Invalid 'id': message id must be a string starting with 'msg_', got 'at_...'`）。
+- 🟢 `resume_agent` ＋ `send_input` 续用**已存在**的执行层线程正常工作：本班 `Kuhn`／`Hume`／`Erdos` 三枚都靠这条道交回并树。⇒ 并行度上限＝**活着的旧线程数**，不是总控偷懒。一个 block 只投一次，投错不补投。
+
+### 五、本波三枚（写集两两零相交，全部 `send_input` 续用旧线程）
+
+| 单号 | 线程／树 | 欠的那一格 | 写域 |
+|---|---|---|---|
+| **R527**（代号 C） | `Kuhn`@`be-r550` | R46 判据里「**点击**」那半张：零实现、无具号认领单 | `migrations/0019_*.sql`（已预分配，与 0018 不撞）＋`migrations/manifest.json`＋`app/api/v1/feedback.py`＋`app/rag/retriever.py` 先验三函数＋`frontend/src/lib/feedback.js`／`SourceCard.vue` 埋点＋新钉＋新纸 |
+| **R555** | `Erdos`@`be-r535` | `run_gate.fit_workers()` 只看 `ullAvailPhys` 不看**提交电荷**，而门里真实失败形状是电荷耗尽；外加线程上限的**单变量 A/B**（上一班两个变量同时改，只许报「二者之一或共同」） | 只 `scripts/run_gate.py` ＋它自己的在册件＋新钉 |
+| **R556** | `Hume`@`be-r551` | 五扇 `execs_module = True` 的窗（r472 两扇／r478／r48／r495）迁到 `install_mutation` 新口径——今天这族病就是它们造的 | 只 `tests/**`（含 `tests/_temp_edit_overlay.py`），零产品码 |
+
+前置核对：代号 C 的串行锁 `R519 → C` 已解（`R519` 并树 `03cd2eb`）；`R523`（代号 A＝cached 落库＋0018）已并树 `b2d82a0` ⇒ A×C 那把 `manifest.json` 锁同解。B 那一族（R31 差格 a/b）已由 `R524`（批准腿）＋`R548`（队列道注册）落地，剩「投递面需先裁契约」那一格——**属总控裁定，不随本波投**。
+
+### 六、还欠什么（照实列，不洗）
+
+- 🔴 **run11 开不了窗**：唯一障碍是业主侧那枚外来 CUDA 训练进程（见 §0 名册 `Pasteur` 行）。开窗五步前置里 `gpu_apps`／`foreign_python` 两格不过，且 `correctness`／`evidence` 的 p95 会被它污染到不可采信。
+- 等业主本人：A1 `users.department` 回填、A3 密级标签回填、H13 裁定（格③ 欠的不是码，码都在树上）、`MODEL_CONTEXT_TOKENS` 与 Ollama `num_ctx` 配套、`INDEX_BACKEND=pgvector` 写进 `deploy/.env.server`（**容器** `--force-recreate`，不是镜像重建）。
+- pgvector：切读码全在树、默认未翻；格② 热集让路延迟欠一台安静机器；`R60` 停写退役排在切读之后。
+- 五道验收门：A① 问答档已过（换口径过的，整表 p95 仍 107.9 s）、A③ 过、A④ 有条件成立；**A② 流式逐字从没宣布验过**；B／C（越权 0 条）／D（报告档 100% 可查回，开关仍关）／E（E1–E6）**仍是 0**。
+- 镜像落后主树：`5a6811d` 那份镜像 vs 今天 `f83372d`，带 `build:` 的只有 `migrate` 与 `frontend` 两格 ⇒ `docker compose --env-file deploy/.env.server build migrate`。属重操作，等本波并完再一次性做。
+- 陈账：`R73`、`R76`（今天仍零提交）、`R26`（09-17 记了结案但查不到并树痕迹）。
+- 新立候选：`compiled_view` 那把尺子的 **future-flags 偏差是否还有别处在用**（本波只治了 r466 一族，其余拿 plain `compile()` 量导入件的钉没扫）；`test_r48_..._lands_on_the_wire.py::_reload()` 与它类 docstring 那句「退出再 exec 回盘上的字」仍是旧口径。

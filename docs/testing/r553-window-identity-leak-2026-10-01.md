@@ -38,45 +38,86 @@ if original is _MISSING:
 治：还原面直接看 `live_dict`——进门那一刻先给每一枚 `name` 拍一张值快照 `before_values`，
 窗尾「场上原本没有的名字」才允许 pop，本来在场上的一律装回窗那一枚对象。`live_view` 只留作码体指纹那半格用。
 
-## 三、乙腿：重跑码体会换掉顶层类与顶层实例的身份
+## 三、乙腿：窗尾「再 exec 一遍盘上的字」救不回身份（两版治法，第一版已作废）
 
-`tests/_temp_edit_overlay.py::install_source` 把整份码体 exec 进活模块的 `__dict__`（与 `importlib.reload` 同形）。
-于是：
+**病根**：`tests/_temp_edit_overlay.py::install_source` 把整份码体 exec 进**同一个**模块对象的
+`__dict__`（`importlib.reload` 本来也同形）。于是
 
-1. 每一枚顶层类都是**新对象** ⇒ 模块属性 `SessionRegistry` 换了，而 `chat.session_registry` 这枚实例仍指着旧类；
+1. 每一枚顶层类都是**新对象** ⇒ 模块属性 `SessionRegistry` 换了，而 `chat.session_registry` 那枚实例仍指着旧类；
 2. 顶层那行 `session_registry = SessionRegistry()` **又跑了一遍** ⇒ 模块属性上的单例也是新对象。
 
-窗尾那一次 exec 只会再造第三枚类/实例，救不回来。r499 的三枚牙报的就是这个形状
-（`assert <class 'app.storage.sessions.SessionRegistry'> is <class 'app.storage.sessions.SessionRegistry'>` 成立却 `is` 为假——两枚同名同模块的类对象）。
+窗尾那一次 exec 只会再造第三枚，救不回来。r499 的三枚牙报的就是这个形状
+（`assert <class '…SessionRegistry'> is <class '…SessionRegistry'>` 两枚同名同模块的类对象，`is` 为假）。
 
-治（两道守卫，都在 `install_source` 里，紧跟 exec 之后）：
+**第一版（作废）**：在 `install_source` 里补两道守卫——把新身体逐枚 `setattr` 进旧类
+（`_reuse_class_identities`）、把「赋值行源码一字没改」的模块级实例换回场上那一枚（`_reuse_live_instances`），
+另配 `previous_source()` + `_INSTALLED`（`WeakKeyDictionary`）记住这枚模块上一次真跑的是哪份字节。
+并树后门里读数 **115 failed / 9574 passed / 10 errors**（815–888 s）。两处硬伤都是原理性的，不是调参能救：
 
-- `_reuse_class_identities`：把新身体逐枚 `setattr` 进旧类、旧类上多出来的属性 `delattr`、模块属性指回旧类。
-  🔴 只在**元类与基类都没变**时做——换了基类就不是重跑，宁可换身份也不伪造一枚挂旧名的假类。
-- `_reuse_live_instances`：只把**赋值那行源码一字没改**的模块级实例换回场上那一枚（比对 AST `ast.unparse` 的源码，
-  不比对象状态：`threading.Lock()` 这类每次都不同的东西拿状态比会误伤）。赋值行变了就绝不插手——
-  那一行可能正是刀要执行的东西，替它留旧值＝造一枚假绿。
-- `previous_source()` + `_INSTALLED`（`WeakKeyDictionary`）：记住「这枚模块上一次真跑的是哪份字节」。
-  窗尾的对照文本必须是**影子副本的变异版**，拿盘上文本当对照就会把「赋值行变了」误判成「没变」。
+- 零参 `super()` 读的是码体里那个 `__class__` 格，把新类的方法定进旧类，第一次 `super()` 就
+  `TypeError: super(type, obj): obj must be an instance or subtype of type`；
+- 模块属性上那枚外部 `APIRouter()` 实例被「换回旧值」之后，重跑时对它的 `router.get(...)` 注册静默丢失——
+  那一行正是刀要执行的东西，替它留旧值＝造一枚假绿。
 
-## 四、读数（全部总控主树亲跑，串行、`-o addopts=`、`-p no:randomly`）
+`0dc40b1` 在历史里留着当推翻记录（不删），`fa1cf3e` 换成第二版。今天树上 `_reuse_*` / `previous_source`
+三个名字全部不存在（tests/ · app/ · scripts/ 逐档零命中）。
+
+**第二版（今天树上的形态）**：窗尾**根本不再 exec**。`ShadowEdit.__enter__` 在 `install_source(mutant)`
+之前先 `self._live_snapshot = dict(module.__dict__)`；`__exit__` 调 `restore_namespace(module, snapshot)`——
+快照里没有的名字整片摘掉（变异新造的那些），在快照里的一律装回进门那一刻那一枚对象，返回值是
+「身份对不上」的名字清单，交给 `info["identity_diverged"]`。零类手术、零实例手术、模块体一遍都不多跑
+⇒ 身份与值都是原来那一枚。
+
+牙：`tests/test_r553_counter_evidence_teeth.py`（7 枚，**7 passed in 5.11 s**）。点名三枚关键的——
+`test_the_window_tail_reexecutes_nothing` 计数 `install_source`，整扇窗只准命中一次（进门那次）；
+`test_names_invented_by_the_mutant_do_not_survive_the_window` 钉新造名字不留在场上；
+`test_a_crashed_window_still_hands_the_module_back_untouched` 钉开窗就抛也要倒回。
+
+## 四、读数（全部总控主树亲跑，串行、`-p no:cacheprovider`）
 
 | 命令 | 修前 | 修后 |
 |---|---|---|
-| `r353 + r301` | 4 failed（`NameError`） | **62 passed**（与 `r466` 同跑） |
+| `r353 + r301` | 4 failed（`NameError: PDF_DEGRADATION_REASON_GROUP_CAP`） | **62 passed**（与 `r466` 同跑） |
 | `r495 + r499` | 3 failed | **21 passed** |
 | `r387 + r455×2 + r400 + r492`（坐标重锚后） | 21 failed | **95 passed** |
-| 新钉 `tests/test_r553_counter_evidence_teeth.py` | — | **11 passed in 5.30 s** |
-| 同一枚文件，摘掉两道守卫（`%TEMP%\r553_kill_guards.py` 插件把两个 `_reuse_*` 换成空实现） | — | **4 failed / 7 passed** ⇒ 两道守卫是活的，不是装饰 |
+| 新钉 `tests/test_r553_counter_evidence_teeth.py` | — | **7 passed in 5.11 s** |
+| 16 枚本族件（r466 + r553 + 八枚影子窗 + r48/r495/r497/r499 + r470/r471/r472/r478） | `[r48]` 1 failed；同进程并跑另红一枚 r303 | dirty **309 passed / 1 xfailed / 164.44 s**；`f83372d` 干净树复跑 **309 passed / 1 xfailed / 124.21 s** |
 
-## 五、未达的格子（明写，不洗）
+🔴 两遍数字都得交：dirty 与干净树同名件各跑一遍、文件清单逐枚点名（`fa1cf3e` 当时就漏了第二遍，
+门里剩一枚红混到今天）。
 
-- 本席只治了**这两族形状**（常量被 pop、类与单例被换）。`execs_module = True` 的五扇窗（r472 两扇、r478、r48、r495）
-  今天不再漏身份，但它们仍走「整份码体重跑」这条旧姿势：`install_mutation`（只换变了的那几枚绑定）才是新口径。
-  迁不迁是下一班的账，**别把「不漏了」读成「姿势统一了」**。
-- 顶层实例的状态若由**导入期副作用**决定（而不是那行赋值），守卫会照留旧对象——今天两枚受害模块没有这种形状，
-  未证到其他树。
-- 跨 worker 的泄漏（不同进程）本就不存在；本件只处理同 worker 内的顺序污染。
+## 五、本族同一天又量出三枚（10-01 第二班，并树 `f83372d`）
+
+1. **红的是登记，不是泄漏**：`[r48]` 那格 `len(identity_diff(before, after)) == len(before["objects"])`
+   量的正是「窗尾把码体重跑了一遍」这件事本身；第二版之后 r48 出窗不再换身份 ⇒ 它必然红。在册姿势改名
+   `live_exec_snapshot`，出窗这一侧九枚同判，另留两格降级哨（`execs_module` 仍须为真 ＋ 窗内「整片换身份」
+   那格原样不动）——谁把这扇窗悄悄降级成影子改绑，本件当场红。顺带补强一格：出窗后**本扇窗点名的那几枚
+   绑定**必须回到盘上那份码（旧口径只有 r48 一支有这条，八枚影子窗一辈子没被量过；而 `diff_view(before, after)`
+   只相对开窗前，快照本身若更早沾了变异它照样绿）。只量点名的那几枚，逐枚比整片会把别枚件在导入期
+   合法换过的把手读成假红。
+2. **尺子的编法**：`test_r466…` 文件头写着 `from __future__ import annotations`，而 `compiled_view` 原本走
+   不带 `dont_inherit` 的 plain `compile()` ⇒ 那一位 future 顺调用帧掺进字节码（3.12+ 连 `__annotate__`
+   子码体的形状一起变）。拿它量「导入机器编出来的那份」：10-01 现取 **chat 139/139、data 19/19 枚整片假差**；
+   只把 `co_flags` 从指纹里摘掉仍剩 4 枚真差（`_authorize_queue_task` / `_reap_agent_worker` / `approve` /
+   `delete_document`）。⇒ 新增 `compiled_view(..., dont_inherit=True)`，只给「以盘上那份码当尺子」的格用；
+   窗内比影子副本那两格维持继承帧的编法（`install_source` 同为继承帧，两边同形）。
+   notifications 8、sources 9、inbox 7 枚本来就 0 差，不受影响。
+3. **判据③ 的自证本体自己是加害者**：它收尾用 `install_source(disk_text)`，只救码不救身份——造出第二枚
+   `sources.alert_candidates`，而消费者 `app.notifications.inbox` 手里那枚还是旧的 ⇒ 同 worker 里排在其后的
+   `test_r303_notification_pins.py::test_the_counter_evidence_window_touches_no_tracked_file` 当场红。
+   **在未经改动的 HEAD 上把这两枚件放进同一进程必红（实取 2 failed）**，门里不炸只是 `--dist loadfile`
+   的侥幸，与乙腿同一族形状。⇒ 改成 `overlay.restore_namespace` 按快照倒回，并补一枚「身份也得倒回去」的断言。
+
+## 六、未达的格子（明写，不洗）
+
+- 只治了**这三族形状**（常量被 pop、类与单例被换、自证收尾换身份）。`execs_module = True` 的五扇窗
+  （r472 两扇、r478、r48、r495）今天不再漏身份，但它们仍走「进门整份码体重跑」这条旧姿势：
+  `install_mutation`（只换变了的那几枚绑定）才是新口径。迁不迁是下一班的账，
+  **别把「不漏了」读成「姿势统一了」**。
+- `tests/test_r48_headline_card_lands_on_the_wire.py::_reload()`（自己那枚 `finally` 里无条件重跑一遍盘上的字）
+  与它类 docstring 里那句「退出再 exec 回盘上的字」——本件只登记不代改，已另立候选号（跟进单 §141）。
+- 顶层实例的状态若由**导入期副作用**决定，快照倒回救得回对象身份、救不回那一格状态；
+  今天两枚受害模块没有这种形状，未证到其他树。
 - 门里的分法是 `loadfile` 决定的，加一枚测试件就可能换配对 ⇒ 这类病**必然**还会以「换个号就红」的形状回来。
-`R555`（门自选不看提交电荷）与「正文裸坐标没人咬」（`r387` §1 里那枚 `:4088` 至今指向一行空行，尺子只咬
-`文件名:行号` 全形，裸 `:NNNN` 不在射程内）两枚候选仍未派。
+- 订正一笔旧账：上面那句「115 failed」不能全记在 v1 治法头上——同一时间窗里本席还在跑另一枚并发 pytest，
+  两笔污染叠在一起。v1 那两处硬伤确实存在（§三已写明），但那 115 枚不是它单独造的数。

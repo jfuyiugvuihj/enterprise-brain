@@ -4696,3 +4696,83 @@ A1 `users.department` 回填（现值实测 `admin`/`evalbot` 皆空）＋ A3 �
 5. **主树「脏」的真相**：`git status` 现取 23 行里 17 枚在册件 `update-index --refresh` 报 `needs update`，但逐枚 `git hash-object --path` 与 `HEAD:<path>` **全等**＝stat 缓存假脏；真差只 `chroma_db/chroma.sqlite3` 一枚，按规矩永不提交。另有 4 枚本板自造的壳（`%SystemDrive%/`、`-`、`.tmpfix/`、`.zcodeignore`）＋业主作业目录一枚，属业主删除权，本席一枚没碰。
 6. **派工通道更正（推翻上游一条结论）**：`send_input` 报 `not found` 的线程可用 `resume_agent` 复活续用（本席实测两枚双双成功并交回长文）⇒「等业主手动开线」不再是唯一出路；🔴 `spawn_agent` 开全新线程仍必死，一枚没试。
 7. **在途**：`Kuhn`／R550（`be-r550`@`59a9506`）、`Hume`／R551（`be-r551` 已追平 `4572aa8`，12 分钟独占自验窗）、`Erdos`／R552（`be-r535`@`05bec06`，零写入实话＋备份道裁定）。R553 候选（跨件污染：`tests/_temp_edit_overlay.py` 把改过的源文 `exec` 进活体模块 ⇒ 既能造假红也能造假绿）仍未派。号账：本班用掉 R554，R555／R553 为候选；干净号 **R556 起**。
+
+## §141（10-01 第十班续席·总控线，主树 `f83372d`；单模型未切换；心跳两枚仍 `PAUSED` 一枚没碰）：门清到 0 之后的本波三枚派工判据全文
+
+上游三笔并树与门数在看板 §4EF，本节只写**判据**（派工唯一事实源）。三枚写集两两零相交：
+`R527`（`Kuhn`@`be-r550`）／`R555`（`Erdos`@`be-r535`）／`R556`（`Hume`@`be-r551`），全部 `send_input` 续用旧线程，
+🔴 一枚都没 `spawn`（从本线程 `spawn` 全新线程仍秒死）。执行层一律零 commit。
+
+### R527｜代号 C＝R46 判据里「点击」那半张（计划书 L196 原文三格的第三路）
+
+欠的形状（`docs/handoff/2026-09-30-plan-eight-tickets-recheck.md` §2·R46 差格 a）：`app/api/v1/feedback.py` 顶上那句注释
+明写这一路要前端埋点、等总控另派；`app/`、`migrations/`、`frontend/src` 三层按 `click`／`clicked`／`点击` 现查为 **0 命中**，
+0011 表里没有第三枚计数列、端点里没有那一路、前端没有埋点，也没有认领它的具号单。欠的是
+「新列（要 migration）＋新端点或同端点新枚举＋前端埋点＋先验源」，不是一行能补完的格子。
+前置已解：`R523`（代号 A）并树 `b2d82a0` ⇒ `migrations/manifest.json` 那把 A×C 锁开；`R519` 并树 `03cd2eb` ⇒ `frontend/**` 那把锁开。
+
+**写域**：新 `migrations/0019_*.sql`（**号已预分配死，与 0018 不撞**）＋`migrations/manifest.json`＋
+`app/api/v1/feedback.py`＋`app/rag/retriever.py` 先验三函数（`activity_priors()`／`activity_prior_value()`／
+`rank_hits_by_activity()`）＋`frontend/src/lib/feedback.js` 与 `frontend/src/components/SourceCard.vue` 埋点＋
+新钉 `tests/test_r527_*.py`＋新纸 `docs/testing/r527-*.md`。
+🔴 **不许碰**：`app/agents/**`、`app/api/v1/chat.py`（同波另两枚的邻域与 R551 刚改过的那一片）、`frontend/src/App.vue`、
+`frontend/src/assets/theme.css`；`lint:colors` 预算按 `package.json` 里那枚数（**148**，不是派工词历史上写过的 334），
+多一条裸色值 CI 当场红；`docs/api/contract-v1.md` 若必须动，**只能尾追加或 `git merge-file` 三-way**——
+文末现在是「§4b（`81784da` 移来）→ R523 那 23 行」，整枚覆盖会回退这两笔。
+
+**判据（八格，逐格可失败）**：
+1. 端到端落库＋读回：从端点打进去、从 `activity_priors()` 出来，点一次与不点一次必须量得出差；只测 SQL 文本不算。
+2. 位移界不许放宽：点击进先验之后仍是「每轮至多挪一名」，5/12/40 三种腿宽各测一次；
+   `rank_hits_by_activity` 那三条返回路径**仍交回同一个列表对象**（`is`，不是 `==`）——「无信号 ⇒ 与现状逐字一致」不许被这一路破坏。
+3. 隐私结构成立不靠自觉：0011 的四条 CHECK 家族在 0019 逐条对等（计数非负、去空、≤512），新列**不得有任何 TEXT 承载用户内容**；
+   往端点塞 10 万字自由文本 ⇒ 4xx 且库里零行；在册列清单钉混进 TEXT 即红。
+4. 切读不倒退：`INDEX_BACKEND=pgvector` 摆进子进程 env 跑同一份夹具 ⇒ 走五条读腿出口里的 PGVector 那一支，先验必须仍生效；
+   只在 Chroma 腿上接了＝这一条红（AGENTS.md：新代码不得新增 Chroma 依赖或写点）。
+5. 缺表 fail-open：没跑 0019 的库跑一问必须原序＋NULL 语义＋一行留痕，不许 500，也不许把「读不到计数」冒充成「没有信号所以本该如此」。
+6. 埋点真发得出：`SourceCard.vue` 那一路点击 ⇒ 真打到端点（后端 `tests/test_r46_activity_signals.py` ＋前端同名件都要跑，
+   交回前端全量的 files/tests 两个数）；零新组件、零新增裸色值、不碰 `theme.css`、不碰 `sessions.js`。
+7. 反证刀 ≥5 把，逐枚点名 victim，且 victim 必须是**在册钉本身**（不是自写件）；摘前摘后逐字节 sha256 核过。
+8. 改口成对交两态（动任何一枚在册钉都要）；`migrations/README.md` 与「下一枚 00 号」的在册钉同步改，别留第二份手抄。
+
+### R555｜`scripts/run_gate.py` 的 worker 自选只看物理内存，不看提交电荷
+
+欠的形状（看板 §4EE 第三节末句＋§4EF 门数表）：`fit_workers()` 现读 `min(8, free // 2)` 只取 `ullAvailPhys`，
+而 09-30 那桩「门跑到 99% 停住、xdist worker 死于 `0xe0000008`」的失败形状恰恰是**电荷耗尽**；
+上一班做对照时把「安静机」与「线程上限 1」**两个变量同时改**，只许报「二者之一或共同」，不许写成「上限治好了它」。
+
+**写域**：只 `scripts/run_gate.py` ＋它自己的在册件＋新钉 `tests/test_r555_*.py`＋凭据纸 `docs/perf/r555-*.md`。
+🔴 明令**不许把 `-n` 写进 `pyproject.toml` 的 `addopts`**（六枚件嵌套起 pytest，全局并行会递归扇出）；
+不许改 `--dist loadfile` 语义；不许动 `loadfile` 之外任何分发口径。
+
+**判据（五格）**：
+1. 取数改成「物理空闲」与**提交电荷空闲**两者取小，并交回本机现取读数（10-01 16:2x：free phys ≈11.6 GB／free page ≈19.3 GB）
+   在该读数下自选到几枚、为什么。
+2. 线程上限做**单变量 A/B**：同名子集跑「不设上限」与「设 1」各一次，两态数字都交，写清差异与墙钟。
+3. 摘掉电荷那一格必须红（新钉要有牙，不许写成只报数的取证单）。
+4. `fit_workers()` 的边界（电荷为零／取不到 `GlobalMemoryStatusEx`）不许静默退化成 `-n 1` 而不留痕。
+5. 本单**不许跑全量门**（同波三枚在飞），只许点名件串行复跑；零 commit。
+
+### R556｜把五扇 `execs_module = True` 的旧姿势窗迁到 `install_mutation` 新口径
+
+欠的形状（`docs/testing/r553-window-identity-leak-2026-10-01.md` §六第一格）：R553 之后那五扇窗
+（`tests/test_r472_*.py` 两扇、`tests/test_r478_*.py`、`tests/test_r48_headline_card_lands_on_the_wire.py`、
+`tests/test_r495_session_owner_namespace_is_declared.py`）**不再漏身份**，但它们仍走「进门把整份码体 exec 进活模块」
+这条旧姿势——今天门里那 7 枚「单跑全绿、进门就红」与两枚「同进程配对才红」全是这一族造的。
+新口径是 `install_mutation`：只换变了的那几枚顶层绑定，其余每一枚函数对象连身份都不动。
+🔴 **别把「不漏了」读成「姿势统一了」**，本单就是去补这一格。
+
+**写域**：只 `tests/**`（上面五枚件＋它们各自的反证件＋`tests/_temp_edit_overlay.py` 仅在必须时＋新钉
+`tests/test_r556_*.py`＋新纸 `docs/testing/r556-*.md`）。🔴 零产品码：`app/**` 一枚不碰。
+`tests/test_r466_mutation_does_not_leak_into_live_module.py` 那张在册姿势表要改必须**成对改**——
+`test_the_roster_is_nine_windows_and_only_r48_still_execs` 会当场红，它是本单的进度尺，**不许摘，只许按「名单清空」改写并留一枚「名单不许反弹」的牙**。
+
+**判据（七格）**：
+1. 逐扇迁、逐扇交读数，不许一锅端：每扇迁完都要交「窗内变异仍真被执行」（码体指纹命中影子副本那份）那一格的原证。
+2. 每扇都要交**同进程配对**：迁前实取污染、迁后同配对全绿，这才算这扇迁完。配对表按现取——
+   `r466 自证 ↔ test_r303_notification_pins::test_the_counter_evidence_window_touches_no_tracked_file`（10-01 在 HEAD 上实取 2 failed）、
+   `r495 ↔ test_r499_..._any_file_order`、`r353 ↔ test_r301_upload_readout`。
+3. `execs_module is True` 的名单从 `["r48"]` 缩到 `[]`，在册钉按新事实改口，且留「反弹即红」的牙。
+4. 不许把变异迁成空转刀：摘掉守卫必须红，摘掉迁移必须让配对重新污染（两态都交）。
+5. `test_r48_*.py::_reload()` 与它类 docstring 那句「退出再 exec 回盘上的字」一并归真（它是本单范围内的残留，不再另立号）。
+6. 两遍数字（dirty／干净树）都要交，文件清单逐枚点名——`fa1cf3e` 那笔就是漏了第二遍才让一枚红活到今天。
+7. 禁全量门、禁并树、禁 `git add -A`、零 commit。
