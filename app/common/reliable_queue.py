@@ -92,6 +92,24 @@ TERMINAL_ABSENT = "absent"
 TERMINAL_OK = "ok"
 TERMINAL_UNREADABLE = "unreadable"
 
+#: R558 判据①：队列道逐字片段的**增量投递面**接在既有轮询面上——不新开路由、不加状态词、
+#: 不动终态帧。worker 每攒够这么多片、或距上一发汇流超过这么多秒，就把这一截字打成一批
+#: ``RPUSH`` 进片段表；客户端每 3 s 轮一次，所以「递增」这件事量的就是这两枚阈值本身。
+#: 阈值刻意不做成 env：把投递节奏交给配置，等于允许「同一轮在不同机器上递增性不同」的口径。
+PIECE_FLUSH_PIECES = 8
+PIECE_FLUSH_SECONDS = 1.0
+#: 片段表里最多存这么多批。超了就停止存正文、只把停止这件事如实报进读数（``truncated``）：
+#: 增量面截不动终态帧，客户端到终态照旧拿完整正文，缺的只是「逐片长出来」那一截表演。
+#: 不静默丢、也不把它读成「一个片段都没有」——判据④ 要的就是这两个数分得开。
+PIECE_BATCH_LIMIT = 1024
+#: 一批的结构名。读回来先认它，认不出就按 ``unreadable`` 说，不猜形状。
+PIECE_BATCH_SCHEMA = "queue-piece-batch-v1"
+#: 片段读数的三态与终态读数同形：键不在位（这一轮一枚都没汇出来）／在位解得开／
+#: 在位解不开（半截 JSON、被人手改过、换代留下的异形）。第三态宁缺毋造。
+PIECE_ABSENT = "absent"
+PIECE_OK = "ok"
+PIECE_UNREADABLE = "unreadable"
+
 
 def _terminal_awaits_approval(terminal: dict[str, Any] | None) -> bool:
     """这枚终态是不是「在等人批准」。读不懂就当场 raise，不许猜、也不许退回 `done`。"""
@@ -216,6 +234,9 @@ class ReliableQueue:
 
     def _idempotency_key(self, key: str) -> str:
         return f"{self.name}:idempotency:{key}"
+
+    def _pieces_key(self, request_id: str) -> str:
+        return f"{self.name}:pieces:{request_id}"
 
     def _cancel_key(self, request_id: str) -> str:
         return f"{self.name}:cancel:{request_id}"
@@ -404,6 +425,101 @@ class ReliableQueue:
         if not isinstance(data, dict):
             return {"state": "unreadable", "payload": None}
         return {"state": "ok", "payload": data}
+
+    def append_piece_batch(self, request_id: str, batch: dict[str, Any]) -> bool:
+        """把队列道刚汇出来的一截字打成一批，推进片段表。
+
+        一批就是**一次** ``RPUSH``：不存在「正文到了、计数还没到」的中间态，也不存在写坏一半。
+        每批自带序号与累计计数器，读数侧取「序号最大的那一批」当账面数，并按序号去重——
+        连接抖动让同一批重发时，客户端看见的字不会翻倍。
+
+        租约过期、这一轮被取消之类的旁支不在这里判：片段表只是**过程表演**，终态那一份
+        由 ``complete()`` 独立负责，两者同生不同死（表跟着 ``result_ttl`` 走，过期就没了）。
+        """
+        if not isinstance(batch, dict):
+            raise ValueError("piece batch must be a dict")
+        if batch.get("schema") != PIECE_BATCH_SCHEMA:
+            raise ValueError("piece batch schema must be %r" % PIECE_BATCH_SCHEMA)
+        seq = batch.get("seq")
+        if isinstance(seq, bool) or not isinstance(seq, int) or seq <= 0:
+            raise ValueError("piece batch seq must be a positive int")
+        payload = json.dumps(batch, ensure_ascii=False, separators=(",", ":"))
+        key = self._pieces_key(request_id)
+        self.redis.rpush(key, payload)
+        # TTL 这一手要**问着打**：真 Redis 有 `expire`，仓里那枚离线双件
+        # `tests/test_reliable_queue.py::FakeRedis` 从头到尾只建模 `set(..., ex=)`，没有 `expire`。
+        # 无条件打就会在每一次汇流上抛 AttributeError，被投递面记成一条告警——R548 那枚「片流不许让
+        # 日志面多出一行」的在册钉当场把这件事抓出来了（10-01 现场）。跳过不等于放过：TTL 在位由
+        # `test_the_incremental_store_expires_with_the_result_ttl` 盯着，它把 `expire` 装回双件并
+        # 断言片段键真被叫到，摘掉这一行照样红。
+        expire = getattr(self.redis, "expire", None)
+        if callable(expire):
+            expire(key, self.result_ttl)
+        return True
+
+    def piece_readout(self, request_id: str, *, since: int = 0) -> dict[str, Any]:
+        """读回片段表的增量读数：``text`` 是 ``since`` 之后新长出来的那一截字。
+
+        三态与 ``terminal()`` 同形，因为这三件事差一个字就会读成假绿：
+
+        * ``absent``：表里什么都没有——这一轮一枚片都没汇出来（或已经过期）。它不等于「零片」，
+          更不等于「跑完了没正文」；
+        * ``unreadable``：表在位但解不开（半截 JSON、人手改过、换代留下的异形）。那一格宁缺毋造，
+          并把 ``reason`` 说清，绝不回一串空字冒充「还没长出来」；
+        * ``ok``：``cursor`` 是这批之后的新游标，客户端下一发把它原样填回 ``since``。
+
+        ``discarded`` 说的是 worker **内存账本**超上限丢掉的片数（判据④ 那一行），
+        ``truncated`` 说的是增量表自己停止存正文之后又过了几批——两枚分开报，
+        因为前者不影响客户端拿到的字，后者影响，混成一枚就分不清是内存问题还是投递问题。
+        """
+        empty = {
+            "state": PIECE_ABSENT,
+            "text": "",
+            "cursor": 0,
+            "pieces": 0,
+            "chars": 0,
+            "discarded": 0,
+            "truncated": 0,
+            "legs": [],
+            "reason": "",
+        }
+        raw = self.redis.lrange(self._pieces_key(request_id), 0, -1)
+        if not raw:
+            return empty
+        seen: dict[int, dict[str, Any]] = {}
+        for item in raw:
+            try:
+                data = json.loads(item.decode() if isinstance(item, bytes) else str(item))
+            except (TypeError, ValueError):
+                return dict(empty, state=PIECE_UNREADABLE, reason="batch_payload_unparsable")
+            if not isinstance(data, dict) or data.get("schema") != PIECE_BATCH_SCHEMA:
+                return dict(empty, state=PIECE_UNREADABLE, reason="batch_schema_mismatch")
+            seq = data.get("seq")
+            if isinstance(seq, bool) or not isinstance(seq, int) or seq <= 0:
+                return dict(empty, state=PIECE_UNREADABLE, reason="batch_seq_invalid")
+            seen[seq] = data
+        ordered = [seen[seq] for seq in sorted(seen)]
+        latest = ordered[-1]
+        cursor = int(latest["seq"])
+        offset = since if isinstance(since, int) and since > 0 else 0
+        if offset > cursor:
+            # 游标比表尾还靠前一次换代／过期后的空表：当成 0 整段重讲。屏侧多拿一遍已有的字
+            # 是可恢复的，冻在一枚没人能推进的游标上才是事故——这一格也为此不新造错误码。
+            offset = 0
+        delta = "".join(
+            str(entry.get("text", "")) for entry in ordered if int(entry["seq"]) > offset
+        )
+        return {
+            "state": PIECE_OK,
+            "text": delta,
+            "cursor": cursor,
+            "pieces": int(latest.get("pieces", 0) or 0),
+            "chars": int(latest.get("chars", 0) or 0),
+            "discarded": int(latest.get("discarded", 0) or 0),
+            "truncated": int(latest.get("truncated", 0) or 0),
+            "legs": [str(name) for name in (latest.get("legs") or [])],
+            "reason": "",
+        }
 
     def _record_discard(self, request_id: str, reason: str) -> None:
         """把"结果被丢弃"写进重试账本，供 `failure()` 与 /queue/status 读得到。

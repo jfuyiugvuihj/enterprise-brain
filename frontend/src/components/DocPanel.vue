@@ -100,7 +100,7 @@ export function shouldReadUploadAgain(faces, ticksDone, maxTicks) {
 
 // ==================== 上传密级（R313 格一） ====================
 /**
- * 默认值就是后端那一句 classification: int = Form(1)（app/api/v1/chat.py:4470）里的 1。
+ * 默认值就是后端那一句 classification: int = Form(1)（app/api/v1/chat.py:4506）里的 1。
  * 这一枚数字是「用户不动选择框」的唯一出口：表单带着 1 发出去，FastAPI 收到的分类与今天
  * （前端压根不发这一枚字段、由 Form 默认补上 1）逐字相同 —— 落库行、检索判定都不变，零行为变化。
  * 要挪这个默认只能连着后端那句一起挪：只改这里等于把默认悄悄换了位。

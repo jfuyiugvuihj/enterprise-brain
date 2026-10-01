@@ -5929,3 +5929,51 @@ What this section does **not** assert is any measured figure for product traffic
 open-window tier really lands a non-zero cached count is a reading owed by the next open-window
 run (run10). Until that run reports it, every non-`NULL` value in that column is a per-call
 report -- not an average, not a hit rate, and not a claim about the customer's cache.
+
+## Queue lane streaming pieces (`R558`)
+
+Tail-appended on purpose: this section is the only place the new keys are named, and the
+sections above it are byte-identical to the revision this ticket branched from.
+
+The queue lane has no answer stream. A report turn is enqueued, the enqueue-time SSE closes
+after `queued` + `done`, and the worker runs the turn out of process, so the characters the
+orchestrator emits piece by piece (`stream_piece_sink`, R548) had a receiver in the worker and
+no surface to reach the client. R558 puts that surface on the endpoint the client already
+polls. Nothing else moved: no new route, no new status word, no new stable error code, and the
+terminal frame, `usage`, `sources`, audit rows and the answer key are byte-for-byte what they
+were.
+
+Request: `GET /api/v1/queue/status/{request_id}`, one optional query parameter.
+
+| name | type | absent | out of range |
+| --- | --- | --- | --- |
+| `since` | non-negative int | treated as `0` (the client is told the whole accumulated tail) | unparsable, negative, **or larger than the last sequence number in the store** are all treated as `0` -- the client re-reads characters it already has. A cursor past the end is never answered with a permanently empty `text`: that would freeze the screen on a cursor nobody can advance. This never 4xx's, and no new stable code is introduced for it |
+
+Response: `stream_pieces` is added to the polling body **only while `status == "processing"`**.
+It is absent (not `null`, not `{}`) for `queued`, `awaiting_approval`, `done` and every other
+status, because those statuses are not "still producing characters": the settled answer lives
+in `result` and the terminal readout, and the incremental surface is a display of the process,
+not a second copy of the outcome.
+
+| key | type | null | says |
+| --- | --- | --- | --- |
+| `stream_pieces` | object | never | the piece readout block below |
+| `stream_pieces.state` | `absent` / `ok` / `unreadable` | never | `absent` = the store holds nothing yet (first poll, or expired); it does **not** mean "zero pieces were produced" and not "the turn produced no text". `unreadable` = the store is there but the batch will not parse -- report it, never pass empty text off as "not yet" |
+| `stream_pieces.text` | string | never | the characters accumulated after `since`. Empty when `state` is not `ok`, and legitimately empty when `ok` and nothing new arrived since the cursor |
+| `stream_pieces.cursor` | int | never | pass this back as `since` on the next poll. `0` when `state` is `absent`/`unreadable` |
+| `stream_pieces.pieces` | int | never | pieces the worker's ledger has received, **including** the ones the memory cap dropped |
+| `stream_pieces.chars` | int | never | characters the ledger has received |
+| `stream_pieces.discarded` | int | never | pieces dropped by the ledger's in-process cap (`QUEUE_PIECE_LEDGER_LIMIT`, 512): past it the ledger counts and stops retaining. `> 0` is a truncation to be read as truncation -- it is never "there were no pieces" |
+| `stream_pieces.truncated` | int | never | batches the incremental store stopped accepting past its own cap (`PIECE_BATCH_LIMIT`, 1024). Separate from `discarded` on purpose: `discarded` costs the worker memory nothing on the client side, `truncated` costs the client characters it will only recover from the terminal answer |
+| `stream_pieces.legs` | array of string | never | which leg each received piece is stamped with; pieces carrying no stamp collapse into the one empty-string entry |
+| `stream_pieces.reason` | string | never | `""` unless `state` is `unreadable`, then one of `batch_payload_unparsable` / `batch_schema_mismatch` / `batch_seq_invalid` |
+
+Incrementality is a property of the thresholds, not of intent: the worker flushes a batch every
+`PIECE_FLUSH_PIECES` (8) pieces or `PIECE_FLUSH_SECONDS` (1.0 s), whichever comes first, plus one
+final flush before the turn closes so the tail is not left in the buffer. A client polling every
+3 s therefore sees `chars` grow across polls while `status` is still `processing`. A
+"one backfill at terminal" implementation reads empty on every `processing` poll and is the exact
+shape the R558 counter-evidence pin turns red.
+
+Batches carry their own sequence number and the store de-duplicates by it, so a flush retried
+after a connection blip cannot make the client see the same characters twice.

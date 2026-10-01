@@ -13,7 +13,9 @@ R37：载荷自己声明了 report 档的那一轮走**能挂起**的图，跑�
 （见 _process_report_lane_turn）；没声明档位的存量任务与本单之前逐字节相同。
 
 R548：报告腿的逐字片段汇在 worker 进程里有了可注册点（见 ReportLanePieceLedger）。
-投递面还没裁，所以片只进本轮账本、不外发；屏上与终态形状和 R548 之前逐字相同。
+R558 裁了投递面：账本每汇一批就往片段表推一发，既有轮询面在 processing 态读得到**递增**的
+读数；终态那一格的形状与本单之前逐字节相同——片段一字节不进终态帧 / usage / sources /
+审计行 / 错误码。
 """
 
 import os
@@ -30,6 +32,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from app.common.reliable_queue import (
+    PIECE_BATCH_LIMIT,
+    PIECE_BATCH_SCHEMA,
+    PIECE_FLUSH_PIECES,
+    PIECE_FLUSH_SECONDS,
     LeaseHeartbeat,
     QueueConnectionError,
     QueueMessage,
@@ -433,12 +439,40 @@ class ReportLanePieceLedger:
     「与一次投喂一整篇可区分」，量的就是 ``pieces`` 的枚数与顺序——拼起来等值、分片数不等值。
     """
 
-    def __init__(self, request_id: str = "", *, limit: int = QUEUE_PIECE_LEDGER_LIMIT) -> None:
+    def __init__(
+        self,
+        request_id: str = "",
+        *,
+        limit: int = QUEUE_PIECE_LEDGER_LIMIT,
+        publisher=None,
+        flush_pieces: int = PIECE_FLUSH_PIECES,
+        flush_seconds: float = PIECE_FLUSH_SECONDS,
+        batch_limit: int = PIECE_BATCH_LIMIT,
+        clock=time.monotonic,
+    ) -> None:
         self.request_id = request_id
         self.limit = max(1, int(limit))
         self.pieces: list = []
         self.chars = 0
         self.overflow = 0
+        # R558 判据①：投递面。``publisher`` 收一批 dict、真把批推进表就交回真值。
+        # 它是**可选**的：留 None 时本账本退回 R548 的形状（只记账、一个字都不往外发），
+        # 所以在册那几枚「一字节不进终态帧」的钉没有被改口，改口的只有轮询面那一侧。
+        self._publisher = publisher
+        self._flush_pieces = max(1, int(flush_pieces))
+        self._flush_seconds = max(0.0, float(flush_seconds))
+        self._batch_limit = max(1, int(batch_limit))
+        self._clock = clock
+        self._pending: list = []
+        self._pending_since = self._clock() if publisher is not None else 0.0
+        #: 已经推进表的批数，也就是下一批的序号减一。
+        self.batches = 0
+        #: 真正落到表里的字数（不含没发出去的那一截），用来和 ``chars`` 对账。
+        self.published_chars = 0
+        #: 投递失败的批数。失败不静默：攒着的字留着按同一序号重试。
+        self.publish_errors = 0
+        #: 增量表写满之后停止存正文的批数（与 ``overflow`` 分得很清：后者是内存账本上限）。
+        self.truncated = 0
 
     def __call__(self, piece) -> None:
         """收一片。它不许抛：``nodes.publish_stream_pieces`` 会把抛错记成警告并丢掉余下的片。"""
@@ -449,6 +483,79 @@ class ReportLanePieceLedger:
             self.pieces.append(piece)
         else:
             self.overflow += 1
+        if self._publisher is None or not isinstance(text, str) or not text:
+            return
+        self._pending.append(text)
+        # 两条阈值任一到就汇一发：枚数那条管「字少而片密」，秒数那条管「片少而字长」——
+        # 客户端每 3 s 轮一次，所以任何一条都能在下一发轮询里看见新增的字。
+        if len(self._pending) >= self._flush_pieces or (
+            self._clock() - self._pending_since >= self._flush_seconds
+        ):
+            self.flush()
+
+    def flush(self) -> bool:
+        """把攒着的那一截字打成一批交出去；交回「这一发真推进表了没有」。
+
+        三个不许：
+
+        * **不许抛**——投递面坏了不能把整轮报告带崩，收端那一发同样不许抛（同一口径）；
+        * **不许静默**——失败进 ``publish_errors``，字攒回去、序号不前进，下一发按同一序号
+          重试；读数侧按序号去重，因此重试不会让客户端看见重复的字；
+        * **不许把「表已经写满」读成「一个片段都没有」**——停止存正文后每发只让 ``truncated``
+          加一，账面数（``pieces`` / ``chars`` / ``discarded``）照旧往前滚。
+        """
+        if self._publisher is None or not self._pending:
+            return False
+        if self.batches >= self._batch_limit:
+            # 正文不再存（客户端到终态从 `result` 那一份拿全篇），但每一发的计数照滚。
+            # 刻意不做成「报一次就闭嘴」：表里的数一旦冻在最后一批上，屏侧读到的就是
+            # 「停在第 N 批」的旧账面——那跟静默丢字只差一个数字，差就差在没人说得出来。
+            # 代价是有界的一行 JSON，换来的是「上限到了」这件事随时看得见。
+            self.truncated += 1
+            self._pending = []
+            self._pending_since = self._clock()
+            return self._publish("")
+        text = "".join(self._pending)
+        published = self._publish(text)
+        if published:
+            # 🔴 交出去就必须把攒着的一截字清掉：不清就是每一发都从头把已交过的字再交一遍，
+            # 客户端按游标拼出来的正文会长成「同一段话重复 N 遍」——那是判据③ 禁止的第二条流，
+            # 只是它藏在投递面里。（09-30 现场：本仓第一版就栽在这格，靠 r548 的日志面钉抓出。）
+            self._pending = []
+            self._pending_since = self._clock()
+        return published
+
+    def _publish(self, text: str) -> bool:
+        """把 ``text`` 打成一批交给投递面，成功才推进序号。
+
+        失败的那一批**原样留着**（序号不动），下一发带同一序号重试；读数侧按序号去重，
+        所以连接抖动不会让客户端看见重复的字。
+        """
+        batch = {
+            "schema": PIECE_BATCH_SCHEMA,
+            "seq": self.batches + 1,
+            "text": text,
+            "pieces": self.count,
+            "chars": self.chars,
+            "discarded": self.overflow,
+            "legs": list(self.legs),
+            "truncated": self.truncated,
+        }
+        try:
+            ok = bool(self._publisher(batch))
+        except Exception as exc:
+            ok = False
+            logger.warning(
+                f"[QueueWorker][R558] request_id={self.request_id} 片段汇流失败，留着重试: {exc}"
+            )
+        if ok:
+            self.batches += 1
+            self.published_chars += len(text)
+        else:
+            # 失败只记账，不回填：`_pending` 里那几片原样留着，下一发带**同一序号**重交，
+            # 读数侧按序号去重，客户端因此既不少字也不重复拿字。
+            self.publish_errors += 1
+        return ok
 
     @property
     def count(self) -> int:
@@ -688,9 +795,14 @@ def _process_report_lane_turn(
     task_id = f"task-{uuid4().hex}"
     started = time.monotonic()
 
-    # R548：本轮的逐字片段账本，就是队列道那枚可注册点的收端。投递面还没裁，所以片
-    # 只进账、随本轮退掉，一字节不进终态帧 / usage / sources / 审计行 / 错误码。
-    piece_ledger = ReportLanePieceLedger(request_id)
+    # R548：本轮的逐字片段账本，就是队列道那枚可注册点的收端。
+    # R558 补的是投递面：账本每汇出一批就往片段表推一发，于是既有轮询面读得到**递增**的
+    # 读数。🔴 片段只进这一张表，一字节不进终态帧 / usage / sources / 审计行 / 错误码——
+    # R548 那条零外溢的钉在本单之后仍旧成立，改口的只有 processing 态那一格读数。
+    piece_ledger = ReportLanePieceLedger(
+        request_id,
+        publisher=lambda batch: queue.append_piece_batch(request_id, batch),
+    )
     try:
         final_answer, agent_results, stream_error = _drain_report_stream(
             user_message,
@@ -715,6 +827,10 @@ def _process_report_lane_turn(
             session_id=session_id,
             write_back=write_back,
         )
+
+    # R558 判据①：收窗之前把最后攒着的那一截字推出去。少了这一发，「最后不足 8 片」的那
+    # 一截永远进不了表——递增会演变成「屏幕少了一尾」。
+    piece_ledger.flush()
 
     _log_report_lane_pieces(request_id, piece_ledger)
 

@@ -1226,6 +1226,7 @@ const serverDataReads = ref({}) // R415 · 终态帧报回来的用表读数：�
 const terminalReads = ref({}) // R510 · 终态帧那四枚键的读数：只装后端真交回来的键，没交的键整格缺席
 const unseenReads = ref({})   // 本轮发出、界面尚未认领的事件名
 const queueReads = ref({})    // GET /queue/status/{id} 的最近一次读数
+const queuePieces = ref({})   // R558 · 队列道增量片段：上一发的游标 + 已经画上屏的那一截字
 const queueFaults = ref({})   // 排队状态这一次没读回来时的原始错误
 const queueStops = ref({})    // 这一轮的轮询被终止性判定叫停：停表之后读数不会自己回来
 const queueWaits = ref({})    // R221 · 这一轮盯到点收表：只说「前台不再当场等」，不带失败判定
@@ -1532,13 +1533,34 @@ function unseenOf(msg, index) {
   return [...new Set([...stored, ...arrived])]
 }
 
+/**
+ * R558 · 队列道「屏上要有脸」：正在跑的这一轮，把增量片段当**草稿**画上屏。
+ *
+ * 它是草稿不是终答：`msg.pieceDraft` 记着这件事，终态到货时 `applyQueuedAnswer` 整段替换
+ * 而不是接着加——这一轮屏上最终只有一条答案，判据③ 那把尺子量的就是这件事。走的是
+ * `msg.content` 本来那一条渲染腿：零新组件、零新 CSS、零新增裸色值。
+ */
+function applyQueuedPiece(key, text) {
+  const index = messages.value.findIndex((msg, at) => turnKey(msg, at) === key)
+  if (index < 0) return
+  const msg = messages.value[index]
+  if (msg.role !== 'assistant' || msg.pieceSettled) return
+  msg.content = text
+  msg.pieceDraft = true
+  syncActive()
+}
+
 /** 排队答案补回这条回答：这一轮界面没有实时流，正文只来自状态读数里的 result。 */
 function applyQueuedAnswer(key, answer) {
   const index = messages.value.findIndex((msg, at) => turnKey(msg, at) === key)
   if (index < 0) return
   const msg = messages.value[index]
-  if (msg.content) return
+  // R558：草稿可以被终答整段替换（`pieceDraft` 为真时那一格本来就不是「已经有答案」）；
+  // 其余情形维持原口径——已经有正文就不许多写一条，这正是「每轮一条答案」的屏侧那半。
+  if (msg.content && !msg.pieceDraft) return
   msg.content = answer
+  msg.pieceDraft = false
+  msg.pieceSettled = true
   syncActive()
 }
 
@@ -1590,7 +1612,24 @@ function watchQueueTurn(key, requestId) {
       return
     }
     try {
-      const status = await http.get(`/queue/status/${encodeURIComponent(requestId)}`)
+      // R558 · 甲案投递面：轮询带上上一发交回的游标，读回的 text 就是新长出来的那一截字。
+      const pieceSeen = queuePieces.value[key] || null
+      const pieceCursor = pieceSeen && Number.isFinite(Number(pieceSeen.cursor))
+        ? Number(pieceSeen.cursor)
+        : 0
+      const status = await http.get(
+        `/queue/status/${encodeURIComponent(requestId)}?since=${pieceCursor}`
+      )
+      const piece = status.data?.stream_pieces || null
+      if (piece && typeof piece.text === 'string' && piece.text) {
+        const merged = (pieceSeen ? pieceSeen.text : '') + piece.text
+        queuePieces.value = storeBag(queuePieces, key, {
+          cursor: Number.isFinite(Number(piece.cursor)) ? Number(piece.cursor) : pieceCursor,
+          text: merged,
+          truncated: Number(piece.truncated) > 0,
+        })
+        applyQueuedPiece(key, merged)
+      }
       const read = {
         status: typeof status.data?.status === 'string' ? status.data.status : '',
         position: Number.isFinite(Number(status.data?.position)) ? Number(status.data.position) : null,

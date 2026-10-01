@@ -5195,6 +5195,22 @@ def queue_task_owner_user_id(payload: dict) -> tuple[str, str]:
     return str(live.user_id), ""
 
 
+def _queue_piece_since(request: FastAPIRequest) -> int:
+    """把 `since` 读成一枚非负整数：读不懂就当 0（整段重来），不为此新造错误码。
+
+    R558 判据②要求这一扇门零新稳定码。坏 `since` 的后果只是客户端多拿一遍字，不是拒答，
+    所以它走「宽容取值＋契约里把缺席与越界都说清」这一条，而不走 4xx。
+    """
+    raw = (request.query_params.get("since") or "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return value if value > 0 else 0
+
+
 @router.get("/queue/status/{request_id}")
 async def queue_status(request_id: str, request: FastAPIRequest):
     """轮询队列请求的处理状态。前端每 3s 调用一次，直到终态。
@@ -5242,6 +5258,14 @@ async def queue_status(request_id: str, request: FastAPIRequest):
         pending = queue.redis.lrange(queue.pending_key, 0, -1)
         ids = [item.decode() if isinstance(item, bytes) else str(item) for item in pending]
         readout["position"] = ids.index(request_id) + 1 if request_id in ids else None
+    if status == "processing":
+        # R558 判据①：正在跑的这一轮，逐字片段从**既有轮询面**增量读出（客户端把上一发的
+        # `cursor` 原样填回 `since`，读回的 `text` 就是新长出来的那一截字）。
+        # 🔴 只在 `processing` 这一枚状态下发：终态那份正文由 `result` / 终态读数负责，
+        # 增量面只是「长出来」那一截表演——不进终态帧、不进 usage、不进 sources、不参与评分。
+        readout["stream_pieces"] = queue.piece_readout(
+            request_id, since=_queue_piece_since(request)
+        )
     return readout
 
 
