@@ -11,14 +11,17 @@
  ① 干净机全绿，七格一枚不少（正控——防止「一律 FAIL」这种假严也算通过）；
  ② K1 外来 GPU 计算进程 -> gpu_apps 红（A(1) 的 p95 读数不可采信）；
  ③ K2 空进程表 -> keep_awake 与 foreign_python 双红（🔴 本班刚抓到的那一形：量不到不等于干净）；
- ④ K3 keep-awake 只剩十分钟 -> 红（不许沿用快到期那枚）；
+ ④ K3 keep-awake 停了续锁 -> 红（R566 成对改口：读 stamp 的 mtime，不读「进程起了多久＋命令行那个数」）；
+ ④b R566 反面：起了七小时但每 240 s 真在续的常驻锁必须 PASS——旧算式在这里判死，10-02 差点拦掉 run13；
  ⑤ K4 量具自己 rc=2 -> 该格红而不是绿；
  ⑥ K5 缺 REPORT_LANE_VIA_QUEUE / 跑分树脏 -> 各自红；
  ⑦ K6 反向：Agent 自己的 pytest 子工与 execnet bootstrap 不许报成外来负载（防过严误杀开窗）。
 退出码契约：0 全绿 / 1 至少一格 FAIL / 2 量具没跑成——2 永远不是「已通过」。
 """
 import importlib.util
+import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -31,6 +34,24 @@ sys.modules[_SPEC.name] = gate
 _SPEC.loader.exec_module(gate)
 
 REPO_PY = str(ROOT / ".venv" / "Scripts" / "python.exe")
+#: R566（10-02 成对改口）：`keep_awake` 那一格从今天起读两枚真东西——命令行里有没有 `--loop`，
+#: 以及 stamp 文件的 mtime 新不新（`window_keep_awake.check_stamp` 用的就是 getmtime）。
+#: 所以下面每一枚假进程都必须带一枚本件自己造的、mtime 可拨的 stamp，绝不许蹭真机上那枚活的。
+_STAMP_DIR = tempfile.mkdtemp(prefix="eb_r530_pins_")
+
+
+def _stamp_file(age_seconds, tag, now=None):
+    now = time.time() if now is None else now
+    path = os.path.join(_STAMP_DIR, "ka-%s.txt" % tag)
+    moment = time.strftime("%Y-%m-%dT%H:%M:%S+0800", time.localtime(now - age_seconds))
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write("PREV=0x80000003 REQUESTED=0x80000003 PID=11 AT=%s\n" % moment)
+    os.utime(path, (now - age_seconds, now - age_seconds))
+    return path
+
+
+def _keep_cmd(stamp_path, mode="--loop"):
+    return REPO_PY + " scripts" + chr(92) + "window_keep_awake.py --interval 240 " + mode + " --stamp " + stamp_path
 FOREIGN_PY = "C:" + chr(92) + "Users" + chr(92) + "fengx" + chr(92) + "anaconda3" + chr(92) + "python.exe"
 CHECK_NAMES = {"provenance", "answer_cache", "keep_awake", "gpu_apps", "foreign_python", "eval_tree", "env_flags"}
 
@@ -46,7 +67,7 @@ def _clean(now=None):
         provenance_rc=0,
         provenance_text="verdict       : MATCH",
         cache_rc=0,
-        processes=[_proc(11, REPO_PY, REPO_PY + " keep_awake.py window 600")],
+        processes=[_proc(11, REPO_PY, _keep_cmd(_stamp_file(60.0, "clean", stamp)))],
         create_times={11: stamp - 60},
         gpu_apps=[{"pid": "11", "exe": REPO_PY}],
         gpu_seen=True,
@@ -85,13 +106,19 @@ def test_c_an_empty_process_table_is_never_read_as_clean():
     assert status["foreign_python"] == gate.FAIL
 
 
-def test_d_an_expiring_keep_awake_does_not_cover_the_window():
+def test_d_a_keep_awake_that_stopped_renewing_covers_nothing():
+    """R566 成对改口：旧写法这里比的是「进程起于 235 分钟前 + 命令行里那个 240」算出的剩余分钟。
+
+    真口径改读 stamp：同一枚 `--loop` 进程，续锁一停（mtime 3000 s 没动）⇒ 窗长 300 min 与 3 min
+    两档需求都必须红——覆盖能力不随「需要几分钟」而变。这正是旧算式造出的那枚假绿的反面。
+    """
     stamp = time.time()
+    stale = _stamp_file(3_000.0, "stale", stamp)
     snap = _clean(stamp)
-    snap.processes = [_proc(11, REPO_PY, REPO_PY + " keep_awake.py window 240")]
+    snap.processes = [_proc(11, REPO_PY, _keep_cmd(stale))]
     snap.create_times = {11: stamp - 235 * 60}
     assert _status(snap, 300.0)["keep_awake"] == gate.FAIL
-    assert _status(snap, 3.0)["keep_awake"] == gate.PASS
+    assert _status(snap, 3.0)["keep_awake"] == gate.FAIL
 
 
 def test_e_a_broken_ruler_never_reports_pass():
@@ -120,7 +147,7 @@ def test_f_missing_switch_and_dirty_eval_tree_each_fail():
 def test_g_agents_own_test_children_are_not_foreign_load():
     snap = _clean()
     snap.processes = [
-        _proc(11, REPO_PY, REPO_PY + " keep_awake.py window 600"),
+        _proc(11, REPO_PY, _keep_cmd(_stamp_file(60.0, "g"))),
         _proc(21, FOREIGN_PY, FOREIGN_PY + " -m pytest tests/test_r523_migration_pair.py -q"),
         _proc(22, FOREIGN_PY, FOREIGN_PY + ' -u -c "import sys;exec(eval(sys.stdin.readline()))"'),
         _proc(23, FOREIGN_PY, FOREIGN_PY + ' "-c" "from multiprocessing.spawn import spawn_main"'),
@@ -152,17 +179,24 @@ def test_i_tool_breakage_without_a_fail_cell_is_two_not_zero(monkeypatch):
     assert gate.main([]) == 1
 
 
-def test_k_a_keep_awake_past_its_own_deadline_is_not_coverage():
+def test_k_process_age_is_not_coverage_and_a_renewing_lock_is():
+    """R566 的正反两半：覆盖来自「锁还在不在续」，不来自「进程起了多久」。
+
+    旧写法在这里把「起于 430 分钟前」判成过期——那是本席 10-02 撞到的假红：一枚每 240 s 真在续锁
+    的常驻锁，起过四小时就被判死，21:13 之后连 run13 都开不出来。今天两格各证一头。
+    """
     """正是本班现取的那枚形状：07:50 起的 420 分钟档，到 14:50 就没了，别看它 nominal 还很长。"""
     stamp = time.time()
-    snap = _clean(stamp)
-    snap.processes = [_proc(11, REPO_PY, REPO_PY + " keep_awake.py window 420")]
-    snap.create_times = {11: stamp - 430 * 60}
-    assert _status(snap, 300.0)["keep_awake"] == gate.FAIL
-    fresh = _clean(stamp)
-    fresh.processes = [_proc(11, REPO_PY, REPO_PY + " keep_awake.py window 420")]
-    fresh.create_times = {11: stamp - 10 * 60}
-    assert _status(fresh, 300.0)["keep_awake"] == gate.PASS
+    aged = _clean(stamp)
+    aged.processes = [_proc(11, REPO_PY, _keep_cmd(_stamp_file(60.0, "k-fresh", stamp)))]
+    aged.create_times = {11: stamp - 430 * 60}
+    assert _status(aged, 300.0)["keep_awake"] == gate.PASS, (
+        "起了七小时但每 240 s 真在续锁的常驻锁被判 FAIL——那就是 10-02 拦死 run13 的假红")
+    stopped = _clean(stamp)
+    stopped.processes = [_proc(11, REPO_PY, _keep_cmd(_stamp_file(600.0, "k-stale", stamp)))]
+    stopped.create_times = {11: stamp - 10 * 60}
+    assert _status(stopped, 300.0)["keep_awake"] == gate.FAIL, (
+        "stamp 十分钟没人续还判过：那半格 check_stamp 就没牙")
 
 
 def test_j_in_repo_is_case_insensitive_on_the_root():

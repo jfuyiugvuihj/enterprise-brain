@@ -5,7 +5,8 @@
 
   provenance     镜像携带的文件与 HEAD 一致（复用 scripts/check_image_provenance.py --expect-container 的退出码）
   answer_cache   Redis 里 answer:* 为零（复用 scripts/eval_window_answer_cache_gate.py --check；rc=2 永远不算过）
-  keep_awake     有一枚常驻 keep-awake 且剩余覆盖时长 >= --need-minutes（防「沿用快到期那枚」）
+  keep_awake     常驻 --loop keep-awake 在位 **且** stamp 新鲜（R566：不再从命令行抠一个数当剩余
+                 分钟；窗长超过可证到此刻这一段时，读数里必须带「窗内自复核」那句）
   gpu_apps       nvidia-smi 计算进程里不许有仓库外的可执行文件（防外来负载污染时延判据）
   foreign_python 仓库外解释器跑的常驻脚本点名（外来 train.py 一族）
   eval_tree      跑分树 be-eval95 干净且可 --ff-only 追平
@@ -30,7 +31,14 @@ REPO_TEXT = str(ROOT).lower()
 PASS, FAIL = "PASS", "FAIL"
 PS_QUERY = "Get-CimInstance Win32_Process -Filter @F | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress"
 PS_FILTER = "Name='python.exe' OR Name='pythonw.exe'"
-KEEP_AWAKE_MINUTES = re.compile(r"keep_awake.py\s+\S+\s+([0-9]+(?:.[0-9]+)?)")
+#: R566（10-02）：旧的 KEEP_AWAKE_MINUTES 想把「命令行里的一个数」当「剩余覆盖分钟」，
+#: 而真实命令行是 `... window_keep_awake.py --interval 240 --loop`——数字落在 --interval
+#: 之后，那条正则要求 keep_awake.py 后紧跟 \S+ 再紧跟数字，因此**永不命中**，每一枚调用
+#: 都走 minutes=240.0 兜底：四小时内恒 PASS（假绿，从没读过 stamp），四小时后把这枚每 240 s
+#: 真在续锁的活进程判成「已过期」（假红）。今天只读两件真事：续锁间隔（秒）与 stamp 新鲜度。
+KEEP_AWAKE_INTERVAL = re.compile(r"--interval\s+([0-9]+)")
+KEEP_AWAKE_STAMP = re.compile(r"--stamp\s+(\S+)")
+KEEP_AWAKE_INTERVAL_DEFAULT = 240
 
 
 def run(cmd):
@@ -148,6 +156,37 @@ def collect():
 FOREIGN_NOISE = ("keep_awake.py", "-m pytest", "-u -c", "spawn_main", "r530_run10_window_preflight.py")
 
 
+def _window_keep_awake():
+    """按路径把 `scripts/window_keep_awake.py` 拉进来——它是脚本不是包，直接 import 进不来。"""
+    scripts_dir = str(ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import window_keep_awake
+    return window_keep_awake
+
+
+def keep_awake_interval(cmd_text):
+    """续锁间隔，单位**秒**（`--interval` 的语义就是秒），绝不当成分钟读。"""
+    match = KEEP_AWAKE_INTERVAL.search(cmd_text)
+    return int(match.group(1)) if match else KEEP_AWAKE_INTERVAL_DEFAULT
+
+
+def keep_awake_stamp_path(cmd_text):
+    match = KEEP_AWAKE_STAMP.search(cmd_text)
+    if match:
+        return match.group(1).strip(chr(34))
+    return _window_keep_awake().DEFAULT_STAMP
+
+
+def keep_awake_freshness(stamp_path, now):
+    """问「上一次真续锁距今多久」；问不到就 FAIL——量不到不等于干净，更不等于挂上了。"""
+    try:
+        return _window_keep_awake().check_stamp(stamp_path, now)
+    except Exception as exc:
+        return False, "stamp 问不到（%s: %s）——量不到不等于干净" % (type(exc).__name__, exc)
+
+
+
 def is_project_noise(cmd_text):
     """Agent 自己的 pytest 子工／execnet bootstrap 不算外来负载，别把它们报成脏。"""
     return any(token in cmd_text for token in FOREIGN_NOISE)
@@ -177,24 +216,33 @@ def evaluate(snap, need_minutes):
     if not snap.processes:
         rows.append(("keep_awake", FAIL, "进程表问不到（PS 量具没跑成）——空表不等于没有常驻 keep-awake"))
     elif not keep:
-        rows.append(("keep_awake", FAIL, "机上没有常驻 keep-awake；DC 睡眠=180 s，适配器一掉电就冻窗"))
+        rows.append(("keep_awake", FAIL, "机上没有常驻 keep-awake；DC 睡眠=180 s，适配器一掉电就冻窗"
+                     " —— 补法：python scripts/window_keep_awake.py --loop --interval 240（临时锁，不改任何电源设置）"))
     else:
-        best, best_left = None, float("-inf")
+        # R566 口径：`--loop` 的覆盖时长是「进程活着就无限」，有界的只有 `--once`。本格能证的只
+        # 有「上一次真续锁距今多久」（window_keep_awake.check_stamp，MAX_STAMP_AGE_SECONDS=300），
+        # 所以 PASS 要两枚真读数同时成立：常驻 --loop 进程在位 **且** stamp 新鲜。只凭命令行里那个
+        # 数是旧写法，本单明令不许。窗长超过「可证到此刻」这一段时，读数必须连带交出「窗内自复核」
+        # 那句——不许把一限量写成一个人的到期分钟数，那正是半夜冻窗的现成形状。
+        chosen = None
         for p in keep:
-            pid = int(p["ProcessId"])
-            started = snap.create_times.get(pid, 0.0)
-            match = KEEP_AWAKE_MINUTES.search(str(p.get("CommandLine", "")))
-            minutes = float(match.group(1)) if match else 240.0
-            left = started + minutes * 60 - snap.now
-            if left > best_left:
-                best, best_left = p, left
-        if best_left >= need_minutes * 60:
-            rows.append(("keep_awake", PASS, "pid=" + str(best["ProcessId"]) + " 剩余 "
-                         + str(int(best_left // 60)) + " min >= 需要 " + str(need_minutes) + " min"))
+            cmd = str(p.get("CommandLine", ""))
+            interval = keep_awake_interval(cmd)
+            fresh, phrase = keep_awake_freshness(keep_awake_stamp_path(cmd), snap.now)
+            mode = "常驻 --loop（每 %d s 续一发）" % interval if "--loop" in cmd else "--once（只挂一发，非常驻）"
+            note = mode + "；" + phrase
+            if fresh and "--loop" in cmd:
+                chosen = (p, note, True)
+                break
+            if chosen is None:
+                chosen = (p, note, False)
+        best, note, ok = chosen
+        if ok:
+            rows.append(("keep_awake", PASS, "pid=" + str(best["ProcessId"]) + " " + note
+                         + "；需要 " + str(need_minutes) + " min ⇒ 本格只证到此刻，窗内必须自复核（续锁一停，stamp 过 300 s 就红）"))
         else:
-            phrase = ("已过期 " + str(int(-best_left // 60)) + " min") if best_left < 0 else ("只剩 " + str(int(best_left // 60)) + " min")
-            rows.append(("keep_awake", FAIL, "pid=" + str(best["ProcessId"]) + " " + phrase
-                         + " < 需要 " + str(need_minutes) + " min（沿用快到期那枚＝半夜冻窗的现成形状）"))
+            rows.append(("keep_awake", FAIL, "pid=" + str(best["ProcessId"]) + " " + note
+                         + " —— 补法：python scripts/window_keep_awake.py --loop --interval 240（临时锁，不改任何电源设置）"))
 
     if not snap.gpu_seen:
         rows.append(("gpu_apps", FAIL, "nvidia-smi 跑不成——问不到就不能假设没有外来 GPU 负载"))
