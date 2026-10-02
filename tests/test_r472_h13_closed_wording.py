@@ -17,11 +17,13 @@ r"""R472：H13 已经结案，仓里那两处「还没裁」的假话必须绝�
   丁 `department_column_missing` 那一支仍然不报因由、码仍然落 `no_visible_rows`
      （契约「## R467」节明写：换掉的只是理由，行为一个字没变）。
 反证七刀一律落 `tests/_temp_edit_overlay.py` 的影子根或就地换函数，被跟踪文件全程只读。
+🔴 R556（10-01）把这件的窗尾旧姿势也迁了：两扇 `execs_module = True` 今天都是 `False`，窗内由 `r466.install_mutation` 只装变了的那几枚顶层绑定（读数见`docs/testing/r556-window-posture-migration-2026-10-01.md`）。
 """
 
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -29,6 +31,7 @@ import pytest
 from app.agents import tools
 from tests import _temp_edit_overlay as overlay
 from tests import test_error_code_vocabulary as vocab
+from tests import test_r466_mutation_does_not_leak_into_live_module as r466
 
 REPO = overlay.REPO
 TOOLS_REL = "app/agents/tools.py"
@@ -155,8 +158,10 @@ class _ShadowWordEdit(overlay.ShadowEdit):
     """一扇反证窗：把一处改口换回盘上曾经写过的假话，变异只落影子根。"""
 
     tag = "r472"
-    #: 词表件的键与值是模块级数据：要连数据一起变才量得到丙格。
-    execs_module = True
+    #: 🔴 R556：旧姿势是进门把整份码体 exec 进活模块（词表件的键与值是模块级数据，要连数据一起变
+    #: 才量得到丙格）。今天由 ``_word_window`` 只把**变了的那几枚顶层绑定**装进活模块：落在注释上的
+    #: 那三把刀一枚绑定都不碰，落在 ``DEFERRED_CODES`` 上的那一把照样被执行。
+    execs_module = False
 
     def __init__(self, knife: str) -> None:
         rel, old, new = FAKE_OPEN_REASONS[knife]
@@ -169,6 +174,34 @@ class _ShadowWordEdit(overlay.ShadowEdit):
         if count != 1:
             raise AssertionError("反证刀的锚不唯一（%d 处）：%r" % (count, self._old[:50]))
         return _mutant_or_red(text.replace(self._old, self._new))
+
+
+@contextmanager
+def _word_window(knife: str):
+    """开一扇 r472 的反证窗（R556 新口径）：变异只落影子根，活模块只换**变了的那几枚顶层绑定**。
+
+    这四把刀形状不同，装法也不同，分开说清：
+      · `vocab_reason` / `tools_reason` / `unattributed` 改的是注释——注释进不了码体，被指的钉读的
+        是 ``overlay.authoritative_text``（窗内＝影子副本），所以一枚绑定都不装；
+      · `implemented` 改的是词表件的 ``DEFERRED_CODES``（模块级数据），丙格读
+        ``vocab.DEFERRED_CODES[...]``，那一枚必须走 ``r466.install_mutation`` 才算真被执行。
+    🔴 两种情形都不许 exec 整份码体：那正是本单要清掉的旧姿势。
+    """
+    rel, _old, _new = FAKE_OPEN_REASONS[knife]
+    disk_text = (REPO / rel).read_bytes().decode("utf-8")
+    with _ShadowWordEdit(knife) as info:
+        shadow_text = info.read_text()
+        names, _unmatched = r466.changed_bindings(disk_text, shadow_text)
+        if names:
+            module = overlay.module_of(rel)
+            assert module is not None, "%s 对应的模块还没被导入：变异无处可装" % rel
+            with r466.install_mutation(module, REPO / rel, shadow_text) as mutant:
+                info["installed_bindings"] = sorted(mutant)
+                yield info
+        else:
+            assert shadow_text != disk_text, "这把刀连影子副本都没改变一个字：反证是空的"
+            info["installed_bindings"] = []
+            yield info
 
 
 # ==================== 甲 · 「H13 未决」的字样在两枚被钉文件里必须绝迹 ====================
@@ -288,7 +321,7 @@ def test_the_missing_department_column_branch_still_reports_no_reason():
 
 def test_counter_evidence_1_fake_reason_back_in_the_vocabulary_goes_red():
     """刀①：词表件的理由换回「业主尚未裁口径（H13）」——甲格必须红。"""
-    with _ShadowWordEdit("vocab_reason"):
+    with _word_window("vocab_reason"):
         assert _open_hits(VOCAB_REL), "假理由回插了而甲格量不到：正则族瞎了"
         with pytest.raises(AssertionError) as caught:
             test_no_open_question_wording_survives_in_the_two_files()
@@ -297,7 +330,7 @@ def test_counter_evidence_1_fake_reason_back_in_the_vocabulary_goes_red():
 
 def test_counter_evidence_2_fake_reason_back_in_tools_goes_red():
     """刀②：tools.py 的理由换回「密级口径属 H13（业主未裁）」——甲格必须红。"""
-    with _ShadowWordEdit("tools_reason"):
+    with _word_window("tools_reason"):
         assert _open_hits(TOOLS_REL), "假理由回插了而甲格量不到"
         with pytest.raises(AssertionError) as caught:
             test_no_open_question_wording_survives_in_the_two_files()
@@ -306,7 +339,7 @@ def test_counter_evidence_2_fake_reason_back_in_tools_goes_red():
 
 def test_counter_evidence_3_claiming_it_is_implemented_goes_red():
     """刀③：登记值改写成「已实现」——丙格红（键没动也红，不靠一句注释）。"""
-    with _ShadowWordEdit("implemented"):
+    with _word_window("implemented"):
         assert vocab.DEFERRED_CODES[PENDING_CODE].startswith("已实现"), "影子根没生效"
         with pytest.raises(AssertionError) as caught:
             test_the_pending_code_is_still_pending_not_implemented()
@@ -315,7 +348,7 @@ def test_counter_evidence_3_claiming_it_is_implemented_goes_red():
 
 def test_counter_evidence_4_dropping_the_attribution_goes_red():
     """刀④：删掉一处改口的两枚出处——乙格红。"""
-    with _ShadowWordEdit("unattributed"):
+    with _word_window("unattributed"):
         with pytest.raises(AssertionError) as caught:
             test_every_rewritten_comment_names_both_sources()
         assert "出处" in str(caught.value), str(caught.value)
@@ -368,8 +401,10 @@ def test_counter_evidence_7_reporting_a_reason_for_that_branch_goes_red():
     )
 
     class _ReportsAReason(overlay.ShadowEdit):
+        #: 🔴 R556：这扇窗过去进门 exec 整份 tools.py；今天由 install_mutation 只装
+        #: 变了的那一枚 `_row_scope_reason`，其余每一枚函数对象连身份都不动。
         tag = "r472-ding"
-        execs_module = True
+        execs_module = False
 
         def mutate(self, text: str) -> str:
             count = text.count(anchor)
@@ -379,18 +414,21 @@ def test_counter_evidence_7_reporting_a_reason_for_that_branch_goes_red():
                 text.replace(anchor, anchor.replace('return ""', 'return "本表没有部门列，过滤后一行不剩"'))
             )
 
-    with _ReportsAReason(REPO / TOOLS_REL):
-        assert tools._row_scope_reason(dict(_MISSING_COLUMN)) != "", "影子根没生效"
-        with pytest.raises(AssertionError) as caught:
-            test_the_missing_department_column_branch_still_reports_no_reason()
-        assert "开始替别的维度报因由" in str(caught.value), str(caught.value)
+    with _ReportsAReason(REPO / TOOLS_REL) as info:
+        with r466.install_mutation(tools, REPO / TOOLS_REL, info.read_text()) as mutant:
+            assert "_row_scope_reason" in mutant, (
+                "这把刀没落在 `_row_scope_reason` 上（实取 %s）：丁格反证迁成了空转" % (sorted(mutant),))
+            assert tools._row_scope_reason(dict(_MISSING_COLUMN)) != "", "影子根没生效"
+            with pytest.raises(AssertionError) as caught:
+                test_the_missing_department_column_branch_still_reports_no_reason()
+            assert "开始替别的维度报因由" in str(caught.value), str(caught.value)
 
 
 def test_the_tracked_files_survive_every_knife_untouched():
     """七刀全程只读：被跟踪文件进出逐字节相等，且窗外甲乙丙丁自己都是绿的。"""
     for knife in sorted(FAKE_OPEN_REASONS):
         before = {rel: (REPO / rel).read_bytes() for rel in (TOOLS_REL, VOCAB_REL)}
-        with _ShadowWordEdit(knife):
+        with _word_window(knife):
             pass
         for rel, raw in before.items():
             assert (REPO / rel).read_bytes() == raw, "反证刀写进了被跟踪文件：%s" % rel

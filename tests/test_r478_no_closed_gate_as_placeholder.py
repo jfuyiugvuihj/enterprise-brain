@@ -34,6 +34,9 @@ test_counter_evidence_dropping_the_closure_cell_is_not_an_empty_ruler）：摘�
 正则本件照抄，只把 H13 放宽成任意一枚闸门号，并常驻核对「本件的形状集必须是它的超集」（基线与
 盘上各量一遍）——上一席漏掉的正是这一格。
 
+R556（10-01）：两扇 `_SpanEdit` 窗今天都不再进门 exec 整份码体——常量那一支走
+`r466.install_mutation`，类体那一支走 `overlay.isolated_module`（凭据 `docs/testing/r556-window-posture-migration-2026-10-01.md`）。
+
 断言格：甲 假指针在 app/** 零命中、名单现读、丙格（提到已结案的号必须自己点名结案）、尺子必须是
 r472 那把的超集、基线九格病仍要读得出（事故 #83：刀照基线造）；乙 两枚对外可见的串必须逐字自白
 「今天没有任何路径比较这枚字段、注册值不改变任何结果」并点名出处——既不许写回 waiting 形状，也
@@ -57,6 +60,7 @@ from app.api.v1 import open_platform as open_platform_routes
 from app.common import audit, open_platform
 from app.common.open_platform import clear_app_registry, configure_app_store
 from tests import _temp_edit_overlay as overlay
+from tests import test_r466_mutation_does_not_leak_into_live_module as r466
 from tests import test_r467_classification_default_is_ratified as r467
 from tests import test_r472_h13_closed_wording as r472
 from tests import test_r78_unearned_claims as r78
@@ -308,10 +312,15 @@ def _balanced_span(text, anchor):
 
 
 class _SpanEdit(overlay.ShadowEdit):
-    """一扇反证窗：把一枚对外可见的字面量整段换成假话，变异只落影子根并 exec 回模块。"""
+    """一扇反证窗：把一枚对外可见的字面量整段换成假话，变异只落影子根（活模块交给 `_span_window`）。
+
+    🔴 R556：`execs_module` 从今天起是 False。旧口径进门把整份码体 exec 进活模块，窗尾再倒回快照；
+    新口径由姿势件只装**变了的那几枚顶层绑定**，落在 Pydantic 类体里的那一把改读隔离副本
+    （`overlay.isolated_module`），活模块一个字都不碰。
+    """
 
     tag = "r478"
-    execs_module = True
+    execs_module = False
 
     def __init__(self, rel, anchor, body_lines, closer):
         super().__init__(REPO / rel)
@@ -331,6 +340,45 @@ class _SpanEdit(overlay.ShadowEdit):
             raise AssertionError("反证刀产物编译不过（它红的是语法不是判据）：" + str(exc)) from exc
         return mutant
 
+
+#: 这一族刀落在类体里：`description` 是在模型类创建那一刻烘进 JSON schema 的，只换那一枚类绑定
+#: 换不到已经注册好的端点注解——那会把刀迁成空转（比不迁更坏）。所以对外那一面读隔离副本。
+SCHEMA_SURFACE_RELS = ("app/api/v1/open_platform.py",)
+
+
+@contextmanager
+def _span_window(rel, anchor, body_lines, closer):
+    """开一扇 r478 的反证窗：变异只落影子根，活模块不再 exec 整份码体（R556 新口径）。
+
+    两格分开走，各有各的原证：
+      · `MAX_CLEARANCE_NOTE` 落在 `app/common/open_platform.py` 的模块级赋值上 ⇒ 走
+        ``r466.install_mutation``，窗内 `_note_text()` 与响应体读到的就是影子副本那份值；
+      · `description=` 落在 `ApplicationRegisterRequest` 类体里 ⇒ 对外面改读
+        ``overlay.isolated_module`` 造的那枚隔离副本（整份变异码体在它身上跑，活模块不开口），
+        被指的 r78 那枚钉读的仍是「发布出去的文档」，判据强度一格没降。
+    """
+    path = REPO / rel
+    disk_text = path.read_bytes().decode("utf-8")
+    with _SpanEdit(rel, anchor, body_lines, closer) as info:
+        shadow_text = info.read_text()
+        module = overlay.module_of(rel)
+        assert module is not None, rel + " 对应的模块还没被导入：这扇窗无从落绑"
+        if rel in SCHEMA_SURFACE_RELS:
+            info["installed_bindings"] = []
+            info["surface"] = lambda: overlay.isolated_module(module, shadow_text, path)
+            yield info
+        else:
+            names, _unmatched = r466.changed_bindings(disk_text, shadow_text)
+            assert names, "%s 这把刀没落到任何一枚顶层绑定上：反证是空的" % rel
+            with r466.install_mutation(module, path, shadow_text) as mutant:
+                info["installed_bindings"] = sorted(mutant)
+                info["surface"] = lambda: module
+                yield info
+
+
+#: 两把对外可见串的锚（R556 抽常量：新钉 `tests/test_r556_*.py` 与本件复用同一份变异，不抄第二份字面）。
+NOTE_ASSIGN_ANCHOR = "MAX_CLEARANCE_NOTE = ("
+DESCRIPTION_CALL_ANCHOR = "description=("
 
 #: 这枚登记值在源码里的两种存在形状：属性（数据类那一行）与字典键（``asdict`` 摊平之后）。
 FIGURE_KEY = "max_clearance"
@@ -448,14 +496,19 @@ def _own_the_open_platform_surfaces(monkeypatch):
     r78.audit.clear_audit_events()
 
 
-def _published_description():
-    """从「重新 exec 过的路由模块 + 重新生成的对外文档」里取那枚 description。
+def _published_description(module=None):
+    """从「当前该算数的那份路由码 + 重新生成的对外文档」里取那枚 description。
 
     description 是在模型类创建时烘进 JSON schema 的，改活对象改不动；这一刀要量的本来就是
     发布出去的那份文档，所以走重建这条路，而不是拿字符串比着看。
+
+    R556：重建读的是哪一枚模块由调用方给。反证窗里给的是 `overlay.isolated_module` 造的那枚
+    隔离副本（影子副本那份码在它身上整片跑），窗外不给就用活模块——旧口径靠进门 exec 整份码体
+    把活模块顶掉，那正是本单要清掉的一格。
     """
+    surface = module or open_platform_routes
     fresh = FastAPI(title="r478-refutation")
-    fresh.include_router(open_platform_routes.apps_router, prefix="/api/v1")
+    fresh.include_router(surface.apps_router, prefix="/api/v1")
     schema = fresh.openapi()
     return schema["components"]["schemas"]["ApplicationRegisterRequest"]["properties"][
         "max_clearance"]["description"]
@@ -509,11 +562,15 @@ def _stays_green(fn, why):
 FENCE = chr(96) * 3
 
 
-def _fresh_app():
-    """按「一个新进程今天会发布什么」重建对外文档：模块被 exec 成变异版时，这里的就是变异版。"""
+def _fresh_app(module=None):
+    """按「一个新进程今天会发布什么」重建对外文档。
+
+    R556：`module` 给的是反证窗里那枚隔离副本时，发布出去的就是影子副本那份字；不给就用活模块。
+    """
+    surface = module or open_platform_routes
     built = FastAPI(title="r478-counter-evidence")
-    built.include_router(open_platform_routes.router, prefix="/api/v1")
-    built.include_router(open_platform_routes.apps_router, prefix="/api/v1")
+    built.include_router(surface.router, prefix="/api/v1")
+    built.include_router(surface.apps_router, prefix="/api/v1")
     return built
 
 
@@ -756,8 +813,9 @@ def test_counter_evidence_reinserting_the_old_note_goes_red(monkeypatch):
         _stays_green(r78.test_the_registration_response_labels_the_clearance_it_stores,
                      "刀一的控制格：窗外那枚钉就该是绿的")
         assert not scan_app(), "窗外已经有假指针了，刀一的读数无从归因：" + _render(scan_app())
-        with _SpanEdit(NOTE_REL, "MAX_CLEARANCE_NOTE = (",
-                       _one_line_literal(_base_note(), "    "), ")"):
+        with _span_window(NOTE_REL, NOTE_ASSIGN_ANCHOR,
+                          _one_line_literal(_base_note(), "    "), ")") as note_window:
+            assert note_window["installed_bindings"], "常量那一支没装进活模块：刀迁成了空转"
             reported = [hit for hit in scan_app() if hit["rel"] == NOTE_REL]
             assert reported, "刀一落下去尺子不报（旧句明明带着 open decision 与闸门号）：尺子是空转的"
             assert any(word in _note_text().lower() for word in WAITING_WORDS), "旧句的 waiting 形状没被量到"
@@ -771,14 +829,15 @@ def test_counter_evidence_reinserting_the_old_description_goes_red(monkeypatch):
     """刀二：description= 回插基点那句——咬的是发布出去的 OpenAPI 那一格（不是模型里的字）。"""
     with _r78_state(monkeypatch):
         assert not scan_app(), "窗外已经有假指针了，刀二的读数无从归因：" + _render(scan_app())
-        with _SpanEdit(DESCRIPTION_REL, "description=(",
-                       _one_line_literal(_base_description(), "            "), ")"):
+        with _span_window(DESCRIPTION_REL, DESCRIPTION_CALL_ANCHOR,
+                          _one_line_literal(_base_description(), "            "), ")") as desc_window:
+            assert desc_window["installed_bindings"] == [], "类体那一支不该再碰活模块的绑定"
             reported = [hit for hit in scan_app() if hit["rel"] == DESCRIPTION_REL]
             assert reported, "刀二落下去尺子不报：尺子是空转的"
-            published = _published_description().lower()
+            published = _published_description(desc_window["surface"]()).lower()
             assert any(word in published for word in WAITING_WORDS), "发布出去的文档没变成旧句：刀没落到对外面"
             assert _base_description().lower() in published, "发布的不是基点那句原文，红就红得没有依据"
-            monkeypatch.setattr(r78, "app", _fresh_app())
+            monkeypatch.setattr(r78, "app", _fresh_app(desc_window["surface"]()))
             _reds(r78.test_the_api_documentation_says_the_same_thing_to_the_client_that_reads_it,
                   "刀二落下去 OpenAPI 换锚后的钉还是绿的：那枚钉没咬住发布面")
 
@@ -789,9 +848,11 @@ def test_counter_evidence_claiming_the_field_is_enforced_goes_red(monkeypatch):
         _stays_green(r78.test_the_registration_response_labels_the_clearance_it_stores, "控制格（回执）")
         _stays_green(r78.test_the_api_documentation_says_the_same_thing_to_the_client_that_reads_it,
                      "控制格（发布面）")
-        with _SpanEdit(NOTE_REL, "MAX_CLEARANCE_NOTE = (", FAKE_ENFORCEMENT_NOTE, ")"):
-            with _SpanEdit(DESCRIPTION_REL, "description=(", FAKE_ENFORCEMENT_DESCRIPTION, ")"):
-                monkeypatch.setattr(r78, "app", _fresh_app())
+        with _span_window(NOTE_REL, NOTE_ASSIGN_ANCHOR, FAKE_ENFORCEMENT_NOTE, ")") as note:
+            assert note["installed_bindings"], "假实现口吻没装进活模块：响应体那一格迁成了空转"
+            with _span_window(DESCRIPTION_REL, DESCRIPTION_CALL_ANCHOR, FAKE_ENFORCEMENT_DESCRIPTION,
+                              ")") as desc:
+                monkeypatch.setattr(r78, "app", _fresh_app(desc["surface"]()))
                 _reds(r78.test_the_registration_response_labels_the_clearance_it_stores,
                       "假实现口吻落进响应体，r78 的第一枚钉却还绿：强度没升上去")
                 _reds(r78.test_the_api_documentation_says_the_same_thing_to_the_client_that_reads_it,

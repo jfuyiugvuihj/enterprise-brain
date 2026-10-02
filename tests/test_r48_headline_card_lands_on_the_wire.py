@@ -23,6 +23,7 @@ import importlib
 import importlib.util
 import json
 import re
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,7 @@ import pytest
 from app.api.v1 import chat
 
 import tests._temp_edit_overlay as overlay      # R253: 反证窗的影子根（变异只落副本）
+from tests import test_r466_mutation_does_not_leak_into_live_module as r466
 from tests.test_sse_sources import (  # noqa: F401  -- 同一条链，不造第二份夹具
     FINANCE_DOC,
     HR_DOC,
@@ -430,12 +432,19 @@ class _TempEdit(overlay.ShadowEdit):
     """一扇只改影子副本的反证窗（R253）：按字节进出、退出即还原视图，盘上那枚从头到尾只读。
 
     骨架在 ``tests/_temp_edit_overlay.py``；本件留下的只有「变异是什么」：锚点唯一性与那行
-    ``里锚点不唯一（N 处）`` 的报错原文照旧。本件的反证要真跑码，所以 ``execs_module`` 开着——
-    窗内把影子字节 exec 进 ``app.api.v1.chat`` 那枚现有模块对象，退出再 exec 回盘上的字。
+    ``里锚点不唯一（N 处）`` 的报错原文照旧。
+
+    🔴 R556 归真：上面原来还写着「本件的反证要真跑码，所以 ``execs_module`` 开着——窗内把影子字节
+    exec 进 ``app.api.v1.chat`` 那枚现有模块对象，退出再 exec 回盘上的字」。那句现在不成立了，
+    而且「退出再 exec 回盘上的字」正是 R553 乙腿点名的病（码体重跑会再造每一枚顶层类与每一行顶层
+    初始化，身份从此对不上号）。今天 ``execs_module = False``：要跑的变异由 ``_chat_window`` 走
+    ``r466.install_mutation``，只装**变了的那一枚** ``_headline_card_data``，出窗逐枚装回。
+    契约那两把刀改的是 ``docs/api/contract-v1.md``——``overlay.module_of`` 对非 .py 只能交 None，
+    那一族的窗从来只需要影子副本那份字。
     """
 
     tag = "r48"
-    execs_module = True
+    execs_module = False
 
     def __init__(self, path, edits):
         super().__init__(path)
@@ -451,16 +460,29 @@ class _TempEdit(overlay.ShadowEdit):
 
 
 def _reload():
-    """把 chat 模块按**当前该算数的那份字节**重跑一遍：窗内是影子副本，窗外是盘上的被跟踪文件。
+    """重新装载**夹具**模块 ``tests.test_sse_sources`` 并交回它——它不再兼任「把盘上的字 exec 回活模块」。
 
-    ``overlay.install_source`` 与 ``importlib.reload`` 同形：都在同一个模块对象的 ``__dict__``
-    上重跑码体，所以 ``from app.api.v1 import chat`` 的旧绑定一起看到新码，而被跟踪文件不开口。
+    🔴 R556 归真（跟进单 §141 判据⑤）：这一手原来第一件事就是 ``install_source(chat, 当前该算数的那份
+    字节)``——在活模块的 ``__dict__`` 上重跑整份码体。那一手救不回身份：每一枚顶层类与每一行顶层
+    初始化都被再造一遍（凭据 `docs/testing/r553-window-identity-leak-2026-10-01.md` §三·乙腿）。
+    今天窗内要跑的变异由 ``_chat_window`` 只装 ``_headline_card_data`` 那一枚绑定、出窗逐枚装回，
+    活模块压根不需要「重跑一遍」；这里留下的只有夹具重载这一件真事——本件与邻件都把返回的夹具模块
+    显式传下去（``_mutated_round(sources, ...)``），那条契约不改。
     """
     import tests.test_sse_sources as sources
 
-    overlay.install_source(chat, overlay.authoritative_text(overlay.rel_of(CHAT_PY)), CHAT_PY)
     importlib.reload(sources)
     return sources
+
+
+@contextmanager
+def _chat_window(edits):
+    """R556 新口径的 chat 反证窗：影子副本落变异 -> 只装变了的那几枚顶层绑定 -> 出窗逐枚装回。"""
+    with _TempEdit(CHAT_PY, edits) as info:
+        shadow_text = info.read_text()
+        with r466.install_mutation(chat, CHAT_PY, shadow_text) as mutant:
+            info["installed_bindings"] = sorted(mutant)
+            yield info
 
 
 def test_counter_evidence_b_dropping_the_name_from_the_contract_turns_r156_red():
@@ -509,12 +531,15 @@ def test_counter_evidence_c1_a_payload_key_nobody_named_turns_the_provenance_pin
     """
     tracked = hashlib.sha256(CHAT_PY.read_bytes()).hexdigest()[:16]
     try:
-        with _TempEdit(CHAT_PY, [(C1_ANCHOR, C1_MUTANT)]) as info:
+        with _chat_window([(C1_ANCHOR, C1_MUTANT)]) as info:
             sources = _reload()
             body = sources.drive(monkeypatch, tmp_path,
                                  [sources.doc_state(sources.fake_retriever_hits())],
                                  sources.finance_principal())
             data = _one_card(body)["data"]
+            assert info["installed_bindings"] == ["_headline_card_data"], (
+                "这把刀没只装 `_headline_card_data`（实取 %s）：姿势回退成了整片 exec" % (
+                    info["installed_bindings"],))
             assert "fabricated_note" in data, "变异没跑到影子副本的码：这枚反证是空的"
             with pytest.raises(AssertionError) as exc:
                 _check_payload_keys(data)
@@ -536,7 +561,7 @@ def test_counter_evidence_c2_a_row_field_that_does_not_exist_turns_the_round_red
     anchor = '        "sources": [dict(row) for row in shown],'
     patched = '        "sources": [dict(row, quote=row["excerpted_quote"]) for row in shown],'
     try:
-        with _TempEdit(CHAT_PY, [(anchor, patched)]) as info:
+        with _chat_window([(anchor, patched)]) as info:
             sources = _reload()
             with pytest.raises(KeyError) as exc:
                 sources.drive(monkeypatch, tmp_path,

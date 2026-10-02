@@ -34,8 +34,8 @@ from tests.test_r48_headline_card_lands_on_the_wire import (  # noqa: F401  -- �
     CHAT_PY as _CHAT_PY,
     EVENT,
     FINANCE_DOC,
-    _TempEdit,
     _ask,
+    _chat_window,
     _reload,
     cards,
     doc_state,
@@ -315,10 +315,11 @@ def test_d1_counter_evidence_a_card_sent_as_text_turns_this_pin_red(monkeypatch,
     answer = FINANCE_DOC + "：一线城市住宿费为每晚 500 元，凭发票据实报销。"
     tracked = _CHAT_PY.read_bytes()                  # 判据①的现场取证：被跟踪文件全程只读
     try:
-        with _TempEdit(_CHAT_PY, [(_crlf(CALL_ANCHOR), _crlf(CALL_MUTANT))]) as info:
+        with _chat_window([(_crlf(CALL_ANCHOR), _crlf(CALL_MUTANT))]) as info:
             sources = _reload()
             with_card = _mutated_round(sources, monkeypatch, tmp_path, answer)
-            # 摘卡那一遍摘的就是影子副本那份新码：变异 exec 在同一个模块对象上，身份没换。
+            # 摘卡那一遍摘的就是影子副本那份新码：R556 之后它是 `install_mutation` 装进活模块的
+            # 那一枚 `_headline_card_data`（旧口径是整份码体 exec 在同一个模块对象上）。
             restore = suppress_card(chat)
             try:
                 without_card = _mutated_round(sources, monkeypatch, tmp_path, answer)
@@ -342,9 +343,10 @@ def test_d1_counter_evidence_a_card_sent_as_text_turns_this_pin_red(monkeypatch,
             assert not cards_in(with_card), "变异后仍按卡片事件名发：那改法没生效"
         assert info["restored"], "被跟踪的 chat.py 没保持原样"
     finally:
-        # 🔴 顺序是这枚反证的一半：``_TempEdit.__exit__`` 先把模块 exec 回盘上的字、还原视图，
-        # 这里才把夹具再重载一遍。反过来写（在 with 里面 reload）会把变异后的码留在内存里，
-        # 同批那十枚用例接着就红在无关格上——这是本班实际踩过的一枚污染，留成注释当路标。
+        # 🔴 顺序是这枚反证的一半（R556 改口径后仍然成立，理由换了）：窗里 `_reload()` 重载的是
+        # **夹具**模块，它读的活 chat 此刻还被 `install_mutation` 装着变异；出窗先逐枚装回原对象，
+        # 这里再把夹具重载一遍，两枚读数才对同一份字节。反过来写（在 with 里面 reload）会把夹具的
+        # 新副本留在内存里，同批那十枚用例接着就红在无关格上——这是本班实际踩过的一枚污染，留当路标。
         _reload()
     assert _CHAT_PY.read_bytes() == tracked, "被跟踪的 chat.py 在窗里被改过：影子根没接住变异"
     assert _CHAT_PY.read_bytes().decode("utf-8").count(_crlf(CALL_ANCHOR)) == 1, "发射点没回到原样"

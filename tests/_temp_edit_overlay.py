@@ -28,6 +28,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from types import ModuleType
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -135,6 +136,21 @@ def module_of(rel: str):
     if not rel.endswith(".py"):
         return None
     return sys.modules.get(rel[:-3].replace("/", "."))
+
+
+def isolated_module(module, text: str, filename):
+    """把一份字节 exec 进一枚**新造**的模块对象：整份码体照跑，但活模块一个名字都不换。
+
+    来历（R556 判据① 的原证面）：r478 那把刀落在 Pydantic 模型类里，而 ``description`` 是在**类创建
+    那一刻**烘进 JSON schema 的——只换那一枚类绑定，活路由上那条端点仍指着旧类，发布的文档就还是旧句，
+    刀就迁成了空转（比不迁更坏）。正例姿势在 ``tests/test_r457_audit_retention_execution_leg.py``：
+    要跑变异就把它装进一枚隔离对象。这里给同一族姿势一个把手：新模块的 ``__dict__`` 以活模块当前那份
+    起头（窗内夹具替身照样看得见），被跟踪文件与活模块都不开口。
+    """
+    fresh = ModuleType(getattr(module, "__name__", "r556-isolated"))
+    fresh.__dict__.update(module.__dict__)
+    exec(compile(text, str(filename), "exec"), fresh.__dict__)
+    return fresh
 
 
 def install_source(module, text: str, filename) -> None:

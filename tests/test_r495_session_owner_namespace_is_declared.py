@@ -46,6 +46,7 @@ import json
 import os
 import subprocess
 import uuid
+from contextlib import contextmanager
 
 import pytest
 
@@ -53,6 +54,7 @@ from app.agents.contracts import Principal
 from app.common import auth
 from app.storage import sessions as sessions_module
 from tests import _temp_edit_overlay as overlay
+from tests import test_r466_mutation_does_not_leak_into_live_module as r466
 
 REPO = overlay.REPO
 AUTH_REL = "app/common/auth.py"
@@ -502,8 +504,11 @@ class _Knife(overlay.ShadowEdit):
     """一扇 R495 的反证窗：锚点命中不是恰好一处就整片不落；变异文本先过 compile()。"""
 
     tag = "r495"
-    #: 三把刀都要被执行（写腿与读腿真跑一遍），所以变异要 exec 进活模块。
-    execs_module = True
+    #: 🔴 R556：三把刀仍要被真执行（写腿与读腿真跑一遍），但不再进门 exec 整份码体——由
+    #: ``_knife_window`` 走 ``r466.install_mutation``，只把**变了的那几枚顶层绑定**装进活模块；
+    #: 落在 ``SessionRegistry`` 类体里的那一把由姿势件的类支在活命名空间里现编那一枚类语句，
+    #: 方法体的 ``__globals__`` 仍是这一枚模块的字典，窗内 ``_use_recorder`` 装的替身照样看得见。
+    execs_module = False
 
     def __init__(self, path, edits=(), replacement=None):
         super().__init__(path)
@@ -560,6 +565,23 @@ def KNIFE_THREE():
     return _Knife(REPO / SESSIONS_REL, replacement=_pristine_text(SESSIONS_REL))
 
 
+@contextmanager
+def _knife_window(builder):
+    """R556 新口径的开窗器：影子副本落变异 -> 只装变了的那几枚顶层绑定 -> 出窗逐枚装回。
+
+    交回 ``(window, info)`` 而不只是 info：``_replay`` 收尾要报 ``window.rel``（被跟踪文件全程
+    只读那一格凭它点名），旧写法是 `window = builder(); with window as info:`，两者等价。
+    """
+    window = builder()
+    with window as info:
+        module = overlay.module_of(window.rel)
+        assert module is not None, (
+            "%s 对应的模块还没被导入：变异无处可装，这把刀是空的" % window.rel)
+        with r466.install_mutation(module, window.path, info.read_text()) as mutant:
+            info["installed_bindings"] = sorted(mutant)
+            yield window, info
+
+
 _KNIFE_BUILDERS = {"one": KNIFE_ONE, "two": KNIFE_TWO, "three": KNIFE_THREE}
 _REDS = (AssertionError, pytest.fail.Exception)
 
@@ -582,8 +604,7 @@ def _checks(tmp_path, monkeypatch):
 
 def _replay(builder, must_go_red, tmp_path, monkeypatch, probe=None):
     """开一扇刀窗：逐格重跑在册判据，点名红的；该红的一格没红就当场 fail。"""
-    window = builder()
-    with window as info:
+    with _knife_window(builder) as (window, info):
         red, green = [], []
         for label, call in _checks(tmp_path, monkeypatch):
             try:
@@ -725,10 +746,12 @@ def pytest_configure(config):
     builder = _KNIFE_BUILDERS.get(name)
     if builder is None:
         raise RuntimeError("R495_KNIFE 只认 %s，读到 %r" % (sorted(_KNIFE_BUILDERS), name))
-    window = builder()
+    ctx = _knife_window(builder)
+    window, info = ctx.__enter__()
+    _KNIFE_STATE["context"] = ctx
     _KNIFE_STATE["window"] = window
-    _KNIFE_STATE["info"] = window.__enter__()
-    print("[r495] knife=%s open on %s (shadow only)" % (name, window.rel))
+    _KNIFE_STATE["info"] = info
+    print("[r495] knife=%s open on %s (shadow only, install_mutation)" % (name, window.rel))
 
 
 def pytest_unconfigure(config):
@@ -736,9 +759,13 @@ def pytest_unconfigure(config):
     if window is None:
         return
     info = _KNIFE_STATE["info"]
-    window.__exit__(None, None, None)
+    ctx = _KNIFE_STATE.get("context")
+    if ctx is not None:
+        ctx.__exit__(None, None, None)   # 先把装进活模块的那几枚绑定逐枚装回，再关窗
+    else:
+        window.__exit__(None, None, None)
     print(
-        "[r495] knife closed tracked-file-untouched=%s shadow_clean=%s"
-        % (info["restored"], info["shadow_clean"])
+        "[r495] knife closed installed=%s tracked-file-untouched=%s shadow_clean=%s"
+        % (info.get("installed_bindings"), info["restored"], info["shadow_clean"])
     )
     _KNIFE_STATE.clear()

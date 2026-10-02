@@ -42,6 +42,16 @@ R553 第二版（10-01）改了基类的还原姿势，本件跟着改**一处�
 ``co_flags`` 摘掉仍剩 4 枚真差（``_authorize_queue_task`` / ``_reap_agent_worker`` / ``approve`` /
 ``delete_document``）。所以凡「盘上那份码」当尺子的那两格一律 ``dont_inherit=True``；窗内比影子副本
 那两格不动（``install_source`` 也是继承帧的编法，两边同形）。
+
+R556（10-01 第十一班）把最后那几扇旧姿势窗也迁进本口径：``execs_module is True`` 的在册名单由
+``["r48"]`` 缩到 ``[]``——r472 两扇、r478、r495、r48 从今天起都只装「变了的那几枚顶层绑定」，
+落在顶层类上的那一族由本件新加的类支接住。名册钉随之按新事实改口（``only_r48_still_execs`` →
+``none_of_them_execs_the_live_module``），并留一枚「名单反弹即红」的牙。
+🔴 盘上另有两枚 exec 窗不在本单写域、今天仍登记在案：
+``tests/test_r482_registered_ceiling_is_the_ceiling.py::_ClampEdit``（越界不迁，坐标交回）与
+``tests/test_r553_counter_evidence_teeth.py::_Probe``（它量的就是 exec 姿势本身，迁了就没牙了）；
+逐枚读数见 ``docs/testing/r556-window-posture-migration-2026-10-01.md`` 与新钉
+``tests/test_r556_window_posture_is_installed_not_executed.py``。
 """
 from __future__ import annotations
 
@@ -110,12 +120,33 @@ def _rebase(value, live_dict: dict, name: str):
     return value
 
 
+def _top_level_class_names(text: str) -> set:
+    """那份字节里的顶层**类名**。install_mutation 原本对它们设计性拒绝（``_rebase`` 明写
+    「得手工处理」）；R556 把这格补进姿势件——补的是同一族口径（只碰点名的那几枚绑定），
+    不是在 test 件里另抄一套第二实现。
+    """
+    return {node.name for node in ast.parse(text).body if isinstance(node, ast.ClassDef)}
+
+
+def _top_level_class_statement(text: str, name: str) -> str:
+    for node in ast.parse(text).body:
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            return ast.unparse(node)
+    raise AssertionError("影子副本里没有顶层类 %s 的定义：这一枚绑定不该走类那一支" % name)
+
+
 @contextlib.contextmanager
 def install_mutation(module, path, mutant_text: str) -> dict:
     """把影子副本里改动的那几枚顶层绑定临时装进活模块，出门逐枚还原并核对每一枚把手没被换过。
 
     🔴 不重跑整份模块体：``overlay.install_source`` 会把码体 exec 进 ``module.__dict__``，于是
     每一枚顶层函数都换成新身体、导入期那层壳也被 plain 编译顶掉。这里只碰变了的那几枚名字。
+
+    R556 补上顶层**类**那一支：变异落在类体里时（r478 的 ``description=`` 在 Pydantic 模型类里、
+    r495 的归属判定在 ``SessionRegistry.is_owned_by`` 里），过去 ``_rebase`` 一句「得手工处理」把这格
+    推给调用方；今天这一支把那一枚类语句在**活命名空间**里现编一遍——方法体的 ``__globals__`` 仍是
+    这一枚模块的字典，窗内 monkeypatch 装的夹具替身照样看得见。出窗仍按进门那一刻的值逐枚装回，
+    没点名的绑定一枚都不动。
     """
     disk_text = path.read_bytes().decode("utf-8")
     names, unmatched = changed_bindings(disk_text, mutant_text)
@@ -132,14 +163,26 @@ def install_mutation(module, path, mutant_text: str) -> dict:
     #: `_MISSING`，`is` 成立 ⇒ 自我认证，泄漏检查看不见。还原面因此必须直接看 `live_dict`：
     #: 窗内不在场上的名字才允许 pop，本来在场上的一律装回窗那一枚对象。
     before_values = {name: (live_dict[name] if name in live_dict else _MISSING) for name in names}
+    #: R556：落在**顶层类**上的变异走单独一支——类语句必须在活命名空间里现编一遍，否则它每一枚方法
+    #: 体的 ``__globals__`` 停在那份一次性字典上，窗内由 monkeypatch 装进去的夹具替身它一枚都看不见。
+    #: 没点名的名字照旧一枚都不碰，出窗仍按 before_values 逐枚装回。
+    disk_classes = _top_level_class_names(disk_text)
+    mutant_classes = _top_level_class_names(mutant_text)
+    class_names = [n for n in names if n in mutant_classes or n in disk_classes]
+    plain_names = [n for n in names if n not in class_names]
     scratch = dict(live_dict)
     exec(compile(mutant_text, str(path), "exec"), scratch)   # 只进这份一次性字典
     installed = {}
     try:
-        for name in names:
+        for name in plain_names:
             assert name in scratch, "变异里的 %s 没在影子副本里绑上名字" % name
             installed[name] = _rebase(scratch[name], live_dict, name)
             setattr(module, name, installed[name])
+        for name in class_names:
+            if name not in mutant_classes:
+                continue   # 变异把这枚类整个摘掉了：exec 整片码体的旧姿势同样不会删名字，照旧留场上
+            exec(compile(_top_level_class_statement(mutant_text, name), str(path), "exec"), live_dict)
+            installed[name] = live_dict[name]
         yield installed
     finally:
         for name in names:
@@ -287,7 +330,9 @@ def _open_r388(m):
 
 
 def _open_r48(m):
-    return m._TempEdit(m.CHAT_PY, [(m.C1_ANCHOR, m.C1_MUTANT)]), m.CHAT_PY
+    """R556：这扇窗在册登记的是「影子改绑 + 只装变了的那几枚绑定」，开窗器必须是件自己
+    那枚 `_chat_window`——裸 `_TempEdit` 在今天只落影子根、不碰活模块，拿它当窗会读成空转刀。"""
+    return m._chat_window([(m.C1_ANCHOR, m.C1_MUTANT)]), m.CHAT_PY
 
 
 #: 判据① 那张表的机器可读形态。posture 与 verdict 都是本席 d824b10 现取的读数，不是派工词里的旧账。
@@ -326,10 +371,10 @@ WINDOWS = (
      "posture": "shadow_swap"},
     {"key": "r48", "test_file": "tests.test_r48_headline_card_lands_on_the_wire",
      "target": "app.api.v1.chat", "edit": "_TempEdit", "opener": _open_r48,
-     "verdict": "进门照旧 exec 整份码体（窗内整片换身份，下面 else 支量着）·出窗由 R553 基类的"
-                "命名空间快照倒回，不再重跑码体·本件只登记不代改（它自己那枚 finally 里的 "
-                "_reload() 仍会重跑一遍盘上的字——那在本件之外，另立候选号）",
-     "posture": "live_exec_snapshot"},
+     "verdict": "R556 已迁 install_mutation：进门只把变了的那几枚顶层绑定（`_headline_card_data`）"
+                "装进活模块，出窗逐枚装回；它自己那枚 finally 里的 `_reload()` 从此只重载夹具，"
+                "不再 exec 盘上的字（判据⑤ 归真）。契约那两把刀改的是 .md，module_of 只可能交 None。",
+     "posture": "shadow_swap"},
 )
 
 
@@ -383,17 +428,29 @@ _SELF_PROOFS = {"leaky_install_source_no_restore": _leak_install_source_no_resto
 # ------------------------------------------------------------------------------- 用例
 
 
-def test_the_roster_is_nine_windows_and_only_r48_still_execs():
-    """账面订正 + 判据④ 刀一的第一颗牙：这一族是 9 枚不是 3 枚，且 execs_module 只准开在 r48 上。"""
+def test_the_roster_is_nine_windows_and_none_of_them_execs_the_live_module():
+    """R466 的九扇在册 + R556 的名单清空：`execs_module is True` 这一族今天必须是空集。
+
+    用例名里那句 ``only_r48_still_execs`` 是 R466 的账面；R556 把最后一扇（r48）也迁进
+    ``install_mutation`` 之后它就成了假话——在册钉按新事实改口，名字跟着事实走，不许留一枚
+    写着旧账的名字。🔴 这一格同时就是「反弹即红」那枚牙：谁再把任何一扇在册窗开成
+    ``execs_module = True``，或把它登记成旧姿势的 posture，``still_execs`` / 那两格立刻非空。
+    """
     keys = sorted(row["key"] for row in WINDOWS)
     assert keys == sorted(["r303", "r310", "r337", "r353", "r354", "r373", "r381", "r388", "r48"]), keys
     still_execs = sorted(
         row["key"] for row in WINDOWS if _row_handles(row)[1].execs_module is True)
-    assert still_execs == ["r48"], (
-        "R466 之后只允许 r48 那一枚还开着 execs_module（它的 finally 无条件把盘上的字装回活模块，"
-        "判据① 判定为已保证复原、本单不许动）；现在还在名单外的：%s" % (still_execs,))
-    assert sorted(row["key"] for row in WINDOWS if row["posture"] == "shadow_swap") == \
-        [k for k in keys if k != "r48"], "在册姿势与 execs_module 读数不一致：有人在名单外开窗"
+    assert still_execs == [], (
+        "R556 之后九扇一律影子改绑 + install_mutation：名单不许反弹（还开着 execs_module 的：%s）"
+        % (still_execs,))
+    not_swap = sorted(row["key"] for row in WINDOWS if row["posture"] != "shadow_swap")
+    assert not_swap == [], (
+        "登记表里又出现旧姿势的行列（%s）：R556 之后 posture 只准写 shadow_swap" % (not_swap,))
+    mismatched = sorted(
+        row["key"] for row in WINDOWS
+        if (row["posture"] == "shadow_swap") is not (_row_handles(row)[1].execs_module is False))
+    assert mismatched == [], (
+        "在册姿势与 execs_module 读数不一致：有人在名单里登记了旧姿势（%s）" % (mismatched,))
 
 
 @pytest.mark.parametrize("row", WINDOWS, ids=[row["key"] for row in WINDOWS])
