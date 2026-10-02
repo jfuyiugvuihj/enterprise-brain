@@ -1644,6 +1644,10 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | （总控亲做·非执行层） | — | **R555** `run_gate.fit_workers()` 改按**提交电荷**取小＋每次退让都留痕 | 主树 `75b227d`（`scripts/run_gate.py` 40/15＋新钉 `tests/test_r555_commit_charge_limits_the_gate.py` 188 行／8 枚＋纸 `docs/perf/r555-commit-charge-headroom-2026-10-01.md`） | ✅ **已结案并树**：原派 `Erdos`@`be-r535`，因那棵树被 R562 的 42 枚占住（一树一单）⇒ 改由总控下地。两态数字成对：dirty 同名五件 **108 passed／34.63 s／rc=0**，clean 落在 `75b227d` 复跑**同数 108**／55.49 s／rc=0（34.63→55.49 是 4 枚 Agent 并发争用，不是回归）。🔴 判据② 线程上限单变量 A/B **只交数不交结论**：8.27 s／9.17 s／同臂复跑 27.13 s ⇒ 差整块躺在噪声带里，不许写「上限治好了它」；要出可采信的数必须安静机。 | 23:4x |
 | （总控代跑·非执行层） | — | **R561 判据⑤**（＝R558 判据① 欠的那半张：容器＋真 Redis 的片段读数） | 主树 `7fe1fe7`（纸 §十三 回填＋`docs/perf/raw/r561-2026-10-01/summary.json` 267 行） | ✅ **拿到读数**：23:38:32→23:41:23，`report-01`，`final_kind=queued_polled`、76 发、`wait_ms=230802.9`；**六格全 PASS／rc=0**——`growing` chars 21→1490（19 枚互异值、cursor 1→23）／`caps_zero` 75 发里 discarded=0 truncated=0／`terminal_no_pieces` 终态 16 枚键无片段键／`zero_bypass_unreadable_retry` 三枚都是**量到了**的 0／`provenance` 走 `/app/BUILD_INFO` 与主树逐字符等 40。🔴 只证**形状**，不是时延读数，**不翻 A②（88/105）也不翻 D 门（8/12）**。 | 23:4x |
 
+| `Erdos`（复用线程） | `01a0f03c-…51-a68b-4da0c2b02be4` | **R562 结案并树**（10-02 10:3x·甲案三处改钉全落·整单 44 枚不拆半） | 主树 `1a65621`（`frontend/**` 44 枚·numstat 与源树逐枚全等） | ✅ 两态同名集全绿：vitest 148 files／lint:colors 148 problems 0 errors／Python 24 枚钉 650 passed；0 字节复扫 0 枚 |
+| `Hume`／`Pasteur`（**两枚已死**） | `01a0f0e6-…`／`01a0f09f-…` | **R556**／**R557** | `be-r551`（7 枚 M·半成品）／`be-eval95`（dirty=0·零产物） | 🔴 双双 403 `AccessDenied.Unpurchased`＝provider 欠费无权限，**不补投**；R556 那族不解则门不绿、不能 push；R557 零产物 ⇒ R559 仍堵 |
+| `Kuhn`（复用线程） | `01a0efcf-…` | **R527**（R46「点击」那半张） | `be-r550` 基点 `82790a4`（21 枚 M + 3 枚未跟踪·0019 迁移在盘） | ⏸ 00:02 后无写入亦无交回记录，本席未验未并 |
+| （R564 承接线） | `01a0eac0-…` | **R564**（帧账加腿名列） | `be-r564` 基点 `7557d87` | ⚪ 投递后 10 小时 `dirty=0`＝零写入，判据未动 |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -6370,3 +6374,17 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 - **八枚「计划书零提交」的真实堵点（本席按树上事实逐枚复核，不是抄 09-30 那张纸）**：`R29` 已并树·②那一格要**换无思考模型**＝业主；`R32` 已并树；`R33` 已并树；`R38` 只剩真机抽查读数＝窗；`R43` 落库那一格**已在树**（`b2d82a0`＝R523 建 `0018_prompt_cache_tokens.sql`，`app/trace/schema.py:104-108` 与 `projections.py:309` 现读都在，本席逐枚核过）——🔴 **这推翻 09-30 R521 那张纸 §2「R43 b) 真欠 4 处」那句**，它当时最新迁移只到 0017，之后 R523 把它补上了；`R46` 剩「点击」半张（`Kuhn`/R527 **正在做**）＋真库真并发强度（窗）＋按人限额（业主裁）；`R48` 欠口径裁定＋换引擎（业主）；`R31` 见上一条。⇒ **八枚里今天还欠代码的只有 R46 那半张与 R564 一枚量具单**，其余全是「窗」与「业主手上的裁定」。
 - 四枚投递现取（一个 block 一枚，一枚都没 `spawn`）：`Erdos`/R562 补令（甲案已裁，不等点头）、`Hume`/R556、`Kuhn`/R527、`Pasteur`/R557。四枚写集两两零相交，与本席主树零撞；`be-r535` 42 枚改动、`be-r550` 已长出 `migrations/0019_document_clicked_count.sql`＋`r527-source-click.test.js`——**0019 那枚号本席派前核过**：主树最新只到 `0018_prompt_cache_tokens.sql`，不撞。
 - 本机现状：外部 `train.py --device cuda`（PID 49496，22:40:16 起）仍在，**GPU 那扇窗（A①③④／run6）仍打不开**；门 #5 那一遍跑在 `1c8c64b`、`-n 4`，只剩一枚 `test_r48_*` 的 teardown 漏（R563 那枚守卫把它点出来了，凶手就是漏的那一枚模块）——**那枚件正是 `Hume`/R556 的写域**，本席不抢它的活，等它并完再开门。
+
+### 4EH 第十一节（10-02 10:3x·总控线·主树 `d0d96d9`→`1a65621`·单模型未切换·心跳一枚没碰）：R562 结案并树，中断 10 小时的账落到纸上
+
+- **背景（不回避）**：上一席在 10-02 00:05 前后中断，**10 小时里三棵工作树零写入**（按 mtime 逐枚现取：`be-r550` 最后写 00:02:22、`be-r535` 00:01:01、`be-r551` 00:01:52），主树停在 `d0d96d9`。本席接手后没有去读旧对话，只按树上事实与纸面判据干活。
+- ✅ **R562（`Erdos`@`be-r535`）验收通过并树 `1a65621`**：整单 44 枚一起搬（该单明写拆 `errcodes.js` 会造 20+ 枚红，故不拆半），零未跟踪件，搬运走 `scripts/r531_worktree_merge.py --tree ../be-r535 --apply`。
+  · 并树前置证明（本席现取，不采信执行层自述）：主树 `1a65621^` 那 44 枚的 blob 与 `be-r535` 基点 `82790a4` **逐枚全等**（`git rev-parse HEAD:<p>` 对 `82790a4:<p>`，不等 0 枚）⇒ 文件级搬运 ≡ 打补丁，无覆盖别人改动的可能。
+  · 🔴 **复扫执行层自报的那次截断事故**：全仓「HEAD 非空而盘上 0 字节」的件 = **0 枚**；搬运后 `git diff --numstat` 与源树 **逐枚全等**。复原声明里唯一被本席独立证实的是这一格，其余读数一律重跑。
+  · 两态数字（同名集两遍，事故 #96 那一族）：dirty 与 clean **完全一致**——`npx vitest run` **148 files passed / exit=0**（dirty 那遍另读到 3477 tests passed，clean 那遍 exit=0 且文件数同为 148）、`npm run lint:colors` **148 problems（0 errors）/ exit=0**、Python 侧 `rg -l frontend/src tests/` 选出的 **24 枚**在册钉 **650 passed / 1 xfailed**。
+  · 唯一那枚 ERROR 归因写死：`test_r48_headline_card_lands_on_the_wire.py::test_counter_evidence_c2` 的 **teardown** 被 R563 守卫点名（`app.api.v1.chat` 六枚顶层可调用没还账，原文 `KeyError 'excerpted_quote'`）——属 **R556 治下**，与 R562 无关，两态同现即证不是搬运造的。
+  · 甲案三处改钉的落点（都是增行、非 ±等行，逐枚点名防「±等行」口径被悄悄放宽）：`r427 +81/-10`、`r368 +36/-19`（28→29 枚含反弹牙）、`r380-detail-voice +35/-6`、另 `r560 +199/-184`。census 516/anchored 516/unanchored 0；裸冒号**现取 25 枚**（49 是中间态），其中 6 枚留裸冒号（`router/index.js:149`×3、`lib/notifications.js:26`×2、`r316-admin-entry.test.js:122`×1）——**豁免结论不写进 `r560` 注释**（那会让在册钉再涨行），只记这一格与本笔提交说明。
+- ⏸ **`be-r550`/R527（`Kuhn`）现取 21 枚 M + 3 枚未跟踪，比交接时多 4 枚，且无交回记录**：0019 迁移与两枚新钉都在盘上，属**半成品**，本席未验、未并。
+- 🔴 **`be-r551`/R556（`Hume`）与 `be-eval95`/R557（`Pasteur`）双双死在 provider 403 `AccessDenied.Unpurchased`**（百炼 `token-plan…/compatible-mode/v1/responses`，欠费/无权限，不是消息 id 污染）：`be-r551` 留 7 枚 M 的半成品，`be-eval95` 零产物 ⇒ **R559 仍堵**。按规矩**不补投**。
+- ⚪ **R564（`01a0eac0`）投递后 10 小时 `dirty=0`＝零写入**，判据未动一行。
+- 机上现状：外部 `anaconda3\python.exe train.py --device cuda`（**新 PID 13864**，09:46:55 起，昨晚那枚 49496 已不在）继续挡 GPU 本机分数窗；容器 backend/worker/scheduler `Up 11h (healthy)`；主树领先 `gitee` **17 枚未 push**（门未绿，不推）。
