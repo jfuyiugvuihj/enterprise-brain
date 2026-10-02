@@ -4980,3 +4980,131 @@ R557（`Pasteur`）先交全量机器账的**纸**，本单把那本纸变成**�
 
 1. **`docker compose build` 必须先带血缘**：`$env:GIT_SHA=(git rev-parse HEAD)`、`$env:BUILT_AT=<现取>` 再 `docker compose --env-file deploy/.env.server build migrate`。不带 ⇒ `/app/BUILD_INFO` 写 `revision=unknown` ⇒ 任何容器侧量具判 `UNMEASURED` 并**拒绝开窗**（`rc=2`）。「量不到不等于干净」这条在设计上就该拦，别绕。
 2. **容器 `up -d --force-recreate` 之后先等 healthy 再打发**：`backend` 的 healthcheck `start-period=45s`，recreate 完 8 秒发第一发实测 `RemoteDisconnected`。
+## §148（10-02 第十一班续格·总控线，主树 `c9243d4`·run12 窗内立案）：两枚在册自家缺陷立单（R566 保命锁口径／R567 BOM 扫描域）
+
+来历：本席 10-02 接手真机与仓里各撞一枚。两枚都不是执行层的错，也不在别人写域里。数字全部现取，不引旧账。
+
+### 一、R566｜`scripts/r530_run10_window_preflight.py` 的 `keep_awake` 那一格读的是不存在的量
+
+**病灶（现读代码坐实，非推测）**：`KEEP_AWAKE_MINUTES`（`:33`）要求 `keep_awake.py` 之后紧跟 `\S+` 再紧跟数字；真实命令行 17:56 现取 `Win32_Process` 是 `... .venv\Scripts\python.exe -X utf8 scripts\window_keep_awake.py --interval 240 --loop`（真身 PID=32844，`.venv` 那枚是跳板），数字落在 `--interval` 之后 ⇒ **正则永不命中**，每枚调用都走 `minutes = 240.0`（`:186`）那个兜底，于是 `left = started + 240*60 - now`。三种形状都是假的：
+- 假绿：开窗后 4 小时内恒 PASS，哪怕锁其实没在续——本格从没读过 `stamp`，也没读 `check_stamp()`（`scripts/window_keep_awake.py:89`，`MAX_STAMP_AGE_SECONDS = 300` 正是为这件事写的）。
+- 假红：一枚**活着且每 240 s 真在续锁**的常驻进程（17:13:19 起），过 21:13 就被判「已过期」并 FAIL；`--need-minutes > 240` 对新挂的锁**永远不可能过**。本席这次 7/7 PASS 是把需求降到 180 才拿到的——没吹锁，但过的理由不对。
+- 语义层：`--loop` 的覆盖时长是「进程活着就无限」，有界的只有 `--once`。「续锁间隔秒」与「覆盖分钟」是两个量，不许当一个。
+
+**写域**：`scripts/r530_run10_window_preflight.py`（只 `keep_awake` 那一格＋它的取数）＋新钉 `tests/test_r566_*.py`＋纸 `docs/perf/r566-keep-awake-caliber-2026-10-02.md`。🔴 不许碰 `scripts/window_keep_awake.py` 的锁语义本体（它是对的）；不许改任何电源设置——`powercfg /change standby-timeout-ac 0` 属业主动作，且业主已明令「别设为永眠」。
+
+**判据（五格，逐格可失败）**：
+1. PASS 必须同时握两格真读数：`--loop` 常驻进程在位 **且** `check_stamp()` 交回 `(True, …)`（stamp 年龄 ≤ 300 s）。只凭命令行字符串命中 ⇒ 红。
+2. `--interval` 按**秒**读，只用于给「下一次续锁最晚时刻」定界；覆盖时长改成态分支——`--loop` ⇒ stamp 新鲜即「无限（受进程寿命约束）」，`--once` ⇒ 才是有界分钟数。
+3. 三把刀各交两态读数：(a) 摘掉 `check_stamp` 半格 ⇒ 必须红（证这半格有牙）；(b) 把 stamp 年龄推到 > 300 s 而进程仍活 ⇒ 必须 FAIL 且话术点明「锁没在续」；(c) 进程不在位 ⇒ FAIL，不许说成「剩余 X min」。
+4. `--need-minutes` 超出当前可信用时交回可执行建议（还差多少／怎么补：重挂一枚 `--loop`），不许只报一个过期分钟数。
+5. 在册纪律：两态数字（apply 未 commit／commit 后干净树）都交、文件清单逐枚点名；零 commit、禁全量门、禁并树、禁 `git add -A`。
+
+### 二、R567｜`scripts/check_no_bom.py` 自 `5a6811d` 起 rc=1，两天没人撞——raw 证据不许改字节
+
+**现取**：`python scripts/check_no_bom.py` ⇒ rc=1，offender = `docs/perf/raw/run10-2026-09-30/phase1_start.txt`（EF BB BF，10-01 00:00 由 `5a6811d` 落库）。`WHITELIST`（`:29`）只有两枚精确路径（看板＋`scripts/run_backend_tests.ps1`），`in_scope()`（`:56`）按后缀放行 `.txt` ⇒ raw 证据天然在扫描域里。它不在 `scripts/run_gate.py` 的清单里，所以门绿着、这格红着过了两天。
+
+🔴 **不许顺手把 BOM 删掉**：raw 是量具原样吐出的字节，改一个字节＝改证据。正解是把 `docs/perf/raw/**` 请出扫描域。
+
+**写域**：`scripts/check_no_bom.py`＋新钉 `tests/test_r567_*.py`＋（若裁它进门）`scripts/run_gate.py` 的一行清单。不许改 `docs/perf/raw/**` 里任何一枚文件的字节。
+
+**判据（四格）**：
+1. 现跑 rc=0，且 `phase1_start.txt` 的字节与 `git show 5a6811d:docs/perf/raw/run10-2026-09-30/phase1_start.txt` 逐字节全等（钉里现算 sha256，不许写死长度当证明）。
+2. 排除必须是**目录前缀形状**（`docs/perf/raw/`），不许逐枚文件名点名——逐枚白名单挡不住下一批 raw 落库就红。
+3. 留一枚「豁免面不许外扩」的牙：白名单／排除集里出现任何一条既不在 `docs/perf/raw/**`、也不是那两枚在册精确路径 ⇒ 红。raw 之外想豁免必须另立单。
+4. 裁「进不进常驻门」并交理由：进 ⇒ `run_gate.py` 复跑点名；不进 ⇒ 常驻钉必须自己覆盖同一条判据（今天 rc=1 两天没人撞就是两头都不管的形状），不许留空。
+## §149（10-02 第十一班续格·总控线，主树 `c9243d4`·run12 窗内第二笔记账）：R568 评测集三桶改题＋R569 语料内部矛盾无仲裁——两枚都由现跑现取证立起
+
+### 〇、先更正三笔账面（都属「引用旧数不查现行」，本席自己差点再犯）
+
+1. 「105 题里 55 条 `must_contain` 在语料里搜不到出处」＝**过期**（09-17 的账）。10-02 18:0x 现跑 `scripts/check_eval_evidence_coverage.py` ⇒ **件口径 19 条**、语义口径 20 条（多 `tool-02` 的 `Word`，被整 token `password` 吞掉）。逐条与 JSON 在 `C:%TEMP%\evalrun\coverage-2026-10-02.json`。
+2. 「业主要按的闸门含 A1 `users.department` 回填、A3 密级标签回填」＝**错**（本席 18:0x 现读计划书 §13:508/515 纠正）：A1 已裁「不在真库做，改沙盒」，理由原话是给跑分账号 `evalbot` 设部门会让 105 题里的跨部门题集体崩；A3 已裁「交付阶段按客户真实密级做，不进 V1/V2 代码路径」；H13 已裁＝甲。⇒ 🔴 **谁都不许对真库做 A1/A3 回填**——那不是欠活，是已裁不做的项；格③ 那两个「未验」是常态口径，不是待办。
+3. 「`migrations/manifest.json` 里 0019 的摘要不符」＝**本席查错层，当场撤回**。`app/db/migrations.py:176-179` 算的是 `sha256(path.read_text(encoding="utf-8").encode("utf-8"))`——universal-newlines 把 CRLF 归一成 LF 之后再哈希；拿 `Get-FileHash` 量原始字节必然不等。用 0018 做正控复算：`text_lf` 与 `raw_crlf->lf` 同值且等于 manifest，0019 同法逐字等于 `12d1ab2f…` ⇒ `Kuhn` 的 0019 摘要成对，无缺陷。
+
+### 一、R568｜评测集 19 条「缺出处」按 D10 甲案分三桶——只有 5 条属于「可改题」，其余是尺子用错了地方
+
+前置：D10 裁「先乙拿基线、拿到分之后按 B/C/D 三桶改题」；业主 10-02 复批边界＝**只准把 `must_contain` 换成语料里逐字存在的片段，不改题面语义、不删题、不动 `total`**，改完 `tests/test_evaluation_report.py` 与 `tests/test_r94_eval_evidence_coverage.py`（钉题号集合与四桶计数）必须成对改口并两态交数。🔴 本单**等 run12 分数落地之后才许动手**——旧口径的分母先跑完，否则同一轮里两个口径并存。
+
+**桶 C｜行为锚词：「文档出处」这把尺不适用（9 条，不许改题，只许在账上分桶）**
+`chat-09` 不矛盾、`chat-12` 无法确认、`unsupported-01/02/04` 无法确认、`insight-07` 不确定性、`tool-03` 重新生成、`report-09` 继续生成、`report-08` 未索引。
+理由：这些串考的是模型**怎么说**（拒答、承认区间、重签链接、后台续跑），不是它**从哪篇抄**；把 `无法确认` 换成某段语料原话等于把这题从「会不会瞎编」改成「会不会复读」。`report-08` 的出处在产品规则侧（契约/代码），不在 `documents/*.txt`。
+
+**桶 B｜数据推导锚词：出处在表格与计算腿（4 条，同不许改题）**
+`data-07` 前五、`data-08` 小计、`insight-05` 长期未处理、`insight-06` 超标率。
+现跑已证：件口径的 `--include-csv` 开关对这五枚字面串交回 0 命中（脚本 §2.3 原话），列名与数值里天然不存在「前五」这种词——它们的正确判据是 `requires_evidence` 与算出的数字，不是逐字锚词。
+
+**桶 D｜真·文档事实锚词，语料里确有逐字替身（5 条，本单唯一可动笔的地方）**
+| 题 | 现锚词 | 语料现取逐字替身（本席 18:0x 现扫） | 附加账 |
+|---|---|---|---|
+| `doc-15` | 不需要打印 | 「无需再打印」（`费用报销管理制度V2.1.txt` 六(三)：员工无需再打印纸质版提交） | 🔴 与《企业管理制度手册》2.1.3「电子发票需打印后附在报销单后」**正面冲突**，见 R569 |
+| `report-07` | 审批路径 | 「审批流程」（11 篇命中） | 同义换字面，不改题面语义 |
+| `doc-17` | 公司抬头 | 「公司全称」（3 篇）/「抬头为公司全称或员工姓名（仅限差旅、通讯、交通类）」（V2.1 五(二)） | ⚠️ 语料对差旅类**允许开员工姓名**，gold 那句「一律开具公司抬头」需先对 `差旅费报销细则_2026版` 复核再决定改不改——**这题的 gold 可能是错的**，不许用改锚词把错掩盖掉 |
+| `chat-02` | 之后、财务 | 「财务审核」2 篇；审批链原文「直属领导→财务审核→财务总监→总经理」（手册 2.1.2） | ⚠️ 语料没有「部门负责人→财务」这条链（`部门负责人` 10 篇命中里无一条是审批顺序）⇒ 同属 gold 待复核 |
+| `chat-11` | 800元、审批 | 「审批」36 篇命中；「500元」在 `差旅费报销细则_2026版`/V2.1 | 「800元」是题面给的数，本就不可能出现在语料 ⇒ 该锚词属桶 C 形状（考算术不考复读），建议移出而非替换 |
+
+**判据（六格，逐格可失败）**
+1. 分桶必须逐枚点名且**每枚带出处**：桶 C/B 的每一枚要交「为什么这把尺不适用」的一句话加现取证据（哪个开关、几次命中），不许只写分类标签。
+2. 桶 D 的每一次替换必须交**替换前后两把尺的数**：`check_eval_evidence_coverage.py` 件口径缺口必须从 19 单调下降、语义口径从 20 下降，且 `--caliber-json` 的「反向翻转=0」自检仍 rc=0。
+3. 题面语义零改动：`question`／`answer` 两枚字段逐字节不变（钉里现算 hash 对照），`total` 仍 105，`id` 集合与 `category` 分布一枚不动。
+4. `doc-17`／`chat-02` 两题在复核结论出来之前**冻结不动**：若复核判 gold 错，出路是「gold 改正＋另立单」，不是「把锚词改成能过的样子」。
+5. `chat-11` 的 `800元` 若移出，必须同时留一枚「移出≠放宽」的牙：该题的正确性改由数字腿判（答案里必须真出现 800 与超标的推导），不许变成无锚词裸放。
+6. 成对改口＋两态数字：`tests/test_evaluation_report.py`、`tests/test_r94_eval_evidence_coverage.py` 与本件改动同笔；dirty 一遍、commit 后干净树复跑一遍，文件清单逐枚点名。零 commit、禁全量门、禁并树由执行层做。
+
+### 二、R569｜语料内部对「电子发票要不要打印」给出相反答案，而口径登记表明确不裁这一类
+
+**现取事实**：`documents/企业管理制度手册.txt` 2.1.3 句「电子发票需打印后附在报销单后」；`documents/费用报销管理制度V2.1.txt` 六(三) 句「员工无需再打印纸质版提交」（同篇 五(三) 补「全面推行电子发票报销，纸质发票逐步取消，过渡期至 2025-06-30」）。`documents/制度与口径登记表.txt`（V1.0，生效 2026-01-01）总则第 3 条原话：「本表不改动……实体标准（金额标准、票据要求、审批权限）。涉及金额标准、票据要求、审批权限的，一律以既有制度为准」⇒ **登记表对「票据要求」这一类不作仲裁**，于是"以既有制度为准"指向两篇互斥的既有制度。
+
+后果不是文牍问题：`doc-15` 的 gold 按 V2.1＋过渡期已过判「不需要打印」是对的，但检索层没有任何一条规则能说"这两篇撞了时该信谁"——`hnsw` 名次谁在前谁进窗口，客户换个文件名顺序答案就翻。这一格同时是评测分母里**未知的真源**：105 题里凡是票据要求/审批权限族（`doc-*`/`chat-*` 至少 5 枚）都可能被同一枚暗坑咬。
+
+**写域**：取证与判据在纸；治法侧只 `app/rag/**`（冲突检测/版本优先）或 `documents/` 侧语料治理——🔴 二者都要另裁，本单今天**只立案不处方**。
+**判据（四格）**
+1. 冲突必须**机器可查**而不是一次人工发现：给一枚现扫件，扫 `documents/*.txt` 里同一实体（打印要求/限额/审批链）给出互斥结论的篇对，逐枚点名——今天必须先跑出「手册×V2.1」这一对且只有这一对被判打印冲突。
+2. 裁定口径要落到**可执行**处：三选一（登记表扩权裁票据要求／给制度加版本优先级字段／检索侧冲突即降级并明示"两篇冲突"），并把选定那条写进计划书与契约，不留"以最新为准"这种没定义的句子。
+3. 未裁之前，受影响题号必须在凭据纸上**逐枚挂牌**（至少 `doc-15`，其余由判据① 的扫描件点名），run12/run13 的 correctness 读数引用时必须带这句限定。
+4. 不许把冲突当「语料太乱」删文档了事：`documents/` 里任何一枚的删除属业主动作。
+
+## §150 · R570 长跑窗的断点保护（run12 烧掉 99 题换来的教训）
+
+**立单原委（全部现取，非转述）**
+
+- run12 于 10-02 19:17:39 以 rc=1 收场，日志原话：`GATE FAILED: missing 6 fixture id(s): doc-01, doc-02, doc-03, report-10, report-11, report-12` ＋ `nothing written to C:\Users\fengx\AppData\Local\Temp\evalrun\run12-answers.jsonl`。
+- 六题两笔独立原因：`report-10/11/12` = 业主 19:12 关掉 Docker Desktop（`WinError 10061 目标计算机积极拒绝`，七枚容器 19:58 随重启回来）；`doc-01/02/03` = 总控自己的错，17:22 拿真 fixture 题号打了冒烟探针，答案落进 Redis，而 P-18 的 `answer:* = 0` 是 17:14 校的（在探针**之前**）⇒ 命中答案缓存，按纪律整窗作废。
+- 盘上活下来的只有 `run12-sidecar.jsonl`（99 行）与 `run12-sidecar-frames.jsonl`（834 KB）：这两件**不含答案文本**，所以 99 题的模型调用全部白付，只能整窗重跑。
+
+**这不是故障，是在册设计**
+
+- `scripts/collect_evaluation_answers.py:293-296` 的 `write_answers` 把全部答案 `"".join(...)` 之后一次性 `write_text`，且它在覆盖闸（`assert_coverage`，必须 105 全齐）之后才执行。
+- `scripts/eval_transport_ask_v2.py:20-21` 自己写明：「逐题在盘」只指 sidecar；「采集器只在覆盖闸全过时写字节，中途没有断点；sidecar 就是这一轮废在哪一题的证据」。
+- 结论：只要窗口按今天的形状跑，**任何一次中断（关容器／断网／休眠／杀进程）都必然整窗重来**，业主「断开程序」不是意外，是必然撞。
+
+**写域（与其它在飞单不相交）**
+
+- 新增 `scripts/eval_window_shard_driver.py`。
+- 新增 `tests/test_r570_window_shard_driver.py`。
+- 🔴 一律不许碰：`scripts/collect_evaluation_answers.py`、`scripts/eval_transport_ask_v2.py`、`tests/test_r123_hitl_approval.py`（:205 钉 payload 键集、:243 钉 sidecar 九键＋甲案七键）、`tests/test_r181_text_frame_ruler.py`、`tests/test_r205a_latency_source.py`、`tests/test_r447_queue_approval_round_and_evidence.py`、`tests/test_collect_evaluation_answers.py`、`scripts/run_quality_evaluation.py`、`app/**`、`frontend/**`。
+
+**可运行参照件（总控 10-02 20:2x 亲手写、亲手跑、七条行为逐条验过）**
+
+- `C:\Users\fengx\AppData\Local\Temp\eb-rescue\R570\resume_window_driver.py`（376 行，纯 stdlib，ASCII）
+- 自测件 `selftest2.py`／`selftest3.py` 同目录；迷你 fixture `mini9.jsonl`／`mini7.jsonl`。
+- 实测记录：`--dry-run` 九片全 rc=0；复跑 `already complete=9 to run=0`（零重打）；删 s002+s005 后 `to run=2` 且只执行这两片；`--commit` 出 9 行且顺序 == fixture 顺序；换 fixture 后 `REFUSE: window.json fixture_sha256=... but live is ...`；短片拒合并 `REFUSE: shard 003 holds 0/1 rows`； bogus transport 连续四片全空 ⇒ `STOP ... rc=3`；`--expect-backend pgvector` 在容器 `INDEX_BACKEND=''` 时 REFUSE、`--expect-backend chroma` 放行。
+
+**判据（七格，缺一不收）**
+
+1. 断点粒度到题：`--shard-size` 默认 1，每题一片、片成即独立落盘，sidecar/帧账不因分片而多写一行。
+2. 幂等：已完成片在复跑时 `todo` 归零，**一题都不许重打**（重打＝重付费＝假时延进 P95）。
+3. 局部失败局部补：中途死掉的窗口，重开只补差集片，不许整窗重来。
+4. 合并仍走覆盖闸：按 fixture 原序拼 `<tag>-answers.jsonl`，必须 105 枚唯一 id、逐行 `answer` 非空；缺一枚就拒合并并非零退出。
+5. 🔴 复用必须有指纹：镜像 `revision` ∧ 容器 `INDEX_BACKEND` ∧ fixture `sha256` ∧ transport spec ∧ `shard_size` 五项全等才准用盘上旧片；任一不符 ⇒ REFUSE 并写明「这些片是在另一种条件下采的」。**半窗混库拼成一条基线比丢一窗更坏**（R59 切读对分窗的可比性就靠这一格）。
+6. 环境失联要早停保进度：连续 N 片（默认 4）零产出 ⇒ 判后端/容器已死，停窗退出并保留已完成片，不许在死后端上空转烧完剩余窗口。
+7. 读路径可钉死：`--expect-backend pgvector|chroma` 双向都要有真拦（`chroma` = 容器该变量为空），且 REFUSE 时给出正确补法——`env_file` 在容器创建那一刻才解析，正解 `docker compose up -d --force-recreate`，`docker restart` 不重读。
+
+**开窗纪律另加两条（写进 runbook 同一口径）**
+
+- 探针**禁止使用 fixture 里的任何题号**（要冒烟就自造一句不在集里的话）：run12 那三题就是这么废的。
+- `answer:* = 0`（`scripts/eval_window_answer_cache_gate.py --check`）必须在**任何一次真请求之前**、且**在探针之后**再校一次；校完到开窗之间不许再有任何人往 `evalbot` 会话里塞问题。
+
+**收窗口径不许被分片改变**
+
+- sidecar 与帧账仍是「一题一行、按执行顺序」的全账；若某片被整片重打，同一 id 会留下第二行（attempt 语义，既有量具按 `attempts_collapsed` 计数），driver 在 `--commit` 必须如实报 duplicate 行数，凭据纸也必须原样写，不许悄悄去重。
+- 评分仍只走在册 `scripts/run_quality_evaluation.py --fixture … --answers …`，不许另造第二把尺。
