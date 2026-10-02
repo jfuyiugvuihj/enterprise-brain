@@ -1648,6 +1648,12 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Hume`／`Pasteur`（**两枚已死**） | `01a0f0e6-…`／`01a0f09f-…` | **R556**／**R557** | `be-r551`（7 枚 M·半成品）／`be-eval95`（dirty=0·零产物） | 🔴 双双 403 `AccessDenied.Unpurchased`＝provider 欠费无权限，**不补投**；R556 那族不解则门不绿、不能 push；R557 零产物 ⇒ R559 仍堵 |
 | `Kuhn`（复用线程） | `01a0efcf-…` | **R527**（R46「点击」那半张） | `be-r550` 基点 `82790a4`（21 枚 M + 3 枚未跟踪·0019 迁移在盘） | ⏸ 00:02 后无写入亦无交回记录，本席未验未并 |
 | （R564 承接线） | `01a0eac0-…` | **R564**（帧账加腿名列） | `be-r564` 基点 `7557d87` | ⚪ 投递后 10 小时 `dirty=0`＝零写入，判据未动 |
+| `Hume`→（总控接手亲修） | `01a0f0e6-…`（provider 403 死，不再复用） | **R556**（姿势族治本） | 主树（写域＝六枚在册钉改口＋`tests/_temp_edit_overlay.py`＋两枚新件） | ✅ **已结案并树 `c9a782e`**：同 HEAD 两棵树对照——未打补丁的 `be-r556base`（dirty=0）G3 73 passed **＋2 errors**、G4 1 passed **＋1 error**；打了补丁的主树六组全 rc=0，G1 由 18 增至 22 passed（那枚新姿势钉在位）。dirty/clean 两态同名集逐组同数：22/28/21/49/73/1 | 20:5x |
+| （总控亲修·非执行层） | — | **R566＋R567** | 主树（`scripts/r530_run10_window_preflight.py`＋`scripts/check_no_bom.py`＋成对改口钉＋两枚新钉） | ✅ **已结案并树 `c95fe22`**：R566 把保活地平线改成真读数（旧正则对真实命令行永不命中 ⇒ 恒 240 min 兜底：四小时内假绿、21:13 后假红、`--need-minutes>240` 永不可能通过）；R567 把 raw 证据退出 BOM 扫描（现跑 rc=0，且 `phase1_start.txt` 的 blob 与 `5a6811d` 全等＝没洗证据）。三件合跑 **24 passed**（6＋6＋12 逐枚点名，两态同数）——上一班记的「34 passed」作废 | 20:5x |
+| （总控立单） | — | **跟进单 §148–§150 落档** | 主树 `docs/handoff/2026-09-15-backend-followup-requests.md` | ✅ 并树 `db0b336`（＋128/-0，CRLF 精确、裸 CR 1534 未动、无 BOM）：三笔过期账更正＋R568/R569/R570 立单 | 20:5x |
+| `Erdos`（**复用线程续用**，非新线程） | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R570**（本班新立·本席唯一一次投递，20:4x `send_input`） | `be-r565`（基点 `c9243d4`，**独占**；写域＝两枚全新件 `scripts/eval_window_shard_driver.py`＋`tests/test_r570_…py`，可另写一枚凭据纸；🔴 禁碰采集器／transport／sidecar 键集／帧账／评分件／`app/**`／`frontend/**`） | 🟡 在途：把总控参照件（`%TEMP%\eb-rescue\R570\resume_window_driver.py`，376 行，七条行为已亲验：分片即落盘／幂等零重打／局部补跑／合并覆盖闸／五项指纹拒用混库／连续四片全空早停 rc=3／`--expect-backend` 双向真拦）移植入库并补钉。明令窗未开：不许打模型、不许碰 `evalrun` 里任何 run/selftest 件、不许动容器、不许 commit | 20:5x |
+| （run12 定性·总控亲取） | — | **run12 整窗报废** | `be-eval95` ＋ `%TEMP%\evalrun` | 🔴 **作废**：19:17:39 rc=1，`missing 6 fixture id(s)` ⇒ `nothing written to run12-answers.jsonl`。六题两笔独立原因：`report-10/11/12` ＝业主 19:12 关 Docker Desktop（10061 拒连，19:58 容器回来）；`doc-01/02/03` ＝**总控自己的错**，17:22 用真 fixture 题号打冒烟探针污染 Redis，而 P-18 是 17:14 校的（在探针**之前**）。sidecar 99 行＋帧账 834 KB 在盘但**不含答案文本** ⇒ 不可复原 | 20:0x |
+| （今晚开窗阻塞·等业主一格） | — | **P-20 前置三格 FAIL** | 主树现取 `scripts/r530_run10_window_preflight.py --json` | 🔴 `gpu_apps`：**CS2 在跑**（pid 36684，20:13:17 起，`nvidia-smi` 现列它在 GPU 上）⇒ A① 的 p95 不可采信；**关游戏是业主的动作，本席不代杀别人进程**。`provenance`：镜像落后（正解＝随 R527 并树后一次重打，带 GIT_SHA/BUILT_AT）。`foreign_python`：总控自己那遍验收在跑，收工自愈。`answer_cache` PASS（`answer:* = 0`）、`keep_awake` PASS（pid 14828 每 240 s 续锁、171 s 前续过；**临时锁，一行电源设置都没改**，合业主「别设为永眠」）、`eval_tree`／`env_flags` PASS | 20:5x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -6388,3 +6394,41 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 - 🔴 **`be-r551`/R556（`Hume`）与 `be-eval95`/R557（`Pasteur`）双双死在 provider 403 `AccessDenied.Unpurchased`**（百炼 `token-plan…/compatible-mode/v1/responses`，欠费/无权限，不是消息 id 污染）：`be-r551` 留 7 枚 M 的半成品，`be-eval95` 零产物 ⇒ **R559 仍堵**。按规矩**不补投**。
 - ⚪ **R564（`01a0eac0`）投递后 10 小时 `dirty=0`＝零写入**，判据未动一行。
 - 机上现状：外部 `anaconda3\python.exe train.py --device cuda`（**新 PID 13864**，09:46:55 起，昨晚那枚 49496 已不在）继续挡 GPU 本机分数窗；容器 backend/worker/scheduler `Up 11h (healthy)`；主树领先 `gitee` **17 枚未 push**（门未绿，不推）。
+
+
+## 4EI 第十二班第一格（10-02 20:0x–21:0x·总控线·主树 `c9243d4`→`c9a782e`→`c95fe22`→`db0b336`·单模型未切换·心跳一枚没碰）：run12 为什么必然整窗重来、断点保护怎么落、三笔并树
+
+### 一、回答业主那一问：「我断开了程序，是不是每次都要重跑」——**是，而且不是意外，是架构必然**
+
+- 现取凭据：`scripts/collect_evaluation_answers.py:293-296` 的 `write_answers` 把全部答案 `"".join(...)` 之后**一次性** `write_text`，而它只在覆盖闸 `assert_coverage`（105 全齐）之后才被调用；`main()` 第 400-405 行的分支把「缺一题」写成 `nothing written to <output>` ＋ rc=1。
+- `scripts/eval_transport_ask_v2.py:20-21` 自己把这条例写明挂着：「逐题在盘」只对 sidecar 成立，「采集器只在覆盖闸全过时写字节，**中途没有断点**；sidecar 就是这一轮废在哪一题的证据」。
+- 所以：**关容器、断网、休眠、杀进程，任何一种中断都必然整窗重来**。run12 不是撞了运气，是撞了设计。业主「有事断开某些程序」这个动作，在这套形状下等价于扔掉一整窗（今天实测＝99 题的模型调用白付，约 3 小时墙钟）。
+- 为什么 sidecar 救不回来：现取 99 行的键集只有 `id/kind/wall_ms/answer_chars/evidence_n/tool_calls/attempt/sentinel/approved/approval_*/pre_*/ts`——**只有计数与时间，一个字的答案文本都没有**；帧账那 834 KB 同样只有 `chars`/`sha`/时间。评分件 `run_quality_evaluation.py` 要的是 `answer` 文本，因此不可复原，只能重采。
+- 🔴 别拿「答案缓存」当断点保护：Redis 的 `answer:*` 正是 P-18 要求开窗前清成 0 的东西——命中它＝这一发的时延是约 50 ms 的假读数，纪律直接破。run12 那三题就是这么死的。
+
+### 二、本格已落的两层修法（都不许改被钉死的在册件）
+
+- **止血层（今天已可用，落仓外 `%TEMP%\eb-rescue\R570\resume_window_driver.py`，376 行，总控亲手写、七条行为亲手跑）**：105 题切成 105 片（`--shard-size` 默认 1），每片独立 `--output`、片成即落盘；复跑只补未完成片；全部齐了 `--commit` 按 fixture 原序合并并跑覆盖闸。**中断代价从 105 题降到 1 题**。
+  - 实测清单（假 transport，零模型调用）：九片全 rc=0 → 复跑 `already complete=9 to run=0`（一题没重打）→ 删两片后 `to run=2` 且**只执行那两片** → 合并 9 行且顺序 == fixture 顺序 → 换 fixture 后 `REFUSE: window.json fixture_sha256=… but live is …` → 缺片时 `REFUSE: shard 003 holds 0/1 rows` → bogus transport 连四片全空 `STOP … rc=3` → `--expect-backend pgvector` 在容器 `INDEX_BACKEND=''` 时 REFUSE、`chroma` 时放行。
+  - 🔴 复用必须有指纹（镜像 `revision` ∧ `INDEX_BACKEND` ∧ fixture `sha256` ∧ transport ∧ `shard_size`）：**半窗混库拼成一条基线，比丢一窗更坏**——R59 切读的对分窗可比性就靠这一格。
+- **根治层＝R570，已立单并投出**（跟进单 §150，七格判据＋禁改清单＋开窗纪律两条新增），执行层 `Erdos` 在途，移植入库后本席验收。
+- 开窗纪律新增（本格的教训写死）：① **探针禁用 fixture 里的任何题号**；② `answer:* = 0` 必须在**任何真请求之前、且在探针之后**再校一次——run12 那三题就是死于 17:14 校完之后 17:22 本席自己拿 `doc-02` 打了冒烟探针。
+
+### 三、三笔并树（执行层零 commit，全部本席代提交、逐枚显式列路径）
+
+- `c9a782e` **R556**（9 files）：姿势族「已安装未执行」治本。判据④ 的两态由**同 HEAD 两棵树**给出，不靠手工摘刀——`be-r556base`（dirty=0）G3 73 passed＋**2 errors**、G4 1 passed＋**1 error**；主树六组全 rc=0。error 实名两枚逐一点名：`test_r48_headline_card_lands_on_the_wire.py::test_counter_evidence_c2_a_row_field_that_does_not_exist_turns_the_round_red`、`test_r48_headline_never_enters_the_text_ledger.py::test_d1_counter_evidence_a_card_sent_as_text_turns_this_pin_red`。
+- `c95fe22` **R566＋R567**（5 files）：保活地平线改真读数＋raw 证据退出 BOM 扫描。三件合跑 **24 passed**（6＋6＋12）。
+- `db0b336` **跟进单 §148–§150**（＋128/-0）：CRLF 精确、裸 CR 1534 未动、无 BOM，追加后自证行数对得上。
+- 两态纪律：每笔都交了「dirty 态跑一遍＋commit 后干净树复跑同名件」，文件清单逐组点名，主树现除 `chroma_db/chroma.sqlite3`（数据件，永不提交）外**内容级零脏项**。
+
+### 四、本席订正自己三笔账（都按现跑，不按记忆）
+
+- 「R566/R567 三件合跑 34 passed」**作废**，现跑 **24 passed**（6＋6＋12 逐枚）。34 是上一班把别的件混进去的数，不该继续沿用。
+- 「主树 ~17 枚 M 是 mtime 假脏」这句**方法错了但结论对**：本席先用 `git show HEAD:<file>` 与工作树字节直比，得到 29 枚全「内容不同」——假象。真因是 `core.autocrlf=true`（无 `.gitattributes`）：blob 存 LF、工作树是 CRLF，字节直比必然全不一致。**判 dirty 只准用 `git diff --numstat HEAD`**，它给出 12 枚（含 `chroma_db`），与上一班「29 列 − 17 假 = 12 真」逐枚吻合。
+- 上一班记的「`powershell -File … -Tree …` 参数被外层 shell 吞了」**是误判**。真因两条，都在本席自己写的 `r556_verify.ps1` 里：① 那行 dirty 计数本席自己写了个括号不闭合的表达式；② Windows PowerShell 5.1 读**无 BOM 的 UTF-8 .ps1** 时按 ANSI 解，中文标签变乱码把引号拆散。正解：验收脚本**纯 ASCII 标签**，主树路径经环境变量 `EB_MAIN` 传入（命令行传中文路径同样有编码雷）。
+
+### 五、今晚开窗（run13＝Chroma 基线重做）的前置现状
+
+- P-20 现取：`answer_cache`／`keep_awake`／`eval_tree`／`env_flags` 四格 PASS；三格 FAIL——`gpu_apps`（**CS2 pid 36684 占着 GPU**，20:13:17 起）、`provenance`（镜像 `fe166c8` 落后主树）、`foreign_python`（本席验收在跑，收工自愈）。
+- 🔴 唯一需要业主的那一格：**关掉 Counter-Strike 再开窗**（A① 的 p95 时延读数不可采信）。本席不代杀别人进程，也不擅自开窗——业主已明令「今晚再跑」，窗一开就用分片 driver 跑，中断只补差集。
+- `provenance` 那格由本席推进：R527（`app/**` 动读路径）验收并树后一次重打镜像（带 `GIT_SHA`/`BUILT_AT`），再 `docker compose up -d --force-recreate`；run14（pgvector 对分窗）另需 `deploy/.env.server` 写 `INDEX_BACKEND=pgvector` 且**容器 recreate**（不是镜像 rebuild），并现取 `schema_migrations` 确认 **0019 已应用**——否则 R527 的活动先验 SELECT 抛错走 fail-open，先验整族静默关掉，那一窗与 run13 就不是同一套检索条件。
