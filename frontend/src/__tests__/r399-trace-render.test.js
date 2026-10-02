@@ -54,7 +54,7 @@ import {
 
 // ==================== 后端回包的形状（逐枚照那两枚出口交回的结构，不掺演示值） ====================
 
-/** coverage.per_request 里的一条账：app/common/stage_timing.py:674 开格，六枚键在 :675-:680。 */
+/** coverage.per_request 里的一条账：app/common/stage_timing.py:674 开格，六枚键在 app/common/stage_timing.py:675-:680。 */
 function runEntry(overrides = {}) {
   return {
     segment_sum_ms: 912.5,

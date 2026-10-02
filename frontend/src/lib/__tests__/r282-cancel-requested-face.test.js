@@ -3,15 +3,15 @@
  *
  * 病灶（改前取证取的是本单基点 ec42480 上真跑出来的结果，不是推断）：
  *   lib/provenance.js:349 queueFace 逐格判 queued / processing / done / cancelled / expired /
- *     awaiting_approval，唯独没有 cancel_requested 那一格，于是它落到 :416 那格 failed 兜底：
- *     「这一轮在后台执行失败，没有产出答案」（tone=danger）。同文件 :250 的状态清单注释里
+ *     awaiting_approval，唯独没有 cancel_requested 那一格，于是它落到 frontend/src/lib/provenance.js:416 那格 failed 兜底：
+ *     「这一轮在后台执行失败，没有产出答案」（tone=danger）。同文件 frontend/src/lib/provenance.js:250 的状态清单注释里
  *     明明写着 cancel_requested 在后端存在 —— 只有分支没做。
  *   契约 docs/api/contract-v1.md:611-613：cancel_requested 是【非终态】，cancel() 在任务离开
  *     pending 列表之后按下，标记写进台账、由握着任务的 worker 下一次检查落成 cancelled；
  *     从这里起它只会落 cancelled，永远不会变成 done。写点 app/common/reliable_queue.py:478-486，
  *     读数出口 app/api/v1/chat.py:4361-4368（status 原样交回，failure 那一格恒带）。
  *   为什么这不是纸面缺陷：调用点 ChatPanel.vue:1317 交出去的是【落盘读数 msg.queue】那一格，
- *     而 R268 在 :1310 加的守卫前置条件是 read && —— 读数表为空时整条守卫直接绕过。乙组复现的
+ *     而 R268 在 frontend/src/components/ChatPanel.vue:1310 加的守卫前置条件是 read && —— 读数表为空时整条守卫直接绕过。乙组复现的
  *     就是这一格，手法与 r268 甲组第 3 条同一份（restoreQueuedTurns 只在 onMounted 跑一次，
  *     换进 messages 的轮次不会自己长出读数）。
  *
@@ -336,7 +336,7 @@ describe('乙 · 判据① 重新打开一条会话时这一格画的是哪句�
 // （ChatPanel.vue:1506-1511），真路径凭据由 R293 第二棒补上：`components/__tests__/r293-cancel-requested-persist.test.js:1`
 // —— 16 枚，真挂载面板 → 真点「不排了」拿非终态回执 → 当场看那一次回写 → 卸载后只用盘上那一格重新挂载，
 // 屏幕第二回仍说同一句；四把反证（摘 persist / 冒充 cancelled / 加回 syncActive+stopQueueWatch / 措辞分叉）
-// 的实测红名清单在那枚文件头 :39-59。乙组这三枚的前提从此不再靠手搭。
+// 的实测红名清单在那枚文件头 frontend/src/components/__tests__/r293-cancel-requested-persist.test.js:39 起那一段「反证怎么算红」。乙组这三枚的前提从此不再靠手搭。
 
 describe('丙 · 判据③ 措辞的唯一出处在 lib，面板一份都不许持有（自持措辞必红）', () => {
   const pendingBlock = /function queueCancelPendingFace\(\) \{([\s\S]*?)\n\}/.exec(panel)

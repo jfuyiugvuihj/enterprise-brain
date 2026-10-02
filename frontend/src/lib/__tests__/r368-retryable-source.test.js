@@ -17,11 +17,11 @@
  *  丙 判据③ internal_error 的句子与 flag 不再互相打脸。裁定：改文案、flag 保持 false（三条理由写在
  *     errcodes.js 那一格上面），本件把它升格成全称律 —— 三张表里凡判 false 的那一格，句子都不许承诺
  *     「稍后重试」那一族字样；正则逐字沿用 r208-dictionary-voice.test.js:26。
- *  丁 判据④ 三枚点名用例逐枚落屏：insight-alerts.test.js 那三枚钉（:819 / :823 / :830）的改口读数
- *     以本件的断言为准，:823 那枚按判据②保持 true 不动。
- *  戊 判据⑤ 字典注释里引用的后端行号当场对账：行号从 git show HEAD:app/agents/evidence.py 现读推导，
- *     并断言那一行的内容确实是 _RETRIABLE_CODES。这里一个手抄的 18 都不许出现 —— 冻结的历史只许当
- *     素材读，不许出现在与现场读数的等号一侧（R346 为这条立过账）。谁挪了行号，这枚钉当场报出新行号。
+ *  丁 判据④ 三枚点名用例逐枚落屏：insight-alerts.test.js 那三枚钉（frontend/src/components/__tests__/insight-alerts.test.js:819 / :823 / :830）的改口读数
+ *     以本件的断言为准，frontend/src/components/__tests__/insight-alerts.test.js:823 那枚按判据②保持 true 不动。
+ *  戊 判据⑤ 字典注释里引用的后端行号当场对账：两把尺一律从 git show HEAD:app/agents/evidence.py 现读推导 —— 
+ *     说集合的那一枚对 _RETRIABLE_CODES 的定义行，说「retryable=error_code in _RETRIABLE_CODES」那一句的每一枚对各自的出口行。
+ *     R562 换锚的理由：旧尺只有定义行一把，而字典注释里两档都有，拿定义行量出口就是拿错尺（钉的是尺子形状，不是某个数字）。
  *
  * 读后端口径一律 git show HEAD，绝不 readFileSync 工作树的 app/**：那条教训记在
  * r316-users-contract.test.js:52-59（工作树那一版可能与判据所依据的版本不同，读它就是永远绿的假绿）。
@@ -97,17 +97,25 @@ function showAtRef(path, ref = 'HEAD') {
   return text.replace(/\r\n/g, '\n')
 }
 
-/** 当场推导 _RETRIABLE_CODES 那一行的行号与内容：不抄数字，谁挪了行号这里就跟着挪。 */
-function retriableCodeSite(src) {
+/** 两把尺都当场推导：集合定义那一行，加上每一枚写着 retryable=error_code in _RETRIABLE_CODES 的出口行。 */
+function retriableSites(src) {
   const lines = src.split('\n')
-  const index = lines.findIndex(line => /^\s*_RETRIABLE_CODES\s*=\s*\{/.test(line))
-  if (index < 0) throw new Error('app/agents/evidence.py 里认不出 _RETRIABLE_CODES = { … }：这条理由必须重新取证。')
-  return { line: index + 1, text: lines[index] }
+  const def = lines.findIndex(line => /^\s*_RETRIABLE_CODES\s*=\s*\{/.test(line))
+  const outs = lines.map((line, index) => (/retryable=error_code in _RETRIABLE_CODES/.test(line) ? index + 1 : 0)).filter(Boolean)
+  if (def < 0 || !outs.length) throw new Error('app/agents/evidence.py 里认不出 _RETRIABLE_CODES 的定义行，或那句 retryable=error_code in _RETRIABLE_CODES 已被摘掉：两把尺都落空，这一格不许降级')
+  return { definition: { line: def + 1, text: lines[def] }, outlets: outs.map(n => ({ line: n, text: lines[n - 1] })) }
+}
+
+/** 字典注释里的每一枚 evidence.py 坐标，按它自己那一行说的话分档：写着出口语句的那一档，其余那档说的是集合。 */
+function evidenceCites(text) {
+  return text.split('\n').flatMap((line, index) => [...line.matchAll(/app\/agents\/evidence\.py:(\d+)((?:\s*(?:[与和、,]|[/])\s*:(\d+))*)/g)]
+    .flatMap(item => [Number(item[1])].concat((item[2].match(/\d+/g) || []).map(Number))
+      .map(n => ({ n, at: index + 1, outlet: line.includes('retryable=error_code in _RETRIABLE_CODES') }))))
 }
 
 /** 后端那一枚集合的成员名同样当场从 git 对象里抠，不在本件里手抄一遍。 */
 function retriableCodes(src) {
-  const body = /\{([^}]*)\}/.exec(retriableCodeSite(src).text)
+  const body = /\{([^}]*)\}/.exec(retriableSites(src).definition.text)
   return (body[1].match(/"[a-z_]+"/g) || []).map(token => token.replace(/"/g, ''))
 }
 
@@ -265,14 +273,23 @@ describe('R368 丁 · 判据④：三枚点名用例逐枚落屏（insight-alert
 describe('R368 戊 · 判据⑤：字典注释里引用的后端行号当场对得上（不抄数字）', () => {
   const EVIDENCE = 'app/agents/evidence.py'
 
-  it('errcodes.js 里每一处 app/agents/evidence.py:<N> 都等于当场推导的那一行', () => {
-    const site = retriableCodeSite(showAtRef(EVIDENCE))
-    expect(site.text.includes('_RETRIABLE_CODES'), '推导到的那一行必须真的写着 _RETRIABLE_CODES').toBe(true)
-    const cited = [...sourceOf('../errcodes.js').matchAll(/app\/agents\/evidence\.py:(\d+)/g)].map(item => Number(item[1]))
-    expect(cited.length, '字典里一处引用都没有：引用被删了，这枚钉就白写').toBeGreaterThan(0)
-    for (const n of cited) {
-      expect(n, 'evidence.py 引用漂了：注释写 ' + n + '，当场推导的是 ' + site.line + '（' + site.text.trim() + '）').toBe(site.line)
-    }
+  it('errcodes.js 每一枚 evidence.py 坐标都等于它自己那句话点名那一格的当场推导：说集合的钉定义行、说出口的钉各自那一枚出口行', () => {
+    const sites = retriableSites(showAtRef(EVIDENCE))
+    const cited = evidenceCites(sourceOf('../errcodes.js'))
+    expect(cited.length, '字典里一处 evidence.py 引用都没有：引用被删了，这枚钉就白写').toBeGreaterThan(0)
+    const outletCites = cited.filter(row => row.outlet).map(row => row.n)
+    const setCites = [...new Set(cited.filter(row => !row.outlet).map(row => row.n))]
+    expect(sites.outlets.length, '注释说「两枚信封出口」，后端现读却数出 ' + sites.outlets.length + ' 枚 retryable=error_code in _RETRIABLE_CODES：这句注释与后端不再是同一件事').toBe(2)
+    expect(outletCites, '出口那一档漂了：注释逐枚是 ' + outletCites.join('、') + '，当场推导的出口行是 ' + sites.outlets.map(site => site.line).join('、')).toEqual(sites.outlets.map(site => site.line))
+    expect(setCites, '集合那一档漂了：注释逐枚是 ' + setCites.join('、') + '，当场推导的定义行是 ' + sites.definition.line).toEqual([sites.definition.line])
+  })
+
+  it('反弹牙：把那句出口语句或那枚集合定义从 HEAD 那一版里摘掉 ⇒ 尺必须抛，不许静默数出零枚出口', () => {
+    const src = showAtRef(EVIDENCE)
+    const OUTLET = 'retryable=error_code in _RETRIABLE_CODES'
+    expect(src.split(OUTLET).length, '后端那句话换了写法：这把尺得重新取证，不许拿旧形状算绿').toBeGreaterThan(2)
+    expect(() => retriableSites(src.split(OUTLET).join('retryable = isRetriable(error_code)')), '摘掉出口语句还能算出位置：那把尺是假的').toThrow(/两把尺都落空/)
+    expect(() => retriableSites(src.replace(/^(\s*)_RETRIABLE_CODES(\s*)=\s*\{/m, '$1$2NOT_A_SET = {')), '摘掉集合定义还能算出位置：那把尺是假的').toThrow(/两把尺都落空/)
   })
 
   it('注释那句「收了五档、刻意没有这一档」当场成立：档位数目与成员都从 git 对象现读', () => {

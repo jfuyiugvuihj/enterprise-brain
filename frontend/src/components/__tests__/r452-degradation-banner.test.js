@@ -2,8 +2,8 @@
  * R452 · G07 残格「全站降级横幅」的反证钉（判据①②③④⑤⑥ · 全部走 SSR 真 HTML）
  *
  * 病灶（总控现读 @7532652）：逐族降级那张脸早就长出并且在册 —— lib/health.js:214 computeFace、
- * :241 runtimeFaces、:65-66 读只读名单、:284 degraded；可消费点只有对话那一屏（ChatPanel.vue:242
- * import、:778 runtimeFaceList → 屏上 :1830-1832）。App.vue 一侧 runtimeFaces 零命中 ⇒ 员工切到
+ * frontend/src/lib/health.js:241 runtimeFaces、frontend/src/lib/health.js:65-66 读只读名单、frontend/src/lib/health.js:284 degraded；可消费点只有对话那一屏（ChatPanel.vue:242
+ * import、frontend/src/components/ChatPanel.vue:778 runtimeFaceList → 屏上 frontend/src/components/ChatPanel.vue:1830-1832）。App.vue 一侧 runtimeFaces 零命中 ⇒ 员工切到
  * 总览 / 喂料 / 告警 / 审批任何一屏，「这台机器没配检索模型」「推理没走加速设备」「某几格跑在只读
  * 保护下」一个字都看不见：答案质量崩了没有一句解释。本单把它升成登录后整站常驻的一枚横幅。
  *

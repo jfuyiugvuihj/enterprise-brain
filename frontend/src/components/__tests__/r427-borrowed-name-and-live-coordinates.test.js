@@ -270,6 +270,52 @@ describe('R427丁 · 阻塞账：五处病灶今天改不了，是被钉住的�
 
 const SESSIONS = 'frontend/src/lib/sessions.js'
 const CHAT = 'frontend/src/components/ChatPanel.vue'
+// ==================== 戊 · 现读声称（R562 换尺）====================
+
+/** 注释里点到的每一枚源名都要当场认得出仓内真源：认不出就抛，多义短名与缺路径都逃不掉。 */
+const CITE_TARGETS = {
+  'ChatPanel.vue': CHAT,
+  'frontend/src/components/ChatPanel.vue': CHAT,
+  'lib/sessions.js': SESSIONS,
+  'frontend/src/lib/sessions.js': SESSIONS,
+  'sessions.js': SESSIONS,
+}
+
+/**
+ * R562 换掉的对账姿势：本组原来把「整句怎么写」当字面量吃，于是注释把裸冒号补成仓内全路径就红 ——
+ * 那量的是句子的写法，不是账的对错。现在钉的是「声称的每一枚（真源, 行号）== 当场推导的那一行」：
+ * 写全路径按全路径认，裸冒号继承上一枚文件名，两种写法都合法；源名认不出、数字对不上，各自抛。
+ */
+function citesFrom(flat) {
+  const re = /([\w./-]+\.(?:js|vue|py|md|ts))?:(\d+)(?:-(\d+))?/g
+  const out = []
+  let last = null
+  let match
+  while ((match = re.exec(flat)) !== null) {
+    if (match[1] !== undefined) {
+      const target = CITE_TARGETS[match[1]]
+      if (!target) throw new Error('引用名认不出仓内真源：' + match[1] + ' —— 多义短名请写全路径，这一格不许猜')
+      last = target
+    }
+    if (!last) throw new Error('裸冒号坐标前面没有可继承的文件名：' + flat.slice(0, 60))
+    out.push({ src: last, start: Number(match[2]), end: match[3] === undefined ? null : Number(match[3]) })
+  }
+  return out
+}
+
+/** 取那句话：按锚串定位所在行，向下并 span 行（注释会折行，句子是一枚整体），折行处的星号展平。 */
+function sentenceText(text, anchor, span = 1) {
+  const lines = text.split('\n')
+  const index = lines.findIndex(line => line.includes(anchor))
+  if (index < 0) throw new Error('认不出锚句「' + anchor + '」：那一句话换了写法，戊组这格必须重新取证')
+  const flat = lines.slice(index, index + span).join('\n').replace(/\n\s*\*\s?/g, ' ')
+  const stop = flat.indexOf('——')
+  return stop < 0 ? flat : flat.slice(0, stop)
+}
+
+const baseOf = repoPath => repoPath.split('/').pop().replace(/\./g, '\\.')
+/** 一枚（真源, 行号）在句子里的两种合法写法：带路径的那一种，与继承上一枚文件名的裸冒号那一种。 */
+const citeToken = pair => '(?:(?:[\\w./-]+/)?' + baseOf(pair.src) + ':|:)' + pair.start + (pair.end === null || pair.end === undefined ? '' : '-' + pair.end)
 
 function headLines(repoPath) {
   let text
@@ -323,9 +369,23 @@ describe('R427戊 · 五处死坐标引用逐枚对账：声称的数字必须�
     expect(headLines(SESSIONS)[490]).toContain('替换而不是追加')
   })
 
-  it('r293:53 那条通道五枚坐标逐枚相等（:' + UNMOUNTED.line + ' -> :' + FLUSH.line + ' -> :' + SCROLL.line + ' -> :' + SYNC.line + ' -> :' + PERSIST.line + '）', () => {
-    expect(R293).toContain('ChatPanel.vue:' + UNMOUNTED.line + ' onUnmounted -> :' + FLUSH.line + ' flushScroll -> lib/sessions.js:' + SCROLL.line)
-    expect(R293).toContain('rememberScroll -> :' + SYNC.line + ' syncActive -> :' + PERSIST.line + ' persist')
+  it('r293 那条通道五枚坐标逐枚相等（:' + UNMOUNTED.line + ' -> :' + FLUSH.line + ' -> :' + SCROLL.line + ' -> :' + SYNC.line + ' -> :' + PERSIST.line + '），且每一枚都认得出自己的真源', () => {
+    const flat = sentenceText(R293, '掩盖它的是这条通道', 3)
+    const chain = [
+      { src: CHAT, start: UNMOUNTED.line, end: null, word: 'onUnmounted' },
+      { src: CHAT, start: FLUSH.line, end: null, word: 'flushScroll' },
+      { src: SESSIONS, start: SCROLL.line, end: null, word: 'rememberScroll' },
+      { src: SESSIONS, start: SYNC.line, end: null, word: 'syncActive' },
+      { src: SESSIONS, start: PERSIST.line, end: null, word: 'persist' },
+    ]
+    const pairs = citesFrom(flat)
+    expect(pairs.length, '那句通道话数出的坐标枚数与账不等（现读 ' + pairs.length + ' 枚，账上 ' + chain.length + ' 枚）：删一枚引用躲检查、或多抄一枚，都在这格当场撞').toBe(chain.length)
+    chain.forEach((link, index) => {
+      expect(pairs[index].src, '通道第 ' + (index + 1) + ' 枚引的不是它该引的那本真源（这句现读的是 ' + pairs[index].src + '）').toBe(link.src)
+      expect(pairs[index].start, '通道第 ' + (index + 1) + ' 枚声称 :' + pairs[index].start + '，当场推导的是 :' + link.start).toBe(link.start)
+      expect(flat, '通道第 ' + (index + 1) + ' 枚的数字后面接的不是它那枚词：数字与话脱节').toMatch(new RegExp(citeToken(link) + '\\s*' + link.word))
+    })
+    expect(flat, '五枚词的先后不再是那条通道（-> 断链）').toMatch(new RegExp(chain.map(link => link.word).join('\\s*->\\s*.*?')))
     // 🔴 这三格原来钉的是「函数头 + 一枚写死的行距」（+4 / +5 / +6）。行距是别人插一行就会失效的东西：
     // 09-28 的 R458 在 onUnmounted 块里加了一发 clearRecheckFaceTimer()，+4 当场被打成假红（本席现取 flushScroll() 在 :894）。
     // 改口成按块形状推导——「这一发的函数体里必须恰好有那一枚调用」：调用消失即红，挪远挪近不红。强度只升不降。
@@ -353,8 +413,15 @@ describe('R427戊 · 五处死坐标引用逐枚对账：声称的数字必须�
     expect(R293).not.toMatch(/lib\/sessions\.js:159/)
   })
 
-  it('r293:35 声称 ChatPanel.vue:' + QUEUED.line + ' 对 :' + LOAD.line + '-' + PULL.line + ' —— 先后顺序也得真成立；旧值 743 / 748-755 已从这一句退场', () => {
-    expect(R293).toContain('（ChatPanel.vue:' + QUEUED.line + ' 对 :' + LOAD.line + '-' + PULL.line + '）→ 刷新那一轮')
+  it('r293 声称 :' + QUEUED.line + ' 对 :' + LOAD.line + '-' + PULL.line + ' —— 先后顺序也得真成立；旧值 743 / 748-755 已从这一句退场', () => {
+    const flat = sentenceText(R293, '）→ 刷新那一轮')
+    const pairs = citesFrom(flat)
+    const wants = [{ src: CHAT, start: QUEUED.line, end: null }, { src: CHAT, start: LOAD.line, end: PULL.line }]
+    expect(pairs.length, '那一句话出的坐标不是两枚（现读 ' + pairs.length + ' 枚）').toBe(2)
+    pairs.forEach((pair, index) => {
+      expect(pair.src + ':' + pair.start + (pair.end === null ? '' : '-' + pair.end), '「对」' + (index === 0 ? '左' : '右') + '边那枚漂了：当场推导的是 :' + wants[index].start + (wants[index].end === null ? '' : '-' + wants[index].end)).toBe(wants[index].src + ':' + wants[index].start + (wants[index].end === null ? '' : '-' + wants[index].end))
+    })
+    expect(flat, '两枚之间连的不是「对」、或括号与「→ 刷新那一轮」不在原位').toMatch(new RegExp('（' + citeToken(wants[0]) + ' 对 ' + citeToken(wants[1]) + '）→ 刷新那一轮'))
     expect(MOUNTED.text).toBe('onMounted(() => {')
     expect(QUEUED.text).toBe('restoreQueuedTurns()')
     expect(LOAD.text).toBe('const storedActive = loadSessions()')
@@ -366,8 +433,12 @@ describe('R427戊 · 五处死坐标引用逐枚对账：声称的数字必须�
     expect(R293).not.toMatch(/:748-755/)
   })
 
-  it('r293:46 声称 :' + QF.line + ' 的 queueFace(msg.queue) —— 它就在 !read 那一支里、守卫（:' + GUARD.line + '）之后；旧值 1317 在这一句里已 0 命中', () => {
-    expect(R293).toContain('走 :' + QF.line + ' 的 queueFace(msg.queue)，本来就没经过面板自持那一份')
+  it('r293 声称 :' + QF.line + ' 的 queueFace(msg.queue) —— 它就在 !read 那一支里、守卫（:' + GUARD.line + '）之后；旧值 1317 在这一句里已 0 命中', () => {
+    const flat = sentenceText(R293, '的 queueFace(msg.queue)')
+    const pairs = citesFrom(flat)
+    expect(pairs.length, '那一腿说出的坐标不是一枚（现读 ' + pairs.length + ' 枚）').toBe(1)
+    expect(pairs[0].src + ':' + pairs[0].start, '走的那一枚漂了：当场推导 queueFace(msg.queue) 在 :' + QF.line).toBe(CHAT + ':' + QF.line)
+    expect(flat, '「走 …… 的 queueFace(msg.queue)」这句话换了写法').toMatch(new RegExp('走\\s*' + citeToken({ src: CHAT, start: QF.line, end: null }) + '\\s*的 queueFace\\(msg\\.queue\\)'))
     expect(QF.text).toBe('face = msg.queue ? queueFace(msg.queue) : null')
     expect(QF.line).toBeGreaterThan(GUARD.line)
     expect(QF.lines[QF.line - 1 - 5].trim()).toBe('} else if (!read) {')
@@ -377,9 +448,9 @@ describe('R427戊 · 五处死坐标引用逐枚对账：声称的数字必须�
   it('反向自证：五处引用都还在原位——把它们删掉躲检查同样算红', () => {
     expect(R197).toMatch(/restoreActive\(\) 那样整份换掉 messages\.value（sessions\.js:\d+）/)
     expect(R210).toMatch(/``frontend\/src\/lib\/sessions\.js:\d+`` 的\*\*追加\*\*分支/)
-    expect(R293).toMatch(/掩盖它的是这条通道：ChatPanel\.vue:\d+ onUnmounted -> :\d+ flushScroll -> lib\/sessions\.js:\d+/)
-    expect(R293).toMatch(/（ChatPanel\.vue:\d+ 对 :\d+-\d+）→ 刷新那一轮/)
-    expect(R293).toMatch(/走 :\d+ 的 queueFace\(msg\.queue\)/)
+    expect(R293).toMatch(/掩盖它的是这条通道：(?:\S*ChatPanel\.vue)?:\d+ onUnmounted -> (?:\S*ChatPanel\.vue)?:\d+ flushScroll -> (?:\S*sessions\.js)?:\d+/)
+    expect(R293).toMatch(/（(?:\S*ChatPanel\.vue)?:\d+ 对 (?:\S*ChatPanel\.vue)?:\d+-\d+）→ 刷新那一轮/)
+    expect(R293).toMatch(/走 (?:\S*ChatPanel\.vue)?:\d+ 的 queueFace\(msg\.queue\)/)
   })
 
   it('旧值今天确实指着别处（本单不是猜的；而且只断「那一行不是它声称的那一格」，不断「那一行具体是什么」——后者会被下一笔并树的形态改动打成假红，本组今天就是被 :743 与 :1317 那两枚具体字面量绊倒的）：814 仍是空行、:767 不是 onUnmounted、:702 不是 flushScroll、:743 不是 restoreQueuedTurns、:1317 不是 queueFace 那一腿', () => {

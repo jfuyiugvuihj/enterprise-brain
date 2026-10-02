@@ -2,7 +2,7 @@
  * R186 · 后端已经不撒谎了，界面上得有人替它把话说出来
  *
  * R180（并树 4f96cb6）把行级判定写进两枚成功体字段：preview.row_scope
- * （app/api/v1/data.py:132-169 构形、:319 挂上）与 GET /data-files 的 restricted
+ * （app/api/v1/data.py:132 起那一段构形、app/api/v1/data.py:319 挂上）与 GET /data-files 的 restricted
  * （app/api/v1/data.py:240-249）。改之前整棵前端一个字都不读它们（全 src 只有
  * src/lib/errcodes.js 的 error-envelope 一族认得 row_scope_denied），所以员工看到的仍是
  * 「列表空空、预览空白」= 与「不存在」长得一模一样 —— R163 归的 B 类病在界面层的最后一公里。

@@ -23,7 +23,7 @@ import { errorDetail, http, PERMISSION_DENIED } from './http'
 import { errorCodeLabel, errorCodeOf } from './errcodes'
 import { failureRetryable, formatStamp, readFailureView, SHAPE_FAILURE_DESCRIPTION } from './alerts'
 
-/** 三条路由：一条读，两条写（notifications.py:187 / :212 / :218）。 */
+/** 三条路由：一条读，两条写（app/api/v1/notifications.py:187 / :212 / :218）。 */
 export const INBOX_PATH = '/notifications'
 export const READ_ACTION_PATH = '/notifications/read'
 export const DISMISS_ACTION_PATH = '/notifications/dismiss'

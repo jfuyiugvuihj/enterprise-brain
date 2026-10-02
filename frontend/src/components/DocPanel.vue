@@ -632,7 +632,7 @@ async function uploadFilesParallel(files) {
 }
 
 // 🔴 这两枚签名（uploadSingleFile(file) / createUploadItem(file)）钉在
-// tests/test_frontend_upload_auth.py:66-68 与 :99 那三枚字面量上（本单写集之外，一字未动）。
+// tests/test_frontend_upload_auth.py:66-68 与 tests/test_frontend_upload_auth.py:99 那三枚字面量上（本单写集之外，一字未动）。
 // 密级这一格因此不走「多传一枚参数」，改成建表单那一刻现读选择框 —— 语义等价：JS 单线程，
 // uploadFilesParallel 的 map 会把每一发的表单在同一次同步执行里拼完，之后改下拉追不上已拼好的那几份。
 async function uploadSingleFile(file) {
@@ -1046,7 +1046,7 @@ onDeactivated(stopUploadPoll)
           </div>
           <!-- R338：这一次上传的 PDF 提取读数。数据全部出自刚回来的那一发 POST /upload 回执，
                本格不为它多打一次请求（判据⑥）。
-               🔴 这一格不落库（契约 docs/api/contract-v1.md:2390 明写「a reading, not a ledger」，
+               🔴 这一格不落库（后端 app/api/v1/chat.py:4476 明写「a reading, not a ledger」，
                app/documents/catalog.py 对 pdf_extraction 零命中），所以只画在【刚上传这一条】上：
                刷新或重进就读不到，目录行也不长「OCR 状态列」，更不写 localStorage 留住它。
                回执为 null（非 PDF / .docx / .txt）⇒ v-if 不成立 ⇒ 整格不画，不画成「0 页扫描」（判据①）。

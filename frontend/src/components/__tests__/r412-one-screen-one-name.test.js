@@ -2,7 +2,7 @@
  * R412 · 一屏一名：屏名只有 meta.title 一个人说，页内自写的那一句必须逐字跟着它
  *
  * 要治的病（docs/handoff/2026-09-27-v2-gap-recheck-2.md §3「R412 · 喂料屏三名并存」那一格）：
- *   同一屏上并存三个名字 —— 顶栏与侧栏叫「喂料」（src/router/index.js:70 的 meta.title），标签条
+ *   同一屏上并存三个名字 —— 顶栏与侧栏叫「喂料」（frontend/src/router/index.js:70 的 meta.title），标签条
  *   叫「文档」（src/router/feed-tabs.js 里 FEED_TABS[0].label），DocPanel 页内又叫「知识库」
  *   （改前实测：src/components/DocPanel.vue:955 那句 <strong>知识库</strong>）。员工嘴里说的和
  *   屏上写的对不上三次。

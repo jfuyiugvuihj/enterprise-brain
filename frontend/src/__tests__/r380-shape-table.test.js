@@ -11,9 +11,9 @@
  * 裸串那一族（bare:true）改判之后一格都不许剩无中文的人话位；全表无中文的人话位只准落在
  * ENGLISH_SLOTS 那份封闭名单里，名单扩容必须连 R281 判据③一起改判，不许悄悄加一格。
  *
- * 后端真源现读 app/**（不采信派工词）：中文 detail 见 auth.py:75/:130/:179/:222/:225/:281、
- * alerts.py:1020、common/auth.py:603-744、common/authorization.py:23；ASCII-only 的 detail
- * 字面量在 118 个 py 文件里共 73 枚，逐枚数过全是 snake_case 码名（走 :457 那一档，压根到不了
+ * 后端真源现读 app/**（不采信派工词）：中文 detail 见 app/api/v1/auth.py:75/:130/:179/:222/:225/:281、
+ * alerts.py:1020、app/common/auth.py:603 起那一段、common/authorization.py:23；ASCII-only 的 detail
+ * 字面量在 118 个 py 文件里共 73 枚，逐枚数过全是 snake_case 码名（走 frontend/src/lib/errcodes.js:309 那一档，压根到不了
  * 散文位）。屏上那句英文只可能出自框架与代理：app 没有 @exception_handler，未捕获 500 由
  * Starlette 回 "Internal Server Error"，另有 "Not Found" / "Too Many Requests" / "Bad Gateway"
  * 与 nginx 502 正文。逐枚中文人的句子的穷举钉在 __tests__/r380-detail-voice.test.js 乙组。

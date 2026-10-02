@@ -6,10 +6,10 @@
  * app/api/v1/observability.py:1644 那条 GET，读的是 app/common/audit.py:584 那份进程内视图。
  *
  * 🔴 这一屏存在的全部意义是判据 C：不许把截断藏起来。回包把这件事拆成六格交出来，本层逐格转达：
- *   filters（:1211-1215 构造，空串那一档后端自己剔掉了）、event_count（:1228 这一页几枚）、
- *   events_total（:1229 过滤后共几枚）、recorded_total（:1230 过滤前全库几枚）、
- *   truncated（:1231 这一页装不下剩下的那些）、limits（:1233-1239 默认与上限与这次实际用的）。
- *   order = newest_first 是 :1232 写死的字面量，屏上原话印出来 —— 「先看最近这些」这件事不该由界面猜。
+ *   filters（app/api/v1/observability.py:1657-1661 构造，空串那一档后端自己剔掉了）、event_count（app/api/v1/observability.py:1674 这一页几枚）、
+ *   events_total（app/api/v1/observability.py:1675 过滤后共几枚）、recorded_total（app/api/v1/observability.py:1676 过滤前全库几枚）、
+ *   truncated（app/api/v1/observability.py:1677 这一页装不下剩下的那些）、limits（app/api/v1/observability.py:1679-1685 默认与上限与这次实际用的）。
+ *   order = newest_first 是 app/api/v1/observability.py:1678 写死的字面量，屏上原话印出来 —— 「先看最近这些」这件事不该由界面猜。
  *
  * 另两格要紧的：
  *  · 空结果分三种脸，谁都不许冒充谁：过滤条件把每一条都筛掉了（filters 非空、events_total 为 0）、

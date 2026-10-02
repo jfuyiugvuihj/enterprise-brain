@@ -4,8 +4,8 @@
  * 病灶（改前取证，行号取本单基点 1142c27）：
  *   lib/health.js:57  problems.includes(model_not_available) ? 'down' : 'ready'
  *                     —— 整份文件只认一枚码，其余降级一律落进 'ready'；
- *   app/common/monitoring.py:146 已经交出 embedding_model_missing、:133 交出 queue_unavailable、
- *                     :131 交出 *_read_only，前端一码不读。
+ *   app/common/monitoring.py:146 已经交出 embedding_model_missing、app/common/monitoring.py:133 交出 queue_unavailable、
+ *                     app/common/monitoring.py:131 交出 *_read_only，前端一码不读。
  *   于是后端明明报着「检索模型没就绪 / 队列连不上 / 存储只读」，顶栏照样是绿点加「本地模型就绪」。
  *
  * 反证怎么算红：把 modelState 改回那一句三元，下面甲组全部红；把一族文案并成同一句，

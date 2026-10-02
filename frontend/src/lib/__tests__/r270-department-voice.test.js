@@ -5,7 +5,7 @@
  *   ① department_scope_required 原句「请先选择部门范围，再生成这项结果。」叫用户去按一枚界面上
  *      根本不存在的部门选择器（全站无选择器：rg 部门 src/components 只剩报销自查那一格输入框）。
  *      后端这句话真正在说的是**这个账号自己没登记部门归属**（app/api/v1/data.py:45 的
- *      OWNER_SCOPE_REQUIRED，两条出口 :271 与 :459 的 _require_artifact_scope），
+ *      OWNER_SCOPE_REQUIRED，两条出口 app/api/v1/data.py:271 与 :459 的 _require_artifact_scope），
  *      缺的那一格在人身上不在界面上，所以下一步只能是找人补登记或换账号。
  *   ② department_override_denied（app/common/authorization.py:62，verify_department_self_report
  *      以 403 吐出）今天在字典与别名表里 0 命中 ⇒ 被 STATUS_CODES[403] 兜成 permission_denied，

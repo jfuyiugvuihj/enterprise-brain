@@ -6,21 +6,21 @@
  * git grep -n traces -- frontend/src 零命中）。本文件把它们接上，一个端点都不新增。
  *
  * 三枚读腿与它们的闸口（取证 = 基点 49489c3 现读）：
- *   事件回放  app/api/v1/observability.py:600  GET /traces/{trace_id}；:603 过 ACTION_AUDIT；
- *             :630 那一格在「记到的事件为零」时答 404 resource_not_found 而不是 200 空数组
+ *   事件回放  app/api/v1/observability.py:600  GET /traces/{trace_id}；app/api/v1/observability.py:603 过 ACTION_AUDIT；
+ *             app/api/v1/observability.py:630 那一格在「记到的事件为零」时答 404 resource_not_found 而不是 200 空数组
  *             —— 所以「这一条运行没留下痕迹」是服务端说出来的话，前端不许替它说，也不许把
- *             自己那一次问不出翻译成这句。回包里的计数（:640 / :641 / :642）原样读，不重算。
- *   运行清单  app/api/v1/observability.py:684  GET /stage-latency，不带 trace_id 时 :714 把
+ *             自己那一次问不出翻译成这句。回包里的计数（app/api/v1/observability.py:640 / :641 / app/api/v1/observability.py:642）原样读，不重算。
+ *   运行清单  app/api/v1/observability.py:684  GET /stage-latency，不带 trace_id 时 app/api/v1/observability.py:714 把
  *             scope 写成 process：这一格答的是「这台服务进程今天的分段账」。清单不来自前端数
  *             样本，而来自服务端自己折好的 coverage.per_request（app/common/stage_timing.py:674
- *             逐枚运行一条账，:685 的 coverage.requests 就是它的枚数）；这里只读它，顺序也照
+ *             逐枚运行一条账，app/common/stage_timing.py:685 的 coverage.requests 就是它的枚数）；这里只读它，顺序也照
  *             它给的那串键，不重排、不排序。
  *   分段耗时  同一条出口带 trace_id 时走 app/api/v1/observability.py:710（scope 写成 trace），
- *             数由 :655 那一格从已记录的事件里折出来 —— 它不重跑请求，昨天的运行也读得回来。
- *   开关      进程账本自己带一枚 enabled（app/common/stage_timing.py:956，读的是 :755 那个环境
+ *             数由 app/api/v1/observability.py:655 那一格从已记录的事件里折出来 —— 它不重跑请求，昨天的运行也读得回来。
+ *   开关      进程账本自己带一枚 enabled（app/common/stage_timing.py:956，读的是 app/common/stage_timing.py:755 那个环境
  *             变量）：它是 false 时这一格叫「不供数」，绝不叫「今天没有运行」。
- *   闸口      app/common/permissions.py:15（admin）与 :16（auditor）名下有 audit:read，
- *             :13（staff）与 :14（manager）没有 ⇒ 员工打这三枚出口拿回来的是 403，不是空列表。
+ *   闸口      app/common/permissions.py:15（admin）与 app/common/permissions.py:16（auditor）名下有 audit:read，
+ *             app/common/permissions.py:13（staff）与 app/common/permissions.py:14（manager）没有 ⇒ 员工打这三枚出口拿回来的是 403，不是空列表。
  *
  * 三条不变量（逐枚有钉：src/lib/__tests__/r399-traces-contract.test.js）：
  *  ① 数只从服务端来：屏上每一个数字都是回包里那一格的读数。前端不数事件、不加和、不算百分位、
@@ -133,7 +133,7 @@ export const LEDGER_FAILED_TITLE = '分段账没读到'
 // ==================== 词表（对照后端字面量，词表外只说未登记） ====================
 
 /**
- * coverage.per_request 每一条账的字段名：那一格开在 app/common/stage_timing.py:674，六枚键在 :675-:680。
+ * coverage.per_request 每一条账的字段名：那一格开在 app/common/stage_timing.py:674，六枚键在 app/common/stage_timing.py:675-:680。
  * 这一枚数组是账本不是注释：契约钉拿它逐枚对源码，后端改了名而这里没跟上就红。
  */
 export const RUN_BACKEND_FIELDS = [
@@ -532,7 +532,7 @@ export function ledgerMalformedView() {
 /**
  * 单条运行的分段账 -> 那一格。零样本与否只看服务端那枚 sample_count
  * （app/common/stage_timing.py:699），前端不数样本；缺哪几段也照它自己说的
- * missing_stages（:702）念，不替它补一段名字。
+ * missing_stages（app/common/stage_timing.py:702）念，不替它补一段名字。
  */
 export function ledgerViewFromResponse(data) {
   if (!isRecord(data)) return ledgerMalformedView()

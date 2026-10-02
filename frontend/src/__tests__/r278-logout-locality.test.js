@@ -3,9 +3,9 @@
  *
  * 背景是两件事叠在一起，得判一次（不是判两回）：
  *   · R268 刚并树（90c15bb）：左侧会话名单不再只有本机那一份，点一次「从服务器取回」就打
- *     一次 GET /sessions 再并进来（lib/sessions.js:924 readBackendSessionList / :940 mergeServerSessions，
+ *     一次 GET /sessions 再并进来（lib/sessions.js:924 readBackendSessionList / frontend/src/lib/sessions.js:940 mergeServerSessions，
  *     挂载期一枚请求都不发）；
- *   · App.vue 的 doLogout（改前 :183-197）今天整包清 eb_*，只留「记住我」的账号名，
+ *   · App.vue 的 doLogout（改前 frontend/src/lib/sessions.js:183-197）今天整包清 eb_*，只留「记住我」的账号名，
  *     而清之前还先走 goToLogin() -> resetSessions()（lib/sessions.js:176）把内存 store 与
  *     本机名单一起洗掉。
  * 于是这一格要回答的是：**清完库之后，那个「点一次取回」的入口还在不在？**

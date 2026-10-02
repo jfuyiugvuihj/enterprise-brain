@@ -3,11 +3,11 @@
  *
  * 病灶（改前取证，本件基点 4dcbd30）：
  *   ChatPanel.vue:840-844 QUEUE_POLL_STOPPERS 只有三格（404 resource_not_found /
- *     403 permission_denied / 401 authentication_required），而 :851 的匹配是
+ *     403 permission_denied / 401 authentication_required），而 frontend/src/components/ChatPanel.vue:851 的匹配是
  *     item.status === status && item.code === code 双条件；
- *   app/api/v1/chat.py::_authorize_queue_task 实际有五枚拒绝出口（:750 401 / :753 404 /
- *     :759 与 :763 两枚 403 authorization_unavailable / :765 403 permission_denied），
- *     其中 :759（任务载荷读不出 JSON）与 :763（载荷里没有 principal.user_id）这一族
+ *   app/api/v1/chat.py::_authorize_queue_task 实际有五枚拒绝出口（frontend/src/components/ChatPanel.vue:750 401 / frontend/src/components/ChatPanel.vue:753 404 /
+ *     frontend/src/components/ChatPanel.vue:759 与 :763 两枚 403 authorization_unavailable / frontend/src/components/ChatPanel.vue:765 403 permission_denied），
+ *     其中 frontend/src/components/ChatPanel.vue:759（任务载荷读不出 JSON）与 frontend/src/components/ChatPanel.vue:763（载荷里没有 principal.user_id）这一族
  *     永远匹配不上名单 ⇒ 一枚再也读不回来的任务，页签照样每 3 秒打一枪，
  *     后端 R194 起的审计台账每笔拒绝记一行——正是 R198 要治的那笔噪声，只漏了入口这一格。
  *
@@ -47,7 +47,7 @@ const panel = source('ChatPanel.vue')
 const QUEUE_MS = 3000
 const REQUEST_ID = 'req-r202-a'
 const SSR_CONTEXT_KEY = Symbol.for('v-scx')
-// chat.py:759 与 :763 两枚出口回的是同一个 detail，界面认的是「status + code」这一格
+// chat.py:759 与 app/api/v1/chat.py:763 两枚出口回的是同一个 detail，界面认的是「status + code」这一格
 const AUTHZ = 'authorization_unavailable'
 
 // ==================== 网络层脚本 ====================

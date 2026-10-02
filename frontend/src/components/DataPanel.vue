@@ -11,7 +11,7 @@ import ArtifactList, { advanceDelete, deleteButtonLabel, deleteErrorView, isPend
 
 /**
  * R186 · 行级判定的三张脸。后端（R180）已经把结论写进两枚成功体字段 ——
- * preview.row_scope（app/api/v1/data.py:132-169 构形、:319 挂上）与 GET /data-files 的
+ * preview.row_scope（app/api/v1/data.py:132 起那一段构形、app/api/v1/data.py:319 挂上）与 GET /data-files 的
  * restricted（app/api/v1/data.py:240-249）。这一枚面板只做一件事：把后端已经做出的判定
  * 说出去，一个字都不替它猜。
  *

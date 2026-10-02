@@ -4,19 +4,19 @@
  * 病（开工现取，基点 85572c1）：GET /api/v1/slo 在前端零消费者 —— 三枚只读出口里它的读数最不像
  * 「屏」（它交的全是欠账），所以界面上一个接它的地方都没有（rg -nF "/slo" frontend/src 除 </slot>
  * 那种误命中外 0 枚生产命中）。出口早就在树：app/api/v1/observability.py:1145 那条 GET，
- * 读数体是同文件 :1056 的 slo_readout()。本层把它接上，一枚端点都不新增、一格字段都不新造。
+ * 读数体是同文件 app/api/v1/observability.py:1056 的 slo_readout()。本层把它接上，一枚端点都不新增、一格字段都不新造。
  *
  * 🔴 这一屏存在的全部意义是判据 A：不许把「没量过」画成达成。三格机制在源码里就写着，本层只转达：
  *   ① 样本闸不是查询参数。MIN_SLO_SAMPLES（app/api/v1/observability.py:742）由 slo_readout 的
- *      min_samples 形参默认值带出，:1060 那句注释给的理由是「调用方可以调低的下限不算下限」；
+ *      min_samples 形参默认值带出，app/api/v1/observability.py:1060 那句注释给的理由是「调用方可以调低的下限不算下限」；
  *      所以这一屏连 limit 都不发，屏上印的那枚数是回包里的 sample_floor，不是界面给的。
- *   ② 欠样本时百分位是 null 而不是 0。:1018 与 :1019 在 status 不是 measured 时把 p50_ms /
- *      p95_ms 写成 None —— :749 那段注释说得很直白：骨架对没见过的分布答 0，而一枚 0 毫秒的 P95
+ *   ② 欠样本时百分位是 null 而不是 0。app/api/v1/observability.py:1018 与 :1019 在 status 不是 measured 时把 p50_ms /
+ *      p95_ms 写成 None —— app/api/v1/observability.py:749 那段注释说得很直白：骨架对没见过的分布答 0，而一枚 0 毫秒的 P95
  *      是这一模块能造出的最像真的假 SLO。所以屏上读 null 一律画「未记录」，一枚 0 都不许出现。
- *   ③ 目标值整格待填。SLO_TARGET_PENDING（:747）= awaiting_real_samples，:744 那句写明「写死一个
+ *   ③ 目标值整格待填。SLO_TARGET_PENDING（app/api/v1/observability.py:747）= awaiting_real_samples，app/api/v1/observability.py:744 那句写明「写死一个
  *      800 毫秒就是编数据」。屏上每一档的目标那一格只有这一句人话，没有数字。
  *
- * blockers 逐条挂出来（判据 A 的后半）：_slo_not_measurable（:1034）在 :1050-1052 交出 [{code, detail}]，
+ * blockers 逐条挂出来（判据 A 的后半）：_slo_not_measurable（app/api/v1/observability.py:1034）在 :1050-1052 交出 [{code, detail}]，
  * code 用后端原名（lane_attribution_absent 那一族属乙半未清），本层一枚都不改名、一枚都不合并；
  * 中文只在词表里给它配一句「这是什么」，词表外的值只说「未登记的判定」，不猜。
  *

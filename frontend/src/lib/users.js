@@ -5,12 +5,12 @@
  * 改部门），后端没给的能力这里不造 —— 它只有「删除」没有「停用」，屏上就只说删除。
  *
  * 后端零改动，口径逐字跟着源码走（读路径取证 = 主树 4382443）：
- *   出口  app/api/v1/auth.py:90  GET /users，:106 回 {"users": users}（R356 起名册取不到
+ *   出口  app/api/v1/auth.py:90  GET /users，app/api/v1/auth.py:106 回 {"users": users}（R356 起名册取不到
  *         时答 503 storage_unavailable，不答 {"users": []}）；authorize_request(request,
- *         ACTION_MANAGE_USERS, resource_name="users") 与 :98 POST / :113 DELETE / :123 PUT
- *         password / :139 PUT department 四枚写出口过的是同一道闸 —— 读写五腿共用一枚判定。
+ *         ACTION_MANAGE_USERS, resource_name="users") 与 app/api/v1/auth.py:98 POST / app/api/v1/auth.py:113 DELETE / app/api/v1/auth.py:123 PUT
+ *         password / app/api/v1/auth.py:139 PUT department 四枚写出口过的是同一道闸 —— 读写五腿共用一枚判定。
  *   列名  app/common/auth.py:543  SELECT id, username, role, department, created_at；
- *         内存表那一腿（:538-541）回同一组键，created_at 给空串。
+ *         内存表那一腿（app/common/auth.py:538-541）回同一组键，created_at 给空串。
  *   闸口  app/common/authorization.py:50-57  无 Principal → 401 authentication_required，
  *         PermissionError → 403，detail 里带 reason code（app/common/policy.py 的
  *         authorization_decision）；staff / manager / auditor 的角色集里没有 users:manage
@@ -34,7 +34,7 @@ import { errorDetail, http, PERMISSION_DENIED } from './http'
 
 /** 这一屏唯一的一条请求路径。列表只此一条，写路径一枚都不接。 */
 export const USERS_PATH = '/users'
-/** 后端 auth.py:112 那一格回包里的数组键名。 */
+/** 后端 app/api/v1/auth.py:112 那一格回包里的数组键名。 */
 export const USERS_ROWS_KEY = 'users'
 
 /**
@@ -107,7 +107,7 @@ export function userRoleLabel(role) {
   return USER_ROLE_LABELS[key] || USER_ROLE_UNKNOWN
 }
 
-/** 后端没记部门就是空串（auth.py:565 那一格同一语义）：说「未登记」，不替它编一个部门名。 */
+/** 后端没记部门就是空串（app/api/v1/auth.py:88 那一格同一语义）：说「未登记」，不替它编一个部门名。 */
 export function departmentText(department) {
   return textOf(department) || UNATTRIBUTED_DEPARTMENT
 }
@@ -277,7 +277,7 @@ export const USER_WRITE_DEPARTMENT = 'department'
 export const USER_CREATE_PATH = USERS_PATH
 export const USER_PASSWORD_PATH = '/users/password'
 export const USER_DEPARTMENT_PATH = '/users/department'
-/** DELETE 的路径带编号（auth.py:131 声明的是 user_id: int），所以这里是一个构造函数而不是常量。 */
+/** DELETE 的路径带编号（app/api/v1/auth.py:131 声明的是 user_id: int），所以这里是一个构造函数而不是常量。 */
 export const USER_DELETE_PATH_PREFIX = `${USERS_PATH}/`
 
 /**
@@ -330,7 +330,7 @@ export const USER_FORM_RULES = {
  */
 export const USER_CREATABLE_ROLES = USER_FORM_RULES.creatableRoles
 
-/** 后端 CreateUserRequest 那两枚默认值（auth.py:28-29：role 默认 staff、department 默认空串）：表单起点照它抄，不自己挑一枚。 */
+/** 后端 CreateUserRequest 那两枚默认值（app/api/v1/auth.py:28-29：role 默认 staff、department 默认空串）：表单起点照它抄，不自己挑一枚。 */
 export const USER_CREATE_DEFAULTS = { role: 'staff', department: '' }
 
 /** 预检没过时的那几句话：说的是本账那几个值，不是第二份判定。 */
@@ -361,7 +361,7 @@ export function passwordBody(form = {}) {
 }
 
 /**
- * department 这一枚键每次都必须出现：后端把「缺席 / null」读成「这轮没说」（auth.py:171-180 那半条
+ * department 这一枚键每次都必须出现：后端把「缺席 / null」读成「这轮没说」（app/api/v1/auth.py:171-180 那半条
  * 分支一个字都不写，回 changed: false），显式空串才读成「清空归属」。少发一枚键就是把「没改」
  * 提交成「改过了」——那一格 R290 的注释专门钉过，本层照它的口径整发都带上。
  */
@@ -373,7 +373,7 @@ export function departmentBody(form = {}) {
 }
 
 /**
- * DELETE 按编号定位（auth.py:131 的路径参数是 user_id）。名册这一行没给编号就构造不出路径：
+ * DELETE 按编号定位（app/api/v1/auth.py:131 的路径参数是 user_id）。名册这一行没给编号就构造不出路径：
  * 空串是唯一允许的「不行」，前端不替后端猜一个 id，也不发一枚注定 422 的请求。
  */
 export function userDeletePath(row) {
@@ -461,8 +461,8 @@ const USER_WRITE_FACE_COPY = {
 }
 
 /**
- * 后端那四枚出口的成功回包共有形状：{"status": "ok"}（auth.py:120），三枚还多带一句 message
- * （:110 / :134 / :198-203）。认「成了」只认这一枚键的这一枚值，别的形状一律走「读不出结论」那张脸。
+ * 后端那四枚出口的成功回包共有形状：{"status": "ok"}（app/api/v1/auth.py:120），三枚还多带一句 message
+ * （app/api/v1/auth.py:110 / :134 / app/api/v1/auth.py:198-203）。认「成了」只认这一枚键的这一枚值，别的形状一律走「读不出结论」那张脸。
  */
 export const USER_WRITE_OK_KEY = 'status'
 export const USER_WRITE_OK_VALUE = 'ok'

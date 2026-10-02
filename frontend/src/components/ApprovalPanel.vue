@@ -179,7 +179,7 @@ async function submitCheck(force = false) {
     // department_override_denied（LEGACY_ALIASES 在册）出的已经是字典那句中文，后端那句英文改走
     // rawMessage。原先这两行的三元是给那个洞打的现场补丁，今天补丁与 errorDetail 逐字同一
     // （等值性由 lib/__tests__/r281-dictionary-voice.test.js:155 钉着），留着就是给同一句话开第二条出口。
-    // departmentRefused 本身照留：:174 它驱动失败卡那张脸（:89 的标题），管的是脸不是句子。
+    // departmentRefused 本身照留：frontend/src/lib/__tests__/r281-dictionary-voice.test.js:174 它驱动失败卡那张脸（frontend/src/lib/__tests__/r281-dictionary-voice.test.js:89 的标题），管的是脸不是句子。
     error.value = errorDetail(err, '审批预审失败')
   } finally {
     loading.value = false

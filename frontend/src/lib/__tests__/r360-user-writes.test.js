@@ -310,7 +310,7 @@ describe('R360甲 · 四枚出口逐枚接通，且后端一个字没动', () =>
     const password = outletBody(API, '@router.put("/users/password")')
     expect(password).toContain('data.username != principal.username')
     expect(password).not.toContain('authorize_request(')
-    // 那一半自助豁免被后端写进了这一枚自己的 docstring（auth.py:146-147），只能按「有没有这一行 if」判
+    // 那一半自助豁免被后端写进了这一枚自己的 docstring（app/api/v1/auth.py:146-147），只能按「有没有这一行 if」判
     expect(outletBody(API, '@router.put("/users/department")')).not.toMatch(/if data\.username != principal\.username/)
   })
 

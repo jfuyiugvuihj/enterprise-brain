@@ -26,7 +26,7 @@ export const SCOPE_REASON_TEXT = {
 
 /**
  * 版本行的时间列只有一个真源：document_versions.created_at（app/documents/catalog.py:36 的
- * _SELECT_COLUMNS、:469 的建表语句、:521 的写入点）。上传/发布之类别的列名今天不存在，
+ * _SELECT_COLUMNS、app/documents/catalog.py:469 的建表语句、app/documents/catalog.py:521 的写入点）。上传/发布之类别的列名今天不存在，
  * 不替后端提前发明键名——读不到时间就明说「无从核对」，比拿一个猜来的键装作量到了强。
  */
 const VERSION_TIME_KEYS = ['created_at']

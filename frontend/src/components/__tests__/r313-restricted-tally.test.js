@@ -7,7 +7,7 @@
  * 「知识库是空的」。一名权限不足的员工站在有资料的库里，界面告诉他「这里什么都没有」——
  * 他去猜、去重复上传、去找管理员；管理员看到的还是同一句假话。
  *
- * 判据与样板都借同仓既有那一份（DataPanel.vue:124 取 res.data.restricted、:288 起那段
+ * 判据与样板都借同仓既有那一份（DataPanel.vue:124 取 res.data.restricted、frontend/src/components/DataPanel.vue:288 起那段
  * restrictedNotice 就是既定的说法），本单不另创口径：
  *   ① 把 restricted 读出来并给正脸，说「有 N 份存在但你看不见」；
  *   ② 🔴 一个文件名都不点 —— 点名一件无权访问的资源本身就是泄露，那两份投影里也没有名字；

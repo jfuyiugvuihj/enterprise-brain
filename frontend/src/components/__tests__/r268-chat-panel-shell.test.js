@@ -7,7 +7,7 @@
  *        import 的）并存两套词汇。本件把这一格接到【那一套】上，不新建第三套。
  *   G20  ChatPanel.vue 里 10 枚裸 <button>（UiButton / UiDialog 原语早在树上），控件各写各的
  *        焦点、忙碌、禁用与色值 —— 接原语，视觉沿用既有那几枚类。
- *   G17  路由那一屏叫「问一句」（router/index.js:87 meta.title），页内标题自己写着另一个名字。
+ *   G17  路由那一屏叫「问一句」（frontend/src/router/index.js:87 meta.title），页内标题自己写着另一个名字。
  *        🔴 router 不在本单写域（块 F 持有），这里只把【页内】统一到 meta.title 那一处真源。
  *
  * 反证怎么算红：把 deleteSession 改回 `if (!confirm(...)) return` → 甲组第 1、2、3 条全红；

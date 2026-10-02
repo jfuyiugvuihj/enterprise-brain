@@ -2,11 +2,11 @@
  * R375 · 写路径那颗「重试」按钮改吃字典那一把尺（判据①③④⑤）
  *
  * 病灶（改前取证，本单基点 796540e，行号为改前实测）：R368 只收了读路径那一枚出口
- * （alerts.js:137 failureRetryable + :158 readFailureView 的 error 档），同一族的两枚**写点**仍硬编：
+ * （alerts.js:137 failureRetryable + frontend/src/lib/alerts.js:158 readFailureView 的 error 档），同一族的两枚**写点**仍硬编：
  *   alerts.js:584        disposalFailureView 最后一条 return —— 面板 InsightPanel.vue:559-569 拿它画
  *                        UiErrorState，retry-text=「再试这一件」，所以这一枚是真的会多出一颗按钮；
  *   notifications.js:289 writeFailureView —— NotificationBell.vue:181/198 在「标为已读 / 全部标已读」
- *                        的 catch 里喂它（该字段今天只落进 :288-290 那句纯文本 note，屏上没画按钮，
+ *                        的 catch 里喂它（该字段今天只落进 frontend/src/components/NotificationBell.vue:288-290 那句纯文本 note，屏上没画按钮，
  *                        账记在交回里）。
  * 后果：同一类错误读的时候说 false、写的时候说 true —— R368 判据③要消灭的那种分裂。
  *

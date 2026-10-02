@@ -2,7 +2,7 @@
  * R519 · 队列道回来的那一格（`data_filename`），屏侧到底读不读得到
  *
  * 病灶（本单基点 97724c5 现取，不是推断）：服务端这一格在队列道上早就出到线上了——
- *   deploy/queue_worker.py:711 / :757 / :921 三处把 `dataset_files` 递给 `chat.build_queue_terminal`
+ *   deploy/queue_worker.py:711 / :757 / deploy/queue_worker.py:921 三处把 `dataset_files` 递给 `chat.build_queue_terminal`
  *   → app/api/v1/chat.py:2296 `attach_terminal_data_filename` 落进终态载荷
  *   → app/api/v1/chat.py:5029-5031 `queue_terminal_readout` 只在载荷里那一格非空时把它写进回执
  *   → GET /queue/status/{request_id} 的返回体顶层就摆着 `data_filename`。

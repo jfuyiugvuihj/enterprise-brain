@@ -5,7 +5,7 @@
  * 而 SourceCard 的 marks 是按【filename】存在【实例】里的（SourceCard.vue:53）。
  * 切会话时 messages[i] 整份被换掉而下标没变 ⇒ 卡片实例复用 ⇒ 上一轮那笔「已记下」
  * 原封不动跟到新会话那一轮：员工看到的是「这一轮我也点过了？」，这一轮他什么都没点。
- * 同屏的 CacheFace（:1258）已经是正确写法：:key="`cache-${turnKey(msg, i)}`"。
+ * 同屏的 CacheFace（frontend/src/components/ChatPanel.vue:2182）已经是正确写法：:key="`cache-${turnKey(msg, i)}`"。
  *
  * 环境仍是 node（仓库没有 jsdom / @vue/test-utils，也不 npm i）。SSR 每次渲染都新建实例，
  * 「实例复用」这件事在 renderToString 里根本看不见，所以这一族换两条腿，各管各的事：
@@ -19,7 +19,7 @@
  *      丙段再把「必须走 turnKey」「外层 :key="i" 不许动」钉在源码上。
  *
  * 两处诚实交代（不假装验过自己验不了的）：
- *   1) turnKey 住在 <script setup> 里不外露，本单也不许新造一份，所以测试按 :835 那两行
+ *   1) turnKey 住在 <script setup> 里不外露，本单也不许新造一份，所以测试按 frontend/src/components/ChatPanel.vue:1312 那两行
  *      原文镜像了一枚求值器；丙4 那枚钉子盯着原文，谁改 turnKey 谁就得同时来改镜子。
  *      镜子只负责把源码里那枚表达式算成一个值，它不当第二套判断。
  *   2) 机制腿的宿主是测试自搭的最小消息循环（外层 :key="i" + 内层一张卡），它证的是

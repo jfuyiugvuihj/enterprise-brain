@@ -14,7 +14,7 @@
  *   丙 判据②   防线唯一性：全仓非测试源码里「用文字形状当闸」的地方只准有一处，
  *              proseIsForHumans 只准有一个调用点，errorDetail 的函数体逐字钉死。
  *              ⇒ 把防线抄进 http.js（或任何第二处）当场红。
- *   丁 判据④   零新增错误码、零新增 reason、零新增文案：与本单基点 285e265 逐字对账四张表。
+ *   丁 判据④   零新增错误码、零新增 reason、零新增文案：与基点逐字对账四张表的码与文案本体（R562 甲案：注释行不在这把尺上）。
  *   戊          errorDetail 这条薄通道拿到的仍是字典句；字典没话说时才退回面板场景文案。
  *   己          后端原文的第二条腿（R291 的折叠详情区）没被本单堵掉，也没多开第三条。
  */
@@ -274,10 +274,30 @@ describe('丁 · 判据④：零新增错误码、零新增 reason、零新增�
   }
 
   /**
-   * 字典区域 = 四张表 + 兜底句，从枚数注释起、到 CODE_PATTERN 止。本单判据④的账就是这一段
-   * 必须与基点逐字相同：码名、别名、散文、状态归类、文案，连每一枚位锚注释都不许动。
-   * 后续哪一单真要扩字典，得带着它自己的判据来改这一格。
+   * 字典区域 = 四张表 + 兜底句，从枚数注释起、到 CODE_PATTERN 止。判据④的账是这一段里的码体：
+   * 原来这一段连每一枚位锚注释都冻着。R562 甲案把这把尺收到码体与文案：那一族注释记的正是后端行号，
+   * 剥掉注释之后与基点逐字相同；扩字典的那一单得带着自己的判据来改这一格。
+   * 而 R562 这枚单子的本职就是去改那些行号 —— 冻住它们等于判「行号不许说真话」。码名与文案照旧一字不许动。
    */
+  /**
+   * 剥掉注释只剩码体：块注释整段摘掉，行注释按「行首、或不被冒号顶着」的那一道斜杠切，再削行尾空白。
+   * 这一段里字符串不含 `//`（R562 现取 245 行逐枚数过：行尾挂注释的只有 5 行，全是 `// …policy.py:…` 那一种），
+   * 所以这里不必上完整的字符串状态机；真长出带斜杠的文案，切多=码体看着变了=本组红，不会假绿。
+   */
+  function codeOnly(text) {
+    return text
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .split('\n')
+      .map(line => line.replace(/(^|[^:])\/\/.*$/, '$1').trimEnd())
+      .filter(line => line.trim() !== '')
+      .join('\n')
+  }
+
+  /** 判据④真正冻的东西：码名、别名、散文、状态归类、文案本体。R562 甲案把「连注释一起冻」收到这一层。 */
+  function dictionaryBody(text) {
+    return codeOnly(dictionaryRegion(text))
+  }
+
   function dictionaryRegion(text) {
     const start = text.indexOf('/** 与后端封闭枚举一一对应的键')
     const end = text.indexOf('const CODE_PATTERN')
@@ -285,10 +305,19 @@ describe('丁 · 判据④：零新增错误码、零新增 reason、零新增�
     return text.slice(start, end)
   }
 
-  it('四张表连文案带位锚注释逐字未动', () => {
+  it('四张表的码与文案本体逐字未动（位锚注释按新事实改口不在这把尺上 —— R562 甲案）', () => {
     const base = showAtRef(BASE_REF, BASE_PATH)
     const now = readSource('lib/errcodes.js')
-    expect(dictionaryRegion(now)).toBe(dictionaryRegion(base))
+    expect(dictionaryRegion(base).length, '基点那一份的字典区域读成空段：尺子落空，本组不许绿').toBeGreaterThan(1000)
+    expect(dictionaryBody(now), '四张表的码名／别名／散文／状态归类／文案与基点不同：判据④是零新增，要扩字典得带着自己的判据来改这一格').toBe(dictionaryBody(base))
+  })
+
+  it('这把尺两头都有牙：注释层剥得干净（否则冻结是假的），码体层改一个字就露馅（否则尺子量不到东西）', () => {
+    const region = dictionaryRegion(readSource('lib/errcodes.js'))
+    expect(codeOnly(region), '剥完注释还留着位锚注释的痕迹：这一把尺没剥干净，「注释可以改口」那句话是空的').not.toMatch(/policy\.py:|evidence\.py:|contracts\.py:|sessions\.js:/)
+    const mutated = region.replace('要找的内容不存在或已被移除。', '要找的内容不存在或已被移除。X')
+    expect(mutated, '内存里那一改没落进这段区域：尺子量的不是这段文本').not.toBe(region)
+    expect(codeOnly(mutated), '改了一枚文案，剥完注释却看不出差别：码体根本不在这把尺上，冻结是假的').not.toBe(codeOnly(region))
   })
 
   it('reason 那一层也没有新词：STATUS_CODES 的取值全部落在封闭枚举里', () => {

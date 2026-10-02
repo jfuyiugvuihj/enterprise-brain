@@ -5,7 +5,7 @@
  *  ① 后端零改动。app/api/v1/alerts.py 的读与写五枚端点（GET /alerts、GET/POST/DELETE /alerts/rules、
  *     POST /alerts/check）加上 R251 落的处置三枚（POST /alerts/{id}/ack、/close、/assign）与单条详情
  *     （GET /alerts/{id}），全部过 ACTION_MANAGE_ALERTS 判定，staff 与 auditor 的角色集里没有这一项
- *     （app/common/permissions.py:13/:16），manager 与 admin 有（:14/:15）。
+ *     （app/common/permissions.py:13/:16），manager 与 admin 有（app/common/permissions.py:14/:15）。
  *     所以员工账号在这一页拿到的是 403，不是空数组；处置三枚也一样，403 不会退成「已经点过了」。
  *  ② 「无权限」与「空列表」必须是两张脸（看板 §4F.5 裁定 (c)）。空列表是 200 响应，
  *     压根走不到失败判定；403 是失败，永远不许被降级成「当前没有触发中的告警」。
@@ -346,8 +346,8 @@ function idText(value) {
  *      15 枚列名；
  *   ② 生产库那条腿：migrations/0003 建表 6 列（id、rule_id、message、ai_analysis、read、created_at）
  *      ＋ 0012 补 department ＋ 0014 补 8 枚处置列 ＝ 15 列；
- *   ③ 无库那条腿：evaluate_all 写进内存表的 7 枚字面键（:818-827）＋ alert_ledger_row 永远补齐的
- *      8 枚处置列（:427-438）＝ 15 枚键。
+ *   ③ 无库那条腿：evaluate_all 写进内存表的 7 枚字面键（app/api/v1/alerts.py:818-827）＋ alert_ledger_row 永远补齐的
+ *      8 枚处置列（app/api/v1/alerts.py:427-438）＝ 15 枚键。
  * 三条路交回的列集相同，所以「后端到底发几列」今天有唯一答案。逐列归属：
  * id、rule_id、message、ai_analysis、created_at 进前五键；department -> departmentText；
  * status -> status / statusLabel / statusKnown；acknowledged_by、acknowledged_at、closed_by、

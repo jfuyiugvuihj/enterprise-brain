@@ -3,7 +3,7 @@
  *
  * 病（本单唯一的断点，改前取证取在 60a8e01）：R504 已经让后端 legacy `done` 帧与队列终态
  * 「该给 data_filename 就给、说不清就整格不落键」（app/api/v1/chat.py:372
- * attach_terminal_data_filename，唯一挂载件；两枚出口 :2296 队列终态与 :2345 done 帧），
+ * attach_terminal_data_filename，唯一挂载件；两枚出口 app/api/v1/chat.py:2296 队列终态与 app/api/v1/chat.py:2345 done 帧），
  * 可屏侧这一格今天仍只由 canonical 那条腿驱动：frontend/src/lib/sessions.js 的 case done
  * 连 payload 一个字都不读 ⇒ 只走 legacy 道的那一屏（缓存命中那条腿今天压根不发
  * request.completed：chat.py:2626 cached_response 只发 status/text/sources/done），后端明明
@@ -18,18 +18,18 @@
  *   整格缺席   ⇒ 一个字都不动。缺席用 Object.prototype.hasOwnProperty 判，undefined 另立一态。
  *
  * 🔴 两条道的优先级（现读流上次序之后定死）：canonical request.completed 在先到
- *   （chat.py:2995 yield，:3014-3016 的注释明写它排在 legacy done 之前），legacy done 是流末尾
- *   那一枚（chat.py:3040 / :3722）。于是规矩是「先到者胜，后到的 legacy 只填还没人说过的那一格」：
+ *   （chat.py:2995 yield，app/api/v1/chat.py:3014-3016 的注释明写它排在 legacy done 之前），legacy done 是流末尾
+ *   那一枚（chat.py:3040 / app/api/v1/chat.py:3722）。于是规矩是「先到者胜，后到的 legacy 只填还没人说过的那一格」：
  *   后到的 legacy 空值不得覆盖先到的 canonical 真值；两枚非空值也不许互相改口。
  *
  * 🔴 形状约束（本单原地改，一行都没多）：sessions.js 的总行数由在册件 r424:160 按【工作树】钉死
- *   为 1006，r427:386 又按【HEAD】钉死 :814 必须是空行。多插一行，前者在本树上立刻红、后者在总并
+ *   为 1006，r427:386 又按【HEAD】钉死 app/api/v1/chat.py:814 必须是空行。多插一行，前者在本树上立刻红、后者在总并
  *   树上红，两枚都是假红。所以采纳只许写成 case 行之下、return 行之上的那一枚行。
  *
  * 反证怎么算红（三把刀各现跑一次，红字原文与逐字节还原读数见
  * docs/testing/r512-legacy-done-data-filename-2026-09-29.md）：
  *   刀一 把 case done 那一支改回改前这形（一个字不读 payload）⇒ 实测红 7 枚：甲1 乙5 乙6 乙7 丙1 丙5 丁3；
- *   刀二 逐字照 :481 抄成「是字符串就采纳」（连带摘掉非空与先到者胜两枚闸门）⇒ 实测红 5 枚：甲2 甲3 乙1 乙4 乙7；
+ *   刀二 逐字照 app/api/v1/chat.py:481 抄成「是字符串就采纳」（连带摘掉非空与先到者胜两枚闸门）⇒ 实测红 5 枚：甲2 甲3 乙1 乙4 乙7；
  *   刀三 无条件赋值（缺席与非字符串都补造成空串）⇒ 实测红 13 枚：甲2 甲3 甲4 甲5 甲6 甲7 乙1 乙2 乙4 乙7 丙4 丙5 丁3。
  */
 import { readFileSync } from 'node:fs'

@@ -35,7 +35,7 @@
  * R380 判据①③（2026-09-27）把同一条原则铺到**第二个形状**：形状 1 的裸串 detail 既不是码名、
  * 也不在任何一张表里时，过去一律原样当人话（下面那两道 return），于是未捕获 500 的
  * "Internal Server Error" 这类框架英文直接印上屏。现在那两道 return 只读 proseIsForHumans()
- * 一个答案：含中日韩文字 ⇒ 照旧直出（auth.py:81 那句一分未退）；不含 ⇒ 走 STATUS_CODES[status]
+ * 一个答案：含中日韩文字 ⇒ 照旧直出（app/api/v1/auth.py:81 那句一分未退）；不含 ⇒ 走 STATUS_CODES[status]
  * 的字典句，没有状态码可归类才回兜底句，原文进 rawMessage。
  * 防英文的地方由此仍然只有一处，且全在字典侧：分流「字典认不认得这枚码」= dictionaryClaims()，
  * 分流「后端这句话能不能给人看」= proseIsForHumans()。消费侧（lib/http.js::errorDetail 与一切
@@ -51,7 +51,7 @@
  *         A − C 非空 ⇒ 后端发得出、界面只能说兜底句；C − A 非空 ⇒ 前端自扩了契约没有的码。
  *         旧版只钉 A − C 且拿手抄的 17 码去钉，所以后端 26 vs 前端 25 的漂移无人报警。
  *   列 B 不再单列：app/agents/evidence.py 的 _ERROR_CODES 现由 _enum_error_codes() 从
- *         ErrorEnvelope.code 派生（:21-34）。第二份手抄码表本身就是当年那个把线上真码洗成
+ *         ErrorEnvelope.code 派生（app/api/v1/auth.py:21-34）。第二份手抄码表本身就是当年那个把线上真码洗成
  *         internal_error 的缺陷，后端已删掉它，所以 A − B 恒为空，没有可钉的账。
  *   UNRATIFIED_CODES 概念随 6606f59 追认而作废：data.py 7 码与 no_answer_produced 现在都在
  *         列 A 里，「前端有话、契约没登记」恒为空，由 C − A 一条直接钉住，不留永远该是空的名单。
@@ -123,7 +123,7 @@ export const ERROR_CODES = {
   // R368 判据③（裁定：改文案，flag 一分不动）：这一格原句写着「请稍后重试」而 flag 是 false，两句互相打脸。
   // 改哪一半按「哪一半更接近事实」定，三条一手取证（一律 git show HEAD 现读，不采信注释）：
   //   ① 后端对这一枚码明确说了不可重试：app/agents/evidence.py:18 的 _RETRIABLE_CODES 五档里没有
-  //      internal_error，而 :317 与 :425 两枚信封出口写的是 retryable=error_code in _RETRIABLE_CODES
+  //      internal_error，而 app/agents/evidence.py:317 与 :425 两枚信封出口写的是 retryable=error_code in _RETRIABLE_CODES
   //      ⇒ 后端自己发出来的信封里这一枚就是 False，字典那句 false 才是与后端同源的那一半；
   //   ② 上面 row_scope_denied 那段的理由②已经把「字典写 true、信封写 false ⇒ 同一个码两种说法」列为
   //      缺陷，把这一枚 flag 翻成 true 造的就是那一处分裂 —— 所以动的只能是句子；
@@ -141,7 +141,7 @@ export const ERROR_CODES = {
   unsupported_export_format: { message: '这种导出格式暂不支持，请换一种格式。', retryable: false },
   // R270 判据①（缺口 G19）：原句让用户「先挑一枚部门范围再生成结果」，叫的是**界面上不存在**的控件
   // ——全站没有部门选择器（rg 部门 src/components 只剩报销自查那一格输入框），客户把这一格读成 bug，
-  // 新句按后端真正在说的话写：data.py:45 的 OWNER_SCOPE_REQUIRED 只有两条出口（:271 与 :459 的
+  // 新句按后端真正在说的话写：data.py:45 的 OWNER_SCOPE_REQUIRED 只有两条出口（app/api/v1/data.py:271 与 :459 的
   // _require_artifact_scope），两条说的都是**这个账号自己没登记部门归属**，于是服务端定不出这份数据记在
   // 哪个部门名下。缺的那一格在人身上不在界面上，所以下一步只能是找人补登记；retryable 仍为 false ——
   // 同一发请求原样重发不会变，「补好之后重新发起一次」说的是改完之后再发起，不是等一会儿再试。
@@ -245,7 +245,7 @@ export const LEGACY_ALIASES = {
   invalid_agent_result: { code: 'internal_error', message: '分析结果格式异常，本次未采信，请重试。', retryable: true },
 
   // 下面五条是 app/common/policy.py 的拒绝原因码，经 HTTPException(detail=decision.reason_code) 原样落到 403 body：
-  // alerts.py:106 / artifacts.py:50 / chat.py:278,318,766,1708 / data.py:90,328,354 / intelligence.py:69。
+  // alerts.py:106 / app/api/v1/artifacts.py:50 / chat.py:278,318,766,1708 / data.py:90,328,354 / intelligence.py:69。
   // 下载与预览走 responseType:blob，这些码读不出来就会被误判成「坏了」，所以必须有人话 + 下一步。
   principal_inactive: { code: 'account_unavailable', message: '这个账号已被停用，请联系管理员恢复后再使用。', retryable: false }, // policy.py:136
   department_scope_denied: { code: 'permission_denied', message: '这份资料属于其他部门的数据范围，当前账号看不到，请联系管理员授权。', retryable: false }, // policy.py:210
@@ -329,12 +329,12 @@ function isCodeShape(value) {
  * 只问一件事 —— 有没有中日韩文字。不问语种清单、不量句子长度、不养英文黑名单：那三样都会
  * 把闸口变成第二本需要人维护的账，防英文的地方也就跟着多出账本来。
  *   有 ⇒ 这就是后端写给人看的句子，原样占人话位。逐枚出处（现测表在 r380-shape-table.test.js）：
- *        auth.py:81「用户名或密码错误」、:130 / :179「用户不存在」、:222「SSO 未启用或请求未通过
- *        验证」、:225「缺少 SSO 身份头」、:281「画像保存失败」；alerts.py:1020「非法操作符: …」；
- *        common/auth.py:603-744 那批「用户名和密码不能为空」「原密码错误」；
+ *        app/api/v1/auth.py:81「用户名或密码错误」、app/api/v1/auth.py:130 / app/api/v1/auth.py:179「用户不存在」、app/api/v1/auth.py:222「SSO 未启用或请求未通过
+ *        验证」、app/api/v1/auth.py:225「缺少 SSO 身份头」、app/api/v1/auth.py:281「画像保存失败」；alerts.py:1020「非法操作符: …」；
+ *        app/common/auth.py:603 起那一批「用户名和密码不能为空」「原密码错误」；
  *        common/authorization.py:23「权限不足: …」。中英混排同样含中文，误杀不到它。
  *   没有 ⇒ 这枚裸串不可能是后端为这一发备下的话。取证：app/** 118 个 py 文件里 73 枚 ASCII-only
- *        的 detail 字面量逐枚数过，全部是 snake_case 码名（走上面 :457 那一档：兜底句 +
+ *        的 detail 字面量逐枚数过，全部是 snake_case 码名（走上面 frontend/src/lib/errcodes.js:309 那一档：兜底句 +
  *        「错误码：xxx」小字），压根到不了这一行；真落到这一行的 ASCII 散文只有框架与代理生成
  *        的 HTTP 原话 —— app 里没有 @exception_handler，未捕获异常由 Starlette 回
  *        "Internal Server Error"，另有 "Not Found" / "Method Not Allowed" / "Too Many Requests" /
@@ -505,7 +505,7 @@ function resolveCode(raw, status) {
   const humanVoice = proseIsForHumans(voice)
   const rejectedProse = humanVoice ? '' : voice
   if (statusKey) {
-    // 中文人话直出（auth.py:81 那类）；HTTP 英文原话退给字典的状态句
+    // 中文人话直出（app/api/v1/auth.py:81 那类）；HTTP 英文原话退给字典的状态句
     return clampResult({
       code: statusKey,
       rawCode: codeHint,
@@ -719,8 +719,8 @@ export function errorCodeOf(errOrResult) {
  *     :750 401 authentication_required / :753 404 resource_not_found /
  *     :759 与 :763 两枚 403 authorization_unavailable / :765 403 permission_denied；
  *   别名折入 rawCode !== code —— app/common/policy.py::authorization_decision 的原因码族，
- *     七枚 raise 处逐枚回 detail=decision.reason_code：chat.py:703 与 :3486、artifacts.py:50、
- *     intelligence.py:109、alerts.py:262、data.py:103 与 :437（feedback.py:202/234 那两枚走的是
+ *     七枚 raise 处逐枚回 detail=decision.reason_code：chat.py:703 与 app/api/v1/chat.py:3486、app/api/v1/artifacts.py:50、
+ *     intelligence.py:109、alerts.py:262、data.py:103 与 app/api/v1/data.py:437（feedback.py:202/234 那两枚走的是
  *     RetrievalScopeError 那一族，不是 policy 的原因码；observability.py::_deny 把原因码放进
  *     details，裸码不出门 —— 两处都不在这笔账里）。其中四枚被本表折进名单里已有的格：
  *     resource_scope_missing / resource_scope_invalid → authorization_unavailable，

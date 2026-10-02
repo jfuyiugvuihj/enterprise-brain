@@ -482,8 +482,8 @@ describe('R278 判据①② · 顶栏这一行的形状（R333 改口：这一�
     // 而 SSR 不跑 onMounted，那一格在这里必然还没有数字 —— 别把它读成「加载之后也不许摆数」，
     // 那正好是 R299 之后要的反面：徽标就在人点开之前摆出后端全集口径的那一个数。
     // 加载后的口径钉在别处，逐条是：components/__tests__/r333-notification-bell.test.js:201
-    // （全集 42 与页内 3 行不许互换）、:213（下界只说「至少」）、:222（0 与未知两张脸）、
-    // :233（可见数字 aria-hidden，读屏只走 aria-label 那一句），以及同件庚组 :650（真壳层的
+    // （全集 42 与页内 3 行不许互换）、frontend/src/components/__tests__/r333-notification-bell.test.js:213（下界只说「至少」）、frontend/src/components/__tests__/r333-notification-bell.test.js:222（0 与未知两张脸）、
+    // frontend/src/components/__tests__/r333-notification-bell.test.js:233（可见数字 aria-hidden，读屏只走 aria-label 那一句），以及同件庚组 frontend/src/components/__tests__/r333-notification-bell.test.js:650（真壳层的
     // SSR 那一段只许说「还没读出来」，一个数字都不许凭空摆）。
     const { topbar } = await renderWorkspace({ [TOKEN_KEY]: 'jwt-live', [USER_KEY]: 'baiye', [ROLE_KEY]: 'staff' })
     expect(topbar).not.toMatch(/\d+\s*(?:条|个|枚)/)

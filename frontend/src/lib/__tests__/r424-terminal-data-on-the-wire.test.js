@@ -2,7 +2,7 @@
  * R424 · 「服务端这一轮实际用了哪份数据文件」从线上交到 state 的那一手
  *
  * 病（本单唯一的断点，改前取证取在 18ca560）：后端 R414 已经在 request.completed 的终态帧里交来
- * data_filename（app/api/v1/chat.py:2795 与 :3439 两枚出口，三态语义出自 :361 terminal_data_filename
+ * data_filename（app/api/v1/chat.py:2795 与 :3439 两枚出口，三态语义出自 app/api/v1/chat.py:361 terminal_data_filename
  * ——正好一枚交文件名，零枚与多枚都交空串），面板也早写好了三张脸（ChatPanel.vue 的 serverDataOf），
  * 可中间那一截断在这里：request.completed 那一支只抄 awaiting_hitl 与 awaiting_steps，data 的其余键
  * 全丢 ⇒ 线上明明带了那一格，屏上那一行一枚字都不画。R415 交单时把这枚断点钉成「会自己报红的标记」，

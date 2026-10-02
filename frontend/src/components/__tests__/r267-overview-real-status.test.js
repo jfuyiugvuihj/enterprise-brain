@@ -1,7 +1,7 @@
 /**
  * R267 · 块 A 判据③（G02）的反证钉：三处写死的字串必须换成服务端字段
  *
- * 原病灶（缺口清单 §6 G02，锚 1142c27 的行号为 DashboardPanel.vue:281-282 与 :307）：
+ * 原病灶（缺口清单 §6 G02，锚 1142c27 的行号为 DashboardPanel.vue:281-282 与 frontend/src/components/DashboardPanel.vue:307）：
  *   一、每一篇文档都标着「知识库 · 已解析」，后端 parse_status / index_status 根本没人读；
  *   二、指标口径那一格永远显示「高可信」，而 /semantics/match 顶层就回着 definition_source
  *       与 provenance，context.warnings 里还带着「未与已上传制度文件核对」这句原话。

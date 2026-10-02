@@ -1276,7 +1276,7 @@ const QUEUE_SETTLED = ['done', 'cancelled', 'failed', 'expired', 'dead', 'awaiti
 // 界面读不到，说失败就是假话；而瞬断、超时、5xx 那一族在到点之前一律照常重试，
 // r198 乙组与 r202 丙组钉着的反向半条，本单一个字没放宽。
 // 300 秒不是拍的：后端一枚任务的最长租约 lease_seconds=300（reliable_queue.py:67），
-// 回执保留 result_ttl=1800（同文件 :70）——停表之后「稍后仍然查得回」还是真话。
+// 回执保留 result_ttl=1800（同文件 app/common/reliable_queue.py:70）——停表之后「稍后仍然查得回」还是真话。
 const QUEUE_WAIT_DEADLINE_MS = 300000
 // 到点用同一枚 3 秒时钟数出来：既不多起一枚计时器（r198 丁4 钉的就是只准一枚时钟），
 // 也不读系统时间——改系统时钟、页签被浏览器节流，都不该把这一轮的前台等待提前判死。

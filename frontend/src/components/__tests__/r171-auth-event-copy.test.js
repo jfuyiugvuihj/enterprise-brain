@@ -8,7 +8,7 @@
  *
  * 🔴 顺手记一笔证伪（跟进单 §85 三 的原判据是错的）：原判据说「loginError.value = event.message
  * 为 undefined ⇒ 错误条不亮」，并把这件事算在 shipped 的 unauthorized 路径上。实测不是：
- * lib/http.js:95 的 unauthorized 与 :127 的 expiring 从 a07294fb（2026-09-15）起就一直带文案，
+ * lib/http.js:95 的 unauthorized 与 frontend/src/lib/http.js:127 的 expiring 从 a07294fb（2026-09-15）起就一直带文案，
  * 全盘 src/** 也只有这两枚 emit。所以「不亮」只在 message 缺席/为空/非字符串时才成立，
  * 而那种输入今天没有任何发出方会发——本件按最窄口径钉成 App.vue 这一支自己的防御，
  * 不去 lib/http.js 补文案（那是发出方的事，也是禁改区）。

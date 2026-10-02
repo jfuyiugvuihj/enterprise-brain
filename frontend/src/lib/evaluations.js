@@ -8,14 +8,14 @@
  *
  * 🔴 这一屏存在的全部意义是判据 B：不许做成能触发跑分的样子。
  *   ① 载荷自己就写着这件事：execution.runs_on_request 恒为 false（observability.py:1627），
- *      reason（:1182-1185）说的是「评测要把整条检索与模型栈按每一题跑一遍，不该塞进一发只读的管理
- *      请求」，command_template（:1186，值出自 :64 那枚常量）是给人在命令行上敲的那一句。
+ *      reason（app/api/v1/observability.py:1182-1185）说的是「评测要把整条检索与模型栈按每一题跑一遍，不该塞进一发只读的管理
+ *      请求」，command_template（app/api/v1/observability.py:1186，值出自 app/api/v1/observability.py:64 那枚常量）是给人在命令行上敲的那一句。
  *      屏上把这三样如实端出来：只读、可选中复制、零枚「立即运行」按钮 —— 摆一枚按下去什么都不会
  *      发生的按钮，就是 R32 明令禁的假控件。
- *   ② reports 为空时后端答的是 status = no_reports（:1173 那一格按 summaries 是否为空分档）：
+ *   ② reports 为空时后端答的是 status = no_reports（app/api/v1/observability.py:1173 那一格按 summaries 是否为空分档）：
  *      这一屏走空态脸，说「这台机器上一份评测报告都还没有」，绝不画一枚 0 分。
- *   ③ 报告读不读得出来是报告自己的事：status 有三档（ok / unreadable / too_large，:447 与 :457、
- *      :465 写出来的字面量），unreadable 那一行屏上就写「这份文件读不出指标」，metrics 空对象
+ *   ③ 报告读不读得出来是报告自己的事：status 有三档（ok / unreadable / too_large，app/api/v1/observability.py:447 与 :457、
+ *      app/api/v1/observability.py:465 写出来的字面量），unreadable 那一行屏上就写「这份文件读不出指标」，metrics 空对象
  *      不当成「指标都是零」。
  *
  * 三条不变量（钉在 src/lib/__tests__/r505-evaluations-contract.test.js）：
