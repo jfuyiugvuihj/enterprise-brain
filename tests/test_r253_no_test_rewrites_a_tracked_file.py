@@ -28,7 +28,13 @@ r"""R253 判据 ②：闭合钉——全仓扫描「在测试运行期间就地�
 盲区（明写，不装没有）：移动删除族只认 ``os.`` / ``shutil.`` 前缀——``str.replace`` 与
 ``Path.replace`` 同名，按接收者判会把全仓的文本替换读成写盘。跨件的路径传递（把被跟踪文件交给
 另一枚件里的 helper 去写）也看不见：本件的扫描范围是单文件。运行期那半边由审计钩子补。
-"""
+
+R572 改口（跟进单 §151 三·判据③）：本件末尾那枚引用者钉原来把**旧姿势的把手名**写成字面量
+（``"_TempEdit(" in source``），等于手抄第二份真源。``c9a782e``（R556）把
+``tests/test_r48_headline_never_enters_the_text_ledger.py`` 迁进 ``r466.install_mutation``
+之后，那枚在册钉的反证件与变异本体一枚都没少，只是换了把手名，于是引用者钉把它判成红。
+今天把手名沿 AST 从两枚真源派生（窗骨架 ＋ 装变异那一腿）：派生不到 ⇒ 红，射程内的件不再调用
+任何一枚派生把手 ⇒ 红。扫描口径本身一枚没放宽——它判的是写口，本节判的是把手。"""
 from __future__ import annotations
 
 import ast
@@ -493,15 +499,172 @@ def test_no_test_rewrites_a_tracked_file_in_place():
         + "\n  ".join("%(label)s:%(line)d  %(write)s  （%(source)s）" % item for item in findings)
 
 
+# ==================== 判据 ③（R572 改口）：把手名从真源派生，不抄旧姿势的名字 ====================
+#
+# 本节替掉的是本件末尾那枚引用者钉的判法。旧写法把**已过时的姿势名**写成字面量
+# （``assert "_TempEdit(" in source``）＝手抄第二份真源：``c9a782e``（R556）把
+# ``tests/test_r48_headline_never_enters_the_text_ledger.py`` 迁进 ``r466.install_mutation``
+# 之后，那枚在册钉的反证件与变异本体一枚都没少，只是换了把手名，于是引用者钉把一枚**有牙的**
+# 钉判成红（跟进单 §151 三·症状①）。今天名字沿 AST 从两枚真源派生：派生源被摘空 ⇒ 红，
+# 射程内的件不再调用任何一枚派生把手 ⇒ 红。两格都有反证，见
+# ``tests/test_r572_window_handles_are_derived_not_transcribed.py``。
+
+#: 派生源一：影子窗骨架。它交回的公开「上下文管理器类」＝一扇窗的样子（``ShadowEdit``）。
+SOURCE_OF_WINDOW_BASES = "tests/_temp_edit_overlay.py"
+#: 派生源二：R556 的姿势件。它交回的公开 ``@contextmanager`` ＝把变异装进活模块那一腿
+#: （``install_mutation``）——旧姿势的 ``execs_module`` 今天不许再当判据。
+SOURCE_OF_POSTURE_HANDLES = "tests/test_r466_mutation_does_not_leak_into_live_module.py"
+
+#: 引用者钉的射程：三枚件与各自的反证件名下限。下限一枚都不许随改口蒸发。
+COUNTER_PROOF_HOMES = {
+    "tests/test_r156_sse_event_surface_sync.py": 5,
+    "tests/test_r48_headline_card_lands_on_the_wire.py": 3,
+    "tests/test_r48_headline_never_enters_the_text_ledger.py": 1,
+}
+
+
+def _top_level_defs(tree: ast.AST) -> list:
+    """一件**顶层**的类与函数：派生把手名只看顶层，局部函数与串里的同名都不算。"""
+    return [node for node in tree.body
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))]
+
+
+def _callee_tail(node):
+    """``_TempEdit(...)`` 与 ``r466.install_mutation(...)`` 共用的那枚尾名。"""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _has_dunder(node, name: str) -> bool:
+    """顶层类体里有没有一枚叫 ``name`` 的方法：骨架的「是不是一扇窗」就按这两格认。"""
+    return any(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == name
+               for item in getattr(node, "body", []))
+
+
+def _opens_a_window(node, handles: frozenset) -> bool:
+    """这枚顶层函数体内有没有 ``with <已认把手>(...)``：包装把手就是这么认出来的。"""
+    for item_node in ast.walk(node):
+        if not isinstance(item_node, (ast.With, ast.AsyncWith)):
+            continue
+        for with_item in item_node.items:
+            expr = with_item.context_expr
+            if isinstance(expr, ast.Call) and _callee_tail(expr.func) in handles:
+                return True
+    return False
+
+
+def parse_sources(texts: dict) -> dict:
+    """rel -> 文本 的合成输入面 -> rel -> (文本, 已解析 AST)。
+
+    反证拿它喂**同一枚**派生与**同一枚**判据：盘上一字节不动，摘的只是输入。
+    """
+    return {rel: (text, ast.parse(text)) for rel, text in texts.items()}
+
+
+def suite_sources() -> dict:
+    """``tests/**.py`` 的 rel -> (文本, AST)：派生把手名的原料，也是反证可整体换掉的输入面。"""
+    texts = {}
+    for path in sorted(TESTS_DIR.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        texts["tests/" + path.relative_to(TESTS_DIR).as_posix()] = path.read_text(encoding="utf-8")
+    return parse_sources(texts)
+
+
+def window_handles(sources: dict) -> frozenset:
+    """在册反证窗的把手名——沿 AST 从两枚真源闭包派生，不抄名单：
+
+      ① ``SOURCE_OF_WINDOW_BASES`` 交回的公开上下文管理器类（窗骨架）；
+      ② ``SOURCE_OF_POSTURE_HANDLES`` 交回的公开 ``@contextmanager``（装变异那一腿）；
+      ③ 闭包两路：继承已认骨架的顶层**类**（各件自己那枚 ``_TempEdit``），以及体内 ``with``
+         调到已认把手的顶层**函数**（``_chat_window``／``_open_r48`` 这一族包装把手）。
+         名叫 ``test_*`` 的顶层函数不进闭包：用例本体开的是窗，它本身不是把手——不收这一口，
+         把手集合就会被两百多枚用例名灌满，「派生不到」那格判的就不是它要判的东西。
+
+    🔴 两枚真源都不在场就交回空集：引用者钉拿空集必须红，不许退回手抄一份名字表。
+    """
+    handles: set = set()
+    skeleton = sources.get(SOURCE_OF_WINDOW_BASES)
+    if skeleton is not None:
+        handles |= {node.name for node in _top_level_defs(skeleton[1])
+                    if isinstance(node, ast.ClassDef) and not node.name.startswith("_")
+                    and _has_dunder(node, "__enter__") and _has_dunder(node, "__exit__")}
+    posture = sources.get(SOURCE_OF_POSTURE_HANDLES)
+    if posture is not None:
+        handles |= {node.name for node in _top_level_defs(posture[1])
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and not node.name.startswith("_")
+                    and any(_callee_tail(dec) == "contextmanager" for dec in node.decorator_list)}
+    for _ in range(4):                          # 定点：包装把手还能被别的包装把手再套一层
+        grew = False
+        for _text, tree in sources.values():
+            for node in _top_level_defs(tree):
+                if node.name in handles or node.name.startswith("test"):
+                    continue        # 用例本体不是把手：它开窗，但它不叫「开窗那一手」
+                if isinstance(node, ast.ClassDef):
+                    hit = any(_callee_tail(base) in handles for base in node.bases)
+                else:
+                    hit = _opens_a_window(node, frozenset(handles))
+                if hit:
+                    handles.add(node.name)      # 同名就是同一族把手：集合按名字认，不按文件
+                    grew = True
+        if not grew:
+            break
+    return frozenset(handles)
+
+
+def called_handles(tree: ast.AST, handles: frozenset) -> set:
+    """这枚件真**调用**过的把手名：只认调用点，串里出现同名不算。"""
+    found = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            tail = _callee_tail(node.func)
+            if tail in handles:
+                found.add(tail)
+    return found
+
+
+def assert_homes_still_ship_their_counter_proofs(sources=None, handles=None) -> dict:
+    """引用者钉的本体，拆成普通函数：反证要驱动**同一枚**逻辑，不许另造一套判据。
+
+    交回 ``rel -> (反证件数, 这枚件真调用过的把手名)``——那两份读数同时才是判据 ③：
+    用例名不许蒸发，窗也必须还在。
+    """
+    texts = suite_sources() if sources is None else sources
+    names = window_handles(texts) if handles is None else frozenset(handles)
+    assert names, (
+        "从真源（%s ＋ %s）派生不到任何一枚窗把手名：引用者钉瞎了——旧姿势的骨架名与新姿势的"
+        "装变异把手名它一枚都认不出来，这时「反证件数 >= 下限」那几格全是空转"
+        % (SOURCE_OF_WINDOW_BASES, SOURCE_OF_POSTURE_HANDLES))
+    readings = {}
+    for rel, needed in sorted(COUNTER_PROOF_HOMES.items()):
+        entry = texts.get(rel)
+        assert entry is not None, "射程里的 %s 不在输入面上：这枚判据没被测到" % rel
+        _source, tree = entry
+        counters = [node.name for node in ast.walk(tree)
+                    if isinstance(node, ast.FunctionDef)
+                    and (node.name.startswith("test_counter_evidence")
+                         or node.name.startswith("test_d1_"))]
+        assert len(counters) >= needed, "%s 只剩 %d 枚反证件：%s" % (rel, len(counters), counters)
+        used = sorted(called_handles(tree, names))
+        assert used, ("%s 里已经没有在册反证窗把手了：从真源派生到 %d 枚名字（%s），这一枚一件"
+                      "都没被调用；旧写法在这一格只认字面量 `_TempEdit(`，新姿势它认不出来"
+                      % (rel, len(names), ", ".join(sorted(names))))
+        readings[rel] = (len(counters), used)
+    return readings
+
+
 def test_the_three_pins_this_ticket_moved_still_ship_their_counter_proofs():
-    """判据 ③ 的落点核对：三枚件改的是「变异往哪儿落」，用例名与变异本体一枚都不许一起蒸发。"""
-    homes = {"tests/test_r156_sse_event_surface_sync.py": 5,
-             "tests/test_r48_headline_card_lands_on_the_wire.py": 3,
-             "tests/test_r48_headline_never_enters_the_text_ledger.py": 1}
-    for rel, needed in homes.items():
-        source = (REPO / rel).read_text(encoding="utf-8")
-        names = [node.name for node in ast.walk(ast.parse(source))
-                 if isinstance(node, ast.FunctionDef)
-                 and (node.name.startswith("test_counter_evidence") or node.name.startswith("test_d1_"))]
-        assert len(names) >= needed, "%s 只剩 %d 枚反证件：%s" % (rel, len(names), names)
-        assert "_TempEdit(" in source, rel + " 里已经没有 _TempEdit 了"
+    """判据 ③ 的落点核对：三枚件改的是「变异往哪儿落」，用例名与变异本体一枚都不许一起蒸发。
+
+    R572 改口：把手名不再手抄。今天两格同时成立才算过——反证件名下限照旧，且这枚件真调用过
+    一枚**派生自真源**的窗把手（影子窗骨架或装变异那一腿）。
+    """
+    sources = suite_sources()
+    handles = window_handles(sources)
+    readings = assert_homes_still_ship_their_counter_proofs(sources, handles)
+    assert handles, "派生把手集合为空：上面那格就是空转"
+    print("[r253/r572] 派生把手 %d 枚；射程内读数：%s" % (len(handles), readings))

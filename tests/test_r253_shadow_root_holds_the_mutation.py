@@ -10,10 +10,18 @@ r"""R253：影子根自己得先有牙——判据 ①② 的运行期那一半�
 跑完的那批件，所以「新长出一处就地改写」必须靠静态扫描闭合，本件只对自己的窗口取证。
 
 五格读数，全部是现量的：
-  ① 真反证窗 + 真变异跑进 ``app.api.v1.chat``（R48 反证③ 前半那枚字面，本件不抄第二份）：
+  ① 真反证窗 + 真变异装进 ``app.api.v1.chat``（R572 迁到在册姿势：影子副本落变异 ＋
+     ``r466.install_mutation`` 只装变了的那一枚顶层绑定；变异字面仍借 R48 反证③ 前半那一枚）：
      盘上零写口、被跟踪文件 sha 逐字节恒定、影子副本与被跟踪那份确实不同、卡片真带着那格假字段。
+     🔴 这一格的牙长在 ``install_mutation`` 那一腿上：``_TempEdit`` 今天 ``execs_module = False``，
+     只落影子副本不装活模块，卡片就交不出那格假字段——本件 10-02 起正是红在这一格
+     （跟进单 §151 三·症状②，摘掉那一腿的反证见 ``tests/test_r572_the_migrated_window_still_has_teeth.py``）。
   ② 影子根越界就硬拒：``..`` 拼不回仓里，所以「忘还原」这类事故在构造上伤不到盘上。
-  ③ 换码不换模块对象：``install_source`` 与 ``importlib.reload`` 同形，旧绑定一起看到新码。
+  ③ 换码不换模块对象：``install_source`` 与 ``importlib.reload`` 同形，旧绑定一起看到新码；
+     窗尾按**对象身份**倒回（R572 补）。旧写法窗尾再 exec 一遍盘上的字，而 ``compile`` 会继承
+     ``overlay`` 那枚模块的 ``from __future__ import annotations`` ⇒ 装回去的是新对象＋新码体
+     （多一枚 CO_FUTURE_ANNOTATIONS），conftest 的在册 R563 守卫比的就是码体，于是同名集全跑里
+     本模块收工 ERROR、下一枚撞上 ``app.api.v1.chat`` 的件跟着报同一句话。
   ④ 只给解析器看的那类变异（契约）：盘上恒定，窗内的影子文本确实换了字。
   ⑤ 同一枚被跟踪文件上要开第二扇窗：当场拒。窗内 ``info`` 只有 ``before``，
      ``restored``/``after``/``shadow_clean`` 都是退出时才有的读数。
@@ -35,6 +43,7 @@ from tests.test_r48_headline_card_lands_on_the_wire import (  # noqa: F401  -- �
     C1_ANCHOR,
     C1_MUTANT,
     CHAT_PY,
+    _chat_window,
     _one_card,
     _reload,
     _TempEdit,
@@ -105,11 +114,17 @@ def sha256_of(path) -> str:
 
 
 def test_a_live_counter_evidence_window_opens_no_write_on_the_tracked_file(monkeypatch, tmp_path):
-    """判据 ①② 的现场：真变异真跑码，而盘上那枚 ``chat.py`` 连一个写口都没挨到。"""
+    """判据 ①② 的现场：真变异真跑码，而盘上那枚 ``chat.py`` 连一个写口都没挨到。
+
+    R572：窗走 ``_chat_window``（在册姿势，本件不抄第二份开窗器）——影子副本落变异 ＋
+    ``r466.install_mutation`` 只把变了的那一枚 ``_headline_card_data`` 装进活模块。下面那格
+    ``installed_bindings`` 钉的就是「装的是那一枚绑定，不是整片码体」；少了这一腿，
+    ``fabricated_note`` 出不来，本件红在下一格。
+    """
     install_write_ledger()
     baseline = len(_events)
     tracked = sha256_of(CHAT_PY)
-    with _TempEdit(CHAT_PY, [(C1_ANCHOR, C1_MUTANT)]) as info:
+    with _chat_window([(C1_ANCHOR, C1_MUTANT)]) as info:
         assert sha256_of(CHAT_PY)[:16] == info["before"], "窗里盘上那枚被改过"
         assert sha256_of(CHAT_PY) == tracked, "被跟踪的 chat.py 在窗里被改过"
         assert info.read_bytes() != CHAT_PY.read_bytes(), "影子副本没落下变异：这枚窗口是空的"
@@ -119,6 +134,9 @@ def test_a_live_counter_evidence_window_opens_no_write_on_the_tracked_file(monke
                              [sources.doc_state(sources.fake_retriever_hits())],
                              sources.finance_principal())
         assert "fabricated_note" in _one_card(body)["data"], "影子字节没被执行：判据 ③ 掉了"
+        assert info.get("installed_bindings") == ["_headline_card_data"], (
+            "这把刀没只装 `_headline_card_data`（实取 %r）：姿势回退成了整片 exec"
+            % (info.get("installed_bindings"),))
         assert _events == _events[:baseline], "对被跟踪文件开过写口：%s" % _events[baseline:]
     assert overlay.open_windows() == (), "窗关了但影子根还记着它"
     assert sha256_of(CHAT_PY) == tracked
@@ -138,11 +156,22 @@ def test_the_shadow_root_cannot_reach_a_tracked_file_even_by_hand():
 
 
 def test_install_source_swaps_the_bytes_not_the_module_object():
-    """``importlib.reload`` 也不换模块身份：本件全部旧绑定要一起看到新码，退出即回原样。"""
+    """``importlib.reload`` 也不换模块身份：旧绑定一起看到新码，退出按**对象身份**回原样。
+
+    R572 补的就是窗尾那一手。旧写法是「再 exec 一遍盘上的字」，看着平等、其实不平等：
+    ``overlay.install_source`` 里的 ``compile`` 继承调用者（``overlay`` 自己 ``from __future__
+    import annotations``）的未来标志，重 exec 回来的顶层函数是新对象**加新码体**——conftest 的
+    在册 R563 守卫比的是码体，于是它把这一手判成跨模块的漏：同名集全跑里本模块收工 ERROR，
+    下一枚 ``importlib.reload(app.api.v1.chat)`` 的件（``tests/test_phase9_private_deps.py``）
+    也报同一句话（跟进单 §151 三·症状③④）。今天窗尾用骨架自己交回的 ``restore_namespace``：
+    倒回进门那一刻的那一枚枚对象，不再重跑码体（R553 乙腿同一口径，本件不另造第二套还原）。
+    """
     import sys as _sys
 
     assert chat is _sys.modules["app.api.v1.chat"]
+    live_before = dict(chat.__dict__)          # 进门那一刻的活命名空间：窗尾按身份倒回
     original = chat.HEADLINE_SOURCE_LIMIT
+    ask_before = chat.ask
     raw = CHAT_PY.read_bytes().decode("utf-8")
     anchor = "HEADLINE_SOURCE_LIMIT = %d" % original
     assert raw.count(anchor) == 1, "锚点不唯一，这格换码是空的：%d 处" % raw.count(anchor)
@@ -154,8 +183,13 @@ def test_install_source_swaps_the_bytes_not_the_module_object():
     try:
         assert chat.HEADLINE_SOURCE_LIMIT == 99, "exec 没落到模块字典上"
     finally:
-        overlay.install_source(chat, raw, CHAT_PY)
-    assert chat.HEADLINE_SOURCE_LIMIT == original
+        diverged = overlay.restore_namespace(chat, live_before)
+    assert chat.HEADLINE_SOURCE_LIMIT == original, (
+        "窗尾没把活模块的顶层值装回进门那一刻：R563 会把这一手判成跨模块的漏")
+    assert chat.ask is ask_before, (
+        "窗尾重 exec 出来的同名函数顶掉了原来那一枚（新对象＋未来标志的新码体）："
+        "R563 在册守卫比的是码体，本模块与下一枚撞上 chat 的模块会连着报同一句漏")
+    assert "ask" in diverged, "restore_namespace 一声不响：这一手没真在倒回：%s" % (diverged,)
     assert sha256_of(CHAT_PY) == hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
