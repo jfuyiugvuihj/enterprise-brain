@@ -5238,3 +5238,28 @@ R557（`Pasteur`）先交全量机器账的**纸**，本单把那本纸变成**�
 - 于是本单的形状钉死为「把已经算出来的码接上持久面＋可读面」，不是「新造一套原因码」。写域随之收窄到 `app/common/reliable_queue.py::fail_or_retry`（`:576-579` 那一支）＋ `app/api/v1/chat.py:5214` `queue_status` 那几行，必要时带上 `deploy/queue_worker.py`（R578 刚并树 `e19ddc5`，已腾空）。
 - 🔴 **投递账**：10:0x 投 `R585` 触顶 `collab spawn agent thread limit reached`（同机在飞五枚：`Bohr`/R575、`Faraday`/R579、`Herschel`/R580、`Popper`/R584、`Einstein`/R581）。按规矩（一个 block 只一次投递、报错不补投）**当场停手**，工作树 `be-r585`（基点 `714691c`）已预配并原地待投，判据即本纸 §155 三＋本格补录。槽位一空由总控一次投出，不重复投。
 - 顺手把「量具发 `lane` 之后 D 格才第一次可测」这一条钉进纸：09:56–09:58 现取 `docker logs enterprise-brain-backend-1`，`GET /api/v1/queue/status/<rid>` 计数 **14 次**、间隔 3 s（与 `frontend/src/components/ChatPanel.vue:839` 的 `QUEUE_POLL_MS=3000` 同源）；worker 侧同一分钟交回 `[QueueWorker][R548] … 报告档逐片汇 33 枚 / 674 字 / 腿 doc` 与 `报告档跑完 status=success awaiting_hitl=True sources=0 model_calls=3`。🔴 `sources=0` 这一枚是 **D-3 的第一枚真读数**（成功终态里出处为零），不许被「跑通了」那句话盖掉，收窗后由 `scripts/eval_lane_readout.py --label run15` 逐题对账。
+
+## §156（10-03 第十二班第七格·总控线，主树 `1b0534a`·gitee 已平到 `1b0534a`）：本班新立一枚 R587 · 投出两枚 R582/R583 · 一枚触顶待投 · R586 三档实测窗在跑
+
+### 一、投递账（一 block 一投递，触顶不补投）
+
+- **R582 已投** `Franklin`（`01a0ff91-a451-7fa2-ab26-e9f3090d0acd`），树 `be-r582`@`1b0534a`，写域 `app/api/v1/alerts.py` ＋ `tests/test_r582_*` ＋ 纸。判据全文见 §154 一。
+- **R583 已投** `Plato`（`01a0ff91-c965-7780-bf8f-522850a5bd67`），树 `be-r583`@`1b0534a`，写域 `tests/_temp_edit_overlay.py` ＋ 那枚枚数钉 ＋ `tests/test_r583_*` ＋ 纸。🔴 **总控在派工词里已把出路裁成（甲）**（进册＋同步枚数钉 9→N＋改掉「名册只管 r466 一族」那句旧解释），执行层不许改选、不许回来再问；禁碰 `tests/test_r253_*`（R572 刚并树 `6a2c09b`）、禁碰 `scripts/r530_run10_window_preflight.py` 与 `tests/test_r530_*`（`Einstein`/R581 在飞）、禁碰 `tests/conftest.py`（`Popper`/R584 在飞）。
+- **R587 待投**：投递当场 `collab spawn failed: agent thread limit reached`，按规矩**不补投**，工作树 `be-r587`@`1b0534a` 已预配。判据全文见本节二。
+- 在飞六枚：`Faraday`/R579（`be-r579`@`b85c277`）、`Einstein`/R581（`be-r581`@`dfc057b`）、`Popper`/R584（`be-r584`@`dfc057b`）、`Confucius`/R585（`be-r585`@`714691c`，10:18 现取仍在跑测试、`git diff --numstat HEAD` 仍空）、`Franklin`/R582、`Plato`/R583。
+
+### 二、R587｜库级 GUC 不在 pg_dump 里，恢复后嵌入维度设置丢失（E 门「备份恢复演练通过」的假绿，**待投**）
+
+- 本席 10:0x 复取（原发现来自 R575 交回，并树 `1b0534a`）：`pg_dump` 产物 TOC 269 条里**零命中库级 `ALTER DATABASE … SET`**；`pg_db_role_setting` 现读 16384 = `enterprise_brain`、105788 = `eb_r59_sandbox` 两枚都挂着 `app.embedding_dimension=768` / `app.embedding_model=nomic-embed-text`；消费方就在树上——`app/db/migrations.py:57` 与 `:82` 正是读这枚 GUC。⇒ 恢复出来的库里这些 setting 变 MISSING，**「备份成功」日志全绿而恢复后读腿维度错**。
+- 判据五格：① 备份工序把库级/角色级 setting 一起取（`SELECT setdatabase, setrole, setconfig FROM pg_db_role_setting`），落进与 dump 同目录同前缀、成对可核对的产物；② 恢复工序在**跑任何校验之前**重新施加这些 setting；③ 对账新增一格「恢复库的 `app.embedding_dimension` / `app.embedding_model` 与源库逐枚等」，取不到就判红，不许「缺失但看起来能跑」蒙过去；④ 反证三把（摘掉施加那一步第③格必须红／改掉源库一枚值必须红／恢复库为空必须红），各交摘前摘后 sha256 前 12；⑤ 纸面写死 **E 门「备份恢复演练通过」必须连 globals 一起备**，并点名 `scripts/r575_vector_restore_drill.py` / `tests/test_r575_vector_restore_drill.py` 里哪一格因此要改判据或加格。
+- 允许的真库动作（出界一律不许）：`enterprise_brain` 只读；自建演练库一律叫 `eb_r587_restore`，用完 `dropdb`；🔴 不许碰 `enterprise_brain` 数据行、不许碰 `eb_r59_sandbox`（R59 在用）。PG 无宿主端口 ⇒ 一律 `docker exec`（宿主 5432 是没有 `vector_scope` 的野库，连上就是假读数）。
+- 写域 `scripts/backup_database.py` / `scripts/restore_database.py` 或 R575 那套演练件（二选一，按真源就近改并点名为什么）＋ `tests/test_r587_*` ＋ 纸。
+
+### 三、R586｜报告档在 4096 窗口下结构性进不去——本班按「先量再改」开三档实测窗
+
+- 缺陷本体（run15 worker 日志 09:57:02 原文）：`tier=analysis thinking=disabled prompt_tokens=2694 … required_n_ctx=4230 n_ctx=4096 … error_code=context_limit_exceeded`，接一行 `No request was sent and no business conclusion was generated.` ⇒ **只差 134 token**，且**在发请求之前就拒**、刻意不走兜底文案（`app/agents/nodes.py:379-387` 注释解释过：走兜底会让客户看到一句客套话、真原因烂在日志里）。
+- 两半都必须动（缺一半＝没改）：① `deploy/.env.server` 今天**根本没有** `MODEL_CONTEXT_TOKENS` 那一行，走 `app/common/model_budget.py` 的 `DEFAULT_CONTEXT_TOKENS=4096`；② 服务端 `ollama` 那格只有 `NVIDIA_VISIBLE_DEVICES`/`NVIDIA_DRIVER_CAPABILITIES`（`docker-compose.yml:93-97`），全仓零命中 `OLLAMA_CONTEXT_LENGTH`，`ollama ps` 现读 `qwen3.5:9b CONTEXT=4096 100% GPU`——而产品侧**从不把 `num_ctx` 发进请求载荷**（`app/agents/contracts.py:165`、`app/api/v1/observability.py:1818` 两处自证），所以窗口归模型服务器说了算。
+- 在册两笔实测互相冲突，故不许直接改：`.env.example:309`「4096→8192 使 load_s 0.001→5.811」vs `app/agents/contracts.py:329`「同 2154-token prompt prefill 66.683 s vs 68.849 s（+3.2%）」。本机 RTX 4060 Laptop 8188 MiB、现读已用 5210 MiB。
+- 🔴 量具＝`scripts/r586_context_window_probe.py`（本席 10:2x 新写，10:27:33 开窗）：四趟 `4096 对照 → 6144 → 8192 → 4096 复测`，每趟 8 发 prefill（`num_predict=1`）＋ 2 发 decode（`num_predict=300`），语料**取自在册件 `scripts/perf_probe_rate.py:_SENTENCES`**（12 句、sha `b38ce24447e1`，与 W8 速率曲线同源可比），提示形状照抄产品（资料在前、问题在后、每发带唯一校验码防 Ollama 前缀缓存）。逐趟现取 `ollama ps` 的 SIZE/PROCESSOR/CONTEXT 与 `nvidia-smi` 显存。**PROCESSOR 不是 `100% GPU` 的那一档直接作废**；读数落 `%TEMP%\r586\r586-probe-*.jsonl`（不入仓）。
+- 选档之后才算改：改 `deploy/.env.server` 的 `MODEL_CONTEXT_TOKENS` ＋ `docker-compose.yml` ollama 那格加 `OLLAMA_CONTEXT_LENGTH`，🔴 这一步要的是**容器重建**（`docker compose --env-file deploy/.env.server up -d --force-recreate backend worker scheduler ollama`），`docker restart` 不重读 `env_file`。同窗必须复测 **A① 问答档 p95**：越过 90 s 就判本档不可用，不许拿「报告档好了」来抵。
+- 另一枚同源隐患已并入本节二（R587）：E 门「备份恢复演练通过」若不连库级 GUC 一起备，恢复后维度就是错的。
