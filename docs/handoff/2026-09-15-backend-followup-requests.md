@@ -5263,3 +5263,55 @@ R557（`Pasteur`）先交全量机器账的**纸**，本单把那本纸变成**�
 - 🔴 量具＝`scripts/r586_context_window_probe.py`（本席 10:2x 新写，10:27:33 开窗）：四趟 `4096 对照 → 6144 → 8192 → 4096 复测`，每趟 8 发 prefill（`num_predict=1`）＋ 2 发 decode（`num_predict=300`），语料**取自在册件 `scripts/perf_probe_rate.py:_SENTENCES`**（12 句、sha `b38ce24447e1`，与 W8 速率曲线同源可比），提示形状照抄产品（资料在前、问题在后、每发带唯一校验码防 Ollama 前缀缓存）。逐趟现取 `ollama ps` 的 SIZE/PROCESSOR/CONTEXT 与 `nvidia-smi` 显存。**PROCESSOR 不是 `100% GPU` 的那一档直接作废**；读数落 `%TEMP%\r586\r586-probe-*.jsonl`（不入仓）。
 - 选档之后才算改：改 `deploy/.env.server` 的 `MODEL_CONTEXT_TOKENS` ＋ `docker-compose.yml` ollama 那格加 `OLLAMA_CONTEXT_LENGTH`，🔴 这一步要的是**容器重建**（`docker compose --env-file deploy/.env.server up -d --force-recreate backend worker scheduler ollama`），`docker restart` 不重读 `env_file`。同窗必须复测 **A① 问答档 p95**：越过 90 s 就判本档不可用，不许拿「报告档好了」来抵。
 - 另一枚同源隐患已并入本节二（R587）：E 门「备份恢复演练通过」若不连库级 GUC 一起备，恢复后维度就是错的。
+
+## §157（10-03 第十二班第七格续·总控线，主树 `9c9a0b1`→`394205a`，run16 相 2 专窗**在跑**）：本班自纠一笔（R588 前提不成立）· 新立 R589/R590 · R585/R587 两枚复投账
+
+### 一、🔴 自纠：本席在 §4EL 名册里立的 **R588 前提被自己的复核推翻，不立**
+
+- 旧句（前任账，本席未复核就抄进看板）：「`sidecar.evidence_n` 与 `answers.evidence` 两本账不等 10 枚」。
+- 本席 10:5x 逐题实测 run15 那 12 题：`evidence_n` 与 `len(answers.evidence)` **12/12 全等**（report-01 0/0、report-02 5/5、report-03 4/4、report-04 4/4、report-05 5/5、report-06 5/5、report-07 6/6、report-08 5/5、report-09 4/4、report-10 5/5、report-11 0/0、report-12 3/3）。⇒ 那句「不等 10 枚」不知从哪一版账上来的，**本席不该不复核就抄**（这正是 AGENTS.md 里「引用任何数字前先查有没有被后续实测推翻」那条，本席自己犯了一次）。
+- D-3 真正欠的是**另一个**问题：流内 `sources` 事件 8/12 与可读面 `sources_present` 3/11 是两个口径，谁算「出处逐题可查回」没定死。等 run16 的读数出来再定性立案，不拿旧账立单。
+
+### 二、R589｜「射程内测试件集合」把解析不了的文件静默跳过（本班现场复现，**待投**）
+
+- 现场：本席验 R584 时反序跑那 13 枚名单集，第一次交回 **156 passed／1 failed**，红在 `tests/test_r253_no_test_rewrites_a_tracked_file.py::test_the_three_pins_this_ticket_moved_still_ship_their_counter_proofs`；而当时盘上正有一枚**本席自己刚写、还带语法错误**的 `tests/test_r586_*.py`。把那枚文件修好，反序复跑 **157 passed／0 error**。
+- 机理：那格的「射程内集合」`suite_sources()`→`window_handles()` 是按**能否 parse** 派生的，解析不了的文件被**静默跳过** ⇒ 集合无声变小，`assert handles` 那种「集合为空才红」的守卫救不了「集合少一枚」。
+- 为什么是真缺陷：它把**别人（或总控自己）的手抖**读成了一次回归；下一次会同样把**真漏**读成「不在射程」。判据三格：① 射程内有文件 `SyntaxError` 必须**直接红并点名文件与行列**，不许静默缩集；② 现有 9→N 那枚名册钉（R583 在治）与本钉不许互相掩盖——两枚各自能独立红；③ 反证两把（塞一枚语法坏的件必红／塞一枚合法但不该进集的件不得被算进集）。写域 `tests/_temp_edit_overlay.py`／该族派生器＋新钉；🔴 与 **R583 同一族，必须排 R583 之后**（`Plato` 在写 `tests/_temp_edit_overlay.py`）。
+
+### 三、R590｜A② 两枚残留红的逐腿归因（`tool-02` 两窗同红／`scope-05` 只在 pgvector 窗红，**待投**）
+
+- 本席 10:5x 现取两窗帧账（同一份在册尺）：`tool-02` run13 `text_frames=20 / max_stream_frames=19 / answer_chars=561 / first_visible_event=step / first_visible_ms=37340.1 / kind=approved_ok`，run14 同形（`first_visible_ms=41127.4`）；`scope-05` run13 `text_frames=31 / max_stream_frames=30 / answer_chars=612`，run14 同值。**两枚都不是「没逐片腿」**——片数清清楚楚在几十枚，所以它们在甲案里仍是红，只能是在册七枚合取的**其它腿**上红。
+- 判据三格：① 逐腿点名 `tool-02`／`scope-05` 各红在第几腿（用在册 `_frame_verdict` 那把尺的腿名，不许自造腿名）；② 判每一腿是**产品形状**还是**量具口径**——若是量具口径，改判据要单独报批，不许顺手放宽；③ `scope-05` 只在 run14（pgvector 读后端）红、run13 不红 ⇒ 必须回答「这一格与切读有没有关系」，与 R580 那句「退步 10 枚中检索腿 0 枚」对账。写域 新量具件＋纸；🔴 只读取证，不改评测集、不动 `app/**`。
+
+### 四、复投账（provider 限流这一台机上是真的）
+
+- `Confucius`/R585 死于 `429 Too Many Requests`（`exceeded retry limit`），取证**零写入**（`rev-parse`＝基点 `714691c`、`numstat` 空、未跟踪 0、`rev-list --count`＝0）⇒ 本席把 `be-r585` 追平到 `394205a` 后**复投**给 `Hegel`（`01a0ffad-2955-7a51-9348-2e8b896a5140`）。这是复投不是双投：前一线已 close、零产物、无同号并发。
+- `Lovelace`/R587（`01a0ffa7-0a18-7703-9561-d6987395e454`）同理为复投（首投触顶时**没有 agent_id 落地**）。
+- 🔴 派工词里已写明：行号一律自取（基点动过），旧行号即假读数。
+
+## §158（10-03 第十二班第七格续·总控线，主树 `394205a`）：R60 停写退役正式立案（业主 10-0x 再问「为什么还不切换 pgvector」）＋ 本班两笔裁断
+
+### 一、先说清今天到底切到哪一步（免得下一班又抄错）
+
+- 写路径**唯一事实源**现取：`app/rag/retriever.py:1220 _write_batch(ids, documents, metadatas, embeddings, *, mirror=None)`——**Chroma 是主写**，PG 是 `mirror`（`app/rag/pg_store.py:175 dual_write_enabled()`，开关 `VECTOR_DUAL_WRITE`，代码缺省 OFF、本机容器现读 `on`）。
+- 读路径：`app/rag/indexing.py:50 INDEX_BACKEND_DEFAULT = "chroma"`（**代码缺省没翻**，这是给客户的回滚档），但本机三枚容器 `printenv INDEX_BACKEND` 现读 **pgvector**（`deploy/.env.server`，R59 翻默认由总控 10-03 执行并已被 run14/15/16 用真）。
+- ⇒ 所以「还没切完」的准确说法是：**读已切（本机生产）、写还是 Chroma 主＋PG 镜像**。计划书 §3 P5（`docs/handoff/2026-09-17-pgvector-adoption-plan.md:85`）要的就是这一格：**停 Chroma 写**。
+- 硬前置已清：R575（并树 `1b0534a`）第一次真跑 `pg_dump → 独立库恢复 → 12 项指纹对账 → 检索对账 → dropdb` 六格全达；R586（`9c9a0b1`）把两半窗口配套到 8192 且在册闸 `paired`。唯一还挂在前面的是 **R587（库级 GUC 不在 dump 里）**——它不阻塞停写本身，但**阻塞「备份恢复演练通过」这句结论**，所以 R60 的回滚演练那一格必须等 R587 或同批交。
+
+### 二、R60｜停 Chroma 写与退役路径（P1，**待投**，树已预配 `be-r60b`@`394205a`）
+
+- 判据七格：
+  ① `INDEX_BACKEND=pgvector` 时写路径**唯一化**：`_write_batch` 只落 PG，Chroma 那一腿不接新行；`INDEX_BACKEND=chroma` 时**行为一字不改**（遗留档就是回滚通路，动它＝拆自己的退路）。
+  ② 停写靠开关/后端判定，**不许硬删代码**：关掉 pgvector 主写之后同一套件还能写 Chroma，且这一手有常驻钉。
+  ③ 删除那一腿同步：`_note_hot_delete`（`retriever.py:969`）与 delete 路径在 pgvector 主写下只删 PG，不留「删了 PG、Chroma 还留着孤儿行」这种形状。
+  ④ 现读取数才算「停写」：写一枚新文档后 **PG `chunk_vectors` 行数 +1 且 Chroma collection 计数 +0**，两枚读数都要现取进纸；只报「代码看起来改了」不收。
+  ⑤ 一键回滚演练：回到上一 `index_version` 全量恢复**真跑一次**并留证（可复用 R575 那套件；🔴 备份必须连库级 GUC 一起备，见 R587）。
+  ⑥ 纸面：`chroma_db` 归档／下线路径写进 `docs/**` 与升级手册，并把「Chroma 仍在提供读服务的那一档」（`INDEX_BACKEND=chroma`）写准——既不许写成已下线，也不许写成最终架构。
+  ⑦ 反证三把：把 pgvector 主写下仍写 Chroma 那一腿摘掉必须让第④格红／开关退回 chroma 时 PG 那一腿必须仍写（不许顺手把双写一起关成零写）／回滚演练少一步必须红。
+- 写域 `app/rag/retriever.py`（必要时 `app/rag/pg_store.py` 的开关语义与 `app/rag/indexing.py` 的判定函数）＋ 新钉 `tests/test_r60_*.py` ＋ `docs/**`。
+- 🔴 **禁碰清单（本单一条都不许越）**：`chroma_db/**` 一枚文件不许删、不许反跟踪、`.gitignore` 不许改（H4/H5/H8 是业主本人动作）；不许动容器下线；不许碰 `app/api/v1/alerts.py`（R582 在收）／`app/common/reliable_queue.py` 与 `app/api/v1/chat.py` 的 `queue_status`（R585 在飞）／`scripts/backup_database.py`·`scripts/restore_database.py`（R587 在飞）／`tests/_temp_edit_overlay.py`（R583 在飞）。
+
+### 三、本班两笔裁断
+
+- **`tests/test_r251_alert_disposal.py:730 test_an_allowed_disposal_adds_no_audit_line` 的口径变更由总控批准**：它钉的是「处置成功不写安全台账」这句**旧假话**，正是 R582 判据①要治的对象。执行层 `Franklin` 没擅自改在册件是对的；本席裁定：**随 R582 同批改口为新真话**（处置成功必须落一行、且三枚动作名互不相同），并在交工纸记明「在册件口径变更＝总控授权」，引用 R179/R194 那条唯一通路不变。
+- **R582 并树后必须重跑 `python scripts/r483_empty_tables_triage.py --sync`**：`alerts.py` 净插 +60 行 ⇒ 那枚把文档行坐标与现场扫描逐字节对账的钉必然红。这不是新缺陷，**是它设计好的出路**（生成件不许手抄）；`test_the_coordinates_printed_in_the_document_are_the_ones_the_scanner_finds_now` 同源同治。
