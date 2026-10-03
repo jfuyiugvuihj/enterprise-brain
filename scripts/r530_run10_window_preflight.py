@@ -7,7 +7,9 @@
   answer_cache   Redis 里 answer:* 为零（复用 scripts/eval_window_answer_cache_gate.py --check；rc=2 永远不算过）
   keep_awake     常驻 --loop keep-awake 在位 **且** stamp 新鲜（R566：不再从命令行抠一个数当剩余
                  分钟；窗长超过可证到此刻这一段时，读数里必须带「窗内自复核」那句）
-  gpu_apps       nvidia-smi 计算进程里不许有仓库外的可执行文件（防外来负载污染时延判据）
+  gpu_apps       GPU 计算进程三分法（R581）：CLEAN／ATTRIBUTED／FOREIGN，任何一条腿问不到落 UNMEASURED；
+                 判定真源在 scripts/r581_gpu_attribution.py（影子 → 容器 → 计算 pid 同名同槽，四腿缺一
+                 即红），本件只做 CLEAN/ATTRIBUTED→PASS、FOREIGN/UNMEASURED→FAIL 的映射，不留第二套
   foreign_python 仓库外解释器跑的常驻脚本点名（外来 train.py 一族）
   eval_tree      跑分树 be-eval95 干净且可 --ff-only 追平
   env_flags      deploy/.env.server 里 VECTOR_DUAL_WRITE / REPORT_LANE_VIA_QUEUE 在位；INDEX_BACKEND 未翻只作 INFO
@@ -67,14 +69,10 @@ def read_processes():
 
 
 def read_gpu_apps():
-    code, out = run(["nvidia-smi", "--query-compute-apps=pid,process_name", "--format=csv,noheader"])
-    rows = []
-    for line in out.splitlines():
-        line = line.strip()
-        if line and "," in line:
-            pid, _, name = line.partition(",")
-            rows.append({"pid": pid.strip(), "exe": name.strip().strip('"')})
-    return rows, code == 0
+    """R581：nvidia-smi 的取数与解析都在真源里，本件只留一枚兼容出口（交回 (行, 问没问到)）。"""
+    gpu = _gpu_attribution()
+    code, out = run(gpu.NVIDIA_CMD)
+    return [row.__dict__ for row in gpu.parse_rows(out)], code == 0
 
 
 def read_create_time(pid):
@@ -125,13 +123,17 @@ class Snapshot:
     eval_tree_found: bool = False
     env_flags: dict = field(default_factory=dict)
     now: float = field(default_factory=time.time)
+    #: R581：GPU 读数的原件（GpuState）。None = 调用方/测试只塞了 gpu_apps 裸行，此时归因腿问不到。
+    gpu_state: object = None
 
 
 def collect():
     p_code, p_out = run([sys.executable, "scripts/check_image_provenance.py", "--expect-container"])
     c_code, _ = run([sys.executable, "scripts/eval_window_answer_cache_gate.py", "--check"])
     procs = read_processes()
-    gpu_apps, gpu_seen = read_gpu_apps()
+    gpu_state = _gpu_attribution().collect(run=run)
+    gpu_apps = [row.__dict__ for row in gpu_state.host_rows]
+    gpu_seen = gpu_state.host_seen
     create_times = {}
     for row in procs:
         try:
@@ -150,7 +152,7 @@ def collect():
             ahead = int(out.split("\t")[0])
     tool_broken = p_code not in (0, 1) or c_code not in (0, 1, 2) or not procs
     return Snapshot(p_code, p_out, c_code, procs, create_times, gpu_apps, gpu_seen,
-                    dirty, ahead, found, read_env_flags()), tool_broken
+                    dirty, ahead, found, read_env_flags(), gpu_state=gpu_state), tool_broken
 
 
 FOREIGN_NOISE = ("keep_awake.py", "-m pytest", "-u -c", "spawn_main", "r530_run10_window_preflight.py")
@@ -163,6 +165,15 @@ def _window_keep_awake():
         sys.path.insert(0, scripts_dir)
     import window_keep_awake
     return window_keep_awake
+
+
+def _gpu_attribution():
+    """R581 归因真源。它和 window_keep_awake 一样是脚本不是包，直接 import 进不来，先补 sys.path。"""
+    scripts_dir = str(ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import r581_gpu_attribution
+    return r581_gpu_attribution
 
 
 def keep_awake_interval(cmd_text):
@@ -196,7 +207,7 @@ def in_repo(path_text):
     return bool(path_text) and REPO_TEXT in str(path_text).lower()
 
 
-def evaluate(snap, need_minutes):
+def evaluate(snap, need_minutes, verdicts=None):
     rows = []
     if snap.provenance_rc == 0:
         rows.append(("provenance", PASS, "镜像携带的文件与 HEAD 一致"))
@@ -244,15 +255,16 @@ def evaluate(snap, need_minutes):
             rows.append(("keep_awake", FAIL, "pid=" + str(best["ProcessId"]) + " " + note
                          + " —— 补法：python scripts/window_keep_awake.py --loop --interval 240（临时锁，不改任何电源设置）"))
 
-    if not snap.gpu_seen:
-        rows.append(("gpu_apps", FAIL, "nvidia-smi 跑不成——问不到就不能假设没有外来 GPU 负载"))
-    else:
-        foreign = [g for g in snap.gpu_apps if not in_repo(g["exe"])]
-        if foreign:
-            rows.append(("gpu_apps", FAIL, "外来进程占着 GPU，A(1) 的 p95 时延读数不可采信："
-                         + "; ".join("pid=" + str(g["pid"]) + " exe=" + str(g["exe"]) for g in foreign)))
-        else:
-            rows.append(("gpu_apps", PASS, "GPU 计算进程 " + str(len(snap.gpu_apps)) + " 枚，无仓库外可执行文件"))
+    # R581（10-03）：这一格怎么判不在本件里 —— 真源 = scripts/r581_gpu_attribution.py。本件只做
+    # 词汇映射：CLEAN／ATTRIBUTED → PASS，FOREIGN／UNMEASURED → FAIL。🔴「问不到」落 UNMEASURED
+    # 也是 FAIL，不许拿「没量到」冒充「没有外来 GPU 负载」；本格不治任何时延读数。
+    gpu = _gpu_attribution()
+    state = snap.gpu_state if snap.gpu_state is not None else gpu.GpuState(
+        host_rows=snap.gpu_apps, host_seen=snap.gpu_seen)
+    verdict = gpu.classify(state)
+    if verdicts is not None:
+        verdicts["gpu_apps"] = verdict.status
+    rows.append(("gpu_apps", PASS if verdict.status in gpu.PASSING else FAIL, verdict.detail))
 
     strays = [p for p in snap.processes
               if not in_repo(str(p.get("ExecutablePath", "")))
@@ -292,10 +304,12 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true")
     opts = parser.parse_args(argv)
     snap, tool_broken = collect()
-    rows = evaluate(snap, opts.need_minutes)
+    verdicts = {}
+    rows = evaluate(snap, opts.need_minutes, verdicts)
     fails = [r for r in rows if r[1] == FAIL]
     if opts.json:
-        print(json.dumps([{"check": n, "status": s, "detail": d} for n, s, d in rows], ensure_ascii=False, indent=2))
+        print(json.dumps([{"check": n, "status": s, "detail": d, "verdict": verdicts.get(n, s)}
+                          for n, s, d in rows], ensure_ascii=False, indent=2))
     else:
         for name, status, detail in rows:
             print("[P-20] " + status.ljust(4) + " " + name.ljust(14) + " " + detail)
