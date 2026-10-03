@@ -5577,3 +5577,9 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 - 本窗指纹 `revision=a2bbf13`＝当时 HEAD、`index_backend=pgvector`：这两窗本来就是**读腿切到 pgvector 之后**的读数，格① 那一格有它们作证。
 
 **五、待业主**：仍只有老几样（A1 `users.department` 回填／A3 密级标签回填／H13 裁定／R440 整表口径／`MODEL_CONTEXT_TOKENS` 与 Ollama `num_ctx` 配套／评测集改题再批准／一张真扫描件）。🔴 新增一句：`origin` 这个 github remote 现在 TLS 握手失败，要不要留它、要不要改推 gitee 为准，属业主侧决定，本席不擅自删远端。
+### 166.1 收官补格（23:53·断网前 6 分钟现取）：过夜队列三步收窗 · R143 逐题半张**有读数了**
+- 队列三步全部收窗（`ledger.jsonl` 现取）：`gate5_full` rc=0／613.5 s → `r143a_corpus` **rc=0／9.2 s** → `r143b_questions` **rc=1／12.1 s**（这枚 1 是脚本自判"有差异"，不是崩）。`gate5_full` 第二遍自动 `SKIP already rc=0`＝断点续跑生效。
+- 语料级半张（`%TEMP%\eb103\overnight\r143a_corpus.out`／`r143a.json`）：`pg_vectors 1008`＝`chroma_vectors 1008`＝`chunks_rows 1008`＝`chunks_with_backfilled_embedding 1008`，`only_in_pg 0`／`only_in_chroma 0`／`wrong_width 0`／`all_zero_rows 0`／`index_version_id_null 0`，口径 `nomic-embed-text`／768 维／l2。⇒ **集合面全等，双写没漏一枚**。
+- 🔴 逐题半张（`r143b_questions.out`／`.json`）：**50/105 题 top-5 不一致**，且多枚题的 **chroma 腿返回空列表**（如 `report-12`：chroma `[]` vs pg 5 枚）。这句**不许**读成"pgvector 比 Chroma 准"——本半张是脚本自己拿两边引擎逐题对比，不是服务内端到端读路径，空列表那一族要先归因（scope/where 过滤、collection 名册、还是遗留引擎真无命中）。明晨第一件事：拿 `r143b.json` 逐题对 `must_contain` 与 `--where-json`，把"50 枚差异"拆成三桶再说结论。
+- 明晨重跑法（照抄即可，零网络依赖）：`python %TEMP%\eb103\overnight1003.py`——已 rc=0 的步自动跳过，只会重跑 `r143b_questions`；要它重跑逐题就先把 `ledger.jsonl` 那行删掉或改 `rc`。派工词记得写 `/app/.venv/bin/python`（§166 二那格）。
+- 盘面终数：主树 HEAD `3a2062a`（门 #5 打的是 `72eaca0`＝同码不同账，本笔只追加跟进单文本），`@{u}..HEAD` 落账后现取；未跟踪脏项只有 `.zcodeignore` 与业主作业目录（业主本人的材料，本席不碰）。在途执行层**零枚**，心跳零枚，`powercfg` 一字未动，`--purge` 继续不做。
