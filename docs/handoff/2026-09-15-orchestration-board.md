@@ -1654,6 +1654,10 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Erdos`（**复用线程续用**，非新线程） | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R570**（本班新立·本席唯一一次投递，20:4x `send_input`） | `be-r565`（基点 `c9243d4`，**独占**；写域＝两枚全新件 `scripts/eval_window_shard_driver.py`＋`tests/test_r570_…py`，可另写一枚凭据纸；🔴 禁碰采集器／transport／sidecar 键集／帧账／评分件／`app/**`／`frontend/**`） | 🟡 在途：把总控参照件（`%TEMP%\eb-rescue\R570\resume_window_driver.py`，376 行，七条行为已亲验：分片即落盘／幂等零重打／局部补跑／合并覆盖闸／五项指纹拒用混库／连续四片全空早停 rc=3／`--expect-backend` 双向真拦）移植入库并补钉。明令窗未开：不许打模型、不许碰 `evalrun` 里任何 run/selftest 件、不许动容器、不许 commit | 20:5x |
 | （run12 定性·总控亲取） | — | **run12 整窗报废** | `be-eval95` ＋ `%TEMP%\evalrun` | 🔴 **作废**：19:17:39 rc=1，`missing 6 fixture id(s)` ⇒ `nothing written to run12-answers.jsonl`。六题两笔独立原因：`report-10/11/12` ＝业主 19:12 关 Docker Desktop（10061 拒连，19:58 容器回来）；`doc-01/02/03` ＝**总控自己的错**，17:22 用真 fixture 题号打冒烟探针污染 Redis，而 P-18 是 17:14 校的（在探针**之前**）。sidecar 99 行＋帧账 834 KB 在盘但**不含答案文本** ⇒ 不可复原 | 20:0x |
 | （今晚开窗阻塞·等业主一格） | — | **P-20 前置三格 FAIL** | 主树现取 `scripts/r530_run10_window_preflight.py --json` | 🔴 `gpu_apps`：**CS2 在跑**（pid 36684，20:13:17 起，`nvidia-smi` 现列它在 GPU 上）⇒ A① 的 p95 不可采信；**关游戏是业主的动作，本席不代杀别人进程**。`provenance`：镜像落后（正解＝随 R527 并树后一次重打，带 GIT_SHA/BUILT_AT）。`foreign_python`：总控自己那遍验收在跑，收工自愈。`answer_cache` PASS（`answer:* = 0`）、`keep_awake` PASS（pid 14828 每 240 s 续锁、171 s 前续过；**临时锁，一行电源设置都没改**，合业主「别设为永眠」）、`eval_tree`／`env_flags` PASS | 20:5x |
+| `Kuhn`（复用线程，非新线程） | `01a0efcf-5b50-7452-ba0b-0d10293efe52` | **R572**（r253 一族迁在册新姿势＋治那枚把旧姿势名字写死的引用者钉；判据全文＝跟进单 §151 三） | `be-r572`（基点 `fd90f30`，**独占**；写域只 `tests/test_r253_*.py`＋新钉 `tests/test_r572_*.py`＋凭据纸 `docs/testing/r572-*.md`） | 🟡 在途。10-03 08:3x 现取：`git diff --numstat HEAD` 空＋`rev-list --count fd90f30..HEAD`＝0 ⇒ **至今零写入**；`wait_agent` 无终态＝线程活着。R572 并完前，主树任何并树都要注明 `tests/test_r253_*` 那 2 failed＋2 errors 是 HEAD 自带（事故 #104） | 10-03 08:3x |
+| `Erdos`（复用线程） | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R565＋R571 结案并树**（收件整理单，A–D 四格照交；本席另独立核过 sha 与 numstat） | 主树 `fc8140f`（R565 三枚全新增）／`6c8b6dd`（R571 两枚在册件改口 33/6＋79/0） | ✅ 总控亲跑两态（脏态与提交后干净树）同名集 **55 passed / rc=0**；五枚件盘上 sha256 前 12 与源树逐枚全等 | 10-03 08:5x |
+| `Hume`／`Pasteur`（**仍死，未复用**） | `01a0f0e6-…`／`01a0f09f-…` | **R556**（已由总控接手并树 `c9a782e`）／**R557**（零产物） | `be-r551`（7 枚 M 半成品·未验未并）／`be-eval95`（现取 dirty=0，跑分树，10-03 用作 run13/14 采集） | 🔴 百炼 403 `AccessDenied.Unpurchased` 仍在，业主那次续订没覆盖这两条线；本席 10-03 未向它们投过一句话 | 10-03 08:3x |
+| （总控亲做·非执行层） | — | **R59 翻默认读后端真落地**（`INDEX_BACKEND=pgvector`） | `deploy/.env.server:77`（该文件未跟踪、不入仓）＋backend/worker/scheduler 三枚容器 `up -d --force-recreate`（runbook:519 正解） | ✅ 08:4x 现读：三枚容器 `printenv INDEX_BACKEND` 均 `pgvector`；backend 进程内 `read_backend()`＝`pgvector`；代码缺省 `INDEX_BACKEND_DEFAULT` 一字未动。🔴 上一格 §151 曾把「裁定」写成「已执行」＝事故 #105，订正见跟进单 §152 | 10-03 08:4x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -6432,3 +6436,32 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 - P-20 现取：`answer_cache`／`keep_awake`／`eval_tree`／`env_flags` 四格 PASS；三格 FAIL——`gpu_apps`（**CS2 pid 36684 占着 GPU**，20:13:17 起）、`provenance`（镜像 `fe166c8` 落后主树）、`foreign_python`（本席验收在跑，收工自愈）。
 - 🔴 唯一需要业主的那一格：**关掉 Counter-Strike 再开窗**（A① 的 p95 时延读数不可采信）。本席不代杀别人进程，也不擅自开窗——业主已明令「今晚再跑」，窗一开就用分片 driver 跑，中断只补差集。
 - `provenance` 那格由本席推进：R527（`app/**` 动读路径）验收并树后一次重打镜像（带 `GIT_SHA`/`BUILT_AT`），再 `docker compose up -d --force-recreate`；run14（pgvector 对分窗）另需 `deploy/.env.server` 写 `INDEX_BACKEND=pgvector` 且**容器 recreate**（不是镜像 rebuild），并现取 `schema_migrations` 确认 **0019 已应用**——否则 R527 的活动先验 SELECT 抛错走 fail-open，先验整族静默关掉，那一窗与 run13 就不是同一套检索条件。
+## 4EJ 第十二班第四格（10-03 00:2x–09:0x·总控线·主树 `fd90f30`→`fc8140f`→`6c8b6dd`→`2638552`·单模型未切换·心跳一枚没碰（automation 仍 `PAUSED`））：run13/run14 成对双窗第一次落地 · P3 第一次有真库读数 · R59 翻默认真落 · 🔴 本席一天内两笔自曝（#104 并红没跑门／#105 说执行了没执行）
+
+### 一、自动队列（断网也不重来）跑通了，四格全交
+
+- 落点：`%TEMP%\eb-rescue\R570\queue_v2.py`，日志 `%TEMP%\evalrun\queue1314.log`，终态 `{"S1_run13": true, "S2_parity": true, "S3_run14": true, "S4_compare": true}`，02:19:44 收尾。
+- v1 的三处致命缺陷已修：① `--out/--md` 探错；② P3 必须在 **backend 容器内**跑（宿主 5432 那台是无 `vector_scope` 的野 PG，连上就是假读数）；③ GPU 闸把 Docker vGPU 的宿主影子（`pid=4 [Insufficient Permissions]`）当外来负载——改成**正面归因**：ollama 容器侧同场点名到计算进程才放行。
+
+### 二、run13（Chroma）vs run14（pgvector）＝成对双窗
+
+- 成对性：同镜像 `fd90f30`、同题集 sha `686c564ff298`、同 transport `eval_transport_ask_v2`、同 `shard_size=1`、各 105/105、零重试轮、sidecar 无重复题号、零哨兵；唯一变量＝容器 `INDEX_BACKEND`（`docker exec printenv` 现取核过）。
+- 读数：`answer_correctness 0.5619→0.5238`／`evidence_coverage 0.7524→0.7524`／`unsupported_claim_rate 0→0`／甲案扣除集合两窗完全相同（19 枚、分母 86）／avg 60.1→63.4 s、p95 151.8→164.7 s。
+- 逐题归因（尺是确定性的 `app/quality/eval.py::_is_correct`，离线复算）：翻分 10↓／6↑＝16 枚散 8 类；`doc-15` 两窗引证逐字相同仍翻、`unsupported-01/02` 两窗都正确拒答只差锚词、`metric-11` 走数据道（`tool_calls 4→2`）⇒ **净 −4 题属生成措辞噪声，不是切读退化**。
+- P3 逐题对读（105 题、k=5、容器内）：`pg_leg.state=read_live`；`1008=1008`／`only_in_*=0`／错维 0／全零 0；**PG 索引=精确 105/105**，Chroma 只有 **55/105** 且 **21 题交空 top-5**（PG 一支不空）；`mean_overlap_ratio 0.7238`、`max_abs_rank_shift 2`、`mean_kendall_tau 1.0` ⇒ 方向是 **PG 严格不劣于 Chroma**。
+
+### 三、两笔并树＋一笔记账（执行层 `Erdos`@`be-r565`，基点 `fd90f30`）
+
+- `fc8140f` R565（A2 分母分桶量具＋20 枚离线钉＋凭据纸）／`6c8b6dd` R571（分片 driver 缺 `--env-file` 该 REFUSE 不该崩）／`2638552` 跟进单 §151–§152。
+- 验收＝本席亲跑：五枚件 sha256 前 12 与源树逐枚全等；同名集 55 passed 脏态与干净树各一遍。🔴 执行层自报的 35 枚预期没被采信成读数。
+
+### 四、🔴 两笔自曝（同日同族：把「说了」当「做了」）
+
+- **事故 #104**：本席把带红的 `c9a782e`（R556）并进主干——改口 `tests/test_r48_*` 前没取**引用者清单**，`tests/test_r253_*` 一族今天 2 failed＋2 errors（干净 `fd90f30` 全量门 **2 failed / 9837 passed / 52 skipped / 2 xfailed / exit=1 / 534 s**，单跑复现＝真红非共置）。同族第四次利息。治它＝**R572**（已投 `Kuhn`）。
+- **事故 #105**：§151 那句「裁定并已执行翻 `INDEX_BACKEND=pgvector`」在落笔时是**假的**——08:34 现取 `deploy/.env.server` 零命中、三枚容器 `printenv` 全空、`StartedAt` 还是队列 02:19 回退那次 recreate。新纪律：**任何「已执行」必须与一次现读同段出现（命令＋输出）**。08:4x 已真执行并留读数（见名册行）。
+- 另订正三笔陈旧账（跟进单 §152 二）：H13 早于 09-28 结案＝甲；A1/A3 已裁「不在真库做／交付阶段做」，不是欠业主的动作；「计划书 8 枚零提交」被机器账 `scripts/audit_plan_ticket_ledger.py` 在 `6c8b6dd` 现取推翻——R29/R31/R32/R33/R38/R43/R46/R48 **全有产物在树**（R32·R33 LANDED，余 PARTIAL＝欠真机门判据），真 ZERO 只有 R39（裁定不建）／R143／R144。**⇒ V1 剩余量的主体不是代码，是 A/B/C/D/E 五道真机门。**
+
+### 五、下一格（本格已派／待派，按写集切）
+
+- 在途：`Kuhn`/R572（`be-r572`，并完前门不绿、不许 push）。
+- 待派三块写集零相交：R573 A② 三口径离线读数（`scripts/`＋`tests/`＋`docs/perf/`，零模型零容器，吃现成 run13/14 帧账）／R574 合成扫描件端到端（V2 #13/#14/#15 那格从「从没跑过」变有读数，禁碰演示库计数）／R575 R60 前置真库备份恢复演练（`scripts/`＋`tests/`，容器只读）。
