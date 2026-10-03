@@ -36,6 +36,16 @@ R496（09-29 返工）· 禁域自护钉的作用域：那两枚盘面钉（`tes
 🔴 一层都不许拿「删路径」或放宽断言糊过去：`FORBIDDEN_PATHS` 一枚不删，`REGISTERED_FILES` 一枚不删，
    红句照样点名文件。刀在 `tests/test_r496_forbidden_pin_scope.py`，两形（假红消失／真越界还红）都走影子副本道。
 
+R623（10-03 返工）· 两枚活体钉从此按**内容**判：`git status --porcelain` 降级成「待查名单」，一律不再当罪证。
+ 病（总控 10-03 一手实测）：并树窗口里这两枚钉会咬红，而事后在同一棵树现读，那 17 枚被点名的受跟踪条目
+ HEAD blob、索引 blob、`git hash-object` 现算值三者一字不差、`git diff` 零报——盘面那一行报的是「瞬时状态」，
+ 不是「谁写了字节」。本单不复现成因（10-03 在安静树上做过 7 组 stat 扰动＋`index.lock`＋`GIT_OPTIONAL_LOCKS=0`，
+ 纯 mtime 脏始终骗不过 porcelain，见 `tests/test_r623_content_caliber_disk_pins.py` 那把说谎刀的用意），
+ 只把判据换掉：从今天起**一条路径有没有手，只看 HEAD blob == 索引 blob == 盘上字节（经 git 自己的过滤）**。
+ 三条腿任一不等＝有手，红句点名是哪条腿漂了；三条腿一字不差＝放掉，那不是脏。名册一枚没删——
+ `FORBIDDEN_PATHS` 12 枚、`REGISTERED_FILES` 12 枚、`DELIVERED_FILES` 6 枚原样，本单只改「怎么判」，不改「判什么」。
+ 刀：`tests/test_r623_content_caliber_disk_pins.py`（只 touch mtime 必须绿／真写一个字节必须红）。
+
 底座那四条锚点（模型腿本来就是 OpenAI 兼容）也在本件里现读一遍：锚点漂了要停下报，
 不许把「行号会漂」当成免检理由 —— 所以钉的是**符号在场**，行号只在失败消息里现算现打。
 
@@ -213,9 +223,13 @@ def inline_values(environment: dict) -> list[str]:
 
 
 def git_status_porcelain(root: Path = REPO) -> list[str]:
-    """盘面现读。root 默认是真树；反证一律传影子根，不许在真树上造漂移。"""
+    """盘面现读。root 默认是真树；反证一律传影子根，不许在真树上造漂移。
+
+    R623：这一行从此只产**候选名单**。带 `--no-optional-locks` 是有两重意思——本件的钉不许为了
+    看一眼盘面就去写别人正在用的索引；判决一律走 `content_verdict`，不看这里的存在性。
+    """
     proc = subprocess.run(
-        ["git", "-c", "core.quotePath=false", "status", "--porcelain",
+        ["git", "--no-optional-locks", "-c", "core.quotePath=false", "status", "--porcelain",
          "--untracked-files=all"],
         cwd=str(root), capture_output=True, text=True, encoding="utf-8",
     )
@@ -288,6 +302,173 @@ def registered_modifications(entries: list[str]) -> list[str]:
     return hits
 
 
+# ------------------------------------------------------------------ R623 内容层（量字节，不量盘面存在性）
+#: 三方对账的三条腿名。红句里逐枚点名，读的人不必再自己敲一遍 git。
+BLOB_LEGS = ("HEAD", "index", "worktree")
+
+
+def _git_read(root: Path, *args: str, sep: str = "\n") -> list[str]:
+    """一枚只读 git 读数，回非空条目。rc!=0 当场停——「读不到」永远不许当成「读到零」，
+    那会把真越界放成绿（判据③不许被这枚尺自己磨平）。"""
+    proc = subprocess.run(
+        ["git", "--no-optional-locks", "-c", "core.quotePath=false", *args],
+        cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    assert proc.returncode == 0, "git %s 读不到：%s" % (" ".join(args), proc.stderr[:200])
+    return [chunk.strip() for chunk in proc.stdout.split(sep) if chunk.strip()]
+
+
+def _leg_text(leg: tuple[str, str] | None) -> str:
+    return "缺" if leg is None else "%s:%s" % (leg[0], leg[1][:10])
+
+
+def head_leg(rel: str, root: Path = REPO) -> tuple[str, str] | None:
+    """HEAD 里这枚路径的 (mode, blob)；HEAD 没有这条路径 ⇒ None。"""
+    lines = _git_read(root, "ls-tree", "HEAD", "--", rel)
+    if not lines:
+        return None
+    assert len(lines) == 1, "HEAD 里 %s 读出 %d 行：pathspec 不唯一，这枚尺不许猜" % (rel, len(lines))
+    meta = lines[0].split("\t", 1)[0].split()
+    return meta[0], meta[2]
+
+
+def index_leg(rel: str, root: Path = REPO) -> tuple[str, str] | None:
+    """索引 stage0 的 (mode, blob)；不在索引 ⇒ None；未合并（多档）⇒ ("unmerged", "unmerged")。"""
+    lines = _git_read(root, "ls-files", "-s", "--", rel)
+    if not lines:
+        return None
+    if len(lines) > 1:
+        return "unmerged", "unmerged"
+    parts = lines[0].split("\t", 1)[0].split()
+    return parts[0], parts[1]
+
+
+def worktree_leg(rel: str, root: Path = REPO) -> str | None:
+    """盘上字节经 **git 自己的过滤** 之后的 blob sha；文件不在盘上 ⇒ None。
+
+    必须是 `hash-object --path`：这台机 `core.autocrlf=true`，盘上是 CRLF、库里是 LF，
+    拿原始字节的 sha 当尺会把全仓判成脏——那还是本单要根治的假红，只是换了个方向。
+    10-03 实测：`app/agents/nodes.py` 过滤后 == HEAD，原始字节 sha 另一枚，两者差一枚都不许用。
+    """
+    target = root / rel
+    if not target.is_file():
+        return None
+    lines = _git_read(root, "hash-object", "--path", rel, str(target))
+    assert len(lines) == 1 and re.fullmatch(r"[0-9a-f]{40,64}", lines[0]), \
+        "盘上字节读不到 %s：%s" % (rel, lines)
+    return lines[0]
+
+
+def head_map(rels: list[str], root: Path = REPO) -> dict[str, tuple[str, str]]:
+    """一批路径在 HEAD 里的 (mode, blob)，一次 `ls-tree -r` 读回；没进 HEAD 的一律缺席。"""
+    out: dict[str, tuple[str, str]] = {}
+    if not rels:
+        return out
+    for line in _git_read(root, "ls-tree", "-r", "HEAD", "--", *rels):
+        meta, path = line.split("\t", 1)
+        parts = meta.split()
+        out[path.replace("\\", "/")] = (parts[0], parts[2])
+    return out
+
+
+def index_map(rels: list[str], root: Path = REPO) -> dict[str, tuple[str, str]]:
+    """一批路径在索引 stage0 里的 (mode, blob)，一次 `ls-files -s` 读回；未合并记成 unmerged。"""
+    out: dict[str, tuple[str, str]] = {}
+    if not rels:
+        return out
+    for line in _git_read(root, "ls-files", "-s", "--", *rels):
+        meta, path = line.split("\t", 1)
+        parts = meta.split()
+        rel = path.replace("\\", "/")
+        if parts[2] != "0" or out.get(rel) == UNMERGED:
+            out[rel] = UNMERGED
+        else:
+            out.setdefault(rel, (parts[0], parts[1]))
+    return out
+
+
+#: 未合并（索引里同一枚路径挂着几档）＝一定算一只手，不必再猜哪一档是答案。
+UNMERGED = ("unmerged", "unmerged")
+
+
+def content_verdict(rel: str, root: Path = REPO,
+                    legs: tuple[dict, dict] | None = None) -> tuple[bool, str]:
+    """这枚路径相对 HEAD 到底有没有手：三条腿逐一对账。回 (有手?, 说明)。
+
+    放掉一条的唯一理由是「三条腿一字不差」；别的一律算手。红句里带三条腿的读数，复跑不必再问。
+    `legs` 是 `head_map`/`index_map` 批量读好的两腿（一批路径只起两枚子进程）；不传就自己现读。
+    """
+    if legs is None:
+        head, index = head_leg(rel, root), index_leg(rel, root)
+    else:
+        head, index = legs[0].get(rel), legs[1].get(rel)
+    work = worktree_leg(rel, root)
+    legs = "HEAD=%s index=%s worktree=%s" % (_leg_text(head), _leg_text(index),
+                                             work[:10] if work else "缺")
+    if head is None and index is None and work is None:
+        return False, "三条腿都没有这枚路径（不在本单视野）"
+    if head is None:
+        return True, "HEAD 里没有、盘上或索引里有＝新文件 | " + legs
+    if work is None:
+        return True, "HEAD 里有、盘上没了＝删除 | " + legs
+    if index is None:
+        return True, "索引里没了而 HEAD 与盘上都在＝暂存删除 | " + legs
+    if head[1] != index[1]:
+        return True, "索引 blob 与 HEAD 不等＝暂存过的一手 | " + legs
+    if head[0] != index[0]:
+        return True, "索引 mode 与 HEAD 不等＝类型或权限变了 | " + legs
+    if work != head[1]:
+        return True, "盘上字节与 HEAD blob 不等＝改过 | " + legs
+    return False, "字节相同 | " + legs
+
+
+def hit_path(hit: str) -> str:
+    """从读数里取回路径：`"M app/x.py"`／`"content app/x.py"`，后挂的 ` | 说明` 一并剥掉。
+
+    内容层的罪证条目形如 `"M app/x.py | 盘上字节与 HEAD blob 不等＝改过 | HEAD=... index=... worktree=..."`：
+    状态词只用一枚空格分隔，说明只用 `" | "` 分隔，所以剥两次就回到路径本身。
+    """
+    head = hit.split(" | ", 1)[0]
+    return head.split(" ", 1)[1] if " " in head else head
+
+
+def content_hands(hits: list[str], root: Path = REPO,
+                  sweep: tuple[str, ...] = ()) -> tuple[list[str], list[str]]:
+    """候选过一遍内容尺 ⇒ (真手, 因字节相同被放掉的)。
+
+    sweep 是一张不论盘面点没点名都要自己查一遍的小名册（本单交付件 6 枚、在册件 12 枚）：
+    哪天盘面反过来漏报，这两张名册还能自己站住。禁域那 ~500 枚不吃 sweep，它的发现面走
+    `forbidden_diff_paths`——一把内容尺一次子进程，不吃 mtime。
+    """
+    pending: dict[str, str] = {}
+    for hit in hits:
+        pending.setdefault(hit_path(hit), hit)
+    for rel in sweep:
+        pending.setdefault(rel, "content " + rel)
+    paths = sorted(pending)
+    legs = (head_map(paths, root), index_map(paths, root))
+    hands: list[str] = []
+    dropped: list[str] = []
+    for rel in paths:
+        changed, why = content_verdict(rel, root, legs)
+        (hands if changed else dropped).append("%s | %s" % (pending[rel], why))
+    return hands, dropped
+
+
+def construction_hands(root: Path = REPO, entries: list[str] | None = None) -> list[str]:
+    """内容级施工指纹：本单在这棵树到底有没有手。盘面行只是候选，字节才算数。"""
+    entries = git_status_porcelain(root) if entries is None else list(entries)
+    hands, _dropped = content_hands(construction_fingerprint(entries), root,
+                                    sweep=DELIVERED_FILES)
+    return hands
+
+
+def forbidden_diff_paths(root: Path = REPO) -> list[str]:
+    """禁域的内容级发现面：`git diff HEAD -- <禁域>` 点名的路径，一次子进程，一个字不看 porcelain。"""
+    return [rel for rel in _git_read(root, "diff", "--name-only", "-z", "--no-renames", "HEAD",
+                                     "--", *FORBIDDEN_PATHS, sep="\0") if is_forbidden(rel)]
+
+
 # ------------------------------------------------------------------ R496 归因层·活体（本单施工指纹）
 def construction_fingerprint(entries: list[str]) -> list[str]:
     """本单在这棵树的施工指纹：声明的交付件里，有哪一枚相对 HEAD 有手。
@@ -307,22 +488,32 @@ def construction_fingerprint(entries: list[str]) -> list[str]:
     return sorted(hand)
 
 
-def forbidden_dirt_reading(root: Path = REPO) -> tuple[list[str], list[str]]:
-    """(施工指纹, 禁域脏态读数)。指纹为空 ⇒ 本单不在此树施工 ⇒ 读数一律为空：沉默，不是告警。"""
-    entries = git_status_porcelain(root)
-    fingerprint = construction_fingerprint(entries)
-    if not fingerprint:
+def forbidden_dirt_reading(root: Path = REPO,
+                           entries: list[str] | None = None) -> tuple[list[str], list[str]]:
+    """(内容级施工指纹, 内容级禁域罪证)。指纹为空 ⇒ 本单不在此树施工 ⇒ 一律为空：沉默，不是告警。
+
+    R623：禁域罪证有两条发现面（盘面行＋`git diff HEAD -- <禁域>`），两条都只是**候选**——
+    每条候选还要再过一遍三条腿对账才成罪证。盘面说它脏而字节相同 ⇒ 放掉，那不是脏。
+    """
+    entries = git_status_porcelain(root) if entries is None else list(entries)
+    hands = construction_hands(root, entries)
+    if not hands:
         return [], []
-    return fingerprint, dirty_forbidden_paths(entries)
+    candidates = dirty_forbidden_paths(entries) + ["M " + rel for rel in forbidden_diff_paths(root)]
+    breaches, _dropped = content_hands(candidates, root)
+    return hands, breaches
 
 
-def registered_dirt_reading(root: Path = REPO) -> tuple[list[str], list[str]]:
-    """同一道闸门，量具换成在册件全集（M/D/R/C/T 逐枚点名）。"""
-    entries = git_status_porcelain(root)
-    fingerprint = construction_fingerprint(entries)
-    if not fingerprint:
+def registered_dirt_reading(root: Path = REPO,
+                            entries: list[str] | None = None) -> tuple[list[str], list[str]]:
+    """同一道闸门，量具换成在册件全集：12 枚逐一走内容尺，不依赖盘面点没点名。"""
+    entries = git_status_porcelain(root) if entries is None else list(entries)
+    hands = construction_hands(root, entries)
+    if not hands:
         return [], []
-    return fingerprint, registered_modifications(entries)
+    breaches, _dropped = content_hands(registered_modifications(entries), root,
+                                       sweep=REGISTERED_FILES)
+    return hands, breaches
 
 
 # ------------------------------------------------------------------ R496 归因层·历史（挂号提交）
@@ -645,16 +836,19 @@ def test_counter_evidence_the_git_forbidden_path_guard_bites_on_a_dirty_app_tree
 
 # ------------------------------------------------------------------ 判据④ 盘面（现取，不采信自述）
 # 两枚盘面钉的判决本体挪进下面这两枚函数：件里的钉与 R496 的刀共用同一份尺，不许各写一把。
-def forbidden_overreach_verdict(root: Path = REPO) -> None:
-    """判据④·活体层。主张只有一条，主语是本单：「R453 没在这棵树里写过禁域」。
+def forbidden_overreach_verdict(root: Path = REPO,
+                                entries: list[str] | None = None) -> None:
+    """判据④·活体层。主张只有一条，主语是本单：「R453 没在这棵树里写过禁域」——判的是字节。
 
     前置条件是本单施工指纹非空。指纹为空＝本单在此树零写入，此时盘面任何脏态都是别人的手笔，
     这枚钉无权开口（沉默＝不适用，不是告警，也不是 skip）；09-29 那两次假红就死在没有这道闸门。
     指纹非空＝本单正在此树施工，而一棵施工树只有一枚 Agent 的手，其余受跟踪改动落在本单名下。
+    R623 把「有没有手」从盘面存在性换成三条腿 blob 对账：并树瞬时那一行 ` M` 不再是罪证。
     """
-    fingerprint, breaches = forbidden_dirt_reading(root)
+    fingerprint, breaches = forbidden_dirt_reading(root, entries)
     assert not breaches, (
-        "判据④禁域被动过：%s（app/**·frontend/**·docker-compose 本体·业主 env 样例·"
+        "判据④禁域被动过（按内容判：HEAD blob／索引 blob／盘上字节三条腿对账不等）：%s"
+        "（app/**·frontend/**·docker-compose 本体·业主 env 样例·"
         "在册量具 eval_transport_ask_v2.py·评测集目录都不在本单写域）；"
         "本单施工指纹=%s，故这些改动落在本单名下" % (breaches, fingerprint))
 
@@ -687,16 +881,18 @@ def test_no_ticket_signed_write_lands_outside_the_write_domain() -> None:
     assert not strays, "带本单签名的新文件长在写域之外：%s" % strays
 
 
-def registered_overreach_verdict(root: Path = REPO) -> None:
-    """判据④·活体层之二：本单正在此树施工时，在册件一枚不许 M/D/R/C/T。
+def registered_overreach_verdict(root: Path = REPO,
+                                 entries: list[str] | None = None) -> None:
+    """判据④·活体层之二：本单正在此树施工时，在册件一枚不许动过字节（12 枚走内容尺逐枚对账）。
 
     与上一枚同一道闸门。它守的是「本单不许顺手改别人的在册件」，从来不该守「这棵树此刻不许有
     别人的在册件改动」——后者不属于本单，替它喊红就是拿别人的合法施工当自己的越界证据。
+    R623：在册件这一层连盘面点名都不再依赖（走 `sweep=REGISTERED_FILES`），盘面漏报它自己也查。
     """
-    fingerprint, hits = registered_dirt_reading(root)
+    fingerprint, hits = registered_dirt_reading(root, entries)
     assert not hits, (
-        "在册件被改动：%s；本单施工指纹=%s（指纹为空时本钉不适用：别人家的合法改动不归本单名下）"
-        % (hits, fingerprint))
+        "在册件被改动（按内容判：三条腿对账不等）：%s；本单施工指纹=%s"
+        "（指纹为空时本钉不适用：别人家的合法改动不归本单名下）" % (hits, fingerprint))
 
 
 def test_registered_in_book_files_carry_no_modification_or_deletion() -> None:
