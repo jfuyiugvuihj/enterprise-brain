@@ -1704,6 +1704,8 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | （总控亲做·**已授权删除**） | — | **R611 删除清单沙盒模拟＋入队**（在册 308 枚工作树逐枚现取：删除候选 252／保 4 枚 parked 独有提交／保 51 枚账上未点名含 🔴`be-r598` 待并树真载荷） | 判据＝账（主树提交点名）＋载荷先归档；`chroma_db`/缓存记噪声；`.zcodeignore` 与业主作业目录不动 | 🟡 模拟两遍已完（`r611-sim2.json`），执行由 `r611_watch.py` 在队列 `QUEUE ALL DONE`＋盘面空闲那一刻自动做 ①验 ②归档复验 ③同卷 move 进检疫区 ④prune；**窗内不执行**；磁盘真回收留给显式 `--purge`。🔴 订正：按字节等于今天的主树≠已并树（并树后主树又长过），211/252 枚会被误判 | 10-03 17:4x |
 | （总控亲做·**窗内抢修**） | — | **🔴 事故 #109**：接续器 `sequencer1819.py` 的 `REPO` 中文路径被命令通道写成字面 `????` ⇒ run18 收窗那一刻整条队列会静默死（run18 不归档、run19 不开） | `%TEMP%\evalrun\sequencer1819_v2.py`（全 ASCII＋`assert isdir`＋先睡 30 s 再探） | ✅ 17:39:13 换掉旧 pid 66360 起新接续器，run18 驱动两枚进程未受影响；规矩入册：生成再跑的脚本一律 ASCII，中文走 `chr()`，末尾带路径自检。同类残件 `fix_knife1.py`/`r588_probe.py` 也带 `????`（没在跑，未碰） | 10-03 17:39 |
 | （待派·窗后） | — | **R610** 收割 R605 那 6 条独有牙（`tests/` 一枚新钉·零生产码，判据见跟进单 §161.1） | 写域＝`tests/test_r610_*` | ⏳ 排 run19 收窗之后 | 10-03 17:4x |
+| （总控亲做·**业主已授权**） | — | **H8／H4 落地两格**：`.gitignore` 加 `.tmpfix/` 一行（暂存壳不再挡 `dirty=0` 开窗前置；跑分残留刻意不补忽略规则——那会盖掉 R606 的写点病）；心跳 **`automation-2` 已删除**（走 `automation_update` mode=delete，非手改 toml） | 主树 `.gitignore` 39→40 行·CR 枚数不变（实测 3→3）／`~/.codex/automations` 现读只剩 `autodl`（与本盘无关，仍 `PAUSED`，未碰） | ✅ 删而不改到本线程的理由：`at_` 前缀注入会永久毒死主力线程（`01a0acfb`·`01a09dda` 两枚皆死于此），闸门清点改由总控每格开篇现读 `human-gates.md`，不设定时器 | 10-03 17:5x |
+| （总控亲做·**H5 记未做**） | — | 🔴 **`chroma_db` 反跟踪今天不做**：业主已点头，卡的是**成文前置**——`human-gates.md:55`「仅用户本人，且必须等」·`:122`「不急，必须等在途合完」·`:129`「H5（工作树剩 1 个时）」；今天 `be-r598` 待并树（3 枚改＋8 枚未跟踪）且在册工作树 308 枚 | 另叠三枚在册钉读跟踪态：`tests/test_r134_chroma_writeback.py:66`／`scripts/check_image_provenance.py:80`／`scripts/audit_vector_mirror_sets.py:507` | ⏳ 立 **R613**（run19 收窗＋R598 并完之后）：`git rm -r --cached chroma_db`（磁盘一枚不动）＋同笔两态亲跑那三枚＋全量门；若某枚钉真依赖跟踪态则退回业主裁。窗内禁跑测试 ⇒ 现在做＝未验收并树 | 10-03 17:5x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -6735,3 +6737,11 @@ C 门三格现状：①越权 0 条＝**未验**（R481 口径；R487 只到账�
 - 入册规矩：**生成再跑的脚本一律 ASCII，中文走转义，末尾必带一次路径/依赖存在自检**；同类残件 `fix_knife1.py`·`r588_probe.py` 也带 `????`（没在跑，本格未碰）。
 
 **三、#107 订正与 R610**：见跟进单 §161.1／§162 一、四——`Darwin` 收席前写了三枚，实现与 `8d8b85f` 无独有产物（只差参数名与措辞），**牙独有 6 条** ⇒ R610 窗后收割；`AGENTS.md` 新增"收席取证时效"一条。
+
+
+## 4ER 第十二班第十二格（10-03 17:5x·总控线·主树 `3dd667d`→本笔／**单模型未切换**／心跳已彻底摘掉）：业主「可以」三格——两格落地 · H5 记未做并立 R613
+
+- **一、做了的两格**：`.gitignore` 加 `.tmpfix/`（一行，CR 枚数实测 3→3、LF 39→40；`tests/test_deployment_topology.py:227` 那枚读 `.gitignore` 的钉只断言 `deploy/.env.server` 在不在，加行对它是纯增量）；心跳 `automation-2` 删除（`~/.codex/automations` 现读只剩 `autodl`，与本盘无关、仍 `PAUSED`、未碰）。🔴 **删而不是改到本线程**：AGENTS.md 会话防中毒段写死心跳注入条目为 `at_` 前缀，百炼 compatible-mode 重放历史强校验 `msg_` ⇒ 之后每轮 400；`01a0acfb`·`01a09dda` 两枚主力线程都这么死。今后人工闸门由总控每格开篇现读 `docs/handoff/2026-09-17-human-gates.md`，不用定时器。
+- **二、没做的那格（H5＝`chroma_db` 反跟踪）不是"等业主"**：业主已授权，卡的是 H5 自己的成文前置（`:55`／`:122`／`:129` 三处，本节一末已点名）。今天待并树 `be-r598` 仍在、工作树 308 枚。硬风险另叠一层：三枚在册钉读跟踪态——`tests/test_r134_chroma_writeback.py:66` 在采集时刻抓 `git status --porcelain -- chroma_db` 与 `diff --numstat`；`scripts/check_image_provenance.py:80` 注释写死「chroma_db is tracked here and almost always dirty」；`scripts/audit_vector_mirror_sets.py:507` 禁止把元数据 schema 往「仓库里被 git 跟踪的那枚 `chroma_db/`」迁移。窗内禁跑测试 ⇒ 此刻反跟踪就是一笔没有两态验收的并树。
+- **三、R613（H5 执行单）**：`git rm -r --cached chroma_db`（`git ls-files chroma_db` 现读 6 枚在册、最后入库 `1c345b1` 09-03「Snapshot current work」；盘上 7 枚 7.92 MB 一枚不动）＋同笔两态亲跑上面三枚＋一次全量门；成功后把各文档里「主树恒脏 `chroma_db/chroma.sqlite3`」这条口径一并收掉（`.gitignore` 里 `chroma_db/` 早已在位，反跟踪之后 `git status` 永久干净）。若某枚钉真依赖跟踪态 ⇒ 退回业主裁：**改钉属代码变更、反跟踪属业主动作，两件事不许混在一笔里蒙混**。🔴 顺带纠一格旧数：H5 标题写的是「191 MB」，今天 `chroma_db/` 实测 7 枚 7.92 MB ⇒ 那 191 MB 早不在这儿了，别拿它估回收量。
+- **四、S4 与 R613 的关系**（防重复立案）：`docs/deployment/chroma-retirement-path.md` §4 的 S4＝目录与卷离场（删除＋`.gitignore`＋容器下线三样）；R613 只做「仓库里那枚目录反跟踪」这一小步，命名卷 `vectordb` 与容器内 `/app/chroma_db` 仍等 S2 归档件在异机验过之后才谈。

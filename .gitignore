@@ -37,3 +37,4 @@ documents/*
 static/*
 tmp_*.log
 /enterprise_brain
+.tmpfix/
