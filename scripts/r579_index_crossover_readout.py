@@ -452,12 +452,13 @@ class Db:
         self.prepare_threshold = prepare_threshold
 
     def open(self, *, expect_database=None):
-        import psycopg
+        from app.db.connection import connect_with_policy
 
         kwargs = {}
         if self.prepare_threshold is not KEEP_PSYCOPG_DEFAULT:
             kwargs["prepare_threshold"] = self.prepare_threshold
-        self.connection = psycopg.connect(self.url, autocommit=True, **kwargs)
+        # 边界把驱动参数原样转发给驱动（R602 起）：autocommit 与 prepare_threshold 一枚都不能掉。
+        self.connection = connect_with_policy(self.url, autocommit=True, **kwargs)
         if self.read_only:
             self._raw("SET default_transaction_read_only = on")
             got = self._raw("SHOW default_transaction_read_only").fetchone()[0]

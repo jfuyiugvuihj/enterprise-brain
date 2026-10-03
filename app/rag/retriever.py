@@ -740,8 +740,7 @@ def _read_engagement_rows() -> list[tuple]:
     tests/test_r46c_engagement_prior.py 的列名清单拦下。表还没建（业主未跑 0019）与库连不上都
     照样抛出去，由 engagement_priors() 那层退化成"没有先验"。
     """
-    import psycopg
-
+    from app.db.connection import open_connection, parse_database_settings
     # 函数内 import：与 _read_activity_signal_rows 同一条理由（pg_store 反向 import 本模块）。
     from app.rag import pg_store
 
@@ -750,7 +749,8 @@ def _read_engagement_rows() -> list[tuple]:
         url = url + ("&" if "?" in url else "?") + (
             "connect_timeout=" + str(ACTIVITY_PRIOR_CONNECT_TIMEOUT_SECONDS)
         )
-    with psycopg.connect(url) as connection:
+    # 边界只转发 conninfo，所以超时随 DSN 走；行工厂不动，仍是驱动自己的元组缺省。
+    with open_connection(parse_database_settings(url)) as connection:
         rows = connection.execute(
             "SELECT filename, "
             "COUNT(*) FILTER (WHERE event_type = 'click') AS clicks, "
