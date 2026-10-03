@@ -150,19 +150,56 @@ def shard_name(tag: str, index: int, suffix: str) -> str:
     return "%s-s%03d-%s.jsonl" % (tag, index, suffix)
 
 
-def refuse_inside_repo(path: Path, what: str) -> None:
-    """🔴 产物只许落仓外：指进仓内当场拒（在册纪律，别让脏件流进别的树）。"""
+def refuse_inside_repo(path: Path, what: str, root: Path = None) -> None:
+    """🔴 产物只许落仓外：指进仓内当场拒（在册纪律，别让脏件流进别的树）。
+
+    R601 判据②：``root`` 可指到**别的**一棵树。``--repo`` 指哪棵树，采集器就在哪棵树里写字节，
+    只拿本件自己的 ``REPO_ROOT`` 过闸等于放行「往 --repo 那棵树漏产物」这一形（在册 runbook
+    里的跑分树就是另一棵）。与 ``scripts/collect_evaluation_answers.py`` 同名同语义同一枚把手。
+    """
+    base = REPO_ROOT if root is None else Path(root)
     try:
         resolved = Path(path).resolve()
-        root = REPO_ROOT.resolve()
+        inside = base.resolve()
     except OSError:
         return
     try:
-        resolved.relative_to(root)
+        resolved.relative_to(inside)
     except ValueError:
         return
-    refuse(what + " 落在仓内：" + str(resolved), "产物必须落仓外（默认 %TEMP%\\evalrun），"
-           "仓内答案件会脏每一棵 worktree 并招来误加 git add")
+    refuse(what + " 落在仓内：" + str(resolved) + "（对 " + str(inside) + " 这棵树）",
+           "产物必须落仓外（默认 %TEMP%\\evalrun），仓内答案件会脏每一棵 worktree 并招来误加 git add")
+
+
+#: 一扇窗会写的每一枚落点（R601 判据②：逐枚点名过闸，不许只挑两枚看）。
+#: 分片自己的 fixture/answers 都在 ``root`` 之下，由「分片目录」这一枚代闸。
+LANDING_SPOTS = (("tmp", "产物目录"), ("root", "分片目录"), ("window", "指纹件"),
+                 ("shards", "分片计划件"), ("sidecar", "侧车"), ("frames", "帧账"),
+                 ("answers", "合并件"), ("log", "驱动日志"))
+
+
+def is_git_tree(path) -> bool:
+    """``.git`` 在位就算一棵树（主树是目录，worktree 是文件，两形都算）。"""
+    try:
+        return (Path(path) / ".git").exists()
+    except OSError:
+        return False
+
+
+def refuse_landing_spots(P: dict, repo: Path = None) -> None:
+    """逐枚过闸，并对两棵树过闸：本件自己的树 + ``--repo`` 那棵**树**。
+
+    🔴 第二道只在那枚 ``--repo`` 确实是一棵 git worktree 时才走：量具自测里 ``--repo`` 常被
+    指成一枚临时目录（``tests/test_r570_window_shard_driver.py`` 两枚在册钉就这么用），临时目录
+    不是仓库，往它里面写产物脏不了任何一棵树；把它当仓库拒＝拿假罪证拦真窗。对真跑分树
+    （``be-eval95`` 那形）这一道是实打实的：从前只闸本件自己的 REPO_ROOT。
+    """
+    roots = [REPO_ROOT]
+    if repo is not None and is_git_tree(repo):
+        roots.append(Path(repo))
+    for key, label in LANDING_SPOTS:
+        for base in roots:
+            refuse_inside_repo(P[key], label, root=base)
 
 
 def read_jsonl_rows(path: Path) -> list:
@@ -385,16 +422,24 @@ def collector_command(python: str, repo: Path, shard_fixture: Path, shard_answer
 
 def collector_env(tmp_dir: Path, sidecar: Path, base_env: dict, env_file: Path, repo: Path,
                   base_url: str, username: str, dry_run: bool,
-                  env_file_explicit: bool = False) -> dict:
+                  env_file_explicit: bool = False, frames: Path = None) -> dict:
     """给采集器的一瓶环境。
 
     🔴 ``EVAL_SIDECAR`` 全窗只有**一枚**：sidecar／帧账仍是一题一行的全账，
     分片本身不许让它多写一行（判据 ①）。``TEMP``/``TMP`` 指向本窗目录，
     免得采集器自己的临时件漏在别处。
+
+    R601 判据②：``EVAL_FRAME_LEDGER`` 从前**不设**，帧账全靠 transport 跟着 SIDECAR 走
+    （``scripts/eval_transport_ask_v2.py:236`` 的缺省名）。跟着走不是把手：那一腿的缺省值是
+    ``scripts/collect-sidecar-frames.jsonl``，SIDECAR 一旦没设就落在仓内——今天漏进仓里的正是这一枚。
+    现在两枚落点都由本件逐枚钉死，缺 ``frames`` 时按 transport 的同一把命名派生。
     """
+    ledger = Path(frames) if frames is not None else \
+        Path(sidecar).with_name(Path(sidecar).stem + "-frames.jsonl")
     env = dict(base_env)
     env.update({
         "EVAL_SIDECAR": str(sidecar),
+        "EVAL_FRAME_LEDGER": str(ledger),
         "PYTHONIOENCODING": "utf-8",
         "TEMP": str(tmp_dir),
         "TMP": str(tmp_dir),
@@ -481,7 +526,8 @@ def run_window(args, P: dict, live: dict, fixture: Path, repo: Path) -> int:
     P["root"].mkdir(parents=True, exist_ok=True)
     P["shards"].write_text(json.dumps(plan, ensure_ascii=False) + "\n", encoding="utf-8")
     env = collector_env(P["tmp"], P["sidecar"], dict(os.environ), Path(args.env_file), repo,
-                       args.base_url, args.username, args.dry_run, args.env_file_explicit)
+                       args.base_url, args.username, args.dry_run, args.env_file_explicit,
+                       frames=P["frames"])
     if args.dry_run:
         log("DRY RUN：假 transport（采集器自带），零模型调用；不占单实例闸")
     else:
@@ -688,8 +734,7 @@ def main(argv: list = None) -> int:
         if args.shard_size < 1:
             build_plan([], args.shard_size)  # 同一枚闸，别在两处各写一遍文案
         P = paths(args.tag, Path(args.tmp_dir))
-        refuse_inside_repo(P["tmp"], "产物目录")
-        refuse_inside_repo(P["answers"], "合并件")
+        refuse_landing_spots(P, Path(args.repo))
         fixture = Path(args.fixture)
         if not fixture.is_file():
             refuse("fixture 读不到：" + str(fixture))

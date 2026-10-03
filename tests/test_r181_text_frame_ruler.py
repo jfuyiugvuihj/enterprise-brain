@@ -4,6 +4,12 @@
 负责拼 URL 与请求体），零服务 / 零模型 / 零容器 / 零连库；两份产物都写 tmp_path，仓内零字节
 （``test_the_frame_ledger_path_is_resolved_at_write_time`` 就是钉这一条的）。
 
+R601（10-03）改这一条的**判法**：最后那枚常驻钉读的是**前后差分**（跑前拍清单、跑后只许
+「新增枚数＝0」），不再读「此刻盘面有没有某枚产物」。成因与凭据见
+``docs/testing/r601-replay-diff-not-disk-state-2026-10-03.md``；一把 byte-已存的产物
+留在盘上是别的窗留下的，不是本单罪证。扫描面一个字没缩（仍是 scripts/*frames*.jsonl），
+也没加任何豁免名单。
+
 钉住的五件事：
   1. 一题的 ``text`` 帧计数真的在数：三帧读 3、一帧读 1、零帧读 0；
   2. 前缀单调坏形计数：相邻两帧，后帧必须以先帧为前缀（cumulative 语义），不满足记一次；
@@ -19,6 +25,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -162,8 +169,12 @@ class ScriptedOpener:
         return FakeResponse(lines=sse(self.script.get(path) or []))
 
 
-@pytest.fixture
-def adapter(tmp_path):
+def build_adapter(tmp_path):
+    """把真 transport 装成一枚可驱动的适配器：落点绑在 tmp_path，零服务 / 零模型 / 零连库。
+
+    R601 把这十二行从 fixture 里拆出来当**公共把手**：`tests/test_r601_*` 要在影子根里跑
+    同一枚真重放，不许再抄一份 adapter 构造（两份手抄的 fixture 迟早不同代）。
+    """
     module = _load("r181_transport_under_test", SCRIPT_PATH)
     module.BASE_URL = "http://eval.test"
     module.SIDECAR = tmp_path / "sidecar-run6.jsonl"
@@ -178,6 +189,11 @@ def adapter(tmp_path):
     module._LAST_CALL = 0.0
     module.time = FakeTime()
     return module
+
+
+@pytest.fixture
+def adapter(tmp_path):
+    return build_adapter(tmp_path)
 
 
 def consume(module, events):
@@ -607,8 +623,67 @@ def test_the_105_question_replay_still_hashes_to_the_pre_r181_digests(adapter, t
     assert sum(1 for row in frames if row["streams"] == 2) == 18           # 走了批准轮的 18 枚
 
 
+# ===== 二、R601：仓内零写入这枚常驻钉读**差分**，不读「此刻盘面」 =====
+
+#: 扫描面（R601 判据① 不许缩小它）：一个字未改，仍是 10-03 那条 glob 与同一枚根。
+FRAMES_SCAN = "scripts/*frames*.jsonl"
+
+
+def frames_inventory(root):
+    """现读一盘 ``root`` 下的窗口产物：名字 -> (字节数, sha256)。目录不在 = 空账。
+
+    清单里带字节指纹是为了让反证能证明「盘上原有那枚产物一个字节都没被本单动过」；
+    读不到的件如实记 ``unreadable``，不静默剔掉。
+    """
+    found = {}
+    for path in sorted(Path(root).glob(FRAMES_SCAN)):
+        try:
+            blob = path.read_bytes()
+        except OSError as exc:  # 盘面读不到也是读数，不许当成「没有这枚文件」
+            found[path.name] = ("unreadable", type(exc).__name__)
+            continue
+        found[path.name] = (len(blob), hashlib.sha256(blob).hexdigest())
+    return found
+
+
+def new_frames_since(before, after):
+    """差分只问一件事：跑完之后**多出来**的那几枚名字。
+
+    🔴 原有产物不在返回里（它不是本单罪证）；被删掉的原有产物也不在返回里——那是别人的手
+    （业主今天把 26 KB 那枚搬进 %TEMP%/eb103/stray/ 正是这种合法动作），拿它当罪证就会
+    重犯本单要治的那枚病。
+    """
+    return sorted(set(after) - set(before))
+
+
+def repo_write_judgment(root, run):
+    """一把尺量两头：跑一次 ``run``，回 (跑前清单, 新增清单, 绿不绿)。
+
+    常驻钉与 R601 的两把影子反证都调这一枚，不许各拿一把尺（``tests/test_r496_*`` 立的规矩）。
+    """
+    before = frames_inventory(root)
+    run()
+    after = frames_inventory(root)
+    new = new_frames_since(before, after)
+    return before, new, not new
+
+
 def test_the_replay_produces_no_bytes_inside_the_repo(adapter, tmp_path):
-    """窗口重放全程仓内零写入（两份产物都跟着 tmp_path 的 sidecar 走）。"""
-    _replay(adapter, tmp_path)
-    stray = [path for path in REPO_ROOT.glob("scripts/*frames*.jsonl")]
-    assert stray == []
+    """窗口重放全程仓内零写入（两份产物都跟着 tmp_path 的 sidecar 走）。
+
+    🔴 R601 判据①：判**前后差分**，不判「此刻盘面有没有某枚产物」。10-03 08:52:05 双写窗把
+    ``collect-sidecar-frames.jsonl``（26,095 B，sha256 EA1CC7247804AEB7…）漏进 ``scripts/``，
+    这枚钉从那刻起恒红、与任何改动无关（主树 commit ``b78ecd8`` 记了全过程）；本树 10-03 现取
+    复证：把那枚产物按字节摆回 ``scripts/`` ⇒ 旧判法 rc=1，搬回去 ⇒ rc=0，两态之间本文件一字未改。
+    """
+    before, new, green = repo_write_judgment(REPO_ROOT, lambda: _replay(adapter, tmp_path))
+    assert green, ("重放往仓内落了新产物：" + "、".join(new)
+                   + "｜跑前原有=" + (", ".join(sorted(before)) or "无")
+                   + "｜正解＝EVAL_SIDECAR/EVAL_FRAME_LEDGER 指仓外（本用例已由 adapter 绑好 tmp_path）")
+    # 差分之外补一刀原有的洞：产物若写进一枚**盘上已有**的同名件，差分读不出来，
+    # 所以重放真正会写的三枚路径必须一路在仓外——这一格才是「零写入」的正证，差分只是归因。
+    for what, spot in (("sidecar", adapter.SIDECAR), ("帧账", adapter.frame_ledger_path()),
+                       ("答案件", tmp_path / "answers-replay.jsonl")):
+        resolved = Path(spot).resolve()
+        assert resolved != REPO_ROOT and REPO_ROOT not in resolved.parents, (
+            "重放的" + what + "落点指进仓内：" + str(resolved))

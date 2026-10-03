@@ -98,6 +98,17 @@ class CollectionError(RuntimeError):
     """A transport result that cannot be trusted as a measured answer."""
 
 
+class LandingSpotError(RuntimeError):
+    """A product path that resolves inside the repo: refuse before a single byte is written.
+
+    R601 (2026-10-03). The window that leaked `scripts/collect-sidecar.jsonl` and
+    `scripts/collect-sidecar-frames.jsonl` into the repo ran the collector with neither
+    `EVAL_SIDECAR` nor `EVAL_FRAME_LEDGER` set, so the transport module answered with its
+    own factory default, which is repo-internal by construction. This is the same handle
+    as `scripts/eval_window_shard_driver.py::refuse_inside_repo`, same name, same semantics.
+    """
+
+
 class CoverageError(CollectionError):
     """The fixture ids and the collected ids do not line up."""
 
@@ -297,6 +308,80 @@ def write_answers(path: str | Path, answers: list[dict]) -> Path:
     return target
 
 
+#: R601 判据②：仓外纪律的一句话正解（与 driver 那条 REFUSE 文案同族）。
+LANDING_REMEDY = ("产物必须落仓外：EVAL_SIDECAR / EVAL_FRAME_LEDGER 指到 %TEMP%/evalrun，" 
+                  "或用 --output 给一枚仓外路径；仓内产物会脏每一棵 worktree 并招来误加 git add")
+#: The in-repo eval transport is the leg that owns the two evidence files. Its name is
+#: spelled here because "cannot read its landing spot" must refuse, not pass.
+EVAL_TRANSPORT_MODULE = "eval_transport_ask_v2"
+
+
+def refuse_inside_repo(path: str | Path, what: str, root: str | Path | None = None) -> None:
+    """Refuse a product path that lands inside ``root`` (default: this repo).
+
+    Same handle as `scripts/eval_window_shard_driver.py:153`: resolve first (so a `..`
+    detour cannot smuggle a path back into the tree), then relative_to; an unreadable
+    path is not a verdict, so it is left to the writer to fail on its own.
+    """
+    base = REPO_ROOT if root is None else Path(root)
+    try:
+        resolved = Path(path).resolve()
+        inside = base.resolve()
+    except OSError:
+        return
+    try:
+        resolved.relative_to(inside)
+    except ValueError:
+        return
+    raise LandingSpotError(what + " 落在仓内：" + str(resolved))
+
+
+def transport_evidence_module(transport: Callable[..., Any] | None):
+    """The module behind a loaded transport callable, or None when it is not importable here."""
+    if transport is None:
+        return None
+    return sys.modules.get(str(getattr(transport, "__module__", "")))
+
+
+def window_landing_spots(output: str | Path,
+                         transport: Callable[..., Any] | None = None) -> list[tuple[str, Path]]:
+    """Every file this run will write: the answers line plus the transport owns two evidence files.
+
+    The sidecar / frame ledger spots are **asked from the loaded module** (`SIDECAR`,
+    `frame_ledger_path()`), never guessed from a name we remember here: a guessed name is
+    how a guard ends up watching a file nobody writes.
+    """
+    spots: list[tuple[str, Path]] = [("答案件", Path(output))]
+    module = transport_evidence_module(transport)
+    sidecar = getattr(module, "SIDECAR", None) if module is not None else None
+    if sidecar is not None:
+        spots.append(("侧车", Path(sidecar)))
+    ledger = getattr(module, "frame_ledger_path", None) if module is not None else None
+    if callable(ledger):
+        spots.append(("帧账", Path(ledger())))
+    return spots
+
+
+def refuse_landing_spots(output: str | Path, transport: Callable[..., Any] | None = None,
+                         root: str | Path | None = None) -> list[tuple[str, Path]]:
+    """Preflight gate: refuse before bytes when any landing spot resolves inside the repo.
+
+    Fail-closed on "cannot ask": when the transport is the in-repo eval adapter, the two
+    evidence files are exactly the ones that leaked today, so an unreadable leg is a refusal,
+    not a pass (same rule the driver applies to a missing --env-file).
+    """
+    spots = window_landing_spots(output, transport)
+    module = transport_evidence_module(transport)
+    if module is not None and str(module.__name__).rsplit(".", 1)[-1] == EVAL_TRANSPORT_MODULE:
+        asked = [what for what, _ in spots]
+        if "侧车" not in asked or "帧账" not in asked:
+            raise LandingSpotError("侧车/帧账的落点问不着（" + EVAL_TRANSPORT_MODULE
+                                   + " 上没有 SIDECAR/frame_ledger_path）⇒ 按「问不到」处理，不许当通过")
+    for what, spot in spots:
+        refuse_inside_repo(spot, what, root=root)
+    return spots
+
+
 def build_dry_run_transport() -> Callable[[dict], Any]:
     """Fake transport: structurally complete sample answers, zero model calls."""
 
@@ -395,6 +480,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             transport = load_transport(args.transport)
             answer_source = args.transport
+        try:
+            refuse_landing_spots(output, transport)
+        except LandingSpotError as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            print(LANDING_REMEDY, file=sys.stderr)
+            return 2
         answers, failures = collect_answers(rows, transport, answer_source=answer_source)
         assert_coverage(rows, answers)
     except CoverageError as exc:
