@@ -5172,3 +5172,26 @@ R557（`Pasteur`）先交全量机器账的**纸**，本单把那本纸变成**�
 - 现状 P-20 现取 rc=1，两格 FAIL：`provenance`（镜像 `fd90f30` 落后主树 6 笔——正解 GIT_SHA 到 BUILT_AT 到 `docker compose build migrate` 到 `up -d` 到验 `/app/BUILD_INFO`，本席收完在途件后做一次）；`gpu_apps` 原文「外来进程占着 GPU，A① 的 p95 时延读数不可采信：pid=4 exe=[Insufficient Permissions]」，而 **pid=4 是 Windows System**，这台机上它永远在。
 - 🔴 两套判定已经并存：队列 v2 为它另写了一套（`%TEMP%\eb-rescue\R570\queue_v2.py`，日志 00:21–00:26 六轮 REFUSE 为证）。AGENTS.md 明令不许复制平行实现 ⇒ 正解是把队列那套已验证的姿势收进在册件，别的调用点都改调它。
 - 判据六格：`gpu_apps` 改三分法 `CLEAN`／`ATTRIBUTED`／`FOREIGN`；归因链必须写成「影子 → 容器 → 计算 pid 同名同槽」的可失败断言（少一步就红），不是「看起来不像负载」；取不到证据一律落 FAIL/UNMEASURED（🔴 不许「问不到」当「没有」，这仓自己写的教训）；真有人在抢 GPU 的形状必须仍 FAIL（默认行为不许放松）；归因真源只写一处（新 `scripts/r581_gpu_attribution.py`，`scripts/r530_run10_window_preflight.py` 调它）；在册那 11 枚 `tests/test_r530_window_preflight_pins_the_opening_conditions.py` 改前改后同名集同数、断言不许放宽；`--json` 面的键不许消失。写域另含可选的 `scripts/eval_window_shard_driver.py` 闸那几行——若判定 driver 不该调则不改，纸里写清为什么并出转出项，不许默默留两套。本单不治任何时延读数，A①／A④ 一格都不许因此变绿。
+
+
+## §154（10-03 第十二班第六格·总控线，主树 `dfc057b`）：本班新立三枚——R582 告警处置不留审计账 · R583 开窗器名册与真实开窗者脱节 · R584 全量门唯一那枚 teardown ERROR（已投 `Popper`）
+
+### 一、R582｜告警处置三写口不落审计账（**待投**）
+
+- 本席 09:5x 现取（`rg audit|record_ app/api/v1/alerts.py`）：全文件只有一处写账——`:371 _audit_alert_denial` → `:379 audit_log.record_audit(principal, ACTION_MANAGE_ALERTS, "denied", resource, reason)`，**动作字面量只有 `denied`**。三枚处置写口 `:1147 acknowledge_alert` / `:1160 close_alert` / `:1173 assign_alert` 全部经 `:669 _dispose_alert`，成功路径**一个字节都不进 `audit_events`**。
+- 现场凭据：`Salk` 在 R577 真跑过 `ack → assign → close` 三步（服务端各 200，`alerts` 表 id=1 已 closed、id=2 acknowledged），事后按 `resource/action like '%alert%'` 查 `audit_events` 交回 **0 行**（R577 交工纸 §3 六格之④）。
+- 为什么是真缺陷不是设计取舍：同文件 `:650` 那句注释自己写着「审计里只落主体、动作、判定、资源名与那枚稳定码（沿用 `_audit_alert_denial`）」——拒绝有账、放行没账，客户问「谁在什么时候关掉这条告警」时，`audit_events` 答不出，只剩 `alerts` 表那三列时间戳，而**表列不是审计账**（不可追加、无主体身份链）。这属 §86 一那句「C 类拒绝不落审计」的镜像族：这一次是**放行不落审计**。
+- 判据五格：① 三枚写口各落一行 `audit_events`，动作字面量互不相同且与 `ACTION_MANAGE_ALERTS` 同源（不许现编字符串）；② 拒绝那一格现有形状一字不改（`status_code`/`detail` 逐字未动，沿用 R179/R194 那条唯一通路）；③ 转派给他人时账上**同时**记「谁派的」与「派给谁」，不许只记前者；④ 反证三把（摘掉 `record_audit` 调用必须红／把三枚动作写成同一枚字面量必须红／账上少了 assignee 那一格必须红），摘前摘后逐字节 sha256；⑤ 🔴 **判据用词订正**：`audit_events` **没有 `route` 列**（R577 现取），凡沿用「按 route 计数」的判据都取不到数，本单及后续一律改 resource/action 口径。写域 `app/api/v1/alerts.py`＋新钉＋纸；禁 `frontend/**`、禁改在册件口径、禁容器写操作与模型。
+
+### 二、R583｜`WINDOWS` 名册与真实开窗者脱节（**待投**）
+
+- `Kuhn` 在 R572 交回时点名：`tests/_temp_edit_overlay.py` 的 `WINDOWS` 名册被在册钉 `test_the_roster_is_nine_windows…` 钉成「恰等于那 9 枚」，而 R572 已把第二扇窗（`tests/test_r253_shadow_root_holds_the_mutation.py` 的 `_chat_window`）接进 `install_mutation` 却**没进册**——名册与真实开窗者从此不一致，且这枚钉会**主动阻止**后来者进册。
+- 两条出路，执行层不许自己选，交回来由总控裁：**(甲)** 进册＋同步那枚枚数钉（9→N，并把「名册只管 r466 一族」那句旧解释改掉）；**(乙)** 名册只管 r466，纸面写清边界并把「凡接进 `install_mutation` 的窗必须进册」这句从文档里删掉。🔴 不许的是第三种：留着名册与真实开窗者不一致，那等于把「谁开过窗」这本账作废。
+- 判据四格：① 现取当前所有调到 `install_mutation`／overlay 开窗把手的测试件清单（沿 AST 派生，不许手抄——R572 那枚 `window_handles()` 已是在册真源）；② 名册与该清单逐枚对账，缺哪枚点名哪枚；③ 选定的那一条出路落地后，那枚枚数钉与真实枚数同数；④ 反证两把（新增一扇不进册的窗必须红／把名册里一枚真删掉必须红）。写域 `tests/_temp_edit_overlay.py`＋`test_the_roster_is_nine_windows` 那枚钉＋纸；🔴 本单**不许**碰 `tests/test_r253_*`（R572 刚并树 `6a2c09b`）。
+
+### 三、R584｜全量门唯一那枚 teardown ERROR（已投 `Popper`，树 `be-r584`@`dfc057b`）
+
+- 现状：`Kuhn` 现取同名 13 枚名单集正序/反序皆 `157 passed, 1 error`，那枚 error 恒在 `test_phase9_private_deps.py`；单跑绿、合跑红，形状是**共置**不是本体。
+- 机理（R572 现取，待 `Popper` 自己复现）：`tests/conftest.py:708 _eb_r563_same` 第四腿 `getattr(a, "__defaults__", None) == getattr(b, "__defaults__", None)` 拿**实例身份**比 FastAPI 的 `File()/Form()`（继承 pydantic `FieldInfo`，未定义 `__eq__` ⇒ 走 `object.__eq__`）；`importlib.reload` 合法重载后码体逐字节相同、默认值是新实例 ⇒ 恒不等 ⇒ `:757` 判成漂移。旁证：漂移名单**只有** `upload_document` 一枚，同模块其余顶层函数全绿——它们默认值是 `None`/字符串这类按值相等的东西。
+- 🔴 两条锁死给执行层的规矩：**不许锯腿**（不许写成「`co_code` 相同就跳过 `__defaults__`」，那是把守卫洗成永真）；**真漏的形状必须仍红**（三把反证：摘腿必红／换语义不同的桩必红／真留假身仍红在凶手模块自己名下——R563 原意就是「红落在凶手身上」，见 `conftest.py:730` 那段注释）。
+- 判据与读数要求全文见看板 §0 名册 `Popper`/R584 那一行。并树前总控会亲跑那 13 枚名单集正序与反序两遍，**两向同数且 0 error** 才算达。
