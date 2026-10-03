@@ -2093,3 +2093,20 @@ def pgvector_reads_enabled() -> bool:
     call, not this function's.
     """
     return read_backend() == PGVECTOR_BACKEND
+
+
+def pgvector_writes_are_primary() -> bool:
+    """R60 判据①：新写入的向量行今天只许落 PostgreSQL 吗。
+
+    本函数问的是读路径已经在问的那一句话，而且仍由 :func:`read_backend` 一处回答。部署在
+    写下 ``INDEX_BACKEND`` 的那一刻就已经说了哪一台引擎持有向量；再给写路径配第二把开关，
+    就是 R592 那枚「一把开关」的钉要拦的形状，而这里的形状更坏一档：读已经从 PostgreSQL 答，
+    退役中的那一腿却还在长新行 ——「Chroma 正在退役」当场从一句未完成的话变成一句假话。
+
+    它不许诺「什么都不写」。写路径只在**这一笔真的有一条 PG 腿**时才来问它
+    （app/rag/retriever.py 的 ``_writes_go_to_pgvector``）：``VECTOR_DUAL_WRITE`` 关着就没有
+    PG 腿，那时把遗留腿一起关掉不是停写而是零写，判据②第二把反证刀抓的正是那一格。缺省答复
+    是 ``False``，理由与读路径同一条：出厂的 ``INDEX_BACKEND_DEFAULT`` 还站在遗留档 ——
+    本函数报的是部署在哪儿，不是把部署挪到哪儿。
+    """
+    return read_backend() == PGVECTOR_BACKEND

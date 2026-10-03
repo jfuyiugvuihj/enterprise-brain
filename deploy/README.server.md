@@ -136,6 +136,10 @@ docker compose run --rm backend python scripts/backup_workspace.py --output /app
 
 数据库口令只通过容器环境变量传递，不会出现在命令行或日志里。
 
+向量这条腿：定案的生产向量库是 PostgreSQL + PGVector，Chroma 是退役中的遗留件；本机生产已停写
+（新行只落 PG），归档与下线的阶段表见 docs/deployment/chroma-retirement-path.md。整库恢复走
+scripts/r575_vector_restore_drill.py，恢复判据里包含 chunk_vectors 的行数与向量指纹对账。
+
 ## 访问
 
 - `http://你的服务器IP/`

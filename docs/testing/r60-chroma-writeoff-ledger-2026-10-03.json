@@ -1,0 +1,219 @@
+{
+  "ticket": "R60",
+  "cell": "判据⑤ —— 一键回滚演练（真跑一次并留证）",
+  "date": "2026-10-03",
+  "worktree": "C:\\Users\\fengx\\PycharmProjects\\be-r60b",
+  "base_commit": "245315b",
+  "written_utc": "2026-10-03T14:4x+08:00 (本机现取，见各步 run_stamp)",
+  "sandbox_db": "eb_r575_drill",
+  "chroma_sandbox_dir": "/tmp/r60stage/chroma (backend 容器内新开的沙盒目录；/app/chroma_db 与工作树 chroma_db 一枚字节未动)",
+  "reused_suites": {
+    "r575": "scripts/r575_vector_restore_drill.py full --keep --queries 20 --top-k 10 (rc=0, status=PASS, run_stamp=20261003T062557Z)",
+    "r587": "库级 GUC 成对取/施加在 backup/restore 两步之内（本单未改这两枚件的任何一个字节）"
+  },
+  "steps": {
+    "preflight": {
+      "ok": true,
+      "container": "enterprise-brain-postgres-1",
+      "image": "pgvector/pgvector:pg16",
+      "pgvector_version": "0.8.6",
+      "system_identity": "16.15 (Debian 16.15-1.pgdg12+2)/7685285828163473446",
+      "databases_before": [
+        "eb_r59_sandbox",
+        "enterprise_brain",
+        "postgres",
+        "template0",
+        "template1"
+      ],
+      "production_vector_count": 1008,
+      "production_schema_migrations": "0001,0002,0003,0004,0005,0006,0007,0008,0009,0010,0011,0012,0013,0014,0015,0016,0017,0018,0019",
+      "production_vector_fingerprint": "2277eab6b71ad776827ea4c3b04840e9"
+    },
+    "backup": {
+      "ok": true,
+      "archive": "C:\\Users\\fengx\\PycharmProjects\\r575-drill\\eb_r575_drill-20261003T062559Z.dump",
+      "archive_sha256": "cc64359e6894e2f451d20f40c3235277b1e263da02b0b1c1e95c27e4cb52121e",
+      "bytes": 79869035,
+      "manifest_entries": 277,
+      "landing_tables": [
+        "chunks",
+        "chunk_vectors"
+      ],
+      "globals": {
+        "json": "C:\\Users\\fengx\\PycharmProjects\\r575-drill\\eb_r575_drill-20261003T062559Z.globals.json",
+        "sql": "C:\\Users\\fengx\\PycharmProjects\\r575-drill\\eb_r575_drill-20261003T062559Z.globals.sql",
+        "json_sha256": "8c642d48b7971ea6cb7a853d32cf969d8cdfd42969c02864b9fe278b99895596",
+        "sql_sha256": "ba5c59f4768d8297d874c0963ffe19115b4ee540dea903d6176e6411a9ab461a"
+      }
+    },
+    "restore": {
+      "ok": true,
+      "database": "eb_r575_drill",
+      "drill_db": "eb_r575_drill",
+      "archive_sha256": "cc64359e6894e2f451d20f40c3235277b1e263da02b0b1c1e95c27e4cb52121e",
+      "manifest_entries": 277,
+      "globals_applied": 2,
+      "globals_deferred_cluster_level": 0,
+      "globals_verified": "2 枚库级 setting 施加后逐枚现读相等，verify_globals 零问题（不等则 restore 直接 Mismatch）",
+      "drill_vector_count": 1008,
+      "drill_vector_fingerprint": "2277eab6b71ad776827ea4c3b04840e9",
+      "drill_globals_session": "app.embedding_dimension=768 ;; app.embedding_model=nomic-embed-text"
+    },
+    "reconcile": {
+      "ok": true,
+      "compared_items": [
+        "chunk_vectors_rows",
+        "embedding_count",
+        "embedding_column_type",
+        "embedding_dims",
+        "zero_vector_rows",
+        "vector_scope_rows",
+        "vector_scope_profile",
+        "documents_rows",
+        "chunks_rows",
+        "schema_migrations",
+        "vector_content_md5",
+        "chunk_vector_indexes",
+        "globals_profile",
+        "globals_session"
+      ],
+      "compared_count": 14,
+      "vector_fingerprint_source": "2277eab6b71ad776827ea4c3b04840e9",
+      "vector_fingerprint_drill": "2277eab6b71ad776827ea4c3b04840e9",
+      "differences": [],
+      "extras_reported": [
+        "cluster_roles",
+        "globals_deferred"
+      ]
+    },
+    "recall": {
+      "ok": true,
+      "queries": 20,
+      "top_k": 10,
+      "only_in_source": 0,
+      "only_in_drill": 0,
+      "max_rank_shift": 0,
+      "max_top1_distance_delta": 0.0,
+      "ef_search_seen_in_session": [
+        "100",
+        "1000"
+      ],
+      "requested_ef_search": {
+        "production-width": 100,
+        "near-exhaustive": 1000
+      }
+    },
+    "writeoff-probe": {
+      "ok": true,
+      "command": "docker exec -w /tmp/r60stage -e PYTHONPATH=/tmp/r60stage -e INDEX_BACKEND=pgvector enterprise-brain-backend-1 python r60_driver.py write pgvector",
+      "rc": 0,
+      "database": "eb_r575_drill",
+      "index_backend": "pgvector",
+      "dual_write": true,
+      "writes_go_to_pgvector": true,
+      "document": "r60-arm-pgvector-20261003.txt",
+      "written_chunks": 1,
+      "outcome": [
+        true,
+        "已添加 1 个文本块"
+      ],
+      "pg_count_before": 1009,
+      "pg_count_after": 1010,
+      "legacy_count_before": 1,
+      "legacy_count_after": 1,
+      "legacy_ids_added": [],
+      "psql_independent_after": "1010 (SELECT count(*) FROM chunk_vectors, docker exec psql 现取)",
+      "retriever_module_file": "/tmp/r60stage/app/rag/retriever.py",
+      "delete_proof": {
+        "pg_only_document": {
+          "action": "delete r60-arm-pgvector-20261003.txt (只住在 PG 的行)",
+          "pg_count_before": 1010,
+          "pg_count_after": 1009,
+          "legacy_count_before": 1,
+          "legacy_count_after": 1,
+          "legacy_ids_removed": []
+        },
+        "held_by_both_legs": {
+          "action": "delete r60-arm-legacy-20261003.txt (两腿都持有的行)",
+          "pg_count_before": 1009,
+          "pg_count_after": 1008,
+          "legacy_count_before": 1,
+          "legacy_count_after": 0,
+          "legacy_ids_removed": [
+            "r60-arm-legacy-20261003.txt_0"
+          ]
+        }
+      }
+    },
+    "rollback-knob": {
+      "ok": true,
+      "command": "docker exec -w /tmp/r60stage -e PYTHONPATH=/tmp/r60stage -e INDEX_BACKEND=chroma enterprise-brain-backend-1 python r60_driver.py write legacy",
+      "rc": 0,
+      "database": "eb_r575_drill",
+      "index_backend": "chroma",
+      "dual_write": true,
+      "writes_go_to_pgvector": false,
+      "document": "r60-arm-legacy-20261003.txt",
+      "written_chunks": 1,
+      "outcome": [
+        true,
+        "已添加 1 个文本块"
+      ],
+      "pg_count_before": 1008,
+      "pg_count_after": 1009,
+      "legacy_count_before": 0,
+      "legacy_count_after": 1,
+      "legacy_ids_added": [
+        "r60-arm-legacy-20261003.txt_0"
+      ],
+      "psql_independent_after": "1009 (SELECT count(*) FROM chunk_vectors, docker exec psql 现取)",
+      "note": "同一枚套件、同一份码，只把 INDEX_BACKEND 拨回 chroma：遗留腿重新接行、PG 那一腿照旧写 —— 退路靠开关，不靠改码"
+    },
+    "index-rollback": {
+      "ok": true,
+      "command": "docker exec -w /tmp/r60stage -e PYTHONPATH=/tmp/r60stage enterprise-brain-backend-1 python r60_ledger_driver.py",
+      "rc": 0,
+      "ledger_source": "生产账 /app/data/index-versions.json 的 /tmp 副本（原件前后 sha256 逐字相同：bfacb66077ccebbdb5ab328eb4834ce7460c28d8d1ebce2d2455397752ae8177）",
+      "index_id": "document:2025-2026中国企业协同办公市场研究报告.txt",
+      "version_before": "document:2025-2026中国企业协同办公市场研究报告.txt:va1b455a24ec4421ca81e6027cac7ea07",
+      "previous_index_version_id": "document:2025-2026中国企业协同办公市场研究报告.txt:v191d8fbc9b8a468c9076489224980126",
+      "version_after": "document:2025-2026中国企业协同办公市场研究报告.txt:v191d8fbc9b8a468c9076489224980126",
+      "restored_status": "published",
+      "displaced_status_in_file": "superseded",
+      "pointer_moved": true,
+      "history_length": 2,
+      "db_ledger_counts": {
+        "index_versions_published": 129,
+        "index_versions_superseded": 133,
+        "index_registry_rows": 129
+      },
+      "db_side_gap": "index_registry.current_version_id 今天没有一键回退入口（只有 IndexPublisher._abort 的失败回滚路径会走 registry.rollback）；本步只现读上报，不自造第二条 UPDATE"
+    },
+    "postflight": {
+      "ok": true,
+      "production_vector_count_before": 1008,
+      "production_vector_count_after": 1008,
+      "chunk_vectors_equal": true,
+      "documents_equal": true,
+      "chunks_equal": true,
+      "vector_fingerprint_equal": true,
+      "r60_rows_left_in_production": 0
+    },
+    "cleanup": {
+      "ok": true,
+      "command": "python scripts/r575_vector_restore_drill.py cleanup",
+      "rc": 0,
+      "drill_dropped": true,
+      "databases_after_cleanup": [
+        "eb_r59_sandbox",
+        "enterprise_brain",
+        "postgres",
+        "template0",
+        "template1"
+      ],
+      "residue_extra": [],
+      "residue_missing": [],
+      "container_scratch": "/tmp/r60stage 已由 docker exec -u root 删除；容器 /app 与工作树 chroma_db 零写入（git status --porcelain -- chroma_db 空）"
+    }
+  }
+}

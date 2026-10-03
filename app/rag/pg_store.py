@@ -1040,3 +1040,96 @@ def reset_vector_read_diagnostics() -> None:
     _READ_DIAGNOSTICS["rows"] = 0
     _READ_DIAGNOSTICS["bypasses"] = {}
     _READ_DIAGNOSTICS["last_bypass"] = None
+
+
+# ============================================================================
+# R60 判据③：停写之后，「这份文档的行住在哪一库」必须由 PG 自己回答
+# ----------------------------------------------------------------------------
+# 遗留腿不再接新行之后，chunk_vectors 里会出现 Chroma 根本没有的行。删除与按文档读回如果
+# 还只问遗留腿，那些行就永远删不掉 ——「已删文档继续被检索」是这一格点名的形状，它只能在
+# 问句那一层修，不在删除那一层。两条语句都留在存储层：retriever 不抄第二份 SQL，正如 R575
+# 的恢复演练不复制 pg_store 的排名语句。
+#
+# 两条都不问 ANN、都不选 embedding 列：按文档名找行是目录动作，不是检索动作。
+# VECTOR_DUAL_WRITE 关着时它们与 read_topk 同口径拒答 —— 那时 PG 里没有人在写的向量，
+# 交回「没有行」就是说谎，宁可拒答。
+# ============================================================================
+
+#: content_sha256 这一列装的就是 metadata 里的 ``hash``（凭据：VectorMirror.build_rows 那一行
+#: ``str(values.get("hash") or "") or None``）。列名与键名在这里刻意不同名，本单不改列名
+#: （改名要动 migrations 与在册对账件，越出 R60 写域）；读出来摊回 ``hash`` 这个键，两条腿
+#: 对同一个消费方（app/api/v1/chat.py 的 _document_publication）说同一个词。
+_SELECT_DOCUMENT_ROWS_SQL = (
+    "SELECT vector_id, content, chunk_index, classification, department, content_sha256 "
+    "FROM chunk_vectors WHERE filename = %s ORDER BY chunk_index, vector_id"
+)
+_SELECT_DOCUMENT_NAMES_SQL = (
+    "SELECT DISTINCT filename FROM chunk_vectors WHERE filename <> '' ORDER BY filename"
+)
+#: 与 _SELECT_DOCUMENT_ROWS_SQL 的列序逐位对齐；第六位的键名用遗留腿的写法，不用列名。
+_DOCUMENT_ROW_COLUMNS = ("vector_id", "content", "chunk_index", "classification",
+                         "department", "hash")
+
+
+def _document_leg_connection(*, connection_factory=None, url=None,
+                             vector_table=DEFAULT_VECTOR_TABLE):
+    """Open the PostgreSQL leg for a document read, refusing with the codes reads use.
+
+    Reuses :func:`vector_mirror` rather than opening a connection of its own: the mirror is
+    the only place that knows how to reach this database, what to do when psycopg is missing,
+    and which stable code to name when the switch says off.
+    """
+    if vector_table != DEFAULT_VECTOR_TABLE:
+        raise VectorReadRejectedError(
+            f"按文档读行只认 {DEFAULT_VECTOR_TABLE}，拿到 {vector_table!r}",
+            reason=REASON_VECTOR_READ_TABLE_UNRECOGNISED)
+    mirror = vector_mirror(connection_factory=connection_factory, url=url,
+                           vector_table=vector_table)
+    if mirror is None:
+        raise VectorReadRejectedError(
+            f"{DUAL_WRITE_ENV} 关着：chunk_vectors 里没有人在写的向量，按文档读行问不出真相",
+            reason=REASON_VECTOR_READ_WITHOUT_DUAL_WRITE)
+    return mirror
+
+
+def document_vector_rows(*, filename: str, connection_factory=None, url=None,
+                         vector_table: str = DEFAULT_VECTOR_TABLE) -> list[dict]:
+    """The rows PostgreSQL holds for one document, in chunk order.
+
+    Read-back, not a re-split and not a search: it answers "which vector ids does this
+    filename own", which is exactly what a delete has to know before it may claim the
+    document is gone. ``classification`` comes back as NULL when the row carries none --
+    the same fail-closed rule R57 set for :func:`switched_corpus` and
+    ``retriever._hit_dicts``: a storage layer that invents a clearance is the last forged
+    row in this tree.
+    """
+    mirror = _document_leg_connection(connection_factory=connection_factory, url=url,
+                                      vector_table=vector_table)
+    try:
+        rows = mirror.connection.execute(_SELECT_DOCUMENT_ROWS_SQL,
+                                         (str(filename),)).fetchall()
+    finally:
+        mirror.close()
+    return [
+        {column: _row_value(row, column, position)
+         for position, column in enumerate(_DOCUMENT_ROW_COLUMNS)}
+        for row in rows
+    ]
+
+
+def indexed_document_names(*, connection_factory=None, url=None,
+                           vector_table: str = DEFAULT_VECTOR_TABLE) -> list[str]:
+    """Every document name PostgreSQL holds vector rows for, sorted.
+
+    The empty string is dropped rather than counted: build_rows already refuses a row with
+    no filename, so one appearing here would be another ticket's bug, and naming "" as a
+    document would report a file nobody uploaded.
+    """
+    mirror = _document_leg_connection(connection_factory=connection_factory, url=url,
+                                      vector_table=vector_table)
+    try:
+        rows = mirror.connection.execute(_SELECT_DOCUMENT_NAMES_SQL).fetchall()
+    finally:
+        mirror.close()
+    names = [str(_row_value(row, "filename", 0) or "") for row in rows]
+    return sorted({name for name in names if name})

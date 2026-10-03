@@ -1462,6 +1462,14 @@ class DocumentRetriever:
             mirror.add(
                 ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings
             )
+            if self._writes_go_to_pgvector():
+                # R60 判据①：INDEX_BACKEND=pgvector 时写路径唯一化 —— 这一腿到此为止，
+                # 新行只落 PG。代码留在原地不删（判据②）：开关退回 chroma 它就照常接行，
+                # 而这一支判定被摘掉之后，第④格那对现取读数当场红。
+                # 注意这一支必须排在 mirror 非 None 之内：没有 PG 腿时它一个字节都不许拦，
+                # 否则「关遗留腿 + 没开 PG 腿」= 零写。
+                logger.info(f"[R60] 停写生效：本批 {len(ids)} 行只落 PostgreSQL，Chroma 不接新行")
+                return
         self.collection.add(
             ids=ids,
             documents=documents,
@@ -1484,6 +1492,64 @@ class DocumentRetriever:
         from app.rag import pg_store
 
         return pg_store.vector_mirror()
+
+    def _writes_go_to_pgvector(self) -> bool:
+        """R60 判据①②③：这一笔写入/删除里，PostgreSQL 是不是新行的住所。
+
+        三枚条件，一枚比一枚贵，而且本函数一不发 SQL、二不开连接：
+
+        * ``stores_vectors`` —— 离线 ``_JsonCollection`` 没有向量列，没有东西可镜像，那枚
+          JSON 文件就是唯一的库；
+        * ``pg_store.dual_write_enabled()`` —— 双写关着就没有 PG 腿可交行。那时把遗留腿
+          一起关掉不是「停写」，是**零写**：文档上传之后哪一库里都没有它的向量。判据②
+          第二把反证刀钉的就是这一格；
+        * ``indexing.pgvector_writes_are_primary()`` —— 拨的是``INDEX_BACKEND``那一把既有
+          开关，与读路径同一枚调用点、同一处解析（``app/rag/indexing.py`` 的
+          ``read_backend()``）。这里不许长出第二把名字里带 BACKEND 的环境变量：两把开关的
+          形状不是多一行代码，而是两台机器各拨一把，然后诊断里看着像切完了。
+
+        读部署不等于改部署：本函数只问两枚在册判定，用例用 ``monkeypatch.setenv`` 就能
+        把答复翻过来，正反两挡都量得到。
+        """
+        from app.rag import indexing as indexing_module
+        from app.rag import pg_store
+
+        if not self.stores_vectors:
+            return False
+        return bool(pg_store.dual_write_enabled()
+                    and indexing_module.pgvector_writes_are_primary())
+
+    def _document_rows_by_leg(self, filename: str):
+        """一份文档的行到底住在哪一库：返回 (遗留腿 ids, 遗留腿 metadatas, PG 行)。
+
+        R60 判据③。遗留腿还接新行的时候，问它「这个文件名有哪些行」就是在问两腿；停写
+        之后不成立了 —— 切换之后写的行只存在于 PostgreSQL，还只问遗留腿的删除会一无所获，
+        于是它不报错、原样返回，而那份"已删除"的文档继续被检索出来。这一格只能修在**问句**
+        那一层：开关停在 ``chroma`` 时本函数照旧只发一次 ``collection.get(where=...)``，
+        一条 SQL 都不多问（判据①「行为一字不改」）；开关停在 ``pgvector`` 时它必须也问
+        PostgreSQL 一次。
+
+        PG 问不出来是**拒答**，不是退回遗留腿。退回就是拿"遗留腿知道的那些"冒充"这份文档
+        的全部"，报出去的是一次没 locating 成功的删除 —— 上传侧的镜像闸门同口径
+        （``REASON_VECTOR_MIRROR_UNAVAILABLE``），这里不新造码。
+        """
+        stored = self.collection.get(where={"filename": filename}) or {}
+        legacy_ids = [str(item) for item in (stored.get("ids") or [])]
+        legacy_metadatas = list(stored.get("metadatas") or [])
+        if not self._writes_go_to_pgvector():
+            return legacy_ids, legacy_metadatas, []
+        from app.rag import pg_store
+
+        try:
+            rows = pg_store.document_vector_rows(filename=filename)
+        except Exception as exc:
+            raise VectorWriteRejectedError(
+                f"拒绝写删向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: 停写已生效，新行只落 "
+                f"PostgreSQL，但 {filename} 的行在 PostgreSQL 那一腿问不出来"
+                f"（{type(exc).__name__}: {exc}）—— 问不全的删除只能拒答，不能报成功",
+                reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
+            ) from exc
+        return legacy_ids, legacy_metadatas, rows
 
     def _vector_snapshot(self, ids):
         """删旧向量前把旧行原样读出，供两腿回滚时逐字放回。
@@ -1528,7 +1594,9 @@ class DocumentRetriever:
         except Exception as exc:
             logger.error(f"向量镜像回滚失败，PG 事务状态未知: {exc}")
         try:
-            if written_ids:
+            if written_ids and not self._writes_go_to_pgvector():
+                # R60 判据③：停写态里这批 id 从没进过遗留腿，撤它们就等于删掉上一版
+                # 还留在 Chroma 里的那些行 —— 补偿只能撤"本次真写过的"，没写过就不许动手。
                 self.collection.delete(ids=list(written_ids))
             if stale_deleted and snapshot and snapshot.get("ids"):
                 self.collection.add(
@@ -1558,10 +1626,14 @@ class DocumentRetriever:
         new_hash = self._file_hash(content)
 
         # 检查是否已存在同名文件。这里只记下旧 id，删除动作推迟到向量合格之后。
-        existing = self.collection.get(where={"filename": filename})
-        stale_ids = list(existing["ids"])
+        # 检查是否已存在同名文件。这里只记下旧 id，删除动作推迟到向量合格之后。
+        # R60 判据③：这一个问题现在必须由两腿各自回答，见 _document_rows_by_leg。
+        legacy_ids, legacy_metadatas, pg_rows = self._document_rows_by_leg(filename)
+        pg_ids = [str(row.get("vector_id")) for row in pg_rows if row.get("vector_id")]
+        stale_ids = list(dict.fromkeys(pg_ids + legacy_ids))
         if stale_ids:
-            old_hash = existing["metadatas"][0].get("hash", "")
+            old_hash = (legacy_metadatas[0].get("hash", "") if legacy_metadatas
+                        else str(pg_rows[0].get("hash") or ""))
             if old_hash == new_hash:
                 logger.info(f"文件未变化，跳过: {filename}")
                 return False, "文件内容未变化，已跳过"
@@ -1604,9 +1676,12 @@ class DocumentRetriever:
         written_ids = []
         stale_deleted = False
         try:
-            if mirror is not None and stale_ids:
+            if mirror is not None and legacy_ids:
                 # 删之前先留快照：PG 侧的回滚是事务级的，Chroma 侧只能靠它逆序放回。
-                snapshot = self._vector_snapshot(stale_ids)
+                # R60 判据③：快照只读遗留腿**真正持有**的那批 id。只住在 PG 的行没有 Chroma
+                # 副本可放回，硬读一份空快照再把 stale_deleted 记成真，等于把"放不回去"
+                # 写成"放得回去"。开关在 chroma 时 legacy_ids == stale_ids，与今天逐字同形。
+                snapshot = self._vector_snapshot(legacy_ids)
                 if snapshot is None:
                     raise VectorWriteRejectedError(
                         f"拒绝写入向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: 双写已开启，"
@@ -1615,11 +1690,18 @@ class DocumentRetriever:
                     )
             if stale_ids:
                 if mirror is not None:
+                    # PG 那一腿删的是并集全量：它持有的行必须一次删干净。
                     mirror.delete(ids=list(stale_ids))
-                self.collection.delete(ids=stale_ids)
-                stale_deleted = True
+                if legacy_ids:
+                    # R60 判据③：遗留腿只删它自己持有的那些。删 PG 而把同名旧行留在
+                    # Chroma 里，就是本判据点名的孤儿形状 —— 回滚到 chroma 那一档时，
+                    # 客户已删的文档会自己活回来。
+                    self.collection.delete(ids=legacy_ids)
+                    stale_deleted = True
                 logger.info(f"已删除旧版本: {filename}")
                 # R44：删掉的旧向量在热集里也不能留下（判据④同名重传那一半）。
+                # R60 判据③：交回的是两腿并起来的全集 —— 热集是进程内的账，它不认识
+                # "行住在哪一库"，只认"这些 id 不再有效"。
                 self._note_hot_delete(stale_ids)
 
             batch_size = 2000
@@ -1892,7 +1974,16 @@ class DocumentRetriever:
     # ==================== 辅助 ====================
 
     def list_documents(self) -> list[str]:
-        """列出已索引的文档名"""
+        """列出已索引的文档名。
+
+        R60 判据③：「已索引」这份名单由持有行的那一库回答。停写之后还只问遗留腿，名单会
+        停在切换那一刻 —— 之后上传的每一枚文档都不在名单里，而它明明能被供应商检索出来，
+        端点 app/api/v1/chat.py:4786 拿的就是这份名单去过滤可见文档。
+        """
+        if self._writes_go_to_pgvector():
+            from app.rag import pg_store
+
+            return pg_store.indexed_document_names()
         all_data = self.collection.get()
         seen = set()
         for meta in all_data.get("metadatas", []):
@@ -1907,8 +1998,32 @@ class DocumentRetriever:
         Read-back, not a re-split: the published record has to describe the index that
         exists. Rows come back ordered by the stored chunk index and carry the vector
         store id, which is the only link from a chunk row to its embeddings. This slice
-        never reads or writes embeddings here; Chroma stays the retrieval path.
+        never reads or writes embeddings here.
+
+        R60 判据③ changes which store it asks: while the legacy leg still accepts new
+        rows it is the only complete answer, and after the write-stop the rows are in
+        PostgreSQL. Reading them from the legacy directory instead would publish a
+        retirement record for a document that has none -- or, on a same-name re-upload,
+        publish the *previous* version's chunks as the current ones, which is worse than
+        the empty answer.
         """
+        if self._writes_go_to_pgvector():
+            from app.rag import pg_store
+
+            return [
+                {
+                    "vector_id": str(row.get("vector_id") or ""),
+                    "content": str(row.get("content") or ""),
+                    "chunk_index": int(row.get("chunk_index") or 0),
+                    # NULL 原样交回 None，不补 1：R57 的 fail-closed 对两条腿是同一条规则。
+                    # 下面遗留腿那一行还留着的默认值不归本单改，判定见本函数 docstring 与
+                    # R57 §1 站点③（消费方只读 content / vector_id / hash 三键）。
+                    "classification": row.get("classification"),
+                    "department": row.get("department") or "",
+                    "hash": str(row.get("hash") or ""),
+                }
+                for row in pg_store.document_vector_rows(filename=filename)
+            ]
         stored = self.collection.get(where={"filename": filename}) or {}
         documents = stored.get("documents") or []
         metadatas = stored.get("metadatas") or []
@@ -1942,27 +2057,35 @@ class DocumentRetriever:
         就回滚 PG 事务并原样抛出，不留"PG 无向量 ⇔ Chroma 仍可检索"的半态。开关关闭
         （默认）时这里仍然只有一次 get 与一次 delete，行为与本单之前一致。
         """
-        existing = self.collection.get(where={"filename": filename})
-        if not existing["ids"]:
+        # R60 判据③：这一问句是整条删除链的要害。停写之后新行只住 PostgreSQL，
+        # 只问遗留腿就在这里一无所获 —— 它会静悄悄地 return，端点报删除成功，而那份文档
+        # 的每一行还留在 chunk_vectors 里继续被检索。两腿各问各的，谁持有谁被删。
+        legacy_ids, _legacy_metadatas, pg_rows = self._document_rows_by_leg(filename)
+        pg_ids = [str(row.get("vector_id")) for row in pg_rows if row.get("vector_id")]
+        stored_ids = list(dict.fromkeys(pg_ids + legacy_ids))
+        if not stored_ids:
             return
         mirror = self._open_vector_mirror()
         snapshot = None
         stale_deleted = False
         try:
             if mirror is not None:
-                # 同 add_document：读得出旧向量才敢删，否则回滚时无货可放回。
-                snapshot = self._vector_snapshot(existing["ids"])
-                if snapshot is None:
-                    raise VectorWriteRejectedError(
-                        f"拒绝删除向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: 双写已开启，"
-                        f"但 {filename} 的旧向量读不出快照，删掉就无法忠实还原",
-                        reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
-                    )
-                mirror.delete(ids=list(existing["ids"]))
-            self.collection.delete(ids=existing["ids"])
-            stale_deleted = True
-            # R44：文档删除 ⇒ 热集对应条目必须失效（判据④）。
-            self._note_hot_delete(existing["ids"])
+                if legacy_ids:
+                    # 同 add_document：读得出旧向量才敢删，否则回滚时无货可放回。
+                    snapshot = self._vector_snapshot(legacy_ids)
+                    if snapshot is None:
+                        raise VectorWriteRejectedError(
+                            f"拒绝删除向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: 双写已开启，"
+                            f"但 {filename} 的旧向量读不出快照，删掉就无法忠实还原",
+                            reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
+                        )
+                # PG 删全集（它持有的那些行一枚都不许留下），Chroma 只删它自己持有的那些。
+                mirror.delete(ids=list(stored_ids))
+            if legacy_ids:
+                self.collection.delete(ids=legacy_ids)
+                stale_deleted = True
+            # R44：文档删除 ⇒ 热集对应条目必须失效（判据④）。R60 判据③：全集交回。
+            self._note_hot_delete(stored_ids)
             if mirror is not None:
                 mirror.commit()
         except Exception:
