@@ -31,6 +31,7 @@ from app.common.model_config import (
     runtime_window_from_refusal,
 )
 from app.common.model_handler import KEEP_ALIVE_FIELD
+from app.common.model_handler import TRANSPORT_COMPAT
 from app.agents.contracts import (
     CONTEXT_PAIRING_MARKER,
     AgentResult,
@@ -52,6 +53,8 @@ from app.common.model_budget import (
     model_tier_budget,
     model_timeout_code,
     produced_a_tool_call,
+    lever_rejection_code,
+    no_think_request_fields,
     resolve_model_thinking,
     record_budget_event,
     report_budget,
@@ -209,7 +212,7 @@ def _log_thinking_mode(base_url: str) -> None:
     policy = resolve_model_thinking()
     logger.info(
         f"[Model] 兼容腿 thinking={policy.mode}"
-        f"（{'请求体带 thinking 字段' if policy.wire else '请求体不带 thinking 字段，与 R100 之前逐字节相同'}）"
+        f"（{('请求体带 ' + '|'.join(no_think_request_fields())) if policy.wire else '请求体不带 thinking 字段，与 R100 之前逐字节相同'}）"
         f"，来源 {policy.note}，端点 {base_url}"
     )
 
@@ -373,6 +376,13 @@ def _with_boundary_fields(call_kwargs: dict) -> dict:
     An ``enabled`` process adds nothing at all, which is what makes "switch it back on" mean
     "send the bytes this product sent before this ticket" instead of inventing a second
     spelling nobody measured.
+
+    R591 is about *which* fields a ``disabled`` process adds, not about this merge: the loop
+    below already takes whatever :func:`thinking_extra_body` returns, so the compatible leg
+    gained the field its endpoint actually reads (``reasoning_effort="none"``, measured against
+    the inert ``thinking`` object in ``app/common/model_budget.py``) without a second call site
+    to forget. That is the property worth keeping -- one switch, one fragment, both legs of this
+    boundary, and a caller that wrote its own value is still obeyed.
 
     ``keep_alive`` joined the same merge under R29, for the same reason and with the same
     respect for a caller that spelled the field itself. Its value is resolved per call rather
@@ -914,6 +924,14 @@ class _ResilientModel(Runnable):
         the model free to eat that answer thinking would make the cap below the floor a
         mystery to the next reader, so the two decisions are made in one place and sent in one
         body.
+
+        R591 corrected the last sentence's *field*, not its shape. The pair run16/run17 shipped
+        was ``max_tokens=1536`` and ``thinking={"type":"disabled"}``, and both arms of that pair
+        came back with zero visible characters at ``finish_reason=length``: the cap went to the
+        hidden chain either way. The field that does change the answer on this endpoint is
+        ``reasoning_effort``, and :func:`thinking_extra_body` now sends both spellings under the
+        one mode word. Sizing an answer and asking for no thinking chain are still one decision
+        in one body -- which is the half of this docstring that was right.
         """
         if self.budget is None:
             return {}, None
@@ -945,6 +963,25 @@ class _ResilientModel(Runnable):
             "min_answer_tokens": verdict.min_answer_tokens,
             "clamp_basis": verdict.basis,
         }
+
+    @staticmethod
+    def _leg_fields() -> dict:
+        """Name the leg this boundary is on, and the fields it asked the model with.
+
+        R591 判据① is a sentence about evidence, not about code: run16 and run17 could not be
+        asked "which leg made this call?" because only the native leg ever named itself, in its
+        own应答 line, while every answer leg on this boundary is compatible by construction and
+        said nothing. Two things came out of that. A 400-downgrade from native to compat (R147)
+        is indistinguishable from a call that never asked for native, and an empty answer is
+        indistinguishable from an empty answer caused by a field this leg never sent. Both lines
+        now carry the leg and the field names, and a third now carries them in the span summary,
+        so the trace export answers it after the log rotation.
+
+        Streaming is a mode, not a transport: ``invoke`` with the R203 tap, ``stream``, and the
+        rewrite fallback are three different shapes of the same ``/v1/chat/completions`` request,
+        which is exactly why this is a method on the boundary instead of a guess at a call site.
+        """
+        return {"transport": TRANSPORT_COMPAT, "no_think_fields": no_think_request_fields()}
 
     def _answer_leg_tap(self, config, call_kwargs: dict) -> tuple[Any, Any, dict]:
         """该发流式就返回 ``(tap, 这一发要用的 config, 附加 kwargs)``，否则 ``(None, config, {})``。
@@ -1029,10 +1066,41 @@ class _ResilientModel(Runnable):
                     slot.release()
                     span.finish("failed", error_code=provider_code)
                     raise ModelContextLimitExceeded(self.budget, prompt_tokens or 0) from exc
+            #: R591: the one failure this boundary can *create* by fixing an empty answer. A
+            #: server that has no idea what ``reasoning_effort`` means answers 400, and without
+            #: this name that is a deployment losing every answer to a line that reads
+            #: "provider unavailable" -- indistinguishable from the model being down. Checked
+            #: after :func:`context_error_code` on purpose: a refusal that names both the window
+            #: and a field belongs to the window, which has its own code and its own re-raise.
+            #: The verdict below is untouched (offline reply, ``failed`` span, same evidence), so
+            #: this adds a name, not a behaviour -- and it adds no fallback sentence either,
+            #: which is the line app/agents/nodes.py:379-387 holds against masking.
+            lever_code = lever_rejection_code(exc)
+            if lever_code:
+                record_budget_event("lever_rejected")
+                logger.error(
+                    budget_signal(
+                        getattr(self.budget, "tier", None) or "analysis",
+                        prompt_tokens=prompt_tokens,
+                        read_seconds=float(getattr(self.budget, "timeout_seconds", 0.0) or 0.0),
+                        stream=False,
+                        code=lever_code,
+                        **self._leg_fields(),
+                    )
+                    + f" [Model] 服务端拒收了关闭思考的请求字段，本次不发兜底文案冒充答案: {exc}"
+               )
             from app.trace.spans import error_code_for
 
             timeout_code = model_timeout_code(exc)
-            span.finish("failed", error_code=timeout_code or error_code_for(exc))
+            span.finish(
+                "failed",
+                error_code=timeout_code or error_code_for(exc),
+                #: The name rides on the same span the failure already closed, so the trace
+                #: export carries it and the verdict, the evidence bag, and the customer reply
+                #: are exactly what they were before this line existed (R591 判据③: an
+                #: observable failure, not a different one).
+                summary={"lever_rejection_code": lever_code} if lever_code else None,
+            )
             slot.release()
             if timeout_code:
                 # R99: the expired clock used to be filed as ``internal_error`` and logged at
@@ -1050,6 +1118,7 @@ class _ResilientModel(Runnable):
                         stream=False,
                         code=timeout_code,
                         **self._verdict_fields(verdict),
+                        **self._leg_fields(),
                     )
                     + f" [Model] provider 超时，改用离线回复（该回复不计为业务结论）: {exc}"
                 )
@@ -1070,6 +1139,10 @@ class _ResilientModel(Runnable):
         if self.budget is not None:
             truncated = detect_output_truncation(response)
             summary["budget_tier"] = self.budget.tier.value
+            #: R591: the leg, on the span as well as on the log line, because a trace export is
+            #: what survives log rotation, and "which leg answered this" is a question about the
+            #: round, not about the moment somebody happened to be tailing stdout.
+            summary.update(self._leg_fields())
             if truncated:
                 summary["truncation_code"] = truncated
                 logger.warning(
@@ -1079,6 +1152,7 @@ class _ResilientModel(Runnable):
                         read_seconds=self.budget.timeout_seconds,
                         code=truncated,
                         **self._verdict_fields(verdict),
+                        **self._leg_fields(),
                     )
                 )
             empty_code = detect_empty_answer(response)
@@ -1100,9 +1174,11 @@ class _ResilientModel(Runnable):
                         stream=False,
                         code=empty_code,
                         **self._verdict_fields(verdict),
+                        **self._leg_fields(),
                     )
                     + " [Model] 模型正文为空，不作为答案交付（同一行的 thinking= 说明这次到底有没有要求"
-                    "关掉思考，max_tokens= 说明预算有多大；思考链吃满预算只是已测过的成因之一）"
+                    "关掉思考，no_think_fields= 说明请求体里真的带了哪几枚字段，transport= 说明是哪条腿"
+                    "发的，max_tokens= 说明预算有多大；思考链吃满预算只是已测过的成因之一）"
                 )
         span.finish(
             "failed" if empty_code else "completed",
@@ -1184,10 +1260,31 @@ class _ResilientModel(Runnable):
                     _log_context_refusal(self.budget, prompt_tokens)
                     span.finish("failed", error_code=provider_code)
                     raise ModelContextLimitExceeded(self.budget, prompt_tokens or 0) from exc
+                #: R591, same name as the :meth:`invoke` exit above: the streamed answer leg is
+                #: the shape run16/run17 actually lost, so a server that refuses the lever has to
+                #: say so here as well or the fix is only half observable.
+                lever_code = lever_rejection_code(exc)
+                if lever_code:
+                    record_budget_event("lever_rejected")
+                    logger.error(
+                        budget_signal(
+                            getattr(self.budget, "tier", None) or "analysis",
+                            prompt_tokens=prompt_tokens,
+                            read_seconds=float(getattr(self.budget, "timeout_seconds", 0.0) or 0.0),
+                            stream=True,
+                            code=lever_code,
+                            **self._leg_fields(),
+                        )
+                        + f" [Model] 服务端拒收了关闭思考的请求字段，本次不发兜底文案冒充答案: {exc}"
+                    )
                 from app.trace.spans import error_code_for
 
                 timeout_code = model_timeout_code(exc)
-                span.finish("failed", error_code=timeout_code or error_code_for(exc))
+                span.finish(
+                    "failed",
+                    error_code=timeout_code or error_code_for(exc),
+                    summary={"lever_rejection_code": lever_code} if lever_code else None,
+                )
                 if timeout_code:
                     record_budget_event("timeout_offline_reply")
                     logger.error(
@@ -1198,6 +1295,7 @@ class _ResilientModel(Runnable):
                             stream=True,
                             code=timeout_code,
                             **self._verdict_fields(verdict),
+                            **self._leg_fields(),
                         )
                         + f" [Model] provider 流式超时，改用离线流（该回复不计为业务结论）: {exc}"
                     )
@@ -1224,9 +1322,11 @@ class _ResilientModel(Runnable):
                         read_seconds=float(getattr(self.budget, "timeout_seconds", 0.0) or 0.0),
                         stream=True,
                         code=NO_ANSWER_CODE,
+                        **self._leg_fields(),
                     )
                     + " [Model] 流式正文为空，不作为答案交付（同一行的 thinking= 说明这次到底有没有要求"
-                    "关掉思考；思考链吃满预算只是已测过的成因之一）"
+                    "关掉思考，no_think_fields= 说明请求体里真的带了哪几枚字段，transport= 说明是哪条腿"
+                    "发的；思考链吃满预算只是已测过的成因之一）"
                 )
                 span.finish("failed", error_code=NO_ANSWER_CODE)
                 return

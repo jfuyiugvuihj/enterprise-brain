@@ -48,7 +48,11 @@ from app.common.model_budget import (
     estimate_prompt_tokens,
     http_timeout,
     model_tier_budget,
+    lever_rejection_code,
+    no_think_request_fields,
+    record_budget_event,
     request_timeout_ceiling_seconds,
+    thinking_extra_body,
 )
 from app.common.model_config import KeepAlivePolicy, get_local_model_settings, resolve_keep_alive
 
@@ -568,10 +572,20 @@ class ModelHandler:
             if refused:
                 self._log_budget_verdict(budget, prompt_tokens, refused)
                 raise ModelContextLimitExceeded(budget, prompt_tokens or 0) from exc
+            #: R591 判据③ 的第二把: the move to the compatible leg is now counted in the
+            #: process-wide ledger a health surface publishes, not only on this instance. R147
+            #: made the verdict nameable, and its own comment says "once" and "every call" are
+            #: different incidents -- until this line the published numbers could not tell them
+            #: apart, which is why run16/run17 had to be reconstructed by joining a SQL table to
+            #: 8 MB of server log. `no_think_fields=` names what the leg being moved *to* asks
+            #: with, so a downgrade and an empty answer can be read in the same breath.
+            record_budget_event("native_body_rejected")
             logger.warning(
                 f"[Model] 原生 {NATIVE_CHAT_SUFFIX} 拒收本次报文形状（{exc}）："
                 f"本次退回 {TRANSPORT_COMPAT} 腿，原生腿不退役"
-                f"（verdict={exc.verdict} request_rejections={self._native_request_rejections}）"
+                f"（verdict={exc.verdict} request_rejections={self._native_request_rejections}"
+                f" budget_event=native_body_rejected"
+                f" no_think_fields={'|'.join(no_think_request_fields()) or 'none'}）"
             )
             return None
         except _NativeChatUnsupported as exc:
@@ -659,6 +673,28 @@ class ModelHandler:
             # gets the same verdict: one collision, one code, whoever detected it.
             self._log_budget_verdict(budget, prompt_tokens, provider_code, stream=stream)
             raise ModelContextLimitExceeded(budget, prompt_tokens or 0) from exc
+        #: R591 判据③: the one failure this product's own fix can cause, named instead of
+        #: buried. A server that has no idea what ``reasoning_effort`` means answers 400, and
+        #: every line below it says "provider unavailable" -- which is true of the model and a
+        #: lie about the cause. The offline sentence is still what the caller gets (this
+        #: boundary has never invented a nicer answer, and 判据③ forbids it from starting now);
+        #: what changes is that the round carries a code, a count, and the field names it was
+        #: refused for. Checked after the length refusal, which has its own code and re-raises.
+        lever_code = lever_rejection_code(exc)
+        if lever_code:
+            record_budget_event("lever_rejected")
+            logger.error(
+                budget_signal(
+                    budget.tier,
+                    prompt_tokens=prompt_tokens,
+                    read_seconds=budget.timeout_seconds,
+                    code=lever_code,
+                    stream=stream,
+                    transport=transport,
+                    no_think_fields=no_think_request_fields(),
+                )
+                + f" [Model] 服务端拒收了关闭思考的请求字段，本次不发兜底文案冒充答案: {exc}"
+            )
         logger.warning(f"[Model] provider unavailable: {exc}")
         if stream:
             return iter([_OfflineStreamChunk(MODEL_UNAVAILABLE_REPLY)])
@@ -733,13 +769,21 @@ class ModelHandler:
                 stream=stream,
                 max_tokens=budget.max_tokens,
                 timeout=http_timeout(budget, prompt_tokens, stream=stream),
-                # The compatible leg gets the same request it would make without this line,
-                # plus residency. Whether the server honours keep_alive is a server fact, and on
-                # this one it does not: /v1 on Ollama 0.34.2 ignores the field outright (measured
-                # 2026-09-21 from /api/ps -- 1200 s survived a compat call asking for 20m, one
-                # asking for nothing, and one asking for 1800s). Asking anyway costs nothing and
-                # keeps both legs stating the same window in the same request.
-                extra_body={KEEP_ALIVE_FIELD: keep_alive.wire},
+                # Residency, and since R591 the same no-thinking fragment the answer legs carry.
+                # Whether the server honours keep_alive is a server fact, and on this one it does
+                # not: /v1 on Ollama 0.34.2 ignores the field outright (measured 2026-09-21 from
+                # /api/ps -- 1200 s survived a compat call asking for 20m, one asking for nothing,
+                # and one asking for 1800s). Asking anyway costs nothing and keeps both legs
+                # stating the same window in the same request.
+                # Asking for residency *alone*, on the other hand, is what cost the answer: this
+                # mouth sent no thinking field at all, so every call that landed here -- a server
+                # with no /api/chat, or one that refused a body with the 400 above, or the legacy
+                # streaming half -- handed the tier's whole output budget to a thinking model's
+                # hidden chain and came back with an empty body (R591 判据①: the compat leg was
+                # never missing a native fallback, it was missing the request). One resolver,
+                # ``thinking_extra_body``, both boundaries, and an ``enabled`` process still
+                # sends the body it sent before R100, residency aside.
+                extra_body={**thinking_extra_body(), KEEP_ALIVE_FIELD: keep_alive.wire},
             )
         except Exception as exc:
             slot.release()

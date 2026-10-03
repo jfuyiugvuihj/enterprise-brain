@@ -745,8 +745,9 @@ def window_plan(tier_or_budget=None, *, context_limit_tokens: int | None = None)
 #: The near-miss spellings return nothing too -- top-level ``think:false`` on the compat body
 #: (row #7) and ``options.thinking_disabled`` on the native body (row #3) are both measured at
 #: 0 characters -- so an operator who copies one of those concludes the model cannot be
-#: switched off. It can, in exactly one spelling per leg: native takes ``think`` at the request
-#: top level, compat takes ``thinking`` in the body.
+#: switched off. It said it can, in exactly one spelling per leg: native takes ``think`` at the
+#: request top level, compat takes ``thinking`` in the body. **R591 refuted the compat half of
+#: that sentence on 2026-10-03** (table below); only the native half still stands.
 #:
 #: RE-MEASURED ON THE SHIPPING HOST BY R29 (2026-09-21, qwen3:4b, host Ollama, streaming -- which
 #: is the shape the answer leg actually uses), and the sentence above needs its second half
@@ -768,10 +769,37 @@ def window_plan(tier_or_budget=None, *, context_limit_tokens: int | None = None)
 #: from a stream -- which is also why ``model_calls.input_tokens``/``output_tokens`` stay NULL for
 #: streamed rounds whatever this switch says.
 #:
-#: This boundary owns the compatible leg (``app/agents/nodes.py:_make_model``), so it sends
-#: that one spelling and no other. ``disabled`` is the default because the measured
-#: alternative answers with nothing: R99 made an empty body an honest failure, and an honest
-#: failure is better than a fake answer, but it is still not an answer.
+#: RE-MEASURED ON THE SHIPPING HOST BY R591 (2026-10-03, qwen3.5:9b, the container's own Ollama
+#: 0.34.0, one prompt, six arms, credentials ``%TEMP%\r591-probe.txt`` and
+#: ``%TEMP%\evalrun\r591-compat-lever.txt``), and this is a refutation, not a refinement:
+#:
+#:   compat  thinking:{"type":"disabled"}    content    0  reasoning 5554  finish=length  73.49 s
+#:   compat  no thinking field at all        content    0  reasoning 6041  finish=length  53.36 s
+#:   compat  thinking + reasoning_effort=none content 572  reasoning    0  finish=stop     8.48 s
+#:   compat  reasoning_effort=none, cap 96   content   14  reasoning    0  finish=stop     7.91 s
+#:   compat  nothing at all, cap 96          content    0  reasoning  329  finish=length    2.65 s
+#:   native  think:false                     content  804  reasoning    0  finish=stop    12.35 s
+#:
+#: Rows 1 and 2 are the disease, named: run16 ``report-04`` and run17 ``report-04`` both ended
+#: ``budget_verdict=fits max_tokens=1536 error_code=model_output_truncated`` on one line and
+#: ``error_code=no_answer_produced`` on the next, 0 characters delivered, while the server's own
+#: line for the same round read ``eval time=38469ms / 1536 tokens`` with ``truncated=0`` -- the
+#: cap spent to the last token inside the reasoning channel. The field R100 landed is inert on
+#: this endpoint: with it and without it the round is the same empty round, which is also why
+#: §42 row #6 (93 characters, ``finish_reason=stop``) stopped reproducing.
+#: ``reasoning_effort`` is the field ``/v1/chat/completions`` does read, so a
+#: ``disabled`` body now carries both spellings under the one mode word: ``thinking`` stays
+#: because R100 ratified that byte and dropping it is its own unmeasured change, and
+#: ``reasoning_effort`` is the half that makes the request mean what it says.
+#:
+#: What this does *not* buy, so nobody pays for it twice: the native leg is still 4-6x faster
+#: and ~3x cheaper in tokens on a thinking model (last row), and the answer legs stay off it for
+#: R29's reason two blocks above -- ``/api/chat`` would stream the model's monologue into the
+#: customer's chat window, and it is the non-streaming rewrite leg that already uses it.
+#: This boundary owns the compatible leg (``app/agents/nodes.py:_make_model``), so it fixes the
+#: body of the leg it owns. ``disabled`` remains the default because the measured alternative
+#: answers with nothing: R99 made an empty body an honest failure, and an honest failure is
+#: better than a fake answer, but it is still not an answer.
 MODEL_THINKING_ENV = "MODEL_THINKING"
 #: The only two values that mean something. Anything else is a misconfiguration, not a mode.
 THINKING_DISABLED = "disabled"
@@ -783,6 +811,18 @@ DEFAULT_MODEL_THINKING = THINKING_DISABLED
 #: shape that was measured; the field is not offered as a knob to tune.
 THINKING_REQUEST_FIELD = "thinking"
 THINKING_REQUEST_VALUE = {"type": "disabled"}
+#: The other spelling of the same request, and the one this endpoint actually honours (R591's
+#: six-arm table above). A plain string because that is the wire shape measured -- top level,
+#: ``"none"``, not nested, not a boolean. Not a knob to tune either: ``low``/``medium``/``high``
+#: ask a thinking model to think *less*, and at a 1536-token cap that is the same zero-character
+#: answer arriving by a different road (rows 1 and 2).
+REASONING_EFFORT_REQUEST_FIELD = "reasoning_effort"
+REASONING_EFFORT_DISABLED_VALUE = "none"
+#: The names that ride on a ``disabled`` body, in the order they are written. A line that says
+#: ``thinking=disabled`` without these cannot answer the question an empty answer really poses:
+#: not "did we ask for no thinking" -- the mode word already says that -- but "what did we put
+#: on the wire to get it", which is now two fields and used to be one that did nothing.
+NO_THINK_REQUEST_FIELDS = (THINKING_REQUEST_FIELD, REASONING_EFFORT_REQUEST_FIELD)
 
 
 @dataclass(frozen=True)
@@ -795,10 +835,12 @@ class ThinkingPolicy:
     """
 
     mode: str
-    #: The request-body fragment this boundary adds: ``{"thinking": {...}}``, or empty when
+    #: The request-body fragment this boundary adds: the two no-thinking spellings the
+    #: compatible endpoint is given (``thinking`` and ``reasoning_effort``, R591), or empty when
     #: thinking is left alone. An ``enabled`` call has to be the exact body this product sent
     #: before R100, so switching thinking back on is a no-op on the wire rather than a second
-    #: spelling nobody measured.
+    #: spelling nobody measured -- and it is also the operator's lever if a server ever refuses
+    #: one of the two fields, which is why the fragment is one switch and not two.
     wire: dict[str, Any]
     note: str
 
@@ -860,7 +902,10 @@ def resolve_model_thinking(raw: str | None = None) -> ThinkingPolicy:
                 f"thinking={mode}."
             )
     wire = (
-        {THINKING_REQUEST_FIELD: dict(THINKING_REQUEST_VALUE)}
+        {
+            THINKING_REQUEST_FIELD: dict(THINKING_REQUEST_VALUE),
+            REASONING_EFFORT_REQUEST_FIELD: REASONING_EFFORT_DISABLED_VALUE,
+        }
         if mode == THINKING_DISABLED
         else {}
     )
@@ -870,6 +915,16 @@ def resolve_model_thinking(raw: str | None = None) -> ThinkingPolicy:
 def thinking_extra_body(raw: str | None = None) -> dict[str, Any]:
     """The body fragment one call adds for its thinking mode, or ``{}`` when it adds none."""
     return {key: dict(value) if isinstance(value, dict) else value for key, value in resolve_model_thinking(raw).wire.items()}
+
+
+def no_think_request_fields(raw: str | None = None) -> tuple[str, ...]:
+    """Which field names this call's body will carry to ask for no thinking chain.
+
+    ``()`` for an ``enabled`` process. This is what a log line greps for after an empty answer:
+    ``thinking=disabled`` alone no longer distinguishes "the field we sent is the inert one"
+    from "we sent the field the endpoint reads", and that distinction is the whole of R591.
+    """
+    return tuple(name for name in NO_THINK_REQUEST_FIELDS if name in resolve_model_thinking(raw).wire)
 
 
 def model_thinking_mode(raw: str | None = None) -> str:
@@ -1032,6 +1087,39 @@ def context_error_code(exc: BaseException) -> str | None:
     return CONTEXT_LIMIT_CODE if any(fragment in text for fragment in CONTEXT_ERROR_FRAGMENTS) else None
 
 
+#: R591: the code for "the server refused this body because of the fields that ask for no
+#: thinking chain". It is deliberately not a member of ``ErrorEnvelope`` and not
+#: ``model_unavailable`` -- the two read as "the machine is down", and a server that dislikes
+#: one request field is a payload finding, exactly the difference R147 split the native 400 out
+#: to make. Nothing downstream changes verdict on it: the round still fails the way a provider
+#: failure fails, and all this adds is that it fails with its own name.
+LEVER_REJECTED_CODE = "thinking_lever_rejected"
+#: Text a server writes when the lever, not the prompt, is the problem. Both spellings are
+#: listed because the two families answer differently: an OpenAI-shaped validator names the
+#: field (``reasoning_effort``, ``Extra inputs are not permitted``), Ollama names the ability
+#: (``does not support thinking``). Deliberately nothing vaguer than that -- "400" alone would
+#: catch the context-limit family, which has its own code and is checked first.
+LEVER_REJECTION_FRAGMENTS = (
+    "reasoning_effort",
+    "does not support thinking",
+    "thinking is not supported",
+    "unsupported thinking",
+)
+
+
+def lever_rejection_code(exc: BaseException) -> str | None:
+    """Stable code when the provider refused the request for its no-thinking fields, or None.
+
+    Read from the provider's own sentence, the same way :func:`context_error_code` reads the
+    length refusal, and for the same reason: this is the one failure the *fix* can introduce,
+    so the boundary that adds the field has to be the boundary that says so out loud rather
+    than letting a deployment on a non-thinking server or a stricter OpenAI clone lose every
+    answer to what would otherwise log as ``provider unavailable``.
+    """
+    text = str(exc).lower()
+    return LEVER_REJECTED_CODE if any(fragment in text for fragment in LEVER_REJECTION_FRAGMENTS) else None
+
+
 def budget_signal(
     tier: ModelTier | str,
     *,
@@ -1049,6 +1137,8 @@ def budget_signal(
     window: "WindowPlan | None" = None,
     over_by_tokens: int | None = None,
     required_n_ctx: int | None = None,
+    transport: str = "",
+    no_think_fields: tuple[str, ...] | None = None,
 ) -> str:
     """The one line format every budget verdict is logged as, marker included.
 
@@ -1073,6 +1163,16 @@ def budget_signal(
     ``empty_answer_rejected`` therefore has to be able to tell "we asked it to think and it
     starved" from "we asked it not to and it still starved" without opening an env file, and
     the two must not be able to share a count without saying which one is being counted.
+
+    ``transport=`` and ``no_think_fields=`` are R591 and are emitted **only when a caller
+    supplies them**, because a line every call already writes is a line a dozen pins already
+    match. They exist for one specific question, which run16 and run17 could not be answered
+    from any log in the box: an empty round says ``no_answer_produced`` and stops there, while
+    the two facts that explain it are (a) which leg made the request and (b) which field names
+    that leg put on the wire to ask for no thinking. Before this, the only leg that named
+    itself was the native one, in its own应答 line, so "compat by construction" was invisible
+    and the 400-downgrade that R147 worries about was indistinguishable from a call that never
+    asked for the native leg at all.
     """
     parts = [
         MODEL_BUDGET_MARKER,
@@ -1083,6 +1183,10 @@ def budget_signal(
     ]
     if stream is not None:
         parts.append(f"stream={'yes' if stream else 'no'}")
+    if transport:
+        parts.append(f"transport={transport}")
+    if no_think_fields is not None:
+        parts.append("no_think_fields=" + ("|".join(no_think_fields) if no_think_fields else "none"))
     if clamped is not None:
         parts.append(f"clamped={'yes' if clamped else 'no'}")
     if verdict:
@@ -1528,6 +1632,16 @@ BUDGET_EVENT_NAMES = (
     "budget_unaffordable",
     "timeout_offline_reply",
     "empty_answer_rejected",
+    #: R591. A native leg that refused one of our bodies and moved the call to the compatible
+    #: leg: R147 made that verdict *sayable* and counted it on the handler instance, and this
+    #: makes it *countable* from the published health readout next to the answers it cost. One
+    #: is a fact about one request; the pair is how an operator notices it is a fact about every
+    #: request, which is what a payload bug looks like from outside the process.
+    "native_body_rejected",
+    #: R591. A compatible-leg server that refused the body over the no-thinking fields
+    #: (``reasoning_effort`` / ``thinking``). The one count that tells a deployment its model
+    #: cannot be asked to stop thinking, instead of a wall of ``provider unavailable``.
+    "lever_rejected",
 )
 
 _budget_events: dict[str, int] = {name: 0 for name in BUDGET_EVENT_NAMES}
@@ -1591,6 +1705,18 @@ def model_budget_readout() -> dict[str, Any]:
             #: separately from the mode word.
             "request_field_sent": bool(thinking.wire),
             "request_field": THINKING_REQUEST_FIELD if thinking.wire else "",
+            #: R591: every field name the ``disabled`` body actually carries. ``request_field``
+            #: above stayed on purpose -- pins and greps already read it, and it is still true --
+            #: but on its own it now names the field that measured 0 characters with and without
+            #: it, so a reader who stops there is reading half the body.
+            "request_fields": list(no_think_request_fields()),
+            #: Which of the two the compatible endpoint honours, as the measurement says it:
+            #: this pair is the one arm that came back with ``finish_reason=stop`` and non-empty
+            #: content on a thinking model. Nothing here claims it is *why* the other is inert.
+            "compat_lever": {
+                "field": REASONING_EFFORT_REQUEST_FIELD,
+                "value": REASONING_EFFORT_DISABLED_VALUE,
+            },
             "accepted_values": list(MODEL_THINKING_MODES),
             "provenance": "env"
             if os.environ.get(MODEL_THINKING_ENV) is not None

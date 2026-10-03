@@ -11,6 +11,10 @@
 钉死的几件事：
 - 原生腿 `/api/chat` 与兼容腿 `/v1` 都带 `keep_alive`，且**除这一个字段外两条腿的请求
   形状与 R92 结案时一字不差**（`think:false`、`num_predict=256`、`max_tokens`、`stream`）；
+  🔴 R591 改判了兼容腿这一半边：那条腿除 `keep_alive` 之外还带上关闭思考的两枚字段
+  （`thinking` + `reasoning_effort`，见 `app/common/model_budget.py` 的六臂表）。原生腿的形状
+  一字未动，本文件里关于它的钉原样成立。改名与放宽都不在这一笔——被证伪的是"兼容腿除了常驻
+  什么都不加"这句话本身：它正是 rewrite 落到兼容腿时正文 0 字的成因。
 - 未配置时线上走 Ollama 自己的默认 300 s —— 本单不许"新增强制打开的默认值"，常驻窗口是
   运维旋钮，不是这一层替他做的决定；
 - 🔴 红线：`-1` / `infinite` / `2h` / 乱码都换不来"永不卸载"，只会被截到上限并在日志里
@@ -25,7 +29,12 @@ import httpx
 import pytest
 
 from app.agents.contracts import ModelTier
-from app.common.model_budget import OUTPUT_TRUNCATED_CODE, ModelContextLimitExceeded
+from app.common.model_budget import (
+    NO_THINK_REQUEST_FIELDS,
+    OUTPUT_TRUNCATED_CODE,
+    ModelContextLimitExceeded,
+    thinking_extra_body,
+)
 from app.common import model_budget, model_config
 from app.common.model_config import (
     DEFAULT_KEEP_ALIVE_SECONDS,
@@ -174,11 +183,19 @@ def test_the_compatible_leg_is_asked_the_same_window(monkeypatch):
     chunks = handler.chat([{"role": "user", "content": "讲讲住宿费标准"}], stream=True)
 
     assert [chunk.choices[0].delta.content for chunk in chunks] == ["住宿", "费"]
-    assert compat.calls[0]["extra_body"] == {KEEP_ALIVE_FIELD: "900s"}
+    assert compat.calls[0]["extra_body"] == {KEEP_ALIVE_FIELD: "900s", **thinking_extra_body()}
 
 
-def test_residency_is_the_only_thing_either_leg_added(monkeypatch):
-    """除常驻这一个字段外，两条腿的请求形状与 R92 结案时一字不差（判据④的反证）。"""
+def test_the_two_legs_add_residency_and_nothing_else_beyond_their_own_budget(monkeypatch):
+    """两条腿各自除了「常驻 + 本档预算」之外不带第三个主意：判据④ 的反证。
+
+    R34 wrote this as "residency is the only thing either leg added", and R591 re-verdicts the
+    compatible half of that sentence rather than deleting it: the native leg still adds exactly
+    one field, while the compat leg adds residency **and** the two no-thinking spellings, because
+    a compat body that asks for neither hands the tier's whole output cap to a thinking model and
+    answers with zero characters. The property the test exists for is unchanged -- no third
+    opinion reaches either body from this boundary.
+    """
     _, native = _ask_native(_handler(monkeypatch, "15m"))
 
     assert native.calls[0]["payload"] == {
@@ -199,7 +216,7 @@ def test_residency_is_the_only_thing_either_leg_added(monkeypatch):
     assert call["stream"] is True
     assert call["max_tokens"] == ModelHandler._call_budget(stream=True).max_tokens
     assert set(call) == {"model", "messages", "stream", "max_tokens", "timeout", "extra_body"}
-    assert set(call["extra_body"]) == {KEEP_ALIVE_FIELD}
+    assert set(call["extra_body"]) == {KEEP_ALIVE_FIELD, *NO_THINK_REQUEST_FIELDS}
 
 
 def test_the_rewrite_cap_is_still_256_on_the_wire(monkeypatch):
@@ -234,7 +251,7 @@ def test_an_unconfigured_machine_keeps_the_servers_own_default(monkeypatch):
     handler = _handler(monkeypatch, None)
     compat = _compat_on(handler, stream_chunks=[_stream_chunk("x")])
     handler.chat([{"role": "user", "content": "答"}], stream=True)
-    assert compat.calls[0]["extra_body"] == {KEEP_ALIVE_FIELD: "300s"}
+    assert compat.calls[0]["extra_body"] == {KEEP_ALIVE_FIELD: "300s", **thinking_extra_body()}
 
 
 @pytest.mark.parametrize(
@@ -377,7 +394,7 @@ def test_a_server_that_refuses_the_native_leg_still_falls_back_the_same_way(monk
     assert reply.transport == TRANSPORT_COMPAT
     assert str(reply) == REWRITE_JSON
     assert handler._native_supported is False
-    assert compat.calls[0]["extra_body"] == {KEEP_ALIVE_FIELD: "900s"}
+    assert compat.calls[0]["extra_body"] == {KEEP_ALIVE_FIELD: "900s", **thinking_extra_body()}
 
 
 def test_a_transport_that_ismerely_unreachable_keeps_the_offline_verdict(monkeypatch):
