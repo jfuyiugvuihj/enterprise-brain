@@ -555,3 +555,19 @@ R386 顺手挖出、并明确写"不是本班写域"（下面这一段是 **09-2
   3. 密级标注策略逐库确认（H13 甲的代价，`2026-09-17-human-gates.md` H13 结案节）：未标注的上传按 1 级＝本客户全员可检索，客户首灌前必须由客户自己确认，不许我们替他标。
   4. `users.department` 回填＋密级标签回填在**客户真实数据**上做（A1/A3 已裁在交付阶段做，09-28 结案）。🔴 沙盒那 252 枚合成标签只证行为、**不证客户隔离**，不许拿它把 §13 的格③ 翻绿。
 - **一格今天新欠的口径账（防重复立案）**：三枚冻结分片 `docs/testing/fixtures/r97-shard-{1,2,3}.jsonl` 与题源已**不同代**（29 行内容差，主件 sha16 `686c564ff2985744` vs 三片拼接 `2230b2b45be18bfb`）；跑分窗吃的始终是主件（run13/14/16/17 的 `fixture_sha256` 逐枚现读一致），所以**向量召回与 105 题读数都不受影响**，欠的只是把那三片从题源重新派生＋一枚逐字节钉。取证与修法见跟进单 §160.3、判据 R598⑦。
+
+## 15. 10-03 第十二班第十一格·总控落笔：S0 停写已完成（R60 并树 `9f43a31`）·本机读腿有窗指纹为凭·剩余阶段只剩 S1-S5
+
+> 本节只追加，§9.3／§12／§13／§14 原文一字不改。凭据要么是本席现取，要么是已并树件的交工纸，未复跑的数字不写。
+
+- **§14 那句「R60 还在飞」已过期**：R60 于 10-03 并树 `9f43a31`（施工 Aquinas @`be-r60b`，基点 `245315b`）。验收＝两态亲跑同一份 15 枚清单 **277 passed → 277 passed**（apply 未 commit 一遍、commit 后干净树再一遍）；另在没有 R60 的控制树基点 `8adb57d` 上跑那 12 枚坐标件＝**32 failed / 177 passed / 1 xfailed**，与 apply 态逐枚同名同数 ⇒ **零新增红**。
+- **停写不是纸面上的（一手凭据）**：`docs/testing/r60-chroma-writeoff-ledger-2026-10-03.json` 的 `writeoff-probe` 格——同一份码、同一枚套件，`INDEX_BACKEND=pgvector` 写一发 ⇒ `chunk_vectors` 1009→1010、遗留腿 1→**1**、`legacy_ids_added=[]`；把旋钮拨回 `chroma` ⇒ 遗留腿 0→1 重新接行、PG 那腿照旧写 ⇒ §3 那两把回滚的第一把**靠开关不靠改码**，且是容器内真跑的。收尾账：生产向量 1008 前后逐字节相等、`r60_rows_left_in_production=0`、生产账本 `index-versions.json` 原件前后 sha256 逐字相同、`/app/chroma_db` 与工作树 `chroma_db` 零写入（`git status --porcelain -- chroma_db` 空）。
+- **本机读腿走 PG，今天有跑分窗的指纹作凭**：`%TEMP%\evalrun\run18.window.json` 现读 `"index_backend": "pgvector"`·`"revision": "a2bbf133bd80…"（＝当时 HEAD）·`"fixture_sha256": "686c564ff2985744…"`（＝主件）。🔴 出厂默认照旧未翻：`app/rag/indexing.py:50 INDEX_BACKEND_DEFAULT = "chroma"`，§14 那条业主裁定原样有效——**本机走 PG 与客户装机走 PG 是两件事**，后者仍要装机人自己写 env 再 `--force-recreate`。
+- **口径钉死（两句假话都不许说）**：Chroma **既不是最终架构，也没有下线**。它今天仍住在仓库里（`git ls-files chroma_db`＝6 枚在册，最后入库 `1c345b1`）、仍住在命名卷 `vectordb`（`docker-compose.yml:44`）、仍在备份范围里。准确的话只有一句：**写已停、本机读已切、退役未完**。
+- **剩余阶段只剩五格**（逐条执行清单的唯一出处＝`docs/deployment/chroma-retirement-path.md` §4，本节只记今天走到哪）：
+  - **S1 观察窗**（运维）：从 `9f43a31` 起算，现网三枚容器 `printenv INDEX_BACKEND` 全 pgvector 且无人拨回；`scripts/rebuild_index.py --status` 两腿差只增不减。**未做**。
+  - **S2 最后一次带遗留库的全量归档**（运维）：趁 `chroma_db` 还在备份范围内做一次全量并校验 sha256 离线保存。R608 之后镜像里 `pg_dump` 17.11 已在位（交回 79,899,932 B 归档的凭据在看板 §4EP 二），但**这一步针对 chroma 目录的归档没做**。
+  - **S3 把 `chroma_db` 摘出备份范围**（代码单）：`app/common/backup.py:12 DEFAULT_BACKUP_DIRS` 改一行＋同步 `tests/test_postgres_backup_recovery.py` 的落点名册，🔴 **尚未立案**（建议号 R612，写域＝`app/common/backup.py`＋那一枚测试，摘之前 S2 必须先有归档件）。
+  - **S4 目录与卷离场**：🔴 业主本人（H4／H5／H8，`docs/handoff/2026-09-17-human-gates.md:43`·`:55`·`:76`），要的是删除＋`.gitignore`＋容器下线三样，本席一枚没碰。
+  - **S5 代码退役**：必须晚于 S4，且同批**必须重排 `stores_vectors` 的判定**——今天只有 chromadb 不可导入才落到离线 `_JsonCollection`（`app/rag/retriever.py:1027`），遗留客户端一旦不装，这条判定会把「该走 PostgreSQL」误读成关键词降级。
+- **本席没证的两格**（诚实清单，别被本节读成「切换完成」）：§9.3 的 ②（热集让路延迟，欠一台安静机器）与 ③（四件可失败判据，仍记「未验」）都没因 S0 完成而动一格；R143 recall 对账与 pgvector 格② 排在 run18→run19 之后，客户尺寸两档差仍未量。
