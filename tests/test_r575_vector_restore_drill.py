@@ -21,6 +21,9 @@ R575 的读数只在真机那一枚 ``enterprise-brain-postgres-1`` 上量得到
    假阳性：``--replace-drill-db`` 且不 ``--keep`` 的一轮，删掉自己那枚却被判「少了」，rc=5）。
 6. **静态预算**：件里以写动词开头的语句字面量逐枚点名，全部只指向 ``eb_r575_drill``，
    ``TRUNCATE``/``UPDATE``/``DELETE``/``INSERT``/``COPY``/``VACUUM``/``ALTER``/``GRANT`` 零枚。
+7. **库级 setting 成对（R587）**：备份少了 ``.globals.json``/``.globals.sql`` 这一对产物，恢复就
+   不许建库；施加排在 ``ANALYZE`` 与任何对账之前；摘掉施加那一步、改掉一枚值、把恢复库清空——
+   三把都把第③格变红。逐条见 ``tests/test_r587_globals_pair_gates_the_e_gate.py``。
 
 盲区（诚实写明）：假句柄只回答演练**真的发出去**的那些语句，它证的是判据的形状，不证
 PostgreSQL 的恢复行为，也不证那 1008 枚向量真恢复回来了——后者只有
@@ -46,6 +49,27 @@ PROD_ROWS = "7"
 VECTOR_IDS = ["a_0", "a_1", "a_2", "a_3"]
 ARCHIVE = b"r575 fake pg_dump payload" * 64
 ARCHIVE_SHA = hashlib.sha256(ARCHIVE).hexdigest()
+#: 生产那两枚库级 setting 的在册值（现取凭据见 docs/testing/r575-...§7 发现一）。
+PROD_SETTINGS = {"app.embedding_dimension": "768", "app.embedding_model": "nomic-embed-text"}
+
+
+def _globals_reading(database: str, settings: dict) -> dict:
+    """按 ``collect_globals`` 的形状配一份读数，让测试自己能写出成对产物。"""
+    rows = [{"scope": "database", "setdatabase": "16384", "setrole": "0",
+             "database": database, "role": drill.GLOBALS_ALL_ROLES_LABEL,
+             "name": name, "value": value} for name, value in sorted(settings.items())]
+    names = list(drill.required_global_settings())
+    return {"database": database, "rows": rows, "session": dict(settings), "names": names,
+            "profile": drill.globals_profile(rows),
+            "session_profile": drill.globals_session_profile(settings, names),
+            "deferred_profile": "NONE"}
+
+
+def _pair(archive, settings=None, *, database: str = drill.SOURCE_DB) -> dict:
+    """判据①：给这枚归档在同目录同前缀配一份 globals 产物，返回件里那枚配对账。"""
+    return drill.write_globals_artifacts(
+        Path(archive).parent, _globals_reading(database, dict(settings or PROD_SETTINGS)),
+        archive=archive)
 
 
 def _record(fields) -> str:
@@ -67,6 +91,13 @@ class FakePg:
     在行数不变的情况下整列归零；``topk-drops`` 让恢复库少一枚命中；``topk-swaps`` 命中相同
     次序不同；``width-ignored`` 让候选宽度停在出厂档；``toc-drops-mirror`` 让归档目录里没有
     ``chunk_vectors`` 的数据项；``drop-fails`` 让那句 DROP DATABASE 不生效。
+
+    R587 之后 ``settings`` 是**有状态的**：``self.settings[库名][setting 名] = 值`` 就是那枚
+    ``pg_db_role_setting``，``_apply_globals`` 会把件里发出去的 ``ALTER ... SET`` 真打在状态上，
+    ``current_setting`` 也就跟着现读现答（默认态=完美的一轮：恢复库早已被施加过同一套 setting，
+    否则在册那枚"12 项全等"判据会自红）。新注入的谎：``skip-globals-apply``（件让施加，库里
+    不落地）、``globals-absent``（恢复库那两枚为空，= 老口径下的真库盘面）、``globals-drift``
+    （恢复库一枚值与备份不等）、``source-drift``（源库一枚值改了）。
     """
 
     def __init__(self, *, databases=None, damage=None):
@@ -74,6 +105,17 @@ class FakePg:
                               else [drill.MAINT_DB, drill.SOURCE_DB, drill.DRILL_DB])
         self.damage = set(damage or ())
         self.calls: list = []
+        self.settings = {drill.SOURCE_DB: dict(PROD_SETTINGS),
+                         drill.DRILL_DB: dict(PROD_SETTINGS)}
+        self.role_settings: dict = {}
+        self.applied_globals: list = []
+        self.skipped_globals = 0
+        if "globals-absent" in self.damage or "skip-globals-apply" in self.damage:
+            self.settings[drill.DRILL_DB] = {}
+        if "globals-drift" in self.damage:
+            self.settings[drill.DRILL_DB]["app.embedding_dimension"] = "1536"
+        if "source-drift" in self.damage:
+            self.settings[drill.SOURCE_DB]["app.embedding_dimension"] = "1536"
 
     def __call__(self, argv, *, input_text=None, timeout=900):
         argv = list(argv)
@@ -142,7 +184,7 @@ class FakePg:
             pinned = re.search(r"set_config\('hnsw\.ef_search', '(\d+)'", statement)
             if pinned:
                 width = "40" if "width-ignored" in self.damage else pinned.group(1)
-            sets.append(self._one(restored, statement, width))
+            sets.append(self._one(restored, statement, width, database))
         return self._ok(_answer(sets))
 
     @staticmethod
@@ -150,14 +192,14 @@ class FakePg:
         keep = []
         for line in stdin.splitlines():
             text = line.strip().rstrip(";").strip()
-            if (not text or text in ("BEGIN", "COMMIT")
+            if (not text or text in ("BEGIN", "COMMIT") or text.startswith("--")
                     or text == f"SELECT '{drill.BOUNDARY}'"
                     or text.startswith(drill.READ_ONLY_PIN)):
                 continue
             keep.append(text)
         return keep
 
-    def _one(self, restored, sql, width):
+    def _one(self, restored, sql, width, database):
         if sql.startswith("DROP DATABASE"):
             name = sql.split('"')[1]
             if "drop-fails" not in self.damage and name in self.databases:
@@ -170,10 +212,50 @@ class FakePg:
             return []
         if sql.startswith("ANALYZE") or sql.startswith("SELECT pg_sleep"):
             return []
+        if "FROM pg_db_role_setting" in sql:
+            return self._settings_rows(database)
+        if sql.startswith("SELECT coalesce(current_setting("):
+            name = re.search(r"current_setting\('([^']+)'", sql).group(1)
+            return [(self.settings.get(database, {}).get(name, "MISSING"),)]
+        if sql.startswith("SELECT format('ALTER "):
+            self._apply_globals(database, sql)
+            return []
         for pattern, builder in self._patterns(restored, width):
             if re.search(pattern, sql):
                 return builder()
         raise AssertionError("FakePg 没被教会回答这条语句：" + sql[:140])
+
+    def _settings_rows(self, database):
+        """把 self.settings 摊成 GLOBALS_SQL 那七列的形状（先库级，再角色级）。"""
+        store = self.settings.get(database, {})
+        oid = "16384" if database == drill.SOURCE_DB else "17000"
+        rows = [("database", oid, "0", database, drill.GLOBALS_ALL_ROLES_LABEL, name,
+                 store[name]) for name in sorted(store)]
+        rows += [("role_in_database", oid, "1", database, role, name, value)
+                 for (where, role, name), value in sorted(self.role_settings.items())
+                 if where == database]
+        return rows
+
+    def _apply_globals(self, database, sql):
+        """件让服务器做什么，FakePg 就做什么：SET 的那一名、%L 的那一枚值，打在 current_database()。
+
+        这里刻意**不**用件里的常量反解，只按 SQL 文本读：件要是把库名写死进语句、或者把值漏在
+        引号外，这一枚假句柄就先答不上来，而不是顺着它一起编故事。
+        """
+        head, args = sql.split("', ", 1)
+        tail = args[: -len(") \\gexec")]
+        kind = head.split("ALTER ")[1].split()[0]
+        name = head.split(" SET ")[1].split(" = %L")[0]
+        literals = [item.replace("''", "'") for item in re.findall(r"'((?:[^']|'')*)'", tail)]
+        value = literals[-1]
+        if "skip-globals-apply" in self.damage:
+            self.skipped_globals += 1
+            return
+        self.applied_globals.append((database, kind, name, value))
+        if kind == "DATABASE":
+            self.settings.setdefault(database, {})[name] = value
+        else:
+            self.role_settings[(database, literals[0], name)] = value
 
     def _patterns(self, restored, width):
         rows = str(max(int(PROD_ROWS) - 1, 0) if restored and "drop-row" in self.damage
@@ -199,10 +281,8 @@ class FakePg:
             (r"FROM schema_migrations", lambda: [("0001,0002,0018",)]),
             (r"md5\(string_agg", lambda: [("deadbeef",)]),
             (r"FROM pg_indexes", lambda: [("chunk_vectors_pkey :: CREATE ...",)]),
-            (r"FROM pg_db_role_setting",
-             lambda: [("NONE" if restored else "db=enterprise_brain conf={x}",)]),
-            (r"current_setting\('app\.embedding",
-             lambda: [("MISSING/MISSING" if restored else "768/nomic-embed-text",)]),
+            # R587：这两枚旧答案摘掉了——库级 setting 现在走 _settings_rows/有状态的
+            # current_setting（旧那枚 db=%s 形状带着库名，两侧永远不等，只能上报不能门控）。
             (r"FROM pg_roles", lambda: [("enterprise_brain:super",)]),
             (r"ORDER BY md5\(vector_id\)", lambda: [(vid, "[0.5,0.5]") for vid in VECTOR_IDS]),
             (r"^SELECT set_config", lambda: [(width,)]),
@@ -450,6 +530,7 @@ def test_restore_refuses_to_create_a_second_database_with_the_same_name(tmp_path
     monkeypatch.setattr(drill, "_run", fake)
     archive = tmp_path / "eb_r575_drill.dump"
     archive.write_bytes(ARCHIVE)
+    _pair(archive)  # 判据①：成对产物在位，这枚用例要的才是"第二枚同名库"那一道闸
     drill.restore(CONTAINER, archive=archive, drill=drill.DRILL_DB)
     assert fake.databases.count(drill.DRILL_DB) == 1
     with pytest.raises(drill.Refuse, match=drill.DRILL_DB):
