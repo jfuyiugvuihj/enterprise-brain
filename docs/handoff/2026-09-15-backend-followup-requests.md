@@ -5337,3 +5337,41 @@ D-1 达标（12/12 `structured`；批准轮批到终答 8／批准失败 0／仍
 ### 四、开窗状态与下一班接手点
 
 run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，一窗多判据＝A①／A④／C／D），四道自证全过才放行（`INDEX_BACKEND=pgvector`／`BUILD_INFO revision=e6fdeb4`＝HEAD／`MODEL_CONTEXT_TOKENS=8192`／单实例端口 38817）。开窗前置 **P-20 七格首次全 PASS·rc=0**（含 R581 治好那格；它自限「只证占卡的是自家容器，不证时延干净」）。🔴 同机四枚在途在跑测试 ⇒ A①／A④ 的时延读数按**带噪**记账：通过可信，不合格不作结论。收窗动作与启动器读数口径照 §158 四。
+
+## 160 第十二班第九格（10-03 14:0x–14:4x）：业主四笔裁定到货 · R591 投出 · R598 触顶未落地（判据全文落纸） · 新抓到一枚三片不同代
+
+### 160.1 业主裁定（原话「1 2 都按你的建议来 3 批准、R487 与合成扫描件你办、默认不翻」）
+
+- ①R440／A① 整表口径＝批准按问答档定死；②A② 三口径＝批准甲＋乙两读并列；③评测集改题＝批准；④R487 三十枚演示账号＝总控代办；⑤V2 #13 扫描件＝总控以**合成件**代办；⑥`INDEX_BACKEND` 出厂默认＝**不翻**（转交付阶段项）。正文见计划书 §6 勘误追加那节与 `2026-09-17-human-gates.md` 末节，本处只记号账，不复述理由。
+
+### 160.2 投递记录（一 block 一次投递，报错不补投）
+
+- **R591 → `Archimedes`（`01a1005e-ce41-77b2-8fbb-a5ad6486ef5d`）14:1x 一次投出**，树 `be-r591`@`245315b`（投前现取 dirty=0／untracked=0）。判据核心＝总控 14:0x 亲跑的三臂表（compat＋`thinking:disabled` 73.49 s／`finish=length`／正文 0 字／reasoning 5554 字｜compat 不带该字段 53.36 s／正文 0 字／reasoning 6041｜native＋`think:false` **12.35 s／`finish=stop`／正文 804 字**）⇒ 🔴 **前任「带 thinking 字段反而触发思考」的假设作废**，那字段完全无效；分岔在**端点**。要证的是 `app/common/model_handler.py:90 NATIVE_REQUEST_REJECTED_STATUSES = frozenset({400})` 那条**静默退回**是否就是 run16/17 `report-04` 空正文与 run17 三枚批准失败（`chart-01/02/04`：`approve 200` 而恢复流里无 text 事件）的成因。
+- 🔴 **R598 触顶未落地**：`spawn_agent` 报 `collab spawn failed: agent thread limit reached`（在飞七枚：`Gödel`/R590、`Heisenberg`/R596、`McClintock`/R597、`Aquinas`/R60、`Sagan`/R589、`Archimedes`/R591）。按仓规不当场补投。零写入取证：`Test-Path C:\Users\fengx\PycharmProjects\be-r598` ＝ **False**（工作树本身没建起来 ⇒ 不存在任何写入），主树 HEAD 未变。腾出槽位后**一次投出**，判据全文就是下面 160.4。
+
+### 160.3 新抓到的一枚不同代账（本席亲跑，不是转述）
+
+- 在册件 `docs/handoff/2026-09-17-eval-real-run-runbook.md:413` 那行「冻结三分片完整性：`r97-shard-{1,2,3}.jsonl` 拼接**逐字节等于** `tests/fixtures/business_evaluation_100.jsonl`，sha256 前缀 `2230b2b45be18bfb`，24,346 B ⇒ ✅ 与登记一致，题源没被碰过」**今天证伪**：
+  - 实测三片拼接＝24,346 B／sha16 `2230b2b45be18bfb`（对得上登记），主件＝**41,941 B／sha16 `686c564ff2985744`**（对不上）。105 个 id 与顺序完全相同，**29 行内容不同代**（三片缺 `anchor_provenance` 字段，`answer`/`must_contain` 还是 R401 之前的旧词）。三片自 `78b8507` 后再没动过，主件被 R401（`baef92e`）改过 ⇒ 那行 ✅ 从头到尾**只对着三片自己的 sha 核过、从没对主件核过**。
+  - 🔴 但历史分数没被污染：run13/run14/run16/run17 的 `window.json` 里 `fixture_sha256` 逐枚现读＝`686c564f…`＝**主件**。⇒ 这是「冻结件与题源分代」的账本病，不是「跑分跑错题」的产品病。定性同 R583 那一族（手抄账 vs 派生账分叉）。修法并进 R598 判据⑦：三片从新主件**派生**＋一枚「拼接逐字节等于主件」的常驻钉＋反证刀。runbook 那行由总控追加勘误，原文不改。
+
+### 160.4 R598 判据全文（待投·评测集改题收尾·R401 的第二刀，业主 10-03 已批）
+
+基点 `245315b`，独占 `be-r598`。现状读数（总控 14:3x 亲跑在册量具）：`scripts/check_eval_evidence_coverage.py` ＝ **查无出处的行 19／词条 19**，`行数==词条数` 指纹成立；题源 105 行／121 词条／语料 `documents/*.txt` 95 篇（主口径，PDF 与 CSV 都不算出处）。19 枚名册由 `app/quality/eval.py:237 unscorable_records()` 逐枚读出 id/reason/missing_term/pool（R401 丙案标记）。
+
+- ① 🔴 **语料零变化**：`documents/**` 一字节不许动、不新增 txt（B 案一律不采纳，打穿 P-17 与全部历史可比性）。
+- ② 🔴 **判分器不在这一刀**：`app/quality/eval.py`、`scripts/run_quality_evaluation.py` 一字不动。凡「必须改判分器才能救」的行（拒答形状／输出形状那一族：`unsupported-01/02/04`、`tool-03`、`report-03/07/08/09`）**一律保持丙**并注明属后续 R600。宁可少救几枚，不许偷偷放宽 substring 规则凑数。
+- ③ 19 枚逐枚三选一（甲=锚词换成语料真在位的那句且出处必须**派生**、乙=同 tier 同 category 换题面、丙=保留原题保持扣除），一枚不落，分五族处置：
+  - **语料互斥 2 枚**（`doc-15` 电子发票「无需打印」、`doc-17` 发票抬头「公司全称」）⇒ 总控代业主裁定规则＝**制度/细则类条款 > 会议纪要/FAQ/过渡期安排**；「过渡期 2025-06-30 前纸质仍可报销」与「电子发票归档后无需再打印」是两条不同命题、并不互斥 ⇒ 走甲。第三组「住宿超标 需审批 vs 自理」由执行层现查它在不在 19 枚里，不在就点名它现在的处置与出处行号。🔴 若逐字对账后判定**真互斥**，不许二选一硬翻绿 ⇒ 保持丙＋写「客户真实制度若相反，改的是语料不是金标」进交付检查项。
+  - **会话内真值 4 枚**（`chat-09/11/12`、`insight-07`）⇒ 出处天然不在 95 篇里，原则上保持丙，除非能为某枚找到语料在位且语义等价的锚词（那才算甲）。
+  - **CSV 真值 4 枚**（`data-07/08`、`insight-05/06`）⇒ 🔴 不许在本单改「CSV 不算出处」这条主口径（§1.7，动它＝同时动两把尺与全部历史可比性），保持丙，但要把「若采纳 CSV 为出处可救回哪几枚」算给下一班看数。
+  - **产品/输出形状词** 与 **拒答类** ⇒ 见②，保持丙，账挂 R600。
+- ④ 守恒：题源恒 105 行、id 集合与顺序不变、`tier`/`category` 分布逐档守恒（乙案换题必须落同 category 同 tier）；丙案铁规＝题保留、`must_contain` 一字节不动、reason/pool 齐全（缺一枚 `unscorable_records()` 当场抛）。
+- ⑤ 守卫重录最小化：只许动 `tests/test_evaluation_report.py` 与 `tests/test_r94_eval_evidence_coverage.py`，逐格写「为什么不是为了让门绿」；两枚尺子上的 33/35 那类历史冻结数不许顺手改。
+- ⑥ 主口径读数：改后「查无出处的行数」必须**恰好等于**新的丙案枚数，`行数==词条数` 指纹不许破。
+- ⑦ 三片重派生＋常驻钉（见 160.3）：`docs/testing/fixtures/r97-shard-{1,2,3}.jsonl` 从新主件逐字节派生（35/35/35、保持现序），新增一枚钉＝三片拼接**逐字节等于**主件（含 BOM/行序/换行符），并打印两边 sha256 前 16；🔴 不许写成「读盘上现成三片比一下」的永真式，要带反证刀（手改一片里一个词→必红）。
+- ⑧ 反证 ≥5 把（摘刀必红、逐把写「摘哪一把→哪枚红」）：锚词换成语料不存在的词仍被指名／置空某枚 `must_contain` 当场红／删一行守恒钉红／甲案锚词与派生出处不符派生钉红／category 改动桶守恒钉红／三片偷改一个词完整性钉红。
+- ⑨ 交回三组数（全离线，🔴 禁打模型）：改前改后 `check_eval_evidence_coverage.py` 全文、`unscorable_records()` 枚数与逐枚 id、correctness 分母 105−丙（改前 86 → 改后几）。
+- ⑩ 可比性声明照 R401 格式：「新锚词基线自本次改题后第一扇窗起，run13/14/16/17 及以前的 correctness/evidence 不可与新集直接比对」＋与旧集逐枚 diff 表（未改的行按 id 点名「一字节未动」）。
+- ⑪ 开工前把「谁在读 `business_evaluation_100.jsonl`」`git grep -l` 列全（在册读者至少含 `scripts/eval_window_shard_driver.py`、`scripts/r595_latency_readout.py`、`scripts/r580_per_class_attribution.py`、`scripts/r438_correctness_denominator.py`、`tests/test_r123_*`、`tests/test_r126_*`），逐枚说明为什么不需要跟着改——🔴 只许解释，不许越界去改。
+- 写域：`tests/fixtures/business_evaluation_100.jsonl`、`docs/testing/fixtures/r97-shard-{1,2,3}.jsonl`、`tests/test_evaluation_report.py`、`tests/test_r94_eval_evidence_coverage.py`、`scripts/check_eval_evidence_coverage.py`（只加派生能力，§1.4/1.5/1.7 一字不动）、`scripts/r401_anchor_provenance.py`、新钉 `tests/test_r598_*`／量具 `scripts/r598_*`、交工纸 `docs/testing/r598-eval-retitling-2026-10-03.md`。禁区：`app/**`、`documents/**`、`data/**`、`migrations/**`、`docs/handoff/**`、`tests/_temp_edit_overlay.py`，以及在飞六枚的写域。
