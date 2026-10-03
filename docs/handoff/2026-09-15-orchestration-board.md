@@ -6662,3 +6662,8 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 - 本班一次触顶：⛔ **R598** 报 `agent thread limit reached`（当时在飞六枚＝实测上限 6）⇒ 按仓规记「未落地」，零写入取证 `Test-Path be-r598`＝False、主树 HEAD 未变；判据全文落跟进单 §160.4，腾出槽位后一次投出。
 - 在飞七枚：`Gödel`/R590（只读）、`Heisenberg`/R596、`McClintock`/R597、`Aquinas`/R60、`Sagan`/R589、`Archimedes`/R591，加待收的交回队列。写域零交集（`chat.py`/`model_*`/`nodes`/`contracts` 归 R591；`retriever`/`pg_store`/`indexing` 归 R60；`retrieval_pipeline`/`r577`/`r536` 归 R597；`backup`/`restore`/`Dockerfile` 归 R596；`_temp_edit_overlay` 归 R589；评测集与三片归待投的 R598）。
 - 下一步（顺序，别打乱）：① 收交回逐枚两态亲跑；② 腾槽投 R598 → 再投 R599（合成扫描件）；③ C 门「缓存命中显式标注」那格放一枚小探针（夹具 `%TEMP%\evalrun\fixture-cache2.jsonl` 两枚同题，🔴 不要设 `EVAL_DECLARE_LANE_TIER`；定性＝**码在树、从没验过**：`app/api/v1/chat.py:2594-2626` 的 `cache_fields{cached:true}`＋R154 `cached-unknown` 第四态，历轮不命中是因为每扇窗开前清了 `answer:*`）；④ 机器独占时跑 `python scripts/run_gate.py`（并发由脚本按空闲内存自选，纸上不写死 `-n`）；⑤ A① 安静复测排在 R591 并树之后；⑥ 今天已并的 8 枚＋`e750d5c`＋看板这一笔 **push**（业主 standing 授权）。
+
+### 八、C 门那一格今天真机达标（总控亲跑，14:3x–14:4x，见跟进单 §160.5）
+
+`cache-a` 45.5 s 正常生成（`cached=False`／405 字／`evidence_n=5`／`steps=2`）；`cache-b` 同题重问，**0.4 s 被采集器 P-18 闸具名拒绝**（`命中答案缓存 ⇒ 开窗纪律破了`，`eval_transport_ask_v2.py:1322`），driver 收窗 `1/2 shards complete`。第二发窗后单读流面四枚事件：`status="📋 缓存命中，直接返回"`／`text.cached=True`＋`cache_generated_at`／`sources` 在位／`done.answer_present=True`，0.06 s、`steps=0`。⇒ 🔴 第一条凭据不是「命中快」，而是**命中冒充不了一次正常生成**（假时延进不了 P95）；双路识别真发得出。探针留下的 `answer:*` 已从 2 枚清回 **0**、仓内零落盘。
+C 门三格现状：①越权 0 条＝**未验**（R481 口径；R487 只到账号面）②缓存命中显式标注＝**达标**（本班）③评测集分数不退化＝run17 成立，**R598 改题后要在新集上重量**。
