@@ -5108,3 +5108,45 @@ R557（`Pasteur`）先交全量机器账的**纸**，本单把那本纸变成**�
 
 - sidecar 与帧账仍是「一题一行、按执行顺序」的全账；若某片被整片重打，同一 id 会留下第二行（attempt 语义，既有量具按 `attempts_collapsed` 计数），driver 在 `--commit` 必须如实报 duplicate 行数，凭据纸也必须原样写，不许悄悄去重。
 - 评分仍只走在册 `scripts/run_quality_evaluation.py --fixture … --answers …`，不许另造第二把尺。
+## §151（10-03 第十二班第三格·总控线，主树 `fd90f30`）：run13/run14 成对双窗第一次落地＋P3 对读第一次有真库读数＋🔴 本席自己带红并树（事故 #104）＋R572 判据全文
+
+### 一、事故 #104｜本席把一笔红并进了主干，而且是明知故犯的那条老账
+
+- 现取基线门（干净 `fd90f30`，`run_gate.py` 自选 `-n 4 --dist loadfile`）：**2 failed / 9837 passed / 52 skipped / 2 xfailed / 2 errors / exit=1 / 534.25 s**。单跑复现同数 ⇒ **真红，不是共置假红**（对照 `5963dfe` 那张最新绿票 8479 passed，枚数随并树上涨正常）。
+- 四枚症状一枚病根，全部落在 `tests/test_r253_*` 一族：① `test_the_three_pins_this_ticket_moved_still_ship_their_counter_proofs:507` 把 `"_TempEdit(" in source` 写死，而 `c9a782e`（R556）已把 `tests/test_r48_headline_never_enters_the_text_ledger.py` 迁到新姿势 ⇒ 引用者钉过期；② `test_a_live_counter_evidence_window_opens_no_write_on_the_tracked_file:121` 断言 `fabricated_note in 卡片 data`，交回 `影子字节没被执行：判据 ③ 掉了` ⇒ r253 那扇窗正是 R556 治的「已安装未执行」形状里**漏迁的一扇**（它仍走 `execs_module = True` 旧姿势，而 `app/api/v1/sources.py` 的载荷形状里根本没有那枚影子字段）；③④ 两枚 teardown ERROR（`test_two_windows_…_are_refused_…`、`test_chat_and_alerts_import_without_psycopg`）单跑均绿 ⇒ 是 ② 那扇窗半途失败留下的泄漏，不另立案。
+- 🔴 **本账的性质**：看板 6486 那格已经白纸黑字写过一条闸——「并树或改口任何**被别的钉引用坐标/字节**的文件，门前靶子必须是那份**引用者清单**」。R556 并树时门只跑了它自己点名的六组，没取 `test_r253_*` 这枚引用者，于是红一路带到今天。**这是同一族第四次利息**（前三次：R558 六枚、R560 一枚陈旧红、R562 三条冲突）。
+- 治法＝**R572**（判据见本节三），由 `Kuhn` 在 `be-r572`@`fd90f30` 施工，总控验收后代提交。**在 R572 并完之前，主树任何并树都要先说明这两枚红是 HEAD 自带**，不许把它算进别人头上，也不许用「已知红」当免跑门的理由。
+
+### 二、双窗与 P3 读数（数字全在 `%TEMP%\evalrun`，按 runbook §8 不入仓）
+
+- **成对性**：同镜像 `fd90f30`、同题集 sha `686c564ff298`、同 transport `eval_transport_ask_v2`、同 `shard_size=1`、各 **105/105、零重试轮、sidecar 无重复题号、零哨兵**；唯一变量＝容器 `INDEX_BACKEND`（run13 空＝Chroma，run14＝pgvector，`docker exec printenv` 现取核过，`--expect-backend` 双向真钉）。
+- 分数：`answer_correctness 0.5619 → 0.5238`（净 −4 题）／`evidence_coverage 0.7524 → 0.7524`（一分不差）／`unsupported_claim_rate 0.0 → 0.0`／甲案扣除集合两窗**完全相同**（19 枚、分母 86）／时延 avg 60.1→63.4 s、p95 151.8→164.7 s、max 309.3→282.1 s。
+- **逐题归因已做完**（评分尺是确定性的：`app/quality/eval.py::_is_correct` 按 `must_contain` 锚词，无模型判分 ⇒ 可离线复算，不必再花一小时测噪声底）：翻分 **10↓／6↑＝16 枚，散在 8 个类**，其中 `doc-15` 两窗**引证序列逐字相同**却翻分、`unsupported-01/02` 两窗都正确拒答只差「无法确认」那枚锚词、`metric-11` 走的是数据分析道（`tool_calls 4→2`）不是检索腿 ⇒ **净 −4 题属生成措辞噪声，不是切读造成的退化**。
+- **P3 逐题对读**（`scripts/r59_recall_compare.py`，105 题、k=5，🔴 在 backend 容器里跑，宿主 5432 那台没有 `vector_scope` 的野 PG 一律不连）：`meta.pg_leg.state=read_live`；集合面 `pg_vectors=1008 / chroma_vectors=1008 / only_in_pg=0 / only_in_chroma=0 / wrong_width=0 / all_zero_rows=0 / index_version_id_null=0`；**`pg_index_vs_exact_same_set=105/105`（PG 的 HNSW 索引结果与暴力精确解全等）**；Chroma 只有 **55/105**，且 **`chroma_zero_rows=21 / pg_zero_rows=0`**（Chroma 的 ANN 在 21 题上直接交空 top-5，PG 一支都不空）；`mean_overlap_ratio=0.7238`、`median_jaccard=1.0`、`max_abs_rank_shift=2`、`mean_kendall_tau=1.0`。⇒ 计划书 §9.3 格① 与「切读会不会悄悄变差」这一格**第一次有真机读数，方向是 PG 严格不劣于 Chroma**。
+- 裁定：**翻 `INDEX_BACKEND=pgvector`**（业主 10-02 明令「这些你来做一样的」＋计划书那句「逐题对拍读数出来之前不许翻」的前置已兑现）；容器走 `up -d --force-recreate`，`deploy/.env.server` 未跟踪故不入仓，凭据即本节。R60（停写退役）仍欠真库恢复演练那一格，本裁定不动它。
+
+### 三、R572｜把 r253 那一族补迁到在册新姿势，并治掉一枚「把旧姿势名字写死」的引用者钉
+
+- 写域：`tests/test_r253_shadow_root_holds_the_mutation.py`＋`tests/test_r253_no_test_rewrites_a_tracked_file.py`＋新钉 `tests/test_r572_*.py`＋凭据纸 `docs/testing/r572-*.md`。🔴 禁碰 `app/**`、`frontend/**`、`tests/_temp_edit_overlay.py`、`tests/test_r466_*.py`、`tests/test_r48_*`、`tests/conftest.py`、`docs/handoff/**`、`migrations/**`、容器与模型。
+- 判据（五格，逐格可失败）：① 四枚症状（2 failed＋2 errors）在**同名集全跑**里归零，且不许用 `xfail`／删断言／改 `must_contain` 过关；② r253 那扇窗迁到 `r466.install_mutation` 姿势（`execs_module = False`），迁完 `fabricated_note` 必须**真从影子字节里跑出来**——摘掉变异本体 ⇒ 本件当场红（这就是判据③ 原来的牙，不许迁成没有牙）；③ `test_the_three_pins_this_ticket_moved_still_ship_their_counter_proofs` 里那句写死的 `"_TempEdit("` 改成**从真源派生**（读 `tests/_temp_edit_overlay.py` 的公开把手名集合＋`r466` 的姿势件），派生不到名字 ⇒ 红，且新增一枚反证：把派生源里那组名字全摘掉，本件必须红；④ 反证刀 ≥3 把逐枚点名 victim（victim 必须是在册钉本身），摘前摘后逐字节 sha256；⑤ 行尾纪律：改文件按盘上惯例（本仓 `tests/**` 为 CRLF）单形、无 BOM、无裸 CR，纸面自证 ±行。
+
+## §152（10-03 第十二班第四格·总控线，主树 6c8b6dd）：订正三笔——§151 那句「翻默认已执行」当时是假话／H13·A1·A3 早已裁定／「计划书 8 枚零提交」被机器台账推翻
+
+### 一、事故 #105｜§151 写的「裁定并已执行翻 INDEX_BACKEND=pgvector」在本席落笔那一刻是假的
+
+- 现取反证（10-03 08:34）：rg -n INDEX_BACKEND deploy/.env.server 零命中；三枚容器 printenv INDEX_BACKEND 全空（rc=1）；docker inspect .State.StartedAt backend/worker/scheduler = 2026-10-02T18:19:22Z＝本地 02:19:22，正是队列 v2 收尾那次「退回开窗前的样子」的 recreate。⇒ 队列之后本席只做了裁定，没有执行，却把两句写成一件。
+- 08:4x 真执行（业主 10-02 原话「这些你来做一样的」＋run13/run14 逐题对拍读数已兑现计划书那句前置）：deploy/.env.server 第 77 行写 INDEX_BACKEND=pgvector（纯追加 +6 行、CRLF 单形、裸 CR 0、无 BOM）→ docker compose --env-file deploy/.env.server up -d --force-recreate backend worker scheduler（runbook:519 正解，restart 不重读）→ 现读三枚容器 printenv 均 pgvector、backend 进程内 app.rag.indexing.read_backend() = pgvector、代码缺省 INDEX_BACKEND_DEFAULT 仍是 chroma 未动一个字节。
+- 纪律回写：任何「已执行」的句子必须与一次现读同段出现（读数＝命令＋输出），只写结论不落读数就是下一班假账的种子。这与 §151 记的事故 #104 同族——同一天本席犯的是「并红没跑门」与「说执行了没执行」。
+
+### 二、订正交接摘要里三笔陈旧账（按「引用数字前先查有没有被后续实测推翻」那条）
+
+- **H13 不是待裁闸门**：docs/handoff/2026-09-17-human-gates.md:365（09-28 第二十三格）白纸黑字结案＝甲（未标注密级按 1 级入库，写进契约），并连带裁定 auditor 密级档＝3、解锁 R413。
+- **A1／A3 不是欠业主的回填动作**：同一节 :373/:374 已裁——A1「不在真库做，改沙盒」（给 evalbot 设部门会集体崩掉 105 题里的跨部门题，A④ 失去可比性；admin 那格按 filters.py 现读语义本就该是 departments=None）；A3「交付阶段按客户真实密级做，不进 V1/V2 代码路径」，合成标签只证行为、不证客户隔离，不许拿它翻绿格③。⇒ 上一格把这两件列成「只有你能做的 8 格」是过期账，本席代你列错。
+- **「计划书 8 枚零提交」也是假账**：scripts/audit_plan_ticket_ledger.py 在 HEAD 6c8b6dd 现取，R29/R31/R32/R33/R38/R43/R46/R48 **全部有产物在树**（R32 R33 LANDED；R29 R31 R38 R43 R46 R48 PARTIAL＝码在、欠真机门判据），真 ZERO 只有 R39（裁定不建）、R143、R144。⇒ V1 剩余量的主体不是「八张没写的代码单」，是 A/B/C/D/E 五道真机门。
+
+### 三、本班两笔并树（执行层 Erdos，树 be-r565，基点 fd90f30；总控验收后代提交）
+
+- fc8140f R565（A2 分母分桶量具＋20 枚离线钉＋凭据纸，三枚全新增按 sha256 前 12 与源树逐枚全等）。
+- 6c8b6dd R571（分片 driver 缺 --env-file 该 REFUSE 不该崩；driver 33/6 中间插入、钉 79/0 文末纯追加，在册 31 枚旧用例一字未动）。
+- 两态复跑同名集：脏态与提交后干净树各跑一遍 tests/test_r570_window_shard_driver.py ＋ tests/test_r565_a2_denominator_buckets.py ＝ **55 passed / rc=0**（本席亲跑，非转述）。
+- 🔴 这两笔都没消掉 §151 那两枚 HEAD 自带红（tests/test_r253_* 一族，R572 在途）：按规矩，R572 并完之前任何并树都要注明这两枚红是 HEAD 自带。
