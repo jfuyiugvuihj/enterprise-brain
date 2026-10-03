@@ -5551,3 +5551,29 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 - **为什么不并树**：距 24:00 断网只剩 30 分钟，再来一枚全量门（约 11 分钟）＋两态亲跑＋落账＋push 挤不进可靠窗口。按本班自己立的规矩**不把所有者的交付留在没门的树顶**，改做**保命提交**：在它自己树里 `git commit` 两枚点名路径并**推分支** `codex/be-r625`（＝`bfc507e`＋wip 一笔），比躺在磁盘或只躺在 `%TEMP%` 备份强。本席现取凭据：`git diff HEAD -- app/` **空**（产品码零改动，不采信自述）。
 - **明晨第一件事**：并 R625——先现读复核上面那两笔订正，再两态亲跑（点名 r625／r60-write／parity／rollback_drill／r59 四件，执行层自报合并 119 passed 只作对照），达标后代提交并**跑一次全量门**才算在册绿票换顶。
 - 本班收官盘面：主树 HEAD 见本笔之后那枚；门 #4（`51439fd`）＝0 failed／10628 passed／58 skipped／2 xfailed／615.1 s／exit=0＝**本班唯一在册终数**；在途执行层**零枚**（`Dirac`/`Boole`/`Galileo`/`Bohr` 全部 close 腾槽，按 §165.2 那条新铁规）；`powercfg` 一字未动、心跳为零、`--purge` 继续不做且点名排除 `be-r550`。
+
+### 166 第十二班收官格（10-03 23:2x-24:0x·总控线·主树 `72eaca0`·**单模型未切换**·心跳零枚）：R625 并树 · 过夜队列 · 🔴 抓到"R143/R428 每班都欠一台安静机器"的真因
+
+**一、R625 已并树 = `72eaca0`**（保命提交 `ffa5f1d` 转正式，执行层 `Bohr`／树 `be-r625`）
+- 本席**现读**复核它顶回的两笔前提，两笔都成立，本席派工词错：`collection.add` 字面 4 处 = **1 处在 docstring**（`app/rag/retriever.py:1446`）＋真调用 3 处（`:1455` `:1473` `:1602`），`self.collection.delete` 3 处（`:1600` `:1699` `:2085`）⇒ 全库 6 枚变异写点与它的名册逐枚对得上；`_writes_go_to_pgvector` 的 def 在 `retriever.py:1496`（不是 1495）。
+- 两态亲跑（总控自己跑的）：state① `cherry-pick -n` 已 apply 未 commit ＝ **102 passed／0 failed／14.10 s**；state② commit 后干净树同名六件 ＝ **102 passed／0 failed／13.78 s**。点名清单＝`tests/test_r625_chroma_write_sites_are_named_one_by_one.py`·`tests/test_r60_write_path_unique_under_pgvector.py`·`tests/test_r59_where_parity.py`·`tests/test_r60_predicate_terms_and_leg_parity.py`·`tests/test_r60_rollback_drill_ledger.py`·`tests/test_r59_chroma_untouched_on_pg_reads.py`。
+- 并树前 `git diff HEAD -- app/` ＝空（产品码零改动）；执行层零 commit，两枚路径显式列名代提交。**push 已成**：`gitee/codex/data-file-catalog` = `72eaca0`、`@{u}..HEAD` = 0。🔴 `origin`（github）本席现取 `TLS connect error: unexpected eof while reading` ⇒ 今晚只推得动 gitee，这句按实录入，不写成"两枚 remote 都推了"。
+
+**二、🔴 一枚根因：R143 与 R428 不是"欠一台安静机器"，是账上那条容器内配方根本跑不起来**
+- 看板与跟进单反复写的 `docker exec -e INDEX_BACKEND=pgvector -i enterprise-brain-backend-1 /usr/local/bin/python - < 脚本`，本席 23:41 现取当场死在 import：`ModuleNotFoundError: No module named dotenv`（而 `app/rag/retriever.py:12` 就 import 它）。
+- 真解释器 = **`/app/.venv/bin/python`**（现取 `-c "import dotenv, app.rag.pg_store"` ⇒ deps ok）。另两格配套事实：镜像里**没有 `tests/`** ⇒ 逐题半张要先 `docker cp` 语料件进 `/tmp`；`/app/chroma_db` **是真卷**（`enterprise-brain_vectordb`，内有 09-18 那枚 collection 目录）⇒ 容器内同时看得见 Chroma 与 PG，对账在容器内成立。
+- 后果与改口：照旧配方派工，执行层 0.4 s 就退，谁也没量到东西，于是每班都把这两枚读成"机器不安静"。下次派工词必须写 `/app/.venv/bin/python`，并把"逐题要先 cp 语料件"写进前置。R428 的驱动件 `%TEMP%\evalrun\r428-driver.md` 本席现取**不存在**（`evalrun` 目录只剩 run18/19 那批）⇒ 按 §120 四重建才能投。
+
+**三、过夜队列（业主 23:2x 令"按序把之后的跑完＋断网准备"）**
+- `%TEMP%\eb103\overnight1003.py`（正文全 ASCII，仓路径 `chr()` 现拼，守 #109）＋ `%TEMP%\eb103\overnight\ledger.jsonl`：逐枚记 `ts/step/rc/secs/log/head/dirty_total/dirty_non_chroma`，**已 rc=0 的步骤重跑自动跳过** ⇒ 断联/断电后照抄一条命令即续跑，不重打。
+- 三步：`gate5_full`（`python scripts/run_gate.py` 自选 `-n 7`／headroom 14.7 GB，23:42:09 起）→ `r143a_corpus`（`scripts/compare_vector_recall.py --skip-questions`，语料级差集，不打模型）→ `r143b_questions`（逐题召回，打**容器内本机 Ollama**，零网络依赖）。全三步**断网都不影响**。
+- 🔴 **R143 语料级半张已现取得数**（23:46:45 本席用改好的解释器手工跑 `--skip-questions --all`，rc=0／12.4 s，产物 `%TEMP%\eb103\r143a_smoke.out`）：口径 `nomic-embed-text`／768 维／l2，U1 距离=l2（样本 64 枚），`pg_vectors 1008`＝`chroma_vectors 1008`＝`chunks_rows 1008`＝`chunks_with_backfilled_embedding 1008`，`only_in_pg 0`／`only_in_chroma 0`／`wrong_width 0`／`all_zero_rows 0`／`index_version_id_null 0`。⇒ **集合面两边全等**，逐题召回半张交过夜队列 `r143b_questions`（打容器内本机 Ollama，断网不影响）。
+- 踩坑入册：`subprocess.run` 同时给 `stdin=` 与 `input=` 必 `ValueError`（第一版三枚全 rc=125 秒死，0.0 s）；`Start-Process` 的 `-RedirectStandardOutput` 目录必须**先存在**。这两条是"派工词写对了、载荷却零落盘"的又一族成因。
+- 门 #5（HEAD `72eaca0`／`python scripts/run_gate.py` 自选 `-n 7`／23:42:09 起）＝**0 failed／10651 passed／58 skipped／2 xfailed／605.70 s／exit=0**。在册绿票换顶的前提＝0 failed。门飞行期间本席**零仓内写、零并行 pytest**（门 #2 那次自纠的口径），落这笔是在门收窗之后。
+
+**四、run18／run19 收官（19:31 双双 rc=0，105/105 片）**
+- `correctness 0.6571／0.6476`、`evidence 0.7905／0.7810`、`p95 73.4 s／70.5 s`、`scorable_subset 0.6977／0.6744`（deducted_n=19→分母 86）。
+- 🔴 `scripts/r580_per_class_attribution.py` 的逐类对照**当场拒**（rc=2）：两窗 `index_backend` 相同（都 `pgvector`）⇒ 翻分不能归给读腿那一刀。⇒ A④「逐类不退化」这格还欠一窗或改口径，不许抄上一班那句。
+- 本窗指纹 `revision=a2bbf13`＝当时 HEAD、`index_backend=pgvector`：这两窗本来就是**读腿切到 pgvector 之后**的读数，格① 那一格有它们作证。
+
+**五、待业主**：仍只有老几样（A1 `users.department` 回填／A3 密级标签回填／H13 裁定／R440 整表口径／`MODEL_CONTEXT_TOKENS` 与 Ollama `num_ctx` 配套／评测集改题再批准／一张真扫描件）。🔴 新增一句：`origin` 这个 github remote 现在 TLS 握手失败，要不要留它、要不要改推 gitee 为准，属业主侧决定，本席不擅自删远端。
