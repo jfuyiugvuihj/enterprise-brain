@@ -5433,3 +5433,10 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
   - 门现状：A① 待本窗判、A② 残留红两枚有名有姓（`tool-*`／`report-*`，归因件 `b78ecd8`）、A③ ✅、A④ 待 run18＋run19 同修订对；B／E 整行已移出 V1（09-24 裁定）；C① 生产侧记未验（业主已裁 A1 不在真库做、A3 属交付阶段）、C② 达标、C③ 待新集重量；D 三格待本窗首读数。
   - 判据欠的**不是代码**的那几格：格③ 生产 `department`/`classification` 全空（四件判据记「未验」），V2 #20 越权 Agent 永远收不掉（只能记未验），这两句不许翻绿。
 
+
+### 161.1 订正（本席 17:3x 现取·覆盖 §161 与看板 §4EP 那句「R605 零写入」）
+- 16:36 那次取证在那一刻是真（`diff --numstat HEAD` 空／`ls-files --others` 空／`rev-list --count 74572b7..HEAD`=0），但**收席之前** `be-r602b` 又写了三枚：`app/db/connection.py`（+20/-4，边界签名末尾加 `**caller_kwargs`）、`app/notifications/states.py`（把那行「row_factory 原样递下去」的假话注释改掉）、新增 `tests/test_r605_row_factory_reaches_the_driver.py`。三枚已按字节归档 `%TEMP%\eb103\delete-quarantine-2026-10-03\r605-payload\`（`manifest.tsv` 里三行 sha12＝`b7f772fd7399`／`de843816caf1`／`b9c8db553a52`），工作树 `be-r602b` 已随删除清单进检疫区。
+- **实现层无独有产物**：与已并树的 `8d8b85f` 同一修法（边界把调用方多给的驱动参数原样转发，策略名排在后面赢）；差别只在参数名 `caller_kwargs` vs `driver_kwargs` 和文档串措辞。逐行比对＝`Compare-Object` 交回 15/3 行、全在注释与签名那两格。
+- 🔴 **但牙有独有**：那枚新钉 11 条 `def test_`，已并树的 `tests/test_r602_notification_pg_leg.py` 只有 4 条。逐名对账后独有 6 条——写腿也到驱动／env 全关时转发逐字节等于调用方给的那几枚／DSN 自带超时压过 env／六枚测试缝不许漏进转发的 kwargs／两枚边界签名都收调用方 kwargs／states 探针仍在向边界要 dict_rows。
+- 立新单 **R610**（写域＝`tests/` 一枚新钉，零生产码·窗后做）：把那 6 条独有牙钉在现在的 `**driver_kwargs` 签名上，两态亲跑（dirty＋commit 后同清单）。R605 号仍作废不复用；R609 仍留给那 75 枚 `*-processing.json` 的写手不在跟踪代码里那一格。
+- **规矩补一条**（已写进 `AGENTS.md:52`）：「零写入」只在取证那一刻成立——收席动作之前必须**重跑** `diff --numstat HEAD`＋`ls-files --others`＋`rev-list --count`，三枚都在收席那一刻现取，不许引用几分钟前的旧账。事故 #107 的正确定性因此从「二次投递零写入」改成「二次投递且留下 6 条独有牙」。

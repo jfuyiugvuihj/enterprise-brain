@@ -1694,7 +1694,7 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | ⛔ **R598 投递触顶（未落地）** | — | **R598** 评测集改题收尾（业主 10-03 已批·判据全文已落跟进单 §160.4） | 树**没建起来** | 🔴 `spawn_agent` 报 `collab spawn failed: agent thread limit reached`（当时在飞六枚＝这台机实测上限 6：第 7 枚 spawn 直接触顶，纸上那句「最高 6–8」今天被量低了一格）。按仓规**不当场补投**。零写入取证：`Test-Path be-r598` ＝ **False**、主树 HEAD 未变。腾出槽位后一次投出 | 10-03 14:3x |
 | （总控亲做·非执行层） | — | **R487＝V2 #19 账号面读数到手**（`python scripts/provision_bulk_accounts.py --count 30 --roles staff manager admin auditor --departments 财务部 行政部 销售部 技术部 --apply`） | 演示库 `enterprise_brain`；凭据落 `%TEMP%\r52_bulk_accounts.json`（仓外，不入仓） | ✅ dry-run rc=0 先过 ⇒ 30 枚／staff 8·manager 8·admin 7·auditor 7／四部门 8·8·8·6／**role×department 16 of 16 全覆盖**；`created/verified 30 of 30`、`bulk account acceptance: PASS`（逐枚登录取 token＋`GET /api/v1/profile` 回显真角色与部门＋`GET /api/v1/data-files` 逐枚低于 500＋匿名 401/403）。🔴 这一格只交**账号面**：检索面越权矩阵在演示库仍是空集（`documents` 部门全空），牙在 R469 沙盒臂那侧，**不许拿 R487 翻 C 门或格③ 的绿** | 10-03 14:5x |
 | `Aquinas`／`Gauss`／`Leibniz`／`Chandrasekhar`／`Archimedes`／`Sagan`／`McClintock`／`Heisenberg`（**本班收席八枚，全部已交回并树**） | 唯一键只认 id：`01a10054-9757…`／`01a100a9-71ec…`／`01a10078-70ee…`／`01a100ba-94ce…`／`01a1005e-ce41…`／`01a10054-faba…`／`01a10044-df4b…`／`01a10044-2da3…` | R60 · R602 · R601 · R599 · R591 · R589 · R597 · R596（后四枚上一格并完，本格只收席腾槽） | 主树 `9f43a31`/`8d8b85f`/`0a75e73`/`1514ba1` | ✅ 交回并树·席已关（这台机实测并发上限 6，关席才腾槽） | 10-03 17:0x |
-| ⛔ **事故 #107：R605＝R602 的第二次投递** | `01a100e0-c0e2-73b3-b377-35712fb57827`（`Darwin`） | **R605**（承作废的 R602，号账错位） | `be-r602b`@`74572b7` | 🔴 零写入取证＝`diff --numstat HEAD` 空＋`ls-files --others` 空＋`rev-list --count 74572b7..HEAD`=0 ⇒ 收席；**R605 号作废不复用**（同类第六次） | 10-03 16:4x |
+| ⛔ **事故 #107：R605＝R602 的第二次投递**（17:3x 订正：收席前它已写入三枚） | `01a100e0-c0e2-73b3-b377-35712fb57827`（`Darwin`） | **R605**（作废不复用）→ 另立 **R610** | `be-r602b`@`74572b7`（已进检疫区） | 🔴 16:36 的「零写入」只在那一刻成立：收席前写入三枚（`connection.py` +20/-4 走 `**caller_kwargs`／`states.py` 注释订正／新钉 `test_r605_row_factory_reaches_the_driver.py`），已按字节归档 `%TEMP%\eb103\delete-quarantine-2026-10-03\r605-payload\`；实现与 `8d8b85f` 无独有产物，**牙独有 6 条**（11 vs 4）⇒ R610 窗后收割两态亲跑 | 10-03 16:4x→17:3x |
 | （总控亲做·非执行层） | — | **R60 停 Chroma 写并树**（写路径唯一化＋回滚演练账本＋S0–S5 退役阶段表） | 主树，9 枚路径显式列名 | ✅ 两态亲跑 277 passed → 277 passed；控制树 `be-r60ctl`@`8adb57d` 同 12 枚坐标件 32F/177P/1x 与 apply 态逐枚同名同数 ⇒ 零新增红 | 10-03 16:5x |
 | （总控亲做·非执行层） | — | **R602 通知中心 PG 腿并树**（`connect_with_policy` 接住 `row_factory`，桩全撤写真签名钉） | 主树 `8d8b85f`，基点 `292168a` 与 `app/db/connection.py`·`states.py` 在 `292168a..HEAD` 零重叠已核 | ✅ dirty 14F/158P/1skip/1x → 控制树 14F/151P/1x，FAILED 名单相等；+7P/+1skip 恰等新钉 | 10-03 17:0x |
 | （总控亲做·非执行层） | — | **R601＋R599 并树**（常驻钉改前后差分＋落点必须在仓外／合成扫描件 V2 #13 首读数） | 主树 `0a75e73`·`1514ba1` | ✅ 41 枚件 695 passed/6 skipped（两态同数）；R599 K2 摘过的 `app/rag/loader.py` 并树前现验与 HEAD 逐字节全等 | 10-03 17:0x |
@@ -6700,6 +6700,8 @@ C 门三格现状：①越权 0 条＝**未验**（R481 口径；R487 只到账�
 **三、⚠️ 事故 #107：同一枚单第二次投递（同类第六次）**
 
 - `R602` 的施工席 `Gauss` 失联后被当作废，另立 `R605` 投给新线程 `Darwin`；随后 `Gauss` 活着交回全套实修 ⇒ 同题两席。处置按仓规：先取证（`be-r602b` dirty=0／untracked=0／相对基点 0 枚提交＝零写入），再收 `Darwin` 席，**R605 号作废不复用**，`R602` 按交回并树。
+
+- 🔴 **17:3x 订正**：上面那句「零写入取证⇒收席」只在 16:36 那一刻成立，收席之前 `Darwin` 已写入三枚（`connection.py` +20/-4、`states.py` 注释订正、新钉 11 条 `def test_`）。三枚按字节归档在 `%TEMP%\eb103\delete-quarantine-2026-10-03\r605-payload\`，逐行对账＝**实现无独有产物**（与 `8d8b85f` 同修法，只差参数名与措辞），**牙有独有 6 条** ⇒ 另立 **R610**（写域＝`tests/`，窗后两态亲跑）。R605 号仍作废不复用。详见跟进单 §161.1。
 
 **四、run18＝安静复测窗（窗内在跑，17:12:40 起）**
 
