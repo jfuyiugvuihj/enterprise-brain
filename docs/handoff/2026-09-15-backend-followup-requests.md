@@ -5195,3 +5195,38 @@ R557（`Pasteur`）先交全量机器账的**纸**，本单把那本纸变成**�
 - 机理（R572 现取，待 `Popper` 自己复现）：`tests/conftest.py:708 _eb_r563_same` 第四腿 `getattr(a, "__defaults__", None) == getattr(b, "__defaults__", None)` 拿**实例身份**比 FastAPI 的 `File()/Form()`（继承 pydantic `FieldInfo`，未定义 `__eq__` ⇒ 走 `object.__eq__`）；`importlib.reload` 合法重载后码体逐字节相同、默认值是新实例 ⇒ 恒不等 ⇒ `:757` 判成漂移。旁证：漂移名单**只有** `upload_document` 一枚，同模块其余顶层函数全绿——它们默认值是 `None`/字符串这类按值相等的东西。
 - 🔴 两条锁死给执行层的规矩：**不许锯腿**（不许写成「`co_code` 相同就跳过 `__defaults__`」，那是把守卫洗成永真）；**真漏的形状必须仍红**（三把反证：摘腿必红／换语义不同的桩必红／真留假身仍红在凶手模块自己名下——R563 原意就是「红落在凶手身上」，见 `conftest.py:730` 那段注释）。
 - 判据与读数要求全文见看板 §0 名册 `Popper`/R584 那一行。并树前总控会亲跑那 13 枚名单集正序与反序两遍，**两向同数且 0 error** 才算达。
+
+
+## §155（10-03 第十二班第六格续·总控线，主树 `cc386be`，run15 相 2 专窗**在跑**）：run15 头四题就把 D 格的两枚真缺陷炸出来——R585 死终态不带原因码 · R586 报告档在 4096 窗口下结构性进不去
+
+### 一、开窗凭据（现取，命令＋输出同段）
+
+- 09:54:35 开窗：`scripts/eval_window_shard_driver.py --tag run15 --fixture %TEMP%\evalrun\fixture-report12.jsonl --run --env-file deploy/.env.server --repo be-eval95`，壳 pid 62168／driver pid 62088，`window.json` 已落（`revision` 与 `fixture_sha256=a9af15ea81c2` 进指纹）。
+- 🔴 与历轮唯一的差别是本席亲手补了那枚缺的量具入参：进程环境 `EVAL_DECLARE_LANE_TIER=报告`（`eval_transport_ask_v2.py:220` 的 `DECLARE_LANE_TIER`，`os.environ` 经 driver `collector_env(..., dict(os.environ), ...)` 透传），于是载荷第一次带 `lane=report`，`app/api/v1/chat.py:2567` 那两道与件才第一次同时成立。
+- 现场反证（不是推断）：开窗两分钟内 `docker logs enterprise-brain-backend-1` 出现 **14 次 `GET /api/v1/queue/status/<request_id>`**，轮询间隔与 `frontend/src/components/ChatPanel.vue:839` 的 `QUEUE_POLL_MS=3000` 同源；历轮跑分这个计数是 **0**——0 就证明从没入队，这一条比任何自述都硬。
+- worker 侧同步现取：`[QueueWorker][R548] request_id=fc3cd247… 报告档逐片汇 33 枚 / 674 字 / 腿 doc` ＋ `报告档跑完 status=success awaiting_hitl=True sources=0 model_calls=3`。**R558/R578 那枚逐片注册点第一次在真容器里被走到**（此前只有离线证明），本格只报读数，不改 A②／D 的判绿口径。
+
+### 二、头四题读数（09:57–10:02，12 题里的 4 题）
+
+| 题 | kind | wall | answer_chars | 终态 shape |
+|---|---|---|---|---|
+| `report-01` | `queued_dead` | 149.5 s | 18（哨兵 `<no-bytes-emitted>`） | **`no_keys`** |
+| `report-02` | `queued_approved` | 80.2 s | 727 | `structured`／`schema=queue-terminal-v1`／`usage_present=true`／`approval_present=true` |
+| `report-03` | `queued_polled` | 52 s | 856 | `structured`／`state=answered`／`usage_present=true` |
+| （第 4 题在跑） | | | | |
+
+- 同步道对照（run14 同四题）：`report-01` `ok`／51.5 s／1202 字、`report-02` `approved_ok`／52.4 s／727 字、`report-03` `ok`／28.5 s／240 字。🔴 **`report-03` 从 28.5 s 涨到 52 s、`report-01` 从答回 1202 字变成 18 字哨兵**——切队列道不是免费的，这两笔代价必须进 D 格的账，不许只报「跑通了」。
+
+### 三、R585｜死终态交回 `no_keys`，客户拿不到「为什么失败」（**待投**，P1）
+
+- 现取：`report-01` 的 `queue.terminal.shape = "no_keys"`，`usage_present=false`、`schema=null`、`state=null`、`sources_present=null`；而 worker 日志里同一枚 `request_id=a55ef916…` **明明写着** `报告档终态不可重试，不再重投 -> dead: context_limit_exceeded (reason=non_retryable_terminal attempts=1 max_attempts=3)`。
+- 也就是说原因码在服务端**已经算出来了**，但可读面 `/queue/status` 在那一枚终态上一个键都不交。R578 的注册点交的是「worker 内部拿得到 sink」，R558 交的是「逐片段 reach the polling surface」——**失败终态那一条从来没被接到可读面**，本单补的就是这一格。
+- 后果按客户的说法讲：报告档失败时前端只会显示「没字」（哨兵 `<no-bytes-emitted>`），客户判断这是 bug，不会知道是窗口不够大——这正是 `app/agents/nodes.py:379-387` 那条注释反对的事（走兜底文案会把真原因烂在日志里），今天它以另一种形式发生了：**日志里有、面上没有**。
+- 判据五格：① 死终态在可读面必须交回 `state=dead` ＋ `reason` 枚 `internal_error`/`context_limit_exceeded` 这类**在册**稳定码（禁新造码，与 `tests/test_error_code_vocabulary.py` 那把 `ENUM_CODES` 尺对账）；② 成功终态形状一字不改（`schema=queue-terminal-v1` 的现有键不许增删改序）；③ 不可重试与可重试两种 dead 要分得开（`retryable` 那一格沿用 R448 的口径）；④ 反证三把（摘掉 reason 装配必须红／把在册码换成现编字符串必须被字面量钉红／成功终态多塞一键必须红）；⑤ 纸里必须逐字引本纸 §一 那条 worker 日志原文与 `terminal.shape` 读数，并明写「本单不治窗口参数，R586 才是」。写域 `app/api/v1/queue*.py`／`app/api/v1/chat.py` 可读面那几行＋新钉＋纸；🔴 **`chat.py` 今天归 R577 已结案、`queue_worker.py` 今天归 R578 已结案，两枚写域现已腾空**，但本单与 **R586 不许同时动 `chat.py`** ⇒ 两单串行，先 R585。
+
+### 四、R586｜报告档在 `MODEL_CONTEXT_TOKENS=4096` 下结构性进不去（**待投**，P1，业主已授「配套这一格你自己来」）
+
+- 现取拒发原文（worker 日志 09:57:02）：`tier=analysis prompt_tokens=2694 … required_n_ctx=4230 n_ctx=4096 full_window_seconds=46.6 max_coherent_n_ctx=18064 window_coherent=yes error_code=context_limit_exceeded`，接着一行「`No request was sent and no business conclusion was generated.`」。**只差 134 token**，而 `max_coherent_n_ctx=18064` 说明抬到 8192 仍落在在册自认「相干」的范围里。
+- 两半都必须动（缺一半等于没改，这条本仓已经付过三次学费）：① 应用侧 `deploy/.env.server` 加 `MODEL_CONTEXT_TOKENS=8192`（现取该文件**根本没有这一行**，走的是 `app/common/model_budget.py:285` 的 `DEFAULT_CONTEXT_TOKENS = 4096`）；② 服务端 `ollama` 那一格今天只有 `NVIDIA_VISIBLE_DEVICES`／`NVIDIA_DRIVER_CAPABILITIES`（`docker-compose.yml:93-97`），**全仓零命中 `OLLAMA_CONTEXT_LENGTH`**，`ollama ps` 现读 `qwen3.5:9b` 的 `CONTEXT=4096`。
+- 🔴 代价必须先量再改，不许拍：在册两笔实测互相冲突——`.env.example:309` 记「4096→8192 让 load_s 从 0.001 涨到 5.811（要重装模型）」，`app/agents/contracts.py:329` 记「同一 2154-token prompt 在 4096 与 8192 下 prefill 66.683 s / 68.849 s（+3.2%）」。本机是 **RTX 4060 Laptop 8 GB，现读已用 5640 MiB、`qwen3.5:9b` 5.3 GB 常驻 100% GPU** ⇒ 8192 的 KV 增量有没有把模型挤出显存（一旦 offload 到 CPU，p95 就不是 +3% 而是数倍），**只有量出来才知道**。所以本单第一格是量，不是改。
+- 判据六格：① 三档配对各交一组真读数（4096 对照／6144／8192），每档 ≥5 题同题同序，报 avg/p95、`ollama ps` 的 `PROCESSOR` 列必须仍是 `100% GPU`（出现 `CPU`/`CPU -> GPU` 即判「挤出去了」，该档作废并写明）；② 改前改后各取一次 `/api/ps` 的 `context_length` 与容器 `printenv MODEL_CONTEXT_TOKENS`，两半同数字才算「配套」，`tests/test_r535_context_pairing_gate.py:163` 那枚「env 宽于服务端＝不配套」的钉必须仍是绿的；③ 报告档 12 题在选定档上重跑，`queued_dead` 枚数必须为 0（非 0 就照实报，不许靠调 `MODEL_TIER_ANALYSIS_MAX_TOKENS` 绕过——那是改判据不是修缺陷）；④ A① 问答档 p95 必须在同一档复测一次，🔴 **若 p95 越过 90 s 判「本档不可用」，不许拿「报告档好了」抵**；⑤ 反证两把（只改应用侧不改服务端，闸必须报 not paired／只改服务端不改应用侧，拒发必须仍发生）；⑥ 纸里必须写清「这一改属交付参数，客户机显存不同就要重量」，并把 `deploy/.env.server.example` 一起补上说明。写域 `deploy/**`＋纸＋新钉；**禁动 `app/**` 的算式与缺省值**（R535 明写「参数抬到哪一档属裁量，算式不许顺手改」）；与 R585 串行。
