@@ -13,7 +13,8 @@
 在册允许的两枚发射点：
   · ``app/rag/retrieval_pipeline.py`` —— 本单落的产品道那一枚（唯一实现 + 唯一调用点）；
   · ``app/rag/debug.py`` —— RAG 调试面那枚遗留发射器，不在本单写域，🔴 也不许被算成产品道读数
-    （口径出处 ``docs/testing/r483-empty-tables-2026-09-29.md:104``）。
+    （口径出处 ``scripts/r483_empty_tables_triage.py::TRIAGE["retrieval_traces"]["debug_only_surface"]``；
+    那一格的裁定与词表都以这枚真源为准，再生件的行号会漂，本文件不引行号——R597）。
 """
 import ast
 import re

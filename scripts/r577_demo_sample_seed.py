@@ -164,10 +164,49 @@ def missing_rules(existing: list[dict], planned: list[dict]) -> list[dict]:
     return [rule for rule in planned if str(rule.get("name") or "") not in have]
 
 
+#: 裁定词表与逐格裁定的真源：词表与裁定全在这一枚文件里，本件只从它取词、不抄第二份。
+#: 🔴 手抄的那一份在真源改口之后会继续说假话——R593（2026-10-03）把本件原先抄进散文的那一格
+#: 按现读改了判，本件的拒收语义没变，变的只有「那一格叫什么」这一枚出处（R597 收口）。
+TRIAGE_SCRIPT = "r483_empty_tables_triage.py"
+#: 这把闸守的那一格用**表名**当坐标：表名不随现读改判漂，裁定词会。
+GUARDED_TABLE = "alert_rules"
+
+
+def triage_tool():
+    """加载在册裁定件本身（不是它的副本）：``VERDICTS`` 词表与 ``TRIAGE`` 台账全在它那一处。"""
+    spec = importlib.util.spec_from_file_location(
+        "r483_empty_tables_triage", ROOT / "scripts" / TRIAGE_SCRIPT
+    )
+    if spec is None or spec.loader is None:  # pragma: no cover - 文件不在树上才是真出事
+        raise RuntimeError("cannot load scripts/" + TRIAGE_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def guarded_verdict(table: str = GUARDED_TABLE) -> str:
+    """这一格**今天**的裁定词：现取真源，并核它仍在真源自己的词表里。
+
+    🔴 这一格不在台账里、或词不在词表里 ⇒ 当场抛，一律不回落成手抄词：本件宁可让那句拒收消息
+    发不出去，也不替上一班的账再抄一遍。R597 的两把反证刀就从这一枚把手下嘴。
+    """
+    module = triage_tool()
+    if table not in module.TRIAGE:
+        raise RuntimeError("scripts/" + TRIAGE_SCRIPT + " 的台账里没有 " + table + " 这一格")
+    verdict = str(module.TRIAGE[table]["verdict"])
+    if verdict not in module.VERDICTS:
+        raise RuntimeError("scripts/" + TRIAGE_SCRIPT + " 里 " + table + " 的裁定 " + repr(verdict)
+                           + " 不在它自己的词表 " + repr(tuple(module.VERDICTS)) + " 里")
+    return verdict
+
+
 def attributed_alerts(rows: list[dict], department: str = OWNER_DEPARTMENT) -> list[dict]:
     """只采纳盖了部门章的行；``alerts.department`` 空着的行在这里就是「没归因」。
 
-    这一枚是反证②的牙：needs_owner 那一格真正要拦的是「拿一行无归属的告警冒充闭环」。
+    这一枚是反证②的牙：它真正要拦的是「拿一行无归属的告警冒充闭环」，与那一格的裁定词叫什么无关。
+    🔴 原先这一句手抄了那一格的裁定词，R593 按现读改判之后它就成了过期账；现在要引用那一格就按
+    表名说（``GUARDED_TABLE``），词一律走 ``guarded_verdict()`` 现取真源。
     """
     return [row for row in rows if department in str(row.get("department") or "")]
 
@@ -178,7 +217,8 @@ def require_attributed_alerts(rows: list[dict], department: str = OWNER_DEPARTME
     if len(kept) < MIN_ALERTS:
         raise ValueError("带部门归因的告警行不足 " + str(MIN_ALERTS) + " 枚（现 " + str(len(kept))
                          + " 枚，总行数 " + str(len(rows)) + "）: alerts.department 为空的行是「无归属」，"
-                         "拿它走闭环等于把 needs_owner 那一格判绿 —— 拒收，不是放宽")
+                         "拿它走闭环等于把 " + GUARDED_TABLE + " 那一格判绿"
+                         "（该格今天的裁定＝" + guarded_verdict() + "）—— 拒收，不是放宽")
     return kept
 
 

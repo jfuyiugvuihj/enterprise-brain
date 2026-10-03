@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """R536 判据① —— 产品问答道（``POST /ask``：流式腿与批准续跑腿）确实发出 ``retrieval.completed``。
 
-症状与裁定：全仓发这枚事件的只有 ``app/rag/debug.py`` 那一枚 RAG 调试面，正常问答链一枚都不发
-⇒ ``retrieval_traces`` 永远 0 行（裁定原文 ``docs/testing/r483-empty-tables-2026-09-29.md:104``）。
+症状与裁定（09-30 的历史陈述，不是今天的读数）：全仓发这枚事件的只有 ``app/rag/debug.py`` 那一枚
+RAG 调试面，正常问答链一枚都不发 ⇒ ``retrieval_traces`` 当时读数为 0 行。裁定与词表只有一份真源：
+``scripts/r483_empty_tables_triage.py::TRIAGE["retrieval_traces"]``（现取用它的 ``--json``；再生件
+``docs/testing/r483-empty-tables-2026-09-29.md`` 里那一节由它渲染，行号会漂，本文件不引行号——那一格
+今天已按现读改过判，抄词与抄行号都会当场过期（R593／R597）。
 🔴 同一条裁定钉着口径：**不许拿 ``POST /retrieval/debug`` 那一腿冒充产品道** —— 所以本文件把
 「调试面仍旧只发它自己那一枚」也钉成判据（``test_the_debug_face_still_emits_exactly_one``）。
 

@@ -1050,7 +1050,7 @@ def _retain_permitted(hits: list[dict], pred) -> list[dict]:
 # ``retrieval.completed`` 的只有 ``app/rag/debug.py`` 那一枚 RAG 调试面，正常问答链一枚都不发
 # ⇒ ``retrieval_traces`` 永远 0 行，V2 第 12 句「每轮问答可回查检索」没有数据，C 门「检索留痕」
 # 那半格也永远从沙盒读数升级到不了生产读数。裁定原文在
-# docs/testing/r483-empty-tables-2026-09-29.md:104 —— no_seed_path 不是合法为空，是欠码；
+# scripts/r483_empty_tables_triage.py::TRIAGE["retrieval_traces"]（裁定词唯一真源，现取用它的 --json；「永远 0 行」是 09-30 陈述）；
 # 同一条裁定还钉着口径：🔴 不许拿 ``POST /retrieval/debug`` 那一腿冒充产品道。
 #
 # 这一节是全仓**唯一**的产品道发射实现，形状由 tests/test_r536_single_emission_point.py 钉死：

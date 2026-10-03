@@ -76,6 +76,23 @@ def load_seed_copy(tmp_path: Path, name: str, anchor: str = "", replacement: str
 seed = _load_seed()
 
 
+#: 裁定词表与逐枚裁定的唯一真源（R597 判据①）：本件要引用那一格的裁定词，只从这里现取。
+TRIAGE_REL = "scripts/r483_empty_tables_triage.py"
+
+
+def load_triage():
+    """把在册裁定件读进内存（只读）：本件不抄第二份词表，也不改它一个字。"""
+    spec = importlib.util.spec_from_file_location("r483_triage_for_r577", ROOT / TRIAGE_REL)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+TRIAGE = load_triage()
+
+
 class LandmineSocket:
     """开 socket 就炸：干跑与所有打桩用例的正控都不该走到这里。"""
 
@@ -428,13 +445,26 @@ def test_the_metric_list_is_read_not_invented():
 
 
 def test_unattributed_alert_rows_are_refused():
-    """``alerts.department`` 为空的行就是「无归属」：拿它冒充闭环＝把 needs_owner 判绿（反证②正控）。"""
+    """``alerts.department`` 为空的行就是「无归属」：拿它冒充闭环＝把那一格判绿（反证②正控）。
+
+    🔴 R597 连名带断言改口（在册断言只加不减）：docstring 原先手抄了那一格的裁定词，而真源
+    ``scripts/r483_empty_tables_triage.py`` 在 R593 已按现读把那一格改了判，那句手抄今天就是过期账。
+    本枚钉现在认两件事：① 拒收消息点名的是**表名** ``seed.GUARDED_TABLE``；② 消息里那一枚裁定词与
+    真源 ``TRIAGE.TRIAGE[表名]["verdict"]`` 现取的读数逐字相等。真源改口它跟着改口；真源被人删词，
+    它跟着红（刀见 docs/testing/r597-*.md）。
+    """
     rows = [{"id": 1, "department": ""}, {"id": 2, "department": ""},
             {"id": 3, "department": seed.OWNER_DEPARTMENT}]
 
     with pytest.raises(ValueError) as refused:
         seed.require_attributed_alerts(rows)
     assert "无归属" in str(refused.value)
+
+    message = str(refused.value)
+    verdict = str(TRIAGE.TRIAGE[seed.GUARDED_TABLE]["verdict"])
+    assert verdict in TRIAGE.VERDICTS, (verdict, TRIAGE.VERDICTS)
+    assert seed.GUARDED_TABLE + " 那一格判绿" in message, message
+    assert "今天的裁定＝" + verdict in message, message
 
     attributed = [{"id": index, "department": seed.OWNER_DEPARTMENT} for index in (1, 2)]
     assert seed.require_attributed_alerts(attributed) == attributed
