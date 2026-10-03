@@ -34,7 +34,7 @@
 
 | 核验 | 命令 / 做法 | 输出 | 判定 |
 |---|---|---|---|
-| 三分片逐字节 == 夹具 | 把 `docs/testing/fixtures/r97-shard-{1,2,3}.jsonl` 按序拼接，与 `tests/fixtures/business_evaluation_100.jsonl` 比字节 | `concat bytes 24346` / `sha256 2230b2b45be18bfbb19f2f58a5ba55a5b36b444060886a30dcf073a81d678bab` / `byte-equal: True` | ✅ §46 的 `2230b2b45be18bfb` 与 24,346 B 为真 |
+| 三分片逐字节 == 夹具 | 把 `docs/testing/fixtures/r97-shard-{1,2,3}.jsonl` 按序拼接，与 `tests/fixtures/business_evaluation_100.jsonl` 比字节 | **09-20 代读数**：`concat bytes 24346` / `sha256 2230b2b45be18bfbb19f2f58a5ba55a5b36b444060886a30dcf073a81d678bab` / `byte-equal: True`；**10-03 复算现值**：`concat bytes 41941` / `sha256 686c564ff2985744e6f050e5ea7639500c99bd80b3e32fc3a85e585f5ecdd79b` / `byte-equal: True` | ✅ §46 的 `2230b2b45be18bfb` 与 24,346 B 在 **09-20 那一代为真**（当时三片拼接＝主件＝24,346 B）；R401（`baef92e`，09-28）把主件改到 41,941 B 而三片没跟着动 ⇒ 中间那一代那句 `byte-equal: True` 不成立，自 R598（`d3786fa`，10-03）三片由主件逐字节重派生才再次为真，凭据 `python scripts/r598_shard_sync.py --check` rc=0 |
 | 行数 | 三个分片各数 `\n` 分隔行 | `35 + 35 + 35 = 105` | ✅ 105 条，一题不漏（§1.2 表实发 105 行） |
 | 档位分布 | 读 `tier` 字段计数 | `问答 50 / 分析 35 / 报告 20` | ✅ 与看板 `docs/handoff/2026-09-15-orchestration-board.md:1071`、`:1493` 登记的 50·35·20 一致 |
 | `requires_evidence` | 计数 | `83 / 105` 为 true | 与 §2.1-C 的上限算术直接相关 |
@@ -355,7 +355,7 @@ cd C:\Users\fengx\PycharmProjects\be-r107      # codex/be-r107 @ a9fad8c
 & $PY scripts\rehearse_eval_window.py --only doc       # 按前缀筛
 
 # 2 夹具完整性（§1.1 前两行）
-& $PY -c "import hashlib,pathlib;fs=['docs/testing/fixtures/r97-shard-%d.jsonl'%i for i in (1,2,3)];d=b''.join(pathlib.Path(f).read_bytes() for f in fs);t=pathlib.Path('tests/fixtures/business_evaluation_100.jsonl').read_bytes();print('concat bytes',len(d));print('sha256',hashlib.sha256(d).hexdigest());print('byte-equal',d==t)"
+& $PY -c "import hashlib,pathlib;fs=['docs/testing/fixtures/r97-shard-%d.jsonl'%i for i in (1,2,3)];d=b''.join(pathlib.Path(f).read_bytes() for f in fs);t=pathlib.Path('tests/fixtures/business_evaluation_100.jsonl').read_bytes();print('concat bytes',len(d));print('sha256',hashlib.sha256(d).hexdigest());print('byte-equal',d==t)"   # 命令本身一字未改，它是上面那串 09-20 代读数的复现入口；10-03 原样复跑给 `concat bytes 41941` / `sha256 686c564f...` / `byte-equal True`。旧串 24346 与 2230b2b4... 是当时那一代的真值：R401（`baef92e`）改主件之后三片没跟着动，`byte-equal` 在中间那一代不成立，自 R598（`d3786fa`）由主件逐字节重派生才再次成立，凭据 `python scripts/r598_shard_sync.py --check` rc=0
 # 3 无出处 29 条（主口径 / 含 PDF）
 & $PY scripts\check_eval_evidence_coverage.py
 & $PY scripts\check_eval_evidence_coverage.py --include-pdf     # 会刷数千行 pypdf 噪声，慎

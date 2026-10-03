@@ -410,7 +410,7 @@ sys.exit(1 if flags else 0)
 | 预检 | 实取 | 判定 |
 |---|---|---|
 | 跑分树快进 + 零脏项 | `git merge --ff-only ede64f2` 后 `status --porcelain -uall` = **0 行** | ✅ 主树永远脏（1 万项），开窗只能用这棵树 |
-| 冻结三分片完整性 | `r97-shard-{1,2,3}.jsonl` 拼接 **逐字节等于** `tests/fixtures/business_evaluation_100.jsonl`，sha256 前缀 `2230b2b45be18bfb`，24,346 B | ✅ 与登记一致，题源没被碰过 |
+| 冻结三分片完整性 | `r97-shard-{1,2,3}.jsonl` 拼接 **逐字节等于** `tests/fixtures/business_evaluation_100.jsonl`；R621 把这格就地改判成三段账：① 入仓那代（`78b8507`）拼接＝主件＝**24,346 B／sha256 前缀 `2230b2b45be18bfb`（09-20 代读数，当时为真）**；② R401（`baef92e`，09-28）改了主件而三片没跟着动 ⇒ 两代之间 **29 行内容不同代**（105 枚 id 与顺序仍全同），本行那句 ✅ 从这一刻起是假绿——它核的是拼接自己的 sha，从没对主件核过字节；③ R598（`d3786fa`，10-03）把三片从主件逐字节重派生 ⇒ **现值 41,941 B／前缀 `686c564ff2985744`，两下再次逐字节相等** | ✅ 今天成立，凭据 `python scripts/r598_shard_sync.py --check` rc=0，主件 sha16 `686c564ff2985744`（本表这条判据从此必须附主件 sha16）；那两枚 09-20 代旧读数原样留在上一格，末节 10-03 那条勘误是本次改判之前的取证记录，照旧留档 |
 | P-7 采集器 dry-run | `collected=105 of 105`，exit 0，产物落 TEMP | ✅ 采集器与夹具接口仍对接 |
 | 适配器导入 + `EVAL_SIDECAR` 生效 | `SIDECAR` 解析到 TEMP（`inside_repo=False`），`transport` 可调用 | ✅ 默认值是 `scripts/collect-sidecar.jsonl`，**不设环境变量就是往仓内写** |
 | 认证链路（不打模型） | 经 `eval_transport_ask_v2.login()` 真取到 JWT，`token_len=147`、`prefix=eyJhbG` | ✅ 口令、`/api/v1/login`、顶层 `token` 键、`:8001` 直连四项同时对 |
