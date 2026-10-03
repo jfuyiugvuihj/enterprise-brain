@@ -6,6 +6,8 @@
   R345：读不开的数据文件不再一声不响 —— 本轮摘要点名每一份跳过的文件与异常类名，
   一份都没读成功时说的是「读不到」，不是「无异常」
 - daily_report(): 汇总关键指标生成日报文本；处置闭环（R251）：确认 / 转派 / 关闭 —— 状态机、处置人与时间落库、处置后按新状态读回
+- R582：三枚处置写口（ack / close / assign）各落一行审计账（audit_events），写点在 _audit_alert_disposal；
+  读台账的放行仍然不记 —— 「读了一次」不是一次事件，「写成了」才是
 导入不硬依赖 Postgres（懒建表）。
 """
 import os
@@ -372,9 +374,12 @@ def _audit_alert_denial(principal, resource: str, reason: str) -> None:
     """把一次告警面的拒绝写进既有那本账（``app/common/audit.py``，集合 ``audit_events``）。
 
     载荷只有主体、动作、资源名、判定结果与稳定码：别人的告警正文、部门值、密级值一个字都不
-    进 payload。也只在拒绝这一侧记账：台账每次开面板与刷新都要读一遍，把放行也写成一行
-    只会淹掉账本，
-    而「资源级放行、行级裁掉几行」按平台既有心智并不是一次拒绝事件（与检索按档位裁剪同理）。
+    进 payload。这一枚通路只管**拒绝**，读台账与写规则的放行同样不在这里记账：台账每次开
+    面板与刷新都要读一遍，把放行也写成一行只会淹掉账本，而「资源级放行、行级裁掉几行」按
+    平台既有心智并不是一次拒绝事件（与检索按档位裁剪同理）。
+
+    处置**写成**那一侧另有一枚出口 ``_audit_alert_disposal``（R582）：那里记的不是「读了一次」，
+    是「这一条被谁改成了什么」，两本加起来才是这一道口子的完整流水。
     """
     audit_log.record_audit(principal, ACTION_MANAGE_ALERTS, "denied", resource, reason)
 
@@ -654,6 +659,53 @@ def _refuse_alert_disposal(principal, code: str, status_code: int) -> None:
     _audit_alert_denial(principal, ALERT_DISPOSAL_RESOURCE, code)
     raise HTTPException(status_code=status_code, detail=code)
 
+#: 三枚处置写口在账上的**动作名**，一枚都不现编：``ACTION_MANAGE_ALERTS``
+#: （``app/common/permissions.py``，与拒绝那一格同一枚权限词）乘上本模块在册的
+#: ``ALERT_ACTIONS``（ack / close / assign）。三枚字面量因此互不相同（R582 判据①），
+#: 又都从同一枚符号长出来 —— 账面上 ``alerts:manage`` 那一行仍是「拒绝」，
+#: ``alerts:manage:ack`` 一族的三行是「放行并落成」，同一枚 ``resource`` 把两面对齐成
+#: 同一道口子的流水，而不是两本互不知情的账。
+ALERT_DISPOSAL_AUDIT_ACTIONS: dict[str, str] = {
+    action: f"{ACTION_MANAGE_ALERTS}:{action}" for action in ALERT_ACTIONS
+}
+
+#: 放行那一侧的判定词与稳定码，两枚都是在册读数，本件一枚都不新造：
+#: ``allowed`` 与 ``app/common/authorization.py`` 的 authorize、``app/api/v1/data.py`` 的资源门
+#: 同一枚词；``permission_granted`` 是 ``app/common/policy.py`` 对「角色持有 alerts:manage」交回的
+#: 原话（``app/api/v1/observability.py`` 已在审计侧引用过它）。``reason`` 不另开码表 —— 与
+#: ``_refuse_alert_disposal`` 那句「本件不为审计另开第二份码表」同一口径，取的只是放行那一枚。
+ALERT_DISPOSAL_AUDIT_OUTCOME = "allowed"
+ALERT_DISPOSAL_AUDIT_REASON = "permission_granted"
+
+
+def _audit_alert_disposal(principal, action: str, alert_id: int, row: dict) -> None:
+    """把一次**处置成功**写进同一本账（``app/common/audit.py``，集合 ``audit_events``）。
+
+    R582 治的就是这一格原先的空白：三枚写口只有拒绝落账，客户问「谁在什么时候关掉了这条
+    告警」时 ``audit_events`` 答不出，只剩 ``alerts`` 表那三列时间戳 —— 表列不是审计账（不可
+    追加、没有主体身份链），所以这里补的是账，不是把表列再抄一遍。
+
+    判据③要「谁派的」与「派给谁」同时在场：``actor`` 取服务端自己认下的处置主体，
+    ``assigned_by`` / ``assignee`` 取**处置之后读回的那一行**（``alert_disposal_writes`` 把
+    ``actor`` 写进 ``assigned_by``、接手人写进 ``assignee``），账上写的因此是行本身，不是调用方的
+    自述。正文、部门值、密级值一个字都不进载荷 —— 与 ``_audit_alert_denial`` 同一口径。
+    """
+    audit_log.record_audit(
+        principal,
+        ALERT_DISPOSAL_AUDIT_ACTIONS[action],
+        ALERT_DISPOSAL_AUDIT_OUTCOME,
+        ALERT_DISPOSAL_RESOURCE,
+        ALERT_DISPOSAL_AUDIT_REASON,
+        after_summary={
+            "actor": str(getattr(principal, "username", "") or ""),
+            "alert_id": int(alert_id),
+            "action": action,
+            "status": str(row.get("status") or ALERT_STATUS_OPEN),
+            "assigned_by": str(row.get("assigned_by") or ""),
+            "assignee": str(row.get("assignee") or ""),
+        },
+    )
+
 
 def _require_capable_assignee(principal, row: dict, assignee: str) -> None:
     """转派的四格失败共用一枚码。
@@ -680,6 +732,10 @@ def _dispose_alert(principal, alert_id: int, action: str, assignee: str = "") ->
 
     R359 另加一条前置：生产环境而库不在 ⇒ 503，三条处置写口一起过这道闸。写成「200 +
     处置后的行」而实际只落进内存，等于在台账上留下一笔谁都无法复核的处置。
+
+    R582 起还有一件：两条腿**写成**之后共用同一枚写账点 ``_audit_alert_disposal``，各落一行
+    ``audit_events``；三格拒绝都在上面就抛了，永远走不到这里，所以账上的 ``allowed`` 行只对应
+    真实发生了的处置，而拒绝那三格仍只有 ``_audit_alert_denial`` 一条通路。
     """
     _require_ready_store(f"dispose_{action}")
     if not _database_available():
@@ -699,39 +755,43 @@ def _dispose_alert(principal, alert_id: int, action: str, assignee: str = "") ->
             disposed_at=_alert_disposal_now(),
         )
         row.update(zip(columns, values))
-        return alert_ledger_row(row)
-
-    _ensure()
-    with _conn() as conn:
-        _require_alert_disposal_schema(conn)
-        row = _alert_row_from_connection(conn, principal, alert_id, for_update=True)
-        if row is None:
-            _refuse_alert_disposal(principal, ALERT_DISPOSAL_NOT_FOUND_CODE, 404)
-        current = alert_row_status(row)
-        if not alert_disposal_guard(action, current):
-            _refuse_alert_disposal(principal, ALERT_DISPOSAL_CONFLICT_CODE, 409)
-        if action == ALERT_ACTION_ASSIGN:
-            _require_capable_assignee(principal, row, assignee)
-        columns, values = alert_disposal_writes(
-            action,
-            current,
-            actor=principal.username,
-            assignee=assignee,
-            disposed_at=_alert_disposal_now(),
-        )
-        assignments = ", ".join(f"{column} = %s" for column in columns)
-        updated = conn.execute(
-            f"UPDATE alerts SET {assignments} WHERE id = %s", (*values, alert_id)
-        )
-        if updated.rowcount != 1:
-            # 锁内一行都没写成：与「读不到」同形交回，不补第二笔，也不换个说法再试一次。
-            conn.rollback()
-            _refuse_alert_disposal(principal, ALERT_DISPOSAL_NOT_FOUND_CODE, 404)
-        conn.commit()
-        refreshed = _alert_row_from_connection(conn, principal, alert_id)
-        if refreshed is None:
-            raise RuntimeError("alert disposal wrote a row that cannot be read back")
-        return alert_ledger_row(refreshed)
+        disposal = alert_ledger_row(row)
+    else:
+        _ensure()
+        with _conn() as conn:
+            _require_alert_disposal_schema(conn)
+            row = _alert_row_from_connection(conn, principal, alert_id, for_update=True)
+            if row is None:
+                _refuse_alert_disposal(principal, ALERT_DISPOSAL_NOT_FOUND_CODE, 404)
+            current = alert_row_status(row)
+            if not alert_disposal_guard(action, current):
+                _refuse_alert_disposal(principal, ALERT_DISPOSAL_CONFLICT_CODE, 409)
+            if action == ALERT_ACTION_ASSIGN:
+                _require_capable_assignee(principal, row, assignee)
+            columns, values = alert_disposal_writes(
+                action,
+                current,
+                actor=principal.username,
+                assignee=assignee,
+                disposed_at=_alert_disposal_now(),
+            )
+            assignments = ", ".join(f"{column} = %s" for column in columns)
+            updated = conn.execute(
+                f"UPDATE alerts SET {assignments} WHERE id = %s", (*values, alert_id)
+            )
+            if updated.rowcount != 1:
+                # 锁内一行都没写成：与「读不到」同形交回，不补第二笔，也不换个说法再试一次。
+                conn.rollback()
+                _refuse_alert_disposal(principal, ALERT_DISPOSAL_NOT_FOUND_CODE, 404)
+            conn.commit()
+            refreshed = _alert_row_from_connection(conn, principal, alert_id)
+            if refreshed is None:
+                raise RuntimeError("alert disposal wrote a row that cannot be read back")
+            disposal = alert_ledger_row(refreshed)
+    # R582：只有**写成了**的处置才走到这一行（三格拒绝都在上面就抛了）。两条腿共用这一枚
+    # 写账点，所以「ack / close / assign 各落一行」不随走哪条腿而变。
+    _audit_alert_disposal(principal, action, alert_id, disposal)
+    return disposal
 
 
 # ==================== 纯判定（可单测） ====================

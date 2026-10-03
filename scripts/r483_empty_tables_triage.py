@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""R483 · 演示库里八枚 0 行的表逐枚定性（取证单，零产品码、零写库）。
+"""R483 · 演示库里八枚「当时 0 行」的表逐枚定性（取证单，零产品码、零写库；R593 于 10-03 改口）。
 
 病：`docs/perf/raw/r470-2026-09-29/probe-before-stop-start.json` 里八枚表 rows=0 —— 「表在」正在
 冒充「闭环在」。本单不新建业务闭环、不改产品码，只把八枚表逐枚交回：今日现读 / 昨日底 /
@@ -14,9 +14,12 @@
 * **写入点**现场扫 `app/**` 与 `scripts/**` 的源码，得到「哪枚文件哪一枚函数往里写」，再顺着
   调用链往上爬，看这条道今天到底挂在哪张产品脸上（HTTP 路由 / `add_job`）。🔴 不许推「应该由某个
   定时任务写」：定时任务要么被 `add_job(` 现扫到（连行号带触发参数一起交回），要么这条道不存在。
-* **裁定只有三个词**：`no_seed_path`（该有数据，但产品侧没有任何走得通的写入道）/
-  `legitimately_empty`（按设计就该空，等一次真实行为）/ `needs_owner`（要业主输入才能填）。
-  裁定与扫出来的道互为牙齿：`validate()` 里谁漂了谁红，下一班不必信本席的嘴。
+* **裁定只有四个词**：`no_seed_path`（该有数据，但产品侧没有任何走得通的写入道）/
+  `legitimately_empty`（按设计就该空，等一次真实行为）/ `needs_owner`（要业主输入才能填）/
+  `no_longer_empty`（R593 加：本单的「0 行」定性已被现读推翻，这张表今天有行）。
+  裁定与扫出来的道互为牙齿，裁定与现读的行数也互为牙齿：`validate()` 里谁漂了谁红。
+  🔴 前三词每一词都额外断言「此刻 0 行」，所以这台机器一旦被真用过，旧词表里就没有任何一词能
+  诚实描述「有行」那三格——R593 加词是为了让假话说不出嘴，不是为了给旧词松绑。
 
 所以 `docs/testing/r483-empty-tables-2026-09-29.md` 整枚是生成物：每一枚数字、每一个行号都由
 `render_document()` 出，改一个字符都得重跑 `--sync`；`--check` 逐字节核（含哨兵区两面）。
@@ -47,7 +50,9 @@ READOUT_BEGIN = "<!-- R483-READOUT-BEGIN -->"
 READOUT_END = "<!-- R483-READOUT-END -->"
 NL = chr(10)
 
-#: 本单点名的八枚 0 行表；顺序即文档里的呈现顺序，不许悄悄加宽或换序。
+#: R483 在 09-29 点名的八枚「当时读数为 0」的表；顺序即文档里的呈现顺序，不许悄悄加宽或换序。
+#: 🔴 点名范围是历史事实，「0 行」不是：10-03 真机评测窗与演示账号跑过之后，三枚已经长出行了。
+#: 各格裁定按现读重定性（改判出处逐枚写在本表的 re_ruling 里），本件不许把任何一枚读数当常驻不变量。
 TARGET_TABLES = (
     "alerts",
     "alert_rules",
@@ -65,7 +70,18 @@ CONTROL_FLOOR = {"chunk_vectors": 1, "sessions": 1}
 CONTEXT_TABLES = ("pending_approvals", "trace_events", "agent_runs", "documents", "users")
 READ_TABLES = TARGET_TABLES + CONTROL_TABLES + CONTEXT_TABLES
 
-VERDICTS = ("no_seed_path", "legitimately_empty", "needs_owner")
+#: 裁定用词表。前三词由 R483 造册时立下，每一词都**同时断言「这张表此刻一行没有」**；
+#: 🔴 第四词 no_longer_empty 由 R593 加：它不断言行数，只承认「本单的 0 行定性已被现读推翻」。
+#: 加词而不是把旧词改宽——旧三词各自还钉着自己的判据（欠码 / 本该空 / 只能等业主），
+#: 把它们改成「空不空都算」等于把这族钉的牙拔了。
+VERDICTS = ("no_seed_path", "legitimately_empty", "needs_owner", "no_longer_empty")
+#: 预设「今天 0 行」的那三词：现读一旦非 0，用它们就是假话。
+ZERO_ROW_VERDICTS = ("no_seed_path", "legitimately_empty", "needs_owner")
+#: 预设「今天有行」的那一词：现读一旦回到 0 行，用它同样是假话（反方向照旧有牙）。
+NONZERO_ROW_VERDICT = "no_longer_empty"
+#: 「裁定用词 vs 现读行数」这对判据的点名钥匙串：反证钉与派生断言都按它找点名。
+#: 🔴 改这句措辞就要一起改钉——不许把点名换成没人认得的暗号。
+ROW_MISMATCH_PHRASE = "定性过期"
 
 CONTAINER = "enterprise-brain-postgres-1"
 SCHEDULER_CONTAINER = "enterprise-brain-scheduler-1"
@@ -857,25 +873,39 @@ def _dedupe(items, key: str) -> list:
 #: validate() 里，不在这段话里。
 TRIAGE = {
     "alerts": {
-        "verdict": "legitimately_empty",
+        "verdict": "no_longer_empty",
         "entries": ("evaluate_all",),
         "events": (),
         "hit_kinds": ("sql_write",),
         "lane": "只有巡检命中才写：告警行唯一出处是 app/api/v1/alerts.py::evaluate_all 里那句 "
                 "INSERT INTO alerts，规则集取自 alert_rules 里 enabled=TRUE 的行。上表另一枚 "
                 "sql_write 是处置闭环的 UPDATE（确认 / 转派 / 关闭），它只改状态，不加行。",
-        "why": "这条道今天真在跑（现扫到的 add_job 注册 + scheduler 日志里的成功行数，两格都进本表），"
-               "空的是它的上游：一枚启用规则都没有，逐规则判定无从命中。补一条业主规则它自己会长行，"
-               "缺的不是码。无库时的代码兜底规则走的是内存表，不构成本表数据。",
+        "re_ruling": "改判出处：R593（2026-10-03）——基点 6fcea4f 现跑 "
+                     "`python scripts/r483_empty_tables_triage.py --json` 交回 rc=1，本格 problems 原话："
+                     "「alerts 今天已经有 4 行了，本单的 0 行定性过期，重跑 --sync」（总控 10-03 11:1x "
+                     "于主树现取，本席在基点复跑同一句逐字对上）。裁定随这条读数改口，不由本席宣布；"
+                     "今天的行数只在上表与第五节读数件里，本段一枚数字都不留。",
+        "why": "这条道今天真在跑（现扫到的 add_job 注册 + scheduler 日志里的成功行数，两格都进本表）。"
+               "🔴 原话「空的是它的上游：一枚启用规则都没有，逐规则判定无从命中」已被现读推翻——"
+               "`alert_rules` 今天有 enabled=TRUE 的行，巡检于是真命中并长出了行；「补一条业主规则它"
+               "自己会长行」这一句今天不再是假设，是已经发生过的事。无库时的代码兜底规则走的是内存表，"
+               "不构成本表数据，那一句仍然成立。",
     },
     "alert_rules": {
-        "verdict": "needs_owner",
+        "verdict": "no_longer_empty",
         "entries": ("create_rule",),
         "events": (),
         "hit_kinds": ("sql_write",),
         "lane": "app/api/v1/alerts.py::create_rule（HTTP 建规则那一腿）→ INSERT INTO alert_rules。",
-        "why": "规则的三要素（指标 / 运算符 / 阈值）就是一家企业的口径，代码替业主编一条就是假账。"
-               "写入道在树且现扫得到路由，演示库从没建过规则 ⇒ 这 0 行是业主侧欠一次录入，不是欠码。",
+        "re_ruling": "改判出处：R593（2026-10-03）——同一条 `--json` 现读交回 rc=1，本格原话："
+                     "「alert_rules 今天已经有 4 行了，本单的 0 行定性过期，重跑 --sync」；行是从本格"
+                     "在册的那条 POST 建规则道写进去的（写入点与坐标由本表现扫，见上表）。行数同上，"
+                     "只归读数件管。",
+        "why": "规则的三要素（指标 / 运算符 / 阈值）就是一家企业的口径，代码替业主编一条就是假账——"
+               "这一句没有被推翻。今天在册的是演示样本种子经 POST /api/v1/alerts/rules 建的样本规则"
+               "（名字以 r577-sample- 起头，指标列名取自数据集画像）：它把「这张表空不空」翻成了非空，"
+               "**没有**把「业主口径」翻绿，真业务规则依旧等人录。所以 09-29 那句 needs_owner 在当时"
+               "成立（那时它 0 行），今天按现读改判 no_longer_empty，业主欠的那半移进本段留名。",
     },
     "notification_states": {
         "verdict": "legitimately_empty",
@@ -920,7 +950,9 @@ TRIAGE = {
         #: 🔴 这一格今天由 `validate()` 逼出来，不由任何人宣布：量具学会沿事件标签跨「发射点 →
         #: 订阅 / 投影 → 写句」之后（R550），现扫能从产品面走到这张表；裁 no_seed_path 就当场报
         #: 「裁定过期」。摘掉发射那一腿，它会重新报「应改判 no_seed_path」——牙在 validate() 里。
-        "verdict": "legitimately_empty",
+        #: 🔴 R593（10-03）同一枚 validate() 又逼了一次：问答窗跑过之后这张表有行了，
+        #: legitimately_empty 预设 0 行，于是当场报过期——改判同样不是任何人宣布的。
+        "verdict": "no_longer_empty",
         "entries": ("project_retrieval",),
         "events": ("retrieval.completed",),
         "hit_kinds": ("write_by_registry", "declared_writer"),
@@ -940,10 +972,17 @@ TRIAGE = {
                 " app/trace/store.py 收事件落投影；发这枚事件的是 app/rag/retrieval_pipeline.py::"
                 "record_retrieval_completed，它缺 arm_retrieval_trace 挂进执行上下文的那枚身份就"
                 "直接走开，所以闸门真挂在问答脸上。",
+        "re_ruling": "改判出处：R593（2026-10-03）——总控 10-03 11:1x 在主树现跑 "
+                     "`python scripts/r483_empty_tables_triage.py --json` 交回 rc=1，本格原话："
+                     "「retrieval_traces 今天已经有 911 行了，本单的 0 行定性过期，重跑 --sync」；"
+                     "本席在基点 6fcea4f 复跑同一条命令，同一句里是另一枚更大的数（问答窗还在往里加行）。"
+                     "两枚数都只算历史引用、不算今天的事实——现读以本表与第五节读数件为准，这正是本格把"
+                     "数字交给渲染而不写进裁定的理由。",
         "why": "写入道今天两格都在：写句在（投影注册在册），产品面也在（现扫从问答道沿"
-               " retrieval.completed 这枚标签跨过来）。于是 0 行的准确说法是「这轮行为还没留下痕」，"
-               "不再是「没人写」。库里那枚行数由本表现读交回，本段一个数字都不写；读出 0 也不再"
-               "区分「没跑过窗」与「道不通」——这一格 R550 之前量不准，现在量得准。",
+               " retrieval.completed 这枚标签跨过来）。🔴 原话「于是 0 行的准确说法是『这轮行为还没"
+               "留下痕』」已是过去式——痕真留下了，见上表与第四节事件面那一叠数。于是本格要量的不再是"
+               "空不空，而是道通不通：道今天通；一旦摘掉发射腿，validate() 会重新报「应改判 "
+               "no_seed_path」，那才是它该回去的时候。库里那枚行数由本表现读交回，本段一个数字都不写。",
     },
     "user_profiles": {
         "verdict": "needs_owner",
@@ -1173,14 +1212,30 @@ def render_per_table(readings: dict) -> list:
                          + inline("validate()") + " 同时红）。")
         if spec.get("owner_ruling"):
             lines.append("- " + spec["owner_ruling"])
+        #: 🔴 改判凭据挨着今天的读数渲染：数字出自读数件，不在裁定散文里过夜（R593 判据①）。
+        if spec.get("re_ruling"):
+            lines.append("- " + spec["re_ruling"] + "　**本格今日现读 " + str(today["rows"])
+                         + " 行**（这枚数出自 " + inline("readout") + "，与上一句里的历史引用无关）。")
     return lines
 
 FENCE = chr(96) * 3
 JSON_FENCE = FENCE + "json"
 
 
+def _emptiness_claim(readings: dict, tables, noun: str) -> str:
+    """V2 自述里那句「有没有一行」必须由现读决定（R593 判据①）。
+
+    🔴 R483 造册时三句都写死「今天没有一行××」——那是 09-29 的读数；10-03 之后告警两枚表与
+    retrieval_traces 都长出了行，把当时的读数留在句子里就是这本台账的第四句假话。
+    """
+    rows = [rows_of(readings, table)["rows"] for table in tables]
+    if all(count == 0 for count in rows):
+        return "今天**没有一行" + noun + "**"
+    return "今天**已经有真数据**（R483 造这一句时这里是零，那句今天只算历史引用）"
+
+
 def render_v2_sentences(readings: dict) -> list:
-    """V2 三条各挂一句明话：有数据给表名与行数，没有就写没有（判据④）。"""
+    """V2 三条各挂一句明话：有数据给表名与行数，没有就写没有（判据④，空/非空由现读算）。"""
     payload = readings["payload"]
     sweep = payload.get("alert_sweep_log") or {}
     events = payload.get("trace_event_types") or {}
@@ -1196,21 +1251,33 @@ def render_v2_sentences(readings: dict) -> list:
     retrieval = rows_of(readings, "retrieval_traces")["rows"]
     metrics = rows_of(readings, "metric_definitions")["rows"]
     completed = int(events.get("retrieval.completed") or 0)
+    #: #11 那句的推论跟着上游走：规则没进来时挡路的是业主一次录入；进来了还空才轮得到缺码。
+    alert_gate = ("⇒ 挡在这条链前面的是业主一条启用规则，不是缺码。" if rules == 0 else
+                  "⇒ 启用规则今天已在册（这两格的裁定与改判出处见上表），这条链缺的不再是行也不是码，"
+                  "而是**业主口径的规则**——演示样本种子建的那几条不算，见 " + inline("alert_rules")
+                  + " 那一格的 why。")
+    #: #17 那句的 (乙) 边界同样不许过夜：铃铛被人点过一次，端到端就不再是零。
+    clicked = ("但没有任何一次已读/忽略落表；" if states == 0 else
+               "已经有 " + str(states) + " 次已读/忽略落表；")
+    tail17 = ("端到端行为读数为零，这句只能报 (乙)。" if states == 0 else
+              "端到端行为已经落下行，本句原先那条 (乙) 边界由现读翻开（裁定见上表）。")
+    source = ("告警那一枚候选源今天恒交白卷（" + inline("alerts") + " 0 行）" if alerts == 0 else
+              "告警那一枚候选源今天有账可数（" + inline("alerts") + " " + str(alerts) + " 行）")
     return [
-        "- **#11 告警闭环**：今天**没有一行真数据** —— 现读 " + inline("alert_rules") + " "
-        + str(rules) + " 行、" + inline("alerts") + " " + str(alerts) + " 行。代码侧不是空转："
-        + inline("add_job") + " 现扫到 " + str(alert_jobs) + " 枚注册（连触发参数与行号进上面那张表），"
-        + inline(SCHEDULER_CONTAINER) + " 日志尾部现数到 "
+        "- **#11 告警闭环**：" + _emptiness_claim(readings, ("alert_rules", "alerts"), "真数据")
+        + " —— 现读 " + inline("alert_rules") + " " + str(rules) + " 行、" + inline("alerts") + " "
+        + str(alerts) + " 行。代码侧不是空转：" + inline("add_job") + " 现扫到 " + str(alert_jobs)
+        + " 枚注册（连触发参数与行号进上面那张表），" + inline(SCHEDULER_CONTAINER) + " 日志尾部现数到 "
         + str(int(sweep.get("successful_sweeps_in_tail") or 0)) + " 次 " + inline(SWEEP_JOB)
         + " executed successfully（间隔现读 " + inline(str(sweep.get("trigger_interval"))) + "）。"
-        + "⇒ 挡在这条链前面的是业主一条启用规则，不是缺码。",
-        "- **#17 通知基础能力**：今天**没有一行行为数据** —— 现读 " + inline("notification_states")
-        + " " + str(states) + " 行。收件箱本身有账可列（现读 " + inline("pending_approvals") + " "
-        + str(approvals) + " 行、" + inline("documents") + " " + str(documents) + " 行、"
-        + inline("users") + " " + str(users) + " 行），但没有任何一次已读/忽略落表；告警那一枚候选源"
-        "今天恒交白卷（" + inline("alerts") + " " + str(alerts) + " 行）。⇒ 接口与前端正脸在树，"
-        "端到端行为读数为零，这句只能报 (乙)。",
-        "- **#3 CalculationRun（执行数据血缘）**：今天**没有一行真数据** —— 现读 "
+        + alert_gate,
+        "- **#17 通知基础能力**：" + _emptiness_claim(readings, ("notification_states",), "行为数据")
+        + " —— 现读 " + inline("notification_states") + " " + str(states) + " 行。收件箱本身有账可列"
+        "（现读 " + inline("pending_approvals") + " " + str(approvals) + " 行、" + inline("documents")
+        + " " + str(documents) + " 行、" + inline("users") + " " + str(users) + " 行），"
+        + clicked + source + "。⇒ 接口与前端正脸在树，" + tail17,
+        "- **#3 CalculationRun（执行数据血缘）**："
+        + _emptiness_claim(readings, ("calculation_runs",), "真数据") + " —— 现读 "
         + inline("calculation_runs") + " " + str(calc) + " 行，且表名在 " + inline("app/") + " 与 "
         + inline("scripts/") + " 里现扫 " + str(calc_refs) + " 处引用（连读路径都没长）。"
         + "⇒ 「每个 Artifact 绑 DatasetVersion、CalculationRun、MetricDefinition」那句仍是后续目标；"
@@ -1261,14 +1328,25 @@ def render_region(readings: dict) -> str:
 def render_document(readings: dict) -> str:
     """整枚文档的唯一出口。文档里没有任何一枚手写数字：要改就改生成器，或者重跑 --sync。"""
     payload = readings["payload"]
+    #: 🔴 标题里的「0 行」是 09-29 的点名范围；今天有几枚已经长出行，由现读说了算（R593）。
+    nonzero = [table for table in TARGET_TABLES if rows_of(readings, table)["rows"] != 0]
+
+    def count_of(word: str) -> int:
+        return sum(1 for table in TARGET_TABLES if TRIAGE[table]["verdict"] == word)
     head = [
         "<!-- 本文件整枚由 scripts/r483_empty_tables_triage.py 生成（--sync）。" + NL
         + "     改文案改生成器，改数重跑读数；手写任何一格，--check 逐字节红。 -->",
         "",
-        "# R483 · 演示库八枚 0 行表的逐枚定性（2026-09-29）",
+        "# R483 · 演示库八枚「当时 0 行」表的逐枚定性（2026-09-29 造册 / 2026-10-03 R593 按现读改口）",
         "",
         "本单是取证单：不新建业务闭环、不改产品码，只把「结构在、一行没有」的八枚表逐枚定性，"
         "让下一班知道哪枚是真欠码、哪枚本来就该空、哪枚只能等业主。",
+        "",
+        "🔴 **R593（2026-10-03）改口**：上面那句「一行没有」是 09-29 造册时的点名范围，不是今天的"
+        "读数——八枚里今天已有 " + str(len(nonzero)) + " 枚长出行了（"
+        + " / ".join(inline(table) for table in nonzero) + "），裁定由 " + inline("validate()")
+        + " 逼出来逐枚重定性，改判凭据写在各自那一格。这一行与下面每一格都由现读算，"
+        "本文件不抄上一班的数。",
         "",
         "## 口径（四句写死在生成器里，不在别处抄第二份）",
         "",
@@ -1282,18 +1360,22 @@ def render_document(readings: dict) -> str:
         + " 的源码得到「哪枚文件哪枚函数往里写」，再顺调用链往上爬，看这条道今天挂在哪个产品面"
         "（HTTP 路由 / " + inline("add_job") + "）。🔴 扫不到就写没找到，绝不写「应该由某个定时任务写」。",
         "- 路由串按装饰器原文交回（**不含** router 前缀），坐标一律现扫：🔴 本文件一枚行号都不是抄的。"
-        + "　**裁定只有三词**：" + " / ".join(inline(word) for word in VERDICTS)
-        + "；裁定与现扫互为牙齿，谁漂了 " + inline("validate()") + " 报哪一格。",
+        + "　**裁定只有 " + str(len(VERDICTS)) + " 词**："
+        + " / ".join(inline(word) for word in VERDICTS)
+        + "；裁定与现扫互为牙齿、裁定与现读行数也互为牙齿，谁漂了 " + inline("validate()")
+        + " 报哪一格。",
         "- 取数时刻 " + inline(str(payload.get("taken_at"))) + "；服务端 "
         + _fmt_cell(str((payload.get("server") or {}).get("version")), 120) + "。",
         "",
-        "结论一句话：八枚里没有一枚是「码写完了等着跑」——" + str(sum(
-            1 for table in TARGET_TABLES if TRIAGE[table]["verdict"] == "no_seed_path"))
-        + " 枚今天压根没有走得通的写入道，" + str(sum(
-            1 for table in TARGET_TABLES if TRIAGE[table]["verdict"] == "needs_owner"))
-        + " 枚只能等业主录入，" + str(sum(
-            1 for table in TARGET_TABLES if TRIAGE[table]["verdict"] == "legitimately_empty"))
-        + " 枚按设计就该空着等一次真实行为。",
+        "结论一句话（四个数由本表现算，一枚不抄）：R483 点名的八枚里，"
+        + str(count_of(NONZERO_ROW_VERDICT)) + " 枚今天已经有行（" + inline(NONZERO_ROW_VERDICT)
+        + "）、" + str(count_of("no_seed_path")) + " 枚压根没有走得通的写入道（"
+        + inline("no_seed_path") + "）、" + str(count_of("needs_owner"))
+        + " 枚只能等业主输入（" + inline("needs_owner") + "）、"
+        + str(count_of("legitimately_empty")) + " 枚按设计就该空着等一次真实行为（"
+        + inline("legitimately_empty") + "）；四数之和 "
+        + str(sum(count_of(word) for word in VERDICTS)) + " = " + str(len(TARGET_TABLES))
+        + "，本单不留一格含糊——每一格到底还欠什么，只在本格那一节里写，本句不替谁担保。",
     ]
     tail = [
         "",
@@ -1338,7 +1420,12 @@ def splice_region(doc_text: str, region: str) -> str:
 
 
 def validate(readings: dict) -> list:
-    """五族牙：0 行还成立、裁定与现扫互证、写入点扫描不许空转、对照表不许 0、日志要撑得住那句话。"""
+    """六族牙：裁定用词 vs 现读行数、裁定 vs 现扫写入点、扫描不许空转、对照表不许 0、日志撑得住那句话。
+
+    🔴 第一族由 R593 改形：过去它问「0 行还成立吗」——那是拿 10-03 之前的盘面读数当尺子，
+    这台机器只要真被用过一次就永久红；现在它问「你用的裁定词和你读到的行数对不对得上」，
+    两个方向都咬，于是它随真库走而不再随日历红。
+    """
     problems = []
     payload = readings["payload"]
     readout = payload.get("readout") or {}
@@ -1356,11 +1443,20 @@ def validate(readings: dict) -> list:
         problems += [table + "：" + item for item in surface["problems"]]
         verdict = spec["verdict"]
         if verdict not in VERDICTS:
-            problems.append(table + " 的裁定不在三词表里：" + verdict)
+            problems.append(table + " 的裁定不在词表里：" + verdict)
+        #: 🔴 R593 判据①：裁定用词与现读行数互为牙齿（旧写法是无条件 rows != 0 就报，
+        #: 等于把「在册目标表此刻全 0 行」钉成本单的常驻不变量）。
         rows = rows_of(readings, table)["rows"]
-        if rows != 0:
-            problems.append(table + " 今天已经有 " + str(rows) + " 行了，本单的 0 行定性过期，"
-                            "重跑 --sync")
+        if verdict in ZERO_ROW_VERDICTS and rows != 0:
+            problems.append(table + " 今天已经有 " + str(rows) + " 行了，本格却裁 " + verdict
+                            + "（这一词预设它一行没有），本单的 0 行定性过期，改判 "
+                            + NONZERO_ROW_VERDICT + " 并重跑 --sync"
+                            + ("；no_seed_path 更刺眼——产品道写不出行，这些行是道外写的"
+                               if verdict == "no_seed_path" else ""))
+        elif verdict == NONZERO_ROW_VERDICT and rows == 0:
+            problems.append(table + " 今天现读 0 行，本格却裁 " + verdict
+                            + "，这一判同样定性过期：要么回到预设 0 行的那三词之一，"
+                            "要么库被人清过——重跑 --sync 复核")
         kinds = {hit.kind for hit in analysis["hits"]}
         for kind in spec.get("hit_kinds", ()):
             if kind not in kinds:
@@ -1378,7 +1474,9 @@ def validate(readings: dict) -> list:
         if verdict == "no_seed_path" and has_product:
             problems.append(table + " 裁为 no_seed_path，但现扫已能从产品面走到它，裁定过期："
                             + repr(product["routes"] + product["jobs"]))
-        if verdict in ("legitimately_empty", "needs_owner") and not has_product:
+        #: 除 no_seed_path 之外的每一词都在断言「这条道今天挂在产品面上」——R593 把新词
+        #: no_longer_empty 一并纳进来：有行却爬不到道，同样是「行是道外写的」那一格疑点。
+        if verdict != "no_seed_path" and not has_product:
             problems.append(table + " 裁为 " + verdict + "，但现扫爬不到任何产品面 HTTP 路由或 "
                             "add_job：按判据这条道不存在，应改判 no_seed_path")
         for word in product["unused_exemptions"]:
@@ -1428,7 +1526,7 @@ def validate(readings: dict) -> list:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="R483 · 八枚 0 行表的逐枚定性（只读取证件）")
+    ap = argparse.ArgumentParser(description="R483 · 八枚「当时 0 行」表的逐枚定性（只读取证件）")
     ap.add_argument("--doc", default=str(DOC_PATH), help="生成物落点")
     ap.add_argument("--probe", default=str(PROBE_PATH), help="昨日底探针原件")
     ap.add_argument("--scan-root", default=str(REPO_ROOT), help="扫写入点的仓根")

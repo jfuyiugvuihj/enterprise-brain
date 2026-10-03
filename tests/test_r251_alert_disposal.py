@@ -726,23 +726,46 @@ def test_every_refusal_lands_one_line_in_the_existing_ledger(ledger, role, actio
     assert all(token not in payload for token in FORBIDDEN_IN_AUDIT), line
 
 
-def test_an_allowed_disposal_adds_no_audit_line(ledger):
-    """处置成功的那一笔不写安全台账：谁、什么时候、做了什么已经在那行数据上，不重复记第二本。"""
+def test_an_allowed_disposal_adds_exactly_one_audit_line(ledger):
+    """R582 改口：处置成功的那一笔必须落一行账。
+
+    旧的那句「成功不记账，因为谁做了什么已经在那行数据上」把 ``alerts`` 的三列时间戳当成了审计账，
+    而表列不可追加、也没有主体身份链——客户问「谁在什么时候关掉了这条告警」时台账答不出。
+    这一枚钉曾把那句假话钉成常驻，所以随 R582 一起改口，不是放宽：账动作名不许现编，
+    只能是被测模块自己派生出来的那一枚（``ALERT_DISPOSAL_AUDIT_ACTIONS``），与判据①同源。
+
+    另一半口径仍然钉死：**读**台账不是一次事件。三次读过去，账上的行数一格都不许动。
+    """
+    import json
+
     ledger.mp.setattr(ledger.alerts, "ALERT_DISPOSAL_RESOURCE", "r251-audit-probe-resource")
+    action_name = ledger.alerts.ALERT_DISPOSAL_AUDIT_ACTIONS["ack"]
+    assert action_name != ACTION_MANAGE_ALERTS, "账动作名必须是被派生出来的那一枚，不是裸权限词"
 
-    before = [
-        event
-        for event in get_audit_events(action=ACTION_MANAGE_ALERTS)
-        if str(event.get("username") or "") == OWN_MANAGER
-    ]
+    def lines() -> list:
+        return [
+            event
+            for event in get_audit_events(action=action_name)
+            if str(event.get("username") or "") == OWN_MANAGER
+        ]
+
+    before = lines()
     assert _post(ledger.client, OWN_MANAGER, OWN_ALERT, "ack").status_code == 200
-    after = [
-        event
-        for event in get_audit_events(action=ACTION_MANAGE_ALERTS)
-        if str(event.get("username") or "") == OWN_MANAGER
-    ]
+    after = lines()
 
-    assert len(after) == len(before), (before, after)
+    assert len(after) == len(before) + 1, (before, after)
+    line = after[-1]
+    assert line["outcome"] == ledger.alerts.ALERT_DISPOSAL_AUDIT_OUTCOME, line
+    assert line["reason"] == ledger.alerts.ALERT_DISPOSAL_AUDIT_REASON, line
+    assert line["resource"] == "r251-audit-probe-resource", line
+    payload = json.dumps(line, ensure_ascii=False)
+    assert all(token not in payload for token in FORBIDDEN_IN_AUDIT), line
+
+    # 读台账不是事件：连着读三遍，那一格不许多出行。
+    before_read = lines()
+    for _ in range(3):
+        lines()
+    assert lines() == before_read, (before_read, lines())
 
 
 # ================================================================= 词表与 DDL 同源
