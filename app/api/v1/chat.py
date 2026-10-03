@@ -16,6 +16,7 @@ import itertools
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import aclosing
 from pathlib import Path
+from typing import get_args
 
 # 显式线程池 — 支持 1000+ 并发（每个 uvicorn 实例）
 _executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="ezn_")
@@ -5119,6 +5120,46 @@ def queue_terminal_readout(
     return readout
 
 
+# ==================== R585：死终态也要在可读面上说话 ====================
+
+#: 错误码词表的运行时投影。唯一真源 = `app/agents/contracts.py::ErrorEnvelope.code`，这里派生集合而不是抄第二份手抄码表（抄两份的代价写在 `app/agents/evidence.py::_enum_error_codes` 的 docstring 里）。R585 判据①那句「在册稳定码」指的就是这一枚集合：可读面**只许消费它，不许给它添成员**。
+STABLE_ERROR_CODES = frozenset(get_args(ErrorEnvelope.model_fields["code"].annotation))
+#: 死终态成因认不出枚举时的兜底码。取值必须是上面那枚集合的成员——把它换成现编字符串，
+#: 由 `tests/test_r585_dead_terminal_reason.py` 的字面量钉与成员钉两头当场判红（判据④ 第二把）。
+DEAD_REASON_FALLBACK = "internal_error"
+
+
+def queue_dead_readout(queue, request_id: str, status: str) -> dict:
+    """死终态在 `/queue/status` 上的那一格读数（R585 判据①③）。
+
+    缺陷本体（真机单子 `a55ef916eb43486789a9a68f81cb9f7c`）：worker 早就把成因算出来了——`报告档终态不可重试，不再重投 -> dead: context_limit_exceeded`——可这一扇门面在 `dead` 状态下**一个键都不交**，量具只读得到 `terminal.shape="no_keys"`，客户屏上只剩一枚 `<no-bytes-emitted>` 哨兵。本函数不新造一套原因码，只把那枚**已经算出来的码**接到面上。
+
+    三条口径：
+    * `reason` 只交在册稳定码。账本里那枚原始文本认不出枚举就兜到 `DEAD_REASON_FALLBACK`，同时原文照旧留在同一格响应的 `failure.last_error` 里——收窄成枚举不等于把信息丢掉。
+    * `retryable` 沿用 R448 的口径：它是调用方当年交给队列的那一枚终局判定，不是从 `attempts` 反推的。`None` 说的是「这一行落在本单之前，队列没记这一笔」，绝不拿 False 冒充「不可重试」——那正是 R448 判据要分开的两种 dead 被洗成一枚的写法。
+    * 出处／token／批准把手三格这里**不交**：这一轮压根没跑完，交一枚空表就是把「没说」洗成「说了零」，R254 刚治过的那枚谎不许在这一格复发。
+    """
+    verdict = queue.dead_verdict(request_id) or {}
+    ledger = queue.failure(request_id)
+    raw = str(verdict.get("reason") or ledger.get("last_error") or "").strip()
+    retryable = verdict.get("retryable")
+    if retryable is False:
+        note = "队列判定这一枚失败重试也不会变，首发即落 dead，没有占用重试名额。"
+    elif retryable is True:
+        note = "重试名额已用完，这一轮落 dead；每一轮的原始文本仍在 failure.last_error。"
+    else:
+        note = "这一行落在 R585 之前：队列当年没记终局判定，重试名额那一笔账读不出来。"
+    return {
+        "terminal_schema": reliable_queue.DEAD_TERMINAL_SCHEMA,
+        # 逐字回显状态键上那枚词，不在这里第二次拼写它（R232 的词表只有一处写法）。
+        "terminal_state": status,
+        "reason": raw if raw in STABLE_ERROR_CODES else DEAD_REASON_FALLBACK,
+        "retryable": retryable,
+        "answer_present": bool(queue.result(request_id)),
+        "terminal_note": note,
+    }
+
+
 # ==================== R295：队列单的归属在读取时刻现取 ====================
 
 #: 归属成因码。字面值与 `deploy/queue_worker.py` 里 R294 那一族逐字相等（本文件不 import
@@ -5258,6 +5299,9 @@ async def queue_status(request_id: str, request: FastAPIRequest):
         pending = queue.redis.lrange(queue.pending_key, 0, -1)
         ids = [item.decode() if isinstance(item, bytes) else str(item) for item in pending]
         readout["position"] = ids.index(request_id) + 1 if request_id in ids else None
+    elif status == reliable_queue.DEAD_STATUS:
+        # R585 判据①：死终态过去在这一扇门上**一个键都不交**（量具读出 `terminal.shape="no_keys"`、`schema`／`state`／`sources_present` 全 null），客户屏上只剩哨兵 `<no-bytes-emitted>`。成因早在 worker 那一头算完了，本格只负责把它接到面上。
+        readout.update(queue_dead_readout(queue, request_id, status))
     if status == "processing":
         # R558 判据①：正在跑的这一轮，逐字片段从**既有轮询面**增量读出（客户端把上一发的
         # `cursor` 原样填回 `since`，读回的 `text` 就是新长出来的那一截字）。

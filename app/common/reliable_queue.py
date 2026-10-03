@@ -91,6 +91,13 @@ TERMINAL_STATE_TO_STATUS = {
 TERMINAL_ABSENT = "absent"
 TERMINAL_OK = "ok"
 TERMINAL_UNREADABLE = "unreadable"
+#: ==================== R585：死终态那一笔账 ====================
+#: 状态键上那枚「彻底失败」的词。🔴 写入处必须仍旧是字符串字面量（`tests/test_r232_queue_status_vocabulary_sync.py` 的 AST 只认「往 status 键写一枚字面量」这一种形状，写成常量会落进它的 blind spot），所以这一枚常量只给**读侧**比对用；它与那处字面量逐字相等由本单的钉看着。
+DEAD_STATUS = "dead"
+#: 死终态在可读面上的结构名。它与 `TERMINAL_SCHEMA` 是两枚不同的形状：成功终态那一份键集合已由 R254 冻结（R585 判据②一字不改），失败这一份只说「为什么失败」，绝不冒充成功形状。这一格不是错误码——稳定码的唯一词表是 `app/agents/contracts.py::ErrorEnvelope.code`。
+DEAD_TERMINAL_SCHEMA = "queue-dead-v1"
+#: 队列账本（message 键那本 JSON）里那一笔终态判定的键名。只在**真落 dead 的那一次**写入，形状 `{"reason": <交给队列的原始文本>, "retryable": <调用方的终局判定>}`。它是 R585 判据③那条分家的唯一凭据：`attempts` 与 `max_attempts` 反推不出它——一枚「名额恰好用完、且契约又判了不可重试」的行，两种成因在这两个数上一模一样。
+DEAD_VERDICT_LEDGER_KEY = "dead_verdict"
 
 #: R558 判据①：队列道逐字片段的**增量投递面**接在既有轮询面上——不新开路由、不加状态词、
 #: 不动终态帧。worker 每攒够这么多片、或距上一发汇流超过这么多秒，就把这一截字打成一批
@@ -557,6 +564,8 @@ class ReliableQueue:
         exactly where it was, so the retry budget stays intact for real faults.
         Every existing caller keeps its previous behaviour because the default is
         ``True``, which makes the condition below identical to the old one.
+
+        R585：真正落 dead 的那一次，把「为什么落 dead」也记进同一本账（`dead_verdict`），可读面才第一次说得出成因——过去这枚判定只活在 worker 的日志行里。账本读不到（message 键不在位）仍旧一个字节都不盖，与 `_record_discard` 同一口径：宁可少一笔原因，不伪造账本。
         """
         if self.is_cancelled(request_id):
             self.redis.lrem(self.processing_key, 1, request_id)
@@ -566,14 +575,20 @@ class ReliableQueue:
             return "cancelled"
         raw = self.redis.get(self._message_key(request_id))
         attempts = 0
+        data = None
         if raw:
             data = json.loads(raw)
             attempts = int(data.get("attempts", 0))
             data["last_error"] = error
+        dead = not retryable or attempts >= self.max_attempts
+        if data is not None:
+            if dead:
+                # R585 判据①③：这一枚判定必须在写状态键**之前**落账——反过来就留出一瞬「状态已经叫 dead、账上还答不出为什么」的窗口。
+                data[DEAD_VERDICT_LEDGER_KEY] = {"reason": str(error), "retryable": bool(retryable)}
             self.redis.set(self._message_key(request_id), json.dumps(data, ensure_ascii=False, separators=(",", ":")))
         self.redis.lrem(self.processing_key, 1, request_id)
         self.redis.delete(self._lease_key(request_id))
-        if not retryable or attempts >= self.max_attempts:
+        if dead:
             self.redis.rpush(self.dead_key, request_id)
             self.redis.set(self._status_key(request_id), "dead")
             return "dead"
@@ -609,6 +624,25 @@ class ReliableQueue:
         if value is None:
             return None
         return value.decode() if isinstance(value, bytes) else str(value)
+
+    def dead_verdict(self, request_id: str) -> dict[str, Any] | None:
+        """这一枚 dead 是怎么落下来的；没有这笔账就交回 None，不拿 False 冒充「不可重试」。
+
+        R585 判据①③：可读面要说的两件事——落 dead 时交给队列的那枚原始文本，以及调用方当时给出的终局判定。读不懂（键不在位、载荷不是当年那本 dict 账、那一格压根没记）一律交回 None：这一格说的是「读不到」，不是「没有发生过」。
+        """
+        raw = self.redis.get(self._message_key(request_id))
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        verdict = data.get(DEAD_VERDICT_LEDGER_KEY)
+        if not isinstance(verdict, dict):
+            return None
+        return {"reason": verdict.get("reason"), "retryable": verdict.get("retryable")}
 
     def failure(self, request_id: str) -> dict[str, Any]:
         """Report retry bookkeeping so a failed task always carries a reason."""
