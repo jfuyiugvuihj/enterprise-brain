@@ -218,7 +218,7 @@ def transient_connect_errors(driver=None) -> tuple:
 
 
 def connect_with_policy(url: str, *, policy=None, environ=None, connect=None,
-                        transient=None, sleep=None, clock=None):
+                        transient=None, sleep=None, clock=None, **driver_kwargs):
     """按 :func:`connect_policy` 的读数开一条连接：超时 + 有界重试 + 指数退避 + 预算。
 
     env 一个都不设时走的是 ``connect(url)`` 一发：不睡、不重试、不加超时，和
@@ -228,6 +228,18 @@ def connect_with_policy(url: str, *, policy=None, environ=None, connect=None,
     ``connect`` / ``transient`` / ``sleep`` / ``clock`` 是给测试留的缝（与本仓
     ``connection_factory=`` 同一族做法）。注入假 connect 而不给 transient 时重试自动
     关掉，免得拿一枚不存在的异常类去 except。
+
+    R602 起这枚签名末尾多了一格 ``**driver_kwargs``：调用方多给的**驱动参数**原样
+    转给驱动。从前这枚是全具名关键字、一枚都不许多收，于是 ``app/notifications/
+    states.py`` 递下来的 ``row_factory=dict_row`` 无处可去，通知中心那条 PG 腿一被
+    走到就 TypeError。事故 #106：在册测试桩全部打在 ``_conn`` 上，于是这枚错从 ``fea3161``
+    （09-26 那笔把落点收进边界起）在真库里一次都没通过过，而全量门一路绿（账见
+    docs/perf/r602-notification-pg-leg-2026-10-03.md）。
+
+    合并次序写死在下面：策略自己那两枚（``connect_timeout`` / ``keepalives``）排在
+    **后面**，调用方不许拿它们盖掉操作者拧开的 env；env 全关时 :func:`connect_kwargs`
+    交回空 dict，转发格因此逐字节等于调用方给的那几枚 —— 判据①那句「不设 env 就是
+    今天」的账一个字都没动。
     """
     plan = connect_policy(environ) if policy is None else policy
     if connect is None:
@@ -238,7 +250,7 @@ def connect_with_policy(url: str, *, policy=None, environ=None, connect=None,
             transient = transient_connect_errors(psycopg)
     if transient is None:
         transient = ()
-    kwargs = connect_kwargs(plan, url)
+    kwargs = {**driver_kwargs, **connect_kwargs(plan, url)}
     monotonic = time.monotonic if clock is None else clock
     sleeper = time.sleep if sleep is None else sleep
     attempts = max(1, plan.attempts)
@@ -274,6 +286,8 @@ def open_connection_with_policy(settings: DatabaseSettings, **kwargs):
     """``open_connection()`` 的策略版：留给后续调用点迁入时用的同形入口。
 
     env 全关时它发出的调用与 ``open_connection(settings)`` 逐字节相同；本单不改
-    ``open_connection`` 一个字节，也不把任何调用方指到这里。
+    ``open_connection`` 一个字节，也不把任何调用方指到这里。R602 起这里的 ``**kwargs``
+    不再只装那四枚测试缝：调用方多给的驱动参数（今天唯一一枚是 notifications 的
+    ``row_factory=dict_row``）由 :func:`connect_with_policy` 原样转给驱动。
     """
     return connect_with_policy(settings.url, **kwargs)
