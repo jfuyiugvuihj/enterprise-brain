@@ -1701,6 +1701,9 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | （总控亲做·**新抓 P1**） | — | **R608 镜像重建自 R596 起每次必死**：`Dockerfile:90` 押在 `www.postgresql.org`／`apt.postgresql.org`，本机与任何客户内网都取不到（六家国内镜像无 `postgresql-pgdg`，trixie 无 `postgresql-client-16` 候选） | 主树 `a2bbf13`，5 枚路径 | ✅ 改走已登记的 `APT_MIRROR` 装 `postgresql-client-${PG_CLIENT_MAJOR=17}`；钉由「大版本相等」改成「不低于服务端」（凭据＝pg_dump 17.11 打 16.15 交回 79,899,932 B 归档、`pg_dumpall --globals-only` rc=0）；重建 9 s、容器内四枚工具在位、provenance PASS | 10-03 17:0x |
 | （总控亲做·**窗内在跑**） | — | **run18＝全 105 题「一窗多判据」·安静复测**（A① 问答档／A② 流式帧／C③ 新集分数／D 三格） | 镜像 `revision=a2bbf13`（＝HEAD）· `INDEX_BACKEND=pgvector` · `fixture_sha256=686c564f…`＝主件 | 🟢 17:12:40 开窗，`shards=105`，P-20 七格全 PASS·rc=0（keep_awake 第一跑 FAIL，补 `window_keep_awake.py --loop --interval 240` 后绿；电源设置一字未动），首片 `doc-01` 60.4 s rc=0 | 10-03 17:1x |
 | （队列·待接） | — | **run19**（A④ 逐类不退化的同修订机器对照，`r580` 对不同 revision 硬拒）→ **R143 recall 对账** → **pgvector 格② 热集让路延迟** | `%TEMP%\evalrun` · 同一镜像同一 HEAD | ⏳ run18 收窗即接；驱动片级断点，断联后 `--run` 续跑零重打 | 10-03 17:1x |
+| （总控亲做·**已授权删除**） | — | **R611 删除清单沙盒模拟＋入队**（在册 308 枚工作树逐枚现取：删除候选 252／保 4 枚 parked 独有提交／保 51 枚账上未点名含 🔴`be-r598` 待并树真载荷） | 判据＝账（主树提交点名）＋载荷先归档；`chroma_db`/缓存记噪声；`.zcodeignore` 与业主作业目录不动 | 🟡 模拟两遍已完（`r611-sim2.json`），执行由 `r611_watch.py` 在队列 `QUEUE ALL DONE`＋盘面空闲那一刻自动做 ①验 ②归档复验 ③同卷 move 进检疫区 ④prune；**窗内不执行**；磁盘真回收留给显式 `--purge`。🔴 订正：按字节等于今天的主树≠已并树（并树后主树又长过），211/252 枚会被误判 | 10-03 17:4x |
+| （总控亲做·**窗内抢修**） | — | **🔴 事故 #109**：接续器 `sequencer1819.py` 的 `REPO` 中文路径被命令通道写成字面 `????` ⇒ run18 收窗那一刻整条队列会静默死（run18 不归档、run19 不开） | `%TEMP%\evalrun\sequencer1819_v2.py`（全 ASCII＋`assert isdir`＋先睡 30 s 再探） | ✅ 17:39:13 换掉旧 pid 66360 起新接续器，run18 驱动两枚进程未受影响；规矩入册：生成再跑的脚本一律 ASCII，中文走 `chr()`，末尾带路径自检。同类残件 `fix_knife1.py`/`r588_probe.py` 也带 `????`（没在跑，未碰） | 10-03 17:39 |
+| （待派·窗后） | — | **R610** 收割 R605 那 6 条独有牙（`tests/` 一枚新钉·零生产码，判据见跟进单 §161.1） | 写域＝`tests/test_r610_*` | ⏳ 排 run19 收窗之后 | 10-03 17:4x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -6715,3 +6718,20 @@ C 门三格现状：①越权 0 条＝**未验**（R481 口径；R487 只到账�
 - 机器侧 ≈ **5.5 h**：run18 118 min＋run19 118 min＋R143 20–40 min＋格② 20–30 min＋新镜像 restore 演练约 15 min。总控侧窗后 ≈ **1.5–1.8 h**：family A 40–60 min（含 `retriever.py` 那枚裸连——R60 +148/-25 之后行号作废，必须现取）＋ R598 并树 25–40 min ＋ 一次全量门约 10 min。
 - 门现状：A① 待本窗判／A② 残留红有名有姓／A③ ✅／A④ 待同修订两窗；**B／E 整行已移出 V1**（09-24 裁定）；C① 生产侧记未验（A1 已裁不在真库做、A3 属交付阶段）、C② 达标、C③ 待新集重量；D 三格待本窗首读数。
 - 待业主：无新增闸门；仍欠的只有删除清单／`.gitignore`／`chroma_db` 反跟踪／把 `automation-2` 的 `target_thread_id` 从死线程改到本线程（本线程未动它）。
+## 4EQ 第十二班第十一格（10-03 17:3x-17:5x·总控线·主树 `1ffc0a8`／**单模型未切换**／心跳一枚没碰）：#107 订正 · #109 抢修 · 删除清单沙盒模拟
+
+**一、删除清单（业主授权"可以删，删之前先沙盒模拟"）**
+- 在册工作树 308 枚（含主树）逐枚现取两遍：`merged` 用一枚 `git rev-list HEAD`（1,239 枚）离线判，不用逐树 spawn；再逐文件字节对账（`r611-sim2.json`）。
+- 🔴 **判据订正**：上一格"脏＝有独有载荷"错，本格"逐字节等于今天的主树才算已并树"也错——并树之后主树又长过，按字节判会把 211/252 枚正常残副本读成独有物。真判据＝**主树提交标题点过这枚树名（该单已由总控代提交并树）＋载荷先按字节归档**。
+- 分档：删除候选 **252**／保 **4**（`be-r163`·`be-r180`·`be-r205b`·`be-r338`＝明写不并树的 parked WIP，各 1 枚独有提交）／保 **51**（账上未点名，含探针壳 `_eolprobe`·`be-base*`·`be-eval95`·`bisect-*`·`gate-bisect-a`·`verify-r189`，以及 🔴 **待并树真载荷 `be-r598`**：3 枚改＋8 枚未跟踪）。
+- 执行阶梯（`r611_final.py`）：① 现取 `merged`/`locked`/`in_ledger` 三判 → ② 非噪声载荷约 1,385 枚文件复制进 `%TEMP%\eb103\r611-payload-archive\<树>\` 逐枚 sha256 复验（噪声＝`chroma_db/`·`__pycache__`·`.pytest_cache/`·`static/charts/`）→ ③ 零失配才同卷 `move` 进 `PycharmProjects\_quarantine-2026-10-03-worktrees\` → ④ `git worktree prune` → ⑤ 磁盘真回收留给显式 `--purge`（今晚不做，检疫区留着可回滚）。样本 53 MB/枚 ⇒ 约 13 GB（估算）。
+- **窗内不执行**：`busy()` 把 eval 驱动／`run_gate.py`／接续器三族进程当闸；`r611_watch.py` 17:44:24 起等"队列 `QUEUE ALL DONE` ＋ 空闲"那一刻自动做 ①→④。
+- 仓根跑分残留四枚（`0076-done.json`·`head.json`·`polls.jsonl`·`scripts/collect-sidecar.jsonl`）已进检疫区，`manifest.tsv` 462→466 行；tracked 零枚被碰。
+- 仍欠业主一个字：`.gitignore` 加 `.tmpfix/`；`chroma_db` 反跟踪（09-15 裁甲＝只加忽略规则）；`automation-2`（仍 `PAUSED` 指向死线程 `01a0acfb`，**不建议**改到本线程，建议删）。
+
+**二、🔴 事故 #109（窗内抢修，不改测量条件）**
+-  `%TEMP%\evalrun\sequencer1819.py` 的 `REPO` 里那四位中文是**字面 `????`**——命令通道会把非 ASCII 转成 `?`。后果：run18 收窗时 `subprocess.call(cwd=<不存在>)` 抛异常，整条队列静默死掉 ⇒ run18 不归档、run19 不开，两扇窗白等。
+- 新版 `sequencer1819_v2.py`：正文全 ASCII、路径 `chr()` 现拼、`assert os.path.isdir(REPO)`、`wait_done` 先睡 30 s 再探、每步带时间戳。17:39:13 杀旧 pid 66360 起新接续器，run18 两枚驱动进程一字未动（17:41 现读 48/105 片，`metric-*` 段 29-48 s/片）。
+- 入册规矩：**生成再跑的脚本一律 ASCII，中文走转义，末尾必带一次路径/依赖存在自检**；同类残件 `fix_knife1.py`·`r588_probe.py` 也带 `????`（没在跑，本格未碰）。
+
+**三、#107 订正与 R610**：见跟进单 §161.1／§162 一、四——`Darwin` 收席前写了三枚，实现与 `8d8b85f` 无独有产物（只差参数名与措辞），**牙独有 6 条** ⇒ R610 窗后收割；`AGENTS.md` 新增"收席取证时效"一条。

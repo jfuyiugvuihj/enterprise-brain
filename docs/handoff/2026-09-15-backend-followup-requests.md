@@ -5440,3 +5440,17 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 - 🔴 **但牙有独有**：那枚新钉 11 条 `def test_`，已并树的 `tests/test_r602_notification_pg_leg.py` 只有 4 条。逐名对账后独有 6 条——写腿也到驱动／env 全关时转发逐字节等于调用方给的那几枚／DSN 自带超时压过 env／六枚测试缝不许漏进转发的 kwargs／两枚边界签名都收调用方 kwargs／states 探针仍在向边界要 dict_rows。
 - 立新单 **R610**（写域＝`tests/` 一枚新钉，零生产码·窗后做）：把那 6 条独有牙钉在现在的 `**driver_kwargs` 签名上，两态亲跑（dirty＋commit 后同清单）。R605 号仍作废不复用；R609 仍留给那 75 枚 `*-processing.json` 的写手不在跟踪代码里那一格。
 - **规矩补一条**（已写进 `AGENTS.md:52`）：「零写入」只在取证那一刻成立——收席动作之前必须**重跑** `diff --numstat HEAD`＋`ls-files --others`＋`rev-list --count`，三枚都在收席那一刻现取，不许引用几分钟前的旧账。事故 #107 的正确定性因此从「二次投递零写入」改成「二次投递且留下 6 条独有牙」。
+
+### 162 第十二班第十一格（10-03 17:3x-17:5x·总控线）：订正 #107 · 抓到并修好 #109 · 删除清单做完沙盒模拟并入队
+- **一、#107 已订正**：见 §161.1（R605 不是零写入，实现无独有产物、牙独有 6 条 ⇒ R610）。随本笔并树 `AGENTS.md` 新增一条收席取证时效规矩。
+- **二、🔴 事故 #109（本席抓到并当场换掉）**：run18→run19 的接续器 `%TEMP%\evalrun\sequencer1819.py` 里 `REPO = r"...PycharmProjects\????"` ——路径的中文是**字面问号**，因为**命令通道会把非 ASCII 转成 `?`**，凡"用 shell 写脚本文件"生成的长活脚本都会中（`fix_knife1.py`/`r588_probe.py` 同样带着 `????`，只是没在跑）。后果：run18 收窗那一刻 `subprocess.call(cwd=<不存在的目录>)` 当场抛异常，整条队列静默死掉 ⇒ run18 不归档、run19 不开，今晚两扇窗白等。处置：新版 `sequencer1819_v2.py` **正文全 ASCII**（路径用 `chr(0x4F01)...` 现拼）＋开头 `assert os.path.isdir(REPO)`＋`wait_done` 先睡 30 s 再探；17:39:13 杀旧 pid 66360、起新接续器（日志同一枚 `queue1819.log`），run18 两枚驱动进程一字未动。规矩入册：**生成再跑的脚本一律 ASCII，中文走转义，末尾必带一次"路径/依赖存在"自检**。
+- **三、删除清单（业主 10-03 授权"可以删，但删之前先在沙盒模拟"）**
+  - 先补上一格漏的那几枚：仓根 `0076-done.json`／`head.json`／`polls.jsonl`／`scripts/collect-sidecar.jsonl`（10-01 23:42 与 10-03 08:54 的跑分残留，untracked）已移进检疫区 `repo-root-junk-2026-10-03/`，`manifest.tsv` 462→466 行逐枚记 sha12；tracked 文件零枚被碰。`.zcodeignore` 与业主作业目录不动（业主材料）。
+  - 在册工作树现取 308 枚（含主树）。沙盒模拟两遍：`r611_sim.py`（`diff`/`ls-files` 计数）＋ `r611_sim2.py`（逐文件字节对账，`r611-sim2.json`）。
+  - 🔴 **订正一条判据**：上一格那种"脏＝有独有载荷"、以及"逐字节等于今天的主树才算已并树"都是错的——并树之后主树又长过，按字节判会把 211/252 枚已并树的正常残副本读成"有独有物"。真判据＝**账（主树提交标题点过这枚树的名字 ⇒ 该单已由总控代提交并树）＋载荷先按字节归档**。
+  - 分档（现取）：**删除候选 252 枚**（已并入且账上点名）／**保 4 枚**（`be-r163`·`be-r180`·`be-r205b`·`be-r338`，四枚明写"不并树"的 parked WIP，各自 1 枚独有提交）／**保 51 枚**（主树提交没点名的，含 `_eolprobe`·`be-base-72d0419`·`be-basehead`·`be-eval95`·`be-r556base`·`bisect-*`·`gate-bisect-a`·`verify-r189` 这些探针壳，以及 🔴 **`be-r598`＝待并树真载荷**：3 枚改＋8 枚未跟踪，mtime 10-03 15:32）。
+  - 落地阶梯 `r611_final.py`（业主授权范围内的"零风险"次序）：① 逐枚现取 `merged`／`locked`／`in_ledger`；② 把非噪声载荷（噪声＝`chroma_db/`·`__pycache__`·`.pytest_cache/`·`static/charts/`）约 1,385 枚文件按字节复制进 `%TEMP%\eb103\r611-payload-archive\<树>\` 并逐枚 sha256 复验，**零失配才许下一步**；③ 同卷 `move`（瞬时 rename、可回滚）进 `C:\Users\fengx\PycharmProjects\_quarantine-2026-10-03-worktrees\`；④ 全部搬完 `git worktree prune` 一次；⑤ 磁盘真回收留给显式 `--purge`，今晚不做。样本 53 MB/枚 ⇒ 预计约 13 GB（估算，非实测总量）。
+  - 排队方式：**窗内不执行**（`busy()` 现读会把 eval/gate/sequencer 三族进程当闸）；`r611_watch.py` 17:44:24 起在等"队列 `QUEUE ALL DONE` ＋ 盘面空闲"那一刻自动跑 ①→④，上限 480 min，日志 `%TEMP%\eb103\r611-watch.log` 与 `r611-apply.log`。
+  - 仍要业主一个字才能做的三件：`.gitignore` 加 `.tmpfix/`（AGENTS.md 明令改 `.gitignore` 属业主）；`chroma_db` 反跟踪（09-15 裁"甲＝只加忽略规则、不改版本控制范围"，6 枚在册文件要 `rm --cached`）；心跳 `automation-2`（仍 `PAUSED`、target 仍指死线程 `01a0acfb`——本席不动它，也**不建议**改到本线程，那正是毒死线程的老路，建议直接删）。
+- **四、R610**（待派·写域＝`tests/` 一枚新钉·零生产码）：收割 §161.1 那 6 条独有牙，窗后两态亲跑。
+- **五、盘面**：HEAD 本笔＝#107 订正＋#162 落账，push 后 `unpushed=0`；run18 到 17:41 收 48/105 片，`metric-*` 段单片 29-48 s（比 run17 的 118 min 快，本机安静）。
