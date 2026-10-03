@@ -5150,3 +5150,25 @@ R557（`Pasteur`）先交全量机器账的**纸**，本单把那本纸变成**�
 - 6c8b6dd R571（分片 driver 缺 --env-file 该 REFUSE 不该崩；driver 33/6 中间插入、钉 79/0 文末纯追加，在册 31 枚旧用例一字未动）。
 - 两态复跑同名集：脏态与提交后干净树各跑一遍 tests/test_r570_window_shard_driver.py ＋ tests/test_r565_a2_denominator_buckets.py ＝ **55 passed / rc=0**（本席亲跑，非转述）。
 - 🔴 这两笔都没消掉 §151 那两枚 HEAD 自带红（tests/test_r253_* 一族，R572 在途）：按规矩，R572 并完之前任何并树都要注明这两枚红是 HEAD 自带。
+
+## §153（10-03 第十二班第五格·总控线，主树 `bd52ef7`·gitee 已平）：新立三枚（R579/R580 已投·R581 待投）＋一句降级（「PG 索引=精确 105/105」是平凡真）
+
+### 一、降级一句昨天的读数（本席 09:0x 现网 EXPLAIN 实测）
+
+- 1008 枚现网上规划器**不选 HNSW 索引**：`EXPLAIN ANALYZE select vector_id from chunk_vectors where classification = any('{1}'::integer[]) order by embedding <-> <常量> limit 5` 交 `Seq Scan on chunk_vectors`（rows=1008）加 `Sort Method: top-N heapsort`，actual time 约 **2.4 ms**；再加 `set enable_seqscan=off; set enable_sort=off` 才交 `Index Scan using chunk_vectors_embedding_idx`，约 **44.5 ms**（**慢 18 倍**）。`pg_stat_user_indexes` 现读：`chunk_vectors_embedding_idx.idx_scan` = **0**，`chunk_vectors` 的 `seq_scan` = 1432。
+- 所以 §151 那句「PG 索引=精确 105/105」**必须降级为平凡真**：那 105 题的 PG 腿走的是全表精确解，与暴力解全等并不证明图索引的质量。同段那句「Chroma 只有 55/105 且 21 题交空 top-5」**不受影响**（那是 Chroma ANN 自己的形状），翻默认的凭据也不受影响：`vector_scope.vector_scope_pkey.idx_scan` 单题一问 **1207 到 1217**（+10）—— `vector_scope` 只有 PG 读腿会碰。
+- 距离算子与索引算子类是对得上的：`vector_scope.distance_function` 现读 `l2`，`app/rag/pg_store.py:619` 的 `DISTANCE_OPERATORS` 把 `l2` 映射为 `<->`，`pg_indexes` 现读索引为 `USING hnsw (embedding vector_l2_ops) WITH (m='16', ef_construction='100')`。⇒ 不是「索引坏了」，是「这个尺寸规划器不选它」，所以**客户尺寸那一格从来没量过**，改由 R579 量拐点。
+
+### 二、R579｜PG 读腿「索引拐点」（已投执行层 Faraday，树 `be-r579`@`b85c277`，agent `01a0ff44-4673-78f2-9fd4-2e6d3c054be5`）
+
+写域＝新 `scripts/r579_index_crossover_readout.py` ＋新钉＋纸 `docs/perf/r579-index-crossover-2026-10-03.md`；禁 `app/**`／`frontend/**`／`deploy/**`／`docs/handoff/**`／在册量具改口／容器写操作／模型。生产库全程只读，沙盒库自建自删（`eb_r579_probe`），合成向量固定 seed、零 embedding 推理。判据六格：①复现上面三条 EXPLAIN 读数；②四档规模（1008／5000／20000／50000，灌不动就停在能灌成的最大档并写明）各交 (a) 规划器选哪条腿＋对照组、(b) 索引腿 vs 同档暴力解 top-k 名次差（k=5 与 k=20：重合率·平均绝对位移·最大位移·`only_in_*` 枚数）、(c) 两侧 p50/p95（每档不少于 30 次查询）；③候选宽度必须派生自 `app.rag.pg_store.configured_hnsw_ef_search()`，件里出现一枚硬编码宽度数字即红（R393 同族）；④不可外推声明成格（合成不等于客户分布，不许断言「客户机上会怎样」）；⑤反证三把（摘掉 `only_in_*` 比对必须红／指不存在的档位必须非零退出并点名哪一档／在生产库上试 `INSERT` 必须被拒）；⑥清理与零污染（`psql -l` 库名集合回到开头那一集、生产六项对照前后全等、大文件只落仓外 `r579-drill`）。
+
+### 三、R580｜A④ 逐类不退化第一次逐类归因 run13 到 run14（已投执行层 Herschel，树 `be-r580`@`b85c277`，agent `01a0ff46-f731-75c1-a564-71ac3d0a90f1`）
+
+尺必须在册（`app/quality/eval.py::_is_correct` 按 `must_contain`），禁平行实现。判据五格：①`category` 乘两窗＋`tier` 乘两窗两张分桶表，每桶 n 加总必须等于 105，对账不上 rc 非 0；②每一处下降题级归因，四类（检索腿／生成措辞／分母口径／量具取不到）之外不许新增类别，归「检索腿」的必须逐枚交两窗 evidence 的文件名#chunk 级差异；③甲案扣除集合两窗相同与否必须现读（不许抄本板那句 19 枚／分母 86）；④反证三把（手改一枚 `correct_n` 必须报下降／指 104 行必须 REFUSE／run13 自比必须 0 下降＝正控），摘前摘后逐字节 sha256；⑤纸里逐字引 `docs/handoff/2026-09-23-v1-acceptance-record.md` §3 那行 A④ 原文（引错即红），并明写「只交数，翻不翻绿由总控裁」。
+
+### 四、R581｜把「Docker vGPU 影子」正面归因写进在册开窗前置闸（**待投**：并发已满，按规矩不双投，落此单等新线程或等槽位）
+
+- 现状 P-20 现取 rc=1，两格 FAIL：`provenance`（镜像 `fd90f30` 落后主树 6 笔——正解 GIT_SHA 到 BUILT_AT 到 `docker compose build migrate` 到 `up -d` 到验 `/app/BUILD_INFO`，本席收完在途件后做一次）；`gpu_apps` 原文「外来进程占着 GPU，A① 的 p95 时延读数不可采信：pid=4 exe=[Insufficient Permissions]」，而 **pid=4 是 Windows System**，这台机上它永远在。
+- 🔴 两套判定已经并存：队列 v2 为它另写了一套（`%TEMP%\eb-rescue\R570\queue_v2.py`，日志 00:21–00:26 六轮 REFUSE 为证）。AGENTS.md 明令不许复制平行实现 ⇒ 正解是把队列那套已验证的姿势收进在册件，别的调用点都改调它。
+- 判据六格：`gpu_apps` 改三分法 `CLEAN`／`ATTRIBUTED`／`FOREIGN`；归因链必须写成「影子 → 容器 → 计算 pid 同名同槽」的可失败断言（少一步就红），不是「看起来不像负载」；取不到证据一律落 FAIL/UNMEASURED（🔴 不许「问不到」当「没有」，这仓自己写的教训）；真有人在抢 GPU 的形状必须仍 FAIL（默认行为不许放松）；归因真源只写一处（新 `scripts/r581_gpu_attribution.py`，`scripts/r530_run10_window_preflight.py` 调它）；在册那 11 枚 `tests/test_r530_window_preflight_pins_the_opening_conditions.py` 改前改后同名集同数、断言不许放宽；`--json` 面的键不许消失。写域另含可选的 `scripts/eval_window_shard_driver.py` 闸那几行——若判定 driver 不该调则不改，纸里写清为什么并出转出项，不许默默留两套。本单不治任何时延读数，A①／A④ 一格都不许因此变绿。
