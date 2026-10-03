@@ -395,25 +395,21 @@ def test_the_pgvector_write_predicate_is_the_read_switch_itself(monkeypatch):
 
 
 def test_stopping_the_write_is_a_switch_and_not_a_deletion():
-    """判据②常驻钉：``_write_batch`` 里那一枚 ``collection.add`` 必须还在源码里。
+    """判据②常驻钉（R625 改写）：停写是判定，不是删码——而"摘没摘"要逐枚点名。
 
-    把它摘掉也能让第④格今天绿，但那是把退路拆了：回滚＝改码重新发版，而不是把开关拨回
-    chroma。所以这枚钉只看 AST，不看今天的读数 —— 读数会随每笔并树漂，结构不会。
+    原来这一格写的是 len(_write_batch 里的 collection.add) >= 2。那句话钉不住任何一枚具体写点
+    的身份：主写路径上再多出一枚 add，它只会更满足；把停写判定中和成 if False，它一字不动还是绿。
+    现在改判身份。名册按 AST 现取 app/ 里每一枚 Chroma 写点的名字、各自的闸门条件、各自允许喂的
+    id，四格（名册对账/闸门/id 来源/主写路径无闸门写点）任一不中都红，报的是那一枚写点的名字。
+    名册是两枚件共用的一份（tests/test_r625_chroma_write_sites_are_named_one_by_one.py），
+    不在这里再抄一套判据；行号一枚都不抄，行号会漂。
     """
-    tree = ast.parse(RETRIEVER_PY.read_text(encoding="utf-8"))
-    body = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_write_batch":
-            body = node
-            break
-    assert body is not None, "_write_batch 不在了 —— 那已经不是停写，是删码"
-    handed = [item for item in ast.walk(body)
-              if isinstance(item, ast.Call)
-              and isinstance(item.func, ast.Attribute) and item.func.attr == "add"
-              and isinstance(item.func.value, ast.Attribute)
-              and item.func.value.attr == "collection"]
-    assert len(handed) >= 2, (
-        "遗留腿的 add 调用被摘掉了（现读 %d 枚；离线那支与正常那支都得在）" % len(handed))
+    # 函数内 import：本文件的模块级假腿正被那枚件复用，模块级互领会成循环 import。
+    from test_r625_chroma_write_sites_are_named_one_by_one import write_site_findings
+
+    findings = write_site_findings()
+    assert findings == [], ("Chroma 写点不再逐枚点名了（身份/闸门/允许喂的 id/主写路径）：\n"
+                            + "\n".join(findings))
 
 
 def test_the_write_leg_reads_no_second_switch():
