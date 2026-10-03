@@ -1665,6 +1665,15 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Popper`（**新线程，一次投递**） | `01a0ff75-197c-7531-9049-c0b834b8cdeb` | **R584**（本班新立·治全量门唯一那枚 teardown ERROR） | `be-r584`（基点 `dfc057b`，**独占**；写域＝`tests/conftest.py` 的 `_eb_r563_same` 那一腿＋新钉＋纸） | 🟡 **在途**（09:5x 投出）。判据硬在两处：**不许锯腿**（`__defaults__` 仍要判，只把比较从实例身份换成结构比较）＋三把反证必须真咬（摘腿必红／换语义不同的桩必红／真留假身仍红在凶手模块）。 | 10-03 09:5x |
 | `Einstein`（**新线程，一次投递**） | `01a0ff75-771d-7312-b101-23c5a13cecdb` | **R581**（判据全文＝跟进单 §153 四）把 pid=4 vGPU 影子**正面归因**收进在册开窗前置闸 | `be-r581`（基点 `dfc057b`，**独占**；写域＝新 `scripts/r581_gpu_attribution.py`＋`r530_run10_window_preflight.py` 调它＋可选 driver 那几行） | 🟡 **在途**（09:5x 投出）。🔴 现值已变：本席 09:4x 现取 `--need-minutes 90` **rc=0／8 格全 PASS**（`gpu_apps` 那一刻真没有负载、`provenance` 随镜像重建转绿）——这不是本格变绿，影子会回来；本单不治任何时延读数。 | 10-03 09:5x |
 | （总控亲做·非执行层） | — | **run15＝D 格相 2 专窗**（12 题报告档，`REPORT_LANE_VIA_QUEUE=on` ＋ 量具补发 `lane=report`） | `be-eval95` 已 `merge --ff-only dfc057b`＋`%TEMP%\evalrun\run15.*`＋仓外子集件 `fixture-report12.jsonl`（sha `a9af15ea81c2`，整行原样抽取，评测集一字节未动） | 🟢 **09:54:35 开窗**（driver pid 62088／壳 pid 62168，`window.json` 已落，`shards=12 to run=12`）。开窗前置现取：P-20 **8 格全 PASS**、P-18 `answer:*`＝0（`PING=PONG` 先过再数）。 | 10-03 09:54 |
+| `Popper`（**已结案并释放槽位**） | `01a0ff75-197c-7531-9049-c0b834b8cdeb` | **R584** 治全量门唯一那枚 teardown ERROR（`_eb_r563_same` 第四腿拿实例身份比 `File()/Form()`） | `be-r584`（基点 `dfc057b`，独占） | ✅ **结案并树 `ebf0d7b`**：三枚产物 sha 与交回**逐枚全等**（`31d51669be9c`/`0b8c1be09f2b`/`2caf3f34229b`）；总控主树**两态亲跑** 13 枚名单集——脏态正序 **157 passed／0 error**（58.46 s）、提交后干净树正序 **157 passed／0 error**（56.40 s）、反序 **157 passed／0 error**（59.94 s），与自报同数。🔴 订正编号一笔：`6a2c09b` 提交信息把这枚缺陷叫 R582，落账（§154）已改号 R584，R582 现指告警审计那一单，两号不得互认 | 11:0x |
+| `Confucius`（**已死·429**） | `01a0ff8a-60c7-7741-b53d-c6c53a18963f` | **R585** `dead` 终态接上持久面＋可读面原因码（判据＝跟进单 §155 三＋五） | `be-r585`（基点 `714691c`） | 🔴 **死于 `429 Too Many Requests`**（10:5x 回执 `exceeded retry limit`）。取证：`rev-parse`＝`714691c`、`numstat` 空、未跟踪 0 枚、`rev-list --count 714691c..HEAD`＝0 ⇒ **零写入、单没落地**（10:18 那笔盘上时间戳只是 `__pycache__`，是它在跑测试不是它在写码）。按规矩**不当场补投**，列本班复投第一位 | 11:0x |
+| `Lovelace`（**新线程·复投**） | `01a0ffa7-0a18-7703-9561-d6987395e454` | **R587** 库级 GUC 不在 pg_dump 里，恢复库 `app.embedding_dimension` 变 MISSING（E 门备份假绿） | `be-r587`（基点 `1b0534a`，独占） | 🔵 10:5x 首投触顶 `agent thread limit reached`（无 agent_id 落地）；`Popper` 结案腾出槽位后**取证零写入 ⇒ 复投**，非双投。判据五格全文＝跟进单 §156 二 | 11:0x |
+| `Franklin`（**新线程，一次投递**） | `01a0ff91-a451-7fa2-ab26-e9f3090d0acd` | **R582** 告警处置三写口不落审计账（判据＝跟进单 §154 一） | `be-r582`（基点 `1b0534a`，独占；写域 `app/api/v1/alerts.py`＋新钉＋纸） | 🔵 在途。11:0x 实取 `M 96/36 app/api/v1/alerts.py` ＋ 新钉 `tests/test_r582_alert_disposal_audit_ledger.py`，纸未落 | 11:0x |
+| `Plato`（**新线程，一次投递**） | `01a0ff91-c965-7780-bf8f-522850a5bd67` | **R583** `WINDOWS` 名册与真实开窗者脱节（出路已由总控裁成**甲**：进册＋同步枚数钉＋改掉旧解释） | `be-r583`（基点 `1b0534a`，独占） | 🔵 在途，11:0x 实取**零写入**（刚开工） | 11:0x |
+| `Einstein`（在途·**未回执**） | `01a0ff75-771d-7312-b101-23c5a13cecdb` | **R581** 把 pid=4 vGPU 影子正面归因收进在册开窗前置闸（三分法 CLEAN/ATTRIBUTED/FOREIGN） | `be-r581`（基点 `dfc057b`，独占；`M 37/23 scripts/r530_run10_window_preflight.py`＋新 `scripts/r581_gpu_attribution.py`＋新钉＋纸） | 🟡 盘上四枚件 10:5x 与 11:0x **两次实取一字未动**，疑收尾卡住或同样受限流影响。🔴 本单与本班开窗**直接相关**：10:5x P-20 现读 `gpu_apps=FAIL「外来进程占着 GPU…pid=4 exe=[Insufficient Permissions]」`，而 `Get-Process -Id 4`＝**System**、`nvidia-smi --query-compute-apps` **零命中** ⇒ 那格是假红，不是真有人在用 GPU | 11:0x |
+| `Faraday`（在途） | `01a0ff44-4673-78f2-9fd4-2e6d3c054be5` | **R579** PG 索引拐点（自建 `eb_r579_probe`，1008/5k/20k/50k，零模型零数据写生产） | `be-r579`（基点 `b85c277`，独占） | 🔵 在途。四枚未跟踪件，其中 `scripts/r579_index_crossover_readout.py.bak-pre-statspatch` 是**备份垃圾，并树时不收**，交回时要点名 | 11:0x |
+| （总控亲做·非执行层） | — | **R586 配套抬上下文窗口**（两半同数 8192） | `docker-compose.yml` ollama 那格＋量具 `scripts/r586_context_window_probe.py`＋钉 8 枚（并树 `9c9a0b1`）；`deploy/.env.server`（未跟踪） | ✅ 10:5x 实测到位：ollama 容器 `printenv OLLAMA_CONTEXT_LENGTH=8192`、backend/worker `printenv MODEL_CONTEXT_TOKENS=8192`、真发一发后 `ollama ps`＝`qwen3.5:9b 5.5 GB 100% GPU 8192`；在册配套闸 `check_context_pairing()` 现读 **verdict=paired**（declared 8192 env／runtime 8192 api/ps）。钉写出来当场咬过我一处：compose 注释原没写「改完要 `--force-recreate`」 | 11:0x |
+| （总控亲做·**窗内在跑**） | — | **run16＝D 格复测**（12 题报告档，`REPORT_LANE_VIA_QUEUE=on` ＋ 量具发 `lane=报告`，窗口两半 8192） | `be-eval95` 已 `merge --ff-only 9c9a0b1`＋`%TEMP%\evalrun\run16.*`＋`fixture-report12.jsonl`（sha `a9af15ea81c2`，评测集一字节未动） | 🔵 10:48:08 开窗，`shards=12 to run=12`。开窗前置 `provenance/answer_cache/keep_awake/foreign_python/eval_tree/env_flags` 六格 PASS，唯 `gpu_apps` FAIL（见 `Einstein` 行，pid=4＝System 的假红）⇒ **本轮只取 D 三格，A① 时延复测不许拿这一轮宣布** | 11:0x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -6509,3 +6518,33 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 - 仓内漏出的跑分垃圾，🔴 **未跟踪、不入仓、本席按规矩只报不删**：`scripts/collect-sidecar.jsonl`＋`scripts/collect-sidecar-frames.jsonl`（10-03 08:54 漏出——runbook §16 记过的脚枪：`EVAL_SIDECAR`/`EVAL_FRAME_LEDGER` 两枚都不设时两份默认落进 `scripts/`）；仓根 `0001-processing.json`…`0076-done.json`＋`head.json`＋`polls.jsonl`（10-01 23:38 队列腿手测残留）；另加历史三件 `.tmpfix/`、`?? -`、`?? %SystemDrive%/`。
 - 被跟踪的 `chroma_db/chroma.sqlite3` 会被跑测改字节（`Kuhn` 与本席各遇到一次）——长期处置（出册／gitignore／反跟踪）是业主动作，本席不动。
 - push 由业主执行（主树现领先 gitee 若干枚，见下）。gitee 平到 `bd52ef7`，其后 `e19ddc5`／`63c36dd`／`6a2c09b`／`dfc057b` 四枚未推。
+
+## 4EL 第十二班第七格（10-03 10:1x–11:0x·总控线·主树 `1b0534a`→`ebf0d7b`→`6910093`→`9c9a0b1`／单模型未切换／心跳一枚没碰（automation 仍 `PAUSED`）／峰值并发 6）：两枚并树 · R586 两半真到位并paired · run16 开窗 · 🔴 两枚 Agent 死于 429 · A② 追加一笔裁定
+
+### 一、并树两枚（都过了「两态亲跑」这道手续）
+
+- **R584 `ebf0d7b`**：全量门那枚唯一的红（`tests/conftest.py:708 _eb_r563_same` 第四腿拿**实例身份**比 FastAPI `File()/Form()`，`importlib.reload` 合法重载后恒不等 ⇒ `157 passed／1 error`）。治法是换比法不比身份：形状卡死→逐位同型→FieldInfo 十五枚语义位→repr 兜底，**腿没锯**。总控主树亲跑：脏态正序 157/0 error、提交后干净树正序 157/0 error、反序 157/0 error。执行层另交四把刀 K1–K4（摘整腿四枚漏钉一起红／真漏必须点名且漂移名单 `len==1`／假身仍红在凶手模块／清空语义位则戊必红）。
+  - 🔴 本班踩到一枚**次生事实**，比本单更要紧：反序第一次跑出 `156 passed／1 failed`，红在 `test_r253_no_test_rewrites_a_tracked_file::test_the_three_pins_this_ticket_moved_still_ship_their_counter_proofs`——原因是**我**当时正往 `tests/` 里写一枚还有语法错误的钉，那枚派生「射程内集合」的把手把解析不了的文件**静默跳过**了。文件修好后反序复跑 157/0。⇒ 立 **R589**：射程内有文件解析不了必须直接红并点名，不许静默缩集（今天差点把总控自己的手抖算成别人的回归）。
+- **R586 `9c9a0b1`**：报告档在 4096 窗口下结构性进不去（run15 worker 日志 `required_n_ctx=4230 > n_ctx=4096 ⇒ context_limit_exceeded`，差 134 token，产品在**发请求之前**就拒且刻意不走兜底）。两半必须同数：`MODEL_CONTEXT_TOKENS` 是本进程算预算那一半，服务端 `num_ctx` 才是真收多少那一半，而产品从不发 `num_ctx`（`app/agents/contracts.py:165`、`app/api/v1/observability.py:1818` 两处自证）⇒ compose 的 ollama 那格今天只有 `NVIDIA_*` 两行、全仓零命中 `OLLAMA_CONTEXT_LENGTH`。**先量再改**：新量具四趟 4096/6144/8192/4096复测，全部 `100% GPU`，显存 5208/5274/5340/5208 MiB（8192 只多 132 MiB），prefill 中位 1.608/1.636/1.734/**1.758** s——末趟是同配置对照，漂移 +9.3% 已大于 4096→8192 的 +7.8%，**档位差在本机噪声之下**，故选档依据是显存与 GPU 归属而非速率；旧账 `.env.example:309` 那句「0.001→5.811」是热加载对冷加载、不同代。缺省仍留 4096（compose 用 `${OLLAMA_CONTEXT_LENGTH:-4096}`），本机两半 8192 落 `deploy/.env.server`。
+  - 到位读数：ollama 容器 `OLLAMA_CONTEXT_LENGTH=8192`、backend/worker `MODEL_CONTEXT_TOKENS=8192`、`ollama ps`＝`5.5 GB 100% GPU 8192`、在册配套闸 **verdict=paired**。
+
+### 二、run16（D 格复测）10:48 开窗
+
+前置六格 PASS、`gpu_apps` FAIL（pid=4＝`System`，`--query-compute-apps` 零命中 ⇒ 假红，见名册 `Einstein` 行）。本轮**只取 D 三格**（可查回／usage 非零／出处），**A① 问答档 p95 的复测不许拿这一轮宣布**——它要等 R581 把那格治好、且机器安静。
+
+### 三、A② 追加一笔裁定（在 09-29 甲案之上，不改合格线宽严）
+
+- 沿用甲案与「两读并列」，R573 交的六组数就是这两读。追加一条：**B3 哨兵族与 chart-01 不得算进 A② 的红**。理由同 09-29 已写死的那句——哨兵正文由 `build_precheck()`/`extract_standard()` 确定性拼出、全文零枚模型符号，物理上发不出第二枚字；`max_stream_frames>1` 是自加格，既不算红也不算绿。
+- 于是两窗残留实红：run13 `tool-02` 一枚（甲-2 分母 100→剔 4 枚＝96，95/96＝**0.9896**）；run14 `tool-02` ＋ **`scope-05`**（分母 102→剔 4＝98，96/98＝**0.9796**）。🔴 `scope-05` 是 run14 才有、run13 没有的**新红**，落在切读那一刀之后，必须归因后才能宣布 A② 是否可达。⇒ 立 **R590**：逐帧归因 `tool-02`（两窗同红）与 `scope-05`（只在 pgvector 窗红），不许拿「口径」二字抵过去。**A② 判词仍是不达**，只是从「一堆红」收窄成「两枚有名有姓的红」。
+
+### 四、本班新立与待投
+
+- 新立 **R588**｜`sidecar.evidence_n` 与 `answers.evidence` 两本账在 run15 的 12 题里 **10 枚不等**，D-3「出处逐题可查回」到底吃哪本账现在说不清——这是量具账本口径问题，不是产品问题，但它决定 D-3 能不能翻绿。
+- 新立 **R589**｜R253/R572 一族把「射程内测试件集合」按能否 parse 派生，`tests/` 里出现语法坏文件时**静默少一枚**（本班现场复现：反序 156/1 假红）。
+- 新立 **R590**｜A② 残留两枚红的逐帧归因（`tool-02`／`scope-05`）。
+- 待投顺序（腾出一枚槽位投一枚，触顶即落纸面不补投）：**R585 复投**（`Confucius` 死于 429、取证零写入）→ R588 → R589 → R590 → R583 之后才谈得上碰 `scripts/r530_run10_window_preflight.py` 的活（R581 在写域里）。
+
+### 五、要业主本人出手的
+
+- 本班没有新增要你按的闸门。原来那八格里，`MODEL_CONTEXT_TOKENS 与 Ollama num_ctx 配套` 这一格**本席已按你的授权做完并验过**（paired 读数在上面）；A1/A3 回填、H13 裁定、R440 整表口径、评测集改题、R487 演示账号、`INDEX_BACKEND` 翻默认（已完成）等仍按原账。
+- 🔴 -provider 侧限流：两枚执行层死于 `429 Too Many Requests`（`Confucius`/R585 零写入、`Lovelace`/R587 首投触顶）。这一台机上的并行度今天受 provider 支配，不是编排选择。
