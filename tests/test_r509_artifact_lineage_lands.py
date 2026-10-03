@@ -447,8 +447,13 @@ def test_the_migration_is_registered_and_loads():
     assert entry is not None, "0017 没进迁移册：loader fail closed，客户机上这两枚列根本不存在"
     assert entry.version == "0017", entry.version
     following = MIGRATIONS[MIGRATIONS.index(entry) + 1:]
-    assert [(item.version, item.name) for item in following] == [("0018", "prompt_cache_tokens")], (
-        "0017 之后只许站着 R523 的 0018 prompt_cache_tokens，多一枚就得回这里指名："
+    # 10-03 登记动作（R349 改口流程第 3 步）：0017 之后站着 R523 的 0018 与 R46 差格 a 的 0019，
+    # 枚数与主题名一起点上；再多一枚仍会在这里红，静默通过这条路依然是关着的。
+    assert [(item.version, item.name) for item in following] == [
+        ("0018", "prompt_cache_tokens"),
+        ("0019", "document_engagement_events"),
+    ], (
+        "0017 之后只许站着已指名的 0018（R523）与 0019（R46 差格 a），多一枚就得回这里指名："
         + str([(item.version, item.name) for item in following])
     )
 

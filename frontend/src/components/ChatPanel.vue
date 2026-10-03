@@ -2176,6 +2176,7 @@ function renderMd(raw) {
                     v-if="sourceFaceOf(msg, i)"
                     :face="sourceFaceOf(msg, i)"
                     :key="`source-${turnKey(msg, i)}`"
+                    :thread-id="turnKey(msg, i)"
                     @preview="openSourcePreview"
                   />
                   <!-- 「实时算」也是必须说出口的一态（不是留白），但它只对当场看到的轮次说。 -->

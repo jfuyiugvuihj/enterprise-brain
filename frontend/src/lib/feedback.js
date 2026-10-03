@@ -1,14 +1,15 @@
 /**
  * R195 · 出处卡片那两枚动作的唯一判定与措辞点（R46 前端半张）。
+ * R46 差格 a · 同一张卡片上另外两枚动作（点开原文 / 展开详情）的判定与出口也住在这里。
  *
- * 契约只有一枚出口：app/api/v1/feedback.py 的 POST /feedback/document。它【只认两枚键】
+ * 采纳与驳回这一族只有一枚出口：app/api/v1/feedback.py 的 POST /feedback/document。它【只认两枚键】
  * ——filename（上界 512 个字符，与 migrations/0011 那条 CHECK 同值）与 signal
  * （只有 accepted 与 rejected 两值），多一个键整条拒；200 回来的那五格见
  * docs/api/contract-v1.md 的 Document Activity Feedback 一节。本模块因此不长第三格：
  * 请求体由 feedbackRequestBody 一处组装，返回的是一个只含两枚键的字面对象，
  * 问题原文、答案文本、命中句都没有装进去的位置（判据④）。
  *
- * 撤回这一族【刻意不做】：取证 app/api/v1/feedback.py 全文只有两枚路由
+ * 撤回这一族【刻意不做】：取证 app/api/v1/feedback.py 里与采纳/驳回有关的路由只有两枚
  * （POST 与 GET /feedback/document），没有任何 DELETE / 复位出口；那张表的写法是
  * ON CONFLICT DO UPDATE 累加计数，落下去的数只能变大。既没有可走的门，也不许把一枚
  * 反向信号当成撤回发出去——那会把「有人觉得没用」凭空记成「有人觉得有用」，
@@ -16,6 +17,10 @@
  *
  * 形状沿用 lib/provenance.js 与 lib/alerts.js：判定与措辞住在这里，组件只画，
  * node 环境能直接单测；发请求走 lib/http.js 那一个 axios 实例（Bearer 由它的拦截器加）。
+ *
+ * 下面 ENGAGEMENT 那一族（点击/浏览）吃的是同一副约束，另一枚出口、另一张表：
+ * POST /feedback/engagement 只认四枚键（filename / event / thread_id / rank），身份从 token
+ * 里取、时刻在库里生成，所以「谁在查」与「什么时候」都不从这一侧出。
  */
 import { errorCodeOf } from './errcodes'
 import { errorDetail, http } from './http'
@@ -364,3 +369,178 @@ export function feedbackAriaLabel(signal, filename) {
 
 /** 两枚按钮那一组的名字：屏上读不出「采纳 / 驳回」这种内部词。 */
 export const FEEDBACK_GROUP_LABEL = '这处出处对你有帮助吗'
+
+// ==================== R46 差格 a · 点击与浏览（出处被真看过）====================
+//
+// 跟进单 §21 那句「采纳/驳回/点击 → 相关度先验」里的第三枚信号，前端这一半住在这里。
+// 出口是 app/api/v1/feedback.py 的 POST /api/v1/feedback/engagement，载荷【只认四枚键】
+// ——filename / event / thread_id / rank，多一个键整条拒（422）。四格里没有一格装得下正文：
+// 问句、答案、命中句、密级值、部门值都没有进来的位置（判据①与禁止项）。身份由服务端从
+// token 里取，前端【不发 username】；时刻由库里 NOW() 生成，前端也不发——一个人不能替自己
+// 造时间戳，也不能替别人打点。
+//
+// 与上面那两枚动作（采纳/驳回）的关系：两族动作记进两张表，一枚说的是「这篇有用」，一枚
+// 说的是「这篇我点开看过」。前端因此长两个模块函数而不是复用 feedbackRequestBody——复用
+// 就等于把两种语义折成一列，排序读回来的那一侧再也分不开是谁说的。
+//
+// 发送失败【不重试、不补发】：这一族动作是可丢的观测，不是一次会被追问的业务提交。把丢
+// 掉的点击在下一轮补发，等于替用户记得比他自己更牢。界面对此不说谎（engaged 之后不再画
+// 「已记录」那一句，只留一次静默与一条 warn）。
+
+/** 出处那一行到这张表的第二枚键：与后端 Literal["click","view"] 一字不多。 */
+export const ENGAGEMENT_PATH = '/feedback/engagement'
+export const EVENT_CLICK = 'click'
+export const EVENT_VIEW = 'view'
+export const ENGAGEMENT_EVENTS = [EVENT_CLICK, EVENT_VIEW]
+
+/** 请求体允许出现的键，顺序也钉住：多一格或少一格都说明契约变了。 */
+export const ENGAGEMENT_BODY_KEYS = ['filename', 'event', 'thread_id', 'rank']
+
+/** 与 migrations/0019 那两枚 CHECK 同值同形：上界与字符集两侧都是硬护栏，不靠调用方自觉。 */
+export const MAX_THREAD_ID_CHARS = 128
+export const MIN_RESULT_RANK = 1
+export const MAX_RESULT_RANK = 100
+const THREAD_ID_SHAPE = /^[A-Za-z0-9_.:#-]{1,128}$/
+
+/** 两枚动作的人话：界面上不说 click / view 这种内部词。 */
+export const EVENT_LABELS = {
+  [EVENT_CLICK]: '点开原文',
+  [EVENT_VIEW]: '展开这处详情',
+}
+
+const engagementText = value => (typeof value === 'string' ? value.trim() : '')
+
+/** 这一枚动作认不认：认不出就不发，后端只会回 422，而那一发是白写的账。 */
+export function isEngagementEvent(value) {
+  return ENGAGEMENT_EVENTS.indexOf(engagementText(value)) >= 0
+}
+
+/**
+ * 题号：前端能给的只有「哪一轮」，也就是 ChatPanel 里那枚 turnKey（m<mid> 或 <会话>#<序号>）。
+ * 读不成一律空串——空题号不发事件，因为「不知道是哪一道题的点击」进不了任何派生，
+ * 而硬凑一个（"unknown"）会把不同轮次的账并成一本，那是更坏的一种假。
+ */
+export function engagementThreadId(value) {
+  const raw = engagementText(value)
+  return raw && THREAD_ID_SHAPE.test(raw) ? raw : ''
+}
+
+/**
+ * 名次：只认真整数，1 起，越界一律 null。「第几名」说不清时这一发就不该记，而不是夹到边界上。
+ *
+ * 🔴 不做 Number() 那种"看着宽一点"的转换：数字字符串也收下就等于前端承认"名次可以是任意
+ * 能 coerce 的东西"，而后端那一格是 `rank: StrictInt`，宽松 int 会把 `True`／`"3"`／`3.0` 静默折成整数。两侧都只认整数，才不会出现"前端发得出去、
+ * 后端回一句 422"那种两边各自都对的账。
+ */
+export function engagementRank(value) {
+  if (typeof value !== 'number' || !Number.isInteger(value)) return null
+  if (value < MIN_RESULT_RANK || value > MAX_RESULT_RANK) return null
+  return value
+}
+
+/** 去重键：同一个人、同一道题、同一条出处、同一种动作只算一次事实（与库里那枚 UNIQUE 同形）。 */
+export function engagementEventKey({ filename = '', event = '', threadId = '' } = {}) {
+  const name = engagementText(filename)
+  const kind = engagementText(event)
+  const turn = engagementThreadId(threadId)
+  if (!name || !isEngagementEvent(kind) || !turn) return ''
+  return [turn, name, kind].join('\u0000')
+}
+
+/**
+ * 这一发该不该出门：键组不齐＝不发（缺题号是最常见的一种），已发过＝不发。
+ * 去重放在前端不是为了省流量，是因为一个人连点二十次就能把一篇顶进窗口首位——
+ * 那正是 0011 记账里被点名、留给强度校准单的旧缺陷（库侧 UNIQUE 是第二道，两道都要在）。
+ */
+export function shouldSendEngagement(seen, { filename = '', event = '', threadId = '' } = {}) {
+  const key = engagementEventKey({ filename, event, threadId })
+  if (!key) return false
+  const known = seen && typeof seen.has === 'function' ? seen : null
+  if (!known) return true
+  return !known.has(key)
+}
+
+/**
+ * 载荷的唯一组装点：只可能有四枚键，且顺序写死。
+ * 返回 null 的意思是这一发根本不该出门（缺名、超长、带换行、题号不成形、名次越界、动作不认识）。
+ */
+export function engagementRequestBody(filename, event, threadId, rank) {
+  const name = engagementText(filename)
+  if (!name || /[\r\n\u0000]/.test(name) || name.length > MAX_FILENAME_CHARS) return null
+  if (!isEngagementEvent(event)) return null
+  const turn = engagementThreadId(threadId)
+  if (!turn) return null
+  const position = engagementRank(rank)
+  if (position === null) return null
+  return { filename: name, event: engagementText(event), thread_id: turn, rank: position }
+}
+
+/** 200 回执的认法：status 与 event 两格都得对上号才算真记上了。 */
+export function engagementReceiptView(data, { filename = '', event = '', threadId = '' } = {}) {
+  const body = data && typeof data === 'object' ? data : null
+  if (!body) return { kind: 'uncertain', face: 'unconfirmed', detail: '' }
+  const sent = isEngagementEvent(event) ? engagementText(event) : ''
+  const named = engagementText(filename)
+  const kind = engagementText(body.event)
+  const namedBack = engagementText(body.filename)
+  const turnBack = engagementText(body.thread_id)
+  const turn = engagementThreadId(threadId)
+  if (String(body.status || '') !== 'ok' || !sent || kind !== sent) {
+    return { kind: 'uncertain', face: 'unconfirmed', detail: '' }
+  }
+  if (named && namedBack && named !== namedBack) return { kind: 'uncertain', face: 'unconfirmed', detail: '' }
+  if (turn && turnBack && turn !== turnBack) return { kind: 'uncertain', face: 'unconfirmed', detail: '' }
+  const count = value => (Number.isFinite(Number(value)) ? Math.max(0, Math.trunc(Number(value))) : 0)
+  return {
+    kind: 'recorded',
+    face: engagementText(body.deduplicated) === 'true' || body.deduplicated === true ? 'deduplicated' : 'recorded',
+    event: sent,
+    clicks: count(body.clicks),
+    views: count(body.views),
+  }
+}
+
+/** 发不出去的几种原因，各自一句人话（与 sendDocumentSignal 同一族判法）。 */
+export function engagementRefusalView(reason) {
+  const sentences = {
+    no_filename: '这一处出处没有名字，点开这件事记不上账。',
+    no_thread: '这一轮没有可登记的题号，点开这件事记不上账。',
+    unknown_event: '这个动作后端还不认，先不落账。',
+    bad_rank: '这一条的名次读不出来，先不落账。',
+  }
+  return { kind: 'refused', face: reason, detail: sentences[reason] || '' }
+}
+
+/**
+ * 发一枚出处动作。永远走 lib/http.js 那一个实例（Bearer 由它的请求拦截器挂上），
+ * 这里不写第二份网络出口；返回的是【视图】而不是抛异常——点原文这件事不能被一次记账
+ * 失败挡住，用户该看到的原文必须照样打开。
+ */
+export async function sendEngagementEvent(
+  { filename = '', event = '', threadId = '', rank = null } = {},
+  client = http,
+) {
+  const name = engagementText(filename)
+  if (!name) return engagementRefusalView('no_filename')
+  if (/[\r\n\u0000]/.test(name) || name.length > MAX_FILENAME_CHARS) return engagementRefusalView('no_filename')
+  if (!engagementThreadId(threadId)) return engagementRefusalView('no_thread')
+  if (!isEngagementEvent(event)) return engagementRefusalView('unknown_event')
+  if (engagementRank(rank) === null) return engagementRefusalView('bad_rank')
+  const body = engagementRequestBody(name, event, threadId, rank)
+  if (!body) return engagementRefusalView('no_filename')
+  try {
+    const response = await client.post(ENGAGEMENT_PATH, body)
+    return engagementReceiptView(response && response.data, { filename: name, event, threadId })
+  } catch (err) {
+    // 只留码，不拼详情：详情里可能带后端回显的东西，而这一族动作不值得为它多一屏字。
+    return { kind: 'failed', face: 'offline', detail: '', code: errorCodeOf(err) || '' }
+  }
+}
+
+/** 按钮那一句的屏幕阅读全称：单独读到「展开这处详情」时得知道说的是哪一份资料。 */
+export function engagementAriaLabel(event, filename) {
+  const label = EVENT_LABELS[engagementText(event)] || ''
+  const name = engagementText(filename)
+  if (!label) return ''
+  return name ? `${label}：${name}` : label
+}

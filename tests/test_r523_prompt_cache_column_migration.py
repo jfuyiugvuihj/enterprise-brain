@@ -25,6 +25,7 @@ import pytest
 
 from app.db import migrations as mig
 from test_r120_clean_install_first_boot import COMPOSE_DEFAULT_DATABASE, FreshSession
+from test_r349_catalog_tail_ledger import CATALOG_TAIL_NAME, CATALOG_TAIL_VERSION
 from test_r183_184_migration_pair import (
     added_column_specs,
     executable_statements,
@@ -130,21 +131,32 @@ def test_a_first_install_walks_past_0018_without_stopping(profile_declared):
 
 
 def test_a_database_at_0017_has_0018_as_its_only_pending_step():
-    """既有库（账本打到 0017）：pending 恰一枚，就是 0018，不带别人。"""
+    """既有库（账本打到 0017）：pending 的第一枚必须是 0018，不带别人。
+
+    10-03 登记动作（R349 改口流程第 3 步）：账本尾号已到 0019（R46 差格 a 的
+    document_engagement_events），所以 0017 那一步之后排着两枚待落。函数名里的 only 说的是
+    "0018 之前不夹别人"这一格，今天照旧钉着——改名会牵动交工纸里的坐标，按先例只登记不改名。
+    """
     pending = mig.migration_plan(_ledger(BEFORE_VERSION))
 
-    assert [item.version for item in pending] == [NEW_VERSION], [item.version for item in pending]
+    assert [item.version for item in pending] == [NEW_VERSION, CATALOG_TAIL_VERSION], [
+        item.version for item in pending
+    ]
     assert pending[0].name == NEW_NAME
+    assert pending[-1].name == CATALOG_TAIL_NAME, pending[-1].name
 
 
 def test_the_upgrade_applies_the_column_and_records_it(profile_declared):
-    """既有库跑迁移器：只执行 0018 那一笔，账上多出尾号那一行，摘要与登记同字。"""
+    """既有库跑迁移器：0018 排在第一笔执行，账上多出尾号那一行，摘要与登记同字。
+
+    10-03 登记动作：账本尾号已到 0019，所以这一趟前滚会连着落两枚，本件点名的 0018 仍居首。
+    """
     session = FreshSession(database=COMPOSE_DEFAULT_DATABASE, ledger=_ledger(BEFORE_VERSION))
 
     applied = mig.apply_migrations(session, COMPOSE_DEFAULT_DATABASE)
 
-    assert [item.version for item in applied] == [NEW_VERSION]
-    assert session.applied == [NEW_VERSION]
+    assert [item.version for item in applied] == [NEW_VERSION, CATALOG_TAIL_VERSION]
+    assert session.applied == [NEW_VERSION, CATALOG_TAIL_VERSION]
     assert sorted(session.ledger) == [item.version for item in mig.MIGRATIONS]
     assert session.ledger[NEW_VERSION] == next(
         item.checksum for item in mig.MIGRATIONS if item.version == NEW_VERSION

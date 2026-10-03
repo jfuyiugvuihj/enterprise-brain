@@ -16,5 +16,6 @@
   "0015_dataset_version_scope_columns.sql": "39efb0fd5850809e303199cf5400e59e7a663a47f3599288c80c0fb609fc76b0",
   "0016_notification_states.sql": "b4403b02bdf97343777ac84d73d03e701cef0f981ffa667059c68e29e22fc619",
   "0017_artifact_generation_lineage.sql": "b60fd9743be17a6ca99a7e3cb114f15423afdb0f855cbd0ad706a3c51b67a0f8",
-  "0018_prompt_cache_tokens.sql": "13672cda1ee34adfe3898afdb57694340a42ffa717f70863d72d652e852515ba"
+  "0018_prompt_cache_tokens.sql": "13672cda1ee34adfe3898afdb57694340a42ffa717f70863d72d652e852515ba",
+  "0019_document_engagement_events.sql": "fe52ac3ee7f7ab9d078e9442d8bbaa30e4a886fde8ca8aec2237196fff5dc764"
 }

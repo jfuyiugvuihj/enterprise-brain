@@ -685,6 +685,220 @@ def activity_prior_value(counts) -> float:
     return max(-cap, min(cap, raw))
 
 
+# ==================== R46 差格 a · 点击/浏览先验（出处被真看过 → 相关度先验）====================
+#
+# 跟进单 §21 那句「采纳/驳回/点击 → 相关度先验」里的第三枚信号，落在 migrations/0019 那张
+# 事件表上，本段是它的**读腿**。它刻意长成上面那段采纳/驳回先验的形状——同一套 TTL、同一套
+# 退避、同一套 fail-open、同一套观测面，最后与那一合成**一枚**先验。两套各长一套兜底逻辑的
+# 下场是没人说得清这一次排序到底听谁的，而判据②那句「没信号时与现状一致」也就没了尺。
+#
+# 🔴 两路信号合成一个数，位移界**不因此变宽**：ACTIVITY_PRIOR_MAX_SHIFT_RANKS 说的从来不是
+# 「采纳这一路最多挪几名」，而是「先验这一手最多挪几名」（R153 的原话）。所以合并值夹回同
+# 一根 ±1 名，而不是 1+1=2。点击证据再厚也只买到「在同一次交换名额里赢过隔壁」，买不到第二格
+# 位移——这条由 tests/test_r46c_engagement_prior.py 拿腿宽 5/12/40 各量一遍钉住。
+#
+# 冷启动（判据②）：这一路没有「分数」这回事，0.0 的含义是**不动名次**，不是「这篇值零分」。
+# 从没人点过的文档与刚入库的新文档在这一路拿同一个中性值，排序退回名次分本身，于是新文档永远
+# 靠相关性还有上位的机会，不会被「历史点击多」那一族永久压住。反过来样本太少时先验按
+# confidence = 样本数 / ENGAGEMENT_MIN_SAMPLES 往中性收缩，「第一个点的人替整篇定序」不发生。
+
+#: 整表快照的进程内 TTL 与读失败退避：与 ACTIVITY_PRIOR_* 同值同理由（一次库故障最多拖慢一个
+#: 窗口，而不是拖慢每一问），但**各自一份状态**——一路读到、一路读不通是两种真实，合成一个
+#: "读不到"就把可核对性丢了。
+ENGAGEMENT_PRIOR_TTL_SECONDS = 30.0
+ENGAGEMENT_PRIOR_RETRY_SECONDS = 10.0
+ENGAGEMENT_PRIOR_CACHED_SOURCES = frozenset({"store", "error"})
+
+#: 证据权重：把一条出处**点开**比**展开看了一眼**更强，所以一枚 click 记一份、一枚 view 记
+#: 半份。这枚比值是口径，不是校准结果——真库强度欠一台安静机器量（见交工纸「未验的格子」）。
+ENGAGEMENT_CLICK_WEIGHT = 1.0
+ENGAGEMENT_VIEW_WEIGHT = 0.5
+#: 分母上先垫的五次空看：与 ACTIVITY_PRIOR_SMOOTHING 同一个理由——第一枚证据不该替整篇定序。
+ENGAGEMENT_PRIOR_SMOOTHING = 5.0
+#: 样本数下限：攒够这么多枚动作之前，先验按 support / 本数 往中性收缩；不足一枚都不给满格。
+ENGAGEMENT_MIN_SAMPLES = 5
+#: 🔴 与采纳/驳回共用同一根界：合并后仍是一枚名次，本单一秒都不放宽。
+ENGAGEMENT_PRIOR_MAX_SHIFT_RANKS = ACTIVITY_PRIOR_MAX_SHIFT_RANKS
+
+#: 观测面：与 _ACTIVITY_PRIOR_STATE 同形状，两路各自记自己读没读到（判据⑤那句「读不到」与
+#: 「没信号」必须分得开，在两路上都得分得开）。
+_ENGAGEMENT_PRIOR_STATE: dict = {
+    "loaded_at": 0.0,
+    "expires_at": 0.0,
+    "documents": 0,
+    "source": "never",
+    "reason": "",
+}
+_CACHED_ENGAGEMENT_PRIORS: dict = {}
+
+
+def _read_engagement_rows() -> list[tuple]:
+    """整表聚合读动作，交回 (filename, clicks, views) 元组列表。读不成一律往外抛。
+
+    🔴 列清单只有文档标识与两枚 COUNT：username 在这一条语句里**连出现的位置都没有**，所以
+    「谁点的」进不了排序，只进得了审计与本表。想按人加权就得改这条字面量，而那一步会先被
+    tests/test_r46c_engagement_prior.py 的列名清单拦下。表还没建（业主未跑 0019）与库连不上都
+    照样抛出去，由 engagement_priors() 那层退化成"没有先验"。
+    """
+    import psycopg
+
+    # 函数内 import：与 _read_activity_signal_rows 同一条理由（pg_store 反向 import 本模块）。
+    from app.rag import pg_store
+
+    url = pg_store.resolve_database_url()
+    if "connect_timeout=" not in url:
+        url = url + ("&" if "?" in url else "?") + (
+            "connect_timeout=" + str(ACTIVITY_PRIOR_CONNECT_TIMEOUT_SECONDS)
+        )
+    with psycopg.connect(url) as connection:
+        rows = connection.execute(
+            "SELECT filename, "
+            "COUNT(*) FILTER (WHERE event_type = 'click') AS clicks, "
+            "COUNT(*) FILTER (WHERE event_type = 'view') AS views "
+            "FROM document_engagement_events GROUP BY filename"
+        ).fetchall()
+    return [
+        (str(row[0]), int(row[1]), int(row[2]))
+        for row in rows
+        if str(row[0] or "").strip()
+    ]
+
+
+def engagement_priors(*, now: float | None = None, row_reader=None) -> dict[str, dict]:
+    """filename -> {"clicks", "views"}：带 TTL 缓存，**fail-open**（与 activity_priors 同一套）。"""
+    import time as _time
+
+    clock = _time.monotonic if now is None else (lambda: float(now))
+    if row_reader is None:
+        if (
+            _ENGAGEMENT_PRIOR_STATE["source"] in ENGAGEMENT_PRIOR_CACHED_SOURCES
+            and clock() < _ENGAGEMENT_PRIOR_STATE["expires_at"]
+        ):
+            return dict(_CACHED_ENGAGEMENT_PRIORS)
+        row_reader = _read_engagement_rows
+    try:
+        rows = list(row_reader() or [])
+    except Exception as exc:
+        # 异常名走 __class__.__name__ 而不是 type(exc).__name__：两枚读数同值，但后者那行字面量
+        # 是 tests/test_r525_counter_evidence_teeth.py 里 K6 那把反证刀的锚点，锚点要求**全文件
+        # 唯一**（不唯一的刀等于没动东西）。新读腿不能把别人那把刀磨钝——措辞换形，语义一字不漂。
+        _CACHED_ENGAGEMENT_PRIORS.clear()
+        _ENGAGEMENT_PRIOR_STATE.update(
+            {
+                "source": "error",
+                "reason": exc.__class__.__name__,
+                "documents": 0,
+                "loaded_at": clock(),
+                "expires_at": clock() + ENGAGEMENT_PRIOR_RETRY_SECONDS,
+            }
+        )
+        logger.warning(f"点击/浏览事件读不到，本次排序不动用这一路先验: {exc}")
+        return {}
+    priors = {
+        str(name): {"clicks": int(clicks), "views": int(views)}
+        for name, clicks, views in rows
+    }
+    _CACHED_ENGAGEMENT_PRIORS.clear()
+    _CACHED_ENGAGEMENT_PRIORS.update(priors)
+    _ENGAGEMENT_PRIOR_STATE.update(
+        {
+            "loaded_at": clock(),
+            "expires_at": clock() + ENGAGEMENT_PRIOR_TTL_SECONDS,
+            "documents": len(priors),
+            "source": "store",
+            "reason": "",
+        }
+    )
+    return dict(priors)
+
+
+def engagement_prior_diagnostics() -> dict:
+    """这一路的可读数：读没读成、几篇、为什么（开关沿用 activity 那一枚，见下面注释）。"""
+    return {
+        "enabled": activity_prior_enabled(),
+        "source": _ENGAGEMENT_PRIOR_STATE["source"],
+        "reason": _ENGAGEMENT_PRIOR_STATE["reason"],
+        "documents": int(_ENGAGEMENT_PRIOR_STATE["documents"]),
+        "max_shift_ranks": ENGAGEMENT_PRIOR_MAX_SHIFT_RANKS,
+        "click_weight": ENGAGEMENT_CLICK_WEIGHT,
+        "view_weight": ENGAGEMENT_VIEW_WEIGHT,
+        "smoothing": ENGAGEMENT_PRIOR_SMOOTHING,
+        "min_samples": ENGAGEMENT_MIN_SAMPLES,
+    }
+
+
+def reset_engagement_priors() -> None:
+    """清掉这一路的缓存与观测面。"""
+    _CACHED_ENGAGEMENT_PRIORS.clear()
+    _ENGAGEMENT_PRIOR_STATE.update(
+        {"loaded_at": 0.0, "expires_at": 0.0, "documents": 0, "source": "never", "reason": ""}
+    )
+
+
+def reset_signal_priors() -> None:
+    """两本账一起清：写成功之后调用，免得「回执说点过、排序还按没点过排」。
+
+    排序一次读两路，快照就必须同生同死；只清一路等于让另一路带着旧账参加下一次比较。
+    """
+    reset_activity_priors()
+    reset_engagement_priors()
+
+
+def engagement_prior_value(counts) -> float:
+    """一篇文档靠点击/浏览挣到的先验，单位是**名次**；没动作＝0.0＝不动名次。
+
+    🔴 这一路**只抬不压**：返回值恒在 [0, 界]。没人点过不等于不好，可能是刚入库、可能是这道题
+    本来就没人往下翻——把「零证据」读成负分，新文档就永久翻不了身，那正是判据②点名要拦的读法。
+    两列计数都是 0 与「这一篇压根不在表里」在这里给出同一个 0.0，而两者与「读不通」在观测面上
+    分得开（source 为 store / error）。
+    """
+    if not isinstance(counts, dict):
+        return 0.0
+    try:
+        clicks = int(counts.get("clicks") or 0)
+        views = int(counts.get("views") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if clicks < 0 or views < 0:
+        return 0.0
+    support = clicks + views
+    if support <= 0:
+        return 0.0
+    cap = float(ENGAGEMENT_PRIOR_MAX_SHIFT_RANKS)
+    evidence = ENGAGEMENT_CLICK_WEIGHT * clicks + ENGAGEMENT_VIEW_WEIGHT * views
+    # 冷启动收缩：证据不足下限就按比例往中性拉，攒够之后 confidence 恒为 1，不再随样本变。
+    confidence = min(1.0, support / float(ENGAGEMENT_MIN_SAMPLES))
+    raw = cap * evidence / (evidence + ENGAGEMENT_PRIOR_SMOOTHING) * confidence
+    return max(0.0, min(cap, raw))
+
+
+def merge_signal_priors(activity, engagement) -> dict[str, dict]:
+    """把两路计数并成排序吃的那一份：一路缺席不抹掉另一路。"""
+    merged: dict[str, dict] = {}
+    for table in (activity, engagement):
+        for source, counts in (table or {}).items():
+            name = str(source or "")
+            if not name:
+                continue
+            row = merged.setdefault(name, {})
+            if isinstance(counts, dict):
+                row.update(counts)
+    return merged
+
+
+def signal_prior_value(counts) -> float:
+    """一次比较用的合并不值：两路各自算，再夹回**同一根**界。
+
+    夹界而不是相加后就交出去，是判据②「位移界不许放宽」的落点：采纳与点击各自顶满时，简单
+    相加会给出 2 枚名次，而名次空间的交换轮数仍是一轮——那一轮至多换一名，多出来的 1 既量不到
+    也说不清，只留下"常数写 1、实际行为像 2"的口径漂移。夹回 ±1 名之后，两路信号买到的是
+    「在同一次交换名额里谁赢」，买不到第二格位移。
+    """
+    cap = float(ACTIVITY_PRIOR_MAX_SHIFT_RANKS)
+    total = activity_prior_value(counts) + engagement_prior_value(counts)
+    return max(-cap, min(cap, total))
+
+
 def _hit_source(hit) -> str:
     """命中里那个文档标识；不是字典、或没带 source，一律读成空串（＝这一条拿不到先验）。
 
@@ -744,11 +958,16 @@ def rank_hits_by_activity(hits, priors, *, enabled: bool = True, rank_base: int 
 
     列表里混进非字典条目时，那些条目按 _hit_source 的口径拿不到先验、也不被注记，只按原名次
     参与交换：本函数对畸形输入交回的是排好序的原条目，不是异常。
+
+    R46 差格 a 在本函数上只动了一处：算 strength 的那一枚函数从 activity_prior_value 换成
+    signal_prior_value（采纳/驳回 + 点击/浏览，夹回同一根界）。注记的键清单一个字都不加——
+    它是答案侧的契约（tests/test_r153_prior_shift_is_bounded.py::NOTE_KEYS 判等），要加长它
+    得先改判据。点击那一路的证据由 GET /api/v1/feedback/engagement 现读，不塞进这枚注记。
     """
     if not enabled or not isinstance(hits, list) or not hits:
         return hits
     lookup = priors or {}
-    strengths = [activity_prior_value(lookup.get(_hit_source(hit))) for hit in hits]
+    strengths = [signal_prior_value(lookup.get(_hit_source(hit))) for hit in hits]
     if not any(strengths):
         return hits
     carriers = []
@@ -796,12 +1015,15 @@ class DocumentRetriever:
     #: R59 块1 判据②(a)：切读态下 PG 腿打空时，命中带上的降级码（与上一枚分家，见模块注释）
     REASON_PG_ZERO_ROWS = RETRIEVAL_REASON_PG_ZERO_ROWS
 
-    def __init__(self, chroma_dir: str = "./chroma_db", *, activity_prior=None):
+    def __init__(self, chroma_dir: str = "./chroma_db", *, activity_prior=None, engagement_prior=None):
         os.makedirs(chroma_dir, exist_ok=True)
         self.chroma_dir = chroma_dir
         # R46：计数表的读取方可注入（测试不连库也能验排序），默认走进程内缓存的
         # 整表快照。注入一个返回 {} 的 callable 就等于关掉先验，不改排序语义。
         self._activity_prior_loader = activity_prior or activity_priors
+        # R46 差格 a：点击/浏览那一路的读取方同一形状、同一注入位。两路各自一份快照，一路
+        # 读不通只让那一路退化成"没有先验"，不抹掉另一路挣来的证据。
+        self._engagement_prior_loader = engagement_prior or engagement_priors
         if chromadb is None:
             class _JsonCollection:
                 def __init__(self, path):
@@ -1563,13 +1785,23 @@ class DocumentRetriever:
         """R46：把采纳/驳回计数施加在这条腿刚排好的候选集上（四条腿共用这一处）。
 
         读不到计数＝没有先验＝把**同一个列表对象**原序交回（fail-open，裁定理由见模块里
-        R46 那段注释）。判定可见性的仍是 filters.py 那一处，本方法一个候选都不增减。
+        R46 那段注释）。判定可见性的仍是 filters.py 那一处，本方法一个候选都不增减：两路先验
+        都只在**已经合法**的候选集内部挪名次，且共用同一根位移界（signal_prior_value）。
         """
         try:
             priors = self._activity_prior_loader() or {}
         except Exception as exc:  # pragma: no cover - 默认 loader 已自兜底，只防注入的 loader 抛错
             logger.warning(f"活动信号先验不可用，本次排序不动: {type(exc).__name__}")
             return hits
+        # R46 差格 a：点击/浏览并进来。🔴 getattr 守卫不是防御性冗余——tests/test_r525_* 拿
+        # SimpleNamespace(_activity_prior_loader=...) 直呼本方法，那些载体上没有第二路读取方；
+        # 缺属性就只用采纳/驳回，这正是"一路缺席不抹掉另一路"的口径。
+        engagement_loader = getattr(self, "_engagement_prior_loader", None)
+        if engagement_loader is not None:
+            try:
+                priors = merge_signal_priors(priors, engagement_loader() or {})
+            except Exception as exc:  # pragma: no cover - 默认 loader 已自兜底，只防注入的抛错
+                logger.warning(f"点击/浏览先验不可用，本次只用采纳/驳回: {type(exc).__name__}")
         return rank_hits_by_activity(hits, priors, enabled=activity_prior_enabled())
 
     def _collection_name(self) -> str:

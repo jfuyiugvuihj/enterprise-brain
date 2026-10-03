@@ -10,6 +10,18 @@
  * R195 在这一族的每一行上补两枚动作（采纳 / 驳回）：员工看完回答终于有一个地方能把
  * 「这条真帮到我」说出口。判定、措辞、发请求一律在 lib/feedback.js，本组件只存态与画；
  * 那两句空话节点（另有 N 处未展示 / 本轮没检索到可用文档）一行按钮都不摆。
+ *
+ * R46 差格 a 在同一张卡片上补两枚【观测】动作：点开原文＝click，展开这一条详情＝view。
+ * 判定、组装、发送、去重一律在 lib/feedback.js 的 ENGAGEMENT 那一族，这里只多长一格态。
+ * 两枚都刻意【不改既有节点】——理由不是省事，是别人的判据：
+ *   · click 包在既有那枚「打开原文」的 emit 上，模板里那一行一个字没动（R307 的在册钉逐字
+ *     钉着那句 @click 与它到 ./ui 的接线）；
+ *   · view 用原生 <details>/<summary>，既不多一枚 UiButton（同一枚钉着「三枚原语按钮」的
+ *     清单），也不造一枚 role="button" 的 span——那是把键盘与读屏用户留在门外假装做到了。
+ * 🔴 记账失败不挡用户看原文：发不出去只是少一枚证据，把原文藏起来才是事故，所以这一路
+ * 的发收结果一个字节都不上屏（不发失败脸，也不因为后端拒了就改按钮的可用性）。
+ * 题号（thread_id）由父级 ChatPanel 把它那枚 turnKey 传进来；缺它就不发——组件自己不知道
+ * "这是哪一道题"，猜一个就是把不同轮次的账并成一本。
  */
 import { reactive } from 'vue'
 import {
@@ -24,21 +36,39 @@ import {
   rowFeedbackBlocked,
   rowFilename,
   rowMarkable,
+  EVENT_CLICK,
+  EVENT_LABELS,
+  EVENT_VIEW,
+  engagementEventKey,
   sendDocumentSignal,
+  sendEngagementEvent,
   settleFeedback,
+  shouldSendEngagement,
   signalLabel,
 } from '../lib/feedback.js'
 import { classificationLabel, formatDayStamp, scoreLabel } from '../lib/provenance.js'
 import { UiButton } from './ui'
 
-defineProps({
+const props = defineProps({
   face: {
     type: Object,
     default: null,
   },
+  /**
+   * 这一轮提问的轮次标识（ChatPanel::turnKey 那一族：m<mid> 或 <会话>#<序号>）。
+   * 点击账要能说「是哪一道题里点的」，而这一格只有父级知道；缺它这一路一发都不发。
+   */
+  threadId: {
+    type: String,
+    default: '',
+  },
 })
 
-const emit = defineEmits(['preview'])
+/**
+ * 「打开原文」那枚出口的真 emit。下面同名那层包了 R46a 的记账，模板里读的是包过的那一枚——
+ * 于是既有接线（含 R307 钉住的那句字面 @click）一个字节都不必改。
+ */
+const previewSource = defineEmits(['preview'])
 
 /**
  * 评价态按【文件名】存：后端计数就是一文件一格（document_activity_signals 以 filename 为键），
@@ -58,6 +88,55 @@ const blockedOf = row => rowFeedbackBlocked(row)
  * 点一下：发不出去时 requestFeedback 给的是 null，这里就一发都不发。
  * 后端没有撤回的出口，所以记上之后的第二次点击不是撤回，也不许当成反向信号再发一枚。
  */
+/** 展开态与「这一发发过没有」：前者按行存，后者按 (题号·文件名·动作) 那枚键存。 */
+const opened = reactive({})
+const sentEngagements = reactive(new Set())
+
+const textOf = value => (typeof value === 'string' ? value.trim() : '')
+const detailKey = (row, index) => `detail-${index}-${textOf(row && row.sourceId)}`
+const detailOpen = (row, index) => Boolean(opened[detailKey(row, index)])
+const detailLabel = event => EVENT_LABELS[event] || ''
+
+/** 这一条出处排在第几名：读 face.rows 里的位次，1 起。找不到就不记——名次说不清就不该落账。 */
+const rankOf = row => {
+  const rows = props.face && Array.isArray(props.face.rows) ? props.face.rows : null
+  return rows ? rows.indexOf(row) : -1
+}
+
+/**
+ * 记一枚动作。发不出去就一发都不发（缺名字、缺题号、名次不成形、这一发已经发过）。
+ * 🔴 返回值【不喂给界面】：这一族是观测，不是一次会被追问的业务提交；把丢掉的点击在下一轮
+ * 补发，等于替用户记得比他自己更牢。
+ */
+async function noteEngagement(row, event, rank) {
+  const item = {
+    filename: rowFilename(row),
+    event,
+    threadId: textOf(props.threadId),
+    rank,
+  }
+  const key = engagementEventKey(item)
+  if (!key || !shouldSendEngagement(sentEngagements, item)) return null
+  sentEngagements.add(key)
+  return sendEngagementEvent(item)
+}
+
+/** 与既有接线同名，所以模板那句 emit('preview', row) 照原样就能把 click 记上：先放行再记账。 */
+function emit(event, row) {
+  previewSource(event, row)
+  if (event !== 'preview') return
+  const rank = rankOf(row)
+  if (rank >= 0) void noteEngagement(row, EVENT_CLICK, rank + 1)
+}
+
+/** 展开这一条详情：第一次展开记一枚 view；折叠再展开不重复记（前端与库里那枚 UNIQUE 各一道）。 */
+function onDetailToggle(row, index, event) {
+  const key = detailKey(row, index)
+  const open = event && event.target ? Boolean(event.target.open) : !opened[key]
+  opened[key] = open
+  if (open) void noteEngagement(row, EVENT_VIEW, index + 1)
+}
+
 async function markSignal(row, signal) {
   const key = rowFilename(row)
   const next = requestFeedback(markOf(row), signal)
@@ -105,6 +184,24 @@ const effectiveMoment = row => formatDayStamp(row?.effectiveDate)
         <span v-if="row.versionId" class="source-meta" data-testid="source-version">版本 {{ row.versionId }}</span>
         <span v-if="effectiveMoment(row)" class="source-meta" data-testid="source-effective">生效 {{ effectiveMoment(row) }}</span>
         <p v-if="hitSentence(row)" class="source-excerpt" data-testid="source-excerpt">{{ hitSentence(row) }}</p>
+        <!--
+          R46 差格 a · 展开这一条的详情：第一次展开落一枚 view。
+          看得见的那几格全是这一条命中本来就带着的读数（名次 / 出处号 / 相关度），不新造任何
+          东西，也不含正文——命中句那一行上面已经画着，这里不重复抄一份。
+        -->
+        <details
+          class="source-detail"
+          data-testid="source-detail"
+          :open="detailOpen(row, index)"
+          @toggle="onDetailToggle(row, index, $event)"
+        >
+          <summary class="source-detail__summary" data-testid="source-detail-summary">{{ detailLabel(EVENT_VIEW) }}</summary>
+          <span class="source-detail__body">
+            <span class="source-detail__rank" data-testid="source-detail-rank">本轮第 {{ index + 1 }} 名</span>
+            <span v-if="row.sourceId" class="source-detail__id" data-testid="source-detail-id">出处 {{ row.sourceId }}</span>
+            <span v-if="scoreLabel(row)" class="source-detail__score" data-testid="source-detail-score">{{ scoreLabel(row) }}</span>
+          </span>
+        </details>
         <!-- R195 · 一处出处一次评价：两枚互斥，点亮只等真回执；没有撤回那一支（后端没这枚出口）。 -->
         <span
           v-if="rowMarkable(row)"
@@ -263,6 +360,32 @@ const effectiveMoment = row => formatDayStamp(row?.effectiveDate)
   margin: var(--s-1) 0 0;
   font-size: var(--t-xs);
   color: var(--warning);
+}
+
+/* R46 差格 a · 展开详情那一行同样只复用既有 token，与下面那句同一理由：theme.css 另有其人。 */
+.source-detail {
+  flex: 1 1 100%;
+}
+
+.source-detail__summary {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.source-detail__summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.source-detail__body {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-1) var(--s-2);
+  margin-top: var(--s-1);
+  font-size: var(--t-xs);
+  color: var(--text-3);
 }
 
 /* R195 · 两枚动作只复用既有 token：theme.css 另有其人正在动，这里一律不新增色值 */
