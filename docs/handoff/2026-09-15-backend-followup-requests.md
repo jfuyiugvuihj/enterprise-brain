@@ -5543,3 +5543,11 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 - 🔴 **成因仍未证**：17 枚假红没能复现（7 组 stat 扰动＋`index.lock`＋`GIT_OPTIONAL_LOCKS=0` 都骗不过 porcelain）⇒ 刀 A 物理半新旧两尺皆绿、只算下限，真牙是「说谎半」那一形。本席不认领任何成因结论，这句留给下班带真实现场再查。
 - **R625（`Bohr`）今晚不并树**：23:04 现读它树里 `M tests/test_r60_write_path_unique_under_pgvector.py`（13/18）＋新 `tests/test_r625_chroma_write_sites_are_named_one_by_one.py`，回执未落盘。按 23:15 截止线：赶不上就不并，**改在它自己树里 wip 保命提交＋推分支**（货不能只躺在磁盘上——这是本班记过的老账）。并树与验收留下班，且必须先复核那格 `>= 2` 现读到底是几枚写点。
 - **门 #4＝本班最终凭证**：- 🔴 **门 #4＝本班第四遍·在册终数**：HEAD `51439fd`，`python scripts/run_gate.py` 自选 `-n 7`（headroom 14.2 GB／2 GB per worker），**0 failed／10628 passed／58 skipped／2 xfailed／2761 warnings／615.1 s／exit=0**（23:04:51–23:15:09，日志 `%TEMP%\eb103\gate4_51439fd.out`，FAILED 行 0 枚）。枚数 10597→10628 那 +31 枚逐枚对得上（R623 的 22＋R60 块 1 的 9）；门 #1／#2／#3 的原读数留在上面几格不改写。编号撞车提醒：本板历史里上一班也用过「门 #2/#3/#4」，与本串不是同一批，认读以 HEAD sha 为准。
+
+### 165.5 R625 收工＝**保命提交、不并树**（断网前 30 分钟的取舍）
+
+- `Bohr` 交回 R625：新 `tests/test_r625_chroma_write_sites_are_named_one_by_one.py`（862 行／23 条，名册身份＝文件＋函数限定名＋动词＋关键字形状，闸门与 id 来源全从 AST 现取，**零行号**；扫整棵 `app/**`，现读全库 6 枚变异写点＝3 `add`＋3 `delete`）＋改 `tests/test_r60_write_path_unique_under_pgvector.py`（14/18，删掉 `len(handed) >= 2` 那一格、改成调用同一份名册，其余 16 条一字未动）。三把反证刀全红：刀 A（主写路径插一枚 upsert）⇒ 新钉 6 failed；刀 B（补偿放回喂本次新 id）⇒ 4 failed 且**在册原件 17 全绿／parity 9 全绿／旧 `>= 2` 单跑绿**——这一形今天没有一枚在册钉量得到；刀 C（摘 `stores_vectors`）⇒ 新钉 2 failed＋复现在册 17 全绿（归因照它的原话写，不抢功）。
+- 🔴 它又顶回本席两笔前提（本席现读取证方向一致，细节待明日逐条复量）：`collection.add` 字面 4 处里**有 1 枚在 docstring**、真调用 3 枚；`>= 2` 那格的 `ast.walk` 作用域只有 `_write_batch`，今天恰好取等 ⇒ 准确说法不是「实际写点比它能表达的多」，而是**它对「多写」与「少判」两形都不敏感**。`_writes_go_to_pgvector` 的 def 在 `app/rag/retriever.py:1496`（本席派工词写 1495）。
+- **为什么不并树**：距 24:00 断网只剩 30 分钟，再来一枚全量门（约 11 分钟）＋两态亲跑＋落账＋push 挤不进可靠窗口。按本班自己立的规矩**不把所有者的交付留在没门的树顶**，改做**保命提交**：在它自己树里 `git commit` 两枚点名路径并**推分支** `codex/be-r625`（＝`bfc507e`＋wip 一笔），比躺在磁盘或只躺在 `%TEMP%` 备份强。本席现取凭据：`git diff HEAD -- app/` **空**（产品码零改动，不采信自述）。
+- **明晨第一件事**：并 R625——先现读复核上面那两笔订正，再两态亲跑（点名 r625／r60-write／parity／rollback_drill／r59 四件，执行层自报合并 119 passed 只作对照），达标后代提交并**跑一次全量门**才算在册绿票换顶。
+- 本班收官盘面：主树 HEAD 见本笔之后那枚；门 #4（`51439fd`）＝0 failed／10628 passed／58 skipped／2 xfailed／615.1 s／exit=0＝**本班唯一在册终数**；在途执行层**零枚**（`Dirac`/`Boole`/`Galileo`/`Bohr` 全部 close 腾槽，按 §165.2 那条新铁规）；`powercfg` 一字未动、心跳为零、`--purge` 继续不做且点名排除 `be-r550`。
