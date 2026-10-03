@@ -1685,6 +1685,14 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Hegel`（在途·**复投**） | `01a0ffad-2955-7a51-9348-2e8b896a5140` | **R585** `dead` 终态接持久面＋原因码 | `be-r585`（基点 `394205a`，独占） | 🟡 在途（`Confucius` 死于 429 零写入后复投）。11:1x 实取 `M 44/0 app/api/v1/chat.py` ＋ `M 35/1 app/common/reliable_queue.py` ⇒ 已开工，写域与 R582/R583/R587/R593 互不重叠 | 11:1x |
 | （总控亲做） | — | **run16 收官**＝D 格复测（12 题报告档子集，评测集一字节未动） | `%TEMP%\evalrun` | ✅ 11:10 **12/12 齐**（`report-04` 首片 rc=−1 零产出，第 2 轮补片 292.6 s 成功）。三格读数见 §4EM 二；🔴 崩因已现场取到＝**模型正文为空**（`no_answer_produced`，那一发正好吐满 1536 枚 `max_tokens`）⇒ 新立 R591 | 11:1x |
 | （总控亲做·**窗内在跑**） | — | **run17＝全 105 题「一窗多判据」**（A① 问答档／A④ 逐类／C 分数不退化／D 报告 12 题） | 镜像 `revision=e6fdeb4`（＝HEAD）· `INDEX_BACKEND=pgvector` · `MODEL_CONTEXT_TOKENS=8192` · 四道自证全过才放行 | 🟢 **11:25:48 开窗**，shards=105。开窗前置 P-20 **七格全 PASS·rc=0**（本班第一次，含 R581 治好那格）。🔴 同机仍有四枚在途执行层跑测试 ⇒ A① 的**通过**可信（噪声只会让它更慢），**不合格**不可作结论，必要时安静复测 | 11:2x |
+| `Gödel` | `01a10043-778d-7e52-83f8-13627b835170` | **R590** A② 两枚残留红逐腿归因（`tool-02` 两窗同红／`scope-05` 只在 pgvector 窗红），须覆盖 run13/14/**17**，不许拿「口径」二字抵过去（判据＝跟进单 §159 三，业主裁定后指 §160.1②） | `be-r590`@`03507f3`（**只读**＋新量具＋纸） | 🔵 在途。14:4x 现取 dirty=0／untracked=1＝只读单的正常形状 | 10-03 14:4x |
+| `Heisenberg` | `01a10044-2da3-7f73-9d94-b640f80ad2af` | **R596** 出厂 CLI 读 `globals`＋镜像缺 pg 工具（`scripts/backup_database.py`·`restore_database.py`·`Dockerfile`＋新钉；🔴 不许动容器/重建） | `be-r596`@`03507f3` | 🔵 在途。14:4x dirty=3／untracked=2 | 10-03 14:4x |
+| `McClintock` | `01a10044-df4b-7952-8677-e55364ae1db1` | **R597** r483 四词化后四处散文对齐（`retrieval_pipeline.py:1053`·`scripts/r577_demo_sample_seed.py:170`·`tests/test_r577_*:431`·`tests/test_r536_*`） | `be-r597`@`03507f3` | 🔵 在途。14:4x dirty=5／untracked=1 | 10-03 14:4x |
+| `Aquinas`（第二人，唯一键只认 id） | `01a10054-9757-7a53-aef2-7d5595f405f7` | **R60 停 Chroma 写（P1）** 判据七格原文＝跟进单 §158；🔴 只交沙盒库读数，禁碰 `chroma_db/**` 与 `.gitignore` | `be-r60b`@**`245315b`**（R46 并树后从 `394205a` 复取，前置路障已清） | 🔵 在途。14:4x dirty=0／untracked=0 | 10-03 14:4x |
+| `Sagan`（第二人，唯一键只认 id） | `01a10054-faba-7e40-a87b-baa7d0375a35` | **R589** 射程内集合静默跳过语法坏件（`tests/_temp_edit_overlay.py`＋派生器＋新钉；须与 R583 名册钉**各自独立红**） | `be-r589`@`245315b` | 🔵 在途。14:4x dirty=0／untracked=0 | 10-03 14:4x |
+| `Archimedes`（本班新线程·**一次投递**，与 R248/R538 那两枚同名者无关，唯一键只认 id） | `01a1005e-ce41-77b2-8fbb-a5ad6486ef5d` | **R591（P1）** 报告档空正文治腿：compat 腿在思考模型上必然把预算吐进 reasoning（三臂表＝跟进单 §160.2），要证的是 `model_handler.py:90 NATIVE_REQUEST_REJECTED_STATUSES={400}` 那条**静默退回**是不是 run16/17 `report-04` 与 run17 `chart-01/02/04` 批准失败的成因；🔴 不许用兜底文案掩盖空正文（`nodes.py:379-387` 那条原则守住） | `be-r591`@`245315b`（投前 dirty=0／untracked=0） | 🔵 在途·14:1x 投出 | 10-03 14:1x |
+| ⛔ **R598 投递触顶（未落地）** | — | **R598** 评测集改题收尾（业主 10-03 已批·判据全文已落跟进单 §160.4） | 树**没建起来** | 🔴 `spawn_agent` 报 `collab spawn failed: agent thread limit reached`（当时在飞六枚＝这台机实测上限 6：第 7 枚 spawn 直接触顶，纸上那句「最高 6–8」今天被量低了一格）。按仓规**不当场补投**。零写入取证：`Test-Path be-r598` ＝ **False**、主树 HEAD 未变。腾出槽位后一次投出 | 10-03 14:3x |
+| （总控亲做·非执行层） | — | **R487＝V2 #19 账号面读数到手**（`python scripts/provision_bulk_accounts.py --count 30 --roles staff manager admin auditor --departments 财务部 行政部 销售部 技术部 --apply`） | 演示库 `enterprise_brain`；凭据落 `%TEMP%\r52_bulk_accounts.json`（仓外，不入仓） | ✅ dry-run rc=0 先过 ⇒ 30 枚／staff 8·manager 8·admin 7·auditor 7／四部门 8·8·8·6／**role×department 16 of 16 全覆盖**；`created/verified 30 of 30`、`bulk account acceptance: PASS`（逐枚登录取 token＋`GET /api/v1/profile` 回显真角色与部门＋`GET /api/v1/data-files` 逐枚低于 500＋匿名 401/403）。🔴 这一格只交**账号面**：检索面越权矩阵在演示库仍是空集（`documents` 部门全空），牙在 R469 沙盒臂那侧，**不许拿 R487 翻 C 门或格③ 的绿** | 10-03 14:5x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -6600,3 +6608,57 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 
 - 本班**没有新增要你按的闸门**。仍然欠的三格不变：A1 `users.department` 回填、A3 密级标签回填、H13 裁定（格③ 欠的不是代码）。
 - 新增**一条通知**（不需要你现在动手）：run17 于 11:25:48 开窗、全 105 题、预计 100–120 分钟，镜像 `revision=e6fdeb4`＝HEAD；同机仍有四枚在途执行层在跑测试，所以 **A①／A④ 的时延读数按「带噪」记账**——通过可信（噪声只会更慢），不合格不作结论，必要时另开安静复测窗。
+
+## 4EN 第十二班第九格（10-03 14:0x–14:5x·总控线·主树 `5f61bc7`…`245315b`→`e750d5c`／**单模型未切换**／心跳一枚没碰（automation 仍 `PAUSED`）／峰值并发 6（🔴 第 7 枚 spawn 触顶＝这台机今天的上限实测是 6））：本班八枚并树收官 · run17 全 105 题收窗 · 三臂探针推翻前任假设 · 业主四笔裁定落账 · R487 建号到手 · 🔴 R598 触顶未落地
+
+### 一、本班八枚并树（执行层零 commit，全部总控**两态亲跑**＝apply 未 commit 跑一遍＋`git commit` 后干净树复跑同名件再跑一遍）
+
+- **R592 → `705fe23`**（36/36 两态）：`scripts/eval_lane_readout.py` 那行「侧车 `evidence_n` ↔ `answers.evidence` 枚数不等」曾把 11 枚打印成 `None`＝一枚不存在的两本账不齐；改后 `evidence_n` 取不到＝0 枚、`=0` 名册 31 枚真零。
+- **R595 → `79af2b6`**（24/24）：时延读数收进在册尺 `scripts/r595_latency_readout.py`，停表帽命中必须单列。
+- **R593＋R582 → `03507f3`**（111/111，＋`--check` rc=0 逐字节）：R483 那本空表台账把「此刻盘面全零」写成常驻不变量（真库一旦被用过就永久红）；告警处置三写口不落审计账。
+- **R540 → `7b0b27d`**（38 passed＋1 skipped，两态同数）：真机腿默认 `skip`＋env 开关的在册先例（R591 的常驻钉照它写）。
+- **R587 → `eecd699`**（38/38；邻座 23 passed/3 skipped）：库级 GUC 不在 `pg_dump` 的 TOC 里 ⇒ 恢复库 `app.embedding_dimension` 当场 MISSING，`collect_globals()` 成对取 `.globals.json`/`.globals.sql`。
+- **R583 → `500d88a`**（29/29 ＋ 33 枚 `_temp_edit_overlay` import 者全集 **516 passed/1 xfailed/0 failed·300 s**）：反证窗名册从手抄 9 行改成派生 16 枚（LIVE 16·isolated 1·exec 2·no_install 6，改后 missing=[] extra=[]）。
+- **R585 → `1f0f0f2`**（队列族 14 枚件各 269/269）：`dead` 终态第一次带原因码进持久面（`dead_verdict` 必须排在写状态键**之前**落账）。
+- **R46 差格 a → `245315b`**（后端 130/130＋前端定向 vitest 15 passed；`npm run lint:colors` 改后仍 **148**＝未越 `--max-warnings=148`）：出处被点开/被展开落事件表（迁移 `0019_document_engagement_events.sql`），派生腿冷启动 0.0＝不动名次。🔴 它同时**清掉 R60 的前置路障**（两单同抢 `app/rag/retriever.py`），`be-r60b` 已从 `394205a` 复取到 `245315b`。
+
+### 二、run17＝全 105 题「一窗多判据」收窗（11:25:48→**13:23:36**，118 分钟，105/105 片、零失败、driver rc=0）
+
+- 指纹 `revision=e6fdeb4`（＝开窗时 HEAD）、`index_backend=pgvector`、`probe_ok=True`；`--commit` 已跑：`run17-answers.jsonl` 105 行／duplicate=0／帧账 105 行。🔴 **镜像随后已换到 `245315b`** ⇒ 这一窗的读数是「代码在树、镜像换了」的那一版，跨窗对照要用 `scripts/r580_per_class_attribution.py` 时它会**硬拒**不同 revision（今天要同修订两窗才有 A④ 逐类机器对照）。
+- **A① 三组数**（在册尺，停表帽命中 0 枚、帽值现读 300 s）：问答类 n=64 **p95=109.6 s**（avg 49.5/p50 44.9/max 155.9）｜分析·报告 n=35 p95 313.5 s｜整表 n=105 p95 157.7 s。超帽带不摘 2 枚：`chart-04` 318.0 s（`kind=approval_failed`）、`report-04` 313.5 s（`kind=queued_approved`）。⇒ 🔴 **本格不作结论**：同机六枚执行层全程在跑测试＝带噪窗；历史对照 run13 问答类 118.3 s／run14 128.3 s（都带噪）、安静窗 61.0 s／71.8 s。**安静复测必须排在 R591 并树之后**（native 腿省下的正是每发 40–60 s），否则量两遍。
+- **分数（在册尺 `scripts/run_quality_evaluation.py`）**：run17 **correctness 0.5810／evidence 0.7810／p95 157,739 ms／scorable_subset 0.6047（52/86，deducted 19）**｜run13 0.5619/0.7524/151,750｜run14 0.5238/0.7524/164,661 ⇒ **整表不退化**。
+- **D 三格**：kind 直方图 ok 75／queued_polled 8／approved_ok 4／**approval_failed 3**／queued_approved 12／error_event 3；structured 20/105；批准轮批到终答 12、**批准失败 3＝`chart-01`/`chart-02`/`chart-04`**、仍停挂起 0；终答字数 p50 572／min 21／max 3228，<40 字 6 枚；D-2 usage **20/20**、Σtotal 120,747；D-3 判词达标（可读面↔交回逐枚等）但 `sources_present` 仅 6/20、🔴 **`report-11` 批准腿出处仍 0**（2603 字，这句从 09-21 挂到今天没关）、流内 sources 事件 94/105。
+- **A②**（`scripts/r573_caliber_reconciliation.py --tag run17`）：approval-*/scope-*/unsupported-* 全 True；**tool-01..04、report-02/04/05/07/09/10/11/12 四列全 False**；report-01/03/06/08 不可判。⇒ 残留实红收窄成有名有姓的两枚，归因在飞的 R590。
+
+### 三、🔴 本班最大的技术发现：三臂探针推翻前任的假设（R591 判据的事实底座）
+
+| 臂 | 秒 | finish | 正文字符 | reasoning 字符 | generated_tokens |
+|---|---|---|---|---|---|
+| compat `/v1/chat/completions` ＋ `thinking:{type:"disabled"}` | 73.49 | **length** | **0** | 5554 | 1536 |
+| compat 不带该字段 | 53.36 | **length** | **0** | 6041 | 1536 |
+| native `/api/chat` ＋ `think:false` | **12.35** | **stop** | **804** | 0 | 486 |
+
+- 前任假设「带 `thinking` 字段反而触发思考」**作废**：那枚字段**完全无效**，两臂同样空正文。真正的分岔是**端点**：compat 腿在 ollama 0.34.0＋思考模型上必然把预算吐进 reasoning 通道；native＋`think:false` 不但出正文，还**快 4–6 倍、少 3 倍 token**（直接关系 A① 那格 90 s 门槛）。
+- 产品早就有 native 腿（`app/common/model_handler.py:71 TRANSPORT_NATIVE`、`:58 NATIVE_CHAT_SUFFIX`、`:59-61 think:false`＋`num_predict`，R147 的活）⇒ 这是**腿选择**问题不是缺功能。待证的机制＝`model_handler.py:90 NATIVE_REQUEST_REJECTED_STATUSES = frozenset({400})` 那条「原生端点不收这枚体就退回 compat、腿不退役」：若批准/恢复腿发出的体撞 400，那一发就**静默**落到 compat ⇒ 空正文。同形证据＝run17 三枚批准失败与 run16/17 `report-04`（`model_output_truncated`→`no_answer_produced`→最终回答 0 字）。
+- 取证坑记一笔：量具 `%TEMP%\evalrun\r591_thinking_probe.py` 原写 `BASE=http://localhost:11434`，在 backend 容器里**拒连**；正确名字是 `http://ollama:11434`（现读自容器 `OLLAMA_BASE_URL`）。跑法 `Get-Content -LiteralPath <件> -Raw | docker exec -i enterprise-brain-backend-1 python -`（PowerShell 不支持 `<`）。
+
+### 四、镜像与容器（业主授权的 P-8/P-20 那条链，本班走完）
+
+`$env:GIT_SHA=(git rev-parse HEAD)` → `docker compose --env-file deploy/.env.server build migrate`（12 s，层缓存；🔴 漏 `--env-file` 就报 `required variable POSTGRES_USER is missing a value`）→ `run --rm --build=false migrate` 交回 **`applied=1 database=enterprise_brain`**（迁移 0019 在真库第一次落地）→ `up -d --force-recreate backend worker scheduler` 三枚 healthy，`org.opencontainers.image.revision`＝当前 HEAD ⇒ 溯源干净。旧容器日志随之丢失（下一班引用时别再找它）。
+
+### 五、业主 10-03 裁定四笔到货（原话「1 2 都按你的建议来 3 批准、R487 与合成扫描件你办、默认不翻」）
+
+- A①／R440 整表口径＝**按问答档定死**（V1 只认那一格 ≤90 s，整表与分析·报告只公布不判）；A②＝**甲＋乙两读并列**升为业主口径；**评测集改题＝批准**（单号 R598，判据全文跟进单 §160.4）；`INDEX_BACKEND` **出厂默认不翻**（`app/rag/indexing.py:50` 保持 `chroma`，翻默认转交付阶段项，四行检查项已写进 pgvector 计划书 §14）。落账提交 `e750d5c`（计划书／闸门表／跟进单 §160／runbook 勘误／计划书 §14，全部只追加，编码逐枚现验：跟进单 bare_cr 恒 **1534**、四枚 CRLF 件无裸 CR、看板 **LF＋BOM** 未破）。
+- **R487 建号已办**（总控亲做，非执行层）：dry-run rc=0 先过 ⇒ 30 枚／staff 8·manager 8·admin 7·auditor 7／四部门 8·8·8·6／**role×department 16 of 16 全覆盖**；`--apply` 交回 `created/verified 30 of 30`＋`bulk account acceptance: PASS`（逐枚登录取 token、`GET /api/v1/profile` 回显真角色与部门、`GET /api/v1/data-files` 逐枚低于 500、匿名 401/403）。凭据 `%TEMP%\r52_bulk_accounts.json`（仓外）。🔴 **V2 #19 只到「账号面」**：检索面越权矩阵在演示库仍是空集（`documents` 部门全空），牙在 R469 沙盒臂那侧——**不许拿 R487 翻 C 门或格③ 的绿**。
+- V2 #13 那份扫描件按业主令走**合成件**（不打客户真件、不改 `documents/**` 语料面），单号 **R599**，槽位一到就投。
+
+### 六、🔴 本班抓到的一枚不同代账（已在 runbook 就地作废）
+
+`docs/handoff/2026-09-17-eval-real-run-runbook.md:413` 那行「三片拼接**逐字节等于**主件 ⇒ 题源没被碰过」被证伪：三片拼接 24,346 B／sha16 `2230b2b45be18bfb`（对得上登记），主件 41,941 B／sha16 `686c564ff2985744`（对不上），**29 行内容不同代**（三片缺 `anchor_provenance`、金标与锚词还是 R401 之前的旧词）；三片自 `78b8507` 未再动、主件被 R401（`baef92e`）改过 ⇒ 那行从没对主件核过字节。🔴 **历史分数没被污染**：run13/14/16/17 的 `window.json` 里 `fixture_sha256` 逐枚现读＝主件。修法并入 R598⑦（三片从主件逐字节派生＋一枚常驻钉＋反证刀），同 R583 那一族「手抄账 vs 派生账分叉」。
+
+### 七、投递记录与在飞（一 block 一次投递，报错不补投）
+
+- 本班一次投递：**R591 → `Archimedes`/`01a1005e-ce41-77b2-8fbb-a5ad6486ef5d`**（`be-r591`@`245315b`，投前 dirty=0／untracked=0）。
+- 本班一次触顶：⛔ **R598** 报 `agent thread limit reached`（当时在飞六枚＝实测上限 6）⇒ 按仓规记「未落地」，零写入取证 `Test-Path be-r598`＝False、主树 HEAD 未变；判据全文落跟进单 §160.4，腾出槽位后一次投出。
+- 在飞七枚：`Gödel`/R590（只读）、`Heisenberg`/R596、`McClintock`/R597、`Aquinas`/R60、`Sagan`/R589、`Archimedes`/R591，加待收的交回队列。写域零交集（`chat.py`/`model_*`/`nodes`/`contracts` 归 R591；`retriever`/`pg_store`/`indexing` 归 R60；`retrieval_pipeline`/`r577`/`r536` 归 R597；`backup`/`restore`/`Dockerfile` 归 R596；`_temp_edit_overlay` 归 R589；评测集与三片归待投的 R598）。
+- 下一步（顺序，别打乱）：① 收交回逐枚两态亲跑；② 腾槽投 R598 → 再投 R599（合成扫描件）；③ C 门「缓存命中显式标注」那格放一枚小探针（夹具 `%TEMP%\evalrun\fixture-cache2.jsonl` 两枚同题，🔴 不要设 `EVAL_DECLARE_LANE_TIER`；定性＝**码在树、从没验过**：`app/api/v1/chat.py:2594-2626` 的 `cache_fields{cached:true}`＋R154 `cached-unknown` 第四态，历轮不命中是因为每扇窗开前清了 `answer:*`）；④ 机器独占时跑 `python scripts/run_gate.py`（并发由脚本按空闲内存自选，纸上不写死 `-n`）；⑤ A① 安静复测排在 R591 并树之后；⑥ 今天已并的 8 枚＋`e750d5c`＋看板这一笔 **push**（业主 standing 授权）。
