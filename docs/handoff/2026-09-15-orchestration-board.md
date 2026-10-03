@@ -1658,6 +1658,13 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Erdos`（复用线程） | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R565＋R571 结案并树**（收件整理单，A–D 四格照交；本席另独立核过 sha 与 numstat） | 主树 `fc8140f`（R565 三枚全新增）／`6c8b6dd`（R571 两枚在册件改口 33/6＋79/0） | ✅ 总控亲跑两态（脏态与提交后干净树）同名集 **55 passed / rc=0**；五枚件盘上 sha256 前 12 与源树逐枚全等 | 10-03 08:5x |
 | `Hume`／`Pasteur`（**仍死，未复用**） | `01a0f0e6-…`／`01a0f09f-…` | **R556**（已由总控接手并树 `c9a782e`）／**R557**（零产物） | `be-r551`（7 枚 M 半成品·未验未并）／`be-eval95`（现取 dirty=0，跑分树，10-03 用作 run13/14 采集） | 🔴 百炼 403 `AccessDenied.Unpurchased` 仍在，业主那次续订没覆盖这两条线；本席 10-03 未向它们投过一句话 | 10-03 08:3x |
 | （总控亲做·非执行层） | — | **R59 翻默认读后端真落地**（`INDEX_BACKEND=pgvector`） | `deploy/.env.server:77`（该文件未跟踪、不入仓）＋backend/worker/scheduler 三枚容器 `up -d --force-recreate`（runbook:519 正解） | ✅ 08:4x 现读：三枚容器 `printenv INDEX_BACKEND` 均 `pgvector`；backend 进程内 `read_backend()`＝`pgvector`；代码缺省 `INDEX_BACKEND_DEFAULT` 一字未动。🔴 上一格 §151 曾把「裁定」写成「已执行」＝事故 #105，订正见跟进单 §152 | 10-03 08:4x |
+| `Lamark`（**新线程，一次投递**） | `01a0ff3d-a8be-7853-87bf-d9884f2495dd` | **R578**（队列道那半格：可注册点＋失败终态与具名原因码） | `be-r578`（基点 `b85c277`，**独占**；写域＝`deploy/queue_worker.py` `+11/-0`＋两枚新钉＋纸） | ✅ **结案并树 `e19ddc5`**：总控两态亲跑 13 件 220 passed／1 failed（唯一红＝R548 台账指纹钉 `test_z9c`），正解按 R558 先例在 §7.1 **追加**现读行 `9a29a599…bc07`（历史两枚不追改）⇒ 复跑 17 passed。R578 交回纸 §4 明写「队列道逐字节片段真机读数仍未取，A②／D 不许据此翻绿」。 | 10-03 09:1x |
+| `Salk`（**新线程，一次投递**） | `01a0ff3d-3d02-7873-85e1-9e788b0148c1` | **R577**＝R541＋R539（30 枚四档样本账号＋告警闭环第一行真数据；owner 裁＝`dataowner`） | `be-r577`（基点 `b85c277`，自建树，**独占**；四枚全新增，零在册件改动） | ✅ **结案并树 `63c36dd`**：`users 3->33`、形状 admin8/auditor8/manager7/staff7、研发8 市场8 财务8 法务6、三枚老账号四列逐字符全等；评测集 105 行＋sha `686c564ff298` 前后全等、`documents/chunks/chunk_vectors` 105/1008/1008 全等。🔴 **格④ 部分达**：处置三写口 200 跑通但 `audit_events` 里 alert 相关 **0 行**（`app/api/v1/alerts.py:379` 全文件唯一 `record_audit` 且只记拒绝）⇒ 越写域，另立 **R582**。凭据只落仓外 `%TEMP%\r577-demo-sample-credentials.json`。总控亲跑两态 33 passed，四枚 sha 与自报全等。 | 10-03 09:4x |
+| `Kuhn`（复用线程） | `01a0efcf-5b50-7452-ba0b-0d10293efe52` | **R572**（事故 #104 那族 HEAD 自带红） | `be-r572`（基点 `fd90f30`，**独占**；写域只 `tests/test_r253_*`＋两枚新钉＋纸） | ✅ **结案并树 `6a2c09b`**：总控主树两态亲跑 **25 passed／0 failed／0 error**（改前同名在 `fd90f30`＝2 failed＋2 errors）。判据① 第 4 枚症状**未达且经本席复现确认**：`test_phase9_private_deps` teardown ERROR 属 R563 那把 `__defaults__ ==` 尺过窄，治它要动 `tests/conftest.py` 或 phase9 本体（两枚都在本单禁碰清单）⇒ 另立 **R584**（已投 `Popper`）。 | 10-03 09:5x |
+| `Erdos`（复用线程） | `01a0f03c-07db-7d51-a68b-4da0c2b02be4` | **R573**（A② 三口径离线对账，吃 run13/14 现成帧账） | `be-r573`（基点 `b85c277`，**独占**；三枚全新增） | ✅ **结案并树 `dfc057b`**：六组数（甲/乙/丙 × 两窗）一列不省——账上口径 `ledger` 95／96，丙-不算 96／97，乙-2 挪分母后 0.9794／0.9697 **仍非 1.0000**；本件**不选口径**。七把反证刀，🔴 执行层自招刀⑤ 第一版把截断点定成「末行取前 8000 字符」而末行实长 7959＝**当时没有牙**，已订正进纸 §6（这条自招是加分不是污点）。总控亲跑 14 passed，三枚 sha 全等。 | 10-03 09:5x |
+| `Popper`（**新线程，一次投递**） | `01a0ff75-197c-7531-9049-c0b834b8cdeb` | **R584**（本班新立·治全量门唯一那枚 teardown ERROR） | `be-r584`（基点 `dfc057b`，**独占**；写域＝`tests/conftest.py` 的 `_eb_r563_same` 那一腿＋新钉＋纸） | 🟡 **在途**（09:5x 投出）。判据硬在两处：**不许锯腿**（`__defaults__` 仍要判，只把比较从实例身份换成结构比较）＋三把反证必须真咬（摘腿必红／换语义不同的桩必红／真留假身仍红在凶手模块）。 | 10-03 09:5x |
+| `Einstein`（**新线程，一次投递**） | `01a0ff75-771d-7312-b101-23c5a13cecdb` | **R581**（判据全文＝跟进单 §153 四）把 pid=4 vGPU 影子**正面归因**收进在册开窗前置闸 | `be-r581`（基点 `dfc057b`，**独占**；写域＝新 `scripts/r581_gpu_attribution.py`＋`r530_run10_window_preflight.py` 调它＋可选 driver 那几行） | 🟡 **在途**（09:5x 投出）。🔴 现值已变：本席 09:4x 现取 `--need-minutes 90` **rc=0／8 格全 PASS**（`gpu_apps` 那一刻真没有负载、`provenance` 随镜像重建转绿）——这不是本格变绿，影子会回来；本单不治任何时延读数。 | 10-03 09:5x |
+| （总控亲做·非执行层） | — | **run15＝D 格相 2 专窗**（12 题报告档，`REPORT_LANE_VIA_QUEUE=on` ＋ 量具补发 `lane=report`） | `be-eval95` 已 `merge --ff-only dfc057b`＋`%TEMP%\evalrun\run15.*`＋仓外子集件 `fixture-report12.jsonl`（sha `a9af15ea81c2`，整行原样抽取，评测集一字节未动） | 🟢 **09:54:35 开窗**（driver pid 62088／壳 pid 62168，`window.json` 已落，`shards=12 to run=12`）。开窗前置现取：P-20 **8 格全 PASS**、P-18 `answer:*`＝0（`PING=PONG` 先过再数）。 | 10-03 09:54 |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -6465,3 +6472,40 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 
 - 在途：`Kuhn`/R572（`be-r572`，并完前门不绿、不许 push）。
 - 待派三块写集零相交：R573 A② 三口径离线读数（`scripts/`＋`tests/`＋`docs/perf/`，零模型零容器，吃现成 run13/14 帧账）／R574 合成扫描件端到端（V2 #13/#14/#15 那格从「从没跑过」变有读数，禁碰演示库计数）／R575 R60 前置真库备份恢复演练（`scripts/`＋`tests/`，容器只读）。
+
+
+## 4EK 第十二班第六格（10-03 09:1x–10:0x·总控线·主树 `e19ddc5`→`63c36dd`→`6a2c09b`→`dfc057b`／单模型未切换／心跳一枚没碰（automation 仍 `PAUSED`）／峰值并发 5）：四枚并树 · 🔴 D 格「开关开着也没入队」的第二重根因（量具不发 `lane`）· run15 相 2 专窗开窗 · 三枚新单 R582/R583/R584
+
+### 一、四枚并树（全部总控亲跑两态：apply 未 commit ＋ 干净树复跑，同名件文件清单逐枚点名）
+
+- `e19ddc5` **R578**（`Lamark`）：`deploy/queue_worker.py` `+11/-0`。脏态 13 件 220 passed／1 failed，唯一红是 R548 台账指纹钉 `test_z9c`——按 R558 先例在 §7.1 **追加**现读行（`9a29a599…bc07`），历史两枚 `03be6d53`／`905d3a58` 不追改，复跑 17 passed。🔴 纪律补一条：并 `queue_worker.py` 或被台账指纹钉引用的件，**同笔就要追加现读行**，不许等钉红再补。
+- `63c36dd` **R577**（`Salk`）：四枚全新增、零在册件改动；源树与主树两态各 33 passed，sha 四枚全等。真写库动作四跑（`--apply`），前后读数逐格入纸。
+- `6a2c09b` **R572**（`Kuhn`）：事故 #104 那族 HEAD 自带红归零——主树两态 **25 passed／0 failed／0 error**。
+- `dfc057b` **R573**（`Erdos`）：A② 三口径六组数全在纸（账在 `%TEMP%` 不入仓，钉只钉形状与算术），干净树 14 passed。
+
+### 二、🔴 D 格为什么历轮从没被量到——第二重根因今天才挖出来
+
+- 上一班记的第一重成因是「`REPORT_LANE_VIA_QUEUE` 一直关着」。今天现取：`deploy/.env.server:71` 已是 `on`，三枚容器 `printenv` 也全是 `on`，**可 run14 那 12 道报告题照样不是队列道**。
+- 帧账证据（`%TEMP%\evalrun\run14-sidecar-frames.jsonl`，105 行）：`report-01` 到 `report-12` 的 `text_frames` 是 **30–60 帧增量流**、`queue` 键逐枚是**空 dict**、`criterion_two_holds` 11/12。增量流＝同步道的形状；真走队列道应当是「取回整段」＝`(text_frames, max_stream_frames) = (1, 1)`。
+- 根因到行：`scripts/eval_transport_ask_v2.py:220` 的 `DECLARE_LANE_TIER = os.getenv("EVAL_DECLARE_LANE_TIER", "")` ＋ `:1301-1302` 的 `lane = LANE_BY_TIER.get(tier, "") if DECLARE_LANE_TIER and tier == DECLARE_LANE_TIER else ""` ⇒ **量具从前从不发 `lane`**（这一条 R226 的注释自己写着，只是没人去翻），而产品那道闸是 `app/api/v1/chat.py:2567` 的 `if lane == LANE_REPORT and _report_lane_via_queue_enabled()`——**两个条件缺一个就不入队**。所以「只翻开关」= 没翻。
+- 🔴 定性：这是**量具缺陷，不是产品缺陷**（与 R226 同一句结论，今天有了帧账凭据）。修法在跑分侧：设 `EVAL_DECLARE_LANE_TIER=报告`，且只跑报告档那 12 题——这就是 run15 相 2 专窗。
+- 顺带一条同形状旧错：计划书 §6 D 行那句「`REPORT_LANE_VIA_QUEUE` 现网默认关」在今天**已经不适用**，但 D 三格仍然 0 格——成因换成了上面那句。别再抄那句旧解释。
+
+### 三、run15 开窗凭据（零 CPU 争用面）
+
+- 前置：`scripts/r530_run10_window_preflight.py --need-minutes 90` → **rc=0，8 格全 PASS**（`provenance`／`answer_cache`／`keep_awake`／`gpu_apps`／`foreign_python`／`eval_tree`／`env_flags`／verdict）。对比 09:0x 那次 rc=1（`gpu_apps`＋`provenance` 两格 FAIL）：`provenance` 靠镜像重建＋`up -d`（镜像现带 `revision=63c36dd`）转绿，`gpu_apps` 靠那一刻 CS2 真退出转绿——**后者不是治好的**，正解归 R581。
+- 缓存：`scripts/eval_window_answer_cache_gate.py`（不带 `--check`）→ `PING=PONG` 先过、`answer:*`＝0 枚、`dbsize=113` 旁证其它键族一枚没多删。
+- 子集件：12 行 `report-*` 从 `tests/fixtures/business_evaluation_100.jsonl`（sha `686c564ff298`）**整行原样**抽到仓外 `fixture-report12.jsonl`（sha `a9af15ea81c2`），评测集零改动——这条纪律由 `tests/test_evaluation_report.py` 钉着。
+- 跑分树 `be-eval95`：`merge --ff-only dfc057b` 追平，`diff --numstat HEAD` 空。
+
+### 四、本班新立三枚（先落纸再派，按写集切）
+
+- **R582**｜告警处置三写口不落审计账。`app/api/v1/alerts.py` 的 `ack`/`assign`/`close`（`:1147`／`:1160`／`:1173`）三枚写口全程无 `record_audit`——本席现取：全文件唯一那条 `record_audit` 在 `:379`，且**只记拒绝**。后果是「谁确认了这条告警」在 `audit_events` 里查不到，只剩业务表那三列，客户「处置留痕」这条问的是前者。🔴 另订正判据原文一处用词：`audit_events` **没有 `route` 列**，凡写「按 route 计数」的判据都取不到数，立案时得改成 resource/action 口径。写域 `app/api/v1/alerts.py`＋新钉；**待投**。
+- **R583**｜`WINDOWS` 名册进册。`tests/_temp_edit_overlay.py` 那本名册被在册钉 `test_the_roster_is_nine_windows…` 钉成「恰等于那 9 枚」，R572 新接的第二扇窗（r253）因此**没进册**——名册与真实开窗者已经不一致。要么进册＋同步那枚钉，要么在纸面写清「名册只管 r466 一族」。写域 `tests/_temp_edit_overlay.py`＋那枚钉；**待投**。
+- **R584**｜见名册行（已投 `Popper`）。
+
+### 五、要业主本人出手的（本席一律不代做）
+
+- 仓内漏出的跑分垃圾，🔴 **未跟踪、不入仓、本席按规矩只报不删**：`scripts/collect-sidecar.jsonl`＋`scripts/collect-sidecar-frames.jsonl`（10-03 08:54 漏出——runbook §16 记过的脚枪：`EVAL_SIDECAR`/`EVAL_FRAME_LEDGER` 两枚都不设时两份默认落进 `scripts/`）；仓根 `0001-processing.json`…`0076-done.json`＋`head.json`＋`polls.jsonl`（10-01 23:38 队列腿手测残留）；另加历史三件 `.tmpfix/`、`?? -`、`?? %SystemDrive%/`。
+- 被跟踪的 `chroma_db/chroma.sqlite3` 会被跑测改字节（`Kuhn` 与本席各遇到一次）——长期处置（出册／gitignore／反跟踪）是业主动作，本席不动。
+- push 由业主执行（主树现领先 gitee 若干枚，见下）。gitee 平到 `bd52ef7`，其后 `e19ddc5`／`63c36dd`／`6a2c09b`／`dfc057b` 四枚未推。
