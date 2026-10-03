@@ -70,7 +70,7 @@
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
 - 从写句往上爬过的坐标：`app/api/v1/notifications.py:136 · _apply`、`app/api/v1/notifications.py:213 · mark_notifications_read`、`app/api/v1/notifications.py:219 · dismiss_notifications`、`app/notifications/states.py:213 · apply_state`。
 - 本表这一跳不需要跨边：写句往上爬就直接见脸，或根本爬不到脸，两种都不靠事件标签撑道。
-- 入口只在测试里被引到：`tests/test_r299_notification_inbox.py`、`tests/test_r303_pg_upsert_leg.py`、`tests/test_r376_gate_shape_pins.py`、`tests/test_r376_notifications_refuse_a_store_that_is_not_there.py`，另有 1 枚（按判据④，那不算产品有一行真数据）。
+- 入口只在测试里被引到：`tests/test_r299_notification_inbox.py`、`tests/test_r303_pg_upsert_leg.py`、`tests/test_r376_gate_shape_pins.py`、`tests/test_r376_notifications_refuse_a_store_that_is_not_there.py`，另有 2 枚（按判据④，那不算产品有一行真数据）。
 - 该走哪条写入道：app/notifications/states.py::apply_state（表名走本文件的 TABLE 常量拼进写句）→ POST /notifications/read 与 /notifications/dismiss 两条腿共用它。
 - 裁定理由：按设计只有真人点「已读 / 忽略」才写这一行，收件箱本身不开第四本账（三条源全从已有的账现读）。所以 0 行的准确说法是：铃铛挂上之后没人点过一次。要补的是端到端行为读数，不是接口。
 
