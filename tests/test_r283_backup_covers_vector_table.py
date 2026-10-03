@@ -37,6 +37,7 @@ import ast
 import math
 from pathlib import Path
 import re
+import subprocess
 
 import pytest
 
@@ -44,6 +45,7 @@ from scripts import backup_database as backup_module
 from scripts import restore_database as restore_module
 from scripts.backup_database import backup_database, missing_landing_tables, tables_in_backup
 from tests import test_postgres_backup_recovery as drill
+from tests.test_r596_globals_pair_leaves_the_dump import fake_psql
 
 TAG = "brp-offline"
 _QUERY = drill.DRILL_QUERY_VECTOR
@@ -579,8 +581,22 @@ def test_the_cli_forwards_both_landing_points_and_the_restore_tool(monkeypatch, 
         "5540; 0 58001 TABLE DATA public chunk_vectors postgres",
     ]
 
-    def fake_run(command, *, env, check):
-        backup_module.Path(command[command.index("--file") + 1]).write_bytes(b"dump")
+    read_globals = fake_psql()
+
+    def fake_run(command, *, env, check, **kwargs):  # noqa: ARG001 - 真件还带 capture_output/text/input
+        """桩按工具分派：R596 起备份 CLI 不只发一发 `pg_dump`。
+
+        `capture_output` 是 stdlib 的合法参数，桩不吃它（桩过窄）就等于把 R596 多发的那一发
+        psql 判成参数错误。名册外的工具当场报错，所以「少发一条命令」仍然会红，不会被宽签名
+        静默放过；读数只引用 R596 自己的名册，这里不重写一套。
+        """
+        tool = Path(str(command[0])).name
+        if tool.startswith("pg_dump"):
+            backup_module.Path(command[command.index("--file") + 1]).write_bytes(b"dump")
+            return subprocess.CompletedProcess(list(command), 0, "", "")
+        if tool.startswith("psql"):
+            return read_globals(list(command), env, label="cli", stdin_text=kwargs.get("input"))
+        raise AssertionError(f"备份 CLI 发出了名册外的工具：{command[0]!r}")
 
     def fake_list_backup(archive, *, pg_restore_path="pg_restore"):
         seen["pg_restore_path"] = pg_restore_path

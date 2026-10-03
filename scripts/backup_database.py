@@ -1,4 +1,16 @@
-"""Create a PostgreSQL logical backup without exposing credentials in argv."""
+"""Create a PostgreSQL logical backup without exposing credentials in argv.
+
+R596 closes the half of "we have a backup" that ``pg_dump`` cannot answer. Database-level and
+role-in-database settings live in ``pg_db_role_setting``, which appears nowhere in a
+custom-format archive's table of contents, so a whole-database dump can be perfectly green
+while the restored database answers ``current_setting('app.embedding_dimension')`` with
+MISSING -- the width migration 0010 and the read path both depend on. A backup therefore does
+not finish when the dump exists: it finishes when the dump *and* its paired
+``<archive stem>.globals.json`` / ``<archive stem>.globals.sql`` exist next to it, carrying the
+settings that were read off the source database and a statement file the restore side can
+re-apply before it reconciles anything. The artifact shape is R587's shape (see
+``scripts/restore_database.py``), not a second format invented here.
+"""
 from __future__ import annotations
 
 import argparse
@@ -114,6 +126,32 @@ def backup_database(
     return destination
 
 
+def _globals_book():
+    """成对产物那一本账住在恢复侧（``scripts/restore_database.py``，R587 的口径）。
+
+    包内导入优先；``python scripts/backup_database.py`` 直跑时只有 ``scripts/`` 在 sys.path
+    上，那就退回同目录导入——操作者那条路必须走得通，不能只在 pytest 里绿。
+    """
+    try:
+        from scripts import restore_database as book
+    except ImportError:
+        here = str(Path(__file__).resolve().parent)
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import restore_database as book
+    return book
+
+
+def pair_globals_with_backup(database_url: str, archive: str | Path, *,
+                             psql_path: str = "psql") -> dict:
+    """判据①备份侧那一半：与归档同目录、同前缀落下 ``.globals.json`` 与 ``.globals.sql``。
+
+    少了这一步，"整库备份成功"就还是那句推理而不是演练：dump 里一枚库级 setting 都没有，
+    恢复出来的库 ``app.embedding_dimension`` / ``app.embedding_model`` 全是 MISSING，而备份
+    日志与向量行数都好看。成对产物带归档 sha256，两侧不成对时恢复侧当场拒收。
+    """
+    return _globals_book().write_globals_pair(database_url, archive, psql_path=psql_path)
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Create an Enterprise Brain PostgreSQL backup.")
     parser.add_argument("--output", required=True)
@@ -131,6 +169,13 @@ def main(argv: list[str] | None = None) -> int:
         default="pg_restore",
         dest="pg_restore_path",
         help="pg_restore used to read the archive table of contents for --require-table",
+    )
+    parser.add_argument(
+        "--psql",
+        default="psql",
+        dest="psql_path",
+        help="psql used to read the database-level settings pg_dump cannot carry; the "
+             "production image installs postgresql-client-16 for it (R596)",
     )
     args = parser.parse_args(argv)
 
@@ -151,6 +196,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"database backup failed: {exc}", file=sys.stderr)
         return 1
     print(f"backup={output}")
+    book = _globals_book()
+    try:
+        pair = pair_globals_with_backup(database_url, output, psql_path=args.psql_path)
+    except book.RefuseError as exc:
+        print(f"database backup refused: {exc}", file=sys.stderr)
+        return 2
+    except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
+        print(f"database backup failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"globals={pair['json']}")
+    print(f"globals_sql={pair['sql']}")
+    print(f"globals_pair={pair['json_sha256'][:12]}/{pair['sql_sha256'][:12]} "
+          f"archive={pair['archive_sha256'][:12]}")
+    print(f"globals_applied={pair['applied']} globals_deferred={pair['deferred']}")
+    print(f"globals_profile={pair['profile']}")
+    print(f"globals_session={pair['session_profile']}")
     return 0
 
 

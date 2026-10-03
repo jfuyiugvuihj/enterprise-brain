@@ -63,6 +63,41 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         uv sync --frozen --no-dev; \
     fi
 
+# R596: the backup and restore CLIs have to reach PostgreSQL through the client tools, and
+# this image shipped none of them. psql / pg_dump / pg_restore / pg_dumpall were each asked for
+# in the running backend container and every one came back MISSING, which makes any
+# subprocess-based backup or restore path structurally unable to run here -- not merely
+# mis-configured. It matters because a custom-format archive cannot carry database-level
+# settings (pg_db_role_setting: app.embedding_dimension / app.embedding_model), so those have
+# to be captured from the source and re-applied through psql on the way back in.
+#
+# The major version is load-bearing: pg_dump aborts when the server is newer than it is, so the
+# client has to match PostgreSQL 16 -- docker-compose.yml runs postgres from
+# pgvector/pgvector:pg16, which is Debian 12 with PGDG builds (16.x-1.pgdg12). Debian 12's own
+# archive only carries postgresql-client-15, so the tools come from the same PGDG repository
+# that built the server, pinned to major 16 by package name. Never substitute the unversioned
+# postgresql-client metapackage here: on Debian 12 it resolves to 15, and pg_dump 15 against a
+# 16 server fails with a version mismatch. PG_MAJOR stays pinned to the compose tag by
+# tests/test_r596_image_carries_the_pg16_tools.py, so bumping one without the other goes red.
+#
+# Two build arguments carry the egress, mirroring APT_MIRROR and PIP_INDEX_URL for a customer
+# intranet; both the repository and the signing key are fetched over HTTPS with the interpreter
+# already in this image, so no additional downloader is introduced and the key is verified by
+# apt's signed-by instead of being trusted blindly. This layer sits below uv sync on purpose:
+# it changes no dependency layer, only the two small COPY layers above the provenance stamp.
+ARG PGDG_MIRROR=https://apt.postgresql.org/pub/repos/apt
+ARG PGDG_KEY_URL=https://www.postgresql.org/media/keys/ACCC4CF8.asc
+RUN set -eux; \
+    opts="-o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::ForceIPv4=true"; \
+    apt-get update $opts; \
+    apt-get install -y --no-install-recommends $opts ca-certificates; \
+    install -d /usr/share/postgresql-common/pgdg; \
+    python -c 'import sys, urllib.request; urllib.request.urlretrieve(sys.argv[1], "/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc")' "$PGDG_KEY_URL"; \
+    . /etc/os-release; test -n "$VERSION_CODENAME"; \
+    echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] ${PGDG_MIRROR} ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list; \
+    apt-get update $opts; \
+    apt-get install -y --no-install-recommends $opts postgresql-client-16; \
+    rm -rf /var/lib/apt/lists/*
 # The service account exists before the sources are copied so the COPYs below can carry
 # ownership directly (see the note at the top). Recursing over /app afterwards would
 # duplicate the venv into a fresh layer.
