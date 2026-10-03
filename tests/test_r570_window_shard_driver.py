@@ -29,6 +29,10 @@
 ④⑥ 的口径本身（退出码与默认值不许漂）→ ``test_the_exit_code_and_default_tables_are_pinned``
 七格之外的两道机械闸 → ``test_the_same_tag_cannot_be_claimed_twice``（同 tag 单实例）＋
    ``test_the_header_mapping_names_only_real_cases``（本表自证）
+R571 · 口令来源（``--env-file`` 缺省指向未跟踪件 ⇒ 必须 REFUSE，不许裸 FileNotFoundError）→
+   ``test_a_missing_env_file_refuses_instead_of_crashing`` ＋
+   ``test_collector_env_refuses_when_the_env_file_is_gone`` ＋
+   ``test_an_existing_env_file_still_supplies_the_password``（正控）
 
 反证牙（在册 ``counter_evidence`` 命名，一枚都不分层出门）：
   a ``test_counter_evidence_a_blinding_the_fingerprint_gate_reigns_a_mixed_baseline`` 摘指纹闸⇒敢混库
@@ -707,6 +711,81 @@ def test_counter_evidence_f_no_test_here_shells_out_to_docker(tmp_path, monkeypa
     assert asked, "假读数单点没被用上：那指纹是从哪来的？"
     assert any("BUILD_INFO" in shell for shell, _ in asked)
     assert not any("printenv" in shell for shell, _ in asked), "printenv 会把「读到空」误判成「问不着」"
+
+# ============ R571 · 口令来源问不到 ⇒ REFUSE（真窗 22:36:22 就是在这里裸崩的） ============
+
+def test_a_missing_env_file_refuses_instead_of_crashing(tmp_path, monkeypatch, capsys):
+    """两种盘面都得拒：① 显式 ``--env-file`` 指一枚不在的件；② 缺省那枚（``<repo>/deploy/…``）。
+
+    ``deploy/.env.server`` 是**未跟踪件**，只存在于主树工作副本——``--repo`` 指向跑分树时缺省值
+    必然落空（总控 22:36:22 真窗第一枪 ``FileNotFoundError`` 裸崩就是这么来的）。
+    🔴 量具自己崩 ≠ 被测环境干净：这一格必须 REFUSE 非零，且**一题都不许开打、一次 docker 都不许碰**。
+    """
+    fixture, _ids = mini_fixture(tmp_path, count=2)
+    asked = fake_docker(monkeypatch)
+    collector = FakeCollector()
+    monkeypatch.setattr(drv, "invoke_collector", collector)
+    monkeypatch.delenv("EVAL_PASSWORD", raising=False)
+    gone = tmp_path / "deploy" / ".env.server"
+    assert not gone.exists(), "正控前提：这枚件在本树里就是不存在"
+    capsys.readouterr()
+    explicit = drv.main(base_argv(tmp_path, fixture, tag="r571gone") + ["--run", "--repo",
+                                                                       str(tmp_path),
+                                                                       "--env-file", str(gone)])
+    out_explicit = capsys.readouterr()
+    text_a = out_explicit.out + out_explicit.err
+    assert explicit == drv.RC_REFUSE and explicit != 0, (explicit, text_a)
+    assert "Traceback" not in text_a, "裸 traceback 冒充环境干净：" + text_a
+    assert "显式给的 --env-file" in text_a, text_a
+    capsys.readouterr()
+    implicit = drv.main(base_argv(tmp_path, fixture, tag="r571gone2") + ["--run",
+                                                                        "--repo", str(tmp_path)])
+    cap = capsys.readouterr()
+    text_b = cap.out + cap.err
+    assert implicit == drv.RC_REFUSE and implicit != 0, (implicit, text_b)
+    assert "Traceback" not in text_b and "缺省" in text_b, text_b
+    for text in (text_a, text_b):
+        assert "--env-file" in text and "deploy/.env.server" in text, "两条补法一枚都不许少：" + text
+        assert "①" in text and "②" in text, "补法要分条给，不许糊成一句：" + text
+    assert collector.calls == [], "口令都没问到，一题都不许开打"
+    assert asked == [], "拒要落在探针之前，一次 docker 都不许白碰"
+    assert not (tmp_path / "r571gone.window.json").exists(), "拒在开窗之前，window.json 不许落"
+
+
+def test_collector_env_refuses_when_the_env_file_is_gone(tmp_path):
+    """收口处再一道闸：就算 main 里那枚早闸被人摘了，``collector_env`` 也不许把 OSError 抛出去。"""
+    gone = tmp_path / "deploy" / ".env.server"
+    with pytest.raises(drv.Refuse) as refused:
+        drv.collector_env(tmp_path, tmp_path / "sidecar.jsonl", {}, gone, tmp_path,
+                          "http://127.0.0.1:11434", "eval", False)
+    assert refused.value.code == drv.RC_REFUSE
+    assert "①" in refused.value.hint and "②" in refused.value.hint, refused.value.hint
+
+
+def test_an_existing_env_file_still_supplies_the_password(tmp_path, monkeypatch, capsys):
+    """正控：件在位 ⇒ 照常读到口令并传下去。不许为了拦缺件把这格顺手焊死（那是假安全）。"""
+    fixture, ids = mini_fixture(tmp_path, count=2)
+    fake_docker(monkeypatch)
+    env_file = tmp_path / "deploy.env.server"
+    env_file.write_text(chr(10).join(["EB_EVAL_USERNAME=eval","EB_EVAL_PASSWORD=hunter2-r571", ""]), encoding="utf-8")
+    monkeypatch.delenv("EVAL_PASSWORD", raising=False)
+    env = drv.collector_env(tmp_path, tmp_path / "sidecar.jsonl", {}, env_file, tmp_path,
+                            "http://127.0.0.1:11434", "eval", False)
+    assert env["EVAL_PASSWORD"] == "hunter2-r571", env
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    base = probe.getsockname()[1]
+    probe.close()
+    collector = FakeCollector()
+    monkeypatch.setattr(drv, "invoke_collector", collector)
+    rc = drv.main(base_argv(tmp_path, fixture, tag="r571ok") + ["--run", "--repo", str(tmp_path),
+                                                               "--env-file", str(env_file),
+                                                               "--lock-port-base", str(base)])
+    out = capsys.readouterr().out
+    assert rc == drv.RC_OK, (rc, out)
+    assert [row for row in ([c["ids"][0] for c in collector.calls])] == ids, out
+    assert all(call["dry_run"] is False for call in collector.calls), "真窗那一路不许带 --dry-run"
+
 
 # ==================== 件头映射自证（R560/R562 同族病：手抄的引用会过期） ====================
 

@@ -83,6 +83,10 @@ FINGERPRINT_KEYS = ("revision", "index_backend", "fixture_sha256", "transport", 
 #: 读不到容器时的说法：不许把「读不到」当成「读到空」。
 HOW_RECREATE = ("env_file 是在容器创建那一刻才解析的：正解 docker compose up -d --force-recreate，"
                 "plain docker restart 不重读它")
+#: 口令来源问不到时的两条补法（R571：deploy/.env.server 是未跟踪件，只在工作副本里）。
+ENV_FILE_REMEDIES = ("① 显式传 --env-file <主树工作副本>/deploy/.env.server（该件未跟踪，"
+                     "只存在于主树工作副本，工作树／跑分树里根本没有）；"
+                     "② 或把它放进 --repo 那棵树的 deploy/.env.server")
 
 RC_OK = 0
 RC_REFUSE = 2
@@ -344,8 +348,24 @@ def make_shard_fixture(fixture: Path, want: list, target: Path) -> None:
     target.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
 
 
-def password_from_env_file(env_file: Path) -> str:
-    for line in Path(env_file).read_text(encoding="utf-8-sig").splitlines():
+def password_from_env_file(env_file: Path, explicit: bool = False) -> str:
+    """口令的唯一取用点：文件问不到 ⇒ 走 REFUSE（非零）。
+
+    🔴 裸 FileNotFoundError 一律不许出现在这条路上——deploy/.env.server 是未跟踪件，缺省值
+    ``<repo>/deploy/.env.server`` 在 --repo 指向跑分树时必然落空（R571 真窗 22:36:22 就这么裸崩）。
+    量具自己崩＝问不到，既不是「被测环境干净」，也不许当成通过。
+    """
+    src = "显式给的 --env-file" if explicit else "由 --repo 推出的缺省 env-file（可用 --env-file 覆盖）"
+    path = Path(env_file)
+    try:
+        if not path.is_file():
+            raise FileNotFoundError("文件不在或不是一枚普通件")
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError as exc:
+        refuse(src + " 读不到：" + str(path) + "（" + type(exc).__name__ + "：" + str(exc) + "）"
+               + " ⇒ 这一窗不开：按「问不到」处理，不许当缺省能用、也不许当通过",
+               ENV_FILE_REMEDIES)
+    for line in lines:
         if line.startswith("EB_EVAL_PASSWORD"):
             return line.split("=", 1)[1].strip()
     return ""
@@ -364,7 +384,8 @@ def collector_command(python: str, repo: Path, shard_fixture: Path, shard_answer
 
 
 def collector_env(tmp_dir: Path, sidecar: Path, base_env: dict, env_file: Path, repo: Path,
-                  base_url: str, username: str, dry_run: bool) -> dict:
+                  base_url: str, username: str, dry_run: bool,
+                  env_file_explicit: bool = False) -> dict:
     """给采集器的一瓶环境。
 
     🔴 ``EVAL_SIDECAR`` 全窗只有**一枚**：sidecar／帧账仍是一题一行的全账，
@@ -380,7 +401,7 @@ def collector_env(tmp_dir: Path, sidecar: Path, base_env: dict, env_file: Path, 
     })
     if dry_run:
         return env
-    password = env.get("EVAL_PASSWORD") or password_from_env_file(env_file)
+    password = env.get("EVAL_PASSWORD") or password_from_env_file(env_file, env_file_explicit)
     if not password:
         refuse("拿不到 EVAL_PASSWORD，也没有 " + str(env_file) + " 里的 EB_EVAL_PASSWORD",
                "演练请用 --dry-run（零模型调用、不要求凭据）；真窗先备好 deploy/.env.server")
@@ -460,7 +481,7 @@ def run_window(args, P: dict, live: dict, fixture: Path, repo: Path) -> int:
     P["root"].mkdir(parents=True, exist_ok=True)
     P["shards"].write_text(json.dumps(plan, ensure_ascii=False) + "\n", encoding="utf-8")
     env = collector_env(P["tmp"], P["sidecar"], dict(os.environ), Path(args.env_file), repo,
-                       args.base_url, args.username, args.dry_run)
+                       args.base_url, args.username, args.dry_run, args.env_file_explicit)
     if args.dry_run:
         log("DRY RUN：假 transport（采集器自带），零模型调用；不占单实例闸")
     else:
@@ -640,7 +661,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--python", default=None,
                         help="调采集器用的解释器（默认 EB_EVAL_PYTHON 或当前解释器）")
     parser.add_argument("--env-file", default=None,
-                        help="EVAL_PASSWORD 来源（默认 <repo>/deploy/.env.server）")
+                        help="EVAL_PASSWORD 来源（缺省 <repo>/deploy/.env.server；该件未跟踪，"
+                             "跑分树里通常没有 ⇒ 要显式指主树工作副本那一枚）")
     parser.add_argument("--container", default=DEFAULT_CONTAINER)
     parser.add_argument("--base-url", default=os.environ.get("EVAL_BASE_URL") or DEFAULT_BASE_URL)
     parser.add_argument("--username", default=os.environ.get("EVAL_USERNAME") or DEFAULT_USERNAME)
@@ -657,6 +679,7 @@ _LOCKS = []
 def main(argv: list = None) -> int:
     args = build_parser().parse_args(argv)
     args.python = args.python or default_python()
+    args.env_file_explicit = args.env_file is not None
     args.env_file = args.env_file or str(Path(args.repo) / "deploy" / ".env.server")
     try:
         modes = [args.plan, args.run, args.commit].count(True)
@@ -673,6 +696,10 @@ def main(argv: list = None) -> int:
         ids = load_ids(fixture)
         # 🔴 只有「真窗开跑」才必须问得到容器：--plan 是取证、--commit 是收口，
         # 都不能因为 Docker 停了就念不出状态（run12 就是先关 Docker 再谈收口的）。
+        # 🔴 真窗要口令：来源问不到就在开窗前拒（R571 那枚裸崩）。--plan 是取证、--commit 是收口，
+        # 两者都不碰凭据，不许被这一格误拦；--dry-run 走采集器自带假 transport，也不要凭据。
+        if args.run and not args.dry_run and not os.environ.get("EVAL_PASSWORD"):
+            password_from_env_file(Path(args.env_file), args.env_file_explicit)
         live = provenance(args.transport, fixture, args.shard_size, args.container,
                           args.dry_run, require_probe=bool(args.run and not args.dry_run))
         check_read_path(live, args.expect_backend)
