@@ -3,16 +3,32 @@
 
 本单是取证单，不是改架构的单，所以它的验收里有几条"今天成立、但下一个人可以悄悄做掉"的
 约束：出厂默认仍是 chroma（`app/rag/indexing.py` 那一行）、没有任何配置面被本班偷偷接上
-pgvector 读（一切 `.env*`/compose/deploy 里不许有一行把它赋成非 chroma 的生效位赋值；09-28 随 R408 收窄：注释掉的样例不算）、本班自己的测量件只允许
+pgvector 读（一切 `.env*`/compose/deploy 里不许有一行把它赋成非 chroma 的生效位赋值；09-28 随 R408 收窄：注释掉的样例不算；10-03 随 R617 第二次收窄：只判**入树**的配置面，见下一段）、本班自己的测量件只允许
 进程内翻开关且必须收尾（只经 `os.environ` 赋值 + `pop`/`del`）、对遗留引擎只允许动元数据
 不允许动向量（`upsert(`/`.add(`/`.delete(` 零命中）、报告是拼出来的而不是手抄出来的
 （占位符不残留）。这些都不该靠本单报告的自述维持，所以钉成静态件。
 
 范围全部离线：读文件文本，不 import 产品代码、不起服务、不连库、不碰 `chroma_db/**`。
+
+10-03 第二次收窄（R617 · 业主本机文件豁免）
+    上面那句"一切配置面"原本按盘面 glob 取值，于是把 `deploy/.env.server` 也扫了进来。那枚文件
+    命中 `.gitignore:11`，**永远不会入树**：它是业主为**自己这台机器**切读路径写的落盘，与出厂裁定
+    不冲突——`INDEX_BACKEND_DEFAULT` 仍是 chroma，入树的配置面里没有一处把它赋成非 chroma 生效位。
+    本钉要判的是**树里的东西**会不会被悄悄翻默认，所以取值判定的范围收成「git 跟踪的名单 ∩ 盘面
+    glob」。划范围只用 `git ls-files -z` 这一枚尺（口径二选一，不混用 ignore 判定来划范围）：它只读
+    索引，不 import 产品代码、不起服务、不联网、不改盘，仍在上面那句"离线"的口径里——与 r453 拿
+    `docker compose config` 只渲文件同一类取数。`-z` 不是讲究：本树有 99 枚非 ASCII 路径，默认的
+    quotepath 会把它们写成八进制转义，两头对不上就是一枚会误放行的坑。
+    豁免的前提由本件自己钉死（`test_owner_local_env_file_stays_untracked_and_under_the_rule` 与
+    `test_every_path_that_left_the_scope_is_currently_ignored`）：谁哪天把它 `git add -f` 进索引，或删掉
+    ignore 那一行，那格立刻回红，不用任何人再想起来改尺。判据本身一字未动——**在范围内**的赋值行
+    值不是 chroma 就红；出厂默认那两枚断言、进程内翻开关必须收尾、遗留引擎只许动元数据、报告不手抄
+    这四条一格没松。
 """
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -23,8 +39,12 @@ INDEXING = REPO / "app" / "rag" / "indexing.py"
 SCRIPTS = sorted((REPO / "scripts").glob("r382_*.py"))
 REPORTS = sorted((REPO / "docs" / "perf").glob("r382-*.md"))
 
-#: 一切"部署会看见"的配置面。`.env` 在个别工作树里不存在，所以只扫在场的那些。
+#: 一切"部署会看见"的配置面。`.env` 在个别工作树里不存在，所以只扫在场的那些；在场还不够——
+#: 取值判定只看 git 跟踪的那份名单（10-03 R617 收窄，口径与理由见模块 docstring）。
 CONFIG_GLOBS = (".env*", "docker-compose*.yml", "deploy/.env*", "deploy/*.yml", "setup.sh")
+
+#: 本次收窄唯一豁免的那枚本机文件：业主为自己这台机器切读路径写的落盘，ignore 罩着、不入树。
+OWNER_LOCAL_ENV = "deploy/.env.server"
 
 SWITCH = "INDEX_BACKEND"
 
@@ -43,11 +63,68 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def config_surfaces() -> list[Path]:
+def git_bytes(*args: str) -> bytes:
+    """只读地跑完一枚 git 命令并交回 stdout：不 import 产品代码、不起服务、不联网、不改盘。"""
+    proc = subprocess.run(("git", "-C", str(REPO)) + args, capture_output=True)
+    assert proc.returncode == 0, "git %s rc=%s：%s" % (
+        " ".join(args), proc.returncode, proc.stderr.decode("utf-8", "replace").strip()[:200])
+    return proc.stdout
+
+
+def tracked_paths() -> set[str]:
+    """git 索引里的那份名单＝「入树」的名单——本件划范围只用这一枚尺。"""
+    return {entry.decode("utf-8", "surrogateescape")
+            for entry in git_bytes("ls-files", "-z").split(b"\x00") if entry}
+
+
+def is_ignored(relative: str) -> bool:
+    """这枚路径此刻是否被 ignore 规则罩着（`--no-index`＝只看规则本身，不受跟踪态影响）。
+
+    只用来**验豁免的前提**（下面两枚钉子），不参与划范围——划范围只看 tracked。两枚前提分开咬，
+    谁破谁红，归因才清楚。
+    """
+    proc = subprocess.run(
+        ("git", "-C", str(REPO), "check-ignore", "--no-index", "-q", "--", relative),
+        capture_output=True)
+    assert proc.returncode in (0, 1), "git check-ignore 用法不对 rc=%s" % proc.returncode
+    return proc.returncode == 0
+
+
+def relative_name(path: Path) -> str:
+    return path.relative_to(REPO).as_posix()
+
+
+def label(path: Path) -> str:
+    """报告用的名字：树里的给相对路径，tmp 里的（反证钉喂的假件）给文件名。"""
+    try:
+        return path.relative_to(REPO).as_posix()
+    except ValueError:
+        return path.name
+
+
+def disk_config_surfaces() -> list[Path]:
+    """盘面 glob 命中的在场文件＝收窄前的老范围，留着它才能钉"掉出去的东西凭什么掉出去"。"""
     found: set[Path] = set()
     for pattern in CONFIG_GLOBS:
         found.update(REPO.glob(pattern))
     return sorted(p for p in found if p.is_file())
+
+
+def config_surfaces() -> list[Path]:
+    """取值判定的范围＝盘面 glob ∩ git 跟踪名单（10-03 R617 收窄）。"""
+    tracked = tracked_paths()
+    return [path for path in disk_config_surfaces() if relative_name(path) in tracked]
+
+
+def switched_values(paths) -> list[str]:
+    """把每一枚配置面过一遍生效位赋值，交回"值不是 chroma"的读数——判据一字未动。"""
+    switched = []
+    for path in paths:
+        for match in EFFECTIVE_SET.finditer(read(path)):
+            value = effective_value(match.group(1))
+            if value != "chroma":
+                switched.append(label(path) + " -> " + repr(value))
+    return switched
 
 
 def test_factory_default_still_reads_from_the_retiring_engine() -> None:
@@ -82,16 +159,88 @@ def test_no_deployment_surface_switches_the_read_backend() -> None:
     同口径另有 R408 那枚行为化钉从真函数嘴里咬住（read_backend() 缺省仍是 chroma、
     pgvector_reads_enabled() 为假），两把不互相替代。对 `INDEX_BACKEND_DEFAULT`
     的那两枚断言一字未动，"出厂默认没被翻"这句话仍然由它把关。
+
+    10-03 第二次收窄记录（R617，总控裁定）：这格把 `deploy/.env.server` 判红了。那枚文件命中
+    `.gitignore:11`，是业主为本机切读路径落的盘（一枚非默认生效位赋值），不入树、也就不是"部署会看见的配置面"。
+    放开的是**不入树的本机文件**，没放开的是**树里翻默认**：范围现在只看 git 跟踪的名单，跟踪件里
+    任何一行生效位赋值不是 chroma 照样当场红。豁免不是空口白话——它的前提由
+    `test_owner_local_env_file_stays_untracked_and_under_the_rule` 钉死，文件一进索引或 ignore 规则一删
+    就红；`test_counter_evidence_a_flipping_surface_inside_the_scope_still_goes_red` 再证判据没被改软。
     """
     surfaces = config_surfaces()
     assert surfaces, "没找到任何配置面文件，本钉无从判定"
-    switched = []
-    for path in surfaces:
-        for match in EFFECTIVE_SET.finditer(read(path)):
-            value = effective_value(match.group(1))
-            if value != "chroma":
-                switched.append(path.relative_to(REPO).as_posix() + " -> " + repr(value))
+    switched = switched_values(surfaces)
     assert not switched, "这些配置面把读后端真的翻了（生效位赋值不是 chroma）：" + str(switched)
+
+
+def test_owner_local_env_file_stays_untracked_and_under_the_rule() -> None:
+    """🔴 上面那格收窄的前提钉：`deploy/.env.server` 此刻仍不入索引，且仍被 ignore 规则罩着。
+
+    豁免只在这两件事同时成立时才成立，所以两件事分开咬：
+    ① 有人 `git add -f` 它 ⇒ 第一枚断言当场红；同时它已经回到 `config_surfaces()` 的范围里，
+       "不许有一行生效位赋值把读后端翻走"立刻对它重新生效，不用人再想起来改尺。
+    ② 有人删掉 `.gitignore:11` 那一行 ⇒ 第二枚红：规则一没，下一句 `git add .` 就会把业主本机那份
+       pgvector 赋值扫进树里，这枚空档必须有人签字才许留。
+    本钉与那枚文件在不在磁盘上无关（`--no-index` 只看规则），在任何一棵树上都真跑，不是 skip。
+    """
+    assert OWNER_LOCAL_ENV not in tracked_paths(), (
+        OWNER_LOCAL_ENV + " 被 add 进索引了 ⇒ 本机文件豁免作废：它现在是入树配置面，必须回到"
+        "「不许有一行生效位赋值把读后端翻走」那把尺底下")
+    assert is_ignored(OWNER_LOCAL_ENV), (
+        ".gitignore 里罩着 " + OWNER_LOCAL_ENV + " 的规则没了 ⇒ 豁免的前提不成立：要么恢复规则，"
+        "要么显式把这枚文件当入树配置面处理")
+    #: 第二枚断言不能是空尺：同一枚探测器对一枚什么规则都没罩的路径必须说"没罩"。
+    #: （本单禁止改 .gitignore，所以"删掉那一行"没法真做，这里改证探测器本身会咬。）
+    assert not is_ignored("r617-no-rule-covers-this-file.txt"), (
+        "check-ignore 探测器失灵：没有任何规则罩着的路径它也说罩着 ⇒ 前提②是空尺")
+
+
+def test_every_path_that_left_the_scope_is_currently_ignored() -> None:
+    """掉出范围的每一枚在场配置面，都必须同时满足「不入索引 ＋ 被 ignore 罩着」。
+
+    这枚防的是"收窄写着写着变成一把更大的尺"：不许按路径名字放过，也不许某一格整块不再扫。
+    树里没有本机文件时循环没有对象（真跑，不是 skip）。
+    """
+    tracked = tracked_paths()
+    for path in disk_config_surfaces():
+        name = relative_name(path)
+        if name in tracked:
+            continue
+        assert is_ignored(name), (
+            name + " 既不在索引里、也没被 ignore 规则罩住，却掉出了本钉的取值范围")
+
+
+def test_the_narrowed_scope_still_covers_the_tracked_surfaces() -> None:
+    """收窄不许顺手把范围掏空：入树那几枚必须仍在场上，`deploy/.env*` 这一格不许整块消失。"""
+    names = {relative_name(path) for path in config_surfaces()}
+    for required in (".env.example", "docker-compose.yml", "deploy/.env.server.example"):
+        assert required in names, required + " 掉出了取值范围：本钉被掏空了"
+    assert any(name.startswith("deploy/.env") for name in names), (
+        "deploy/.env* 整格被排除了——豁免的是那一枚本机文件，不是这一格")
+
+
+def test_counter_evidence_a_flipping_surface_inside_the_scope_still_goes_red(tmp_path: Path) -> None:
+    """反证：这次动的是**范围**，不是判据。把一枚真把默认翻走的配置面喂进同一把尺，必须报。
+
+    四条形状一起核（tmp 里造，不动树上的在册件）：YAML 冒号赋值翻走必须报；等号赋值翻走必须报；
+    值就是 chroma 必须不报；注释掉的 pgvector 必须不报（09-28 R408 那格收窄不能被我带歪）。
+    """
+    flipped = tmp_path / "compose.flipped.yml"
+    flipped.write_text(
+        "services:\n  backend:\n    environment:\n      INDEX_BACKEND: pgvector\n",
+        encoding="utf-8")
+    assert switched_values([flipped]) == ["compose.flipped.yml -> 'pgvector'"], (
+        "范围收窄之后判据失灵了：范围里一枚 pgvector 赋值没被咬住")
+    eq_form = tmp_path / "env.eq"
+    eq_form.write_text("INDEX_BACKEND=pgvector\n", encoding="utf-8")
+    assert switched_values([eq_form]), "等号形态的翻默认没被咬住"
+    back = tmp_path / "env.chroma"
+    back.write_text("INDEX_BACKEND=chroma\n", encoding="utf-8")
+    assert switched_values([back]) == [], "值就是出厂默认的赋值不该被报"
+    commented = tmp_path / "env.comment"
+    commented.write_text("# INDEX_BACKEND=pgvector\n", encoding="utf-8")
+    assert switched_values([commented]) == [], (
+        "注释行被算成落盘了：09-28 R408 那格收窄的形状不能退回去")
 
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)

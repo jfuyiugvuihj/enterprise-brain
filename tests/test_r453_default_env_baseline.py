@@ -15,6 +15,18 @@
 
 `deploy/.env.server` 是业主文件（gitignore 里，工作树通常没有）：本件只读它的**键名**，
 一个值都不读、不打印；文件不在场时第二组基线明写 skip。
+
+10-03 R617 改口 · 有效名集合基线重新对表（不牵扯默认路径本身）
+    业主今天在本机那份 env 里落了读路径的开关，`EFFECTIVE_NAMES_SHA_WITH_DEPLOYMENT_ENV` 当场漂红
+    （下面点名的三枚差集里，另两枚上下文长度键是 09-28 之后补进本机 env 的——本件只证差集，不证各自落盘日期）。
+    对表手法＝用本件同一枚 `names_sha(static_render(REPO, (BASE_COMPOSE,))["effective_names"])` 现取，
+    不是手抄，口径一字未变：只算键名。主树现取读数＝45 枚名目，新 sha 就写在常量那行。与 09-28 那份
+    基线的差集是**三枚新增键名**（`INDEX_BACKEND`／`MODEL_CONTEXT_TOKENS`／`OLLAMA_CONTEXT_LENGTH`）——
+    本件拿 sha 反推核过：把这三枚从名集合里剔掉正好落回旧 sha，所以漂的是"业主本机 env 加了键"，
+    不是改名也不是删键。🔴 变的是业主本机 env 的键集，**不是默认路径**：同一枚 static_render 交回的
+    `declared_names`／`declared_pairs` 两把尺今天复跑仍与 09-28 常量一字不差（compose 一个字没动），
+    默认腿仍指本机 ollama，出厂 `INDEX_BACKEND_DEFAULT` 仍是 chroma。这一格不改成 skip，也不改成
+    "在场也不比对"；文件不在场时的 skip 分支保持原样——那是给没有业主文件的工作树用的，不当成通过。
 """
 from __future__ import annotations
 
@@ -59,8 +71,9 @@ DEFAULT_SURFACES = (
 COMPOSE_DECLARED_NAMES_SHA = "053969b82c552e6a6089240f775b21404326d4e21d88f2a875e6d97702be973e"
 COMPOSE_DECLARED_PAIRS_SHA = "e88f4feaf54cbe73c26994628916347b81720d07dd58a406cb011eea7aba1c32"
 
-#: 业主 env 键集在场时的完整名集合基线（09-28 从主树 deploy/.env.server 现取，只取键名）。
-EFFECTIVE_NAMES_SHA_WITH_DEPLOYMENT_ENV = "febad196851e250a5c4422c8bb6f9ac376101abfdbb4c42f1da8395449a44d0a"
+#: 业主 env 键集在场时的完整名集合基线。10-03 R617 从主树 deploy/.env.server 现取（本件 names_sha，
+#: 只算键名）；上一版 09-28 的已随业主本机加键漂掉，对表过程与差集见模块 docstring。
+EFFECTIVE_NAMES_SHA_WITH_DEPLOYMENT_ENV = "37f8a545ee02301b77390e0eac47d2f2a3a3831a0b487eaf8aa0ad8e3ba9f64b"
 
 ENV_ASSIGNMENT = re.compile(r"^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=")
 
