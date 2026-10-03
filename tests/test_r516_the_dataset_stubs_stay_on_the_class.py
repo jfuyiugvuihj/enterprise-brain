@@ -349,13 +349,17 @@ def _rows_in_one_file(rel: str, text: str) -> tuple:
 
 
 def _all_rows() -> tuple:
+    """射程内逐枚扫。🔴 R589：这里原来那手 ``except SyntaxError: continue`` 是本单治的病——
+    一枚解析不了的件被**静默跳过**，整本账无声少一枚，它名下的桩账从此不在射程里，而每一枚
+    在册钉照样全绿（跟进单 §157 二那族病的正身）。今天走该族唯一的严格口径
+    ``overlay.parse_in_range``：解析不了就当场红，红字点名文件、第几行、第几列、原文那一句、
+    什么错；「集合少一枚」另有 ``assert_covers_the_range`` 逐枚对账，不靠 ``assert`` 一枚空集。
+    """
+    texts = {rel: overlay.authoritative_text(rel) for rel in overlay.in_range_test_rels()}
+    overlay.parse_in_range(texts)
     rows: list = []
-    for path in sorted(TESTS_DIR.rglob("*.py")):
-        rel = path.relative_to(REPO).as_posix()
-        try:
-            rows.extend(_rows_in_one_file(rel, overlay.authoritative_text(rel)))
-        except SyntaxError:             # pragma: no cover - 语法不合法的件本来也跑不起来
-            continue
+    for rel in sorted(texts):
+        rows.extend(_rows_in_one_file(rel, texts[rel]))
     return tuple(rows)
 
 

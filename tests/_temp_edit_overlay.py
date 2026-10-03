@@ -22,9 +22,15 @@ r"""R253：反证钉的「影子根」——变异只落在 %TEMP% 里的副本�
 ``tests/test_r583_window_inventory.py``（沿 AST）与名册
 ``tests/test_r466_mutation_does_not_leak_into_live_module.py::WINDOWS`` 那本账里。
 这里的散文若再出现「那两枚／那九枚」这类账面枚数，就是给下一班撒完的假账。
+🔴 R589：射程内测试件集合也只在这件里枚举与解析一次——``in_range_test_rels()`` 是唯一的射程口径，
+``parse_in_range()`` 是唯一的解析口径。解析不了的文件既不许静默跳过（「射程内集合」会无声少一枚，
+它名下的账从此不在射程里），也不许把不带文件名的原文直接端上去（那会把别人的一枚手抖读成一次回归）。
+落点 ``tests/test_r589_unparseable_files_cannot_shrink_the_range.py``，凭据见
+``docs/testing/r589-unparseable-files-cannot-shrink-the-range-2026-10-03.md``。
 """
 from __future__ import annotations
 
+import ast
 import atexit
 import hashlib
 import os
@@ -133,6 +139,119 @@ def authoritative_text(rel: str) -> str:
     """当前该算数的那份字节：窗内是影子副本的变异版，窗外是盘上的被跟踪文件。"""
     source = SHADOW.root / rel if rel in _WINDOWS else REPO / rel
     return source.read_bytes().decode("utf-8")
+
+
+# ==================== R589：射程只从这里枚举，解析失败只从这里红 ====================
+#
+# 病（跟进单 §157 二，10-03 现场复现）：本族「射程内测试件集合」是按**能否 parse** 长出来的，两种坏
+# 形状都真在盘上生活过——
+#   · 静默跳过：``tests/test_r516_the_dataset_stubs_stay_on_the_class.py::_all_rows`` 原来是
+#     ``except SyntaxError: continue``。一枚解析不了的件被无声摘出集合，它名下的账从此不在射程里，
+#     而每一枚在册钉照样全绿——``assert handles`` 那种「空集才红」的守卫看不见「少一枚」。
+#   · 红得没法照着改：``tests/test_r253_no_test_rewrites_a_tracked_file.py::suite_sources`` 调
+#     ``ast.parse(text)`` 不交 ``filename``，原文抛出去报的是 ``File "<unknown>", line 2``，不点名
+#     是哪枚文件，于是别人（或总控自己）的一枚手抖被读成一次回归，同时红三枚与本单无关的钉。
+# 治法是一枚口径两家用：射程只由 ``in_range_test_rels()`` 枚举一次，解析只由 ``parse_in_range()`` 收口
+# 一次；解析不了就红，逐枚点名「文件、第几行、第几列、原文那一句、什么错」；``assert_covers_the_range``
+# 再按逐枚差集对账「输入面少了哪一枚」，缺谁点谁。
+# 🔴 本节不写枚数：枚数由 ``in_range_test_rels()`` 现量（写死就是给下一班撒的假账，同 R583 那条规矩）。
+
+#: 射程 = ``tests/**.py``。全族唯一的枚举口径：别处再 ``rglob`` 一份就是第二份真源。
+RANGE_DIR = "tests"
+#: 编译缓存不是源码：混进射程等于把同一枚件数两遍。
+RANGE_SKIP_DIR_NAMES = {"__pycache__", ".mypy_cache", ".pytest_cache"}
+#: 红字里带上这两枚名字，接手的人不用回跟进单猜该改哪儿、该看哪份凭据。
+RANGE_PIN = "tests/test_r589_unparseable_files_cannot_shrink_the_range.py"
+RANGE_PAPER = "docs/testing/r589-unparseable-files-cannot-shrink-the-range-2026-10-03.md"
+
+
+def in_range_test_paths(repo=None) -> list:
+    """射程内每一枚件的盘上位置（排序、去编译缓存）：唯一的枚举口径，派生件都从这里长出来。"""
+    base = Path(repo).resolve() if repo is not None else REPO
+    root = base / RANGE_DIR
+    if not root.is_dir():
+        raise AssertionError("射程目录不在：%s——枚举口径自己缩水了，本族任何「0 处」读数都不算数" % root)
+    return [path for path in sorted(root.rglob("*.py"))
+            if not RANGE_SKIP_DIR_NAMES & set(path.parts)]
+
+
+def in_range_test_rels(repo=None) -> tuple:
+    """射程内件名的仓内相对路径（posix、排序）：集合对账按这一枚元组走，不按账面枚数。"""
+    base = Path(repo).resolve() if repo is not None else REPO
+    return tuple(path.relative_to(base).as_posix() for path in in_range_test_paths(base))
+
+
+def describe_parse_failure(rel: str, exc: BaseException, text: str) -> str:
+    """一枚解析失败 -> 人能照着改的读数：文件、第几行、第几列、原文那一句、什么错。"""
+    line = getattr(exc, "lineno", None)
+    column = getattr(exc, "offset", None)
+    source = (getattr(exc, "text", None) or "").strip("\r\n")
+    if not source and line:
+        lines = text.replace("\r\n", "\n").split("\n")
+        source = lines[line - 1] if 0 < line <= len(lines) else ""
+    return "%s:第 %s 行 第 %s 列  %s  %s: %s" % (
+        rel, line if line else "?", column if column else "?", source,
+        type(exc).__name__, getattr(exc, "msg", None) or exc)
+
+
+def parse_in_range(texts: dict = None, repo=None) -> dict:
+    """射程内集合 -> ``rel -> (文本, 已解析 AST)``：该族唯一的严格解析口径（与 ``parse_sources`` 同形）。
+
+    三种用法同一枚判法：
+      · ``texts=None`` 读盘上的射程（走 ``authoritative_text``，所以反证窗里读的仍是影子那一份）；
+      · 交回 ``texts`` 就是一枚**合成输入面**：反证只摘输入面，被跟踪文件全程只读，与 R572／R583 同形；
+      · 无论哪一路，解析不了的文件一枚都不许被跳过：逐枚攒齐失败再一次红全，红字点名文件与行列。
+    🔴 收尾那格 ``set(parsed) == set(texts)`` 是给下一班的牙：谁把这里改成「catch 完 continue」，
+    这格当场红——静默缩集这一族病不许靠纪律防。
+    """
+    if texts is None:
+        texts = {}
+        unreadable: list = []
+        for rel in in_range_test_rels(repo):
+            try:
+                texts[rel] = authoritative_text(rel)
+            except (OSError, UnicodeDecodeError) as exc:
+                unreadable.append("%s 读不出文本 %s: %s" % (rel, type(exc).__name__, exc))
+        if unreadable:
+            raise AssertionError(
+                "射程内有 %d 枚件读不出文本（R589 判据①）：读不出也按解析不了同一格处置，不许静默少一枚：\n  %s\n"
+                "判据落点 %s，凭据 %s" % (len(unreadable), "\n  ".join(unreadable), RANGE_PIN, RANGE_PAPER))
+    parsed: dict = {}
+    failures: list = []
+    for rel in sorted(texts):
+        text = texts[rel]
+        try:
+            parsed[rel] = (text, ast.parse(text, filename=rel))
+        except SyntaxError as exc:
+            failures.append(describe_parse_failure(rel, exc, text))
+    if failures:
+        raise AssertionError(
+            "射程内有 %d 枚件解析不了（R589 判据①）：这一族的「射程内集合」按能否 parse 长出来，一枚解析不了的"
+            "文件被静默跳过，集合就无声少一枚，它名下的账从此不在射程里，每一枚在册钉照样全绿；反过来把原文直接"
+            "端上去，报的是那条不带文件名的原文——不点名是哪枚文件，别人的一枚手抖就被读成一次回归。"
+            "先修文件再复跑，逐枚点名 文件/行/列/原文/错误：\n  %s\n判据落点 %s，机理与两趟对照读数 %s"
+            % (len(failures), "\n  ".join(failures), RANGE_PIN, RANGE_PAPER))
+    assert set(parsed) == set(texts), (
+        "严格解析口径自己缩集了：输入面 %d 枚、交回 %d 枚，缺 %s"
+        % (len(texts), len(parsed), sorted(set(texts) - set(parsed))))
+    return parsed
+
+
+def assert_covers_the_range(surface_keys, scope=None, where: str = "") -> dict:
+    """「集合少一枚」的守卫：射程内每一枚都必须在这枚输入面上，缺哪枚点名哪枚。
+
+    空集守卫（``assert handles`` 那一族）只在射程塌成零枚时红；从 640 枚缩到 639 枚它一路绿。这里按
+    逐枚差集判，缺谁点谁，并把 ``where``（哪一枚派生者交回的面）写进红字，让接手的人知道该修哪条腿。
+    """
+    expected = set(in_range_test_rels() if scope is None else scope)
+    have = set(surface_keys)
+    missing = sorted(expected - have)
+    extra = sorted(have - expected)
+    assert not missing, (
+        "%s 交回的射程内输入面少了 %d 枚（R589 判据①：静默缩集）：缺 %s（面 %d 枚 vs 射程 %d 枚）"
+        % (where or "输入面", len(missing), ", ".join(missing), len(have), len(expected)))
+    return {"surface": len(have), "scope": len(expected), "missing": tuple(missing),
+            "extra": tuple(extra)}
 
 
 def module_of(rel: str):
