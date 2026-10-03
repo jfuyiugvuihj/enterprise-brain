@@ -1693,6 +1693,14 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Archimedes`（本班新线程·**一次投递**，与 R248/R538 那两枚同名者无关，唯一键只认 id） | `01a1005e-ce41-77b2-8fbb-a5ad6486ef5d` | **R591（P1）** 报告档空正文治腿：compat 腿在思考模型上必然把预算吐进 reasoning（三臂表＝跟进单 §160.2），要证的是 `model_handler.py:90 NATIVE_REQUEST_REJECTED_STATUSES={400}` 那条**静默退回**是不是 run16/17 `report-04` 与 run17 `chart-01/02/04` 批准失败的成因；🔴 不许用兜底文案掩盖空正文（`nodes.py:379-387` 那条原则守住） | `be-r591`@`245315b`（投前 dirty=0／untracked=0） | 🔵 在途·14:1x 投出 | 10-03 14:1x |
 | ⛔ **R598 投递触顶（未落地）** | — | **R598** 评测集改题收尾（业主 10-03 已批·判据全文已落跟进单 §160.4） | 树**没建起来** | 🔴 `spawn_agent` 报 `collab spawn failed: agent thread limit reached`（当时在飞六枚＝这台机实测上限 6：第 7 枚 spawn 直接触顶，纸上那句「最高 6–8」今天被量低了一格）。按仓规**不当场补投**。零写入取证：`Test-Path be-r598` ＝ **False**、主树 HEAD 未变。腾出槽位后一次投出 | 10-03 14:3x |
 | （总控亲做·非执行层） | — | **R487＝V2 #19 账号面读数到手**（`python scripts/provision_bulk_accounts.py --count 30 --roles staff manager admin auditor --departments 财务部 行政部 销售部 技术部 --apply`） | 演示库 `enterprise_brain`；凭据落 `%TEMP%\r52_bulk_accounts.json`（仓外，不入仓） | ✅ dry-run rc=0 先过 ⇒ 30 枚／staff 8·manager 8·admin 7·auditor 7／四部门 8·8·8·6／**role×department 16 of 16 全覆盖**；`created/verified 30 of 30`、`bulk account acceptance: PASS`（逐枚登录取 token＋`GET /api/v1/profile` 回显真角色与部门＋`GET /api/v1/data-files` 逐枚低于 500＋匿名 401/403）。🔴 这一格只交**账号面**：检索面越权矩阵在演示库仍是空集（`documents` 部门全空），牙在 R469 沙盒臂那侧，**不许拿 R487 翻 C 门或格③ 的绿** | 10-03 14:5x |
+| `Aquinas`／`Gauss`／`Leibniz`／`Chandrasekhar`／`Archimedes`／`Sagan`／`McClintock`／`Heisenberg`（**本班收席八枚，全部已交回并树**） | 唯一键只认 id：`01a10054-9757…`／`01a100a9-71ec…`／`01a10078-70ee…`／`01a100ba-94ce…`／`01a1005e-ce41…`／`01a10054-faba…`／`01a10044-df4b…`／`01a10044-2da3…` | R60 · R602 · R601 · R599 · R591 · R589 · R597 · R596（后四枚上一格并完，本格只收席腾槽） | 主树 `9f43a31`/`8d8b85f`/`0a75e73`/`1514ba1` | ✅ 交回并树·席已关（这台机实测并发上限 6，关席才腾槽） | 10-03 17:0x |
+| ⛔ **事故 #107：R605＝R602 的第二次投递** | `01a100e0-c0e2-73b3-b377-35712fb57827`（`Darwin`） | **R605**（承作废的 R602，号账错位） | `be-r602b`@`74572b7` | 🔴 零写入取证＝`diff --numstat HEAD` 空＋`ls-files --others` 空＋`rev-list --count 74572b7..HEAD`=0 ⇒ 收席；**R605 号作废不复用**（同类第六次） | 10-03 16:4x |
+| （总控亲做·非执行层） | — | **R60 停 Chroma 写并树**（写路径唯一化＋回滚演练账本＋S0–S5 退役阶段表） | 主树，9 枚路径显式列名 | ✅ 两态亲跑 277 passed → 277 passed；控制树 `be-r60ctl`@`8adb57d` 同 12 枚坐标件 32F/177P/1x 与 apply 态逐枚同名同数 ⇒ 零新增红 | 10-03 16:5x |
+| （总控亲做·非执行层） | — | **R602 通知中心 PG 腿并树**（`connect_with_policy` 接住 `row_factory`，桩全撤写真签名钉） | 主树 `8d8b85f`，基点 `292168a` 与 `app/db/connection.py`·`states.py` 在 `292168a..HEAD` 零重叠已核 | ✅ dirty 14F/158P/1skip/1x → 控制树 14F/151P/1x，FAILED 名单相等；+7P/+1skip 恰等新钉 | 10-03 17:0x |
+| （总控亲做·非执行层） | — | **R601＋R599 并树**（常驻钉改前后差分＋落点必须在仓外／合成扫描件 V2 #13 首读数） | 主树 `0a75e73`·`1514ba1` | ✅ 41 枚件 695 passed/6 skipped（两态同数）；R599 K2 摘过的 `app/rag/loader.py` 并树前现验与 HEAD 逐字节全等 | 10-03 17:0x |
+| （总控亲做·**新抓 P1**） | — | **R608 镜像重建自 R596 起每次必死**：`Dockerfile:90` 押在 `www.postgresql.org`／`apt.postgresql.org`，本机与任何客户内网都取不到（六家国内镜像无 `postgresql-pgdg`，trixie 无 `postgresql-client-16` 候选） | 主树 `a2bbf13`，5 枚路径 | ✅ 改走已登记的 `APT_MIRROR` 装 `postgresql-client-${PG_CLIENT_MAJOR=17}`；钉由「大版本相等」改成「不低于服务端」（凭据＝pg_dump 17.11 打 16.15 交回 79,899,932 B 归档、`pg_dumpall --globals-only` rc=0）；重建 9 s、容器内四枚工具在位、provenance PASS | 10-03 17:0x |
+| （总控亲做·**窗内在跑**） | — | **run18＝全 105 题「一窗多判据」·安静复测**（A① 问答档／A② 流式帧／C③ 新集分数／D 三格） | 镜像 `revision=a2bbf13`（＝HEAD）· `INDEX_BACKEND=pgvector` · `fixture_sha256=686c564f…`＝主件 | 🟢 17:12:40 开窗，`shards=105`，P-20 七格全 PASS·rc=0（keep_awake 第一跑 FAIL，补 `window_keep_awake.py --loop --interval 240` 后绿；电源设置一字未动），首片 `doc-01` 60.4 s rc=0 | 10-03 17:1x |
+| （队列·待接） | — | **run19**（A④ 逐类不退化的同修订机器对照，`r580` 对不同 revision 硬拒）→ **R143 recall 对账** → **pgvector 格② 热集让路延迟** | `%TEMP%\evalrun` · 同一镜像同一 HEAD | ⏳ run18 收窗即接；驱动片级断点，断联后 `--run` 续跑零重打 | 10-03 17:1x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -6667,3 +6675,41 @@ github 代理与 hosts · 抬 `MODEL_CONTEXT_TOKENS` ≥ 4231（建议 8192）�
 
 `cache-a` 45.5 s 正常生成（`cached=False`／405 字／`evidence_n=5`／`steps=2`）；`cache-b` 同题重问，**0.4 s 被采集器 P-18 闸具名拒绝**（`命中答案缓存 ⇒ 开窗纪律破了`，`eval_transport_ask_v2.py:1322`），driver 收窗 `1/2 shards complete`。第二发窗后单读流面四枚事件：`status="📋 缓存命中，直接返回"`／`text.cached=True`＋`cache_generated_at`／`sources` 在位／`done.answer_present=True`，0.06 s、`steps=0`。⇒ 🔴 第一条凭据不是「命中快」，而是**命中冒充不了一次正常生成**（假时延进不了 P95）；双路识别真发得出。探针留下的 `answer:*` 已从 2 枚清回 **0**、仓内零落盘。
 C 门三格现状：①越权 0 条＝**未验**（R481 口径；R487 只到账号面）②缓存命中显式标注＝**达标**（本班）③评测集分数不退化＝run17 成立，**R598 改题后要在新集上重量**。
+
+## 4EP 第十二班第十格（10-03 16:3x–17:2x·总控线·主树 `8adb57d`→`9f43a31`→`8d8b85f`→`0a75e73`→`1514ba1`→`a2bbf13`／**单模型未切换**／心跳一枚没碰（automation 仍 `PAUSED`）／并发：本班收席八枚后＝0 枚在途执行层＋一扇窗在跑）：五枚并树 · 事故 #107 与 #108 · run18 安静复测窗开窗 · V1 剩余墙钟账
+
+> 全文落跟进单 **§161**（字节级尾追加，裸 CR 恒 1534）。本节只留盘面与读数，两处冲突以 §161 为准。
+
+**一、五枚并树（全部总控两态亲跑；执行层零 commit）**
+
+| 单 | 落树 | 两态数字 | 关键裁定 |
+|---|---|---|---|
+| R60 停 Chroma 写 | `9f43a31` | dirty **277 passed** → commit 后同清单 **277 passed** | 控制树 `be-r60ctl`@`8adb57d` 跑同一批 12 枚坐标件＝**32F/177P/1x**，与 apply 态逐枚同名同数 ⇒ 零新增红；`pg_store.py` +93 纯新增读函数放行；「PG 主写下 PG 不可达 ⇒ `GET /documents` 变 500」只影响已翻旋钮客户，立后续单不挡并树 |
+| R602 通知中心 PG 腿（P1） | `8d8b85f` | dirty **14F/158P/1skip/1x** → 控制树@`9f43a31` **14F/151P/1x**，FAILED 名单逐枚相等 | +7P/+1skip 恰等新钉；坏点按一手复证记 `fea3161`（R299 收口，账龄 6 天 22 h），**不是** `fa8709c`；V2 #17 从今天起定性＝端点曾恒 500、修后端到端读数仍欠（R607） |
+| R601 常驻钉改差分 | `0a75e73` | 41 枚件 **695 passed / 6 skipped**（两态同数） | 真根因订正：`eval_transport_ask_v2.py:228` 是相对脚本自己，不是相对 `cwd`；`--repo` 一律比会撞两枚在册钉 ⇒ 改窄为「该树 `.git` 在位才拦」 |
+| R599 合成扫描件（V2 #13） | `1514ba1` | 同上并入 41 枚件；两趟 11P/2skip 与 `R599_REAL_OCR=1` 13P | 首读数＝4 页全扫描页／3 页出字／P4 `ocr-empty`；位图零文字（R148 铁规）；R301「有消费方」挂账可销 |
+| R608 镜像重建修复（总控亲做·P1） | `a2bbf13` | **98 passed**（dirty）→ **98 passed**（干净）；airgap 闸 7 passed / 0 failed | 见下面第二条；重建 9 s、`pg_dump (PostgreSQL) 17.11` 在容器内、`check_image_provenance.py --expect-container` PASS |
+
+**二、🔴 事故 #108（P1·新抓）：镜像重建从 R596 起每次都死**
+
+- 撞响形状＝`Dockerfile:90` 去 `www.postgresql.org` 取 PGDG 签名钥，`failed to solve ... exit code 1`。一手现取：`postgresql.org` 与 `apt.postgresql.org` TLS 均不可达；`tuna/ustc/tencent/zju/aliyun/nju` **无一家镜像有 `postgresql-pgdg`**；base（Debian trixie）里 `postgresql-client-16` **无候选**、`postgresql-client-17 → 17.11-0+deb13u1` 有货。
+- 为什么没人发现：R596 的两枚常驻钉把**怎么装**（PGDG 仓库行、`ARG PGDG_MIRROR`、`urlretrieve` 取钥）当成性质钉住了，而性质本身（镜像里要有那四枚工具、客户端不能比服务端老）一直是对的。这枚钉让这笔账在并树当天不会浮出来——门绿，构建死。
+- 改法：客户端改由 `APT_MIRROR`（airgap 登记表里已有的口子）供 `postgresql-client-${PG_CLIENT_MAJOR}`（默认 17），删掉仓库行与构建期下载器；钉改成「版本化包名由 ARG 解析／客户端大版本**不低于**服务端／只装一枚／不用 metapackage／不许再出现内网取不到的出站与关验签写法」，判指令不判散文。放宽凭据＝同一小时现取：**pg_dump 17.11 打 16.15 服务端交回 79,899,932 B custom 归档、`pg_dumpall --globals-only` rc=0**。
+- 🔴 留两格未验：R575 真机 restore 演练与 R587 globals 成对恢复在**新镜像**上的复取（窗内禁动容器）；计划书 §14 那四行交付检查项没提客户端大版本。
+
+**三、⚠️ 事故 #107：同一枚单第二次投递（同类第六次）**
+
+- `R602` 的施工席 `Gauss` 失联后被当作废，另立 `R605` 投给新线程 `Darwin`；随后 `Gauss` 活着交回全套实修 ⇒ 同题两席。处置按仓规：先取证（`be-r602b` dirty=0／untracked=0／相对基点 0 枚提交＝零写入），再收 `Darwin` 席，**R605 号作废不复用**，`R602` 按交回并树。
+
+**四、run18＝安静复测窗（窗内在跑，17:12:40 起）**
+
+- P-20 七格全 PASS·rc=0；P-18 `answer:* = 0 枚`（PING 过之后读到的 0）；`--plan` 先跑一次确认 105 片、驱动新落点闸不挡路（R601 并树之后第一次）。
+- 指纹：`revision=a2bbf13`＝HEAD、`index_backend=pgvector`、`fixture_sha256=686c564ff2985744…`＝主件、`probe_ok=True`、`shard_size=1`。首片 `doc-01` 60.4 s。
+- 参照（run17，带噪 118 分钟）：问答 n=64 p95 **109.6 s**／分析·报告 p95 313.5 s／整表 p95 157.7 s；correctness 0.5810／evidence 0.7810／scorable_subset 0.6047。🔴 本窗口径＝业主 10-03 裁定：**A① 只认问答档那一格 ≤90 s**，整表只公布不判；停表帽命中枚数必须单列。
+- 队列（一个跑完立刻接下一个，不许空等）：run18 → `--commit` → run19（A④ 同修订对照）→ R143 recall 对账 → pgvector 格② 热集让路延迟。断联不毁进度：驱动片级断点，`--run` 续跑零重打。
+
+**五、V1 剩余墙钟账（本格现推，非抄旧账）**
+
+- 机器侧 ≈ **5.5 h**：run18 118 min＋run19 118 min＋R143 20–40 min＋格② 20–30 min＋新镜像 restore 演练约 15 min。总控侧窗后 ≈ **1.5–1.8 h**：family A 40–60 min（含 `retriever.py` 那枚裸连——R60 +148/-25 之后行号作废，必须现取）＋ R598 并树 25–40 min ＋ 一次全量门约 10 min。
+- 门现状：A① 待本窗判／A② 残留红有名有姓／A③ ✅／A④ 待同修订两窗；**B／E 整行已移出 V1**（09-24 裁定）；C① 生产侧记未验（A1 已裁不在真库做、A3 属交付阶段）、C② 达标、C③ 待新集重量；D 三格待本窗首读数。
+- 待业主：无新增闸门；仍欠的只有删除清单／`.gitignore`／`chroma_db` 反跟踪／把 `automation-2` 的 `target_thread_id` 从死线程改到本线程（本线程未动它）。
