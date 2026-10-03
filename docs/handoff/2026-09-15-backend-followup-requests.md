@@ -5315,3 +5315,25 @@ R557（`Pasteur`）先交全量机器账的**纸**，本单把那本纸变成**�
 
 - **`tests/test_r251_alert_disposal.py:730 test_an_allowed_disposal_adds_no_audit_line` 的口径变更由总控批准**：它钉的是「处置成功不写安全台账」这句**旧假话**，正是 R582 判据①要治的对象。执行层 `Franklin` 没擅自改在册件是对的；本席裁定：**随 R582 同批改口为新真话**（处置成功必须落一行、且三枚动作名互不相同），并在交工纸记明「在册件口径变更＝总控授权」，引用 R179/R194 那条唯一通路不变。
 - **R582 并树后必须重跑 `python scripts/r483_empty_tables_triage.py --sync`**：`alerts.py` 净插 +60 行 ⇒ 那枚把文档行坐标与现场扫描逐字节对账的钉必然红。这不是新缺陷，**是它设计好的出路**（生成件不许手抄）；`test_the_coordinates_printed_in_the_document_are_the_ones_the_scanner_finds_now` 同源同治。
+## §159（10-03 第十二班第八格·总控线，主树 `6fcea4f`→`5af99c6`→`e6fdeb4`·gitee 已平到 `6fcea4f`）：两枚并树（R581/R579）· run16 收官 12/12 · P-20 首次七格全绿 · run17 全 105 题开窗 · 新立 R591/R592/R593 · 🔴 R582 已 apply 未并树（卡 R593）
+
+### 一、投递账（一 block 一投递；两枚都是**复投**不是双投）
+
+- **R587 复投** `Boyle`（`01a0ffb8-5551-7860-90a1-03f3e3344744`），树 `be-r587`（本席 11:0x `git merge --ff-only` 把基点从 `1b0534a` 追平到 `6fcea4f`）。取证在前：`Lovelace` 死于 `429`，`rev-list --count 1b0534a..HEAD`=0／numstat 空／未跟踪 0 ⇒ 零写入成立，且首投根本没有 `agent_id` 落地。判据全文＝§156 二，一字未改。
+- **R593 新立并投** `Banach`（`01a0ffc7-fd28-7293-94b1-b9525270847c`），树 `be-r593`@`6fcea4f`，写域 `scripts/r483_empty_tables_triage.py`＋`tests/test_r483_empty_table_triage_is_derived.py`＋那份再生件文档＋新纸。判据见本节三。
+- 结案并已 close 腾槽位：`Franklin`（R582 交回）／`Einstein`（R581 交回）／`Lovelace`（死于 429）。在途四枚：`Plato`/R583、`Hegel`/R585、`Boyle`/R587、`Banach`/R593——**写域互不重叠**（`test_r466`＋`test_r583_*`／`chat.py`＋`reliable_queue.py`／备份恢复件＋`tests/test_r587_*`／`scripts+r483` 三件）。
+- 🔴 **本席派工词订正一笔**：R583 的写域我原写「只新建 `tests/test_r583_*`」，而那本 `WINDOWS` 名册的枚数钉本来就住在 `tests/test_r466_mutation_does_not_leak_into_live_module.py` 里 ⇒ 改口径必然要动它，是**我的派工词写窄了**，不是执行层越界。11:0x／11:1x 两次实取它 `M 210/24 test_r466`＋新钉，且没碰 `test_r253_*`／`conftest.py`。
+
+### 二、run16 三格读数（D 格复测，凭据全文＝看板 §4EM 二）
+
+D-1 达标（12/12 `structured`；批准轮批到终答 8／批准失败 0／仍停挂起 0；挂起文案 0；<40 字 0）；D-2 达标（12/12 `usage_present`，Σtotal 94,755）；D-3 在册判词达标（对不上 0）但 **`report-11` 那枚「成功终态出处为零」仍挂着**（2603 字／9 次模型往返／`answers.evidence` 空）。`report-01` 本轮回活（run15 死于 `context_limit_exceeded`）＝R586 两半配套的唯一跨窗对照。
+
+### 三、三枚新单
+
+- **R591**（P1·待投）报告档偶发**空正文**：`report-04` 首片 10.7 s 零产出，worker 10:52:54 现取 `error_code=model_output_truncated`→`no_answer_produced`→`[Supervisor] → 最终回答 (0字)`，ollama 侧同发 `eval time=38469.13 ms / 1536 tokens`、`truncated = 0` ⇒ **吐满预算而可见正文为零**，与 `app/common/model_budget.py:1069-1073` 注释自述的症状同形。字段确实发得出去（`app/agents/nodes.py:925`／`:399-405` 两处并 `thinking_extra_body()`）。判据＝带／不带 `thinking` 的一发对照＋`reasoning` 与 `content` 各自字节数，先量是哪一头失效再动代码。本机 ollama **0.34.0**（在册 §42 那批实测的容器版本待核）。
+- **R592**（P2·待投）`scripts/eval_lane_readout.py` 把「侧车 `evidence_n` ↔ `answers.evidence` 枚数不等」打印成 11 枚 `None`，而 `run16-sidecar.jsonl` 原文逐枚是 14／6／9／…（`run15` 那份是 0／5／4）⇒ 取错了键，报出一枚不存在的两本账不齐。治法＝那行与表格列共用同一枚取数把手＋一枚钉。**同族假话本班第二次**（§157 刚自纠过），按 AGENTS.md「引用数字前先查有没有被后续实测推翻」记它一次。
+- **R593**（P1·在途）R483 空表台账把「此刻盘面全零」当**常驻不变量**：`tests/test_r483_empty_table_triage_is_derived.py::test_blade_c...` 最后一行 `assert not any(rows[table])` ⇒ 真库一旦被用过就永久红（本席现场 1 failed／19 passed，75.96 s）。而生成器自己 `--json` rc=1 已点名三格定性过期：`alerts 今天已经有 4 行了`／`alert_rules …4 行`／`retrieval_traces …911 行`（`problems=3`），文档却仍写 `legitimately_empty`／`needs_owner`。🔴 连带后果：**R582 已 apply 到主树但不能并树**（`--sync` 治好两格坐标红、必踩 blade_c 红），等 R593 落地后同批并。
+
+### 四、开窗状态与下一班接手点
+
+run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，一窗多判据＝A①／A④／C／D），四道自证全过才放行（`INDEX_BACKEND=pgvector`／`BUILD_INFO revision=e6fdeb4`＝HEAD／`MODEL_CONTEXT_TOKENS=8192`／单实例端口 38817）。开窗前置 **P-20 七格首次全 PASS·rc=0**（含 R581 治好那格；它自限「只证占卡的是自家容器，不证时延干净」）。🔴 同机四枚在途在跑测试 ⇒ A①／A④ 的时延读数按**带噪**记账：通过可信，不合格不作结论。收窗动作与启动器读数口径照 §158 四。
