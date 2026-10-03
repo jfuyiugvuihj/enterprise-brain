@@ -18,6 +18,12 @@ R447 在本件上多开两格（同一套诚实口径，一条不省）：
   🔴 这一格只认**交出去的那一份**：可读面说了三枚而 answers 交了零枚 ⇒ 不达标，不拿可读面的
   读数冒充「已交回」，也不静默补零。answers 里压根没这一行 ⇒ 明写「取不到，不编数」。
 
+R592 收口一枚取数把手（同一件事只留一处）：`evidence_n` 只住在 sidecar 行里，帧账行不带它。
+  上一版「侧车 evidence_n ↔ answers.evidence 枚数不等」那一行直接去**帧账行**上取这一格 ⇒
+  恒为 None ⇒ 报出一枚根本不存在的「sidecar 与 answers 不齐」，而表格那一列（取 sidecar）
+  又明明打着 14/6/9。现在三处读数一律走 `sidecar_evidence_n()`：真缺那一格就如实报「取不到」，
+  既不冒充零枚，也不冒充不齐，更不冒充齐。
+
 用法：
     python scripts/eval_lane_readout.py --label run9c
 """
@@ -58,6 +64,40 @@ def load_jsonl(path: str) -> list[dict]:
             if previous is None or int(row.get("attempt") or 0) >= int(previous.get("attempt") or 0):
                 rows[key] = row
     return list(rows.values())
+
+#: R592：`evidence_n` 这一格住在 **sidecar 行**里（采集器落盘的那本账），帧账行
+#: （``*-frames.jsonl``）从来不带它 —— 在册 run9 样本实测：sidecar 105/105 有，帧账 0/105 有。
+#: 所以全件只许用下面这一枚把手取它，逐枚表的 evidence_n 列与「两本账不等」那一行必须同源。
+#: 上一版是两处各自把手：表格列取 sidecar（对），那行「不等」直接去帧账行上取（错，恒为 None），
+#: 于是 run16 把 12 枚齐全的账打印成 11 枚不齐，run9 把 105 枚里 72 枚打印成不齐，
+#: 同一件程序两处答案互相打脸，下一班照那行打印还会去立案「两本账口径不齐」。
+SIDECAR_EVIDENCE_KEY = "evidence_n"
+#: 取不到数时的状态名。取不到 ≠ 零枚，也 ≠ 「两本账不齐」，一律如实点名，一枚都不许就近折算。
+EV_OK = "读数"
+EV_NO_ROW = "sidecar 没这一行"
+EV_NO_KEY = "sidecar 缺 evidence_n 格"
+EV_NULL = "evidence_n 值=null"
+EV_NOT_INT = "evidence_n 值不是整数"
+
+
+def sidecar_evidence_n(sidecar_rows, row_id):
+    """唯一一枚 evidence_n 取数把手：交回 ``(枚数, 状态)``。
+
+    枚数是 int 当且仅当状态是 ``EV_OK``；枚数是 None 时状态点名缺在哪一格。
+    缺行 / 缺键 / 值为 null / 值不是整数一律交 None —— 本件抬头口径①：
+    说不出这一枚有几枚，不等于这一枚是零枚。
+    """
+    row = sidecar_rows.get(str(row_id))
+    if row is None:
+        return None, EV_NO_ROW
+    if SIDECAR_EVIDENCE_KEY not in row:
+        return None, EV_NO_KEY
+    value = row[SIDECAR_EVIDENCE_KEY]
+    if value is None:
+        return None, EV_NULL
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None, EV_NOT_INT
+    return value, EV_OK
 
 
 def rank(values: list[float], q: float):
@@ -112,6 +152,11 @@ def main(argv=None) -> int:
     sidecar = {str(r["id"]): r for r in load_jsonl(sidecar_path)}
     answers = {str(r["id"]): r for r in load_jsonl(answers_path)}
     by_id = {str(r["id"]): r for r in frames}
+
+    # 🔴 R592：evidence_n 全件只在这一处取一次，后面四处读数（=0 名册 / 取不到名册 /
+    # 两本账对判 / 逐枚表那一列）一律从 ev_readings 里拿，不许再各自把手。
+    ev_readings = {rid: sidecar_evidence_n(sidecar, rid)
+                   for rid in sorted(set(sidecar) | set(answers) | set(by_id))}
 
     print("## 队列道三格读出（label=%s，件=%s）" % (args.label, os.path.basename(frames_path)))
     print("- 帧账行数=%d ｜ sidecar 行数=%d ｜ answers 行数=%d" % (len(frames), len(sidecar), len(answers)))
@@ -198,8 +243,11 @@ def main(argv=None) -> int:
     serr = [(str(r["id"]), ((r["queue"]["terminal"]).get("sources_error"))) for r in structured
             if ((r["queue"]["terminal"]).get("sources_error"))]
     print("- sources_error 非空=%s" % (serr or "无"))
-    ev_side = [(str(r["id"]), r.get("evidence_n")) for r in frames if int(r.get("evidence_n") or 0) == 0]
-    print("- sidecar.evidence_n=0 的题号=%s" % (sorted(i for i, _ in ev_side) or "无"))
+    ev_zero = sorted(rid for rid, (n, _) in ev_readings.items() if n == 0)
+    ev_unknown = sorted((rid, state) for rid, (_, state) in ev_readings.items() if state != EV_OK)
+    print("- sidecar.evidence_n=0 的题号=%s（真读到 0 枚才算零，共 %d 枚）" % (ev_zero or "无", len(ev_zero)))
+    print("- sidecar.evidence_n 取不到的题号=%s（取不到≠零枚，也≠两本账不齐，共 %d 枚）" % (
+        ev_unknown or "无", len(ev_unknown)))
     ev_ans = sorted(i for i, r in answers.items() if not (r.get("evidence") or []))
     print("- answers.evidence 为空的题号=%s" % (ev_ans or "无"))
     src_events = sum(1 for r in frames if any(e.get("event") == "sources" for e in (r.get("events") or [])))
@@ -221,11 +269,14 @@ def main(argv=None) -> int:
         len(gaps), gaps or "无"))
     print("- 判词：%s" % ("🔴 判据③ 不达标 —— 可读面交了出处而评分器没拿到" if gaps
                         else "达标 —— 可读面说了几枚，交出去的就是几枚"))
-    side_vs_ans = [(str(r["id"]), r.get("evidence_n"),
-                    len((answers.get(str(r["id"])) or {}).get("evidence") or []) if str(r["id"]) in answers else None)
-                   for r in frames
-                   if str(r["id"]) in answers
-                   and int(r.get("evidence_n") or 0) != len(answers[str(r["id"])].get("evidence") or [])]
+    side_vs_ans = []
+    for rid in sorted(set(sidecar) & set(answers)):
+        n_side, _state = ev_readings[rid]
+        n_ans = len(answers[rid].get("evidence") or [])
+        if n_side is None:
+            continue  # 取不到的已由上一行点名：既不冒充「不齐」，也不冒充「齐」
+        if n_side != n_ans:
+            side_vs_ans.append((rid, n_side, n_ans))
     print("- 侧车 evidence_n ↔ answers.evidence 枚数不等=%s（两本账说的必须同一件事）" % (side_vs_ans or "无"))
     approved_evidence = [(str(r["id"]), len((answers.get(str(r["id"])) or {}).get("evidence") or []))
                          for r in frames if str(r.get("kind")) == KIND_APPROVED]
@@ -239,11 +290,12 @@ def main(argv=None) -> int:
         q = r.get("queue") or {}
         t = q.get("terminal") or {}
         u = t.get("usage") or {}
+        n_ev, ev_state = ev_readings[str(r["id"])]
         print("| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
             r.get("id"), r.get("kind"), q.get("final"), t.get("shape"), t.get("state"),
             t.get("answer_present"), t.get("answer_is_park_notice"), t.get("sources_n"),
             u.get("total_tokens"), u.get("model_calls"),
-            (sidecar.get(str(r["id"])) or {}).get("evidence_n"), r.get("answer_chars"),
+            n_ev if ev_state == EV_OK else ev_state, r.get("answer_chars"),
             q.get("polls"), q.get("wait_ms"),
             len((answers.get(str(r["id"])) or {}).get("evidence") or []) if str(r["id"]) in answers else None,
             (sidecar.get(str(r["id"])) or {}).get("approval_rounds")))
