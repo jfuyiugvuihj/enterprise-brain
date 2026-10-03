@@ -601,6 +601,7 @@ def _log_report_lane_pieces(request_id: str, ledger) -> None:
 def _drain_report_stream(
     user_message, *, thread_id, principal, provenance, request_id, trace_id, task_id,
     stream_piece_sink=None,
+    report_failure_sink=None,
 ):
     """跑完这一轮，收回顶层结论、契约记录，以及编排自己报的那句错。
 
@@ -610,6 +611,13 @@ def _drain_report_stream(
     同名形参，由 ``run_with_stream`` 塞进 ``configurable``——这一交就是 R31 差格 b 缺的
     那半格（队列道今天有地方收片了）。传 None 时（全部既有直调）这一发的关键字与
     改前逐字相同，config 里连键都不多加。
+
+    R578 补第二枚可注册点：``report_failure_sink`` 非 None 时，本函数在报告道那一步
+    真取到 ``stream_error`` 之后，把 ``report_failure_record(stream_error)`` 的原样记录
+    交给它——这一发让「终态词 ``failed`` ＋已在册的 ``ErrorEnvelope.code``」在编排 error
+    事件落回 worker 那一刻就是可读的，不必再靠外层调用者反手再叫一次同一枚改码器。
+    传 None 时（全部既有直调）本函数的返回值、config 里的键集、以及 ``run_with_stream``
+    收到的关键字集合与改前逐字节同（判据②：默认零改）。
     """
     from app.agents.orchestrator import run_with_stream
 
@@ -637,6 +645,9 @@ def _drain_report_stream(
             final_answer = str(state["final_answer"])
         if isinstance(state.get("agent_results"), dict):
             agent_results = dict(state["agent_results"])
+    # R578：报告道那一步的终态与具名原因码，交回注册点；缺省不建、一次也不叫。
+    if stream_error and report_failure_sink is not None:
+        report_failure_sink(report_failure_record(stream_error))
     return final_answer, agent_results, stream_error
 
 
