@@ -705,22 +705,150 @@ def _eb_r563_snapshot():
     return out
 
 
+#: R584（10-03 现取，改前三枚读数记在 `docs/testing/r584-defaults-leg-2026-10-03.md`）：
+#: `__defaults__` 那一腿原来拿 `==` 比的是**实例身份**。FastAPI 的 `File()`／`Form()` 继承
+#: pydantic `FieldInfo`，而 `FieldInfo.__eq__ is object.__eq__`（本席读数 True）⇒ `importlib.reload`
+#: 把默认值重造一遍之后，码体逐字节相同的**合法还原**也被判成漂移。
+#: 现场形状：`tests/test_phase9_private_deps.py::TestOptionalPsycopgImports::
+#: test_chat_and_alerts_import_without_psycopg` 只要合跑就恒红在 `app.api.v1.chat.upload_document`
+#: 一枚上——四腿里只有 defaults 那条 False，同模块其余 165 枚顶层函数零漂移。那是"同码体、
+#: 只换了实例"的形状，不是"有人留了假身"的形状。
+#: 治法：腿不摘，只把比较口径从"身份"换成"结构"——同长度、逐位同型、`FieldInfo` 逐语义位、
+#: 函数型默认值按码体、其余先按值再退回"无地址的同 repr"。
+#: 🔴 语义位不是装饰：`File(..., embed=True)` 与 `File(...)` 的 repr **逐字节相同**
+#: （pydantic 的 `Representation` 只渲染 default），只靠 repr 会把这一族漏判。
+#: 🔴 同码体那一支也不再免检：`FunctionType(真身.__code__, ...)` 这种"借体造人"
+#: （`tests/test_r466_mutation_does_not_leak_into_live_module.py` 的 `_rebase` 就长这个形状）
+#: 只有 defaults 这一腿认得出，所以它不许被写成"码体相同就 return True"。
+_EB_R563_FIELDINFO_SLOTS = (
+    "default",
+    "default_factory",
+    "annotation",
+    "embed",
+    "alias",
+    "validation_alias",
+    "serialization_alias",
+    "title",
+    "description",
+    "metadata",
+    "json_schema_extra",
+    "media_type",
+    "include_in_schema",
+    "examples",
+    "openapi_examples",
+)
+
+
+def _eb_r563_repr_matches(a, b):
+    """两枚实例是不是同一个"值"？只有 repr 不带内存地址时才算数。
+
+    `object.__repr__` 那一族的 repr 里写着 ` at 0x...` ⇒ 两枚不同实例必然不同字，
+    这一条回退就退化成身份比较，白送不出去。能走到"同字"的只有自己写了值化
+    `__repr__` 的类（pydantic `FieldInfo` 正是本单的现行患者）。
+    """
+    text_a, text_b = repr(a), repr(b)
+    if text_a != text_b:
+        return False
+    return " at 0x" not in text_a
+
+
+def _eb_r563_slot_same(a, b):
+    """一位值：先身份，再同型，再按值比；值比不动才退到无地址的同 repr。
+
+    函数型的默认值（`default_factory` 那一族）按码体判——`reload` 重造的是同一枚身体，
+    按函数对象的身份判就又是一枚"同码体冤枉"。这里刻意不递归进那枚函数的默认值：
+    码体三条腿已经吃下"换身体"这一族，再递归会给自指默认值留下栈溢出。
+    """
+    if a is b:
+        return True
+    if type(a) is not type(b):
+        return False
+    if inspect.isfunction(a):
+        ca, cb = a.__code__, b.__code__
+        return (
+            ca is cb
+            or (
+                ca.co_name == cb.co_name
+                and ca.co_qualname == cb.co_qualname
+                and ca.co_code == cb.co_code
+            )
+        )
+    try:
+        if bool(a == b):
+            return True
+    except Exception:
+        return False
+    return _eb_r563_repr_matches(a, b)
+
+
+def _eb_r563_is_fieldinfo(value):
+    """`FieldInfo` 这一族从类 MRO 往回认：守卫不许为比较口径新增 import。"""
+    for klass in type(value).__mro__:
+        if klass.__name__ == "FieldInfo" and str(klass.__module__).startswith("pydantic"):
+            return True
+    return False
+
+
+def _eb_r563_values_same(a, b):
+    """`__defaults__` 里的一位怎么算同一枚值。
+
+    `FieldInfo`（含 FastAPI 的 `File`／`Form`／`Body` 支系）逐语义位比，最后一道 repr 兜底；
+    其余走 `_eb_r563_slot_same`。语义位里任何一位换了人都是漂移，不是还原。
+    """
+    if a is b:
+        return True
+    if type(a) is not type(b):
+        return False
+    if _eb_r563_is_fieldinfo(a):
+        for slot in _EB_R563_FIELDINFO_SLOTS:
+            if not _eb_r563_slot_same(getattr(a, slot, _EB_R563_MISSING),
+                                      getattr(b, slot, _EB_R563_MISSING)):
+                return False
+        return _eb_r563_repr_matches(a, b)
+    return _eb_r563_slot_same(a, b)
+
+
+def _eb_r563_defaults_same(da, db):
+    """`__defaults__` 那一腿的判据本体（R584 换的是口径，不是这条腿在不在）。
+
+    形状先卡死：`None`（压根没有默认值）与任何元组不等；类型不同不等；长度不同不等；
+    剩下的逐位交给 `_eb_r563_values_same`。语义不同照样点名（`Form(1)`→`Form(2)`、
+    `File(...)`→`Form(...)`、`embed` 翻了），本单反证 K1／K2 一枚枚咬过。
+    """
+    if da is db:
+        return True
+    if da is None or db is None:
+        return False
+    if type(da) is not type(db) or len(da) != len(db):
+        return False
+    return all(_eb_r563_values_same(a, b) for a, b in zip(da, db))
+
+
 def _eb_r563_same(a, b):
-    """同一枚函数吗？先比对象，再比码体。
+    """同一枚函数吗？先比对象，再比码体，最后比默认值（结构口径）。
 
     比码体而不是比身份：`r48` 那一扇窗把整份源码重新 exec 回活模块，出来的函数是新的对象、
-    旧的身体——那叫还原，不叫漏。真漏的形状是身体换了（`record` 那种就地定义的假身）。
+    旧的身体——那叫还原，不叫漏。真漏两种形状：身体换了（`record` 那种就地定义的假身），
+    或者身体没换但默认值换了人（R53 那一族改 `__defaults__`）。后者在 R584 之前拿身份尺量，
+    把 reload 的合法还原一起咬了；现在换成结构尺，腿仍然在判。
     """
     if a is b:
         return True
     ca, cb = getattr(a, "__code__", None), getattr(b, "__code__", None)
-    if ca is None or cb is None or ca is cb:
+    if ca is None or cb is None:
         return ca is cb
+    if ca is cb:
+        # 借体造人：码体是同一枚对象，能认出"换了人"的只剩默认值这一腿 ⇒ 不许当场放行。
+        return _eb_r563_defaults_same(
+            getattr(a, "__defaults__", None), getattr(b, "__defaults__", None)
+        )
     return (
         ca.co_name == cb.co_name
         and ca.co_qualname == cb.co_qualname
         and ca.co_code == cb.co_code
-        and getattr(a, "__defaults__", None) == getattr(b, "__defaults__", None)
+        and _eb_r563_defaults_same(
+            getattr(a, "__defaults__", None), getattr(b, "__defaults__", None)
+        )
     )
 
 
