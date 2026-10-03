@@ -7,6 +7,10 @@ R587 在生产容器里逐枚问过 ``command -v psql`` / ``pg_dump`` / ``pg_res
 本文件因此一律只读文本，一次容器都不碰：把"某一次 ``command -v`` 在容器里跑得通"写成常驻
 判据，就是 R593 刚治过的那枚病（一次演练当性质）。要判的性质是"**镜像里装的是哪一枚包、
 大版本对不对**"，这个只在 Dockerfile 里，也在 Dockerfile 里就够。
+
+R608 更正（10-03）：镜像里的客户端从 PGDG 的 16 换成 Debian 归档里的 17（PGDG 在这台机与任何
+客户内网都取不到，重建当场死），钉的不变量随之由「大版本相等」改成「不低于服务端、只装一枚、不用
+metapackage」。文件名保留 R596 那枚是为了不把历史账撕开——它现在守的是那四枚工具与那条不变量。
 """
 from __future__ import annotations
 
@@ -52,6 +56,24 @@ def _instructions() -> list[str]:
     return joined
 
 
+#: 具名 build arg 的取值：R608 之后装的那一枚写成 postgresql-client-${PG_CLIENT_MAJOR}，
+#: 包名里带着 arg 名，所以先把 ARG name=default 读出来代进去，才谈得上"数字写在文件里"。
+def _build_arg_values() -> dict[str, str]:
+    values: dict[str, str] = {}
+    for instruction in _instructions():
+        matched = re.match(r"^ARG\s+(\w+)=(\S+)$", instruction)
+        if matched:
+            values[matched.group(1)] = matched.group(2)
+    return values
+
+
+def _resolve_args(token: str) -> str:
+    for name, value in _build_arg_values().items():
+        token = token.replace("${" + name + "}", value)
+    return token
+
+
+
 def _installed_packages() -> list[str]:
     """所有 ``apt-get install`` 真吃进去的包名（标志与 ``$opts`` 一律剥掉）。"""
     packages: list[str] = []
@@ -62,7 +84,7 @@ def _installed_packages() -> list[str]:
             for token in chunk.replace(";", " ").split():
                 if not token or _FLAGS.match(token) or token.startswith("$"):
                     continue
-                packages.append(token)
+                packages.append(_resolve_args(token))
     return packages
 
 
@@ -88,21 +110,30 @@ def _server_major_in_the_stack() -> str:
 def test_the_image_installs_a_version_pinned_postgresql_client() -> None:
     packages = _installed_packages()
 
-    assert f"postgresql-client-{_server_major_in_the_stack()}" in packages, packages
+    pinned = [name for name in packages if re.fullmatch(r"postgresql-client-\d+", name)]
+    assert pinned, packages
     assert "postgresql-client" not in packages, (
-        "装了不带版本的 metapackage：Debian 12 会解析成 15，pg_dump 比服务端老就直接中止")
+        "装了不带版本的 metapackage：它解析成发行版此刻顺手带的那一枚，那个数字不写在 Dockerfile 里")
 
 
-def test_the_client_major_equals_the_postgres_the_stack_actually_runs() -> None:
-    """pg_dump 只肯打不大于自己的服务端：客户端大版本必须与 pgvector/pgvector:pgNN 同数。"""
-    assert _client_major_in_image() == _server_major_in_the_stack(), (
-        "compose 抬了服务端而镜像里还是旧客户端（或反过来）：备份腿会在版本检查上当场死")
+def test_the_client_major_is_not_older_than_the_postgres_the_stack_runs() -> None:
+    """pg_dump 只肯打不大于自己的服务端：客户端大版本必须**不低于** pgvector/pgvector:pgNN。
+
+    R608（10-03）把这格从「相等」放宽成「不低于」。按相等钉等于把镜像永远钉在一枚装不出来的包上：
+    16 的客户端只有 PGDG 出，而 PGDG 在这台机与任何客户内网都取不到（见 Dockerfile 那段）。
+    放宽的凭据不是推理，是同一小时的现取——pg_dump 17.11 打 16.15 的服务端交回 79,899,932 B
+    custom 归档，pg_dumpall --globals-only rc=0。收紧的那一半仍然有牙：客户端比服务端老就是
+    R596 抓到的那枚病，本钉当场红。
+    """
+    assert int(_client_major_in_image()) >= int(_server_major_in_the_stack()), (
+        "compose 抬了服务端而镜像里还是旧客户端：备份腿会在版本检查上当场死")
 
 
 def test_no_second_postgresql_client_major_is_pulled_in() -> None:
     majors = {name.rsplit("-", 1)[1] for name in _installed_packages()
               if name.startswith("postgresql-client-")}
-    assert majors == {_server_major_in_the_stack()}, sorted(majors)
+    assert len(majors) == 1, sorted(majors)
+    assert int(next(iter(majors))) >= int(_server_major_in_the_stack()), sorted(majors)
 
 
 def test_the_four_tools_the_finding_asked_for_are_the_ones_that_package_ships() -> None:
@@ -140,7 +171,7 @@ def _cli_executables() -> list[str]:
 # ---------------------------------------------------------------------------
 
 def test_the_container_path_still_reaches_the_directory_the_tools_install_into() -> None:
-    """postgresql-client-16 把 psql/pg_dump 放进 /usr/bin；这枚镜像自己钉过 PATH。
+    """postgresql-client-<major> 把 psql/pg_dump 放进 /usr/bin；这枚镜像自己钉过 PATH。
 
     ENV PATH 里少 /usr/bin 的话，包装上了也照样 ``command -v`` 取空——那才是真缺件的形状。
     """
@@ -150,30 +181,34 @@ def test_the_container_path_still_reaches_the_directory_the_tools_install_into()
     assert "/usr/bin" in path_line[0], path_line[0]
 
 
-def test_the_pgdg_source_is_signed_and_derives_the_distribution_codename() -> None:
-    text = _dockerfile_text()
+def test_the_client_comes_from_the_archive_the_mirror_arg_already_reaches() -> None:
+    """R608：客户端出自 base 发行版自己的归档，不再另开一道 PGDG 出站。
 
-    assert "signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc" in text
-    assert "${VERSION_CODENAME}-pgdg" in text, (
-        "仓库行写死了发行版代号：换 base 镜像时会指向一个不存在的 suite")
-    assert ". /etc/os-release" in text, "代号没从 os-release 现取"
-    assert "test -n \"$VERSION_CODENAME\"" in text, "代号为空要当场失败，不能拼出一枚坏 suite 名"
+    原格钉的是「PGDG 仓库要过验签、代号要现取」，那两句在没有 PGDG 仓库之后自动失去对象；
+    留下的性质是：不许再出现这台机/客户内网取不到的出站，也不许用任何关掉验签的写法。
+    """
+    code = " ".join(_instructions())  # 只判指令，不判散文：R608 的注释里必须能写下被禁掉的那两个域名
+
+    for banned in ("apt.postgresql.org", "www.postgresql.org", "postgresql-pgdg"):
+        assert banned not in code, banned + "：这层重新引入了一道内网取不到的构建期出站"
     for banned in ("trusted=yes", "apt-key", "--allow-untrusted", "--force-yes"):
-        assert banned not in text, banned + "：仓库不过验签就等于没验"
+        assert banned not in code, banned + "：仓库不过验签就等于没验"
+    assert "ARG PG_CLIENT_MAJOR=" in code, "客户端大版本不再是具名 arg：换档要改代码"
+    assert "postgresql-client-${PG_CLIENT_MAJOR}" in code, "装的那一枚不再由那枚 arg 决定"
 
 
 def test_the_build_egress_stays_behind_named_arguments_and_adds_no_downloader() -> None:
     """仓内那枚 airgap 闸只认 APT_MIRROR / PIP_INDEX_URL 两道口子；本单不许开第三道口子。
 
-    做法是把 PGDG 的仓库与取钥 URL 也做成 build arg，并用镜像里已经在的 python 取钥——
-    不引入 curl / wget / git clone（``scripts/check_airgap_readiness.py`` 把这三枚当未登记的
-    出站），也让内网客户照 APT_MIRROR 的习惯换镜像源。
+    R608 之后这一层不需要第三条口子：客户端就在 base 发行版的归档里，跟着 APT_MIRROR 走。
+    仍然不许引入 curl / wget / git clone（``scripts/check_airgap_readiness.py`` 把这三枚当未
+    登记的出站），也不许在构建期自己 urllib 抓东西。
     """
     text = _dockerfile_text()
 
-    for needle in ("ARG PGDG_MIRROR=", "ARG PGDG_KEY_URL=", "ARG APT_MIRROR=",
-                   "ARG PIP_INDEX_URL="):
+    for needle in ("ARG PG_CLIENT_MAJOR=", "ARG APT_MIRROR=", "ARG PIP_INDEX_URL="):
         assert needle in text, needle + " 少了这道口子"
     for banned in ("curl ", "wget ", "git clone", "addcontextfiles"):
         assert banned not in text, banned + "：未在 airgap 登记表里的出站方式"
-    assert "urllib.request.urlretrieve" in text, "取钥换了实现方式：这枚钉的登记表要跟着改"
+    assert "urlretrieve" not in text, (
+        "构建期又开始自己抓东西了：R608 之后这层只许走 apt，登记表里没有第二条出站")

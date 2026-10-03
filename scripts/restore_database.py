@@ -364,7 +364,7 @@ def _run_psql(command: list[str], environment: dict[str, str], *, label: str,
         )
     except FileNotFoundError as exc:
         raise RefuseError(
-            f"找不到 {command[0]}：镜像里没装 postgresql-client-16，任何走 psql 的备份/恢复腿都"
+            f"找不到 {command[0]}：镜像里没装 postgresql-client-17，任何走 psql 的备份/恢复腿都"
             "结构性跑不起来（判据③；见 Dockerfile 与 docs/testing/r596-*.md）"
         ) from exc
     except subprocess.CalledProcessError as exc:
@@ -690,7 +690,7 @@ def main(argv: list[str] | None = None) -> int:
         default="psql",
         dest="psql_path",
         help="psql used to re-apply and reconcile the database-level settings pg_dump cannot "
-             "carry; the production image installs postgresql-client-16 for it",
+             "carry; the production image installs postgresql-client-17 for it",
     )
     parser.add_argument("--list", action="store_true", dest="list_only")
     args = parser.parse_args(argv)

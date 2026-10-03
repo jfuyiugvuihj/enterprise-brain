@@ -175,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
         default="psql",
         dest="psql_path",
         help="psql used to read the database-level settings pg_dump cannot carry; the "
-             "production image installs postgresql-client-16 for it (R596)",
+             "production image installs postgresql-client-17 for it (R596, re-pinned by R608)",
     )
     args = parser.parse_args(argv)
 

@@ -274,11 +274,11 @@ def test_the_backup_cli_writes_the_pair_by_default(monkeypatch, tmp_path, capsys
 
 def test_the_backup_cli_refuses_loudly_when_psql_is_not_in_the_image(
         monkeypatch, tmp_path, capsys) -> None:
-    """判据③的另一面：镜像没装 postgresql-client-16 时，这里必须点名拒绝，不是假零。"""
+    """判据③的另一面：镜像没装 postgresql-client-17 时，这里必须点名拒绝，不是假零。"""
     _stub_pg_dump(monkeypatch, tmp_path)
 
     def _missing(command, environment, *, label, stdin_text=None):  # noqa: ARG001
-        raise restore_module.RefuseError(f"找不到 {command[0]}：镜像里没装 postgresql-client-16")
+        raise restore_module.RefuseError(f"找不到 {command[0]}：镜像里没装 postgresql-client-17")
 
     monkeypatch.setattr(restore_module, "_run_psql", _missing)
 
@@ -286,7 +286,7 @@ def test_the_backup_cli_refuses_loudly_when_psql_is_not_in_the_image(
     err = capsys.readouterr().err
 
     assert rc == 2, err
-    assert "postgresql-client-16" in err, err
+    assert "postgresql-client-17" in err, err
 
 
 def test_the_backup_cli_refuses_an_unreadable_source_instead_of_shipping_an_empty_pair(
