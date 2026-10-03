@@ -52,6 +52,18 @@ R556（10-01 第十一班）把最后那几扇旧姿势窗也迁进本口径：`
 ``tests/test_r553_counter_evidence_teeth.py::_Probe``（它量的就是 exec 姿势本身，迁了就没牙了）；
 逐枚读数见 ``docs/testing/r556-window-posture-migration-2026-10-01.md`` 与新钉
 ``tests/test_r556_window_posture_is_installed_not_executed.py``。
+
+R583（10-03）把这本名册的**边界**改了口径。旧的那句「R466 的九扇在册」今天作为了不起眼的假话：
+R556 迁进 ``install_mutation`` 的 r472／r478／r495／r497 与 R572 接进同一枚腿的第二扇窗
+（``tests/test_r253_shadow_root_holds_the_mutation.py`` 复用 r48 的 ``_chat_window``）都没进册，
+而枚数钉把名册钉成「恰等于那 9 枚」——钉反过来**阻止**账目跟上事实（跟进单 §155 R583）。
+🔴 今天的边界是**派生**出来的，不是按单号划族：名册只管「把变异装到被跟踪文件的那枚活模块上」的窗，
+清单沿 AST 从 ``tests/test_r583_window_inventory.py`` 交回，枚数由那本账给（9 → 16）。
+不进册的三族同样逐枚点名：只往隔离副本上装的那一枚（r499 的视图）、两枚 exec 姿势窗
+（r482／r553，由 R556 那枚钉看管）、以及只落影子根从不装活模块的那六枚（r156／r457／r467×2／r508／r516）。
+常量腿另有一格：``live_view`` 只收带码体的那几枚（R553 甲腿原话），而补齐后的名册里有三扇窗的刀
+落在模块级字面值上（``DEFERRED_CODES``／``MAX_CLEARANCE_NOTE``／``USER_LOOKUP_COLUMNS``）——
+名册要全，尺子就得先能量常量腿，否则进册即假红。
 """
 from __future__ import annotations
 
@@ -292,7 +304,34 @@ def codes_differ(a: dict, b: dict) -> list:
 def identity_diff(a: dict, b: dict) -> list:
     keys = set(a["objects"]) & set(b["objects"])
     return sorted(name for name in keys if a["objects"][name] is not b["objects"][name])
-# ---------------------------------------------------------------------- 在册的 9 扇反证窗
+def literal_bindings(text: str) -> dict:
+    """顶层「字面值」那几枚绑定的值：``NAME = <字面量>`` 与 ``NAME: 型 = <字面量>``。
+
+    R583：``live_view`` 只收带码体的那几枚（R553 甲腿的口径，不许为了量常量而放宽——放宽就会把
+    非可调用绑定混进身份比对那几格），所以模块级常量得有一枚自己的尺子。读不出字面量的（函数调用、
+    推导式之类）一律不收：宁可让那一枚窗进不了册，也不许拿一枚量不到的尺子假绿。
+    """
+    out: dict = {}
+    for node in ast.parse(text).body:
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets, value = [node.target], node.value
+        else:
+            continue
+        if not isinstance(value, (ast.Constant, ast.Tuple, ast.List, ast.Dict, ast.Set, ast.JoinedStr)):
+            continue
+        try:
+            literal = ast.literal_eval(value)
+        except (ValueError, TypeError):
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                out[target.id] = literal
+    return out
+
+
+# --------------------------------------------------- 在册的窗：派生清单的机器可读形态（R583：枚数由派生对账）
 
 # 每扇窗都用**那一件自己的**开窗把手与它自己登记的锚点：本件不抄第二份变异。
 
@@ -335,6 +374,62 @@ def _open_r48(m):
     return m._chat_window([(m.C1_ANCHOR, m.C1_MUTANT)]), m.CHAT_PY
 
 
+def _open_r253(m):
+    """R583：R572 接进 `install_mutation` 的**第二扇窗**——它不另造窗类，复用 r48 那枚
+    `_chat_window`（本单不许碰 `tests/test_r253_*`，这里只 import 它已有的名字与锚点）。"""
+    return m._chat_window([(m.C1_ANCHOR, m.C1_MUTANT)]), m.CHAT_PY
+
+
+def _open_r48_ledger(m):
+    """R583：`_chat_window` 的第三枚家（台账件，R556 迁的）。锚点用件自己那两枚常量，零手抄。"""
+    return m._chat_window([(m._crlf(m.CALL_ANCHOR), m._crlf(m.CALL_MUTANT))]), m._CHAT_PY
+
+
+def _open_r303_pg(m):
+    """R583：`_mutate` 的第二枚家（pg 上插腿件）：借同一枚把手与同一份腿，改 `states.py`。"""
+    return m._mutate(m.STATES_PY, m._UPSERT_ANCHOR, m._UPSERT_MUTANT), m.STATES_PY
+
+
+def _open_r472(m):
+    """R583：四把刀里只有 `implemented` 那把落在模块级数据 `DEFERRED_CODES` 上——其余三把改注释，
+    一枚绑定都不碰，`_word_window` 那句 `if names:` 根本不装变异。在册登记走有腿那一把。"""
+    rel = m.FAKE_OPEN_REASONS["implemented"][0]
+    return m._word_window("implemented"), m.REPO / rel
+
+
+def _open_r478(m):
+    """R583：`_span_window` 两格里 `NOTE_REL` 那一格走活模块（模块级赋值 `MAX_CLEARANCE_NOTE`），
+    `DESCRIPTION_REL` 那一格走 `overlay.isolated_module` 的隔离副本。在册登记走活模块那格，
+    弹药由件自己的 `_base_note()` 从基点现取（与常驻钉同一份变异，本件不抄第二份字面）。"""
+    return (m._span_window(m.NOTE_REL, m.NOTE_ASSIGN_ANCHOR,
+                          m._one_line_literal(m._base_note(), "    "), ")"),
+            m.REPO / m.NOTE_REL)
+
+
+def _open_r495(m):
+    """R583：这扇窗的「构造」与「装变异」分家在两枚把手里（派生的乙式）：窗由 `KNIFE_*` 造，
+    `_knife_window` 只装变了的那几枚绑定。它交回 `(window, info)`，这里按判据的形状转成 `info`。"""
+    builder = m._KNIFE_BUILDERS["one"]
+    path = builder().path                       # 只构造不进门：拿它点名被跟踪文件
+
+    @contextlib.contextmanager
+    def _hand_over():
+        with m._knife_window(builder) as (_window, info):
+            yield info
+
+    return _hand_over(), path
+
+
+def _open_r497(m):
+    """R583：`_window` 把刀落在 `chat` 的顶层函数上（码腿），弹药取件自己那枚 `_edits_*` 把手。"""
+    return m._window(m._edits_trust_the_column()), m.CHAT_PY
+
+
+#: R583：`edit_file` 记的是窗类**定义所在的那枚件**（字符串点名，不引模块）——消费者件复用别件那枚
+#: 窗类与那枚开窗把手，不该再抄第二份 `ShadowEdit` 子类，而名册仍要逐枚点名「开窗的家」。
+_R48_CARD_DOT = "tests.test_r48_headline_card_lands_on_the_wire"
+_R303_DOT = "tests.test_r303_notification_pins"
+
 #: 判据① 那张表的机器可读形态。posture 与 verdict 都是本席 d824b10 现取的读数，不是派工词里的旧账。
 WINDOWS = (
     {"key": "r303", "test_file": "tests.test_r303_notification_pins",
@@ -374,14 +469,61 @@ WINDOWS = (
      "verdict": "R556 已迁 install_mutation：进门只把变了的那几枚顶层绑定（`_headline_card_data`）"
                 "装进活模块，出窗逐枚装回；它自己那枚 finally 里的 `_reload()` 从此只重载夹具，"
                 "不再 exec 盘上的字（判据⑤ 归真）。契约那两把刀改的是 .md，module_of 只可能交 None。",
+     "posture": "shadow_swap"},    # ---------- 以下七枚由 R583 补进册：清单派生自 tests/test_r583_window_inventory.py，逐枚点名 ----------
+    {"key": "r253", "test_file": "tests.test_r253_shadow_root_holds_the_mutation",
+     "target": "app.api.v1.chat", "edit": "_TempEdit", "edit_file": _R48_CARD_DOT,
+     "opener": _open_r253,
+     "verdict": "R572 接进 install_mutation 的**第二扇窗**（并树 6a2c09b）：它复用 r48 那枚 "
+                "`_chat_window`，所以窗类记在 `edit_file` 那一格。R583 之前它没进册——名册与真实"
+                "开窗者就从这格脱的节，而枚数钉还反过来阻止后来者进册。",
+     "posture": "shadow_swap"},
+    {"key": "r48-ledger", "test_file": "tests.test_r48_headline_never_enters_the_text_ledger",
+     "target": "app.api.v1.chat", "edit": "_TempEdit", "edit_file": _R48_CARD_DOT,
+     "opener": _open_r48_ledger,
+     "verdict": "`_chat_window` 的第三枚家（R556 迁的腿）：刀落在 `canonical_sse_event` 那一手调用上，"
+                "窗内装进活模块的就是变了的那枚顶层函数；派生的甲式认它，旧名册漏它。",
+     "posture": "shadow_swap"},
+    {"key": "r303-pg", "test_file": "tests.test_r303_pg_upsert_leg",
+     "target": "app.notifications.states", "edit": "_R303Edit", "edit_file": _R303_DOT,
+     "opener": _open_r303_pg,
+     "verdict": "`_mutate` 的第二枚家：借 r303 那枚把手与那条腿改 `app/notifications/states.py`。"
+                "同一枚窗类在两枚家里各开各的窗，所以逐枚点名，不让 r303 那一行替它背书。",
+     "posture": "shadow_swap"},
+    {"key": "r472", "test_file": "tests.test_r472_h13_closed_wording",
+     "target": "tests.test_error_code_vocabulary", "edit": "_ShadowWordEdit", "opener": _open_r472,
+     "verdict": "R556 迁进 install_mutation、R583 补进册。四把刀里只有 `implemented` 那把落在模块级"
+                "字面值 `DEFERRED_CODES` 上（其余三把改注释，一枚绑定都不碰，`_word_window` 那句 "
+                "`if names:` 根本不装变异）：本行走的就是常量腿——`live_view` 收不到它，"
+                "由 `literal_bindings` 那一格比值。",
+     "posture": "shadow_swap"},
+    {"key": "r478", "test_file": "tests.test_r478_no_closed_gate_as_placeholder",
+     "target": "app.common.open_platform", "edit": "_SpanEdit", "opener": _open_r478,
+     "verdict": "R556 迁进 install_mutation、R583 补进册。`NOTE_REL` 那格改 `MAX_CLEARANCE_NOTE`"
+                "（模块级字面值，走活模块，本行走这格）；`DESCRIPTION_REL` 那格改 Pydantic 类体里的 "
+                "`description=`，走 `overlay.isolated_module` 的隔离副本——那一格不是本行的腿。",
+     "posture": "shadow_swap"},
+    {"key": "r495", "test_file": "tests.test_r495_session_owner_namespace_is_declared",
+     "target": "app.common.auth", "edit": "_Knife", "opener": _open_r495,
+     "verdict": "R556 迁进 install_mutation、R583 补进册。窗由 `KNIFE_*` 造、变异由 `_knife_window` 装"
+                "（派生的乙式：两处分家）。本行走刀一那把，落在 `USER_LOOKUP_COLUMNS` 这枚模块级"
+                "字面值上；刀二／刀三落在 `SessionRegistry` 类体上，由姿势件的类支接住。",
+     "posture": "shadow_swap"},
+    {"key": "r497", "test_file": "tests.test_r497_session_list_read_leg",
+     "target": "app.api.v1.chat", "edit": "_R497Edit", "opener": _open_r497,
+     "verdict": "R583 补进册（腿是 R556 迁的）：`_window` 把刀落在 chat 的顶层函数上，码腿，"
+                "窗内逐枚点名比码体指纹。",
      "posture": "shadow_swap"},
 )
 
 
 def _row_handles(row):
-    """把这扇窗的把手取齐：件、它的 ShadowEdit 子类、开窗器、被改文件、活模块。"""
+    """把这扇窗的把手取齐：件、它的 ShadowEdit 子类、开窗器、被改文件、活模块。
+
+    R583：``edit_file`` 是窗类**定义所在的那枚件**。消费者件（r253／r48 台账／r303 pg 腿）复用别件
+    那枚窗类与那枚开窗把手，它自己不该再抄一份 ``ShadowEdit`` 子类——名册因此仍能逐枚点名「开窗的家」。
+    """
     module = importlib.import_module(row["test_file"])
-    edit_cls = getattr(module, row["edit"])
+    edit_cls = getattr(importlib.import_module(row.get("edit_file", row["test_file"])), row["edit"])
     assert issubclass(edit_cls, overlay.ShadowEdit), row["edit"] + " 不是影子窗的子类"
     window, path = row["opener"](module)
     target = importlib.import_module(row["target"])
@@ -428,20 +570,30 @@ _SELF_PROOFS = {"leaky_install_source_no_restore": _leak_install_source_no_resto
 # ------------------------------------------------------------------------------- 用例
 
 
-def test_the_roster_is_nine_windows_and_none_of_them_execs_the_live_module():
-    """R466 的九扇在册 + R556 的名单清空：`execs_module is True` 这一族今天必须是空集。
+def test_the_roster_is_the_windows_that_install_on_a_live_module():
+    """R583 甲案：名册＝派生清单点名的那本账，枚数由派生给；`execs_module` 那一族仍是空集。
 
-    用例名里那句 ``only_r48_still_execs`` 是 R466 的账面；R556 把最后一扇（r48）也迁进
-    ``install_mutation`` 之后它就成了假话——在册钉按新事实改口，名字跟着事实走，不许留一枚
-    写着旧账的名字。🔴 这一格同时就是「反弹即红」那枚牙：谁再把任何一扇在册窗开成
-    ``execs_module = True``，或把它登记成旧姿势的 posture，``still_execs`` / 那两格立刻非空。
+    改前这枚钉叫 `test_the_roster_is_nine_windows_and_none_of_them_execs_the_live_module`，
+    它把名册钉成「恰等于 R466 那 9 枚」——名字与枚数都是**账面口径**，于是 R556 迁的 r472／r478／
+    r495／r497 与 R572 接的第二扇窗（r253）一枚都进不来，钉反过来阻止账目跟上事实（跟进单 §155 R583）。
+    🔴 今天枚数不再写死：清单沿 AST 从 `tests/test_r583_window_inventory.py` 交回（判据 ①②），
+    名册去对账它——缺哪枚点名哪枚，多哪枚点名哪枚。名字也不再带枚数，免得下一次改事实又要改名字。
+    两格下限照旧留着：R466 那 9 枚一枚不许离开名册（名单不许反弹），
+    `execs_module is True` 那一族今天必须是空集（R556 的牙原样不动）。
     """
-    keys = sorted(row["key"] for row in WINDOWS)
-    assert keys == sorted(["r303", "r310", "r337", "r353", "r354", "r373", "r381", "r388", "r48"]), keys
+    from tests import test_r583_window_inventory as r583      # 延迟 import：满仓在册件都 import 本件
+    sources, roster_text = r583.default_surfaces()
+    read = r583.inventory(sources)
+    homes = set(read["live"])
+    assert homes, "派生清单是空的：真实开窗者一枚都认不出，这格就成了空转的绿"
+    rows = list(WINDOWS)
+    readings = r583.assert_roster_matches_the_inventory(
+        rows, r583.roster_rows_from_text(roster_text), homes)
     still_execs = sorted(
         row["key"] for row in WINDOWS if _row_handles(row)[1].execs_module is True)
     assert still_execs == [], (
-        "R556 之后九扇一律影子改绑 + install_mutation：名单不许反弹（还开着 execs_module 的：%s）"
+        "在册窗里又有人把整份码体 exec 进活模块（名单不许反弹：%s）；旧口径的 exec 窗由 "
+        "tests/test_r556_window_posture_is_installed_not_executed.py 单独看管，不许混进这本名册"
         % (still_execs,))
     not_swap = sorted(row["key"] for row in WINDOWS if row["posture"] != "shadow_swap")
     assert not_swap == [], (
@@ -451,6 +603,10 @@ def test_the_roster_is_nine_windows_and_none_of_them_execs_the_live_module():
         if (row["posture"] == "shadow_swap") is not (_row_handles(row)[1].execs_module is False))
     assert mismatched == [], (
         "在册姿势与 execs_module 读数不一致：有人在名单里登记了旧姿势（%s）" % (mismatched,))
+    print("[r583] 名册 %d 枚 = 派生 LIVE %d 枚；不进册三族 isolated=%d exec=%d no_install=%d；"
+          "execs_module 空集 · 姿势逐枚 shadow_swap"
+          % (readings["rows"], readings["derived"], len(read["isolated"]),
+             len(read["exec_posture"]), len(read["no_install"])))
 
 
 @pytest.mark.parametrize("row", WINDOWS, ids=[row["key"] for row in WINDOWS])
@@ -472,8 +628,16 @@ def test_a_refutation_window_leaves_no_mutation_on_the_live_module(row):
         shadow_codes = compiled_view(shadow_text, str(path))
         swapped = changed_bindings(disk_text, shadow_text)[0]
         assert swapped, "%s 这扇窗的变异没落到任何顶层绑定上：反证是空的" % row["key"]
-        assert any(shadow_codes[name] != disk_codes[name] for name in swapped), (
-            "%s 的影子副本码体与盘上逐字相同：锚点空转" % row["key"])
+        #: R583：名册补齐后有三扇窗的刀落在**模块级字面值**上，`live_view`/`compiled_view` 都只收
+        #: 带码体的那几枚——所以影子副本与盘上的差也按「码腿 / 常量腿」两格分开量，一枚都不许放过。
+        disk_literals, shadow_literals = literal_bindings(disk_text), literal_bindings(shadow_text)
+        code_moved = [name for name in swapped if shadow_codes.get(name) != disk_codes.get(name)]
+        value_moved = [name for name in swapped
+                       if name in shadow_literals and name in disk_literals
+                       and shadow_literals[name] != disk_literals[name]]
+        assert code_moved or value_moved, (
+            "%s 的影子副本既没改任何一枚顶层码体、也没改任何一枚顶层字面值：锚点空转（点名 %s）"
+            % (row["key"], swapped))
         assert overlay.open_windows() == (rel,), overlay.open_windows()
         inside = live_view(target)
         if row["posture"] == "shadow_swap":
@@ -482,16 +646,30 @@ def test_a_refutation_window_leaves_no_mutation_on_the_live_module(row):
                 % (row["key"], sorted(set(diff_view(before, inside)) - set(swapped))))
             # 判据② 的强度格：影子改绑不是「什么都没装」——窗内必须真在跑影子副本那份码。
             # 只断「没多出别的变化」会把一把空转的刀读成绿，所以这里点名比对每一枚改动的绑定。
-            const_comparable = [name for name in swapped
-                                if name in inside["codes"] and name in shadow_codes]
-            assert const_comparable, (
-                "%s 窗内没有一枚改动的顶层绑定的码体可比对：这枚牙量不到变异" % row["key"])
-            for name in const_comparable:
+            code_comparable = [name for name in swapped
+                               if name in inside["codes"] and name in shadow_codes]
+            value_comparable = [name for name in swapped
+                                if name in shadow_literals and hasattr(target, name)]
+            assert code_comparable or value_comparable, (
+                "%s 窗内没有一枚改动的顶层绑定可比对（既没码体也没字面值）：这枚牙量不到变异"
+                % row["key"])
+            for name in code_comparable:
                 assert inside["codes"][name] == shadow_codes[name], (
                     "%s 窗内 %s 跑的不是影子副本那份码：变异没被执行，反证是空的" % (
                         row["key"], name))
-            assert diff_view(before, inside), (
-                "%s 窗内活模块的码体一处都没变：影子改绑空转" % row["key"])
+            #: 常量腿那一格：窗内活模块上必须真的挂着影子副本那份值，且必须**不是**盘上那份。
+            #: 少了这一格，一把只改常量的刀会被读成空转；只断「相等」不断「与盘上不同」，
+            #: 又会把一枚什么都没装的刀读成绿。
+            for name in value_comparable:
+                live_value = getattr(target, name, _MISSING)
+                assert live_value == shadow_literals[name], (
+                    "%s 窗内 %s 不是影子副本那份值：变异没被执行，反证是空的（实取 %r）"
+                    % (row["key"], name, live_value))
+                if name in disk_literals:
+                    assert live_value != disk_literals[name], (
+                        "%s 窗内 %s 还写着盘上那份值：常量腿空转" % (row["key"], name))
+            assert diff_view(before, inside) or value_comparable, (
+                "%s 窗内活模块的码体与字面值一处都没变：影子改绑空转" % row["key"])
         else:
             # 只登记的那一枚：旧姿势在这里确实把整份码体 exec 进活模块——这正是病根的形状。
             assert len(identity_diff(before, inside)) == len(before["objects"]), (
@@ -518,13 +696,21 @@ def test_a_refutation_window_leaves_no_mutation_on_the_live_module(row):
     shadow_as_imported = compiled_view(shadow_text, str(path), dont_inherit=True)
     visible = [name for name in swapped if name in after["codes"]
                and disk_as_imported.get(name) != shadow_as_imported.get(name)]
-    assert visible, (
-        "%s 点名的顶层绑定里一枚都没有「盘上 vs 影子」可读的差：这格漏变异检是空的（%s）"
-        % (row["key"], swapped[:3]))
+    #: 常量腿的出窗格：按值比，尺子还是盘上那份字面量。
+    visible_values = [name for name in swapped
+                      if name in disk_literals and name in shadow_literals
+                      and disk_literals[name] != shadow_literals[name]]
+    assert visible or visible_values, (
+        "%s 点名的顶层绑定里一枚都没有「盘上 vs 影子」可读的差（码腿与常量腿都空）：这格漏变异检"
+        "是空的（%s）" % (row["key"], swapped[:3]))
     stuck = codes_differ({key: after["codes"][key] for key in visible},
                          {key: disk_as_imported[key] for key in visible})
     assert not stuck, (
         "%s 出窗后点名的这几枚没回到盘上那份码：%s" % (row["key"], stuck[:3]))
+    stuck_values = [name for name in visible_values
+                    if getattr(target, name, _MISSING) != disk_literals[name]]
+    assert not stuck_values, (
+        "%s 出窗后点名的这几枚常量没回到盘上那份值：%s" % (row["key"], stuck_values[:3]))
     if row["posture"] != "shadow_swap":
         # 降级哨（判据④ 刀一的第二颗牙）：上面三格对影子改绑同样成立，所以谁把这扇窗悄悄改成
         # execs_module = False，三格不会响——响的是这一格，外加窗内「整片换身份」那一格。
