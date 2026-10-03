@@ -12,6 +12,13 @@
 ② **队列可读面层**：`GET /queue/{id}` 响应体里的 `sources_present` / `usage`，读 `queue` 格。
 两格判据原文各指各的层，谁也不覆盖谁。
 
+③ **A② 断裂分档层**（R619 乙案，归因见 ``docs/perf/r614-uncorrected-break-attribution-2026-10-03.md``）：
+   ``uncorrected_breaks`` 那一格按行内既有的 ``streams``／``per_stream``／``frames[].stream`` 三列
+   现场拆成两档——单流轮的断裂、多流轮·第④条件结构性够不到的断裂——外加一枚 ``not_applicable``
+   逃生档（派生不出就点名够不到，不许当成 0）。🔴 **分档≠豁免**：落盘值与判定层
+   （``scripts/eval_transport_ask_v2.py`` 的 ``_frame_readings``／``_corrective_readings``）一字不动，
+   两档之和恒等于旧口径那枚数，只是读数不再混在一起冒充同一口径。
+
 用法：
     python scripts/eval_frame_caliber_readout.py
     python scripts/eval_frame_caliber_readout.py --frames docs/testing/sidecar-run9-frames.jsonl
@@ -132,6 +139,229 @@ def event_tally(rows: list[dict]) -> collections.Counter:
     return tally
 
 
+# ==================== R619 乙案：A② 断裂读数的分档（只摊读数，不动判定）====================
+
+#: 🔴 这一格拆的是**读数**，不是判定，也不是豁免。侧车与帧账的落盘值、
+#: ``_frame_readings`` / ``_corrective_readings`` 的豁免账、``criterion_two_holds`` 一律一字不动；
+#: 多流那一档照旧计入 ``uncorrected_breaks``、照旧让 A② 读 False。
+#: 归因凭据＝``docs/perf/r614-uncorrected-break-attribution-2026-10-03.md``（量具口径缺陷，非产品缺陷）。
+UNCORRECTED_CELL = "uncorrected_breaks"
+
+#: 派生「这一轮一共几条流」只许用行内**既有**这三列（R614 §0 与 §1B 点名的就是它们），按次序试。
+#: 🔴 三列都试不出 ⇒ 明写够不到并点名是哪一行（同总控 ``b9fd2fc`` 那条规矩），不许当成 0；
+#: 也不许为这一档新造一枚列（``tests/test_r181_text_frame_ruler.py:50``／``:449`` 两道键集闸在场）。
+STREAM_COLUMNS = ("streams", "per_stream", "frames")
+
+TIER_SINGLE = "档① 单流轮（行内派生得出一枚流 streams=1）"
+TIER_MULTI = "档② 多流轮·第④条件结构性够不到（streams>1）"
+TIER_UNREACHABLE = "档③ not_applicable·这一行派生不出流数"
+CELL_ABSENT_NOTE = ("  - 🔴 A② 断裂分档在这份账里同样记 not_applicable：上面那一格压根不存在，"
+                    "不存在不等于零枚断裂，也不等于没有分档这回事")
+
+
+def _int_or_none(value):
+    """把账上那一格折成整数；折不出（缺格／空串／非数字／布尔）交回 ``None``。🔴 不折成 0。"""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _shown(value):
+    """纸面用：读不出的那一格明写「不可证」，既不留空也不冒充数字。"""
+    return "不可证" if value is None else value
+
+
+def _per_stream_cell(per_stream, index):
+    """取 ``per_stream[流号]`` 那一格；越界／非表 ⇒ ``None``（够不到就说够不到，不编数）。"""
+    if not isinstance(per_stream, list) or index is None or index < 0 or index >= len(per_stream):
+        return None
+    cell = per_stream[index]
+    return cell if isinstance(cell, dict) else None
+
+
+def derive_streams(row):
+    """从行内既有列现场派生「这一轮一共几条流」，交回 ``(枚数, 出处或派生不出的原因)``。
+
+    次序＝``STREAM_COLUMNS``：``streams`` 那一格是正源（``_fold_frames`` 每折一条流加一枚），
+    它缺席或折不出整数才退到 ``per_stream`` 的长度，最后退到 ``frames[].stream`` 的最大流序号加一。
+    🔴 三列都读不出 ⇒ 交回 ``(None, 逐列点名的原因)``：这一行的断裂不许并进档①／档②，也不许读成 0。
+    """
+    notes = []
+    for column in STREAM_COLUMNS:
+        if column not in row:
+            notes.append("%s 缺格" % column)
+            continue
+        value = row[column]
+        if column == "streams":
+            streams = _int_or_none(value)
+            if streams is None:
+                notes.append("streams 折不出整数（%r）" % (value,))
+                continue
+            return streams, "streams"
+        if column == "per_stream":
+            if isinstance(value, list) and value:
+                return len(value), "per_stream"
+            notes.append("per_stream 空表或非表")
+            continue
+        records = value if isinstance(value, list) else []
+        indices = [index for index in (_int_or_none(record.get("stream"))
+                                       for record in records if isinstance(record, dict))
+                   if index is not None]
+        if indices:
+            return max(indices) + 1, "frames[].stream"
+        notes.append("frames %s" % ("非表" if not isinstance(value, list) else "无一枚带可读 stream"))
+    return None, "｜".join(notes)
+
+
+def derive_break_positions(row):
+    """断裂住在第几条流、那一流一共几帧：全部从行内既有列现取，一枚新列都不造。
+
+    两路（🔴 两路都读不出 ⇒ 交回 ``(None, 逐列点名的原因)``，不许读成「这一行没有断裂」）：
+      ① ``frames[]`` 里 ``prefix_break`` 为真的那几枚 —— 一手给出流号与 ``at``，再用
+         ``per_stream[流号]`` 补那一流的总帧数与断裂枚数；
+      ② 退路＝``per_stream[]`` 里 ``breaks>0`` 的那几格（``frames`` 整列缺席的老窗，run6/run7 即此形），
+         只有流号、总帧数、``first_break_at`` 三格。
+    每枚元素＝``{"stream", "at", "stream_frames", "breaks_in_stream"}``，读不出的那一格为 ``None``。
+    """
+    frames = row.get("frames")
+    frames = frames if isinstance(frames, list) else []
+    per_stream = row.get("per_stream")
+    per_stream = per_stream if isinstance(per_stream, list) else []
+
+    flagged = [record for record in frames
+               if isinstance(record, dict) and record.get("prefix_break")]
+    positions = []
+    provenance = ""
+    if flagged:
+        provenance = "frames[].prefix_break"
+        positions = [{"stream": _int_or_none(record.get("stream")),
+                      "at": _int_or_none(record.get("at"))} for record in flagged]
+    else:
+        for number in range(len(per_stream)):
+            cell = _per_stream_cell(per_stream, number)
+            if cell is not None and (_int_or_none(cell.get("breaks")) or 0) > 0:
+                positions.append({"stream": number,
+                                  "at": _int_or_none(cell.get("first_break_at"))})
+        if positions:
+            provenance = "per_stream[].breaks"
+    if not positions:
+        reason = ("断裂位次派生不出：frames 列%s且 prefix_break 无一枚为真；per_stream 列%s且 breaks 无一格 >0"
+                  % ("缺席" if "frames" not in row else "在位",
+                     "缺席" if "per_stream" not in row else "在位"))
+        return None, reason
+    for position in positions:
+        cell = _per_stream_cell(per_stream, position["stream"])
+        position["stream_frames"] = _int_or_none(cell.get("frames")) if cell else None
+        position["breaks_in_stream"] = _int_or_none(cell.get("breaks")) if cell else None
+    return positions, provenance
+
+
+def break_tiers(rows):
+    """把 ``uncorrected_breaks>0`` 的行拆成两档 + 一枚够不到的逃生档（🔴 只读，一行都不改写）。
+
+    分档谓词与 ``caliber_block`` 上面那一行**逐字同**（``int(row.get(cell) or 0) > 0``），
+    所以「档① + 档② + 档③ ＝ 旧口径总数」是恒等式而不是巧合。
+    🔴 分档≠豁免：本件不把多流那一档并入 ``granted``，也不改写当年任何一枚落盘读数。
+    位次派生不出（流数派生得出）那一形**留在它自己那一档**，只在证词里点名够不到，
+    不许因为它就整行逃进档③——那是拿一格的够不到去洗另一格的读数。
+    """
+    tiers = {"single": [], "multi": [], "unreachable": []}
+    for row in rows:
+        uncorrected = int(row.get(UNCORRECTED_CELL) or 0)
+        if uncorrected <= 0:
+            continue
+        streams, streams_from = derive_streams(row)
+        positions, positions_from = derive_break_positions(row)
+        entry = {"id": str(row["id"]),
+                 "uncorrected_breaks": uncorrected,
+                 "streams": streams,
+                 "streams_from": streams_from,
+                 "positions": positions,
+                 "positions_from": positions_from,
+                 # 🔴 同轮既豁免过一枚又有未豁免：盘上不分哪一枚是谁（break_frames 不落帧账），
+                 # 那一行的流序号只能读作候选，纸面必须明写。
+                 "candidate_positions": (_int_or_none(row.get("corrective_replacements")) or 0) > 0}
+        reasons = []
+        if streams is None:
+            reasons.append("流数派生不出（%s）" % streams_from)
+        elif streams < 1:
+            reasons.append("streams=%r 与 uncorrected_breaks>0 矛盾 ⇒ 流数不可信" % streams)
+        if positions is None:
+            reasons.append(positions_from)
+        entry["reason"] = "；".join(reasons)
+        if streams is None or streams < 1:
+            tiers["unreachable"].append(entry)
+        elif streams > 1:
+            tiers["multi"].append(entry)
+        else:
+            tiers["single"].append(entry)
+    return tiers
+
+
+def _describe_break_entry(entry):
+    """一行断裂的纸面证词：题号／流数（含出处）／断裂住在第几条流、该流几帧、第几枚上断。"""
+    bits = ["%s uncorrected_breaks=%d" % (entry["id"], entry["uncorrected_breaks"]),
+            "streams=%s（派生自 %s）" % (_shown(entry["streams"]), entry["streams_from"])]
+    if entry["positions"] is None:
+        bits.append("断裂所在流=🔴 %s" % entry["positions_from"])
+    else:
+        for position in entry["positions"]:
+            stream, streams = position["stream"], entry["streams"]
+            tail = "流序不可证"
+            if isinstance(stream, int) and isinstance(streams, int) and streams >= 1:
+                tail = "非末流＝挂起轮那一族" if stream < streams - 1 else "末流"
+            if entry["candidate_positions"]:
+                tail += "｜候选：同轮另有已豁免的断裂，盘上不分哪一枚"
+            bits.append("断裂在 stream %s（该流 %s 帧，第 %s 枚上断，该流断裂 %s 枚，%s）" % (
+                _shown(stream), _shown(position["stream_frames"]), _shown(position["at"]),
+                _shown(position["breaks_in_stream"]), tail))
+    if entry.get("reason") and entry["positions"] is not None:
+        bits.append("🔴 %s" % entry["reason"])
+    return " ".join(bits)
+
+
+def print_break_tiers(rows, offenders):
+    """把 ``uncorrected_breaks`` 那一格摊成两档：🔴 只加读数，上面那行旧口径一字不动、不被顶掉。"""
+    tiers = break_tiers(rows)
+    for bucket in tiers.values():
+        bucket.sort(key=lambda entry: entry["id"])
+    legacy = len(offenders)
+    legacy_total = sum(int(row.get(UNCORRECTED_CELL) or 0) for row in rows
+                       if int(row.get(UNCORRECTED_CELL) or 0) > 0)
+    counts = {key: len(value) for key, value in tiers.items()}
+    totals = {key: sum(entry["uncorrected_breaks"] for entry in value) for key, value in tiers.items()}
+    for key, title in (("single", TIER_SINGLE), ("multi", TIER_MULTI), ("unreachable", TIER_UNREACHABLE)):
+        ids = [entry["id"] for entry in tiers[key]]
+        print("  - %s：题数=%d/%d 断裂枚数=%d/%d 题号=%s" % (
+            title, counts[key], legacy, totals[key], legacy_total, ids or "无"))
+        for entry in tiers[key]:
+            print("    · %s" % _describe_break_entry(entry))
+    if tiers["multi"]:
+        print("  - 🔴 档②**不是豁免**，也不是「可忽略」那一类的词：分档只改读数，这一 %d 枚照旧计入 "
+              "uncorrected_breaks、照旧让 A② 读 False ⇒ **这一档不算通过**，落盘值一枚都不改写。它只说清断裂住在多流轮里——"
+              "R215 豁免第④条（scripts/eval_transport_ask_v2.py:676）拿**轮级**交付文本比**流内**末帧，"
+              "挂起轮里那次受控整段替换结构性不可能等于批准腿交回的终答（两窗 19/19 终答严格长于 "
+              "pre_answer、0/19 逐字相同）⇒ 只要挂起轮里换了源，这把尺必然判红。修尺本身归甲案，另有单。"
+              % counts["multi"])
+    if tiers["unreachable"]:
+        print("  - 🔴 档③＝not_applicable：题号=%s ⇒ 这些行的流数在这份账里够不到；够不到就说够不到，"
+              "不许当成 0，不许并进档①或档②（同 b9fd2fc 口径）"
+              % [entry["id"] for entry in tiers["unreachable"]])
+    row_sum = counts["single"] + counts["multi"] + counts["unreachable"]
+    break_sum = totals["single"] + totals["multi"] + totals["unreachable"]
+    print("  - 恒等式（题数）：%d(单流)+%d(多流)+%d(够不到)=%d ｜ 旧口径 uncorrected_breaks>0 枚数=%d ⇒ %s" % (
+        counts["single"], counts["multi"], counts["unreachable"], row_sum, legacy,
+        "成立" if row_sum == legacy else "🔴 不成立（本件的 bug，不许放行）"))
+    print("  - 恒等式（断裂枚数）：%d+%d+%d=%d ｜ 旧口径合计=%d ⇒ %s" % (
+        totals["single"], totals["multi"], totals["unreachable"], break_sum, legacy_total,
+        "成立" if break_sum == legacy_total else "🔴 不成立（本件的 bug，不许放行）"))
+
+
 def caliber_block(title: str, rows: list[dict]) -> None:
     total = len(rows)
     print("### %s（n=%d）" % (title, total))
@@ -148,8 +378,12 @@ def caliber_block(title: str, rows: list[dict]) -> None:
             # 🔴 R471 之前开的窗不存这格证词：读不到就明写读不到，不许报 0 冒充量过
             # （在册尺对老账同样不重判，口径见 docs/testing/r471-verdict-caliber-2026-09-29.md）。
             print("- %s 这一格在这份账里不存在（R471 之前的窗）⇒ 不重判当年读数" % cell)
+            if cell == UNCORRECTED_CELL:
+                print(CELL_ABSENT_NOTE)
         else:
             print("- %s >0 枚数=%d 题号=%s" % (cell, len(offenders), offenders or "无"))
+            if cell == UNCORRECTED_CELL:
+                print_break_tiers(rows, offenders)
     repeats = derived_repeats(rows)
     if repeats is None:
         # 🔴 账里没有一枚参与判定的逐帧指纹（R223 并树之前的窗，或量具被摘瞎那一形）：读不到就明写
