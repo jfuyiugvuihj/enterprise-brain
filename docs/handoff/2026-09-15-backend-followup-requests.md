@@ -5583,3 +5583,49 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 - 🔴 逐题半张（`r143b_questions.out`／`.json`）：**50/105 题 top-5 不一致**，且多枚题的 **chroma 腿返回空列表**（如 `report-12`：chroma `[]` vs pg 5 枚）。这句**不许**读成"pgvector 比 Chroma 准"——本半张是脚本自己拿两边引擎逐题对比，不是服务内端到端读路径，空列表那一族要先归因（scope/where 过滤、collection 名册、还是遗留引擎真无命中）。明晨第一件事：拿 `r143b.json` 逐题对 `must_contain` 与 `--where-json`，把"50 枚差异"拆成三桶再说结论。
 - 明晨重跑法（照抄即可，零网络依赖）：`python %TEMP%\eb103\overnight1003.py`——已 rc=0 的步自动跳过，只会重跑 `r143b_questions`；要它重跑逐题就先把 `ledger.jsonl` 那行删掉或改 `rc`。派工词记得写 `/app/.venv/bin/python`（§166 二那格）。
 - 盘面终数：主树 HEAD `3a2062a`（门 #5 打的是 `72eaca0`＝同码不同账，本笔只追加跟进单文本），`@{u}..HEAD` 落账后现取；未跟踪脏项只有 `.zcodeignore` 与业主作业目录（业主本人的材料，本席不碰）。在途执行层**零枚**，心跳零枚，`powercfg` 一字未动，`--purge` 继续不做。
+
+
+### 167 第十三班第二格（10-04 14:4x-17:0x·总控线·主树 4da0bad->ab4e3bb／**单模型未切换**／心跳零枚·automation-2 仍 PAUSED）：门 #6 假红归因 · D 三格史上首次读数 · R143 结案 · C 门普查订正在册假账 · 格② 热集让路首次有数
+
+**一、门 #6 那 10 枚红＝假红，门 #7 才是本 HEAD 唯一凭证**
+- 成因现取：门 #6 于 14:43 开窗，14:46 自动流在门**飞行中**执行了 recreate（backend/worker/scheduler），测量条件被动过 ⇒ 红不可采信。
+- 门 #7：HEAD 4da0bad、自选 -n 4、875.8 s、**exit=0／FAILED 行 0**，日志 TEMP\eb103\gate7.log。已在干净树复跑，随 R626 并树那笔入账。
+- push：gitee/codex/data-file-catalog 追平 4da0bad（rev-list gitee..HEAD=0）；origin 仍 TLS connect error，照实记，不写「两个 remote 都推了」。
+
+**二、D 门三格＝项目史上第一次真读数（相 2 队列道，窗 run21b）**
+- 窗况：16:31:43-16:42:55，672.6 s，12/12 全走队列道（kind：queued_polled 4 + queued_approved 8），terminal.shape=structured 12/12，usage_rows 12/12。
+- 分数（12 题尺）：evaluated 12／correctness 0.5833／evidence 0.8333／p95_ms 106069／scorable_subset 0.6250。
+- 🔴 **D-3 判词只能写成「量具缺半格」**：队列可读面 2/12 有出处；4 枚直通里 2 枚零出处（report-03、report-08）；其余 8 枚 terminal 读的是 awaiting_approval 挂起那一刻的快照，**批准之后没有重读终态载荷** ⇒ 这 8 枚不判红、判「未量到」。
+- 工件：TEMP\eb103\chain2\d2-verdict.json、d2-score.log、TEMP\evalrun\run21b-*。开关已复原 REPORT_LANE_VIA_QUEUE=off。
+
+**三、R143 结案（R626 那枚量具，快照副本读，105 题，13.0 s，两遍读数完全一致）**
+- 静默空召回：chroma 腿 21 题／pg 腿 0 题（21 枚题号已点名，见 r143c.md）。
+- mean_overlap_at_k 0.72381／mean_jaccard 0.682993／exact_leg_agreement 55/105=0.52381／error_count 0／thin_corpus_empty_count 0。
+- 判词：遗留引擎存在**静默空召回**这一族，且不是语料薄造成的（thin_corpus=0）⇒ Chroma 退役「停双写」的前置条件由 R633 量。
+- 工件：TEMP\eb103\chain2\r143.log、r143c.json（102,646 B）、r143c.md（51,360 B）。
+
+**四、C 门普查（生产库 enterprise_brain 只读现取）＝订正一处在册假账**
+- 实测：users_total 63／users_no_department 2；documents_total 105／documents_no_classification 0（全部=1）；chunk_vectors_total 1008／no_classification 0（全部=1）／no_department 1008（全空）；部门分布 财务部 17／销售部 8／行政部 8／研发部 8／市场部 8／技术部 6／法务部 6／空 2。
+- 🔴 在册那句「生产 department/classification 全空」**写错了**：真形状是「密级存在但只有单一档 1」「chunk 层无部门、部门只活在 users 层」。
+- 格③ 仍记**未验**（A1／A3／H13 三件已于 09-28 结案，见 human-gates :365/:373/:374）；沙盒那 252 枚合成标签只证行为、**不证客户隔离**，绝不许拿它翻绿。快照纸 TEMP\eb103\chain2\c1-census.txt。
+
+**五、格② 热集让路＝今天第一次拿到真数（容器内跑沙盒库，16:56:37 起，rc=0／20.6 s）**
+- 两枚阻塞都已治：(a) 沙盒落后迁移 0017/0018/0019 已由总控 migrate.py --database-url 补齐（applied=3 rc=0，**只动沙盒，生产库一字未碰**，复核 1008 枚／top version=0019）；(b) 上次死在写盘 /work/out 不存在——镜像里根本没有 /work，改走 R382_JSON_OUT=/tmp/r382_legs.json ＋ docker cp 取回。
+- hot_handoff **pgvector 侧**：total 0.019 ms、12 问中位 0.001 ms、hits 0／misses 12／resident_chunks 0、last_bypass_reason=hot_index_read_backend_switched。
+- hot_handoff **chroma 侧**：total 158.784 ms、首问 150.189 ms、其后 11 问 0.696-0.915 ms（中位 0.789）、hits 12／misses 0／invalidations 0／resident_chunks 1008。
+- ⇒ 判词：**热集让路的每问代价是微秒级（12 问合计 0.019 ms），真正的成本在热集冷启装载那一笔 150.2 ms**；切读到 pgvector 后热集恒让路（12/12 miss、原因码统一），与 R231 旋钮语义一致。
+- pg 读腿：attempts 84／answered 84／rows 576／bypasses 空（零 bypass）；六枚 principal 逐条 permission_check violations 全空（sales-c1 returned 60）。
+- 🔴 **chroma 对照腿在沙盒量不到**：corpus source=not_switched、attempts 0、permission returned 0、pairwise 空数组 ⇒ 不许把 overlap_ratio 0.0 读成「两引擎名次不一致」，那枚 0.0 是「压根没问」。
+- 🔴 **订正上一班那条推断（假账）**：日志里 12 次「PGVector 读腿交回 0 行」不是沙盒缺 documents 行造成的。沙盒 chunk_vectors 是严格 1:1（sales=1／engineering=2／finance=3／hr=4，各 252 枚），量具自带 PRINCIPALS 里 hr-c1-impossible 与 sales-c2 两枚**故意不可满足的负探针**，6 问 × 2＝12 次 ⇒ 属预期。权限谓词落在 chunk_vectors 的列上（sql_scope_filter ＋ search_vectors 单表 SELECT，不 join documents），沙盒 documents=0／index_versions=0 与读腿行数无关。
+- env 自证：read_backend_after_unsetting=chroma ⇒ 代码出厂缺省仍是 chroma（业主已裁不翻），在册那句没被推翻。
+- 工件：TEMP\eb103\chain2\r428-legs.json、r428-hot.json、r428.stdout.log；复跑法 TEMP\eb103\r428run.py（一条命令，零网络依赖）。
+
+**六、两笔在册前提今天被现取推翻**
+- R25 判据①「改一行 app/** 不 build 即生效」：backend 容器**没有 ./app bind mount**（五枚卷只有 applogs/generated/vectordb/appdata/documents）⇒ 生产 compose 形状下物理不成立。要么加 dev override，要么改口径。
+- A②「等 R524 进镜像」：merge-base --is-ancestor 05bec06 a2bbf13＝rc=0，且 a2bbf13..HEAD -- app/ 只有 f5d75a7（R616）一枚 ⇒ 假前提，A② 欠的是别的东西。
+- 本席自伤一笔入册：写 §167 时先走了 Python 双引号串，文本里的反斜杠 r 被当成回车（TEMP\eb103\chain2 后接 r143.log 被啃成 CR），已改用单引号 here-string 重写并复核孤 CR＝0。同族坑 AGENTS.md 已记（PowerShell 双引号串那一版），这次是 Python 版。
+
+**七、机器重启后的现取盘面（16:5x）**
+- 主树 HEAD ab4e3bb（本笔前为 4da0bad），tracked 面只恒脏 chroma_db/chroma.sqlite3；未跟踪只有 .zcodeignore 与业主作业目录（不碰）。
+- 六枚在飞执行层**全部活着且零 commit**（文件 mtime 16:43-16:51 持续推进）：be-r630（observability＋2 枚牙）／be-r631（scripts/r631_stage_sum_delta.py）／be-r545b（scripts/r545_queue_failure_probe.py）／be-r632（eval_lane_readout.py＋eval_transport_ask_v2.py）／be-r633（scripts/r633_dual_write_off_precondition.py）／be-r634（scripts/r634_category_delta.py＋一枚漏在网络树根的 .tmp_probe.txt，收席时点名清掉）。
+- 待办序：收席 6 枚（逐条对判据＋两态亲跑＋显式列路径代提交）→ 全量门（只在完全安静树跑一次）→ push gitee → run22 全 105 窗（等 R632 的逐行 lane 开关并树，A② 档位名派生＋A④ 逐类不退化＋C③ 一次拿完）。
