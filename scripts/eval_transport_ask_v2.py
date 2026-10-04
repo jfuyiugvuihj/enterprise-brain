@@ -219,6 +219,41 @@ APPROVAL_ROUNDS = max(1, int(os.getenv("EVAL_APPROVAL_ROUNDS", "3")))
 #: 就是照这张表发的）⇒ 这是**量具缺陷，不是产品缺陷**。
 DECLARE_LANE_TIER = os.getenv("EVAL_DECLARE_LANE_TIER", "").strip()
 LANE_BY_TIER = {"报告": "report", "分析": "analysis", "问答": "qa"}
+#: ===== R632 缺陷三：量具这一侧缺的两条腿（两枚开关，默认都关）===================
+#: 上面那一枚只替**与它同名的一档**补 lane，其余两档的题一题都不补 ⇒ 一扇窗里永远只有
+#: 一档在账上带得出档位名。EVAL_DECLARE_LANE_PER_TIER 把口径换成「按每一行自己的档位补」：
+#: 开 = 三档逐行各补各的，关 = 逐字节回到上面那一句（旧口径由牙钉着，见抬头判据）。
+#: 🔴 翻它的代价要写在盘面上：报告档 20 题从此带 lane=report，容器侧 REPORT_LANE_VIA_QUEUE
+#: 也开着时它们就改走队列道 —— 时延换了代，这一窗的 A① 读数不许与 run18 / run20k 并表。
+#: EVAL_RECORD_LANE_READOUT 是第二条腿，而且它**不改载荷**：只把服务端响应头里的档位读数
+#: （app/api/v1/chat.py:1502-1513 发的三枚头）抄进第三份证据件。想在不换代的前提下把 105 题
+#: 逐题档位名读出来，下一窗只开这一枚就够；两条腿各自独立，默认都关 = 一件新产物都不落。
+LANE_PER_TIER_ENV = "EVAL_DECLARE_LANE_PER_TIER"
+LANE_RECORD_ENV = "EVAL_RECORD_LANE_READOUT"
+#: 开关取值的字面与产品同源（app/api/v1/chat.py 的 REPORT_LANE_ON_VALUES），本件不另造一套；
+#: 同源性由 tests/test_r632_transport_lane_switches.py 现读 chat.py 的 AST 对判，不靠抄。
+LANE_SWITCH_ON_VALUES = {"1", "true", "yes", "on"}
+#: 服务端档位读数的三枚头名。产品侧真源是 app/api/v1/chat.py 里那三枚常量；按在册纪律本件
+#: 不引产品码（tests/test_r123_hitl_approval.py:395 那一枚源码级钉就是这个形状），所以这里是
+#: 抄字面 + 钉同源，同源性由 tests/test_r632_transport_lane_switches.py 现读产品源码对判。
+EFFECTIVE_LANE_HEADER = "x-effective-lane"
+DECLARED_LANE_HEADER = "x-declared-lane"
+LANE_SOURCE_HEADER = "x-lane-source"
+#: 档位名读数的落点键。读数**不并进 sidecar 也不并进帧账**：那两本件的键集被在册闸钉成
+#: 对判（tests/test_r181_text_frame_ruler.py 与 tests/test_r223_frame_arrival_clock.py 各自
+#: ``set(row) == JOIN_KEYS | ...``，另加 tests/test_r259_awaiting_approval_stops_the_watch.py
+#: 与 tests/_r259_queue_ruler.py），往里加一列当场红 ⇒ 这一格只能长在第三份件上。
+LANE_LEDGER_ENV = "EVAL_LANE_LEDGER"
+
+
+def _lane_switch(name):
+    """从进程环境读一枚布尔开关：口径与产品那枚 _report_lane_via_queue_enabled 逐字相同。"""
+    return os.getenv(name, "").strip().lower() in LANE_SWITCH_ON_VALUES
+
+
+#: 与 DECLARE_LANE_TIER 同一枚纪律：import 期读一次表，一窗之内不重读（读表腿由 R632 那件钉）。
+DECLARE_LANE_PER_TIER = _lane_switch(LANE_PER_TIER_ENV)
+RECORD_LANE_READOUT = _lane_switch(LANE_RECORD_ENV)
 APPROVAL_FAILED_SENTINEL = os.getenv(
     "EVAL_APPROVAL_FAILED_SENTINEL", "<approval-failed-no-terminal-answer>")
 #: R447 判据②：队列道那一轮挂起被批准到终答之后落的 kind。它与既有十枚 ``queued_*`` 一枚都
@@ -243,6 +278,18 @@ def frame_ledger_path():
     if override:
         return Path(override)
     return Path(SIDECAR).with_name(Path(SIDECAR).stem + "-frames.jsonl")
+
+
+def lane_ledger_path():
+    """R632 档位名读数件的落点：``EVAL_LANE_LEDGER`` 优先，否则跟着 SIDECAR（``-lane`` 尾缀）。
+
+    与 ``frame_ledger_path()`` 同一枚纪律：**调用期**读表，钉在 import 期就把 runbook §8
+    「产物落仓外」的纪律绕过去了（跟着 SIDECAR 走，开窗只设一个变量就不会把它漏在仓内）。
+    """
+    override = str(os.getenv(LANE_LEDGER_ENV) or "").strip()
+    if override:
+        return Path(override)
+    return Path(SIDECAR).with_name(Path(SIDECAR).stem + "-lane.jsonl")
 # 空 dict = 无视 http_proxy/HTTPS_PROXY，等价 curl --noproxy "*"（runbook §6：Clash 会劫 127.0.0.1）
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _TOKEN = ""
@@ -859,7 +906,52 @@ def _record_frames(row_id, kind, attempt, session_id, frames, answer, sentinel):
         print(json.dumps(row, ensure_ascii=False), file=fh)
 
 
-def _stream_once(question, session_id, idempotency_key, lane="", request_sent_at=None):
+def _lane_headers_from_response(resp):
+    """从 /ask 的响应头抄服务端那一侧的档位读数：只读头，一个字节都不碰流本体。
+
+    🔴 三枚头的纪律与产品同源（app/api/v1/chat.py:1502-1513「读数缺格就少发一枚头，不发假值」）：
+    取不到就交 ``None``，不发空串、不折算成零、不拿发出去的那一枚冒充读回来的那一枚。
+    ``headers_readable`` 单独说一件事 —— 这一枚假出口/真出口到底有没有头可读。测试里那些
+    只带 ``read()`` / ``__iter__()`` 的假件根本没有 ``headers`` 这一格，那种「读不到」既不是
+    产品的锅也不是档位为空，把它记成空档就是在制造第三态。
+    """
+    headers = getattr(resp, "headers", None)
+    getter = getattr(headers, "get", None)
+    readout = {"headers_readable": callable(getter), "effective_lane": None,
+               "declared_lane": None, "lane_source": None}
+    if not callable(getter):
+        return readout
+    for key, header in (("effective_lane", EFFECTIVE_LANE_HEADER),
+                        ("declared_lane", DECLARED_LANE_HEADER),
+                        ("lane_source", LANE_SOURCE_HEADER)):
+        value = getter(header)
+        text = str(value).strip() if value is not None else ""
+        readout[key] = text or None
+    return readout
+
+
+def _record_lane_readout(row_id, session_id, sent_lane, readout):
+    """一题一行落第三份件（R632 缺陷三的量具半张）。开关没开就一个字节都不写。
+
+    join 键是 ``session_id``：每次尝试都现造一枚新会话，重试的那一发不会与终答那一发撞键，
+    而帧账那一行本来就带着 ``session_id``（``JOIN_KEYS`` 里的一格）⇒ 侧车 id ← 帧账 ← 本件
+    三跳都是精确键，不靠顺序、不靠题面。``id`` 只当方便人眼的旁注，读数以 session 为准。
+    """
+    row = {"id": row_id, "session_id": session_id,
+           "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+           "sent_lane": sent_lane or None,
+           "effective_lane": readout.get("effective_lane"),
+           "server_declared_lane": readout.get("declared_lane"),
+           "lane_source": readout.get("lane_source"),
+           "headers_readable": bool(readout.get("headers_readable"))}
+    target = lane_ledger_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("a", encoding="utf-8") as fh:
+        print(json.dumps(row, ensure_ascii=False), file=fh)
+
+
+def _stream_once(question, session_id, idempotency_key, lane="", request_sent_at=None,
+                 row_id=""):
     out = _blank_observation(session_id)
     payload = {"message": question, "session_id": session_id, "idempotency_key": idempotency_key}
     if lane:
@@ -870,7 +962,12 @@ def _stream_once(question, session_id, idempotency_key, lane="", request_sent_at
     # 必须复用已有的表戳，或在账上老实写明退到了哪一侧（stream_clock.elapsed_base）。
     out["request_sent_at"] = request_sent_at
     with _open("/api/v1/ask", payload) as resp:
-        return _consume(resp, out)
+        observed = _consume(resp, out)
+        # R632 第二腿：档位读数只在这一发真的拿到响应之后才抄（没打通的那一发没有头可读，
+        # 也不该有一条读数冒充「服务端说它是某档」）。🔴 默认关：关着时一件新产物都不落。
+        if RECORD_LANE_READOUT:
+            _record_lane_readout(row_id, session_id, lane, _lane_headers_from_response(resp))
+        return observed
 
 
 def _approve_once(session_id):
@@ -1300,8 +1397,14 @@ def transport(row):
         try:
             tier = str(row.get("tier", "")).strip()
             lane = LANE_BY_TIER.get(tier, "") if DECLARE_LANE_TIER and tier == DECLARE_LANE_TIER else ""
+            # R632 第一腿：按**每一行自己的档位**补 lane。默认关 ⇒ 上面那一句就是全部口径；
+            # 只在旧那一枚没补出任何东西时才补，两枚同设时旧口径优先，旧读数一字节不改。
+            # 真机后果（开窗人必须先读这一句）：报告档 20 题从此带 lane=report，容器侧
+            # REPORT_LANE_VIA_QUEUE 开着时它们走队列道 ⇒ 这一窗的时延与 run18 / run20k 不同代。
+            if DECLARE_LANE_PER_TIER and not lane:
+                lane = LANE_BY_TIER.get(tier, "")
             out = _stream_once(str(row["question"]), uuid.uuid4().hex, uuid.uuid4().hex,
-                               lane, request_sent_at=pacing)
+                               lane, request_sent_at=pacing, row_id=row_id)
         except urllib.error.HTTPError as exc:  # HTTPError 先于 URLError 捕获，401 强制重登
             try:
                 detail = exc.read().decode("utf-8", "replace")[:300]

@@ -131,7 +131,10 @@ def stat_line(name: str, values) -> str:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--label", default="run9c")
-    ap.add_argument("--dir", default="", help="件所在目录，缺省 %TEMP%\\evalrun")
+    # 🔴 R632 缺陷一：argparse 对每一枚 help 串都做 `%` 展开（HelpFormatter._expand_help），
+    # 裸写的 %TEMP% 因此在 --help 这一刻当场炸 ValueError: unsupported format character 'T'。
+    # 量具自己站不起来，人眼看不见 —— 判它的牙在 tests/test_r632_reader_help_smoke.py。
+    ap.add_argument("--dir", default="", help="件所在目录，缺省 %%TEMP%%\\evalrun")
     ap.add_argument("--frames", default="")
     ap.add_argument("--sidecar", default="")
     ap.add_argument("--answers", default="")
