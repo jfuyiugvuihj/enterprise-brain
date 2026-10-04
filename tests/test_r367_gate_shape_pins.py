@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import test_r645_contract_difference_ledger as contract_ledger
+
 REPO = Path(__file__).resolve().parents[1]
 
 #: 本单的基点。只当素材读：与现场读数的等号一侧不许同时出现它（硬规矩 4）。
@@ -355,14 +357,38 @@ def test_the_module_translates_no_broad_exception_anywhere():
 
 
 # ------------------------------------------------- 判据 6 · 契约补上的那一格
-def test_the_contract_appends_one_section_and_deletes_nothing():
-    """硬规矩 4 那把尺子：文末纯追加、节数只增、本单那一枚标题在追加段里恰一枚。"""
-    base = _base_file("docs/api/contract-v1.md")
-    now = _source(CONTRACT)
+def _contract_history_account():
+    """判据 6 唯一那把尺：契约的历史 == 尺的基点 ＋ 具名差异账（账外一字节都不许动）。
 
-    assert now.startswith(base), "契约不是纯追加：文末之前的每一个字都不许动"
-    assert now.count("\n## ") >= base.count("\n## ") + 1, "一节都没长出来：本单没往契约里写口径"
-    assert now[len(base):].count("\n## " + OWN_SECTION_HEADING) == 1, "本单那一节在追加段里恰一枚"
+    🔴 本件不再自己 `git show` 基点那一份、也不再自己拼前缀等式：尺与差异账一起住在
+    `tests/test_r645_contract_difference_ledger.py`（R645），本单这一枚钉读的是同一本。
+    """
+    return contract_ledger.assert_history_matches_ledger()
+
+
+def test_the_contract_appends_one_section_and_deletes_nothing():
+    """硬规矩 4 那把尺子：账外一字节不动、节数只增、本单那一枚标题在追加段里恰一枚。
+
+    R653（10-04）改口，理由入档、不是放宽：原判据拿本件自己冻的基点做逐字节前缀等式，而 `497ac38`
+    （并树 R630）把 blockers 表里 `first_token_not_a_stage_sample` 那一行的两枚手抄行号换成了运行时
+    派生锚 —— 那一格改得对（对外契约里烤死过期坐标正是本仓在治的病），但前缀等式从今天起不可能绿。
+    撤销 R630 不是治法，把尺的基点前移来灭红更不是（那是把尺子折短）。现在本钉与 r354 那两枚同读
+    R645 那一本具名差异账：账外每一个字节都仍与尺的基点相同，账上逐枚点名、位置一律现派生。
+    本件另两条各自咬得住的判据原样留着：节数只增不减咬「有人删了别人的节」，
+    本单那一枚标题恰一枚咬「一单长出两节」，它们量的都不是位置。
+    """
+    account = _contract_history_account()
+
+    assert len(account.records) == contract_ledger.EXPECTED_DIFFERENCES_TODAY, (
+        contract_ledger.derived_difference_table(account)
+    )
+    assert [record.ticket for record in account.records] == [
+        entry.ticket for entry in contract_ledger.CONTRACT_DIFFERENCES
+    ], "登记过的每一枚都得在尺的基点上定位得到：%s" % contract_ledger.derived_difference_table(account)
+    assert account.current_text.count("\n## ") >= account.base_text.count("\n## ") + 1, (
+        "一节都没长出来：本单没往契约里写口径"
+    )
+    assert account.appendage.count("\n## " + OWN_SECTION_HEADING) == 1, "本单那一节在追加段里恰一枚"
 
 
 def test_the_new_section_states_the_two_faces_and_why_absence_was_not_available():

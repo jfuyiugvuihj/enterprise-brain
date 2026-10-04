@@ -58,6 +58,7 @@ from tests.test_r332_dashboard_trend import (  # noqa: F401  (夹具是导入进
     offline_catalog,
     seed_alerts,
 )
+from tests import test_r645_contract_difference_ledger as contract_ledger
 
 REPO = Path(__file__).resolve().parents[1]
 MODULE = REPO / "app" / "api" / "v1" / "dashboard.py"
@@ -704,6 +705,15 @@ def _section(text: str, marker: str) -> str:
 OWN_SECTION_HEADING = "「其中当时未闭环」"
 
 
+def _contract_history_account():
+    """判据乙唯一那把尺：契约的历史 == 尺的基点 ＋ 具名差异账（账外一字节都不许动）。
+
+    🔴 本件不再自己 `git show` 基点那一份、也不再自己拼前缀等式：尺与差异账一起住在
+    `tests/test_r645_contract_difference_ledger.py`（R645），本单这一枚钉读的是同一本。
+    """
+    return contract_ledger.assert_history_matches_ledger()
+
+
 def test_the_contract_appends_one_section_and_deletes_nothing():
     """乙：契约文末纯追加一节，🔴 删除行为 0；节数只许**增长**，不许与冻结基点比等号。
 
@@ -713,16 +723,29 @@ def test_the_contract_appends_one_section_and_deletes_nothing():
     「二级节多了不止一枚」红掉，而它红的那件事根本不是本单做的。同一条病本仓已裁过两次：
     R346（``test_r238`` 行号账改派生）与 R351（手抄字面/手抄 sha 改记名锚点），口径都是
     「历史只准当素材读，不许出现在与现场比对的等号两侧」。
-    现在这三条各自咬得住：① ``startswith`` 咬"回改前文"（任何人在本节之前动过一个字都红）；
-    ② 只增不减咬"有人删了别人的节"；③ 本单自己那一枚标题恰一枚由 ``_section`` 的 marker 尺子咬，
-    "一单长出两节"照样红——只是它红的是**本单那一枚**，不是全仓节数。
-    """
-    base = _base_file("docs/api/contract-v1.md")
-    now = CONTRACT.read_text(encoding="utf-8").replace("\r\n", "\n")
+    现在这三条各自咬得住：① 尺的基点 ＋ 具名差异账之外的每一个字节都不许动（任何人在本节之前
+    动过一个字都红，红句点名派生出来的字符位与行号）；② 只增不减咬"有人删了别人的节"；
+    ③ 本单自己那一枚标题恰一枚由 ``_section`` 的 marker 尺子咬，"一单长出两节"照样红——
+    只是它红的是**本单那一枚**，不是全仓节数。
 
-    assert now.startswith(base), "契约不是纯追加：文末之前的每一个字都不许动"
-    assert now.count("\n## ") >= base.count("\n## ") + 1, "一节都没长出来：本单没往契约里写口径"
-    assert now[len(base):].count("\n## " + OWN_SECTION_HEADING) == 1, "本单那一节在追加段里恰一枚"
+      · R653 第二次（10-04）：`497ac38`（并树 R630）把 blockers 表里 `first_token_not_a_stage_sample`
+        那一行的两枚手抄行号换成运行时派生锚 —— 那一格改得对，本件那枚 ``startswith`` 前缀等式从今天起
+        不可能绿。撤销 R630 不是治法，把尺的基点前移来灭红更不是。所以本钉摘掉自家的 ``BASE`` 读数与
+        前缀等式，与 r354 那两枚同读 R645 那一本具名差异账：账外一字节都不许动，账上逐枚点名，
+        今天恰好一枚。本单那一节恰一枚、节数只增不减这两条原样留着 —— 它们量的不是位置。
+    """
+    account = _contract_history_account()
+
+    assert len(account.records) == contract_ledger.EXPECTED_DIFFERENCES_TODAY, (
+        contract_ledger.derived_difference_table(account)
+    )
+    assert [record.ticket for record in account.records] == [
+        entry.ticket for entry in contract_ledger.CONTRACT_DIFFERENCES
+    ], "登记过的每一枚都得在尺的基点上定位得到：%s" % contract_ledger.derived_difference_table(account)
+    assert account.current_text.count("\n## ") >= account.base_text.count("\n## ") + 1, (
+        "一节都没长出来：本单没往契约里写口径"
+    )
+    assert account.appendage.count("\n## " + OWN_SECTION_HEADING) == 1, "本单那一节在追加段里恰一枚"
 
 
 def test_the_new_contract_section_states_the_predicate_and_retires_the_old_sentence():

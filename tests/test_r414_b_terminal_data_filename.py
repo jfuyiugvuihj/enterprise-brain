@@ -37,6 +37,7 @@ from tests.test_approve_canonical_events import (
     finance_principal,
     payload_of,
 )
+from tests import test_r645_contract_difference_ledger as contract_ledger
 
 DATASET = "报销明细表.csv"
 OTHER_DATASET = "库存周转表.csv"
@@ -243,19 +244,35 @@ def test_the_contract_says_the_screen_does_not_change_today():
     assert "前端今天**不读**终态这一格" in section, "「界面什么时候说那句话」没交回前端那一单"
 
 
+def _contract_history_account():
+    """判据② 唯一那把尺：契约的历史 == 尺的基点 ＋ 具名差异账（账外一字节都不许动）。
+
+    🔴 本件不再在函数体里现攒 `subprocess` + 手抄基点 + 契约路径去拼前缀等式：尺与差异账一起住在
+    `tests/test_r645_contract_difference_ledger.py`（R645），本单这一枚钉读的是同一本。
+    """
+    return contract_ledger.assert_history_matches_ledger()
+
+
 def test_the_registration_is_a_tail_append_over_the_base():
-    """契约是**跨栈共享面**：本单对它只做尾部追加，基点那份必须是交回字节的前缀。"""
-    import re
-    import subprocess
-    from pathlib import Path
+    """契约是**跨栈共享面**：本单对它只做尾部追加，历史那一格只许是「尺的基点 ＋ 具名差异账」。
 
-    repo = Path(__file__).resolve().parents[1]
-    base = subprocess.run(["git", "show", "c0c4bcd:docs/api/contract-v1.md"], cwd=str(repo),
-                          capture_output=True, check=True).stdout.decode("utf-8").replace("\r\n", "\n")
-    shipped = (repo / "docs" / "api" / "contract-v1.md").read_text(encoding="utf-8").replace("\r\n", "\n")
+    R653（10-04）改口，理由入档、不是放宽：原判据在本件函数体里手抄一枚基点（`c0c4bcd`）再做逐字节
+    前缀等式，而 `497ac38`（并树 R630）把 blockers 表里 `first_token_not_a_stage_sample` 那一行的两枚
+    手抄行号换成了运行时派生锚 —— 那一格改得对，前缀等式从今天起不可能绿。撤销 R630 不是治法，
+    把尺的基点前移来灭红更不是。现在本钉与 r354 那两枚同读 R645 那一本账：账外每一个字节仍与尺的
+    基点相同，位置一律现派生，本件不带走任何一枚坐标。
+    只增不减与「## R414 本节标题恰一枚」这两条原样留着 —— 它们量的是名字与节数，不是位置。
+    """
+    account = _contract_history_account()
 
-    assert shipped.startswith(base), "契约中段被动过字：本单只许往文末追加"
-    assert len(re.findall("(?m)^## ", shipped)) >= len(re.findall("(?m)^## ", base)) + 1, (
+    assert len(account.records) == contract_ledger.EXPECTED_DIFFERENCES_TODAY, (
+        contract_ledger.derived_difference_table(account)
+    )
+    assert [record.ticket for record in account.records] == [
+        entry.ticket for entry in contract_ledger.CONTRACT_DIFFERENCES
+    ], "登记过的每一枚都得在尺的基点上定位得到：%s" % contract_ledger.derived_difference_table(account)
+    assert len(account.current_text) > len(account.base_text), "尾部追加没落地：现盘不比尺的基点长"
+    assert account.current_text.count("\n## ") >= account.base_text.count("\n## ") + 1, (
         "尾部追加没落地：追加后节数只许不减")
-    heads = [line for line in shipped.splitlines() if line.startswith("## R414 ")]
+    heads = [line for line in account.current_text.splitlines() if line.startswith("## R414 ")]
     assert len(heads) == 1, "本节标题在文件里恰一枚——「不许重复登记」的强度在这一格：%s" % heads

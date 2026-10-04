@@ -29,7 +29,6 @@ from __future__ import annotations
 import ast
 import asyncio
 import hashlib
-import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -48,11 +47,9 @@ from app.notifications import states as state_store
 from app.storage import pending_approvals as hitl_store
 from tests import _temp_edit_overlay as overlay
 from tests import test_r466_mutation_does_not_leak_into_live_module as r466
+from tests import test_r645_contract_difference_ledger as contract_ledger
 
 REPO = Path(__file__).resolve().parents[1]
-#: 本单的记名锚点（与 r366 / r373 同一手法）：与现场读数比等号的是它，不是「工作树 vs HEAD」。
-BASE = "b498c88"
-
 STATES_PY = REPO / "app" / "notifications" / "states.py"
 INBOX_PY = REPO / "app" / "notifications" / "inbox.py"
 CONTRACTS_PY = REPO / "app" / "notifications" / "contracts.py"
@@ -215,13 +212,6 @@ def _principal(username: str):
     principal = principal_from_request(request)
     assert principal is not None, username + " 解析不出 principal，本件的直调没有意义"
     return principal, request
-
-
-def _git_show(revision: str, relative: str) -> bytes:
-    return subprocess.run(
-        ["git", "-C", str(REPO), "show", revision + ":" + relative],
-        capture_output=True, check=True,
-    ).stdout
 
 
 def _as_blob_text(raw: bytes) -> str:
@@ -864,15 +854,37 @@ def test_the_new_response_names_are_all_spelled_out_in_the_contract(monkeypatch,
     assert unmentioned == [], "这些新字段在契约里逐字没有名字：" + ", ".join(unmentioned)
 
 
-def test_the_contract_appends_one_section_and_deletes_nothing():
-    """三笔账都与提交先后无关：① 前缀等式（历史一字不动）② 长度变长 ③ 本单节标题恰一枚。"""
-    base = _as_blob_text(_git_show(BASE, "docs/api/contract-v1.md"))
-    now = _as_blob_text(CONTRACT.read_bytes())
+def _contract_history_account():
+    """判据契约那一枚唯一那把尺：历史 == 尺的基点 ＋ 具名差异账（账外一字节都不许动）。
 
-    assert now.startswith(base), "契约不是纯追加：文末之前的每一个字都不许动"
-    assert len(now) > len(base), "契约没长东西：本单一格都没写"
-    assert now[len(base):].count(SECTION_HEADING) == 1, "本单那一节在追加段里不是一枚"
-    assert now.count(SECTION_HEADING) == 1, "本单那一节被人整节复制过"
+    🔴 本件不再自己 `git show` 基点那一份、也不再自己拼前缀等式：尺与差异账一起住在
+    `tests/test_r645_contract_difference_ledger.py`（R645），本单这一枚钉读的是同一本。
+    自家那枚 git 把手与记名锚点随本单一并退役 —— 留着就是第二把尺。
+    """
+    return contract_ledger.assert_history_matches_ledger()
+
+
+def test_the_contract_appends_one_section_and_deletes_nothing():
+    """三笔账都与提交先后无关：① 尺的基点 ＋ 具名差异账（历史一字不动）② 长度变长 ③ 本单节标题恰一枚。
+
+    R653（10-04）第二次改口，理由入档、不是放宽：本钉原本拿自家冻的基点做逐字节前缀等式，而
+    `497ac38`（并树 R630）把 blockers 表里 `first_token_not_a_stage_sample` 那一行的两枚手抄行号换成了
+    运行时派生锚 —— 那一格改得对（对外契约里烤死过期坐标正是本仓在治的病），前缀等式从今天起不可能绿。
+    撤销 R630 不是治法，把尺的基点前移来灭红更不是。现在本钉与 r354 那两枚同读 R645 那一本具名差异账：
+    账外每一个字节仍与尺的基点相同，账上逐枚点名、位置一律现派生，今天恰好一枚。
+    ② 与「本单那一节全文恰一枚」两条原样留着 —— 它们量的是长度与节名，不是位置。
+    """
+    account = _contract_history_account()
+
+    assert len(account.records) == contract_ledger.EXPECTED_DIFFERENCES_TODAY, (
+        contract_ledger.derived_difference_table(account)
+    )
+    assert [record.ticket for record in account.records] == [
+        entry.ticket for entry in contract_ledger.CONTRACT_DIFFERENCES
+    ], "登记过的每一枚都得在尺的基点上定位得到：%s" % contract_ledger.derived_difference_table(account)
+    assert len(account.current_text) > len(account.base_text), "契约没长东西：本单一格都没写"
+    assert account.appendage.count(SECTION_HEADING) == 1, "本单那一节在追加段里不是一枚"
+    assert account.current_text.count(SECTION_HEADING) == 1, "本单那一节被人整节复制过"
 
 
 def test_the_new_contract_section_says_which_face_lives_where():
