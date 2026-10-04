@@ -5910,3 +5910,23 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 
 **五、账面与席位**：`3af0f7e` 落了 §4EZ／§178／名册八行（BOM 保留／CR=0／控制符 4→4／名册行竖线逐枚=7；第一次 splice 多出一枚竖线造出空栏，被自检 `pipes==7` 抓出并回改）。验证件现跑：`check_vector_wording.py rc=0`（38 枚文档全过）、`r638_doc_pointer_ruler.py --check-baseline rc=0`（本轮新增只用 `文件::符号`，没长出手抄坐标）。执行层四枚交卷在册（Godel/R652·Peirce/R646·Descartes/R655 待本席亲跑两态；Bacon/R650 仍在途）；窗内禁并树禁跑测试，一律压到收窗之后。
 - 取号卫生照做：写「事故 #117」之前 `rg -o -N --no-filename "事故 #\d+" --glob "docs/**/*.md"` 现读 max=**#116**（本笔用掉 #117／#118，下一枚 **#119**）。
+## 180. 第十五班（10-05 夜·主树 `9556513` → `3d85d6e`｜单模型未切换｜心跳一枚没碰）：夜窗队列 B 六段收窗 · 事故 #119（盘上旧片复用＝缓存假绿）· 三单并树由总控驱动器亲跑
+
+### 正文（与看板 §4FB 同一笔） 第十五班（10-05 01:0x–收窗·总控线·基点 `9556513`·**单模型未切换**·心跳一枚没碰）：夜窗队列 B 六段跑到底 · 🔴 事故 #119（旧分片会被当已完成复用）· 三单并树由总控驱动器亲跑 · 全量门 rc=1 {'failed': 48, 'passed': 11208, 'skipped': 58, 'xfailed': 2} reds=48 用时 1592.0 s
+
+- **窗的读法（逐枚现取，非转述）**：`night1005b.ledger.jsonl` 共 36 步。真窗（01:00:41 之后，共 36 步）里 rc≠0 的有 3 枚：recall-p3 rc=2 rc=2; recall-fetch rc=1 rc=1; gpuattr-latency-block rc=1 rc=1；另 00:58 那次启动被 P-18 闸拦停，其 3 枚 rc≠0 步骤属被杀尝试，不作本窗判据
+  run22：105 题 correctness=0.6381（可计分子集 0.6512，分母 86 枚）evidence=0.8095 unsupported_claim_rate=0.0 p95=67559.45
+  run22s1：33 题 correctness=0.4545（可计分子集 0.52，分母 25 枚）evidence=0.7273 unsupported_claim_rate=0.0 p95=67983.547
+  run22s2：33 题 correctness=0.5152（可计分子集 0.6，分母 25 枚）evidence=0.7273 unsupported_claim_rate=0.0 p95=72125.558
+  run23：105 题 correctness=0.619（可计分子集 0.6395，分母 86 枚）evidence=0.8095 unsupported_claim_rate=0.0 p95=63782.615
+- **🔴 事故 #119（本席自查，开窗后 20 分钟内处置）**：失败尝试给 `run22s1`（2 片）与 `run23`（11 片）留下盘上旧片，而那两段时间 Redis `answer:*`=25 枚（P-18 违规态）。驱动件的续跑口径是「行数相等 ∧ 题号集合相等 ∧ answer 非空」即算已完成，`<tag>.window.json` 五项指纹全等就整窗复用 ⇒ 相 1 的 A② 与 run23 的 A④ 会把**缓存供的答案**当今天的新答卷＝假绿。处置：两枚 tag 的 `.shards`／`.shards.json`／`.window.json`／`-sidecar*.jsonl` 整体移入 `evalrun\stale-cache-20261005-0115`，驱动件重新探针、从零跑那 33＋105 枚；`run22` 未动（最老一片 01:01:13 晚于 `p18-w1-clear` 01:00:44 rc=0）。取证纸 `evalrun\night1005b-forensics.txt`。新纪律：**复用 tag 前必须连盘上旧片一起隔离，只清 Redis 不够**。
+- **三单并树（总控驱动器 `%TEMP%\eb104\postclose1005.py`，两态由它亲跑，日志逐枚在 `postclose1005\*.log`）**：
+  R655：MERGED 193f65e (two-state same) ｜ base rc=rc=0 45 passed / 0 failed / 0 skipped ｜ state1 rc=rc=0 92 passed / 0 failed / 0 skipped ｜ state2 rc=rc=0 92 passed / 0 failed / 0 skipped
+  R646：MERGED d2cc633 (two-state same) ｜ base rc=rc=0 150 passed / 0 failed / 0 skipped ｜ state1 rc=rc=0 163 passed / 0 failed / 0 skipped ｜ state2 rc=rc=0 163 passed / 0 failed / 0 skipped
+  R652：MERGED 3d85d6e (two-state same) ｜ base rc=rc=0 69 passed / 0 failed / 0 skipped ｜ state1 rc=rc=0 69 passed / 0 failed / 0 skipped ｜ state2 rc=rc=0 69 passed / 0 failed / 0 skipped
+  驱动器规则：state① 零红且枚数达尺才提交，否则把本单复制进去的文件逐枚还原、不提交、继续下一单；主树提交一律显式列路径。本笔之后主树 HEAD `3d85d6e`。
+- **门的账没被本笔翻绿**：A① 与一切 p95 时延读数仍按 GO 纸那句标「污染·不可采信」（`preflight-p20` 的 `env_flags` 与 `gpu_apps`/`foreign_python` 两格本夜设计为 FAIL）。阶段 A 只许按已钉口径记账；C／D／B／E 各格是否翻绿由下一班逐条对 `night1005b-readout.txt` 与本节数字判，不许抄本节当结论。
+- **下一夜该收的两格**（本夜不收，避免与跑分争资源）：① R60 判据④ 的**生产库现取**（现网两枚旋钮与 `_write_batch` 的 R60 早退分支静态可证「新行只落 PostgreSQL」，但计划书 §16 要求账面写「停写未做」，缺的就是演示库那一遍现取；要一发写＋一发删＋逐字节复位 1008 枚）；② S1 观察窗（三枚容器 `printenv INDEX_BACKEND` 全 pgvector 且无人拨回、`rebuild_index.py --status` 两腿差只增不减）。
+- **待派三枚在 `%TEMP%\eb104\dispatch\`**：R654（格② 热集让路驱动件重写）／R656（`TRACE_STORE_PATH` 测试态侧效）／R657（`SLO_METRIC_CALIBER` 首屏 `prerequisite` 新串＋契约两格同批）。仍在途＝`Bacon`/R650（`be-r650`@`f904295`，dirty=4，收窗后由本席亲跑再判）。
+
+
