@@ -380,8 +380,9 @@ def _shipped_report_paths() -> set[Path]:
     """Absolute identities of the report files that ship inside the image.
 
     Resolved instead of compared as strings: the same bundled score can also arrive through
-    a configured directory (the append at observability.py:333 is unconditional), and "which
-    file is this" has to survive both spellings of it.
+    a configured directory -- the append in
+    ``app/api/v1/observability.py::_evaluation_report_candidates`` is unconditional -- and
+    "which file is this" has to survive both spellings of it.
     """
     resolved: set[Path] = set()
     for name in DEFAULT_EVALUATION_REPORT_FILES:
@@ -747,9 +748,9 @@ MIN_SLO_SAMPLES = 100
 SLO_TARGET_PENDING = "awaiting_real_samples"
 
 #: Readout verdicts. ``insufficient_samples`` exists because the alternative is a lie:
-#: ``PerformanceStats.report()`` answers ``0`` for a distribution it has never seen
-#: (``app/common/performance.py:27-28``), and a ``p95_ms`` of ``0`` is the most convincing
-#: fake SLO this module could emit.
+#: ``app/common/performance.py::PerformanceStats._rank`` answers ``0`` for a distribution it
+#: has never seen, so ``app/common/performance.py::PerformanceStats.report`` publishes a
+#: ``p95_ms`` of ``0`` -- the most convincing fake SLO this module could emit.
 SLO_INSUFFICIENT = "insufficient_samples"
 SLO_MEASURED = "measured"
 SLO_NOT_MEASURABLE = "not_measurable"
@@ -776,9 +777,10 @@ SLO_SCREEN_SOURCE = "frontend/src/router/index.js"
 #: code that proves it. These are the holes 乙半 has to close somewhere else first.
 SLO_BLOCKERS: dict[str, str] = {
     "lane_attribution_absent": (
-        "app/trace/spans.py:201-215 hands the ledger stage, tool_name, model_tier and worker "
-        "but never a lane, and no request event carries the question, so every live sample "
-        "groups under lanes.unknown and no per-tier population exists to take a P95 of."
+        "``app/trace/spans.py::ExecutionSpan._observe_stage`` hands the ledger stage, "
+        "tool_name, model_tier and worker but never a lane, and no request event carries the "
+        "question, so every live sample groups under lanes.unknown and no per-tier population "
+        "exists to take a P95 of."
     ),
     "first_token_not_a_stage_sample": (
         "first_token_at is stamped by ``app/trace/spans.py::ExecutionSpan.mark_first_token`` and "
@@ -793,23 +795,25 @@ SLO_BLOCKERS: dict[str, str] = {
     ),
     "wire_first_text_not_recorded": (
         "the plan's 首屏 is the first ``text`` event on the wire (计划书 §3.1). The only "
-        "timestamped first-token evidence is model-side; chat.py:218-243 stamps canonical SSE "
-        "envelopes but does not persist them, so a wire-side number would be a proxy."
+        "timestamped first-token evidence is model-side; "
+        "``app/api/v1/chat.py::canonical_sse_event`` stamps the canonical SSE envelopes but "
+        "nothing persists them, so a wire-side number would be a proxy."
     ),
     "cache_hits_are_not_traced": (
-        "a cache hit returns its StreamingResponse at app/api/v1/chat.py:1191-1215, before any "
-        "request.started event, so it records no window and no sample. The honest denominator "
-        "for 缓存命中 is therefore zero today, not 'fast'."
+        "a cache hit returns its StreamingResponse from ``app/api/v1/chat.py::ask``, before "
+        "any request.started event, so it records no window and no sample. The honest "
+        "denominator for 缓存命中 is therefore zero today, not 'fast'."
     ),
     "wire_step_events_are_not_recorded": (
-        "step.progress is persisted per graph superstep (app/agents/orchestrator.py:1173-1185), "
-        "which measures how often the graph advanced, not when a client saw a ``step``/``status`` "
-        "event; the interval the promise is about has no timestamped source."
+        "``app/agents/orchestrator.py::run_with_stream`` persists step.progress per graph "
+        "superstep through ``app/agents/orchestrator.py::_record_trace``, which measures how "
+        "often the graph advanced, not when a client saw a ``step``/``status`` event; the "
+        "interval the promise is about has no timestamped source."
     ),
     "export_leg_has_no_stage": (
-        "app/common/stage_timing.py:71 maps export_report to no segment, so a report tier's file "
-        "writing lands in unattributed. A five-stage sum is not that tier's end-to-end and must "
-        "not be published as one; coverage_error_pct is what says so."
+        "``app/common/stage_timing.py::TOOL_TO_STAGE`` maps export_report to no segment, so a "
+        "report tier's file writing lands in unattributed. A five-stage sum is not that tier's "
+        "end-to-end and must not be published as one; coverage_error_pct is what says so."
     ),
 }
 
@@ -908,10 +912,11 @@ def _slo_bridge_note(members: Sequence[str], bridge: Mapping[str, str]) -> str:
 def slo_units() -> dict[str, Any]:
     """① : the three units the phrase "三档" collides, read live from their owners.
 
-    计划书 R32 names 问答/分析/报告. ``app/agents/contracts.py:69 ModelTier`` names
-    chat/plan/compress/rewrite/code/alert/analysis. ``app/common/stage_timing.py:48
-    CANONICAL_STAGES`` names classify/rewrite/retrieve/generate/reflect. Three different
-    enumerations over three different things, and no member of one may be renamed to
+    计划书 R32 names 问答/分析/报告. ``app/agents/contracts.py::ModelTier`` names
+    chat/plan/compress/rewrite/code/alert/analysis.
+    ``app/common/stage_timing.py::CANONICAL_STAGES`` names
+    classify/rewrite/retrieve/generate/reflect. Three different enumerations over three
+    different things, and no member of one may be renamed to
     flatter another -- so the bridge is read out of ``LANE_TIERS`` here instead of being
     retyped, and the document table below is pinned against this by a test.
 
@@ -927,13 +932,16 @@ def slo_units() -> dict[str, Any]:
     lane_bridge = {lane: LANE_TIERS[lane].value for lane in lanes}
     return {
         "product_lane": {
-            "owns_the_name": "app/agents/nodes.py (LANE_QA / LANE_ANALYSIS / LANE_REPORT)",
+            "owns_the_name": (
+                "app/agents/nodes.py::LANE_QA, app/agents/nodes.py::LANE_ANALYSIS, "
+                "app/agents/nodes.py::LANE_REPORT"
+            ),
             "decided_by": "R42 classify_route, rules only, zero model calls",
             "members": list(lanes),
             "this_is_the_unit_of_the_slo": True,
         },
         "model_budget_tier": {
-            "owns_the_name": "app/agents/contracts.py:69 ModelTier",
+            "owns_the_name": "app/agents/contracts.py::ModelTier",
             "decided_by": "the call site that asks for budget",
             "members": budget_members,
             "this_is_the_unit_of_the_slo": False,
@@ -941,7 +949,7 @@ def slo_units() -> dict[str, Any]:
             "bridge_note": _slo_bridge_note(budget_members, lane_bridge),
         },
         "ledger_stage": {
-            "owns_the_name": "app/common/stage_timing.py CANONICAL_STAGES",
+            "owns_the_name": "app/common/stage_timing.py::CANONICAL_STAGES",
             "decided_by": "classify_stage(), from label, tool, tier then worker",
             "members": list(CANONICAL_STAGES),
             "this_is_the_unit_of_the_slo": False,
@@ -1725,8 +1733,9 @@ def _budget_knob(name: str, effective: Any, code_default: Any) -> dict[str, Any]
     确实写了，但值不合法或被代码夹回默认，生效的其实是默认值，"我明明设过"在这一档里必须
     当场可辨。
 
-    词汇与现成口径的关系（不是第二套口径）：判定用的谓词就是 ``model_budget._env_set``，
-    写过的取值 ``"env"`` 与 ``model_budget.py:769`` 里速率出处的 ``origin = "env"`` 同一个词、
+    词汇与现成口径的关系（不是第二套口径）：判定用的谓词就是
+    ``app/common/model_budget.py::_env_set``，写过的取值 ``"env"`` 与
+    ``app/common/model_budget.py::clamp_basis`` 里速率出处的 ``origin = "env"`` 同一个词、
     同一个谓词；只有"没写过"这一档这里叫 ``default`` 而不叫 ``calibrated-default``——窗口默认
     4096 是兜底数、不是标定值，沿用它那个词会把两件不同的事说成一件。两种写法在同一条响应里
     都看得见（``budget_readout`` 原样嵌在下面），不做隐藏。

@@ -5977,3 +5977,31 @@ shape the R558 counter-evidence pin turns red.
 
 Batches carry their own sequence number and the store de-duplicates by it, so a flush retried
 after a connection blip cannot make the client see the same characters twice.
+## Surface pointers are derived, not hand-copied (`R635`)
+
+The six rows below still sit in the tables above, verbatim, and are **declared void here** rather
+than erased: the carriers quoted a line number that has already drifted, and the observability
+surface (`app/api/v1/observability.py`) is the source those rows describe. Since `R630` the
+contract rows are compared against that surface, so a stale coordinate in prose reads as a live
+contradiction rather than as history.
+
+Each void row is replaced by a symbol anchor. An anchor resolves through the source tree at read
+time, so a refactor that moves a definition cannot silently make this contract a lie again.
+
+| void as written | replaces it |
+|---|---|
+| `app/agents/contracts.py:69` `ModelTier` | `app/agents/contracts.py::ModelTier` |
+| `app/trace/spans.py:201-215` hands the ledger stage | `app/trace/spans.py::ExecutionSpan._observe_stage` hands the ledger stage |
+| canonical envelopes are stamped (`chat.py:222-243`) | canonical envelopes are stamped (`app/api/v1/chat.py::canonical_sse_event`) |
+| a cache hit returns before any `request.started` (`chat.py:1191-1215`) | a cache hit returns before any `request.started` (`app/api/v1/chat.py::ask`) |
+| `step.progress` is persisted per graph superstep (`orchestrator.py:1173-1185`) | `step.progress` is persisted per graph superstep by `app/agents/orchestrator.py::run_with_stream` through `app/agents/orchestrator.py::_record_trace` |
+| `TOOL_TO_STAGE["export_report"]` is empty (`stage_timing.py:71`) | `app/common/stage_timing.py::TOOL_TO_STAGE` maps `export_report` to the empty segment |
+
+The 预算档 tier cell keeps its tier names; only the coordinate form changes. `MODEL_CONTEXT_TOKENS`
+and the tier table it points at stay as declared elsewhere: this section corrects **where** a
+reader is sent, not **what** the carrier owes.
+
+No reading is recorded here. The gate that keeps this honest is
+`tests/test_r635_surface_pointers_are_derived.py` (anchor resolution plus the widened roster
+measure over the whole blockers table) and `tests/test_r635_counter_evidence_teeth.py` (a copied
+line number fails on shape even when the number happens to be right today).

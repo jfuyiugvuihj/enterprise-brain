@@ -28,6 +28,7 @@ import inspect
 import re
 from dataclasses import fields
 from pathlib import Path
+from typing import Mapping
 
 import test_r526_slot_caliber_closure as r526
 import test_r533_bridge_note_is_derived as r533
@@ -383,3 +384,143 @@ def test_this_file_itself_copies_no_coordinate() -> None:
     assert LINE_ANCHOR.findall(source) == []
     assert r526.find_magnitudes(source) == []
     assert re.search(r"\b\w+\s+of\s+the\s+\w+\s+budget\s+tiers\b", source, re.IGNORECASE) is None
+
+# ==================== R635：同一把尺放宽到整本观测面（下面全部是新增，上面一字未改）====================
+#
+# 为什么要一枚 AST 腿：``app/api/v1/chat.py`` 在模块级就构造 DocumentRetriever()，
+# 在 pytest 之外 import 它一是耗时以秒计，二是朝被 git 跟踪的 ./chroma_db 写回
+# （仓库根 conftest.py 记的就是这一笔）。派工同时禁连库、禁动盘面，所以本单对锚点的
+# 「真解析」走源文件 AST：符号必须真在那枚文件的源码里定义，不靠 import。
+# 它与运行时那把尺（``resolve_symbol``）的同判关系由 R635 的用例钉着，不是另立一套更松的规矩。
+
+WIDE_ANCHOR = re.compile(r"([A-Za-z0-9_./-]+\.py)::([A-Za-z0-9_.]+)")
+_SOURCE_TREES: dict[str, ast.Module] = {}
+
+#: 桥话的装配把手在 import 那一刻抄下来：反证刀把模块属性换成常量时，重建那一条腿仍走真装配，
+#: 不然刀一糊就把尺子与读数一起糊掉了（本件对盘上的文本也是这么处理的）。
+BRIDGE_NOTE_ASSEMBLY_AT_IMPORT = staticmethod(observability._slo_bridge_note).__func__
+
+
+def module_source(rel: str, overrides: Mapping[str, str] | None = None) -> str:
+    """现读被锚定的那枚文件；反证刀递 overrides 时读的是内存影子，盘上一个字节不动。"""
+    if overrides and rel in overrides:
+        return overrides[rel]
+    path = REPO / rel
+    if not path.is_file():
+        raise OSError("锚点指的文件不在盘上：" + rel)
+    return path.read_text(encoding="utf-8")
+
+
+def _defined_names(node: ast.stmt) -> set[str]:
+    if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        return {node.name}
+    if isinstance(node, ast.Assign):
+        return {t.id for t in node.targets if isinstance(t, ast.Name)}
+    if isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        return {node.target.id} if isinstance(node.target, ast.Name) else set()
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return {(a.asname or a.name.split(".")[0]) for a in node.names}
+    return set()
+
+
+def _children(node: ast.AST) -> list[ast.stmt]:
+    """一枚语句里真承载定义的下层体：条件块、try、with 里定义的符号同样算在册。"""
+    body = list(getattr(node, "body", []) or [])
+    if isinstance(node, ast.Try):
+        body += [line for handler in node.handlers for line in handler.body]
+    body += list(getattr(node, "orelse", []) or [])
+    body += list(getattr(node, "finalbody", []) or [])
+    return body
+
+
+def _descends(container: ast.AST, dotted: tuple[str, ...]) -> bool:
+    """按锚点写下的点号链逐层现读：``PerformanceStats._rank`` 得是那枚类里真有的东西。"""
+    if not dotted:
+        return True
+    head, rest = dotted[0], dotted[1:]
+    for node in _children(container):
+        if head not in _defined_names(node):
+            continue
+        if not rest:
+            return True
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if _descends(node, rest):
+                return True
+    return False
+
+
+def anchor_resolves(rel: str, dotted: str, overrides: Mapping[str, str] | None = None) -> bool:
+    """一枚 ``文件::符号`` 锚点真解析得到吗：文件要在盘上，符号要在源码里，逐层可下钻。"""
+    try:
+        source = module_source(rel, overrides)
+    except OSError:
+        return False
+    shadowed = bool(overrides and rel in overrides)
+    if shadowed:
+        return _descends(ast.parse(source), tuple(dotted.split(".")))
+    tree = _SOURCE_TREES.get(rel)
+    if tree is None:
+        tree = ast.parse(source)
+        _SOURCE_TREES[rel] = tree
+    return _descends(tree, tuple(dotted.split(".")))
+
+
+def shape_violations(text: str, overrides: Mapping[str, str] | None = None) -> list[str]:
+    """通用形状尺（不含任何字段专属判断）：抄坐标一枚都不许有，锚点枚枚要真解析。"""
+    bad: list[str] = []
+    copied = sorted(set(LINE_ANCHOR.findall(text)))
+    if copied:
+        bad.append("抄了行号坐标：" + str(copied))
+    for rel, dotted in sorted(set(WIDE_ANCHOR.findall(text))):
+        if not anchor_resolves(rel, dotted, overrides):
+            bad.append("锚点 %s::%s 现读解析不到" % (rel, dotted))
+    return bad
+
+
+def surface_texts(book: Mapping[str, str] | None = None, payload=None) -> list[tuple[str, str]]:
+    """整本盘面的散文落点：``SLO_BLOCKERS`` 的每一格（含没对外那一格）＋回执的全部字符串叶子。"""
+    registry = observability.SLO_BLOCKERS if book is None else book
+    report = observability.slo_readout() if payload is None else payload
+    found = [("SLO_BLOCKERS/" + key, str(value)) for key, value in sorted(registry.items())]
+    found += [("readout" + path, text) for path, text in string_leaves(report) if path]
+    return found
+
+
+def derived_reading_offenders(payload=None) -> list[str]:
+    """R635 补的那一条腿：派生读数 published 出来的一格，必须等于按现取名册重建的那一句。
+
+    在册那把枚数尺只判「数字撞不撞得进派生读数的集合」，所以一枚抄对了值的常量、或一名
+    撞上别的名册长度的数字，它都看不见（本单实测：桥话里抄来的 5 与 stage 名册的 5 撞车）。
+    这一条不猜数字归属，直接把观测面自己那枚装配函数拿现取的两本名册重建一次，逐字对：
+    谁把派生读数抄成常量，句子一动就露形。名册没动时同值抄本仍然看不见——那是这一格的
+    真实盲区，写进 R635 的取证纸，不许吹成「全防」。
+    """
+    report = observability.slo_readout() if payload is None else payload
+    rebuilt = BRIDGE_NOTE_ASSEMBLY_AT_IMPORT(r533.budget_roster(), r533.lane_bridge())
+    bad: list[str] = []
+    for path, text in string_leaves(report):
+        if path.endswith("/bridge_note") and text != rebuilt:
+            bad.append("%s 交回的句子与按现取名册重建的那句不一致：读数被抄下来了" % path)
+    return bad
+
+
+def surface_roster_offenders(book: Mapping[str, str] | None = None, payload=None) -> list[str]:
+    """R630 那把枚数尺原样复用，只是喂进去的东西从「对外回执」扩成「回执 ＋ 整本名册」。"""
+    report = observability.slo_readout() if payload is None else payload
+    registry = observability.SLO_BLOCKERS if book is None else book
+    bad = list(roster_count_offenders(report))
+    bad += [row for row in roster_count_offenders(dict(registry)) if row not in bad]
+    bad += [row for row in derived_reading_offenders(report) if row not in bad]
+    return bad
+
+
+def surface_shape_violations(source: str | None = None,
+                             book: Mapping[str, str] | None = None,
+                             payload=None,
+                             overrides: Mapping[str, str] | None = None) -> list[str]:
+    """一把抓：源文整本 ＋ 名册每一格 ＋ 回执每一枚叶子，同一枚尺，逐枚点名。"""
+    text = OBSERVABILITY.read_text(encoding="utf-8") if source is None else source
+    bad = ["source " + row for row in shape_violations(text, overrides)]
+    for path, prose in surface_texts(book=book, payload=payload):
+        bad += ["%s %s" % (path, row) for row in shape_violations(prose, overrides)]
+    return bad
