@@ -5804,3 +5804,17 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 - ⑤ 那 4.7 MB census 维持**不进仓**（本席 §173 八已裁）：留 `%TEMP%\eb104\r638-census-quarantine`，凭 sha256 `AAA3090AB0C92FA91284BC6AA09171986BEA94DA2041ADF1BBAAA49F26E92E9A`／4,853,080 B 存档，纸里记落点与 sha 即可。
 
 **处置**：5 枚 apply 件已由本席挪出主树（`%TEMP%\eb104\r638-hold`），主树回到 `7fd8d4a` 干净；R638 **不结案**，写域仍由 `Plato`@`be-r638`@`473235f` 独占，返工令走短句投递＋本条账面承接（老席不收长消息，见全局 AGENTS.md）。
+
+### 174 第十四班第三格（10-04 20:4x–21:1x·总控线·主树 `91516c0`→`02ee2e6`→`f4524bc`·**单模型未切换**·心跳零枚·automation-2 仍 PAUSED）：R642 并树 · R640 并树（🔴 ZERO 归 0）· R643 投出 · 事故 **#114**＝本席自己两度抄错 spawn id · run22 四道硬前置落定
+
+**一、R642 已并树 `02ee2e6`**（`Wegener`@`be-r642`@`2103890`，5 files／+1,176 −3，产品码零改动）：D-3 半格装上（新开关 `EVAL_POST_APPROVAL_READBACK`，批准后**只多打一发** GET 读 `queue_status`，缺证词一律 `None` 不折 0）＋A② 甲案（豁免第④条加流级三支，判定用的交付文本只活在内存，**帧账一行一列都没多**，`prefix_breaks` 与 R215 恒等式一字未动）。🔴 本席亲跑＝state① 同名 4 件 **74 passed／5.25 s**；脏态另有两枚在册钉红（`test_r496_forbidden_pin_scope`·`test_r623_content_caliber_disk_pins`＝**2 failed／36 passed／72.22 s**，这两枚拿「盘上字节==HEAD blob」当判据，属 #96 同族）；state② 并树后同名 6 件 **112 passed／0 failed／73.00 s**⇒**假红自绿、非货错**，本单不代改那两枚钉（记在此，谁要治另立单）。它顶回一条 R614 前提并证实：`per_stream` 键集被 `test_r215` 逐位对判钉死 ⇒ 加指纹不可行，改走内存态，**总控无需补任何键集名单**。
+
+**二、R640 已并树 `f4524bc`**（`Dalton`@`be-r640`@`2103890`，4 files／+1,482 −71）：本席在主树**亲跑这把账尺**现取＝`在册 43 号：LANDED=23 · PARTIAL=17 · CLOSED=1 · ZERO=0 · FOREIGN=1 · NOTBUILT=1 · RESULT=PASS（0 条违规，在册 43 号逐条自证）`／rc=0，与执行层自报**同数**；两态亲跑 **31 passed／67.15 s**（16＋15）＝**31 passed／68.26 s**。⇒ 🔴 **「计划书代码单清零」按读法甲成立**：ZERO 里只剩的三枚全是号账错位（R143 已结案／R144 外来号／R39 裁定不建），**真正一页未写的计划书代码单＝0 枚**；剩下的 17 张 PARTIAL 里 14 张差窗、3 张差码（R46 信号·R48 前端·R51 凭据件＝R643 正在治）。它另自跑出一处**原判据没写**的同源假账（正文转述被当成认领⇒会把 R51 理由句从量具纸抢到自己纸上），治法＝「标题行才算认领＋正文引用单列转述计数＋C18」。顶回本席三处前提：尺早记 PARTIAL 非 LANDED／母集 105/105/106 非 105/105／基点尺 blob 33,265 B 非 33,901 B。
+
+**三、🔴 事故 #114（编号前先跑尺：`rg -o -N --no-filename "事故 #\d+" --glob "docs/**/*.md"` 现取 distinct=83／max=#113）**：**本席自己两度把 spawn 席位 id 抄错**——R642 写成 `…b472-4821-95a0-4693c232636a`（真值 `…b498-7950-80e3-0e323197a573`）、R643 名册行又写成 `…aba3c2531e59`（真值 `…aba3c2fc2531`）。两次都是**同一族病**：把「我记得的回执」当账面事实。第一次由 `wait_agent` 回执 `not_found` 顶出来，第二次靠**文件名与 `session_meta` 双取相等**（`MATCH=True`）在落笔前拦住。代价不是账面难看，是 `send_input`／`close_agent` 会打到别的席位或投递失败。⇒ 常驻口径升级（已写进 §173.1 与本条）：**名册落 id 之前必须现取 `session_meta` 三枚（`id`／`parent_thread_id`／`agent_nickname`）并与 rollout 文件名逐字相等**；不等就不许写名册、不许算投出。
+
+**四、R639 施工面**：`Aristotle` 按本席 §173 六的裁定做 **R639-A 唯一那一族**（补偿：`_undo_vector_write` 的 `mirror is not None` 腿门），盘上有 `r639-a-product-code.diff`＋新牙 `test_r639_undo_survives_a_missing_pg_leg.py`；🔴 本席承诺的那一笔（R633 两枚过期期望同批代改）等它交回时做，不许它自扩写域。
+
+**五、R643 已投出**＝`01a106f3-5c0d-7bb1-9bb9-aba3c2531e59`… **以本条为准的是现取真值 `01a106f3-5c0d-7bb1-9bb9-aba3c2fc2531`**（`Helmholtz`，parent＝本席，20:46:14）@`be-r643`@`02ee2e6`。治的是**判据② 的分母折叠**：run20k `doc-04` 同题两发（各 27 事件）27,490.9 与 27,244.6，折叠把另一发丢在账外、差 0.90%＝与 1% 线同数量级 ⇒ 判据② 现在的分母是「这题平均多久」而不是「这一发多久」。R644（补覆盖面）仍等 R643 并完再算。
+
+**六、🔴 本席新裁一格（评测集改题排 run22 之后）**：在册件 `scripts/r598_disposition_ledger.py`／`scripts/r598_pending_jia.py` 已把「改不了金标」那一族量清并**备而不落**（甲案凭据齐、待的是重录写域外那枚 `tests/test_r401_unscorable_rows_are_named_not_dropped.py`）。本席裁定：**run22 先用旧集打**——因为 `scripts/r634_category_delta.py` 的跨代次对子要求**题集 sha 相同**（今天现取：三窗 revision 与题集 sha 全等 ⇒ **rc=4「量不到」**，白纸黑字）。改题会换 fixture sha ⇒ 直接打断 A④ 唯一的对子来源。⇒ 改题在 run22 收窗之后按甲案走，重录域外件由本席落笔。
