@@ -5750,3 +5750,35 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 `app/api/v1` 路由枚数：`chat` 19／`alerts` 9／`observability` 8／`intelligence` 8／`data` 7／`notifications` 6／`open_platform` 6／`artifacts` 4／`feedback` 4／`auth` 11／`dashboard` 2。`app/rag` 件：`ocr.py` 20 KB／`spreadsheets.py` 34 KB／`tables.py` 40 KB／`hot_index.py` 32 KB／`pg_store.py` 56 KB／`indexing.py` 92 KB。⇒ **V2 各腿（OCR／表格／Excel-CSV／Dashboard／图谱／审批／通知中心／Artifact-Trace）码大体在树上，欠的是真数据与门**：`dashboard.py` 只有 2 枚路由（最薄），图谱面 5 枚文件带 `knowledge_graph` 字样，审批面 23 枚文件命中。
 
 **六、通道事实（今日新增，写给下一班）**：对半路停下的老席发**一句**短句（`send_input`）实测成功——`Plato`/R638 收到后立刻恢复施工并交出派生基线；两枚死席（#112/#113）都是死在**长消息**上。⇒ 老席续投的正解＝**一句以内、只说「继续本单交齐剩余哪几样」，判据不许在续投里改写**（要改就落账面立单）。
+
+### 173 第十四班第二格（10-04 19:1x–19:3x·总控线·主树 `48cc956`→`88c22d2`→`569f871`·**单模型未切换**·心跳零枚·automation-2 仍 PAUSED）：`close_agent` 在本会话可用（订正上一班）· R636 并树 · R639 裁决只签补偿族 · R640／R642 投出 · R636 三项待裁本席落裁
+
+**一、🔴 订正上一班那句「死席收不掉」（在册口径作废）**
+本席 19:1x 起 `close_agent` **可用**，连收三枚且回执都带终态原文：`Hubble`（R641 已结案）／`Faraday`（回执 `previous_status.errored` 就是那枚 `Invalid 'call_id': call_id is required for function_call_output.`，`request_id` 与 §171 逐字相符＝事故 #113 的原始凭据）／`Kant`（R633）。⇒ 上一班那句「`close_agent` 可能报 `unsupported call`」**只在那一席会话成立**，槽位在本会话能真释放，这也是 R640／R642 今天能投出去的原因（在飞上限 3–4 枚仍守）。判活口径不变：`read_thread`＋盘面三枚**在收席那一刻**现取。
+
+**二、R641（＝R545 返工）已并树 `48cc956`**：4 files／+3,262。本席亲跑两态＝脏态 **54 passed／23.61 s**、commit 后干净树 **54 passed／22.36 s**；返工前同一件在主树是 1 failed／48 passed／22.96 s。仍欠容器内读数那一半（要 `REPORT_LANE_VIA_QUEUE=on` 的窗，一行原文由 `scripts/r545_queue_failure_probe.py --print-recipe` 现取 rc=0），排在 run22 之后的 D 门相 2。
+
+**三、R636 已并树 `569f871`**（`Leibniz`@`be-r636`@`473235f`，3 files／+2,672）：本席亲跑两态 **31 passed／6.70 s**（apply 未 commit）与 **31 passed／6.28 s**（commit 后干净树，同名件清单逐枚一致）。收货前查过基点到 HEAD 之间无人动过这三枚路径（`git diff --name-only 473235f..HEAD --` 零输出）。卫生四道：三枚件 `0x00/07/08/0b/0c` 各 0、无 BOM、CR 0、🔴 `*.py:数字` 手抄坐标 **0 枚**（R638 那道棘轮要拦的病，本单自己先做到）。
+
+**四、🔴 凭据位置订正（账面那条路径是假的，本席现取）**：跟进单与上一班交接都写 `%TEMP%\eb103\r143c.json`，实测 `%TEMP%\eb103\` 里只有 `r143a_smoke.out`；真位置＝**`%TEMP%\eb103\chain2\r143c.json`（102,646 B，16:47:13）**＋同目录 `r143c.md`（51,360 B）。仓内侧三枚凭据本席已逐枚点名存在：`scripts/r626_legacy_engine_silent_empty_probe.py`／`tests/test_r626_legacy_silent_empty_teeth.py`／`docs/perf/r626-legacy-engine-silent-empty-recall-2026-10-04.md`，结案笔 `4da0bad` 在 HEAD 祖先链上。⇒ R640 的派工词按仓内侧写，🔴 **不许拿 `%TEMP%` 当派生源**（换机器就没）。
+
+**五、本席对 R636 纸 §12「待总控裁」四格落裁**（不许执行层代裁，也不许留白）
+1. **`queue_wait` 含不含进分段加总＝不含**。队列等待不是模型分段，进去会把「排队慢」洗成「模型慢」，R51② 那条线就永远量不到真东西。⇒ 但必须**单列一格明账**，不许静默丢；这一格归 R643 判据。
+2. **`step.finished`／`retrieval.completed` 不纳为独立分段**。它们与 `retrieve`／`generate` 时间上重叠，纳入＝同一秒计两次账，加总会超端到端＝新的假话。归因时可以引用，加总时不许进。
+3. **`reflect` 那条腿全线不产**（`app/trace/spans.py::record_stage_event` 调用点 0 枚）⇒ 属「该车道压根不产分段账」那一族，🔴 **不在 V1 关键路径**（V1 的门不依赖分段全覆盖），排在 R643 之后另立修复单，本班不派。
+4. **R-636-6（要动 R631 在册件）＝授权，但另立单 R643，不许塞进 R636**。理由：R631 是 R51② 的凭据件，它的分母折叠在同题两发时会把第二发丢到账外（run20k `doc-04`：折叠后 27,490.9 vs 另一发 27,244.6，差 **0.90%**，与 1% 判据线同一数量级）⇒ 这不是美化读数，是判据本身不成立。R643 的合格线＝同题两发必须**逐发各算一次**并点名，不许折叠；改前改后对三窗跑，凡受影响的题号要交出「改前判 X／改后判 Y」清单，由本席抽验。
+
+**六、R639 裁决（`Aristotle` 续席交回一份「不能按判据①⑤整单收货」的报告，本席裁如下）**
+- 🔴 **只签 R639-A＝补偿那一族**（`_undo_vector_write` 的 `mirror is not None` 腿门摘掉＋`mirror.rollback()` 前判 None，共 11 处 edit 里的 3 处，切片名 `VARIANTS["comp"]`）。执行层亲跑：改后量具 10 条→**8 条**，`compensation_needs_a_leg_it_wont_have` **2→0**，`roster_findings=[]`；在册四件 `r60 17 passed`／`r60 9 passed`／`r625 23 passed`／`r633 2 failed 33 passed`。这一族是唯一能**不改契约就诚实归零**的。
+- **另两族本席裁为「不动三枚在册钉」**：`tests/test_r60_write_path_unique_under_pgvector.py::test_a_pg_leg_that_is_not_there_never_becomes_a_zero_write`、`tests/test_r60_predicate_terms_and_leg_parity.py::test_the_stop_write_branch_is_inside_the_pg_leg`、`tests/test_r625_chroma_write_sites_are_named_one_by_one.py::test_dropping_one_term_of_the_write_predicate_is_a_lie` 都把「off 态＝遗留腿接管」钉成**契约**（R60 那两枚 docstring 自述「谁都不写是本单最贵的错」）。这跟 `VECTOR_DUAL_WRITE` 的真语义是一回事：它是**整条 PG 腿的总闸**（`app/rag/pg_store.py::dual_write_enabled` 自述 `Is the PostgreSQL leg on?`），拨 off 的正当含义是**回滚到遗留引擎**，不是「停写 Chroma」——停写由 R60 那套 write-off 机制做，两码事。⇒ **「零写更坏还是搬家更坏」不是缺陷排序，是旋钮语义**，本席按上一种钉法裁定：off＝回滚，遗留腿接管是对的。执行层要求业主级裁决那一格，本席就此代裁并落账，🔴 **不许在同批重写那三枚钉**。
+- `delete_set_blind_to_pg_only_rows` 与 `chroma_write_gate_reopens` 两族**继续记「未消」**，由 R633 量具每次现取；要真正消掉得改旋钮语义（新旋钮、新契约），那是 R60 停写退役之后的事，不在 V1。
+- 🔴 **R633 那两枚改后变红的期望钉由本席同批代改**（属执行层写域外，前例＝本席在 `497ac38` 代改契约那一行）：它们把「`compensation_needs_a_leg_it_wont_have` 存在」当断言（量具的 P9 现形钉），R639-A 归零之后必须**反向**成「该族归零且补偿可达」。代改理由写进并树笔，不偷偷放宽。
+- **R639-C（读腿另一半在 `app/rag/pg_store.py`＋`app/rag/retrieval_pipeline.py`）暂缓不派**：V1 门槛不需要它，且 `retrieval_pipeline.py` 是历史共抢文件。
+- 订正本席派工词两处**假前提**（在册口径：本席自纠不甩执行层）：① `app/common/**` 里**没有**向量／写库错误码字典，在册字典是 `app/rag/retriever.py::EMBEDDING_REASON_LABELS`（钉在 `tests/test_r21_answer_side_degradation.py::test_the_reason_labels_cover_every_stable_code`）；② 量具那两族是**名字／结构判据**，不存在「只改产品码就让它们归零」的形状。
+
+**七、两枚新单已投出**（一 block 一枚投递调用，全合规）
+- **R640 账尺派生化**＝`01a1069e-b472-4821-95a0-4693c232636a`… 更正：`01a1069e-b470-71f3-9ff6-c2fcf4a4c11d`（`Dalton`）@`be-r640`@`2103890`。判据 D1–D7，🔴 禁区 `docs/handoff/**`（只读账本不写账本）。四格＝R143 结案却记 ZERO／R144 外来号／R39 裁定不建／R51 理由句「未量」已被 `d00b791` 推翻（量到了、三窗 105/105 全 FAIL）。改后期望 **ZERO＝0**，新增 `CLOSED`·`FOREIGN`·`NOTBUILT` 三档。
+- **R642 量具两格**＝`01a106ab-b472-4821-95a0-4693c232636a`（`Wegener`）@`be-r642`@`2103890`。判据见名册行。
+- 在飞满槽 4 枚：R638（`Plato`）／R639-A（`Aristotle`）／R640／R642。**R643 排下一格空槽**，🔴 不超发。
+
+**八、下一步序（落账为据，防下一班重新发明）**：收 R638→R639-A→R640→R642 逐枚两态代提交 → 全量门 `python scripts/run_gate.py`（要完全安静的树；上一枚在册绿票＝门 #7 `4da0bad`／`-n 4`／875.8 s／exit=0）→ `docker compose --env-file deploy/.env.server build migrate`＋`up -d --force-recreate backend worker scheduler` → **run22 全 105 窗**（一窗多判据：A②／A④跨代次对子／C③／D-3）→ D 门相 2 单独窗（`REPORT_LANE_VIA_QUEUE=on`，须 R642 并树后才有意义）。R638 那个 4.7 MB census JSON 本席已裁：**不进仓**（棘轮基线 384 KB 已够，census 留 `%TEMP%` 并在取证纸里记 sha＋字节数）。
