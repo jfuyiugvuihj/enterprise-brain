@@ -1519,6 +1519,20 @@ class DocumentRetriever:
         return bool(pg_store.dual_write_enabled()
                     and indexing_module.pgvector_writes_are_primary())
 
+    def _legacy_rows_may_be_shadowed_by_pg(self) -> bool:
+        """R639-A 专用档位判定：PostgreSQL 自称是正文的住所，而那条腿被旋钮关了。
+
+        与 ``_writes_go_to_pgvector`` 读同样两枚在册开关，但答的是**反**的那一格——那一枚答
+        "新行该交给谁"，这一枚答"这一档里两库可能同时持有同一份文档，而只有一库在写"。
+        出厂默认档（``INDEX_BACKEND`` 在 chroma）不在这一格内，所以本方法为假：那一份行为
+        一字不改，本单只治"读了 PG、写了 Chroma"的矛盾档。一不发 SQL，二不开连接。
+        """
+        from app.rag import indexing as indexing_module
+        from app.rag import pg_store
+
+        return bool(indexing_module.pgvector_writes_are_primary()
+                    and not pg_store.dual_write_enabled())
+
     def _document_rows_by_leg(self, filename: str):
         """一份文档的行到底住在哪一库：返回 (遗留腿 ids, 遗留腿 metadatas, PG 行)。
 
@@ -1582,19 +1596,31 @@ class DocumentRetriever:
     def _undo_vector_write(self, mirror, written_ids, snapshot, *, stale_deleted=True):
         """两腿一起退回本次写入之前：PG 回滚事务，Chroma 撤掉新写、放回旧行。
 
-        mirror.rollback() 是硬要求：PG 侧的失败定义就是"这个事务一个向量都不留"。Chroma
-        侧是 best-effort（撤不动就记日志，业务异常照样往上抛），因为 Chroma 没有事务，能
-        做的只有逆序补偿；补偿失败的窗口写进交付说明的"必须业主真机"清单。
+        R639-A：mirror 可以是 None——那正是 VECTOR_DUAL_WRITE 关掉的档位，此时没有 PG 事务
+        可回滚，但遗留目录刚接了新行、也可能刚被硬删过旧行，逆序补偿这一半仍然要做，而且它
+        是这一档里唯一活着的撤销通道。有条腿时 mirror.rollback() 仍是硬要求：PG 侧的失败定义
+        就是"这个事务一个向量都不留"。Chroma 侧是 best-effort（撤不动就记日志，业务异常照样
+        往上抛），因为 Chroma 没有事务，能做的只有逆序补偿；补偿失败的窗口写进交付说明的
+        "必须业主真机"清单。
 
         stale_deleted 必须是 Chroma 那一次 delete 真的成功之后才为真：没删过就不能凭空
         add 一遍，否则"回滚"本身会变成一次写入。
         """
+        if mirror is not None:
+            try:
+                mirror.rollback()
+            except Exception as exc:
+                logger.error(f"向量镜像回滚失败，PG 事务状态未知: {exc}")
         try:
-            mirror.rollback()
-        except Exception as exc:
-            logger.error(f"向量镜像回滚失败，PG 事务状态未知: {exc}")
-        try:
-            if written_ids and not self._writes_go_to_pgvector():
+            if stale_deleted and not snapshot:
+                # R639-A：旧行已经被硬删，而手里没有快照——这时候再撤走本次的新行，这份文档
+                # 就在两库里一起消失了。宁可不撤，也要把这一格说出去（在册码进日志）。
+                logger.error(
+                    f"补偿无法忠实还原 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: {len(written_ids)} "
+                    f"枚新行要撤，但旧向量快照读不出来，保留本次新行交人工核对 —— "
+                    f"半截回滚比不回滚更糟"
+                )
+            elif written_ids and not self._writes_go_to_pgvector():
                 # R60 判据③：停写态里这批 id 从没进过遗留腿，撤它们就等于删掉上一版
                 # 还留在 Chroma 里的那些行 —— 补偿只能撤"本次真写过的"，没写过就不许动手。
                 self.collection.delete(ids=list(written_ids))
@@ -1676,16 +1702,23 @@ class DocumentRetriever:
         written_ids = []
         stale_deleted = False
         try:
-            if mirror is not None and legacy_ids:
+            if legacy_ids and self.stores_vectors and (
+                    mirror is not None or self._legacy_rows_may_be_shadowed_by_pg()
+            ):
                 # 删之前先留快照：PG 侧的回滚是事务级的，Chroma 侧只能靠它逆序放回。
+                # R639-A：这道闸门原来挂在 mirror 非 None 上，于是关掉 VECTOR_DUAL_WRITE 之后
+                # 快照不读、补偿不跑、而下面那一支遗留腿的 delete 照删不误——三件事一起静默。
+                # 快照护的是"被硬删的旧行放得回去"，它属于遗留腿，不属于那条 PG 腿：谁要被
+                # 硬删，谁就得先有快照。读不出就当场拒写，用的是在册那枚码，本单不新造。
                 # R60 判据③：快照只读遗留腿**真正持有**的那批 id。只住在 PG 的行没有 Chroma
                 # 副本可放回，硬读一份空快照再把 stale_deleted 记成真，等于把"放不回去"
                 # 写成"放得回去"。开关在 chroma 时 legacy_ids == stale_ids，与今天逐字同形。
                 snapshot = self._vector_snapshot(legacy_ids)
                 if snapshot is None:
                     raise VectorWriteRejectedError(
-                        f"拒绝写入向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: 双写已开启，"
-                        f"但 {filename} 的旧向量读不出快照，删掉就无法忠实还原",
+                        f"拒绝写入向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: {filename} "
+                        f"的旧向量在遗留目录里读不出快照，删掉就无法忠实还原 —— 宁可不写，"
+                        f"也不留一次撤不掉的删除",
                         reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
                     )
             if stale_ids:
@@ -1718,9 +1751,10 @@ class DocumentRetriever:
                 # 两腿都写完才 commit：这个 PG 事务里躺着本次全部删与写，提交失败就整体退回。
                 mirror.commit()
         except Exception:
-            if mirror is not None:
-                self._undo_vector_write(mirror, written_ids, snapshot,
-                                        stale_deleted=stale_deleted)
+            # R639-A：补偿不再挂在那条腿上。关掉 VECTOR_DUAL_WRITE 时 mirror 是 None，可遗留
+            # 目录刚刚接了新行、刚刚也被硬删过旧行——正是最需要有人逆序撤回来的那一刻。
+            self._undo_vector_write(mirror, written_ids, snapshot,
+                                    stale_deleted=stale_deleted)
             raise
         finally:
             if mirror is not None:
@@ -2069,16 +2103,19 @@ class DocumentRetriever:
         snapshot = None
         stale_deleted = False
         try:
+            if legacy_ids and self.stores_vectors and (
+                    mirror is not None or self._legacy_rows_may_be_shadowed_by_pg()
+            ):
+                # R639-A：同 add_document。这一支在 off 态整块被跳过，于是遗留腿被硬删、
+                # 快照一份没读、补偿也够不着；读不出快照就当场拒删（在册码，不新造）。
+                snapshot = self._vector_snapshot(legacy_ids)
+                if snapshot is None:
+                    raise VectorWriteRejectedError(
+                        f"拒绝删除向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: {filename} "
+                        f"的旧向量在遗留目录里读不出快照，删掉就无法忠实还原",
+                        reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
+                    )
             if mirror is not None:
-                if legacy_ids:
-                    # 同 add_document：读得出旧向量才敢删，否则回滚时无货可放回。
-                    snapshot = self._vector_snapshot(legacy_ids)
-                    if snapshot is None:
-                        raise VectorWriteRejectedError(
-                            f"拒绝删除向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: 双写已开启，"
-                            f"但 {filename} 的旧向量读不出快照，删掉就无法忠实还原",
-                            reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
-                        )
                 # PG 删全集（它持有的那些行一枚都不许留下），Chroma 只删它自己持有的那些。
                 mirror.delete(ids=list(stored_ids))
             if legacy_ids:
@@ -2089,8 +2126,8 @@ class DocumentRetriever:
             if mirror is not None:
                 mirror.commit()
         except Exception:
-            if mirror is not None:
-                self._undo_vector_write(mirror, [], snapshot, stale_deleted=stale_deleted)
+            # R639-A：同上，这一支也不许再要一条它拿不到的腿。
+            self._undo_vector_write(mirror, [], snapshot, stale_deleted=stale_deleted)
             raise
         finally:
             if mirror is not None:

@@ -236,16 +236,18 @@ def test_the_tool_names_every_write_site_the_registered_roster_knows(tool, roste
 
 def test_turning_the_switch_off_is_measured_as_a_loss_not_a_green(tool, roster, retriever_source,
                                                                  pg_store_source):
-    """本单的核心读数：这一格现在**不能翻**，而且不许由"没发现"冒充"可翻"。"""
+    """本单的核心读数：这一格现在**不能翻**，而且不许由「没发现」冒充「可翻」。
+
+    R639-A 治掉补偿那一族之后，这一枚必须同时钉两件事：剩下的四族仍在场（少一族＝量具坏了，
+    不是产品码落地），被治掉的那一族当场断言**不在场**。两个方向都缺就是空转。
+    """
     reading = measure_static(tool, roster)
     assert {"chroma_write_gate_reopens",
-            "compensation_needs_a_leg_it_wont_have",
             "delete_set_blind_to_pg_only_rows",
             "question_rehomes_to_legacy_store",
             "read_leg_waits_for_chroma_receipt"} <= reading["codes"], reading["codes"]
+    assert "compensation_needs_a_leg_it_wont_have" not in reading["codes"], reading["findings"]
     assert reading["exit"] == tool.EXIT_CANNOT_FLIP
-
-
 def test_the_stop_write_predicate_is_still_a_conjunction_of_the_registered_terms(tool, roster,
                                                                                retriever_source):
     """前提钉：判定今天由这几枚条件与成，其中一枚就是这枚旋钮。前提被改掉时本单整问句要重对。"""
@@ -425,23 +427,33 @@ def test_the_questions_that_move_back_to_the_legacy_directory_are_named(tool, ro
             "DocumentRetriever._document_rows_by_leg"} <= subjects, subjects
 
 
-def test_the_compensation_family_is_reported_as_needing_a_leg_it_wont_have(tool, roster,
-                                                                          retriever_source,
-                                                                          pg_store_source):
-    """补偿那一族的闸门文字从赋值现取：写侧那条腿改名（`mirror`→`leg`），判据一字不改。
+def test_the_compensation_family_is_reported_only_while_a_leg_gate_exists(tool, roster,
+                                                                         retriever_source,
+                                                                         pg_store_source):
+    """补偿那一族的判定仍从**赋值现取腿名**：有门才报；R639-A 把门摘掉之后必须归零。
 
-    这一枚钉的是量具自己：谁把"腿"的名字写死成字面量，改名那一刀就会让它闭嘴——那正是
-    本仓记过一整族的"名字会漂"病。
+    R633 立这一枚时两枚调用点都站在 `if mirror is not None:` 之内，量具必须报；R639-A 摘掉
+    之后必须不报。谁把「腿」的名字写死成字面量，改名那一刀就会让它闭嘴——那一格照旧留着。
+    三个方向都要有牙，缺一个都是空转：现取归零、改名同判据、把门包回去必须复现。
     """
     baseline = measure_static(tool, roster)
-    codes = {item["code"] for item in baseline["findings"]}
-    assert "compensation_needs_a_leg_it_wont_have" in codes, baseline["findings"]
+    assert "compensation_needs_a_leg_it_wont_have" not in baseline["codes"], baseline["findings"]
+
     renamed = re.sub(r"\bmirror\b", "leg", retriever_source)
     assert "leg = self._open_vector_mirror()" in renamed, "刀要改的是名字，不是生产者函数"
     reading = measure_static(tool, roster, retriever=renamed)
-    assert "compensation_needs_a_leg_it_wont_have" in reading["codes"], reading["findings"]
+    assert "compensation_needs_a_leg_it_wont_have" not in reading["codes"], reading["findings"]
 
-
+    target = "self._undo_vector_write(leg, [], snapshot, stale_deleted=stale_deleted)"
+    eol = "\r\n" if "\r\n" in renamed else "\n"
+    lines = renamed.split(eol)
+    hits = [n for n, line in enumerate(lines) if line.strip() == target]
+    assert len(hits) == 1, "变异没落地：调用点原文漂了，本枚牙要重取坐标"
+    pad = " " * (len(lines[hits[0]]) - len(lines[hits[0]].lstrip()))
+    lines[hits[0]] = pad + "if leg is not None:" + eol + pad + "    " + target
+    rewired = eol.join(lines)
+    back = measure_static(tool, roster, retriever=rewired)
+    assert "compensation_needs_a_leg_it_wont_have" in back["codes"], back["findings"]
 def test_the_tool_carries_no_second_list_of_write_sites(tool):
     """本单硬规：写点清单只有一份。量具里不许出现第二份身份、函数名或 `collection.add` 的字面抄本。"""
     source = TOOL_PATH.read_text(encoding="utf-8")
