@@ -5724,3 +5724,29 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 
 **七、下一格按序（不许停在第一项）**
 收席四枚（逐枚：取证现取→apply 点名货→对判据→两态亲跑同数→代提交）→ 全量门 `python scripts/run_gate.py`（并发脚本自选、纸上不写死 `-n`；要完全安静的树）→ 重建后端镜像 `docker compose --env-file deploy/.env.server build migrate` ＋ `up -d --force-recreate backend worker scheduler` → **run22 全 105 窗**（63–118 分钟；必带 `EVAL_SIDECAR`＋`EVAL_APPROVAL_LEDGER`＋`EVAL_RECORD_LANE_READOUT=on`，`REPORT_LANE_VIA_QUEUE=off`；一窗多判据 A② 档位名派生／A④ 跨代次对子／C③ 新集不退化／D-3 帧账对照）→ D 门相 2 单独窗。窗内硬禁：并树、跑测试、动容器、打模型。
+
+### 172 第十三班第九格（10-04 18:4x-19:0x·总控线·主树 `b6344d8`·**单模型未切换**·心跳零枚·在飞 4 枚＝满槽）：🔴 订正「计划书 8 张零提交」＝过期账 · 17 张 PARTIAL 按差码／差窗二分 · R640 与 R642 判据预配 · run22 前置现取 · V2 在树面读数
+
+**一、🔴 账面订正：那句「8 张零提交」已经不成立**
+本席在主树 `b6344d8` 现跑 `python scripts/audit_plan_ticket_ledger.py` ⇒ **在册 43 号：LANDED＝23／PARTIAL＝17／ZERO＝3，RESULT=PASS（0 条违规）**。LANDED 名单含 **R30 R32 R33 R42**（正是上一班列进「零提交」的那几枚），PARTIAL 含 **R25 R26 R27 R28 R29 R31 R35 R37 R38 R43 R44 R46 R47 R48 R50 R51 R52**，ZERO 只剩 **R39（裁定不建·沿用 R17）·R143（今日 §167 三已结案，尺还记 ZERO＝本单要治的假账）·R144（外来号：业主给前端的建议号，从没在后端立过）**。
+⇒ 从今天起别再抄「20 单零提交／8 单零提交」那两版旧账。**真形状是：码大体在树上，欠的是判据，而判据绝大多数欠窗不欠码。**
+
+**二、17 张 PARTIAL 按「差什么」二分（这条决定派工还是开窗）**
+- **差窗（14 张·只能靠测量）**：R25 容器内改一行不 build 即生效／R26 容器内 `nvidia-smi` 有卡（H11）／R27 端到端 −≥35 s／R28 30 题不退化／R29 生成轮 30.6→≤22 s／R31 片段不重叠逐字无缺／R35 跨部门跨密级命中 0 条（P0，按裁定记「未验」）／R37 队列失败有终态与原因码（**＝R641＋D 相 2 复窗**）／R38 `usage` 非零且与 Ollama 自报一致／R43 E3 档 `cached_tokens>0`／R44 热集覆盖 95% 查询（欠一台安静机器重量）／R47 同义词题命中改进／R50 全量重建可中断续跑／R52 断网可装可跑。
+- **差码或差前置（3 张）**：**R46** 采纳/驳回信号→相关度先验（信号面还没有，是真缺码）／**R48** 首屏结论卡片＋来源（要动 `frontend/**`，D13 已授权但要排前端线）／**R51** 端到端与分段加总误差 <1%（今日 R631 量到三窗全 FAIL，归因单 **R636 在飞**，修复单等它交回再立）。
+
+**三、待投两枚的判据全文（槽位一空即投，别再让它们只活在脑子里）**
+- **R640＝账尺派生化**：写域 `scripts/audit_plan_ticket_ledger.py`＋新 `tests/test_r640_*`＋新 `docs/testing/r640-*`；🔴 禁区 `docs/handoff/**`（只读账本不写账本，改表让尺变绿＝造假）。要三件事：① 把 R143·R144·R39 三行硬编码改派生——R143 应读成 **CLOSED（凭 §167 三的结案与 r143c 工件）**，R144 应被认成**外来号**（不在计划书 §5.2 表内）而不是编个状态，R39 从 ZERO 单列成**「裁定不建」不计零提交**；② PARTIAL 的**理由句**必须从纸面派生——现取那句「R51 差：② 端到端与分段加总误差 <1%（未量）」已被今日 R631 推翻（量到了、三窗全 FAIL），改判据要看内容不看提交标题；③ 三把反证刀各配正控（假 sha／摘掉裁定句／改回硬编码）＋两态亲跑同数。
+- **R642＝D-3 量具补半格**（§167 二那格的缺口，根因很具体）：`run21b` 12 枚里 **8 枚 terminal 读的是 `awaiting_approval` 挂起那一刻的快照，批准之后没有重读终态载荷**⇒ D-3 只能判「未量到」。写域＝`scripts/eval_transport_ask_v2.py` 的批准支＋新 `tests/test_r642_*`＋新 `docs/testing/r642-*`；判据＝批准之后**必须再读一次** `/api/v1/queue/status/...` 并把两次读数都留档（缺证词记 None）；🔴 不许改产品码来凑读数，不许把「没重读」折成「读到了空」；禁区含 `app/**`、`docs/handoff/**`、契约、评测夹具。并树后由总控在 D 相 2 复窗里取那 8 枚的真读数。
+
+**四、run22 全 105 窗前置（本席现取，波次一清就能开）**
+- 命令原文：`python scripts/eval_window_shard_driver.py --tag run22 --plan` → `--run` → `--commit`（🔴 只有 `--commit` 才拼 `run22-answers.jsonl`，之前别判「答案文件不存在」），再 `python scripts/run_quality_evaluation.py --fixture tests/fixtures/business_evaluation_100.jsonl --answers <run22-answers.jsonl> --output <run22-score.json>`。
+- 必带 env：`EVAL_SIDECAR`＋`EVAL_APPROVAL_LEDGER`＋`EVAL_RECORD_LANE_READOUT=on`，`REPORT_LANE_VIA_QUEUE=off`（相 2 单独窗）。
+- 现场核对（18:4x 现取）：七枚容器全 healthy；`backend|worker|scheduler` 内 `MODEL_CONTEXT_TOKENS=8192`／`VECTOR_DUAL_WRITE=on`／`REPORT_LANE_VIA_QUEUE=off`；`ollama` 容器 `OLLAMA_CONTEXT_LENGTH=8192`（`StartedAt=2026-10-04T08:02:03Z`）⇒ **那两半今天实测同数**，§165 五把它列进「待业主」是过期账，就地改口。
+- 盘上已有 `run21`／`run21b` 各 12 行（报告档 12 题子集，非全 105），别当全量窗用。
+- 续跑防断网：照 §166 三那条配方（ledger 已 rc=0 的步自动跳过），脚本正文一律 ASCII、仓路径 `chr()` 现拼（守 #109）。
+
+**五、V2 在树面读数（回答「V2 做到哪了」用，本席 18:5x 现取）**
+`app/api/v1` 路由枚数：`chat` 19／`alerts` 9／`observability` 8／`intelligence` 8／`data` 7／`notifications` 6／`open_platform` 6／`artifacts` 4／`feedback` 4／`auth` 11／`dashboard` 2。`app/rag` 件：`ocr.py` 20 KB／`spreadsheets.py` 34 KB／`tables.py` 40 KB／`hot_index.py` 32 KB／`pg_store.py` 56 KB／`indexing.py` 92 KB。⇒ **V2 各腿（OCR／表格／Excel-CSV／Dashboard／图谱／审批／通知中心／Artifact-Trace）码大体在树上，欠的是真数据与门**：`dashboard.py` 只有 2 枚路由（最薄），图谱面 5 枚文件带 `knowledge_graph` 字样，审批面 23 枚文件命中。
+
+**六、通道事实（今日新增，写给下一班）**：对半路停下的老席发**一句**短句（`send_input`）实测成功——`Plato`/R638 收到后立刻恢复施工并交出派生基线；两枚死席（#112/#113）都是死在**长消息**上。⇒ 老席续投的正解＝**一句以内、只说「继续本单交齐剩余哪几样」，判据不许在续投里改写**（要改就落账面立单）。
