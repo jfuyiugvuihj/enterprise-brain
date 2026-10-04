@@ -5818,3 +5818,17 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 **五、R643 已投出**＝`01a106f3-5c0d-7bb1-9bb9-aba3c2531e59`… **以本条为准的是现取真值 `01a106f3-5c0d-7bb1-9bb9-aba3c2fc2531`**（`Helmholtz`，parent＝本席，20:46:14）@`be-r643`@`02ee2e6`。治的是**判据② 的分母折叠**：run20k `doc-04` 同题两发（各 27 事件）27,490.9 与 27,244.6，折叠把另一发丢在账外、差 0.90%＝与 1% 线同数量级 ⇒ 判据② 现在的分母是「这题平均多久」而不是「这一发多久」。R644（补覆盖面）仍等 R643 并完再算。
 
 **六、🔴 本席新裁一格（评测集改题排 run22 之后）**：在册件 `scripts/r598_disposition_ledger.py`／`scripts/r598_pending_jia.py` 已把「改不了金标」那一族量清并**备而不落**（甲案凭据齐、待的是重录写域外那枚 `tests/test_r401_unscorable_rows_are_named_not_dropped.py`）。本席裁定：**run22 先用旧集打**——因为 `scripts/r634_category_delta.py` 的跨代次对子要求**题集 sha 相同**（今天现取：三窗 revision 与题集 sha 全等 ⇒ **rc=4「量不到」**，白纸黑字）。改题会换 fixture sha ⇒ 直接打断 A④ 唯一的对子来源。⇒ 改题在 run22 收窗之后按甲案走，重录域外件由本席落笔。
+
+### 175 第十四班第五格（10-04 21:1x-21:4x·总控线·主树 `88ba01e`→`2d2680b`·**单模型未切换**·心跳零枚·automation-2 仍 PAUSED）：R639-A 并树 · 本席代改两枚过期牙（§173 六那笔欠账结清）· R645 投出 · 全量门前最后一族红定性
+
+**一、R639-A 已并树 `2d2680b`**（`Aristotle`@`be-r639`@`45d5f55`，5 files／+948 −42）：本席亲跑在册量具（只读调用，禁区件一字未动）＝**发现 8 条／`compensation_needs_a_leg_it_wont_have` 2→0／exit=1「不能翻」**，与执行层读数同数；`read_leg_waits_for_chroma_receipt` 2→1（`read_topk` 那一半随吞点里有了 `raise` 消掉，`read_corpus` 那一半在写域外原样在册）。两态亲跑同名 16 枚＝state① **302 passed／5 failed／75.57 s**、state② **305 passed／2 failed／74.86 s**（总数两态同为 307，差的那 3 枚正是本席同批重落的 r387 派生值，不是货错）。产品码只动 `app/rag/retriever.py`（62 增 25 删），零枚新造错误码。
+
+**二、本席欠账结清（§173 六签的「R639-A 收货时同批代改」）**：`tests/test_r633_dual_write_off_precondition_teeth.py` 两枚过期期望已反向——`::test_turning_the_switch_off_is_measured_as_a_loss_not_a_green` 断言体从五族改四族并**当场断言被治掉那一族不在场**（少一族＝量具坏了，多一族＝产品码没落地，两个方向都得有牙）；`::test_the_compensation_family_is_reported_as_needing_a_leg_it_wont_have` 改名 `..._only_while_a_leg_gate_exists`，补成三向有牙：现取归零／`mirror`→`leg` 改名同判据／**把腿门包回去必须让那一族复现**（这才叫牙还在）。用的文本是执行层在 TEMP 影子检出实跑过的那一份（35 passed／0 failed），不是草稿；抄写时按它的提醒把行尾从字符串自取（`read_text()` 会把 CRLF 归一成 LF）。量具本体、名册、豁免一律没动。
+
+**三、r387 血缘纸两格由本席重落**（本单撑长行号所致）：`docs/perf/r387-label-lineage-2026-09-27.md` 表第 10 跳那一格与正文那一枚各重落一次，🔴 值只由在册量具 `scripts/r387_label_lineage.py --no-db --emit-doc-cells` 现取派生落地、本条不复述坐标（复述＝又种下一枚手抄）。复跑 r387＋r400 两枚件＝**57 passed／1.75 s**。
+
+**四、🔴 全量门前最后一族红已定性并派工**：主树同名 16 枚里剩 2 枚红＝`tests/test_r354_delete_audit_shares_the_owner_reader.py::test_the_current_contract_is_the_base_plus_an_appendage` 与 `::test_the_appendage_deletes_nothing_and_adds_exactly_one_section`，红句「契约的历史被动过：第 114053 字节起与基点不同」。归因三枚凭据：① 本席在主树跑、`docs/api/contract-v1.md` 的 `git status --porcelain` 为空（不是施工脏态）；② `git log -S`＋旧句里那枚 `spans.py` 过期坐标（冒号后三位数字，本条不复述）反查 `docs/api/contract-v1.md` 直指今天 `497ac38`（并树 R630）把契约**中段**两枚手抄坐标改成派生锚；③ 该改动方向是对的（对外契约里烤死过期行号正是本仓这两天在治的病）。⇒ **R645 已投**（`Harvey`@`be-r645`@`2d2680b`，id 三取验真）：把「逐字节前缀相同」换成**具名差异账**，账上今天恰好一枚、只收「手抄坐标→`文件::符号`」这一种形状，四把反证刀含「禁止把 `BASE` 前移灭红」，字节偏移不许手抄进钉。禁区写死 `docs/api/contract-v1.md` 一字不许动，也不许新追加一节来绕过前缀判定。
+
+**五、下一格待派（本席记号 **R646**，等槽位）**：执行层只读取证交回一枚真隐患——`docs/deployment/chroma-retirement-path.md` 手抄了 7 枚 `app/rag/retriever.py` 的行号，**已错位 2 枚且没有任何钉管**（其中一枚现在落在本单新增的那个具名判定上，另一枚落在 `delete_document` 之后的一句注释上）。🔴 **R60 停写那一单照这张纸下刀会砍错位置**，所以它排在 R639-A 之后、停写窗之前必须先治。判据拟为：把这张纸的行号改成 `文件::符号` 派生锚＋补一枚常驻钉让「这张纸再出现 `.py` 冒号跟数字」当场红，写域只给这一枚 .md 与新钉。
+
+**六、run22 前置现状（未开窗）**：三枚执行层在飞（`Plato`/R638-R、`Helmholtz`/R643、`Harvey`/R645）。波次清空后按序＝全量门（要完全安静的树）→ 重建镜像＋`--force-recreate`（H12 已实测容器内 `app/api/v1/observability.py` 与主树 md5 不同，必须重建）→ run22 全 105 窗（带 `EVAL_RECORD_LANE_READOUT=on` 与 `EVAL_POST_APPROVAL_READBACK=on`）。🔴 门现在还不绿（`497ac38` 那族 2 枚红等 R645），所以镜像重建排在 R645 并完之后，别拿红门当基线。
