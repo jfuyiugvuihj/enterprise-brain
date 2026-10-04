@@ -6005,3 +6005,25 @@ No reading is recorded here. The gate that keeps this honest is
 `tests/test_r635_surface_pointers_are_derived.py` (anchor resolution plus the widened roster
 measure over the whole blockers table) and `tests/test_r635_counter_evidence_teeth.py` (a copied
 line number fails on shape even when the number happens to be right today).
+
+## Carrier landed: the 家族 A reading tool is in the repo (`R632`)
+
+One phrase in the handoff table above is **declared void here**, quoted verbatim rather than erased:
+
+> 该件落仓之前这一条跑不起来，跑不起来就是「取不到」，不许手算
+
+It was true when written. `scripts/eval_slo_lane_readout.py` is now committed — it landed as
+"R632" (merge `22d75ad`, 2026-10-04) — so the family-A slot's "before the carrier lands" clause no
+longer describes the tree. What did **not** change: the sentence's second half stays in force. A
+missing reading is still reported as "cannot obtain", never hand-computed, and the family-A numbers
+still only come from `python scripts/eval_slo_lane_readout.py --window <tag>` against a real window.
+
+Still absent, and therefore still owed by families B/C/D: `scripts/eval_slo_wire_readout.py` (first
+-screen and progress-interval legs) and `scripts/eval_cache_hit_probe.py`. Their rows above keep
+reading as written.
+
+The carrier also gained two off-by-default switches with the same merge, both recorded so a future
+window is not compared against the wrong shape: `EVAL_DECLARE_LANE_PER_TIER` (declare each row's own
+lane; a window with it on must not be pooled with `run18`/`run20k` for the end-to-end percentile)
+and `EVAL_RECORD_LANE_READOUT` (copy the three response headers into a third file, touch nothing
+else). Neither switch changes the payload or the latency caliber when it is off.
