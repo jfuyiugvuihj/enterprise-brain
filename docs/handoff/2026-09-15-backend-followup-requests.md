@@ -5664,3 +5664,23 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 **四、在飞与槽位（现取）**
 - 在飞 **1 枚**：Faraday／R545 返工（be-r545b）。已 close：Pasteur／Gibbs／Kant／Feynman／Ptolemy／Darwin／（Pasteur 前班已 close）。业主口径 3～4 枚上限，故本笔之后可再投 2～3 枚。
 - 主树待提交货已清空到只剩账面三档＋恒脏 `chroma_db/chroma.sqlite3`＋`.zcodeignore`＋业主作业目录；`docs/handoff/2026-09-17-pgvector-adoption-plan.md` §16 那笔订正（R633 交回的两格：判据④ 从未在生产库跑过＝真；「回滚演练没跑过」＝假，`reused_suites` 点名 r575＋r587 四步 ok:true）随本笔一起提交。
+### 169 第十三班第六格（10-04 20:0x-·总控线·主树 d1118af／**单模型未切换**／心跳零枚·automation-2 仍 PAUSED）：窗内零争用四件·R633 那两格总控亲验·R545 同族病处置·删除清单这格结字
+
+**一、🔴 R633 留给总控的两格「执行层读数·总控未复核」——本席亲验，两句都成立**
+- 亲读 `app/rag/retriever.py::DocumentRetriever._writes_go_to_pgvector`（定义处现取，未抄行号）：`return bool(pg_store.dual_write_enabled() and indexing_module.pgvector_writes_are_primary())`，且 `stores_vectors` 先挡离线 `_JsonCollection`。⇒ 把 `VECTOR_DUAL_WRITE` 拨 off 的净效果**不是停写**，是「PG 不再收新行、遗留 Chroma 腿重开接行」。执行层纸面那句「恰恰相反」＝本席亲验成立。
+- 亲读补偿那一支：`_undo_vector_write` 两枚调用点**各自站在** `if mirror is not None` 之内（`mirror.commit()` 与 `_undo_vector_write(...)` 同挡）。⇒ 双写 off ⇒ 没有 mirror ⇒ 补偿整支不可达，而同一时刻遗留写闸门是开的 ⇒ **回滚面静默失效**。这条是本格最贵的一格（P9），本席单独复现，不是转抄。
+- ⇒ 裁定：**R60「停双写」的正解必须走产品码显式化**（off 态的读腿／删除问句／名单／补偿四支改成显式报错而不是搬家或静默），另立 **R639**（写域 `app/rag/retriever.py` 独占，现无人持有）。🔴 **不许用拨旋钮来"实现停写"**——那会造出「Chroma 重新长行而没人撤它」的盘面，比双写更坏。
+
+**二、本波在飞（现取）**：4 枚到顶——R636 `Leibniz`（`be-r636`）／R637 `Averroes`（`be-r637`）／R638 `Plato`（`be-r638`，基点均 `473235f`）＋ R545 `Faraday` 返工（`be-r545b`@4da0bad）。槽位一腾先投 R639，再按 R636 交回的判据投分段账修复单。
+
+**三、run22 前置（本席现取，全部只读）**
+- 容器 7 枚全 `healthy`／`Up 2 hours`（backend·worker·scheduler 同镜像 `enterprise-brain:local`，postgres＝`pgvector/pgvector:pg16`）；`docker version` server 29.7.2；`powercfg /q ... STANDBYIDLE` 当前交流索引 `0x00000000" + Q +"（永不睡，无需改动，也**不许改**）。
+- 镜像落后两笔 `app/api/v1/observability.py`（`497ac38` R630／`b1a4760` R635 的文案坐标）⇒ 开窗前 `docker compose --env-file deploy/.env.server build migrate` 再 `up -d --force-recreate backend worker scheduler`（改 env 必须 recreate，`docker restart` 不重读 `env_file:`）。
+- 驱动 CLI 现取（`scripts/eval_window_shard_driver.py`）：`--tag`／`--plan`／`--run`／`--commit`／`--expect-backend`／`--env-file`／`--retries`（默认 2）／`--dead-streak`／`--retry-sleep`（默认 45 s）／`--allow-sample-merge`。🔴 只有 `--commit` 才按 fixture 原序拼 `<tag>-answers.jsonl`，在它之前不许判「答案文件不存在」。
+- 一窗多判据（本格定死，省窗）：A② 档位名派生读数（开 `EVAL_RECORD_LANE_READOUT`，家族 A 件已于 `22d75ad` 落仓，契约那句「落仓之前跑不起来」已由本席文末追加作废）／A④ 逐类不退化（要**不同 revision 的跨代次对子**，与 run18／run19／run20k 的 `a2bbf133` 配对）／C③ 新集分数不退化／D-3 帧账对照。开窗必带 `EVAL_SIDECAR`＋`EVAL_APPROVAL_LEDGER`（今日已证：不带就是把 105 枚帧账读成 0）；`REPORT_LANE_VIA_QUEUE=off` 与 D 门相 2 窗物理互斥，分开跑。
+
+**四、删除清单这格结字**：`be-r60ctl`／`be-r602b`／`.tmpfix` 三件今天 `Test-Path` 全 False（早已不在盘）；`git worktree prune --dry-run -v` 零输出，登记 77 棵工作树全部在盘 ⇒ **无待删项**，本格结案。（另记：77 棵里约 60 棵是历史执行层树，要不要批量清本席不擅动——每棵都得先逐枚证零独有内容，属业主面决定。）
+
+**五、前端在册欠账已过期（本席现取，未动一字节）**：`UiErrorState` 现落在 **18** 枚 `.vue`（旧账写「21 处」）、`frontend/src/components/DashboardPanel.vue` 裸 `<button` **1** 枚（旧账写「9 枚」）。⇒ 那两格不能再当拦路石报给业主；V2 前端剩余要按现取重立判据。
+
+**六、盘面与推送**：主树 HEAD `d1118af`（`473235f` 账面→`df72bc1` 名册三行→本笔）；工作树只余恒脏 `chroma_db/chroma.sqlite3`＋`.zcodeignore`＋业主作业目录。`git push gitee codex/data-file-catalog` 已推 `ee92c1f..d1118af`（7 枚）rc=0；`origin`（GitHub）仍 TLS connect error 未推，照实记。
