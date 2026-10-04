@@ -781,9 +781,15 @@ SLO_BLOCKERS: dict[str, str] = {
         "groups under lanes.unknown and no per-tier population exists to take a P95 of."
     ),
     "first_token_not_a_stage_sample": (
-        "first_token_at is recorded on a model span (app/trace/spans.py:174) and persisted "
-        "(app/trace/store.py:259), but app/common/stage_timing.py:330-345 never reads it into "
-        "a sample, so 首屏 is computable per trace and not from the in-process ledger."
+        "first_token_at is stamped by ``app/trace/spans.py::ExecutionSpan.mark_first_token`` and "
+        "emitted on the finished model span by ``app/trace/spans.py::ExecutionSpan.finish``; "
+        "``app/trace/projections.py::project_span`` folds it into the model_calls row, whose "
+        "columns are the roster in ``app/trace/schema.py::TRACE_TABLE_COLUMNS``, and "
+        "``app/storage/persistence.py::PostgresPersistenceAdapter.upsert`` writes it, taking the "
+        "column set from ``app/storage/persistence.py::_TABLES`` -- ``app/trace/store.py`` pushes "
+        "sealed projections and names no column; ``app/common/stage_timing.py`` folds finished "
+        "spans into ledger samples yet its ``samples_from_span_payload`` builds a ``StageSample`` "
+        "with no field for it, so 首屏 is computable per trace and not from the in-process ledger."
     ),
     "wire_first_text_not_recorded": (
         "the plan's 首屏 is the first ``text`` event on the wire (计划书 §3.1). The only "
