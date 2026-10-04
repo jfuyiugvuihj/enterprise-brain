@@ -504,3 +504,14 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 - **③ 评测集改题＝业主批准**（D10 甲案那一步）：准许改 `tests/fixtures/business_evaluation_100.jsonl` 本体与钉住它的 `tests/test_evaluation_report.py`、`tests/test_r94_eval_evidence_coverage.py`。🔴 批准的是**逐枚处置**，不是「让分数好看」：`documents/**` 一字节不许动、105 行与 tier/category 分布守恒、判分器 `app/quality/eval.py` 不在这一刀里（拒答/输出形状那一档另立 R600）、宁可少救几枚也不许放宽 substring 规则凑数。单号 **R598**，判据全文见跟进单 §160。
 - **④⑤ 两格转总控执行**（业主 10-03「你办」）：R487 三十枚演示账号（`scripts/provision_bulk_accounts.py`，dry-run 先行）；V2 #13 那份扫描件按业主令做成**合成件**，不打客户真件、不改 `documents/**` 语料面。
 - **⑥ `INDEX_BACKEND` 出厂默认＝业主裁定「不翻」**：`app/rag/indexing.py:50 INDEX_BACKEND_DEFAULT` 保持 `"chroma"`，「客户侧写 `INDEX_BACKEND=pgvector` ＋ `docker compose up -d --force-recreate`」从 V1 的最后一格改挂**交付阶段项**（写进交付前检查项）。本机 `deploy/.env.server:77` 已显式 `pgvector`，那一格不动。理由如实写在这儿：R60（停 Chroma 写）仍在飞，默认翻早于退役完成＝把一个还没拆完的遗留件写成「不用配」，下一位接手人就会拿假默认去装客户机。
+
+
+## §6 勘误追加（10-04 第十三班第二格·A④ 口径裁定＋两笔在册假账·只追加，上面任何一行一字不改）
+
+- **① A④「逐类不退化」的判据主体换形**（总控代业主裁定，可推翻；凭据＝今日并树的 `scripts/r634_category_delta.py`，执行层 Gibbs／树 be-r634，并树笔 `958df58`）：
+  - 现取盘面：三扇完整窗 run18／run19／run20k 的 `revision` 全等 `a2bbf133`、`fixture_sha256` 全等 `686c564f` ⇒ **没有跨代次对子**；run21／run21b 换了指纹（`6b554db8`）但同 revision，且只有 12 题。⇒ 今天任何「逐类没退化」的说法都只能是**未量**，不许翻绿。
+  - 同码复跑量出的摆动底（run18→run19，n=1 对子，单样本下界不是分布）：可判类目最大摆 `0.1666`（6 枚题掉 1 枚），19 枚那一族摆 `0.1579`（掉 3 枚），p95 两跑之间差到 `12.4 s`。已登记的两笔真退化（`doc-19` 0.6842→0.6316＝0.0526、口径冲突 0.4211→0.3158＝0.1053）**都落在这把底以内** ⇒ 「类目 delta 超没超底」这个问法在 19 枚题的量级上分辨不出 1～3 枚题的退化。
+  - 🔴 新判据（题级取严，类目 delta 降为公布读数）：对照窗内**任一类目出现掉分题**，必须逐枚归因到四型（答得不同／没答／哨兵／批准失败）之后才允许判；四型里只要出现「没答」或「批准失败」即判红，「答得不同」须与该题在基线窗的出处对过账才算解释完毕。类目 delta 只作每轮公布读数，**不作门槛**。底换成形之前（多窗分布），A④ 一律记「未验」。
+  - 开窗前置新增硬条件（今日实测出证的两个坑）：① `EVAL_SIDECAR`／`EVAL_APPROVAL_LEDGER` 必须设——三扇的 `latency_ms.frame_ledger_rows` 现读全为 0 且无 `approval_ledger` 格，所以「p95 与逐发帧账对过」在这三扇上**不成立**；② `index_backend` 为**空串**的窗（run20k 即此形）＝未设＝缺省 Chroma 读腿，不许与 pgvector 窗混在同一张同码复跑表里。
+- **② 🔴 在册假账一笔（本席自己报出去的）**：`unsupported_claim_rate` 那句「五连 0」改判为**没量**。现取三扇 answers 共 315 行、带 `claims` 键的＝**0 行**，而这把尺只从 `claims` 数无据断言 ⇒ 恒 0 是零分母，不是「客户没拿到编造答案」。凡引用这个 0 的格子（含 C／D 门相关句）从今天起记**未验**；要拿它说话，必须先让 transport 把 `claims` 落进答案件。
+- **③ 并发硬上限改 3～4 枚**（业主 10-04 明令，已同步写进 `AGENTS.md`）：在册那句「机器实测 6 枚」作废。在飞达 4 枚即停止新投，先收席（验收＋close）腾槽；收席不 close 会把自己的账挤死（在册事故：四枚已结案没 close，把新一枚挤成 `agent thread limit reached`）。

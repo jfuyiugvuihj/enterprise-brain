@@ -5629,3 +5629,13 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 - 主树 HEAD ab4e3bb（本笔前为 4da0bad），tracked 面只恒脏 chroma_db/chroma.sqlite3；未跟踪只有 .zcodeignore 与业主作业目录（不碰）。
 - 六枚在飞执行层**全部活着且零 commit**（文件 mtime 16:43-16:51 持续推进）：be-r630（observability＋2 枚牙）／be-r631（scripts/r631_stage_sum_delta.py）／be-r545b（scripts/r545_queue_failure_probe.py）／be-r632（eval_lane_readout.py＋eval_transport_ask_v2.py）／be-r633（scripts/r633_dual_write_off_precondition.py）／be-r634（scripts/r634_category_delta.py＋一枚漏在网络树根的 .tmp_probe.txt，收席时点名清掉）。
 - 待办序：收席 6 枚（逐条对判据＋两态亲跑＋显式列路径代提交）→ 全量门（只在完全安静树跑一次）→ push gitee → run22 全 105 窗（等 R632 的逐行 lane 开关并树，A② 档位名派生＋A④ 逐类不退化＋C③ 一次拿完）。
+
+**八、R634 并树＝A④ 那格的尺换形（执行层 Gibbs／树 be-r634／并树笔 958df58）**
+- 本席亲跑：脏态 10 passed／0.47 s，commit 后干净树复跑同名件 10 passed／0.48 s（两态同数）；量具本体本席独立复现＝rc=4 判不了（命令：python -X utf8 scripts/r634_category_delta.py --window run18 --window run19 --window run20k）。
+- 四条事实本席逐枚现取证实：三扇 revision／fixture_sha256 两枚全等（run21／run21b 是另一枚指纹但同 revision）⇒ 派工词里那句「用这把底判跨代次那一组」物理不可做；answers 315 行带 claims 键＝0 行；frame_ledger_rows 三扇全 0；run20k 窗记 index_backend 空串。⇒ 执行层顶回前提为真，本单交 rc=4 不交绿灯，合规。
+- 摆动底与 A④ 新判据、两笔在册假账的正式裁定写在计划书 §6 追加格（10-04 第二格），本档不重抄。
+- be-r634 那枚 .tmp_probe.txt 执行层已自删，本席复核工作树根目录干净；收席已 close。
+
+**九、并发口径收紧（业主 10-04 明令「他只支持 3-4 个 agent」）**
+- 在册那句「机器上限实测 6 枚」作废，AGENTS.md 已改写：在飞达 4 枚即**不再新投**，先收席腾槽；收席必须 close。
+- 本班实投序列照实记：16:5x 六枚在飞（Pasteur／Feynman／Faraday／Ptolemy／Kant／Gibbs）→ Pasteur、Gibbs 先后交回并 close → 17:2x 补投 Darwin（R635，基点 497ac38＝新 HEAD）⇒ 现回落到 5 枚。**下一枚只在再有执行层交回之后才投**，不按 6 枚排。
