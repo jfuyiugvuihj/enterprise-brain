@@ -15,6 +15,7 @@
 ⑥ 发级身份与行位无关：原料行序打乱，逐发账与逐题账必须逐枚相等（R638 那把棘轮的同族病）。
 
 真窗那一组只在 ``%TEMP%\\evalrun`` 那三本件在位时跑；不在位即 skip，不改判语。
+R655 升格（10-05）：真窗那格 test_real_run20k_only_diverges_from_the_coverage_ledger_on_the_folded_denominator 原本把「覆盖面那把尺自己也折了一枚」这枚 R643 并树时的现场读数当判据钉住，R647（并树 246efb7）把 r636 的发级分母改走 r631 那条路之后它就是拿过期事实当真理的假红；该格现改为正形＋病形两半都断，反证牙住在 tests/test_r655_no_stale_fact_teeth.py。
 🔴 本文件的钉一律不看「此刻工作树脏不脏／盘上字节等不等于 HEAD」（在册事故 #96／#107／#113）：
 判据全是原料内容与在册算术，两态复跑同数是总控在收席那一刻现取的事。
 """
@@ -573,14 +574,51 @@ def test_real_universe_reconciles_with_the_coverage_ledger(window: str, 母集: 
 
 @real_inputs
 def test_real_run20k_only_diverges_from_the_coverage_ledger_on_the_folded_denominator() -> None:
-    """母集枚数照旧对得上；分歧只在同题多发的分母上 —— 覆盖面那把尺自己也折了一枚。"""
-    data = ruler.collect(window="run20k", directory=REAL_DIR)
-    multi = {entry["key"] for entry in data["shot_leg"]["ledger"] if entry["shot_count"] > 1}
+    """R655 升格：正形（发级分母逐枚对得上）与病形（折回一枚分母）两半都断。
 
+    改前这格钉的是 R643 并树那一刻的现场读数——「覆盖面那把尺自己也折了一枚 ⇒ 与 r631 分歧」，
+    等于把「旧红还在」当成判据。R647（并树 246efb7）把 r636 的发级分母改走 r631 那条路之后那枚红
+    就不存在了，于是旧写法当场成为拿过期事实当真理的假红（在册读数：DID NOT RAISE MismatchError）。
+    判据换了方向，牙只许更硬：正形少一枚对账就红，病形不肯红同样红。
+    """
+    honest = ruler.collect(window="run20k", directory=REAL_DIR)
+    multi = {entry["key"] for entry in honest["shot_leg"]["ledger"] if entry["shot_count"] > 1}
+    per_shot = {str(row["trace_id"]): (round(float(row["end_to_end_ms"]), 1), float(row["error_pct"]))
+                for row in honest["rows"] if row["key"] == "doc-04"}
+
+    #: ① 正形：r636 的发级分母与 r631 交回的 reference_rows 逐枚对得上
+    assert multi == {"doc-04"} and len(per_shot) == 2
+    built = coverage.build_window("run20k", REAL_DIR)
+    assert built["shot_ledger"]["fold_legacy"] is False
+    assert built["mismatches"] == []
+    gap = built["reference_gap"]
+    assert gap["asked_minus_rows"] == 0 and gap["no_denom_minus_skipped"] == 0
+    assert gap["rows"] == len(honest["rows"]) and gap["skipped"] == len(honest["skipped"])
+    doc_rows = [row for row in built["questions"] if row["key"] == "doc-04"]
+    assert len(doc_rows) == 2 and {str(row["trace_id"]) for row in doc_rows} == set(per_shot)
+    values = sorted(float(row["end_to_end_ms"]) for row in doc_rows)
+    assert values == [27244.6, 27490.9], (
+        "两发的逐枚分母不再等于在册读数：连对账基准一起折时 mismatches 交回空列表、账面自洽，"
+        "只有这一枚逐枚锚能救（现读 %s）" % values)
+    assert len(set(values)) == 2, "两发又折回同一枚分母了"
+    assert 27367.75 not in values, "不许平均：谁也不许等于谁"
+    assert values.count(27490.9) == 1, "不许取最大：那枚分母只属于它自己那一发"
+    for row in doc_rows:
+        their_ms, their_pct = per_shot[str(row["trace_id"])]
+        assert float(row["end_to_end_ms"]) == their_ms, row["trace_id"]
+        assert float(row["error_pct"]) == their_pct, row["trace_id"]
+
+    #: ② 病形：把 shots 折回一枚分母（在册那条路 fold_legacy）当场红，且点名 trace 与两个数
     with pytest.raises(coverage.MismatchError) as excinfo:
-        coverage.build_window("run20k", REAL_DIR)
-
-    hits = json.loads(str(excinfo.value).split("前若干枚：", 1)[1])
+        coverage.build_window("run20k", REAL_DIR, fold_legacy=True)
+    message = str(excinfo.value)
+    hits = json.loads(message.split("前若干枚：", 1)[1])
+    assert {item["key"] for item in hits} == {"doc-04"} <= multi
     assert {item["field"] for item in hits} <= {"end_to_end_ms", "error_pct"}
-    assert {item["key"] for item in hits} <= multi
-    assert {item["key"] for item in hits} == {"doc-04"}
+    stolen = [item for item in hits if item["field"] == "end_to_end_ms"]
+    assert len(stolen) == 1, "折叠没借走任何一枚端到端分母 ⇒ 病形没有复现"
+    victim = stolen[0]
+    assert victim["trace_id"] in per_shot and float(victim["mine"]) != float(victim["r631"])
+    assert (round(float(victim["mine"]), 1), round(float(victim["r631"]), 1)) == (27490.9, 27244.6)
+    assert victim["trace_id"] in message
+    assert "27244.6" in message and "27490.9" in message
