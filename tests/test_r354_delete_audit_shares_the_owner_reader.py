@@ -14,9 +14,10 @@ r"""R354 判据⑤⑥⑦ · delete 那一腿与两处出口同读一枚 helper�
     对 delete 那一腿是瞎的」—— 否则这单到底补了什么无从证明。
   · 判据⑥：审计事件的 schema、稳定码词表、delete 的响应形状一律不动。唯一动的是那一格的**值形态**
     （`""` → `null`），本件拿两副世界逐格对账证明别的一格一个字没变。
-  · 判据⑦：契约只能文末追加 —— 现取 `git show a7ac040:docs/api/contract-v1.md`，逐字节证明当前文件
-    的前 N 字节与它 prefix-identical，再证明 `--numstat` 删除列为 0、`## ` 节标题恰 +1、lone LF 0、
-    U+FFFD 0。
+  · 判据⑦：契约的历史逐字节不许动、新内容只许长在文末 —— 尺不在本文件里，在
+    `tests/test_r645_contract_difference_ledger.py` 那一本**具名差异账**上：账外一字节都不许动，
+    账上逐枚点名（起点／终点由 `git show` 与盘上现读派生，不许抄偏移量），今天账上恰好一枚。
+    本件另证追加段里本单那一节恰一枚、严格 UTF-8、零 lone LF、零 U+FFFD。
 
 四把反证（只落 `tests/_temp_edit_overlay.py` 的影子根，盘上 `data.py` 全程只读，进出各取一次 sha256）：
 刀1 退回基点那一形（直读属性）；刀2 就地手搓一套「答案碰巧也对」的第二读法；刀3 为审计那一格现查
@@ -40,6 +41,7 @@ from pathlib import Path
 from app.common import audit
 from tests import _temp_edit_overlay as overlay
 from tests import test_r466_mutation_does_not_leak_into_live_module as r466
+from tests import test_r645_contract_difference_ledger as contract_ledger
 from tests.test_r337_owner_receipt_on_both_exits import (
     EXIT_SHAPE,
     LEGACY,
@@ -430,57 +432,55 @@ def test_the_delivered_audit_leg_passes_both_layers_of_the_ruler():
 # ------------------------------------------------------------------ 判据⑦：契约只能文末追加
 
 
-def _git(args: list) -> str:
-    return subprocess.run(["git", "-C", str(ROOT)] + args, capture_output=True, check=True).stdout.decode("utf-8")
+def _contract_history_account():
+    """判据⑦ 唯一那把尺：契约的历史 == 基点 ＋ 具名差异账（账外一字节都不许动）。
 
-
-def _normalize_eol(data: bytes) -> bytes:
-    """按签出语义归一（index 存 LF、工作树是 CRLF）：等式要在内容层成立，不在传输层成立。"""
-    return data.replace(b"\r\n", b"\n")
-
-
-def _first_difference(base: bytes, current: bytes) -> int:
-    return next(
-        (index for index in range(min(len(base), len(current))) if base[index] != current[index]),
-        min(len(base), len(current)),
-    )
+    🔴 本文件不再自己 `git show` 基点那一份、也不再自己拼前缀等式：尺与差异账一起住在
+    `tests/test_r645_contract_difference_ledger.py`（R645），下面两枚钉读的是同一本。
+    """
+    return contract_ledger.assert_history_matches_ledger()
 
 
 def test_the_current_contract_is_the_base_plus_an_appendage():
-    """判据⑦：前 N 字节与 `git show a7ac040` 那一份 prefix-identical —— 历史行一字节都不许动。"""
-    base = _normalize_eol(subprocess.run(
-        ["git", "-C", str(ROOT), "show", "%s:%s" % (BASE, "docs/api/contract-v1.md")],
-        capture_output=True, check=True).stdout)
-    current = _normalize_eol(CONTRACT.read_bytes())
+    """判据⑦ 的前半：账外每一个字节都与基点相同 —— 差异只许是账上逐字登记的那几格。"""
+    account = _contract_history_account()
 
-    assert current.startswith(base), "契约的历史被动过：第 %d 字节起与基点不同" % _first_difference(base, current)
-    assert len(current) > len(base), "本单没往契约里追加任何东西"
+    assert len(account.records) == contract_ledger.EXPECTED_DIFFERENCES_TODAY, (
+        contract_ledger.derived_difference_table(account)
+    )
+    assert [record.ticket for record in account.records] == [
+        entry.ticket for entry in contract_ledger.CONTRACT_DIFFERENCES
+    ], "登记过的每一枚都得在基点上定位得到：%s" % contract_ledger.derived_difference_table(account)
 
 
 def test_the_appendage_deletes_nothing_and_adds_exactly_one_section():
-    """判据⑦ 的三笔账：历史行一字节不动 / 本单那一节恰一枚 / 严格 UTF-8、零 lone LF、零 U+FFFD。
+    """判据⑦ 的后半：历史只许是「基点 ＋ 账上登记」那一份、追加段里本单那一节恰一枚、严格 UTF-8。
 
-    🔴 总控并树时改口一次（同类病这两天已裁三回：R346 行号账、R351 手抄 sha、R340 节数账，口径照抄）：
-    原写法两半都在并树之后必红——「`git diff --numstat` 删除列 == 0」比的是**工作树与 HEAD**，总控一提交
-    就成空 diff（added=0，"契约没长东西"当场假红）；「全仓 `## ` 节数 == 基点 + 1」把**冻结基点**的节数放在
-    与现场读数的等号一侧，而本单从开工到并树之间 R356 / R340 正当各追加过一节（现场 35 -> 38）。
-    现在这三条都与提交先后无关且各自咬得住：① 前缀等式咬"回改历史行"，一字节都不许动；② 长度必须变长，
-    咬"什么都没写"；③ 本单那枚节标题在追加段里恰一枚，咬"同一单写两节"，也咬"没写节"。编码两条原样留着。
+    两次改口都留在这里（同类病本仓这两天裁过好几回：R346 行号账、R351 手抄 sha、R340 节数账）：
+      · 并树时第一次：原写法两半都在并树之后必红——「`git diff --numstat` 删除列 == 0」比的是
+        **工作树与 HEAD**，总控一提交就成空 diff（added=0，"契约没长东西"当场假红）；「全仓 `## ` 节数
+        == 基点 + 1」把**冻结基点**的节数放在与现场读数的等号一侧，而本单从开工到并树之间 R356 / R340
+        正当各追加过一节（现场 35 -> 38）。改后三条都与提交先后无关且各自咬得住：尺咬"回改历史行"、
+        追加段必须非空咬"什么都没写"、本单那枚节标题在追加段里恰一枚（也咬"同一单写两节"与"没写节"）。
+        编码两条原样留着。
+      · R645 第二次：`497ac38`（并树 R630）把 blockers 表那一行的两枚手抄行号换成了运行时派生锚 ——
+        那一格改得对（对外契约里烤死过期坐标正是本仓在治的病），撤销它不是治法，把尺的基点前移来灭红
+        更不是。所以「与基点逐字节前缀相同」换成了「基点 ＋ 具名差异账」：账外一字节都不许动，账上
+        逐枚点名（旧文新文逐字、位置现派生），今天恰好一枚。两枚钉换读同一本账，谁也不许留自家的
+        前缀等式 —— 那等于给其中一枚开后门。
     """
-    base_text = _normalize_eol(_git(
-        ["show", "%s:%s" % (BASE, "docs/api/contract-v1.md")]).encode("utf-8")).decode("utf-8")
-    current_bytes = CONTRACT.read_bytes()
-    current_text = _normalize_eol(current_bytes).decode("utf-8")  # 严格解码：坏一个字节就红
+    account = _contract_history_account()
+    current_bytes = contract_ledger.current_contract_bytes()
 
-    assert current_text.startswith(base_text), "契约的历史被动过：本单只许文末追加"
-    assert len(current_text) > len(base_text), "契约没长东西：本单一格都没写"
+    assert len(account.records) == contract_ledger.EXPECTED_DIFFERENCES_TODAY
+    assert len(account.appendage) > 0, "契约没长东西：追加段是空的"
     own_headings = [
         line
-        for line in current_text[len(base_text):].splitlines()
+        for line in account.appendage.splitlines()
         if line.startswith("## ") and "R353 / R354" in line
     ]
     assert len(own_headings) == 1, "本单那一节在追加段里应有 1 枚，实得 %d" % len(own_headings)
-    assert current_text.count("\ufffd") == 0, "契约里出现 U+FFFD：编码被写坏过"
+    assert account.current_text.count("\ufffd") == 0, "契约里出现 U+FFFD：编码被写坏过"
     assert current_bytes.count(b"\n") - current_bytes.count(b"\r\n") == 0, "追加引入了 lone LF"
 
 def test_the_contract_records_that_the_audit_says_null_now():
