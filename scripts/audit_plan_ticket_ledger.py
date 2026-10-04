@@ -681,7 +681,7 @@ LEDGER_EXTRA = [
     T("R47", "PARTIAL", [A("95a1cd9", "施工", "app/rag/retrieval_pipeline.py"), A("006c613", "并树")],
       [S21(47, "①")], "① 真实命中改进量 0/105（用例打桩）"),
     T("R48", "PARTIAL", [A("0ad3d3e", "并树 R48 路线甲", "frontend/src/components/AnswerHeadlineCard.vue")],
-      [S21(48, "①")], "① 首屏 ≤1 s 在本机硬件口径上物理不可达（地板 11.0 s），B 行已整行移出 V1"),
+      [S21(48, "①")], "① 首屏 ≤1 s 随 B 行移出 V1（本机地板 11.0 s）；线索卡与「未获补齐」失败脸在树 0ad3d3e；wire 首屏自 c00d98d 起量得到（app/api/v1/chat.py::_record_wire_first_text 记账＋app/api/v1/observability.py::wire_first_text_readout 读回，blocker wire_first_text_not_recorded 已摘）；🔴 数还没有：qa.first_text_p95_ms 照旧走 not_measurable，要真样本与本机数值"),
     T("R49", "LANDED", [A("8680f43", "施工", "app/documents/index_policy.py"), A("c26afda", "并树"),
                          A("d0489e6", "并树 R237 收判据②", "frontend/src/components/DocPanel.vue")],
       [], "①③ 由本号落码；②「未索引」那张脸已由 R237 接上 index_status/excluded 字段，钉 r237-r49-index-face.test.js"),

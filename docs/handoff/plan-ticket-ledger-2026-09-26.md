@@ -85,7 +85,7 @@ head=03beca81db62d1d1cae6c9fc7d417fb1bccd47bb commits_on_head=786 worktree=dirty
 | R45 | **LANDED** | `0276f78`·施工[2 枚]、`640ef08`·并树[2 枚] | 是 | 按 §21.9／§21.10 重定义口径达 | — |
 | R46 | **PARTIAL** | `c29ccf5`·R152 施工（后端半张）[8 枚]、`eaa9af8`·R152 并树[9 枚]、`484536c`·R195 并树（消费侧）[4 枚] | 是 | ① 真库/真并发次序未证；按 filename 聚合无身份 ⇒ 强度校准另在 R153 | G-R46-1 |
 | R47 | **PARTIAL** | `95a1cd9`·施工[2 枚]、`006c613`·并树[2 枚] | 是 | ① 真实命中改进量 0/105（用例打桩） | G-R47-1 |
-| R48 | **PARTIAL** | `0ad3d3e`·并树 R48 路线甲[8 枚] | 是 | ① 首屏 ≤1 s 在本机硬件口径上物理不可达（地板 11.0 s），B 行已整行移出 V1 | G-R48-1 |
+| R48 | **PARTIAL** | `0ad3d3e`·并树 R48 路线甲[8 枚] | 是 | ① 首屏 ≤1 s 随 B 行移出 V1（本机地板 11.0 s）；线索卡与「未获补齐」失败脸在树 0ad3d3e；wire 首屏自 c00d98d 起量得到（app/api/v1/chat.py::_record_wire_first_text 记账＋app/api/v1/observability.py::wire_first_text_readout 读回，blocker wire_first_text_not_recorded 已摘）；🔴 数还没有：qa.first_text_p95_ms 照旧走 not_measurable，要真样本与本机数值 | G-R48-1 |
 | R49 | **PARTIAL** | `8680f43`·施工[6 枚]、`c26afda`·并树[6 枚] | 是 | ②「未索引」那张脸 UI 还没有 | G-R49-1 |
 | R50 | **PARTIAL** | `090c820`·施工[4 枚]、`94f7fa1`·并树[4 枚] | 是 | 增量与可续跑在树；「低峰」那半句没挂进排程 | G-R50-1 |
 | R51 | **PARTIAL** | `6833140`·施工[9 枚]、`cef08bf`·并树[9 枚] | 是 | ② 加总误差 <1% 未量；rewrite/reflect 两格插桩后置 | G-R51-1 |
