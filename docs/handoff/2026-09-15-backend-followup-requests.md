@@ -5700,3 +5700,27 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 **三、id 验真换通道（本席自己差点又犯一次）**
 - 这枚 spawn 的返回值**没落进本席上下文**，本席手上只有一句自己写下的 id。按 #24／`938d→93ed`／`…25b3→…25b6` 那三笔教训，本席没有把它直接写进名册，而是走只读通道 `read_thread` 现取标题与该线程施工轨迹核对（标题即 R639 派工词全文）⇒ 才算凭据。同一方法顺带读到 `Leibniz` 正在把 trace 分成「有分母无样本」与「无分母」两组反推缺段形状（`B` 组 19 枚／`C` 组 20 枚），与派工词判据对得上。
 - 顺带记一句方法账：`wait_agent` 对这些执行层恒交 `status={}`，拿它判活会误判（本席拿不存在的 id 探过，也只回空），判活只认 `git status`／文件 mtime／`read_thread`。
+
+### 171 第十三班第八格（10-04 18:2x-18:4x·总控线·主树 `df90ea0`→本笔·**单模型未切换**·心跳零枚·在飞 4 枚＝满槽）：🔴 事故 #113（R545 返工令死在投递）· #112 改号与尺 · R641 已投 · 三条新规矩落 AGENTS.md
+
+**一、🔴 事故 #113：上一班那句「返工令已 send_input」是假的**
+`read_thread` 现取 `01a10607-f091-7ae1-b290-0a8d836da341`（`Faraday`）：`status`＝**systemError**，最后一枚 turn `failed`／477 ms，错误原文 `Invalid 'call_id': call_id is required for function_call_output.`（request_id `5c5b3299-90e4-4297-87a1-cf55c684d184`），而**失败的那枚条目就是 `send_message_to_thread` 的 function_call_output** ⇒ 命令根本没送达执行层，不是「送到了但没做」。零写入三证（收席那一刻现取）：`git -C be-r545b diff --numstat HEAD`＝0 枚；四枚草稿 mtime 全部落在 17:11–17:35（返工令之后一字未动）；`git -C be-r545b rev-list --count 4da0bad..HEAD`＝0。货不退（量具 86,155 B＋牙 33,657／12,739 B＋取证纸 40,146 B 仍在盘上），返工另立 **R641** 承接同一批草稿。同族账：#112（`Averroes`／R637，本席 `send_input` 下订正令当场炸）→ **一天两撞，同一面墙**。
+
+**二、编号卫生与本格改号**
+尺：`rg -o -N --no-filename "事故 #\d+" --glob "docs/**/*.md"` ⇒ distinct＝81／**max＝#111**（#107·#108·#109·#110·#111 全部已被 10-03 那几格占用）。上一班把 R637 失联记成 **#108**，与 §161 二那笔「镜像重建从 R596 起每次都死」（P1）**同号**⇒ 本班改号：**R637 失联＝#112**、**R545 返工令投递即死＝#113**。跟进单只许文末追加，§161 二与 §170 一 的原文一字不动，作废声明就在这一格；看板名册行由本席行 splice 就地改号。
+
+**三、三条新规矩（已落 `AGENTS.md`「派工防中毒」段）**
+① 派工词**一次投全**；订正前提／改判据一律落账面由新单承接，老席不收长消息。② 死席收不掉（`close_agent` 报 `unsupported call`）且 `wait_agent` 恒回空 ⇒ 判活只认 `read_thread`＋`git status --porcelain`＋文件 mtime，三枚都在收席那一刻现取。③ spawn 回执没落进上下文时**不许猜 id**，走 `~/.codex/sessions/<日期>/rollout-*-<id>.jsonl` 的 ordinal 0 `session_meta` 只读验真再写名册（本席 R641 就是这么核的）。④ 写「事故 #N」前先取 max。
+
+**四、R641 派工三元组（投前投后各现取一遍，防 #102 同族）**
+`R641` → `01a10677-829f-7c03-be24-6d1e4ab063f5`（昵称 `Hubble`）→ `be-r545b`@**`df90ea0`**。树由本席 `git merge --ff-only df90ea0` 从 `4da0bad` 追平（**29 files／+10,539 −40**）；追平前现取 `diff --numstat HEAD`＝0、`diff --cached --numstat`＝0、四枚草稿全部 `??` 未跟踪 ⇒ 快进不动未跟踪件，追平后 `status --porcelain` 复取仍是那四枚。写域＝`scripts/r545_*`·`scripts/r641_*`·`tests/test_r545_*`·`tests/test_r641_*`·`docs/testing/r545-*`·`docs/testing/r641-*`；禁区＝`app/**`／`deploy/**`／`.env*`／契约／`docs/handoff/**`／`frontend/**`／评测夹具／`r631`·`r633`·`r634`·`r635` 在册件／`run_gate.py`；零容器零连库零模型；不许 commit。
+🔴 那枚红牙的真值（本席现读，写给执行层与下一班）：`tests/test_r545_counter_evidence_teeth.py::test_z9c_the_worktree_carries_only_this_tickets_write_domain` 跑 `git -C <当前树> status --porcelain`，把每条条目比对 `("scripts/r545_","tests/test_r545_","docs/testing/r545-")`，要求 `offenders == []`。主树**恒脏一枚被跟踪的 `chroma_db/chroma.sqlite3`** ⇒ 在自己树绿、搬进主树必红。合格改法＝影子端两态（`tmp_path` 里 `git init` 自造仓，摆写域内货→绿／写域外塞 `app/poison.py`→红，断言只看本单点名的货清单）；🔴 **给 `chroma_db` 加豁免名单或 `pytest.skip`＝拔牙，直接没收工**。
+
+**五、账面与推送**
+上一格两笔未落账面已提交 **`df90ea0`**（`2 files changed, 18 insertions(+), 1 deletion(-)`）；卫生现取：看板 BOM＝True／CR＝0／LF＝6,836、名册行 7 枚竖线；跟进单 `pure_append`＝True／孤 CR 1,534→1,534／控制字符 0 枚／+4,184 B。推 gitee `d1118af..df90ea0` 成功；`origin`（GitHub）仍 TLS connect error。
+
+**六、在飞读数（本席亲取，非执行层自述）**
+`Leibniz`／R636 活：正在按车道聚合 `stage·source·tier·worker` 形状并查 12 枚 generate 缺失题的事件类型；`Plato`／R638 活：`scripts/r638_doc_pointer_ruler.py` 首版自查出重复 `exact` 判定与 `if False else None` 死代码，**当场删文件重写**并改走分段暂存；`Aristotle`／R639 活：在取 R633 三族原因码原文；`Hubble`／R641 18:30:58 投出。⇒ **满槽，本席不再新投**；槽位一空即投 **R640**（机器账尺派生化，判据全文见 §170 三）。
+
+**七、下一格按序（不许停在第一项）**
+收席四枚（逐枚：取证现取→apply 点名货→对判据→两态亲跑同数→代提交）→ 全量门 `python scripts/run_gate.py`（并发脚本自选、纸上不写死 `-n`；要完全安静的树）→ 重建后端镜像 `docker compose --env-file deploy/.env.server build migrate` ＋ `up -d --force-recreate backend worker scheduler` → **run22 全 105 窗**（63–118 分钟；必带 `EVAL_SIDECAR`＋`EVAL_APPROVAL_LEDGER`＋`EVAL_RECORD_LANE_READOUT=on`，`REPORT_LANE_VIA_QUEUE=off`；一窗多判据 A② 档位名派生／A④ 跨代次对子／C③ 新集不退化／D-3 帧账对照）→ D 门相 2 单独窗。窗内硬禁：并树、跑测试、动容器、打模型。
