@@ -3,7 +3,7 @@ r"""R636 —— G-R51-1 第四格的**覆盖面账**：逐枚点名「哪一段�
 
 只读、离线、零模型、零容器、零 PG、零连库。原料 = R631 同一本三件（只读，不重导）：
     分段腿    %TEMP%\evalrun\<window>-traces.jsonl
-    端到端腿  %TEMP%\evalrun\<window>-sidecar.jsonl（wall_ms，按题号索引）
+    端到端腿  %TEMP%\evalrun\<window>-sidecar.jsonl（wall_ms：**一行一发**，每一发连它自己的 trace）
     桥        %TEMP%\evalrun\<window>-sidecar-frames.jsonl（session_id ↔ 题号）
 
 ===== 这单欠的从来不是「再量一次误差」=====
@@ -465,8 +465,50 @@ def default_directory() -> Path:
     return Path(tempfile.gettempdir()) / "evalrun"
 
 
-def read_inputs(window: str, directory: Path) -> dict[str, Any]:
-    """读三本原料，并顺手把「窗里有哪几枚 trace、各自事件清单」摊平交回。"""
+def _samples_by_trace(samples: Iterable[StageSample]) -> dict[str, list[StageSample]]:
+    """按 trace 归堆：筛法与 r631.collect() 逐枚一致（trace_id 为空的样本不进门）。"""
+    out: dict[str, list[StageSample]] = {}
+    for sample in samples:
+        if sample.trace_id:
+            out.setdefault(sample.trace_id, []).append(sample)
+    return out
+
+
+def shot_leg_view(shot_leg: Mapping[str, Any], leg: Any, *, fold_legacy: bool) -> dict[str, Any]:
+    """发级账抬头：读了几行、连上几发、哪几发没身份、同题各发差多大。
+
+    一枚数都不在这里自算：全部取自 r631.attribute_shots ＋ summarize_shots 的现跑读数。
+    """
+    return {
+        "keyed": shot_leg.get("keyed"),
+        "leg_name": leg.name,
+        "leg_clock": leg.clock,
+        "rows_read": leg.rows_read,
+        "shots": shot_leg.get("shots"),
+        "attributed": shot_leg.get("attributed"),
+        "traces_with_denominator": shot_leg.get("traces_with_denominator"),
+        "identity_mix": dict(shot_leg.get("identity_mix") or {}),
+        "multi_shot_questions": dict(shot_leg.get("multi_shot_questions") or {}),
+        "spreads": list(shot_leg.get("spreads") or []),
+        "unattributed_labels": [str(item.get("label")) for item in shot_leg.get("unattributed") or []],
+        "no_positive_span_labels": [str(item.get("label")) for item in shot_leg.get("no_positive_span") or []],
+        "fold_legacy": bool(fold_legacy),
+        "legacy_conflicts": list(shot_leg.get("legacy_conflicts") or []),
+    }
+
+
+def read_inputs(window: str, directory: Path, *, fold_legacy: bool = False) -> dict[str, Any]:
+    """读三本原料，并顺手把「窗里有哪几枚 trace、各自事件清单」摊平交回。
+
+    端到端腿的分母按**发**取（R647）：一行 sidecar 就是一发，每一发连它自己的那枚 trace。
+    走的是 r631.collect() 里 E2E_SIDECAR 那条腿的同一条装配路（read_sidecar_shots ＋
+    read_frames_shots ＋ trace_sessions_from_events ⇒ r631._build_shot_leg ⇒ attribute_shots），
+    逐枚同参数；本件不另造一套折叠，不平均，不取最大。
+    改前读的是 r631.read_sidecar() 那本题号级折叠视图（同题多发取 attempt 最大、并列取后一行），
+    而 R631 自 R643（并树 f0c4572）起交回的是发级真值、按 trace_id 索引 ⇒ 同题两发的两枚 trace
+    都拿到同一枚分母，逐枚对账当场崩（在册读数：run20k／doc-04 的 27,244.6 与 27,490.9）。
+    fold_legacy 只留给反证牙复现那枚病形（r631._build_shot_leg 里已在册），默认 False。
+    """
     r631 = load_r631()
     traces_path = Path(directory) / ("%s-traces.jsonl" % window)
     sidecar_path = Path(directory) / ("%s-sidecar.jsonl" % window)
@@ -478,9 +520,22 @@ def read_inputs(window: str, directory: Path) -> dict[str, Any]:
     rows = _raw_rows(traces_path)
     sessions = r631.read_frames_sessions(frames_path)
     trace_to_key = r631.trace_keys_from_events(events, sessions)
-    sidecar_leg = r631.read_sidecar(sidecar_path)
-    denominators = {trace: float(sidecar_leg.values[key])
-                    for trace, key in trace_to_key.items() if key in sidecar_leg.values}
+    #: ↓ 与 r631.collect() 逐枚同参数：同一座桥、同一条腿、同一个 allow_unjoined 口径。
+    sidecar_shots, sidecar_rows_read = r631.read_sidecar_shots(sidecar_path)
+    frames_shots, frames_rows_read = r631.read_frames_shots(frames_path)
+    sessions_by_trace, sessions_ambiguous = r631.trace_sessions_from_events(events)
+    samples_by_trace = _samples_by_trace(samples_from_events(events))
+    sidecar_leg, shot_leg, _per_shot_values = r631._build_shot_leg(
+        r631.E2E_SIDECAR, sidecar_path, sidecar_shots, frames_shots,
+        trace_to_key=trace_to_key, sessions_by_trace=sessions_by_trace,
+        join_identities={}, allow_unjoined=not samples_by_trace, fold_legacy=fold_legacy)
+    if sidecar_leg.keyed != "trace":
+        raise InputMissing(
+            "%s 的端到端腿落在 %s 索引（keyed=%s），而本件的母集按 trace_id 切 ⇒ 这座桥不在位："
+            "窗 %s 的事件载荷里没有 session_id ↔ 题号，本件不按时序猜配对"
+            % (sidecar_path, "发标签" if sidecar_leg.keyed == "shot" else sidecar_leg.keyed,
+               sidecar_leg.keyed, window))
+    denominators = {str(trace): float(value) for trace, value in sidecar_leg.values.items()}
     by_trace: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         by_trace.setdefault(str(row.get("trace_id") or ""), []).append(row)
@@ -494,9 +549,13 @@ def read_inputs(window: str, directory: Path) -> dict[str, Any]:
         "trace_to_key": trace_to_key,
         "sessions": dict(sessions),
         "denominators": denominators,
-        "sidecar_values": dict(sidecar_leg.values),
-        "sidecar_rows_read": sidecar_leg.rows_read,
+        #: R647 起这本账按 trace_id 索引（改前按题号，且同题多发只剩一枚）。
+        "sidecar_values": dict(denominators),
+        "sidecar_rows_read": sidecar_rows_read,
         "sidecar_duplicates": list(sidecar_leg.duplicates),
+        "frames_rows_read": frames_rows_read,
+        "sessions_ambiguous": list(sessions_ambiguous),
+        "shot_ledger": shot_leg_view(shot_leg, sidecar_leg, fold_legacy=fold_legacy),
         "r631": r631,
     }
 
@@ -848,20 +907,16 @@ def lane_matrix(items: Sequence[Mapping[str, Any]], canonical: Sequence[str]) ->
 def build_window(window: str, directory: Path | str = None, *,
                  recognizer: Callable[[Iterable[Mapping[str, Any]]], Sequence[StageSample]] | None = None,
                  omit_groups: Sequence[str] = (), facts: Mapping[str, Any] | None = None,
-                 tolerance_seconds: float = 2.0) -> dict[str, Any]:
+                 tolerance_seconds: float = 2.0, fold_legacy: bool = False) -> dict[str, Any]:
     """一窗的覆盖面账。任何一条自证不过，当场抛，不交半个数冒充测量。"""
     directory = Path(directory or default_directory())
-    inputs = read_inputs(window, directory)
+    inputs = read_inputs(window, directory, fold_legacy=fold_legacy)
     facts = facts or source_facts()
     canonical = facts["canonical_stages"]
     recognise = recognizer or samples_from_events
 
     events = inputs["events"]
-    samples_all = list(recognise(events))
-    by_trace: dict[str, list[StageSample]] = {}
-    for sample in samples_all:
-        if sample.trace_id:
-            by_trace.setdefault(sample.trace_id, []).append(sample)
+    by_trace = _samples_by_trace(recognise(events))
 
     denominators = inputs["denominators"]
     rows_by_trace = inputs["rows_by_trace"]
@@ -1063,6 +1118,7 @@ def build_window(window: str, directory: Path | str = None, *,
                          for item in groups[GROUP_BARE]],
         },
         "reference_gap": reference_gap,
+        "shot_ledger": inputs["shot_ledger"],
         "questions": questions,
         "claims": [claim.as_dict() for claim in claims],
         "stage_rollup": stage_rollup,
@@ -1278,6 +1334,14 @@ def render(data: Mapping[str, Any], max_rows: int = 200) -> list[str]:
                    data["universe"]["counts"][GROUP_ASKED], data["universe"]["counts"][GROUP_NO_DENOM],
                    data["universe"]["counts"][GROUP_RESUMED_HEAD], data["universe"]["counts"][GROUP_BARE],
                    json.dumps(data["reference_gap"], ensure_ascii=False)))
+    shot = data["shot_ledger"]
+    out.append("- 端到端腿按发取：%s 读了 %d 行 sidecar ⇒ %d 发连上 %d 枚 trace（题号级折叠视图已停用）"
+               "｜ 身份分布 %s ｜ 同题多发的题号 %s ｜ 未归名 %s%s" % (
+                   shot["leg_name"], shot["rows_read"], shot["shots"], shot["traces_with_denominator"],
+                   json.dumps(shot["identity_mix"], ensure_ascii=False, sort_keys=True),
+                   json.dumps(shot["multi_shot_questions"], ensure_ascii=False, sort_keys=True),
+                   ", ".join(shot["unattributed_labels"]) or "无",
+                   " ｜🔴 折叠视图复现中（fold_legacy）" if shot["fold_legacy"] else ""))
     out.append("- Σ端到端 %s ms ｜ Σ分段进账 %s ms ｜ Σ缺口 %s ms（%s%%）" % (
         totals["end_to_end_ms"], totals["segment_sum_ms"], totals["gap_ms"], totals["gap_pct"]))
     out.append("- 缺口拆账：配对孤儿 trace %s ms（加得进）｜ int() 地板界 %s ms ｜ 残差 %s ms（占端到端 %s%%，"
