@@ -694,6 +694,8 @@ def _stage_report_from_trace(trace_id: str) -> dict[str, Any]:
         end_to_end_by_trace=request_windows_from_events(events),
     )
     report["samples"] = [sample.as_dict() for sample in samples]
+    # R649：同一本账、同一批事件，顺带交出首屏那一格的真读数（量不到就具名原因，不折 0）。
+    report["first_text"] = wire_first_text_row(events, trace_id)
     return report
 
 
@@ -707,8 +709,11 @@ async def read_stage_latency(
 
     With ``trace_id`` the answer comes from that one persisted trace, which is how
     judgement 2 -- the segments must add up to the request within one percent -- gets
-    checked against real recorded bytes rather than a live process. Without it, the
-    in-process rolling window is reported, the same block ``/health/details`` carries.
+    checked against real recorded bytes rather than a live process. That per-trace answer
+    also carries the R649 首屏 row under ``first_text``: the first wire frame a client
+    could see, derived by :func:`wire_first_text_from_events` from recorded stamps and
+    never filled in here. Without the id, the in-process rolling window is reported, the
+    same block ``/health/details`` carries.
     """
     principal = _require_action(request, ACTION_AUDIT, "stage-latency")
     from app.common.stage_timing import stage_latency_readout
@@ -793,12 +798,6 @@ SLO_BLOCKERS: dict[str, str] = {
         "spans into ledger samples yet its ``samples_from_span_payload`` builds a ``StageSample`` "
         "with no field for it, so 首屏 is computable per trace and not from the in-process ledger."
     ),
-    "wire_first_text_not_recorded": (
-        "the plan's 首屏 is the first ``text`` event on the wire (计划书 §3.1). The only "
-        "timestamped first-token evidence is model-side; "
-        "``app/api/v1/chat.py::canonical_sse_event`` stamps the canonical SSE envelopes but "
-        "nothing persists them, so a wire-side number would be a proxy."
-    ),
     "cache_hits_are_not_traced": (
         "a cache hit returns its StreamingResponse from ``app/api/v1/chat.py::ask``, before "
         "any request.started event, so it records no window and no sample. The honest "
@@ -816,6 +815,159 @@ SLO_BLOCKERS: dict[str, str] = {
         "end-to-end and must not be published as one; coverage_error_pct is what says so."
     ),
 }
+
+
+# ==================== R649 · 首屏那一格：从已在册的那本账里派生读数 ====================
+#: wire 上第一枚**屏上看得见**的 text 帧落进 trace 账时的事件名。唯一真源在这里；写侧只有
+#: ``app/api/v1/chat.py::_record_wire_first_text`` 一枚，它迟 import 本名，不抄第二份。
+#: 🔴 这不是 SSE 事件名：客户端那一侧的帧一枚都不因本单多出或改变，它只是那本已在册的账上
+#: （``app/trace/store.py::TraceStore.record_event``）多出的一行。
+WIRE_FIRST_TEXT_EVENT_TYPE = "wire.first_text"
+
+#: The stamp that opens the window 首屏 is measured across. It is the same event the
+#: request-window distribution already pairs on, so 首屏 and 端到端 share one denominator
+#: (``app/common/stage_timing.py::request_windows_from_events``) rather than inventing a second
+#: round start -- the wire envelope's own ``sequence`` and ``timestamp`` are the same two numbers
+#: this book carries, and this slot reads the persisted copy because a reader who arrives after
+#: the response is gone has nothing else to replay.
+WIRE_FIRST_TEXT_OPEN_EVENT = "request.started"
+
+#: Why a read-back can answer ``None``. Each one names a different hole, because "the round
+#: never put a line on the screen" and "the round put one there but this trace opened no
+#: window" are two statements, and the second is the cache leg (blocker
+#: ``cache_hits_are_not_traced``) refusing to be counted rather than a shortage of samples.
+WIRE_FIRST_TEXT_NO_EVENT = "no_wire_first_text_event"
+WIRE_FIRST_TEXT_NO_WINDOW = "wire_first_text_without_request_window"
+
+#: The one-line reason each of the two shapes publishes. Prose only: no number lives here.
+WIRE_FIRST_TEXT_REASONS: dict[str, str] = {
+    WIRE_FIRST_TEXT_NO_EVENT: (
+        "this trace recorded no ``" + WIRE_FIRST_TEXT_EVENT_TYPE + "`` event, so nothing was "
+        "handed to the wire as a visible ``text`` frame; ``None`` here is the absence of the "
+        "event, not a zero measurement"
+    ),
+    WIRE_FIRST_TEXT_NO_WINDOW: (
+        "a visible ``text`` frame was recorded but no ``request.started`` opens this trace's "
+        "window, so there is no stamp to subtract; this is the shape the cache leg answers with "
+        "while blocker ``cache_hits_are_not_traced`` stands"
+    ),
+}
+
+
+def wire_first_text_from_events(
+    events: Sequence[Mapping[str, Any]] | None,
+) -> dict[str, dict[str, Any]]:
+    r"""每请求的首屏毫秒，从这一本账自己记下的两枚戳派生：``request.started`` → 第一枚可见 text 帧。
+
+    🔴 这是**读**，不是记：一枚戳都不在这里产生。两枚都来自 ``app/trace/store.py::TraceStore.record_event``
+    已经落下的行，差值用 ``app/common/stage_timing.py::to_epoch_ms``（与那本账算端到端同一枚换算），
+    所以本单没有第二套算术，也没有第二本账。
+
+    三条取值纪律，逐条都是拦假读数的：
+      · 一个 trace 只认**最早**那一枚可见 text 帧 —— 首屏量的是第一行，第二行不算第二次首屏；
+      · 帧必须排在 ``request.started`` 之后：排在之前的那一枚窗口都没开，宁可答 ``None``
+        也不许拿一个起点都没有的差值充数；
+      · 每个起点重新开一窗（续跑轮真会再记一枚 ``request.started``，
+        见 ``app/api/v1/chat.py::_record_resumed_lane_trace``），首屏量的是**当前这一轮**从起点
+        到看见第一行字，不是整条 trace 从头到尾。
+
+    分位不在这里：本函数只交样本，门与排名仍由 ``app/common/performance.py::PerformanceStats``
+    那一件按 ``MIN_SLO_SAMPLES`` 算，读口在 ``read_stage_latency``。
+    """
+    from app.common.stage_timing import to_epoch_ms
+
+    opened: dict[str, float] = {}
+    stamps: dict[str, str] = {}
+    rows: dict[str, dict[str, Any]] = {}
+    for event in events or []:
+        body = event or {}
+        trace_id = str(body.get("trace_id") or "")
+        event_type = str(body.get("event_type") or "")
+        if not trace_id:
+            continue
+        if event_type == WIRE_FIRST_TEXT_OPEN_EVENT:
+            stamp = to_epoch_ms(body.get("timestamp"))
+            if stamp is None:
+                continue
+            opened[trace_id] = stamp
+            stamps[trace_id] = str(body.get("timestamp") or "")
+            continue
+        if event_type != WIRE_FIRST_TEXT_EVENT_TYPE or trace_id not in opened:
+            continue
+        if trace_id in rows:
+            # 首屏只有一枚：后面那些帧把这一格占了就是第二套口径。
+            continue
+        finished = to_epoch_ms(body.get("timestamp"))
+        if finished is None or finished < opened[trace_id]:
+            continue
+        payload = body.get("payload") or {}
+        rows[trace_id] = {
+            "first_text_ms": round(finished - opened[trace_id], 6),
+            "request_started_at": stamps[trace_id],
+            "first_text_at": str(body.get("timestamp") or ""),
+            "first_text_sequence": body.get("sequence"),
+            "leg": str(payload.get("leg") or ""),
+            "visible_chars": payload.get("visible_chars"),
+        }
+    return rows
+
+
+def wire_first_text_row(
+    events: Sequence[Mapping[str, Any]] | None, trace_id: str
+) -> dict[str, Any]:
+    """一枚 trace 的首屏读回：量到了就交数，量不到就交**具名的那一个原因**。
+
+    🔴 三态分开署名，不许折成一格：``measured``／``no_wire_first_text_event``／
+    ``wire_first_text_without_request_window``。没有数就是 ``None``，不是 ``0``，也不是
+    从别的件（采集器那一侧的帧账）借来的一枚 —— 线上与离线两形各归各的署名，
+    借数就是本仓记过一整族的空绿。
+    """
+    rows = wire_first_text_from_events(events)
+    row = rows.get(str(trace_id or "").strip())
+    if row is not None:
+        return {
+            "trace_id": str(trace_id or "").strip(),
+            "event_type": WIRE_FIRST_TEXT_EVENT_TYPE,
+            "measured_from": SLO_SOURCE_TRACE,
+            "status": "measured",
+            "reason": "",
+            **row,
+        }
+    seen = [
+        event
+        for event in list(events or [])
+        if str((event or {}).get("event_type") or "") == WIRE_FIRST_TEXT_EVENT_TYPE
+        and str((event or {}).get("trace_id") or "") == str(trace_id or "").strip()
+    ]
+    reason = WIRE_FIRST_TEXT_NO_WINDOW if seen else WIRE_FIRST_TEXT_NO_EVENT
+    return {
+        "trace_id": str(trace_id or "").strip(),
+        "event_type": WIRE_FIRST_TEXT_EVENT_TYPE,
+        "measured_from": SLO_SOURCE_TRACE,
+        "status": reason,
+        "reason": WIRE_FIRST_TEXT_REASONS[reason],
+        "first_text_ms": None,
+        "request_started_at": None,
+        "first_text_at": None,
+        "first_text_sequence": None,
+        "leg": str((seen[0].get("payload") or {}).get("leg") or "") if seen else "",
+        "visible_chars": seen[0].get("payload", {}).get("visible_chars") if seen else None,
+    }
+
+
+def wire_first_text_readout(trace_id: str) -> dict[str, Any]:
+    """按 ``trace_id`` 现读一次首屏：走 ``app/api/v1/chat.py`` 之外谁都在用的那本账回放。"""
+    normalized = str(trace_id or "").strip()
+    if not normalized:
+        _fail(400, "validation_error", "trace_id is required.", details={"field": "trace_id"})
+    if len(normalized) > MAX_TRACE_ID_CHARS:
+        _fail(
+            400,
+            "validation_error",
+            f"trace_id exceeds {MAX_TRACE_ID_CHARS} characters.",
+            details={"field": "trace_id", "max_chars": MAX_TRACE_ID_CHARS},
+        )
+    return wire_first_text_row(_trace_store().replay(normalized), normalized)
 
 
 @dataclass(frozen=True)
@@ -1002,7 +1154,6 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     blockers=(
                         "lane_attribution_absent",
                         "first_token_not_a_stage_sample",
-                        "wire_first_text_not_recorded",
                     ),
                 ),
                 SloMetric(

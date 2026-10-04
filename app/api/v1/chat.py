@@ -274,6 +274,121 @@ def text_sse_frame(content: str, cache_fields: dict | None = None) -> str:
     return sse_event("text", payload)
 
 
+# ==================== R649 · 首屏那一格：把 wire 上第一枚**可见** text 帧落进 trace 账 ====================
+#
+# 计划书 §3.1 的「首屏」量的是客户端看见第一行字的时刻。本单不提速、不填数，只把那一枚时刻落进
+# **已在册的那本账**：``app/trace/store.py::TraceStore.record_event``。事件名由观测面那一侧署名
+# （``app/api/v1/observability.py::WIRE_FIRST_TEXT_EVENT_TYPE``，迟 import——抄第二份就是平行实现），
+# 而 ``sequence`` 与 ``timestamp`` 两枚都由那本账自己盖：本单不带第二枚时钟，也不新造第三本账。
+# 读数怎么从那两枚已在册的戳算出来，见 ``app/api/v1/observability.py::wire_first_text_from_events``。
+#
+# 🔴 记的是**帧**，不是 token。两形在流式里不等价，混了就是一枚假读数：
+#   · 逐片道里一枚 token 未必构成一帧 —— ``app/api/v1/chat.py::_AnswerPieceStream.frame_for`` 只在
+#     屏上那一份真变长时才交回帧，交不回帧而 ``continue`` 的那一枚压根没上屏；
+#   · 批准道里还有一枚与屏上逐字相同的正文被闸门拦下 —— ``app/api/v1/chat.py::_ApprovedAnswerStream.decide``
+#     的 ``skip`` 那一支不发帧，本单也就不记账；
+#   · 模型侧第一个 token 有它自己的账 —— ``app/trace/spans.py::ExecutionSpan.mark_first_token`` 落的
+#     是 ``model_calls.first_token_at`` 那一列，与本单这一格是两件事，谁也不许顶谁；
+#     blocker ``first_token_not_a_stage_sample`` 说的正是那一族。
+#
+# 🔴 命中道不记：``app/api/v1/chat.py::ask`` 里 ``cached_response`` 那一腿一条 canonical 事件都没有、
+# 一个 run 行都不该有。为它补一枚 wire 事件会给一轮压根没跑过的编排造出 ``agent_runs`` 行
+# （每一枚 trace 事件都刷新那一行），那是造证据，不是量首屏。这一格的缺席继续由
+# blocker ``cache_hits_are_not_traced`` 说着，本单不替它翻绿。
+
+
+def _record_wire_first_text(
+    *,
+    request_id: str,
+    trace_id: str,
+    task_id: str,
+    session_id: str,
+    leg: str,
+    visible_chars: int,
+    owner_id: str = "",
+) -> None:
+    r"""把本轮第一枚可见 text 帧落进 trace 那本账：走既有出口，不新开一本。
+
+    🔴 载荷里只有归因用的两格 —— 这一枚帧是从哪一条道交出去的、它带着多少个看得见的字。
+    本单**不带**时长：时长由观测面从同一本账里那两枚已在册的戳派生
+    （``app/api/v1/observability.py::wire_first_text_from_events``）。把 ``elapsed_ms`` 抄进载荷
+    就是给同一件事开第二个真源，两形哪天分叉没人报错。
+
+    也**不带**档位与题面：blocker ``lane_attribution_absent`` 要的是「stage 样本与 request 事件
+    都说不出这一轮被判进了哪一档」，本单既不裁这件事，也不许用一枚旁路事件把它糊过去 ——
+    那正是「为了看起来绿把 blocker 摸掉」那一族病。
+
+    记账坏了不许打断用户已经等到的流（与 ``app/api/v1/chat.py::_record_pending_approval`` 同一裁定），
+    但留痕迹：量具哑掉与量具在场是两件不同的事。
+    """
+    from app.api.v1.observability import WIRE_FIRST_TEXT_EVENT_TYPE
+    from app.trace.store import default_trace_store
+
+    try:
+        default_trace_store().record_event(
+            trace_id=trace_id,
+            request_id=request_id,
+            task_id=task_id,
+            event_type=WIRE_FIRST_TEXT_EVENT_TYPE,
+            status="running",
+            payload={
+                "session_id": session_id,
+                "leg": leg,
+                "visible_chars": int(visible_chars),
+                # 没有 owner 的那一行到不了六张表（REASON_OWNER_MISSING）：有就带，没有就不发这一格，
+                # 也不补一枚假 owner（与 app/api/v1/chat.py::_record_resumed_lane_trace 同一打法）。
+                **({"owner_id": owner_id} if owner_id else {}),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - 量具哑掉不是这一轮失败
+        logger.warning(
+            f"[R649][Trace] 首屏那一枚可见 text 帧没落进 trace session={session_id[:8]}...：{exc}"
+        )
+
+
+class _FirstVisibleTextMark:
+    """本轮第一枚**屏上看得见**的 text 帧的闸门：一轮至多落一枚账。
+
+    :meth:`note` 只判「这是不是本轮第一枚交了屏的正文」，一个字都不改帧形：帧仍旧由
+    ``app/api/v1/chat.py::text_sse_frame`` 构造、由调用方原样 ``yield``。闸门的状态住在这枚
+    per-round 对象里，不落盘、也不进帧账 —— R642 那半格刚把 A② 甲案落在内存态，
+    本单一行一列都不给它添。
+    """
+
+    def __init__(
+        self,
+        *,
+        request_id: str,
+        trace_id: str,
+        task_id: str,
+        session_id: str,
+        owner_id: str = "",
+    ) -> None:
+        self._identity = {
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "task_id": task_id,
+            "session_id": session_id,
+            "owner_id": owner_id,
+        }
+        #: 已落账那一枚的腿名。没落过账就是 ``None``，读回不许折成空串或 ``0``。
+        self.leg: str | None = None
+
+    @property
+    def recorded(self) -> bool:
+        return self.leg is not None
+
+    def note(self, body: str, *, leg: str) -> None:
+        """在把这一枚帧交给 SSE 出口之前调用：只有本轮第一枚看得见的正文会落账。
+
+        空正文不算「看得见的一行」：它不落账，也不吃掉闸门 —— 后面真长了字的那一枚仍算第一枚。
+        """
+        if self.recorded or not body.strip():
+            return
+        self.leg = leg
+        _record_wire_first_text(**self._identity, leg=leg, visible_chars=len(body))
+
+
 def _document_source_row(worker: str, evidence: dict) -> dict | None:
     """还原一条文档 Evidence 成 ``DocumentRetrievalScope.allows`` 认得的命中形状。
 
@@ -2810,6 +2925,15 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         answer_cached = False
         sequence = 1
 
+        # R649：本轮首屏那一枚可见 text 帧的闸门，与 ``sequence`` 同一处出生，一轮一枚。
+        first_text_mark = _FirstVisibleTextMark(
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+            session_id=thread_id,
+            owner_id=str(getattr(request_principal, "user_id", "") or ""),
+        )
+
         yield canonical_sse_event(
             "request.started",
             request_id=request_id,
@@ -2877,6 +3001,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 if frame_text is None:
                     continue
                 cumulative_text = frame_text
+                # R649：``frame_for`` 交回帧才算「屏上多了一行」；上面那枚 ``continue`` 那一支
+                # 一个像素都没变，本单一个字都不记。
+                first_text_mark.note(cumulative_text, leg="piece")
                 yield text_sse_frame(cumulative_text, live_cache_fields)
                 await asyncio.sleep(0)
                 continue
@@ -2984,6 +3111,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     if answer_needs_correction:
                         yield sse_event("step", {**correction, "status": "running"})
                         await asyncio.sleep(0)
+                    # R649：没有逐片的一轮，收尾这一枚就是屏上第一行；有逐片时闸门早已落过账，
+                    # 再调一次也不改写第一枚的读数。
+                    first_text_mark.note(full_text, leg="terminal")
                     yield text_sse_frame(full_text, live_cache_fields)
                     if answer_needs_correction:
                         yield sse_event("step", {**correction, "status": "done",
@@ -3531,6 +3661,14 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         start_time = time.time()
         last_emit = time.monotonic()
         sequence = 1
+        # R649：批准续跑这一腿的首屏闸门，与 /ask 那一腿同一枚类、同一条纪律。
+        first_text_mark = _FirstVisibleTextMark(
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+            session_id=request.session_id,
+            owner_id=str(getattr(principal, "user_id", "") or ""),
+        )
         ai_reply: list[str] = []
         latest_worker_results: dict = {}
         latest_final_answer = ""
@@ -3563,6 +3701,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             if verdict == "replace":
                 yield sse_event("step", {**correction, "status": "running"})
                 await asyncio.sleep(0)
+            # R649：闸门判 ``skip`` 那一支在上面就 return 了；走到这里这一枚正文真发了屏。
+            first_text_mark.note(body, leg="approved")
             yield text_sse_frame(body)
             if verdict == "replace":
                 yield sse_event("step", {**correction, "status": "done",
