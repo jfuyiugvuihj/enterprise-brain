@@ -254,6 +254,13 @@ def _lane_switch(name):
 #: 与 DECLARE_LANE_TIER 同一枚纪律：import 期读一次表，一窗之内不重读（读表腿由 R632 那件钉）。
 DECLARE_LANE_PER_TIER = _lane_switch(LANE_PER_TIER_ENV)
 RECORD_LANE_READOUT = _lane_switch(LANE_RECORD_ENV)
+#: ===== R642 D-3：批准之后那一次 ``/queue/status`` 重读（口径见抬头第 14 条）=========
+#: 🔴 默认关：关着时一枚状态读都不许多打、两份证据件的字节逐字回到今天（旧口径由
+#: tests/test_r642_post_approval_terminal_readback.py 钉死）；开着时批准轮走完之后多打**一发**
+#: GET。开窗人要读 D-3 那一格就得带上它 —— 不带不是「读到了零枚出处」，是这一格今天没量过。
+#: 读表时机与 R632 那两枚同一条纪律：import 期读一次，一窗之内不重读。
+POST_APPROVAL_READBACK_ENV = "EVAL_POST_APPROVAL_READBACK"
+RECORD_POST_APPROVAL_TERMINAL = _lane_switch(POST_APPROVAL_READBACK_ENV)
 APPROVAL_FAILED_SENTINEL = os.getenv(
     "EVAL_APPROVAL_FAILED_SENTINEL", "<approval-failed-no-terminal-answer>")
 #: R447 判据②：队列道那一轮挂起被批准到终答之后落的 kind。它与既有十枚 ``queued_*`` 一枚都
@@ -661,6 +668,10 @@ def _new_frame_ledger():
             # R215：跨流的坏形证词。它**不进** per_stream —— 那一格的键集被
             # tests/test_r181_text_frame_ruler.py 逐字钉着，一多一少都算改尺。
             "break_frames": [],
+            # R642 甲案：每条流**自己交付**的那份字（``_consume`` 末帧覆盖前帧之后的读数）。
+            # 🔴 与 break_frames 同一格纪律：只活在内存里、只喂第④条的流级比对，一列都不进账
+            # —— per_stream 那一格多带一枚指纹就把 run6 的逐位复算打断（原始账不许漂）。
+            "stream_deliveries": [],
             # R223：到达时刻的账（跨流，同样**不进** per_stream）。
             "frame_arrivals": [], "events": [], "clocks": [],
             # R222：队列道取回那一程的停表账。没走队列就是空字典，读作「这一题没取回过」。
@@ -680,6 +691,9 @@ def _fold_frames(ledger, out):
     ledger["prefix_breaks"] += breaks
     ledger["per_stream"].append({"frames": frames, "breaks": breaks,
                                  "first_break_at": int(out.get("first_break_at") or 0)})
+    # R642 甲案：这条流交付的那份字跟着折进内存账（第④条流级比对的比对对象）。
+    # 🔴 只喂判定，不落盘、不计数：原始账那几格与帧账一行的键集一字未动。
+    ledger["stream_deliveries"].append(str(out.get("answer") or ""))
     # R215：这条流的坏形证词跟着折进账，顺手记下「这条流一共几枚帧」—— 判据① （末帧）
     # 要的就是这两个数相等。零帧的流没有证词可带（上面那格同理不覆盖末帧）。
     stream_index = len(ledger["per_stream"]) - 1
@@ -697,15 +711,50 @@ def _fold_frames(ledger, out):
     return ledger
 
 
+def _stream_level_correction(frame_text, answer_text, deliveries, stream):
+    """R642 甲案：豁免四条件里第④条的**流级**读法（判定层今天唯一的改动点）。
+
+    轮级那一条（``frame_text == answer_text``）一字未动，仍排在最前面 —— 它讲的是「收尾那次
+    整段替换，屏上换成的正是交回评分器的那份字」。今天补的是挂起轮内换源那一形：三条
+    **同时**成立才算，缺一条就不算 ——
+      (a) 断裂住在**非最后一条**流里。末流那一族的坏形照旧只许用轮级那一条判，本条不给它
+          开后门（R215 当年在册用例全是「一条 /ask 流」的形状，那一族的读法一字不改）。
+      (b) 断裂帧逐字等于**它所在那一条流**自己交付的那份字 —— 同一条流内不许换源。这一条
+          真有牙：末帧是一枚空帧时 ``deliveries[stream]`` 仍是该流最后一枚非空帧的字，
+          两者不等就豁免不了（``_consume`` 的 ``if content:`` 那一条口径）。
+      (c) 本轮终答以它为前缀 —— 批准腿是接着往下写，不是屏上换了第二份字。🔴 这一条是闸：
+          放宽它就是把「换源换成了另一份答案」洗成「一次纠正」（R614 §4 的守门用例，
+          本单落成常驻牙）。同文重发那一形不归它管，由 R471 的派生格
+          ``cross_stream_repeat_frames`` 独立拦，两格不许互抄。
+    🔴 ``deliveries`` 缺席（复算入口、调用方没折过任何流、越界流号）⇒ 一律不豁免：
+    宁可少豁免一次，不可多豁免一次。本函数只读内存里那一份证词，一列都不往账上添。
+    """
+    if frame_text == answer_text:
+        return True  # 轮级那一条，原样
+    if not isinstance(deliveries, list) or stream < 0 or stream >= len(deliveries):
+        return False
+    if stream >= len(deliveries) - 1:
+        return False  # (a) 末流：只认轮级
+    if frame_text != deliveries[stream]:
+        return False  # (b) 同一条流内换了源
+    return bool(frame_text) and answer_text.startswith(frame_text)  # (c) 终答以它为前缀
+
+
 def _corrective_readings(frames, answer):
     """R215 判据② 的豁免账：本轮几枚坏形是「受控纠正替换」，剩下几枚是真断流。
 
     四条**同时**成立才豁免一枚，缺一条就不豁免 —— 量具多豁免一次，判据② 就永久假绿一次：
       ① 它是**这一条流的最后一枚** text 帧。中途坏形说明流被截断过，收尾救不回来；
+      🔴 R642 甲案只换第④条的**比对对象**（轮级 → 流级），① ② ③ 一字未动，
+      ``prefix_breaks`` 与「豁免只把坏形分家」那枚恒等式一字未动，原始账一格不漂。
       ② 本轮至多一枚。一题里出现第二次换源，那已经不是「一次纠正」；
       ③ 它前面紧邻一枚 ``step(tool=answer_correction, status=running)``。光靠字节流的形状
          （短一截、换个头、又变长）蒙不过去 —— 屏上那次整段替换是被这枚 step 武装的；
-      ④ 它的正文与最终交付的 ``answer`` **逐字相等**。换源之后屏上没换成这份字，就不算纠正。
+      ④ 它逐字等于本轮交回评分器的 ``answer``（轮级，原样），**或** R642 甲案的流级三条
+         同时成立：(a) 它所在那一条流不是最后一条流、(b) 它逐字等于**它所在那一条流**自己
+         交付的那份字、(c) 本轮终答以它为前缀。判法在 ``_stream_level_correction``。
+         🔴 跨流不许互相比源：拿批准腿的终答去比挂起轮的末帧，两窗 19/19 恒假（R614 §2），
+         这一族的坏形因此从来没有过一次豁免 —— 那是量具失明，不是产品断流。
     🔴 原始账一格不动：``prefix_breaks`` 照旧，豁免只体现在 ``uncorrected_breaks``。
     """
     granted = 0
@@ -720,8 +769,10 @@ def _corrective_readings(frames, answer):
             continue  # ① 不是这一条流的末帧
         if not record.get("armed"):
             continue  # ③ 前面没有那枚武装替换的 step
-        if str(record.get("text") or "") != answer_text:
-            continue  # ④ 屏上没真替换成交付的那份字
+        if not _stream_level_correction(str(record.get("text") or ""), answer_text,
+                                        frames.get("stream_deliveries"),
+                                        int(record.get("stream") or 0)):
+            continue  # ④ 轮级/流级两条比源都不成立：屏上没真替换成交付的那份字
         granted += 1
     total = int(frames.get("prefix_breaks") or 0)
     return {"corrective_replacements": granted, "uncorrected_breaks": total - granted}
@@ -1360,6 +1411,126 @@ def _poll_queue(request_id):
                  "", "no_status" if not book["polls"] else "deadline", now)
 
 
+# ==================== R642 D-3：批准之后必须再读一次终态载荷 ====================
+#
+# 病根（跟进单 §167 二／§172 二；本席 10-04 在 run21b 那 12 行上现取）：``_poll_queue`` 读到
+# ``awaiting_approval`` 就停表，``queue.terminal`` 从此定格在**挂起那一刻**的快照上，而 transport
+# 随后把批准轮走到终答（R447 判据①）却一次都没回头再读那枚载荷 ⇒ 那 8 枚 ``queued_approved``
+# 的 ``terminal.state`` 全是 ``awaiting_approval``、``sources_present`` 全是 false、
+# ``sources_n`` 全是 0。这枚 0 说的是「挂起的时候当然还没有出处」，不是「批准后出处为零」
+# —— D-3 只能判「未量到」：拿它判红是假红，拿它判绿是假绿。
+# 今天补的是**那一次读**，不是那格结论：批准后多打一发 GET，读回的东西另存一格，
+# 快照那一格一个字不改（两次读数都在账上）。拿不到证词就记 None 并点名原因，🔴 不折 0、
+# 不拿快照冒充、不改一字节产品码。真机读数由总控在 run22／D 相 2 的窗里取。
+
+#: 批准后终态那一格长在取回账的哪一处：``queue.post_approval``。
+#: 🔴 它长在 ``queue`` 那一格**里面**：帧账一行的键集是四枚「对判，不是子集」的在册钉
+#: （``tests/test_r181_text_frame_ruler.py``／``test_r223_frame_arrival_clock.py``／
+#: ``test_r259_awaiting_approval_stops_the_watch.py``／``tests/_r259_queue_ruler.py``），
+#: 顶层一列都不许多 —— 与 R259 那条「读数只许长在 queue 那一格里」同一族纪律。
+POST_APPROVAL_CELL_KEY = "post_approval"
+#: 这一格该有几枚读数（本单的自证钉：缺一枚就是量具没交回它承诺的东西）。
+POST_APPROVAL_CELL_KEYS = ("read", "outcome", "terminal")
+
+
+def _read_queue_terminal(request_id):
+    """批准之后**再读一次** ``/queue/status/{request_id}``，把那一枚读回折成一格账。
+
+    只一发 GET：不循环、不睡表、一枚 ``time.time()`` 都不多读（钟的纪律见抬头第 10 条那族），
+    也不复用 ``_poll_queue`` 那把轮子 ⇒ 停表词表与读表次数一字未动（判据⑤ 同族口径）。
+    三条诚实口径照抄 ``_terminal_readout`` 那一族，一枚不省：
+      ① 打不通 / 载荷解不成对象 ⇒ ``read`` 假、``terminal`` 那一身槽位全 ``None``
+        （形状 ``not_terminal``）：这一格今天**没量到**，🔴 不折成 0、不拿挂起快照顶替；
+      ② 读到了而服务端在这枚状态下没交读数键 ⇒ 形状 ``no_keys``／``legacy``，照样说不出；
+      ③ 读到真终态 ⇒ 槽位逐枚照收，含 ``sources_error`` 那一枚「出处压根没算成」。
+    """
+    cell = {"read": False, "outcome": "", "terminal": _terminal_readout(None)}
+    try:
+        with _open("/api/v1/queue/status/" + str(request_id), None, "GET") as resp:
+            body = json.loads(resp.read().decode("utf-8", "replace"))
+        if not isinstance(body, dict):
+            cell["outcome"] = "not_object"
+            return cell
+        cell["read"] = True
+        cell["outcome"] = "read"
+        cell["terminal"] = _terminal_readout(body)
+    except urllib.error.HTTPError as exc:
+        cell["outcome"] = "http_" + str(exc.code)
+    except (urllib.error.URLError, OSError, UnicodeDecodeError,
+            json.JSONDecodeError, ValueError) as exc:
+        cell["outcome"] = type(exc).__name__
+    return cell
+
+
+#: D-3「批准之后出处随没随答案」的八枚可判读数，逐枚不同名、互不冒充。
+#: 🔴 这一族治的就是那枚假零：从前账上只有挂起快照可算，``sources_n`` 读出来是 0，
+#: 于是「批准之后没重读」被折成「批准后出处为零」—— 与 ``tests/_r259_queue_ruler.py``
+#: 那枚 ``sources_cell`` 把 ``row_cannot_say`` 与 ``read_zero`` 分家同一件事，同一方向。
+D3_READ_SOME = "read_some"
+D3_READ_ZERO = "read_zero"
+D3_NOT_COMPUTABLE = "not_computable"
+D3_ROW_CANNOT_SAY = "row_cannot_say"
+#: 批准后那一发读回的还是挂起态：批准没有落到这一行的终态上 ⇒ 那一枚载荷说的仍然是
+#: 「挂起的时候还没有出处」。🔴 这一枚 guard 治的就是 D-3 的病根本身 —— 不拦它，
+#: 「批准后仍挂起」会被折成 ``read_zero``，与拿挂起快照冒充是同一枚假零。状态词与
+#: ``_poll_queue`` 停表那一条同源（``awaiting_approval``），本单不另起第二把尺。
+D3_STILL_PARKED = "still_parked"
+PARKED_TERMINAL_STATE = "awaiting_approval"
+D3_READBACK_UNREADABLE = "readback_unreadable"
+D3_NO_READBACK = "no_readback"
+D3_NOT_APPLICABLE = "not_applicable"
+#: 欠「批准后重读」这一格的 kind 两枚：批到终答与批不到 —— 两条都真打了批准轮。
+#: 🔴 同步道那一族（``approved_ok``）不在名单里：它没有队列终态载荷可重读，``queue`` 那一格
+#: 本来就是个空字典，D-3 在它身上读的是流内 ``sources`` 事件，另一条腿，不许互抄。
+APPROVAL_ROUND_KINDS = (QUEUED_APPROVED_KIND, "approval_failed")
+
+
+def _readback_cell(name, sources_n, note):
+    """D-3 那一格的返回形状：读数有名、枚数可 None、原因随行交回（禁止只印一格）。"""
+    return {"cell": name, "sources_n": sources_n, "note": note}
+
+
+def post_approval_sources_readback(row):
+    """把一题的帧账行折成 D-3「批准后终态」那一格的诚实读数（只读，一枚都不现编）。
+
+    ``sources_n`` 只在 ``read_some``／``read_zero``／``not_computable`` 三枚读数下才是**真读数**，
+    其余五枚一律 ``None`` ——「那一行说不出」与「查过了，零枚」是两件事（口径① 的延续）。
+    🔴 批准后那一发若仍送回挂起态，读数是 ``still_parked`` 而不是 ``read_zero``：这一格
+    拦的就是本单要治的那枚假零，方向只会变严，不会多豁免。
+    题号与逐枚点名由调用方拿着：读数件与本单的离线对照表都按这一枚函数走，不另起第二把尺。
+    """
+    record = row or {}
+    book = record.get("queue") or {}
+    kind = str(record.get("kind") or "")
+    if not book or kind not in APPROVAL_ROUND_KINDS:
+        return _readback_cell(D3_NOT_APPLICABLE, None,
+                              "这一题没走队列道或没打批准轮 ⇒ D-3 不欠批准后重读")
+    cell = book.get(POST_APPROVAL_CELL_KEY)
+    if not isinstance(cell, dict):
+        return _readback_cell(D3_NO_READBACK, None,
+                              "打了批准轮而账上没有批准后终态 ⇒ 未量到，不许读成零枚出处")
+    if not cell.get("read"):
+        return _readback_cell(D3_READBACK_UNREADABLE, None,
+                              "批准后那一发重读没读到载荷：" + str(cell.get("outcome") or "未说明"))
+    terminal = cell.get("terminal") or {}
+    shape = terminal.get("shape")
+    if shape == TERMINAL_SHAPE_NOT_TERMINAL:
+        return _readback_cell(D3_READBACK_UNREADABLE, None,
+                              "重读那一发送回的不是终态载荷（形状 not_terminal）")
+    if terminal.get("state") == PARKED_TERMINAL_STATE:
+        return _readback_cell(D3_STILL_PARKED, None,
+                              "批准后那一发读回的还是挂起态 ⇒ 批准没落到终态，不许读成零枚出处")
+    count = terminal.get("sources_n")
+    if not _sources_are_reportable(shape) or count is None:
+        return _readback_cell(D3_ROW_CANNOT_SAY, None,
+                              "那一行说不出自己有没有出处（形状 " + str(shape) + "）")
+    if terminal.get("sources_error"):
+        return _readback_cell(D3_NOT_COMPUTABLE, count,
+                              "服务端明说出处没算成：" + str(terminal.get("sources_error")))
+    return _readback_cell(D3_READ_ZERO if count == 0 else D3_READ_SOME, count,
+                          "批准后终态真交回 " + str(count) + " 枚出处")
+
+
 def _record(row_id, kind, attempt, started, payload, sentinel, extra=None):
     """逐题在盘：采集器只有覆盖闸全过才写字节，中途没有任何断点，这行就是废题的证据。
 
@@ -1504,6 +1675,16 @@ def transport(row):
                 _APPROVAL_FAILURES += 1  # 不进 _BLANKS：批准失败是产品结局，不是零字节系统性故障
             elif kind == QUEUED_APPROVED_KIND:
                 _QUEUED_APPROVED += 1  # R447：队列道批到终答的题数（收窗自查那一格）
+            # ===== R642 D-3：批准之后必须再读一次终态载荷（抬头第 14 条）=====
+            # 快照那一格（``queue.terminal``）说的还是「挂起那一刻」那句话，一个字不改；今天多存
+            # 的是批准**之后**那一发读回的东西 —— 两次读数都留档，谁也不冒充谁。
+            # 🔴 拿不到就记 None：不折 0、不拿快照顶替、不动产品码。开关关着时这一发压根不打，
+            # 落盘字节逐字回到今天（假出口按发数说话，多打一发当场红）。
+            if from_queue and RECORD_POST_APPROVAL_TERMINAL:
+                queue_book = frames.get("queue")
+                if isinstance(queue_book, dict):
+                    queue_book[POST_APPROVAL_CELL_KEY] = _read_queue_terminal(
+                        (out.get("queued") or {}).get("request_id"))
         payload = {"answer": answer, "evidence": evidence, "first_token_at": first_token_at,
                    "thinking_chars": None,  # HTTP 侧看不见隐藏思维链 ⇒ null，禁止估算
                    "tool_calls": steps}
@@ -1524,4 +1705,6 @@ def summary():
             "approval_failures_this_process": _APPROVAL_FAILURES,
             "awaiting_approval_turns": _PARKED,  # R259：挂起题数（不喂白烧闸）
             "queued_approved_turns": _QUEUED_APPROVED,  # R447：其中批到终答的题数
+            # R642：D-3 那半格的开关状态随自查交回 —— 关着就是这一格今天没量，写在盘面上。
+            "post_approval_readback": ("on" if RECORD_POST_APPROVAL_TERMINAL else "off"),
             "frame_ledger": str(frame_ledger_path())}  # R181 判据② 的证据件落点（收窗自查用）
