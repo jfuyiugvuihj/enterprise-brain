@@ -668,10 +668,16 @@ LEDGER_A = [
 ]
 
 LEDGER_EXTRA = [
-    T("R46", "PARTIAL", [A("c29ccf5", "R152 施工（后端半张）", "migrations/0011_document_activity_signals.sql"),
-                         A("eaa9af8", "R152 并树"), A("484536c", "R195 并树（消费侧）", "frontend/src/lib/feedback.js")],
-      [S21(46, "①")], "① 真库/真并发次序未证；按 filename 聚合无身份 ⇒ 强度校准另在 R153",
-      note="计划书 L468 那句「真零产物只剩 R46 的消费侧」是假账：消费侧产物在 R195 名下已并树"),
+    T("R46", "LANDED", [A("c29ccf5", "R152 施工（后端半张）", "migrations/0011_document_activity_signals.sql"),
+                        A("eaa9af8", "R152 并树"), A("484536c", "R195 并树（消费侧）", "frontend/src/lib/feedback.js"),
+                        A("bf75136", "R648 并树（真库读数）", "scripts/r648_real_pg_gauge.py")],
+      [], "① 真库两腿已于 R648 量到：8 枚真连接同打一假名逐列 80/80 零丢更新、读后写点名 victim、"
+          "净值 0 而两列各 12 不许折成一枚、真 ANN 三档位移全部 ≤1 名（界由 R153 钉死一字未改）；"
+          "凭据 docs/testing/r648-real-pg-concurrency-2026-10-04.md",
+      note="计划书 L468 那句「真零产物只剩 R46 的消费侧」是假账：消费侧产物在 R195 名下已并树；"
+           "原句后半「强度校准另在 R153」同属过期账（R153 并树 3a5c24b），10-04 由 R648 真库读数结案 G-R46-1。"
+           "🔴 诚实边界：证据面是 eb_r59_sandbox 演示语料＋合成标签＋单射改名的假 filename，生产库那张表仍 0 行"
+           "（打点走 HTTP 端点那一腿要另量），本档不主张客户尺寸与客户隔离"),
     T("R47", "PARTIAL", [A("95a1cd9", "施工", "app/rag/retrieval_pipeline.py"), A("006c613", "并树")],
       [S21(47, "①")], "① 真实命中改进量 0/105（用例打桩）"),
     T("R48", "PARTIAL", [A("0ad3d3e", "并树 R48 路线甲", "frontend/src/components/AnswerHeadlineCard.vue")],

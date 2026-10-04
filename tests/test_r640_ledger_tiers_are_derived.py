@@ -264,7 +264,7 @@ def _cli(*extra):
 def test_the_cli_prints_six_tiers_and_still_passes():
     code, text = _cli()
     assert code == 0, text[-800:]
-    assert "在册 43 号：LANDED=23 · PARTIAL=17 · CLOSED=1 · ZERO=0 · FOREIGN=1 · NOTBUILT=1" in text
+    assert "在册 43 号：LANDED=24 · PARTIAL=16 · CLOSED=1 · ZERO=0 · FOREIGN=1 · NOTBUILT=1" in text
     assert "RESULT=PASS（0 条违规，在册 43 号逐条自证）" in text
     assert "不计入欠账的档：R39 R143 R144" in text
     assert "🔴 账面滞后：本尺派生为 CLOSED" in text, "计划书那行还写「待派」——尺只能报滞后，改表归人"
