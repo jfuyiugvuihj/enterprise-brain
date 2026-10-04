@@ -5782,3 +5782,8 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 - 在飞满槽 4 枚：R638（`Plato`）／R639-A（`Aristotle`）／R640／R642。**R643 排下一格空槽**，🔴 不超发。
 
 **八、下一步序（落账为据，防下一班重新发明）**：收 R638→R639-A→R640→R642 逐枚两态代提交 → 全量门 `python scripts/run_gate.py`（要完全安静的树；上一枚在册绿票＝门 #7 `4da0bad`／`-n 4`／875.8 s／exit=0）→ `docker compose --env-file deploy/.env.server build migrate`＋`up -d --force-recreate backend worker scheduler` → **run22 全 105 窗**（一窗多判据：A②／A④跨代次对子／C③／D-3）→ D 门相 2 单独窗（`REPORT_LANE_VIA_QUEUE=on`，须 R642 并树后才有意义）。R638 那个 4.7 MB census JSON 本席已裁：**不进仓**（棘轮基线 384 KB 已够，census 留 `%TEMP%` 并在取证纸里记 sha＋字节数）。
+
+### 173.1 本席自纠一格（19:3x·紧接着 §173 落笔之后现取）
+🔴 **§173 七与看板名册里 R642 那枚席位 id 写错了**：账面写 `01a106ab-b472-4821-95a0-4693c232636a`，实测真 id＝**`01a106ab-b498-7950-80e3-0e323197a573`**（凭 `~/.codex/sessions/2026/10/04/rollout-2026-10-04T19-27-58-01a106ab-b498-….jsonl` ordinal 0 的 `session_meta`：`id`／`parent_thread_id`＝本席／`agent_nickname=Wegener`／`thread_source=subagent`）。同法验真第二枚：`01a1069e-b470-71f3-9ff6-c2fcf4a4c11d`／`agent_nickname=Dalton`（19:13:46）＝账面正确。
+**病因与纪律同源**：两次 spawn 的回执都没落进本席上下文，本席按在册规矩「回执没落进上下文时不许猜 id」应当**先去 sessions 验真再写名册**，结果 R640 那格验了、R642 那格没验就落笔——这正是「引用任何数字前先查有没有被后续实测推翻」对本席自己也要成立那一格。名册行已由本席 splice 改回真 id（跟进单只许文末追加，故 §173 原文不动，作废声明以本条为准）。
+🔴 顺带把这条坑升级成常驻口径：**错 id 的代价不是账面难看，是 `send_input`／`close_agent` 会打到别的席位或投递失败**（本席 19:3x 那枚 `wait_agent` 就是被这个错 id 顶回来的，回执 `not_found`）。⇒ 今后名册落 id 之前，必须现取 `session_meta` 三枚（`id`／`parent_thread_id`／`agent_nickname`）逐字对，才对得上才算投出。
