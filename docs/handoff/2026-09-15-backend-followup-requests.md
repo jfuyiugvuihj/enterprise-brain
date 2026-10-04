@@ -5639,3 +5639,28 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 **九、并发口径收紧（业主 10-04 明令「他只支持 3-4 个 agent」）**
 - 在册那句「机器上限实测 6 枚」作废，AGENTS.md 已改写：在飞达 4 枚即**不再新投**，先收席腾槽；收席必须 close。
 - 本班实投序列照实记：16:5x 六枚在飞（Pasteur／Feynman／Faraday／Ptolemy／Kant／Gibbs）→ Pasteur、Gibbs 先后交回并 close → 17:2x 补投 Darwin（R635，基点 497ac38＝新 HEAD）⇒ 现回落到 5 枚。**下一枚只在再有执行层交回之后才投**，不按 6 枚排。
+
+### 168 第十三班第四格（10-04 19:0x-19:5x·总控线·主树 3346c89→d00b791→b1a4760→本笔／**单模型未切换**／心跳零枚·automation-2 仍 PAUSED 且 target 仍指死线程 01a0acfb）：R631 并树＝R51② 判红 · R635 并树＝坐标派生 · R545 第三次同族病退回 · 本席改口一笔
+
+**一、R631 并树 `d00b791`（执行层 Feynman／树 be-r631@4da0bad）——差的那枚导出由本席交，格子从「量不到」变「不达标」**
+- 本席亲跑两态同名件（`tests/test_r631_stage_sum_delta.py`＋`tests/test_r51_stage_latency.py`）：state①（apply 未 commit）**80 passed／6.76 s**，state②（commit 后干净树复跑同名 2 枚）**80 passed／6.68 s**，两态文件清单逐枚相同。
+- 导出为**纯读**：现取 `trace_events` 69,106 行、`created_at` 列型 `timestamp with time zone`、`payload` 列型 `jsonb`、`current_setting('TimeZone')`＝`Etc/UTC`。窗界由 sidecar `ts`（本地 +08）换算 UTC，逐窗 `min/max(created_at)` 现取落在界内。
+- 🔴 取证纸 §7 那条 `\\copy ... WITH (FORMAT JSON, ARRAY TRUE)` 本席原样跑，三窗各报 `ERROR: syntax error at or near "FORMAT"`（通道 `docker exec -i … psql -At -c`）。改用逐行 `row_to_json` 出 JSONL（`_json_rows` 认），`payload::text` 正是纸面说的「解一次」那条契约，`(created_at AT TIME ZONE 'UTC')::text` 交无时区读数由 `_to_ms` 按 UTC 收。命令原文已写进纸 §11。
+- 三窗读数与判语：见计划书 §6 追加第四格①②（p50 32.96／29.80／31.41%，p95 73.86／73.79／73.67%，两条线全 FAIL，`failing_1pct` 枚数＝母集枚数）。⇒ 本笔的净效果是把 **R51 的结案降级**，不是把格子推绿。
+- 母集诚实性本席核过：`no_denominator` 逐枚点名在册未被摘除（20／19／19），`untrusted_reasons` 三窗皆空，`doc-04` 重题已点名取 `attempt` 最大那枚。
+
+**二、R635 并树 `b1a4760`（执行层 Darwin／树 be-r635@497ac38）——观测面手抄坐标清零＋R630 那把尺扩到整本名册**
+- 本席亲跑两态同名件 **13 枚**：state① **199 passed／25.89 s**、state② **199 passed／25.46 s**，与执行层自报（199／25.79、199／26.03）同枚数。
+- 四枚货 sha256 前缀与执行层自报台账**逐枚吻合**（`dfd2f094`／`9a2809fa`／`0116611f`／`3ed72c0e`），故收货不必重抄内容。
+- 🔴 名册那枚 id 本席写错了，就地订正：写的是 `01a10631-359f-7270-96d9-6b6c2df325b3`，spawn 真返回 `01a10631-359f-7270-96d9-6b6c2df325b6`（末位 3／6）。同族先例＝R626 那次 `938d→93ed`（`4d13596`）。规矩重申：**名册 id 必须在投递返回那一刻与 spawn 值逐字核一遍**，不能凭手感重打。
+- 契约 `docs/api/contract-v1.md` 那六行旧坐标由本席落，走**文末追加**（文末追加一节，标题自报号 R635`）：中间一字未动，因为 `tests/test_r523_cached_count_lands.py:517` 那枚钉 `contract_is_pure_append` 明令「文末之前动过字即红」，照 R523/R558 先例「旧句仍在、文末点名作废」。追加后 CR＝LF＝6,007、孤 CR 0、控制字符 0；13 枚同名件（含 r523／r105）复跑仍 199 passed。
+- 执行层另点名两件本席不在本笔处理的：契约另有 9 处 `chat.py:`／`orchestrator.py:` 旧坐标（L368/395/398/401/414/426/1265/1474/1542）；`slo_units()` 文档串里两枚手抄名册成员枚举。⇒ 并入 R637 射程。
+
+**三、R545 退回返工（同族病第三次）**
+- 本席亲跑 state①：主树 **1 failed／48 passed／22.96 s**（`%TEMP%\\eb103\\r545-state1.log`）。红的 `tests/test_r545_counter_evidence_teeth.py:247`：「本单写域外出现了条目：chroma_db/chroma.sqlite3, …」。
+- 病形＝常驻钉把「此刻整棵工作树脏不脏」当判据：它在自己树里只有三枚 untracked 所以绿，搬到主树必红（主树永远有别人的合法货与恒脏的 `chroma_db/chroma.sqlite3`）。同族在册 #96（施工期盘面脏当永真判据）／#107（收席引用旧账），今天第三次。
+- 处理：按规矩**不当场补投、不并树**，`send_input` 令 Faraday 在原树 be-r545b 返工（只审本单写域内条目＋态分支／影子端正控），返工后两态亲跑交数。主树里那四枚副本已核 sha256 与原件逐枚相同，挪进检疫区 `%TEMP%\\eb103\\quarantine\\r545\\`（删除通道被策略拦，本席不绕）。
+
+**四、在飞与槽位（现取）**
+- 在飞 **1 枚**：Faraday／R545 返工（be-r545b）。已 close：Pasteur／Gibbs／Kant／Feynman／Ptolemy／Darwin／（Pasteur 前班已 close）。业主口径 3～4 枚上限，故本笔之后可再投 2～3 枚。
+- 主树待提交货已清空到只剩账面三档＋恒脏 `chroma_db/chroma.sqlite3`＋`.zcodeignore`＋业主作业目录；`docs/handoff/2026-09-17-pgvector-adoption-plan.md` §16 那笔订正（R633 交回的两格：判据④ 从未在生产库跑过＝真；「回滚演练没跑过」＝假，`reused_suites` 点名 r575＋r587 四步 ok:true）随本笔一起提交。

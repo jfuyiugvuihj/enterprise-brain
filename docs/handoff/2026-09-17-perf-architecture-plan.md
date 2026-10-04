@@ -515,3 +515,15 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
   - 开窗前置新增硬条件（今日实测出证的两个坑）：① `EVAL_SIDECAR`／`EVAL_APPROVAL_LEDGER` 必须设——三扇的 `latency_ms.frame_ledger_rows` 现读全为 0 且无 `approval_ledger` 格，所以「p95 与逐发帧账对过」在这三扇上**不成立**；② `index_backend` 为**空串**的窗（run20k 即此形）＝未设＝缺省 Chroma 读腿，不许与 pgvector 窗混在同一张同码复跑表里。
 - **② 🔴 在册假账一笔（本席自己报出去的）**：`unsupported_claim_rate` 那句「五连 0」改判为**没量**。现取三扇 answers 共 315 行、带 `claims` 键的＝**0 行**，而这把尺只从 `claims` 数无据断言 ⇒ 恒 0 是零分母，不是「客户没拿到编造答案」。凡引用这个 0 的格子（含 C／D 门相关句）从今天起记**未验**；要拿它说话，必须先让 transport 把 `claims` 落进答案件。
 - **③ 并发硬上限改 3～4 枚**（业主 10-04 明令，已同步写进 `AGENTS.md`）：在册那句「机器实测 6 枚」作废。在飞达 4 枚即停止新投，先收席（验收＋close）腾槽；收席不 close 会把自己的账挤死（在册事故：四枚已结案没 close，把新一枚挤成 `agent thread limit reached`）。
+
+## §6 勘误追加（10-04 第十三班第四格·R51 判据② 真读数判红＋本席一句说过头就地改口·只追加，上面任何一行一字不改）
+
+- **① 导出一枚账，R51 那格从「量不到」变「量到了且不达标」**（凭据＝今日并树的 `scripts/r631_stage_sum_delta.py`，执行层 Feynman／树 be-r631，并树笔 `d00b791`；分段腿原料＝本席只读导出的 `trace_events` 三窗 3,515／3,427／3,511 行，零写入、未 recreate、未打模型）：
+  - run18 n=105 p50 32.9612% p95 73.8571% p99 83.5642% 最大 97.2193% 残差均值 13,431.74 ms rc=1
+  - run19 n=105 p50 29.7976% p95 73.7937% p99 84.1346% 最大 97.8826% 残差均值 11,962.51 ms rc=1
+  - run20k n=106 p50 31.4064% p95 73.6662% p99 82.8806% 最大 97.505% 残差均值 11,803.42 ms rc=1
+  - 两条线各判一次：三窗 `< 1.0%` 与 `< 0.03%` **全 FAIL**，且 failing_1pct 枚数＝母集枚数（105／105／106）⇒ 无一题过线，不是抽样噪声。
+- **② 🔴 结案降级**：本档 L201 那行写的 `R51（已结案 cef08bf）` 从今天起改判 **部分达成**——判据①（分类/改写/检索/生成/反思各段 P50/P95 可查）**成立**（在册 `GET /observability/stage-latency` 与 `/health/details` 的 performance 块，43 枚在册钉在位）；判据②（端到端与分段加总误差 <1%）**未达**（就是上面那三窗读数）。机器尺 `scripts/audit_plan_ticket_ledger.py` 把 R51 记 LANDED 从今天起是假账，改点随 R637 落，本笔不动尺。G-R51-1 这格在 R636 并树并再导一窗之前**不许翻绿**。
+- **③ 病形与立单**：缺段集中在 `rewrite,retrieve,generate,reflect`。最坏一枚 `chart-01` 端到端 94,651 ms 只有 1 段 2,632 ms 进账（三窗同形：run19 1,886 ms／run20k 2,406 ms）；`scope-05` 已进 6 段仍差 240,527 ms。⇒ 立 **R636**：按车道逐枚归因分段账欠在哪一段，补齐或明写「该车道不产分段」，并给 `no_denominator` 那 19–20 枚（缓存命中不发 `request.started`，在册 `cache_hits_are_not_traced`）出明账。
+- **④ 🔴 本席一句说过头，就地改口**（本档 §6 追加第二格「开窗前置」那条）：原句「run18／run19／run20k 三扇的 `latency_ms.frame_ledger_rows` 现读全为 0 且无 `approval_ledger` 格，所以『p95 与逐发帧账对过』在这三扇上**不成立**」——**前半是错的**。帧账三扇都在盘上（1,044,042／977,867／1,003,308 B），全 0 是**评分命令没带 `EVAL_SIDECAR`／`EVAL_APPROVAL_LEDGER`** 造成的，不是缺件。带 env 离线复评现取：三扇 `frame_ledger_rows=105`、`suspect_n=0`、`approval_ledger{hitl_pre_n 19, approved_final_n 19, approval_failed_n 0, ledger_rows 105}`。⇒ 「p95 与逐发帧账对过」这句在三扇上**成立**（离线补判，不需重开窗；件在 `%TEMP%\\eb103\\rescore\\*.json`）。那条「开窗必须设两枚 env」的**前置硬条件不变**，只是罪名列错了。
+- **⑤ 仍然成立的那笔订正**：`unsupported_claim_rate` 的「五连 0」判为**没量**——三扇 answers 共 315 行、带 `claims` 键的＝**0 行**，恒 0 是零分母。凡引用它的 C／D 门句子继续记**未验**；要它可量，先让 transport 把 `claims` 落进答案件（随 R632 那族量具单排）。
