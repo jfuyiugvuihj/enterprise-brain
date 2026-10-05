@@ -6001,3 +6001,42 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 - **改法（机械防，写进规矩）**：今后凡报「某席零写入／某树不存在」，凭据必须是**当场 `git worktree list` 全量输出＋逐条 `status --porcelain`＋`rev-list --count <基点>..HEAD`**，三件齐了才允许落纸；只查一个猜测路径＝无效取证。**已把这条写进派工模板与本班名册行的取证列。**
 - **连带后果已核**：`Bohr`（重投）建的 `be-r666` 目前 porcelain 空 ⇒ 两枚没在同树一处写，不构成真写域冲突；死席那半货封存待与 `Bohr` 交付逐枚比对，谁达标用谁，**不许两半混并**。
 - 另记一笔同族：本班一度把 `playwright fill()` 造成的空白面板判成 P1「前端不渲染实时流」，换真实键盘事件即正常（见 §183.3 末条）。两件事同根：**先确认自己在哪一层按的按钮，再报存在或不存在。**
+
+
+## 184. 第十七班续席（10-05 16:2x-17:0x）：R664 并树＋R659 item① 退回并立 R672＋逐格结案纸落地＋r302 控制符账本改口（总控线）
+
+**基点与链**：本班接手时主树 HEAD `b5b67b5`，现落 `R664 并树 b0404c7` → `账 f7b8b47` → 本笔。今天累计 25 枚提交未推（`Your branch is ahead of 'gitee/codex/data-file-catalog'`），push 属业主。
+
+### 184.1 R664 并树（执行层 Galileo·事故 #121 未建树写进主树）
+
+`tests/test_r645_contract_difference_ledger.py`（15 枚扩到 24 枚，+599/−21）＋新纸 `docs/testing/r664-inplace-derived-anchor-differences-2026-10-05.md`。总控亲跑 state① 现盘同名件 **122 passed / 4 failed / 62.29 s**，state② 干净树复跑 **82 passed / 0 failed / 50.16 s**（两态文件清单逐枚点名）。刀③ 的 escape 集由空集转 3 枚（`d1118af`／`b1a4760`／`497ac38`），两本账一起清那条腿交回 0 枚。四枚红逐枚为 r638 基线未随 R660 重锚（3 枚）＋ r302 控制符记账（1 枚），先于本单存在（执行层已在零本单件的干净 `b5b67b5` 检出逐枚同名复现）。
+
+### 184.2 R659 item① 退回并立 R672（归因钉死，不是含糊退回）
+
+- 本班把 Arendt 那两枚件投进主树跑 `tests/test_r330_vector_legs_reach_the_health_outlet.py`＋`tests/test_r633_dual_write_off_precondition_teeth.py`＋`tests/test_r650_corpus_leg_names_its_refusal.py`＋`tests/test_r659_topk_leg_names_its_refusal.py`：**5 failed / 76 passed / 127.88 s**（两遍同数）。
+- 🔴 归因 A/B：把 item① 两枚改动 `git stash push` 收起后单跑 r633 ＝ **39 passed / 0 failed / 112.53 s**（基 `b0404c7`）。⇒ 五枚红确由 item① 造成，与夜窗无关、与既有账无关。
+- 病形不是"某处少一行"：r633 在 `::test_turning_the_switch_off_is_measured_as_a_loss_not_a_green` 里钉的是**四族必须在场**（`chroma_write_gate_reopens`／`delete_set_blind_to_pg_only_rows`／`question_rehomes_to_legacy_store`／`read_leg_waits_for_chroma_receipt`），少一族判「量具坏」而不是「产品落地」。item① 把 `read_topk` 的配置性拒答改成立即具名抛之后，**第四族整族消失** ⇒ 这五枚里含一枚**行为钉**（`::test_answers_move_back_to_the_legacy_engine_while_the_switch_is_off`），不是改口能糊过去的。
+- 处置：主树改动逐字节还原（`git checkout --`），货不丢——retriever diff 8,076 B ＋ 测试件 25,589 B 隔离在 `%TEMP%\eb104672hold\`，并预配工作树 `be-r672`@`b0404c7` 装好三枚件（含本班给 r650 落的改口 9/4），r650＋r659 在该树 **27 passed / 0 failed / 28.19 s**。执行层 **Zeno／R672** 已投，判据写死「三族必须在场＋第四族必须缺席且摘掉具名抛要能复现，摘牙不可复现＝把别人的牙摘了交差」，并明写「若结论是四族在场属 R60 停写的正面承诺，停下回报，不许硬改凑绿」。
+- 未收口：item③（`app/common/monitoring.py` 那格）从未动工；item② 仍挂 R667。
+
+### 184.3 逐格结案纸（业主今晚点名要的那张）
+
+新增 `docs/testing/v1-cell-closeout-2026-10-05.md`（144 行·并树 `f7b8b47`）：真欠十格／五格改档／门里另欠逐格交「判据原文逐字＋本班现取读数＋量具与代次＋三态结论」。本班结掉 达 2／没达 5／量不到 2／没验 1，并推翻三枚过期账（R25② 的 `docker-compose.dev.yml` 早在树上、R37③ 已由 R585 `1f0f0f2` 兑现、R43② 的 `cached_tokens` 现读已非零），同时拦住两枚想混进 OUT 的格（R29② R43②）。待业主三件也写在同一张纸 §4。
+
+### 184.4 §102 第一节改口格：跟进单控制符账本收紧到零（本笔就是那一次改口）
+
+跟进单 §102 第一节当年把「7 枚 U+FFFD ＋ 一枚 `0x0c`」记成存量旧痕，`tests/test_r302_docs_utf8_guard.py` 按 `(7, (0x0C,))` 等值断言。本班现取该文件：**U+FFFD 仍 7 枚未动、控制字符集合＝空、NUL 0 枚**。原因＝上一班已把 `C:Users<FF>engx.codexsessions` 那一形复原成字面反斜杠（落盘于并树 `b5b67b5`，出处＝§183.5 末条），疤治掉了账本还留着。
+⇒ 本班按 r302 自己给看板开过的同一条路（看板那 4 枚 `0x07`/`0x08` 复原后账本收紧到零，见该件模块 docstring 末格）把账本改口成 `(7, ())`，🔴 **只收紧不放宽**：以后再有 FF 进跟进单照样红，而且从此要求更严。7 枚 U+FFFD 一格未动、考古仍不做。
+复跑自证：`tests/test_r302_docs_utf8_guard.py` **8 passed / 0 failed / 1.59 s**（改前该件 1 failed，红句 `控制字符 () != 记账 (12,)`——那个 `12` 就是 `0x0C` 的十进制，上一班把它读成"枚数 12→11"是误读，本笔一并订正）。
+
+### 184.5 事故 #122（总控自己撞的·写清楚给下一班）
+
+本班为止损杀掉自己误起的 pytest 时，用「按命令行模式匹配」批杀进程，**连执行层 Erdos／R662 正在跑的 state② 复跑一起杀了**（pid 32980／20316，45 枚同名件，跑完约 3.5 分钟白丢）。根因链：本班把 `Get-ChildItem -Filter` 传了数组 ⇒ `$f` 为空 ⇒ `pytest` 无文件参数 ⇒ 按 `testpaths` 退化成全量收集（约 4,000 枚），本班为了抢 CPU 扩大化杀。
+订正规矩三条：① **只按自己会话的 pid 杀，绝不按命令行模式批杀**；② 文件枚举一律 `Where-Object { $_.Name -match ... }` 或先列清单再验「枚数＝预期」，空清单当场停下而不是往下跑；③ 派工给执行层期间，本班的每一次本地复跑都要先想「会不会打死别人」。
+受害单已自行恢复：本班 `read_thread` 现读 Erdos 状态 active、正在重投 state②，货未丢（`nodes.py`／`chat.py` 两枚产品件＋两枚新牙都在它的树上）。
+
+### 184.6 夜队列现状（接班的人先看这段）
+
+`night1005d_queue.py` pid **25508**，16:25:44 起跑，`MUST_FINISH_BY=none`＝**永不截停**，`QUIET_FROM=20:00`。带 1 第一扇 `run24s1` 在跑（33 题子集窗，成本现取 ≈65 s/题）。日志 `%TEMP%\evalrun
+ight1005d.log`，账 `%TEMP%\evalrun
+ight1005d.ledger.jsonl`，头七步全 rc=0（keepawake／image-prov／backend-probe code=401／shape-emit／p18 清核／fresh tag ok）。**夜里只测不建**；带 2 起跑前要 build 后端镜像＋`--force-recreate`＋provenance PASS，带 2 期间总控静默（不跑测试、不动容器、不打模型）。
