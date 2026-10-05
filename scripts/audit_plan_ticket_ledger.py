@@ -686,8 +686,8 @@ LEDGER_EXTRA = [
                          A("d0489e6", "并树 R237 收判据②", "frontend/src/components/DocPanel.vue")],
       [], "①③ 由本号落码；②「未索引」那张脸已由 R237 接上 index_status/excluded 字段，钉 r237-r49-index-face.test.js"),
     T("R50", "PARTIAL", [A("090c820", "施工", "scripts/rebuild_index.py"), A("94f7fa1", "并树")],
-      [S21(50, "②")], "增量与可续跑在树；排程已由 R425 挂上（开关/预算/时刻三枚旋钮＋cron，缺省不排），"
-                      "欠的是执行腿：R22 判据 3 钉死 app 侧不得 import/call/spawn 重建，改钉属业主裁定",
+      [S21(50, "②")], "增量与可续跑在树；排程已由 R425 挂上（开关/预算/时刻三枚旋钮＋cron，缺省不排）；"
+                      "判据①② 达（②凭据＝scripts/rebuild_index.py::run_rebuild 可中断续跑）；「低峰自动触发」半句 2026-10-05 移出 V1 门槛、登记为交付阶段动作（客户方在宿主日历自行安装 cron，app 侧保持 status=refused 属设计），欠的那格从今天起记「欠一条客户授权」不记欠代码，裁定句见计划书 §7 追加条（R652 方案单）",
       note="计划书 L468 那句「真零产物只剩 R50」是假账：R50 名下两枚产物提交都在主干；本尺原句"
            "「低峰那半句没挂进排程」同属过期账，10-04 现读 app/scheduler/jobs.py::register_jobs 与 "
            "offpeak_rebuild_window 的 status=refused 之后改口（凭据见跟进单 177 节）"),

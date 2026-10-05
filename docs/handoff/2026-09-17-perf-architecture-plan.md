@@ -197,7 +197,7 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 | R47 | 术语/同义词接进改写（`match_terms` 已有） | L2 | 0.5 |
 | R48 | 首屏结论卡片 + 来源，正文后台补 | L4 | 0.75 |
 | R49 | 索引瘦身：草稿/模板/超小文档不入索 | L3 | 0.5 |
-| R50 | 增量索引 + 低峰全量重建 | L3 | 1.0 |
+| R50 | 增量索引 + 低峰全量重建（🔴 自动触发半句 2026-10-05 移出 V1 门槛，见文末「门的归属裁定」追加条；V1 内判据①② 达，凭据见跟进单 §21 R50 行）| L3 | 1.0 |
 | **R51**（**已结案** `cef08bf`）| 阶段化 P95 观测：`app/common/stage_timing.py` 五段账本 + `GET /observability/stage-latency`，`/health/details` 的 `performance` 块加段不改行为 | 观测 | 0.75 |
 | R52 | 断外网自检 + 内网证书（私有化形态，非性能） | L5 | 0.5 |
 | **R58** | 双读镜像：Chroma 与 PGVector 同事务双写（**架构线，非本计划工期**）| 架构 | 1.5 |
@@ -527,3 +527,10 @@ R5（`standard_source` 在 `app/**` **0 命中**）、R3/R41（`sources` 只在�
 - **③ 病形与立单**：缺段集中在 `rewrite,retrieve,generate,reflect`。最坏一枚 `chart-01` 端到端 94,651 ms 只有 1 段 2,632 ms 进账（三窗同形：run19 1,886 ms／run20k 2,406 ms）；`scope-05` 已进 6 段仍差 240,527 ms。⇒ 立 **R636**：按车道逐枚归因分段账欠在哪一段，补齐或明写「该车道不产分段」，并给 `no_denominator` 那 19–20 枚（缓存命中不发 `request.started`，在册 `cache_hits_are_not_traced`）出明账。
 - **④ 🔴 本席一句说过头，就地改口**（本档 §6 追加第二格「开窗前置」那条）：原句「run18／run19／run20k 三扇的 `latency_ms.frame_ledger_rows` 现读全为 0 且无 `approval_ledger` 格，所以『p95 与逐发帧账对过』在这三扇上**不成立**」——**前半是错的**。帧账三扇都在盘上（1,044,042／977,867／1,003,308 B），全 0 是**评分命令没带 `EVAL_SIDECAR`／`EVAL_APPROVAL_LEDGER`** 造成的，不是缺件。带 env 离线复评现取：三扇 `frame_ledger_rows=105`、`suspect_n=0`、`approval_ledger{hitl_pre_n 19, approved_final_n 19, approval_failed_n 0, ledger_rows 105}`。⇒ 「p95 与逐发帧账对过」这句在三扇上**成立**（离线补判，不需重开窗；件在 `%TEMP%\\eb103\\rescore\\*.json`）。那条「开窗必须设两枚 env」的**前置硬条件不变**，只是罪名列错了。
 - **⑤ 仍然成立的那笔订正**：`unsupported_claim_rate` 的「五连 0」判为**没量**——三扇 answers 共 315 行、带 `claims` 键的＝**0 行**，恒 0 是零分母。凡引用它的 C／D 门句子继续记**未验**；要它可量，先让 transport 把 `claims` 落进答案件（随 R632 那族量具单排）。
+
+## §7 追加（10-05 第十五班第二格·总控线·只追加，上面任何一行一字不改）
+
+> **🔴 门的归属裁定·追加一条（R50 丙案，总控自裁；授权来源＝业主 09-17「你自己来规划决定除非一定要我出手才能解决」＋ 10-02「这些你来做一样的」；可推翻）**：
+> - **「低峰全量重建的自动触发」这半句从 V1 门槛移出**，登记为**交付阶段动作**——由客户方在其宿主日历上自行安装 cron／任务计划，把 `scripts/rebuild_index.py` 挂上去。理由：R22 判据 3 那枚钉（app 侧不得 import/call/spawn 重建）保护的正是「谁授权了这台机器的自动重活」，改钉换来的是「人决定」这一格，而 `app/scheduler/index_rebuild_config.py::schedulable` 保持 `status=refused` **是设计而不是欠账**。凭据＝10-05 并树的方案单 `docs/deployment/offpeak-rebuild-execution-shape-2026-10-05.md`（R652，纯纸面，该纸自写「不认领 `G-R50-1`，也不能替结案笔存在」⇒ 台账档位由总控定，本条就是那只裁定句）。
+> - 连带效果：**R50 在 V1 内只交两格**——增量索引可续跑（判据①）＋全量重建可中断续跑（判据②，凭据 `scripts/rebuild_index.py::run_rebuild`）。欠的那格从今天起记「欠一条客户授权」，不再记「欠代码」。
+> - 🔴 这一条**不翻任何门的绿**：A／C／D 三行各自该量什么仍然自己去量，B 行与 E 行整行移出 V1 门槛那条 09-24 裁定原样有效。
