@@ -1,6 +1,29 @@
-# R674 · R51②：窗必须按题导出 trace 事件，否则「分段加总误差 <1%」永远量不到
+# R674 · 待派池工单（由 R679 从账面派生·判据原文逐字·非总控亲签）
 
-**基点**：开工时现取主树 HEAD。**独占工作树**：总控预配。本单**只改量具与导出腿**，不动产品行为。
+**号**：R674
+**基点**：9efff02
+**状态**：不由本文携带——跑 `python scripts/tickets_index.py --verify` 现取
+**写域**：
+- `scripts/`
+- `tests/test_r674_*.py`
+- `docs/tickets/R674-*.md`
+- `docs/testing/r674-<今天>.md`
+
+派工时由总控按写集复核上面四格；本行以下不再是机器字段。
+
+## 判据原文（逐字·一个字不许改）
+
+```verbatim source="S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R51::判据（机器可验）"
+① 分类/改写/检索/生成/反思各段 P50/P95 可查；② 端到端与分段加总误差 <1%（对齐 `docs/perf/latency-budget-2026-09-16.md` 的 0.03%）
+```
+
+出处谓词＝`S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R51::判据（机器可验）`。尺会按这枚谓词重读源文件逐字符比对，改一个字就点名「哪一号第几块自第几个字符起不合」。
+
+## 账面点名的落点（派生自上面判据原文里的反引号路径）
+
+- `docs/perf/latency-budget-2026-09-16.md`
+
+## 总控亲签段（派工口径·以上「判据原文」逐字块为准）
 
 ## 现取病形（总控 10-05 亲跑）
 
@@ -22,3 +45,18 @@
 ## 禁区（踩线即退回）
 
 `frontend/**`／`docs/handoff/**`／`docs/api/contract-v1.md`／评测夹具与判分器／`scripts/run_gate.py`／`pyproject.toml`／`deploy/**`／容器与镜像动作／主树任何路径。
+
+## 交付清单
+
+1. 判据原文逐字进单：`python scripts/tickets_index.py --verify` 必须绿，退出码 0。
+2. 同名件两态读数：state① 本树已 apply 未 commit／state② `git archive 9efff02` 干净检出＋只投本单货；清单逐枚相同、总数相同，标「执行层自报」。
+3. 凭据纸 `docs/testing/r674-<开工日>.md`：判据实际读数（枚数／字节数／退出码），不许形容词。
+4. 反证牙：改掉盘上副本里的一处判据原文 ⇒ 校验非零退出并点名哪一号哪一条被改了字。
+5. 坐标一律 `文件::符号`，禁止 `文件:数字` 形态的行号。
+6. 收席那一刻现取：`rev-list --count 9efff02..HEAD`、staged 清单、未跟踪逐枚点名、`diff --numstat HEAD`。
+
+## 这一枚为什么存在
+
+待派池的散文账只有一行「R674（…）」，开工的人得重读整本跟进单或看板才能拿到判据原文。
+本文件把那一段逐字搬进 `docs/tickets/`，从此逐号状态的唯一真源是工单目录，
+每班开工只读 `docs/tickets/index.tsv` 与本文件。

@@ -1,6 +1,34 @@
-# R670 · R38③：`/chat` 打完模型必须落 `model_calls` 行并带原始 usage（V1 欠账格）
+# R670 · 待派池工单（由 R679 从账面派生·判据原文逐字·非总控亲签）
 
-**基点**：开工时现取主树 HEAD 写进交付（本班投单时为 `daa12a0` 之后的最新代次）。**独占工作树**：总控预配并告知路径，不许换树、不许碰主树。
+**号**：R670
+**基点**：9efff02
+**状态**：不由本文携带——跑 `python scripts/tickets_index.py --verify` 现取
+**写域**：
+- `app/api/v1/chat.py`
+- `app/trace/`
+- `spans.py`
+- `persistence.py`
+- `schema.py`
+- `model_calls`
+- `tests/test_r670_*.py`
+- `docs/tickets/R670-*.md`
+- `docs/testing/r670-<今天>.md`
+
+派工时由总控按写集复核上面四格；本行以下不再是机器字段。
+
+## 判据原文（逐字·一个字不许改）
+
+```verbatim source="S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R38::判据（机器可验）"
+抽查一问，`input_tokens/output_tokens` 非零且与 Ollama 自报一致
+```
+
+出处谓词＝`S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R38::判据（机器可验）`。尺会按这枚谓词重读源文件逐字符比对，改一个字就点名「哪一号第几块自第几个字符起不合」。
+
+## 账面点名的落点（派生自上面判据原文里的反引号路径）
+
+（本枚判据原文里没有点名的文件路径——落点由总控派工时给。）
+
+## 总控亲签段（派工口径·以上「判据原文」逐字块为准）
 
 ## 现取病形（总控 10-05 亲验，代次见看板 §4GG）
 
@@ -23,3 +51,18 @@
 ## 禁区（踩线即退回）
 
 `frontend/**`／`docs/handoff/**`／`docs/api/contract-v1.md`／评测夹具与 `tests/test_evaluation_report.py`／`scripts/run_gate.py`／`pyproject.toml`／`deploy/.env.server`／`chroma_db/**`／任何镜像与容器动作／主树任何路径。`app/agents/nodes.py` 只在确有必要时改，且必须在交付里点名那一处符号与原因（R662 刚并树，改它要先对账）。
+
+## 交付清单
+
+1. 判据原文逐字进单：`python scripts/tickets_index.py --verify` 必须绿，退出码 0。
+2. 同名件两态读数：state① 本树已 apply 未 commit／state② `git archive 9efff02` 干净检出＋只投本单货；清单逐枚相同、总数相同，标「执行层自报」。
+3. 凭据纸 `docs/testing/r670-<开工日>.md`：判据实际读数（枚数／字节数／退出码），不许形容词。
+4. 反证牙：改掉盘上副本里的一处判据原文 ⇒ 校验非零退出并点名哪一号哪一条被改了字。
+5. 坐标一律 `文件::符号`，禁止 `文件:数字` 形态的行号。
+6. 收席那一刻现取：`rev-list --count 9efff02..HEAD`、staged 清单、未跟踪逐枚点名、`diff --numstat HEAD`。
+
+## 这一枚为什么存在
+
+待派池的散文账只有一行「R670（…）」，开工的人得重读整本跟进单或看板才能拿到判据原文。
+本文件把那一段逐字搬进 `docs/tickets/`，从此逐号状态的唯一真源是工单目录，
+每班开工只读 `docs/tickets/index.tsv` 与本文件。
