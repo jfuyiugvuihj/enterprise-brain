@@ -152,3 +152,22 @@
 - **事故 #122**（本班新撞）：总控为了批量杀掉自己误起的 pytest，按命令行模式 `Stop-Process`，**连执行层正在跑的 state② 复跑一起杀了**（受害 pid 32980／20316，属 Erdos/R662 的 45 枚同名件复跑）。根因是本班自己把 `Get-ChildItem -Filter` 传了数组，`$f` 变空 ⇒ pytest 退化成全量收集，本班为了止损扩大化杀进程。
   订正规矩：**只按自己会话的 pid 杀，绝不按命令行模式批杀**；写文件枚举一律 `Where-Object { $_.Name -match ... }` 或先列清单再验枚数＝预期。受害单已由其执行层自行重试（本班 16:4x `read_thread` 现读 Erdos 状态 active、在重投 state②）。
 - **过期账三枚**（R25②／R37③／R43②＋R29②）：上一班把「文件不存在／判据欠」当成结论，实际是**没现取到层与名字**。本班已逐枚现读取证并写在上面各格里。
+
+## 7. 续席（10-05 18:48–19:3x，总控亲跑）——写一格填一格
+
+本班提交链八枚（代次现取 `git rev-list --count --since=2026-10-05` ＝全仓当日枚数，HEAD 见本节末）：`1d8f025`（G1 甲「摘牙」定义＋AGENTS 两处改窄＋跟进单 §160.5 回执）→ `9efff02`（**R662 并树，本班唯一产品码改动**）→ `6005baf`（`docs/tickets/WINDOW-2026-10-05.md` 夜窗约束落文件）→ `1668ff0`（看板名册 splice＋§4GG 结论节）→ `daa12a0`（roadmap r5：代次／镜像格／R31②／A②）→ `ae1cd85`（R670／R674／R677／R678 四枚工单）→ `64e320d`（R673／R684）→ `a10dcdf`（R687·V2 首枚）。
+
+| 格 | 三态 | 本班现取读数 | 量具与代次 |
+| --- | --- | --- | --- |
+| R31②／A② 流式逐字 | **没达**（码已进树，等真窗） | state①＝**697 passed／0 failed／15 skipped／140.23 s**；state②＝**同数／138.63 s**（干净检出 `C:\Users\fengx\wt-r662s2`@`9efff02`，DIRTY=0）；两态总数与执行层自报 712 collected 相符，执行层数不采信 | 45 枚同名件清单现取自 `docs/testing/r662-a2-single-frame-rows-2026-10-05.md`；翻绿要带 2 帧账，影子复演不算 |
+| 镜像代次 | **已对齐** | label `org.opencontainers.image.revision`＝**`9efff02585a2feb659784991feace7d83445bc54`**（18:57 带 `GIT_SHA` build 1.9 s 全缓存＋19:0x `--force-recreate backend worker scheduler`） | `scripts/check_image_provenance.py` → `tree: 9efff02 (build inputs clean)`／`verdict: DOCS-ONLY`／**PASS** |
+| 带 2 起跑条件 | **就绪** | 队列日志首行现取 `quiet_from=20:00`；band 2＝`run25`／`run26`／`run27`／`run28` 四扇同码全表窗，band 3＝跨代次 A④ 配对 8 对＋noisefloor 四对＋`r581`＋`a1-p95-recheck`＋`close-out`（要求 `REPORT_LANE_VIA_QUEUE=off`，现读 off） | `%TEMP%\evalrun\night1005d.log`／`.ledger.jsonl`；pid 25508（永不截停）＋看门狗 37840／44404＋keep_awake 39284 全在 |
+| R27③／R37③ | **达（账未落）** | 本班不改账尺（那是执行层写域）；两格已由 `Boyle`/R686 在飞落档，读法乙 11→9 | 凭据在 §1.3／§1.6，判据见 `docs/tickets/R686-land-two-measured-cells.md` |
+| 派工卫生 | **按新规① 执行** | 三枚派工词实测 **191／184／176 字节**（上限 200），一个 block 一次投递、零补投；对已有席位只发两枚单句短令 | `docs/tickets/R686-*.md`＋`WINDOW-2026-10-05.md`；在飞＝`Boyle`/R686、`Franklin`/R679、`Nash`/R682（三枚到上沿，本班不再新投） |
+| 收席 | **三枚腾槽** | `Erdos`（R662 已并树）、`Bohr`（R666 已并树）、`Lovelace`（R666 首任，死于 429）——收席那一刻三枚盘面各自现取，`Lovelace` 整树差异 **30,445 B 已盘外保命** `…\eb104\lovelace-hold\lovelace-r666.patch`，同号双实现**不并树**待裁 | 看板 §0 名册 L1594／L1596／L1597／L1598 各行逐枚点名 |
+| 计划书 §8「Excel/CSV 知识库模式＝未做」 | **过期半格（本班订正）** | `.xlsx`／`.csv` 进知识库白名单那半**早在树**（R306，凭据＝`app/documents/file_security.py` 顶部注释）；真缺的是 `app/api/v1/data.py::upload_excel` 一步都不碰知识库（不建 catalog 行、不切片、不入向量） | 已立 **R687**（V2 首枚）按两格分判，禁「笼统写已做／未做」 |
+| 晨间可派 | **八枚工单已落文件** | `docs/tickets/` 现读 11 枚文件：R670／R673／R674／R677／R678／R679／R680／R682／R684／R686／R687（＋WINDOW） | 写集互不相交者可与在飞席并行；`R680` 与 `R686` 同写账尺⇒串行；`R670` 的 `chat.py` 已因 `Erdos` 收席解锁 |
+| 待业主（仍三件，本班不自办） | **未动** | `OLLAMA_REQUIRE_GPU` 翻不翻（改生产行为）；R47① 走甲（评测集加 12 枚题）还是乙（改 top-5 变化率口径，本班默认）；**`git push`**（本班 8 枚＋此前 33 枚全部未推，本机是唯一副本＝H6 未结） | 另：删除清单（含本班 `wt-r666s2` 残件；`wt-r662s2` 用毕 DIRTY=0 可留）、`.gitignore`、`chroma_db` 反跟踪、`automation-2` 改指本线程 |
+
+- 本班零越线：`frontend/**` 一字节未动；未跑全量门（夜队列在跑，pid 25508 永不截停）；未删文件；未 push；未改任何 `.env*` 值；容器只做了**总控职责内**的一次带戳 build＋recreate（业主 10-05 明令「后端镜像重建你能做的话就你来」）。
+- 编码自证：本节经单引号 here-string 落盘，现扫 `0x00`／`0x07`／`0x08`／`0x0b`／`0x0c` 各 **0 枚**，全文不含 `*.py:数字` 手抄坐标；文件保持 CRLF、无 BOM（与前置各节同形）。
