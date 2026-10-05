@@ -5993,3 +5993,11 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 - 待业主：`git push gitee HEAD`（今天 21 枚未推，本机是唯一副本）／`.gitattributes`（治那两枚 autocrlf 红的唯一根因解）／删除清单（`be-r660`·`be-r661`·`be-r659`·`be-r654`·`be-r60ctl`·`be-r602b`·`.tmpfix`＋主树根 6 字节杂件 `0`＋`%TEMP%\eb104\r660\state2\` 58 MB 被本机策略拦下）／`chroma_db` 反跟踪／`automation-2` 仍 `PAUSED` 且仍指死线程／窗首 keep_alive 预驻留（改测量条件）。
 - 明早目标口径先说清：**「能演示」今天已证；「已验收」仍差 16 格里那 10 格真欠＋四道门的真机窗**。两件事不许混着报。
 
+
+### 183.5 🔴 本班自纠（不占事故号·同族第三次撞同一堵墙）
+
+- **错在哪**：§183.3 那句「取证 `be-r666` 从未创建 ⇒ 零写入」是**假的**。本班 16:3x 现取 `git worktree list` 才发现那枚 429 死席建的树叫 `C:\Users\fengx\wt-r666`（不是 `be-r666`），里面**有货**：`M scripts/audit_plan_ticket_ledger.py`、`M tests/test_r640_ledger_tiers_are_derived.py`、新 `tests/test_r666_out_of_scope_tier.py`、新 `tests/test_r666_counter_evidence_knives.py`，`ahead=0`、无凭据纸。
+- **根因**：AGENTS.md 明写「报某物不存在前先确认自己在哪一层查、用的是不是这一层的正确名字」，还专门记过「判断默认值是否可达必须查调用点」。本班拿**自己习惯的树名前缀**去查，而不是拿 `git worktree list` 的现取名下清单去查——同一枚病，第十七班又撞一次，而且这次是总控自己撞的。
+- **改法（机械防，写进规矩）**：今后凡报「某席零写入／某树不存在」，凭据必须是**当场 `git worktree list` 全量输出＋逐条 `status --porcelain`＋`rev-list --count <基点>..HEAD`**，三件齐了才允许落纸；只查一个猜测路径＝无效取证。**已把这条写进派工模板与本班名册行的取证列。**
+- **连带后果已核**：`Bohr`（重投）建的 `be-r666` 目前 porcelain 空 ⇒ 两枚没在同树一处写，不构成真写域冲突；死席那半货封存待与 `Bohr` 交付逐枚比对，谁达标用谁，**不许两半混并**。
+- 另记一笔同族：本班一度把 `playwright fill()` 造成的空白面板判成 P1「前端不渲染实时流」，换真实键盘事件即正常（见 §183.3 末条）。两件事同根：**先确认自己在哪一层按的按钮，再报存在或不存在。**
