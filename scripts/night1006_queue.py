@@ -140,8 +140,17 @@ def wait_backend(step, cap_sec=300):
 
 
 def set_switch(key, value):
+    """Rewrite one key in deploy/.env.server, appending it when the file has no such line.
+
+    OLLAMA_REQUIRE_GPU is *absent* on this box (that is the fail-open state), so a subn that
+    demands exactly one hit would report SWITCH-FAIL and the GPU gate would never run at all.
+    """
     raw = open(ENVF, "rb").read()
     new, n = re.subn(("(?m)^" + key + "=.*$").encode(), (key + "=" + value).encode(), raw)
+    if n == 0:
+        sep = b"" if raw.endswith(b"\n") or not raw else b"\n"
+        raw = raw + sep + (key + "=" + value).encode() + b"\n"
+        new, n = raw, 1
     if n != 1:
         log("SWITCH-FAIL " + key + " lines found=" + str(n))
         led("switch-" + key, 1, 0.0, "expected exactly one line, found " + str(n))
