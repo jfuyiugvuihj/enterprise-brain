@@ -7096,3 +7096,10 @@ C 门三格现状：①越权 0 条＝**未验**（R481 口径；R487 只到账�
 **夜窗排班落文件**＝`docs/tickets/WINDOW-2026-10-06.md`＋`scripts/night1006_queue.py`（六波：镜像 provenance→GPU 硬门＋smoke→**run30** 全 105（A②／A④／C③／R38③／R51②／R26②）→**run30d** 33 行形状子集 lane=on（D 三格）→**run31** 同代次第二扇（A④噪声底＋R28③跨代对子）→逐窗 r573／r595／r631／r636／r634 读数→复位）。续跑判据：账本 `%TEMP%\evalrun\night1006.ledger.jsonl` 里已 rc=0 的步骤重启后跳过，**不重烧 GPU**；这就是「断联别重来」的落点。
 
 **在飞**＝R670／R674／R678 三枚（并发上沿，不再新投）。**待并树后即做**：`GIT_SHA=<HEAD>` 重建 `enterprise-brain:local`＋recreate→起队列。今夜必须联网做完的动作只有**镜像重建**，故排在 24:00 断网前。
+### §4GH.1 夜窗起跑读数（23:28–23:33 现取）
+
+- 队列 pid `48736` 起、看门狗 pid `25836` 起（`max_relaunch=6`，账本 `%TEMP%\evalrun\night1006.ledger.jsonl`）。
+- `docker-up` rc=0、`prov` rc=0：镜像 label `6ba1be0268cd1618d0ee5bf933c37eafe044626f` ＝当时主树 HEAD，verdict **PASS／DOCS-ONLY**（断网前 23:27 完成重建并 `git push gitee` 成功 `aae90e6..6ba1be0`）。
+- 🔴 **GPU 硬门已翻且没炸**：`OLLAMA_REQUIRE_GPU -> 1`、recreate rc=0、backend 20.4 s 应答、容器内 `printenv` 现取 **1**；单题 smoke **rc=0／45.8 s**（`doc-01`）⇒ 没触发回滚，R26② 今夜第一次在「硬门 on」形态下可量。
+- **run30 已开窗**：23:29:18 起，p18 clear＋check 双 rc=0、fresh tag ok。预计 ~1.9 h；随后 run30d（D 三格，lane=on）、run31（同代次第二扇）。
+- 三枚执行层（R670／R674／R678）在飞 **70 分钟零写入**（三棵树 `dirty=0`、无自提交），断网后大概率死席——**不等它们**：窗所测的 A② 分片码已在代次里（R662 `9efff02`），R670／R674／R678 只加观测与量具，明早并树后另开短窗量 R38③／R51②／D 格。
