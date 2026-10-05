@@ -1601,6 +1601,10 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Nash` | `01a10bb9-da8b-7972-a053-f49a981f90eb`（spawn 回执直取） | **R682** 四数一红线的机器尺 `scripts/meta_health.py`（读 markdown 用例占比等） | 总控预配 `be-r682`@`6005baf`（**独占**，基点含 WINDOW 文件） | 🟡 在飞（19:1x 一次投递成功；派工词 **176 B**；写域 `scripts/meta_health.py`＋`tests/test_r682_*`，与另两席零交）；在飞 3 枚＝本机上沿（#120：三枚＋总控同跑即撞 429）⇒ **本班不再新投** | 19:1x |
 | `Boyle`（结案） | `01a10bb8-634c-70a2-a80a-2a2a771e9de9` | **R686** 结算 R27③／R37③ 两格已量到的「达」 | `be-r686`@`9efff02`（执行层自提交 `c1c918b` 货＋`5e9eeac` 纸，新规⑦ 第一次真跑通） | ✅ **已结案并树 `e99681e`（总控代提交）**：读法乙 **11→9**、LANDED 24→26、PARTIAL 11→9，OUT/CLOSED/FOREIGN/NOTBUILT/ZERO 五档一字未动；C15＋C8 两把牙原样在咬、反证牙红绿齐（`--fault R27=PARTIAL@ce0b041` → exit=1 唯一一行点名 R27）；总控亲跑 state① 68 passed／0 failed／185.35 s、state② 68／0／182.39 s（`wt-r686s2`@`e99681e` DIRTY=0）。执行层请示的写域解释（判据 5 两枚账尺用例件不匹配 `tests/test_*ledger*` 字面 glob）由总控放行，十把刀一把没摘。已 close 腾槽 | 19:4x |
 | `Nash`（结案） | `01a10bb9-da8b-7972-a053-f49a981f90eb` | **R682** 四数一红线机器尺 `scripts/meta_health.py` | `be-r682`@`6005baf`（执行层自提交 `bc8df51`→`eff70a0`→`ecef8a8`） | ✅ **已结案并树 `dd16297`（总控代提交，14 枚全离线牙）**：现取 ③ 台账 3,124,911 B、④ 并树/日 169 枚均值 24.14、🔴 红线 direct 85／helper 184／upper_bound 476 对分母 8889＝0.96%／2.07%／5.35%（与本班文件级 40.26% 是两个口径，引用必须带档位）；② 验证墙钟尺自己判 **NOT_MEASURED**（找不到同 HEAD 复跑就不抄，正控牙证明该分支不是死码）。总控亲跑 state① 14 passed／19.35 s、state② 14 passed／19.62 s。🔴 订正它一句「`app/**` 未动⇒不用重建镜像」：`scripts/**` 同样被镜像带走，provenance 当场 MISMATCH，本班已重建＋recreate 转 PASS。已 close 腾槽 | 19:4x |
+| `Sagan` | `01a10c71-781b-7122-9881-4641bdf45a2f`（spawn 回执直取） | **R670** R38③：`/chat` 打完模型必须落 `model_calls` 行并带原始 usage | 总控预配 `C:\Users\fengx\PycharmProjects\be-r670`@`b666ff3`（**独占**） | 🟡 在飞（22:20 一次投递；派工词 **176 B**；写域 `app/api/v1/chat.py`＋`app/trace/**`，`app/agents/nodes.py` 属禁区） | 22:2x |
+| `Avro` | `01a10c72-7b46-7902-8239-cec2a386f1c6`（rollout 文件名直取，未凭记忆） | **R674** R51②：窗必须按题导出 trace 事件，否则「分段加总误差 <1%」永远量不到 | 总控预配 `be-r674`@`b666ff3`（**独占**） | 🟡 在飞（22:22 一次投递；派工词 **181 B**；写域 `scripts/` 读数腿，`app/trace/` 已摘除归 R670） | 22:2x |
+| `Mendel` | `01a10c72-f8c8-7512-bf61-ffe22279bfd3`（spawn 回执直取） | **R678** D 门量具补 `lane` 声明（`DECLARE_LANE_TIER` 缺省空串＝三扇 on 相全是废样本） | 总控预配 `be-r678`@`b666ff3`（**独占**） | 🟡 在飞（22:24 一次投递；派工词 **181 B**；写域 `scripts/eval_transport_ask_v2.py`＋`scripts/r573_caliber_reconciliation.py`） | 22:2x |
+| `Franklin`（结案） | `01a10bb8-c9db-7341-a66d-6f6ab7ddcfb2` | **R679** 台账机器化 | `be-r679`@`9efff02`（19 枚未自提交，货经 patch 承接） | ✅ **已结案并树 `b666ff3`＋索引重生成 `d653e41`**：state① 87 passed／0 failed／44.13 s（主树 dirty）、state② 87／0／51.45 s（`wt-r679s2b`@`d653e41` DIRTY=0）；`--verify` rc=0（155 行／LANDED 139／QUEUED 16／工单 19 枚／逐字块 14 枚）；`--cost` 3,129,016 B → 17,842 B＝**175.4×**。🔴 同号双份见事故 #123 | 22:2x |
 494_stray_main`，零丢失）；已 close | 19:0x |
 | `Laplace` | `01a0ed5e-f014-77c2-954a-5667e50ac6ba` | **R518** A 圈② 甲案的机械落地（让尺子说清哪一轮有逐片腿） | `be-r518`（基点 `403db3d`） | ✅ **已结案并树 `97724c5`**：dirty＝干净态两回同名件 **116 passed**；腿名 0/105 派生不出这一格如实交回，已排进 R524 | 09-30 08:5x |
 | `Heisenberg` | `01a0ed33-8116-7371-aaf6-5a58da1163d0` | **R516** bind 同族实例影子债第二批（`dataset_registry` 一族 8 枚＋upsert 打实例 3 枚改到类目标） | `be-r516`（基点 `85572c1`） | ✅ **已结案并树 `d9de23c`**：进程级单例方法桩 **28→19**；总控亲跑 dirty **217**／干净态正序 **217**／乱序 **217**；🔴 施工层曾把在册钉写成近名（少一枚 `s`），已复原名并删近名件 | 09-30 08:5x |
@@ -7076,3 +7080,19 @@ C 门三格现状：①越权 0 条＝**未验**（R481 口径；R487 只到账�
 - **红线两个数不能混用**：文件级归因 3,559／8,840＝40.26%（外部复核那句「42%」的真实落点）；函数体直接 open docs＝85／8889＝0.96%（helper 2.07%、upper_bound 5.35%）。引用必须带档位名。
 - **晨间可派（工单已落文件）**：R670（R38③，`chat.py` 已解锁）· R677（R44①）· R674（R51②）· R678（D 门量具）· R680（账尺改读 `docs/tickets/**`，须排 R686 之后——已满足）· R684（写域所有权表）· R687（V2 首枚：`/upload-excel` 那份表格进知识库）。在飞仍 `Franklin`/R679 一枚。
 - **待业主三件未动**：`OLLAMA_REQUIRE_GPU` 翻不翻 · R47① 甲／乙 · **`git push`**（本班已 12 枚提交未推，本机唯一副本＝H6）。
+
+## §4GH 第十七班（10-05 22:05–22:35）· 业主三件裁定落地＋R679 并树＋夜窗排班落文件
+
+**业主授权**：「这三件也由你的建议来做」⇒ 三件全部由总控裁定并执行，不再等业主。
+
+1. **`git push`**：22:07 推 `gitee` **成功**（`7ae956c..9964e3a`，本班 13 枚离机）；`origin`（GitHub）TLS  handshake 被断（`unable to access ... unexpected eof`），本机可达的远端只有 gitee。H6「本机是唯一副本」自 22:07 起**不再成立**，但只有一份远端仍是单点，故另起 `git bundle` 到 `E:\eb-backup\`。
+2. **`OLLAMA_REQUIRE_GPU`**：**翻 on**，带自动回滚。依据＝`app/common/model_capabilities.py::annotate_inference_compute` 只对**确证的 CPU 降级**硬失败（`undetermined` 仅警告），风险面窄；且 R673 护栏句「fail-open 形态下测出的延迟数不得用于 R26②」决定了不翻就永远量不到那一格。回滚条件写进队列：单题 smoke 非零 ⇒ 立刻写 `false`＋recreate＋记 `gpu-gate rc=1`。
+3. **R47①**：走**乙**（改 top-5 变化率口径），不动 105 题评测集。理由＝评测集被 `tests/test_evaluation_report.py` 钉住且是全部历史窗口的可比性基线；加 12 枚同义题（甲）留给 V2 作为**附加册**而不是改这张册。零分母那格今夜仍记 `NOT_MEASURED`，不冒充达。
+
+**R679 并树（`b666ff3`）＋事故 #123**：执行层派生的 14 枚待派池工单与我亲签的 6 枚**撞号**（R670／R673／R674／R677／R678／R684，slug 不同号相同；R684 连文件名都撞）。裁定＝逐字块与机器字段取派生单，写域／现取病形／作业判据取亲签段，**一号一枚**；5 枚亲签文件作废删除（内容已并入，git 历史可取）。R674 写域里的 `app/trace/` 摘除归 R670。索引自指问题一并落账：`index.tsv` 在 R679 落树**之前**生成，那一行仍是 QUEUED ⇒ 并树之后必须 `--write` 重生成再提交（`d653e41`），今后每并一枚都跟一笔。
+
+**Docker 每次重启都失败的真因**（业主令「修改一下以后别犯错」）：不是 E 盘。`%LOCALAPPDATA%\Docker\run\sailor-ingest.sock` 与 `%LOCALAPPDATA%\docker-secrets-engine\engine.sock` 是上一班崩溃后残留的**零字节 AF_UNIX 墓碑**，Windows 既删不掉（"The file cannot be accessed by the system"，`del \\?\` 也返回 0 但文件仍在）也 rename 不动，而真正卡住启动的是**僵尸 `com.docker.backend` 还占着活 socket**。修法＝`scripts/docker_up.ps1`：exe 路径**派生**（`where docker` 上溯 → 注册表 InstallLocation → 两个已知根，禁硬编码 C:），杀僵尸→`wsl --shutdown`→起→等 `//./pipe/dockerDesktopLinuxEngine`→验 server。22:06 手动起失败、22:10 按此序起、**22:15 管道通**，22:2x 七枚容器全 healthy。
+
+**夜窗排班落文件**＝`docs/tickets/WINDOW-2026-10-06.md`＋`scripts/night1006_queue.py`（六波：镜像 provenance→GPU 硬门＋smoke→**run30** 全 105（A②／A④／C③／R38③／R51②／R26②）→**run30d** 33 行形状子集 lane=on（D 三格）→**run31** 同代次第二扇（A④噪声底＋R28③跨代对子）→逐窗 r573／r595／r631／r636／r634 读数→复位）。续跑判据：账本 `%TEMP%\evalrun\night1006.ledger.jsonl` 里已 rc=0 的步骤重启后跳过，**不重烧 GPU**；这就是「断联别重来」的落点。
+
+**在飞**＝R670／R674／R678 三枚（并发上沿，不再新投）。**待并树后即做**：`GIT_SHA=<HEAD>` 重建 `enterprise-brain:local`＋recreate→起队列。今夜必须联网做完的动作只有**镜像重建**，故排在 24:00 断网前。
