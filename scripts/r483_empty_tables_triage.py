@@ -908,15 +908,20 @@ TRIAGE = {
                "成立（那时它 0 行），今天按现读改判 no_longer_empty，业主欠的那半移进本段留名。",
     },
     "notification_states": {
-        "verdict": "legitimately_empty",
+        "verdict": "no_longer_empty",
         "entries": ("apply_state",),
         "events": (),
         "hit_kinds": ("write_via_table_constant",),
         "lane": "app/notifications/states.py::apply_state（表名走本文件的 TABLE 常量拼进写句）→ "
                 "POST /notifications/read 与 /notifications/dismiss 两条腿共用它。",
         "why": "按设计只有真人点「已读 / 忽略」才写这一行，收件箱本身不开第四本账（三条源全从已有的账"
-               "现读）。所以 0 行的准确说法是：铃铛挂上之后没人点过一次。要补的是端到端行为读数，"
-               "不是接口。",
+               "现读）。要补的是端到端行为读数，不是接口。",
+        "re_ruling": "改判出处：R593 立的规矩（本格由总控 10-05 按同一条 --check 现读执行）—— 本格 "
+                     "problems 原话：「notification_states 今天已经有 3 行了，本格却裁 "
+                     "legitimately_empty（这一词预设它一行没有），本单的 0 行定性过期，改判 "
+                     "no_longer_empty 并重跑 --sync」；行是从本格在册的那两条 POST 腿写进去的（演示账号与 "
+                     "端到端走查真点过铃铛）。业主欠的那半（端到端行为读数）仍留在本段：有行只证 "
+                     "「有人点过」，不证「点完界面就对了」。",
     },
     "calculation_runs": {
         "verdict": "no_seed_path",
