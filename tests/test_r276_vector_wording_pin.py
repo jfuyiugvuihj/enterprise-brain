@@ -29,6 +29,7 @@ MANAGED_DOCS = (
     "docs/system-architecture-2026-09-17.md",
     "docs/system-design-2026-09-16.md",
     "docs/version-roadmap-and-next-week-plan-2026-09-22.md",
+    "docs/version-roadmap-and-requirements-2026-10-05.md",
     "docs/api/contract-v1.md",
     "docs/deployment/backup-restore.md",
     "docs/deployment/memory-fallback-and-multi-instance-boundaries.md",
