@@ -1307,16 +1307,23 @@ class DocumentRetriever:
                        query: str = ""):
         """R59b：把语义腿问到 PostgreSQL + PGVector。开关关着就一条 SQL 都不发。
 
-        交回 None ＝ 这一腿没答（开关关 / 双写没开 / 连不上 / 过滤器翻译不出来），
-        调用方原路退回遗留的 Chroma 腿。退回不等于少一道闸门：Chroma 那条本来就把同一份
-        ``where`` 下推给向量库，两条腿都是先过滤再截名次，越权行在名次里压根不占位。
+        交回 None ＝ 这一腿没答（开关关 / 连不上 / 镜像不可用 / 过滤器翻译不出来），调用方
+        原路退回遗留的 Chroma 腿。退回不等于少一道闸门：Chroma 那条本来就把同一份 ``where``
+        下推给向量库，两条腿都是先过滤再截名次，越权行在名次里压根不占位。
+
+        🔴 R659 判据①：配置性拒答那一族（双写关着 / 表不认，即 pg_store 的
+        CONFIGURAL_READ_REFUSAL_REASONS）**不再交回 None**，当场具名抛，不改问遗留目录 ——
+        那一档里 PostgreSQL 一格内容都没有，把答复交给那台待退役的引擎就是把一枚配置矛盾读成
+        一次正常答案，在册量具 r633 点名的「隐式等 Chroma 回执」正是这一形。族码与语料腿共用
+        R650 那一本，本单一枚新造错误码都没有；可用性那一族的 availability-first 一字未动。
 
         🔴 R59 块1 判据②(a)：**PG 腿交回 0 行不是合法的"库说没有"**。R269 §5 第①处点名的
         正是这一格——旧写法把 0 行原样交回，用户于是拿到一份空上下文，而整条降级分支只挂在
         "embedding 挂掉"那一支上。这条语义与引擎无关（切读治不到它），所以降级在这里发生：
         交回关键词腿的命中并带稳定码，一问仍只记一笔 search_shape（与 R158 同规）。
         降级走的是 ``_keyword_hits`` 的内容扫描，它不问 ANN——切读之后 Chroma 那条向量索引
-        在任何分支上都不再是答复来源，唯一还会问它的是"读腿拒答"那一支（见 search()）。
+        在任何分支上都不再是答复来源，唯一还会问它的是读腿**可用性**拒答那一支（见 search()；
+        配置性那一支自 R659 起当场具名抛，不再改问遗留目录）。
 
         答出行时命中的字典仍由 ``_hit_dicts`` 生成（R44 钉的形状），检索腿标注也仍是
         semantic —— 换引擎不是降级。密级为 NULL 的行原样交回 None：R57 的 fail-closed 由
@@ -1331,6 +1338,17 @@ class DocumentRetriever:
             rows = pg_store.read_topk(query_vector=query_embedding, k=k, where=where)
         except Exception as exc:
             reason = str(getattr(exc, "reason", "") or pg_store.REASON_VECTOR_READ_FAILED)
+            if reason in pg_store.CONFIGURAL_READ_REFUSAL_REASONS:
+                # 判据① 的正身：这一格不许把答复改交给遗留目录。抛之前照旧记一笔绕行 ——
+                # 记的是既有那本 vector_read_diagnostics（R330 的口径：出口只许投影既有读数，
+                # 不许新开第四本账），detail 里多带的那半句就是"调用方拒绝改问遗留库"这一格，
+                # 它在 /health/details 的 vector_read.last_bypass 上直接可读，不必翻日志。
+                pg_store.note_read_bypass(
+                    reason,
+                    f"topk: {type(exc).__name__}: {exc} —— 语义腿不改问遗留目录")
+                logger.warning(
+                    f"PGVector 读腿按配置拒答，本次不改问遗留 Chroma 腿（{reason}）：{exc}")
+                raise
             logger.warning(f"PGVector 读腿拒答，本次退回遗留 Chroma 腿（{reason}）：{exc}")
             pg_store.note_read_bypass(reason, f"{type(exc).__name__}: {exc}")
             return None
@@ -1836,6 +1854,9 @@ class DocumentRetriever:
             # 下面的遗留腿与切读之前逐字一致（同 R44 给热集那条立的规矩）。
             # R59 块1 判据②(a)：这一腿交回 0 行时它自己降级，交回来的永远是"可以直接用的
             # 命中"，所以 None 只可能意味着"这一腿没答"，不再意味着"PG 库里没有"。
+            # R659 判据①：这一腿对配置性拒答（双写关着 / 表不认）当场具名抛，不再交回 None ——
+            # 下面的遗留腿因此在这一档里根本不会被问到。异常由调用侧既有那几处 try 各自收尾
+            # （检索管线按腿记一句「召回失败」），服务不因它起不来，与 R650 给语料腿那格同形。
             pg_hits = self._pgvector_hits(query_embedding, k, where, query=query)
             if pg_hits is not None:
                 return self._apply_activity_prior(pg_hits)

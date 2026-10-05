@@ -14,6 +14,8 @@
      调用方；这一枚是从本席这一侧替 test_r330 / test_r592 那两族在册牙看住它。
   5. 在册量具 r633 现跑：read_corpus 那半格「隐式等 Chroma 回执」必须不再在册；read_topk
      那半格必须照旧在册 —— 它的吞点与答复点都在 app/rag/retriever.py，本席写域外，不顺手治。
+   🔴 改口指针（总控 10-05 并 R659 item① 时落下）：本条后半「read_topk 照旧在册」
+   已过期，现盘该半格同样不在册；原始判据留文不改史。
 
 两把反证刀（K1/K2）走内存影子：源文从盘上读成字符串、AST 上改一刀、compile + exec 成影子
 函数，落盘的 app/** 一个字节都不动；每把刀都先跑正控（同一套影子机械、不动刀），正控不绿
@@ -297,7 +299,11 @@ def test_build_index_holds_no_legacy_receipt_while_the_caller_still_decides():
 
 
 def test_the_shipped_gauge_no_longer_names_the_corpus_leg_as_a_chroma_waiter():
-    """判据① 的常驻化：在册量具现跑，read_corpus 那半格必须不在，read_topk 那半格必须在。
+    """判据① 的常驻化：在册量具现跑，read_corpus 那半格必须不在；
+    read_topk 那半格自 R659 item① 并树之后同样必须不在 —— 它的吞点已从
+    「交回 None 改问遗留库」改成具名抛（承接：
+    tests/test_r659_topk_leg_names_its_refusal.py::test_the_registered_gauge_now_reads_no_chroma_waiter）。
+    R650 当年写「照旧在册」是因为它只治语料腿；本行是总控改口，不是把 R650 的判据摘掉。
 
     量具与名册本席一字未动（禁区），这里只按在册调用面把派生取回来。
     """
@@ -312,9 +318,8 @@ def test_the_shipped_gauge_no_longer_names_the_corpus_leg_as_a_chroma_waiter():
         "腿必须还在册上：本单治的是吞它那一层的下游，不是把读腿拆了")
     assert not [row for row in waiters if row["leg"] == "read_corpus"], (
         "语料腿还在等遗留库回执：" + repr(pairs))
-    assert ("read_topk", "app/rag/retriever.py::_pgvector_hits",
-            "app/rag/retriever.py::search") in pairs, (
-        "read_topk 那一半的吞点与答复点都在 app/rag/retriever.py，本单写域外，必须照旧被点名")
+    assert not [row for row in waiters if row["leg"] == "read_topk"], (
+        "R659 item① 之后 read_topk 仍被点名成等遗留库回找：" + repr(pairs))
 
 
 # --------------------------------------------------------------------- 两把反证刀（内存影子）

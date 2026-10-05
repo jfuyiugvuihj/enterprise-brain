@@ -39,6 +39,28 @@ R658 把第 3 格里语料腿那几枚牙**改挂**（过期的是"搬家前的�
     （钉的是名字，不是"waiters 空不空"）。
 两把刀与正控共用同一套派生机械（`corpus_reading(..., bite=False/True)`）；正控按刀各配一枚、
 刀口不落（edits=()），必须先绿，红才算被咬中。
+
+🔴 R672 改口指针（10-05；原始判据留文不改史）：`app/rag/retriever.py::_pgvector_hits` 对
+**配置性**拒答（双写关着 / 表不认，族码用在册的 `pg_store.CONFIGURAL_READ_REFUSAL_REASONS`）
+不再交回 None 改问遗留目录，改成当场具名抛。在册量具的吞点判据是「except 支里一枚 raise 都没有」
+（`scripts/r633_dual_write_off_precondition.py::_handler_swallows`），这一改之后 top-k 那一支不再算
+吞点 ⇒ `read_leg_waits_for_chroma_receipt` **整族**从派生里消失。本文件跟着改口的只有这一族的
+在场/缺席方向：三族（`chroma_write_gate_reopens`／`delete_set_blind_to_pg_only_rows`／
+`question_rehomes_to_legacy_store`）仍按「族在场」逐枚点名、少一族当场红；补偿那一族
+（`compensation_needs_a_leg_it_wont_have`）「已治掉必须不在场」那句一字未动——它和第四族的缺席
+是两种东西，不许合并。量具本体也一字未动：派生本来就出得来这个读数，缺的只是本文件的期望值。
+新牙 K3/K3b 证明这格缺席的原因是产品落地而不是量具漏看：把盘上读回的 retriever 源文里那枚具名抛
+摘掉（只在内存的源码副本上，刀口从 `tests/test_r659_topk_leg_names_its_refusal.py` 借一枚，不抄
+第二份判据），那一族必须原样回来（点名 `read_topk`、复现在册三元组），本文件那枚「必须缺席」的
+断言（`_assert_no_topk_chroma_waiter`）必须当场红；再把吞点改成无条件上抛，它必须再走一次。
+现跑那一枚行为钉拆成两档分开判：可用性拒答（连不上）那一半期望一字未改——答复仍由遗留库给出，
+正控是同一台装配里健康的 PG 腿答复时遗留腿零被问；配置性拒答（旋钮关着）那一半跟着 item① 改——
+当场抛、遗留库零被问、形状账不凭空记答复者，正控是那枚哨兵自己会咬。
+🔴 代价记档（不许假装没看见）：吞点判据按整段 except 支算，item① 之后同一支里两种形状并存
+（配置性上抛、可用性仍交回 None），量具把整支读成「不吞」⇒ 可用性那一格的静默降级从此不在
+`waiters` 面上显形。这一格今天由本文件的可用性档与 `tests/test_r659_topk_leg_names_its_refusal.py`
+的反面面钉住；量具要不要改成按分支判，本单不动它（一改就和 r659 已在册的 `waiters == []` 冲突），
+留给 R60 停写那一单定夺。
 """
 
 from __future__ import annotations
@@ -59,13 +81,20 @@ from app.rag import retriever as rt
 
 #: 在册的读路装配台（`DocumentRetriever(str(tmp_path / "chroma"))` 那一套）与写删装配台。
 #: 复用它们，不为 R633 再造一套平行假腿——同族病记过两次。
-from test_r59b_pg_read_switch import _build_retriever
+from test_r59b_pg_read_switch import (
+    _FakeConnection as PgReadConnection,
+    _NeverAsked,
+    _build_retriever,
+)
 from test_r60_write_path_unique_under_pgvector import (
     LegacyHandle,
     PgTable,
     _assemble,
     pg_row,
 )
+#: R672：哨兵、建连接缝与那枚刀口全部从承接同一判据的在册件借，本文件不抄第二份"什么算吞/什么算问"。
+from test_r659_topk_leg_names_its_refusal import _no_connection, _refuse_connection, \
+    _strip_the_named_raise
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 TOOL_PATH = REPO / "scripts" / "r633_dual_write_off_precondition.py"
@@ -88,8 +117,19 @@ CORPUS_ANSWERER = PIPELINE_REL + "::_legacy_corpus"
 CORPUS_TRIPLE = (CORPUS_LEG, CORPUS_SWALLOWER, CORPUS_ANSWERER)
 #: 搬家前那一格的形状（S1 反向刀要复现的就是它）：遗留回执仍打在调用方自己身上。
 SILENT_CORPUS_TRIPLE = (CORPUS_LEG, CORPUS_SWALLOWER, PIPELINE_REL + "::build_index")
-#: top-k 腿的在册三元组：R650 与本单都不治它，它必须逐字照旧（吞点与答复点都在 retriever.py）。
+#: top-k 腿的三元组。R659 item① 之前它是"今天的在册读数"；本单之后它是 **K3 反证刀要复现的病形**
+#: ——吞点里那枚具名抛被摘掉时，量具交回来的就是这一格（吞点与答复点都在 retriever.py）。
 TOPK_TRIPLE = ("read_topk", RETRIEVER_REL + "::_pgvector_hits", RETRIEVER_REL + "::search")
+TOPK_LEG = "read_topk"
+TOPK_SWALLOWER = "_pgvector_hits"
+TOPK_ANSWERER = "search"
+#: 关掉双写那一格今天仍在场的三族：判据按「族在场」逐枚点，不按枚数写死——少一族＝量具坏了。
+REQUIRED_FAMILIES = ("chroma_write_gate_reopens", "delete_set_blind_to_pg_only_rows",
+                     "question_rehomes_to_legacy_store")
+#: R659 item① 治掉的那一族：在 off 态必须**缺席**，而缺席的原因由 K3 指着那枚具名抛。
+REPAIRED_FAMILY = "read_leg_waits_for_chroma_receipt"
+#: 已被 R639-A 治掉的那一族（本单一字未动）：它与上面那枚缺席断言是两种东西，不许合并。
+COMPENSATED_FAMILY = "compensation_needs_a_leg_it_wont_have"
 
 
 def _load(path, name):
@@ -256,6 +296,30 @@ def _subjects_by_code(findings, code):
     return {item["subject"] for item in findings if item["code"] == code}
 
 
+def _assert_no_topk_chroma_waiter(tool, reading, *, witness: str):
+    """缺席断言的**单一出口**：面一与面三两枚钉都从这里判，K3 反证刀咬的也是这一枚。
+
+    为什么不就地写两句断言：写两遍就是第二份抄本（与
+    `test_the_tool_carries_no_second_list_of_write_sites` 同族病），改一处忘一处就又是一枚过期事实；
+    更要紧的是 K3 必须拿**同一枚**断言去咬——它红，"这一族今天缺席"才不是一句随盘的形容词。
+
+    四句都可失败，缺一句就是拿形容词交差：
+      1. `waiters` 里不许有 top-k 那一行——静默等 Chroma 回执这一形不再在册；
+      2. 整族必须从 codes 里消失——只删行不删族，等于量具还在报一件没发生的事；
+      3. 腿本身必须还在拒答名册上：归 0 只许是"不再吞"，不许是"把读腿拆了"；
+      4. 答复点必须还带着打在遗留目录上的读调用：可用性那一格今天仍由它接，摘掉就是顺手治没。
+    """
+    rows = [row for row in reading["waiters"]["waiters"] if row["leg"] == TOPK_LEG]
+    assert not rows, (witness + "：top-k 那一格又回来等 Chroma 回执：" + repr(rows))
+    assert REPAIRED_FAMILY not in reading["codes"], (
+        witness + "：整族还从 findings 里发出来（现取 codes：%s）" % sorted(reading["codes"]))
+    assert TOPK_LEG in leg_names(reading), (
+        witness + "：读腿整条被拆了，缺席就不是产品落地（现取 legs：%s）" % sorted(leg_names(reading)))
+    answerer = tool._legacy_receipt_calls(
+        _function(ast.parse(reading["sources"][RETRIEVER_REL]), TOPK_ANSWERER))
+    assert answerer, (witness + "：答复点不再问遗留目录，可用性那一格从此没人接")
+
+
 # ------------------------------------------------- 面一/面二：今天的读数与"少一枚条件就红"
 
 
@@ -280,15 +344,20 @@ def test_turning_the_switch_off_is_measured_as_a_loss_not_a_green(tool, roster, 
                                                                  pg_store_source):
     """本单的核心读数：这一格现在**不能翻**，而且不许由「没发现」冒充「可翻」。
 
-    R639-A 治掉补偿那一族之后，这一枚必须同时钉两件事：剩下的四族仍在场（少一族＝量具坏了，
+    R639-A 治掉补偿那一族之后，这一枚必须同时钉两件事：还在场的族逐枚点名（少一族＝量具坏了，
     不是产品码落地），被治掉的那一族当场断言**不在场**。两个方向都缺就是空转。
+
+    R672 改口：被治掉的那一侧今天有两族，不再是一族——`read_leg_waits_for_chroma_receipt` 自
+    R659 item① 起同样归零，因为吞点里那枚具名抛在位。它的缺席断言走单一出口
+    `_assert_no_topk_chroma_waiter`（与面三同一枚，K3 咬的也是同一枚），不许写成"它总是缺席"。
     """
     reading = measure_static(tool, roster)
-    assert {"chroma_write_gate_reopens",
-            "delete_set_blind_to_pg_only_rows",
-            "question_rehomes_to_legacy_store",
-            "read_leg_waits_for_chroma_receipt"} <= reading["codes"], reading["codes"]
-    assert "compensation_needs_a_leg_it_wont_have" not in reading["codes"], reading["findings"]
+    for code in REQUIRED_FAMILIES:
+        assert code in reading["codes"], (
+            "少的是这一族——量具坏了，不是产品落地：" + code + repr(sorted(reading["codes"])))
+        assert _subjects_by_code(reading["findings"], code), code
+    _assert_no_topk_chroma_waiter(tool, reading, witness="现盘（含 R659 item①）")
+    assert COMPENSATED_FAMILY not in reading["codes"], reading["findings"]
     assert reading["exit"] == tool.EXIT_CANNOT_FLIP
 def test_the_stop_write_predicate_is_still_a_conjunction_of_the_registered_terms(tool, roster,
                                                                                retriever_source):
@@ -442,23 +511,26 @@ def corpus_registration(tool, reading):
 def test_the_refusing_legs_and_their_chroma_receipts_are_named_from_the_code(tool, roster,
                                                                              retriever_source,
                                                                              pg_store_source):
-    """今天的读数：拒答面照旧点名；语料腿已离开 waiters、答复者却具名在册（R650 之后的形状）。
+    """今天的读数：拒答面照旧点名；两条读腿都已合法离开 waiters，答复者却各自具名在册。
+
+    语料腿那一格是 R650 之后的形状（腿在册、吞点在册、等回执归零，靠 `corpus_registration()`
+    多走一跳把答复者取回来）；top-k 那一格是 R659 item① 之后的形状，本单按同一口径改口，
+    断言走单一出口 `_assert_no_topk_chroma_waiter`。
 
     这一格不许拿数量当判据——`switch_gated_legs()` 与 `legacy_receipt_waiters()` 全从 AST 现取，
-    下面四把反向刀各改一格，派生必须跟着改口；把它们写成 `== 3` / `== 2` 就量不到那一族。
+    下面几把反向刀各改一格，派生必须跟着改口；把它们写成 `== 3` / `== 2` 就量不到那一族。
     """
     reading = measure_static(tool, roster)
     assert {"read_topk", "read_corpus", "_document_leg_connection",
             "document_vector_rows", "indexed_document_names"} <= leg_names(reading), leg_names(reading)
-    assert TOPK_TRIPLE in waiter_triples(reading), waiter_triples(reading)
     #: 判据① 的正面钉（两格都要有，缺一格就是假话）：腿没被拆，等 Chroma 回执那一格才归零。
     assert CORPUS_LEG in leg_names(reading), (
         "语料腿整条被拆了：判据① 的归 0 该是「搬家」，不是把读腿拔掉")
     assert CORPUS_LEG not in waiter_legs(reading), waiter_triples(reading)
     assert corpus_registration(tool, reading) == CORPUS_TRIPLE, corpus_registration(tool, reading)
-    assert "read_leg_waits_for_chroma_receipt" in reading["codes"]
-    assert _subjects_by_code(reading["findings"], "read_leg_waits_for_chroma_receipt") \
-        == {"read_topk"}, reading["findings"]
+    #: R672：top-k 走的是语料腿 R650 同一条路——腿与答复点都还在册，等回执那一格归零。
+    _assert_no_topk_chroma_waiter(tool, reading, witness="拒答面现读")
+    assert _subjects_by_code(reading["findings"], REPAIRED_FAMILY) == set(), reading["findings"]
 
 
 def test_a_refusal_on_another_reason_is_not_a_dual_write_leg(tool, roster, retriever_source,
@@ -500,6 +572,10 @@ def test_a_refusal_that_is_not_swallowed_stops_being_a_receipt(tool, roster, ret
     同一份码里两种形状并存，只有这一种进 waiters。
     R658：本腿那一格今天不在 waiters（见 `corpus_registration()`），所以"另一条没被误伤"改判
     搬家后的在册三元组照旧，不再判 `read_corpus in waiter_legs`——那一格已经是在册的假。
+
+    🔴 R672 诚实记档：本枚刀在 top-k 那一格**已经改不动读数**——现盘那支 except 里本来就有 raise，
+    刀口落不落都是"不在 waiters"。它今天的判别力在两格：腿必须还在册、语料腿的归 0 不许被倒推回去。
+    top-k 那一格的两向判别力交给 K3（摘掉具名抛 ⇒ 整族复现）与 K3b（改成无条件上抛 ⇒ 整族再走）。
     """
     mutated = _raise_instead_of_swallowing(retriever_source)
     reading = measure_static(tool, roster, retriever=mutated)
@@ -610,9 +686,86 @@ def test_each_new_knife_redds_the_registered_corpus_triple(knife, tool, roster, 
     else:
         #: S2 只改名字：waiters 那一格必须照旧是空的，否则这枚钉就退化成"waiters 空不空"。
         assert CORPUS_LEG not in waiter_legs(reading), waiter_triples(reading)
-    #: 两把刀都不许顺手拆腿，也不许误伤 top-k 那一格（吞点与答复点都在本单写域外）。
+    #: 两把刀都不许顺手拆腿（吞点与答复点都在本单写域外）。
     assert CORPUS_LEG in leg_names(reading), leg_names(reading)
-    assert TOPK_TRIPLE in waiter_triples(reading), waiter_triples(reading)
+    assert TOPK_LEG in leg_names(reading), leg_names(reading)
+    #: R672：这两把刀砍的是 pipeline 那一份源文，不该把 top-k 的静默回执反向召回来。
+    assert TOPK_LEG not in waiter_legs(reading), (
+        knife + " 把 top-k 的静默回执又召回来了：" + repr(waiter_triples(reading)))
+
+
+# -------------------------- 面三补刀（R672）：第四族的归 0 是真行为，两向都要能改口
+
+
+def strip_the_named_raise(source):
+    """K3 刀口：把 retriever 源文里那枚"按族分家"的具名抛换成 pass（内存副本，盘上不动）。
+
+    刀本身从承接同一判据的那本件借一枚（`_strip_the_named_raise`），本文件不抄第二份"哪一行算抛"；
+    刀口必须落在源文上，否则 K3 就是一把空刀——那一格在函数里现证。
+    """
+    tree = ast.parse(source)
+    _strip_the_named_raise(_function(tree, TOPK_SWALLOWER))
+    ast.fix_missing_locations(tree)
+    mutated = ast.unparse(tree)
+    assert mutated != source, "K3 刀口没落在源文上"
+    return mutated
+
+
+def raise_unconditionally_after_stripping(source):
+    """K3b 刀口：先摘掉具名抛，再把整支 except 改成无条件上抛（两把刀共用同一套 AST 机械）。
+
+    这一枚给 K3 补上反方向：整族跟着"有没有 raise"走，不是跟着盘面走，也不是只跟着本单那一支走。
+    """
+    return _raise_instead_of_swallowing(strip_the_named_raise(source))
+
+
+def topk_reading(tool, roster, retriever_source, *, knife=None):
+    """装刀：`knife=None` 是正控（源文一字不动），落刀才换 retriever 那一份内存副本。"""
+    text = retriever_source if knife is None else knife(retriever_source)
+    if knife is not None:
+        assert text != retriever_source, "刀口没落在源文上"
+    return measure_static(tool, roster, retriever=text)
+
+
+def test_the_k3_control_reads_the_registered_absence_before_the_knife(tool, roster,
+                                                                     retriever_source):
+    """K3 的正控：同一套派生机械、刀口不落 ⇒ 缺席断言必须先绿，红才算被咬中。"""
+    reading = topk_reading(tool, roster, retriever_source)
+    _assert_no_topk_chroma_waiter(tool, reading, witness="K3 正控")
+    assert _subjects_by_code(reading["findings"], REPAIRED_FAMILY) == set()
+
+
+def test_k3_dropping_the_named_raise_brings_the_family_back(tool, roster, retriever_source):
+    """K3 反证刀：摘掉那枚具名抛 ⇒ 病形逐字复现，而"必须缺席"那一枚断言当场红。
+
+    这一枚是本单判别力的正身。没有它，"第四族必须缺席"就退化成一句随盘的形容词：量具哪天坏了、
+    或者谁把读腿整条拆了，读数一样绿——那正是"把别人的牙摘了交差"那一形（在册事故同族）。
+    """
+    bitten = topk_reading(tool, roster, retriever_source, knife=strip_the_named_raise)
+    #: 复现的是搬家前那一格，名字、吞点、答复点三枚都要逐字对上在册三元组。
+    assert REPAIRED_FAMILY in bitten["codes"], bitten["findings"]
+    assert _subjects_by_code(bitten["findings"], REPAIRED_FAMILY) == {TOPK_LEG}, bitten["findings"]
+    assert TOPK_TRIPLE in waiter_triples(bitten), waiter_triples(bitten)
+    #: 面一与面三共用**同一枚**断言，所以它在这里必须红，且红句点名回来的那一格。
+    with pytest.raises(AssertionError) as caught:
+        _assert_no_topk_chroma_waiter(tool, bitten, witness="K3 落刀")
+    assert "等 Chroma 回执" in str(caught.value), str(caught.value)
+    #: 摘刀之后另外三族不许跟着消失：本单改口的只有这一族，不是把量具整体翻红。
+    for code in REQUIRED_FAMILIES:
+        assert code in bitten["codes"], (code, sorted(bitten["codes"]))
+
+
+def test_k3b_an_unconditional_raise_takes_the_family_out_again(tool, roster, retriever_source):
+    """K3b：把吞点改成无条件上抛 ⇒ 整族再走一次（派生跟着码走，两向都可失败）。
+
+    没有这一枚，K3 只证了"摘掉抛会回来"，读起来仍可能像"只要 retriever 被动过就红"。
+    这一枚把方向扳回去：同一份摘过刀的副本，再补一枚 raise，读数必须回到缺席那一格。
+    """
+    again = topk_reading(tool, roster, retriever_source,
+                         knife=raise_unconditionally_after_stripping)
+    assert REPAIRED_FAMILY not in again["codes"], again["findings"]
+    _assert_no_topk_chroma_waiter(tool, again, witness="K3b 无条件上抛")
+    assert TOPK_LEG in leg_names(again), leg_names(again)
 
 
 def test_the_questions_that_move_back_to_the_legacy_directory_are_named(tool, roster,
@@ -668,16 +821,19 @@ def test_the_tool_carries_no_second_list_of_write_sites(tool):
 # --------------------------------------------------------------- 现跑：off 态掉的是哪一格
 
 
-def test_answers_move_back_to_the_legacy_engine_while_the_switch_is_off(tmp_path, monkeypatch):
-    """把开关从 on 拨到 off：语义答复真的改由 Chroma 给出，bypass 原因码点名那一枚稳定码。
+def test_answers_still_move_back_to_the_legacy_engine_on_an_availability_refusal(tmp_path,
+                                                                                monkeypatch):
+    """档一 · 可用性拒答（连不上）：这一半的期望一字未改——答复仍由 Chroma 给出。
 
-    这一枚是「隐式等 Chroma 回执」的现跑凭据：`read_topk()` 连一条 SQL 都不发（拿不到腿就拒开），
-    上一层把拒答吞成"这一腿没答"，`search()` 于是落到 `collection.query()`。在册的
-    `test_r59b_pg_read_switch` 钉的是"连不上"那一枚原因（`vector_mirror` 抛异常），
-    这一枚钉的是"旋钮关着"那一枚原因——同一族里两格，红的不是同一件事。
+    item① 治的是配置性那一支，availability-first 不许顺手治没：`read_topk()` 连不上时上一层仍把它
+    吞成"这一腿没答"，`search()` 于是落到 `collection.query()`。在册的 `test_r59b_pg_read_switch`
+    钉的是同一形状在 `vector_mirror` 那一条上的读数，本枚钉的是本量具这一问句需要的那一格：
+    静默降级今天还在，只是它不再属于配置性那一族。
+    正控：`test_the_healthy_pg_leg_answers_while_the_legacy_engine_is_never_asked`——同一台装配、
+    连接健康时答复来自 PG 腿，本枚那句 `answered_by == chroma` 因此只可能来自那枚拒答。
     """
     instance = _build_retriever(tmp_path, monkeypatch, backend=indexing.PGVECTOR_BACKEND)
-    monkeypatch.setenv(pg_store.DUAL_WRITE_ENV, "off")
+    _refuse_connection(monkeypatch, pg_store.REASON_VECTOR_READ_FAILED)
 
     hits = instance.search("住宿费标准", k=5)
 
@@ -686,8 +842,65 @@ def test_answers_move_back_to_the_legacy_engine_while_the_switch_is_off(tmp_path
     assert reading["answered_by"] == rt.RETRIEVAL_SERVER_CHROMA, reading
     assert reading["leg"] == "semantic"
     bypass = pg_store.vector_read_diagnostics()["last_bypass"]
-    assert bypass["reason"] == pg_store.REASON_VECTOR_READ_WITHOUT_DUAL_WRITE, bypass
+    assert bypass["reason"] == pg_store.REASON_VECTOR_READ_FAILED, bypass
+    #: 这一支走的还是"吞掉并退回"那句：detail 里不许出现配置性那一族的记号。
+    assert "不改问遗留目录" not in bypass["detail"], bypass
     assert pg_store.vector_read_diagnostics()["answered"] == 0
+
+
+def test_a_configural_refusal_raises_on_the_spot_instead_of_moving_answers_back(tmp_path,
+                                                                               monkeypatch):
+    """档二 · 配置性拒答（旋钮关着）：跟着 item① 改口——当场具名抛，遗留库一枚都不许被问。
+
+    病形（本枚红之前的形状，也是 R633 给这一格起的名字）：`read_topk()` 连一条 SQL 都不发就按
+    `VECTOR_DUAL_WRITE 关着` 拒答，上一层把它吞成"这一腿没答"，`search()` 落到 Chroma——
+    一枚配置矛盾就这样被读成一次正常答案。今天这一支必须抛，而且不许在形状账上留下一个答复者。
+    """
+    instance = _build_retriever(tmp_path, monkeypatch, backend=indexing.PGVECTOR_BACKEND)
+    monkeypatch.setenv(pg_store.DUAL_WRITE_ENV, "off")
+    instance.collection = _NeverAsked()
+    _no_connection(monkeypatch)          #: 这一档连 PostgreSQL 都不该开口，开口就当场红。
+    before = rt.search_shape_diagnostics()
+
+    with pytest.raises(pg_store.VectorReadRejectedError) as caught:
+        instance.search("住宿费标准", k=5)
+
+    assert caught.value.reason == pg_store.REASON_VECTOR_READ_WITHOUT_DUAL_WRITE, str(caught.value)
+    bypass = pg_store.vector_read_diagnostics()["last_bypass"]
+    assert bypass["reason"] == pg_store.REASON_VECTOR_READ_WITHOUT_DUAL_WRITE, bypass
+    assert "不改问遗留目录" in bypass["detail"], bypass
+    assert pg_store.vector_read_diagnostics()["answered"] == 0
+    assert rt.search_shape_diagnostics() == before, "拒答那一问被记上了一个答复者"
+
+
+def test_the_healthy_pg_leg_answers_while_the_legacy_engine_is_never_asked(tmp_path, monkeypatch):
+    """两档共用的正控：旋钮开着、连接健康 ⇒ 答复来自 PG 腿，遗留腿零被问。
+
+    这一枚证的是本文件的假腿装配台真的接得上：档一那句 `answered_by == chroma` 只可能来自拒答，
+    档二那句"零被问"只可能来自那枚具名抛，两样都不是"假腿没接上"读出来的形状。
+    """
+    instance = _build_retriever(tmp_path, monkeypatch, backend=indexing.PGVECTOR_BACKEND)
+    monkeypatch.setattr(pg_store, "_connect", lambda url, factory: PgReadConnection())
+    instance.collection = _NeverAsked()
+
+    hits = instance.search("住宿费标准", k=5)
+
+    assert hits, hits
+    assert rt.search_shape_diagnostics()["last"]["answered_by"] == rt.RETRIEVAL_SERVER_PGVECTOR, \
+        rt.search_shape_diagnostics()["last"]
+
+
+def test_the_never_asked_sentinel_actually_bites():
+    """档二 的正控：`_NeverAsked` 会咬——不证它会咬，"一枚都不许被问"就是永真判据。
+
+    与 `test_the_compensation_family_is_reported_only_while_a_leg_gate_exists` 同一条规矩：
+    量具自己要先能被证实是活的，读数才不算空话。
+    """
+    sentinel = _NeverAsked()
+    for verb in ("query", "get"):
+        with pytest.raises(AssertionError):
+            getattr(sentinel, verb)()
+    assert sentinel.name == "legacy_chroma_must_not_be_asked"
 
 
 def test_a_row_written_after_the_flip_is_undeletable_and_off_the_list_when_the_switch_is_off(monkeypatch):
