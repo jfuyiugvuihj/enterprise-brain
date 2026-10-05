@@ -2694,7 +2694,7 @@ git `core.autocrlf=true` 又只管 LF↔CRLF 管不了双 CR ⇒ 判它"脏没�
 - **六、13 格红 → 5 枚修复件的认领表（下班接手先核这张表，别让任何一格没人认领）**：A 类 3 —— data.py preview 无行级过滤 → **R180** ｜ alerts 跨部门 manager 读到别部门告警 → **R176** ｜ knowledge-graph private 写而不读 → **R177**。B 类 4 —— `chat.py:1313-1317`「暂无相关文档」写死 → **R179** ｜ `chat.py:3172-3174`+`:602-616` 目录空列表假话 → **R179** ｜ `data.py:121-163` 静默 `continue` → **R180** ｜ `tools.py:237-248`+`:952-954`+`:1069-1071`「没有数据文件」→ **R178**（🔴 同形两处只改一处就是留第二张假话）。C 类 6 —— `filters.py:102-106` → **R178** ｜ `chat.py:1300-1305` → **R179** ｜ `chat.py:583-587` 两格（peer_probe + admin_cannot_read，拦人谓词在 `app/storage/sessions.py:85`）→ **R179** ｜ `alerts.py:96-107` 两格（staff 读拒 / 写拒都不落审计）→ **R176**。⇒ 五枚并树并绿之后，把 `codex/be-r163`(`eebaadb`) 上那两枚矩阵件接绿并树，阶段 C 才有资格谈翻绿；在此之前计划书 §6 C 行与 E 线越权判据按裁定 5 继续锁。
 ## 88. 第四十二班第一格（09-23 12:4x–13:1x，主树 `09bc7f7` → 本班）：接手核对证伪三笔"已派工" · R170 并树 · R172/R177 待并 · 另立 R182
 
-- **一、接手核对（摘要 vs 磁盘，逐条实取）**：主树 HEAD 实取 `d394a65`（交接摘要写的 `2d8f093` 在仓库里不存在）；工作区脏项只有 §87 六那 2 行未落账（已提交 `09bc7f7` 双推）。🔴 摘要里的三笔"在途/已结案"全部无身体：`01a0cca7-385c`(R181) / `01a0cc5b-29ea`(R171) / `01a0cc5b-15cf`(R175) 在 `C:Usersengx.codexsessions` 全量递归搜**零 rollout**，`be-r171`/`be-r175` **不是登记过的工作树**，全盘搜 `r171*` 零命中，`App.vue` 里搜不到任何 expired-session 文案。⇒ R171 **从未开工**；R175 那份"零改动申报"同样无身体，且它点名的三枚函数（`_approve_hitl_events`/`_request_lane_payloads`/`_apply_lane_decision`）在 `chat.py` 里**一枚都不存在**（实取只有 `_record_pending_approval:2135` / `_decide_pending_approval:2167` / `hitl_pending:2182` / `approve:2272`）⇒ 其"落终态早于落事件"的结论降为**待验假设**，禁止当已证事实引用。
+- **一、接手核对（摘要 vs 磁盘，逐条实取）**：主树 HEAD 实取 `d394a65`（交接摘要写的 `2d8f093` 在仓库里不存在）；工作区脏项只有 §87 六那 2 行未落账（已提交 `09bc7f7` 双推）。🔴 摘要里的三笔"在途/已结案"全部无身体：`01a0cca7-385c`(R181) / `01a0cc5b-29ea`(R171) / `01a0cc5b-15cf`(R175) 在 `C:\Users\fengx\.codex\sessions` 全量递归搜**零 rollout**，`be-r171`/`be-r175` **不是登记过的工作树**，全盘搜 `r171*` 零命中，`App.vue` 里搜不到任何 expired-session 文案。⇒ R171 **从未开工**；R175 那份"零改动申报"同样无身体，且它点名的三枚函数（`_approve_hitl_events`/`_request_lane_payloads`/`_apply_lane_decision`）在 `chat.py` 里**一枚都不存在**（实取只有 `_record_pending_approval:2135` / `_decide_pending_approval:2167` / `hitl_pending:2182` / `approve:2272`）⇒ 其"落终态早于落事件"的结论降为**待验假设**，禁止当已证事实引用。
   - **R181 的处置**：按 §87 三 的约定另起一格实投，真身 `01a0cc81-4c4e-7471-bb0d-07aced1a0a5d`（派工前 `be-r181` 实取 `dirty=0`、`.venv` Junction 由总控本班建、import 实测解析到本树 `app/`）。投后 8 min 复看 rollout 事件时间戳 12:52:54 在推进。
   - **🔴 一条量具教训（记死，别再拿它当证据）**：rollout 文件的 **`LastWriteTime` 不等于活跃度**——`01a0cc81` 的 mtime 冻在 12:23:41 而内部最后事件时间戳是 12:52:54、体积还在涨。判断一具身体活着只能读 **rollout 内最后一条 `timestamp`**，或用 `wait_agent`；**禁止用文件 mtime 判死**。
   - **另记一笔真泄漏**：12:28:57 主树 `app/api/v1/alerts.py` 出现 192/11 的在途半品（R176 的写域），比 `be-r176` 里那份 195/11 早 11 分钟 ⇒ 施工方从主树拷档时把半品留在了主树。本班 `git checkout --` 复原，**R176 的活没受损**（它的树里那份更新）。规矩重申：并别人的单之前先 `git status --porcelain -- app frontend` 看有没有不属于本单的脏项。
@@ -5958,3 +5958,38 @@ run17 于 **11:25:48** 开窗（全 105 题，`EVAL_DECLARE_LANE_TIER=报告`，
 - **🔴 本班新现取，改一句旧账**：A③ 此前记 ✅，实为**半格**——ollama 容器 `nvidia-smi` 交 RTX 4060 Laptop 8188 MiB ✅，但 `OLLAMA_REQUIRE_GPU` 在 `deploy/.env.server` 与容器环境里**都没设**，而 `app/common/model_capabilities.py::require_gpu_enabled` 未设即 fail-open ⇒ 「拿不到卡必须显式报错」这条路在生产配置上从没走通过。`ollama ps` 现取为空（`LOCAL_MODEL_KEEP_ALIVE=15m` 已过）⇒ 窗第一题必付冷加载。
 - **验证（总控亲跑，三态齐）**：`python scripts/check_vector_wording.py` rc=0（40 枚文档全过）；state①（apply 未 commit）与 state②（`f79b005` 干净树）跑同一册五枚件（`test_r276_vector_wording_pin`＋`test_r251_alert_disposal`＋`test_r417_bulk_role_mix`＋`test_r302_docs_utf8_guard`＋`test_r638_pointer_ratchet`）＝**133 passed／0 failed**，13.11 s vs 13.41 s，文件清单逐枚相同。r276 受管清单纳入新件（增牙不摘牙）。
 - **杂务一笔报业主**：主树根出现一枚 6 字节杂件 `0`（内容 `2480`，10-05 11:36:29 生成，本班命令通道的产物）。按规矩我不删文件，请点头；它与 `be-r60ctl`／`be-r602b`／`.tmpfix` 那批删除清单同批处置最省事。
+
+## 183 第十七班（10-05 15:0x–16:1x）·Docker 栈被 OOM 打死之后拉起·演示第一次逐层亲验并自纠一枚假 bug·R660 并树 46→2·R659 拆货·事故 #120/#121
+
+### 183.1 现取凭据（总控亲跑，非转述）
+
+- 容器栈开工现取：八枚全停，`backend/worker/scheduler` = **Exited (137)**（OOM），其余 Exited (0)；`docker info` 通 ⇒ 引擎没死。拉起后七枚 Up／四枚 healthy。
+- `python scripts/verify_container_stack.py --skip-build` = **22 passed / 0 failed / rc=0**，凭据落 `tmp/container_gate.log`。三枚容器 `printenv INDEX_BACKEND` 全 `pgvector`。
+- 前端：`build frontend` ＋ `--force-recreate frontend`；产物内 `fonts.googleapis.com`／`gstatic` 命中各 **0**；`login-bg`/`workbench-bg` 两枚 webp 与九枚 woff2 全在 `assets/`。
+- 端到端：`POST /api/v1/chat` 热答 **6.2 s**，答案带《来源：2026年五一劳动节放假通知.txt》；无出处那问它老实说没找到。界面真实键盘路径问答：步骤牌＋来源卡＋正文逐帧长出。
+- SSE 直探经 nginx：`0s status`／`3.8s step`／`15.1s heartbeat`／`20.4s` 起 21 枚 `text` 帧单调增长／收尾 `answer.headline`·`sources`·`request.completed`·`done`。
+- 演示库现读：`documents=105`、`chunk_vectors=1008`、`alerts=12`（未读 12）、`alert_rules=4`、`users=63`。
+- R660 三态：改前 **46 failed/164 passed/160.66 s** → state① **208 passed/2 failed/149.63 s** → 并树 `798dbdf` → state② 干净检出 **208 passed/2 failed/145.88 s**，两态红逐枚同名。
+- 剩两枚红的根因证死：同一枚 r469 纸在 `core.autocrlf=false` 干净检出 = **237,481 B／CRLF 0／LF 7,194**；主树工作副本 = **244,675 B／CRLF 7,194／LF 0**；差 7,194 B 恰为每行一枚 CR，内容逐字相同。
+- R659 亲跑：五枚件 **7 failed/55 passed/29.10 s**（红全在在册钉 r330×4＋r650×3，红句 `assert 'configural_refusal' == 'legacy_chroma'`）；拆掉 item② 之后四枚件 **1 failed/46 passed/26.71 s**，唯一那枚红 `assert (...) in set()` ⇒ 量具 waiters 归 0。
+
+### 183.2 结案与判据
+
+- **R660 结案并树 `798dbdf`**。一并落总控两笔：r483 生成件按在册通道 `--sync` 重生成（执行层手改 59/57 行没跑 `--sync`，逐字节钉照咬），并把 `--check` 现读逼出的改判（`notification_states` 已有 3 行 ⇒ `legitimately_empty` 过期）落成 `no_longer_empty`，出处与 problems 原话进 `re_ruling`，`--sync problems=0 rc=0`。
+- **R659 拆货**：item① 收（`read_topk` 配置性拒答改具名抛，零新造错误码，waiters 归 0）；item② **退回**（`configural_refusal` 与七枚在册钉字面值互斥，形状同 R664，另单承接）；item③ **从未动工**（`app/common/monitoring.py` 零改动）。r650 那枚「read_topk 必须照旧被点名」的期望属账面，由总控另笔改口。
+- **裁定**：派工词【禁区】`docs/handoff/**` 与【铁规】点名 r455 出路互斥 ⇒ 禁区**窄化为「看板名册＋跟进单」两枚**，其余 handoff 取证纸在派工点名时允许重锚。写进派工模板。
+
+### 183.3 事故两枚
+
+- **#120**：R666 首次 spawn 成功、约 30 分钟后 **429 Too Many Requests** 死席；收席前取证 `be-r666` **从未创建** ⇒ 零写入。按新派工重投 `Bohr`（上次投递本身落地成功，死因是 provider 限流，不属「投递报错不许补投」那一族）。教训：**三枚在飞＋总控同跑就会撞 429**。
+- **#121**：`Galileo`/R664 未建工作树，把 `tests/test_r645_contract_difference_ledger.py`（599/21）**直接写进主树**。货不丢，但主树测量被污染 ⇒ 本班起所有并树验收改在**干净影子树**做。派工模板新增硬要求：建树失败即停下回报，不许在主树落一个字节。
+- 自纠一笔（不占事故号，属归因纪律）：本班先用 `playwright fill()`＋`press(Enter)` 发问，屏幕 41 s 空白，一度误判「前端不渲染实时流」为 P1；换真实键盘事件一切正常，后端日志与落库都完整（`[ASK] 41.6s`、user＋assistant 两条齐、答案 347 字）。**报「某处坏了」之前必须先确认自己在哪一层按的按钮。**
+
+### 183.4 待派／在途／待业主
+
+- 在飞三枚：`Erdos`/R662（A② 四枚单帧行）、`Galileo`/R664（r645 刀③ escape 集）、`Bohr`/R666（账尺加 `OUT` 档）。
+- 待派：**R665**（把 r3 文档现状数字改成当场派生、取不到就红）、**R667**（R659 item②③ 与那七枚在册钉的互斥裁定，形状照 R664）、**R663/R654**（热集让路驱动件，同源两单先对写集）、**R668**（R661 未治四处：`tests/conftest.py` 缺 session 级 `TRACE_STORE_PATH` 改道等）。
+- 🔴 开窗前两件（顺序不许换）：① 重建后端镜像＋`--force-recreate`＋`check_image_provenance.py` 现读 PASS（label 仍 `9556513`，HEAD 已 `798dbdf`）；② `powercfg /change standby-timeout-ac 0`。
+- 待业主：`git push gitee HEAD`（今天 21 枚未推，本机是唯一副本）／`.gitattributes`（治那两枚 autocrlf 红的唯一根因解）／删除清单（`be-r660`·`be-r661`·`be-r659`·`be-r654`·`be-r60ctl`·`be-r602b`·`.tmpfix`＋主树根 6 字节杂件 `0`＋`%TEMP%\eb104\r660\state2\` 58 MB 被本机策略拦下）／`chroma_db` 反跟踪／`automation-2` 仍 `PAUSED` 且仍指死线程／窗首 keep_alive 预驻留（改测量条件）。
+- 明早目标口径先说清：**「能演示」今天已证；「已验收」仍差 16 格里那 10 格真欠＋四道门的真机窗**。两件事不许混着报。
+

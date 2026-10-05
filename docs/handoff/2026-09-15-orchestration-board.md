@@ -1586,6 +1586,14 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Aristotle`（派工词代号写的 `Lorentz`） | `01a0ec46-639b-7561-9b93-66ddfa748070` | **R493** 血缘纸 §9.6 那枚无锚「今天现读」＋§9.5/§9.7 过期叙述收口 | `be-r493`（基点 `438d67d`） | 🟡 在途（本班新投，即 R492 结案时问总控要的那份点名授权：限补锚一处可动 `scripts/r387_label_lineage.py`，其余字节禁）。甲案补锚 46→47 或乙案降级为丙类历史账，两案都要交「为什么」与一把会红的刀；🔴 禁手改数字，`--verify-plan-table` 必须 MATCH | 16:5x |
 | `Bacon` | `01a0ec53-1569-7eb0-9efb-27cbac62fe3f` | **R497** 会话列表读腿去 N+1 | `be-r497` | **已结案并树 `399a5a4`（已 push）**：dirty 76 passed → commit → 干净态 76 passed / 45.53 s（主树点名 6 枚件）；两枚产物字节与执行层 sha 逐枚等值 `057F09AF4EE54D8D`/`5EB2B24682F8411E`；已 close | 18:4x 本席亲跑 |
 | `Einstein` | `01a0ec33-d0eb-7090-89f4-f3923177b012` | **R494** `/profile` 全栈 | `be-r494`（现复位给 R509 用） | **已结案并树 `8ab62d8`+`6e62379`+`5dc5192`+`f45eca9`（已 push）**：FE 全量 132/2674 干净态两遍全绿；BE 16 枚点名件 dirty 186 → 干净态 **186 passed / 205.30 s**；🔴 自报一笔 #92 同族事故（坏正则令 `$dest` 空 ⇒ 6 枚异物落进主树根，已逐枚核 sha 等值后移入 `%TEMP%
+| `Hilbert` | `01a109e5-4f18-75e2-a4aa-4233425789e4` | **R660** 46 枚派生坐标漂移重锚 | `be-r660`@`8a52c5c` | **✅ 已结案并树（本班·总控代提交）**：`798dbdf`。改前基线真栈重取 46 failed/164 passed/160.66 s；state① 208 passed/2 failed/149.63 s；state② 干净检出同数同名/145.88 s。剩两枚红＝机器配置病（autocrlf）非码病 | 16:04:24 |
+| `Lovelace` | `01a10a04-3d2c-7c51-b0fa-3b9e8fef9491` | **R661** trace 落盘压在 SSE 临界路径（P1） | `be-r661`@`96763c4` | **✅ 已结案并树（上一班）**：`1af37c5`，三态 133→167→167 passed。🔴 未治四处已点名（conftest 缺 TRACE_STORE_PATH 改道／backfill 仍整本读件／JsonPersistenceAdapter.upsert 整档读＋fsync／replay 整本读件） | 16:04:24 |
+| `Arendt` | `01a10a04-7ec0-7341-93a2-dd6acb69c820` | **R659** read_topk 半格＋source 失真＋健康出口 | `be-r659`@`96763c4` | ⛔ **中断残留（94 分钟后被打断，凭据纸没落盘）·本班处置**：item① 收（read_topk 配置性拒答改具名抛，量具 waiters 归 0）；item② **退回**（`configural_refusal` 那格与在册 r650/r330 七枚钉正面互斥，它们钉的就是字面值 legacy_chroma）；item③ 从未动工（`app/common/monitoring.py` 零改动） | 16:04:24 |
+| `Pauli` | （429 死席） | **R654** 热集让路驱动件重写 | `be-r654`@`8a52c5c` | ⛔ 429 死席已 close，**零写入取证过**（树内 ahead=0、porcelain 空）。R654 仍未落地，派工词在档 | 16:04:24 |
+| （R666 第一人） | `01a10b18-…` 之前的同名尝试 | **R666** 账尺加 OUT 档 | **未建树** | ⛔ **事故 #120**：spawn 成功、跑约 30 分钟后 429 Too Many Requests 死席。收席前取证＝`be-r666` 从未创建 ⇒ 零写入。已重投给 `Bohr` | 16:0x |
+| `Erdos` | `01a10af4-0374-79f2-96f5-ca97b110720d` | **R662** A② 四枚单帧行（chart-01/tool-04/data-12/chart-04） | 自建树（基点 `1af37c5`） | 🟡 **在飞**（15:25 派出，存活未秒死）。写域＝发射层＋新牙＋凭据纸；禁区含 `app/trace/store.py`·`app/rag/**`·契约本体 | 16:04:24 |
+| `Galileo` | `01a10af4-d6c4-7523-b496-0ca1e22ea064` | **R664** r645 刀③ escape 集归零（甲案） | 🔴 **主树**（未建树） | 🟡 **在飞**（15:26 派出）。🔴 **事故 #121**：本班 16:0x 现取主树 `M tests/test_r645_contract_difference_ledger.py` 599/21 ⇒ 该席把货直接写进主树而非自己的工作树。货不丢（写域本就是该件），但**主树测量被污染**，验收一律改在干净影子树做 | 16:0x |
+| `Bohr` | `01a10b18-668f-78f3-872f-cf727a2f8744` | **R666** 账尺加 OUT 档（重投） | 须自建 `be-r666` | 🟡 **在飞**（16:0x 派出，派工词已明写「绝不许碰主树」＋基点 `798dbdf`） | 16:0x |
 494_stray_main`，零丢失）；已 close | 19:0x |
 | `Laplace` | `01a0ed5e-f014-77c2-954a-5667e50ac6ba` | **R518** A 圈② 甲案的机械落地（让尺子说清哪一轮有逐片腿） | `be-r518`（基点 `403db3d`） | ✅ **已结案并树 `97724c5`**：dirty＝干净态两回同名件 **116 passed**；腿名 0/105 派生不出这一格如实交回，已排进 R524 | 09-30 08:5x |
 | `Heisenberg` | `01a0ed33-8116-7371-aaf6-5a58da1163d0` | **R516** bind 同族实例影子债第二批（`dataset_registry` 一族 8 枚＋upsert 打实例 3 枚改到类目标） | `be-r516`（基点 `85572c1`） | ✅ **已结案并树 `d9de23c`**：进程级单例方法桩 **28→19**；总控亲跑 dirty **217**／干净态正序 **217**／乱序 **217**；🔴 施工层曾把在册钉写成近名（少一枚 `s`），已复原名并删近名件 | 09-30 08:5x |
@@ -6939,3 +6947,67 @@ C 门三格现状：①越权 0 条＝**未验**（R481 口径；R487 只到账�
 - **日期作废的理由写进文档**：把没被量过的格折算成一个日期，就是「一直说差一点」的成因。r3 改成逐格表：三态／量具／读数／代次／解锁这一步／归谁。
 - **在飞三枚照旧**（`Hilbert`/R660 正在修 prose-cell 重写留下的 4 枚幽灵指针；`Lovelace`/R661 复现首片阻塞 0.375 s 后在修四处；`Arendt`/R659 在清点上一班留下的跑测目录与影子树）。待派池新增 **R665**（本文事实派生钉）。
 - **业主侧四件**（r3 §10）：傍晚有网重建镜像（label 仍 `9556513`，HEAD 已 `f79b005`）／账尺加 `OUT` 档的裁定／`git push gitee HEAD`（今天 18 枚未推）／杂件 `0` 与删除清单。
+
+## 4FE 第十七班（10-05 15:0x–16:1x·总控线·主树 `1af37c5`→`798dbdf`·**单模型未切换**·心跳一枚没碰·automation-2 仍 `PAUSED` 且仍指死线程属业主）：Docker 栈被 OOM 打死之后拉起 · 演示第一次逐层亲验（登录／工作台／SSE 逐帧／6.2 s 带引用答复）· 🔴 一次「假 bug」自纠（自动化注入造成的空白面板）· R660 并树 46→2 · 剩两枚红钉死成机器配置病 · R659 拆货（收①退②③）· 事故 #120/#121
+
+### 4FE.1 栈是死的，演示是活的
+
+- 开工现取：八枚容器全停，`backend/worker/scheduler` 是 **Exited (137)**（OOM／被杀），其余 Exited (0)。`docker info` 仍通 ⇒ 服务层死、引擎没死。
+- 拉起＝`docker compose --env-file deploy/.env.server up -d`（**recreate 不是 build**）。八分钟内七枚 Up、四枚 healthy，`migrate` 一次性件正常退场。
+- 现读三枚容器 `printenv INDEX_BACKEND` 全 `pgvector`；宿主 `:80/api/v1/health` 交 `{"status":"ok"}`；`scripts/verify_container_stack.py --skip-build` **22 passed / 0 failed / rc=0**（R25 欠的两句容器内事实，今天第一次真读到其中一句）。
+
+### 4FE.2 演示逐层亲验（业主令「我就做个演示版」）
+
+- **前端镜像已 5 天没重建** ⇒ 业主浏览器里看到的还是 09-30 那版。本班 `build frontend` ＋ `up -d --force-recreate frontend`，产物现读：`login-bg-*.webp`／`workbench-bg-*.webp`／九枚 `*.woff2` 全在 `assets/`，`grep -rl fonts.googleapis.com /usr/share/nginx/html` 命中 **0**、`gstatic` **0** ⇒ 运行时零外部请求这条硬约束达成。
+- **登录页**不白屏，地球图接上（`mix-blend-mode: screen` 生效）；**工作台**四层齐（`app-bg__base/__art/__grid/__scrim`），美术层从本机 `assets/` 取。
+- **端到端问答**：`POST /api/v1/chat` 冷答 14.6 s、热答 **6.2 s**，交回带《来源：2026年五一劳动节放假通知.txt》的真引用文本；无出处的「报销流程」那问它**老实说没找到**并给下一步建议——这正是产品承诺的那张脸。
+- **界面里真问一句**（真实键盘路径）：问题气泡、`📄 搜索知识库` 步骤牌、来源卡（「本轮命中的资料 · 3 处资料（不是结论）」＋密级/版本）、正文逐帧长出，全部可见。
+- **SSE 直探**（经 nginx）：`t=0s status` → `3.8s step` → `15.1s heartbeat` → `20.4s` 起 21 枚 `text` 帧内容单调增长 → `answer.headline`/`sources`/`request.completed`/`done`。帧序与分片都没问题，**流式不是这轮的病灶**。
+- 演示库体量现读：`documents=105`（可见范围里 100）、`chunk_vectors=1008`、`alerts=12`（未读 12）、`alert_rules=4`、`users=63`。工作台「数据趋势」前几格是 0 **不是坏**：2026-09 有 100 篇、2026-10 有 12 条，只是默认从最旧月排起。
+
+### 4FE.3 🔴 本班自纠一枚「假 bug」（同族教训再记一次）
+
+- 本班先用 `playwright fill()` ＋ `press("Enter")` 发问，屏幕 41 s 空白、按钮停在「中断本次回答」，一度判成 P1「前端不渲染实时流」。
+- 换**真实键盘事件**（`pressSequentially` ＋ `press`）复现：一切正常。⇒ 那是**注入方式造的假象**，不是产品缺陷。后端日志同期证明那一轮其实跑完了（`[ASK] 41.6s | steps=1`），落库也完整（`user`＋`assistant` 两条都在，答案 347 字带 steps）。
+- 归因纪律：报「某处坏了」之前必须先确认**自己在哪一层按的按钮**。这条与 AGENTS.md 那句「判断默认值是否可达必须查调用点」同源。
+- 顺带两枚**真**小账（未修，只登记）：① `/sessions` 列表回 `msg_count=1` 而会话详情里有两条消息；② 运行留痕那格在跑完一次问答前是空的，文案是诚实的（「账本在答，只是这一格里一枚运行都没有」）。
+
+### 4FE.4 R660 并树：46 枚红 → 2 枚，且那 2 枚钉死是机器配置病
+
+- **改前基线在真栈上重取**（上一班的数被 Docker 宕机污染过）：`46 failed / 164 passed / 160.66 s`，红名与 `%TEMP%\eb104\gate-reds-47.txt` 去掉 r149 后**逐枚全等**，也与执行层影子树正控同数。
+- **state①**（apply 未 commit，主树）：`208 passed / 2 failed / 149.63 s`。**state②**（`git clone` 干净检出 `798dbdf`，porcelain 空）：`208 passed / 2 failed / 145.88 s`，**两态红逐枚同名、总数相同**。
+- 并树提交 `798dbdf`（显式列六枚路径，禁 `git add -A`）：四枚改件（`docs/handoff/2026-09-26-v1-frontend-gap-list.md` 5/5、`docs/perf/r387-label-lineage-2026-09-27.md` 12/12、`docs/testing/r483-empty-tables-2026-09-29.md` 69/66、`docs/testing/run9-readout-2026-09-28.md` 1/1）＋新纸 `docs/testing/r660-gate-reanchor-2026-10-05.md`＋`scripts/r483_empty_tables_triage.py`。
+- **执行层没做完、由总控补的两笔**：r483 那份是**生成件**，执行层手改 59/57 行没跑 `--sync`，逐字节钉照咬；本班按在册通道 `--sync` 重生成，并把它自己那条 `--check` 现读（`notification_states` 已有 3 行 ⇒ `legitimately_empty` 过期）改判 `no_longer_empty`，改判出处与 problems 原话落进 `re_ruling` ⇒ `--sync problems=0 rc=0`。
+- **剩两枚红（`test_r469_readout_is_generated.py` 两枚）＝机器配置病，本班把它证死了**：同一枚 `docs/testing/r469-sandbox-scope-readout-2026-09-28.md` 在 `core.autocrlf=false` 干净检出下 **237,481 B／CRLF 0／LF 7,194**，主树工作副本 **244,675 B／CRLF 7,194／LF 0**，差值恰为每行一枚 CR、内容逐字相同。⇒ 那两枚「逐字节等于再生件」的钉在本机配置下**永不可能绿**。治它只有 `.gitattributes`（业主域，已列入待业主清单），**摘钉不算治**。
+- **总控裁定一笔（执行层留的问题）**：派工词【禁区】写 `docs/handoff/**` 与【铁规】点名 r455 出路互斥，本单取了「量具点名的纸面」⇒ **禁区窄化为「看板名册＋跟进单」两枚**，其余 `docs/handoff/` 取证纸在派工点名时允许重锚。此条写进派工模板。
+
+### 4FE.5 R659 拆货：收 item①、退 item②、item③ 从未动工
+
+- 席位 `Arendt` 状态＝interrupted（94 分钟后被打断），最后一句是「正在写凭据纸」⇒ **纸没落盘**，读数一律不得当总控亲跑。
+- 本班亲跑（在它自己那棵树上，逐枚点名）：五枚件 `7 failed / 55 passed / 29.10 s`。红全在**在册钉**上：`test_r330_*` 四枚＋`test_r650_corpus_leg_names_its_refusal.py` 三枚，红句逐枚同形 `assert 'configural_refusal' == 'legacy_chroma'`。
+- **item② 退回**：把配置性拒答那格的 source 写成 `configural_refusal`，与七枚在册钉**正面互斥**（它们钉的就是字面值 `legacy_chroma`），而判据② 明令 r330 断言一字不改 ⇒ 这一格不是「再登记一笔差异」能解决的，形状与 R664 同族，另单承接。
+- **item① 收**：`retriever.py` 把配置性拒答从「吞成这一腿没答」改成当场具名抛（复用 R650 族码，零新造错误码）。拆掉 item② 之后复跑四枚件＝`1 failed / 46 passed / 26.71 s`，唯一那枚红是 `test_r650_...::test_the_shipped_gauge_...`，红句 `assert (...) in set()` ⇒ **量具 waiters 已归 0**（判据① 达成），而那枚钉写的是「read_topk 本单写域外，必须照旧被点名」——**该跟着改的是账面，不是行为**。执行层按工单该「停下回报」没停，本班不替它藏。
+- **item③ 从未动工**：`app/common/monitoring.py` 零改动，健康出口那一格仍欠。
+- 处置：item① 由本班另起一笔干净并树（含 r650 那枚期望改口＋凭据纸由本班写），item②③ 立**新单**承接。
+
+### 4FE.6 事故两枚与并发账
+
+- **事故 #120**：R666 第一次 spawn 成功、跑约 30 分钟后 **429 Too Many Requests** 死席。收席前取证＝`be-r666` **从未创建** ⇒ 零写入。按「新派工」重投给 `Bohr`（不是补投：上一次投递本身是成功落地的，死因是 provider 限流）。**并行度在这台机上受 provider 支配**，三枚在飞＋总控同跑就会撞 429。
+- **事故 #121**：`Galileo`/R664 未建工作树，把 `tests/test_r645_contract_difference_ledger.py`（599/21）**直接写进主树**。货不丢（写域本就是该件），但主树测量被污染 ⇒ 本班所有并树验收改在**干净影子树**做，R664 验收时以影子树数为准。派工模板新增一行硬要求：「建树失败就停下回报，不许在主树落一个字节」。
+- 本班开工第一动作＝关死席：关掉四枚历史席位（R649/R646/R652/Arendt）之后立即可投，再次印证「已结案不 close 会占名额」。
+
+### 4FE.7 V1 现况（唯一分母＝账尺读法乙未清 16 号，本班拆成 10/5/1）
+
+- 台账现取（本班 16:0x 亲跑 `audit_plan_ticket_ledger.py` RESULT=PASS／rc=0）：在册 43＝LANDED 24／PARTIAL 16／CLOSED 1／FOREIGN 1／NOTBUILT 1；读法甲未清 **0**。
+- **10 格真欠**：R25②（剩「改一行不 build 即生效」半句）／R26②（丢卡必报错·未验）／R27③（端到端 −≥35 s，数已到只差落纸）／R28③＝A④（跨代次对子 0 枚⇒量不到，今晚窗）／R31②（R662 在治）／R37③／R38③／R44①（R663）／R47①（先裁口径）／R51②（量到了、仍红）。
+- **5 格待改档**（R29②／R43②／R48①／R50②／R52①）：本班已把「加 `OUT` 档」立成 **R666** 并派出——机械档由执行层做，**裁定句由总控落账**，改完读法乙从 16 变 11。
+- **1 格属交付阶段**：R35②（客户真实密级，业主 09-28 已裁「交付阶段做」）。
+- 门里另欠：C① 越权 0 条＝**未验**（生产标签全空，合成标签不证隔离）／C④ 零分母／D 报告档 3 格未验（开关仍 off）／前端九环走查＋两张失败脸／pgvector 尾格 R60 停写与 R579 索引腿。
+
+### 4FE.8 今晚这扇窗开之前必须先做的两件事（顺序不许换）
+
+1. **重建后端镜像**：`docker compose --env-file deploy/.env.server build migrate` ＋ `up -d --force-recreate backend worker scheduler`，再 `python scripts/check_image_provenance.py` 现读 PASS。本班现读 label 仍 `9556513`、HEAD 已 `798dbdf` ⇒ 不重建就是拿旧码测新账。
+2. **`powercfg /change standby-timeout-ac 0`**（属业主点头项，本班未擅自改）。不设就是重演 09-21 那夜「机器休眠、四枚 Agent 被冻一整夜」。
+- 成本按现取数排（**旧账「3–5 小时/窗」作废**）：≈65 s/题 ⇒ 105 窗 ≈ 1.9 h、33 子集窗 ≈ 0.6 h。夜队列脚本 `%TEMP%\eb104\night1005d_queue.py` 已在档，带 2 建议 23:30 起、`MUST_FINISH_BY=07:00` 超点自动 SKIP 把机器还给业主。
+- 🔴 夜里**只测不建**：夜间无网，`docker build`／push／总控与子 agent 推理都吃网；跑分窗打本机 Ollama 不吃网。
+
