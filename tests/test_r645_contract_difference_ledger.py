@@ -18,15 +18,30 @@ r"""R645 · 契约历史的「具名差异账」：默认逐字节不许动，�
   ④ 今天账上恰好一枚：多一枚少一枚都红（`EXPECTED_DIFFERENCES_TODAY`）。
   ⑤ 基点冻在 `a7ac040`：谁前移它，登记在册的旧文就在那一版里找不到 —— 这是结构性挡；另按字面量再挡一枚。
 
-四把刀（每把先跑正控；全部只拿内存副本与 `tmp_path` 影子端判，盘上契约一字节不动）：
+六把反证刀（每把先跑正控；全部只拿内存副本与 `tmp_path` 影子端判，盘上契约一字节不动）：
 刀① 账外手改历史区一个标点 ⇒ 两枚钉都红，红句点名派生出来的位置（字符位与行号）；
 刀② 往账里塞一枚「把一句结论换掉」的改写 ⇒ 必红，并说清这形状为什么不收；加进真账则枚数一起报；
 刀③ 把 `FROZEN_BASE` 换成较新的版本（本刀直接用 HEAD，不抄 sha）⇒ 两枚钉红、基点字面量钉也红；
 刀④ 新文里留一枚手抄坐标（半截派生）⇒ 必红，理由就是那一格仍然会过期。
+刀A 追加段里来一次没有出处的原地改口 ⇒ 必红，红句说「就地消失」；登记了却拿不出单号与凭据纸 ⇒ 也必红。
+刀B 把一次原地改口伪装成纯追加（补一行空行撑长度）⇒ 必红；把「旧文 ＋ 一行空行」登记成改口 ⇒ 形状尺当场拒。
 
 🔴 两枚钉同判据：`test_the_current_contract_is_the_base_plus_an_appendage` 与
 `test_the_appendage_deletes_nothing_and_adds_exactly_one_section` 都只走本文件这一把尺，谁也不许留着自家的
 前缀等式（那等于给它开后门）—— 这一条沿 AST 现查，见 `test_the_two_r354_nails_read_this_same_book`。
+
+R664（10-05）给这本账扩了第二类：`CONTRACT_REWORDS` 那一本**改口账**。上面的差异账管的是「冻结基点到现盘」
+那一段历史里的格子；契约文末长出来的那一截里也有必须**原地**改口的行 —— 见
+`tests/test_r526_slot_caliber_closure.py::test_the_contract_row_and_the_module_are_the_same_words`：它把 §4b
+那一格与码面那一枚字段逐字对判，只许原地换、不许另起新节回避。R657 依令原地替换 §4b 的 `qa.first_text_p95_ms` 那一行
+之后，「现盘是任一在册版本的纯追加」就此不再成立，刀③ 交回的 escape 集当场为空：两枚在册不变式互斥。
+裁的是账的形状，不是任何一枚码：改口账只收「派生锚行的原地改口」，三条硬条件 ——
+① 逐字点名那一格（旧文新文各一整行，行首格子名两侧必须相等，前后缀逐字等值，一半不许包住另一半）；
+② 账面有出处（点名单号 ＋ 凭据纸，纸里点得出这一单与这一格，另由 `derive_reword_pair()` 拿两半回 git 现校）；
+③ 账外一字节仍当场红 —— 尺先把现盘按两本账退回原形，再拿「基点 ＋ 差异账」比历史区的前缀、拿**最近那一版
+   在册契约的同一原形**比追加段；退回原形比那一版还长了别的东西，就是「就地消失」，补多少行空行都蒙不过。
+今天改口账上恰好一枚（R657），`EXPECTED_REWORDS_TODAY` 与那两枚字面量同为尺的一部分。
+凭据纸：`docs/testing/r664-inplace-derived-anchor-differences-2026-10-05.md`。
 """
 from __future__ import annotations
 
@@ -55,6 +70,9 @@ FROZEN_BASE = "a7ac040"
 #: 今天账上应当有的枚数：多一枚少一枚都红。
 EXPECTED_DIFFERENCES_TODAY = 1
 
+#: 今天改口账上应当有的枚数：多一枚少一枚都红（与上面那枚同为尺的字面量，见 `_literal_pin_problems`）。
+EXPECTED_REWORDS_TODAY = 1
+
 #: r354 那两枚钉、它们共用的那把尺、以及那把尺必须落到的本文件入口。
 R354_NAILS = (
     "test_the_current_contract_is_the_base_plus_an_appendage",
@@ -71,6 +89,10 @@ HAND_COPY_COORD = re.compile(r"[\w./+-]*\.py:\d+")
 BARE_LINE_NUMBER = re.compile(r"`:\d")
 #: 派生锚：`文件::符号`。新文里必须至少一枚，否则这一格只是改写，不是派生化。
 DERIVED_ANCHOR = re.compile(r"[\w./+-]+\.py::\w[\w.]*")
+#: 那一格的名字：表格行第一枚反引号里那一串。原地改口不许顺手把被点名的格子换成另一格。
+ROW_NODE = re.compile(r"^\|\s*`([^`]+)`")
+#: 单号那一形：R 紧跟数字。改口的出处要点得出是谁立的单。
+TICKET_SHAPE = re.compile(r"^R\d+$")
 
 
 class Difference(NamedTuple):
@@ -85,6 +107,17 @@ class Difference(NamedTuple):
     reason: str
 
 
+class Reword(NamedTuple):
+    """改口账上一枚原地改口：立案号、逐字旧行、逐字新行、为什么收它、出处落在哪张凭据纸。
+
+    🔴 字段面里同样没有位置那一格：字符位与行号一律由 `apply_rewords()` 现派生。
+    """
+
+    ticket: str
+    old: str
+    new: str
+    reason: str
+    evidence: str
 class Record(NamedTuple):
     """派生出来的那一格：登记的逐文字对上了基点与现盘的哪一段。"""
 
@@ -97,6 +130,17 @@ class Record(NamedTuple):
     current_line: int
 
 
+class RewordMark(NamedTuple):
+    """派生出来的那一格改口：登记的逐字两半对上了现盘与历史态的哪一段。"""
+
+    ticket: str
+    current_start: int
+    current_end: int
+    historical_start: int
+    historical_end: int
+    current_line: int
+    head_length: int
+    tail_length: int
 class Account(NamedTuple):
     """一次对账的全部现场：两侧原文、拼接出来的「历史应当长这样」、逐枚差异、逐条红。"""
 
@@ -105,6 +149,8 @@ class Account(NamedTuple):
     expected_prefix: str
     records: tuple
     violations: tuple
+    historical_text: str = ""
+    reword_marks: tuple = ()
 
     @property
     def appendage(self) -> str:
@@ -121,6 +167,19 @@ R630_FIRST_TOKEN_ROW = Difference(
 )
 
 CONTRACT_DIFFERENCES: tuple = (R630_FIRST_TOKEN_ROW,)
+
+
+#: R657 那一格：§4b 名册里 `qa.first_text_p95_ms` 那一行，整行逐字（含行尾 LF）。
+#: 两半都由 `derive_reword_pair()` 拿登记回 git 现校：旧行取自改口落地那一版的上一版，新行取自那一版本身。
+R657_FIRST_TEXT_ROW = Reword(
+    ticket="R657",
+    old="| `qa.first_text_p95_ms` | 采集器帧账 scripts/eval_transport_ask_v2.py 的 `events[]` 逐事件 `elapsed_ms`（基准 `stream_clock.request_sent_at`）；事件面读法件 scripts/eval_frame_caliber_readout.py | docs/testing/sidecar-{window}-frames.jsonl · `events[]` 里第一枚 `event == 'text'` 的 `elapsed_ms`；🔴 不是 `first_visible_ms`——那一格量的是第一个**可见**事件，上一窗帧账多数行的 `first_visible_event` 是 `step` 而不是 `text`，两格不同量，拿它顶首屏就是第二套口径 | n(该生效档里真出现 `text` 事件的流式请求数) >= MIN_SLO_SAMPLES，且分母就是这一格自己那枚分布的样本数；caliber=local-full：数值必本机（R453 裁定（b）），云端形状窗交回这一格即拒；分位只按 app/common/performance.py::PerformanceStats (nearest rank: the value at ceil(n * q), 1-based) 取；仓内任何第二套排名都不算这格的凭据；原始读数件必须落在 docs/perf/raw/ 或 docs/testing/ 之内，读数本里同时记下该件的 sha256；target 只由乙半按这三件写；p50_ms / p95_ms 永远由计算得出，手打的数不进 value 侧；上面缺一件 = 本格仍是「待真机样本」：未实测的秒数 = 不可承诺 | 未在册（不许拿相近枚名走私） | 是 | ①R453 名册要先新增一枚首屏格：`first_visible_ms` 是别的东西，拿它顶这格＝走私；②产品侧 wire 事件仍不落盘（blocker `wire_first_text_not_recorded`），本格的凭据是采集器那一侧的外部观察，读数本必须这么署名；③还没有一枚按 `text` 挑第一枚的在册读数件 |\n",
+    new="| `qa.first_text_p95_ms` | 采集器帧账 scripts/eval_transport_ask_v2.py 的 `events[]` 逐事件 `elapsed_ms`（基准 `stream_clock.request_sent_at`）；事件面读法件 scripts/eval_frame_caliber_readout.py | docs/testing/sidecar-{window}-frames.jsonl · `events[]` 里第一枚 `event == 'text'` 的 `elapsed_ms`；🔴 不是 `first_visible_ms`——那一格量的是第一个**可见**事件，上一窗帧账多数行的 `first_visible_event` 是 `step` 而不是 `text`，两格不同量，拿它顶首屏就是第二套口径 | n(该生效档里真出现 `text` 事件的流式请求数) >= MIN_SLO_SAMPLES，且分母就是这一格自己那枚分布的样本数；caliber=local-full：数值必本机（R453 裁定（b）），云端形状窗交回这一格即拒；分位只按 app/common/performance.py::PerformanceStats (nearest rank: the value at ceil(n * q), 1-based) 取；仓内任何第二套排名都不算这格的凭据；原始读数件必须落在 docs/perf/raw/ 或 docs/testing/ 之内，读数本里同时记下该件的 sha256；target 只由乙半按这三件写；p50_ms / p95_ms 永远由计算得出，手打的数不进 value 侧；上面缺一件 = 本格仍是「待真机样本」：未实测的秒数 = 不可承诺 | 未在册（不许拿相近枚名走私） | 是 | ①R453 名册要先新增一枚首屏格：`first_visible_ms` 是别的东西，拿它顶这格＝走私；②wire 首屏今天已落账也可读回（`app/api/v1/chat.py::_record_wire_first_text` 记账＋`app/api/v1/observability.py::wire_first_text_readout` 读回，R649 已并树），blocker `wire_first_text_not_recorded` 已从 §6 那本名册摘掉 ⇒ 本格不再欠「量得到」这一件；③仍欠两件才谈落数：还没有一枚按 `text` 挑第一枚的在册读数件，且样本量没到 `MIN_SLO_SAMPLES` |\n",
+    reason="契约 §4b 那一格与 app/api/v1/observability.py::SLO_METRIC_CALIBER 里同一枚 prerequisite 由逐字对判钉在一起，只许原地换；那一行本来就是派生锚行，不是手抄坐标，所以它属于改口账而不是差异账",
+    evidence="docs/testing/r657-caliber-prerequisite-2026-10-05.md",
+)
+
+CONTRACT_REWORDS: tuple = (R657_FIRST_TEXT_ROW,)
 
 
 # ------------------------------------------------------------------ 现取的两侧
@@ -205,8 +264,217 @@ def _window(text: str, index: int, span: int = 60) -> str:
     return text[max(0, index - 20):index + span]
 
 
-def audit_history(base_text: str, current_text: str, ledger: tuple) -> Account:
-    """把「前缀逐字节相同」这条不变式按差异账走一遍，交回逐枚派生位置与逐条红。"""
+def _row_node(row: str) -> str:
+    """那一行的格子名：表格行行首第一枚反引号里那一串。"""
+    match = ROW_NODE.match(row)
+    return match.group(1) if match else ""
+
+
+def _common_head(left: str, right: str) -> int:
+    """两侧逐字相等的前缀长度（分块比，不逐字符走一遍半兆）。"""
+    limit = min(len(left), len(right))
+    step = 4096
+    start = 0
+    while start + step <= limit and left[start:start + step] == right[start:start + step]:
+        start += step
+    while start < limit and left[start] == right[start]:
+        start += 1
+    return start
+
+
+def _common_tail(left: str, right: str, head: int) -> int:
+    """前缀之外两侧逐字相等的后缀长度（两半不许重叠：中间那一格才是真改了口）。"""
+    limit = min(len(left), len(right)) - head
+    count = 0
+    while count < limit and left[len(left) - 1 - count] == right[len(right) - 1 - count]:
+        count += 1
+    return count
+
+
+def reword_shape_violations(entry: Reword) -> list:
+    """这一格是不是「派生锚行的原地改口」那一形状；交回逐条理由，空表才叫合格。"""
+    problems: list[str] = []
+    if not entry.old or not entry.new:
+        problems.append("旧文或新文是空串：改口账只收「整行原地换掉」，不收把话删掉或凭空造出来那一形")
+        return problems
+    for side, row in (("旧文", entry.old), ("新文", entry.new)):
+        if row.count("\n") != 1 or not row.endswith("\n") or not row.startswith("| "):
+            problems.append("%s不是表格里的一整行（要求恰一枚行尾、以竖线起头）：原地改口只许逐字点名那一行" % side)
+    if entry.old == entry.new:
+        problems.append("旧文与新文逐字相等：这一格根本没有改口，登记它只是给账添一格空位")
+    if entry.new.startswith(entry.old) or entry.old.startswith(entry.new):
+        problems.append(
+            "一半整串是另一半的开头（补一行空行那一形）：那是文末追加伪装成改口 —— 原地改口两半都不许包住对方"
+        )
+    if _row_node(entry.old) != _row_node(entry.new):
+        problems.append(
+            "两半点名的是不同的格子（旧 %r 新 %r）：改口只许改那一格里说的话，不许换被点名的那一格"
+            % (_row_node(entry.old), _row_node(entry.new))
+        )
+    if not DERIVED_ANCHOR.search(entry.old):
+        problems.append(
+            "旧文里没有一枚 `文件::符号` 派生锚：改口账只收派生锚行；手抄坐标那一格属于差异账（手抄坐标 → 派生锚）"
+        )
+    if not DERIVED_ANCHOR.search(entry.new):
+        problems.append("新文里没有一枚 `文件::符号` 派生锚：这一格只是把话说长说短，不是把口径改回运行时")
+    left = sorted(set(HAND_COPY_COORD.findall(entry.new)))
+    if left:
+        problems.append("新文里还留着 %d 枚手抄坐标（半截派生，那一格明年照样过期）：%s" % (len(left), left))
+    bare = BARE_LINE_NUMBER.findall(entry.new)
+    if bare:
+        problems.append("新文里还留着 %d 枚裸行号（冒号紧跟数字那一形）：那也是手抄坐标，只是没带文件名" % len(bare))
+    return problems
+
+
+def reword_provenance_problems(entry: Reword) -> list:
+    """判据⑥②：改口必须在账面有出处 —— 点名单号 ＋ 凭据纸，纸里点得出这一单与这一格。"""
+    problems: list[str] = []
+    if not TICKET_SHAPE.match(entry.ticket):
+        problems.append("立案号 %r 不是单号那一形（要 R 紧跟数字）：原地改口必须在账面点名单号" % entry.ticket)
+    if not entry.evidence.startswith("docs/testing/") or not entry.evidence.endswith(".md"):
+        problems.append(
+            "凭据纸 %r 不在 docs/testing/ 下的 .md 里：改口的出处只能落在取证纸上，不许落在契约本体或口头里" % entry.evidence
+        )
+        return problems
+    paper = REPO.joinpath(*entry.evidence.split("/"))
+    if not paper.is_file():
+        problems.append("凭据纸不存在：%s" % entry.evidence)
+        return problems
+    text = normalize_eol(paper.read_bytes()).decode("utf-8")
+    if entry.ticket not in text:
+        problems.append("凭据纸 %s 里没有立案号 %s：出处要点得出是谁立的单" % (entry.evidence, entry.ticket))
+    node = _row_node(entry.old)
+    if not node:
+        problems.append("旧行行首点不出格子名：凭据纸没法与它对上号")
+    elif node not in text:
+        problems.append("凭据纸 %s 里没有那一格的格子名 %s：出处要点得出改的是哪一格" % (entry.evidence, node))
+    return problems
+
+
+def unwind_rewords(text: str, rewords: tuple) -> str:
+    """把改口账倒着套在任何一份契约文本上（用在册那一版时就用它）：逐枚把登记的新行换回旧行。
+
+    只在那一行「新文恰一枚、旧文零枚」时才换 —— 换不动就原样交回，让尺那一层去报登记与现场不符。
+    """
+    unwound = text
+    for entry in rewords:
+        if entry.new and unwound.count(entry.new) == 1 and unwound.count(entry.old) == 0:
+            unwound = unwound.replace(entry.new, entry.old, 1)
+    return unwound
+
+
+def committee_revision() -> str:
+    """最近那一枚动过契约的提交：追加段那条腿的对照面，版本号一律现取，不抄进账。"""
+    revision = _git_output("log", "-1", "--format=%h", "--", CONTRACT_REL).strip()
+    if not revision:
+        raise AssertionError("取不到任何一枚动过契约的提交：追加段这一条腿没法判，先取证再改尺")
+    return revision
+
+
+def committed_appendage_problems(pristine: str, ledger: tuple, rewords: tuple) -> list:
+    """判据⑥③：现盘按两本账退回原形之后，必须仍是「最近那一版在册契约（同样退回原形）＋ 文末追加」。
+
+    追加段那一截不与差异账的前缀尺见面，所以「就地改一句话、再补一行空行装作只长了文末」这种走法
+    只能由这一条腿咬。它比「与最近某几版里任意一版同前缀」强：一枚**旧而短**的版本会白让追加段里的
+    账外改口过关（新刀 A 第一版就是被这一条抓出来的），所以对照面只认最新那一版。
+    """
+    revision = committee_revision()
+    committed = normalize_eol(git_show(revision)).decode("utf-8")
+    baseline = unwind_differences(unwind_rewords(committed, rewords), ledger)
+    if pristine.startswith(baseline):
+        return []
+    index = _first_difference(baseline, pristine)
+    line = pristine.count("\n", 0, index) + 1
+    return [
+        "现盘按两本账退回原形之后，比最近那一版在册契约（commit %s）的同一原形还长了账外的格：从第 %d 字符"
+        "（第 %d 行）起就不同，账上应是 %r，退回原形是 %r —— 文末长出来那一截里的原地改口只许登记在改口账上，不许就地消失"
+        % (revision, index, line, _window(baseline, index), _window(pristine, index))
+    ]
+
+def apply_rewords(current_text: str, frozen_text: str, rewords: tuple) -> tuple:
+    """把改口账逐枚按现盘退回历史态：交回 (历史态, 逐枚派生位置, 逐条红)。"""
+    problems: list[str] = []
+    for position, entry in enumerate(rewords, start=1):
+        for reason in reword_shape_violations(entry):
+            problems.append("改口账第 %d 枚（立案 %s）这形状不收：%s" % (position, entry.ticket, reason))
+        for reason in reword_provenance_problems(entry):
+            problems.append("改口账第 %d 枚（立案 %s）没有出处：%s" % (position, entry.ticket, reason))
+
+    placed: list = []
+    for position, entry in enumerate(rewords, start=1):
+        if not entry.old or not entry.new or entry.old == entry.new:
+            continue
+        in_base = frozen_text.count(entry.old)
+        if in_base:
+            problems.append(
+                "改口账第 %d 枚（立案 %s）的旧文在冻结基点里命中 %d 处：那一格长在历史区里，它属于差异账"
+                "（手抄坐标 → 派生锚），不属于改口账" % (position, entry.ticket, in_base)
+            )
+            continue
+        hits = _occurrences(current_text, entry.new)
+        if len(hits) != 1:
+            problems.append(
+                "改口账第 %d 枚（立案 %s）登记的新文在现盘上命中 %d 处（要求恰 1 处）："
+                "那一格的原地改口要么没落地，要么后来又被改过" % (position, entry.ticket, len(hits))
+            )
+            continue
+        if current_text.count(entry.old):
+            problems.append(
+                "改口账第 %d 枚（立案 %s）登记的旧文在现盘上还命中 1 处：账说它已经原地改口，盘上它还在 —— "
+                "把旧行留在盘上再多补一行，也只是追加，不是改口" % (position, entry.ticket)
+            )
+            continue
+        placed.append((hits[0], entry))
+
+    placed.sort(key=lambda item: item[0])
+    for (start, entry), (next_start, nxt) in zip(placed, placed[1:]):
+        if next_start < start + len(entry.new):
+            problems.append(
+                "改口账里立案 %s 与立案 %s 两格在现盘第 %d 字符之后重叠：一本账把同一格写了两遍"
+                % (entry.ticket, nxt.ticket, start)
+            )
+
+    historical = current_text
+    marks: list = []
+    for start, entry in reversed(placed):
+        if start and historical[start - 1] != "\n":
+            problems.append(
+                "改口账立案 %s 登记的那一格在现盘上不从行首起：原地改口只许整行换，不许从一行中间切开" % entry.ticket
+            )
+            continue
+        unwound = historical[:start] + entry.old + historical[start + len(entry.new):]
+        head_length = _common_head(entry.old, entry.new)
+        tail_length = _common_tail(entry.old, entry.new, head_length)
+        marks.append(
+            RewordMark(
+                ticket=entry.ticket,
+                current_start=start,
+                current_end=start + len(entry.new),
+                historical_start=start,
+                historical_end=start + len(entry.old),
+                current_line=current_text.count("\n", 0, start) + 1,
+                head_length=head_length,
+                tail_length=tail_length,
+            )
+        )
+        historical = unwound
+    if historical.count("\n") != current_text.count("\n"):
+        problems.append(
+            "按改口账退回历史态之后行数变了（现盘 %d 行 -> 历史态 %d 行）：原地改口只许一行换一行，增行删行都算改史"
+            % (current_text.count("\n"), historical.count("\n"))
+        )
+    return historical, tuple(reversed(marks)), problems
+
+
+def unwind_differences(text: str, ledger: tuple) -> str:
+    """把差异账也退回原形：追加段那一条腿要比的是「一本账都没登记过」的那一份契约。"""
+    pristine = text
+    for entry in ledger:
+        if entry.new and pristine.count(entry.new) == 1:
+            pristine = pristine.replace(entry.new, entry.old, 1)
+    return pristine
+def audit_history(base_text: str, current_text: str, ledger: tuple, rewords: tuple = ()) -> Account:
+    """把「前缀逐字节相同」这条不变式按两本账走一遍：现盘先退回历史态，再交回逐枚派生位置与逐条红。"""
     violations: list[str] = []
 
     for position, entry in enumerate(ledger, start=1):
@@ -282,20 +550,27 @@ def audit_history(base_text: str, current_text: str, ledger: tuple) -> Account:
                 % (position, entry.ticket, got_old)
             )
 
-    if not current_text.startswith(expected):
-        index = _first_difference(expected, current_text)
+    # 两本账的分工按**冻结基点**划线（`FROZEN_BASE` 的字面量钉就是这一行的依据）：刀③ 把尺的基点
+    # 临时挪到较新的一版时，那一版里带着已经改过口的行，不许因此就把在册的改口判成越界。
+    historical, marks, reword_problems = apply_rewords(current_text, base_contract_text(), tuple(rewords))
+    violations.extend(reword_problems)
+
+    if not historical.startswith(expected):
+        index = _first_difference(expected, historical)
         violations.append(
             "契约的历史在差异账之外被动过：现盘第 %d 字符（第 %d 行）起与「基点 ＋ 账上 %d 枚登记」的拼接不同，"
             "对应基点第 %d 字符；账上应是 %r，现盘是 %r"
-            % (index, current_text.count("\n", 0, index) + 1, len(ledger), _base_anchor(anchors, index),
-               _window(expected, index), _window(current_text, index))
+            % (index, historical.count("\n", 0, index) + 1, len(ledger), _base_anchor(anchors, index),
+               _window(expected, index), _window(historical, index))
         )
-    if len(current_text) <= len(expected):
+    if len(historical) <= len(expected):
         violations.append(
-            "契约没长东西：现盘 %d 字符 <= 拼接后的历史 %d 字符，本单一格都没往文末追加" % (len(current_text), len(expected))
+            "契约没长东西：现盘 %d 字符 <= 拼接后的历史 %d 字符，本单一格都没往文末追加" % (len(historical), len(expected))
         )
+    pristine = unwind_differences(historical, tuple(ledger))
+    violations.extend(committed_appendage_problems(pristine, tuple(ledger), tuple(rewords)))
 
-    return Account(base_text, current_text, expected, tuple(records), tuple(violations))
+    return Account(base_text, current_text, expected, tuple(records), tuple(violations), historical, marks)
 
 
 def _base_anchor(anchors: list, index: int) -> int:
@@ -307,14 +582,19 @@ def _base_anchor(anchors: list, index: int) -> int:
 
 
 def assert_history_matches_ledger(base_text: str = None, current_text: str = None,
-                                  ledger: tuple = None, expected_count: int = None) -> Account:
-    """判据⑦ 唯一那把尺（r354 两枚钉共用）：现盘 == 基点 ＋ 具名差异账，且枚数恰好今天那一本。"""
+                                  ledger: tuple = None, expected_count: int = None,
+                                  rewords: tuple = None, expected_reword_count: int = None) -> Account:
+    """判据⑦ 唯一那把尺（r354 那两枚钉与 r653 那六枚钉共用）：现盘 == 基点 ＋ 具名差异账 ＋ 文末追加，
+    而文末那一截里改过口的行只许长在改口账上：先按账退回原形，再逐条腿比（差异账 ＋ 追加段 ＋ 枚数门）。
+    """
     base = base_contract_text() if base_text is None else base_text
     current = current_contract_text() if current_text is None else current_text
     book = CONTRACT_DIFFERENCES if ledger is None else tuple(ledger)
+    reword_book = CONTRACT_REWORDS if rewords is None else tuple(rewords)
     want = EXPECTED_DIFFERENCES_TODAY if expected_count is None else expected_count
+    want_rewords = EXPECTED_REWORDS_TODAY if expected_reword_count is None else expected_reword_count
 
-    account = audit_history(base, current, book)
+    account = audit_history(base, current, book, reword_book)
     problems = list(account.violations)
     if len(book) != want:
         problems.append("差异账的枚数不对：账上登记 %d 枚，今天应当恰好 %d 枚（多一枚少一枚都红）" % (len(book), want))
@@ -323,13 +603,20 @@ def assert_history_matches_ledger(base_text: str = None, current_text: str = Non
             "派生出来的差异枚数不对：账上登记 %d 枚、能在基点定位的 %d 枚，今天应当恰好 %d 枚"
             % (len(book), len(account.records), want)
         )
+    if len(reword_book) != want_rewords:
+        problems.append(
+            "改口账的枚数不对：账上登记 %d 枚，今天应当恰好 %d 枚（多一枚少一枚都红）" % (len(reword_book), want_rewords)
+        )
+    if len(account.reword_marks) != want_rewords:
+        problems.append(
+            "派生出来的改口枚数不对：账上登记 %d 枚、能在现盘定位的 %d 枚，今天应当恰好 %d 枚"
+            % (len(reword_book), len(account.reword_marks), want_rewords)
+        )
     if problems:
         raise AssertionError(
-            "契约历史与具名差异账对不上（%d 条）：\n  · %s" % (len(problems), "\n  · ".join(problems))
+            "契约历史与具名账（差异 ＋ 改口）对不上（%d 条）：\n  · %s" % (len(problems), "\n  · ".join(problems))
         )
     return account
-
-
 def derived_difference_table(account: Account) -> list:
     """逐枚点名：立案、基点起点／终点字符位与行号、现盘起点／终点字符位与行号、旧文新文字数。"""
     rows: list[str] = []
@@ -343,7 +630,27 @@ def derived_difference_table(account: Account) -> list:
                 record.current_end - record.current_start,
             )
         )
-    return rows# ------------------------------------------------------------------ 一本账只许有一份
+    return rows
+
+
+def derived_reword_table(account: Account) -> list:
+    """逐枚点名改口：立案、现盘起点／终点字符位与行号、退回历史态后的终点、两侧逐字等值的前缀／后缀长度。"""
+    rows: list[str] = []
+    for mark in account.reword_marks:
+        rows.append(
+            "立案 %s：现盘第 %d..%d 字符（第 %d 行，新文 %d 字）-> 历史态到第 %d 字符收尾（旧文 %d 字），"
+            "两侧逐字相等的前缀 %d 字 / 后缀 %d 字"
+            % (
+                mark.ticket,
+                mark.current_start, mark.current_end, mark.current_line, mark.current_end - mark.current_start,
+                mark.historical_end, mark.historical_end - mark.historical_start,
+                mark.head_length, mark.tail_length,
+            )
+        )
+    return rows
+
+
+# ------------------------------------------------------------------ 一本账只许有一份
 
 #: pytest 按顶层名收本文件，r354 却按 `tests.` 点名 import 它。两个名字若落在两个模块对象上，
 #: 刀架在自己这一份的把手上、钉读的那一份看不见 —— 反证立刻变成假绿。所以先把名字合流，
@@ -422,6 +729,13 @@ def _ledger_entry(ticket: str) -> Difference:
         if entry.ticket == ticket:
             return entry
     raise AssertionError("差异账里没有立案 %s：今天这本账应当逐枚点名" % ticket)
+
+
+def _reword_entry(ticket: str) -> Reword:
+    for entry in SELF.CONTRACT_REWORDS:
+        if entry.ticket == ticket:
+            return entry
+    raise AssertionError("改口账里没有立案 %s：今天这本账应当逐枚点名" % ticket)
 
 
 def _r354_module():
@@ -526,7 +840,7 @@ def _literal_assignments(tree: ast.Module, name: str) -> list:
 
 
 def _literal_pin_problems(source_text: str) -> list:
-    """尺的两枚字面量：基点 `a7ac040` 与枚数门 `1`。它们一被挪走，红句就交回来。
+    """尺的三枚字面量：基点 `a7ac040`、差异枚数门 `1`、改口枚数门 `1`。它们一被挪走，红句就交回来。
 
     为什么必须有这一枚钉（刀③ 当场演示）：把基点前移 + 把账清空 + 把枚数门归零，
     「历史逐字节不许动」这条不变式在尺那一层是可以整体绕过去的 —— 唯一的封口就是
@@ -549,6 +863,13 @@ def _literal_pin_problems(source_text: str) -> list:
     elif not (isinstance(gates[0], ast.Constant) and gates[0].value == 1):
         problems.append(
             "枚数门不再是 1（现在是 %r）：正控必须钉在「恰好一枚」上，不许松成阈值" % _value_of(gates[0])
+        )
+    gates_rewords = _literal_assignments(tree, "EXPECTED_REWORDS_TODAY")
+    if len(gates_rewords) != 1:
+        problems.append("改口枚数门 EXPECTED_REWORDS_TODAY 被赋值了 %d 次（要求恰 1 次）" % len(gates_rewords))
+    elif not (isinstance(gates_rewords[0], ast.Constant) and gates_rewords[0].value == 1):
+        problems.append(
+            "改口枚数门不再是 1（现在是 %r）：原地改口同样只许恰好一枚，不许松成阈值" % _value_of(gates_rewords[0])
         )
     return problems
 
@@ -578,6 +899,34 @@ def _synthetic_second_entry() -> Difference:
             reason="这一格只用来把枚数门撑到两枚：盘上从来没有落地过",
         )
     raise AssertionError("基点里找不到第二枚手抄坐标：那枚数门就没法被合成地撑起来")
+def derive_reword_pair(entry: Reword) -> tuple:
+    """账本的生成件：拿登记的两半回 git 现取，交回 (改口落地那一版, 那一版上一版里的那一行, 那一版里的那一行)。
+
+    下一班要再登记一枚原地改口时不必手抄整行：按格子名取现盘那一行当新文，再取落地那一版的上一版那一行当旧文。
+    两半对不上登记，就是这本账与历史分家了 —— 当场红，不许就地改抄。
+    """
+    marker = "| `%s` |" % _row_node(entry.old)
+    landed = _git_output("log", "--format=%h", "-S", entry.new, "--", CONTRACT_REL).split()
+    if len(landed) != 1:
+        raise AssertionError(
+            "立案 %s 登记的新文在契约历史里改变了 %d 版的发生次数（要求恰 1 版）："
+            "那一格要么没原地落地过，要么这本登记不是唯一的一版" % (entry.ticket, len(landed))
+        )
+    landing = landed[0]
+    before = normalize_eol(git_show("%s^" % landing)).decode("utf-8")
+    after = normalize_eol(git_show(landing)).decode("utf-8")
+    rows_before = [line for line in before.splitlines(True) if line.startswith(marker)]
+    rows_after = [line for line in after.splitlines(True) if line.startswith(marker)]
+    if len(rows_before) != 1 or len(rows_after) != 1:
+        raise AssertionError(
+            "版本 %s 与其上一版里以 %r 起头的表格行不是各一枚（得 %d 枚与 %d 枚）：格子名不再唯一"
+            % (landing, marker, len(rows_before), len(rows_after))
+        )
+    if rows_before[0] == rows_after[0]:
+        raise AssertionError("版本 %s 里 %r 那一行没有原地变过：这一格不是改口，别拿它入账" % (landing, marker))
+    return landing, rows_before[0], rows_after[0]
+
+
 # ------------------------------------------------------------------ 常驻牙：账本身
 
 def test_the_disk_state_is_green_with_exactly_one_named_difference():
@@ -800,7 +1149,116 @@ def test_the_ledger_ships_no_skip_or_exemption_list():
         assert _loose_count_assertions(body) == [], name
         decorators = [ast.unparse(item) for item in defs[name].decorator_list]
         assert not [text for text in decorators if "skip" in text or "xfail" in text], (name, decorators)
-# ------------------------------------------------------------------ 四把反证刀
+# ------------------------------------------------------------------ 常驻牙：改口账（R664）
+
+
+def test_the_reword_book_is_green_with_exactly_one_named_reword():
+    """正控：现盘在改口账上同样是绿的，而且绿在「恰好一枚原地改口」上，不是绿在松掉的阈值上。"""
+    account = assert_history_matches_ledger()
+
+    assert account.violations == (), account.violations
+    assert len(account.reword_marks) == EXPECTED_REWORDS_TODAY == 1, derived_reword_table(account)
+    assert [mark.ticket for mark in account.reword_marks] == ["R657"], account.reword_marks
+    assert account.historical_text and account.historical_text != account.current_text
+    assert len(account.appendage) > 0, "追加段是空的：契约没长东西"
+    assert len(derived_reword_table(account)) == 1, derived_reword_table(account)
+
+
+def test_the_reword_positions_are_derived_and_the_neighbourhood_is_byte_equal():
+    """判据⑥①：那一格的位置由现盘派生，前后各 200 字符两侧逐字等值 —— 原地改口不许把邻格一起拖走。"""
+    account = assert_history_matches_ledger()
+    mark = account.reword_marks[0]
+    entry = _reword_entry(mark.ticket)
+
+    assert account.current_text[mark.current_start:mark.current_end] == entry.new
+    assert account.historical_text[mark.historical_start:mark.historical_end] == entry.old
+    assert account.current_text[:mark.current_start] == account.historical_text[:mark.historical_start]
+    assert account.current_text[mark.current_end:] == account.historical_text[mark.historical_end:]
+    head_before = account.current_text[max(0, mark.current_start - 200):mark.current_start]
+    assert head_before == account.historical_text[max(0, mark.historical_start - 200):mark.historical_start]
+    tail_after = account.current_text[mark.current_end:mark.current_end + 200]
+    assert tail_after == account.historical_text[mark.historical_end:mark.historical_end + 200]
+    assert entry.old.endswith("\n") and entry.old.count("\n") == 1, mark.ticket
+    assert entry.new.endswith("\n") and entry.new.count("\n") == 1, mark.ticket
+    assert _row_node(entry.old) == _row_node(entry.new), mark.ticket
+    assert 0 < mark.head_length < len(entry.old), derived_reword_table(account)
+    assert mark.head_length + mark.tail_length < min(len(entry.old), len(entry.new)), "两半叠满了：那其实没改口"
+
+
+def test_the_reword_entries_are_the_accepted_shape_with_a_named_provenance():
+    """判据⑥② 的正控：账上每一枚都先要是「派生锚行的原地改口」，再点得出单号与凭据纸。"""
+    assert CONTRACT_REWORDS, "改口账是空的：现盘明明有一格原地改过口（R657），空账就是假绿"
+
+    for entry in CONTRACT_REWORDS:
+        problems = reword_shape_violations(entry)
+        assert problems == [], (entry.ticket, problems)
+        provenance = reword_provenance_problems(entry)
+        assert provenance == [], (entry.ticket, provenance)
+        assert DERIVED_ANCHOR.findall(entry.old), entry.ticket
+        assert DERIVED_ANCHOR.findall(entry.new), entry.ticket
+        assert HAND_COPY_COORD.findall(entry.new) == [], entry.ticket
+        assert BARE_LINE_NUMBER.findall(entry.new) == [], entry.ticket
+
+
+def test_the_reword_record_carries_no_position_field():
+    """判据③ 对改口账同样成立：`Reword` 的字段面里没有位置那一格，只有单号与凭据纸。"""
+    assert set(Reword._fields) == {"ticket", "old", "new", "reason", "evidence"}, Reword._fields
+    assert set(get_type_hints(Reword).values()) == {str}, get_type_hints(Reword)
+    assert {"current_start", "current_end", "historical_start", "historical_end", "current_line",
+            "head_length", "tail_length"} <= set(RewordMark._fields), RewordMark._fields
+
+    for entry in CONTRACT_REWORDS:
+        assert entry.ticket and entry.reason and entry.evidence, entry
+        assert entry.old != entry.new, entry.ticket
+        with pytest.raises(AttributeError):
+            entry.current_start  # type: ignore[attr-defined]
+
+
+def test_the_two_books_do_not_write_the_same_row():
+    """两本账各管一段：差异账管冻结基点那一段历史，改口账只管文末长出来那一截里的行。"""
+    account = assert_history_matches_ledger()
+
+    for entry in CONTRACT_REWORDS:
+        assert account.base_text.count(entry.old) == 0, entry.ticket
+        assert account.base_text.count(entry.new) == 0, entry.ticket
+        assert entry.ticket not in [record.ticket for record in account.records], entry.ticket
+    for registered in CONTRACT_DIFFERENCES:
+        for entry in CONTRACT_REWORDS:
+            assert registered.old not in entry.new and registered.new not in entry.old, (
+                registered.ticket, entry.ticket)
+
+
+def test_the_registered_reword_lands_in_a_commit_and_derives_from_it():
+    """出处的结构腿：那一枚原地改口真的落在某枚提交里，旧行取自那一枚的上一版，两半与登记逐字相等。"""
+    committed = head_contract_text()
+
+    for entry in CONTRACT_REWORDS:
+        assert committed.count(entry.new) == 1, entry.ticket
+        assert committed.count(entry.old) == 0, entry.ticket
+        landing, old_row, new_row = derive_reword_pair(entry)
+        assert new_row == entry.new, (entry.ticket, landing)
+        assert old_row == entry.old, (entry.ticket, landing)
+        assert _git_ok("merge-base", "--is-ancestor", "%s^" % landing, "HEAD"), landing
+        assert _git_ok("merge-base", "--is-ancestor", landing, "HEAD"), landing
+
+
+def test_the_reword_book_holds_exactly_one_reword_today():
+    """枚数门对改口账同样成立：少一枚多一枚都红，红句要说「改口账的枚数不对」。"""
+    account = assert_history_matches_ledger()
+    assert len(CONTRACT_REWORDS) == len(account.reword_marks) == EXPECTED_REWORDS_TODAY == 1
+    assert [entry.ticket for entry in CONTRACT_REWORDS] == ["R657"], CONTRACT_REWORDS
+
+    entry = _reword_entry("R657")
+    with pytest.raises(AssertionError) as fewer:
+        assert_history_matches_ledger(rewords=())
+    assert "改口账的枚数不对" in str(fewer.value), str(fewer.value)
+
+    with pytest.raises(AssertionError) as more:
+        assert_history_matches_ledger(rewords=(entry, _reword_entry(entry.ticket)))
+    assert "改口账的枚数不对" in str(more.value), str(more.value)
+
+
+# ------------------------------------------------------------------ 六把反证刀
 
 def test_counter_evidence_1_a_byte_changed_outside_the_ledger_reddens_both_nails(tmp_path, monkeypatch):
     """刀①：账外手改历史区一个标点 ⇒ 两枚钉都红，红句点名派生出来的位置（不是抄来的数字）。"""
@@ -871,7 +1329,12 @@ def test_counter_evidence_2_a_difference_of_the_wrong_shape_is_refused(tmp_path,
 
 
 def test_counter_evidence_3_moving_the_frozen_base_forward_reddens(monkeypatch):
-    """刀③：把尺的基点从 `a7ac040` 换成较新的一版 ⇒ 必红；前移基点灭红由字面量钉常驻挡着。"""
+    """刀③：把尺的基点从 `a7ac040` 换成较新的一版 ⇒ 必红；前移基点灭红由字面量钉常驻挡着。
+
+    🔴 R664 之后这把刀的判据一字没松，改的是尺：现盘先按改口账退回历史态，再与「基点 ＋ 差异账」比前缀。
+    于是那三条腿（前移基点 ＋ 清空差异账 ＋ 差异枚数门归零）重新走得通 —— 交回的候选正是 R657 原地改口
+    之前那几版；把改口账也一起清空反而走不通，那一格由尺自己守住，不靠枚数门，见本刀第二条腿。
+    """
     before = _disk_sha()
     assert not _red(_run_r354_nails()), "正控先绿"
 
@@ -902,12 +1365,29 @@ def test_counter_evidence_3_moving_the_frozen_base_forward_reddens(monkeypatch):
         escapes.append(candidate)
     assert escapes, "三条腿都走不通的话，字面量钉就是空转：这一枚要现交出走得通的那几版"
 
+    # 第二条腿（R664 新增）：两本账一起清还能走得通的话，改口账就只是装饰 —— 走不通才是对的。
+    both: list = []
+    for candidate in _git_output("log", "--format=%h", "-8", "--", CONTRACT_REL).split():
+        if candidate == FROZEN_BASE:
+            continue
+        try:
+            assert_history_matches_ledger(
+                base_text=base_contract_text(candidate), current_text=current, ledger=(),
+                expected_count=0, rewords=(), expected_reword_count=0
+            )
+        except AssertionError:
+            continue
+        both.append(candidate)
+    assert not both, "两本账一起清还走得通：%s —— 那追加段那一条腿就是空转" % both
+
     source = _own_source()
     assert _literal_pin_problems(source) == [], _literal_pin_problems(source)
     moved = source.replace('FROZEN_BASE = "a7ac040"', 'FROZEN_BASE = "HEAD"', 1)
     assert any("把基点前移来灭红" in line for line in _literal_pin_problems(moved)), moved
     zeroed = source.replace("EXPECTED_DIFFERENCES_TODAY = 1", "EXPECTED_DIFFERENCES_TODAY = 0", 1)
     assert any("枚数门" in line for line in _literal_pin_problems(zeroed)), zeroed
+    zeroed_rewords = source.replace("EXPECTED_REWORDS_TODAY = 1", "EXPECTED_REWORDS_TODAY = 0", 1)
+    assert any("改口枚数门" in line for line in _literal_pin_problems(zeroed_rewords)), zeroed_rewords
 
 
 def test_counter_evidence_4_a_half_derived_rewrite_reddens(tmp_path, monkeypatch):
@@ -944,4 +1424,102 @@ def test_counter_evidence_4_a_half_derived_rewrite_reddens(tmp_path, monkeypatch
     assert len(red) == 2, red
     for name, each in red.items():
         assert "登记的新文在现盘上命中 0 处" in each, (name, each)
+    assert _disk_sha() == before, "刀动到了盘上那枚禁区文件"
+
+
+def test_counter_evidence_A_an_inplace_reword_without_provenance_reddens(tmp_path, monkeypatch):
+    """新刀 A：追加段里来一次没有出处的原地改口 ⇒ 必红；登记了却拿不出单号与凭据纸 ⇒ 也必红。"""
+    entry = _reword_entry("R657")
+    anchor = "app/api/v1/observability.py::wire_first_text_readout"
+    assert entry.new.count(anchor) == 1, anchor
+    tampered = entry.new.replace(anchor, "app/api/v1/observability.py::slo_slot_caliber", 1)
+    assert tampered != entry.new and tampered.count("\n") == 1, _row_node(tampered)
+    before = _disk_sha()
+    assert not _red(_run_r354_nails()), "正控先绿：现盘在账上本来是不红的"
+
+    # 第一条腿：那一格真的在盘上被原地换掉了，改口账却一格没登记。前缀尺管不到追加段，长度腿也照样过，
+    # 只有「退回原形必须仍是最近那一版在册契约 ＋ 文末追加」这一条腿咬得住它：红句必须点名「就地消失」。
+    unbooked_dir = tmp_path / "unbooked"
+    unbooked_dir.mkdir()
+    shadow = _shadow_copy(unbooked_dir, lambda body: body.replace(entry.new, tampered, 1))
+    shadow_text = normalize_eol(shadow.read_bytes()).decode("utf-8")
+    index = shadow_text.find(tampered)
+    assert index != -1, _row_node(tampered)
+    line = shadow_text.count("\n", 0, index) + 1
+    monkeypatch.setattr(SELF, "CONTRACT_PATH", shadow)
+
+    with pytest.raises(AssertionError) as vanished:
+        assert_history_matches_ledger()
+    message = str(vanished.value)
+    assert "不许就地消失" in message, message
+    assert "在差异账之外被动过" not in message, "那一格在追加段里：前缀尺本来就管不到它，这一刀只能由追加段那一腿咬"
+    assert "第 %d 行" % line in message, (line, message)
+
+    red = _red(_run_r354_nails())
+    assert len(red) == 2, red
+    for each in red.values():
+        assert "不许就地消失" in each, each
+
+    # 第二条腿：改口登记在册，出处拿不出来 —— 没有单号，或凭据纸不存在，各自当场红。
+    nameless = Reword(ticket="", old=entry.old, new=entry.new, reason=entry.reason, evidence=entry.evidence)
+    assert any("必须在账面点名单号" in each for each in reword_provenance_problems(nameless)), nameless
+    orphan = Reword(
+        ticket=entry.ticket, old=entry.old, new=entry.new, reason=entry.reason,
+        evidence="docs/testing/r664-这一张凭据纸不存在-2026-10-05.md",
+    )
+    assert any("凭据纸不存在" in each for each in reword_provenance_problems(orphan)), orphan
+    with pytest.raises(AssertionError) as unattributed:
+        assert_history_matches_ledger(rewords=(orphan,))
+    got = str(unattributed.value)
+    assert "没有出处" in got and "凭据纸不存在" in got, got
+    assert _disk_sha() == before, "刀动到了盘上那枚禁区文件"
+
+
+def test_counter_evidence_B_a_reword_disguised_as_a_pure_append_reddens(tmp_path, monkeypatch):
+    """新刀 B：把一次原地改口伪装成纯追加（补一行空行撑长度）⇒ 必红；把「旧行 ＋ 一行空行」登记成改口 ⇒ 形状尺拒。"""
+    entry = _reword_entry("R657")
+    assert entry.new.endswith(" |\n"), entry.new[-4:]
+    shorter = entry.new[:-120] + " |\n"
+    assert len(shorter) < len(entry.new) and shorter.count("\n") == 1, _row_node(shorter)
+    assert _row_node(shorter) == _row_node(entry.new), _row_node(shorter)
+    before = _disk_sha()
+    assert not _red(_run_r354_nails()), "正控先绿"
+    text, _newline = _disk_text_and_newline()
+
+    # 第一条腿（账面侧）：拿「旧行 ＋ 一行空行」当改口登记 —— 那一形其实是追加，形状尺当场拒。
+    disguised_entry = Reword(
+        ticket=entry.ticket, old=entry.old, new=entry.old + "\n", reason=entry.reason, evidence=entry.evidence
+    )
+    shape = reword_shape_violations(disguised_entry)
+    assert any("文末追加伪装成改口" in each for each in shape), shape
+    with pytest.raises(AssertionError) as refused:
+        assert_history_matches_ledger(rewords=(disguised_entry,))
+    refused_message = str(refused.value)
+    assert "这形状不收" in refused_message and "文末追加伪装成改口" in refused_message, refused_message
+
+    # 正控：只补一行空行、账一字不动 —— 那是正当的文末追加，尺必须仍是绿的（蒙混骗得过长度腿是预期内的）。
+    pad_dir = tmp_path / "only-pad"
+    pad_dir.mkdir()
+    padded = _shadow_copy(pad_dir, lambda body: body + "\n")
+    monkeypatch.setattr(SELF, "CONTRACT_PATH", padded)
+    account = assert_history_matches_ledger()
+    assert account.violations == (), account.violations
+    assert len(account.current_text) > len(text), "补一行空行没能把长度撑起来：这一刀的蒙混前提不成立"
+
+    # 第二条腿（盘上侧）：改口就地做了、账上没登记，文末再补一行空行装作「我只长了文末」。
+    both_dir = tmp_path / "pad-and-reword"
+    both_dir.mkdir()
+    shadow = _shadow_copy(both_dir, lambda body: body.replace(entry.new, shorter, 1) + "\n")
+    monkeypatch.setattr(SELF, "CONTRACT_PATH", shadow)
+    with pytest.raises(AssertionError) as disguised:
+        assert_history_matches_ledger()
+    message = str(disguised.value)
+    assert "不许就地消失" in message, message
+    assert "没长东西" not in message, "长度腿被一行空行蒙混过去是预期内的：救场只有追加段那一条腿"
+    assert "在差异账之外被动过" not in message, message
+
+    red = _red(_run_r354_nails())
+    assert len(red) == 2, red
+    for each in red.values():
+        assert "不许就地消失" in each, each
     assert _disk_sha() == before, "刀动到了盘上那枚禁区文件"
