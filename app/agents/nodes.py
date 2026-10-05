@@ -713,6 +713,78 @@ def answer_leg_stream_target(config: Any) -> tuple[Any, str]:
     return sink, worker
 
 
+def publish_formed_answer_pieces(config: Any, text: str, *, call_id: str = "") -> int:
+    r"""把**已经成形的一整段答复**逐片交给本轮注册的出口：R662 判据① 「不许一坨」。
+
+    病形（``docs/testing/r662-a2-single-frame-rows-2026-10-05.md``）：离线回复、以及"框架聚合
+    完才交回、一枚字都没经过出口"的那一发，正文到手时**已经是一整段写完的字**。收端今天只能
+    把它发成一枚帧，A② 在帧账上就读成 ``max_stream_frames == 1``——"答案已成形"这一类从来没有
+    逐片上过屏。本件只管一件事：把这一整段按在册那两把尺切成片，交给同一条出口。
+
+    🔴 分片只能做在**答复成形腿**这一侧，不许做在收端：``app/api/v1/chat.py::_AnswerPieceStream``
+    的"收端一个字都不切"是 R149 判据②③ 钉住的既有裁定（``tests/test_r149_sse_text_pieces.py::
+    test_a_whole_answer_with_no_pieces_still_issues_exactly_one_text_frame`` 与
+    ``test_one_oversized_piece_is_never_split_by_the_receiver`` 两枚钉），收端切了就凭空造短碎片。
+
+    四条纪律，逐条对着既有尺写，一枚都不新造：
+      * **准入一字不放宽**：走 :func:`answer_leg_stream_target`——名单外（``approval``／
+        ``export``／supervisor 派发）与没注册出口的道（队列道、审批道、离线直调）一枚片都不发。
+      * **两把尺不动**：成片用的就是 R31 那枚 :class:`StreamPieceMerger`，尺寸闸
+        （``STREAM_PIECE_MIN_CHARS``）与空档地板由它钉着；判据② 的"片段时间戳不重叠"由
+        ``StreamPieceMerger._emit`` 抬起点保证（区间可偏窄不可重叠）。
+      * **禁硬切凑多发**：攒不出第二枚就一枚都不发（交回 0）。天然短过尺寸闸的那一族由尺寸闸
+        说了算，本件不拿多发一枚同文帧去把 ``text_frames`` 洗大。
+      * **零等待**：一次喂一段、成一片，中间没有任何 sleep／定时器／节流——片与片之间的间隔
+        由发射本身产生（出口 → 队列 → 收端那一枚 ``await asyncio.sleep(0)``）。
+
+    ``call_id`` 非空时沿用那一发自己的身份（R149b 硬前置：片必须带调用身份）；留空由本件现铸
+    一枚——离线回复与"聚合完才交回"都是**新的一发**，没身份收端就分不开它和别的腿。交回真正
+    交出几片，调用方只拿来记日志。
+    """
+    sink, worker = answer_leg_stream_target(config)
+    if sink is None:
+        return 0
+    body = text if isinstance(text, str) else ""
+    if not body.strip():
+        return 0
+    merger = StreamPieceMerger()
+    size = merger.min_chars
+    pieces: list[StreamPiece] = []
+    for start in range(0, len(body), size):
+        pieces.extend(merger.feed(body[start:start + size]))
+    pieces.extend(merger.finish())
+    if len(pieces) < 2:
+        return 0  # 攒不出第二枚 = 天然短，本件不硬切凑多发
+    publish_stream_pieces(config, pieces,
+                          call_id=call_id or uuid4().hex[:12], worker=worker)
+    return len(pieces)
+
+
+def publish_formed_reply_for_call(config: Any, reply: Any, *, tap: Any = None) -> int:
+    """这一发一枚片都没交出去、交回来的却是整段成形的字 ⇒ 按尺寸闸补成逐片（R662 判据①）。
+
+    ``tap`` 是那一发的流式闸门，可能为 ``None``（预算耗尽那一刻连请求都没发出去）。三种情况
+    一枚片都不许多发，前两条是 R203 自己在册的闸门，本件一字不改地尊重、并且把它读全：
+      * 这一发**有任何字到过闸门** —— 已经有一半真话上过屏，离线回复不是它的延伸（T3 与
+        ``app/api/v1/chat.py`` 里那行「流式片段与终答不同源」的 error 日志同一裁定）。
+        🔴 判据是 :attr:`_AnswerPieceTap.arrived_chars`，不是 :attr:`published`：T2 压着
+        最新那枚片等下一枚来证明「还在写字」，provider 死在半路时 ``abandon()`` 把手里那枚
+        整片丢弃 —— 于是「流过半截真话」那一发的 ``published`` 读数可以是 0。拿它当准入
+        就会把 R210 那族「半截真话 + 离线话术」的纠正替换改发成一串片（那一形钉在
+        ``tests/test_r210_frame_ledger_of_a_broken_round.py``）。
+      * :attr:`_AnswerPieceTap.abandoned` 是 ``tool_call`` —— 那一发是工具轮，它的字不是终答
+        （T1，钉在 ``tests/test_r203_answer_leg_streams.py::test_a_tool_call_round_publishes_no_pieces``）；
+      * 准入不在名单、或本轮压根没注册出口 —— 与 :func:`publish_formed_answer_pieces` 同一条。
+    """
+    if tap is not None:
+        if (getattr(tap, "published", 0) or getattr(tap, "arrived_chars", 0)
+                or getattr(tap, "abandoned", "") == "tool_call"):
+            return 0
+    return publish_formed_answer_pieces(
+        config, visible_chunk_text(reply),
+        call_id=str(getattr(tap, "call_id", "") or ""))
+
+
 class _AnswerPieceTap(BaseCallbackHandler):
     """把框架在 ``invoke`` 内部走的那一路流，接回 R31 的片段出口。
 
@@ -746,6 +818,11 @@ class _AnswerPieceTap(BaseCallbackHandler):
         self.call_id = call_id
         self.merger = StreamPieceMerger()
         self.published = 0
+        #: 这一发**到过闸门的可见字数**（R662 的判据，与 ``published`` 不是一回事）。
+        #: ``published`` 只数「已经放出门的片」，而 T2 天生压着最新那枚等下一枚来证明
+        #: 「还在写字」——provider 死在半路时 ``abandon()`` 会把手里那枚整片丢弃，于是
+        #: 明明流过半截真话的一发读起来像「一个字都没到过」。R662 补成形片时必须认这一格。
+        self.arrived_chars = 0
         self._pending = None
         self._abandoned = ""
 
@@ -769,7 +846,10 @@ class _AnswerPieceTap(BaseCallbackHandler):
         if produced_a_tool_call(message):
             self.abandon("tool_call")
             return
-        for piece in self.merger.feed(visible_chunk_text(message)):
+        text = visible_chunk_text(message)
+        if text:
+            self.arrived_chars += len(text)
+        for piece in self.merger.feed(text):
             self._offer(piece)
 
     def _offer(self, piece) -> None:
@@ -1011,7 +1091,9 @@ class _ResilientModel(Runnable):
             logger.warning("[Model] 本地模型并发预算耗尽，使用离线回复")
             span = self._span(config, queue_wait_ms=exc.wait_ms)
             span.finish("rate_limited", error_code=exc.code)
-            return self._offline_fallback(messages, config=config, **kwargs)
+            reply = self._offline_fallback(messages, config=config, **kwargs)
+            publish_formed_reply_for_call(config, reply)
+            return reply
 
         span = self._span(config, queue_wait_ms=slot.wait_ms)
         prompt_tokens = estimate_prompt_tokens(messages)
@@ -1124,7 +1206,9 @@ class _ResilientModel(Runnable):
                 )
             else:
                 logger.warning(f"[Model] provider invoke 失败，使用离线回复: {exc}")
-            return self._offline_fallback(messages, config=config, **kwargs)
+            reply = self._offline_fallback(messages, config=config, **kwargs)
+            publish_formed_reply_for_call(config, reply, tap=tap)
+            return reply
         slot.release()
         if tap is not None:
             delivered = tap.close()
@@ -1132,6 +1216,13 @@ class _ResilientModel(Runnable):
                 logger.info(
                     f"[R203] leg={tap.worker} call={tap.call_id} 生成腿流式 pieces={delivered}"
                 )
+            else:
+                formed = publish_formed_reply_for_call(config, response, tap=tap)
+                if formed:
+                    logger.info(
+                        f"[R662] leg={tap.worker} call={tap.call_id} "
+                        f"生成腿交回成形整段，按尺寸闸补逐片 pieces={formed}"
+                    )
         from app.trace.spans import model_token_counts
 
         summary = dict(model_token_counts(response))

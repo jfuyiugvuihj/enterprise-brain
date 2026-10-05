@@ -1978,8 +1978,15 @@ class _ApprovedAnswerStream:
         """比字：这一枚正文与屏上此刻那一份逐字相同吗。本类唯一的判据，不看别的。"""
         return body == self.on_screen
 
-    def decide(self, body: str, *, terminal: bool) -> str:
-        """先比字，再决定：``skip`` 不发 / ``emit`` 顺着屏上那一份继续发 / ``replace`` 换源整段替换。"""
+    def decide(self, body: str, *, terminal: bool, opening: bool = False) -> str:
+        """先比字，再决定：``skip`` 不发 / ``emit`` 顺着屏上那一份继续发 / ``replace`` 换源整段替换。
+
+        ``opening``（R662 判据①）只说一件事：这一枚是**本腿自己那一发的头一枚逐片帧**，而屏上
+        此刻挂着的只是那句挂起说明。那一刻本轮还没有任何终答上过屏，这一发就不是 R464 要拦的
+        「第二枚终答流」，它是第一枚 —— 拦下它等于把本轮的答复压成一坨（在册病形：run22
+        ``chart-01``／``tool-04`` 两条流各只发 1 帧，``max_stream_frames == 1``）。
+        其余三条规则（比字同屏不发、非延续整段拦下并大声记账、一轮至多换源一次）一字不改。
+        """
         if not body:
             return "skip"
         # 规则 1（刀 A 摘这一格）：先比字。逐字同屏 ⇒ 不发、不武装、不吃 arm_pending。
@@ -1992,6 +1999,16 @@ class _ApprovedAnswerStream:
             self.emitted += 1
             return "emit"
         if not terminal:
+            if opening and not self.emitted:
+                # R662：屏上只有那句挂起说明 ⇒ 本轮第一枚终答流就是本腿这一发。它的头一枚逐片帧
+                # 不许当「另一条流的脑袋」拦下，而要带 R210 那对 step 出门整段替换 —— 与规则 3
+                # 同一格，只是走在头一枚片上。一轮至多换源一次：``emitted`` 非零就走不到这里。
+                # 🔴 行序与规则 3 那一格刻意不同：``tests/test_r464_...`` 的刀 B 锚点必须仍唯一命中。
+                self.arm_pending = False
+                self.on_screen = body
+                self.replacements += 1
+                self.emitted += 1
+                return "replace"
             self.held.append(body)  # 规则 2：另一条流的脑袋——拦下并记账，不静默
             return "skip"
         # 规则 3（刀 B 摘这一格）：走到这里已经比过字 —— 这一枚与屏上**不同**，本轮终答换了
@@ -3684,16 +3701,21 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         # （会话历史最后一条 assistant 行，与挂起轮收尾帧同源），本腿不再发它第二遍；
         # 真要换源就带 R210 那对 step 显式记账，而不是让客户把同一轮的答案读两遍。
         # 读账排在 _save_message 之前：这一轮自己那一行还不能当"屏上已有的正文"。
-        answer_stream = _ApprovedAnswerStream(_round_screen_answer(request.session_id))
+        screen_at_open = _round_screen_answer(request.session_id)
+        answer_stream = _ApprovedAnswerStream(screen_at_open)
+        # R662：屏上此刻挂着的如果**只是**那句挂起说明（``hitl_park_text`` 现构造那一枚），本轮
+        # 就还没有一份答复上过屏，批准续跑那一发是本轮第一枚终答流 —— 逐片帧一帧一帧上屏。
+        # 判定只认现构造逐字比，不抄字面，也不拿"屏上有字"当成"屏上有答复"。
+        screen_holds_notice = is_hitl_park_notice(screen_at_open)
 
-        async def _emit_answer(body: str, *, terminal: bool):
+        async def _emit_answer(body: str, *, terminal: bool, opening: bool = False):
             """闸门放行才发帧：``emit`` 顺着屏上那份继续发，``replace`` 武装整段替换。
 
             帧只走 :func:`text_sse_frame`（与挂起轮、命中道、逐片道同一枚构造器，字面
             与本单改前那两行 f-string 逐字节相同）；武装只走 :data:`CORRECTION_STEP_TOOL`
             那对既有 step，与 ``/ask`` 的断流守卫同一张脸 —— 本单不造第二套片账。
             """
-            verdict = answer_stream.decide(body, terminal=terminal)
+            verdict = answer_stream.decide(body, terminal=terminal, opening=opening)
             if verdict == "skip":
                 return
             correction = {"type": "step", "tool": CORRECTION_STEP_TOOL,
@@ -3806,7 +3828,8 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     piece_suppressed += 1
                     continue
                 piece_frames += 1
-                async for chunk in _emit_answer(frame_text, terminal=False):
+                async for chunk in _emit_answer(frame_text, terminal=False,
+                                                opening=screen_holds_notice):
                     yield chunk
                 continue
 
