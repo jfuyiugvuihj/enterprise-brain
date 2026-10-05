@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """R262 · 计划书台账归真：把「哪些单真落地了」做成机器可校验的账。
 
-R640 起这把尺出六档，且新档只许派生——写死单号名单会被自己的牙咬（见 C11/C13）：
+R640 起这把尺出七档，派生档只许派生——写死单号名单会被自己的牙咬（见 C11/C13）：
 - LANDED／PARTIAL／ZERO＝老三档，口径不变（产物在树＋欠账逐字点名／HEAD 祖先链上全史零产物）。
 - CLOSED＝账面有结案裁定句（形状为「R<号> 结案（R<量具> …）」），且那枚量具的货真在仓内：
   结案笔在 HEAD 祖先链上、它带进主干的产物文件仍在盘上、且同笔带来一枚 docs/perf 或 docs/testing 取证纸。
@@ -10,6 +10,16 @@ R640 起这把尺出六档，且新档只许派生——写死单号名单会被
   台账也不许给它挂产物 ⇒ 「从没立过后端单」不是一种「零提交」，它该被单列而不是计入 ZERO 分子。
 - NOTBUILT＝裁定不建：计划书把那行划了删除线，且跟进单 §21 里读得到「不建，沿用」那句裁定；
   两边只剩一边＝不可判定，当场红，不许悄悄掉回 ZERO 去凑分子。
+- OUT（R666）＝移出本版代码半径：这一格经实测或裁定确认**不属这版代码能解的题**。
+  🔴 它绝不等于判达，也不算完成。它由人执笔写死（尺子不许自己派生这一档，所以它不进 DERIVABLE_TIERS），
+  但必须同时交出三样东西，缺一即红：
+  ① 仓内真实存在的**文书**（只认 docs／README.md，拿代码注释当裁定＝C19 咬）＋该文书里的判语关键词
+    （文件断头／锚点不唯一／关键词读不到＝C19 咬），且那枚文书的落盘提交在 HEAD 祖先链上
+    （本地便签或躺在别的 ref 上＝同一枚 C19 咬）；
+  ② 为什么不可达的证据——一枚数字或一句裁定引句（「暂时不做」这种形容词过不去＝C20 咬）；
+  ③ 逐字点名被移出的那一格（整号一笔抹掉＝C21 咬），且本格必须有产物在树——零产物的号想移出半径，
+    那叫 ZERO 或 PARTIAL，不叫 OUT（C22 咬）。
+  OUT 不进读法甲／读法乙的未清分子，但必须在报表里单列一段，段内逐格带「不算完成」。
 - 理由句同样从出处派生：取证纸以 `G-R<号>-<序>` 认领某一格欠账时，那格的判语按纸面内容现取；
   纸上的结论与台账里写死的理由句打架 ⇒ 红（读的是纸的内容，不是提交标题）。
 
@@ -25,6 +35,7 @@ R640 起这把尺出六档，且新档只许派生——写死单号名单会被
     python scripts/audit_plan_ticket_ledger.py --timing     # 耗时只打 stderr
     python scripts/audit_plan_ticket_ledger.py --fault R46=LANDED@deadbeef
     python scripts/audit_plan_ticket_ledger.py --fault R143=CLOSED@deadbeef   # 反证：喂假 sha
+    python scripts/audit_plan_ticket_ledger.py --fault R25=OUT@ad85821         # 反证：给没出处的号标 OUT 必须红并点名
 
 退出码：0 自检全过 / 1 自检咬到 / 2 环境或出处错（git 读不到、锚点漂了、判据引用失真）。
 """
@@ -46,11 +57,18 @@ CODE_SUFFIX = (".py", ".js", ".vue", ".css", ".html", ".sql", ".sh",
                ".toml", ".yml", ".yaml", ".json", ".example")
 DOC_PREFIX = ("docs/", "README.md")
 
-# 六档。DERIVED 是「本格判定（或理由句）由事实派生」的哨兵；新档写死＝C11 咬。
-VERDICTS = ("LANDED", "PARTIAL", "CLOSED", "ZERO", "FOREIGN", "NOTBUILT")
+# 七档。DERIVED 是「本格判定（或理由句）由事实派生」的哨兵；派生新档写死＝C11 咬。
+# OUT＝移出本版代码半径（R666）：写死但必须带出处，🔴 绝不等于判达（出处断头＝C19，证据空心＝C20，不点名格子＝C21）。
+VERDICTS = ("LANDED", "PARTIAL", "CLOSED", "ZERO", "FOREIGN", "NOTBUILT", "OUT")
 DERIVED = "<派生>"
 DERIVABLE_TIERS = ("CLOSED", "FOREIGN", "NOTBUILT")
-CLEARED_TIERS = ("LANDED", "CLOSED", "FOREIGN", "NOTBUILT")   # 读法甲里不算「未清」的档
+OUT_TIER = "OUT"                    # 故意不进 DERIVABLE_TIERS：移出是裁定，不许从 git 事实派生
+OUT_DISCLAIMER = "不算完成"
+CLEARED_TIERS = ("LANDED", "CLOSED", "FOREIGN", "NOTBUILT", OUT_TIER)  # 读法甲／乙里都不算「未清」；OUT＝移出≠判达
+OUT_VAGUE = ("暂时不做", "暂不做", "先不做", "以后再说", "以后再做", "回头再做", "回头再说",
+             "后续再做", "后续再说", "待后续", "来不及", "没时间")
+OUT_DOC_PREFIX = ("docs/", "README.md")     # 出处只认仓内文书：代码注释里的「TODO」不叫裁定
+OUT_NUMBER_RE = re.compile(r"\d{2,}(?:\.\d+)?|\d+\.\d+")
 EVIDENCE_DIRS = ("docs/perf/", "docs/testing/")
 CLAUSE_MARKS = "①②③④⑤⑥⑦⑧⑨"
 PRIMARY_RE = re.compile(r"(?<![A-Za-z0-9])R(\d{1,3})([a-z]?)(?![0-9A-Za-z])")
@@ -587,9 +605,9 @@ def summarize_facts(facts):
     return facts.get("note", "无")
 
 
-def T(tid, verdict, artifacts, gaps=(), why="", classes=("产品码", "契约"), note=""):
+def T(tid, verdict, artifacts, gaps=(), why="", classes=("产品码", "契约"), note="", out=None):
     return {"id": tid, "verdict": verdict, "artifacts": list(artifacts), "gaps": list(gaps),
-            "why": why, "classes": classes, "note": note}
+            "why": why, "classes": classes, "note": note, "out": out}
 
 
 def A(sha, via, expect=None):
@@ -617,6 +635,21 @@ def S85(anchor, label, seq=1):
     return {"file": FOLLOWUP, "anchor": anchor, "label": "跟进单 §85 · " + label, "seq": seq}
 
 
+# OUT 档的出处（R666）：两枚仓内裁定纸——键名查文件，行号一律运行时现取
+ROADMAP = "docs/version-roadmap-and-requirements-2026-10-05.md"
+OFFPEAK = "docs/deployment/offpeak-rebuild-execution-shape-2026-10-05.md"
+PLAN = "docs/handoff/2026-09-17-perf-architecture-plan.md"   # 业主 09-24 门的归属裁定原文（OUT 的裁定出处只认这一本＋专门裁定纸）
+
+
+def OOS(file, anchor, keyword, evidence):
+    """OUT 档的出处三件套（R666）：仓内文档＋文档里的判语关键词＋为什么不可达的证据。
+
+    anchor 在该文件内必须恰命中一行（漂了或被复制＝C19 咬），keyword 必须落在那一行上，
+    evidence 得带一枚数字或一句裁定引句（「暂时不做」这种形容词过不去＝C20 咬）。
+    """
+    return {"file": file, "anchor": anchor, "keyword": keyword, "evidence": evidence}
+
+
 LEDGER_A = [
     T("R25", "PARTIAL", [A("ad85821", "施工", "docker-compose.dev.yml"), A("b17b4dd", "并树")],
       [S21(25)], "两句判据都是容器内事实，从未在真机读过"),
@@ -628,8 +661,11 @@ LEDGER_A = [
       [S21(27, "③")], "③ 端到端 −≥35 s 等 A 门"),
     T("R28", "PARTIAL", [A("d2566e1", "施工"), A("1c0b08b", "并树")],
       [S21(28, "③")], "③ 30 题不退化等 A 门"),
-    T("R29", "PARTIAL", [A("62c734d", "施工", "tests/test_r29_thinking_tax.py"), A("791568c", "并树")],
-      [S21(29, "②")], "真机 A/B 判负：并的是「不迁腿」这个负结果与契约钉，30.6 s→≤22 s 一分没省"),
+    T("R29", "OUT", [A("62c734d", "施工", "tests/test_r29_thinking_tax.py"), A("791568c", "并树")],
+      [S21(29, "②")], "真机 A/B 判负：并的是「不迁腿」这个负结果与契约钉，30.6 s→≤22 s 一分没省",
+      out=OOS(PLAN, "BCDE 有些是不是属于后面版本的你可以放后面来", "移出 V1 门槛",
+              "真机 A/B 实测 30.6 s → ≤22 s 判负：改动落地后一分没省，并树的只有「不迁腿」这个负结果＋契约钉；"
+              "这一格在 V1 硬件口径上不会变绿，判语「整行移出 V1 门槛」（业主 09-24 原话「BCDE 有些是不是属于后面版本的你可以放后面来」）")),
     T("R30", "LANDED", [A("3cb563b", "施工", "app/agents/contracts.py"), A("50aff1a", "并树")],
       [], "四条判据逐条有码有钉（结案核对 R224 判「达」）"),
     T("R31", "PARTIAL", [A("a7cd9b6", "施工", "app/agents/nodes.py"), A("eef642b", "并树")],
@@ -657,10 +693,13 @@ LEDGER_A = [
     T("R41", "LANDED", [A("e8d3200", "施工", "app/api/v1/chat.py"), A("571e0d6", "并树")], [], "①②③ 达"),
     T("R42", "LANDED", [A("5ff93cd", "施工", "app/agents/nodes.py"), A("89965d5", "并树")],
       [], "按 §27.2 改判口径达；业主驳回 H15 则本号自动回未达"),
-    T("R43", "PARTIAL", [A("4586bb4", "R43a 并树", "app/common/model_handler.py"),
+    T("R43", "OUT", [A("4586bb4", "R43a 并树", "app/common/model_handler.py"),
                          A("839c344", "R43b＝R167 并树", "tests/test_r167_answer_prefix_reuse.py")],
       [S21(43, "②")], "① 由 R43a 落码；② 真机 E3 读数与「cached 落库那一列」都还没有",
-      note="R43b 交回的是尺子，结论「本写域可挪字节 = 0」——上一格派工词把 839c344 记成 R43 的并树提交是单号错位"),
+      note="R43b 交回的是尺子，结论「本写域可挪字节 = 0」——上一格派工词把 839c344 记成 R43 的并树提交是单号错位",
+      out=OOS(PLAN, "门的归属裁定（第四十四班", "移出 V1 门槛",
+              "E3 档实测 cached_tokens > 0 的前提是换推理引擎／换档位，而 V1 钉死「只管理本机 Ollama」⇒ 属部署形态不属代码半径；"
+              "本机零枚 E3 读数可取，判语「整行移出 V1 门槛」")),
     T("R44", "PARTIAL", [A("9940c13", "施工", "app/rag/hot_index.py"), A("39006b8", "并树"), A("564340e", "总控热修")],
       [S21(44, "①")], "① 的 105/105 是在 379 chunk 小库＋哈希桩上证的，真库 37 483 chunk 未测"),
     T("R45", "LANDED", [A("0276f78", "施工", "app/rag/retrieval_pipeline.py"), A("640ef08", "并树")],
@@ -680,21 +719,31 @@ LEDGER_EXTRA = [
            "（打点走 HTTP 端点那一腿要另量），本档不主张客户尺寸与客户隔离"),
     T("R47", "PARTIAL", [A("95a1cd9", "施工", "app/rag/retrieval_pipeline.py"), A("006c613", "并树")],
       [S21(47, "①")], "① 真实命中改进量 0/105（用例打桩）"),
-    T("R48", "PARTIAL", [A("0ad3d3e", "并树 R48 路线甲", "frontend/src/components/AnswerHeadlineCard.vue")],
-      [S21(48, "①")], "① 首屏 ≤1 s 随 B 行移出 V1（本机地板 11.0 s）；线索卡与「未获补齐」失败脸在树 0ad3d3e；wire 首屏自 c00d98d 起量得到（app/api/v1/chat.py::_record_wire_first_text 记账＋app/api/v1/observability.py::wire_first_text_readout 读回，blocker wire_first_text_not_recorded 已摘）；🔴 数还没有：qa.first_text_p95_ms 照旧走 not_measurable，要真样本与本机数值"),
+    T("R48", "OUT", [A("0ad3d3e", "并树 R48 路线甲", "frontend/src/components/AnswerHeadlineCard.vue")],
+      [S21(48, "①")], "① 首屏 ≤1 s 随 B 行移出 V1（本机地板 11.0 s）；线索卡与「未获补齐」失败脸在树 0ad3d3e；wire 首屏自 c00d98d 起量得到（app/api/v1/chat.py::_record_wire_first_text 记账＋app/api/v1/observability.py::wire_first_text_readout 读回，blocker wire_first_text_not_recorded 已摘）；🔴 数还没有：qa.first_text_p95_ms 照旧走 not_measurable，要真样本与本机数值",
+      out=OOS(PLAN, "R48 的判据① 随 B 一并移出 V1 门槛", "移出 V1 门槛",
+              "本机地板实测 11.0 s：只吐 1 枚 token 也要 11.0 s，判据要的 1 s 在本机物理不可达；"
+              "「首屏 ≤1 s」随 B 行移出 V1 门槛，给客户报配置档位属发布期动作，判语「整行移出 V1 门槛」")),
     T("R49", "LANDED", [A("8680f43", "施工", "app/documents/index_policy.py"), A("c26afda", "并树"),
                          A("d0489e6", "并树 R237 收判据②", "frontend/src/components/DocPanel.vue")],
       [], "①③ 由本号落码；②「未索引」那张脸已由 R237 接上 index_status/excluded 字段，钉 r237-r49-index-face.test.js"),
-    T("R50", "PARTIAL", [A("090c820", "施工", "scripts/rebuild_index.py"), A("94f7fa1", "并树")],
+    T("R50", "OUT", [A("090c820", "施工", "scripts/rebuild_index.py"), A("94f7fa1", "并树")],
       [S21(50, "②")], "增量与可续跑在树；排程已由 R425 挂上（开关/预算/时刻三枚旋钮＋cron，缺省不排）；"
                       "判据①② 达（②凭据＝scripts/rebuild_index.py::run_rebuild 可中断续跑）；「低峰自动触发」半句 2026-10-05 移出 V1 门槛、登记为交付阶段动作（客户方在宿主日历自行安装 cron，app 侧保持 status=refused 属设计），欠的那格从今天起记「欠一条客户授权」不记欠代码，裁定句见计划书 §7 追加条（R652 方案单）",
       note="计划书 L468 那句「真零产物只剩 R50」是假账：R50 名下两枚产物提交都在主干；本尺原句"
            "「低峰那半句没挂进排程」同属过期账，10-04 现读 app/scheduler/jobs.py::register_jobs 与 "
-           "offpeak_rebuild_window 的 status=refused 之后改口（凭据见跟进单 177 节）"),
+           "offpeak_rebuild_window 的 status=refused 之后改口（凭据见跟进单 177 节）",
+      out=OOS(OFFPEAK, "> 按 2026-10-05 裁定**移出 V1 门槛**，登记为**交付阶段动作**", "移出 V1 门槛",
+              "丙案裁定：判据②「全量重建可中断续跑」达，凭据 scripts/rebuild_index.py::run_rebuild ＋ "
+              "tests/test_r50_resumable_rebuild.py 20 枚 ＋ tests/test_r50_incremental_index.py 15 枚；"
+              "欠的「低峰自动触发」半句登记为交付阶段动作，app 侧保持 status=refused 属设计，判语「移出 V1 门槛」")),
     T("R51", "PARTIAL", [A("6833140", "施工", "app/common/stage_timing.py"), A("cef08bf", "并树")],
       [S21(51, "②")], DERIVED),
-    T("R52", "PARTIAL", [A("8c888c7", "施工", "scripts/check_airgap_readiness.py"), A("1b84fb2", "闸门自修")],
-      [S21(52, "①")], "①②③ 全是墙上事实，E 行已整行移出 V1"),
+    T("R52", "OUT", [A("8c888c7", "施工", "scripts/check_airgap_readiness.py"), A("1b84fb2", "闸门自修")],
+      [S21(52, "①")], "①②③ 全是墙上事实，E 行已整行移出 V1",
+      out=OOS(PLAN, "**B 行与 E 行整行移出 V1 门槛**", "移出 V1 门槛",
+              "E 行整行移出 V1 门槛（上线实施清单）：断网可装可跑在开发机上既不能证实也不能证伪，"
+              "缺的是一台干净机的演练；尺子 scripts/check_airgap_readiness.py 已在树，判语「整行移出 V1 门槛」")),
     T("R141", "LANDED", [A("1cbd164", "并树", "frontend/src/router/lane-choice.js")], [],
       "档位标签第一次真改派工作腿；看板 §4BF 记「R141 达标并树」"),
     T("R142", "LANDED", [A("19761a5", "施工", "tests/test_r142_error_code_table_sync.py"), A("b58a5b9", "并树")],
@@ -781,6 +830,51 @@ def resolve_artifacts(git, row):
     return resolved
 
 
+def resolve_out(deriver, row):
+    """OUT 档的出处现读（R666）：文件在不在仓内、判语关键词读不读得到，全部当场量。
+
+    这里不许抛 SourceError：出处断头是「这本账判错了」而不是「环境读不到」，必须走自检红并点名那一号
+    （反证刀喂假出处走的就是这条路径，退出码 1）。
+    """
+    spec = row.get("out")
+    if not spec:
+        return {"problem": "本格没挂出处——OUT 必须点名仓内文档＋该文档里的判语关键词"}
+    rel = spec.get("file") or ""
+    if not rel or not deriver.exists(rel):
+        return {"problem": "OUT 出处 %r 不在仓内＝断头引用（要的是仓内真实存在的文档路径）" % (rel or "空串")}
+    if not rel.startswith(OUT_DOC_PREFIX):
+        return {"problem": "OUT 出处 %s 不是仓内文书（只认 %s）＝拿代码注释当裁定"
+                        % (rel, "、".join("`%s`" % prefix for prefix in OUT_DOC_PREFIX))}
+    try:
+        lines = deriver.quoter.file_lines(rel)
+    except (OSError, UnicodeDecodeError) as error:
+        return {"problem": "OUT 出处 %s 读不到：%s" % (rel, error)}
+    hits = [index for index, line in enumerate(lines) if spec["anchor"] in line]
+    if not hits:
+        return {"problem": "OUT 出处 %s 里读不到锚点 %r＝判语断头（文档改口了，改判得重新落纸）"
+                        % (rel, spec["anchor"][:60])}
+    if len(hits) > 1:
+        return {"problem": "OUT 锚点在 %s 命中 %d 处，要求恰 1 处：%r" % (rel, len(hits), spec["anchor"][:60])}
+    line = lines[hits[0]]
+    if spec["keyword"] not in line:
+        return {"problem": "OUT 判语关键词「%s」不在 %s 第 %d 行上：%s"
+                        % (spec["keyword"], rel, hits[0] + 1, line.strip()[:60])}
+    landing = deriver.git.first_add(rel)
+    if landing is None:
+        return {"problem": "出处 %s 读不到把它带进仓库的提交＝本地便签不在册（裁定得先并树才作数）" % rel}
+    if not deriver.git.is_ancestor(landing):
+        return {"problem": "出处 %s 的落盘提交 %s 不在 HEAD 祖先链上＝那枚裁定还没进主干" % (rel, short(landing))}
+    evidence = spec.get("evidence") or ""
+    problems = []
+    if not (OUT_NUMBER_RE.search(evidence) or BRACKET_RE.search(evidence)):
+        problems.append("证据句里既没有证据数字也没有裁定引句：%r" % evidence[:60])
+    vague = [phrase for phrase in OUT_VAGUE if phrase in evidence]
+    if vague:
+        problems.append("证据句里只剩形容词（%s）＝不可达没交代" % "、".join(vague))
+    return {"file": rel, "line": hits[0] + 1, "quote": line.strip(), "keyword": spec["keyword"],
+            "evidence": evidence, "landing": landing, "problems": problems}
+
+
 def tier_reason(tier, facts):
     """新档的「一句话依据」也只许从派生事实拼出来，脚本里不存成品句。"""
     if tier == "CLOSED":
@@ -801,6 +895,7 @@ def build_rows(git, quoter, deriver):
         row = dict(spec)
         row["artifacts_resolved"] = resolve_artifacts(git, row)
         row["gaps_resolved"] = [quoter.quote(gap, row["id"]) for gap in spec["gaps"]]
+        row["out_resolved"] = resolve_out(deriver, row) if spec.get("out") else None
         row["auto"] = sorted(attributed[row["id"]])
         row["catch_up"] = sorted(catch_up[row["id"]])
         row["plan_status"] = plan_status(quoter, row["id"])
@@ -855,7 +950,7 @@ def apply_faults(git, rows, faults):
 
 
 def self_checks(rows):
-    """这台尺子的牙：老三档的牙一枚不摘，新档再加五枚，全部对着「此刻的事实」咬。
+    """这台尺子的牙：老三档的牙一枚不摘，派生档再加八枚，OUT 档再加三枚，全部对着「此刻的事实」咬。
 
     C11 新档判定写死＝红（派生哨兵不许退回头抄账）
     C12 标了派生却落不实地＝红（结案句与裁定句都不许断头）
@@ -865,6 +960,10 @@ def self_checks(rows):
     C16 新档不许挂点名欠账（要么改判 PARTIAL，要么把凭据补齐）
     C17 CLOSED 必须有结案凭据那一笔在台账里；NOTBUILT／FOREIGN 不许有任何产物
     C18 同一格欠账只许一枚纸在标题里认领（正文转述不算认领，新写一枚纸不许顶掉量具的判语）
+    C19 OUT 必须点名仓内真实出处（文件在盘＋锚点唯一＋判语关键词落在那一行）
+    C20 OUT 必须交出不可达证据（数字或裁定引句；「暂时不做」这种形容词过不去）
+    C21 OUT 必须逐字点名被移出的那一格（整号一笔抹掉＝假账）
+    C22 OUT 的号必须有产物在树（零产物不许借移出洗成不欠——那是 ZERO／PARTIAL 的活）
     """
     failures = []
     for row in rows:
@@ -920,8 +1019,22 @@ def self_checks(rows):
                     tid, verdict, "、".join(art["sha"] for art in products)))
             if verdict == "CLOSED" and not any(art.get("derived") for art in row["artifacts_resolved"]):
                 failures.append("C17 %s：判 CLOSED 但台账里没有「结案凭据」那一笔（结案句点名的量具提交必须挂上来受 C2/C3/C5 管）" % tid)
+        elif verdict == OUT_TIER:
+            source = row.get("out_resolved")
+            if source is None:
+                failures.append("C19 %s：判 OUT 却没挂出处——OUT 必须点名仓内真实文档＋该文档里的判语关键词" % tid)
+            elif source.get("problem"):
+                failures.append("C19 %s：OUT 出处落不实地——%s" % (tid, source["problem"]))
+            else:
+                for problem in source["problems"]:
+                    failures.append("C20 %s：OUT 的证据落不实地——%s（出处 %s 第 %d 行）" % (
+                        tid, problem, source["file"], source["line"]))
+            if not row["gaps_resolved"]:
+                failures.append("C21 %s：判 OUT 却没逐字点名移出的那一格（整号一笔抹掉＝假账）" % tid)
+            if not products:
+                failures.append("C22 %s：判 OUT 却没有一枚在树的产物＝零产物的号不许借 OUT 把「这版没做」挪出半径" % tid)
         elif verdict not in VERDICTS:
-            failures.append("C1 %s：判定词「%s」不在六档之内" % (tid, verdict))
+            failures.append("C1 %s：判定词「%s」不在七档之内" % (tid, verdict))
         if verdict == "PARTIAL" and not row["faulted"]:
             for key, paper in row["gap_reasons"]:
                 if paper.get("polarity") == "MEASURED" and "PASS" in paper.get("phrase", ""):
@@ -960,11 +1073,16 @@ def render_head(git, rows, faults, deriver):
     if faults:
         emit("!! 本次运行注入故障台账：%s ⇒ 这份输出是反证演示，不是账" % "、".join(sorted(faults)))
     emit("head=%s commits_on_head=%d worktree=%s" % (git.head(), len(git.commits()), git.worktree_state()))
-    emit("六档口径：LANDED＝产物在树且无点名欠账；PARTIAL＝产物在树但点名欠判据；"
+    emit("七档口径：LANDED＝产物在树且无点名欠账；PARTIAL＝产物在树但点名欠判据；"
          "CLOSED＝账面结案裁定句点名量具且其产物与取证纸都在仓内（派生）；ZERO＝HEAD 祖先链上全史零产物；"
-         "FOREIGN＝计划书与跟进单 §21 都没有它的行（派生）；NOTBUILT＝计划书划删除线＋§21 不建裁定（派生）")
+         "FOREIGN＝计划书与跟进单 §21 都没有它的行（派生）；NOTBUILT＝计划书划删除线＋§21 不建裁定（派生）；"
+         "OUT＝人执笔改判的移出格，带仓内出处＋判语关键词＋不可达证据，🔴 绝不等于判达（%s）" % OUT_DISCLAIMER)
     emit("派生纪律：CLOSED／FOREIGN／NOTBUILT 只许从事实派生——判定写死咬 C11，把已结案／外来／不建记成 ZERO 咬 C13，"
          "理由句与取证纸打架咬 C14，取证纸已判达却仍挂欠账咬 C15，派生落不实地咬 C12")
+    emit("移出纪律（R666）：OUT 不许派生——尺子不能自己把一格判出圈，只许人执笔并当场交出出处："
+         "出处不是仓内文书／文件断头／锚点不唯一／判语关键词读不到／落盘提交不在祖先链上咬 C19，"
+         "证据空心或只剩形容词咬 C20，没点名格子咬 C21，零产物还想移出咬 C22；"
+         "这一档%s，只从「未清」分子里剔出去，不进「完成」那一列" % OUT_DISCLAIMER)
     emit("归属口径：提交标题里第一枚单号＝该提交的归属号（拆单子号 R26a/R43a/R152 一类按账上具名挂靠，不自动并号）；"
          "标题含 catch up/追平/保活 的只记账不作产物证据")
     emit("产物口径：产品码＝app/frontend/scripts/tests/migrations/deploy/static 与代码类后缀；契约＝docs/api/** 与 migrations/manifest.json")
@@ -1043,9 +1161,11 @@ def render_head(git, rows, faults, deriver):
 def render_tail(git, rows, out):
     emit = out.append
     emit("")
-    emit("## 4. 欠账与判据原文（机器从出处逐字切段，非转述）")
+    emit("## 4. 欠账与判据原文（机器从出处逐字切段，非转述；OUT 移出的格在 §9 单列，既不算欠账也不算完成）")
     emit("")
     for row in rows:
+        if row["verdict"] == OUT_TIER:
+            continue
         for gap in row["gaps_resolved"]:
             emit("- G-%s ｜出处：%s ｜`%s` 第 %d 行（按 LF 计数）｜%s ｜原文：%s" % (
                 gap["key"], gap["source"], gap["file"], gap["line"], row["verdict"], gap["quote"]))
@@ -1074,9 +1194,9 @@ def render_tail(git, rows, out):
             counts[row["verdict"]] += 1
     emit("## 7. 计数")
     emit("")
-    emit("在册 %d 号：LANDED=%d · PARTIAL=%d · CLOSED=%d · ZERO=%d · FOREIGN=%d · NOTBUILT=%d" % (
+    emit("在册 %d 号：LANDED=%d · PARTIAL=%d · CLOSED=%d · ZERO=%d · FOREIGN=%d · NOTBUILT=%d · OUT=%d" % (
         len(rows), counts["LANDED"], counts["PARTIAL"], counts["CLOSED"],
-        counts["ZERO"], counts["FOREIGN"], counts["NOTBUILT"]))
+        counts["ZERO"], counts["FOREIGN"], counts["NOTBUILT"], counts[OUT_TIER]))
     for verdict in VERDICTS:
         emit("- %s：%s" % (verdict, " ".join(row["id"] for row in rows if row["verdict"] == verdict) or "无"))
     emit("- 派生档合计 %d 号：%s" % (
@@ -1088,19 +1208,49 @@ def render_tail(git, rows, out):
     zeros = [row for row in rows if row["verdict"] == "ZERO"]
     partials = [row for row in rows if row["verdict"] == "PARTIAL"]
     parked = [row for row in rows if row["verdict"] in CLEARED_TIERS]
+    outs = [row for row in rows if row["verdict"] == OUT_TIER]
     emit("- 读法甲（产物在树即算清）：未清 %d 号：%s" % (len(zeros), " ".join(row["id"] for row in zeros) or "无"))
     emit("- 读法乙（判据全达才算清）：未清 %d 号（PARTIAL %d ＋ ZERO %d）" % (
         len(zeros) + len(partials), len(partials), len(zeros)))
+    emit("- 🔴 移出的 %d 号（OUT）：%s——不进取数分子，也**%s**；逐格出处见下一段" % (
+        len(outs), " ".join(row["id"] for row in outs) or "无", OUT_DISCLAIMER))
+    emit("- 移出不等于判达：完成那一列只有 LANDED %d 号，OUT %d 号走的是「不在本版代码半径」，两个数不许相加汇报" % (
+        counts["LANDED"], len(outs)))
     emit("- 不计入欠账的档：%s（CLOSED＝已结案有仓内凭据；NOTBUILT＝业主裁定不建；FOREIGN＝外来号从没立过后端单）" % (
         " ".join(row["id"] for row in parked if row["verdict"] in DERIVABLE_TIERS) or "无"))
     for row in partials + zeros:
         gaps = "；".join(gap["quote"] for gap in row["gaps_resolved"]) or row["why"]
         emit("  - %s（%s）差：%s" % (row["id"], row["verdict"], gaps))
+    emit("")
+    emit("## 9. 移出的 %d 格（OUT·%s）" % (len(outs), OUT_DISCLAIMER))
+    emit("")
+    if not outs:
+        emit("- 本档 0 格：没有号被改判 OUT（OUT 由人执笔带出处，尺子不许自己派生这一档）")
+    else:
+        emit("- 🔴 OUT＝该格经实测或裁定确认不在本版代码半径内。这一档**%s**：既不进读法甲／读法乙的未清分子，"
+             "也不许读成判达；每一格都得当场点名仓内文书出处（且那枚文书已并树）与不可达证据，"
+             "缺一条腿就是 C19（出处断头／不是文书／锚点不唯一／没进主干）／C20（证据空心或只剩形容词）／"
+             "C21（没点名格子）／C22（零产物想移出）的红。" % OUT_DISCLAIMER)
+    for row in outs:
+        source = row["out_resolved"] or {}
+        cells = "、".join("G-%s" % gap["key"] for gap in row["gaps_resolved"]) or "🔴 未点名"
+        emit("- %s ｜OUT ｜移出格：%s" % (row["id"], cells))
+        for gap in row["gaps_resolved"]:
+            emit("  - 移出格判据原文（逐字）：%s｜%s 第 %d 行：%s" % (
+                gap["key"], gap["source"], gap["line"], gap["quote"]))
+        emit("  - 出处：%s 第 %s 行｜判语关键词「%s」｜落盘凭据 %s（在 HEAD 祖先链）｜原文：%s" % (
+            source.get("file", "🔴 断头"), source.get("line", "—"), source.get("keyword", "—"),
+            short(source.get("landing")) or "—",
+            safe(source.get("quote") or source.get("problem", "—"))))
+        emit("  - 为什么不可达：%s" % safe(source.get("evidence") or "🔴 没写"))
+        for problem in source.get("problems", []):
+            emit("  - 🔴 证据落不实地：%s" % problem)
+        emit("  - 这一格%s（移出本版代码半径 ≠ 判达；改判由人执笔，凭据在上面的出处里）" % OUT_DISCLAIMER)
     return counts
 
 
 CHECKLIST = (
-    "C1 判定词只许六档", "C2 证据提交必须存在", "C3 证据提交必须在 HEAD 祖先链上",
+    "C1 判定词只许七档（拼错的判定词照咬，OUT 亦在册）", "C2 证据提交必须存在", "C3 证据提交必须在 HEAD 祖先链上",
     "C4 提交信息必须含点名的那枚单号（派生凭据认量具号）", "C5 点名落点必须在该提交实改文件里",
     "C6 LANDED／CLOSED 必须有产品码或契约改动", "C7 PARTIAL 必须有产物",
     "C8 PARTIAL 必须逐字点名欠账", "C9 ZERO 不得被自动归集逮到产物", "C10 ZERO 不得挂产物提交",
@@ -1108,7 +1258,11 @@ CHECKLIST = (
     "C13 台账档与派生档不许打架（尤其把已结案／外来／不建记成 ZERO）",
     "C14 写死的理由句不许与取证纸现取判语打架", "C15 取证纸已判达不许仍挂欠账",
     "C16 新档不许挂点名欠账", "C17 新档的凭据与产物口径",
-    "C18 同一格只许一枚纸认领（标题行才算认领，正文转述不算）")
+    "C18 同一格只许一枚纸认领（标题行才算认领，正文转述不算）",
+    "C19 OUT 必须点名仓内真实出处（文件在盘＋锚点唯一＋判语关键词落在那一行）",
+    "C20 OUT 必须交出不可达证据（数字或裁定引句，形容词不许过）",
+    "C21 OUT 必须逐字点名被移出的那一格（整号一笔抹掉＝假账）",
+    "C22 OUT 的号必须有产物在树（零产物不许借移出洗成不欠）")
 
 
 def main(argv=None):
@@ -1142,7 +1296,7 @@ def main(argv=None):
         return 2
     failures = self_checks(rows)
     out.append("")
-    out.append("## 9. 自检（这台尺子的牙）")
+    out.append("## 10. 自检（这台尺子的牙）")
     out.append("")
     out.append("；".join(CHECKLIST))
     if failures:

@@ -83,6 +83,14 @@ def test_zero_is_empty_while_the_tier_still_exists(reading):
         assert tier in ruler.VERDICTS, tier + " 必须是册内的正式档，不是脚注"
 
 
+def test_out_is_a_real_tier_that_is_never_derived(reading):
+    """R666 的 OUT：在册的第七档，但不是派生档——移出是裁定，尺子不许自己把一格判出圈。"""
+    ruler = reading["ruler"]
+    assert "OUT" in ruler.VERDICTS, "OUT 必须是第七档，不是脚注"
+    assert "OUT" in ruler.CLEARED_TIERS, "OUT 不许留在「未清」分子里（它压根不在本版代码半径内）"
+    assert "OUT" not in ruler.DERIVABLE_TIERS, "OUT 不许派生：由人执笔带出处，写死才是本分"
+
+
 def test_the_four_cells_moved_out_of_the_zero_numerator(reading):
     got = {tid: reading["by_id"][tid]["verdict"] for tid in ("R39", "R143", "R144")}
     assert got == {"R39": "NOTBUILT", "R143": "CLOSED", "R144": "FOREIGN"}, got
@@ -261,10 +269,11 @@ def _cli(*extra):
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 
-def test_the_cli_prints_six_tiers_and_still_passes():
+def test_the_cli_prints_seven_tiers_and_still_passes():
     code, text = _cli()
     assert code == 0, text[-800:]
-    assert "在册 43 号：LANDED=24 · PARTIAL=16 · CLOSED=1 · ZERO=0 · FOREIGN=1 · NOTBUILT=1" in text
+    # R666 加了 OUT 档并把 5 格移出：PARTIAL 从 16 降到 11，OUT=5（移出 ≠ 判达，逐格出处在 §9）
+    assert "在册 43 号：LANDED=24 · PARTIAL=11 · CLOSED=1 · ZERO=0 · FOREIGN=1 · NOTBUILT=1 · OUT=5" in text
     assert "RESULT=PASS（0 条违规，在册 43 号逐条自证）" in text
     assert "不计入欠账的档：R39 R143 R144" in text
     assert "🔴 账面滞后：本尺派生为 CLOSED" in text, "计划书那行还写「待派」——尺只能报滞后，改表归人"
