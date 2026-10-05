@@ -1755,6 +1755,12 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Descartes`（本班新投·已交卷待并） | `01a107bb-5d3a-7e91-b720-5e9e913d9f69`（id 三取验真同法） | **R655** 把 R647 并树后仍红的唯一那格（`r643` 的 run20k 折返分母）升成**正形＋病形两半都断**，另补一枚常驻牙件与凭据纸 | `be-r655`（基点 `246efb7`） | **已结案并树** `193f65e`：总控驱动器两态亲跑（state①→commit→state②），凭据见 §4FB | 04:15:41 |
 | `Peirce`（本班新投·已交卷待并） | `01a107bb-9ca5-71e3-927e-57f8dc79f9e0`（id 三取验真同法） | **R646** 退役纸 15 枚手抄 `.py:行号` 全改派生锚（点名命令现读零命中），并治工单说的那两枚错位（`_document_rows_by_leg` 真身 1536、`delete_document` 真身 2087）；🔴 另交一枚工单没点名的错位：主树 `deploy/.env.server` 的 `INDEX_BACKEND=pgvector` 在**第 76 行**（AGENTS.md 记 77，77 是 R586 注释），两枚已改口成键名 | `be-r646`（基点 `246efb7`） | **已结案并树** `d2cc633`：总控驱动器两态亲跑（state①→commit→state②），凭据见 §4FB | 04:15:41 |
 | `Godel`（本班新投·已交卷待并） | `01a107bb-3c76-7a92-a0a4-1398896c1fe5`（id 三取验真同法） | **R652** 低峰执行腿方案纸（唯一新文件 `docs/deployment/offpeak-rebuild-execution-shape-2026-10-05.md`，383 行）：推荐**丙案**＝R50 判据② 按现读证据判达、「低峰自动触发」半句随 B／E 行移出 V1；甲-2（宿主计划任务）降级为交付阶段配方，只交配方＋自证命令，不交装好的 timer；甲-1／乙不推荐 | `be-r652`（基点 `d7f1376`） | **已结案并树** `3d85d6e`：总控驱动器两态亲跑（state①→commit→state②），凭据见 §4FB | 04:15:41 |
+| `Hilbert`（本班新投·在途） | `01a109e5-4f18-75e2-a4aa-4233425789e4`（id 三取验真：sessions 文件名 `rollout-2026-10-05T10-29-45-…`、ordinal 0 `session_meta` 的 `id`／`parent_thread_id`＝本席 `01a0af5c-e4ce-7830-a9b9-5e83d27bc4ff`／`agent_nickname`＝Hilbert，逐字相等） | **R660** 全量门 46 枚**派生坐标漂移**重锚（昨夜 R649／R653／R647 并树插行后没替自己跑门留下的红账）＋在册纸按现读改口；🔴 只走量具自己的 `--check`／`--land`／`--sync`，不许手抄行号 | `be-r660`（基点 `8a52c5c`，本席现建，`.venv` Junction 实测可解析） | 🟡 **在途**（11:1x 现取 `dirty=5`＝在册纸五张；`rev-list --count 8a52c5c..HEAD`=0＝零 commit）。首投触 `agent thread limit reached`，取证零线程后再投＝首次成功投递，非补投 | 11:1x |
+| `Lovelace`（本班新投·在途） | `01a10a04-3d2c-7c51-b0fa-3b9e8fef9491`（id 三取验真：sessions 文件名 `rollout-2026-10-05T11-03-32-…`、ordinal 0 `session_meta` 的 `id`／`parent_thread_id`＝本席／`agent_nickname`＝Lovelace，逐字相等） | **R661** 🔴 P1：trace 落盘体量压在 SSE 临界路径（`data/traces/events.jsonl` 32 MB 时首片被攒成一坨；主树红／影子树绿同 sha，正控反证三取三复现）＝r149 那枚全量门红的根因 | `be-r661`（基点 `96763c4`，本席现建） | 🟡 **在途**（11:1x 现取 `dirty=0`＝仍在探针阶段；自述已复现首片阻塞 0.375 s，🔴 读数不作数，待本席亲跑）。首投同样触闸一次，取证零线程后投出 | 11:1x |
+| `Arendt`（本班新投·在途） | `01a10a04-7ec0-7341-93a2-dd6acb69c820`（id 三取验真：sessions 文件名 `rollout-2026-10-05T11-03-49-…`、ordinal 0 `session_meta` 的 `id`／`parent_thread_id`＝本席／`agent_nickname`＝Arendt，逐字相等） | **R659** R650＋R658 并树后仍欠的三格：`read_topk` 半格＋`switched_corpus` 的 source 失真＋健康出口那一格（写域＝`app/rag/**` 那两枚＋新用例＋新纸；🔴 禁碰 `chat.py`·`observability.py`·契约本体·评测夹具） | `be-r659`（基点 `96763c4`，本席现建，`.venv` Junction 已挂） | 🟡 **在途**（11:1x 现取 `dirty=0`＝在核对判据出处） | 11:1x |
+| `Banach`（本班·已结案） | 席位唯一键＝agent_id（上一班名册在册） | **R657** 首屏那一格口径串与契约两格同批改口（作废 blocker `wire_first_text_not_recorded`） | `be-r657` | ✅ **已并树 `dfc75f0`**：基点 **127/0** → state① **2 failed/125 passed** → state② **1 failed/126 passed**。🔴 自报「并树即回绿」被本席亲跑推翻一半——`r523` 回绿、`r645` 刀③ 仍红（escape 集空，两枚不变式互斥）⇒ 遗留下单 **R664**；已 close 让槽 | 11:0x |
+| `Tesla`（本班·已结案） | 席位唯一键＝agent_id（上一班名册在册） | **R658** R650 的同批伴侣（三枚过期牙改挂新形状，红线＝两堆必须一起并） | `be-r658` | ✅ **已并树 `96763c4`**（与 R650 同批，三态 285/0→300/0→300/0）；已 close 让槽 | 11:0x |
+| `Pauli`（本班·死席） | 席位唯一键＝agent_id | **R654** 格② 热集让路驱动件按 §120 重写 | `be-r654`（基点 `8a52c5c`） | ⛔ 死于 `429 Too Many Requests`，零写入已取证（`dirty=0`／`untracked=0`／`rev-list --count 8a52c5c..HEAD`=0）⇒ 已 close 让槽；**R654 未落地**，派工词 `%TEMP%\eb104\dispatch\R654.txt` 等槽位复投（非双投） | 11:0x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -2715,7 +2721,7 @@ H11（重启容器真拿 GPU）· H12（`docker compose build migrate`）· H13�
 
 - 接手 HEAD `141f52a`，脏项只有 `chroma_db/**`（6 项）+ §29.6 垃圾清单 ⇒ **没有任何一笔产品代码游离在未提交态**。业主开场点名的 be-r20/be-r53 两笔经核**早已并树结案**（`6d03788` / `5984696`），盘上只剩未跟踪垃圾 `probe.txt`、`*.r57bak`×2 ⇒ 无需抢救。
 - 上班欠的两笔已补：看板 §4AQ.9 在盘未提交 ⇒ 代提交 `9ebddad`；L2094 flake 旧归因 + §4AQ.6"只在分支测过"的缺口 ⇒ 随 `2100185` 一并改写。
-- 🔴 **事故 #27（上班 18:5x 自报，本班核实零副作用）**：把 `send_input` 误写成 `automation_update`，参数校验当场拒。实取 `%USERPROFILE%\.codexutomationsutomation-2utomation.toml` mtime 仍为 **09-17 20:23:22**、`target_thread_id` 仍指死线 `01a0acfb` ⇒ **心跳没被碰过**，业主"别执行心跳"的口令未被违反。
+- 🔴 **事故 #27（上班 18:5x 自报，本班核实零副作用）**：把 `send_input` 误写成 `automation_update`，参数校验当场拒。实取 `%USERPROFILE%\.codex\automations\automation-2\automation.toml` mtime 仍为 **09-17 20:23:22**、`target_thread_id` 仍指死线 `01a0acfb` ⇒ **心跳没被碰过**，业主"别执行心跳"的口令未被违反。
 
 ### 4AR.2 基线：主树缺口补测（这条是本班的先决条件）
 
@@ -4290,7 +4296,7 @@ R193 `Newton`（越权矩阵，**这是唯一真压着 V1 宣布的一条**）·
 
 - **#45 的半条**：12:5x 两枚 `spawn_agent` 各报一次 `collab spawn failed: CreatePipe(...): No such file or directory (os error 2)`（投 **R205b**、**R206**，均在 `close_agent` 之后）。本班 13:0x 用"`git status --porcelain` 空"取证成"零写入 = 未落地"。
 - **#46 = 那个取证结论错了**：13:3x 实取 `be-r206` 里已有 **254 行在写**（`retrieval_pipeline.py` +150 / `nodes.py` +94 / 新件 `tests/test_r206_caliber_quotes.py` 18 KB，mtime 13:35:13 仍在动），`be-r205b` 有 13:04:12 的一批 `__pycache__/*.pyc` ⇒ **两枚投递都落地了，回执报错在先、开工在后二十多分钟**。总控因为信了"未落地"，把 R206 的另一半写进了**同一棵树**。
-- **损害归零（操作，不是结论）**：`git apply --3way` 之后 `git diff --stat` 里冒出 104/150 这种对不上自己改动量级的数 ⇒ 立刻停手；全量取证存 `%TEMP%e-r206-full-1336.patch`；`git restore --staged --worktree` 退主树；新件搬 `%TEMP%`；另起 `be-r206a`（基点同为 `8ab60cc`）重落自己那一刀。**主树全程没收到那半件在制品。**
+- **损害归零（操作，不是结论）**：`git apply --3way` 之后 `git diff --stat` 里冒出 104/150 这种对不上自己改动量级的数 ⇒ 立刻停手；全量取证存 `%TEMP%\be-r206-full-1336.patch`；`git restore --staged --worktree` 退主树；新件搬 `%TEMP%`；另起 `be-r206a`（基点同为 `8ab60cc`）重落自己那一刀。**主树全程没收到那半件在制品。**
 - **三条新规矩**：① 投递报错后的取证**必须两次、间隔 ≥20 min**，并看 `__pycache__` mtime——一次空 `git status` 判死等于把活 Agent 当死的；② 总控下场前先对目标树做"独占声明"（两次 status + mtime 排序），mtime 在两次读取之间走过就搬新树；③ 改动量级与自己写的不符 ⇒ 先取证再回退，不许"顺手一起提交"。
 - **R206 正式分家**：落地那枚继续 **R206b 逐字保真**；总控交 **R206a 派工**（`be-r206a`）。合并顺序先 a 后 b。
 - **同格另记（运行时确实自愈了一半）**：13:2x 投 R212（`Epicurus`/`Noether`）一枚落地并**已交回**（见本节第五段）。`CreatePipe` 那两枚的归因仍是**未证**。
@@ -6912,3 +6918,16 @@ C 门三格现状：①越权 0 条＝**未验**（R481 口径；R487 只到账�
 - **门的账没被本笔翻绿**：A① 与一切 p95 时延读数仍按 GO 纸那句标「污染·不可采信」（`preflight-p20` 的 `env_flags` 与 `gpu_apps`/`foreign_python` 两格本夜设计为 FAIL）。阶段 A 只许按已钉口径记账；C／D／B／E 各格是否翻绿由下一班逐条对 `night1005b-readout.txt` 与本节数字判，不许抄本节当结论。
 - **下一夜该收的两格**（本夜不收，避免与跑分争资源）：① R60 判据④ 的**生产库现取**（现网两枚旋钮与 `_write_batch` 的 R60 早退分支静态可证「新行只落 PostgreSQL」，但计划书 §16 要求账面写「停写未做」，缺的就是演示库那一遍现取；要一发写＋一发删＋逐字节复位 1008 枚）；② S1 观察窗（三枚容器 `printenv INDEX_BACKEND` 全 pgvector 且无人拨回、`rebuild_index.py --status` 两腿差只增不减）。
 - **待派三枚在 `%TEMP%\eb104\dispatch\`**：R654（格② 热集让路驱动件重写）／R656（`TRACE_STORE_PATH` 测试态侧效）／R657（`SLO_METRIC_CALIBER` 首屏 `prerequisite` 新串＋契约两格同批）。仍在途＝`Bacon`/R650（`be-r650`@`f904295`，dirty=4，收窗后由本席亲跑再判）。
+
+
+## 4FC 第十六班（10-05 09:5x–11:1x·总控线·主树 `f2c2f7f`→`8a52c5c`→`df8c123`→`96763c4`→`dfc75f0`·**单模型未切换**·心跳一枚没碰·automation-2 仍 `PAUSED` 且仍指死线程属业主）：四组门读数同时有名有姓（A① 可判达／A② 红四枚点名／A④ 同码零退化但跨代次量不到）· 双写召回腿跑成（Chroma 侧 24 题空召回）· 全量门 48 枚红＝46 派生漂移＋1 枚 P1 · 🔴 R657 执行层自报「并树即回绿」被总控亲跑推翻，`r645` 刀③ 遗留待裁 R664 · 🔴 新操作学：**关掉已完成席位才回并行名额**
+- **门读数（本席亲跑量具，非转述）**：A① 问答类 p95 run22 **50.1 s**／run23 **50.1 s**、停表帽命中 0 枚（帽 300.0 s），公布读数分析·报告类 85.5／85.6 s、整表 67.6／63.8 s ⇒ **按业主已裁口径可判达**；A② 在册七枚合取 **102/105**、②原文两格 **104/105**，红四枚＝`chart-01`·`tool-04`（各只发 1 帧）、`data-12`（2858 字一帧）、子集窗 `chart-04`（`missing_chars=1258`，全表窗同题 64 帧全绿 ⇒ 形状相关）⇒ **不翻绿，欠代码 → R662**；A④ run22→run23 五项指纹全等＝同码复跑，翻分 8 枚全「答得不同」、**退化格 0 格**、rc=4（跨代次对子 0 枚 ⇒ 记「量不到」）；A③ ✅（H11）。
+- **双写召回腿**：135 题／67 题 top-5 不一致／**Chroma 侧 24 题空召回**（PG 侧均给 5 条），`drift` pg 1008／chroma 1008／零差集 ⇒ R60 停写退役的正面论据。正解记法：镜像无 `tests/fixtures`，须 `docker cp` 到 `/tmp` 再 `--fixture`。
+- **🔴 P1 立案并派出（R661／`Lovelace`）**：trace 落盘体量压在 SSE 临界路径——`tests/test_r149_sse_text_pieces.py` 只在主树红（`data/traces/events.jsonl` 32,038,850 B），影子树 24,498 B 全绿，移走 3/3 绿、复制回 3/3 红；物证隔离 `%TEMP%\eb104\trace-quarantine-20261005\`，**主树那本无损移走，别删**。
+- **🔴 执行层假话一枚（本席亲跑抓出）**：`Banach`／R657 自报「并树即回绿」只兑现一半——`r523` 回绿、`r645` 刀③ 仍红（escape 集空：原地改 §4b 与「纯追加」两枚不变式互斥）⇒ 需新单裁定，拟号 **R664**；不许改钉／摘牙／revert 代码面。
+- **🔴 并行名额的真实机制**：`agent thread limit reached` 是被**已结案未 close 的尸体席位**占掉的，不是 provider 天花板。实测关 2 席⇒连投 2 枚成功。⇒ **每班开工第一动作＝关死席与结案席**，并行度按 3–4 枚用；本班 R660／R661 首投各触闸一次，均取证零线程后再投（按首次成功投递记账，非补投）。
+- **并树三态亲跑数**：R650＋R658 `96763c4`＝基点 **285/0**（99.25 s）→ state① **300/0**（115.89 s）→ state② **300/0**（112.86 s），牙件 35→39、GONE 0、三对 sha256 亲自比等；R657 `dfc75f0`＝基点 **127/0** → state① **2 failed/125 passed** → state② **1 failed/126 passed**。
+- **🔴 开窗前置**：镜像 provenance 现在 **FAIL**（`df8c123` 动了镜像带的 `scripts/audit_plan_ticket_ledger.py`，label 仍 `9556513`）⇒ 傍晚有网时必须 `docker compose --env-file deploy/.env.server build migrate`＋`up -d --force-recreate backend worker scheduler`，再现读 PASS。夜队列 `night1005d_queue.py` 已改 **只测不建**（verify-only，不干净就 ABORT 停）。
+- **V1 口径唯一事实源（本席 11:1x 亲跑尺子 RESULT=PASS／rc=0）**：在册 43 号＝LANDED 24／**PARTIAL 16**／CLOSED 1／ZERO 0／FOREIGN 1／NOTBUILT 1；「产物在树」读法未清 **0** 号，「判据全达」读法未清 **16** 号。
+- **业主侧仅剩**：`git push gitee HEAD`（今天已 3 笔未推）、删除清单（`be-r60ctl`／`be-r602b`／`.tmpfix`）、`chroma_db` 反跟踪、`automation-2` 仍 PAUSED 指死线程。
+- **下一格动作**：盯 `Hilbert`／R660 交卷逐族复验→两态并树；立并派 **R664**（`r645` 刀③）与 **R662**（A② 四枚单帧行）、**R663**（r428 热集让路驱动件按 §120 重写）；`Pauli`／R654 死席的派工词 `%TEMP%\eb104\dispatch\R654.txt` 等槽位。
