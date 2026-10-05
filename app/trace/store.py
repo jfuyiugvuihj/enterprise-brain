@@ -63,6 +63,19 @@ and the writer gives the number up, takes another from the tables, and tries aga
 ``SEQUENCE_ATTEMPTS``. An event that still cannot win a number is recorded out of the number
 book exactly as R263 records an unconfirmed one, because that is what it has become: a body
 whose address the tables refuse, waiting for the settlement sweep to give it one.
+
+A sixth claim belongs here, because the five above are only worth what one event can pay for.
+``_file_sequence_floor`` used to answer "what number has this journal already handed out for
+this trace" by reading and parsing the whole append-only file. That is the whole journal's
+size, charged to every event -- measured here at 15.7 ms per recorded megabyte, per event --
+so a journal grown to 32 MB cost half a second before the first characters of an answer
+reached the client, and the per-piece SSE stream turned into one lump at the end (R661; the
+event being paid for is ``app/api/v1/chat.py::_FirstVisibleTextMark.note`` taking its number).
+The floor is now folded forward from a byte cursor: one ``stat`` plus whatever bytes the file
+has gained since the last fold, with a bounded seed window for a store that opens a journal
+already larger than that window. The rule is unchanged -- ``max(pg, file) + 1`` -- only how
+the file half of it is obtained, and the seed window is the one thing this file can no longer
+prove, which ``_file_sequence_floor`` says out loud rather than folding into a zero.
 """
 
 import json
@@ -152,6 +165,15 @@ ID_TAKEN_SEQUENCE_STATEMENT = (
 #: a longer journal is drained over more than one sweep and each report names what is left.
 BACKFILL_LINES_PER_SWEEP = 2_000
 
+#: Bytes of the journal a store folds into its sequence floors the first time it looks at the
+#: file. A constant rather than a fraction of the journal: an event can only collide with a
+#: number this journal has already handed out for its own trace, and on an append-only file
+#: the lines that can still be handed a number again are the ones near the end of it. A
+#: journal no larger than this is folded whole, so the floor is exactly what the old full scan
+#: read; past it the store trusts the six tables for what the window does not reach, which is
+#: what R250 made the tables the ledger for (R661).
+JOURNAL_FLOOR_SEED_BYTES = 1 << 20
+
 
 class TraceStoreError(ValueError):
     """Raised when a trace event cannot be safely recorded."""
@@ -202,6 +224,15 @@ class TraceStore:
         #: rather than a number, so a read cannot recognise it from the rows alone. Bounded,
         #: because a settled line is answered by the tables from then on either way.
         self._durable_provisional_ids: set[str] = set()
+        #: R661 -- trace_id -> the highest sequence this journal holds for it, folded forward
+        #: from ``_journal_floor_cursor`` instead of recomputed from every line in the file.
+        #: Grown only by lines read off the disk, so about every line it has seen it says what
+        #: the full scan said, and about the lines it has not seen it says nothing at all.
+        self._journal_floors: dict[str, int] = {}
+        #: Byte offset of the journal through which ``_journal_floors`` has been folded, or
+        #: ``None`` while this store has not looked at the file. Always a line boundary: a
+        #: partial trailing line is read again, and folding one line twice is a no-op.
+        self._journal_floor_cursor: int | None = None
         durability.set_backend(backend=self._backend_name(), postgres=self.database is not None)
 
     # ------------------------------------------------------------------ backends
@@ -1078,10 +1109,106 @@ class TraceStore:
             return 0, False, f"{exc.reason}: {exc}"
 
     def _file_sequence_floor(self, trace_id: str) -> int:
-        events = [event for event in self._read_events() if event.get("trace_id") == trace_id]
-        if not events:
+        """The highest number this journal holds for one trace, without reading the file.
+
+        ``max(pg, file) + 1`` is still the rule (R250); what changed is where the file half
+        comes from, and the reason it matters is that ``record_event`` asks for a number on
+        **every** event. Reading the whole journal there charged the person waiting for an
+        answer for the size of a file that is never deleted -- settled lines stay in it by
+        R257's design -- and the shape of that cost was measured, not argued: 0 B folded in
+        0.1 ms, 1 MB in 12.5 ms, 8 MB in 75.4 ms, 32 MB in 501.8 ms, with the second visible
+        frame of an answer arriving 0.19 s after the first at 32 MB instead of 0.5 s after it.
+
+        What the bounded seed does not prove, stated rather than hidden: a trace whose every
+        journal line is older than ``JOURNAL_FLOOR_SEED_BYTES`` and which this process has not
+        written to reads a floor of 0 where a full scan would have read its number, and two
+        lines carrying the same ``{trace_id}:{sequence}`` is precisely what the floor exists to
+        prevent (``_merge_events`` keys by that pair, so a duplicate costs a replayed event).
+        Reaching that takes three things at once -- the tables unreachable for the whole of it,
+        another process having written those lines, and the trace lying idle behind a window of
+        journal activity -- and it is the window, not the file, that bounds it.
+        """
+        self._fold_journal_floors()
+        return self._journal_floors.get(str(trace_id or ""), 0)
+
+    def _journal_size(self) -> int:
+        """Bytes in the journal, or 0 when there is no file. Reading this never creates one."""
+        try:
+            return self.path.stat().st_size
+        except OSError:
             return 0
-        return max(int(event.get("sequence") or 0) for event in events)
+
+    def _fold_journal_line(self, raw: bytes) -> None:
+        """Take one journal line's number into the floor map, if the line carries one.
+
+        A line this fold cannot read is skipped rather than raised: the write path is asking
+        "which number may I take", and a torn line answers nothing. The read path keeps raising
+        (``_journal_records`` with ``tolerant=False``), because a trace quietly read as shorter
+        than it is would be a lie. That is R257's split -- strict where a silent short read
+        would lie, tolerant where one bad line is no excuse -- and this moves neither side.
+        """
+        if not raw.strip():
+            return
+        try:
+            record = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return
+        if not isinstance(record, dict):
+            return
+        if isinstance(record.get(BACKFILL_RECEIPT_MARKER), dict):
+            # A receipt is not an event and repeats no trace id on purpose (see _journal_records).
+            return
+        trace_id = str(record.get("trace_id") or "")
+        if not trace_id:
+            return
+        try:
+            sequence = int(record.get("sequence") or 0)
+        except (TypeError, ValueError):
+            return
+        if sequence > self._journal_floors.get(trace_id, 0):
+            self._journal_floors[trace_id] = sequence
+
+    def _fold_journal_floors(self) -> None:
+        """Grow the floor map with the bytes the journal has gained, never with the file.
+
+        Reached from ``_next_sequence``, so it runs under the write lock. Three cases, and each
+        one is stated because this ticket is about a cost:
+
+        * the first look at a file no larger than ``JOURNAL_FLOOR_SEED_BYTES`` folds it whole
+          from byte 0, which is exactly what the old full scan read;
+        * the first look at a larger file reads only the window at the end of it, and the
+          partial line that window starts inside is skipped rather than guessed at;
+        * every later call pays one ``stat`` plus one read of whatever has been appended since
+          the last fold -- by this process or by another, which is why the fold tracks bytes
+          rather than simply remembering the numbers this process handed out.
+
+        A file that has shrunk under the cursor was rotated or truncated, so nothing folded
+        from bytes that are no longer there is worth standing behind: the map is rebuilt from
+        the same bounded window.
+        """
+        size = self._journal_size()
+        cursor = self._journal_floor_cursor
+        if cursor is None or size < cursor:
+            self._journal_floors = {}
+            self._journal_floor_cursor = cursor = max(0, size - JOURNAL_FLOOR_SEED_BYTES)
+        if size <= cursor:
+            return
+        try:
+            with self.path.open("rb") as handle:
+                handle.seek(cursor)
+                chunk = handle.read(size - cursor)
+        except OSError:
+            # Nothing readable behind the cursor. Leave it where it is: a file that comes back
+            # is then read from a line boundary rather than from inside one.
+            return
+        consumed = chunk.rfind(b"\n") + 1
+        if not consumed:
+            # Not one whole line yet. Folding half a JSON object would be inventing a number,
+            # so the cursor does not move and these bytes are read again.
+            return
+        for raw in chunk[:consumed].split(b"\n"):
+            self._fold_journal_line(raw)
+        self._journal_floor_cursor = cursor + consumed
 
     def _local_only_gap(self, run_id: str, durable: dict[str, tuple[str, str]]) -> dict[str, Any]:
         """The journal lines this run holds that the six tables do not, counted and dated.
