@@ -2,7 +2,7 @@
 
 版本：2026-10-05-**r4**（取代同日 r3；r3 取代 2026-09-22-r2，也取代仓内 `docs/version-roadmap-and-next-week-plan-2026-09-22.md`）
 文档性质：V0–V5 的功能边界（长期有效）＋ 截至某一代次的完成现状（易失效，失效条件见 §0.4）
-读数代次：主树 HEAD `12aa93c`，分支 `codex/data-file-catalog`，2026-10-05 18:2x +08，总控现取（r3 那句 `c4ec463` 已隔 12 枚提交，属过期账）
+读数代次：主树 HEAD `1668ff0`，分支 `codex/data-file-catalog`，2026-10-05 19:2x +08，总控现取（`12aa93c`／`9efff02` 之后的两笔全是 docs-only；r4 那句 `12aa93c` 从此属过期账）
 编制口径：**每条现状后面跟着一条可复制的现取命令**；拿不出命令的句子一律不写。旧版的百分比完成度全部作废。
 
 ## 0. 这份文档为什么必须重写
@@ -81,7 +81,7 @@
 | 台账搬运成本 | 跟进单 1,335,486 B／7,577 行；看板 7,050 行——**每班整本重读**，这是病根，处置见 `docs/engineering/multi-agent-project-rules-2026-10-05.md` | `Get-Item docs/handoff/2026-09-15-backend-followup-requests.md` |
 | 向量库 | 全库 **1008** 枚向量在位；双写 **on**；读路径 **pgvector**（容器现值）；**停写未做**（R60）；双写召回腿 135 题里 **67 题 top-5 不一致**、Chroma 侧 **24 题空召回**、`drift` 零差集＝今夜 r58-recall 复核仍成立 | `docker exec enterprise-brain-backend-1 printenv INDEX_BACKEND`、`docker exec enterprise-brain-postgres-1 psql -U postgres -d enterprise_brain -c "select count(*) from chunk_vectors"` |
 | 生产开关现值 | `INDEX_BACKEND=pgvector`／`VECTOR_DUAL_WRITE=on`／`REPORT_LANE_VIA_QUEUE=off`／🔴 `OLLAMA_REQUIRE_GPU` **未设**（`printenv` rc=1＝fail-open）／`MODEL_CONTEXT_TOKENS=8192`／`MODEL_MAX_CONCURRENCY=1` | `docker exec enterprise-brain-backend-1 printenv <键名>`（键名查，别记行号） |
-| 镜像代次 | label `org.opencontainers.image.revision`=**`unknown`**（傍晚那次 build 没带 `GIT_SHA`）⇒ 今夜带戳重建 `12aa93c`＋`--force-recreate`，否则带 2 量的是旧码 | `docker inspect enterprise-brain:local --format "{{json .Config.Labels}}"`、`python scripts/check_image_provenance.py` |
+| 镜像代次 | label `org.opencontainers.image.revision`=**`9efff02585a2feb659784991feace7d83445bc54`**（18:57 带 `GIT_SHA` build、19:0x `--force-recreate backend worker scheduler`、`scripts/check_image_provenance.py` 交 **PASS／DOCS-ONLY**）⇒ 今夜带 2 量的就是含 R662 的这一代 |
 | 评测集 | **105** 题，题源 `tests/fixtures/business_evaluation_100.jsonl` 一字节未动且被 `tests/test_evaluation_report.py` 钉着；改题收尾＝19 枚全丙、零改题 | `python scripts/check_eval_evidence_coverage.py`、`python scripts/r598_shard_sync.py --check` |
 | 今夜真机窗（带 1，不判延迟） | run24s1／24s2／24s1b／24s2b／24s1c／24s2c 六扇收窗 rc=0；三扇 on 相的 `r573-A2` 逐枚 **rc=2**（D 门取不到数，根因＝量具 R678）；r58-recall rc=1＝量具设计内的「不能翻」读数；R575 备份—恢复演练 rc=0（62.3 s） | `%TEMP%\evalrun\night1005d.log`、`night1005d.ledger.jsonl` |
 | 在途执行层 | `Erdos`／R662（A② 四枚单帧行，写域含 `chat.py`＋`nodes.py`）；`Bohr`／R666 与 `Zeno`／R672 已验收并树、已 close 腾槽 | 看板 §0 名册行 |
@@ -140,7 +140,7 @@ V1 明确不做（不变）：PDF 表格识别、复杂 Word 表格结构化、E
 | R26 | ② 丢卡必须显式报错 | **没达** | `app/common/model_capabilities.py::require_gpu_enabled` 未设即 fail-open；容器 `printenv OLLAMA_REQUIRE_GPU` **rc=1** | 翻 `OLLAMA_REQUIRE_GPU=1`＋recreate＝**改生产行为**（待业主），语义钉＝**R673** | 业主＋我 | 30–60 分 |
 | R27 | ③ 端到端 −≥35 s | **达**（账未落） | 160.552 s 基线 → 问答类 p95 **50.1 s**（`scripts/r595_latency_readout.py`，run22／run23 两窗互证，代次 `9556513`）＝−110.4 s | 把这一格的达落进账尺＝**R686** | 子 agent | 15 分 |
 | R28 | ③ 30 题评测不退化 | **量不到** | `scripts/r634_category_delta.py`：run22→run23 五项指纹全等＝同码复跑，要的**跨代次对子 0 枚**（rc=4） | 今夜带 2 四扇同码窗＋12 枚对子 | 我＋窗 | 一夜一窗 |
-| R31 | ② 逐片时间戳不重叠、逐字无缺字 | **没达** | 在册七枚合取 102/105；红四枚有名有姓＝`chart-01`／`tool-04`（各只发 1 帧）、`data-12`（2858 字一帧）、`chart-04`（missing 1258／extra 36，只在 33 题子集窗炸＝形状相关）；帧账 `run22-sidecar-frames.jsonl` 可离线复演 | **R662 在飞**（`Erdos`） | 子 agent | 0.5–1 人日 |
+| R31 | ② 逐片时间戳不重叠、逐字无缺字 | **没达**（R662 的码已于 19:0x 并树 `9efff02`，两态各 697 passed／0 failed／15 skipped＝140.23 s／138.63 s；🔴 这一格仍是没达——分片复演不等于真窗，翻绿要带 2 读数） | 在册七枚合取 102/105；红四枚有名有姓＝`chart-01`／`tool-04`（各只发 1 帧）、`data-12`（2858 字一帧）、`chart-04`（missing 1258／extra 36，只在 33 题子集窗炸＝形状相关）；帧账 `run22-sidecar-frames.jsonl` 可离线复演 | **R662 在飞**（`Erdos`） | 子 agent | 0.5–1 人日 |
 | R35 | ② 跨部门／跨密级 0 条命中（P0） | **量不到** | 生产库 `department`／`classification` 全空；沙盒 252 枚合成标签只证行为、**不证客户隔离**（业主 A3 已裁「交付阶段按客户真实密级做」） | 判据已改写成四件可失败判据并记「未验」；不许拿合成标签翻绿 | 客户交付阶段 | — |
 | R37 | ③ 队列失败有终态与原因码 | **达**（账未落） | 🔴 推翻上一班「R227 后一次没重量」：R585 已并树 `1f0f0f2`；八处 `fail_or_retry` 逐枚点开＝七枚稳定码＋一枚 `str(e)`（`deploy/queue_worker.py::_process_reserved` 收尾，例外另立 **R675**）；在册牙亲跑 99 passed／0 failed／37.39 s | 落进账尺＝**R686** | 子 agent | 15 分 |
 | R38 | ③ 抽查一问 `input_tokens/output_tokens` 非零且与 Ollama 自报一致 | **没达** | `/ask` 有行非零（3955／245／467，cached 467／369／493）；🔴 `/chat` 打完模型**不落 `model_calls` 行**，`metadata` 只 `{"worker":"doc"}`、没存原始 usage | **R670**（写域含 `chat.py`⇒必须等 `Erdos` 收席） | 子 agent | 0.5 人日 |
@@ -162,7 +162,7 @@ V1 明确不做（不变）：PDF 表格识别、复杂 Word 表格结构化、E
 | 门·格 | 三态 | 量具 | 现取读数 | 代次 | 解锁这一步 |
 |---|---|---|---|---|---|
 | A① 端到端时延 | **达**（口径＝只认问答类 n=64 ≤90 s，整表只公布不判；口径未定死之前阶段 A 不许整体翻绿） | `scripts/r595_latency_readout.py` | 问答类 p95 50.1／50.1 s（两窗互证）、停表帽命中 0；公布读数分析·报告类 85.5／85.6 s、整表 67.6／63.8 s | `9556513` | 带 2 四扇同码窗复算 |
-| A② 流式逐字无缺字 | **没达** | `scripts/r573_caliber_reconciliation.py` | 在册七枚合取 102/105、②原文两格 104/105；红四枚点名见 §4 R31 行 | `9556513` | R662（在飞） |
+| A② 流式逐字无缺字 | **没达** | `scripts/r573_caliber_reconciliation.py` | 在册七枚合取 102/105、②原文两格 104/105；红四枚点名见 §4 R31 行 | `9556513` | R662 **已并树 `9efff02`**（生产者可成形答复补逐片＋收端挂起说明屏放行逐片帧，两态各 697／0／15）⇒ 解锁只剩带 2 真窗复跑，影子复演不算翻绿 |
 | A③ 有卡可见／丢卡必报错 | **没达**（旧写法「半格」不精确） | `docker exec … printenv`＋`app/common/model_capabilities.py::require_gpu_enabled` | ollama 容器 `nvidia-smi` 交 RTX 4060 Laptop 8188 MiB ✅；`OLLAMA_REQUIRE_GPU` 现取**未设**（rc=1）＝fail-open，正是判据③要禁止的形状 | 10-05 现取 | 设 true＋recreate＋跑一次「卡不可见必报错」＝R673（改生产行为，待业主） |
 | A④ 逐类不退化 | **量不到**（不是「达」） | `scripts/r634_category_delta.py` | 跨代次对子 **0 枚**（rc=4）；run22→run23 指纹全等＝同码复跑；历史教训＝run4 抓到过一次真退化（文档问答 0.6842→0.6316，`doc-19` 一枚），run5 收回 ⇒ 这句只能算「有条件成立」 | `9556513` | 今夜带 2 四扇＋12 枚对子 |
 | B 上卡定档 | **移出 V1**（账尺已进 `OUT` 档，不再挂欠账） | — | 本机地板 11.0 s；「首屏 ≤1 s」前提＝换档位／引擎，与 V1「只管理本机 Ollama」冲突 | 计划书 09-24 裁定 | 给客户报档位时属交付实施 |
