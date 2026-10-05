@@ -1409,8 +1409,10 @@ SLO_METRIC_CALIBER: dict[tuple[str, str], SloSlotCaliber] = {
         reader_path="scripts/eval_slo_wire_readout.py",
         prerequisite=(
             "①R453 名册要先新增一枚首屏格：`first_visible_ms` 是别的东西，拿它顶这格＝走私；"
-            "②产品侧 wire 事件仍不落盘（blocker `wire_first_text_not_recorded`），本格的凭据是"
-            "采集器那一侧的外部观察，读数本必须这么署名；③还没有一枚按 `text` 挑第一枚的在册读数件"
+            "②wire 首屏今天已落账也可读回（`app/api/v1/chat.py::_record_wire_first_text` 记账＋"
+            "`app/api/v1/observability.py::wire_first_text_readout` 读回，R649 已并树），"
+            "blocker `wire_first_text_not_recorded` 已从 §6 那本名册摘掉 ⇒ 本格不再欠「量得到」这一件；"
+            "③仍欠两件才谈落数：还没有一枚按 `text` 挑第一枚的在册读数件，且样本量没到 `MIN_SLO_SAMPLES`"
         ),
         reference_readout="docs/testing/sidecar-run9-frames.jsonl",
         reference_field="events",
