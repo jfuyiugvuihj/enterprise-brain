@@ -657,8 +657,10 @@ LEDGER_A = [
                          A("af027ce", "R26b 施工"), A("6ee2f79", "R26b 并树")],
       [S21(26, "①")], "②③④ 已落码，① 卡业主 H11 真机",
       note="本单产物全在拆单子号 R26a/R26b 名下；按裸号字面 grep 判它「没动过」是方法错（第三十六班已把这条写进规矩）"),
-    T("R27", "PARTIAL", [A("ce0b041", "施工"), A("6a4f02b", "并树")],
-      [S21(27, "③")], "③ 端到端 −≥35 s 等 A 门"),
+    T("R27", "LANDED", [A("ce0b041", "施工"), A("6a4f02b", "并树")],
+      [], "③ 端到端 −≥35 s 量到达：基线 160.552 s → 问答类 p95 50.1 s（降 110.4 s ≥ 35 s）；"
+          "量具 scripts/r595_latency_readout.py，run22 与 run23 两窗互证，读数代次 9556513；"
+          "凭据 docs/testing/v1-cell-closeout-2026-10-05.md 的 R27③ 一节（10-05 结算，R686）"),
     T("R28", "PARTIAL", [A("d2566e1", "施工"), A("1c0b08b", "并树")],
       [S21(28, "③")], "③ 30 题不退化等 A 门"),
     T("R29", "OUT", [A("62c734d", "施工", "tests/test_r29_thinking_tax.py"), A("791568c", "并树")],
@@ -680,8 +682,14 @@ LEDGER_A = [
       [S21(35, "②")], "② 跨部门／跨密级 0 条命中待 C 门矩阵"),
     T("R36", "LANDED", [A("ef3d193", "施工", "tests/fixtures/business_evaluation_100.jsonl"), A("ac44d00", "并树")],
       [], "评测集 105 条在树，①②③ 达"),
-    T("R37", "PARTIAL", [A("45b9720", "worker 半程", "deploy/queue_worker.py"), A("0c08209", "并树")],
-      [S21(37, "③")], "产物在树、开关默认关；③ 终态原因码由 R227 改码后未重量"),
+    T("R37", "LANDED", [A("45b9720", "worker 半程", "deploy/queue_worker.py"), A("0c08209", "并树")],
+      [], "③ 队列失败有终态与原因码 量到达：量具 R585（并树代次 1f0f0f2）——"
+          "app/common/reliable_queue.py::fail_or_retry 真落 dead 那一支把 {reason, retryable} 排在写状态键之前进账；"
+          "deploy/queue_worker.py 八处调用点逐枚点开＝七枚稳定码＋一枚 str(e)（收尾兜底那枚在 "
+          "deploy/queue_worker.py::_process_reserved，例外另立 R675，不计进本格欠账也不拿它挡判达）；"
+          "在册牙三件 tests/test_r585_dead_terminal_reason.py＋tests/test_r545_queue_failure_teeth.py＋"
+          "tests/test_r254_queue_terminal_honesty.py，读数 99 passed／0 failed／37.39 s；"
+          "凭据 docs/testing/v1-cell-closeout-2026-10-05.md 的 R37③ 一节（10-05 结算，R686）"),
     T("R38", "PARTIAL", [A("c81fbb5", "施工", "app/trace/spans.py"), A("2e6abc6", "并树")],
       [S21(38)], "通路形状已修（原生腿读回 input_tokens、cached 归真）；「抽查一问非零」等真机 D-2",
       note="上一格派工词给的 `40e6789` 在本仓不存在——R38 的真凭据是 c81fbb5＋并树 2e6abc6"),

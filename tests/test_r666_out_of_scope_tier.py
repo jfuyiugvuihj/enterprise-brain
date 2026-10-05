@@ -48,7 +48,7 @@ OFFPEAK = "docs/deployment/offpeak-rebuild-execution-shape-2026-10-05.md"
 PLAN = "docs/handoff/2026-09-17-perf-architecture-plan.md"   # 业主 09-24 门的归属裁定原文（总控 10-05 改判：OUT 出处不许指向总控自己写的版本文档＝双真源）
 MOVED_SOURCES = (ROADMAP, OFFPEAK, PLAN)
 MOVED = ("R29", "R43", "R48", "R50", "R52")
-STILL_OPEN = ("R25", "R26", "R27", "R28", "R31", "R35", "R37", "R38", "R44", "R47", "R51")
+STILL_OPEN = ("R25", "R26", "R28", "R31", "R35", "R38", "R44", "R47", "R51")
 DISCLAIMER = "不算完成"
 CODE_RE = re.compile(r"(?:🔴 )?(C\d+)")
 NAMES = itertools.count()
@@ -204,7 +204,7 @@ def cli(*extra):
     return proc.returncode, proc.stdout.decode("utf-8", "replace")
 
 # ---------------------------------------------------------------------------
-# 账面读数：5 进 11 留，OUT 在册但不是派生档，老三档口径一字未动
+# 账面读数：5 进 9 留（R27③／R37③ 两格已由 R686 结算成 LANDED），OUT 在册但不是派生档，老三档口径一字未动
 # ---------------------------------------------------------------------------
 
 def test_out_is_the_seventh_tier_and_the_old_tiers_stay_in_order(ruler):
@@ -215,17 +215,17 @@ def test_out_is_the_seventh_tier_and_the_old_tiers_stay_in_order(ruler):
     assert ruler.OUT_DISCLAIMER == DISCLAIMER
 
 
-def test_exactly_the_five_named_cells_moved_and_eleven_stay_partial(reading):
+def test_exactly_the_five_named_cells_moved_and_nine_stay_partial(reading):
     assert reading["failures"] == [], "在册台账自检必须全过：" + "；".join(reading["failures"])
     tiers = {row["id"]: row["verdict"] for row in reading["rows"]}
     moved = tuple(sorted(tid for tid, verdict in tiers.items() if verdict == "OUT"))
     assert moved == tuple(sorted(MOVED)), "改判 OUT 的必须正好是工单点名的 5 号：" + repr(moved)
     partials = tuple(sorted(tid for tid, verdict in tiers.items() if verdict == "PARTIAL"))
-    assert partials == tuple(sorted(STILL_OPEN)), "其余 11 号必须仍为 PARTIAL：" + repr(partials)
+    assert partials == tuple(sorted(STILL_OPEN)), "其余 9 号必须仍为 PARTIAL：" + repr(partials)
     assert len(reading["rows"]) == 43, "在册号数不许被本单改动"
 
 
-def test_the_eleven_partials_still_name_their_debt_verbatim(reading):
+def test_the_nine_partials_still_name_their_debt_verbatim(reading):
     for tid in STILL_OPEN:
         row = reading["by_id"][tid]
         assert row["verdict"] == "PARTIAL", tid + " 不该被本单碰"
@@ -257,8 +257,11 @@ def test_out_cells_leave_both_reading_numerators(reading):
     counts = dict((verdict, 0) for verdict in reading["ruler"].VERDICTS)
     for row in reading["rows"]:
         counts[row["verdict"]] += 1
-    assert counts["OUT"] == 5 and counts["PARTIAL"] == 11 and counts["ZERO"] == 0
-    assert counts["LANDED"] == 24, "移出不是判达：LANDED 一枚都不许多出来"
+    assert counts["OUT"] == 5 and counts["PARTIAL"] == 9 and counts["ZERO"] == 0
+    landed = {row["id"] for row in reading["rows"] if row["verdict"] == "LANDED"}
+    assert counts["LANDED"] == 26, "LANDED 只许是 R666 那笔的 24 号＋R686 结算的 2 号"
+    assert {"R27", "R37"} <= landed, "R686 结算的两格必须真在 LANDED 里"
+    assert not set(MOVED) & landed, "移出不是判达：OUT 那 5 号一枚都不许混进 LANDED"
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +272,7 @@ def test_the_cli_singles_out_the_moved_cells_with_the_disclaimer(ruler):
     code, text = cli()
     assert code == 0, text[-800:]
     assert ("## 9. 移出的 5 格（OUT·" + DISCLAIMER + "）") in text, "OUT 进了 CLEARED_TIERS 却不单列＝假账"
-    assert "读法乙（判据全达才算清）：未清 11 号（PARTIAL 11 ＋ ZERO 0）" in text
+    assert "读法乙（判据全达才算清）：未清 9 号（PARTIAL 9 ＋ ZERO 0）" in text
     assert "读法甲（产物在树即算清）：未清 0 号" in text
     for tid in MOVED:
         assert ("- %s ｜OUT ｜移出格：G-" % tid) in text, tid + " 没被单列"

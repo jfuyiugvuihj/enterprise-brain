@@ -273,7 +273,8 @@ def test_the_cli_prints_seven_tiers_and_still_passes():
     code, text = _cli()
     assert code == 0, text[-800:]
     # R666 加了 OUT 档并把 5 格移出：PARTIAL 从 16 降到 11，OUT=5（移出 ≠ 判达，逐格出处在 §9）
-    assert "在册 43 号：LANDED=24 · PARTIAL=11 · CLOSED=1 · ZERO=0 · FOREIGN=1 · NOTBUILT=1 · OUT=5" in text
+    # R686 结算 R27③／R37③ 两格已量到的「达」：LANDED 24→26、PARTIAL 11→9（读法乙未清 11→9）
+    assert "在册 43 号：LANDED=26 · PARTIAL=9 · CLOSED=1 · ZERO=0 · FOREIGN=1 · NOTBUILT=1 · OUT=5" in text
     assert "RESULT=PASS（0 条违规，在册 43 号逐条自证）" in text
     assert "不计入欠账的档：R39 R143 R144" in text
     assert "🔴 账面滞后：本尺派生为 CLOSED" in text, "计划书那行还写「待派」——尺只能报滞后，改表归人"
