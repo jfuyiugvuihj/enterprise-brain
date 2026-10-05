@@ -12,7 +12,7 @@
 |---|---|---|
 | 真欠 10 | R25② R26② R27③ R28③ R31② R37③ R38③ R44① R47① R51② | 达 2（R27③ R37③）· 没达 5（R26② R31② R38③ R44① R51②）· 量不到 2（R28③ R47①）· 没验 1（R25②，码早在树上） |
 | 五格改档 | R29② R43② R48① R50② R52① | 该移出的只有 3（R48① R50② R52①）· R29② R43② 是**账过期**，各立重量单 |
-| 门里另欠 | C① C④ D×3 前端九环＋两张失败脸 R60 停写 R579 索引腿 | 全条**未验／量不到／没做**，一格都没绿 |
+| 门里另欠 | C① C④ D×3 前端九环＋两张失败脸 R60 停写 R579 索引腿 | 本班续席更正：D① **不再是「从没量过」**——`report-01` 单题在容器里六格全 PASS（代次 `fe166c8`），但「报告档 100%」那半与 D② D③ 的**值**仍未验；其余各条仍全条未绿 |
 
 ## 1. 真欠十格
 
@@ -107,11 +107,20 @@
 |---|---|---|---|
 | C① 越权 0 条 | **未验**（不许翻绿） | 生产库 `users.department`／`classification` 全空；R193 那 51 格今日真红 0 但都在沙盒／合成侧；沙盒 252 枚合成标签**只证行为不证客户隔离**；A1／A3／H13 三件 09-28 已结案，欠的**不是代码** | 客户真实密级回填＝交付阶段，本机不可证 |
 | C④ 无依据断言率 | **量不到（零分母）** | `unsupported_claim_rate=0.0`，但三窗 315 行里带 `claims` 键＝**0 行**；本班复核 `run22-answers.jsonl` 首行键集现取＝answer／answer_source／evidence／first_token_at／id／latency_ms／thinking_chars／tool_calls——**没有 claims**（坐实上一班那句） | 欠一枚「把 claims 落进答案件」的量具升级单 |
-| D 报告档三格 | **未验** | `REPORT_LANE_VIA_QUEUE` 仍 off；r573 明写报告档 12 枚**队列可读面键数=0**＝那层从没被测过 | 今晚夜队列带 1 的 1b／2b 两扇就是开关 on 的样本，第一次有机会取到 D 的读面数；跑完必须还原 off |
+| D 报告档三格 | **D① 部分达（1 枚有凭据）· D② D③ 仍未验**（🔴 订正上一班「那层从没被测过」） | 见 **§3.1**：`docs/perf/raw/r561-2026-10-01/summary.json` 交回一次真容器队列道（`final_kind=queued_polled`／六格全 PASS／rc=0，代次 `fe166c8`）；但带 1 那两扇「on」窗是**废样本** | 见 **§3.1** 末两条：今晚 on 相补一发 r561 取 `usage`／`sources` 的**值**＋立 **R678** 让传输真发 `lane` |
 | A② 三口径 | **没达** | 见 §1.5：在册合取 102/105，红四枚有名 | R662 交卷＋验收 |
 | 前端九环走查＋两张失败脸 | **没做** | 本班只验过一次界面真实键盘问答（步骤牌＋来源卡＋正文逐帧长出）＋SSE 经 nginx 帧账（0s status→3.8s step→15.1s heartbeat→20.4s 起 21 枚 text 帧单调增长→done）；九环清单**没逐项打勾**；embedding 缺失／无 GPU 两张失败脸没拍 | 子 agent 开窗逐环拍图（不占本机模型窗，走浏览器） |
 | pgvector R60 停写 | **没达** | 双写召回腿已跑成：135 题里 **67 题 top-5 不一致**、**Chroma 侧 24 题空召回**（PG 侧均给 5 条）、`drift` 零差集＝停写的正面论据；但停写前置量具 r633 五枚要先重锚（=R672） | R672（Zeno 在飞）→ 再 R60 |
 | R579 索引腿 | **没达** | 生产现网 1008 枚上规划器**根本不选 HNSW**：`EXPLAIN ANALYZE` 交 `Seq Scan on chunk_vectors`＋top-N heapsort ≈2.4 ms，禁 seqscan/sort 才走 `Index Scan using chunk_vectors_embedding_idx` ≈44.5 ms（慢 18 倍），`pg_stat_user_indexes` 里该索引 `idx_scan` 至今 0 ⇒ 那句「PG 索引=精确 105/105」是**平凡真** | R579 量索引腿质量与拐点 |
+
+### 3.1 D 报告档三格：一班之内两笔订正（本班 17:3x–17:5x 现取）
+
+- 判据原文（计划书 D 行逐字，`docs/handoff/2026-09-17-perf-architecture-plan.md::五道验收门` 表内那一格）：「**报告档 100% 完成可查回；`usage` 非零；`sources` 事件在流里出现**」。
+- **订正一（推翻「从没被测过」）**：`docs/perf/raw/r561-2026-10-01/summary.json` 现取——10-01 23:38:33 那一遍是**真容器、真 Redis、开关 on** 的队列道，六格全 `PASS`、`rc=0`：`final_kind=queued_polled`、`queue_reason=report_lane`、`queue_lane_echo=report`、`polls=76`、`wait_ms=230802.9`、growing 段 20 发字符数 19 枚互异单调、caps_zero 两枚上限全 0、终态那一发**不带片段键**且体内 16 枚键含 `usage`／`sources`／`sources_present`／`answer_present`；provenance 那格记 `host_head=fe166c8…` 与两枚容器 `BUILD_INFO` rev 逐字符相等。⇒ **D① 的单题（`report-01`）有凭据**，代次 `fe166c8`；r561 件抬头那句「容器那一遍至今没跑过」与上一班那句「那层从没被测过」**同为过期账**。
+- 🔴 **D① 的「100%」那半仍未验**：那一遍只问了一枚（`--id report-01`，默认单题），12 枚报告题从没在一扇窗里整档走过队列道。
+- **订正二（今晚夜窗的真缺陷·量具不是产品）**：`scripts/eval_transport_ask_v2.py::DECLARE_LANE_TIER = os.getenv("EVAL_DECLARE_LANE_TIER", "").strip()` 缺省**空串**，同文件抬头自陈「历轮跑分里报告档走的一律是同步道：只翻 `REPORT_LANE_VIA_QUEUE` 也不入队，D-1『入队 → worker 跑完 → /queue/status 取回正文』从来没被量到过」。本班 17:3x 现取带 1 已收的两扇「on」窗（`run24s2` 16:58、`run24s2b` 17:33，镜像代次 `b5b67b5`）：12 枚报告题**正文全在**（`answer` 长 99–2884 字），但 `answer_source` **逐枚都是** `eval_transport_ask_v2:transport`、`queued_polled` **零枚** ⇒ 这两扇对 D 门是**废样本**，上一班「1b／2b 就是开关 on 的样本、第一次有机会取数」那句因此不成立。
+- **D② `usage` 非零／D③ `sources` 在流里**：`summary.json` 只留下终态体的**键名**、没留**值**，`polls.jsonl` 那批逐发回执不在盘上（`docs/perf/raw/r561-2026-10-01/` 现取只有 `summary.json` 一枚）⇒ 两格仍**未验**，不许拿「键在场」冒充「值非零」。
+- 本班动作：① 已下探针 `evalrun::lane_probe_1005.py`——**按状态触发不用钟**（等 `.env.server` 那行真变 on 且队列日志出现 `BACKEND-READY recreate-on*-ready`，再落定 90 s 让 recreate 真落地，因为实测容器取到值要 20.4／36.0／40.7 s），在下一枚 on 相里跑 `scripts/r561_queue_lane_piece_readout.py --id report-01` 取 `usage`／`sources` 的**值**；探针不碰开关、不动容器，19:30 之后拒绝起跑以免撞带 2。② 立 **R678**：让带 on 相的窗真入队——给传输设 `EVAL_DECLARE_LANE_TIER=报告`（或走 R632 那枚 `EVAL_RECORD_LANE_READOUT`：只抄服务端档位读数、不改载荷不换代），把 12 枚报告题的队列可读面一次取全。
 
 ## 4. 要业主出手的（本班不自作主张，共三件）
 
@@ -132,10 +141,11 @@
 | R675 | R37③ 那条点名例外：`queue_worker.py` 收尾兜底传 `str(e)` 改稳定码 | 待派（小单） |
 | R676 | R47① 零分母处置（甲加题／乙改形状，等裁） | 等业主 |
 | R677 | R44① 热集让路驱动件（与在册 R663／R654 同源，先对写集择一） | 待派 |
+| R678 | D① 的「100%」半格＋D② D③ 的**值**：夜窗 on 相必须让传输真发 `lane`（`EVAL_DECLARE_LANE_TIER`）或用 `EVAL_RECORD_LANE_READOUT` 只抄读数，12 枚报告题整档走队列道 | 待派（写域 `scripts/eval_transport_ask_v2.py`＋读数件，**不与 R672 的 `app/rag/**` 相撞**） |
 
 🔴 另记 **R667**（在册沿用：R659 item② 语料腿三值化，与 7 枚字面值 `legacy_chroma` 正面互斥，形状同 R664）——本班不改它内容，只登记它仍欠。
 
-🔴 **编号卫生补一句给下一班**：本班 16:5x 现取 docs 里 `R6xx` 最大到 **R668**，所以 R669 起才是空地。上一班在会话里口头浮过 R669／R670／R671 三个号但**一个都没落进 docs**——本班照其原意沿用 R669（R25）与 R670（R38③），并把 R671 留给它本来的 /ask 那笔，**不自带第二套编号**，以免同号双投。
+🔴 **编号卫生补一句给下一班**：本班 16:5x 现取 docs 里 `R6xx` 最大到 **R668**，本班续席 17:4x 再取为 **R677**，故新号从 **R678** 起，所以 R669 起才是空地。上一班在会话里口头浮过 R669／R670／R671 三个号但**一个都没落进 docs**——本班照其原意沿用 R669（R25）与 R670（R38③），并把 R671 留给它本来的 /ask 那笔，**不自带第二套编号**，以免同号双投。
 
 ## 6. 本班记的两笔自己的错（不藏）
 
