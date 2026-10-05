@@ -27,6 +27,18 @@
   4. 语料面只走注入的连接与快照：非沙盒库名且没给开窗责任人 ⇒ 连一次都不许连就按 2 号收；
      会话不是 READ ONLY ⇒ 按 2 号收；`--chroma-dir` 指现役卷 ⇒ 复用 r626 那枚判据按 2 号收。
   5. 退出码语义：1 号只允许由"检出发现"发出，3 号是"语料面未取数"而不是绿，产物落仓外。
+
+R658 把第 3 格里语料腿那几枚牙**改挂**（过期的是"搬家前的形状"，不是盘面状态——本件从头
+到尾只看源码派生，一枚 git 探针都不落）：R650 把遗留回执从
+`retrieval_pipeline.py::build_index` 搬进具名方法 `_legacy_corpus()`，并让调用方对配置性拒答
+当场具名抛 ⇒ `read_corpus` **合法地**离开 `waiters`，而腿本身仍在名册上、吞点也还在。
+于是本文件补两把新刀，钉住"今天的归 0 是真行为、不是量具漏看"：
+  * S1 反向刀：把调用方那枚具名抛改回"退回问遗留目录"（全库 get() 回到 build_index 身上）
+    ⇒ read_corpus 必须重新出现在 waiters 里，read_leg_waits_for_chroma_receipt 必须重新点名它；
+  * S2 形状刀：只把那枚具名方法改名 ⇒ waiters 那一格照旧是空的，但在册三元组的第三格对不上
+    （钉的是名字，不是"waiters 空不空"）。
+两把刀与正控共用同一套派生机械（`corpus_reading(..., bite=False/True)`）；正控按刀各配一枚、
+刀口不落（edits=()），必须先绿，红才算被咬中。
 """
 
 from __future__ import annotations
@@ -62,8 +74,22 @@ RECALL_PATH = REPO / "scripts" / "compare_vector_recall.py"
 PROBE_PATH = REPO / "scripts" / "r626_legacy_engine_silent_empty_probe.py"
 RETRIEVER_PY = REPO / "app" / "rag" / "retriever.py"
 PG_STORE_PY = REPO / "app" / "rag" / "pg_store.py"
+PIPELINE_PY = REPO / "app" / "rag" / "retrieval_pipeline.py"
 RETRIEVER_REL = "app/rag/retriever.py"
 PG_STORE_REL = "app/rag/pg_store.py"
+PIPELINE_REL = "app/rag/retrieval_pipeline.py"
+
+#: 语料腿在 R650 之后的在册三元组：(腿, 拒答被谁吞成"这一腿没答", 答复由谁给)。
+#: 第三格是**具名方法**。这一格今天不在 `waiters` 里——调用方自己不亲口问遗留库了，
+#: 所以同一问句改由多走一跳的派生回答（见 `corpus_registration()`）。
+CORPUS_LEG = "read_corpus"
+CORPUS_SWALLOWER = PG_STORE_REL + "::switched_corpus"
+CORPUS_ANSWERER = PIPELINE_REL + "::_legacy_corpus"
+CORPUS_TRIPLE = (CORPUS_LEG, CORPUS_SWALLOWER, CORPUS_ANSWERER)
+#: 搬家前那一格的形状（S1 反向刀要复现的就是它）：遗留回执仍打在调用方自己身上。
+SILENT_CORPUS_TRIPLE = (CORPUS_LEG, CORPUS_SWALLOWER, PIPELINE_REL + "::build_index")
+#: top-k 腿的在册三元组：R650 与本单都不治它，它必须逐字照旧（吞点与答复点都在 retriever.py）。
+TOPK_TRIPLE = ("read_topk", RETRIEVER_REL + "::_pgvector_hits", RETRIEVER_REL + "::search")
 
 
 def _load(path, name):
@@ -94,6 +120,11 @@ def roster():
 @pytest.fixture(scope="module")
 def retriever_source():
     return RETRIEVER_PY.read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def pipeline_source():
+    return PIPELINE_PY.read_text(encoding="utf-8")
 
 
 @pytest.fixture(scope="module")
@@ -176,18 +207,27 @@ def app_sources(tool, **overrides):
     return sources
 
 
-def measure_static(tool, roster, *, retriever=None, pg_store_text=None):
+def measure_static(tool, roster, *, retriever=None, pg_store_text=None, pipeline_text=None):
     """把静态三面拼起来，语料面按"未取数"交回；换掉的源码副本只进内存，盘上不动。"""
-    sources = app_sources(tool, **({RETRIEVER_REL: retriever} if retriever is not None else {}),
-                          **({PG_STORE_REL: pg_store_text} if pg_store_text is not None else {}))
+    mutated = {}
+    if retriever is not None:
+        mutated[RETRIEVER_REL] = retriever
+    if pg_store_text is not None:
+        mutated[PG_STORE_REL] = pg_store_text
+    #: R658：语料腿的答复者住在 retrieval_pipeline.py，改挂它就得能换这一枚源文（同样只在内存）。
+    if pipeline_text is not None:
+        mutated[PIPELINE_REL] = pipeline_text
+    sources = app_sources(tool, **mutated)
     retriever_src = sources[RETRIEVER_REL]
     pg_src = sources[PG_STORE_REL]
-    #: 换了 retriever 就从那份副本现取写点，别的文件照旧全扫：一枚都不许少。
-    if retriever is None:
-        sites = roster.app_write_sites()
+    #: 换了哪一份源文就从那一份副本现取写点，别的文件照旧全扫：一枚都不许少。
+    if mutated:
+        sites = [item for item in roster.app_write_sites() if item.path not in mutated]
+        for rel in sorted(mutated):
+            sites = list(sites) + list(roster.chroma_write_sites(sources[rel], rel))
+        sites = tuple(sites)
     else:
-        sites = [item for item in roster.app_write_sites() if item.path != RETRIEVER_REL]
-        sites = tuple(sites + list(roster.chroma_write_sites(retriever_src, RETRIEVER_REL)))
+        sites = roster.app_write_sites()
     predicate = tool.predicate_terms(roster, retriever_src)
     site_face = tool.write_site_face(roster, sites, retriever_src)
     void = tool.roster_cross_check(roster, site_face)
@@ -197,6 +237,8 @@ def measure_static(tool, roster, *, retriever=None, pg_store_text=None):
     waiters = tool.legacy_receipt_waiters(sources, gated["legs"])
     findings = tool.off_state_findings(predicate, site_face, questions, waiters, None)
     return {
+        #: R658：源文一起交回，语料腿那一格的派生与量具看的必须是同一批字节，不许在牙里再读一遍盘。
+        "sources": sources,
         "predicate": predicate,
         "site_face": site_face,
         "void": void,
@@ -339,7 +381,7 @@ def test_a_count_preserving_identity_swap_still_bites(tool, roster, retriever_so
         % RETRIEVER_REL
     assert _named_in(void, face["roster_findings"], collided), (void, face["roster_findings"])
 
-# -------------------------------------- 面三：拒答面与「隐式等 Chroma 回执」面（两把反向刀）
+# ------------------------------- 面三：拒答面与「隐式等 Chroma 回执」面（四把反向刀）
 
 
 def leg_names(reading):
@@ -350,31 +392,81 @@ def waiter_legs(reading):
     return {item["leg"] for item in reading["waiters"]["waiters"]}
 
 
+def waiter_triples(reading):
+    return {(item["leg"], item["refusal_swallowed_by"], item["answered_by"])
+            for item in reading["waiters"]["waiters"]}
+
+
+def corpus_registration(tool, reading):
+    """语料腿那一格的三元组现取：(腿, 拒答被谁吞, 答复由谁给)——两副面孔取一副。
+
+    R650 之前"答复由谁给"就写在 `waiters` 里（调用方自己亲口问遗留库）；R650 之后本腿**合法地**
+    离开 `waiters`，同一问句改由多走一跳的派生回答：吞点的调用方委托出去的那枚带遗留读的具名方法。
+    两副面孔都只从 AST 现取，谓词一律借量具自己的 `_legacy_receipt_calls()` / `_calls_inside()`
+    与 `swallows` —— 本文件不自造第二套"什么算遗留读"（那是 `test_the_tool_carries_no_second_list_of_write_sites`
+    同族的病）。取不到唯一一枚时交回**现取到的整串名字**（tuple），等式对不上就红，不许当没看见。
+    """
+    direct = [row for row in reading["waiters"]["waiters"] if row["leg"] == CORPUS_LEG]
+    if len(direct) == 1:
+        row = direct[0]
+        return (row["leg"], row["refusal_swallowed_by"], row["answered_by"])
+    swallows = [row for row in reading["waiters"]["swallows"] if row["leg"] == CORPUS_LEG]
+    if len(swallows) != 1:
+        return (CORPUS_LEG,
+                tuple(sorted("%s::%s" % (row["file"], row["function"]) for row in swallows)), ())
+    swallow = swallows[0]
+    trees = {}
+    for rel, text in reading["sources"].items():
+        try:
+            trees[rel] = ast.parse(text)
+        except SyntaxError:
+            continue
+    answerers = set()
+    for tree in trees.values():
+        for caller in tool._functions(tree):
+            calls = tool._calls_inside(caller)
+            if not any(item.endswith("." + swallow["function"]) or item == swallow["function"]
+                       for item in calls):
+                continue
+            for other_rel, other_tree in trees.items():
+                for other in tool._functions(other_tree):
+                    if not tool._legacy_receipt_calls(other):
+                        continue
+                    if any(item.endswith("." + other.name) or item == other.name
+                           for item in calls):
+                        answerers.add("%s::%s" % (other_rel, other.name))
+    third = next(iter(answerers)) if len(answerers) == 1 else tuple(sorted(answerers))
+    return (CORPUS_LEG, "%s::%s" % (swallow["file"], swallow["function"]), third)
+
+
 def test_the_refusing_legs_and_their_chroma_receipts_are_named_from_the_code(tool, roster,
-                                                                            retriever_source,
-                                                                            pg_store_source):
-    """今天的读数：两枚拒答面与两条"答复改由 Chroma 给"的路径都要点得出名字。
+                                                                             retriever_source,
+                                                                             pg_store_source):
+    """今天的读数：拒答面照旧点名；语料腿已离开 waiters、答复者却具名在册（R650 之后的形状）。
 
     这一格不许拿数量当判据——`switch_gated_legs()` 与 `legacy_receipt_waiters()` 全从 AST 现取，
-    下面两把反向刀各摘一格，派生必须跟着改口；把它们写成 `== 3` / `== 2` 就量不到那一族。
+    下面四把反向刀各改一格，派生必须跟着改口；把它们写成 `== 3` / `== 2` 就量不到那一族。
     """
     reading = measure_static(tool, roster)
     assert {"read_topk", "read_corpus", "_document_leg_connection",
             "document_vector_rows", "indexed_document_names"} <= leg_names(reading), leg_names(reading)
-    pairs = {(item["leg"], item["refusal_swallowed_by"], item["answered_by"])
-             for item in reading["waiters"]["waiters"]}
-    assert ("read_topk", "app/rag/retriever.py::_pgvector_hits",
-            "app/rag/retriever.py::search") in pairs, pairs
-    assert ("read_corpus", "app/rag/pg_store.py::switched_corpus",
-            "app/rag/retrieval_pipeline.py::build_index") in pairs, pairs
+    assert TOPK_TRIPLE in waiter_triples(reading), waiter_triples(reading)
+    #: 判据① 的正面钉（两格都要有，缺一格就是假话）：腿没被拆，等 Chroma 回执那一格才归零。
+    assert CORPUS_LEG in leg_names(reading), (
+        "语料腿整条被拆了：判据① 的归 0 该是「搬家」，不是把读腿拔掉")
+    assert CORPUS_LEG not in waiter_legs(reading), waiter_triples(reading)
+    assert corpus_registration(tool, reading) == CORPUS_TRIPLE, corpus_registration(tool, reading)
     assert "read_leg_waits_for_chroma_receipt" in reading["codes"]
+    assert _subjects_by_code(reading["findings"], "read_leg_waits_for_chroma_receipt") \
+        == {"read_topk"}, reading["findings"]
 
 
 def test_a_refusal_on_another_reason_is_not_a_dual_write_leg(tool, roster, retriever_source,
                                                              pg_store_source):
     """反向刀一：把 `read_topk` 那处开关拒答换成别的稳定码 ⇒ 这条腿与它的回执一起从派生里消失。
 
-    另一格（语料腿）一字没动，必须照旧在册——这才叫"点名派生"，不是"整面翻红"。
+    另一格（语料腿）一字没动：R650 之后它的在册形状是那枚三元组 + 不在 waiters，两样照旧才叫
+    "点名派生"，不是"整面翻红"。
     """
     needle = "reason=REASON_VECTOR_READ_WITHOUT_DUAL_WRITE)"
     assert pg_store_source.count(needle) >= 3, "三处开关拒答同形，本刀只换第一处（read_topk）"
@@ -382,8 +474,10 @@ def test_a_refusal_on_another_reason_is_not_a_dual_write_leg(tool, roster, retri
     reading = measure_static(tool, roster, pg_store_text=mutated)
     assert "read_topk" not in leg_names(reading), leg_names(reading)
     assert "read_topk" not in waiter_legs(reading), waiter_legs(reading)
-    assert "read_corpus" in leg_names(reading)
-    assert "read_corpus" in waiter_legs(reading)
+    assert CORPUS_LEG in leg_names(reading)
+    assert CORPUS_LEG not in waiter_legs(reading), (
+        "刀砍在 top-k 那一格，语料腿的归 0 不该被这枚刀倒着推回去")
+    assert corpus_registration(tool, reading) == CORPUS_TRIPLE, corpus_registration(tool, reading)
 
 
 def _raise_instead_of_swallowing(source):
@@ -404,12 +498,121 @@ def test_a_refusal_that_is_not_swallowed_stops_being_a_receipt(tool, roster, ret
     这一枚钉的是"隐式等 Chroma 回执"这句话里**唯一可证的那一半**：拒答被谁吞、答复由谁给。
     它不许把 fail-closed 的拒答（`_document_rows_by_leg` 那一支原样上抛）读成静默降级——
     同一份码里两种形状并存，只有这一种进 waiters。
+    R658：本腿那一格今天不在 waiters（见 `corpus_registration()`），所以"另一条没被误伤"改判
+    搬家后的在册三元组照旧，不再判 `read_corpus in waiter_legs`——那一格已经是在册的假。
     """
     mutated = _raise_instead_of_swallowing(retriever_source)
     reading = measure_static(tool, roster, retriever=mutated)
     assert "read_topk" in leg_names(reading), "拒答面一字没动，腿必须还在册上"
     assert "read_topk" not in waiter_legs(reading), waiter_legs(reading)
-    assert "read_corpus" in waiter_legs(reading), "另一条不该被误伤"
+    assert CORPUS_LEG not in waiter_legs(reading), (
+        "这枚刀砍在 top-k 的吞点上，不该把语料腿的遗留回执又召回来："
+        + repr(waiter_triples(reading)))
+    assert corpus_registration(tool, reading) == CORPUS_TRIPLE, (
+        "另一条不该被误伤：" + repr(corpus_registration(tool, reading)))
+
+
+# ------------------------------------------------- 面三补刀（R658）：今天的归 0 是真行为
+
+
+def _pipeline_function(tree, name):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError("retrieval_pipeline.py 里找不到函数 " + name
+                         + " —— 刀先磨不利，别拿去砍钉")
+
+
+def restore_the_silent_legacy_question(source):
+    """S1 反向刀：把 R650 那处具名抛改回"退回问遗留目录"（吞掉），形状照搬家前逐字复原。
+
+    `if all_data is None:` 那一支整段换成「构造 DocumentRetriever + 全库 get()」：调用方不再按族
+    分家，遗留回执重新打在 `build_index` 自己身上——这一形正是在册量具点名的
+    read_leg_waits_for_chroma_receipt。砍在源码副本（AST），落盘的 app/** 一个字节不动。
+    """
+    tree = ast.parse(source)
+    build = _pipeline_function(tree, "build_index")
+    for node in ast.walk(build):
+        if not (isinstance(node, ast.If) and "all_data is None" in ast.unparse(node.test)):
+            continue
+        body = ast.parse("from app.rag.retriever import DocumentRetriever\n"
+                         "r = DocumentRetriever()\n"
+                         "all_data = r.collection.get()").body
+        for item in body:
+            ast.copy_location(item, node)
+        node.body = body
+        return ast.unparse(tree)
+    raise AssertionError("build_index 里没有『all_data is None』那一支，这把刀没磨到东西")
+
+
+MISNAMED_ANSWERER = "_legacy_corpus_renamed"
+MISNAMED_TRIPLE = (CORPUS_LEG, CORPUS_SWALLOWER, PIPELINE_REL + "::" + MISNAMED_ANSWERER)
+
+
+def misname_the_named_method(source):
+    """S2 形状刀：只把那枚具名方法改名（def 与调用点各一枚，其余一字不动）。
+
+    这一把不改任何行为：遗留读仍然只在具名方法里，`read_corpus` 仍然不在 waiters。它要证的是
+    在册三元组钉的是**名字**——名字漂了那一格必须红，而不是跟着一起漂。
+    """
+    tree = ast.parse(source)
+    defs = [node for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "_legacy_corpus"]
+    calls = [node for node in ast.walk(tree)
+             if isinstance(node, ast.Attribute) and node.attr == "_legacy_corpus"]
+    if len(defs) != 1 or len(calls) != 1:
+        raise AssertionError("具名方法的 def/调用点不是各一枚（def %s 枚、call %s 枚），这把刀不适用"
+                             % (len(defs), len(calls)))
+    defs[0].name = MISNAMED_ANSWERER
+    calls[0].attr = MISNAMED_ANSWERER
+    return ast.unparse(tree)
+
+
+KNIVES = {
+    "S1": {"mutate": restore_the_silent_legacy_question, "victim": SILENT_CORPUS_TRIPLE,
+           "claim": "静默回执复现：语料腿重新回到 waiters"},
+    "S2": {"mutate": misname_the_named_method, "victim": MISNAMED_TRIPLE,
+           "claim": "答复者的名字漂了：在册三元组对不上"},
+}
+
+
+def corpus_reading(tool, roster, pipeline_source, knife, *, bite):
+    """装刀：`bite=False` 是正控（同一套派生机械、edits=()），`bite=True` 才落刀。"""
+    mutate = KNIVES[knife]["mutate"] if bite else None
+    text = pipeline_source if mutate is None else mutate(pipeline_source)
+    if bite:
+        assert text != pipeline_source, knife + "：刀口没落在源文上"
+    return measure_static(tool, roster, pipeline_text=text)
+
+
+@pytest.mark.parametrize("knife", sorted(KNIVES))
+def test_the_positive_control_reads_the_registered_shape(knife, tool, roster, pipeline_source):
+    """每把刀各配一枚正控、刀口不落（edits=()）：读数必须就是在册那一格，先绿，红才算被咬中。"""
+    reading = corpus_reading(tool, roster, pipeline_source, knife, bite=False)
+    assert corpus_registration(tool, reading) == CORPUS_TRIPLE, corpus_registration(tool, reading)
+    assert CORPUS_LEG not in waiter_legs(reading), waiter_triples(reading)
+
+
+@pytest.mark.parametrize("knife", sorted(KNIVES))
+def test_each_new_knife_redds_the_registered_corpus_triple(knife, tool, roster, pipeline_source):
+    """S1/S2 各红各的格：派生必须交出被咬中那一串名字，不许"整体翻红"糊过去。"""
+    spec = KNIVES[knife]
+    reading = corpus_reading(tool, roster, pipeline_source, knife, bite=True)
+    got = corpus_registration(tool, reading)
+    assert got != CORPUS_TRIPLE, knife + " 没咬中在册三元组：" + repr(got)
+    assert got == spec["victim"], "%s 红得没点名：%r（应复现 %r）" % (knife, got, spec["victim"])
+    if knife == "S1":
+        #: 唯一一把改行为的刀：归 0 必须被推回去，finding 也要重新点名本腿。
+        assert SILENT_CORPUS_TRIPLE in waiter_triples(reading), waiter_triples(reading)
+        assert CORPUS_LEG in _subjects_by_code(reading["findings"],
+                                               "read_leg_waits_for_chroma_receipt"), \
+            reading["findings"]
+    else:
+        #: S2 只改名字：waiters 那一格必须照旧是空的，否则这枚钉就退化成"waiters 空不空"。
+        assert CORPUS_LEG not in waiter_legs(reading), waiter_triples(reading)
+    #: 两把刀都不许顺手拆腿，也不许误伤 top-k 那一格（吞点与答复点都在本单写域外）。
+    assert CORPUS_LEG in leg_names(reading), leg_names(reading)
+    assert TOPK_TRIPLE in waiter_triples(reading), waiter_triples(reading)
 
 
 def test_the_questions_that_move_back_to_the_legacy_directory_are_named(tool, roster,

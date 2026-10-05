@@ -968,6 +968,42 @@ def reset_vector_corpus_diagnostics() -> None:
     _CORPUS_DIAGNOSTICS.update({"reads": 0, "rows": 0, "source": "", "reason": ""})
 
 
+#: The refusal family that comes from the knobs rather than from the database: this gear has
+#: no PostgreSQL leg at all. ``VECTOR_DUAL_WRITE`` off, or a question aimed at a table this
+#: layer does not own. Neither one is a retryable outage, and neither one is a sentence the
+#: legacy engine gets to answer. That split is R650: availability-first stays for the codes
+#: that mean "could not reach it" and is refused for the ones that mean "this leg was never
+#: configured to exist". Classification only -- no in-register code changes meaning, and
+#: :func:`switched_corpus` keeps its three answers and its ``None`` promise.
+CONFIGURAL_READ_REFUSAL_REASONS = frozenset({
+    REASON_VECTOR_READ_WITHOUT_DUAL_WRITE,
+    REASON_VECTOR_READ_TABLE_UNRECOGNISED,
+})
+
+
+def corpus_configural_refusal_reason() -> str:
+    """Which configuration refusal the corpus leg is standing in, ``""`` when it is not in one.
+
+    A caller needs it because neither place it could read today says the thing:
+    :func:`switched_corpus` answers "this leg did not answer" with the same ``None`` for both
+    classes, and :func:`vector_corpus_diagnostics` describes a refusal as an exception name
+    plus prose -- prose is what a human reads, not what a caller branches on. Pure knob read:
+    no connection, no SQL, no process state, so two corpus builders in one process cannot
+    trample each other.
+
+    :func:`read_corpus` raises exactly the two codes in the family above, and the table one
+    cannot fire from the single call site that passes no table; it is in the family because
+    the rule is "the knobs said no", not because this accessor can produce it.
+    """
+    from app.rag import indexing as indexing_module
+
+    if not indexing_module.pgvector_reads_enabled():
+        return ""  # 没人切读：出厂那一档照旧问遗留库，这一格本单一字不动
+    if not dual_write_enabled():
+        return REASON_VECTOR_READ_WITHOUT_DUAL_WRITE
+    return ""
+
+
 def switched_corpus():
     """The corpus a switched deployment should use, or ``None`` to mean "ask the legacy one".
 

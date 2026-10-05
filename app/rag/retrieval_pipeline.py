@@ -403,16 +403,30 @@ class BM25Searcher:
         两条腿取的是同一批内容（双写逐枚相等，计划书 §9.1），但"切了读"这句话如果只管
         语义腿就是半切：每次建语料仍然朝那台要退役的引擎开一次全库 ``get()``。
         ``switched_corpus()`` 交回 None 只说"这一腿没答"（没切 / 双写没开 / 连不上），
-        前两种都原路退回遗留腿，与切读之前逐字一致；它不会用空列表冒充"库是空的"。
-        开关默认不翻 ⇒ 这条分支在今天的默认态里一次都不生效（有一枚钉专管这件事）。
+        它不会用空列表冒充"库是空的"；那三答与这枚 None 的承诺住在 ``pg_store`` 那边，本单不动。
+        R650 给这一腿的三种 None 三种说法：**没切**（出厂默认档）与**连不上**（真故障）照旧原路
+        退回遗留腿，与切读之前逐字一致，后者还留下一笔绕行账；**配置性拒答**（旋钮说这条腿本来
+        就不该问：双写关着 / 表不认）当场具名拒答，不许改问遗留库 —— 那一档里 PostgreSQL 一格
+        内容都没有，把答复交给那台待退役的引擎就是把一枚配置错误读成一次正常答案，在册量具 r633
+        点名的「隐式等 Chroma 回执」正是这一形。开关默认不翻 ⇒ 这条分支在今天的默认态里一次都
+        不生效（有一枚钉专管这件事）。
         """
         with self._lock:
             from app.rag import pg_store
             all_data = pg_store.switched_corpus()
             if all_data is None:
-                from app.rag.retriever import DocumentRetriever
-                r = DocumentRetriever()
-                all_data = r.collection.get()
+                reason = pg_store.corpus_configural_refusal_reason()
+                if reason in pg_store.CONFIGURAL_READ_REFUSAL_REASONS:
+                    # R650：配置性拒答不改问遗留库，当场具名抛出去。名字用在册稳定码，本单
+                    # 零枚新造码；抛出之后由既有那三处 try 各自收尾（按腿召回的 try 记日志、
+                    # rebuild_bm25 的 done-callback、启动预加载的 try），服务不因它起不来。
+                    raise pg_store.VectorReadRejectedError(
+                        f"BM25 语料腿不改问遗留向量库 [{reason}]：读侧已切到 pgvector 而 "
+                        f"{pg_store.DUAL_WRITE_ENV} 关着 —— 这一档里 PostgreSQL 一格内容都没有，"
+                        "把答复交给那台待退役的引擎等于把配置矛盾读成正常答案。先对齐旋钮："
+                        f"要么开 {pg_store.DUAL_WRITE_ENV} 并重建满一轮，要么把读侧切回遗留档",
+                        reason=reason)
+                all_data = self._legacy_corpus()
             docs = all_data.get("documents", [])
             metadatas = all_data.get("metadatas", [])
 
@@ -449,6 +463,21 @@ class BM25Searcher:
             self.documents = documents
             self.bm25 = BM25Okapi(corpus)
             logger.info(f"BM25 索引构建完成: {len(corpus)} 篇")
+
+    def _legacy_corpus(self):
+        """R650 分家后的另一半：只有"这条腿没答上"才走到这里问遗留向量库。
+
+        进得来的两种 None 是**没切**与**连不上**，与 R59b 为 top-k 腿做过的取舍同一条：真连不上
+        不该让操作员一整轮都拿不到答复。它也同等地看得见（equally visible）—— 调用前
+        ``switched_corpus()`` 已把这一步记进 ``vector_read_diagnostics()`` 的 ``last_bypass``，并把
+        ``vector_corpus_diagnostics()`` 的 source 写成 ``legacy_chroma``。配置性拒答不许进来（见
+        :meth:`build_index`）。取数面仍是不带 where 的全库 ``get()``，那一枚形状由
+        ``tests/test_classification_fail_closed.py`` 钉着，本方法不改它。
+        """
+        from app.rag.retriever import DocumentRetriever
+
+        r = DocumentRetriever()
+        return r.collection.get()
 
     def search(self, query: str, k: int = 10, pred=None) -> list[dict]:
         with self._lock:
