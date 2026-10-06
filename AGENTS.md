@@ -83,7 +83,7 @@
 
 **元成本上限（防文件爆炸复发）**
 - 不为「文档写得对不对」新增测试；不再新增凭据纸／结案纸（`docs/testing/rNNN-*.md`）、事故编号、行号棘轮。证据＝用例本身＋退出码＋走查产物目录里的日志与截图。
-- 单枚功能单的验证预算 ≤5 分钟（同名件两态）；超预算＝写集切错了，回去切小，不许用多跑几遍门盖过去。
+- 单枚功能单的验证预算 ≤5 分钟（同名件两态）；超预算＝写集切错了，回去切小，不许用多跑几遍门盖过去。收席三枚读数、逐枚 SHA-256、写域越界、两态复跑一律走 `python scripts/verify_seat.py`——总控不手抄，手抄一次就是事故 #107 的形状（引用几分钟前的旧账就收席，留在别人树上的独有牙会被当成零写入扔掉）。
 - 每笔并树报三个数：产品码行数／测试行数／文档行数。**测试＋文档新增行数不得超过产品码的 3 倍**，要超先由业主裁定。
 
 **汇报口径**
@@ -95,6 +95,6 @@
 - 读数在飞禁改 HEAD（commit／`git worktree add`／reset／stash）；跑窗或跑门与执行层跑件互斥；窗内禁并树、禁动容器、禁打模型。
 - 往文件写含反引号的正文一律走单引号 here-string 或编辑器通道，写完现读扫 `0x00/07/08/0b/0c`＝0；中文提交用 `git commit -F <UTF-8 无 BOM>`；并树显式列路径、禁 `git add -A`。
 - 测试一律用主树 `.venv\Scripts\python.exe`（anaconda 那枚缺 chromadb）；Docker 起不来用 `powershell -NoProfile -File scripts\docker_up.ps1`。
-- `app/**` 并树后必须重建镜像＋`--force-recreate` 才作数——容器带旧码时任何端到端结论都无效。
+- `app/**` 并树后必须重建镜像＋`--force-recreate` 才作数——容器带旧码时任何端到端结论都无效；`smoke_v1.py::code_freshness` 现在就拦这一条。并树同笔落一行回滚＝`git revert -n <那笔 sha>` ＋重建＋recreate，回滚验过之前席位那棵树不许 archive。
 - 坐标一律 `文件::符号`，出现 `文件:行号` 即账错；反证钉（`counter_evidence`／`teeth`）存量不许摘。
 - 全文理由与落地见 `docs/engineering/dev-mode-2026-10-06.md`。
