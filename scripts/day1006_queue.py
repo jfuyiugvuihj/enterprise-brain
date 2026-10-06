@@ -91,6 +91,19 @@ def ensure_generation(step):
               fatal=True)
 
 
+def claims(tag):
+    """C 门第四格的分母在不在：0＝MEASURED，3＝NOT_MEASURED（行在而 claims 全空），2＝窗件没跑到。
+
+    这一枚不是牙，是把「unsupported_claim_rate=0.0」那两种成因分开的读数口；
+    rc=3 不许当失败炸掉夜窗，也不许当达标写进账——它写的是「没有分母的 0」。
+    """
+    rc = sh([PY, os.path.join("scripts", "r704_claims_coverage_readout.py"), "--window", tag],
+            300, tag + "-r704-claims")
+    led(tag + "-r704-verdict", 0 if rc == 0 else 1, 0.0,
+        "denominator=" + {0: "MEASURED", 3: "NOT_MEASURED", 2: "WINDOW-MISSING"}.get(rc, "rc=" + str(rc)))
+    return rc
+
+
 def pairing():
     prev = prev_windows()
     if not prev:
@@ -127,6 +140,7 @@ def main():
     Q.full_window("run32", env=Q.SYNC_ENV)
     sh([PY, os.path.join("scripts", "r631_stage_sum_delta.py"), "--window", "run32"], 600,
        "run32-r631-lane-off", extra_env=Q.SYNC_ENV)
+    claims("run32")
 
     # D gate: the report tier through the queue lane, declared explicitly on both sides.
     Q.set_switch("REPORT_LANE_VIA_QUEUE", "on")
@@ -140,6 +154,13 @@ def main():
     Q.full_window("run33", env=Q.SYNC_ENV)
     sh([PY, os.path.join("scripts", "r631_stage_sum_delta.py"), "--window", "run33"], 600,
        "run33-r631-lane-off", extra_env=Q.SYNC_ENV)
+    claims("run33")
+
+    # band 5: R44 格一（覆盖 95% 查询的热集常驻）——在册覆盖率量具当场取数，要现读建库，
+    # 所以排在两扇全窗之后：这时机器只余队列自己，量到的才是安静机器上的数。
+    sh([PY, os.path.join("scripts", "r677_hot_set_yield.py"), "--json", "--coverage",
+        "--timeout-seconds", "900",
+        "--out", os.path.join(Q.TMP, "r677-coverage-day1006.json")], 1200, "r44-coverage-r677")
 
     pairing()
     Q.p18("p18-close")
