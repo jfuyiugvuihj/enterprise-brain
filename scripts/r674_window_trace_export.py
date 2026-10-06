@@ -720,8 +720,11 @@ def psql_jsonl(docker_bin: str, container: str, user: str, database: str, sql: s
     """只读 psql：会话先 default_transaction_read_only = on，再发 SELECT。
 
     姿势的在册真源＝scripts/audit_r160_department_columns.py::psql_readonly（同一道命令形状）。
+
+    🔴 R721：psql 会把 -c SET 的命令标签 SET 打到标准输出，混进这一腿的逐行 JSON 读数面，
+    本件按契约逐行 json.loads ⇒ 第一行就撞墙（现取 rc=5）。-q 只关命令标签，一条 SELECT 的口径没动。
     """
-    argv = [docker_bin, "exec", container, "psql", "-U", user, "-d", database, "-At",
+    argv = [docker_bin, "exec", container, "psql", "-U", user, "-d", database, "-At", "-q",
             "-v", "ON_ERROR_STOP=1", "-c", READ_ONLY_SQL_PREFIX, "-c", sql]
     completed = subprocess.run(argv, capture_output=True, check=False)
     if completed.returncode != 0:
