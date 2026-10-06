@@ -119,6 +119,26 @@ def pairing():
             "--window", "run33"], 300, "a4-same-generation-run32-run33")
 
 
+def ensure_baseline_switch_off(step):
+    """每一轮开局先把 sync 相钉死，再动 band 1。
+
+    band 2 会把 REPORT_LANE_VIA_QUEUE 拧到 on（D 相），跑完才拧回来。若两轮之间进程死在 band 2
+    里、或机器重启，盘上留下的就是 on--那一轮 band 1 的 105 题全窗就量在错的相态上，
+    而 r573 的 --expect-lane-phase off 会把它当红拒收。开窗条件不能指望上一轮的收尾：
+    跟 ensure_generation 一样现读现校。
+    """
+    raw = open(Q.ENVF, "rb").read().decode("utf-8", "replace")
+    if "REPORT_LANE_VIA_QUEUE=off" in raw:
+        led(step, 0, 0.0, "switch already off")
+        log("baseline switch already off")
+        return 0
+    log("baseline switch NOT off -- forcing off + recreate")
+    if Q.set_switch("REPORT_LANE_VIA_QUEUE", "off") != 0:
+        led(step, 1, 0.0, "set_switch failed")
+        return 1
+    return Q.recreate(step + "-recreate")
+
+
 def main():
     os.makedirs(Q.WORK, exist_ok=True)
     Q.load_done()
@@ -134,6 +154,11 @@ def main():
         log("ABORT: the container does not carry the code under test")
         with open(Q.DONE, "w", encoding="utf-8") as fh:
             fh.write("ABORTED image-generation head=" + head_sha()[:7] + "\n")
+        keep.kill()
+        return 2
+
+    if ensure_baseline_switch_off("baseline-switch-off") != 0:
+        log("ABORT: cannot put the sync-phase switch back to off")
         keep.kill()
         return 2
 
@@ -174,10 +199,23 @@ def main():
         len(rows), sum(1 for r in rows if r["rc"] == 0),
         sum(1 for r in rows if r["rc"] != 0), sum(r["secs"] for r in rows) / 60.0,
         head_sha()[:7]))
+    #: 同一枚步骤在多轮里只认最新那一笔（早先的红已经被后面那轮治掉的不算红）。
+    latest = {}
+    for r in rows:
+        latest[str(r.get("step"))] = r.get("rc")
+    #: DONE 让看门狗退场，所以它只许在「采窗真落地」之后才写：三扇窗的 -run/-commit 一枚不绿
+    #: 就不写 DONE，让看门狗按账本跳过 rc=0 的步骤重投一轮。旧写法是无条件写 DONE，于是
+    #: band 1 空跑 rc=2 的 run32 永远不会被再试一次--机器天亮前就闲下来了（在册病根 ⑪）。
+    collecting = [s for tag in MINE for s in (tag + "-run", tag + "-commit")]
+    uncollected = [s for s in collecting if latest.get(s, 1) != 0]
     log("==== " + summary)
+    keep.kill()
+    if uncollected:
+        log("NOT-DONE: window collection still red: " + ",".join(uncollected) +
+            " -- watchdog will relaunch from the ledger")
+        return 3
     with open(Q.DONE, "w", encoding="utf-8") as fh:
         fh.write(summary)
-    keep.kill()
     return 0
 
 

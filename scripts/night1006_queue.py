@@ -16,6 +16,7 @@ Bands (order matters, see docs/tickets/WINDOW-2026-10-05.md):
 Close-out restores both switches and the power setting.
 """
 import glob
+import importlib.util
 import io
 import json
 import os
@@ -25,6 +26,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 REPO = r"C:\Users\fengx\PycharmProjects\企业智脑"
 PY = os.path.join(REPO, ".venv", "Scripts", "python.exe")
@@ -199,20 +201,73 @@ def p18(step):
               300, step + "-check", fatal=True)
 
 
+def r674_pg_gate_name():
+    """PG 腿那枚环境变量名从量具自己那一行取，本件不抄第二份（R720 判据①）。"""
+    src = open(os.path.join("scripts", "r674_window_trace_export.py"), encoding="utf-8").read()
+    m = re.search(r'^PG_OPT_IN_ENV = "(.+?)"', src, re.M)
+    return m.group(1) if m else ""
+
+
+
+def r674_pg_user():
+    """PG 腿的用户名向 compose 的 postgres 服务现取：量具缺省 postgres 在这台机上不存在（R720）。
+
+    取不到就交回空串 —— 调用侧宁可退回旧行为，也不在这里手抄第二份部署事实。
+    """
+    try:
+        completed = subprocess.run(
+            COMPOSE + ['exec', '-T', 'postgres', 'printenv', 'POSTGRES_USER'],
+            capture_output=True, text=True, timeout=60)
+    except Exception:
+        return ''
+    value = (completed.stdout or '').strip()
+    if completed.returncode != 0 or not re.fullmatch('[A-Za-z0-9_]+', value):
+        return ''
+    return value
+
+
+def readout_artifacts(tag):
+    """读数落点名的唯一出处：-quality.json / -report.json（fresh_tag 与 readout 共用一份）。"""
+    return [os.path.join(TMP, tag + suffix) for suffix in ("-quality.json", "-report.json")]
+
+
+def window_artifacts(tag):
+    """一扇窗在盘上的全部落点。文件名一律从量具自己的 paths() 派生，本件不抄第二份。"""
+    spec = importlib.util.spec_from_file_location("eval_window_shard_driver", DRV)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    listed = mod.paths(tag, Path(TMP))
+    paths = [listed[key] for key in ("root", "window", "shards", "sidecar", "frames", "answers", "log")]
+    paths += [Path(path) for path in readout_artifacts(tag)]
+    return [path for path in paths if path.exists()]
+
+
 def fresh_tag(tag):
-    d = os.path.join(TMP, tag + ".shards")
-    if os.path.isdir(d):
-        q = os.path.join(TMP, "stale-cache-" + time.strftime("%Y%m%d-%H%M%S"))
+    """开窗前整体清场：这一 tag 的盘上落点全部搬进隔离目录，只搬不删。
+
+    必须**整体**搬。<tag>.window.json 是这扇窗五枚指纹的唯一记录，量具每次动手都先比它；
+    旧写法只搬 <tag>.shards 而把指纹记留在盘上，于是重开同一扇窗时量具按「半窗混库比丢一窗
+    更坏」当场 REFUSE。10-06 18:0x 实测：run32-run 0.5 秒 rc=2，一扇 105 题的全窗就这样空跑，
+    而下游 11 枚读数全部跟着变红--账面看着像「窗跑过了」，其实一格都没量。
+    """
+    artifacts = window_artifacts(tag)
+    if not artifacts:
+        log("fresh tag ok: " + tag)
+        return 0
+    q = os.path.join(TMP, "stale-cache-" + time.strftime("%Y%m%d-%H%M%S") + "-" + tag)
+    try:
         os.makedirs(q, exist_ok=True)
-        try:
-            os.rename(d, os.path.join(q, tag + ".shards"))
-            log("QUARANTINE stale shards tag=" + tag)
-            return 0
-        except Exception as exc:
-            log("QUARANTINE-FAIL tag=" + tag + " " + repr(exc))
-            return 1
-    log("fresh tag ok: " + tag)
-    return 0
+        moved = []
+        for src in artifacts:
+            dst = os.path.join(q, src.name)
+            os.rename(str(src), dst)
+            moved.append(src.name)
+        log("QUARANTINE stale tag=" + tag + " moved=" + str(len(moved)) +
+            " into " + q + " names=" + ",".join(moved))
+        return 0
+    except Exception as exc:
+        log("QUARANTINE-FAIL tag=" + tag + " " + repr(exc))
+        return 1
 
 
 def drv(tag, extra, timeout, fixture=None, env=None):
@@ -226,12 +281,11 @@ def drv(tag, extra, timeout, fixture=None, env=None):
 def readout(tag, fixture=FIXTURE, env=None):
     ans = os.path.join(TMP, tag + "-answers.jsonl")
     side = os.path.join(TMP, tag + "-sidecar.jsonl")
+    quality, report = readout_artifacts(tag)
     sh([PY, os.path.join("scripts", "run_quality_evaluation.py"), "--fixture", fixture,
-       "--answers", ans, "--output", os.path.join(TMP, tag + "-quality.json")], 900,
-       tag + "-score", extra_env=env)
+       "--answers", ans, "--output", quality], 900, tag + "-score", extra_env=env)
     sh([PY, os.path.join("scripts", "run_quality_evaluation.py"), "--fixture", fixture,
-       "--answers", ans, "--output", os.path.join(TMP, tag + "-report.json")], 900,
-       tag + "-report", extra_env=env)
+       "--answers", ans, "--output", report], 900, tag + "-report", extra_env=env)
     sh([PY, os.path.join("scripts", "r595_latency_readout.py"), "--answers", ans,
        "--fixture", fixture, "--sidecar", side, "--label", tag], 300, tag + "-r595", extra_env=env)
     n_rows = count_fixture_rows(fixture)
@@ -239,8 +293,20 @@ def readout(tag, fixture=FIXTURE, env=None):
             "--no-rows", "--expect-denominator", str(n_rows),
             "--expect-lane-phase", lane_phase_for(tag)]
     sh(r573, 300, tag + "-r573", extra_env=env)
+    #: R720：真窗的分段腿在 PG 里，而 r674 出厂即关两枚闸、缺省落件位又落在仓内 ⇒ r631/r636
+    #: 在 evalrun 目录永远找不到件、恒 rc=3/4。两枚闸一起递，out 直接落在窗的产物目录；
+    #: 取不到常量名就退回旧行为（绝不让读数腿把窗带崩）。
+    pg_gate = r674_pg_gate_name()
+    pg_user = r674_pg_user()
     for tool in glob.glob(os.path.join("scripts", "r674*.py")):
-        sh([PY, tool, "--window", tag], 600, tag + "-" + os.path.basename(tool)[:-3], extra_env=env)
+        extra, env2 = [], dict(env or {})
+        if pg_gate and os.path.basename(tool).startswith("r674_window_trace_export"):
+            extra = ["--from-postgres", "--out", os.path.join(TMP, tag + "-traces.jsonl")]
+            env2[pg_gate] = "on"
+            if pg_user:
+                extra += ["--user", pg_user]
+        sh([PY, tool, "--window", tag] + extra, 900,
+           tag + "-" + os.path.basename(tool)[:-3], extra_env=env2)
     for tool in ("r631_stage_sum_delta.py", "r636_stage_coverage.py"):
         path = os.path.join("scripts", tool)
         if os.path.exists(path):
