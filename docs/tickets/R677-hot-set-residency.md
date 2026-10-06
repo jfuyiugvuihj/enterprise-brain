@@ -61,3 +61,15 @@
 待派池的散文账只有一行「R677（…）」，开工的人得重读整本跟进单或看板才能拿到判据原文。
 本文件把那一段逐字搬进 `docs/tickets/`，从此逐号状态的唯一真源是工单目录，
 每班开工只读 `docs/tickets/index.tsv` 与本文件。
+
+---
+
+## 总控派工段（10-06 13:1x·基点 `c82208c`·席位自拟名并回报）
+
+- **基点改口**：本文头部写的 `9efff02` 已过期，派工基点＝主树现取 `c82208c`（含 R690 与 CHASE 三笔）。工作树＝`C:\Users\fengx\PycharmProjects\be-r677`（总控已 `git worktree add --detach` 备好，独占）。
+- **解释器**：`C:\Users\fengx\PycharmProjects\企业智脑\.venv\Scripts\python.exe`（裸 python 无 chromadb，conftest 会当场 ImportError）。
+- **写域追加一格**（原判据四格之外，派工即生效）：`app/rag/hot_index.py` ＋ `tests/test_r677_*.py` ＋ 新量具 `scripts/r677_hot_set_yield.py` ＋ 凭据纸 `docs/testing/r677-2026-10-06.md`。🔴 不许写整本 `scripts/`（原判据那一格太宽，会撞别人），只许新增你自己那一枚脚本；改任何在册脚本即退回。
+- **禁区**：`app/agents/nodes.py`／`app/trace/**`／`app/common/stage_timing.py`（R688 在飞独占）、`app/common/model_capabilities.py`（R673 在飞独占）、`app/api/v1/chat.py`、评测夹具与 `tests/test_evaluation_report.py`、`frontend/**`、`docs/handoff/**`、容器／镜像／模型调用、`git push`、主树 commit（**你可以在你这棵树里自提交**，主树由总控代并）。
+- **本班窄化**：本单只交**代码＋离线牙**。真机重量（安静机器 + 让路延迟）今晚在夜窗里由 `run32` 顺带取数，**本单不许起窗、不许打模型、不许动容器**；交付里明写「离线达／重量待窗」，写成达即退回。
+- **判据（可失败）**：① 让路驱动件在位且有牙——热集命中路径与让路路径两条都能离线跑出来，且有一枚反证证明「摘掉让路 ⇒ 某枚计数必变」；② 与遗留引擎一致性那半句照原判据「有测试」；③ 凭据纸逐枚点名判据、两态数字（dirty 与自提交后干净树，文件清单逐枚相同）、未验清单。
+- **回报**：交回 patch 路径 + SHA-256 + `git diff --numstat <基点>..HEAD` 逐枚点名 + 两态读数；执行层自报的数只作对照，总控亲跑才算。
