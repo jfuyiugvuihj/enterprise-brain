@@ -173,3 +173,5 @@ R707	LANDED	tests/test_r688_stage_accounts_are_landed.py, tests/test_r688_counte
 R708	QUEUED	docs/api/contract-v1.md, docs/tickets/R708-*.md, docs/testing/r708-<开工日>.md	-	总控亲签工单·无机器字段
 R709	QUEUED	app/api/v1/chat.py, _should_use_data_context, route_main, has_data, _authorized_dataset_files, tests/test_r709_*.py, docs/tickets/R709-*.md, docs/testing/r709-<开工日>.md	-	总控亲签工单·无机器字段
 R710	QUEUED	app/agents/tools.py, app/storage/artifacts.py, app/agents/nodes.py, app/tools/**, tests/test_r710_*.py, docs/tickets/R710-*.md, docs/testing/r710-<开工日>.md	-	总控亲签工单·无机器字段
+R711	QUEUED	scripts/tickets_index.py, tests/test_r711_*.py, docs/tickets/R711-*.md, docs/tickets/index.tsv, docs/testing/r711-<开工日>.md	-	总控亲签工单·无机器字段
+R712	QUEUED	docs/perf/**, scripts/**, tests/test_r455_*.py, tests/test_r483_*.py, tests/test_r492_*.py, tests/test_r400_*.py, tests/test_r712_*.py, docs/tickets/R712-*.md, docs/testing/r712-<开工日>.md	-	总控亲签工单·无机器字段
