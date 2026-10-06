@@ -56,6 +56,7 @@ from app.agents.nodes import (
 )
 from app.agents.evidence import (
     aggregate_agent_result,
+    bag_from_config,
     build_agent_result,
     new_evidence_bag,
     summarize_agent_result,
@@ -228,10 +229,58 @@ chart_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [analyze_data,
 export_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [export_report], prompt=EXPORT_PROMPT, checkpointer=_checkpointer)
 
 
+#: 本轮台账里"报告字节已经落过盘"这一件型的名字（``app/agents/tools.py::_register_artifact``
+#: 交进证据袋的就是它，与 ``app/storage/artifacts.py::ArtifactRecord.artifact_type`` 同源）。
+_REPORT_ARTIFACT_TYPE = "report"
+
+
+def _registered_report_rows(config) -> list[dict]:
+    """本轮真登记进产物台账的报告件行；读不出件型的老形状一律当没这回事。
+
+    R713 的判据源就这一枚函数：它读的是物证（工具腿登记成功那一刻写进证据袋的行，与台账行
+    同源），不是答复文字。把它的读数摘掉，兜底腿就退回改前形状 ——
+    ``tests/test_r713_one_question_one_report_file.py`` 的反证牙钉的正是这一格。
+    """
+    bag = bag_from_config(config)
+    if not bag:
+        return []
+    return [
+        row
+        for row in (bag.get("artifacts") or [])
+        if isinstance(row, dict)
+        and str(row.get("artifact_type") or "") == _REPORT_ARTIFACT_TYPE
+    ]
+
+
 def _fallback_export_result(user_message: str, model_result: str, config=None) -> str:
-    """Ensure an export request produces a usable artifact when the model omits tool args."""
+    """同一轮只交一枚报告文件：已经有物证就交付那一枚，绝不为了补一句链接再落一次盘。
+
+    改前的形状：只拿答复文字里有没有受控产物口当作"这一轮已经落过盘"的判据。文字不是证据
+    —— 模型把链接改写成别的形状（在册历史形状是 ``/static/exports/`` 那一条落盘路径，见
+    ``tests/test_approval_stream.py``），或只说一句"文件已导出"，字符串守卫就认不出已经落过
+    的那一枚，于是再调一次 ``export_report``：一枚问话写两枚 PDF，第二枚没人登记（R710 交回
+    件①，凭据纸 ``docs/testing/r710-2026-10-06.md`` 第二节第 2 条）。
+
+    改后读两枚物证，顺序不可倒：① 答复里已经点着受控产物口 —— 那是交付腿本来就写对了，
+    一个字都不必再动；② 证据袋里已经登记过 report 件 —— 那是工具腿真落过盘，第二次导出当场
+    取消，正文缺的那句下载链接从在册行里补上（只追加、不改写，句子形状照
+    ``app/agents/tools.py::_export_report`` 的完成态）。两条都不成立，才落第一次盘 ——
+    本单砍的是第二次，不是兜底腿存在的理由。
+    """
     if "/api/v1/artifacts/" in model_result:
         return model_result
+    registered = _registered_report_rows(config)
+    if registered:
+        url = str(registered[-1].get("download_url") or "").strip()
+        logger.info(
+            f"[R713] export 兜底腿取消第二次导出：本轮已登记 {len(registered)} 枚报告件 "
+            f"url={url or '(在册行没有下载口)'}"
+        )
+        if not url:
+            return model_result
+        body = str(model_result or "")
+        line = f"报告已生成: [📋 下载报告]({url})"
+        return f"{body}\n\n{line}" if body.strip() else line
     title = "企业经营分析报告"
     sections = json.dumps(
         [
