@@ -162,3 +162,4 @@ R695	QUEUED	app/api/v1/chat.py, app/rag/retrieval_pipeline.py, app/trace/spans.p
 R696	QUEUED	scripts/r631_stage_sum_delta.py, scripts/r674_window_trace_export.py, tests/test_r696_*.py, docs/testing/r696-<开工日>.md, docs/tickets/R696-*.md	-	总控亲签工单·无机器字段
 R697	QUEUED	tests/test_r636_stage_coverage.py, tests/test_r697_*.py, docs/testing/r697-<开工日>.md, docs/tickets/R697-*.md	-	总控亲签工单·无机器字段
 R698	QUEUED	scripts/r638_doc_pointer_ruler.py, tests/test_r698_*.py, docs/tickets/R698-*.md, docs/testing/r698-<开工日>.md	-	总控亲签工单·无机器字段
+R699	QUEUED	app/agents/contracts.py, app/agents/evidence.py, app/agents/nodes.py, tests/test_r699_*.py, docs/tickets/R699-*.md, docs/testing/r699-<开工日>.md	-	总控亲签工单·无机器字段
