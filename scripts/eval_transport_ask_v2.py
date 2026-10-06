@@ -586,6 +586,40 @@ def _blank_observation(session_id):
             "request_sent_at": None}
 
 
+#: R718 判据①：legacy 终态帧与队列终态载荷里那两格断言分母的键名，与产品出口
+#: ``app/api/v1/chat.py::build_done_frame`` / ``::build_queue_terminal`` 逐字同名。
+#: 🔴 采集器只认这两枚新键，第四枚名字不许进 payload。
+CLAIMS_CARRY_KEYS = ("claims", "claims_error")
+
+
+def _claims_cells(source):
+    """从一帧终态载荷里折出可交回评分器的那两格；交不出就交空 dict。
+
+    只搬不改：``claims`` 只在非空列表时发键、``claims_error`` 只在非空字符串时发键——
+    与 R702 判据 2 同一口径，「这一轮没有分母」与「这一轮一枚不被支撑的断言都没有」
+    不许混成一格。两枚都交不出 ⇒ 空 dict，payload 一字节都不许多出来。
+    """
+    if not isinstance(source, dict):
+        return {}
+    cells = {}
+    claims = source.get("claims")
+    if isinstance(claims, list):
+        carried = [row for row in claims if isinstance(row, dict)]
+        if carried:
+            cells["claims"] = carried
+    error = source.get("claims_error")
+    if isinstance(error, str) and error:
+        cells["claims_error"] = error
+    return cells
+
+
+def _terminal_claims_cells(book):
+    """队列道：断言分母活在 ``/queue/status`` 的终态载荷里，只从取回账的 ``terminal`` 那一格取。"""
+    if not isinstance(book, dict):
+        return {}
+    return _claims_cells(book.get("terminal"))
+
+
 def _consume(response, out):
     """把一条 SSE 流从头读到尾，逐事件填进观测桶。/ask 与 /approve 事件形状同构。
 
@@ -635,6 +669,13 @@ def _consume(response, out):
                 out["error_text"] = text  # chat.py:1338 / :1439
         elif name == "queued":
             out["queued"] = dict(data)  # chat.py:1039-1051
+        elif name == "done":
+            # R718 判据①：legacy 终态帧里的断言分母从今天起进账。只抄不改：
+            # answer / first_token_at / steps / cached / evidence 的取值口径逐字不动，
+            # 交不出就一字节都不许多（旧窗那种「缺键」的形状必须还能被 r704 认出来）。
+            cells = _claims_cells(data)
+            if cells:
+                out["claims_cells"] = cells
         elif name == "cancelled":
             out["cancelled"] = True  # chat.py:1283
     return out
@@ -1287,14 +1328,16 @@ def _resolve_hitl(row_id, session_id, steps, frames=None, success_kind="approved
             return {"answer": text, "evidence": list(out["evidence"]),
                     "first_token_at": out["first_token_at"], "steps": steps,
                     "kind": success_kind, "sentinel": False, "approved": approved,
-                    "rounds": rounds, "http_status": http_status, "error": ""}
+                    "rounds": rounds, "http_status": http_status, "error": "",
+                    "claims_cells": out.get("claims_cells") or {}}
         error = "approve 200 仍无终答：" + (out["error_text"].strip() or "恢复流里没有 text 事件")
         break
     if not error:
         error = "批准 " + str(rounds) + " 轮后仍停在审批闸，没有终答（上限 EVAL_APPROVAL_ROUNDS）"
     return {"answer": APPROVAL_FAILED_SENTINEL, "evidence": [], "first_token_at": None,
             "steps": steps, "kind": "approval_failed", "sentinel": True, "approved": approved,
-            "rounds": rounds, "http_status": http_status, "error": error}
+            "rounds": rounds, "http_status": http_status, "error": error,
+            "claims_cells": {}}
 
 
 #: ==================== R259：把队列终态读数折进取回账 ====================
@@ -1389,6 +1432,8 @@ def _terminal_readout(body):
     readout["worker_status"] = _text_slot(body, "worker_status")
     readout["scope_reason_code"] = _text_slot(body, "scope_reason_code")
     readout["terminal_note"] = _text_slot(body, "terminal_note")
+    # R718 判据①：断言两格原样折进取回账，交得出才发键，交不出这一格缺席。
+    readout.update(_claims_cells(body))
     if _sources_are_reportable(shape):
         sources = body.get("sources")
         readout["sources_present"] = _flag_slot(body, "sources_present")
@@ -1803,10 +1848,13 @@ def transport(row):
         sentinel = False
         kind = "ok"
         from_queue = out["queued"] is not None
+        # R718 判据①：断言分母跟着「交回终答的那一程」走，不跟着第一条流走。
+        claims_cells = out.get("claims_cells") or {}
         if from_queue:
             # R222：kind 由停表那一层给（五枚终态 + 三枚没读到终局，逐枚可区分），
             # 取回那一程的账折进帧账的 queue 那一格。
             kind, answer, frames["queue"] = _poll_queue(out["queued"].get("request_id"))
+            claims_cells = _terminal_claims_cells(frames["queue"])
             first_token_at = None  # 后台跑的首字观测不到 ⇒ null（采集器允许 null，禁止估算）
             if kind == "queued_polled":
                 # R447 判据③：出处随答案交回。后台那一轮的 sources 只活在 `/queue/status` 的
@@ -1862,6 +1910,8 @@ def transport(row):
             steps = resolved["steps"]
             kind = resolved["kind"]
             sentinel = resolved["sentinel"]
+            # R718 判据①：批准之后那一程的终态帧才是本题的分母来源。
+            claims_cells = resolved.get("claims_cells") or claims_cells
             if not pending_approval:
                 # 同步道：批准那条流的首字就是本题的首字。队列道那一格留 null —— 后台那一程的
                 # 首字观测不到（本文件抬头第 3 条），批准腿的到达时刻只进帧账的 ``events`` /
@@ -1888,6 +1938,9 @@ def transport(row):
         payload = {"answer": answer, "evidence": evidence, "first_token_at": first_token_at,
                    "thinking_chars": None,  # HTTP 侧看不见隐藏思维链 ⇒ null，禁止估算
                    "tool_calls": steps}
+        # R718 判据①：交得出才发键（空列表与空串都不发）。C④ 的零分母与零幻觉
+        # 是两句话，采集器不许拿「补齐」把它洗成同一格。
+        payload.update(claims_cells)
         # 故意不自报 latency_ms：交给采集器 perf_counter 实测（collect:192/:146）
         _record(row_id, kind, attempt, started, payload, sentinel, extra)
         # R181 判据②：sidecar 那九键 + 甲案七键原样不动，帧读数落在第二份证据件里。

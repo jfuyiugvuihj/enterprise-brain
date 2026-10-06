@@ -230,7 +230,7 @@ def build_answer(row: dict, payload: Any, *, measured_ms: float, answer_source: 
         # a baseline, and app/quality/runner.py ignores keys it does not read.
         "answer_source": answer_source,
     }
-    for optional in ("claims", "confidence", "confidence_label"):
+    for optional in ("claims", "claims_error", "confidence", "confidence_label"):
         if optional in payload:
             answer[optional] = payload[optional]
     if latency_suspect is not None:

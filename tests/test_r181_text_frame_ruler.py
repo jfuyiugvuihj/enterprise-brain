@@ -44,6 +44,9 @@ SIDECAR_BASE_KEYS = ("id", "kind", "attempt", "sentinel", "evidence_n",
 R123_EXTRA_KEYS = {"pre_kind", "pre_answer_chars", "pre_evidence_n", "approved",
                    "approval_rounds", "approval_http_status", "approval_error"}
 PAYLOAD_KEYS = {"answer", "evidence", "first_token_at", "thinking_chars", "tool_calls"}
+#: R718 判据②：终态帧那两格断言分母允许随 payload 交回。🔴 这是把「相等判」换成
+#: 「在册键不许少 + 新键只限具名」的双向子集判，不是把牙摘掉：第四枚键名进来照样当场红。
+R718_CARRY_KEYS = {"claims", "claims_error"}
 #: 帧证据件的一行里，除 join 键之外该有的读数（判据② 的读数 + covering 布尔 + 取证辅助）。
 #: R215 起多两格「坏形分家」：corrective_replacements = 收尾那次受控纠正替换掉的坏形数，
 #: uncorrected_breaks = 没被救回来的真断流数；判据② 换读后者，原始 prefix_breaks 继续留在账上。
@@ -439,7 +442,8 @@ def test_the_payload_and_sidecar_contracts_are_untouched(adapter):
                               ("done", {"type": "done"})],
               "/api/v1/approve": MULTI_FRAME}
     payload, _, sidecar, frames = drive(adapter, script, row)
-    assert set(payload) == PAYLOAD_KEYS                    # 交回采集器的仍是那五键
+    assert set(payload) - R718_CARRY_KEYS == PAYLOAD_KEYS   # 在册五键一枚不许少
+    assert set(payload) <= PAYLOAD_KEYS | R718_CARRY_KEYS   # 新键只限具名两枚
     record = sidecar[0]
     assert tuple(list(record)[:9]) == SIDECAR_BASE_KEYS     # 九键的名字与顺序
     assert set(record) - set(SIDECAR_BASE_KEYS) <= (R123_EXTRA_KEYS | {"pre_answer"})
