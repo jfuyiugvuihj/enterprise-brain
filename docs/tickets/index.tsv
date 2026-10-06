@@ -184,6 +184,6 @@ R718	LANDED	scripts/eval_transport_ask_v2.py, scripts/eval_frame_caliber_readout
 R719	LANDED	tests/test_r645_contract_difference_ledger.py, docs/api/contract-v1.md, tests/test_r719_*.py, docs/tickets/R719-*.md, docs/testing/r719-<开工日>.md	7e5975690777	总控亲签工单·无机器字段
 R720	LANDED	scripts/night1006_queue.py, readout, scripts/day1006_queue.py, tests/test_r720_*.py, docs/tickets/R720-*.md, docs/testing/r720-<开工日>.md	d8ce86c5450c	总控亲签工单·无机器字段
 R721	LANDED	scripts/r674_window_trace_export.py, psql_jsonl, docs/tickets/R721-*.md, docs/testing/r721-<开工日>.md	6545360f5c59	总控亲签工单·无机器字段
-R722	QUEUED	scripts/r483_empty_tables_triage.py, scripts/check_vector_wording.py, tests/test_r478_*.py, tests/test_r516_*.py, tests/test_r695_*.py, tests/test_r310_*.py, tests/test_r276_*.py, docs/tickets/R722-*.md, docs/testing/r722-<开工日>.md	-	总控亲签工单·无机器字段
+R722	LANDED	scripts/r483_empty_tables_triage.py, scripts/check_vector_wording.py, tests/test_r478_*.py, tests/test_r516_*.py, tests/test_r695_*.py, tests/test_r310_*.py, tests/test_r276_*.py, docs/tickets/R722-*.md, docs/testing/r722-<开工日>.md	fe4c72aee304	总控亲签工单·无机器字段
 R723	QUEUED	app/agents/evidence.py, _terminal_status, app/agents/contracts.py, app/agents/nodes.py, _carry_chart_leg_truth, tests/test_r723_*.py, docs/tickets/R723-*.md, docs/testing/r723-<开工日>.md	-	总控亲签工单·无机器字段
 R724	QUEUED	app/api/v1/chat.py, _enqueue_ask_turn, deploy/queue_worker.py, tests/test_r37_report_lane_enqueue.py, tests/test_r32_lane_contract.py, tests/test_r724_*.py, docs/tickets/R724-*.md, docs/testing/r724-<开工日>.md	-	总控亲签工单·无机器字段
