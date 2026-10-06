@@ -25,10 +25,16 @@ class UploadInspection:
 # app.rag.loader.load_document(), otherwise the stored file and its catalog row
 # survive as a failed version and the upload route answers 500 document_parse_failed.
 # R306 put `.xlsx` and `.csv` in: they are read by app/rag/spreadsheets.py, so they
-# are knowledge-base documents as well as datasets. POST /api/v1/upload-excel is still
-# a separate route with its own filename, permission and conflict rules, and it does
-# not read this dict. `.xls` is deliberately absent: openpyxl cannot read the legacy
-# binary format and xlrd is not a direct dependency of this repository.
+# are knowledge-base documents as well as datasets. R700 retired the second half of that
+# sentence: POST /api/v1/upload-excel now reads this dict too, through
+# `sanitize_upload_filename` (filename), `inspect_dataset_upload` (accepted types and
+# magic bytes) and `guard_dataset_name_conflict` (same-name conflict), so one file table
+# no longer answers the same three questions twice. What stays outside this dict is the
+# read-engine gate in `app/tools/excel.py` -- "is this a knowledge-base type" and "can
+# this machine open the format" are different questions with different refusals.
+# `.xls` is deliberately absent: openpyxl cannot read the legacy binary format and xlrd
+# is not a direct dependency of this repository.
+
 _ALLOWED_TYPES = {
     ".pdf": ("application/pdf", (b"%PDF-",)),
     ".txt": ("text/plain", ()),
@@ -130,6 +136,51 @@ def inspect_upload_header(filename: str, header: bytes | bytearray | memoryview)
         extension=extension,
         media_type=media_type,
     )
+
+
+#: Leading bytes of an upload that a signature in the dict above can be matched against.
+#: The dataset route already holds the whole body in memory, so it hands the sample here
+#: instead of opening the stored file a second time.
+DATASET_SIGNATURE_SAMPLE_BYTES = 8192
+
+
+class DatasetFilenameConflictError(ValueError):
+    """One active dataset already owns the logical filename a caller is asking for.
+
+    R700 moved the *rule* next to the whitelist both upload routes read. The registry
+    lookup stays with the dataset route, because only that route knows its own
+    catalogue: it passes what the registry answered and gets the refusal back. The route
+    then answers its documented ``409 dataset_filename_conflict`` -- this module raises
+    no HTTP shape and defines no new error code.
+    """
+
+    def __init__(self, filename: str) -> None:
+        super().__init__(f"an active dataset is already named {filename}")
+        self.filename = filename
+
+
+def inspect_dataset_upload(filename: str, payload: bytes | bytearray | memoryview) -> UploadInspection:
+    """Boundary check for POST /api/v1/upload-excel, answered from the dict above.
+
+    One file, two lives: the same workbook the knowledge-base route indexes is the one
+    the dataset route registers, so both must agree, before a byte is written, about
+    which suffixes this deployment has a reader for and whether the header matches the
+    suffix it claims.
+    """
+    sample = payload[:DATASET_SIGNATURE_SAMPLE_BYTES] if payload else b""
+    return inspect_upload_header(filename, sample)
+
+
+def guard_dataset_name_conflict(display_filename: str, existing_active: object | None) -> None:
+    """Refuse a dataset name that an active dataset already holds.
+
+    `existing_active` is whatever the caller's registry returned for the name, `None`
+    when nobody holds it. The decision -- a taken name is a refusal rather than a new
+    version -- is stated here so the dataset route cannot quietly grow the knowledge
+    route's versioning, and the knowledge route cannot quietly grow this one's conflict.
+    """
+    if existing_active is not None:
+        raise DatasetFilenameConflictError(display_filename)
 
 
 def build_storage_path(root: str | Path, resource_id: str, extension: str) -> Path:

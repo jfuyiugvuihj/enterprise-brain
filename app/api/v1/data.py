@@ -36,6 +36,14 @@ from app.common.permissions import (
 )
 from app.common.policy import authorization_decision
 from app.common.rbac import filter_dataframe_rows_with_scope
+from app.documents.file_security import (
+    DatasetFilenameConflictError,
+    UploadSecurityError,
+    guard_dataset_name_conflict,
+    inspect_dataset_upload,
+    sanitize_upload_filename,
+)
+from app.documents.knowledge_ingest import index_dataset_copy
 from app.storage import artifacts as artifact_storage
 from app.storage.datasets import dataset_registry
 
@@ -104,10 +112,34 @@ def _dataset_row_owner_id(record) -> str | None:
 
 
 def _safe_data_filename(filename: str) -> str:
-    safe_name = Path(filename or "").name
-    if not safe_name or safe_name in {".", ".."}:
-        raise HTTPException(status_code=400, detail="invalid_filename")
-    return safe_name
+    """Filename legality for a dataset, answered by the guard the knowledge base uses.
+
+    R700 judgement 2. This was a private two-line rule that quietly *stripped* directories
+    out of a name (`Path("a/b.csv").name` -> `b.csv`) and waved a disguise like
+    `policy.pdf.xlsx` through. It now asks `app/documents/file_security.py`, the same guard
+    POST /api/v1/upload refuses with: a path separator, a leading dot and a middle
+    extension that is itself a document or executable suffix are all refusals. The public
+    code stays the documented `invalid_filename`, so no response shape moves and
+    `frontend/src/lib/errcodes.js` gains no key.
+    """
+    try:
+        return sanitize_upload_filename(filename)
+    except UploadSecurityError as exc:
+        raise HTTPException(status_code=400, detail="invalid_filename") from exc
+
+
+def _knowledge_base_retriever():
+    """The handle that answers knowledge-base reads today, borrowed from the route that owns it.
+
+    R700 writes through it instead of building a `DocumentRetriever` of its own because the
+    hot subset of the index lives per handle: a private handle would park the new rows in
+    the durable store while the handle that answers questions keeps answering without them
+    until the next process start. The import is lazy -- `app/api/v1/chat.py` constructs its
+    handle at import time, and this route must stay loadable without pulling that along.
+    """
+    from app.api.v1 import chat
+
+    return chat.retriever
 
 
 def _refuse_unreadable_data_file(filename: str) -> None:
@@ -301,16 +333,31 @@ async def list_data_files(request: Request = None):
 
 @router.post("/upload-excel")
 async def upload_excel(request: Request, file: UploadFile = File(...)):
-    """上传 Excel/CSV → 解析 → 返回数据画像"""
+    """上传 Excel/CSV → 解析 → 返回数据画像，并把同一份表格并进知识库（R700）。"""
     filename = _safe_data_filename(file.filename)
     principal = _authorized_principal(request, ACTION_UPLOAD)
-    if dataset_registry.get_active_by_filename(filename) is not None:
-        raise HTTPException(status_code=409, detail="dataset_filename_conflict")
+    # 冲突那一格今天起由 `app/documents/file_security.py` 定夺（R700 判据②）：登记表还是本路由
+    # 自己查（只有它认得自己的账），但「同名即拒、不是新版本」这条规则写在两路共读的那本字典
+    # 旁边，数据集不会悄悄长出知识库的版本语义，反过来也不会。
+    try:
+        guard_dataset_name_conflict(filename, dataset_registry.get_active_by_filename(filename))
+    except DatasetFilenameConflictError as exc:
+        raise HTTPException(status_code=409, detail="dataset_filename_conflict") from exc
     # 拒绝发生在落盘之前：读不动的格式既不该留在 DATA_DIR 里，也不该走到 load_excel 那一步
     # 才炸出一条 import 失败（那正是旧版 .xls 的下场）。
     _refuse_unreadable_data_file(filename)
     file_path = Path(DATA_DIR) / filename
     content = await file.read()
+    # 类型与表头两格同样并进那本字典：后缀必须在 `_ALLOWED_TYPES` 里，表头字节必须对得上那一格
+    # 声明的签名。于是同一份文件在两条上传路上答同一个码——伪造的 .xlsx 在写第一个字节之前就被
+    # 拒（过去它先落盘，再在 openpyxl 上炸成一条 500），与 POST /upload 对同一份文件的答复一致。
+    try:
+        inspect_dataset_upload(filename, content)
+    except UploadSecurityError as exc:
+        raise HTTPException(
+            status_code=400, detail=getattr(exc, "code", None) or "unsupported_file"
+        ) from exc
+
     temp_path = file_path.with_name(f".{file_path.name}.upload")
     with open(temp_path, "wb") as handle:
         handle.write(content)
@@ -340,7 +387,21 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
         }
     )
 
+    # R700 判据①：这条表格的第二条命。入库只走知识库既有那条腿的四个出口（正文=loader 的
+    # load_document，值不值得入=documents/index_policy 的判定，写=retriever.add_document，
+    # 关键词=tools.rebuild_bm25），本路由不另起第二套入库腿，也不新增任何 Chroma 写点。
+    # 读数只进日志：数据集那一半的字段与状态码一个字不许改（判据②），所以知识库这一腿
+    # 无论成功、被策略排除、还是模型没在，都不许把一次已注册成功的上传回报成故障。
+    await index_dataset_copy(
+        display_filename=filename,
+        storage_path=str(file_path),
+        department=str(getattr(principal, "department", "") or ""),
+        classification=dataset.classification,
+        retriever=_knowledge_base_retriever(),
+    )
+
     return preview
+
 
 
 @router.get("/data-files/{filename}/preview")
