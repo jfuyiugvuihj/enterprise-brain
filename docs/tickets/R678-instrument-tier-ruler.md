@@ -61,3 +61,41 @@
 待派池的散文账只有一行「R678（…）」，开工的人得重读整本跟进单或看板才能拿到判据原文。
 本文件把那一段逐字搬进 `docs/tickets/`，从此逐号状态的唯一真源是工单目录，
 每班开工只读 `docs/tickets/index.tsv` 与本文件。
+
+
+---
+
+## 执行层交付（R678·开工日 2026-10-05·待总控验收并树）
+
+- 树＝C:/Users/fengx/PycharmProjects/be-r678；基点＝d653e41（派工口径；本文件机器字段仍写 9efff02，
+  两者只差一枚 index.tsv 重生成账，与本单货无涉）。主树 0 次写入。
+- 写集逐枚点名：scripts/eval_transport_ask_v2.py（声明闸＋前置 CLI＋收窗自查那一格）／
+  scripts/r573_caliber_reconciliation.py（--expect-lane-phase on 的事后尺，只在 rc=2 归因句那一格改口）／
+  新增 tests/test_r678_lane_declaration_gate.py／新增 tests/test_r678_waste_sample_ruler.py／
+  本文件文末追加／新凭据纸 docs/testing/r678-2026-10-05.md。
+- 五枚判据的读数全在凭据纸里（§1 判据①·§2 判据②·§3 判据③·§4 判据④·§5 判据⑤），本段不复述数字，
+  只记三件必须让验收一眼看见的事：
+  ① 「未设即致命」没有按字面整本做——它和并树在册钉
+  tests/test_r520_declare_lane_env_leg.py::test_an_unset_key_leaves_the_report_tier_on_the_sync_path
+  （写域外那枚文件）正面冲突。交付形态＝「未设＋指望入队
+  才致命」，同步相那格逐字节照旧，另有 --lane-preflight 那一步与事后尺两道闸。理由与翻字面所需的前置
+  动作写在凭据纸 §7 第 2 条。
+  ② 判据② 的「现读到 answer_source 不再是 transport 默认值」在这台机上量不出来：answer_source 由
+  采集器写死＝args.transport，与走哪条道无关（scripts/collect_evaluation_answers.py::build_answer）。
+  交付改用侧车／帧账的 kind 那一列＋第三份件的 sent_lane，并把「拿 answer_source 当 D① 信号会读假绿」
+  记进凭据纸 §2 与 §7 第 3 条。
+  ③ 自动那一腿的边界：transport 那道门只认量具自己进程环境里与产品同名的开关，不读 deploy/**、
+  不问容器（判据④ 的死线）。带 1 那三扇的实况（容器 on／采集进程两样都没有）拦住它的是前置那一步
+  与事后尺；要做成「开窗即致命」需要 driver／collector 在开窗那一刻调用 require_lane_declaration，
+  两枚文件都在写域外 ⇒ 建议另立一号。
+  ④ 一枚编号撞车（本席自己发现并自己处置）：`scripts/eval_transport_ask_v2.py` 有两枚在册注释按编号引用
+  「抬头第 14 条」，而那条自并树笔 02ee2e6 起从未落地；本单那段若记 14 号就会把这两枚引用引到一枚内容
+  全错的口径上。处置＝本单那段改记 15 号，R642 那两行一字不碰，悬空引用另立一号（凭据纸 §7 第 5 条）。
+- 同名件两态：NOT_RUN_IN_WINDOW（夜窗在跑·窗内禁跑测试）。清单与补跑口径见凭据纸 §5 第 2 条。
+- 反证牙：三把量具刀＋一把尺子刀，摘腿必红／补回必绿／每把进刀前后各核一次原件 sha256；另有盘上副本改
+  判据原文一个字⇒ --verify rc=5 点名到字符。第一轮读数在凭据纸 §3 与 §5 第 4 条，第二轮（改完编号重取）
+  四枚探针的逐形读数在 §8：gate 6 形＋7 条判据全过、preflight 12 形 rc 全等预期、r573 5 形 rc＝[0,0,2,0,0]、
+  knives 7 条判据全过。
+- 🔴 本席在隔离树里跑不动 §6 的第① 步：deploy/.env.server 未被 git 跟踪 ⇒ 工作树里没有那枚件，
+  实取 rc=4「问不着」（不是缺陷，是那一格的形状）；带 3 的这一步得由总控在真装着那本 env 的盘上取。
+- 真 on 相窗（D 门三格）仍未验：本单一枚模型没打、一台容器没碰。

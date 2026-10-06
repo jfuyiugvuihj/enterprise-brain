@@ -19,6 +19,12 @@ run13／run14 是第一次两窗各 105 枚齐、且都带 R223 逐帧到达坐�
   丙 max_stream_frames>1 算不算 A② —— 同一分母两个分子：丙-算＝在册七枚合取（recomputed_ledger），
       丙-不算＝把这一枚合取对每一行走一遍反事实探针（抬高 max_stream_frames 再叫在册尺复算），
       翻动的题号逐枚点名。探针只改内存里的那一行影子，盘上一字节不动。
+
+🔴 R678 另加一把尺（--expect-lane-phase on，缺省 off 时本件读数逐字节照旧）：一扇窗声称自己走在
+  队列道上，账上就必须有 queued_* 那一族 kind；一枚都没有 ⇒ 本件点名那一扇并当场拒出数（rc=2）。
+  归因写在拒判句里不许改口：那是**量具没声明档位**（传输层从不发 lane），不是产品没入队，更不是
+  「D 门量到了零」。带 1 已收的 run24s2／run24s2b／run24s2c 三扇就是这一形——12 枚报告题正文全在，
+  走的却全是同步道，对 D 门是废样本；从前本件只对它们说「分母对不上」，从今天起能说清为什么。
 """
 
 from __future__ import annotations
@@ -51,6 +57,12 @@ RC_REFUSE = 2
 RC_GREEN = 3
 
 CALIBRE_LABELS = ("甲-1", "甲-2", "乙-1", "乙-2", "丙-算", "丙-不算")
+# R678 的那一把新尺：这一窗是否**声称**走在队列道上。缺省 off ＝ 今天的老口径，一格不多判。
+EXPECT_LANE_PHASES = ("off", "on")
+DEFAULT_EXPECT_LANE_PHASE = "off"
+# 队列道那一族 kind 的前缀：量具侧的真源是 scripts/eval_transport_ask_v2.py 的 QUEUED_APPROVED_KIND
+# 与 _poll_queue 那一族（queued_polled／queued_approved／queued_stalled／…），本件只认前缀不抄名册。
+QUEUE_LEG_KIND_PREFIX = "queued_"
 
 
 class RefuseError(Exception):
@@ -211,6 +223,42 @@ def compute_groups(records: list) -> list:
     ]
 
 
+def lane_leg_readout(records: list) -> dict:
+    """这一窗有没有真的走过队列道：逐枚 kind 现读，零枚就直说零枚（🔴 不折成「干净」）。
+
+    只读量具已经落在帧账里的那一列 kind，本件不新增任何一次读数、不碰容器、不碰网络。
+    """
+    kind_counts = {}
+    queue_ids = []
+    for item in records:
+        kind = str(item["kind"] or "")
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+        if kind.startswith(QUEUE_LEG_KIND_PREFIX):
+            queue_ids.append(str(item["id"]))
+    return {"kind_counts": dict(sorted(kind_counts.items())),
+            "queue_leg_count": len(queue_ids),
+            "queue_leg_ids": sorted(queue_ids)}
+
+
+def require_lane_leg(tag: str, readout: dict, expect: str) -> None:
+    """R678 判据 2 的那枚离线牙：声称 on 相却一枚 queued_* 都没有 ⇒ 点名那一扇并拒出数。
+
+    拒的是「拿这一扇当 D 门样本」这件事，不是「这一窗分数多少」：正文全在、六组数也算得出来，
+    但那六组数说的是同步道，跟 D① 的「入队 → worker 跑完 → /queue/status 取回正文」没关系。
+    """
+    if expect != "on" or readout["queue_leg_count"]:
+        return
+    raise RefuseError(
+        "on 相窗「" + tag + "」里 " + QUEUE_LEG_KIND_PREFIX + "* 零枚（现取 kind 分布＝"
+        + json.dumps(readout["kind_counts"], ensure_ascii=False) + "）：报告档走的还是同步道 ⇒ "
+        + "这一扇相对 D 门是废样本，本件不按它出数。归因写死不许改口——这是**量具缺陷**：传输层"
+        + "只有显式声明档位才发 lane，只翻容器那枚 REPORT_LANE_VIA_QUEUE 一枚都不发，不是产品没入队。"
+        + "修法一步＝开窗那一刻在采集进程环境里设 EVAL_DECLARE_LANE_TIER=报告（或 "
+        + "EVAL_DECLARE_LANE_PER_TIER=on 逐行各补各的），并先跑 python "
+        + "scripts/eval_transport_ask_v2.py --lane-preflight --env-file deploy/.env.server，走到 "
+        + "rc=0 再点火；归因与修法同步记在 docs/testing/r678-2026-10-05.md。")
+
+
 def read_window_provenance(evalrun: Path, tag: str) -> dict:
     """收窗时落盘的这一窗出处（镜像 revision／读后端／题集 sha）。读不到就明写读不到，不补造。"""
     path = evalrun / (tag + ".window.json")
@@ -235,10 +283,14 @@ def in_book_readout(paths: dict) -> dict:
     return {"rc": rc, "text": buffer.getvalue()}
 
 
-def collect(tag: str, paths: dict, expect: int) -> dict:
+def collect(tag: str, paths: dict, expect: int,
+            expect_lane_phase: str = DEFAULT_EXPECT_LANE_PHASE) -> dict:
     window = load_window(paths, expect)
     records = build_records(window["rows"], window["buckets"])
-    return {"tag": tag, "paths": {key: str(value) for key, value in paths.items()},
+    # R678：先判「这一窗配不配当 D 门样本」再出数——出数在前、拒判在后就是默许废样本进账。
+    lane_leg = lane_leg_readout(records)
+    require_lane_leg(tag, lane_leg, expect_lane_phase)
+    return {"tag": tag, "lane_leg": lane_leg, "paths": {key: str(value) for key, value in paths.items()},
             "sha12": {key: sha12(value) for key, value in paths.items()},
             "frames_rows": len(window["rows"]), "dedup_rows": window["dedup_count"],
             "attempts_collapsed": window["frames_collapsed"],
@@ -291,6 +343,11 @@ def render_text(reports: list, handle, show_rows: bool) -> None:
         handle.write("## " + report["tag"] + chr(10))
         prov = report["provenance"]
         handle.write("- 出处：" + json.dumps(prov, ensure_ascii=False) + chr(10))
+        leg = report["lane_leg"]
+        handle.write("- 队列道读数（R678·现取 kind，零枚就写零枚）：queued_* 枚数="
+                     + str(leg["queue_leg_count"]) + " 题号="
+                     + (",".join(leg["queue_leg_ids"]) or "无")
+                     + " ｜ kind 分布=" + json.dumps(leg["kind_counts"], ensure_ascii=False) + chr(10))
         handle.write("- 输入件 sha12=" + json.dumps(report["sha12"], ensure_ascii=False)
                      + " ｜ 帧账行数=" + str(report["frames_rows"]) + "（去重后=" + str(report["dedup_rows"])
                      + "，同题多轮折叠=" + str(report["attempts_collapsed"]) + "）" + chr(10))
@@ -313,8 +370,9 @@ class GreenClaimError(Exception):
     """想拿某一档单独宣布 A② 翻绿：本件有权当场拒（分母被人挪过的那一种绿，比红更坏）。"""
 
 
-def build_report(tag: str, evalrun: Path, overrides: dict, expect: int) -> dict:
-    report = collect(tag, ledger_paths(evalrun, tag, overrides), expect)
+def build_report(tag: str, evalrun: Path, overrides: dict, expect: int,
+                 expect_lane_phase: str = DEFAULT_EXPECT_LANE_PHASE) -> dict:
+    report = collect(tag, ledger_paths(evalrun, tag, overrides), expect, expect_lane_phase)
     report["provenance"] = read_window_provenance(evalrun, tag)
     report["in_book"] = report.pop("in_book_readout")
     return report
@@ -332,6 +390,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="在册分母对账（0 或负数一律拒：不许静默关闸按半套窗出数）")
     parser.add_argument("--format", choices=("table", "json"), default="table")
     parser.add_argument("--no-rows", action="store_true", help="只交六组数，不交逐题表")
+    parser.add_argument("--expect-lane-phase", choices=EXPECT_LANE_PHASES,
+                        default=DEFAULT_EXPECT_LANE_PHASE,
+                        help="R678：on＝这一窗声称走在队列道，账上就必须有 queued_*；一枚都没有 ⇒ "
+                             "点名那一扇并拒出数（rc=2）。缺省 off＝今天的老口径，一格都不多判。")
     parser.add_argument("--declare-green", default=None,
                         help="演示用：拿这一档宣布翻绿 ⇒ 本件一律当场拒（rc=3）")
     return parser
@@ -352,7 +414,8 @@ def main(argv: list = None) -> int:
             raise RefuseError("显式指了单窗账件却给了 " + str(len(args.tag))
                               + " 枚 --tag：这会拿同一套账冒充两窗的数 ⇒ 拒")
         evalrun = Path(args.evalrun)
-        reports = [build_report(tag, evalrun, overrides, args.expect_denominator) for tag in args.tag]
+        reports = [build_report(tag, evalrun, overrides, args.expect_denominator,
+                                 args.expect_lane_phase) for tag in args.tag]
     except GreenClaimError as exc:
         print("[r573][拒宣布] " + str(exc), file=sys.stderr)
         return RC_GREEN

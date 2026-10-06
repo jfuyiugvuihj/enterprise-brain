@@ -158,6 +158,29 @@
     ``scripts/r239_stream_gap_offline_audit.py`` 拿老账退回 ``prefix_breaks`` 同一条纪律）。
     口径、影响面与立案项见 ``docs/testing/r471-verdict-caliber-2026-09-29.md``。
 
+15. R678（10-05）缺省不许静默：这一窗指望入队却没声明档位 ⇒ 开跑那一刻具名拒。
+    带 1 已收的三扇 on 相（run24s2／run24s2b／run24s2c）就是这么废的：容器侧
+    REPORT_LANE_VIA_QUEUE 翻成 on，量具这一侧 DECLARE_LANE_TIER 缺省空串、DECLARE_LANE_PER_TIER
+    也关着 ⇒ 一发 lane 都不出门，服务端「lane 等于 report 且开关 on」那两道与件永远差一半，
+    12 枚报告题照旧走同步道：正文全在，对 D 门却是零读数。从前量具对这件事的态度是
+    「照跑，事后你自己发现」——判据 1 不许这么记。本文件从今天起在 transport 动手之前
+    （login 之前，一发请求都不许多打）过 require_lane_declaration 那道闸：指望入队却一枚 lane
+    都不发 ⇒ LaneDeclarationError 具名退出，采集器因此零产出、非零 rc。
+    🔴 三条边界，一条都不许松动：① **不猜档位**——猜出来的样本比废样本更坏（判据 1 后半句）；
+    ② 意图这一枚信号只认量具进程环境里与产品同名的那枚开关（EXPECT_QUEUE_LANE_ENV），本件
+    既不读 deploy/**，也不问容器（判据 4：容器与镜像动作属禁区），容器侧真值由开窗人在
+    ``python scripts/eval_transport_ask_v2.py --lane-preflight --env-file <compose 那本 env>``
+    里现取；③ 两枚开关都不设时的旧口径逐字节不变——R520 判据①（键不在盘上 ⇒ 报告档一题都不发）
+    与 R632 判据①（默认态一件新产物都不落）是并树在册钉，本单一根手指都不碰它们，所以
+    「未设就静默」只在指望入队那一形里致命。
+    事后那把尺在 ``scripts/r573_caliber_reconciliation.py``：--expect-lane-phase on 时这一窗里
+    queued_* 零枚 ⇒ 点名那一扇并拒出数。读数与「下一次带 3 怎么声明」见
+    ``docs/testing/r678-2026-10-05.md``。
+    🔴 编号卫生：本条记 15 不记 14——``02ee2e6`` 并树的 R642 有两枚注释按编号引用本抬头的
+    第 14 条（一处贴着 ``RECORD_POST_APPROVAL_TERMINAL`` 的声明，一处在 D-3 实现那一段），但那一枚
+    条目从未落地。本条若占 14 号，那两处引用会读到一个字面命中、内容全错的口径：第 14 号留给 R642
+    的缺文，建议另立一号补（本单只改自己这一条的编号，不碰 R642 那两行）。
+
    本文件的行号引用会随 ``app/api/v1/chat.py`` 漂移。09-23 在本树实取：``chat.py:1364`` 今天落在
    ``_complete_pending_steps`` 的收尾里（``return completed`` 在 :1363），「/ask 只发一条整段 text」
    这句旧断言早已失效；``/approve`` 路由在 :2271 而不是 :1719。R181 只订正自己动到的那几处，
@@ -165,9 +188,11 @@
 
 跑法与凭据见看板 §4BD：BASE_URL / 账号一律走环境变量，代码里没有硬编凭据。
 """
+import argparse
 import hashlib
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -245,6 +270,25 @@ LANE_SOURCE_HEADER = "x-lane-source"
 #: 与 tests/_r259_queue_ruler.py），往里加一列当场红 ⇒ 这一格只能长在第三份件上。
 LANE_LEDGER_ENV = "EVAL_LANE_LEDGER"
 
+#: ===== R678 判据①：缺省不许静默——档位声明是开窗前置，不是可省的装饰 ============
+#: 「这一窗指望入队」那一格用的信号与产品**同名**：不另造词，也不去读 deploy/**，更不去
+#: 问容器（判据④：容器与镜像动作属禁区）。容器侧真值由开窗人在
+#: ``--lane-preflight --env-file <compose 那本 env>`` 里现取（前置本体见文件末尾的 main）。
+EXPECT_QUEUE_LANE_ENV = "REPORT_LANE_VIA_QUEUE"
+#: 声明腿那枚键的**名字**住在常量里：错误句与前置读数都从这里取，不在第二处抄字面。
+#: 🔴 上面 DECLARE_LANE_TIER 那一行读取腿逐字不动——R520 的读取腿钉就是按那一句认的。
+DECLARE_LANE_TIER_ENV = "EVAL_DECLARE_LANE_TIER"
+#: 显式声明「这一窗就是同步相、一题 lane 都不发」的取值。缺省（键根本不在盘上）从此不
+#: 等于这句话：要拿同步样本可以，但得有人把它写出来（判据①：不许静默，也不许替开窗人猜）。
+DECLARE_LANE_NONE_VALUES = {"off", "none", "no-lane", "sync"}
+#: 开窗前置的三枚退出码。🔴 「问不着」既不许折成 0，也不许折成「off 所以没事」——那正是
+#: 本单要砍的那一枚静默缺省换个格子复发。
+RC_PREFLIGHT_OK = 0
+RC_PREFLIGHT_REFUSE = 2
+RC_PREFLIGHT_ASKED_BLIND = 4
+#: --phase 的三种取值：auto 先看 --env-file 里那枚开关，再看本进程环境；两处都问不着 ⇒ 非零。
+PHASE_CHOICES = ("auto", "on", "off")
+
 
 def _lane_switch(name):
     """从进程环境读一枚布尔开关：口径与产品那枚 _report_lane_via_queue_enabled 逐字相同。"""
@@ -254,6 +298,8 @@ def _lane_switch(name):
 #: 与 DECLARE_LANE_TIER 同一枚纪律：import 期读一次表，一窗之内不重读（读表腿由 R632 那件钉）。
 DECLARE_LANE_PER_TIER = _lane_switch(LANE_PER_TIER_ENV)
 RECORD_LANE_READOUT = _lane_switch(LANE_RECORD_ENV)
+#: R678 判据① 的意图那一枚：读表时机与上面两枚同一条纪律（import 期读一次，一窗之内不重读）。
+EXPECT_QUEUE_LANE = _lane_switch(EXPECT_QUEUE_LANE_ENV)
 #: ===== R642 D-3：批准之后那一次 ``/queue/status`` 重读（口径见抬头第 14 条）=========
 #: 🔴 默认关：关着时一枚状态读都不许多打、两份证据件的字节逐字回到今天（旧口径由
 #: tests/test_r642_post_approval_terminal_readback.py 钉死）；开着时批准轮走完之后多打**一发**
@@ -297,6 +343,157 @@ def lane_ledger_path():
     if override:
         return Path(override)
     return Path(SIDECAR).with_name(Path(SIDECAR).stem + "-lane.jsonl")
+
+
+class LaneDeclarationError(RuntimeError):
+    """指望入队却一枚 lane 都不发：当场具名拒。不猜档位，也不退化成同步道样本（判据①）。"""
+
+
+def lane_declaration():
+    """把两枚声明腿与「指望入队」那一枚意图读成一格账。🔴 只读盘面上的键，一字不改口径。
+
+    sends_any_lane 是那道闸唯一的判据来源：它说的是「这一窗会不会有一发 lane 出门」，不是
+    「开窗人以为自己声明了」——声明了名册外的档位名同样一题都不补（R520 判据③ 钉的就是那一形）。
+    """
+    raw = str(DECLARE_LANE_TIER or "").strip()
+    explicit_none = raw.lower() in DECLARE_LANE_NONE_VALUES
+    tier_declared = bool(raw) and not explicit_none
+    tier_is_known = raw in LANE_BY_TIER
+    return {"declare_env": DECLARE_LANE_TIER_ENV,
+            "tier_raw": raw,
+            "tier_declared": tier_declared,
+            "tier_is_explicit_none": explicit_none,
+            "tier_is_known": tier_is_known,
+            "per_tier": bool(DECLARE_LANE_PER_TIER),
+            "readout": bool(RECORD_LANE_READOUT),
+            "expect_queue_lane": bool(EXPECT_QUEUE_LANE),
+            "sends_any_lane": bool(DECLARE_LANE_PER_TIER or (tier_declared and tier_is_known))}
+
+
+def _declaration_refusal(state, where, intent):
+    """把拒写成一句能照着改口的话：点名键名、点名名册、点名下一步（判据① 要的正是这一句）。"""
+    who = "（触发点 " + str(where) + "）" if where else ""
+    roster = "／".join(sorted(LANE_BY_TIER))
+    stem = ("R678 具名拒" + who + "：" + intent + "，而量具一枚 lane 都不发 ⇒ 报告档照旧走同步道，"
+            "这一窗相对 D 门是废样本。报告档要 on 相必须显式声明 tier（档位名册现取=" + roster + "）：")
+    if state["tier_is_explicit_none"]:
+        detail = ("你把这一窗声明成了同步相（" + DECLARE_LANE_TIER_ENV + "=" + state["tier_raw"] +
+                  "），却又带着入队那枚开关 ⇒ 两句话互相矛盾。要么把它设成名册里的档位名，"
+                  "要么摘掉 " + EXPECT_QUEUE_LANE_ENV + " 再开这一窗。")
+    elif state["tier_declared"]:
+        detail = ("你设了 " + DECLARE_LANE_TIER_ENV + "=" + state["tier_raw"] +
+                  "，但那一枚名字不在名册里 ⇒ 一题都不补 lane，与没声明同形。"
+                  "要么改成名册里的档位名，要么开 " + LANE_PER_TIER_ENV + "=on 逐行按各自档位补。")
+    else:
+        detail = ("设 " + DECLARE_LANE_TIER_ENV + "=报告（只补报告档，与 run17／run11c 同口径），或开 "
+                  + LANE_PER_TIER_ENV + "=on（三档逐行各补各的）。只想跑同步样本就反过来声明：把 "
+                  + DECLARE_LANE_TIER_ENV + " 显式写成 " + "／".join(sorted(DECLARE_LANE_NONE_VALUES)) +
+                  " 之一，同时摘掉入队那枚开关。")
+    return (stem + detail + " 本量具不猜档位——猜出来的样本比废样本更坏（判据① 后半句）。"
+            "要把服务端说出的档位名逐题现读进第三份件，另开 " + LANE_RECORD_ENV + "=on（不改载荷）。")
+
+
+def require_lane_declaration(where="", expect_queue_lane=None, intent=None):
+    """判据① 的开跑闸：只在「指望入队却一枚 lane 都不发」那一形里致命，其余口径逐字节照旧。
+
+    🔴 「没声明、也没指望入队」那一格本单刻意不动：它是 R520 判据①（键不在盘上 ⇒ 报告档一题
+    都不发）与 R632 判据①（默认态一件新产物都不落）钉着的同步相缺省，把它改成致命＝在别人的
+    在册钉上动刀。同步相从此要过 --lane-preflight 才点得着火（见本文件末尾），事后那把尺在
+    scripts/r573_caliber_reconciliation.py 的 --expect-lane-phase。
+    """
+    state = lane_declaration()
+    if expect_queue_lane is not None:
+        state["expect_queue_lane"] = bool(expect_queue_lane)
+    if not state["expect_queue_lane"] or state["sends_any_lane"]:
+        return state
+    if intent is None:
+        intent = ("这一窗指望入队（量具进程环境里 " + EXPECT_QUEUE_LANE_ENV + " 是 on）")
+    raise LaneDeclarationError(_declaration_refusal(state, where, intent))
+
+
+def read_env_file_switch(path):
+    """从 compose 那本 env 文件里现读入队开关的**最后一个**取值；文件读不到就抛，不折成空。
+
+    口径照 compose：后写的行覆盖先写的，井号行与没有等号的行跳过，值两侧引号脱掉。本件只
+    读盘，不动容器、不动镜像、不动进程环境（判据④）。
+    """
+    value = ""
+    for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
+        text = line.strip()
+        if not text or text.startswith("#") or "=" not in text:
+            continue
+        key, _, raw = text.partition("=")
+        if key.strip() == EXPECT_QUEUE_LANE_ENV:
+            value = raw.strip().strip(chr(34)).strip(chr(39))
+    return value
+
+
+def lane_preflight(phase="auto", env_file=None):
+    """开窗前置那一步：交回 (退出码, 一格读数)。判据① 里「开跑那一刻」的人工那一遍。
+
+    两枚开关都不设、也没带 --env-file 时这一格是「问不着」，本件按非零退出：把问不着读成
+    off 然后照跑，正是 run24s2 那一族废样本的起手式。
+    """
+    state = lane_declaration()
+    notes = []
+    if phase == "auto":
+        if env_file:
+            target = Path(env_file)
+            if not target.is_file():
+                return RC_PREFLIGHT_ASKED_BLIND, {"phase": "unknown", "env_file": str(target),
+                        "reason": "env-file 读不到 ⇒ " + EXPECT_QUEUE_LANE_ENV + " 问不着，不许折成 off"}
+            raw = read_env_file_switch(target)
+            if not raw:
+                return RC_PREFLIGHT_ASKED_BLIND, {"phase": "unknown", "env_file": str(target),
+                        "reason": "那本 env-file 里没有 " + EXPECT_QUEUE_LANE_ENV + " 这一行 ⇒ 相问不着"}
+            phase = "on" if raw.strip().lower() in LANE_SWITCH_ON_VALUES else "off"
+            notes.append("相取自 " + str(target) + " 里的 " + EXPECT_QUEUE_LANE_ENV + "=" + raw)
+        elif state["expect_queue_lane"]:
+            phase = "on"
+            notes.append("相取自本进程环境的 " + EXPECT_QUEUE_LANE_ENV)
+        else:
+            return RC_PREFLIGHT_ASKED_BLIND, {"phase": "unknown", "declaration": state,
+                    "reason": "既没给 --env-file，本进程环境里也没有 " + EXPECT_QUEUE_LANE_ENV +
+                              " ⇒ 这一窗是不是 on 相问不着。显式给 --env-file，或直接 --phase on／off"}
+    expect = (phase == "on")
+    intent = ("这一窗声明成 on 相" + ("（" + notes[-1] + "）" if notes else "")) if expect else ""
+    try:
+        require_lane_declaration(where="开窗前置", expect_queue_lane=expect, intent=intent)
+    except LaneDeclarationError as exc:
+        return RC_PREFLIGHT_REFUSE, {"phase": phase, "declaration": state,
+                                     "notes": notes, "refusal": str(exc)}
+    note = ("on 相：声明腿在位，lane 逐请求出门" if expect
+            else "同步相：一题都不带 lane ⇒ 这一窗不进 D 门账，也不许拿它读 D① 的 100%")
+    if expect and not state["readout"]:
+        note += "（档位名的逐题现读还欠 " + LANE_RECORD_ENV + "=on；侧车里的 queued_* 仍是硬凭据）"
+    return RC_PREFLIGHT_OK, {"phase": phase, "declaration": state, "notes": notes, "readout": note}
+
+
+def main(argv=None):
+    """量具自己的开窗前置：python scripts/eval_transport_ask_v2.py --lane-preflight
+
+    不带 --lane-preflight 时只交回声明读数（零判定、零副作用），给人对着盘面抄一句话用。
+    """
+    parser = argparse.ArgumentParser(
+        description="R678 开窗前置：档位声明与这一窗的相必须配得上（只读盘，不动容器、不动模型）")
+    parser.add_argument("--lane-preflight", action="store_true",
+                        help="真判这一格：on 相没声明 ⇒ 非零并点名键名")
+    parser.add_argument("--phase", choices=PHASE_CHOICES, default="auto",
+                        help="这一窗是不是 on 相；auto 先看 --env-file，再看本进程环境")
+    parser.add_argument("--env-file", default=None, help="compose 用的那本 env 文件（只读它）")
+    args = parser.parse_args(argv)
+    if not args.lane_preflight:
+        print(json.dumps(lane_declaration(), ensure_ascii=False))
+        return RC_PREFLIGHT_OK
+    rc, readout = lane_preflight(args.phase, args.env_file)
+    print(json.dumps(readout, ensure_ascii=False, indent=1))
+    if rc == RC_PREFLIGHT_REFUSE:
+        print("[r678][REFUSE] " + str(readout.get("refusal", "")), file=sys.stderr)
+    elif rc == RC_PREFLIGHT_ASKED_BLIND:
+        print("[r678][问不着] " + str(readout.get("reason", "")), file=sys.stderr)
+    return rc
+
+
 # 空 dict = 无视 http_proxy/HTTPS_PROXY，等价 curl --noproxy "*"（runbook §6：Clash 会劫 127.0.0.1）
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _TOKEN = ""
@@ -1560,6 +1757,9 @@ def transport(row):
     """
     global _TOKEN, _BLANKS, _APPROVAL_FAILURES, _PARKED, _QUEUED_APPROVED
     row_id = str(row.get("id", ""))
+    # R678 判据①：缺省不许静默。这道闸打在 login() 之前——指望入队却没声明档位时一发请求
+    # 都不许多打，采集器因此零产出、非零退出，而不是跑完整窗才被事后尺告成废样本。
+    require_lane_declaration(row_id)
     last_error = None
     for attempt in range(1, ATTEMPTS + 1):
         started = time.time()
@@ -1707,4 +1907,11 @@ def summary():
             "queued_approved_turns": _QUEUED_APPROVED,  # R447：其中批到终答的题数
             # R642：D-3 那半格的开关状态随自查交回 —— 关着就是这一格今天没量，写在盘面上。
             "post_approval_readback": ("on" if RECORD_POST_APPROVAL_TERMINAL else "off"),
+            # R678 判据①：这一窗的档位声明随自查交回——没声明就是没声明，收窗那一眼就看得见，
+            # 不必等事后有人把 sidecar 与 answers 摊开对（带 1 那三扇就是这么漏过去的）。
+            "lane_declaration": lane_declaration(),
             "frame_ledger": str(frame_ledger_path())}  # R181 判据② 的证据件落点（收窗自查用）
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
