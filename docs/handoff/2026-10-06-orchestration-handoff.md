@@ -81,3 +81,21 @@
 - **解释器**：主树 `.venv\Scripts\python.exe` 才是能跑测试的那枚；`C:\Users\fengx\anaconda3\python.exe` 缺 `chromadb`，只能跑纯 stdlib 脚本（conftest 当场 ImportError）。
 - **`Start-Process -ArgumentList` 只吃单串**：传数组会报「Cannot convert System.Object[]」；正确写法是把 `"-m pytest -q --no-header <文件串>"` 拼成一整串。别信 `Start-Sleep` 阻塞式等待——exec 通道 30 s 就 yield，长批一律 `Start-Process` ＋ 日志尾读。
 - **state② 的树形状**：`git archive` 出的树没有 `.git`，状态敏感钉（r496／r688 一族）连收集都过不去；干净态一律 `git worktree add --detach` 跑，用完 `git worktree remove`（AGENTS ⑮ 的正解）。
+
+
+---
+
+## 追加（10-06 16:3x·第二十一班·新总控线亲取，对本纸上面几格的订正）
+
+🔴 **§1 那张表写「刚投」是乐观账**：`read_thread` 逐枚现取，四枚席位的 turn **全是 `interrupted`**（旧线吃满那一刻一起断）。
+真实形状：`Newton`／R706 齐码缺纸、`Archimedes`／R694 齐货缺纸、`Schrodinger`／R702 半件（`chat.py` 仅 +5 行未提交）、`Noether`／R710 零交付。
+本班处置：R706 并树 `bef6ec4`＋总控代纸 `3ac4454`（同名件两态 81 passed／53.22 s 与 81 passed／54.86 s，七枚牙逐枚点名）；
+R694 并树 `2b817fe`（52 枚逐枚 blob 对盘零失配＋README 代纸，环达 1-6/9、未达 7/8，未达归因＝R703 已并／**R710 未结案**）；
+R702 与 R710 走 `send_message_to_thread` 短指针续投（各 ~160 字节），要返工仍旧落账面。
+
+🔴 **§3 那句「账本＝`%TEMP%\evalrun\night1006.ledger.jsonl`」与码不符**：`scripts/day1006_queue.py` 把 `Q.LEDGER` 就地覆写成
+`day1006.ledger.jsonl`（夜窗那份 54 笔是昨夜 run30 家族的账，与今天这份**不同名、不会互相误跳**）。行号不写，按 `Q.LEDGER` 那格查。
+
+🔴 **§3 的起法今天被事故 #129 污染过一次**：我拿 `--help` 试未读过的队列，它没有 help 分支、直接从 band0 开跑，
+真执行了 `--force-recreate backend worker scheduler` 并清空 run32 的 shard 目录，`day1006.ledger.jsonl` 里 band0 那几笔已是 rc=0。
+⇒ **真窗起之前先把这份账本改名留证（`day1006.ledger.jsonl.accident129`），让代次闸重跑**；否则窗会在旧镜像上量新并的 `app/**`＝假账。
