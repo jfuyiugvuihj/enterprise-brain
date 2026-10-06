@@ -40,7 +40,12 @@ import ctypes
 import ctypes.wintypes as wt
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE_ARGS = ["-m", "pytest", "-q", "-p", "no:cacheprovider", "--no-header"]
+#: --continue-on-collection-errors（10-07 回滚演练挖出来的形状）：码与测试一旦脱节，
+#: 贴错那一侧的文件会在 import 期就炸，pytest 默认把整批中止——门交回一个 rc=2 而不是
+#: 逐枚点名的红，等于把「坏在哪一枚」这条信息吃掉。演练实测：退掉 200e47f 的产品码后，
+#: 一枚牙正红（14 failed／1 passed），另一枚牙直接 collection error 并把整批打断。
+BASE_ARGS = ["-m", "pytest", "-q", "-p", "no:cacheprovider", "--no-header",
+             "--continue-on-collection-errors"]
 
 #: 2026-10-06 改章：账面坐标族永久退出全量门。名册的唯一真源是
 #: ``scripts/selfcheck_ledger.py::FAMILIES``，这里只做减法、禁止再抄一份名单——
