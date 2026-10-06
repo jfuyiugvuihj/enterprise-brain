@@ -233,13 +233,13 @@ r2 那张 A–F 并发组表已废（它按功能名称分组，而并行只能�
 |---|---|---|
 | PGVector 正式接入读路径 | **码在树＋生产已切** | `printenv INDEX_BACKEND`=pgvector（10-03）；欠停写退役＋客户尺寸校验 |
 | OCR 与扫描 PDF | **码在树** | `app/rag/ocr.py`＋`loader.py` 三档页源（`e441d10`）；真扫描件质量未验 |
-| PDF/Word 表格解析 | 半 | `app/rag/tables.py` 模块＋契约在树，**端到端待接线**（R300 `72a9bdc`） |
+| PDF/Word 表格解析 | **达**（10-06 订正：旧账「半／端到端待接线」已过期） | R304 并树 `9344028`：带表 PDF／DOCX 在交给分块器之前先过 `app/rag/tables.py`（`app/rag/loader.py` 现取 `from app.rag import tables as table_channel`，塌了就从 `DocumentExtraction.tables` 看得见，判据⑤不许静默）；在册 `tests/test_r300_tables.py` 43 枚与 r304 专名件 25 枚第十班逐枚单点跑过（§4DB）。真扫描件质量属 OCR 那一行，不由本行宣称 |
 | `Artifact`／`CalculationRun` | 半 | `app/api/v1/artifacts.py` 4 枚路由＋9 枚专名测试件；`CalculationRun` 侧未逐格验收 |
 | 权限统一／资源级隔离 | 半 | `auth.py` 11 枚路由、`restricted.py`、R193 矩阵 51 格真红 0；生产标签那一格按 §5 C① 记"未验" |
 | 知识图谱 | 有入口 | `app/knowledge_graph/service.py`＋`intelligence.py` 8 枚路由＋2 枚专名测试件；定位纸在 `docs/design/knowledge-graph-positioning.md` |
 | 审批助手／通知 | 有入口 | HITL 批准链在 `chat.py`；`notifications.py` 6 枚路由＋5 枚专名测试件 |
 | Dashboard 真实数据 | 有入口 | `dashboard.py` 2 枚路由＋4 枚专名测试件；"不依赖固定演示值"未逐格验 |
-| Excel/CSV 知识库模式 | 未做 | `app/documents/file_security.py` 顶部注释点名 `POST /upload-excel` 的边界仍未并进知识库索引 |
+| Excel/CSV 知识库模式 | **在飞**（R700 已派 `Mill`／`be-r700`／基点 `f363d94`） | 病形现取：`app/documents/file_security.py` 顶部自陈 `POST /api/v1/upload-excel is still a separate route ... and it does not read this dict`；路由在 `app/api/v1/data.py::upload_excel`；`app/rag/loader.py` 只有 R304 那条 PDF／DOCX 腿。`.xls` 维持不做（openpyxl 读不了遗留二进制、`xlrd` 不在本仓依赖）。判据锁死：复用既有入库腿·零新 Chroma 写点·响应形状不破（`frontend/src/components/DataPanel.vue` 在调，禁改 `frontend/**`）·表格→正文复用 `app/rag/tables.py`·`pyproject.toml`／`uv.lock` 禁动 |
 | 队列重试／死信／幂等／失败原因完整 | 半 | `deploy/queue_worker.py`＋R37 ③ 未重量（见 §4） |
 | 重启不丢核心数据 | 半 | R575 备份—恢复演练 10-05 首次真跑到底；🔴 R587 抓到库级 GUC 不在 pg_dump 里（E 门备份假绿） |
 
