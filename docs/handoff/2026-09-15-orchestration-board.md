@@ -1780,10 +1780,14 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Banach`（本班·已结案） | 席位唯一键＝agent_id（上一班名册在册） | **R657** 首屏那一格口径串与契约两格同批改口（作废 blocker `wire_first_text_not_recorded`） | `be-r657` | ✅ **已并树 `dfc75f0`**：基点 **127/0** → state① **2 failed/125 passed** → state② **1 failed/126 passed**。🔴 自报「并树即回绿」被本席亲跑推翻一半——`r523` 回绿、`r645` 刀③ 仍红（escape 集空，两枚不变式互斥）⇒ 遗留下单 **R664**；已 close 让槽 | 11:0x |
 | `Tesla`（本班·已结案） | 席位唯一键＝agent_id（上一班名册在册） | **R658** R650 的同批伴侣（三枚过期牙改挂新形状，红线＝两堆必须一起并） | `be-r658` | ✅ **已并树 `96763c4`**（与 R650 同批，三态 285/0→300/0→300/0）；已 close 让槽 | 11:0x |
 | `Pauli`（本班·死席） | 席位唯一键＝agent_id | **R654** 格② 热集让路驱动件按 §120 重写 | `be-r654`（基点 `8a52c5c`） | ⛔ 死于 `429 Too Many Requests`，零写入已取证（`dirty=0`／`untracked=0`／`rev-list --count 8a52c5c..HEAD`=0）⇒ 已 close 让槽；**R654 未落地**，派工词 `%TEMP%\eb104\dispatch\R654.txt` 等槽位复投（非双投） | 11:0x |
-| `Huygens`（本班在飞） | `01a10f09-1ba2-7ec1-b7cf-90a7ede5b9b0` | **R688** R51② 五段事件生产腿（`CANONICAL_STAGES` 那五段要有真发点） | `be-r688`（基点 `624bb78`，**独占**） | 🟡 **在飞·未交**：11:2x 现取 `ahead=0`、dirty 2 枚（`app/agents/nodes.py` +184/-161、`app/trace/spans.py` +88/-1）、untracked 2 枚 ⇒ 有写入、零自提交，验收等收席三证现取 | 11:2x |
-| `Pasteur`（本班在飞） | `01a10f09-3306-7371-8b77-cb5e7d5dc56f` | **R690** R38③ `/chat` 腿缺 `stream_options.include_usage`（同仓两条道一条有计量） | `be-r690`（基点 `624bb78`，**独占**） | 🟡 **在飞·已自提交**：现取 `ahead=2`、HEAD `c39d969`、dirty 0、untracked 0（新规：执行层只许在**自己树**提交，主树仍未动）。⚠️ 另有 `be-r690s3`（只 1 枚未跟踪牙件）与 `%TEMP%\r690b2`／`%TEMP%\r690b3` 三枚影子树，收席时逐枚点名哪一棵是正席 | 11:2x |
-| `Beauvoir`（本班在飞） | `01a10f09-b3e0-7433-91d5-97194d4b0b73` | **R673** GPU 语义钉（`OLLAMA_REQUIRE_GPU` 丢卡必报错，写域窄化见工单追加段） | `wt-r673`（基点 `b666ff3`，**独占**） | 🟡 **在飞·未交**：现取 `ahead=0`、dirty 1 枚（`app/common/model_capabilities.py` +90）、untracked 1 枚（`tests/test_r673_gpu_honest_declaration.py`）。🔴 **两树同单**：`wt-r673s2` 内容与 `wt-r673` 逐枚相同（dirty 与 untracked 同形）⇒ 疑似重复体，按事故 #14 那族处理：收席时先 `fsck`/`diff` 判谁是真的写域，**不许两枚都并** | 11:2x |
+| `Huygens`（本班·已结案） | `01a10f09-1ba2-7ec1-b7cf-90a7ede5b9b0` | **R688** R51② 五段事件生产腿 | `be-r688`（基点 `624bb78`，独占） | **✅ 已并树 `ecbd525`**：自提交 `bf7f25c` 1 枚，补丁 62,058 B／SHA-256 `51A453E1…4205EB36`，主树 apply 后 7 枚文件逐枚同哈希；总控亲跑 state① 同名 6 枚＝**108 passed／13 skipped／0 failed／70.40 s**（state② 见 §4GJ）。13 枚 skip 逐枚归因＝`tests/test_r636_stage_coverage.py` 缺仓外导出件 `%TEMP%\evalrun` 的窗口依赖件，不是摘牙。🔴 席位 11:27 被打断时**交付纸为零**且其跟进纸引用了不存在的纸 ⇒ 纸由总控代写（`docs/testing/r688-2026-10-06.md`），R51② 仍记**待窗**。12:0x 收席三证现取（rev-list=1／dirty 空／untracked 空）后 close | 12:00 |
+| `Pasteur`（本班·已结案） | `01a10f09-3306-7371-8b77-cb5e7d5dc56f` | **R690** R38③ `/chat` 腿缺 `stream_options.include_usage` | `be-r690`（基点 `624bb78`，独占） | **✅ 已并树 `c82208c`**：补丁 20,375 B／SHA-256 `CF69B448…265FB52E`；决定性 4 枚件 **82 passed／0 failed／7.52 s**；state① 41 枚件 **1 failed／878 passed／246.18 s**（那 1 枚＝r496 施工期指纹钉，脏态产物）；state② 干净树同名 41 枚件 **879 passed／0 failed／289.49 s**（11:47:58 收口，两态齐）。11:5x 收席后 close | 11:59 |
+| `Beauvoir`（本班·已结案） | `01a10f09-b3e0-7433-91d5-97194d4b0b73` | **R673** GPU 两种姿势各自具名 | `wt-r673`（基点 `b666ff3`，独占）＋`wt-r673s2`／`wt-r673s3` | **✅ 已并树 `b2daf17`**：改动件 `app/common/model_capabilities.py` **+90/−0** 单发补丁 5,582 B（apply rc=0，落盘同哈希），新钉 17 枚（K1～K5 五把刀＋「什么都没挪的刀必须被拒」），凭据纸 §1～§10 席位写、§11 总控补验收栏。🔴 两树同单已判：`wt-r673` 是真货（含纸），`wt-r673s2` 是同改动同钉的**无纸副本**（state②／反证用），**只并一份**。总控亲跑 state①②③ 三态＝117 passed／1 failed（那 1 枚 r498 已在干净影子树 `f36de2f` 上证为先红）／11.9 s。顺带 r453 那一格按派工段口径落**账面登记**（45→46 枚名，登记前亲跑 1 failed／12 passed，剔键逐字符回落旧基线＝True）→ 已并 `4ebfaff`。12:0x 收席三证现取后 close | 12:00 |
 | `总控本人`（本班亲做） | 不占执行层席位（不入并发计数） | **CHASE-2026-10-06** 三刀里没做全的那两刀（段 A′ 已并 `7136f3d`／段 B `0093e43`／段 C＋凭据纸 `8c1dc02`） | 主树 `8c1dc02` | ✅ **已交付**：段 A′ 39 枚派生坐标红→**0**（同名 8 枚件 158 passed／0 failed／1 xfailed／5.70 s）；段 B 卫兵落地，机械层现取 95 枚／30 个文件、预算 95、`--check` rc=0，牙 7 枚（state① 6.99 s／state② 7.90 s 两态同清单）；段 C 计划书 §2 全量门那格按今晨亲跑改口＋新开 §0.6 四行。🔴 **未达三格如实挂账**：段 A 原判据 1／2（文档层 5416 枚／135 个文件未符号化）归 R692；刀1 状态真源未做（账尺里 `docs.tickets` 命中 **0**）归 R680；余下先红只给推算、全量门未重量 | 12:1x |
+| `Laplace`（本班在飞） | `01a10f4a-ec71-7862-a78d-7285e0817f26` | **R677** 格② 热集常驻让路驱动件（只交代码＋离线牙，真机重量今晚 run32 顺带取） | `be-r677`（基点 `f36de2f`，独占） | 🟡 **在飞**：11:4x 投出（单 block 一次投递，无第二通道），派工词＝指针（≤200 B）；写域 `app/rag/hot_index.py`＋新 `scripts/r677_hot_set_yield.py`＋新钉，禁区含 `app/agents/**`（Huygens 在飞）与 `app/api/v1/chat.py` | 11:52 |
+| `Goodall`（本班在飞） | `01a10f4b-002d-75a3-aecd-f2f613e70ec0` | **R676** R47① 乙案口径（业主已裁乙：不动 105 题评测集，改 top-5 变化率） | `be-r676`（基点 `f36de2f`，独占） | 🟡 **在飞**：与 Laplace 同 block 之后分块投出；写域 `scripts/r676_synonym_top5_delta.py`＋新钉＋凭据纸，🔴 明令不许动 `scripts/tickets_index.py` 与评测夹具 | 11:52 |
+| `Curie`（本班在飞） | `01a10f66-8a01-72d3-8266-b110a77e30c7` | **R693** 门那格清零：9 枚在册先红逐枚治（r638×3／r469×2／r492×2／r595×1／r498×1） | `be-r693`（基点 `6800b4c`，独占） | 🟡 **在飞**：12:0x 投出；零摘牙硬规矩——变空只许靠派生尺 `--land` 写回或修那把身份坏掉的尺；夜窗量具（`eval_*`／`r57*`／`r59*`／`r63*`／`r674*`／`run_gate.py`）只读，洞在尺身上即交回总控裁 | 12:07 |
+| `Archimedes`（本班在飞） | `01a10f67-0bb8-7882-8023-6137e87063dc` | **R694** 前端九环走查＋两张失败脸（§9 判据 5） | `be-r694`（基点 `6800b4c`，独占） | 🟡 **在飞**：12:0x 投出；🔴 本单**不改任何被跟踪源文件**，货是证据；开工须过代次闸（backend 镜像 `CreatedSince` ≤2 h——总控 12:0x 已 `build migrate`＋`--force-recreate backend worker scheduler`，代次闸复跑 **PASS／120 枚在册模块逐字节对齐**） | 12:09 |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -7149,3 +7153,56 @@ C 门三格现状：①越权 0 条＝**未验**（R481 口径；R487 只到账�
 ### §4GI.7 今晚排班（一次排队，别做一步停一步）
 
 band 顺序＝provenance 硬闸 → `run32`（全 105 题，同步相显式声明）→ `run32d`（33 题 D 门三件齐）→ 跨代对子 pairing（run32 × run30/31，补 A④）→ close-out（r573 逐窗读数落纸）。开机前 `powercfg /change standby-timeout-ac 0`（**不设永眠**，业主明令）；窗内总控只做零争用账面活（清删除清单、写 R692／R680 单），**窗内硬禁**：并树、跑测试、动容器、打模型。
+
+## §4GJ 第十九班（10-06 11:4x–12:1x·总控线·主树 `f36de2f`→`ecbd525`→`b2daf17`→`4ebfaff`→`6800b4c`·**单模型未切换**·心跳一枚没碰）：两笔并树＋账面登记＋代次闸重建＋门那格真账 9 枚 · 🔴 事故 #125
+
+### 1. R690 的两态终于齐了（上一班欠的那一半）
+
+- state②＝干净树复跑同名 41 枚件：**879 passed / 0 failed / 289.49 s**（11:47:58 收口）。与 state① 的 1 failed／878 passed 相加同为 879 枚，差额恰是那枚 r496 施工期指纹钉——**脏态产物，不是 R690 的罪**，纸 §9 已就地记。
+- 🔴 **事故 #125（本席自证，同类病第一次落在测量与改树互斥上）**：上一班在 state② 批次**还在飞**的时候发了 3 枚提交（`e22ba97`／`7bbedd7`／`f36de2f`）并加了两枚 `git worktree add`，把主树 HEAD 从批次脚下挪走 ⇒ 那一次跑出 **17 failed／862 passed**（3 枚 `test_r453_cloud_eval_override`＋14 枚 `test_r496_forbidden_pin_scope`，全是读 git/盘面状态的敏感钉）。归因＝**本席造成，与被测单无关**，处置＝冻树重跑（本条那一枚 879/0 就是重跑结果）。规矩补第 **⑮** 条进 `AGENTS.md`：**同名件／门这类读数在飞时，禁止一切改 HEAD 的动作（commit／worktree add／reset／stash）**，要并树先收批，或把读数改到影子树跑。
+
+### 2. R688 并树 `ecbd525`（执行层 Huygens／树 `be-r688`／基点 `624bb78`／自提交 `bf7f25c`）
+
+- 五段事件**第一次有生产发点**：`app/agents/nodes.py` ＋184/−161、`app/trace/spans.py` ＋88/−1、`app/common/stage_timing.py` ＋14/−3。补丁 62,058 B／SHA-256 `51A453E169DD6BB2E90979E6F9ABD10DA59D34738A9601C6B8A4702B4205EB36`，主树 `git apply` 后 7 枚文件与席位树**逐枚 SHA-256 相同**；基点撞域 numstat 空。
+- 总控亲跑两态（同名 6 枚，清单逐枚相同）：state① 脏态 **108 passed／13 skipped／0 failed／70.40 s**；state② 干净树 **108 passed／13 skipped／0 failed／146.94 s**（慢在四席同时在跑，非判语变化）。分枚：两枚 r688 件 18 passed、`test_r636_stage_coverage.py` 18 passed＋13 skipped、三枚在册计时/观测件 72 passed。
+- 13 枚 skip 逐枚点名归因＝`tests/test_r636_stage_coverage.py` 四处「仓外导出件不在位（%TEMP%\evalrun）⇒ 真窗对账组不参与判语」，是**窗口依赖件**，今晚 run32 出货后由同名件自己吃；不是摘牙、不是缺口。
+- 🔴 **交付纸由总控代写**（`docs/testing/r688-2026-10-06.md`，7,324 B／63 行／控制符各 0／`file:line` 形态 0 枚）：席位 11:27 被打断时纸为零，而它的跟进纸已经引用「读数见交付纸」——**照席位自报入账就是假账**，故本纸全部读数由本席亲跑，纸 §6 把这一格逐字记账。
+- **R51②（分段加总误差 <1%）不由本单翻绿**，纸 §5 明写「待窗」。剩下两条腿的裁定：retrieve 采**甲案**（承认 `app/agents/tools.py::search_docs` 的工具跨度即段账，`app/common/stage_timing.py::TOOL_TO_STAGE` 已归段，r636 真窗 run18＝retrieve 74/105 产账）；🔴 乙案会在同一段放两把尺，`aggregate_stage_latency` 只剔严格包含、等长区间进 `unresolved_pairs`，`within_one_percent` 从此永闭——那正是 R51② 的死法，不许走。rewrite 另立单号（今天既无跨度也无身份：`app/api/v1/chat.py::_rewrite_followup` 与 `app/rag/retrieval_pipeline.py::QueryRewriter.rewrite` 签名里没有 config/主体，`app/common/model_handler.py` 里 `record_stage_event` 零枚；R690 已并树 ⇒ 写域冲突已消）。
+
+### 3. R673 并树 `b2daf17` ＋ r453 账面登记 `4ebfaff`（执行层 Beauvoir／树 `wt-r673`／基点 `b666ff3`／未自提交 rev-list=0）
+
+- 货＝`app/common/model_capabilities.py` **＋90/−0**（`gpu_posture`／`posture_basis`／`declare_gpu_posture`／`reset_gpu_posture_declaration`＋四条具名声明；`annotate_inference_compute` 在探针之前先声明姿势；硬门触发与 fail-open 各打各的行）＋新钉 17 枚（K1～K5 五把刀，另有「什么都没挪的刀必须被拒」）＋凭据纸（§1～§10 席位写、§11 总控补）。
+- 🔴 **两树同单的判定**（事故 #14 那族）：`wt-r673`＝真货（含纸），`wt-r673s2`＝同改动同钉的**无纸副本**（state②／反证用），`wt-r673s3`＝`--verify` 对照树。**只并一份**，两枚一次性树待收。
+- 三态读数（同名 6 枚）：state① 脏 **117 passed／1 failed／11.91 s**、state② R673 已 commit 而登记未 commit **117 passed／1 failed／11.53 s**、state③ 两者都进树 **117 passed／1 failed／11.87 s**。那 1 枚红的归因**独立证过**：`tests/test_r498_landing_shape_is_not_a_mention.py::test_a_probe_burned_by_a_landing_message_reads_a_mention` 在干净影子树 `f36de2f`（R688／R673 均未进树）复跑同名件＝**1 failed／60 passed**，同一枚同一形状 ⇒ 先红，记进下一节那 9 枚，本班不摘牙不改口。
+- r453 那一格按派工段口径落**账面登记**（本席亲做，席位写域之外）：`EFFECTIVE_NAMES_SHA_WITH_DEPLOYMENT_ENV` 由 45 枚名的 `37f8a545…` 改登 46 枚名的 `ccbf4740b8dd6e644beca2ae63c387b14c0e33381e23a2ef538fe03654791c85`。取证三步全是本席亲跑——登记前干净主树 `ecbd525`＝**1 failed／12 passed**（尺自己把新 sha 打印出来，逐字符与席位 §5 相符）；现取＝**46 枚名**；剔掉 `OLLAMA_REQUIRE_GPU` ⇒ 45 枚名 ⇒ **落回旧基线 True**；`declared_names`／`declared_pairs` 仍与 09-28 常量一字不差（compose 未动）。登记后单件 **13 passed／2.23 s**。
+
+### 4. 门那格的真账：在册先红 9 枚（本席 12:0x 亲跑 16 枚同名件＝9 failed／268 passed／26.53 s）
+
+| 族 | 枚数 | 红在哪几枚 |
+|---|---|---|
+| r638 指针棘轮 | 3 | `test_the_stored_baseline_matches_the_rulers_own_reading`／`test_no_markdown_file_grew_its_paper_coordinates`／`test_shrink_is_named_not_silently_forgiven`（尺自身恒等式 `after − before == len(added)` 断，实测形如 `before=75 after=77 added=31`） |
+| r469 读数件生成 | 2 | `test_the_in_tree_readout_is_byte_for_byte_what_the_lib_emits`／`test_the_cli_is_the_only_way_that_produced_this_table` |
+| r492 §9.3 列对派生 | 2 | `test_s9_3_coordinate_column_equals_the_derived_readings`／`test_teeth_b_swapping_two_cells_turns_red` |
+| r595 run9 凭据复现 | 1 | `test_run9_book_credential_is_reproduced` |
+| r498 提及／并树 | 1 | `test_a_probe_burned_by_a_landing_message_reads_a_mention` |
+
+- `docs/version-roadmap-and-requirements-2026-10-05.md` §9 判据 4 要的是**红集合为空**，不是「红都能归因」⇒ 这 9 枚不清，门那一格永不绿。承接单＝**R693**（`docs/tickets/R693-gate-red-set-to-zero.md`，席位 `Curie`），硬规矩零摘牙。段 A′ 已用同手法把另三族 39 枚治到 0，这 9 枚是剩下的同族账。
+- 另两枚在册件本席已复跑转绿：`test_r453_default_env_baseline.py` 13 passed（登记后）、`test_r400_*` 两枚件在全绿组里（本次 268 passed 含它）。
+
+### 5. 后端镜像代次闸：FAIL → 重建 → PASS（今晚开窗的前置已解）
+
+- 派工前跑 `scripts/check_image_provenance.py`＝**FAIL／rc=1**，逐枚点名 16 处字节差（`app/agents/nodes.py`／`app/api/v1/chat.py`／`app/common/model_capabilities.py`／`app/common/model_handler.py`／`app/common/stage_timing.py`／`app/trace/spans.py`／`app/trace/projections.py`／`scripts/eval_transport_ask_v2.py`／`scripts/r573_caliber_reconciliation.py`／`scripts/night1006_queue.py` 等，另 `scripts/lint_hand_copied_coordinates.py`／`r674_window_trace_export.py`／`day1006_queue.py` 是「在树里、不在镜像里」）⇒ 镜像 `6ba1be0` 落后今天四笔产品码。
+- 照夜队列 band 0 同一条命令做（不发明）：`docker compose --env-file deploy/.env.server build migrate`（层缓存命中，秒级完成）＋`up -d --force-recreate backend worker scheduler`（rc=0）。复跑代次闸＝**PASS**（`byte check: clean, 120 tracked modules compared`），七枚容器齐、backend／worker／scheduler healthy。UI 面现取 `GET /` 200、`GET /api/v1/health` 200。
+- 前端**没动**：`git log --since="30 hours ago" -- frontend` 零提交 ⇒ `enterprise-brain-frontend:local`（21 h）不落后，走查对着当代码走；`frontend/**` 归前端线，本班一字节未碰。
+
+### 6. 在飞与并发（硬上限 3～4，本班到顶）
+
+- 12:1x 现取在飞＝**4 枚**：`Laplace`／R677（`be-r677`）、`Goodall`／R676（`be-r676`）、`Curie`／R693（`be-r693`）、`Archimedes`／R694（`be-r694`）⇒ **不再新投**，先收席腾槽。`Huygens`／`Beauvoir`／`Pasteur` 三枚已 close（收席三证在名册行内逐枚现取）。
+- 派工一律「一个 block 一次投递」：本班 4 次 spawn 分 4 个 block，每次一条，全部成功、零补投。派工词＝指针（每条 ≤200 B，规格住 `docs/tickets/**`）。
+- 🔴 本席踩到一次投递参数事故：spawn 时带了 `reasoning_effort` 覆盖 ⇒ 服务端回「Reasoning effort `medium` is not supported」而**未创建线程**（参数校验期即拒，零写入），去掉覆盖裸投即成。这条与旧规矩「派工不得带 model 覆盖」同族，补一句：**派工词调用只许带 message，任何模型／推理档覆盖都不带**。
+
+### 7. 欠账与今晚排班（口径不变，只补今天的新事实）
+
+- 欠代码：R677／R676／R693／R694 在飞；并完后另立 **R695**＝rewrite 腿（送身份＋开 `stage_account`）、**R696**＝retrieve 甲案读侧并段（`scripts/r631_stage_sum_delta.py`＋R674 导出器，排窗后）、R692＝文档层全符号化（5,416 处／135 枚文件）、R680＝账尺改读工单目录＋r631 按键名查、R669＝R25② 带 overlay 真机取证（要动容器，排窗后）。
+- 欠窗（今晚，本机不吃网）：`scripts/day1006_queue.py`＋`scripts/night1006_watchdog.py` 排 run32（全 105，约 1.9 h）→ run32d（33 题 D 相，`EVAL_DECLARE_LANE_TIER=报告`＋`REPORT_LANE_VIA_QUEUE=on`＋r573 `--expect-denominator 33 --expect-lane-phase on`）→ run33（同代次第二枚，配 A④ 跨代对子）→ 配队（r634 只在存活窗上跑，run22/23 的证据件已被事故 #124 删掉）。代次闸已提前 PASS，夜里那一格只会复跑确认、不会再花 3600 s 重建。
+- 卫生自检：本班所有新写入文档控制符 `0x00/07/08/0b/0c` 枚数各 0；看板 BOM（`EF BB BF`）与 LF 行尾保持（12:1x 写回后现取 1,790,580 B／7,156 行，numstat ＋7/−3 只动名册那五行）；坐标一律 `文件::符号`，`file:line` 形态 0 枚。
