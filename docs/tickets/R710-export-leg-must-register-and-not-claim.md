@@ -27,3 +27,11 @@
 ## 禁区
 
 `app/api/v1/chat.py`（R702 在飞）／`app/api/v1/data.py`／`app/documents/**`／`app/rag/**`／`app/quality/**` 与评测夹具／`frontend/**`／`app/agents/orchestrator.py`（R30/R31/R33/R42/R38 那一族共抢的文件，本单不动它）／夜窗量具／容器·镜像·真模型·GPU／主树任何路径。
+
+
+## 订正（总控 10-06 17:1x，据执行层 Ramanujan 一手现读，AGENTS ①：判据改动落账面）
+
+- 🔴 本工单原文点名的键名 `ARTIFACT_DIR` **是过期账**：`rg ARTIFACT_DIR app/` 零命中。真坐标两枚＝`app/tools/export.py::EXPORT_DIR`
+  （仓库根下 `static/exports`）与 `app/storage/artifacts.py::_STATIC_ROOT`，两枚同在 compose `generated:/app/static` 一枚卷上，
+  不存在「写到库外」。后续一律按符号查，不许按这行抄。
+- 本单交回的四件另立号承接：**R713**（编排层二次落盘语义）／**R714**（按原句认拒绝）／**R715**（图腿无 preflight 与人话）／**R716**（生产 `users.department` 全空，属业主）。
