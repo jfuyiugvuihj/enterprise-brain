@@ -171,7 +171,7 @@ R704	LANDED	scripts/r704_claims_coverage_readout.py, scripts/day1006_queue.py, d
 R706	LANDED	tests/test_r496_forbidden_pin_scope.py, tests/test_r453_cloud_eval_override.py, content_verdict, tests/test_r706_*.py, docs/tickets/R706-*.md, docs/testing/r706-<开工日>.md	bef6ec423168	总控亲签工单·无机器字段
 R707	LANDED	tests/test_r688_stage_accounts_are_landed.py, tests/test_r688_counter_evidence_teeth.py, tests/test_r707_emit_point_host_account_shapes.py, docs/tickets/R707-*.md, docs/tickets/index.tsv	4147b6d4b866	总控亲签工单·无机器字段
 R708	QUEUED	docs/api/contract-v1.md, docs/tickets/R708-*.md, docs/testing/r708-<开工日>.md	-	总控亲签工单·无机器字段
-R709	QUEUED	app/api/v1/chat.py, _should_use_data_context, route_main, has_data, _authorized_dataset_files, tests/test_r709_*.py, docs/tickets/R709-*.md, docs/testing/r709-<开工日>.md	-	总控亲签工单·无机器字段
+R709	LANDED	app/api/v1/chat.py, _should_use_data_context, route_main, has_data, _authorized_dataset_files, tests/test_r709_*.py, docs/tickets/R709-*.md, docs/testing/r709-<开工日>.md	1b27bfb9c5d2	总控亲签工单·无机器字段
 R710	LANDED	app/agents/tools.py, app/storage/artifacts.py, app/agents/nodes.py, app/tools/**, tests/test_r710_*.py, docs/tickets/R710-*.md, docs/testing/r710-<开工日>.md	529a777e5710	总控亲签工单·无机器字段
 R711	QUEUED	scripts/tickets_index.py, tests/test_r711_*.py, docs/tickets/R711-*.md, docs/tickets/index.tsv, docs/testing/r711-<开工日>.md	-	总控亲签工单·无机器字段
 R712	LANDED	docs/perf/**, scripts/**, tests/test_r455_*.py, tests/test_r483_*.py, tests/test_r492_*.py, tests/test_r400_*.py, tests/test_r712_*.py, docs/tickets/R712-*.md, docs/testing/r712-<开工日>.md	2aa12de3c08c	总控亲签工单·无机器字段
