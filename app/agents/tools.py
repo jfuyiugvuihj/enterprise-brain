@@ -454,6 +454,52 @@ def _ranking_count(query: str) -> int | None:
     return _chinese_ranking_number(token)
 
 
+# ==================== R703 · 分组维度照这张表的真列名点，不照硬写字面点 ====================
+#
+# 病形现取（跟进单口径：客户带着报销明细表.csv 问「按月份统计报销金额，并画一张柱状图」，
+# 屏上回的是「文档中未包含实际报销数据」）：Data 腿的返回串里只有一枚 📈 数值统计 小节，
+# 分组汇总那一节一个字都没出。原因在触发条件与选列两处都写死了字面：
+#   触发那一枚字面表是 ["对比","比较","分组","按区域","按类型"]，后两枚是别家夹具的列名手抄，
+#   真表真问法一枚都不命中；选列那一支做的是 `tc in query` 单向包含，列名「发生月份」
+#   不是问法「按月份…」的子串，于是永远配不上。
+# 判据口径：命中与否由**这张表自己的列名**说了算，问法只负责指出"按哪个维度"。
+# 老那一支（字面命中时的选列与任意挑选）整段保留，读数字节不变；新增的只是
+# "问法点了维度、且维度在这张表里对得上真列名"这一条通路。
+
+#: 问法里点维度时常用的那几枚前导字：「按月份」「各区域」「逐月」「分部门」「每季」「照类型」。
+_DIMENSION_MARKERS = "按各逐分照每"
+#: 前导字后面最多取几个字去找列名，再从最长逐字回退：「按月份统计报销」里只有「月份」是列名片段。
+_DIMENSION_WINDOW = 6
+#: 分组汇总最多列几组。这一段直接进 prompt，装箱预算卡在那儿；超线明说还剩几组，不静默截断。
+_MAX_GROUP_ROWS = 12
+
+_DIMENSION_CANDIDATE_RE = re.compile(
+    "[" + _DIMENSION_MARKERS + r"]\s*([0-9A-Za-z_一-鿿]{1," + str(_DIMENSION_WINDOW) + r"})"
+)
+
+
+def _named_dimension_column(query: str, txt_cols: list[str]) -> str | None:
+    """问法点名的维度 → 这张表里的真列名；点不出或表里没有交 None，不猜。
+
+    匹配是**双向**的，两个方向各有各的真实问法：「月份」要能对上「发生月份」（候选是列名的一段），
+    「发生月份」要能对上「发生月份」（列名是候选的一段）。只写单向那一枚，命中的就仍然只是
+    "客户把列名一字不差敲出来"的那种问法。
+
+    单字候选只认等值：「分析金额」里「析」是"分析"的尾巴，若允许包含匹配，
+    任何列名带「析」的表都会被判成"客户要按那一列分组"。
+    """
+    for match in _DIMENSION_CANDIDATE_RE.finditer(query or ""):
+        token = match.group(1)
+        for size in range(len(token), 0, -1):
+            candidate = token[:size]
+            for column in txt_cols:
+                if candidate == column:
+                    return column
+                if len(candidate) >= 2 and (candidate in column or column in candidate):
+                    return column
+    return None
+
+
 def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> list[str]:
     """用 pandas 计算查询结果，返回简洁的分析文本"""
     import pandas as pd
@@ -569,8 +615,12 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
             results.append("\n".join(lines))
 
     # "对比/比较" → groupby
-    if any(kw in q_lower for kw in ["对比", "比较", "分组", "按区域", "按类型"]):
-        group_col = None
+    # R703：触发条件补一条通路 —— 问法点了维度、且这个维度在这张表的真列名里对得上。
+    # 字面命中时走的仍是老那两挑选（先 `tc in query` 单向包含，再 2..20 唯一值任意挑），
+    # 读数一字不变；新增的只处理"字面一枚都不命中、但客户明明说了按哪一列"的那一支。
+    literal_group = any(kw in q_lower for kw in ["对比", "比较", "分组", "按区域", "按类型"])
+    group_col = None
+    if literal_group:
         for tc in txt_cols:
             if tc in query:
                 group_col = tc
@@ -581,13 +631,22 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
                 if 2 <= n_unique <= 20:
                     group_col = tc
                     break
-        if group_col and num_cols:
-            agg = df.groupby(group_col)[num_cols[:3]].sum()
-            lines = [f"📋 按 {group_col} 分组汇总:"]
-            for idx, row in agg.iterrows():
-                vals = ", ".join(f"{c}={v:.1f}" for c, v in row.items())
-                lines.append(f"  {idx}: {vals}")
-            results.append("\n".join(lines))
+    if not group_col:
+        group_col = _named_dimension_column(query, txt_cols)
+    if group_col and num_cols:
+        agg = df.groupby(group_col)[num_cols[:3]].sum()
+        lines = [f"📋 按 {group_col} 分组汇总:"]
+        total_groups = len(agg)
+        for idx, row in agg.head(_MAX_GROUP_ROWS).iterrows():
+            vals = ", ".join(f"{c}={v:.1f}" for c, v in row.items())
+            lines.append(f"  {idx}: {vals}")
+        if total_groups > _MAX_GROUP_ROWS:
+            # 截断要看得见：这一段直接进 prompt，静默少列几组＝让模型以为这就是全部。
+            lines.append(
+                f"  …共 {total_groups} 组，本条只列前 {_MAX_GROUP_ROWS} 组"
+                f"（还有 {total_groups - _MAX_GROUP_ROWS} 组未列出）"
+            )
+        results.append("\n".join(lines))
 
     # 兜底：返回基本统计
     if not results and num_cols:

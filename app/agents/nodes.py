@@ -2431,6 +2431,212 @@ def _carry_caliber_quotes(state, question: str, final: str, worker_results: dict
     return rebuilt, merged
 
 
+# ==================== R703：答复不许拿文字冒充屏上的图 ====================
+#
+# 病形同族（走查环 7 与环 8 那一格：``charts_on_screen=0``／``chart_srcs=[]``／``artifact_total=0``）：
+# 答复里写着图，屏上一枚图都没有。导出件那一格另立号，本单只在**答复侧**钉一句真话，
+# 而且只钉「声称有图、本轮却一枚图表件都查不回」这一枚形状。
+#
+# 🔴 三条边界：
+#   * 只追加、不改写，落点与交回形状抄 ``_carry_caliber_quotes``（R203：已发帧仍是终答前缀）；
+#   * 判据只读物证：本轮真有 ``artifact_type == "chart"`` 的件就闭嘴。读不出件型的老形状
+#     （``artifacts`` 里躺一枚裸字符串）也闭嘴 —— 宁可少说一句，不许冤称客户「没有图」；
+#   * 本腿不出图、不补工具调用、不碰批准链（那在 app/api/v1/chat.py，另单）。
+
+#: 台账标记：窗内要能 grep 出"哪一题被图表真话腿钉过一句"，也要能反证它没开口时确实没开口。
+CHART_TRUTH_MARKER = "[R703ChartTruth]"
+
+#: 台账标记：同一读法，钉的是"答复说文档里没数据、本轮却真算过一张有行的表"那一格。
+DATASET_TRUTH_MARKER = "[R703DatasetTruth]"
+
+#: 声称"屏上已经有这张图"的两类形状。图片 markdown／``<img>`` 是直接摆出物件；短语那一族
+#: 只收完成态（已生成／请看下图），刻意不收「柱状图」「画一张图」这种光**提到**图的词 ——
+#: 走查那一轮的答复通篇说的是"无法直接生成…柱状图"，本腿必须对它闭嘴。
+_CHART_CLAIM_IMAGE_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)|<img\b[^>]*>", re.IGNORECASE)
+_CHART_CLAIM_PHRASES = (
+    "图表已生成",
+    "已生成图表",
+    "已生成图",
+    "图已生成",
+    "已出图",
+    "见下图",
+    "如下图",
+    "如图所示",
+    "图表如下",
+    "生成的图表",
+)
+#: 图这一族词的粗筛：一条都没提"图"的文字不可能是"声称有图"，先挡掉，免得把知识库里的
+#: 表格 markdown 当作出图声称。
+_CHART_WORD_RE = re.compile(r"图|表|chart|plot", re.IGNORECASE)
+
+#: 追加那一句。措辞红线：不说"失败"（那会把没执行说出错）、不说"没权限"（因由不归这里猜）、
+#: 不替客户决定要不要重跑，只把"文字不等于屏上有图"这一件事实说清。
+CHART_TRUTH_SENTENCE = (
+    "⚠️ 说明：本轮没有真正生成可打开的图表文件，上面关于图表的文字不代表屏上已有图。"
+)
+
+
+def _chart_artifacts_in_state(state) -> list[dict]:
+    """本轮工具边界真登记过的图表件（``agent_results[*].artifacts`` 里件型为 chart 的那些）。
+
+    读的是 ``app/agents/evidence.py::record_artifact`` 落进证据袋、再由
+    ``app/agents/orchestrator.py::_make_worker_wrapper`` 写进 ``agent_results`` 的那本账 ——
+    装箱之后还在的料才算数，与 ``_cited_caliber_fragments`` 同一读法。本函数只搬运读数，
+    不判定、不补记。
+    """
+    rows: list[dict] = []
+    for raw in (state.get("agent_results") or {}).values():
+        if isinstance(raw, dict):
+            artifacts = raw.get("artifacts") or []
+        else:
+            artifacts = getattr(raw, "artifacts", None) or []
+        for item in artifacts:
+            if isinstance(item, dict):
+                row = item
+            elif hasattr(item, "model_dump"):
+                row = item.model_dump()
+            else:
+                continue
+            if str(row.get("artifact_type") or "") == "chart":
+                rows.append(row)
+    return rows
+
+
+def _claims_a_chart(text) -> bool:
+    """这一份文字有没有声称"图已经在了"。判定只看完成态声称，不看光提到图。"""
+    body = str(text or "")
+    if not _CHART_WORD_RE.search(body):
+        return False
+    if _CHART_CLAIM_IMAGE_RE.search(body):
+        return True
+    return any(phrase in body for phrase in _CHART_CLAIM_PHRASES)
+
+
+def _carry_chart_truth(state, model_answer: str, final: str, worker_results: dict):
+    """声称有图而本轮查不回图表件 ⇒ 末尾追加一句真话；其余情形一个字都不动。
+
+    声称以 ``model_answer``（逐字保真与择边两腿补写**之前**那一份模型正文）为准：那两枚守卫
+    抬进正文的是知识库原文，原文里若躺着一枚图片 markdown，不该算成本腿要治的"声称有图"。
+    """
+    if _chart_artifacts_in_state(state):
+        return final, None
+    if not _claims_a_chart(model_answer or final):
+        return final, None
+    values = [key for key, value in (worker_results or {}).items() if str(value or "").strip()]
+    merged: dict | None = None
+    if values:
+        merged = dict(worker_results)
+        last = values[-1]
+        merged[last] = str(merged[last]).strip() + "\n\n" + CHART_TRUTH_SENTENCE
+        rebuilt = "\n\n".join(str(merged[key]).strip() for key in values if str(merged[key]).strip())
+    else:
+        rebuilt = str(final).strip() + "\n\n" + CHART_TRUTH_SENTENCE
+    logger.info(
+        f"{CHART_TRUTH_MARKER} claim=image_or_phrase artifacts=0 "
+        f"answer_chars={len(str(final))}->{len(rebuilt)}"
+    )
+    return rebuilt, merged
+
+
+#: 答复里"文档没有数据"那一张脸的说法族。只收**指向文档**的那几句：工具腿自己那句诚实的
+#: 「文件里没有数据行」不在此列 —— 它说的是量不到，不是"本轮没带表"，两句不能并成一格。
+_DATASET_ABSENCE_BLAME = (
+    "文档中未包含",
+    "文档里没有数据",
+    "文档中没有数据",
+    "文档中未提及",
+    "所有文档均为",
+    "未包含实际报销数据",
+)
+
+#: 补写那一句：只把台账里已有的读数递到客户眼前，不替模型重写它的结论。
+DATASET_TRUTH_SENTENCE = "本轮带着数据文件：{names}。上面「文档里没有数据」那句话说的是文档，不是这张表。"
+
+
+def _dataset_readouts_in_state(state) -> list[dict]:
+    """本轮工具边界真算过的数据文件读数 ``[{name, rows, cols}]``，逐枚去重。
+
+    读的是 ``app/agents/tools.py::_record_dataset_evidence`` 在装箱**之后**记进证据袋的那本账
+    （`source_type == "dataset"`，行数列数来自过滤后的真帧），与 ``app/api/v1/chat.py`` 汇
+    ``data_filename`` 用的是同一批料。本函数只搬运读数，不判定、不补记，也不新算任何数字。
+    """
+    readouts: list[dict] = []
+    seen: set[str] = set()
+    for raw in (state.get("agent_results") or {}).values():
+        if isinstance(raw, dict):
+            rows_in_bag = raw.get("evidence") or []
+        else:
+            rows_in_bag = getattr(raw, "evidence", None) or []
+        for item in rows_in_bag:
+            if isinstance(item, dict):
+                row = item
+            elif hasattr(item, "model_dump"):
+                row = item.model_dump()
+            else:
+                continue
+            if str(row.get("source_type") or "") != "dataset":
+                continue
+            locator = row.get("locator")
+            name = ""
+            if isinstance(locator, dict):
+                name = str(locator.get("filename") or "")
+            name = name or str(row.get("source_name") or "")
+            if not name or name in seen:
+                continue
+            metadata = row.get("metadata") or {}
+            columns = metadata.get("columns") or []
+            seen.add(name)
+            readouts.append(
+                {
+                    "name": name,
+                    "rows": int(metadata.get("row_count") or 0),
+                    "cols": len(columns) if isinstance(columns, list) else 0,
+                }
+            )
+    return readouts
+
+
+def _format_dataset_readouts(readouts: list[dict]) -> str:
+    """读数 → 人话：``报销明细表.csv（144 行 × 9 列）``；列数读不出就只报行。"""
+    parts = []
+    for item in readouts:
+        shape = f"{item['rows']} 行"
+        if item["cols"]:
+            shape += f" × {item['cols']} 列"
+        parts.append(f"{item['name']}（{shape}）")
+    return "、".join(parts)
+
+
+def _carry_dataset_truth(state, model_answer: str, final: str, worker_results: dict):
+    """答复按"文档里没有数据"作答、本轮却真算过一张有行的表 ⇒ 末尾追加一句真话。
+
+    只读物证：台账里没有 dataset 证据（本轮没跑数据、或跑的表一行都不剩）时本腿闭嘴 ——
+    那时"没有数据"可能正是实话，替它说一句"带着数据文件"就是编。声称以 ``model_answer``
+    （补写之前那一份模型正文）为准，理由与 ``_carry_chart_truth`` 同一条。
+    """
+    readouts = [item for item in _dataset_readouts_in_state(state) if item["rows"] > 0]
+    if not readouts:
+        return final, None
+    body = str(model_answer or final or "")
+    if not any(phrase in body for phrase in _DATASET_ABSENCE_BLAME):
+        return final, None
+    block = DATASET_TRUTH_SENTENCE.format(names=_format_dataset_readouts(readouts))
+    values = [key for key, value in (worker_results or {}).items() if str(value or "").strip()]
+    merged: dict | None = None
+    if values:
+        merged = dict(worker_results)
+        last = values[-1]
+        merged[last] = str(merged[last]).strip() + "\n\n" + block
+        rebuilt = "\n\n".join(str(merged[key]).strip() for key in values if str(merged[key]).strip())
+    else:
+        rebuilt = str(final).strip() + "\n\n" + block
+    logger.info(
+        f"{DATASET_TRUTH_MARKER} datasets={len(readouts)} "
+        f"answer_chars={len(str(final))}->{len(rebuilt)}"
+    )
+    return rebuilt, merged
+
+
 def synthesize(state, config=None) -> dict:
     """把最终回答写入 state，并把值得记的沉淀进长期记忆"""
     # R688（判据①·生产发点）：终答装配是规则腿，没有自己的跨度；worker 的作答往返另有 model 跨度，本件只记这一段自己的墙钟，区间不与之重叠。
@@ -2480,6 +2686,33 @@ def synthesize(state, config=None) -> dict:
             final = guarded
         if side_update is not None:
             worker_update = side_update
+
+        # R703（判据 3）：声称有图、本轮却一枚图表件都查不回 ⇒ 钉一句真话。排在逐字保真与
+        # 择边之后：那两枚送的是真料原话，本枚送的是"没发生的事别说成发生了"，最后一步只追加一次。
+        # 与前两枚同一条硬规矩：整条炸了也不能带走终答。
+        try:
+            truth_base = worker_update if worker_update is not None else worker_results
+            guarded, truth_update = _carry_chart_truth(state, model_final, final, truth_base)
+        except Exception as exc:  # noqa: BLE001 - 终答优先，守卫失声只许记账不许拦
+            guarded, truth_update = final, None
+            logger.warning(f"{CHART_TRUTH_MARKER} status=skipped error={exc}")
+        if guarded != final:
+            final = guarded
+        if truth_update is not None:
+            worker_update = truth_update
+
+        # R703（判据 2）：答复走"文档里没有数据"那一支、台账里却躺着本轮真算过的有行的表 ⇒ 钉一句真话。
+        # 排在图表那枚之后：两句都是追加，先说数据在哪儿，再说图没生成。同样炸了也不许带走终答。
+        try:
+            data_base = worker_update if worker_update is not None else worker_results
+            guarded, data_update = _carry_dataset_truth(state, model_final, final, data_base)
+        except Exception as exc:  # noqa: BLE001 - 终答优先，守卫失声只许记账不许拦
+            guarded, data_update = final, None
+            logger.warning(f"{DATASET_TRUTH_MARKER} status=skipped error={exc}")
+        if guarded != final:
+            final = guarded
+        if data_update is not None:
+            worker_update = data_update
 
         if state.get("intent") == "task" and q and final:
             user_id = _memory_user_id(state)
