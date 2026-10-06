@@ -144,7 +144,7 @@ R673	LANDED	app/common/, app/rag/, tests/test_r673_*.py, docs/tickets/R673-*.md,
 R674	LANDED	scripts/, tests/test_r674_*.py, docs/tickets/R674-*.md, docs/testing/r674-<今天>.md	ef42b6b03389	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R51::判据（机器可验）
 R675	QUEUED	tests/test_r675_*.py, docs/testing/r675-<开工日>.md, docs/tickets/R675-named-error-code-fill.md, scripts/tickets_index.py	9efff02	LINE::docs/handoff/2026-09-15-orchestration-board.md::**R675**
 R676	QUEUED	tests/test_r676_*.py, docs/testing/r676-<开工日>.md, docs/tickets/R676-synonym-rewrite-no-roundtrip.md, scripts/tickets_index.py	9efff02	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R47::判据（机器可验）
-R677	QUEUED	app/rag/hot_index.py, tests/test_r677_*.py, scripts/, docs/tickets/R677-*.md, docs/testing/r677-<今天>.md	9efff02	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R44::判据（机器可验）
+R677	LANDED	app/rag/hot_index.py, tests/test_r677_*.py, scripts/, docs/tickets/R677-*.md, docs/testing/r677-<今天>.md	152c9ce09ceb	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R44::判据（机器可验）
 R678	LANDED	scripts/eval_transport_ask_v2.py, scripts/r573_caliber_reconciliation.py, tests/test_r678_*.py, docs/tickets/R678-*.md, docs/testing/r678-<今天>.md	fc012e355614	LINE::docs/handoff/2026-09-15-backend-followup-requests.md::现取 R678
 R679	LANDED	docs/tickets/**, index.tsv, scripts/tickets_index.py, tests/test_r679_*.py, docs/testing/r679-<今天>.md	b666ff32c907	总控亲签工单·无机器字段
 R680	QUEUED	scripts/audit_plan_ticket_ledger.py, scripts/r631_stage_sum_delta.py, tests/test_r680_*.py, docs/tickets/R680-*.md, docs/testing/r680-<今天>.md	-	总控亲签工单·无机器字段
