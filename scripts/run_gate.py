@@ -42,6 +42,21 @@ import ctypes.wintypes as wt
 ROOT = Path(__file__).resolve().parents[1]
 BASE_ARGS = ["-m", "pytest", "-q", "-p", "no:cacheprovider", "--no-header"]
 
+#: 2026-10-06 改章：账面坐标族永久退出全量门。名册的唯一真源是
+#: ``scripts/selfcheck_ledger.py::FAMILIES``，这里只做减法、禁止再抄一份名单——
+#: 抄一次就多一本账，而多一本账正是这把刀要砍掉的东西。
+SELFCHECK = ROOT / "scripts" / "selfcheck_ledger.py"
+
+
+def ledger_family_paths():
+    """账面族里此刻真在盘上的文件（不在的一律不传，免得把改名当成出门）。"""
+    spec = importlib.util.spec_from_file_location("_selfcheck_ledger", SELFCHECK)
+    if spec is None or spec.loader is None:
+        return []
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return [str(ROOT / name) for name in getattr(module, "FAMILIES", []) if (ROOT / name).is_file()]
+
 
 class MemoryStatusEx(ctypes.Structure):
     _fields_ = [
@@ -103,6 +118,10 @@ def main() -> int:
     parser.add_argument("-n", "--workers", type=int, default=0,
                         help="xdist workers (default 0 = pick from free memory; 8 needs ~16 GB free)")
     parser.add_argument("--serial", action="store_true", help="force the serial gate")
+    parser.add_argument("--include-ledger", action="store_true",
+                        help="把账面坐标族一起跑（默认减掉它们；那一族的红走 scripts/selfcheck_ledger.py）")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="只打印将要执行的命令与被减掉的名册，不落一次测试")
     # Anything argparse does not own (paths, -k, -m, --lf, ...) goes straight to pytest, in order.
     opts, extra = parser.parse_known_args()
     if opts.workers <= 0:
@@ -111,6 +130,9 @@ def main() -> int:
         why = f"explicit -n {opts.workers}"
 
     cmd = [sys.executable, *BASE_ARGS, *extra]
+    dropped = [] if opts.include_ledger else ledger_family_paths()
+    for path in dropped:
+        cmd += ["--ignore", path]
     parallel = importlib.util.find_spec("xdist") is not None and not opts.serial and opts.workers > 1
     if parallel:
         cmd += ["-n", str(opts.workers), "--dist", "loadfile"]
@@ -121,6 +143,13 @@ def main() -> int:
 
     print(f"[run_gate] {mode} [{why}]", flush=True)
     print(f"[run_gate] $ {' '.join(cmd)}", flush=True)
+    print(f"[run_gate] 账面族出门 {len(dropped)} 枚（2026-10-06 改章：这一族不阻塞并树与发版，"
+          "红走 scripts/selfcheck_ledger.py；要连它一起跑用 --include-ledger）", flush=True)
+    if opts.dry_run:
+        for path in dropped:
+            print(f"[run_gate]   减掉 {Path(path).relative_to(ROOT)}", flush=True)
+        print("[run_gate] dry-run：没跑任何测试", flush=True)
+        return 0
     started = time.time()
     code = subprocess.call(cmd, cwd=ROOT)
     print(f"[run_gate] {mode}: {time.time() - started:.1f} s, exit={code}", flush=True)

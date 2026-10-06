@@ -1,9 +1,11 @@
 """smoke_v1.py -- V1 的唯一验收门：九条用户旅程的端到端冒烟（2026-10-06 改章）。
 
-跑法（这台机上主树 .venv 没有 playwright，所以走查件的解释器要能换）：
+跑法（缺省自带解释器：主树 .venv 没有 playwright 与 pillow，门自己用 uv 现拉）：
 
-    python scripts/smoke_v1.py --env-file deploy/.env.server ^
-        --python "uv run --no-project --with playwright==1.63.0 python"
+    python scripts/smoke_v1.py --env-file deploy/.env.server
+
+要换解释器就 --python "...python"。走查件的第三方依赖只有 playwright 与 pillow 两枚，
+缺任何一枚都是门红——10-06 首跑就是栽在 --with pillow 没写上（环 2 截图对撞要用 PIL）。
 
 它只做一件事——把真容器·真模型·真浏览器里的九条旅程走一遍（复用 scripts/r694_walkthrough.py，
 不另起第二套走查件），逐条给「能演示／不能演示／差在哪」，任一旅程不能演示就 exit=1。
@@ -18,9 +20,11 @@ import tempfile
 import time
 import urllib.request
 from pathlib import Path
+from datetime import datetime
 
 REPO = Path(__file__).resolve().parents[1]
 WALK = REPO / "scripts" / "r694_walkthrough.py"
+WALK_PYTHON_DEFAULT = "uv run --no-project --with playwright==1.63.0 --with pillow python"
 PASS = "达"
 
 
@@ -37,8 +41,52 @@ def preflight(base_url):
     return bad
 
 
+#: 端到端结论要落在真码上：这三枚容器带的镜像必须不早于最新一枚 app 提交。
+CONTAINERS = ("backend", "worker", "scheduler")
+
+
+def _iso(stamp):
+    stamp = (stamp or "").strip()
+    if not stamp:
+        return None
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def code_freshness():
+    """容器启动时刻 vs 最新 app 提交时刻。拿不到读数不沉默——照样交回门红。"""
+    bad = []
+    proc = subprocess.run(["git", "log", "-1", "--format=%cI", "--", "app"],
+                          cwd=str(REPO), capture_output=True, text=True, encoding="utf-8",
+                          errors="replace")
+    app_at = _iso(proc.stdout)
+    if app_at is None:
+        bad.append("问不到最新 app 提交时刻（git rc=" + str(proc.returncode) + "）＝不判新鲜度也别宣布绿")
+        return bad
+    listed = subprocess.run(["docker", "ps", "--format", "{{.Names}}"],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    names = [n for n in (listed.stdout or "").split() if any(k in n for k in CONTAINERS)]
+    if not names:
+        bad.append("容器名单里没有 backend/worker/scheduler（docker rc=" + str(listed.returncode)
+                   + "），拿不到启动时刻")
+        return bad
+    for name in names:
+        insp = subprocess.run(["docker", "inspect", "-f", "{{.State.StartedAt}}", name],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+        started = _iso(insp.stdout)
+        if started is None:
+            bad.append(name + " 问不到启动时刻：" + (insp.stderr or "").strip()[:80])
+        elif started < app_at:
+            bad.append(name + " 启动于 " + started.strftime("%m-%d %H:%M")
+                       + "，早于最新 app 提交 " + app_at.strftime("%m-%d %H:%M")
+                       + "＝容器带的是旧码，这轮端到端读数不清")
+    return bad
+
+
 def run_walk(out, env_file, base_url, rings, python_opt):
-    argv = (shlex.split(python_opt) if python_opt else [sys.executable]) + [str(WALK)]
+    argv = shlex.split(python_opt or WALK_PYTHON_DEFAULT) + [str(WALK)]
     cmd = argv + ["--env-file", env_file, "--base-url", base_url, "--rings", rings, "--out", str(out)]
     print("[smoke_v1] $ " + " ".join(cmd), flush=True)
     return subprocess.call(cmd, cwd=str(REPO))
@@ -73,8 +121,11 @@ def main():
     ap.add_argument("--base-url", default="http://localhost/")
     ap.add_argument("--rings", default="1,2,3,4,5,6,7,8,9")
     ap.add_argument("--out", default="", help="走查产物落点，缺省 TEMP 下 evalrun/smoke-v1")
-    ap.add_argument("--python", default="", help="走查件的解释器命令，例：uv run --no-project --with playwright==1.63.0 python")
+    ap.add_argument("--python", default=WALK_PYTHON_DEFAULT,
+                    help="走查件的解释器命令。主树 .venv 里没有 playwright 与 pillow，缺省用 uv 现拉一枚（走查件的全部第三方依赖就这两件，其余是标准库与 docker CLI）")
     ap.add_argument("--no-preflight", action="store_true", help="跳过环境自检（明知环境齐时用）")
+    ap.add_argument("--allow-stale", action="store_true",
+                        help="明知容器已带最新码时跳过新鲜度检查")
     args = ap.parse_args()
     if not args.no_preflight:
         bad = preflight(args.base_url)
@@ -83,6 +134,16 @@ def main():
                 print("[preflight] " + line, flush=True)
                 print("[preflight] 环境不齐＝门红：先 docker compose up -d --force-recreate（起不来用 scripts/docker_up.ps1）再重跑本门。", flush=True)
             return 1
+    if not args.allow_stale:
+        stale = code_freshness()
+        if stale:
+            for line in stale:
+                print("[freshness] " + line, flush=True)
+            print("[freshness] 容器带旧码＝门红：先重建镜像，再 docker compose --env-file "
+                  "deploy/.env.server up -d --force-recreate backend worker scheduler"
+                  "（Docker 起不来用 scripts/docker_up.ps1）；明知已对齐时用 --allow-stale", flush=True)
+            return 1
+        print("[freshness] 三枚容器带的码不早于最新 app 提交，端到端读数可作数", flush=True)
     out = Path(args.out) if args.out else Path(tempfile.gettempdir()) / "evalrun" / "smoke-v1"
     out.mkdir(parents=True, exist_ok=True)
     started = time.time()
