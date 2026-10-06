@@ -22,3 +22,15 @@
 ## 禁区（踩线即退回）
 
 `app/storage/artifacts.py`（R710 已并）／`app/api/v1/chat.py`／`frontend/**`／评测夹具与夜窗量具／`docs/handoff/**`／主树任何路径。
+
+## 追认（总控 10-06 22:2x·并树那一刻落账）
+
+执行层自报写域越界：`app/storage/datasets.py::DatasetOwnerScopeMissing` 落在本单写域之外。总控裁定**接受并具名追认**，理由逐条：
+
+- 拒绝类型的 raise site 本来就在数据集那侧；把类型定义搬到路由层（`app/api/v1/data.py`）会形成 `app.storage.datasets` → `app.api.v1` 的 import 环，而 `tests/test_r310_dataset_row_owner.py` 的 import 面棘轮正好守着这一族。
+- 本单判据 1 要求「不再留任何一处 `str(exc) ==` 比拒绝句的写法」，那一处 `raise` 与类型名同源，改不开新的一格就治不了病根。
+- 越界范围逐枚点名：只有新增异常类型符号与其 `raise` 语句，数据集隔离判定语义一字未动（判据 3 仍成立）。
+
+因此本单并树后的实际写域＝`app/api/v1/data.py`／`app/storage/datasets.py`（仅上述两形）／新增 `tests/test_r714_*.py`／`docs/tickets/R714-*.md`／`docs/testing/r714-<开工日>.md`。
+
+🔴 后续须重锚：`R687` 的写域同样点名 `app/api/v1/data.py` 与 `upload_excel`，它派工前必须先读本节，否则两枚撞写域。

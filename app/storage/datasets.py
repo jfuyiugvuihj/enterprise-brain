@@ -221,6 +221,18 @@ class DatasetRowConflict(ValueError):
     """A write broke a uniqueness rule of the tables (primary key, live filename, version number)."""
 
 
+#: The dataset half of the owner-scope refusal. ``app/storage/artifacts.py`` named its half
+#: in R710 (``ArtifactOwnerScopeMissing``), and the leg that had to say that refusal out loud
+#: started catching the type instead of reading a sentence; this is the same shape for the
+#: ``datasets`` tables. It stays a ``ValueError`` subclass, so every pre-existing
+#: ``except ValueError`` caller keeps working without edits. A caller that must answer the
+#: refusal catches *this type*: matching the registry's prose is a second copy of a rule the
+#: registry already states once, and one reworded comma silently turns a refusal into a
+#: response that no longer says the scope rule was ever consulted.
+class DatasetOwnerScopeMissing(ValueError):
+    """The uploading principal has no department, so no ``datasets`` row can be recorded."""
+
+
 class UnknownDatasetTable(ValueError):
     """A caller asked this store to touch a table it does not own.
 
@@ -902,7 +914,7 @@ class DatasetRegistry:
             }
         )
         if not departments:
-            raise ValueError("dataset owner must have a department scope")
+            raise DatasetOwnerScopeMissing("dataset owner must have a department scope")
         content_sha256 = _hash_file(path)
 
         with self._lock:

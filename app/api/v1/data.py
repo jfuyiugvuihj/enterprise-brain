@@ -45,7 +45,7 @@ from app.documents.file_security import (
 )
 from app.documents.knowledge_ingest import index_dataset_copy
 from app.storage import artifacts as artifact_storage
-from app.storage.datasets import dataset_registry
+from app.storage.datasets import DatasetOwnerScopeMissing, dataset_registry
 
 router = APIRouter()
 DATA_DIR = os.getenv("DATA_DIR", "./data")
@@ -59,7 +59,11 @@ DATA_FILE_EXTENSIONS = accepted_data_file_extensions()
 # ownership from a department scope. An account without one - the first administrator
 # of a fresh install, unless AUTH_DEPARTMENT named its department - can sign in and
 # manage users but cannot own data, which is a refusal, not a server fault.
-_OWNER_SCOPE_ERROR = "dataset owner must have a department scope"
+# R714: that refusal is recognized here by its type, never by its sentence. Until now this
+# route compared ``str(exc)`` against a copy of the registry's own words, so rewording the
+# prose anywhere in storage silently changed what a department-free caller hears, and the
+# copy here was a second statement of a rule the registry states once. The type is the
+# contract; the sentence is prose.
 OWNER_SCOPE_REQUIRED = "department_scope_required"
 
 # R180: file-level authorization (app/common/policy.py) and row-level ownership
@@ -371,7 +375,7 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
     except Exception as exc:
         if file_path.exists() and dataset_registry.get_active_by_filename(filename) is None:
             file_path.unlink()
-        if str(exc) == _OWNER_SCOPE_ERROR:
+        if isinstance(exc, DatasetOwnerScopeMissing):
             raise HTTPException(status_code=403, detail=OWNER_SCOPE_REQUIRED) from exc
         raise
     preview = build_dataframe_preview(df, filename)
