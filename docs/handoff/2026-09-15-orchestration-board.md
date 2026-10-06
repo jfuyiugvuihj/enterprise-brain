@@ -7206,3 +7206,9 @@ band 顺序＝provenance 硬闸 → `run32`（全 105 题，同步相显式声�
 - 欠代码：R677／R676／R693／R694 在飞；并完后另立 **R695**＝rewrite 腿（送身份＋开 `stage_account`）、**R696**＝retrieve 甲案读侧并段（`scripts/r631_stage_sum_delta.py`＋R674 导出器，排窗后）、R692＝文档层全符号化（5,416 处／135 枚文件）、R680＝账尺改读工单目录＋r631 按键名查、R669＝R25② 带 overlay 真机取证（要动容器，排窗后）。
 - 欠窗（今晚，本机不吃网）：`scripts/day1006_queue.py`＋`scripts/night1006_watchdog.py` 排 run32（全 105，约 1.9 h）→ run32d（33 题 D 相，`EVAL_DECLARE_LANE_TIER=报告`＋`REPORT_LANE_VIA_QUEUE=on`＋r573 `--expect-denominator 33 --expect-lane-phase on`）→ run33（同代次第二枚，配 A④ 跨代对子）→ 配队（r634 只在存活窗上跑，run22/23 的证据件已被事故 #124 删掉）。代次闸已提前 PASS，夜里那一格只会复跑确认、不会再花 3600 s 重建。
 - 卫生自检：本班所有新写入文档控制符 `0x00/07/08/0b/0c` 枚数各 0；看板 BOM（`EF BB BF`）与 LF 行尾保持（12:1x 写回后现取 1,790,580 B／7,156 行，numstat ＋7/−3 只动名册那五行）；坐标一律 `文件::符号`，`file:line` 形态 0 枚。
+
+### §4GJ.8 订正本班自己写错的一句（12:5x，出处＝`tests/test_r636_stage_coverage.py::WINDOWS` 现取）
+
+- 上面第 2 节那句「今晚 run32 出货后由同名件自己吃」**错了**，`docs/testing/r688-2026-10-06.md` §4 已就地订正并写明现取证据：那 13 枚 skip 属于钉在 `WINDOWS ＝ ("run18", "run19", "run20k")` 上的真窗对账组，而这三本导出件（traces／sidecar／sidecar-frames）已不在盘——`%TEMP%\evalrun` 现取只有 run30／run30d／run31 的 sidecar 两本，`*-traces.jsonl` 枚数＝0；`docs/perf/raw` 现取 5 个目录、`*-traces.jsonl` 枚数＝0。
+- 今晚队列确实会导 trace：`scripts/night1006_queue.py::readout` 里那圈 `for tool in glob("scripts/r674*.py")` 逐窗跑 `--window <tag>`，默认落 `docs/perf/raw/<窗号>/<窗号>-traces.jsonl`，随后才跑 `r631`／`r636` 两把尺（同一函数内，逐窗）。所以 **R51② 的读数今晚拿得到**，但那 13 枚 skip 要变绿得另换 `WINDOWS`——已立 **R697**（尺与钉同口改，本班不顺手动）。
+- 这条订正本身就是规矩 ③ 的用处：报「某物不存在」前先确认自己在哪一层查、用的是不是这一层的正确名字。本席错在把「窗的导出件」当成「同名件点名要的那三本」，两层名字不重合。
