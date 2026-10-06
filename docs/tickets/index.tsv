@@ -141,7 +141,7 @@ R669	QUEUED	tests/test_r669_*.py, docs/testing/r669-<开工日>.md, docs/tickets
 R670	QUEUED	app/api/v1/chat.py, app/trace/, spans.py, persistence.py, schema.py, model_calls, tests/test_r670_*.py, docs/tickets/R670-*.md, docs/testing/r670-<今天>.md	9efff02	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R38::判据（机器可验）
 R672	LANDED	-	06990c318e0e	无工单文件·凭并树提交
 R673	QUEUED	app/common/, app/rag/, tests/test_r673_*.py, docs/tickets/R673-*.md, docs/testing/r673-<今天>.md	9efff02	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R26::判据（机器可验）
-R674	QUEUED	scripts/, tests/test_r674_*.py, docs/tickets/R674-*.md, docs/testing/r674-<今天>.md	9efff02	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R51::判据（机器可验）
+R674	LANDED	scripts/, tests/test_r674_*.py, docs/tickets/R674-*.md, docs/testing/r674-<今天>.md	ef42b6b03389	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R51::判据（机器可验）
 R675	QUEUED	tests/test_r675_*.py, docs/testing/r675-<开工日>.md, docs/tickets/R675-named-error-code-fill.md, scripts/tickets_index.py	9efff02	LINE::docs/handoff/2026-09-15-orchestration-board.md::**R675**
 R676	QUEUED	tests/test_r676_*.py, docs/testing/r676-<开工日>.md, docs/tickets/R676-synonym-rewrite-no-roundtrip.md, scripts/tickets_index.py	9efff02	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R47::判据（机器可验）
 R677	QUEUED	app/rag/hot_index.py, tests/test_r677_*.py, scripts/, docs/tickets/R677-*.md, docs/testing/r677-<今天>.md	9efff02	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R44::判据（机器可验）
