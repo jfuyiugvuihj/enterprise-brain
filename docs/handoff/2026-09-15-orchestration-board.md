@@ -1605,6 +1605,12 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Avro` | `01a10c72-7b46-7902-8239-cec2a386f1c6`（rollout 文件名直取，未凭记忆） | **R674** R51②：窗必须按题导出 trace 事件，否则「分段加总误差 <1%」永远量不到 | 总控预配 `be-r674`@`b666ff3`（**独占**） | 🟡 在飞（22:22 一次投递；派工词 **181 B**；写域 `scripts/` 读数腿，`app/trace/` 已摘除归 R670） | 22:2x |
 | `Mendel` | `01a10c72-f8c8-7512-bf61-ffe22279bfd3`（spawn 回执直取） | **R678** D 门量具补 `lane` 声明（`DECLARE_LANE_TIER` 缺省空串＝三扇 on 相全是废样本） | 总控预配 `be-r678`@`b666ff3`（**独占**） | 🟡 在飞（22:24 一次投递；派工词 **181 B**；写域 `scripts/eval_transport_ask_v2.py`＋`scripts/r573_caliber_reconciliation.py`） | 22:2x |
 | `Franklin`（结案） | `01a10bb8-c9db-7341-a66d-6f6ab7ddcfb2` | **R679** 台账机器化 | `be-r679`@`9efff02`（19 枚未自提交，货经 patch 承接） | ✅ **已结案并树 `b666ff3`＋索引重生成 `d653e41`**：state① 87 passed／0 failed／44.13 s（主树 dirty）、state② 87／0／51.45 s（`wt-r679s2b`@`d653e41` DIRTY=0）；`--verify` rc=0（155 行／LANDED 139／QUEUED 16／工单 19 枚／逐字块 14 枚）；`--cost` 3,129,016 B → 17,842 B＝**175.4×**。🔴 同号双份见事故 #123 | 22:2x |
+| `Laplace`（结案） | `01a10f4a-ec71-7862-a78d-7285e0817f26` | **R677** 热集让路驱动件＋离线牙 | `be-r677`@`f36de2f`（终 `3172fae`） | ✅ 并树 `152c9ce`＋终版纸 `3a08975`；主树两态 88 passed／88 passed，总控亲手摘腿反证 12 failed／76 passed；口径**离线达／重量待窗**，R44① 生产读路径仍未达 | 12:5x |
+| `Goodall`（结案） | `01a10f4b-002d-75a3-aecd-f2f613e70ec0` | **R676** R47① 乙案口径量具（同义词腿→top-5 变化率） | `be-r676`@`f36de2f`（终 `3eb218a`） | ✅ 并树 `484e57a`＋索引重生成 `557f137`；两态 33／33，总控亲手对调分子分母反证 1 failed＋2 errors；执行层自抓自修一枚从来没跑通的 `--out` 死枝 | 13:0x |
+| `Curie` | `01a10f66-8a01-72d3-8266-b110a77e30c7` | **R693** 门那格 9 枚先红清零 | `be-r693`@`6800b4c` | 🟡 在飞（2 笔自提交，纸在补末笔）；已交回 4 件由总控裁：预算 95→94／r469 行尾成对断言／r638 尺身恒等式（→ R698）／r483 两枚先红 | 13:0x |
+| `Archimedes` | `01a10f67-0bb8-7882-8023-6137e87063dc` | **R694** 前端九环浏览器走查＋两张失败脸 | `be-r694`@`6800b4c` | 🟡 在飞·Playwright 真 chromium 打真栈（非离线冒充），截图已落 8 枚含问答环；🔴 占模型与 GPU ⇒ 今晚窗口必须排在它结案之后 | 13:0x |
+| `Bacon` | `01a10f8d-3cc9-7021-ae0f-07ad5045b4db` | **R695** rewrite 段生产发点（R51② 第二条腿） | `be-r695`@`3a08975` | 🟡 在飞·写域含 `app/api/v1/chat.py`／`app/rag/retrieval_pipeline.py`；并树后必须重建后端镜像再开窗 | 13:0x |
+| `Sartre` | `01a10f97-484d-7121-9be8-6075d6001fa5` | **R698** r638 尺身恒等式自断 | `be-r698`@`a3a7a4e` | 🟡 在飞·禁触 `docs/testing/r638-pointer-baseline.json`（Curie 写域，两席同文件即冲突） | 13:0x |
 494_stray_main`，零丢失）；已 close | 19:0x |
 | `Laplace` | `01a0ed5e-f014-77c2-954a-5667e50ac6ba` | **R518** A 圈② 甲案的机械落地（让尺子说清哪一轮有逐片腿） | `be-r518`（基点 `403db3d`） | ✅ **已结案并树 `97724c5`**：dirty＝干净态两回同名件 **116 passed**；腿名 0/105 派生不出这一格如实交回，已排进 R524 | 09-30 08:5x |
 | `Heisenberg` | `01a0ed33-8116-7371-aaf6-5a58da1163d0` | **R516** bind 同族实例影子债第二批（`dataset_registry` 一族 8 枚＋upsert 打实例 3 枚改到类目标） | `be-r516`（基点 `85572c1`） | ✅ **已结案并树 `d9de23c`**：进程级单例方法桩 **28→19**；总控亲跑 dirty **217**／干净态正序 **217**／乱序 **217**；🔴 施工层曾把在册钉写成近名（少一枚 `s`），已复原名并删近名件 | 09-30 08:5x |
@@ -7212,3 +7218,33 @@ band 顺序＝provenance 硬闸 → `run32`（全 105 题，同步相显式声�
 - 上面第 2 节那句「今晚 run32 出货后由同名件自己吃」**错了**，`docs/testing/r688-2026-10-06.md` §4 已就地订正并写明现取证据：那 13 枚 skip 属于钉在 `WINDOWS ＝ ("run18", "run19", "run20k")` 上的真窗对账组，而这三本导出件（traces／sidecar／sidecar-frames）已不在盘——`%TEMP%\evalrun` 现取只有 run30／run30d／run31 的 sidecar 两本，`*-traces.jsonl` 枚数＝0；`docs/perf/raw` 现取 5 个目录、`*-traces.jsonl` 枚数＝0。
 - 今晚队列确实会导 trace：`scripts/night1006_queue.py::readout` 里那圈 `for tool in glob("scripts/r674*.py")` 逐窗跑 `--window <tag>`，默认落 `docs/perf/raw/<窗号>/<窗号>-traces.jsonl`，随后才跑 `r631`／`r636` 两把尺（同一函数内，逐窗）。所以 **R51② 的读数今晚拿得到**，但那 13 枚 skip 要变绿得另换 `WINDOWS`——已立 **R697**（尺与钉同口改，本班不顺手动）。
 - 这条订正本身就是规矩 ③ 的用处：报「某物不存在」前先确认自己在哪一层查、用的是不是这一层的正确名字。本席错在把「窗的导出件」当成「同名件点名要的那三本」，两层名字不重合。
+
+## §4GK 第二十班续席（10-06 12:3x–13:1x·总控线·主树 `c39999a`→`152c9ce`→`3a08975`→`20595e4`→`484e57a`→`557f137`→`a3a7a4e`·**单模型未切换**·心跳一枚没碰）：R677／R676 并树 · R698 立单派工 · 🔴 事故 #126（总控自己在在飞席的树里做反证）
+
+### 4GK.1 两笔并树（全部总控亲跑，执行层自报一律只算自报）
+
+- **R677**（Laplace／`be-r677`@`f36de2f`→`3172fae`）三枚交付全新增 1005 行、删除 0 行；三枚 blob 逐枚对盘 `a0641a1`／`20ec455`／`d9d9985d`（我先前并的是纸的上一版 `2b0b171`，席位终笔又改了一行——把「`rev-list --count f36de2f..HEAD` 交回 0」这枚 state① 旧账订正为 2）。主树 state① **88 passed／54.98 s**，commit 后 state② **88 passed／49.73 s**。反证：总控亲手把 `app/rag/hot_index.py::HotSetIndex._bypass_locked` 里 `for metadata in self._cold.values()` 换成 `for metadata in []` ⇒ **12 failed／76 passed／44.34 s**，还原后 `git status` 对该路径为空。卫兵 `tickets_index --verify` rc=0、`lint_hand_copied_coordinates --check` 95/95 WITHIN rc=0、驱动件单跑 rc=0 且 `weight.status=NOT_MEASURED`。
+- **口径订正（不再抄旧账）**：账面原写「R44① 让路没件」**是错的**。让路腿的码本来就在树——`HotSetIndex._bypass_locked`（冷表扫描）→ `::REASON_INCOMPLETE` → `HotSetIndex.rank` 交回 `None` → `app/rag/retriever.py::DocumentRetriever._hot_hits` 交回 `None` → `search()` 落非热集腿。缺的是**驱动件**，R677 补驱动件＋牙，`app/**` 一字节未动。R44① 仍记**离线达／重量待窗**，生产读路径今天仍未达（`INDEX_BACKEND=pgvector` 令整层走 `::REASON_READ_BACKEND_SWITCHED`）。
+- **R676**（Goodall／`be-r676`@`f36de2f`→`3eb218a`）五枚交付全新增 1514 行；五枚 blob 逐枚对盘 `677f426`／`6897ee7`／`3b58407`／`ab7fccb`／`d1cabac`。主树 state① **33 passed／23.06 s**；量具单跑 rc=0（105 题里同义词族 15 枚，能把新块送进 top-5 的只有「原题词腿召回短于 top_k」那一形＝**1 枚**；候选面补回 137 枚块、top-5 面几乎不动；full 档规则腿被挡在门外 15/15）。反证：把 `scripts/r676_synonym_top5_delta.py::top5_change_rate` 的分子分母对调 ⇒ `tests/test_r676_top5_delta_gauge_shape.py::test_the_change_rate_is_entered_top5_over_denominator` **当场 FAILED**（另 2 枚 error），还原后 blob 复比对盘一致。
+- 🔴 **并树配套动作欠过一次（记成流程账，别写成货坏）**：R676 commit 后我第一轮 state② 收到 **3 failed／30 passed**，逐枚点名全是同一句——`tickets_index` 按 git 现查已得 `R676 LANDED@484e57a5bab2`，而 `index.tsv` 第 146 行仍冻在 `QUEUED@9efff02`。不是交付坏，是我把「重生成索引」排在复跑之后。补 `557f137` 后同名件复跑 **33 passed／25.02 s**。⇒ 流程改口：**并树 → `tickets_index --write` → 提交索引 → 再取 state②**，R677 当时正是这个顺序所以没炸。
+- **执行层自净一枚真缺陷**：Goodall 在自己 HEAD 复跑量具时抓出 `--out` 分支写成 `Path.expandvars()`（`pathlib` 无此方法，这条路径从来没跑通过），就地修并补两枚走 CLI 本体的牙。R676 纸面因此多两笔，交付从 4 枚变 5 枚。
+
+### 4GK.2 R698 立单（门那格的真实病根从「基线过期」改口为「尺自己算错」）
+
+- 现取：`scripts/r638_doc_pointer_ruler.py::ratchet_diff` 末尾 assert 要 `after - before == len(added) - len(removed)`，而 `grew.append(...)` 只带 `added`、`shrank.append(...)` 只带 `removed` ⇒ 既增又删的档恒等式右边少减数，尺自断（现场 before=75／after=77／added=31：左 2、右 31）。`_multiset_diff` 本体是对的，坏在调用侧丢掉一张表。
+- 工单落 `docs/tickets/R698-r638-ruler-identity-selfbreak.md`（新规：规格住文件，派工词 133 B 只送指针）。写域只含那把尺＋本单新牙＋本单账面件；🔴 **明写禁触 `docs/testing/r638-pointer-baseline.json`**——它在飞席 Curie／R693 的写域里，两席同文件即真写域冲突；`--land`／`--check-baseline` 本次一律不许跑，不许拿重落基线冒充治疗。
+- **R696／R697 不现在投**：两张工单自己写明执行时机＝窗之后（要 run32／run33 的真导出件当分母），且 R696 要改夜窗量具 `scripts/r631_stage_sum_delta.py`／`scripts/r674_window_trace_export.py`。槽位留给不需要窗的活。
+
+### 4GK.3 🔴 事故 #126：总控在**在飞席位的工作树里**做反证，留下一枚未还原的变异（同类第一次，责任在总控）
+
+- 事实：我在 `be-r677`（Laplace 当时仍在写凭据纸）里做摘腿反证，那轮 pytest 被我自己设的 30 s yield 截断，命令尾的 `git checkout -- app/rag/hot_index.py` 因此没执行 ⇒ 盘上留下 `for metadata in []` 一枚活变异。是 Laplace 自己发现并还原，还如实写进交回词；它的交付 numstat 里 `app/` 为 0 枚，产物未受染。
+- 归因：不是模型、不是 provider，是**我把反证做错了地方＋把 yield 当成了等待**。摘腿必须在**主树**做（R676 那次就是在主树做的，收尾还原逐枚 blob 复比对盘一致）。
+- 立规（本条即时生效）：① 反证／任何会临时改盘面的动作，只在主树做，且同一条命令里必须自带「改→跑→还原→复比 blob」四步，不许跨命令；② 需要比 30 s 更长的命令一律落日志文件（`Tee-Object`）再取末行，不靠 yield 硬等——靠 yield 截断就是 #126 的直接成因。
+
+### 4GK.4 现读取数（本段落盘那一刻）
+
+- 主树 HEAD `a3a7a4e`，脏项只有：`chroma_db/chroma.sqlite3`（遗留双写在写，未提交）、`docs/testing/shape-window-readout-2026-09-28.md` 与 `scripts/night1006_queue.py`（**逐字节为空 diff**，纯 `core.autocrlf=true` 行尾噪声）；未跟踪三枚＝`.zcodeignore`／一枚 6 字节文件名就叫 `0` 的碎片／业主自己的 `课程实践-对象建模-企业智脑/`。删除与 `.gitignore` 一律等业主本人。
+- 容器七枚齐（backend／worker／scheduler healthy 且镜像 `enterprise-brain:local` 建于 12:0x，frontend 未动——`frontend/**` 最后一次提交 10-03 13:53，镜像不落后）；Ollama／postgres／redis healthy 14 h。
+- 存活窗：`run30`（13708 B／00:16）、`run30d`（7002 B／00:32）、`run31`（13712 B／01:20）在盘；`run22`／`run23` 已被事故 #124 吃掉 ⇒ A④ 跨代次对子从今晚 run32／run33 起算。`day1006` 账本与 DONE 文件**不存在**＝今天从零起，不会被 RESUME-SKIP 误跳。
+- 子集分母：`docs/testing/bank-shape-subset-30.jsonl` 现取 **33 行**，与 `scripts/day1006_queue.py` 里 `--expect-denominator 33` 同值（文件名里的 30 是历史名，不是枚数）。
+- 看板现取 1,086,242 B／7,214 行（本段追加前）；工单目录 28 枚文件，索引 163 行／13,765 B／LANDED 147／QUEUED 16。
