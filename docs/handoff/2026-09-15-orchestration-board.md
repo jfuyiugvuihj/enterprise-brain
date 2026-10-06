@@ -1780,6 +1780,10 @@ ReAct 往返**，真撞墙的是另外两发（各 0.06 s，`model_handler.py:93
 | `Banach`（本班·已结案） | 席位唯一键＝agent_id（上一班名册在册） | **R657** 首屏那一格口径串与契约两格同批改口（作废 blocker `wire_first_text_not_recorded`） | `be-r657` | ✅ **已并树 `dfc75f0`**：基点 **127/0** → state① **2 failed/125 passed** → state② **1 failed/126 passed**。🔴 自报「并树即回绿」被本席亲跑推翻一半——`r523` 回绿、`r645` 刀③ 仍红（escape 集空，两枚不变式互斥）⇒ 遗留下单 **R664**；已 close 让槽 | 11:0x |
 | `Tesla`（本班·已结案） | 席位唯一键＝agent_id（上一班名册在册） | **R658** R650 的同批伴侣（三枚过期牙改挂新形状，红线＝两堆必须一起并） | `be-r658` | ✅ **已并树 `96763c4`**（与 R650 同批，三态 285/0→300/0→300/0）；已 close 让槽 | 11:0x |
 | `Pauli`（本班·死席） | 席位唯一键＝agent_id | **R654** 格② 热集让路驱动件按 §120 重写 | `be-r654`（基点 `8a52c5c`） | ⛔ 死于 `429 Too Many Requests`，零写入已取证（`dirty=0`／`untracked=0`／`rev-list --count 8a52c5c..HEAD`=0）⇒ 已 close 让槽；**R654 未落地**，派工词 `%TEMP%\eb104\dispatch\R654.txt` 等槽位复投（非双投） | 11:0x |
+| `Huygens`（本班在飞） | `01a10f09-1ba2-7ec1-b7cf-90a7ede5b9b0` | **R688** R51② 五段事件生产腿（`CANONICAL_STAGES` 那五段要有真发点） | `be-r688`（基点 `624bb78`，**独占**） | 🟡 **在飞·未交**：11:2x 现取 `ahead=0`、dirty 2 枚（`app/agents/nodes.py` +184/-161、`app/trace/spans.py` +88/-1）、untracked 2 枚 ⇒ 有写入、零自提交，验收等收席三证现取 | 11:2x |
+| `Pasteur`（本班在飞） | `01a10f09-3306-7371-8b77-cb5e7d5dc56f` | **R690** R38③ `/chat` 腿缺 `stream_options.include_usage`（同仓两条道一条有计量） | `be-r690`（基点 `624bb78`，**独占**） | 🟡 **在飞·已自提交**：现取 `ahead=2`、HEAD `c39d969`、dirty 0、untracked 0（新规：执行层只许在**自己树**提交，主树仍未动）。⚠️ 另有 `be-r690s3`（只 1 枚未跟踪牙件）与 `%TEMP%\r690b2`／`%TEMP%\r690b3` 三枚影子树，收席时逐枚点名哪一棵是正席 | 11:2x |
+| `Beauvoir`（本班在飞） | `01a10f09-b3e0-7433-91d5-97194d4b0b73` | **R673** GPU 语义钉（`OLLAMA_REQUIRE_GPU` 丢卡必报错，写域窄化见工单追加段） | `wt-r673`（基点 `b666ff3`，**独占**） | 🟡 **在飞·未交**：现取 `ahead=0`、dirty 1 枚（`app/common/model_capabilities.py` +90）、untracked 1 枚（`tests/test_r673_gpu_honest_declaration.py`）。🔴 **两树同单**：`wt-r673s2` 内容与 `wt-r673` 逐枚相同（dirty 与 untracked 同形）⇒ 疑似重复体，按事故 #14 那族处理：收席时先 `fsck`/`diff` 判谁是真的写域，**不许两枚都并** | 11:2x |
+| `总控本人`（本班亲做） | 不占执行层席位（不入并发计数） | **CHASE-2026-10-06** 三刀里没做全的那两刀（段 A′ 已并 `7136f3d`／段 B `0093e43`／段 C＋凭据纸 `8c1dc02`） | 主树 `8c1dc02` | ✅ **已交付**：段 A′ 39 枚派生坐标红→**0**（同名 8 枚件 158 passed／0 failed／1 xfailed／5.70 s）；段 B 卫兵落地，机械层现取 95 枚／30 个文件、预算 95、`--check` rc=0，牙 7 枚（state① 6.99 s／state② 7.90 s 两态同清单）；段 C 计划书 §2 全量门那格按今晨亲跑改口＋新开 §0.6 四行。🔴 **未达三格如实挂账**：段 A 原判据 1／2（文档层 5416 枚／135 个文件未符号化）归 R692；刀1 状态真源未做（账尺里 `docs.tickets` 命中 **0**）归 R680；余下先红只给推算、全量门未重量 | 12:1x |
 
 
 - **⚠️ 事故定性的更正（09-17 10:34，重要，别再把账全记在"自律不足"上）**：
@@ -7103,3 +7107,45 @@ C 门三格现状：①越权 0 条＝**未验**（R481 口径；R487 只到账�
 - 🔴 **GPU 硬门已翻且没炸**：`OLLAMA_REQUIRE_GPU -> 1`、recreate rc=0、backend 20.4 s 应答、容器内 `printenv` 现取 **1**；单题 smoke **rc=0／45.8 s**（`doc-01`）⇒ 没触发回滚，R26② 今夜第一次在「硬门 on」形态下可量。
 - **run30 已开窗**：23:29:18 起，p18 clear＋check 双 rc=0、fresh tag ok。预计 ~1.9 h；随后 run30d（D 三格，lane=on）、run31（同代次第二扇）。
 - 三枚执行层（R670／R674／R678）在飞 **70 分钟零写入**（三棵树 `dirty=0`、无自提交），断网后大概率死席——**不等它们**：窗所测的 A② 分片码已在代次里（R662 `9efff02`），R670／R674／R678 只加观测与量具，明早并树后另开短窗量 R38③／R51②／D 格。
+
+## §4GI 第十八班（10-06 09:2x–12:1x·总控线·主树 `b666ff3`→`f522b04`→`5023726`→`328bfbe`→`624bb78`→`7136f3d`→`0093e43`→`8c1dc02`·**单模型未切换**·心跳一枚没碰）：夜窗收账 · 全量门真账 · CHASE 三刀补齐 · 🔴 事故 #124
+
+### §4GI.1 夜窗 `night1006`（23:28 → 01:20:22 DONE，账本 `%TEMP%\evalrun\night1006.ledger.jsonl`）
+
+- 队列自续跑到底：**54 steps／42 rc=0／12 red／112.3 min**，看门狗在线，无一段等人。
+- 分数（`r573` 事后尺）：`run30` 全 105 题 **correctness 0.6476／evidence 0.8095／unsupported_claim_rate 0**；同代次第二扇 `run31` **0.6190／0.80／0**；`run30d` 33 行 **0.6061／0.7273／0**。尺＝09-21 那遍 0.4762／0.7524 ⇒ correctness 大幅抬升，unsupported 六连 0。
+- 时延（`run30`）：问答 p95 **47.97 s**（n=50）／分析 63.8／报告 51.68／整表 51.7，停表帽命中 0 枚。🔴 **A① 不翻绿**：窗内跑了 119 s 与 217 s 的件，这批时延不作结论（新规矩：夜窗期间不许有 agent 跑件，run30 的时延数因此只当样本不当判据）。
+- 🔴 **D 相昨夜仍是废样本**，真因本班查到并已在 `328bfbe` 修：队列传的键是 `DECLARE_LANE_TIER`，量具真读的键是 `EVAL_DECLARE_LANE_TIER`，且档位名册是 `LANE_BY_TIER` 的**中文键**（报告／分析／问答）。run32d 要 `EVAL_DECLARE_LANE_TIER=报告` ＋ `REPORT_LANE_VIA_QUEUE=on` ＋ r573 `--expect-denominator 33 --expect-lane-phase on` 三件齐。
+- A④：同码噪声底已量（逐类 p95 摆动 Excel 14,100.5／多轮 4,028.3／无证据 2,985.9／文档问答 2,718.4 ms），**退化零格**；但跨代次对子＝**0 枚**（run22／run23 的窗产物被事故 #124 删了）⇒ 需 `run32 × run30/31` 补。
+
+### §4GI.2 🔴 事故 #124（编排故障，同类第 … 次；按裁定**不用新增针闭合**）
+
+执行层 `Avicenna`（R674）的一次性自检脚本里写了 `shutil.rmtree(base.parent.parent)`（`base` 是 `mkdtemp()/evalrun`）⇒ **清了整个 `%TEMP%`**。损失现取：`%TEMP%\evalrun` 里 run22／run23／run25 的窗产物（逐枚 `MISSING`；剩余 569 枚文件里 run30／run30d／run31 全在）；`%TEMP%\eb104\lovelace-hold\lovelace-r666.patch`（**30,445 B，R666 第二实现的唯一盘外快照，不可恢复**）；`%TEMP%\r647_state2`／`%TEMP%\r653_state2` 两枚 worktree 标 prunable（**未 prune**，窗后 `git fsck --lost-found` 验过再决定）。
+处置＝**规则改动**（不编号进产品史、不加针）：执行层禁 `rmtree`、禁碰 `%TEMP%` 里非本单目录；一次性脚本必须落在工单指名的窗内目录。已写进 AGENTS.md。
+
+### §4GI.3 全量门真账（新规④口径：每班开工一次；反证钉不分层）
+
+- state①（dirty＝R670 已 apply 未 commit，HEAD `8bca11c`）：**57 failed／11438 passed／94 skipped／2 xfailed／978.29 s／`-n 4`／exit=1**（`%TEMP%\eb1006\gate_state1.log`，`FAILED` 行逐枚计＝57）。
+- 对照（干净 HEAD `8bca11c`，同批 18 枚件，工作树 `wt-hdctrl`）：**50 failed／342 passed／2 skipped／168.09 s**（`ctrl18.log`）⇒ **50 枚是这棵树自带的先红**，R670 净新增 7 枚、治好 0 枚。🔴 计划书 §2 那句「48 failed／基点 `9556513`」是过期账，已按现读改口并新开 §0.6 对账。
+- 那 7 枚逐枚归因：3 枚＝`-n 4` 抢 CPU 压节拍帧距（脏树安静串行复跑同三枚 rc=0／12.87 s／12 passed）；2 枚＝state① 盘面必脏的前提钉（#96 同族）；1 枚＝R670 挪 `chat.py`/`spans.py` 行位致文档表坐标漂（段 A′ 已治）；1 枚＝未跟踪 `deploy/.env.server` 里新冒出的 `OLLAMA_REQUIRE_GPU` 待登记进基线名册。
+- 50 枚先红的族：r460 21／r455 11／r387 7＝**39 枚派生坐标族**（段 A′ 已清零）＋ r638 3／r469 2／r492 2／r400 1／r498 1／r595 1／r483 1。🔴 r638 那 3 枚本班诊断出**不是基线旧**：尺自证等式 `after - before == len(added)` 不成立（`docs/testing/r483-empty-tables-2026-09-29.md` 交 `before=75 after=77 added=31`）⇒ 窗后立号，写域不含 `r638`，本班不修。
+
+### §4GI.4 CHASE-2026-10-06（业主点名「上次那三刀你没做全」，本班总控亲做，禁碰产品码与夜窗量具）
+
+- **段 A′**（`7136f3d`）：`scripts/r387_label_lineage.py::land_lineage_doc` 与 `scripts/r455_gapdoc_coordinates.py::land_cells` 补上 `--land` 机械落地腿（照 `scripts/r460_run9_coordinates.py::land_cells` 的写法：只写现读串、锚腐即拒写）。读数：三族牙 8 枚同名件 **158 passed／0 failed／1 xfailed／5.70 s**（collected 159 枚，逐枚点名 43/5/6/19/8/13/24/41），改前改后**文件清单逐枚相同、零 deselect、零摘牙**。三把尺 `--land` rc=0 且幂等。反证四形成立：改锚 → `CoordinateUnavailable`／`RuntimeError(命中 0 枚)` 并点名；手改假数 → 被机械改回 `changed=1`。
+- **段 B**（`0093e43`）：新建 `scripts/lint_hand_copied_coordinates.py`（只扫 `tests`＋`scripts` 的 AST 字符串常量；docstring／注释不判；现取 **95 枚／30 个文件**，`HAND_COPY_BUDGET = 95`；rc 0／4／5）＋ `tests/test_chase_lint_names_every_hand_copy.py`（7 枚全离线牙，含两把反证）。两态：state① **7 passed／6.99 s**、state② 干净树 **7 passed／7.90 s**，已提交路径 `git diff HEAD` 交空。受影响面 59 枚「枚举全树」的钉＝**1284 passed／1 xfailed／3 failed／432.34 s**（3 枚红＝先红的 r638）。
+- **段 C**（`8c1dc02`）：计划书 §2 全量门那格改口＋新开 §0.6 四行；凭据纸 `docs/testing/chase-2026-10-06.md`；`docs/tickets/index.tsv` 重生成 157 行／12,428 B／LANDED 142／QUEUED 15，`--check` rc=0；账尺 `audit_plan_ticket_ledger` 现取 **RESULT=PASS（0 条违规，43 号）**；十枚账件（r679/r251/r276/r417/r666/r246/r115/r472/r478/r492）**213 passed／0 failed**。
+- 🔴 **未达（不折成达标）**：段 A 原判据 1／2 未做（三本表里 `文件:行号` 一枚未少＝14／56／126 枚；文档层全仓 **5416 枚／135 个文件**）⇒ **R692**；刀1 状态真源未做（`rg docs.tickets scripts/audit_plan_ticket_ledger.py` 现取 **0 命中**，`index.tsv` 仍无消费方＝第三本账风险）⇒ **R680**（含 `scripts/r631_stage_sum_delta.py` 那枚写死的 LF 位，属夜窗量具，窗后做）；段 B 原「文档追加即红」改口为「机械层种/换两形」，原话不删、随 R692 生效。
+- 写域出入一格：工单把 gapdoc 记成 `docs/testing/gapdoc-2026-09-2*.md`，真实位置是 `docs/handoff/2026-09-26-v1-frontend-gap-list.md`（`scripts/r455_gapdoc_coordinates.py::GAPDOC` 现取）——段 A′ 的 `--land` 动过它那 5 行（尺写的、非手改），越界一格记在凭据纸 §7。
+
+### §4GI.5 空转 8h32m 的机制级修法（业主点名「解释然后改」）
+
+01:20 收账 → 09:52 之间机器零产出。病根不是网络、不是模型，是**我把下一步押在「这条线程还在」上**：夜里收完账没有把确定性步骤落成队列。修法：新建 `scripts/day1006_queue.py`（白天段同夜窗形状——账本 rc=0 的步骤重启即跳过、不重烧 GPU；band 0 是镜像代次硬闸，provenance 不合就 `GIT_SHA=<HEAD> docker compose build migrate` ＋ `up -d --force-recreate backend worker scheduler` 再验，验不过直接 ABORT 不测旧码）。纪律入 AGENTS.md：**交还机器前机器上必须有活**。
+
+### §4GI.6 保命账（H6 到今天为止）
+
+`git push gitee codex/data-file-catalog` 现取 rc=0，`328bfbe..8c1dc02` 已推，`rev-list --count gitee/...HEAD` ＝ **0**；离线副本 `E:\eb-backup\main-20261006-1114.bundle`（**30,145,531 B**，`git bundle verify` = okay，complete history）。GitHub `origin` 仍 TLS 不通（只有 gitee 可用）。🔴 H6「本机是唯一副本」这一格按「远端有 gitee＋E 盘有 bundle」**两腿记账**，不宣布结案：异地性仍等于同一台机器所在网络。
+
+### §4GI.7 今晚排班（一次排队，别做一步停一步）
+
+band 顺序＝provenance 硬闸 → `run32`（全 105 题，同步相显式声明）→ `run32d`（33 题 D 门三件齐）→ 跨代对子 pairing（run32 × run30/31，补 A④）→ close-out（r573 逐窗读数落纸）。开机前 `powercfg /change standby-timeout-ac 0`（**不设永眠**，业主明令）；窗内总控只做零争用账面活（清删除清单、写 R692／R680 单），**窗内硬禁**：并树、跑测试、动容器、打模型。
