@@ -1378,7 +1378,20 @@ def test_counter_evidence_3_moving_the_frozen_base_forward_reddens(monkeypatch):
         except AssertionError:
             continue
         both.append(candidate)
-    assert not both, "两本账一起清还走得通：%s —— 那追加段那一条腿就是空转" % both
+    #: 🔴 R719 改形（10-06）：契约是**只往文末追加**的那本，所以「最新版的上一版」天然满足
+    #: 「基点＋空账＝它自己」，纯追加的祖先会稳定走进 both。上一班把这一格写成 assert not both，
+    #: 于是它随每一笔合法追加变红——那是一条不许有人动笔的账，不是牙。牙在别处：
+    #: 走进 both 的候选**必须是现盘的真前缀**（纯追加的祖先），只要有一枚不是前缀，
+    #: 就说明「两本账一起清」真能掩盖一次原地改口——那一枚才是本刀要抓的罪证。
+    for candidate in both:
+        assert current.startswith(base_contract_text(candidate)), (
+            "两本账一起清就走得通，而 %s 不是现盘的纯追加祖先（原地改过口的历史区被洗白了）" % candidate)
+    #: 第二枚牙：把尺按在册基点与现盘整跑一遍，账与枚数门全清成零 ⇒ 必须当场红，
+    #: 而且红句要点名「契约的历史在差异账之外被动过」。这一格不许随追加变绿。
+    with pytest.raises(AssertionError) as pinned:
+        assert_history_matches_ledger(ledger=(), expected_count=0,
+                                      rewords=(), expected_reword_count=0)
+    assert "契约历史与具名账（差异 ＋ 改口）对不上" in str(pinned.value), str(pinned.value)
 
     source = _own_source()
     assert _literal_pin_problems(source) == [], _literal_pin_problems(source)
