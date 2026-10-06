@@ -22,3 +22,10 @@
 ## 禁区
 
 产品码任何路径／`tests/**`（本单不新增钉子）／`frontend/**`／`docs/handoff/**` 的既有前置行／容器·镜像·模型·GPU。
+
+## 落账（总控亲签亲做·10-06 23:0x）
+
+- 本节由总控亲自落地，不经执行层：`docs/api/contract-v1.md` 文末追加一节「队列发布腿与夜窗量具收口 ＋ 三处过期口径具名作废（2026-10-06，R717 ＋ R718 ＋ R708）」，纯追加、上文一字未改（现取：追加前 459,434 字符 → 追加后 462,030 字符，差＝本节字节数）。
+- 三处过期口径逐格已在契约里点名作废，判据形态一律 `文件::符号`；本单没有新增读 markdown 的用例。
+- 凭据纸：`docs/testing/r708-2026-10-06.md`。卫兵读数（`lint_hand_copied_coordinates --check`／`r638_doc_pointer_ruler.py`／`tests/test_r132_contract_followup_sync.py`）在并树之后现取，逐枚填在那纸第三节；取不到数的那一格照旧写「读数待取」，不许拿预期值装绿。
+- R702 登记的第三件（`tests/test_r504_terminal_frames_carry_data_filename.py` 那枚相等针需要 widen）本单没动，仍欠。

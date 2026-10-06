@@ -6100,3 +6100,52 @@ R699 把每一枚断言算在工具边界上（`app/agents/evidence.py::build_an
 * **一枚在册针需要 widen**：`tests/test_r504_terminal_frames_carry_data_filename.py::test_the_two_shapes_are_not_the_same_face`
   拿「缺席那一形的键集合 == `{"type"} | SHARED_READOUT_KEYS`」做**相等**判，而判据 2 要的正是终态帧多交
   一枚具名格——两枚要求不可能同时绿。那枚针在本单写域之外，由它在册的主人 widen；本契约不替它改口。
+
+## 队列发布腿与夜窗量具收口 ＋ 三处过期口径具名作废（2026-10-06，R717 ＋ R718 ＋ R708）
+
+R702 文末那格「今天仍然欠的那一手」登记了三件事，本班收掉前两件事，第三件事照旧只登记不动手。
+
+### 一、`deploy/queue_worker.py` 三处调用今天逐枚递两格（R717）
+
+* 三处构造点（按 (所在函数, `terminal_state`) 点名，不写行号）：
+  `_process_report_lane_turn` 的 `TERMINAL_STATE_AWAITING_APPROVAL` 那一处、同函数的
+  `TERMINAL_STATE_ANSWERED` 那一处、`_process_reserved` 的 `TERMINAL_STATE_ANSWERED` 那一处。
+* 语义与 R702 构造点逐字一致：只搬运、零重算、零新增 IO。交不出只发原因码，**绝不发空 `claims`**；
+  挂起轮那两格都不发（空正文 ⇒ `claims_for_egress` 交回 `([], "")` ⇒ 构造点一字节都不许多）。
+* 钉：`tests/test_r717_queue_worker_passes_claims.py`——结构普查把「调用点枚数＝三、每处都带两枚关键字」
+  钉死（第四枚调用点想不递就当场红），两把反证刀分别摘投递与把稳定码换成空清单。
+* 🔴 读数仍待窗：D 相那两格（`claims` 与 `claims_error` 在答案件里到底交不交得出）要一扇 on 相的真窗才算达，
+  本节只说码在树。
+
+### 二、夜窗量具今天读得到那两格了（R718）
+
+* `scripts/eval_transport_ask_v2.py` 的 legacy `done` 分支与队列取回账都把两格折进答案件；
+  `scripts/collect_evaluation_answers.py` 的可选键名册补上 `claims_error`（此前只有 `claims`，
+  原因码会在落盘那一格被吞掉）。只搬不改：交不出就整格缺席，旧窗那种「缺键」形状必须还能被 `r704` 认出来。
+* `tests/test_r181_text_frame_ruler.py` 那枚五键**相等**针就此改形（不是摘牙）：在册五键一枚不许少，
+  新键只限具名两枚，第四枚键名照样当场红。
+* C④ 今天不因本节翻绿：零分母与零幻觉仍是两句话，翻绿要等真窗交回非零分母的那一份读数。
+
+### 三、三处过期口径——具名作废，原地一字不改（R708）
+
+契约是 append-only 的那本账（差异账与改口账由 `tests/test_r645_contract_difference_ledger.py` 守着），
+所以下面三格以本节作废上文，上文原文留在原地当历史，不抹。
+
+1. **「`.xlsx` 与 `.csv` 通过 `POST /api/v1/upload` 进知识库」（上文 Knowledge-Base Spreadsheets 一节，R306）
+   不完整。**今天现取：`POST /api/v1/upload-excel` 也把已落盘的那份表格送下同一条知识库腿——
+   搬运件是 `app/documents/knowledge_ingest.py::index_dataset_copy`，由 `app/api/v1/data.py::upload_excel`
+   调用；四个出口仍复用既有那一条腿（`app/rag/loader.py::load_document` →
+   `app/documents/index_policy.py` 判定 → `retriever.add_document` → `app/tools/rebuild_bm25`），
+   本路不另起第二套入库腿、不新增 Chroma 写点。入库成功与否只进日志，数据集那一半的字段与状态码一个字不许改。
+   凭据：`docs/testing/r700-2026-10-06.md` 与 `tests/test_r700_dataset_upload_reads_the_document_dict.py`。
+2. **「S5 兼容注记里那份白名单口径」自 R700 起要按两枚新把手读**：文件名与表头签名的判定住在
+   `app/documents/file_security.py::sanitize_upload_filename` 与 `::inspect_dataset_upload`，
+   同名冲突住在 `app/documents/file_security.py::guard_dataset_name_conflict`（由 `app/api/v1/data.py`
+   的上传腿调用）。那节上文只说过「`.xls` 作为 `unsupported_file` 在写字节之前被拒」，没点名这三枚符号。
+3. **「`.xls` 改名 `.xlsx` 仍然在 openpyxl 里失败并冒成 500」（Dataset File Delivery 一节那一句）**已经过期。
+   🔴 现取读数：这类伪造表头交回 **400**，载荷是具名字典 `{code, message}`，不是 500；
+   量具路径 `tests/test_r700_xls_stays_refused_by_name.py`（真 OLE2 二进制走路由，逐枚断言 400 与码名）。
+   同名冲突那一格另发 **409**（`dataset_filename_conflict`），与 400 分家。本节不写「应当返回」，只写现取。
+
+（R702 登记的第三件「`tests/test_r504_terminal_frames_carry_data_filename.py` 那枚相等针需要 widen」
+  本班没动：它不在 R717／R718 写域，仍由它在册的主人处理。）
