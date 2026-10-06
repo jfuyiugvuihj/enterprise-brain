@@ -187,6 +187,89 @@ def require_gpu_enabled(explicit: bool | None = None) -> bool:
     return (os.getenv(REQUIRE_GPU_ENV) or "").strip().lower() in _TRUE_VALUES
 
 
+# ---------------------------------------------------------------------------
+# R673 - the fail-open default has to carry its own name on the log
+#
+# R26 ② says a machine that cannot get its card must say so with a stable code. That
+# sentence is only judgeable in one of the two postures below, so the posture itself
+# gets announced the first time a probe runs: an unset switch is a decision, not an
+# absence. A latency number taken while the box answers from the CPU leg must never be
+# readable afterwards as a GPU number, and neither announcement may launder the other.
+# ---------------------------------------------------------------------------
+
+POSTURE_FAIL_OPEN = "fail_open"
+POSTURE_REQUIRE_GPU = "require_gpu"
+
+#: One of these two lines is logged the first time a posture is seen by this process.
+POSTURE_DECLARATION_FAIL_OPEN = (
+    "R673 GPU 姿势声明：posture=fail_open（缺省放行）。"
+    "这一形态不拦 CPU 腿：探测确证推理跑在 CPU 上时也只写一条告警、发现结果照旧可用，"
+    "所以屏上那句答复可能是 CPU 腿给的。"
+    "R26②「拿不到卡必须显式报错 + 稳定码」这一类判据在这种形态下不可判。"
+)
+POSTURE_DECLARATION_REQUIRE_GPU = (
+    "R673 GPU 姿势声明：posture=require_gpu（硬门在位）。"
+    "探测确证推理跑在 CPU 上时，发现结果就地 available=false 并带稳定码 "
+    + COMPUTE_DEGRADED_CODE
+    + "，不静默降级继续跑。R26② 类判据只在这种形态下可判。"
+)
+
+#: Emitted per detection, because the two postures conclude different things about
+#: the same confirmed CPU leg. Both carry the probe reading that decided it.
+CPU_LEG_DECLARATION = (
+    "R673 确证 CPU 腿（fail_open）：此刻走的是 CPU 腿，硬门未架所以照旧服务，只是慢。"
+    "本形态下测出的延迟数不得用于 R26②。"
+)
+HARD_REFUSAL_DECLARATION = (
+    "R673 硬门触发（require_gpu）：确证 CPU 腿，发现结果就地不可用并带稳定码 "
+    + COMPUTE_DEGRADED_CODE
+    + "，不降级、不静默继续跑。"
+)
+
+#: Which posture this process announced last; the announcement is once per posture.
+_declared_posture: str | None = None
+
+
+def gpu_posture(armed: bool | None = None) -> str:
+    """Name the effective posture for this call: the hard gate, or fail-open."""
+    return POSTURE_REQUIRE_GPU if require_gpu_enabled(armed) else POSTURE_FAIL_OPEN
+
+
+def posture_basis(armed: bool | None = None) -> str:
+    """Say what the posture was resolved from; a forced caller hides behind no env."""
+    if armed is None:
+        raw = (os.getenv(REQUIRE_GPU_ENV) or "").strip()
+        return REQUIRE_GPU_ENV + " 现值=" + (raw or "<未设>")
+    return REQUIRE_GPU_ENV + " 由调用方显式指定 require_gpu=" + str(armed)
+
+
+def declare_gpu_posture(armed: bool | None = None) -> str:
+    """Log one named line per posture so the default is never anonymous.
+
+    R673 ① wants the unset switch named and saying out loud that R26②-type criteria
+    cannot be judged in that shape; R673 ② wants the armed switch named as well. The
+    two bodies are different strings, so a reader can tell which shape produced a
+    number, and a test can fail when either shape stops announcing itself.
+    """
+    global _declared_posture
+    posture = gpu_posture(armed)
+    if _declared_posture == posture:
+        return posture
+    _declared_posture = posture
+    body = (
+        POSTURE_DECLARATION_REQUIRE_GPU
+        if posture == POSTURE_REQUIRE_GPU
+        else POSTURE_DECLARATION_FAIL_OPEN
+    )
+    logger.warning("%s 依据：%s", body, posture_basis(armed))
+    return posture
+
+
+def reset_gpu_posture_declaration() -> None:
+    """Forget the announced posture so the next detection announces it again."""
+    global _declared_posture
+    _declared_posture = None
+
 def _matches(tokens: list[str], needles: tuple[str, ...]) -> bool:
     return any(needle in token for token in tokens for needle in needles)
 
@@ -345,7 +428,11 @@ def annotate_inference_compute(
     ``unknown`` changes nothing but the log line: it is neither a passport ("clearly
     on the card") nor a crime ("degraded"). ``require_gpu`` overrides the environment
     switch for callers that already know their own policy.
+
+    The posture that produced this answer is announced once per process by
+    ``declare_gpu_posture`` (R673) before the probe runs.
     """
+    declare_gpu_posture(require_gpu)
     compute = detect_inference_compute(fetch, base_url)
     result.inference = compute
     if compute.on_gpu:
@@ -355,7 +442,10 @@ def annotate_inference_compute(
         return result
     logger.warning("ollama inference is running on CPU, not GPU: %s", compute.detail or "")
     if require_gpu_enabled(require_gpu):
+        logger.warning("%s 探测读数：%s", HARD_REFUSAL_DECLARATION, compute.detail or "")
         result.available = False
         result.error_code = compute.error_code
         result.error_message = compute.error_message
+        return result
+    logger.warning("%s 探测读数：%s", CPU_LEG_DECLARATION, compute.detail or "")
     return result
