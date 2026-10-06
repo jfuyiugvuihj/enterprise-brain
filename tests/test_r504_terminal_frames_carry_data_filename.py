@@ -158,12 +158,20 @@ def test_the_two_shapes_are_not_the_same_face(monkeypatch, tmp_path):
     produced = done_frame(drive(monkeypatch, tmp_path, filenames=(DATASET,)))
     empty = done_frame(drive(monkeypatch, tmp_path, filenames=(), declared=""))
 
-    assert set(produced) - set(empty) == {"data_filename"}, (sorted(produced), sorted(empty))
+    #: R702 之后具名格不止一枚：断言出口多带 `claims`／交不出带 `claims_error`。
+    #: 相等判就此换成子集判——但三枚牙一枚不摘：既有键不许少、两形的差不许退化、第四枚新键照样红。
+    named_cells = {"data_filename", "claims", "claims_error"}
+    assert set(produced) - set(empty) <= named_cells, (sorted(produced), sorted(empty))
+    assert "data_filename" in set(produced) - set(empty), (
+        "两形只差具名格可以，但 `data_filename` 这一格不许一起消失——那才是本单要钉的东西"
+    )
     assert set(empty) - set(produced) == set()
     assert set(empty) == {"type"} | SHARED_READOUT_KEYS, (
         "缺席那一形必须等于在册件按名钉住的那具键集合——否则改的就是那道钉"
     )
-    assert set(produced) == {"type"} | SHARED_READOUT_KEYS | {"data_filename"}
+    assert set(produced) - ({"type"} | SHARED_READOUT_KEYS) <= named_cells, (
+        "带数据那一形除了在册键与三枚具名格，多一枚都不许过"
+    )
 
 
 def test_the_declared_field_never_becomes_the_answer(monkeypatch, tmp_path):
