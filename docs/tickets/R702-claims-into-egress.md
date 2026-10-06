@@ -20,7 +20,7 @@
 
 ## 写域（只许这些）
 
-`app/api/v1/chat.py`（仅出口那一格与必要的导入）／`app/agents/evidence.py`（只许搬运函数，不许动判定）／`docs/api/contract-v1.md`／新增 `tests/test_r702_*.py`／`docs/tickets/R702-*.md`／`docs/testing/r702-<开工日>.md`
+`app/api/v1/chat.py`（仅出口那一格与必要的导入）／`app/agents/evidence.py`（🔴 10-06 收窄：只许 import 调用，一字节不许改——该文件此刻由 R703 在飞席持有；投影函数 `eval_payload_for_answer` 已在树，本单无需再动它）／`docs/api/contract-v1.md`／新增 `tests/test_r702_*.py`／`docs/tickets/R702-*.md`／`docs/testing/r702-<开工日>.md`
 
 ## 禁区（踩线即退回）
 
@@ -29,3 +29,10 @@
 ## 这一枚为什么存在
 
 R699 把 claims 造出来了却没接出去，C④ 那一格今晚的窗还是会量到零分母；这一腿不并，run32／run33 白跑一扇（同一扇窗 1.9 小时，是这台机上最贵的资源）。
+
+## 追加（总控 10-06 15:4x）· 基点、席位与边界
+
+- 基点＝派工那一刻主树 HEAD 现取；独占席树 `C:\Users\fengx\PycharmProjects\be-r702`（detached checkout），不许换树、不许碰主树、不许 commit（并树归总控）。
+- `app/agents/evidence.py` 一字节不许改（见上，写域已就地收窄）。需要的东西 R699 都造好了：`Claim`／`atomize_answer_claims`／`claim_support_scan`／`require_measured_claims_denominator`／`eval_payload_for_answer`。
+- 与 R703 的边界：R703 交回那一格 `app/api/v1/chat.py::_should_use_data_context` 用「报销」落 `document_terms` 否掉 `data_filename`（连带 `route_main` 的 `has_data` 与 `_authorized_dataset_files` 退化成全量可见）**不归本单**，由 R709 承接。本单只把 claims 接出出口；顺手改路由＝两单读数混账，判负。
+- 判据 3 写字段落点时只准 `文件::符号`，禁 `文件:行号`（在册尺 `scripts/lint_hand_copied_coordinates.py`）。
