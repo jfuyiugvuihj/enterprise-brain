@@ -194,7 +194,8 @@ def test_the_two_legs_add_residency_and_nothing_else_beyond_their_own_budget(mon
     one field, while the compat leg adds residency **and** the two no-thinking spellings, because
     a compat body that asks for neither hands the tier's whole output cap to a thinking model and
     answers with zero characters. The property the test exists for is unchanged -- no third
-    opinion reaches either body from this boundary.
+    opinion reaches either body from this boundary -- R690 registered the metering
+    opt-in as the one extra compat-streaming key, and this pin still refuses a third.
     """
     _, native = _ask_native(_handler(monkeypatch, "15m"))
 
@@ -215,7 +216,12 @@ def test_the_two_legs_add_residency_and_nothing_else_beyond_their_own_budget(mon
     assert call["model"] == MODEL
     assert call["stream"] is True
     assert call["max_tokens"] == ModelHandler._call_budget(stream=True).max_tokens
-    assert set(call) == {"model", "messages", "stream", "max_tokens", "timeout", "extra_body"}
+    #: R690 给流式那一发带上计量 opt-in（`app/common/model_handler.py::ModelHandler.chat`
+    #: 的 `stream_options`）。做法照 R591 对同一枚钉的先例：改窄那半句而不是删掉——
+    #: 非流式仍是那六格，流式＝六格加这一格，任何第三主意照样红在这一行。
+    assert set(call) == {"model", "messages", "stream", "max_tokens", "timeout", "extra_body",
+                         "stream_options"}
+    assert call["stream_options"] == {"include_usage": True}
     assert set(call["extra_body"]) == {KEEP_ALIVE_FIELD, *NO_THINK_REQUEST_FIELDS}
 
 

@@ -704,8 +704,22 @@ class ModelHandler:
             error_code=MODEL_UNAVAILABLE_CODE,
         )
 
-    def chat(self, messages: list[dict], source: ModelSource = ModelSource.LOCAL, stream: bool = True):
-        """Call the local model; failures remain explicit and non-business results."""
+    def chat(
+        self,
+        messages: list[dict],
+        source: ModelSource = ModelSource.LOCAL,
+        stream: bool = True,
+        *,
+        stream_options: dict | None = None,
+    ):
+        """Call the local model; failures remain explicit and non-business results.
+
+        ``stream_options`` is metering, not tuning: on the compatible leg a stream reports
+        no counters at all unless the body asks for them (R31 现读), so every streamed round
+        this boundary sent landed in ``model_calls`` with ``input_tokens`` and
+        ``output_tokens`` left NULL. The caller may pass its own ``stream_options`` and then
+        its values are the ones that go out.
+        """
         client = self.ollama_client
         model = self.local_model
         from app.common.model_budget import ModelBudgetExhausted
@@ -762,6 +776,18 @@ class ModelHandler:
                 slot.release()
                 return native
 
+        #: 流式那一发的 usage opt-in（R690）。形状逐字照另一条边界上那处在册写法
+        #: ``app/agents/nodes.py::_answer_leg_tap``，本处不另造规则：只在真走流式时进请求，
+        #: 调用方自己写过 ``stream_options`` 就原样放行（与 R30 那条 "caller's cap wins" 同一个
+        #: 裁定）。非流式的 body 一个字不变。缺这一格的代价不在这儿而在账上：
+        #: ``app/trace/spans.py::stream_usage_counts`` 只能搬服务端报过的数，没报就留 NULL，
+        #: 于是 ``/chat`` 那两枚计数列永远读不出数（R670 交回单 §9 点名的就是这一格）。
+        request_kwargs: dict = {}
+        if stream:
+            request_kwargs["stream_options"] = (
+                {"include_usage": True} if stream_options is None else stream_options
+            )
+
         try:
             response = client.chat.completions.create(
                 model=model,
@@ -784,6 +810,7 @@ class ModelHandler:
                 # ``thinking_extra_body``, both boundaries, and an ``enabled`` process still
                 # sends the body it sent before R100, residency aside.
                 extra_body={**thinking_extra_body(), KEEP_ALIVE_FIELD: keep_alive.wire},
+                **request_kwargs,
             )
         except Exception as exc:
             slot.release()
