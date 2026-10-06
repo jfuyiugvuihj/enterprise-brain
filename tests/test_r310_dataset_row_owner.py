@@ -70,7 +70,11 @@ REGISTERED_KEYS = BASE_KEYS + ["dataset_id", "version_id", "classification"]
 
 #: 基点 9344028 现取的 import 面（含函数体内那枚懒加载的 app.agents.tools）。本单只补字段，
 #: 一枚都不许多 —— 判据 3 的「不许新增 import 面」由下面那枚棘轮钉住。
-IMPORT_FACE = frozenset({
+#: 🔴 10-06 随账而动（总控亲改，凭据纸 docs/testing/r712-2026-10-06.md 分栏 D 行）：R700 并树
+#: `8d3d2d2` 让 /upload-excel 那份表格走知识库那条腿，合法长出三枚——下面另立一格点名它们，
+#: 不把它们混进基点名册。棘轮一枚没松：面必须**等于** BASE∪R700 这两格的并，多一枚少一枚都红；
+#: `app.documents.catalog` 那条禁令原样留着（判据 3 的后半句）。
+IMPORT_FACE_BASE = frozenset({
     "asyncio", "datetime", "fastapi", "fastapi.responses", "mimetypes", "os", "pandas",
     "pathlib", "pydantic",
     "app.agents.tools", "app.api.v1.restricted", "app.common.audit", "app.common.authorization",
@@ -78,6 +82,12 @@ IMPORT_FACE = frozenset({
     "app.common.rbac", "app.storage", "app.storage.datasets",
     "app.tools.chart", "app.tools.excel", "app.tools.export", "app.tools.visualize",
 })
+#: R700 `8d3d2d2` 长出的那三枚，单独一格：谁想撤销它就得从这里改，不许偷偷塞回基点名册。
+IMPORT_FACE_R700 = frozenset({
+    "app.documents.file_security", "app.documents.knowledge_ingest", "app.api.v1",
+})
+
+IMPORT_FACE = IMPORT_FACE_BASE | IMPORT_FACE_R700
 
 
 def _principal(username):

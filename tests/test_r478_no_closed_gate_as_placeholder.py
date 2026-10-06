@@ -274,8 +274,25 @@ def bare_gate_mentions(cells=CLOSURE_CELLS):
     return out
 
 
+def _base_app_files():
+    """基点那棵树里**真实跟踪**的 app 文件，由 git 现读（不抄名册、不抄出生日）。"""
+    raw = subprocess.run(["git", "ls-tree", "-r", "--name-only", BASE, "--", "app"],
+                         cwd=str(REPO), capture_output=True, check=True).stdout
+    return {line for line in raw.decode("utf-8").splitlines() if line.strip()}
+
+
+def _absent_at_base():
+    """基点之后才出生的文件。刀不能照一份不存在的基线造，所以这一格只能点名、不能当空文本读。"""
+    return sorted(set(_app_files()) - _base_app_files())
+
+
 def _base_text(rel):
-    """基点那份字节：反证刀必须照基线造，不照改后的自己造。"""
+    """基点那份字节：反证刀必须照基线造，不照改后的自己造。
+
+    🔴 文件在基点还不存在时交回 None（不是空串）：空串会被读成「基线上干净」，那是假绿的一种形状。
+    """
+    if rel not in _base_app_files():
+        return None
     raw = subprocess.run(["git", "show", BASE + ":" + rel], cwd=str(REPO),
                          capture_output=True, check=True).stdout
     return raw.decode("utf-8").replace(chr(13), "")
@@ -616,7 +633,10 @@ def _line_hits(rel, text, patterns):
 def _line_hits_app(patterns, reader):
     out = []
     for rel in _app_files():
-        out.extend(_line_hits(rel, reader(rel), patterns))
+        text = reader(rel)
+        if text is None:
+            continue
+        out.extend(_line_hits(rel, text, patterns))
     return out
 
 
@@ -703,10 +723,36 @@ def test_the_ruler_reads_the_disease_it_was_built_for():
     """刀照基线造（事故 #83）：这枚尺子必须在基点那份字节上读出本单登记过的每一格病。"""
     seen = set()
     for rel in _app_files():
-        for hit in scan_text(rel, _base_text(rel)):
+        text = _base_text(rel)
+        if text is None:
+            continue
+        for hit in scan_text(rel, text):
             seen.add((hit["rel"], hit["line"], hit["tier"]))
     missing = [site for site in DISEASE_BASELINE if site not in seen]
     assert not missing, "尺子在基线上读不出这些登记过的病格（它被改窄了？）：" + repr(missing)
+
+
+def test_files_born_after_the_base_are_named_by_git_not_by_an_exemption_list():
+    """U0001F534 「这文件在基点还不存在」只能由 git 说：不许塞豁免表，也不许返回空串。
+
+    挡的是最省事的两条假绿路——给 _base_text 加一张名单、或让缺席读成空文本（空文本＝「基线上
+    干净」，那正是本单登记的病形）。名册由 `git ls-tree` 现读，逐枚再取出生笔
+    （`git log --diff-filter=A`）并用 `merge-base --is-ancestor` 验它确实在基点之外。
+    """
+    tracked = _base_app_files()
+    assert tracked, "git ls-tree 交回空集：这枚尺子今天什么都没在读"
+    absent = _absent_at_base()
+    assert absent == sorted(absent), "缺席名册没排序，逐枚点名会变成随机顺序"
+    overlap = sorted(set(absent) & {row[0] for row in DISEASE_BASELINE})
+    assert not overlap, "这些文件在基点不存在，却登记了基线病格：" + repr(overlap)
+    for rel in absent:
+        born = subprocess.run(["git", "log", "--diff-filter=A", "--format=%H", "--", rel],
+                              cwd=str(REPO), capture_output=True, check=True)
+        commits = [line for line in born.stdout.decode("utf-8").splitlines() if line.strip()]
+        assert commits, rel + " 查不到出生笔"
+        rc = subprocess.run(["git", "merge-base", "--is-ancestor", commits[-1], BASE],
+                            cwd=str(REPO), capture_output=True).returncode
+        assert rc != 0, rel + " 的出生笔在基点之内，它不该被读成缺席：" + commits[-1]
 
 
 # ==================== 格乙 · 两枚对外可见的串必须如实 ====================

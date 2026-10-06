@@ -123,7 +123,11 @@ BANNED: tuple[tuple[str, re.Pattern[str], str], ...] = (
     (
         "chroma_declared_final_or_production_architecture",
         re.compile(
-            r"chroma[^。\n]{0,24}(?:最终|长期|未来的?|目标态?|生产)(?:生产)?(?:架构|向量库|向量存储)",
+            # 🔴 限定语必须紧贴 Chroma 那一格：跨小句（。；：，、）抓来的名词不算断言。
+            # 在册误咬形状＝「不得新增 Chroma 写点（AGENTS.md 定案：生产向量库＝PGVector）」，
+            # 那半句「生产向量库」说的是 PGVector，不是 Chroma。冒号只许紧跟 Chroma。
+            r"chroma(?:[^。；;：:，、\n]{0,24}|[：:]\s*)"
+            r"(?:最终|长期|未来的?|目标态?|生产)(?:生产)?(?:架构|向量库|向量存储)",
             re.IGNORECASE,
         ),
         "把 Chroma 写成最终/生产架构",

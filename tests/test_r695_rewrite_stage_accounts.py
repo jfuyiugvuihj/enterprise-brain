@@ -41,7 +41,7 @@ import pytest
 
 from app.api.v1 import chat
 from app.common import stage_timing
-from app.common.model_handler import ModelReply
+from app.common.model_handler import ModelHandler, ModelReply
 from app.rag import retrieval_pipeline
 from app.trace import spans
 
@@ -200,11 +200,12 @@ def stub_rewrite_model(monkeypatch) -> list[dict]:
     """把改写腿唯一的模型出口打成桩，并记下每一趟调用。"""
     seen: list[dict] = []
 
-    def fake_chat(**kwargs):
+    def fake_chat(*args, **kwargs):  # 类目标桩：绑定的 self 与实参一律由位置吸收
         seen.append(kwargs)
         return ModelReply(REWRITTEN_QUESTION, finish_reason="stop")
 
-    monkeypatch.setattr(chat.model_handler, "chat", fake_chat)
+    #: 桩打在**类目标**上（r516 的在册治法：进程级单例不许落方法桩，那枚账全仓量出来）。
+    monkeypatch.setattr(ModelHandler, "chat", fake_chat)
     return seen
 
 

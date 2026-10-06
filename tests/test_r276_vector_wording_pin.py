@@ -209,6 +209,9 @@ def test_prohibition_sentences_about_the_wording_are_not_violations(tmp_path) ->
         COMPLIANT
         + "\n- 不许把 Chroma 写成最终架构，也不能写成已下线。\n"
         + "- 新文档一律不得把向量库＝Chroma 当成现状。\n"
+        # 在册误咬（10-06 由 docs/tickets/R700-*.md 那一格量出来）：限定语隔着冒号属于另一枚主语。
+        + "- 入库只许复用既有那条腿；新代码一律不得新增 Chroma 依赖或新的 Chroma 写点\n"
+        + "（AGENTS.md 技术栈定案：生产向量库＝PostgreSQL + PGVector）。\n"
     )
     tree = _tree(tmp_path, {"docs/rules.md": banned_note})
     assert checker.check(tree) == []

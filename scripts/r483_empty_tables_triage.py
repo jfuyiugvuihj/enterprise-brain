@@ -237,7 +237,32 @@ CREATE_RE = r"CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+"
 #: 函数本身（多行调用扫不到同一行时，靠它把「哪个函数写它」现取回来）> 建表出处。
 KIND_ORDER = ("sql_write", "write_via_table_constant", "write_by_registry", "declared_writer",
               "ddl")
+#: 🔴 10-06 随账而动（R712 分栏 A 行，凭据纸 docs/testing/r712-2026-10-06.md）。
+#: 这枚 60 是 09-29 在**当时那棵树**上量的；R670／R695／R700／R702／R710 五笔并树把问答道加宽之后，
+#: retrieval_traces 这条链现取 75 枚，全局手抄数一口气红掉 11 枚反证钉，而被测产品码一处都没坏——
+#: 那正是「手抄数字当尺子」的病形（病根处置 ③⑭）。治法＝预算逐枚表点名（CLIMB_RECORD，值＝现扫
+#: 交回的 nodes，谁改代码谁重取），余量是一枚规则常量（CLIMB_SLACK），两头都咬：长了由 surface 报
+#: 「不敢全收」，短过余量由 validate 报「加宽那条链的并树退了」。这枚 60 就此降级成
+#: 「没登记过的表」的下限，不再当任何一枚在册表的尺。
 BFS_NODE_CAP = 60
+#: 每枚表在册的爬链枚数（10-06 现取；量法＝把预算抬到树外，再看 BFS 自己交回的 nodes）。
+CLIMB_RECORD = {
+    "alerts": 2,
+    "alert_rules": 1,
+    "notification_states": 4,
+    "calculation_runs": 0,
+    "metric_definitions": 3,
+    "retrieval_traces": 75,
+    "user_profiles": 2,
+    "document_activity_signals": 2,
+}
+#: 余量是一枚规则，不是一枚读数：它给下一批并树留位，留多了就是空转。
+CLIMB_SLACK = 15
+
+
+def climb_budget(table: str) -> int:
+    """这一枚表的爬链预算＝在册记录＋余量；没登记过的表退回旧那枚 60。"""
+    return CLIMB_RECORD.get(table, BFS_NODE_CAP) + CLIMB_SLACK
 BFS_CALLERS_PER_NODE = 8
 
 # --------------------------------------------------------------------------- R550 三把尺
@@ -499,7 +524,7 @@ class SourceIndex:
                 names.append(rel)
         return names
 
-    def surface(self, entries, events=()) -> dict:
+    def surface(self, entries, events=(), budget=None) -> dict:
         """从写入点往上爬到产品脸：三条边都算数（R550 之前只有第一条）。
 
         * `caller` —— 文本上写着 `<symbol>(` 的调用者，原有那一跳（`self.` 与定义行本身不算）；
@@ -513,6 +538,7 @@ class SourceIndex:
         🔴 三条边一律 fail closed：守卫解不开、调用点落在模块级、发射点不在函数里，都只记
         note 并**不**把这条道算通——宁可读成 no_seed_path，也不许靠放宽爬法把裁定推绿。
         """
+        budget = BFS_NODE_CAP if budget is None else int(budget)
         routes, jobs, trail, problems, notes, bridges = [], [], [], [], [], []
         queue = []
         for entry in entries:
@@ -543,8 +569,9 @@ class SourceIndex:
             if not node["symbol"] or key in seen or node["hop"] > 5:
                 continue
             seen.add(key)
-            if len(seen) > BFS_NODE_CAP:
-                problems.append("调用链超过 " + str(BFS_NODE_CAP) + " 枚节点，本单不敢全收")
+            if len(seen) > budget:
+                problems.append("调用链超过在册预算 " + str(budget) + " 枚节点（现取第 "
+                                + str(len(seen)) + " 枚，在册记录见 CLIMB_RECORD），本单不敢全收")
                 break
             here = (node["file"], node["line"])
             trail.append(_fmt_location(node["file"], node["line"], node["symbol"]))
@@ -1073,7 +1100,8 @@ def analyze(index: SourceIndex, table: str) -> dict:
         "hits": hits,
         "references": index.references(table),
         "ddl_home": index.ddl_home(table),
-        "surface": index.surface(spec["entries"], spec["events"]),
+        "surface": index.surface(spec["entries"], spec["events"],
+                                  budget=climb_budget(table)),
     }
 
 
@@ -1446,6 +1474,13 @@ def validate(readings: dict) -> list:
         analysis = readings["analysis"][table]
         surface = analysis["surface"]
         problems += [table + "：" + item for item in surface["problems"]]
+        #: 🔴 第二头：链比在册记录短过余量，说明那笔把它加宽的并树退了，记录得重取。
+        nodes = surface.get("nodes")
+        recorded = CLIMB_RECORD.get(table)
+        if nodes is not None and recorded is not None and nodes < recorded - CLIMB_SLACK:
+            problems.append(table + "：调用链比在册记录短 " + str(recorded - nodes) + " 枚（在册 "
+                            + str(recorded) + "／现取 " + str(nodes)
+                            + "）——那笔把链加宽的并树退了，CLIMB_RECORD 要重取")
         verdict = spec["verdict"]
         if verdict not in VERDICTS:
             problems.append(table + " 的裁定不在词表里：" + verdict)
