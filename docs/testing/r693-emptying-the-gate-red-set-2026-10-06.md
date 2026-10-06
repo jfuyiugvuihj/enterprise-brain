@@ -108,17 +108,20 @@
 
 ## 8　本单的写集（并树时逐枚对 SHA-256）
 
-| 文件 | 动作 | 行数 |
-|---|---|---|
-| `docs/perf/r387-label-lineage-2026-09-27.md` | §9.3 最后一列机械改写 9 格 | +5 −5 |
-| `docs/testing/r638-pointer-baseline.json` | 按尺自己的读数重落基线（total 4102 → 4165） | +178 −85 |
-| `docs/testing/r469-sandbox-scope-readout-2026-09-28.md` | 出表口写回（盘面行尾归 LF，`git diff` 空） | 0 |
-| `tests/test_r595_stall_cap.py` | 出处坐标改由尺现场取 | +12 −2 |
-| `tests/test_r498_landing_shape_is_not_a_mention.py` | 取证改走证据清单（同族那枚绿的钉一并加固，见 §9） | +24 −3 |
-| `scripts/r693_land_s93_column.py` | 新增：§9.3 机械写回口 | 新增 |
-| `tests/test_r693_land_s93_column.py` | 新增：写回口自己的 10 把牙 | 新增 |
-| `docs/testing/r693-emptying-the-gate-red-set-2026-10-06.md` | 新增：本纸 | 新增 |
+哈希取自本单树 HEAD（现取前 16 位十六进制，逐枚对盘用）。**本纸自己的哈希不列在这里**——落上去就立刻过期，对盘时按 git 里的 blob 现取。
 
+| 文件 | 字节 | SHA-256 前 16 位 | 动作 |
+|---|---|---|---|
+| `docs/perf/r387-label-lineage-2026-09-27.md` | 101,269 | `22BBD11987C5D2DE` | §9.3 最后一列机械改写 9 格（+5 −5，成对行尾原样还原） |
+| `docs/testing/r638-pointer-baseline.json` | 439,694 | `ABB78014DFE03289` | 按尺自己的读数重落基线（files 128／total 4102 → 4165，+178 −85） |
+| `docs/testing/r469-sandbox-scope-readout-2026-09-28.md` | 237,481 | `9AFA89B2E3E5BBBF` | 出表口写回（盘面行尾归 LF；与 HEAD blob 逐字节同，`git diff` 空 ⇒ **并树带不走**，见 §7-2） |
+| `docs/tickets/R693-gate-red-set-to-zero.md` | 7,070 | `78B0D76DB88D0A5B` | 文末追加一段交回摘要（在册正文一字未动） |
+| `scripts/r693_land_s93_column.py` | 9,433 | `D2D6CFE4CDA30B0C` | 新增：§9.3 机械写回口（数字全现场派生，映射不唯一整本拒写） |
+| `tests/test_r498_landing_shape_is_not_a_mention.py` | 24,013 | `F16A2F7D2AA99401` | 取证改走证据清单（+24 −3；同族那枚绿的钉一并加固，见 §10） |
+| `tests/test_r595_stall_cap.py` | 10,313 | `80B6FCC5A79F35DE` | 出处坐标改由 `stall_cap` 现场取（+12 −2） |
+| `tests/test_r693_land_s93_column.py` | 8,055 | `7F2DF348F4303C89` | 新增：写回口自己的 10 把牙（全离线） |
+
+三笔提交：`7cb7945`（货 7 枚）＋`9b41738`（本纸补记复跑读数）＋第三笔（工单追加与本节）。
 ## 9　复跑时刻的机器状态（现取）
 
 * 解释器：独占树自己不带 `.venv`，本单所有跑件走主树那份 venv（只读它的 site-packages，没装也没改任何东西）。
