@@ -1638,6 +1638,53 @@ def _query_data(query: str, config: RunnableConfig) -> str:
 
 # ==================== Chart Tool v2 ====================
 
+#: 图腿失败的三张脸，每张一句人话加一枚公开码（形状抄导出腿 ``_EXPORT_NO_DEPARTMENT_HEAD``）。
+#: 改前只有两枚裸 f-string：``except Exception as e: return f"图表生成失败: {e}"`` 把画图函数抛出的
+#: 异常原句直接拼进客户可见正文、且不落日志；登记那一腿更糟——它整个在 try 之外，
+#: ``app/storage/artifacts.py::ArtifactRegistry.register`` 交回的「artifact owner must have a
+#: department scope」由 langgraph 的 ToolNode 按 TOOL_CALL_ERROR_TEMPLATE 折成「Error: …」交给
+#: 模型：既没有稳定码，又把内部英文词表卖给了客户。一手读数见
+#: docs/testing/walkthrough-2026-10-06/README.md 缺陷 #2 与 #3（环 7：chart_artifact.found=false、
+#: total=0、charts_on_screen=0，而终答正文 6 250 字，屏上零字说清「为什么没有图」）。
+#: 次序现在是反过来的：先问登记表收不收，收不下就不写盘。
+_CHART_NO_DEPARTMENT_HEAD = (
+    "本轮没有生成图表文件：产物台账要求发起这一轮的账号有部门归属，而这个账号的部门是空的。"
+    "图落盘也登记不进去、查不回来，所以本轮不写盘——请管理员先给这个账号补部门归属"
+)
+_CHART_REGISTRATION_REFUSED_HEAD = "本轮的图表文件没能登记进产物台账：这一轮没有可打开的图表文件"
+_CHART_GENERATION_FAILED_HEAD = "图表生成失败：这一轮没有写出图表文件"
+_CHART_FAILURE_CODE_RE = re.compile(r"error_code=([a-z_]+)")
+
+
+def _discard_unregistrable_chart(path: object) -> None:
+    """登记不上的那一枚图不该留在盘上：形状与理由抄在册正例 ``_discard_unregistrable_report``。
+
+    它自己抄的是 ``app/api/v1/data.py::upload_excel``——登记失败时删的就是刚写的那一枚。这里删的
+    也只可能是本函数这一次调用刚交回来的路径：私有化部署的机器上，一枚没有台账行、因而没有任何
+    权限判定管得着它的 PNG/HTML，留着就是留着一个人人可读、系统却不认的原件。
+    """
+    if not path:
+        return
+    try:
+        os.remove(str(path))
+    except OSError as exc:
+        logger.warning(f"[Tool] unregistered chart left on disk: {exc}")
+
+
+def _chart_terminal_error_code(text: object) -> str:
+    """图腿没交出图时 span 上写哪一枚码：读它自己那句话里带的码，两路同源（抄导出腿）。
+
+    一句都没有码的老形状只剩「不支持的图表类型」那一枚，它本来就是模型拼错的参数，沿用
+    ``validation_error``；带得出码却不是公开枚举成员的名字（``authorization_required``）一律折回
+    ``internal_error``——本层不替公开词表扩容，也不再把所有失败洗成同一枚码（走查缺陷 #3 要的
+    正是「参数没验过」与「画图函数抛了」分色）。
+    """
+    match = _CHART_FAILURE_CODE_RE.search(str(text or ""))
+    if not match:
+        return "validation_error"
+    return _public_error_code(match.group(1), "internal_error")
+
+
 def _generate_chart(
     chart_type: str,
     config: RunnableConfig,
@@ -1650,6 +1697,7 @@ def _generate_chart(
     branches: dict[str, list[str]] | None = None,
     title: str = "数据分析图表",
 ) -> str:
+    from app.storage.artifacts import ArtifactOwnerScopeMissing, owner_department_scope
     from app.tools.chart import bar_chart, line_chart, pie_chart, radar_chart
     from app.tools.visualize import gantt_chart, mindmap as _mindmap
 
@@ -1666,25 +1714,51 @@ def _generate_chart(
         return f"不支持的图表类型: {chart_type}，可选: bar/line/pie/radar/gantt/mindmap"
 
     try:
-        if _artifact_principal(config, ACTION_ANALYZE) is None:
+        principal = _artifact_principal(config, ACTION_ANALYZE)
+        if principal is None:
             record_tool_status(
                 bag_from_config(config), tool="generate_chart", status="rejected", error_code="authorization_required"
             )
             return _authorization_error()
+        #: preflight：属主交不出部门 ⇒ 登记表当场必拒 ⇒ 一枚字节都不许先落盘（与导出腿同一次序）。
+        if not owner_department_scope(principal):
+            return _denial_text(
+                config,
+                tool="generate_chart",
+                code="department_scope_required",
+                head=_CHART_NO_DEPARTMENT_HEAD,
+            )
         path = chart_funcs[chart_type]()
-    except Exception as e:
-        return f"图表生成失败: {e}"
 
-    urls = _artifact_urls(path, "chart", config)
-    if urls is None:
-        _record_denial(
-            config, tool="generate_chart", code="authorization_required", status="rejected"
+        try:
+            urls = _artifact_urls(path, "chart", config)
+        except ArtifactOwnerScopeMissing as exc:
+            #: 拒收真落在写盘之后（同一刻改的部门、另一枚根因）：孤儿字节当场收回。
+            logger.warning(f"[Tool] chart registration refused: {type(exc).__name__}: {exc}")
+            _discard_unregistrable_chart(path)
+            return _denial_text(
+                config,
+                tool="generate_chart",
+                code="department_scope_required",
+                head=_CHART_REGISTRATION_REFUSED_HEAD,
+            )
+        if urls is None:
+            _record_denial(
+                config, tool="generate_chart", code="authorization_required", status="rejected"
+            )
+            return _authorization_error()
+        url, _ = urls
+        if path.lower().endswith(".html"):
+            return f"图表已生成: [{title}]({url})"
+        return f"图表已生成: ![{title}]({url})"
+    except Exception as exc:  # noqa: BLE001 - 失败要说得出口，内部原句不许替它说话
+        logger.warning(f"[Tool] chart generation failed: {type(exc).__name__}: {exc}")
+        return _denial_text(
+            config,
+            tool="generate_chart",
+            code="internal_error",
+            head=_CHART_GENERATION_FAILED_HEAD,
         )
-        return _authorization_error()
-    url, _ = urls
-    if path.lower().endswith(".html"):
-        return f"图表已生成: [{title}]({url})"
-    return f"图表已生成: ![{title}]({url})"
 
 
 
@@ -1853,7 +1927,7 @@ def generate_chart_v2(
             title=title,
         )
         if not str(result).startswith("图表已生成"):
-            span.finish("failed", error_code="validation_error")
+            span.finish("failed", error_code=_chart_terminal_error_code(result))
         return result
 
 

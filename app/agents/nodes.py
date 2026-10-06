@@ -2736,6 +2736,103 @@ def _carry_report_truth(state, model_answer: str, final: str, worker_results: di
     return rebuilt, merged
 
 
+# ==================== R715 · 图腿登记不下那一格的人话（判据 2） ====================
+
+#: 台账标记：窗内要能 grep 出"哪一轮的图腿登记不下、屏上因此补了一句为什么没有图"，也要能反证
+#: 它没开口时确实没开口。名字里的腿（leg=chart）是判据 2 要的点名：读数只说 artifacts=0 不够，
+#: 得说清这一句是替图腿还的债（导出腿那一位是 [R710ReportTruth] 的 leg=export）。
+CHART_LEG_TRUTH_MARKER = "[R715ChartLegTruth]"
+
+#: 读数面里图腿会交回来、而本腿说得出口的因由码 → 人话。表外的码（含读不出 error 格的老形状）
+#: 一律闭嘴：因由不在表内就是本层说不出，宁可少说一句，不许替别的层猜。
+#: ``department_scope_required`` 的出处是 ``app/agents/tools.py::_generate_chart`` 里 preflight 与
+#: 登记被拒那两支，两支撑的是同一件事：属主交不出部门，``ArtifactRegistry.register`` 当场拒。
+_CHART_LEG_REFUSAL_HEADS = {
+    "department_scope_required": (
+        "发起这一轮的账号没有部门归属，图表文件登记不进产物台账，本轮因此没有落盘"
+    ),
+}
+
+#: 追加那一句的模板：``{code}`` 与读数面那一枚码同源（判据 1 的"具名格与读数面一致"）——本层
+#: 从不把正文里读到的码名再写回账上，也不给同一格换第二枚码。措辞红线抄在册正例：只把"这一轮
+#: 没有图、原因写在账上"这一件事实说清，不替客户决定要不要重跑。
+CHART_LEG_TRUTH_SENTENCE = "⚠️ 说明：为什么没有图：{reason}（error_code={code}）"
+
+
+def _chart_leg_refusal_code_in_state(state) -> str:
+    """本轮图腿交回的那枚拒绝码（``agent_results`` 里 worker 为 chart 那一行的 ``error.code``）。
+
+    读的是 ``app/agents/evidence.py::build_agent_result`` 从证据袋折出来的那本账——工具腿在
+    ``app/agents/tools.py::_generate_chart`` 里用 ``_denial_text`` 同一处写下正文与码，装箱之后
+    还在的料才算数。只认图腿那一行：别的腿的拒绝不归本腿说话；只认表内的码：表外与读不出
+    error 格的老形状一律交回空串。本函数只搬运读数，不判定、不补记。
+    """
+    for key, raw in (state.get("agent_results") or {}).items():
+        if isinstance(raw, dict):
+            row = raw
+        elif hasattr(raw, "model_dump"):
+            row = raw.model_dump()
+        else:
+            continue
+        if str(row.get("worker") or key or "") != "chart":
+            continue
+        error = row.get("error")
+        code = ""
+        if isinstance(error, dict):
+            code = str(error.get("code") or "")
+        elif error is not None:
+            code = str(getattr(error, "code", "") or "")
+        if code in _CHART_LEG_REFUSAL_HEADS:
+            return code
+    return ""
+
+
+def _says_why_there_is_no_chart(text, code: str) -> bool:
+    """这一份正文里是不是已经把那枚因由码写在屏上了：写过就闭嘴，不许钉第二句。
+
+    工具腿那句诚实话本来带着同一个码（两路同源），模型把它原样抬进终答时屏上已经说清，
+    再补一句就是两句互相打脸。
+    """
+    return f"error_code={code}" in str(text or "")
+
+
+def _carry_chart_leg_truth(state, model_answer: str, final: str, worker_results: dict):
+    """图腿本轮登记不下、屏上却没写「为什么没有图」⇒ 末尾追加一句真话；其余情形一个字都不动。
+
+    这一格与 ``_carry_chart_truth``（R703）不是同一格：那一枚治"文字冒充屏上已有图"，它的句子
+    按措辞红线不许说因由，而且对「无法生成柱状图」那类答复刻意闭嘴；本枚治走查环 7 的另一半
+    ——图腿一路走到 ``ArtifactRegistry.register`` 被拒，屏上 6 250 字没有一个字交代原因
+    （凭据 docs/testing/walkthrough-2026-10-06/README.md 缺陷 #2，账本 rings[ring=7].readings）。
+    三条边界抄在册正例：只追加不改写、判据只读物证（读数面交不出表内的码就闭嘴）、本腿不产
+    文件也不碰批准链。声称与否不参与判定——因由是账上写下的，不从正文猜；屏上连一个字都没有时
+    也闭嘴（那一份空正文的账归 R439，不归本单）。
+    """
+    if _chart_artifacts_in_state(state):
+        return final, None
+    code = _chart_leg_refusal_code_in_state(state)
+    if not code:
+        return final, None
+    if _says_why_there_is_no_chart(final, code) or _says_why_there_is_no_chart(model_answer, code):
+        return final, None
+    if not str(final).strip():
+        return final, None
+    sentence = CHART_LEG_TRUTH_SENTENCE.format(reason=_CHART_LEG_REFUSAL_HEADS[code], code=code)
+    values = [key for key, value in (worker_results or {}).items() if str(value or "").strip()]
+    merged: dict | None = None
+    if values:
+        merged = dict(worker_results)
+        last = values[-1]
+        merged[last] = str(merged[last]).strip() + "\n\n" + sentence
+        rebuilt = "\n\n".join(str(merged[key]).strip() for key in values if str(merged[key]).strip())
+    else:
+        rebuilt = str(final).strip() + "\n\n" + sentence
+    logger.info(
+        f"{CHART_LEG_TRUTH_MARKER} leg=chart refusal_code={code} artifacts=0 "
+        f"answer_chars={len(str(final))}->{len(rebuilt)}"
+    )
+    return rebuilt, merged
+
+
 def synthesize(state, config=None) -> dict:
     """把最终回答写入 state，并把值得记的沉淀进长期记忆"""
     # R688（判据①·生产发点）：终答装配是规则腿，没有自己的跨度；worker 的作答往返另有 model 跨度，本件只记这一段自己的墙钟，区间不与之重叠。
@@ -2825,6 +2922,20 @@ def synthesize(state, config=None) -> dict:
             final = guarded
         if report_update is not None:
             worker_update = report_update
+
+        # R715（判据 2）：图腿本轮登记不下、屏上却没写「为什么没有图」⇒ 钉一句因由。排在报告那枚
+        # 之后：几句都是追加，最后一步只追加一次；同一条硬规矩——整条炸了也不能带走终答。
+        # 与 ``_carry_chart_truth`` 各治各的格：那一枚说"屏上没有图"，本枚说"为什么没有"。
+        try:
+            leg_base = worker_update if worker_update is not None else worker_results
+            guarded, leg_update = _carry_chart_leg_truth(state, model_final, final, leg_base)
+        except Exception as exc:  # noqa: BLE001 - 终答优先，守卫失声只许记账不许拦
+            guarded, leg_update = final, None
+            logger.warning(f"{CHART_LEG_TRUTH_MARKER} status=skipped error={exc}")
+        if guarded != final:
+            final = guarded
+        if leg_update is not None:
+            worker_update = leg_update
 
         if state.get("intent") == "task" and q and final:
             user_id = _memory_user_id(state)
