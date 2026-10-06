@@ -164,3 +164,4 @@ R697	QUEUED	tests/test_r636_stage_coverage.py, tests/test_r697_*.py, docs/testin
 R698	LANDED	scripts/r638_doc_pointer_ruler.py, tests/test_r698_*.py, docs/tickets/R698-*.md, docs/testing/r698-<开工日>.md	960201e8ae59	总控亲签工单·无机器字段
 R699	QUEUED	app/agents/contracts.py, app/agents/evidence.py, app/agents/nodes.py, tests/test_r699_*.py, docs/tickets/R699-*.md, docs/testing/r699-<开工日>.md	-	总控亲签工单·无机器字段
 R700	QUEUED	app/api/v1/data.py, app/documents/**, app/rag/loader.py, tests/test_r700_*.py, docs/tickets/R700-*.md, docs/testing/r700-<开工日>.md	-	总控亲签工单·无机器字段
+R701	QUEUED	scripts/r701_eol_form.py, scripts/r547_scope_verdict_gauge.py, tests/test_r490_live_reads_match_derived.py, tests/test_r492_s93_column_matches_derived.py, tests/test_r469_readout_is_generated.py, tests/test_r701_*.py, docs/tickets/R701-*.md, docs/testing/r701-<开工日>.md, docs/tickets/index.tsv	-	总控亲签工单·无机器字段

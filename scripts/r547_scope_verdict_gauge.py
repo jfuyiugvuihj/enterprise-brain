@@ -47,6 +47,10 @@ from pathlib import Path
 REPO_ROOT = Path(os.environ.get("R547_REPO_ROOT") or Path(__file__).resolve().parents[1])
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+if str(REPO_ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import r701_eol_form as eol  # noqa: E402  盘形行尾谓词的单一真源，见 R701
 
 TOOL = "scripts/r547_scope_verdict_gauge.py"
 LIB_REL = "scripts/r469_readout_lib.py"
@@ -89,9 +93,9 @@ FIXTURE_MARK = "DEMONSTRATION_FIXTURE_NOT_A_MEASUREMENT"
 # ------------------------------------------------------------------ 派生锚（行号一律运行时取）
 
 def read_rows(rel):
-    """现读盘上那一本：先证明换行符仍成对，再按行切开。行号 = 下标 + 1。"""
+    """现读盘上那一本：先证明行尾整齐（纯 LF 或成对 CRLF），再按行切开。行号 = 下标 + 1。"""
     raw = (REPO_ROOT / rel).read_bytes().decode("utf-8")
-    assert raw.count("\r") == raw.count("\n"), rel + " 的换行符不再成对"
+    eol.assert_uniform(raw, rel)
     return raw.splitlines()
 
 

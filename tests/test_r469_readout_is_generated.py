@@ -54,6 +54,11 @@ def _load(name: str, path: Path):
 lib = _load("r469_readout_lib", LIB_PATH)
 
 
+#: 盘形行尾谓词的单一真源（见 R701）：仓库无 .gitattributes、本机 core.autocrlf=true，
+#: 同一枚 blob 在干净检出里是成对 CRLF、在 Linux 克隆里是纯 LF，本件不许把其中一种当产品事实。
+eol = _load("r701_eol_form", REPO_ROOT / "scripts" / "r701_eol_form.py")
+
+
 @pytest.fixture(scope="module")
 def markdown() -> str:
     return READOUT_PATH.read_text(encoding="utf-8")
@@ -77,12 +82,15 @@ def _validate_pair(mutated: dict):
 
 def test_the_in_tree_readout_is_byte_for_byte_what_the_lib_emits(markdown: str,
                                                                 evidence: dict) -> None:
-    """T5 的正腿：盘上那份与 `render_readout(证据)` 逐字节相同——手写即假账。"""
+    """T5 的正腿：盘上那份与 `render_readout(证据)` 逐字节相同——手写即假账。
+
+    行尾形状由 checkout 决定，比较在 LF 空间做；内容一位都不许差。
+    """
     assert lib.render_readout(evidence) == markdown
     raw = READOUT_PATH.read_bytes()
-    assert raw == markdown.encode("utf-8")
+    eol.assert_uniform(raw, READOUT_PATH.name)
+    assert eol.to_lf(raw) == markdown.encode("utf-8")
     assert not raw.startswith(b"\xef\xbb\xbf"), "生成件不带 BOM，盘上那份也不许有"
-    assert b"\r" not in raw, "生成件按 LF 落盘：混行尾会让字节钉天天误红"
 
 
 def test_the_cli_is_the_only_way_that_produced_this_table(tmp_path, markdown: str) -> None:
@@ -96,7 +104,9 @@ def test_the_cli_is_the_only_way_that_produced_this_table(tmp_path, markdown: st
          "--out", str(out_path)],
         cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace")
     assert result.returncode == lib.EXIT_OK, result.stderr[-800:]
-    assert out_path.read_bytes() == READOUT_PATH.read_bytes(), "CLI 再生与盘上那份不同"
+    regen = eol.to_lf(out_path.read_bytes())
+    disk = eol.to_lf(READOUT_PATH.read_bytes())
+    assert regen == disk, "CLI 再生与盘上那份不同（按 LF 归一后逐字节比，行尾形状不算产品事实）"
 
 
 def test_the_in_tree_readout_passes_its_own_validator(markdown: str, evidence: dict) -> None:

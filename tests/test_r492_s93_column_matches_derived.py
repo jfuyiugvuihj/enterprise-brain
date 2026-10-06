@@ -61,10 +61,24 @@ def _load_tool():
 TOOL_MODULE = _load_tool()
 
 
+#: 行尾谓词不在本件里复写一遍：盘形由 core.autocrlf/.gitattributes 决定，见 R701。
+def _load_eol_form():
+    path = REPO / "scripts" / "r701_eol_form.py"
+    spec = importlib.util.spec_from_file_location("r701_eol_form_r492", path)
+    assert spec and spec.loader, "加载不到行尾谓词：" + str(path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+EOL = _load_eol_form()
+
+
 def read_rows(rel=DOC_REL):
-    """现读盘上那一本：先证明换行符仍成对，再按行切开。行号 = 下标加一。"""
+    """现读盘上那一本：先证明行尾整齐（纯 LF 或成对 CRLF），再按行切开。行号 = 下标加一。"""
     raw = (REPO / rel).read_bytes().decode("utf-8")
-    assert raw.count("\r") == raw.count("\n"), rel + " 的换行符不再成对"
+    EOL.assert_uniform(raw, rel)
     return raw.splitlines()
 
 
