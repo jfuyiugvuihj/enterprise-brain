@@ -174,7 +174,7 @@ R708	QUEUED	docs/api/contract-v1.md, docs/tickets/R708-*.md, docs/testing/r708-<
 R709	QUEUED	app/api/v1/chat.py, _should_use_data_context, route_main, has_data, _authorized_dataset_files, tests/test_r709_*.py, docs/tickets/R709-*.md, docs/testing/r709-<开工日>.md	-	总控亲签工单·无机器字段
 R710	LANDED	app/agents/tools.py, app/storage/artifacts.py, app/agents/nodes.py, app/tools/**, tests/test_r710_*.py, docs/tickets/R710-*.md, docs/testing/r710-<开工日>.md	529a777e5710	总控亲签工单·无机器字段
 R711	QUEUED	scripts/tickets_index.py, tests/test_r711_*.py, docs/tickets/R711-*.md, docs/tickets/index.tsv, docs/testing/r711-<开工日>.md	-	总控亲签工单·无机器字段
-R712	QUEUED	docs/perf/**, scripts/**, tests/test_r455_*.py, tests/test_r483_*.py, tests/test_r492_*.py, tests/test_r400_*.py, tests/test_r712_*.py, docs/tickets/R712-*.md, docs/testing/r712-<开工日>.md	-	总控亲签工单·无机器字段
+R712	LANDED	docs/perf/**, scripts/**, tests/test_r455_*.py, tests/test_r483_*.py, tests/test_r492_*.py, tests/test_r400_*.py, tests/test_r712_*.py, docs/tickets/R712-*.md, docs/testing/r712-<开工日>.md	2aa12de3c08c	总控亲签工单·无机器字段
 R713	QUEUED	app/agents/orchestrator.py, _fallback_export_result, tests/test_r713_*.py, docs/tickets/R713-*.md, docs/testing/r713-<开工日>.md	-	总控亲签工单·无机器字段
 R714	QUEUED	app/api/v1/data.py, tests/test_r714_*.py, docs/tickets/R714-*.md, docs/testing/r714-<开工日>.md	-	总控亲签工单·无机器字段
 R715	QUEUED	app/agents/tools.py, app/agents/nodes.py, tests/test_r715_*.py, docs/tickets/R715-*.md, docs/testing/r715-<开工日>.md	-	总控亲签工单·无机器字段
