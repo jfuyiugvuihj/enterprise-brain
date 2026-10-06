@@ -920,6 +920,10 @@ def _process_report_lane_turn(
         # `done`，客户端读到的是「跑完了」——那既不是正文也不是答案，是谎报终态。今天答案键
         # 干脆不写（`result=None`），挂起文案只留在 `approval.notice` 那一格里，并随它交出
         # 一件可寻址的批准把手（客户端不必重发本轮）。会话历史那一笔照旧写这句（R37 判据③⑤）。
+        #: R717 判据①（挂起轮）：这一轮没有正文，两格都不发——这不是省笔，是 R702 判据 2 同一条口径：
+        #: 空正文交回 ([], "")，构造点因此一字节都不许多。「没有分母」与「一枚不被支撑的断言都没有」
+        #: 是两句话，挂起轮两句都不许说。
+        carried_claims, claims_reason = chat.claims_for_egress(agent_results, "")
         terminal = chat.build_queue_terminal(
             terminal_state=chat.TERMINAL_STATE_AWAITING_APPROVAL,
             answer_present=False,
@@ -929,6 +933,8 @@ def _process_report_lane_turn(
             sources_error="",
             usage=usage,
             dataset_files=dataset_files,
+            claims=carried_claims or None,
+            claims_error=claims_reason,
             approval=chat.hitl_approval_handle(
                 session_id=session_id or thread_id, parked=parked
             ),
@@ -966,6 +972,9 @@ def _process_report_lane_turn(
         visible_sources, scope_reason, sources_error = chat.queue_turn_sources(
             agent_results, principal
         )
+        #: R717 判据①（正文腿）：断言分母与出处同一只证据袋、同一条腿。只搬运，判定仍住在
+        #: app/agents/evidence.py::build_agent_result 出厂的那一份里（R702 判据 1・4）。
+        carried_claims, claims_reason = chat.claims_for_egress(agent_results, answer)
         terminal = chat.build_queue_terminal(
             terminal_state=chat.TERMINAL_STATE_ANSWERED,
             answer_present=bool(answer),
@@ -975,6 +984,8 @@ def _process_report_lane_turn(
             sources_error=sources_error,
             usage=usage,
             dataset_files=dataset_files,
+            claims=carried_claims or None,
+            claims_error=claims_reason,
         )
         published = queue.complete(request_id, answer, terminal=terminal)
 
@@ -1130,6 +1141,9 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
         # 取数同样只走那枚在册收集器，本文件不拼第二份名字；零枚与多枚一律不传，整格缺席。
         dataset_files: list[str] = []
         chat._collect_dataset_filenames({"orchestrator": record}, dataset_files)
+        #: R717 判据①（老腿）：与上面那枚证据袋同形（{"orchestrator": record}）；零枚与多枚一律
+        #: 不传，整格缺席——R254 判据②与 R514 立的就是这个形状。
+        carried_claims, claims_reason = chat.claims_for_egress({"orchestrator": record}, answer)
         terminal = chat.build_queue_terminal(
             terminal_state=chat.TERMINAL_STATE_ANSWERED,
             answer_present=bool(answer),
@@ -1139,6 +1153,8 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
             sources_error=sources_error,
             usage=usage,
             dataset_files=dataset_files,
+            claims=carried_claims or None,
+            claims_error=claims_reason,
         )
         if not queue.complete(request_id, answer, terminal=terminal):
             logger.info(
