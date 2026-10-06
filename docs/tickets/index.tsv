@@ -177,7 +177,7 @@ R711	QUEUED	scripts/tickets_index.py, tests/test_r711_*.py, docs/tickets/R711-*.
 R712	LANDED	docs/perf/**, scripts/**, tests/test_r455_*.py, tests/test_r483_*.py, tests/test_r492_*.py, tests/test_r400_*.py, tests/test_r712_*.py, docs/tickets/R712-*.md, docs/testing/r712-<开工日>.md	2aa12de3c08c	总控亲签工单·无机器字段
 R713	LANDED	app/agents/orchestrator.py, _fallback_export_result, tests/test_r713_*.py, docs/tickets/R713-*.md, docs/testing/r713-<开工日>.md	cac0fed745b3	总控亲签工单·无机器字段
 R714	LANDED	app/api/v1/data.py, tests/test_r714_*.py, docs/tickets/R714-*.md, docs/testing/r714-<开工日>.md	04adae12ae06	总控亲签工单·无机器字段
-R715	QUEUED	app/agents/tools.py, app/agents/nodes.py, tests/test_r715_*.py, docs/tickets/R715-*.md, docs/testing/r715-<开工日>.md	-	总控亲签工单·无机器字段
+R715	LANDED	app/agents/tools.py, app/agents/nodes.py, tests/test_r715_*.py, docs/tickets/R715-*.md, docs/testing/r715-<开工日>.md	200e47f45705	总控亲签工单·无机器字段
 R716	QUEUED	-	-	总控亲签工单·无机器字段
 R717	LANDED	deploy/queue_worker.py, tests/test_r717_*.py, docs/tickets/R717-*.md, docs/testing/r717-<开工日>.md, docs/api/contract-v1.md	4f6c93a48942	总控亲签工单·无机器字段
 R718	LANDED	scripts/eval_transport_ask_v2.py, scripts/eval_frame_caliber_readout.py, tests/test_r181_text_frame_ruler.py, tests/test_r718_*.py, docs/tickets/R718-*.md, docs/testing/r718-<开工日>.md	a9366752d25a	总控亲签工单·无机器字段
