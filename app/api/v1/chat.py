@@ -28,11 +28,6 @@ from app.common.no_store import NO_STORE_HEADERS
 from pydantic import BaseModel
 
 from app.agents.contracts import AuthorizationDecision, ErrorEnvelope, Principal
-from app.agents.evidence import (
-    ClaimsDenominatorError,
-    coerce_agent_result,
-    eval_payload_for_answer,
-)
 from app.common import auth
 from app.common import reliable_queue
 from app.common.audit import record_audit
@@ -2513,51 +2508,6 @@ def approval_ledger_state(session_id: str, owner_user_id: str) -> str:
     return str(row.status)
 
 
-#: R702 判据 2：正文非空而一枚断言都交不出时，出口改交原因码，不许退化成「不带 claims 键」。
-#: 三枚码各说一件事：本轮压根没算出断言 / 记录还原不出 ``AgentResult`` / 正文出自缓存那一轮。
-#: 口径与 ``sources_error`` 同一本账：非空说的是「这一格压根交不出」，不是「交出来是空表」。
-CLAIMS_ERROR_ZERO_DENOMINATOR = "claims_denominator_zero"
-CLAIMS_ERROR_NO_RECORD = "claims_record_unavailable"
-CLAIMS_ERROR_CACHE_ROW = "answer_cache_without_claims"
-
-
-def claims_for_egress(agent_results: dict, delivered_text: str) -> tuple[list[dict], str]:
-    """把本轮**已经算好的**断言搬到终态出口：只搬运、零 IO（R702 判据 1・4）。
-
-    判定住在 ``app/agents/evidence.py::build_agent_result``：每一条 worker 记录出厂时 ``claims``
-    就在那一枚工具边界上算完了，本件一件都不重算——逐枚 ``coerce_agent_result`` 还原成
-    ``AgentResult``，再走 ``eval_payload_for_answer`` 那唯一投影取出 claims。投影里那句零分母
-    拒绝因此在**出货之前**生效，不是事后翻账。
-
-    两形分开交回，谁也不许冒充谁（判据 2）：
-      * 正文非空而一枚断言都交不出 ⇒ ``CLAIMS_ERROR_ZERO_DENOMINATOR``；
-      * 记录在而还原不出 ``AgentResult`` ⇒ ``CLAIMS_ERROR_NO_RECORD``。
-    空正文回 ``( [], "")``：没有正文就没有「分母」这件事可说，不许顺手发一枚空 claims 键——
-    判分器 ``app/quality/eval.py::evaluate_provenance`` 会把空清单读成「没有一条不被支撑」。
-    """
-    if not str(delivered_text or "").strip():
-        return [], ""
-    claims: list[dict] = []
-    reason = ""
-    for worker, raw in (agent_results or {}).items():
-        if raw is None or (isinstance(raw, dict) and not raw):
-            continue
-        record = coerce_agent_result(str(worker), raw)
-        if record is None:
-            reason = CLAIMS_ERROR_NO_RECORD
-            continue
-        if not str(record.answer or "").strip():
-            continue
-        try:
-            projected = eval_payload_for_answer(record)
-        except ClaimsDenominatorError:
-            return [], CLAIMS_ERROR_ZERO_DENOMINATOR
-        claims.extend(projected["claims"])
-    if not claims:
-        return [], reason or CLAIMS_ERROR_ZERO_DENOMINATOR
-    return claims, reason
-
-
 def build_queue_terminal(
     *,
     terminal_state: str,
@@ -2569,8 +2519,6 @@ def build_queue_terminal(
     usage: dict | None = None,
     approval: dict | None = None,
     dataset_files: list[str] | None = None,
-    claims: list[dict] | None = None,
-    claims_error: str = "",
 ) -> dict:
     """队列终态载荷的唯一构造点（判据①②③共用同一份形状）。
 
@@ -2579,15 +2527,10 @@ def build_queue_terminal(
 
     `dataset_files` 是 R504 加的第八格：只在真读得出那一份时出现（同一枚 `terminal_data_filename`），
     读不出就整格缺席；既有键名与语义一字未动。
-
-    `claims` / `claims_error` 是 R702 加的第九格：与 legacy `done` 帧同一枚构造口径、同一格位置，
-    断言交得出才发键；交不出就只发原因码——「这一行没有分母」与「这一行没有幻觉」不许混成一格。
     """
     if terminal_state not in (TERMINAL_STATE_ANSWERED, TERMINAL_STATE_AWAITING_APPROVAL):
         raise ValueError(f"queue terminal cannot carry terminal_state={terminal_state!r}")
     rows = list(sources or [])
-    carried_claims = [row for row in (claims or []) if isinstance(row, dict)]
-    carried_claims_error = str(claims_error or "")
     payload = {
         "schema": reliable_queue.TERMINAL_SCHEMA,
         "terminal_state": terminal_state,
@@ -2600,8 +2543,6 @@ def build_queue_terminal(
         # 混成一格，客户就会拿着一个空清单去查检索，而真正坏的是主体还原或台账连接。
         "sources_error": str(sources_error or ""),
         "usage": usage,
-        **({"claims": carried_claims} if carried_claims else {}),
-        **({"claims_error": carried_claims_error} if carried_claims_error else {}),
         "approval": approval,
     }
     return attach_terminal_data_filename(payload, dataset_files)
@@ -2631,8 +2572,6 @@ def done_sse_frame(
     usage: dict | None = None,
     approval: dict | None = None,
     dataset_files: list[str] | None = None,
-    claims: list[dict] | None = None,
-    claims_error: str = "",
 ) -> str:
     """legacy `event: done` 那一帧的唯一构造点（判据②③⑤）。
 
@@ -2644,12 +2583,7 @@ def done_sse_frame(
     非空说的是「这一格压根没读出来」，它和「读出来是空表」不是同一句话。
     `data_filename` 是 R504 加的第八格，与队列终态同一枚构造口径：只在真读得出那一份时出现，
     `terminal_data_filename` 交空串就整格缺席。
-    `claims` 是 R702 加的第九格，取值只走 ``claims_for_egress``（搬运本轮已算好的断言），
-    与队列终态同名同形同格位；`claims_error` 非空说的是「这一轮的断言交不出」，
-    与「交出来的断言里一枚不被支撑的都没有」不是同一句话——后者才有分母。
     """
-    carried_claims = [row for row in (claims or []) if isinstance(row, dict)]
-    carried_claims_error = str(claims_error or "")
     payload = {
         "type": "done",
         "terminal_state": terminal_state,
@@ -2658,8 +2592,6 @@ def done_sse_frame(
         "sources": [row for row in (sources or []) if isinstance(row, dict)],
         "sources_error": str(sources_error or ""),
         "usage": usage,
-        **({"claims": carried_claims} if carried_claims else {}),
-        **({"claims_error": carried_claims_error} if carried_claims_error else {}),
         "approval": approval,
     }
     return sse_event("done", attach_terminal_data_filename(payload, dataset_files))
@@ -2674,8 +2606,6 @@ def done_frame_for_turn(
     visible_rows: list[dict] | None,
     sources_error: str = "",
     dataset_files: list[str] | None = None,
-    agent_results: dict | None = None,
-    claims_error: str = "",
 ) -> str:
     """跑完一轮的三条出口（/ask 正文、/approve 续跑、答案缓存命中）共用的 done 帧。
 
@@ -2685,11 +2615,6 @@ def done_frame_for_turn(
     `dataset_files` 是 R504 多收的一枚读数：谁把这一轮的 dataset 证据交给它，那一轮的 done
     才说得出用的哪份文件。缓存命中那一支今天**不交**（命中轮的用表读数当年没有落账，本单
     未治，见 docs/testing/ 的 R504 读数件），于是那一帧那一格整枚缺席。
-
-    `agent_results` 是 R702 交进来的本轮 worker 记录：断言早在工具边界算完了，这里只把它们搬到
-    终态那一帧（``claims_for_egress``）。`claims_error` 由调用方明说「这一轮压根交不出断言」那
-    一形（缓存命中那一支），与搬运的结论无关。挂起那一轮交回的是那句挂起说明而不是答案，
-    没有正文可判 ⇒ 两格都不发。
     """
     if intr:
         state = TERMINAL_STATE_AWAITING_APPROVAL
@@ -2697,12 +2622,6 @@ def done_frame_for_turn(
     else:
         state = TERMINAL_STATE_ANSWERED if full_text else TERMINAL_STATE_NO_ANSWER
         approval = None
-    if intr:
-        carried, reason = [], ""
-    elif claims_error:
-        carried, reason = [], claims_error
-    else:
-        carried, reason = claims_for_egress(agent_results or {}, full_text)
     return done_sse_frame(
         terminal_state=state,
         answer_present=bool(full_text),
@@ -2712,8 +2631,6 @@ def done_frame_for_turn(
         usage=read_model_call_usage(request_id),
         approval=approval,
         dataset_files=dataset_files,
-        claims=carried or None,
-        claims_error=reason,
     )
 
 
@@ -3016,7 +2933,6 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 intr=None,
                 visible_rows=cached_visible if manifest else None,
                 sources_error="" if manifest else SOURCES_ERROR_NO_MANIFEST,
-                claims_error=CLAIMS_ERROR_CACHE_ROW if cached else "",
             )
             await asyncio.sleep(0)
         return StreamingResponse(
@@ -3140,7 +3056,6 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         initial_msg_count = -1
         initial_worker_results: dict = {}
         latest_worker_results: dict = {}
-        latest_agent_results: dict = {}
         latest_final_answer = ""
         answer_candidates: list[str] = []
         # R149 判据②：累计全文与片数。片带的是增量、帧带的是累计，换算只发生在这两枚
@@ -3430,7 +3345,6 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     intr=intr,
                     visible_rows=visible_rows,
                     dataset_files=dataset_files,
-                    agent_results=latest_agent_results,
                 )
                 await asyncio.sleep(0)
                 break
@@ -3476,7 +3390,6 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             if isinstance(agent_results, dict):
                 _collect_document_sources(agent_results, source_rows)
                 _collect_dataset_filenames(agent_results, dataset_files)
-                latest_agent_results = dict(agent_results)
                 # R48 路线甲：本轮第一批**看得见**的来源一到手就发首屏线索卡，一轮只发一枚。
                 # 三条硬边界都收在这十几行里：走 canonical 信封（绝不骑 text 道）、正文一格
                 # 都不写（载荷只有来源行与两枚计数）、没有可见行就一枚都不发（宁缺毋造——
@@ -3915,7 +3828,6 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         )
         ai_reply: list[str] = []
         latest_worker_results: dict = {}
-        latest_agent_results: dict = {}
         latest_final_answer = ""
         answer_candidates: list[str] = []
         initial_count = -1
@@ -4205,7 +4117,6 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     intr=intr,
                     visible_rows=visible_rows,
                     dataset_files=dataset_files,
-                    agent_results=latest_agent_results,
                 )
                 await asyncio.sleep(0)
                 break
@@ -4256,7 +4167,6 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             if isinstance(agent_results, dict):
                 _collect_document_sources(agent_results, source_rows)
                 _collect_dataset_filenames(agent_results, dataset_files)
-                latest_agent_results = dict(agent_results)
             if initial_count < 0:
                 initial_count = len(msgs)
 
@@ -5510,14 +5420,6 @@ def queue_terminal_readout(
     data_filename = data.get("data_filename")
     if isinstance(data_filename, str) and data_filename:
         readout["data_filename"] = data_filename
-    # R702：断言那一格照旧「载荷里有才说，没有就整格缺席」——搬运不判定，
-    # 更不许拿一枚空清单把「这一行没有分母」洗成「这一行没有幻觉」。
-    carried_claims = data.get("claims")
-    if isinstance(carried_claims, list) and carried_claims:
-        readout["claims"] = [row for row in carried_claims if isinstance(row, dict)]
-    carried_claims_error = data.get("claims_error")
-    if isinstance(carried_claims_error, str) and carried_claims_error:
-        readout["claims_error"] = carried_claims_error
     return readout
 
 
