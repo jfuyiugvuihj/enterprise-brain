@@ -168,3 +168,4 @@ R701	LANDED	scripts/r701_eol_form.py, scripts/r547_scope_verdict_gauge.py, tests
 R702	QUEUED	app/api/v1/chat.py, app/agents/evidence.py, docs/api/contract-v1.md, tests/test_r702_*.py, docs/tickets/R702-*.md, docs/testing/r702-<开工日>.md	-	总控亲签工单·无机器字段
 R703	QUEUED	app/agents/nodes.py, app/agents/tools.py, app/tools/**, app/agents/evidence.py, tests/test_r703_*.py, docs/tickets/R703-*.md, docs/testing/r703-<开工日>.md	-	总控亲签工单·无机器字段
 R704	LANDED	scripts/r704_claims_coverage_readout.py, scripts/day1006_queue.py, docs/tickets/R704-*.md, docs/testing/r704-<开工日>.md, docs/tickets/index.tsv	0e53db3d2fcf	总控亲签工单·无机器字段
+R706	QUEUED	tests/test_r496_forbidden_pin_scope.py, tests/test_r453_cloud_eval_override.py, content_verdict, tests/test_r706_*.py, docs/tickets/R706-*.md, docs/testing/r706-<开工日>.md	-	总控亲签工单·无机器字段
