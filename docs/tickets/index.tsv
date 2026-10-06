@@ -158,7 +158,7 @@ R688	LANDED	-	ecbd52515225	总控亲签工单·无机器字段
 R690	LANDED	-	c82208c85988	总控亲签工单·无机器字段
 R693	LANDED	tests/test_r469_readout_is_generated.py, tests/test_r492_s93_column_matches_derived.py, tests/test_r498_landing_shape_is_not_a_mention.py, tests/test_r638_pointer_ratchet.py, tests/test_r595_stall_cap.py, tests/test_r693_*.py, scripts/r693_*.py, docs/**, docs/tickets/R693-*.md, docs/testing/r693-<开工日>.md	d2bd7798a226	总控亲签工单·无机器字段
 R694	QUEUED	docs/testing/walkthrough-2026-10-06/**, scripts/r694_*.py, tests/test_r694_*.py, docs/tickets/R694-*.md	-	总控亲签工单·无机器字段
-R695	QUEUED	app/api/v1/chat.py, app/rag/retrieval_pipeline.py, app/trace/spans.py, app/common/stage_timing.py, app/common/model_handler.py, tests/test_r695_*.py, docs/tickets/R695-*.md, docs/testing/r695-<开工日>.md	-	总控亲签工单·无机器字段
+R695	LANDED	app/api/v1/chat.py, app/rag/retrieval_pipeline.py, app/trace/spans.py, app/common/stage_timing.py, app/common/model_handler.py, tests/test_r695_*.py, docs/tickets/R695-*.md, docs/testing/r695-<开工日>.md	78a65682d9ac	总控亲签工单·无机器字段
 R696	QUEUED	scripts/r631_stage_sum_delta.py, scripts/r674_window_trace_export.py, tests/test_r696_*.py, docs/testing/r696-<开工日>.md, docs/tickets/R696-*.md	-	总控亲签工单·无机器字段
 R697	QUEUED	tests/test_r636_stage_coverage.py, tests/test_r697_*.py, docs/testing/r697-<开工日>.md, docs/tickets/R697-*.md	-	总控亲签工单·无机器字段
 R698	LANDED	scripts/r638_doc_pointer_ruler.py, tests/test_r698_*.py, docs/tickets/R698-*.md, docs/testing/r698-<开工日>.md	960201e8ae59	总控亲签工单·无机器字段
@@ -169,3 +169,4 @@ R702	QUEUED	app/api/v1/chat.py, app/agents/evidence.py, docs/api/contract-v1.md,
 R703	QUEUED	app/agents/nodes.py, app/agents/tools.py, app/tools/**, app/agents/evidence.py, tests/test_r703_*.py, docs/tickets/R703-*.md, docs/testing/r703-<开工日>.md	-	总控亲签工单·无机器字段
 R704	LANDED	scripts/r704_claims_coverage_readout.py, scripts/day1006_queue.py, docs/tickets/R704-*.md, docs/testing/r704-<开工日>.md, docs/tickets/index.tsv	0e53db3d2fcf	总控亲签工单·无机器字段
 R706	QUEUED	tests/test_r496_forbidden_pin_scope.py, tests/test_r453_cloud_eval_override.py, content_verdict, tests/test_r706_*.py, docs/tickets/R706-*.md, docs/testing/r706-<开工日>.md	-	总控亲签工单·无机器字段
+R707	QUEUED	tests/test_r688_stage_accounts_are_landed.py, tests/test_r688_counter_evidence_teeth.py, tests/test_r707_emit_point_host_account_shapes.py, docs/tickets/R707-*.md, docs/tickets/index.tsv	-	总控亲签工单·无机器字段
