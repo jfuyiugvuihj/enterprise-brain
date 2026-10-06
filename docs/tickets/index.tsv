@@ -166,7 +166,7 @@ R699	LANDED	app/agents/contracts.py, app/agents/evidence.py, app/agents/nodes.py
 R700	LANDED	app/api/v1/data.py, app/documents/**, app/rag/loader.py, tests/test_r700_*.py, docs/tickets/R700-*.md, docs/testing/r700-<开工日>.md	8d3d2d2c0469	总控亲签工单·无机器字段
 R701	LANDED	scripts/r701_eol_form.py, scripts/r547_scope_verdict_gauge.py, tests/test_r490_live_reads_match_derived.py, tests/test_r492_s93_column_matches_derived.py, tests/test_r469_readout_is_generated.py, tests/test_r701_*.py, docs/tickets/R701-*.md, docs/testing/r701-<开工日>.md, docs/tickets/index.tsv	c5450844bb90	总控亲签工单·无机器字段
 R702	QUEUED	app/api/v1/chat.py, app/agents/evidence.py, eval_payload_for_answer, docs/api/contract-v1.md, tests/test_r702_*.py, docs/tickets/R702-*.md, docs/testing/r702-<开工日>.md	-	总控亲签工单·无机器字段
-R703	QUEUED	app/agents/nodes.py, app/agents/tools.py, app/tools/**, app/agents/evidence.py, tests/test_r703_*.py, docs/tickets/R703-*.md, docs/testing/r703-<开工日>.md	-	总控亲签工单·无机器字段
+R703	LANDED	app/agents/nodes.py, app/agents/tools.py, app/tools/**, app/agents/evidence.py, tests/test_r703_*.py, docs/tickets/R703-*.md, docs/testing/r703-<开工日>.md	7810f7371300	总控亲签工单·无机器字段
 R704	LANDED	scripts/r704_claims_coverage_readout.py, scripts/day1006_queue.py, docs/tickets/R704-*.md, docs/testing/r704-<开工日>.md, docs/tickets/index.tsv	0e53db3d2fcf	总控亲签工单·无机器字段
 R706	QUEUED	tests/test_r496_forbidden_pin_scope.py, tests/test_r453_cloud_eval_override.py, content_verdict, tests/test_r706_*.py, docs/tickets/R706-*.md, docs/testing/r706-<开工日>.md	-	总控亲签工单·无机器字段
 R707	QUEUED	tests/test_r688_stage_accounts_are_landed.py, tests/test_r688_counter_evidence_teeth.py, tests/test_r707_emit_point_host_account_shapes.py, docs/tickets/R707-*.md, docs/tickets/index.tsv	-	总控亲签工单·无机器字段
