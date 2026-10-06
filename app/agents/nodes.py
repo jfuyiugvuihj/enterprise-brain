@@ -2637,6 +2637,105 @@ def _carry_dataset_truth(state, model_answer: str, final: str, worker_results: d
     return rebuilt, merged
 
 
+#: 台账标记：窗内要能 grep 出"哪一轮声称报告文件已经交出去了、而本轮台账里一枚报告件都没有"。
+#: 名字里的腿（leg=export）是判据 3 要的"点名是哪条腿在冒充"：读数只说 artifacts=0 不够，
+#: 得说得出这一句是替导出腿还的债。
+REPORT_TRUTH_MARKER = "[R710ReportTruth]"
+
+#: 声称"报告文件已经交出去了"的两类形状：一句完成态话，或一枚点到产物下载口的链接。
+#: 刻意不收「可以导出为PDF」「建议导出Excel格式」「请上传该文件」这一族**建议** —— 走查环 8
+#: 那一轮的正文里就躺着这两句，本腿若对它开口，就是把一句真话钉成第枚假话；也不收用户自己
+#: 那句"并导出成报告文件"（那是问题，不是声称）。
+_REPORT_CLAIM_PHRASES = (
+    "报告文件已导出",
+    "已导出报告文件",
+    "报告文件已生成",
+    "已生成报告文件",
+    "报告已导出",
+    "已导出报告",
+    "报告已生成",
+    "已生成报告",
+    "报告导出完成",
+    "报告已准备好",
+    "报告文件已就绪",
+)
+#: 图那一腿交回的是 ``/content``（png/html），数据导出是 xlsx，只有报告件走 ``/download``，
+#: 所以这一枚形状不会把别的腿的链接错认成"报告已经在这儿了"。
+_REPORT_DELIVERY_LINK_RE = re.compile(r"/api/v1/artifacts/[^)\s]+/download")
+_REPORT_WORD_RE = re.compile(r"报告|report", re.IGNORECASE)
+
+#: 追加那一句。措辞红线与 ``CHART_TRUTH_SENTENCE`` 同一条：不说"失败"（那一格因由不归这层猜，
+#: 工具腿自己那句话已经把码说清了）、不说"没权限"、不替客户决定要不要重跑，
+#: 只把"台账里没有这枚可查回的件"这一件事实说清。
+REPORT_TRUTH_SENTENCE = (
+    "⚠️ 说明：本轮产物台账里没有可查回的报告文件，上面「报告已导出／已生成」那类说法"
+    "不对应一个能打开的文件。"
+)
+
+
+def _report_artifacts_in_state(state) -> list[dict]:
+    """本轮工具边界真登记过的报告件（``agent_results[*].artifacts`` 里件型为 report 的那些）。
+
+    读法与 ``_chart_artifacts_in_state`` 同一枚：账本出自
+    ``app/agents/evidence.py::record_artifact``，由 ``app/agents/orchestrator.py`` 的 worker
+    包装写进 ``agent_results``，装箱之后还在的料才算数。本函数只搬运读数，不判定、不补记。
+    """
+    rows: list[dict] = []
+    for raw in (state.get("agent_results") or {}).values():
+        if isinstance(raw, dict):
+            artifacts = raw.get("artifacts") or []
+        else:
+            artifacts = getattr(raw, "artifacts", None) or []
+        for item in artifacts:
+            if isinstance(item, dict):
+                row = item
+            elif hasattr(item, "model_dump"):
+                row = item.model_dump()
+            else:
+                continue
+            if str(row.get("artifact_type") or "") == "report":
+                rows.append(row)
+    return rows
+
+
+def _claims_an_exported_report(text) -> bool:
+    """这一份文字有没有声称"报告文件已经交出去了"。只看完成态声称，光提到导出不算。"""
+    body = str(text or "")
+    if not _REPORT_WORD_RE.search(body):
+        return False
+    if any(phrase in body for phrase in _REPORT_CLAIM_PHRASES):
+        return True
+    return bool(_REPORT_DELIVERY_LINK_RE.search(body))
+
+
+def _carry_report_truth(state, model_answer: str, final: str, worker_results: dict):
+    """声称报告文件已导出、本轮台账却一枚报告件都查不回 ⇒ 末尾追加一句真话；其余一字不动。
+
+    环 8 的病形就是这一格：导出腿自报 ``status=failed`` 交回 51 字，终答里却写着报告文件已
+    导出并点了文件名。三条边界抄在册正例 ``_carry_chart_truth``：只追加不改写、判据只读物证
+    （读不出件型的老形状一律当没这回事，宁可少说一句）、本腿不产文件也不碰批准链。
+    声称以 ``model_answer``（逐字保真与择边两腿补写**之前**那一份模型正文）为准，同一条理由。
+    """
+    if _report_artifacts_in_state(state):
+        return final, None
+    if not _claims_an_exported_report(model_answer or final):
+        return final, None
+    values = [key for key, value in (worker_results or {}).items() if str(value or "").strip()]
+    merged: dict | None = None
+    if values:
+        merged = dict(worker_results)
+        last = values[-1]
+        merged[last] = str(merged[last]).strip() + "\n\n" + REPORT_TRUTH_SENTENCE
+        rebuilt = "\n\n".join(str(merged[key]).strip() for key in values if str(merged[key]).strip())
+    else:
+        rebuilt = str(final).strip() + "\n\n" + REPORT_TRUTH_SENTENCE
+    logger.info(
+        f"{REPORT_TRUTH_MARKER} leg=export claim=phrase_or_delivery_link artifacts=0 "
+        f"answer_chars={len(str(final))}->{len(rebuilt)}"
+    )
+    return rebuilt, merged
+
+
 def synthesize(state, config=None) -> dict:
     """把最终回答写入 state，并把值得记的沉淀进长期记忆"""
     # R688（判据①·生产发点）：终答装配是规则腿，没有自己的跨度；worker 的作答往返另有 model 跨度，本件只记这一段自己的墙钟，区间不与之重叠。
@@ -2713,6 +2812,19 @@ def synthesize(state, config=None) -> dict:
             final = guarded
         if data_update is not None:
             worker_update = data_update
+
+        # R710（判据 3）：声称报告文件已导出、本轮却查不回一枚报告件 ⇒ 钉一句真话。排在数据那枚
+        # 之后：三句都是追加，最后一步只追加一次；与前两枚同一条硬规矩，整条炸了也不许带走终答。
+        try:
+            report_base = worker_update if worker_update is not None else worker_results
+            guarded, report_update = _carry_report_truth(state, model_final, final, report_base)
+        except Exception as exc:  # noqa: BLE001 - 终答优先，守卫失声只许记账不许拦
+            guarded, report_update = final, None
+            logger.warning(f"{REPORT_TRUTH_MARKER} status=skipped error={exc}")
+        if guarded != final:
+            final = guarded
+        if report_update is not None:
+            worker_update = report_update
 
         if state.get("intent") == "task" and q and final:
             user_id = _memory_user_id(state)

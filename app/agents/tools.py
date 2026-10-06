@@ -1690,20 +1690,93 @@ def _generate_chart(
 
 # ==================== Export Tool ====================
 
+#: 导出腿失败的三张脸，每张一句人话加一枚公开码。旧形状只有一枚 f-string，而且它拼的是
+#: 登记表内部的英文原句：走查环 8 现读到的那 51 字就是
+#: 「报告生成失败: 」+「artifact owner must have a department scope」——既没有码（终态只剩
+#: 一句人话，机器读不出因由），又把内部词表卖给了客户（同族旧账见
+#: docs/current-functionality-2026-09-10-revision-log.md 的 R-新4），而那一轮已经先往盘上
+#: 落了一枚谁都登记不上的 PDF。次序现在是反过来的：先问登记表收不收，收不下就不写盘。
+_EXPORT_NO_DEPARTMENT_HEAD = (
+    "本轮没有导出报告文件：产物台账要求发起这一轮的账号有部门归属，而这个账号的部门是空的。"
+    "文件落盘也登记不进去、查不回来，所以本轮不写盘——请管理员先给这个账号补部门归属"
+)
+_EXPORT_REGISTRATION_REFUSED_HEAD = (
+    "本轮的报告文件没能登记进产物台账：这一轮没有可下载的报告文件"
+)
+_EXPORT_GENERATION_FAILED_HEAD = "报告生成失败：这一轮没能写出报告文件"
+_EXPORT_BAD_SECTIONS_HEAD = "报告没能导出：这一轮交来的报告章节读不出来"
+_EXPORT_FAILURE_CODE_RE = re.compile(r"error_code=([a-z_]+)")
+
+
+def _discard_unregistrable_report(path: object) -> None:
+    """登记不上的那一枚报告文件不该留在盘上：产物口只认台账，落单的字节谁也查不回来。
+
+    在册正例是 ``app/api/v1/data.py::upload_excel`` —— 登记失败时删的就是自己刚写的那一枚。
+    这里删的也只可能是本函数这一次调用刚交回来的路径：私有化部署的机器上，一枚没有台账行、
+    因而没有任何权限判定管得着它的 PDF，留着就是留着一个人人可读、系统却不认的原件。
+    """
+    if not path:
+        return
+    try:
+        os.remove(str(path))
+    except OSError as exc:
+        logger.warning(f"[Tool] unregistered report left on disk: {exc}")
+
+
+def _export_terminal_error_code(text: object) -> str:
+    """导出腿没交出报告时，span 上写哪一枚码：读它自己那句话里带的码，读不到才兜底。
+
+    正文与码同源（都出自 ``_denial_text`` 那一处），所以不会出现「说的是部门、码写的是内部错」
+    这种两张皮。枚举之外的名字一律折回 ``internal_error``：``authorization_required`` 不在封闭
+    枚举里（``tests/test_error_code_vocabulary.py`` 钉着这件事），本层不替它扩公开词表。
+    """
+    match = _EXPORT_FAILURE_CODE_RE.search(str(text or ""))
+    return _public_error_code(match.group(1) if match else "", "internal_error")
+
+
 def _export_report(report_title: str, sections_json: str,
                     config: RunnableConfig, include_charts: str = "") -> str:
+    from app.storage.artifacts import ArtifactOwnerScopeMissing, owner_department_scope
     from app.tools.export import generate_pdf_report
 
     try:
-        if _artifact_principal(config, ACTION_EXPORT) is None:
+        principal = _artifact_principal(config, ACTION_EXPORT)
+        if principal is None:
             record_tool_status(
                 bag_from_config(config), tool="export_report", status="rejected", error_code="authorization_required"
             )
             return _authorization_error()
-        sections = json.loads(sections_json)
+        if not owner_department_scope(principal):
+            return _denial_text(
+                config,
+                tool="export_report",
+                code="department_scope_required",
+                head=_EXPORT_NO_DEPARTMENT_HEAD,
+            )
+        try:
+            sections = json.loads(sections_json)
+        except (TypeError, ValueError) as exc:
+            #: 章节是模型自己拼的那枚参数：说成"读不出来"（validation_error），不冒充内部错。
+            logger.warning(f"[Tool] report sections unreadable: {type(exc).__name__}")
+            return _denial_text(
+                config,
+                tool="export_report",
+                code="validation_error",
+                head=_EXPORT_BAD_SECTIONS_HEAD,
+            )
         path = generate_pdf_report(title=report_title, sections=sections)
 
-        urls = _artifact_urls(path, "report", config)
+        try:
+            urls = _artifact_urls(path, "report", config)
+        except ArtifactOwnerScopeMissing as exc:
+            logger.warning(f"[Tool] report registration refused: {type(exc).__name__}: {exc}")
+            _discard_unregistrable_report(path)
+            return _denial_text(
+                config,
+                tool="export_report",
+                code="department_scope_required",
+                head=_EXPORT_REGISTRATION_REFUSED_HEAD,
+            )
         if urls is None:
             _record_denial(
                 config, tool="export_report", code="authorization_required", status="rejected"
@@ -1711,8 +1784,14 @@ def _export_report(report_title: str, sections_json: str,
             return _authorization_error()
         _, url = urls
         return f"报告已生成: [📋 下载报告]({url})"
-    except Exception as e:
-        return f"报告生成失败: {e}"
+    except Exception as exc:  # noqa: BLE001 - 失败要说得出口，内部原句不许替它说话
+        logger.warning(f"[Tool] report generation failed: {type(exc).__name__}: {exc}")
+        return _denial_text(
+            config,
+            tool="export_report",
+            code="internal_error",
+            head=_EXPORT_GENERATION_FAILED_HEAD,
+        )
 
 
 @tool
@@ -1796,7 +1875,7 @@ def export_report(report_title: str, sections_json: str,
     ) as span:
         result = _export_report(report_title, sections_json, config, include_charts)
         if "报告已生成" not in str(result):
-            span.finish("failed", error_code="internal_error")
+            span.finish("failed", error_code=_export_terminal_error_code(result))
         return result
 
 

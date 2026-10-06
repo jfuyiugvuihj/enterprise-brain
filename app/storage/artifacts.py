@@ -102,6 +102,44 @@ SCOPE_METADATA_KEYS = (
 )
 
 
+#: The name for the refusal this module raises when an owner cannot be recorded a department
+#: for. The ``department_ids`` of a row come from the principal that generated the bytes, and
+#: every later read of that row enforces *that* scope - with no department on either side
+#: there is nothing to enforce, so registration refuses. Before this name existed the refusal
+#: arrived as a bare ``ValueError``, and the leg that swallowed it printed
+#: ``ArtifactRegistry.register``'s internal sentence straight into the customer's answer
+#: (``docs/testing/r710-2026-10-06.md`` 第一节「问 2」). A caller that has to say the truth
+#: out loud catches this type; it never string-matches a message.
+class ArtifactOwnerScopeMissing(ValueError):
+    """The generating principal has no department, so no ``artifacts`` row can be recorded."""
+
+
+def owner_department_scope(principal: Any) -> list[str]:
+    """The department ids ``ArtifactRegistry.register`` would write for this owner.
+
+    Empty means the registry will refuse the row. Leg work whose only product is such a row -
+    the export leg writing a PDF nobody can register - asks this *before* doing the work, so
+    the bytes and the claim about them never exist apart. The check and the write read this
+    one function: a second copy of the rule is how a deployment ends up with a file on disk
+    and zero rows in the table.
+    """
+    if principal is None:
+        return []
+    return sorted(
+        {
+            value
+            for value in [
+                str(getattr(principal, "department", "") or ""),
+                *(
+                    str(item or "")
+                    for item in (getattr(principal, "department_ids", None) or [])
+                ),
+            ]
+            if value
+        }
+    )
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -596,15 +634,9 @@ class ArtifactRegistry:
         if not artifact_type.strip():
             raise ValueError("artifact type is required")
         path = self._contained_path(storage_path, must_exist=True)
-        departments = sorted(
-            {
-                value
-                for value in [principal.department, *principal.department_ids]
-                if value
-            }
-        )
+        departments = owner_department_scope(principal)
         if not departments:
-            raise ValueError("artifact owner must have a department scope")
+            raise ArtifactOwnerScopeMissing("artifact owner must have a department scope")
         if expires_at is not None and expires_at.tzinfo is None:
             raise ValueError("artifact expiry must include a timezone")
 
