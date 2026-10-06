@@ -13,12 +13,13 @@
    一枚都不许落进逐片直发的流式腿 —— 那是 ``tests/test_r149_sse_text_pieces.py`` 与
    ``tests/test_r661_trace_journal_hot_path_teeth.py`` 两枚在册钉的地盘。
 
-🔴 retrieve / rewrite 两段今天仍没有生产发点，而且**不是**本单能修的：它们的边界在
-``app/agents/tools.py::search_docs``、``app/rag/retrieval_pipeline.py::QueryRewriter.rewrite``、
-``app/api/v1/chat.py::_rewrite_followup`` 与 ``app/common/model_handler.py``（R690 的在飞写域），
-全在 R688 写域外。本件因此把「这两段零枚 stage 件」也钉死：谁补上线，这枚钉当场红、
-账就得跟着改 —— 它正是「不许拿三段冒充五段」的可失败版本。反证牙在
-``tests/test_r688_counter_evidence_teeth.py``（摘掉一段发点 ⇒ 判据① 的钉点名那一段红）。
+🔴 段名与发点枚数**一律由 ``stage_emit_points()`` 现读**，本文件不登记死清单：R688 建件那天
+rewrite 段确实零枚发点，R695 把 rewrite 接上两条腿之后，那份手抄名单就成了假账。
+现在「还没落地的段」= 在册五段减去现读有发点的段（``unlanded_stage_names()``）；
+「落地的段各 >= 1 枚」那条仍按图道 ``LANDED_STAGES`` 走，因为它量的是**一次生产问答真发了
+什么件**，不是码在不在树上 —— 两件事原先挤在同一格，是 R688 建件时的口径粗糙。
+发点宿主拿身份认两种机制（形参 ``config``／同模块挂载后自读），凭据与反证牙在
+``tests/test_r707_emit_point_host_account_shapes.py``。
 """
 from __future__ import annotations
 
@@ -48,8 +49,15 @@ STAGE_EVENT = "stage.finished"
 
 #: 本单在写域内落地的三段（``app/agents/nodes.py`` 里各有可指认的发点）。
 LANDED_STAGES = ("classify", "generate", "reflect")
-#: 写域外、本单只登记不修的两段（判据① 的 5/5 因此**未达成**，见交付纸）。
-UNLANDED_STAGES = ("retrieve", "rewrite")
+
+
+def unlanded_stage_names(root: Path = APP_ROOT) -> tuple[str, ...]:
+    """R707 订正：现读「在册但 ``app/**`` 里没有可指认发点」的段名。
+
+    原先这格手抄成 ``("retrieve", "rewrite")``，R695 给 rewrite 上线两条腿之后就过期了；
+    谁再补一段，这一格自己跟着变，不用回来改清单。
+    """
+    return tuple(stage for stage in CANONICAL_STAGES if stage not in stage_emit_points(root))
 
 #: 流式腿的名字：这些宿主里出现 stage 发点 = 计时纪律破了（判据⑤）。
 STREAMING_HOSTS = (
@@ -89,6 +97,72 @@ def _defs(tree: ast.AST) -> list[tuple[int, int, str]]:
 
     visit(tree, "")
     return rows
+
+
+def _def_map(tree: ast.AST) -> dict[str, ast.AST]:
+    """与 ``_defs`` 同一趟遍历、同一套命名，交回 ``符号名 -> 定义节点``（只登记函数）。
+
+    两把尺必须同名同形：发点表走 ``_defs``，形状表走 ``_def_map``，名字一分叉就各说各话。
+    同名断言在 ``tests/test_r707_emit_point_host_account_shapes.py``。
+    """
+    out: dict[str, ast.AST] = {}
+
+    def visit(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                name = prefix + child.name
+                out[name] = child
+                visit(child, name + ".")
+            elif isinstance(child, ast.ClassDef):
+                name = prefix + child.name + ""
+                visit(child, name + ".")
+            else:
+                visit(child, prefix)
+
+    visit(tree, "")
+    return out
+
+
+def _called_name(func: ast.expr) -> str:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return ""
+
+
+#: 宿主拿到本轮身份的两种机制（R695 交出的两条腿）；两条都不通 = 静默失效。
+IDENTITY_ARG = "config"
+IDENTITY_READERS = ("current_turn_identity",)
+IDENTITY_ARMS = ("arm_turn_identity",)
+
+
+def host_account_shape(site: str, root: Path = APP_ROOT) -> dict:
+    """现读一枚发点宿主 ``文件::符号`` 到底怎么拿到本轮身份。
+
+    返回 ``{site, args, mechanism, mechanisms, self_reads, module_arms}``：``mechanism``
+    是第一条走通的路（形参 ``config`` 优先），``mechanisms`` 登记全部走通的路。
+    两条都不通就是 ``none`` —— 那种发点写的账恒为匿名、恒不落地，调用方必须红。
+    """
+    relative, _, symbol = site.partition("::")
+    tail = relative.split("/", 1)[1] if "/" in relative else relative
+    tree = ast.parse((root / tail).read_text(encoding="utf-8"))
+    node = _def_map(tree).get(symbol)
+    assert node is not None, "发点符号在 %s 里认不出定义：%s" % (relative, symbol)
+    args = [a.arg for a in node.args.args + node.args.kwonlyargs]
+    self_reads = any(isinstance(call, ast.Call) and _called_name(call.func) in IDENTITY_READERS
+                     for call in ast.walk(node))
+    module_arms = any(isinstance(call, ast.Call) and _called_name(call.func) in IDENTITY_ARMS
+                      for call in ast.walk(tree))
+    mechanisms = []
+    if IDENTITY_ARG in args:
+        mechanisms.append("config")
+    if self_reads and module_arms:
+        mechanisms.append("armed")
+    return {"site": site, "args": args,
+            "mechanism": mechanisms[0] if mechanisms else "none",
+            "mechanisms": tuple(mechanisms), "self_reads": self_reads,
+            "module_arms": module_arms}
 
 
 def _host_of(rows: list[tuple[int, int, str]], lineno: int) -> str:
@@ -167,13 +241,15 @@ def assert_stage_accounts(
     *,
     trace_id: str = "",
     landed: tuple[str, ...] = LANDED_STAGES,
-    unlanded: tuple[str, ...] = UNLANDED_STAGES,
+    unlanded: tuple[str, ...] | None = None,
 ) -> dict[str, int]:
     """判据① 的可执行版本：段名只认在册字面、落地的段各有 >=1 枚、没落地的段必须零枚。
 
     每一枚断言都在消息里点名它判的那一段 —— 反证牙（``test_r688_counter_evidence_teeth``）
     靠这一点把「摘掉一段发点」读成「那一段当场红」，而不是读成一句整体的失败。
     """
+    if unlanded is None:
+        unlanded = unlanded_stage_names()
     grouped = stage_accounts(events, trace_id=trace_id)
     invented = sorted(name for name in grouped if name not in CANONICAL_STAGES)
     assert not invented, (
@@ -185,8 +261,8 @@ def assert_stage_accounts(
                 % (stage, counts or "{}"))
     for stage in unlanded:
         assert counts.get(stage, 0) == 0, (
-                "段 %s 的发点已落到本写域之外的那条腿上：R688 的账面（三段落地 / 两段登记）"
-                "得跟着改口径，不许沿用旧账（现读枚数 %d）" % (stage, counts.get(stage, 0)))
+                "段 %s 现读枚数不为零（%d）：发点已经上线或本轮真发了件，"
+                "R688/R707 的账面得跟着改口径，不许沿用旧账" % (stage, counts.get(stage, 0)))
     return counts
 
 
@@ -370,21 +446,24 @@ def test_the_landed_segments_have_named_emit_points_and_no_invented_names():
             assert symbol.split(".")[0] in host, site
 
 
-def test_every_emit_point_host_accepts_a_config_argument():
-    """发点宿主若不接 ``config``，账就恒为匿名、恒不落地 —— 那是静默失效，必须钉住。"""
+def test_every_emit_point_host_can_reach_the_turn_identity():
+    """发点宿主拿不到本轮身份 = 账恒为匿名、恒不落地，那种静默失效必须钉住。
+
+    R707 订正（10-06）：这枚钉原先只认「形参里有 ``config``」**一种**形状，还只解析
+    ``app/agents/nodes.py`` 一枚文件的模块级函数；R695 给 chat 腿挂了端点身份
+    （``app/trace/spans.py::arm_turn_identity`` ＋ 腿内自读 ``current_turn_identity``）
+    并给检索腿加可选形参后，它把合法形状当唯一形状，当场红
+    （红句 ``AssertionError: RetrievalPipeline.search``）。两种机制现在都算数，
+    两条都不通才红；反证见 ``tests/test_r707_emit_point_host_account_shapes.py``
+    （摘掉挂载那一行 ⇒ 那条腿的读数从 ``armed`` 掉回 ``none``）。
+    """
     points = stage_emit_points()
-    hosts = sorted({site.partition("::")[2] for sites in points.values() for site in sites})
-    assert hosts, "一枚发点都没有"
-    tree = ast.parse((REPO_ROOT / "app" / "agents" / "nodes.py").read_text(encoding="utf-8"))
-    args = {
-        node.name: [p.arg for p in node.args.args + node.args.kwonlyargs]
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-    }
-    for host in hosts:
-        name = host.split(".")[0]
-        assert name in args, host
-        assert "config" in args[name], "%s 不接 config" % host
+    sites = sorted({site for stage_sites in points.values() for site in stage_sites})
+    assert sites, "一枚发点都没有"
+    shapes = [host_account_shape(site) for site in sites]
+    silent = [shape for shape in shapes if shape["mechanism"] == "none"]
+    assert not silent, "这些发点宿主既没有 %s 形参，也没有同模块挂载后自读：%s" % (
+        IDENTITY_ARG, [shape["site"] for shape in silent])
 
 
 def test_no_stage_account_sits_on_the_streaming_leg():
