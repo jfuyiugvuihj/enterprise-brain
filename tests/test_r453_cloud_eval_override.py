@@ -46,6 +46,15 @@ R623（10-03 返工）· 两枚活体钉从此按**内容**判：`git status --p
  `FORBIDDEN_PATHS` 12 枚、`REGISTERED_FILES` 12 枚、`DELIVERED_FILES` 6 枚原样，本单只改「怎么判」，不改「判什么」。
  刀：`tests/test_r623_content_caliber_disk_pins.py`（只 touch mtime 必须绿／真写一个字节必须红）。
 
+R706（10-06 返工）· 又一枚形态分支：无 `.git` 的导出不许拖停同批件。
+ `git archive HEAD` 解出来的树里没有库，`git ls-files` 必非零，原来那枚 assert 落在**收集阶段**
+ （`RUN_START_TREE_SHA` 在 import 那一刻就要读清单），一枚件把同批其它件一起带走。
+ 今天起读清单那两道口多回一种形状 `None`＝「这枚检出没有库」——它与「读到零枚」是两件事，
+ 只有 git 自己说 not a git repository 才算无库，别的原因问不到照停；依赖被跟踪清单的钉一律走
+ `require_git_checkout` 给**具名 skip**。影子树里造的漂移与实质层读数不受影响。
+ 活体钉那一格（先分树的状态再取证＋影子端正控）在被治的那枚件里：`tests/test_r496_forbidden_pin_scope.py`。
+ 刀：`tests/test_r706_state_branch_disk_pins.py`。
+
 底座那四条锚点（模型腿本来就是 OpenAI 兼容）也在本件里现读一遍：锚点漂了要停下报，
 不许把「行号会漂」当成免检理由 —— 所以钉的是**符号在场**，行号只在失败消息里现算现打。
 
@@ -558,7 +567,8 @@ def signed_commit_overreach(root: Path = REPO) -> list[str]:
 
 def deliverables_tracked_in_head(root: Path = REPO) -> bool:
     """本单交付件是否已进 HEAD（并树之前它们只长在盘上，那棵树里没有本单的历史可审）。"""
-    tracked = set(tracked_paths(root))
+    tracked = tracked_paths(root)
+    assert tracked is not None, "无库的检出里本函数无权回答「交付件进 HEAD 了吗」"
     return any(rel in tracked for rel in DELIVERED_FILES)
 
 
@@ -675,8 +685,42 @@ def foreign_surface_reaches(text: str, document: dict) -> list[str]:
     return breaches
 
 
-def tracked_paths(root: Path = REPO) -> list[str]:
-    """被跟踪文件全集。core.quotePath=false 必须带：否则非 ASCII 路径会被转义成假缺失。"""
+#: 一棵检出的两种形状（R706 判据④）：有库的树（真树／影子树／`git worktree` 摘出来的树）与
+#: 无库的导出树（`git archive` 解出来的目录）。后者里 `git ls-files` 必非零。
+REPO_SHAPE = "repo"
+ARCHIVE_SHAPE = "archive"
+NOT_A_REPO = re.compile(r"not a git repository", re.IGNORECASE)
+
+
+def checkout_shape(root: Path = REPO) -> str:
+    """现取这枚检出的形状：只有 git 自己说「not a git repository」才算无库的导出树。
+    别的原因问不到＝环境故障，照样停——把故障说成导出树就是又一枚「把牙换成沉默」。"""
+    proc = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=str(root), capture_output=True,
+                          text=True, encoding="utf-8", errors="replace")
+    if proc.returncode == 0:
+        return REPO_SHAPE
+    assert NOT_A_REPO.search(proc.stderr or "") or NOT_A_REPO.search(proc.stdout or ""), \
+        "问不到这棵树的 git 形状（%s）：%s" % (root, (proc.stderr or proc.stdout)[:200])
+    return ARCHIVE_SHAPE
+
+
+#: 判据④要的具名 skip：话里写清本钉只在真树与影子树里判，读的人不必猜为什么少一枚。
+NO_CHECKOUT_SKIP = "无 .git 的检出：本钉只在真树与影子树里判（被跟踪清单取不到）"
+
+
+def require_git_checkout(root: Path = REPO) -> None:
+    """拿不到被跟踪清单的检出 ⇒ 依赖它的钉具名 skip，不许 ERROR 带走同批其它件。"""
+    if checkout_shape(root) != REPO_SHAPE:
+        pytest.skip(NO_CHECKOUT_SKIP)
+
+
+def tracked_paths(root: Path = REPO) -> list[str] | None:
+    """被跟踪文件全集。core.quotePath=false 必须带：否则非 ASCII 路径会被转义成假缺失。
+
+    R706 判据④：`None` 是第三形＝「这枚检出没有库」，与「读到零枚」是两件事。
+    """
+    if checkout_shape(root) != REPO_SHAPE:
+        return None
     proc = subprocess.run(
         ["git", "-c", "core.quotePath=false", "ls-files"],
         cwd=str(root), capture_output=True, text=True, encoding="utf-8",
@@ -690,9 +734,13 @@ def sha256_at(rel: str, root: Path = REPO) -> str:
     return "ABSENT" if not path.is_file() else hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def tracked_manifest(root: Path = REPO) -> dict[str, str]:
-    """全集逐枚 sha256（工作树字节）。实测 1277 枚约 0.1 s，够得起每轮跑两次。"""
-    return {rel: sha256_at(rel, root) for rel in tracked_paths(root)}
+def tracked_manifest(root: Path = REPO) -> dict[str, str] | None:
+    """全集逐枚 sha256（工作树字节）。实测 1277 枚约 0.1 s，够得起每轮跑两次。
+
+    无库的检出同样回 `None`：调用方要么具名 skip，要么逐枚点名，不许当成一张空清单。
+    """
+    paths = tracked_paths(root)
+    return None if paths is None else {rel: sha256_at(rel, root) for rel in paths}
 
 
 def digest_of(manifest: dict[str, str]) -> str:
@@ -712,11 +760,16 @@ def manifest_offenders(before: dict[str, str], after: dict[str, str]) -> list[st
     return offenders
 
 
+#: import 那一刻这枚检出的形状：无库的导出树里两枚跑前读数为空，依赖它们的钉靠
+#: `require_git_checkout` 具名 skip，而不是在收集阶段抛一枚 ERROR 带走同批件（R706 判据④）。
+CHECKOUT_SHAPE_AT_RUN_START = checkout_shape(REPO)
+MANIFEST_READABLE_AT_RUN_START = CHECKOUT_SHAPE_AT_RUN_START == REPO_SHAPE
+
 #: 真树的跑前读数：反证在影子根里造漂移时，用它证明真树一个字节都没被碰过。
-RUN_START_TREE_SHA = digest_of(tracked_manifest(REPO))
+RUN_START_TREE_SHA = digest_of(tracked_manifest(REPO) or {})
 
 #: 跑前读数：本件被 import 的那一刻（＝这一轮测试开跑之前）的全集摘要。
-MANIFEST_AT_RUN_START = tracked_manifest()
+MANIFEST_AT_RUN_START = tracked_manifest() or {}
 DIGEST_AT_RUN_START = digest_of(MANIFEST_AT_RUN_START)
 
 
@@ -845,6 +898,7 @@ def forbidden_overreach_verdict(root: Path = REPO,
     指纹非空＝本单正在此树施工，而一棵施工树只有一枚 Agent 的手，其余受跟踪改动落在本单名下。
     R623 把「有没有手」从盘面存在性换成三条腿 blob 对账：并树瞬时那一行 ` M` 不再是罪证。
     """
+    require_git_checkout(root)
     fingerprint, breaches = forbidden_dirt_reading(root, entries)
     assert not breaches, (
         "判据④禁域被动过（按内容判：HEAD blob／索引 blob／盘上字节三条腿对账不等）：%s"
@@ -862,6 +916,7 @@ def test_the_declared_delivery_list_is_all_on_disk() -> None:
 
     这条只看本单自己的名字（tests/test_r453_ 那一格），不看别人的单、不看业主的永久脏项。
     """
+    require_git_checkout()
     missing = [rel for rel in DELIVERED_FILES if not (REPO / rel).is_file()]
     assert not missing, "声明过的交付件不在盘上：%s" % missing
     undeclared = [path for path in untracked_paths(git_status_porcelain())
@@ -877,6 +932,7 @@ def test_the_declared_delivery_list_is_all_on_disk() -> None:
 
 def test_no_ticket_signed_write_lands_outside_the_write_domain() -> None:
     """签名可辨是本单的手笔 ⇒ 必须落在写域三枚前缀里；别人的单与业主垃圾一律不管。"""
+    require_git_checkout()
     strays = ticket_signed_strays(git_status_porcelain())
     assert not strays, "带本单签名的新文件长在写域之外：%s" % strays
 
@@ -889,6 +945,7 @@ def registered_overreach_verdict(root: Path = REPO,
     别人的在册件改动」——后者不属于本单，替它喊红就是拿别人的合法施工当自己的越界证据。
     R623：在册件这一层连盘面点名都不再依赖（走 `sweep=REGISTERED_FILES`），盘面漏报它自己也查。
     """
+    require_git_checkout(root)
     fingerprint, hits = registered_dirt_reading(root, entries)
     assert not hits, (
         "在册件被改动（按内容判：三条腿对账不等）：%s；本单施工指纹=%s"
@@ -902,7 +959,11 @@ def test_registered_in_book_files_carry_no_modification_or_deletion() -> None:
 
 # ------------------------------------------------------------------ R496 归因层·历史（提交级读数）
 def signed_commit_overreach_verdict(root: Path = REPO) -> None:
-    """挂本单号的并树提交一枚都不许碰禁域。这层一个字不看 `git status`：任何树、任何时刻同一读数。"""
+    """挂本单号的并树提交一枚都不许碰禁域。这层一个字不看 `git status`：任何树、任何时刻同一读数。
+
+    R706 判据④：无库的导出树里 `git log` 也问不到，本钉同样给具名 skip，不许 ERROR。
+    """
+    require_git_checkout(root)
     if not deliverables_tracked_in_head(root):
         assert not ticket_landing_commits(root), (
             "本单交付件还没进 HEAD，HEAD 里却已有一枚挂 R%s 号的并树提交："
@@ -976,6 +1037,7 @@ def test_the_tracked_sha256_baseline_is_unchanged_from_run_start_to_assert() -> 
     自己比。全仓被跟踪件里没有任何一枚是被测试写到盘上的（影子树一律落 tmp_path，09-28 现
     扫：唯一五处写盘全在 tmp 影子根里），所以这条不会因别人的测试造出假红。
     """
+    require_git_checkout()
     now = tracked_manifest()
     offenders = manifest_offenders(MANIFEST_AT_RUN_START, now)
     assert not offenders, (
@@ -985,6 +1047,7 @@ def test_the_tracked_sha256_baseline_is_unchanged_from_run_start_to_assert() -> 
 
 def test_the_sha_baseline_covers_enough_files_to_have_teeth() -> None:
     """基线钉不许空响：全集必须够大、在册件必须一枚枚在摘要里、摘要对枚序不敏感。"""
+    require_git_checkout()
     absent = [rel for rel in REGISTERED_FILES if rel not in MANIFEST_AT_RUN_START]
     assert not absent, "在册件不在被跟踪全集里（清单漂了或它没进版本控制）：%s" % absent
     assert len(MANIFEST_AT_RUN_START) >= 1000, (
@@ -1140,6 +1203,7 @@ def test_counter_evidence_a_dirty_instrument_is_named_by_the_registered_guard() 
 
 def test_counter_evidence_a_touched_tracked_file_moves_the_baseline() -> None:
     """sha 基线摘牙：改一枚在册件的读数 ⇒ 逐枚比对必须点名它，全集摘要必须跟着漂。"""
+    require_git_checkout()
     victim = "docker-compose.yml"
     assert victim in MANIFEST_AT_RUN_START, "在册件不在全集摘要里，这枚反证空响"
     mutated = dict(MANIFEST_AT_RUN_START)
@@ -1151,6 +1215,7 @@ def test_counter_evidence_a_touched_tracked_file_moves_the_baseline() -> None:
 
 def test_counter_evidence_a_deleted_tracked_file_is_named_not_shrugged_off() -> None:
     """被跟踪文件被删（ABSENT）同样要点名，不许当成「少一枚」混过去。"""
+    require_git_checkout()
     mutated = dict(MANIFEST_AT_RUN_START)
     victim = "app/common/model_handler.py"
     mutated[victim] = "ABSENT"
@@ -1181,7 +1246,7 @@ def test_counter_evidence_a_drift_in_a_shadow_copy_turns_the_disk_pins_red(tmp_p
     assert len(offenders) == 1 and offenders[0].startswith(victim + " "), offenders
     assert digest_of(before) != digest_of(tracked_manifest(root)), "逐枚漂了而摘要没漂：会漏报"
     assert ticket_signed_strays(entries) == [], "被跟踪文件的改动不归签名筛管，各钉各的面"
-    assert digest_of(tracked_manifest(REPO)) == RUN_START_TREE_SHA, (
+    assert digest_of(tracked_manifest(REPO) or {}) == RUN_START_TREE_SHA, (
         "反证说是在影子根里造漂移，真树却被碰脏了——这正是不许拿原件做实验的理由")
 
 
@@ -1211,7 +1276,7 @@ def test_counter_evidence_a_shadow_tree_full_of_foreign_junk_stays_green(tmp_pat
     assert ticket_signed_strays(entries) == [], ticket_signed_strays(entries)
     assert registered_modifications(entries) == [], registered_modifications(entries)
     assert manifest_offenders(tracked_manifest(root), tracked_manifest(root)) == []
-    assert digest_of(tracked_manifest(REPO)) == RUN_START_TREE_SHA, "真树被这枚反证碰过"
+    assert digest_of(tracked_manifest(REPO) or {}) == RUN_START_TREE_SHA, "真树被这枚反证碰过"
     flagged = retired_shape_extras(entries)
     assert len(flagged) == len(junk), (
         "旧钉本该把这 %d 枚噪声全判越界，读不满说明这枚反证是空响：%s" % (len(junk), flagged))

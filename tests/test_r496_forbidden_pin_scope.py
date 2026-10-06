@@ -15,10 +15,22 @@ R471 合法改过在册量具 `scripts/eval_transport_ask_v2.py`，两枚钉替�
 
 全部离线：漂移只在 tmp_path 的影子根里造；每把跑完现读真树全集摘要，必须与 import 那一刻逐字相等。
 尺一份都不新造：判决本体取自被治的那枚件（`importlib` 按路径载），两棵树不许各拿一把尺。
+
+R706（10-06 返工）· 本件的自读钉 `dropped_must_be_identical` 从此**先分这棵树的状态再取证**：
+ 静止态（HEAD 之下没有在飞的受跟踪货）一字不松，照旧拿 HEAD blob 对盘上字节；并树中态
+ （`git apply` 之后、`git commit` 之前那一段时间）改判索引 blob 对盘上字节，HEAD↔索引／HEAD↔盘上
+ 那一截差异逐枚点名登记，不作罪证。10-06 主树并 R700 时 state① 唯一那枚红就是这枚钉收的：
+ 闸门按归因放掉 `app/api/v1/data.py`（R700 的手），复证却拿 HEAD 当底本，于是「放掉了一条真改动」。
+ 🔴 不是「脏就跳过」：跳过＝摘牙。并树中态当场再拿一枚 `git worktree add --detach <HEAD>` 的干净
+ 影子树作**正控**（同一枚 `content_verdict`、同一批候选、同一枚 HEAD sha），两态数字记进 `READINGS_LOG`
+ 供凭据纸取数，影子树用完当场 `git worktree remove` 并自证名册里读不到它。
+ 刀：`tests/test_r706_state_branch_disk_pins.py`（静止态不松／暂存后又改必须红／未暂存的货不许红／
+ 无 .git 的检出具名 skip）。
 """
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
 from pathlib import Path
 
@@ -89,8 +101,113 @@ def commit_all(root: Path, subject: str) -> str:
 
 
 def real_tree_untouched() -> None:
-    assert mod.digest_of(mod.tracked_manifest(mod.REPO)) == mod.RUN_START_TREE_SHA, (
+    assert mod.digest_of(mod.tracked_manifest(mod.REPO) or {}) == mod.RUN_START_TREE_SHA, (
         "刀说是在影子根里造漂移，真树却被碰脏了——这正是 09-28 越界那一笔换成的这个形")
+
+
+# ------------------------------------------------------------------ R706 态分支（先分状态，再取证）
+#: 静止态＝HEAD 之下没有在飞的受跟踪货（索引与盘上逐枚等 HEAD）；并树中态＝`git apply` 之后、
+#: `git commit` 之前那一段时间——索引或盘上本来就与 HEAD 不同，那是别人那一枚单正在搬的货。
+#: 未跟踪条目不算货：主树常年挂着业主的 `?? ...`，把它算进来就等于宣布每棵树都在并树。
+STATIC_STATE = "静止态"
+MERGING_STATE = "并树中态"
+#: 并树中态里被放掉的候选的凭据前缀（判据①：那一截差异逐枚点名登记、不作罪证）。
+REGISTERED_PREFIX = "并树中态登记"
+
+#: 供凭据纸取数（判据②要两态数字）：每一枚 `real_tree_reading_verdict` 现读现 append 一条账。
+READINGS_LOG: list[dict] = []
+
+#: 影子端正控的路径前缀：带 pid 与序号，同批并发各建各的，只删自己建的那一枚。
+SHADOW_WORKTREE_PREFIX = "r706-head-shadow"
+SHADOW_SERIAL = [0]
+
+
+def read_tree_state(root: Path) -> dict:
+    """现取这棵树的状态：`git diff --cached --name-only`（HEAD↔索引）＋ `git status --porcelain`（索引↔盘上）。
+
+    两枚读数一律现取（判据①禁手抄、禁引用几分钟前的旧账）；`entries` 那种注入读数不参与分态，
+    分态只认这棵树自己此刻的 git 回答——注入的行是「git 若说谎时会打印的那几行」，不是盘面事实。
+    """
+    staged = set(mod._git_read(root, "diff", "--name-only", "-z", "--no-renames", "--cached", sep="\0"))
+    unstaged = set()
+    for line in mod.git_status_porcelain(root):
+        xy, raw = line[:2], line[3:].strip().replace("\\", "/")
+        if xy.strip() == "??":
+            continue
+        if len(xy) == 2 and xy[1] != " ":
+            unstaged.add(raw.split(" -> ")[0].strip())
+    delta = sorted(staged | unstaged)
+    return {"state": MERGING_STATE if delta else STATIC_STATE,
+            "staged": sorted(staged), "unstaged": sorted(unstaged), "delta": delta}
+
+
+def merge_drop_verdict(rel: str, root: Path, staged: set[str]) -> tuple[bool, str]:
+    """并树中态下「被闸门放掉的候选」的复证：三条腿里改判另两条——索引 blob 对盘上字节。
+
+    HEAD↔索引／HEAD↔盘上那一截是这棵树在飞的货，登记，不作罪证；索引里一旦存着一枚与 HEAD 不同的
+    暂存内容，它就是这一形的权威底本，盘上字节又不等于它 ⇒ 闸门吞下了「暂存之后又被写了一手」，
+    那是真手，必须红（判据③①②）。
+    """
+    head, index, work = mod.head_leg(rel, root), mod.index_leg(rel, root), mod.worktree_leg(rel, root)
+    legs = "HEAD=%s index=%s worktree=%s" % (mod._leg_text(head), mod._leg_text(index),
+                                             work[:10] if work else "缺")
+    if index == mod.UNMERGED:
+        return True, "索引未合并＝闸门吞掉的一手 | " + legs
+    if rel in staged:
+        if index is None:
+            if work is not None:
+                return True, "暂存里删掉了、盘上又长出字节＝索引 blob 与盘上不等 | " + legs
+            return False, "%s：暂存删除与盘上一致（HEAD↔索引那一截是货）| %s" % (REGISTERED_PREFIX, legs)
+        if work is None:
+            return True, "暂存内容之外盘上没了＝索引 blob 与盘上不等 | " + legs
+        if work != index[1]:
+            return True, "暂存之后又被写了一手＝索引 blob 与盘上不等 | " + legs
+        return False, "%s：暂存 blob 与盘上一字不差（HEAD↔索引那一截是货）| %s" % (REGISTERED_PREFIX, legs)
+    if head is None and index is None and work is None:
+        return False, "三条腿都没有这枚路径（不在本单视野）| " + legs
+    if head is not None and index is None:
+        return True, "索引里没了而 HEAD 与盘上都在＝暂存之外的一手 | " + legs
+    if head is not None and work is not None and work == head[1]:
+        return False, "字节相同 | " + legs
+    return False, "%s：未进索引的那一截差异＝apply 未 commit 的货，不作罪证 | %s" % (
+        REGISTERED_PREFIX, legs)
+
+
+def drop_audit(rel: str, root: Path, state: dict) -> tuple[bool, str]:
+    """被闸门放掉的候选的复证判据。静止态一字不松（照旧 `content_verdict` 三条腿全等）；
+    并树中态走索引对盘上——换的是坐标系，不换「放掉一条就要拿得出凭据」这条本分。"""
+    if state["state"] == STATIC_STATE:
+        return mod.content_verdict(rel, root)
+    return merge_drop_verdict(rel, root, set(state["staged"]))
+
+
+def head_shadow_control(root: Path, tmp: Path, rels: list[str]) -> dict:
+    """并树中态的正控（判据②）：同一批候选拿到 `git worktree add --detach <HEAD>` 的干净检出里再读一遍。
+
+    正控读到的 HEAD 必须与脏树同一枚 sha，被登记的每一枚在正控里必须一字不差——这就是「并树中态
+    不再红」不永真的凭据：把尺换成「脏就跳过」也能骗过脏树，骗不过这里逐枚点名的两态对照。
+    影子树只读，用完当场 `git worktree remove`，只删自己建的那一枚，并自证名册里再读不到它。
+    """
+    SHADOW_SERIAL[0] += 1
+    sha = mod._git(root, "rev-parse", "HEAD").strip()
+    tree = tmp / ("%s-%d-%d" % (SHADOW_WORKTREE_PREFIX, os.getpid(), SHADOW_SERIAL[0]))
+    tree.parent.mkdir(parents=True, exist_ok=True)
+    mod._git(root, "worktree", "add", "--detach", str(tree), sha)
+    readings: dict[str, list] = {}
+    try:
+        assert mod._git(tree, "rev-parse", "HEAD").strip() == sha, (
+            "影子端正控不是这棵树的 HEAD：%s vs %s" % (sha, tree))
+        for rel in rels:
+            changed, why = mod.content_verdict(rel, tree)
+            readings[rel] = [changed, why]
+            assert not changed, "干净 HEAD 检出里同一枚 content_verdict 读出了手：%s | %s" % (rel, why)
+    finally:
+        mod._git(root, "worktree", "remove", "--force", str(tree))
+    listing = mod._git(root, "worktree", "list", "--porcelain").replace("\\", "/").lower()
+    assert str(tree).replace("\\", "/").lower() not in listing, "工作树名册里还挂着影子树：%s" % tree
+    assert not tree.exists(), "影子树用完没删干净：%s" % tree
+    return {"head_sha": sha, "shadow_tree": str(tree), "removed": True,
+            "rels": sorted(readings), "readings": readings}
 
 
 # ------------------------------------------------------------------ 判据②：名单一枚不许少
@@ -231,21 +348,31 @@ def test_a_foreign_signed_commit_never_enters_the_roster(tmp_path: Path) -> None
 
 
 # ------------------------------------------------------------------ 真树自身的读数（现取，两形都要有牙）
-def dropped_must_be_identical(root: Path, candidates: list[str], hands: list[str]) -> None:
-    """闸门只许放掉「HEAD blob == 索引 blob == 盘上字节」的候选，而且放掉的每一枚当场复证一遍。
+def dropped_must_be_identical(root: Path, candidates: list[str], hands: list[str],
+                              state: dict | None = None) -> list[str]:
+    """闸门只许放掉「这一形的底本与盘上一字不差」的候选，放掉的每一枚当场复证，回登记账。
 
-    R623 的那道保险：不复证就没法区分「字节相同所以放」与「尺漂了所以看不见」——藏掉该藏的
-    是消灭假红，藏掉不该藏的是把牙磨平换绿，这两件事在盘面读数上长得一模一样，只有三条腿
-    对账能分开。所以这里对每一条被放掉的候选重跑一次 `content_verdict`，量出不同就红。
+    R623 那道保险原样留着：不复证就分不清「字节相同所以放」与「尺漂了所以看不见」。
+    R706 换的是坐标系。静止态一字不松——照旧拿 HEAD blob 对盘上字节，今天该红的还得红；
+    并树中态里 HEAD 之上有在飞的货（`git apply` 未 commit），拿 HEAD 当底本就是把别人那一枚单
+    的合法施工判成本单吞掉的罪证（10-06 主树并 R700 时 state① 唯一那枚红即此）。这一形改判
+    索引 blob 对盘上字节，HEAD↔索引／HEAD↔盘上那一截逐枚点名登记、不作罪证，由调用方拿影子端
+    正控再读一遍。🔴 不是「脏就跳过」：跳过＝摘牙；登记的每一枚都得留下名字。
     """
+    state = read_tree_state(root) if state is None else state
     kept = {mod.hit_path(hit) for hit in hands}
     dropped = [hit for hit in candidates if mod.hit_path(hit) not in kept]
+    registered: list[str] = []
     for hit in dropped:
         rel = mod.hit_path(hit)
-        changed, why = mod.content_verdict(rel, root)
-        assert not changed, "闸门放掉了真改动：%s（读数 %s）" % (rel, hit)
-        assert why.startswith("字节相同"), \
-            "放掉一条却拿不出『三条腿一字不差』的凭据：%s | %s" % (hit, why)
+        changed, why = drop_audit(rel, root, state)
+        assert not changed, "闸门放掉了真改动：%s（读数 %s｜态=%s｜%s）" % (rel, hit, state["state"], why)
+        assert why.startswith("字节相同") or why.startswith(REGISTERED_PREFIX) or \
+            why.startswith("三条腿都没有"), \
+            "放掉一条却拿不出『底本一字不差』的凭据：%s | %s | 态=%s" % (hit, why, state["state"])
+        if why.startswith(REGISTERED_PREFIX):
+            registered.append("%s | %s" % (rel, why))
+    return registered
 
 
 def real_tree_reading_verdict(root: Path, tmp: Path,
@@ -259,8 +386,14 @@ def real_tree_reading_verdict(root: Path, tmp: Path,
         在同一形下照样咬假红——并树窗口里 porcelain 能把内容一字未动的受跟踪条目报成 ` M`，事后
         现读三条腿全等（总控 17 枚）。今天：候选一律过内容尺，被放掉的每一枚都要能复证字节相同。
     `entries` 只给反证注入「git 若说谎时会打印的那几行」用；真跑一律现取，不采信自述。
+
+    R706 判据①②：先 `read_tree_state(root)` 分态，再取证。并树中态里被登记的每一枚当场拿
+    `git worktree add --detach <HEAD>` 的干净影子树复证一次，两态数字进 `READINGS_LOG` 供凭据纸取数。
+    R706 判据④：无 .git 的检出（`git archive` 解出来的树）具名 skip，不许在收集阶段 ERROR。
     """
+    mod.require_git_checkout(root)
     entries = mod.git_status_porcelain(root) if entries is None else list(entries)
+    state = read_tree_state(root)
     cand_fingerprint = mod.construction_fingerprint(entries)      # 候选层：盘面把本单点名的手
     raw_forbidden = mod.dirty_forbidden_paths(entries)            # 候选层：盘面把禁域点名的手
     raw_registered = mod.registered_modifications(entries)        # 候选层：盘面将在册件点名的手
@@ -283,9 +416,29 @@ def real_tree_reading_verdict(root: Path, tmp: Path,
     assert {mod.hit_path(hit) for hit in hands} <= \
         {mod.hit_path(hit) for hit in cand_fingerprint} | set(mod.DELIVERED_FILES), \
         "内容级指纹点到了本单名册之外的路径：闸门凭空指控"
-    dropped_must_be_identical(root, cand_fingerprint, hands)
-    dropped_must_be_identical(root, raw_forbidden, breaches)
-    dropped_must_be_identical(root, raw_registered, reg_breaches)
+    registered: list[str] = []
+    registered += dropped_must_be_identical(root, cand_fingerprint, hands, state)
+    registered += dropped_must_be_identical(root, raw_forbidden, breaches, state)
+    registered += dropped_must_be_identical(root, raw_registered, reg_breaches, state)
+    # 判据②：并树中态必须当场再跑一次「同一枚 content_verdict 在干净影子树里的读数」作对照。
+    shadow_control = {"skipped_reason": "%s：本钉拿的就是 HEAD 那一截底本，无需影子端正控" % state["state"]}
+    if state["state"] == MERGING_STATE:
+        rels = sorted({row.split(" | ", 1)[0] for row in registered}) or list(mod.DELIVERED_FILES)
+        shadow_control = head_shadow_control(root, tmp, rels)
+    READINGS_LOG.append({
+        "root": str(root),
+        "state": state["state"],
+        "staged": len(state["staged"]),
+        "unstaged": len(state["unstaged"]),
+        "hands": len(hands),
+        "breaches": len(breaches),
+        "reg_breaches": len(reg_breaches),
+        "dropped_candidates": len({mod.hit_path(hit) for hit in
+                                   cand_fingerprint + raw_forbidden + raw_registered} -
+                                  {mod.hit_path(hit) for hit in hands + breaches + reg_breaches}),
+        "registered": registered,
+        "control": shadow_control,
+    })
     if hands:
         # 形甲·本单此刻有手（内容尺量出来的手）⇒ 归因只认本单自己的名字，且名下零越界。
         joined = ",".join(hands)
@@ -295,9 +448,11 @@ def real_tree_reading_verdict(root: Path, tmp: Path,
             "形甲：指纹非空却没一枚落在本单名下（既不是在册交付件也不是写域新钉）："
             "归因把别人家的手记给了本单：%s" % hands)
         assert breaches == [], (
-            "形甲：本单在这棵树施工，内容尺却读出禁域越界——本单名下真越界：%s" % breaches)
+            "形甲：本单在这棵树施工，内容尺却读出禁域越界——本单名下真越界：%s（态=%s）"
+            % (breaches, state["state"]))
         assert reg_breaches == [], (
-            "形甲：本单在这棵树施工，内容尺却读出在册件动过字节：%s" % reg_breaches)
+            "形甲：本单在这棵树施工，内容尺却读出在册件动过字节：%s（态=%s）"
+            % (reg_breaches, state["state"]))
     else:
         # 形乙·此刻无人施工（盘面说有手的，全被三条腿对账放掉）⇒ 空读必须是合法的空。
         assert breaches == [] and reg_breaches == [], (
@@ -318,10 +473,13 @@ def real_tree_reading_verdict(root: Path, tmp: Path,
 
 
 def test_the_real_tree_reads_its_own_construction_fingerprint(tmp_path: Path) -> None:
-    """真树自读（R623 形）：判决本体抽出成 `real_tree_reading_verdict`，与本单的刀共用一把尺。
+    """真树自读（R623 形＋R706 态分支）：判决本体抽出成 `real_tree_reading_verdict`，与本单的刀共用一把尺。
 
     读数改形三条永真 + 两形各一刀，与 09-29 那版同形，只是把「盘面存在性当罪证」那三句换成了
     「三条腿 blob 对账」：只 touch mtime 不再能让这两枚钉开口，真写一个字节仍旧当场点名（判据②③
     的实测在 `tests/test_r623_content_caliber_disk_pins.py`）。
+    R706 再加一层：先分这棵树在静止态还是并树中态。并树窗口里 `git apply` 未 commit 的那一截
+    差异是在飞的货，逐枚登记并去干净影子树复证，不再当成「闸门吞了真改动」——主树并每一枚单
+    都要付一次「先红 vs 我造成」的归因税，今晚还要并三笔，这一格到此为止。
     """
     real_tree_reading_verdict(mod.REPO, tmp_path)
