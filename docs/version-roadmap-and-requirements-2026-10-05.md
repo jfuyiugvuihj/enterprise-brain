@@ -87,7 +87,7 @@
 | r453 基线登记 | 记在「待登记」 | **已登记 `4ebfaff`**：45→46 枚名，登记后单件 13 passed | 同上纸 §11 |
 | 门那格先红 | 「其余待查」 | **9 枚逐枚点名**（族表见看板 §4GJ 第 4 节），承接单 R693 已派 | `docs/tickets/R693-gate-red-set-to-zero.md` |
 | 后端镜像代次 | 落后主树（昨夜记过 21 h） | **PASS**：`build migrate`＋`up -d --force-recreate backend worker scheduler`，120 枚在册模块逐字节对齐 | 看板 §4GJ 第 5 节 |
-| V 前端九环＋两脸 | 没做 | **已派 R694**（`Archimedes`@`be-r694`），九环首次逐环钉成可失败表 | `docs/tickets/R694-frontend-nine-loop-walkthrough.md` |
+| V 前端九环＋两脸 | 没做 | **已交并树 `2b817fe`**（执行层 `Archimedes`@`be-r694`，凭据纸由总控代写）：环 **达 1-6、9**，环 **7、8 未达**——环 7 的分析腿归 R703（已并 `7810f73`，取证时刻在并树前所以读数仍旧），环 8 的产物登记腿归 **R710（在飞未结案）**；两张失败脸四案齐（`blank_screen` 逐枚 false，降级横幅具名），断网两页零外部请求，一次性容器六枚全回收、`r694_leftover` 空；缺陷清单六条逐条归因到符号（只立号零改码，判据 3 交回空）| `docs/testing/walkthrough-2026-10-06/README.md`＋`docs/tickets/R694-frontend-nine-loop-walkthrough.md` |
 | 推送／副本 | 本机唯一副本（H6 未结） | **gitee 已平到 `865cd3e`、未推枚数 0**；离线备份 `E:\eb-backup\main-20261006-121x.bundle`（30,246,346 B，`verify` okay）。🔴 github 那条仍推不通：`TLS connect error: unexpected eof`＝业主侧代理账 | 本节 |
 
 🔴 本班另记一条自纠（事故 #125）：上午在 state② 批次**在飞**时改了主树 HEAD（3 枚提交＋2 次 `worktree add`），那一次报 17 failed／862 passed 全是状态敏感钉的假红；冻树复跑＝879 passed／0 failed。规矩已补进 `AGENTS.md` 第 ⑮ 条（读数在飞禁改 HEAD）与第 ⑯ 条（派工调用只带 message，任何模型／推理档覆盖都不带——实测 `spawn_agent` 带 `reasoning_effort` 会在参数校验期被拒、线程根本没创建）。

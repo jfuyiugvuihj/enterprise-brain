@@ -99,3 +99,7 @@ R702 与 R710 走 `send_message_to_thread` 短指针续投（各 ~160 字节）�
 🔴 **§3 的起法今天被事故 #129 污染过一次**：我拿 `--help` 试未读过的队列，它没有 help 分支、直接从 band0 开跑，
 真执行了 `--force-recreate backend worker scheduler` 并清空 run32 的 shard 目录，`day1006.ledger.jsonl` 里 band0 那几笔已是 rc=0。
 ⇒ **真窗起之前先把这份账本改名留证（`day1006.ledger.jsonl.accident129`），让代次闸重跑**；否则窗会在旧镜像上量新并的 `app/**`＝假账。
+
+**再追加（16:4x·同班）**：上面「真窗起之前先把账本改名」这条**已经做了**——`day1006.ledger.jsonl` 现为 `day1006.ledger.jsonl.accident129`，
+那份污染账里的 band0 八笔 rc=0 不会再骗过代次闸。另：band0 其实已经把 band1 拉起来真跑过（`eval_window_shard_driver --tag run32` 与 `window_keep_awake --loop` 在我杀父队列后活着），
+现已逐 PID 清干净，run32 的 51 枚半途分片留给真窗的 `p18-run32-clear` 去清，我不手删。⇒ **下一条线起窗的口径＝等 R702／R710 并完、盘面没有件在跑、账本是新的，三件齐了才按 §3 那行命令起。**
