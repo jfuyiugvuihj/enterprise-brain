@@ -140,7 +140,7 @@ R668	QUEUED	tests/test_r668_*.py, docs/testing/r668-<开工日>.md, docs/tickets
 R669	QUEUED	tests/test_r669_*.py, docs/testing/r669-<开工日>.md, docs/tickets/R669-dev-mount-no-rebuild.md, scripts/tickets_index.py	9efff02	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R25::判据（机器可验）
 R670	LANDED	app/api/v1/chat.py, app/trace/, spans.py, persistence.py, schema.py, model_calls, tests/test_r670_*.py, docs/tickets/R670-*.md, docs/testing/r670-<今天>.md	f522b0435783	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R38::判据（机器可验）
 R672	LANDED	-	06990c318e0e	无工单文件·凭并树提交
-R673	QUEUED	app/common/, app/rag/, tests/test_r673_*.py, docs/tickets/R673-*.md, docs/testing/r673-<今天>.md	9efff02	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R26::判据（机器可验）
+R673	LANDED	app/common/, app/rag/, tests/test_r673_*.py, docs/tickets/R673-*.md, docs/testing/r673-<今天>.md	b2daf17d1c01	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R26::判据（机器可验）
 R674	LANDED	scripts/, tests/test_r674_*.py, docs/tickets/R674-*.md, docs/testing/r674-<今天>.md	ef42b6b03389	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R51::判据（机器可验）
 R675	QUEUED	tests/test_r675_*.py, docs/testing/r675-<开工日>.md, docs/tickets/R675-named-error-code-fill.md, scripts/tickets_index.py	9efff02	LINE::docs/handoff/2026-09-15-orchestration-board.md::**R675**
 R676	QUEUED	tests/test_r676_*.py, docs/testing/r676-<开工日>.md, docs/tickets/R676-synonym-rewrite-no-roundtrip.md, scripts/tickets_index.py	9efff02	S21CELL::docs/handoff/2026-09-15-backend-followup-requests.md::R47::判据（机器可验）
@@ -154,5 +154,7 @@ R683	QUEUED	tests/test_r683_*.py, docs/testing/r683-<开工日>.md, docs/tickets
 R684	QUEUED	docs/architecture/write-ownership.yaml, scripts/, tests/test_r684_*.py, docs/tickets/R684-*.md, docs/testing/r684-<今天>.md	9efff02	LINE::docs/handoff/2026-09-15-backend-followup-requests.md::- **R684**：
 R686	LANDED	scripts/audit_plan_ticket_ledger.py, tests/test_*ledger*, tests/test_r686_*, docs/tickets/R686-*.md, docs/testing/r686-<今天>.md	e99681ef8aef	总控亲签工单·无机器字段
 R687	QUEUED	app/api/v1/data.py, upload_excel, app/documents/, app/rag/spreadsheets.py, tests/test_r687_*.py, docs/tickets/R687-*.md, docs/testing/r687-<今天>.md	-	总控亲签工单·无机器字段
-R688	QUEUED	-	-	总控亲签工单·无机器字段
+R688	LANDED	-	ecbd52515225	总控亲签工单·无机器字段
 R690	LANDED	-	c82208c85988	总控亲签工单·无机器字段
+R693	QUEUED	tests/test_r469_readout_is_generated.py, tests/test_r492_s93_column_matches_derived.py, tests/test_r498_landing_shape_is_not_a_mention.py, tests/test_r638_pointer_ratchet.py, tests/test_r595_stall_cap.py, tests/test_r693_*.py, scripts/r693_*.py, docs/**, docs/tickets/R693-*.md, docs/testing/r693-<开工日>.md	-	总控亲签工单·无机器字段
+R694	QUEUED	docs/testing/walkthrough-2026-10-06/**, scripts/r694_*.py, tests/test_r694_*.py, docs/tickets/R694-*.md	-	总控亲签工单·无机器字段
