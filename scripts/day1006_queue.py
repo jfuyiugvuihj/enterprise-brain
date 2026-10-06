@@ -18,7 +18,9 @@ Bands (order matters):
   band 2  run32d -- 33-line shape subset with REPORT_LANE_VIA_QUEUE=on and the report tier
                    declared => the D gate's three cells. The night run passed an env name the
                    tool never reads, so run30d was a dud; see night1006_queue.py::LANE_ENV.
-  band 3  pairing readouts: r634 across (run22 run23 run30 run31) x (run32 run32d)
+  band 3  run33  -- second full window in the same generation (A4 needs a pair)
+  band 4  pairing readouts: r634 over the counterpart windows that still exist on disk
+          (run22/run23 were destroyed by accident #124; the band names every skip)
   close   restore switches, p18 gate, container ps, DONE summary
 
 Nothing here needs the internet: ollama/postgres/redis live inside the compose network and the
@@ -42,8 +44,25 @@ Q.DONE = os.path.join(TMP, "day1006.DONE.txt")
 PY, sh, log, led = Q.PY, Q.sh, Q.log, Q.led
 COMPOSE = Q.COMPOSE
 FIXTURE, SUBSET = Q.FIXTURE, Q.SUBSET
-PREV = ("run22", "run23", "run30", "run31")
-MINE = ("run32", "run32d")
+PREV_WANTED = ("run22", "run23", "run30", "run31")
+#: A window is only pairable when its five readout files survived on disk. Two of the
+#: wanted ones were eaten by accident #124 (an agent's rmtree over %TEMP%), so the
+#: pairing band names what it skipped instead of silently returning a red rc.
+MINE = ("run32", "run32d", "run33")
+PAIRABLE = ("run32", "run33")
+
+
+def readable(tag):
+    return os.path.exists(os.path.join(TMP, tag + "-report.json"))
+
+
+def prev_windows():
+    keep = [w for w in PREV_WANTED if readable(w)]
+    for w in PREV_WANTED:
+        if w not in keep:
+            led("pair-skip-" + w, 0, 0.0, "MISSING on disk (accident #124) -- not a red")
+    return tuple(keep)
+
 
 
 def head_sha():
@@ -73,10 +92,18 @@ def ensure_generation(step):
 
 
 def pairing():
-    for a in PREV:
+    prev = prev_windows()
+    if not prev:
+        led("a4-pairing-nothing-to-pair", 1, 0.0,
+            "no surviving counterpart window -- A4 stays unproven, say so in the book")
+        return
+    for a in prev:
         for b in MINE:
             sh([PY, os.path.join("scripts", "r634_category_delta.py"), "--window", a,
                 "--window", b], 300, "a4-" + a + "-" + b)
+    if readable("run32") and readable("run33"):
+        sh([PY, os.path.join("scripts", "r634_category_delta.py"), "--window", "run32",
+            "--window", "run33"], 300, "a4-same-generation-run32-run33")
 
 
 def main():
@@ -107,6 +134,12 @@ def main():
     Q.full_window("run32d", fixture=SUBSET, env=Q.LANE_ENV)
     Q.set_switch("REPORT_LANE_VIA_QUEUE", "off")
     Q.recreate("recreate-d-off")
+
+    # band 3: a second full window in the same generation, so A4 gets a pair that is not
+    # measured against last night's code. Same switches, same declared sync phase.
+    Q.full_window("run33", env=Q.SYNC_ENV)
+    sh([PY, os.path.join("scripts", "r631_stage_sum_delta.py"), "--window", "run33"], 600,
+       "run33-r631-lane-off", extra_env=Q.SYNC_ENV)
 
     pairing()
     Q.p18("p18-close")

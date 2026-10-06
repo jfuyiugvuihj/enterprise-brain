@@ -7,6 +7,7 @@ again. Restarts are capped by a number, not by mood.
 Process scan uses Get-CimInstance (wmic is gone from recent builds -- a scan that always
 returns empty would have made this watchdog fan out duplicates, which is worse than nothing).
 """
+import argparse
 import json
 import os
 import subprocess
@@ -15,15 +16,28 @@ import time
 
 REPO = r"C:\Users\fengx\PycharmProjects\企业智脑"
 PY = os.path.join(REPO, ".venv", "Scripts", "python.exe")
-QUEUE = os.path.join(REPO, "scripts", "night1006_queue.py")
 TMP = os.path.join(os.environ["TEMP"], "evalrun")
-WDLOG = os.path.join(TMP, "night1006.watchdog.log")
-DONE = os.path.join(TMP, "night1006.DONE.txt")
-STATE = os.path.join(TMP, "night1006.watchdog.json")
-MAX_RELAUNCH = int(os.environ.get("NIGHT1006_MAX_RELAUNCH", "6"))
+#: The tag names the ledger/DONE/log trio, the queue names the process to supervise. Defaults
+#: keep last night's invocation byte-for-byte working; tonight passes them explicitly, so one
+#: watchdog serves both queues instead of a second copy that can disagree with the first.
+_parser = argparse.ArgumentParser(description="keep a window queue alive without a heartbeat")
+_parser.add_argument("--tag", default="night1006")
+_parser.add_argument("--queue", default="night1006_queue.py")
+_parser.add_argument("--max-relaunch", type=int, default=6)
+_ARGS = _parser.parse_args()
+QUEUE = os.path.join(REPO, "scripts", _ARGS.queue)
+WDLOG = os.path.join(TMP, _ARGS.tag + ".watchdog.log")
+DONE = os.path.join(TMP, _ARGS.tag + ".DONE.txt")
+STATE = os.path.join(TMP, _ARGS.tag + ".watchdog.json")
+MAX_RELAUNCH = int(os.environ.get("EB_WATCHDOG_MAX_RELAUNCH", str(_ARGS.max_relaunch)))
+#: 🔴 The scan must not match the watchdog itself: passing --queue puts the queue filename
+#: straight into this process's command line, so a naive -like match finds its own pid every
+#: round, never accumulates a miss, and the "supervision" is fake-green. Both the pattern and
+#: the pid list now exclude the supervisor (hardening the shape the night version got by luck).
 PS = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-      "Where-Object { $_.CommandLine -like '*night1006_queue.py*' } | "
-      "Select-Object -ExpandProperty ProcessId")
+      "Where-Object { $_.CommandLine -like '*' + '%s' + '*' -and $_.CommandLine -notlike '*watchdog*' } | "
+      "Select-Object -ExpandProperty ProcessId") % _ARGS.queue
+CHILD_OUT = os.path.join(TMP, _ARGS.tag + ".child.out")
 os.makedirs(TMP, exist_ok=True)
 
 
@@ -42,7 +56,8 @@ def queue_pids():
     if res.returncode != 0:
         wlog("scan rc=%s err=%s -- treating as UNKNOWN, no relaunch" % (res.returncode, res.stderr[:200]))
         return [-1]
-    return [int(x) for x in res.stdout.split() if x.strip().isdigit()]
+    pids = [int(x) for x in res.stdout.split() if x.strip().isdigit()]
+    return [x for x in pids if x != os.getpid()]
 
 
 def state():
@@ -57,7 +72,7 @@ def save_state(data):
 
 
 def launch():
-    with open(os.path.join(TMP, "night1006.child.out"), "ab") as out:
+    with open(CHILD_OUT, "ab") as out:
         proc = subprocess.Popen([PY, QUEUE], cwd=REPO, stdout=out, stderr=subprocess.STDOUT,
                                 creationflags=0x00000008 if hasattr(subprocess, "DETACHED_PROCESS") else 0)
     return proc.pid
