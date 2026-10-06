@@ -803,6 +803,95 @@ def build_ledger(postgres: dict, chroma: dict, documents: dict) -> dict:
     }
 
 
+
+#: ===== CHASE-2026-10-06 段 A：机械落地腿（表逐格按现读换，正文只在映射唯一时才换）========
+#: 为什么正文不能跟着算术走：R660 那一族纯返工单的成因就是「人拿旧数加减行号」。这里唯一的
+#: 合法映射是「该文件现读集里恰有一枚还没被本文引用过的值」，两枚以上候选就拒写并点名候选。
+LINEAGE_DOC = "docs/perf/r387-label-lineage-2026-09-27.md"
+SECTION_ONE_HEADING = "## 1. \u5224\u636e\u2460"
+PROSE_CITE = re.compile(r"([A-Za-z0-9_./-]+[.](?:py|vue|sql)):`?(\d+)(?:-(\d+))?`?")
+NUMBER_TOKEN = re.compile(r"\d+(?:-\d+)?")
+
+
+def derived_values_by_file(root: Path = ROOT) -> dict:
+    """每枚锚的现读值，按「全路径」与「裸文件名」两个键索引（正文里两种写法都有）。"""
+    out: dict = {}
+    for key in LINEAGE_SITES:
+        file, first, last = resolve_site(key, root)
+        rendered = str(first) if first == last else "%d-%d" % (first, last)
+        for name in {file, file.rsplit("/", 1)[-1]}:
+            out.setdefault(name, set()).add(rendered)
+    return out
+
+
+def _section_bounds(rows) -> tuple:
+    hits = [i for i, row in enumerate(rows) if row.startswith(SECTION_ONE_HEADING)]
+    if len(hits) != 1:
+        raise RuntimeError("\u6587\u6863\u91cc \u00a71 \u90a3\u4e00\u8282\u5b9a\u4f4d\u4e0d\u5230\uff08\u547d\u4e2d %d \u679a\uff09\uff0c\u62d2\u7edd\u843d\u5730" % len(hits))
+    start = hits[0]
+    end = next((i for i in range(start + 1, len(rows)) if rows[i].startswith("## ")), len(rows))
+    return start, end
+
+
+def land_lineage_doc(text: str, cells: dict, values: dict) -> tuple:
+    """交回 (新正文, 改动枚数, 拒写清单)。清单非空时调用方一枚字节都不许写盘。"""
+    newline = "\r\n" if "\r\n" in text else "\n"
+    rows = text.split(newline)
+    start, end = _section_bounds(rows)
+    changed = 0
+    for index in range(start + 1, end):
+        line = rows[index]
+        if not line.startswith("| "):
+            continue
+        parts = line.split("|")
+        if len(parts) < 5:
+            continue
+        head = parts[1].strip()
+        if not head.isdigit() or int(head) not in cells:
+            continue
+        old = parts[3]
+        if not re.search(r"\d", old):
+            raise RuntimeError("\u7b2c %s \u8df3\u90a3\u4e00\u683c\u8bfb\u4e0d\u51fa\u6570\u5b57\uff0c\u62d2\u7edd\u843d\u5730\uff1a%r" % (head, old))
+        want = " " + cells[int(head)] + " "
+        if want != old:
+            rows[index] = "|".join(parts[:3] + [want] + parts[4:])
+            changed += 1
+    #：「已被本文引用过」按数值 token 判，不按文件名前缀判：表里第二枚坐标是脱文件名写法，
+    #　按名字统计会把现读值算成未引用，映射虚高成多候选，本班首次落地就是这么拒写的。
+    #　区间与单行值都按贪婪整段取，单行值不会被区间误判成已引用。
+    quoted_tokens: set = set()
+    for index in range(start, end):
+        quoted_tokens.update(NUMBER_TOKEN.findall(rows[index]))
+    refusals = []
+    for index in range(start + 1, end):
+        line = rows[index]
+        if line.startswith("| ") or set(line.strip()) <= set("+-: "):
+            continue
+        rebuilt = line
+        for name, first, last in PROSE_CITE.findall(line):
+            want = first if not last or last == first else first + "-" + last
+            if name not in values:
+                refusals.append("\u6b63\u6587\u5f15\u7528\u4e86\u6ca1\u6709\u951a\u7684\u6587\u4ef6\uff1a%s" % name)
+                continue
+            if want in values[name]:
+                continue
+            token = name + ":" + want
+            if token not in rebuilt:
+                refusals.append("%s \u7684 %s \u5728\u6587\u4e2d\u7684\u5199\u6cd5\u4e0e\u6b63\u5219\u4e0d\u540c\u5f62\uff0c\u62d2\u7edd\u731c" % (name, want))
+                continue
+            spare = sorted(v for v in values[name] if v not in quoted_tokens)
+            if len(spare) != 1:
+                refusals.append("%s \u7684 %s \u4e0d\u662f\u73b0\u8bfb\u503c\uff0c\u5019\u9009 %d \u679a\uff08%s\uff09\u21d2 \u6620\u5c04\u4e0d\u552f\u4e00\uff0c\u62d2\u7edd\u843d\u5730"
+                                % (name, want, len(spare), "\u3001".join(spare)))
+                continue
+            hit = spare[0]
+            rebuilt = rebuilt.replace(token, name + ":" + hit, 1)
+            quoted_tokens.add(hit)
+            changed += 1
+        rows[index] = rebuilt
+    return newline.join(rows), changed, refusals
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="R387 标签血缘取证（只读）")
     parser.add_argument("--database-url", default=os.getenv("DATABASE_URL", ""))
@@ -813,6 +902,8 @@ def main(argv=None) -> int:
     parser.add_argument("--json", dest="out", default="")
     parser.add_argument("--emit-doc-cells", action="store_true",
                         help="把文档 §1 血缘表那一格的现读结果按「序号<TAB>格」打出来（行号是派生的，表不许手改）")
+    parser.add_argument("--land", action="store_true",
+                        help="按现读机械重写 §1 那张表与正文里那些派生数；映射不唯一就拒写并非零退出")
     args = parser.parse_args(argv)
 
     if args.emit_doc_cells:
@@ -827,6 +918,28 @@ def main(argv=None) -> int:
         for item in LINEAGE_ANCHOR_FAILURES:
             print("  - " + item, file=sys.stderr)
         return 3
+
+    if args.land:
+        try:
+            values = derived_values_by_file()
+        except AnchorNotUnique as exc:
+            print("ABORT: \u951a\u8bfb\u4e0d\u51fa\u6765\uff0c\u62d2\u7edd\u843d\u5730\uff1a" + str(exc), file=sys.stderr)
+            return 3
+        path = ROOT / LINEAGE_DOC
+        text = path.read_bytes().decode("utf-8")
+        landed, changed, refusals = land_lineage_doc(text, LINEAGE_DOC_CELLS, values)
+        if refusals:
+            for item in refusals:
+                print("REFUSE: " + item, file=sys.stderr)
+            print("ABORT: \u672c\u6b21\u4e00\u679a\u5b57\u8282\u90fd\u6ca1\u5199\u76d8\uff08\u62d2\u7edd\u534a\u843d\u5730\uff09\u3002", file=sys.stderr)
+            return 4
+        if changed == 0:
+            print("\u90a3\u4e9b\u683c\u5df2\u7ecf\u662f\u73b0\u8bfb\uff0c\u4e00\u679a\u5b57\u8282\u90fd\u4e0d\u5fc5\u52a8")
+        else:
+            path.write_bytes(landed.encode("utf-8"))
+            print("\u5df2\u6309\u73b0\u8bfb\u673a\u68b0\u91cd\u5199 %d \u5904\uff08\u8868\u9010\u683c\uff0b\u6620\u5c04\u552f\u4e00\u7684\u6b63\u6587\uff09\uff1a%s"
+                  % (changed, LINEAGE_DOC))
+        return 0
 
     if args.no_db:
         postgres = {"skipped": "--no-db"}

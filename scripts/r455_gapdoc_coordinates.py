@@ -376,6 +376,9 @@ def main(argv=None) -> int:
                         help="把缺口单那一格的成品串按「锚名<TAB>格」打出来（行号是派生的，表不许手改）")
     parser.add_argument("--check", action="store_true",
                         help="那一格 vs 按符号现读：等值 rc=0；锚腐 rc=3；漂了或多手抄 rc=4")
+    parser.add_argument("--land", action="store_true",
+                        help="按现读机械重写那几格（只动坐标那一串字，锚腐即拒写）"
+                             " —— 下一班不必手改数字，也不必做行号算术（CHASE-2026-10-06 段 A）")
     parser.add_argument("--no-history", action="store_true", help="不对历史表那两节（影子树里没有 git 时用）")
     parser.add_argument("--json", dest="out", default="", help="把全貌写成 JSON 文件（只写点名那一枚）")
     args = parser.parse_args(argv)
@@ -390,6 +393,19 @@ def main(argv=None) -> int:
 
     try:
         body = gapdoc_text()
+        if args.land:
+            if failures:
+                for item in failures:
+                    print("ABORT: 锚读不出来，拒绝落地：" + item, file=sys.stderr)
+                return 3
+            landed = land_cells(body, cells)
+            if landed == body:
+                print("那几格已经是现读，一枚字节都不必动：" + json.dumps(cells, ensure_ascii=False))
+            else:
+                (ROOT / GAPDOC).write_bytes(landed.encode("utf-8"))
+                print("已按现读机械重写行内引用（只动坐标那一串字）：" +
+                      json.dumps(cells, ensure_ascii=False))
+            body = gapdoc_text()
         report = compare(text=body)
         if not args.no_history:
             report["history"] = history_frozen_diff(body, head_gapdoc())
