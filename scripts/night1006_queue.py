@@ -16,6 +16,7 @@ Bands (order matters, see docs/tickets/WINDOW-2026-10-05.md):
 Close-out restores both switches and the power setting.
 """
 import glob
+import io
 import json
 import os
 import re
@@ -41,8 +42,33 @@ CONTAINER = "enterprise-brain-backend-1"
 HEALTH = "http://127.0.0.1:8001/health"
 # R678 gives the transport its lane declaration. If the landed ticket names it differently,
 # change the VALUE here -- the queue fails loudly (rc recorded) rather than sampling a dud.
-LANE_ENV = {"DECLARE_LANE_TIER": os.environ.get("NIGHT1006_LANE_TIER", "report")}
+#: R678 reads the declaration through EVAL_DECLARE_LANE_TIER (see
+#: scripts/eval_transport_ask_v2.py::DECLARE_LANE_TIER), and the tier roster is
+#: scripts/eval_transport_ask_v2.py::LANE_BY_TIER, whose keys are the Chinese tier names.
+#: The night run passed DECLARE_LANE_TIER=report, which the tool never reads: a silent dud.
+LANE_ENV = {
+    "EVAL_DECLARE_LANE_TIER": os.environ.get("NIGHT1006_LANE_TIER", "\u62a5\u544a"),
+    "EVAL_POST_APPROVAL_READBACK": "on",
+    "REPORT_LANE_VIA_QUEUE": "on",
+}
+#: Sync-phase windows must say so out loud instead of leaving the key absent.
+SYNC_ENV = {"EVAL_DECLARE_LANE_TIER": "sync"}
 os.makedirs(WORK, exist_ok=True)
+
+#: The subset window is only a D-gate sample if the ruler is told the real
+#: denominator; 105 was hard-wired into run30d and made rc=2 on a healthy window.
+def count_fixture_rows(path):
+    with io.open(path, encoding="utf-8") as fh:
+        return sum(1 for line in fh if line.strip())
+
+
+#: Which windows claim the queue lane. Keep this in step with the bands in main().
+LANE_PHASE_BY_TAG = {"run30d": "on", "run32d": "on"}
+
+
+def lane_phase_for(tag):
+    return LANE_PHASE_BY_TAG.get(tag, "off")
+
 
 DONE_STEPS = set()
 
@@ -197,7 +223,7 @@ def drv(tag, extra, timeout, fixture=None, env=None):
     return sh(base + extra, timeout, tag + "-" + extra[0].strip("-"), extra_env=env, fatal=True)
 
 
-def readout(tag, fixture, env=None):
+def readout(tag, fixture=FIXTURE, env=None):
     ans = os.path.join(TMP, tag + "-answers.jsonl")
     side = os.path.join(TMP, tag + "-sidecar.jsonl")
     sh([PY, os.path.join("scripts", "run_quality_evaluation.py"), "--fixture", fixture,
@@ -208,8 +234,11 @@ def readout(tag, fixture, env=None):
        tag + "-report", extra_env=env)
     sh([PY, os.path.join("scripts", "r595_latency_readout.py"), "--answers", ans,
        "--fixture", fixture, "--sidecar", side, "--label", tag], 300, tag + "-r595", extra_env=env)
-    sh([PY, os.path.join("scripts", "r573_caliber_reconciliation.py"), "--tag", tag, "--no-rows"],
-       300, tag + "-r573", extra_env=env)
+    n_rows = count_fixture_rows(fixture)
+    r573 = [PY, os.path.join("scripts", "r573_caliber_reconciliation.py"), "--tag", tag,
+            "--no-rows", "--expect-denominator", str(n_rows),
+            "--expect-lane-phase", lane_phase_for(tag)]
+    sh(r573, 300, tag + "-r573", extra_env=env)
     for tool in glob.glob(os.path.join("scripts", "r674*.py")):
         sh([PY, tool, "--window", tag], 600, tag + "-" + os.path.basename(tool)[:-3], extra_env=env)
     for tool in ("r631_stage_sum_delta.py", "r636_stage_coverage.py"):
