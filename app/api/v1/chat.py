@@ -1672,6 +1672,17 @@ def _require_no_lane_on_chat(request) -> None:
 
 
 def _should_use_data_context(message: str, filename: str) -> bool:
+    """本轮问句是否「只要数据分析工具」（R709 收窄后的职责边界）。
+
+    它判的是**要不要额外检索文档**：命中 document_terms 就不把问句改写成
+    「请仅使用数据分析工具」，文档腿因此留在场。
+
+    🔴 它不判「本轮用不用点名的数据集」——那一格归
+    app/api/v1/chat.py::_named_dataset_must_travel。把它当否决用会把调用方点了名的
+    data_filename 挡在 configurable 之外：route_main 的 has_data 因此读成假，
+    _authorized_dataset_files 因此退化成全量可见集（凭据纸
+    docs/testing/r709-2026-10-06.md 第一节：「报销」那枚词命中即否决）。
+    """
     if not filename:
         return False
     text = (message or "").strip().lower()
@@ -1718,6 +1729,17 @@ def _should_use_data_context(message: str, filename: str) -> bool:
     has_document_intent = any(term in text for term in document_terms)
     has_data_intent = any(term in text for term in data_terms)
     return has_data_intent and not has_document_intent
+
+
+def _named_dataset_must_travel(filename: str) -> bool:
+    """调用方点名了数据集，这一轮就必须带着它（R709 判据 2 的路由改口）。
+
+    判别只看「点没点名」一枚条件，问句里有什么词都不许把它否决掉。被否决的代价写在
+    两处退化上：app/agents/orchestrator.py::route_main 的 has_data 读成假，Data 腿
+    当场不派；app/agents/tools.py::_authorized_dataset_files 走不到选中支，交回逐条
+    放行后的全量可见集——C 门「越权 0 条」那一格的风险就在第二处。
+    """
+    return bool(str(filename or "").strip())
 
 
 def _ensure_sessions_table():
@@ -2846,6 +2868,8 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     original_msg = request.message
     orchestration_msg = original_msg
     if _should_use_data_context(original_msg, request.data_filename):
+        # R709：这一处只管「要不要额外检索文档」。问句含制度词时不改写，文档腿留下；
+        # 点名的数据集照旧跟着这一轮走（下面 user_ctx 那一格），本枚判断否决不到它。
         orchestration_msg = (
             f"请仅使用数据分析工具分析数据文件《{request.data_filename}》。"
             f"用户问题：{original_msg}"
@@ -2899,7 +2923,10 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         if request_principal is not None:
             user_ctx = user_ctx or {"username": username}
             user_ctx["principal"] = request_principal
-        if _should_use_data_context(original_msg, request.data_filename):
+        # R709 判据 2／3：点名就必带，问句里的制度词不再拥有否决权。这一格进了
+        # configurable，route_main 的 has_data 才读得出真，_authorized_dataset_files
+        # 才走得到「只算点名的那一份」那一支，可见集不退化成全量。
+        if _named_dataset_must_travel(request.data_filename):
             user_ctx = user_ctx or {"username": username}
             user_ctx["data_filename"] = request.data_filename
     except Exception:
