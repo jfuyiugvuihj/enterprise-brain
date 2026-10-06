@@ -157,7 +157,7 @@ R687	QUEUED	app/api/v1/data.py, upload_excel, app/documents/, app/rag/spreadshee
 R688	LANDED	-	ecbd52515225	总控亲签工单·无机器字段
 R690	LANDED	-	c82208c85988	总控亲签工单·无机器字段
 R693	LANDED	tests/test_r469_readout_is_generated.py, tests/test_r492_s93_column_matches_derived.py, tests/test_r498_landing_shape_is_not_a_mention.py, tests/test_r638_pointer_ratchet.py, tests/test_r595_stall_cap.py, tests/test_r693_*.py, scripts/r693_*.py, docs/**, docs/tickets/R693-*.md, docs/testing/r693-<开工日>.md	d2bd7798a226	总控亲签工单·无机器字段
-R694	QUEUED	docs/testing/walkthrough-2026-10-06/**, scripts/r694_*.py, tests/test_r694_*.py, docs/tickets/R694-*.md	-	总控亲签工单·无机器字段
+R694	LANDED	docs/testing/walkthrough-2026-10-06/**, scripts/r694_*.py, tests/test_r694_*.py, docs/tickets/R694-*.md	2b817fe18f4f	总控亲签工单·无机器字段
 R695	LANDED	app/api/v1/chat.py, app/rag/retrieval_pipeline.py, app/trace/spans.py, app/common/stage_timing.py, app/common/model_handler.py, tests/test_r695_*.py, docs/tickets/R695-*.md, docs/testing/r695-<开工日>.md	78a65682d9ac	总控亲签工单·无机器字段
 R696	QUEUED	scripts/r631_stage_sum_delta.py, scripts/r674_window_trace_export.py, tests/test_r696_*.py, docs/testing/r696-<开工日>.md, docs/tickets/R696-*.md	-	总控亲签工单·无机器字段
 R697	QUEUED	tests/test_r636_stage_coverage.py, tests/test_r697_*.py, docs/testing/r697-<开工日>.md, docs/tickets/R697-*.md	-	总控亲签工单·无机器字段
@@ -168,7 +168,7 @@ R701	LANDED	scripts/r701_eol_form.py, scripts/r547_scope_verdict_gauge.py, tests
 R702	QUEUED	app/api/v1/chat.py, app/agents/evidence.py, eval_payload_for_answer, docs/api/contract-v1.md, tests/test_r702_*.py, docs/tickets/R702-*.md, docs/testing/r702-<开工日>.md	-	总控亲签工单·无机器字段
 R703	LANDED	app/agents/nodes.py, app/agents/tools.py, app/tools/**, app/agents/evidence.py, tests/test_r703_*.py, docs/tickets/R703-*.md, docs/testing/r703-<开工日>.md	7810f7371300	总控亲签工单·无机器字段
 R704	LANDED	scripts/r704_claims_coverage_readout.py, scripts/day1006_queue.py, docs/tickets/R704-*.md, docs/testing/r704-<开工日>.md, docs/tickets/index.tsv	0e53db3d2fcf	总控亲签工单·无机器字段
-R706	QUEUED	tests/test_r496_forbidden_pin_scope.py, tests/test_r453_cloud_eval_override.py, content_verdict, tests/test_r706_*.py, docs/tickets/R706-*.md, docs/testing/r706-<开工日>.md	-	总控亲签工单·无机器字段
+R706	LANDED	tests/test_r496_forbidden_pin_scope.py, tests/test_r453_cloud_eval_override.py, content_verdict, tests/test_r706_*.py, docs/tickets/R706-*.md, docs/testing/r706-<开工日>.md	bef6ec423168	总控亲签工单·无机器字段
 R707	LANDED	tests/test_r688_stage_accounts_are_landed.py, tests/test_r688_counter_evidence_teeth.py, tests/test_r707_emit_point_host_account_shapes.py, docs/tickets/R707-*.md, docs/tickets/index.tsv	4147b6d4b866	总控亲签工单·无机器字段
 R708	QUEUED	docs/api/contract-v1.md, docs/tickets/R708-*.md, docs/testing/r708-<开工日>.md	-	总控亲签工单·无机器字段
 R709	QUEUED	app/api/v1/chat.py, _should_use_data_context, route_main, has_data, _authorized_dataset_files, tests/test_r709_*.py, docs/tickets/R709-*.md, docs/testing/r709-<开工日>.md	-	总控亲签工单·无机器字段
