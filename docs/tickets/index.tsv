@@ -175,7 +175,7 @@ R709	QUEUED	app/api/v1/chat.py, _should_use_data_context, route_main, has_data, 
 R710	LANDED	app/agents/tools.py, app/storage/artifacts.py, app/agents/nodes.py, app/tools/**, tests/test_r710_*.py, docs/tickets/R710-*.md, docs/testing/r710-<开工日>.md	529a777e5710	总控亲签工单·无机器字段
 R711	QUEUED	scripts/tickets_index.py, tests/test_r711_*.py, docs/tickets/R711-*.md, docs/tickets/index.tsv, docs/testing/r711-<开工日>.md	-	总控亲签工单·无机器字段
 R712	LANDED	docs/perf/**, scripts/**, tests/test_r455_*.py, tests/test_r483_*.py, tests/test_r492_*.py, tests/test_r400_*.py, tests/test_r712_*.py, docs/tickets/R712-*.md, docs/testing/r712-<开工日>.md	2aa12de3c08c	总控亲签工单·无机器字段
-R713	QUEUED	app/agents/orchestrator.py, _fallback_export_result, tests/test_r713_*.py, docs/tickets/R713-*.md, docs/testing/r713-<开工日>.md	-	总控亲签工单·无机器字段
+R713	LANDED	app/agents/orchestrator.py, _fallback_export_result, tests/test_r713_*.py, docs/tickets/R713-*.md, docs/testing/r713-<开工日>.md	cac0fed745b3	总控亲签工单·无机器字段
 R714	QUEUED	app/api/v1/data.py, tests/test_r714_*.py, docs/tickets/R714-*.md, docs/testing/r714-<开工日>.md	-	总控亲签工单·无机器字段
 R715	QUEUED	app/agents/tools.py, app/agents/nodes.py, tests/test_r715_*.py, docs/tickets/R715-*.md, docs/testing/r715-<开工日>.md	-	总控亲签工单·无机器字段
 R716	QUEUED	-	-	总控亲签工单·无机器字段
@@ -184,3 +184,6 @@ R718	QUEUED	scripts/eval_transport_ask_v2.py, scripts/eval_frame_caliber_readout
 R719	QUEUED	tests/test_r645_contract_difference_ledger.py, docs/api/contract-v1.md, tests/test_r719_*.py, docs/tickets/R719-*.md, docs/testing/r719-<开工日>.md	-	总控亲签工单·无机器字段
 R720	LANDED	scripts/night1006_queue.py, readout, scripts/day1006_queue.py, tests/test_r720_*.py, docs/tickets/R720-*.md, docs/testing/r720-<开工日>.md	d8ce86c5450c	总控亲签工单·无机器字段
 R721	LANDED	scripts/r674_window_trace_export.py, psql_jsonl, docs/tickets/R721-*.md, docs/testing/r721-<开工日>.md	6545360f5c59	总控亲签工单·无机器字段
+R722	QUEUED	scripts/r483_empty_tables_triage.py, scripts/check_vector_wording.py, tests/test_r478_*.py, tests/test_r516_*.py, tests/test_r695_*.py, tests/test_r310_*.py, tests/test_r276_*.py, docs/tickets/R722-*.md, docs/testing/r722-<开工日>.md	-	总控亲签工单·无机器字段
+R723	QUEUED	app/agents/evidence.py, _terminal_status, app/agents/contracts.py, app/agents/nodes.py, _carry_chart_leg_truth, tests/test_r723_*.py, docs/tickets/R723-*.md, docs/testing/r723-<开工日>.md	-	总控亲签工单·无机器字段
+R724	QUEUED	app/api/v1/chat.py, _enqueue_ask_turn, deploy/queue_worker.py, tests/test_r37_report_lane_enqueue.py, tests/test_r32_lane_contract.py, tests/test_r724_*.py, docs/tickets/R724-*.md, docs/testing/r724-<开工日>.md	-	总控亲签工单·无机器字段
