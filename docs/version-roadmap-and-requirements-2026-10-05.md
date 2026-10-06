@@ -77,6 +77,21 @@
 7. 「未做」与「码在树」两头必须同时说：写未完成要点名欠的那一格，写已完成要给现取命令。
 8. 常驻牙不许把「此刻盘面脏不脏」「盘上字节是否等于 HEAD blob」当判据（事故 #96／#107／#113 同族病）。
 
+### 0.7 10-06 午·本班续格对账（把上午那遍 §0.6 之后新发生的事逐格落账，不改上面各节原文）
+
+| 格 | 上午的账 | 现取（10-06 12:1x） | 凭据 |
+|---|---|---|---|
+| R690（R38③ usage 真达） | 在飞、两态欠一遍 | **已并 `c82208c` 且两态齐**：state② 干净树 41 枚件 **879 passed／0 failed／289.49 s** | `docs/testing/r690-2026-10-06.md` §9 |
+| R688（R51② 生产发点） | 待派 | **已并 `ecbd525`**：三段有发点，两态 108 passed／13 skipped／0 failed；纸由总控代写（席位被打断时纸为零） | `docs/testing/r688-2026-10-06.md` |
+| R673（R26② 语义钉） | 待派 | **已并 `b2daf17`**：＋90/−0 与 17 枚牙（K1～K5）；三态 117 passed／1 failed（那 1 枚＝r498 先红，已在干净影子树 `f36de2f` 上证） | `docs/testing/r673-2026-10-06.md` §11 |
+| r453 基线登记 | 记在「待登记」 | **已登记 `4ebfaff`**：45→46 枚名，登记后单件 13 passed | 同上纸 §11 |
+| 门那格先红 | 「其余待查」 | **9 枚逐枚点名**（族表见看板 §4GJ 第 4 节），承接单 R693 已派 | `docs/tickets/R693-gate-red-set-to-zero.md` |
+| 后端镜像代次 | 落后主树（昨夜记过 21 h） | **PASS**：`build migrate`＋`up -d --force-recreate backend worker scheduler`，120 枚在册模块逐字节对齐 | 看板 §4GJ 第 5 节 |
+| V 前端九环＋两脸 | 没做 | **已派 R694**（`Archimedes`@`be-r694`），九环首次逐环钉成可失败表 | `docs/tickets/R694-frontend-nine-loop-walkthrough.md` |
+| 推送／副本 | 本机唯一副本（H6 未结） | **gitee 已平到 `865cd3e`、未推枚数 0**；离线备份 `E:\eb-backup\main-20261006-121x.bundle`（30,246,346 B，`verify` okay）。🔴 github 那条仍推不通：`TLS connect error: unexpected eof`＝业主侧代理账 | 本节 |
+
+🔴 本班另记一条自纠（事故 #125）：上午在 state② 批次**在飞**时改了主树 HEAD（3 枚提交＋2 次 `worktree add`），那一次报 17 failed／862 passed 全是状态敏感钉的假红；冻树复跑＝879 passed／0 failed。规矩已补进 `AGENTS.md` 第 ⑮ 条（读数在飞禁改 HEAD）与第 ⑯ 条（派工调用只带 message，任何模型／推理档覆盖都不带——实测 `spawn_agent` 带 `reasoning_effort` 会在参数校验期被拒、线程根本没创建）。
+
 ## 2. 现在的账（全部现取，代次 `dd16297`；R686 结算两格后由 11→9；10-06 晨本班对 §2 全量门那一格的改口与新增读数见 §0.6）
 
 | 项 | 现取读数 | 命令 |
@@ -85,7 +100,7 @@
 | 「产物在树即算清」未清 | **0 号** | 同上（读法甲） |
 | 「判据全达才算清」未清 | **9 号**：R25 R26 R28 R31 R35 R38 R44 R47 R51 | 同上（读法乙） |
 | 移出的 5 格（🔴 不算完成） | R29② R43② R48① R50② R52①，逐格带仓内出处＋判语关键词＋不可达证据 | 同上（`OUT` 那一段） |
-| 全量门（最近一次总控亲跑） | **57 failed／11438 passed／94 skipped／2 xfailed／978.29 s／`-n 4`／exit=1**；取证态＝HEAD `8bca11c` 上「R670 已 apply 未 commit」的 dirty 态（state①），日志 `%TEMP%\eb1006\gate_state1.log`。对照＝干净 HEAD `8bca11c` 上同批 18 枚件 **50 failed／342 passed／2 skipped／168.09 s**（工作树 `wt-hdctrl`，日志 `ctrl18.log`）⇒ 50 枚是**这棵树自带的先红**、R670 净新增 7 枚、被 R670 治好的 0 枚（那 7 枚逐枚归因见 `docs/testing/chase-2026-10-06.md` §3）。先红里 **39 枚**＝r460 21／r455 11／r387 7 三族派生坐标，已由 CHASE-2026-10-06 段 A′ 在 HEAD `7136f3d` 治好，三族同名件复跑 **158 passed／0 failed／1 xfailed／5.70 s**（8 枚文件逐枚点名见凭据纸）；其余先红（r638 需重取基线、r595 手抄坐标、r469／r492／r400／r498 待查、r453 未跟踪 env 里那行 `OLLAMA_REQUIRE_GPU` 待登记）**门未重量**——全量门在今晨那一遍之后没再跑（`scripts/run_gate.py` 属夜窗量具禁区，新规④下一次重量排在夜窗之后）。旧格「48 failed／11208 passed／…（基点 `9556513`）」作废，对账见 §0.6 | `python scripts/run_gate.py` |
+| 全量门（最近一次总控亲跑） | **57 failed／11438 passed／94 skipped／2 xfailed／978.29 s／`-n 4`／exit=1**；取证态＝HEAD `8bca11c` 上「R670 已 apply 未 commit」的 dirty 态（state①），日志 `%TEMP%\eb1006\gate_state1.log`。对照＝干净 HEAD `8bca11c` 上同批 18 枚件 **50 failed／342 passed／2 skipped／168.09 s**（工作树 `wt-hdctrl`，日志 `ctrl18.log`）⇒ 50 枚是**这棵树自带的先红**、R670 净新增 7 枚、被 R670 治好的 0 枚（那 7 枚逐枚归因见 `docs/testing/chase-2026-10-06.md` §3）。先红里 **39 枚**＝r460 21／r455 11／r387 7 三族派生坐标，已由 CHASE-2026-10-06 段 A′ 在 HEAD `7136f3d` 治好，三族同名件复跑 **158 passed／0 failed／1 xfailed／5.70 s**（8 枚文件逐枚点名见凭据纸）；其余先红已于 10-06 12:0x 亲跑 16 枚同名件量准＝**9 枚**（r638 指针棘轮 3／r469 读数件生成 2／r492 §9.3 列对派生 2／r595 run9 凭据复现 1／r498 提及与并树 1；r453 那格已由账面登记 `4ebfaff` 治好，登记前亲跑 1 failed／12 passed、剔键逐字符落回旧基线 True；r400 两枚件已在绿组）**门未重量**——全量门在今晨那一遍之后没再跑（`scripts/run_gate.py` 属夜窗量具禁区，新规④下一次重量排在夜窗之后）。这 9 枚的承接单＝**R693**（席位 `Curie`@`be-r693`，零摘牙硬规矩：变空只许靠派生尺 `--land` 写回或修那把身份坏掉的尺）。旧格「48 failed／11208 passed／…（基点 `9556513`）」作废，对账见 §0.6 与 §0.7 | `python scripts/run_gate.py` |
 | 体量 | `app` py 120、`tests` py 697（其中 **564 枚叫 `test_r*.py`**＝按单号生成的针）、`scripts` py 108、`docs` md 205、docs 共 9,180,484 B | `Get-ChildItem app -Recurse -Filter *.py` 等逐目录计数 |
 | 台账搬运成本 | 跟进单 1,335,486 B／7,577 行；看板 7,050 行——**每班整本重读**，这是病根，处置见 `docs/engineering/multi-agent-project-rules-2026-10-05.md` | `Get-Item docs/handoff/2026-09-15-backend-followup-requests.md` |
 | 向量库 | 全库 **1008** 枚向量在位；双写 **on**；读路径 **pgvector**（容器现值）；**停写未做**（R60）；双写召回腿 135 题里 **67 题 top-5 不一致**、Chroma 侧 **24 题空召回**、`drift` 零差集＝今夜 r58-recall 复核仍成立 | `docker exec enterprise-brain-backend-1 printenv INDEX_BACKEND`、`docker exec enterprise-brain-postgres-1 psql -U postgres -d enterprise_brain -c "select count(*) from chunk_vectors"` |
@@ -146,7 +161,7 @@ V1 明确不做（不变）：PDF 表格识别、复杂 Word 表格结构化、E
 | 号 | 欠的那一格（尺子点名） | 三态 | 现取凭据（量具＋代次） | 解锁这一步 | 归谁 | 墙钟 |
 |---|---|---|---|---|---|---|
 | R25 | 两句判据都是容器内事实，从未在真机读过 | **没验** | 🔴 推翻上一班「真没做」：`docker-compose.dev.yml` 早在在册（文件头自陈 R25，`./app:/app/app` 热挂进 backend／worker／scheduler，backend 带 `--reload-dir`，并写明为何不用 `docker-compose.override.yml`）；`docker inspect` 现取在跑容器只 5 枚命名卷、零 bind mount | 带 overlay 实跑一取证（动容器⇒窗后）＝**R669** | 我 | 20–40 分 |
-| R26 | ② 丢卡必须显式报错 | **没达** | `app/common/model_capabilities.py::require_gpu_enabled` 未设即 fail-open；容器 `printenv OLLAMA_REQUIRE_GPU` **rc=1** | 翻 `OLLAMA_REQUIRE_GPU=1`＋recreate＝**改生产行为**（待业主），语义钉＝**R673** | 业主＋我 | 30–60 分 |
+| R26 | ② 丢卡必须显式报错 | **语义已并树，真机那一半待演练** | `app/common/model_capabilities.py`（R673 并树 `b2daf17`）现取两种姿势各自具名：缺省＝`gpu_posture()`→`fail_open` 打一条 `CPU_LEG_DECLARATION`，翻 on＝`require_gpu` 硬门触发时就地 `available=false` 带稳定码；`deploy/.env.server` 里 `OLLAMA_REQUIRE_GPU` 现取＝`1`（业主 10-05 裁定、夜队列追加），三枚容器 `printenv`＝1，昨夜单题 smoke rc=0／45.8 s；r453 那格已按账面登记 45→46 枚名（`4ebfaff`） | 🔴 **仍欠一次真机丢卡演练**＋`/health/details` 三分读数（纸 §8 逐格记「未验」）；R26②／A③ **不由 R673 翻绿** | 我＋窗 | 窗后 30 分 |
 | R27 | ③ 端到端 −≥35 s | **达**（已落账尺 `e99681e`，读法乙 11→9） | 160.552 s 基线 → 问答类 p95 **50.1 s**（`scripts/r595_latency_readout.py`，run22／run23 两窗互证，代次 `9556513`）＝−110.4 s | 把这一格的达落进账尺＝**R686** | 子 agent | 15 分 |
 | R28 | ③ 30 题评测不退化 | **量不到** | `scripts/r634_category_delta.py`：run22→run23 五项指纹全等＝同码复跑，要的**跨代次对子 0 枚**（rc=4） | 今夜带 2 四扇同码窗＋12 枚对子 | 我＋窗 | 一夜一窗 |
 | R31 | ② 逐片时间戳不重叠、逐字无缺字 | **没达**（R662 的码已于 19:0x 并树 `9efff02`，两态各 697 passed／0 failed／15 skipped＝140.23 s／138.63 s；🔴 这一格仍是没达——分片复演不等于真窗，翻绿要带 2 读数） | 在册七枚合取 102/105；红四枚有名有姓＝`chart-01`／`tool-04`（各只发 1 帧）、`data-12`（2858 字一帧）、`chart-04`（missing 1258／extra 36，只在 33 题子集窗炸＝形状相关）；帧账 `run22-sidecar-frames.jsonl` 可离线复演 | **R662 在飞**（`Erdos`） | 子 agent | 0.5–1 人日 |
@@ -155,7 +170,7 @@ V1 明确不做（不变）：PDF 表格识别、复杂 Word 表格结构化、E
 | R38 | ③ 抽查一问 `input_tokens/output_tokens` 非零且与 Ollama 自报一致 | **没达** | `/ask` 有行非零（3955／245／467，cached 467／369／493）；🔴 `/chat` 打完模型**不落 `model_calls` 行**，`metadata` 只 `{"worker":"doc"}`、没存原始 usage | **R670**（写域含 `chat.py`⇒必须等 `Erdos` 收席） | 子 agent | 0.5 人日 |
 | R44 | ① 覆盖 95% 查询的热集常驻 | **没达** | `app/rag/hot_index.py` 在树；账上点名的**让路驱动件不在盘上**（与在册 R663／R654 同源） | **R677** 重写＋一台安静机器重量 | 子 agent＋窗 | 1 人日＋窗 |
 | R47 | ① 同义词题命中改进 | **量不到（零分母）** | 码在树（`retrieval_pipeline.py::expand_query_synonyms`）；105 题类别分布现取**零枚同义词题** ⇒ 分子永远为空 | 业主裁甲（加 12 枚题，评测集被钉钉过）或乙（改 top-5 变化率口径）＝**R676**；本班默认乙 | 待裁＋子 agent | 0.5 人日 |
-| R51 | ② 端到端与分段加总误差 <1% | **没达** | 本班亲跑 `scripts/r631_stage_sum_delta.py --window run22 run23` 各 **rc=3＝量不到**；喂 32 MB 隔离事件件取到 trace 2447／跨度 7405，但 classify／rewrite／retrieve／generate／reflect **五段全缺**、可比 0 枚（`scripts/r636_stage_coverage.py` 同 RC=3） | **R674**（窗按题导出 `runXX-traces.jsonl`）；顺带 **R680** 把 r631 的手抄 LF 位改成按键名查 | 子 agent | 1 人日 |
+| R51 | ② 端到端与分段加总误差 <1% | **生产发点已并树，读数待窗** | R688 并树 `ecbd525`：五段里 **classify／generate／reflect 三段有可指认生产发点**（`app/agents/nodes.py::classify_intent`／`::respond`／`::reflect_node`），总控亲跑两态同名 6 枚＝108 passed／13 skipped／0 failed；`app/trace/spans.py::record_stage_event` 与 `app/common/stage_timing.py::stage_window` 从「产品道零调用点」变有调用点 ⇒ `r631` 今晨那种 rc=3 空输入不再成立 | 欠两段：retrieve 采**甲案**（承认 `app/agents/tools.py::search_docs` 工具跨度即段账，读侧并段＝R696）；rewrite 需送身份＋开 `stage_account`＝**R695**；<1% 那一格由今晚 run32／run33 的 `r631` 读数判 | 子 agent | 今晚读数 |
 
 **读成三句话**：
 
@@ -181,7 +196,7 @@ V1 明确不做（不变）：PDF 表格识别、复杂 Word 表格结构化、E
 | C④ 无依据断言率 | **量不到（零分母）** | 质量件 `claims` 键 | `unsupported_claim_rate=0.0`，但三窗 315 行里带 `claims` 键 **0 行**＝没有分母的 0，不是「没有幻觉」 | `9556513` | 欠一枚「把 claims 落进答案件」的量具升级单 |
 | D 报告档可查回 | **未验**（订正：单题有凭据，整档没有） | `scripts/r561_queue_lane_piece_readout.py`＋`scripts/r573_caliber_reconciliation.py` | ✅ 10-01 真容器队列道六格全 PASS rc=0（`final_kind=queued_polled`／`polls=76`／终态体含 `usage`/`sources`）＝D① 单题代次 `fe166c8`；🔴 今夜三扇 on 相（run24s2／2b／2c）`queued_polled` **零枚**、`answer_source` 逐枚 `eval_transport_ask_v2:transport`＝**废样本**（根因＝`DECLARE_LANE_TIER` 缺省空串）；D②/D③ 键名在册、值没留 | 12aa93c | **R678** 修量具后重开一扇 on 相窗（跑完必须还原 off） |
 | E 企业形态 | **移出 V1**（账尺已进 `OUT` 档） | 环境矩阵 E1–E6 | 72 h 长跑／备份恢复／改时钟验 JWT 属上线实施清单；唯一产品级判据「双身份越权 0 条」由 C① 承担 | 计划书裁定 | 交付阶段；R575 备份演练今夜 rc=0（62.3 s） |
-| V 前端 | **未验** | Playwright＋人工走查 | 登录页地球图、字体本地化、工作台背景四层已并树；九环走查与两张失败脸（embedding 缺失／无 GPU）没做 | 待做 | 子 agent 开窗＋截图 |
+| V 前端 | **在飞**（R694 已派） | `docs/tickets/R694-frontend-nine-loop-walkthrough.md`＋Playwright | 登录页地球图／字体本地化／工作台背景四层已并树；九环**首次钉成逐环可失败表**＋两张失败脸（embedding 缺失／无 GPU，注入法禁改产品码）＋断网自证；环境前置现取七枚容器齐、`GET /` 200、`GET /api/v1/health` 200，后端代次闸已由 FAIL(16 处字节差) → `build migrate`＋`--force-recreate` → **PASS（120 枚在册模块逐字节对齐）**，前端源码 30 h 零提交故镜像不落后、不重建 | 席位 `Archimedes`@`be-r694` 交付截图与逐环读数；发现缺陷只立号不改码 | 子 agent | 收窗前 |
 ## 6. 多 Agent 并发施工（这台机上的真实机制，不是愿望）
 
 r2 那张 A–F 并发组表已废（它按功能名称分组，而并行只能按写集切）。现行规则：
