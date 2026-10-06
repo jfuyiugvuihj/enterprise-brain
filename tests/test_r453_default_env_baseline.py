@@ -27,6 +27,16 @@
     `declared_names`／`declared_pairs` 两把尺今天复跑仍与 09-28 常量一字不差（compose 一个字没动），
     默认腿仍指本机 ollama，出厂 `INDEX_BACKEND_DEFAULT` 仍是 chroma。这一格不改成 skip，也不改成
     "在场也不比对"；文件不在场时的 skip 分支保持原样——那是给没有业主文件的工作树用的，不当成通过。
+
+10-06 R673 登记 · 有效名集合基线再对表（账面登记，不是改判据口径）
+    业主 10-05 裁定把 GPU 硬门翻 on，夜队列把 `OLLAMA_REQUIRE_GPU` 追加进本机那份 `deploy/.env.server`
+    ⇒ 本件在干净主树漂红，总控亲跑读数＝1 failed / 12 passed，尺自己把新 sha 打印成 `ccbf4740…`。
+    登记手法与上面 R617 那一节同口径：用本件自己的 names_sha(static_render(REPO, (BASE_COMPOSE,))
+    ["effective_names"]) 现取＝**46 枚名**；把 `OLLAMA_REQUIRE_GPU` 单独剔掉 ⇒ 45 枚名 ⇒ sha 逐字符落回
+    10-03 那份基线（falls_back_to_stored_baseline=True，总控亲验，非席位转述）。所以漂的是"业主本机 env
+    又加了一枚键"，不是改名也不是删键。`declared_names`／`declared_pairs` 两把尺同日复跑仍与 09-28 常量
+    一字不差（compose 本体没动，默认路径未变）。这一格属 R673 总控追加段点名的"账面登记"，落点是常量那行
+    `EFFECTIVE_NAMES_SHA_WITH_DEPLOYMENT_ENV`，在执行层写域之外，由总控落笔。
 """
 from __future__ import annotations
 
@@ -72,8 +82,10 @@ COMPOSE_DECLARED_NAMES_SHA = "053969b82c552e6a6089240f775b21404326d4e21d88f2a875
 COMPOSE_DECLARED_PAIRS_SHA = "e88f4feaf54cbe73c26994628916347b81720d07dd58a406cb011eea7aba1c32"
 
 #: 业主 env 键集在场时的完整名集合基线。10-03 R617 从主树 deploy/.env.server 现取（本件 names_sha，
-#: 只算键名）；上一版 09-28 的已随业主本机加键漂掉，对表过程与差集见模块 docstring。
-EFFECTIVE_NAMES_SHA_WITH_DEPLOYMENT_ENV = "37f8a545ee02301b77390e0eac47d2f2a3a3831a0b487eaf8aa0ad8e3ba9f64b"
+#: 只算键名）。
+#: 10-06 R673 登记：业主 10-05 裁定翻 on、夜队列把那一行追加进本机 env ⇒ 现取 46 枚名，
+#: 上一版（10-03 R617 的 45 枚名）已随加键漂掉；对表手法与 R617 同一口径，差集证明见模块 docstring。
+EFFECTIVE_NAMES_SHA_WITH_DEPLOYMENT_ENV = "ccbf4740b8dd6e644beca2ae63c387b14c0e33381e23a2ef538fe03654791c85"
 
 ENV_ASSIGNMENT = re.compile(r"^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=")
 
