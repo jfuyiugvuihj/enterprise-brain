@@ -61,3 +61,13 @@
 待派池的散文账只有一行「R673（…）」，开工的人得重读整本跟进单或看板才能拿到判据原文。
 本文件把那一段逐字搬进 `docs/tickets/`，从此逐号状态的唯一真源是工单目录，
 每班开工只读 `docs/tickets/index.tsv` 与本文件。
+
+
+---
+
+## 总控追加（10-06 10:5x·派工前写域窄化，与本单原判据同时生效）
+
+- 🔴 **写域窄化到符号级**：只许 `app/common/model_capabilities.py` ＋新增 `tests/test_r673_*.py` ＋ `docs/testing/r673-<开工日>.md`。目录级 `app/common/` 与 `app/rag/` **一律禁碰**——`app/common/model_handler.py` 正由 R690（席位 Pasteur）独占，`app/rag/**` 另有他席；两席同文件＝真写域冲突，退回。
+- 现取盘面（派工时）：`OLLAMA_REQUIRE_GPU` 已在 `deploy/.env.server` 里被夜队列**追加**成 `1`（业主 10-05 裁定翻 on），三枚容器 `printenv` 现取＝1，昨夜单题 smoke **rc=0／45.8 s** 未触发回滚。所以本单**不再需要**动容器或动 env——`deploy/.env.server` 属禁区，动它即作废。
+- 顺带一格记账（可由本单的证据纸承接，不许改量具）：`tests/test_r453_default_env_baseline.py::test_the_effective_name_set_baseline_when_the_deployment_env_file_is_present` 因那行新键而红（干净树 `wt-r670s2`@`328bfbe` 上不存在未跟踪的 env 件，故对照不红）。这一格的正解是把 `OLLAMA_REQUIRE_GPU` 登记进基线名册，属账面登记，不属改判据；若你判它必须改口径才能绿，停下写进交付由总控裁。
+- R26②／A③ 的翻绿**不由本单宣布**：语义钉＋离线反证归本单，「丢卡必报错」的真机演练要一扇不吃外网的窗（Ollama 在 compose 网络内），窗后排。交付里明写哪格待窗，写成达即退回。

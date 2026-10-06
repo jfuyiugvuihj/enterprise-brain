@@ -154,3 +154,5 @@ R683	QUEUED	tests/test_r683_*.py, docs/testing/r683-<开工日>.md, docs/tickets
 R684	QUEUED	docs/architecture/write-ownership.yaml, scripts/, tests/test_r684_*.py, docs/tickets/R684-*.md, docs/testing/r684-<今天>.md	9efff02	LINE::docs/handoff/2026-09-15-backend-followup-requests.md::- **R684**：
 R686	LANDED	scripts/audit_plan_ticket_ledger.py, tests/test_*ledger*, tests/test_r686_*, docs/tickets/R686-*.md, docs/testing/r686-<今天>.md	e99681ef8aef	总控亲签工单·无机器字段
 R687	QUEUED	app/api/v1/data.py, upload_excel, app/documents/, app/rag/spreadsheets.py, tests/test_r687_*.py, docs/tickets/R687-*.md, docs/testing/r687-<今天>.md	-	总控亲签工单·无机器字段
+R688	QUEUED	-	-	总控亲签工单·无机器字段
+R690	QUEUED	-	-	总控亲签工单·无机器字段

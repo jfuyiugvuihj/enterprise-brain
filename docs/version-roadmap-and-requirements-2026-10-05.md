@@ -56,6 +56,15 @@
 | 6 | 「在途执行层 `Hilbert`／`Lovelace`／`Arendt`」 | 过期名册。现取在飞＝`Erdos`/R662（A② 四枚单帧行，写域含 `chat.py`＋`nodes.py`）；`Bohr`/R666 与 `Zeno`/R672 已验收并树并 close 腾槽 | 看板 §0 名册行 |
 | 7 | 「全量门 48 failed／11208 passed／…（基点 `9556513`）」 | 数字**仍然在册但代次更旧**：那之后 R664／R672／R666 已并树，门未重量。新规④口径＝全量门每班开工一次＋冻结前一次＋每并满 5 枚补一次，今夜带 2 静默期不跑 | `python scripts/run_gate.py` |
 
+## 0.6 r4 里被本班（2026-10-06 晨·总控）推翻或改口的行（逐条对账）
+
+| # | r4 原话 | 本班现取 | 现取凭据 |
+|---|---|---|---|
+| 1 | 「全量门 48 failed／11208 passed／58 skipped／2 xfailed／1592.0 s／基点 `9556513`」 | **作废**（代次与枚数两头都旧）。今晨总控亲跑 state①＝**57 failed／11438 passed／94 skipped／2 xfailed／978.29 s／`-n 4`／exit=1**（HEAD `8bca11c`＋dirty）；同 HEAD 干净对照 18 枚件＝**50 failed**，即套件自带先红 50 枚、R670 净新增 7 枚。🔴 那句「48 枚红已归因」是**上一班的归因**，本班重算后 50 枚先红里 **39 枚属派生坐标漂移**（三族，已治）、**其余仍未清账**（见 §2 同一格） | `%TEMP%\eb1006\gate_state1.log`、`%TEMP%\eb1006\ctrl18.log`、`python scripts/run_gate.py`（窗后重量） |
+| 2 | 「`OLLAMA_REQUIRE_GPU` **未设**（`printenv` rc=1＝fail-open）」 | **过期**。业主 10-05 裁定翻 on，夜队列已把那行追加进 `deploy/.env.server`；本班 10:5x 现取三枚容器 `printenv OLLAMA_REQUIRE_GPU` ＝ **1**（凭据＝`docs/tickets/R673-gpu-honest-declaration.md` 追加段）。§2 那行仍写「未设」，本班不重跑容器命令（本单禁区＝任何容器动作），故只记改口不翻格，留待窗后现取重写 | `docker exec enterprise-brain-backend-1 printenv OLLAMA_REQUIRE_GPU`（键名查，别记行号） |
+| 3 | 「重锚工单会一直生（R660 重锚 46 枚／R646 换 15 枚）」 | **今天有了量具**：机械层（`tests/**.py`＋`scripts/**.py` 的 AST 字符串常量）手抄坐标现取 **95 枚／30 个文件**，已挂棘轮 `scripts/lint_hand_copied_coordinates.py::HAND_COPY_BUDGET`＝95，超线 rc=4；文档层（`docs/**/*.md`，236 个文件全扫）现取 **5416 枚／135 个文件**，逐枚计不逐行计，用的是同一把正则：看板 914／跟进单 860／`docs/api/contract-v1.md` 246⇒ 卫兵今天只咬机械层，文档层归 **R692**（全量符号化）。三把坐标尺（r460／r455／r387）的 `--land` 腿齐了：并树挪行位之后一条命令回绿，不再产生纯重锚单 | `python scripts/lint_hand_copied_coordinates.py --check`（rc=0，现取=95 预算=95 越界文件=30）；文档层＝把同一把 `LITERAL_CITE` 正则对 `docs/**/*.md` 逐枚计数（一次性脚本，不入册） |
+| 4 | 「台账拆成机器可读小文件＝刀1 已做」 | **半做，判负**：`rg docs.tickets scripts/audit_plan_ticket_ledger.py` 现取 **0 命中** ⇒ 账尺的状态仍从计划书格子取，`docs/tickets/index.tsv`（155 行）没有消费方＝第三本账风险。承接单 **R680**（在册 QUEUED），本单写域不含它 | `rg -c "docs\.tickets" scripts/audit_plan_ticket_ledger.py` |
+
 ## 1. 反假账八条（施工与记账都受约束）
 
 1. 每个结论只能取三态之一：`码在树`／`真机验过`／`量不到`。后两态不许互相换措辞，"量不到"不许写成"已完成"或"不影响"。
@@ -68,7 +77,7 @@
 7. 「未做」与「码在树」两头必须同时说：写未完成要点名欠的那一格，写已完成要给现取命令。
 8. 常驻牙不许把「此刻盘面脏不脏」「盘上字节是否等于 HEAD blob」当判据（事故 #96／#107／#113 同族病）。
 
-## 2. 现在的账（全部现取，代次 `dd16297`；R686 结算两格后由 11→9）
+## 2. 现在的账（全部现取，代次 `dd16297`；R686 结算两格后由 11→9；10-06 晨本班对 §2 全量门那一格的改口与新增读数见 §0.6）
 
 | 项 | 现取读数 | 命令 |
 |---|---|---|
@@ -76,7 +85,7 @@
 | 「产物在树即算清」未清 | **0 号** | 同上（读法甲） |
 | 「判据全达才算清」未清 | **9 号**：R25 R26 R28 R31 R35 R38 R44 R47 R51 | 同上（读法乙） |
 | 移出的 5 格（🔴 不算完成） | R29② R43② R48① R50② R52①，逐格带仓内出处＋判语关键词＋不可达证据 | 同上（`OUT` 那一段） |
-| 全量门（最近一次总控亲跑） | 48 failed／11208 passed／58 skipped／2 xfailed／1592.0 s／exit=1，**基点 `9556513`**；此后 R664／R672／R666 已并树，门未重量（新规④：每班开工一次＋冻结前一次＋每并满 5 枚补一次） | `python scripts/run_gate.py` |
+| 全量门（最近一次总控亲跑） | **57 failed／11438 passed／94 skipped／2 xfailed／978.29 s／`-n 4`／exit=1**；取证态＝HEAD `8bca11c` 上「R670 已 apply 未 commit」的 dirty 态（state①），日志 `%TEMP%\eb1006\gate_state1.log`。对照＝干净 HEAD `8bca11c` 上同批 18 枚件 **50 failed／342 passed／2 skipped／168.09 s**（工作树 `wt-hdctrl`，日志 `ctrl18.log`）⇒ 50 枚是**这棵树自带的先红**、R670 净新增 7 枚、被 R670 治好的 0 枚（那 7 枚逐枚归因见 `docs/testing/chase-2026-10-06.md` §3）。先红里 **39 枚**＝r460 21／r455 11／r387 7 三族派生坐标，已由 CHASE-2026-10-06 段 A′ 在 HEAD `7136f3d` 治好，三族同名件复跑 **158 passed／0 failed／1 xfailed／5.70 s**（8 枚文件逐枚点名见凭据纸）；其余先红（r638 需重取基线、r595 手抄坐标、r469／r492／r400／r498 待查、r453 未跟踪 env 里那行 `OLLAMA_REQUIRE_GPU` 待登记）**门未重量**——全量门在今晨那一遍之后没再跑（`scripts/run_gate.py` 属夜窗量具禁区，新规④下一次重量排在夜窗之后）。旧格「48 failed／11208 passed／…（基点 `9556513`）」作废，对账见 §0.6 | `python scripts/run_gate.py` |
 | 体量 | `app` py 120、`tests` py 697（其中 **564 枚叫 `test_r*.py`**＝按单号生成的针）、`scripts` py 108、`docs` md 205、docs 共 9,180,484 B | `Get-ChildItem app -Recurse -Filter *.py` 等逐目录计数 |
 | 台账搬运成本 | 跟进单 1,335,486 B／7,577 行；看板 7,050 行——**每班整本重读**，这是病根，处置见 `docs/engineering/multi-agent-project-rules-2026-10-05.md` | `Get-Item docs/handoff/2026-09-15-backend-followup-requests.md` |
 | 向量库 | 全库 **1008** 枚向量在位；双写 **on**；读路径 **pgvector**（容器现值）；**停写未做**（R60）；双写召回腿 135 题里 **67 题 top-5 不一致**、Chroma 侧 **24 题空召回**、`drift` 零差集＝今夜 r58-recall 复核仍成立 | `docker exec enterprise-brain-backend-1 printenv INDEX_BACKEND`、`docker exec enterprise-brain-postgres-1 psql -U postgres -d enterprise_brain -c "select count(*) from chunk_vectors"` |
