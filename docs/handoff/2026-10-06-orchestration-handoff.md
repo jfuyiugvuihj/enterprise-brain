@@ -103,3 +103,50 @@ R702 与 R710 走 `send_message_to_thread` 短指针续投（各 ~160 字节）�
 **再追加（16:4x·同班）**：上面「真窗起之前先把账本改名」这条**已经做了**——`day1006.ledger.jsonl` 现为 `day1006.ledger.jsonl.accident129`，
 那份污染账里的 band0 八笔 rc=0 不会再骗过代次闸。另：band0 其实已经把 band1 拉起来真跑过（`eval_window_shard_driver --tag run32` 与 `window_keep_awake --loop` 在我杀父队列后活着），
 现已逐 PID 清干净，run32 的 51 枚半途分片留给真窗的 `p18-run32-clear` 去清，我不手删。⇒ **下一条线起窗的口径＝等 R702／R710 并完、盘面没有件在跑、账本是新的，三件齐了才按 §3 那行命令起。**
+## 追加（10-06 18:3x·第二十一班续席·订正本纸 §3 夜窗那一格）
+
+**§3 那行起法命令没错，但今天照它起就是跑不动**——队列码里躺着两枚「看着在跑、其实一格没量」的暗闸：`fresh_tag` 把窗指纹记留在盘上 ⇒ band1 的 105 题全窗 0.5 秒 REFUSE rc=2；文末无条件写 DONE ⇒ 看门狗见 DONE 退场，永不重投。两处已就地治，另补一枚开局把 `REPORT_LANE_VIA_QUEUE` 钉回 sync 相的现读现校。全文见看板 §4GN 与事故 #130。
+
+**18:22 起的这扇才是今晚的真窗**：`run32.window.json` 现取 `revision=922da30c...`／`pgvector`，`run32-run.log` 写 `shards=105 already complete=0 to run=105`，队列为 `night1006_watchdog.py --tag day1006`（watchdog 现取 pid 见 `day1006.watchdog.log`，重投预算已用 2／8）。接班线只有一件硬要做：**别改 HEAD、别重建镜像**（⑮ 与 #130 同族）；窗外只做零 CPU 的账面活。
+
+🔴 **⑪ 的第三枚读数今天订正**：「账本行数在涨」在采窗步骤在飞时**根本不涨**——`led()` 只在步骤收尾才落一行，105 片跑一个半小时可以一行都不新增。判「窗真在量」的真尺＝`%TEMP%\evalrun\<tag>.shards\*-answers.jsonl` 的枚数在涨（外加 `<tag>-sidecar.jsonl` 在长），账本行数只用来判「步骤有没有收」。今天就是被这条口径骗过一次：账本 12 笔新行，全窗零片。
+
+## 再追加（10-06 18:3x·同班·窗后队与两格「今晚必不绿」）
+
+**① 窗后已排队**：`%TEMP%\evalrun\day1006\day1006_postgate_watch.py`（真身 pid 现取 16572）等 `day1006.DONE.txt` 或「片数十分钟不涨且窗属进程零枚」才起 `scripts/run_gate.py`，落 `day1006\postgate-run_gate.log`＋账本一行。明早先看这份门的真数再派 R712——**别拿事故 #125 那枚 57 failed 当 HEAD 账**。它不提交、不改 HEAD，只跑读数。
+
+**🔴 ② 两格今晚不许翻绿**：C④ 要量具读得到 claims，而 `eval_transport_ask_v2.py::transport` 读不到（五枚键被 `test_r181_text_frame_ruler.py` 相等钉锁着）＝R718，窗后第一优先派它，`run32-r704-claims` 今晚多半还是 rc=3／NOT_MEASURED，那是**量具的格子**不是产品的失败；R44① 的客户尺寸格要 37,483 枚真库，band5 那枚 `--coverage` 只量本机 1,008 枚的安静机器重量，两格不同命，不许互相冒充。
+
+**③ 本班未提交的账（按 ⑮ 故意压着）**：`scripts/night1006_queue.py`（fresh_tag 整体隔离＋readout 落点名派生）、`scripts/day1006_queue.py`（开局钉 sync 相＋DONE 只在采窗全绿才写）、这两页账，外加 `chroma_db/chroma.sqlite3` 与三枚 EOL 幻影。窗一落地就该随账代提交（显式列路径，禁 `git add -A`），顺序不能倒——先提交再让窗跑＝重建镜像换 revision＝在飞窗当场 REFUSE。
+
+## 今晚时刻表（10-06 19:1x 立·本班亲盯到落地·不是「等明早」）
+
+写在纸上的理由：⑪ 说确定性步骤不许押在这条线程还在——能自动的已经自动（三扇窗由队列自己走，门由 `postgate` 自己起）；下面这几件是**写码＋两态验收＋归因**，替不了，所以把开工时刻与判据钉死，本线程一旦死掉，接班线照这张表继续，不用重新推。
+
+| 时刻 | 动作 | 判据／禁令 |
+|---|---|---|
+| 19:2x | run32 收窗后全套读数 | R51②（`run32-r631`／`-r636`）· A②（`run32-r573`）· R38③ usage · C③ 分数 · R26② 归因——照形落账，读数不达就写不达 |
+| ~20:20 | run32d（D 门三格） | 只认 `final_kind=queued_polled` 的枚数 |
+| ~21:10 | run33（A④ 同码对子） | 与 run30/31 配跨代次＝`r634` 的现取分栏 |
+| ~21:50 | 队列写 DONE | 六枚采窗步骤全 rc=0 才写（本班新规矩） |
+| ~22:10 | 全量门真数（`postgate`） | 门那格的 HEAD 账，替掉作废的 57 failed |
+| 22:15 | **窗内禁令解除**：先提交积压（两笔队列修复＋账），再派 `R718`＋`R709` | 派工词只送指针≤200 字节；两枚写集不撞（`scripts/eval_transport_ask_v2.py`＋`test_r181` 钉 vs `chat.py::_should_use_data_context`） |
+| 23:00-00:30 | 收 R718 两态并树 → 起 **run34** 补 C④ 分母 | R718 判据④：改尺之后旧窗帧账与 C④ 读数**一律作废**，C④ 只许由新窗判 |
+| 00:30-01:30 | 复走前端九环（环 7/8）＋两张失败脸 | 要动容器＋打模型＋人来判达/未达 ⇒ **不排自动队列**（无人值守会把容器留在注入态） |
+| 01:30-02:30 | R26 丢卡演练 · R669 overlay 取证 · R47① 乙案读数 | 都要动容器/服务，串行走，一枚一枚收 |
+| 02:30 起 | `R712` 治派生坐标族红 | 按族切给席位并行（r460／r455／r387 写集互不重叠），只许「文档再生／量具派生」两形，禁手抄凑绿、禁摘牙；治完必须再跑一遍全量门 |
+
+只有你本人能做的三格今晚照样不碰：R35② 客户真实密级、R44① 的 37,483 枚真库尺寸、H11 真机 GPU 读数（另加 `git push` 与 automation-2 的死线程）。
+
+## 断网Survival格（10-06 19:2x·业主提示「网随时会掉」后本班补的一格）
+
+**这条链现在整条不吃网**：三扇窗（`day1006_queue.py` 自带 DONE 闸）→ 全量门（`day1006_postgate_watch.py`，现取 shim pid 50128／真身 5248）→ **无模型读数补腿**（`day1006_catchup.py`）。三段串在同一个看门狗上，掉线、掉本线程都照跑；账本仍是 `day1006.ledger.jsonl`（rc=0 即跳过）。
+
+`day1006_catchup.py` 干的是本班刚查出来的那条腿：`scripts/r674_window_trace_export.py::PG_OPT_IN_ENV`＝`R674_WINDOW_EXPORT_PG`，PG 腿出厂即关、要 `--from-postgres` ∧ 该变量＝on 两枚闸齐了才连库，而队列 `readout` 只递 `--window` ⇒ 分段腿恒 rc=4、`r631`/`r636` 恒 rc=3。catchup 对 `run32`／`run33`／`run32d` 各补一次导出＋`r631`（相态从队列名册 `lane_phase_for` 派生，on 相递 `LANE_ENV`）＋`r636` 两窗覆盖率＋`eval_lane_readout --label`，全部只读取件，日志落 `day1006\catchup-*.log`。🔴 这是**手跑取数**，不等于 R720 结案——接进队列的 durable 修在 `docs/tickets/R720-*.md`（判据 6 条已钉死）。
+
+**本线程万一死掉，接班的第一手（都不动 HEAD、不需要网）**：
+1. 读 `%TEMP%\evalrun\day1006\postgate-run_gate.log` 尾＝门那格的 HEAD 真数；
+2. 读 `%TEMP%\evalrun\day1006\catchup-r631-run32.log`＝R51② 端到端 vs 分段加总误差；
+3. 若 2 缺件（catchup 没跑成），手动补：`R674_WINDOW_EXPORT_PG=on` ＋ `.venv\Scripts\python.exe scripts\r674_window_trace_export.py --window run32 --from-postgres --out %TEMP%\evalrun\run32-traces.jsonl`，再 `.venv\Scripts\python.exe scripts\r631_stage_sum_delta.py --window run32`（测的是 PG 里的只读 SELECT，跑前先看窗是否已收：`day1006.DONE.txt` 在不在）。
+
+**只有网才能做的事（掉线就停，别硬试）**：验收两态、`git apply` 并树、代提交、派席（`spawn_agent` 走模型流量）。所以本班把「能自动的」全部交给了磁盘，没把读数押在自己身上。

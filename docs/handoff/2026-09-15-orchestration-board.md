@@ -7289,3 +7289,19 @@ band 顺序＝provenance 硬闸 → `run32`（全 105 题，同步相显式声�
 **同一枚 Stop-Process 还误伤了两枚执行层席位在跑的命令**（过滤条件匹配到了 codex 运行时的 powershell／rg 那几条，也包括我自己那枚 shell——它的命令行里带着正则字面，所以我是自杀在链路中途，`exit=-1`）。
 后果取证：`be-r702`／`be-r710` 两枚席位 `read_thread` 现取仍在工作、两棵树零提交（`be-r702` 只有继承来的 `chat.py` +5 行，`be-r710` 干净），线程没死；被打断的是它们某一次工具调用，按规矩由执行层自己重取，总控不补投、不改判据。
 教训入 ⑰ 的第二条腿：**杀进程只认 PID 逐枚点名，不许按命令行正则批杀**——命令行里会出现我自己的正则字面，正则批杀必自伤，且顺手带走别人在跑的活。
+## §4GN 第二十一班续席（10-06 18:1x-18:3x·总控线·主树仍 `922da30`（本班零提交）·**单模型未切换**·心跳一枚没碰·automation-2 仍 PAUSED 指向死线程）：夜窗空跑根因治掉 · run32 全 105 真开窗 · 🔴 事故 #130（账面满页 rc，其实一格没量）
+
+**#130 的形状**：交接纸 §3 那行起法照做，看门狗 18:04 起来、18:05:25 投出队列，`day1006.ledger.jsonl` 到 18:05:55 已落 12 笔——盘面看着像「窗在跑」。真数是 `run32-run` **0.5 秒 rc=2**：一扇 105 题的全窗一格没采，下游 11 枚读数跟着 rc=1/2/3/4，`run32-r704-verdict` 写的是 `denominator=WINDOW-MISSING`；然后队列自己走进 band2，于是飞着的只有 run32d。**账本有新行不等于窗在量**——这一枚要立的口径是：判「读数在飞」要问**有没有正在写的片**，不能只问有没有新账行（⑪ 的第三枚读数因此订正，见交接纸）。
+
+**三处根因全在队列自己的码里**（不是模型慢、不是机器慢）：
+① `scripts/night1006_queue.py::fresh_tag` 只搬 `<tag>.shards` 目录，把 `<tag>.window.json`（五枚指纹的唯一记录）与 sidecar 留在盘上；`scripts/eval_window_shard_driver.py::open_window_or_resume` 每次动手先比指纹，撞上一枚「记 `2b817fe`／现取 `922da30`」的旧记录 ⇒ 按「半窗混库拼成一条基线比丢一窗更坏」当场 REFUSE。留那枚旧指纹的正是 16:2x 被事故 #129 半途杀掉的那扇窗 ⇒ 之后每一轮重投都在半秒内 REFUSE，而 rc=2 在账本里的形状和「跑过了但是红」一模一样。治法＝清场必须**整体**搬：落点名一律从量具自己的 `paths()` 派生（不抄第二份名单），连 `-quality.json`／`-report.json` 两枚读数落点一起进隔离目录，目录名带 tag；🔴 只搬不删，证据留 `%TEMP%\evalrun\stale-cache-<时间戳>-<tag>`。
+② `scripts/day1006_queue.py` 文末**无条件**写 `day1006.DONE.txt`，而看门狗是「见 DONE 就退场」⇒ 哪怕 band1 空跑，这一轮收工后再没有下一轮：今晚唯一能把 6 号翻绿的那扇窗永远不会被再试一次。治法＝DONE 只在三扇窗的 `-run`／`-commit` 六枚采窗步骤（名字从 `MINE` 派生）现取全 rc=0 时才写，否则以 rc=3 收，让看门狗按账本跳过已绿步骤重投；同一枚步骤在多轮里只认最新那一笔。
+③ band1 的 sync 相**默认上一轮替它收尾**：band2 把 `REPORT_LANE_VIA_QUEUE` 拧到 on，跑完才拧回 off；进程若死在 band2 里或机器重启，盘上留下的是 on，下一轮 band1 的 105 题全窗就量在错相态上，而 `--expect-lane-phase off` 会把它判红。治法＝开局加 `ensure_baseline_switch_off`，跟 `ensure_generation` 一样现读现校：不是 off 就拧回 off 并 recreate＋等后端答话，已经是 off 就不白重建。
+
+**18:22:32 重投的现取凭据**（三处按预期点火）：`baseline switch NOT off -- forcing off + recreate` → `baseline-switch-off-recreate rc=0` → `BACKEND-READY ... waited=15.3s` → `QUARANTINE stale tag=run32 moved=4 names=run32.window.json,run32.shards.json,run32-sidecar.jsonl,run32-sidecar-frames.jsonl` → `run32.window.json` 五项指纹现取 `revision=922da30c...`／`index_backend=pgvector`／`shard_size=1` → `run32-run.log`：`shards=105 already complete=0 to run=105`。🔴 读数一概还没落地：A②／A④／C③／C④／R26②／R51②／R38③ 与 D 门三格继续写「码在树／读数待窗」，本纸这条登记不许被当成翻绿。
+代价照记：band2 那扇 run32d 采到第 25 片时被逐 PID 点名停掉（半片作废，正解是整体隔离重采），换的是 band1 全窗今晚真跑——按 bands 顺序它本来排在 band2 前面。
+
+**本班刻意没做的事**：不新增针（⑫ 裁定：编排故障只配规则改动＋看板记账）；不提交（⑮：读数在飞禁改 HEAD——两笔队列修复与这两页账都躺在工作树里，明早窗落定再随账代提交；顺序不能倒，重建镜像会换 revision ⇒ 在飞窗的合并闸当场 REFUSE）；不派工（⑬：窗内禁跑件，R709／R712／R713-R715 全等窗后）。
+
+**窗后一笔（同班 18:2x·⑪ 不许空转，也不许把确定性步骤押在「这条线程还在」）**：三扇窗收完之后机器还余整夜，已排窗后队列 `%TEMP%\evalrun\day1006\day1006_postgate_watch.py`（watcher 真身现取 pid 16572／.venv shim 49996）。语义：每分钟只做两次文件 stat（`day1006.DONE.txt` 与三扇窗的 `-answers.jsonl` 枚数），**片数连十分钟不涨才花一枚 PowerShell 扫进程**——每分钟扫一次本身就坐在时延读数旁边，那是 ⑬ 不许的形状；扫到窗属进程零枚才起 `scripts/run_gate.py`，读数落 `day1006\postgate-run_gate.log` 并在账本写一行 `postgate-run_gate`。要的是 **HEAD 上带着真窗产出的门真数**：账面那枚 57 failed 是事故 #125 在批次中间量的，不算 HEAD 账。它只数不杀（⑰），要停它只认 PID 逐枚点名。
+预期里有两格今晚一定不绿，先写死免得被当成假账或被误翻绿：**C④** 的分母要量具读得到 claims，而 `scripts/eval_transport_ask_v2.py::transport` 今天读不到（五枚键被 `tests/test_r181_text_frame_ruler.py` 的相等钉锁着）＝已立 **R718**，窗后先派它，再谈 C④；**R44① 的客户尺寸那一格**要 37,483 枚真库，band5 的 `r677_hot_set_yield --coverage` 量的是本机 1,008 枚的安静机器重量，两者不许混。

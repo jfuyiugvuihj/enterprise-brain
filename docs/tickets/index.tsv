@@ -182,3 +182,5 @@ R716	QUEUED	-	-	总控亲签工单·无机器字段
 R717	QUEUED	deploy/queue_worker.py, tests/test_r717_*.py, docs/tickets/R717-*.md, docs/testing/r717-<开工日>.md, docs/api/contract-v1.md	-	总控亲签工单·无机器字段
 R718	QUEUED	scripts/eval_transport_ask_v2.py, scripts/eval_frame_caliber_readout.py, tests/test_r181_text_frame_ruler.py, tests/test_r718_*.py, docs/tickets/R718-*.md, docs/testing/r718-<开工日>.md	-	总控亲签工单·无机器字段
 R719	QUEUED	tests/test_r645_contract_difference_ledger.py, docs/api/contract-v1.md, tests/test_r719_*.py, docs/tickets/R719-*.md, docs/testing/r719-<开工日>.md	-	总控亲签工单·无机器字段
+R720	LANDED	scripts/night1006_queue.py, readout, scripts/day1006_queue.py, tests/test_r720_*.py, docs/tickets/R720-*.md, docs/testing/r720-<开工日>.md	d8ce86c5450c	总控亲签工单·无机器字段
+R721	QUEUED	scripts/r674_window_trace_export.py, psql_jsonl, docs/tickets/R721-*.md, docs/testing/r721-<开工日>.md	-	总控亲签工单·无机器字段
