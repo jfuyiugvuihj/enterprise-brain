@@ -283,3 +283,19 @@ python scripts/run_gate.py
 ```
 
 窗口成本（用来判断"要跑多久"，不是承诺）：一扇 105 题全表窗在本机 CPU 档约 3–5 小时；33 题子集窗约 1–1.5 小时；报告档 12 题另需一张 `REPORT_LANE_VIA_QUEUE=on` 的相 2 窗（约 25 分钟，跑完必须还原 off）。四扇同码窗＋12 枚对子是 A④ 与 C③ 的最小集，一夜排得下，但**一夜只能排一次**，因为它独占 GPU/模型，窗内禁止并树与跑测试。
+
+---
+
+## 0.8 午间对账（10-06 13:2x·总控线·主树现取 `d8859d8`·单模型未切换）
+
+**这一节只干一件事：把 §4／§5 里已被今天实测推翻或推进的行，逐行点名「被本节取代」，并给出读数与量具。** 表体本身我没有手改——一张手改的长表就是第二本真源，改一次漂一次。下一班要动 §4／§5 时，请以本节为准重写那几行，然后删掉本节里被吃掉的那几条。
+
+- **§4 R44 行「让路驱动件不在盘上」＋「账上点名」两格已被取代**。今天实测：让路腿的码本来就在树（`app/rag/hot_index.py::HotSetIndex._bypass_locked` → `::REASON_INCOMPLETE` → `::HotSetIndex.rank` 交回 `None` → `app/rag/retriever.py::DocumentRetriever._hot_hits` → `search()` 落非热集腿），缺的是驱动件。R677 已补驱动件＋牙并树 `152c9ce`＋终版纸 `3a08975`；主树两态各 **88 passed／0 failed**（54.98 s／49.73 s），总控亲手摘腿反证 **12 failed／76 passed**。R44① 三态仍记 **没达**，口径写「**离线达／重量待窗**」：`INDEX_BACKEND=pgvector` 令生产读路径整层走 `::REASON_READ_BACKEND_SWITCHED`，热集覆盖率 95% 那一句今天只有评测集分母（105/105），真实查询日志分母 `NOT_MEASURED`。
+- **§4 R47 行「零分母」已被取代，但「改进」那半仍没达**。业主已裁乙（改 top-5 变化率口径），量具 `scripts/r676_synonym_top5_delta.py` 与两枚走 CLI 本体的牙并树 `484e57a`＋索引 `557f137`；主树两态各 **33 passed／0 failed**。离线读数（零模型）：105 题里同义词族 **15 枚**，其中只有「原题词腿召回短于 top_k」那一形能把新块送进 top-5＝**1 枚**；同义词腿补回候选块合计 **137 枚**（候选面在动、top-5 面几乎不动）；full 档改写正常返回时规则腿被挡在门外 **15/15**。真机命中改进仍记 **待窗**。
+- **§5「门那格」的 9 枚先红已清零**（这一格不在 §4／§5 表里，在 §9 判据 4）。承接单 R693 并树 `d2bd779`＋终版纸 `3bfb679`：主树同名八枚件 state① **146 passed／2 failed／195.46 s**，那两枚逐名为 `tests/test_r469_readout_is_generated.py::test_the_in_tree_readout_is_byte_for_byte_what_the_lib_emits` 与 `::test_the_cli_is_the_only_way_that_produced_this_table`，报错原文 `At index 66 diff: b'\r' != b'\n'`＝行尾环境件（本机 `core.autocrlf=true` 把 LF blob 铺成 CRLF 盘，而那枚钉逐字节比盘）；把该文档行尾归 LF 后该件 **15 passed／0.88 s**，state② 全集合 **148 passed／0 failed／189.16 s**。🔴 **这不叫根治**：行尾归 LF 是盘面动作，`git diff` 空、并树带不走，重新 checkout 就再红；durable 两条路互相打架（补 `.gitattributes` 会把 `tests/test_r492_s93_column_matches_derived.py::read_rows` 的「CR 枚数＝LF 枚数」成对断言打红），已记入待裁，另立单承接。
+- **棘轮基线 95→94 已闭合**（`scripts/lint_hand_copied_coordinates.py::HAND_COPY_BUDGET`，总控配套并树）：降的一枚是 `tests/test_r595_stall_cap.py` 里把 `scripts/eval_transport_ask_v2.py` 帽带行号抄进断言的字面量，现改由尺现场取。现取 **94／预算 94／越界文件 29＝WITHIN rc=0**。
+- **§5 A③ 行「没达」不变，但补一句**：GPU 两种姿势今天已各自具名并树（R673 `b2daf17`＋名册登记 `4ebfaff`，缺省不再是匿名决定），欠的只剩「丢卡必报错」那枚语义钉与一次演练；演练要动容器 ⇒ 排窗后。
+- **§4 R51 行「生产发点已并树」今天补第二段**：classify／generate／reflect 三段发点已并树（R688 `ecbd525`），rewrite 段由在飞席 Bacon／R695 接（写域 `app/api/v1/chat.py`＋`app/rag/retrieval_pipeline.py`），retrieve 段按甲案走「r631 两栏并报」的在飞后续（R696，窗后）。五段齐之前，`<1%` 那一格一律记 **待窗**，不许拿离线合成件宣布达。
+- **§5 C④ 行「量不到（零分母）」的成因已定位**（这条最重要，因为它记了五班）：判分器早就写好——`app/quality/eval.py` 现读 `answer.get("claims") or []` 再按每条 `supported` 分箱，注释自陈「因为采集器从不交 claims，per 行 evidence_coverage 与它同值」；采集器 `scripts/collect_evaluation_answers.py` 对 `claims` 只做「响应里有就带走」；答案契约 `app/agents/contracts.py` 根本没有 `claims` 这一格。⇒ 缺的全在产品侧。已立 **R699** 并派在飞席 Dirac（判分器·采集器·评测夹具全部列禁区，靠改尺变绿即退回；交付只许写「码在树＋分母待窗」）。
+- **§5 V 行（前端九环走查）**：在飞席 Archimedes／R694 正用 Playwright 真 chromium 打真栈，截图已落 8 枚（登录 1440／工作台 1440 与 760／上传前三张／目录／问答终态），另在造两张失败脸的一次性注入件（`scripts/r694_failure_faces.py`／`scripts/r694_fake_ollama.py`）。它占模型与容器 ⇒ **今晚窗口必须排在它结案之后**。
+- **今天新增的在册账**：事故 **#126**（总控在在飞席 `be-r677` 的树里做反证、被自己的 30 s yield 截断、留下一枚未还原的活变异，由执行层自己发现并还原；详看板 §4GK.3）；并树配套流程改口（并树 → `tickets_index --write` → 提交索引 → 再取 state②，R676 第一次 state② 收到 3 failed 就是这套顺序倒了）。
