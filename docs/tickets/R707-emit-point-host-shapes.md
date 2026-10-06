@@ -28,3 +28,8 @@
 
 - **#127**（现取 max＝126 之后）：总控自己用切片拼接改 `tests/test_r688_stage_accounts_are_landed.py`（`t[:i] + new + seg[cut:]`），把 446 行的件截成 37 行，连带 `test_r707_…`／`test_r688_…` 三枚件收集 ERROR。已 `git checkout --` 从索引恢复（20,751 B／SHA 与基点相等），本单口径改动**重做**为精确整串替换（`str.replace` 前逐枚 `count(old) == 1` 断言）。规矩补一条：改盘上一枚件，只许整串替换或编辑器通道，禁切片拼接。
 - 同批第二格：`tests/test_r695_rewrite_stage_accounts.py.r695stray`（9,922 B，未跟踪）是执行层席位误写进主树的半件。对盘：主树与席树终版 SHA-256 均为 `386d00f45617cff0decba208361321115cdf6eedeef7cb73cfd7fbfd5c61dc80`（＝R695 凭据纸 §8 现取值），stray 为 `c46d3a4c7e2ff739785db9b1a6950f9b7fde39f36cd2b6825a35f8c17348ca18` ⇒ **无丢件**，残件按业主授权删除（删前沙盒模拟＋全档 `rg r695stray` 零引用）。
+
+## 并树补记（总控 10-06 15:4x 现取）
+
+- 本单已随 R695 同批并树：`54e1f53`（基点 `5984c78`），索引重生成笔 `468fe3b`。两态读数：state① dirty **333 passed／13 skipped／0 failed／213.77 s**；state② 干净检出（`git worktree add --detach` @ `468fe3b`）**332 passed／14 skipped／0 failed／139.29 s**。那 1 枚从 passed 变 skipped 的是 `tests/test_r51_observation_is_passive.py` 的私有写域守卫（静止树 scope 为空 ⇒ 不适用），归因与 R695 凭据纸 §5 第 6 条同源。
+- 🔴 顺手登记一处索引判据缺口：`scripts/tickets_index.py::landing_numbers` 只从提交标题里的**「并树」字面**认落地号，所以我那笔标题写「R707 订正 r688 口径…」的真并树提交被判成 QUEUED。本单不靠改标题洗状态——补记这段就是凭据；**治它另立号**（判据缺口属账面机器，不属 V1 门槛）。
