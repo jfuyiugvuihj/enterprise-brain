@@ -60,3 +60,15 @@
 待派池的散文账只有一行「R674（…）」，开工的人得重读整本跟进单或看板才能拿到判据原文。
 本文件把那一段逐字搬进 `docs/tickets/`，从此逐号状态的唯一真源是工单目录，
 每班开工只读 `docs/tickets/index.tsv` 与本文件。
+
+---
+
+## 执行层回执（be-r674／基点 d653e41／2026-10-05 23:1x·货在树里，状态不由本文携带）
+
+- **交了什么**：scripts/r674_window_trace_export.py（按题导出器）＋ tests/test_r674_stage_latency_export.py（18 枚牙）＋凭据纸 docs/testing/r674-2026-10-05.md。判据原文逐字块一字未动；`scripts/tickets_index.py --verify` rc=0。
+- **两态数（执行层自报）**：state① 18 passed／0.81 s（复跑 0.84 s）；state②（`git archive d653e41` 干净检出＋只投本单两枚件）18 passed／0.80 s；清单逐枚相同、总数相同。
+- **r631 一字未改**：本单只读引用它并把件喂回去（scripts/r631_stage_sum_delta.py 与 scripts/r636_stage_coverage.py 零字节改动）——所以与 R680 的同文件写集**没有真的撞**；纸面那一格请总控裁（详见凭据纸 §1「写集冲突回报」）。
+- **件的两行形状（对判据 1 那句「逐行至少含五段起止时刻」的取窄）**：事件行只带十枚起止时刻，整本跨度账（逐枚 record 级）落在一枚 r674.shot.detail 行上；一题都没落的落 r674.question.no_events 行并留在母集里。理由＝把跨度账抄到每一行，一扇 105 题窗要胀到几十 MB 压进 git；现取体量 12,293 B／题。
+- **判据 2 的「同一把尺退回 rc=3」按导出器解**：抹一段⇒导出器 rc=3 点名（r631 同件仍出数并在「该题未现段」列点名，那是它的在册语义）；抹整条分段腿⇒r631 rc=3＋status=no_segments。两半都钉住了。若总控要求「抹一段也要让 r631 rc=3」，那是改 r631 的判死条件，归 R680／另立单，本席不越。
+- **窗况**：本席按 `docs/tickets/WINDOW-2026-10-05.md` 的口径现取过——night1005d 队列 pid 不在、夜产物自 20:29 起零写入、容器 22:13 刚被 recreate、总控 22:18–22:20 正在并树与派工；据此刻「无窗空档」跑了单文件同名件（最重 10 s）。若总控判这仍算窗内，两态数请窗后复跑，本席不辩解。
+- 🚨 **事故 #124（本席造成）**：一次性自检脚本末尾 `shutil.rmtree(base.parent.parent)` 把 %TEMP% 当自己根目录清了——`%TEMP%\evalrun`（夜窗产物 144 枚＋night1005d 日志与账本）、`%TEMP%\eb104`（**含 Lovelace／R666 那份 30,445 B 的唯一盘外保命快照**）、`%TEMP%\r647_state2`、`%TEMP%\r653_state2` 全没，`git worktree list` 三枚现标 prunable。仓内与所有工作树的货一格未损。逐枚点名、幸存清单与处置写在 docs/testing/r674-2026-10-05.md §0；看板 §0 那一行须由总控 splice（docs/handoff/** 在本席禁区）。`git worktree prune` 请先确认 lovelace 快照无别底再动。
