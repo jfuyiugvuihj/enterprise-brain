@@ -27,7 +27,7 @@ LITERAL_CITE = re.compile(
     r"[A-Za-z0-9_./\\-]+\.(?:" + "|".join(MANAGED_EXTS) + r")" + COLON + r"\d")
 
 #: 现取基线：本文件第一次落地时的枚数与文件数。改这个数必须在提交词里逐枚点名是谁降的。
-HAND_COPY_BUDGET = 95
+HAND_COPY_BUDGET = 94
 RC_CLEAN = 0
 RC_OVER_BUDGET = 4
 RC_NO_SCOPE = 5

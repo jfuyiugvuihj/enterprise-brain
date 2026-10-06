@@ -13,7 +13,7 @@
 - **昨日底**：`PROBE_PATH` 里那枚 `rows`，渲染时现读原件，本件不隔夜存这份数。
 - **写入点**：现场扫 `app/**` 与 `scripts/**` 的源码得到「哪枚文件哪枚函数往里写」，再顺调用链往上爬，看这条道今天挂在哪个产品面（HTTP 路由 / `add_job`）。🔴 扫不到就写没找到，绝不写「应该由某个定时任务写」。
 - 路由串按装饰器原文交回（**不含** router 前缀），坐标一律现扫：🔴 本文件一枚行号都不是抄的。　**裁定只有 4 词**：`no_seed_path` / `legitimately_empty` / `needs_owner` / `no_longer_empty`；裁定与现扫互为牙齿、裁定与现读行数也互为牙齿，谁漂了 `validate()` 报哪一格。
-- 取数时刻 `2026-10-05T15:55:44+08:00`；服务端 PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 6…。
+- 取数时刻 `2026-10-06T13:09:15+08:00`；服务端 PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 6…。
 
 结论一句话（四个数由本表现算，一枚不抄）：R483 点名的八枚里，4 枚今天已经有行（`no_longer_empty`）、2 枚压根没有走得通的写入道（`no_seed_path`）、1 枚只能等业主输入（`needs_owner`）、1 枚按设计就该空着等一次真实行为（`legitimately_empty`）；四数之和 8 = 8，本单不留一格含糊——每一格到底还欠什么，只在本格那一节里写，本句不替谁担保。
 <!-- R483-TABLE-BEGIN -->
@@ -26,7 +26,7 @@
 | `notification_states` | 3 | 0 | +3 | 3 | `app/notifications/states.py:258 · apply_state`, `app/notifications/states.py:213 · apply_state` | `migrations/0016_notification_states.sql:63` | `no_longer_empty` |
 | `calculation_runs` | 0 | 0 | 0 | None | 没找到 | `migrations/0002_execution_data_lineage.sql:52` | `no_seed_path` |
 | `metric_definitions` | 0 | 0 | 0 | None | `app/semantics/registry.py:742 · _insert_statement`, `app/semantics/registry.py:751 · _insert_statement` ＋2 处 | `migrations/0002_execution_data_lineage.sql:72` | `no_seed_path` |
-| `retrieval_traces` | 1957 | 0 | +1957 | trace-ffdf522ac31141cdac6fd270c57518f5:… | `app/storage/persistence.py:418`, `app/trace/projections.py:324 · project_retrieval` | `migrations/0002_execution_data_lineage.sql:170` | `no_longer_empty` |
+| `retrieval_traces` | 2679 | 0 | +2679 | trace-fffceb6bfa354e2992662927bcedd517:… | `app/storage/persistence.py:418`, `app/trace/projections.py:350 · project_retrieval` | `migrations/0002_execution_data_lineage.sql:170` | `no_longer_empty` |
 | `user_profiles` | 0 | 0 | 0 | None | `app/memory/profile.py:273 · upsert_profile`, `app/memory/profile.py:240 · upsert_profile` | `migrations/0003_legacy_runtime_tables.sql:83` | `needs_owner` |
 | `document_activity_signals` | 0 | 0 | 0 | None | `app/api/v1/feedback.py:56`, `scripts/r648_real_pg_gauge.py:404 · read_then_write_script` ＋3 处 | `migrations/0011_document_activity_signals.sql:24` | `legitimately_empty` |
 
@@ -103,20 +103,20 @@
 
 ### `retrieval_traces` —— `no_longer_empty`
 
-- 今日现读 1957 行（昨日底 0 行，Δ 1957），主键 `retrieval_trace_id` 顶值 `trace-ffdf522ac31141cdac6fd270c57518f5:21`。
+- 今日现读 2679 行（昨日底 0 行，Δ 2679），主键 `retrieval_trace_id` 顶值 `trace-fffceb6bfa354e2992662927bcedd517:21`。
 - 结构出处：`migrations/0002_execution_data_lineage.sql:170`；表名在 app/ 与 scripts/ 里现扫到 22 行、9 枚文件。
-- 写入点（现扫）：`app/storage/persistence.py:418`（write_by_registry）、`app/trace/projections.py:324 · project_retrieval`（declared_writer）。
-- 这条道今天挂在产品面上：`POST /ask ← app/api/v1/chat.py:2599 · _run`、`POST /approve ← app/api/v1/chat.py:3556 · _run`。
+- 写入点（现扫）：`app/storage/persistence.py:418`（write_by_registry）、`app/trace/projections.py:350 · project_retrieval`（declared_writer）。
+- 这条道今天挂在产品面上：`POST /ask ← app/api/v1/chat.py:2722 · _run`、`POST /approve ← app/api/v1/chat.py:3679 · _run`。
 - 🔴 现扫确实爬到一枚脸，但它是**调试面**，按本单显式豁免不算产品道：`POST /retrieval/debug ← app/api/v1/observability.py:529 · retrieval_debug`。
 - 定时任务这条道现扫为零（🔴 所以本单不写「应该由某个定时任务写」这种话）。
-- 从写句往上爬过的坐标：`app/agents/orchestrator.py:962 · _approval_worker_node`、`app/agents/tools.py:1085 · search_docs`、`app/api/v1/chat.py:2823 · _run`、`app/api/v1/chat.py:3605 · _run`、`app/api/v1/observability.py:529 · retrieval_debug`、`app/approval/assistant.py:225 · retrieve_expense_hits`，另有 49 枚。
-- 跨「发射点 → 订阅 / 投影 → 写句」那一跳的边（现扫，逐枚可复核）：`declared_event retrieval.completed：TRIAGE 声明 → app/rag/debug.py:24 · run_retrieval_debug`；`declared_event retrieval.completed：TRIAGE 声明 → app/rag/retrieval_pipeline.py:1206 · record_retrieval_completed`；`gate_token retrieval.completed：app/rag/retrieval_pipeline.py:1206 · record_retrieval_completed → app/rag/retrieval_pipeline.py:1136 · arm_retrieval_trace`；`publish retrieval.completed：app/trace/projections.py:353 · project_event → app/rag/debug.py:24 · run_retrieval_debug`；`publish retrieval.completed：app/trace/projections.py:353 · project_event → app/rag/retrieval_pipeline.py:1206 · record_retrieval_completed`；`event_guard retrieval.completed：app/trace/projections.py:382 → app/trace/projections.py:324 · project_retrieval`。
+- 从写句往上爬过的坐标：`app/agents/orchestrator.py:962 · _approval_worker_node`、`app/agents/tools.py:1085 · search_docs`、`app/api/v1/chat.py:2946 · _run`、`app/api/v1/chat.py:3728 · _run`、`app/api/v1/observability.py:529 · retrieval_debug`、`app/approval/assistant.py:225 · retrieve_expense_hits`，另有 49 枚。
+- 跨「发射点 → 订阅 / 投影 → 写句」那一跳的边（现扫，逐枚可复核）：`declared_event retrieval.completed：TRIAGE 声明 → app/rag/debug.py:24 · run_retrieval_debug`；`declared_event retrieval.completed：TRIAGE 声明 → app/rag/retrieval_pipeline.py:1206 · record_retrieval_completed`；`gate_token retrieval.completed：app/rag/retrieval_pipeline.py:1206 · record_retrieval_completed → app/rag/retrieval_pipeline.py:1136 · arm_retrieval_trace`；`publish retrieval.completed：app/trace/projections.py:379 · project_event → app/rag/debug.py:24 · run_retrieval_debug`；`publish retrieval.completed：app/trace/projections.py:379 · project_event → app/rag/retrieval_pipeline.py:1206 · record_retrieval_completed`；`event_guard retrieval.completed：app/trace/projections.py:408 → app/trace/projections.py:350 · project_retrieval`。
 - ⚠ 现扫在这一处 fail closed（解不开就不算通，宁可读成没道）：`调用点在模块级，接不上任何 def：scripts/r220_packing_loss.py:13`。
 - 入口只在测试里被引到：`tests/test_r536_retrieval_completed_on_product_lane.py`、`tests/test_r550_event_hop_climb_is_generic.py`（按判据④，那不算产品有一行真数据）。
 - 该走哪条写入道：app/trace/projections.py::project_retrieval（collection 走 _PostgresTable 注册）← 同文件 project_event 在 `if event_type == "retrieval.completed"` 守卫里派发 ← app/trace/store.py 收事件落投影；发这枚事件的是 app/rag/retrieval_pipeline.py::record_retrieval_completed，它缺 arm_retrieval_trace 挂进执行上下文的那枚身份就直接走开，所以闸门真挂在问答脸上。
 - 裁定理由：写入道今天两格都在：写句在（投影注册在册），产品面也在（现扫从问答道沿 retrieval.completed 这枚标签跨过来）。🔴 原话「于是 0 行的准确说法是『这轮行为还没留下痕』」已是过去式——痕真留下了，见上表与第四节事件面那一叠数。于是本格要量的不再是空不空，而是道通不通：道今天通；一旦摘掉发射腿，validate() 会重新报「应改判 no_seed_path」，那才是它该回去的时候。库里那枚行数由本表现读交回，本段一个数字都不写。
 - 裁定出处：总控 2026-09-29 裁定——当时唯一发射点在 RAG 调试面（app/rag/debug.py 发 retrieval.completed ← POST /retrieval/debug），正常问答链一枚都不发 ⇒「有表、有写句、但没有喂它产品的道」。**那半句话已经过期**：R536（09-30 并树）把发射实现接到产品问答道（app/rag/retrieval_pipeline.py::record_retrieval_completed，挂点是 POST /ask 与 /approve 续跑轮）。当时本格仍暂不翻，理由是本量具认的「道」只从写语句往上爬到 HTTP 路由或 add_job，跨不过事件投影那一跳——那是量具的盲区。R550 已把这一跳补成通用的沿边传递（表名不当分支），所以裁定按现扫改口；改口的凭据不是本段散文，是 validate() 那两枚自洽腿与摘腿的刀。
-- 改判出处：R593（2026-10-03）——总控 10-03 11:1x 在主树现跑 `python scripts/r483_empty_tables_triage.py --json` 交回 rc=1，本格原话：「retrieval_traces 今天已经有 911 行了，本单的 0 行定性过期，重跑 --sync」；本席在基点 6fcea4f 复跑同一条命令，同一句里是另一枚更大的数（问答窗还在往里加行）。两枚数都只算历史引用、不算今天的事实——现读以本表与第五节读数件为准，这正是本格把数字交给渲染而不写进裁定的理由。　**本格今日现读 1957 行**（这枚数出自 `readout`，与上一句里的历史引用无关）。
+- 改判出处：R593（2026-10-03）——总控 10-03 11:1x 在主树现跑 `python scripts/r483_empty_tables_triage.py --json` 交回 rc=1，本格原话：「retrieval_traces 今天已经有 911 行了，本单的 0 行定性过期，重跑 --sync」；本席在基点 6fcea4f 复跑同一条命令，同一句里是另一枚更大的数（问答窗还在往里加行）。两枚数都只算历史引用、不算今天的事实——现读以本表与第五节读数件为准，这正是本格把数字交给渲染而不写进裁定的理由。　**本格今日现读 2679 行**（这枚数出自 `readout`，与上一句里的历史引用无关）。
 
 ### `user_profiles` —— `needs_owner`
 
@@ -144,32 +144,33 @@
 - 裁定理由：只有采纳 / 驳回一次才加一次计数，演示库没有真人点过。读侧今天把「读成功而零行」当作一种独立状态记账（app/rag/retriever.py 的活动先验诊断格为此留了名目），所以零行不等于读不到。
 
 ## 三、V2 三条自述：今天有没有一行真数据
-- **#11 告警闭环**：今天**已经有真数据**（R483 造这一句时这里是零，那句今天只算历史引用） —— 现读 `alert_rules` 4 行、`alerts` 12 行。代码侧不是空转：`add_job` 现扫到 1 枚注册（连触发参数与行号进上面那张表），`enterprise-brain-scheduler-1` 日志尾部现数到 6 次 `evaluate_all` executed successfully（间隔现读 `0:05:00`）。⇒ 启用规则今天已在册（这两格的裁定与改判出处见上表），这条链缺的不再是行也不是码，而是**业主口径的规则**——演示样本种子建的那几条不算，见 `alert_rules` 那一格的 why。
-- **#17 通知基础能力**：今天**已经有真数据**（R483 造这一句时这里是零，那句今天只算历史引用） —— 现读 `notification_states` 3 行。收件箱本身有账可列（现读 `pending_approvals` 427 行、`documents` 105 行、`users` 63 行），已经有 3 次已读/忽略落表；告警那一枚候选源今天有账可数（`alerts` 12 行）。⇒ 接口与前端正脸在树，端到端行为已经落下行，本句原先那条 (乙) 边界由现读翻开（裁定见上表）。
-- **#3 CalculationRun（执行数据血缘）**：今天**没有一行真数据** —— 现读 `calculation_runs` 0 行，且表名在 `app/` 与 `scripts/` 里现扫 0 处引用（连读路径都没长）。⇒ 「每个 Artifact 绑 DatasetVersion、CalculationRun、MetricDefinition」那句仍是后续目标；同一句里的 `metric_definitions` 现读 0 行、`retrieval_traces` 现读 1957 行（库里 `retrieval.completed` 事件 1957 条）。
+- **#11 告警闭环**：今天**已经有真数据**（R483 造这一句时这里是零，那句今天只算历史引用） —— 现读 `alert_rules` 4 行、`alerts` 12 行。代码侧不是空转：`add_job` 现扫到 1 枚注册（连触发参数与行号进上面那张表），`enterprise-brain-scheduler-1` 日志尾部现数到 12 次 `evaluate_all` executed successfully（间隔现读 `0:05:00`）。⇒ 启用规则今天已在册（这两格的裁定与改判出处见上表），这条链缺的不再是行也不是码，而是**业主口径的规则**——演示样本种子建的那几条不算，见 `alert_rules` 那一格的 why。
+- **#17 通知基础能力**：今天**已经有真数据**（R483 造这一句时这里是零，那句今天只算历史引用） —— 现读 `notification_states` 3 行。收件箱本身有账可列（现读 `pending_approvals` 559 行、`documents` 106 行、`users` 63 行），已经有 3 次已读/忽略落表；告警那一枚候选源今天有账可数（`alerts` 12 行）。⇒ 接口与前端正脸在树，端到端行为已经落下行，本句原先那条 (乙) 边界由现读翻开（裁定见上表）。
+- **#3 CalculationRun（执行数据血缘）**：今天**没有一行真数据** —— 现读 `calculation_runs` 0 行，且表名在 `app/` 与 `scripts/` 里现扫 0 处引用（连读路径都没长）。⇒ 「每个 Artifact 绑 DatasetVersion、CalculationRun、MetricDefinition」那句仍是后续目标；同一句里的 `metric_definitions` 现读 0 行、`retrieval_traces` 现读 2679 行（库里 `retrieval.completed` 事件 2679 条）。
 
 ## 四、尺子自证（已知非空的表跟着进同一张读数表）
 | 对照表 | 今日现读 | 昨日底 | 主键顶值（今日现读） | 尺子自证 |
 |---|---:|---:|---|---|
-| `chunk_vectors` | 1008 | 1008 | 高新技术企业认定管理办法_摘录.txt_2 | 非空，读数件不是空转 |
-| `sessions` | 2282 | 1020 | r8-same-dept-a86604 | 非空，读数件不是空转 |
+| `chunk_vectors` | 1030 | 1008 | 高新技术企业认定管理办法_摘录.txt_2 | 非空，读数件不是空转 |
+| `sessions` | 2805 | 1020 | r8-same-dept-a86604 | 非空，读数件不是空转 |
 
 事件面现读（`trace_events` 按 event_type 分组，只 SELECT）：
-- `step.progress`：32572 条
-- `model.started`：8744 条
-- `model.finished`：8743 条
-- `tool_call.finished`：7166 条
-- `tool_call.started`：7166 条
-- `step.started`：2607 条
-- `request.started`：2592 条
-- `step.finished`：2518 条
-- `tool.completed`：2471 条
-- `request.completed`：2189 条
-- `retrieval.completed`：1957 条
-- `wire.first_text`：357 条
+- `step.progress`：39281 条
+- `model.started`：10817 条
+- `model.finished`：10816 条
+- `tool_call.finished`：8511 条
+- `tool_call.started`：8511 条
+- `step.started`：3248 条
+- `request.started`：3239 条
+- `step.finished`：3152 条
+- `tool.completed`：3078 条
+- `request.completed`：2704 条
+- `retrieval.completed`：2679 条
+- `wire.first_text`：996 条
 - `agent.result.recorded`：111 条
 - `request.failed`：81 条
-- 其中 `retrieval.completed`（`retrieval_traces` 今天唯一的闸门事件）：1957 条
+- `stage.finished`：10 条
+- 其中 `retrieval.completed`（`retrieval_traces` 今天唯一的闸门事件）：2679 条
 
 ## 五、原始读数（机器件，勿手改；`--check` 就用它复现上面每一格）
 <!-- R483-READOUT-BEGIN -->
@@ -178,18 +179,18 @@
   "alert_sweep_log": {
     "container": "enterprise-brain-scheduler-1",
     "days_seen": [
-      "2026-10-05"
+      "2026-10-06"
     ],
     "rc": 0,
-    "successful_sweeps_in_tail": 6,
+    "successful_sweeps_in_tail": 12,
     "trigger_interval": "0:05:00"
   },
   "command": "docker exec enterprise-brain-postgres-1 psql -U enterprise_brain -d enterprise_brain -At -v ON_ERROR_STOP=1 -c \"SET default_transaction_read_only = on\" -c \"<SELECT>\"",
   "readout": {
     "agent_runs": {
       "pk": "agent_run_id",
-      "pk_max": "trace-ffdf522ac31141cdac6fd270c57518f5:orchestrator",
-      "rows": 2921
+      "pk_max": "trace-fffceb6bfa354e2992662927bcedd517:orchestrator",
+      "rows": 3700
     },
     "alert_rules": {
       "pk": "id",
@@ -209,7 +210,7 @@
     "chunk_vectors": {
       "pk": "vector_id",
       "pk_max": "高新技术企业认定管理办法_摘录.txt_2",
-      "rows": 1008
+      "rows": 1030
     },
     "document_activity_signals": {
       "pk": "filename",
@@ -218,8 +219,8 @@
     },
     "documents": {
       "pk": "id",
-      "pk_max": "131",
-      "rows": 105
+      "pk_max": "134",
+      "rows": 106
     },
     "metric_definitions": {
       "pk": "metric_definition_id",
@@ -233,23 +234,23 @@
     },
     "pending_approvals": {
       "pk": "id",
-      "pk_max": "427",
-      "rows": 427
+      "pk_max": "589",
+      "rows": 559
     },
     "retrieval_traces": {
       "pk": "retrieval_trace_id",
-      "pk_max": "trace-ffdf522ac31141cdac6fd270c57518f5:21",
-      "rows": 1957
+      "pk_max": "trace-fffceb6bfa354e2992662927bcedd517:21",
+      "rows": 2679
     },
     "sessions": {
       "pk": "id",
       "pk_max": "r8-same-dept-a86604",
-      "rows": 2282
+      "rows": 2805
     },
     "trace_events": {
       "pk": "event_id",
-      "pk_max": "trace-ffdf522ac31141cdac6fd270c57518f5:9",
-      "rows": 79274
+      "pk_max": "trace-fffceb6bfa354e2992662927bcedd517:9",
+      "rows": 97234
     },
     "user_profiles": {
       "pk": "user_id",
@@ -269,27 +270,28 @@
     "server_addr": "local",
     "version": "PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit"
   },
-  "taken_at": "2026-10-05T15:55:44+08:00",
+  "taken_at": "2026-10-06T13:09:15+08:00",
   "trace_event_types": {
     "agent.result.recorded": 111,
-    "model.finished": 8743,
-    "model.started": 8744,
-    "request.completed": 2189,
+    "model.finished": 10816,
+    "model.started": 10817,
+    "request.completed": 2704,
     "request.failed": 81,
-    "request.started": 2592,
-    "retrieval.completed": 1957,
-    "step.finished": 2518,
-    "step.progress": 32572,
-    "step.started": 2607,
-    "tool.completed": 2471,
-    "tool_call.finished": 7166,
-    "tool_call.started": 7166,
-    "wire.first_text": 357
+    "request.started": 3239,
+    "retrieval.completed": 2679,
+    "stage.finished": 10,
+    "step.finished": 3152,
+    "step.progress": 39281,
+    "step.started": 3248,
+    "tool.completed": 3078,
+    "tool_call.finished": 8511,
+    "tool_call.started": 8511,
+    "wire.first_text": 996
   }
 }
 ```
 <!-- R483-READOUT-END -->
-读数出处：`enterprise-brain-postgres-1` / 库 `enterprise_brain` / 账号 `enterprise_brain` / 服务端地址 `local` / PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 6…；取数时刻 `2026-10-05T15:55:44+08:00`。🔴 宿主 127.0.0.1:5432 上另有野 PG，本件从不直连它。
+读数出处：`enterprise-brain-postgres-1` / 库 `enterprise_brain` / 账号 `enterprise_brain` / 服务端地址 `local` / PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 6…；取数时刻 `2026-10-06T13:09:15+08:00`。🔴 宿主 127.0.0.1:5432 上另有野 PG，本件从不直连它。
 <!-- R483-TABLE-END -->
 
 ## 六、怎么重跑（同一把尺子，两面对）

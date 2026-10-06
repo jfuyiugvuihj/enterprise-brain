@@ -90,6 +90,16 @@ def tier(ruler, token):
 def row_of(ruler, token):
     return ruler.check("核 {0} 一枚。".format(token))["numbers"][0]
 
+def mention_shas(ruler, token):
+    """本号名下被判成「提及」的那几枚 sha——走尺的证据清单，不走 note。
+
+    note 那一串只印最新一枚提及（`scripts/dispatch_preflight.py::Ruler.ticket_status` 的形状），
+    别人的提交再点一次本号的名，note 就把在册那枚挤掉了：R693 现取的 R900 正是这一形。
+    判据要的是「那枚落地对本号只是提及」，证据清单才装得下这个意思。
+    """
+    _landed, _off_trunk, mentioned, _refused = ruler.landing_hits(token)
+    return [one["sha"] for one in mentioned]
+
 
 # ---------------------------------------------------------------------------
 # ① 首行形状：读位置，不读「含不含那两个字」
@@ -303,14 +313,25 @@ def test_the_landing_commit_of_one_ticket_is_only_a_mention_for_the_numbers_it_n
     assert row_of(live, "R491")["status"] == r498.HAS_COMMIT
     row = row_of(live, "R475")
     assert row["status"] == r498.MENTION_ONLY, row["status"]
-    assert row["commits"] == 0 and "7126614" in row["note"]
+    assert row["commits"] == 0, row["note"]
+    assert "7126614" in mention_shas(live, "R475"), row["note"]
+    assert row["first"] in mention_shas(live, "R475"), row["note"]
 
 
 def test_a_probe_burned_by_a_landing_message_reads_a_mention(live, r498):
-    """R491 的并树信息把探针号 R900 写进了正文：从此 R900 只能是提及，绝不能是并树。"""
+    """R491 的并树信息把探针号 R900 写进了正文：从此 R900 只能是提及，绝不能是并树。
+
+    取证改走证据清单：note 只印最新一枚提及，`a10dcdf` 一点名就把 `7126614` 挤出那串，
+    本枚钉于是红在别人的提交上（R693 现取＝基点上先红）。档位、凭据枚数、那枚落地绝不
+    许升成本号凭据，三样一条都不松。
+    """
     row = row_of(live, "R900")
     assert row["status"] == r498.MENTION_ONLY and row["commits"] == 0
-    assert "7126614" in row["note"]
+    mentioned = mention_shas(live, "R900")
+    assert "7126614" in mentioned, row["note"]
+    assert row["first"] in mentioned, row["note"]
+    landed, _off, _mentioned, _refused = live.landing_hits("R900")
+    assert all(one["sha"] != "7126614" for one in landed), "那枚落地被当成 R900 的凭据＝提及升并树"
 
 
 @pytest.mark.parametrize("token,sha", MENTION_SHAS)

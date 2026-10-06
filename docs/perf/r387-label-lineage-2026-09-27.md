@@ -712,11 +712,11 @@ r346 `35 passed`、r302 `8 passed` —— 与本班树逐枚同值。
 
 | 派工词点的病 | 现在的锚（key） | 锚首行 token（唯一命中，逐枚现读） | 本班现读＝左列锚 key 经 `resolve_site` 现场派生（R492 钉逐格对账，漂一枚即红） |
 |---|---|---|---|
-| 服务端强制覆盖那一格（旧账冻在 `3656..3719`） | `hop2` | `department = str(getattr(principal, "department", "") or "")` | `app/api/v1/chat.py:4664` |
-| 同一格的 docstring 理由段 | `hop2n` | `The document scope is decided here rather than accepted from the form: retrieval` | `:4656-4660` |
-| 接口形参默认值那一格（旧账冻在 `3644..3719` 起端） | `hop1` | `async def upload_document(file: UploadFile = File(...),` → `department: str = Form(""),` | `:4646-4648` |
-| 密级下传那四格（旧账冻在 `1534..1620` 一族） | `hop5f` `hop5g` `hop5h` `hop5i` `hop5j` | `classification: int = Form(1),` / `classification,`+`department or None,` / `if ok:` 起六行块 / `classification=classification,`+两行 / `classification=classification,`+`department=department,`+`scope=…` | `:4647` / `:4792` / `:4806` / `:4820` / `:4895` |
-| 目录账区间（旧账冻在 `748..763` 那格） | `hop6` + `hop6b`/`hop6c`/`hop6n` | `async def upload_document…` 区间终点 / `INSERT INTO documents(` / `department or None,` / `_version_metadata` 收尾 | `:4220-4304` → `:1239-1274`（`:1257` / `:1268`） |
+| 服务端强制覆盖那一格（旧账冻在 `3656..3719`） | `hop2` | `department = str(getattr(principal, "department", "") or "")` | `app/api/v1/chat.py:4793` |
+| 同一格的 docstring 理由段 | `hop2n` | `The document scope is decided here rather than accepted from the form: retrieval` | `:4785-4789` |
+| 接口形参默认值那一格（旧账冻在 `3644..3719` 起端） | `hop1` | `async def upload_document(file: UploadFile = File(...),` → `department: str = Form(""),` | `:4775-4777` |
+| 密级下传那四格（旧账冻在 `1534..1620` 一族） | `hop5f` `hop5g` `hop5h` `hop5i` `hop5j` | `classification: int = Form(1),` / `classification,`+`department or None,` / `if ok:` 起六行块 / `classification=classification,`+两行 / `classification=classification,`+`department=department,`+`scope=…` | `:4776` / `:4921` / `:4935` / `:4949` / `:5024` |
+| 目录账区间（旧账冻在 `748..763` 那格） | `hop6` + `hop6b`/`hop6c`/`hop6n` | `async def upload_document…` 区间终点 / `INSERT INTO documents(` / `department or None,` / `_version_metadata` 收尾 | `:4349-4433` → `:1239-1274`（`:1257` / `:1268`） |
 | 部门名册那一格（`list_user_departments`） | 🔴 **本单 46 枚锚里没有它** | 全仓 `app/**` 读不出这个符号（见 §9.6 落空账） | — |
 
 同一文件的多个站点**逐格一枚锚**（不共用），并由 `test_multi_site_hops_give_every_site_its_own_anchor`

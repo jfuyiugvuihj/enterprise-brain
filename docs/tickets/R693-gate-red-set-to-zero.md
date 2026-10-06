@@ -38,3 +38,14 @@
 ## 禁区（踩线即退回）
 
 `app/**`／`frontend/**`／`deploy/**` 与任何 `.env*`／评测夹具 `tests/fixtures/**` 与 `tests/test_evaluation_report.py`／`docs/handoff/**`／`docs/api/contract-v1.md`／`pyproject.toml`／`uv.lock`／`scripts/run_gate.py`／容器·镜像·模型动作／主树任何路径。
+
+---
+
+## 执行层交回（派工词只送指针，席位名未告知故不落名／独占树 be-r693／基点 6800b4c·2026-10-06 12:5x 现取）
+
+* **九枚全先红**：基点态同名 14 枚件一跑＝9 failed／225 passed／234 collected／20.66 s，红的名与本单点名逐枚对上；本单态＝0 failed／244 passed／244 collected（同名 234 枚名册一一枚相同，另加本单 10 枚牙）；提交后干净树复跑＝0 failed／244 passed／20.30 s。
+* **手法只有在册那两形**：跑派生尺自己写回（r469 出表口／r492 补的 §9.3 写回口／r638 按尺自己的读数重落基线 4102→4165）＋修那把身份坏掉的钉（r595 出处坐标改由 `stall_cap` 现场取／r498 取证从 note 展示串改走 `landing_hits` 证据清单）。零摘牙：无 xfail／skip／删用例／改口径。
+* **本单造成一枚新红（写域外，请并树时一并裁）**：手抄坐标棘轮要重取基线 95→94，降的是 `tests/test_r595_stall_cap.py` 那一枚字面坐标；牙 `tests/test_chase_lint_names_every_hand_copy.py::test_the_live_tree_sits_exactly_on_the_ratchet` 因此红。常量在 `scripts/lint_hand_copied_coordinates.py::HAND_COPY_BUDGET`，本单未动。
+* **另三件交回**：① r469 那两枚的根因是 `core.autocrlf=true` 的工作副本行尾而非账，主树窗后需再跑一次同一条出表口命令（并树带不走盘面行尾）；② r638 的 `ratchet_diff` 恒等式在 grew 那一格不落 `removed`（尺在夜窗只读名单，本单没动刀）；③ `tests/test_r483_empty_table_triage_is_derived.py` 两枚同名件外先红，纯 LF 基点影子树单跑复现，治法是它自己的 `--sync`，写域外。
+* **凭据纸**：`docs/testing/r693-emptying-the-gate-red-set-2026-10-06.md`（判据 1～6 逐条读数）。新量具 `scripts/r693_land_s93_column.py` ＋牙件 `tests/test_r693_land_s93_column.py`。两笔提交 `7cb7945`（货）＋`9b41738`（本纸补记读数）；本段追加为第三笔。
+* **夜窗纪律**：没跑全量门；`app/**`／`frontend/**`／`deploy/**`／夹具／`docs/handoff/**`／`pyproject.toml`／`uv.lock`／只读量具／主树——一枚未碰。

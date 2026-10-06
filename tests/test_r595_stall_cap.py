@@ -143,7 +143,12 @@ def test_above_band_is_named_but_never_removed(tmp_path):
 
 
 def test_run9_book_credential_is_reproduced(tmp_path):
-    """R440 的凭据本身就是判据：run9 的 chat-11 wall_ms=300108.2 恰等帽值，本件必须自己抓出来。"""
+    """R440 的凭据本身就是判据：run9 的 chat-11 wall_ms=300108.2 恰等帽值，本件必须自己抓出来。
+
+    在册凭据那一行逐字节钉，但只冻「命中枚数＋帽值」两样——出处那枚行号本来就该随码漂移，
+    抄进本件就成了第二份真源（R660／R646 那一族纯重锚单的形状），所以它由 stall_cap 现场取。
+    口径一字未改：首行仍须逐字符等于这串，帽值漂一格、命中多一枚都当场红。
+    """
     data = mod.collect(RUN9_ANSWERS, BANK, RUN9_SIDECAR,
                        transport_source=mod.DEFAULT_TRANSPORT_SOURCE, label="run9")
     assert [hit["id"] for hit in data["hits"]] == ["chat-11"]
@@ -153,7 +158,12 @@ def test_run9_book_credential_is_reproduced(tmp_path):
     assert data["cells"][mod.GROUP_ALL]["p95_rank"] == 140878.8            # 剔帽后（信息位）
     assert data["tiers"]["问答"]["p95_rank_inclusive"] == 125225.2         # 板上「问答档 n=50 p95 125.2 s」
     assert data["tiers"]["问答"]["n"] == 50 and data["cells"][mod.GROUP_QA]["n"] == 64
-    assert "\n".join(mod.render(data)).splitlines()[0] == "停表帽命中 1 枚（帽值 300000.0 ms (300.0 s)，现读自 eval_transport_ask_v2.py:201）"
+    live_cap = mod.stall_cap(mod.DEFAULT_TRANSPORT_SOURCE)
+    assert live_cap["cap_ms"] == 300000.0 and live_cap["cap_line"] > 0
+    heading = "\n".join(mod.render(data)).splitlines()[0]
+    assert heading == ("停表帽命中 1 枚（帽值 300000.0 ms (300.0 s)，现读自 "
+                       + Path(mod.DEFAULT_TRANSPORT_SOURCE).name + ":"
+                       + str(live_cap["cap_line"]) + "）"), heading
 
 
 def test_scale_check_survives_a_cap_hit(tmp_path):
