@@ -26,6 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 _SPEC = importlib.util.spec_from_file_location(
     "r636_stage_coverage", REPO_ROOT / "scripts" / "r636_stage_coverage.py")
 ruler = importlib.util.module_from_spec(_SPEC)
+from test_r688_stage_accounts_are_landed import LANDED_STAGES, stage_emit_points
 sys.modules[_SPEC.name] = ruler  # dataclass 要能从 sys.modules 找回本模块，否则当场炸
 _SPEC.loader.exec_module(ruler)
 
@@ -330,8 +331,18 @@ def test_derived_ruler_detects_a_planted_call_site(tmp_path: Path) -> None:
         encoding="utf-8")
     hits = ruler.call_sites_of("record_stage_event", tmp_path / "app")
     assert hits == ["app/pkg/mod.py::adopt"]
-    # 反控：真实的 app/** 今天仍是零枚（这条形状一变，覆盖面账就得改口径）
-    assert ruler.call_sites_of("record_stage_event", REPO_ROOT / "app") == []
+    # R688 判据③ 的在册口径改口（改的是这一枚断言，牙一枚没摘：上面影子端正控照旧）。
+    # 旧断言钉的是「产品道零枚」这个形状；R688 并树之后那个形状**就是**要翻转的东西，
+    # 所以新口径钉两格：app/** 里 record_stage_event 的调用点枚数 >= 1，并且五段里本单
+    # 落地的每一段都有可指认的发点（文件::符号，AST 现读，不抄表）。
+    # 🔴 尺本体 scripts/r636_stage_coverage.py 属夜窗量具（本单禁区），一字节未动。
+    sites = ruler.call_sites_of("record_stage_event", REPO_ROOT / "app")
+    assert len(sites) >= 1, sites
+    points = stage_emit_points()
+    assert set(points) <= set(ruler.source_facts()["canonical_stages"]), sorted(points)
+    for stage in LANDED_STAGES:
+        assert points.get(stage), "段 %s 在 app/** 里没有可指认的生产发点" % stage
+        assert all(site.startswith("app/agents/nodes.py::") for site in points[stage]), points
 
 
 def test_identityless_detector_reads_the_two_real_sites(facts) -> None:

@@ -890,9 +890,20 @@ def stage_window(stage: str, **identity: Any):
     """Time one block of work and hand the sample to the ledger.
 
     This exists for the segments that are not a model or tool span -- a rule node that
-    does real work has no span to inherit. Callers inside files this ticket may not touch
-    (``app/rag/**``, ``app/common/model_handler.py``) can adopt it with one line each;
-    until they do, the segment shows up in ``missing_stages`` instead of being guessed.
+    does real work has no span to inherit. It feeds the in-process ledger only: nothing
+    here writes a trace event, so a window replayed from ``events.jsonl`` cannot see it.
+
+    R688 is the ticket that gave the five segments a *journal* entry point. A product
+    call site that wants an event and a sample from one block of work uses
+    ``app/trace/spans.py::stage_account`` (one call site = one ``stage.finished`` + one
+    sample); it must not stack this window on top of that, because two meters over one
+    interval is what ``aggregate_stage_latency`` cannot resolve. Two of the five still
+    have no boundary inside the files that may open one (``retrieve`` lives behind
+    ``app/agents/tools.py::search_docs``, ``rewrite`` behind
+    ``app/rag/retrieval_pipeline.py::QueryRewriter.rewrite`` and
+    ``app/common/model_handler.py``), so they stay in ``missing_stages`` instead of being
+    guessed -- and ``CANONICAL_STAGES`` is the only vocabulary a stage event may carry
+    (the writer refuses anything else).
     """
     started = time.monotonic()
     started_at = datetime.now(timezone.utc).isoformat()

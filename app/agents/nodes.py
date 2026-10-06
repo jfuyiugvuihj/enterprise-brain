@@ -1498,22 +1498,37 @@ def _last_user(state) -> str:
     return ""
 
 
+def _stage_account(config, *, stage, tier="", summary=None):
+    """R688（判据①）：为没有自己的跨度的那一段产品码开一本五段事件账。
+
+    懒导入的理由与 ``_ResilientModel._span`` 同一枚：路由不该依赖 trace 包，节点更不该
+    因为记账失败而失败。config 里没有认证主体时一个字节都不写（``ExecutionSpan.active``
+    是所有跨度共用的那条「无主不记」规矩），发点因此不需要任何新判断。段名只认
+    ``app/common/stage_timing.py::CANONICAL_STAGES``，自造的段名在写入口就被拒。
+    """
+    from app.trace.spans import stage_account
+
+    return stage_account(config, stage=stage, tier=tier, summary=summary)
+
+
 # ==================== 意图分类（确定性，不调 LLM） ====================
 
 _SMALLTALK = ["你好", "您好", "在吗", "谢谢", "感谢", "再见", "拜拜",
               "你是谁", "你叫什么", "hello", "hi", "早上好", "晚上好"]
 
 
-def classify_intent(state) -> dict:
+def classify_intent(state, config=None) -> dict:
     """规则分类：chat(闲聊) / task(任务)。快、稳、可解释。"""
-    q = _last_user(state).strip()
-    ql = q.lower()
-    if any(k in ql for k in _SMALLTALK) and len(q) <= 12:
-        intent = "chat"
-    else:
-        intent = "task"
-    logger.info(f"[Classify] '{q[:30]}' → {intent}")
-    return {"intent": intent}
+    # R688（判据①·生产发点）：规则分类这一段今天没有任何跨度（无 model、无 tool），端到端里它落在 gap_ms。一段一枚件：区间内不存在第二枚在册跨度，所以不可能与谁重复计数。
+    with _stage_account(config, stage="classify", summary={"node": "classify_intent"}):
+        q = _last_user(state).strip()
+        ql = q.lower()
+        if any(k in ql for k in _SMALLTALK) and len(q) <= 12:
+            intent = "chat"
+        else:
+            intent = "task"
+        logger.info(f"[Classify] '{q[:30]}' → {intent}")
+        return {"intent": intent}
 
 
 # ==================== R42 快慢判别器（规则优先，零模型调用） ====================
@@ -1935,15 +1950,17 @@ def decide_workers(turn: TurnLane, workers, *, has_data: bool = False, abstained
     return tuple(kept), tuple(cut), tuple(added)
 
 
-def respond(state) -> dict:
+def respond(state, config=None) -> dict:
     """闲聊直接回答，不走 worker"""
-    q = _last_user(state)
-    try:
-        resp = _make_model(ModelTier.CHAT, prompt=q).invoke([HumanMessage(content=q)])
-        text = resp.content or "你好，我是企业智脑，可以帮你查文档、分析数据、画图、导出报告。"
-    except Exception:
-        text = "你好，我是企业智脑，可以帮你查文档、分析数据、画图、导出报告。"
-    return {"final_answer": text, "messages": [AIMessage(content=text)]}
+    # R688（判据①·生产发点）：闲聊作答腿与 plan 同形：模型调用不带 config ⇒ 今天不发 model 跨度，generate 段在 a1 车道整条缺账。这枚件补的就是那一格；不带 config 的那一发一字不动，免得同一段区间被两枚件重复计数（那是 <1% 加总判据的死法）。
+    with _stage_account(config, stage="generate", tier="chat", summary={"node": "respond"}):
+        q = _last_user(state)
+        try:
+            resp = _make_model(ModelTier.CHAT, prompt=q).invoke([HumanMessage(content=q)])
+            text = resp.content or "你好，我是企业智脑，可以帮你查文档、分析数据、画图、导出报告。"
+        except Exception:
+            text = "你好，我是企业智脑，可以帮你查文档、分析数据、画图、导出报告。"
+        return {"final_answer": text, "messages": [AIMessage(content=text)]}
 
 
 # ==================== 记忆加载 ====================
@@ -2028,99 +2045,103 @@ def plan(state, config=None) -> dict:
     时与 R141 之前逐字节相同：单参数直调它的 tests/test_r42_zero_model_calls.py
     两枚用例都不必改口。
     """
-    q = _last_user(state)
-    deterministic_plan = build_task_plan(q)
-    if deterministic_plan:
-        logger.info(f"[Plan] deterministic tasks={len(deterministic_plan)}")
-        return {"plan": deterministic_plan}
-    decision = classify_route(q)
-    turn = turn_lane_from_decision(decision, declared_lane_from_config(config))
-    if not turn.may_plan:
-        # R42 判别器判到问答档 ⇒ 这一发拆题模型不付。判错了有边界：route_main 的
-        # 关键词兜底与 reflect 的"要图没图/要导出没下载链接"仍能把这一轮升回分析档
-        # （判据②），而省下的这一发是真的会打顶的：docs/perf/latency-budget-2026-09-16.md
-        # 记的同日 21:50 那次冷启动，`[Plan]` 之后连吃 5 发 60 s 超时、整轮 302 s，
-        # 最后只交付一句兜底文案。
-        logger.info("[Plan] 问答档 → 不拆题")
-        return {"plan": []}
-    if not any(k in q for k in _COMPLEX):
-        return {"plan": []}
-    prompt = (
-        "把下面的复合问题拆成 2-4 个独立子任务，返回 JSON 数组（只输出数组）：\n"
-        f"{q}"
-    )
-    try:
-        import json
-        resp = _make_model(ModelTier.PLAN, prompt=prompt).invoke([HumanMessage(content=prompt)])
-        arr = json.loads(str(resp.content).strip().removeprefix("```json").removesuffix("```"))
-        plan_list = arr if isinstance(arr, list) else []
-    except Exception as e:
-        logger.warning(f"[Plan] 拆解失败: {e}")
-        plan_list = []
-    logger.info(f"[Plan] {len(plan_list)} 个子任务")
-    return {"plan": plan_list}
+    # R688（判据①·生产发点）：这一腿里模型调用不带 config（在册 identityless 钉守着，本单不碰它），所以今天连 model 跨度都不发；这一段的时间由下面这枚 stage 件交出。config 只用于取记账身份，不参与路由，也不参与 R42 的零模型判据。
+    with _stage_account(config, stage="classify", tier="plan", summary={"node": "plan"}):
+        q = _last_user(state)
+        deterministic_plan = build_task_plan(q)
+        if deterministic_plan:
+            logger.info(f"[Plan] deterministic tasks={len(deterministic_plan)}")
+            return {"plan": deterministic_plan}
+        decision = classify_route(q)
+        turn = turn_lane_from_decision(decision, declared_lane_from_config(config))
+        if not turn.may_plan:
+            # R42 判别器判到问答档 ⇒ 这一发拆题模型不付。判错了有边界：route_main 的
+            # 关键词兜底与 reflect 的"要图没图/要导出没下载链接"仍能把这一轮升回分析档
+            # （判据②），而省下的这一发是真的会打顶的：docs/perf/latency-budget-2026-09-16.md
+            # 记的同日 21:50 那次冷启动，`[Plan]` 之后连吃 5 发 60 s 超时、整轮 302 s，
+            # 最后只交付一句兜底文案。
+            logger.info("[Plan] 问答档 → 不拆题")
+            return {"plan": []}
+        if not any(k in q for k in _COMPLEX):
+            return {"plan": []}
+        prompt = (
+            "把下面的复合问题拆成 2-4 个独立子任务，返回 JSON 数组（只输出数组）：\n"
+            f"{q}"
+        )
+        try:
+            import json
+            resp = _make_model(ModelTier.PLAN, prompt=prompt).invoke([HumanMessage(content=prompt)])
+            arr = json.loads(str(resp.content).strip().removeprefix("```json").removesuffix("```"))
+            plan_list = arr if isinstance(arr, list) else []
+        except Exception as e:
+            logger.warning(f"[Plan] 拆解失败: {e}")
+            plan_list = []
+        logger.info(f"[Plan] {len(plan_list)} 个子任务")
+        return {"plan": plan_list}
 
 
 # ==================== 反思 ====================
 
-def reflect_node(state) -> dict:
+def reflect_node(state, config=None) -> dict:
     """检查最终回答质量，决定重派(redo)或放行"""
-    q = _last_user(state)
-    review_result = None
-    retry_count = state.get("retry_count", 0)
-    raw_results = state.get("agent_results") or {}
-    if raw_results:
-        structured_results = []
-        for worker, raw in raw_results.items():
-            try:
-                if isinstance(raw, AgentResult):
-                    structured_results.append(raw)
-                else:
-                    payload = dict(raw)
-                    payload.setdefault("worker", worker)
-                    structured_results.append(AgentResult.model_validate(payload))
-            except Exception as exc:
-                logger.warning(f"[Reflect] 忽略无效 Agent 结果 {worker}: {exc}")
-        if structured_results:
-            review = review_agent_results(structured_results)
-            review_result = review.model_dump()
-    final = str(state.get("final_answer") or "").strip()
-    if not final:
-        delivered = [
-            str(value).strip()
-            for value in (state.get("worker_results") or {}).values()
-            if str(value or "").strip()
-        ]
-        final = "\n\n".join(delivered)
-    if not final:
-        for m in reversed(state.get("messages", [])):
-            if type(m).__name__ == "AIMessage" and getattr(m, "content", "") and not getattr(m, "tool_calls", None):
-                final = m.content
-                break
+    # R688（判据①·生产发点）：复审是纯规则过：五段里 reflect 今天全线不产账（真窗 105/105 缺这一段），因为这条腿根本没有插桩点。写入口见 app/trace/spans.py::record_stage_event。
+    with _stage_account(config, stage="reflect", summary={"node": "reflect_node"}):
+        q = _last_user(state)
+        review_result = None
+        retry_count = state.get("retry_count", 0)
+        raw_results = state.get("agent_results") or {}
+        if raw_results:
+            structured_results = []
+            for worker, raw in raw_results.items():
+                try:
+                    if isinstance(raw, AgentResult):
+                        structured_results.append(raw)
+                    else:
+                        payload = dict(raw)
+                        payload.setdefault("worker", worker)
+                        structured_results.append(AgentResult.model_validate(payload))
+                except Exception as exc:
+                    logger.warning(f"[Reflect] 忽略无效 Agent 结果 {worker}: {exc}")
+            if structured_results:
+                review = review_agent_results(structured_results)
+                review_result = review.model_dump()
+        final = str(state.get("final_answer") or "").strip()
+        if not final:
+            delivered = [
+                str(value).strip()
+                for value in (state.get("worker_results") or {}).values()
+                if str(value or "").strip()
+            ]
+            final = "\n\n".join(delivered)
+        if not final:
+            for m in reversed(state.get("messages", [])):
+                if type(m).__name__ == "AIMessage" and getattr(m, "content", "") and not getattr(m, "tool_calls", None):
+                    final = m.content
+                    break
 
-    redo = False
-    if review_result and not review_result["passed"] and retry_count < 1:
-        redo = True
-        retry_count += 1
-    if not final or len(final) < 5:
-        redo = True
-    elif any(bad in final for bad in ["失败", "错误", "无法", "抱歉"]):
-        redo = True
-    elif any(k in q for k in ["图", "图表", "柱状", "折线", "饼图"]) and "![" not in final:
-        redo = True   # 要图却没图
-    elif any(k in q for k in ["导出", "报告", "PDF", "pdf"]) and "下载" not in final:
-        redo = True   # 要导出却没下载链接
+        redo = False
+        if review_result and not review_result["passed"] and retry_count < 1:
+            redo = True
+            retry_count += 1
+        if not final or len(final) < 5:
+            redo = True
+        elif any(bad in final for bad in ["失败", "错误", "无法", "抱歉"]):
+            redo = True
+        elif any(k in q for k in ["图", "图表", "柱状", "折线", "饼图"]) and "![" not in final:
+            redo = True   # 要图却没图
+        elif any(k in q for k in ["导出", "报告", "PDF", "pdf"]) and "下载" not in final:
+            redo = True   # 要导出却没下载链接
 
-    count = state.get("reflect_count", 0) + (1 if redo else 0)
-    logger.info(f"[Reflect] redo={redo} count={count}")
-    update = {
-        "redo": redo,
-        "reflect_count": count,
-        "retry_count": retry_count,
-    }
-    if review_result is not None:
-        update["review_result"] = review_result
-    return update
+        count = state.get("reflect_count", 0) + (1 if redo else 0)
+        logger.info(f"[Reflect] redo={redo} count={count}")
+        update = {
+            "redo": redo,
+            "reflect_count": count,
+            "retry_count": retry_count,
+        }
+        if review_result is not None:
+            update["review_result"] = review_result
+        return update
 
 
 def route_reflect(state) -> str:
@@ -2410,63 +2431,65 @@ def _carry_caliber_quotes(state, question: str, final: str, worker_results: dict
     return rebuilt, merged
 
 
-def synthesize(state) -> dict:
+def synthesize(state, config=None) -> dict:
     """把最终回答写入 state，并把值得记的沉淀进长期记忆"""
-    q = _last_user(state)
-    final = state.get("final_answer") or ""
-    worker_results = state.get("worker_results") or {}
-    if worker_results:
-        answers = [
-            str(value).strip()
-            for value in worker_results.values()
-            if str(value).strip()
-        ]
-        if answers:
-            # Worker output is authoritative; trailing supervisor chatter is not.
-            final = "\n\n".join(answers)
-    if not final:
-        for m in reversed(state.get("messages", [])):
-            if type(m).__name__ == "AIMessage" and getattr(m, "content", "") and not getattr(m, "tool_calls", None):
-                final = m.content
-                break
+    # R688（判据①·生产发点）：终答装配是规则腿，没有自己的跨度；worker 的作答往返另有 model 跨度，本件只记这一段自己的墙钟，区间不与之重叠。
+    with _stage_account(config, stage="generate", summary={"node": "synthesize"}):
+        q = _last_user(state)
+        final = state.get("final_answer") or ""
+        worker_results = state.get("worker_results") or {}
+        if worker_results:
+            answers = [
+                str(value).strip()
+                for value in worker_results.values()
+                if str(value).strip()
+            ]
+            if answers:
+                # Worker output is authoritative; trailing supervisor chatter is not.
+                final = "\n\n".join(answers)
+        if not final:
+            for m in reversed(state.get("messages", [])):
+                if type(m).__name__ == "AIMessage" and getattr(m, "content", "") and not getattr(m, "tool_calls", None):
+                    final = m.content
+                    break
 
-    # R206（A④ 判据④那枚真退化）：被引证片段里的那句口径原话必须逐字进正文。
-    # 它排在记忆沉淀**之前**：值得沉淀的是交回客户的那一份文字，不是补写前的半成品。
-    # 整条守卫炸了也不能带走终答——这一腿是 END 前最后一站。
-    #: 模型自己写的那一份，在逐字保真腿补写**之前**取：R216 的择边腿判"边选错没"要问这一份，
-    #: 不能问补写之后的那一份（否则 R206b 抬进来的原话会冒充"模型已经选对了"）。
-    model_final = final
-    try:
-        guarded, worker_update = _carry_caliber_quotes(state, q, final, worker_results)
-    except Exception as exc:  # noqa: BLE001 - 终答优先，守卫失声只许记账不许拦
-        guarded, worker_update = final, None
-        logger.warning(f"{CALIBER_QUOTE_MARKER} status=skipped error={exc}")
-    if guarded != final:
-        final = guarded
+        # R206（A④ 判据④那枚真退化）：被引证片段里的那句口径原话必须逐字进正文。
+        # 它排在记忆沉淀**之前**：值得沉淀的是交回客户的那一份文字，不是补写前的半成品。
+        # 整条守卫炸了也不能带走终答——这一腿是 END 前最后一站。
+        #: 模型自己写的那一份，在逐字保真腿补写**之前**取：R216 的择边腿判"边选错没"要问这一份，
+        #: 不能问补写之后的那一份（否则 R206b 抬进来的原话会冒充"模型已经选对了"）。
+        model_final = final
+        try:
+            guarded, worker_update = _carry_caliber_quotes(state, q, final, worker_results)
+        except Exception as exc:  # noqa: BLE001 - 终答优先，守卫失声只许记账不许拦
+            guarded, worker_update = final, None
+            logger.warning(f"{CALIBER_QUOTE_MARKER} status=skipped error={exc}")
+        if guarded != final:
+            final = guarded
 
-    # R216（A④ 判据④ 第 4 格）：互斥口径必须按题面点名的那一侧作答。排在逐字保真**之后**：
-    # 先把原话送进正文，再判哪一句是本题结论——两枚守卫各治各的格，收益不互记。
-    # 与上一腿同一条硬规矩：整条炸了也不能带走终答，这一腿是 END 前最后一站。
-    try:
-        side_base = worker_update if worker_update is not None else worker_results
-        guarded, side_update = _apply_caliber_side(state, q, final, side_base, model_final)
-    except Exception as exc:  # noqa: BLE001 - 终答优先，择边腿失声只许记账不许拦
-        guarded, side_update = final, None
-        logger.warning(f"{CLAUSE_SIDE_MARKER} status=skipped error={exc}")
-    if guarded != final:
-        final = guarded
-    if side_update is not None:
-        worker_update = side_update
+        # R216（A④ 判据④ 第 4 格）：互斥口径必须按题面点名的那一侧作答。排在逐字保真**之后**：
+        # 先把原话送进正文，再判哪一句是本题结论——两枚守卫各治各的格，收益不互记。
+        # 与上一腿同一条硬规矩：整条炸了也不能带走终答，这一腿是 END 前最后一站。
+        try:
+            side_base = worker_update if worker_update is not None else worker_results
+            guarded, side_update = _apply_caliber_side(state, q, final, side_base, model_final)
+        except Exception as exc:  # noqa: BLE001 - 终答优先，择边腿失声只许记账不许拦
+            guarded, side_update = final, None
+            logger.warning(f"{CLAUSE_SIDE_MARKER} status=skipped error={exc}")
+        if guarded != final:
+            final = guarded
+        if side_update is not None:
+            worker_update = side_update
 
-    if state.get("intent") == "task" and q and final:
-        user_id = _memory_user_id(state)
-        if user_id:
-            remember(user_id, f"问: {q[:60]} → 答: {final[:80]}")
-        else:
-            logger.warning("[Synthesize] memory persistence skipped because the request has no authenticated identity")
+        if state.get("intent") == "task" and q and final:
+            user_id = _memory_user_id(state)
+            if user_id:
+                remember(user_id, f"问: {q[:60]} → 答: {final[:80]}")
+            else:
+                logger.warning("[Synthesize] memory persistence skipped because the request has no authenticated identity")
 
-    update = {"final_answer": final}
-    if worker_update is not None:
-        # 交回整张表：收端拿 worker_results 当终答正文（见 _carry_caliber_quotes 约束 1、2）
-        update["worker_results"] = worker_update
-    return update
+        update = {"final_answer": final}
+        if worker_update is not None:
+            # 交回整张表：收端拿 worker_results 当终答正文（见 _carry_caliber_quotes 约束 1、2）
+            update["worker_results"] = worker_update
+        return update

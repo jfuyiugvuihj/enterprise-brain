@@ -6,6 +6,7 @@ invented principal, which keeps ``owner_id`` meaningful in every execution table
 """
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import time
@@ -217,6 +218,38 @@ class ExecutionSpan:
             logger.warning("[Trace] stage observation failed: %s", exc)
 
 
+def _canonical_stage_name(stage: Any) -> str:
+    """The one literal of ``CANONICAL_STAGES`` a label names, or ``""`` for "invented".
+
+    R688 判据①: a stage event has to carry the literal the five-segment ledger already
+    knows. A name outside that vocabulary is a row no ruler can compare, so it is refused
+    here rather than trusted -- the same "no self-invented stage" rule
+    ``app/common/stage_timing.py::classify_stage`` applies to samples.
+    """
+    from app.common.stage_timing import CANONICAL_STAGES
+
+    label = str(stage or "").strip().lower()
+    return label if label in CANONICAL_STAGES else ""
+
+
+def _refuse_stage_name(stage: Any) -> dict[str, Any]:
+    """Refuse a name the ledger cannot attribute, and make the refusal leave a number.
+
+    Nothing is persisted. The failure still has to be countable, because "a dropped
+    segment is how a stage sum fakes a match" is the first design rule of
+    ``app/common/stage_timing.py`` -- so the drop is recorded as a collector failure
+    (judgement 3: silent, never raised) instead of looking like an empty vocabulary.
+    """
+    try:
+        from app.common.stage_timing import default_stage_ledger
+
+        default_stage_ledger().failures += 1
+    except Exception:  # noqa: BLE001 - counting must not outrank the refusal
+        pass
+    logger.warning("[Trace] stage event refused: %r is not a canonical segment", stage)
+    return {}
+
+
 def record_stage_event(
     config: Any,
     *,
@@ -236,7 +269,14 @@ def record_stage_event(
     ``ExecutionSpan`` primitives so the "no owner, no record" rule still applies. It
     deliberately does not touch the evidence bag: writing a duration must not change what
     the answer cites.
+
+    R688 made this the entry point the product actually calls, and it refuses a label that
+    is not in ``app/common/stage_timing.py::CANONICAL_STAGES``: an invented segment writes
+    no event and no sample, and is counted as a collector failure.
     """
+    label = _canonical_stage_name(stage)
+    if not label:
+        return _refuse_stage_name(stage)
     identity = span_identity(config)
     span = ExecutionSpan(
         record_kind="stage_windows",
@@ -245,7 +285,7 @@ def record_stage_event(
         started_event="stage.started",
         finished_event="stage.finished",
         base_payload={
-            "stage": stage,
+            "stage": label,
             "agent_run_id": identity["agent_run_id"],
             "agent_step_id": identity["agent_step_id"],
             "worker": identity["worker"],
@@ -264,6 +304,52 @@ def record_stage_event(
     span.record(span.finished_event, status, payload)
     span._observe_stage(payload)
     return payload
+
+
+@contextlib.contextmanager
+def stage_account(
+    config: Any,
+    *,
+    stage: str,
+    tier: str = "",
+    summary: dict[str, Any] | None = None,
+):
+    """Time one block of product code and land exactly one ``stage.finished`` event.
+
+    This is the shape R688 needed: a segment with no span of its own -- a rule node, or a
+    node whose model call carries no owner, so ``ExecutionSpan.active`` is false and
+    ``record()`` returns early -- gets its duration from the boundary that actually runs
+    it. One call site writes one event plus one ledger sample, never a second meter for
+    work a model or tool span already timed: two accounts over one interval is exactly
+    what ``app/common/stage_timing.py::aggregate_stage_latency`` cannot resolve, and the
+    stage-sum gate is the number this instrumentation exists to serve.
+
+    Timing discipline (R688 判据⑤): the cost on the caller thread is two
+    ``time.monotonic()`` reads, two stamps, and the one journal append ``record()`` has
+    always made. Nothing here can fail a business answer -- a collector that raises is
+    the failure R51 judgement 3 forbids -- so the write is guarded and logged.
+    """
+    started = time.monotonic()
+    started_at = _utc_now()
+    status = "completed"
+    try:
+        yield
+    except BaseException:
+        status = "failed"
+        raise
+    finally:
+        try:
+            record_stage_event(
+                config,
+                stage=stage,
+                duration_ms=(time.monotonic() - started) * 1000.0,
+                status=status,
+                started_at=started_at,
+                tier=tier,
+                summary=summary,
+            )
+        except Exception as exc:  # noqa: BLE001 - telemetry never reaches the request
+            logger.warning("[Trace] stage account was not recorded: %s", exc)
 
 
 def _reported_count(value: Any) -> int | None:
@@ -594,6 +680,7 @@ def error_code_for(exc: BaseException) -> str:
 __all__ = [
     "ExecutionSpan",
     "record_stage_event",
+    "stage_account",
     "model_token_counts",
     "stream_usage_counts",
     "error_code_for",
