@@ -756,9 +756,9 @@ def ratchet_diff(baseline: dict, live: dict) -> dict:
         added, removed = _multiset_diff(stored["pointers"], entry["pointers"])
         cell = {"doc": doc, "before": stored["count"], "after": entry["count"]}
         if entry["count"] > stored["count"]:
-            grew.append({**cell, "added": added})
+            grew.append({**cell, "added": added, "removed": removed})
         elif entry["count"] < stored["count"]:
-            shrank.append({**cell, "removed": removed})
+            shrank.append({**cell, "added": added, "removed": removed})
         elif added or removed:
             shifted.append({**cell, "added": added, "removed": removed})
         if stored.get("digest") == entry.get("digest") and sorted(stored["pointers"]) != sorted(entry["pointers"]):
@@ -766,7 +766,7 @@ def ratchet_diff(baseline: dict, live: dict) -> dict:
                            "stored": stored["count"], "live": entry["count"]})
     for doc, stored in sorted(baseline["files"].items()):
         if doc not in live["files"] and stored["count"]:
-            shrank.append({"doc": doc, "before": stored["count"], "after": 0,
+            shrank.append({"doc": doc, "before": stored["count"], "after": 0, "added": [],
                            "removed": sorted(stored["pointers"])})
     # 自证：只有两边的 count 都等于各自清单长度时，方向算术才成立；不等的那一形归 forged 管。
     for cell in itertools.chain(grew, shrank, shifted):
