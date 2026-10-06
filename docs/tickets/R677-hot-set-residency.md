@@ -64,7 +64,7 @@
 
 ---
 
-## 总控派工段（10-06 13:1x·基点 `c82208c`·席位自拟名并回报）
+## 总控派工段（10-06 13:1x·基点＝派工那一刻主树 HEAD 现取（本段落盘之后那一枚，具体 sha 由派工指针词带；产品码代次＝`c82208c`，它之后全是账面件）·席位自拟名并回报）
 
 - **基点改口**：本文头部写的 `9efff02` 已过期，派工基点＝主树现取 `c82208c`（含 R690 与 CHASE 三笔）。工作树＝`C:\Users\fengx\PycharmProjects\be-r677`（总控已 `git worktree add --detach` 备好，独占）。
 - **解释器**：`C:\Users\fengx\PycharmProjects\企业智脑\.venv\Scripts\python.exe`（裸 python 无 chromadb，conftest 会当场 ImportError）。
