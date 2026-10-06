@@ -1765,6 +1765,48 @@ def _withheld_retrieval_context(scope, recalled: list[dict]) -> str:
 
 # ==================== 旧版 Chat（保留兼容） ====================
 
+def _record_chat_round_verdict(
+    *,
+    trace_id: str,
+    request_id: str,
+    task_id: str,
+    owner_id: str,
+    event_type: str,
+    status: str,
+    error_code: str = "",
+) -> None:
+    """把 ``/chat`` 这一轮的终态落进 trace 那本账：只发一枚既有名字的 canonical 事件。
+
+    为什么这一枚必须有，而不是「本单只欠一行 ``model_calls``」就算完：本单为这条道开的 span
+    经 ``app/trace/projections.py::project_run`` 会造出 ``model_calls`` 的 FK 父行
+    ``agent_runs``（每一枚 trace 事件都刷新那一行）。父行若永远停在 ``running``，本单就是在一边
+    补 R38 的账、一边新造一笔「这一轮还没结束」的假账 —— 而 ``app/trace/lifecycle.py`` 把
+    「终态不可回退」钉得很死，那一行今天没有别人能替它收口。
+
+    🔴 事件名与状态词都取自已在册的闭集
+    ``app/common/stage_timing.py::REQUEST_TERMINAL_EVENTS``，本单一码不新造、一帧不发：
+    ``/chat`` 的出口仍是纯 ``text/plain``，canonical 帧一个字都不上那条道（判据③：不改契约口径）。
+    没有 ``request.started`` 是有意的：那一枚要给「这轮跑了多久」当天花板用，而本单不替这条
+    legacy 道新造时长读数，只替它把已经发生的事收口。
+    """
+    from app.trace.store import default_trace_store
+
+    try:
+        default_trace_store().record_event(
+            trace_id=trace_id,
+            request_id=request_id,
+            task_id=task_id,
+            event_type=event_type,
+            status=status,
+            payload={
+                "owner_id": owner_id,
+                **({"error_code": error_code} if error_code else {}),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - 量具哑掉不许改本轮已经交出去的正文
+        logger.warning(f"[R670][Trace] 这一轮的终态没落进 trace：{exc}")
+
+
 @router.post("/chat")
 async def chat(request: ChatRequest, http_request: FastAPIRequest):
     """旧版纯文本问答：检索同样必须落在 Principal 的权限范围内。"""
@@ -1780,7 +1822,31 @@ async def chat(request: ChatRequest, http_request: FastAPIRequest):
     _require_no_lane_on_chat(request)
     retrieval_filter = scope.filters
 
+    # R670：这一腿以前打完模型不落一行 ``model_calls`` —— 端点从不打开 span，也没有任何 trace
+    # 身份给它寻址，于是计划书 R38 判据③「抽查一问 input_tokens/output_tokens 非零」在这条生产
+    # 主路径上连一个可查的落点都没有。三枚 id 在这里铸，打法与 ``app/api/v1/chat.py::ask`` 同源：
+    # 账要归给正在答的这一轮，不是归给某个后来读到它的时刻。观测不改正文 —— SSE 帧、档位读数、
+    # 失败文案一个字节都不动，本单只在那本账上多一行它本来就欠着的行。
+    trace_id = f"trace-{uuid.uuid4().hex}"
+    request_id = f"req-{uuid.uuid4().hex}"
+    task_id = f"task-{uuid.uuid4().hex}"
+    span_config = {
+        "configurable": {
+            "principal": principal,
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "task_id": task_id,
+        }
+    }
+
     async def generate():
+        from app.trace.spans import error_code_for, start_model_call, stream_usage_counts
+
+        # 只有真的打到模型才有一发可记：检索就失败的那轮一行 model_calls 都不该有。
+        span = None
+        reported_usage = None
+        #: 本轮的终态：（事件名, 状态词, 错误码）。没打过模型的那轮保持全空 ⇒ 一笔账都不造。
+        verdict = ("", "", "")
         try:
             recalled = list(retriever.search(request.message, k=5, where=retrieval_filter))
             sources = [source for source in recalled if scope.allows(source)]
@@ -1808,17 +1874,57 @@ async def chat(request: ChatRequest, http_request: FastAPIRequest):
 - 如果文档包含相关信息，明确引用来源
 - 如果文档不包含相关信息，如实告知并给出建议"""
 
+            span = start_model_call(
+                span_config,
+                provider="local",
+                model_name=str(getattr(model_handler, "local_model", "") or ""),
+            )
             stream = model_handler.chat(
                 messages=[{"role": "user", "content": prompt}],
                 source=ModelSource.LOCAL,
                 stream=True,
             )
             for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                # 计量的落点是末片，不是应答片：兼容腿只在服务端被要求报数时才带这一格
+                # （``stream_options.include_usage``，R31 现读），今天这条道没开那一格，所以
+                # 这一枚 ``getattr`` 每次都是 ``None`` —— 那是帧形状说的话，本单不替它编数。
+                reported = getattr(chunk, "usage", None)
+                if reported is not None:
+                    reported_usage = reported
+                choices = getattr(chunk, "choices", None) or []
+                if not choices:
+                    # 只带计量、不带 delta 的末片不是正文，不许被当正文去索引 choices[0]。
+                    continue
+                content = choices[0].delta.content
+                if content:
+                    span.mark_first_token()
+                    yield content
+            span.finish("completed", summary=stream_usage_counts(reported_usage))
+            verdict = ("request.completed", "completed", "")
         except Exception as exc:  # noqa: BLE001 - 旧端点同样不得把内部异常发给客户端
+            code = error_code_for(exc)
+            if span is not None:
+                span.finish("failed", error_code=code, summary=stream_usage_counts(reported_usage))
+            verdict = ("request.failed", "failed", code)
             logger.error(f"Chat error: {exc}")
             yield "\n[错误] 本轮检索或模型调用失败，请重试或改用 /api/v1/ask。"
+        finally:
+            if span is not None and not span.finished:
+                # 客户端半路收手：这一发结束了，只是它没写完。收 span 的裁定照
+                # ``app/trace/spans.py::ExecutionSpan.finish`` 的 ``record_evidence`` 那一格 ——
+                # 一枚调用方自己丢掉的调用不该进证据袋去改本轮的判词。
+                span.finish("cancelled", record_evidence=False)
+                verdict = ("request.cancelled", "cancelled", "")
+            if span is not None and verdict[0]:
+                _record_chat_round_verdict(
+                    trace_id=trace_id,
+                    request_id=request_id,
+                    task_id=task_id,
+                    owner_id=str(getattr(principal, "user_id", "") or ""),
+                    event_type=verdict[0],
+                    status=verdict[1],
+                    error_code=verdict[2],
+                )
 
     # /chat 的读数永远是"这一轮没按任何档位走图"：端点结构决定，与调用方声明无关。
     # 有声明在上一条就 400 了，所以这里 declared 必为空串，只发 x-lane-source 一枚。

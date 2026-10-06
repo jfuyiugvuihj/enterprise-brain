@@ -272,6 +272,32 @@ def project_tool_completed(
     ]
 
 
+def _span_metadata(
+    payload: dict[str, Any], current: dict[str, Any], summary: dict[str, Any]
+) -> dict[str, Any]:
+    """What a span row records about its round beyond the columns that have homes.
+
+    ``worker`` is the field it has always been, read the same way, in the same position.
+    ``usage_keys`` joins it **only** on a round whose call site metered a usage block through
+    ``app/trace/spans.py::stream_usage_counts`` -- the legacy ``POST /api/v1/chat`` leg, whose
+    counters ride one tail frame instead of a reply object. It is the sorted key names of that
+    block as the server sent them, so a reader of ``model_calls`` can tell three facts apart
+    without re-guessing them: "this round reported prompt/completion/cached", "this round
+    reported a block without a cached side", and "this round reported no block at all" (the
+    empty list). An empty list is a reading about the frame shape; it is never a zero in a
+    column, and it is never a cache-hit rate -- the same distinction R146 wrote for
+    ``model_calls.cached_tokens``.
+
+    A call site that says nothing keeps the exact bytes it kept before, which is the rule R51
+    states for ``stage`` and ``model_tier`` in ``app/trace/spans.py::start_model_call``: the
+    trace of a round that never asked for a new field must not change shape because the field
+    exists.
+    """
+    metadata = {"worker": payload.get("worker") or current.get("worker")}
+    if "usage_keys" in summary:
+        metadata["usage_keys"] = [str(key) for key in (summary.get("usage_keys") or [])]
+    return metadata
+
 def project_span(
     event: dict[str, Any], owner_id: str, current: dict[str, Any], collection: str
 ) -> Projection | None:
@@ -307,7 +333,7 @@ def project_span(
                 # 0018. A key the summary does not carry stays NULL, because spans.py drops
                 # it when the reply reported nothing; _first keeps a reported 0 as 0.
                 "cached_tokens": _first(summary.get("cached_tokens"), current.get("cached_tokens")),
-                "metadata": {"worker": payload.get("worker") or current.get("worker")},
+                "metadata": _span_metadata(payload, current, summary),
             }
         )
     else:

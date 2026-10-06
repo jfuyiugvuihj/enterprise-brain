@@ -409,6 +409,98 @@ def model_token_counts(response: Any) -> dict[str, Any]:
     return counts
 
 
+#: The spellings one server reading arrives under, per wire shape. The compatible leg names
+#: them ``prompt_tokens`` / ``completion_tokens``, the native leg names them
+#: ``prompt_eval_count`` / ``eval_count``, LangChain renames them ``input_tokens`` /
+#: ``output_tokens``, and the cached side is ``usage.prompt_tokens_details.cached_tokens``,
+#: ``usage.input_token_details.cache_read`` or ``prompt_eval_cached_count``. One fact, several
+#: spellings: the meter below only ever selects a spelling the block actually carries. It
+#: never converts one into another, never subtracts one from another, never defaults one.
+USAGE_INPUT_KEYS = ("input_tokens", "prompt_tokens", "prompt_eval_count")
+USAGE_OUTPUT_KEYS = ("output_tokens", "completion_tokens", "eval_count")
+USAGE_CACHED_KEYS = ("cached_tokens", "cache_read", "prompt_eval_cached_count")
+USAGE_DETAIL_BLOCKS = ("input_token_details", "prompt_tokens_details")
+
+
+def _usage_block(usage: Any) -> dict[str, Any] | None:
+    """The usage block as a mapping, whether the client handed back a dict or a model.
+
+    ``openai`` hands a streamed chunk a ``CompletionUsage`` object; the frames captured off
+    the wire are plain dicts. Both are the same server fact, so losing a reading over that
+    difference would be a defect in this meter rather than a fact about the round.
+    """
+    if isinstance(usage, dict):
+        return usage
+    dump = getattr(usage, "model_dump", None)
+    if callable(dump):
+        dumped = dump()
+        if isinstance(dumped, dict):
+            return dumped
+    return None
+
+
+def _first_reported(block: dict[str, Any], names: tuple[str, ...]) -> int | None:
+    """The first of these spellings the block really reports, or ``None`` for "not said".
+
+    :func:`_reported_count` is what makes "present" mean "the server said a number": a
+    reported 0 stays a 0, an absent key stays ``None``. 跟进单 §21（「不得估算冒充实测 token
+    数」）keeps the gap between those two answers out of the ledger, and it is the same rule
+    ``app/common/model_handler.py`` states for ``cached_tokens``.
+    """
+    for name in names:
+        counted = _reported_count(block.get(name))
+        if counted is not None:
+            return counted
+    return None
+
+
+def stream_usage_counts(usage: Any) -> dict[str, Any]:
+    """Meter the usage block one **streamed** round reports, and name what it never said.
+
+    R670 opened this seam because the legacy ``POST /api/v1/chat`` leg never handed
+    :func:`model_token_counts` a reply object: it consumes a stream, and a stream carries its
+    counters (when it carries them at all) on one tail frame that no reply shape covers. The
+    two answers are two different facts, and the empty answer is a fact too.
+
+    * **no usage block** -- both counters come back ``None`` and ``usage_keys`` comes back as
+      the empty list. That is the frame shape speaking: the compatible leg stays silent on a
+      stream unless the request opts into ``stream_options.include_usage``, which is measured
+      here, not theorised (R31 探针, landed in ``docs/perf/latency-budget-2026-09-16.md`` and
+      in the R31 account in the follow-up sheet; the ``/ask`` answer legs already ask for it,
+      through ``app/agents/nodes.py::_answer_leg_tap``). A ``model_calls.input_tokens`` of NULL
+      on such a round means "this round could not say" -- never "the cache did not hit", never
+      a smoothed 0.
+    * **a block that counted** -- the columns take the server's own numbers under whichever
+      spelling that block uses, and ``usage_keys`` holds the sorted key names of the block as
+      the server sent it, so a reader can see which shape metered without re-guessing it.
+    * **a block that counted one side only** -- the other side stays ``None``. Selecting a
+      spelling is not arithmetic.
+
+    ``cached_tokens`` joins the dict only when a reading exists, the rule
+    :func:`model_token_counts` already follows; ``app/trace/projections.py::_span_metadata``
+    then decides what the row's ``metadata`` says about the shape, and the column keeps its
+    NULL when the key is absent.
+    """
+    block = _usage_block(usage)
+    if block is None:
+        return {"input_tokens": None, "output_tokens": None, "usage_keys": []}
+    counts: dict[str, Any] = {
+        "input_tokens": _first_reported(block, USAGE_INPUT_KEYS),
+        "output_tokens": _first_reported(block, USAGE_OUTPUT_KEYS),
+    }
+    cached = _first_reported(block, USAGE_CACHED_KEYS)
+    if cached is None:
+        for block_name in USAGE_DETAIL_BLOCKS:
+            details = block.get(block_name)
+            if isinstance(details, dict):
+                cached = _first_reported(details, USAGE_CACHED_KEYS)
+                if cached is not None:
+                    break
+    if cached is not None:
+        counts["cached_tokens"] = cached
+    counts["usage_keys"] = sorted(str(key) for key in block)
+    return counts
+
 def start_model_call(
     config: Any,
     *,
@@ -503,6 +595,7 @@ __all__ = [
     "ExecutionSpan",
     "record_stage_event",
     "model_token_counts",
+    "stream_usage_counts",
     "error_code_for",
     "span_identity",
     "start_model_call",
