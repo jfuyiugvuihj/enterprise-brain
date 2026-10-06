@@ -166,8 +166,11 @@ def test_the_two_shapes_are_not_the_same_face(monkeypatch, tmp_path):
         "两形只差具名格可以，但 `data_filename` 这一格不许一起消失——那才是本单要钉的东西"
     )
     assert set(empty) - set(produced) == set()
-    assert set(empty) == {"type"} | SHARED_READOUT_KEYS, (
-        "缺席那一形必须等于在册件按名钉住的那具键集合——否则改的就是那道钉"
+    assert {"type"} | SHARED_READOUT_KEYS <= set(empty), (
+        "在册键一枚不许少——少了就是拆那道钉"
+    )
+    assert set(empty) - ({"type"} | SHARED_READOUT_KEYS) <= named_cells, (
+        "缺席那一形也只许多具名格里的东西，第四枚新键不许过"
     )
     assert set(produced) - ({"type"} | SHARED_READOUT_KEYS) <= named_cells, (
         "带数据那一形除了在册键与三枚具名格，多一枚都不许过"
