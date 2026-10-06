@@ -27,6 +27,11 @@
 
 已 close（不占槽）：`Laplace` `Goodall` `Curie` `Sartre` `Dirac` `Mill` `Bacon` `Lagrange`。
 
+🔴 **下一条线接这四枚席位的正确通道**：它们是**旧总控线**用 `spawn_agent` 开出来的子线，新线程手里没有它们的 multi_agent 句柄，别去 `wait_agent`／`close_agent`。
+正解＝`list_threads` 找到它们（按上表的 `agent_id` 对号）→ `read_thread` 取进度 → 要下指令用 `send_message_to_thread`，
+且**措辞照 AGENTS 的短消息规矩**（长消息是致命通道，#112／#113 两枚执行层死在投递本身）；要返工就落成账面（工单文末追加＋新单承接），不发长令。
+交付到货后由**新总控**在主树验收并树（`git apply` patch＋逐枚 SHA-256 对盘），席位不碰主树。
+
 ## 2. 待派池（按写集排，串行理由逐格点名）
 
 - **R709** `chat.py::_should_use_data_context` 因「报销」落 `document_terms` 否决本轮 `data_filename`（连带 `route_main` 的 `has_data` 与 `_authorized_dataset_files` 退化成全量可见＝越权面）——🔴 **等 R702 并树**（同文件）。
