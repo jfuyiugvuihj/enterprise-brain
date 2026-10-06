@@ -16,7 +16,7 @@ import itertools
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import aclosing
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 # 显式线程池 — 支持 1000+ 并发（每个 uvicorn 实例）
 _executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="ezn_")
@@ -1328,71 +1328,84 @@ def _is_followup(message: str) -> bool:
     return _starts_with_deictic(text) or any(marker in text for marker in _FOLLOWUP_MARKERS)
 
 
-def _rewrite_followup(session_id: str, user_msg: str) -> str:
+def _rewrite_followup(session_id: str, user_msg: str, config: Any = None) -> str:
+    """Rewrite a follow-up into a standalone question, and bill the round trip to ``rewrite``.
+
+    R695 judgement 1: the round identity arrives either as ``config`` or from the context the
+    endpoint armed for this turn (``app/trace/spans.py::arm_turn_identity``), because the
+    regression doubles that replace this function take exactly ``(session_id, user_msg)``.
+    No identity means no bytes: the rule in ``app/trace/spans.py`` that an ownerless span
+    records nothing stays the only gate, so an un-armed call leaves the segment honestly
+    missing instead of inventing a duration for it.
+    """
     if not _is_followup(user_msg):
         return user_msg
 
-    msgs = _get_session_messages(session_id)
-    prev_user = [m["content"] for m in msgs if m["role"] == "user"]
-    # R126：「上一问」不许等于本轮自己。ask 路由已改成"先改写、后落库"，这里再钉第二道闸：
-    # 只要历史末尾就是本轮这句（老调用点、或任何先落库的调用方），就把它剔掉 —— 否则
-    # prompt 会变成"上一问: X ／ 当前: X"，模型没有上文可用，只能凭空编一段。
-    if prev_user and prev_user[-1] == user_msg:
-        prev_user = prev_user[:-1]
-    if not prev_user:
-        return user_msg
+    from app.trace.spans import current_turn_identity, stage_account
 
-    previous_user_msg = prev_user[-1]
-    try:
-        prompt = f"""把追问改写为完整独立问题。结合上文语境。
+    identity = config if config is not None else current_turn_identity()
+    with stage_account(identity, stage="rewrite", tier="rewrite"):
+        msgs = _get_session_messages(session_id)
+        prev_user = [m["content"] for m in msgs if m["role"] == "user"]
+        # R126：「上一问」不许等于本轮自己。ask 路由已改成"先改写、后落库"，这里再钉第二道闸：
+        # 只要历史末尾就是本轮这句（老调用点、或任何先落库的调用方），就把它剔掉 —— 否则
+        # prompt 会变成"上一问: X ／ 当前: X"，模型没有上文可用，只能凭空编一段。
+        if prev_user and prev_user[-1] == user_msg:
+            prev_user = prev_user[:-1]
+        if not prev_user:
+            return user_msg
+
+        previous_user_msg = prev_user[-1]
+        try:
+            prompt = f"""把追问改写为完整独立问题。结合上文语境。
 
 上一问: {previous_user_msg}
 当前: {user_msg}
 
 只输出改写后的问题:"""
-        result = model_handler.chat(
-            messages=[{"role": "user", "content": prompt}],
-            source=ModelSource.LOCAL,
-            stream=False,
-        )
-        from app.common.model_handler import MODEL_UNAVAILABLE_CODE, RATE_LIMITED_CODE
-
-        # 改写腿原先认不出"这一趟没真改写"：chat() 失败时不抛异常，只把一枚类型化 error_code
-        # 挂在返回体上。本守卫的集合只收"这句话由 model_handler 自己造、不是模型说的"这两枚 ——
-        #   MODEL_UNAVAILABLE_CODE  provider 挂/超时，正文是"离线模式：模型不可用…"四十字
-        #   RATE_LIMITED_CODE       容量闸住改写预算，正文是 103 字的英文 "Local model capacity
-        #                           is exhausted…"（app/common/model_handler.py 的 _call_budget）
-        # 两枚的正文都非空且远超下面 len(rewritten) > 3 那道尺寸检查，会原样取代用户真正的问题
-        # 送进图、送进检索、参与缓存键，而 except 分支在这两条路上都不触发。反过来
-        # RESPONSE_EMPTY_CODE / OUTPUT_TRUNCATED_CODE 是真答案身上带的诊断码 —— 尤其
-        # output_truncated 是一条被长度切短的**真改写** —— 所以这里是一张枚举表，不是
-        # "error_code 非空即失败"的总线判；判别也不看句子文本，不另立第二份词表。
-        canned_reply_reasons = {
-            MODEL_UNAVAILABLE_CODE: "模型不可用，provider 未生成业务结论",
-            RATE_LIMITED_CODE: "改写预算闸住，本机模型容量已满",
-        }
-        result_error_code = getattr(result, "error_code", "")
-        canned_reason = canned_reply_reasons.get(result_error_code)
-        if canned_reason:
-            # 两条回落共用判据 1 那句 stem，把差别写在原因与改写码上：运维 grep
-            # "改写码 rate_limited" 还是 "改写码 model_unavailable"，就分得清"预算太小"和
-            # "模型坏了"。这里刻意不带那串等号前缀 —— 跟进单 §12.1 把"码名只许出现在结构化赋值
-            # 处、不许塞进可读文本"钉成了机器判据（tests/test_error_code_vocabulary.py 的
-            # test_no_bare_error_code_lives_inside_a_string_literal_in_chat_py 扫
-            # 整份 chat.py），本行是日志而不是异常载荷，所以用中文键名挂裸码值。
-            logger.warning(
-                f"[REWRITE] 改写腿拿到离线罐头句，已回退原问题：{canned_reason}"
-                f"（改写码 {result_error_code}）｜{user_msg[:60]}"
+            result = model_handler.chat(
+                messages=[{"role": "user", "content": prompt}],
+                source=ModelSource.LOCAL,
+                stream=False,
             )
-            return user_msg
-        rewritten = result.strip() if isinstance(result, str) else result.choices[0].message.content.strip()
-        if rewritten and len(rewritten) > 3:
-            logger.info(f"[REWRITE] '{user_msg}' → '{rewritten[:60]}'")
-            return rewritten
-    except Exception as e:
-        logger.warning(f"[REWRITE] 失败: {e}")
+            from app.common.model_handler import MODEL_UNAVAILABLE_CODE, RATE_LIMITED_CODE
 
-    return user_msg
+            # 改写腿原先认不出"这一趟没真改写"：chat() 失败时不抛异常，只把一枚类型化 error_code
+            # 挂在返回体上。本守卫的集合只收"这句话由 model_handler 自己造、不是模型说的"这两枚 ——
+            #   MODEL_UNAVAILABLE_CODE  provider 挂/超时，正文是"离线模式：模型不可用…"四十字
+            #   RATE_LIMITED_CODE       容量闸住改写预算，正文是 103 字的英文 "Local model capacity
+            #                           is exhausted…"（app/common/model_handler.py 的 _call_budget）
+            # 两枚的正文都非空且远超下面 len(rewritten) > 3 那道尺寸检查，会原样取代用户真正的问题
+            # 送进图、送进检索、参与缓存键，而 except 分支在这两条路上都不触发。反过来
+            # RESPONSE_EMPTY_CODE / OUTPUT_TRUNCATED_CODE 是真答案身上带的诊断码 —— 尤其
+            # output_truncated 是一条被长度切短的**真改写** —— 所以这里是一张枚举表，不是
+            # "error_code 非空即失败"的总线判；判别也不看句子文本，不另立第二份词表。
+            canned_reply_reasons = {
+                MODEL_UNAVAILABLE_CODE: "模型不可用，provider 未生成业务结论",
+                RATE_LIMITED_CODE: "改写预算闸住，本机模型容量已满",
+            }
+            result_error_code = getattr(result, "error_code", "")
+            canned_reason = canned_reply_reasons.get(result_error_code)
+            if canned_reason:
+                # 两条回落共用判据 1 那句 stem，把差别写在原因与改写码上：运维 grep
+                # "改写码 rate_limited" 还是 "改写码 model_unavailable"，就分得清"预算太小"和
+                # "模型坏了"。这里刻意不带那串等号前缀 —— 跟进单 §12.1 把"码名只许出现在结构化赋值
+                # 处、不许塞进可读文本"钉成了机器判据（tests/test_error_code_vocabulary.py 的
+                # test_no_bare_error_code_lives_inside_a_string_literal_in_chat_py 扫
+                # 整份 chat.py），本行是日志而不是异常载荷，所以用中文键名挂裸码值。
+                logger.warning(
+                    f"[REWRITE] 改写腿拿到离线罐头句，已回退原问题：{canned_reason}"
+                f"（改写码 {result_error_code}）｜{user_msg[:60]}"
+                )
+                return user_msg
+            rewritten = result.strip() if isinstance(result, str) else result.choices[0].message.content.strip()
+            if rewritten and len(rewritten) > 3:
+                logger.info(f"[REWRITE] '{user_msg}' → '{rewritten[:60]}'")
+                return rewritten
+        except Exception as e:
+            logger.warning(f"[REWRITE] 失败: {e}")
+
+        return user_msg
 
 
 # ==================== Pydantic ====================
@@ -2757,7 +2770,28 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     # R126：读历史必须排在写本轮之前。这句的下一句原先就是 _save_message(..., "user", ...)，
     # 于是 _rewrite_followup 取到的「上一问」永远是本轮自己。落库挪到改写之后，会话里
     # 仍是"用户问在前、助手答在后"（答复那枚 _save_message 在几百行之后），历史不缺行。
-    rewritten_msg = _rewrite_followup(thread_id, orchestration_msg)
+    # R695 判据①：这一行把本轮的身份交给改写腿。形参那条路走不通——config 若改必交，调用点
+    # 就得交第三枚实位，全档 31 枚按 `(session_id, message)` 两枚元数替身的件当场 TypeError
+    # （席外实测 17 枚红，凭据纸 §6e；红的正包括判据④ 点名不许红的 test_r149），
+    # 所以走 R536 已经在册的正例（arm_retrieval_trace 同一形状）：把本轮 config 挂进执行上下文，
+    # 由 app/api/v1/chat.py::_rewrite_followup 自己去读。摘掉这一枚挂载 ⇒ rewrite 段当场没主，
+    # 一个字节都不落（app/trace/spans.py::arm_turn_identity 拒挂匿名轮次），牙在
+    # tests/test_r695_counter_evidence_teeth.py。
+    from app.trace.spans import arm_turn_identity, reset_turn_identity
+
+    turn_identity_token = arm_turn_identity({
+        "configurable": {
+            "principal": request_principal,
+            "thread_id": thread_id,
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "task_id": task_id,
+        }
+    })
+    try:
+        rewritten_msg = _rewrite_followup(thread_id, orchestration_msg)
+    finally:
+        reset_turn_identity(turn_identity_token)
     _save_message(thread_id, "user", request.message)
 
     # R141 判据①：本轮声明的档位与它的读数。取 rewritten_msg 而不是原始 message —— 图里的

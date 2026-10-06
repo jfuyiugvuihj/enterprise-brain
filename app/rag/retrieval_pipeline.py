@@ -892,7 +892,8 @@ class RetrievalPipeline:
                where: dict | None = None, pred=None,
                tier: str | None = None,
                owner_id: str | None = None,
-               context_pack: bool = False) -> tuple[list[dict], list[str]]:
+               context_pack: bool = False,
+               config: dict | None = None) -> tuple[list[dict], list[str]]:
         """
         执行完整检索管线。
         返回 (重排后的文档列表, 改写版本列表)
@@ -911,7 +912,18 @@ class RetrievalPipeline:
         # ① 查询改写 + 拆分
         tier = resolve_rewrite_tier(tier)
         if should_rewrite_query(query, tier):
-            rewritten = self.rewriter.rewrite(query)
+            # R695：rewrite 段的生产发点开在这一发外面。身份从 ``config`` 进来（枚与枚的接线见
+            # ``RetrievalPipeline.search_for_principal`` 与 app/rag/retrieval_pipeline.py::retrieval_turn_config）。
+            # 这里刻意不给 ``QueryRewriter.rewrite`` 加形参：R43a 的硬门钉着它的签名只剩一枚
+            # ``question``（tests/test_r43a_rewrite_prefix_reuse.py::test_no_identity_can_reach_the_reusable_prefix），
+            # 那是「可复用前缀收不到身份」的结构证据，本单不拆它。
+            # 这一段的区间落在 search_docs 的工具跨度**之内**，app/common/stage_timing.py::aggregate_stage_latency
+            # 按严格包含把它剔出加总账（``_entry`` 的 ledger 视图），所以一把尺只量一次；
+            # p50/p95 那一面仍然量到它，missing_stages 从此不再凭空少一段。
+            from app.trace.spans import stage_account
+
+            with stage_account(config, stage="rewrite", tier="rewrite"):
+                rewritten = self.rewriter.rewrite(query)
         else:
             # 省掉的就是这一发阻塞的 chat 往返：它曾是整条检索链路里最慢的一步。
             rewritten = {}
@@ -1017,6 +1029,8 @@ class RetrievalPipeline:
         found = self.search(
             query, top_k=top_k, where=scope.filters, pred=scope.allows, tier=tier,
             owner_id=owner_id, context_pack=context_pack,
+            # R695 判据① 的调用点：把「这一发检索属于哪一轮、属于谁」交给检索管线自己算。
+            config=retrieval_turn_config(principal),
         )
         duration_ms = round((perf_counter() - started) * 1000, 2)
         record_retrieval_scope(principal, scope, hit_count=len(found[0]))
@@ -1131,6 +1145,29 @@ TRACE_HIT_CAP = 20
 def current_retrieval_trace_context() -> RetrievalTraceContext | None:
     """这一条执行上下文里挂着的问答身份；没有问答在跑就是 ``None``。"""
     return _RETRIEVAL_TRACE_CONTEXT.get()
+
+
+def retrieval_turn_config(principal: Principal | None) -> dict | None:
+    """把「这一发检索属于哪一轮、属于谁」拼成 ``app/trace/spans.py::span_identity`` 认的那格形状。
+
+    三个 id 来自 :func:`arm_retrieval_trace` 挂进执行上下文的问答身份（R536 在册的那枚），
+    主体是调用方交进来的 ``principal``。缺任何一枚都交回 ``None``：R51 的账宁可不发，也不许
+    把一段耗时挂到一枚编出来的 trace 或一个编出来的 owner 上 —— 「无主不记」是
+    ``app/trace/spans.py::ExecutionSpan.active`` 已有的规矩，本件不新造第二种判法。
+    """
+    context = current_retrieval_trace_context()
+    if context is None or principal is None:
+        return None
+    if not str(getattr(principal, "user_id", "") or "").strip():
+        return None
+    return {
+        "configurable": {
+            "principal": principal,
+            "trace_id": context.trace_id,
+            "request_id": context.request_id,
+            "task_id": context.task_id,
+        }
+    }
 
 
 def arm_retrieval_trace(

@@ -897,13 +897,14 @@ def stage_window(stage: str, **identity: Any):
     call site that wants an event and a sample from one block of work uses
     ``app/trace/spans.py::stage_account`` (one call site = one ``stage.finished`` + one
     sample); it must not stack this window on top of that, because two meters over one
-    interval is what ``aggregate_stage_latency`` cannot resolve. Two of the five still
-    have no boundary inside the files that may open one (``retrieve`` lives behind
-    ``app/agents/tools.py::search_docs``, ``rewrite`` behind
-    ``app/rag/retrieval_pipeline.py::QueryRewriter.rewrite`` and
-    ``app/common/model_handler.py``), so they stay in ``missing_stages`` instead of being
-    guessed -- and ``CANONICAL_STAGES`` is the only vocabulary a stage event may carry
-    (the writer refuses anything else).
+    interval is what ``aggregate_stage_latency`` cannot resolve. R695 gave ``rewrite`` its
+    two boundaries -- ``app/api/v1/chat.py::_rewrite_followup`` for the follow-up round trip
+    and ``app/rag/retrieval_pipeline.py::RetrievalPipeline.search`` for the multi-query
+    rewrite, which sits inside the ``app/agents/tools.py::search_docs`` span and is therefore
+    excluded from the additive ledger instead of being billed a second time. One of the five
+    still has no boundary of its own (``retrieve`` lives behind that same tool span, which is
+    R696's merge, not a new meter here) -- and ``CANONICAL_STAGES`` is the only vocabulary a
+    stage event may carry (the writer refuses anything else).
     """
     started = time.monotonic()
     started_at = datetime.now(timezone.utc).isoformat()

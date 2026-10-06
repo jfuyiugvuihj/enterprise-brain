@@ -6,6 +6,7 @@ invented principal, which keeps ``owner_id`` meaningful in every execution table
 """
 from __future__ import annotations
 
+from contextvars import ContextVar, Token
 import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -60,6 +61,41 @@ def span_identity(config: Any) -> dict[str, str]:
         "agent_run_id": f"{trace_id}:orchestrator" if trace_id else "",
         "agent_step_id": step_id,
     }
+
+
+#: The config of the request being answered right here, for the legs that cannot take one.
+#: ``app/api/v1/chat.py::_rewrite_followup`` is replaced across the regression suite by
+#: doubles that accept exactly ``(session_id, user_msg)``, so R695 sends that leg its round
+#: identity through the execution context instead of the argument list -- the shape
+#: ``app/rag/retrieval_pipeline.py::arm_retrieval_trace`` already uses for retrieval traces.
+#: An account with no owner still writes no bytes: ``ExecutionSpan.active`` is the only gate.
+_TURN_IDENTITY: ContextVar[Any] = ContextVar("enterprise_brain_turn_identity", default=None)
+
+
+def arm_turn_identity(config: Any) -> Token[Any] | None:
+    """Hang this round's config on the current execution context.
+
+    Refuses an anonymous round and returns ``None`` rather than arming an invented owner:
+    a caller that cannot prove who is asking gets no account, exactly as ``span_identity``
+    already refuses to invent one. The token has to go back to :func:`reset_turn_identity`
+    in a ``finally`` -- a leaked token would hand this request's owner to the next request
+    that reuses the context.
+    """
+    identity = span_identity(config)
+    if not identity["owner_id"] or not identity["trace_id"]:
+        return None
+    return _TURN_IDENTITY.set(config)
+
+
+def current_turn_identity() -> Any:
+    """The armed round's config, or ``None`` when no owned request runs in this context."""
+    return _TURN_IDENTITY.get()
+
+
+def reset_turn_identity(token: Token[Any] | None) -> None:
+    """Put the context back the way it was. ``None`` (never armed) is a no-op."""
+    if token is not None:
+        _TURN_IDENTITY.reset(token)
 
 
 @dataclass
@@ -679,6 +715,9 @@ def error_code_for(exc: BaseException) -> str:
 
 __all__ = [
     "ExecutionSpan",
+    "arm_turn_identity",
+    "current_turn_identity",
+    "reset_turn_identity",
     "record_stage_event",
     "stage_account",
     "model_token_counts",
