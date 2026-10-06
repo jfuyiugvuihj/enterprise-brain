@@ -699,6 +699,36 @@ class Evidence(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+#: 断言清单为空不是一次测量。``unsupported_claim_rate`` 的分母是答案真正交出来的断言枚数，
+#: 零枚时它会印出一枚好看的 0.0，而那枚 0 什么也没说（R699 记了五班的「零分母的 0」）。
+#: 产品侧宁可写出这个名字，也不交那一枚 0.0。
+CLAIMS_NOT_MEASURED = "NOT_MEASURED"
+CLAIMS_MEASURED = "MEASURED"
+
+
+class Claim(BaseModel):
+    """答案里的一枚原子断言，以及本轮检索到的证据有没有撑住它。
+
+    ``app/quality/eval.py::evaluate_provenance`` 早就在逐条读 ``supported``，缺的是产品侧不肯
+    交这一格：三窗 315 行带 ``claims`` 键 0 行，于是 ``unsupported_claim_rate=0.0`` 是没有分母
+    的 0。``text``／``supported`` 两枚键名不是风格选择 —— 判分器按字面读它们，改名就等于把分母
+    重新归零，``tests/test_r699_claims_in_answer_payload.py`` 两头都钉着。
+    """
+
+    #: 被判定的那一枚断言原文（一条断言一行，不是一段话）。
+    text: str
+    #: 🔴 只由本轮检索到的证据决定：唯一定夺点是
+    #: ``app/agents/evidence.py::build_answer_claims``。「答案里出现了引用标记」不算证据。
+    supported: bool
+    #: 指认到具体证据的出处，在册形状 ``{source}#chunk={chunk_index}``（由
+    #: ``app/agents/evidence.py::record_document_hits`` 写进证据袋的那一格搬运）。
+    #: ``supported`` 为真时这一枚列表必须非空 —— 只写「有出处」三个字是判据 1 退回的那条形。
+    evidence_refs: list[str] = Field(default_factory=list)
+    #: 判分时实际量到的字面包含度（取证用），阈值是
+    #: ``app/agents/evidence.py::CLAIM_SUPPORT_CONTAINMENT_FLOOR``。
+    support_ratio: float = 0.0
+
+
 class MetricContext(BaseModel):
     metric_name: str
     definition: str
@@ -733,6 +763,10 @@ class AgentResult(BaseModel):
     request_id: str = ""
     trace_id: str = ""
     evidence: list[Evidence] = Field(default_factory=list)
+    #: R699：答案件逐条交出断言，``app/quality/eval.py`` 里那把 ``unsupported_claim_rate``
+    #: 才有分母。唯一的构造点是 ``app/agents/evidence.py`` 的 ``build_agent_result`` 与
+    #: ``aggregate_agent_result``；构造不出断言时那一头当场拒绝，不交空清单。
+    claims: list[Claim] = Field(default_factory=list)
     metrics: list[MetricContext] = Field(default_factory=list)
     confidence: float = 0.0
     confidence_label: Literal["引用充分", "引用不足", "推测"] = "引用不足"
