@@ -108,7 +108,8 @@ def report(out, started, walk_rc):
         verdict = "能演示" if r.get("status") == PASS else "不能演示"
         print(str(r.get("ring")) + " | " + str(r.get("title")) + " | " + verdict + " | " + note[:140], flush=True)
     print("", flush=True)
-    print("[smoke_v1] " + str(len(rows) - len(bad)) + "/" + str(len(rows)) + " 条能演示；墙钟 "
+    print("[smoke_v1] " + str(len(rows) - len(bad)) + "/" + str(len(rows))
+          + " 条能演示（分母＝本轮真跑的 " + str(len(rows)) + " 条）；墙钟 "
           + str(round(time.time() - started, 1)) + " s；账本 " + str(led), flush=True)
     if walk_rc != 0:
         print("[smoke_v1] 走查件退出码 " + str(walk_rc) + "（环境/登录/容器问题同样算门红，不许推给非产品原因）", flush=True)
@@ -119,7 +120,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--env-file", default=str(REPO / "deploy" / ".env.server"))
     ap.add_argument("--base-url", default="http://localhost/")
-    ap.add_argument("--rings", default="1,2,3,4,5,6,7,8,9")
+    ap.add_argument("--suite", choices=("v1", "v2"), default="v1",
+                    help="v1＝九条旅程（缺省）；v2＝环 10–16 那张 V2 演示面。两张分母分开报，别拿一张盖另一张")
+    ap.add_argument("--rings", default="", help="点名要跑的环号；不给就按 --suite 的那一套全跑")
     ap.add_argument("--out", default="", help="走查产物落点，缺省 TEMP 下 evalrun/smoke-v1")
     ap.add_argument("--python", default=WALK_PYTHON_DEFAULT,
                     help="走查件的解释器命令。主树 .venv 里没有 playwright 与 pillow，缺省用 uv 现拉一枚（走查件的全部第三方依赖就这两件，其余是标准库与 docker CLI）")
@@ -127,6 +130,8 @@ def main():
     ap.add_argument("--allow-stale", action="store_true",
                         help="明知容器已带最新码时跳过新鲜度检查")
     args = ap.parse_args()
+    if not args.rings:
+        args.rings = "1,2,3,4,5,6,7,8,9" if args.suite == "v1" else "10,11,12,13,14,15,16"
     if not args.no_preflight:
         bad = preflight(args.base_url)
         if bad:

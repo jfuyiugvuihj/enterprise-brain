@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -1363,6 +1364,489 @@ class Walk:
         )
         self.finish(9, "HITL／审计", status, readings, shots, note)
 
+    # ---------------------------------------------------------------- V2 演示面
+    #: 这六条不是 V1 那九条的加时赛：它们量的是 V2 那张验收面（表格进知识库、页面不吃演示值、
+    #: 告警闭环、通知、一次运行的 Trace、图谱写读回路）。判据一律是「屏上看得见什么」，
+    #: 拿不到控件就把在位枚数记进读数——尺子的坏不许冒充产品的坏（10-07 环 7 那一课）。
+    def _goto(self, path: str, wait_testid: str) -> dict[str, Any]:
+        """按地址栏进一屏（history 模式深链在交付环境里落得到 index.html）。"""
+        assert self.page is not None
+        self.page.goto(self.args.base_url.rstrip("/") + path, wait_until="load")
+        found = wait_for(lambda: self.page.locator("[data-testid=%s]" % wait_testid).count() > 0, 20)
+        self.page.wait_for_timeout(800)
+        return {"path": path, "panel": wait_testid, "panel_found": bool(found)}
+
+    def _bubble_texts(self) -> list[str]:
+        assert self.page is not None
+        return self.page.evaluate(
+            "() => Array.from(document.querySelectorAll('.msg-bubble-wrap')).map(e => e.innerText || '')"
+        )
+
+    def ring10(self) -> None:
+        """V2 环 10 表格进知识库：数据口上传一张 CSV ⇒ 问一句，当场答出只有这一枚档才有的那个数。
+
+        这一环先前几版都不周：第一版把「问一句」发在数据屏（那一屏没有输入框，等满超时记成
+        产品的坏）；第二版数的是整枚气泡，把来源卡正文与自己那句问话都算了进去——10-07 19:3x
+        现读屏上答的其实是上一笔那一张旧表。这一版只读助手正文那一个元素，且要答的数是
+        按本轮时间戳生成的，旧档里没有第二个它。
+        上传由部门里的那一枚账号发起：admin 没有部门，产品按规矩拒绝给这张表定归属，屏上那句
+        话是真的（读侧另有环 16 钉住）。listed_in_knowledge_base 不当判据：R700 明写它故意不写
+        文档目录行，字节归谁是 R687 的零拷贝问题，那一格今天仍然只是读数。
+        """
+        self.ask_as_owner()
+        assert self.page is not None
+        marker = "走查标记" + self.nonce
+        value = str(900000 + int(self.nonce))
+        fixture = self.out / "fixtures" / ("v2-table-" + self.nonce + ".csv")
+        fixture.parent.mkdir(parents=True, exist_ok=True)
+        grid = ["部门,项目,数值"]
+        grid += ["市场部,月度差旅%s-%02d,%d" % (self.nonce, index, index * 3) for index in range(1, 41)]
+        grid.append("市场部," + marker + "," + value)
+        fixture.write_bytes(("\n".join(grid) + "\n").encode("utf-8-sig"))
+        nav = self._goto("/data", "data-panel")
+        items = "[data-testid=data-file-item]"
+        before_rows = self.page.locator(items).count()
+        self.page.set_input_files("[data-testid=data-upload-input]", str(fixture))
+        landed = wait_for(
+            lambda: self.page.locator(items).filter(has_text=fixture.name).count() > 0, 60)
+        upload_face = self.page.evaluate(
+            "() => Array.from(document.querySelectorAll('.upload-item, [data-testid=ui-error-state]'))"
+            ".map(e => (e.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 160))"
+        )
+        shots = [self.shot("v2-r10-table-listed.png")]
+        kb_nav = self._goto("/docs", "documents-panel")
+        in_kb = wait_for(
+            lambda: self.page.locator("[data-testid=doc-row]").filter(has_text=fixture.name).count() > 0, 20)
+        shots.append(self.shot("v2-r10-in-knowledge-base.png"))
+        self.open_screen("nav-chat", "chat-panel")
+        self.state["mid_shot_slot"] = "r10"
+        asked = self.ask("公司知识库里有一张表叫 " + fixture.name
+                         + "，它里面「" + marker + "」这一行的数值是多少？请给出来源文件名。", lane="问答档")
+        screen = self.read_chat_screen()
+        answer = self.page.evaluate(
+            "() => Array.from(document.querySelectorAll('.msg-bubble.assistant'))"
+            ".map(e => e.innerText || '')"
+        )
+        joined = "\n".join(answer[-1:])
+        carries = value in joined
+        shots.append(self.shot("v2-r10-answer.png"))
+        readings = {
+            "fixture_name": fixture.name,
+            "marker": marker,
+            "unique_value": value,
+            "nav": nav,
+            "principal": self.principal,
+            "rows_before_upload": before_rows,
+            "row_listed_after_upload": bool(landed),
+            "upload_face_on_screen": upload_face,
+            "listed_in_knowledge_base": bool(in_kb),
+            "kb_nav": kb_nav,
+            "asked": asked.get("asked"),
+            "ask_blocked_reason": asked.get("blocked_reason"),
+            "final_chars": asked.get("final_chars"),
+            "sources_cards": screen["sources_cards"],
+            "source_names_on_screen": [t.replace("\n", " | ")[:80] for t in
+                                       self.page.locator("[data-testid=source-card]").all_inner_texts()[:4]],
+            "answer_names_the_table": fixture.name in joined,
+            "answer_carries_the_value": bool(carries),
+            "answer_on_screen": joined[:400].replace("\n", " | "),
+        }
+        status = "达" if (landed and asked.get("asked") and carries) else "未达"
+        note = "" if status == "达" else (
+            "未达只可能差在两格之一：这一枚档没落进数据列表（row_listed_after_upload），或者当场"
+            "答不出那个只属于本轮的数（answer_carries_the_value，屏上正文原话记在 answer_on_screen）。"
+        )
+        self.finish(10, "表格进知识库", status, readings, shots, note)
+
+    def ring11(self) -> None:
+        """V2 环 11 总览真实数据：屏上不许挂着「演示数据」牌，且文档数要与「喂料」屏现读相等。"""
+        self.ensure_login()
+        assert self.page is not None
+        nav = self._goto("/overview", "dashboard-kpis")
+        demo_flag = self.page.locator("[data-testid=dashboard-demo-flag]").all_inner_texts()
+        tiles = self.page.evaluate(
+            "() => Array.from(document.querySelectorAll('[data-testid^=dashboard-kpi-]'))"
+            ".map(e => ({ id: e.getAttribute('data-testid'),"
+            " text: (e.innerText || '').replace(/\\s+/g, ' ').trim() }))"
+        )
+        shots = [self.shot("v2-r11-overview.png")]
+        self.open_screen("nav-feed", "documents-panel")
+        docs_now = self._doc_counts()
+        shots.append(self.shot("v2-r11-feed-docs.png"))
+        kpi_docs = None
+        for tile in tiles:
+            if str(tile.get("id") or "").endswith("-documents"):
+                digits = "".join(ch for ch in tile["text"] if ch.isdigit())
+                kpi_docs = int(digits) if digits else None
+        readings = {
+            "nav": nav,
+            "demo_flag_on_screen": demo_flag,
+            "kpi_tiles": tiles,
+            "kpi_documents": kpi_docs,
+            "feed_tile_documents": docs_now.get("tile"),
+            "feed_api_documents": docs_now.get("api_document_count"),
+        }
+        status = "达" if (
+            not demo_flag and kpi_docs is not None and docs_now.get("tile") == kpi_docs
+        ) else "未达"
+        note = "" if status == "达" else (
+            "未达差在总览那一格还挂着演示牌、或它的文档数与喂料屏现读不等（两枚读数都在 kpi_documents"
+            " 与 feed_tile_documents）。"
+        )
+        self.finish(11, "总览真实数据", status, readings, shots, note)
+
+    def ring12(self) -> None:
+        """V2 环 12 告警闭环：确认／转派／关闭，每一态都要在屏上真落一次并留下台账行。
+
+        巡检是同步的一发慢请求（每条命中都要过一次 AI 归因，10-07 19:1x 实测 5 枚规则
+        跑了 15 s），上一版点完「立即巡检」只等 4 s 就去数行，那会儿屏上站的是
+        「正在读取告警列表」那张 loading 脸，`alert-rows` 容器整块不存在，于是把
+        「还在跑」读成「屏上没有告警」。这一版按名字等那条告警真落账，再看屏。
+        """
+        self.ensure_login()
+        assert self.page is not None
+        nav = self._goto("/insights", "alerts-panel")
+        page = self.page
+        rows = page.locator("[data-testid=alert-rows] .record-item")
+        face = "[data-testid=alert-action-receipt], [data-testid=alert-action-failure]"
+
+        def _face() -> list[str]:
+            return page.locator(face).all_inner_texts()[:1]
+
+        def _panel_face() -> dict[str, Any]:
+            """这一会儿告警区站的是哪张脸：加载中／读不到／空／有列表。"""
+            card = page.locator("[data-testid=alerts-card]")
+            return {
+                "data_face": card.first.get_attribute("data-face") if card.count() else None,
+                "error": page.locator("[data-testid=ui-error-state]").all_inner_texts()[:1],
+                "empty": page.locator("[data-testid=ui-empty-state]").all_inner_texts()[:1],
+                "list_rows": rows.count(),
+            }
+
+        def _body(path: str) -> Any:
+            call = self.api(path)
+            return call.get("body") if isinstance(call, dict) else None
+
+        def _alert_landed(name: str) -> bool:
+            items = (_body("/alerts") or {}).get("alerts") or []
+            return any(name in str(item.get("message") or "")
+                       and str(item.get("status")) == "open" for item in items)
+
+        def _rule_exists(name: str) -> bool:
+            items = (_body("/alerts/rules") or {}).get("rules") or []
+            return any(str(item.get("name")) == name for item in items)
+
+        def _enabled_row(name: str, testid: str) -> int:
+            """挑一枚这一态还点得动的告警行：上一笔走查推过终态的行，按钮带着理由 disable。"""
+            pool = rows.filter(has_text=name) if name else rows
+            for index in range(pool.count()):
+                button = pool.nth(index).locator("[data-testid=%s]" % testid)
+                if button.count() and button.first.is_enabled():
+                    return index
+            return -1
+
+        def _mint() -> dict[str, Any]:
+            """自己长出一枚可闭环的告警：走屏上那枚「告警规则」入口登记一条必然越界的规则，
+            再按「立即巡检」，等这一条真落进服务端账本，才回屏上看。"""
+            name = "走查闭环" + self.nonce
+            out: dict[str, Any] = {"rule_name": name, "form_fields": 0, "rule_created": False,
+                                   "check_clicked": False, "alert_landed": False}
+            fields = page.locator("[data-testid=rule-form] input")
+            out["form_fields"] = fields.count()
+            if out["form_fields"] < 3:
+                return out
+            fields.nth(0).fill(name)
+            fields.nth(1).fill("出差天数")
+            trigger = page.locator("[data-testid=rule-form] [data-testid=ui-select-trigger]")
+            if trigger.count():
+                trigger.first.click()
+                page.wait_for_timeout(400)
+                gt = page.locator("[data-testid=ui-select-list] li, [data-testid=ui-select-list] button")
+                for index in range(gt.count()):
+                    if "大于" in (gt.nth(index).inner_text() or ""):
+                        gt.nth(index).click()
+                        break
+            fields.nth(2).fill("0")
+            save = page.locator("[data-testid=create-rule]")
+            if save.count():
+                save.first.click(timeout=8000)
+                out["rule_created"] = bool(wait_for(lambda: _rule_exists(name), 20))
+            if out["rule_created"] and page.locator("[data-testid=run-alert-check]").count():
+                page.click("[data-testid=run-alert-check]")
+                out["check_clicked"] = True
+                out["alert_landed"] = bool(wait_for(lambda: _alert_landed(name), 180, poll_s=3.0))
+            if out["alert_landed"] and page.locator("[data-testid=reload-alerts]").count():
+                page.click("[data-testid=reload-alerts]")
+                wait_for(lambda: rows.count() > 0, 30, poll_s=1.0)
+            return out
+
+        shots = [self.shot("v2-r12-alerts-before.png")]
+        face_before = _panel_face()
+        ledger_before = page.locator("[data-testid=alert-ledger-line]").count()
+        status_before = page.locator("[data-testid=alert-status-line]").all_inner_texts()[:1]
+        minted = _mint()
+        name = str(minted.get("rule_name") or "")
+        states: dict[str, Any] = {}
+        for action, testid, fill_first in (("ack", "alert-ack", False),
+                                           ("assign", "alert-assign", True),
+                                           ("close", "alert-close", False)):
+            index = _enabled_row(name, testid)
+            if index < 0:
+                states[action] = {"rows_on_screen": rows.count(), "enabled_row": -1,
+                                  "why": "屏上没有这一态还点得动的告警行",
+                                  "panel_face": _panel_face()}
+                continue
+            row = rows.filter(has_text=name).nth(index)
+            button = row.locator("[data-testid=%s]" % testid).first
+            before_face = _face()
+            try:
+                button.click(timeout=8000)
+                if testid == "alert-close":
+                    # 关闭是终态，产品按两下：第一下只把这一行点亮成「确认关闭？」，第二下才真发 POST。
+                    page.wait_for_timeout(400)
+                    button.click(timeout=8000)
+            except Exception as exc:  # noqa: BLE001 - 点不动只记账，不许把整轮带走
+                states[action] = {"enabled_row": index, "click_error": str(exc)[:150]}
+                continue
+            if fill_first:
+                form = row.locator("[data-testid=assign-form]")
+                if form.count() == 0:
+                    form = page.locator("[data-testid=assign-form]")
+                if form.count():
+                    inputs = form.locator("input, select")
+                    if inputs.count():
+                        # 转派对象得自己管得了告警、且这一条在他的可见范围里；派给不存在的账号是
+                        # 这条尺子不周，不是产品坏：用在册的财务部经理档。
+                        inputs.first.fill("reportowner")
+                    send = page.locator("[data-testid=alert-assign-send]")
+                    if send.count():
+                        send.first.click(timeout=8000)
+            # 回执与拒绝句是面板级的一枚：不等它换掉上一态留下的那一句，就会把 assign 的失败
+            # 记成 close 的失败（10-07 18:1x 实测就串了这一次）。
+            changed = bool(wait_for(lambda: _face() != before_face, 12))
+            after_face = _face()
+            states[action] = {
+                "clicked": True,
+                "enabled_row": index,
+                "face_changed": changed,
+                "status_line": row.locator("[data-testid=alert-status-line]").all_inner_texts()[:1],
+                "receipt": after_face,
+            }
+            shots.append(self.shot("v2-r12-after-%s.png" % action))
+        ledger_after = page.locator("[data-testid=alert-ledger-line]").count()
+        receipts = sum(1 for value in states.values() if value.get("face_changed")
+                       and "failure" not in str(value.get("receipt") or "").lower())
+        refusals = {key: value.get("receipt") for key, value in states.items()
+                    if not value.get("face_changed")}
+        status_after = page.locator("[data-testid=alert-status-line]").all_inner_texts()[:1]
+        readings = {
+            "nav": nav,
+            "principal": self.principal,
+            "alert_rows": rows.count(),
+            "panel_face_before_mint": face_before,
+            "panel_face_after": _panel_face(),
+            "mint": minted,
+            "ledger_lines_before": ledger_before,
+            "ledger_lines_after": ledger_after,
+            "status_line_before": status_before,
+            "status_line_after": status_after,
+            "receipts": receipts,
+            "refusals": refusals,
+            "states": states,
+        }
+        status = "达" if receipts >= 3 else "未达"
+        note = "" if status == "达" else (
+            "未达差在某一态没能当场成立（拿到回执 %d 态；被拒那一态连着它自己的原因句记在 states 与 "
+            "refusals 两格，屏上站的是哪张脸记在 panel_face_after 与 mint 两格）。" % receipts
+        )
+        self.finish(12, "告警闭环", status, readings, shots, note)
+
+    def ring13(self) -> None:
+        """V2 环 13 通知中心：角标能点开、列表有内容、标一次已读要看见角标真的动。"""
+        self.ensure_login()
+        assert self.page is not None
+        page = self.page
+
+        def _unread_count():
+            """面板自己那句「至少 N 条未读通知」——它是后端现读的那一格。"""
+            text = "".join(page.locator("[data-testid=notification-panel]").all_inner_texts()[:1])
+            found = re.findall(r"(\d+)\s*条未读", text)
+            return int(found[0]) if found else None
+
+        unread_before = None
+        unread_after = None
+        trigger = page.locator("[data-testid=notification-trigger]")
+        if trigger.count() == 0:
+            self.open_screen("nav-chat", "chat-panel")
+            trigger = page.locator("[data-testid=notification-trigger]")
+        badge_before = page.locator("[data-testid=notification-badge]").all_inner_texts()
+        shots: list[dict[str, Any]] = []
+        opened = False
+        rows = 0
+        marked = False
+        if trigger.count():
+            trigger.first.click()
+            opened = bool(wait_for(lambda: page.locator("[data-testid=notification-panel]").count() > 0, 10))
+            # 「正在读取通知」是产品自己的加载脸：骨架还没退场就取行数，是我这条尺子取早了。
+            wait_for(lambda: page.locator("[data-testid=notification-row]").count() > 0
+                     or page.locator("[data-testid=notification-list]").count() > 0, 15)
+            rows = page.locator("[data-testid=notification-row]").count()
+            shots.append(self.shot("v2-r13-notification-panel.png"))
+            unread_before = _unread_count()
+            mark = page.locator("[data-testid=notification-mark-read]")
+            if mark.count():
+                mark.first.click()
+                wait_for(lambda: _unread_count() != unread_before, 12)
+                unread_after = _unread_count()
+                marked = True
+        badge_after = page.locator("[data-testid=notification-badge]").all_inner_texts()
+        readings = {
+            "trigger_on_screen": trigger.count(),
+            "panel_opened": opened,
+            "still_reading_note": page.locator("[data-testid=notification-panel]").all_inner_texts()[:1][0][:60]
+            if page.locator("[data-testid=notification-panel]").count() else [],
+            "rows_in_panel": rows,
+            "badge_before": badge_before,
+            "badge_after": badge_after,
+            "mark_read_clicked": marked,
+        }
+        dropped = unread_before is not None and unread_after == unread_before - 1
+        readings["unread_panel_before"] = unread_before
+        readings["unread_panel_after"] = unread_after
+        status = "达" if (opened and rows > 0 and marked and dropped) else "未达"
+        note = "" if status == "达" else (
+            "未达差在点完「标记已读」之后面板自己那句未读数没准时少一枚"
+            "（两态记在 unread_panel_before / unread_panel_after）。角标那两态严重程度只当读数"
+            "：同一轮里前面那几环会自己长出新通知（10-07 19:5x 现读点完已读反而 88+ → 94+）。"
+        )
+        self.finish(13, "通知中心", status, readings, shots, note)
+
+    def ring14(self) -> None:
+        """V2 环 14 一次运行的关键 Trace：选一次运行，屏上要列得出阶段与耗时。"""
+        self.ensure_login()
+        assert self.page is not None
+        nav = self._goto("/traces", "trace-panel")
+        page = self.page
+        runs = page.locator("[data-testid=pick-run]")
+        runs_readout = page.locator("[data-testid=runs-cell]").all_inner_texts()[:6]
+        events = 0
+        picked = False
+        options_open = 0
+        if runs.count():
+            # 「点选一枚运行」是 UiSelect：点它是开列表，要在列表里挑一枚才算选过。
+            page.locator("[data-testid=pick-run] [data-testid=ui-select-trigger]").first.click()
+            options = page.locator("[data-testid=ui-select-list] li, [data-testid=ui-select-list] button")
+            options_open = options.count()
+            if options_open:
+                options.first.click()
+                picked = bool(wait_for(
+                    lambda: page.locator("[data-testid=events-table]").count() > 0, 20))
+            # 屏上那句话才算数：「服务端说这一条运行记了 N 条，这一屏读出的 M 条」。表格单元格
+            # 没有专用 testid，拿 .count() 数格子是这条尺子不周（18:3x 实测屏上写着 68 条、
+            # 格子只数出 1 枚，那一发未达是尺子的红）。
+            readout = page.locator("[data-testid=events-count]").all_inner_texts()[:1]
+            digits = [int(x) for text in readout for x in re.findall(r"\d+", text)]
+            events = min(digits) if digits else 0
+            events_pairs = digits[:2]
+        shots = [self.shot("v2-r14-trace-run.png")]
+        readings = {
+            "nav": nav,
+            "runs_on_screen": runs.count(),
+            "runs_readout": runs_readout,
+            "run_picked": picked,
+            "select_options_open": options_open,
+            "event_cells": events,
+            "events_digits_on_screen": events_pairs,
+            "events_count_readout": page.locator("[data-testid=events-count]").all_inner_texts()[:2],
+        }
+        status = "达" if (runs.count() > 0 and events >= 2) else "未达"
+        note = "" if status == "达" else (
+            "未达差在运行列表是空的、或选完一次运行屏上列不出阶段（屏上那句读数记在 "
+            "events_count_readout 与 events_digits_on_screen）。"
+        )
+        self.finish(14, "一次运行的关键 Trace", status, readings, shots, note)
+
+    def ring15(self) -> None:
+        """V2 环 15 知识图谱登记并读回：屏上登记一条关系，刷新以后列表里要读得回它。"""
+        self.ensure_login()
+        assert self.page is not None
+        nav = self._goto("/graph", "graph-panel")
+        page = self.page
+        marker = "走查主体" + self.nonce
+        fields = page.locator(".form-grid input")
+        filled = fields.count()
+        shots: list[dict[str, Any]] = []
+        saved = False
+        if filled >= 4:
+            fields.nth(0).fill(marker)
+            fields.nth(1).fill("依赖")
+            fields.nth(2).fill("走查客体")
+            fields.nth(3).fill("r694 走查")
+            page.click("[data-testid=save-relation]")
+            page.wait_for_timeout(1500)
+            saved = True
+        reload_button = page.locator("[data-testid=reload-relations]")
+        if reload_button.count():
+            reload_button.first.click()
+            page.wait_for_timeout(1200)
+        items = page.locator(".relation-item").all_inner_texts()
+        shots.append(self.shot("v2-r15-graph-relations.png"))
+        errors = page.locator("[data-testid=ui-error-state]").all_inner_texts()[:2]
+        back = any(marker in text for text in items)
+        readings = {
+            "nav": nav,
+            "form_fields_on_screen": filled,
+            "save_clicked": saved,
+            "marker": marker,
+            "relation_items_on_screen": len(items),
+            "relation_read_back": back,
+            "relation_sample": [text.replace("\n", " | ")[:120] for text in items[:2]],
+            "error_state_on_screen": errors,
+        }
+        status = "达" if (back) else "未达"
+        note = "" if status == "达" else (
+            "未达差在登记这一腿：屏上读数记了表单在位枚数、有没有点保存、以及错误态那一句原话。"
+        )
+        self.finish(15, "知识图谱写读回路", status, readings, shots, note)
+
+
+    def ring16(self) -> None:
+        """V2 环 16 管理员读数据列表：没有部门归属的管理员进「数据」屏要读得出列表。
+
+        业主 2026-10-07 裁定「管理员不被要求与自己的资源同部门」，写侧已由 cba7d29 改口
+        （admin 问一句柱状图，屏上终于有柱状图）；这一环钉读侧同一口径，不许这一句
+        「你的账号还没有登记所属部门」把整张列表挡在屏外。
+        """
+        self.ensure_login()
+        assert self.page is not None
+        nav = self._goto("/data", "data-panel")
+        settled = wait_for(
+            lambda: self.page.locator("[data-testid=ui-error-state]").count() > 0
+            or self.page.locator("[data-testid=data-file-item]").count() > 0, 20)
+        rows = self.page.locator("[data-testid=data-file-item]").count()
+        faces = self.page.locator("[data-testid=ui-error-state]").all_inner_texts()[:2]
+        call = self.api("/data-files")
+        detail = None
+        if isinstance(call, dict) and isinstance(call.get("body"), dict):
+            detail = call["body"].get("detail")
+        shots = [self.shot("v2-r16-admin-data-list.png")]
+        ok = bool(settled) and isinstance(call, dict) and call.get("status") == 200 and rows > 0 and not faces
+        readings = {
+            "nav": nav,
+            "settled": bool(settled),
+            "principal": self.principal,
+            "http_status": call.get("status") if isinstance(call, dict) else None,
+            "detail_code": detail,
+            "file_rows_on_screen": rows,
+            "error_face_on_screen": [f.replace("\n", " | ")[:200] for f in faces],
+        }
+        status = "达" if ok else "未达"
+        note = "" if ok else (
+            "未达差在读侧还按部门定范围：GET /data-files 对无部门的管理员交回 "
+            + str(detail) + "（写侧 cba7d29 已放行，读侧未跟上）。"
+        )
+        self.finish(16, "管理员读数据列表", status, readings, shots, note)
+
 def _ordered(items: Any) -> list[Any]:
     seen = []
     for item in items:
@@ -1437,6 +1921,8 @@ def main(argv: list[str] | None = None) -> int:
     methods = {
         1: "ring1", 2: "ring2", 3: "ring3", 4: "ring4", 5: "ring5",
         6: "ring6", 7: "ring7", 8: "ring8", 9: "ring9",
+        10: "ring10", 11: "ring11", 12: "ring12", 13: "ring13", 14: "ring14", 15: "ring15",
+        16: "ring16",
     }
     with Walk(args) as walk:
         for ring in rings:

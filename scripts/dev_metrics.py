@@ -187,18 +187,27 @@ def main() -> int:
         demo_total = 9
     else:
         path, when, rings = led
-        demo_ok = sum(1 for r in rings if r.get("status") == PASS)
-        demo_total = len(rings)
         age = ""
         if stamp and when < stamp:
             age = "  [读数过期：早于最新一枚 app 提交 " + stamp.strftime("%m-%d %H:%M") + "]"
-        print("  4 演示    " + str(demo_ok) + "/" + str(demo_total) + " 条能演示，账本 "
-              + str(path) + "（" + when.strftime("%m-%d %H:%M") + "）" + age, flush=True)
-        for r in rings:
-            if r.get("status") != PASS:
-                note = re.sub(r"\s+", " ", str(r.get("note") or ""))[:90]
-                print("       未达 " + str(r.get("ring")) + " " + str(r.get("title"))
-                      + " :: " + note, flush=True)
+        # 两张验收面分开报：V1 是九条旅程，V2 是环 10 起那张表。合在一起的分数会说谎——
+        # 只跑 V2 那一套时，"6 条"里一条 V1 旅程都没有。
+        for label, pick in (("V1", lambda r: r.get("ring", 0) <= 9), ("V2", lambda r: r.get("ring", 0) > 9)):
+            rows_s = [r for r in rings if pick(r)]
+            if not rows_s:
+                print("  4 演示 " + label + "  本轮账本里没有 " + label + " 那一套的读数（跑 "
+                      "python scripts/smoke_v1.py --suite " + label.lower() + "）", flush=True)
+                continue
+            ok = sum(1 for r in rows_s if r.get("status") == PASS)
+            print("  4 演示 " + label + "  " + str(ok) + "/" + str(len(rows_s)) + " 条能演示，账本 "
+                  + str(path) + "（" + when.strftime("%m-%d %H:%M") + "）" + age, flush=True)
+            for r in rows_s:
+                if r.get("status") != PASS:
+                    note = re.sub(r"\s+", " ", str(r.get("note") or ""))[:90]
+                    print("       未达 " + str(r.get("ring")) + " " + str(r.get("title"))
+                          + " :: " + note, flush=True)
+        demo_ok = sum(1 for r in rings if r.get("status") == PASS)
+        demo_total = len(rings)
 
     ref, base = baseline_rules()
     now_rules = rules_count((REPO / "AGENTS.md").read_text(encoding="utf-8"))
