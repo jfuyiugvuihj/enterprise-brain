@@ -232,3 +232,69 @@ def test_a_series_that_does_not_match_the_named_axis_is_not_boxed(monkeypatch, t
 
     assert "error_code=validation_error" in result
     assert not [p for p in tmp_path.iterdir() if p.suffix in (".png", ".jpg", ".html")]
+
+
+#: 10-07 13:10 现读（走查环 7，后端日志 ``[Tool] chart generation failed: TypeError:
+#: unhashable type: 'dict'``）：模型把 labels 交成一串 dict，那枚 dict 走进 matplotlib 的
+#: 分类轴当场炸，屏上只剩一句「图表生成失败」。牙咬的是这一格：名字藏在 dict 里也得画得出图。
+def test_labels_hiding_inside_dicts_are_still_drawn(monkeypatch, tmp_path):
+    from app.tools import chart
+
+    _registry(monkeypatch, tmp_path)
+    drawn = tmp_path / "dictlabels.png"
+    drawn.write_bytes(b"dictlabels")
+    seen: dict = {}
+
+    def fake_bar(labels, values, title="x"):
+        seen["labels"] = labels
+        seen["values"] = values
+        return str(drawn)
+
+    monkeypatch.setattr(chart, "bar_chart", fake_bar)
+    result = generate_chart.invoke(
+        {
+            "chart_type": "bar",
+            "labels": [
+                {"发生月份": "2026-01", "金额": 67770},
+                {"发生月份": "2026-02", "金额": 52710},
+                {"发生月份": "2026-03", "金额": 82830},
+            ],
+            "values": [67770, 52710, 82830],
+            "title": "月度报销金额",
+        },
+        config=_config(),
+    )
+
+    assert "图表已生成" in result
+    assert seen["labels"] == ["2026-01", "2026-02", "2026-03"]
+    assert seen["values"] == [67770, 52710, 82830]
+
+
+#: 名与数条数不齐时不许抛进画图函数换一句「生成失败」：按短的截齐，多出来的那一截不画。
+def test_mismatched_label_and_value_counts_are_trimmed_not_crashed(monkeypatch, tmp_path):
+    from app.tools import chart
+
+    _registry(monkeypatch, tmp_path)
+    drawn = tmp_path / "trimmed.png"
+    drawn.write_bytes(b"trimmed")
+    seen: dict = {}
+
+    def fake_bar(labels, values, title="x"):
+        seen["labels"] = labels
+        seen["values"] = values
+        return str(drawn)
+
+    monkeypatch.setattr(chart, "bar_chart", fake_bar)
+    result = generate_chart.invoke(
+        {
+            "chart_type": "bar",
+            "labels": ["1月", "2月", "3月", "4月"],
+            "values": [10, 20, 30],
+            "title": "月度报销金额",
+        },
+        config=_config(),
+    )
+
+    assert "图表已生成" in result
+    assert seen["labels"] == ["1月", "2月", "3月"]
+    assert seen["values"] == [10, 20, 30]

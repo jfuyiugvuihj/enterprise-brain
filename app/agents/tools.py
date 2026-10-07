@@ -1813,6 +1813,41 @@ _NUMBER_KEYS = ("值", "数值", "金额", "数量", "总数", "合计", "value"
 _UNIT_NOISE = (",", "元", "￥", "¥", "$", "%", " ", "，")
 
 
+#: 横轴名目在模型手里最常长的几种「有名字的那一格」；认不出就退回逐个值里挑第一个标量。
+_LABEL_KEYS = ("label", "name", "category", "x", "名称", "名字", "标签", "类目")
+
+
+def _as_label(item: object) -> str:
+    """横轴名目只认标量文本。
+
+    10-07 13:10 现读（走查环 7，后端日志 ``[Tool] chart generation failed: TypeError:
+    unhashable type: 'dict'``）：模型把 labels 交成一串 dict（每枚形如 ``{"发生月份": "2026-01",
+    "金额": 67770}``），那枚 dict 一路走进 matplotlib 的分类轴，画图当场炸，客户看到的只有
+    「图表生成失败：这一轮没有写出图表文件」。名字从 dict 里挑第一个标量，挑不出就交回空串。
+    """
+    if item is None or isinstance(item, bool):
+        return ""
+    if isinstance(item, (str, int, float)):
+        return str(item).strip()
+    if isinstance(item, dict):
+        for key in _LABEL_KEYS:
+            found = _as_label(item.get(key))
+            if found:
+                return found
+        for value in item.values():
+            found = _as_label(value)
+            if found:
+                return found
+        return ""
+    if isinstance(item, (list, tuple)):
+        for value in item:
+            found = _as_label(value)
+            if found:
+                return found
+        return ""
+    return str(item).strip()
+
+
 def _as_number(item: object) -> float | None:
     if isinstance(item, bool):
         return None
@@ -1930,7 +1965,7 @@ def _generate_chart(
     from app.tools.visualize import gantt_chart, mindmap as _mindmap
 
     chart_type = _normalize_chart_type(chart_type)
-    labels = _as_sequence(labels)
+    labels = [text for text in (_as_label(item) for item in _as_sequence(labels)) if text]
     values = [n for n in (_as_number(item) for item in _as_sequence(values)) if n is not None]
     if chart_type in ("bar", "pie") and not values:
         values = _first_series(datasets)
@@ -1947,6 +1982,12 @@ def _generate_chart(
                 len(values),
                 title,
             )
+    #: 名与数对不齐时多出来的那一截画不进同一根柱子，先按短的截齐——截齐比抛进 matplotlib
+    #: 换回一句「生成失败」诚实，也不许为此偷偷补数。
+    if chart_type in ("bar", "line", "pie") and labels and values and len(labels) != len(values):
+        keep = min(len(labels), len(values))
+        logger.info("[ChartBox] 名目与数值条数不齐 labels=%d values=%d，按 %d 截齐", len(labels), len(values), keep)
+        labels, values = labels[:keep], values[:keep]
     if chart_type in ("bar", "pie") and not values:
         return _denial_text(
             config, tool="generate_chart", code="validation_error", head=_CHART_NO_NUMBERS_HEAD
