@@ -202,6 +202,7 @@ class Walk:
         self.ledger.set_root("origin_host", urlparse(args.base_url).hostname)
         self.ledger.set_root("fixture", str(args.fixture))
         self.ledger.set_root("fixture_bytes", Path(args.fixture).stat().st_size)
+        self.ledger.set_root("fixture_source", str(getattr(args, "fixture_source", "") or args.fixture))
         self.ledger.set_root("credential_key_names", {
             "primary": [PRIMARY_USER_KEY, PRIMARY_PASS_KEY],
             "secondary": [SECOND_USER, SECOND_PASS_KEY],
@@ -1298,7 +1299,31 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="起手清空账本再跑：正式那一遍必须只装这一遍的读数，不留上一笔的旧环",
     )
+    parser.add_argument(
+        "--no-stage-fixture",
+        action="store_true",
+        help="不复制本轮唯一档名，直接喂 --fixture 原件（只为复现「同名档只开新版本」那一格）",
+    )
     return parser
+
+
+def stage_run_fixture(source: Path, out: Path) -> Path:
+    """每一轮都喂一枚库里从没出现过的档名。
+
+    同名档只会给老档开一个新版本，列表那一格的计数不按 +1 走，环 3 的
+    count_delta 就把「尺子重复喂料」判成产品回归（10-07 09:20 实测
+    fixture_already_in_corpus_before_upload=1、count_delta=0，而屏上写着已可检索）。
+    档名带本轮时刻，正文再带一行同刻的样本编号，两头都不可能与上一笔撞车。
+    """
+    run_id = time.strftime("%Y%m%d-%H%M%S")
+    dest_dir = out / "fixtures"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / ("smoke-" + run_id + (source.suffix or ".txt"))
+    payload = source.read_bytes()
+    if source.suffix.lower() in (".txt", ".md", ".csv"):
+        payload += ("\n\n[smoke-run " + run_id + "] \u672c\u8f6e\u8d70\u67e5\u6837\u672c\u7f16\u53f7\uff1a" + run_id + "\n").encode("utf-8")
+    dest.write_bytes(payload)
+    return dest
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1306,6 +1331,9 @@ def main(argv: list[str] | None = None) -> int:
     fixture = Path(args.fixture)
     if not fixture.is_absolute():
         fixture = Path(__file__).resolve().parents[1] / args.fixture
+    args.fixture_source = str(fixture)
+    if not args.no_stage_fixture:
+        fixture = stage_run_fixture(fixture, Path(args.out))
     args.fixture = str(fixture)
     rings = [int(x) for x in args.rings.split(",") if x.strip()]
     methods = {
