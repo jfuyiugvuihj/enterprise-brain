@@ -1430,6 +1430,10 @@ class Walk:
         joined = "\n".join(answer[-1:])
         carries = value in joined
         shots.append(self.shot("v2-r10-answer.png"))
+        # B17 之后这一环要证明的是「这一轮真读了知识库」，不是「模型嘴上提了文件名」。
+        # 来源卡是证据袋画出来的：没检索就没有卡，编出来的出处画不出卡。
+        readings_source_lines = [t.replace("\n", " | ") for t in
+                                 self.page.locator("[data-testid=source-card]").all_inner_texts()]
         readings = {
             "fixture_name": fixture.name,
             "marker": marker,
@@ -1448,13 +1452,16 @@ class Walk:
             "source_names_on_screen": [t.replace("\n", " | ")[:80] for t in
                                        self.page.locator("[data-testid=source-card]").all_inner_texts()[:4]],
             "answer_names_the_table": fixture.name in joined,
+            "source_card_names_the_table": any(fixture.name in line for line in readings_source_lines),
             "answer_carries_the_value": bool(carries),
             "answer_on_screen": joined[:400].replace("\n", " | "),
         }
-        status = "达" if (landed and asked.get("asked") and carries) else "未达"
+        cards = any(fixture.name in line for line in readings_source_lines)
+        status = "达" if (landed and asked.get("asked") and carries and cards) else "未达"
         note = "" if status == "达" else (
-            "未达只可能差在两格之一：这一枚档没落进数据列表（row_listed_after_upload），或者当场"
-            "答不出那个只属于本轮的数（answer_carries_the_value，屏上正文原话记在 answer_on_screen）。"
+            "未达只可能差在三格之一：这一枚档没落进数据列表（row_listed_after_upload），当场"
+            "答不出那个只属于本轮的数（answer_carries_the_value，屏上正文原话记在 answer_on_screen），"
+            "或者屏上没有点名这一枚档的来源卡（source_card_names_the_table＝没真读知识库，B17 那一族）。"
         )
         self.finish(10, "表格进知识库", status, readings, shots, note)
 
