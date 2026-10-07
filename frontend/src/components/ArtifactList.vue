@@ -210,7 +210,7 @@ export function openButtonLabel(state) {
 </script>
 
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { errorDetail, http, isPermissionDenied } from '../lib/http'
 import { fetchArtifactBlob } from '../lib/artifacts'
 import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from './ui'
@@ -313,6 +313,9 @@ function reload() {
   actionErrorSource.value = null
   loadArtifacts()
 }
+
+// 挂载即取第一发：这枚组件自己取数，谁都不许替它按刷新（DataPanel 读文件列表同一写法）。
+onMounted(reload)
 
 function noteAction(view, kind, artifactId, source) {
   actionErrorSource.value = source || null
