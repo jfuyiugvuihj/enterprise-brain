@@ -2545,6 +2545,90 @@ def _append_chart_images(state, final: str, worker_results: dict):
     return rebuilt, merged
 
 
+#: 台账标记：窗内要能 grep 出「本轮明明出了图、正文里还躺着几段绘图代码」。
+PLOT_RECIPE_MARKER = "[R728PlotRecipe]"
+
+#: 点名了绘图库的围栏代码块才算「配方」；一段 SQL 或一段 shell 不是本腿要摘的东西。
+_PLOT_RECIPE_HINTS = (
+    "matplotlib",
+    "pyplot",
+    "plt.",
+    "savefig",
+    "seaborn",
+    "sns.",
+    "plotly",
+    "px.bar",
+    "go.figure",
+    "pyecharts",
+)
+
+#: 一段绘图配方 = 围栏代码块，外加紧挨在它上面的小标题与那句引导话（"### 柱状图可视化建议"
+#: + "如需绘制柱状图，可使用以下Python代码："）。10-07 17:0x 现读：只摘围栏会留下一节空标题，
+#: 客户看见的是"建议"两个字底下一片空白，比留着代码更懵 —— 引导句以冒号收尾，一起带走。
+_PLOT_FENCE_RE = re.compile(
+    r"(?:^|\n)(?:#{1,6} [^\n]*\n+)?(?:[^\n]{0,120}[:：]\s*\n+)?```[^\n]*\n.*?```",
+    re.DOTALL,
+)
+
+
+def _is_plot_recipe(block: str) -> bool:
+    body = str(block or "").lower()
+    return any(hint in body for hint in _PLOT_RECIPE_HINTS)
+
+
+def _strip_plot_recipes(text: str) -> tuple[str, int]:
+    """摘掉点名绘图库的围栏代码块，其余文字一个字不动；交回（新文字, 摘掉的段数）。"""
+    dropped = 0
+
+    def _sub(match: "re.Match[str]") -> str:
+        nonlocal dropped
+        block = match.group(0)
+        if not _is_plot_recipe(block):
+            return block
+        dropped += 1
+        return ""
+
+    stripped = _PLOT_FENCE_RE.sub(_sub, str(text or ""))
+    if dropped:
+        stripped = re.sub(r"\n{3,}", "\n\n", stripped).strip()
+    return stripped, dropped
+
+
+def _drop_plot_recipes(state, final: str, worker_results: dict):
+    """本轮真登记过图表件 ⇒ 把正文里那些「教你自己画一张」的绘图代码摘掉。
+
+    客户点的是「画一张柱状图」，图已经贴在同一个气泡里了，正文再留一段 ``plt.bar(...)``
+    加一串颜色，等于一边交货一边教客户重做一遍——业主 10-07 现读纠的就是这一格：屏上
+    那张图是一根色，正文里那段配方还是六道彩虹。本轮没有图表件时整条闭嘴：那时
+    「怎么画」可能正是客户唯一能拿走的回答，摘它就是替客户把答案撕了。
+    """
+    if not _chart_artifacts_in_state(state):
+        return final, None
+    values = [key for key, value in (worker_results or {}).items() if str(value or "").strip()]
+    if not values:
+        stripped, dropped = _strip_plot_recipes(final)
+        if not dropped:
+            return final, None
+        logger.info(
+            f"{PLOT_RECIPE_MARKER} dropped={dropped} answer_chars={len(str(final))}->{len(stripped)}"
+        )
+        return stripped, None
+    merged = dict(worker_results)
+    dropped = 0
+    for key in values:
+        stripped, cut = _strip_plot_recipes(merged[key])
+        if cut:
+            merged[key] = stripped
+            dropped += cut
+    if not dropped:
+        return final, None
+    rebuilt = "\n\n".join(str(merged[key]).strip() for key in values if str(merged[key]).strip())
+    logger.info(
+        f"{PLOT_RECIPE_MARKER} dropped={dropped} answer_chars={len(str(final))}->{len(rebuilt)}"
+    )
+    return rebuilt, merged
+
+
 def _claims_a_chart(text) -> bool:
     """这一份文字有没有声称"图已经在了"。判定只看完成态声称，不看光提到图。"""
     body = str(text or "")
@@ -2664,6 +2748,11 @@ def _carry_dataset_truth(state, model_answer: str, final: str, worker_results: d
     if not any(phrase in body for phrase in _DATASET_ABSENCE_BLAME):
         return final, None
     block = DATASET_TRUTH_SENTENCE.format(names=_format_dataset_readouts(readouts))
+    #: R727：批准续跑的那一轮会把本腿再走一遍，而补写落的是 worker_results 里的那条腿 ——
+    #: 上一遍的那句已经躺在正文里了。屏上同一句提示出现两遍就是这一格（业主 10-07 现读）：
+    #: 已经说过的一次都不许再说第二遍。
+    if block in str(final or ""):
+        return final, None
     values = [key for key, value in (worker_results or {}).items() if str(value or "").strip()]
     merged: dict | None = None
     if values:
@@ -2996,6 +3085,19 @@ def synthesize(state, config=None) -> dict:
             final = guarded
         if image_update is not None:
             worker_update = image_update
+
+        # R728：本轮真出过图 ⇒ 正文里那些"教你自己画一张"的绘图代码不再递给客户。排在贴图之后：
+        # 图先上屏，本枚只摘文字里的代码块，两枚打的不是同一格。同一条硬规矩——炸了也不许带走终答。
+        try:
+            recipe_base = worker_update if worker_update is not None else worker_results
+            guarded, recipe_update = _drop_plot_recipes(state, final, recipe_base)
+        except Exception as exc:  # noqa: BLE001 - 终答优先，守卫失声只许记账不许拦
+            guarded, recipe_update = final, None
+            logger.warning(f"{PLOT_RECIPE_MARKER} status=skipped error={exc}")
+        if guarded != final:
+            final = guarded
+        if recipe_update is not None:
+            worker_update = recipe_update
 
         if state.get("intent") == "task" and q and final:
             user_id = _memory_user_id(state)

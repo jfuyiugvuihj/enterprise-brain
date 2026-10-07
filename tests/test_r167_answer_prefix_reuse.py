@@ -93,8 +93,8 @@ WRITE_SCOPE = ("app/agents/nodes.py", "app/agents/orchestrator.py")
 ACCOUNT_FIXED_BYTES = {
     "MAIN_SYSTEM": 774,
     "DOC_PROMPT": 186,
-    "DATA_PROMPT": 268,
-    "CHART_PROMPT": 182,
+    "DATA_PROMPT": 535,  # 10-07 R728：数据腿话术加了一句"画图不归你"
+    "CHART_PROMPT": 290,  # 10-07 R724 上一班改词时没跟着重算，今天补平
     "EXPORT_PROMPT": 71,
     "PLAN_INSTRUCTION": 99,
 }
