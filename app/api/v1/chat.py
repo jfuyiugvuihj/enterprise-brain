@@ -2750,6 +2750,8 @@ def _enqueue_ask_turn(
     lane: str,
     # R141：入队这一支的读数只上**响应头**。载荷与 queued 事件的字段一格不加 ——
     # tests/test_r37_report_lane_enqueue.py 与 test_r32_lane_contract.py 逐字段钉着它们。
+    # R724 改口：载荷从此多一格 data_filename（被点名的表），两枚契约件已随账改口；
+    # 响应头那一格一字未动。
     lane_readout: dict | None = None,
 ) -> StreamingResponse:
     """把一轮问答收进可靠队列，回一条只含回执的 SSE。
@@ -2783,6 +2785,12 @@ def _enqueue_ask_turn(
         # worker 靠这两个字段决定走能挂起的图，以及跑完要不要补写会话历史。
         payload["lane"] = lane
         payload["write_back_session"] = True
+    #: R724：客户点名的那张表要跟着这一轮进后台。同步路径早就把它写进 user_ctx
+    #: （上面 `_named_dataset_must_travel` 那一格），队列道不带 ⇒ worker 那一轮
+    #: route_main 的 has_data 读成假、Data 腿当场不派，点了表却答非所问。
+    named = str(getattr(request, "data_filename", "") or "").strip()
+    if named and _named_dataset_must_travel(named):
+        payload["data_filename"] = named
     try:
         queue = connect_reliable_queue()
         message = queue.enqueue(payload, idempotency_key)

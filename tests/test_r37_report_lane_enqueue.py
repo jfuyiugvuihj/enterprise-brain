@@ -135,12 +135,14 @@ def _http_request():
     )
 
 
-def _ask(*, lane=None, idempotency=IDEM):
+def _ask(*, lane=None, idempotency=IDEM, data_filename=None):
     from app.api.v1 import chat
 
     fields = {"message": MESSAGE, "session_id": SESSION}
     if lane is not None:
         fields["lane"] = lane
+    if data_filename is not None:
+        fields["data_filename"] = data_filename
     if idempotency is not None:
         fields["idempotency_key"] = idempotency
     return asyncio.run(chat.ask(chat.AskRequest(**fields), http_request=_http_request()))
@@ -274,6 +276,22 @@ def test_the_queued_event_says_why_the_turn_went_background(monkeypatch, tmp_pat
         "usage": None,
         "approval": None,
     }
+
+
+def test_a_named_dataset_travels_into_the_queue_payload(monkeypatch, tmp_path):
+    """R724 判据①：客户点了哪张表，后台那一轮就得带着它。
+
+    屏上看得见的坏：报告档点明「就用这张表」，载荷不带那一格 ⇒ worker 那一轮
+    ``route_main`` 的 has_data 读成假、Data 腿当场不派，客户拿回一段与那张表无关的话。
+    没点名的对照由下面那枚既有的「一字不变」钉管着：缺席就是不多这一格。
+    """
+    ctx = _install(monkeypatch, tmp_path, allowed=False)
+    _switch(monkeypatch, "1")
+
+    _ask(lane=None, data_filename="报销明细表.csv")
+
+    assert len(ctx.queue.calls) == 1
+    assert ctx.queue.calls[0]["payload"]["data_filename"] == "报销明细表.csv"
 
 
 def test_the_over_limit_payload_is_untouched_for_callers_that_declare_no_lane(monkeypatch, tmp_path):

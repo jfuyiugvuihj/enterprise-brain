@@ -602,6 +602,7 @@ def _drain_report_stream(
     user_message, *, thread_id, principal, provenance, request_id, trace_id, task_id,
     stream_piece_sink=None,
     report_failure_sink=None,
+    data_filename="",
 ):
     """跑完这一轮，收回顶层结论、契约记录，以及编排自己报的那句错。
 
@@ -627,7 +628,8 @@ def _drain_report_stream(
     for event in run_with_stream(
         user_message,
         thread_id=thread_id,
-        user={"principal": principal, PRINCIPAL_PROVENANCE_KEY: provenance},
+        user={"principal": principal, PRINCIPAL_PROVENANCE_KEY: provenance,
+              **({"data_filename": data_filename} if str(data_filename or "").strip() else {})},
         request_id=request_id,
         trace_id=trace_id,
         task_id=task_id,
@@ -779,6 +781,16 @@ def _fail_report_turn(queue, request_id, record, *, session_id, write_back) -> b
     return True
 
 
+def _named_dataset(payload) -> dict:
+    """R724：入队那一刻点名的表，跟着这一轮一起进图。
+
+    读的是载荷自己写下的那一格（``app/api/v1/chat.py::_enqueue_ask_turn``），本件不判定、
+    不补猜：没点名就交回空表，config 里连键都不多加——与同步路径同一条件。
+    """
+    named = str((payload or {}).get("data_filename") or "").strip()
+    return {"data_filename": named} if named else {}
+
+
 def _process_report_lane_turn(
     queue,
     request_id,
@@ -821,6 +833,7 @@ def _process_report_lane_turn(
             # R294：这里交下去的是消费时刻现取的那一份，不是载荷里冻着的快照。
             principal=principal,
             provenance=principal_provenance,
+            data_filename=str(payload.get("data_filename") or "").strip(),
             request_id=request_id,
             trace_id=trace_id,
             task_id=task_id,
@@ -1097,7 +1110,8 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
             thread_id=thread_id,
             # R294：同上——图里拿到的是消费时刻的投影，随行的签名由
             # app/agents/tools.py::_tool_principal 认账，缺它就不许当身份用。
-            user={"principal": principal_payload, PRINCIPAL_PROVENANCE_KEY: principal_provenance},
+            user={"principal": principal_payload, PRINCIPAL_PROVENANCE_KEY: principal_provenance,
+                  **_named_dataset(payload)},
         )
         record = agent_result.model_dump() if hasattr(agent_result, "model_dump") else dict(agent_result or {})
         record_agent_result(record, owner_id=owner_id, session_id=session_id, entry_point="queue")
@@ -1187,8 +1201,10 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
         )
 
     except Exception as e:
-        logger.error(f"[QueueWorker] 失败 request_id={request_id}: {e}")
-        terminal_status = queue.fail_or_retry(request_id, str(e))
+        # R675：账面那一格写稳定码，原句留在上面那行日志里。`str(e)` 落进队列记录等于把
+        # 一句随版本漂移的话术当成契约——读状态的人拿它没法判，客户更读不懂。
+        logger.error(f"[QueueWorker] 失败 request_id={request_id}: {type(e).__name__}: {e}")
+        terminal_status = queue.fail_or_retry(request_id, "internal_error")
         logger.info(f"[QueueWorker] request_id={request_id} -> {terminal_status}")
 
     return True
