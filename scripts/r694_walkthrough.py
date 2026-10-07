@@ -836,12 +836,24 @@ class Walk:
         out["outcome_codes"] = page.locator("[data-testid=hitl-outcome-code]").all_inner_texts()
         return out
 
-    def read_chat_screen(self) -> dict[str, Any]:
-        """回到「问一句」读屏上那一截；live 没画出来就刷新一次再读，两态都记。"""
+    def read_chat_screen(self, expect_chart: bool = False) -> dict[str, Any]:
+        """回到「问一句」读屏上那一截；live 没画出来就刷新一次再读，两态都记。
+
+        ``expect_chart`` 只在台账已经交回图表件时为真：那时给前端一次有上限的取图时间
+        （ChartViewer 走鉴权取 blob，慢一拍是真的，判据不该拿采样时刻当产品坏）。等满仍没有图，
+        读数照旧交回 charts_on_screen=0——那种未达才是真的未达。
+        """
+        from playwright.sync_api import TimeoutError as WalkTimeoutError
+
         page = self.page
         assert page is not None
         self.open_screen("nav-chat", "chat-panel")
         page.wait_for_timeout(1200)
+        if expect_chart:
+            try:
+                page.wait_for_selector(".chart-card, .chart-img", timeout=12000)
+            except WalkTimeoutError:
+                pass
         rows_live = page.locator(".msg-row").count()
         reloaded = False
         if not rows_live:
@@ -1182,17 +1194,21 @@ class Walk:
             url = chart["newest"].get("content_url") or chart["newest"].get("download_url")
             readings["chart_piece"] = self.fetch_piece(url)
             readings["chart_piece_url"] = url
-        after = self.read_chat_screen()
+        after = self.read_chat_screen(expect_chart=bool(chart["found"]))
         readings["after_approve"] = after
         shots.append(self.shot("r694-r7-chart-face.png"))
         readings["artifact_leg_error"] = self.artifact_leg_error()
         readings["department_probe"] = self.department_probe()
-        status = "达" if (chart["found"] or after["charts_on_screen"]) else "未达"
+        #: 判据那一行写的是「图当场显示、可下载」——两半都要。以前只按"或"判，13:21 那一轮
+        #: 就是靠台账里那枚件判了达，而屏上其实一张图都没有（charts_on_screen=0）。
+        status = "达" if (chart["found"] and after["charts_on_screen"]) else "未达"
         note = (
             "出图那一枚批准先在对话里找牌（hitl-approve-chat），拿不到就走审批屏；两态分开记。"
             if status == "达" else
-            "未达差在「图能出」那半条：图登记这一腿交回的读数记在 artifact_leg_error，"
-            "对照读数记在 department_probe（同一句问话、一枚部门非空的账号）。"
+            "未达差的半条看读数分家：chart_artifact.found=false ⇒ 差在「图能出」（图登记这一腿"
+            "交回的读数记在 artifact_leg_error，对照读数记在 department_probe：同一句问话、一枚"
+            "部门非空的账号）；found=true 而 charts_on_screen=0 ⇒ 差在「屏上看得见」，那半条的"
+            "正文逐字在 after_approve.answer_tail、图地址在 chart_srcs。"
         )
         self.finish(7, "数据分析", status, readings, shots, note)
 

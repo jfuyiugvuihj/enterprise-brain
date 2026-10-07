@@ -2502,6 +2502,49 @@ def _chart_artifacts_in_state(state) -> list[dict]:
     return rows
 
 
+#: 10-07 13:21 现读（走查环 7，账本 rings[ring=7].readings：``chart_artifact.found=True``
+#: 而 ``charts_on_screen=0``；会话正文逐字读下来 ``has_image_md=False``）：图真的画出来并登记进
+#: 台账了，模型却把工具交回的那行图片 markdown 换成自己"画"的 ASCII 方块（一整屏 █），
+#: 客户屏上看不到一张图。判据写的是「图当场显示」——文件在台账不等于客户看见了。
+#: 这一格不再押模型的抄写：本轮真登记过图表件，产品自己把每一张图贴进终答，
+#: 前端 ``frontend/src/components/ChartViewer.vue`` 认的就是这一行（它走鉴权取 blob 再显示）。
+CHART_IMAGE_MARKER = "[R725ChartImage]"
+CHART_IMAGE_CAPTION = "本轮生成的图表"
+
+
+def _append_chart_images(state, final: str, worker_results: dict):
+    """本轮真登记过图表件、正文里却没有它的地址 ⇒ 末尾替客户贴上图；贴过的不贴第二遍。"""
+    rows = _chart_artifacts_in_state(state)
+    if not rows:
+        return final, None
+    from app.storage.artifacts import artifact_content_url
+
+    body = str(final or "")
+    lines: list[str] = []
+    for row in rows:
+        artifact_id = str(row.get("artifact_id") or "").strip()
+        if not artifact_id or artifact_id in body:
+            continue
+        lines.append(f"![{CHART_IMAGE_CAPTION}]({artifact_content_url(artifact_id)})")
+    if not lines:
+        return final, None
+    tail = "\n\n" + "\n".join(lines)
+    values = [key for key, value in (worker_results or {}).items() if str(value or "").strip()]
+    merged: dict | None = None
+    if values:
+        merged = dict(worker_results)
+        last = values[-1]
+        merged[last] = str(merged[last]).strip() + tail
+        rebuilt = "\n\n".join(str(merged[key]).strip() for key in values if str(merged[key]).strip())
+    else:
+        rebuilt = str(final).strip() + tail
+    logger.info(
+        f"{CHART_IMAGE_MARKER} charts={len(rows)} pasted={len(lines)} "
+        f"answer_chars={len(str(final))}->{len(rebuilt)}"
+    )
+    return rebuilt, merged
+
+
 def _claims_a_chart(text) -> bool:
     """这一份文字有没有声称"图已经在了"。判定只看完成态声称，不看光提到图。"""
     body = str(text or "")
@@ -2936,6 +2979,20 @@ def synthesize(state, config=None) -> dict:
             final = guarded
         if leg_update is not None:
             worker_update = leg_update
+
+        # R725：本轮真出过图 ⇒ 图自己上屏，不指望模型把工具那行图片 markdown 抄回来。
+        # 排在所有"说没图"的守卫之后：那几枚只在查不回图表件时开口，本枚只在查得回时贴图，
+        # 两拨条件互斥，打不着架。同一条硬规矩——整条炸了也不能带走终答。
+        try:
+            image_base = worker_update if worker_update is not None else worker_results
+            guarded, image_update = _append_chart_images(state, final, image_base)
+        except Exception as exc:  # noqa: BLE001 - 终答优先，贴图失声只许记账不许拦
+            guarded, image_update = final, None
+            logger.warning(f"{CHART_IMAGE_MARKER} status=skipped error={exc}")
+        if guarded != final:
+            final = guarded
+        if image_update is not None:
+            worker_update = image_update
 
         if state.get("intent") == "task" and q and final:
             user_id = _memory_user_id(state)

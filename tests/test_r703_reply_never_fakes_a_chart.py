@@ -109,9 +109,12 @@ def test_the_truth_sentence_says_nothing_about_failure_or_permission() -> None:
 
 
 def test_a_registered_chart_artifact_keeps_the_leg_silent() -> None:
+    #: 登记行的 artifact_id 与它自己的 download_url 必须是同一枚件（原来写的是随机串，那是夹具
+    #: 自己的账错）。对上了，R725 的贴图腿才认得出「这行 embed 已经在正文里」，本腿那句「没有图」
+    #: 的沉默才不会被多出来的一行字盖过。
     artifacts = [
         {
-            "artifact_id": "art-" + uuid4().hex[:8],
+            "artifact_id": "art-1",
             "artifact_type": "chart",
             "download_url": "/api/v1/artifacts/art-1/download",
         }
@@ -210,3 +213,37 @@ def test_chart_artifact_reader_ignores_legacy_bare_string_artifacts() -> None:
 
     assert nodes._chart_artifacts_in_state(state) == []
     assert nodes.CHART_TRUTH_SENTENCE in _run(state)["final_answer"]
+
+# ==================== R725 · 本轮真出过图 ⇒ 图自己上屏 ====================
+
+
+def test_a_registered_chart_gets_pasted_into_the_answer_as_an_image_line() -> None:
+    # 10-07 13:21 现读（走查环 7）：图登记上了（chart_artifact.found=True）而屏上一张图都没有
+    # （charts_on_screen=0）——模型把工具那行图片 markdown 换成自己画的 ASCII 方块。本轮真登记过
+    # 图表件，终答末尾就必须出现它的正文地址，前端 ChartViewer 认的就是这一行。
+    legs = {
+        "data": "月度合计 466860 元。",
+        "chart": "### 可视化柱状图\n```text\n100,000 | ████\n```",
+    }
+    artifacts = [
+        {
+            "artifact_id": "art-9",
+            "artifact_type": "chart",
+            "download_url": "/api/v1/artifacts/art-9/download",
+        }
+    ]
+
+    result = _run(_state(legs, artifacts))
+
+    final = result["final_answer"]
+    assert "![本轮生成的图表](/api/v1/artifacts/art-9/content)" in final, final
+    assert final.startswith(legs["data"]), "只许追加，不许改写模型已经写的字"
+    assert nodes.CHART_TRUTH_SENTENCE not in final, "本轮有图，那句「没有图」不许上屏"
+
+
+def test_an_image_the_model_already_pasted_is_not_pasted_twice() -> None:
+    # 模型自己贴对了地址 ⇒ 本腿闭嘴：屏上两张同一枚图，多出来的那张没有第二枚件作保。
+    answer = "月度报销见 ![柱状图](/api/v1/artifacts/art-9/content)"
+    result = _run(_state({"chart": answer}, [{"artifact_id": "art-9", "artifact_type": "chart"}]))
+
+    assert result["final_answer"].count("/api/v1/artifacts/art-9/content") == 1, result["final_answer"]

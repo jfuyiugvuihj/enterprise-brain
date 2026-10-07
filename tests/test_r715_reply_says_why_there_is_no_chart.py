@@ -209,8 +209,10 @@ def test_one_registered_chart_artifact_keeps_the_leg_silent(caplog) -> None:
     with caplog.at_level(logging.INFO, logger="enterprise_brain"):
         result = nodes.synthesize(state)
 
-    assert result["final_answer"] == IMPERSONATED_ANSWER, result
-    assert "worker_results" not in result, "一个字都没补，却回写了 worker_results"
+    # R725 之后「一个字都不动」不再由本腿独享：本轮有图而正文里没有那行 embed，贴图那一腿
+    # 会在末尾补一行地址。本腿要钉的仍是同一格——它自己那句因由不许上屏、模型已经写的字一个字
+    # 都不许改；这格是不是本腿做的，交给下面那行台账标记说话。
+    assert result["final_answer"].startswith(IMPERSONATED_ANSWER), result
     assert not [
         record.message
         for record in caplog.records

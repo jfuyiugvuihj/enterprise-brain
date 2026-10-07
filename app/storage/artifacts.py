@@ -110,6 +110,14 @@ SCOPE_METADATA_KEYS = (
 #: ``ArtifactRegistry.register``'s internal sentence straight into the customer's answer
 #: (``docs/testing/r710-2026-10-06.md`` 第一节「问 2」). A caller that has to say the truth
 #: out loud catches this type; it never string-matches a message.
+def artifact_content_url(artifact_id: object) -> str:
+    """产物正文地址的唯一写法：``ArtifactRecord.content_url`` 与终答贴图那一行都从这里取。
+
+    地址长在两处各自拼一遍，迟早有一处漂——漂了屏上就是一张碎图，而台账里那枚件明明是好的。
+    """
+    return f"/api/v1/artifacts/{artifact_id}/content"
+
+
 class ArtifactOwnerScopeMissing(ValueError):
     """The generating principal has no department, so no ``artifacts`` row can be recorded."""
 
@@ -285,7 +293,7 @@ class ArtifactRecord:
 
     @property
     def content_url(self) -> str:
-        return f"/api/v1/artifacts/{self.artifact_id}/content"
+        return artifact_content_url(self.artifact_id)
 
     @property
     def download_url(self) -> str:
