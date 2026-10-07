@@ -13,6 +13,8 @@
 | 4 | 文档列表/搜索/预览/下载/删除 | 列表出现刚上传那枚；预览、下载、删除各走一遍 | 能演示 | — |
 | 5 | 知识问答（流式） | 逐字往外吐，新气泡当场落屏，答案带文件名/来源可点 | 能演示 | —（10-07 15:12 现读：流式期间字就往上走，收尾那一份等于服务端落库那一份，不再等刷新） |
 | 6 | 权限隔离 | 换部门账号问同一句，拿不到不该看的来源；界面无泄露痕迹 | 能演示 | 生产库 `department`/`classification` 全空＝业主回填（R35②） |
+| 7a | **带部门的账号问一句要图** | 图先上屏（卡片排在正文之前）、标题说得出「金额（按发生月份）」、一组数一根色、正文里的表格是真表格 | 能演示 | —（16:0x 现读：reportowner 那一轮 decoded_imgs=1、cards=1，屏见 evalrun/r78-fix 与 evalrun/r7table） |
+| 7b | **没部门的账号（admin）问同一句** | 屏上必须说清「为什么没有图」而不是静默给一张表 | 能演示 | 图这一腿仍交不出货：``users.department`` 对 admin 为 NULL，preflight 当场拒登记。16:2x 现读 admin 真问一句：tables=2、decoded_imgs=0、屏上出现「为什么没有图：发起这一轮的账号没有部门归属…（error_code=department_scope_required）」——这句是本次 B3 修好才说得出。**要出图得业主裁两选一**：给 admin 回填部门，或判「admin 角色不该过密级闸」（＝B10 同一族） |
 | 7 | 数据分析＋出图 | 选中 Excel/CSV 后问一句，图当场显示、可下载，数字与表对得上 | 能演示 | —（10-07 15:12 现读：本轮图 `4b3bbf68…` 15:12:44 登记、屏上 charts=2、PNG 36,638 字节的 magic 对得上，批准在对话里那枚牌点的。B9 那一发连打八次本轮未复现，单留着；B3 图腿错误码被折仍未落地） |
 | 8 | 报告导出 | 报告档问一句，导出件能在结果区拿到，含标题/来源/结论/图/生成时间 | 能演示 | **导出件里那一格图是空的**＝B11（`generate_pdf_report` 的 `chart_paths` 至今是死的，装箱不吃证据袋那一腿）；其余在位：10-07 15:16 现读 PDF 43,151 字节，`%PDF-1.3` 头，API 与盘上两态同一枚。R724 队列道点名表＝B2 未落地 |
 | 9 | HITL／审计 | 挂起待批可批准也可驳回，两态都有终态与原因码，审计面读得到 | 能演示 | R675 剩一处 `str(e)` 未具名＝B4 |
@@ -20,15 +22,15 @@
 ## 二、可派的功能单（写集互不重叠，一枚＝一条上面那行）
 
 - **B1 前端流式落屏**＝已交付（2a5e0a6＋a5c258a，业主 10-07 授权动 `frontend/**`）：repaint 治「屏上 0 行」，`reconcileAuthoritativeBody` 治「屏上那一份 ≠ 服务端落库那一份」——15:12 现读九环 9/9，环 5 与环 7 都在这一格上翻绿。
-- **B2 队列道点名表**＝R724：报告档走队列时拿不到被点名的数据集，答非所问。写域 `app/agents/**`＋队列件。
-- **B3 图腿错误码被折**＝R723：一轮里数据腿与图腿各拒一次时，只剩一条码，屏幕上看不出是图失败。写域 `app/agents/nodes.py`。
-- **B4 一处未具名错误码**＝R675：`deploy/queue_worker.py::_process_reserved` 收尾那处 `str(e)` 换成稳定码。
+- **B2 队列道点名表**＝R724：已交付——入队载荷从此带 `data_filename`（点了哪张表就带着进后台），worker 两条道（普通与报告档）都把它塞进 `configurable`，与同步路径同一条件；没点名一格都不多加。同名件 15 枚绿（含新增那枚对照）。
+- **B3 图腿错误码被折**＝R723：已交付——`evidence._terminal_status` 在 failed/rejected 那一支单独点名 `generate_chart` 自己的码，不再被同一条腿上另一枚失败挤掉。16:2x 现读（admin 那一轮）屏上第一次说得出「为什么没有图」那句因由，就是这一枚的效果。
+- **B4 一处未具名错误码**＝R675：已交付——收尾那处 `str(e)` 换成在册的 `internal_error`，原句只留在日志那一行（日志同时带上异常类名）。
 - **B5 分段计量两张尺**＝R696／R697：检索腿视图合并＋`r636` 真窗重绑。属「读数」不属「演示」，排在 B1–B4 之后。
 - **B6 表格上传后检索可见**＝R687。🔴 与计划书 §3「V1 明确不做 Excel/CSV 进知识库索引」打架，先由业主裁归属，裁完再决定做不做。
 - **B7 热集让路驱动件重写**＝R677（R44①）：属性能项，不挡演示。
 - **B8 overlay 真机取证**＝R669（R25②）：要动容器，排窗后。
-- **B9 图腿把同一发失败连打八次**：10-07 12:43 现读，模型每 5 s 交回同一枚 `generate_chart(chart_type=柱状图, labels=6, values=0)`，八次之后消息历史里再没有可渲染的 user 轮，本地模型服务端 500（Jinja `No user query found in messages.`），图腿以 model_unavailable 收口，一轮白等 114 s。要治两格：① 同名同参的工具失败要有上限与终止话（写域 `app/agents/orchestrator.py` 的工具环＋`app/agents/nodes.py` 的 provider 失败那一支）；② 数值要有确定性来源——数据腿已经算出月度合计，图腿却要靠模型手抄进 `values`，抄不来就该由产品自己装箱（写域 `app/agents/tools.py::_analyze_data` 交回的形状＋图腿装配）。R723 与本格同一片写域，做 B9 时一并收。
-- **B11 导出件里永远不会有图**（10-07 13:44 现读，两枚报告 PDF 逐枚查字节）：`app/tools/export.py::generate_pdf_report` 的 `chart_paths` 参数是死的——函数体只嵌 `sections` 里 `type=="chart"` 的那几格，而模型交回的 sections 永远不会有这一格（它不知道图在容器里的路径，工具给它的是 URL）。实测 `report_0d5cd5ecd2.pdf`（43,135 字节／3 页）与 `report_30bd261808.pdf`（42,976 字节／3 页）里 `/Subtype /Image` 均为 0 枚。屏上那一格今天已由 R725 修好（终答末尾由产品自己贴一行图片地址，13:40 现读 charts=1 pasted=1），导出件这一格仍缺：要治的是 `_export_report` 按本轮真登记过的图表件装箱（`app/storage/artifacts.py` 的 lineage 两列 session_id／request_id 就是为这一格留的），不是叫模型抄路径。环 8 今天的判据仍只看「导出件可查回、字节数 >0」，「含图」那一半本轮读数明记：这一轮没有图可嵌。写域 `app/agents/tools.py::_export_report` ＋ `app/tools/export.py::generate_pdf_report`。
+- **B9 图腿把同一发失败连打八次**＝已交付（上限那一半）：`_generate_chart` 按参数指纹在本轮缓冲里数次数，第 3 次直接交回「不必再试」并记 `chart_refusal_repeated`（因由表认得它，屏上会说得出）；图腿提示词同步补一句不要用同一枚参数重试。数值那一半由 9561e1f 的装箱承担。原始 12:43 那一发本轮未复现。
+- **B11 导出件里永远不会有图**＝已交付（16:0x 现读：报告 PDF 43,151 → 93,347 字节，`/Subtype /Image` 由 0 枚变 1 枚，凭据 `[R726ExportCharts] leg=export round_charts=1`）：装箱改走产物台账的生成血缘（证据袋是按腿开的，按袋查图必然查不到图腿那一枚）。原文留底——（10-07 13:44 现读，两枚报告 PDF 逐枚查字节）：`app/tools/export.py::generate_pdf_report` 的 `chart_paths` 参数是死的——函数体只嵌 `sections` 里 `type=="chart"` 的那几格，而模型交回的 sections 永远不会有这一格（它不知道图在容器里的路径，工具给它的是 URL）。实测 `report_0d5cd5ecd2.pdf`（43,135 字节／3 页）与 `report_30bd261808.pdf`（42,976 字节／3 页）里 `/Subtype /Image` 均为 0 枚。屏上那一格今天已由 R725 修好（终答末尾由产品自己贴一行图片地址，13:40 现读 charts=1 pasted=1），导出件这一格仍缺：要治的是 `_export_report` 按本轮真登记过的图表件装箱（`app/storage/artifacts.py` 的 lineage 两列 session_id／request_id 就是为这一格留的），不是叫模型抄路径。环 8 今天的判据仍只看「导出件可查回、字节数 >0」，「含图」那一半本轮读数明记：这一轮没有图可嵌。写域 `app/agents/tools.py::_export_report` ＋ `app/tools/export.py::generate_pdf_report`。
 - **B10 属主档位与演示数据不自洽（要业主裁政策）**：`app/storage/datasets.py::DatasetRegistry.register` 缺省把数据集标成 `internal`（2 级），而 staff 档位只有 1 级，`app/common/policy.py::authorization_decision` 里没有「属主读自己名下资源」这一支 ⇒ 上传人读不到自己上传的表；行级那侧更窄——演示 CSV 的「部门」列只有销售部等六枚，数据集登记口径却取自属主（财务部），非管理员账号必然被 `app/common/rbac.py::filter_dataframe_rows` 挡到 0 行。今天为了不卡演示，播种了一枚带部门的管理员账号 reportowner（c404e76），**没有**动这三条口径本身。裁三个问题：缺省密级该不该是 internal；要不要给属主开一条自读；演示数据是不是该改成六部门各有属主。
 
 ## 三、不再当门的东西（降级，不是删除）
