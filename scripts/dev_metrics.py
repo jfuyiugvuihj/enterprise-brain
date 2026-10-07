@@ -80,22 +80,35 @@ def commits(range_args):
     return out
 
 
-def newest_ledger():
-    """盘上最新一枚端到端走查账本（含 rings 那族），交回 (路径, mtime 时刻, 行数)。"""
+FAMILIES = (("V1", lambda n: n <= 9), ("V2", lambda n: n > 9))
+
+
+def newest_ledgers():
+    """两张验收面各找一本自己的账：V1 看环 1–9，V2 看环 10 起。
+
+    以前只取盘上最新那一枚账本，于是刚跑完 V2 就报不出 V1、刚跑完 V1 就报不出 V2——
+    同一班里换一张面，另一张面的读数就凭空消失（10-07 20:0x 实测：V1 报 9/9、V2 报
+    「本轮账本里没有」，而 V2 那本账 19:56 才落盘）。各找各的最新一本，缺一张就说缺。
+    """
     root = Path(tempfile.gettempdir()) / "evalrun"
-    best = None
+    found = {label: None for label, _ in FAMILIES}
     if not root.is_dir():
-        return None
+        return found
     for cand in sorted(root.rglob("ledger.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             doc = json.loads(cand.read_text(encoding="utf-8"))
         except Exception:
             continue
         rows = doc.get("rings") or []
-        if isinstance(rows, list) and rows and all(isinstance(r, dict) and "ring" in r for r in rows):
-            best = (cand, datetime.fromtimestamp(cand.stat().st_mtime), rows)
-            break
-    return best
+        if not (isinstance(rows, list) and rows
+                and all(isinstance(r, dict) and "ring" in r for r in rows)):
+            continue
+        when = datetime.fromtimestamp(cand.stat().st_mtime)
+        for label, pick in FAMILIES:
+            mine = [r for r in rows if pick(int(r.get("ring") or 0))]
+            if mine and found[label] is None:
+                found[label] = (cand, when, mine)
+    return found
 
 
 def app_commit_time():
@@ -179,35 +192,28 @@ def main() -> int:
           + "{:.0f}".format(pct) + "%）＝标题含 订正/返工/作废/重锚/退回/纠错", flush=True)
     print("  3 功能    碰 app/ 的 " + str(len(feature)) + " 笔（能演示几条见下一行，笔数不是进度）", flush=True)
 
-    led = newest_ledger()
+    lads = newest_ledgers()
     stamp = app_commit_time()
-    if led is None:
-        print("  4 演示    盘上没有走查账本＝现无可演示读数（先跑 python scripts/smoke_v1.py）", flush=True)
-        demo_ok = 0
-        demo_total = 9
-    else:
-        path, when, rings = led
+    if all(value is None for value in lads.values()):
+        print("  4 演示    盘上没有走查账本＝现无可演示读数（先跑 python scripts/smoke_v1.py --suite v1）",
+              flush=True)
+    for label, value in lads.items():
+        if value is None:
+            print("  4 演示 " + label + "  盘上没有 " + label + " 那一套的读数（跑 python scripts/smoke_v1.py --suite "
+                  + label.lower() + "）", flush=True)
+            continue
+        path, when, rings = value
         age = ""
         if stamp and when < stamp:
             age = "  [读数过期：早于最新一枚 app 提交 " + stamp.strftime("%m-%d %H:%M") + "]"
-        # 两张验收面分开报：V1 是九条旅程，V2 是环 10 起那张表。合在一起的分数会说谎——
-        # 只跑 V2 那一套时，"6 条"里一条 V1 旅程都没有。
-        for label, pick in (("V1", lambda r: r.get("ring", 0) <= 9), ("V2", lambda r: r.get("ring", 0) > 9)):
-            rows_s = [r for r in rings if pick(r)]
-            if not rows_s:
-                print("  4 演示 " + label + "  本轮账本里没有 " + label + " 那一套的读数（跑 "
-                      "python scripts/smoke_v1.py --suite " + label.lower() + "）", flush=True)
-                continue
-            ok = sum(1 for r in rows_s if r.get("status") == PASS)
-            print("  4 演示 " + label + "  " + str(ok) + "/" + str(len(rows_s)) + " 条能演示，账本 "
-                  + str(path) + "（" + when.strftime("%m-%d %H:%M") + "）" + age, flush=True)
-            for r in rows_s:
-                if r.get("status") != PASS:
-                    note = re.sub(r"\s+", " ", str(r.get("note") or ""))[:90]
-                    print("       未达 " + str(r.get("ring")) + " " + str(r.get("title"))
-                          + " :: " + note, flush=True)
-        demo_ok = sum(1 for r in rings if r.get("status") == PASS)
-        demo_total = len(rings)
+        ok = sum(1 for r in rings if r.get("status") == PASS)
+        print("  4 演示 " + label + "  " + str(ok) + "/" + str(len(rings)) + " 条能演示，账本 "
+              + str(path) + "（" + when.strftime("%m-%d %H:%M") + "）" + age, flush=True)
+        for r in rings:
+            if r.get("status") != PASS:
+                note = re.sub(r"\s+", " ", str(r.get("note") or ""))[:90]
+                print("       未达 " + str(r.get("ring")) + " " + str(r.get("title"))
+                      + " :: " + note, flush=True)
 
     ref, base = baseline_rules()
     now_rules = rules_count((REPO / "AGENTS.md").read_text(encoding="utf-8"))
