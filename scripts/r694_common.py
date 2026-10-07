@@ -112,12 +112,29 @@ class Ledger:
         )
 
 
+#: 一枚截图的上限。``page.screenshot()`` 默认没有超时：页面卡在半截导航或常亮动画上时，
+#: 整场走查就挂在那里，九环交不回任何读数（10-07 13:44 现读，环 7 的对照探针挂死 15 分钟，
+#: 账本里没有 rings[7]，屏上其实早就答完了）。取不到图就把这一格明说取不到，不许挂住全场。
+SHOT_TIMEOUT_MS = 20000
+
+
 def register_shot(page: Any, out_dir: str | Path, name: str, **kwargs: Any) -> dict[str, Any]:
-    """截图落盘并登记：文件名、字节数、取图时刻、视口。"""
+    """截图落盘并登记：文件名、字节数、取图时刻、视口；取不到就记 error，不抛、不挂。"""
+    timeout = kwargs.pop("timeout", SHOT_TIMEOUT_MS)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     target = out / name
-    page.screenshot(path=str(target), **kwargs)
+    try:
+        page.screenshot(path=str(target), timeout=timeout, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - 证据少一张只许记账，不许把整场跑挂住
+        return {
+            "file": name,
+            "bytes": target.stat().st_size if target.exists() else 0,
+            "sha256_8": "",
+            "taken_at": stamp(),
+            "error": "%s after %dms" % (type(exc).__name__, timeout),
+            "viewport": getattr(page, "viewport_size", None),
+        }
     return {
         "file": name,
         "bytes": target.stat().st_size,

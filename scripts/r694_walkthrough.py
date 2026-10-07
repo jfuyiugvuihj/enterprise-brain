@@ -1052,7 +1052,8 @@ class Walk:
         return self.page.evaluate(
             """async (u) => {
                 const token = localStorage.getItem('eb_token') || '';
-                const r = await fetch(u, { headers: { Authorization: 'Bearer ' + token } });
+                const r = await fetch(u, { headers: { Authorization: 'Bearer ' + token },
+                                           signal: AbortSignal.timeout(20000) });
                 const buf = new Uint8Array(await r.arrayBuffer());
                 const magic = Array.from(buf.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('');
                 return { status: r.status, bytes: buf.length, magic_hex8: magic,
