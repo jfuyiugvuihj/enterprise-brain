@@ -1685,6 +1685,105 @@ def _chart_terminal_error_code(text: object) -> str:
     return _public_error_code(match.group(1), "internal_error")
 
 
+#: 模型把图型写成中文是常态：本机 10-07 12:21 现读，图腿第一发交回 chart_type="柱状图"
+#: （validation_error），反思重试那一发写对了 "bar" 却把数值那一栏留空（internal_error）。
+#: 同义词只在这一处收，未知名照旧走「不支持的图表类型」那一句——
+#: tests/test_r715_chart_leg_refuses_before_a_byte_lands.py 钉着那句与它那枚码。
+_CHART_TYPE_ALIASES = {
+    "柱状图": "bar", "柱图": "bar", "条形图": "bar", "直方图": "bar",
+    "折线图": "line", "曲线图": "line", "线图": "line",
+    "饼图": "pie", "饼状图": "pie", "圆形图": "pie", "扇形图": "pie",
+    "雷达图": "radar", "蜘蛛图": "radar",
+    "甘特图": "gantt", "进度图": "gantt", "里程碑图": "gantt",
+    "思维导图": "mindmap", "脑图": "mindmap",
+}
+
+#: 图腿第四张脸：名目收到了、数字没跟上。以前这一格由画图函数抛异常换成一句
+#: 「图表生成失败」，客户看不出差在哪一栏；现在它在写盘之前就说出口。
+_CHART_NO_NUMBERS_HEAD = (
+    "本轮没有生成图表文件：横轴的名目收到了，纵轴的数字是空的。"
+    "这不是画图组件坏了，是这一轮没算出可画的数——"
+    "请确认选中的数据文件里有一列能求和或计数，或换一种说法再问一次。"
+)
+
+
+def _normalize_chart_type(chart_type: object) -> str:
+    """图型名只认六个英文键，先把中文同义词翻过来，其余原样交回（小写化）。"""
+    name = str(chart_type or "").strip()
+    if not name:
+        return ""
+    return _CHART_TYPE_ALIASES.get(name) or _CHART_TYPE_ALIASES.get(name.lower()) or name.lower()
+
+
+def _as_sequence(raw: object) -> list:
+    """名目与数值都可能是 None、真数组、或一枚 JSON 串／逗号串：模型只被要求「给一串」。"""
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return list(raw)
+    if isinstance(raw, dict):
+        return list(raw.values())
+    text = str(raw).strip()
+    if not text:
+        return []
+    if text.startswith(("[", "{")):
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, (list, tuple)):
+            return list(parsed)
+        if isinstance(parsed, dict):
+            return list(parsed.values())
+    return [piece.strip() for piece in re.split(r"[,;、\n]", text) if piece.strip()]
+
+
+#: 一个「数」可能长成 {"金额": "12,300"} 那样。单位只剥不改值：带「万」的字符串解析不出来，
+#: 宁可交回 None 让图腿说出「没拿到数」，也不悄悄把 12 万画成 12。
+_NUMBER_KEYS = ("值", "数值", "金额", "数量", "总数", "合计", "value", "y", "count", "total", "amount")
+_UNIT_NOISE = (",", "元", "￥", "¥", "$", "%", " ", "，")
+
+
+def _as_number(item: object) -> float | None:
+    if isinstance(item, bool):
+        return None
+    if isinstance(item, (int, float)):
+        return float(item)
+    if isinstance(item, dict):
+        for key in _NUMBER_KEYS:
+            if key in item:
+                found = _as_number(item[key])
+                if found is not None:
+                    return found
+        for value in item.values():
+            found = _as_number(value)
+            if found is not None:
+                return found
+        return None
+    if isinstance(item, (list, tuple)):
+        return _as_number(item[0]) if item else None
+    text = str(item or "").strip()
+    for noise in _UNIT_NOISE:
+        text = text.replace(noise, "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _first_series(datasets: object) -> list:
+    """模型把数字放进 datasets 而没放 values 时取第一条序列：柱图与饼图只画一条。"""
+    if not isinstance(datasets, dict):
+        return []
+    for series in datasets.values():
+        numbers = [n for n in (_as_number(item) for item in _as_sequence(series)) if n is not None]
+        if numbers:
+            return numbers
+    return []
+
+
 def _generate_chart(
     chart_type: str,
     config: RunnableConfig,
@@ -1701,6 +1800,19 @@ def _generate_chart(
     from app.tools.chart import bar_chart, line_chart, pie_chart, radar_chart
     from app.tools.visualize import gantt_chart, mindmap as _mindmap
 
+    chart_type = _normalize_chart_type(chart_type)
+    labels = _as_sequence(labels)
+    values = [n for n in (_as_number(item) for item in _as_sequence(values)) if n is not None]
+    if chart_type in ("bar", "pie") and not values:
+        values = _first_series(datasets)
+    if chart_type in ("bar", "pie") and not values:
+        return _denial_text(
+            config, tool="generate_chart", code="validation_error", head=_CHART_NO_NUMBERS_HEAD
+        )
+    if chart_type in ("line", "radar") and not values and not _first_series(datasets):
+        return _denial_text(
+            config, tool="generate_chart", code="validation_error", head=_CHART_NO_NUMBERS_HEAD
+        )
     chart_funcs = {
         "bar": lambda: bar_chart(labels or [], values or [], title=title),
         "line": lambda: line_chart(labels or [], datasets or {"数据": values or []}, title=title),
@@ -1912,6 +2024,10 @@ def generate_chart_v2(
             "title": title,
             "label_count": len(labels or []),
             "value_count": len(values or []),
+            #: 10-07 现读：图腿连着两发 value_count=0，光看这两格分不出「模型没给数」还是
+            #: 「数在 datasets 里」。名字与条数是形状，不是客户数据，画不出图时它就是归因。
+            "datasets_names": sorted(str(key) for key in datasets) if isinstance(datasets, dict) else None,
+            "categories_count": len(categories or []),
         },
     ) as span:
         result = _generate_chart(
