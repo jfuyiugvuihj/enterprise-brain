@@ -131,6 +131,15 @@ def generate_pdf_report(title: str, sections: list[dict], chart_paths: list[str]
         elif t == "chart":
             pdf.chart_image(sec["path"], sec.get("caption", ""))
 
+    #: 调用方交回的本轮图表件路径：给进来就真嵌（10-07 现读两枚报告 PDF 里 `/Subtype /Image`
+    #: 均 0 枚——这一枚参数一直是死的，模型交回的 sections 永远不会有 type=="chart" 那一格，
+    #: 因为它不知道图在容器里的路径，工具给它的是 URL）。缺文件的写法沿用 chart_image 那句。
+    embedded = [str(item) for item in (chart_paths or []) if str(item).strip()]
+    if embedded:
+        pdf.heading("本轮生成的图表", level=2)
+        for item in embedded:
+            pdf.chart_image(item, caption=os.path.basename(item))
+
     # 尾页
     pdf.add_page()
     pdf.ln(80)

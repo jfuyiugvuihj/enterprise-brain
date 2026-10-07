@@ -293,6 +293,34 @@ def _register_artifact(path: str, artifact_type: str, config):
     return artifact
 
 
+def _round_chart_paths(config, principal) -> list[str]:
+    """本轮真登记过、现在还打得开的图表件路径（newest first）。
+
+    为什么不去问证据袋：袋是按腿开的（``app/agents/orchestrator.py`` 每一枚 worker leg 各开一只，
+    批准腿再开一只），导出腿那只袋里永远没有图腿登记的那枚件——按袋查图必然查不到。
+    所以装箱走产物台账的生成血缘：会话号去掉 ``:worker`` 那一截后缀就是本轮这一场会话，
+    再按属主收一道（同一场会话也可能换人批准），只读物证、不猜。
+    """
+    session, _request = _tool_turn(config)
+    if not session:
+        return []
+    base = session.split(":", 1)[0]
+    owner = str(getattr(principal, "user_id", "") or "")
+    from app.storage import artifacts as artifact_storage
+
+    paths: list[str] = []
+    for record in artifact_storage.artifact_registry.list_active(artifact_type="chart"):
+        lineage = str(getattr(record, "session_id", "") or "")
+        if lineage.split(":", 1)[0] != base:
+            continue
+        if owner and str(getattr(record, "owner_id", "") or "") != owner:
+            continue
+        stored = str(getattr(record, "storage_path", "") or "")
+        if stored:
+            paths.append(stored)
+    return paths
+
+
 def _authorized_dataset_files(
     config,
 ) -> "tuple[list[tuple[str, str]], str | DatasetsHiddenByScope | None]":
@@ -1893,11 +1921,10 @@ def _first_series(datasets: object) -> list:
 _BOX_KIND_PREFERENCE = {"group": 300.0, "ranking": 200.0, "preview": 100.0}
 
 
-def _boxed_chart_series(bag: dict | None, labels: list | None, title: str) -> tuple[list, list, str]:
-    """模型点了横轴的名、没把数带回来：从本轮缓冲里取那一串数，按名对齐装箱。
+def _best_series_row(bag: dict | None, labels: list | None, title: str) -> dict:
+    """本轮缓冲里与「模型点名的那一串横轴」最对得上的那一行数；对不上交回空表。
 
-    交回 ``(labels, values, 出处)``；对不上就交回空——空装箱照旧走「这一轮没有数字」那句人话，
-    绝不为了画出图而编一串数。出处只进日志，用来归因「这张图的数是模型给的还是自己装的」。
+    装箱与填名目两件事共用这一枚打分：只认账上真算过的 series，不猜、不编。
     """
     candidates = [
         row
@@ -1905,7 +1932,7 @@ def _boxed_chart_series(bag: dict | None, labels: list | None, title: str) -> tu
         if isinstance(row, dict) and row.get("labels") and row.get("values")
     ]
     if not candidates:
-        return [], [], ""
+        return {}
     given = [str(item).strip() for item in (labels or []) if str(item).strip()]
 
     def score(row: dict) -> float:
@@ -1926,8 +1953,19 @@ def _boxed_chart_series(bag: dict | None, labels: list | None, title: str) -> tu
         return -1.0
 
     best = max(candidates, key=score)
-    if score(best) < 0:
-        return [], [], ""
+    return {} if score(best) < 0 else best
+
+
+def _boxed_chart_series(bag: dict | None, labels: list | None,
+                        title: str) -> tuple[list, list, str, dict]:
+    """模型点了横轴的名、没把数带回来：从本轮缓冲里取那一串数，按名对齐装箱。
+
+    交回 ``(labels, values, 出处, 账上那一行)``；对不上就交回空——空装箱照旧走「这一轮没有数字」
+    那句人话，绝不为了画出图而编一串数。出处只进日志，用来归因「这张图的数是模型给的还是自己装的」。
+    """
+    best = _best_series_row(bag, labels, title)
+    if not best:
+        return [], [], "", {}
     own_labels = [str(item).strip() for item in best.get("labels") or []]
     own_values = list(best.get("values") or [])
     if not given:
@@ -1944,8 +1982,34 @@ def _boxed_chart_series(bag: dict | None, labels: list | None, title: str) -> tu
         pairs = [(item, by_label[item]) for item in given if item in by_label]
         use_labels, use_values = [item[0] for item in pairs], [item[1] for item in pairs]
     if not use_values or len(use_labels) != len(use_values):
-        return [], [], ""
-    return use_labels, use_values, f"{best.get('dimension')}×{best.get('column')}"
+        return [], [], "", {}
+    return use_labels, use_values, f"{best.get('dimension')}×{best.get('column')}", best
+
+
+#: 同一发画图请求在本轮里最多试几枚：10-07 12:43 现读，模型每 5 s 交回同一枚参数，八次之后
+#: 本地模型服务端 500（Jinja: No user query found in messages），一轮白等 114 s。
+_CHART_REPEAT_LIMIT = 2
+_CHART_REPEAT_HEAD = "这一发画图请求本轮已经原样试过 {times} 次，结果一样，不必再试"
+
+#: 模型没写标题时挂在屏上的那句占位话。写死成一枚常量，是为了让「它到底写没写」判得出来。
+_DEFAULT_CHART_TITLE = "数据分析图表"
+
+
+def _chart_face_labels(title: str, row: dict) -> tuple[str, str, str]:
+    """标题与两条轴的名字：只从账上那一行取，不新造话（横轴＝dimension，纵轴＝column）。
+
+    10-07 现读那一轮：图画对了，标题却还挂着「数据分析图表」，两条轴也没有名字——客户看不出
+    这是报销金额按月。模型自己写了标题就留着它的，只有它没写（或抄了缺省值）才由名目填。
+    """
+    dimension = str((row or {}).get("dimension") or "").strip()
+    column = str((row or {}).get("column") or "").strip()
+    head = str(title or "").strip()
+    if head in ("", _DEFAULT_CHART_TITLE):
+        if column and dimension:
+            head = f"{column}（按{dimension}）"
+        else:
+            head = column or dimension or _DEFAULT_CHART_TITLE
+    return head, dimension, column
 
 
 def _generate_chart(
@@ -1958,7 +2022,7 @@ def _generate_chart(
     tasks: list[dict] | None = None,
     root: str | None = None,
     branches: dict[str, list[str]] | None = None,
-    title: str = "数据分析图表",
+    title: str = _DEFAULT_CHART_TITLE,
 ) -> str:
     from app.storage.artifacts import ArtifactOwnerScopeMissing, owner_department_scope
     from app.tools.chart import bar_chart, line_chart, pie_chart, radar_chart
@@ -1967,11 +2031,30 @@ def _generate_chart(
     chart_type = _normalize_chart_type(chart_type)
     labels = [text for text in (_as_label(item) for item in _as_sequence(labels)) if text]
     values = [n for n in (_as_number(item) for item in _as_sequence(values)) if n is not None]
+    #: 同一发参数原样重交：本轮缓冲里数着它，超过上限就直接交回那句「不必再试」，
+    #: 不再跑 matplotlib、不再登记、也不再给本地模型一次 5 s 的往返。
+    bag = bag_from_config(config)
+    if bag is not None:
+        fingerprint = json.dumps(
+            {"type": chart_type, "labels": labels, "values": values,
+             "datasets": sorted((datasets or {}).keys()), "title": str(title or "")},
+            ensure_ascii=False, sort_keys=True, default=str,
+        )
+        attempts = bag.setdefault("chart_attempts", {})
+        times = int(attempts.get(fingerprint, 0) or 0) + 1
+        attempts[fingerprint] = times
+        if times > _CHART_REPEAT_LIMIT:
+            return _denial_text(
+                config, tool="generate_chart", code="chart_refusal_repeated",
+                head=_CHART_REPEAT_HEAD.format(times=times),
+            )
     if chart_type in ("bar", "pie") and not values:
         values = _first_series(datasets)
     #: 模型给的名字轴与数值仍凑不齐一张图时，先回头看本轮算过的数——不猜、不编，只对得上才用。
+    series_row: dict = {}
     if chart_type in ("bar", "line", "pie") and not values:
-        box_labels, box_values, box_from = _boxed_chart_series(bag_from_config(config), labels, title)
+        box_labels, box_values, box_from, series_row = _boxed_chart_series(
+            bag_from_config(config), labels, title)
         if box_values:
             labels = box_labels
             values = box_values
@@ -1996,9 +2079,16 @@ def _generate_chart(
         return _denial_text(
             config, tool="generate_chart", code="validation_error", head=_CHART_NO_NUMBERS_HEAD
         )
+    #: 名目：装箱那一腿顺手交回账上那一行；模型自己把数带回来了也要再问一次缓冲，
+    #: 只为取「这串数是哪一列、按哪一维分的」——取不到就照旧留缺省，不编。
+    if not series_row and chart_type in ("bar", "line", "pie"):
+        series_row = _best_series_row(bag_from_config(config), labels, title)
+    title, xlabel, ylabel = _chart_face_labels(title, series_row)
     chart_funcs = {
-        "bar": lambda: bar_chart(labels or [], values or [], title=title),
-        "line": lambda: line_chart(labels or [], datasets or {"数据": values or []}, title=title),
+        "bar": lambda: bar_chart(labels or [], values or [], title=title,
+                                 xlabel=xlabel, ylabel=ylabel),
+        "line": lambda: line_chart(labels or [], datasets or {"数据": values or []}, title=title,
+                                   xlabel=xlabel, ylabel=ylabel),
         "pie": lambda: pie_chart(labels or [], values or [], title=title),
         "radar": lambda: radar_chart(categories or labels or [], datasets or {"数据": values or []}, title=title),
         "gantt": lambda: gantt_chart(tasks or [], title=title),
@@ -2133,7 +2223,15 @@ def _export_report(report_title: str, sections_json: str,
                 code="validation_error",
                 head=_EXPORT_BAD_SECTIONS_HEAD,
             )
-        path = generate_pdf_report(title=report_title, sections=sections)
+        #: 装箱由产品自己做：模型交回的 sections 里那一格图永远填不出来（它只拿到 URL，
+        #: 拿不到容器路径），所以这里按台账取本轮的图，连同 include_charts 里它点名的那几枚。
+        charts = _round_chart_paths(config, principal)
+        asked = [item.strip() for item in re.split(r"[,;，；\n]", str(include_charts or "")) if item.strip()]
+        for item in asked:
+            if item not in charts:
+                charts.append(item)
+        logger.info("[R726ExportCharts] leg=export round_charts=%d asked=%d", len(charts), len(asked))
+        path = generate_pdf_report(title=report_title, sections=sections, chart_paths=charts)
 
         try:
             urls = _artifact_urls(path, "report", config)

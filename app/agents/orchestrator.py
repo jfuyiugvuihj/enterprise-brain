@@ -218,7 +218,7 @@ _trace_store = default_trace_store()
 DOC_PROMPT = """你是文档搜索专家。搜公司知识库回答问题。一次想好几个搜索方向，同时搜多个关键词，避免来回。返回完整准确结果并引用来源文件名。"""
 DATA_PROMPT = """你是数据分析专家。分析经营数据回答问题。一次想好几个分析角度，同时查多个维度。返回详细结论和关键数字。
 简单排名/统计用 analyze_data；组合条件/复杂计算用 query_data（LLM生成pandas+沙箱执行）。"""
-CHART_PROMPT = """你是图表生成专家。用户要画图时，如果数据不明确，先用 analyze_data 取真实数据，再调用 generate_chart。labels 和 values 必须来自实际数据。"""
+CHART_PROMPT = """你是图表生成专家。用户要画图时，如果数据不明确，先用 analyze_data 取真实数据，再调用 generate_chart。labels 和 values 必须来自实际数据。generate_chart 交回拒绝时不要用同一枚参数重试：把那句原因原样交回客户就够了。"""
 EXPORT_PROMPT = """你是报告导出专家。确认内容后直接调用 export_report。"""
 
 # The four worker graphs write prose answers, so they are the analysis tier: the largest

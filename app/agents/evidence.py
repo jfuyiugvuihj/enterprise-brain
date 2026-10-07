@@ -458,6 +458,13 @@ def _terminal_status(bag: dict[str, Any] | None, answer: str) -> tuple[str, str]
     if "failed" in names or "rejected" in names:
         index = names.index("failed") if "failed" in names else names.index("rejected")
         code = str(statuses[index].get("error_code") or "")
+        #: R723：一轮里数据腿与图腿各拒一次时，按位置取只留下第一条码，屏上看不出「是图没画成」。
+        #: 图腿自己那枚单独点名——它说的是「为什么没有图」，比另一条腿的失败更贴客户那一句。
+        chart_code = next((str(item.get("error_code") or "") for item in statuses
+                           if str(item.get("tool") or "") == "generate_chart"
+                           and str(item.get("error_code") or "")), "")
+        if chart_code:
+            code = chart_code
         if "rejected" in names and not code:
             return "rejected", "permission_denied"
         return ("failed" if "failed" in names else "rejected"), (code or "internal_error")

@@ -36,6 +36,9 @@ _setup_chinese_font()
 
 PRIMARY = "#1a4f8a"       # 深蓝（主色）
 ACCENTS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"]
+#: 一组数就是一根色。以前柱状图按「每一根」发配色板，六个月的报销额画成六道彩虹
+#: （10-07 现读那张图），客户第一眼以为是六个系列。板子留给多系列与饼图。
+ACCENT_SINGLE = ACCENTS[0]
 BG_LIGHT = "#f8fafc"
 
 plt.rcParams.update({
@@ -118,7 +121,7 @@ def bar_chart(labels: list[str], values: list[float],
     - horizontal=True: 横向柱状图（标签多时推荐）
     """
     fig, ax = plt.subplots(figsize=(max(8, len(labels) * 0.5), 5.5))
-    colors = [ACCENTS[i % len(ACCENTS)] for i in range(len(labels))]
+    colors = ACCENT_SINGLE
 
     if horizontal:
         bars = ax.barh(labels, values, color=colors, height=0.7)
