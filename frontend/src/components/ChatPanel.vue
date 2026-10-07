@@ -1950,6 +1950,44 @@ function openApprovalTurn(action) {
 
 // ==================== Markdown ====================
 
+/**
+ * Markdown 表格 → 真表格。必须在「换行」那两步之前走完：表格是一行一行竖线拼起来的，
+ * 晚一步每行都会被换成 <br>，剩下的就是 10-07 屏上那一坨——客户问「柱状图数据」，
+ * 看到的是一堆竖线：| 月份 | 报销金额（元） | 环比变化 | 一行行堆着，既不是表也不是图。
+ * 只认「表头行 + |---| 分隔行」这一形，对不上的一律原样交回，不猜。
+ */
+function renderMdTables(html) {
+  const lines = html.split('\n')
+  const out = []
+  const isRow = (line) => /^\s*\|.*\|\s*$/.test(line || '')
+  const cells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|')
+    .map((cell) => cell.trim())
+  for (let index = 0; index < lines.length; index += 1) {
+    const head = lines[index]
+    const rule = lines[index + 1] || ''
+    if (!isRow(head) || !isRow(rule) || !/-{2,}/.test(rule)) {
+      out.push(lines[index])
+      continue
+    }
+    const body = []
+    index += 2
+    while (index < lines.length && isRow(lines[index])) {
+      body.push(cells(lines[index]))
+      index += 1
+    }
+    index -= 1
+    out.push(
+      '<table class="md-table"><thead><tr>'
+      + cells(head).map((cell) => `<th>${cell}</th>`).join('')
+      + '</tr></thead><tbody>'
+      + body.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join('')}</tr>`).join('')
+      + '</tbody></table>',
+    )
+  }
+  return out.join('\n')
+}
+
+
 function renderMd(raw) {
   if (!raw) return ''
   let html = raw
@@ -1965,6 +2003,11 @@ function renderMd(raw) {
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" class="md-link">$1</a>')
   html = html.replace(/^&gt;\s?(.*)$/gm, '<blockquote>$1</blockquote>')
   html = html.replace(/^[-*]\s+(.*)$/gm, '<li>$1</li>')
+  html = renderMdTables(html)
+  html = html.replace(/^(#{1,6})\s+(.*)$/gm, (_, hashes, text) => {
+    const level = Math.min(hashes.length, 6)
+    return `<h${level}>${text}</h${level}>`
+  })
   html = html.replace(/\n\n/g, '</p><p>')
   html = html.replace(/\n/g, '<br>')
   html = `<p>${html}</p>`
@@ -2181,6 +2224,11 @@ function renderMd(raw) {
                   :has-answer="Boolean(msg.content)"
                   :streaming="Boolean(loading && i === messages.length - 1)"
                 />
+                <!-- 本轮的图表卡片排在正文之前：R725 把图片地址贴在终答末尾，于是图永远站在
+                     整面文字墙的最下面（10-07 现读：卡片顶在 4965 px 处，正文墙 4500 px），
+                     客户不滚到底就以为「图没画出来」。图先上屏，正文跟在后面。 -->
+                <ChartViewer v-for="(ch, ci) in parseCharts(msg.content)"
+                             :key="`chart-${ci}`" :src="ch.src" :caption="ch.caption" />
                 <div v-if="msg.role === 'assistant' && loading && i === messages.length - 1 && !msg.content && !msg.steps?.length"
                      class="typing-dots">
                   <span></span><span></span><span></span>
@@ -2188,9 +2236,6 @@ function renderMd(raw) {
                 <div v-else-if="msg.role === 'assistant'"
                      class="msg-content" v-html="renderMd(stripChartMarkers(msg.content))" />
                 <div v-else class="msg-content">{{ msg.content }}</div>
-
-                <ChartViewer v-for="(ch, ci) in parseCharts(msg.content)"
-                             :key="ci" :src="ch.src" :caption="ch.caption" />
 
                 <!-- R150 · 三张脸。字段都是后端早已发出的（sources / cached / queued），
                      这里只是第一次有人读它们。措辞与判据在 lib/provenance.js，本面板不当第三套判断。
@@ -2804,6 +2849,23 @@ function renderMd(raw) {
   color: #606266;
 }
 .msg-content :deep(li) { margin: 4px 0 4px 20px; }
+.msg-content :deep(h1), .msg-content :deep(h2) { font-size: 16px; }
+.msg-content :deep(h3), .msg-content :deep(h4) { font-size: 15px; }
+.msg-content :deep(h5), .msg-content :deep(h6) { font-size: 14px; }
+.msg-content :deep(h1), .msg-content :deep(h2), .msg-content :deep(h3),
+.msg-content :deep(h4), .msg-content :deep(h5), .msg-content :deep(h6) {
+  /* 字色跟着气泡走：这一屏是深色底，写死深色字＝标题直接看不见（16:0x 现读那张屏）。 */
+  margin: 12px 0 6px; font-weight: 700; color: inherit; line-height: 1.5;
+}
+.msg-content :deep(.md-table) {
+  border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px;
+}
+.msg-content :deep(.md-table th), .msg-content :deep(.md-table td) {
+  border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; vertical-align: top;
+}
+.msg-content :deep(.md-table th) {
+  background: rgba(127, 127, 127, 0.18); font-weight: 600; color: inherit;
+}
 .msg-content :deep(b) { font-weight: 600; color: #1a1a2e; }
 
 /* ===== 输入区 ===== */

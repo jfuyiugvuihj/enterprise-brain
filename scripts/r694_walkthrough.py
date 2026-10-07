@@ -122,7 +122,11 @@ BUBBLE_PROBE = """
     chars: content.length,
     sources: document.querySelectorAll('[data-testid=source-card]').length,
     steps: document.querySelectorAll('.steps-bar .step-card').length,
-    charts: document.querySelectorAll('.chart-card, .chart-img').length,
+    // 只数「真解码出来的那张图」：.chart-card 在取字节失败时照样挂在屏上（ChartViewer 的
+    // 错误脸），按元素数判「屏上有图」会把裂图算成货——10-07 那枚假绿就是这么来的。
+    charts: Array.from(document.querySelectorAll('img.chart-img'))
+                .filter((i) => i.complete && i.naturalWidth > 0).length,
+    chart_cards: document.querySelectorAll('.chart-card').length,
     hitlCard: document.querySelectorAll('[data-testid=hitl-approve-chat]').length,
     faces: Array.from(document.querySelectorAll('[data-testid=runtime-face]')).map((e) => e.textContent.trim().slice(0, 120)),
   };
@@ -750,6 +754,7 @@ class Walk:
             "sources_cards": screen["sources"],
             "steps_cards": screen["steps"],
             "charts_on_screen": screen["charts"],
+            "chart_cards_on_screen": screen["chart_cards"],
             "runtime_faces": screen["faces"],
             "hitl": decision,
         }
@@ -861,7 +866,11 @@ class Walk:
         page.wait_for_timeout(1200)
         if expect_chart:
             try:
-                page.wait_for_selector(".chart-card, .chart-img", timeout=12000)
+                page.wait_for_function(
+                    "() => Array.from(document.querySelectorAll('img.chart-img'))"
+                    ".some((i) => i.complete && i.naturalWidth > 0)",
+                    timeout=12000,
+                )
             except WalkTimeoutError:
                 pass
         rows_live = page.locator(".msg-row").count()
@@ -887,6 +896,7 @@ class Walk:
             "sources_cards": probe["sources"],
             "steps_cards": probe["steps"],
             "charts_on_screen": probe["charts"],
+            "chart_cards_on_screen": probe["chart_cards"],
             "chart_srcs": chart_src[:4],
             "answer_tail": answer[-700:].replace("\n", " | "),
             "terminal_answer_readouts": page.locator(
