@@ -351,7 +351,9 @@ import {
   adoptBackendSession,
   consumeSseStream,
   hasLocalSession,
+  activeId,
   loadSessions,
+  pullBackendMessages,
   readBackendSession,
   readBackendSessionIds,
   sessions,
@@ -571,6 +573,13 @@ async function decide({ row, approved } = {}) {
   if (view.face === 'ok') {
     localIds.value = readLocalIds()
     await loadPending()
+    // 办成之后把【服务端落库的那一份正文】取回 store：这一屏不吃那一轮的流（见 decide 顶上
+    // 那两行注释），客户回到「问一句」看见的本来该是交付的那份字。10-07 14:04 现读给出反面：
+    // 图真画出来并登记了、终答末尾也贴了图片地址，屏上却还站着挂起轮那半截 —— 因为批准续跑
+    // 那一腿的正文从来没回到会话里。取不回就一个字节都不动：这一屏的话已经说完了。
+    if (row.sessionId && String(row.sessionId) === String(activeId.value)) {
+      await pullBackendMessages(row.sessionId)
+    }
   }
   return view
 }

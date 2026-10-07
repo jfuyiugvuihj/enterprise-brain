@@ -250,6 +250,7 @@ import { fetchRuntimeHealth, modelState, modelStatusText, runtimeFaces } from '.
 // 与告警规则删除同一条行为口径：一次错位的点击删不掉没点过的那一行。
 import { advanceDelete, deleteButtonLabel, isPendingDelete } from './ArtifactList.vue'
 import {
+  SESSION_READ,
   abortStream,
   activeDataFilename,
   activeId,
@@ -269,6 +270,7 @@ import {
   rememberScroll,
   mergeServerSessions,
   pullBackendMessages,
+  readBackendSession,
   readBackendSessionList,
   removeSession,
   restoreActive,
@@ -959,6 +961,19 @@ onUnmounted(() => {
   flushScroll()
 })
 
+// B1 的根因（10-07 现读：问一句之后屏上 0 行，刷新才看见）：store 里的 messages 是一枚
+// shallowRef，而这一屏从头到尾只往那枚数组里 push、往消息对象上塞 content —— 两种写法都
+// 换不了引用，Vue 就不重渲染。流式帧到的时候字其实已经进了消息对象，屏上却一动不动。
+// 这里补的就是那一格「换引用」：派生态的写法与上面注释里那几张脸表同一条（整表换新）。
+function repaint() {
+  messages.value = [...messages.value]
+}
+
+function streamTick() {
+  flush()
+  repaint()
+}
+
 async function send(dataFilename = activeDataFilename.value) {
   const text = input.value.trim()
   if (!text || loading.value) return
@@ -978,6 +993,7 @@ async function send(dataFilename = activeDataFilename.value) {
   messages.value.push({
     role: 'assistant', content: '', steps: [], sources: null, mid: genId(), dataFilename: dataFilename || '',
   })
+  repaint()
   const aiMsg = messages.value[messages.value.length - 1]
   const turn = turnKey(aiMsg, messages.value.length - 1)
   note('')
@@ -1012,8 +1028,8 @@ async function send(dataFilename = activeDataFilename.value) {
         hitl.value = { pending, labels, interrupted: false }
         endStream()
       },
-      onText: flush,
-      onBatch: flush,
+      onText: streamTick,
+      onBatch: streamTick,
       onSources: (sources) => {
         sourceReads.value = { ...sourceReads.value, [turn]: sources }
       },
@@ -1059,6 +1075,7 @@ async function send(dataFilename = activeDataFilename.value) {
     // R415：终态帧里服务端报的那一份表，跟在流之后抄 —— 它在最后一帧才到场。
     adoptServerDataRead(turn, aiMsg, result)
     adoptTerminalReads(turn, aiMsg, result)
+    await adoptAuthoritativeBody(result, aiMsg)
     // 「命中缓存但来源已改版」这句只能真读 GET /documents/{filename}/versions 才说得出。
     // 放在流结束之后而不是 onCache 里：sources 帧在 text 之后到，先查会拿着空清单误报。
     await checkCacheStaleness(turn, aiMsg)
@@ -1165,8 +1182,8 @@ async function approve(approved) {
         hitl.value = { pending: nextPending, labels, interrupted: false }
         endStream()
       },
-      onText: flush,
-      onBatch: flush,
+      onText: streamTick,
+      onBatch: streamTick,
     })
 
     if (!result.ok) {
@@ -1185,6 +1202,7 @@ async function approve(approved) {
     // R415：批准续跑的那一轮与 /ask 同一格读数（R414 两条腿各一处），同一个抄法。
     adoptServerDataRead(turn, aiMsg, result)
     adoptTerminalReads(turn, aiMsg, result)
+    await adoptAuthoritativeBody(result, aiMsg)
     syncActive()
     await scrollBottom()
   } catch (err) {
@@ -1789,6 +1807,40 @@ async function cancelQueuedTurn(msg, index) {
  *   读到了但每一版都早于生成时间 -> []（确实没改版）
  *   有晚于生成时间的版本 -> 逐文件名带上最新版本号与入库时间
  */
+/**
+ * 终答以【服务端落库的那一份正文】为准，覆盖屏上这一格气泡。
+ *
+ * 两道已知的闸都把「服务端补过的正文」和「客户看见的正文」分成了两截：服务端在流结束之后
+ * 还要往正文里补东西（口径原文逐字引用、本轮图表的地址、'没有图/没有数据' 那句真话），
+ * 而批准续跑那一轮交回的文字被 R464 整段拦下不上屏。13:47 现读就是这一格：台账里的正文
+ * 1930 字、末尾躺着 `![本轮生成的图表](/api/v1/artifacts/b4dabd07.../content)`，
+ * 屏上只有 1405 字、一张图都没有 —— 判据写的是'图当场显示'，那就得让屏上这一格等于服务端那一份。
+ *
+ * 只问一次既有的 GET /sessions/{id}（:func:`readBackendSession`，抄历史正文走的就是它，
+ * 不开第二条取正文的路子）；读不到、读到的不是成功终态、或末尾那条不是 assistant，一律一个
+ * 字节都不动 —— 宁可留着屏上已有的那一截，也不拿猜来的话覆盖它。
+ */
+async function adoptAuthoritativeBody(result, msg) {
+  if (!result || result.ok !== true) return
+  if (result.stopped === 'hitl') return
+  const terminal = result.state && result.state.terminal
+  if (terminal === 'failed' || terminal === 'cancelled') return
+  if (!msg || msg.role !== 'assistant') return
+  if (!activeId.value) return
+  const read = await readBackendSession(activeId.value)
+  if (read.outcome !== SESSION_READ.found) {
+    // 静默读不回等于把这一格藏起来：这一屏不许拿猜来的话覆盖屏上已有的正文，但那一句要留得下。
+    console.warn('[R726Adopt] 会话正文读不回，屏上留着流里那一份', read.outcome)
+    return
+  }
+  const rows = (read.messages || []).filter(item => item && item.role === 'assistant')
+  if (!rows.length) return
+  const body = String(rows[rows.length - 1].content || '')
+  if (!body || body === msg.content) return
+  msg.content = body
+  console.info('[R726Adopt] 屏上正文换成服务端落库那一份 chars=', body.length)
+}
+
 async function checkCacheStaleness(key, msg) {
   const cache = msg.cache
   if (!cache || cache.cached !== true) return
