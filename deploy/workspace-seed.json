@@ -10,6 +10,13 @@
       "role": "staff",
       "department": "财务部",
       "password_env": "EB_SEED_OWNER_PASSWORD"
+    },
+    {
+      "username": "reportowner",
+      "role": "admin",
+      "department": "财务部",
+      "password_env": "EB_SEED_MANAGER_PASSWORD",
+      "_why": "环7／环8 的演示账号：带部门才登得了产物（app/storage/artifacts.py::owner_department_scope），而首任管理员故意不带部门，所以另建一枚带部门的管理员。行级口径也只有管理员走得通：演示数据的「部门」列只有销售部等六枚，而数据集登记的部门口径取自属主（财务部），非管理员账号不是被数据集口径挡（app/common/policy.py::authorization_decision）就是被行级挡位挡到 0 行（app/common/rbac.py::filter_dataframe_rows）。"
     }
   ],
   "documents": {

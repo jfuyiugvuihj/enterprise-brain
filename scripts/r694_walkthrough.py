@@ -44,6 +44,13 @@ PRIMARY_USER_KEY = "AUTH_USERNAME"
 PRIMARY_PASS_KEY = "DEMO_ADMIN_PASSWORD"
 SECOND_USER = "dataowner"
 SECOND_PASS_KEY = "EB_SEED_OWNER_PASSWORD"
+#: 环 7／环 8 的属主账号。首任管理员故意不带部门（见 deploy/workspace-seed.json 的 _comment
+#: 与 app/api/v1/data.py 同一条口径），而数据集注册缺省是 internal（2 级，
+#: app/storage/datasets.py::DatasetRegistry.register），staff 档位只有 1 级——连自己名下那枚都读不到
+#: （app/common/policy.py::authorization_decision 的 clearance_insufficient）。所以「当场出图、当场
+#: 导出」这一件事，真环境里做的是部门里的经理档账号，不是没有部门的超级管理员。
+ARTIFACT_USER_DEFAULT = "reportowner"
+ARTIFACT_PASS_KEY = "EB_SEED_MANAGER_PASSWORD"
 
 #: SSE 取帧器。挂在 fetch 上，把 ``text/event-stream`` 的响应 tee 一份自己解析；
 #: 交给产品码的那一份一字不动，所以屏上走的还是产品自己的解析腿。
@@ -213,6 +220,8 @@ class Walk:
         self.page: Page | None = None
         self.requests: list[str] = []
         self.state: dict[str, Any] = {}
+        #: 此刻 self.page 背后是哪一枚账号：primary＝主账号，artifact＝属主账号，""＝还没登录。
+        self.principal = ""
         #: 本轮编号：同一枚问句第二次问会命中答案缓存，缓存那一发只给一帧，量不到逐帧长出。
         self.nonce = time.strftime("%H%M%S")
 
@@ -289,6 +298,7 @@ class Walk:
         return "%s（走查编号 %s）" % (text, self.nonce)
 
     def finish(self, ring: int, title: str, status: str, readings: dict[str, Any], shots: list[dict[str, Any]], note: str = "") -> None:
+        readings.setdefault("principal", self.principal or "未登录")
         self.ledger.record("rings", {
             "ring": ring,
             "title": title,
@@ -380,6 +390,7 @@ class Walk:
             env_key(self.args.env_file, PRIMARY_USER_KEY),
             env_key(self.args.env_file, PRIMARY_PASS_KEY),
         )
+        self.principal = "primary"
         login_elapsed = seconds_since(login_started)
         layers = page.eval_on_selector_all(
             "div.app-bg > *",
@@ -742,12 +753,29 @@ class Walk:
     # ------------------------------------------------------------- 批准与读屏
     def ensure_login(self) -> None:
         """单独跑某一环时自己把身份补齐：环与环之间只共享这一枚 context。"""
-        if self.context is None:
-            self.page = self.new_principal(
-                env_key(self.args.env_file, PRIMARY_USER_KEY),
-                env_key(self.args.env_file, PRIMARY_PASS_KEY),
-            )
-            self.context = self.page.context
+        self.as_principal(
+            env_key(self.args.env_file, PRIMARY_USER_KEY),
+            env_key(self.args.env_file, PRIMARY_PASS_KEY),
+            label="primary",
+        )
+
+    def as_principal(self, username: str, password: str, label: str) -> None:
+        """把这一环的主角换成另一枚账号（同一台栈、独立 context）；已经是那一枚就不重开。"""
+        if self.principal == label and self.context is not None:
+            return
+        page = self.new_principal(username, password)
+        old = self.context
+        self.page, self.context, self.principal = page, page.context, label
+        if old is not None:
+            old.close()
+
+    def ask_as_owner(self) -> None:
+        """环 7／环 8 换成属主账号：图与导出件要有属主，属主得是部门里、档位够的那一枚。"""
+        user = str(self.args.artifact_user or "").strip()
+        if not user:
+            self.ensure_login()
+            return
+        self.as_principal(user, env_key(self.args.env_file, ARTIFACT_PASS_KEY), label="artifact")
 
     def approve_pending(self, click: bool = True) -> dict[str, Any]:
         """在「审批与待办」屏批准最新一枚待批，取批准前后两态。
@@ -1119,7 +1147,7 @@ class Walk:
 
     def ring7(self) -> None:
         """环 7 数据分析：真键盘问一句要图的，批掉挂起的「生成图表」，再读图与产物登记。"""
-        self.ensure_login()
+        self.ask_as_owner()
         self.open_screen("nav-chat", "chat-panel")
         self.state["mid_shot_slot"] = "r7"
         readings = self.ask(self.args.analysis_question, approve_in_chat=True,
@@ -1189,7 +1217,7 @@ class Walk:
 
     def ring8(self) -> None:
         """环 8 报告导出：报告档问一句，批掉「导出报告」，取导出件字节数（API 腿与盘上腿分开记）。"""
-        self.ensure_login()
+        self.ask_as_owner()
         self.open_screen("nav-chat", "chat-panel")
         self.state["mid_shot_slot"] = "r8"
         readings = self.ask(self.args.report_question, approve_in_chat=False,
@@ -1298,6 +1326,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--fresh",
         action="store_true",
         help="起手清空账本再跑：正式那一遍必须只装这一遍的读数，不留上一笔的旧环",
+    )
+    parser.add_argument(
+        "--artifact-user",
+        default=ARTIFACT_USER_DEFAULT,
+        help="环7／环8 用哪一枚属主账号问话（部门里、档位够的那一枚）；传空串退回主账号",
     )
     parser.add_argument(
         "--no-stage-fixture",
