@@ -80,7 +80,8 @@ def commits(range_args):
     return out
 
 
-FAMILIES = (("V1", lambda n: n <= 9), ("V2", lambda n: n > 9))
+#: 两张面各自的全集分母：V1 九条旅程（环 1–9）、V2 十二条（环 10–21）。
+FAMILIES = (("V1", lambda n: n <= 9, 9), ("V2", lambda n: n > 9, 12))
 
 
 def newest_ledgers():
@@ -91,9 +92,10 @@ def newest_ledgers():
     「本轮账本里没有」，而 V2 那本账 19:56 才落盘）。各找各的最新一本，缺一张就说缺。
     """
     root = Path(tempfile.gettempdir()) / "evalrun"
-    found = {label: None for label, _ in FAMILIES}
+    found = {label: None for label, _, _ in FAMILIES}
     if not root.is_dir():
         return found
+    ledgers = []
     for cand in sorted(root.rglob("ledger.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             doc = json.loads(cand.read_text(encoding="utf-8"))
@@ -103,11 +105,25 @@ def newest_ledgers():
         if not (isinstance(rows, list) and rows
                 and all(isinstance(r, dict) and "ring" in r for r in rows)):
             continue
-        when = datetime.fromtimestamp(cand.stat().st_mtime)
-        for label, pick in FAMILIES:
-            mine = [r for r in rows if pick(int(r.get("ring") or 0))]
-            if mine and found[label] is None:
-                found[label] = (cand, when, mine)
+        ledgers.append((cand, datetime.fromtimestamp(cand.stat().st_mtime), rows))
+    # 一枚环取它自己最新那本账里的读数：跑过 12 环之后又单跑一枚环 10，环 10 用新的、
+    # 其余 11 环仍算数——以前只认最新一本账，于是单跑一环把整张面报成 1/1。
+    for label, pick, total in FAMILIES:
+        taken = {}
+        newest = None
+        for cand, when, rows in ledgers:
+            for row in rows:
+                try:
+                    ring = int(row.get("ring") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if not pick(ring) or ring in taken:
+                    continue
+                taken[ring] = row
+                newest = when if newest is None else max(newest, when)
+        if taken:
+            ordered = [taken[key] for key in sorted(taken)]
+            found[label] = (len(ordered), total, ordered, newest)
     return found
 
 
@@ -202,13 +218,16 @@ def main() -> int:
             print("  4 演示 " + label + "  盘上没有 " + label + " 那一套的读数（跑 python scripts/smoke_v1.py --suite "
                   + label.lower() + "）", flush=True)
             continue
-        path, when, rings = value
+        covered, total, rings, newest = value
         age = ""
-        if stamp and when < stamp:
+        if stamp and newest and newest < stamp:
             age = "  [读数过期：早于最新一枚 app 提交 " + stamp.strftime("%m-%d %H:%M") + "]"
         ok = sum(1 for r in rings if r.get("status") == PASS)
-        print("  4 演示 " + label + "  " + str(ok) + "/" + str(len(rings)) + " 条能演示，账本 "
-              + str(path) + "（" + when.strftime("%m-%d %H:%M") + "）" + age, flush=True)
+        gap = "" if covered == total else ("（这一面共 " + str(total) + " 条，另有 "
+                                        + str(total - covered) + " 条盘上没读数）")
+        print("  4 演示 " + label + "  " + str(ok) + "/" + str(total) + " 条能演示，读数取自 "
+              + str(covered) + " 本账里各环最新的一本（最新一刻 " + (newest.strftime("%m-%d %H:%M") if newest else "?")
+              + "）" + gap + age, flush=True)
         for r in rings:
             if r.get("status") != PASS:
                 note = re.sub(r"\s+", " ", str(r.get("note") or ""))[:90]
