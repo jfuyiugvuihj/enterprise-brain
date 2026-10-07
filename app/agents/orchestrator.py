@@ -37,6 +37,9 @@ from app.agents.contracts import ModelTier
 from app.agents.state import AgentState, _merge_dicts
 from app.approval.assistant import build_precheck
 from app.agents.tools import (
+    PACK_MATERIAL_CALIBRATION,
+    PROMPT_MATERIAL_CALIBRATION_KEY,
+    PROMPT_SHELL_EXTRA_TOKENS_KEY,
     PRINCIPAL_PROVENANCE_KEY,
     search_docs,
     analyze_data,
@@ -230,6 +233,44 @@ doc_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [search_docs], p
 data_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [analyze_data, query_data], prompt=DATA_PROMPT, checkpointer=_checkpointer)
 chart_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [analyze_data, generate_chart], prompt=CHART_PROMPT, checkpointer=_checkpointer)
 export_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [export_report], prompt=EXPORT_PROMPT, checkpointer=_checkpointer)
+
+#: 10-08：装箱那一层量 prompt 的尺（estimate_prompt_tokens）看不见 bind_tools 挂进请求体的
+#: 工具字段。缺的那一截在 8192 的窗口上不是「少塞一片料」而是整轮作废：服务端超窗时自己把最前面
+#: 几条挤出去重渲染模板，被挤掉的正是本轮问题，模板当场 raise，兼容腿回 500「No user query found
+#: in messages」，屏上剩下的是兜底吐出来的原始材料。这两格在建图时按真源量一次，随子图 config
+#: 交给装箱（app/agents/tools.py），装箱与发请求前那道守卫读同一本账。
+_LEG_WORKER_TOOLS: dict[str, list] = {
+    "doc": [search_docs],
+    "data": [analyze_data, query_data],
+    "chart": [analyze_data, generate_chart],
+    "export": [export_report],
+}
+#: 带表格料的腿：这两条把 CSV/Excel 的概览与样本 JSON 装进 prompt，料价按实测倍率折算。
+_TABULAR_LEGS = ("data", "chart")
+
+
+def _tool_fields_tokens(tools) -> int:
+    """这一腿真带进请求体的工具字段值多少枚，尺与守卫同一枚（estimate_text_tokens）。"""
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    from app.common.model_budget import estimate_text_tokens
+
+    try:
+        payload = json.dumps(
+            [convert_to_openai_tool(item) for item in tools], ensure_ascii=False, default=str
+        )
+    except Exception:
+        return 0
+    return estimate_text_tokens(payload)
+
+
+#: 456 那枚壳是 run5 在 doc 腿上量的，里面已经含着 search_docs 自己的工具字段，所以登记的是各腿
+#: 相对它的差额——doc 因此是 0，不给自己已有的东西记两遍功。
+_DOC_TOOL_FIELDS_BASELINE = _tool_fields_tokens(_LEG_WORKER_TOOLS["doc"])
+_LEG_SHELL_EXTRA_TOKENS = {
+    name: max(0, _tool_fields_tokens(tools) - _DOC_TOOL_FIELDS_BASELINE)
+    for name, tools in _LEG_WORKER_TOOLS.items()
+}
 
 
 #: 本轮台账里"报告字节已经落过盘"这一件型的名字（``app/agents/tools.py::_register_artifact``
@@ -908,6 +949,10 @@ def _make_worker_wrapper(graph, name: str):
             if k in parent_conf:
                 child_conf[k] = parent_conf[k]
         child_conf["worker"] = name
+        #: 10-08：这一腿真实的壳与料价倍率随 config 交给装箱（上面 _LEG_SHELL_EXTRA_TOKENS）。
+        child_conf[PROMPT_SHELL_EXTRA_TOKENS_KEY] = _LEG_SHELL_EXTRA_TOKENS.get(name, 0)
+        if name in _TABULAR_LEGS:
+            child_conf[PROMPT_MATERIAL_CALIBRATION_KEY] = PACK_MATERIAL_CALIBRATION
         child_conf["evidence_bag"] = evidence_bag
         if step_id:
             child_conf["step_id"] = step_id

@@ -247,3 +247,39 @@ def test_an_image_the_model_already_pasted_is_not_pasted_twice() -> None:
     result = _run(_state({"chart": answer}, [{"artifact_id": "art-9", "artifact_type": "chart"}]))
 
     assert result["final_answer"].count("/api/v1/artifacts/art-9/content") == 1, result["final_answer"]
+
+
+def test_chart_leg_boxes_the_numbers_it_was_not_given():
+    """模型只点横轴的名、没把数带回来：图腿从本轮缓冲里取那一串数——屏上是有图还是没图。
+
+    10-08 00:25 环 7 现读：装箱不再顶穿窗口之后，模型这一发正是只点名不给数，而
+    ``_boxed_chart_series`` 里那段按名对齐的代码用的 ``given`` 从来没被赋值（同一枚
+    打分函数 ``_best_series_row`` 里有那一行，搬过来时漏了）⇒ 当场 NameError，图腿整轮崩，
+    屏上零张图、零枚登记，正文退成一段「您可以这样画」。这一枚用例删掉它漏掉的就是这个坏。
+    """
+    from app.agents.tools import _boxed_chart_series
+
+    bag = {
+        "chart_series": [{
+            "kind": "group",
+            "dimension": "发生月份",
+            "column": "金额",
+            "labels": ["2026-01", "2026-02", "2026-03"],
+            "values": [67770.0, 52710.0, 82830.0],
+        }]
+    }
+    named = ["2026-01", "2026-02", "2026-03"]
+    labels, values, source, row = _boxed_chart_series(bag, named, "金额（按发生月份）")
+    assert values == [67770.0, 52710.0, 82830.0], (labels, values)
+    assert labels == named, labels
+    assert source == "发生月份×金额", source
+    assert row.get("column") == "金额", row
+
+    #: 一枚名都没点（模型只说"把这一串画出来"）：整串缓冲照收，不猜也不编。
+    labels, values, _source, _row = _boxed_chart_series(bag, [], "金额（按发生月份）")
+    assert values == [67770.0, 52710.0, 82830.0], values
+    assert labels == named, labels
+
+    #: 对不上账的那一发不许硬凑：交回空，由调用方说那句「这一轮没有数字」。
+    assert _boxed_chart_series(bag, ["完全没这一列"], "金额")[1] == [], "对不上也凑数"
+    assert _boxed_chart_series({}, named, "金额") == ([], [], "", {}), "本轮没算过数也能装箱"

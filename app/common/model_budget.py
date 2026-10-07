@@ -1054,6 +1054,25 @@ def estimate_prompt_tokens(prompt: Any) -> int | None:
     return total
 
 
+def request_shell_tokens(tools: Any) -> int:
+    """What the request body carries that no message list can see: the tool fields.
+
+    10-08 实测的账：装箱与发请求前那道守卫都按 ``estimate_prompt_tokens(messages)`` 量
+    prompt，而这个数不含 ``bind_tools`` 挂进请求体的一串 JSON，也不含服务端模板围着它
+    拼的那段固定说明。真机 prompt 因此恒比估算大；窗口按 messages 算满，多出来的一截由服务端
+    自己裁——它裁的是最前面几条，其中一条就是本轮问题，于是模板当场 500（No user query found
+    in messages），客户看见的是兜底吐出来的原始材料，不是一张图。把这半截壳量回来，判拒才完整。
+    """
+    if not tools:
+        return 0
+    import json
+    try:
+        payload = json.dumps(tools, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return 0
+    return estimate_text_tokens(payload)
+
+
 def _finish_reason(response: Any) -> str:
     metadata = getattr(response, "response_metadata", None)
     if isinstance(metadata, dict):

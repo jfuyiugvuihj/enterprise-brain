@@ -978,6 +978,20 @@ class _ResilientModel(Runnable):
         span.finish("model_unavailable", error_code="model_unavailable", summary=model_token_counts(response))
         return response
 
+    def _wire_prompt_tokens(self, messages, kwargs) -> int | None:
+        """Size the prompt the way the server will see it: the messages plus the tool fields.
+
+        estimate_prompt_tokens(messages) 只量了消息那一半：bind_tools 挂进请求体的工具字段每一发
+        都真占窗口，却不在账上。补上它，这道守卫判的是完整的一发——宁可在这里先说一句「这题装不
+        下」，也不让服务端自己把本轮问题裁掉再回一枚 500。
+        """
+        from app.common.model_budget import request_shell_tokens
+
+        prompt_tokens = estimate_prompt_tokens(messages)
+        if prompt_tokens is None:
+            return None
+        return prompt_tokens + request_shell_tokens((kwargs or {}).get("tools"))
+
     def _budget_kwargs(self, prompt_tokens: int | None, *, stream: bool) -> tuple[dict, Any]:
         """Size this exact call: its own output cap and a clock proportional to its prompt.
 
@@ -1096,7 +1110,7 @@ class _ResilientModel(Runnable):
             return reply
 
         span = self._span(config, queue_wait_ms=slot.wait_ms)
-        prompt_tokens = estimate_prompt_tokens(messages)
+        prompt_tokens = self._wire_prompt_tokens(messages, kwargs)
         try:
             budget_kwargs, verdict = self._budget_kwargs(prompt_tokens, stream=False)
             call_kwargs = _with_boundary_fields({**budget_kwargs, **kwargs})
@@ -1317,7 +1331,7 @@ class _ResilientModel(Runnable):
         span = None
         try:
             span = self._span(config, queue_wait_ms=slot.wait_ms)
-            prompt_tokens = estimate_prompt_tokens(messages)
+            prompt_tokens = self._wire_prompt_tokens(messages, kwargs)
             try:
                 budget_kwargs, verdict = self._budget_kwargs(prompt_tokens, stream=True)
                 kwargs = _with_boundary_fields({**budget_kwargs, **kwargs})

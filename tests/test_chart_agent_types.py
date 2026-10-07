@@ -88,7 +88,7 @@ def test_chinese_chart_type_draws_the_bar(monkeypatch, tmp_path):
     drawn.write_bytes(b"bar")
     seen: dict = {}
 
-    def fake_bar(labels, values, title="x"):
+    def fake_bar(labels, values, title="x", **_axes):
         seen["labels"] = labels
         seen["values"] = values
         return str(drawn)
@@ -111,7 +111,7 @@ def test_bar_falls_back_to_the_series_handed_in_datasets(monkeypatch, tmp_path):
     drawn.write_bytes(b"bar2")
     seen: dict = {}
 
-    def fake_bar(labels, values, title="x"):
+    def fake_bar(labels, values, title="x", **_axes):
         seen["values"] = values
         return str(drawn)
 
@@ -175,7 +175,7 @@ def test_the_month_numbers_it_computed_draw_the_bar(monkeypatch, tmp_path):
     drawn.write_bytes(b"boxed")
     seen: dict = {}
 
-    def fake_bar(labels, values, title="x"):
+    def fake_bar(labels, values, title="x", **_axes):
         seen["labels"] = labels
         seen["values"] = values
         return str(drawn)
@@ -245,7 +245,7 @@ def test_labels_hiding_inside_dicts_are_still_drawn(monkeypatch, tmp_path):
     drawn.write_bytes(b"dictlabels")
     seen: dict = {}
 
-    def fake_bar(labels, values, title="x"):
+    def fake_bar(labels, values, title="x", **_axes):
         seen["labels"] = labels
         seen["values"] = values
         return str(drawn)
@@ -279,7 +279,7 @@ def test_mismatched_label_and_value_counts_are_trimmed_not_crashed(monkeypatch, 
     drawn.write_bytes(b"trimmed")
     seen: dict = {}
 
-    def fake_bar(labels, values, title="x"):
+    def fake_bar(labels, values, title="x", **_axes):
         seen["labels"] = labels
         seen["values"] = values
         return str(drawn)

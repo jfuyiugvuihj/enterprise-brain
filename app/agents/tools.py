@@ -1078,6 +1078,40 @@ def _retrieval_supports_context_pack(pipeline) -> bool:
     return cached
 
 
+#: 建图那一刻由 app/agents/orchestrator.py 登记进子图 config 的两格。缺省（没登记）＝今天
+#: 的算术一字不变，钉装箱那几枚用例（r112/r122/r445/r451/r463）因此不必跟着房账重测；生产路径上
+#: 四条 worker 腿都带，图是那一边建的。
+#:   shell_extra＝这一腿挂进请求体的工具字段，比 run5 量 456 那枚壳时多出来的一截；
+#:   calibration＝表格料在真机的词价对估算的倍率，房按它折过才开始装。
+#: 10-08 真机（qwen3.5:9b / num_ctx=8192 / 兼容腿）逐档量过料价：估算 1032 / 3012 / 4538 /
+#: 5322 枚的表格 JSON，真机 prompt 分别是 1836 / 4716 / 6936 / 8076 枚，拟合 real ≈
+#: 1.45 × est + 338。再往上（6023 枚那一档）服务端不答 413，它把最前面几条挤出去重渲染模板，
+#: 被挤掉的正是本轮问题，模板当场 raise → HTTP 500「No user query found in messages」→
+#: 兜底把 12k 字原始材料当答案回屏，屏上零张图。取 1.6 给第三轮往返留余量。
+PROMPT_SHELL_EXTRA_TOKENS_KEY = "prompt_shell_extra_tokens"
+PROMPT_MATERIAL_CALIBRATION_KEY = "prompt_material_calibration"
+PACK_MATERIAL_CALIBRATION = 1.6
+
+
+def _configurable(config) -> dict:
+    return ((config or {}).get("configurable") or {})
+
+
+def _leg_shell_extra_tokens(config) -> int:
+    try:
+        return max(0, int(_configurable(config).get(PROMPT_SHELL_EXTRA_TOKENS_KEY) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _leg_material_calibration(config) -> float:
+    try:
+        factor = float(_configurable(config).get(PROMPT_MATERIAL_CALIBRATION_KEY) or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    return factor if factor > 1.0 else 1.0
+
+
 def _pack_into_prompt_room(
     config, *, leg: str, units, keep_first_truncated: bool = False, profile: str | None = None
 ) -> list:
@@ -1125,12 +1159,20 @@ def _pack_into_prompt_room(
     tier = pack_profile_tier(profile)
     #: 装箱看不见的那半截 prompt（system 段＋题面＋壳＋两轮历史），两枚实测预留就是它的现值。
     #: 它同时进 room 与台账的 ``prompt_estimate_tokens``：一处算，两处读，不许再各抄一遍。
-    prefix_reserve = CONTEXT_SHELL_RESERVE_TOKENS + CONTEXT_HISTORY_RESERVE_TOKENS
+    shell_extra = _leg_shell_extra_tokens(config)
+    calibration = _leg_material_calibration(config)
+    prefix_reserve = (
+        CONTEXT_SHELL_RESERVE_TOKENS + CONTEXT_HISTORY_RESERVE_TOKENS + shell_extra
+    )
     room_total = model_tier_budget(tier).pack_room_tokens(prefix_reserve)
     key = _pack_ledger_key(config)
     with _pack_lock:
         used = _pack_ledger.get(key, 0) if key else 0
         room = max(0, room_total - used)
+        if calibration > 1.0:
+            #: 房先按实测料价折一刀再装：估不准的那一截（表格 JSON 的词价）要是留给服务端自己
+            #: 裁，代价是整轮 500，不是少塞一片料。
+            room = int(room / calibration)
         fitted, dropped, packed_tokens = pack_prefix_by_rank(units, room)
         truncated = 0
         stub = PACK_STUB_NONE
@@ -1966,6 +2008,11 @@ def _boxed_chart_series(bag: dict | None, labels: list | None,
     best = _best_series_row(bag, labels, title)
     if not best:
         return [], [], "", {}
+    #: 模型点名的那一串横轴，归一化与上面 _best_series_row 同一枚。7c00d9a 把「按名对齐」这一段
+    #: 搬进这枚函数时没把它一起搬过来：模型只给名、不给数的那一发当场 NameError——given 在这里
+    #: 从来没被赋值。屏上现象＝零张图，图腿交回一段「您可以这样画」的散文（10-08 00:25 环 7 现读
+    #: 就是这个形状：装箱不再顶穿窗口之后，模型这一发正是只点名不给数）。
+    given = [str(item).strip() for item in (labels or []) if str(item).strip()]
     own_labels = [str(item).strip() for item in best.get("labels") or []]
     own_values = list(best.get("values") or [])
     if not given:
