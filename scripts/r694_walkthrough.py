@@ -401,6 +401,19 @@ class Walk:
             "div.app-bg",
             "el => ({ cls: el.className, ariaHidden: el.getAttribute('aria-hidden') })",
         )
+        #: 13:04 现读（环 2 未达，body_cards=[]）：容器刚 recreate，工作台的数据还没回来，首屏
+        #: 一枚卡都还没落位，量具读空 ⇒ 把「采样采在冷启动空档」判成了产品坏。给它一枚有上限的
+        #: 等待：只等卡片出现，不替判据放宽「完整在视口内」那条几何规矩；等满 15 s 仍空就照原样
+        #: 交回空读数——那种未达才是真的未达。
+        from playwright.sync_api import TimeoutError as WalkTimeoutError
+
+        cards_started = epoch()
+        try:
+            page.wait_for_selector(".reference-kpi, .reference-card, .panel-card", timeout=15000)
+        except WalkTimeoutError:
+            pass
+        cards_waited = seconds_since(cards_started)
+        page.wait_for_timeout(600)
         first_screen_cards = page.evaluate(CARD_JS)
         solidity = self._card_solidity(page, first_screen_cards)
         first_screen_count = len(solidity)
@@ -414,6 +427,7 @@ class Walk:
         solidity += self._card_solidity(page, lower)
         readings = {
             "login_elapsed_s": login_elapsed,
+            "cards_waited_s": round(cards_waited, 3),
             "app_bg_wrapper": wrap,
             "app_bg_layers": layers,
             "layer_count": len(layers),
