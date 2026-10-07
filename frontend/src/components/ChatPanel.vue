@@ -236,7 +236,7 @@ let panelRuntimeRead = null
 </script>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AnswerHeadlineCard from './AnswerHeadlineCard.vue'
 import CacheFace from './CacheFace.vue'
@@ -250,7 +250,6 @@ import { fetchRuntimeHealth, modelState, modelStatusText, runtimeFaces } from '.
 // 与告警规则删除同一条行为口径：一次错位的点击删不掉没点过的那一行。
 import { advanceDelete, deleteButtonLabel, isPendingDelete } from './ArtifactList.vue'
 import {
-  SESSION_READ,
   abortStream,
   activeDataFilename,
   activeId,
@@ -270,8 +269,8 @@ import {
   rememberScroll,
   mergeServerSessions,
   pullBackendMessages,
-  readBackendSession,
   readBackendSessionList,
+  reconcileAuthoritativeBody,
   removeSession,
   restoreActive,
   sessionBodyMissing,
@@ -930,6 +929,11 @@ async function recheckRuntimeHealth() {
   recheckFaceTimer = setTimeout(retireRecheckFace, RECHECK_FACE_HOLD_MS)
 }
 
+// 回到「问一句」这一屏：屏上的正文以服务端落库那一份为准（批准可能是在另一屏点的）。
+onActivated(() => {
+  reconcileAuthoritativeBody()
+})
+
 onMounted(() => {
   refreshRuntimeHealth()
   restoreQueuedTurns()
@@ -1075,7 +1079,11 @@ async function send(dataFilename = activeDataFilename.value) {
     // R415：终态帧里服务端报的那一份表，跟在流之后抄 —— 它在最后一帧才到场。
     adoptServerDataRead(turn, aiMsg, result)
     adoptTerminalReads(turn, aiMsg, result)
-    await adoptAuthoritativeBody(result, aiMsg)
+    await reconcileAuthoritativeBody({
+      ok: result.ok,
+      stopped: result.stopped,
+      terminal: result.state && result.state.terminal,
+    })
     // 「命中缓存但来源已改版」这句只能真读 GET /documents/{filename}/versions 才说得出。
     // 放在流结束之后而不是 onCache 里：sources 帧在 text 之后到，先查会拿着空清单误报。
     await checkCacheStaleness(turn, aiMsg)
@@ -1202,7 +1210,11 @@ async function approve(approved) {
     // R415：批准续跑的那一轮与 /ask 同一格读数（R414 两条腿各一处），同一个抄法。
     adoptServerDataRead(turn, aiMsg, result)
     adoptTerminalReads(turn, aiMsg, result)
-    await adoptAuthoritativeBody(result, aiMsg)
+    await reconcileAuthoritativeBody({
+      ok: result.ok,
+      stopped: result.stopped,
+      terminal: result.state && result.state.terminal,
+    })
     syncActive()
     await scrollBottom()
   } catch (err) {
@@ -1807,40 +1819,6 @@ async function cancelQueuedTurn(msg, index) {
  *   读到了但每一版都早于生成时间 -> []（确实没改版）
  *   有晚于生成时间的版本 -> 逐文件名带上最新版本号与入库时间
  */
-/**
- * 终答以【服务端落库的那一份正文】为准，覆盖屏上这一格气泡。
- *
- * 两道已知的闸都把「服务端补过的正文」和「客户看见的正文」分成了两截：服务端在流结束之后
- * 还要往正文里补东西（口径原文逐字引用、本轮图表的地址、'没有图/没有数据' 那句真话），
- * 而批准续跑那一轮交回的文字被 R464 整段拦下不上屏。13:47 现读就是这一格：台账里的正文
- * 1930 字、末尾躺着 `![本轮生成的图表](/api/v1/artifacts/b4dabd07.../content)`，
- * 屏上只有 1405 字、一张图都没有 —— 判据写的是'图当场显示'，那就得让屏上这一格等于服务端那一份。
- *
- * 只问一次既有的 GET /sessions/{id}（:func:`readBackendSession`，抄历史正文走的就是它，
- * 不开第二条取正文的路子）；读不到、读到的不是成功终态、或末尾那条不是 assistant，一律一个
- * 字节都不动 —— 宁可留着屏上已有的那一截，也不拿猜来的话覆盖它。
- */
-async function adoptAuthoritativeBody(result, msg) {
-  if (!result || result.ok !== true) return
-  if (result.stopped === 'hitl') return
-  const terminal = result.state && result.state.terminal
-  if (terminal === 'failed' || terminal === 'cancelled') return
-  if (!msg || msg.role !== 'assistant') return
-  if (!activeId.value) return
-  const read = await readBackendSession(activeId.value)
-  if (read.outcome !== SESSION_READ.found) {
-    // 静默读不回等于把这一格藏起来：这一屏不许拿猜来的话覆盖屏上已有的正文，但那一句要留得下。
-    console.warn('[R726Adopt] 会话正文读不回，屏上留着流里那一份', read.outcome)
-    return
-  }
-  const rows = (read.messages || []).filter(item => item && item.role === 'assistant')
-  if (!rows.length) return
-  const body = String(rows[rows.length - 1].content || '')
-  if (!body || body === msg.content) return
-  msg.content = body
-  console.info('[R726Adopt] 屏上正文换成服务端落库那一份 chars=', body.length)
-}
-
 async function checkCacheStaleness(key, msg) {
   const cache = msg.cache
   if (!cache || cache.cached !== true) return

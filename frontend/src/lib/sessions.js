@@ -1004,3 +1004,50 @@ export async function pullBackendMessages(id) {
   persist()
   return read
 }
+
+/**
+ * 屏上那一格气泡 = 服务端落库的那一份正文（唯一一条路子，两条腿与两屏都走它）。
+ *
+ * 为什么要这一枚（10-07 现读三笔，同一根因）：服务端在流结束之后还要往正文里补东西（口径原文
+ * 逐字引用、本轮图表的地址、"没有图/没有数据"那句真话），而批准续跑那一轮的文字另有 R464 那道
+ * 闸拦着不上屏。两条腿合起来就是「台账里的正文比客户看见的长」：14:49 那一轮图真画出来并登记了、
+ * 终答末尾也贴了图片地址，服务端 6222 字、屏上仍站着挂起轮那 5875 字，一张图都没有。
+ *
+ * 三条边界：不带本轮终态的调用（切屏、审批屏点完）在收流中不动，那一发自己会走到收尾；
+ * 带本轮终态的调用由流末那一发发起，认的是 ok/stopped/terminal，不等控制器复位；
+ * 与屏上逐字相同不动。只覆盖最后一条 assistant 的正文 —— 出处卡、档位、终态读数那几张脸的
+ * 键表住在组件的 ref 里，换的是消息对象而不是那几张表，所以谁也不被抹掉。
+ */
+export async function reconcileAuthoritativeBody(turn = null) {
+  const sessionId = textOf(activeId.value)
+  if (!sessionId) return false
+  if (turn) {
+    // 流末那一发：/ask 与 /approve 都在 endStream() 之前走到这里，控制器还在，
+    // 吃 isStreaming() 就等于永远直接 return（10-07 现读环 7 未达的那一格）。
+    if (turn.ok !== true || turn.stopped === "hitl") return false
+    if (turn.terminal === "failed" || turn.terminal === "cancelled") return false
+  } else if (isStreaming()) {
+    return false
+  }
+  const read = await readBackendSession(sessionId)
+  if (read.outcome !== SESSION_READ.found) {
+    console.warn("[AuthoritativeBody] 会话正文读不回，屏上留着流里那一份", read.outcome)
+    return false
+  }
+  const rows = (read.messages || []).filter(item => item && item.role === "assistant")
+  if (!rows.length) return false
+  const body = String(rows[rows.length - 1].content || "")
+  if (!body) return false
+  const list = messages.value
+  for (let index = list.length - 1; index >= 0; index -= 1) {
+    const row = list[index]
+    if (!row || row.role !== "assistant") continue
+    if (String(row.content || "") === body) return false
+    list[index] = { ...row, content: body }
+    messages.value = [...list]
+    persist()
+    console.info("[AuthoritativeBody] 屏上正文换成服务端落库那一份 chars=", body.length)
+    return true
+  }
+  return false
+}

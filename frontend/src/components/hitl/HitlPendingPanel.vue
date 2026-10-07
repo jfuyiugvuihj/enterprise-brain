@@ -353,7 +353,7 @@ import {
   hasLocalSession,
   activeId,
   loadSessions,
-  pullBackendMessages,
+  reconcileAuthoritativeBody,
   readBackendSession,
   readBackendSessionIds,
   sessions,
@@ -578,7 +578,7 @@ async function decide({ row, approved } = {}) {
     // 图真画出来并登记了、终答末尾也贴了图片地址，屏上却还站着挂起轮那半截 —— 因为批准续跑
     // 那一腿的正文从来没回到会话里。取不回就一个字节都不动：这一屏的话已经说完了。
     if (row.sessionId && String(row.sessionId) === String(activeId.value)) {
-      await pullBackendMessages(row.sessionId)
+      await reconcileAuthoritativeBody()
     }
   }
   return view

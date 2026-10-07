@@ -198,6 +198,16 @@ ARTIFACT_WAIT_S = 150.0
 LOG_LOOKBACK_MIN = 45
 
 
+def _artifact_ids(reading: dict[str, Any]) -> set[str]:
+    """本轮开工前已在位的产物 id：排旧件只认这个，不再拿台账里的陈件当本轮的货。"""
+    ids: set[str] = set()
+    for row in (reading or {}).get("rows") or []:
+        key = row.get("artifact_id") or row.get("id")
+        if key:
+            ids.add(str(key))
+    return ids
+
+
 class Walk:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -1062,20 +1072,30 @@ class Walk:
             url)
 
     def wait_for_artifact(self, kinds: tuple[str, ...],
-                          timeout_s: float = ARTIFACT_WAIT_S) -> dict[str, Any]:
-        """等那一枚产物登记上来：只认 artifact_type，不靠屏上写了什么字。"""
+                          timeout_s: float = ARTIFACT_WAIT_S,
+                          exclude_ids: set[str] | None = None) -> dict[str, Any]:
+        """等那一枚产物登记上来：只认 artifact_type，不靠屏上写了什么字。
+
+        exclude_ids＝本轮开工前已在位的那几枚。15:48 那轮的假读数就出在这里：屏上一张图都没有，
+        量具却把 14:32 那一轮的旧件报成本轮的 found（newest 逐字等于 artifacts_before.rows[0]）。
+        旧件不算货——只有这一轮真登记出来的那枚才算。
+        """
         started = epoch()
+        stale = {str(x) for x in (exclude_ids or set())}
         arts: dict[str, Any] = {}
         while True:
             arts = self.artifacts()
             hits = [r for r in arts["rows"]
-                    if str(r.get("artifact_type") or "").lower() in kinds]
+                    if str(r.get("artifact_type") or "").lower() in kinds
+                    and str(r.get("artifact_id") or r.get("id") or "") not in stale]
             if hits:
                 return {"found": True, "wait_s": seconds_since(started), "newest": hits[0],
-                        "total": arts["total"], "http_status": arts["http_status"]}
+                        "total": arts["total"], "http_status": arts["http_status"],
+                        "stale_excluded": len(stale)}
             if time.time() - started > timeout_s:
                 return {"found": False, "wait_s": seconds_since(started), "newest": None,
-                        "total": arts["total"], "http_status": arts["http_status"]}
+                        "total": arts["total"], "http_status": arts["http_status"],
+                        "stale_excluded": len(stale)}
             time.sleep(2.0)
 
     def artifact_leg_error(self) -> list[str] | None:
@@ -1177,6 +1197,7 @@ class Walk:
         self.ask_as_owner()
         self.open_screen("nav-chat", "chat-panel")
         self.state["mid_shot_slot"] = "r7"
+        ids_before_ask = _artifact_ids(self.artifacts())
         readings = self.ask(self.args.analysis_question, approve_in_chat=True,
                             table=self.args.data_table, lane="分析档")
         shots = [r for r in [readings.pop("mid_shot")] if r]
@@ -1189,7 +1210,7 @@ class Walk:
         else:
             readings["decision"] = self.decide_parked("生成图表", "approve")
         shots.append(self.shot("r694-r7-approval-face.png"))
-        chart = self.wait_for_artifact(("chart", "image"))
+        chart = self.wait_for_artifact(("chart", "image"), exclude_ids=ids_before_ask)
         readings["chart_artifact"] = chart
         if chart["found"]:
             url = chart["newest"].get("content_url") or chart["newest"].get("download_url")
@@ -1220,6 +1241,7 @@ class Walk:
             page_b = self.new_principal(SECOND_USER, env_key(self.args.env_file, SECOND_PASS_KEY))
             self.page, self.context = page_b, page_b.context
             self.open_screen("nav-chat", "chat-panel")
+            probe_before = _artifact_ids(self.artifacts())
             out: dict[str, Any] = {"user": SECOND_USER, "ask": self.chart_ask(page_b)}
             hitl = page_b.locator("[data-testid=hitl-approve-chat]")
             if hitl.count():
@@ -1230,7 +1252,7 @@ class Walk:
             else:
                 out["decision_face"] = "审批屏"
                 out["decision"] = self.decide_parked("生成图表", "approve")
-            chart = self.wait_for_artifact(("chart", "image"))
+            chart = self.wait_for_artifact(("chart", "image"), exclude_ids=probe_before)
             out["chart_artifact"] = {k: v for k, v in chart.items() if k != "newest"}
             if chart["found"]:
                 row = chart["newest"]
@@ -1251,6 +1273,7 @@ class Walk:
         self.ask_as_owner()
         self.open_screen("nav-chat", "chat-panel")
         self.state["mid_shot_slot"] = "r8"
+        ids_before_ask = _artifact_ids(self.artifacts())
         readings = self.ask(self.args.report_question, approve_in_chat=False,
                             table=self.args.data_table, lane="报告档")
         shots = [r for r in [readings.pop("mid_shot")] if r]
@@ -1259,7 +1282,8 @@ class Walk:
         readings["artifacts_before"] = self.artifacts()
         readings["decision"] = self.decide_parked("导出报告", "approve")
         shots.append(self.shot("r694-r8-approval-face.png"))
-        report = self.wait_for_artifact(("report", "document", "export", "pdf"))
+        report = self.wait_for_artifact(("report", "document", "export", "pdf"),
+                                        exclude_ids=ids_before_ask)
         readings["report_artifact"] = report
         exported = None
         if report["found"]:
