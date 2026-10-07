@@ -26,6 +26,8 @@ REPO = Path(__file__).resolve().parents[1]
 WALK = REPO / "scripts" / "r694_walkthrough.py"
 WALK_PYTHON_DEFAULT = "uv run --no-project --with playwright==1.63.0 --with pillow python"
 PASS = "达"
+V1_RINGS = "1,2,3,4,5,6,7,8,9"
+V2_RINGS = "10,11,12,13,14,15,16,17,18,19,20,21"
 
 
 def preflight(base_url):
@@ -88,15 +90,16 @@ def code_freshness():
 def run_walk(out, env_file, base_url, rings, python_opt):
     argv = shlex.split(python_opt or WALK_PYTHON_DEFAULT) + [str(WALK)]
     cmd = argv + ["--env-file", env_file, "--base-url", base_url, "--rings", rings, "--out", str(out)]
+    cmd += ["--fresh"]
     print("[smoke_v1] $ " + " ".join(cmd), flush=True)
     return subprocess.call(cmd, cwd=str(REPO))
 
 
-def report(out, started, walk_rc):
+def report(out, started, walk_rc, label=""):
     led = out / "ledger.json"
     if not led.exists():
         print("[smoke_v1] 走查件没交回账本（walk_rc=" + str(walk_rc) + "）：" + str(led) + " 不在盘上", flush=True)
-        return 1
+        return 1, []
     doc = json.loads(led.read_text(encoding="utf-8"))
     rows = doc.get("rings") or []
     bad = [r for r in rows if r.get("status") != PASS]
@@ -109,11 +112,44 @@ def report(out, started, walk_rc):
         print(str(r.get("ring")) + " | " + str(r.get("title")) + " | " + verdict + " | " + note[:140], flush=True)
     print("", flush=True)
     print("[smoke_v1] " + str(len(rows) - len(bad)) + "/" + str(len(rows))
-          + " 条能演示（分母＝本轮真跑的 " + str(len(rows)) + " 条）；墙钟 "
+          + " 条能演示" + label + "（分母＝本轮真跑的 " + str(len(rows)) + " 条）；墙钟 "
           + str(round(time.time() - started, 1)) + " s；账本 " + str(led), flush=True)
     if walk_rc != 0:
         print("[smoke_v1] 走查件退出码 " + str(walk_rc) + "（环境/登录/容器问题同样算门红，不许推给非产品原因）", flush=True)
-    return 1 if (bad or walk_rc != 0 or not rows) else 0
+    return (1 if (bad or walk_rc != 0 or not rows) else 0), rows
+
+
+def aggregate(out, rowsets, passes):
+    """连续测试：同一套连跑 N 遍，逐环统计绿遍数。
+
+    一遍绿不算稳。任一环没有遍遍绿就交回「抖动」并 exit=1——
+    业主 2026-10-07 要的就是这个数：这功能到底是不是每回都演示得出来。
+    """
+    by_ring = {}
+    for rows in rowsets:
+        for row in rows:
+            key = row.get("ring")
+            hit = by_ring.setdefault(key, {"title": row.get("title"), "greens": 0, "runs": 0, "notes": []})
+            hit["runs"] += 1
+            if row.get("status") == PASS:
+                hit["greens"] += 1
+            else:
+                hit["notes"].append(str(row.get("note") or "").replace("\n", " ")[:110])
+    print("", flush=True)
+    print("[smoke_v1] 连续测试：同一套连跑 " + str(passes) + " 遍，逐环统计（绿遍数＝几遍演示得出来）", flush=True)
+    print("环 | 标题 | 绿遍数 | 不稳的差在哪", flush=True)
+    print("--- | --- | --- | ---", flush=True)
+    unstable = 0
+    for key in sorted(by_ring, key=lambda x: (x is None, x)):
+        hit = by_ring[key]
+        shake = "" if hit["greens"] == hit["runs"] else " ←抖动"
+        unstable += 0 if hit["greens"] == hit["runs"] else 1
+        print(str(key) + " | " + str(hit["title"]) + " | " + str(hit["greens"]) + "/" + str(hit["runs"]) + shake
+              + " | " + " ;; ".join(hit["notes"])[:150], flush=True)
+    print("", flush=True)
+    print("[smoke_v1] 连跑 " + str(passes) + " 遍：稳定 " + str(len(by_ring) - unstable) + "/" + str(len(by_ring))
+          + " 环；账本 " + str(out) + "\pass1 … pass" + str(passes), flush=True)
+    return 1 if unstable else 0
 
 
 def main():
@@ -121,7 +157,9 @@ def main():
     ap.add_argument("--env-file", default=str(REPO / "deploy" / ".env.server"))
     ap.add_argument("--base-url", default="http://localhost/")
     ap.add_argument("--suite", choices=("v1", "v2"), default="v1",
-                    help="v1＝九条旅程（缺省）；v2＝环 10–16 那张 V2 演示面。两张分母分开报，别拿一张盖另一张")
+                    help="v1＝九条旅程（缺省）；v2＝环 10–21 那张 V2 演示面（十二环，全 13 屏都走到）。两张分母分开报，别拿一张盖另一张")
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="同一套连跑几遍（连续测试）。任一环没遍遍绿就报抖动并 exit=1")
     ap.add_argument("--rings", default="", help="点名要跑的环号；不给就按 --suite 的那一套全跑")
     ap.add_argument("--out", default="", help="走查产物落点，缺省 TEMP 下 evalrun/smoke-v1")
     ap.add_argument("--python", default=WALK_PYTHON_DEFAULT,
@@ -131,7 +169,7 @@ def main():
                         help="明知容器已带最新码时跳过新鲜度检查")
     args = ap.parse_args()
     if not args.rings:
-        args.rings = "1,2,3,4,5,6,7,8,9" if args.suite == "v1" else "10,11,12,13,14,15,16"
+        args.rings = V2_RINGS if args.suite == "v2" else V1_RINGS
     if not args.no_preflight:
         bad = preflight(args.base_url)
         if bad:
@@ -149,11 +187,22 @@ def main():
                   "（Docker 起不来用 scripts/docker_up.ps1）；明知已对齐时用 --allow-stale", flush=True)
             return 1
         print("[freshness] 三枚容器带的码不早于最新 app 提交，端到端读数可作数", flush=True)
-    out = Path(args.out) if args.out else Path(tempfile.gettempdir()) / "evalrun" / "smoke-v1"
-    out.mkdir(parents=True, exist_ok=True)
-    started = time.time()
-    walk_rc = run_walk(out, args.env_file, args.base_url, args.rings, args.python)
-    return report(out, started, walk_rc)
+    out = Path(args.out) if args.out else Path(tempfile.gettempdir()) / "evalrun" / ("smoke-" + args.suite)
+    passes = max(1, args.repeat)
+    rowsets = []
+    rc = 0
+    for index in range(passes):
+        target = out if passes == 1 else out / ("pass" + str(index + 1))
+        target.mkdir(parents=True, exist_ok=True)
+        label = "" if passes == 1 else "（第 " + str(index + 1) + "/" + str(passes) + " 遍）"
+        started = time.time()
+        walk_rc = run_walk(target, args.env_file, args.base_url, args.rings, args.python)
+        one_rc, rows = report(target, started, walk_rc, label)
+        rc = max(rc, one_rc)
+        rowsets.append(rows)
+    if passes > 1:
+        rc = max(rc, aggregate(out, rowsets, passes))
+    return rc
 
 
 if __name__ == "__main__":

@@ -1847,6 +1847,305 @@ class Walk:
         )
         self.finish(16, "管理员读数据列表", status, readings, shots, note)
 
+    def _select_option(self, scope: str, wanted: str) -> bool:
+        """屏上那几枚下拉都是 UiSelect：点触发器开列表，再点认得出的那一行。"""
+        page = self.page
+        assert page is not None
+        trigger = page.locator("%s [data-testid=ui-select-trigger]" % scope)
+        if trigger.count() == 0:
+            return False
+        trigger.first.click()
+        page.wait_for_timeout(400)
+        opts = page.locator("[data-testid=ui-select-list] li, [data-testid=ui-select-list] button")
+        for index in range(opts.count()):
+            if wanted in (opts.nth(index).inner_text() or ""):
+                opts.nth(index).click()
+                page.wait_for_timeout(400)
+                return True
+        page.keyboard.press("Escape")
+        return False
+
+    def ring17(self) -> None:
+        """V2 环 17 交成果拿得回来：屏上列出产物，点开一枚图表当场看得见图；删除是两步且撤得回。"""
+        self.ensure_login()
+        assert self.page is not None
+        page = self.page
+        nav = self._goto("/artifacts", "artifacts-panel")
+        items = page.locator("[data-testid=artifact-item]")
+        listed = wait_for(lambda: items.count() > 0, 25)
+        rows = items.count()
+        kinds = [(items.nth(i).get_attribute("data-artifact-type") or "") for i in range(min(rows, 12))]
+        shots = [self.shot("v2-r17-artifacts-list.png")]
+        charts = [i for i, kind in enumerate(kinds) if "chart" in kind]
+        shown = None
+        if charts:
+            items.nth(charts[0]).locator("[data-testid=artifact-open]").first.click()
+            fig = page.locator("[data-testid=artifact-preview]")
+            if wait_for(lambda: fig.count() > 0, 25):
+                wait_for(lambda: page.evaluate(
+                    "() => { const i = document.querySelector('[data-testid=artifact-preview] img');"
+                    " return Boolean(i && i.complete && i.naturalWidth > 0); }"), 20)
+                shown = page.evaluate(
+                    "() => { const i = document.querySelector('[data-testid=artifact-preview] img');"
+                    " return i ? { natural: i.naturalWidth + 'x' + i.naturalHeight,"
+                    " src_head: (i.currentSrc || i.src || '').slice(0, 48) } : null; }")
+                shots.append(self.shot("v2-r17-chart-preview.png"))
+        two_step = False
+        cancelled = False
+        if rows:
+            items.first.locator("[data-testid=artifact-delete]").first.click()
+            cancel = page.locator("[data-testid=artifact-delete-cancel]")
+            two_step = bool(wait_for(lambda: cancel.count() > 0, 8))
+            if two_step:
+                cancel.first.click()
+                cancelled = bool(wait_for(lambda: cancel.count() == 0, 8))
+        rows_after = items.count()
+        readings = {
+            "nav": nav,
+            "principal": self.principal,
+            "artifact_rows_on_screen": rows,
+            "listed": bool(listed),
+            "types_on_screen": kinds,
+            "chart_preview_decoded": shown,
+            "delete_is_two_step": two_step,
+            "delete_cancelled": cancelled,
+            "artifact_rows_after_cancel": rows_after,
+            "first_two_rows": [t.replace("\n", " | ")[:90] for t in items.all_inner_texts()[:2]],
+        }
+        ok = bool(listed) and rows > 0 and bool(shown and shown.get("natural", "0x0") != "0x0") \
+            and two_step and cancelled and rows_after == rows
+        status = "达" if ok else "未达"
+        note = "" if status == "达" else (
+            "未达差在哪一格照读数认：列不出产物看 artifact_rows_on_screen，点开拿不到图看"
+            "chart_preview_decoded，删除不两步或撤不回看 delete_is_two_step 与 delete_cancelled。"
+        )
+        self.finish(17, "交成果列表与拿回", status, readings, shots, note)
+
+    def ring18(self) -> None:
+        """V2 环 18 我的账号：四格身份读得出来，职位改一次当场读得回，再改回去不留痕。"""
+        self.ensure_login()
+        assert self.page is not None
+        page = self.page
+        nav = self._goto("/profile", "profile-panel")
+        cells = {key: page.locator("[data-testid=cell-%s-value]" % key).all_inner_texts()[:1]
+                 for key in ("username", "role", "clearance")}
+        department = page.locator("[data-testid=cell-department] .profile-value").all_inner_texts()[:1]
+        edit = page.locator("[data-testid=profile-edit]")
+        shots = [self.shot("v2-r18-profile-before.png")]
+        marker = "走查职位" + self.nonce
+        original = edit.locator("input").first.input_value() if edit.count() else ""
+        wrote = False
+        if edit.count():
+            edit.locator("input").first.fill(marker)
+            edit.locator(".profile-actions button").first.click()
+            wrote = bool(wait_for(lambda: page.locator("[data-testid=profile-saved]").count() > 0
+                                  or page.locator("[data-testid=profile-write-face]").count() > 0, 20))
+        receipt = page.locator("[data-testid=profile-saved]").all_inner_texts()[:1]
+        failure = page.locator("[data-testid=profile-write-face]").all_inner_texts()[:1]
+        page.reload(wait_until="load")
+        page.wait_for_selector("[data-testid=profile-panel]", timeout=20000)
+        wait_for(lambda: page.locator("[data-testid=profile-edit] input").count() > 0, 20)
+        page.wait_for_timeout(600)
+        read_back = page.locator("[data-testid=profile-edit] input").first.input_value()
+        restored = False
+        if read_back == marker:
+            page.locator("[data-testid=profile-edit] input").first.fill(original)
+            page.locator("[data-testid=profile-edit] .profile-actions button").first.click()
+            page.reload(wait_until="load")
+            page.wait_for_selector("[data-testid=profile-panel]", timeout=20000)
+            wait_for(lambda: page.locator("[data-testid=profile-edit] input").count() > 0, 20)
+            page.wait_for_timeout(600)
+            restored = page.locator("[data-testid=profile-edit] input").first.input_value() == original
+        shots.append(self.shot("v2-r18-profile-readback.png"))
+        identity = all(bool(cells.get(key)) for key in ("username", "role", "clearance"))
+        readings = {
+            "nav": nav,
+            "principal": self.principal,
+            "identity_cells": cells,
+            "department_cell": department,
+            "position_written": wrote,
+            "position_marker": marker,
+            "position_read_back": read_back,
+            "position_restored": restored,
+            "save_receipt": [t.replace("\n", " | ")[:120] for t in receipt],
+            "write_failure_face": [t.replace("\n", " | ")[:160] for t in failure],
+        }
+        ok = identity and wrote and read_back == marker and restored
+        status = "达" if ok else "未达"
+        note = "" if status == "达" else (
+            "未达差在：四格身份读不全看 identity_cells，改完刷新读不回看 position_read_back，"
+            "被产品拒绝看 write_failure_face 那一句原话。"
+        )
+        self.finish(18, "我的账号读得出改得回", status, readings, shots, note)
+
+    def ring19(self) -> None:
+        """V2 环 19 账号与角色：屏上开通一枚走查账号→名册读得回→调部门读得回→删掉不再有它。"""
+        self.ensure_login()
+        assert self.page is not None
+        page = self.page
+        nav = self._goto("/admin", "admin-panel")
+        rows = page.locator("[data-testid=admin-users-rows]")
+        wait_for(lambda: rows.count() > 0, 25)
+        account = "walk" + self.nonce
+        password = "Walk!" + self.nonce + "9"
+        shots = [self.shot("v2-r19-admin-roster.png")]
+        page.click("[data-testid=open-create]")
+        page.wait_for_timeout(500)
+        fields = page.locator("[data-testid=create-username] input")
+        created = False
+        if fields.count():
+            fields.first.fill(account)
+            page.locator("[data-testid=create-password] input").first.fill(password)
+            self._select_option("[data-testid=create-role]", "员工")
+            page.locator("[data-testid=create-department] input").first.fill("市场部")
+            page.click("[data-testid=submit-create]")
+            created = bool(wait_for(lambda: rows.filter(has_text=account).count() > 0, 25))
+        shots.append(self.shot("v2-r19-created.png"))
+        dept_moved = False
+        department_read = []
+        if created:
+            self._select_option("[data-testid=pick-target]", account)
+            opener = page.locator("[data-testid=open-department]")
+            if opener.count():
+                opener.first.click()
+                page.wait_for_timeout(500)
+                box = page.locator("[data-testid=department-value] input")
+                if box.count():
+                    box.first.fill("财务部")
+                    page.click("[data-testid=submit-department]")
+                    dept_moved = bool(wait_for(
+                        lambda: "财务部" in " ".join(rows.filter(has_text=account).all_inner_texts()), 25))
+                department_read = rows.filter(has_text=account).all_inner_texts()[:1]
+        shots.append(self.shot("v2-r19-department.png"))
+        deleted = False
+        if created:
+            self._select_option("[data-testid=pick-target]", account)
+            opener = page.locator("[data-testid=open-delete]")
+            if opener.count():
+                opener.first.click()
+                page.wait_for_timeout(500)
+                confirm = page.locator("[data-testid=confirm-delete]")
+                if confirm.count():
+                    confirm.first.click()
+                    deleted = bool(wait_for(lambda: rows.filter(has_text=account).count() == 0, 25))
+        reload_button = page.locator("[data-testid=reload-users]")
+        if reload_button.count():
+            reload_button.first.click()
+            page.wait_for_timeout(1500)
+        gone = rows.filter(has_text=account).count() == 0
+        shots.append(self.shot("v2-r19-deleted.png"))
+        readings = {
+            "nav": nav,
+            "principal": self.principal,
+            "account": account,
+            "roster_rows_on_screen": rows.count(),
+            "created_and_listed": created,
+            "department_changed": dept_moved,
+            "department_row_text": [t.replace("\n", " | ")[:160] for t in department_read],
+            "deleted": deleted,
+            "gone_after_reload": gone,
+        }
+        ok = created and dept_moved and deleted and gone
+        status = "达" if ok else "未达"
+        note = "" if status == "达" else (
+            "未达差在哪一步记在哪一格：开不出来看 created_and_listed，调部门读不回看 "
+            "department_changed，删不掉看 deleted 与 gone_after_reload。"
+        )
+        self.finish(19, "账号与角色开改删一圈", status, readings, shots, note)
+
+    def ring20(self) -> None:
+        """V2 环 20 服务等级目标：三档各自「今天怎么说」读得出来，且没量过的事不许画成达成。
+
+        判据按这屏自己的设计写（frontend/src/components/SloPanel.vue 判据 A）：今天三档的
+        target_status 一律 awaiting_real_samples、样本池是每进程内存，所以屏上**本来就不该**
+        有毫秒数。这一环钉的是三件事：三档都在、每档说得出样本池与欠多少、没量过时不许出现
+        「达成」那两个字。量不到毫秒这笔账另记 B20，不在这里蒙过去。
+        """
+        self.ensure_login()
+        assert self.page is not None
+        page = self.page
+        nav = self._goto("/slo", "slo-panel")
+        tiers = page.locator("[data-testid=slo-tier]")
+        settled = wait_for(lambda: tiers.count() > 0
+                           or page.locator("[data-testid=slo-failure]").count() > 0, 25)
+        tier_count = tiers.count()
+        observed = [t.replace("\n", " | ").strip()
+                    for t in page.locator("[data-testid=slo-observed]").all_inner_texts()]
+        reasons = [t.replace("\n", " | ").strip()
+                   for t in page.locator("[data-testid=slo-reason]").all_inner_texts()]
+        blockers = [t.replace("\n", " | ").strip()
+                    for t in page.locator("[data-testid=slo-blocker]").all_inner_texts()]
+        head = {key: (page.locator("[data-testid=slo-%s]" % key).all_inner_texts() or [""])[0].strip()
+                for key in ("target-status", "percentile-source", "requested-by", "floor")}
+        pool = [t.replace("\n", " | ").strip()
+                for t in page.locator("[data-testid=slo-pool-numbers]").all_inner_texts()]
+        failures = [t.replace("\n", " | ").strip()
+                    for t in page.locator("[data-testid=slo-failure]").all_inner_texts()]
+        whole = page.locator("[data-testid=slo-panel]").inner_text() if settled else ""
+        shots = [self.shot("v2-r20-slo.png")]
+        digits = [int(x) for x in re.findall(r"(\d+)\s*枚请求窗口", " ".join(observed + pool))]
+        shortfalls = [int(x) for x in re.findall(r"还欠\D{0,4}(\d+)", whole)]
+        claimed = [word for word in ("已达成", "达标通过", "目标达成") if word in whole]
+        every_tier_talks = tier_count == 3 and len(observed) == 3 and all(observed)
+        ok = bool(settled) and every_tier_talks and not failures and bool(head["target-status"]) \
+            and digits and not claimed
+        readings = {
+            "nav": nav,
+            "principal": self.principal,
+            "settled": bool(settled),
+            "tiers_on_screen": tier_count,
+            "tier_sample_sentences": [t[:150] for t in observed],
+            "sample_pool_digits": digits,
+            "shortfall_cells": shortfalls[:6],
+            "head_cells": head,
+            "reason_lines": [t[:120] for t in reasons[:6]],
+            "blocker_lines": [t[:120] for t in blockers[:6]],
+            "unattributed_pool": [t[:200] for t in pool],
+            "failure_face": failures[:2],
+            "words_claiming_met": claimed,
+        }
+        status = "达" if ok else "未达"
+        note = "" if ok else (
+            "未达差在哪一格照读数认：三档不齐看 tiers_on_screen，某一档没说出样本池看 "
+            "tier_sample_sentences，画了「达成」那类字样看 words_claiming_met，整屏失败看 failure_face。"
+        )
+        self.finish(20, "服务等级目标三档各自说得清", status, readings, shots, note)
+
+    def ring21(self) -> None:
+        """V2 环 21 评测报告：屏上列得出题集与跑过的报告，总数那格读得出数字。"""
+        self.ensure_login()
+        assert self.page is not None
+        page = self.page
+        nav = self._goto("/evaluations", "evaluations-panel")
+        wait_for(lambda: page.locator("[data-testid=eval-sets-table]").count() > 0
+                 or page.locator("[data-testid=evaluations-failure]").count() > 0
+                 or page.locator("[data-testid=evaluations-empty]").count() > 0, 25)
+        sets_rows = page.locator("[data-testid=eval-sets-table] tbody tr").count()
+        reports_rows = page.locator("[data-testid=eval-reports-table] tbody tr").count()
+        total = page.locator("[data-testid=eval-total]").all_inner_texts()[:1]
+        metrics = page.locator("[data-testid=eval-report-metrics]").all_inner_texts()[:1]
+        failures = page.locator("[data-testid=evaluations-failure]").all_inner_texts()[:1]
+        empty = page.locator("[data-testid=evaluations-empty]").all_inner_texts()[:1]
+        shots = [self.shot("v2-r21-evaluations.png")]
+        digits = [x for x in __import__("re").findall(r"\d+", " ".join(total))]
+        ok = sets_rows > 0 and not failures and bool(digits)
+        status = "达" if ok else "未达"
+        note = "" if status == "达" else (
+            "未达差在屏上列不出题集或读不出总数：题集行数、报告行数、总数格、失败脸、空脸分别记在 "
+            "sets_rows / reports_rows / total_cell / failure_face / empty_face。"
+        )
+        readings = {
+            "nav": nav,
+            "principal": self.principal,
+            "sets_rows": sets_rows,
+            "reports_rows": reports_rows,
+            "total_cell": [t.replace("\n", " | ")[:80] for t in total],
+            "report_metrics": [t.replace("\n", " | ")[:160] for t in metrics],
+            "failure_face": [t.replace("\n", " | ")[:160] for t in failures],
+            "empty_face": [t.replace("\n", " | ")[:120] for t in empty],
+        }
+        self.finish(21, "评测报告屏读得出", status, readings, shots, note)
+
 def _ordered(items: Any) -> list[Any]:
     seen = []
     for item in items:
@@ -1923,6 +2222,7 @@ def main(argv: list[str] | None = None) -> int:
         6: "ring6", 7: "ring7", 8: "ring8", 9: "ring9",
         10: "ring10", 11: "ring11", 12: "ring12", 13: "ring13", 14: "ring14", 15: "ring15",
         16: "ring16",
+        17: "ring17", 18: "ring18", 19: "ring19", 20: "ring20", 21: "ring21",
     }
     with Walk(args) as walk:
         for ring in rings:
