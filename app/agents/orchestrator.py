@@ -809,6 +809,65 @@ def _agent_result_error_code(agent_result) -> str:
 
 # ==================== Worker Wrapper（传 thread_id） ====================
 
+#: B17（业主 2026-10-07 批准治）：文档腿不许「没检索就说话」。
+#: 病（10-07 19:36 现取 trace）：doc_graph 是一枚 ReAct，检索与否过去由模型自己裁——那一轮
+#: 只有一次模型往返、零枚工具调用，它照样答了，还答出库里根本不存在的文件名《走查标记记录表》。
+#: 屏幕上的现象是「答案看着像、出处是编的」。
+#: 改法：这一腿收口前先看它查没查过。查过＝一枚都不多打（R117 的每轮一发装箱账不动）；
+#: 没查过＝拿调用者的真身份补一发 search_docs，把检索原文连同作答规矩交回同一腿再答一次。
+#: 补的那一发走的还是工具本身（同一道密级/部门闸、同一枚证据袋、同一条 trace 工具跨度），
+#: 所以「这一轮到底查没查」在运行留痕里读得回，不是另起第二条检索路。
+#: 段序按 R167 的前缀复用纪律排：固定块在最前，可变内容一律落在它后面。
+_DOC_EVIDENCE_RULE = (
+    "作答规矩：只根据下面这份知识库检索结果回答，引用的文件名必须是这份结果里出现过的来源；"
+    "这份结果里没有的就说不知道，不许猜文件名、不许编制度条款。"
+    "这一轮已经按当前问题检索过，除非这份结果明显不足以回答，不必拿同一批关键词再搜一遍。"
+    "以下是检索结果："
+)
+#: 分隔块写成具名字面量：它是固定字，但按 R167 那把尺子的口径，可变内容之后不许再挂固定串。
+_DOC_EVIDENCE_SEP = "\n\n以上为检索结果，本轮问题是：\n"
+
+
+#: 边界自己报过的终态里，这几枚算「好好跑完了」，其余一律是坏了或空手。
+_DOC_CLEAN_STATUSES = frozenset({"", "ok", "success", "completed"})
+
+
+def _doc_leg_spoke_without_reading(result: dict, bag: dict | None) -> bool:
+    """这一腿是不是「没读知识库就把话说完了」——B17 要治的那一种。
+
+    三枚口子合起来认：证据袋里有检索原文＝读过；ReAct 走过工具串＝读过（哪怕那一发空手回
+    「未找到」，模型也确实见到过它）；边界报过坏（模型不可用、检索不可用、越权拒答）＝这一轮的
+    输出是错误脸而不是一句主张，不去拿补查盖它。三条都不中而屏上又确实出了一段话，才补。
+    """
+    if bag and bag.get("documents"):
+        return False
+    if any(str(row.get("status") or "").strip().lower() not in _DOC_CLEAN_STATUSES
+           for row in list((bag or {}).get("model_statuses") or []) + list((bag or {}).get("tool_statuses") or [])):
+        return False
+    messages = result.get("messages") or []
+    if any(type(message).__name__ == "ToolMessage" for message in messages):
+        return False
+    return any(
+        type(message).__name__ == "AIMessage"
+        and str(getattr(message, "content", "") or "").strip()
+        and not getattr(message, "tool_calls", None)
+        for message in messages
+    )
+
+
+def _doc_question_with_evidence(user_msg: HumanMessage, child_cfg: dict) -> HumanMessage:
+    """把「光板问题」换成「固定规矩＋这一发的检索原文＋问题」，供补查那一趟用。"""
+    question = str(user_msg.content or "")
+    try:
+        evidence = search_docs.invoke({"query": question}, config=child_cfg)
+    except Exception as exc:  # noqa: BLE001 - 检索打不出去不许掀翻整轮，改明说读不到
+        logger.warning("[doc] 补查那一发没打出去，本轮按「读不到知识库」作答：%s", exc)
+        evidence = "（起手检索没打出去，本轮读不到知识库）"
+    text = str(evidence or "").strip() or "（这一发检索没有返回任何内容）"
+    body = _DOC_EVIDENCE_RULE + text + _DOC_EVIDENCE_SEP + question
+    return HumanMessage(content=body)
+
+
 def _make_worker_wrapper(graph, name: str):
     def node(state: AgentState, config) -> dict:
         parent_conf = (config or {}).get("configurable", {}) or {}
@@ -885,6 +944,10 @@ def _make_worker_wrapper(graph, name: str):
         logger.info(f"[{name}] 开始执行...")
         try:
             result = graph.invoke({"messages": [user_msg]}, config=child_cfg)
+            if name == "doc" and _doc_leg_spoke_without_reading(result, evidence_bag):
+                # B17：模型一枚工具都没调就把话说了——补一发真检索，带着原文在同一腿重答一次。
+                logger.warning("[doc] 这一腿没检索就作答，按 B17 补查后重答一次")
+                result = graph.invoke({"messages": [_doc_question_with_evidence(user_msg, child_cfg)]}, config=child_cfg)
         except GraphRecursionError:
             #: 绕圈停在腿内，不许它把模型的历史挤空——挤空的后果是整轮 500，不是少一张图。
             logger.warning(f"[{name}] 往返上限 {_LEG_RECURSION_LIMIT} 用尽，本腿就地收口")
