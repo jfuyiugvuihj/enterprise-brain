@@ -88,7 +88,7 @@ def _config(**overrides) -> dict:
     configurable = {
         "id": USERNAME,
         "username": USERNAME,
-        "role": "admin",
+        "role": "manager",
         "department": "",
         "thread_id": "sess-r715-" + uuid4().hex[:8],
         "request_id": "req-r715-" + uuid4().hex[:8],
@@ -148,6 +148,25 @@ def test_a_departmentless_owner_is_refused_before_a_single_byte_is_written(
     assert "本轮没有生成图表文件" in answer, answer
     assert "部门" in answer, answer
     assert "图表已生成" not in answer, answer
+
+
+def test_an_administrator_without_a_department_still_gets_the_chart(monkeypatch, tmp_path) -> None:
+    """业主 10-07 裁定改口：管理员不被要求与资源同部门，没部门也该画得出自己的图。
+
+    读那一侧早就是这条口径（``app/common/policy.py`` 的 ``administrator_scope``、
+    ``app/common/rbac.py`` 的「空部门行只有 admin 看得到」），写这一侧以前只问部门，
+    于是同一个账号读得到别人的图、画不出自己的图：admin 问一句「画张柱状图」，
+    preflight 在写盘之前就叫停，屏上静默只剩一张表。现在这一发必须真出图、真登记。
+    """
+    registry = _registry(monkeypatch, tmp_path)
+    written: list[str] = []
+    _fake_charts(monkeypatch, tmp_path, written)
+
+    answer = _ask(_config(role="admin"), **BAR_ARGS)
+
+    assert written, "管理员名下这一轮的图该真落盘"
+    assert len(registry.list_active()) == 1, registry.list_active()
+    assert "图表已生成" in answer, answer
 
 
 def test_the_refusal_carries_a_public_code_and_the_ledger_reads_the_same_one(monkeypatch, tmp_path) -> None:

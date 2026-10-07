@@ -63,7 +63,7 @@ def _config(**overrides) -> dict:
     configurable = {
         "id": USERNAME,
         "username": USERNAME,
-        "role": "admin",
+        "role": "manager",
         "department": "",
         "thread_id": "sess-r710-" + uuid4().hex[:8],
         "request_id": "req-r710-" + uuid4().hex[:8],

@@ -2024,7 +2024,7 @@ def _generate_chart(
     branches: dict[str, list[str]] | None = None,
     title: str = _DEFAULT_CHART_TITLE,
 ) -> str:
-    from app.storage.artifacts import ArtifactOwnerScopeMissing, owner_department_scope
+    from app.storage.artifacts import ArtifactOwnerScopeMissing, owner_can_register_artifact
     from app.tools.chart import bar_chart, line_chart, pie_chart, radar_chart
     from app.tools.visualize import gantt_chart, mindmap as _mindmap
 
@@ -2106,7 +2106,7 @@ def _generate_chart(
             )
             return _authorization_error()
         #: preflight：属主交不出部门 ⇒ 登记表当场必拒 ⇒ 一枚字节都不许先落盘（与导出腿同一次序）。
-        if not owner_department_scope(principal):
+        if not owner_can_register_artifact(principal):
             return _denial_text(
                 config,
                 tool="generate_chart",
@@ -2195,7 +2195,7 @@ def _export_terminal_error_code(text: object) -> str:
 
 def _export_report(report_title: str, sections_json: str,
                     config: RunnableConfig, include_charts: str = "") -> str:
-    from app.storage.artifacts import ArtifactOwnerScopeMissing, owner_department_scope
+    from app.storage.artifacts import ArtifactOwnerScopeMissing, owner_can_register_artifact
     from app.tools.export import generate_pdf_report
 
     try:
@@ -2205,7 +2205,7 @@ def _export_report(report_title: str, sections_json: str,
                 bag_from_config(config), tool="export_report", status="rejected", error_code="authorization_required"
             )
             return _authorization_error()
-        if not owner_department_scope(principal):
+        if not owner_can_register_artifact(principal):
             return _denial_text(
                 config,
                 tool="export_report",

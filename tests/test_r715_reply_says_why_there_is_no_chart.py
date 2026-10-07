@@ -165,7 +165,7 @@ def test_the_named_slot_in_the_answer_is_the_code_the_ledger_actually_holds(
         "configurable": {
             "id": "r715-nodept",
             "username": "r715-nodept",
-            "role": "admin",
+            "role": "manager",
             "department": "",
             "thread_id": "sess-r715-" + uuid4().hex[:8],
             "request_id": "req-r715-" + uuid4().hex[:8],

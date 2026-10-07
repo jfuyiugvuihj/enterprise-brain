@@ -46,6 +46,7 @@ from typing import Any
 
 from app.agents.contracts import Principal, ResourceScope
 from app.common.logger import logger
+from app.common.policy import is_administrator
 from app.storage.persistence import PersistenceWriteError, build_persistence_adapter
 
 #: The collection name of the canonical table, and the ``resource_type`` its rows carry.
@@ -146,6 +147,19 @@ def owner_department_scope(principal: Any) -> list[str]:
             if value
         }
     )
+
+
+def owner_can_register_artifact(principal: Any) -> bool:
+    """这一位属主能不能把生成物登记进台账：有部门，或者本来就是替整个租户行事的管理员。
+
+    读那一侧早就是这条口径——``app/common/policy.py`` 的 ``administrator_scope`` 明写
+    「管理员不被要求与资源同部门」，``app/common/rbac.py`` 也认「空部门行只有 admin 看得到」。
+    写这一侧以前只问部门，于是同一个账号读得到别人的图、画不出自己的图：管理员没有部门
+    （``users.department`` 为 NULL 是合法形状，``_bootstrap_admin_department`` 允许操作者不命名），
+    问一句「画张柱状图」就被 preflight 拦下，屏上只剩一张表。10-07 业主裁定改这一格。
+    管理员名下那枚件仍然不带部门：别人看不见它，这正是既有语义，不新增例外。
+    """
+    return bool(owner_department_scope(principal)) or is_administrator(principal)
 
 
 def _utc_now() -> datetime:
@@ -643,7 +657,7 @@ class ArtifactRegistry:
             raise ValueError("artifact type is required")
         path = self._contained_path(storage_path, must_exist=True)
         departments = owner_department_scope(principal)
-        if not departments:
+        if not departments and not is_administrator(principal):
             raise ArtifactOwnerScopeMissing("artifact owner must have a department scope")
         if expires_at is not None and expires_at.tzinfo is None:
             raise ValueError("artifact expiry must include a timezone")
