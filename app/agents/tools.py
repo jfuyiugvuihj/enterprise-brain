@@ -15,6 +15,7 @@ from app.agents.evidence import (
     _enum_error_codes,
     bag_from_config,
     record_artifact,
+    record_chart_series,
     record_dataset,
     record_document_hits,
     record_tool_status,
@@ -500,7 +501,36 @@ def _named_dimension_column(query: str, txt_cols: list[str]) -> str | None:
     return None
 
 
-def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> list[str]:
+def _record_series(series_out: list | None, *, kind: str, dimension: str, column: str, labels, values) -> None:
+    """把算好的一串数交给缓冲；只在调用方要的时候记，正文那几行一个字都不动。"""
+    if series_out is None:
+        return
+    pairs: list[tuple[str, float]] = []
+    for label, value in zip([str(item).strip() for item in (labels or [])], list(values or [])):
+        if not label:
+            return
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return
+        if number != number:
+            return
+        pairs.append((label, number))
+    if pairs:
+        series_out.append(
+            {
+                "kind": kind,
+                "dimension": str(dimension or ""),
+                "column": str(column or ""),
+                "labels": [item[0] for item in pairs],
+                "values": [item[1] for item in pairs],
+            }
+        )
+
+
+def _answer_query(
+    df, query: str, num_cols: list[str], txt_cols: list[str], series_out: list | None = None
+) -> list[str]:
     """用 pandas 计算查询结果，返回简洁的分析文本"""
     import pandas as pd
     results = []
@@ -540,6 +570,12 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
         if not label_col:
             return ""
         return label_tag + str(row[label_col])
+
+    def plain_label(row) -> str:
+        """图表标签取裸值：``label_value`` 带「列名=」前缀，那是给人读的一句，不是横轴刻度。"""
+        if not label_col:
+            return ""
+        return str(row[label_col])
 
     # "哪个/谁最XX" → 排名第一
     m = re.search(r"(哪个|谁|哪家|哪).*?(最高|最低|最多|最少|最大|最小)", query)
@@ -594,6 +630,15 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
                 name = label_value(r)
                 vals = ", ".join(f"{c}={r[c]}" for c in num_cols[:3])
                 lines.append(f"  {name}: {vals}")
+            for _col in num_cols[:3]:
+                _record_series(
+                    series_out,
+                    kind="ranking",
+                    dimension=label_col,
+                    column=_col,
+                    labels=[plain_label(r) for _, r in sorted_df.iterrows()],
+                    values=sorted_df[_col].tolist(),
+                )
             results.append("\n".join(lines))
 
     # "统计/汇总/平均/合计" → describe
@@ -646,6 +691,16 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
                 f"  …共 {total_groups} 组，本条只列前 {_MAX_GROUP_ROWS} 组"
                 f"（还有 {total_groups - _MAX_GROUP_ROWS} 组未列出）"
             )
+        shown = agg.head(_MAX_GROUP_ROWS)
+        for _col in num_cols[:3]:
+            _record_series(
+                series_out,
+                kind="group",
+                dimension=group_col,
+                column=_col,
+                labels=[str(item) for item in shown.index],
+                values=shown[_col].tolist(),
+            )
         results.append("\n".join(lines))
 
     # 兜底：返回基本统计
@@ -656,6 +711,15 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
             name = label_value(r)
             vals = ", ".join(f"{c}={r[c]}" for c in num_cols[:3])
             lines.append(f"  {name}: {vals}")
+        for _col in num_cols[:3]:
+            _record_series(
+                series_out,
+                kind="preview",
+                dimension=label_col,
+                column=_col,
+                labels=[plain_label(r) for _, r in sorted_df.iterrows()],
+                values=sorted_df[_col].tolist(),
+            )
         results.append("\n".join(lines))
 
     return results
@@ -1397,8 +1461,13 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
             text_cols = select_text_columns(df)
 
             try:
-                ai_parts = _answer_query(df, query, numeric_cols, text_cols)
+                series: list[dict] = []
+                ai_parts = _answer_query(df, query, numeric_cols, text_cols, series_out=series)
                 parts.extend(ai_parts)
+                #: 10-07 现读（走查环 7）：图腿自己调用 analyze_data 时，数在这条边界上就算完了，
+                #: 可模型连发 21 发 generate_chart 只带标签不带数值，最后把本地模型的历史挤空、
+                #: 服务端 500，一轮白等 114 s、屏上零张图。数既然已经在手，就不该再押在模型的抄写上。
+                record_chart_series(bag_from_config(config), series)
             except Exception:
                 # R192 病灶二第 1 层（可诊断性）：这一支改前是裸 `pass`——异常被吞干净之后，
                 # 员工看见的是"这份文件没结论"，运维侧一个字都没有，现场不可复现。
@@ -1784,6 +1853,66 @@ def _first_series(datasets: object) -> list:
     return []
 
 
+#: 装箱时的挑选次序：分组汇总是「按客户点名的维度算出来的一串数」，最贴近一张柱状图；
+#: 排名/预览次之。读不出的 kind 给零分，不加分。
+_BOX_KIND_PREFERENCE = {"group": 300.0, "ranking": 200.0, "preview": 100.0}
+
+
+def _boxed_chart_series(bag: dict | None, labels: list | None, title: str) -> tuple[list, list, str]:
+    """模型点了横轴的名、没把数带回来：从本轮缓冲里取那一串数，按名对齐装箱。
+
+    交回 ``(labels, values, 出处)``；对不上就交回空——空装箱照旧走「这一轮没有数字」那句人话，
+    绝不为了画出图而编一串数。出处只进日志，用来归因「这张图的数是模型给的还是自己装的」。
+    """
+    candidates = [
+        row
+        for row in ((bag or {}).get("chart_series") or [])
+        if isinstance(row, dict) and row.get("labels") and row.get("values")
+    ]
+    if not candidates:
+        return [], [], ""
+    given = [str(item).strip() for item in (labels or []) if str(item).strip()]
+
+    def score(row: dict) -> float:
+        own = [str(item).strip() for item in row.get("labels") or []]
+        base = _BOX_KIND_PREFERENCE.get(str(row.get("kind") or ""), 0.0)
+        hint = str(title or "")
+        for token in (row.get("column"), row.get("dimension")):
+            name = str(token or "")
+            if len(name) >= 2 and name in hint:
+                base += 50.0
+        if not given:
+            return base + float(len(own))
+        hit = sum(1 for item in given if item in own)
+        if hit and hit * 2 >= len(given):
+            return base + 1000.0 + float(hit)
+        if len(own) == len(given):
+            return base + 500.0
+        return -1.0
+
+    best = max(candidates, key=score)
+    if score(best) < 0:
+        return [], [], ""
+    own_labels = [str(item).strip() for item in best.get("labels") or []]
+    own_values = list(best.get("values") or [])
+    if not given:
+        use_labels, use_values = own_labels, own_values
+    elif all(item in own_labels for item in given):
+        by_label = dict(zip(own_labels, own_values))
+        pairs = [(item, by_label[item]) for item in given]
+        use_labels, use_values = [item[0] for item in pairs], [item[1] for item in pairs]
+    elif len(given) == len(own_labels):
+        # 模型换了写法（「1月」对「2026-01」）：按名次对齐，标签沿用它点名的写法。
+        use_labels, use_values = given, own_values
+    else:
+        by_label = dict(zip(own_labels, own_values))
+        pairs = [(item, by_label[item]) for item in given if item in by_label]
+        use_labels, use_values = [item[0] for item in pairs], [item[1] for item in pairs]
+    if not use_values or len(use_labels) != len(use_values):
+        return [], [], ""
+    return use_labels, use_values, f"{best.get('dimension')}×{best.get('column')}"
+
+
 def _generate_chart(
     chart_type: str,
     config: RunnableConfig,
@@ -1805,6 +1934,19 @@ def _generate_chart(
     values = [n for n in (_as_number(item) for item in _as_sequence(values)) if n is not None]
     if chart_type in ("bar", "pie") and not values:
         values = _first_series(datasets)
+    #: 模型给的名字轴与数值仍凑不齐一张图时，先回头看本轮算过的数——不猜、不编，只对得上才用。
+    if chart_type in ("bar", "line", "pie") and not values:
+        box_labels, box_values, box_from = _boxed_chart_series(bag_from_config(config), labels, title)
+        if box_values:
+            labels = box_labels
+            values = box_values
+            logger.info(
+                "[ChartBox] 图腿自己装箱 series=%s labels=%d values=%d title=%s",
+                box_from,
+                len(labels),
+                len(values),
+                title,
+            )
     if chart_type in ("bar", "pie") and not values:
         return _denial_text(
             config, tool="generate_chart", code="validation_error", head=_CHART_NO_NUMBERS_HEAD
@@ -2015,7 +2157,11 @@ def generate_chart_v2(
     branches: dict[str, list[str]] | None = None,
     title: str = "数据分析图表",
 ) -> str:
-    """生成柱状图、折线图、饼图、雷达图、甘特图或思维导图。"""
+    """生成图表。参数契约（缺一项就画不出来）：
+    - chart_type 只认 bar/line/pie/radar/gantt/mindmap 六个英文键，不要写中文；
+    - labels 是横轴名称数组，values 是与它等长的纯数字数组（如 [67770, 52710]），两者必须同时给；
+    - values 里的数必须逐字来自上一手 analyze_data 交回的结论；
+    - 上一手没算出数字时不要调用本工具，直接用文字说明原因。"""
     with start_tool_call(
         config,
         tool_name="generate_chart",

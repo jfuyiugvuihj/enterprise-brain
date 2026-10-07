@@ -23,6 +23,7 @@ load_dotenv()
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import create_react_agent, ToolNode
 from langgraph.types import Send, Command
+from langgraph.errors import GraphRecursionError
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
 try:
@@ -581,6 +582,14 @@ def _intent_text(user_message: str) -> str:
 #: （出处是上面的 _HITL_PARKED，本单只借用"这两条腿不该被重新分层"这一条事实）。
 _SIDE_EFFECT_LEGS: tuple[str, ...] = ("chart", "export")
 
+#: 10-07 现读（走查环 7，12:43:14→12:45:07）：图腿在同一发失败调用上连打 21 发、每发约 5.3 s，
+#: 本地服务端 ollama 把消息历史挤到只剩 system 与工具轮，模板当场 500「No user query found in
+#: messages」，整轮白等 114 s，屏上零张图。一次正经作业是「取数一发 + 画图一发 + 收口一发」，
+#: 十个超步已经容得下三发失败调用；再多就是模型自己在绕圈，绕圈不会绕出图，只会绕崩服务。
+_LEG_RECURSION_LIMIT = 10
+#: 收口那一句是腿自己的正文，客户看得见：说清这一腿没产出文件，不替客户决定要不要重跑。
+_LEG_LOOP_STOP_TEXT = "这一腿没能在往返上限内完成：模型在同一发调用上反复绕圈，本轮因此没有产出图表或报告文件。"
+
 
 def kb_leg_for_caliber(text: str, workers) -> list[str]:
     """R206a：口径题的知识库腿没出门就补一条，**只加不减**。
@@ -842,6 +851,8 @@ def _make_worker_wrapper(graph, name: str):
         if step_id:
             child_conf["step_id"] = step_id
         child_cfg = {"configurable": child_conf}
+        if name in _SIDE_EFFECT_LEGS:
+            child_cfg["recursion_limit"] = _LEG_RECURSION_LIMIT
 
         msgs = state.get("messages", [])
         user_msg = None
@@ -870,7 +881,12 @@ def _make_worker_wrapper(graph, name: str):
             owner_id=owner_id,
         )
         logger.info(f"[{name}] 开始执行...")
-        result = graph.invoke({"messages": [user_msg]}, config=child_cfg)
+        try:
+            result = graph.invoke({"messages": [user_msg]}, config=child_cfg)
+        except GraphRecursionError:
+            #: 绕圈停在腿内，不许它把模型的历史挤空——挤空的后果是整轮 500，不是少一张图。
+            logger.warning(f"[{name}] 往返上限 {_LEG_RECURSION_LIMIT} 用尽，本腿就地收口")
+            result = {"messages": [AIMessage(content=_LEG_LOOP_STOP_TEXT)]}
         out_msgs = result.get("messages", [])
         final = ""
         for m in reversed(out_msgs):

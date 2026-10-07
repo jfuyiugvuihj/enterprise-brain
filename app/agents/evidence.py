@@ -52,6 +52,9 @@ def new_evidence_bag() -> dict[str, list[Any]]:
         "metrics": [],
         "tool_statuses": [],
         "model_statuses": [],
+        #: 图腿的数值缓冲（不是「模型读过什么」的证据，不进 sources、不进任何客户可见字段）：
+        #: 数据腿算好的标签—数值序列存在这儿，模型只点名不带数时由图腿自己装箱。
+        "chart_series": [],
     }
 
 
@@ -177,6 +180,28 @@ def record_tool_status(
     bag["tool_statuses"].append(
         {"tool": str(tool or ""), "status": str(status or ""), "error_code": str(error_code or "")}
     )
+
+
+def record_chart_series(bag: dict[str, Any] | None, series: list[dict] | None) -> int:
+    """把数据腿算好的数值序列记进本轮缓冲，供图腿在模型没带数时装箱。
+
+    只收「标签与数值等长、至少一个数」的序列：半截序列装出来的是一张缺柱子的图，
+    那比没有图更难向客户解释。
+    """
+    if bag is None:
+        return 0
+    buffer = bag.setdefault("chart_series", [])
+    recorded = 0
+    for row in series or []:
+        if not isinstance(row, dict):
+            continue
+        labels = row.get("labels") or []
+        values = row.get("values") or []
+        if not values or len(labels) != len(values):
+            continue
+        buffer.append(dict(row))
+        recorded += 1
+    return recorded
 
 
 def record_model_status(bag: dict[str, Any] | None, status: str, error_code: str = "") -> None:
