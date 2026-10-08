@@ -529,6 +529,94 @@ def _named_dimension_column(query: str, txt_cols: list[str]) -> str | None:
     return None
 
 
+# ==================== B18 · 问句点名某一行的时候，先去表里把那一行找出来 ====================
+#
+# 病形现读（10-08 09:5x，跟进单 B18）：夹具表 41 行，最后一行是 项目=走查标记425273 / 数值=1325273，
+# 屏上问「它里面「走查标记425273」这一行的数值是多少」答的是「数值为 3，对应数据行：项目=月度差旅425273-01」。
+# 两处叠在一起才成这一格：
+#   ① `_answer_query` 那四段（排名／统计／分组／兜底预览）里没有一段是"照问句点名的值取行"，
+#      这一发只落到兜底预览那一段；
+#   ② 预览每一行只印一枚 `label_col`，而这张表挑中的是「部门」——41 行全是「市场部」，
+#      印出来的十行彼此一模一样，被点名的那一行在 prompt 里根本没有身份。
+# 于是模型回头去读同一条消息里那份 `数据样本(前15行)`，第一行就是 3。
+# 判据（交班单 §1.1）：同一句被点名的话，两条道答出来的数必须一致，且等于表里那一行。
+# 本层只负责把那一行连同它所有的列摆到模型眼前，不叫模型自己去认——认错了就是屏上那个假数。
+
+#: 问句里点名一行时可能带的引号（成对，取中间那一段）。
+_QUOTED_NAME_RE = re.compile(r"[「『“《〈]([^」』”》〉]{1,80})[」』”》〉]")
+#: 没有引号时按"名字段"切：连续的汉字／字母／数字／点／横线／下划线，标点与空白即断。
+_NAME_TOKEN_RE = re.compile(r"[0-9A-Za-z_一-鿿.\-]{2,80}")
+#: 一次最多拿几枚候选去比。问句本身只有几十字，这枚上限只挡畸形输入，不改正常读数。
+_MAX_NAME_TOKENS = 40
+#: 兜底那一路（在某一列的真值集合里找"整段出现在引号里"的那一枚）每列最多看多少枚真值。
+_MAX_NAME_SCAN_VALUES = 4000
+#: 「点名一行」的行数上限：一次挑出六行八行的那不是点名，是按某个维度切了一刀——
+#: 那种问法归分组汇总那一段管，本段不插手，免得把客户没要的东西塞进已经很挤的 prompt。
+_MAX_NAMED_ROWS = 5
+#: 一句问话最多点几枚行名（「对比 A 和 B 两行」这种形状）。
+_MAX_NAMED_HITS = 3
+#: 点名行每一行最多印几列：这一段直接进 prompt，与分组那一节同一规矩，超线明说、不静默。
+_MAX_NAMED_COLUMNS = 10
+
+
+def _name_tokens(query: str) -> tuple[list[str], list[str]]:
+    """问句里可能是在点一行名字的两族片段：(引号段, 全部候选)。长的排前面。
+
+    分两族是因为「市场部」这种既可能是在点名一行、也可能只是顺嘴提了一个部门：
+    前者可以放宽到"真值整段出现在引号里"，后者只认整值相等，不然每一张按部门切的表都会多出一段。
+    """
+    text = query or ""
+    quoted = [item.strip() for item in _QUOTED_NAME_RE.findall(text)]
+    tokens = quoted + [item.strip() for item in _NAME_TOKEN_RE.findall(text)]
+    unique: list[str] = []
+    for token in tokens:
+        if len(token) >= 2 and token not in unique:
+            unique.append(token)
+    unique.sort(key=len, reverse=True)
+    quoted_unique = [token for token in unique if token in quoted]
+    return quoted_unique, unique[:_MAX_NAME_TOKENS]
+
+
+def _named_row_hits(df, query: str, txt_cols: list[str]) -> list[tuple[str, str, object]]:
+    """问句点到的行名 → [(列名, 那一列里的真值, 挑出来的子帧)]；一枚都不点交空表，不猜。
+
+    两条通路，先便宜后兜底：
+      ① 拿候选名去和文本列的**整值**比（pandas 向量化，一个字符都不猜）；
+      ② ① 一枚都不中时，只在**引号里**找"这一列的某枚真值整段出现在引号中"——
+        客户打的是「走查标记425273这一行」而表里存的是「走查标记425273」时走这里。
+    只收"至少挑出一行、又没挑走整张表、且行数不超过 _MAX_NAMED_ROWS"的命中：
+    整张表都姓「市场部」时那不是点名一行，一次挑出二十行也不是。
+    """
+    quoted, tokens = _name_tokens(query)
+    total = len(df)
+    if not total or not tokens or not txt_cols:
+        return []
+    hits: list[tuple[int, int, str, str, object]] = []
+
+    def keep(column: str, value: str) -> None:
+        mask = df[column].astype(str).eq(value)
+        rows = int(mask.sum())
+        if 0 < rows <= _MAX_NAMED_ROWS and rows < total:
+            hits.append((rows, len(value), column, value, df[mask]))
+
+    for column in txt_cols:
+        for token in tokens:
+            keep(column, token)
+    if not hits:
+        for column in txt_cols:
+            uniques = df[column].dropna().unique()
+            if len(uniques) > _MAX_NAME_SCAN_VALUES:
+                continue
+            for value in uniques:
+                text = str(value)
+                if len(text) < 2:
+                    continue
+                if any(text in item for item in quoted):
+                    keep(column, text)
+    hits.sort(key=lambda item: (item[0], -item[1]))
+    return [(item[2], item[3], item[4]) for item in hits[:_MAX_NAMED_HITS]]
+
+
 def _record_series(series_out: list | None, *, kind: str, dimension: str, column: str, labels, values) -> None:
     """把算好的一串数交给缓冲；只在调用方要的时候记，正文那几行一个字都不动。"""
     if series_out is None:
@@ -604,6 +692,20 @@ def _answer_query(
         if not label_col:
             return ""
         return str(row[label_col])
+
+    # 问句点名一行 → 先把那一行连同它所有的列摆出来（B18）。这一段排在其余四段之前，
+    # 并且顺手替自己把兜底预览顶掉：预览印的是"数值最大的那十行"，被点名的那一行多半不在里面，
+    # 而模型只会去读它看得见的那几行。
+    for hit_column, hit_value, hit_frame in _named_row_hits(df, query, txt_cols):
+        hit_rows = len(hit_frame)
+        lines = [f"📍 问句点名的行（{hit_column}={hit_value}，命中 {hit_rows} 行）:"]
+        columns_use = list(df.columns)[:_MAX_NAMED_COLUMNS]
+        for _, row in hit_frame.head(_MAX_NAMED_ROWS).iterrows():
+            cells = ", ".join(f"{column}={row[column]}" for column in columns_use)
+            lines.append(f"  {cells}")
+        if hit_rows > _MAX_NAMED_ROWS:
+            lines.append(f"  …共 {hit_rows} 行，本条只列前 {_MAX_NAMED_ROWS} 行")
+        results.append("\n".join(lines))
 
     # "哪个/谁最XX" → 排名第一
     m = re.search(r"(哪个|谁|哪家|哪).*?(最高|最低|最多|最少|最大|最小)", query)

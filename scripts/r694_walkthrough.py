@@ -1497,8 +1497,9 @@ class Walk:
         shots.append(self.shot("v2-r10-in-knowledge-base.png"))
         self.open_screen("nav-chat", "chat-panel")
         self.state["mid_shot_slot"] = "r10"
-        asked = self.ask("公司知识库里有一张表叫 " + fixture.name
-                         + "，它里面「" + marker + "」这一行的数值是多少？请给出来源文件名。", lane="问答档")
+        row_question = ("公司知识库里有一张表叫 " + fixture.name
+                        + "，它里面「" + marker + "」这一行的数值是多少？请给出来源文件名。")
+        asked = self.ask(row_question, lane="问答档")
         screen = self.read_chat_screen()
         answer = self.page.evaluate(
             "() => Array.from(document.querySelectorAll('.msg-bubble.assistant'))"
@@ -1507,6 +1508,24 @@ class Walk:
         joined = "\n".join(answer[-1:])
         carries = value in joined
         shots.append(self.shot("v2-r10-answer.png"))
+        # B18：同一句话再走一遍算数那一条道（分析档的天花板允许 data 腿），两条道必须答同一个数。
+        # 10-08 09:5x 现读：问答档答对（1325273），另一条道答「数值为 3／项目=月度差旅425273-01」
+        # ——把表里第一行当成了被点名的那一行。这一格以前根本不在门上：环 10 只演问答档那一条腿。
+        # 三个不周都会把这一发假绿：① 问话与上一发逐字相同 ⇒ 产品自己的答案缓存直接回旧那一份
+        # （10-08 10:1x 现读：第二发屏上仍是「📄 搜索知识库」那一轮的原话）；② 不点名数据表 ⇒ 分析档
+        # 的天花板允许 data，可 supervisor 仍然只派了 doc；③ 只看屏上有没有那个数 ⇒ 数是谁算的没人问。
+        # 所以这一发：换一句问法（同一名、同一数）、点名这一枚档、并把牌子上跑的是哪条道记进账。
+        asked_data = self.ask(row_question + "（换算数那一条道再问一次）",
+                              lane="分析档", table=fixture.name)
+        data_chips = list(asked_data.get("steps_labels") or [])
+        data_leg_ran = any("分析数据" in text for text in data_chips)
+        data_bubbles = self.page.evaluate(
+            "() => Array.from(document.querySelectorAll('.msg-bubble.assistant'))"
+            ".map(e => e.innerText || '')"
+        )
+        joined_data = "\n".join(data_bubbles[-1:])
+        carries_data = value in joined_data
+        shots.append(self.shot("v2-r10-answer-data-leg.png"))
         # B17 之后这一环要证明的是「这一轮真读了知识库」，不是「模型嘴上提了文件名」。
         # 来源卡是证据袋画出来的：没检索就没有卡，编出来的出处画不出卡。
         readings_source_lines = [t.replace("\n", " | ") for t in
@@ -1531,14 +1550,28 @@ class Walk:
             "answer_names_the_table": fixture.name in joined,
             "source_card_names_the_table": any(fixture.name in line for line in readings_source_lines),
             "answer_carries_the_value": bool(carries),
+            "data_leg_asked": asked_data.get("asked"),
+            #: 这一发的牌子上跑的是哪条道——没有「📊 分析数据」这一枚，下面那格读数就不算数。
+            "data_leg_chips_on_screen": data_chips,
+            "data_leg_actually_ran": bool(data_leg_ran),
+            "data_leg_answer_carries_the_value": bool(carries_data),
+            "data_leg_answer_on_screen": joined_data[:400].replace("\n", " | "),
+            #: 两腿同数＝B18 那格判据的正身：同一句被点名的话，走知识库与走算数答的要是一个数。
+            "both_legs_answer_the_same_number": bool(carries and carries_data and data_leg_ran),
             "answer_on_screen": joined[:400].replace("\n", " | "),
         }
         cards = any(fixture.name in line for line in readings_source_lines)
-        status = "达" if (landed and asked.get("asked") and carries and cards) else "未达"
+        status = "达" if (
+            landed and asked.get("asked") and carries and cards
+            and data_leg_ran and carries_data
+        ) else "未达"
         note = "" if status == "达" else (
             "未达只可能差在三格之一：这一枚档没落进数据列表（row_listed_after_upload），当场"
             "答不出那个只属于本轮的数（answer_carries_the_value，屏上正文原话记在 answer_on_screen），"
-            "或者屏上没有点名这一枚档的来源卡（source_card_names_the_table＝没真读知识库，B17 那一族）。"
+            "或者屏上没有点名这一枚档的来源卡（source_card_names_the_table＝没真读知识库，B17 那一族）；"
+            "再或者同一句话换到算数那一条道就答错了行（data_leg_answer_carries_the_value＝B18 那一格，"
+            "那条道答的原话记在 data_leg_answer_on_screen，跑没跑那条道看 data_leg_actually_ran 与"
+            " data_leg_chips_on_screen——牌子只有「📄 搜索知识库」时这一发量不到算数腿，判未达）。"
         )
         self.finish(10, "表格进知识库", status, readings, shots, note)
 
