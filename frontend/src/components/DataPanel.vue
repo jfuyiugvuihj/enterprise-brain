@@ -58,6 +58,7 @@ const previewLoading = ref(false)
 const previewError = ref('')
 const previewDenied = ref(false)
 const uploading = ref(false)
+const uploadError = ref('')
 const dataFiles = ref([])
 const filesLoading = ref(false)
 const filesError = ref('')
@@ -92,12 +93,13 @@ async function uploadExcel(e) {
   form.append('file', file)
 
   uploading.value = true
+  uploadError.value = ''
   try {
     const res = await http.post('/upload-excel', form)
     applyDataPreview(res.data)
     await loadDataFiles(file.name)
   } catch (err) {
-        filesError.value = errorDetail(err, '数据上传失败')
+    uploadError.value = errorDetail(err, '数据上传失败')
   } finally {
     uploading.value = false
     e.target.value = ''
@@ -387,6 +389,13 @@ onMounted(loadDataFiles)
                @change="uploadExcel" :disabled="uploading" />
       </label>
       <p class="upload-hint">上传经营数据开始分析</p>
+      <UiErrorState
+        v-if="uploadError"
+        title="数据上传失败"
+        :description="uploadError"
+        :retryable="false"
+        dense
+      />
     </div>
 
     <section class="data-files-section">
