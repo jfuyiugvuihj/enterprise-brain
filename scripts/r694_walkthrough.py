@@ -897,6 +897,10 @@ class Walk:
         chart_src = page.evaluate(
             "() => Array.from(document.querySelectorAll('.chart-img')).map(i => i.getAttribute('src'))"
         )
+        chart_titles = page.evaluate(
+            "() => Array.from(document.querySelectorAll('.chart-card .chart-caption'))"
+            ".map(e => (e.innerText || '').replace(/\\s+/g, ' ').trim())"
+        )
         return {
             "rows_live_before_reload": rows_live,
             "reloaded_to_read_screen": reloaded,
@@ -908,6 +912,7 @@ class Walk:
             "charts_on_screen": probe["charts"],
             "chart_cards_on_screen": probe["chart_cards"],
             "chart_srcs": chart_src[:4],
+            "chart_titles": chart_titles[:4],
             "answer_tail": answer[-700:].replace("\n", " | "),
             "terminal_answer_readouts": page.locator(
                 "[data-testid=terminal-answer-readout]").all_inner_texts(),
@@ -1169,8 +1174,39 @@ class Walk:
                                            signal: AbortSignal.timeout(20000) });
                 const buf = new Uint8Array(await r.arrayBuffer());
                 const magic = Array.from(buf.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join('');
-                return { status: r.status, bytes: buf.length, magic_hex8: magic,
-                         content_type: r.headers.get('content-type') };
+                const contentType = r.headers.get('content-type') || '';
+                const result = { status: r.status, bytes: buf.length, magic_hex8: magic,
+                                 content_type: contentType };
+                if (contentType.toLowerCase().includes('pdf') || magic.startsWith('25504446')) {
+                    const text = new TextDecoder('latin1').decode(buf);
+                    result.pdf_image_count = (text.match(/\\/Subtype\\s*\\/Image/g) || []).length;
+                }
+                if (contentType.toLowerCase().startsWith('image/') && buf.length) {
+                    try {
+                        const bitmap = await createImageBitmap(new Blob([buf], {type: contentType}));
+                        const canvas = document.createElement('canvas');
+                        canvas.width = bitmap.width;
+                        canvas.height = bitmap.height;
+                        const ctx = canvas.getContext('2d', {willReadFrequently: true});
+                        ctx.drawImage(bitmap, 0, 0);
+                        const pixels = ctx.getImageData(0, 0, bitmap.width, bitmap.height).data;
+                        const accents = new Set();
+                        for (let i = 0; i < pixels.length; i += 4) {
+                            const [red, green, blue, alpha] = pixels.slice(i, i + 4);
+                            const max = Math.max(red, green, blue);
+                            const min = Math.min(red, green, blue);
+                            if (alpha > 0 && max - min >= 40 && max >= 90) {
+                                accents.add([red >> 4, green >> 4, blue >> 4].join(','));
+                            }
+                        }
+                        result.accent_color_count = accents.size;
+                        result.colored_pixel_count = [...accents].length;
+                        bitmap.close();
+                    } catch (err) {
+                        result.image_probe_error = String(err && err.message || err);
+                    }
+                }
+                return result;
             }""",
             url)
 
@@ -1332,7 +1368,15 @@ class Walk:
         readings["department_probe"] = self.department_probe()
         #: 判据那一行写的是「图当场显示、可下载」——两半都要。以前只按"或"判，13:21 那一轮
         #: 就是靠台账里那枚件判了达，而屏上其实一张图都没有（charts_on_screen=0）。
-        status = "达" if (chart["found"] and after["charts_on_screen"] and not refusal) else "未达"
+        piece = readings.get("chart_piece") or {}
+        titles = [title for title in (after.get("chart_titles") or []) if title and title != "图表"]
+        status = "达" if (
+            chart["found"]
+            and after["charts_on_screen"]
+            and titles
+            and int(piece.get("accent_color_count") or 0) >= 1
+            and not refusal
+        ) else "未达"
         note = (
             "出图那一枚批准先在对话里找牌（hitl-approve-chat），拿不到就走审批屏；两态分开记。"
             if status == "达" else
@@ -1407,7 +1451,12 @@ class Walk:
         after = self.read_chat_screen()
         readings["after_approve"] = after
         shots.append(self.shot("r694-r8-report-face.png"))
-        status = "达" if (exported and exported["bytes"] > 0 and exported["status"] == 200) else "未达"
+        status = "达" if (
+            exported
+            and exported["bytes"] > 0
+            and exported["status"] == 200
+            and int(exported.get("pdf_image_count") or 0) >= 1
+        ) else "未达"
         note = (
             "导出件字节数走的是浏览器里那枚带 token 的 GET；盘上最新一枚 PDF 另记在 disk_newest_pdf，"
             "两态不许并成一格。" if status == "达" else
