@@ -345,6 +345,8 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
     # 旁边，数据集不会悄悄长出知识库的版本语义，反过来也不会。
     try:
         guard_dataset_name_conflict(filename, dataset_registry.get_active_by_filename(filename))
+        from app.documents.catalog import latest_document_version
+        guard_dataset_name_conflict(filename, latest_document_version(filename))
     except DatasetFilenameConflictError as exc:
         raise HTTPException(status_code=409, detail="dataset_filename_conflict") from exc
     # 拒绝发生在落盘之前：读不动的格式既不该留在 DATA_DIR 里，也不该走到 load_excel 那一步
@@ -402,6 +404,7 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
         department=str(getattr(principal, "department", "") or ""),
         classification=dataset.classification,
         retriever=_knowledge_base_retriever(),
+        owner_id=str(principal.user_id),
     )
 
     return preview
@@ -491,6 +494,13 @@ async def delete_data_file(filename: str, request: Request):
     uploaded file and its own registry row are this route's subject.
     """
     record = _authorized_dataset(request, filename, ACTION_DELETE)
+    from app.documents.catalog import latest_document_version
+    linked = latest_document_version(filename)
+    if linked and Path(linked.get("storage_path") or "").resolve() == Path(record.storage_path).resolve():
+        # Retire the shared knowledge entry before removing the dataset bytes.
+        # The document route keeps an active dataset's original file in place.
+        from app.api.v1.chat import delete_document
+        await delete_document(filename, request)
     principal = principal_from_request(request)
     path = Path(record.storage_path)
     size_before = path.stat().st_size if path.is_file() else None

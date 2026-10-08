@@ -90,6 +90,10 @@ class _Brain:
 
         self.data_dir = tmp_path / "data"
         self.data_dir.mkdir()
+        from app.documents import catalog
+        docs_dir = tmp_path / "documents"
+        docs_dir.mkdir()
+        monkeypatch.setattr(catalog, "DOCUMENTS_DIR", str(docs_dir))
         self.leg = _FakeLeg()
         self.bm25_calls: list[int] = []
         registry = DatasetRegistry(

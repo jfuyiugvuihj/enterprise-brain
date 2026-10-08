@@ -32,11 +32,8 @@ has already succeeded and its documented response shape must not change (R700
 judgement 2). The skip goes to the server log with the code the embedding client itself
 would have produced.
 
-What this module deliberately does NOT do: write a document-catalogue row or publish an
-index version. Those belong to the knowledge-base route's persistence helpers, whose
-storage coordinates are the knowledge directory, while a dataset file lives in `DATA_DIR`
--- deciding which root owns the bytes is ticket R687's zero-copy question, not this
-ticket's to settle. Recorded in docs/testing/r700-2026-10-06.md.
+After indexing, the catalogue references the dataset's original path. DATA_DIR owns
+the bytes; removing the knowledge entry does not remove the active dataset (B15).
 """
 from __future__ import annotations
 
@@ -193,6 +190,7 @@ async def index_dataset_copy(
     department: str,
     classification: Any,
     retriever: Any,
+    owner_id: str = "",
     registry_fetch: Callable[[str], dict] | None = None,
 ) -> dict[str, str]:
     """Send one already-stored dataset file down the knowledge-base leg.
@@ -241,5 +239,17 @@ async def index_dataset_copy(
         return _receipt(STATUS_SKIPPED, skipped, index_notice(skipped))
 
     await _rebuild_keyword_corpus()
+    if owner_id:
+        from app.documents.catalog import record_document_version
+
+        try:
+            await asyncio.to_thread(
+                record_document_version, display_filename, level, department,
+                str(storage_path), owner_id=owner_id, size_bytes=size_bytes,
+                parse_status="ready", index_status=INDEX_STATUS_INDEXED,
+            )
+        except Exception as exc:
+            logger.exception(f"[Data] knowledge-base catalogue failed: {display_filename}")
+            return _receipt(STATUS_FAILED, "storage_unavailable", str(exc))
     logger.info(f"[Data] knowledge-base index accepted: {display_filename} level={level}")
     return _receipt(STATUS_INDEXED, "", str(message))

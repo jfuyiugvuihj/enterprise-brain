@@ -5445,8 +5445,14 @@ async def delete_document(filename: str, request: FastAPIRequest):
 
     removed: list[str] = []
     unremoved: list[str] = []
+    retained: list[str] = []
+    from app.storage.datasets import dataset_registry
+    linked_dataset = dataset_registry.get_active_by_filename(filename)
     for item in [*stored_versions, version]:
         storage_path = str(item.get("storage_path") or "")
+        if linked_dataset and Path(storage_path).resolve() == Path(linked_dataset.storage_path).resolve():
+            retained.append(storage_path)
+            continue
         if not storage_path or not os.path.exists(storage_path):
             continue
         if storage_path in removed or storage_path in unremoved:
@@ -5471,7 +5477,7 @@ async def delete_document(filename: str, request: FastAPIRequest):
             code="internal_error",
         )
 
-    delete_document_versions(filename, storage_paths=tuple(removed))
+    delete_document_versions(filename, storage_paths=tuple(removed + retained))
     remaining = list_document_versions(filename)
     after = {
         "deleted": not remaining,

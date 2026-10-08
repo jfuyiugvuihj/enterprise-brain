@@ -1482,8 +1482,7 @@ class Walk:
         现读屏上答的其实是上一笔那一张旧表。这一版只读助手正文那一个元素，且要答的数是
         按本轮时间戳生成的，旧档里没有第二个它。
         上传由部门里的那一枚账号发起：admin 没有部门，产品按规矩拒绝给这张表定归属，屏上那句
-        话是真的（读侧另有环 16 钉住）。listed_in_knowledge_base 不当判据：R700 明写它故意不写
-        文档目录行，字节归谁是 R687 的零拷贝问题，那一格今天仍然只是读数。
+        话是真的（读侧另有环 16 钉住）。B15：同一枚原表还必须出现在知识库目录。
         """
         self.ask_as_owner()
         assert self.page is not None
@@ -1585,11 +1584,11 @@ class Walk:
         }
         cards = any(fixture.name in line for line in readings_source_lines)
         status = "达" if (
-            landed and asked.get("asked") and carries and cards
+            landed and in_kb and asked.get("asked") and carries and cards
             and data_leg_ran and carries_data
         ) else "未达"
         note = "" if status == "达" else (
-            "未达只可能差在三格之一：这一枚档没落进数据列表（row_listed_after_upload），当场"
+            "未达：档没落进数据列表或知识库目录（row_listed_after_upload／listed_in_knowledge_base），当场"
             "答不出那个只属于本轮的数（answer_carries_the_value，屏上正文原话记在 answer_on_screen），"
             "或者屏上没有点名这一枚档的来源卡（source_card_names_the_table＝没真读知识库，B17 那一族）；"
             "再或者同一句话换到算数那一条道就答错了行（data_leg_answer_carries_the_value＝B18 那一格，"

@@ -196,6 +196,14 @@ def _record_local_version(metadata: dict) -> None:
             key: metadata.get(key) for key in _SIDECAR_FIELDS
         } | {"recorded_path": str(metadata.get("storage_path") or "")}
         _write_sidecar(path, records)
+        # External files keep their bytes in DATA_DIR; the document directory
+        # keeps a metadata pointer so the offline listing can still find them.
+        root_sidecar = Path(DOCUMENTS_DIR) / LOCAL_CATALOG_FILENAME
+        if root_sidecar.resolve() != path.resolve():
+            root_records = _read_sidecar(root_sidecar)
+            key = _sidecar_key(str(metadata["filename"]), int(metadata["version"]))
+            root_records[key] = records[key]
+            _write_sidecar(root_sidecar, root_records)
     except OSError as exc:
         logger.warning(f"[Docs] catalog sidecar write failed: {exc}")
     except Exception as exc:
