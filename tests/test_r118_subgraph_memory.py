@@ -179,12 +179,7 @@ def test_worker_child_prompt_is_system_plus_this_round_question_every_round():
             "若这里变红，说明装配已经能跨轮 resume（清掉了继承的父 config / 把子图直接当节点），"
             "那么跟进单 §55 的定性、orchestrator 的注释、以及 R117 的『跨轮不扣房』口径要一起重开。" % (index + 1, kinds)
         )
-        # B17（10-07）之后开局那条 human 不再是光板问题：起手检索的原文与作答规矩同段带进子图。
-        # 这枚钉要钉的仍是「本轮问题在 playing、上一轮不回读」，所以改成认末尾那一句原话。
-        assert str(prompt[-1].content).endswith(questions[index]), (
-            "R127 判据①：第 %d 轮子图开局那条 human 末尾不是本轮问题原文，实测 %r"
-            % (index + 1, str(prompt[-1].content)[:200])
-        )
+        assert str(prompt[-1].content) == questions[index]
 
     joined = ["\n".join(str(message.content) for message in prompt) for prompt in starts]
     for index, text in enumerate(joined):
