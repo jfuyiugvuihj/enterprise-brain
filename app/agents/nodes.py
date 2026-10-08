@@ -79,6 +79,13 @@ OFFLINE_GENERIC_ANSWER = '离线模式已启用，但我仍可以继续帮你梳
 #: The streaming fallback emits this chunk on its own, so the text a client accumulates is
 #: this sentence and nothing else.
 OFFLINE_STREAM_CHUNK = '离线模式已启用'
+#: 模型不可用、而工具已经查到料时往屏上放的那一格（B25）。以前这里零判据：整段原文包成
+#: AIMessage 就交出去，10-08 撤下演练屏上落了 12,476 字检索原文（读数
+#: %TEMP%\evalrun\r7revert 环 7）——既没人整理，也不说模型坏了，还被当成答案进缓存。
+#: 现在两条：失败当场说破，材料限长。
+OFFLINE_TOOL_OUTPUT_LEAD = '本轮模型不可用，下面是系统这一步返回的原文，未经整理：'
+#: 上限按「一屏读得完」定；超出的部分不带上屏，但当场写明还剩多少字没显示。
+OFFLINE_TOOL_OUTPUT_MAX_CHARS = 600
 
 OFFLINE_REPLY_TEXTS = frozenset(
     {
@@ -95,13 +102,39 @@ def is_offline_reply_text(text) -> bool:
     """Whether this text is one of the sentences above rather than something a model wrote.
 
     Exact match, deliberately: a substring test would flag a real answer that happens to
-    discuss offline mode. The direction of the error is what decided that -- a false positive
+    discuss offline mode. The one exception is the bounded excerpt below, whose lead is a
+    constant written by this same boundary -- text a model authored cannot start with it.
+    The direction of the error is what decided that -- a false positive
     costs one cache miss, a false negative replays a canned sentence as an answer until the
     entry expires. Nothing in the delivery path changes today: the caller that has to ask
     this question is the cache guard in app/api/v1/chat.py, outside this ticket's write
     domain, and tests/test_r99_budget_selfconsistency.py pins that it does not yet.
     """
-    return isinstance(text, str) and text.strip() in _OFFLINE_REPLY_VARIANTS
+    if not isinstance(text, str):
+        return False
+    stripped = text.strip()
+    if stripped in _OFFLINE_REPLY_VARIANTS:
+        return True
+    # 兜底那半截原文（``_offline_tool_output_reply``）：开头这句是死的、后面那段料是活的，
+    # 精确匹配认不出它，于是它既会进答案缓存（一次模型故障被当成这个问题的答案回放半
+    # 小时），又会被 ``_answer_leg_publishes_tail`` 当成刚才那半截字的延伸接到屏上。这枚
+    # 开头由本文件写，模型写的字不可能以它开头。
+    return stripped.startswith(OFFLINE_TOOL_OUTPUT_LEAD)
+
+
+def _offline_tool_output_reply(tool_output: str) -> str:
+    """模型不可用时兜底交回的那一格：说破失败，且不许把整段原始材料堆上屏（B25）。
+
+    点名那句与料之间空一行，屏上是两格不是一坨；料太长就只送头一截，尾巴上当场写明
+    还有多少字没显示——不许让人以为这一屏是完整的。
+    """
+    gap = chr(10) * 2
+    body = (tool_output or "").strip()
+    if len(body) <= OFFLINE_TOOL_OUTPUT_MAX_CHARS:
+        return OFFLINE_TOOL_OUTPUT_LEAD + gap + body
+    shown = body[:OFFLINE_TOOL_OUTPUT_MAX_CHARS]
+    omitted = f"（余下 {len(body) - len(shown):,} 字未显示：模型不可用，没有人整理它。）"
+    return OFFLINE_TOOL_OUTPUT_LEAD + gap + shown + gap + omitted
 
 
 class _OfflineModel(Runnable):
@@ -133,8 +166,8 @@ class _OfflineModel(Runnable):
                     isinstance(msg, dict) and msg.get("role") == "user"
                 ):
                     break
-        if tool_output:
-            return AIMessage(content=tool_output)
+        if tool_output.strip():
+            return AIMessage(content=_offline_tool_output_reply(tool_output))
         if "dispatch" in self.tool_names:
             return AIMessage(
                 content="",
