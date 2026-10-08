@@ -62,6 +62,49 @@ def _run(state: dict) -> dict:
     return nodes.synthesize(state)
 
 
+@pytest.mark.parametrize("chart_exists", [False, True])
+def test_document_chart_refusal_yields_to_a_delivered_chart_and_keeps_policy(chart_exists):
+    policy = "报销制度：每笔费用必须先审批，原始发票须留存；月报用 Excel 汇总。"
+    refusal = (
+        "根据现有文档，**无法直接提供按月份统计的报销金额数据或现成的柱状图**，因为：\n\n"
+        "1. 文档性质：制度文件不包含历史数据。\n2. 数据缺失：没有实际报销金额数据。\n\n"
+        "**建议操作：**\n\n1. 联系财务部申请数据。\n2. 使用 Excel 或 Python 自己画图。\n\n"
+        + policy
+    )
+    artifacts = [{"artifact_id": "art-1", "artifact_type": "chart",
+                  "download_url": "/api/v1/artifacts/art-1/download"}] if chart_exists else []
+    state = _state({"data": "月度合计 17100 元。", "doc": refusal,
+                    "chart": CHART_LINE if chart_exists else ""}, artifacts)
+    state["agent_results"]["doc"] = {"evidence": [{
+        "provenance_status": "verified", "permission_checked": True,
+        "source_name": "报销制度.txt", "excerpt": policy,
+    }]}
+    result = _run(state)
+    final = result["final_answer"]
+    assert policy in final
+    assert "月度合计 17100 元。" in final
+    assert state["agent_results"]["doc"]["evidence"][0]["source_name"] == "报销制度.txt"
+    if chart_exists:
+        assert "无法直接提供" not in final
+        assert "联系财务部" not in final
+        assert "自己画图" not in final
+        assert CHART_LINE in final
+        assert result["worker_results"]["doc"] == policy
+    else:
+        assert refusal in final
+
+
+def test_a_chart_does_not_change_an_independent_document_policy_answer():
+    policy = "制度禁止虚报费用；无法报销无凭证支出。"
+    state = _state({"doc": policy, "chart": CHART_LINE}, [
+        {"artifact_id": "art-1", "artifact_type": "chart",
+         "download_url": "/api/v1/artifacts/art-1/download"},
+    ])
+    result = _run(state)
+    assert result["final_answer"] == policy + "\n\n" + CHART_LINE
+    assert "worker_results" not in result
+
+
 # ==================== 声称有图而查不回件 ⇒ 钉一句真话 ====================
 
 

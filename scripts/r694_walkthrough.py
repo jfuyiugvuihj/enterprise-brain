@@ -1321,19 +1321,25 @@ class Walk:
             readings["chart_piece_url"] = url
         after = self.read_chat_screen(expect_chart=bool(chart["found"]))
         readings["after_approve"] = after
+        body = self.page.locator(".msg-bubble.assistant").last.inner_text()
+        refusal = re.search(
+            r"(?:无法|不能|未能|不支持)[^。\n]{0,20}(?:生成|绘制|画出|提供)[^。\n]{0,60}(?:图表|柱状图|折线图|饼图)",
+            body,
+        )
+        readings["chart_refusal_on_screen"] = refusal.group(0) if refusal else ""
         shots.append(self.shot("r694-r7-chart-face.png"))
         readings["artifact_leg_error"] = self.artifact_leg_error()
         readings["department_probe"] = self.department_probe()
         #: 判据那一行写的是「图当场显示、可下载」——两半都要。以前只按"或"判，13:21 那一轮
         #: 就是靠台账里那枚件判了达，而屏上其实一张图都没有（charts_on_screen=0）。
-        status = "达" if (chart["found"] and after["charts_on_screen"]) else "未达"
+        status = "达" if (chart["found"] and after["charts_on_screen"] and not refusal) else "未达"
         note = (
             "出图那一枚批准先在对话里找牌（hitl-approve-chat），拿不到就走审批屏；两态分开记。"
             if status == "达" else
             "未达差的半条看读数分家：chart_artifact.found=false ⇒ 差在「图能出」（图登记这一腿"
             "交回的读数记在 artifact_leg_error，对照读数记在 department_probe：同一句问话、一枚"
             "部门非空的账号）；found=true 而 charts_on_screen=0 ⇒ 差在「屏上看得见」，那半条的"
-            "正文逐字在 after_approve.answer_tail、图地址在 chart_srcs。"
+            "正文逐字在 after_approve.answer_tail、图地址在 chart_srcs；图在而正文说生不成看 chart_refusal_on_screen。"
         )
         self.finish(7, "数据分析", status, readings, shots, note)
 

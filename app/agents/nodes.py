@@ -3015,6 +3015,40 @@ def _carry_chart_leg_truth(state, model_answer: str, final: str, worker_results:
     return rebuilt, merged
 
 
+_DOC_CHART_REFUSAL_RE = re.compile(
+    r"(?:无法|不能|未能|不支持)[^。\n]{0,20}(?:生成|绘制|画出|提供)[^。\n]{0,60}(?:图表|柱状图|折线图|饼图)"
+)
+_DOC_CHART_WORKAROUND_RE = re.compile(
+    r"文档性质|数据缺失|图表缺失|不包含.{0,12}(?:历史|报销|实际)数据|没有实际报销.*数据"
+    r"|建议操作|联系财务.*数据|导出.{0,20}(?:报销|数据)|Excel|Python|matplotlib|MYBI|BI工具"
+)
+
+
+def _reconcile_document_chart_refusal(state, worker_results: dict):
+    """已有本轮图表时，文档腿的出图拒绝和自助步骤不再代表合流结果。"""
+    doc = str(worker_results.get("doc") or "")
+    if not _chart_artifacts_in_state(state) or not _DOC_CHART_REFUSAL_RE.search(doc):
+        return None
+    cited = [row["text"] for row in _cited_caliber_fragments(state)]
+    kept = []
+    refusal_seen = False
+    for line in doc.splitlines():
+        quote = line.strip(" -*>#\t")
+        if len(quote) >= 12 and any(quote in text for text in cited):
+            kept.append(line)
+            continue
+        if _DOC_CHART_REFUSAL_RE.search(line):
+            refusal_seen = True
+            continue
+        if refusal_seen and _DOC_CHART_WORKAROUND_RE.search(line):
+            continue
+        kept.append(line)
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+    merged = dict(worker_results)
+    merged["doc"] = cleaned
+    return merged
+
+
 def synthesize(state, config=None) -> dict:
     """把最终回答写入 state，并把值得记的沉淀进长期记忆"""
     # R688（判据①·生产发点）：终答装配是规则腿，没有自己的跨度；worker 的作答往返另有 model 跨度，本件只记这一段自己的墙钟，区间不与之重叠。
@@ -3022,6 +3056,9 @@ def synthesize(state, config=None) -> dict:
         q = _last_user(state)
         final = state.get("final_answer") or ""
         worker_results = state.get("worker_results") or {}
+        doc_update = _reconcile_document_chart_refusal(state, worker_results)
+        if doc_update is not None:
+            worker_results = doc_update
         if worker_results:
             answers = [
                 str(value).strip()
@@ -3154,6 +3191,8 @@ def synthesize(state, config=None) -> dict:
                 logger.warning("[Synthesize] memory persistence skipped because the request has no authenticated identity")
 
         update = {"final_answer": final}
+        if worker_update is None:
+            worker_update = doc_update
         if worker_update is not None:
             # 交回整张表：收端拿 worker_results 当终答正文（见 _carry_caliber_quotes 约束 1、2）
             update["worker_results"] = worker_update
