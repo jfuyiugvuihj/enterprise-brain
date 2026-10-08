@@ -118,10 +118,11 @@ def code_freshness():
     return bad
 
 
-def run_walk(out, env_file, base_url, rings, python_opt):
+def run_walk(out, env_file, base_url, rings, python_opt, extra=()):
     argv = shlex.split(python_opt or WALK_PYTHON_DEFAULT) + [str(WALK)]
     cmd = argv + ["--env-file", env_file, "--base-url", base_url, "--rings", rings, "--out", str(out)]
     cmd += ["--fresh"]
+    cmd += list(extra)
     print("[smoke_v1] $ " + " ".join(cmd), flush=True)
     return subprocess.call(cmd, cwd=str(REPO))
 
@@ -198,6 +199,12 @@ def main():
     ap.add_argument("--no-preflight", action="store_true", help="跳过环境自检（明知环境齐时用）")
     ap.add_argument("--allow-stale", action="store_true",
                         help="明知容器已带最新码时跳过新鲜度检查")
+    ap.add_argument("--chat-lane", default="",
+                    help="环 5 在屏上点的档位（原样送给走查件 --chat-lane）。缺省不点档位，九环形状一字不动；"
+                    "要照 B19 那一格牌子就传 --chat-lane 问答档。档位选完会留在地址栏里，后面的环接着用它问话")
+    ap.add_argument("--chip-question", default="",
+                    help="环 5 在 --chat-lane 之下另问一句，专门把步子牌裁一张（原样送走查件）")
+    ap.add_argument("--question", default="", help="覆盖环 5 的那一句问话（原样送走查件）")
     args = ap.parse_args()
     if not args.rings:
         args.rings = V2_RINGS if args.suite == "v2" else V1_RINGS
@@ -228,7 +235,14 @@ def main():
         target.mkdir(parents=True, exist_ok=True)
         label = "" if passes == 1 else "（第 " + str(index + 1) + "/" + str(passes) + " 遍）"
         started = time.time()
-        walk_rc = run_walk(target, args.env_file, args.base_url, args.rings, args.python)
+        extra = []
+        if args.chat_lane:
+            extra += ["--chat-lane", args.chat_lane]
+        if args.chip_question:
+            extra += ["--chip-question", args.chip_question]
+        if args.question:
+            extra += ["--question", args.question]
+        walk_rc = run_walk(target, args.env_file, args.base_url, args.rings, args.python, extra)
         one_rc, rows = report(target, started, walk_rc, label)
         rc = max(rc, one_rc)
         rowsets.append(rows)

@@ -123,6 +123,13 @@ BUBBLE_PROBE = """
     chars: content.length,
     sources: document.querySelectorAll('[data-testid=source-card]').length,
     steps: document.querySelectorAll('.steps-bar .step-card').length,
+    // B19：牌子上的字本身。只数枚数量不出「档位说不用算数、牌子说分析了数据」这一格。
+    step_labels: (() => {
+      const wraps = document.querySelectorAll('.msg-bubble-wrap');
+      const last = wraps[wraps.length - 1] || null;
+      return last ? Array.from(last.querySelectorAll('.steps-bar .step-card'))
+                  .map((e) => (e.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 60)) : [];
+    })(),
     // 只数「真解码出来的那张图」：.chart-card 在取字节失败时照样挂在屏上（ChartViewer 的
     // 错误脸），按元素数判「屏上有图」会把裂图算成货——10-07 那枚假绿就是这么来的。
     charts: Array.from(document.querySelectorAll('img.chart-img'))
@@ -754,6 +761,7 @@ class Walk:
             "final_chars": screen["chars"],
             "sources_cards": screen["sources"],
             "steps_cards": screen["steps"],
+            "steps_labels": screen.get("step_labels", []),
             "charts_on_screen": screen["charts"],
             "chart_cards_on_screen": screen["chart_cards"],
             "runtime_faces": screen["faces"],
@@ -896,6 +904,7 @@ class Walk:
             "final_chars": probe["chars"],
             "sources_cards": probe["sources"],
             "steps_cards": probe["steps"],
+            "steps_labels": probe.get("step_labels", []),
             "charts_on_screen": probe["charts"],
             "chart_cards_on_screen": probe["chart_cards"],
             "chart_srcs": chart_src[:4],
@@ -905,19 +914,87 @@ class Walk:
         }
 
     # --------------------------------------------------------------------- 环
+    #: 档位承诺与步子牌的对照表（B19）。牌子上写什么，屏上那句承诺就不许反着说。
+    LANE_FORBIDDEN_CHIPS = {
+        "问答档": ("分析数据", "生成图表", "导出报告"),
+        "分析档": ("导出报告",),
+    }
+
+    def _shot_steps_bar(self, name: str) -> dict[str, Any] | None:
+        """把最后一条回答上面那一排步子牌单独裁一张——结案纸要的是屏上那行字，不是整屏。"""
+        assert self.page is not None
+        bar = self.page.locator(".steps-bar").last
+        try:
+            if bar.count() == 0:
+                return None
+            bar.scroll_into_view_if_needed(timeout=5000)
+            box = bar.bounding_box(timeout=5000)
+        except Exception:
+            return None
+        if not box:
+            return None
+        pad = 10
+        viewport = self.page.viewport_size or {"width": 1440, "height": 900}
+        clip = {
+            "x": max(0.0, box["x"] - pad),
+            "y": max(0.0, box["y"] - pad),
+            "width": min(box["width"] + 2 * pad, float(viewport["width"])),
+            "height": min(box["height"] + 2 * pad, float(viewport["height"])),
+        }
+        return register_shot(self.page, self.out, name, clip=clip)
+
+    def lane_chip_probe(self, lane: str, question: str) -> dict[str, Any]:
+        """选着档位问一句，把屏上那排步子牌读回来，并当场对一句账。
+
+        判据（B19）：档位说「只用文字回答，不算数、不出图、不产文件」，屏上的牌子就不许
+        出现「📊 分析数据／📈 生成图表／📋 导出报告」。这一格以前只能靠人眼盯屏，量具里
+        只有牌子枚数（steps_cards），枚数对得上而名字说反话照样绿——10-08 09:1x 现读
+        lane=qa 问「各部门的报销排名是怎样的？」就是这么被放过去的。
+        """
+        probe = self.ask(question, approve_in_chat=False, lane=lane)
+        labels = list(probe.get("steps_labels") or [])
+        forbidden = self.LANE_FORBIDDEN_CHIPS.get(lane, ())
+        contradictions = [text for text in labels if any(word in text for word in forbidden)]
+        promise = ""
+        if self.page is not None:
+            try:
+                promise = self.page.locator("[data-testid=chat-lane-promise]").first.inner_text()
+            except Exception:
+                promise = ""
+        probe.update({
+            "lane_declared_on_screen": lane,
+            "lane_promise_on_screen": (promise or "").replace("\n", " ").strip(),
+            "steps_labels": labels,
+            "steps_contradict_lane": bool(contradictions),
+            "contradicting_chips": contradictions,
+        })
+        return probe
+
     def ring5(self) -> None:
         self.state["mid_shot_slot"] = "r5"
         self.ensure_login()
         self.open_screen("nav-chat", "chat-panel")
-        readings = self.ask(self.question(self.args.question), approve_in_chat=False)
+        lane = (self.args.chat_lane or "").strip()
+        readings = self.ask(self.question(self.args.question), approve_in_chat=False,
+                            lane=lane or None)
         shots = [r for r in [readings.pop("mid_shot")] if r]
         shots.append(self.shot("r694-r5-answer-final.png"))
+        # B19：只在点名要对照牌子的那一发上多问一句、多裁一张。不点名时这一环一字不动。
+        chip = self.lane_chip_probe(lane, self.question(self.args.chip_question)) if lane else None
+        if chip:
+            shots.append(self._shot_steps_bar("r694-r5-step-chips.png"))
+            readings["chip_question"] = chip["question"]
+            readings["lane_promise_on_screen"] = chip["lane_promise_on_screen"]
+            readings["steps_labels"] = chip["steps_labels"]
+            readings["steps_contradict_lane"] = chip["steps_contradict_lane"]
+            readings["contradicting_chips"] = chip["contradicting_chips"]
         status = "达" if (
             readings["frame_count_total"] > 1
             and readings["answer_chars_from_frames"] > 40
             and readings["final_chars"] > 40
             and readings["sources_cards"] > 0
             and readings["sequence_monotonic"] is not False
+            and not (chip or {}).get("steps_contradict_lane")
         ) else "未达"
         self.state["ring5_sources"] = readings["sources_cards"]
         self.state["ring5_final_chars"] = readings["final_chars"]
@@ -2181,6 +2258,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--fresh",
         action="store_true",
         help="起手清空账本再跑：正式那一遍必须只装这一遍的读数，不留上一笔的旧环",
+    )
+    parser.add_argument(
+        "--chat-lane",
+        default="",
+        help="环 5 在屏上选哪一档发问（「问答档」／「分析档」／「报告档」，空串＝不碰选择框，"
+             "与今天的九环逐字同形）。点名问答档时另问一句带算数词的话，把步子牌裁一张（B19）。",
+    )
+    parser.add_argument(
+        "--chip-question",
+        default="各部门的报销金额排名是怎样的？",
+        help="与 --chat-lane 同用：问法里带 data_kw 的那一句，专门用来照出牌子与档位对不对得上。",
     )
     parser.add_argument(
         "--artifact-user",
