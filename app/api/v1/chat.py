@@ -1538,6 +1538,32 @@ def _declared_lane(request) -> str:
     return lane.strip() if isinstance(lane, str) else ""
 
 
+def _chip_legs_within_lane(leg_names, readout: dict) -> list[str]:
+    """步子牌只许报本轮那一档真允许的腿（B19）——牌子跟档位，不跟关键词的第二套猜测。
+
+    上面那一串关键词纠偏读的是 supervisor **改派之前**的那一发 dispatch（R141 的天花板
+    在图里砍腿，砍完的结果并不回写到那一发 tool_call 上），所以「选了问答档、data 腿
+    已被砍掉」那一轮，屏上的牌子照样写「📊 分析数据」，而同屏那句承诺是「只用文字回答，
+    不算数、不出图、不产文件」。这一格不重算派工、不另发明第二套判别，只拿本轮已经算好
+    的档位读数（``TurnLane.as_dict()`` 那一份，与响应头／request.started 帧／trace 同源）
+    当尺子把牌子筛一遍。
+
+    筛光不等于没腿：``route_main`` 把腿砍到零时交回的是这一档最小可兑现的那条读腿
+    （``nodes.LANE_PRIMARY_LEG``），牌子跟着说同一句话，不许出现「一句承诺一条腿都没有」。
+    没声明（``lane_source`` 不是 explicit）时天花板给满，本函数一字不改地原样交回。
+    """
+    from app.agents import nodes
+
+    given = [str(name) for name in (leg_names or [])]
+    allowed = [str(name) for name in (readout.get("allowed_workers") or [])]
+    if readout.get("lane_source") != nodes.LANE_SOURCE_EXPLICIT or not allowed:
+        return given
+    kept = [name for name in given if name in allowed]
+    if given and not kept:
+        kept = [nodes.LANE_PRIMARY_LEG]
+    return kept
+
+
 def _turn_lane_readout(question: str, declared: str, *, routed: bool = True) -> dict:
     """本轮的档位读数。三处出口（响应头 / request.started 帧 / trace 载荷）都取自这里。
 
@@ -3561,6 +3587,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 elif any(kw in user_msg for kw in data_kw) and "chart" not in dispatched:
                     if "data" not in dispatched:
                         dispatched = ["data"]
+                # B19：牌子跟档位。上面这三挑选的是「模型想派谁」，档位砍完腿之后没人替
+                # 它改口；这里按本轮那一份档位读数把牌子筛一遍，其余一律不动。
+                dispatched = _chip_legs_within_lane(dispatched, lane_readout)
 
             if dispatched and dispatched != last_workers:
                 for w in dispatched:

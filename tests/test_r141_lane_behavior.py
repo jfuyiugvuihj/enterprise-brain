@@ -466,7 +466,7 @@ def _canonical(body, name):
 
 
 def _drive(monkeypatch, tmp_path, *, lane=None, cached=None, rate_allowed=True, switch=None,
-           data_filename="", principal=None):
+           data_filename="", principal=None, dispatched_legs=None):
     """跑真的 ``/ask``：只把"会花钱 / 会留痕 / 会打网络"的出口换成桩或计数器。"""
     from app.common import reliable_queue
 
@@ -481,7 +481,13 @@ def _drive(monkeypatch, tmp_path, *, lane=None, cached=None, rate_allowed=True, 
         seen["kwargs"] = sorted(kwargs)
         seen["user_message"] = user_message
         seen["user"] = user
-        yield {"messages": [], "worker_results": {"doc": ANSWER}, "final_answer": ANSWER}
+        round_messages = []
+        if dispatched_legs:
+            # 真形状：supervisor 那一发 dispatch 是**改派之前**的清单，B19 的病就长在这一点上。
+            round_messages.append(AIMessage(content="", tool_calls=[
+                {"name": "dispatch", "args": {"workers": list(dispatched_legs)}, "id": "r141-dispatch"}
+            ]))
+        yield {"messages": round_messages, "worker_results": {"doc": ANSWER}, "final_answer": ANSWER}
 
     monkeypatch.setattr(chat, "_ensure_sessions_table", lambda: None)
     monkeypatch.setattr(chat, "_ensure_session", lambda *a, **k: None)
@@ -736,3 +742,57 @@ def test_the_lane_tables_are_the_only_source_for_the_readout():
             "_lane_readout_headers", "_require_no_lane_on_chat"} <= names
     for lane in (LANE_QA, LANE_ANALYSIS, LANE_REPORT):
         assert resolve_turn_lane(HEAVY, lane).allowed_workers == LANE_WORKERS[lane] + LANE_EXEMPT_WORKERS
+
+
+# ==================== F 组 · 步子牌跟档位（B19） ====================
+
+
+def _step_frames(body):
+    """从 SSE 正文里摘出全部 step 帧（running 与 done 都算）：屏上那排牌子读的就是它们。"""
+    frames = []
+    for block in body.split("\n\n"):
+        lines = block.splitlines()
+        if len(lines) >= 2 and lines[0] == "event: step":
+            frames.append(json.loads(lines[1][len("data: ") :]))
+    return frames
+
+
+@pytest.mark.parametrize(
+    "given, expected_legs",
+    [(["data"], ["doc"]), (["chart"], ["doc"]), (["export"], ["doc"]),
+     (["doc", "data", "chart"], ["doc"])],
+)
+def test_a_declared_qa_round_never_sends_a_heavy_leg_chip_on_the_wire(
+    monkeypatch, tmp_path, given, expected_legs
+):
+    """问答档那一轮，屏上那句承诺是「只用文字回答，不算数、不出图、不产文件」。
+
+    10-08 09:1x 现读（真容器·真模型，lane=qa 问「各部门的报销排名是怎样的？」）：图里
+    ``[R141] 声明档 qa → 派 ['doc'] | 砍 data``，可 SSE 交出去的仍是两枚
+    ``tool=data／label=📊 分析数据``（running＋done）——牌子读的是 supervisor **改派之前**
+    那一发 dispatch，档位砍掉的腿在屏上又自己站了回来。员工在同屏读到两句相反的话。
+    """
+    run = _drive(monkeypatch, tmp_path, lane=LANE_QA, dispatched_legs=given)
+    frames = _step_frames(run.body)
+
+    assert frames, "这一轮一枚牌子都没发，等于拿空表冒充筛过"
+    assert {frame["tool"] for frame in frames} == set(expected_legs)
+    assert all("分析数据" not in frame["label"] for frame in frames), frames
+    assert all("生成图表" not in frame["label"] for frame in frames), frames
+
+
+@pytest.mark.parametrize("lane", [LANE_ANALYSIS, LANE_REPORT])
+def test_the_heavier_declared_tiers_keep_their_compute_chip(monkeypatch, tmp_path, lane):
+    """筛子不许顺手把该跑的腿也筛没：分析档／报告档里 data 腿本来就是合法腿。"""
+    run = _drive(monkeypatch, tmp_path, lane=lane, dispatched_legs=["data"])
+
+    assert {frame["tool"] for frame in _step_frames(run.body)} == {"data"}
+
+
+def test_an_undeclared_round_sends_exactly_the_chips_it_sent_before(monkeypatch, tmp_path):
+    """没声明档位＝没有天花板：牌子逐字照旧（判据② 的「缺省与显式可分辨」落在屏上那一半）。"""
+    run = _drive(monkeypatch, tmp_path, lane=None, dispatched_legs=["data"])
+    frames = _step_frames(run.body)
+
+    assert {frame["tool"] for frame in frames} == {"data"}
+    assert {frame["label"] for frame in frames} == {"📊 分析数据"}
