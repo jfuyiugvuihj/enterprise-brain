@@ -91,7 +91,7 @@
 - 105 题评测窗降级为产品统计口径，机器空着才跑，不再是 V1 验收的前置条件。
 
 **安全线六条（技术坑，一条不放宽）**
-- 只有业主能做的不代做：`git push`／automation-2 指向死线程／`.gitignore` 与 `chroma_db` 反跟踪／删陈旧 worktree 与残件／R35② 客户真实密级与 R44① 真库尺寸回填；改 `frontend/**` 需他点头。
+- 只有业主能做的不代做：`git push`／automation-2 指向死线程／`.gitignore` 与 `chroma_db` 反跟踪／删陈旧 worktree 与残件／R35② 客户真实密级与 R44① 真库尺寸回填；改 `frontend/**` 需他点头。未经业主明确授权，严禁使用业主的重置卡；继续任务、自动续跑或额度不足都不算使用重置卡的授权。
 - 读数在飞禁改 HEAD（commit／`git worktree add`／reset／stash）；跑窗或跑门与执行层跑件互斥；窗内禁并树、禁动容器、禁打模型。
 - 往文件写含反引号的正文一律走单引号 here-string 或编辑器通道，写完现读扫 `0x00/07/08/0b/0c`＝0；中文提交用 `git commit -F <UTF-8 无 BOM>`；并树显式列路径、禁 `git add -A`。
 - 测试一律用主树 `.venv\Scripts\python.exe`（anaconda 那枚缺 chromadb）；Docker 起不来用 `powershell -NoProfile -File scripts\docker_up.ps1`。

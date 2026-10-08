@@ -1,5 +1,16 @@
 # 接班单：V2 挂账一次清（2026-10-08 约 09:0x 交班）
 
+## 10-08 收工接力更新
+
+- 已接续对话 `01a11909-77ea-77a1-8dc3-baf8873def19`；B18／B19／B22 和 R118 收针已由前班交付。本班在原分支顺序完成 B26 `71e6d16`、B16 `ba4aa8b`、B15 `95c2671`、B13 `ea35969`＋制度摘要订正 `5e6a2d0`。
+- 最新正式验收：V1 **9/9 能演示**（`%TEMP%\evalrun\takeover-final-v1b`）；V2 **12/12 能演示**（`%TEMP%\evalrun\takeover-final-v2c`）。每环日志与截图在各目录里，后端与前端新鲜度检查均放行。
+- B26 选中表跨批准保留；B15 同一原件进目录、可预览下载，知识库移除保留数据原件，数据删除同步退役目录；B16 上传错误独立显示且列表保留；B13 真图后清理出图拒绝，制度正文与引用保留。各笔实际回滚结果及限制已更新到唯一队列 `docs/backlog.md`。
+- 业主已裁 B10：默认 internal、属主按角色密级核验，不增加自读豁免。B16 的前端授权限本班已批准方案；客户真实密级、尺寸与旧残件仍不代改。
+- B21 的真实 SLO 仍缺跨进程样本汇总、分档归属与目标值；屏上能演示的是如实说清欠多少。B14 的图与导出内容判据仍见 backlog，不拿存在性演示替它结案。
+- 新增授权边界已并入 `AGENTS.md` 既有安全线：未经业主明确授权，严禁使用重置卡；继续任务、自动续跑、额度不足均不构成授权。没有使用重置卡。
+
+以下为 09:0x 原交班历史，不作为当前待办或读数。
+
 写这枚的原因：上一班（总控）上下文耗尽，V2 的挂账要一整班做完。规矩照 `AGENTS.md`「开发模式」那一节，本单只补**现场事实**，不重复规矩。
 
 ## 0. 现在到底在哪
@@ -19,7 +30,7 @@
 3. **B19 选了「问答档」步子牌仍写「📊 分析数据」**（屏上自相矛盾）
    - 嫌疑：`app/api/v1/chat.py` 里按关键词回写 `dispatched` 那一串（`data_kw` 那一排）。要么牌子跟档位，要么档位不写死。
 4. **B22 改了前端，新鲜度拦门不响**（流程漏洞，会让以后任何前端结论假绿；上一班正要做，被中断，未落地）
-   - 事实：`scripts/smoke_v1.py:47 CONTAINERS = ("backend","worker","scheduler")`，`code_freshness` 只比最新 `app` 提交与这三枚的 `StartedAt`。`frontend` 是另一枚镜像（`enterprise-brain-frontend:local`，`docker-compose.yml:265` 用 `frontend/Dockerfile` 构建，不在 `migrate` 那条道上），改 `frontend/**` 既不重建也不拦门。
+   - 事实：`scripts/smoke_v1.py::CONTAINERS`（当时只列 backend／worker／scheduler），`code_freshness` 只比最新 `app` 提交与这三枚的 `StartedAt`。`frontend` 是另一枚镜像（`enterprise-brain-frontend:local`，`docker-compose.yml::services.frontend` 用 `frontend/Dockerfile` 构建，不在 `migrate` 那条道上），改 `frontend/**` 既不重建也不拦门。
    - 现读：`enterprise-brain-frontend-1 Up 12 hours`——屏上跑的前端比 10-07 那两笔前端修复（`2a5e0a6`／`a5c258a`／`5c8cae5`）新还是旧，今天**量不出来**。
    - 改法：把「最新 `frontend` 提交时刻」与 frontend 容器的 `StartedAt` 也放进 `code_freshness` 的合取里（同一把尺、同一句措辞，拿不到读数照样门红）；顺带在册面上写清前端要 `docker compose build frontend` 才换码。
 5. **B15／B16／B10／B13 四枚要业主裁或要点点头**（B16、B13 动 `frontend/**`；B15／B10 是归属与档位政策）——开工前先把这四条摆给业主，别自己裁。
