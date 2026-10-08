@@ -63,7 +63,8 @@ def _run(state: dict) -> dict:
 
 
 @pytest.mark.parametrize("chart_exists", [False, True])
-def test_document_chart_refusal_yields_to_a_delivered_chart_and_keeps_policy(chart_exists):
+@pytest.mark.parametrize("policy_is_quote", [False, True])
+def test_document_chart_refusal_yields_to_a_delivered_chart_and_keeps_policy(chart_exists, policy_is_quote):
     policy = "报销制度：每笔费用必须先审批，原始发票须留存；月报用 Excel 汇总。"
     refusal = (
         "根据现有文档，**无法直接提供按月份统计的报销金额数据或现成的柱状图**，因为：\n\n"
@@ -77,7 +78,8 @@ def test_document_chart_refusal_yields_to_a_delivered_chart_and_keeps_policy(cha
                     "chart": CHART_LINE if chart_exists else ""}, artifacts)
     state["agent_results"]["doc"] = {"evidence": [{
         "provenance_status": "verified", "permission_checked": True,
-        "source_name": "报销制度.txt", "excerpt": policy,
+        "source_name": "报销制度.txt",
+        "excerpt": policy if policy_is_quote else "费用应先行审批，发票应留存，月度汇总使用电子表格。",
     }]}
     result = _run(state)
     final = result["final_answer"]

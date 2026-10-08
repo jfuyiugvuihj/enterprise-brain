@@ -3020,7 +3020,10 @@ _DOC_CHART_REFUSAL_RE = re.compile(
 )
 _DOC_CHART_WORKAROUND_RE = re.compile(
     r"文档性质|数据缺失|图表缺失|不包含.{0,12}(?:历史|报销|实际)数据|没有实际报销.*数据"
-    r"|建议操作|联系财务.*数据|导出.{0,20}(?:报销|数据)|Excel|Python|matplotlib|MYBI|BI工具"
+    r"|建议操作|联系财务.*数据|导出.{0,20}(?:报销|数据)"
+    r"|(?:Excel|Python|matplotlib|MYBI|BI工具)[^。\n]{0,40}(?:画图|绘图|绘制|生成.{0,8}图)"
+    r"|(?:画图|绘图|绘制)[^。\n]{0,40}(?:Excel|Python|matplotlib|MYBI|BI工具)"
+    r"|提供.{0,15}(?:Python|绘图).{0,15}代码"
 )
 
 

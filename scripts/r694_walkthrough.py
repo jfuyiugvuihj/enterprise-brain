@@ -1321,7 +1321,7 @@ class Walk:
             readings["chart_piece_url"] = url
         after = self.read_chat_screen(expect_chart=bool(chart["found"]))
         readings["after_approve"] = after
-        body = self.page.locator(".msg-bubble.assistant").last.inner_text()
+        body = self.page.locator(".msg-bubble.assistant .msg-content").last.inner_text()
         refusal = re.search(
             r"(?:无法|不能|未能|不支持)[^。\n]{0,20}(?:生成|绘制|画出|提供)[^。\n]{0,60}(?:图表|柱状图|折线图|饼图)",
             body,
