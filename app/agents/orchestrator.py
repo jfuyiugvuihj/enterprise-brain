@@ -769,7 +769,7 @@ def route_main(state: AgentState, config=None):
         kept, cut, added = decide_workers(
             turn,
             workers,
-            has_data=bool(((config or {}).get("configurable") or {}).get("data_filename")),
+            has_data=bool(state.get("data_filename", ((config or {}).get("configurable") or {}).get("data_filename"))),
             abstained=abstained,
         )
         if cut or added:
@@ -912,6 +912,10 @@ def _doc_question_with_evidence(user_msg: HumanMessage, child_cfg: dict) -> Huma
 def _make_worker_wrapper(graph, name: str):
     def node(state: AgentState, config) -> dict:
         parent_conf = (config or {}).get("configurable", {}) or {}
+        # B26: resume rebuilds the caller's config, but the table selection belongs
+        # to the parked turn. Keep current identity; restore only its data scope.
+        if "data_filename" in state:
+            parent_conf = {**parent_conf, "data_filename": state["data_filename"]}
         # 取消检查点 2（即将开工）：并行 worker 可能共享同一次流边界，边界检查只
         # 拦得住第一个，故逐节点再查一遍。放在 trace 与 invoke 之前，取消时不会留下
         # 半截 step.started。
@@ -1467,6 +1471,8 @@ def _initial_execution_state(
         "retry_count": 0,
         "trace_events": [],
         "session_id": thread_id,
+        # Always reset, including when the next turn does not select a table.
+        "data_filename": str(user.get("data_filename") or "").strip(),
         "request_id": request_id,
         "trace_id": trace_id,
         "task_id": task_id,
