@@ -739,7 +739,7 @@ async def read_stage_latency(
     return report
 
 
-# ==================== R105 · three-tier SLO contract: shape and arithmetic, no numbers ====
+# ==================== R105 · three-tier SLO contract: shape, arithmetic and policy targets ====
 
 #: R36 judgement 2, restated in 计划书 §3.1 ("P95 且样本 ≥100 条"): a percentile is
 #: reportable only from at least this many samples of the distribution it describes.
@@ -747,10 +747,21 @@ async def read_stage_latency(
 #: second copy of the number.
 MIN_SLO_SAMPLES = 100
 
-#: Every target slot in the contract starts empty on purpose. 乙半 fills it from the D14甲
-#: window; nothing else may put a number in it, because no real sample has been drawn yet.
-#: Writing "800 ms" here would be invented data, the same line R36 drew at demo corpora.
+#: A target is a policy ceiling, not a measured result.  Policy A registers the product
+#: promise here while the sample gate below still withholds p50/p95 until real local samples
+#: clear ``MIN_SLO_SAMPLES``.  The desktop roadmap only confirms the current 50.1 s p95 and
+#: explicitly forbids an external promise without target-machine measurement; these values are
+#: therefore displayed as internal policy targets, never as measured performance.
 SLO_TARGET_PENDING = "awaiting_real_samples"
+SLO_TARGET_SET = "target_set"
+SLO_TARGET_PARTIAL = "targets_partially_set"
+
+SLO_TARGET_QA_COMPLETION_MS = 10_000
+SLO_TARGET_QA_FIRST_TEXT_MS = 1_000
+SLO_TARGET_QA_CACHE_HIT_MS = 999
+SLO_TARGET_ANALYSIS_COMPLETION_MS = 45_000
+SLO_TARGET_ANALYSIS_PROGRESS_MS = 15_000
+SLO_TARGET_REPORT_COMPLETION_MS = 120_000
 
 #: Readout verdicts. ``insufficient_samples`` exists because the alternative is a lie:
 #: ``app/common/performance.py::PerformanceStats._rank`` answers ``0`` for a distribution it
@@ -972,13 +983,14 @@ def wire_first_text_readout(trace_id: str) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class SloMetric:
-    """One addressable number slot: 乙半 fills ``target``, and nothing else may write it."""
+    """One addressable number slot and its policy target, if this metric has one."""
 
     name: str
     label_zh: str
     population: str
     source: str
     blockers: tuple[str, ...] = ()
+    target_ms: float | None = None
 
 
 @dataclass(frozen=True)
@@ -1142,6 +1154,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     ),
                     source=SLO_SOURCE_LEDGER,
                     blockers=("lane_attribution_absent",),
+                    target_ms=SLO_TARGET_QA_COMPLETION_MS,
                 ),
                 SloMetric(
                     name="first_text_p95_ms",
@@ -1155,6 +1168,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
                         "lane_attribution_absent",
                         "first_token_not_a_stage_sample",
                     ),
+                    target_ms=SLO_TARGET_QA_FIRST_TEXT_MS,
                 ),
                 SloMetric(
                     name="cache_hit_p95_ms",
@@ -1162,6 +1176,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     population="one cache-hit response on the ask path",
                     source=SLO_SOURCE_NONE,
                     blockers=("cache_hits_are_not_traced",),
+                    target_ms=SLO_TARGET_QA_CACHE_HIT_MS,
                 ),
             ),
             note=(
@@ -1186,6 +1201,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     ),
                     source=SLO_SOURCE_LEDGER,
                     blockers=("lane_attribution_absent",),
+                    target_ms=SLO_TARGET_ANALYSIS_COMPLETION_MS,
                 ),
                 SloMetric(
                     name="progress_interval_p95_ms",
@@ -1195,6 +1211,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     ),
                     source=SLO_SOURCE_TRACE,
                     blockers=("lane_attribution_absent", "wire_step_events_are_not_recorded"),
+                    target_ms=SLO_TARGET_ANALYSIS_PROGRESS_MS,
                 ),
             ),
         ),
@@ -1215,6 +1232,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     ),
                     source=SLO_SOURCE_LEDGER,
                     blockers=("lane_attribution_absent", "export_leg_has_no_stage"),
+                    target_ms=SLO_TARGET_REPORT_COMPLETION_MS,
                 ),
             ),
             note=(
@@ -1228,7 +1246,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
     )
 
 
-# ==================== R526 · 乙半交接面：每枚数字格的口径三件（只钉口径，不落数）=====
+# ==================== R526 · 每枚数字格的口径三件（实测不落数）========================
 
 #: Which faces of the repository count as evidence at all. A readout that lived in a temporary
 #: directory is not evidence: the next machine cannot re-read it, which is precisely how run9's
@@ -1246,7 +1264,7 @@ SLO_CALIBER_SPINE: tuple[str, ...] = (
     "caliber=local-full：数值必本机（R453 裁定（b）），云端形状窗交回这一格即拒",
     f"分位只按 {SLO_PERCENTILE_SOURCE} 取；仓内任何第二套排名都不算这格的凭据",
     "原始读数件必须落在 " + " 或 ".join(SLO_EVIDENCE_DIRS) + " 之内，读数本里同时记下该件的 sha256",
-    "target 只由乙半按这三件写；p50_ms / p95_ms 永远由计算得出，手打的数不进 value 侧",
+    "policy target 由 B21 policy A 登记；p50_ms / p95_ms 永远由计算得出，手打的数不进 value 侧",
     "上面缺一件 = 本格仍是「待真机样本」：未实测的秒数 = 不可承诺",
 )
 
@@ -1517,7 +1535,13 @@ def _slot_response_path(slot: str) -> str:
     return "tiers[%s].numbers.%s" % (parts[0], ".".join(parts[1:]))
 
 
-def _caliber_record(entry: SloSlotCaliber, *, slot: str, blockers: tuple[str, ...]) -> dict[str, Any]:
+def _caliber_record(
+    entry: SloSlotCaliber,
+    *,
+    slot: str,
+    blockers: tuple[str, ...],
+    target_ms: float | None = None,
+) -> dict[str, Any]:
     """Render one slot's caliber. Blockers come from the contract object, never from a copy."""
     return {
         "slot": slot,
@@ -1537,8 +1561,8 @@ def _caliber_record(entry: SloSlotCaliber, *, slot: str, blockers: tuple[str, ..
         "reference_readout": entry.reference_readout,
         "reference_field": entry.reference_field,
         "may_fill_from_window": entry.may_fill_from_window,
-        "target_status": SLO_TARGET_PENDING,
-        "target": None,
+        "target_status": SLO_TARGET_SET if target_ms is not None else SLO_TARGET_PENDING,
+        "target": target_ms,
         "percentile_source": SLO_PERCENTILE_SOURCE,
         "blockers": [{"code": code, "detail": SLO_BLOCKERS[code]} for code in blockers],
     }
@@ -1554,9 +1578,8 @@ def slo_slot_caliber() -> dict[str, Any]:
     instrument, no file and no condition. ``orphan`` is the other direction: a caliber whose slot
     no longer exists on the contract object (a rename that only edited one side).
 
-    🔴 This function publishes no measurement. ``target`` is ``None`` for every slot and
-    ``target_status`` is the pending constant, because the numbers belong to 乙半 and to the
-    window, not to a caliber table.
+    🔴 This function publishes no measurement. Policy targets are copied from the declared
+    metric slots; stage slots remain pending until a separate policy target is registered.
     """
     from app.common.stage_timing import CANONICAL_STAGES
 
@@ -1571,7 +1594,14 @@ def slo_slot_caliber() -> dict[str, Any]:
             if entry is None:
                 uncalibrated.append(slot)
                 continue
-            slots.append(_caliber_record(entry, slot=slot, blockers=metric.blockers))
+            slots.append(
+                _caliber_record(
+                    entry,
+                    slot=slot,
+                    blockers=metric.blockers,
+                    target_ms=metric.target_ms,
+                )
+            )
             filled.add(slot)
 
         stage_entry = SLO_STAGE_CALIBER.get(tier.lane)
@@ -1608,7 +1638,9 @@ def slo_slot_caliber() -> dict[str, Any]:
     }
 
 
-def _slo_stat(values: list[float], floor: int) -> dict[str, Any]:
+def _slo_stat(
+    values: list[float], floor: int, *, target_ms: float | None = None
+) -> dict[str, Any]:
     """One gated number. Percentiles come from ``PerformanceStats`` and nowhere else.
 
     Below ``floor`` samples the slot reports its own shortfall and no number at all. That is
@@ -1631,8 +1663,8 @@ def _slo_stat(values: list[float], floor: int) -> dict[str, Any]:
         "p50_ms": report["p50_ms"] if sufficient else None,
         "p95_ms": report["p95_ms"] if sufficient else None,
         "percentile_source": SLO_PERCENTILE_SOURCE,
-        "target": None,
-        "target_status": SLO_TARGET_PENDING,
+        "target": target_ms,
+        "target_status": SLO_TARGET_SET if target_ms is not None else SLO_TARGET_PENDING,
         "reason": (
             ""
             if sufficient
@@ -1654,8 +1686,10 @@ def _slo_not_measurable(metric: SloMetric, floor: int) -> dict[str, Any]:
         "p50_ms": None,
         "p95_ms": None,
         "percentile_source": SLO_PERCENTILE_SOURCE,
-        "target": None,
-        "target_status": SLO_TARGET_PENDING,
+        "target": metric.target_ms,
+        "target_status": (
+            SLO_TARGET_SET if metric.target_ms is not None else SLO_TARGET_PENDING
+        ),
         "reason": (
             f"{metric.label_zh} has no measurement piece to sample from yet: "
             + "; ".join(metric.blockers)
@@ -1742,7 +1776,7 @@ def slo_readout(*, min_samples: int = MIN_SLO_SAMPLES) -> dict[str, Any]:
                 SLO_SOURCE_LEDGER,
                 SLO_SOURCE_TRACE,
             }:
-                number = _slo_stat(end_to_end, floor)
+                number = _slo_stat(end_to_end, floor, target_ms=metric.target_ms)
                 number["blockers"] = [
                     {"code": code, "detail": SLO_BLOCKERS[code]}
                     for code in metric.blockers
@@ -1783,7 +1817,7 @@ def slo_readout(*, min_samples: int = MIN_SLO_SAMPLES) -> dict[str, Any]:
     return {
         "schema": "r105.slo/1",
         "sample_floor": floor,
-        "target_status": SLO_TARGET_PENDING,
+        "target_status": SLO_TARGET_PARTIAL,
         "percentile_source": SLO_PERCENTILE_SOURCE,
         "measurement_source": measurement_source,
         "units": slo_units(),

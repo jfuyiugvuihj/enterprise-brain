@@ -33,6 +33,7 @@ import {
   SLO_STATUS_MEASURED,
   SLO_STATUS_NOT_MEASURABLE,
   SLO_TARGET_LABELS,
+  SLO_TARGET_SET,
   SLO_TARGET_PENDING,
   SLO_TITLES,
 } from '../../lib/slo'
@@ -143,6 +144,22 @@ describe('R505 判据 A · 三档逐档画欠账，一枚 0 都不许画成读�
     expect(html).not.toContain('达标')
     expect(cellText(html, 'slo-target-status')).toBe(SLO_TARGET_LABELS[SLO_TARGET_PENDING])
     expect(html).toContain('目标值待填')
+  })
+
+  it('policy A 登记的目标值出现在目标列，但不冒充实测百分位', async () => {
+    const { html } = await renderWith({
+      ...PAYLOAD,
+      target_status: SLO_TARGET_SET,
+      tiers: [tier('qa', '问答档', {
+        numbers: {
+          end_to_end_p95_ms: slot({ target: 10_000, target_status: SLO_TARGET_SET }),
+        },
+      })],
+    })
+    expect(html).toContain(SLO_TARGET_LABELS[SLO_TARGET_SET])
+    expect(html).toContain('10000 毫秒')
+    expect(html).toContain(UNRECORDED)
+    expect(html).not.toContain('达标')
   })
 
   it('样本闸那枚数只可能来自回包：改 sample_floor，屏上跟着改', async () => {

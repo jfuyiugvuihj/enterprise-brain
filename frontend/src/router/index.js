@@ -158,7 +158,7 @@ export const routes = [
     meta: { screen: true, title: '运行留痕', icon: 'M4 7h16M4 12h10M4 17h6M14 12l3 3 5-6', primary: false, administratorOnly: true },
   },
   // R505 判据 A · 「服务等级目标」是一屏：GET /api/v1/slo 这条读腿今天在前端零消费者，而它交的全是
-  // 欠账 —— 三档的每一个数字格都写着「欠样本」或「不可测」，目标值整格待填。写法逐字照上面 /admin 与
+  // 欠账 —— 三档的每一个数字格都写着「欠样本」或「不可测」，目标值按 policy A 登记、实测仍受样本闸控制。写法逐字照上面 /admin 与
   // /traces 那两枚先例：primary:false 派生不出一级入口，administratorOnly:true 让它只长进管理员那一份
   // 入口清单（administratorNavigation 就是 App.vue 侧栏那枚 v-for 的真源，加这三屏不改壳层一个字）。
   // 这一屏上没有任何一处能把样本闸调低：那一枚下限写在服务端，能调低的下限不是下限。

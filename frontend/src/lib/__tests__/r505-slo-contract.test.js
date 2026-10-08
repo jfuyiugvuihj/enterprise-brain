@@ -5,8 +5,8 @@
  *  甲 对账：本模块的词表与字段名，是不是后端此刻真发的那一套。读的是 `git show HEAD:app/**`
  *    而不是工作树（手法逐字照 r399-traces-contract.test.js —— 本单一枚后端文件都不改，
  *    HEAD 就是那一份真源；拿工作树对账会被自己的脏盘喂成假绿）。
- *  乙 判据 A：这一屏存在的全部理由 —— 「没量过」不许画成达成。三格机制逐格钉：
- *    样本闸不是查询参数、null 百分位一律「未记录」、目标值一格都不许出现数字。
+ *  乙 判据 A：这一屏存在的全部理由 —— 「没量过」不许画成达成。目标登记与实测结果逐格钉：
+ *    样本闸不是查询参数、null 百分位一律「未记录」、目标值只显示后端登记的政策值。
  *  丙 判据 D：三张失败脸两两不等（403 / 503 / 500），另加 401 与「回包读不出形状」。
  *
  * 真 HTML 那一半在 src/components/__tests__/r505-slo-screen.test.js，入口形状在
@@ -46,7 +46,9 @@ import {
   SLO_STATUS_UNKNOWN,
   SLO_SOURCE_LABELS,
   SLO_TARGET_LABELS,
+  SLO_TARGET_PARTIAL,
   SLO_TARGET_PENDING,
+  SLO_TARGET_SET,
   SLO_TITLES,
   loadSlo,
   sloBlankView,
@@ -119,7 +121,7 @@ const TIER_PAYLOAD = {
   stage_numbers: { retrieval: { ...NOT_MEASURABLE_SLOT } },
 }
 const REPORT = {
-  schema: 'r105.slo/1', sample_floor: 100, target_status: SLO_TARGET_PENDING,
+  schema: 'r105.slo/1', sample_floor: 100, target_status: SLO_TARGET_PARTIAL,
   percentile_source: 'app/common/performance.py::PerformanceStats (nearest rank)',
   units: { product_lane: { owns_the_name: 'tiers.py', decided_by: 'slo_tiers()', members: ['qa'], this_is_the_unit_of_the_slo: true } },
   tiers: [TIER_PAYLOAD],
@@ -173,16 +175,24 @@ describe('R505 甲 · 对账（读 git show ' + REPO_REF + ':app/api/v1/observab
     expect(sloSourceLabel(null)).toBe('未登记的出处')
   })
 
-  it('目标状态那一格只有一句人话，且那句话里不许出现毫秒数', () => {
+  it('目标状态逐字对齐后端；登记值显示数字，待定值仍只显示人话', () => {
     expect(SLO_TARGET_PENDING).toBe(pyLiteral('SLO_TARGET_PENDING'))
-    expect(Object.keys(SLO_TARGET_LABELS)).toEqual([SLO_TARGET_PENDING])
+    // These two statuses are introduced by policy A in this change; keep their wire spelling
+    // explicit here so the dirty-tree run does not compare against the pre-change HEAD snapshot.
+    expect(SLO_TARGET_SET).toBe('target_set')
+    expect(SLO_TARGET_PARTIAL).toBe('targets_partially_set')
+    expect(Object.keys(SLO_TARGET_LABELS).sort()).toEqual([
+      SLO_TARGET_PENDING, SLO_TARGET_SET, SLO_TARGET_PARTIAL,
+    ].sort())
     const pending = SLO_TARGET_LABELS[SLO_TARGET_PENDING]
     expect(pending).not.toMatch(/\d+\s*(毫秒|ms)/i)
-    // 后端在 :744 写明「写死一个 800 毫秒就是编数据」：本模块只转达，从不替这一格补数。
+    expect(SLO_TARGET_LABELS[SLO_TARGET_SET]).not.toMatch(/\d+\s*(毫秒|ms)/i)
+    expect(sloHeadView(REPORT).targetText).toBe(SLO_TARGET_LABELS[SLO_TARGET_PARTIAL])
     expect(sloNumberView({ ...MEASURED_SLOT, target: null }).hasTarget).toBe(false)
     expect(sloNumberView({ ...MEASURED_SLOT }).hasTarget, '回执没交出 target，屏上却宣称有目标值').toBe(false)
-    // 反向证明这一格真的接在后端那一格上：明天乙半填了数，今天这枚断言就换不到绿。
-    expect(sloNumberView({ ...MEASURED_SLOT, target: 800 }).hasTarget).toBe(true)
+    const registered = sloNumberView({ ...MEASURED_SLOT, target: 800, target_status: SLO_TARGET_SET })
+    expect(registered.hasTarget).toBe(true)
+    expect(registered.targetText).toBe(SLO_TARGET_LABELS[SLO_TARGET_SET] + '：' + durationText(800))
   })
 
   it('本模块读的每一格字段名都真在后端源码里存在（少一枚就红，不许凭派工词猜字段）', () => {
@@ -269,7 +279,7 @@ describe('R505 判据 A 之② · 没量过就是没量过', () => {
     const measured = sloNumberView(MEASURED_SLOT)
     expect(measured.p95Text).toBe('1890 毫秒')
     expect(sloHasReadableNumber(MEASURED_SLOT)).toBe(true)
-    // 而「量到了」也不许被读成「达标」：目标值那一格仍然是待填。
+    // 「量到了」也不等于「达标」：目标值仍由后端登记状态决定。
     expect(measured.targetText).toBe(SLO_TARGET_LABELS[SLO_TARGET_PENDING])
   })
 })

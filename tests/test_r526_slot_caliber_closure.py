@@ -3,12 +3,13 @@
 
 对判据的哪一条（派工词 R526）：
   ① 每枚数字格都能指向「量具脚本名 + 原始读数文件路径 + 达成条件」三件，缺任一件即红；
-  ② 不发布数值：未实测的秒数 = 不可承诺 —— 这一条本身被写成能跑的牙，不是一句态度；
+  ② 不发布实测数值：未实测的秒数 = 不可承诺。B21 policy A 的目标上限可以登记，但不能冒充
+     p50/p95 结果；这一条本身被写成能跑的牙，不是一句态度；
   ③ 同源算术：观测面报出的口径与契约散文逐字同源（同一枚量具名、同一套单位映射、同一副脊柱）；
-  ④ §4 的 目标 格仍全部「待真机样本」；谁把它填成数字又拿不出 docs/perf/raw/ 凭据 ⇒ 当场红；
+  ④ §4 的目标格按 policy A 登记产品上限；stage 格仍「待真机样本」，实测百分位仍受样本门控制；
   ⑥ run10 收窗之后的交接表在册：每一枚族都点名 了谁、按什么命令、附什么凭据。
 
-🔴 本文件不出现任何一枚秒数 / token 数 / 分数。反证要用的伪造值只在
+🔴 本文件不出现任何一枚实测秒数 / token 数 / 分数。反证要用的伪造值只在
 ``tests/test_r526_counter_evidence_teeth.py`` 里，且只喂 tmp_path 上的影子副本，永不落纸。
 
 形状：每条判据都写成「纯函数 + 返回违规清单」，正向用例断言清单为空；反证刀把同一批纯函数喂
@@ -188,10 +189,20 @@ def check_legs(cal: dict):
                 continue
             if not str(value).strip():
                 bad.append("%s：缺「%s」那一件" % (item["slot"], leg))
-        if item["target"] is not None:
-            bad.append("%s：target 被写成了 %r —— 本单只钉口径" % (item["slot"], item["target"]))
-        if item["target_status"] != observability.SLO_TARGET_PENDING:
-            bad.append("%s：target_status 不是 %s" % (item["slot"], observability.SLO_TARGET_PENDING))
+        expected = {
+            f"{tier.lane}.{metric.name}": metric.target_ms
+            for tier in observability.slo_tiers()
+            for metric in tier.metrics
+        }.get(item["slot"])
+        if item["target"] != expected:
+            bad.append("%s：target 与 policy A 不同源（%r ≠ %r）" % (item["slot"], item["target"], expected))
+        expected_status = (
+            observability.SLO_TARGET_SET
+            if expected is not None
+            else observability.SLO_TARGET_PENDING
+        )
+        if item["target_status"] != expected_status:
+            bad.append("%s：target_status 不是 %s" % (item["slot"], expected_status))
     return bad
 
 
@@ -294,8 +305,15 @@ def check_no_numbers(text: str, cal: dict):
     for name in ("sample_floor",):
         if str(cal[name]).isdigit():
             bad.append("观测面把样本门抄成了数字：%s" % cal[name])
-    if any(item["target"] is not None for item in cal["slots"]):
-        bad.append("有 target 被填了：本单只钉口径")
+    expected = {
+        f"{tier.lane}.{metric.name}": metric.target_ms
+        for tier in observability.slo_tiers()
+        for metric in tier.metrics
+    }
+    for item in cal["slots"]:
+        want = expected.get(item["slot"])
+        if item["target"] != want:
+            bad.append("%s：target 不是 policy A 登记的值（%r ≠ %r）" % (item["slot"], item["target"], want))
     return bad
 
 
@@ -334,34 +352,32 @@ def evidence_backed(item, cal, root: Path = REPO):
 
 
 def check_targets_pending(text: str, cal: dict):
-    """判据④：乙半没交之前，§4 的 目标 列必须还至少有一枚「待真机样本」；偷填而拿不出凭据即红。"""
+    """判据④：目标列与 policy A 同源；stage 目标仍待定，实测数仍由样本门控制。"""
     bad = []
     rows = target_rows(text)
     metric_slots = [item for item in cal["slots"] if ".stage." not in item["slot"]]
     if len(rows) != len(metric_slots):
         bad.append("§4 的数字格行数与观测面派生的档位格数不等：%d vs %d" % (len(rows), len(metric_slots)))
     by_slot = {item["slot"]: item for item in metric_slots}
-    pending = 0
+    expected_targets = {
+        f"{tier.lane}.{metric.name}": metric.target_ms
+        for tier in observability.slo_tiers()
+        for metric in tier.metrics
+    }
     for row in rows:
         lane = row[0].strip("`")
         metric = re.findall(r"`([^`]+)`", row[1])
         slot = "%s.%s" % (lane, metric[0] if metric else row[1])
         cell = row[-1]
-        if cell == PENDING_TEXT:
-            pending += 1
-            continue
         item = by_slot.get(slot)
         if item is None:
             bad.append("§4 里有一枚观测面没有的格子：%s" % slot)
             continue
-        if cell and not find_magnitudes(cell):
-            bad.append("%s：目标格被填成了非量级的东西（%r）——要么待真机样本，要么实测数" % (slot, cell))
-        if not evidence_backed(item, cal):
-            bad.append(
-                "%s：目标格被填成了 %r，但拿不出在册凭据件（量具/读数件/样本门任缺一件）" % (slot, cell)
-            )
-    if pending < 1:
-        bad.append("§4 的目标格里一枚「待真机样本」都不剩：乙半没交之前这不可能")
+        target = expected_targets.get(slot)
+        suffix = " (P95, subsecond ceiling)" if slot.endswith("cache_hit_p95_ms") else " (P95)"
+        expected_cell = PENDING_TEXT if target is None else f"{target:,.0f} ms{suffix}"
+        if cell != expected_cell:
+            bad.append("%s：目标格没有登记 policy A 的原话（%r ≠ %r）" % (slot, cell, expected_cell))
     return bad
 
 
@@ -563,8 +579,8 @@ def test_the_number_scanner_is_not_a_dead_tooth() -> None:
         assert find_magnitudes(sample) == [], sample
 
 
-def test_the_target_column_still_says_awaiting_real_samples() -> None:
-    """判据④：乙半没交之前 §4 的目标格必须还挂着「待真机样本」，且不许被偷填。"""
+def test_the_target_column_matches_policy_a() -> None:
+    """判据④：§4 的目标列按 policy A 登记，分段格仍保持待真机样本。"""
     assert check_targets_pending(contract_text(), caliber()) == []
 
 
@@ -616,11 +632,20 @@ def test_the_observation_surface_does_not_reach_into_the_response() -> None:
 
 
 def test_the_caliber_is_machine_readable_json() -> None:
-    """「可查询描述」的意思：一次调用交出整张表，且逐格带着 target=None。"""
+    """「可查询描述」的意思：一次调用交出整张表，目标状态与 metric 同源。"""
     payload = json.dumps(caliber(), ensure_ascii=False, default=str)
     assert "r526.slo-caliber/1" in payload
-    assert all(item["target"] is None for item in caliber()["slots"])
-    assert all(item["target_status"] == observability.SLO_TARGET_PENDING for item in caliber()["slots"])
+    targets = {
+        f"{tier.lane}.{metric.name}": metric.target_ms
+        for tier in observability.slo_tiers()
+        for metric in tier.metrics
+    }
+    for item in caliber()["slots"]:
+        expected = targets.get(item["slot"])
+        assert item["target"] == expected
+        assert item["target_status"] == (
+            observability.SLO_TARGET_SET if expected is not None else observability.SLO_TARGET_PENDING
+        )
 
 
 def test_the_full_suite_of_checks_is_empty_on_the_shipped_tree(r453_cells) -> None:

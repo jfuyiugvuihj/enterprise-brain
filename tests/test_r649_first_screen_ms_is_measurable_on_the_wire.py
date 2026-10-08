@@ -336,14 +336,15 @@ def test_the_blocker_book_drops_only_the_cell_this_ticket_closed() -> None:
         assert observability.SLO_BLOCKERS[code], code
 
 
-def test_the_slot_still_answers_not_measurable_and_no_number() -> None:
-    """判据③：这一格买到的是"能量"。回执里它仍旧不可测、仍旧没有数、target 仍旧待填。"""
+def test_the_slot_still_answers_not_measurable_and_keeps_policy_target() -> None:
+    """判据③：这一格仍不可测、没有实测百分位，但保留 policy A 的目标上限。"""
     report = observability.slo_readout()
     tier = next(row for row in report["tiers"] if row["lane"] == "qa")
     block = tier["numbers"]["first_text_p95_ms"]
     assert block["status"] == observability.SLO_NOT_MEASURABLE, block
-    assert block["p50_ms"] is None and block["p95_ms"] is None and block["target"] is None
-    assert block["target_status"] == observability.SLO_TARGET_PENDING
+    assert block["p50_ms"] is None and block["p95_ms"] is None
+    assert block["target"] == observability.SLO_TARGET_QA_FIRST_TEXT_MS
+    assert block["target_status"] == observability.SLO_TARGET_SET
     codes = [item["code"] for item in block["blockers"]]
     assert codes == list(metric_blocker_codes()), codes
     assert "wire_first_text_not_recorded" not in json.dumps(report, ensure_ascii=False)
@@ -354,8 +355,8 @@ def metric_blocker_codes() -> list[str]:
     return list(_first_text_metric().blockers)
 
 
-def test_no_promise_survives_anywhere_on_the_new_surface() -> None:
-    """不许把「首屏 ≤1 s」写进任何对外句子：本单新增的每一格都不带承诺、不带实测秒数。"""
+def test_no_measured_promise_survives_anywhere_on_the_new_surface() -> None:
+    """目标是内部 policy；未经目标机器实测，不能把它写成外部实测承诺。"""
     probe = json.dumps(
         {
             "constants": [
