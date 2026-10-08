@@ -1596,6 +1596,9 @@ def run_with_stream(
     # 本轮档位读数：与图内 plan()/route_main 读的是同一份规则本体（resolve_turn_lane 不打
     # [R42] 锚点，频次一字不动），user_message 就是 plan() 拿到的那枚文本 ⇒ 读数与生效路径同源。
     turn = resolve_turn_lane(user_message, declared)
+    # Keep the resolved lane beside the execution context so every live span sample carries
+    # the same attribution that the request.started trace event already publishes.
+    config["configurable"].update(turn.as_dict())
     max_attempts = 3
     last_worker_results: dict = {}
     last_state: dict = {}

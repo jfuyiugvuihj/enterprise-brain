@@ -938,6 +938,31 @@ class TraceStore:
                 _merge_events(events, lines), key=lambda event: int(event.get("sequence") or 0)
             )
 
+    def all_events(self) -> list[dict[str, Any]]:
+        """Read every persisted trace event for aggregate observability views."""
+        with self._lock:
+            stored: list[dict[str, Any]] = []
+            if self.persistence is not None:
+                try:
+                    stored = [
+                        self.database_as_event(row)
+                        for row in (self.persistence.list("trace_events") or [])
+                    ]
+                except Exception as exc:
+                    durability.note_local_read_fallback(REASON_READ_FAILED, str(exc))
+            merged: dict[str, dict[str, Any]] = {}
+            for event in self._read_events():
+                merged[f"{event.get('trace_id')}:{event.get('sequence')}"] = event
+            for event in stored:
+                merged[f"{event.get('trace_id')}:{event.get('sequence')}"] = event
+            return sorted(
+                merged.values(),
+                key=lambda event: (
+                    str(event.get("trace_id") or ""),
+                    int(event.get("sequence") or 0),
+                ),
+            )
+
     def _local_trace_lines(self, trace_id: str) -> list[tuple[str, dict[str, Any]]]:
         """This trace's journal lines, as (address, event) pairs, minus the ones already rows.
 

@@ -782,10 +782,10 @@ SLO_SCREEN_SOURCE = "frontend/src/router/index.js"
 #: code that proves it. These are the holes 乙半 has to close somewhere else first.
 SLO_BLOCKERS: dict[str, str] = {
     "lane_attribution_absent": (
-        "``app/trace/spans.py::ExecutionSpan._observe_stage`` hands the ledger stage, "
-        "tool_name, model_tier and worker but never a lane, and no request event carries the "
-        "question, so every live sample groups under lanes.unknown and no per-tier population "
-        "exists to take a P95 of."
+        "legacy or unlabelled samples carry no lane and remain in the unknown pool; current "
+        "``/api/v1/ask`` requests copy the resolved R42 lane from ``request.started`` into "
+        "their execution context and ``ExecutionSpan._observe_stage``. A tier is publishable "
+        "only when its samples carry that lane."
     ),
     "first_token_not_a_stage_sample": (
         "first_token_at is stamped by ``app/trace/spans.py::ExecutionSpan.mark_first_token`` and "
@@ -1673,12 +1673,60 @@ def slo_readout(*, min_samples: int = MIN_SLO_SAMPLES) -> dict[str, Any]:
     samples. Both are gated by ``min_samples``, which is deliberately not a query parameter --
     an SLO floor a caller can lower is not a floor.
     """
-    from app.common.stage_timing import default_stage_ledger
+    from app.common.stage_timing import (
+        LaneTier,
+        default_stage_ledger,
+        request_windows_from_events,
+        samples_from_events,
+    )
 
     floor = max(1, int(min_samples))
     ledger = default_stage_ledger()
-    samples = ledger.samples()
-    windows = ledger.request_windows()
+    live_samples = ledger.samples()
+    live_windows = ledger.request_windows()
+    events = list(getattr(_trace_store(), "all_events", lambda: [])() or [])
+    persisted_samples: list[Any] = []
+    persisted_windows: dict[str, float] = {}
+    if events:
+        lane_by_trace: dict[str, LaneTier] = {}
+        for event in events:
+            if str(event.get("event_type") or "") != "request.started":
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            lane = str(payload.get("lane") or "").strip()
+            tier = str(payload.get("tier") or "").strip()
+            if lane or tier:
+                lane_by_trace[str(event.get("trace_id") or "")] = LaneTier(
+                    lane=lane,
+                    tier=tier,
+                    rule=str(payload.get("rule") or "").strip(),
+                    source=str(payload.get("lane_source") or "persisted_request"),
+                )
+        persisted_samples = samples_from_events(events, lane_by_trace=lane_by_trace)
+        persisted_windows = request_windows_from_events(events)
+    live_trace_ids = {sample.trace_id for sample in live_samples if sample.trace_id}
+    persisted_trace_ids = {sample.trace_id for sample in persisted_samples if sample.trace_id}
+    durable_overlaps_live = bool(live_trace_ids & persisted_trace_ids)
+    if persisted_samples and (not live_samples and not live_windows or durable_overlaps_live):
+        seen = {
+            (sample.trace_id, sample.stage, sample.duration_ms, sample.started_at, sample.completed_at)
+            for sample in persisted_samples
+        }
+        samples = persisted_samples + [
+            sample
+            for sample in live_samples
+            if (sample.trace_id, sample.stage, sample.duration_ms, sample.started_at, sample.completed_at)
+            not in seen
+        ]
+        windows = {**persisted_windows, **live_windows}
+        measurement_source = SLO_SOURCE_TRACE
+    else:
+        samples = live_samples
+        windows = live_windows
+        measurement_source = SLO_SOURCE_LEDGER
+    lane_attribution_missing = any(
+        sample.trace_id and not sample.lane for sample in samples
+    )
 
     tiers: list[dict[str, Any]] = []
     for tier in slo_tiers():
@@ -1690,16 +1738,23 @@ def slo_readout(*, min_samples: int = MIN_SLO_SAMPLES) -> dict[str, Any]:
             # The request-window distribution is the only one the in-process ledger can answer
             # with, so the branch is spelled against that slot rather than against the source
             # alone: a second ledger-sourced metric has to be wired deliberately, not inherit.
-            if metric.source == SLO_SOURCE_LEDGER and metric.name == "end_to_end_p95_ms":
+            if metric.name == "end_to_end_p95_ms" and metric.source in {
+                SLO_SOURCE_LEDGER,
+                SLO_SOURCE_TRACE,
+            }:
                 number = _slo_stat(end_to_end, floor)
                 number["blockers"] = [
-                    {"code": code, "detail": SLO_BLOCKERS[code]} for code in metric.blockers
+                    {"code": code, "detail": SLO_BLOCKERS[code]}
+                    for code in metric.blockers
+                    if code != "lane_attribution_absent" or lane_attribution_missing
                 ]
             else:
                 number = _slo_not_measurable(metric, floor)
             number["label"] = metric.label_zh
             number["population"] = metric.population
-            number["measured_from"] = metric.source
+            number["measured_from"] = (
+                measurement_source if metric.name == "end_to_end_p95_ms" else metric.source
+            )
             numbers[metric.name] = number
         tiers.append(
             {
@@ -1730,6 +1785,7 @@ def slo_readout(*, min_samples: int = MIN_SLO_SAMPLES) -> dict[str, Any]:
         "sample_floor": floor,
         "target_status": SLO_TARGET_PENDING,
         "percentile_source": SLO_PERCENTILE_SOURCE,
+        "measurement_source": measurement_source,
         "units": slo_units(),
         "tiers": tiers,
         "unattributed_pool": {

@@ -60,6 +60,10 @@ def span_identity(config: Any) -> dict[str, str]:
         "worker": str(configurable.get("worker") or "").strip(),
         "agent_run_id": f"{trace_id}:orchestrator" if trace_id else "",
         "agent_step_id": step_id,
+        "lane": str(configurable.get("lane") or "").strip(),
+        "tier": str(configurable.get("tier") or "").strip(),
+        "rule": str(configurable.get("rule") or "").strip(),
+        "lane_source": str(configurable.get("lane_source") or "").strip(),
     }
 
 
@@ -239,6 +243,9 @@ class ExecutionSpan:
                 stage=str(base.get("stage") or ""),
                 tool_name=str(base.get("tool_name") or ""),
                 tier=str(base.get("model_tier") or ""),
+                lane=str(base.get("lane") or self.identity.get("lane") or ""),
+                rule=str(base.get("rule") or self.identity.get("rule") or ""),
+                lane_source=str(base.get("lane_source") or self.identity.get("lane_source") or "unknown"),
                 worker=str(base.get("worker") or ""),
                 duration_ms=payload.get("duration_ms"),
                 trace_id=self.identity.get("trace_id", ""),
@@ -326,6 +333,9 @@ def record_stage_event(
             "agent_step_id": identity["agent_step_id"],
             "worker": identity["worker"],
             "model_tier": tier,
+            "lane": identity.get("lane", ""),
+            "rule": identity.get("rule", ""),
+            "lane_source": identity.get("lane_source", ""),
         },
     )
     payload = {
@@ -647,6 +657,9 @@ def start_model_call(
         "agent_step_id": identity["agent_step_id"],
         "worker": identity["worker"],
         "queue_wait_ms": queue_wait_ms,
+        "lane": identity.get("lane", ""),
+        "rule": identity.get("rule", ""),
+        "lane_source": identity.get("lane_source", ""),
     }
     if stage:
         base_payload["stage"] = stage
@@ -683,6 +696,9 @@ def start_tool_call(
             "agent_run_id": identity["agent_run_id"],
             "agent_step_id": identity["agent_step_id"],
             "worker": identity["worker"],
+            "lane": identity.get("lane", ""),
+            "rule": identity.get("rule", ""),
+            "lane_source": identity.get("lane_source", ""),
             "arguments": _summarize_arguments(arguments),
         },
     )

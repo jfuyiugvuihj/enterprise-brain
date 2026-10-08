@@ -401,6 +401,66 @@ def test_unlabelled_live_samples_are_not_split_across_tiers(client) -> None:
     assert "lane_attribution_absent" in json.dumps(body["tiers"], ensure_ascii=False)
 
 
+def test_slo_readout_replays_persisted_events_after_process_restart(tmp_path, monkeypatch) -> None:
+    """The SLO screen keeps real samples after the process that recorded them is gone."""
+    from app.storage.persistence import JsonPersistenceAdapter
+    from app.trace.store import TraceStore
+
+    persistence_path = tmp_path / "trace-store.json"
+    writer = TraceStore(
+        tmp_path / "writer-events.jsonl",
+        persistence=JsonPersistenceAdapter(persistence_path),
+    )
+    for index in range(100):
+        trace_id = f"durable-slo-{index}"
+        common = {
+            "trace_id": trace_id,
+            "request_id": f"request-{index}",
+            "task_id": f"task-{index}",
+        }
+        writer.record_event(
+            **common,
+            event_type="request.started",
+            status="running",
+            payload={"owner_id": "u-admin", "lane": LANE_QA, "tier": "chat", "rule": "test"},
+        )
+        writer.record_event(
+            **common,
+            event_type="stage.finished",
+            status="completed",
+            payload={
+                "owner_id": "u-admin",
+                "record_id": f"stage-{index}",
+                "stage": "generate",
+                "duration_ms": float(index + 1),
+                "started_at": "2026-10-08T00:00:00+00:00",
+                "completed_at": "2026-10-08T00:00:00.001000+00:00",
+            },
+        )
+        writer.record_event(
+            **common,
+            event_type="request.completed",
+            status="completed",
+            payload={"owner_id": "u-admin"},
+        )
+
+    reader = TraceStore(
+        tmp_path / "reader-events.jsonl",
+        persistence=JsonPersistenceAdapter(persistence_path),
+    )
+    reset_stage_ledger()
+    monkeypatch.setattr(observability, "_trace_store", lambda: reader)
+
+    body = observability.slo_readout()
+    tier = _tier(body, LANE_QA)
+    gate = tier["numbers"]["end_to_end_p95_ms"]
+
+    assert tier["observed_requests"] == 100
+    assert gate["status"] == observability.SLO_MEASURED
+    assert tier["stage_numbers"]["generate"]["n"] == 100
+    assert "lane_attribution_absent" not in json.dumps(gate, ensure_ascii=False)
+
+
 def test_slots_without_a_measurement_piece_still_answer_no_number(client) -> None:
     tier = _tier(client.get(SLO_PATH, headers=_headers()).json(), LANE_QA)
 

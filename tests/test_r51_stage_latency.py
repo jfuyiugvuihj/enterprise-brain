@@ -580,6 +580,22 @@ def test_a_finished_span_lands_in_the_ledger_under_its_own_segment(trace_store) 
     assert stages["reflect"]["count"] == 0
 
 
+def test_a_finished_span_keeps_the_request_lane_on_the_live_sample(trace_store) -> None:
+    from app.trace.spans import start_model_call
+
+    span = start_model_call(
+        _config(lane="qa", tier="chat", rule="explicit", lane_source="explicit"),
+        provider="ollama",
+        model_name="qwen3.5:9b",
+        model_tier="chat",
+    )
+    span.finish("completed")
+
+    sample = default_stage_ledger().samples()[-1]
+    assert sample.lane == "qa"
+    assert sample.tier == "chat"
+
+
 def test_a_model_built_by_the_production_factory_reports_its_own_tier(trace_store) -> None:
     """Judgement 4's production pin: the tier that sized the budget is the tier the span carries.
 
