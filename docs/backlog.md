@@ -57,7 +57,9 @@ V2 自 10-07 起有自己的第二张验收面（环 10–16，见下面『一�
 - **B19 选了「问答档」，那一轮的步子牌仍写「📊 分析数据」**：屏上那句承诺是「只用文字回答，不算数、不出图、不产文件」，步子牌却说分析了数据。嫌疑是 `app/api/v1/chat.py` 里按关键词回写 `dispatched` 的那一串（`data_kw` 那一排）。要么牌子跟着档位改口，要么档位没真管住腿——两件都得先现读定性。
 - **B20 「交成果」屏永远列不出产物（已修 5c8cae5）**：`frontend/src/components/ArtifactList.vue` 自己取数，可 `loadArtifacts()` 只写在 `reload()` 里、全文件没有一处 `onMounted`，而两处挂载点（`ArtifactsPanel.vue` 与 `DataPanel.vue`）都只是 `<ArtifactList />` 不带 ref——没人替它按第一下刷新。屏上现象＝永远停在「暂无分析产物」，接口那边同账号有 29 条。DataPanel 读文件列表用的是 `onMounted(loadDataFiles)`，这里只是漏了这一行。
 - **B21 服务等级目标这屏今天量不到毫秒（演示时只能报「欠多少」）**：三格叠着——① 样本池是每进程内存（`app/common/stage_timing.py::StageLedger.add_request_window`），重启清零、跨容器不汇；② 分档归属还没通（`lane_attribution_absent`，现读未归档池 19 条、三档各 0 条）；③ 目标值那格按设计空着等填（`awaiting_real_samples`，`app/api/v1/observability.py` 模块头明写「starts empty on purpose」），而出百分位要 100 条。所以这屏能演示的是「三档各自说得出今天欠多少」，不能演示「达标」——环 20 就钉这一格，量不到毫秒这笔账挂在这里，不在屏上蒙。
-- **B22 改了前端，新鲜度拦门不响**：`smoke_v1.py::code_freshness` 只比「最新 `app` 提交时刻」与 backend/worker/scheduler 三枚容器的启动时刻。`frontend/**` 是另一枚镜像（`enterprise-brain-frontend:local`），改它不触发拦门——今天 5c8cae5 那笔就是靠手工 build＋recreate 才作数的。风险形状＝前端没重建时，走查件跑在全是旧页面上照样能报绿。写域：`scripts/smoke_v1.py::code_freshness`（加一枚前端提交 vs frontend 容器的对照）。
+- **B22 改了前端，新鲜度拦门不响（本班已治：`scripts/smoke_v1.py::FRESHNESS_TRACKS`）**：`smoke_v1.py::code_freshness` 以前只比「最新 `app` 提交时刻」与 backend/worker/scheduler 三枚容器的启动时刻。`frontend/**` 是另一枚镜像（`enterprise-brain-frontend:local`），改它不触发拦门——10-07 那笔 5c8cae5 就是靠手工 build＋recreate 才作数的。风险形状＝前端没重建时，走查件跑在全是旧页面上照样能报绿。
+  🔧 改法＝同一把尺量两族：`FRESHNESS_TRACKS` 现在两笔（`app` 对 backend/worker/scheduler、`frontend` 对 frontend 容器），措辞与「拿不到读数照样门红」那一格逐字同形。**当场就抓到一枚真旧**：现读 frontend 容器启动于 10-07 20:46、最新 `frontend` 提交 5c8cae5 落在 20:48，拦门当场红一行；`docker compose --env-file deploy/.env.server build frontend` 加 `up -d --force-recreate frontend` 之后同一把尺交回零行。
+  📌 账面新规矩（写在这里，不写进 AGENTS.md 那 21 枚）：**改 `frontend/**` 要 `docker compose build frontend` 才换码**，它不在 `migrate` 那条道上；只 `--force-recreate` 不 build＝端上去的还是旧页面。
 
 ## 二、可派的功能单（写集互不重叠，一枚＝一条上面那行）
 

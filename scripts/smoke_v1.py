@@ -43,8 +43,25 @@ def preflight(base_url):
     return bad
 
 
-#: 端到端结论要落在真码上：这三枚容器带的镜像必须不早于最新一枚 app 提交。
+#: 端到端结论要落在真码上：每一族容器带的镜像必须不早于它那一路源码的最新一枚提交。
+#: 两族分开量：backend/worker/scheduler 共用后端镜像（码源在 app/**），而 frontend/**
+#: 是另一枚镜像（docker-compose.yml 的 frontend 格用 frontend/Dockerfile 自己
+#: npm run build，不在 migrate 那条道上），改前端只有 docker compose build frontend
+#: 才换码。以前这一族没人量：10-07 那笔前端修复 5c8cae5 全靠手工 build 加 recreate 才
+#: 作数，屏上跑的前端比那笔新还是旧，当时量不出来（B22）。尺子与措辞同后端那一族逐字
+#: 同形，拿不到读数照样门红。
 CONTAINERS = ("backend", "worker", "scheduler")
+FRONTEND_CONTAINERS = ("frontend",)
+
+#: 三格一体：(源码路径, 容器名关键子串, 换码那一句)
+FRESHNESS_TRACKS = (
+    ("app", CONTAINERS,
+     "重建后端镜像再 docker compose --env-file deploy/.env.server up -d --force-recreate "
+     "backend worker scheduler"),
+    ("frontend", FRONTEND_CONTAINERS,
+     "docker compose --env-file deploy/.env.server build frontend 再 up -d --force-recreate "
+     "frontend"),
+)
 
 
 def _iso(stamp):
@@ -57,21 +74,20 @@ def _iso(stamp):
         return None
 
 
-def code_freshness():
-    """容器启动时刻 vs 最新 app 提交时刻。拿不到读数不沉默——照样交回门红。"""
+def _track_freshness(source, keys, listed_names, listed_rc, rebuild_hint):
+    """一族容器 vs 它那一路源码的最新提交：尺子只有一把，两族共用。"""
     bad = []
-    proc = subprocess.run(["git", "log", "-1", "--format=%cI", "--", "app"],
+    proc = subprocess.run(["git", "log", "-1", "--format=%cI", "--", source],
                           cwd=str(REPO), capture_output=True, text=True, encoding="utf-8",
                           errors="replace")
-    app_at = _iso(proc.stdout)
-    if app_at is None:
-        bad.append("问不到最新 app 提交时刻（git rc=" + str(proc.returncode) + "）＝不判新鲜度也别宣布绿")
+    code_at = _iso(proc.stdout)
+    if code_at is None:
+        bad.append("问不到最新 " + source + " 提交时刻（git rc=" + str(proc.returncode)
+                   + "）＝不判新鲜度也别宣布绿")
         return bad
-    listed = subprocess.run(["docker", "ps", "--format", "{{.Names}}"],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace")
-    names = [n for n in (listed.stdout or "").split() if any(k in n for k in CONTAINERS)]
+    names = [n for n in listed_names if any(k in n for k in keys)]
     if not names:
-        bad.append("容器名单里没有 backend/worker/scheduler（docker rc=" + str(listed.returncode)
+        bad.append("容器名单里没有 " + "/".join(keys) + "（docker rc=" + str(listed_rc)
                    + "），拿不到启动时刻")
         return bad
     for name in names:
@@ -80,10 +96,25 @@ def code_freshness():
         started = _iso(insp.stdout)
         if started is None:
             bad.append(name + " 问不到启动时刻：" + (insp.stderr or "").strip()[:80])
-        elif started < app_at:
+        elif started < code_at:
             bad.append(name + " 启动于 " + started.strftime("%m-%d %H:%M")
-                       + "，早于最新 app 提交 " + app_at.strftime("%m-%d %H:%M")
-                       + "＝容器带的是旧码，这轮端到端读数不清")
+                       + "，早于最新 " + source + " 提交 " + code_at.strftime("%m-%d %H:%M")
+                       + "＝容器带的是旧码，这轮端到端读数不清（换码：" + rebuild_hint + "）")
+    return bad
+
+
+def code_freshness():
+    """两族容器的启动时刻 vs 各自那一路源码的最新提交时刻。
+
+    拿不到读数不沉默——照样交回门红。后端那一族与前端那一族各判各的，两行的红都交出去：
+    以前前端没重建时走查跑在旧页面上照样能报绿，那一格根本不在门上（B22）。
+    """
+    listed = subprocess.run(["docker", "ps", "--format", "{{.Names}}"],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+    listed_names = (listed.stdout or "").split()
+    bad = []
+    for source, keys, rebuild_hint in FRESHNESS_TRACKS:
+        bad += _track_freshness(source, keys, listed_names, listed.returncode, rebuild_hint)
     return bad
 
 
@@ -182,11 +213,12 @@ def main():
         if stale:
             for line in stale:
                 print("[freshness] " + line, flush=True)
-            print("[freshness] 容器带旧码＝门红：先重建镜像，再 docker compose --env-file "
-                  "deploy/.env.server up -d --force-recreate backend worker scheduler"
+            print("[freshness] 容器带旧码＝门红：按上面每一行点名的那一族换码——后端三枚重建镜像"
+                  "再 up -d --force-recreate，前端要 docker compose build frontend 再 recreate"
                   "（Docker 起不来用 scripts/docker_up.ps1）；明知已对齐时用 --allow-stale", flush=True)
             return 1
-        print("[freshness] 三枚容器带的码不早于最新 app 提交，端到端读数可作数", flush=True)
+        print("[freshness] 后端三枚带 app 那一路的码、前端一枚带 frontend 那一路的码，"
+              "都不早于各自最新提交，端到端读数可作数", flush=True)
     out = Path(args.out) if args.out else Path(tempfile.gettempdir()) / "evalrun" / ("smoke-" + args.suite)
     passes = max(1, args.repeat)
     rowsets = []
