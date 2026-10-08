@@ -914,6 +914,21 @@ class Walk:
         }
 
     # --------------------------------------------------------------------- 环
+    #: 屏上那句「数值 = 几」。取**最后一次**出现的那枚：客户读的是结论落点，
+    # 不是自问自答的过程里顺口提过一嘴的那个数。
+    _VALUE_ASSERTION_RE = re.compile(r"数值[^0-9]{0,8}([0-9][0-9,０-９]*)")
+
+    @classmethod
+    def stated_value(cls, text: str) -> str:
+        """屏上最后落点的那枚数值；一枚都没说出来交空串。
+
+        10-08 10:3x 撤下态现读给出了这枚尺子的样子：模型一路自问自答，中间抄到过真值
+        （「对应行信息：…数值=1003548」），最后一句落回「因此……的数值是 3」。按「这枚数
+        在答案里出现过」判，这一发照样绿；客户在屏上读到的答案却是错的。
+        """
+        found = cls._VALUE_ASSERTION_RE.findall(text or "")
+        return found[-1].replace(",", "") if found else ""
+
     #: 档位承诺与步子牌的对照表（B19）。牌子上写什么，屏上那句承诺就不许反着说。
     LANE_FORBIDDEN_CHIPS = {
         "问答档": ("分析数据", "生成图表", "导出报告"),
@@ -1479,6 +1494,11 @@ class Walk:
         grid = ["部门,项目,数值"]
         grid += ["市场部,月度差旅%s-%02d,%d" % (self.nonce, index, index * 3) for index in range(1, 41)]
         grid.append("市场部," + marker + "," + value)
+        # B18：表里再放一枚比被点名的那一行更大的数。少了这一枚，兜底预览按数值降序恰好把
+        # 被点名的那行排在第一，模型「猜最大的那一行」也能猜对——10-08 10:3x 撤下态那一跑判「达」
+        # 就是这么来的（原话「数值为 1003038（该行为数据中数值最大的记录）」）。加了一枚更大的数，
+        # 猜最大那一行就必然猜错，这一发量的才是「它认不认得被点名的那一行」。
+        grid.append("市场部,月度差旅%s-99,999999999" % self.nonce)
         fixture.write_bytes(("\n".join(grid) + "\n").encode("utf-8-sig"))
         nav = self._goto("/data", "data-panel")
         items = "[data-testid=data-file-item]"
@@ -1506,7 +1526,7 @@ class Walk:
             ".map(e => e.innerText || '')"
         )
         joined = "\n".join(answer[-1:])
-        carries = value in joined
+        carries = self.stated_value(joined) == value
         shots.append(self.shot("v2-r10-answer.png"))
         # B18：同一句话再走一遍算数那一条道（分析档的天花板允许 data 腿），两条道必须答同一个数。
         # 10-08 09:5x 现读：问答档答对（1325273），另一条道答「数值为 3／项目=月度差旅425273-01」
@@ -1524,7 +1544,7 @@ class Walk:
             ".map(e => e.innerText || '')"
         )
         joined_data = "\n".join(data_bubbles[-1:])
-        carries_data = value in joined_data
+        carries_data = self.stated_value(joined_data) == value
         shots.append(self.shot("v2-r10-answer-data-leg.png"))
         # B17 之后这一环要证明的是「这一轮真读了知识库」，不是「模型嘴上提了文件名」。
         # 来源卡是证据袋画出来的：没检索就没有卡，编出来的出处画不出卡。
@@ -1550,6 +1570,9 @@ class Walk:
             "answer_names_the_table": fixture.name in joined,
             "source_card_names_the_table": any(fixture.name in line for line in readings_source_lines),
             "answer_carries_the_value": bool(carries),
+            #: 屏上最后落点说出来的那枚数——两腿各一格，读数不当门、但未达时只要看这两格
+            "doc_leg_stated_value": self.stated_value(joined),
+            "data_leg_stated_value": self.stated_value(joined_data),
             "data_leg_asked": asked_data.get("asked"),
             #: 这一发的牌子上跑的是哪条道——没有「📊 分析数据」这一枚，下面那格读数就不算数。
             "data_leg_chips_on_screen": data_chips,
