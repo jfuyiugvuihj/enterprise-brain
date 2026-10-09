@@ -71,8 +71,7 @@ export const READ_FAILED_TITLE = '挂起待办没能读出来'
 
 /** 空态说的是「确实没有挂着的事」，而且要和「没权限」分得开：两句话不许互相顶替。 */
 export const EMPTY_TITLE = '现在没有等你拍板的事'
-export const EMPTY_DESCRIPTION = '这一屏读的是服务端的挂起账本：只有智能体真的停下来等确认时才会写下一笔。'
-  + '这里为空就说明确实没有挂着的事，不等于这个账号没权限看账本，也不等于已经有人替你办了。'
+export const EMPTY_DESCRIPTION = '目前没有需要你确认的操作。任务需要确认时，会在这里显示。'
 
 /** 三句失败话各说各的事：没权限 / 表没建 / 没登录。 */
 export const DENIED_TITLE = '这个账号没有读挂起账本的权限'

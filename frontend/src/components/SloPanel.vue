@@ -155,7 +155,7 @@ function unitKindText(unit) {
         <div class="section-head">
           <span class="eyebrow">统计说明</span>
           <span class="demo-note" data-testid="slo-floor">
-            至少需要 {{ textOrUnrecorded(head.sampleFloor) }} 个样本才能显示百分位；样本门槛由系统统一设置。
+            至少需要 {{ textOrUnrecorded(head.sampleFloor) }} 样本才能显示百分位；样本门槛由系统统一设置。
           </span>
         </div>
         <dl class="slo-facts">

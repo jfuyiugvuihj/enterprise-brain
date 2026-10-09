@@ -245,7 +245,7 @@ describe('R505 判据 A 之② · 没量过就是没量过', () => {
     expect(view.p95Text).toBe(UNRECORDED)
     expect(view.p50Text).not.toBe(durationText(0))
     expect(view.statusText).toBe(SLO_STATUS_LABELS[SLO_STATUS_INSUFFICIENT])
-    expect(view.statusText).toContain('欠样本')
+    expect(view.statusText).toContain('样本不足')
     expect(sloHasReadableNumber(STAT_SLOT)).toBe(false)
   })
 
@@ -255,7 +255,7 @@ describe('R505 判据 A 之② · 没量过就是没量过', () => {
     expect(insufficient.shortfall).toBe('97 条')
     expect(notMeasurable.shortfall).toBe('100 条')
     expect(notMeasurable.samples).toBe('0 条样本')
-    expect(notMeasurable.statusText).toContain('不可测')
+    expect(notMeasurable.statusText).toContain('尚未采集')
     expect(notMeasurable.statusText).not.toBe(insufficient.statusText)
     // 后端把「还欠几枚」折好了交给屏（:1016）：屏面只做单位换算，不做减法。
     expect(notMeasurable.requiredSamples).toBe('100 条')
@@ -313,7 +313,7 @@ describe('R505 判据 A 之③ · blockers 逐条挂出来，码名留后端原�
     expect(tier.label).toBe('问答档')
     expect(tier.screenRoute).toBe('chat')
     expect(tier.endpoints).toEqual(['/api/v1/chat'])
-    expect(tier.observedRequests).toBe('7 枚请求窗口')
+    expect(tier.observedRequests).toBe('7 个请求窗口')
   })
 
   it('非数组的 blockers 一律当「没交出障碍」，不猜、不补一条', () => {

@@ -52,15 +52,15 @@ export const SLO_FACES = [
 /** 后端在册的那枚存储码：app/api/v1/observability.py 没有 503 的文档形状，故只认码不认状态机。 */
 export const SLO_STORAGE_CODE = 'storage_unavailable'
 
-export const SLO_LOADING_TEXT = '正在读这份三档目标账'
+export const SLO_LOADING_TEXT = '正在加载服务目标'
 export const SLO_TITLES = {
-  [SLO_FACE_LOADING]: '正在读这份目标账',
+  [SLO_FACE_LOADING]: '正在加载服务目标',
   [SLO_FACE_READY]: '',
-  [SLO_FACE_UNAUTHORIZED]: '这份目标账要重新登录才读得到',
-  [SLO_FACE_DENIED]: '这份目标账不向你开放',
-  [SLO_FACE_STORAGE]: '读数落不在这台机器上：存储不可用',
-  [SLO_FACE_MALFORMED]: '这份目标账的回包读不出形状',
-  [SLO_FACE_FAILED]: '这份目标账没读回来',
+  [SLO_FACE_UNAUTHORIZED]: '请登录后查看服务目标',
+  [SLO_FACE_DENIED]: '没有查看服务目标的权限',
+  [SLO_FACE_STORAGE]: '存储服务不可用',
+  [SLO_FACE_MALFORMED]: '服务目标数据格式异常',
+  [SLO_FACE_FAILED]: '服务目标加载失败',
 }
 
 /** 403 之后必须指出下一步去哪（与 lib/traces.js 同一口径）：重新登录不会让这项权限出现。 */
@@ -77,9 +77,9 @@ export const SLO_STATUS_INSUFFICIENT = 'insufficient_samples'
 export const SLO_STATUS_NOT_MEASURABLE = 'not_measurable'
 
 export const SLO_STATUS_LABELS = {
-  [SLO_STATUS_MEASURED]: '量到了：样本够了，百分位出自服务端那一格',
-  [SLO_STATUS_INSUFFICIENT]: '欠样本：读数不足以出百分位，所以这里没有数字',
-  [SLO_STATUS_NOT_MEASURABLE]: '不可测：今天没有任何一段程序在产生这一格的样本',
+  [SLO_STATUS_MEASURED]: '已采集：样本充足，可查看实测耗时',
+  [SLO_STATUS_INSUFFICIENT]: '样本不足：暂不显示百分位',
+  [SLO_STATUS_NOT_MEASURABLE]: '尚未采集：此指标的测量尚未接入',
 }
 export const SLO_STATUS_UNKNOWN = '未登记的判定'
 
@@ -88,7 +88,7 @@ export const SLO_TARGET_PENDING = 'awaiting_real_samples'
 export const SLO_TARGET_SET = 'target_set'
 export const SLO_TARGET_PARTIAL = 'targets_partially_set'
 export const SLO_TARGET_LABELS = {
-  [SLO_TARGET_PENDING]: '目标值待填：还没有人往这一格写过数字',
+  [SLO_TARGET_PENDING]: '目标值待填：尚未设置',
   [SLO_TARGET_SET]: '[目标] 内部优化上限',
   [SLO_TARGET_PARTIAL]: '部分目标已登记：分段目标仍待定',
 }
@@ -98,7 +98,7 @@ export const SLO_TARGET_UNKNOWN = '未登记的目标状态'
 export const SLO_SOURCE_LABELS = {
   stage_ledger: '来自进程内的分段账本',
   persisted_trace_events: '来自已落盘的运行事件',
-  no_measurement_piece: '没有测量件：再多流量也填不上这一格',
+  no_measurement_piece: '测量尚未接入，增加请求量也不会生成样本',
 }
 export const SLO_SOURCE_UNKNOWN = '未登记的出处'
 
@@ -211,7 +211,7 @@ export function sloTierViews(report) {
       screenPath: textOf(isRecord(source.screen) ? source.screen.path : ''),
       screenSource: textOf(isRecord(source.screen) ? source.screen.source : ''),
       endpoints: Array.isArray(source.endpoints) ? source.endpoints.map(item => textOf(item)) : [],
-      observedRequests: countText(source.observed_requests, '枚请求窗口'),
+      observedRequests: countText(source.observed_requests, '个请求窗口'),
       numbers: Object.keys(numbers).map(key => ({ ...sloNumberView(numbers[key]), key })),
       stages: Object.keys(stages).map(key => ({
         ...sloNumberView(stages[key]),

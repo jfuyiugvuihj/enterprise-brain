@@ -2277,7 +2277,7 @@ class Walk:
                     for t in page.locator("[data-testid=slo-failure]").all_inner_texts()]
         whole = page.locator("[data-testid=slo-panel]").inner_text() if settled else ""
         shots = [self.shot("v2-r20-slo.png")]
-        digits = [int(x) for x in re.findall(r"(\d+)\s*枚请求窗口", " ".join(observed + pool))]
+        digits = [int(x) for x in re.findall(r"(\d+)\s*(?:个|枚)请求窗口", " ".join(observed + pool))]
         shortfalls = [int(x) for x in re.findall(r"还欠\D{0,4}(\d+)", whole)]
         claimed = [word for word in ("已达成", "达标通过", "目标达成") if word in whole]
         every_tier_talks = tier_count == 3 and len(observed) == 3 and all(observed)
