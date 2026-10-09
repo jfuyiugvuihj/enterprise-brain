@@ -10,6 +10,11 @@ def test_policy_question_about_expense_standard_routes_only_to_documents():
     assert _workers("住宿费用通常按什么标准报销？超过标准需要准备哪些材料？") == ["doc"]
 
 
+def test_approval_flow_summary_does_not_precheck_a_nonexistent_expense():
+    assert _workers("请依据差旅制度汇总报销审批环节，演示编号193416") == ["doc"]
+    assert "approval" in _workers("请预审申请金额500元的报销，并说明审批流程")
+
+
 def test_comparative_expense_question_routes_only_to_data():
     assert _workers("哪个部门住宿费最高、哪个最低，差距是多少？") == ["data"]
 

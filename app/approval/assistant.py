@@ -144,10 +144,11 @@ def precheck_payload(result: dict, *, requested_by: str = "") -> dict:
     return payload
 
 _AMOUNT_PATTERN = re.compile(
-    r"(?P<value>\d+(?:[.,]\d+)*)\s*(?P<unit>万元|万|元|块)?"
+    r"(?:(?P<label>报销金额|申请金额|金额|费用|花费|报销|￥|¥|人民币)\s*(?:为|是|[:：])?\s*)?"
+    r"(?P<value>\d+(?:[.,]\d+)*)\s*(?P<unit>万元|万|元|块|CNY|RMB|人民币)?", re.I
 )
 _STANDARD_PATTERNS = (
-    re.compile(r"(?:上限|标准|不得超过|不超过|限额|最高)[^0-9]{0,12}(\d+(?:\.\d+)?)"),
+    re.compile(r"(?:上限|标准|不得超过|不超过|限额|最高)[^0-9]{0,12}(\d+(?:\.\d+)?)\s*(万元|元|块|CNY|RMB)", re.I),
     re.compile(r"(\d+(?:\.\d+)?)[^0-9]{0,6}(?:元/晚|元每晚|元\/晚)"),
 )
 _EXPENSE_TYPES = {
@@ -167,13 +168,17 @@ def parse_expense_request(question: str) -> dict:
     text = str(question or "")
     amount = None
     for match in _AMOUNT_PATTERN.finditer(text):
+        if re.search(r"(?:标准|限额|上限|预算|不超过|最高)(?:金额)?\s*(?:为|是|[:：])?\s*$", text[:match.start("value")]):
+            continue
         raw = match.group("value").replace(",", "")
         unit = match.group("unit") or ""
+        if not match.group("label") and (not unit or unit == "万"):
+            continue
         try:
             value = Decimal(raw) * (Decimal("10000") if "万" in unit else Decimal("1"))
         except InvalidOperation:
             continue
-        if unit:
+        if match.group("label"):
             amount = value
             break
         if amount is None:
@@ -194,6 +199,8 @@ def extract_standard(excerpts: list[str]) -> Decimal | None:
             for match in pattern.finditer(text):
                 try:
                     value = Decimal(match.group(1))
+                    if match.lastindex and match.lastindex > 1 and match.group(2) == "万元":
+                        value *= Decimal("10000")
                 except InvalidOperation:
                     continue
                 if value > 0:
