@@ -89,7 +89,7 @@ export const SLO_TARGET_SET = 'target_set'
 export const SLO_TARGET_PARTIAL = 'targets_partially_set'
 export const SLO_TARGET_LABELS = {
   [SLO_TARGET_PENDING]: '目标值待填：还没有人往这一格写过数字',
-  [SLO_TARGET_SET]: '目标已登记：按当前 SLO 口径对比',
+  [SLO_TARGET_SET]: '[目标] 内部优化上限',
   [SLO_TARGET_PARTIAL]: '部分目标已登记：分段目标仍待定',
 }
 export const SLO_TARGET_UNKNOWN = '未登记的目标状态'
