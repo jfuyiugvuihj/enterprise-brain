@@ -218,11 +218,9 @@ function confirmDelete() {
   <div class="panel-shell" data-testid="admin-panel" :data-face="view.face">
     <header class="panel-head">
       <div>
-        <span class="eyebrow">服务端账号名册</span>
+        <span class="eyebrow">账号管理</span>
         <p>
-          这一屏列的是 GET /users 真回包里的行：谁在名册上、各自被登记成什么角色。
-          名册读回来之后，下面那块动作条按后端早就在树的四枚出口写它——开通账号、改密码、调部门、删除账号；
-          每写完一次这一屏都重新读一次，所以屏上那几行永远是刚刚读回来的结果，不是前端自己改出来的影子。
+          查看账号及角色，开通账号、修改密码、调整部门或删除账号。操作完成后，列表会自动更新。
         </p>
       </div>
       <div>
@@ -246,7 +244,7 @@ function confirmDelete() {
     <section v-if="canAct" class="panel-card" data-testid="admin-user-actions">
       <div class="section-head">
         <span class="eyebrow">账号操作</span>
-        <span class="demo-note">后端只有「删除」这一枚出口，没有「停用」；改名与换角色它也没给出口 —— 这里只摆它真给的那四枚。</span>
+        <span class="demo-note">目前支持开通、修改密码、调整部门和删除账号。暂不支持停用、改名或修改角色。</span>
       </div>
 
       <div class="section-head">
@@ -255,7 +253,7 @@ function confirmDelete() {
           v-model="targetName"
           label="操作对象"
           :options="targetOptions"
-          placeholder="先从名册里点一枚账号"
+          placeholder="请选择账号"
           data-testid="pick-target"
         />
         <UiButton
@@ -292,7 +290,7 @@ function confirmDelete() {
         />
       </div>
       <p v-else-if="!isEmpty" class="demo-note">
-        改密码、调部门、删除都落在「操作对象」那一枚账号上：还没点到人，这三枚就不摆出来。
+        请先选择账号，再修改密码、调整部门或删除。
       </p>
 
       <!-- 回执：成功那一支是名册旁边一句话，失败那一支是一张独立的脸（判据丙），都不挂重试。 -->
@@ -344,8 +342,8 @@ function confirmDelete() {
     -->
     <UiDialog
       v-model="dlgCreate"
-      title="开通一枚新账号"
-      description="这一枚发的是 POST /users。表单里那几条要求逐条抄自后端自己的规则，一条不多一条不少。"
+      title="开通新账号"
+      description="填写账号信息并设置初始密码。"
       :busy="busyKind === USER_WRITE_CREATE"
     >
       <div class="panel-shell">
@@ -354,7 +352,7 @@ function confirmDelete() {
           label="账号名"
           required
           :error="fieldErrors[USER_FORM_FIELDS.username]"
-          hint="后端对账号名没有字符集、也没有长度规则，所以这里也不设：填什么就发什么。"
+          hint="请输入账号名。"
           data-testid="create-username"
         />
         <UiField
@@ -378,7 +376,7 @@ function confirmDelete() {
           v-model="form[USER_FORM_FIELDS.department]"
           label="部门归属"
           :error="fieldErrors[USER_FORM_FIELDS.department]"
-          hint="留空就是这一枚账号没有归属部门；后端对部门归属同样没有字符集规则。"
+          hint="可留空，表示暂未分配部门。"
           data-testid="create-department"
         />
       </div>

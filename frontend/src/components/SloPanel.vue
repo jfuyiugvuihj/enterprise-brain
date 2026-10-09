@@ -7,7 +7,7 @@
 
   🔴 这一屏的判据是 A：不许把「没量过」画成达成。三条落地写法，逐条有钉
   （src/components/__tests__/r505-slo-screen.test.js）：
-    ① 每一档都把「欠样本 / 不可测」与还欠几枚印出来：p50/p95 在服务端答 null 的地方，屏上就是
+    ① 每一档都把「欠样本 / 不可测」与缺少样本几枚印出来：p50/p95 在服务端答 null 的地方，屏上就是
        「未记录」这一句人话。目标值只显示服务端登记的政策目标，实测百分位仍受样本闸控制，
        所以这一屏没有任何一处把目标值冒充实测结果，也没有任何一处把 0 当读数。
     ② blockers 逐条挂出来，code 用后端原名（lane_attribution_absent 那一族属乙半未清）：
@@ -59,22 +59,22 @@ const pool = computed(() => view.value.pool || null)
 
 /** 数字那一表：列就是回包里的格，formatter 一律不吃算术（值在 lib 层已经折成文本）。 */
 const numberColumns = [
-  { key: 'label', label: '哪一格' },
-  { key: 'statusText', label: '这一格今天怎么说' },
+  { key: 'label', label: '指标' },
+  { key: 'statusText', label: '当前状态' },
   { key: 'samples', label: '已有样本' },
-  { key: 'requiredSamples', label: '出数要几枚' },
-  { key: 'shortfall', label: '还欠' },
-  { key: 'p50Text', label: '一半在这儿' },
-  { key: 'p95Text', label: '九成五在这儿' },
+  { key: 'requiredSamples', label: '所需样本' },
+  { key: 'shortfall', label: '缺少样本' },
+  { key: 'p50Text', label: '中位耗时（P50）' },
+  { key: 'p95Text', label: '95% 请求耗时（P95）' },
   { key: 'targetText', label: '目标值' },
 ]
 
 const stageColumns = [
   { key: 'label', label: '哪一段' },
-  { key: 'statusText', label: '这一段今天怎么说' },
+  { key: 'statusText', label: '当前状态' },
   { key: 'samples', label: '已有样本' },
-  { key: 'shortfall', label: '还欠' },
-  { key: 'p95Text', label: '九成五在这儿' },
+  { key: 'shortfall', label: '缺少样本' },
+  { key: 'p95Text', label: '95% 请求耗时（P95）' },
 ]
 
 const unitColumns = [
@@ -118,10 +118,9 @@ function unitKindText(unit) {
   <div class="panel-shell" data-testid="slo-panel" :data-face="view.face">
     <header class="panel-head">
       <div>
-        <span class="eyebrow">三档目标账：今天能说什么、不能说什么</span>
+        <span class="eyebrow">服务目标与运行表现</span>
         <p>
-          这一屏列的是问答 / 分析 / 报告三档各自的目标读数，以及服务端为每一格交代的欠账。
-          屏上每一个数字都是回包里那一格的读数：这里不数样本、不加和、不算百分位，也不替任何一格补目标值。
+          查看问答、分析和报告的响应时间目标与实测结果。样本不足或尚未采集的指标会显示原因。
         </p>
         <p class="demo-note">
           [目标] 为内部优化目标；未经目标机器实测不能对外承诺。报告按 60–120 秒规划，后台执行后可查回。
@@ -154,17 +153,16 @@ function unitKindText(unit) {
       <!-- 顶栏那一行：样本闸、目标状态、百分位出处，三格都只可能来自回包。 -->
       <section class="panel-card" data-testid="slo-head">
         <div class="section-head">
-          <span class="eyebrow">这份账的算法与闸口</span>
+          <span class="eyebrow">统计说明</span>
           <span class="demo-note" data-testid="slo-floor">
-            出百分位要{{ textOrUnrecorded(head.sampleFloor) }}：这一枚下限写在服务端，不是查询参数，
-            界面上没有任何一格能把它调低。
+            至少需要 {{ textOrUnrecorded(head.sampleFloor) }} 个样本才能显示百分位；样本门槛由系统统一设置。
           </span>
         </div>
         <dl class="slo-facts">
-          <div><dt>回执形状</dt><dd data-testid="slo-schema">{{ textOrUnrecorded(head.schema) }}</dd></div>
-          <div><dt>目标值这一格</dt><dd data-testid="slo-target-status">{{ textOrUnrecorded(head.targetText) }}</dd></div>
-          <div><dt>百分位出自</dt><dd data-testid="slo-percentile-source">{{ textOrUnrecorded(head.percentileSource) }}</dd></div>
-          <div><dt>这次是谁读的</dt><dd data-testid="slo-requested-by">{{ textOrUnrecorded(head.requestedBy) }}</dd></div>
+          <div><dt>数据格式</dt><dd data-testid="slo-schema">{{ textOrUnrecorded(head.schema) }}</dd></div>
+          <div><dt>目标状态</dt><dd data-testid="slo-target-status">{{ textOrUnrecorded(head.targetText) }}</dd></div>
+          <div><dt>统计方式</dt><dd data-testid="slo-percentile-source">{{ textOrUnrecorded(head.percentileSource) }}</dd></div>
+          <div><dt>当前账号</dt><dd data-testid="slo-requested-by">{{ textOrUnrecorded(head.requestedBy) }}</dd></div>
         </dl>
         <p class="demo-note" data-testid="slo-population-note">{{ textOrUnrecorded(head.populationNote) }}</p>
       </section>
@@ -180,27 +178,26 @@ function unitKindText(unit) {
         <div class="section-head">
           <span class="eyebrow">{{ textOrUnrecorded(tier.label) }}（{{ textOrUnrecorded(tier.lane) }}）</span>
           <span class="demo-note" data-testid="slo-observed">
-            这台服务在这一档今天有{{ textOrUnrecorded(tier.observedRequests) }}——分档的样本池就是它，不多不少。
+            已记录请求：{{ textOrUnrecorded(tier.observedRequests) }}
           </span>
         </div>
         <p v-if="tier.note" class="demo-note">{{ tier.note }}</p>
         <p class="demo-note">
-          这一档落在{{ textOrUnrecorded(tier.screenPath) }}那一屏，走的是{{ memberText(tier.endpoints) }}；
-          「屏」这个字的名册归{{ textOrUnrecorded(tier.screenSource) }}。
+          使用页面：{{ textOrUnrecorded(tier.screenPath) }}；接口：{{ memberText(tier.endpoints) }}；配置来源：{{ textOrUnrecorded(tier.screenSource) }}。
         </p>
 
         <UiTable
           :columns="numberColumns"
           :rows="tier.numbers"
           row-key="key"
-          aria-label="这一档的目标读数"
+          aria-label="该类请求的目标与实测"
           data-testid="slo-numbers"
         />
         <UiTable
           :columns="stageColumns"
           :rows="tier.stages"
           row-key="key"
-          aria-label="这一档的分段读数"
+          aria-label="该类请求的阶段耗时"
           data-testid="slo-stage-numbers"
         />
 
@@ -209,14 +206,14 @@ function unitKindText(unit) {
           <li v-for="slot in tier.numbers" :key="slot.key" data-testid="slo-reason">
             <span>{{ textOrUnrecorded(slot.label) }}：{{ textOrUnrecorded(slot.statusText) }}</span>
             <span class="demo-note">{{ textOrUnrecorded(slot.reason) }}</span>
-            <span class="demo-note">这一格的分布来自{{ textOrUnrecorded(slot.sourceText) }}</span>
+            <span class="demo-note">数据来源：{{ textOrUnrecorded(slot.sourceText) }}</span>
           </li>
         </ul>
 
         <!-- 🔴 blockers 逐条挂出来，码名留后端原名（技术信息区），一枚都不合并。 -->
         <div class="slo-blockers" data-testid="slo-blockers">
-          <p class="eyebrow">这一档还挂着哪些障碍（逐条，不合并）</p>
-          <p v-if="!tier.blockerList.length" class="demo-note">这一档的回执没交出任何一条障碍。</p>
+          <p class="eyebrow">待完善项</p>
+          <p v-if="!tier.blockerList.length" class="demo-note">暂无待完善项。</p>
           <ul v-else>
             <li v-for="blocker in tier.blockerList" :key="blocker.id" data-testid="slo-blocker">
               <span class="demo-note">技术信息 · 码名 <code>{{ blocker.codeName }}</code></span>
@@ -229,15 +226,15 @@ function unitKindText(unit) {
       <!-- 未归因那一池：它不是任何一档，屏上也不许把它当一档。 -->
       <section v-if="pool" class="panel-card" data-testid="slo-pool">
         <div class="section-head">
-          <span class="eyebrow">还没归到任何一档的那一池</span>
-          <span class="demo-note">它不是一档，也不能被当成一档来读；屏上这一格存在的意义就是说清这件事。</span>
+          <span class="eyebrow">未分类的历史请求</span>
+          <span class="demo-note">这些请求尚未标记类型，单独统计，不计入三类请求的结果。</span>
         </div>
         <p class="demo-note">{{ textOrUnrecorded(pool.what) }}</p>
         <UiTable
           :columns="numberColumns"
           :rows="[{ ...pool.endToEnd, key: 'pool-end-to-end' }]"
           row-key="key"
-          aria-label="那一池的端到端读数"
+          aria-label="历史请求的总耗时"
           data-testid="slo-pool-numbers"
         />
         <ul>
@@ -248,22 +245,22 @@ function unitKindText(unit) {
         </ul>
       </section>
 
-      <!-- 「三档」这个词在仓里撞在三枚枚举上：三枚都列出来，不挑一枚当真理。 -->
+      <!-- 「三档」这个词在仓里撞在分类定义上：三枚都列出来，不挑一枚当真理。 -->
       <section v-if="units.length" class="panel-card" data-testid="slo-units">
         <div class="section-head">
-          <span class="eyebrow">「档」这个字撞在三枚枚举上</span>
-          <span class="demo-note">三枚都是真存在的名册，逐枚列出来，谁也不许改名去讨好谁。</span>
+          <span class="eyebrow">请求类型与模型配置</span>
+          <span class="demo-note">请求类型、模型配置和性能档位使用不同的分类，具体定义如下。</span>
         </div>
         <UiTable
           :columns="unitColumns"
           :rows="units.map(unit => ({ ...unit, membersText: memberText(unit.members), unitText: unitKindText(unit) }))"
           row-key="id"
-          aria-label="三枚枚举"
+          aria-label="分类定义"
           data-testid="slo-unit-table"
         />
         <ul>
           <li v-for="unit in units.filter(item => item.bridge.length || item.bridgeNote)" :key="'bridge-' + unit.id">
-            <span class="demo-note">从问答档到模型档的桥：{{ memberText(unit.bridge) }}</span>
+            <span class="demo-note">请求与模型的对应关系：{{ memberText(unit.bridge) }}</span>
             <p v-if="unit.bridgeNote" class="demo-note">{{ unit.bridgeNote }}</p>
           </li>
         </ul>

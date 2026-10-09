@@ -185,7 +185,7 @@ describe('R505 判据 B · 这一屏说的是「读」，不是一枚能按的�
     expect(html).toContain('11 份')
     expect(html).toContain('这一发把回执认得的报告都列出来了')
     expect(html).not.toContain('这一发只交出前若干份')
-    expect(html).toContain('请求里带的那一枚')
+    expect(html).toContain('请求的显示上限')
     expect(html).toContain('没夹')
     const first = await renderWith(PAYLOAD)
     expect(first.html).toContain('这一发只交出前若干份，报告目录里还有更早的没列出')

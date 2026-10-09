@@ -194,9 +194,8 @@ onMounted(submitCheck)
     <header class="panel-head">
       <div>
         <h3>审批与待办</h3>
-        <p>这是一台报销政策自查工具：填一组参数，看金额按【服务端随结论回给这一屏的标准】算是否超标，并拿到下一步建议。它不办理审批。</p>
-        <p>真正在等你拍板的事在上方那一块：每一笔都能就地定夺，也能跳回产生它的那一轮对话。
-          拍过板而那一轮中途跑挂了的也在同一块单独说一句：它不会再回来等你拍第二次，也不会被记成你的否决。</p>
+        <p>查看待确认操作，或按知识库中的报销标准检查费用是否超标。费用自查提供建议，不办理正式审批。</p>
+        <p>待确认操作可在下方批准或驳回，也可返回对应对话。已确认但执行失败的操作会单独提示，无需重复确认。</p>
       </div>
     </header>
 
@@ -207,7 +206,7 @@ onMounted(submitCheck)
     <!-- 这一行以下才是一台拿演示初始值预演的计算器：上方那一块待办不是它的一部分。 -->
     <aside class="demo-flag-row" data-testid="approval-demo-flag">
       <span class="demo-flag">演示数据</span>
-      <span class="demo-note">这一屏的初始值（屏上现在是金额 {{ form.amount }}、费用类型 {{ form.expense_type }}）是仓库里的演示常量，不是任何人的真单据；部门那一格不在那份常量里，填的是你这个账号在系统里登记的部门，账号没登记就空着由服务端补。比的标准也不在常量里，由服务端从知识库检索后随结论一起回，检索不到就直说没有。这块只管下面「自查参数 / 自查结论」两格，不构成审批记录；上方那一屏挂起待办读的是服务端真账本，跟这些初始值没有关系。</span>
+      <span class="demo-note">下方金额 {{ form.amount }}、费用类型 {{ form.expense_type }} 为演示初始值，请按实际情况填写。部门取自你这个账号在系统里登记的部门；报销标准由知识库提供，未查到时会明确提示。自查不会生成审批记录，上方待确认操作显示实际任务。</span>
     </aside>
 
     <!-- F4（checklist L111）当年裁定：这一屏只做「自查」，工单模型 C-1 没建，所以这里既没有
@@ -219,13 +218,8 @@ onMounted(submitCheck)
     <aside class="scope-note" data-testid="approval-scope-note">
       <strong>自查工具，不是审批</strong>
       <p>它回答的只有一个问题：这组费用参数按标准算超没超标。查完不会生成工单，不会记在任何人名下，也不会改变任何单据的状态。</p>
-      <p>需要人工确认时，入口在对话页那一轮卡片上；上方那一屏列的就是同一批待确认的事。两处按的是同一个
-          resolver、同一个判定，账本只有一份 —— 在哪儿点都一样，这一屏不放第二套结论，免得两处互相打架。</p>
-      <p>「挂起待办」这一屏读的是服务端挂起账本，一行一笔，没有真挂着的事就留空态。
-          同一份响应里还带着「拍过板而那一轮失败了」的那几笔：它们已经从待办里闭合，
-          所以既不占待办的行位、也不给动作按钮，只留一句人话 —— 故障不冒充拒绝，也不冒充办完。
-          它仍然不摆「待审批 N 条」那种数字：后端给的 count 是过滤后的长度，契约明写不得当总数用，
-          那就无处可取的数继续不摆。</p>
+      <p>待确认操作也可在对话中处理，两处会同步更新。</p>
+      <p>没有待确认操作时显示空列表。执行失败会单独显示原因，不会记为驳回或完成。</p>
     </aside>
 
     <div class="panel-grid">
@@ -237,7 +231,7 @@ onMounted(submitCheck)
           <label><span>费用类型</span><input v-model="form.expense_type" /></label>
         </div>
         <p class="source-hint" data-testid="approval-standard-source-hint">
-          这一格没有「标准」输入框，也没有「证据」输入框：比的那个数和它的出处都随结论由服务端回给这一屏，界面不持有它，也就无从改它。
+          报销标准与依据由系统从知识库查询，无法在此手动修改。
         </p>
         <div class="actions">
           <UiButton class="primary-btn" variant="primary" :loading="loading" :label="loading ? '正在自查' : '重新自查'" data-testid="run-approval" @click="submitCheck(true)" />
@@ -273,7 +267,7 @@ onMounted(submitCheck)
             <span data-testid="approval-ratio">超比：{{ result.excess_ratio == null ? '算不出' : (Number(result.excess_ratio) * 100).toFixed(1) + '%' }}</span>
           </div>
           <p class="source-line" data-testid="approval-standard-source" :data-standard-source="result.standard_source || ''">
-            {{ standardFromServer ? '上面的标准是服务端从知识库检索出来的那一个数，不是这一屏填的。' : '服务端没回标准的取用口径，这一格不替它编出处。' }}
+            {{ standardFromServer ? '标准来自知识库。' : '暂未获得标准来源，请核实后再使用结论。' }}
           </p>
           <div v-if="standardEvidence.length" class="chips" data-testid="approval-standard-evidence">
             <span v-for="item in standardEvidence" :key="item" class="chip">{{ item }}</span>

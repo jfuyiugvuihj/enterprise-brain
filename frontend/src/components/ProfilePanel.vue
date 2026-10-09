@@ -102,11 +102,10 @@ onUnmounted(() => { profileToken += 1 })
   <div class="panel-shell" data-testid="profile-panel">
     <header class="panel-head">
       <div>
-        <span class="eyebrow">这个账号在这台服务器上的样子</span>
+        <span class="eyebrow">账号信息</span>
         <h3>我的账号</h3>
         <p>
-          下面四格读的都是服务端这一发的回执：你是谁、归哪个部门、能读到第几级文档，
-          以及你自己动手改得动的那两格。这里不摆演示值，也不替后端猜数。
+          查看账号、角色、部门和文档访问级别，并修改职位与个人偏好。
         </p>
       </div>
       <UiButton label="重新读取" variant="secondary" size="sm" :disabled="busy" @click="loadIntoView" />
@@ -140,15 +139,15 @@ onUnmounted(() => { profileToken += 1 })
           <dd class="profile-note">{{ DEPARTMENT_READ_ONLY_NOTE }}</dd>
         </div>
         <div class="profile-cell" data-testid="cell-clearance">
-          <dt>可读档位</dt>
+          <dt>文档访问级别</dt>
           <dd class="profile-value" data-testid="cell-clearance-value">{{ cells.clearance.text }}</dd>
           <dd v-if="!cells.clearance.known" class="profile-note">{{ cells.clearance.note }}</dd>
         </div>
       </dl>
 
       <section class="profile-edit" data-testid="profile-edit">
-        <h4>你自己改得动的两格</h4>
-        <UiField v-model="form.position" label="职位" hint="这个称谓会拼进对话的画像块，后端只认这一格与你下面的偏好" />
+        <h4>个人设置</h4>
+        <UiField v-model="form.position" label="职位" hint="用于帮助助手理解你的工作背景。" />
         <UiField v-model="form.preferences" label="偏好" multiline :rows="3" hint="一行一条，空行不保存" />
         <div class="profile-actions">
           <UiButton label="保存" variant="primary" :loading="busy" :disabled="loading" @click="saveProfile" />

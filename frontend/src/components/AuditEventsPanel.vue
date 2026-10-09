@@ -108,10 +108,9 @@ function textOrUnrecorded(value) {
   <div class="panel-shell" data-testid="audit-panel" :data-face="view.face">
     <header class="panel-head">
       <div>
-        <span class="eyebrow">这台服务记下的审计事件</span>
+        <span class="eyebrow">审计记录</span>
         <p>
-          这一屏只读：它列的是服务端自己记下的那一条一条，从最近一条往回列。
-          这里没有一处能把事件写进去、改起来或抹掉，也没有一处把「这一页」说成「全部」。
+          查看账号操作及处理结果，按时间从新到旧排列。支持按条件筛选，记录仅供查看。
         </p>
       </div>
       <UiButton
@@ -127,18 +126,18 @@ function textOrUnrecorded(value) {
     <!-- 过滤条件：四格逐枚对后端那四个形参，空着的那几枚整枚不发。 -->
     <section class="panel-card" data-testid="audit-filters-form">
       <div class="section-head">
-        <span class="eyebrow">按条件读（可留空）</span>
-        <span class="demo-note">三枚条件都是「整字段相等」，不是模糊查找：后端那一条出口就是这么筛的。</span>
+        <span class="eyebrow">筛选记录</span>
+        <span class="demo-note">筛选条件按完整字段精确匹配，可留空。</span>
       </div>
       <div class="audit-filter-grid">
-        <UiField v-model="form.username" label="谁（用户名）" placeholder="留空就是不按这一格筛" />
-        <UiField v-model="form.action" label="做了什么（后端原名）" placeholder="留空就是不按这一格筛" />
-        <UiField v-model="form.outcome" label="结果（后端原名）" placeholder="留空就是不按这一格筛" />
+        <UiField v-model="form.username" label="用户名" placeholder="留空则不限" />
+        <UiField v-model="form.action" label="操作类型（系统标识）" placeholder="留空则不限" />
+        <UiField v-model="form.outcome" label="处理结果（系统标识）" placeholder="留空则不限" />
         <UiField v-model="form.limit" label="最多读几条" type="number" placeholder="留空就用服务端的默认" />
       </div>
       <div class="audit-filter-actions">
-        <UiButton label="按这些条件读" variant="primary" size="sm" :loading="busy" data-testid="audit-query" @click="loadIntoView" />
-        <UiButton label="清空条件重读" variant="ghost" size="sm" :disabled="busy" data-testid="audit-clear" @click="clearFilters" />
+        <UiButton label="查询" variant="primary" size="sm" :loading="busy" data-testid="audit-query" @click="loadIntoView" />
+        <UiButton label="重置筛选" variant="ghost" size="sm" :disabled="busy" data-testid="audit-clear" @click="clearFilters" />
       </div>
     </section>
 
@@ -163,17 +162,17 @@ function textOrUnrecorded(value) {
       <!-- 🔴 判据 C 那一格：这一页是全部还是头一段，六枚读数逐格说，一枚都不合并。 -->
       <section class="panel-card" data-testid="audit-counts">
         <div class="section-head">
-          <span class="eyebrow">这一页到底列了多少</span>
+          <span class="eyebrow">记录统计</span>
           <span class="demo-note" data-testid="audit-order">{{ textOrUnrecorded(counts.orderText) }}</span>
         </div>
         <dl class="audit-facts">
-          <div><dt>这一页几条</dt><dd data-testid="audit-event-count">{{ textOrUnrecorded(counts.eventCount) }}</dd></div>
-          <div><dt>按这条件共几条</dt><dd data-testid="audit-events-total">{{ textOrUnrecorded(counts.eventsTotal) }}</dd></div>
-          <div><dt>全库共几条（筛之前）</dt><dd data-testid="audit-recorded-total">{{ textOrUnrecorded(counts.recordedTotal) }}</dd></div>
-          <div><dt>还有没列出来的吗</dt><dd data-testid="audit-truncated">{{ textOrUnrecorded(counts.truncatedText) }}</dd></div>
-          <div><dt>这次用的上限</dt><dd>{{ textOrUnrecorded(limits.appliedLimit) }}</dd></div>
-          <div><dt>请求里带的那一枚</dt><dd data-testid="audit-requested-limit">{{ textOrUnrecorded(limits.requestedLimit) }}</dd></div>
-          <div><dt>有没有被夹住</dt><dd data-testid="audit-clamped">{{ textOrUnrecorded(limits.clampedText) }}</dd></div>
+          <div><dt>当前页记录数</dt><dd data-testid="audit-event-count">{{ textOrUnrecorded(counts.eventCount) }}</dd></div>
+          <div><dt>匹配记录数</dt><dd data-testid="audit-events-total">{{ textOrUnrecorded(counts.eventsTotal) }}</dd></div>
+          <div><dt>全部记录数</dt><dd data-testid="audit-recorded-total">{{ textOrUnrecorded(counts.recordedTotal) }}</dd></div>
+          <div><dt>是否还有更多记录</dt><dd data-testid="audit-truncated">{{ textOrUnrecorded(counts.truncatedText) }}</dd></div>
+          <div><dt>实际显示上限</dt><dd>{{ textOrUnrecorded(limits.appliedLimit) }}</dd></div>
+          <div><dt>请求的显示上限</dt><dd data-testid="audit-requested-limit">{{ textOrUnrecorded(limits.requestedLimit) }}</dd></div>
+          <div><dt>是否达到上限</dt><dd data-testid="audit-clamped">{{ textOrUnrecorded(limits.clampedText) }}</dd></div>
           <div><dt>默认与最多</dt><dd>{{ textOrUnrecorded(limits.defaultLimit) }} / {{ textOrUnrecorded(limits.maxLimit) }}</dd></div>
         </dl>
         <p class="demo-note">
@@ -198,7 +197,7 @@ function textOrUnrecorded(value) {
         <div v-else class="section-head">
           <span class="eyebrow">最近这些事件</span>
           <span class="demo-note">
-            处置结果那一列认的是后端写的那几个值；认不下的原样留在「为这枚结果给的理由」旁边，不翻译、不猜。
+            结果与原因保留系统记录的原始信息，便于核查。
           </span>
         </div>
         <UiTable

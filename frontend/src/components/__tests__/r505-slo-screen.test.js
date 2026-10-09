@@ -129,7 +129,7 @@ describe('R505 判据 A · 三档逐档画欠账，一枚 0 都不许画成读�
     expect(html).toContain('分析档')
     expect(html).toContain('报告档')
     expect(count(html, 'slo-pool')).toBe(1)
-    expect(html).toContain('它不是一档，也不能被当成一档来读')
+    expect(html).toContain('单独统计，不计入三类请求的结果')
   })
 
   it('服务端答 null 的两枚百分位，屏上只有「未记录」：整屏今天没有一枚 0 毫秒', async () => {
@@ -208,14 +208,14 @@ describe('R505 判据 A · 三档逐档画欠账，一枚 0 都不许画成读�
       tiers: PAYLOAD.tiers.map((row, index) => (index === 0 ? { ...row, numbers: { end_to_end_p95_ms: slot({ blockers: [] }) }, stage_numbers: { retrieval: slot({ blockers: [] }) } } : row)),
     })
     expect(count(stripped.html, 'slo-blocker')).toBe(4)
-    expect(stripped.html).toContain('这一档的回执没交出任何一条障碍')
+    expect(stripped.html).toContain('暂无待完善项')
   })
 
   it('这一屏连一枚输入框都没有：样本闸不是能被界面调低的旋钮', async () => {
     const { html } = await renderWith(PAYLOAD)
     expect(html).not.toMatch(/<input\b/i)
     expect(panelSource()).not.toMatch(/<UiField\b/)
-    expect(html).toContain('界面上没有任何一格能把它调低')
+    expect(html).toContain('样本门槛由系统统一设置')
   })
 })
 

@@ -110,17 +110,16 @@ function metricText(metrics) {
   <div class="panel-shell" data-testid="evaluations-panel" :data-face="view.face">
     <header class="panel-head">
       <div>
-        <span class="eyebrow">这台机器上存着的评测报告</span>
+        <span class="eyebrow">评测报告</span>
         <p>
-          这一屏只读：它列的是已经躺在报告目录里的评测结果，以及服务端为「为什么这一屏不能跑分」给的那句原话。
-          屏上每一个数字都是回包里那一格的读数，这里不平均、不排名，也不拿零冒充没量到的东西。
+          查看已保存的评测结果和题集信息。此页面仅展示报告；如需运行评测，请按下方说明在服务器上操作。
         </p>
       </div>
       <div class="eval-tools">
         <UiField
           v-model="form.limit"
-          label="最多列几份（留空就是不带这一格）"
-          hint="这一枚数只是这份回执的条数上限；真要改它，重新读一次就带上"
+          label="显示报告数"
+          hint="留空使用默认值；修改后点击刷新。"
           type="number"
         />
         <UiButton
@@ -151,39 +150,39 @@ function metricText(metrics) {
       <!-- 这一屏的第一格就是「它不跑分」：三样如实端出来，命令只读。 -->
       <section class="panel-card" data-testid="evaluations-execution">
         <div class="section-head">
-          <span class="eyebrow">这一屏会不会跑一轮评测</span>
+          <span class="eyebrow">如何运行评测</span>
           <span class="demo-note" data-testid="eval-runs">{{ textOrUnrecorded(execution.runsText) }}</span>
         </div>
         <p data-testid="eval-reason">{{ textOrUnrecorded(execution.reason) }}</p>
-        <p class="demo-note">要跑评测请在服务器上按这一句敲（这里只给读，不给按）：</p>
+        <p class="demo-note">请在服务器上执行以下命令：</p>
         <code class="eval-command" data-testid="eval-command">{{ textOrUnrecorded(execution.commandTemplate) }}</code>
         <p class="demo-note" data-testid="eval-report-module">
-          跑完之后负责把结果落成报告的那一格：{{ textOrUnrecorded(execution.reportModule) }}
+          报告生成模块：{{ textOrUnrecorded(execution.reportModule) }}
         </p>
       </section>
 
       <!-- 这份回执读了什么：状态、时间、总数与是不是把清单截短了，四格分开说。 -->
       <section class="panel-card" data-testid="evaluations-head">
         <div class="section-head">
-          <span class="eyebrow">这一发回执自己怎么说</span>
+          <span class="eyebrow">报告概览</span>
           <span class="demo-note" data-testid="eval-truncated">{{ textOrUnrecorded(head.truncatedText) }}</span>
         </div>
         <dl class="eval-facts">
           <div><dt>状态</dt><dd data-testid="eval-status">{{ textOrUnrecorded(head.status) }}</dd></div>
           <div><dt>生成于</dt><dd>{{ textOrUnrecorded(head.generatedText) }}</dd></div>
           <div><dt>报告目录里共有</dt><dd data-testid="eval-total">{{ textOrUnrecorded(head.reportsTotal) }}</dd></div>
-          <div><dt>这次是谁读的</dt><dd>{{ textOrUnrecorded(head.requestedBy) }}</dd></div>
-          <div><dt>这一发用的上限</dt><dd>{{ textOrUnrecorded(limits.appliedLimit) }}</dd></div>
-          <div><dt>请求里带的那一枚</dt><dd data-testid="eval-requested-limit">{{ textOrUnrecorded(limits.requestedLimit) }}</dd></div>
-          <div><dt>有没有被夹住</dt><dd data-testid="eval-clamped">{{ textOrUnrecorded(limits.clampedText) }}</dd></div>
-          <div><dt>出口最多给</dt><dd>{{ textOrUnrecorded(limits.maxReports) }}</dd></div>
+          <div><dt>当前账号</dt><dd>{{ textOrUnrecorded(head.requestedBy) }}</dd></div>
+          <div><dt>实际显示上限</dt><dd>{{ textOrUnrecorded(limits.appliedLimit) }}</dd></div>
+          <div><dt>请求的显示上限</dt><dd data-testid="eval-requested-limit">{{ textOrUnrecorded(limits.requestedLimit) }}</dd></div>
+          <div><dt>是否达到上限</dt><dd data-testid="eval-clamped">{{ textOrUnrecorded(limits.clampedText) }}</dd></div>
+          <div><dt>最大显示数量</dt><dd>{{ textOrUnrecorded(limits.maxReports) }}</dd></div>
         </dl>
       </section>
 
       <section class="panel-card" data-testid="evaluations-reports">
         <div class="section-head">
           <span class="eyebrow">存着的报告</span>
-          <span class="demo-note">一份报告一行；它自己读不读得出来由它那一格说，屏上不替它圆。</span>
+          <span class="demo-note">每行对应一份报告；读取失败时会显示原因。</span>
         </div>
         <!-- 空报告走这一屏自己的空态脸（判据 B 的②）：它说的是「一份都没有」，不是零分。 -->
         <UiEmptyState
@@ -213,7 +212,7 @@ function metricText(metrics) {
         <div class="section-head">
           <span class="eyebrow">配置的评测集</span>
           <span class="demo-note">
-            文件在这台机器上不存在，那一行的题数就是零 —— 这句话说的是「没这份文件」，不是「零道题全错」。
+            题集文件不存在时，题数显示为零，不代表评测得分为零。
           </span>
         </div>
         <UiTable

@@ -312,7 +312,7 @@ describe('R505 交付卫生 · 这一屏不自造第二套真源', () => {
   it('零枚裸 <button>：三枚动作全是 ui 原语，且没有一枚写着运行/执行/写入', () => {
     const source = panelSource()
     expect(countNativeButtons(source)).toBe(0)
-    expect(buttonLabels(source)).toEqual(['重新读取', '按这些条件读', '清空条件重读'])
+    expect(buttonLabels(source)).toEqual(['重新读取', '查询', '重置筛选'])
     expect(source).not.toMatch(/label="[^"]*(运行|执行|跑一轮|开始|触发|提交|写入|补记)/)
     expect(source).not.toMatch(/<form\b/i)
   })

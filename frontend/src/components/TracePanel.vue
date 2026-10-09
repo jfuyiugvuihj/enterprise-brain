@@ -135,8 +135,8 @@ const stageColumns = [
   { key: 'count', label: '记到几次', formatter: value => countText(value, '次') },
   { key: 'totalMs', label: '合计', formatter: value => durationText(value) },
   { key: 'sharePct', label: '占整条', formatter: value => percentText(value) },
-  { key: 'p50Ms', label: '一半的样本在这儿', formatter: value => durationText(value) },
-  { key: 'p95Ms', label: '九成五的样本在这儿', formatter: value => durationText(value) },
+  { key: 'p50Ms', label: '中位耗时（P50）', formatter: value => durationText(value) },
+  { key: 'p95Ms', label: '95% 样本耗时（P95）', formatter: value => durationText(value) },
 ]
 
 async function loadRoster() {
@@ -208,10 +208,9 @@ onUnmounted(() => {
   <div class="panel-shell" data-testid="trace-panel" :data-face="roster.face">
     <header class="panel-head">
       <div>
-        <span class="eyebrow">服务端运行账本</span>
+        <span class="eyebrow">运行记录</span>
         <p>
-          这一屏列的是这台服务记下的运行，以及点中一枚运行之后服务端为它交出的事件与分段耗时。
-          屏上每一个数字都是回包里那一格的读数：这里不数事件、不加和、也不算百分位。
+          选择一次运行，查看处理步骤、事件记录和各阶段耗时。
         </p>
       </div>
       <div>
@@ -229,8 +228,8 @@ onUnmounted(() => {
     <!-- 甲 · 清单格：有哪几枚运行由服务端那一格说；这里只画它给的行。 -->
     <section class="panel-card" data-testid="runs-cell" :data-face="roster.face">
       <div class="section-head">
-        <span class="eyebrow">这台服务记下的运行</span>
-        <span class="demo-note">这份清单问的是服务进程今天记下的运行账本；它没列出的编号不等于没跑过。</span>
+        <span class="eyebrow">运行列表</span>
+        <span class="demo-note">仅列出系统已记录的运行，部分历史运行可能未保存。</span>
       </div>
 
       <UiLoadingState v-if="rosterKind === 'loading'" :label="RUNS_LOADING_TEXT" data-testid="runs-loading" />
@@ -252,9 +251,9 @@ onUnmounted(() => {
       <template v-else-if="rosterKind === 'ready'">
         <UiSelect
           :model-value="picked"
-          label="点选一枚运行"
+          label="选择运行记录"
           :options="runOptions"
-          placeholder="先从这份清单里挑一枚"
+          placeholder="请选择一次运行"
           data-testid="pick-run"
           @update:model-value="adoptRun"
         />
@@ -317,7 +316,7 @@ onUnmounted(() => {
     <section class="panel-card" data-testid="ledger-cell" :data-face="ledgerCell.face">
       <div class="section-head">
         <span class="eyebrow">这一次运行的分段耗时</span>
-        <span class="demo-note">数从已记录的事件里折出来，不重跑这一次运行。</span>
+        <span class="demo-note">耗时根据已保存的事件计算，查看时不会重新执行任务。</span>
       </div>
 
       <UiLoadingState v-if="ledgerKind === 'loading'" :label="LEDGER_LOADING_TEXT" data-testid="ledger-loading" />

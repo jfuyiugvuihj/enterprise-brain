@@ -32,11 +32,10 @@ import ArtifactList from './ArtifactList.vue'
   <div class="panel-shell" data-testid="artifacts-panel">
     <header class="panel-head">
       <div>
-        <div class="eyebrow">从对话与数据析出的成果</div>
+        <div class="eyebrow">分析成果</div>
         <h3>交成果</h3>
         <p>
-          这一屏列的是你这个账号现在打得开的分析产物，按时间从新到旧。
-          打开、删除、往下多读几页都在下面这一处；「喂料」的数据标签里看到的也是同一批成果。
+          查看你有权限访问的图表和报告，按生成时间从新到旧排列。可打开、下载或删除成果；数据页面也可查看同一批内容。
         </p>
       </div>
     </header>

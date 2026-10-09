@@ -283,7 +283,7 @@ describe('R277④ · 屏面上再无源码路径、路由名、英文装饰字�
     expect(text).not.toContain('/hitl/pending')
     expect(text, '人话句里不许夹裸码名').not.toMatch(/\b[a-z][a-z0-9]*_[a-z0-9]+\b/)
     // 反向自证这条扫描有正文可读：那句诚实话必须在屏上。
-    expect(text).toContain('填的是你这个账号在系统里登记的部门')
+    expect(text).toContain('取自你这个账号在系统里登记的部门')
     expect(text).toContain('演示数据')
   })
 
