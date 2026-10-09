@@ -4,7 +4,7 @@ The local JSON metadata file is the authority for what this process believes is
 published. ``PostgresIndexStore`` mirrors one publication into ``index_registry``,
 ``index_versions`` and ``chunks`` inside a single database transaction, so a publication
 that fails halfway leaves neither a published version nor a stranded chunk row behind.
-Chroma stays the only retrieval path: this module records chunks, it never embeds them,
+PGVector is the sole retrieval store; this module records version metadata,
 and every row it writes leaves ``chunks.embedding`` NULL.
 
 R22 binds every index version to the embedding profile that produced it: ``embedding_model``
@@ -46,8 +46,8 @@ RESOURCE_TYPE_DOCUMENT = "document"
 #: the ledger naming one engine while reads answer from another is the half-switched
 #: state R59b exists to avoid, and two readers that each pick their own source is how it
 #: comes back.
-INDEX_BACKENDS = frozenset({"chroma", "pgvector"})
-INDEX_BACKEND_DEFAULT = "chroma"
+INDEX_BACKENDS = frozenset({"pgvector"})
+INDEX_BACKEND_DEFAULT = "pgvector"
 PGVECTOR_BACKEND = "pgvector"
 #: The operator's spelling of the same switch, read when it is asked. It is *not* set
 #: here: the shipped answer stays ``INDEX_BACKEND_DEFAULT`` until a deployment says
@@ -297,7 +297,7 @@ class EmbeddingScope:
 def _shipped_embedding_model() -> str:
     """The model this build embeds with, read from the module that actually calls it.
 
-    Imported lazily and guarded: app/rag/retriever pulls in chromadb and langchain, and an
+    Imported lazily and guarded: app/rag/retriever pulls in langchain, and an
     index registry must still open when those are missing. If the retriever cannot be read
     the shipped constant answers, never "unknown".
     """
@@ -2038,75 +2038,16 @@ def _table_is_present(present: set[tuple[str, str]], table: str) -> bool:
 
 
 def read_backend() -> str:
-    """Which engine answers a semantic search: ``"chroma"`` or ``"pgvector"``.
-
-    This is the one resolution of the switch in the tree, and three things ask it: the
-    semantic leg in app/rag/retriever.py, :meth:`PublicationOutcome.as_dict`, and the
-    backend :meth:`IndexRegistry.create_version` stamps into a version record. Each calls
-    *this function* rather than picking a source of its own, which is what keeps the
-    ledger and the read path from being set apart -- by accident, by a typo, or by a
-    deployment that only half said what it meant.
-
-    Two spellings, one order of authority: ``INDEX_BACKEND_ENV`` first, then the
-    ``INDEX_BACKEND`` constant in this module. The environment wins because it is the
-    deployment speaking, and the whole point of a knob is that an operator can move the
-    read engine and roll it back again without a rebuild. A test or a fork that sets only
-    the constant is still heard, so long as nothing in the environment contradicts it.
-    The price of that order is real: a stray ``INDEX_BACKEND`` in a shell outranks the
-    code, in a test run too, which is why every pin that cares states its environment
-    precondition instead of trusting the machine it happens to run on.
-
-    This resolves at call time, not at import time, for the same reason
-    :func:`configured_embedding_scope` does: a process that has already imported this
-    module must see the value the deployment actually settled on, and a test that sets
-    the constant has to move the read path too -- otherwise the two would disagree about
-    which engine is live, which is exactly the half-switched state R59b exists to avoid.
-
-    An unrecognised value keeps reads on the shipped engine and says so in the log, the
-    way :func:`app.rag.pg_store.dual_write_enabled` treats a typo in VECTOR_DUAL_WRITE.
-    Silently trying the other engine is the worse failure: "pgvector" misspelled as
-    "pg_vetcor" would otherwise read an empty Chroma nobody writes to. A value that
-    cannot be read is not rescued by the other spelling either -- an environment typo
-    stays a typo even when the constant happens to name a real engine, because the
-    operator's intent is then unknown and only the shipped answer is honest.
-    """
-    requested = str(os.getenv(INDEX_BACKEND_ENV, "") or "")
-    if not requested.strip():
-        requested = str(INDEX_BACKEND or "")
-    value = requested.strip().lower()
-    if value in INDEX_BACKENDS:
-        return value
-    if value:
-        logger.warning(
-            f"[Indexing] INDEX_BACKEND={value!r} is not one of "
-            f"{sorted(INDEX_BACKENDS)}; reads stay on {INDEX_BACKEND_DEFAULT}."
-        )
-    return INDEX_BACKEND_DEFAULT
+    """PGVector is the only supported engine; stale deployment values fail explicitly."""
+    value = str(os.getenv(INDEX_BACKEND_ENV, INDEX_BACKEND_DEFAULT) or INDEX_BACKEND_DEFAULT).strip().lower()
+    if value != PGVECTOR_BACKEND:
+        raise ValueError(f"INDEX_BACKEND={value!r} 不再支持，请配置 pgvector")
+    return PGVECTOR_BACKEND
 
 
 def pgvector_reads_enabled() -> bool:
-    """True when the semantic read leg should ask PostgreSQL instead of Chroma.
-
-    Default off: the switch still ships on ``"chroma"`` -- in the constant, and as the
-    answer whenever nothing sets ``INDEX_BACKEND_ENV``. R231 built the knob; turning it
-    is a deployment decision on a planned window, which makes it the adoption plan's
-    call, not this function's.
-    """
     return read_backend() == PGVECTOR_BACKEND
 
 
 def pgvector_writes_are_primary() -> bool:
-    """R60 判据①：新写入的向量行今天只许落 PostgreSQL 吗。
-
-    本函数问的是读路径已经在问的那一句话，而且仍由 :func:`read_backend` 一处回答。部署在
-    写下 ``INDEX_BACKEND`` 的那一刻就已经说了哪一台引擎持有向量；再给写路径配第二把开关，
-    就是 R592 那枚「一把开关」的钉要拦的形状，而这里的形状更坏一档：读已经从 PostgreSQL 答，
-    退役中的那一腿却还在长新行 ——「Chroma 正在退役」当场从一句未完成的话变成一句假话。
-
-    它不许诺「什么都不写」。写路径只在**这一笔真的有一条 PG 腿**时才来问它
-    （app/rag/retriever.py 的 ``_writes_go_to_pgvector``）：``VECTOR_DUAL_WRITE`` 关着就没有
-    PG 腿，那时把遗留腿一起关掉不是停写而是零写，判据②第二把反证刀抓的正是那一格。缺省答复
-    是 ``False``，理由与读路径同一条：出厂的 ``INDEX_BACKEND_DEFAULT`` 还站在遗留档 ——
-    本函数报的是部署在哪儿，不是把部署挪到哪儿。
-    """
     return read_backend() == PGVECTOR_BACKEND

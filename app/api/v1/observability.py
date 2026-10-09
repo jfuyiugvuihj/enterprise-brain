@@ -67,7 +67,7 @@ EVALUATION_COMMAND_TEMPLATE = (
 )
 
 _RETRIEVAL_CAPABILITIES = (
-    ("chromadb", "vector_store", "chroma_persistent_client", "offline_json_collection"),
+    ("psycopg", "vector_store", "pgvector", "unavailable"),
     ("rank_bm25", "keyword_scoring", "rank_bm25", "token_overlap_shim"),
     ("jieba", "tokenizer", "jieba", "naive_char_or_whitespace"),
     ("sentence_transformers", "reranker", "cross_encoder", "rrf_only"),

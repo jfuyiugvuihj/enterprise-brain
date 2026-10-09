@@ -1,4 +1,14 @@
-# Chroma 的归档与下线路径（R60 停写之后）
+# Chroma 退役记录
+
+## 2026-10-09：PGVector 唯一接管
+
+业主明确授权彻底移除 Chroma。现役代码只接受 `INDEX_BACKEND=pgvector`，不再有 Chroma 客户端、写入或回退；文档替换与删除使用单一 PostgreSQL 事务。安装依赖、镜像目录、Compose 挂载与日常备份范围同步退出旧库。
+
+退役前归档保存在 `%TEMP%\evalrun\pgvector-retire-1009`：PostgreSQL dump 与配套 globals 文件、容器旧卷 tar、本机旧库 zip。旧目录与卷在浏览器验收及实际回滚演练后清除；执行结果见同目录日志与截图。
+
+现役普查使用 `scripts/rebuild_index.py --status`，读取 PostgreSQL。历史 Chroma 对比量具与反证测试保留为迁移历史，不再是现役运行入口。恢复使用 PostgreSQL dump、globals 与工作区备份；下述 `INDEX_BACKEND=chroma` 开关只适用于历史版本，当前版本明确拒绝。
+
+## 以下为 2026-10-03 的历史工序与读数
 
 > 定案口径（业主 2026-09-24 定案，AGENTS.md 同条）：生产向量库是 PostgreSQL + PGVector；
 > Chroma 是**退役中的遗留件**。本页只回答两件事：它今天还在替谁干活，以及它按什么顺序退。

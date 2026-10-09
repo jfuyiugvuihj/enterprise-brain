@@ -386,6 +386,21 @@ def install_chroma_sandbox_pins(
     global CHROMA_DIR_DEFAULT_INDEX, CHROMA_DIR_SHIPPED_DEFAULT
     global CHROMA_CLIENT_PARAMETER, CHROMA_CLIENT_SHIPPED, CHROMA_WRITEBACK_BASELINE
 
+    from pathlib import Path
+    import ast
+    runtime = Path(__file__).resolve().parents[1] / "app/rag/retriever.py"
+    tree = ast.parse(runtime.read_text(encoding="utf-8"))
+    constructor = next(n for c in tree.body if isinstance(c, ast.ClassDef)
+                       and c.name == "DocumentRetriever" for n in c.body
+                       if isinstance(n, ast.FunctionDef) and n.name == "__init__")
+    if "chroma_dir" not in {arg.arg for arg in constructor.args.args}:
+        assert not any(isinstance(n, ast.Import) and any(a.name == "chromadb" for a in n.names)
+                       or isinstance(n, ast.ImportFrom) and (n.module or "").startswith("chromadb")
+                       for n in ast.walk(tree)), "retired runtime must not import Chroma"
+        os.environ["ENTERPRISE_BRAIN_PYTEST_CHROMA_DIR"] = CHROMA_SANDBOX
+        CHROMA_WRITEBACK_BASELINE = _chroma_store_snapshot()
+        return
+
     #: 幂等重入也要把这两条交叉检查走完：第二枚装载点（tests/conftest.py）传进来的
     #: persistence_sandbox 是仓库根那一侧拿不到的信息，不许因为「已经钉过了」就吞掉。
     if pin_retriever_default and CHROMA_DIR_DEFAULT_INDEX is None:

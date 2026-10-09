@@ -1,35 +1,7 @@
-"""R58: the PostgreSQL half of the Chroma / pgvector dual write.
+"""PostgreSQL + PGVector storage, transactional writes and permission-filtered reads.
 
-================================================================== 口径 (钉死)
-This module exists for one reason: to close the window in which a chunk's metadata is
-visible in PostgreSQL while its vector lives only in Chroma, so authorization filtering
-and semantic search can be answered by one engine. It is NOT a latency measure -- measured
-retrieval is 0.242 s, 0.15% of an end-to-end request -- and it does not change which model
-produces a vector, how wide that vector is, or how results are re-ranked
-(docs/handoff/2026-09-17-pgvector-adoption-plan.md section 7 lists all three under
-明确不做). Nothing here calls an embedding endpoint: it writes vectors somebody else made.
-
-Chroma is still the read path: R59b added the pgvector read leg at the bottom of this
-file, but its switch -- indexing.INDEX_BACKEND -- still ships on "chroma", so which engine
-answers a search does not change until somebody flips that on purpose. Everything the read
-leg needs is already here: it reuses vector_mirror(), so the 0010 scope row and the real
-column type are the same two probes that gate writes, never a second口径 check.
-
-================================================================== fail closed
-The switch is VECTOR_DUAL_WRITE and its default is OFF. With it off this module imports no
-psycopg, opens no connection and issues no SQL, so a private install without pgvector keeps
-running exactly as it does today. With it on, a failure anywhere in the PostgreSQL leg
-raises; no path reports success because Chroma took the write. The caller in
-app/rag/retriever.py holds both legs in one try block and rolls PostgreSQL back when Chroma
-fails, so the two engines either both hold a vector or neither does.
-
-============================================================== no re-declaration
-Dimension and model come from app/rag/indexing.py (EMBEDDING_MODEL_ENV,
-EMBEDDING_DIMENSION_ENV, SCOPE_UNKNOWN, configured_embedding_scope); the error family and
-the pre-write gate come from app/rag/retriever.py (VectorWriteRejectedError,
-assert_writable_embeddings, the REASON_* codes). Both are imported, never copied: R22
-closed with the explicit instruction that this file must not carry a second literal 768,
-and R21 closed with exactly one exception family for vector writes.
+Embedding model and width are validated before every vector transaction. PostgreSQL
+is mandatory; historical mirror names remain for callers and diagnostics only.
 """
 from __future__ import annotations
 
@@ -57,9 +29,7 @@ from app.rag.retriever import (
     assert_writable_embeddings,
 )
 
-#: The only spelling that turns the PostgreSQL leg on. Anything else -- including a value
-#: this module does not recognise -- leaves it off, because off is the state every ticket
-#: before this one shipped and tested.
+#: Historical diagnostic spelling; no longer read from the environment.
 DUAL_WRITE_ENV = "VECTOR_DUAL_WRITE"
 TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
 FALSY_VALUES = frozenset({"0", "false", "no", "off"})
@@ -173,22 +143,8 @@ def _refusal(message: str, reason: str, model: str) -> "VectorWriteRejectedError
 
 
 def dual_write_enabled() -> bool:
-    """Is the PostgreSQL leg on? Off unless an operator says so, in those words.
-
-    An unrecognised value is a typo waiting to be deployed ("ture"), so it is reported and
-    then treated as off: the state that keeps working is the state that was shipped.
-    """
-    raw = str(os.getenv(DUAL_WRITE_ENV, "") or "").strip().lower()
-    if raw in TRUTHY_VALUES:
-        return True
-    if raw in FALSY_VALUES:
-        return False
-    if raw:
-        logger.warning(
-            f"[VectorMirror] {DUAL_WRITE_ENV}={raw!r} is not recognised; the PostgreSQL leg "
-            f"stays off. Use one of {sorted(TRUTHY_VALUES)} to enable it."
-        )
-    return False
+    """Compatibility name for historical callers: PostgreSQL is mandatory now."""
+    return True
 
 
 def resolve_database_url() -> str:
@@ -516,7 +472,7 @@ def _connect(url: str, connection_factory):
         return open_connection(settings)
     except ImportError as exc:
         raise VectorWriteRejectedError(
-            f"镜像已开启但 psycopg 不可用（{exc}）：安装 psycopg[binary]，或关掉 {DUAL_WRITE_ENV}",
+            f"PGVector 不可用（{exc}）：安装 psycopg[binary] 后重试",
             reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
             model=configured_embedding_scope().embedding_model,
         ) from exc
@@ -530,19 +486,8 @@ def _connect(url: str, connection_factory):
 
 
 def vector_mirror(*, connection_factory=None, url: str | None = None,
-                  vector_table: str = DEFAULT_VECTOR_TABLE) -> "VectorMirror | None":
-    """Open the mirror for one document write, or return None when the switch is off.
-
-    Returning None is the entire behaviour of a disabled switch: the caller then issues no
-    PostgreSQL statement at all, so an install without pgvector is untouched by this ticket.
-    With the switch on, both probes have to agree before a vector is accepted -- 0010's
-    vector_scope row and the real column type, checked against the running EMBEDDING_MODEL
-    and EMBEDDING_DIMENSION. A database that is merely unreachable is also a refusal rather
-    than a degraded write, because a silently missing mirror is exactly the half-state this
-    ticket exists to remove; the reason code is what an upload operator reads.
-    """
-    if not dual_write_enabled():
-        return None
+                  vector_table: str = DEFAULT_VECTOR_TABLE) -> "VectorMirror":
+    """Open a mandatory PGVector transaction and validate model, width and column type."""
     configured = configured_embedding_scope()
     connection = _connect(url or resolve_database_url(), connection_factory)
     try:
@@ -1023,10 +968,10 @@ def switched_corpus():
         rows = read_corpus()
     except Exception as exc:  # noqa: BLE001 - 一次拒答只该让语料建得慢一点，不该放宽
         reason = str(getattr(exc, "reason", "") or REASON_VECTOR_READ_FAILED)
-        _note_corpus(CORPUS_SOURCE_LEGACY, None, f"{type(exc).__name__}: {exc}")
+        _note_corpus(CORPUS_SOURCE_PGVECTOR, None, f"{type(exc).__name__}: {exc}")
         note_read_bypass(reason, f"corpus: {type(exc).__name__}: {exc}")
-        logger.warning(f"PGVector 语料腿拒答，本次语料仍取遗留向量库（{reason}）：{exc}")
-        return None
+        logger.warning(f"PGVector 语料读取失败（{reason}）：{exc}")
+        raise
     payload = {
         "documents": [row.get("content") or "" for row in rows],
         "metadatas": [{
@@ -1169,3 +1114,51 @@ def indexed_document_names(*, connection_factory=None, url=None,
         mirror.close()
     names = [str(_row_value(row, "filename", 0) or "") for row in rows]
     return sorted({name for name in names if name})
+
+
+class PgVectorCollection:
+    """Read-only corpus and vector census projection; PostgreSQL is the only source."""
+    name = "chunk_vectors"
+
+    def get(self, where=None, ids=None, limit=None, offset=0, include=None):
+        columns = ("vector_id", "content", "filename", "chunk_index", "classification", "department", "hash")
+        if include and "embeddings" in include:
+            columns += ("embedding",)
+        if isinstance(where, dict) and set(where) == {"filename"}:
+            clause, params = "filename = %s", [str(where["filename"])]
+        else:
+            clause, params = sql_scope_filter(where)
+        if ids is not None:
+            clause = ("(" + clause + ") AND " if clause else "") + "vector_id = ANY(%s::text[])"
+            params.append(list(ids))
+        sql = ("SELECT " + ", ".join("content_sha256 AS hash" if k == "hash" else k for k in columns)
+               + " FROM chunk_vectors" + (" WHERE " + clause if clause else "")
+               + " ORDER BY vector_id")
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(max(0, int(limit)))
+        sql += " OFFSET %s"
+        params.append(max(0, int(offset)))
+        transaction = vector_mirror()
+        try:
+            rows = transaction.connection.execute(sql, params).fetchall()
+        finally:
+            transaction.close()
+        selected = [{k: _row_value(row, k, i) for i, k in enumerate(columns)} for row in rows]
+        payload = {"ids": [r["vector_id"] for r in selected],
+                   "documents": [r["content"] for r in selected],
+                   "metadatas": [{k: r.get(k) for k in
+                       ("filename", "chunk_index", "classification", "department", "hash")}
+                       for r in selected]}
+        if include and "embeddings" in include:
+            payload["embeddings"] = [json.loads(r["embedding"]) if isinstance(r["embedding"], str)
+                                     else list(r["embedding"]) for r in selected]
+        return payload
+
+    def count(self):
+        transaction = vector_mirror()
+        try:
+            row = transaction.connection.execute("SELECT count(*) FROM chunk_vectors").fetchone()
+            return int(_row_value(row, "count", 0))
+        finally:
+            transaction.close()

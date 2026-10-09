@@ -9,7 +9,6 @@ from pathlib import Path
 DEFAULT_BACKUP_DIRS = (
     "documents",
     "data",
-    "chroma_db",
     "static/exports",
     "logs",
 )

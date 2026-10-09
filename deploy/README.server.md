@@ -136,8 +136,8 @@ docker compose run --rm backend python scripts/backup_workspace.py --output /app
 
 数据库口令只通过容器环境变量传递，不会出现在命令行或日志里。
 
-向量这条腿：定案的生产向量库是 PostgreSQL + PGVector，Chroma 是退役中的遗留件；本机生产已停写
-（新行只落 PG），归档与下线的阶段表见 docs/deployment/chroma-retirement-path.md。整库恢复走
+向量存储统一使用 PostgreSQL + PGVector，上传、检索和删除都访问 PostgreSQL。
+Chroma 运行依赖与挂载已移除，旧库只保留离线归档；退役记录见 docs/deployment/chroma-retirement-path.md。整库恢复走
 scripts/r575_vector_restore_drill.py，恢复判据里包含 chunk_vectors 的行数与向量指纹对账。
 
 ## 访问
@@ -149,7 +149,7 @@ scripts/r575_vector_restore_drill.py，恢复判据里包含 chunk_vectors 的�
 
 - Nginx 只代理 `/api/`。图表和报告通过 `/api/v1/artifacts/{id}/content|download`
   经过权限判定后交付，**不存在公开的 `/static/` 交付路径**。
-- 客户上传、生成文件、Trace、日志和过渡向量库都挂在命名卷上，重建镜像不会丢失。
+- PostgreSQL、客户上传、生成文件、Trace 和日志都有持久卷，重建镜像不会丢失。
 - 客户机器只运行这一个栈，数据不出服务器。
 - 不部署 Docker 时，用 `deploy/start_workers.sh` 起多个 API 进程，并单独运行一次
   `python deploy/scheduler.py` 作为唯一的调度进程（生产 APP_ENV 下 API 不再内嵌调度器）。

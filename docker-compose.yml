@@ -1,8 +1,8 @@
 # Private single-machine deployment for 企业智脑.
 # One command: docker compose up --build -d   (configure .env first)
 #
-# Storage topology: PostgreSQL + PGVector, Redis, local file volumes. Chroma remains a
-# transitional vector store only. Customer uploads never enter the image.
+# Storage topology: PostgreSQL + PGVector, Redis, local file volumes.
+# Customer uploads never enter the image.
 #
 # Containers read deploy/.env.server, never the development .env. Compose substitutes
 # variables inside env files, so a deployment file must write a literal $ as $$ -- which
@@ -41,7 +41,6 @@ x-persistent-paths: &persistent-paths
   - appdata:/app/data
   - generated:/app/static
   - applogs:/app/logs
-  - vectordb:/app/chroma_db
 
 services:
   postgres:
@@ -165,12 +164,6 @@ services:
       # The embedding profile the API reads with must be the one the migration declared.
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
-      # R120: the pgvector mirror (R58) is switched here, and nowhere else in this stack.
-      # off is the shipped default and stays the default when the operator sets nothing, so an
-      # install that never mentions it behaves exactly as it did before: app/rag/pg_store.py
-      # imports no psycopg, opens no connection and issues no SQL. Only the processes that
-      # write vectors get it -- migrate runs DDL and never embeds.
-      VECTOR_DUAL_WRITE: ${VECTOR_DUAL_WRITE:-off}
       # The API must not own scheduled side effects while workers are scaled.
       SCHEDULER_ENABLED: "false"
       LOCAL_MODEL_BASE_URL: http://ollama:11434/v1
@@ -212,8 +205,6 @@ services:
       # The worker embeds and mirrors chunks, so it needs the same declared profile.
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
-      # The worker is a vector writer too, so it carries the same switch, spelled the same way.
-      VECTOR_DUAL_WRITE: ${VECTOR_DUAL_WRITE:-off}
       SCHEDULER_ENABLED: "false"
       LOCAL_MODEL_BASE_URL: http://ollama:11434/v1
       OLLAMA_BASE_URL: http://ollama:11434
@@ -249,8 +240,6 @@ services:
       # Same profile for the scheduler: an alert job that embeds under another width is drift.
       EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
-      # A scheduled job that embeds can also mirror, so the switch is not a backend-only knob.
-      VECTOR_DUAL_WRITE: ${VECTOR_DUAL_WRITE:-off}
       LOCAL_MODEL_BASE_URL: http://ollama:11434/v1
       OLLAMA_BASE_URL: http://ollama:11434
     volumes: *persistent-paths
@@ -288,4 +277,3 @@ volumes:
   appdata:
   generated:
   applogs:
-  vectordb:

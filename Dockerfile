@@ -98,8 +98,8 @@ RUN set -eux; \
 # duplicate the venv into a fresh layer.
 RUN groupadd --system --gid 10001 brain \
     && useradd --system --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin brain \
-    && mkdir -p /app/data /app/logs /app/chroma_db /app/documents /app/static/charts /app/static/exports /app/.cache \
-    && chown -R 10001:10001 /app/data /app/logs /app/chroma_db /app/documents /app/static /app/.cache
+    && mkdir -p /app/data /app/logs /app/documents /app/static/charts /app/static/exports /app/.cache \
+    && chown -R 10001:10001 /app/data /app/logs /app/documents /app/static /app/.cache
 
 # Customer uploads and generated files are never baked into the image: they live on
 # mounted volumes so a rebuild cannot lose or leak them.
@@ -126,7 +126,7 @@ RUN printf 'revision=%s\nbuilt_at=%s\n' "$GIT_SHA" "$BUILT_AT" > /app/BUILD_INFO
 
 USER 10001:10001
 
-VOLUME ["/app/documents", "/app/data", "/app/static", "/app/logs", "/app/chroma_db"]
+VOLUME ["/app/documents", "/app/data", "/app/static", "/app/logs"]
 
 EXPOSE 8001
 

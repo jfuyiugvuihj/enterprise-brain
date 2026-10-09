@@ -17,9 +17,9 @@ def test_backup_round_trip_includes_manifest_and_files(tmp_path):
     manifest = create_backup(source, archive)
     restore_backup(archive, restored)
 
-    assert manifest["files"] == 2
+    assert manifest["files"] == 1
     assert (restored / "documents" / "policy.txt").read_text(encoding="utf-8") == "住宿费标准500元"
-    assert (restored / "chroma_db" / "index.bin").read_bytes() == b"index"
+    assert not (restored / "chroma_db").exists()
 
 
 def test_restore_rejects_path_traversal(tmp_path):

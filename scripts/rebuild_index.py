@@ -281,33 +281,17 @@ class CensusStore:
 
 def open_census_store(chroma_dir: str | None = None,
                       collection_name: str | None = None) -> tuple:
-    """Open the live vector store for a census, or come back with why it stayed shut.
-
-    Deliberately not ``DocumentRetriever()``: that constructor makes the directory when it is
-    missing and calls ``get_or_create_collection``, so a command whose whole job is to report
-    what is already stored would be able to add to it. The store is also opened without
-    touching the embedder, because ``--status`` has to answer on a machine where the model is
-    not configured, and an unopenable store is an unmeasurable census, not a crash.
-    """
-    directory = str(chroma_dir or os.getenv("CHROMA_DIR") or (ROOT / "chroma_db"))
-    name = str(collection_name or os.getenv("CHROMA_COLLECTION") or "enterprise_docs")
-    if not Path(directory).is_dir():
-        return None, f"there is no vector store directory at {directory}"
+    """Open the mandatory PGVector store read-only; legacy arguments are rejected."""
+    if chroma_dir or collection_name:
+        return None, "legacy directory/collection arguments are no longer supported; use DATABASE_URL"
     try:
-        import chromadb
-        from chromadb.config import Settings
-    except ModuleNotFoundError as exc:
-        return None, f"chromadb is not importable here ({exc})"
-    try:
-        client = chromadb.PersistentClient(
-            path=directory, settings=Settings(anonymized_telemetry=False)
-        )
-        collection = client.get_collection(name=name)
+        from app.rag.pg_store import PgVectorCollection
+        collection = PgVectorCollection()
+        collection.count()
+        return CensusStore(collection, source="pgvector:chunk_vectors"), ""
     except Exception as exc:
-        # Chroma is one writer per directory, so "the application is writing right now" has
-        # to arrive as a reason an operator can read, not as a traceback.
-        return None, f"{type(exc).__name__}: {exc}"
-    return CensusStore(collection, source=f"{directory}#{name}"), ""
+        return None, f"PGVector census unavailable: {type(exc).__name__}: {exc}"
+
 
 
 def _tally_stored_vector(documents: dict, vector, metadata, dimension: int) -> bool:
@@ -1107,12 +1091,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--chroma-dir",
         default=None,
-        help="vector store directory the --status census reads (defaults to CHROMA_DIR, then ./chroma_db)",
+        help="retired option; --status reads DATABASE_URL (PGVector)",
     )
     parser.add_argument(
         "--chroma-collection",
         default=None,
-        help="collection the --status census reads (defaults to CHROMA_COLLECTION, then enterprise_docs)",
+        help="retired option; census reads chunk_vectors from DATABASE_URL",
     )
     parser.add_argument("--json", action="store_true", help="emit the report as JSON")
     return parser

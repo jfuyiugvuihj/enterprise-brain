@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "apscheduler",
-    "chromadb",
+    "bcrypt>=5.0.0",
     "dashscope",
     "fastapi",
     "fpdf2",
