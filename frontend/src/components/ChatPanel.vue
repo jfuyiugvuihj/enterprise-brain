@@ -930,8 +930,9 @@ async function recheckRuntimeHealth() {
 }
 
 // 回到「问一句」这一屏：屏上的正文以服务端落库那一份为准（批准可能是在另一屏点的）。
-onActivated(() => {
-  reconcileAuthoritativeBody()
+onActivated(async () => {
+  await reconcileAuthoritativeBody()
+  restoreQueuedTurns({ refresh: true })
 })
 
 onMounted(() => {
@@ -1624,7 +1625,8 @@ function adoptQueueDataRead(key, readout) {
 
 function watchQueueTurn(key, requestId) {
   if (!requestId) return
-  if (queueWatches.some(item => item.key === key)) return
+  const watching = queueWatches.find(item => item.key === key)
+  if (watching) { void watching.tick?.(); return }
   const entry = { key, timer: 0, polls: 0 }
   // 重新盯上 = 又一轮前台等待：上一轮到点的痕要清掉，否则那张脸会盖住新读数。
   queueWaits.value = storeBag(queueWaits, key, null)
@@ -1673,6 +1675,11 @@ function watchQueueTurn(key, requestId) {
         approval: status.data?.approval && typeof status.data.approval === 'object' ? status.data.approval : null,
       }
       queueReads.value = storeBag(queueReads, key, read)
+      const turn = messages.value.find((msg, at) => turnKey(msg, at) === key)
+      if (turn?.queue && turn.queue.status !== read.status) {
+        turn.queue = { ...turn.queue, status: read.status }
+        syncActive()
+      }
       queueFaults.value = storeBag(queueFaults, key, null)
       if (read.status === 'done' && read.result) applyQueuedAnswer(key, read.result)
       // R519：队列道那一格同样只在后端真交回来时才抄，缺席与空串一个字都不写。
@@ -1695,6 +1702,7 @@ function watchQueueTurn(key, requestId) {
       queueStats.value = null
     }
   }
+  entry.tick = tick
   tick()
   entry.timer = setInterval(tick, QUEUE_POLL_MS)
   queueWatches.push(entry)
@@ -1716,10 +1724,11 @@ function stopQueueWatches() {
 }
 
 /** 刷新或切回来接着盯：queued 那一轮的答案在 Redis 回执过期前仍然读得到，读数过期就画过期。 */
-function restoreQueuedTurns() {
+function restoreQueuedTurns({ refresh = false } = {}) {
   messages.value.forEach((msg, index) => {
     if (msg?.role !== 'assistant' || !msg.queue?.requestId) return
-    if (msg.content) return
+    if (!refresh) { if (msg.content) return }
+    if (refresh && ['done', 'cancelled', 'failed', 'expired', 'dead'].includes(msg.queue.status)) return
     watchQueueTurn(turnKey(msg, index), msg.queue.requestId)
   })
 }
@@ -2285,7 +2294,7 @@ function renderMd(raw) {
                   <p v-if="terminalAnswerFace(msg, i)" class="lane-readout" role="status" data-testid="terminal-answer-readout">{{ terminalAnswerFace(msg, i) }}</p>
                   <!-- 档位那张脸：读的是响应头给的本轮真读数，不是选择框的当前值。
                        用户中途改选择框不会回改已落定的那一轮；后端没发读数就整条不画。 -->
-                  <p v-if="laneFaceText(laneFaceOf(msg, i))" class="lane-readout" role="status"
+                  <p v-if="!msg.queue && laneFaceText(laneFaceOf(msg, i))" class="lane-readout" role="status"
                      data-testid="lane-readout">{{ laneFaceText(laneFaceOf(msg, i)) }}</p>
                   <!-- 界面没认领的后端事件：画成系统自陈，而不是静默丢进 unknownEvents 当没看见。
                        这行的「技术信息」四个字同时是 V6 裸码闸门认得的诊断区标记。 -->

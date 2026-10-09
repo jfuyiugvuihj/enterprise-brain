@@ -297,5 +297,6 @@ describe('F · 入队被拒与轮询失败：两句都是人话，且都不叫�
     expect(face.headline).toContain('没读到')
     expect(face.headline).not.toContain('前面还有')
     expect(face.detail).toContain('3 秒')
+    expect(face.retryable).toBe(false)
   })
 })

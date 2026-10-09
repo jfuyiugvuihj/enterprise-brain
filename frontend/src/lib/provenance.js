@@ -281,7 +281,7 @@ const LEDGER_STATE = {
 const LEDGER_VOICE = {
   awaiting: '',
   unavailable: '挂起台账这一格今天读不出来，界面不能肯定这一步还开着。',
-  resumed: '账本说这一步已经放行并在往下跑，屏幕上这一格落在放行之前。',
+  resumed: '已批准，系统已继续处理本轮任务。',
   refused: '账本说这一步已经被驳回，它不会执行。',
   abandoned: '账本说这一轮被按了停止：停止不等于驳回，这一步既没执行也没被确认否决。',
   stale: '账本说这次挂起已经不作数了（同一个会话后来另开过新的一笔确认）。',
@@ -325,11 +325,11 @@ function awaitingApprovalFace(approval) {
   const what = !handle
     ? '后端这一格的读数里没带可批准的把手，界面说不出等的是哪一步。'
     : (parked
-      ? `等你拍板的是：${parked}。`
+      ? `${open ? '待确认的操作' : '本次操作'}：${parked}。`
       : '后端没在这一格里写清等的是哪一步。')
   const tail = open
     ? '批准或驳回都在「审批与待办」那一屏做：那里点的还是后端原来那扇门，不必重发这一轮的问题；不去点它，这一轮就停在这里不动。'
-    : '这一屏不再等它，也不会替你重发这一轮的问题。'
+    : '请回到对话查看本轮的处理情况。'
   return {
     // kind 里刻意不写 awaiting：到点收表那一态在本仓是按名字认领的——屏上那张脸的 `face.kind` 与 `data-kind` 上写着 `/wait|background/`。
     // （r221 乙3 :299 / 乙5 :330 / 乙7 :351 三枚拿它认 `kind`，乙6 :343 另钉 `data-kind="[\w-]*(wait|background)"`），而 awaiting 恰好含 wait，两名并排迟早看错。
@@ -337,7 +337,7 @@ function awaitingApprovalFace(approval) {
     kind: open ? 'parked-approval' : 'approval-closed',
     headline: open
       ? '这一轮停在等你确认的那一步，不确认它就不会再动'
-      : '这一轮等的那一步在账上已经闭合，屏幕这一格是闭合之前的读数',
+      : (raw === 'resumed' ? '本轮审批已通过' : (raw === 'refused' ? '本轮审批已驳回' : '这次审批已无法继续')),
     detail: `${what}${voice}${tail}`,
     tone: open ? 'warn' : 'muted',
     retryable: false,
@@ -487,10 +487,10 @@ export function queuePollFailedFace(error) {
   return {
     kind: 'unreadable',
     headline: '这一轮已经排上队，但排队状态这次没读到',
-    detail: `${result.message}界面每 3 秒再读一次状态，读数回来之前不猜你前面有几个人。`,
+    detail: '页面每 3 秒自动重试读取进度，恢复后继续跟踪原任务，结果仍会回到此会话。',
     codeLabel: errorCodeLabel(result),
     tone: 'warn',
-    retryable: result.retryable,
+    retryable: false,
     ahead: null,
   }
 }
