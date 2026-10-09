@@ -322,10 +322,10 @@ const LANE_NAMES = { qa: '问答档', analysis: '分析档', report: '报告档'
 // 档位在界面上的承诺，与 nodes.LANE_WORKERS 那张表同一方向（只写人话，不写腿名清单）：
 // 读的是「选了会怎样」，不替后端宣布它跑了哪条腿，也不拿屏上不存在的「知识库」当对象名（R423）。
 const LANE_PROMISES = {
-  '': '按问题内容自动挑一条最省的路',
-  qa: '只用文字回答，不算数、不出图、不产文件',
-  analysis: '允许进数据分析与图表，但不产文件',
-  report: '一定走导出这一腿（会先请你确认）',
+  '': '按问题内容选择合适的处理方式',
+  qa: '根据资料回答，不生成图表或报告',
+  analysis: '可分析数据、生成图表，不导出报告',
+  report: '生成报告，导出前需要你确认',
 }
 
 // 路由在这里是**可选**的：组件被单测裸渲染（renderToString，无 router 上下文）时
@@ -643,17 +643,17 @@ function chooseDataTable(value) {
 function dataTableFaceText() {
   const chosen = String(activeDataFilename.value || '')
   const picked = chosen
-    ? `这一轮将把〈${chosen}〉发给后端`
-    : '这一轮不指定数据表：由后端按问题内容决定走不走数据分析'
-  const tail = '问题看起来是查资料的，后端就不一定用这张表。'
-  if (dataFilesState.value === 'loading') return `${picked}｜数据表清单正在读……`
+    ? `本次选择的文件：${chosen}`
+    : '未选择数据文件'
+  const tail = '分析某份表格时请选择该文件；查询制度可以不选。'
+  if (dataFilesState.value === 'loading') return `${picked}｜正在加载文件列表……`
   if (dataFilesState.value === 'failed') {
-    return `${picked}｜清单没读到：${normalizeError(dataFilesError.value).message}可以先按当前这张表问，或点「重读清单」再试。`
+    return `${picked}｜文件列表加载失败：${normalizeError(dataFilesError.value).message}请点击「刷新文件列表」重试。`
   }
   if (dataFilesState.value === 'ready') {
-    return `${picked}｜清单已读到 ${dataFiles.value.length} 张，可就地改。${tail}`
+    return `${picked}｜共有 ${dataFiles.value.length} 份可选文件。${tail}`
   }
-  return `${picked}｜点开这里才读清单，界面挂载时不发请求。${tail}`
+  return `${picked}｜点击选择框可查看可用文件。${tail}`
 }
 
 /**
@@ -1076,7 +1076,7 @@ async function send(dataFilename = activeDataFilename.value) {
     } else if (result.state.terminal === 'cancelled') {
       if (!aiMsg.content) aiMsg.content = '本次回答已中断。'
     } else if (result.stopped !== 'hitl' && !aiMsg.content) {
-      aiMsg.content = '本轮没有返回内容。'
+      aiMsg.content = aiMsg.queue ? '任务已提交，进度见下方提示。' : '暂未收到回答内容。'
     }
     // R415：终态帧里服务端报的那一份表，跟在流之后抄 —— 它在最后一帧才到场。
     adoptServerDataRead(turn, aiMsg, result)
@@ -2146,10 +2146,10 @@ function renderMd(raw) {
           class="runtime-recheck-btn"
           size="sm"
           data-testid="runtime-recheck-button"
-          title="再看一次这台机器此刻的状态"
+          title="刷新服务状态"
           :loading="runtimeRecheck.phase === 'sending'"
           @click="recheckRuntimeHealth"
-        >再看一次</UiButton>
+        >刷新服务状态</UiButton>
         <p
           v-if="runtimeRecheckFace(runtimeRecheck)"
           class="runtime-recheck-face"
@@ -2367,7 +2367,7 @@ function renderMd(raw) {
             data-testid="chat-data-table-reload"
             :loading="dataFilesState === 'loading'"
             @click="loadDataFiles({ force: true })"
-          >重读清单</UiButton>
+          >刷新文件列表</UiButton>
           <span class="lane-promise" data-testid="chat-data-table-face">{{ dataTableFaceText() }}</span>
         </div>
         <!-- 失败提示原先只是换行色的 <p role="status">：读屏不会打断，等于把错误当通知。
