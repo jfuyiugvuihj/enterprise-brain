@@ -1015,6 +1015,7 @@ async function send(dataFilename = activeDataFilename.value) {
       body: JSON.stringify({
         message: text,
         session_id: activeId.value,
+        idempotency_key: `${activeId.value}:${aiMsg.mid}`,
         data_filename: dataFilename,
         // R141：这一格就是「发出去真的带着档位」。空串是合法取值（不声明），
         // 与后端 AskRequest.lane 的默认值同一含义，不是漏传。
@@ -1540,8 +1541,9 @@ function queueFaceOf(msg, index) {
   } else if (read && !QUEUE_SETTLED.includes(read.status)
     && (read.status === 'cancel_requested' || (cancel && cancel.phase === 'requested'))) {
     face = queueCancelPendingFace()
+  } else if (queueFaults.value[key] && (!read || !QUEUE_SETTLED.includes(read.status))) {
+    face = queuePollFailedFace(queueFaults.value[key])
   } else if (!read) {
-    if (queueFaults.value[key]) return queuePollFailedFace(queueFaults.value[key])
     // 只收到 queued 回执、状态还没读回来：说「已排上队、位次未读到」，不补 0 也不猜人数。
     // R268 把这半句改成读回执自己那枚状态（原来写死 queued）：取消落定之后这一轮重新挂载时
     // 读数表是空的，写死就把它画回「排队中」——那是判据①点名的第二种假话。
