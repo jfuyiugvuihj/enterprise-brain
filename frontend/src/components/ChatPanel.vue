@@ -663,7 +663,7 @@ function dataTableFaceText() {
 function dataTableOf(msg) {
   if (!msg || msg.role !== 'assistant') return ''
   if (typeof msg.dataFilename !== 'string') return ''
-  return msg.dataFilename ? `本轮发问带的表：${msg.dataFilename}` : '本轮没指定数据表'
+  return msg.dataFilename ? `已选择数据表：${msg.dataFilename}` : '本轮未指定数据表'
 }
 
 /**
@@ -688,7 +688,7 @@ function serverDataOf(msg, index) {
     : (typeof msg.serverDataFilename === 'string' ? msg.serverDataFilename : null)
   if (read === null) return ''
   if (read === '') return '这一轮说不准是哪张表：服务端没报出唯一的一张（可能没跑数据，也可能不止一份一起算了）'
-  return `这一轮算数用的表：${read}`
+  return `本轮数据来源：${read}`
 }
 
 /**
@@ -724,10 +724,10 @@ function adoptServerDataRead(turn, msg, result) {
  * 哪一枚缺席、哪一枚给了空值。
  */
 const TERMINAL_READ_SHAPES = {
-  session_id: { label: '这一轮后端报的会话号', unit: '' },
-  worker_count: { label: '这一轮后端报的分析工因数', unit: ' 枚' },
-  elapsed: { label: '这一轮后端报的耗时', unit: ' 秒' },
-  answer_length: { label: '这一轮后端报的答案长度', unit: ' 个字符' },
+  session_id: { label: '会话编号', unit: '' },
+  worker_count: { label: '处理步骤', unit: ' 项' },
+  elapsed: { label: '本次用时', unit: ' 秒' },
+  answer_length: { label: '回答字数', unit: ' 个字符' },
 }
 const TERMINAL_READ_KEYS = Object.keys(TERMINAL_READ_SHAPES)
 
@@ -1387,7 +1387,12 @@ function laneFaceText(read) {
  * 压根没走文档检索（数据问答、寒暄），画一张「没有检索到可用文档」的卡等于替后端撒谎。
  */
 function sourceFaceOf(msg, index) {
-  return sourcesFace(readTurn(sourceReads, msg, index) || msg.sources)
+  const face = sourcesFace(readTurn(sourceReads, msg, index) || msg.sources)
+  const filename = readTurn(serverDataReads, msg, index) || msg.serverDataFilename
+  if (face?.kind === 'none' && typeof filename === 'string' && filename) {
+    return { ...face, headline: '本轮依据数据表', reason: `统计来自「${filename}」，可到“数据”页面核对原始内容。` }
+  }
+  return face
 }
 
 /**
@@ -2288,6 +2293,8 @@ function renderMd(raw) {
                        后端给了才画；给了空值就明说空值；这一格没来就整条不出现（与上面那一格、与同屏
                        lane-readout 同一口径）。四枚都不拿本地现成的数回填：会话号有 activeId、答案长度
                        数得出 msg.content.length、耗时自己能掐表，那些都不是后端报回来的读数。 -->
+                  <details class="processing-details">
+                    <summary>处理详情</summary>
                   <p v-if="terminalSessionFace(msg, i)" class="lane-readout" role="status" data-testid="terminal-session-readout">{{ terminalSessionFace(msg, i) }}</p>
                   <p v-if="terminalWorkerFace(msg, i)" class="lane-readout" role="status" data-testid="terminal-worker-readout">{{ terminalWorkerFace(msg, i) }}</p>
                   <p v-if="terminalElapsedFace(msg, i)" class="lane-readout" role="status" data-testid="terminal-elapsed-readout">{{ terminalElapsedFace(msg, i) }}</p>
@@ -2302,6 +2309,7 @@ function renderMd(raw) {
                     本轮后端还发出过界面尚未认领的事件（技术信息）：{{ unseenOf(msg, i).join('、') }}。
                     答案正文照旧，但这几格的读数今天画不出来，请当成缺陷报给前端。
                   </p>
+                  </details>
                 </div>
               </div>
             </div>

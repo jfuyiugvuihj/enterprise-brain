@@ -65,10 +65,10 @@ function turnWith(read) {
 
 const GIVEN = { session_id: 'srv-9', worker_count: 3, elapsed: 12.4, answer_length: 2048 }
 const GIVEN_TEXT = {
-  session_id: '这一轮后端报的会话号：srv-9',
-  worker_count: '这一轮后端报的分析工因数：3 枚',
-  elapsed: '这一轮后端报的耗时：12.4 秒',
-  answer_length: '这一轮后端报的答案长度：2048 个字符',
+  session_id: '会话编号：srv-9',
+  worker_count: '处理步骤：3 项',
+  elapsed: '本次用时：12.4 秒',
+  answer_length: '回答字数：2048 个字符',
 }
 const EMPTY_TEXT = '后端这一格交回的是空值（它开了口，但没给内容）'
 
@@ -246,9 +246,9 @@ describe('甲 · 三形各一张脸（断的是屏上那句话，一枚键一条
   it('0 是值不是缺席：后端报 0 枚／0 秒／0 个字符，屏上就照实报 0', async () => {
     messages.value = turnWith({ session_id: 'srv-zero', worker_count: 0, elapsed: 0, answer_length: 0 })
     const html = await render()
-    expect(faceOf(html, 'worker_count')).toEqual(['这一轮后端报的分析工因数：0 枚'])
-    expect(faceOf(html, 'elapsed')).toEqual(['这一轮后端报的耗时：0 秒'])
-    expect(faceOf(html, 'answer_length')).toEqual(['这一轮后端报的答案长度：0 个字符'])
+    expect(faceOf(html, 'worker_count')).toEqual(['处理步骤：0 项'])
+    expect(faceOf(html, 'elapsed')).toEqual(['本次用时：0 秒'])
+    expect(faceOf(html, 'answer_length')).toEqual(['回答字数：0 个字符'])
   })
 
   it('只说在助手那一侧：员工自己那句话不配拥有这四格', async () => {
@@ -276,8 +276,8 @@ describe('甲 · 三形各一张脸（断的是屏上那句话，一枚键一条
   it('部分到场：只交两枚时另两枚整格不画，有脸那两枚照说', async () => {
     messages.value = turnWith({ session_id: 'srv-partial', elapsed: 3.5 })
     const html = await render()
-    expect(faceOf(html, 'session_id')).toEqual(['这一轮后端报的会话号：srv-partial'])
-    expect(faceOf(html, 'elapsed')).toEqual(['这一轮后端报的耗时：3.5 秒'])
+    expect(faceOf(html, 'session_id')).toEqual(['会话编号：srv-partial'])
+    expect(faceOf(html, 'elapsed')).toEqual(['本次用时：3.5 秒'])
     expect(faceOf(html, 'worker_count')).toEqual([])
     expect(faceOf(html, 'answer_length')).toEqual([])
   })
@@ -316,8 +316,8 @@ describe('乙 · 流结束之后把整格读数抄进这一轮（lib → 面板�
     await panel0.state.send('')
     await settled()
     const html = await render()
-    expect(faceOf(html, 'session_id')).toEqual(['这一轮后端报的会话号：srv-two'])
-    expect(faceOf(html, 'elapsed')).toEqual(['这一轮后端报的耗时：2.5 秒'])
+    expect(faceOf(html, 'session_id')).toEqual(['会话编号：srv-two'])
+    expect(faceOf(html, 'elapsed')).toEqual(['本次用时：2.5 秒'])
     expect(faceOf(html, 'worker_count')).toEqual([])
     expect(faceOf(html, 'answer_length')).toEqual([])
     expect(assistantMsg().terminalReadData, '缺席的键不许被补进袋子').toEqual({ session_id: 'srv-two', elapsed: 2.5 })
@@ -331,7 +331,7 @@ describe('乙 · 流结束之后把整格读数抄进这一轮（lib → 面板�
     await panel0.state.send('')
     await settled()
     const html = await render()
-    expect(faceOf(html, 'session_id')).toEqual(['这一轮后端报的会话号：' + EMPTY_TEXT])
+    expect(faceOf(html, 'session_id')).toEqual(['会话编号：' + EMPTY_TEXT])
     expect(faceOf(html, 'worker_count')).toEqual([])
   })
 
@@ -367,7 +367,7 @@ describe('丙 · 线上到屏上那一整截（lib 不做桩，真帧 → 真读
     }))
     const html = await render()
     for (const key of KEYS) expect(faceOf(html, key), key).toEqual([GIVEN_TEXT[key]])
-    expect(textOf(html, 'server-data-readout')).toEqual(['这一轮算数用的表：sales.xlsx'])
+    expect(textOf(html, 'server-data-readout')).toEqual(['本轮数据来源：sales.xlsx'])
   })
 
   it('🔴 帧里的读数与界面自己那几枚不同 → 屏上只能说帧里的，不许回显请求值/本地数', async () => {
@@ -376,10 +376,10 @@ describe('丙 · 线上到屏上那一整截（lib 不做桩，真帧 → 真读
       data: { session_id: 'srv-side-01', worker_count: 5, elapsed: 99.9, answer_length: 2048 },
     }))
     const html = await render()
-    expect(faceOf(html, 'session_id'), '界面自己的会话号是 r510-local-session，不许冒充后端读数').toEqual(['这一轮后端报的会话号：srv-side-01'])
-    expect(faceOf(html, 'worker_count')).toEqual(['这一轮后端报的分析工因数：5 枚'])
-    expect(faceOf(html, 'elapsed')).toEqual(['这一轮后端报的耗时：99.9 秒'])
-    expect(faceOf(html, 'answer_length'), '本地正文长度数得出，不许拿它当后端报的答案长度').toEqual(['这一轮后端报的答案长度：2048 个字符'])
+    expect(faceOf(html, 'session_id'), '界面自己的会话号是 r510-local-session，不许冒充后端读数').toEqual(['会话编号：srv-side-01'])
+    expect(faceOf(html, 'worker_count')).toEqual(['处理步骤：5 项'])
+    expect(faceOf(html, 'elapsed')).toEqual(['本次用时：99.9 秒'])
+    expect(faceOf(html, 'answer_length'), '本地正文长度数得出，不许拿它当后端报的答案长度').toEqual(['回答字数：2048 个字符'])
     expect(aiMsg.content.length).not.toBe(2048)
     expect(activeId.value).toBe('r510-local-session')
   })
@@ -433,9 +433,9 @@ describe('丁 · 两边逐字对齐 + 面板不当第三套判断（源码级）
 
   it('后端两枚终态出口今天确实交出这四枚键（屏侧这句话的全部依据）', () => {
     const src = chat()
-    const exits = [...src.matchAll(/"request\.completed",/g)].length
-    expect(exits, 'request.completed 的出口数变了：这一枚取证必须重新看').toBe(2)
-    for (const match of src.matchAll(/"request\.completed",/g)) {
+    const exits = [...src.matchAll(/yield canonical_sse_event\(\s*"request\.completed",/g)]
+    expect(exits.length, 'request.completed 的 SSE 出口数变了：这一枚取证必须重新看').toBe(2)
+    for (const match of exits) {
       const block = src.slice(match.index, match.index + 900)
       for (const key of KEYS) expect(block, '这一枚出口不再交 ' + key + '：屏上那一句就成了假话').toContain(`"${key}"`)
     }

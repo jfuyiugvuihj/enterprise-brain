@@ -113,11 +113,11 @@ describe('B · 卡片上的字段措辞：后端给什么说什么，不给就�
 })
 
 describe('C · 缓存那张脸：四态不许并成一句', () => {
-  it('实时算这一态明写它的证据是「当场没带回读数」，不是「后端报了未命中」', () => {
+  it('实时算这一态说明本次生成，不误说是缓存结果', () => {
     const face = cacheFace({ cached: false, generatedAt: '', note: '', observed: true })
     expect(face.kind).toBe('live')
     expect(face.headline).toContain('实时')
-    expect(face.detail).toContain('读数')
+    expect(face.detail).toContain('本次提问')
     expect(face.detail).not.toContain('缓存结果')
   })
 

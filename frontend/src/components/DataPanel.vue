@@ -384,11 +384,11 @@ onMounted(loadDataFiles)
     <!-- 上传区 -->
     <div class="upload-section">
       <label class="upload-btn" :class="{ loading: uploading }">
-        {{ uploading ? '⏳ 解析中...' : '📊 上传 Excel' }}
-        <input data-testid="data-upload-input" type="file" hidden accept=".xlsx,.xls,.csv"
+        {{ uploading ? '⏳ 解析中...' : '📊 上传数据' }}
+        <input data-testid="data-upload-input" type="file" hidden accept=".xlsx,.csv"
                @change="uploadExcel" :disabled="uploading" />
       </label>
-      <p class="upload-hint">上传经营数据开始分析</p>
+      <p class="upload-hint">支持 Excel（.xlsx）和 CSV；旧版 .xls 请先另存为 .xlsx。</p>
       <UiErrorState
         v-if="uploadError"
         title="数据上传失败"

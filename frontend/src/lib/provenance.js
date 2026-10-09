@@ -208,7 +208,7 @@ export function cacheFace(cache, staleness) {
     return {
       kind: 'live',
       headline: '本轮实时生成',
-      detail: '这一轮的回答帧当场看着生成，没有带回缓存读数。',
+      detail: '根据本次提问生成回答。',
       tone: 'muted',
     }
   }

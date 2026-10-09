@@ -989,8 +989,8 @@ onDeactivated(stopUploadPoll)
          @drop.prevent="onDrop">
       <label class="upload-label">
         <span class="upload-icon">☁️</span>
-        <span>拖拽或点击上传 · 支持多选</span>
-        <input data-testid="document-upload-input" type="file" hidden multiple accept=".pdf,.docx,.doc,.txt" @change="onFileInput" />
+        <span>拖拽或点击上传 · 支持 PDF、DOCX、TXT、Markdown、Excel 和 CSV，可多选</span>
+        <input data-testid="document-upload-input" type="file" hidden multiple accept=".pdf,.docx,.txt,.md,.xlsx,.csv" @change="onFileInput" />
       </label>
     </div>
 

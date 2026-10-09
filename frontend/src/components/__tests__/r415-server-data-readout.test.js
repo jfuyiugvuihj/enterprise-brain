@@ -221,8 +221,8 @@ describe('甲 · 三态各有名字（断的是屏上那句话的文本）', () 
     // 故意让两份不同名：任何"回落到请求值"的实现都会在这一枚当场红。
     messages.value = turn({ sent: '报销明细表.csv', server: 'sales.xlsx' })
     const html = await render()
-    expect(serverReadout(html)).toEqual(['这一轮算数用的表：sales.xlsx'])
-    expect(sentReadout(html)).toEqual(['本轮发问带的表：报销明细表.csv'])
+    expect(serverReadout(html)).toEqual(['本轮数据来源：sales.xlsx'])
+    expect(sentReadout(html)).toEqual(['已选择数据表：报销明细表.csv'])
   })
 
   it('说不准：交来空串就说不准，一个字都不许从发依据里借', async () => {
@@ -236,7 +236,7 @@ describe('甲 · 三态各有名字（断的是屏上那句话的文本）', () 
     // 🔴 本仓的假绿形状就在这两行：空串那一格不是"用了一份空文件"，更不是刚才点的那一张。
     expect(lines[0]).not.toContain('报销明细表.csv')
     expect(lines[0]).not.toContain('sales.xlsx')
-    expect(sentReadout(html)).toEqual(['本轮发问带的表：报销明细表.csv'])
+    expect(sentReadout(html)).toEqual(['已选择数据表：报销明细表.csv'])
   })
 
   it('不画：终态帧没这一格就整句不出现，而发依据那一句照旧在（缺席不等于空串）', async () => {
@@ -244,7 +244,7 @@ describe('甲 · 三态各有名字（断的是屏上那句话的文本）', () 
     const html = await render()
     expect(serverReadout(html)).toEqual([])
     expect(html).not.toContain('data-testid="server-data-readout"')
-    expect(sentReadout(html)).toEqual(['本轮发问带的表：报销明细表.csv'])
+    expect(sentReadout(html)).toEqual(['已选择数据表：报销明细表.csv'])
   })
 
   it('三态两两不并格：两种有句子的说法彼此不同，第三种一句都没有', async () => {
@@ -272,7 +272,7 @@ describe('乙 · 流结束之后把读数抄进这一轮（接缝验法：交过
     await panel0.state.send('报销明细表.csv')
     await settled()
     const html = await render()
-    expect(serverReadout(html)).toEqual(['这一轮算数用的表：sales.xlsx'])
+    expect(serverReadout(html)).toEqual(['本轮数据来源：sales.xlsx'])
     const aiMsg = messages.value.filter(item => item.role === 'assistant').pop()
     expect(aiMsg.serverDataFilename).toBe('sales.xlsx')
     expect(aiMsg.dataFilename, '发依据没被读数顶掉：两句各说各的事').toBe('报销明细表.csv')
@@ -287,7 +287,7 @@ describe('乙 · 流结束之后把读数抄进这一轮（接缝验法：交过
     await settled()
     const html = await render()
     expect(serverReadout(html)).toEqual([])
-    expect(sentReadout(html)).toEqual(['本轮发问带的表：报销明细表.csv'])
+    expect(sentReadout(html)).toEqual(['已选择数据表：报销明细表.csv'])
   })
 
   it('lib 交来空串 → 屏上说不准，且不等于上面两态里的任何一句', async () => {
@@ -300,7 +300,7 @@ describe('乙 · 流结束之后把读数抄进这一轮（接缝验法：交过
     const lines = serverReadout(await render())
     expect(lines).toHaveLength(1)
     expect(lines[0]).toContain('说不准')
-    expect(sentReadout(await render())).toEqual(['本轮没指定数据表'])
+    expect(sentReadout(await render())).toEqual(['本轮未指定数据表'])
   })
 })
 
@@ -308,7 +308,7 @@ describe('丙 · 线上到屏上那一整截（lib 不做桩，只把 consumeSse
   it('终态帧带文件名 → 屏上报的就是那一个名字，而不是界面发出去的那一张', async () => {
     const { aiMsg } = await realTurn(terminalFrameWithRead)
     const html = await render()
-    expect(serverReadout(html), '线上那一格到屏上这一句必须接得住').toEqual(['这一轮算数用的表：sales.xlsx'])
+    expect(serverReadout(html), '线上那一格到屏上这一句必须接得住').toEqual(['本轮数据来源：sales.xlsx'])
     expect(aiMsg.serverDataFilename).toBe('sales.xlsx')
     expect(aiMsg.dataFilename, '发依据与用表读数各说各的事，一句不替另一句背书').toBe('报销明细表.csv')
   })
@@ -329,7 +329,7 @@ describe('丙 · 线上到屏上那一整截（lib 不做桩，只把 consumeSse
     }))
     expect(serverReadout(await render())).toEqual([])
     expect('serverDataFilename' in aiMsg, '后端没说话，界面也不许替它宣布「说不准」').toBe(false)
-    expect(sentReadout(await render())).toEqual(['本轮发问带的表：报销明细表.csv'])
+    expect(sentReadout(await render())).toEqual(['已选择数据表：报销明细表.csv'])
   })
 
   it('读数随会话落盘：刷新回来仍报同一个名字，复原的不是现猜的', async () => {
@@ -341,7 +341,7 @@ describe('丙 · 线上到屏上那一整截（lib 不做桩，只把 consumeSse
     real.restoreActive(real.loadSessions())
     const aiMsg = real.messages.value.filter(item => item.role === 'assistant').pop()
     expect(aiMsg.serverDataFilename, '随会话落盘的那一份没回来：刷新一次就读不到服务端读数了').toBe('sales.xlsx')
-    expect(serverReadout(await render())).toEqual(['这一轮算数用的表：sales.xlsx'])
+    expect(serverReadout(await render())).toEqual(['本轮数据来源：sales.xlsx'])
   })
 
   // 挂具放在最后一枚用例之后：函数声明提到整个 describe 作用域，而 307/308 那两行的位置
