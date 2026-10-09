@@ -5,6 +5,7 @@ Day 7-8: Excel 数据处理
 import ast
 import os
 import io
+import re
 import importlib.util
 import pandas as pd
 import openpyxl
@@ -168,13 +169,13 @@ def read_csv(file_path: str) -> pd.DataFrame:
 
 # ==================== 合并单元格填充 (#6) ====================
 
-def _fill_merged_cells(file_path: str) -> pd.DataFrame:
+def _fill_merged_cells(file_path: str, sheet_name: str | None = None) -> pd.DataFrame:
     """
     检测并填充合并单元格。
     openpyxl 读取 → 原地展开合并区域的值 → 转为 DataFrame
     """
     wb = openpyxl.load_workbook(file_path, data_only=True)
-    ws = wb.active
+    ws = wb[sheet_name] if sheet_name else wb.worksheets[0]
 
     merged_ranges = list(ws.merged_cells.ranges)
     if not merged_ranges:
@@ -206,7 +207,7 @@ def _fill_merged_cells(file_path: str) -> pd.DataFrame:
 
 # ==================== 文件加载 ====================
 
-def load_excel(file_path: str) -> pd.DataFrame:
+def load_excel(file_path: str, *, query: str = "") -> pd.DataFrame:
     """统一入口：自动识别收口名单里的格式，处理合并单元格。
 
     R336：进门先问「这一枚后缀在本机真有读引擎吗」，拒绝发生在任何一次磁盘读之前。
@@ -224,14 +225,31 @@ def load_excel(file_path: str) -> pd.DataFrame:
         return read_csv(file_path)
 
     # 收口名单里剩下的表格格式（今天只有 .xlsx），引擎名从 DATA_READ_ENGINES 现取
-    df = _fill_merged_cells(file_path)
+    book = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        sheet_names = book.sheetnames
+    finally:
+        book.close()
+    positive = re.sub(r"(?:不要|别|无需|不)(?:读取|读|分析|使用|查看)[^，。；;\n]*", "", query)
+    requested = [a or b for a, b in re.findall(
+        r'[「“"]([^」”"]+)[」”"]\s*工作表|工作表\s*[「“"]([^」”"]+)[」”"]', positive
+    )]
+    unknown = [name for name in requested if name not in sheet_names]
+    if unknown:
+        raise ValueError(f"工作表「{unknown[0]}」不存在；可选：{'、'.join(sheet_names)}")
+    matches = list(dict.fromkeys(requested)) or [name for name in sheet_names if name in positive]
+    if len(matches) > 1:
+        raise ValueError(f"本次分析请选择一张工作表；题目包含：{'、'.join(matches)}")
+    sheet_name = matches[0] if matches else sheet_names[0]
+    df = _fill_merged_cells(file_path, sheet_name)
     if df is None:
-        df = pd.read_excel(file_path, engine=engine_for(ext))
+        df = pd.read_excel(file_path, engine=engine_for(ext), sheet_name=sheet_name)
 
     # 清理：删全空行/列
     df.dropna(how="all", inplace=True)
     df.dropna(axis=1, how="all", inplace=True)
     df.reset_index(drop=True, inplace=True)
+    df.attrs.update(sheet_name=sheet_name, sheet_names=sheet_names)
 
     return df
 

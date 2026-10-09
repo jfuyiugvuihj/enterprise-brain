@@ -1613,7 +1613,8 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
     pending_datasets: "list[tuple[str, object, int]]" = []
     for fname, file_path in files:
         try:
-            df = load_excel(file_path)
+            question = str(conf.get("data_question") or "")
+            df = load_excel(file_path, query=question) if question else load_excel(file_path)
             df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
                 # 码与文案同判据源：一个给机器，一个给人看，同一条 reason_code。
@@ -1625,6 +1626,8 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
             profile = profile_dataframe(df)
             cols_info = [f"{c['name']}({c['dtype']})" if isinstance(c, dict) else str(c) for c in profile["columns"]]
             parts.append(f"📁 {fname}: {profile['rows']}行 × {len(cols_info)}列 — 列: {', '.join(cols_info)}")
+            if df.attrs.get("sheet_name"):
+                parts.append(f"本次只读取工作表「{df.attrs['sheet_name']}」；工作簿全部工作表：{'、'.join(df.attrs['sheet_names'])}。")
 
             # 根据 query 计算具体答案
             numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
@@ -1814,7 +1817,8 @@ def _query_data(query: str, config: RunnableConfig) -> str:
     empty_files = 0
     for fname, file_path in files:
         try:
-            df = load_excel(file_path)
+            question = str(conf.get("data_question") or "")
+            df = load_excel(file_path, query=question) if question else load_excel(file_path)
             df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
                 reason = _row_scope_reason(scope_info)
@@ -1841,7 +1845,8 @@ def _query_data(query: str, config: RunnableConfig) -> str:
             # 截断标记），连标记都装不下就换那一句指名"本题数据结果超出本机上下文"的话。
             # R445 按名次扫的救援在这一条候选上与旧读法同形：交得出就是它自己的整条或桩。
             # R122：裁出来那一截的正文不够门槛也不交——"📊 x.xlsx 查询结果:"加三个字不是答案。
-            query_text = f"📊 {fname} 查询结果:\n{result}"
+            sheet = f" 工作表「{df.attrs['sheet_name']}」" if df.attrs.get("sheet_name") else ""
+            query_text = f"📊 {fname}{sheet} 查询结果:\n{result}"
             fitted = _pack_into_prompt_room(
                 config, leg="query", units=[query_text], keep_first_truncated=True
             )

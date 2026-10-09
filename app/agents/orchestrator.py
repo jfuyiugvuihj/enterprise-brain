@@ -972,6 +972,7 @@ def _make_worker_wrapper(graph, name: str):
                 break
         if user_msg is None:
             user_msg = HumanMessage(content="请完成你的专业工作。")
+        child_conf["data_question"] = str(user_msg.content or "")
 
         owner_id = _owner_id_from(parent_conf)
         started = time.monotonic()

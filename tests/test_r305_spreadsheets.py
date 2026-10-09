@@ -33,6 +33,33 @@ import pytest
 from app.rag import loader, spreadsheets, tables
 from app.rag.tables import ANCHOR_JOIN, BLOCK_SEPARATOR, SEGMENT_CHAR_BUDGET, TableBlock
 
+
+def test_analysis_reads_named_sheet_instead_of_active_or_first(tmp_path):
+    import openpyxl
+    from app.tools.excel import load_excel
+
+    book = openpyxl.Workbook()
+    first = book.active
+    first.title = "合并表"
+    first.append(["部门", "月份", "金额"])
+    first.append(["销售", "一月", 100])
+    first.append([None, "二月", 200])
+    first.merge_cells("A2:A3")
+    second = book.create_sheet("第二张表")
+    second.append(["部门", "月份", "金额"])
+    second.append(["行政", "二月", 20])
+    book.active = 1
+    path = tmp_path / "multi.xlsx"
+    book.save(path)
+    default = load_excel(str(path))
+    assert default["金额"].tolist() == [100, 200]
+    assert default["部门"].tolist() == ["销售", "销售"]
+    selected = load_excel(str(path), query="读取「第二张表」工作表，不要读取「合并表」。")
+    assert selected["金额"].tolist() == [20]
+    assert selected.attrs["sheet_names"] == ["合并表", "第二张表"]
+    with pytest.raises(ValueError, match="不存在"):
+        load_excel(str(path), query="读取「不存在的表」工作表")
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_SOURCE = REPO_ROOT / "app" / "rag" / "spreadsheets.py"
 LOADER_SOURCE = REPO_ROOT / "app" / "rag" / "loader.py"
