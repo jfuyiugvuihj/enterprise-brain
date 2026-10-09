@@ -411,7 +411,7 @@ onMounted(async () => {
             <div class="trend-scroll">
               <table class="trend-table" data-testid="dashboard-trend-table">
                 <caption class="trend-caption">
-                  新增条目数 · {{ trendView.windowLabel }} · 服务端自报时区 {{ trendView.timeZone }}
+                  新增数量 · {{ trendView.windowLabel }} · 时区 {{ trendView.timeZone }}
                 </caption>
                 <thead>
                   <tr>
@@ -438,17 +438,20 @@ onMounted(async () => {
                 </tbody>
               </table>
             </div>
+            <details class="trend-statistics">
+              <summary>统计说明</summary>
             <p class="demo-note trend-alerts-note" data-testid="dashboard-trend-alerts-note">{{ trendView.alertsNote }}</p>
             <p class="demo-note trend-undated-note" data-testid="dashboard-trend-undated-note">{{ trendView.undatedNote }}</p>
             <ul class="trend-notes" data-testid="dashboard-trend-notes">
               <li v-for="(note, index) in trendView.notes" :key="index">{{ note }}</li>
             </ul>
+            </details>
           </div>
         </article>
 
         <article class="reference-card risk-card" data-testid="dashboard-risk-card">
           <header class="reference-card-head">
-            <div><h2>异常与风险</h2><p>服务端告警账本里最近的记录</p></div>
+            <div><h2>异常与风险</h2><p>最近的告警记录</p></div>
             <UiButton
               type="button"
               size="sm"

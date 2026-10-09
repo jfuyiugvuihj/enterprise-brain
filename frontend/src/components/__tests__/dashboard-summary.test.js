@@ -327,18 +327,18 @@ describe('W6-④ 取数走统一实例、检查 response.ok、失败可重试、
 
   it('口径来源写在数字旁边，并如实带上服务端回显的登录者', () => {
     const note = summaryScopeNote('finance-manager')
-    expect(note).toContain('可见范围')
+    expect(note).toContain('统计范围')
     expect(note).toContain('finance-manager')
-    expect(note).toContain('不是全租户总数')
-    expect(summaryScopeNote('')).toContain('按你当前的可见范围')
-    expect(summaryScopeNote(null)).toContain('按你当前的可见范围')
+    expect(note).toContain('有权查看的内容')
+    expect(summaryScopeNote('')).toContain('你有权查看的内容')
+    expect(summaryScopeNote(null)).toContain('你有权查看的内容')
   })
 
   it('真渲染里能看到口径行，四张卡也各自标了落点', async () => {
     stubRoutes({ summary: summaryBodyWithoutAlerts() })
     const html = await renderLoaded(await mountedPanel())
     expect(html).toContain('data-testid="dashboard-scope-note"')
-    expect(html).toContain('四个数字由服务端按「finance-manager」当前的可见范围计算')
+    expect(html).toContain('统计范围：账号「finance-manager」有权查看的内容')
     for (const target of ['docs', 'data', 'approval', 'insights']) {
       expect(html).toContain(`data-target="${target}"`)
     }

@@ -261,8 +261,8 @@ export async function loadDashboardSummary() {
 /** 口径提示：数字旁边必须跟着这一句，否则它会被读成全租户总数。 */
 export function summaryScopeNote(generatedFor) {
   const who = typeof generatedFor === 'string' ? generatedFor.trim() : ''
-  if (who) return `四个数字由服务端按「${who}」当前的可见范围计算，不是全租户总数。`
-  return '四个数字由服务端按你当前的可见范围计算，不是全租户总数。'
+  if (who) return `统计范围：账号「${who}」有权查看的内容。`
+  return '以下统计仅包含你有权查看的内容。'
 }
 
 /**

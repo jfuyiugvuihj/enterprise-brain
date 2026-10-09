@@ -1661,6 +1661,7 @@ class Walk:
         tiles = self.page.evaluate(
             "() => Array.from(document.querySelectorAll('[data-testid^=dashboard-kpi-]'))"
             ".map(e => ({ id: e.getAttribute('data-testid'),"
+            " value: (e.querySelector('.kpi-copy strong')?.innerText || '').trim(),"
             " text: (e.innerText || '').replace(/\\s+/g, ' ').trim() }))"
         )
         shots = [self.shot("v2-r11-overview.png")]
@@ -1670,8 +1671,11 @@ class Walk:
         kpi_docs = None
         for tile in tiles:
             if str(tile.get("id") or "").endswith("-documents"):
-                digits = "".join(ch for ch in tile["text"] if ch.isdigit())
-                kpi_docs = int(digits) if digits else None
+                digits = tile["value"].replace(",", "")
+                kpi_docs = int(digits) if digits.isdigit() else None
+        catalog = self.api("/documents/catalog")
+        catalog_rows = (catalog.get("body") or {}).get("documents")
+        catalog_count = len(catalog_rows) if isinstance(catalog_rows, list) else None
         readings = {
             "nav": nav,
             "demo_flag_on_screen": demo_flag,
@@ -1679,9 +1683,11 @@ class Walk:
             "kpi_documents": kpi_docs,
             "feed_tile_documents": docs_now.get("tile"),
             "feed_api_documents": docs_now.get("api_document_count"),
+            "feed_catalog_documents": catalog_count,
         }
         status = "达" if (
             not demo_flag and kpi_docs is not None and docs_now.get("tile") == kpi_docs
+            and catalog.get("status") == 200 and catalog_count == kpi_docs
         ) else "未达"
         note = "" if status == "达" else (
             "未达差在总览那一格还挂着演示牌、或它的文档数与喂料屏现读不等（两枚读数都在 kpi_documents"
