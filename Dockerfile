@@ -91,7 +91,8 @@ ARG PG_CLIENT_MAJOR=17
 RUN set -eux; \
     opts="-o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::ForceIPv4=true"; \
     apt-get update $opts; \
-    apt-get install -y --no-install-recommends $opts ca-certificates postgresql-client-${PG_CLIENT_MAJOR}; \
+    apt-get install -y --no-install-recommends $opts ca-certificates postgresql-client-${PG_CLIENT_MAJOR} \
+        libxcb1 libgl1 libglib2.0-0t64; \
     rm -rf /var/lib/apt/lists/*
 # The service account exists before the sources are copied so the COPYs below can carry
 # ownership directly (see the note at the top). Recursing over /app afterwards would
