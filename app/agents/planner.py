@@ -48,8 +48,11 @@ def build_task_plan(question: str) -> list[dict]:
             "比较",
         ]
     )
+    intent = q
+    if has_data:
+        intent = re.sub(r"已批准|未批准|待审批|审批中|已审批|已支付|已驳回|审批状态", "", q)
     has_doc = any(
-        k in q
+        k in intent
         for k in [
             "制度",
             "流程",
@@ -67,7 +70,7 @@ def build_task_plan(question: str) -> list[dict]:
         ]
     )
     has_chart = any(k in q for k in ["图", "图表", "趋势", "可视化"])
-    has_approval = any(k in q for k in ["审批", "责任", "承担", "预审", "授权", "批准"])
+    has_approval = any(k in intent for k in ["审批", "责任", "承担", "预审", "授权", "批准"])
     explains_flow = any(k in q for k in ["流程", "环节", "由谁", "谁审批", "谁批准"])
     requests_verdict = any(k in q for k in ["预审", "是否", "能否", "能批", "超标", "合规"])
     if explains_flow and not requests_verdict:

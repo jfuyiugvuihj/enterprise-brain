@@ -1590,6 +1590,7 @@ def _row_scope_denial_text(
 def _analyze_data(query: str, config: RunnableConfig) -> str:
     from app.common.rbac import filter_dataframe_rows_with_scope
     from app.tools.excel import load_excel, profile_dataframe, select_text_columns
+    from app.tools.excel import filter_explicit_categories
     context = _tool_context(config)
     if context is None:
         record_tool_status(
@@ -1622,7 +1623,13 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 parts.append(_row_scope_line(fname, scope_info))
                 continue
             produced += 1
+            df = filter_explicit_categories(df, question or query)
             pending_datasets.append((fname, df, len(parts)))
+            if df.attrs.get("filter_note"):
+                parts.append(f"📁 {fname}: {df.attrs['filter_note']}")
+            if df.empty:
+                parts.append("筛选后没有符合条件的记录，不计算全表金额。")
+                continue
             profile = profile_dataframe(df)
             cols_info = [f"{c['name']}({c['dtype']})" if isinstance(c, dict) else str(c) for c in profile["columns"]]
             parts.append(f"📁 {fname}: {profile['rows']}行 × {len(cols_info)}列 — 列: {', '.join(cols_info)}")
@@ -1793,6 +1800,7 @@ def _flatten_query_tuple_keys(value: Any) -> Any:
 def _query_data(query: str, config: RunnableConfig) -> str:
     from app.common.rbac import filter_dataframe_rows_with_scope
     from app.tools.excel import load_excel, safe_query
+    from app.tools.excel import filter_explicit_categories
     context = _tool_context(config)
     if context is None:
         record_tool_status(
@@ -1831,6 +1839,12 @@ def _query_data(query: str, config: RunnableConfig) -> str:
         except Exception:
             unreadable += 1
             continue
+        try:
+            df = filter_explicit_categories(df, question or query)
+        except ValueError as exc:
+            return f"查询未完成：{exc}"
+        if df.empty:
+            return f"{df.attrs.get('filter_note', '')}筛选后没有符合条件的记录。"
         attempted += 1
         code = _llm_pandas_code(df, query)
         res = safe_query(df, code)
@@ -1847,6 +1861,8 @@ def _query_data(query: str, config: RunnableConfig) -> str:
             # R122：裁出来那一截的正文不够门槛也不交——"📊 x.xlsx 查询结果:"加三个字不是答案。
             sheet = f" 工作表「{df.attrs['sheet_name']}」" if df.attrs.get("sheet_name") else ""
             query_text = f"📊 {fname}{sheet} 查询结果:\n{result}"
+            if df.attrs.get("filter_note"):
+                query_text += f"\n{df.attrs['filter_note']}"
             fitted = _pack_into_prompt_room(
                 config, leg="query", units=[query_text], keep_first_truncated=True
             )

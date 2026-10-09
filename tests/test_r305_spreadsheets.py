@@ -60,6 +60,23 @@ def test_analysis_reads_named_sheet_instead_of_active_or_first(tmp_path):
     with pytest.raises(ValueError, match="不存在"):
         load_excel(str(path), query="读取「不存在的表」工作表")
 
+
+def test_expense_status_filter_counts_only_approved_and_paid(tmp_path):
+    from app.tools.excel import load_excel, filter_explicit_categories
+
+    path = tmp_path / "expenses.csv"
+    path.write_text("部门,金额,状态\n财务部,200,已支付\n销售部,480,已批准\n销售部,200,待审批\n研发部,420,已支付\n研发部,90,已驳回\n人事部,210,已批准\n研发部,110,待审批\n", encoding="utf8")
+    frame = load_excel(str(path))
+    query = "仅统计状态为「已批准」或「已支付」的记录，排除「待审批」和「已驳回」，按部门汇总金额"
+    filtered = filter_explicit_categories(frame, query)
+    assert filtered["金额"].sum() == 1310
+    assert frame["金额"].sum() == 1710
+    assert set(filtered["状态"]) == {"已批准", "已支付"}
+    assert filtered.attrs["filter_note"]
+    assert filter_explicit_categories(frame, "仅统计状态为「已批准」，排除「已批准」").empty
+    with pytest.raises(ValueError, match="没有取值"):
+        filter_explicit_categories(frame, "仅统计状态为「不存在的状态」")
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_SOURCE = REPO_ROOT / "app" / "rag" / "spreadsheets.py"
 LOADER_SOURCE = REPO_ROOT / "app" / "rag" / "loader.py"

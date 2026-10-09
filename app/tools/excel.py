@@ -207,6 +207,40 @@ def _fill_merged_cells(file_path: str, sheet_name: str | None = None) -> pd.Data
 
 # ==================== 文件加载 ====================
 
+def filter_explicit_categories(df: pd.DataFrame, query: str) -> pd.DataFrame:
+    """在计算、样本和图表之前执行用户明确引用的分类筛选。"""
+    selected = df
+    notes = []
+    for exclude, pattern in (
+        (False, r"(?:仅|只)(?:统计|计算|包含|保留|分析|汇总)([^，。；;\n]+)"),
+        (True, r"(?:排除|不含|不计入|不统计)([^，。；;\n]+)"),
+    ):
+        for clause in re.findall(pattern, query):
+            values = re.findall(r'[「“"]([^」”"]+)[」”"]', clause)
+            if not values:
+                continue
+            columns = select_text_columns(df)
+            named = [c for c in columns if str(c) in clause]
+            candidates = named or [
+                c for c in columns
+                if set(values).issubset(set(df[c].dropna().astype(str)))
+            ]
+            if len(candidates) != 1:
+                raise ValueError("无法确定筛选字段，请写明列名及表中实际取值。")
+            column = candidates[0]
+            unknown = set(values) - set(df[column].dropna().astype(str))
+            if unknown:
+                raise ValueError(f"字段「{column}」没有取值：{'、'.join(sorted(unknown))}")
+            mask = selected[column].astype(str).isin(values)
+            selected = selected.loc[~mask if exclude else mask].copy()
+            notes.append(f"{column}{'排除' if exclude else '仅包含'}{'、'.join(values)}")
+    if notes:
+        selected.attrs["filter_note"] = (
+            f"实际筛选：{'；'.join(notes)}；筛选前 {len(df)} 行，筛选后 {len(selected)} 行。"
+        )
+    return selected
+
+
 def load_excel(file_path: str, *, query: str = "") -> pd.DataFrame:
     """统一入口：自动识别收口名单里的格式，处理合并单元格。
 
