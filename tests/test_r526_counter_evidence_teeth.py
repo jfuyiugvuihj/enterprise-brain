@@ -115,19 +115,20 @@ def _bites(violations, victim, column=None):
 def test_k1_a_stolen_number_without_raw_evidence_turns_the_nail_red(shadow):
     assert T.check_targets_pending(shadow.original, T.caliber()) == []  # 正控
 
-    mutated = shadow(_one_line(shadow.original, QA_ROW_NEEDLE, _sub(T.PENDING_TEXT, FORGED_SECONDS)))
+    registered = f"{T.observability.SLO_TARGET_QA_COMPLETION_MS:,.0f} ms (P95)"
+    mutated = shadow(_one_line(shadow.original, QA_ROW_NEEDLE, _sub(registered, FORGED_SECONDS)))
     violations = T.check_targets_pending(mutated, T.caliber())
-    _bites(violations, VICTIM_A, "凭据")
+    _bites(violations, VICTIM_A, "policy A")
     assert not any(T.PENDING_TEXT in line for line in violations)
 
 
-def test_k1b_the_same_number_is_admissible_once_every_leg_is_real(shadow):
-    """反向对照：K1 不是「凡有数字就红」的假牙——三件齐了就该放行。"""
+def test_k1b_registered_policy_target_stays_admissible_with_real_evidence(shadow):
+    """反向对照：已授权的政策目标保持放行，实测凭据不改写政策值。"""
     cal = _caliber_for(
         VICTIM_A, reader_landed=True, prerequisite="", raw_readout="docs/testing/sidecar-run9.jsonl"
     )
     assert T.fillable(next(i for i in cal["slots"] if i["slot"] == VICTIM_A))
-    mutated = shadow(_one_line(shadow.original, QA_ROW_NEEDLE, _sub(T.PENDING_TEXT, FORGED_SECONDS)))
+    mutated = shadow(shadow.original)
     assert T.check_targets_pending(mutated, cal) == []
 
 # ==================== K2 观测面与契约散文分家（散文抄了第二套 / 观测面自己跑了） ============
