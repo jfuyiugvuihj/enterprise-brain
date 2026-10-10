@@ -541,6 +541,12 @@ class Walk:
 
     def _doc_counts(self) -> dict[str, Any]:
         assert self.page is not None
+        self.page.wait_for_function(
+            r"""() => {
+                const badge = document.querySelector('[data-testid=documents-panel] .panel-hd-left .badge');
+                return badge && /^\d+$/.test(badge.textContent.trim());
+            }""", timeout=15000,
+        )
         tile = self.page.evaluate(
             "() => { const b = document.querySelector("
             "'[data-testid=documents-panel] .panel-hd-left .badge');"
