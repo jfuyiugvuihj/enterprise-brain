@@ -136,6 +136,7 @@ class _MemoryRedis:
 
 
 # ==================== 缓存 ====================
+AUTHORIZATION_DATA_REVISION = "rows-v2"
 
 def _hash(question: str) -> str:
     return hashlib.md5(question.strip().encode()).hexdigest()[:12]
@@ -189,7 +190,7 @@ def _scope_part(scope: str) -> str:
     if not scope:
         return ""
     # Older cached answers may include unrestricted spreadsheet rows.
-    return f"rows-v2:{hashlib.md5(scope.encode()).hexdigest()[:12]}:"
+    return f"{AUTHORIZATION_DATA_REVISION}:{hashlib.md5(scope.encode()).hexdigest()[:12]}:"
 
 
 def _answer_key(question: str, scope: str) -> str:

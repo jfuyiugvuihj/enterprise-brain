@@ -2021,6 +2021,22 @@ def _memory_user_id(state) -> str:
     return str(principal_user_id or state.get("user_id") or "").strip()
 
 
+def _scoped_memory_user_id(state) -> str:
+    """Old answers and answers from another authorization scope are not reusable facts."""
+    import hashlib
+    from app.agents.contracts import Principal
+    from app.common.cache import AUTHORIZATION_DATA_REVISION, answer_cache_scope
+
+    user_id = _memory_user_id(state)
+    if not user_id:
+        return ""
+    principal = state.get("principal")
+    if isinstance(principal, dict):
+        principal = Principal.model_validate(principal)
+    scope = answer_cache_scope(principal, username=user_id)
+    return f"{AUTHORIZATION_DATA_REVISION}:{hashlib.sha256(scope.encode()).hexdigest()}"
+
+
 def _authoritative_department(state) -> str:
     """R296：画像与 prompt 里的部门只认 ``users`` 那一行。
 
@@ -2067,7 +2083,7 @@ def load_memory(state) -> dict:
             "memory_error": "authorization_required",
         }
     q = _last_user(state)
-    long_mem = recall(user_id, q, k=3) if q else []
+    long_mem = recall(_scoped_memory_user_id(state), q, k=3) if q else []
     profile = get_profile(
         user_id,
         fallback={
@@ -3189,7 +3205,7 @@ def synthesize(state, config=None) -> dict:
         if state.get("intent") == "task" and q and final:
             user_id = _memory_user_id(state)
             if user_id:
-                remember(user_id, f"问: {q[:60]} → 答: {final[:80]}")
+                remember(_scoped_memory_user_id(state), f"问: {q[:60]} → 答: {final[:80]}")
             else:
                 logger.warning("[Synthesize] memory persistence skipped because the request has no authenticated identity")
 
