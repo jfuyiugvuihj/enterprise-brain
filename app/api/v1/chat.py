@@ -37,7 +37,7 @@ from app.common import auth
 from app.common import reliable_queue
 from app.common.audit import record_audit
 from app.storage import pending_approvals
-from app.common.authorization import principal_from_request
+from app.common.authorization import authorize_request, principal_from_request
 from app.rag import ocr as ocr_channel
 from app.rag.loader import (
     DEGRADATION_NOTE_PREFIX,
@@ -68,7 +68,7 @@ from app.rag.indexing import (
 from app.common.model_handler import ModelHandler, ModelSource
 from app.common.logger import logger
 from app.common.performance import PerformanceStats, RequestBudget
-from app.common.permissions import ACTION_APPROVE, ACTION_DELETE, ACTION_DOWNLOAD, ACTION_VIEW
+from app.common.permissions import ACTION_APPROVE, ACTION_DELETE, ACTION_DOWNLOAD, ACTION_UPLOAD, ACTION_VIEW
 from app.common.policy import authorization_decision
 from app.documents.catalog import (
     build_storage_name,
@@ -4977,6 +4977,8 @@ async def upload_document(file: UploadFile = File(...),
     department is what the datasets and artifacts registries already use.
     """
     principal = principal_from_request(request) if request is not None else None
+    if request is not None:
+        authorize_request(request, ACTION_UPLOAD, resource_name=file.filename or "document")
     owner_id = str(getattr(principal, "user_id", "") or "") or None
     department = str(getattr(principal, "department", "") or "")
     header = await file.read(8192)
@@ -4987,6 +4989,15 @@ async def upload_document(file: UploadFile = File(...),
             status_code=400, detail=getattr(exc, "code", None) or "unsupported_file"
         ) from exc
 
+    if request is not None:
+        existing = latest_document_version(inspection.display_filename)
+        if existing is not None:
+            authorize_request(
+                request,
+                ACTION_UPLOAD,
+                resource=_document_resource_scope(inspection.display_filename, existing),
+                resource_name=inspection.display_filename,
+            )
     next_version = peek_next_document_version(inspection.display_filename)
     resource_id = uuid.uuid4().hex
     storage_path = build_storage_path(DOCUMENTS_DIR, resource_id, inspection.extension)
