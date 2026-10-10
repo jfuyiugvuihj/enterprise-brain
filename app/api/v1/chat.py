@@ -5238,9 +5238,17 @@ async def upload_document(file: UploadFile = File(...),
     )
 
 
+def _indexed_document_names() -> set[str]:
+    try:
+        return set(retriever.list_documents())
+    except Exception as exc:
+        logger.warning(f"[Docs] list unavailable: {type(exc).__name__}")
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
+
+
 @router.get("/documents")
 async def list_documents(request: FastAPIRequest):
-    indexed_names = set(retriever.list_documents())
+    indexed_names = _indexed_document_names()
     # 判定与计数只走 _classify_document_rows 那一份（R179 的通路），这里不数第二遍权限；
     # 形状只走 app/api/v1/restricted.py 那一份（R200），这里也不拼第二遍。
     visible_rows, withheld = _classify_document_rows(request, current_documents())
@@ -5259,6 +5267,7 @@ async def list_documents(request: FastAPIRequest):
 
 @router.get("/documents/catalog")
 async def list_document_catalog(request: FastAPIRequest):
+    _indexed_document_names()
     visible, withheld = _classify_document_rows(request, current_documents())
     result: dict = {"documents": visible}
     if withheld:

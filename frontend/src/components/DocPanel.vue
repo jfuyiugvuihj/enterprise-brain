@@ -335,7 +335,7 @@ export function pdfExtractionLines(cell) {
 import { computed, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { http, errorDetail } from '../lib/http'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
-import { UiButton, UiEmptyState, UiErrorState } from './ui'
+import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 // 删除确认沿用本仓已有那一套两步内联状态机（ArtifactList.vue 的 advanceDelete，
 // DataPanel.vue 与 ChatPanel.vue 都是这么引的），不再新建第三套词汇。
 import { advanceDelete, deleteButtonLabel, isPendingDelete } from './ArtifactList.vue'
@@ -348,6 +348,7 @@ import { classificationLabel } from '../lib/provenance'
 // R49 判据②要的那张「未索引」脸只能从这两枚字段来。以前这里把行压成 filename 就丢掉
 // 了它们 —— 服务端答了，界面把答案扔了，用户上传被排除的那篇就此在库里查无此脸。
 const docs = ref([])
+const listState = ref('loading')
 // R313 格二 · 「有 N 份存在，但你看不见」那一格。读的是 GET /documents/catalog 成功体里的
 // restricted（app/api/v1/chat.py:4235；形状只出自 app/api/v1/restricted.py 那一份 —— R200）。
 // 后端早就把这句话发出来了，界面此前一个字都不提，权限不足的员工站在有资料的库里听到的仍是
@@ -543,6 +544,7 @@ function readRestricted(payload) {
 
 /** 返回值就是「这一发列表读到了没有」：轮询那一格要据此决定读不读得到状态。 */
 async function loadDocs() {
+  listState.value = 'loading'
   dismissNotice()
   // 上一轮那句「有 N 份看不见」不属于这一轮：重载先清，失败也清，不许留成陈话（与 DataPanel 同一条）。
   restricted.value = null
@@ -556,11 +558,17 @@ async function loadDocs() {
       .filter(row => Boolean(row && row.filename))
     // 服务端这一腿答了「有 N 份你看不见」，界面就得说这句话；它没给就是真没有。
     restricted.value = readRestricted(res.data.restricted)
+    listState.value = 'ready'
     return true
   } catch (err) {
+    listState.value = 'failed'
+    docs.value = []
     restricted.value = null
     console.error('文档列表加载失败', err)
-    raiseNotice('文档列表没加载出来', errorDetail(err, '文档列表加载失败'), true)
+    const detail = err?.response?.status === 503
+      ? '知识库服务暂时不可用，请稍后点击重新加载。'
+      : errorDetail(err, '文档列表加载失败')
+    raiseNotice('文档列表没加载出来', detail, true)
     return false
   }
 }
@@ -953,7 +961,7 @@ onDeactivated(stopUploadPoll)
       <div class="panel-hd-left">
         <span>📁</span>
         <strong>喂料</strong>
-        <span class="badge">{{ docs.length }}</span>
+        <span class="badge">{{ listState === 'ready' ? docs.length : '—' }}</span>
       </div>
 
       <!-- 管理员开关 -->
@@ -1145,10 +1153,11 @@ onDeactivated(stopUploadPoll)
 
     <!-- 文档列表 -->
     <div class="doc-list" data-testid="document-list">
+      <UiLoadingState v-if="listState === 'loading'" title="正在加载文档列表" dense />
       <!-- R313 · 格二：空脸那一句只在【真的一枚都没有】时才许说出口；原文不复述进这枚注释（SSR 会留着注释，复述就把 panel-states 那枚 toContain 喂成假绿）。
            后端在同一个成功体里另挂了 restricted（app/api/v1/chat.py:4235）=「有，但你看不见」，
            那是与「没有」正相反的一句话，两句不许同时站在这块屏上（与 DataPanel 判据 1④ 同一条）。 -->
-      <UiEmptyState v-if="docs.length === 0 && !restrictedNotice" title="这里还没有文档" description="上传公司制度、手册或数据开始" />
+      <UiEmptyState v-if="listState === 'ready' && docs.length === 0 && !restrictedNotice" title="这里还没有文档" description="上传公司制度、手册或数据开始" />
       <UiEmptyState v-else-if="docs.length > 0 && filteredDocs.length === 0" :title="noMatchTitle" dense />
 
       <TransitionGroup name="list" tag="div">

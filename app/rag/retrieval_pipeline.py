@@ -830,6 +830,10 @@ def render_caliber_quotes(quotes, answer: str) -> str:
 
 # ==================== 统一检索入口 ====================
 
+class RetrievalUnavailableError(RuntimeError):
+    code = "retrieval_unavailable"
+
+
 class RetrievalPipeline:
     """Agentic RAG 统一检索管线"""
 
@@ -899,6 +903,8 @@ class RetrievalPipeline:
         queries = all_queries[:MAX_RECALL_QUERIES]  # 最多 5 个查询
         all_semantic = []
         all_bm25 = []
+        semantic_reads = 0
+        recall_errors = []
         with ThreadPoolExecutor(max_workers=len(queries)) as ex:
             futures = {}
             for q in queries:
@@ -910,11 +916,17 @@ class RetrievalPipeline:
                     results = f.result()
                 except Exception as e:
                     logger.warning(f"召回失败 [{kind}] '{q[:20]}': {e}")
+                    recall_errors.append(e)
                     continue
                 if kind == "sem":
+                    semantic_reads += 1
                     all_semantic.extend(results)
                 else:
                     all_bm25.extend(results)
+
+        # 缓存的 BM25 不能掩盖当前 PG 读失败；成功读取零行才是没有匹配资料。
+        if not semantic_reads and recall_errors:
+            raise RetrievalUnavailableError("retrieval_unavailable") from recall_errors[0]
 
         # 去重
         # R45 缺陷②（纵深防御 + 两腿契约对称）：语义腿只有 where 下推，BM25 腿则一直在

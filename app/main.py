@@ -266,7 +266,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         from app.agents.contracts import Principal
-        from app.common.auth import get_token_from_request, get_user, verify_token
+        from app.common.auth import get_token_from_request, get_user, verify_token, UserStoreUnavailable
+        from psycopg import Error as DatabaseError
         token = get_token_from_request(request)
         payload = verify_token(token) if token else None
         if not token or not payload:
@@ -275,7 +276,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             _file_anonymous_denial(request, "absent" if not token else "invalid")
             return JSONResponse(status_code=401, content={"detail": "authentication_required"})
         username = payload.get("sub", "")
-        user = get_user(username) if username else None
+        try:
+            user = get_user(username) if username else None
+        except (DatabaseError, UserStoreUnavailable) as exc:
+            from fastapi.responses import JSONResponse
+            logger.warning("[Auth] account lookup unavailable: %s", type(exc).__name__)
+            return JSONResponse(status_code=503, content={"detail": "storage_unavailable"})
         if not user:
             from fastapi.responses import JSONResponse
             # 凭证在、人不在：仍然算匿名探测，主体走 record_audit 的退化投影。

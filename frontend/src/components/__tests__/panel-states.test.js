@@ -319,11 +319,11 @@ describe('DocumentPreviewModal · 预览进行态吃原语（A-5-4）', () => {
 
 
 describe('DocPanel · 一条提示条拆成「哪种事没成」+ 两处空态', () => {
-  it('SSR 首屏：空列表画原语，两句话一字不改，emoji 图标交给原语的内置图标', async () => {
+  it('SSR 首屏未读取列表时显示加载中，不能宣称知识库为空', async () => {
     const html = await render(DocPanel)
-    expect(html).toContain('data-testid="ui-empty-state"')
-    expect(html).toContain('这里还没有文档')
-    expect(html).toContain('上传公司制度、手册或数据开始')
+    expect(html).toContain('data-testid="ui-loading-state"')
+    expect(html).not.toContain('这里还没有文档')
+    expect(html).not.toContain('data-testid="ui-empty-state"')
     expect(html).not.toContain('class="empty"')
     expect(html).not.toContain('📭')
   })
@@ -331,7 +331,7 @@ describe('DocPanel · 一条提示条拆成「哪种事没成」+ 两处空态',
   // 以前不论上传、下载还是删除失败，按钮永远写着「重新加载」并去重拉列表。
   it('只有列表本身没拿到时才提供「重新加载」，下载/删除失败不提供假补救', () => {
     const s = source('DocPanel.vue')
-    expect(s).toContain("raiseNotice('文档列表没加载出来', errorDetail(err, '文档列表加载失败'), true)")
+    expect(s).toContain("raiseNotice('文档列表没加载出来', detail, true)")
     expect(s).toContain("raiseNotice('文件没能下载', errorDetail(err, '文件下载失败'), false)")
     expect(s).toContain("raiseNotice('删除没有完成', errorDetail(err, '删除失败'), false)")
     expect(s).toContain("raiseNotice('部分文档没能删除'")

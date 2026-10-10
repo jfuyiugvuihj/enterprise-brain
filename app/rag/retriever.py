@@ -1212,8 +1212,7 @@ class DocumentRetriever:
         try:
             rows = pg_store.read_topk(query_vector=query_embedding, k=k, where=where)
         except Exception as exc:
-            reason = str(getattr(exc, "reason", "") or pg_store.REASON_VECTOR_READ_FAILED)
-            pg_store.note_read_bypass(reason, f"{type(exc).__name__}: {exc}")
+            self._note_store_failure(exc, k, self.MODE_SEMANTIC)
             raise
         pg_store.note_read_answered(len(rows))
         if not rows:
@@ -1483,6 +1482,17 @@ class DocumentRetriever:
             store_error=store_error,
         )
 
+    def _note_store_failure(self, exc, k: int, leg: str) -> None:
+        from app.rag import pg_store
+
+        reason = str(getattr(exc, "reason", "") or pg_store.REASON_VECTOR_READ_FAILED)
+        pg_store.note_read_bypass(reason, type(exc).__name__)
+        self._note_search_shape(
+            answered_by=RETRIEVAL_SERVER_PGVECTOR, leg=leg, reason=reason,
+            n_results=k, rows_returned=0, hits_built=0,
+            outcome=RETRIEVAL_OUTCOME_STORE_FAILED, store_error=type(exc).__name__,
+        )
+
     @staticmethod
     def _outcome_for(rows_returned: int, hits_built: int) -> str:
         """结局码：0 命中时，"库本来就没给行"与"给了行却在我们将要交回前丢了"必须分家。"""
@@ -1508,7 +1518,11 @@ class DocumentRetriever:
         self._note_search(self.MODE_KEYWORD, reason)
         if k <= 0:
             return []
-        stored = (self.collection.get(where=where) if where else self.collection.get()) or {}
+        try:
+            stored = (self.collection.get(where=where) if where else self.collection.get()) or {}
+        except Exception as exc:
+            self._note_store_failure(exc, k, self.MODE_KEYWORD)
+            raise
         documents = stored.get("documents") or []
         metadatas = stored.get("metadatas") or []
         query_tokens = set(_tokenize_for_fallback(query))
