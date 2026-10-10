@@ -311,8 +311,6 @@ def _fallback_export_result(user_message: str, model_result: str, config=None) -
     ``app/agents/tools.py::_export_report`` 的完成态）。两条都不成立，才落第一次盘 ——
     本单砍的是第二次，不是兜底腿存在的理由。
     """
-    if "/api/v1/artifacts/" in model_result:
-        return model_result
     registered = _registered_report_rows(config)
     if registered:
         url = str(registered[-1].get("download_url") or "").strip()
@@ -321,6 +319,8 @@ def _fallback_export_result(user_message: str, model_result: str, config=None) -
             f"url={url or '(在册行没有下载口)'}"
         )
         if not url:
+            return model_result
+        if url in str(model_result or ""):
             return model_result
         body = str(model_result or "")
         line = f"报告已生成: [📋 下载报告]({url})"

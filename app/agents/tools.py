@@ -2363,6 +2363,14 @@ def _export_terminal_error_code(text: object) -> str:
     return _public_error_code(match.group(1) if match else "", "internal_error")
 
 
+def _verified_data_sections(filename: str, analysis: str) -> list[dict]:
+    return [
+        {"type": "heading", "content": "核验数据与筛选结果"},
+        {"type": "text", "content": f"数据来源：{filename}"},
+        {"type": "text", "content": analysis},
+    ]
+
+
 def _export_report(report_title: str, sections_json: str,
                     config: RunnableConfig, include_charts: str = "") -> str:
     from app.storage.artifacts import ArtifactOwnerScopeMissing, owner_can_register_artifact
@@ -2393,13 +2401,31 @@ def _export_report(report_title: str, sections_json: str,
                 code="validation_error",
                 head=_EXPORT_BAD_SECTIONS_HEAD,
             )
+        if not isinstance(sections, list) or any(not isinstance(item, dict) for item in sections):
+            return _denial_text(config, tool="export_report", code="validation_error", head=_EXPORT_BAD_SECTIONS_HEAD)
+        conf = (config or {}).get("configurable", {}) or {}
+        filename = str(conf.get("data_filename") or "").strip()
+        if filename:
+            # Re-read the selected table through the authorized data tool. This survives
+            # HITL resumption without trusting another worker's model-written prose.
+            from app.agents.evidence import new_evidence_bag
+            verified_bag = new_evidence_bag()
+            verified_config = {**(config or {}), "configurable": {**conf, "evidence_bag": verified_bag}}
+            question = str(conf.get("data_question") or "按部门汇总金额与合计")
+            analysis = _analyze_data(question, verified_config)
+            if not verified_bag.get("datasets"):
+                return _denial_text(config, tool="export_report", code="validation_error",
+                                    head="选中数据未能完成授权核验，未生成报告。")
+            sections = _verified_data_sections(filename, analysis)
+            bag = bag_from_config(config)
+            if bag is not None:
+                bag.setdefault("datasets", []).extend(verified_bag["datasets"])
+        # Chart paths supplied by a model are never filesystem authority.
+        sections = [item for item in sections if item.get("type") != "chart"]
         #: 装箱由产品自己做：模型交回的 sections 里那一格图永远填不出来（它只拿到 URL，
         #: 拿不到容器路径），所以这里按台账取本轮的图，连同 include_charts 里它点名的那几枚。
         charts = _round_chart_paths(config, principal)
         asked = [item.strip() for item in re.split(r"[,;，；\n]", str(include_charts or "")) if item.strip()]
-        for item in asked:
-            if item not in charts:
-                charts.append(item)
         logger.info("[R726ExportCharts] leg=export round_charts=%d asked=%d", len(charts), len(asked))
         path = generate_pdf_report(title=report_title, sections=sections, chart_paths=charts)
 
