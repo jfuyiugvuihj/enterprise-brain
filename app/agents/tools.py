@@ -1624,7 +1624,11 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 parts.append(_row_scope_line(fname, scope_info))
                 continue
             produced += 1
-            df = filter_explicit_categories(df, question or query, category_frame=category_frame)
+            try:
+                df = filter_explicit_categories(df, question or query, category_frame=category_frame)
+            except ValueError as exc:
+                return _denial_text(config, tool="analyze_data", code="validation_error",
+                                    head=f"筛选条件无法执行：{exc}")
             pending_datasets.append((fname, df, len(parts)))
             if df.attrs.get("filter_note"):
                 parts.append(f"📁 {fname}: {df.attrs['filter_note']}")

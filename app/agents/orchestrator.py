@@ -993,7 +993,18 @@ def _make_worker_wrapper(graph, name: str):
         )
         logger.info(f"[{name}] 开始执行...")
         try:
-            result = graph.invoke({"messages": [user_msg]}, config=child_cfg)
+            filter_failure = ""
+            if name in ("data", "chart") and child_conf.get("data_filename"):
+                # Invalid original filters cannot be repaired by repeatedly rephrasing
+                # a tool call. Check through the same authorized data tool first.
+                probe_bag = new_evidence_bag()
+                probe_cfg = {**child_cfg, "configurable": {**child_conf, "evidence_bag": probe_bag}}
+                probe = analyze_data.invoke({"query": str(user_msg.content or "")}, config=probe_cfg)
+                if any(row.get("error_code") == "validation_error" for row in probe_bag["tool_statuses"]):
+                    filter_failure = str(probe)
+                    evidence_bag["tool_statuses"].extend(probe_bag["tool_statuses"])
+            result = ({"messages": [AIMessage(content=filter_failure)]} if filter_failure
+                      else graph.invoke({"messages": [user_msg]}, config=child_cfg))
             if name == "doc" and _doc_leg_spoke_without_reading(result, evidence_bag):
                 # B17：模型一枚工具都没调就把话说了——补一发真检索，带着原文在同一腿重答一次。
                 logger.warning("[doc] 这一腿没检索就作答，按 B17 补查后重答一次")
