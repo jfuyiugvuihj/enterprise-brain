@@ -1645,7 +1645,7 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
 
             try:
                 series: list[dict] = []
-                ai_parts = _answer_query(df, query, numeric_cols, text_cols, series_out=series)
+                ai_parts = _answer_query(df, question or query, numeric_cols, text_cols, series_out=series)
                 parts.extend(ai_parts)
                 #: 10-07 现读（走查环 7）：图腿自己调用 analyze_data 时，数在这条边界上就算完了，
                 #: 可模型连发 21 发 generate_chart 只带标签不带数值，最后把本地模型的历史挤空、
@@ -2123,6 +2123,16 @@ def _best_series_row(bag: dict | None, labels: list | None, title: str) -> dict:
     return {} if score(best) < 0 else best
 
 
+def _requested_group_series(bag: dict | None, question: str) -> dict:
+    groups = [row for row in (bag or {}).get("chart_series", [])
+              if row.get("kind") == "group" and row.get("labels") and row.get("values")]
+    dimension = _named_dimension_column(question, list(dict.fromkeys(str(row.get("dimension") or "") for row in groups)))
+    if not dimension:
+        return {}
+    matching = [row for row in groups if row.get("dimension") == dimension]
+    return _best_series_row({"chart_series": matching}, None, question)
+
+
 def _boxed_chart_series(bag: dict | None, labels: list | None,
                         title: str) -> tuple[list, list, str, dict]:
     """模型点了横轴的名、没把数带回来：从本轮缓冲里取那一串数，按名对齐装箱。
@@ -2220,10 +2230,15 @@ def _generate_chart(
                 config, tool="generate_chart", code="chart_refusal_repeated",
                 head=_CHART_REPEAT_HEAD.format(times=times),
             )
+    requested = _requested_group_series(bag, str(((config or {}).get("configurable") or {}).get("data_question") or ""))
+    if requested and chart_type in ("bar", "line", "pie"):
+        labels, values = list(requested["labels"]), list(requested["values"])
+        if chart_type == "line":
+            datasets = {str(requested.get("column") or "金额"): values}
     if chart_type in ("bar", "pie") and not values:
         values = _first_series(datasets)
     #: 模型给的名字轴与数值仍凑不齐一张图时，先回头看本轮算过的数——不猜、不编，只对得上才用。
-    series_row: dict = {}
+    series_row: dict = requested
     if chart_type in ("bar", "line", "pie") and not values:
         box_labels, box_values, box_from, series_row = _boxed_chart_series(
             bag_from_config(config), labels, title)
