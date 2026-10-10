@@ -1616,6 +1616,7 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
         try:
             question = str(conf.get("data_question") or "")
             df = load_excel(file_path, query=question) if question else load_excel(file_path)
+            category_frame = df
             df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
                 # 码与文案同判据源：一个给机器，一个给人看，同一条 reason_code。
@@ -1623,7 +1624,7 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 parts.append(_row_scope_line(fname, scope_info))
                 continue
             produced += 1
-            df = filter_explicit_categories(df, question or query)
+            df = filter_explicit_categories(df, question or query, category_frame=category_frame)
             pending_datasets.append((fname, df, len(parts)))
             if df.attrs.get("filter_note"):
                 parts.append(f"📁 {fname}: {df.attrs['filter_note']}")
@@ -1827,6 +1828,7 @@ def _query_data(query: str, config: RunnableConfig) -> str:
         try:
             question = str(conf.get("data_question") or "")
             df = load_excel(file_path, query=question) if question else load_excel(file_path)
+            category_frame = df
             df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
                 reason = _row_scope_reason(scope_info)
@@ -1840,7 +1842,7 @@ def _query_data(query: str, config: RunnableConfig) -> str:
             unreadable += 1
             continue
         try:
-            df = filter_explicit_categories(df, question or query)
+            df = filter_explicit_categories(df, question or query, category_frame=category_frame)
         except ValueError as exc:
             return f"查询未完成：{exc}"
         if df.empty:

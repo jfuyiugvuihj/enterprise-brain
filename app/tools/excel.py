@@ -207,9 +207,10 @@ def _fill_merged_cells(file_path: str, sheet_name: str | None = None) -> pd.Data
 
 # ==================== 文件加载 ====================
 
-def filter_explicit_categories(df: pd.DataFrame, query: str) -> pd.DataFrame:
+def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: pd.DataFrame | None = None) -> pd.DataFrame:
     """在计算、样本和图表之前执行用户明确引用的分类筛选。"""
     selected = df
+    domain = df if category_frame is None else category_frame
     notes = []
     for exclude, pattern in (
         (False, r"(?<![不非])(?:仅|只)(?:统计|计算|包含|保留|分析|汇总)([^，。；;\n]+)"),
@@ -227,19 +228,19 @@ def filter_explicit_categories(df: pd.DataFrame, query: str) -> pd.DataFrame:
                     raw = raw.replace(str(column), "", 1)
                 raw = re.sub(r"^(?:为|是|等于|中|的|[:：=])+", "", raw).strip()
                 raw = re.sub(r"(?:的)?(?:记录|数据|费用|订单)$", "", raw).strip()
-                known = {str(v) for c in (named or columns) for v in df[c].dropna().unique()}
+                known = {str(v) for c in (named or columns) for v in domain[c].dropna().unique()}
                 values = [raw] if raw in known else [v.strip() for v in re.split(r"或者|以及|或|和|与|、", raw)]
                 # “仅统计金额” is an operation, not a categorical condition.
                 if not named and not any(v in known for v in values):
                     continue
             candidates = named or [
                 c for c in columns
-                if set(values).issubset(set(df[c].dropna().astype(str)))
+                if set(values).issubset(set(domain[c].dropna().astype(str)))
             ]
             if len(candidates) != 1:
                 raise ValueError("无法确定筛选字段，请写明列名及表中实际取值。")
             column = candidates[0]
-            unknown = set(values) - set(df[column].dropna().astype(str))
+            unknown = set(values) - set(domain[column].dropna().astype(str))
             if unknown:
                 raise ValueError(f"字段「{column}」没有取值：{'、'.join(sorted(unknown))}")
             mask = selected[column].astype(str).isin(values)
