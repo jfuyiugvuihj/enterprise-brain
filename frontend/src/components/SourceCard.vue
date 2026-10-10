@@ -182,7 +182,7 @@ const effectiveMoment = row => formatDayStamp(row?.effectiveDate)
         <span v-if="classificationLabel(row.classification)" class="source-meta" data-testid="source-classification">{{ classificationLabel(row.classification) }}</span>
         <span v-if="row.department" class="source-meta" data-testid="source-department">{{ row.department }}</span>
         <span v-if="row.versionId" class="source-meta" data-testid="source-version">版本 {{ row.versionId }}</span>
-        <span v-if="effectiveMoment(row)" class="source-meta" data-testid="source-effective">生效 {{ effectiveMoment(row) }}</span>
+        <span v-if="effectiveMoment(row)" class="source-meta" data-testid="source-effective">知识库更新 {{ effectiveMoment(row) }}</span>
         <p v-if="hitSentence(row)" class="source-excerpt" data-testid="source-excerpt">{{ hitSentence(row) }}</p>
         <!--
           R46 差格 a · 展开这一条的详情：第一次展开落一枚 view。

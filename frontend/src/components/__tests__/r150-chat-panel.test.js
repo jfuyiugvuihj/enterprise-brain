@@ -55,12 +55,12 @@ describe('G1 · 出处那张脸上屏（R41 判据③ 的销账实据）', () =>
     expect(html).toContain('第 5 段')
   })
 
-  it('判据①「生效日期」这一格：后端抄了名字就上屏，没抄就不画（界面不补今天）', async () => {
+  it('知识库版本更新日期有读数才上屏，不冒充制度生效日期', async () => {
     const dated = await renderWith([assistantTurn({
       sources: { rows: [{ ...hitRow, effectiveDate: '2026-03-01T09:00:00+08:00' }], hitCount: 1, hiddenCount: 0, scopeReasonCode: '' },
     })])
     expect(dated).toContain('data-testid="source-effective"')
-    expect(dated).toContain('生效 2026-03-01')
+    expect(dated).toContain('知识库更新 2026-03-01')
     const undated = await renderWith([assistantTurn({
       sources: { rows: [hitRow], hitCount: 1, hiddenCount: 0, scopeReasonCode: '' },
     })])
@@ -117,7 +117,7 @@ describe('G2 · 缓存那张脸上屏（三态不许并成一句）', () => {
     const html = await renderWith([assistantTurn({ cache: { cached: false, generatedAt: '', note: '', observed: true } })])
     expect(html).toContain('data-testid="cache-face"')
     expect(html).toContain('本轮实时生成')
-    expect(html).toContain('没有带回缓存读数')
+    expect(html).toContain('根据本次提问生成回答。')
   })
 
   it('本单之前入库的老消息没有这格读数：界面不替它宣布「实时算」', async () => {

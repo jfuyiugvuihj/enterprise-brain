@@ -90,7 +90,7 @@ const face = computed(() => {
         <span v-if="classificationLabel(row.classification)" class="headline-tag">{{ classificationLabel(row.classification) }}</span>
         <span v-if="row.department" class="headline-tag">{{ row.department }}</span>
         <span v-if="row.versionId" class="headline-tag">版本 {{ row.versionId }}</span>
-        <span v-if="row.effectiveDate" class="headline-tag">生效 {{ formatMoment(row.effectiveDate) || '（读数缺格式）' }}</span>
+        <span v-if="row.effectiveDate" class="headline-tag">知识库更新 {{ formatMoment(row.effectiveDate) || '（读数缺格式）' }}</span>
       </li>
     </ul>
     <p v-if="moreCount" class="headline-more" data-testid="r48-headline-more">另有 {{ moreCount }} 处命中未在这张卡上列出。</p>

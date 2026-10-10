@@ -25,7 +25,7 @@ import pytest
 from app.api.v1 import chat
 from app.common import cache
 from app.common.identity import Principal
-from app.common.model_handler import ModelReply
+from app.common.model_handler import ModelHandler, ModelReply
 from app.storage.sessions import SessionRegistry
 
 #: 评测题集：105 行，其中 12 行是 `多轮对话`（工单里写作 group，字段名实为 category）
@@ -67,12 +67,12 @@ def record_rewriter_prompts(monkeypatch, reply: str = REWRITTEN):
     """只桩改写腿唯一的模型出口，返回它看到的 prompt 列表。"""
     prompts = []
 
-    def fake_chat(**kwargs):
+    def fake_chat(self, **kwargs):
         messages = kwargs.get("messages") or [{}]
         prompts.append(messages[0].get("content", ""))
         return ModelReply(reply, finish_reason="stop")
 
-    monkeypatch.setattr(chat.model_handler, "chat", fake_chat)
+    monkeypatch.setattr(ModelHandler, "chat", fake_chat)
     return prompts
 
 
@@ -103,7 +103,7 @@ def install_ask_route(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cache, "_redis", cache._MemoryRedis())
 
-    def fake_model_chat(**kwargs):
+    def fake_model_chat(self, **kwargs):
         messages = kwargs.get("messages") or [{}]
         prompts.append(messages[0].get("content", ""))
         return ModelReply(REWRITTEN, finish_reason="stop")
@@ -116,7 +116,7 @@ def install_ask_route(monkeypatch, tmp_path):
             "final_answer": ANSWER_BODY,
         }
 
-    monkeypatch.setattr(chat.model_handler, "chat", fake_model_chat)
+    monkeypatch.setattr(ModelHandler, "chat", fake_model_chat)
     monkeypatch.setattr("app.common.cache.check_rate_limit", lambda *_a, **_k: (True, 9))
     monkeypatch.setattr("app.common.cache.get_cached_answer", lambda *_a, **_k: None)
     monkeypatch.setattr("app.common.cache.answer_cache_origin", lambda *_a, **_k: {})

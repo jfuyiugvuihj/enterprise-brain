@@ -80,8 +80,8 @@ def _probe(script_path: Path) -> dict:
     """跑子进程探针：``script_path`` 是被探的那份预演件（真件或反证副本）。"""
     code = (PROBE.replace("REPO_HERE", repr(str(REPO)))
                   .replace("TARGET_HERE", repr(str(script_path))))
-    out = subprocess.run([sys.executable, "-c", code],
-                         capture_output=True, text=True, timeout=180, cwd=str(REPO))
+    out = subprocess.run([sys.executable, "-X", "utf8", "-c", code],
+                         capture_output=True, text=True, encoding="utf-8", timeout=180, cwd=str(REPO))
     line = [l for l in out.stdout.splitlines() if l.startswith("{")]
     assert line, f"探针没出读数：stdout={out.stdout[-400:]} stderr={out.stderr[-800:]}"
     return json.loads(line[-1])
