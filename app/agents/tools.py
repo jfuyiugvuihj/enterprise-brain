@@ -2385,10 +2385,19 @@ def _export_terminal_error_code(text: object) -> str:
 
 
 def _verified_data_sections(filename: str, analysis: str) -> list[dict]:
+    lines = []
+    for line in analysis.splitlines():
+        if line.startswith("--- 数据样本"):
+            break
+        if line == "数据分析结果:" or (line.startswith("📁 ") and "实际筛选：" not in line):
+            continue
+        if "实际筛选：" in line:
+            line = line[line.index("实际筛选："):]
+        lines.append(line)
     return [
         {"type": "heading", "content": "核验数据与筛选结果"},
         {"type": "text", "content": f"数据来源：{filename}"},
-        {"type": "text", "content": analysis},
+        {"type": "text", "content": "\n".join(lines)},
     ]
 
 

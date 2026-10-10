@@ -13,3 +13,10 @@ def test_report_preserves_finance_scope():
     sections = _verified_data_sections("费用明细.csv", "财务: 金额=200\n合计: 金额=200")
     text = "\n".join(section.get("content", "") for section in sections)
     assert "200" in text and "1310" not in text and "销售" not in text
+
+
+def test_report_keeps_business_totals_without_tool_internals():
+    analysis = '数据分析结果:\n📁 费用.csv: 实际筛选：状态仅包含已支付\n📁 费用.csv: 2行 × 2列 — 列: 金额(int64),部门(str)\n合计: 金额=200\n--- 数据样本(前15行) ---\n[{"金额":120}]'
+    text = "\n".join(section.get("content", "") for section in _verified_data_sections("费用.csv", analysis))
+    assert "200" in text and "实际筛选" in text
+    assert "int64" not in text and "数据样本" not in text and '[{"' not in text
