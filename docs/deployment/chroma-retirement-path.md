@@ -4,7 +4,7 @@
 
 业主明确授权彻底移除 Chroma。现役代码只接受 `INDEX_BACKEND=pgvector`，不再有 Chroma 客户端、写入或回退；文档替换与删除使用单一 PostgreSQL 事务。安装依赖、镜像目录、Compose 挂载与日常备份范围同步退出旧库。
 
-退役前归档保存在 `%TEMP%\evalrun\pgvector-retire-1009`：PostgreSQL dump 与配套 globals 文件、容器旧卷 tar、本机旧库 zip。旧目录与卷在浏览器验收及实际回滚演练后清除；执行结果见同目录日志与截图。
+退役前归档保存在 `C:\Users\fengx\Documents\企业智脑备份\2026-10-09-pgvector-retire-7c1d1b5`：PostgreSQL dump 与配套 globals 文件、容器旧卷 tar、本机旧库 zip、原目录的可恢复归档。旧目录已移出工作区并退出 Git 跟踪，旧 Docker 卷已删除；日常运行与备份只使用 PostgreSQL。日志与截图在 `%TEMP%\evalrun\pgvector-retire-1009`。
 
 现役普查使用 `scripts/rebuild_index.py --status`，读取 PostgreSQL。历史 Chroma 对比量具与反证测试保留为迁移历史，不再是现役运行入口。恢复使用 PostgreSQL dump、globals 与工作区备份；下述 `INDEX_BACKEND=chroma` 开关只适用于历史版本，当前版本明确拒绝。
 
