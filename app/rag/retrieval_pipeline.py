@@ -856,7 +856,7 @@ class RetrievalPipeline:
                tier: str | None = None,
                owner_id: str | None = None,
                context_pack: bool = False,
-               config: dict | None = None) -> tuple[list[dict], list[str]]:
+               config: dict | None = None, project_hit=None) -> tuple[list[dict], list[str]]:
         """
         执行完整检索管线。
         返回 (重排后的文档列表, 改写版本列表)
@@ -941,7 +941,12 @@ class RetrievalPipeline:
         # 文档。而去重本身也不能丢：重复命中会在 rrf_fusion 里反复累加 reciprocal-rank，
         # 把只被单腿召回的来源压到后面（融合输出长度与重复无关，偏的是名次）。
         # 这个顺序也与 BM25 腿既有顺序一致：search 内部过 pred，这里再去重。
-        all_semantic = _deduplicate(_retain_permitted(all_semantic, pred))
+        all_semantic = _retain_permitted(all_semantic, pred)
+        all_bm25 = _retain_permitted(all_bm25, pred)
+        if project_hit:
+            all_semantic = [safe for hit in all_semantic if (safe := project_hit(hit)) is not None]
+            all_bm25 = [safe for hit in all_bm25 if (safe := project_hit(hit)) is not None]
+        all_semantic = _deduplicate(all_semantic)
         all_bm25 = _deduplicate(all_bm25)
 
         # ③ RRF 融合
@@ -991,6 +996,7 @@ class RetrievalPipeline:
         发射实现在本文件末节，判据与口径全在那里。
         """
         scope = resolve_document_retrieval_scope(principal)
+        from app.rag.row_scope import spreadsheet_projector
         # tier 不传时由 search() 读环境变量决定：调用方一行不改也能整条链路分档。
         # owner_id 与 app/agents/orchestrator.py 的 _owner_id_from 同一个口径（principal.user_id），
         # 决定的是"读哪一份术语目录"，不是"能看哪些文档"：registry 只允许调用者自己的行加
@@ -1002,6 +1008,7 @@ class RetrievalPipeline:
             owner_id=owner_id, context_pack=context_pack,
             # R695 判据① 的调用点：把「这一发检索属于哪一轮、属于谁」交给检索管线自己算。
             config=retrieval_turn_config(principal),
+            project_hit=spreadsheet_projector(principal, scope),
         )
         duration_ms = round((perf_counter() - started) * 1000, 2)
         record_retrieval_scope(principal, scope, hit_count=len(found[0]))

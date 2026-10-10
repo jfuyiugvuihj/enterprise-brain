@@ -188,7 +188,8 @@ def _scope_part(scope: str) -> str:
     """作用域为空时沿用历史键，未升级的调用方不会落到另一份键空间。"""
     if not scope:
         return ""
-    return f"{hashlib.md5(scope.encode()).hexdigest()[:12]}:"
+    # Older cached answers may include unrestricted spreadsheet rows.
+    return f"rows-v2:{hashlib.md5(scope.encode()).hexdigest()[:12]}:"
 
 
 def _answer_key(question: str, scope: str) -> str:
