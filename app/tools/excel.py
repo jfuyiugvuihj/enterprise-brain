@@ -212,15 +212,26 @@ def filter_explicit_categories(df: pd.DataFrame, query: str) -> pd.DataFrame:
     selected = df
     notes = []
     for exclude, pattern in (
-        (False, r"(?:仅|只)(?:统计|计算|包含|保留|分析|汇总)([^，。；;\n]+)"),
+        (False, r"(?<![不非])(?:仅|只)(?:统计|计算|包含|保留|分析|汇总)([^，。；;\n]+)"),
         (True, r"(?:排除|不含|不计入|不统计)([^，。；;\n]+)"),
     ):
         for clause in re.findall(pattern, query):
             values = re.findall(r'[「“"]([^」”"]+)[」”"]', clause)
-            if not values:
-                continue
             columns = select_text_columns(df)
+            # Prefer the longest explicit column name (复核状态 must not also name 状态).
             named = [c for c in columns if str(c) in clause]
+            named = [c for c in named if not any(str(c) in str(other) for other in named if other != c)]
+            if not values:
+                raw = clause.strip()
+                for column in named:
+                    raw = raw.replace(str(column), "", 1)
+                raw = re.sub(r"^(?:为|是|等于|中|的|[:：=])+", "", raw).strip()
+                raw = re.sub(r"(?:的)?(?:记录|数据|费用|订单)$", "", raw).strip()
+                known = {str(v) for c in (named or columns) for v in df[c].dropna().unique()}
+                values = [raw] if raw in known else [v.strip() for v in re.split(r"或者|以及|或|和|与|、", raw)]
+                # “仅统计金额” is an operation, not a categorical condition.
+                if not named and not any(v in known for v in values):
+                    continue
             candidates = named or [
                 c for c in columns
                 if set(values).issubset(set(df[c].dropna().astype(str)))
