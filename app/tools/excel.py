@@ -232,7 +232,10 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
                 values = [raw] if raw in known else [v.strip() for v in re.split(r"或者|以及|或|和|与|、", raw)]
                 # “仅统计金额” is an operation, not a categorical condition.
                 if not named and not any(v in known for v in values):
-                    continue
+                    operations = {str(c) for c in df.select_dtypes(include=["number"]).columns} | {"合计", "总金额", "金额合计", "总额", "行数", "数量", "总数"}
+                    if not raw or raw in operations:
+                        continue
+                    raise ValueError("无法确定分类筛选条件，请写明列名及表中实际取值。")
             candidates = named or [
                 c for c in columns
                 if set(values).issubset(set(domain[c].dropna().astype(str)))

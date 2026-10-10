@@ -44,3 +44,8 @@ def test_valid_status_absent_from_own_rows_is_still_a_valid_filter(expenses):
     own = expenses.loc[expenses["部门"] == "财务"]
     actual = filter_explicit_categories(own, "仅统计已批准或已支付，排除待审批和已驳回", category_frame=expenses)
     assert actual["金额"].sum() == 200 and len(actual) == 1
+
+
+def test_unknown_unquoted_category_is_not_ignored(expenses):
+    with pytest.raises(ValueError):
+        filter_explicit_categories(expenses, "仅统计已撤销")
