@@ -2819,7 +2819,9 @@ def _enqueue_ask_turn(
         payload["data_filename"] = named
     try:
         queue = connect_reliable_queue()
-        message = queue.enqueue(payload, idempotency_key)
+        scoped_key = json.dumps([str(principal.user_id) if principal is not None else username,
+                                 idempotency_key], separators=(",", ":"))
+        message = queue.enqueue(payload, scoped_key)
     except QueueConnectionError as exc:
         raise HTTPException(
             status_code=503,

@@ -410,7 +410,7 @@ def test_the_report_label_still_owns_the_only_real_queue_route(monkeypatch, tmp_
     assert run.graph_calls == 0
     assert run.enqueue_lanes == ["report"]
     assert run.enqueue[0]["payload"]["write_back_session"] is True
-    assert run.enqueue[0]["idempotency_key"] == IDEMPOTENCY
+    assert json.loads(run.enqueue[0]["idempotency_key"]) == ["u-r32", IDEMPOTENCY]
 
 
 @pytest.mark.parametrize("lane", ["", "qa", "analysis"])

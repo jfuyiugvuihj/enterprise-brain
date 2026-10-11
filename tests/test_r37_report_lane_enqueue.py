@@ -226,7 +226,7 @@ def test_a_declared_report_lane_is_enqueued_when_the_switch_is_on(monkeypatch, t
 
     assert len(ctx.queue.calls) == 1, ctx.queue.calls
     call = ctx.queue.calls[0]
-    assert call["idempotency_key"] == IDEM
+    assert json.loads(call["idempotency_key"]) == [USER_ID, IDEM]
     payload = call["payload"]
     assert payload["task_type"] == "ask"
     assert payload["message"] == MESSAGE
