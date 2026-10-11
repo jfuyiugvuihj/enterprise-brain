@@ -194,7 +194,8 @@ def _scope_part(scope: str) -> str:
 
 
 def _answer_key(question: str, scope: str) -> str:
-    return f"answer:{_scope_part(scope)}{_hash(question)}"
+    revision = "conditions-v1:" if scope else ""
+    return f"answer:{revision}{_scope_part(scope)}{_hash(question)}"
 
 
 def cache_answer(question: str, answer: str, scope: str = "", ttl: int | None = None) -> None:
