@@ -603,6 +603,7 @@ def _drain_report_stream(
     stream_piece_sink=None,
     report_failure_sink=None,
     data_filename="",
+    queue_execution_guard=None,
 ):
     """跑完这一轮，收回顶层结论、契约记录，以及编排自己报的那句错。
 
@@ -629,6 +630,7 @@ def _drain_report_stream(
         user_message,
         thread_id=thread_id,
         user={"principal": principal, PRINCIPAL_PROVENANCE_KEY: provenance,
+              **({"queue_execution_guard": queue_execution_guard} if queue_execution_guard else {}),
               **({"data_filename": data_filename} if str(data_filename or "").strip() else {})},
         request_id=request_id,
         trace_id=trace_id,
@@ -838,6 +840,7 @@ def _process_report_lane_turn(
             trace_id=trace_id,
             task_id=task_id,
             stream_piece_sink=piece_ledger,
+            queue_execution_guard=queue.execution_guard(request_id),
         )
     except Exception as exc:
         logger.error(f"[QueueWorker] request_id={request_id} 报告档后台执行异常: {exc}")
@@ -1061,7 +1064,7 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
     if not owner_id:
         # A queued task without an owning Principal must not run under a shared identity.
         logger.error(f"[QueueWorker] 拒绝执行 request_id={request_id}: 缺少授权主体")
-        queue.fail_or_retry(request_id, "authorization_required")
+        queue.fail_or_retry(request_id, "authorization_required", retryable=False)
         return True
 
     # R294：这一行之前，载荷里那份冻结的快照就是本轮身份——R290 挪完部门，后台
@@ -1111,7 +1114,9 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
             # R294：同上——图里拿到的是消费时刻的投影，随行的签名由
             # app/agents/tools.py::_tool_principal 认账，缺它就不许当身份用。
             user={"principal": principal_payload, PRINCIPAL_PROVENANCE_KEY: principal_provenance,
+                  "queue_execution_guard": queue.execution_guard(request_id),
                   **_named_dataset(payload)},
+            request_id=request_id,
         )
         record = agent_result.model_dump() if hasattr(agent_result, "model_dump") else dict(agent_result or {})
         record_agent_result(record, owner_id=owner_id, session_id=session_id, entry_point="queue")

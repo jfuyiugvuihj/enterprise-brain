@@ -370,11 +370,12 @@ def test_the_agent_writer_names_its_own_turn_and_the_direct_writer_its_own_reque
 
 
 def test_the_tool_turn_reader_is_defined_once_and_used_once():
-    """configurable -> 轮身份 的读取在 tools.py 里只有一处，且只喂产物写点。"""
+    """轮身份只有一个读取定义；成果写点调用一次，计算记录可复用同源读取。"""
     tree = ast.parse((REPO_ROOT / "app/agents/tools.py").read_text(encoding="utf-8"))
     definitions = [n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_tool_turn"]
     assert definitions == ["_tool_turn"], f"_tool_turn 定义了 {definitions} 次"
-    used = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_tool_turn"]
+    writer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_register_artifact")
+    used = [n for n in ast.walk(writer) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_tool_turn"]
     assert len(used) == 1, f"_tool_turn 被用了 {len(used)} 次：产物写点出现了第二份来源"
 
 
@@ -385,7 +386,11 @@ def test_the_pair_is_assembled_in_the_storage_module_only():
     readers = (API_MODULE.relative_to(REPO_ROOT).as_posix(), *WRITERS)
     for relative in readers:
         surface = set()
-        for _lineno, keys in dict_literal_key_sets((REPO_ROOT / relative).read_text(encoding="utf-8")):
+        text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        if relative == "app/agents/tools.py":
+            writer = next(n for n in ast.parse(text).body if isinstance(n, ast.FunctionDef) and n.name == "_register_artifact")
+            text = ast.unparse(writer)
+        for _lineno, keys in dict_literal_key_sets(text):
             surface |= keys & set(LINEAGE_KEYS)
         assert not surface, f"{relative} 自己拼了一份血缘键名：{sorted(surface)}"
     api_text = API_MODULE.read_text(encoding="utf-8")
@@ -486,7 +491,7 @@ TO_ROW_PAIR = '        "session_id": record.session_id,\n        "request_id": r
 COERCE_LINEAGE = "                **normalize_lineage(raw),\n"
 PAYLOAD_FILTER = "            if value is not None\n"
 BLANK_FOLD = "    return text or None"
-TOOLS_CALL = "        session_id=turn_session,\n        request_id=turn_request,\n"
+TOOLS_CALL = "                    session_id=turn_session,\n                    request_id=turn_request,\n"
 
 
 def test_blade_k1_dropping_the_reader_leg_goes_red():

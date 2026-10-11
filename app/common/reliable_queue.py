@@ -13,6 +13,8 @@ import os
 import threading
 import time
 import uuid
+from contextlib import contextmanager
+from functools import wraps
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +23,40 @@ class QueueConnectionError(RuntimeError):
     """Raised when the reliable queue cannot establish a verified Redis connection."""
 
     code = "queue_unavailable"
+
+
+class QueueExecutionLost(RuntimeError):
+    """The task was cancelled or this attempt no longer owns its lease."""
+
+    code = "queue_execution_lost"
+
+
+def _request_serialized(method):
+    @wraps(method)
+    def locked(self, request_id, *args, **kwargs):
+        with self._mutation_lock(request_id):
+            return method(self, request_id, *args, **kwargs)
+    return locked
+
+
+@contextmanager
+def artifact_execution_guard(guard):
+    """Fence artifact registration against cancellation and reassigned attempts."""
+    if not guard:
+        yield
+        return
+    if not isinstance(guard, dict) or not all(
+        isinstance(guard.get(key), str) and guard[key]
+        for key in ("queue_name", "request_id", "lease_token")
+    ):
+        raise QueueExecutionLost("invalid queue execution guard")
+    queue = connect_reliable_queue(name=guard["queue_name"])
+    request_id = guard["request_id"]
+    queue._lease_tokens[request_id] = guard["lease_token"]
+    with queue._mutation_lock(request_id):
+        if not queue.owns_execution(request_id):
+            raise QueueExecutionLost("queue attempt no longer owns execution")
+        yield
 
 
 #: R155: 部署侧声明的排队上限。这一枚常量只产生「看得见」的读数，不产生任何执法——
@@ -169,6 +205,7 @@ class QueueMessage:
     request_id: str
     payload: dict[str, Any]
     attempts: int = 0
+    lease_token: str = ""
 
 
 class ReliableQueue:
@@ -204,6 +241,8 @@ class ReliableQueue:
         self.max_attempts = max_attempts
         self.idempotency_ttl = idempotency_ttl
         self.result_ttl = result_ttl
+        self._lease_tokens: dict[str, str] = {}
+        self._held_locks = threading.local()
         self.capacity = capacity
         #: 容量与来源必须成对：capacity 是空的而来源写 constructor 是句假话。
         self.capacity_source = (
@@ -248,10 +287,40 @@ class ReliableQueue:
     def _cancel_key(self, request_id: str) -> str:
         return f"{self.name}:cancel:{request_id}"
 
+    @contextmanager
+    def _mutation_lock(self, request_id: str):
+        held = getattr(self._held_locks, "keys", set())
+        key = f"{self.name}:mutation:{request_id}"
+        if key in held:
+            yield
+            return
+        with self.redis.lock(key, timeout=30, blocking_timeout=10):
+            self._held_locks.keys = held | {key}
+            try:
+                yield
+            finally:
+                self._held_locks.keys = held
+
+    def execution_guard(self, request_id: str) -> dict[str, str]:
+        return {"queue_name": self.name, "request_id": request_id,
+                "lease_token": self._lease_tokens.get(request_id, "")}
+
+    def owns_execution(self, request_id: str) -> bool:
+        token = self._lease_tokens.get(request_id)
+        current = self.redis.get(self._lease_key(request_id))
+        if isinstance(current, bytes):
+            current = current.decode()
+        return bool(token and current == token and self.status(request_id) == "processing"
+                    and not self.is_cancelled(request_id))
+
     def enqueue(self, payload: dict[str, Any], idempotency_key: str) -> QueueMessage:
         key = (idempotency_key or "").strip()
         if not key:
             raise ValueError("idempotency_key is required")
+        with self._mutation_lock("idempotency:" + key):
+            return self._enqueue_locked(payload, key)
+
+    def _enqueue_locked(self, payload: dict[str, Any], key: str) -> QueueMessage:
         existing = self.redis.get(self._idempotency_key(key))
         if existing:
             request_id = existing.decode() if isinstance(existing, bytes) else str(existing)
@@ -263,10 +332,12 @@ class ReliableQueue:
         request_id = uuid.uuid4().hex
         body = {"request_id": request_id, "payload": payload, "attempts": 0, "enqueued_at": time.time()}
         serialized = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
-        self.redis.set(self._idempotency_key(key), request_id, ex=self.idempotency_ttl)
-        self.redis.set(self._message_key(request_id), serialized)
-        self.redis.set(self._status_key(request_id), "queued")
-        self.redis.rpush(self.pending_key, request_id)
+        with self.redis.pipeline(transaction=True) as tx:
+            tx.set(self._idempotency_key(key), request_id, ex=self.idempotency_ttl)
+            tx.set(self._message_key(request_id), serialized)
+            tx.set(self._status_key(request_id), "queued")
+            tx.rpush(self.pending_key, request_id)
+            tx.execute()
         return QueueMessage(request_id, payload, 0)
 
     def reserve(self, timeout: int = 0) -> QueueMessage | None:
@@ -278,6 +349,18 @@ class ReliableQueue:
             return None
         if isinstance(request_id, bytes):
             request_id = request_id.decode()
+        with self._mutation_lock(request_id):
+            return self._reserve_locked(request_id)
+
+    def _reserve_locked(self, request_id: str) -> QueueMessage | None:
+        if self.redis.lpos(self.processing_key, request_id) is None:
+            return None
+        if self.status(request_id) in {"done", "dead", "failed", "cancelled", AWAITING_APPROVAL}:
+            self.redis.lrem(self.processing_key, 1, request_id)
+            return None
+        if self.redis.exists(self._lease_key(request_id)):
+            self.redis.lrem(self.processing_key, 1, request_id)
+            return None
         if self.is_cancelled(request_id):
             self.redis.lrem(self.processing_key, 1, request_id)
             self.redis.delete(self._lease_key(request_id))
@@ -292,28 +375,28 @@ class ReliableQueue:
         attempts = int(data.get("attempts", 0)) + 1
         data["attempts"] = attempts
         data["reserved_at"] = time.time()
-        self.redis.set(self._message_key(request_id), json.dumps(data, ensure_ascii=False, separators=(",", ":")))
-        self.redis.set(self._status_key(request_id), "processing")
-        self.redis.set(self._lease_key(request_id), "1", ex=self.lease_seconds)
-        return QueueMessage(request_id, data["payload"], attempts)
+        token = uuid.uuid4().hex
+        self._lease_tokens[request_id] = token
+        with self.redis.pipeline(transaction=True) as tx:
+            tx.set(self._message_key(request_id), json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+            tx.set(self._status_key(request_id), "processing")
+            tx.set(self._lease_key(request_id), token, ex=self.lease_seconds)
+            tx.execute()
+        return QueueMessage(request_id, data["payload"], attempts, token)
 
     def _lease_lost(self, request_id: str) -> bool:
-        """True when this worker no longer holds the processing lease.
+        """True when this attempt no longer owns the processing lease."""
+        return not self.owns_execution(request_id)
 
-        租约按 request_id 记账而非按持有者记账，因此这里只能判断“租约是否还在”，
-        无法区分持有者；跨持有者的令牌围栏仍是已知限制。
-        """
-        return not bool(self.redis.exists(self._lease_key(request_id)))
-
+    @_request_serialized
     def renew_lease(self, request_id: str) -> bool:
         """把还在手上的处理租约续满；租约已经不在了就返回 False，绝不复活它。
 
-        Redis 的 `EXPIRE` 对不存在的键返回 0，这一枚语义正是本单要的：任务一旦被
-        `requeue_expired` 收回或改派，上一任再想续也续不回来。改用 `SET ... EX` 续
-        会把这道保护踩平——那等于两任持有者同时声称在跑同一条消息，而账上只有后写的
-        那一份租约。（跨持有者的令牌围栏仍是已知限制，本方法不假装解决它。）
+        续租在共享锁内比对本任令牌；旧执行者不能续新持有者的租约。
         """
-        return bool(self.redis.expire(self._lease_key(request_id), self.lease_seconds))
+        return self.owns_execution(request_id) and bool(
+            self.redis.expire(self._lease_key(request_id), self.lease_seconds)
+        )
 
     def lease_heartbeat(
         self,
@@ -344,7 +427,10 @@ class ReliableQueue:
             clock=clock,
         )
 
+    @_request_serialized
     def ack(self, request_id: str) -> bool:
+        if self._lease_lost(request_id) and not self.is_cancelled(request_id):
+            return False
         removed = self.redis.lrem(self.processing_key, 1, request_id)
         if removed:
             # 只有在处理队列里确实取走了这条消息才允许释放租约，
@@ -359,6 +445,7 @@ class ReliableQueue:
         self.redis.set(self._status_key(request_id), "done")
         return True
 
+    @_request_serialized
     def complete(self, request_id: str, result: str | None, *, terminal: dict[str, Any] | None = None) -> bool:
         """Persist the result before acknowledging the processing lease.
 
@@ -394,25 +481,25 @@ class ReliableQueue:
             self.ack(request_id)
             return False
         if self._lease_lost(request_id):
-            self._record_discard(request_id, DISCARD_REASON_LEASE_LOST)
-            self.redis.delete(self._result_key(request_id))
-            self.redis.delete(self._terminal_key(request_id))
+            # An old attempt must not modify a newer attempt's result or ledger.
+            if self.status(request_id) == "processing" and not self.redis.exists(self._lease_key(request_id)):
+                self._record_discard(request_id, DISCARD_REASON_LEASE_LOST)
             return False
-        if result is not None:
-            self.redis.set(self._result_key(request_id), result, ex=self.result_ttl)
-        if terminal is not None:
-            self.redis.set(
-                self._terminal_key(request_id),
-                json.dumps(terminal, ensure_ascii=False, separators=(",", ":")),
-                ex=self.result_ttl,
-            )
-        if not self.ack(request_id):
+        if self.redis.lpos(self.processing_key, request_id) is None:
             return False
-        if awaiting:
-            # 写在这里而不并进 `ack()`：ack 那一支说的仍是「闭合成 done」这件旧事，只有带着待批准
-            # 把手的这一轮才改口。🔴 必须是字符串字面量：R232 用 AST 认「往 status 键写字面量」
-            # 这枚形状，写成常量会落进它的 blind_spots，而那枚钉的文本计数还会把注释也数进去。
-            self.redis.set(self._status_key(request_id), "awaiting_approval")
+        with self.redis.pipeline(transaction=True) as tx:
+            if result is not None:
+                tx.set(self._result_key(request_id), result, ex=self.result_ttl)
+            if terminal is not None:
+                tx.set(self._terminal_key(request_id),
+                       json.dumps(terminal, ensure_ascii=False, separators=(",", ":")), ex=self.result_ttl)
+            tx.lrem(self.processing_key, 1, request_id)
+            tx.delete(self._lease_key(request_id))
+            if awaiting:
+                tx.set(self._status_key(request_id), "awaiting_approval")
+            else:
+                tx.set(self._status_key(request_id), "done")
+            tx.execute()
         return True
 
     def terminal(self, request_id: str) -> dict[str, Any]:
@@ -433,6 +520,7 @@ class ReliableQueue:
             return {"state": "unreadable", "payload": None}
         return {"state": "ok", "payload": data}
 
+    @_request_serialized
     def append_piece_batch(self, request_id: str, batch: dict[str, Any]) -> bool:
         """把队列道刚汇出来的一截字打成一批，推进片段表。
 
@@ -450,6 +538,8 @@ class ReliableQueue:
         seq = batch.get("seq")
         if isinstance(seq, bool) or not isinstance(seq, int) or seq <= 0:
             raise ValueError("piece batch seq must be a positive int")
+        if not self.owns_execution(request_id):
+            return False
         payload = json.dumps(batch, ensure_ascii=False, separators=(",", ":"))
         key = self._pieces_key(request_id)
         self.redis.rpush(key, payload)
@@ -555,7 +645,9 @@ class ReliableQueue:
             return None
         return value.decode() if isinstance(value, bytes) else str(value)
 
-    def fail_or_retry(self, request_id: str, error: str, *, retryable: bool = True) -> str:
+    @_request_serialized
+    def fail_or_retry(self, request_id: str, error: str, *, retryable: bool = True,
+                      _recover_expired: bool = False) -> str:
         """Retry a failed task, or park it in the dead-letter list.
 
         ``retryable=False`` is a caller-supplied verdict that another attempt cannot
@@ -567,6 +659,11 @@ class ReliableQueue:
 
         R585：真正落 dead 的那一次，把「为什么落 dead」也记进同一本账（`dead_verdict`），可读面才第一次说得出成因——过去这枚判定只活在 worker 的日志行里。账本读不到（message 键不在位）仍旧一个字节都不盖，与 `_record_discard` 同一口径：宁可少一笔原因，不伪造账本。
         """
+        status = self.status(request_id)
+        if status in {"done", "dead", "failed", "cancelled", AWAITING_APPROVAL}:
+            return status
+        if not _recover_expired and self._lease_lost(request_id) and not self.is_cancelled(request_id):
+            return status or "failed"
         if self.is_cancelled(request_id):
             self.redis.lrem(self.processing_key, 1, request_id)
             self.redis.lrem(self.pending_key, 1, request_id)
@@ -585,31 +682,45 @@ class ReliableQueue:
             if dead:
                 # R585 判据①③：这一枚判定必须在写状态键**之前**落账——反过来就留出一瞬「状态已经叫 dead、账上还答不出为什么」的窗口。
                 data[DEAD_VERDICT_LEDGER_KEY] = {"reason": str(error), "retryable": bool(retryable)}
-            self.redis.set(self._message_key(request_id), json.dumps(data, ensure_ascii=False, separators=(",", ":")))
-        self.redis.lrem(self.processing_key, 1, request_id)
-        self.redis.delete(self._lease_key(request_id))
-        if dead:
-            self.redis.rpush(self.dead_key, request_id)
-            self.redis.set(self._status_key(request_id), "dead")
-            return "dead"
-        self.redis.rpush(self.pending_key, request_id)
-        self.redis.set(self._status_key(request_id), "queued")
-        return "queued"
+        with self.redis.pipeline(transaction=True) as tx:
+            if data is not None:
+                tx.set(self._message_key(request_id), json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+            tx.lrem(self.processing_key, 1, request_id)
+            tx.delete(self._lease_key(request_id))
+            tx.delete(self._pieces_key(request_id))
+            if dead:
+                tx.rpush(self.dead_key, request_id)
+                tx.set(self._status_key(request_id), "dead")
+            else:
+                tx.rpush(self.pending_key, request_id)
+                tx.set(self._status_key(request_id), "queued")
+            tx.execute()
+        self._lease_tokens.pop(request_id, None)
+        return "dead" if dead else "queued"
 
     def requeue_expired(self) -> int:
         moved = 0
         for item in self.redis.lrange(self.processing_key, 0, -1):
             request_id = item.decode() if isinstance(item, bytes) else str(item)
-            if self.redis.exists(self._lease_key(request_id)):
-                continue
-            self.fail_or_retry(request_id, "lease_expired")
-            moved += 1
+            with self._mutation_lock(request_id):
+                if self.status(request_id) == "queued" and not self.redis.exists(self._lease_key(request_id)):
+                    if self.redis.lrem(self.processing_key, 1, request_id):
+                        self.redis.rpush(self.pending_key, request_id)
+                        moved += 1
+                    continue
+                if self.redis.exists(self._lease_key(request_id)) or self.status(request_id) not in {"processing", "cancel_requested"}:
+                    continue
+                self.fail_or_retry(request_id, "lease_expired", _recover_expired=True)
+                moved += 1
         return moved
 
+    @_request_serialized
     def cancel(self, request_id: str) -> bool:
         if not self.redis.exists(self._message_key(request_id)):
             return False
-        self.redis.set(self._cancel_key(request_id), "1", ex=self.lease_seconds)
+        if self.status(request_id) in {"done", "dead", "failed", "cancelled", AWAITING_APPROVAL}:
+            return True
+        self.redis.set(self._cancel_key(request_id), "1")
         if self.redis.lrem(self.pending_key, 1, request_id):
             self.redis.set(self._status_key(request_id), "cancelled")
         else:

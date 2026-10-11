@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from app.api.v1 import artifacts, chat, data, auth, alerts, dashboard, feedback, intelligence, open_platform, observability, notifications
+from app.api.v1 import artifacts, calculations, chat, data, auth, alerts, dashboard, feedback, intelligence, open_platform, observability, notifications
 
 
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
@@ -80,6 +80,7 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1", dependencies=[])
 app.include_router(data.router, prefix="/api/v1", dependencies=[])
 app.include_router(artifacts.router, prefix="/api/v1", dependencies=[])
+app.include_router(calculations.router, prefix="/api/v1")
 app.include_router(alerts.router, prefix="/api/v1")  # 阶段 4 告警
 app.include_router(intelligence.router, prefix="/api/v1")
 app.include_router(dashboard.router, prefix="/api/v1")  # R14-A1 总览聚合（只读）

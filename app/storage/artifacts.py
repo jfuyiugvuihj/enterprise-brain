@@ -547,6 +547,9 @@ class ArtifactRegistry:
                 scope[key] = metadata[key]
             elif key in raw:
                 scope[key] = raw[key]
+        calculation_ids = metadata.get("calculation_run_ids")
+        if isinstance(calculation_ids, list) and all(isinstance(item, str) and item for item in calculation_ids):
+            scope["calculation_run_ids"] = calculation_ids
         artifact_id = str(raw.get("artifact_id") or "")
         storage_key = str(raw.get("storage_key") or raw.get("storage_path") or "")
         try:
@@ -642,6 +645,7 @@ class ArtifactRegistry:
         session_id: str | None = None,
         request_id: str | None = None,
         expires_at: datetime | None = None,
+        calculation_run_ids: list[str] | None = None,
     ) -> ArtifactRecord:
         """Store the bytes' row, and - when the caller knows them - the turn that made them.
 
@@ -684,6 +688,8 @@ class ArtifactRegistry:
                 "visibility": visibility,
             },
         )
+        if calculation_run_ids:
+            record.metadata["calculation_run_ids"] = list(dict.fromkeys(calculation_run_ids))
         with self._lock:
             return self._write(record)
 
@@ -781,6 +787,7 @@ def register_artifact(
     session_id: str | None = None,
     request_id: str | None = None,
     expires_at: datetime | None = None,
+    calculation_run_ids: list[str] | None = None,
 ) -> ArtifactRecord:
     return artifact_registry.register(
         storage_path,
@@ -792,4 +799,5 @@ def register_artifact(
         session_id=session_id,
         request_id=request_id,
         expires_at=expires_at,
+        calculation_run_ids=calculation_run_ids,
     )

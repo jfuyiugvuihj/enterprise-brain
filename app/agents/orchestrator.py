@@ -951,6 +951,7 @@ def _make_worker_wrapper(graph, name: str):
             # 取消标记必须一路传到子图：工具（chart/export）在子图里执行，只改父层的
             # 话子图看不到标记，检查点 2/3 就等于恒不触发。
             "cancel_event",
+            "queue_execution_guard",
         ):
             if k in parent_conf:
                 child_conf[k] = parent_conf[k]
@@ -1356,9 +1357,9 @@ def run_orchestrator(user_message: str, thread_id: str = "default") -> str:
     return _final_of(result)
 
 
-def run_orchestrator_queue(user_message: str, thread_id: str = "default", *, user: dict | None = None):
+def run_orchestrator_queue(user_message: str, thread_id: str = "default", *, user: dict | None = None, request_id: str | None = None):
     """Queue entry point returning one canonical ``AgentResult`` record."""
-    request_id, trace_id, task_id = _execution_ids()
+    request_id, trace_id, task_id = _execution_ids(request_id)
     configurable = {
         "thread_id": thread_id,
         "request_id": request_id,
@@ -1429,9 +1430,9 @@ def run_orchestrator_queue(user_message: str, thread_id: str = "default", *, use
     return record
 
 
-def run_orchestrator_result(user_message: str, thread_id: str = "default", *, user: dict | None = None):
+def run_orchestrator_result(user_message: str, thread_id: str = "default", *, user: dict | None = None, request_id: str | None = None):
     """Alias kept for the queue worker: the canonical record is the return value."""
-    return run_orchestrator_queue(user_message, thread_id=thread_id, user=user)
+    return run_orchestrator_queue(user_message, thread_id=thread_id, user=user, request_id=request_id)
 
 
 def _final_of(result) -> str:

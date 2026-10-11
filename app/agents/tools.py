@@ -272,15 +272,46 @@ def _register_artifact(path: str, artifact_type: str, config):
     if principal is None:
         return None
     from app.storage import artifacts as artifact_storage
+    from app.storage.calculations import calculation_storage
+    from contextlib import nullcontext
 
     turn_session, turn_request = _tool_turn(config)
-    artifact = artifact_storage.register_artifact(
-        path,
-        artifact_type=artifact_type,
-        principal=principal,
-        session_id=turn_session,
-        request_id=turn_request,
-    )
+    guard = ((config or {}).get("configurable") or {}).get("queue_execution_guard")
+    if guard:
+        from app.common.reliable_queue import artifact_execution_guard
+        boundary = artifact_execution_guard(guard)
+    else:
+        boundary = nullcontext()
+    try:
+        with boundary:
+            artifact = None
+            if guard and artifact_type == "report" and turn_request and turn_session:
+                for candidate in artifact_storage.artifact_registry.list_active(owner_id=principal.user_id, artifact_type="report"):
+                    if (candidate.request_id == turn_request
+                            and str(candidate.session_id or "").split(":", 1)[0] == turn_session.split(":", 1)[0]
+                            and os.path.splitext(candidate.filename)[1] == os.path.splitext(path)[1]
+                            and os.path.isfile(candidate.storage_path)):
+                        artifact = candidate
+                        if os.path.abspath(path) != os.path.abspath(candidate.storage_path):
+                            os.remove(path)
+                        break
+            if artifact is None:
+                calculation_ids = calculation_storage.ids_for_turn(
+                    owner_id=principal.user_id, session_id=turn_session, request_id=turn_request
+                )
+                artifact = artifact_storage.register_artifact(
+                    path,
+                    artifact_type=artifact_type,
+                    principal=principal,
+                    session_id=turn_session,
+                    request_id=turn_request,
+                    calculation_run_ids=calculation_ids,
+                )
+    except Exception as exc:
+        if getattr(exc, "code", "") == "queue_execution_lost":
+            if os.path.isfile(path):
+                os.remove(path)
+        raise
     record_artifact(
         bag_from_config(config),
         artifact_id=artifact.artifact_id,
@@ -404,6 +435,62 @@ def _record_dataset_evidence(config, filename: str, df) -> None:
         columns=[str(column) for column in getattr(df, "columns", [])],
         department=str(getattr(record, "department", "") or "") if record is not None else "",
     )
+
+
+class _CalculationPersistenceError(RuntimeError):
+    pass
+
+
+def _start_calculation(config, filename: str, query: str, *, operation: str):
+    from app.storage.datasets import dataset_registry
+    from app.storage.calculations import calculation_storage
+
+    dataset = dataset_registry.get_active_by_filename(filename)
+    principal = _tool_principal(config)
+    session, request = _tool_turn(config)
+    if dataset is None or not dataset.version_id:
+        raise _CalculationPersistenceError("数据版本未登记，无法保存可回查的计算记录。")
+    try:
+        return calculation_storage.start_run(
+            owner_id=principal.user_id,
+            dataset_version_id=dataset.version_id,
+            request_id=request,
+            parameters={
+                "session_id": session,
+                "trace_id": span_identity(config).get("trace_id"),
+                "filename": filename,
+                "query": query,
+                "operation": operation,
+                "role": principal.role,
+                "department": principal.department,
+                "clearance": principal.clearance,
+                "authorization_department_ids": sorted(principal.department_ids),
+                "scope": {"department_ids": list(principal.department_ids),
+                          "classification": dataset.classification, "visibility": "private"},
+            },
+        )["calculation_run_id"]
+    except Exception as exc:
+        raise _CalculationPersistenceError("计算记录保存失败，请稍后重试。") from exc
+
+
+def _finish_calculation(calculation_id, result):
+    from app.storage.calculations import calculation_storage
+
+    try:
+        calculation_storage.complete_run(calculation_id, result)
+    except Exception as exc:
+        raise _CalculationPersistenceError("计算结果未能保存，本轮没有可回查的计算结果，请稍后重试。") from exc
+
+
+def _fail_calculation(calculation_id, error_code):
+    if not calculation_id:
+        return
+    from app.storage.calculations import calculation_storage
+
+    try:
+        calculation_storage.fail_run(calculation_id, error_code)
+    except Exception as exc:
+        raise _CalculationPersistenceError("失败计算的状态未能保存，请稍后重试。") from exc
 
 
 # ==================== R192 · 问法里的「前 N」：中文数词与阿拉伯数字同解 ====================
@@ -1617,12 +1704,15 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
     #: (文件名, 该文件过滤后的帧, 它进 prompt 的第一段下标)：装箱证明送出去了才记证据袋
     pending_datasets: "list[tuple[str, object, int]]" = []
     for fname, file_path in files:
+        calculation_id = None
         try:
             question = str(conf.get("data_question") or "")
+            calculation_id = _start_calculation(config, fname, question or query, operation="analyze_data")
             df = load_excel(file_path, query=question) if question else load_excel(file_path)
             category_frame = df
             df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
+                _fail_calculation(calculation_id, _row_scope_code(scope_info))
                 # 码与文案同判据源：一个给机器，一个给人看，同一条 reason_code。
                 scope_codes.append(_row_scope_code(scope_info))
                 parts.append(_row_scope_line(fname, scope_info))
@@ -1631,12 +1721,16 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
             try:
                 df = filter_explicit_categories(df, question or query, category_frame=category_frame)
             except ValueError as exc:
+                _fail_calculation(calculation_id, "validation_error")
                 return _denial_text(config, tool="analyze_data", code="validation_error",
                                     head=f"筛选条件无法执行：{exc}")
             pending_datasets.append((fname, df, len(parts)))
             if df.attrs.get("filter_note"):
                 parts.append(f"📁 {fname}: {df.attrs['filter_note']}")
             if df.empty:
+                _finish_calculation(calculation_id, {"rows": 0, "columns": list(map(str, df.columns)),
+                    "filter_note": df.attrs.get("filter_note", ""), "sheet_name": df.attrs.get("sheet_name", ""),
+                    "answer": ["筛选后没有符合条件的记录。"], "numeric_statistics": [], "chart_series": []})
                 parts.append("筛选后没有符合条件的记录，不计算全表金额。")
                 continue
             profile = profile_dataframe(df)
@@ -1654,12 +1748,21 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
             try:
                 series: list[dict] = []
                 ai_parts = _answer_query(df, question or query, numeric_cols, text_cols, series_out=series)
+                _finish_calculation(calculation_id, {
+                    "rows": int(len(df)), "columns": list(map(str, df.columns)),
+                    "filter_note": df.attrs.get("filter_note", ""), "sheet_name": df.attrs.get("sheet_name", ""),
+                    "numeric_statistics": [c for c in profile["columns"] if c["name"] in profile["numeric_columns"]],
+                    "chart_series": series, "answer": ai_parts,
+                })
                 parts.extend(ai_parts)
                 #: 10-07 现读（走查环 7）：图腿自己调用 analyze_data 时，数在这条边界上就算完了，
                 #: 可模型连发 21 发 generate_chart 只带标签不带数值，最后把本地模型的历史挤空、
                 #: 服务端 500，一轮白等 114 s、屏上零张图。数既然已经在手，就不该再押在模型的抄写上。
                 record_chart_series(bag_from_config(config), series)
+            except _CalculationPersistenceError:
+                raise
             except Exception:
+                _fail_calculation(calculation_id, "internal_error")
                 # R192 病灶二第 1 层（可诊断性）：这一支改前是裸 `pass`——异常被吞干净之后，
                 # 员工看见的是"这份文件没结论"，运维侧一个字都没有，现场不可复现。
                 # 记账只走仓里既有那一条通路（record_tool_status：本文件上方几处拒绝出口用的
@@ -1693,7 +1796,10 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 )
             except Exception:
                 pass
+        except _CalculationPersistenceError as exc:
+            return _denial_text(config, tool="analyze_data", code="internal_error", head=str(exc))
         except Exception as e:
+            _fail_calculation(calculation_id, "internal_error")
             parts.append(f"📁 {fname}: 读取失败 - {e}")
 
     if not produced:
@@ -1833,12 +1939,15 @@ def _query_data(query: str, config: RunnableConfig) -> str:
     unreadable = 0
     empty_files = 0
     for fname, file_path in files:
+        calculation_id = None
         try:
             question = str(conf.get("data_question") or "")
+            calculation_id = _start_calculation(config, fname, question or query, operation="query_data")
             df = load_excel(file_path, query=question) if question else load_excel(file_path)
             category_frame = df
             df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
+                _fail_calculation(calculation_id, _row_scope_code(scope_info))
                 reason = _row_scope_reason(scope_info)
                 if reason:
                     denied_codes.append(_row_scope_code(scope_info))
@@ -1846,20 +1955,33 @@ def _query_data(query: str, config: RunnableConfig) -> str:
                 elif int(scope_info.get("rows_in") or 0) <= 0:
                     empty_files += 1
                 continue
+        except _CalculationPersistenceError as exc:
+            return _denial_text(config, tool="query_data", code="internal_error", head=str(exc))
         except Exception:
+            _fail_calculation(calculation_id, "internal_error")
             unreadable += 1
             continue
         try:
             df = filter_explicit_categories(df, question or query, category_frame=category_frame)
         except ValueError as exc:
+            _fail_calculation(calculation_id, "validation_error")
             return f"查询未完成：{exc}"
         if df.empty:
+            _finish_calculation(calculation_id, {"rows": 0, "query_result": None,
+                "filter_note": df.attrs.get("filter_note", ""), "sheet_name": df.attrs.get("sheet_name", "")})
             return f"{df.attrs.get('filter_note', '')}筛选后没有符合条件的记录。"
         attempted += 1
-        code = _llm_pandas_code(df, query)
-        res = safe_query(df, code)
+        try:
+            code = _llm_pandas_code(df, query)
+            res = safe_query(df, code)
+        except Exception:
+            _fail_calculation(calculation_id, "internal_error")
+            raise
         if res.get("error") is None:
             result = res["result"]
+            _finish_calculation(calculation_id, {"rows": int(len(df)),
+                "query_result": _flatten_query_tuple_keys(result), "expression": code,
+                "filter_note": df.attrs.get("filter_note", ""), "sheet_name": df.attrs.get("sheet_name", "")})
             if not isinstance(result, str):
                 # R462：多级索引的结果带 tuple 键，先在契约出口展平成字符串键，再序列化。
                 result = json.dumps(
@@ -1882,6 +2004,7 @@ def _query_data(query: str, config: RunnableConfig) -> str:
             # 同一读法：只有真进 prompt 的那一块，才算模型读过这个数据集。
             _record_dataset_evidence(config, fname, df)
             return fitted[0]
+        _fail_calculation(calculation_id, "validation_error")
     # 三种终态各说各话（R62 判据①②）：查询确实没过 ≠ 无权看到行 ≠ 压根没有行可读。
     if attempted:
         return "查询失败：LLM 生成的代码在沙箱中多次执行未通过，请换个问法。"

@@ -71,6 +71,7 @@ import {
   verdictText,
 } from '../lib/traces'
 import { UiButton, UiEmptyState, UiErrorState, UiLoadingState, UiSelect, UiTable } from './ui'
+import CalculationRuns from './CalculationRuns.vue'
 
 /**
  * 路由在这里是**可选**的（与 ChatPanel.vue:326 同一手法）：单测裸渲染这一屏时没有 router 上下文，
@@ -311,6 +312,8 @@ onUnmounted(() => {
         </UiTable>
       </template>
     </section>
+
+    <CalculationRuns :trace-id="picked" />
 
     <!-- 丙 · 分段格：与乙同一枚编号，但各问各的、各归各的脸。 -->
     <section class="panel-card" data-testid="ledger-cell" :data-face="ledgerCell.face">

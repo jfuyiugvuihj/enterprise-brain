@@ -1660,11 +1660,18 @@ function watchQueueTurn(key, requestId) {
         `/queue/status/${encodeURIComponent(requestId)}?since=${pieceCursor}`
       )
       const piece = status.data?.stream_pieces || null
+      const attempt = Number(status.data?.failure?.attempts || 0)
+      if (pieceSeen && pieceSeen.attempt !== attempt) {
+        queuePieces.value = storeBag(queuePieces, key, { cursor: 0, text: '', attempt })
+        applyQueuedPiece(key, '')
+        return
+      }
       if (piece && typeof piece.text === 'string' && piece.text) {
         const merged = (pieceSeen ? pieceSeen.text : '') + piece.text
         queuePieces.value = storeBag(queuePieces, key, {
           cursor: Number.isFinite(Number(piece.cursor)) ? Number(piece.cursor) : pieceCursor,
           text: merged,
+          attempt,
           truncated: Number(piece.truncated) > 0,
         })
         applyQueuedPiece(key, merged)
