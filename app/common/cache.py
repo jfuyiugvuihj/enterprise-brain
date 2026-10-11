@@ -136,7 +136,7 @@ class _MemoryRedis:
 
 
 # ==================== 缓存 ====================
-AUTHORIZATION_DATA_REVISION = "rows-v2"
+AUTHORIZATION_DATA_REVISION = "rows-v3"
 
 def _hash(question: str) -> str:
     return hashlib.md5(question.strip().encode()).hexdigest()[:12]

@@ -39,6 +39,29 @@ from app.rag.filters import record_retrieval_scope, resolve_document_retrieval_s
 
 model = ModelHandler()
 
+
+def requested_document_names(query: str) -> frozenset[str]:
+    """Keep explicit, exclusive file requests intact through query rewriting."""
+    text = str(query or "")
+    if not re.search(r"(?:只|仅)(?:依据|根据|查(?:看|阅)?|读(?:取)?|参考|使用|看)", text):
+        return frozenset()
+    names = set()
+    for match in re.finditer(r'【([^】]+)】|《([^》]+)》|“([^”]+)”|"([^"]+)"', text):
+        name = next(value for value in match.groups() if value is not None).strip()
+        prefix = re.split(r"[，。；,;]", text[:match.start()])[-1]
+        if re.search(r"(?:不要|排除|不(?:读|查|看|用|参考|使用))", prefix):
+            continue
+        if re.fullmatch(r"[^/\\\r\n]+\.(?:pdf|docx?|txt|md|csv|xlsx?)", name, re.I):
+            names.add(name)
+    return frozenset(names)
+
+
+def document_query_predicate(query: str, scope):
+    names = requested_document_names(query)
+    return lambda hit: scope.allows(hit) and (
+        not names or str(hit.get("source") or hit.get("filename") or "") in names
+    )
+
 # ==================== 查询改写 ====================
 
 #: 可变内容后置（R43a，跟进单 §81 三）。改前 ``{question}`` 夹在两段固定指令**中间**，两次改写
@@ -1004,7 +1027,7 @@ class RetrievalPipeline:
         owner_id = str(getattr(principal, "user_id", "") or "").strip() or None
         started = perf_counter()
         found = self.search(
-            query, top_k=top_k, where=scope.filters, pred=scope.allows, tier=tier,
+            query, top_k=top_k, where=scope.filters, pred=document_query_predicate(query, scope), tier=tier,
             owner_id=owner_id, context_pack=context_pack,
             # R695 判据① 的调用点：把「这一发检索属于哪一轮、属于谁」交给检索管线自己算。
             config=retrieval_turn_config(principal),

@@ -1393,6 +1393,10 @@ def search_docs(query: str, config: RunnableConfig) -> str:
         return _authorization_error()
 
     with start_tool_call(config, tool_name="search_docs", arguments={"query": query}) as span:
+        from app.rag.retrieval_pipeline import requested_document_names
+        original_question = str(((config or {}).get("configurable") or {}).get("data_question") or "")
+        if requested_document_names(original_question):
+            query = original_question
         pipeline = _get_pipeline()
         try:
             retrieval_kwargs = {
