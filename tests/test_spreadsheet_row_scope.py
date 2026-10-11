@@ -40,3 +40,12 @@ def test_foreign_only_fragment_is_not_emitted(sheet):
     hit = {"source": "费用.csv", "content": "| 销售 | 480 | 1 |"}
     result = project_spreadsheet_hit(hit, sheet, principal())
     assert result is None
+
+
+@pytest.mark.parametrize("department,row,amount", [("销售", 1, "480"), ("研发", 2, "420")])
+def test_own_fragment_keeps_original_row_position_after_authorization(sheet, department, row, amount):
+    caller = Principal(user_id="test", username="test", roles=["manager"], department=department, clearance=2)
+    hit = {"source": "费用.csv", "content": sheet.blocks[0].row_lines[row]}
+    result = project_spreadsheet_hit(hit, sheet, caller)
+    assert result and amount in result["content"]
+    assert all(value not in result["content"] for value in ("200", "888", "999"))

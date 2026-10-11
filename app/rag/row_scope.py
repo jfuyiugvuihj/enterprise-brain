@@ -32,9 +32,12 @@ def project_spreadsheet_hit(hit, sheet, principal):
         if position >= stop or offset <= start:
             continue
         frame = pd.DataFrame(block.rows, columns=block.header)
+        original_row = object()  # cannot collide with any user-supplied column name
+        frame[original_row] = range(len(frame))
         visible = filter_dataframe_rows(frame, role=principal.role, department=principal.department)
         # Keep the original chunk boundary: never expand a small hit into a whole workbook.
-        visible = visible.loc[[index for index in visible.index if block.row_lines[index] in content]]
+        visible = visible.loc[visible[original_row].map(lambda index: block.row_lines[index] in content)]
+        visible = visible.drop(columns=[original_row])
         if not visible.empty:
             # Captions/full-width rows may contain totals from outside the visible rows.
             blocks.append(replace(block, rows=tuple(visible.itertuples(index=False, name=None)),
