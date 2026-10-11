@@ -136,6 +136,7 @@ def generate_pdf_report(title: str, sections: list[dict], chart_paths: list[str]
     #: 因为它不知道图在容器里的路径，工具给它的是 URL）。缺文件的写法沿用 chart_image 那句。
     embedded = [str(item) for item in (chart_paths or []) if str(item).strip()]
     if embedded:
+        pdf.add_page()
         pdf.heading("本轮生成的图表", level=2)
         for item in embedded:
             pdf.chart_image(item, caption=os.path.basename(item))
