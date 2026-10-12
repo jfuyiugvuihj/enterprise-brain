@@ -212,9 +212,17 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
     selected = df
     domain = df if category_frame is None else category_frame
     notes = []
+    # Resolve common 已经X wording only against values that really exist in the table.
+    columns = select_text_columns(df)
+    known_values = {str(v) for c in columns for v in domain[c].dropna().unique()}
+    for value in sorted(known_values, key=len, reverse=True):
+        if value.startswith("已") and len(value) > 1:
+            query = query.replace("已经" + value[1:], value)
     for exclude, pattern in (
         (False, r"(?<![不非])(?:仅|只)(?:统计|计算|包含|保留|分析|汇总)([^，。；;\n]+)"),
         (True, r"(?:排除|不含|不计入|不统计)([^，。；;\n]+)"),
+        (True, r"([^，。；;\n]+?)(?:不计入|不统计)(?=[，。；;\n]|$)"),
+        (False, r"(?:统计|合计|汇总|计算)([^，。；;\n]+?)的(?:金额|费用|记录|数据|总额)"),
     ):
         for clause in re.findall(pattern, query):
             values = re.findall(r'[「“"]([^」”"]+)[」”"]', clause)

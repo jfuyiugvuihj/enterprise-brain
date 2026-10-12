@@ -101,9 +101,18 @@ export async function fetchArtifactBlob(url, { signal } = {}) {
   }
 
   const objectUrl = createObjectUrl(blob)
+  const disposition = String(response.headers?.['content-disposition'] || '')
+  const encoded = disposition.match(/filename\*=utf-8''([^;]+)/i)
+  const plain = disposition.match(/filename="([^"]+)"/i)
+  let filename = plain?.[1] || ''
+  if (encoded) {
+    try { filename = decodeURIComponent(encoded[1]) } catch (_) { /* retain plain filename */ }
+  }
+  filename = filename.split(/[\\/]/).pop().replace(/[\x00-\x1f]/g, '')
   let revoked = false
   return {
     objectUrl,
+    filename,
     blob,
     mediaType: blob.type || 'image/png',
     size: blob.size,

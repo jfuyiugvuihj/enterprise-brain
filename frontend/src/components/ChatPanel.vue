@@ -238,6 +238,7 @@ let panelRuntimeRead = null
 <script setup>
 import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useChatArtifactDownload } from '../composables/useChatArtifactDownload'
 import AnswerHeadlineCard from './AnswerHeadlineCard.vue'
 import CacheFace from './CacheFace.vue'
 import ChartViewer from './ChartViewer.vue'
@@ -296,6 +297,7 @@ import { UiButton, UiEmptyState, UiErrorState } from './ui'
 import { LANE_CHOICES, LANE_UNDECLARED, laneFromQuery, queryWithLane } from '../router/lane-choice.js'
 
 const input = ref('')
+const { busy: reportDownloading, error: reportDownloadError, onClick: downloadReport } = useChatArtifactDownload()
 const chatEl = ref(null)
 const sidebarOpen = ref(true)
 const cancelPhase = ref('idle')
@@ -2257,8 +2259,12 @@ function renderMd(raw) {
                   <span></span><span></span><span></span>
                 </div>
                 <div v-else-if="msg.role === 'assistant'"
-                     class="msg-content" v-html="renderMd(stripChartMarkers(msg.content))" />
+                     class="msg-content" @click="downloadReport($event, turnKey(msg, i))" v-html="renderMd(stripChartMarkers(msg.content))" />
                 <div v-else class="msg-content">{{ msg.content }}</div>
+                <p v-if="reportDownloading === turnKey(msg, i)" role="status">正在下载报告…</p>
+                <UiErrorState v-if="reportDownloadError?.turn === turnKey(msg, i)"
+                              title="报告下载失败" :description="errorDetail(reportDownloadError.cause, '请检查权限或稍后重试。')"
+                              :raw-error="reportDownloadError.cause" :retryable="false" dense />
 
                 <!-- R150 · 三张脸。字段都是后端早已发出的（sources / cached / queued），
                      这里只是第一次有人读它们。措辞与判据在 lib/provenance.js，本面板不当第三套判断。

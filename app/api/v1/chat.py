@@ -1140,6 +1140,38 @@ def _save_message(session_id: str, role: str, content: str, steps: list | None =
         conn.commit()
 
 
+def _save_approval_answer(session_id: str, content: str):
+    """Refresh this user turn's answer instead of appending its full body again."""
+    now = datetime.now(_tz).isoformat()
+    if not _session_database_available():
+        rows = _MEM_SESSION_MESSAGES.get(session_id, [])
+        for row in reversed(rows):
+            if row["role"] == "user":
+                break
+            if row["role"] == "assistant":
+                row["content"] = content
+                _MEM_SESSIONS[session_id]["updated_at"] = now
+                return
+        _save_message(session_id, "assistant", content)
+        return
+    with _sess_conn() as conn:
+        # Lock the session so two approval completions cannot append competing answers.
+        conn.execute("SELECT id FROM sessions WHERE id = %s FOR UPDATE", (session_id,))
+        row = conn.execute(
+            "SELECT id, role FROM session_messages WHERE session_id = %s ORDER BY id DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if row and row["role"] == "assistant":
+            conn.execute("UPDATE session_messages SET content = %s WHERE id = %s", (content, row["id"]))
+        else:
+            conn.execute(
+                "INSERT INTO session_messages (session_id, role, content, steps, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (session_id, "assistant", content, "[]", now),
+            )
+        conn.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (now, session_id))
+        conn.commit()
+
+
 def _list_sessions() -> list[dict]:
     """整表捞会话行，每行带一枚 ``msg_count``（该会话的用户消息数）。
 
@@ -2243,7 +2275,12 @@ def _select_final_answer(
         if body
     ]
     if worker_answers:
-        return "\n\n".join(worker_answers)
+        paragraphs = []
+        for answer in worker_answers:
+            for paragraph in answer.split("\n\n"):
+                if paragraph.strip() and paragraph not in paragraphs:
+                    paragraphs.append(paragraph)
+        return "\n\n".join(paragraphs)
     body = _answer_body(final_answer)
     if body:
         return body
@@ -4133,7 +4170,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     worker_results=latest_worker_results,
                     candidates=answer_candidates + ai_reply,
                 )
-                _save_message(request.session_id, "assistant", full_text)
+                _save_approval_answer(request.session_id, full_text)
                 # 批准与拒绝都要闭合账面，否则面板会一直显示一条其实已经处理过的待办。
                 # refused 这一支对应 84af113「拒绝必须真的拒绝」的账面部分。
                 _decide_pending_approval(

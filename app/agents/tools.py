@@ -340,7 +340,11 @@ def _round_chart_paths(config, principal) -> list[str]:
     from app.storage import artifacts as artifact_storage
 
     paths: list[str] = []
+    conf = ((config or {}).get("configurable") or {})
+    current_ids = set(conf.get("report_chart_ids") or []) if "report_chart_ids" in conf else None
     for record in artifact_storage.artifact_registry.list_active(artifact_type="chart"):
+        if current_ids is not None and str(record.artifact_id) not in current_ids:
+            continue
         lineage = str(getattr(record, "session_id", "") or "")
         if lineage.split(":", 1)[0] != base:
             continue
@@ -426,6 +430,11 @@ def _record_dataset_evidence(config, filename: str, df) -> None:
     bag = bag_from_config(config)
     if bag is None:
         return
+    question = str(((config or {}).get("configurable") or {}).get("data_question") or "")
+    bag.setdefault("report_facts", []).append(_report_data_facts(
+        filename, df, question, version_id=getattr(record, "version_id", ""),
+        sha256=getattr(record, "content_sha256", ""),
+    ))
     record_dataset(
         bag,
         filename=filename,
@@ -1758,6 +1767,9 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 #: 10-07 现读（走查环 7）：图腿自己调用 analyze_data 时，数在这条边界上就算完了，
                 #: 可模型连发 21 发 generate_chart 只带标签不带数值，最后把本地模型的历史挤空、
                 #: 服务端 500，一轮白等 114 s、屏上零张图。数既然已经在手，就不该再押在模型的抄写上。
+                for item in series:
+                    unit = re.search(r"[（(]([^）)]+)[）)]", str(item.get("column") or ""))
+                    item["unit"] = unit.group(1) if unit else "单位未标注"
                 record_chart_series(bag_from_config(config), series)
             except _CalculationPersistenceError:
                 raise
@@ -2322,7 +2334,9 @@ def _chart_face_labels(title: str, row: dict) -> tuple[str, str, str]:
             head = f"{column}（按{dimension}）"
         else:
             head = column or dimension or _DEFAULT_CHART_TITLE
-    return head, dimension, column
+    unit = str((row or {}).get("unit") or "").strip()
+    axis_column = f"{column}（{unit}）" if unit and unit not in column else column
+    return head, dimension, axis_column
 
 
 def _generate_chart(
@@ -2364,6 +2378,9 @@ def _generate_chart(
     requested = _requested_group_series(bag, str(((config or {}).get("configurable") or {}).get("data_question") or ""))
     if requested and chart_type in ("bar", "line", "pie"):
         labels, values = list(requested["labels"]), list(requested["values"])
+        if chart_type == "bar" and re.search(r"PDF|报告|导出", str(((config or {}).get("configurable") or {}).get("data_question") or ""), re.I):
+            pairs = sorted(zip(labels, values), key=lambda item: item[1], reverse=True)
+            labels, values = [item[0] for item in pairs], [item[1] for item in pairs]
         if chart_type == "line":
             datasets = {str(requested.get("column") or "金额"): values}
     if chart_type in ("bar", "pie") and not values:
@@ -2511,6 +2528,134 @@ def _export_terminal_error_code(text: object) -> str:
     return _public_error_code(match.group(1) if match else "", "internal_error")
 
 
+def _report_data_facts(filename: str, df, question: str, *, version_id: str = "", sha256: str = "") -> dict:
+    """Compute report claims directly from the authorized, filtered frame."""
+    import pandas as pd
+    numeric = list(df.select_dtypes(include=["number"]).columns)
+    named = [column for column in numeric if str(column) in question]
+    chosen = named or numeric
+    dimension = _named_dimension_column(question, [str(c) for c in df.columns])
+    facts = {"filename": filename, "version_id": version_id, "sha256": sha256,
+        "rows": len(df), "sheet": df.attrs.get("sheet_name", ""),
+        "filter": df.attrs.get("filter_note", ""), "period": "未提供日期字段", "metrics": [],
+        "record_columns": [str(c) for c in df.columns[:8]],
+        "records": [[str(value) if pd.notna(value) else "未标注" for value in row]
+                    for row in df.iloc[:100, :8].itertuples(index=False, name=None)]}
+    dates = [c for c in df.columns if "日期" in str(c) or pd.api.types.is_datetime64_any_dtype(df[c])]
+    if dates and not df.empty:
+        parsed = pd.to_datetime(df[dates[0]], errors="coerce").dropna()
+        if not parsed.empty:
+            facts["period"] = f"{parsed.min():%Y-%m-%d} 至 {parsed.max():%Y-%m-%d}（{dates[0]}）"
+    for column in chosen:
+        values = df[column].dropna()
+        unit = re.search(r"[（(]([^）)]+)[）)]", str(column))
+        metric = {"column": str(column), "unit": unit.group(1) if unit else "单位未标注",
+            "sum": float(values.sum()), "mean": float(values.mean()) if len(values) else None,
+            "missing": int(df[column].isna().sum()), "negative": bool((values < 0).any()),
+            "dimension": dimension, "groups": []}
+        if dimension and dimension in df.columns:
+            grouped = df.groupby(dimension, dropna=False)[column].sum().sort_values(ascending=False)
+            metric["groups"] = [(str(label) if pd.notna(label) else "未标注", float(value)) for label, value in grouped.items()]
+        facts["metrics"].append(metric)
+    return facts
+
+
+def _verified_data_answer(facts: list[dict]) -> str:
+    """Present calculated table facts without model-written units or artifact claims."""
+    parts = []
+    for source in facts:
+        parts.append(f"当前授权范围内纳入 **{source['rows']} 条记录**。")
+        for metric in source["metrics"]:
+            parts.append(f"**{metric['column']}合计：{metric['sum']:,.2f}（{metric['unit']}）**；"
+                + (f"非空记录均值：{metric['mean']:,.2f}。" if metric["mean"] is not None else "没有可计算的非空记录。"))
+            if metric["groups"]:
+                parts.append(f"| {metric['dimension']} | {metric['column']}（{metric['unit']}） |\n| --- | ---: |\n"
+                    + "\n".join(f"| {label} | {value:,.2f} |" for label, value in metric["groups"]))
+                if len(metric["groups"]) == 1:
+                    parts.append("仅一个可见分组，不能用于跨部门比较。")
+            if metric["missing"]:
+                parts.append(f"{metric['missing']} 条记录缺失该指标，未按零值填充。")
+        parts.append(f"筛选：{source['filter'] or '未指定分类筛选'}\n\n"
+                     f"期间：{source['period']}\n\n来源：{source['filename']}；"
+                     f"工作表：{source['sheet'] or '单表'}；版本：{source['version_id'] or '未登记'}。")
+    return "\n\n".join(parts)
+
+
+def _verified_report_sections(facts: list[dict], analysis: str) -> list[dict]:
+    """Business narrative whose numerical assertions share the actual calculation input."""
+    sections = []
+    for source in facts:
+        group_tables = []
+        first = next(iter(source["metrics"]), {})
+        sections.append({"type": "summary", "period": source["period"], "cards": [
+            {"label": "纳入金额合计" if "金额" in first.get("column", "") else "纳入指标合计",
+             "value": f"{first['sum']:,.2f}" if first else "未提供", "hint": first.get("unit", "无数值字段")},
+            {"label": "纳入记录", "value": str(source["rows"]), "hint": "当前授权与筛选口径"},
+            {"label": "每条记录均值", "value": f"{first['mean']:,.2f}" if first.get("mean") is not None else "未提供",
+             "hint": "按非空数值记录计算"}]})
+        sections.append({"type": "heading", "content": "01 管理摘要 · 分析结论"})
+        if not source["rows"]:
+            sections.append({"type": "callout", "content": "筛选后 0 行，合计 0.00；没有可用于部门比较或趋势判断的数据。"})
+        for metric in source["metrics"]:
+            unit = metric["unit"]
+            text = f"{metric['column']}合计 {metric['sum']:,.2f}（{unit}）。"
+            if metric["mean"] is not None:
+                text += f"每条非空记录均值 {metric['mean']:,.2f}（{unit}）。"
+            if metric["missing"]:
+                text += f"有 {metric['missing']} 条记录缺失该数值，未作为零值填充。"
+            groups = metric["groups"]
+            if groups:
+                top, value = groups[0]
+                if len(groups) > 1 and metric["sum"] > 0 and not metric["negative"]:
+                    text += f"\n{top}金额最高，占当前筛选合计的 {value / metric['sum']:.2%}。"
+                elif metric["negative"]:
+                    text += "\n包含负值，净额占比可能误导，不作正向费用占比判断。"
+                if len(groups) == 1:
+                    text += "\n只有一个分组，本图仅展示该分组金额，不能用于部门之间的比较。"
+                elif len(groups) >= 2 and metric["sum"] > 0 and not metric["negative"]:
+                    combined = sum(value for _, value in groups[:2])
+                    text += f"\n前两位合计 {combined:,.2f}，占比 {combined / metric['sum']:.2%}；可优先核对对应业务明细。"
+            sections.append({"type": "callout", "content": text})
+            if groups:
+                group_tables.extend([
+                    {"type": "table", "headers": [metric["dimension"], f"{metric['column']}（{unit}）", "占筛选合计"],
+                     "rows": [[label, f"{value:,.2f}", f"{value / metric['sum']:.2%}" if metric['sum'] > 0 and not metric['negative'] else "不适用"]
+                              for label, value in groups] + [["合计", f"{metric['sum']:,.2f}", "100.00%" if metric['sum'] > 0 and not metric['negative'] else "不适用"]]},
+                ])
+        sections.extend([{"type": "heading", "content": "02 分组构成 · 图表解读"}, {"type": "chart_slot"}])
+        sections.extend([
+            {"type": "page_break"},
+            {"type": "heading", "content": "03 费用汇总明细", "level": 3},
+            *group_tables,
+            {"type": "heading", "content": "下一步行动 · 建议与限制", "level": 3},
+            {"type": "table", "headers": ["事项", "建议动作", "完成依据"],
+             "col_widths": [24, 94, 60], "align": "LEFT", "rows": [
+                ["费用复核", "核对金额较高分组的原始申请与业务用途", "明细与申请单一致"],
+                ["单位口径", "由材料提供者确认数值单位", "来源表明确标注单位"],
+                ["预算与对比", "补充预算和可比上期后再做差异分析", "同一范围、单位和时间口径"]]},
+            {"type": "text", "font_size": 10, "line_height": 5.3, "content": "当前材料未提供预算、上期和业务量基准，不能判断增长、超支或费用原因。"
+                "建议先完成数据复核；未标注单位的字段不能直接视为人民币。"},
+            {"type": "heading", "content": "04 编制口径与数据来源", "level": 3},
+            {"type": "text", "font_size": 10, "line_height": 5.3, "content": f"数据来源：{source['filename']}；版本：{source['version_id'] or '未登记'}\n"
+                f"工作表：{source['sheet'] or '单表'}；当前授权范围内筛选后 {source['rows']} 行。\n"
+                f"日期范围：{source['period']}\n筛选口径：{source['filter'] or '未指定分类筛选'}\n"
+                "合计按筛选后非空数值求和，均值按非空记录计算；占比为分组金额除以当前筛选合计。"},
+        ])
+        if source.get("sha256"):
+            sections.append({"type": "text", "font_size": 10, "line_height": 5.3, "content": f"来源文件 SHA-256：{source['sha256']}"})
+        if source.get("records"):
+            sections.extend([
+                {"type": "heading", "content": "附录 · 纳入计算的原始明细", "level": 3},
+                {"type": "table", "headers": source["record_columns"], "rows": source["records"],
+                 "font_size": 10, "line_height": 5.3, "align": "LEFT"},
+                {"type": "text", "font_size": 10, "line_height": 5.3,
+                 "content": f"本附录展示 {len(source['records'])} / {source['rows']} 条纳入记录。原始明细用于回查，不包含授权范围外记录。"},
+            ])
+    if not facts:
+        return []
+    return sections
+
+
 def _verified_data_sections(filename: str, analysis: str) -> list[dict]:
     lines = []
     for line in analysis.splitlines():
@@ -2573,7 +2718,11 @@ def _export_report(report_title: str, sections_json: str,
             if not verified_bag.get("datasets"):
                 return _denial_text(config, tool="export_report", code="validation_error",
                                     head="选中数据未能完成授权核验，未生成报告。")
-            sections = _verified_data_sections(filename, analysis)
+            facts = verified_bag.get("report_facts") or []
+            sections = _verified_report_sections(facts, analysis)
+            if not sections:
+                return _denial_text(config, tool="export_report", code="validation_error",
+                                    head="未取得可核验的报告正文，未生成报告。")
             bag = bag_from_config(config)
             if bag is not None:
                 bag.setdefault("datasets", []).extend(verified_bag["datasets"])
@@ -2582,6 +2731,18 @@ def _export_report(report_title: str, sections_json: str,
         #: 装箱由产品自己做：模型交回的 sections 里那一格图永远填不出来（它只拿到 URL，
         #: 拿不到容器路径），所以这里按台账取本轮的图，连同 include_charts 里它点名的那几枚。
         charts = _round_chart_paths(config, principal)
+        question = str(conf.get("data_question") or "")
+        if filename and re.search(r"含图|带图|图表.*报告|(?:柱状图|柱图).*(?:导出|PDF|报告)", question, re.I) and not charts:
+            return _denial_text(config, tool="export_report", code="validation_error",
+                                head="本轮要求的图表尚未成功生成，未导出缺图报告。请先完成图表生成后再导出。")
+        if charts:
+            caption = f"{report_title}；来源：{filename or '本轮分析'}"
+            if filename and facts:
+                caption = "当前授权与筛选范围内的分组构成；单位以坐标轴标注为准；来源与版本详见编制口径。"
+            chart_sections = [{"type": "chart", "path": chart, "caption": f"图{i + 1}：{caption}"} for i, chart in enumerate(charts)]
+            slot = next((i for i, section in enumerate(sections) if section.get("type") == "chart_slot"), len(sections))
+            sections[slot:slot + (slot < len(sections))] = chart_sections
+            charts = []
         asked = [item.strip() for item in re.split(r"[,;，；\n]", str(include_charts or "")) if item.strip()]
         logger.info("[R726ExportCharts] leg=export round_charts=%d asked=%d", len(charts), len(asked))
         path = generate_pdf_report(title=report_title, sections=sections, chart_paths=charts)

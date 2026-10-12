@@ -145,7 +145,7 @@ def test_export_worker_fallback_replaces_static_url_with_controlled_artifact(mon
 
     assert "/api/v1/artifacts/artifact-1/download" in result
     assert observed["config"]["configurable"]["username"] == "finance-manager"
-def test_a_declined_action_is_recorded_so_it_cannot_run_again(monkeypatch):
+def test_a_declined_action_is_recorded_so_it_cannot_run_again(monkeypatch, tmp_path):
     """Rejecting a parked action must not let supervisor dispatch that node again.
 
     Skipping the node alone left it in the plan, so the action the user declined ran
@@ -153,27 +153,15 @@ def test_a_declined_action_is_recorded_so_it_cannot_run_again(monkeypatch):
     """
     from app.agents import orchestrator
 
-    captured = {}
-
-    class FakeGraph:
-        def update_state(self, config, values):
-            captured["update"] = values
-
-        def stream(self, payload, config, **kwargs):
-            captured["payload"] = payload
-            yield {"messages": []}
-
-    monkeypatch.setattr(orchestrator, "multi_agent_graph", FakeGraph())
-    monkeypatch.setattr(
-        orchestrator, "check_interrupt", lambda thread_id: {"pending": ["chart"], "labels": ["📈 生成图表"]}
-    )
-
-    list(orchestrator.run_interrupt_stream("thread-2", False, {"username": "tester"}))
-
-    update = captured["update"]
+    from test_quality_approval_lifecycle import approval_graph
+    graph, sid = approval_graph(tmp_path)
+    monkeypatch.setattr(orchestrator, "multi_agent_graph", graph)
+    list(orchestrator.run_interrupt_stream(sid, False, {"username": "tester"}))
+    update = graph.get_state({"configurable": {"thread_id": sid}}).values
     assert update["worker_results"]["chart"] == "已取消，未执行：📈 生成图表"
-    assert str(update["messages"][0].content) == "已取消，未执行：📈 生成图表"
-    assert captured["payload"].goto == "supervisor"
+    assert any(str(message.content) == "已取消，未执行：📈 生成图表" for message in update["messages"])
+    assert not (tmp_path / "chart").exists() and not (tmp_path / "export").exists()
+    assert orchestrator.check_interrupt(sid)["pending"] == ["export"]
 
 
 def test_an_approved_action_is_not_marked_cancelled(monkeypatch):

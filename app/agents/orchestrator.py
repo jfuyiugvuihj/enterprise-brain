@@ -782,6 +782,18 @@ def route_main(state: AgentState, config=None):
                 f" | 补 {','.join(added) or '-'}"
             )
 
+    # Explicit refusal in the user's request takes precedence over planner/model dispatch.
+    prohibited = set()
+    dataset_evidence = [item for item in ((state.get("agent_results") or {}).get("data") or {}).get("evidence", [])
+                        if item.get("source_type") == "dataset"]
+    conditional_empty = bool(re.search(r"(?:如|如果|若|当|为空时).*?(?:为空|0行|没有记录|无数据|不画)", intent_text))
+    empty_data = bool(dataset_evidence) and all(item.get("metadata", {}).get("row_count") == 0 for item in dataset_evidence)
+    enforce_prohibition = not conditional_empty or empty_data
+    if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:画|绘制|生成)(?:柱状|折线|饼)?图|不(?:要|需)?(?:生成)?图表", intent_text):
+        prohibited.add("chart")
+    if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:导出|下载|生成)(?:PDF|pdf)?(?:报告)?", intent_text):
+        prohibited.add("export")
+    workers = [worker for worker in workers if worker not in prohibited]
     completed_workers = set((state.get("worker_results") or {}).keys())
     remaining = [worker for worker in workers if worker not in completed_workers]
     ready = [
@@ -976,6 +988,10 @@ def _make_worker_wrapper(graph, name: str):
         if user_msg is None:
             user_msg = HumanMessage(content="请完成你的专业工作。")
         child_conf["data_question"] = str(user_msg.content or "")
+        if name == "export":
+            chart_result = (state.get("agent_results") or {}).get("chart") or {}
+            child_conf["report_chart_ids"] = [str(item["artifact_id"])
+                for item in chart_result.get("artifacts", []) if isinstance(item, dict) and item.get("artifact_id")]
 
         owner_id = _owner_id_from(parent_conf)
         started = time.monotonic()
@@ -997,6 +1013,7 @@ def _make_worker_wrapper(graph, name: str):
         logger.info(f"[{name}] 开始执行...")
         try:
             filter_failure = ""
+            table_answer = None
             if name in ("data", "chart") and child_conf.get("data_filename"):
                 # Invalid original filters cannot be repaired by repeatedly rephrasing
                 # a tool call. Check through the same authorized data tool first.
@@ -1006,8 +1023,24 @@ def _make_worker_wrapper(graph, name: str):
                 if any(row.get("error_code") == "validation_error" for row in probe_bag["tool_statuses"]):
                     filter_failure = str(probe)
                     evidence_bag["tool_statuses"].extend(probe_bag["tool_statuses"])
-            result = ({"messages": [AIMessage(content=filter_failure)]} if filter_failure
-                      else graph.invoke({"messages": [user_msg]}, config=child_cfg))
+                elif (re.search(r"按部门.*(?:汇总|合计)", str(user_msg.content or ""))
+                      and not re.search(r"同比|环比|预算|预测|SQL|相关性", str(user_msg.content or ""), re.I)
+                      and probe_bag.get("report_facts")):
+                    # Numeric briefs and their charts use the authorized, filtered frame.
+                    # A model must not invent units or claim a tool ran before approval.
+                    from app.agents.tools import _verified_data_answer
+                    for key, rows in probe_bag.items():
+                        if isinstance(rows, list):
+                            evidence_bag.setdefault(key, []).extend(rows)
+                    if name == "data":
+                        table_answer = _verified_data_answer(probe_bag["report_facts"])
+                    elif name == "chart" and re.search(r"柱状图|柱图", str(user_msg.content or "")):
+                        table_answer = generate_chart.invoke({"chart_type": "bar"}, config=child_cfg)
+            if name == "export" and child_conf.get("data_filename"):
+                table_answer = export_report.invoke({"report_title": "费用分析简报", "sections_json": "[]"}, config=child_cfg)
+            result = ({"messages": [AIMessage(content=filter_failure)]} if filter_failure else
+                      {"messages": [AIMessage(content=table_answer)]} if table_answer is not None else
+                      graph.invoke({"messages": [user_msg]}, config=child_cfg))
             if name == "doc" and _doc_leg_spoke_without_reading(result, evidence_bag):
                 # B17：模型一枚工具都没调就把话说了——补一发真检索，带着原文在同一腿重答一次。
                 logger.warning("[doc] 这一腿没检索就作答，按 B17 补查后重答一次")
@@ -1819,15 +1852,22 @@ def run_interrupt_stream(
         update: dict = {"messages": [AIMessage(content=note)]}
         if declined:
             update["worker_results"] = {node: note for node in declined}
-        multi_agent_graph.update_state(config, update)
+        # Mark the parked node complete and replace its scheduled task. Command(goto)
+        # adds a supervisor task while retaining the parked task; its resume marker
+        # then skips the next static interrupt, executing export before approval.
+        resumed_config = multi_agent_graph.update_state(
+            config, update, as_node=declined[0] if declined else "supervisor"
+        )
         # 顺序不能反：refused 必须先落账（84af113 "拒绝必须真的拒绝"），此后的收尾流才
         # 允许被停止打断。把 update_state 挪到流后面，一次取消就会把 refused 变成
         # "什么都没发生"，supervisor 会把刚被拒绝的动作再派一次。
         try:
             for event in _cancellable_stream(
                 multi_agent_graph,
-                Command(goto="supervisor"),
-                config,
+                None,
+                {**config, "configurable": {**config["configurable"],
+                    **{key: value for key, value in resumed_config.get("configurable", {}).items()
+                       if key in ("checkpoint_id", "checkpoint_ns")}}},
                 cancel_event=cancel_event,
             ):
                 yield event

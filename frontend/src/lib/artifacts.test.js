@@ -113,4 +113,12 @@ describe('artifacts · 取图失败的说法统一由字典负责', () => {
     expect(created).toEqual([9])
     expect(revoked).toEqual(['blob:mock-1'])
   })
+  it('PDF下载保留后端中文文件名，不用随机产物ID命名', async () => {
+    globalThis.URL.createObjectURL = () => 'blob:pdf'
+    httpGet.mockResolvedValue({ status: 200, data: new Blob(['%PDF'], { type: 'application/pdf' }),
+      headers: { 'content-disposition': "attachment; filename*=utf-8''" + encodeURIComponent('费用分析简报-20261012.pdf') } })
+    const handle = await fetchArtifactBlob('/api/v1/artifacts/a1/download')
+    expect(handle.filename).toBe('费用分析简报-20261012.pdf')
+    handle.revoke()
+  })
 })

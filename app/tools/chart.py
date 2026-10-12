@@ -3,6 +3,7 @@ Day 9: Chart Skill — 图表生成 + 标签防重叠 + 企业配色
 优化 #7 图表标签重叠, #8 企业配色, #24 无显示器后端
 """
 import os
+import math
 import uuid
 import matplotlib
 matplotlib.use("Agg")  # 无 GUI 后端
@@ -120,24 +121,57 @@ def bar_chart(labels: list[str], values: list[float],
     - horizontal=False: 垂直柱状图
     - horizontal=True: 横向柱状图（标签多时推荐）
     """
-    fig, ax = plt.subplots(figsize=(max(8, len(labels) * 0.5), 5.5))
+    if not labels or len(labels) != len(values):
+        raise ValueError("柱状图需要非空且数量一致的分类和数值")
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("柱状图数值必须有效，缺失值需先说明或处理")
+
+    # Explicit category positions preserve every label, including repeated names.
+    # Wrap long names rather than silently dropping categories at a tick locator.
+    wrapped = ["\n".join(line[start:start + 10]
+                        for line in str(label).split("\n")
+                        for start in range(0, max(1, len(line)), 10))
+               for label in labels]
+    rows = max(label.count("\n") + 1 for label in wrapped)
+    if horizontal:
+        size = (9, max(5.5, len(labels) * (0.3 + rows * 0.2)))
+    else:
+        longest = max(len(line) for label in wrapped for line in label.split("\n"))
+        size = (max(8, len(labels) * (longest * 10 / 72 + 0.25)),
+                5.5 + max(0, rows - 1) * 0.25)
+    fig, ax = plt.subplots(figsize=size)
     colors = ACCENT_SINGLE
+    positions = range(len(labels))
+    lower, upper = min(0, min(values)), max(0, max(values))
+    padding = (upper - lower) * 0.15 or 1
+    value_limits = (lower - padding if lower < 0 else 0,
+                    upper + padding if upper > 0 else (0 if lower < 0 else 1))
+    category_limits = (-1.5, 1.5) if len(labels) == 1 else (-0.6, len(labels) - 0.4)
 
     if horizontal:
-        bars = ax.barh(labels, values, color=colors, height=0.7)
+        bars = ax.barh(positions, values, color=colors, height=0.7)
+        ax.set_yticks(list(positions), wrapped, fontsize=10)
+        ax.set_ylim(*category_limits)
+        ax.set_xlim(*value_limits)
         # 数值标注
         for bar, v in zip(bars, values):
-            ax.text(bar.get_width() + max(values) * 0.01, bar.get_y() + bar.get_height() / 2,
-                    f"{v:,.1f}" if v % 1 else f"{v:,.0f}",
-                    va="center", fontsize=9, color="#334155")
+            ax.annotate(f"{v:,.1f}" if v % 1 else f"{v:,.0f}",
+                        (v, bar.get_y() + bar.get_height() / 2),
+                        xytext=(-5 if v < 0 else 5, 0), textcoords="offset points",
+                        ha="right" if v < 0 else "left", va="center",
+                        fontsize=9, color="#334155")
     else:
-        bars = ax.bar(labels, values, color=colors, width=0.65)
-        _smart_labels(ax, labels, "bar")
+        bars = ax.bar(positions, values, color=colors, width=0.65)
+        ax.set_xticks(list(positions), wrapped, fontsize=10)
+        ax.set_xlim(*category_limits)
+        ax.set_ylim(*value_limits)
         # 数值标注（柱顶）
         for bar, v in zip(bars, values):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(values) * 0.015,
-                    f"{v:,.1f}" if v % 1 else f"{v:,.0f}",
-                    ha="center", fontsize=9, color="#334155", fontweight="500")
+            ax.annotate(f"{v:,.1f}" if v % 1 else f"{v:,.0f}",
+                        (bar.get_x() + bar.get_width() / 2, v),
+                        xytext=(0, -5 if v < 0 else 5), textcoords="offset points",
+                        ha="center", va="top" if v < 0 else "bottom",
+                        fontsize=9, color="#334155", fontweight="500")
 
     ax.set_title(title, fontsize=15, fontweight="700", color=PRIMARY, pad=16)
     ax.set_xlabel(xlabel, fontsize=11)
@@ -145,11 +179,7 @@ def bar_chart(labels: list[str], values: list[float],
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    # 标签过多建议
-    suggestion = _label_overlap_suggestion(len(labels), "barh" if horizontal else "bar")
-    if suggestion:
-        fig.text(0.5, -0.05, suggestion, ha="center", fontsize=9, color="#94a3b8", style="italic")
-
+    fig.tight_layout(pad=1.4)
     return _save_and_return(fig)
 
 
