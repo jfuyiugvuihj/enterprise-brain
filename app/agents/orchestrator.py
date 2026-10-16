@@ -63,6 +63,7 @@ from app.agents.evidence import (
     bag_from_config,
     build_agent_result,
     new_evidence_bag,
+    record_tool_status,
     summarize_agent_result,
 )
 from app.memory import compress_messages
@@ -706,7 +707,12 @@ def route_main(state: AgentState, config=None):
         "制度", "流程", "报销", "审批", "住宿费", "差旅", "员工手册",
         "入职", "安全", "规定", "标准", "谁审批", "审批人",
     ]
-    intent_text = _intent_text(user_msg)
+    # Rewriting may expand a follow-up, but cannot grant actions the user prohibited.
+    execution_question = (state.get("task_context") or {}).get("execution_question") or user_msg
+    preserving_report = bool((state.get('task_context') or state.get('data_context') or {}).get('report_body'))
+    if preserving_report:
+        execution_question = '导出PDF报告'
+    intent_text = _intent_text(execution_question)
     ai_answer_text = str(getattr(last, "content", "") or "").strip()
     # supervisor 既没派发也没给出正文时，确定性计划就是本轮契约。旧版本只在
     # len(planned_workers) > 1 时才尊重计划，单步计划被关键词规则整组覆盖。
@@ -765,6 +771,12 @@ def route_main(state: AgentState, config=None):
     # R141 判据①：显式声明的档位在这一格落地成"腿的有无"。上面那句 R42 补派一个字不动
     # —— 它管的是"系统判出来的问答档不许空转"，本节管的是"人明确点了问答档不许跑重活"。
     # 只在真有了声明时才多算一次规则判别（resolve_turn_lane 不打 [R42] 日志，锚点频次不变）。
+    if state.get("task_context"):
+        workers = ["doc", "data"]
+        if any(kw in intent_text for kw in chart_kw):
+            workers.append("chart")
+        if any(kw in intent_text for kw in export_kw):
+            workers.append("export")
     declared = declared_lane_from_config(config)
     if declared:
         turn = resolve_turn_lane(intent_text, declared)
@@ -782,6 +794,13 @@ def route_main(state: AgentState, config=None):
                 f" | 补 {','.join(added) or '-'}"
             )
 
+    # Comparing policy documents is a read task, not a request to precheck an
+    # expense. The real chart/export HITL interrupts remain in their tool path.
+    if declared == LANE_QA and re.search(r"比较|对比|差异|区别|分别说明", intent_text):
+        from app.rag.retrieval_pipeline import requested_document_names
+        if requested_document_names(user_msg) and not re.search(r"预审|自查|是否超标|帮我审批|申请报销", intent_text):
+            workers = [worker for worker in workers if worker != "approval"]
+
     # Explicit refusal in the user's request takes precedence over planner/model dispatch.
     prohibited = set()
     dataset_evidence = [item for item in ((state.get("agent_results") or {}).get("data") or {}).get("evidence", [])
@@ -791,9 +810,11 @@ def route_main(state: AgentState, config=None):
     enforce_prohibition = not conditional_empty or empty_data
     if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:画|绘制|生成)(?:柱状|折线|饼)?图|不(?:要|需)?(?:生成)?图表", intent_text):
         prohibited.add("chart")
-    if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:导出|下载|生成)(?:PDF|pdf)?(?:报告)?", intent_text):
+    if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:(?:导出|下载)(?:PDF|pdf)?(?:报告)?|生成(?:PDF|pdf|报告))", intent_text):
         prohibited.add("export")
     workers = [worker for worker in workers if worker not in prohibited]
+    if preserving_report:
+        workers = ['export']
     completed_workers = set((state.get("worker_results") or {}).keys())
     remaining = [worker for worker in workers if worker not in completed_workers]
     ready = [
@@ -930,6 +951,8 @@ def _make_worker_wrapper(graph, name: str):
         # to the parked turn. Keep current identity; restore only its data scope.
         if "data_filename" in state:
             parent_conf = {**parent_conf, "data_filename": state["data_filename"]}
+        parent_conf = {**parent_conf, "task_context": state.get("task_context") or {}}
+        parent_conf = {**parent_conf, 'data_context': state.get('data_context') or {}}
         # 取消检查点 2（即将开工）：并行 worker 可能共享同一次流边界，边界检查只
         # 拦得住第一个，故逐节点再查一遍。放在 trace 与 invoke 之前，取消时不会留下
         # 半截 step.started。
@@ -952,6 +975,9 @@ def _make_worker_wrapper(graph, name: str):
             "role",
             "department",
             "data_filename",
+            "document_filenames",
+            "task_context",
+            "data_context",
             "principal",
             # R294 把签名长在 configurable 上而不是 Principal 字段里，它与 `principal` 是一对：
             # 只搬身份不搬出处，交进子图的那份 config 就自相矛盾（一枚没人作证的 dict）。今天
@@ -987,7 +1013,9 @@ def _make_worker_wrapper(graph, name: str):
                 break
         if user_msg is None:
             user_msg = HumanMessage(content="请完成你的专业工作。")
-        child_conf["data_question"] = str(user_msg.content or "")
+        child_conf["data_question"] = str(child_conf.get("task_context", {}).get("analysis_question")
+            or child_conf.get('data_context', {}).get('query') or user_msg.content or "")
+        child_conf["execution_question"] = str(child_conf.get("task_context", {}).get("execution_question") or user_msg.content or "")
         if name == "export":
             chart_result = (state.get("agent_results") or {}).get("chart") or {}
             child_conf["report_chart_ids"] = [str(item["artifact_id"])
@@ -1019,11 +1047,12 @@ def _make_worker_wrapper(graph, name: str):
                 # a tool call. Check through the same authorized data tool first.
                 probe_bag = new_evidence_bag()
                 probe_cfg = {**child_cfg, "configurable": {**child_conf, "evidence_bag": probe_bag}}
-                probe = analyze_data.invoke({"query": str(user_msg.content or "")}, config=probe_cfg)
+                probe = analyze_data.invoke({"query": child_conf["data_question"]}, config=probe_cfg)
                 if any(row.get("error_code") == "validation_error" for row in probe_bag["tool_statuses"]):
                     filter_failure = str(probe)
                     evidence_bag["tool_statuses"].extend(probe_bag["tool_statuses"])
-                elif (re.search(r"按部门.*(?:汇总|合计)", str(user_msg.content or ""))
+                elif ((child_conf.get("task_context") or child_conf.get('data_context', {}).get('alert_id')
+                       or re.search(r"按.+?(?:汇总|合计|统计)", str(user_msg.content or "")))
                       and not re.search(r"同比|环比|预算|预测|SQL|相关性", str(user_msg.content or ""), re.I)
                       and probe_bag.get("report_facts")):
                     # Numeric briefs and their charts use the authorized, filtered frame.
@@ -1034,10 +1063,26 @@ def _make_worker_wrapper(graph, name: str):
                             evidence_bag.setdefault(key, []).extend(rows)
                     if name == "data":
                         table_answer = _verified_data_answer(probe_bag["report_facts"])
+                        if child_conf.get('data_context', {}).get('alert_id'):
+                            from app.insights.alert_evidence import explain_finding
+                            table_answer += '\n\n### 阈值提醒与核查限制\n\n' + explain_finding(child_conf['data_context'])
                     elif name == "chart" and re.search(r"柱状图|柱图", str(user_msg.content or "")):
                         table_answer = generate_chart.invoke({"chart_type": "bar"}, config=child_cfg)
             if name == "export" and child_conf.get("data_filename"):
-                table_answer = export_report.invoke({"report_title": "费用分析简报", "sections_json": "[]"}, config=child_cfg)
+                table_answer = export_report.invoke({"report_title": "制度核查简报" if child_conf.get("task_context") else "经营分析简报", "sections_json": "[]"}, config=child_cfg)
+            if name == "doc" and child_conf.get("task_context"):
+                from app.agents.tools import search_docs
+                from app.agents.task_review import policy_review_text, policy_identity, _applicable_policy_documents
+                search_docs.invoke({"query": child_conf["data_question"]}, config=child_cfg)
+                evidence_bag["documents"] = _applicable_policy_documents(evidence_bag.get("documents", []), child_conf["data_question"])
+                table_answer = policy_review_text(evidence_bag.get("documents", []), period=child_conf["data_question"])
+                actual_policy = policy_identity(evidence_bag.get("documents", []), period=child_conf["data_question"])
+                pinned_policy = child_conf["task_context"].get("policy_sources")
+                if pinned_policy is not None and actual_policy != pinned_policy:
+                    table_answer = "制度依据版本已变化或当前无权访问，未沿用旧依据作核查结论。请重新发起核查并确认制度版本。"
+                    record_tool_status(evidence_bag, tool="search_docs", status="rejected", error_code="validation_error")
+                else:
+                    child_conf["task_context"] = {**child_conf["task_context"], "policy_sources": actual_policy}
             result = ({"messages": [AIMessage(content=filter_failure)]} if filter_failure else
                       {"messages": [AIMessage(content=table_answer)]} if table_answer is not None else
                       graph.invoke({"messages": [user_msg]}, config=child_cfg))
@@ -1060,6 +1105,10 @@ def _make_worker_wrapper(graph, name: str):
             # 即使图已经跑到这里，仍然拦得住最后一个副作用。
             _raise_if_cancelled(parent_conf.get("cancel_event"))
             final = _fallback_export_result(user_msg.content, final, config=child_cfg)
+        if child_conf.get("task_context"):
+            # Stable error codes belong to AgentResult.error and the SSE envelope.
+            # Persist only the actionable message in the business conversation.
+            final = re.sub(r"[（(]error_code=[a-z_]+[）)]", "", final)
 
         duration_ms = int((time.monotonic() - started) * 1000)
         agent_result = build_agent_result(
@@ -1085,6 +1134,7 @@ def _make_worker_wrapper(graph, name: str):
             owner_id=owner_id,
         )
         return {
+            **({"task_context": child_conf["task_context"]} if name == "doc" and child_conf.get("task_context") else {}),
             "worker_results": {**state.get("worker_results", {}), name: agent_result.answer},
             "agent_results": {**state.get("agent_results", {}), name: agent_result.model_dump(mode="json")},
             "messages": _worker_handoff_messages(name, agent_result),
@@ -1521,6 +1571,8 @@ def _initial_execution_state(
         "session_id": thread_id,
         # Always reset, including when the next turn does not select a table.
         "data_filename": str(user.get("data_filename") or "").strip(),
+        "task_context": {},
+        'data_context': user.get('data_context') or {},
         "request_id": request_id,
         "trace_id": trace_id,
         "task_id": task_id,
@@ -1633,6 +1685,37 @@ def run_with_stream(
         # 与上面两枚同一个理由：能进 state 的东西才进 state，声明只是一个字符串，但它要影响
         # 的是**图内**派发，跨不过节点的只有 config，所以走同一条 configurable 通道。
         config["configurable"][DECLARED_LANE_KEY] = declared
+    from app.agents.task_review import is_review_question, review_context
+    raw_question = str(context.get("task_question") or user_message)
+    raw_question = re.sub(r'^仅依据以下文件(?:《[^》\r\n]+》)+回答：\n', '', raw_question)
+    filename = str(context.get("data_filename") or "").strip()
+    previous = multi_agent_graph.get_state(config).values or {} if filename else {}
+    previous_context = previous.get("task_context") or {}
+    same_owner = _owner_id_from({"principal": previous.get("principal")}) == owner_id
+    task_context = {}
+    data_context = context.get('data_context') or {}
+    if filename and (is_review_question(raw_question) or (previous_context and same_owner)):
+        from app.storage.datasets import dataset_registry
+        from app.documents.catalog import latest_document_version
+        dataset = dataset_registry.get_active_by_filename(filename)
+        requested = context.get('document_filenames')
+        documents = None if requested is None else []
+        for name in requested or []:
+            version = latest_document_version(name) or {}
+            documents.append({'filename': name, 'version_id': str(version.get('version') or '')})
+        task_context = review_context(raw_question, filename, previous_context if same_owner else {},
+            {"version_id": getattr(dataset, "version_id", ""), "sha256": getattr(dataset, "content_sha256", "")},
+            documents=documents)
+        task_context.pop('report_body', None)
+        if raw_question.startswith('请将以下已完成的分析原文排版导出') and same_owner:
+            task_context['report_body'] = str(previous_context.get('report_body') or previous.get('final_answer') or '')
+    if filename and not task_context and not data_context:
+        from app.storage.datasets import dataset_registry
+        dataset = dataset_registry.get_active_by_filename(filename)
+        prior_data = previous.get('data_context') or {}
+        data_context = review_context(raw_question, filename, prior_data if same_owner else {},
+            {'version_id': getattr(dataset, 'version_id', ''), 'sha256': getattr(dataset, 'content_sha256', '')})
+        data_context['query'] = data_context['analysis_question']
     initial_state = _initial_execution_state(
         user_message,
         thread_id=thread_id,
@@ -1641,6 +1724,10 @@ def run_with_stream(
         trace_id=trace_id,
         task_id=task_id,
     )
+    initial_state["task_context"] = task_context
+    initial_state['data_context'] = data_context
+    if initial_state.get('data_context') and same_owner and raw_question.startswith('请将以下已完成的分析原文排版导出'):
+        initial_state['data_context'] = {**initial_state['data_context'], 'report_body': str((previous.get('data_context') or {}).get('report_body') or previous.get('final_answer') or '')}
     # 本轮档位读数：与图内 plan()/route_main 读的是同一份规则本体（resolve_turn_lane 不打
     # [R42] 锚点，频次一字不动），user_message 就是 plan() 拿到的那枚文本 ⇒ 读数与生效路径同源。
     turn = resolve_turn_lane(user_message, declared)
@@ -1687,34 +1774,25 @@ def run_with_stream(
                         },
                         owner_id=owner_id,
                     )
-                    for worker, result in worker_results.items():
-                        if last_worker_results.get(worker) == result:
-                            continue
-                        _record_trace(
-                            trace_store,
-                            trace_id=trace_id,
-                            request_id=request_id,
-                            task_id=task_id,
-                            event_type="tool.completed",
-                            status="completed",
-                            payload={
-                                "worker": str(worker),
-                                "result_length": len(str(result or "")),
-                            },
-                            owner_id=owner_id,
-                        )
+                    # Workers and real tool spans already record their actual verdict.
+                    # Their answer text is not a second successful tool execution.
                     last_worker_results = dict(worker_results)
                 yield event
+            record = aggregate_agent_result(last_state.get("agent_results") or {},
+                answer=_final_of(last_state), request_id=request_id, trace_id=trace_id,
+                task_id=task_id, session_id=thread_id)
+            terminal = "completed" if record.status in {"success", "partial"} else record.status
             _record_trace(
                 trace_store,
                 trace_id=trace_id,
                 request_id=request_id,
                 task_id=task_id,
-                event_type="request.completed",
-                status="completed",
+                event_type="request.completed" if terminal in {"completed", "rejected"} else "request.failed",
+                status=terminal,
                 payload={
                     "worker_count": len(last_worker_results),
                     "has_final_answer": bool(last_state.get("final_answer")),
+                    "agent_result": summarize_agent_result(record),
                 },
                 owner_id=owner_id,
             )
@@ -1845,19 +1923,24 @@ def run_interrupt_stream(
         # just declined ran anyway, and the turn parked a second time.
         declined = [node for node in (check_interrupt(thread_id) or {}).get("pending") or []]
         note = (
-            "已取消，未执行：" + "、".join(_HITL_LABELS.get(node, node) for node in declined)
+            "已拒绝，未执行：" + "、".join(_HITL_LABELS.get(node, node) for node in declined)
             if declined
             else "用户取消了此操作。"
         )
         update: dict = {"messages": [AIMessage(content=note)]}
         if declined:
             update["worker_results"] = {node: note for node in declined}
+            update["agent_results"] = {node: {"worker": node, "status": "rejected", "answer": note,
+                "request_id": request_id, "trace_id": trace_id, "task_id": task_id} for node in declined}
         # Mark the parked node complete and replace its scheduled task. Command(goto)
         # adds a supervisor task while retaining the parked task; its resume marker
         # then skips the next static interrupt, executing export before approval.
         resumed_config = multi_agent_graph.update_state(
             config, update, as_node=declined[0] if declined else "supervisor"
         )
+        if declined:
+            from app.storage import pending_approvals
+            pending_approvals.mark_status(thread_id, pending_approvals.REFUSED)
         # 顺序不能反：refused 必须先落账（84af113 "拒绝必须真的拒绝"），此后的收尾流才
         # 允许被停止打断。把 update_state 挪到流后面，一次取消就会把 refused 变成
         # "什么都没发生"，supervisor 会把刚被拒绝的动作再派一次。

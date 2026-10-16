@@ -39,6 +39,8 @@ class AgentState(TypedDict, total=False):
     session_id: str
     # The selected table belongs to this turn and must survive a HITL checkpoint.
     data_filename: str
+    task_context: dict
+    data_context: dict
     allowed_actions: list[str]
     allowed_resource_scope: list[ResourceScope]
     agent_context: AgentContext

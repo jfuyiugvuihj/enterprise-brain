@@ -183,7 +183,7 @@ class PDFReport(FPDF):
         if self.get_y() + needed > self.page_break_trigger:
             self.add_page()
         self.ln(2 if level == 3 else 3)
-        self.multi_cell(0, line_height, text, new_x="LMARGIN", new_y="NEXT")
+        self.multi_cell(0, line_height, text, align="L", new_x="LMARGIN", new_y="NEXT")
         self.ln(2)
         self._font()
         self.set_font_size(11)
@@ -191,10 +191,11 @@ class PDFReport(FPDF):
 
     def paragraph(self, text: str, size: float = 11, line_height: float = 7):
         """正文段落"""
+        text = re.sub(r"(?<!\*)\*\*([^*\n]+)\*\*(?!\*)", r"\1", text)
         self._font()
         self.set_font_size(size)
         self.set_x(self.l_margin)
-        self.multi_cell(0, line_height, text, new_x="LMARGIN", new_y="NEXT")
+        self.multi_cell(0, line_height, text, align="L", new_x="LMARGIN", new_y="NEXT")
         self.ln(2)
 
     def chart_image(self, path: str, caption: str = "", w: int = 160):
@@ -258,6 +259,7 @@ def generate_pdf_report(title: str, sections: list[dict], chart_paths: list[str]
         pdf.chart_image(path, caption=caption)
         embedded.add(key)
 
+    last_section_type = None
     for sec in sections:
         t = sec.get("type", "text")
 
@@ -267,6 +269,10 @@ def generate_pdf_report(title: str, sections: list[dict], chart_paths: list[str]
             pdf.paragraph(sec["content"], sec.get("font_size", 11), sec.get("line_height", 7))
         elif t == "chart":
             embed_chart(sec["path"], sec.get("caption", ""))
+        elif t == "chart_slot":
+            # 没有可嵌入图表时也要交代原因，避免模板留下一个空章节；
+            # 有图表时 _export_report 会先用真实图件替换该占位项。
+            pdf.paragraph(sec.get("content", "本轮未生成图表。"), 10, 5.3)
         elif t == "summary":
             pdf.management_summary(sec)
         elif t == "callout":
@@ -274,7 +280,13 @@ def generate_pdf_report(title: str, sections: list[dict], chart_paths: list[str]
         elif t == "table":
             pdf.data_table(sec)
         elif t == "page_break":
-            pdf.add_page()
+            # A no-chart report uses ``chart_slot`` as an explanatory paragraph.
+            # Do not preserve the chart template's hard page break in that case;
+            # letting the following detail heading flow naturally avoids a mostly
+            # empty first page. Real chart sections still keep the deliberate break.
+            if last_section_type != "chart_slot":
+                pdf.add_page()
+        last_section_type = t
 
     #: 调用方交回的本轮图表件路径：给进来就真嵌（10-07 现读两枚报告 PDF 里 `/Subtype /Image`
     #: 均 0 枚——这一枚参数一直是死的，模型交回的 sections 永远不会有 type=="chart" 那一格，

@@ -71,6 +71,15 @@ def test_explicit_prohibition_removes_model_and_plan_side_effects():
     assert [send.node for send in orchestrator.route_main(state) if hasattr(send, "node")] == ["chart"]
 
 
+def test_no_chart_request_still_exports_requested_pdf():
+    state = {"messages": [HumanMessage(content="核查费用并导出PDF报告，不生成图表。"),
+        AIMessage(content="", tool_calls=[{"name": "dispatch", "id": "test-no-chart",
+            "args": {"workers": ["chart", "export"]}}])],
+        "plan": [{"worker": name} for name in ("data", "chart", "export")],
+        "worker_results": {"data": "已核验合计80"}}
+    assert [send.node for send in orchestrator.route_main(state) if hasattr(send, 'node')] == ['export']
+
+
 def test_resuming_keeps_one_primary_answer_in_history():
     sid = uuid4().hex
     chat._ensure_session(sid, user_id="synthetic-finance")
@@ -82,6 +91,25 @@ def test_resuming_keeps_one_primary_answer_in_history():
     assert [row["role"] for row in rows] == ["user", "assistant"]
     assert rows[-1]["content"].count("合计200元") == 1
     assert "导出报告" in rows[-1]["content"]
+
+
+def test_approval_history_keeps_actual_step_verdict():
+    sid = uuid4().hex
+    chat._ensure_session(sid, user_id='synthetic-finance')
+    chat._save_message(sid, 'assistant', '等待确认', [{'tool': 'export', 'status': 'unknown'}])
+    chat._save_approval_answer(sid, '执行失败，未生成报告', [{'tool': 'export', 'status': 'failed'}])
+    assert chat._get_session_messages(sid)[-1]['steps'] == [{'tool': 'export', 'status': 'failed'}]
+
+
+def test_display_interruption_does_not_swallow_following_explicit_refusal():
+    sid = uuid4().hex
+    assert chat.cancel_request(sid) is False
+    generation = chat.register_request(sid, inherit_pending=False)
+    try:
+        assert not generation.is_set()
+        assert not chat.is_request_cancelled(sid, epoch=generation.epoch)
+    finally:
+        chat.release_request(generation)
 
 
 def test_worker_results_deduplicate_repeated_body():

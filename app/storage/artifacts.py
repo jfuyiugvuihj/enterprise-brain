@@ -550,6 +550,11 @@ class ArtifactRegistry:
         calculation_ids = metadata.get("calculation_run_ids")
         if isinstance(calculation_ids, list) and all(isinstance(item, str) and item for item in calculation_ids):
             scope["calculation_run_ids"] = calculation_ids
+        for key in ("source_documents", "source_artifact_ids"):
+            if key in metadata:
+                scope[key] = metadata[key]
+        if metadata.get('source_alert_id') is not None:
+            scope['source_alert_id'] = int(metadata['source_alert_id'])
         artifact_id = str(raw.get("artifact_id") or "")
         storage_key = str(raw.get("storage_key") or raw.get("storage_path") or "")
         try:
@@ -646,6 +651,9 @@ class ArtifactRegistry:
         request_id: str | None = None,
         expires_at: datetime | None = None,
         calculation_run_ids: list[str] | None = None,
+        source_documents: list[dict] | None = None,
+        source_artifact_ids: list[str] | None = None,
+        source_alert_id: int | None = None,
     ) -> ArtifactRecord:
         """Store the bytes' row, and - when the caller knows them - the turn that made them.
 
@@ -690,6 +698,12 @@ class ArtifactRegistry:
         )
         if calculation_run_ids:
             record.metadata["calculation_run_ids"] = list(dict.fromkeys(calculation_run_ids))
+        if source_documents:
+            record.metadata["source_documents"] = source_documents
+        if source_artifact_ids:
+            record.metadata["source_artifact_ids"] = list(dict.fromkeys(source_artifact_ids))
+        if source_alert_id is not None:
+            record.metadata['source_alert_id'] = int(source_alert_id)
         with self._lock:
             return self._write(record)
 
@@ -776,6 +790,56 @@ _PERSISTENCE = build_persistence_adapter()
 artifact_registry = ArtifactRegistry(_STATIC_ROOT, persistence=_PERSISTENCE)
 
 
+def artifact_sources_allowed(record: ArtifactRecord, principal: Principal, *, _visited=None) -> bool:
+    """Recheck current input access, including the row-filtered calculation identity."""
+    from app.storage.calculations import calculation_storage
+    from app.storage.datasets import dataset_registry
+    from app.common.permissions import ACTION_VIEW
+    from app.common.policy import authorization_decision
+
+    visited = set(_visited or ())
+    if record.artifact_id in visited:
+        return False
+    visited.add(record.artifact_id)
+    for artifact_id in record.metadata.get("source_artifact_ids", []):
+        source_artifact = artifact_registry.get_active(artifact_id)
+        if source_artifact is None or not authorization_decision(principal,
+                source_artifact.resource_scope, action=ACTION_VIEW, require_resource_scope=True).allowed:
+            return False
+        if not artifact_sources_allowed(source_artifact, principal, _visited=visited):
+            return False
+
+    if record.source_version_id:
+        source = dataset_registry.scope_for_version(record.source_version_id)
+        if not authorization_decision(principal, source, action=ACTION_VIEW, require_resource_scope=True).allowed:
+            return False
+    for run_id in record.metadata.get("calculation_run_ids", []):
+        run = calculation_storage.get(run_id)
+        if run is None or not calculation_storage.can_view(run, principal):
+            return False
+    documents = record.metadata.get("source_documents", [])
+    if documents:
+        from app.rag.filters import resolve_document_retrieval_scope
+        from app.rag.indexing import read_index_metadata, default_metadata_path, document_index_id
+        from app.documents.catalog import current_documents, list_document_versions
+        catalog = {row["filename"]: row for row in current_documents()}
+        scope = resolve_document_retrieval_scope(principal)
+        versions, _current = read_index_metadata(default_metadata_path())
+        indexes = {item.index_version_id: item for item in versions}
+        for source in documents:
+            row = catalog.get(source["source_name"])
+            if row is None or not scope.allows(row):
+                return False
+            historical = next((item for item in list_document_versions(source["source_name"])
+                if str(item.get("version")) == str(source.get("version_id"))), None)
+            index = indexes.get(source.get("index_version_id"))
+            if historical is None or not scope.allows(historical):
+                return False
+            if index is None or index.index_id != document_index_id(source["source_name"]) or index.status not in {"published", "superseded"}:
+                return False
+    return True
+
+
 def register_artifact(
     storage_path: str | Path,
     *,
@@ -788,6 +852,9 @@ def register_artifact(
     request_id: str | None = None,
     expires_at: datetime | None = None,
     calculation_run_ids: list[str] | None = None,
+    source_documents: list[dict] | None = None,
+    source_artifact_ids: list[str] | None = None,
+    source_alert_id: int | None = None,
 ) -> ArtifactRecord:
     return artifact_registry.register(
         storage_path,
@@ -800,4 +867,7 @@ def register_artifact(
         request_id=request_id,
         expires_at=expires_at,
         calculation_run_ids=calculation_run_ids,
+        source_documents=source_documents,
+        source_artifact_ids=source_artifact_ids,
+        source_alert_id=source_alert_id,
     )

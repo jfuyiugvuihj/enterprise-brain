@@ -176,7 +176,7 @@ function textOrUnrecorded(value) {
           <div><dt>默认与最多</dt><dd>{{ textOrUnrecorded(limits.defaultLimit) }} / {{ textOrUnrecorded(limits.maxLimit) }}</dd></div>
         </dl>
         <p class="demo-note">
-          事件读自{{ textOrUnrecorded(counts.source) }}；这一发是谁读的：{{ textOrUnrecorded(counts.requestedBy) }}。
+          事件读自{{ textOrUnrecorded(counts.source) }}；查看账号：{{ textOrUnrecorded(counts.requestedBy) }}。
         </p>
         <!-- 服务端 echo 回来的那一格才是「这次真用上的条件」，界面上的表单不算。 -->
         <p class="demo-note" data-testid="audit-filters-note">{{ filtersNote }}</p>

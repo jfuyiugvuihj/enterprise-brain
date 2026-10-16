@@ -108,8 +108,8 @@ function memberText(list) {
 }
 
 function unitKindText(unit) {
-  if (unit.unitOfSlo === true) return '就是它：SLO 按这一枚枚举分档'
-  if (unit.unitOfSlo === false) return '不是它：别拿这一枚枚举当「三档」'
+  if (unit.unitOfSlo === true) return '用于服务目标分类'
+  if (unit.unitOfSlo === false) return '用于其他配置分类'
   return '未记录'
 }
 </script>

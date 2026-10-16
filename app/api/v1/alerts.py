@@ -249,6 +249,13 @@ class RuleCreate(BaseModel):
     metric: str
     op: str = "lt"
     threshold: float
+    data_filename: str = ''
+    query: str = ''
+    group_by: str = ''
+
+
+class CheckSelection(BaseModel):
+    rule_ids: list[int] | None = None
 
 
 #: 转派的请求体只有一枚目标用户名：谁派的、什么时候派的，服务端自己记，不接受客户端代填。
@@ -316,6 +323,9 @@ def alert_row_visible(principal, row) -> bool:
     部门的私有内容，也不认作越权目标，对已过资源级那道门的主体保持可见 —— 与
     ``app/common/policy.py`` 对「无主文档」同一条心智：它只对管理层开放，从来不是公开资源。
     """
+    from app.insights.alert_evidence import source_allowed
+    if not source_allowed(principal, row):
+        return False
     departments = alert_row_scope_departments(principal)
     if departments is None:
         return True
@@ -623,7 +633,8 @@ def _alert_row_from_connection(conn, principal, alert_id: int, *, for_update: bo
     """有库那条腿的单行读。读不到＝这一条不存在，或者存在但不归这个人的行级范围（两者同形）。"""
     sql, params = _alert_scoped_select(principal, for_update=for_update)
     row = conn.execute(sql, (alert_id, *params)).fetchone()
-    return dict(row) if row else None
+    from app.insights.alert_evidence import source_allowed
+    return dict(row) if row and source_allowed(principal, row) else None
 
 
 def _alert_row_from_memory(principal, alert_id: int) -> dict | None:
@@ -942,7 +953,65 @@ def _scan_data_files(principal) -> tuple[list[Path], dict]:
     return paths, summary
 
 
-def evaluate_all(principal=None, scan_summary: dict | None = None) -> list[dict]:
+def _rule_visible(rule, principal):
+    owner = (rule.get('options') or {}).get('owner_id')
+    return not owner or principal is None or is_administrator(principal) or owner == principal.user_id
+
+
+def _with_linked_artifacts(rows, principal):
+    from app.storage.artifacts import artifact_registry, artifact_sources_allowed
+    from app.common.permissions import ACTION_VIEW
+    linked = {}
+    for artifact in artifact_registry.list_active():
+        source_id = artifact.metadata.get('source_alert_id')
+        if (source_id and authorization_decision(principal, artifact.resource_scope, action=ACTION_VIEW, require_resource_scope=True).allowed
+                and artifact_sources_allowed(artifact, principal)):
+            linked.setdefault(int(source_id), []).append({**artifact.public_payload(), 'filename': artifact.filename})
+    return [{**row, 'artifacts': linked.get(row['id'], [])} for row in rows]
+
+
+def _record_finding(rule, evidence, department):
+    """Serialize observations for one object/window; recovery is independent of disposal."""
+    from app.insights.alert_evidence import observation_update, explain_finding
+    key = evidence['finding_key']
+    now = evidence['observed_at']
+    message = f"{rule['name']}: {evidence['metric']}={evidence['current']:g} ({evidence['op']} {evidence['threshold']:g})"
+    if _database_available():
+        with _conn() as conn:
+            conn.execute('SELECT pg_advisory_xact_lock(%s)', (int(key[:15], 16),))
+            prior = conn.execute('SELECT * FROM alerts WHERE finding_key=%s ORDER BY id DESC LIMIT 1 FOR UPDATE', (key,)).fetchone()
+            if prior and not (prior.get('recovered_at') and evidence['breached']):
+                changed = observation_update(dict(prior), evidence, now)
+                row = conn.execute('UPDATE alerts SET evidence=%s::jsonb, observations=%s::jsonb, '
+                    'recovered_at=%s,last_observed_at=%s,message=%s,ai_analysis=%s WHERE id=%s RETURNING *',
+                    (json.dumps(changed['evidence'], ensure_ascii=False), json.dumps(changed['observations'], ensure_ascii=False),
+                     changed['recovered_at'], now, message, explain_finding(evidence), prior['id'])).fetchone()
+                conn.commit()
+                return dict(row), False
+            if not evidence['breached']:
+                return None, False
+            row = conn.execute('INSERT INTO alerts (rule_id,message,ai_analysis,department,finding_key,evidence,observations,last_observed_at) '
+                'VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s) RETURNING *',
+                (rule['id'], message, explain_finding(evidence), department, key,
+                 json.dumps(evidence, ensure_ascii=False), json.dumps([evidence], ensure_ascii=False), now)).fetchone()
+            conn.commit()
+            return dict(row), True
+    prior = next((row for row in reversed(_MEM_ALERTS) if row.get('finding_key') == key), None)
+    if prior and not (prior.get('recovered_at') and evidence['breached']):
+        prior.update(observation_update(prior, evidence, now))
+        prior.update(message=message, ai_analysis=explain_finding(evidence))
+        return prior, False
+    if not evidence['breached']:
+        return None, False
+    row = {'id': max([item['id'] for item in _MEM_ALERTS] or [0]) + 1, 'rule_id': rule['id'],
+        'message': message, 'ai_analysis': explain_finding(evidence), 'department': department,
+        'finding_key': key, 'evidence': evidence, 'observations': [evidence], 'recovered_at': '',
+        'last_observed_at': now, 'created_at': now, 'read': False, **ALERT_DISPOSAL_DEFAULTS}
+    _MEM_ALERTS.append(row)
+    return row, True
+
+
+def evaluate_all(principal=None, scan_summary: dict | None = None, rule_ids: list[int] | None = None) -> list[dict]:
     """读数据逐规则判定，触发则写告警+AI归因。返回本次触发的告警。"""
     from app.tools.excel import load_excel
     if _database_available():
@@ -956,11 +1025,14 @@ def evaluate_all(principal=None, scan_summary: dict | None = None) -> list[dict]
         scan_summary.update(files_summary)
     # 落章用的部门：每份数据自己登记的归属（登记表不可用时为空表）。
     dataset_departments = _dataset_department_index()
+    from app.storage.datasets import dataset_registry
+    registered_paths = {str(Path(item.storage_path).resolve()): item.filename for item in dataset_registry.active_records()}
     dfs: list[tuple[str, object]] = []
     unreadable: list[dict[str, str]] = []
     for data_path in data_paths:
         try:
-            dfs.append((data_path.name, load_excel(str(data_path))))
+            display_name = registered_paths.get(str(data_path.resolve()), data_path.name)
+            dfs.append((display_name, load_excel(str(data_path))))
         except Exception as exc:
             # R345: 读不开的那一份必须留下名字与原因。旧实现是裸的一句 except Exception: continue，
             # 于是「这个月没有异常」与「这个月的数据一份都没读出来」在屏上是同一张脸 —— 读不到被
@@ -989,57 +1061,105 @@ def evaluate_all(principal=None, scan_summary: dict | None = None) -> list[dict]
     else:
         rules = [rule for rule in _MEM_RULES if rule["enabled"]]
 
+    from app.insights.alert_evidence import calculate_finding
+    from app.storage.datasets import dataset_registry
+    from app.common.permissions import ACTION_ANALYZE
     triggered = []
-    recorded_findings: set[tuple] = set()
+    failures = []
+    ongoing, recovered = 0, 0
     for rule in rules:
-        for dataset_name, df in dfs:
-            value = _metric_value(df, rule["metric"])
-            if value is None:
+        if rule_ids is not None and rule['id'] not in rule_ids:
+            continue
+        if not _rule_visible(rule, principal):
+            continue
+        options = rule.get('options') or {}
+        metric_found = False
+        actor = principal
+        if actor is None and options.get('owner_id'):
+            from app.common import auth
+            from app.common.identity import Principal
+            user = auth.get_user(options['owner_id'])
+            if not user or user.get('status') == 'disabled':
                 continue
-            if hit(value, rule["op"], rule["threshold"]):
-                msg = f"{rule['name']}: {rule['metric']}={value:.1f} ({rule['op']} {rule['threshold']})"
-                finding = (rule["id"], msg)
-                if finding in recorded_findings:
-                    # E1-11：同一次巡检内，同一规则 + 同一计算窗口只入库一次
-                    logger.info(
-                        f"[Alert] 同一巡检重复命中已去重: rule_id={rule['id']} dataset={dataset_name}"
-                    )
+            actor = Principal.from_user(user)
+        for dataset_name, df in dfs:
+            dataset = dataset_registry.get_active_by_filename(dataset_name)
+            if not dataset or not dataset.version_id:
+                failures.append({'filename': dataset_name, 'reason': '数据版本未登记，未判断'})
+                continue
+            if options.get('data_filename') and options['data_filename'] != dataset_name:
+                continue
+            try:
+                df = load_excel(dataset.storage_path, query=options.get('query') or '')
+            except Exception:
+                failures.append({'filename': dataset_name, 'reason': '工作表或输入无法读取，未判断'})
+                continue
+            if actor and not authorization_decision(actor, dataset.resource_scope, action=ACTION_ANALYZE, require_resource_scope=True).allowed:
+                continue
+            effective_actor = actor
+            if effective_actor is None:
+                from app.common import auth
+                from app.common.identity import Principal
+                owner = auth.get_user(dataset.owner_id)
+                if not owner or owner.get('status') == 'disabled':
+                    failures.append({'filename': dataset_name, 'reason': '无可用负责人授权，系统巡检未判断'})
                     continue
-                recorded_findings.add(finding)
-                analysis = _ai_analysis(dict(rule), value)
-                # 行级归属落章：读侧那道判定要靠这一列才裁得动人。
-                owner_department = alert_owner_department(
-                    principal, dataset_name, dataset_departments
-                )
-                if _database_available():
-                    with _conn() as conn:
-                        conn.execute(
-                            "INSERT INTO alerts (rule_id, message, ai_analysis, department) "
-                            "VALUES (%s, %s, %s, %s)",
-                            (rule["id"], msg, analysis, owner_department),
-                        )
-                        conn.commit()
-                else:
-                    _MEM_ALERTS.append(
-                        {
-                            "id": len(_MEM_ALERTS) + 1,
-                            "rule_id": rule["id"],
-                            "message": msg,
-                            "ai_analysis": analysis,
-                            "department": owner_department,
-                            "read": False,
-                            "created_at": datetime.now().isoformat(),
-                            **ALERT_DISPOSAL_DEFAULTS,
-                        }
-                    )
-                triggered.append({"message": msg, "ai_analysis": analysis})
-                send_im_notification(
-                    "企业智脑告警",
-                    f"{msg}\n{analysis}".strip(),
-                    source="alerts",
-                    severity="warning",
-                )
-                logger.warning(f"[Alert] 触发: {msg}")
+                effective_actor = Principal.from_user(owner)
+                if not authorization_decision(effective_actor, dataset.resource_scope, action=ACTION_ANALYZE, require_resource_scope=True).allowed:
+                    continue
+            if rule['metric'] not in df:
+                if options.get('data_filename'):
+                    failures.append({'filename': dataset_name, 'reason': '所选工作表没有指定指标列，未判断'})
+                continue
+            metric_found = True
+            import hashlib
+            with open(dataset.storage_path, 'rb') as raw:
+                if hashlib.file_digest(raw, 'sha256').hexdigest() != dataset.content_sha256:
+                    failures.append({'filename': dataset_name, 'reason': '数据内容与登记版本不一致，请重新登记后巡检'})
+                    continue
+            frames = [('', df)]
+            for system_department, frame in frames:
+                try:
+                    evidence = calculate_finding(frame, rule, filename=dataset_name, dataset_id=dataset.dataset_id,
+                        version_id=dataset.version_id, sha256=dataset.content_sha256, principal=effective_actor,
+                        system_department=system_department)
+                    if effective_actor:
+                        from app.storage.calculations import calculation_storage
+                        run = calculation_storage.start_run(effective_actor.user_id, dataset.version_id, None,
+                            {'filename': dataset_name, 'operation': 'alert_threshold', 'query': evidence['query'],
+                             'rule_id': rule['id'], 'role': effective_actor.role, 'department': effective_actor.department,
+                             'clearance': effective_actor.clearance, 'authorization_department_ids': sorted(effective_actor.department_ids),
+                             'scope': {'department_ids': list(effective_actor.department_ids), 'classification': dataset.classification}},
+                            formula=f"SUM({rule['metric']}) {rule['op']} {rule['threshold']}")
+                        calculation_storage.complete_run(run['calculation_run_id'], evidence)
+                        evidence['calculation_run_id'] = run['calculation_run_id']
+                    owner_department = system_department or alert_owner_department(effective_actor, dataset_name, dataset_departments)
+                    row, created = _record_finding(rule, evidence, owner_department)
+                except Exception as exc:
+                    logger.warning('[Alert] 计算或存储未完成 file=%s error=%s', dataset_name, type(exc).__name__)
+                    failures.append({'filename': dataset_name, 'reason': str(exc) if isinstance(exc, ValueError) else '计算或记录保存失败，未判断'})
+                    continue
+                if row and created:
+                    triggered.append(row)
+                    send_im_notification('企业智脑告警', row['message'] + '\n' + row['ai_analysis'], source='alerts', severity='warning')
+                    audit_log.record_audit(actor, ACTION_MANAGE_ALERTS, 'completed', str(row['id']), 'alert_observed',
+                        after_summary={'version_id': evidence['version_id'], 'calculation_run_id': evidence.get('calculation_run_id', '')})
+                elif row:
+                    if evidence['breached']:
+                        ongoing += 1
+                    else:
+                        recovered += 1
+                    if (row.get('recovered_at') == evidence['observed_at']
+                            or len(row.get('observations') or []) > 1 and row['observations'][-1].get('observed_at') == evidence['observed_at']):
+                        audit_log.record_audit(actor, ACTION_MANAGE_ALERTS, 'completed', str(row['id']),
+                            'alert_recovered' if not evidence['breached'] else 'alert_recomputed',
+                            after_summary={'version_id': evidence['version_id'], 'calculation_run_id': evidence.get('calculation_run_id', '')})
+        if not options.get('data_filename') and dfs and not metric_found:
+            failures.append({'rule_id': rule['id'], 'reason': '授权可见工作表没有指定指标列，未判断'})
+    if scan_summary is not None:
+        scan_summary['evaluation_failures'] = failures
+        scan_summary['ongoing'] = ongoing
+        scan_summary['recovered'] = recovered
     return triggered
 
 
@@ -1075,9 +1195,20 @@ def daily_report() -> str:
 
 @router.post("/alerts/rules")
 async def create_rule(data: RuleCreate, request: Request = None):
-    _require_alert_management(request, ALERT_RULES_RESOURCE)
+    principal = _require_alert_management(request, ALERT_RULES_RESOURCE)
     if data.op not in OPS:
         raise HTTPException(status_code=400, detail=f"非法操作符: {data.op}")
+    import math
+    if not data.name.strip() or not data.metric.strip() or not math.isfinite(data.threshold):
+        raise HTTPException(status_code=400, detail='validation_error')
+    if data.data_filename:
+        from app.storage.datasets import dataset_registry
+        from app.common.permissions import ACTION_ANALYZE
+        dataset = dataset_registry.get_active_by_filename(data.data_filename)
+        if not dataset or not authorization_decision(principal, dataset.resource_scope, action=ACTION_ANALYZE, require_resource_scope=True).allowed:
+            raise HTTPException(status_code=403, detail='permission_denied')
+    options = {'owner_id': principal.user_id, 'data_filename': data.data_filename,
+               'query': data.query, 'group_by': data.group_by} if principal else {}
     _require_ready_store("create_rule")
     if not _database_available():
         global _MEM_NEXT_RULE_ID
@@ -1088,6 +1219,7 @@ async def create_rule(data: RuleCreate, request: Request = None):
             "op": data.op,
             "threshold": data.threshold,
             "enabled": True,
+            'options': options,
         }
         _MEM_NEXT_RULE_ID += 1
         _MEM_RULES.append(rule)
@@ -1096,8 +1228,8 @@ async def create_rule(data: RuleCreate, request: Request = None):
         _ensure()
         with _conn() as conn:
             cur = conn.execute(
-                "INSERT INTO alert_rules (name, metric, op, threshold) VALUES (%s, %s, %s, %s) RETURNING id",
-                (data.name, data.metric, data.op, data.threshold),
+                "INSERT INTO alert_rules (name, metric, op, threshold, options) VALUES (%s, %s, %s, %s, %s::jsonb) RETURNING id",
+                (data.name, data.metric, data.op, data.threshold, json.dumps(options, ensure_ascii=False)),
             )
             rid = cur.fetchone()["id"]
             conn.commit()
@@ -1106,28 +1238,34 @@ async def create_rule(data: RuleCreate, request: Request = None):
 
 @router.get("/alerts/rules")
 async def list_rules(request: Request = None):
-    _require_alert_management(request, ALERT_RULES_RESOURCE)
+    principal = _require_alert_management(request, ALERT_RULES_RESOURCE)
     _require_ready_store("list_rules")
     if not _database_available():
-        return {"rules": [dict(rule) for rule in _MEM_RULES]}
+        return {"rules": [dict(rule) for rule in _MEM_RULES if _rule_visible(rule, principal)]}
     with _migrations_first_at_http_exit("list_rules"):
         _ensure()
         with _conn() as conn:
             rows = conn.execute("SELECT * FROM alert_rules ORDER BY id").fetchall()
-    return {"rules": [dict(r) for r in rows]}
+    return {"rules": [dict(r) for r in rows if _rule_visible(r, principal)]}
 
 
 @router.delete("/alerts/rules/{rule_id}")
 async def delete_rule(rule_id: int, request: Request = None):
-    _require_alert_management(request, ALERT_RULES_RESOURCE)
+    principal = _require_alert_management(request, ALERT_RULES_RESOURCE)
     _require_ready_store("delete_rule")
     if not _database_available():
+        row = next((rule for rule in _MEM_RULES if rule['id'] == rule_id), None)
+        if row and not _rule_visible(row, principal):
+            raise HTTPException(status_code=404, detail='resource_not_found')
         before = len(_MEM_RULES)
         _MEM_RULES[:] = [rule for rule in _MEM_RULES if rule["id"] != rule_id]
         return {"status": "ok" if len(_MEM_RULES) < before else "not_found"}
     with _migrations_first_at_http_exit("delete_rule"):
         _ensure()
         with _conn() as conn:
+            row = conn.execute('SELECT * FROM alert_rules WHERE id=%s', (rule_id,)).fetchone()
+            if row and not _rule_visible(row, principal):
+                raise HTTPException(status_code=404, detail='resource_not_found')
             cur = conn.execute("DELETE FROM alert_rules WHERE id = %s", (rule_id,))
             conn.commit()
     return {"status": "ok" if cur.rowcount else "not_found"}
@@ -1155,27 +1293,29 @@ async def list_alerts(request: Request):
                 100,
             )
         )
-        return {"alerts": visible}
+        return {"alerts": _with_linked_artifacts(visible, principal)}
     with _migrations_first_at_http_exit("list_alerts"):
         _ensure()
         predicate, params = alert_row_scope_sql(principal)
         sql = " ".join(
             part
-            for part in ("SELECT * FROM alerts", predicate, "ORDER BY id DESC LIMIT 100")
+            for part in ("SELECT * FROM alerts", predicate, "ORDER BY id DESC")
             if part
         )
         with _conn() as conn:
             rows = conn.execute(sql, params).fetchall()
-    return {"alerts": [dict(r) for r in rows]}
+    visible = list(islice((dict(r) for r in rows if alert_row_visible(principal, r)), 100))
+    return {"alerts": _with_linked_artifacts(visible, principal)}
 
 
 @router.post("/alerts/check")
-async def check_now(request: Request):
+async def check_now(request: Request, selection: CheckSelection | None = None):
     """手动触发一次巡检"""
     principal = _require_alert_management(request, ALERT_LEDGER_RESOURCE)
     _require_ready_store("check_now")
     scan_scope: dict = {}
-    triggered = evaluate_all(principal=principal, scan_summary=scan_scope)
+    selected = selection.rule_ids if selection else None
+    triggered = evaluate_all(principal=principal, scan_summary=scan_scope, **({'rule_ids': selected} if selected is not None else {}))
     return {"triggered": triggered, "scan_scope": scan_scope}
 
 
@@ -1201,7 +1341,7 @@ async def get_alert(alert_id: int, request: Request):
         row = _alert_row_from_memory(principal, alert_id)
     if row is None:
         raise HTTPException(status_code=404, detail=ALERT_DISPOSAL_NOT_FOUND_CODE)
-    return {"alert": alert_ledger_row(row)}
+    return {"alert": _with_linked_artifacts([alert_ledger_row(row)], principal)[0]}
 
 
 @router.post("/alerts/{alert_id}/ack")

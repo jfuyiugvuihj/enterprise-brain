@@ -113,9 +113,9 @@ def build_precheck(
             risk = "high" if ratio >= Decimal("0.2") else "warning"
             recommendation = "提交部门负责人及财务复核"
         else:
-            status = "符合标准"
+            status = "金额未超过所给标准"
             risk = "low"
-            recommendation = "按制度自行留存凭证"
+            recommendation = "仅比较金额，不代表全面合规；补齐原始凭证、业务用途、日期及真实批准材料后核验"
 
     return {
         "department": str(department or ""),
@@ -194,22 +194,24 @@ def extract_standard(excerpts: list[str]) -> Decimal | None:
     """Read a monetary standard out of retrieved policy text, if one is stated."""
     candidates: list[Decimal] = []
     for excerpt in excerpts or []:
-        text = str(excerpt or "")
-        for pattern in _STANDARD_PATTERNS:
-            for match in pattern.finditer(text):
-                try:
-                    value = Decimal(match.group(1))
-                    if match.lastindex and match.lastindex > 1 and match.group(2) == "万元":
-                        value *= Decimal("10000")
-                except InvalidOperation:
-                    continue
-                if value > 0:
-                    candidates.append(value)
+        for clause in re.split(r'[。；;\n]', str(excerpt or '')):
+            if re.search(r'审批|批准|审核|签字', clause):
+                continue
+            for pattern in _STANDARD_PATTERNS:
+                for match in pattern.finditer(clause):
+                    try:
+                        value = Decimal(match.group(1))
+                        if match.lastindex and match.lastindex > 1 and match.group(2) == '万元':
+                            value *= Decimal('10000')
+                    except InvalidOperation:
+                        continue
+                    if value > 0:
+                        candidates.append(value)
     if not candidates:
         return None
-    # The strictest stated limit is the binding standard; the values stay visible in
-    # the evidence excerpt so a reviewer can confirm the reading.
-    return min(candidates)
+    # Distinct amounts may belong to different cities, roles or versions. Without
+    # those conditions, choosing the smallest amount invents a binding standard.
+    return next(iter(set(candidates))) if len(set(candidates)) == 1 else None
 
 
 _STANDARD_QUERY_SUFFIX = "标准 上限 限额"
@@ -252,7 +254,7 @@ def resolve_standard_from_knowledge_base(
     """Read the binding standard out of the knowledge base instead of out of the request.
 
     One algorithm with the approval worker: retrieve the policy text this principal is
-    allowed to see, then keep the strictest figure a passage actually states. The
+    allowed to see, then accept only one unambiguous limit. The
     returned ``standard`` is ``None`` when no passage states one, and the caller reports a
     missing standard instead of substituting a number, a default, or a value from the
     request. ``search`` is the retrieval seam a test injects.
@@ -277,9 +279,8 @@ def resolve_standard_from_knowledge_base(
             evidence.append(entry)
 
     return {
-        # The strictest stated limit binds, as in extract_standard: the minimum of each
-        # passage's minimum is the minimum across all of them.
-        "standard": min(candidates) if candidates else None,
+        # Conflicting passage values require applicability details, not a minimum.
+        "standard": next(iter(set(candidates))) if len(set(candidates)) == 1 else None,
         "evidence": evidence,
         "matched_expense_type": match_expense_type(expense_type),
     }

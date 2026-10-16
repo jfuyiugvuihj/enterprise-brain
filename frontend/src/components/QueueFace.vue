@@ -52,7 +52,7 @@ const emit = defineEmits(['retry', 'action', 'cancel'])
       @click="emit('retry')"
     >按原文再问一次</UiButton>
     <!-- R260 · 挂起待批准那一轮给一件能点的东西：这一枚只做【去哪一屏】，
-         批准本身仍由「审批与待办」那两枚既有组件（HitlPendingPanel / HitlPendingRow）
+         批准本身仍由「待办事项」那两枚既有组件（HitlPendingPanel / HitlPendingRow）
          发到 POST /approve —— 本组件不开第二套批准路径，也不在这里判归属（鉴权在服务端）。
          样式沿用上面那枚 pill：本单不涉视觉，零新增色值。 -->
     <UiButton

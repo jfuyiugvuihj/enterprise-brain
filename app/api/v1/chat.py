@@ -25,7 +25,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, UploadFile, File, Form, Request as FastAPIRequest, Response as FastAPIResponse, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from app.common.no_store import NO_STORE_HEADERS
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from app.agents.contracts import AuthorizationDecision, ErrorEnvelope, Principal
 from app.agents.evidence import (
@@ -145,7 +145,7 @@ def _newest_generation(session_id: str) -> CancelGeneration | None:
     return _REQUESTS[(session_id, max(epochs))]
 
 
-def register_request(session_id: str) -> CancelGeneration:
+def register_request(session_id: str, *, inherit_pending: bool = True) -> CancelGeneration:
     """开一代：按 (session_id, epoch) 登记并返回本代的取消标记。
 
     先到的取消在这里一次性消费掉。老实现无条件换上一个干净的 Event，于是
@@ -156,7 +156,8 @@ def register_request(session_id: str) -> CancelGeneration:
         _REQUESTS[(session_id, generation.epoch)] = generation
         if session_id in _PENDING_CANCELLATIONS:
             _PENDING_CANCELLATIONS.discard(session_id)
-            generation.set()
+            if inherit_pending:
+                generation.set()
         return generation
 
 
@@ -1140,7 +1141,7 @@ def _save_message(session_id: str, role: str, content: str, steps: list | None =
         conn.commit()
 
 
-def _save_approval_answer(session_id: str, content: str):
+def _save_approval_answer(session_id: str, content: str, steps: list | None = None):
     """Refresh this user turn's answer instead of appending its full body again."""
     now = datetime.now(_tz).isoformat()
     if not _session_database_available():
@@ -1150,9 +1151,11 @@ def _save_approval_answer(session_id: str, content: str):
                 break
             if row["role"] == "assistant":
                 row["content"] = content
+                if steps is not None:
+                    row["steps"] = steps
                 _MEM_SESSIONS[session_id]["updated_at"] = now
                 return
-        _save_message(session_id, "assistant", content)
+        _save_message(session_id, "assistant", content, steps)
         return
     with _sess_conn() as conn:
         # Lock the session so two approval completions cannot append competing answers.
@@ -1162,11 +1165,15 @@ def _save_approval_answer(session_id: str, content: str):
             (session_id,),
         ).fetchone()
         if row and row["role"] == "assistant":
-            conn.execute("UPDATE session_messages SET content = %s WHERE id = %s", (content, row["id"]))
+            if steps is None:
+                conn.execute("UPDATE session_messages SET content = %s WHERE id = %s", (content, row["id"]))
+            else:
+                conn.execute("UPDATE session_messages SET content = %s, steps = %s WHERE id = %s",
+                    (content, json.dumps(steps, ensure_ascii=False), row["id"]))
         else:
             conn.execute(
                 "INSERT INTO session_messages (session_id, role, content, steps, created_at) VALUES (%s, %s, %s, %s, %s)",
-                (session_id, "assistant", content, "[]", now),
+                (session_id, "assistant", content, json.dumps(steps or [], ensure_ascii=False), now),
             )
         conn.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (now, session_id))
         conn.commit()
@@ -1460,6 +1467,10 @@ class AskRequest(BaseModel):
     message: str
     session_id: str = ""
     data_filename: str = ""
+    document_filenames: list[str] | None = None
+    alert_id: int | None = None
+    alert_version_id: str | None = None
+    _alert_context: dict = PrivateAttr(default_factory=dict)
     idempotency_key: str = ""
     lane: str = ""
 
@@ -2035,16 +2046,40 @@ async def chat(request: ChatRequest, http_request: FastAPIRequest):
 
 # ==================== Multi-Agent Ask (SSE) ====================
 
-def _complete_pending_steps(steps: list[dict], elapsed: float) -> list[dict]:
-    """将流结束时仍在运行的步骤统一收口，避免前端永久显示加载状态。"""
+def _complete_pending_steps(
+    steps: list[dict], elapsed: float, agent_results: dict | None = None,
+    worker_results: dict | None = None,
+) -> list[dict]:
+    """收口仍在运行的步骤，并优先采用已落账的 worker 终态。
+
+    流尾没有 step 回执时才保留 ``unknown``；不能因为传输层先结束就把已经由
+    worker 记录的成功、拒绝或失败抹成同一个问号。
+    """
     completed = []
+    results = agent_results if isinstance(agent_results, dict) else {}
+    workers = worker_results if isinstance(worker_results, dict) else {}
     for step in steps:
         if step.get("status") != "running":
             continue
-        step["status"] = "done"
-        step["elapsed"] = elapsed
+        record = results.get(step.get("tool"))
+        status = record.get("status") if isinstance(record, dict) else None
+        if status in {"timeout", "model_unavailable", "retrieval_unavailable"}:
+            status = "failed"
+        step["status"] = str(status) if status in {
+            "completed", "success", "failed", "rejected", "refused", "cancelled", "partial"
+        } else "unknown"
+        step["elapsed"] = round(record["duration_ms"] / 1000, 1) if isinstance(record, dict) and isinstance(record.get("duration_ms"), (int, float)) else elapsed
         completed.append(dict(step))
     return completed
+
+
+def _request_verdict(agent_results: dict, answer: str, awaiting: bool = False) -> tuple[str, str, str]:
+    from app.agents.evidence import aggregate_agent_result
+    actual = aggregate_agent_result(agent_results, answer=answer)
+    status = ("completed" if actual.status in {"success", "partial"}
+        or (awaiting and not answer and not agent_results) else actual.status)
+    event = "request.completed" if status in {"completed", "rejected"} else "request.failed"
+    return event, status, actual.error.code if actual.error and status != "completed" else ""
 
 
 def _settled_answer_text(worker_results: dict) -> str:
@@ -2854,6 +2889,11 @@ def _enqueue_ask_turn(
     named = str(getattr(request, "data_filename", "") or "").strip()
     if named and _named_dataset_must_travel(named):
         payload["data_filename"] = named
+    if request.document_filenames is not None:
+        payload['document_filenames'] = request.document_filenames
+        payload['task_question'] = request.message
+    if request._alert_context:
+        payload['data_context'] = request._alert_context
     try:
         queue = connect_reliable_queue()
         scoped_key = json.dumps([str(principal.user_id) if principal is not None else username,
@@ -2938,9 +2978,34 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         raise HTTPException(status_code=403, detail="permission_denied") from exc
     _ensure_session(thread_id, str(request_principal.user_id))
 
+    alert_context = {}
+    if request.alert_id is not None:
+        from app.api.v1.alerts import get_alert
+        payload = await get_alert(request.alert_id, http_request)
+        evidence = payload['alert'].get('evidence') or {}
+        if not evidence or not evidence.get('version_id'):
+            raise HTTPException(status_code=400, detail='validation_error')
+        from app.storage.datasets import dataset_registry
+        dataset = dataset_registry.get_active_by_filename(evidence['filename'])
+        if (not dataset or dataset.version_id != evidence['version_id']
+                or request.alert_version_id != evidence['version_id']):
+            raise HTTPException(status_code=409, detail='validation_error')
+        if request.data_filename and request.data_filename != evidence['filename']:
+            raise HTTPException(status_code=400, detail='validation_error')
+        request.data_filename = evidence['filename']
+        alert_context = {**evidence, 'alert_id': request.alert_id,
+            'query': (evidence.get('query') or '') + f"，按{evidence.get('dimension') or '部门'}汇总{evidence['metric']}与记录数"}
+        request._alert_context = alert_context
     original_msg = request.message
+    if request.document_filenames:
+        names = list(dict.fromkeys(name.strip() for name in request.document_filenames if name.strip()))
+        for name in names:
+            _authorize_document_request(http_request, name, ACTION_VIEW)
+        original_msg = re.sub(r'^仅依据以下文件(?:《[^》\r\n]+》)+回答：\n', '', original_msg)
+        original_msg = '仅依据以下文件' + ''.join('《' + name + '》' for name in names) + '回答：\n' + original_msg
+        request.document_filenames = names
     orchestration_msg = original_msg
-    if _should_use_data_context(original_msg, request.data_filename):
+    if not request.document_filenames and _should_use_data_context(original_msg, request.data_filename):
         # R709：这一处只管「要不要额外检索文档」。问句含制度词时不改写，文档腿留下；
         # 点名的数据集照旧跟着这一轮走（下面 user_ctx 那一格），本枚判断否决不到它。
         orchestration_msg = (
@@ -3002,6 +3067,14 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         if _named_dataset_must_travel(request.data_filename):
             user_ctx = user_ctx or {"username": username}
             user_ctx["data_filename"] = request.data_filename
+            user_ctx["task_question"] = request.message
+        if request.document_filenames is not None:
+            user_ctx = user_ctx or {"username": username}
+            user_ctx["document_filenames"] = request.document_filenames
+            user_ctx["task_question"] = original_msg
+        if alert_context:
+            user_ctx = user_ctx or {'username': username}
+            user_ctx['data_context'] = alert_context
     except Exception:
         user_ctx = None
     if not allowed:
@@ -3047,7 +3120,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     # 真正要盯的是 cache._scope_part：谁要是漏传 scope，条目会落进历史全局键 answer:<hash>，那条键不属于
     # 任何授权输入；由 tests/test_answer_cache_scope.py 钉住「全局键谁都不许回读，带作用域的也不许被空 scope 读到」。
     answer_scope = answer_cache_scope(request_principal, username=username)
-    use_answer_cache = bool(answer_scope)
+    use_answer_cache = bool(answer_scope) and not bool(request.data_filename) and not request.document_filenames
     cached = get_cached_answer(rewritten_msg, scope=answer_scope) if use_answer_cache else None
     if cached and not _answer_body(cached):
         # R439：缓存里躺着一句只剩内部交接标记的条目——改前的树真产过（run9 的 data-09 交回
@@ -3353,7 +3426,12 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             if kind == "done":
                 elapsed_total = round(time.time() - start_time, 1)
                 _ASK_STATS.observe(elapsed_total * 1000)
-                for step in _complete_pending_steps(steps_log, elapsed_total):
+                for step in _complete_pending_steps(
+                    steps_log,
+                    elapsed_total,
+                    latest_agent_results,
+                    latest_worker_results,
+                ):
                     yield f"event: step\ndata: {json.dumps({'type': 'step', **step}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
                 full_text = _select_final_answer(
@@ -3478,13 +3556,14 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     yield f"event: hitl\ndata: {json.dumps({'type': 'hitl', 'pending': intr['pending'], 'labels': intr['labels']}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
 
+                terminal_event, terminal_status, terminal_error = _request_verdict(latest_agent_results, full_text, bool(intr))
                 yield canonical_sse_event(
-                    "request.completed",
+                    terminal_event,
                     request_id=request_id,
                     trace_id=trace_id,
                     task_id=task_id,
                     sequence=sequence,
-                    status="completed",
+                    status=terminal_status,
                     data={
                         "session_id": thread_id,
                         # R414(b)：这一轮的数字是从哪份数据文件算的，终态必须说得出。
@@ -3494,6 +3573,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                         "answer_length": len(full_text),
                         "awaiting_hitl": bool(intr),
                         "awaiting_steps": list(intr["pending"]) if intr else [],
+                        **({"error_code": terminal_error} if terminal_error else {}),
                     },
                 )
                 sequence += 1
@@ -3611,24 +3691,12 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     break
 
             if dispatched:
-                user_msg = ""
-                for m in reversed(msgs):
-                    if type(m).__name__ == "HumanMessage":
-                        user_msg = getattr(m, "content", "") or ""
-                        break
-                chart_kw = ["画", "图", "图表", "柱状图", "折线图", "饼图", "可视化", "图形"]
-                export_kw = ["导出", "PDF", "pdf", "报告", "下载"]
-                data_kw = ["排名", "最高", "最低", "统计", "分析数据", "对比", "比较", "哪个"]
-                if any(kw in user_msg for kw in chart_kw):
-                    dispatched = ["chart"]
-                elif any(kw in user_msg for kw in export_kw) and not any(kw in user_msg for kw in chart_kw):
-                    dispatched = ["export"]
-                elif any(kw in user_msg for kw in data_kw) and "chart" not in dispatched:
-                    if "data" not in dispatched:
-                        dispatched = ["data"]
-                # B19：牌子跟档位。上面这三挑选的是「模型想派谁」，档位砍完腿之后没人替
-                # 它改口；这里按本轮那一份档位读数把牌子筛一遍，其余一律不动。
-                dispatched = _chip_legs_within_lane(dispatched, lane_readout)
+                # Display the same authorized/prohibited/dependency-filtered dispatch
+                # that the graph uses, rather than guessing from words such as “不画图”.
+                from app.agents.orchestrator import route_main
+                routed = route_main(data, {"configurable": {"declared_lane": declared,
+                    "data_filename": request.data_filename}})
+                dispatched = [item.node for item in routed if hasattr(item, "node")] if isinstance(routed, list) else []
 
             if dispatched and dispatched != last_workers:
                 for w in dispatched:
@@ -3651,9 +3719,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     elapsed = round(time.time() - start_time, 1)
                     for s in steps_log:
                         if s["tool"] == w and s["status"] == "running":
-                            s["status"] = "done"
+                            s["status"] = (data.get("agent_results", {}).get(w) or {}).get("status", "unknown")
                             s["elapsed"] = elapsed
-                            yield f"event: step\ndata: {json.dumps({'type': 'step', 'tool': w, 'label': s['label'], 'status': 'done', 'elapsed': elapsed}, ensure_ascii=False)}\n\n"
+                            yield f"event: step\ndata: {json.dumps({'type': 'step', 'tool': w, 'label': s['label'], 'status': s['status'], 'elapsed': elapsed}, ensure_ascii=False)}\n\n"
                             await asyncio.sleep(0)
 
             last_workers = dispatched
@@ -3918,18 +3986,45 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
     # 同一轮的三处读数会各说一句话而没人报错 —— 判据② 要的是同一份数字，不是三个同形的数字。
     # 此刻挂起那行还是 awaiting（闭合在下面那条流的 done 分支里），声明读得回来。
     lane_readout = _resumed_lane_readout(request.session_id)
+    record_audit(principal, ACTION_APPROVE, "confirmed" if request.approved else "rejected",
+        request.session_id, "operation_confirmed" if request.approved else "operation_rejected",
+        request_id=request_id, after_summary={"trace_id": trace_id, "task_id": task_id})
+
+    audited_terminal = False
+    execution_audit_lock = threading.Lock()
+    approve_worker_started = threading.Event()
+    def finish_trace(event_type: str, status: str, error_code: str = ""):
+        nonlocal audited_terminal
+        with execution_audit_lock:
+            if audited_terminal:
+                return
+            _record_chat_round_verdict(trace_id=trace_id, request_id=request_id, task_id=task_id,
+                owner_id=str(getattr(principal, "user_id", "") or ""),
+                event_type=event_type, status=status, error_code=error_code)
+            audited_terminal = True
+            ledger = approval_ledger_state(request.session_id, principal.user_id)
+            outcome = ('rejected' if ledger == 'refused' else 'awaiting' if ledger == 'awaiting'
+                       else status)
+            record_audit(principal, ACTION_APPROVE, outcome, request.session_id,
+                'operation_execution_result', request_id=request_id,
+                after_summary={'trace_id': trace_id, 'task_id': task_id,
+                    'decision': 'confirmed' if request.approved else 'rejected',
+                    'execution_status': status, 'ledger_status': ledger, 'error_code': error_code})
 
     async def generate():
         # 同 /ask：注册与本代弹出留在同一个帧里。resume 起来的那一代才是取消唯一能打击
         # 的对象，所以停在 HITL 的会话被按过停止之后，随后的批准会拿到一个生来就置位的
         # 标记，编排的第一个检查点连 resume 都不发起（甲裁定的落地判据）。
-        cancel_event = register_request(request.session_id)
+        # A prior display interruption must still block execution, but cannot swallow
+        # the user's subsequent explicit refusal of the pending action.
+        cancel_event = register_request(request.session_id, inherit_pending=request.approved)
         try:
             async with aclosing(_approve_stream(cancel_event)) as stream:
                 async for chunk in stream:
                     yield chunk
         finally:
-            release_request(cancel_event)
+            if not approve_worker_started.is_set():
+                release_request(cancel_event)
 
     async def _approve_stream(cancel_event: CancelGeneration):
         from app.agents.orchestrator import run_interrupt_stream
@@ -3956,6 +4051,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             # app/rag/retrieval_pipeline.py 末节（本单唯一的产品道发射实现）。
             from app.rag.retrieval_pipeline import arm_retrieval_trace, reset_retrieval_trace
 
+            execution_state, worker_error = {}, ''
             trace_token = arm_retrieval_trace(
                 trace_id=trace_id, request_id=request_id, task_id=task_id
             )
@@ -3964,34 +4060,58 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     request.session_id,
                     approved=request.approved,
                     user=user_ctx,
+                    request_id=request_id, trace_id=trace_id, task_id=task_id,
                     cancel_event=cancel_event,
                     # R31 差格 a 的注册点。摘掉这一行，续跑轮里那些字一个字都到不了收端
                     # （判据① 的凭据；判据④ 的"无人注册"那一支在 nodes 里，不在这条腿上）。
                     stream_piece_sink=_piece_sink,
                 ):
+                    snapshot = event[1] if isinstance(event, tuple) and len(event) > 1 else event
+                    if isinstance(snapshot, dict):
+                        execution_state.update(snapshot)
                     if cancel_event.is_set():
                         return
                     result_queue.put(("event", event))
                 result_queue.put(("done", None))
             except Exception as e:
+                worker_error = 'internal_error'
                 logger.exception(
                     f"[approve] agent worker raised for session={request.session_id}"
                 )
                 result_queue.put(("error", str(e)))
             finally:
-                reset_retrieval_trace(trace_token)
+                try:
+                    if cancel_event.is_set():
+                        _decide_pending_approval(request.session_id, pending_approvals.ABANDONED)
+                        prior = _round_screen_answer(request.session_id)
+                        notice = '本次操作已取消，未执行后续动作；已完成的动作不会撤销。'
+                        _save_approval_answer(request.session_id, notice if is_hitl_park_notice(prior)
+                            else '\n\n'.join(filter(None, [prior, notice])))
+                        finish_trace('request.cancelled', 'cancelled')
+                    elif worker_error or execution_state.get('error'):
+                        _fail_pending_approval_turn(request.session_id, principal, error_code='internal_error', request_id=request_id)
+                        finish_trace('request.failed', 'failed', 'internal_error')
+                    else:
+                        from app.agents.orchestrator import check_interrupt
+                        intr = check_interrupt(request.session_id)
+                        answer = _select_final_answer(final_answer=execution_state.get('final_answer', ''),
+                            worker_results=execution_state.get('worker_results', {}), candidates=[])
+                        settled = [{'tool': worker, 'label': worker, 'status': 'running'}
+                                   for worker in execution_state.get('agent_results', {})]
+                        _complete_pending_steps(settled, 0, execution_state.get('agent_results', {}))
+                        if answer:
+                            _save_approval_answer(request.session_id, answer, settled)
+                        _decide_pending_approval(request.session_id,
+                            pending_approvals.RESUMED if request.approved else pending_approvals.REFUSED)
+                        finish_trace(*_request_verdict(execution_state.get('agent_results', {}), answer, bool(intr)))
+                finally:
+                    reset_retrieval_trace(trace_token)
+                    release_request(cancel_event)
 
         # R551 顺序不变量：trace 的第三处出口（``request.started``）必须排在**把 _run 交给
         # executor 之前**。``loop.run_in_executor`` 一交出去，工作线程立刻就动，它不等事件循环；
-        # 而 chat.py 这一支此后**再不往 trace 记任何 request.* 终态事件**：这一支的
-        # request.cancelled / request.failed / request.completed 全部只发帧，函数体内没有一处
-        # record_event（``run_interrupt_stream`` 自己也是一枚都不记，见 app/agents/orchestrator.py
-        # 里 run_with_stream 记、run_interrupt_stream 不记那道对照）——口径凭据见本单读数纸。
-        # ⇒ 谁第一个把这枚 trace 的 run 行种出来，谁就是它一辈子的结论。抢在前面的会是检索
-        # 留痕（``status=completed``），随后这枚 ``running`` 的 request.started 被
-        # ``app/trace/lifecycle.py:96`` 以 ``terminal_run_regression`` 拒掉 —— 那一轮后来真失败，
-        # ``agent_runs.status`` 也永远停在 ``completed``。与 /ask 同构：那条道的 request.started
-        # 记在图起跑之前（``app/agents/orchestrator.py`` 的 ``run_with_stream``）。
+        # 先建立 running 父记录，之后 finish_trace 按实际执行结果收口；
+        # 续跑工具、检索与 SSE 共用同一组 request/trace/task 标识。
         # 凭据：tests/test_r551_resumed_lane_seeds_before_executor.py（判据① 两形＋判据② 失败轮）。
         _record_resumed_lane_trace(
             lane_readout,
@@ -4002,6 +4122,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
             task_id=task_id,
         )
         loop = asyncio.get_running_loop()
+        approve_worker_started.set()
         agent_future = loop.run_in_executor(_executor, _run)
         _reap_agent_worker(agent_future, session_id=request.session_id, stage="approve")
 
@@ -4086,11 +4207,12 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
 
         while True:
             # 与 /ask 同口径：按本代比对。上一代留下的取消判不到这一轮头上。
-            if is_request_cancelled(request.session_id, epoch=cancel_event.epoch):
+            if cancel_event.is_set():
                 agent_future.cancel()
                 # 停止 != 拒绝（裁定 ④甲）：账面写 abandoned，绝不写 refused。
                 # 这一行在 R12（826d318）之前是不敢写的——那时"停止"的会话其实跑完了。
                 _decide_pending_approval(request.session_id, pending_approvals.ABANDONED)
+                finish_trace("request.cancelled", "cancelled")
                 # 先发 canonical、再发 legacy，与 /ask 的取消形状（request.cancelled 之后紧跟 legacy cancelled）一致：
                 # 事件名、status="cancelled"、data.session_id 全同。legacy 保留是给
                 # 还没接 canonical 的旧客户端的，不是过渡期垃圾。
@@ -4123,6 +4245,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     error_code="task_timeout",
                     request_id=request_id,
                 )
+                finish_trace("request.failed", "failed", "task_timeout")
                 yield canonical_sse_event(
                     "request.failed",
                     request_id=request_id,
@@ -4170,7 +4293,13 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     worker_results=latest_worker_results,
                     candidates=answer_candidates + ai_reply,
                 )
-                _save_approval_answer(request.session_id, full_text)
+                labels = {"doc": "📄 搜索知识库", "data": "📊 分析数据", "chart": "📈 生成图表", "export": "📋 导出报告"}
+                settled_steps = [{"tool": worker, "label": labels.get(worker, worker), "status": "running"}
+                    for worker in latest_agent_results]
+                _complete_pending_steps(settled_steps, round(time.time() - start_time, 1), latest_agent_results)
+                for step in settled_steps:
+                    yield sse_event("step", {"type": "step", **step})
+                _save_approval_answer(request.session_id, full_text, settled_steps)
                 # 批准与拒绝都要闭合账面，否则面板会一直显示一条其实已经处理过的待办。
                 # refused 这一支对应 84af113「拒绝必须真的拒绝」的账面部分。
                 _decide_pending_approval(
@@ -4215,6 +4344,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     # request.completed 就是把"什么都没产出"伪装成"已回答"
                     # （/ask 的 no_answer_produced 那一支同一裁定）。legacy 这一支只发 done，不新增 error：
                     # 本单对 legacy 只加不减，旧客户端收到 done 才是既有契约。
+                    finish_trace("request.failed", "failed", "no_answer_produced")
                     yield canonical_sse_event(
                         "request.failed",
                         request_id=request_id,
@@ -4257,13 +4387,15 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     )
                     yield f"event: hitl\ndata: {json.dumps({'type': 'hitl', 'pending': intr['pending'], 'labels': intr['labels']}, ensure_ascii=False)}\n\n"
                     await asyncio.sleep(0)
+                terminal_event, terminal_status, terminal_error = _request_verdict(latest_agent_results, full_text, bool(intr))
+                finish_trace(terminal_event, terminal_status, terminal_error)
                 yield canonical_sse_event(
-                    "request.completed",
+                    terminal_event,
                     request_id=request_id,
                     trace_id=trace_id,
                     task_id=task_id,
                     sequence=sequence,
-                    status="completed",
+                    status=terminal_status,
                     data={
                         "session_id": request.session_id,
                         # R414(b)：批准续跑的那一轮与 /ask 同一格读数。
@@ -4273,6 +4405,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                         "answer_length": len(full_text),
                         "awaiting_hitl": bool(intr),
                         "awaiting_steps": list(intr["pending"]) if intr else [],
+                        **({"error_code": terminal_error} if terminal_error else {}),
                     },
                 )
                 sequence += 1
@@ -4323,6 +4456,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     error_code="internal_error",
                     request_id=request_id,
                 )
+                finish_trace("request.failed", "failed", "internal_error")
                 yield canonical_sse_event(
                     "request.failed",
                     request_id=request_id,
@@ -4396,6 +4530,12 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
 
 # ==================== 会话管理 API ====================
 
+@router.get('/hitl/decision/{session_id}')
+async def read_confirmation_decision(session_id: str, request: FastAPIRequest):
+    principal = _authorize_session_request(request, session_id)
+    return FastAPIResponse(content=json.dumps({'ledger_status': approval_ledger_state(session_id, principal.user_id)}),
+                           media_type='application/json', headers=dict(NO_STORE_HEADERS))
+
 # ==================== R295：会话历史回读时重过作用域闸门 ====================
 
 #: 病灶（contract-v1.md「Registered, not fixed」第 2 条登记的那一格）：`GET /sessions/{id}`
@@ -4463,9 +4603,12 @@ def _history_scope_face(messages, principal, session_id: str) -> tuple[list[dict
     文档名、它的部门实值与密级实值一个字都不进台账，也不进返回值——纪律照
     `app/rag/filters.py::_record_refusal`。
     """
+    from app.storage.calculations import calculation_storage
+    try:
+        data_denied = calculation_storage.session_access_denied(principal, session_id)
+    except Exception:
+        data_denied = True
     catalog = _history_catalog_rows()
-    if not catalog:
-        return [dict(message) for message in messages], 0
     scope = None
     scope_code = ""
     try:
@@ -4483,17 +4626,21 @@ def _history_scope_face(messages, principal, session_id: str) -> tuple[list[dict
             else []
         )
         blocked = [item for item in cited if scope is None or not scope.allows(item)]
-        if not blocked:
+        # A deleted source or unreadable catalog must not erase the permission check.
+        named = re.findall(r'《([^》]+\.(?:pdf|docx?|xlsx?|csv|txt|md))》', str(row.get("content") or ""), re.I)
+        missing_source = row.get("role") == "assistant" and any(
+            not any(item.get("filename") == name for item in catalog) for name in named)
+        if not blocked and not missing_source and not (data_denied and row.get("role") == "assistant"):
             readout.append(row)
             continue
-        reason = scope_code or str(scope.refusal_code(blocked[0]) or "permission_denied")
+        reason = "source_scope_denied" if data_denied or missing_source else scope_code or str(scope.refusal_code(blocked[0]) or "permission_denied")
         withheld += 1
         record_audit(principal, ACTION_VIEW, "denied", session_id, reason)
         readout.append(
             {
                 "role": row.get("role"),
                 "created_at": row.get("created_at"),
-                "steps": row.get("steps") or [],
+                "steps": [] if data_denied else row.get("steps") or [],
                 "content": HISTORY_TURN_WITHHELD_TEXT,
                 "answer_withheld": True,
                 "withheld_reason": reason,
@@ -4536,6 +4683,19 @@ async def get_session(session_id: str, request: FastAPIRequest):
         msgs, withheld = _history_scope_face(
             _get_session_messages(session_id), principal, session_id
         )
+        if msgs and not withheld:
+            from app.agents.orchestrator import multi_agent_graph, _owner_id_from
+            saved = multi_agent_graph.get_state({'configurable': {'thread_id': session_id}}).values or {}
+            task = saved.get('task_context') or saved.get('data_context') or {}
+            if task and _owner_id_from({'principal': saved.get('principal')}) == principal.user_id:
+                scope = resolve_document_retrieval_scope(principal)
+                references = task.get('requested_documents') or []
+                if all(scope.allows(latest_document_version(item['filename']) or {}) for item in references):
+                    msgs[-1] = {**msgs[-1], 'task_selection': {
+                        'dataFilename': task['filename'],
+                        'documentFilenames': [item['filename'] for item in references],
+                        **({'origin': {'kind': 'alert', 'id': task['alert_id'], 'versionId': task['version_id']}}
+                           if task.get('alert_id') else {})}}
         if not _session_database_available():
             return {
                 "session": _MEM_SESSIONS.get(session_id),
@@ -5369,6 +5529,12 @@ async def get_document_file(
 ):
     version, _decision = _authorize_document_request(request, filename, ACTION_DOWNLOAD)
     file_path = _document_storage_path(version)
+    # A spreadsheet also registered as a document must not bypass the data route's
+    # row scope by downloading its complete bytes through this alternate URL.
+    from app.api.v1.data import DATA_FILE_EXTENSIONS, authorize_raw_table_download
+
+    if Path(file_path).suffix.lower() in DATA_FILE_EXTENSIONS:
+        await asyncio.to_thread(authorize_raw_table_download, request, Path(file_path), filename)
 
     media_type, _ = mimetypes.guess_type(file_path)
     media_type = media_type or "application/octet-stream"
@@ -5391,7 +5557,8 @@ async def get_document_preview(
     version, _decision = _authorize_document_request(request, filename, ACTION_VIEW)
     file_path = _document_storage_path(version)
     try:
-        payload = await asyncio.to_thread(build_document_preview, file_path, filename)
+        payload = await asyncio.to_thread(build_document_preview, file_path, filename,
+            principal=_document_principal_or_error(request))
     except ValueError as exc:
         raise HTTPException(status_code=415, detail="unsupported_preview") from exc
     except Exception as exc:

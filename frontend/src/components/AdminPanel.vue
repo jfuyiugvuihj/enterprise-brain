@@ -6,7 +6,7 @@
   R360 接的就是那一笔：:98 POST /users、:113 DELETE /users/{user_id}、:123 PUT /users/password、
   :139 PUT /users/department。后端零改动——四枚的语义、状态码、请求体一个字符没动，前端也不替
   它们补能力：后端只有「删除」没有「停用」，屏上就只说删除；改密码那一枚要先验现用密码，
-  屏上就照它说这一格要知道现由密码，不造一枚假的「一键重置」。四枚各自真会回哪些码，见
+  屏上就照它说这一格要知道当前密码，不造一枚假的「一键重置」。四枚各自真会回哪些码，见
   src/lib/__tests__/r360-user-writes.test.js 那张取证表（本单对契约的唯一交代）。
 
   三条屏壳级纪律：
@@ -269,14 +269,14 @@ function confirmDelete() {
         <UiButton
           size="sm"
           :loading="busyKind === USER_WRITE_PASSWORD"
-          label="改密码"
+          label="修改密码"
           data-testid="open-password"
           @click="openDialog(USER_WRITE_PASSWORD)"
         />
         <UiButton
           size="sm"
           :loading="busyKind === USER_WRITE_DEPARTMENT"
-          label="调部门"
+          label="调整部门"
           data-testid="open-department"
           @click="openDialog(USER_WRITE_DEPARTMENT)"
         />
@@ -385,7 +385,7 @@ function confirmDelete() {
         <UiButton
           variant="primary"
           :loading="busyKind === USER_WRITE_CREATE"
-          label="提交开通"
+          label="开通账号"
           data-testid="submit-create"
           @click="submitCreate"
         />
@@ -394,8 +394,8 @@ function confirmDelete() {
 
     <UiDialog
       v-model="dlgPassword"
-      title="改写密码"
-      description="这一枚发的是 PUT /users/password。它先验一遍现由密码才写新密码，所以「不知道现由密码就能重置」这一档后端并没有给 —— 界面上也不摆那种按钮。"
+      title="修改密码"
+      description="输入此账号的当前密码，再设置新密码。"
       :busy="busyKind === USER_WRITE_PASSWORD"
     >
       <div class="panel-shell">
@@ -403,13 +403,13 @@ function confirmDelete() {
           :model-value="form[USER_FORM_FIELDS.username]"
           label="账号名"
           readonly
-          hint="这一枚账号来自名册那几行，不是手打的。"
+          hint="当前选择的账号，无法在此修改。"
           data-testid="password-username"
         />
         <UiField
           v-model="form[USER_FORM_FIELDS.oldPassword]"
           type="password"
-          label="现由密码"
+          label="当前密码"
           :hint="USER_RULE_HINTS.passwordTooShort"
           :error="fieldErrors[USER_FORM_FIELDS.oldPassword]"
           data-testid="password-old"
@@ -428,7 +428,7 @@ function confirmDelete() {
         <UiButton
           variant="primary"
           :loading="busyKind === USER_WRITE_PASSWORD"
-          label="提交改写"
+          label="保存密码"
           data-testid="submit-password"
           @click="submitPassword"
         />
@@ -438,7 +438,7 @@ function confirmDelete() {
     <UiDialog
       v-model="dlgDepartment"
       title="调整部门归属"
-      description="这一枚发的是 PUT /users/department。归属那一格每次都带上：后端把「没带这一格」读成「这轮没说」，一个字都不写；留空才是明确要清空。"
+      description="为此账号调整部门，留空表示取消部门归属。"
       :busy="busyKind === USER_WRITE_DEPARTMENT"
     >
       <div class="panel-shell">
@@ -446,14 +446,14 @@ function confirmDelete() {
           :model-value="form[USER_FORM_FIELDS.username]"
           label="账号名"
           readonly
-          hint="这一枚账号来自名册那几行，不是手打的。"
+          hint="当前选择的账号，无法在此修改。"
           data-testid="department-username"
         />
         <UiField
           v-model="form[USER_FORM_FIELDS.department]"
           label="部门归属"
           :error="fieldErrors[USER_FORM_FIELDS.department]"
-          hint="清空是把人关到门外，不是放开边界：非管理员一旦没有归属，后端会直接拒掉他自己的检索与产出物。"
+          hint="未分配部门的非管理员账号无法检索文档或访问成果。"
           data-testid="department-value"
         />
       </div>
@@ -462,7 +462,7 @@ function confirmDelete() {
         <UiButton
           variant="primary"
           :loading="busyKind === USER_WRITE_DEPARTMENT"
-          label="提交调整"
+          label="保存部门"
           data-testid="submit-department"
           @click="submitDepartment"
         />
@@ -472,7 +472,7 @@ function confirmDelete() {
     <UiDialog
       v-model="dlgDelete"
       title="删除账号"
-      description="后端没有「停用」这一档：这一枚发的是 DELETE，它删掉的就是名册里的那一行，不可逆。"
+      description="请核对账号信息。删除后无法恢复。"
       :busy="busyKind === USER_WRITE_DELETE"
       size="sm"
     >
@@ -485,7 +485,7 @@ function confirmDelete() {
           dense
         />
         <p v-else>
-          确认句：我要删除账号
+          即将删除账号
           <strong>{{ chosenRow ? chosenRow.username : '' }}</strong>
           （名册编号 {{ chosenRow ? chosenRow.id : '' }}），并接受这一步不可逆。
         </p>

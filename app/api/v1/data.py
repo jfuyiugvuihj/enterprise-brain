@@ -6,9 +6,10 @@ import mimetypes
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Annotated
 
 import pandas as pd
-from fastapi import APIRouter, UploadFile, File, HTTPException, Request, Response
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from app.common.no_store import NO_STORE_HEADERS
 from pydantic import BaseModel
@@ -34,7 +35,7 @@ from app.common.permissions import (
     ACTION_UPLOAD,
     ACTION_VIEW,
 )
-from app.common.policy import authorization_decision
+from app.common.policy import authorization_decision, _classification_level
 from app.common.rbac import filter_dataframe_rows_with_scope
 from app.documents.file_security import (
     DatasetFilenameConflictError,
@@ -322,6 +323,8 @@ async def list_data_files(request: Request = None):
                     "dataset_id": record.dataset_id,
                     "version_id": record.version_id,
                     "classification": record.classification,
+                    "classification_level": _classification_level(record.classification),
+                    "department_ids": list(record.department_ids),
                 }
             )
         files.append(item)
@@ -336,10 +339,12 @@ async def list_data_files(request: Request = None):
 
 
 @router.post("/upload-excel")
-async def upload_excel(request: Request, file: UploadFile = File(...)):
+async def upload_excel(request: Request, file: UploadFile = File(...), classification: Annotated[str, Form()] = 'internal'):
     """上传 Excel/CSV → 解析 → 返回数据画像，并把同一份表格并进知识库（R700）。"""
     filename = _safe_data_filename(file.filename)
     principal = _authorized_principal(request, ACTION_UPLOAD)
+    if not isinstance(classification, str) or _classification_level(classification) not in (1, 2, 3):
+        raise HTTPException(status_code=400, detail='invalid_classification')
     # 冲突那一格今天起由 `app/documents/file_security.py` 定夺（R700 判据②）：登记表还是本路由
     # 自己查（只有它认得自己的账），但「同名即拒、不是新版本」这条规则写在两路共读的那本字典
     # 旁边，数据集不会悄悄长出知识库的版本语义，反过来也不会。
@@ -373,7 +378,7 @@ async def upload_excel(request: Request, file: UploadFile = File(...)):
 
     try:
         df = await asyncio.to_thread(load_excel, str(file_path))
-        dataset = dataset_registry.register(file_path, principal=principal, filename=filename)
+        dataset = dataset_registry.register(file_path, principal=principal, filename=filename, classification=classification)
     except Exception as exc:
         if file_path.exists() and dataset_registry.get_active_by_filename(filename) is None:
             file_path.unlink()
@@ -469,6 +474,9 @@ async def preview_data_file(filename: str, request: Request, response: Response)
 async def get_data_file(filename: str, request: Request, inline: bool = False):
     record = _authorized_dataset(request, filename, ACTION_DOWNLOAD)
     path = Path(record.storage_path)
+    await asyncio.to_thread(
+        authorize_raw_table_download, request, path, record.dataset_id
+    )
     media_type, _ = mimetypes.guess_type(record.filename)
     return FileResponse(
         path,
@@ -477,6 +485,40 @@ async def get_data_file(filename: str, request: Request, inline: bool = False):
         content_disposition_type="inline" if inline else "attachment",
         headers=dict(NO_STORE_HEADERS),
     )
+
+
+def authorize_raw_table_download(request: Request, path: Path, resource_id: str) -> None:
+    """Raw bytes cannot apply row filtering; refuse if any sheet contains hidden rows.
+
+    The data and document routes share this check. Checking only the preview sheet
+    would expose other (including hidden) sheets when the complete workbook is sent.
+    """
+    principal = principal_from_request(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="authentication_required")
+    if principal.role == "admin":
+        return
+    _refuse_unreadable_data_file(str(path))
+    try:
+        if path.suffix.lower() == ".xlsx":
+            with pd.ExcelFile(path, engine="openpyxl") as workbook:
+                frames = [workbook.parse(sheet) for sheet in workbook.sheet_names]
+        else:
+            frames = [load_excel(str(path))]
+        for frame in frames:
+            visible, info = filter_dataframe_rows_with_scope(
+                frame, role=principal.role, department=principal.department or ""
+            )
+            if len(visible) != len(frame) or info.get("reason_code") == "authorization_unavailable":
+                record_audit(
+                    principal, ACTION_DOWNLOAD, "denied", resource_id, ROW_SCOPE_DENIED
+                )
+                raise HTTPException(status_code=403, detail=ROW_SCOPE_DENIED)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("[Data] raw download scope check failed")
+        raise HTTPException(status_code=500, detail="dataset_preview_failed") from exc
 
 
 @router.delete("/data-files/{filename}")

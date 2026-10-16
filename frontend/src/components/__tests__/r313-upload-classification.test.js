@@ -227,9 +227,11 @@ describe('R313 格一 乙 · 上传前问那一句：选择框在屏上，默认
     await settle()
     const html = await screenHtml()
     expect(html).toContain('data-testid="document-classification-select"')
-    expect(html.match(/<option value="[1-4]"/g)).toHaveLength(UPLOAD_CLASSIFICATION_LEVELS.length)
+    const uploadSelect = html.match(/<select[^>]*data-testid="document-classification-select"[^>]*>([\s\S]*?)<\/select>/)?.[1]
+    expect(uploadSelect).toBeTruthy()
+    expect(uploadSelect.match(/<option value="[1-4]"/g)).toHaveLength(UPLOAD_CLASSIFICATION_LEVELS.length)
     const text = stripTags(html)
-    expect(text).toContain('这一发的密级')
+    expect(text).toContain('仅设置下一次上传的密级')
     expect(text).toMatch(/密级 1 级（默认）/)
   })
 

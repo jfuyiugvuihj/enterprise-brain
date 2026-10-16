@@ -191,6 +191,7 @@ export function decisionView({
   errorCode = '',
   errorMessage = '',
   awaitingHitl = false,
+  ledgerStatus = null,
 } = {}) {
   const kind = approved ? 'approved' : 'rejected'
   const verb = approved ? '批准' : '驳回'
@@ -199,6 +200,23 @@ export function decisionView({
   // /approve 又停在新一步上时，legacy hitl 事件排在收尾事件之前，读取器当场就停了：
   // 所以"又挂起了"看 stopped，不能只等收尾事件里的那枚旗子。
   const parkedAgain = awaitingHitl || stopped === 'hitl'
+
+  if (!approved && ledgerStatus === 'refused') {
+    return { kind, face: 'ok', title: '已驳回，这一步不会执行',
+      description: terminal === 'failed'
+        ? '服务端已记录拒绝；后续回答收尾失败，不影响这次拒绝决定。'
+        : '服务端已记录拒绝。这一笔不再挂在待办里。', codeLabel: '' }
+  }
+  if (!approved && terminal === 'failed') {
+    return { kind, face: 'unknown', title: '回答收尾失败，拒绝结果待核实',
+      description: '后续回答失败不能证明拒绝未生效。请重新读取服务端决定后再操作。', codeLabel }
+  }
+  if (!approved && ledgerStatus !== null) {
+    return { kind, face: 'unknown', title: '拒绝决定尚未确认',
+      description: ledgerStatus === 'awaiting'
+        ? '服务端仍记录为待确认。请重新读取列表后再决定。'
+        : '服务端决定暂时无法确认，不能按已拒绝记账。请重新读取。', codeLabel }
+  }
 
   if (!ok) {
     return {
@@ -217,7 +235,7 @@ export function decisionView({
       title: verb + '没有生效',
       description: (approved
         ? '那一步并没有跑出结果：' + (reason || '本轮什么也没产出') + '。这一屏不把它记成办妥，也不算你驳回。'
-        : '驳回也没有生效：' + (reason || '本轮什么也没产出') + '。这一步既没执行、也没被确认否决，先别按办完记账。')
+        : '拒绝决定尚未核实：' + (reason || '本轮什么也没产出') + '。请重新读取。')
         // R175 之后「这一行也留在原地」成了半句真话：后端在报失败【之前】就把那一格闭成
         // failed，重新读取之后它不再作为待办回来。所以话只能这么说 —— 账面闭合是一回事，
         // 那一步真跑出了结果又是另一回事，前者永远不能拿来顶后者。
@@ -230,7 +248,7 @@ export function decisionView({
       kind,
       face: 'unknown',
       title: '这一轮回答断了，动作结果没读回来',
-      description: '中断只是脱离这次回答，既不算驳回，也不能断定那一步没跑（契约 R11 / R12）。'
+      description: '中断会请求取消本轮后续处理，既不算驳回，也不能断定动作已停止；已经完成的动作不会撤销。'
         + '请回那一轮对话确认；这一行不会自己消失，也不会被画成已批准。',
       codeLabel: '',
     }
@@ -505,6 +523,9 @@ async function loadPending({ append = false } = {}) {
       return
     }
     const mapped = items.map(mapPendingRow)
+    const retainedOutcomes = { ...outcomes.value }
+    for (const row of mapped) delete retainedOutcomes[row.sessionId]
+    outcomes.value = retainedOutcomes
     rows.value = append ? rows.value.concat(mapped) : mapped
     hasMore.value = Boolean(response.data.has_more)
     // 失败那一格不翻页：翻页游标说的是待办，而这一格说的是「最近这些轮失败了」。
@@ -540,7 +561,7 @@ async function loadPending({ append = false } = {}) {
  * 不去动 sessions 里那条会话的消息 —— 这一屏只负责把「办没办成」说清楚。
  */
 async function decide({ row, approved } = {}) {
-  if (!row || !row.sessionId || busyId.value) return null
+  if (!row || !row.sessionId || busyId.value || outcomes.value[row.sessionId]?.face === 'unknown') return null
   busyId.value = row.sessionId
   let view = null
   try {
@@ -552,6 +573,13 @@ async function decide({ row, approved } = {}) {
     const scratch = { role: 'assistant', content: '', sources: [] }
     const result = await consumeSseStream(response, scratch)
     const state = result.state || {}
+    let ledgerStatus = ''
+    if (!approved) {
+      try {
+        const decision = await http.get(`/hitl/decision/${encodeURIComponent(row.sessionId)}`)
+        ledgerStatus = decision.data?.ledger_status || ''
+      } catch (_) { /* 决定读取失败时不替服务端确认拒绝。 */ }
+    }
     view = decisionView({
       approved,
       ok: result.ok,
@@ -561,6 +589,7 @@ async function decide({ row, approved } = {}) {
       errorCode: state.errorCode || result.errorCode || '',
       errorMessage: result.ok ? '' : result.error || '',
       awaitingHitl: Boolean(state.awaitingHitl),
+      ledgerStatus,
     })
   } catch (err) {
     view = transportDecisionView(approved, err)

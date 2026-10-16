@@ -184,7 +184,7 @@ async def alert_candidates(request) -> SourceBundle:
     items: list[Notification] = []
     for row in rows:
         status = str(row.get('status') or alerts_api.ALERT_STATUS_OPEN)
-        if status in alerts_api.ALERT_TERMINAL_STATUSES:
+        if status in alerts_api.ALERT_TERMINAL_STATUSES or row.get('recovered_at'):
             # 已经关掉的那一条不是待办：告警屏里它还在（处置台账要看），收件箱不该再催一次人。
             continue
         alert_id = row.get('id')

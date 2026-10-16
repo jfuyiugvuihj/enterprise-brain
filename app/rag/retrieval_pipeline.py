@@ -43,6 +43,11 @@ model = ModelHandler()
 def requested_document_names(query: str) -> frozenset[str]:
     """Keep explicit, exclusive file requests intact through query rewriting."""
     text = str(query or "")
+    selected = re.match(r"^仅依据以下文件((?:《[^》\r\n]+》)+)回答：\n", text)
+    if selected:
+        # The UI's explicit selection is authoritative; file names mentioned in
+        # the question body cannot silently widen that selection.
+        return frozenset(re.findall(r"《([^》]+)》", selected.group(1)))
     if not re.search(r"(?:只|仅)(?:依据|根据|查(?:看|阅)?|读(?:取)?|参考|使用|看)", text):
         return frozenset()
     names = set()
@@ -56,8 +61,8 @@ def requested_document_names(query: str) -> frozenset[str]:
     return frozenset(names)
 
 
-def document_query_predicate(query: str, scope):
-    names = requested_document_names(query)
+def document_query_predicate(query: str, scope, document_names=None):
+    names = requested_document_names(query) if document_names is None else frozenset(document_names)
     return lambda hit: scope.allows(hit) and (
         not names or str(hit.get("source") or hit.get("filename") or "") in names
     )
@@ -439,6 +444,8 @@ class BM25Searcher:
                     "content": doc,
                     "source": meta.get("filename", "unknown"),
                     "chunk_index": meta.get("chunk_index", 0),
+                    "index_version_id": meta.get("index_version_id"),
+                    "content_sha256": meta.get("content_sha256"),
                     # R57 fail-closed。此行原为 meta.get("classification", 1)：build_index 在
                     # :175 用的是不带 where 的 collection.get()，全库行都进这个本地索引，于是
                     # 缺 classification 键的遗留行被凭空补成 1 级，随后 BM25Searcher.search 用
@@ -1003,6 +1010,7 @@ class RetrievalPipeline:
         top_k: int = 5,
         tier: str | None = None,
         context_pack: bool = False,
+        document_names: list[str] | None = None,
     ) -> tuple[list[dict], list[str]]:
         """Retrieve only chunks permitted for the supplied Principal.
 
@@ -1027,7 +1035,7 @@ class RetrievalPipeline:
         owner_id = str(getattr(principal, "user_id", "") or "").strip() or None
         started = perf_counter()
         found = self.search(
-            query, top_k=top_k, where=scope.filters, pred=document_query_predicate(query, scope), tier=tier,
+            query, top_k=top_k, where=scope.filters, pred=document_query_predicate(query, scope, document_names), tier=tier,
             owner_id=owner_id, context_pack=context_pack,
             # R695 判据① 的调用点：把「这一发检索属于哪一轮、属于谁」交给检索管线自己算。
             config=retrieval_turn_config(principal),

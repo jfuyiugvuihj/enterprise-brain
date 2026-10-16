@@ -4,6 +4,7 @@ LangChain Tools — 封装企业智脑全部能力，供 ReAct Agent 自主调�
 import os
 import json
 import re
+import hashlib
 from collections import OrderedDict
 from typing import Any, NamedTuple
 import inspect
@@ -296,9 +297,20 @@ def _register_artifact(path: str, artifact_type: str, config):
                             os.remove(path)
                         break
             if artifact is None:
+                task = (((config or {}).get("configurable") or {}).get("task_context")
+                        or ((config or {}).get('configurable') or {}).get('data_context') or {})
+                from app.storage.datasets import dataset_registry
+                source = dataset_registry.get_active_by_filename(task["filename"]) if task else None
                 calculation_ids = calculation_storage.ids_for_turn(
                     owner_id=principal.user_id, session_id=turn_session, request_id=turn_request
                 )
+                parents = list(((config or {}).get('configurable') or {}).get('report_source_artifact_ids') or [])
+                if artifact_type == 'report' and task.get('report_body'):
+                    previous_reports = [item for item in artifact_storage.artifact_registry.list_active(owner_id=principal.user_id, artifact_type='report')
+                        if str(item.session_id or '').split(':')[0] == str(turn_session or '').split(':')[0]
+                        and item.request_id != turn_request]
+                    if previous_reports:
+                        parents.append(previous_reports[0].artifact_id)
                 artifact = artifact_storage.register_artifact(
                     path,
                     artifact_type=artifact_type,
@@ -306,7 +318,17 @@ def _register_artifact(path: str, artifact_type: str, config):
                     session_id=turn_session,
                     request_id=turn_request,
                     calculation_run_ids=calculation_ids,
+                    source_artifact_ids=parents,
+                    source_alert_id=(((config or {}).get('configurable') or {}).get('data_context') or {}).get('alert_id'),
+                    **({"source_version_id": task.get("version_id"), "classification": source.classification,
+                        "source_documents": task.get("policy_sources", [])} if source else {}),
                 )
+                from app.common.audit import record_audit
+                record_audit(principal, ACTION_EXPORT if artifact_type == "report" else ACTION_ANALYZE,
+                    "completed", artifact.artifact_id, "artifact_registered", request_id=turn_request,
+                    resource_scope=artifact.resource_scope,
+                    after_summary={"artifact_type": artifact_type, "session_id": turn_session,
+                        "calculation_run_ids": calculation_ids, "source_version_id": artifact.source_version_id})
     except Exception as exc:
         if getattr(exc, "code", "") == "queue_execution_lost":
             if os.path.isfile(path):
@@ -340,8 +362,17 @@ def _round_chart_paths(config, principal) -> list[str]:
     from app.storage import artifacts as artifact_storage
 
     paths: list[str] = []
+    from app.common.policy import authorization_decision
+    from app.common.permissions import ACTION_VIEW
     conf = ((config or {}).get("configurable") or {})
     current_ids = set(conf.get("report_chart_ids") or []) if "report_chart_ids" in conf else None
+    body = str((conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
+    if body:
+        ordered_ids = list(dict.fromkeys(re.findall(r'!\[[^\]]*\]\(/api/v1/artifacts/([a-zA-Z0-9_-]+)/content\)', body)))
+        current_ids = set(ordered_ids)
+    else:
+        ordered_ids = []
+    paths_by_id = {}
     for record in artifact_storage.artifact_registry.list_active(artifact_type="chart"):
         if current_ids is not None and str(record.artifact_id) not in current_ids:
             continue
@@ -350,10 +381,15 @@ def _round_chart_paths(config, principal) -> list[str]:
             continue
         if owner and str(getattr(record, "owner_id", "") or "") != owner:
             continue
+        if not authorization_decision(principal, record.resource_scope, action=ACTION_VIEW,
+                require_resource_scope=True).allowed or not artifact_storage.artifact_sources_allowed(record, principal):
+            continue
         stored = str(getattr(record, "storage_path", "") or "")
         if stored:
             paths.append(stored)
-    return paths
+            paths_by_id[str(record.artifact_id)] = stored
+            conf.setdefault("report_source_artifact_ids", []).append(record.artifact_id)
+    return [paths_by_id[key] for key in ordered_ids if key in paths_by_id] if body else paths
 
 
 def _authorized_dataset_files(
@@ -398,6 +434,22 @@ def _authorized_dataset_files(
                 code=_policy_denial_code(decision.reason_code),
             )
             return [], f"暂无可访问的数据文件（error_code={decision.reason_code}）"
+        task = conf.get("task_context") or conf.get('data_context') or {}
+        if task:
+            bound_scope = (conf.get('data_context') or {}).get('scope')
+            if bound_scope and (bound_scope.get('role') != principal.role
+                    or bound_scope.get('department') != (principal.department or '')
+                    or bound_scope.get('department_ids', []) != sorted(principal.department_ids)):
+                return [], _denial_text(config, tool=_DATASET_GATE, code='permission_denied',
+                    head='当前账号授权范围与异常计算时不同，未继续沿用旧依据。请重新巡检后分析。')
+            if not task.get("version_id") or record.version_id != task["version_id"]:
+                return [], _denial_text(config, tool=_DATASET_GATE, code="validation_error",
+                    head="输入数据版本已变化，未沿用旧口径生成新结果。请重新发起核查并确认新版本。")
+            with open(record.storage_path, "rb") as source:
+                digest = hashlib.file_digest(source, "sha256").hexdigest()
+            if digest != task.get("sha256"):
+                return [], _denial_text(config, tool=_DATASET_GATE, code="validation_error",
+                    head="输入文件内容与任务绑定版本不一致，未继续计算。请重新登记并确认数据版本。")
         return [(record.filename, record.storage_path)], None
 
     records = list(dataset_storage.dataset_registry.active_records())
@@ -1489,6 +1541,12 @@ def search_docs(query: str, config: RunnableConfig) -> str:
         return _authorization_error()
 
     with start_tool_call(config, tool_name="search_docs", arguments={"query": query}) as span:
+        task = ((config or {}).get('configurable') or {}).get('task_context') or {}
+        from app.agents.task_review import requested_documents_valid
+        if not requested_documents_valid(task, principal):
+            record_tool_status(bag_from_config(config), tool='search_docs', status='rejected', error_code='validation_error')
+            span.finish('rejected', error_code='validation_error')
+            return '指定制度版本已变化或当前无权访问，未继续沿用旧依据。请新建任务并重新选择制度版本。'
         from app.rag.retrieval_pipeline import requested_document_names
         original_question = str(((config or {}).get("configurable") or {}).get("data_question") or "")
         if requested_document_names(original_question):
@@ -1498,6 +1556,10 @@ def search_docs(query: str, config: RunnableConfig) -> str:
             retrieval_kwargs = {
                 "top_k": 5,
             }
+            selected_names = ([item['filename'] for item in task.get('requested_documents') or []]
+                or ((config or {}).get('configurable') or {}).get('document_filenames'))
+            if selected_names:
+                retrieval_kwargs['document_names'] = selected_names
             if _retrieval_supports_context_pack(pipeline):
                 # R112：这条腿的结果直接拼进 prompt，所以最终 top-k 先按 room 裁一刀。
                 retrieval_kwargs["context_pack"] = True
@@ -1516,11 +1578,28 @@ def search_docs(query: str, config: RunnableConfig) -> str:
         from app.rag.retrieval_pipeline import DOC_HIT_CONTENT_CHARS, format_relevance
 
         result_parts = []
+        catalog_versions = {}
+        try:
+            from app.documents.catalog import current_documents
+            catalog_versions = {str(row.get("filename")): str(row.get("version") or "")
+                                for row in current_documents()}
+        except Exception:
+            catalog_versions = {}
         for i, d in enumerate(docs, 1):
             source = d.get("source", "unknown")
             score = format_relevance(d)
             content = d["content"][:DOC_HIT_CONTENT_CHARS]
-            result_parts.append(f"[{i}] 来源:{source} 相关度:{score}\n{content}")
+            from app.rag.indexing import read_index_metadata, default_metadata_path
+            if d.get("index_version_id"):
+                versions, _ = read_index_metadata(default_metadata_path())
+                indexed = next((v for v in versions if v.index_version_id == d["index_version_id"]), None)
+                if indexed is not None:
+                    d["document_version_id"] = indexed.source_version_id.rsplit("|v", 1)[-1]
+            version = (d.get("document_version_id") or d.get("version_id") or d.get("version")
+                       or catalog_versions.get(str(source)) or "未记录")
+            if version != "未记录" and not d.get("document_version_id"):
+                d["document_version_id"] = version
+            result_parts.append(f"[{i}] 来源:{source} 版本:{version} 片段:{d.get('chunk_index', '未记录')} 相关度:{score}\n{content}")
 
         # R112：装箱之后才是发给模型的返回串。装不下丢名次最低的整条；整批都装不下才开救援
         # （``keep_first_truncated``）：按名次往下找第一条交得出去的料，整条装得下交整条、装不下
@@ -1749,7 +1828,8 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 parts.append(f"本次只读取工作表「{df.attrs['sheet_name']}」；工作簿全部工作表：{'、'.join(df.attrs['sheet_names'])}。")
 
             # 根据 query 计算具体答案
-            numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
+            from app.insights.alert_evidence import additive_metric
+            numeric_cols = [column for column in df.select_dtypes(include=['number']).columns if additive_metric(column)]
             # R185：文本列名单走 excel 那一族语义谓词的唯一出口，不再自己比 dtype 字面串。
             # 旧写法只靠 pandas 3 那条声明要移除的兼容通道才勉强捞到 str 列，string/category 两族当场漏。
             text_cols = select_text_columns(df)
@@ -1810,6 +1890,10 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 pass
         except _CalculationPersistenceError as exc:
             return _denial_text(config, tool="analyze_data", code="internal_error", head=str(exc))
+        except ValueError as exc:
+            _fail_calculation(calculation_id, "validation_error")
+            return _denial_text(config, tool="analyze_data", code="validation_error",
+                head=f"数据范围无法读取：{exc}。请核对工作表或筛选条件。")
         except Exception as e:
             _fail_calculation(calculation_id, "internal_error")
             parts.append(f"📁 {fname}: 读取失败 - {e}")
@@ -2531,13 +2615,15 @@ def _export_terminal_error_code(text: object) -> str:
 def _report_data_facts(filename: str, df, question: str, *, version_id: str = "", sha256: str = "") -> dict:
     """Compute report claims directly from the authorized, filtered frame."""
     import pandas as pd
-    numeric = list(df.select_dtypes(include=["number"]).columns)
+    from app.insights.alert_evidence import additive_metric
+    numeric = [column for column in df.select_dtypes(include=['number']).columns if additive_metric(column)]
     named = [column for column in numeric if str(column) in question]
     chosen = named or numeric
     dimension = _named_dimension_column(question, [str(c) for c in df.columns])
     facts = {"filename": filename, "version_id": version_id, "sha256": sha256,
         "rows": len(df), "sheet": df.attrs.get("sheet_name", ""),
-        "filter": df.attrs.get("filter_note", ""), "period": "未提供日期字段", "metrics": [],
+        "filter": df.attrs.get("filter_note", ""), "period": "未提供日期字段", "observed_period": "未提供日期字段", "metrics": [],
+        'non_additive_columns': [str(c) for c in df.select_dtypes(include=['number']).columns if not additive_metric(c)],
         "record_columns": [str(c) for c in df.columns[:8]],
         "records": [[str(value) if pd.notna(value) else "未标注" for value in row]
                     for row in df.iloc[:100, :8].itertuples(index=False, name=None)]}
@@ -2545,7 +2631,10 @@ def _report_data_facts(filename: str, df, question: str, *, version_id: str = ""
     if dates and not df.empty:
         parsed = pd.to_datetime(df[dates[0]], errors="coerce").dropna()
         if not parsed.empty:
-            facts["period"] = f"{parsed.min():%Y-%m-%d} 至 {parsed.max():%Y-%m-%d}（{dates[0]}）"
+            facts["observed_period"] = f"{parsed.min():%Y-%m-%d} 至 {parsed.max():%Y-%m-%d}（{dates[0]}）"
+            facts["period"] = facts["observed_period"]
+    if df.attrs.get("requested_period"):
+        facts["period"] = df.attrs["requested_period"]
     for column in chosen:
         values = df[column].dropna()
         unit = re.search(r"[（(]([^）)]+)[）)]", str(column))
@@ -2565,6 +2654,8 @@ def _verified_data_answer(facts: list[dict]) -> str:
     parts = []
     for source in facts:
         parts.append(f"当前授权范围内纳入 **{source['rows']} 条记录**。")
+        if source.get('non_additive_columns'):
+            parts.append('未直接求和的字段：' + '、'.join(source['non_additive_columns']) + '；编号、比例及单价等需要各自的计算口径。')
         for metric in source["metrics"]:
             parts.append(f"**{metric['column']}合计：{metric['sum']:,.2f}（{metric['unit']}）**；"
                 + (f"非空记录均值：{metric['mean']:,.2f}。" if metric["mean"] is not None else "没有可计算的非空记录。"))
@@ -2575,10 +2666,66 @@ def _verified_data_answer(facts: list[dict]) -> str:
                     parts.append("仅一个可见分组，不能用于跨部门比较。")
             if metric["missing"]:
                 parts.append(f"{metric['missing']} 条记录缺失该指标，未按零值填充。")
+        if source.get("records"):
+            def cell(value):
+                return str(value).replace("|", "\\|").replace("\n", " ")
+            headers = source["record_columns"]
+            parts.append("纳入计算的明细：\n\n| " + " | ".join(map(cell, headers)) + " |\n| "
+                + " | ".join(["---"] * len(headers)) + " |\n"
+                + "\n".join("| " + " | ".join(map(cell, row)) + " |" for row in source["records"])
+                + f"\n\n展示 {len(source['records'])} / {source['rows']} 条纳入记录；合计仅由上述筛选范围产生。")
         parts.append(f"筛选：{source['filter'] or '未指定分类筛选'}\n\n"
                      f"期间：{source['period']}\n\n来源：{source['filename']}；"
                      f"工作表：{source['sheet'] or '单表'}；版本：{source['version_id'] or '未登记'}。")
     return "\n\n".join(parts)
+
+
+def _analysis_body_sections(body: str) -> list[dict]:
+    """Keep the settled server answer, rendering its Markdown tables as real tables."""
+    sections, paragraph = [], []
+    body = re.sub(r'(!\[[^\]]*\]\(/api/v1/artifacts/[a-zA-Z0-9_-]+/content\))', r'\n\n\1\n\n', body)
+    lines = body.splitlines()
+
+    def flush():
+        if paragraph:
+            sections.append({'type': 'text', 'content': '\n'.join(paragraph)})
+            paragraph.clear()
+
+    def cells(line):
+        return [cell.strip() for cell in line.strip().strip('|').split('|')]
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        heading = re.match(r'^#{1,6}\s+(.+)', line)
+        chart = re.fullmatch(r'\s*!\[([^\]]*)\]\(/api/v1/artifacts/([a-zA-Z0-9_-]+)/content\)\s*', line)
+        if chart:
+            flush()
+            sections.append({'type': 'chart_slot', 'content': chart.group(1) or '本次分析图表', 'artifact_id': chart.group(2)})
+        elif heading:
+            flush()
+            sections.append({'type': 'heading', 'content': heading.group(1)})
+        elif (line.strip().startswith('|') and index + 1 < len(lines)
+              and all(re.fullmatch(r':?-{3,}:?', cell.replace(' ', ''))
+                      for cell in cells(lines[index + 1]))):
+            flush()
+            headers, rows = cells(line), []
+            index += 2
+            while index < len(lines) and lines[index].strip().startswith('|'):
+                row = cells(lines[index])
+                if len(row) != len(headers):
+                    break
+                rows.append(row)
+                index += 1
+            sections.append({'type': 'table', 'headers': headers, 'rows': rows, 'align': 'LEFT'})
+            continue
+        elif not line.strip():
+            flush()
+        else:
+            paragraph.append(line.lstrip('> '))
+        index += 1
+    flush()
+    return sections
 
 
 def _verified_report_sections(facts: list[dict], analysis: str) -> list[dict]:
@@ -2586,6 +2733,7 @@ def _verified_report_sections(facts: list[dict], analysis: str) -> list[dict]:
     sections = []
     for source in facts:
         group_tables = []
+        filter_text = re.sub(r"\s+", " ", source["filter"]).strip() or "未指定分类筛选"
         first = next(iter(source["metrics"]), {})
         sections.append({"type": "summary", "period": source["period"], "cards": [
             {"label": "纳入金额合计" if "金额" in first.get("column", "") else "纳入指标合计",
@@ -2607,11 +2755,11 @@ def _verified_report_sections(facts: list[dict], analysis: str) -> list[dict]:
             if groups:
                 top, value = groups[0]
                 if len(groups) > 1 and metric["sum"] > 0 and not metric["negative"]:
-                    text += f"\n{top}金额最高，占当前筛选合计的 {value / metric['sum']:.2%}。"
+                    text += f"\n{top}指标值最高，占当前筛选合计的 {value / metric['sum']:.2%}。"
                 elif metric["negative"]:
                     text += "\n包含负值，净额占比可能误导，不作正向费用占比判断。"
                 if len(groups) == 1:
-                    text += "\n只有一个分组，本图仅展示该分组金额，不能用于部门之间的比较。"
+                    text += "\n只有一个可见分组，不能用于部门之间的比较。"
                 elif len(groups) >= 2 and metric["sum"] > 0 and not metric["negative"]:
                     combined = sum(value for _, value in groups[:2])
                     text += f"\n前两位合计 {combined:,.2f}，占比 {combined / metric['sum']:.2%}；可优先核对对应业务明细。"
@@ -2622,24 +2770,30 @@ def _verified_report_sections(facts: list[dict], analysis: str) -> list[dict]:
                      "rows": [[label, f"{value:,.2f}", f"{value / metric['sum']:.2%}" if metric['sum'] > 0 and not metric['negative'] else "不适用"]
                               for label, value in groups] + [["合计", f"{metric['sum']:,.2f}", "100.00%" if metric['sum'] > 0 and not metric['negative'] else "不适用"]]},
                 ])
-        sections.extend([{"type": "heading", "content": "02 分组构成 · 图表解读"}, {"type": "chart_slot"}])
+        sections.extend([
+            {"type": "heading", "content": "02 分组构成 · 图表解读"},
+            {"type": "chart_slot", "content": "本轮未生成图表：筛选后没有记录，不构造分组或趋势图。" if not source["rows"] else
+             "本轮未生成图表：当前报告以授权范围内的分组表格为依据；如需可视化，请在同一数据版本和筛选口径下明确请求图表。"},
+        ])
         sections.extend([
             {"type": "page_break"},
-            {"type": "heading", "content": "03 费用汇总明细", "level": 3},
-            *group_tables,
+            {"type": "heading", "content": "03 指标汇总明细", "level": 3},
+            *(group_tables or [{"type": "text", "font_size": 10, "line_height": 5.3,
+                "content": "筛选后没有符合条件的记录，没有可列示的分组明细。" if not source["rows"] else "当前数据没有可汇总的分组字段。"}]),
             {"type": "heading", "content": "下一步行动 · 建议与限制", "level": 3},
             {"type": "table", "headers": ["事项", "建议动作", "完成依据"],
              "col_widths": [24, 94, 60], "align": "LEFT", "rows": [
-                ["费用复核", "核对金额较高分组的原始申请与业务用途", "明细与申请单一致"],
+                ["范围复核", "核对期间、筛选条件和授权数据是否完整", "确认0条为本次查询的真实结果"] if not source["rows"] else
+                ["指标复核", "核对指标较高分组的原始记录与业务范围", "明细与来源记录一致"],
                 ["单位口径", "由材料提供者确认数值单位", "来源表明确标注单位"],
-                ["预算与对比", "补充预算和可比上期后再做差异分析", "同一范围、单位和时间口径"]]},
-            {"type": "text", "font_size": 10, "line_height": 5.3, "content": "当前材料未提供预算、上期和业务量基准，不能判断增长、超支或费用原因。"
+                ["预算与对比", "明确预算与可比上期口径后进行差异计算", "同一范围、单位和时间口径"]]},
+            {"type": "text", "font_size": 10, "line_height": 5.3, "content": "本轮只计算当前筛选范围，未进行可比上期、预算和业务量的差异计算，不能据此判断增长、超支或确定原因。"
                 "建议先完成数据复核；未标注单位的字段不能直接视为人民币。"},
             {"type": "heading", "content": "04 编制口径与数据来源", "level": 3},
             {"type": "text", "font_size": 10, "line_height": 5.3, "content": f"数据来源：{source['filename']}；版本：{source['version_id'] or '未登记'}\n"
                 f"工作表：{source['sheet'] or '单表'}；当前授权范围内筛选后 {source['rows']} 行。\n"
-                f"日期范围：{source['period']}\n筛选口径：{source['filter'] or '未指定分类筛选'}\n"
-                "合计按筛选后非空数值求和，均值按非空记录计算；占比为分组金额除以当前筛选合计。"},
+                f"日期范围：{source['period']}\n筛选口径：{filter_text}\n"
+                "合计按筛选后非空数值求和，均值按非空记录计算；占比为分组指标除以当前筛选合计。"},
         ])
         if source.get("sha256"):
             sections.append({"type": "text", "font_size": 10, "line_height": 5.3, "content": f"来源文件 SHA-256：{source['sha256']}"})
@@ -2671,6 +2825,16 @@ def _verified_data_sections(filename: str, analysis: str) -> list[dict]:
         {"type": "text", "content": f"数据来源：{filename}"},
         {"type": "text", "content": "\n".join(lines)},
     ]
+
+
+def _policy_review_sections(review: str, filename: str) -> list[dict]:
+    sections = [{"type": "heading", "content": "制度核查与待补材料"}]
+    sections.extend({"type": "text", "font_size": 10, "line_height": 5.3, "content": line.lstrip("> ")}
+                    for line in review.split("\n\n") if not line.startswith("###"))
+    sections.append({"type": "text", "font_size": 10, "line_height": 5.3,
+        "content": "本次使用合成验收材料，仅验证平台能力，不代表真人业务验收。"
+        if "合成验收" in filename else "本简报用于辅助核查；真实材料与业务决定仍需责任人核实。"})
+    return sections
 
 
 def _export_report(report_title: str, sections_json: str,
@@ -2707,6 +2871,11 @@ def _export_report(report_title: str, sections_json: str,
             return _denial_text(config, tool="export_report", code="validation_error", head=_EXPORT_BAD_SECTIONS_HEAD)
         conf = (config or {}).get("configurable", {}) or {}
         filename = str(conf.get("data_filename") or "").strip()
+        original_body = str((conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
+        from app.agents.task_review import requested_documents_valid
+        if not requested_documents_valid(conf.get('task_context') or {}, principal):
+            return _denial_text(config, tool='export_report', code='validation_error',
+                head='指定制度版本已变化或当前无权访问，未生成报告。请新建任务并重新选择制度版本。')
         if filename:
             # Re-read the selected table through the authorized data tool. This survives
             # HITL resumption without trusting another worker's model-written prose.
@@ -2719,10 +2888,27 @@ def _export_report(report_title: str, sections_json: str,
                 return _denial_text(config, tool="export_report", code="validation_error",
                                     head="选中数据未能完成授权核验，未生成报告。")
             facts = verified_bag.get("report_facts") or []
-            sections = _verified_report_sections(facts, analysis)
+            original_body = str((conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
+            sections = (_analysis_body_sections(original_body) if original_body
+                        else _verified_report_sections(facts, analysis))
+            if conf.get("task_context"):
+                from app.agents.task_review import policy_review_text, policy_identity, _applicable_policy_documents
+                search_docs.invoke({"query": question}, config=verified_config)
+                verified_bag["documents"] = _applicable_policy_documents(verified_bag.get("documents", []), question)
+                if policy_identity(verified_bag.get("documents", []), period=question) != conf["task_context"].get("policy_sources", []):
+                    return _denial_text(config, tool="export_report", code="validation_error",
+                        head="制度依据版本已变化或当前无权访问，未生成报告。请重新发起核查并确认制度版本。")
+                review = policy_review_text(verified_bag.get("documents", []), period=question,
+                    verified_rows=sum(source["rows"] for source in facts))
+                if not original_body:
+                    sections.extend(_policy_review_sections(review, filename))
+                if bag_from_config(config) is not None:
+                    bag_from_config(config).setdefault("documents", []).extend(verified_bag.get("documents", []))
             if not sections:
                 return _denial_text(config, tool="export_report", code="validation_error",
                                     head="未取得可核验的报告正文，未生成报告。")
+            if '合成验收' in filename:
+                sections.append({'type': 'text', 'content': '本次使用合成验收材料，仅验证平台能力，不代表真人业务验收。'})
             bag = bag_from_config(config)
             if bag is not None:
                 bag.setdefault("datasets", []).extend(verified_bag["datasets"])
@@ -2731,8 +2917,12 @@ def _export_report(report_title: str, sections_json: str,
         #: 装箱由产品自己做：模型交回的 sections 里那一格图永远填不出来（它只拿到 URL，
         #: 拿不到容器路径），所以这里按台账取本轮的图，连同 include_charts 里它点名的那几枚。
         charts = _round_chart_paths(config, principal)
-        question = str(conf.get("data_question") or "")
-        if filename and re.search(r"含图|带图|图表.*报告|(?:柱状图|柱图).*(?:导出|PDF|报告)", question, re.I) and not charts:
+        referenced_charts = set(re.findall(r'!\[[^\]]*\]\(/api/v1/artifacts/([a-zA-Z0-9_-]+)/content\)', original_body))
+        if referenced_charts and len(charts) != len(referenced_charts):
+            return _denial_text(config, tool='export_report', code='validation_error',
+                head='原分析图表已失效或当前无权访问，未生成缺图报告。请重新核对分析后导出。')
+        question = str(conf.get("execution_question") or conf.get("data_question") or "")
+        if filename and not original_body and re.search(r"含图|带图|图表.*报告|(?:柱状图|柱图).*(?:导出|PDF|报告)", question, re.I) and not charts:
             return _denial_text(config, tool="export_report", code="validation_error",
                                 head="本轮要求的图表尚未成功生成，未导出缺图报告。请先完成图表生成后再导出。")
         if charts:
@@ -2740,8 +2930,14 @@ def _export_report(report_title: str, sections_json: str,
             if filename and facts:
                 caption = "当前授权与筛选范围内的分组构成；单位以坐标轴标注为准；来源与版本详见编制口径。"
             chart_sections = [{"type": "chart", "path": chart, "caption": f"图{i + 1}：{caption}"} for i, chart in enumerate(charts)]
-            slot = next((i for i, section in enumerate(sections) if section.get("type") == "chart_slot"), len(sections))
-            sections[slot:slot + (slot < len(sections))] = chart_sections
+            if referenced_charts:
+                ids = list(dict.fromkeys(re.findall(r'!\[[^\]]*\]\(/api/v1/artifacts/([a-zA-Z0-9_-]+)/content\)', original_body)))
+                by_id = dict(zip(ids, chart_sections))
+                sections = [by_id[section['artifact_id']] if section.get('type') == 'chart_slot' and section.get('artifact_id') in by_id
+                            else section for section in sections]
+            else:
+                slot = next((i for i, section in enumerate(sections) if section.get("type") == "chart_slot"), len(sections))
+                sections[slot:slot + (slot < len(sections))] = chart_sections
             charts = []
         asked = [item.strip() for item in re.split(r"[,;，；\n]", str(include_charts or "")) if item.strip()]
         logger.info("[R726ExportCharts] leg=export round_charts=%d asked=%d", len(charts), len(asked))

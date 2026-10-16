@@ -280,7 +280,7 @@ describe('R175 · 一次决定的那句话不再承诺「留在原地」', () =>
     const texts = [approved, rejected, timeout].map(view => view.title + '|' + view.description)
     expect(new Set(texts).size).toBe(3)
     for (const view of [approved, rejected, timeout]) {
-      expect(view.face).toBe('failed')
+      expect(view.face).toBe(view === rejected ? 'unknown' : 'failed')
       expect(view.title + view.description).not.toMatch(/已拒绝/)
     }
   })

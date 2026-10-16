@@ -19,6 +19,11 @@ def test_exclusive_document_request_excludes_other_sources_without_widening_perm
     assert document_query_predicate("查询公司的报销制度", scope)({**allowed, "source": "费用.csv"})
 
 
+def test_selected_document_scope_does_not_expand_when_question_mentions_another_file():
+    from app.rag.retrieval_pipeline import requested_document_names
+    assert requested_document_names('仅依据以下文件《A.pdf》《B.txt》回答：\n与《C.pdf》相比有哪些已知限制？') == frozenset({'A.pdf', 'B.txt'})
+
+
 def test_document_retrieval_filter_limits_classification_and_department_before_query():
     principal = Principal(
         user_id="u-1",

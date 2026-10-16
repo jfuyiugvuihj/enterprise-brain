@@ -49,8 +49,7 @@ export const DEEP_LINK_FACES = {
   },
   [SESSION_READ.notFound]: {
     blocking: true, tone: 'error', retry: false,
-    text: '后端给了确定回答：没有这一条会话。要留意它的口径 —— 归属对不上时后端也回同一句（见交付说明的 B 单），'
-      + '所以这一句不能排除「它属于别人」；但它是后端读回来了的答案，不等于「读不到」。',
+    text: '无法打开原分析：记录不存在，或当前账号没有访问权限。你仍可返回成果中心查看和下载文件。',
   },
   [SESSION_READ.notYours]: {
     blocking: true, tone: 'error', retry: false,
@@ -236,6 +235,8 @@ let panelRuntimeRead = null
 </script>
 
 <script setup>
+import BrandMark from './BrandMark.vue'
+import AnalysisContext from './AnalysisContext.vue'
 import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatArtifactDownload } from '../composables/useChatArtifactDownload'
@@ -253,6 +254,7 @@ import { advanceDelete, deleteButtonLabel, isPendingDelete } from './ArtifactLis
 import {
   abortStream,
   activeDataFilename,
+  referenceDocuments,
   activeId,
   beginStream,
   consumeSseStream,
@@ -277,6 +279,8 @@ import {
   sessionBodyMissing,
   scrollOffset,
   scrollTo,
+  stepOutcomeFace,
+  settleReportStepFromContent,
   sessions,
   switchSession,
   syncActive,
@@ -295,12 +299,20 @@ import {
 // R268 · G20：这一屏的按钮一律接自研原语，不再手写裸 button（原语早就在树里，缺的是接线）。
 import { UiButton, UiEmptyState, UiErrorState } from './ui'
 import { LANE_CHOICES, LANE_UNDECLARED, laneFromQuery, queryWithLane } from '../router/lane-choice.js'
+import { ANALYSIS_TEMPLATES } from '../lib/analysis-templates'
+import { documentQuestion, normalizeDocumentNames } from '../lib/document-selection'
 
 const input = ref('')
 const { busy: reportDownloading, error: reportDownloadError, onClick: downloadReport } = useChatArtifactDownload()
 const chatEl = ref(null)
-const sidebarOpen = ref(true)
+const sidebarOpen = ref(false)
+const taskOrigin = ref(null)
+const effectiveOrigin = computed(() => taskOrigin.value
+  || messages.value.findLast(message => message.taskSelection?.origin)?.taskSelection.origin
+  || messages.value.findLast(message => message.taskOrigin)?.taskOrigin || null)
+watch(activeId, () => { taskOrigin.value = null }, { flush: 'sync' })
 const cancelPhase = ref('idle')
+const deciding = ref(false)
 const streamNote = ref('')
 const noteTone = ref('info')
 
@@ -320,7 +332,7 @@ const noteTone = ref('info')
 const LANE_HEADER_EFFECTIVE = 'x-effective-lane'
 const LANE_HEADER_SOURCE = 'x-lane-source'
 const LANE_HEADER_DECLARED = 'x-declared-lane'
-const LANE_NAMES = { qa: '问答档', analysis: '分析档', report: '报告档' }
+const LANE_NAMES = { qa: '知识问答', analysis: '数据分析', report: '生成报告' }
 // 档位在界面上的承诺，与 nodes.LANE_WORKERS 那张表同一方向（只写人话，不写腿名清单）：
 // 读的是「选了会怎样」，不替后端宣布它跑了哪条腿，也不拿屏上不存在的「知识库」当对象名（R423）。
 const LANE_PROMISES = {
@@ -641,6 +653,17 @@ function chooseDataTable(value) {
   syncActive()
 }
 
+function removeReferenceDocument(filename) {
+  referenceDocuments.value = referenceDocuments.value.filter(name => name !== filename)
+  input.value = documentQuestion(input.value, referenceDocuments.value)
+  syncActive()
+}
+function clearReferenceDocuments() {
+  referenceDocuments.value = []
+  input.value = documentQuestion(input.value, [])
+  syncActive()
+}
+
 /** 选择框下面那一行说的三件事：这一轮将发哪张表 / 清单读到哪一步了 / 用不用得上由谁判。 */
 function dataTableFaceText() {
   const chosen = String(activeDataFilename.value || '')
@@ -794,15 +817,55 @@ function stripChartMarkers(content) {
 
 // ==================== 聊天 ====================
 
-function onChatAsk(e) {
+async function startNewTask() {
+  if (loading.value || hitl.value) return
+  newSession()
+  input.value = ''
+  showEarlierTurns.value = false
+  await router?.replace({ name: 'chat', query: {} })
+}
+
+async function onChatAsk(e) {
   const detail = e.detail
   const query = typeof detail === 'string' ? detail : detail?.query
   if (!query) return
-  activeDataFilename.value = typeof detail === 'string'
+  if (loading.value || hitl.value) {
+    note('请先完成当前回答或处理待确认操作，再调整资料。', 'warn')
+    return
+  }
+  if (detail?.newTask) {
+    if (loading.value || hitl.value) {
+      note('请先完成当前分析或处理待确认操作，再开始新的异常分析。', 'warn')
+      return
+    }
+    await startNewTask()
+  }
+  taskOrigin.value = detail?.origin || null
+  activeDataFilename.value = typeof detail === 'string' || detail?.documentFilenames?.length
     ? activeDataFilename.value
-    : detail?.filename || activeDataFilename.value
+    : typeof detail?.filename === 'string' ? detail.filename : activeDataFilename.value
   input.value = query
+  referenceDocuments.value = normalizeDocumentNames(detail?.documentFilenames || [detail?.documentFilename])
+  syncActive()
+  if (detail?.prepare) {
+    chooseLane(activeDataFilename.value ? 'analysis' : referenceDocuments.value.length ? 'qa' : '')
+    nextTick(() => {
+      const field = document.querySelector('[data-testid="chat-panel"] textarea')
+      field?.focus()
+      if (field) field.scrollTop = 0
+    })
+    return
+  }
   send(activeDataFilename.value)
+}
+function prepareAnalysisTemplate(template) {
+  input.value = template.query
+  chooseLane('analysis')
+  nextTick(() => {
+    focusQuestion()
+    const field = document.querySelector('[data-testid="chat-panel"] textarea')
+    if (field) field.scrollTop = 0
+  })
 }
 
 
@@ -982,15 +1045,17 @@ function streamTick() {
 }
 
 async function send(dataFilename = activeDataFilename.value) {
-  const text = input.value.trim()
-  if (!text || loading.value) return
+  const draft = input.value.trim()
+  if (!draft || loading.value) return
+  const text = selectedLane.value === 'report' || dataFilename
+    ? documentQuestion(draft, []) : documentQuestion(draft, referenceDocuments.value)
   if (hitl.value) {
     note('请先处理待确认动作，再发起新一轮提问。', 'warn')
     return
   }
   if (dataFilename) activeDataFilename.value = dataFilename
 
-  messages.value.push({ role: 'user', content: text, sources: null })
+  messages.value.push({ role: 'user', content: text, sources: null, taskOrigin: effectiveOrigin.value })
   input.value = ''
   // mid 是这一轮的脸的钥匙：排队位次与缓存改版核对都是流结束之后才异步回来的，而 store 的
   // messages 是 shallowRef，往消息对象上塞属性触发不了重渲染。派生态住在组件的 ref 表里，
@@ -999,6 +1064,7 @@ async function send(dataFilename = activeDataFilename.value) {
   // 问的是哪张表」。这是界面的发依据，不是后端的用表读数（那枚字段今天线上没有）。
   messages.value.push({
     role: 'assistant', content: '', steps: [], sources: null, mid: genId(), dataFilename: dataFilename || '',
+    documentFilenames: [...referenceDocuments.value],
   })
   repaint()
   const aiMsg = messages.value[messages.value.length - 1]
@@ -1020,6 +1086,10 @@ async function send(dataFilename = activeDataFilename.value) {
         session_id: activeId.value,
         idempotency_key: `${activeId.value}:${aiMsg.mid}`,
         data_filename: dataFilename,
+        document_filenames: [...referenceDocuments.value],
+        ...(effectiveOrigin.value?.kind === 'alert' && effectiveOrigin.value.versionId ? {
+          alert_id: Number(effectiveOrigin.value.id), alert_version_id: effectiveOrigin.value.versionId,
+        } : {}),
         // R141：这一格就是「发出去真的带着档位」。空串是合法取值（不声明），
         // 与后端 AskRequest.lane 的默认值同一含义，不是漏传。
         lane: selectedLane.value,
@@ -1077,12 +1147,16 @@ async function send(dataFilename = activeDataFilename.value) {
       note('本轮未能完成，服务已返回失败状态。', 'error')
     } else if (result.state.terminal === 'cancelled') {
       if (!aiMsg.content) aiMsg.content = '本次回答已中断。'
+      for (const step of aiMsg.steps || []) {
+        if (!['completed', 'success', 'rejected'].includes(step.status)) step.status = 'cancelled'
+      }
     } else if (result.stopped !== 'hitl' && !aiMsg.content) {
       aiMsg.content = aiMsg.queue ? '任务已提交，进度见下方提示。' : '暂未收到回答内容。'
     }
     // R415：终态帧里服务端报的那一份表，跟在流之后抄 —— 它在最后一帧才到场。
     adoptServerDataRead(turn, aiMsg, result)
     adoptTerminalReads(turn, aiMsg, result)
+    settleReportStepFromContent(aiMsg)
     await reconcileAuthoritativeBody({
       ok: result.ok,
       stopped: result.stopped,
@@ -1137,14 +1211,14 @@ async function confirmCancel() {
   }
 
   if (ok && cancelled === true) {
-    note('已脱离本次回答，界面不再接收后续内容。', 'info')
+    note('取消请求已登记，界面已停止接收后续内容；已完成的动作不会撤销。', 'info')
     const last = messages.value[messages.value.length - 1]
     if (last?.role === 'assistant' && !last.content) {
       last.content = '本次回答已中断，未产出结论。'
     }
   } else if (ok && cancelled === false) {
     // HTTP 200 只说明请求被受理，不代表真的停掉了什么。
-    note('当前没有正在生成的内容。', 'warn')
+    note('当前没有在飞的回答；取消标记已留给下一轮处理，不能据此认定待确认动作已拒绝。', 'warn')
   } else if (ok) {
     note('服务未返回中断结果，无法确认本轮回答是否已停止产出。', 'warn')
   } else if (status) {
@@ -1152,8 +1226,7 @@ async function confirmCancel() {
   }
 
   if (awaitingHitl) {
-    // 显式保留待确认卡并标注已中断。R11 裁定：停止只脱离本次回答流，
-    // 不构成对挂起动作的拒绝；拒绝必须在审批卡上显式点「拒绝这个动作」。
+    // 取消标记不等于拒绝决定，保留卡片供服务端重新核实。
     hitl.value = { ...hitl.value, interrupted: true }
     note(`${streamNote.value} 待确认动作仍保留，请明确选择执行或取消。`, 'warn')
   }
@@ -1161,11 +1234,38 @@ async function confirmCancel() {
   persist()
 }
 
+async function refreshPendingDecision() {
+  const pending = hitl.value
+  const sessionId = activeId.value
+  if (!pending) return ''
+  try {
+    const response = await http.get(`/hitl/decision/${encodeURIComponent(sessionId)}`)
+    if (activeId.value !== sessionId || hitl.value !== pending) return ''
+    const status = response.data?.ledger_status || ''
+    if (status === 'awaiting') hitl.value = { ...pending, decisionUnknown: false }
+    else if (['refused', 'resumed', 'failed', 'abandoned', 'stale', 'expired'].includes(status)) {
+      hitl.value = null
+      if (status === 'refused') {
+        const aiMsg = messages.value[messages.value.length - 1]
+        const step = aiMsg?.steps?.find(step => step.tool === 'export')
+        if (step && !['completed', 'success'].includes(step.status)) step.status = 'rejected'
+        note('服务端已记录拒绝，该动作不会执行。', 'info')
+      } else note('服务端已结束本次待确认状态，请查看对话中的实际结果。', 'info')
+    } else hitl.value = { ...pending, decisionUnknown: true }
+    syncActive()
+    persist()
+    return status
+  } catch (_) {
+    if (activeId.value !== sessionId || hitl.value !== pending) return ''
+    hitl.value = { ...pending, decisionUnknown: true }
+    note('确认决定暂时无法核实，请重新读取后再操作。', 'warn')
+    return ''
+  }
+}
+
 async function approve(approved) {
   const pending = hitl.value
-  if (!pending) return
-  // 用户已经做出选择：待确认卡显式清除，不留残影。
-  hitl.value = null
+  if (!pending || deciding.value || pending.decisionUnknown) return
   note('')
 
   const aiMsg = messages.value[messages.value.length - 1]
@@ -1175,6 +1275,7 @@ async function approve(approved) {
     return
   }
 
+  deciding.value = true
   loading.value = true
   const turn = turnKey(aiMsg, messages.value.length - 1)
   const signal = beginStream()
@@ -1204,16 +1305,36 @@ async function approve(approved) {
         : `[请求错误] ${result.error}`
       note(`确认结果未被受理（HTTP ${result.status}）。`, 'error')
     } else if (result.state.terminal === 'failed') {
-      const failure = friendlyErrorText(result.state, '待确认动作执行失败')
+      const failure = friendlyErrorText(result.state, approved ? '待确认动作执行失败' : '拒绝请求后的回答收尾失败')
       aiMsg.content = aiMsg.content ? `${aiMsg.content}\n${failure}` : failure
     } else if (result.state.terminal === 'cancelled') {
-      if (!aiMsg.content) aiMsg.content = '本次回答已中断，未回传动作结果。'
+        const notice = '本次操作已取消，未执行后续动作；已完成的动作不会撤销。'
+        aiMsg.content = /等待你确认|尚未产出回答内容/.test(aiMsg.content || '')
+          ? notice : [aiMsg.content, notice].filter(Boolean).join('\n\n')
+        for (const step of aiMsg.steps || []) {
+          if (!['completed', 'success', 'rejected'].includes(step.status)) step.status = 'cancelled'
+        }
     } else if (!aiMsg.content) {
-      aiMsg.content = approved ? '已确认，但本轮没有返回内容。' : '已拒绝该动作。'
+      aiMsg.content = approved ? '已确认，但本轮没有返回内容。' : '拒绝请求已发送，正在核实决定。'
+    }
+    if (hitl.value === pending) {
+      const status = await refreshPendingDecision()
+      if (approved && result.ok && result.state.terminal === 'completed' && !status) hitl.value = null
     }
     // R415：批准续跑的那一轮与 /ask 同一格读数（R414 两条腿各一处），同一个抄法。
     adoptServerDataRead(turn, aiMsg, result)
     adoptTerminalReads(turn, aiMsg, result)
+    settleReportStepFromContent(aiMsg)
+    if (approved && result.state.terminal === 'failed') {
+      const exportStep = Array.isArray(aiMsg.steps)
+        ? aiMsg.steps.find(step => step?.tool === 'export')
+        : null
+      if (exportStep && !['completed', 'success', 'rejected', 'cancelled'].includes(exportStep.status)) {
+        exportStep.status = 'failed'
+        exportStep.elapsed = exportStep.elapsed ?? 0
+        messages.value = [...messages.value]
+      }
+    }
     await reconcileAuthoritativeBody({
       ok: result.ok,
       stopped: result.stopped,
@@ -1226,10 +1347,12 @@ async function approve(approved) {
       aiMsg.content = `${aiMsg.content}\n[网络错误] ${err.message}`
       note('与服务器的连接中断，待确认动作状态未知。', 'error')
     }
+    if (hitl.value === pending) await refreshPendingDecision()
     syncActive()
   } finally {
     // 无论走到哪条分支都必须复位，否则界面会永远停在「处理中」。
     endStream()
+    deciding.value = false
     cancelPhase.value = 'idle'
     persist()
   }
@@ -1388,6 +1511,96 @@ function laneFaceText(read) {
  * 这条留白是有意的：「没发出处事件」与「发了、但一条没检索到」是两件事，前者多半是这一轮
  * 压根没走文档检索（数据问答、寒暄），画一张「没有检索到可用文档」的卡等于替后端撒谎。
  */
+const contextTurn = computed(() => {
+  for (let index = messages.value.length - 1; index >= 0; index -= 1) {
+    if (messages.value[index].role === 'assistant') return { msg: messages.value[index], index }
+  }
+  return null
+})
+const contextHasAnswer = computed(() => {
+  const msg = contextTurn.value?.msg
+  if (!msg?.content || msg.answer_withheld || loading.value || hitl.value) return false
+  if (/^\[(?:请求错误|网络错误|错误)\]|^(?:任务已提交，|暂未收到回答内容。|本次回答已中断。)/.test(msg.content)) return false
+  if (msg.queue && !['done', 'completed', 'succeeded'].includes(msg.queue.status)) return false
+  return !(msg.steps || []).some(step => ['failed', 'error', 'rejected', 'cancelled', 'interrupted'].includes(step.status))
+})
+const contextAnalysisTurn = computed(() => {
+  const turn = contextTurn.value
+  if (!turn) return null
+  const question = messages.value.slice(0, turn.index).findLast(msg => msg.role === 'user')
+  if (!question?.content?.startsWith('请将以下已完成的分析原文排版导出')) return turn
+  for (let index = turn.index - 1; index >= 0; index -= 1) {
+    if (messages.value[index].role === 'assistant') return { msg: messages.value[index], index }
+  }
+  return turn
+})
+const contextSourceFace = computed(() => contextAnalysisTurn.value ? sourceFaceOf(contextAnalysisTurn.value.msg, contextAnalysisTurn.value.index) : null)
+const contextSources = computed(() => contextSourceFace.value?.rows || [])
+const showEarlierTurns = ref(false)
+const latestQuestionIndex = computed(() => messages.value.findLastIndex(msg => msg.role === 'user'))
+const contextOrigin = computed(() => messages.value[latestQuestionIndex.value]?.taskOrigin || effectiveOrigin.value)
+function questionText(msg) {
+  const content = String(msg?.content || '')
+  if (content.startsWith('请将以下已完成的分析原文排版导出')) {
+    const original = content.match(/分析问题：([\s\S]*?)\n\n(?:实际使用的数据文件|数据文件)：/)
+    return original ? `生成本次报告：${original[1]}` : '将已完成的分析导出为报告'
+  }
+  return content
+}
+const taskTitle = computed(() => /费用|报销/.test(questionText(messages.value[latestQuestionIndex.value])) ? '费用分析与制度核查' : '资料分析与依据核查')
+const taskStages = computed(() => [
+  { label: contextUsedData.value || activeDataFilename.value || referenceDocuments.value.length || contextSources.value.length ? '资料已准备' : '选择资料', state: contextUsedData.value || activeDataFilename.value || referenceDocuments.value.length || contextSources.value.length ? 'done' : 'waiting' },
+  { label: loading.value ? '正在分析' : contextHasAnswer.value ? '分析已完成' : '等待分析', state: loading.value ? 'active' : contextHasAnswer.value ? 'done' : 'waiting' },
+  { label: contextSources.value.length || contextUsedData.value ? '依据可核对' : '依据待核对', state: contextSources.value.length || contextUsedData.value ? 'done' : 'waiting' },
+  { label: hitl.value ? '报告待确认' : /\/artifacts\/[\w-]+\/(?:download|content)/.test(contextTurn.value?.msg.content || '') ? '成果已生成' : '报告未生成', state: hitl.value ? 'active' : /\/artifacts\/[\w-]+\/(?:download|content)/.test(contextTurn.value?.msg.content || '') ? 'done' : 'waiting' },
+])
+const contextUsedData = computed(() => {
+  const turn = contextAnalysisTurn.value
+  if (!turn) return ''
+  const filename = readTurn(serverDataReads, turn.msg, turn.index) || turn.msg.serverDataFilename
+  return typeof filename === 'string' ? filename : ''
+})
+const contextScope = computed(() => {
+  const content = String(contextAnalysisTurn.value?.msg.content || '').replace(/\*\*/g, '')
+  const read = label => content.match(new RegExp(`^${label}[：:]\\s*([^\\n]+)`, 'm'))?.[1] || ''
+  return { period: read('期间'), filter: read('筛选'), unit: read('单位') }
+})
+const contextRecordedData = computed(() => {
+  const content = String(contextAnalysisTurn.value?.msg.content || '').replace(/\*\*/g, '')
+  return content.match(/^文件[：:]\s*[《「]([^》」\n]+)[》」]/m)?.[1] || ''
+})
+function focusQuestion() {
+  document.querySelector('[data-testid="chat-panel"] textarea')?.focus()
+}
+async function requestContextReport() {
+  if (loading.value || hitl.value || !contextHasAnswer.value) return
+  const turn = contextTurn.value
+  const question = messages.value.slice(0, turn.index).findLast(msg => msg.role === 'user')?.content || ''
+  const filename = contextUsedData.value
+  const draft = input.value
+  const lane = selectedLane.value
+  const selectedData = activeDataFilename.value
+  const selectedDocuments = [...referenceDocuments.value]
+  referenceDocuments.value = [...(turn.msg.documentFilenames || referenceDocuments.value)]
+  input.value = [
+    '请将以下已完成的分析原文排版导出为 PDF 报告。仅使用提供的分析内容，保留原有计算结果、范围、引用和限制；不要重新分析数据、查询其他文档或添加未提供的业务结论。',
+    `分析问题：${question}`,
+    filename ? `实际使用的数据文件：${filename}` : '数据文件：以分析原文记载为准；未记载的资料不要补写。',
+    '分析原文开始：', turn.msg.content, '分析原文结束。',
+  ].join('\n\n')
+  chooseLane('report')
+  try {
+    await nextTick()
+    await send(filename)
+  } finally {
+    input.value = draft
+    chooseLane(lane)
+    activeDataFilename.value = selectedData
+    referenceDocuments.value = selectedDocuments
+    syncActive()
+  }
+}
+
 function sourceFaceOf(msg, index) {
   const face = sourcesFace(readTurn(sourceReads, msg, index) || msg.sources)
   const filename = readTurn(serverDataReads, msg, index) || msg.serverDataFilename
@@ -2016,6 +2229,7 @@ function renderMdTables(html) {
 function renderMd(raw) {
   if (!raw) return ''
   let html = raw
+    .replace(/[（(]error_code=[a-zA-Z0-9_:-]+[）)]/g, '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
@@ -2041,23 +2255,34 @@ function renderMd(raw) {
 }
 </script>
 <template>
+  <section class="assistant-task">
+  <header class="assistant-task__head">
+    <div><h2>{{ taskTitle }}</h2><p>查看计算结果和资料依据，再按需要生成报告。</p></div>
+    <div class="assistant-task__tools">
+      <span class="assistant-model-status" :data-state="modelStateValue" data-testid="model-status">{{ modelStateText }}</span>
+      <UiButton variant="ghost" size="sm" data-testid="sidebar-toggle" @click="sidebarOpen = !sidebarOpen">历史任务</UiButton>
+      <UiButton variant="primary" data-testid="new-session" :disabled="loading || !!hitl" @click="startNewTask">＋ 新建任务</UiButton>
+    </div>
+  </header>
+  <ol class="assistant-task__stages" aria-label="本次任务状态">
+    <li v-for="(stage, index) in taskStages" :key="index" :data-state="stage.state"><span class="assistant-task__stage-icon" aria-hidden="true">{{ stage.state === 'done' ? '✓' : stage.state === 'active' ? '…' : index + 1 }}</span><span>{{ stage.label }}</span></li>
+  </ol>
+  <div class="assistant-workspace">
   <div class="chat-layout" data-testid="chat-panel">
     <!-- ===== 会话侧边栏 ===== -->
-    <aside :class="['session-sidebar', { collapsed: !sidebarOpen }]">
+    <aside v-if="sidebarOpen" class="session-sidebar">
       <div class="sidebar-hd">
         <span v-if="sidebarOpen" class="sidebar-title">💬 会话</span>
         <UiButton
           class="sidebar-toggle"
           variant="ghost"
           size="sm"
-          data-testid="sidebar-toggle"
           :title="sidebarOpen ? '收起' : '展开'"
           @click="sidebarOpen = !sidebarOpen"
         >{{ sidebarOpen ? '◀' : '▶' }}</UiButton>
       </div>
 
       <template v-if="sidebarOpen">
-        <UiButton class="new-session-btn" size="sm" data-testid="new-session" @click="newSession">＋ 新建会话</UiButton>
         <!-- R268 · G04：这一枚才是「换台电脑历史还在」的那条路。今天它只在被点下去的那一刻
              发 GET /sessions（面板挂载时一枚请求都不发），把名单并进来：本机有正文的一条不动，
              本机没有的那些行先只带标题 / 问数 / 时间，正文要点开才取。
@@ -2122,12 +2347,12 @@ function renderMd(raw) {
     <!-- ===== 主聊天区 ===== -->
     <div class="chat-panel">
       <!-- 顶栏 -->
-      <div class="chat-topbar">
+      <div v-if="sidebarOpen" class="chat-topbar">
         <div class="chat-topbar-left">
           <span class="chat-dot" :class="`chat-dot--${modelStateValue}`" data-testid="model-dot"></span>
           <!-- R268 · G17：屏名与路由名统一成同一句（meta.title 那一处是真源，本单不改 router）。
                改前这一屏自己写着另一个叫法，同一屏两个名字，员工读到的是两份词汇表。 -->
-          <span class="chat-title" data-testid="chat-screen-name">问一句</span>
+          <span class="chat-title" data-testid="chat-screen-name">智能助手</span>
         </div>
         <span class="model-status" :class="`model-status--${modelStateValue}`" data-testid="model-status">
           🖥️ {{ modelStateText }}
@@ -2155,7 +2380,7 @@ function renderMd(raw) {
            控件棘轮一字未动，App.vue 那一枚文件也一枚未改）。纪律照本文件 session-pull 那一族：挂载期一枚
            请求都不发，员工伸手才发；读数没回来的那一刻按不动第二枚；那行字带一枚会自己退场的
            timer，卸载时清干净。文案只说人话：路径、方法、后端码名一个字都不上屏（判据④）。 -->
-      <div class="runtime-recheck" data-testid="runtime-recheck">
+      <div v-if="modelStateValue !== 'ready' || runtimeFaceList.length" class="runtime-recheck" data-testid="runtime-recheck">
         <UiButton
           class="runtime-recheck-btn"
           size="sm"
@@ -2175,11 +2400,12 @@ function renderMd(raw) {
       </div>
 
       <div class="chat-messages" ref="chatEl" @scroll.passive="onScroll">
+        <UiButton v-if="latestQuestionIndex > 0" variant="ghost" size="sm" class="earlier-turns-toggle" @click="showEarlierTurns = !showEarlierTurns">{{ showEarlierTurns ? '收起前面的分析' : '查看前面的分析与追问' }}</UiButton>
         <!-- R174 · 深链落点先说一句，再画会话本体。落不到的那几张脸各自一句（判据①第 4 件），
              其中 blocking 那几张干脆把会话区盖住：宁可不画，也不许把另一条会话当成链接的落点。 -->
         <p v-if="deepLink && deepLink.state === 'reading'" class="deep-link-note" data-tone="info"
            data-state="reading" data-testid="deep-link-note">
-          这条链接指的是另一条会话里的某一轮，正在问后端有没有把它交给我们……
+          正在读取原分析记录，请稍候……
         </p>
         <div v-else-if="deepFace" class="deep-link-note" :data-tone="deepFace.tone"
              :role="deepFace.tone === 'error' ? 'alert' : 'status'" :data-face="deepLink.face"
@@ -2189,53 +2415,51 @@ function renderMd(raw) {
           <UiButton v-if="deepFace.retry" class="deep-link-retry" size="sm"
                     data-testid="deep-link-retry" @click="applyDeepLink()">再问一次后端</UiButton>
         </div>
-        <div v-if="messages.length === 0 && !deepBlocked" class="welcome-screen">
+        <div v-if="messages.length === 0 && !deepBlocked && !input.trim()" class="welcome-screen">
           <div class="welcome-glow"></div>
           <div class="welcome-card">
-            <div class="wc-icon">🧠</div>
-            <h1>企业智脑</h1>
-            <p class="wc-sub">您的私有 AI 知识助手</p>
-            <div class="wc-features">
-              <div class="wc-feat">
-                <span class="wc-feat-icon">📄</span>
-                <span>上传文档 · 问一句</span>
-              </div>
-              <div class="wc-feat">
-                <span class="wc-feat-icon">📊</span>
-                <span>数据分析 · 图表生成</span>
-              </div>
-              <div class="wc-feat">
-                <span class="wc-feat-icon">🔒</span>
-                <span>数据不出机器 · 安全私有</span>
-              </div>
+            <h1>开始一项分析</h1>
+            <p class="wc-sub">先准备资料，再选择问题。完成分析后可以核对依据并生成报告。</p>
+            <div class="analysis-start-links">
+              <UiButton variant="secondary" @click="router?.push({ name: 'feed', query: { tab: 'docs' } })">准备知识库资料 →</UiButton>
+              <UiButton variant="secondary" @click="router?.push({ name: 'feed', query: { tab: 'data' } })">选择经营数据 →</UiButton>
             </div>
-            <p class="wc-hint">在左侧上传文档，然后开始提问</p>
+            <p class="wc-hint">在资料中心准备文件，或选择下方模板并补充分析要求。</p>
+            <div class="analysis-template-grid" aria-label="常用分析模板">
+              <UiButton v-for="template in ANALYSIS_TEMPLATES" :key="template.id" variant="secondary"
+                :data-testid="`assistant-template-${template.id}`" @click="prepareAnalysisTemplate(template)">
+                <strong>{{ template.label }}</strong><span>{{ template.description }}</span>
+              </UiButton>
+            </div>
           </div>
         </div>
+        <section v-else-if="messages.length === 0 && !deepBlocked" class="analysis-draft-card">
+          <h3>确认本次分析要求</h3>
+          <p>资料与任务来源显示在右侧。请核对下方问题，补充期间、筛选条件或业务口径后发送。</p>
+        </section>
 
         <!-- 链接落不到可看的东西之前，这一条会话整段先不画：拿另一条补位就是「静默落到最新一轮」。 -->
         <TransitionGroup v-if="!deepBlocked" name="msg">
           <div v-for="(msg, i) in messages" :key="i"
+               v-show="showEarlierTurns || i >= latestQuestionIndex || i === deepTurn"
                :data-turn="i"
                :data-deep-target="i === deepTurn ? '1' : null"
                :class="['msg-row', msg.role, { 'is-deep-target': i === deepTurn }]">
-            <div v-if="msg.role === 'assistant'" class="msg-avatar ai">
-              {{ loading && i === messages.length - 1 && !msg.content ? '⏳' : '🤖' }}
-            </div>
-
             <div class="msg-bubble-wrap">
               <!-- 可视标记：链接点中的那一轮，一眼看得出就是这条。 -->
               <p v-if="i === deepTurn" class="deep-link-badge" role="status"
                  data-testid="deep-link-badge" :data-request="msg.requestId || null">{{ deepBadge }}</p>
               <div :class="['msg-bubble', msg.role]">
+                <h3 class="analysis-card-title">{{ msg.role === 'user' ? '你的问题' : '分析结果' }}</h3>
                 <!-- 进度卡片 -->
                 <div v-if="msg.steps && msg.steps.length" class="steps-bar">
                   <div v-for="(st, si) in msg.steps" :key="si"
                        :class="['step-card', st.status]">
-                    <span class="step-icon">{{ st.status === 'running' ? '🔄' : '✅' }}</span>
+                    <span class="step-icon" aria-hidden="true">{{ stepOutcomeFace(st).icon }}</span>
                     <span class="step-label">{{ st.label }}</span>
-                    <span v-if="st.elapsed !== null" class="step-time">{{ st.elapsed }}s</span>
-                    <span v-else class="step-time pulse">…</span>
+                    <span class="step-outcome">{{ stepOutcomeFace(st).text }}</span>
+                    <span v-if="st.elapsed != null" class="step-time">{{ st.elapsed }}s</span>
+                    <span v-else-if="st.status === 'running'" class="step-time pulse">…</span>
                   </div>
                 </div>
 
@@ -2260,7 +2484,7 @@ function renderMd(raw) {
                 </div>
                 <div v-else-if="msg.role === 'assistant'"
                      class="msg-content" @click="downloadReport($event, turnKey(msg, i))" v-html="renderMd(stripChartMarkers(msg.content))" />
-                <div v-else class="msg-content">{{ msg.content }}</div>
+                <div v-else class="msg-content">{{ questionText(msg) }}</div>
                 <p v-if="reportDownloading === turnKey(msg, i)" role="status">正在下载报告…</p>
                 <UiErrorState v-if="reportDownloadError?.turn === turnKey(msg, i)"
                               title="报告下载失败" :description="errorDetail(reportDownloadError.cause, '请检查权限或稍后重试。')"
@@ -2284,7 +2508,6 @@ function renderMd(raw) {
                     @preview="openSourcePreview"
                   />
                   <!-- 「实时算」也是必须说出口的一态（不是留白），但它只对当场看到的轮次说。 -->
-                  <CacheFace v-if="cacheFaceOf(msg, i)" :face="cacheFaceOf(msg, i)" :key="`cache-${turnKey(msg, i)}`" />
                   <QueueFace
                     v-if="queueFaceOf(msg, i)"
                     :face="queueFaceOf(msg, i)"
@@ -2293,6 +2516,9 @@ function renderMd(raw) {
                     @action="openApprovalTurn"
                     @cancel="cancelQueuedTurn(msg, i)"
                   />
+                  <details class="processing-details">
+                    <summary>处理详情与资料记录</summary>
+                  <CacheFace v-if="cacheFaceOf(msg, i)" :face="cacheFaceOf(msg, i)" :key="`cache-${turnKey(msg, i)}`" />
                   <!-- R268 · G03：这一轮发出去时带的是哪张表。与档位那句同一形状：读的是【发出
                        去的那一份】（发依据）；服务端真正用了哪张表由下面那一格报，两句各说各的事。 -->
                   <p v-if="dataTableOf(msg)" class="lane-readout" role="status"
@@ -2306,8 +2532,6 @@ function renderMd(raw) {
                        后端给了才画；给了空值就明说空值；这一格没来就整条不出现（与上面那一格、与同屏
                        lane-readout 同一口径）。四枚都不拿本地现成的数回填：会话号有 activeId、答案长度
                        数得出 msg.content.length、耗时自己能掐表，那些都不是后端报回来的读数。 -->
-                  <details class="processing-details">
-                    <summary>处理详情</summary>
                   <p v-if="terminalSessionFace(msg, i)" class="lane-readout" role="status" data-testid="terminal-session-readout">{{ terminalSessionFace(msg, i) }}</p>
                   <p v-if="terminalWorkerFace(msg, i)" class="lane-readout" role="status" data-testid="terminal-worker-readout">{{ terminalWorkerFace(msg, i) }}</p>
                   <p v-if="terminalElapsedFace(msg, i)" class="lane-readout" role="status" data-testid="terminal-elapsed-readout">{{ terminalElapsedFace(msg, i) }}</p>
@@ -2332,31 +2556,39 @@ function renderMd(raw) {
               <div :class="['hitl-card', { interrupted: hitl.interrupted }]">
                 <div class="hitl-icon">⏸️</div>
                 <div class="hitl-text">
-                  <b>{{ hitl.interrupted ? '已中断，仍待确认' : '需要确认' }}</b>
-                  <span v-if="hitl.interrupted" class="hitl-note">中断只停止了回答的显示，没有拒绝这个动作，请明确选择执行或拒绝。</span>
+                  <b>{{ hitl.interrupted ? '已中断，仍待操作确认' : '需要确认（操作确认）' }}</b>
+                  <span v-if="hitl.interrupted" class="hitl-note">已停止接收回答并请求取消后续处理；这不等于拒绝，也不会撤销已完成动作。</span>
+                  <span v-if="hitl.decisionUnknown" class="hitl-note">决定结果未知，请先重新读取，避免重复操作。</span>
                   <span v-for="(lbl, li) in hitl.labels" :key="li">{{ lbl }}</span>
                 </div>
                 <div class="hitl-actions">
-                  <UiButton class="hitl-btn approve" variant="primary" data-testid="hitl-approve-chat" @click="approve(true)">✅ 确认执行</UiButton>
-                  <UiButton class="hitl-btn cancel" variant="danger" data-testid="hitl-reject" @click="approve(false)">✕ 拒绝这个动作</UiButton>
+                  <UiButton class="hitl-btn approve" variant="primary" :disabled="deciding || hitl.decisionUnknown" data-testid="hitl-approve-chat" @click="approve(true)">✅ 确认执行</UiButton>
+                  <UiButton class="hitl-btn cancel" variant="danger" :disabled="deciding || hitl.decisionUnknown" data-testid="hitl-reject" @click="approve(false)">✕ 拒绝这个动作</UiButton>
+                  <UiButton v-if="hitl.decisionUnknown" variant="ghost" :disabled="deciding" @click="refreshPendingDecision">重新读取决定</UiButton>
                 </div>
               </div>
             </div>
 
-            <div v-if="msg.role === 'user'" class="msg-avatar user">👤</div>
           </div>
         </TransitionGroup>
+        <footer v-if="contextHasAnswer" class="analysis-result-actions">
+          <p>报告将保留本次分析内容、计算结果与引用依据。</p>
+          <UiButton variant="secondary" size="sm" @click="focusQuestion">继续追问</UiButton>
+          <UiButton variant="primary" size="sm" data-testid="context-generate-report" @click="requestContextReport">生成本次报告</UiButton>
+        </footer>
       </div>
 
       <!-- 输入区 -->
       <div class="chat-input-bar">
+        <details class="analysis-input-settings" :open="!messages.length">
+          <summary>任务设置 <span>{{ activeDataFilename || '未指定经营数据' }}</span></summary>
         <!-- R141 · 档位选择器。三件事在这一屏上闭环，缺一件就不许上屏：
              ① 选中项写进地址（?lane=），刷新与转发都留得住；
              ② 发出去真的带这一格（send 的 body 里那一行 lane）；
              ③ 每一轮画回**档位读数**（下面气泡里的 lane-readout），读不到就不画。
              用原生 <select> 而不是自造下拉：键盘/读屏/输入法行为不用重新发明，也不新增色值。 -->
         <div class="lane-bar" data-testid="chat-lane-picker">
-          <label class="lane-label" for="chat-lane-select">本轮档位</label>
+          <label class="lane-label" for="chat-lane-select">任务方式</label>
           <select id="chat-lane-select" class="lane-picker" :value="selectedLane"
                   @change="chooseLane($event.target.value)">
             <option v-for="choice in LANE_CHOICES" :key="choice.value" :value="choice.value">
@@ -2369,7 +2601,7 @@ function renderMd(raw) {
              带哪张表」，气泡里那句说的是「那一轮发出去带了哪张表」，两格各管一头，都不冒充
              后端的用表读数。清单是 lazy 的：伸手（focus / 改选 / 点重读）才发那一枪。 -->
         <div class="lane-bar" data-testid="chat-data-table-picker">
-          <label class="lane-label" for="chat-data-table-select">本轮数据表</label>
+          <label class="lane-label" for="chat-data-table-select">使用的经营数据</label>
           <select
             id="chat-data-table-select"
             class="lane-picker"
@@ -2393,6 +2625,7 @@ function renderMd(raw) {
         </div>
         <!-- 失败提示原先只是换行色的 <p role="status">：读屏不会打断，等于把错误当通知。
              这些句子都是一次性结果，不是一条能重试的面板加载，所以 retryable=false。 -->
+        </details>
         <UiErrorState v-if="streamNote && noteTone === 'error'" :title="streamNote" :retryable="false" dense />
         <p v-else-if="streamNote" :class="['stream-note', noteTone]" role="status" data-testid="chat-note">{{ streamNote }}</p>
         <div class="input-wrapper">
@@ -2402,10 +2635,10 @@ function renderMd(raw) {
             placeholder="输入您的问题… (Enter 发送, Shift+Enter 换行)"
             @keydown="handleKeydown"
             :disabled="loading || !!hitl"
-            rows="1"
+            :rows="input.length > 100 || input.includes('\n') ? 6 : 1"
           />
           <div v-if="cancelPhase === 'confirm'" class="cancel-confirm" data-testid="chat-cancel-confirm">
-            <span class="cancel-confirm-text">中断只是不再接收本轮回答，不会撤销任何动作：待确认的动作仍挂在卡片上，已经批准的动作后端仍会继续执行完。</span>
+            <span class="cancel-confirm-text">中断会停止接收回答，并请求取消后续处理。已完成的动作不会撤销；待确认动作没有因此被拒绝，取消标记可能影响下一轮续跑。</span>
             <UiButton class="send-pill danger" variant="danger" data-testid="chat-cancel-confirm-yes" @click="confirmCancel">确认中断</UiButton>
             <UiButton class="send-pill ghost" variant="ghost" data-testid="chat-cancel-confirm-no" @click="cancelPhase = 'idle'">返回</UiButton>
           </div>
@@ -2453,6 +2686,16 @@ function renderMd(raw) {
       @download="downloadSourcedFile"
     />
   </div>
+  <AnalysisContext :selected-data="activeDataFilename" :reference-documents="referenceDocuments"
+    @remove-reference="removeReferenceDocument" @clear-references="clearReferenceDocuments"
+    :origin="contextOrigin"
+    :used-data="contextUsedData" :recorded-data="contextRecordedData" :sources="contextSources" :source-face="contextSourceFace" :scope="contextScope" :loading="loading" :has-answer="contextHasAnswer"
+    @preview="openSourcePreview" @goto="router?.push(typeof $event === 'string' ? { name: $event } : $event)"
+    @focus="focusQuestion"
+    @report="requestContextReport"
+  />
+  </div>
+  </section>
 </template>
 
 <style scoped>
@@ -2826,10 +3069,13 @@ function renderMd(raw) {
   box-shadow: 0 0 0 2px rgba(64,158,255,0.12);
   animation: stepPulse 2s ease-in-out infinite;
 }
-.step-card.done {
+.step-card.completed, .step-card.success {
   border-color: #b3e19d;
   background: rgba(103,194,58,0.04);
 }
+.step-card.failed { border-color: var(--danger); }
+.step-card.cancelled, .step-card.rejected, .step-card.refused { border-color: var(--muted); }
+.step-outcome { color: var(--ink-soft); }
 @keyframes stepPulse {
   0%, 100% { box-shadow: 0 0 0 2px rgba(64,158,255,0.12); }
   50% { box-shadow: 0 0 0 4px rgba(64,158,255,0.06); }

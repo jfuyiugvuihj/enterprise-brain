@@ -140,6 +140,7 @@ class CalculationStorage:
         ).allowed
 
     def with_artifacts(self, record: dict, principal: Principal, *, candidates=None) -> dict:
+        from app.storage.artifacts import artifact_sources_allowed
         candidates = (artifact_registry.list_active(owner_id=record["owner_id"])
                       if candidates is None else candidates)
         session_id = _base_session(record["parameters"].get("session_id"))
@@ -153,7 +154,7 @@ class CalculationStorage:
                     or _base_session(artifact.session_id) != session_id):
                 continue
             if authorization_decision(principal, artifact.resource_scope, action=ACTION_VIEW,
-                                      require_resource_scope=True).allowed:
+                                      require_resource_scope=True).allowed and artifact_sources_allowed(artifact, principal):
                 artifacts.append({"artifact_id": artifact.artifact_id, "artifact_type": artifact.artifact_type,
                                   "display_name": artifact.filename, "download_url": artifact.download_url})
         return dict(record, artifacts=artifacts)
@@ -200,6 +201,14 @@ class CalculationStorage:
             "ORDER BY created_at,calculation_run_id", (owner_id, request_id, session_id),
         )
         return [row["calculation_run_id"] for row in rows]
+
+    def session_access_denied(self, principal: Principal, session_id: str) -> bool:
+        if getattr(self.persistence, "connection_factory", None) is None:
+            return False
+        rows = self._query(f"SELECT {_SELECT} FROM calculation_runs WHERE owner_id=%s "
+            "AND split_part(COALESCE(parameters->>'session_id',''),':',1)=%s AND status='completed'",
+            (principal.user_id, _base_session(session_id)))
+        return any(not self.can_view(row, principal) for row in rows)
 
 
 calculation_storage = CalculationStorage()

@@ -193,7 +193,7 @@ onMounted(submitCheck)
   <div class="panel-shell" data-testid="approval-panel" data-demo="fixtures">
     <header class="panel-head">
       <div>
-        <h3>审批与待办</h3>
+        <h3>待办事项</h3>
         <p>查看待确认操作，或按知识库中的报销标准检查费用是否超标。费用自查提供建议，不办理正式审批。</p>
         <p>待确认操作可在下方批准或驳回，也可返回对应对话。已确认但执行失败的操作会单独提示，无需重复确认。</p>
       </div>

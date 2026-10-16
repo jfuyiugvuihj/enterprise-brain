@@ -82,10 +82,10 @@ onMounted(loadRelations)
       <section class="panel-card">
         <div class="section-head"><h4>新增关系</h4></div>
         <div class="form-grid">
-          <label><span>主体</span><input v-model="form.source_entity" /></label>
+          <label><span>起点名称</span><input v-model="form.source_entity" /></label>
           <label><span>关系</span><input v-model="form.relation" /></label>
-          <label><span>客体</span><input v-model="form.target" /></label>
-          <label><span>来源</span><input v-model="form.source" /></label>
+          <label><span>关联名称</span><input v-model="form.target" /></label>
+          <label><span>来源文档</span><input v-model="form.source" /></label>
         </div>
         <div class="actions">
           <UiButton class="primary-btn" variant="primary" :loading="saving" :label="saving ? '保存中' : '保存关系'" data-testid="save-relation" @click="saveRelation" />

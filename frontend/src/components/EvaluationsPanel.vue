@@ -61,20 +61,20 @@ const limits = computed(() => view.value.limits || {})
 const head = computed(() => view.value.head || {})
 
 const reportColumns = [
-  { key: 'id', label: '哪一份报告' },
-  { key: 'sourceText', label: '谁要的这份' },
-  { key: 'statusText', label: '这份文件自己' },
-  { key: 'sizeText', label: '多大' },
-  { key: 'modifiedText', label: '改动于' },
-  { key: 'categoryText', label: '分类几枚' },
+  { key: 'id', label: '报告名称' },
+  { key: 'sourceText', label: '报告来源' },
+  { key: 'statusText', label: '文件状态' },
+  { key: 'sizeText', label: '文件大小' },
+  { key: 'modifiedText', label: '更新时间' },
+  { key: 'categoryText', label: '分类数量' },
 ]
 
 const suiteColumns = [
-  { key: 'id', label: '哪一套评测集' },
-  { key: 'existsText', label: '这台机器上有吗' },
-  { key: 'caseCountText', label: '几道题' },
+  { key: 'id', label: '评测集' },
+  { key: 'existsText', label: '文件状态' },
+  { key: 'caseCountText', label: '题目数量' },
   { key: 'categoriesText', label: '题目分类' },
-  { key: 'truncatedText', label: '这一发读全了吗' },
+  { key: 'truncatedText', label: '是否完整' },
 ]
 
 async function loadIntoView() {
@@ -92,16 +92,16 @@ onUnmounted(() => { evaluationsToken += 1 })
 
 function textOrUnrecorded(value) {
   const raw = typeof value === 'string' ? value.trim() : ''
-  return raw || '未记录'
+  return ({ no_reports: '暂无报告', ready: '已加载', 'An evaluation executes the full retrieval and model stack over every case, so it cannot run inside a read-only management request.': '评测会运行检索和模型，需要在服务器上执行。本页面仅查看已保存的结果。' })[raw] || raw || '未记录'
 }
 
 function memberText(list) {
-  return Array.isArray(list) && list.length ? list.join('、') : '没交出分类'
+  return Array.isArray(list) && list.length ? list.join('、') : '未记录分类'
 }
 
 /** 指标那一栏：键名就是后端那一格自己的名字，这里不翻译、不重排、不四舍五入成另一位数。 */
 function metricText(metrics) {
-  if (!Array.isArray(metrics) || !metrics.length) return '这份文件没交出任何指标'
+  if (!Array.isArray(metrics) || !metrics.length) return '该报告未包含指标'
   return metrics.map(item => item.key + ' = ' + (item.isList ? item.listText : item.valueText)).join('；')
 }
 </script>
@@ -181,7 +181,7 @@ function metricText(metrics) {
 
       <section class="panel-card" data-testid="evaluations-reports">
         <div class="section-head">
-          <span class="eyebrow">存着的报告</span>
+          <span class="eyebrow">已保存报告</span>
           <span class="demo-note">每行对应一份报告；读取失败时会显示原因。</span>
         </div>
         <!-- 空报告走这一屏自己的空态脸（判据 B 的②）：它说的是「一份都没有」，不是零分。 -->

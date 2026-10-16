@@ -17,9 +17,9 @@ export const LANE_UNDECLARED = ''
 /** 选择框的脸：value 是发给后端的字节，label 是说给人看的。 */
 export const LANE_CHOICES = [
   { value: LANE_UNDECLARED, label: '系统判断' },
-  { value: 'qa', label: '问答档' },
-  { value: 'analysis', label: '分析档' },
-  { value: 'report', label: '报告档' },
+  { value: 'qa', label: '知识问答' },
+  { value: 'analysis', label: '数据分析' },
+  { value: 'report', label: '生成报告' },
 ]
 
 export const LANE_VALUES = LANE_CHOICES.map((choice) => choice.value)

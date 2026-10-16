@@ -2444,6 +2444,9 @@ def _cited_caliber_fragments(state) -> list[dict]:
                 continue
             if not isinstance(row, dict):
                 continue
+            if state.get("task_context") and str(row.get("source_name") or "").lower().endswith((".csv", ".xlsx")):
+                # Calculation evidence already carries the authorized filtered rows.
+                continue
             if str(row.get("provenance_status") or "") != "verified":
                 continue
             if row.get("permission_checked") is not True:

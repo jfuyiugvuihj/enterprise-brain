@@ -7,6 +7,7 @@ import { formatError } from './errcodes'
 // 入队失败的错误体是 {code, message} 对象（chat.py::_enqueue_ask_turn 的 503），老写法
 // `payload?.detail || detail` 会把整个对象塞进模板字面量，界面渲染成 [object Object]。
 import { normalizeError } from './errcodes'
+import { documentNamesFromQuestion, normalizeDocumentNames } from './document-selection'
 
 // 会话状态放在模块级 shallowRef，面板卸载也不会丢：切走再回来还是同一份会话。
 // 等 V3 上了 router，这份 store 直接交给路由上下文接管。
@@ -18,6 +19,7 @@ export const sessions = shallowRef([])
 export const activeId = shallowRef('')
 export const messages = shallowRef([])
 export const activeDataFilename = shallowRef('')
+export const referenceDocuments = shallowRef([])
 export const loading = shallowRef(false)
 export const hitl = shallowRef(null)
 export const scrollOffset = shallowRef(0)
@@ -68,6 +70,7 @@ export function syncActive() {
     msgCount: messages.value.filter(m => m.role === 'user').length,
     updatedAt: Date.now(),
     dataFilename: activeDataFilename.value,
+    documentFilenames: [...referenceDocuments.value],
     messages: [...messages.value],
   }
   const existing = sessions.value.find(s => s.id === activeId.value)
@@ -85,6 +88,7 @@ export function ensureSession() {
       msgCount: 0,
       updatedAt: Date.now(),
       dataFilename: activeDataFilename.value,
+      documentFilenames: [...referenceDocuments.value],
       messages: [...messages.value],
     }, ...sessions.value]
   }
@@ -102,7 +106,12 @@ export function loadSessions() {
       let msgs = []
       try {
         const mr = localStorage.getItem(MESSAGE_KEY(s.id))
-        if (mr) msgs = JSON.parse(mr) || []
+        if (mr) {
+          msgs = (JSON.parse(mr) || []).map(message => {
+            settleReportStepFromContent(message)
+            return message
+          })
+        }
       } catch (_) { msgs = [] }
       return { ...s, messages: msgs }
     })
@@ -125,8 +134,16 @@ export function localMessagesOf(id) {
 
 export function restoreActive(id) {
   const entry = sessions.value.find(s => s.id === id)
-  messages.value = entry ? [...entry.messages] : []
+  messages.value = entry
+    ? entry.messages.map(message => {
+      settleReportStepFromContent(message)
+      return message
+    })
+    : []
   activeDataFilename.value = entry?.dataFilename || ''
+  referenceDocuments.value = Array.isArray(entry?.documentFilenames)
+    ? normalizeDocumentNames(entry.documentFilenames)
+    : documentNamesFromQuestion(messages.value.findLast(message => message.role === 'user')?.content)
   scrollOffset.value = readNumber(entry?.scrollTop)
 }
 
@@ -135,6 +152,7 @@ export function newSession() {
   activeId.value = genId()
   messages.value = []
   activeDataFilename.value = ''
+  referenceDocuments.value = []
   hitl.value = null
   scrollOffset.value = 0
   ensureSession()
@@ -184,6 +202,7 @@ export function resetSessions() {
   sessions.value = []
   messages.value = []
   activeDataFilename.value = ''
+  referenceDocuments.value = []
   hitl.value = null
   scrollOffset.value = 0
   loading.value = false
@@ -450,6 +469,27 @@ function ensureSteps(msg) {
   return msg.steps
 }
 
+export function stepOutcomeFace(step) {
+  const faces = {
+    running: { icon: '🔄', text: '处理中' },
+    completed: { icon: '✅', text: '执行成功' },
+    success: { icon: '✅', text: '执行成功' },
+    failed: { icon: '⚠', text: '执行失败' },
+    rejected: { icon: '✕', text: '已拒绝，未执行' },
+    refused: { icon: '✕', text: '已拒绝，未执行' },
+    cancelled: { icon: '⏹', text: '已取消' },
+    done: { icon: '•', text: '处理结束' },
+    unknown: { icon: '?', text: '结果未确认' },
+  }
+  return faces[step?.status] || faces.unknown
+}
+
+// Legacy restoration hook: prose cannot supply a missing execution verdict.
+// Actual terminal states arrive in the server's structured step events/history.
+export function settleReportStepFromContent(_message) {
+  return false
+}
+
 export function createStreamReducer(msg, state) {
   return function reduce(parsed) {
     if (!parsed) return { action: 'ignored' }
@@ -543,15 +583,15 @@ export function createStreamReducer(msg, state) {
       case 'step': {
         const steps = ensureSteps(msg)
         const running = payload?.status === 'running'
-        const existing = steps.find(s => s.tool === payload?.tool && s.status === 'running')
+          const existing = [...steps].reverse().find(s => s.tool === payload?.tool && (!running || s.status === 'running'))
         if (existing && !running) {
-          existing.status = 'done'
+          existing.status = payload?.status || 'unknown'
           existing.elapsed = payload?.elapsed ?? null
         } else if (running) {
           if (msg.content) msg._correcting = true
           steps.push({ tool: payload?.tool, label: payload?.label, status: 'running', elapsed: null })
         } else if (payload?.tool) {
-          steps.push({ tool: payload.tool, label: payload?.label, status: payload?.status || 'done', elapsed: payload?.elapsed ?? null })
+          steps.push({ tool: payload.tool, label: payload?.label, status: payload?.status || 'unknown', elapsed: payload?.elapsed ?? null })
         }
         return { action: 'step' }
       }
@@ -803,7 +843,11 @@ export function backendSessionMessages(payload) {
       content: textOf(item.content),
       steps: Array.isArray(item.steps) ? item.steps : [],
       created_at: item.created_at == null ? '' : String(item.created_at),
+      answer_withheld: item.answer_withheld === true,
+      withheld_reason: textOf(item.withheld_reason),
       requestId,
+      ...(item.task_selection && typeof item.task_selection === 'object'
+        ? { taskSelection: item.task_selection } : {}),
       // mid 是面板给每一轮起的钥匙（sources / 缓存那些派生脸用它）；后端行没有本地 mid，
       // 就按位次补一枚，只当身份用，不当内容用。
       mid: `backend-${index}`,
@@ -862,9 +906,15 @@ export function hasLocalSession(id) {
 export function adoptBackendSession(id, list = []) {
   const sessionId = textOf(id)
   if (!sessionId) return []
+  const local = sessions.value.find(entry => entry.id === sessionId)
   messages.value = (Array.isArray(list) ? list : []).map(item => ({ ...item }))
   activeId.value = sessionId
-  activeDataFilename.value = ''
+  const selection = messages.value.findLast(message => message.taskSelection)?.taskSelection
+  activeDataFilename.value = selection?.dataFilename || ''
+  referenceDocuments.value = Array.isArray(local?.documentFilenames)
+    ? normalizeDocumentNames(local.documentFilenames)
+    : Array.isArray(selection?.documentFilenames) ? normalizeDocumentNames(selection.documentFilenames)
+      : documentNamesFromQuestion(messages.value.findLast(message => message.role === 'user')?.content)
   hitl.value = null
   scrollOffset.value = 0
   syncActive()

@@ -66,15 +66,15 @@ let trendToken = 0
 const RISK_ROW_LIMIT = 4
 const RISK_DENIED_TITLE = '这个账号看不到告警账本'
 const RISK_FAILED_TITLE = '异常与风险没加载出来'
-const RISK_ROWS_NOTE = '这里只摆账本里最近的 4 条，完整列表在「异常与告警」。'
+const RISK_ROWS_NOTE = '这里只摆账本里最近的 4 条，完整列表在「异常提醒」。'
 const EVIDENCE_HINT_IDLE = '输入一个指标词，看它的口径由谁登记、有没有和制度文件核对过。'
 const EVIDENCE_HINT_NO_MATCH = '这个问题没有匹配到已登记的指标口径，所以这里没有出处可显示。'
 
 const quickActions = [
   { id: 'docs', icon: 'M12 4v11M7 9l5-5 5 5M5 20h14', label: '上传文档' },
   { id: 'data', icon: 'M5 5h14v14H5zM8 16V9M12 16V7M16 16v-4', label: '数据分析' },
-  { id: 'insights', icon: 'M12 3a4 4 0 0 0-2 7.46V13H8v2h2v2h4v-2h2v-2h-2v-2.54A4 4 0 0 0 12 3Z', label: '新建洞察' },
-  { id: 'approval', icon: 'M6 4h12v16H6zM9 9h6M9 13h6M9 17h3M5 12l3 3 6-7', label: '发起审批' },
+  { id: 'insights', icon: 'M12 3a4 4 0 0 0-2 7.46V13H8v2h2v2h4v-2h2v-2h-2v-2.54A4 4 0 0 0 12 3Z', label: '查看异常提醒' },
+  { id: 'approval', icon: 'M6 4h12v16H6zM9 9h6M9 13h6M9 17h3M5 12l3 3 6-7', label: '查看待办' },
 ]
 
 const scopeNote = computed(() => summaryScopeNote(summary.value?.generatedFor))

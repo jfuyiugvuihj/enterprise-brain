@@ -259,8 +259,9 @@ def test_a_failing_continuation_round_does_not_report_completed(monkeypatch, tmp
     # 这一轮必须真的失败过，否则"不是 completed"是句空话。
     assert "request.failed" in body and "internal_error" in body, body[:600]
     verdict = terminal_verdict(row)
-    assert verdict["status_is_terminal"] is False, verdict
-    assert verdict["completed_at_is_set"] is False, verdict
+    assert verdict["status"] == "failed", verdict
+    assert verdict["status_is_terminal"] is True, verdict
+    assert verdict["completed_at_is_set"] is True, verdict
     kinds = [item["event_type"] for item in store.replay(trace_id)]
     assert kinds[0] == "request.started", kinds
     assert "retrieval.completed" in kinds, kinds
@@ -273,19 +274,19 @@ def _trace_id_from(body: str) -> str:
     hits = re.findall(r"trace-[0-9a-f]{8,}", body)
     assert hits, "整条流里读不到 trace_id，驱动没跑通"
     return hits[0]
-# ------------------------------------------------------------------ 缺口点名（不越界补）
-def test_this_lane_still_records_no_terminal_request_event(monkeypatch, tmp_path):
-    """🔴 本单只修顺序：这一支**至今不往 trace 记 request.* 终态事件**，改前改后都一样。
-
-    承认它而不是顺手补它：补它要动 ``run_interrupt_stream`` 的 canonical 归属，会撞
-    ``tests/test_approve_canonical_events.py`` 一族与前端 ``lastSequence`` 闸门（业主未裁）。
-    """
+# ------------------------------------------------------------------ 原缺口已纳入首任务修复：流与 Trace 必须同一终态。
+def test_continuation_records_the_failure_visible_to_the_client(monkeypatch, tmp_path):
+    """SSE 已失败的续跑，Trace 也必须保存同一编号的真实失败终态。"""
     from app.api.v1 import chat
 
     store = _offline(monkeypatch, tmp_path, chat, _leaving_a_retrieval_trail(fail=True))
     body = _drive(chat, store, monkeypatch, fail=True, executor=EagerExecutor())
 
     kinds = {item["event_type"] for item in store.events}
-    assert "request.failed" not in kinds, "顺序修好了不等于账面会关门：这一支没有终态记账，别把它偷偷补上"
-    assert "request.failed" in body, "帧是发了的（客户端看得见），缺的只是 trace 那一本账"
+    assert "request.failed" in kinds
+    assert "request.failed" in body
     assert "request.started" in kinds, kinds
+    terminal = next(e for e in store.events if e['event_type'] == 'request.failed')
+    assert terminal['trace_id'] == _trace_id_from(body)
+    assert terminal['status'] == 'failed'
+    assert terminal['payload']['error_code'] == 'internal_error'

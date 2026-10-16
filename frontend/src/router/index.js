@@ -62,7 +62,7 @@ export const routes = [
     path: '/overview',
     name: 'overview',
     component: DashboardPanel,
-    meta: { screen: true, title: '总览', icon: 'M4 11.5 12 4l8 7.5v8.5a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z' },
+    meta: { screen: true, title: '工作台', icon: 'M4 11.5 12 4l8 7.5v8.5a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z' },
   },
   // R136 判据② · 文档与数据合成一屏两标签：这一屏只挂 FeedPanel，两块面板一字节未改，
   // 各自仍管自己的接口与交互。图标沿用原「文档」那枚 —— 本单只重排名称与挂载，
@@ -71,13 +71,19 @@ export const routes = [
     path: `/${FEED_SCREEN}`,
     name: FEED_SCREEN,
     component: FeedPanel,
-    meta: { screen: true, title: '喂料', icon: 'M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6', tabs: FEED_TABS },
+    meta: { screen: true, title: '资料中心', icon: 'M6 3h8l4 4v14H6zM14 3v5h5M9 13h6M9 17h6', tabs: FEED_TABS },
+  },
+  {
+    path: '/chat',
+    name: 'chat',
+    component: ChatPanel,
+    meta: { screen: true, title: '智能助手', icon: 'M5 6h14v10H9l-4 4zM8 10h8M8 13h5', keepAlive: true },
   },
   {
     path: '/insights',
     name: 'insights',
     component: InsightPanel,
-    meta: { screen: true, title: '异常与告警', icon: 'M4 17l5-5 4 3 7-8M17 7h3v3' },
+    meta: { screen: true, title: '异常提醒', icon: 'M4 17l5-5 4 3 7-8M17 7h3v3' },
   },
   {
     path: '/approval',
@@ -85,14 +91,9 @@ export const routes = [
     component: ApprovalPanel,
     // R174 判据③ · 定名「审批与待办」：这一屏今天挂着真待办（GET /hitl/pending）与真审批
     // （POST /approve），而「报销」是一枚业务专属词 —— 客户一装机就以为产品只管报销。
-    meta: { screen: true, title: '审批与待办', icon: 'M6 4h12v16H6zM9 9h6M9 13h6M9 17h3M5 12l3 3 6-7' },
+    meta: { screen: true, title: '待办事项', icon: 'M6 4h12v16H6zM9 9h6M9 13h6M9 17h3M5 12l3 3 6-7' },
   },
-  {
-    path: '/chat',
-    name: 'chat',
-    component: ChatPanel,
-    meta: { screen: true, title: '问一句', icon: 'M5 6h14v10H9l-4 4zM8 10h8M8 13h5', keepAlive: true },
-  },
+
   // R315 判据①④ · 「交成果」是一屏，也是第六枚一级入口：员工嘴里说的是「我上次做的那份东西」，
   // 不是「数据面板的第 N 个区块」。屏名沿用 docs/frontend-plan-2026-09-14.md:132 那张工作区映射表里
   // 那一行（新增「交成果」，后端依赖 B-1 / R2 —— 两条今天都已交付），写法逐字照下面 /admin 那枚先例：
@@ -105,7 +106,7 @@ export const routes = [
     path: '/artifacts',
     name: 'artifacts',
     component: ArtifactsPanel,
-    meta: { screen: true, title: '交成果', icon: 'M7 3h7l4 4v14H7zM14 3v5h5M10 17v-4M13 17v-7M18 17h3' },
+    meta: { screen: true, title: '成果中心', icon: 'M7 3h7l4 4v14H7zM14 3v5h5M10 17v-4M13 17v-7M18 17h3' },
   },
   // R494 判据② · 「我的账号」是一屏：员工嘴里那三句话（我是谁、我在哪个部门、我能读到哪几级文档）
   // 今天在界面上无处可查 —— 路由表里就没有这一格，缺口清单的 G10 因此记「半」。这一屏的四格逐格来自
@@ -155,7 +156,7 @@ export const routes = [
     path: '/traces',
     name: 'traces',
     component: TracePanel,
-    meta: { screen: true, title: '运行留痕', icon: 'M4 7h16M4 12h10M4 17h6M14 12l3 3 5-6', primary: false, administratorOnly: true },
+    meta: { screen: true, title: '运行记录', icon: 'M4 7h16M4 12h10M4 17h6M14 12l3 3 5-6', primary: false, administratorOnly: true },
   },
   // R505 判据 A · 「服务等级目标」是一屏：GET /api/v1/slo 这条读腿今天在前端零消费者，而它交的全是
   // 欠账 —— 三档的每一个数字格都写着「欠样本」或「不可测」，目标值按 policy A 登记、实测仍受样本闸控制。写法逐字照上面 /admin 与

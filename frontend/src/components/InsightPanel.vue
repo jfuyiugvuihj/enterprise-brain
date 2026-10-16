@@ -35,6 +35,10 @@ export default { name: 'InsightPanel' }
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { http } from '../lib/http'
+import { useChatArtifactDownload } from '../composables/useChatArtifactDownload'
+import { loading as analysisLoading, hitl } from '../lib/sessions'
 import {
   ALERT_ACTION_NOTES,
   ALERTS_EMPTY_DESCRIPTION,
@@ -67,6 +71,27 @@ import {
   validateRuleForm,
 } from '../lib/alerts'
 import { UiButton, UiEmptyState, UiErrorState, UiField, UiLoadingState, UiSelect } from './ui'
+
+const emit = defineEmits(['ask'])
+const route = useRoute()
+const analysisBusy = computed(() => analysisLoading.value || Boolean(hitl.value))
+const alertDownloads = useChatArtifactDownload()
+function analyzeAlert(item) {
+  if (analysisBusy.value) return
+  const rule = rules.value.find(row => row.id === item.ruleId)
+  const query = [
+    item.evidence ? `按${item.evidence.dimension || '部门'}汇总${item.evidence.metric}与记录数，分析以下阈值提醒；说明计算事实、需核对资料和处理建议，不生成图表或报告。`
+      : '请核查以下异常提醒，说明需要补充核对的资料和建议处理步骤。历史提醒未记录原始数据，不推测具体计算或原因。',
+    `提醒编号：${item.id}；状态：${item.statusLabel}`,
+    `提醒内容：${item.message}`,
+    item.analysis ? `已有分析：${item.analysis}` : '',
+    item.createdAt ? `触发时间：${item.createdAt}` : '',
+    `所属部门：${item.departmentText}`,
+    rule ? `触发规则：${rule.name}；指标：${rule.metricText}；条件：${rule.opLabel} ${rule.thresholdText}` : '',
+  ].filter(Boolean).join('\n\n')
+  emit('ask', { query, filename: item.evidence?.filename || '', prepare: true, newTask: true,
+    origin: { kind: 'alert', id: item.id, title: item.message, versionId: item.evidence?.version_id || '' } })
+}
 
 const alerts = ref([])
 const alertsLoading = ref(true)
@@ -187,12 +212,12 @@ function loadAll() {
   return Promise.all([loadAlerts(), loadRules()])
 }
 
-async function runManualCheck() {
+async function runManualCheck(ruleIds = null) {
   checking.value = true
   checkFailure.value = null
   checkOutcome.value = null
   try {
-    checkOutcome.value = checkOutcomeView(await runCheck())
+    checkOutcome.value = checkOutcomeView(await runCheck(http, Array.isArray(ruleIds) ? ruleIds : null))
   } catch (err) {
     checkFailure.value = readFailureView(err, {
       deniedTitle: '这个账号没有手动巡检的权限',
@@ -423,7 +448,7 @@ onMounted(loadAll)
     <header class="panel-head">
       <div>
         <div class="eyebrow">服务端告警账本</div>
-        <h3>异常与告警</h3>
+        <h3>异常提醒</h3>
         <p>规则命中才会写告警。这一页只列服务端真实记录下来的告警与规则。</p>
       </div>
       <div class="head-stats">
@@ -467,10 +492,26 @@ onMounted(loadAll)
           dense
         />
         <div v-else class="record-list" data-testid="alert-rows">
-          <article v-for="item in alerts" :key="item.id" class="record-item">
+          <article v-for="item in alerts" :key="item.id" class="record-item" :class="{ 'record-item--selected': String(route?.query?.alert || '') === item.id }" :data-alert-id="item.id">
             <div class="record-body">
               <strong>{{ item.message }}</strong>
               <p v-if="item.analysis" class="record-analysis">{{ item.analysis }}</p>
+              <p v-if="item.recoveredAt" data-testid="alert-recovered">检测已恢复：{{ item.recoveredAt }}；人工处置状态仍为{{ item.statusLabel }}。</p>
+              <details v-if="item.evidence" data-testid="alert-evidence">
+                <summary>计算依据与历次观察</summary>
+                <p>{{ item.evidence.filename }} · 版本 {{ item.evidence.version_id }}</p>
+                <p>{{ item.evidence.period }}；{{ item.evidence.filter }}；{{ item.evidence.unit }}</p>
+                <p>纳入 {{ item.evidence.rows }} 条，指标 {{ item.evidence.current }}，阈值 {{ item.evidence.threshold }}。</p>
+                <p v-for="part in item.evidence.contributions" :key="part.label">{{ part.label }}：{{ part.value }}（构成不等于原因）</p>
+                <p v-for="(observation, index) in item.observations" :key="index">
+                  {{ observation.observed_at }} · {{ observation.version_id }} · {{ observation.current }} · {{ observation.breached ? '触发' : '恢复' }}
+                </p>
+                <p v-if="item.evidence.calculation_run_id">计算记录：{{ item.evidence.calculation_run_id }}</p>
+              </details>
+              <div v-if="item.artifacts.length" @click="alertDownloads.onClick($event, item.id)">
+                <p v-for="artifact in item.artifacts" :key="artifact.artifact_id"><a :href="artifact.download_url">关联成果：{{ artifact.filename }}</a></p>
+              </div>
+              <p v-if="alertDownloads.error.value?.turn === item.id">成果暂时无法下载，请刷新或核对当前权限。</p>
               <div class="alert-ledger" data-testid="alert-ledger">
                 <p class="ledger-line" data-testid="alert-status-line">
                   <span
@@ -493,6 +534,8 @@ onMounted(loadAll)
                 </p>
               </div>
               <div class="alert-actions" data-testid="alert-actions">
+                <UiButton size="sm" variant="primary" label="继续分析这条异常" data-testid="alert-analyze"
+                  :disabled="analysisBusy" @click="analyzeAlert(item)" />
                 <UiButton
                   size="sm"
                   variant="secondary"
@@ -523,6 +566,7 @@ onMounted(loadAll)
                   @click="openAssign(item)"
                 />
               </div>
+              <p v-if="analysisBusy" class="alert-note">请先完成或处理当前分析中的待确认操作，再开始异常分析。</p>
               <p v-if="rowActionNote(item)" class="alert-note">{{ rowActionNote(item) }}</p>
               <div v-if="assigningTo(item)" class="assign-form" data-testid="assign-form">
                 <UiField
@@ -651,6 +695,8 @@ onMounted(loadAll)
               </div>
               <div class="record-meta">
                 <span v-if="!item.enabled" class="chip">已停用</span>
+                <UiButton size="sm" variant="secondary" label="巡检本规则" data-testid="check-rule"
+                  :disabled="checking || !canManage" @click="runManualCheck([Number(item.id)])" />
                 <UiButton
                   size="sm"
                   variant="ghost"
@@ -676,6 +722,9 @@ onMounted(loadAll)
           />
 
           <div class="rule-form" data-testid="rule-form">
+            <UiField v-model="ruleForm.dataFilename" label="数据文件（可选）" hint="填写经营数据完整文件名；留空逐份检查授权可见数据" :disabled="!canManage || savingRule" />
+            <UiField v-model="ruleForm.query" label="期间与筛选（可选）" hint="例如：2026-10-01至2026-10-31，仅统计已支付。使用真实列名和值" :disabled="!canManage || savingRule" />
+            <UiField v-model="ruleForm.groupBy" label="构成维度（可选）" hint="例如：部门、产品；用于查看贡献构成，不作为确定原因" :disabled="!canManage || savingRule" />
             <UiField
               v-model="ruleForm.name"
               label="规则名称"

@@ -66,6 +66,10 @@ docker compose --env-file deploy/.env.server -f docker-compose.yml -f docker-com
 - 客户上传与生成文件只存在于命名卷与数据库里，重建镜像不会丢失或外泄
 - 新环境部署从“手工装依赖”降为“拉镜像 + 启动服务”
 
+## 操作手册
+
+[企业智脑操作手册](docs/user-guide/README.md) 按“总目录 → 业务模块 → 功能页面”组织，包含各功能用途、操作步骤、权限和问题排查。
+
 ## 不使用 Docker 时
 
 本地直跑读仓库根的 `.env`（`cp .env.example .env`），python-dotenv 按字面解析，

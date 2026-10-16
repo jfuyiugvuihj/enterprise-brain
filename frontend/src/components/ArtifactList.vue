@@ -105,8 +105,11 @@ export function mapArtifactRow(row) {
     downloadUrl: String(source.download_url || ''),
     createdAt: formatArtifactTime(source.created_at),
     expiryText: artifactExpiryText(source.expires_at),
-    sessionId: String(source.session_id || ''),
+    sessionId: String(source.session_id || '').split(':')[0],
     requestId: String(source.request_id || ''),
+    sourceVersionLabel: String(source.source_version_label || ''),
+    sourceArtifactIds: Array.isArray(source.source_artifact_ids) ? source.source_artifact_ids : [],
+    sourceAlertId: source.source_alert_id || null,
   }
   return {
     ...view,
@@ -211,10 +214,12 @@ export function openButtonLabel(state) {
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { errorDetail, http, isPermissionDenied } from '../lib/http'
 import { fetchArtifactBlob } from '../lib/artifacts'
 import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 
+const router = useRouter()
 const rows = ref([])
 const total = ref(0)
 const offset = ref(0)
@@ -482,8 +487,14 @@ defineExpose({ loadArtifacts, reload })
               :title="item.lineage.title"
               data-testid="artifact-lineage"
             >{{ item.lineage.text }}</span>
+            <span v-if="item.sourceVersionLabel" class="artifact-source">{{ item.sourceVersionLabel }}</span>
+            <span v-if="item.sourceArtifactIds.length" class="artifact-source" data-testid="artifact-predecessors">关联 {{ item.sourceArtifactIds.length }} 份先前成果或图表；编号 {{ item.sourceArtifactIds.join('、') }}</span>
+            <RouterLink v-if="item.sourceAlertId" :to="{ path: '/insights', query: { alert: item.sourceAlertId } }" class="artifact-source">返回异常提醒 #{{ item.sourceAlertId }}</RouterLink>
           </span>
           <span class="artifact-actions">
+            <UiButton v-if="item.sessionId" variant="secondary" size="sm" data-testid="artifact-return-analysis"
+              @click="router?.push({ name: 'chat', query: { session: item.sessionId } })"
+            >返回分析会话</UiButton>
             <UiButton
               variant="secondary"
               size="sm"

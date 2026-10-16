@@ -302,7 +302,7 @@ export function summaryTiles(metrics) {
     },
     {
       id: 'pendingApprovals',
-      label: '待我审批',
+      label: '待我确认',
       value: formatSummaryCount(metrics.pendingApprovals),
       delta: metrics.pendingApprovals ? '等你处理' : '暂无待办',
       hint: '挂起账本里属于你的待确认项，只看你名下开着的行。',

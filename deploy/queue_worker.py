@@ -604,6 +604,7 @@ def _drain_report_stream(
     report_failure_sink=None,
     data_filename="",
     queue_execution_guard=None,
+    task_selection=None,
 ):
     """跑完这一轮，收回顶层结论、契约记录，以及编排自己报的那句错。
 
@@ -631,7 +632,8 @@ def _drain_report_stream(
         thread_id=thread_id,
         user={"principal": principal, PRINCIPAL_PROVENANCE_KEY: provenance,
               **({"queue_execution_guard": queue_execution_guard} if queue_execution_guard else {}),
-              **({"data_filename": data_filename} if str(data_filename or "").strip() else {})},
+              **({"data_filename": data_filename} if str(data_filename or "").strip() else {}),
+              **(task_selection or {})},
         request_id=request_id,
         trace_id=trace_id,
         task_id=task_id,
@@ -790,7 +792,11 @@ def _named_dataset(payload) -> dict:
     不补猜：没点名就交回空表，config 里连键都不多加——与同步路径同一条件。
     """
     named = str((payload or {}).get("data_filename") or "").strip()
-    return {"data_filename": named} if named else {}
+    selection = {"data_filename": named} if named else {}
+    for key in ('document_filenames', 'task_question', 'data_context'):
+        if key in (payload or {}):
+            selection[key] = payload[key]
+    return selection
 
 
 def _process_report_lane_turn(
@@ -836,6 +842,7 @@ def _process_report_lane_turn(
             principal=principal,
             provenance=principal_provenance,
             data_filename=str(payload.get("data_filename") or "").strip(),
+            task_selection=_named_dataset(payload),
             request_id=request_id,
             trace_id=trace_id,
             task_id=task_id,

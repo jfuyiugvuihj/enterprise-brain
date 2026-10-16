@@ -89,6 +89,9 @@ export function ruleRequestBody(form) {
     metric: String(source.metric || '').trim(),
     op: RULE_OPERATORS.some(item => item.value === source.op) ? source.op : 'lt',
     threshold: thresholdValue(source.threshold),
+    ...(source.dataFilename ? { data_filename: String(source.dataFilename).trim() } : {}),
+    ...(source.query ? { query: String(source.query).trim() } : {}),
+    ...(source.groupBy ? { group_by: String(source.groupBy).trim() } : {}),
   }
 }
 
@@ -373,6 +376,10 @@ export function mapAlertRow(row) {
     statusLabel: alertStatusLabel(source.status),
     statusKnown: status !== '',
     handled: ledger.some(line => line.recorded),
+    evidence: source.evidence || null,
+    observations: Array.isArray(source.observations) ? source.observations : [],
+    recoveredAt: String(source.recovered_at || ''),
+    artifacts: Array.isArray(source.artifacts) ? source.artifacts : [],
     actions: alertActionsFor(source.status),
     ledger,
     addressable: /^\d+$/.test(idText(source.id)),
@@ -393,6 +400,7 @@ export function mapRuleRow(row) {
     opLabel: operatorLabel(source.op),
     thresholdText: Number.isFinite(threshold) ? String(threshold) : '没有登记阈值',
     enabled: source.enabled !== false,
+    options: source.options || {},
   }
 }
 
@@ -430,6 +438,9 @@ export function checkOutcomeView(data) {
   const files = Array.isArray(scope.evaluated_files) ? scope.evaluated_files.filter(Boolean) : []
   const reasonKey = typeof scope.reason === 'string' ? scope.reason.trim() : ''
   const reason = SCAN_REASON_MESSAGES[reasonKey] || ''
+  const failures = Array.isArray(scope.evaluation_failures) ? scope.evaluation_failures : []
+  if (failures.length) return { kind: 'unknown', count: triggered.length,
+    title: '部分规则未能完成判断', detail: failures.map(item => `${item.filename}：${item.reason}`).join('；') }
   if (triggered.length > 0) {
     return {
       kind: 'hit',
@@ -441,6 +452,9 @@ export function checkOutcomeView(data) {
   if (reason) {
     return { kind: 'no-target', count: 0, title: '本轮巡检没有判定点', detail: reason }
   }
+  if (scope.ongoing || scope.recovered) return { kind: 'observed', count: 0,
+    title: `持续提醒 ${scope.ongoing || 0} 条，已恢复 ${scope.recovered || 0} 条`,
+    detail: '同一对象与窗口不会重复新增提醒；恢复不等于人工关闭。' }
   if (files.length > 0) {
     return {
       kind: 'clear',
@@ -488,8 +502,8 @@ export async function removeRule(ruleId, client = http) {
   return String(body.status || '') === 'not_found' ? 'not_found' : 'ok'
 }
 
-export async function runCheck(client = http) {
-  const response = await client.post(CHECK_PATH)
+export async function runCheck(client = http, ruleIds = null) {
+  const response = ruleIds ? await client.post(CHECK_PATH, { rule_ids: ruleIds }) : await client.post(CHECK_PATH)
   return response && response.data
 }
 

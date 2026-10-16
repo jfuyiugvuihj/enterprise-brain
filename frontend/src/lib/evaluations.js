@@ -210,9 +210,9 @@ export function evalLimitsView(limits) {
     maxReports: countText(source.max_reports, '份'),
     appliedLimit: countText(source.applied_limit, '份'),
     requestedLimit: source.requested_limit === null || source.requested_limit === undefined
-      ? '这一发没带 limit'
+      ? '使用默认显示数量'
       : countText(source.requested_limit, '份'),
-    clampedText: evalBoolText(source.clamped, '被后端夹过', '没夹'),
+    clampedText: evalBoolText(source.clamped, '已调整为允许的上限', '未达到上限'),
     clamped: typeof source.clamped === 'boolean' ? source.clamped : null,
   }
 }
@@ -226,8 +226,8 @@ export function evalHeadView(report) {
     reportsTotal: countText(source.reports_total, '份'),
     truncated: typeof source.truncated === 'boolean' ? source.truncated : null,
     truncatedText: evalBoolText(source.truncated,
-      '这一发只交出前若干份，报告目录里还有更早的没列出',
-      '这一发把回执认得的报告都列出来了'),
+      '当前仅显示部分报告，可调整显示数量查看',
+      '已显示本次查询的全部报告'),
     requestedBy: textOf(isRecord(source.requested_by) ? source.requested_by.username : ''),
   }
 }

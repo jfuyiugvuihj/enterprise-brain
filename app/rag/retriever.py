@@ -1239,6 +1239,8 @@ class DocumentRetriever:
             "chunk_index": row.get("chunk_index"),
             "classification": row.get("classification"),
             "department": row.get("department") or "",
+            "index_version_id": row.get("index_version_id"),
+            "content_sha256": row.get("content_sha256"),
         } for row in rows]
         hits = self._hit_dicts([row.get("content") for row in rows], metadatas,
                                self.MODE_SEMANTIC, "")
@@ -1393,6 +1395,8 @@ class DocumentRetriever:
                 "content": doc,
                 "source": meta.get("filename", "unknown"),
                 "chunk_index": meta.get("chunk_index", 0),
+                **({"index_version_id": meta.get("index_version_id")} if meta.get("index_version_id") else {}),
+                **({"content_sha256": meta.get("content_sha256")} if meta.get("content_sha256") else {}),
                 # R57 fail-closed。此行原为 meta.get("classification", 1)。本方法的命中字典
                 # 会被直接喂进权限判定：app/api/v1/chat.py 的 scope.allows(source)，以及
                 # app/rag/retrieval_pipeline.py 语义腿上的 _retain_permitted(pred=

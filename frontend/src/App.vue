@@ -6,6 +6,10 @@ import { focusScreenMain, navItems, nextNavItem } from './router/nav-focus'
 import { resetSessions } from './lib/sessions'
 import { UiButton } from './components/ui'
 import NotificationBell from './components/NotificationBell.vue'
+import BrandMark from './components/BrandMark.vue'
+import WorkspaceGuide from './components/WorkspaceGuide.vue'
+import WorkspaceNavigation from './components/WorkspaceNavigation.vue'
+import loginIllustration from './assets/login-knowledge.png'
 import {
   clearSession,
   errorDetail,
@@ -49,8 +53,8 @@ const toast = shallowRef(null)
 // 把它顶下去；<script setup> 的 import 由编译器提到模块顶层，位置不改变语义。
 import { fetchRuntimeHealth, modelState, modelStatusText, runtimeFaces } from './lib/health.js'
 
-const BANNER_NO_READING = '这台机器的健康读数此刻取不到：界面既不能说它一切正常，也不能说它哪里在降级。'
-const BANNER_NO_READING_NEXT = '过一会儿重新登录再看一次；一直读不到，请让管理员确认这台机器上的服务都起来了。'
+const BANNER_NO_READING = '暂未获取服务状态'
+const BANNER_NO_READING_NEXT = '当前状态未确认；若持续出现，请管理员检查服务连接。'
 
 const healthRead = shallowRef({ tried: false, health: null })
 const bannerKind = computed(() => (healthRead.value.tried ? modelState(healthRead.value.health) : 'waiting'))
@@ -305,41 +309,40 @@ onUnmounted(() => {
       </div>
 
       <header class="login-brand">
-        <svg class="login-brand__mark" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-          <path d="M16 2.6 27.4 9.3v13.4L16 29.4 4.6 22.7V9.3z" stroke-linejoin="round" />
-          <path d="M16 10.4 21.4 13.5v6.2L16 22.8l-5.4-3.1v-6.2z" stroke-linejoin="round" opacity=".55" />
-          <circle cx="16" cy="16.6" r="1.9" fill="currentColor" stroke="none" />
-        </svg>
-        <span class="login-brand__name">企业智脑</span>
-        <span class="login-brand__rule" aria-hidden="true"></span>
-        <span class="login-brand__latin">Enterprise Brain</span>
+        <BrandMark />
+        <span class="login-brand__copy">
+          <span class="login-brand__name">企业智脑</span>
+          <span class="login-brand__subtitle">企业内部工作空间</span>
+        </span>
+        <span class="login-network-note">企业内网专用</span>
       </header>
 
       <div class="login-stage">
         <section class="login-pitch" aria-labelledby="login-hero-title" data-testid="login-hero">
-          <span class="login-pitch__rule" aria-hidden="true"></span>
-          <h1 id="login-hero-title">私有化企业智能分析平台</h1>
-          <p class="login-pitch__lead">让企业数据，成为生产力</p>
+          <p class="login-eyebrow">企业 AI 智能分析平台</p>
+          <h1 id="login-hero-title">让知识连接业务<br />让分析<em>有据可循</em></h1>
+          <p class="login-pitch__lead">在企业内部查询资料、分析数据，形成可追溯的工作成果。</p>
+          <img class="login-illustration" :src="loginIllustration" width="1536" height="1024" alt="" aria-hidden="true" fetchpriority="high" />
 
           <div class="login-capabilities" aria-label="平台能力">
             <div>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 19 6v5c0 4.6-2.8 8-7 10-4.2-2-7-5.4-7-10V6z" /></svg>
-              <span>数据安全</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6" /></svg>
+              <span>查询知识</span>
             </div>
             <div>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 8 4-8 4-8-4zM4 12l8 4 8-4M4 17l8 4 8-4" /></svg>
-              <span>知识沉淀</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7M3 21h18" /></svg>
+              <span>分析数据</span>
             </div>
             <div>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19V9M12 19V5M19 19v-7" /></svg>
-              <span>智能分析</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 13l2 2 4-4M9 18h6" /></svg>
+              <span>生成成果</span>
             </div>
           </div>
         </section>
 
         <section class="login-card" aria-labelledby="login-title" data-testid="login-panel">
           <h2 id="login-title">欢迎回来</h2>
-          <p class="login-card__lead">使用企业账号登录工作台</p>
+          <p class="login-card__lead">使用企业账号，进入你的工作台。</p>
 
           <div v-if="loginError" class="login-alert" data-testid="login-error" role="alert">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -385,7 +388,7 @@ onUnmounted(() => {
                 <span class="login-check__box" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
                 </span>
-                <span>记住我</span>
+                <span>记住用户名</span>
               </label>
               <UiButton
                 class="login-link"
@@ -403,12 +406,12 @@ onUnmounted(() => {
               type="submit"
               data-testid="login-submit"
             >
-              进入工作台
+              登录并进入工作台
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="m12 5 7 7-7 7" /></svg>
             </UiButton>
           </form>
 
-          <p class="login-card__foot">没有账号？联系管理员在工作台内开通</p>
+          <p class="login-card__foot">没有账号？<br />请联系企业管理员开通。</p>
         </section>
       </div>
 
@@ -416,11 +419,12 @@ onUnmounted(() => {
         <div class="login-foot__meta">
           <span class="login-badge">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.7 8.9a1 1 0 0 1-.7 0C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.2-2.7a1 1 0 0 1 1.6 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z" /><path d="m9 12 2 2 4-4" /></svg>
-            <span>本机部署 · 数据不出内网</span>
+            <span>本地部署 · 数据留在企业内部</span>
           </span>
           <span class="login-foot__dot" aria-hidden="true"></span>
           <span>企业内网专用</span>
         </div>
+        <span class="login-foot__signature">企业智脑 · 企业内部工作空间</span>
       </footer>
 
       <div v-if="showForgotDialog" class="login-dialog-backdrop" data-testid="login-forgot-dialog">
@@ -461,30 +465,16 @@ onUnmounted(() => {
       </div>
       <aside class="sidebar" aria-label="工作区导航" data-testid="sidebar">
         <div class="sidebar-brand">
-          <span class="brand-mark"><span></span></span>
+          <BrandMark />
           <span>
             <strong>企业智脑</strong>
-            <small>ENTERPRISE BRAIN</small>
+            <small>企业内部工作空间</small>
           </span>
         </div>
         <nav ref="navEl" class="nav-list" data-testid="navigation" @keydown="onNavKeydown">
-          <UiButton
-            v-for="item in navigationForRole(userRole)"
-            :key="item.id"
-            variant="ghost"
-            type="button"
-            :class="['nav-item', { active: route.name === item.id }]"
-            :data-testid="`nav-${item.id}`"
-            :aria-current="route.name === item.id ? 'page' : undefined"
-            :aria-label="item.label"
-            @click="openScreen(item.id)"
-          >
-            <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path :d="item.icon" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <span class="nav-label">{{ item.label }}</span>
-          </UiButton>
+          <WorkspaceNavigation :items="navigationForRole(userRole)" :active-screen="String(route.name || '')" @navigate="openScreen" />
         </nav>
+        <p class="sidebar-note">本地部署<br />数据留在企业内部</p>
       </aside>
 
       <main ref="workspaceEl" class="workspace" tabindex="-1" data-testid="workspace">
@@ -539,6 +529,7 @@ onUnmounted(() => {
         </div>
 
         <section class="panel-slot" data-testid="panel-slot">
+          <WorkspaceGuide />
           <RouterView v-slot="{ Component }">
             <!-- 对话面板切走不卸载：进行中的回答流、输入草稿与滚动位置都得留着（改造前靠 v-show）。
                  其余六屏照旧每次进来重挂载重取数据，与改造前的 v-if 语义一致。 -->

@@ -33,7 +33,7 @@ import ArtifactList from './ArtifactList.vue'
     <header class="panel-head">
       <div>
         <div class="eyebrow">分析成果</div>
-        <h3>交成果</h3>
+        <h3>成果中心</h3>
         <p>
           查看你有权限访问的图表和报告，按生成时间从新到旧排列。可打开、下载或删除成果；数据页面也可查看同一批内容。
         </p>

@@ -3,6 +3,49 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 
+def test_historical_policy_report_requires_both_original_and_current_scope(monkeypatch, tmp_path):
+    from app.agents.contracts import Principal
+    from app.documents import catalog
+    from app.rag import indexing
+    from app.storage.artifacts import ArtifactRegistry, artifact_sources_allowed
+    from types import SimpleNamespace
+    principal = Principal.from_user(_user('finance-manager'))
+    registry = ArtifactRegistry(root=tmp_path)
+    path = tmp_path / 'historical.pdf'
+    path.write_bytes(b'old report')
+    report = registry.register(path, artifact_type='report', principal=principal,
+        source_documents=[{'source_name': '报销办法.pdf', 'version_id': '1', 'index_version_id': 'old-index'}])
+    assert report.metadata.get('source_documents')
+    current = {'filename': '报销办法.pdf', 'version': 2, 'department': 'finance', 'classification': 1}
+    old = dict(current, version=1)
+    monkeypatch.setattr(catalog, 'current_documents', lambda: [current])
+    monkeypatch.setattr(catalog, 'list_document_versions', lambda name: [current, old])
+    monkeypatch.setattr(indexing, 'read_index_metadata', lambda *a: ([SimpleNamespace(
+        index_version_id='old-index', index_id=indexing.document_index_id('报销办法.pdf'), status='superseded')], {}))
+    assert artifact_sources_allowed(report, principal)
+    current['department'] = 'sales'
+    assert not artifact_sources_allowed(report, principal)
+    current['department'] = 'finance'
+    old['department'] = 'sales'
+    assert not artifact_sources_allowed(report, principal)
+
+
+def test_chart_embedding_rechecks_current_artifact_permission(monkeypatch, tmp_path):
+    from app.agents.contracts import Principal
+    from app.agents.tools import _round_chart_paths
+    from app.documents import catalog
+    registry = _registry(monkeypatch, tmp_path)
+    path = tmp_path / 'old.png'
+    path.write_bytes(b'old chart')
+    owner = Principal.from_user(_user('finance-manager'))
+    registry.register(path, artifact_type='chart', principal=owner, session_id='task:chart',
+        source_documents=[{'source_name': '制度.pdf', 'version_id': '1', 'index_version_id': 'idx'}])
+    monkeypatch.setattr(catalog, 'current_documents', lambda: [{
+        'filename': '制度.pdf', 'version': 1, 'department': 'finance', 'classification': 1}])
+    changed = Principal.from_user(_user('finance-manager', 'sales'))
+    assert _round_chart_paths({'configurable': {'thread_id': 'task:export'}}, changed) == []
+
+
 def _headers(username: str) -> dict[str, str]:
     from app.common.auth import create_token
 

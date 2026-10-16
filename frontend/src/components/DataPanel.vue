@@ -1,5 +1,8 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { ANALYSIS_TEMPLATES } from '../lib/analysis-templates'
+import { FILE_CLASSIFICATION_LEVELS, fileAccessLabel, filterFileClassification } from '../lib/file-access'
 import { errorDetail, http, isPermissionDenied } from '../lib/http'
 import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
@@ -49,6 +52,8 @@ function rowCount(value) {
 }
 
 const profile = ref(null)
+const route = useRoute()
+const requestedFileMissing = ref(false)
 const dataFile = ref('')
 const tableColumns = ref([])
 const tableRows = ref([])
@@ -60,6 +65,9 @@ const previewDenied = ref(false)
 const uploading = ref(false)
 const uploadError = ref('')
 const dataFiles = ref([])
+const uploadClassification = ref('2')
+const listClassification = ref('')
+const filteredDataFiles = computed(() => filterFileClassification(dataFiles.value, listClassification.value))
 const filesLoading = ref(false)
 const filesError = ref('')
 // 行级判定的两份原始载荷：预览那一屏的 row_scope 与列表那一屏的 restricted，各自随请求重置。
@@ -74,14 +82,7 @@ const deletingFile = ref(false)
 const fileDeleteError = ref('')
 const fileDeleteDenied = ref(false)
 
-const quickActions = [
-  { label: '📊 各列对比', query: '对比各列数据的最大最小值' },
-  { label: '📈 趋势分析', query: '分析数据的变化趋势' },
-  { label: '📋 生成报告', query: '根据这份数据生成一份分析报告' },
-  { label: '🔍 找出最高', query: '找出每列的最高值和最低值' },
-  { label: '📉 异常检测', query: '检测数据中是否存在异常值' },
-  { label: '💡 总结摘要', query: '用一段话总结这份数据的关键信息' },
-]
+const quickActions = ANALYSIS_TEMPLATES
 
 const emit = defineEmits(['ask'])
 
@@ -91,11 +92,13 @@ async function uploadExcel(e) {
 
   const form = new FormData()
   form.append('file', file)
+  form.append('classification', uploadClassification.value)
 
   uploading.value = true
   uploadError.value = ''
   try {
     const res = await http.post('/upload-excel', form)
+    listClassification.value = ''
     applyDataPreview(res.data)
     await loadDataFiles(file.name)
   } catch (err) {
@@ -124,13 +127,15 @@ async function loadDataFiles(preferredFilename = '') {
     const res = await http.get('/data-files', { params: { _ts: Date.now() } })
     dataFiles.value = res.data.files || []
     restrictedFiles.value = res.data.restricted || null
-    const currentExists = dataFiles.value.some(file => file.filename === dataFile.value)
+    const currentExists = filteredDataFiles.value.some(file => file.filename === dataFile.value)
     const preferredExists = dataFiles.value.some(file => file.filename === preferredFilename)
+    requestedFileMissing.value = Boolean(preferredFilename) && !preferredExists
+    if (requestedFileMissing.value) return
     const nextFilename = preferredExists
       ? preferredFilename
       : currentExists
         ? dataFile.value
-        : dataFiles.value[0]?.filename
+        : filteredDataFiles.value[0]?.filename
     if (nextFilename && (nextFilename !== dataFile.value || !profile.value)) {
       await selectDataFile(nextFilename)
     }
@@ -146,6 +151,7 @@ async function loadDataFiles(preferredFilename = '') {
 }
 
 async function selectDataFile(filename) {
+  requestedFileMissing.value = false
   dataFile.value = filename
   selectingFile.value = true
   previewError.value = ''
@@ -214,6 +220,12 @@ function clearTableState() {
   dataFile.value = ''
   pendingFileDelete.value = ''
 }
+
+watch(listClassification, () => {
+  if (filteredDataFiles.value.some(file => file.filename === dataFile.value)) return
+  clearTableState()
+  if (filteredDataFiles.value.length) selectDataFile(filteredDataFiles.value[0].filename)
+})
 
 // R191：那句话（含它自己的判据）的唯一出处，输入就是后端那枚 row_scope 原样对象。
 const rowScopeNote = computed(() => rowScopeVisibleNote(rowScope.value))
@@ -354,7 +366,7 @@ function closeDataPreview() {
 
 function askQuestion(q) {
   if (!dataFile.value) return
-  emit('ask', { query: q, filename: dataFile.value })
+  emit('ask', { query: q, filename: dataFile.value, prepare: true })
 }
 
 function typeIcon(dtype) {
@@ -376,11 +388,12 @@ function formatModifiedAt(value) {
   return value ? value.replace('T', ' ').replace(/([+-]\d{2}:\d{2})$/, '') : ''
 }
 
-onMounted(loadDataFiles)
+onMounted(() => loadDataFiles(typeof route?.query?.filename === 'string' ? route.query.filename : ''))
 </script>
 
 <template>
   <div class="data-panel" data-testid="data-panel">
+    <p v-if="requestedFileMissing" class="data-next-step" role="status">原分析关联的文件不存在或不在当前账号可见范围内，请从下方选择有权限访问的资料。</p>
     <!-- 上传区 -->
     <div class="upload-section">
       <label class="upload-btn" :class="{ loading: uploading }">
@@ -389,6 +402,11 @@ onMounted(loadDataFiles)
                @change="uploadExcel" :disabled="uploading" />
       </label>
       <p class="upload-hint">支持 Excel（.xlsx）和 CSV；旧版 .xls 请先另存为 .xlsx。</p>
+      <label for="data-upload-classification">上传数据密级</label>
+      <select id="data-upload-classification" v-model="uploadClassification" data-testid="data-upload-classification" :disabled="uploading">
+        <option v-for="level in FILE_CLASSIFICATION_LEVELS" :key="level" :value="String(level)">密级 {{ level }} 级{{ level === 2 ? '（默认）' : '' }}</option>
+      </select>
+      <p class="upload-hint">仅设置下一次上传，不修改已有文件。默认2级沿用原数据上传设置，访问仍受部门、角色和所有者规则控制。</p>
       <UiErrorState
         v-if="uploadError"
         title="数据上传失败"
@@ -401,8 +419,16 @@ onMounted(loadDataFiles)
     <section class="data-files-section">
       <div class="section-heading">
         <span>数据文件</span>
-        <span v-if="dataFiles.length" class="file-count">{{ dataFiles.length }}</span>
+        <span class="file-count" data-testid="data-file-count">{{ filesLoading || filesError ? '—' : `${filteredDataFiles.length} / ${dataFiles.length}` }}</span>
       </div>
+      <label for="data-list-classification">筛选已有数据密级</label>
+      <select id="data-list-classification" v-model="listClassification" data-testid="data-list-classification">
+        <option value="">全部密级</option>
+        <option v-for="level in FILE_CLASSIFICATION_LEVELS" :key="level" :value="String(level)">密级 {{ level }} 级</option>
+        <option value="4">密级 4 级</option>
+        <option value="unknown">未登记密级</option>
+      </select>
+      <p class="upload-hint">显示筛选数 / 当前账号可见总数；筛选不改变文件权限。</p>
 
       <UiLoadingState v-if="filesLoading" label="正在读取数据文件..." dense />
       <UiErrorState
@@ -427,9 +453,10 @@ onMounted(loadDataFiles)
         />
       </template>
 
+      <UiEmptyState v-else-if="!filteredDataFiles.length" title="没有符合当前密级筛选的数据文件" dense />
       <div v-else class="data-file-list">
         <UiButton
-          v-for="file in dataFiles"
+          v-for="file in filteredDataFiles"
           :key="file.filename"
           type="button"
           variant="secondary"
@@ -442,6 +469,7 @@ onMounted(loadDataFiles)
           <span class="data-file-main">
             <span class="data-file-name">{{ file.filename }}</span>
             <span class="data-file-meta">{{ file.size_label }} · {{ formatModifiedAt(file.modified_at) }}</span>
+            <span class="data-file-meta" data-testid="data-file-access">{{ fileAccessLabel(file) }}</span>
           </span>
         </UiButton>
       </div>
@@ -549,13 +577,23 @@ onMounted(loadDataFiles)
     </div>
 
     <!-- 快捷提问 -->
+    <div v-if="dataFile" class="data-next-step">
+      <p>已选择：<strong>{{ dataFile }}</strong>。将此文件带入智能助手，补充分析要求后发送。</p>
+      <UiButton variant="primary" data-testid="data-prepare-analysis"
+        @click="emit('ask', { query: '请分析这份经营数据：', filename: dataFile, prepare: true })"
+      >分析这份数据 <span aria-hidden="true">→</span></UiButton>
+    </div>
     <div class="quick-actions" data-testid="data-quick-actions">
-      <h4>💡 快捷提问</h4>
+      <h4>选择分析模板</h4>
+      <p class="analysis-template-note">选择后会带入当前文件和可编辑的问题，补充期间或口径后再发送。</p>
       <UiButton
         v-for="act in quickActions"
         :key="act.label"
         class="quick-chip"
         :label="act.label"
+        :title="act.description"
+        :data-testid="`analysis-template-${act.id}`"
+        :disabled="!dataFile"
         @click="askQuestion(act.query)"
       />
     </div>
@@ -659,6 +697,8 @@ onMounted(loadDataFiles)
 
 .data-file-item {
   display: flex;
+  flex: 0 0 auto;
+  height: auto;
   /* 接了 UiButton 之后它是原语的根节点：原语默认居中，这一行是文件条目，得拉回左起。 */
   justify-content: flex-start;
   width: 100%;
@@ -732,6 +772,8 @@ onMounted(loadDataFiles)
 .data-file-meta {
   color: var(--legacy-ink-mute);
   font-size: 10px;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* 数据画像 */

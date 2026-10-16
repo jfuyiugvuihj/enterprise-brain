@@ -567,7 +567,7 @@ DISTANCE_OPERATORS = {"l2": "<->", "cosine": "<=>", "ip": "<#>"}
 #: not SELECT *: that dict is R44's contract, and a column that stops existing has to fail
 #: here by name rather than turn into a silently missing metadata key.
 _READ_COLUMNS = ("vector_id", "content", "filename", "chunk_index", "classification",
-                 "department")
+                 "department", "index_version_id", "content_sha256")
 
 #: R59 block 1 criterion (1): once reads are switched, the *lexical* leg's corpus comes from
 #: here too, so the whole read path stops asking the retiring engine. No embedding column:
@@ -982,6 +982,8 @@ def switched_corpus():
             # classification value app/rag/filters.py cannot tell apart from a real one.
             "classification": row.get("classification"),
             "department": row.get("department") or "",
+            "index_version_id": row.get("index_version_id"),
+            "content_sha256": row.get("content_sha256"),
         } for row in rows],
     }
     _note_corpus(CORPUS_SOURCE_PGVECTOR, len(rows))

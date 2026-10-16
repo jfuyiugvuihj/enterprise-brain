@@ -89,21 +89,19 @@ export const PROFILE_TITLES = {
   [PROFILE_FACE_UNAUTHORIZED]: '登录状态已失效',
   [PROFILE_FACE_DENIED]: '这一格不向你开放',
   [PROFILE_FACE_STORAGE]: '画像存储还没就绪',
-  [PROFILE_FACE_MALFORMED]: '这一发回执读不出账号信息',
+  [PROFILE_FACE_MALFORMED]: '账号信息读取失败',
   [PROFILE_FACE_FAILED]: '账号信息没加载出来',
   [PROFILE_FACE_SAVED]: '已经存好了',
   [PROFILE_FACE_DEPARTMENT_REFUSED]: '部门那一格不归你写',
-  [PROFILE_FACE_SAVE_FAILED]: '这一发后端没写成',
-  [PROFILE_FACE_INVALID]: '后端没有收下这一发',
+  [PROFILE_FACE_SAVE_FAILED]: '个人设置未能保存',
+  [PROFILE_FACE_INVALID]: '提交内容未通过校验',
 }
 
 export const PROFILE_LOADING_TEXT = '正在读取这个账号在这台服务器上的样子'
 /** 写成一发之后的回执句：它只说「后端收下了」，不说「值已经是你要的了」——那一句由重读之后的四格来说。 */
-export const PROFILE_SAVED_NOTE = '后端已经收下这一发，上面四格是重新读回来的样子。'
+export const PROFILE_SAVED_NOTE = '个人设置已保存，账号信息已刷新。'
 /** 部门只读那一句人话：权威出处是后端 PUT /profile 的 R296 注释与 department 自助被拒那一枚码。 */
-export const DEPARTMENT_READ_ONLY_NOTE = '部门这一格是只读的：要挪部门请找管理员，走 PUT '
-  + `${DEPARTMENT_WRITE_EXIT}，需要 users:manage 这一项权限。`
-  + '你自己在这里改不动；把这一格一起发给后端，整发都会被拒。'
+export const DEPARTMENT_READ_ONLY_NOTE = '部门由企业管理员统一设置，如需调整请联系管理员。'
 
 /** 判据③：档位拿不到时屏上就是这两句，不许出现任何数字。 */
 export const CLEARANCE_UNKNOWN_TEXT = '这台服务器没把档位告诉我'

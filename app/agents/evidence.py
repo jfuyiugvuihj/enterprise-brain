@@ -88,6 +88,8 @@ def record_document_hits(bag: dict[str, Any] | None, *, query: str, hits: list[d
         bag["documents"].append(
             {
                 "source_name": source,
+                "version_id": str(hit.get("document_version_id") or hit.get("version_id") or hit.get("version") or ""),
+                "index_version_id": str(hit.get("index_version_id") or ""),
                 "source_id": f"{source}#chunk={chunk_index if chunk_index is not None else ''}",
                 "locator": {"chunk_index": chunk_index if chunk_index is not None else None},
                 "excerpt": str(hit.get("content") or "")[:_EXCERPT_LIMIT],
@@ -221,6 +223,7 @@ def evidence_from_bag(bag: dict[str, Any] | None) -> list[Evidence]:
                 source_id=document.get("source_id", ""),
                 source_name=document.get("source_name", ""),
                 document_version_id=document.get("version_id") or None,
+                index_version_id=document.get("index_version_id") or None,
                 locator=document.get("locator") or "",
                 excerpt=document.get("excerpt", ""),
                 score=document.get("score"),

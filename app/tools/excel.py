@@ -212,6 +212,25 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
     selected = df
     domain = df if category_frame is None else category_frame
     notes = []
+    # A requested period is a filter, not the min/max date of the eventual result.
+    date_token = r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
+    periods = re.findall(rf"({date_token})\s*(?:至|到|~|～)\s*({date_token})", query)
+    if periods:
+        if len(set(periods)) != 1:
+            raise ValueError("日期范围不唯一，请明确一个统计期间。")
+        start, end = (pd.to_datetime(v, errors="coerce") for v in periods[0])
+        date_columns = [c for c in df.columns if "日期" in str(c) or pd.api.types.is_datetime64_any_dtype(df[c])]
+        named_dates = [c for c in date_columns if str(c) in query]
+        chosen_dates = named_dates or date_columns
+        if len(chosen_dates) != 1 or pd.isna(start) or pd.isna(end) or start > end:
+            raise ValueError("日期字段或日期范围无法确定，请明确字段和有效起止日期。")
+        column = chosen_dates[0]
+        values = pd.to_datetime(df[column], errors="coerce")
+        if values.isna().any():
+            raise ValueError(f"日期字段「{column}」有缺失或无法识别的日期，未静默忽略。")
+        selected = df.loc[values.between(start, end + pd.Timedelta(days=1), inclusive="left")].copy()
+        selected.attrs["requested_period"] = f"{start:%Y-%m-%d} 至 {end:%Y-%m-%d}（{column}）"
+        notes.append(selected.attrs["requested_period"])
     # Resolve common 已经X wording only against values that really exist in the table.
     columns = select_text_columns(df)
     known_values = {str(v) for c in columns for v in domain[c].dropna().unique()}
@@ -222,7 +241,7 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
         (False, r"(?<![不非])(?:仅|只)(?:统计|计算|包含|保留|分析|汇总)([^，。；;\n]+)"),
         (True, r"(?:排除|不含|不计入|不统计)([^，。；;\n]+)"),
         (True, r"([^，。；;\n]+?)(?:不计入|不统计)(?=[，。；;\n]|$)"),
-        (False, r"(?:统计|合计|汇总|计算)([^，。；;\n]+?)的(?:金额|费用|记录|数据|总额)"),
+        (False, r"(?:统计|合计|汇总|计算)([^，。；;\n]+?)的(?:金额|费用|记录|数据|总额)(?!数|量)"),
     ):
         for clause in re.findall(pattern, query):
             values = re.findall(r'[「“"]([^」”"]+)[」”"]', clause)
@@ -235,13 +254,14 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
                 for column in named:
                     raw = raw.replace(str(column), "", 1)
                 raw = re.sub(r"^(?:为|是|等于|中|的|[:：=])+", "", raw).strip()
-                raw = re.sub(r"(?:的)?(?:记录|数据|费用|订单)$", "", raw).strip()
+                raw = re.sub(r"(?:的)?(?:记录|数据|费用|订单|金额)$", "", raw).strip()
                 known = {str(v) for c in (named or columns) for v in domain[c].dropna().unique()}
                 values = [raw] if raw in known else [v.strip() for v in re.split(r"或者|以及|或|和|与|、", raw)]
                 # “仅统计金额” is an operation, not a categorical condition.
                 if not named and not any(v in known for v in values):
-                    operations = {str(c) for c in df.select_dtypes(include=["number"]).columns} | {"合计", "总金额", "金额合计", "总额", "行数", "数量", "总数"}
-                    if not raw or raw in operations:
+                    operations = {str(c) for c in df.select_dtypes(include=["number"]).columns} | {"合计", "总金额", "金额合计", "总额", "行数", "总行数", "记录数", "总记录数", "数量", "总数"}
+                    operation = re.sub(r"^(?:这份|这张|该|本|全部|所有)(?:数据|表格|文件|表)?的?", "", raw)
+                    if not raw or raw in operations or operation in operations:
                         continue
                     raise ValueError("无法确定分类筛选条件，请写明列名及表中实际取值。")
             candidates = named or [
@@ -258,6 +278,10 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
             selected = selected.loc[~mask if exclude else mask].copy()
             notes.append(f"{column}{'排除' if exclude else '仅包含'}{'、'.join(values)}")
     if notes:
+        # Multiple parser patterns can recognize the same natural-language
+        # condition. Keep the provenance readable and deterministic instead of
+        # repeating an identical filter in the answer and exported report.
+        notes = list(dict.fromkeys(notes))
         selected.attrs["filter_note"] = (
             f"实际筛选：{'；'.join(notes)}；筛选前 {len(df)} 行，筛选后 {len(selected)} 行。"
         )

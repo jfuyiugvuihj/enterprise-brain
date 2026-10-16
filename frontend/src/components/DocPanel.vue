@@ -332,8 +332,10 @@ export function pdfExtractionLines(cell) {
 </script>
 
 <script setup>
+const emit = defineEmits(['ask'])
 import { computed, onDeactivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { http, errorDetail } from '../lib/http'
+import { documentQuestion } from '../lib/document-selection'
 import DocumentPreviewModal from './DocumentPreviewModal.vue'
 import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 // 删除确认沿用本仓已有那一套两步内联状态机（ArtifactList.vue 的 advanceDelete，
@@ -342,6 +344,7 @@ import { advanceDelete, deleteButtonLabel, isPendingDelete } from './ArtifactLis
 // 密级这一格不自造措辞：整数级怎么说成人话，全站只有 lib/provenance.js 那一份口径
 // （classificationLabel：整数级就说「密级 N 级」，不替客户发明档位名字）。
 import { classificationLabel } from '../lib/provenance'
+import { fileAccessLabel, filterFileClassification } from '../lib/file-access'
 
 // 列表存的是【行】而不是裸文件名：GET /documents/catalog 每一行都带着
 // index_status / index_reason（app/documents/catalog.py 的 public_document_row），
@@ -403,9 +406,9 @@ const classificationChoices = computed(() => UPLOAD_CLASSIFICATION_LEVELS.map(le
   isDefault: level === DEFAULT_UPLOAD_CLASSIFICATION,
 })))
 
-/** 选择框旁边那一句（R467 判据②）：只说这一屏真做得到的事 —— 这一发带的是哪一档、**不选会怎样**（默认档 = 密级 1 级 = 不设密级门槛，全公司的人都读得到），部门那一格归服务端（chat.py 的 docstring 明写理由）。 */
+/** 密级与部门权限各自生效，默认密级不能承诺跨部门公开。 */
 const classificationNote = computed(() =>
-  `这一发按 ${classificationWords(uploadClassification.value)} 上传 · 不选就是默认档 ${classificationWords(DEFAULT_UPLOAD_CLASSIFICATION)}：不设密级门槛，全公司的人都读得到（部门由服务端按你的账号判定）`)
+  `仅设置下一次上传的密级，不修改已有文件或列表数量。这一发按 ${classificationWords(uploadClassification.value)} 上传，不选就是默认档 ${classificationWords(DEFAULT_UPLOAD_CLASSIFICATION)}；仍受部门和账号权限限制，部门由服务端按你的账号判定。`)
 
 /**
  * 后端在成功体里说「有 N 份文档存在，但不在当前账号的可见范围内」，界面此前一个字都不提。
@@ -519,17 +522,19 @@ function indexReasonText(row) {
   return known ? INDEX_REASON_TEXT[reason] : INDEX_REASON_UNKNOWN
 }
 
-const excludedDocs = computed(() => docs.value.filter(row => isExcluded(row)))
+const excludedDocs = computed(() => filteredDocs.value.filter(row => isExcluded(row)))
 
 // 过滤后的文档列表
 // 搜索无结果的那句话里带双引号，放进模板属性字面量会撞 Vue 的无引号属性限制，
 // 所以在 script 里拼；文案与接线前逐字相同。
-const noMatchTitle = computed(() => `没有匹配 "${searchQuery.value}" 的文档`)
+const listClassification = ref('')
+const noMatchTitle = computed(() => '没有符合当前名称和密级筛选的文档')
 
 const filteredDocs = computed(() => {
-  if (!searchQuery.value) return docs.value
+  const scoped = filterFileClassification(docs.value, listClassification.value)
+  if (!searchQuery.value) return scoped
   const q = searchQuery.value.toLowerCase()
-  return docs.value.filter(row => row.filename.toLowerCase().includes(q))
+  return scoped.filter(row => row.filename.toLowerCase().includes(q))
 })
 
 /**
@@ -747,6 +752,13 @@ function onDrop(e) {
 
 // 批量删除
 const selectedFiles = ref(new Set())
+const allVisibleSelected = computed(() => filteredDocs.value.length > 0 && filteredDocs.value.every(row => selectedFiles.value.has(row.filename)))
+const selectedNotReady = computed(() => [...selectedFiles.value].some(name => indexStatus(docs.value.find(row => row.filename === name) || {}) !== 'indexed'))
+watch(docs, rows => { selectedFiles.value = new Set([...selectedFiles.value].filter(name => rows.some(row => row.filename === name))) })
+
+function askDocuments(names) {
+  emit('ask', { query: documentQuestion('请填写要查询或比较的问题：', names), prepare: true, filename: '', documentFilenames: names })
+}
 const deleting = ref(false)
 // G15：删除确认改成两步内联，不再用浏览器原生弹窗。两个理由都写在判据里：原生弹窗在
 // 渲染型测试里根本不出现（那些「删之前必须先确认」的用例等于没验过），而私有化客户机上
@@ -783,7 +795,6 @@ function cancelDelete() {
 }
 
 function toggleSelect(filename) {
-  if (!isAdmin.value) return
   if (selectedFiles.value.has(filename)) {
     selectedFiles.value.delete(filename)
   } else {
@@ -792,8 +803,8 @@ function toggleSelect(filename) {
 }
 
 function toggleAll() {
-  if (selectedFiles.value.size === filteredDocs.value.length) {
-    selectedFiles.value.clear()
+  if (allVisibleSelected.value) {
+    filteredDocs.value.forEach(row => selectedFiles.value.delete(row.filename))
   } else {
     filteredDocs.value.forEach(row => selectedFiles.value.add(row.filename))
   }
@@ -960,8 +971,8 @@ onDeactivated(stopUploadPoll)
     <div class="panel-hd">
       <div class="panel-hd-left">
         <span>📁</span>
-        <strong>喂料</strong>
-        <span class="badge">{{ listState === 'ready' ? docs.length : '—' }}</span>
+        <strong>知识库</strong>
+        <span class="badge" data-testid="document-list-count">{{ listState === 'ready' ? filteredDocs.length : '—' }}</span>
       </div>
 
       <!-- 管理员开关 -->
@@ -985,9 +996,20 @@ onDeactivated(stopUploadPoll)
     <div class="search-bar">
       <span class="search-icon">🔍</span>
       <input v-model="searchQuery" placeholder="搜索文档..." class="search-input" />
-      <span v-if="searchQuery" class="search-result">
+      <span v-if="searchQuery || listClassification" class="search-result">
         {{ filteredDocs.length }}/{{ docs.length }}
       </span>
+    </div>
+
+    <div class="classification-bar">
+      <label for="document-list-classification">筛选已有文档密级</label>
+      <select id="document-list-classification" v-model="listClassification" data-testid="document-list-classification" class="classification-picker">
+        <option value="">全部密级</option>
+        <option v-for="level in UPLOAD_CLASSIFICATION_LEVELS" :key="level" :value="String(level)">{{ classificationWords(level) }}</option>
+        <option value="4">密级 4 级</option>
+        <option value="unknown">未登记密级</option>
+      </select>
+      <span class="classification-note">只筛选当前账号有权限查看的文件，不改变文件权限。</span>
     </div>
 
     <!-- 上传区（紧凑） -->
@@ -1002,11 +1024,11 @@ onDeactivated(stopUploadPoll)
       </label>
     </div>
 
-    <!-- R313 · 格一：上传时终于问一句密级。用原生 <select>（与 ChatPanel 那两枚选择框同一条规矩：
+    <!-- R313 · 格一：上传时终于智能助手密级。用原生 <select>（与 ChatPanel 那两枚选择框同一条规矩：
          键盘 / 读屏 / 输入法行为不重新发明，也不新增色值）。默认档就是后端 Form(1) 的那一枚 1，
          不动它 = 今天的行为。🔴 这一屏只有密级、没有部门：部门由服务端按 principal 判（chat.py 写明理由）。 -->
     <div class="classification-bar" data-testid="document-classification-picker">
-      <label class="classification-label" for="document-classification-select">这一发的密级</label>
+      <label class="classification-label" for="document-classification-select">上传文档密级</label>
       <select
         id="document-classification-select"
         class="classification-picker"
@@ -1116,15 +1138,19 @@ onDeactivated(stopUploadPoll)
     />
 
     <!-- 批量操作栏（管理员可见） -->
-    <div v-if="isAdmin && filteredDocs.length > 0" class="batch-bar">
+    <div v-if="filteredDocs.length > 0" class="batch-bar">
       <label class="batch-toggle" @click.prevent="toggleAll">
-        <input type="checkbox" :checked="selectedFiles.size === filteredDocs.length && filteredDocs.length > 0" />
+        <input type="checkbox" :checked="allVisibleSelected" aria-label="选择当前列表全部文档" />
         <span class="batch-text">
           {{ selectedFiles.size ? `已选 ${selectedFiles.size} 个` : '全选' }}
         </span>
       </label>
       <span v-if="selectedFiles.size" class="batch-actions">
+        <UiButton variant="primary" size="sm" data-testid="documents-ask-selected" :disabled="selectedNotReady" @click="askDocuments([...selectedFiles])">基于选中 {{ selectedFiles.size }} 份文件提问</UiButton>
+        <UiButton variant="ghost" size="sm" data-testid="documents-clear-selection" @click="selectedFiles.clear()">清空选择</UiButton>
+        <span v-if="selectedNotReady" role="status">选中资料尚未全部可检索，请等待处理完成或移除未就绪文件。</span>
         <UiButton
+          v-if="isAdmin"
           class="batch-del"
           variant="danger"
           size="sm"
@@ -1167,9 +1193,7 @@ onDeactivated(stopUploadPoll)
              :data-index-reason="row.index_reason || ''"
              @click="toggleSelect(row.filename)">
           <!-- 选择框（管理员） -->
-          <span v-if="isAdmin" class="check-box">
-            {{ selectedFiles.has(row.filename) ? '☑' : '☐' }}
-          </span>
+          <input type="checkbox" class="check-box" :aria-label="'选择文档 ' + row.filename" :checked="selectedFiles.has(row.filename)" @click.stop="toggleSelect(row.filename)" />
 
           <span class="doc-icon">{{ fileIcon(row.filename) }}</span>
           <div class="doc-main">
@@ -1210,8 +1234,16 @@ onDeactivated(stopUploadPoll)
                :data-parse-status="row.parse_status || ''">
               {{ ownerTruth(row) }} · {{ sizeTruth(row) }} · {{ stageTruth(row) }}
             </p>
+            <p class="doc-truth" data-testid="doc-file-access">{{ fileAccessLabel(row) }}</p>
           </div>
           <div class="doc-actions">
+            <UiButton
+              v-if="indexStatus(row) === 'indexed'"
+              variant="secondary"
+              size="sm"
+              data-testid="document-ask"
+              @click.stop="askDocuments([row.filename])"
+            >基于此文件提问</UiButton>
             <UiButton
               class="doc-open-btn"
               variant="secondary"
@@ -1271,7 +1303,7 @@ onDeactivated(stopUploadPoll)
 
     <!-- 底栏统计 -->
     <div v-if="docs.length > 0" class="panel-footer">
-      <span>共 {{ docs.length }} 个文档</span>
+      <span data-testid="document-filter-summary">显示 {{ filteredDocs.length }} / 当前账号可见 {{ docs.length }} 个文档</span>
       <span v-if="excludedDocs.length" class="footer-excluded" data-testid="document-excluded-count">{{ excludedDocs.length }} 个未入索引</span>
       <span v-if="isAdmin" class="footer-hint">点击选择 · 批量删除</span>
     </div>
