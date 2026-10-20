@@ -20,6 +20,7 @@ import re
 from typing import Any, Mapping
 
 from app.common.logger import logger
+from app.rag.indexing import EmbeddingScope
 
 
 @dataclass(frozen=True)
@@ -241,7 +242,7 @@ def _ledger_checksums(rows: list[Any]) -> dict[str, str]:
 
 
 def _indexing():
-    """Read app.rag.indexing at call time, so importing app.db stays free of the RAG stack.
+    """Read app.rag.indexing at call time; this module imports that leaf, not the RAG stack.
 
     The embedding profile means one thing in this repository and that module says it: the
     environment variable names, the defaults, and the question of what the process actually

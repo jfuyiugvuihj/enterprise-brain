@@ -35,6 +35,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -439,14 +440,34 @@ def _child_environment(tmp_path: Path, repo_root: str, report: Path) -> dict:
     return env
 
 
-def _run_child_pytest(repo_root: str, args: list[str], env: dict, cwd: str | None = None) -> object:
+def r449_nested_basetemp(parent_scratch: Path) -> Path:
+    """R449：每一枚嵌套 pytest 会话只用自己的 basetemp，落点必须在父件 scratch 之内。
+
+    不传 --basetemp 时子会话落进 `%TEMP%\\pytest-of-<user>` 那枚共享根（跟进单 §123 第四节）：
+    每枚会话收尾都要剪该根下的旧编号目录（默认只留最近 3 枚，`.lock` 一过期照剪不误），
+    并发时父会话正在用的 tmp_path 就有被剪掉的一天 —— 那是门自己造的假红，不是产品缺陷。
+    判据①（子 basetemp 必须是父 scratch 的子目录）由
+    tests/test_r449_nested_pytest_basetemp_contract.py 机检，漏一处当场点名。
+    """
+    root = Path(parent_scratch) / "r449-nested-basetemp"
+    root.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="child-", dir=str(root)))
+
+
+def _run_child_pytest(
+    repo_root: str, args: list[str], env: dict, parent_scratch: Path, cwd: str | None = None
+) -> object:
     """枚 -q 交给调用方：要断言终端抬头（钉子装没装的直接证据）就得留着默认 verbosity。
 
     缓存 Provider 关掉，免得子进程去写 .pytest_cache；cwd 能换，用来复现「在子目录里拿
     相对路径起 pytest」这一类起法（app/rag/retriever.py:394 的默认值是相对 cwd 的）。
     """
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *args],
+        [
+            sys.executable, "-m", "pytest", "-p", "no:cacheprovider",
+            "--basetemp", str(r449_nested_basetemp(parent_scratch)),
+            *args,
+        ],
         cwd=cwd or repo_root,
         env=env,
         capture_output=True,
@@ -493,7 +514,9 @@ def test_a_path_argument_outside_tests_still_loads_the_pins(
         chroma_writeback_guard.repo_root,
         ["--collect-only", "-p", "r134_child_probe", "app/common/audit.py"],
         _child_environment(tmp_path, chroma_writeback_guard.repo_root, report_path),
+        tmp_path,
     )
+    assert tmp_path.is_dir(), "R449：嵌套会话把父件的 tmp_path 剪掉了（子会话必须自带 --basetemp）"
     problems = chroma_writeback_guard.diff(before, chroma_writeback_guard.snapshot(store))
     assert completed.returncode in {0, 5}, completed.stdout[-3000:] + completed.stderr[-3000:]
     assert "R134 chroma sandbox:" in completed.stdout, (
@@ -528,7 +551,9 @@ def test_a_relative_path_from_a_subdirectory_still_loads_the_pins(
         ["-q", "--collect-only", "-p", "r134_child_probe", "common/audit.py"],
         _child_environment(tmp_path, chroma_writeback_guard.repo_root, report_path),
         cwd=str(Path(chroma_writeback_guard.repo_root) / "app"),
+        parent_scratch=tmp_path,
     )
+    assert tmp_path.is_dir(), "R449：从子目录起的那枚嵌套会话同样不许动父件 tmp_path"
     problems = chroma_writeback_guard.diff(before, chroma_writeback_guard.snapshot(store))
     output = completed.stdout + completed.stderr
     try:
@@ -682,8 +707,51 @@ def _chroma_funnel_sites(root: Path) -> list[str]:
     return sorted(sites)
 
 
+#: 按目录开 Chroma 的收口台账：R134 那层工厂改道今天罩得住的全部入口，逐枚点名。
+#: 钉的是"收口有哪几处"，不是"那几处今天坐在第几行"——行号不进账（R152 在 retriever.py 里
+#: 插了 251 行，把这枚 PersistentClient 从 480 顶到 731，收口一个没多、一个没少，却红了
+#: 一整条全量）。同文件再长第二处会得到两枚条目、多一枚收口就多一枚条目，照样当场红；
+#: 行号仍随断言消息打出来，指位置用。加长只许发生在**新收口真进来时**，不许把断言改松。
+DIRECTORY_FUNNEL_LEDGER = (
+    # 生产读路径本体：DocumentRetriever 的 chroma_dir 默认值就是工作树里那枚相对路径，R53 改的
+    # 是那枚默认值，这一处是它的落点——显式传进来的仓内绝对路径只有工厂改道拦得住。
+    "app/rag/retriever.py:PersistentClient",
+    # 评测对照器：--chroma-dir 的相对默认值按 cwd 解析，而 pytest 的 cwd 就是仓库根。
+    "scripts/compare_vector_recall.py:PersistentClient",
+    # R162 起的第四处：它按字节把源库复制到仓外，PersistentClient 只开副本，所以这一处
+    # **不需要**新增改道规则——改道打在工厂本身，新收口自动落在罩子里。清单仍要如实加长：
+    # 本用例钉的是"一共有几处"，不是"谁需要特判"。
+    "scripts/diag_r162_chroma_zero_rows.py:PersistentClient",
+    # R218（09-24 随并树进来）起的第五处：与 R162 同一形状，先按字节把库复制进临时目录、
+    # 只开副本，照样不需要特判，这里只是把枚数记实。总控 09-24 亲验：本件跑完 R134 的收尾
+    # 报告仍是「落点被改道出工作树: N 次（0 个原路径）」，且 git status 里 chroma_db 零变化。
+    "scripts/r218_switch_rehearsal.py:PersistentClient",
+    # R382（09-27 随 b498c88 并树）三枚切读取证件起的第六、七、八处。三枚都不复制库、原地
+    # 开一个目录，但目录一律取环境变量 R382_CHROMA_DIR，缺省是容器里的路径（/work/chroma_db、
+    # /app/chroma_db）；今天没有一枚测试执行到它们的开库行（test_r389 只装载过 r382_index_scope
+    # 的模块体，PersistentClient 在它自己的 read_chroma() 里没被调到；r382_chroma_space.py 是
+    # 模块级开库，今天没有任何测试 import 它）。"原地开目录"恰好是 R134 拦得住的那一发：改道打在
+    # chromadb.PersistentClient 这枚工厂上、属性查找发生在调用期，谁哪天把它们拿到仓根下跑，
+    # 落点解析进工作树就被同一层罩住——一行新规则都不用加，这也是清单加长而不是另立改道的
+    # 原因。口径的边界照 scripts/r218_switch_rehearsal.py 那条注释：钉子由 tests/conftest 在测试
+    # 生命周期里装，脚本直跑本来就不归它管——R134 钉的一直是"测试期不写脏被跟踪的 ./chroma_db"。
+    "scripts/r382_chroma_space.py:PersistentClient",
+    "scripts/r382_index_scope.py:PersistentClient",
+    "scripts/r382_probe.py:PersistentClient",
+    # 重建器的普查入口 open_census_store()：刻意不用 DocumentRetriever，所以 R53 的默认值改写
+    # 管不到它——本单立单那一发实测（不带参数跑一次 --status 就把被跟踪的 chroma.sqlite3
+    # 原地回写：尺寸一字不变、sha 变了）就是它。
+    "scripts/rebuild_index.py:PersistentClient",
+)
+
+
+def _funnel_ledger(sites: list[str]) -> list[str]:
+    """把现扫读数（``文件:行号:工厂``）折成台账形状（``文件:工厂``）：派生口径只此一处。"""
+    return [site.split(":", 1)[0] + ":" + site.rsplit(":", 1)[1] for site in sites]
+
+
 def test_there_is_still_only_one_directory_funnel_to_guard(chroma_writeback_guard):
-    """R134 只钉一枚 chromadb.PersistentClient，依据是「全仓按目录开库的收口只有那三处」。
+    """R134 只钉一枚 chromadb.PersistentClient，依据是「全仓按目录开库的收口只有那三处」（R162 起为四处）。
 
     这条依据是别人给的（总控 09-21 的 git grep），所以必须自己钉住：app/ 或 scripts/ 里以后
     若长出第二种开库写法（chromadb.Client(...) / Settings(persist_directory=...) /
@@ -692,17 +760,9 @@ def test_there_is_still_only_one_directory_funnel_to_guard(chroma_writeback_guar
     「第 N 层改写」正是本单判据里禁止的表面补丁。
     """
     sites = _chroma_funnel_sites(Path(chroma_writeback_guard.repo_root))
-    # 钉的是"收口有哪几处"，不是"那几处今天坐在第几行"：本单原文的依据就是
-    # 「全仓按目录开库的收口只有那三处」。带行号的等式会被一次无关的插行打红——
-    # R152 在 retriever.py 里加了 251 行，把这枚 PersistentClient 从 480 顶到 731，
-    # 收口一个没多、一个没少，却红了一整条全量。所以这里比 (文件, 工厂名) 与**枚数**：
-    # 同文件再长第二处会得到 4 枚，照样当场红（行号仍随消息打出来，指位置用）。
-    funnels = [site.split(":", 1)[0] + ":" + site.rsplit(":", 1)[1] for site in sites]
-    assert funnels == [
-        "app/rag/retriever.py:PersistentClient",
-        "scripts/compare_vector_recall.py:PersistentClient",
-        "scripts/rebuild_index.py:PersistentClient",
-    ], "按目录开 Chroma 的收口清单变了，R134 的改道要跟着扩：" + "、".join(sites)
+    assert _funnel_ledger(sites) == list(DIRECTORY_FUNNEL_LEDGER), (
+        "按目录开 Chroma 的收口清单变了，R134 的改道要跟着扩：" + "、".join(sites)
+    )
 
 
 def test_the_tests_conftest_still_installs_the_app_level_half(chroma_writeback_guard):

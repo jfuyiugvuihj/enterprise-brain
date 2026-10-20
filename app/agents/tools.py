@@ -4,7 +4,9 @@ LangChain Tools — 封装企业智脑全部能力，供 ReAct Agent 自主调�
 import os
 import json
 import re
+import hashlib
 from collections import OrderedDict
+from typing import Any, NamedTuple
 import inspect
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
@@ -14,11 +16,12 @@ from app.agents.evidence import (
     _enum_error_codes,
     bag_from_config,
     record_artifact,
+    record_chart_series,
     record_dataset,
     record_document_hits,
     record_tool_status,
 )
-from app.trace.spans import start_tool_call
+from app.trace.spans import span_identity, start_tool_call
 
 
 def _get_user_context(user: dict | None = None) -> dict:
@@ -39,8 +42,25 @@ def _get_user_context(user: dict | None = None) -> dict:
     }
 
 
+#: R294 —— 载荷快照不是权威身份。图内这一族只认两种投影：在场请求直接下发的 `Principal`
+#: 对象，以及后台 worker 在**消费时刻**从用户库现取、逐维核过漂移之后交出的那一份 dict。
+#: 后者靠一枚随行签名自证。签名长在 configurable 上而不是 Principal 里：两条路径的
+#: Principal 字段集必须逐字相等（判据②），把出处塞成字段，相等就没有了。
+#: 取值必须与 deploy/queue_worker.py 的同名常量逐字相等，由
+#: tests/test_r294_principal_freeze.py 钉住（写法照 queue_worker 的 REPORT_LANE）。
+PRINCIPAL_PROVENANCE_KEY = "principal_provenance"
+CONSUMPTION_PRINCIPAL_PROVENANCE = "consumption-time"
+
+
 def _tool_principal(config):
-    """Resolve the canonical Principal carried by the Agent runtime."""
+    """Resolve the canonical Principal carried by the Agent runtime.
+
+    R294: a dict here is a queue payload's projection, and a queue payload outlives an
+    identity change -- the department it froze is not the department in force now. Only
+    the worker's consumption-time re-resolution may hand one over, and it signs the
+    hand-off. Anything else that tries to make a frozen dict speak as the subject is
+    refused, because the only honest directions left are narrowing and invalidation.
+    """
     conf = (config or {}).get("configurable", {}) or {}
     try:
         from app.common.identity import Principal
@@ -49,6 +69,10 @@ def _tool_principal(config):
         if isinstance(provided, Principal):
             principal = provided
         elif isinstance(provided, dict):
+            if str(conf.get(PRINCIPAL_PROVENANCE_KEY) or "") != CONSUMPTION_PRINCIPAL_PROVENANCE:
+                raise PermissionError(
+                    "authorization_required: agent tool identity is not consumption-time resolved"
+                )
             principal = Principal.model_validate(provided)
         else:
             principal = Principal.from_user(conf, auth_source="agent")
@@ -92,8 +116,13 @@ _NO_VISIBLE_ROWS_CODE = "no_visible_rows"
 # 数据集准入闸（app/common/policy.py::authorization_decision）的内部 reason → 公开码。
 # 全仓只此一份，放在翻译层：policy/rbac 的判定一个字都不改，内部词表改名也不许破坏公开契约。
 # 没进这张表的 reason（含 clearance_insufficient）一律说成 permission_denied：那只是
-# 「这份资源对你没有授权」这个事实本身，不含更细的判断。密级口径属 H13（业主未裁），
-# 本单不许借映射表替它下结论，也不为它新增枚举成员。
+# 「这份资源对你没有授权」这个事实本身，不含更细的判断。密级这一维今天不是悬案：
+# 密级口径已于 2026-09-28 裁定＝甲（出处 docs/handoff/2026-09-17-human-gates.md 最后一节
+# 「H13 结案 ＋ A1/A3 裁定」；口径已写进契约 docs/api/contract-v1.md 的「## R467」节），
+# 而这一维的拒绝由 authorization_decision 现成的两枚在册裸码承担——越档回
+# clearance_insufficient、密级元数据缺失回 resource_scope_missing，与检索侧
+# app/rag/filters.py::DocumentRetrievalScope.refusal_code 同一套词。翻译层不为它另开一码，
+# 也不替它新增枚举成员。
 _POLICY_DENIAL_CODES = {
     "authentication_required": "authentication_required",
     "principal_inactive": "account_unavailable",
@@ -151,6 +180,60 @@ _DATASET_GATE = "dataset_access"
 def _authorization_error() -> str:
     return "未找到：当前请求缺少有效授权主体（error_code=authorization_required）"
 
+
+class DatasetsHiddenByScope(NamedTuple):
+    """数据集准入闸的第三种回答：台账里登记着文件，而这一个账号一份都读不到。
+
+    它不是异常，也不带文件名、部门归属、密级这些被挡资源的实际值——只带一个数量与一枚
+    公开码。数量够工具说清「不是没有文件」，码够机器读；再多一个字，就是拿拒绝当借口把
+    别人资源的元数据发出去了。
+    """
+
+    total: int
+    code: str
+
+
+#: 三张脸之一：本轮真的什么都没绑定（台账是空的）。这时候让人去上传是对的。
+_NO_BOUND_DATASET_TEXT = (
+    "本轮没有绑定任何数据文件：数据集台账里一个文件都没有。请先到数据分析面板上传 Excel/CSV 文件。"
+)
+
+#: 三张脸之二：有文件，但按当前权限读不到。措辞的目的很具体——让人去申请权限，而不是让人
+#: 再传一次；「不是文件不存在」那一短句就是撞过这面墙的员工需要听到的那句话。
+#: 终态的「（error_code=码）」由 _denial_text 统一拼，本层不发明第二套格式。
+_HIDDEN_DATASETS_HEAD = (
+    "本轮没有展示任何数据文件：台账里登记着数据文件，但按你当前的权限一份都读不到。"
+    "这是权限判定，不是文件不存在——不需要重新上传，请找管理员为这个账号开通对应数据的读取权限。"
+)
+
+
+def _dataset_gate_terminal_code(codes: list[str]) -> str:
+    """几份文件几种因由混在一起时取哪一枚码：说得出具体原因的优先，兜底码只在别无可选时用。
+
+    与 _row_scope_terminal_code 同一个取法（具体的压过笼统的）。能走到这一步就说明每一份
+    文件都被闸挡了，所以这里没有第三种事实可取；一张空表交不出码，而 _record_denial 对空码
+    本来就不落状态（R64），本层也不替它硬造一枚。
+    """
+    for code in codes:
+        if code != _POLICY_DENIAL_FALLBACK_CODE:
+            return code
+    return codes[0] if codes else ""
+
+
+def _dataset_access_text(config, error: object) -> str:
+    """把闸交回来的终态翻成这一条腿自己的人话：两条腿各有一句 return，漏一条就是第二张假话。
+
+    闸能交出两种东西：一句已经拼好的拒绝原文（选中文件那两条分支），或一张
+    ``DatasetsHiddenByScope``。后者必须在这一层变成话，否则调用方拿回去的是这个
+    NamedTuple 的 repr——那是把「有，但你不能看」说得更难懂的新形态。
+    """
+    if isinstance(error, DatasetsHiddenByScope):
+        return _denial_text(
+            config, tool=_DATASET_GATE, code=error.code, head=_HIDDEN_DATASETS_HEAD
+        )
+    return str(error)
+
+
 def _artifact_principal(config, action: str | None = None) -> object | None:
     try:
         principal = _tool_principal(config)
@@ -169,18 +252,88 @@ def _artifact_urls(path: str, artifact_type: str, config) -> tuple[str, str] | N
     return artifact.content_url, artifact.download_url
 
 
+def _tool_turn(config) -> tuple:
+    """(会话号, 请求号) for the turn that is running this tool, or (None, None).
+
+    Both legs already exist on the request path: ``thread_id`` is what the orchestrator names
+    the conversation (``app/agents/orchestrator.py`` puts it in ``configurable``), and
+    ``span_identity`` is the existing resolver for the request. This function reads them, it
+    does not re-declare them; a background or direct call that carries neither produces a row
+    that records nothing, which is the honest answer and not a placeholder to fill in.
+    """
+    conf = (config or {}).get("configurable", {}) or {}
+    session = str(conf.get("thread_id") or "").strip()
+    request = str(span_identity(config).get("request_id") or "").strip()
+    return (session or None, request or None)
+
+
 def _register_artifact(path: str, artifact_type: str, config):
     """Register a generated file and record it as evidence for this execution."""
     principal = _artifact_principal(config)
     if principal is None:
         return None
     from app.storage import artifacts as artifact_storage
+    from app.storage.calculations import calculation_storage
+    from contextlib import nullcontext
 
-    artifact = artifact_storage.register_artifact(
-        path,
-        artifact_type=artifact_type,
-        principal=principal,
-    )
+    turn_session, turn_request = _tool_turn(config)
+    guard = ((config or {}).get("configurable") or {}).get("queue_execution_guard")
+    if guard:
+        from app.common.reliable_queue import artifact_execution_guard
+        boundary = artifact_execution_guard(guard)
+    else:
+        boundary = nullcontext()
+    try:
+        with boundary:
+            artifact = None
+            if guard and artifact_type == "report" and turn_request and turn_session:
+                for candidate in artifact_storage.artifact_registry.list_active(owner_id=principal.user_id, artifact_type="report"):
+                    if (candidate.request_id == turn_request
+                            and str(candidate.session_id or "").split(":", 1)[0] == turn_session.split(":", 1)[0]
+                            and os.path.splitext(candidate.filename)[1] == os.path.splitext(path)[1]
+                            and os.path.isfile(candidate.storage_path)):
+                        artifact = candidate
+                        if os.path.abspath(path) != os.path.abspath(candidate.storage_path):
+                            os.remove(path)
+                        break
+            if artifact is None:
+                task = (((config or {}).get("configurable") or {}).get("task_context")
+                        or ((config or {}).get('configurable') or {}).get('data_context') or {})
+                from app.storage.datasets import dataset_registry
+                source = dataset_registry.get_active_by_filename(task["filename"]) if task else None
+                calculation_ids = calculation_storage.ids_for_turn(
+                    owner_id=principal.user_id, session_id=turn_session, request_id=turn_request
+                )
+                parents = list(((config or {}).get('configurable') or {}).get('report_source_artifact_ids') or [])
+                if artifact_type == 'report' and task.get('report_body'):
+                    previous_reports = [item for item in artifact_storage.artifact_registry.list_active(owner_id=principal.user_id, artifact_type='report')
+                        if str(item.session_id or '').split(':')[0] == str(turn_session or '').split(':')[0]
+                        and item.request_id != turn_request]
+                    if previous_reports:
+                        parents.append(previous_reports[0].artifact_id)
+                artifact = artifact_storage.register_artifact(
+                    path,
+                    artifact_type=artifact_type,
+                    principal=principal,
+                    session_id=turn_session,
+                    request_id=turn_request,
+                    calculation_run_ids=calculation_ids,
+                    source_artifact_ids=parents,
+                    source_alert_id=(((config or {}).get('configurable') or {}).get('data_context') or {}).get('alert_id'),
+                    **({"source_version_id": task.get("version_id"), "classification": source.classification,
+                        "source_documents": task.get("policy_sources", [])} if source else {}),
+                )
+                from app.common.audit import record_audit
+                record_audit(principal, ACTION_EXPORT if artifact_type == "report" else ACTION_ANALYZE,
+                    "completed", artifact.artifact_id, "artifact_registered", request_id=turn_request,
+                    resource_scope=artifact.resource_scope,
+                    after_summary={"artifact_type": artifact_type, "session_id": turn_session,
+                        "calculation_run_ids": calculation_ids, "source_version_id": artifact.source_version_id})
+    except Exception as exc:
+        if getattr(exc, "code", "") == "queue_execution_lost":
+            if os.path.isfile(path):
+                os.remove(path)
+        raise
     record_artifact(
         bag_from_config(config),
         artifact_id=artifact.artifact_id,
@@ -193,7 +346,55 @@ def _register_artifact(path: str, artifact_type: str, config):
     return artifact
 
 
-def _authorized_dataset_files(config) -> tuple[list[tuple[str, str]], str | None]:
+def _round_chart_paths(config, principal) -> list[str]:
+    """本轮真登记过、现在还打得开的图表件路径（newest first）。
+
+    为什么不去问证据袋：袋是按腿开的（``app/agents/orchestrator.py`` 每一枚 worker leg 各开一只，
+    批准腿再开一只），导出腿那只袋里永远没有图腿登记的那枚件——按袋查图必然查不到。
+    所以装箱走产物台账的生成血缘：会话号去掉 ``:worker`` 那一截后缀就是本轮这一场会话，
+    再按属主收一道（同一场会话也可能换人批准），只读物证、不猜。
+    """
+    session, _request = _tool_turn(config)
+    if not session:
+        return []
+    base = session.split(":", 1)[0]
+    owner = str(getattr(principal, "user_id", "") or "")
+    from app.storage import artifacts as artifact_storage
+
+    paths: list[str] = []
+    from app.common.policy import authorization_decision
+    from app.common.permissions import ACTION_VIEW
+    conf = ((config or {}).get("configurable") or {})
+    current_ids = set(conf.get("report_chart_ids") or []) if "report_chart_ids" in conf else None
+    body = str((conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
+    if body:
+        ordered_ids = list(dict.fromkeys(re.findall(r'!\[[^\]]*\]\(/api/v1/artifacts/([a-zA-Z0-9_-]+)/content\)', body)))
+        current_ids = set(ordered_ids)
+    else:
+        ordered_ids = []
+    paths_by_id = {}
+    for record in artifact_storage.artifact_registry.list_active(artifact_type="chart"):
+        if current_ids is not None and str(record.artifact_id) not in current_ids:
+            continue
+        lineage = str(getattr(record, "session_id", "") or "")
+        if lineage.split(":", 1)[0] != base:
+            continue
+        if owner and str(getattr(record, "owner_id", "") or "") != owner:
+            continue
+        if not authorization_decision(principal, record.resource_scope, action=ACTION_VIEW,
+                require_resource_scope=True).allowed or not artifact_storage.artifact_sources_allowed(record, principal):
+            continue
+        stored = str(getattr(record, "storage_path", "") or "")
+        if stored:
+            paths.append(stored)
+            paths_by_id[str(record.artifact_id)] = stored
+            conf.setdefault("report_source_artifact_ids", []).append(record.artifact_id)
+    return [paths_by_id[key] for key in ordered_ids if key in paths_by_id] if body else paths
+
+
+def _authorized_dataset_files(
+    config,
+) -> "tuple[list[tuple[str, str]], str | DatasetsHiddenByScope | None]":
     """Resolve registered datasets after applying the same scope policy as API routes."""
     principal = _artifact_principal(config, ACTION_ANALYZE)
     if principal is None:
@@ -233,10 +434,28 @@ def _authorized_dataset_files(config) -> tuple[list[tuple[str, str]], str | None
                 code=_policy_denial_code(decision.reason_code),
             )
             return [], f"暂无可访问的数据文件（error_code={decision.reason_code}）"
+        task = conf.get("task_context") or conf.get('data_context') or {}
+        if task:
+            bound_scope = (conf.get('data_context') or {}).get('scope')
+            if bound_scope and (bound_scope.get('role') != principal.role
+                    or bound_scope.get('department') != (principal.department or '')
+                    or bound_scope.get('department_ids', []) != sorted(principal.department_ids)):
+                return [], _denial_text(config, tool=_DATASET_GATE, code='permission_denied',
+                    head='当前账号授权范围与异常计算时不同，未继续沿用旧依据。请重新巡检后分析。')
+            if not task.get("version_id") or record.version_id != task["version_id"]:
+                return [], _denial_text(config, tool=_DATASET_GATE, code="validation_error",
+                    head="输入数据版本已变化，未沿用旧口径生成新结果。请重新发起核查并确认新版本。")
+            with open(record.storage_path, "rb") as source:
+                digest = hashlib.file_digest(source, "sha256").hexdigest()
+            if digest != task.get("sha256"):
+                return [], _denial_text(config, tool=_DATASET_GATE, code="validation_error",
+                    head="输入文件内容与任务绑定版本不一致，未继续计算。请重新登记并确认数据版本。")
         return [(record.filename, record.storage_path)], None
 
-    permitted = []
-    for record in dataset_storage.dataset_registry.active_records():
+    records = list(dataset_storage.dataset_registry.active_records())
+    permitted: list[tuple[str, str]] = []
+    hidden_codes: list[str] = []
+    for record in records:
         decision = authorization_decision(
             principal,
             record.resource_scope,
@@ -245,6 +464,13 @@ def _authorized_dataset_files(config) -> tuple[list[tuple[str, str]], str | None
         )
         if decision.allowed:
             permitted.append((record.filename, record.storage_path))
+        else:
+            hidden_codes.append(_policy_denial_code(decision.reason_code))
+    if not permitted and records:
+        # 判定与顺序一个字都没动：还是逐条 authorization_decision，只是把「为什么空」带了出去。
+        # 空表本身说不清自己是「没有文件」还是「有文件但读不到」，逼调用方猜，猜出来的就是
+        # 员工最常撞的那句假话。空台账照旧交空表与 None，那是第一张脸，不是权限事实。
+        return [], DatasetsHiddenByScope(len(records), _dataset_gate_terminal_code(hidden_codes))
     return permitted, None
 
 
@@ -256,6 +482,11 @@ def _record_dataset_evidence(config, filename: str, df) -> None:
     bag = bag_from_config(config)
     if bag is None:
         return
+    question = str(((config or {}).get("configurable") or {}).get("data_question") or "")
+    bag.setdefault("report_facts", []).append(_report_data_facts(
+        filename, df, question, version_id=getattr(record, "version_id", ""),
+        sha256=getattr(record, "content_sha256", ""),
+    ))
     record_dataset(
         bag,
         filename=filename,
@@ -267,14 +498,362 @@ def _record_dataset_evidence(config, filename: str, df) -> None:
     )
 
 
-def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> list[str]:
+class _CalculationPersistenceError(RuntimeError):
+    pass
+
+
+def _start_calculation(config, filename: str, query: str, *, operation: str):
+    from app.storage.datasets import dataset_registry
+    from app.storage.calculations import calculation_storage
+
+    dataset = dataset_registry.get_active_by_filename(filename)
+    principal = _tool_principal(config)
+    session, request = _tool_turn(config)
+    if dataset is None or not dataset.version_id:
+        raise _CalculationPersistenceError("数据版本未登记，无法保存可回查的计算记录。")
+    try:
+        return calculation_storage.start_run(
+            owner_id=principal.user_id,
+            dataset_version_id=dataset.version_id,
+            request_id=request,
+            parameters={
+                "session_id": session,
+                "trace_id": span_identity(config).get("trace_id"),
+                "filename": filename,
+                "query": query,
+                "operation": operation,
+                "role": principal.role,
+                "department": principal.department,
+                "clearance": principal.clearance,
+                "authorization_department_ids": sorted(principal.department_ids),
+                "scope": {"department_ids": list(principal.department_ids),
+                          "classification": dataset.classification, "visibility": "private"},
+            },
+        )["calculation_run_id"]
+    except Exception as exc:
+        raise _CalculationPersistenceError("计算记录保存失败，请稍后重试。") from exc
+
+
+def _finish_calculation(calculation_id, result):
+    from app.storage.calculations import calculation_storage
+
+    try:
+        calculation_storage.complete_run(calculation_id, result)
+    except Exception as exc:
+        raise _CalculationPersistenceError("计算结果未能保存，本轮没有可回查的计算结果，请稍后重试。") from exc
+
+
+def _fail_calculation(calculation_id, error_code):
+    if not calculation_id:
+        return
+    from app.storage.calculations import calculation_storage
+
+    try:
+        calculation_storage.fail_run(calculation_id, error_code)
+    except Exception as exc:
+        raise _CalculationPersistenceError("失败计算的状态未能保存，请稍后重试。") from exc
+
+
+# ==================== R192 · 问法里的「前 N」：中文数词与阿拉伯数字同解 ====================
+# 病灶：员工写「排名前三」，屏上标题写「排名前10」——标题里那个数就是 top_n 本身，而 top_n
+# 只在 `re.search(r"前\s*(\d+)")` 命中时才动，\d 不吃中文数字，于是问三答十。
+# 为什么这一族归一全仓只此一处（三条都是改前实取，不是推测）：
+#   1) 扫遍 app/**，"前 + 数字"的取数正则只有 _answer_query 这一枚命中，没有第二个消费者；
+#   2) 仓里没有既成的中文数词→整数通路可复用：app/documents/index_policy.py 里的
+#      [一二三四五六七八九十百] 是"这一行像不像标题"的字符类，只做形状匹配，不产数值；
+#   3) app/common/model_budget.py::_env_int 与 app/rag/indexing.py::_scope_int 化的是环境量
+#      和台账字段，输入永远是阿拉伯数字串，喂中文数词只会落回默认值——不是同一件事。
+# 所以本单养的是唯一一个消费者：正则一枚、取值一口。第二枚消费者出现时调 _ranking_count()，
+# 不许再抄一份；也不许顺手长成一套通用数词文法（判据明令不许新增自由解析器）。
+
+#: 中文个位数 → 值。"两"是手写里"二"的常见替代，同解。
+_CN_DIGIT_VALUES = {
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+
+#: 「前」后面那一串，外加三种"这根本不是排名条数"的后随形状，命中就整条不认：
+#:   - 后面还是数字：「前30年」被贪婪匹配截成"前 3"是一枚新假话；
+#:   - 数量级位（零/百/千/万）：「前一百名」认成"前 1"同样是假话，宁可退回默认条数——那与改前逐字相同；
+#:   - 时间单位（天/日/周/月/年…）：「提前一天」「前五个月」问的是时间段，不是要前几名。
+_RANKING_COUNT_RE = re.compile(
+    r"前\s*(\d+|[一二两三四五六七八九十]{1,3})"
+    r"(?!\s*(?:\d|[零百千万]|个?(?:工作日|工作天|天|日|号|星期|周|月|年|小时|分钟)))"
+)
+
+#: 问法里点不出数时的条数：沿用改前那一枚，本单不动它。
+_DEFAULT_RANKING_COUNT = 10
+
+#: 病灶二那张脸（用户可见那一层）。它与准入闸那三张脸不同族：那三张说的是文件读不读得到，
+#: 这一张说的是文件读到了、也有行，只是这张表能拿来比大小的列一枚都没有。
+#: 措辞三条红线：不说"没结论"（那是把算不出来说成没算过）、不说"没数据"（数据就在下一段）、
+#: 不提权限与部门（因由不归这里猜）。
+_NO_SORTABLE_NUMERIC_COLUMN_TEXT = (
+    "这份文件没有可排序的数值列：它已有的列全是文本，排名需要一个能比大小的数值列。"
+)
+
+
+def _chinese_ranking_number(token: str) -> int | None:
+    """1..99 的中文数词 → 整数；认不出交 None，不猜。
+
+    只覆盖「三」「十」「十二」「二十」「二十三」这一档形状。再往上（一百、一千）是数量级组合，
+    要吃得下就得写一套完整的中文数词文法，而今天没有任何问法需要它：那一档一律 None，
+    由调用方落回默认条数，读数与改前逐字相同。
+    """
+    if "十" in token:
+        head, _, tail = token.partition("十")
+        tens = 1 if not head else _CN_DIGIT_VALUES.get(head, 0)
+        if not tens:
+            return None
+        if not tail:
+            return tens * 10
+        units = _CN_DIGIT_VALUES.get(tail, 0) if len(tail) == 1 else 0
+        return tens * 10 + units if units else None
+    return _CN_DIGIT_VALUES.get(token)
+
+
+def _ranking_count(query: str) -> int | None:
+    """问法里「前 N」的那个 N：阿拉伯数字与中文数词同解；点不出来交 None。"""
+    match = _RANKING_COUNT_RE.search(query or "")
+    if match is None:
+        return None
+    token = match.group(1)
+    if token.isdigit():
+        return int(token)
+    return _chinese_ranking_number(token)
+
+
+# ==================== R703 · 分组维度照这张表的真列名点，不照硬写字面点 ====================
+#
+# 病形现取（跟进单口径：客户带着报销明细表.csv 问「按月份统计报销金额，并画一张柱状图」，
+# 屏上回的是「文档中未包含实际报销数据」）：Data 腿的返回串里只有一枚 📈 数值统计 小节，
+# 分组汇总那一节一个字都没出。原因在触发条件与选列两处都写死了字面：
+#   触发那一枚字面表是 ["对比","比较","分组","按区域","按类型"]，后两枚是别家夹具的列名手抄，
+#   真表真问法一枚都不命中；选列那一支做的是 `tc in query` 单向包含，列名「发生月份」
+#   不是问法「按月份…」的子串，于是永远配不上。
+# 判据口径：命中与否由**这张表自己的列名**说了算，问法只负责指出"按哪个维度"。
+# 老那一支（字面命中时的选列与任意挑选）整段保留，读数字节不变；新增的只是
+# "问法点了维度、且维度在这张表里对得上真列名"这一条通路。
+
+#: 问法里点维度时常用的那几枚前导字：「按月份」「各区域」「逐月」「分部门」「每季」「照类型」。
+_DIMENSION_MARKERS = "按各逐分照每"
+#: 前导字后面最多取几个字去找列名，再从最长逐字回退：「按月份统计报销」里只有「月份」是列名片段。
+_DIMENSION_WINDOW = 6
+#: 分组汇总最多列几组。这一段直接进 prompt，装箱预算卡在那儿；超线明说还剩几组，不静默截断。
+_MAX_GROUP_ROWS = 12
+
+_DIMENSION_CANDIDATE_RE = re.compile(
+    "[" + _DIMENSION_MARKERS + r"]\s*([0-9A-Za-z_一-鿿]{1," + str(_DIMENSION_WINDOW) + r"})"
+)
+
+
+def _named_dimension_column(query: str, txt_cols: list[str]) -> str | None:
+    """问法点名的维度 → 这张表里的真列名；点不出或表里没有交 None，不猜。
+
+    匹配是**双向**的，两个方向各有各的真实问法：「月份」要能对上「发生月份」（候选是列名的一段），
+    「发生月份」要能对上「发生月份」（列名是候选的一段）。只写单向那一枚，命中的就仍然只是
+    "客户把列名一字不差敲出来"的那种问法。
+
+    单字候选只认等值：「分析金额」里「析」是"分析"的尾巴，若允许包含匹配，
+    任何列名带「析」的表都会被判成"客户要按那一列分组"。
+    """
+    for match in _DIMENSION_CANDIDATE_RE.finditer(query or ""):
+        token = match.group(1)
+        for size in range(len(token), 0, -1):
+            candidate = token[:size]
+            for column in txt_cols:
+                if candidate == column:
+                    return column
+                if len(candidate) >= 2 and (candidate in column or column in candidate):
+                    return column
+    return None
+
+
+# ==================== B18 · 问句点名某一行的时候，先去表里把那一行找出来 ====================
+#
+# 病形现读（10-08 09:5x，跟进单 B18）：夹具表 41 行，最后一行是 项目=走查标记425273 / 数值=1325273，
+# 屏上问「它里面「走查标记425273」这一行的数值是多少」答的是「数值为 3，对应数据行：项目=月度差旅425273-01」。
+# 两处叠在一起才成这一格：
+#   ① `_answer_query` 那四段（排名／统计／分组／兜底预览）里没有一段是"照问句点名的值取行"，
+#      这一发只落到兜底预览那一段；
+#   ② 预览每一行只印一枚 `label_col`，而这张表挑中的是「部门」——41 行全是「市场部」，
+#      印出来的十行彼此一模一样，被点名的那一行在 prompt 里根本没有身份。
+# 于是模型回头去读同一条消息里那份 `数据样本(前15行)`，第一行就是 3。
+# 判据（交班单 §1.1）：同一句被点名的话，两条道答出来的数必须一致，且等于表里那一行。
+# 本层只负责把那一行连同它所有的列摆到模型眼前，不叫模型自己去认——认错了就是屏上那个假数。
+
+#: 问句里点名一行时可能带的引号（成对，取中间那一段）。
+_QUOTED_NAME_RE = re.compile(r"[「『“《〈]([^」』”》〉]{1,80})[」』”》〉]")
+#: 没有引号时按"名字段"切：连续的汉字／字母／数字／点／横线／下划线，标点与空白即断。
+_NAME_TOKEN_RE = re.compile(r"[0-9A-Za-z_一-鿿.\-]{2,80}")
+#: 一次最多拿几枚候选去比。问句本身只有几十字，这枚上限只挡畸形输入，不改正常读数。
+_MAX_NAME_TOKENS = 40
+#: 兜底那一路（在某一列的真值集合里找"整段出现在引号里"的那一枚）每列最多看多少枚真值。
+_MAX_NAME_SCAN_VALUES = 4000
+#: 「点名一行」的行数上限：一次挑出六行八行的那不是点名，是按某个维度切了一刀——
+#: 那种问法归分组汇总那一段管，本段不插手，免得把客户没要的东西塞进已经很挤的 prompt。
+_MAX_NAMED_ROWS = 5
+#: 一句问话最多点几枚行名（「对比 A 和 B 两行」这种形状）。
+_MAX_NAMED_HITS = 3
+#: 点名行每一行最多印几列：这一段直接进 prompt，与分组那一节同一规矩，超线明说、不静默。
+_MAX_NAMED_COLUMNS = 10
+
+
+def _name_tokens(query: str) -> tuple[list[str], list[str]]:
+    """问句里可能是在点一行名字的两族片段：(引号段, 全部候选)。长的排前面。
+
+    分两族是因为「市场部」这种既可能是在点名一行、也可能只是顺嘴提了一个部门：
+    前者可以放宽到"真值整段出现在引号里"，后者只认整值相等，不然每一张按部门切的表都会多出一段。
+    """
+    text = query or ""
+    quoted = [item.strip() for item in _QUOTED_NAME_RE.findall(text)]
+    tokens = quoted + [item.strip() for item in _NAME_TOKEN_RE.findall(text)]
+    unique: list[str] = []
+    for token in tokens:
+        if len(token) >= 2 and token not in unique:
+            unique.append(token)
+    unique.sort(key=len, reverse=True)
+    quoted_unique = [token for token in unique if token in quoted]
+    return quoted_unique, unique[:_MAX_NAME_TOKENS]
+
+
+def _named_row_hits(df, query: str, txt_cols: list[str]) -> list[tuple[str, str, object]]:
+    """问句点到的行名 → [(列名, 那一列里的真值, 挑出来的子帧)]；一枚都不点交空表，不猜。
+
+    两条通路，先便宜后兜底：
+      ① 拿候选名去和文本列的**整值**比（pandas 向量化，一个字符都不猜）；
+      ② ① 一枚都不中时，只在**引号里**找"这一列的某枚真值整段出现在引号中"——
+        客户打的是「走查标记425273这一行」而表里存的是「走查标记425273」时走这里。
+    只收"至少挑出一行、又没挑走整张表、且行数不超过 _MAX_NAMED_ROWS"的命中：
+    整张表都姓「市场部」时那不是点名一行，一次挑出二十行也不是。
+    """
+    quoted, tokens = _name_tokens(query)
+    total = len(df)
+    if not total or not tokens or not txt_cols:
+        return []
+    hits: list[tuple[int, int, str, str, object]] = []
+
+    def keep(column: str, value: str) -> None:
+        mask = df[column].astype(str).eq(value)
+        rows = int(mask.sum())
+        if 0 < rows <= _MAX_NAMED_ROWS and rows < total:
+            hits.append((rows, len(value), column, value, df[mask]))
+
+    for column in txt_cols:
+        for token in tokens:
+            keep(column, token)
+    if not hits:
+        for column in txt_cols:
+            uniques = df[column].dropna().unique()
+            if len(uniques) > _MAX_NAME_SCAN_VALUES:
+                continue
+            for value in uniques:
+                text = str(value)
+                if len(text) < 2:
+                    continue
+                if any(text in item for item in quoted):
+                    keep(column, text)
+    hits.sort(key=lambda item: (item[0], -item[1]))
+    return [(item[2], item[3], item[4]) for item in hits[:_MAX_NAMED_HITS]]
+
+
+def _record_series(series_out: list | None, *, kind: str, dimension: str, column: str, labels, values) -> None:
+    """把算好的一串数交给缓冲；只在调用方要的时候记，正文那几行一个字都不动。"""
+    if series_out is None:
+        return
+    pairs: list[tuple[str, float]] = []
+    for label, value in zip([str(item).strip() for item in (labels or [])], list(values or [])):
+        if not label:
+            return
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return
+        if number != number:
+            return
+        pairs.append((label, number))
+    if pairs:
+        series_out.append(
+            {
+                "kind": kind,
+                "dimension": str(dimension or ""),
+                "column": str(column or ""),
+                "labels": [item[0] for item in pairs],
+                "values": [item[1] for item in pairs],
+            }
+        )
+
+
+def _answer_query(
+    df, query: str, num_cols: list[str], txt_cols: list[str], series_out: list | None = None
+) -> list[str]:
     """用 pandas 计算查询结果，返回简洁的分析文本"""
     import pandas as pd
     results = []
 
     q_lower = query.lower()
-    first_txt_col = txt_cols[0] if txt_cols else ""
     first_num_col = num_cols[0] if num_cols else ""
+
+    # R189 · 名字列也要按问法选。数值列那一支早就有"点名优先、点不出就不静默选"的规矩
+    # （matched = [nc for nc in num_cols if nc in query] 连同注释 C3），文本列此前一律取 txt_cols[0]：
+    # 帧 {姓名, 部门, 销售额} 上问「哪个部门销售额最高」，答案给的是人名 —— 员工看得见的一句假话。
+    # 本单补的就是这枚不对称。取数方式与数值列同型（对 txt_cols 做 c in query），不另发明第二套匹配，
+    # 也不叫模型来选列：这是纯本地 pandas 判定。名单的唯一出口仍是
+    # app/tools/excel.py 的 select_text_columns()（本单一字未动）。
+    named_txt_cols = [tc for tc in txt_cols if tc in query]
+    if named_txt_cols:
+        # 问法点名 => 用它；多列点名时取名单里第一枚，同数值列那一支的 matched[:1]。
+        # 列名问题里已经说过，产物不加前缀 —— 与改前逐字节相同（也保住 R185 钉死的那行排名读数）。
+        label_col, label_tag = named_txt_cols[0], ""
+    elif len(txt_cols) > 1:
+        # 判据 2 取 (a)"输出里显式带出按哪一列作答"，不取 (b)"照数值列先例逐列都给"，理由两条：
+        #   1) 这段文本是直接进 prompt 的，装箱预算就卡在那儿。逐列都给在"排名前 N"那一支要把同一批
+        #      数值行按每个候选名字列重播一遍，行数随候选列数线性翻倍，多出来的行只会把真结论挤出窗口；
+        #      在排名答案那一支还要与数值列的 cols_use 相乘（多指标 x 多名字列），读数糊成一团。
+        #   2) (a) 只多一个"列名="前缀：读的人看得见这一行是按哪一列给的，模型看得见下一句该点名谁，
+        #      而"点名"与"只有一个候选"两种情形一个字节都不动。
+        # 候选之间依然按名单顺序取第一枚（名单顺序＝列顺序，由 select_text_columns 守住），
+        # 但这一枚会被标出来 —— 不再是静默选错列。
+        label_col, label_tag = txt_cols[0], f"{txt_cols[0]}="
+    else:
+        label_col, label_tag = txt_cols[0] if txt_cols else "", ""
+
+    def label_value(row) -> str:
+        """三处消费（排名答案 / 前 N 名逐行标签 / 兜底预览）唯一的名字取值口。
+
+        选列的结论只存在于上面那一处，本函数只做格式化 —— 三处各写一份 if 迟早各自漂移。
+        """
+        if not label_col:
+            return ""
+        return label_tag + str(row[label_col])
+
+    def plain_label(row) -> str:
+        """图表标签取裸值：``label_value`` 带「列名=」前缀，那是给人读的一句，不是横轴刻度。"""
+        if not label_col:
+            return ""
+        return str(row[label_col])
+
+    # 问句点名一行 → 先把那一行连同它所有的列摆出来（B18）。这一段排在其余四段之前，
+    # 并且顺手替自己把兜底预览顶掉：预览印的是"数值最大的那十行"，被点名的那一行多半不在里面，
+    # 而模型只会去读它看得见的那几行。
+    for hit_column, hit_value, hit_frame in _named_row_hits(df, query, txt_cols):
+        hit_rows = len(hit_frame)
+        lines = [f"📍 问句点名的行（{hit_column}={hit_value}，命中 {hit_rows} 行）:"]
+        columns_use = list(df.columns)[:_MAX_NAMED_COLUMNS]
+        for _, row in hit_frame.head(_MAX_NAMED_ROWS).iterrows():
+            cells = ", ".join(f"{column}={row[column]}" for column in columns_use)
+            lines.append(f"  {cells}")
+        if hit_rows > _MAX_NAMED_ROWS:
+            lines.append(f"  …共 {hit_rows} 行，本条只列前 {_MAX_NAMED_ROWS} 行")
+        results.append("\n".join(lines))
 
     # "哪个/谁最XX" → 排名第一
     m = re.search(r"(哪个|谁|哪家|哪).*?(最高|最低|最多|最少|最大|最小)", query)
@@ -293,34 +872,52 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
                 row = df.loc[df[col].idxmin()]
             else:
                 row = df.loc[df[col].idxmax()]
-            name_val = str(row[first_txt_col]) if first_txt_col else ""
+            name_val = label_value(row)
             results.append(f"🎯 {direction}({col}): {name_val} — {col}={row[col]}")
 
     # "排名/排序" → top N
     if any(kw in q_lower for kw in ["排名", "排序", "前", "top", "降序", "升序"]):
-        sort_col = None
-        for nc in num_cols:
-            if nc in query:
-                sort_col = nc
-                break
-        if not sort_col and "利润" in query:
+        if not num_cols:
+            # R192 病灶二第 2 层（用户可见那张脸）：下面那一枚 `num_cols[0]` 在零数值列时抛
+            # IndexError，改前被调用方的 `except Exception: pass` 整个吞掉，于是员工只看见
+            # "这份文件没结论"。因由在这里就说得出，就在这里说，而不是把话留给一次注定被
+            # 吞掉的异常——那是把"说得清"主动降级成"说不清"。
+            results.append(_NO_SORTABLE_NUMERIC_COLUMN_TEXT)
+        else:
+            sort_col = None
             for nc in num_cols:
-                if "利润" in nc:
+                if nc in query:
                     sort_col = nc
                     break
-        if not sort_col:
-            sort_col = first_num_col or num_cols[0]
-        top_n = 10
-        m = re.search(r"前\s*(\d+)", query)
-        if m:
-            top_n = int(m.group(1))
-        sorted_df = df.sort_values(sort_col, ascending=False).head(top_n)
-        lines = [f"📊 按 {sort_col} 排名前{top_n}:"]
-        for _, r in sorted_df.iterrows():
-            name = str(r[first_txt_col]) if first_txt_col else ""
-            vals = ", ".join(f"{c}={r[c]}" for c in num_cols[:3])
-            lines.append(f"  {name}: {vals}")
-        results.append("\n".join(lines))
+            if not sort_col and "利润" in query:
+                for nc in num_cols:
+                    if "利润" in nc:
+                        sort_col = nc
+                        break
+            if not sort_col:
+                sort_col = first_num_col or num_cols[0]
+            # 条数：中文数词与阿拉伯数字同解（前三 / 前五 / 前十名 / 前 10 四形共用一个取值口）。
+            # 点不出数＝改前的零匹配，落回默认条数，读数与改前逐字相同。标题与 head() 取的是
+            # 同一枚 top_n，所以"问三答十"那类各说各话不可能再出现；表本身不足 N 行时列满即止，
+            # 这一格语义本单不动（改前「排名前10」在三行表上印的也是三行，R189 钉的就是那个形状）。
+            count = _ranking_count(query)
+            top_n = _DEFAULT_RANKING_COUNT if count is None else count
+            sorted_df = df.sort_values(sort_col, ascending=False).head(top_n)
+            lines = [f"📊 按 {sort_col} 排名前{top_n}:"]
+            for _, r in sorted_df.iterrows():
+                name = label_value(r)
+                vals = ", ".join(f"{c}={r[c]}" for c in num_cols[:3])
+                lines.append(f"  {name}: {vals}")
+            for _col in num_cols[:3]:
+                _record_series(
+                    series_out,
+                    kind="ranking",
+                    dimension=label_col,
+                    column=_col,
+                    labels=[plain_label(r) for _, r in sorted_df.iterrows()],
+                    values=sorted_df[_col].tolist(),
+                )
+            results.append("\n".join(lines))
 
     # "统计/汇总/平均/合计" → describe
     if any(kw in q_lower for kw in ["统计", "汇总", "平均", "合计", "总计", "概括", "概览"]):
@@ -341,8 +938,12 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
             results.append("\n".join(lines))
 
     # "对比/比较" → groupby
-    if any(kw in q_lower for kw in ["对比", "比较", "分组", "按区域", "按类型"]):
-        group_col = None
+    # R703：触发条件补一条通路 —— 问法点了维度、且这个维度在这张表的真列名里对得上。
+    # 字面命中时走的仍是老那两挑选（先 `tc in query` 单向包含，再 2..20 唯一值任意挑），
+    # 读数一字不变；新增的只处理"字面一枚都不命中、但客户明明说了按哪一列"的那一支。
+    literal_group = any(kw in q_lower for kw in ["对比", "比较", "分组", "按区域", "按类型"])
+    group_col = None
+    if literal_group:
         for tc in txt_cols:
             if tc in query:
                 group_col = tc
@@ -353,22 +954,50 @@ def _answer_query(df, query: str, num_cols: list[str], txt_cols: list[str]) -> l
                 if 2 <= n_unique <= 20:
                     group_col = tc
                     break
-        if group_col and num_cols:
-            agg = df.groupby(group_col)[num_cols[:3]].sum()
-            lines = [f"📋 按 {group_col} 分组汇总:"]
-            for idx, row in agg.iterrows():
-                vals = ", ".join(f"{c}={v:.1f}" for c, v in row.items())
-                lines.append(f"  {idx}: {vals}")
-            results.append("\n".join(lines))
+    if not group_col:
+        group_col = _named_dimension_column(query, txt_cols)
+    if group_col and num_cols:
+        agg = df.groupby(group_col)[num_cols[:3]].sum()
+        lines = [f"📋 按 {group_col} 分组汇总:"]
+        total_groups = len(agg)
+        for idx, row in agg.head(_MAX_GROUP_ROWS).iterrows():
+            vals = ", ".join(f"{c}={v:.1f}" for c, v in row.items())
+            lines.append(f"  {idx}: {vals}")
+        if total_groups > _MAX_GROUP_ROWS:
+            # 截断要看得见：这一段直接进 prompt，静默少列几组＝让模型以为这就是全部。
+            lines.append(
+                f"  …共 {total_groups} 组，本条只列前 {_MAX_GROUP_ROWS} 组"
+                f"（还有 {total_groups - _MAX_GROUP_ROWS} 组未列出）"
+            )
+        shown = agg.head(_MAX_GROUP_ROWS)
+        for _col in num_cols[:3]:
+            _record_series(
+                series_out,
+                kind="group",
+                dimension=group_col,
+                column=_col,
+                labels=[str(item) for item in shown.index],
+                values=shown[_col].tolist(),
+            )
+        results.append("\n".join(lines))
 
     # 兜底：返回基本统计
     if not results and num_cols:
         sorted_df = df.sort_values(num_cols[0], ascending=False).head(10)
         lines = [f"📊 数据预览 (按{num_cols[0]}降序):"]
         for _, r in sorted_df.iterrows():
-            name = str(r[first_txt_col]) if first_txt_col else ""
+            name = label_value(r)
             vals = ", ".join(f"{c}={r[c]}" for c in num_cols[:3])
             lines.append(f"  {name}: {vals}")
+        for _col in num_cols[:3]:
+            _record_series(
+                series_out,
+                kind="preview",
+                dimension=label_col,
+                column=_col,
+                labels=[plain_label(r) for _, r in sorted_df.iterrows()],
+                values=sorted_df[_col].tolist(),
+            )
         results.append("\n".join(lines))
 
     return results
@@ -388,6 +1017,13 @@ _pipeline_lock = threading.Lock()
 # 只有本层能做的事：
 #   ① 把真的要塞回模型的字符串装进本轮剩余的 room；
 #   ② 把"丢几条、装进几条、装箱后 prompt 多少 token"打成一行 ``[PromptPack]`` 账。
+#
+# 🔴 R463 把「可用量由哪一处算」这件事收了口：``window - 该档 declared_max_tokens`` 全仓只
+# 写在 ``app/agents/contracts.py::prompt_room`` 那一处，装箱读的 ``ModelBudget.pack_room_tokens``
+# 与发请求前那道守卫读的 ``ModelBudget.context_window_code`` 都是它的下游。以前这两格是各自
+# 抄了一遍减法（``input_budget_tokens`` 与 ``context_window_code`` 里的 ``prompt+cap<=window``），
+# 装箱塞到边界＝守卫的边界，纯靠两笔算式碰巧同值；跟进单 §133 五 那发 ``prompt_tokens=14928``
+# 被自己下游判拒成 ``required_n_ctx=16464``，撞的就是这条缝。
 #
 # 为什么还要一枚累加的账：同一个 worker 步里模型可以一次并发发好几发工具调用（DOC_PROMPT
 # 自己就写着"一次想好几个搜索方向，同时搜多个关键词"），每一发的返回串都会留在 prompt 里。
@@ -411,8 +1047,10 @@ _STEP_PACK_LEDGER_MAX = 256
 #: ``search_for_principal`` 认不认 ``context_pack``，按实现类缓存一次签名检查。
 _retrieval_pack_support: "OrderedDict[str, bool]" = OrderedDict()
 
-#: 一条都装不下时留给"必须保住的那一条"的截断标记。宁可让模型看到最高分那条的前半段，
+#: 整批一条都装不下时，留给"裁过头的那一条"的截断标记。宁可让模型看到某一条真料的前半段，
 #: 也不要真机那种 evidence_n=0 的整题空手；标记本身也计进 room，不留暗账。
+#: R445 以前这一条写的是"最高分那条"：救援只裁 ``units[0]``，第一名太长、第三名很短时
+#: 第三名压根没被试过——那是本单修的硬顶。名次顺序仍然一个字没动，只是往下扫到装满为止。
 PACK_TRUNCATION_MARK = "…（上下文装箱截断）"
 #: R122 给上面那句"宁可看到前半段"补了一条下限：只有**裁出来的正文够读**才交（见
 #: ``PACK_MIN_STUB_BODY_TOKENS``）。半条命中是好事，只剩几个字的正文不是——那是一条看着
@@ -420,7 +1058,7 @@ PACK_TRUNCATION_MARK = "…（上下文装箱截断）"
 
 #: ``[PromptPack]`` 台账新字段 ``stub=`` 的三枚取值（R122 判据 ③）。🔴 台账既有字段一枚
 #: 不改名、不改相对顺序（run3/run4 的日志口径要连续），这一枚只新增，插在 ``truncated=`` 之后。
-PACK_STUB_NONE = "none"        # 这一发没有"桩"这件事：整批装下了，或连标记都裁不出来
+PACK_STUB_NONE = "none"        # 这一发没有"桩"这件事：整批装下了，或交出去的是整条，或连标记都裁不出来
 PACK_STUB_KEPT = "kept"        # 桩达标，交出去了（与 ``truncated=1`` 同现）
 PACK_STUB_REFUSED = "refused"  # 桩低于门槛没交，改说「本轮检索预算已用尽」那句人话
 
@@ -526,6 +1164,37 @@ def context_pack_room_public() -> int:
     return context_pack_room()
 
 
+def pack_profile_tier(profile: str | None = None):
+    """把装箱档位名翻译成"这一串最终由哪一档买单"，缺省＝在册的 ``analysis``。
+
+    🔴 R463 判据 ①：room 扣的必须是**买单那一档自己声明的** ``declared_max_tokens``，所以
+    装箱侧先得说清自己装出来的串最终由哪一发请求送出。以前这里没有可说的档位——调用点一律
+    走 ``context_pack_room()`` 的缺省，等于替全仓认下了 ``CONTEXT_PACK_TIER`` 那一枚写死的
+    ``"analysis"``。
+
+    ``report`` 不是 ``ModelTier`` 的成员，它是产品道（``app/agents/nodes.py`` 的
+    ``LANE_REPORT``），所以走 ``LANE_TIERS`` 那座既有的桥：今天桥另一头是
+    ``ModelTier.ANALYSIS``（``app/api/v1/observability.py`` 的 ``bridge_note`` 把这件事写在册
+    钉里，"analysis and report share ModelTier.ANALYSIS"），桥上改了这里跟着改，本处不抄第二份。
+    """
+    from app.agents.contracts import ModelTier
+    from app.rag.retrieval_pipeline import CONTEXT_PACK_TIER
+
+    name = str(profile or CONTEXT_PACK_TIER)
+    try:
+        return ModelTier(name)
+    except ValueError:
+        pass
+    from app.agents.nodes import LANE_TIERS
+
+    if name in LANE_TIERS:
+        return LANE_TIERS[name]
+    raise ValueError(
+        f"unknown pack profile {profile!r}: not a ModelTier and not a lane in LANE_TIERS "
+        f"({', '.join(sorted(tier.value for tier in ModelTier))} / {', '.join(sorted(LANE_TIERS))})"
+    )
+
+
 def _no_room_text(leg: str, candidates: int) -> str:
     """裁无可裁时工具自己说的那一句：指名是本题检索料/数据结果超出本机上下文。
 
@@ -561,6 +1230,12 @@ class _PackedUnits(list):
     ``list`` 语义一个字都不变（判空、``join``、按下标取都一样），所以三条腿的返回串照旧
     拼；多出来的这几个字段是给调用方把"真送出去的那几条"翻译给证据袋与 span summary 用的，
     免得那边为了知道丢了几条再算一遍。
+
+    ``source_indexes``：``self[i]`` 来自原 ``units`` 的第几名。前缀填装时它就是 ``0..n-1``
+    （与旧读法逐字等价），R445 的救援交的是名次更后面那一条，没有这一枚，调用方会把
+    "第 4 名送出去了"读成"第 1 名送出去了"，证据袋当场认错人。它是**纯 Python 属性**：
+    ``[PromptPack]`` 台账的字段一枚不新增、不改名、不改顺序（``tests/test_r117_ledger_turn_scoped.py``
+    与 ``tests/test_r122_stub_honesty.py`` 钉着精确字段序）。
     """
 
     def __init__(
@@ -573,8 +1248,13 @@ class _PackedUnits(list):
         room_left: int = 0,
         stub: str = PACK_STUB_NONE,
         ledger_used: int = 0,
+        source_indexes: "list[int] | None" = None,
     ) -> None:
         super().__init__(units)
+        #: 送出去的每一段对应回原 units 的名次；缺省＝前缀（按下标一一对应）。
+        self.source_indexes: "list[int]" = (
+            list(range(len(units))) if source_indexes is None else list(source_indexes)
+        )
         self.dropped_count = int(dropped_count)
         self.truncated_count = int(truncated_count)
         self.packed_tokens = int(packed_tokens)
@@ -598,14 +1278,18 @@ def _empty_pack_text(leg: str, candidates: int, packed: _PackedUnits) -> str:
 
 
 def _pack_kept_hits(hits: list, units: list, fitted: list) -> list:
-    """把真送出去的那几段翻译回 hit：装箱只裁尾巴，所以 ``fitted`` 恒为 ``units`` 的前缀。
+    """把真送出去的那几段翻译回 hit：按 ``source_indexes`` 认名次，装箱只裁尾巴。
 
-    被 ``_fit_unit_to_room`` 裁过尾的那一条（只可能是第一条）按**实际送出的正文**交给证据袋，
-    免得 ``excerpt`` 与 ``content_sha256`` 说"模型读过整段"而它其实只读到裁过的那一截。认不出
-    这种前缀关系就退回原条并留一行警告：宁可正文少诚实一点，也不许少记一条模型真读过的来源。
+    前缀填装时 ``fitted`` 恒为 ``units`` 的前缀，名次就是下标（逐字沿用旧读法）；R445 的救援
+    可能交的是名次更后面那一条，所以这里必须按 ``source_indexes`` 取，不许再拿 ``enumerate``
+    的下标当名次。
+
+    被 ``_fit_unit_to_room`` 裁过尾的那一条按**实际送出的正文**交给证据袋，免得 ``excerpt`` 与
+    ``content_sha256`` 说"模型读过整段"而它其实只读到裁过的那一截。认不出这种前缀关系就退回
+    原条并留一行警告：宁可正文少诚实一点，也不许少记一条模型真读过的来源。
     """
     kept: list = []
-    for index, unit in enumerate(fitted):
+    for unit, index in zip(fitted, getattr(fitted, "source_indexes", range(len(fitted)))):
         original = units[index]
         if unit == original:
             kept.append(hits[index])
@@ -613,7 +1297,8 @@ def _pack_kept_hits(hits: list, units: list, fitted: list) -> list:
         sent = unit[: -len(PACK_TRUNCATION_MARK)] if unit.endswith(PACK_TRUNCATION_MARK) else unit
         if not original.startswith(sent):
             logger.warning(
-                "[PromptPack] 装箱前缀不变量被打破（第 %s 段不是裁尾片段）：证据袋按原条记", index + 1
+                "[PromptPack] 装箱前缀不变量被打破（名次 %s 那一条不是裁尾片段）：证据袋按原条记",
+                index + 1,
             )
             kept.append(hits[index])
             continue
@@ -643,62 +1328,165 @@ def _retrieval_supports_context_pack(pipeline) -> bool:
     return cached
 
 
-def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: bool = False) -> list:
+#: 建图那一刻由 app/agents/orchestrator.py 登记进子图 config 的两格。缺省（没登记）＝今天
+#: 的算术一字不变，钉装箱那几枚用例（r112/r122/r445/r451/r463）因此不必跟着房账重测；生产路径上
+#: 四条 worker 腿都带，图是那一边建的。
+#:   shell_extra＝这一腿挂进请求体的工具字段，比 run5 量 456 那枚壳时多出来的一截；
+#:   calibration＝表格料在真机的词价对估算的倍率，房按它折过才开始装。
+#: 10-08 真机（qwen3.5:9b / num_ctx=8192 / 兼容腿）逐档量过料价：估算 1032 / 3012 / 4538 /
+#: 5322 枚的表格 JSON，真机 prompt 分别是 1836 / 4716 / 6936 / 8076 枚，拟合 real ≈
+#: 1.45 × est + 338。再往上（6023 枚那一档）服务端不答 413，它把最前面几条挤出去重渲染模板，
+#: 被挤掉的正是本轮问题，模板当场 raise → HTTP 500「No user query found in messages」→
+#: 兜底把 12k 字原始材料当答案回屏，屏上零张图。取 1.6 给第三轮往返留余量。
+PROMPT_SHELL_EXTRA_TOKENS_KEY = "prompt_shell_extra_tokens"
+PROMPT_MATERIAL_CALIBRATION_KEY = "prompt_material_calibration"
+PACK_MATERIAL_CALIBRATION = 1.6
+
+
+def _configurable(config) -> dict:
+    return ((config or {}).get("configurable") or {})
+
+
+def _leg_shell_extra_tokens(config) -> int:
+    try:
+        return max(0, int(_configurable(config).get(PROMPT_SHELL_EXTRA_TOKENS_KEY) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _leg_material_calibration(config) -> float:
+    try:
+        factor = float(_configurable(config).get(PROMPT_MATERIAL_CALIBRATION_KEY) or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    return factor if factor > 1.0 else 1.0
+
+
+def _pack_into_prompt_room(
+    config, *, leg: str, units, keep_first_truncated: bool = False, profile: str | None = None
+) -> list:
     """按名次把 ``units`` 装进本轮剩余 room，打一行的账，返回装进去的那几段。
 
     ``units`` 必须已按优先级从高到低排好（检索腿回来的顺序就是 RRF/重排分数降序，数据腿
     按文件与结论的既有顺序）：装箱只从尾部裁，不在这里重新发明排序。
 
-    ``keep_first_truncated``（R122 加了门槛）：整批一条都装不下时，本来会裁最高分那一条的
-    尾巴当桩交出去。桩的正文短于 ``PACK_MIN_STUB_BODY_TOKENS`` 就不交了——那一发是空手，
-    ``stub=refused`` 入账，由调用方说「本轮检索预算已用尽」。达标才交，交出去照旧记
-    ``truncated=1 stub=kept``。
+    ``keep_first_truncated``（R122 加了门槛，R445 改成按名次扫）：整批一条都装不下时开启救援，
+    按 ``units`` 的**原名次**从头扫到装满为止——名次高优先于内容短，交不出去的跳过而不是重排
+    （排序归检索腿，这里不发明第二套）。名字保留 R112 的叫法，但它今天保的**不是** ``units[0]``
+    那一条：改前只裁第一名，第一名太长、后面的短料够房时照样 ``fitted=0``，run9 真机 135 枚空手
+    里有 13 枚的 ``room_left`` 已经够它那一条腿最便宜的整条（取证＝``scripts/r445_pack_forensics.py``
+    的 RULER／VERDICT 两格）。
+
+    门槛只管桩、不管整条：装得下的完整料本来就由 ``pack_prefix_by_rank`` 无门槛交付，救援沿用
+    同一读法，不给整条另立一把尺（``PACK_MIN_STUB_BODY_TOKENS`` 拦的是空壳桩，不是短料）。桩照旧
+    裁不出够读的正文就不交。每一候选都试过仍一件交不出去，那一发才是空手，``stub=refused``
+    （裁得出桩但不够读）或 ``stub=none``（连标记都装不下）入账，由调用方说对应那一句人话。
+
+    前缀填装非空那一支的行为逐字不变（名次就是下标）；救援那一支 ``dropped`` 是「除送出去的
+    那些名次以外的全部」，所以 ``fitted + dropped == candidates`` 这条账不因为打洞而失真。打洞
+    必须带名次账（``source_indexes``），否则证据袋会把第 4 名读成第 1 名。
+
+    ``profile``（R463）：这一串最终由哪一档买单，缺省 ``analysis``（四条 worker 腿在装配期就
+    按它出牌）。它只决定**扣哪一档自己声明的** ``declared_max_tokens``，不改名次、不改门槛、
+    不改台账字段。room 不再由本处或 ``retrieval_pipeline`` 各算一遍，而是问 ``ModelBudget
+    .pack_room_tokens``——发请求前那道守卫判拒用的正是同一枚数（``app/agents/contracts.py``
+    的 ``prompt_room``），所以装箱装到边界就是守卫的边界：再大一枚 token 当场少塞一片，而不是
+    塞完之后由下游那道守卫把整发拒掉（跟进单 §133 五：装箱交出的 14 928 枚题面，加上该档
+    自己声明的输出顶，恰好是判拒读数 ``required_n_ctx=16464 > MODEL_CONTEXT_TOKENS=16384``）。
     """
+    from app.common.model_budget import model_tier_budget
     from app.rag.retrieval_pipeline import (
         CONTEXT_HISTORY_RESERVE_TOKENS,
         CONTEXT_PACK_TIER,
         CONTEXT_SHELL_RESERVE_TOKENS,
         PROMPT_PACK_MARKER,
-        context_pack_room,
         pack_prefix_by_rank,
         text_pack_tokens,
     )
 
     units = list(units)
-    room_total = context_pack_room()
+    profile = str(profile or CONTEXT_PACK_TIER)
+    tier = pack_profile_tier(profile)
+    #: 装箱看不见的那半截 prompt（system 段＋题面＋壳＋两轮历史），两枚实测预留就是它的现值。
+    #: 它同时进 room 与台账的 ``prompt_estimate_tokens``：一处算，两处读，不许再各抄一遍。
+    shell_extra = _leg_shell_extra_tokens(config)
+    calibration = _leg_material_calibration(config)
+    prefix_reserve = (
+        CONTEXT_SHELL_RESERVE_TOKENS + CONTEXT_HISTORY_RESERVE_TOKENS + shell_extra
+    )
+    room_total = model_tier_budget(tier).pack_room_tokens(prefix_reserve)
     key = _pack_ledger_key(config)
     with _pack_lock:
         used = _pack_ledger.get(key, 0) if key else 0
         room = max(0, room_total - used)
+        if calibration > 1.0:
+            #: 房先按实测料价折一刀再装：估不准的那一截（表格 JSON 的词价）要是留给服务端自己
+            #: 裁，代价是整轮 500，不是少塞一片料。
+            room = int(room / calibration)
         fitted, dropped, packed_tokens = pack_prefix_by_rank(units, room)
         truncated = 0
         stub = PACK_STUB_NONE
+        #: 名次账：前缀填装就是 0..n-1，救援那一支换成真正送出去的那几名。
+        source_indexes = list(range(len(fitted)))
         if not fitted and units and keep_first_truncated:
-            head = _fit_unit_to_room(str(units[0]), room)
-            if head:
-                if _stub_body_tokens(head, str(units[0])) >= PACK_MIN_STUB_BODY_TOKENS:
-                    fitted, dropped, truncated = [head], units[1:], 1
-                    packed_tokens = text_pack_tokens(head)
-                    stub = PACK_STUB_KEPT
+            #: 救援那一支：按原名次扫到装满为止。left 是这一支自己的房账，走完就是这一发交出的
+            #: 总额（packed_tokens 进到这里的初值是 0——前缀填装空手时它必然是 0）。
+            rescued: list = []
+            source_indexes = []
+            left = room
+            trimmable = False
+            for index, unit in enumerate(units):
+                text = str(unit)
+                if not text.strip():
+                    #: 全空白的一条交出去就是一条读不出结论的空壳，与 R122 拦桩同一件事，不算可用料。
+                    continue
+                cost = text_pack_tokens(text)
+                if cost <= left:
+                    rescued.append(unit)
+                    source_indexes.append(index)
+                    packed_tokens += cost
+                    left -= cost
+                    continue
+                head = _fit_unit_to_room(text, left)
+                if not head:
+                    continue
+                if _stub_body_tokens(head, text) >= PACK_MIN_STUB_BODY_TOKENS:
+                    cost = text_pack_tokens(head)
+                    rescued.append(head)
+                    source_indexes.append(index)
+                    truncated += 1
+                    packed_tokens += cost
+                    left -= cost
                 else:
-                    # R122 判据 ①②：低于门槛的桩不交，宁可这一发空手说人话，也不许把一条看着像
-                    # 证据、其实只剩几个字的空壳当检索结果交出去。没送出去就不记账（不记假消耗）。
-                    stub = PACK_STUB_REFUSED
-            # head 为空＝连截断标记都装不下：照旧空手，由调用方说「本题料超窗」那一句
+                    trimmable = True
+            if rescued:
+                fitted = rescued
+                #: 打洞了，所以按名次取补集：dropped 仍是「没送出去的那些」，枚数对得上账。
+                kept_set = set(source_indexes)
+                dropped = [u for i, u in enumerate(units) if i not in kept_set]
+                stub = PACK_STUB_KEPT if truncated else PACK_STUB_NONE
+            elif trimmable:
+                # R122 判据 ①②：低于门槛的桩不交，宁可这一发空手说人话，也不许把一条看着像
+                # 证据、其实只剩几个字的空壳当检索结果交出去。没送出去就不记账（不记假消耗）。
+                stub = PACK_STUB_REFUSED
+            # trimmable 为假＝每一候选连截断标记都装不下：照旧空手，由调用方说「本题料超窗」那一句
         if key and packed_tokens:
             _pack_ledger[key] = used + packed_tokens
             _pack_ledger.move_to_end(key)
             while len(_pack_ledger) > _STEP_PACK_LEDGER_MAX:
                 _pack_ledger.popitem(last=False)
         billed = used + packed_tokens
-    reserve = CONTEXT_SHELL_RESERVE_TOKENS + CONTEXT_HISTORY_RESERVE_TOKENS
     #: 账本身份名＝键前缀（step/request/task/thread/off），``[PromptPack]`` 的字段一枚不改名。
+    #: ``tier=`` 今天交的是**买单那一档的名字**（由 ``profile`` 决定，缺省即在册的 ``analysis``），
+    #: 字段名与相对顺序一枚没动（``tests/test_r117_ledger_turn_scoped.py`` 与
+    #: ``tests/test_r445_pack_priority.py`` 钉着）；``prompt_estimate_tokens`` 与 room 用的是同一
+    #: 枚 ``prefix_reserve``，这两格从此不可能互相打脸。
     ledger_kind = key.split(":", 1)[0] if key else "off"
     logger.info(
-        f"{PROMPT_PACK_MARKER} leg={leg} tier={CONTEXT_PACK_TIER} room_total={room_total} "
+        f"{PROMPT_PACK_MARKER} leg={leg} tier={profile} room_total={room_total} "
         f"room_left={room} candidates={len(units)} fitted={len(fitted)} dropped={len(dropped)} "
         f"truncated={truncated} stub={stub} packed_tokens={packed_tokens} ledger_packed_tokens={billed} "
-        f"prompt_estimate_tokens={reserve + billed} ledger={ledger_kind} "
+        f"prompt_estimate_tokens={prefix_reserve + billed} ledger={ledger_kind} "
         f"dropped_labels={_pack_dropped_labels(dropped)}"
     )
     return _PackedUnits(
@@ -709,6 +1497,7 @@ def _pack_into_prompt_room(config, *, leg: str, units, keep_first_truncated: boo
         room_left=room,
         stub=stub,
         ledger_used=used,
+        source_indexes=source_indexes,
     )
 
 
@@ -752,11 +1541,25 @@ def search_docs(query: str, config: RunnableConfig) -> str:
         return _authorization_error()
 
     with start_tool_call(config, tool_name="search_docs", arguments={"query": query}) as span:
+        task = ((config or {}).get('configurable') or {}).get('task_context') or {}
+        from app.agents.task_review import requested_documents_valid
+        if not requested_documents_valid(task, principal):
+            record_tool_status(bag_from_config(config), tool='search_docs', status='rejected', error_code='validation_error')
+            span.finish('rejected', error_code='validation_error')
+            return '指定制度版本已变化或当前无权访问，未继续沿用旧依据。请新建任务并重新选择制度版本。'
+        from app.rag.retrieval_pipeline import requested_document_names
+        original_question = str(((config or {}).get("configurable") or {}).get("data_question") or "")
+        if requested_document_names(original_question):
+            query = original_question
         pipeline = _get_pipeline()
         try:
             retrieval_kwargs = {
                 "top_k": 5,
             }
+            selected_names = ([item['filename'] for item in task.get('requested_documents') or []]
+                or ((config or {}).get('configurable') or {}).get('document_filenames'))
+            if selected_names:
+                retrieval_kwargs['document_names'] = selected_names
             if _retrieval_supports_context_pack(pipeline):
                 # R112：这条腿的结果直接拼进 prompt，所以最终 top-k 先按 room 裁一刀。
                 retrieval_kwargs["context_pack"] = True
@@ -775,14 +1578,32 @@ def search_docs(query: str, config: RunnableConfig) -> str:
         from app.rag.retrieval_pipeline import DOC_HIT_CONTENT_CHARS, format_relevance
 
         result_parts = []
+        catalog_versions = {}
+        try:
+            from app.documents.catalog import current_documents
+            catalog_versions = {str(row.get("filename")): str(row.get("version") or "")
+                                for row in current_documents()}
+        except Exception:
+            catalog_versions = {}
         for i, d in enumerate(docs, 1):
             source = d.get("source", "unknown")
             score = format_relevance(d)
             content = d["content"][:DOC_HIT_CONTENT_CHARS]
-            result_parts.append(f"[{i}] 来源:{source} 相关度:{score}\n{content}")
+            from app.rag.indexing import read_index_metadata, default_metadata_path
+            if d.get("index_version_id"):
+                versions, _ = read_index_metadata(default_metadata_path())
+                indexed = next((v for v in versions if v.index_version_id == d["index_version_id"]), None)
+                if indexed is not None:
+                    d["document_version_id"] = indexed.source_version_id.rsplit("|v", 1)[-1]
+            version = (d.get("document_version_id") or d.get("version_id") or d.get("version")
+                       or catalog_versions.get(str(source)) or "未记录")
+            if version != "未记录" and not d.get("document_version_id"):
+                d["document_version_id"] = version
+            result_parts.append(f"[{i}] 来源:{source} 版本:{version} 片段:{d.get('chunk_index', '未记录')} 相关度:{score}\n{content}")
 
-        # R112：装箱之后才是发给模型的返回串。装不下丢名次最低的整条；整批都装不下才裁最高分
-        # 那一条的正文尾巴（``keep_first_truncated``），连一帧都装不下时才说人话并留下账。
+        # R112：装箱之后才是发给模型的返回串。装不下丢名次最低的整条；整批都装不下才开救援
+        # （``keep_first_truncated``）：按名次往下找第一条交得出去的料，整条装得下交整条、装不下
+        # 裁它的正文尾巴，R445 之前这里只试第一名，第一名太长就整批空手。
         # R122：那条尾巴短到读不出结论（正文不足 ``PACK_MIN_STUB_BODY_TOKENS``）就不交了，改说
         # 「本轮检索预算已用尽」——半条命中是证据，六个字不是。三条腿共用这一枚门槛。
         fitted = _pack_into_prompt_room(
@@ -818,7 +1639,10 @@ def search_docs(query: str, config: RunnableConfig) -> str:
 # ---- R62：行级口径「为什么看不见」的文案层 ------------------------------------
 # 判定的唯一出处是 app/common/rbac.py::filter_dataframe_rows，本层一行都不重判：
 # reason_code 与计数字段全部来自 rbac.filter_dataframe_rows_with_scope 的元数据
-# （键名 rbac.ROW_SCOPE_ATTR）。密级维度属 H13（业主未裁口径），这里既不动它、也不对它下结论。
+# （键名 rbac.ROW_SCOPE_ATTR）。密级口径已于 2026-09-28 裁定＝甲（出处
+# docs/handoff/2026-09-17-human-gates.md 最后一节「H13 结案 ＋ A1/A3 裁定」；口径已写进契约
+# docs/api/contract-v1.md 的「## R467」节），但本层的计数器只有部门那一维，所以密级这一维
+# 这里既不动它、也不替它报因由。
 _NO_VISIBLE_ROWS = "当前账号没有可见数据行"
 _QUERY_DENIED_HEAD = "查询未完成：这些数据文件的行不在当前账号的可见范围内，本轮没有向你展示任何一行。"
 _QUERY_DENIED_HINT = "若这些数据本该对你可见，请让管理员核对你的部门归属，以及这些文件的部门标注。"
@@ -840,7 +1664,11 @@ def _row_scope_reason(info: dict | None) -> str:
     if reason == "department_column_missing":
         # 这一支必须空手回去。``rows_hidden_by_department`` 在 ``department_column_missing`` 下**恒为 0**
         # （rbac 只在「表有部门列」的路径上记部门维度的隐藏行），也就是部门维度一行都没藏过，
-        # 这帧是被另一个维度清空的——而那个维度的口径属 H13（业主未裁），本单明文不许对它下结论。
+        # 这帧是被另一个维度清空的——而本层只翻译部门维度的计数器（契约
+        # docs/api/contract-v1.md 的「## R467」节把这一支的理由正是这么改口的：换掉的只是
+        # 理由，这一支仍然不报因由）。密级口径已于 2026-09-28 裁定＝甲（出处
+        # docs/handoff/2026-09-17-human-gates.md 最后一节「H13 结案 ＋ A1/A3 裁定」），
+        # 它不在本层的计数器里，所以照样不许对它下结论。
         # 判据①的正解＝说不清因由就不说：写成「本表没有部门列……过滤后一行不剩」是把别的维度的账
         # 挂到部门列上（张冠李戴），且 ``rows_in`` 还是那道过滤**之前**的计数，连数都不对。
         # 本层自己在 department_scope 分支立的同一规矩（部门维度没藏过就不下结论）不许在这里绕过。
@@ -888,7 +1716,10 @@ def _row_scope_line(filename: str, info: dict | None) -> str:
 # 上面那张表把「为什么看不见」翻译给人看，这里把同一件事翻译成给机器看的码。两边都只读
 # rbac 的 reason_code，且都必须先过 _row_scope_reason：文案空手回去的那一支（表本来就是
 # 空的、因由根本不在部门维度上），码也一律落到 no_visible_rows——只说「本轮没有可见行」
-# 这个事实，不替没裁的维度下结论。判据源只有一个，码与人话不可能各说各话。
+# 这个事实，不替本层没有计数器的维度下结论（密级口径已于 2026-09-28 裁定＝甲，出处
+# docs/handoff/2026-09-17-human-gates.md 最后一节「H13 结案 ＋ A1/A3 裁定」；口径已写进契约
+# docs/api/contract-v1.md 的「## R467」节，那里明写这一支仍然只报 no_visible_rows、不报因由）。
+# 判据源只有一个，码与人话不可能各说各话。
 _ROW_SCOPE_PUBLIC_CODES = {
     "department_scope": _ROW_SCOPE_DENIED_CODE,
     "authorization_unavailable": _ROW_SCOPE_DENIED_CODE,
@@ -937,7 +1768,8 @@ def _row_scope_denial_text(
 
 def _analyze_data(query: str, config: RunnableConfig) -> str:
     from app.common.rbac import filter_dataframe_rows_with_scope
-    from app.tools.excel import load_excel, profile_dataframe
+    from app.tools.excel import load_excel, profile_dataframe, select_text_columns
+    from app.tools.excel import filter_explicit_categories
     context = _tool_context(config)
     if context is None:
         record_tool_status(
@@ -948,10 +1780,11 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
     role = context["role"]
     dept = context["department"]
     files, dataset_error = _authorized_dataset_files(config)
-    if dataset_error:
-        return dataset_error
+    if dataset_error is not None:
+        return _dataset_access_text(config, dataset_error)
     if not files:
-        return "暂无数据文件。请先在数据分析面板上传 Excel/CSV 文件。"
+        # 走到这里才是真的「本轮没有绑定任何数据文件」：台账是空的，一句都不提权限。
+        return _NO_BOUND_DATASET_TEXT
 
     parts = []
     scope_codes: list[str] = []
@@ -959,38 +1792,110 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
     #: (文件名, 该文件过滤后的帧, 它进 prompt 的第一段下标)：装箱证明送出去了才记证据袋
     pending_datasets: "list[tuple[str, object, int]]" = []
     for fname, file_path in files:
+        calculation_id = None
         try:
-            df = load_excel(file_path)
+            question = str(conf.get("data_question") or "")
+            calculation_id = _start_calculation(config, fname, question or query, operation="analyze_data")
+            df = load_excel(file_path, query=question) if question else load_excel(file_path)
+            category_frame = df
             df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
+                _fail_calculation(calculation_id, _row_scope_code(scope_info))
                 # 码与文案同判据源：一个给机器，一个给人看，同一条 reason_code。
                 scope_codes.append(_row_scope_code(scope_info))
                 parts.append(_row_scope_line(fname, scope_info))
                 continue
             produced += 1
+            try:
+                df = filter_explicit_categories(df, question or query, category_frame=category_frame)
+            except ValueError as exc:
+                _fail_calculation(calculation_id, "validation_error")
+                return _denial_text(config, tool="analyze_data", code="validation_error",
+                                    head=f"筛选条件无法执行：{exc}")
             pending_datasets.append((fname, df, len(parts)))
+            if df.attrs.get("filter_note"):
+                parts.append(f"📁 {fname}: {df.attrs['filter_note']}")
+            if df.empty:
+                _finish_calculation(calculation_id, {"rows": 0, "columns": list(map(str, df.columns)),
+                    "filter_note": df.attrs.get("filter_note", ""), "sheet_name": df.attrs.get("sheet_name", ""),
+                    "answer": ["筛选后没有符合条件的记录。"], "numeric_statistics": [], "chart_series": []})
+                parts.append("筛选后没有符合条件的记录，不计算全表金额。")
+                continue
             profile = profile_dataframe(df)
             cols_info = [f"{c['name']}({c['dtype']})" if isinstance(c, dict) else str(c) for c in profile["columns"]]
             parts.append(f"📁 {fname}: {profile['rows']}行 × {len(cols_info)}列 — 列: {', '.join(cols_info)}")
+            if df.attrs.get("sheet_name"):
+                parts.append(f"本次只读取工作表「{df.attrs['sheet_name']}」；工作簿全部工作表：{'、'.join(df.attrs['sheet_names'])}。")
 
             # 根据 query 计算具体答案
-            numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
-            text_cols = df.select_dtypes(include=["object"]).columns.tolist()
+            from app.insights.alert_evidence import additive_metric
+            numeric_cols = [column for column in df.select_dtypes(include=['number']).columns if additive_metric(column)]
+            # R185：文本列名单走 excel 那一族语义谓词的唯一出口，不再自己比 dtype 字面串。
+            # 旧写法只靠 pandas 3 那条声明要移除的兼容通道才勉强捞到 str 列，string/category 两族当场漏。
+            text_cols = select_text_columns(df)
 
             try:
-                ai_parts = _answer_query(df, query, numeric_cols, text_cols)
+                series: list[dict] = []
+                ai_parts = _answer_query(df, question or query, numeric_cols, text_cols, series_out=series)
+                _finish_calculation(calculation_id, {
+                    "rows": int(len(df)), "columns": list(map(str, df.columns)),
+                    "filter_note": df.attrs.get("filter_note", ""), "sheet_name": df.attrs.get("sheet_name", ""),
+                    "numeric_statistics": [c for c in profile["columns"] if c["name"] in profile["numeric_columns"]],
+                    "chart_series": series, "answer": ai_parts,
+                })
                 parts.extend(ai_parts)
+                #: 10-07 现读（走查环 7）：图腿自己调用 analyze_data 时，数在这条边界上就算完了，
+                #: 可模型连发 21 发 generate_chart 只带标签不带数值，最后把本地模型的历史挤空、
+                #: 服务端 500，一轮白等 114 s、屏上零张图。数既然已经在手，就不该再押在模型的抄写上。
+                for item in series:
+                    unit = re.search(r"[（(]([^）)]+)[）)]", str(item.get("column") or ""))
+                    item["unit"] = unit.group(1) if unit else "单位未标注"
+                record_chart_series(bag_from_config(config), series)
+            except _CalculationPersistenceError:
+                raise
             except Exception:
-                pass
+                _fail_calculation(calculation_id, "internal_error")
+                # R192 病灶二第 1 层（可诊断性）：这一支改前是裸 `pass`——异常被吞干净之后，
+                # 员工看见的是"这份文件没结论"，运维侧一个字都没有，现场不可复现。
+                # 记账只走仓里既有那一条通路（record_tool_status：本文件上方几处拒绝出口用的
+                # 就是它），不另立日志器、不 print、不新增 logging 配置。
+                # 码取这条边界本来就会给的兜底码：app/trace/spans.py::error_code_for 对未登记的
+                # 异常交 internal_error。本单不发明新码——新增一枚枚举码要同时动
+                # app/agents/contracts.py 与前端键集合（tests/test_error_code_vocabulary.py 与
+                # 那枚"枚举＝前端键"用例双向钉着），两处都不在本单写域内。
+                # 落 failed 而不是 rejected：evidence._terminal_status 会把任何 rejected 折成
+                # permission_denied，那是把"算不出来"说成"没权限"（本文件 _record_denial 同一规矩）。
+                record_tool_status(
+                    bag_from_config(config),
+                    tool="analyze_data",
+                    status="failed",
+                    error_code="internal_error",
+                )
 
-            # 返回前 15 行数据用于图表
+            # 返回前 15 行数据用于图表。
+            # R451：标题与它的正文必须是同一枚 unit，不许切成两条。切成两条时装箱按整条取舍，
+            # 前缀填装那一支与 R445 的名次救援那一支都够得着这一形状：标题那条装得下、JSON 那条
+            # 装不下 ⇒ 交出去的是一段以 "数据样本(前15行)" 收尾的话，承诺了 15 行样本
+            # 而后面一个字节都没有。并成一枚以后 "正文没装下" 与 "标题也没出去" 是同一件事，两条支
+            # 用同一把尺，判定只留在这一处，装箱那一层一个字都不必知道小节语法。
+            # 这不是新规矩，是把这一层本来就有的规矩补齐：_answer_query 的排名/统计/分组/预览四段
+            # 各自都是 "\n".join(lines) 出来的一整条，样本是唯一把标题切出去的那一支。
             try:
                 sample = df.head(15).to_dict(orient="records")
-                parts.append("--- 数据样本(前15行) ---")
-                parts.append(json.dumps(sample, ensure_ascii=False, default=str))
+                parts.append(
+                    "--- 数据样本(前15行) ---\n"
+                    + json.dumps(sample, ensure_ascii=False, default=str)
+                )
             except Exception:
                 pass
+        except _CalculationPersistenceError as exc:
+            return _denial_text(config, tool="analyze_data", code="internal_error", head=str(exc))
+        except ValueError as exc:
+            _fail_calculation(calculation_id, "validation_error")
+            return _denial_text(config, tool="analyze_data", code="validation_error",
+                head=f"数据范围无法读取：{exc}。请核对工作表或筛选条件。")
         except Exception as e:
+            _fail_calculation(calculation_id, "internal_error")
             parts.append(f"📁 {fname}: 读取失败 - {e}")
 
     if not produced:
@@ -1005,15 +1910,19 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
     # R112：这段直接进 prompt，而且多文件时是"每文件 概览 + 结论 + 15 行样本 JSON"顺着
     # 往后可无限长。装箱按既有顺序从尾部裁——先掉的必然是样本 JSON 那种大块，其次才是
     # 后一个文件；一条都装不下时说清是本题数据结果超窗，不静默（判据 2/3）。
-    # R122：整批装不下时会裁 parts[0] 当桩，桩的正文不够门槛就不交，改说「预算用尽」——
-    # 第一个文件的文件名那一行不是分析结论，模型读不出数。
+    # R122：整批装不下时开救援裁桩，桩的正文不够门槛就不交，改说「预算用尽」——第一个文件的
+    # 文件名那一行不是分析结论，模型读不出数。R445：救援按名次找第一条交得出去的料，所以交出来
+    # 的可能是后面某个文件的整段，下面那句「这个文件的第一段还在不在送出的那些里」必须按名次判。
     fitted = _pack_into_prompt_room(
         config, leg="data", units=parts, keep_first_truncated=True
     )
     # R112 复验第 2 条（与 doc 腿同一读法）：装箱没送出去的那个文件，证据袋不许说模型读过它。
-    # 存活线就是前缀长度——装箱只裁尾巴，所以"这个文件的第一段还在前缀里"等价于它进了 prompt。
+    # 存活线以前是前缀长度（"装箱只裁尾巴 ⇒ 第一段还在前缀里"）；R445 的救援会交名次更后面的
+    # 那一段，前缀长度当场认错文件，所以改按 ``source_indexes`` 判"它的第一段真被送出去了"。
+    # 前缀填装那一支里两种读法逐字等价（名次就是下标）。
+    _kept_indexes = set(fitted.source_indexes)
     for _ds_fname, _ds_df, _ds_index in pending_datasets:
-        if _ds_index < len(fitted):
+        if _ds_index in _kept_indexes:
             _record_dataset_evidence(config, _ds_fname, _ds_df)
         else:
             logger.info(
@@ -1052,9 +1961,57 @@ def _llm_pandas_code(df, query: str) -> str:
     return code.strip()
 
 
+#: R462 · safe_query 交回的查询结果里，pandas 多级索引会落成 tuple 键：
+#: app/tools/excel.py:476 的 Series.to_dict()（df.groupby(['区域','季度'])['销售额'].sum()
+#: 那一族）与 app/tools/excel.py:474 的 DataFrame.to_dict(orient="records")
+#: （df.groupby('区域').agg({'销售额': ['sum','mean']}) 那一族）。元组不是 JSON 合法的键，
+#: 而 json.dumps 的 default= 只作用于**值**，对键一律当场抛
+#: keys must be str, int, float, bool or None, not tuple（实测加 default=str 一个字都救不了，
+#: 所以那不是修法）。造键那两行不在本单写域，本函数是本条腿唯一的 JSON 契约出口，
+#: 于是在序列化之前把层级元组展成字符串键：逐层原样保序，用 _TUPLE_KEY_SEPARATOR 连接。
+#: 🔴 非 tuple 键与所有值原样交回，没有 tuple 键的负载出来的结构与改前完全相等。
+_TUPLE_KEY_SEPARATOR = " | "
+
+
+def _flatten_query_key(key: Any) -> Any:
+    """层级元组展成字符串键；其余键型原样不动。"""
+    if not isinstance(key, tuple):
+        return key
+    return _TUPLE_KEY_SEPARATOR.join(str(part) for part in key)
+
+
+def _flatten_query_tuple_keys(value: Any) -> Any:
+    """递归展平查询结果里的 tuple 键，供 _query_data 那一次 json.dumps 之前用（R462）。
+
+    只重建 dict 与 list 两类容器，标量与非 tuple 键原样交回：今天全部在绿路径（单级 groupby、
+    纯数字、平面 records 键）交出去的结构与改前逐枚相等，本单不顺手改它们的形状。
+
+    🔴 两枚不同的原键若展成同一枚字符串就当场抛，不合并、不覆盖、不吞异常。静默去重等于
+    交出一枚看着正常、实际混了两行的键——跟进单 §133 判据要的是"修成字符串键"，
+    不是"让它别炸"。
+    """
+    if isinstance(value, dict):
+        flat: dict[Any, Any] = {}
+        origin: dict[Any, Any] = {}
+        for key, item in value.items():
+            normalized = _flatten_query_key(key)
+            if normalized in origin and origin[normalized] != key:
+                raise ValueError(
+                    "查询结果的层级键展平后撞成同一枚字符串，拒绝合并："
+                    f"{origin[normalized]!r} 与 {key!r} 都展成 {normalized!r}"
+                )
+            origin[normalized] = key
+            flat[normalized] = _flatten_query_tuple_keys(item)
+        return flat
+    if isinstance(value, list):
+        return [_flatten_query_tuple_keys(item) for item in value]
+    return value
+
+
 def _query_data(query: str, config: RunnableConfig) -> str:
     from app.common.rbac import filter_dataframe_rows_with_scope
     from app.tools.excel import load_excel, safe_query
+    from app.tools.excel import filter_explicit_categories
     context = _tool_context(config)
     if context is None:
         record_tool_status(
@@ -1065,10 +2022,12 @@ def _query_data(query: str, config: RunnableConfig) -> str:
     role = context["role"]
     dept = context["department"]
     files, dataset_error = _authorized_dataset_files(config)
-    if dataset_error:
-        return dataset_error
+    if dataset_error is not None:
+        # 与 _analyze_data 同形的第二处（app/agents/tools.py 原 :1069-1071）：两处都得自己
+        # 把 DatasetsHiddenByScope 翻成人话，只改一处就是留下第二张假话给 query_data 这条腿。
+        return _dataset_access_text(config, dataset_error)
     if not files:
-        return "暂无数据文件。请先在数据分析面板上传 Excel/CSV 文件。"
+        return _NO_BOUND_DATASET_TEXT
 
     attempted = 0
     denied_rows: list[str] = []
@@ -1076,10 +2035,15 @@ def _query_data(query: str, config: RunnableConfig) -> str:
     unreadable = 0
     empty_files = 0
     for fname, file_path in files:
+        calculation_id = None
         try:
-            df = load_excel(file_path)
+            question = str(conf.get("data_question") or "")
+            calculation_id = _start_calculation(config, fname, question or query, operation="query_data")
+            df = load_excel(file_path, query=question) if question else load_excel(file_path)
+            category_frame = df
             df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
+                _fail_calculation(calculation_id, _row_scope_code(scope_info))
                 reason = _row_scope_reason(scope_info)
                 if reason:
                     denied_codes.append(_row_scope_code(scope_info))
@@ -1087,20 +2051,46 @@ def _query_data(query: str, config: RunnableConfig) -> str:
                 elif int(scope_info.get("rows_in") or 0) <= 0:
                     empty_files += 1
                 continue
+        except _CalculationPersistenceError as exc:
+            return _denial_text(config, tool="query_data", code="internal_error", head=str(exc))
         except Exception:
+            _fail_calculation(calculation_id, "internal_error")
             unreadable += 1
             continue
+        try:
+            df = filter_explicit_categories(df, question or query, category_frame=category_frame)
+        except ValueError as exc:
+            _fail_calculation(calculation_id, "validation_error")
+            return f"查询未完成：{exc}"
+        if df.empty:
+            _finish_calculation(calculation_id, {"rows": 0, "query_result": None,
+                "filter_note": df.attrs.get("filter_note", ""), "sheet_name": df.attrs.get("sheet_name", "")})
+            return f"{df.attrs.get('filter_note', '')}筛选后没有符合条件的记录。"
         attempted += 1
-        code = _llm_pandas_code(df, query)
-        res = safe_query(df, code)
+        try:
+            code = _llm_pandas_code(df, query)
+            res = safe_query(df, code)
+        except Exception:
+            _fail_calculation(calculation_id, "internal_error")
+            raise
         if res.get("error") is None:
             result = res["result"]
+            _finish_calculation(calculation_id, {"rows": int(len(df)),
+                "query_result": _flatten_query_tuple_keys(result), "expression": code,
+                "filter_note": df.attrs.get("filter_note", ""), "sheet_name": df.attrs.get("sheet_name", "")})
             if not isinstance(result, str):
-                result = json.dumps(result, ensure_ascii=False, default=str)
-            # R112：查询结果是一整块，装箱装不下时只能裁这块的尾巴（带可见截断标记），
-            # 连标记都装不下就换那一句指名"本题数据结果超出本机上下文"的话。
+                # R462：多级索引的结果带 tuple 键，先在契约出口展平成字符串键，再序列化。
+                result = json.dumps(
+                    _flatten_query_tuple_keys(result), ensure_ascii=False, default=str
+                )
+            # R112：查询结果是一整块（只有一条候选），装箱装不下时只能裁这块的尾巴（带可见
+            # 截断标记），连标记都装不下就换那一句指名"本题数据结果超出本机上下文"的话。
+            # R445 按名次扫的救援在这一条候选上与旧读法同形：交得出就是它自己的整条或桩。
             # R122：裁出来那一截的正文不够门槛也不交——"📊 x.xlsx 查询结果:"加三个字不是答案。
-            query_text = f"📊 {fname} 查询结果:\n{result}"
+            sheet = f" 工作表「{df.attrs['sheet_name']}」" if df.attrs.get("sheet_name") else ""
+            query_text = f"📊 {fname}{sheet} 查询结果:\n{result}"
+            if df.attrs.get("filter_note"):
+                query_text += f"\n{df.attrs['filter_note']}"
             fitted = _pack_into_prompt_room(
                 config, leg="query", units=[query_text], keep_first_truncated=True
             )
@@ -1110,6 +2100,7 @@ def _query_data(query: str, config: RunnableConfig) -> str:
             # 同一读法：只有真进 prompt 的那一块，才算模型读过这个数据集。
             _record_dataset_evidence(config, fname, df)
             return fitted[0]
+        _fail_calculation(calculation_id, "validation_error")
     # 三种终态各说各话（R62 判据①②）：查询确实没过 ≠ 无权看到行 ≠ 压根没有行可读。
     if attempted:
         return "查询失败：LLM 生成的代码在沙箱中多次执行未通过，请换个问法。"
@@ -1138,6 +2129,300 @@ def _query_data(query: str, config: RunnableConfig) -> str:
 
 # ==================== Chart Tool v2 ====================
 
+#: 图腿失败的三张脸，每张一句人话加一枚公开码（形状抄导出腿 ``_EXPORT_NO_DEPARTMENT_HEAD``）。
+#: 改前只有两枚裸 f-string：``except Exception as e: return f"图表生成失败: {e}"`` 把画图函数抛出的
+#: 异常原句直接拼进客户可见正文、且不落日志；登记那一腿更糟——它整个在 try 之外，
+#: ``app/storage/artifacts.py::ArtifactRegistry.register`` 交回的「artifact owner must have a
+#: department scope」由 langgraph 的 ToolNode 按 TOOL_CALL_ERROR_TEMPLATE 折成「Error: …」交给
+#: 模型：既没有稳定码，又把内部英文词表卖给了客户。一手读数见
+#: docs/testing/walkthrough-2026-10-06/README.md 缺陷 #2 与 #3（环 7：chart_artifact.found=false、
+#: total=0、charts_on_screen=0，而终答正文 6 250 字，屏上零字说清「为什么没有图」）。
+#: 次序现在是反过来的：先问登记表收不收，收不下就不写盘。
+_CHART_NO_DEPARTMENT_HEAD = (
+    "本轮没有生成图表文件：产物台账要求发起这一轮的账号有部门归属，而这个账号的部门是空的。"
+    "图落盘也登记不进去、查不回来，所以本轮不写盘——请管理员先给这个账号补部门归属"
+)
+_CHART_REGISTRATION_REFUSED_HEAD = "本轮的图表文件没能登记进产物台账：这一轮没有可打开的图表文件"
+_CHART_GENERATION_FAILED_HEAD = "图表生成失败：这一轮没有写出图表文件"
+_CHART_FAILURE_CODE_RE = re.compile(r"error_code=([a-z_]+)")
+
+
+def _discard_unregistrable_chart(path: object) -> None:
+    """登记不上的那一枚图不该留在盘上：形状与理由抄在册正例 ``_discard_unregistrable_report``。
+
+    它自己抄的是 ``app/api/v1/data.py::upload_excel``——登记失败时删的就是刚写的那一枚。这里删的
+    也只可能是本函数这一次调用刚交回来的路径：私有化部署的机器上，一枚没有台账行、因而没有任何
+    权限判定管得着它的 PNG/HTML，留着就是留着一个人人可读、系统却不认的原件。
+    """
+    if not path:
+        return
+    try:
+        os.remove(str(path))
+    except OSError as exc:
+        logger.warning(f"[Tool] unregistered chart left on disk: {exc}")
+
+
+def _chart_terminal_error_code(text: object) -> str:
+    """图腿没交出图时 span 上写哪一枚码：读它自己那句话里带的码，两路同源（抄导出腿）。
+
+    一句都没有码的老形状只剩「不支持的图表类型」那一枚，它本来就是模型拼错的参数，沿用
+    ``validation_error``；带得出码却不是公开枚举成员的名字（``authorization_required``）一律折回
+    ``internal_error``——本层不替公开词表扩容，也不再把所有失败洗成同一枚码（走查缺陷 #3 要的
+    正是「参数没验过」与「画图函数抛了」分色）。
+    """
+    match = _CHART_FAILURE_CODE_RE.search(str(text or ""))
+    if not match:
+        return "validation_error"
+    return _public_error_code(match.group(1), "internal_error")
+
+
+#: 模型把图型写成中文是常态：本机 10-07 12:21 现读，图腿第一发交回 chart_type="柱状图"
+#: （validation_error），反思重试那一发写对了 "bar" 却把数值那一栏留空（internal_error）。
+#: 同义词只在这一处收，未知名照旧走「不支持的图表类型」那一句——
+#: tests/test_r715_chart_leg_refuses_before_a_byte_lands.py 钉着那句与它那枚码。
+_CHART_TYPE_ALIASES = {
+    "柱状图": "bar", "柱图": "bar", "条形图": "bar", "直方图": "bar",
+    "折线图": "line", "曲线图": "line", "线图": "line",
+    "饼图": "pie", "饼状图": "pie", "圆形图": "pie", "扇形图": "pie",
+    "雷达图": "radar", "蜘蛛图": "radar",
+    "甘特图": "gantt", "进度图": "gantt", "里程碑图": "gantt",
+    "思维导图": "mindmap", "脑图": "mindmap",
+}
+
+#: 图腿第四张脸：名目收到了、数字没跟上。以前这一格由画图函数抛异常换成一句
+#: 「图表生成失败」，客户看不出差在哪一栏；现在它在写盘之前就说出口。
+_CHART_NO_NUMBERS_HEAD = (
+    "本轮没有生成图表文件：横轴的名目收到了，纵轴的数字是空的。"
+    "这不是画图组件坏了，是这一轮没算出可画的数——"
+    "请确认选中的数据文件里有一列能求和或计数，或换一种说法再问一次。"
+)
+
+
+def _normalize_chart_type(chart_type: object) -> str:
+    """图型名只认六个英文键，先把中文同义词翻过来，其余原样交回（小写化）。"""
+    name = str(chart_type or "").strip()
+    if not name:
+        return ""
+    return _CHART_TYPE_ALIASES.get(name) or _CHART_TYPE_ALIASES.get(name.lower()) or name.lower()
+
+
+def _as_sequence(raw: object) -> list:
+    """名目与数值都可能是 None、真数组、或一枚 JSON 串／逗号串：模型只被要求「给一串」。"""
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        return list(raw)
+    if isinstance(raw, dict):
+        return list(raw.values())
+    text = str(raw).strip()
+    if not text:
+        return []
+    if text.startswith(("[", "{")):
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, (list, tuple)):
+            return list(parsed)
+        if isinstance(parsed, dict):
+            return list(parsed.values())
+    return [piece.strip() for piece in re.split(r"[,;、\n]", text) if piece.strip()]
+
+
+#: 一个「数」可能长成 {"金额": "12,300"} 那样。单位只剥不改值：带「万」的字符串解析不出来，
+#: 宁可交回 None 让图腿说出「没拿到数」，也不悄悄把 12 万画成 12。
+_NUMBER_KEYS = ("值", "数值", "金额", "数量", "总数", "合计", "value", "y", "count", "total", "amount")
+_UNIT_NOISE = (",", "元", "￥", "¥", "$", "%", " ", "，")
+
+
+#: 横轴名目在模型手里最常长的几种「有名字的那一格」；认不出就退回逐个值里挑第一个标量。
+_LABEL_KEYS = ("label", "name", "category", "x", "名称", "名字", "标签", "类目")
+
+
+def _as_label(item: object) -> str:
+    """横轴名目只认标量文本。
+
+    10-07 13:10 现读（走查环 7，后端日志 ``[Tool] chart generation failed: TypeError:
+    unhashable type: 'dict'``）：模型把 labels 交成一串 dict（每枚形如 ``{"发生月份": "2026-01",
+    "金额": 67770}``），那枚 dict 一路走进 matplotlib 的分类轴，画图当场炸，客户看到的只有
+    「图表生成失败：这一轮没有写出图表文件」。名字从 dict 里挑第一个标量，挑不出就交回空串。
+    """
+    if item is None or isinstance(item, bool):
+        return ""
+    if isinstance(item, (str, int, float)):
+        return str(item).strip()
+    if isinstance(item, dict):
+        for key in _LABEL_KEYS:
+            found = _as_label(item.get(key))
+            if found:
+                return found
+        for value in item.values():
+            found = _as_label(value)
+            if found:
+                return found
+        return ""
+    if isinstance(item, (list, tuple)):
+        for value in item:
+            found = _as_label(value)
+            if found:
+                return found
+        return ""
+    return str(item).strip()
+
+
+def _as_number(item: object) -> float | None:
+    if isinstance(item, bool):
+        return None
+    if isinstance(item, (int, float)):
+        return float(item)
+    if isinstance(item, dict):
+        for key in _NUMBER_KEYS:
+            if key in item:
+                found = _as_number(item[key])
+                if found is not None:
+                    return found
+        for value in item.values():
+            found = _as_number(value)
+            if found is not None:
+                return found
+        return None
+    if isinstance(item, (list, tuple)):
+        return _as_number(item[0]) if item else None
+    text = str(item or "").strip()
+    for noise in _UNIT_NOISE:
+        text = text.replace(noise, "")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _first_series(datasets: object) -> list:
+    """模型把数字放进 datasets 而没放 values 时取第一条序列：柱图与饼图只画一条。"""
+    if not isinstance(datasets, dict):
+        return []
+    for series in datasets.values():
+        numbers = [n for n in (_as_number(item) for item in _as_sequence(series)) if n is not None]
+        if numbers:
+            return numbers
+    return []
+
+
+#: 装箱时的挑选次序：分组汇总是「按客户点名的维度算出来的一串数」，最贴近一张柱状图；
+#: 排名/预览次之。读不出的 kind 给零分，不加分。
+_BOX_KIND_PREFERENCE = {"group": 300.0, "ranking": 200.0, "preview": 100.0}
+
+
+def _best_series_row(bag: dict | None, labels: list | None, title: str) -> dict:
+    """本轮缓冲里与「模型点名的那一串横轴」最对得上的那一行数；对不上交回空表。
+
+    装箱与填名目两件事共用这一枚打分：只认账上真算过的 series，不猜、不编。
+    """
+    candidates = [
+        row
+        for row in ((bag or {}).get("chart_series") or [])
+        if isinstance(row, dict) and row.get("labels") and row.get("values")
+    ]
+    if not candidates:
+        return {}
+    given = [str(item).strip() for item in (labels or []) if str(item).strip()]
+
+    def score(row: dict) -> float:
+        own = [str(item).strip() for item in row.get("labels") or []]
+        base = _BOX_KIND_PREFERENCE.get(str(row.get("kind") or ""), 0.0)
+        hint = str(title or "")
+        for token in (row.get("column"), row.get("dimension")):
+            name = str(token or "")
+            if len(name) >= 2 and name in hint:
+                base += 50.0
+        if not given:
+            return base + float(len(own))
+        hit = sum(1 for item in given if item in own)
+        if hit and hit * 2 >= len(given):
+            return base + 1000.0 + float(hit)
+        if len(own) == len(given):
+            return base + 500.0
+        return -1.0
+
+    best = max(candidates, key=score)
+    return {} if score(best) < 0 else best
+
+
+def _requested_group_series(bag: dict | None, question: str) -> dict:
+    groups = [row for row in (bag or {}).get("chart_series", [])
+              if row.get("kind") == "group" and row.get("labels") and row.get("values")]
+    dimension = _named_dimension_column(question, list(dict.fromkeys(str(row.get("dimension") or "") for row in groups)))
+    if not dimension:
+        return {}
+    matching = [row for row in groups if row.get("dimension") == dimension]
+    return _best_series_row({"chart_series": matching}, None, question)
+
+
+def _boxed_chart_series(bag: dict | None, labels: list | None,
+                        title: str) -> tuple[list, list, str, dict]:
+    """模型点了横轴的名、没把数带回来：从本轮缓冲里取那一串数，按名对齐装箱。
+
+    交回 ``(labels, values, 出处, 账上那一行)``；对不上就交回空——空装箱照旧走「这一轮没有数字」
+    那句人话，绝不为了画出图而编一串数。出处只进日志，用来归因「这张图的数是模型给的还是自己装的」。
+    """
+    best = _best_series_row(bag, labels, title)
+    if not best:
+        return [], [], "", {}
+    #: 模型点名的那一串横轴，归一化与上面 _best_series_row 同一枚。7c00d9a 把「按名对齐」这一段
+    #: 搬进这枚函数时没把它一起搬过来：模型只给名、不给数的那一发当场 NameError——given 在这里
+    #: 从来没被赋值。屏上现象＝零张图，图腿交回一段「您可以这样画」的散文（10-08 00:25 环 7 现读
+    #: 就是这个形状：装箱不再顶穿窗口之后，模型这一发正是只点名不给数）。
+    given = [str(item).strip() for item in (labels or []) if str(item).strip()]
+    own_labels = [str(item).strip() for item in best.get("labels") or []]
+    own_values = list(best.get("values") or [])
+    if not given:
+        use_labels, use_values = own_labels, own_values
+    elif all(item in own_labels for item in given):
+        by_label = dict(zip(own_labels, own_values))
+        pairs = [(item, by_label[item]) for item in given]
+        use_labels, use_values = [item[0] for item in pairs], [item[1] for item in pairs]
+    elif len(given) == len(own_labels):
+        # 模型换了写法（「1月」对「2026-01」）：按名次对齐，标签沿用它点名的写法。
+        use_labels, use_values = given, own_values
+    else:
+        by_label = dict(zip(own_labels, own_values))
+        pairs = [(item, by_label[item]) for item in given if item in by_label]
+        use_labels, use_values = [item[0] for item in pairs], [item[1] for item in pairs]
+    if not use_values or len(use_labels) != len(use_values):
+        return [], [], "", {}
+    return use_labels, use_values, f"{best.get('dimension')}×{best.get('column')}", best
+
+
+#: 同一发画图请求在本轮里最多试几枚：10-07 12:43 现读，模型每 5 s 交回同一枚参数，八次之后
+#: 本地模型服务端 500（Jinja: No user query found in messages），一轮白等 114 s。
+_CHART_REPEAT_LIMIT = 2
+_CHART_REPEAT_HEAD = "这一发画图请求本轮已经原样试过 {times} 次，结果一样，不必再试"
+
+#: 模型没写标题时挂在屏上的那句占位话。写死成一枚常量，是为了让「它到底写没写」判得出来。
+_DEFAULT_CHART_TITLE = "数据分析图表"
+
+
+def _chart_face_labels(title: str, row: dict) -> tuple[str, str, str]:
+    """标题与两条轴的名字：只从账上那一行取，不新造话（横轴＝dimension，纵轴＝column）。
+
+    10-07 现读那一轮：图画对了，标题却还挂着「数据分析图表」，两条轴也没有名字——客户看不出
+    这是报销金额按月。模型自己写了标题就留着它的，只有它没写（或抄了缺省值）才由名目填。
+    """
+    dimension = str((row or {}).get("dimension") or "").strip()
+    column = str((row or {}).get("column") or "").strip()
+    head = str(title or "").strip()
+    if head in ("", _DEFAULT_CHART_TITLE):
+        if column and dimension:
+            head = f"{column}（按{dimension}）"
+        else:
+            head = column or dimension or _DEFAULT_CHART_TITLE
+    unit = str((row or {}).get("unit") or "").strip()
+    axis_column = f"{column}（{unit}）" if unit and unit not in column else column
+    return head, dimension, axis_column
+
+
 def _generate_chart(
     chart_type: str,
     config: RunnableConfig,
@@ -1148,14 +2433,81 @@ def _generate_chart(
     tasks: list[dict] | None = None,
     root: str | None = None,
     branches: dict[str, list[str]] | None = None,
-    title: str = "数据分析图表",
+    title: str = _DEFAULT_CHART_TITLE,
 ) -> str:
+    from app.storage.artifacts import ArtifactOwnerScopeMissing, owner_can_register_artifact
     from app.tools.chart import bar_chart, line_chart, pie_chart, radar_chart
     from app.tools.visualize import gantt_chart, mindmap as _mindmap
 
+    chart_type = _normalize_chart_type(chart_type)
+    labels = [text for text in (_as_label(item) for item in _as_sequence(labels)) if text]
+    values = [n for n in (_as_number(item) for item in _as_sequence(values)) if n is not None]
+    #: 同一发参数原样重交：本轮缓冲里数着它，超过上限就直接交回那句「不必再试」，
+    #: 不再跑 matplotlib、不再登记、也不再给本地模型一次 5 s 的往返。
+    bag = bag_from_config(config)
+    if bag is not None:
+        fingerprint = json.dumps(
+            {"type": chart_type, "labels": labels, "values": values,
+             "datasets": sorted((datasets or {}).keys()), "title": str(title or "")},
+            ensure_ascii=False, sort_keys=True, default=str,
+        )
+        attempts = bag.setdefault("chart_attempts", {})
+        times = int(attempts.get(fingerprint, 0) or 0) + 1
+        attempts[fingerprint] = times
+        if times > _CHART_REPEAT_LIMIT:
+            return _denial_text(
+                config, tool="generate_chart", code="chart_refusal_repeated",
+                head=_CHART_REPEAT_HEAD.format(times=times),
+            )
+    requested = _requested_group_series(bag, str(((config or {}).get("configurable") or {}).get("data_question") or ""))
+    if requested and chart_type in ("bar", "line", "pie"):
+        labels, values = list(requested["labels"]), list(requested["values"])
+        if chart_type == "bar" and re.search(r"PDF|报告|导出", str(((config or {}).get("configurable") or {}).get("data_question") or ""), re.I):
+            pairs = sorted(zip(labels, values), key=lambda item: item[1], reverse=True)
+            labels, values = [item[0] for item in pairs], [item[1] for item in pairs]
+        if chart_type == "line":
+            datasets = {str(requested.get("column") or "金额"): values}
+    if chart_type in ("bar", "pie") and not values:
+        values = _first_series(datasets)
+    #: 模型给的名字轴与数值仍凑不齐一张图时，先回头看本轮算过的数——不猜、不编，只对得上才用。
+    series_row: dict = requested
+    if chart_type in ("bar", "line", "pie") and not values:
+        box_labels, box_values, box_from, series_row = _boxed_chart_series(
+            bag_from_config(config), labels, title)
+        if box_values:
+            labels = box_labels
+            values = box_values
+            logger.info(
+                "[ChartBox] 图腿自己装箱 series=%s labels=%d values=%d title=%s",
+                box_from,
+                len(labels),
+                len(values),
+                title,
+            )
+    #: 名与数对不齐时多出来的那一截画不进同一根柱子，先按短的截齐——截齐比抛进 matplotlib
+    #: 换回一句「生成失败」诚实，也不许为此偷偷补数。
+    if chart_type in ("bar", "line", "pie") and labels and values and len(labels) != len(values):
+        keep = min(len(labels), len(values))
+        logger.info("[ChartBox] 名目与数值条数不齐 labels=%d values=%d，按 %d 截齐", len(labels), len(values), keep)
+        labels, values = labels[:keep], values[:keep]
+    if chart_type in ("bar", "pie") and not values:
+        return _denial_text(
+            config, tool="generate_chart", code="validation_error", head=_CHART_NO_NUMBERS_HEAD
+        )
+    if chart_type in ("line", "radar") and not values and not _first_series(datasets):
+        return _denial_text(
+            config, tool="generate_chart", code="validation_error", head=_CHART_NO_NUMBERS_HEAD
+        )
+    #: 名目：装箱那一腿顺手交回账上那一行；模型自己把数带回来了也要再问一次缓冲，
+    #: 只为取「这串数是哪一列、按哪一维分的」——取不到就照旧留缺省，不编。
+    if not series_row and chart_type in ("bar", "line", "pie"):
+        series_row = _best_series_row(bag_from_config(config), labels, title)
+    title, xlabel, ylabel = _chart_face_labels(title, series_row)
     chart_funcs = {
-        "bar": lambda: bar_chart(labels or [], values or [], title=title),
-        "line": lambda: line_chart(labels or [], datasets or {"数据": values or []}, title=title),
+        "bar": lambda: bar_chart(labels or [], values or [], title=title,
+                                 xlabel=xlabel, ylabel=ylabel),
+        "line": lambda: line_chart(labels or [], datasets or {"数据": values or []}, title=title,
+                                   xlabel=xlabel, ylabel=ylabel),
         "pie": lambda: pie_chart(labels or [], values or [], title=title),
         "radar": lambda: radar_chart(categories or labels or [], datasets or {"数据": values or []}, title=title),
         "gantt": lambda: gantt_chart(tasks or [], title=title),
@@ -1166,44 +2518,442 @@ def _generate_chart(
         return f"不支持的图表类型: {chart_type}，可选: bar/line/pie/radar/gantt/mindmap"
 
     try:
-        if _artifact_principal(config, ACTION_ANALYZE) is None:
+        principal = _artifact_principal(config, ACTION_ANALYZE)
+        if principal is None:
             record_tool_status(
                 bag_from_config(config), tool="generate_chart", status="rejected", error_code="authorization_required"
             )
             return _authorization_error()
+        #: preflight：属主交不出部门 ⇒ 登记表当场必拒 ⇒ 一枚字节都不许先落盘（与导出腿同一次序）。
+        if not owner_can_register_artifact(principal):
+            return _denial_text(
+                config,
+                tool="generate_chart",
+                code="department_scope_required",
+                head=_CHART_NO_DEPARTMENT_HEAD,
+            )
         path = chart_funcs[chart_type]()
-    except Exception as e:
-        return f"图表生成失败: {e}"
 
-    urls = _artifact_urls(path, "chart", config)
-    if urls is None:
-        _record_denial(
-            config, tool="generate_chart", code="authorization_required", status="rejected"
+        try:
+            urls = _artifact_urls(path, "chart", config)
+        except ArtifactOwnerScopeMissing as exc:
+            #: 拒收真落在写盘之后（同一刻改的部门、另一枚根因）：孤儿字节当场收回。
+            logger.warning(f"[Tool] chart registration refused: {type(exc).__name__}: {exc}")
+            _discard_unregistrable_chart(path)
+            return _denial_text(
+                config,
+                tool="generate_chart",
+                code="department_scope_required",
+                head=_CHART_REGISTRATION_REFUSED_HEAD,
+            )
+        if urls is None:
+            _record_denial(
+                config, tool="generate_chart", code="authorization_required", status="rejected"
+            )
+            return _authorization_error()
+        url, _ = urls
+        if path.lower().endswith(".html"):
+            return f"图表已生成: [{title}]({url})"
+        return f"图表已生成: ![{title}]({url})"
+    except Exception as exc:  # noqa: BLE001 - 失败要说得出口，内部原句不许替它说话
+        logger.warning(f"[Tool] chart generation failed: {type(exc).__name__}: {exc}")
+        return _denial_text(
+            config,
+            tool="generate_chart",
+            code="internal_error",
+            head=_CHART_GENERATION_FAILED_HEAD,
         )
-        return _authorization_error()
-    url, _ = urls
-    if path.lower().endswith(".html"):
-        return f"图表已生成: [{title}]({url})"
-    return f"图表已生成: ![{title}]({url})"
 
 
 
 # ==================== Export Tool ====================
 
+#: 导出腿失败的三张脸，每张一句人话加一枚公开码。旧形状只有一枚 f-string，而且它拼的是
+#: 登记表内部的英文原句：走查环 8 现读到的那 51 字就是
+#: 「报告生成失败: 」+「artifact owner must have a department scope」——既没有码（终态只剩
+#: 一句人话，机器读不出因由），又把内部词表卖给了客户（同族旧账见
+#: docs/current-functionality-2026-09-10-revision-log.md 的 R-新4），而那一轮已经先往盘上
+#: 落了一枚谁都登记不上的 PDF。次序现在是反过来的：先问登记表收不收，收不下就不写盘。
+_EXPORT_NO_DEPARTMENT_HEAD = (
+    "本轮没有导出报告文件：产物台账要求发起这一轮的账号有部门归属，而这个账号的部门是空的。"
+    "文件落盘也登记不进去、查不回来，所以本轮不写盘——请管理员先给这个账号补部门归属"
+)
+_EXPORT_REGISTRATION_REFUSED_HEAD = (
+    "本轮的报告文件没能登记进产物台账：这一轮没有可下载的报告文件"
+)
+_EXPORT_GENERATION_FAILED_HEAD = "报告生成失败：这一轮没能写出报告文件"
+_EXPORT_BAD_SECTIONS_HEAD = "报告没能导出：这一轮交来的报告章节读不出来"
+_EXPORT_FAILURE_CODE_RE = re.compile(r"error_code=([a-z_]+)")
+
+
+def _discard_unregistrable_report(path: object) -> None:
+    """登记不上的那一枚报告文件不该留在盘上：产物口只认台账，落单的字节谁也查不回来。
+
+    在册正例是 ``app/api/v1/data.py::upload_excel`` —— 登记失败时删的就是自己刚写的那一枚。
+    这里删的也只可能是本函数这一次调用刚交回来的路径：私有化部署的机器上，一枚没有台账行、
+    因而没有任何权限判定管得着它的 PDF，留着就是留着一个人人可读、系统却不认的原件。
+    """
+    if not path:
+        return
+    try:
+        os.remove(str(path))
+    except OSError as exc:
+        logger.warning(f"[Tool] unregistered report left on disk: {exc}")
+
+
+def _export_terminal_error_code(text: object) -> str:
+    """导出腿没交出报告时，span 上写哪一枚码：读它自己那句话里带的码，读不到才兜底。
+
+    正文与码同源（都出自 ``_denial_text`` 那一处），所以不会出现「说的是部门、码写的是内部错」
+    这种两张皮。枚举之外的名字一律折回 ``internal_error``：``authorization_required`` 不在封闭
+    枚举里（``tests/test_error_code_vocabulary.py`` 钉着这件事），本层不替它扩公开词表。
+    """
+    match = _EXPORT_FAILURE_CODE_RE.search(str(text or ""))
+    return _public_error_code(match.group(1) if match else "", "internal_error")
+
+
+def _report_data_facts(filename: str, df, question: str, *, version_id: str = "", sha256: str = "") -> dict:
+    """Compute report claims directly from the authorized, filtered frame."""
+    import pandas as pd
+    from app.insights.alert_evidence import additive_metric
+    numeric = [column for column in df.select_dtypes(include=['number']).columns if additive_metric(column)]
+    named = [column for column in numeric if str(column) in question]
+    chosen = named or numeric
+    dimension = _named_dimension_column(question, [str(c) for c in df.columns])
+    facts = {"filename": filename, "version_id": version_id, "sha256": sha256,
+        "rows": len(df), "sheet": df.attrs.get("sheet_name", ""),
+        "filter": df.attrs.get("filter_note", ""), "period": "未提供日期字段", "observed_period": "未提供日期字段", "metrics": [],
+        'non_additive_columns': [str(c) for c in df.select_dtypes(include=['number']).columns if not additive_metric(c)],
+        "record_columns": [str(c) for c in df.columns[:8]],
+        "records": [[str(value) if pd.notna(value) else "未标注" for value in row]
+                    for row in df.iloc[:100, :8].itertuples(index=False, name=None)]}
+    dates = [c for c in df.columns if "日期" in str(c) or pd.api.types.is_datetime64_any_dtype(df[c])]
+    if dates and not df.empty:
+        parsed = pd.to_datetime(df[dates[0]], errors="coerce").dropna()
+        if not parsed.empty:
+            facts["observed_period"] = f"{parsed.min():%Y-%m-%d} 至 {parsed.max():%Y-%m-%d}（{dates[0]}）"
+            facts["period"] = facts["observed_period"]
+    if df.attrs.get("requested_period"):
+        facts["period"] = df.attrs["requested_period"]
+    for column in chosen:
+        values = df[column].dropna()
+        unit = re.search(r"[（(]([^）)]+)[）)]", str(column))
+        metric = {"column": str(column), "unit": unit.group(1) if unit else "单位未标注",
+            "sum": float(values.sum()), "mean": float(values.mean()) if len(values) else None,
+            "missing": int(df[column].isna().sum()), "negative": bool((values < 0).any()),
+            "dimension": dimension, "groups": []}
+        if dimension and dimension in df.columns:
+            grouped = df.groupby(dimension, dropna=False)[column].sum().sort_values(ascending=False)
+            metric["groups"] = [(str(label) if pd.notna(label) else "未标注", float(value)) for label, value in grouped.items()]
+        facts["metrics"].append(metric)
+    return facts
+
+
+def _verified_data_answer(facts: list[dict]) -> str:
+    """Present calculated table facts without model-written units or artifact claims."""
+    parts = []
+    for source in facts:
+        parts.append(f"当前授权范围内纳入 **{source['rows']} 条记录**。")
+        if source.get('non_additive_columns'):
+            parts.append('未直接求和的字段：' + '、'.join(source['non_additive_columns']) + '；编号、比例及单价等需要各自的计算口径。')
+        for metric in source["metrics"]:
+            parts.append(f"**{metric['column']}合计：{metric['sum']:,.2f}（{metric['unit']}）**；"
+                + (f"非空记录均值：{metric['mean']:,.2f}。" if metric["mean"] is not None else "没有可计算的非空记录。"))
+            if metric["groups"]:
+                parts.append(f"| {metric['dimension']} | {metric['column']}（{metric['unit']}） |\n| --- | ---: |\n"
+                    + "\n".join(f"| {label} | {value:,.2f} |" for label, value in metric["groups"]))
+                if len(metric["groups"]) == 1:
+                    parts.append("仅一个可见分组，不能用于跨部门比较。")
+            if metric["missing"]:
+                parts.append(f"{metric['missing']} 条记录缺失该指标，未按零值填充。")
+        if source.get("records"):
+            def cell(value):
+                return str(value).replace("|", "\\|").replace("\n", " ")
+            headers = source["record_columns"]
+            parts.append("纳入计算的明细：\n\n| " + " | ".join(map(cell, headers)) + " |\n| "
+                + " | ".join(["---"] * len(headers)) + " |\n"
+                + "\n".join("| " + " | ".join(map(cell, row)) + " |" for row in source["records"])
+                + f"\n\n展示 {len(source['records'])} / {source['rows']} 条纳入记录；合计仅由上述筛选范围产生。")
+        parts.append(f"筛选：{source['filter'] or '未指定分类筛选'}\n\n"
+                     f"期间：{source['period']}\n\n来源：{source['filename']}；"
+                     f"工作表：{source['sheet'] or '单表'}；版本：{source['version_id'] or '未登记'}。")
+    return "\n\n".join(parts)
+
+
+def _analysis_body_sections(body: str) -> list[dict]:
+    """Keep the settled server answer, rendering its Markdown tables as real tables."""
+    sections, paragraph = [], []
+    body = re.sub(r'(!\[[^\]]*\]\(/api/v1/artifacts/[a-zA-Z0-9_-]+/content\))', r'\n\n\1\n\n', body)
+    lines = body.splitlines()
+
+    def flush():
+        if paragraph:
+            sections.append({'type': 'text', 'content': '\n'.join(paragraph)})
+            paragraph.clear()
+
+    def cells(line):
+        return [cell.strip() for cell in line.strip().strip('|').split('|')]
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        heading = re.match(r'^#{1,6}\s+(.+)', line)
+        chart = re.fullmatch(r'\s*!\[([^\]]*)\]\(/api/v1/artifacts/([a-zA-Z0-9_-]+)/content\)\s*', line)
+        if chart:
+            flush()
+            sections.append({'type': 'chart_slot', 'content': chart.group(1) or '本次分析图表', 'artifact_id': chart.group(2)})
+        elif heading:
+            flush()
+            sections.append({'type': 'heading', 'content': heading.group(1)})
+        elif (line.strip().startswith('|') and index + 1 < len(lines)
+              and all(re.fullmatch(r':?-{3,}:?', cell.replace(' ', ''))
+                      for cell in cells(lines[index + 1]))):
+            flush()
+            headers, rows = cells(line), []
+            index += 2
+            while index < len(lines) and lines[index].strip().startswith('|'):
+                row = cells(lines[index])
+                if len(row) != len(headers):
+                    break
+                rows.append(row)
+                index += 1
+            sections.append({'type': 'table', 'headers': headers, 'rows': rows, 'align': 'LEFT'})
+            continue
+        elif not line.strip():
+            flush()
+        else:
+            paragraph.append(line.lstrip('> '))
+        index += 1
+    flush()
+    return sections
+
+
+def _verified_report_sections(facts: list[dict], analysis: str) -> list[dict]:
+    """Business narrative whose numerical assertions share the actual calculation input."""
+    sections = []
+    for source in facts:
+        group_tables = []
+        filter_text = re.sub(r"\s+", " ", source["filter"]).strip() or "未指定分类筛选"
+        first = next(iter(source["metrics"]), {})
+        sections.append({"type": "summary", "period": source["period"], "cards": [
+            {"label": "纳入金额合计" if "金额" in first.get("column", "") else "纳入指标合计",
+             "value": f"{first['sum']:,.2f}" if first else "未提供", "hint": first.get("unit", "无数值字段")},
+            {"label": "纳入记录", "value": str(source["rows"]), "hint": "当前授权与筛选口径"},
+            {"label": "每条记录均值", "value": f"{first['mean']:,.2f}" if first.get("mean") is not None else "未提供",
+             "hint": "按非空数值记录计算"}]})
+        sections.append({"type": "heading", "content": "01 管理摘要 · 分析结论"})
+        if not source["rows"]:
+            sections.append({"type": "callout", "content": "筛选后 0 行，合计 0.00；没有可用于部门比较或趋势判断的数据。"})
+        for metric in source["metrics"]:
+            unit = metric["unit"]
+            text = f"{metric['column']}合计 {metric['sum']:,.2f}（{unit}）。"
+            if metric["mean"] is not None:
+                text += f"每条非空记录均值 {metric['mean']:,.2f}（{unit}）。"
+            if metric["missing"]:
+                text += f"有 {metric['missing']} 条记录缺失该数值，未作为零值填充。"
+            groups = metric["groups"]
+            if groups:
+                top, value = groups[0]
+                if len(groups) > 1 and metric["sum"] > 0 and not metric["negative"]:
+                    text += f"\n{top}指标值最高，占当前筛选合计的 {value / metric['sum']:.2%}。"
+                elif metric["negative"]:
+                    text += "\n包含负值，净额占比可能误导，不作正向费用占比判断。"
+                if len(groups) == 1:
+                    text += "\n只有一个可见分组，不能用于部门之间的比较。"
+                elif len(groups) >= 2 and metric["sum"] > 0 and not metric["negative"]:
+                    combined = sum(value for _, value in groups[:2])
+                    text += f"\n前两位合计 {combined:,.2f}，占比 {combined / metric['sum']:.2%}；可优先核对对应业务明细。"
+            sections.append({"type": "callout", "content": text})
+            if groups:
+                group_tables.extend([
+                    {"type": "table", "headers": [metric["dimension"], f"{metric['column']}（{unit}）", "占筛选合计"],
+                     "rows": [[label, f"{value:,.2f}", f"{value / metric['sum']:.2%}" if metric['sum'] > 0 and not metric['negative'] else "不适用"]
+                              for label, value in groups] + [["合计", f"{metric['sum']:,.2f}", "100.00%" if metric['sum'] > 0 and not metric['negative'] else "不适用"]]},
+                ])
+        sections.extend([
+            {"type": "heading", "content": "02 分组构成 · 图表解读"},
+            {"type": "chart_slot", "content": "本轮未生成图表：筛选后没有记录，不构造分组或趋势图。" if not source["rows"] else
+             "本轮未生成图表：当前报告以授权范围内的分组表格为依据；如需可视化，请在同一数据版本和筛选口径下明确请求图表。"},
+        ])
+        sections.extend([
+            {"type": "page_break"},
+            {"type": "heading", "content": "03 指标汇总明细", "level": 3},
+            *(group_tables or [{"type": "text", "font_size": 10, "line_height": 5.3,
+                "content": "筛选后没有符合条件的记录，没有可列示的分组明细。" if not source["rows"] else "当前数据没有可汇总的分组字段。"}]),
+            {"type": "heading", "content": "下一步行动 · 建议与限制", "level": 3},
+            {"type": "table", "headers": ["事项", "建议动作", "完成依据"],
+             "col_widths": [24, 94, 60], "align": "LEFT", "rows": [
+                ["范围复核", "核对期间、筛选条件和授权数据是否完整", "确认0条为本次查询的真实结果"] if not source["rows"] else
+                ["指标复核", "核对指标较高分组的原始记录与业务范围", "明细与来源记录一致"],
+                ["单位口径", "由材料提供者确认数值单位", "来源表明确标注单位"],
+                ["预算与对比", "明确预算与可比上期口径后进行差异计算", "同一范围、单位和时间口径"]]},
+            {"type": "text", "font_size": 10, "line_height": 5.3, "content": "本轮只计算当前筛选范围，未进行可比上期、预算和业务量的差异计算，不能据此判断增长、超支或确定原因。"
+                "建议先完成数据复核；未标注单位的字段不能直接视为人民币。"},
+            {"type": "heading", "content": "04 编制口径与数据来源", "level": 3},
+            {"type": "text", "font_size": 10, "line_height": 5.3, "content": f"数据来源：{source['filename']}；版本：{source['version_id'] or '未登记'}\n"
+                f"工作表：{source['sheet'] or '单表'}；当前授权范围内筛选后 {source['rows']} 行。\n"
+                f"日期范围：{source['period']}\n筛选口径：{filter_text}\n"
+                "合计按筛选后非空数值求和，均值按非空记录计算；占比为分组指标除以当前筛选合计。"},
+        ])
+        if source.get("sha256"):
+            sections.append({"type": "text", "font_size": 10, "line_height": 5.3, "content": f"来源文件 SHA-256：{source['sha256']}"})
+        if source.get("records"):
+            sections.extend([
+                {"type": "heading", "content": "附录 · 纳入计算的原始明细", "level": 3},
+                {"type": "table", "headers": source["record_columns"], "rows": source["records"],
+                 "font_size": 10, "line_height": 5.3, "align": "LEFT"},
+                {"type": "text", "font_size": 10, "line_height": 5.3,
+                 "content": f"本附录展示 {len(source['records'])} / {source['rows']} 条纳入记录。原始明细用于回查，不包含授权范围外记录。"},
+            ])
+    if not facts:
+        return []
+    return sections
+
+
+def _verified_data_sections(filename: str, analysis: str) -> list[dict]:
+    lines = []
+    for line in analysis.splitlines():
+        if line.startswith("--- 数据样本"):
+            break
+        if line == "数据分析结果:" or (line.startswith("📁 ") and "实际筛选：" not in line):
+            continue
+        if "实际筛选：" in line:
+            line = line[line.index("实际筛选："):]
+        lines.append(line)
+    return [
+        {"type": "heading", "content": "核验数据与筛选结果"},
+        {"type": "text", "content": f"数据来源：{filename}"},
+        {"type": "text", "content": "\n".join(lines)},
+    ]
+
+
+def _policy_review_sections(review: str, filename: str) -> list[dict]:
+    sections = [{"type": "heading", "content": "制度核查与待补材料"}]
+    sections.extend({"type": "text", "font_size": 10, "line_height": 5.3, "content": line.lstrip("> ")}
+                    for line in review.split("\n\n") if not line.startswith("###"))
+    sections.append({"type": "text", "font_size": 10, "line_height": 5.3,
+        "content": "本次使用合成验收材料，仅验证平台能力，不代表真人业务验收。"
+        if "合成验收" in filename else "本简报用于辅助核查；真实材料与业务决定仍需责任人核实。"})
+    return sections
+
+
 def _export_report(report_title: str, sections_json: str,
                     config: RunnableConfig, include_charts: str = "") -> str:
+    from app.storage.artifacts import ArtifactOwnerScopeMissing, owner_can_register_artifact
     from app.tools.export import generate_pdf_report
 
     try:
-        if _artifact_principal(config, ACTION_EXPORT) is None:
+        principal = _artifact_principal(config, ACTION_EXPORT)
+        if principal is None:
             record_tool_status(
                 bag_from_config(config), tool="export_report", status="rejected", error_code="authorization_required"
             )
             return _authorization_error()
-        sections = json.loads(sections_json)
-        path = generate_pdf_report(title=report_title, sections=sections)
+        if not owner_can_register_artifact(principal):
+            return _denial_text(
+                config,
+                tool="export_report",
+                code="department_scope_required",
+                head=_EXPORT_NO_DEPARTMENT_HEAD,
+            )
+        try:
+            sections = json.loads(sections_json)
+        except (TypeError, ValueError) as exc:
+            #: 章节是模型自己拼的那枚参数：说成"读不出来"（validation_error），不冒充内部错。
+            logger.warning(f"[Tool] report sections unreadable: {type(exc).__name__}")
+            return _denial_text(
+                config,
+                tool="export_report",
+                code="validation_error",
+                head=_EXPORT_BAD_SECTIONS_HEAD,
+            )
+        if not isinstance(sections, list) or any(not isinstance(item, dict) for item in sections):
+            return _denial_text(config, tool="export_report", code="validation_error", head=_EXPORT_BAD_SECTIONS_HEAD)
+        conf = (config or {}).get("configurable", {}) or {}
+        filename = str(conf.get("data_filename") or "").strip()
+        original_body = str((conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
+        from app.agents.task_review import requested_documents_valid
+        if not requested_documents_valid(conf.get('task_context') or {}, principal):
+            return _denial_text(config, tool='export_report', code='validation_error',
+                head='指定制度版本已变化或当前无权访问，未生成报告。请新建任务并重新选择制度版本。')
+        if filename:
+            # Re-read the selected table through the authorized data tool. This survives
+            # HITL resumption without trusting another worker's model-written prose.
+            from app.agents.evidence import new_evidence_bag
+            verified_bag = new_evidence_bag()
+            verified_config = {**(config or {}), "configurable": {**conf, "evidence_bag": verified_bag}}
+            question = str(conf.get("data_question") or "按部门汇总金额与合计")
+            analysis = _analyze_data(question, verified_config)
+            if not verified_bag.get("datasets"):
+                return _denial_text(config, tool="export_report", code="validation_error",
+                                    head="选中数据未能完成授权核验，未生成报告。")
+            facts = verified_bag.get("report_facts") or []
+            original_body = str((conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
+            sections = (_analysis_body_sections(original_body) if original_body
+                        else _verified_report_sections(facts, analysis))
+            if conf.get("task_context"):
+                from app.agents.task_review import policy_review_text, policy_identity, _applicable_policy_documents
+                search_docs.invoke({"query": question}, config=verified_config)
+                verified_bag["documents"] = _applicable_policy_documents(verified_bag.get("documents", []), question)
+                if policy_identity(verified_bag.get("documents", []), period=question) != conf["task_context"].get("policy_sources", []):
+                    return _denial_text(config, tool="export_report", code="validation_error",
+                        head="制度依据版本已变化或当前无权访问，未生成报告。请重新发起核查并确认制度版本。")
+                review = policy_review_text(verified_bag.get("documents", []), period=question,
+                    verified_rows=sum(source["rows"] for source in facts))
+                if not original_body:
+                    sections.extend(_policy_review_sections(review, filename))
+                if bag_from_config(config) is not None:
+                    bag_from_config(config).setdefault("documents", []).extend(verified_bag.get("documents", []))
+            if not sections:
+                return _denial_text(config, tool="export_report", code="validation_error",
+                                    head="未取得可核验的报告正文，未生成报告。")
+            if '合成验收' in filename:
+                sections.append({'type': 'text', 'content': '本次使用合成验收材料，仅验证平台能力，不代表真人业务验收。'})
+            bag = bag_from_config(config)
+            if bag is not None:
+                bag.setdefault("datasets", []).extend(verified_bag["datasets"])
+        # Chart paths supplied by a model are never filesystem authority.
+        sections = [item for item in sections if item.get("type") != "chart"]
+        #: 装箱由产品自己做：模型交回的 sections 里那一格图永远填不出来（它只拿到 URL，
+        #: 拿不到容器路径），所以这里按台账取本轮的图，连同 include_charts 里它点名的那几枚。
+        charts = _round_chart_paths(config, principal)
+        referenced_charts = set(re.findall(r'!\[[^\]]*\]\(/api/v1/artifacts/([a-zA-Z0-9_-]+)/content\)', original_body))
+        if referenced_charts and len(charts) != len(referenced_charts):
+            return _denial_text(config, tool='export_report', code='validation_error',
+                head='原分析图表已失效或当前无权访问，未生成缺图报告。请重新核对分析后导出。')
+        question = str(conf.get("execution_question") or conf.get("data_question") or "")
+        if filename and not original_body and re.search(r"含图|带图|图表.*报告|(?:柱状图|柱图).*(?:导出|PDF|报告)", question, re.I) and not charts:
+            return _denial_text(config, tool="export_report", code="validation_error",
+                                head="本轮要求的图表尚未成功生成，未导出缺图报告。请先完成图表生成后再导出。")
+        if charts:
+            caption = f"{report_title}；来源：{filename or '本轮分析'}"
+            if filename and facts:
+                caption = "当前授权与筛选范围内的分组构成；单位以坐标轴标注为准；来源与版本详见编制口径。"
+            chart_sections = [{"type": "chart", "path": chart, "caption": f"图{i + 1}：{caption}"} for i, chart in enumerate(charts)]
+            if referenced_charts:
+                ids = list(dict.fromkeys(re.findall(r'!\[[^\]]*\]\(/api/v1/artifacts/([a-zA-Z0-9_-]+)/content\)', original_body)))
+                by_id = dict(zip(ids, chart_sections))
+                sections = [by_id[section['artifact_id']] if section.get('type') == 'chart_slot' and section.get('artifact_id') in by_id
+                            else section for section in sections]
+            else:
+                slot = next((i for i, section in enumerate(sections) if section.get("type") == "chart_slot"), len(sections))
+                sections[slot:slot + (slot < len(sections))] = chart_sections
+            charts = []
+        asked = [item.strip() for item in re.split(r"[,;，；\n]", str(include_charts or "")) if item.strip()]
+        logger.info("[R726ExportCharts] leg=export round_charts=%d asked=%d", len(charts), len(asked))
+        path = generate_pdf_report(title=report_title, sections=sections, chart_paths=charts)
 
-        urls = _artifact_urls(path, "report", config)
+        try:
+            urls = _artifact_urls(path, "report", config)
+        except ArtifactOwnerScopeMissing as exc:
+            logger.warning(f"[Tool] report registration refused: {type(exc).__name__}: {exc}")
+            _discard_unregistrable_report(path)
+            return _denial_text(
+                config,
+                tool="export_report",
+                code="department_scope_required",
+                head=_EXPORT_REGISTRATION_REFUSED_HEAD,
+            )
         if urls is None:
             _record_denial(
                 config, tool="export_report", code="authorization_required", status="rejected"
@@ -1211,8 +2961,14 @@ def _export_report(report_title: str, sections_json: str,
             return _authorization_error()
         _, url = urls
         return f"报告已生成: [📋 下载报告]({url})"
-    except Exception as e:
-        return f"报告生成失败: {e}"
+    except Exception as exc:  # noqa: BLE001 - 失败要说得出口，内部原句不许替它说话
+        logger.warning(f"[Tool] report generation failed: {type(exc).__name__}: {exc}")
+        return _denial_text(
+            config,
+            tool="export_report",
+            code="internal_error",
+            head=_EXPORT_GENERATION_FAILED_HEAD,
+        )
 
 
 @tool
@@ -1250,7 +3006,11 @@ def generate_chart_v2(
     branches: dict[str, list[str]] | None = None,
     title: str = "数据分析图表",
 ) -> str:
-    """生成柱状图、折线图、饼图、雷达图、甘特图或思维导图。"""
+    """生成图表。参数契约（缺一项就画不出来）：
+    - chart_type 只认 bar/line/pie/radar/gantt/mindmap 六个英文键，不要写中文；
+    - labels 是横轴名称数组，values 是与它等长的纯数字数组（如 [67770, 52710]），两者必须同时给；
+    - values 里的数必须逐字来自上一手 analyze_data 交回的结论；
+    - 上一手没算出数字时不要调用本工具，直接用文字说明原因。"""
     with start_tool_call(
         config,
         tool_name="generate_chart",
@@ -1259,6 +3019,10 @@ def generate_chart_v2(
             "title": title,
             "label_count": len(labels or []),
             "value_count": len(values or []),
+            #: 10-07 现读：图腿连着两发 value_count=0，光看这两格分不出「模型没给数」还是
+            #: 「数在 datasets 里」。名字与条数是形状，不是客户数据，画不出图时它就是归因。
+            "datasets_names": sorted(str(key) for key in datasets) if isinstance(datasets, dict) else None,
+            "categories_count": len(categories or []),
         },
     ) as span:
         result = _generate_chart(
@@ -1274,7 +3038,7 @@ def generate_chart_v2(
             title=title,
         )
         if not str(result).startswith("图表已生成"):
-            span.finish("failed", error_code="validation_error")
+            span.finish("failed", error_code=_chart_terminal_error_code(result))
         return result
 
 
@@ -1296,7 +3060,7 @@ def export_report(report_title: str, sections_json: str,
     ) as span:
         result = _export_report(report_title, sections_json, config, include_charts)
         if "报告已生成" not in str(result):
-            span.finish("failed", error_code="internal_error")
+            span.finish("failed", error_code=_export_terminal_error_code(result))
         return result
 
 

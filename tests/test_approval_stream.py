@@ -41,12 +41,15 @@ def test_approve_stream_emits_worker_result_when_no_plain_ai_message(monkeypatch
     seen = {}
 
     def fake_run_interrupt_stream(
-        thread_id: str, approved: bool, user=None, cancel_event=None
+        thread_id: str, approved: bool, user=None, cancel_event=None, stream_piece_sink=None
     ):
         seen["thread_id"] = thread_id
         seen["user"] = user
         # /approve 必须把取消标记交给编排，否则工作线程永远停不下来（R12）。
         seen["cancel_event"] = cancel_event
+        # R524 差格 a：/approve 现在把续跑道的流式片段出口一并交下来。本假件一轮都不产片，
+        # 但出口必须按真签名收下——不收就是 TypeError，整条腿会被 _run 的 except 报成 error。
+        seen["stream_piece_sink"] = stream_piece_sink
         yield {"messages": [AIMessage(content="需要确认后生成图表")]}
         yield {
             "messages": [AIMessage(content="【chart Agent 返回】\n图表已生成：/static/chart.png")],
@@ -80,6 +83,8 @@ def test_approve_stream_emits_worker_result_when_no_plain_ai_message(monkeypatch
     principal = seen["user"]["principal"]
     assert principal.username == "admin"
     assert principal.user_id
+    # R524 差格 a 的账：出口确实从 /approve 交到了续跑道那一层（本轮无片，所以它一次都没被叫）。
+    assert callable(seen["stream_piece_sink"]), "/approve 没把续跑道的 sink 交下来"
 
 
 def test_run_interrupt_stream_config_carries_the_caller_principal(monkeypatch):
@@ -140,7 +145,7 @@ def test_export_worker_fallback_replaces_static_url_with_controlled_artifact(mon
 
     assert "/api/v1/artifacts/artifact-1/download" in result
     assert observed["config"]["configurable"]["username"] == "finance-manager"
-def test_a_declined_action_is_recorded_so_it_cannot_run_again(monkeypatch):
+def test_a_declined_action_is_recorded_so_it_cannot_run_again(monkeypatch, tmp_path):
     """Rejecting a parked action must not let supervisor dispatch that node again.
 
     Skipping the node alone left it in the plan, so the action the user declined ran
@@ -148,27 +153,15 @@ def test_a_declined_action_is_recorded_so_it_cannot_run_again(monkeypatch):
     """
     from app.agents import orchestrator
 
-    captured = {}
-
-    class FakeGraph:
-        def update_state(self, config, values):
-            captured["update"] = values
-
-        def stream(self, payload, config, **kwargs):
-            captured["payload"] = payload
-            yield {"messages": []}
-
-    monkeypatch.setattr(orchestrator, "multi_agent_graph", FakeGraph())
-    monkeypatch.setattr(
-        orchestrator, "check_interrupt", lambda thread_id: {"pending": ["chart"], "labels": ["📈 生成图表"]}
-    )
-
-    list(orchestrator.run_interrupt_stream("thread-2", False, {"username": "tester"}))
-
-    update = captured["update"]
+    from test_quality_approval_lifecycle import approval_graph
+    graph, sid = approval_graph(tmp_path)
+    monkeypatch.setattr(orchestrator, "multi_agent_graph", graph)
+    list(orchestrator.run_interrupt_stream(sid, False, {"username": "tester"}))
+    update = graph.get_state({"configurable": {"thread_id": sid}}).values
     assert update["worker_results"]["chart"] == "已取消，未执行：📈 生成图表"
-    assert str(update["messages"][0].content) == "已取消，未执行：📈 生成图表"
-    assert captured["payload"].goto == "supervisor"
+    assert any(str(message.content) == "已取消，未执行：📈 生成图表" for message in update["messages"])
+    assert not (tmp_path / "chart").exists() and not (tmp_path / "export").exists()
+    assert orchestrator.check_interrupt(sid)["pending"] == ["export"]
 
 
 def test_an_approved_action_is_not_marked_cancelled(monkeypatch):

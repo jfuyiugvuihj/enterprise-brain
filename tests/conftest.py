@@ -654,3 +654,258 @@ def model_endpoint_guard():
         offline_registry_fetch=MODEL_DISCOVERY_PIN.offline,
         model_config=MODEL_DISCOVERY_PIN.module,
     )
+
+
+# ==================== R563：活模块的顶层可调用绑定不得跨模块漏 ====================
+# 病（10-01 实测，同一条 traceback 连撞三遍门，受害者每次不一样所以前两遍被判成"共置假红"）：
+#   tests/test_r354_delete_audit_shares_the_owner_reader.py 的 _recapture/_rebind 用裸赋值
+#   data.record_audit = record 把一枚「假定 principal 不是 None」的假收集器装进活模块，
+#   用例结束没人还原。同一枚 worker（-n 6 --dist loadfile）上的下一模块撞上它：
+#   test_r180_row_scope_preview_and_catalog_honesty.py::test_preview_without_any_principal_fails_closed
+#   ⇒ AttributeError: 'NoneType' object has no attribute 'username' ⇒ 顺着 except Exception
+#   滑成 500 dataset_preview_failed（正是那枚用例注释里禁止的"把拒绝伪装成故障"）。
+#   取证：门 #4 的 %TEMP%\eb-r563-order-<pid>.log 记到 r180 与 r354 同进程；现场合跑两枚
+#   文件 100% 复现（r354+r180 = rc=1，报错逐字相同），r354 改用 monkeypatch 之后同跑 31 passed。
+# 治（两条一起，缺一不可）：
+#   ① 逐模块取一份活绑定基线，模块收工时比对；不等就在**凶手自己的 teardown 上红**并指名——
+#      红在被点名的人身上，这条才不会被下一班当成受害者的运气问题放过去。
+#   ② 同时把活模块还回基线：还回去不是为了免掉这一枚红，是为了别让下一模块替它挨打。
+#   只盯顶层**可调用**（函数与类）：这一族漏的就是假身收集器；DATA_DIR / dataset_registry 这类
+#   夹具重绑（r310／r337 的 _rebind）由 ② 一并还原，但不点名——那是既有的、按窗工作的形状。
+_EB_R563_MISSING = object()
+
+
+_EB_R563_WATCHED = (
+    "app.api.v1.data",
+    "app.api.v1.chat",
+    "app.common.audit",
+    "app.agents.orchestrator",
+    "app.rag.retrieval_pipeline",
+)
+
+
+def _eb_r563_snapshot():
+    """收下每一枚被盯模块当前的顶层**函数**绑定。
+
+    只收函数：这一族漏的就是假身收集器（`record_audit = 一枚假定参数形状的本地函数`）。
+    类不收——把整份源码重 exec 回盘上那一版会连带换掉类的身体，那是既有窗的做法，不是漏。
+    """
+    import types
+
+    out = {}
+    for name in _EB_R563_WATCHED:
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        out[name] = {
+            key: value
+            for key, value in vars(module).items()
+            if not key.startswith("__") and isinstance(value, types.FunctionType)
+        }
+    return out
+
+
+#: R584（10-03 现取，改前三枚读数记在 `docs/testing/r584-defaults-leg-2026-10-03.md`）：
+#: `__defaults__` 那一腿原来拿 `==` 比的是**实例身份**。FastAPI 的 `File()`／`Form()` 继承
+#: pydantic `FieldInfo`，而 `FieldInfo.__eq__ is object.__eq__`（本席读数 True）⇒ `importlib.reload`
+#: 把默认值重造一遍之后，码体逐字节相同的**合法还原**也被判成漂移。
+#: 现场形状：`tests/test_phase9_private_deps.py::TestOptionalPsycopgImports::
+#: test_chat_and_alerts_import_without_psycopg` 只要合跑就恒红在 `app.api.v1.chat.upload_document`
+#: 一枚上——四腿里只有 defaults 那条 False，同模块其余 165 枚顶层函数零漂移。那是"同码体、
+#: 只换了实例"的形状，不是"有人留了假身"的形状。
+#: 治法：腿不摘，只把比较口径从"身份"换成"结构"——同长度、逐位同型、`FieldInfo` 逐语义位、
+#: 函数型默认值按码体、其余先按值再退回"无地址的同 repr"。
+#: 🔴 语义位不是装饰：`File(..., embed=True)` 与 `File(...)` 的 repr **逐字节相同**
+#: （pydantic 的 `Representation` 只渲染 default），只靠 repr 会把这一族漏判。
+#: 🔴 同码体那一支也不再免检：`FunctionType(真身.__code__, ...)` 这种"借体造人"
+#: （`tests/test_r466_mutation_does_not_leak_into_live_module.py` 的 `_rebase` 就长这个形状）
+#: 只有 defaults 这一腿认得出，所以它不许被写成"码体相同就 return True"。
+_EB_R563_FIELDINFO_SLOTS = (
+    "default",
+    "default_factory",
+    "annotation",
+    "embed",
+    "alias",
+    "validation_alias",
+    "serialization_alias",
+    "title",
+    "description",
+    "metadata",
+    "json_schema_extra",
+    "media_type",
+    "include_in_schema",
+    "examples",
+    "openapi_examples",
+)
+
+
+def _eb_r563_repr_matches(a, b):
+    """两枚实例是不是同一个"值"？只有 repr 不带内存地址时才算数。
+
+    `object.__repr__` 那一族的 repr 里写着 ` at 0x...` ⇒ 两枚不同实例必然不同字，
+    这一条回退就退化成身份比较，白送不出去。能走到"同字"的只有自己写了值化
+    `__repr__` 的类（pydantic `FieldInfo` 正是本单的现行患者）。
+    """
+    text_a, text_b = repr(a), repr(b)
+    if text_a != text_b:
+        return False
+    return " at 0x" not in text_a
+
+
+def _eb_r563_slot_same(a, b):
+    """一位值：先身份，再同型，再按值比；值比不动才退到无地址的同 repr。
+
+    函数型的默认值（`default_factory` 那一族）按码体判——`reload` 重造的是同一枚身体，
+    按函数对象的身份判就又是一枚"同码体冤枉"。这里刻意不递归进那枚函数的默认值：
+    码体三条腿已经吃下"换身体"这一族，再递归会给自指默认值留下栈溢出。
+    """
+    if a is b:
+        return True
+    if type(a) is not type(b):
+        return False
+    if inspect.isfunction(a):
+        ca, cb = a.__code__, b.__code__
+        return (
+            ca is cb
+            or (
+                ca.co_name == cb.co_name
+                and ca.co_qualname == cb.co_qualname
+                and ca.co_code == cb.co_code
+            )
+        )
+    try:
+        if bool(a == b):
+            return True
+    except Exception:
+        return False
+    return _eb_r563_repr_matches(a, b)
+
+
+def _eb_r563_is_fieldinfo(value):
+    """`FieldInfo` 这一族从类 MRO 往回认：守卫不许为比较口径新增 import。"""
+    for klass in type(value).__mro__:
+        if klass.__name__ == "FieldInfo" and str(klass.__module__).startswith("pydantic"):
+            return True
+    return False
+
+
+def _eb_r563_values_same(a, b):
+    """`__defaults__` 里的一位怎么算同一枚值。
+
+    `FieldInfo`（含 FastAPI 的 `File`／`Form`／`Body` 支系）逐语义位比，最后一道 repr 兜底；
+    其余走 `_eb_r563_slot_same`。语义位里任何一位换了人都是漂移，不是还原。
+    """
+    if a is b:
+        return True
+    if type(a) is not type(b):
+        return False
+    if _eb_r563_is_fieldinfo(a):
+        for slot in _EB_R563_FIELDINFO_SLOTS:
+            if not _eb_r563_slot_same(getattr(a, slot, _EB_R563_MISSING),
+                                      getattr(b, slot, _EB_R563_MISSING)):
+                return False
+        return _eb_r563_repr_matches(a, b)
+    return _eb_r563_slot_same(a, b)
+
+
+def _eb_r563_defaults_same(da, db):
+    """`__defaults__` 那一腿的判据本体（R584 换的是口径，不是这条腿在不在）。
+
+    形状先卡死：`None`（压根没有默认值）与任何元组不等；类型不同不等；长度不同不等；
+    剩下的逐位交给 `_eb_r563_values_same`。语义不同照样点名（`Form(1)`→`Form(2)`、
+    `File(...)`→`Form(...)`、`embed` 翻了），本单反证 K1／K2 一枚枚咬过。
+    """
+    if da is db:
+        return True
+    if da is None or db is None:
+        return False
+    if type(da) is not type(db) or len(da) != len(db):
+        return False
+    return all(_eb_r563_values_same(a, b) for a, b in zip(da, db))
+
+
+def _eb_r563_same(a, b):
+    """同一枚函数吗？先比对象，再比码体，最后比默认值（结构口径）。
+
+    比码体而不是比身份：`r48` 那一扇窗把整份源码重新 exec 回活模块，出来的函数是新的对象、
+    旧的身体——那叫还原，不叫漏。真漏两种形状：身体换了（`record` 那种就地定义的假身），
+    或者身体没换但默认值换了人（R53 那一族改 `__defaults__`）。后者在 R584 之前拿身份尺量，
+    把 reload 的合法还原一起咬了；现在换成结构尺，腿仍然在判。
+    """
+    if a is b:
+        return True
+    ca, cb = getattr(a, "__code__", None), getattr(b, "__code__", None)
+    if ca is None or cb is None:
+        return ca is cb
+    if ca is cb:
+        # 借体造人：码体是同一枚对象，能认出"换了人"的只剩默认值这一腿 ⇒ 不许当场放行。
+        return _eb_r563_defaults_same(
+            getattr(a, "__defaults__", None), getattr(b, "__defaults__", None)
+        )
+    return (
+        ca.co_name == cb.co_name
+        and ca.co_qualname == cb.co_qualname
+        and ca.co_code == cb.co_code
+        and _eb_r563_defaults_same(
+            getattr(a, "__defaults__", None), getattr(b, "__defaults__", None)
+        )
+    )
+
+
+def _eb_r563_live_module_guard(request):
+    """模块开工取基线；收工比对，漏了就先还回去、再指名道姓地红在本模块自己的 teardown 上。
+
+    🔴 红必须落在凶手自己的模块上：门 #2/#3/#4 三遍里红的是受害者（r466 两次、r180 一次），
+    每遍换个名字，于是前两遍被当成 xdist 共置假红放过去了；同一条 traceback 现场合跑 100% 复现。
+    """
+    before = _eb_r563_snapshot()
+    yield
+    after = _eb_r563_snapshot()
+    drift = []
+    for name, bindings in after.items():
+        base = before.get(name, {})
+        for key, value in bindings.items():
+            original = base.get(key)
+            if original is None or _eb_r563_same(original, value):
+                continue
+            drift.append(
+                "%s.%s：盘上那一版 %s.%s 被换成 %s.%s"
+                % (name, key, getattr(original, "__module__", "?"),
+                   getattr(original, "__qualname__", "?"), getattr(value, "__module__", "?"),
+                   getattr(value, "__qualname__", "?"))
+            )
+    if not drift:
+        return
+    for name, bindings in after.items():
+        module = sys.modules.get(name)
+        if module is None:
+            continue
+        for key, value in bindings.items():
+            original = before.get(name, {}).get(key)
+            if original is not None and not _eb_r563_same(original, value):
+                setattr(module, key, original)
+    pytest.fail(
+        "R563：本模块出门把活模块的顶层可调用绑定换成了自己的假身，没还回去。"
+        + chr(10) + chr(10).join("  - " + line for line in drift) + chr(10)
+        + "活模块已还回基线（下一模块不再当受害者），但红必须留在本模块自己身上：" + chr(10)
+        + "把裸赋值改成 monkeypatch.setattr(模块, 名字, 假身)，或 request.addfinalizer 还账。" + chr(10)
+        + "本条记档：跟进单 §145。上一班把同一形状误判成 xdist 共置假红，门 #2/#3/#4 各漂一次。",
+        pytrace=False,
+    )
+
+
+@pytest.fixture(autouse=True, scope="module")
+def eb_r563_live_module_callables_do_not_leak(request):
+    """R563 的在册钉子：本体拆成普通生成器，反证用例才 drive 得动（fixture 不许被直接调用）。"""
+    yield from _eb_r563_live_module_guard(request)
+
+
+@pytest.fixture
+def eb_r563_guard():
+    """把 R563 的钉子与快照器交给反证用例，用例不必去 import conftest。"""
+    return SimpleNamespace(
+        watched=_EB_R563_WATCHED,
+        snapshot=_eb_r563_snapshot,
+        missing=_EB_R563_MISSING,
+        body=_eb_r563_live_module_guard,
+    )

@@ -19,7 +19,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, Mapping, NoReturn, Sequence
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -30,6 +30,8 @@ from app.common import audit as audit_log
 from app.common.authorization import principal_from_request
 from app.common.permissions import ACTION_AUDIT, ACTION_VIEW
 from app.common.policy import authorization_decision
+#: 两把尺的出口读数面由判分器自己派生（键名不在这抄第二份清单，见 R438 判据⑨）。
+from app.quality.eval import ScorabilityDerivationError, scorability_metrics
 from app.rag.debug import run_retrieval_debug
 from app.rag.filters import RetrievalScopeError
 from app.trace.store import TraceStoreError
@@ -65,7 +67,7 @@ EVALUATION_COMMAND_TEMPLATE = (
 )
 
 _RETRIEVAL_CAPABILITIES = (
-    ("chromadb", "vector_store", "chroma_persistent_client", "offline_json_collection"),
+    ("psycopg", "vector_store", "pgvector", "unavailable"),
     ("rank_bm25", "keyword_scoring", "rank_bm25", "token_overlap_shim"),
     ("jieba", "tokenizer", "jieba", "naive_char_or_whitespace"),
     ("sentence_transformers", "reranker", "cross_encoder", "rrf_only"),
@@ -77,6 +79,10 @@ _SCOPE_ERROR_STATUS = {
 }
 _REPORT_RATIO_KEYS = ("answer_correctness", "evidence_coverage", "unsupported_claim_rate")
 _REPORT_LATENCY_KEYS = ("count", "average", "p95")
+#: 🔴 这里没有第二把尺的键名清单，也不是漏了 —— `_report_metrics` 逐格读报告里那一格自己的键
+#: （`app.quality.eval.scorability_metrics`），抄一份清单就是第二本账（R346/R351/R377/R396/R400
+#: 那一族病的形状）。派生不到锚点当场红，见 R438 判据⑨。
+#: 旧入库件（没有第二把尺那两格）走同一条路：那一把尺今天不存在，不是少了一格。
 
 
 class ApiError(BaseModel):
@@ -279,6 +285,37 @@ def _bounded_report(report: dict[str, Any]) -> tuple[dict[str, Any], dict[str, A
     return bounded, bounds
 
 
+def _bounded_trace_value(value: Any) -> tuple[Any, bool]:
+    """Bound a trace document without changing the type of the numbers inside it.
+
+    ``_bounded_value`` is the retrieval debug plane's helper and it reads every scalar as a
+    float, which is right for a score and wrong for a count: ``counts.agent_steps`` is an
+    integer the administrator matches against what they wrote, and ``sequence`` is the event
+    order. This version keeps ints integers and only truncates what can actually grow:
+    strings, lists and dict breadth.
+    """
+    if isinstance(value, dict):
+        bounded: dict[Any, Any] = {}
+        truncated = False
+        for index, (key, item) in enumerate(value.items()):
+            if index >= MAX_DICT_ITEMS:
+                truncated = True
+                break
+            bounded[key], item_truncated = _bounded_trace_value(item)
+            truncated = truncated or item_truncated
+        return bounded, truncated
+    if isinstance(value, (list, tuple)):
+        truncated = len(value) > MAX_LIST_ITEMS
+        items = [_bounded_trace_value(item)[0] for item in list(value)[:MAX_LIST_ITEMS]]
+        return items, truncated
+    if isinstance(value, str):
+        return value[:MAX_STRING_CHARS], len(value) > MAX_STRING_CHARS
+    if isinstance(value, (bool, int, float)) or value is None:
+        return value, False
+    text = str(value)
+    return text[:MAX_STRING_CHARS], len(text) > MAX_STRING_CHARS
+
+
 def _bounded_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Pass every recorded field through, so a richer event schema is never hidden."""
     bounded = []
@@ -343,8 +380,9 @@ def _shipped_report_paths() -> set[Path]:
     """Absolute identities of the report files that ship inside the image.
 
     Resolved instead of compared as strings: the same bundled score can also arrive through
-    a configured directory (the append at observability.py:333 is unconditional), and "which
-    file is this" has to survive both spellings of it.
+    a configured directory -- the append in
+    ``app/api/v1/observability.py::_evaluation_report_candidates`` is unconditional -- and
+    "which file is this" has to survive both spellings of it.
     """
     resolved: set[Path] = set()
     for name in DEFAULT_EVALUATION_REPORT_FILES:
@@ -398,6 +436,7 @@ def _report_metrics(payload: dict[str, Any]) -> dict[str, Any]:
                 number = _finite_float(latency[key])
                 if number is not None:
                     metrics[f"latency_{key}"] = number
+    metrics.update(scorability_metrics(payload, list_limit=MAX_LIST_ITEMS))
     return metrics
 
 
@@ -425,7 +464,15 @@ def _report_summary(path: Path, *, source: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return record
     record["status"] = "ok"
-    record["metrics"] = _report_metrics(payload)
+    try:
+        record["metrics"] = _report_metrics(payload)
+    except ScorabilityDerivationError:
+        # 两把尺的分母账只有一半、三数算式破、清单与扣除数对不上 ⇒ 这一份文件的读数面整体
+        # 不可信。按既有词汇表落 `unreadable`（docs/api/contract-v1.md:1773 只有 ok / unreadable /
+        # too_large，本单不造新词、不加新键）：宁可少一份指标，不许多一格假的。
+        record["status"] = "unreadable"
+        record["metrics"] = {}
+        return record
     categories = payload.get("category_metrics")
     record["category_count"] = len(categories) if isinstance(categories, dict) else 0
     return record
@@ -647,6 +694,8 @@ def _stage_report_from_trace(trace_id: str) -> dict[str, Any]:
         end_to_end_by_trace=request_windows_from_events(events),
     )
     report["samples"] = [sample.as_dict() for sample in samples]
+    # R649：同一本账、同一批事件，顺带交出首屏那一格的真读数（量不到就具名原因，不折 0）。
+    report["first_text"] = wire_first_text_row(events, trace_id)
     return report
 
 
@@ -660,8 +709,11 @@ async def read_stage_latency(
 
     With ``trace_id`` the answer comes from that one persisted trace, which is how
     judgement 2 -- the segments must add up to the request within one percent -- gets
-    checked against real recorded bytes rather than a live process. Without it, the
-    in-process rolling window is reported, the same block ``/health/details`` carries.
+    checked against real recorded bytes rather than a live process. That per-trace answer
+    also carries the R649 首屏 row under ``first_text``: the first wire frame a client
+    could see, derived by :func:`wire_first_text_from_events` from recorded stamps and
+    never filled in here. Without the id, the in-process rolling window is reported, the
+    same block ``/health/details`` carries.
     """
     principal = _require_action(request, ACTION_AUDIT, "stage-latency")
     from app.common.stage_timing import stage_latency_readout
@@ -687,7 +739,7 @@ async def read_stage_latency(
     return report
 
 
-# ==================== R105 · three-tier SLO contract: shape and arithmetic, no numbers ====
+# ==================== R105 · three-tier SLO contract: shape, arithmetic and policy targets ====
 
 #: R36 judgement 2, restated in 计划书 §3.1 ("P95 且样本 ≥100 条"): a percentile is
 #: reportable only from at least this many samples of the distribution it describes.
@@ -695,15 +747,26 @@ async def read_stage_latency(
 #: second copy of the number.
 MIN_SLO_SAMPLES = 100
 
-#: Every target slot in the contract starts empty on purpose. 乙半 fills it from the D14甲
-#: window; nothing else may put a number in it, because no real sample has been drawn yet.
-#: Writing "800 ms" here would be invented data, the same line R36 drew at demo corpora.
+#: A target is a policy ceiling, not a measured result.  Policy A registers the product
+#: promise here while the sample gate below still withholds p50/p95 until real local samples
+#: clear ``MIN_SLO_SAMPLES``.  The desktop roadmap only confirms the current 50.1 s p95 and
+#: explicitly forbids an external promise without target-machine measurement; these values are
+#: therefore displayed as internal policy targets, never as measured performance.
 SLO_TARGET_PENDING = "awaiting_real_samples"
+SLO_TARGET_SET = "target_set"
+SLO_TARGET_PARTIAL = "targets_partially_set"
+
+SLO_TARGET_QA_COMPLETION_MS = 10_000
+SLO_TARGET_QA_FIRST_TEXT_MS = 1_000
+SLO_TARGET_QA_CACHE_HIT_MS = 999
+SLO_TARGET_ANALYSIS_COMPLETION_MS = 45_000
+SLO_TARGET_ANALYSIS_PROGRESS_MS = 15_000
+SLO_TARGET_REPORT_COMPLETION_MS = 120_000
 
 #: Readout verdicts. ``insufficient_samples`` exists because the alternative is a lie:
-#: ``PerformanceStats.report()`` answers ``0`` for a distribution it has never seen
-#: (``app/common/performance.py:27-28``), and a ``p95_ms`` of ``0`` is the most convincing
-#: fake SLO this module could emit.
+#: ``app/common/performance.py::PerformanceStats._rank`` answers ``0`` for a distribution it
+#: has never seen, so ``app/common/performance.py::PerformanceStats.report`` publishes a
+#: ``p95_ms`` of ``0`` -- the most convincing fake SLO this module could emit.
 SLO_INSUFFICIENT = "insufficient_samples"
 SLO_MEASURED = "measured"
 SLO_NOT_MEASURABLE = "not_measurable"
@@ -730,47 +793,204 @@ SLO_SCREEN_SOURCE = "frontend/src/router/index.js"
 #: code that proves it. These are the holes 乙半 has to close somewhere else first.
 SLO_BLOCKERS: dict[str, str] = {
     "lane_attribution_absent": (
-        "app/trace/spans.py:201-215 hands the ledger stage, tool_name, model_tier and worker "
-        "but never a lane, and no request event carries the question, so every live sample "
-        "groups under lanes.unknown and no per-tier population exists to take a P95 of."
+        "legacy or unlabelled samples carry no lane and remain in the unknown pool; current "
+        "``/api/v1/ask`` requests copy the resolved R42 lane from ``request.started`` into "
+        "their execution context and ``ExecutionSpan._observe_stage``. A tier is publishable "
+        "only when its samples carry that lane."
     ),
     "first_token_not_a_stage_sample": (
-        "first_token_at is recorded on a model span (app/trace/spans.py:174) and persisted "
-        "(app/trace/store.py:259), but app/common/stage_timing.py:330-345 never reads it into "
-        "a sample, so 首屏 is computable per trace and not from the in-process ledger."
-    ),
-    "wire_first_text_not_recorded": (
-        "the plan's 首屏 is the first ``text`` event on the wire (计划书 §3.1). The only "
-        "timestamped first-token evidence is model-side; chat.py:218-243 stamps canonical SSE "
-        "envelopes but does not persist them, so a wire-side number would be a proxy."
+        "first_token_at is stamped by ``app/trace/spans.py::ExecutionSpan.mark_first_token`` and "
+        "emitted on the finished model span by ``app/trace/spans.py::ExecutionSpan.finish``; "
+        "``app/trace/projections.py::project_span`` folds it into the model_calls row, whose "
+        "columns are the roster in ``app/trace/schema.py::TRACE_TABLE_COLUMNS``, and "
+        "``app/storage/persistence.py::PostgresPersistenceAdapter.upsert`` writes it, taking the "
+        "column set from ``app/storage/persistence.py::_TABLES`` -- ``app/trace/store.py`` pushes "
+        "sealed projections and names no column; ``app/common/stage_timing.py`` folds finished "
+        "spans into ledger samples yet its ``samples_from_span_payload`` builds a ``StageSample`` "
+        "with no field for it, so 首屏 is computable per trace and not from the in-process ledger."
     ),
     "cache_hits_are_not_traced": (
-        "a cache hit returns its StreamingResponse at app/api/v1/chat.py:1191-1215, before any "
-        "request.started event, so it records no window and no sample. The honest denominator "
-        "for 缓存命中 is therefore zero today, not 'fast'."
+        "a cache hit returns its StreamingResponse from ``app/api/v1/chat.py::ask``, before "
+        "any request.started event, so it records no window and no sample. The honest "
+        "denominator for 缓存命中 is therefore zero today, not 'fast'."
     ),
     "wire_step_events_are_not_recorded": (
-        "step.progress is persisted per graph superstep (app/agents/orchestrator.py:1173-1185), "
-        "which measures how often the graph advanced, not when a client saw a ``step``/``status`` "
-        "event; the interval the promise is about has no timestamped source."
+        "``app/agents/orchestrator.py::run_with_stream`` persists step.progress per graph "
+        "superstep through ``app/agents/orchestrator.py::_record_trace``, which measures how "
+        "often the graph advanced, not when a client saw a ``step``/``status`` event; the "
+        "interval the promise is about has no timestamped source."
     ),
     "export_leg_has_no_stage": (
-        "app/common/stage_timing.py:71 maps export_report to no segment, so a report tier's file "
-        "writing lands in unattributed. A five-stage sum is not that tier's end-to-end and must "
-        "not be published as one; coverage_error_pct is what says so."
+        "``app/common/stage_timing.py::TOOL_TO_STAGE`` maps export_report to no segment, so a "
+        "report tier's file writing lands in unattributed. A five-stage sum is not that tier's "
+        "end-to-end and must not be published as one; coverage_error_pct is what says so."
     ),
 }
 
 
+# ==================== R649 · 首屏那一格：从已在册的那本账里派生读数 ====================
+#: wire 上第一枚**屏上看得见**的 text 帧落进 trace 账时的事件名。唯一真源在这里；写侧只有
+#: ``app/api/v1/chat.py::_record_wire_first_text`` 一枚，它迟 import 本名，不抄第二份。
+#: 🔴 这不是 SSE 事件名：客户端那一侧的帧一枚都不因本单多出或改变，它只是那本已在册的账上
+#: （``app/trace/store.py::TraceStore.record_event``）多出的一行。
+WIRE_FIRST_TEXT_EVENT_TYPE = "wire.first_text"
+
+#: The stamp that opens the window 首屏 is measured across. It is the same event the
+#: request-window distribution already pairs on, so 首屏 and 端到端 share one denominator
+#: (``app/common/stage_timing.py::request_windows_from_events``) rather than inventing a second
+#: round start -- the wire envelope's own ``sequence`` and ``timestamp`` are the same two numbers
+#: this book carries, and this slot reads the persisted copy because a reader who arrives after
+#: the response is gone has nothing else to replay.
+WIRE_FIRST_TEXT_OPEN_EVENT = "request.started"
+
+#: Why a read-back can answer ``None``. Each one names a different hole, because "the round
+#: never put a line on the screen" and "the round put one there but this trace opened no
+#: window" are two statements, and the second is the cache leg (blocker
+#: ``cache_hits_are_not_traced``) refusing to be counted rather than a shortage of samples.
+WIRE_FIRST_TEXT_NO_EVENT = "no_wire_first_text_event"
+WIRE_FIRST_TEXT_NO_WINDOW = "wire_first_text_without_request_window"
+
+#: The one-line reason each of the two shapes publishes. Prose only: no number lives here.
+WIRE_FIRST_TEXT_REASONS: dict[str, str] = {
+    WIRE_FIRST_TEXT_NO_EVENT: (
+        "this trace recorded no ``" + WIRE_FIRST_TEXT_EVENT_TYPE + "`` event, so nothing was "
+        "handed to the wire as a visible ``text`` frame; ``None`` here is the absence of the "
+        "event, not a zero measurement"
+    ),
+    WIRE_FIRST_TEXT_NO_WINDOW: (
+        "a visible ``text`` frame was recorded but no ``request.started`` opens this trace's "
+        "window, so there is no stamp to subtract; this is the shape the cache leg answers with "
+        "while blocker ``cache_hits_are_not_traced`` stands"
+    ),
+}
+
+
+def wire_first_text_from_events(
+    events: Sequence[Mapping[str, Any]] | None,
+) -> dict[str, dict[str, Any]]:
+    r"""每请求的首屏毫秒，从这一本账自己记下的两枚戳派生：``request.started`` → 第一枚可见 text 帧。
+
+    🔴 这是**读**，不是记：一枚戳都不在这里产生。两枚都来自 ``app/trace/store.py::TraceStore.record_event``
+    已经落下的行，差值用 ``app/common/stage_timing.py::to_epoch_ms``（与那本账算端到端同一枚换算），
+    所以本单没有第二套算术，也没有第二本账。
+
+    三条取值纪律，逐条都是拦假读数的：
+      · 一个 trace 只认**最早**那一枚可见 text 帧 —— 首屏量的是第一行，第二行不算第二次首屏；
+      · 帧必须排在 ``request.started`` 之后：排在之前的那一枚窗口都没开，宁可答 ``None``
+        也不许拿一个起点都没有的差值充数；
+      · 每个起点重新开一窗（续跑轮真会再记一枚 ``request.started``，
+        见 ``app/api/v1/chat.py::_record_resumed_lane_trace``），首屏量的是**当前这一轮**从起点
+        到看见第一行字，不是整条 trace 从头到尾。
+
+    分位不在这里：本函数只交样本，门与排名仍由 ``app/common/performance.py::PerformanceStats``
+    那一件按 ``MIN_SLO_SAMPLES`` 算，读口在 ``read_stage_latency``。
+    """
+    from app.common.stage_timing import to_epoch_ms
+
+    opened: dict[str, float] = {}
+    stamps: dict[str, str] = {}
+    rows: dict[str, dict[str, Any]] = {}
+    for event in events or []:
+        body = event or {}
+        trace_id = str(body.get("trace_id") or "")
+        event_type = str(body.get("event_type") or "")
+        if not trace_id:
+            continue
+        if event_type == WIRE_FIRST_TEXT_OPEN_EVENT:
+            stamp = to_epoch_ms(body.get("timestamp"))
+            if stamp is None:
+                continue
+            opened[trace_id] = stamp
+            stamps[trace_id] = str(body.get("timestamp") or "")
+            continue
+        if event_type != WIRE_FIRST_TEXT_EVENT_TYPE or trace_id not in opened:
+            continue
+        if trace_id in rows:
+            # 首屏只有一枚：后面那些帧把这一格占了就是第二套口径。
+            continue
+        finished = to_epoch_ms(body.get("timestamp"))
+        if finished is None or finished < opened[trace_id]:
+            continue
+        payload = body.get("payload") or {}
+        rows[trace_id] = {
+            "first_text_ms": round(finished - opened[trace_id], 6),
+            "request_started_at": stamps[trace_id],
+            "first_text_at": str(body.get("timestamp") or ""),
+            "first_text_sequence": body.get("sequence"),
+            "leg": str(payload.get("leg") or ""),
+            "visible_chars": payload.get("visible_chars"),
+        }
+    return rows
+
+
+def wire_first_text_row(
+    events: Sequence[Mapping[str, Any]] | None, trace_id: str
+) -> dict[str, Any]:
+    """一枚 trace 的首屏读回：量到了就交数，量不到就交**具名的那一个原因**。
+
+    🔴 三态分开署名，不许折成一格：``measured``／``no_wire_first_text_event``／
+    ``wire_first_text_without_request_window``。没有数就是 ``None``，不是 ``0``，也不是
+    从别的件（采集器那一侧的帧账）借来的一枚 —— 线上与离线两形各归各的署名，
+    借数就是本仓记过一整族的空绿。
+    """
+    rows = wire_first_text_from_events(events)
+    row = rows.get(str(trace_id or "").strip())
+    if row is not None:
+        return {
+            "trace_id": str(trace_id or "").strip(),
+            "event_type": WIRE_FIRST_TEXT_EVENT_TYPE,
+            "measured_from": SLO_SOURCE_TRACE,
+            "status": "measured",
+            "reason": "",
+            **row,
+        }
+    seen = [
+        event
+        for event in list(events or [])
+        if str((event or {}).get("event_type") or "") == WIRE_FIRST_TEXT_EVENT_TYPE
+        and str((event or {}).get("trace_id") or "") == str(trace_id or "").strip()
+    ]
+    reason = WIRE_FIRST_TEXT_NO_WINDOW if seen else WIRE_FIRST_TEXT_NO_EVENT
+    return {
+        "trace_id": str(trace_id or "").strip(),
+        "event_type": WIRE_FIRST_TEXT_EVENT_TYPE,
+        "measured_from": SLO_SOURCE_TRACE,
+        "status": reason,
+        "reason": WIRE_FIRST_TEXT_REASONS[reason],
+        "first_text_ms": None,
+        "request_started_at": None,
+        "first_text_at": None,
+        "first_text_sequence": None,
+        "leg": str((seen[0].get("payload") or {}).get("leg") or "") if seen else "",
+        "visible_chars": seen[0].get("payload", {}).get("visible_chars") if seen else None,
+    }
+
+
+def wire_first_text_readout(trace_id: str) -> dict[str, Any]:
+    """按 ``trace_id`` 现读一次首屏：走 ``app/api/v1/chat.py`` 之外谁都在用的那本账回放。"""
+    normalized = str(trace_id or "").strip()
+    if not normalized:
+        _fail(400, "validation_error", "trace_id is required.", details={"field": "trace_id"})
+    if len(normalized) > MAX_TRACE_ID_CHARS:
+        _fail(
+            400,
+            "validation_error",
+            f"trace_id exceeds {MAX_TRACE_ID_CHARS} characters.",
+            details={"field": "trace_id", "max_chars": MAX_TRACE_ID_CHARS},
+        )
+    return wire_first_text_row(_trace_store().replay(normalized), normalized)
+
+
 @dataclass(frozen=True)
 class SloMetric:
-    """One addressable number slot: 乙半 fills ``target``, and nothing else may write it."""
+    """One addressable number slot and its policy target, if this metric has one."""
 
     name: str
     label_zh: str
     population: str
     source: str
     blockers: tuple[str, ...] = ()
+    target_ms: float | None = None
 
 
 @dataclass(frozen=True)
@@ -787,41 +1007,113 @@ class SloTier:
     note: str = ""
 
 
+def _slo_bridge_note(members: Sequence[str], bridge: Mapping[str, str]) -> str:
+    """R533 judgement 1/2 : the bridge sentence spelled out of both rosters, never retyped.
+
+    Every count and every name below is a readout of ``members`` (the value side of
+    ``contracts.py`` ``ModelTier``) and ``bridge`` (the value side of ``nodes.py``
+    ``LANE_TIERS``): how many budget tiers are shared across lanes and which lanes land on them,
+    and how many budget tiers are named by no lane. A roster edit therefore moves this prose with
+    it, which is the class of defect the R526 skeleton exists to kill -- the branch this one
+    inherits from carried a hand-typed unlaned count here that neither roster ever supported,
+    while the contract said something else, and prose on both surfaces cannot be reconciled by
+    hand. Lanes and tiers spell a name the same way (``analysis``), so both sides of
+    every pair are labelled instead of being left to context.
+
+    Teeth: ``tests/test_r533_bridge_note_is_derived.py`` grows ``ModelTier`` with a shadow member
+    and re-reads :func:`slo_units` to watch the sentence move, then repoints a lane and watches
+    the shared half move with it.
+    """
+    roster = set(members)
+    lanes_by_tier: dict[str, list[str]] = {}
+    for lane, tier in bridge.items():
+        lanes_by_tier.setdefault(tier, []).append(lane)
+
+    shared = {tier: lanes for tier, lanes in lanes_by_tier.items() if len(lanes) > 1}
+    unlaned = [tier for tier in members if tier not in lanes_by_tier]
+    off_roster = sorted(tier for tier in lanes_by_tier if tier not in roster)
+
+    def spelled(names: Sequence[str]) -> str:
+        ticks = [f"`{name}`" for name in names]
+        if len(ticks) < 2:
+            return ", ".join(ticks)
+        return ", ".join(ticks[:-1]) + " and " + ticks[-1]
+
+    def tally(count: int, noun: str) -> str:
+        return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+    def agrees(count: int, singular: str, plural: str) -> str:
+        return singular if count == 1 else plural
+
+    if not shared and not unlaned and not off_roster:
+        return (
+            f"one-to-one: each of the {tally(len(bridge), 'product lane')} budgets on its own "
+            f"of the {len(members)} budget tiers"
+        )
+
+    halves: list[str] = []
+    if shared:
+        groups = "; ".join(
+            f"lanes {spelled(lanes)} on tier `{tier}`"
+            for tier, lanes in sorted(shared.items())
+        )
+        halves.append(
+            f"{tally(len(shared), 'budget tier')} of the {len(members)} "
+            f"{agrees(len(shared), 'is', 'are')} shared across lanes: {groups}"
+        )
+    if unlaned:
+        halves.append(
+            f"{tally(len(unlaned), 'budget tier')} of the {len(members)} "
+            f"{agrees(len(unlaned), 'is', 'are')} named by no lane: {spelled(unlaned)}"
+        )
+    if off_roster:
+        halves.append(
+            f"the bridge points at {spelled(off_roster)}, which the budget roster does not have"
+        )
+    return "not one-to-one: " + "; ".join(halves)
+
+
 def slo_units() -> dict[str, Any]:
     """① : the three units the phrase "三档" collides, read live from their owners.
 
-    计划书 R32 names 问答/分析/报告. ``app/agents/contracts.py:69 ModelTier`` names
-    chat/plan/compress/rewrite/code/alert/analysis. ``app/common/stage_timing.py:48
-    CANONICAL_STAGES`` names classify/rewrite/retrieve/generate/reflect. Three different
-    enumerations over three different things, and no member of one may be renamed to
+    计划书 R32 names 问答/分析/报告. ``app/agents/contracts.py::ModelTier`` names
+    chat/plan/compress/rewrite/code/alert/analysis.
+    ``app/common/stage_timing.py::CANONICAL_STAGES`` names
+    classify/rewrite/retrieve/generate/reflect. Three different enumerations over three
+    different things, and no member of one may be renamed to
     flatter another -- so the bridge is read out of ``LANE_TIERS`` here instead of being
     retyped, and the document table below is pinned against this by a test.
+
+    R533: the sentence this cell used to hand-type (``bridge_note``) is spelled out of both
+    rosters below it, so it cannot disagree with them or with the contract again.
     """
     from app.agents.contracts import ModelTier
     from app.agents.nodes import LANE_ANALYSIS, LANE_QA, LANE_REPORT, LANE_TIERS
     from app.common.stage_timing import CANONICAL_STAGES
 
     lanes = (LANE_QA, LANE_ANALYSIS, LANE_REPORT)
+    budget_members = [tier.value for tier in ModelTier]
+    lane_bridge = {lane: LANE_TIERS[lane].value for lane in lanes}
     return {
         "product_lane": {
-            "owns_the_name": "app/agents/nodes.py (LANE_QA / LANE_ANALYSIS / LANE_REPORT)",
+            "owns_the_name": (
+                "app/agents/nodes.py::LANE_QA, app/agents/nodes.py::LANE_ANALYSIS, "
+                "app/agents/nodes.py::LANE_REPORT"
+            ),
             "decided_by": "R42 classify_route, rules only, zero model calls",
             "members": list(lanes),
             "this_is_the_unit_of_the_slo": True,
         },
         "model_budget_tier": {
-            "owns_the_name": "app/agents/contracts.py:69 ModelTier",
+            "owns_the_name": "app/agents/contracts.py::ModelTier",
             "decided_by": "the call site that asks for budget",
-            "members": [tier.value for tier in ModelTier],
+            "members": budget_members,
             "this_is_the_unit_of_the_slo": False,
-            "bridge_from_product_lane": {lane: LANE_TIERS[lane].value for lane in lanes},
-            "bridge_note": (
-                "not one-to-one: analysis and report share ModelTier.ANALYSIS, and six of the "
-                "seven budget tiers belong to no lane at all"
-            ),
+            "bridge_from_product_lane": lane_bridge,
+            "bridge_note": _slo_bridge_note(budget_members, lane_bridge),
         },
         "ledger_stage": {
-            "owns_the_name": "app/common/stage_timing.py CANONICAL_STAGES",
+            "owns_the_name": "app/common/stage_timing.py::CANONICAL_STAGES",
             "decided_by": "classify_stage(), from label, tool, tier then worker",
             "members": list(CANONICAL_STAGES),
             "this_is_the_unit_of_the_slo": False,
@@ -862,6 +1154,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     ),
                     source=SLO_SOURCE_LEDGER,
                     blockers=("lane_attribution_absent",),
+                    target_ms=SLO_TARGET_QA_COMPLETION_MS,
                 ),
                 SloMetric(
                     name="first_text_p95_ms",
@@ -874,8 +1167,8 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     blockers=(
                         "lane_attribution_absent",
                         "first_token_not_a_stage_sample",
-                        "wire_first_text_not_recorded",
                     ),
+                    target_ms=SLO_TARGET_QA_FIRST_TEXT_MS,
                 ),
                 SloMetric(
                     name="cache_hit_p95_ms",
@@ -883,6 +1176,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     population="one cache-hit response on the ask path",
                     source=SLO_SOURCE_NONE,
                     blockers=("cache_hits_are_not_traced",),
+                    target_ms=SLO_TARGET_QA_CACHE_HIT_MS,
                 ),
             ),
             note=(
@@ -907,6 +1201,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     ),
                     source=SLO_SOURCE_LEDGER,
                     blockers=("lane_attribution_absent",),
+                    target_ms=SLO_TARGET_ANALYSIS_COMPLETION_MS,
                 ),
                 SloMetric(
                     name="progress_interval_p95_ms",
@@ -916,6 +1211,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     ),
                     source=SLO_SOURCE_TRACE,
                     blockers=("lane_attribution_absent", "wire_step_events_are_not_recorded"),
+                    target_ms=SLO_TARGET_ANALYSIS_PROGRESS_MS,
                 ),
             ),
         ),
@@ -936,6 +1232,7 @@ def slo_tiers() -> tuple[SloTier, ...]:
                     ),
                     source=SLO_SOURCE_LEDGER,
                     blockers=("lane_attribution_absent", "export_leg_has_no_stage"),
+                    target_ms=SLO_TARGET_REPORT_COMPLETION_MS,
                 ),
             ),
             note=(
@@ -949,7 +1246,401 @@ def slo_tiers() -> tuple[SloTier, ...]:
     )
 
 
-def _slo_stat(values: list[float], floor: int) -> dict[str, Any]:
+# ==================== R526 · 每枚数字格的口径三件（实测不落数）========================
+
+#: Which faces of the repository count as evidence at all. A readout that lived in a temporary
+#: directory is not evidence: the next machine cannot re-read it, which is precisely how run9's
+#: per-tier latency table went unpinnable (its 抬头 says 仓内零写入，产物全在 Temp）。
+#: 本单不新建第三枚凭据面，只点名在册的两枚（R453 的读数件面、perf 探针台账面）。
+SLO_EVIDENCE_DIRS: tuple[str, ...] = ("docs/perf/raw/", "docs/testing/")
+
+#: The spine every slot's 达成条件 shares: one denominator rule, one sample floor named by its
+#: constant (never by a copy of its number), one rank rule, one evidence requirement. Spelled
+#: once so no slot can quietly carry a second arithmetic; each slot contributes only its own
+#: denominator, which is what the contract §5 asks for -- a number is gated by the n of the
+#: distribution that number describes, not by the request count next to it.
+SLO_CALIBER_SPINE: tuple[str, ...] = (
+    "n(%s) >= MIN_SLO_SAMPLES，且分母就是这一格自己那枚分布的样本数",
+    "caliber=local-full：数值必本机（R453 裁定（b）），云端形状窗交回这一格即拒",
+    f"分位只按 {SLO_PERCENTILE_SOURCE} 取；仓内任何第二套排名都不算这格的凭据",
+    "原始读数件必须落在 " + " 或 ".join(SLO_EVIDENCE_DIRS) + " 之内，读数本里同时记下该件的 sha256",
+    "policy target 由 B21 policy A 登记；p50_ms / p95_ms 永远由计算得出，手打的数不进 value 侧",
+    "上面缺一件 = 本格仍是「待真机样本」：未实测的秒数 = 不可承诺",
+)
+
+#: The last window whose artifacts are on disk, named so a slot's field can be checked against
+#: real bytes instead of against a promise. Reference only: no number is read out of it into any
+#: claim here or in the contract document.
+SLO_REFERENCE_WINDOW = "run9"
+
+#: The two quantiles each stage slot carries, by name. The contract says "one pair of slots per
+#: stage" and spells both keys; a third quantile would need a contract change first.
+SLO_STAGE_QUANTILES: tuple[str, ...] = ("p50_ms", "p95_ms")
+
+@dataclass(frozen=True)
+class SloSlotCaliber:
+    """The three legs one number slot has to stand on before it may carry a number.
+
+    🔴 本单交的是口径，不是数：量具是谁、原始读数落在哪一枚件的哪一格、什么条件才算填上。
+    ``may_fill_from_window`` is **derived** from those legs rather than waved as a flag, so a
+    slot cannot claim to be fillable while a leg is still missing -- which is 判据1/2 of R526
+    in one line: no instrument, no file, no condition, no number.
+
+    ``reader_landed`` / ``reader_path`` are the honest face of "the instrument exists but the
+    thing that turns its readouts into a percentile does not". 量具（采集器）在册 ≠ 读数件在册,
+    and run9 proved the difference matters: its per-tier table came from a throwaway script
+    outside the repository, so nothing could pin it.
+    """
+
+    slot: str
+    family: str
+    instrument: str
+    instrument_paths: tuple[str, ...]
+    raw_readout: str
+    raw_field: str
+    denominator: str
+    roster_cell: str
+    window_admissible: bool
+    reader_landed: bool
+    prerequisite: str
+    reader_path: str = ""
+    reference_readout: str = ""
+    reference_field: str = ""
+    blockers: tuple[str, ...] = ()
+
+    @property
+    def condition(self) -> str:
+        """The shared spine with this slot's denominator plugged in -- assembled, copied nowhere."""
+        return "；".join(
+            line % (self.denominator,) if "%s" in line else line for line in SLO_CALIBER_SPINE
+        )
+
+    @property
+    def may_fill_from_window(self) -> bool:
+        """Derived, never declared: every leg in place, and this window is where the sample is."""
+        return bool(
+            self.window_admissible
+            and self.reader_landed
+            and self.roster_cell
+            and not self.prerequisite
+            and self.raw_readout
+            and self.raw_field
+            and self.instrument
+            and self.instrument_paths
+        )
+
+#: 家族 A：三档端到端。分母是采集器逐发实测的那枚 ``wall_ms``，档位取服务端**生效档**，
+#: 不是评测夹具的声明档 -- 同一个 blocker（``lane_attribution_absent``）在台账面和采集器面
+#: 缺的是同一件事：没有一枚落盘的读数说得出这一发被判进了哪一档。
+_A_END_TO_END = (
+    "采集器 scripts/eval_transport_ask_v2.py 逐发 `wall_ms`；生效档由 "
+    "app/common/stage_timing.py::parse_r42_log_line 从后端 `[R42]` 日志行读回"
+    "（同类先例件 scripts/perf_probe_run5_ledger.py）"
+)
+_A_PATHS = (
+    "scripts/eval_transport_ask_v2.py",
+    "app/common/stage_timing.py",
+    "scripts/perf_probe_run5_ledger.py",
+)
+_A_RAW = "docs/testing/sidecar-{window}.jsonl（下一扇 = docs/testing/sidecar-run10.jsonl）"
+_A_FIELD = (
+    "`wall_ms`，join 键 `id`；🔴 档位取服务端生效档（`[R42] lane=`），不取评测夹具的 `tier` 列"
+    "——那一列是声明档，多轮改写会把两者分开"
+)
+_A_DENOM = "该生效档到达终态的请求数（失败与取消照计）"
+_A_READER = "scripts/eval_slo_lane_readout.py"
+_A_PREREQ = (
+    "还没有一枚在册读数件把 `wall_ms` × 生效档 join 之后按 SLO_PERCENTILE_SOURCE 出分位："
+    "run9 那张分档表出自 Temp 里的一次性手写件（`docs/testing/run9-readout-2026-09-28.md` 抬头"
+    "「仓内零写入，产物全在 …/Temp/evalrun」），不可钉、机器一崩就没 ⇒ 乙半先把读数件落仓并配牙，"
+    "再谈落数"
+)
+
+SLO_METRIC_CALIBER: dict[tuple[str, str], SloSlotCaliber] = {
+    ("qa", "end_to_end_p95_ms"): SloSlotCaliber(
+        slot="qa.end_to_end_p95_ms",
+        family="A-end-to-end",
+        instrument=_A_END_TO_END,
+        instrument_paths=_A_PATHS,
+        raw_readout=_A_RAW,
+        raw_field=_A_FIELD,
+        denominator=_A_DENOM,
+        roster_cell="p95_wall_ms",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path=_A_READER,
+        prerequisite=_A_PREREQ,
+        reference_readout="docs/testing/sidecar-run9.jsonl",
+        reference_field="wall_ms",
+    ),
+    ("analysis", "end_to_end_p95_ms"): SloSlotCaliber(
+        slot="analysis.end_to_end_p95_ms",
+        family="A-end-to-end",
+        instrument=_A_END_TO_END,
+        instrument_paths=_A_PATHS,
+        raw_readout=_A_RAW,
+        raw_field=_A_FIELD,
+        denominator=_A_DENOM,
+        roster_cell="p95_wall_ms",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path=_A_READER,
+        prerequisite=_A_PREREQ,
+        reference_readout="docs/testing/sidecar-run9.jsonl",
+        reference_field="wall_ms",
+    ),
+    ("report", "end_to_end_p95_ms"): SloSlotCaliber(
+        slot="report.end_to_end_p95_ms",
+        family="A-end-to-end",
+        instrument=_A_END_TO_END,
+        instrument_paths=_A_PATHS,
+        raw_readout=_A_RAW,
+        raw_field=_A_FIELD + "；队列道开着时还要说死「查回」那一段算不算进这一发",
+        denominator="该生效档到达终态的请求数（入队点算进去，失败与取消照计）",
+        roster_cell="p95_wall_ms",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path=_A_READER,
+        prerequisite=_A_PREREQ
+        + "；报告档另欠一枚：上一窗帧账里 `queue` 格逐行现读全为空 ⇒ 端到端含不含查回段"
+        "今天要由读数件自己声明，不许两义并存",
+        reference_readout="docs/testing/sidecar-run9.jsonl",
+        reference_field="wall_ms",
+    ),    ("qa", "first_text_p95_ms"): SloSlotCaliber(
+        slot="qa.first_text_p95_ms",
+        family="B-first-text",
+        instrument=(
+            "采集器帧账 scripts/eval_transport_ask_v2.py 的 `events[]` 逐事件 `elapsed_ms`"
+            "（基准 `stream_clock.request_sent_at`）；事件面读法件 scripts/eval_frame_caliber_readout.py"
+        ),
+        instrument_paths=("scripts/eval_transport_ask_v2.py", "scripts/eval_frame_caliber_readout.py"),
+        raw_readout="docs/testing/sidecar-{window}-frames.jsonl",
+        raw_field=(
+            "`events[]` 里第一枚 `event == 'text'` 的 `elapsed_ms`；🔴 不是 `first_visible_ms`"
+            "——那一格量的是第一个**可见**事件，上一窗帧账多数行的 `first_visible_event` 是 `step`"
+            " 而不是 `text`，两格不同量，拿它顶首屏就是第二套口径"
+        ),
+        denominator="该生效档里真出现 `text` 事件的流式请求数",
+        roster_cell="",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path="scripts/eval_slo_wire_readout.py",
+        prerequisite=(
+            "①R453 名册要先新增一枚首屏格：`first_visible_ms` 是别的东西，拿它顶这格＝走私；"
+            "②wire 首屏今天已落账也可读回（`app/api/v1/chat.py::_record_wire_first_text` 记账＋"
+            "`app/api/v1/observability.py::wire_first_text_readout` 读回，R649 已并树），"
+            "blocker `wire_first_text_not_recorded` 已从 §6 那本名册摘掉 ⇒ 本格不再欠「量得到」这一件；"
+            "③仍欠两件才谈落数：还没有一枚按 `text` 挑第一枚的在册读数件，且样本量没到 `MIN_SLO_SAMPLES`"
+        ),
+        reference_readout="docs/testing/sidecar-run9-frames.jsonl",
+        reference_field="events",
+    ),
+    ("qa", "cache_hit_p95_ms"): SloSlotCaliber(
+        slot="qa.cache_hit_p95_ms",
+        family="D-cache-hit",
+        instrument=(
+            "认腿件 scripts/eval_transport_ask_v2.py（`kind` 含 cache 者才算命中腿）＋ 开窗纪律件 "
+            "scripts/eval_window_answer_cache_gate.py（P-18：开窗前 `answer:*` 必须归零）"
+        ),
+        instrument_paths=("scripts/eval_transport_ask_v2.py", "scripts/eval_window_answer_cache_gate.py"),
+        raw_readout="docs/perf/raw/{window}/cache-hit-probe.jsonl（🔴 另开一扇预热探针窗，不是跑分窗）",
+        raw_field="命中腿那一发的 `wall_ms`，同一行要带着说得出「这一发是命中」的 `kind` 证词",
+        denominator="该生效档的命中腿请求数",
+        roster_cell="",
+        window_admissible=False,
+        reader_landed=False,
+        reader_path="scripts/eval_cache_hit_probe.py",
+        prerequisite=(
+            "跑分窗按 P-18 必须零命中：命中即 raise 停窗（量具自己就这么写），上一窗的 `kind` 里"
+            "一枚 cache 都不存在 ⇒ 这格永远不可能由跑分窗填。要填它得先立一扇刻意预热、同题打两遍的"
+            "探针窗并另单认领；在那之前读「待真机样本」是正确答案，不是没干活"
+        ),
+        reference_readout="docs/testing/sidecar-run9.jsonl",
+        reference_field="kind",
+    ),
+    ("analysis", "progress_interval_p95_ms"): SloSlotCaliber(
+        slot="analysis.progress_interval_p95_ms",
+        family="C-progress-interval",
+        instrument=(
+            "采集器帧账 scripts/eval_transport_ask_v2.py 的 `events[]`：同一发内相邻两枚 `step`"
+            " 事件的 `elapsed_ms` 差"
+        ),
+        instrument_paths=("scripts/eval_transport_ask_v2.py",),
+        raw_readout="docs/testing/sidecar-{window}-frames.jsonl",
+        raw_field="相邻 `event == 'step'` 的 `elapsed_ms` 差，逐发取最大那一枚进分布",
+        denominator="相邻进度事件的 gap 数（不是题数）——§5 要的就是按这格自己那枚分布的 n 开门",
+        roster_cell="",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path="scripts/eval_slo_wire_readout.py",
+        prerequisite=(
+            "①名册没有「进度间隔」这一格；②`step.progress` 落盘的是图推进"
+            "（blocker `wire_step_events_are_not_recorded`），客户端看到的间隔今天只有采集器那一侧"
+            "的时间戳，读数本必须这么署名；③还没有算 gap 的在册读数件"
+        ),
+        reference_readout="docs/testing/sidecar-run9-frames.jsonl",
+        reference_field="events",
+    ),
+}
+#: 家族 E：逐段台账格（每档 × 每段 × 每分位一枚）。段名与分位名都来自 ``slo_tiers()`` 与
+#: ``SLO_STAGE_QUANTILES``，本表只说口径，不重列任何一枚名字。
+def _stage_caliber(lane: str, blockers: tuple[str, ...]) -> SloSlotCaliber:
+    return SloSlotCaliber(
+        slot=f"{lane}.stage",
+        family="E-stage",
+        instrument=(
+            "产品读口 GET /api/v1/stage-latency（app/api/v1/observability.py::read_stage_latency，"
+            "带 trace_id 时走持久化 trace 而不是进程滚动窗）＋ 离线分档道 "
+            "app/common/stage_timing.py::stage_latency_readout(lane_by_trace=…)"
+        ),
+        instrument_paths=("app/api/v1/observability.py", "app/common/stage_timing.py"),
+        raw_readout="docs/perf/raw/{window}/stage-latency.jsonl（每行 = 一 trace · 一段）",
+        raw_field=(
+            "该段那两枚分位，随行交回 `coverage_error_pct` 与 `gap_ms`；🔴 五段之和不等于该档"
+            "端到端，差由 coverage 那一格说，不许拿段和顶端到端"
+        ),
+        denominator="该生效档该段的样本数（逐段各开各的门，一枚过了不带动别的）",
+        roster_cell="",
+        window_admissible=True,
+        reader_landed=False,
+        reader_path=_A_READER,
+        prerequisite=(
+            "①还没有一件窗内驱动把逐 trace 的 /stage-latency 读数落成 docs/perf/raw/ 件；"
+            "②名册里只有 `rewrite_leg_seconds` 覆盖 rewrite 一腿，其余四段无在册格 ⇒ 落数前先"
+            "补格或明写本格出自产品读口而非名册；"
+            "③生效档 join 未通 ⇒ 分档分段读数同样只能走 `lane_by_trace` 那条离线道，而它今天没有窗内驱动在调"
+        ),
+        reference_readout="",
+        reference_field="",
+        blockers=blockers,
+    )
+
+
+SLO_STAGE_CALIBER: dict[str, SloSlotCaliber] = {
+    "qa": _stage_caliber("qa", ("lane_attribution_absent",)),
+    "analysis": _stage_caliber("analysis", ("lane_attribution_absent",)),
+    "report": _stage_caliber("report", ("lane_attribution_absent", "export_leg_has_no_stage")),
+}
+def _slot_response_path(slot: str) -> str:
+    """Where the slot lives in the ``GET /api/v1/slo`` answer, spelled from the slot id.
+
+    The addressing template itself is the contract's (§4: ``tiers[lane].numbers.<name>`` and
+    ``tiers[lane].stage_numbers.<stage>.{p50_ms,p95_ms}``); a test rebuilds both from that prose
+    and compares, so the caliber cannot invent a fourth way to address a number slot.
+    """
+    parts = slot.split(".")
+    if len(parts) == 4 and parts[1] == "stage":
+        lane, _, stage, quantile = parts
+        return "tiers[%s].stage_numbers.%s.%s" % (lane, stage, quantile)
+    return "tiers[%s].numbers.%s" % (parts[0], ".".join(parts[1:]))
+
+
+def _caliber_record(
+    entry: SloSlotCaliber,
+    *,
+    slot: str,
+    blockers: tuple[str, ...],
+    target_ms: float | None = None,
+) -> dict[str, Any]:
+    """Render one slot's caliber. Blockers come from the contract object, never from a copy."""
+    return {
+        "slot": slot,
+        "response_path": _slot_response_path(slot),
+        "family": entry.family,
+        "instrument": entry.instrument,
+        "instrument_paths": list(entry.instrument_paths),
+        "raw_readout": entry.raw_readout,
+        "raw_field": entry.raw_field,
+        "denominator": entry.denominator,
+        "condition": entry.condition,
+        "roster_cell": entry.roster_cell,
+        "window_admissible": entry.window_admissible,
+        "reader_landed": entry.reader_landed,
+        "reader_path": entry.reader_path,
+        "prerequisite": entry.prerequisite,
+        "reference_readout": entry.reference_readout,
+        "reference_field": entry.reference_field,
+        "may_fill_from_window": entry.may_fill_from_window,
+        "target_status": SLO_TARGET_SET if target_ms is not None else SLO_TARGET_PENDING,
+        "target": target_ms,
+        "percentile_source": SLO_PERCENTILE_SOURCE,
+        "blockers": [{"code": code, "detail": SLO_BLOCKERS[code]} for code in blockers],
+    }
+
+
+def slo_slot_caliber() -> dict[str, Any]:
+    """①/⑥ : every addressable number slot with its three legs, as data rather than prose.
+
+    The slot universe is **derived** from :func:`slo_tiers`: a metric slot per declared metric,
+    and ``stages x SLO_STAGE_QUANTILES`` slots per tier. So renaming a lane, a metric or a stage
+    on the contract object moves this readout with it, and any slot that loses its caliber lands
+    in ``uncalibrated`` -- which a test reads as red, because 乙半 cannot fill what has no
+    instrument, no file and no condition. ``orphan`` is the other direction: a caliber whose slot
+    no longer exists on the contract object (a rename that only edited one side).
+
+    🔴 This function publishes no measurement. Policy targets are copied from the declared
+    metric slots; stage slots remain pending until a separate policy target is registered.
+    """
+    from app.common.stage_timing import CANONICAL_STAGES
+
+    slots: list[dict[str, Any]] = []
+    uncalibrated: list[str] = []
+    filled: set[str] = set()
+
+    for tier in slo_tiers():
+        for metric in tier.metrics:
+            slot = f"{tier.lane}.{metric.name}"
+            entry = SLO_METRIC_CALIBER.get((tier.lane, metric.name))
+            if entry is None:
+                uncalibrated.append(slot)
+                continue
+            slots.append(
+                _caliber_record(
+                    entry,
+                    slot=slot,
+                    blockers=metric.blockers,
+                    target_ms=metric.target_ms,
+                )
+            )
+            filled.add(slot)
+
+        stage_entry = SLO_STAGE_CALIBER.get(tier.lane)
+        for stage in tier.stages:
+            for quantile in SLO_STAGE_QUANTILES:
+                slot = f"{tier.lane}.stage.{stage}.{quantile}"
+                if stage_entry is None:
+                    uncalibrated.append(slot)
+                    continue
+                slots.append(_caliber_record(stage_entry, slot=slot, blockers=stage_entry.blockers))
+                filled.add(slot)
+
+    declared = {f"{lane}.{name}" for (lane, name) in SLO_METRIC_CALIBER}
+    declared |= {
+        f"{lane}.stage.{stage}.{quantile}"
+        for lane in SLO_STAGE_CALIBER
+        for stage in CANONICAL_STAGES
+        for quantile in SLO_STAGE_QUANTILES
+    }
+    return {
+        "schema": "r526.slo-caliber/1",
+        "document": "docs/api/contract-v1.md",
+        "section": "§4b",
+        "sample_floor": "MIN_SLO_SAMPLES",
+        "percentile_source": SLO_PERCENTILE_SOURCE,
+        "evidence_dirs": list(SLO_EVIDENCE_DIRS),
+        "spine": list(SLO_CALIBER_SPINE),
+        "reference_window": SLO_REFERENCE_WINDOW,
+        "quantiles": list(SLO_STAGE_QUANTILES),
+        "families": sorted({item["family"] for item in slots}),
+        "slots": slots,
+        "uncalibrated": uncalibrated,
+        "orphan": sorted(declared - filled),
+    }
+
+
+def _slo_stat(
+    values: list[float], floor: int, *, target_ms: float | None = None
+) -> dict[str, Any]:
     """One gated number. Percentiles come from ``PerformanceStats`` and nowhere else.
 
     Below ``floor`` samples the slot reports its own shortfall and no number at all. That is
@@ -972,8 +1663,8 @@ def _slo_stat(values: list[float], floor: int) -> dict[str, Any]:
         "p50_ms": report["p50_ms"] if sufficient else None,
         "p95_ms": report["p95_ms"] if sufficient else None,
         "percentile_source": SLO_PERCENTILE_SOURCE,
-        "target": None,
-        "target_status": SLO_TARGET_PENDING,
+        "target": target_ms,
+        "target_status": SLO_TARGET_SET if target_ms is not None else SLO_TARGET_PENDING,
         "reason": (
             ""
             if sufficient
@@ -995,8 +1686,10 @@ def _slo_not_measurable(metric: SloMetric, floor: int) -> dict[str, Any]:
         "p50_ms": None,
         "p95_ms": None,
         "percentile_source": SLO_PERCENTILE_SOURCE,
-        "target": None,
-        "target_status": SLO_TARGET_PENDING,
+        "target": metric.target_ms,
+        "target_status": (
+            SLO_TARGET_SET if metric.target_ms is not None else SLO_TARGET_PENDING
+        ),
         "reason": (
             f"{metric.label_zh} has no measurement piece to sample from yet: "
             + "; ".join(metric.blockers)
@@ -1014,12 +1707,60 @@ def slo_readout(*, min_samples: int = MIN_SLO_SAMPLES) -> dict[str, Any]:
     samples. Both are gated by ``min_samples``, which is deliberately not a query parameter --
     an SLO floor a caller can lower is not a floor.
     """
-    from app.common.stage_timing import default_stage_ledger
+    from app.common.stage_timing import (
+        LaneTier,
+        default_stage_ledger,
+        request_windows_from_events,
+        samples_from_events,
+    )
 
     floor = max(1, int(min_samples))
     ledger = default_stage_ledger()
-    samples = ledger.samples()
-    windows = ledger.request_windows()
+    live_samples = ledger.samples()
+    live_windows = ledger.request_windows()
+    events = list(getattr(_trace_store(), "all_events", lambda: [])() or [])
+    persisted_samples: list[Any] = []
+    persisted_windows: dict[str, float] = {}
+    if events:
+        lane_by_trace: dict[str, LaneTier] = {}
+        for event in events:
+            if str(event.get("event_type") or "") != "request.started":
+                continue
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            lane = str(payload.get("lane") or "").strip()
+            tier = str(payload.get("tier") or "").strip()
+            if lane or tier:
+                lane_by_trace[str(event.get("trace_id") or "")] = LaneTier(
+                    lane=lane,
+                    tier=tier,
+                    rule=str(payload.get("rule") or "").strip(),
+                    source=str(payload.get("lane_source") or "persisted_request"),
+                )
+        persisted_samples = samples_from_events(events, lane_by_trace=lane_by_trace)
+        persisted_windows = request_windows_from_events(events)
+    live_trace_ids = {sample.trace_id for sample in live_samples if sample.trace_id}
+    persisted_trace_ids = {sample.trace_id for sample in persisted_samples if sample.trace_id}
+    durable_overlaps_live = bool(live_trace_ids & persisted_trace_ids)
+    if persisted_samples and (not live_samples and not live_windows or durable_overlaps_live):
+        seen = {
+            (sample.trace_id, sample.stage, sample.duration_ms, sample.started_at, sample.completed_at)
+            for sample in persisted_samples
+        }
+        samples = persisted_samples + [
+            sample
+            for sample in live_samples
+            if (sample.trace_id, sample.stage, sample.duration_ms, sample.started_at, sample.completed_at)
+            not in seen
+        ]
+        windows = {**persisted_windows, **live_windows}
+        measurement_source = SLO_SOURCE_TRACE
+    else:
+        samples = live_samples
+        windows = live_windows
+        measurement_source = SLO_SOURCE_LEDGER
+    lane_attribution_missing = any(
+        sample.trace_id and not sample.lane for sample in samples
+    )
 
     tiers: list[dict[str, Any]] = []
     for tier in slo_tiers():
@@ -1031,16 +1772,23 @@ def slo_readout(*, min_samples: int = MIN_SLO_SAMPLES) -> dict[str, Any]:
             # The request-window distribution is the only one the in-process ledger can answer
             # with, so the branch is spelled against that slot rather than against the source
             # alone: a second ledger-sourced metric has to be wired deliberately, not inherit.
-            if metric.source == SLO_SOURCE_LEDGER and metric.name == "end_to_end_p95_ms":
-                number = _slo_stat(end_to_end, floor)
+            if metric.name == "end_to_end_p95_ms" and metric.source in {
+                SLO_SOURCE_LEDGER,
+                SLO_SOURCE_TRACE,
+            }:
+                number = _slo_stat(end_to_end, floor, target_ms=metric.target_ms)
                 number["blockers"] = [
-                    {"code": code, "detail": SLO_BLOCKERS[code]} for code in metric.blockers
+                    {"code": code, "detail": SLO_BLOCKERS[code]}
+                    for code in metric.blockers
+                    if code != "lane_attribution_absent" or lane_attribution_missing
                 ]
             else:
                 number = _slo_not_measurable(metric, floor)
             number["label"] = metric.label_zh
             number["population"] = metric.population
-            number["measured_from"] = metric.source
+            number["measured_from"] = (
+                measurement_source if metric.name == "end_to_end_p95_ms" else metric.source
+            )
             numbers[metric.name] = number
         tiers.append(
             {
@@ -1069,8 +1817,9 @@ def slo_readout(*, min_samples: int = MIN_SLO_SAMPLES) -> dict[str, Any]:
     return {
         "schema": "r105.slo/1",
         "sample_floor": floor,
-        "target_status": SLO_TARGET_PENDING,
+        "target_status": SLO_TARGET_PARTIAL,
         "percentile_source": SLO_PERCENTILE_SOURCE,
+        "measurement_source": measurement_source,
         "units": slo_units(),
         "tiers": tiers,
         "unattributed_pool": {
@@ -1227,8 +1976,9 @@ def _budget_knob(name: str, effective: Any, code_default: Any) -> dict[str, Any]
     确实写了，但值不合法或被代码夹回默认，生效的其实是默认值，"我明明设过"在这一档里必须
     当场可辨。
 
-    词汇与现成口径的关系（不是第二套口径）：判定用的谓词就是 ``model_budget._env_set``，
-    写过的取值 ``"env"`` 与 ``model_budget.py:769`` 里速率出处的 ``origin = "env"`` 同一个词、
+    词汇与现成口径的关系（不是第二套口径）：判定用的谓词就是
+    ``app/common/model_budget.py::_env_set``，写过的取值 ``"env"`` 与
+    ``app/common/model_budget.py::clamp_basis`` 里速率出处的 ``origin = "env"`` 同一个词、
     同一个谓词；只有"没写过"这一档这里叫 ``default`` 而不叫 ``calibrated-default``——窗口默认
     4096 是兜底数、不是标定值，沿用它那个词会把两件不同的事说成一件。两种写法在同一条响应里
     都看得见（``budget_readout`` 原样嵌在下面），不做隐藏。
@@ -1344,3 +2094,87 @@ async def read_model_budget_facts(request: Request) -> dict[str, Any]:
     report = model_budget_facts()
     report["requested_by"] = _principal_summary(principal)
     return report
+
+
+# ==================== R250: one run, read back out of the trace tables ====================
+
+#: The resource name of the run readout. It is a template, never the requested id: an
+#: authorization refusal must not describe the run it refused to show, and the id of
+#: somebody else's run is exactly the kind of detail that must not come back in an error
+#: body. The id appears only in a 404, which the caller could only have learned by asking
+#: for that id in the first place.
+RUN_READOUT_RESOURCE = "runs"
+RUN_READOUT_PATH = "/runs/{run_id}"
+MAX_RUN_ID_CHARS = 200
+
+
+@router.get(RUN_READOUT_PATH, responses=_ERROR_RESPONSES)
+async def read_run(run_id: str, request: Request) -> dict[str, Any]:
+    """Hand an administrator one run: the row, its steps, and its tool and model calls.
+
+    R248/R249 kept the run history in a file that only the writing process could see, so
+    "what did this request actually do" was unanswerable from the management plane. This
+    route reads the six PostgreSQL trace tables (``app/trace/run_reader.py``) through
+    ``TraceStore.read_run``, which stitches the three sections together: ``agent_runs`` ->
+    ``agent_steps`` -> ``tool_calls`` / ``model_calls``, with ``retrieval_traces`` and the
+    ``trace_events`` that produced them alongside.
+
+    Three contract points, all of them pinned:
+
+    * the gate is ``_require_admin``, the same primitive every other management route
+      uses -- an auditor, a manager and a staff account are refused here before a single
+      row is read, and the refusal body carries error codes only;
+    * the body states its own durability: ``source`` is ``postgres`` when the six tables
+      answered and ``trace_local_fallback`` when the local journal had to be replayed, so a
+      degraded answer is never presented as a durable one;
+    * the terminal verdict comes with the two facts that support it -- the status word and
+      whether the store actually saw the terminal event -- because "completed" without a
+      completion timestamp is a claim, not a record.
+    """
+    principal = _require_admin(request, ACTION_AUDIT, RUN_READOUT_RESOURCE)
+    normalized = str(run_id or "").strip()
+    if not normalized:
+        _fail(400, "validation_error", "run_id is required.", details={"field": "run_id"})
+    if len(normalized) > MAX_RUN_ID_CHARS:
+        _fail(
+            400,
+            "validation_error",
+            f"run_id exceeds {MAX_RUN_ID_CHARS} characters.",
+            details={"field": "run_id", "max_chars": MAX_RUN_ID_CHARS},
+        )
+    try:
+        readout = _trace_store().read_run(normalized)
+    except TraceStoreError as exc:
+        _fail(
+            400,
+            exc.code if exc.code in _SCOPE_ERROR_STATUS else "validation_error",
+            str(exc),
+            details={"stage": "trace_store"},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _fail(
+            500,
+            "internal_error",
+            f"run readout failed: {type(exc).__name__}",
+            details={"stage": "trace_store"},
+        )
+    if not readout.get("found"):
+        _fail(
+            404,
+            "resource_not_found",
+            f"No run is recorded under run_id {normalized!r}.",
+            details={"run_id": normalized, "source": str(readout.get("source") or "")},
+        )
+    #: An error body stays an error body: it names the run it could not find and nothing
+    #: else, so a probe cannot use a 404 to learn how another tenant's runs are shaped.
+    audit_log.record_audit(
+        principal, ACTION_AUDIT, "allowed", RUN_READOUT_RESOURCE, "permission_granted"
+    )
+    bounded, bounds = _bounded_trace_value(readout)
+    bounded["run_id"] = normalized
+    bounded["requested_by"] = _principal_summary(principal)
+    bounded["bounds"] = bounds
+    bounded["generated_at"] = _now()
+    return bounded

@@ -312,15 +312,26 @@ def test_dispatch_exit_has_its_own_ruler(monkeypatch):
     monkeypatch.setattr(loader, "load_doc", lambda path: DIRTY_CHUNK)
     monkeypatch.setattr(loader, "load_txt", lambda path: DIRTY_CHUNK)
     monkeypatch.setattr(loader, "load_md", lambda path: DIRTY_CHUNK)
+    monkeypatch.setattr(
+        loader, "load_spreadsheet", lambda path, display_name=None: DIRTY_CHUNK
+    )
 
-    for extension in (".pdf", ".docx", ".doc", ".txt", ".md"):
+    for extension in (".pdf", ".docx", ".doc", ".txt", ".md", ".xlsx", ".csv"):
         assert loader.load_document("demo" + extension) == "第一段第二段"
 
 
 def test_every_loader_exit_calls_the_same_ruler():
     missing = [
         name
-        for name in ("load_pdf", "load_docx", "load_doc", "load_txt", "load_md", "load_document")
+        for name in (
+            "load_pdf",
+            "load_docx",
+            "load_doc",
+            "load_txt",
+            "load_md",
+            "load_spreadsheet",
+            "load_document",
+        )
         if "sanitize_text(" not in inspect.getsource(getattr(loader, name))
     ]
 

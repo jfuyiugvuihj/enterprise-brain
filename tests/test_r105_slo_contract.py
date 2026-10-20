@@ -6,8 +6,8 @@ the fact under test is itself a source-text fact: that the repository holds one 
 and that the document renders the table that lives in code rather than a copy of it.
 
 🔴 There is no measured number in this file. Every distribution below is a synthetic vector
-whose only job is to move the sample gate, and every target slot in the contract must answer
-``awaiting_real_samples`` -- the filling belongs to 乙半, from the D14甲 window.
+whose only job is to move the sample gate. B21 policy A registers product targets, while each
+percentile below still has to clear the real-sample floor before it can publish a measurement.
 """
 
 import inspect
@@ -233,16 +233,26 @@ def test_the_contract_table_and_the_document_cannot_drift() -> None:
         assert set(_ticks(row[3])) == set(tier.stages), row
 
 
-def test_the_document_registers_every_slot_with_a_target_instead_of_a_number() -> None:
+def test_the_document_registers_every_slot_with_its_policy_target() -> None:
     section = _contract_section()
     slot_rows = _table_rows(section, lanes=[tier.lane for tier in observability.slo_tiers()], cells=5)
-    expected = {tier.lane: {metric.name for metric in tier.metrics} for tier in observability.slo_tiers()}
+    expected_slots = {tier.lane: {metric.name for metric in tier.metrics} for tier in observability.slo_tiers()}
 
     documented: dict[str, set[str]] = {}
+    targets = {
+        (tier.lane, metric.name): metric.target_ms
+        for tier in observability.slo_tiers()
+        for metric in tier.metrics
+    }
     for row in slot_rows:
-        documented.setdefault(row[0].strip("`"), set()).add(_ticks(row[1])[0])
-        assert row[-1] == PENDING_TEXT, row
-    assert documented == expected, (documented, expected)
+        lane = row[0].strip("`")
+        name = _ticks(row[1])[0]
+        documented.setdefault(lane, set()).add(name)
+        target = targets[(lane, name)]
+        suffix = " (P95, subsecond ceiling)" if name == "cache_hit_p95_ms" else " (P95)"
+        expected = PENDING_TEXT if target is None else f"{target:,.0f} ms{suffix}"
+        assert row[-1] == expected, row
+    assert documented == expected_slots, (documented, expected_slots)
 
 
 # ==================== ③ one percentile algorithm, and its one registered duplicate =========
@@ -322,6 +332,31 @@ def test_the_readout_points_at_the_one_rank_rule() -> None:
     assert set(_values_named(report, "percentile_source")) == {observability.SLO_PERCENTILE_SOURCE}
 
 
+def test_b21_policy_a_registers_targets_without_turning_them_into_measurements() -> None:
+    targets = {
+        (tier.lane, metric.name): metric.target_ms
+        for tier in observability.slo_tiers()
+        for metric in tier.metrics
+    }
+    assert targets == {
+        (LANE_QA, "end_to_end_p95_ms"): 10_000,
+        (LANE_QA, "first_text_p95_ms"): 1_000,
+        (LANE_QA, "cache_hit_p95_ms"): 999,
+        (LANE_ANALYSIS, "end_to_end_p95_ms"): 45_000,
+        (LANE_ANALYSIS, "progress_interval_p95_ms"): 15_000,
+        (LANE_REPORT, "end_to_end_p95_ms"): 120_000,
+    }
+
+    report = observability.slo_readout()
+    assert report["target_status"] == observability.SLO_TARGET_PARTIAL
+    for tier in report["tiers"]:
+        for metric in observability.slo_tiers()[[item.lane for item in observability.slo_tiers()].index(tier["lane"])].metrics:
+            slot = tier["numbers"][metric.name]
+            assert slot["target"] == metric.target_ms
+            assert slot["target_status"] == observability.SLO_TARGET_SET
+            assert slot["p95_ms"] is None
+
+
 # ==================== ④ the floor: below it the readout must confess, not answer ===========
 
 
@@ -339,11 +374,14 @@ def test_readout_below_the_floor_says_so_and_returns_no_number(client) -> None:
     assert gate["status"] == observability.SLO_INSUFFICIENT
     assert "insufficient samples" in gate["reason"]
     assert gate["p95_ms"] is None and gate["p50_ms"] is None
-    # Nothing anywhere in the answer may look like an SLO while the floor is unmet.
+    # Percentiles stay withheld below the floor, while policy targets remain visible for
+    # comparison once real samples arrive.
     assert set(_values_named(body, "p95_ms")) == {None}
     assert set(_values_named(body, "p50_ms")) == {None}
-    assert set(_values_named(body, "target_status")) == {observability.SLO_TARGET_PENDING}
-    assert set(_values_named(body, "target")) == {None}
+    assert body["target_status"] == observability.SLO_TARGET_PARTIAL
+    assert gate["target_status"] == observability.SLO_TARGET_SET
+    assert gate["target"] == 10_000
+    assert None in _values_named(body, "target")
 
 
 def test_the_floor_is_a_knife_edge_and_gates_each_number_on_its_own_n(client) -> None:
@@ -401,13 +439,75 @@ def test_unlabelled_live_samples_are_not_split_across_tiers(client) -> None:
     assert "lane_attribution_absent" in json.dumps(body["tiers"], ensure_ascii=False)
 
 
+def test_slo_readout_replays_persisted_events_after_process_restart(tmp_path, monkeypatch) -> None:
+    """The SLO screen keeps real samples after the process that recorded them is gone."""
+    from app.storage.persistence import JsonPersistenceAdapter
+    from app.trace.store import TraceStore
+
+    persistence_path = tmp_path / "trace-store.json"
+    writer = TraceStore(
+        tmp_path / "writer-events.jsonl",
+        persistence=JsonPersistenceAdapter(persistence_path),
+    )
+    for index in range(100):
+        trace_id = f"durable-slo-{index}"
+        common = {
+            "trace_id": trace_id,
+            "request_id": f"request-{index}",
+            "task_id": f"task-{index}",
+        }
+        writer.record_event(
+            **common,
+            event_type="request.started",
+            status="running",
+            payload={"owner_id": "u-admin", "lane": LANE_QA, "tier": "chat", "rule": "test"},
+        )
+        writer.record_event(
+            **common,
+            event_type="stage.finished",
+            status="completed",
+            payload={
+                "owner_id": "u-admin",
+                "record_id": f"stage-{index}",
+                "stage": "generate",
+                "duration_ms": float(index + 1),
+                "started_at": "2026-10-08T00:00:00+00:00",
+                "completed_at": "2026-10-08T00:00:00.001000+00:00",
+            },
+        )
+        writer.record_event(
+            **common,
+            event_type="request.completed",
+            status="completed",
+            payload={"owner_id": "u-admin"},
+        )
+
+    reader = TraceStore(
+        tmp_path / "reader-events.jsonl",
+        persistence=JsonPersistenceAdapter(persistence_path),
+    )
+    reset_stage_ledger()
+    monkeypatch.setattr(observability, "_trace_store", lambda: reader)
+
+    body = observability.slo_readout()
+    tier = _tier(body, LANE_QA)
+    gate = tier["numbers"]["end_to_end_p95_ms"]
+
+    assert tier["observed_requests"] == 100
+    assert gate["status"] == observability.SLO_MEASURED
+    assert tier["stage_numbers"]["generate"]["n"] == 100
+    assert "lane_attribution_absent" not in json.dumps(gate, ensure_ascii=False)
+
+
 def test_slots_without_a_measurement_piece_still_answer_no_number(client) -> None:
     tier = _tier(client.get(SLO_PATH, headers=_headers()).json(), LANE_QA)
 
     for name in ("first_text_p95_ms", "cache_hit_p95_ms"):
         block = tier["numbers"][name]
         assert block["status"] == observability.SLO_NOT_MEASURABLE, name
-        assert block["p95_ms"] is None and block["target"] is None, name
+        expected_target = 1_000 if name == "first_text_p95_ms" else 999
+        assert block["p95_ms"] is None and block["target"] == expected_target, name
+        assert block["target_status"] == observability.SLO_TARGET_SET, name
         codes = [item["code"] for item in block["blockers"]]
         assert codes and set(codes) <= set(observability.SLO_BLOCKERS), name
     assert "cache_hits_are_not_traced" in json.dumps(tier["numbers"]["cache_hit_p95_ms"])

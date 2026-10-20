@@ -65,11 +65,11 @@ describe('V7-2 · 编造的常量只住在 src/devFixtures/，面板源码里一
   const FAKE_TITLES = ['市场部差旅费异常', '财务部报销波动', '行政部住宿费上升']
 
   // W7 起洞察页改接真告警链，devFixtures 那三行假数据整块摘掉，引用面从三块缩到两块。
-  // 给总控的提醒：W6 若把 DashboardPanel 也接上真端点，下面这份名单要跟着缩成
-  // ['ApprovalPanel.vue']。审批页的假参数是 F4 裁定保留的「自查计算器」输入，不在这条摘牌范围内。
-  it('七块面板里只剩等 R13 的审批页与还没接线的总览引用 devFixtures，图谱、聊天与洞察明确不引用', () => {
+  // R267 把这里欠的那句提醒兑掉了：总览的三枚常量随接线一起删，趋势卡画空态、
+  // 异常卡读告警账本，所以名单缩成审批页一枚（F4 裁定保留的「自查计算器」输入）。
+  it('七块面板里只剩等 R13 的审批页引用 devFixtures：总览、图谱、聊天与洞察明确不引用', () => {
     const users = PANELS.filter(f => source(f).includes('devFixtures')).sort()
-    expect(users).toEqual(['ApprovalPanel.vue', 'DashboardPanel.vue'])
+    expect(users).toEqual(['ApprovalPanel.vue'])
   })
 
   it('W7 反向钉：洞察页源码不再引用 devFixtures，SSR 首屏也不再挂演示徽标', async () => {
@@ -84,9 +84,15 @@ describe('V7-2 · 编造的常量只住在 src/devFixtures/，面板源码里一
   })
 
   it('每个演示文件都自带"上线前必须清空"的告示，防止被当成真数据留下', () => {
-    for (const f of ['approval-demo.js', 'dashboard-demo.js', 'insights-demo.js']) {
+    for (const f of ['approval-demo.js', 'insights-demo.js']) {
       expect(readFileSync(new URL(`../../devFixtures/${f}`, import.meta.url), 'utf8')).toContain('上线前必须清空')
     }
+  })
+
+  // R267：总览那份常量不是「清空」而是整枚摘掉——留一份空文件在 devFixtures 里，
+  // 下一个接线的人只会照着它再编一次数据。
+  it('dashboard-demo.js 随总览接线一起从树里消失，不许留成空壳', () => {
+    expect(existsSync(new URL('../../devFixtures/dashboard-demo.js', import.meta.url))).toBe(false)
   })
 })
 
@@ -98,19 +104,24 @@ describe('V7-3 · 演示面板必须挂牌，且不许借用告警语言', () =>
     expect(html).toContain('演示数据')
   })
 
-  it('总览面板的徽标在位（它首屏是 loading，所以这条只能钉源码），三处子卡各挂一个', () => {
+  // R267：三枚子卡的假数据各自归真或退场，徽标不该再一处挂一个；但屏幕正文里那句
+  // 「演示数据」+ 一句人话是诚实牌，摘牌就等于把剩下的那一格没接线藏起来。
+  // data-demo="fixtures" 这枚机器标记随常量一起摘：这一屏已经没有 fixture 输入了。
+  it('总览的诚实牌仍在（徽标一处 + 一句人话），但不再自称 fixtures', () => {
     const s = source('DashboardPanel.vue')
-    expect(s).toContain('data-demo="fixtures"')
-    expect(s.match(/class="demo-flag"/g)).toHaveLength(3)
+    expect(s).not.toContain('data-demo=')
+    expect(s).toContain('data-testid="dashboard-demo-flag"')
+    expect(s.match(/class="demo-flag"/g)).toHaveLength(1)
+    expect(s).toContain('演示数据')
   })
 
-  it('critical 只剩一处计数过滤，不参与 class 也不参与配色；warning 在面板里归零', () => {
+  // 钉的是「改回假数据就必须红」：告警账本没有 severity 这一列，谁要再把演示常量
+  // 那套 critical/warning 权威语义搬回总览，前两针立刻撞。
+  it('总览不再收 severity/critical，也不许把告警语义贴到配色上；洞察与审批页维持归零', () => {
     const s = source('DashboardPanel.vue')
-    expect(s.match(/critical/g)).toHaveLength(1)
-    expect(s).toContain("item.severity === 'critical'")
-    expect(s).not.toMatch(/class="[^"]*critical/)
-    expect(s).not.toMatch(/:class=[^\n]*critical/)
-    expect(s).not.toMatch(/severity[\s\S]{0,40}(#|rgba?\()/)
+    expect(s).not.toMatch(/critical/)
+    expect(s).not.toMatch(/severity/)
+    expect(s).not.toMatch(/warning[\s\S]{0,40}(#|rgba?\()/)
     for (const f of ['InsightPanel.vue', 'ApprovalPanel.vue']) expect(source(f)).not.toMatch(/critical|warning/)
   })
 

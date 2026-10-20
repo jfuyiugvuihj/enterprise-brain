@@ -2,6 +2,28 @@ from app.common.identity import Principal
 from app.rag.filters import RetrievalScopeError, build_document_retrieval_filter
 
 
+def test_exclusive_document_request_excludes_other_sources_without_widening_permissions():
+    from app.rag.filters import resolve_document_retrieval_scope
+    from app.rag.retrieval_pipeline import document_query_predicate
+
+    principal = Principal(user_id="finance", username="finance", department="finance", clearance=2)
+    scope = resolve_document_retrieval_scope(principal)
+    allowed = {"source": "现行制度.pdf", "department": "finance", "classification": 1}
+    predicate = document_query_predicate("只依据文件【现行制度.pdf】回答：600元谁审批？", scope)
+    assert predicate(allowed)
+    assert not predicate({**allowed, "source": "费用.csv"})
+    assert not predicate({**allowed, "department": "sales"})
+    assert not predicate({**allowed, "classification": 3})
+    assert not document_query_predicate("只查【不存在.pdf】", scope)(allowed)
+    assert document_query_predicate("仅依据【现行制度.pdf】【旧制度.pdf】比较版本", scope)(allowed)
+    assert document_query_predicate("查询公司的报销制度", scope)({**allowed, "source": "费用.csv"})
+
+
+def test_selected_document_scope_does_not_expand_when_question_mentions_another_file():
+    from app.rag.retrieval_pipeline import requested_document_names
+    assert requested_document_names('仅依据以下文件《A.pdf》《B.txt》回答：\n与《C.pdf》相比有哪些已知限制？') == frozenset({'A.pdf', 'B.txt'})
+
+
 def test_document_retrieval_filter_limits_classification_and_department_before_query():
     principal = Principal(
         user_id="u-1",

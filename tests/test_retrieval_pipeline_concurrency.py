@@ -2,6 +2,18 @@ from concurrent.futures import ThreadPoolExecutor
 import sys
 
 
+def test_unavailable_pg_is_not_an_empty_knowledge_base():
+    import pytest
+    from app.rag.retrieval_pipeline import RetrievalPipeline
+    from app.rag.retriever import OllamaEmbeddings
+
+    # conftest 指向不可连接的 PostgreSQL；实际连接失败，不能冒充零召回。
+    pipeline = RetrievalPipeline()
+    pipeline.semantic.retriever.embedding = OllamaEmbeddings(base_url="http://127.0.0.1:1")
+    with pytest.raises(RuntimeError, match="retrieval_unavailable"):
+        pipeline.search("报销材料", tier="fast")
+
+
 def test_bm25_search_serializes_first_index_build(monkeypatch):
     from app.rag.retrieval_pipeline import BM25Searcher
 

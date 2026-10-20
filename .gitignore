@@ -1,5 +1,10 @@
 .venv/
 __pycache__/
+.pytest_cache/
+.vite/
+.idea/
+.firecrawl/
+output/
 *.pyc
 data/*.db
 data/*.db-*
@@ -37,3 +42,4 @@ documents/*
 static/*
 tmp_*.log
 /enterprise_brain
+.tmpfix/

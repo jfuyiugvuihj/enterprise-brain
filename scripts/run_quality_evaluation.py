@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.quality.runner import run_recorded_evaluation
+from app.quality.eval import format_correctness_rulers  # R438 判据⑩：第二把尺由判分器自己报，本件不抄键名也不抄数字
 
 
 def main():
@@ -21,7 +22,7 @@ def main():
         f"evaluated={report['total']} "
         f"correctness={report['answer_correctness']:.4f} "
         f"evidence={report['evidence_coverage']:.4f} "
-        f"p95_ms={report['latency_ms']['p95']}"
+        f"p95_ms={report['latency_ms']['p95']} {format_correctness_rulers(report)}"
     )
 
 

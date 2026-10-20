@@ -169,11 +169,17 @@ def test_a_report_lane_turn_runs_on_the_graph_that_can_park(monkeypatch, tmp_pat
     assert ctx.worker.process_one() is True
 
     assert sink.exists() is False, "挂起没保住就等于自动批准"
-    assert ctx.queue.status(_request_id(ctx)) == "done"
+    # R254 判据①：挂着的一轮从此不许报 done。
+    assert ctx.queue.status(_request_id(ctx)) == "awaiting_approval"
 
 
 def test_a_parked_report_turn_never_executes_the_export_node(monkeypatch, tmp_path):
-    """判据⑤：查回来的结果要说“等你确认”，而且不许假装导出已完成。"""
+    """判据⑤加 R254 判据①：挂起的一轮不执行导出，也不再把挂起文案当正文交回。
+
+    改前这一枚钉的是 `result == PARK_EXPORT`——那正是 09-25 那扇窗量红的形状：11 枚把同一句
+    37 字文案当 `result` 交回、队列侧报 `final=done`。今天答案是「这一轮没有正文」，那句话说
+    它该说的地方（`approval.notice` 与会话历史），一行都不许多。
+    """
     sink = tmp_path / "export-should-not-exist-b"
     ctx = _install_worker(
         monkeypatch, tmp_path, name="r37-park-text", graph=_parked_graph(_SinkWorker(sink))
@@ -181,8 +187,12 @@ def test_a_parked_report_turn_never_executes_the_export_node(monkeypatch, tmp_pa
 
     assert ctx.worker.process_one() is True
 
-    assert ctx.queue.result(_request_id(ctx)) == PARK_EXPORT
+    assert ctx.queue.result(_request_id(ctx)) is None
     assert sink.exists() is False
+    terminal = ctx.queue.terminal(_request_id(ctx))
+    assert terminal["state"] == "ok"
+    assert terminal["payload"]["terminal_state"] == "awaiting_approval"
+    assert terminal["payload"]["answer_present"] is False
 
 
 def test_a_parked_report_turn_opens_one_awaiting_row_for_the_right_owner(monkeypatch, tmp_path):
@@ -406,8 +416,20 @@ def test_the_background_turn_answers_the_owner_end_to_end(monkeypatch, tmp_path)
     from app.main import app
     from tests.test_r37_report_lane_enqueue import _ask, _data_objects, _install as _install_api, _switch, USERNAME as ENQUEUE_USERNAME
 
+    from app.common import auth as real_auth
+
     queue = ReliableQueue(FakeRedis(), name="r37-e2e", lease_seconds=30)
     api = _install_api(monkeypatch, tmp_path, queue=queue)
+    # 入队件那份 auth 桩比 R295（并树 d194d99）更早：那一单起，队列读侧的归属判定
+    # （``chat.queue_task_owner_user_id``）要先问一句"用户库此刻是哪一档"。桩答不出这一问，
+    # 端到端就在读侧炸成 AttributeError。这里补的是**本进程的真读数**——直接委托给
+    # ``app.common.auth``，替场景挑一档是把量具掰弯，答"没有这一问"是假话。
+    monkeypatch.setattr(
+        api.chat.auth,
+        "user_storage_state",
+        staticmethod(real_auth.user_storage_state),
+        raising=False,
+    )
     _switch(monkeypatch, "1")
     monkeypatch.setattr(chat, "_session_database_available", lambda: True)
 

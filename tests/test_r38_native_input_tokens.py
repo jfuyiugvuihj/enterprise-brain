@@ -36,6 +36,7 @@ from app.common.model_handler import (
 )
 from app.trace import spans
 from app.trace.spans import model_token_counts
+from tests._r250_fake_postgres import FakePostgres
 
 #: 一个不存在的机器名：万一有缝没堵住，它也只能 DNS 失败，绝不会碰到宿主模型的端口。
 SAFE_BASE_URL = "http://model.internal:11434/v1"
@@ -266,36 +267,35 @@ def test_compat_reply_without_a_usage_object_still_reports_nothing():
 def test_both_counts_reach_the_postgres_insert_parameters(tmp_path, monkeypatch):
     """判据 ③ 的落库半边：``model_calls`` 那条 INSERT 的参数里就得有这两枚数。
 
-    用仓里已有的那套假连接（``tests/test_persistence_adapter.py`` 的形状）捕获 ``execute`` 的
-    参数，按 INSERT 的列名回读——一次数据库连接都不建立。
+    本枚此前长红，红在桩不在生产：它就地手搓的假连接只答了这条写链两问里的一问，
+    于是 ``INSERT INTO model_calls`` 一枚都没观察到，判据拿到 ``[]``。R418 逐把实测：
+
+    - 少答 ``rowcount``（``app/storage/persistence.py:603`` 朝驱动读它）⇒ 空表上一枚自由的
+      key 也被判成「已被占用」⇒ ``_apply_event_row`` 抛 ``EventIdTakenError`` ⇒ 该事件的
+      其余投影（含 ``model_calls``）一枚都不写，两枚事件一起掉进兜底账；
+    - 另一问是 ``MAX(sequence)``（``app/trace/run_reader.py:149``）：它不跟着表状态答，两枚
+      事件就让到同一个 ``event_id``，第二枚悄悄换掉第一枚的身——那正是 R272 关掉的洞。
+
+    所以落库换成仓里那枚严格假库 ``tests/_r250_fake_postgres.py``：两问都答，且都从同一份内存
+    表状态回答（``ON CONFLICT (event_id) DO NOTHING`` 撞键报 0 行、不撞报 1 行，
+    ``MAX(sequence)`` 跟着已落的行走），认不出的语句当场喊而不是回空。换来的是 ``:328``
+    一字未动而两行都落库——``trace-38:1`` 与 ``trace-38:2`` 各一枚，零条兜底账。
+    全程离线：假库是内存字典，一次数据库连接都不建立，也不碰 ``app/**``。
+
+    🔴 别再手搓假连接：常驻派生钉
+    ``tests/test_r418_double_answers_every_question_the_adapter_asks.py`` 盯「假库所答的问
+    ⊇ 写链真问的问」，要问的集合从 ``app/storage/persistence.py`` 现场派生、不抄清单。
+    引入点 ``951909b``（R272）；非 R294 回归（``70fef378^`` 与 ``70fef378`` 同红）。
     """
     from app.agents.nodes import _ResilientModel
     from app.storage.persistence import PostgresPersistenceAdapter
     from app.trace.store import TraceStore
 
-    observed = []
-
-    class _Result:
-        def fetchone(self):
-            return None
-
-        def fetchall(self):
-            return []
-
-    class _Connection:
-        def execute(self, sql, params=None):
-            observed.append((sql, params))
-            return _Result()
-
-        def commit(self):
-            return None
-
-        def close(self):
-            return None
-
+    #: 严格假库：两问都答，且都从同一份表状态回答。
+    database = FakePostgres()
     store = TraceStore(
         tmp_path / "spans.jsonl",
-        persistence=PostgresPersistenceAdapter(lambda: _Connection()),
+        persistence=PostgresPersistenceAdapter(database.connection_factory),
     )
     monkeypatch.setattr(spans, "default_trace_store", lambda: store)
     config = {
@@ -321,7 +321,7 @@ def test_both_counts_reach_the_postgres_insert_parameters(tmp_path, monkeypatch)
 
     inserts = [
         (statement, bound)
-        for statement, bound in observed
+        for statement, bound in database.statements
         if statement.startswith("INSERT INTO model_calls")
     ]
     # 一次调用两张行：``start_model_call`` 先开一行，``span.finish`` 再合一次，带数的是后者。

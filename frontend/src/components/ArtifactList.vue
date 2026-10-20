@@ -16,6 +16,9 @@
  *      axios 实例挂 Authorization）。content_url / download_url 一律不进 <img :src>、
  *      <a :href> 或 window.open —— 那些请求不带 Authorization，会把 401/403 伪装成
  *      「图坏了」（ChartViewer.vue:8-10 同一条判据）。界面上出现过的地址只有 blob: 地址。
+ *   ④ 来源那一格（R509）两张脸不并成一格：后端登记过就报出那一轮/那一笔请求，没登记就明说
+ *      「没有登记它是哪一次产生的」。这一格只读列表行的 session_id / request_id 两枚可空列
+ *      （migrations/0017），不借创建时间、owner 或访问者身份猜一个来源。
  *   ③ 删除是两步内联确认，不用 window.confirm：第一次点击把按钮变成「确认删除？」，第二次
  *      点击才发 DELETE。状态机是 advanceDelete() 这个纯函数，点另一行只会把待确认挪到那一行
  *      （返回 arm 而不是 execute），所以一次错位点击不可能删掉没点过的行。DataPanel 的数据
@@ -66,10 +69,34 @@ export function artifactExpiryText(value) {
   return stamp ? '有效期至 ' + stamp.slice(0, 10) : ''
 }
 
+/**
+ * 「这一条是哪一次产生的」那一格的两张脸（R509）。
+ *
+ * 两枚键在后端是**可空列**（migrations/0017），没登记就整格缺席，所以这里只有两种可能：
+ *   登记过 -> 说得出是哪一次问答 / 哪一笔请求，报的是行里那两枚原值；
+ *   没登记 -> 明说「没有登记」，不画「—」、不画 0、不画空串，也不借创建时间或 owner 猜一轮。
+ * 两张脸必须由 face 分开，模板按 face 分支渲染，谁都不许顶替谁。
+ */
+export const LINEAGE_UNRECORDED_TEXT = '这一条没有登记它是哪一次产生的'
+
+export function lineageView(source) {
+  const row = source && typeof source === 'object' ? source : {}
+  const session = typeof row.sessionId === 'string' ? row.sessionId.trim() : ''
+  const request = typeof row.requestId === 'string' ? row.requestId.trim() : ''
+  if (!session && !request) {
+    return { face: 'unrecorded', text: LINEAGE_UNRECORDED_TEXT, title: LINEAGE_UNRECORDED_TEXT }
+  }
+  const parts = []
+  if (session) parts.push('问答 ' + session)
+  if (request) parts.push('请求 ' + request)
+  const text = '来自 ' + parts.join(' · ')
+  return { face: 'lineage', text, title: text }
+}
+
 /** 后端行 -> 视图模型。snake_case 字段名只在这一个函数里出现，模板里全是视图字段。 */
 export function mapArtifactRow(row) {
   const source = row && typeof row === 'object' ? row : {}
-  return {
+  const view = {
     artifactId: String(source.artifact_id || ''),
     filename: String(source.filename || '未命名产物'),
     typeRaw: String(source.artifact_type || ''),
@@ -78,6 +105,15 @@ export function mapArtifactRow(row) {
     downloadUrl: String(source.download_url || ''),
     createdAt: formatArtifactTime(source.created_at),
     expiryText: artifactExpiryText(source.expires_at),
+    sessionId: String(source.session_id || '').split(':')[0],
+    requestId: String(source.request_id || ''),
+    sourceVersionLabel: String(source.source_version_label || ''),
+    sourceArtifactIds: Array.isArray(source.source_artifact_ids) ? source.source_artifact_ids : [],
+    sourceAlertId: source.source_alert_id || null,
+  }
+  return {
+    ...view,
+    lineage: lineageView(view),
   }
 }
 
@@ -177,11 +213,13 @@ export function openButtonLabel(state) {
 </script>
 
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { errorDetail, http, isPermissionDenied } from '../lib/http'
 import { fetchArtifactBlob } from '../lib/artifacts'
 import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from './ui'
 
+const router = useRouter()
 const rows = ref([])
 const total = ref(0)
 const offset = ref(0)
@@ -190,6 +228,9 @@ const loading = ref(false)
 const loadingMore = ref(false)
 const loadError = ref('')
 const loadDenied = ref(false)
+// R291：详情区（UiErrorState 的 raw-error）要的是错误对象本身，不是任何加工后的句子。
+// 这一格存列表那一发 catch 到的原物；它来自 http.js 的 GET /artifacts，不经 lib/artifacts.js。
+const loadErrorSource = ref(null)
 const moreError = ref('')
 
 const pendingDelete = ref('')
@@ -198,6 +239,9 @@ const openingId = ref('')
 const previewId = ref('')
 const previewUrl = ref('')
 const actionError = ref(null)
+// R291：同上，与 actionError 同生同灭。发不发 GET 失败、还是压根没有错误对象（无地址那一发），
+// 这一格就留 null —— 没有原文就不长详情区，前端不替后端编一句话。
+const actionErrorSource = ref(null)
 
 let activeHandle = null
 let openToken = 0
@@ -233,7 +277,7 @@ function dropList() {
 async function loadArtifacts(options) {
   const append = Boolean(options && options.append)
   if (append ? loadingMore.value || loading.value : loading.value) return
-  if (append) { loadingMore.value = true; moreError.value = '' } else { loading.value = true; loadError.value = ''; loadDenied.value = false }
+  if (append) { loadingMore.value = true; moreError.value = '' } else { loading.value = true; loadError.value = ''; loadDenied.value = false; loadErrorSource.value = null }
   const requestOffset = append ? offset.value : 0
   try {
     // _ts 沿用 DataPanel 读列表的防缓存写法；后端多余查询参数不校验，不影响 limit/offset 判定。
@@ -256,6 +300,7 @@ async function loadArtifacts(options) {
       dropList()
       loadDenied.value = denied
       loadError.value = detail
+      loadErrorSource.value = err
     }
   } finally {
     if (append) loadingMore.value = false
@@ -267,12 +312,18 @@ function reload() {
   releasePreview()
   loadError.value = ''
   loadDenied.value = false
+  loadErrorSource.value = null
   moreError.value = ''
   actionError.value = null
+  actionErrorSource.value = null
   loadArtifacts()
 }
 
-function noteAction(view, kind, artifactId) {
+// 挂载即取第一发：这枚组件自己取数，谁都不许替它按刷新（DataPanel 读文件列表同一写法）。
+onMounted(reload)
+
+function noteAction(view, kind, artifactId, source) {
+  actionErrorSource.value = source || null
   actionError.value = {
     title: view.title,
     description: view.description,
@@ -302,6 +353,7 @@ async function openArtifact(item) {
   const token = ++openToken
   openingId.value = item.artifactId
   actionError.value = null
+  actionErrorSource.value = null
   try {
     const handle = await fetchArtifactBlob(target)
     if (token !== openToken) { handle.revoke(); return }
@@ -321,6 +373,8 @@ async function openArtifact(item) {
       openErrorView({ denied: isPermissionDenied(err), detail: err.message || '', retryable: err.retryable }),
       'open',
       item.artifactId,
+      // 这一枚 err 就是 lib/artifacts.js 重建并 attachRawText 过的那一发的真身（R291 的病因现场）
+      err,
     )
   } finally {
     if (token === openToken) openingId.value = ''
@@ -337,6 +391,7 @@ async function removeArtifact(item) {
   if (!item || deletingId.value) return
   deletingId.value = item.artifactId
   actionError.value = null
+  actionErrorSource.value = null
   try {
     await http.delete('/artifacts/' + encodeURIComponent(item.artifactId))
     if (previewId.value === item.artifactId) releasePreview()
@@ -346,7 +401,7 @@ async function removeArtifact(item) {
     // 不把 offset 也退一格，下一页会整行漏掉一条。
     offset.value = Math.max(0, offset.value - 1)
   } catch (err) {
-    noteAction(deleteErrorView({ denied: isPermissionDenied(err), detail: errorDetail(err, '') }), 'delete', item.artifactId)
+    noteAction(deleteErrorView({ denied: isPermissionDenied(err), detail: errorDetail(err, '') }), 'delete', item.artifactId, err)
   } finally {
     deletingId.value = ''
   }
@@ -355,7 +410,7 @@ async function removeArtifact(item) {
 function requestDelete(item) {
   if (!item || deletingId.value || loading.value || loadingMore.value) return
   const step = advanceDelete(pendingDelete.value, item.artifactId)
-  if (step === 'arm') { pendingDelete.value = item.artifactId; actionError.value = null; return }
+  if (step === 'arm') { pendingDelete.value = item.artifactId; actionError.value = null; actionErrorSource.value = null; return }
   if (step !== 'execute') return
   pendingDelete.value = ''
   removeArtifact(item)
@@ -395,6 +450,7 @@ defineExpose({ loadArtifacts, reload })
       v-else-if="face === 'error'"
       :title="listView.title"
       :description="listView.description"
+      :raw-error="loadErrorSource"
       :retryable="listView.retryable"
       retry-text="重新加载"
       :busy="loading"
@@ -425,8 +481,20 @@ defineExpose({ loadArtifacts, reload })
               {{ item.createdAt }}
               <template v-if="item.expiryText">· {{ item.expiryText }}</template>
             </span>
+            <span
+              class="artifact-source"
+              :class="'artifact-source--' + item.lineage.face"
+              :title="item.lineage.title"
+              data-testid="artifact-lineage"
+            >{{ item.lineage.text }}</span>
+            <span v-if="item.sourceVersionLabel" class="artifact-source">{{ item.sourceVersionLabel }}</span>
+            <span v-if="item.sourceArtifactIds.length" class="artifact-source" data-testid="artifact-predecessors">关联 {{ item.sourceArtifactIds.length }} 份先前成果或图表；编号 {{ item.sourceArtifactIds.join('、') }}</span>
+            <RouterLink v-if="item.sourceAlertId" :to="{ path: '/insights', query: { alert: item.sourceAlertId } }" class="artifact-source">返回异常提醒 #{{ item.sourceAlertId }}</RouterLink>
           </span>
           <span class="artifact-actions">
+            <UiButton v-if="item.sessionId" variant="secondary" size="sm" data-testid="artifact-return-analysis"
+              @click="router?.push({ name: 'chat', query: { session: item.sessionId } })"
+            >返回分析会话</UiButton>
             <UiButton
               variant="secondary"
               size="sm"
@@ -464,6 +532,7 @@ defineExpose({ loadArtifacts, reload })
         v-if="actionError"
         :title="actionView.title"
         :description="actionView.description"
+        :raw-error="actionErrorSource"
         :retryable="actionView.retryable"
         retry-text="再试一次"
         :busy="Boolean(openingId)"
@@ -555,6 +624,21 @@ defineExpose({ loadArtifacts, reload })
 .artifact-meta {
   color: var(--text-3);
   font-size: var(--t-xs);
+}
+
+/* 来源那一格：两张脸共用一个尺寸，只靠字重与层次区分，不新增任何色值。 */
+.artifact-source {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.artifact-source--lineage {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.artifact-source--unrecorded {
+  font-style: italic;
 }
 
 .artifact-actions {

@@ -136,6 +136,10 @@ docker compose run --rm backend python scripts/backup_workspace.py --output /app
 
 数据库口令只通过容器环境变量传递，不会出现在命令行或日志里。
 
+向量存储统一使用 PostgreSQL + PGVector，上传、检索和删除都访问 PostgreSQL。
+Chroma 运行依赖与挂载已移除，旧库只保留离线归档；退役记录见 docs/deployment/chroma-retirement-path.md。整库恢复走
+scripts/r575_vector_restore_drill.py，恢复判据里包含 chunk_vectors 的行数与向量指纹对账。
+
 ## 访问
 
 - `http://你的服务器IP/`
@@ -145,7 +149,7 @@ docker compose run --rm backend python scripts/backup_workspace.py --output /app
 
 - Nginx 只代理 `/api/`。图表和报告通过 `/api/v1/artifacts/{id}/content|download`
   经过权限判定后交付，**不存在公开的 `/static/` 交付路径**。
-- 客户上传、生成文件、Trace、日志和过渡向量库都挂在命名卷上，重建镜像不会丢失。
+- PostgreSQL、客户上传、生成文件、Trace 和日志都有持久卷，重建镜像不会丢失。
 - 客户机器只运行这一个栈，数据不出服务器。
 - 不部署 Docker 时，用 `deploy/start_workers.sh` 起多个 API 进程，并单独运行一次
   `python deploy/scheduler.py` 作为唯一的调度进程（生产 APP_ENV 下 API 不再内嵌调度器）。
@@ -189,6 +193,49 @@ docker compose run --rm backend python scripts/backup_workspace.py --output /app
    `wsl_update_x64.msi`，那个是 Windows 10 旧实现的内核包，24H2 上装它必 `1603`）。
    `msiexec /i wsl.<版本>.x64.msi /quiet` 之后 `C:\Program Files\WSL` 与 `LxssManager` 才存在。
 
+
+## 首灌前必须过的一道签字闸门：密级标注策略（C-1）
+
+**这一条查的不是机器，是客户有没有知情。** 密级这一维今天已由业主裁定结案（H13 = 甲，
+写进契约 `docs/api/contract-v1.md` 的 `## R467` 那一节）：**未标注密级的上传按 1 级入库，而
+1 级不设密级门槛 —— 本公司所有账号都读得到**（部门那一维仍由服务端按账号判定，是另一道闸）。
+也就是说，员工在上传屏上**没点密级**的那一发，等于把那份文件对全公司公开。这是定案，不是缺陷；
+但它必须是**客户知情之后选的**，不能是我们替他们默认下来、再在上线会上解释。
+
+### 逐库确认（一台机器一个企业 = 一套库，但库里要点名两处落点）
+
+1. **文档库**：上传进来的每一份文件，按几级入库 —— 确认客户知道「不选＝1 级＝全公司可读」，
+   并确认他们的高敏资料（人事、薪酬、合同）有没有各自的标注动作。
+2. **数据表（`/api/v1/data-files`）**：行级密级列同样按 1 级兜底
+   （`app/common/rbac.py::filter_dataframe_rows` 的 `fillna(1)`），表里没有密级列时这一维
+   根本不参与过滤 —— 问一句「你们的表里有没有密级列」。
+
+### 可执行的核验（首灌之后立刻跑，读数落交付记录）
+
+```bash
+docker compose --env-file deploy/.env.server exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select count(*) as rows_total, count(*) filter (where classification is null) as missing_classification from chunk_vectors"'
+
+docker compose --env-file deploy/.env.server exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "select classification, count(*) from resource_versions where classification is not null group by classification order by 2 desc"'
+```
+
+- `missing_classification` **必须是 0**。密级**缺键**（注意：不是缺 1）的行在检索侧**永不可见**
+  （契约 `## R467` 第 3 条），这批行不是权限问题，是**静默丢料**：客户会问「明明传了为什么搜不到」。
+  首灌前空库读到 0 不算过关，首灌后这一枚才是。
+- 第二发读的是**入库级的分布**：满屏都是 `1` 就说明客户根本没在标密级，C-1 那句话必须当场再问一遍，
+  并把答案记进交付记录。这一枚读数只问「是不是有意的」，不判权限。
+
+### 谁签字
+
+| 签什么 | 谁 | 缺这一枚签的后果 |
+| --- | --- | --- |
+| 「未标注＝1 级＝全公司可读」这条口径我方已知情，高敏资料的标注动作由我方负责 | **客户方数据负责人**（业务侧，不是 IT 侧） | 不开首灌 |
+| 口径已按契约 `## R467` 逐字交付，两发核验命令已跑、读数已归档 | **我方实施工程师** | 交付记录视为不完整 |
+
+两枚签名 + 日期写进交付记录（与上面「镜像版本凭据到 digest」那条同一本账）。
+🔴 这一条不许由我们自己签完就开灌：口径是业主定的，知情同意是客户给的。
+
+钉：`tests/test_r467_delivery_gate_classification_item.py` 钉住本节在场、它写的缺省档与契约同源、
+核验命令点名的表与列在 `migrations/0010_pgvector_chunks.sql` 里真存在。摘掉本节，那枚钉当场红。
 
 ## 基础镜像的获取（实测过的一条路）
 

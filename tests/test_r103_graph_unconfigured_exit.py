@@ -115,6 +115,7 @@ def _development_without_a_store(monkeypatch):
 def _store_that_cannot_be_written(monkeypatch, tmp_path):
     """Production with a durable store named, and that store refusing the write."""
     from app.knowledge_graph.service import KnowledgeGraph
+    from app.storage.persistence import JsonPersistenceAdapter
 
     def fail_upsert(*args, **kwargs):
         raise OSError("simulated disk failure")
@@ -123,7 +124,7 @@ def _store_that_cannot_be_written(monkeypatch, tmp_path):
     monkeypatch.setenv("KNOWLEDGE_GRAPH_STORE_PATH", str(tmp_path / "relations.json"))
     graph = _mount_graph(monkeypatch, KnowledgeGraph())
     assert graph._store is not None, "the durable store must be the one under test"
-    monkeypatch.setattr(graph._store, "upsert", fail_upsert)
+    monkeypatch.setattr(JsonPersistenceAdapter, "upsert", fail_upsert)
     return graph
 
 
@@ -233,6 +234,7 @@ def test_the_three_refusals_leave_three_different_audit_reasons(client, monkeypa
 def test_open_platform_registration_keeps_503_for_a_real_store_failure(client, monkeypatch, tmp_path):
     """判据 2 的核对结论钉成用例：那枚 503 说的是真话，本单不动它。"""
     from app.common import auth, open_platform
+    from app.storage.persistence import JsonPersistenceAdapter
 
     monkeypatch.setattr(
         auth,
@@ -253,7 +255,7 @@ def test_open_platform_registration_keeps_503_for_a_real_store_failure(client, m
     def fail_upsert(*args, **kwargs):
         raise OSError("simulated disk failure")
 
-    monkeypatch.setattr(store, "upsert", fail_upsert)
+    monkeypatch.setattr(JsonPersistenceAdapter, "upsert", fail_upsert)
     try:
         response = client.post(
             APPS_PATH,

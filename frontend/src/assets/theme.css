@@ -1796,19 +1796,14 @@ textarea:focus-visible {
   font-size: 20px;
 }
 
-.workspace-tools > button:hover {
+/* R307 第二棒残留：顶栏退出按钮原语化后，本枚选择器 (0,2,1) 被 .ui-button--ghost:hover:not(:disabled) (0,3,0) 压掉，hover 文字色从 #5beaff 掉成 --text-2。正解在此处补一枚 .ui-button 限定把特异性抬到 (0,3,1)，零新色值；旧 selector 保留，非原语按钮不受影响。全站没有任何一枚 token 等于 #5beaff，故不许改用 token。 */
+.workspace-tools > button:hover,
+.workspace-tools > button.ui-button:hover {
   color: #5beaff;
 }
 
-.workspace-tools > button svg {
-  width: 17px;
-  height: 17px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.45;
-}
+/* R278：这条管的是顶栏那两枚图标按钮（搜索、通知）里的 svg。两枚控件已经摘掉，工具行里
+   今天没有一枚按钮画图，规则留着就是死代码——删。 */
 
 .user-avatar {
   display: grid;
@@ -2364,23 +2359,21 @@ textarea:focus-visible {
   }
 
   .reference-workbench .nav-list {
-    display: flex;
+    /* 390px 下六枚入口必须一屏可见：横向滚动的条会把异常、待办与成果藏在屏外，
+       员工看不到入口就等于没有。两行三列，触控目标仍按 44px 走。 */
+    display: block;
     width: 100%;
-    overflow-x: auto;
+    overflow-x: visible;
     gap: 5px;
     scrollbar-width: none;
   }
 
-  .reference-workbench .nav-list::-webkit-scrollbar {
-    display: none;
-  }
-
   .reference-workbench .nav-item {
-    width: auto;
-    min-width: 67px;
-    min-height: 38px;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
     justify-content: center;
-    padding: 0 9px;
+    padding: 0 6px;
   }
 
   .reference-workbench .nav-icon {
@@ -2405,10 +2398,9 @@ textarea:focus-visible {
     gap: 7px;
   }
 
-  .workspace-tools > button:first-child,
-  .workspace-tools > button:nth-child(2) {
-    display: none;
-  }
+  /* R278：这里原先有两条 display:none，按位置洗掉的是顶栏前两枚按钮——正是那两枚「按了
+     没反应」的搜索与通知。控件已摘，规则再留着就会把唯一剩下的那枚退出按钮当成第一枚隐掉，
+     窄屏上人就退不出登录了。所以随控件一起删。 */
 
   .workspace-tools .identity {
     display: none;
@@ -2591,4 +2583,110 @@ textarea:focus-visible {
   /* 纯白与纯黑（alpha 变体一律由 color-mix 派生，不再写 rgba 字面量） */
   --legacy-paper: #ffffff;
   --legacy-void: #000000;
+}
+/* ==========================================================================
+ * R341 · 「数据趋势」这一格接上服务端期间序列之后的版式
+ *
+ * 这一块不新增任何一枚裸色值：只引用上面既有的 token（视觉文档 §5.1 / V6 锁色值）。
+ * 条形只是那一格数字的等比影子，长度由 DashboardPanel 按服务端回传的数算出来；
+ * 全窗口零新增时每根都收成零长，画不出一根「看起来像有」的条。
+ * ========================================================================== */
+
+.trend-window-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 0 0 13px;
+}
+
+.trend-window-tools .ui-select {
+  flex: 0 0 auto;
+  min-width: 132px;
+}
+
+.trend-window-tools .ui-button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--bg-panel-2);
+  color: var(--ink);
+}
+
+.trend-body {
+  min-width: 0;
+}
+
+.trend-scroll {
+  max-height: 268px;
+  overflow-y: auto;
+}
+
+.trend-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-xs);
+}
+
+.trend-caption {
+  padding: 0 0 6px;
+  color: var(--text-3);
+  text-align: left;
+  font-size: var(--t-xs);
+}
+
+.trend-table th,
+.trend-table td {
+  padding: 5px 7px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-1);
+}
+
+.trend-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-dropdown);
+  color: var(--text-3);
+  font-weight: 600;
+  background: var(--surface-1);
+}
+
+.trend-table th[scope='row'] {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  text-align: left;
+}
+
+.trend-cell-count {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+}
+
+.trend-bar {
+  display: inline-block;
+  width: 52px;
+  height: 6px;
+  margin-right: 7px;
+  overflow: hidden;
+  vertical-align: middle;
+  background: var(--surface-3);
+  border-radius: var(--r-sm);
+}
+
+.trend-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.trend-alerts-note {
+  margin: 9px 0 0;
+}
+
+.trend-notes {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.6;
 }

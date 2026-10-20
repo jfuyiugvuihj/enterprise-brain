@@ -20,8 +20,16 @@
   4. 算逐题召回时本机 Ollama 在位、模型与 EMBEDDING_MODEL 一致：题向量必须由生产侧同一
      模型产出，否则比的不是同一件事（R22 口径）。本脚本不改模型、不改维度、不加重排。
 
-退出码：0 = 逐题 top-k 全一致且两侧无集合差；1 = 有差异（正常结论，交人判读）；
-2 = 前置不满足（未迁移 / 距离函数不一致 / 目录缺失 / 口径漂移），此时不输出召回结论。
+退出码（R269 判据④ 归真）：
+  0 = 跑成了，两侧无差异
+  1 = 跑成了，且**检出差异**（正常结论，交人判读）—— 这个码只允许由「有差异」发出
+  2 = 前置不满足 / 量具自己没跑成：未迁移、目录缺失、取不到 collection、空库测不起、
+      距离口径判读不出、口径漂移，以及脚本自身抛出的任何异常。此时不输出召回结论，
+      且 stderr 首行必带「[前置不满足]」，让照退出码分诊的自动化能分开两种读数。
+本文件历史上有九处 `raise SystemExit("字符串")`（:100/:135/:148/:156/:166/:181/:185/:190/
+:376），Python 对字符串参数一律给退出码 1，与「1 = 有差异」撞车：那九条「根本没跑成」
+的路径在自动化眼里全是「跑成了、有差异」。现在九处统一走 fail_precondition()。
+契约钉：tests/test_r269_exit_codes.py（含反证钉：目录真实、集合名对、count=0 的空库）。
 """
 
 from __future__ import annotations
@@ -42,6 +50,23 @@ from app.db.connection import open_connection, parse_database_settings  # noqa: 
 from app.rag import pg_store  # noqa: E402
 
 DESCRIPTION = "R58 双写镜像逐题召回对比（只读，不写一行业务数据）"
+
+#: R269 判据④：退出码只有这三个语义，且 1  exclusively 表示"检出差异"。
+EXIT_NO_DIFFERENCE = 0
+EXIT_DIFFERENCE = 1
+EXIT_PRECONDITION = 2
+#: stderr 首行的固定前缀：自动化据此把"没跑成"与"跑成了"分开记账。
+PRECONDITION_PREFIX = "[前置不满足] "
+
+
+def fail_precondition(reason: str):
+    """前置不满足的唯一出口：原因进 stderr（首行带前缀），退出码 2，绝不借用 1。
+
+    为什么不是 `raise SystemExit("字符串")`：那种写法把消息交给解释器打印，退出码固定为
+    1，而 1 在本脚本里已经属于"跑成了、检出差异"。R264 就是被这条撞车读反过一次。
+    """
+    print(PRECONDITION_PREFIX + str(reason), file=sys.stderr, flush=True)
+    raise SystemExit(EXIT_PRECONDITION)
 
 #: 本脚本只发 SELECT。读 vector_scope 的语句在这里重写一遍而不复用镜像的探测常量，是因为
 #: 那些常量属于写路径；一个承诺只读的工具不该依赖写路径的内部形状。表名、schema_version、
@@ -97,7 +122,7 @@ def _safe_table(name: str) -> str:
     """表名进 SQL 之前先过白名单：这是给业主用的工具，不接受手滑带进来的引号。"""
     if not _TABLE_NAME.match(str(name)) or str(name) not in {pg_store.DEFAULT_VECTOR_TABLE,
                                                                  "chunks"}:
-        raise SystemExit("[前置不满足] 不接受的表名：" + str(name))
+        fail_precondition("不接受的表名：" + str(name))
     return str(name)
 
 
@@ -132,7 +157,7 @@ def _first_difference(left, right):
 def connect_read_only(url: str):
     settings = parse_database_settings(url)
     if not settings.is_postgresql:
-        raise SystemExit("[前置不满足] 连接串不是 PostgreSQL：" + url)
+        fail_precondition("连接串不是 PostgreSQL：" + str(url))
     connection = open_connection(settings)
     try:
         connection.read_only = True  # psycopg3：会话事务只读，误写当场报错
@@ -145,16 +170,16 @@ def read_scope(connection, vector_table: str) -> dict:
     """读 0010 登记的口径，并确认它和运行时一致；不一致就是前置不满足。"""
     row = connection.execute(_READ_SCOPE_SQL, (pg_store.VECTOR_SCHEMA_VERSION,)).fetchone()
     if row is None:
-        raise SystemExit(
-            "[前置不满足] vector_scope 里没有 schema_version="
+        fail_precondition(
+            "vector_scope 里没有 schema_version="
             + str(pg_store.VECTOR_SCHEMA_VERSION)
             + " 这一行：先跑 0010_pgvector_chunks.sql")
     dimension = int(_row(row, "dimension", 1) or 0)
     type_row = connection.execute(_READ_COLUMN_TYPE_SQL, (vector_table,)).fetchone()
     column_type = str(_row(type_row, "format_type", 0) or "") if type_row is not None else ""
     if column_type != "vector(" + str(dimension) + ")":
-        raise SystemExit(
-            "[前置不满足] " + vector_table + ".embedding 实际类型 "
+        fail_precondition(
+            vector_table + ".embedding 实际类型 "
             + (column_type or "不存在") + "，与声明的 vector(" + str(dimension) + ") 不符")
     stored = pg_store.VectorScope(
         embedding_model=str(_row(row, "embedding_model", 0) or ""),
@@ -163,8 +188,8 @@ def read_scope(connection, vector_table: str) -> dict:
     )
     disagreements = pg_store.scope_disagreements(pg_store.configured_embedding_scope(), stored)
     if disagreements:
-        raise SystemExit(
-            "[前置不满足] 库里口径 model=" + stored.embedding_model
+        fail_precondition(
+            "库里口径 model=" + stored.embedding_model
             + " dimension=" + str(stored.dimension)
             + " 与运行时不一致（" + ", ".join(disagreements) + "）：先按 R22 重建索引")
     return {
@@ -178,17 +203,18 @@ def read_scope(connection, vector_table: str) -> dict:
 def open_chroma(chroma_dir: str, collection_name: str):
     directory = Path(chroma_dir)
     if not directory.exists():
-        raise SystemExit("[前置不满足] Chroma 目录不存在：" + str(directory) + "（不要新建）")
+        fail_precondition("Chroma 目录不存在：" + str(directory) + "（不要新建）")
     try:
         import chromadb
     except ImportError as exc:  # pragma: no cover
-        raise SystemExit("[前置不满足] chromadb 不可用：" + str(exc))
+        fail_precondition("chromadb 不可用：" + str(exc))
     client = chromadb.PersistentClient(path=str(directory))
     try:
         return client.get_collection(name=collection_name)
     except Exception as exc:
-        raise SystemExit(
-            "[前置不满足] 取不到 collection " + repr(collection_name) + "：" + str(exc))
+        fail_precondition(
+            "取不到 collection " + repr(collection_name) + "：" + str(exc)
+            + "（目录真实也不等于集合在里面）")
 
 
 def chroma_distance(collection) -> str:
@@ -373,7 +399,7 @@ def load_questions(paths) -> list:
     for path in paths:
         file_path = ROOT / path if not Path(path).is_absolute() else Path(path)
         if not file_path.exists():
-            raise SystemExit("[前置不满足] 题集不存在：" + str(file_path))
+            fail_precondition("题集不存在：" + str(file_path))
         for line in file_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line:
@@ -413,7 +439,8 @@ def _write_out(args, result: dict) -> None:
         print("结论已写出：" + args.out)
 
 
-def main(argv=None) -> int:
+def _compare(argv=None) -> int:
+    """逐题/语料两级对比的主体；退出码语义见 main() 与文件 docstring。"""
     args = parse_args(argv)
     vector_table = _safe_table(args.vector_table)
     connection = connect_read_only(args.database_url or pg_store.resolve_database_url())
@@ -422,12 +449,26 @@ def main(argv=None) -> int:
         collection = open_chroma(args.chroma_dir, args.collection)
         space, u1 = resolve_chroma_distance(collection)
         if space != canonical_distance(scope["distance_function"]):
-            print("[前置不满足] collection 距离=" + (space or u1["source"])
-                  + "，vector_scope 声明=" + scope["distance_function"])
+            # 这一格以前把"根本没测起来"写成"两边排序天然不同"：空库（样本 0 枚）
+            # 就是被这句话读反的。现在只有真量到"这个序不属于任何候选算子"才提
+            # 排序不同，两条判读分开说。
+            summary = (PRECONDITION_PREFIX + "collection 距离=" + (space or u1["source"])
+                       + "，vector_scope 声明=" + scope["distance_function"])
             if u1.get("reason"):
-                print("    U1 判读：" + u1["reason"])
-            print("两边排序天然不同，不出召回结论；先核对 0010 的 app.vector_distance_function")
-            return 2
+                report = [summary,
+                          "    U1 判读：" + u1["reason"],
+                          "    这一格根本没测起来（样本/探针不足），不出召回结论；"
+                          "不是「两边排序天然不同」，也别去改 0010"]
+            else:
+                report = [summary,
+                          "    两边排序天然不同，不出召回结论；"
+                          "先核对 0010 的 app.vector_distance_function"]
+            for line in report:
+                print(line)  # 判读全文进 stdout：R157 的人读契约钉在这里，搬走就红
+            # 同一句判据再进 stderr 首行：R269 判据④要求照退出码分诊的
+            # 自动化能分开"没跑成"与"跑成了但有差异"，而 stdout 是给人读的。
+            print(summary, file=sys.stderr, flush=True)
+            return EXIT_PRECONDITION
         drift = corpus_drift(connection, collection, vector_table=vector_table, scope=scope)
         result = {"scope": scope, "u1": u1, "k": args.k, "drift": drift,
                 "questions": [], "summary": {}}
@@ -442,7 +483,7 @@ def main(argv=None) -> int:
             print("-- 逐题对比已跳过（--skip-questions）--")
             result["summary"] = {"skipped_questions": True, "corpus_gap": gap}
             _write_out(args, result)
-            return 1 if gap else 0
+            return EXIT_DIFFERENCE if gap else EXIT_NO_DIFFERENCE
 
         from app.rag.retriever import OllamaEmbeddings  # 要发 embedding：延后 import
 
@@ -475,9 +516,25 @@ def main(argv=None) -> int:
         print("-- 汇总：%d/%d 题 top-%d 不一致%s --" % (
             differing, len(questions), args.k, "（另有语料级差集）" if gap else ""))
         _write_out(args, result)
-        return 1 if differing or gap else 0
+        return EXIT_DIFFERENCE if (differing or gap) else EXIT_NO_DIFFERENCE
     finally:
         connection.close()
+
+
+def main(argv=None) -> int:
+    """R269 判据④：把"没跑成"与"跑成了但有差异"在退出码上彻底分开。
+
+    - 九处前置检查各自 raise SystemExit(EXIT_PRECONDITION)，原样上抛（SystemExit 不是
+      Exception 的后代，下面的兜底不会把它洗掉）；
+    - 量具自己抛出的任何异常（目录被别的进程写坏、chromadb 内部错、PG 连不上、题集读不动）
+      过去会以退出码 1 混进"检出差异"，现在统一按前置不满足记账并写 stderr 首行。
+    反向契约同样有钉：真的检出差异时仍然返回 1，无差异仍然返回 0。
+    """
+    try:
+        return _compare(argv)
+    except Exception as exc:  # noqa: BLE001 - 兜底的意义就是"没跑成不许冒充有差异"
+        fail_precondition("量具自身异常终止：" + type(exc).__name__ + ": " + str(exc)
+                          + "（本次没有产出任何召回结论）")
 
 
 if __name__ == "__main__":

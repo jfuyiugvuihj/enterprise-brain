@@ -45,6 +45,8 @@ import {
   RULE_OPERATORS,
   SCAN_REASON_MESSAGES,
   SHAPE_FAILURE_DESCRIPTION,
+  UNATTRIBUTED_DEPARTMENT,
+  UNRECORDED,
   advanceRuleDelete,
   checkOutcomeView,
   createRule,
@@ -154,15 +156,34 @@ function routePost(routes) {
   })
 }
 
-/** 告警行 / 规则行的后端真形状（GET /alerts 六列、alert_rules 六列）。 */
+/**
+ * 告警行 / 规则行的后端真形状。
+ *
+ * alerts 一行实测 15 列（R271 在 commit 70b4f26 逐列数出来：自建库 DDL 15 枚列名 ＝ 生产
+ * 0003 建表 6 列 + 0012 department + 0014 八枚处置列 ＝ 无库内存行 7 枚字面键 + ledger 8 枚）。
+ * 这里就按 15 枚给：六列那份旧账（连同 lib/alerts.js 里那句注释）随 R271 一起作废，
+ * 列集与逐列归属由 r271-alert-contract.test.js 直接读后端与迁移现算，抄在这里不算数。
+ *
+ * 默认给的是「一条刚触发、还没人处置」的 open 行：八枚处置列全是空串，
+ * 与后端 ALERT_DISPOSAL_DEFAULTS 逐枚同值——空串是「没记过」，不是 0，也不是空白。
+ */
 function alertRow(overrides) {
   return Object.assign({
     id: 7,
     rule_id: 3,
     message: '差旅费合计 12800 大于阈值 8000',
     ai_analysis: '集中在 9 月，环比上升明显。',
-    created_at: '2026-09-16T09:12:44.123456+08:00',
+    department: '市场部',
     read: false,
+    status: 'open',
+    acknowledged_by: '',
+    acknowledged_at: '',
+    closed_by: '',
+    closed_at: '',
+    assignee: '',
+    assigned_by: '',
+    assigned_at: '',
+    created_at: '2026-09-16T09:12:44.123456+08:00',
   }, overrides || {})
 }
 
@@ -369,6 +390,42 @@ function backendRoutes() {
   return routes
 }
 
+/**
+ * R355 · 巡检理由从后端真源派生，不再手抄名单。
+ * 上一版这里抄死三枚名字，R345 给后端加了 all_data_files_unreadable 却没人回来加第四行，
+ * 于是界面把「一个文件都读不出来」画成「后端没有说明本轮的扫描范围」——那是替后端说了假话。
+ * 手法与 backendRoutes() 同源：读 git 对象而不是工作树副本；解析不出理由一律抛红，
+ * 禁止退化成空对账（一枚都不认，比认错一枚更糟）。
+ */
+function backendScanReasons() {
+  let text
+  try {
+    text = execFileSync('git', ['show', BACKEND_REF + ':' + BACKEND_ALERTS], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+  } catch (cause) {
+    throw new Error('读不到后端真源 ' + BACKEND_REF + ':' + BACKEND_ALERTS + '（git show 失败：' + cause.message + '）。巡检理由对账不许降级。')
+  }
+  if (!text || !text.trim()) throw new Error('git show ' + BACKEND_REF + ':' + BACKEND_ALERTS + ' 返回空内容，无法对账。')
+  const lines = text.split(/\r?\n/)
+  const consts = new Map()
+  for (const line of lines) {
+    const top = /^([A-Z][A-Z0-9_]{2,})\s*=\s*["']([a-z0-9_]+)["']\s*$/.exec(line)
+    if (top) consts.set(top[1], top[2])
+  }
+  const reasons = new Set()
+  for (const line of lines) {
+    const assign = /^\w+\[\s*["']reason["']\s*\]\s*=\s*(.+?)\s*$/.exec(line.trim())
+    if (!assign) continue
+    for (const lit of assign[1].match(/["']([a-z0-9_]+)["']/g) || []) reasons.add(lit.replace(/["']/g, ''))
+    for (const ident of assign[1].match(/\b[A-Z][A-Z0-9_]{2,}\b/g) || []) {
+      if (!consts.has(ident)) {
+        throw new Error('后端把 ' + ident + ' 当巡检理由，但这一版解析不出它的字面值：形状变了要同步改这里，不许让对账退化成漏项。')
+      }
+      reasons.add(consts.get(ident))
+    }
+  }
+  if (!reasons.size) throw new Error('解析不到任何 ["reason"] 赋值：后端形状变了，要同步改这里的解析，不许让它退化成空对账。')
+  return [...reasons].sort()
+}
 const flush = async () => {
   for (let round = 0; round < 8; round += 1) await new Promise(resolve => { setTimeout(resolve, 0) })
 }
@@ -456,8 +513,10 @@ describe('W7 判据② 追加 · 五个端点是后端真存在的路由，且�
     expect(rulePath(null)).toBe('')
   })
 
-  it('取数只走 lib/alerts.js 的五个函数，面板里不再手写路径、不再用旧 api 封装', () => {
-    for (const name of ['fetchAlerts(', 'fetchRules(', 'createRule(', 'removeRule(', 'runCheck(']) {
+  it('取数与处置只走 lib/alerts.js 的出口，面板里不再手写路径、不再用旧 api 封装', () => {
+    // R271 起三枚处置动作也走同一个出口：disposeAlert 是面板唯一的处置写路径，
+    // 路径字符串只许出现在 lib/alerts.js 里（下面那条 /alerts 字面量判据就是钉这一件事）。
+    for (const name of ['fetchAlerts(', 'fetchRules(', 'createRule(', 'removeRule(', 'runCheck(', 'disposeAlert(']) {
       expect(code(), '面板没接上 ' + name).toContain(name)
     }
     expect(code()).toContain("from '../lib/alerts'")
@@ -648,7 +707,7 @@ describe('W7 判据③ · 审批页是报销政策自查工具，不是审批', 
 
   it('界面自己说清定位：自查工具、不办理审批、不生成工单', () => {
     const s = source('ApprovalPanel.vue')
-    for (const phrase of ['报销自查', '它不办理审批', '自查工具，不是审批', '入口在对话页',
+    for (const phrase of ['审批与待办', '它不办理审批', '自查工具，不是审批', '入口在对话页',
       '不会生成工单', '不会记在任何人名下', '不会改变任何单据的状态']) {
       expect(s).toContain(phrase)
     }
@@ -753,11 +812,11 @@ describe('W7 lib/alerts.js · 判脸与归码矩阵（R1 裁定 (c) 的逻辑全
     expect(view.description).toContain('请联系管理员开通')
   })
 
-  it('readFailureView · 500 与连不上服务：都归 error 并给重试', () => {
+  it('readFailureView · 500 与连不上服务：都归 error，500 不给重试、断网才给', () => {
     const broken = readFailureView(httpError(500, 'internal_error'), failureArgs)
     expect(broken.face).toBe('error')
     expect(broken.title).toBe(FAILED_TITLE)
-    expect(broken.retryable).toBe(true)
+    expect(broken.retryable).toBe(false)
     expect(broken.description).toContain('系统内部出现异常')
     const offline = readFailureView({ request: {}, message: 'Network Error' }, failureArgs)
     expect(offline.face).toBe('error')
@@ -768,7 +827,7 @@ describe('W7 lib/alerts.js · 判脸与归码矩阵（R1 裁定 (c) 的逻辑全
   it('readFailureView · 权限范围判不出来不是「没权限」：403 + resource_scope_missing 归 error', () => {
     const missing = readFailureView(httpError(403, 'resource_scope_missing'), failureArgs)
     expect(missing.face).toBe('error')
-    expect(missing.retryable).toBe(true)
+    expect(missing.retryable).toBe(false)
     expect(missing.description).toContain('判断不了你能不能看')
     expect(missing.codeLabel).toBe('')
     const scoped = readFailureView(httpError(403, 'department_scope_denied'), failureArgs)
@@ -838,17 +897,52 @@ describe('W7 lib/alerts.js · 判脸与归码矩阵（R1 裁定 (c) 的逻辑全
     expect(operatorLabel(undefined)).toBe('无法识别的比较方式')
   })
 
-  it('mapAlertRow：后端六列 -> 视图字段，缺字段给一句人话而不是 undefined', () => {
+  it('mapAlertRow：后端 15 列 -> 视图字段，缺列给「未记录」而不是 0 或空白', () => {
+    expect(UNRECORDED).toBe('未记录')
     const row = mapAlertRow(alertRow())
     expect(row).toEqual({
-      id: '7', ruleId: '3', message: alertRow().message,
-      analysis: '集中在 9 月，环比上升明显。', createdAt: '2026-09-16 09:12',
+      id: '7',
+      ruleId: '3',
+      message: alertRow().message,
+      analysis: '集中在 9 月，环比上升明显。',
+      createdAt: '2026-09-16 09:12',
+      departmentText: '市场部',
+      status: 'open',
+      statusLabel: '还没人处理',
+      statusKnown: true,
+      handled: false,
+      actions: ['ack', 'close', 'assign'],
+      ledger: [
+        { key: 'ack', label: '确认', who: UNRECORDED, to: '', at: UNRECORDED, recorded: false },
+        { key: 'close', label: '关闭', who: UNRECORDED, to: '', at: UNRECORDED, recorded: false },
+        { key: 'assign', label: '指派', who: UNRECORDED, to: UNRECORDED, at: UNRECORDED, recorded: false },
+      ],
+      addressable: true,
     })
+    // 第 15 枚 read 是唯一刻意不进视图模型的一列：后端没有改成已读的端点。
     expect(Object.keys(row)).not.toContain('read')
     expect(mapAlertRow({}).message).toBe('这条告警没有留下说明文字。')
     expect(mapAlertRow(alertRow({ message: '   ' })).message).toBe('这条告警没有留下说明文字。')
     expect(mapAlertRow(alertRow({ ai_analysis: null })).analysis).toBe('')
-    expect(mapAlertRow(null)).toEqual({ id: '', ruleId: '', message: '这条告警没有留下说明文字。', analysis: '', createdAt: '' })
+    expect(mapAlertRow(null)).toEqual({
+      id: '',
+      ruleId: '',
+      message: '这条告警没有留下说明文字。',
+      analysis: '',
+      createdAt: '',
+      departmentText: UNATTRIBUTED_DEPARTMENT,
+      status: 'open',
+      statusLabel: '还没人处理',
+      statusKnown: true,
+      handled: false,
+      actions: ['ack', 'close', 'assign'],
+      ledger: [
+        { key: 'ack', label: '确认', who: UNRECORDED, to: '', at: UNRECORDED, recorded: false },
+        { key: 'close', label: '关闭', who: UNRECORDED, to: '', at: UNRECORDED, recorded: false },
+        { key: 'assign', label: '指派', who: UNRECORDED, to: UNRECORDED, at: UNRECORDED, recorded: false },
+      ],
+      addressable: false,
+    })
   })
 
   it('mapRuleRow：缺阈值/缺指标给「没有登记」而不是 NaN，enabled 缺省按启用', () => {
@@ -901,9 +995,27 @@ describe('W7 lib/alerts.js · 判脸与归码矩阵（R1 裁定 (c) 的逻辑全
       expect(view.title + view.detail).not.toMatch(ZERO_CLAIM)
     }
     expect(checkOutcomeView({ triggered: [{ id: 1 }], scan_scope: { reason: 'no_data_files' } }).kind).toBe('hit')
-    expect(Object.keys(SCAN_REASON_MESSAGES).sort()).toEqual(['no_data_files', 'no_permitted_datasets', 'tenant_data_dir_unavailable'])
+    // R355：这一行原来是手抄的三枚名字，后端加了第四枚它照样绿——那才是病根。
+    // 改成双向逐字相等：后端少给一枚、前端多留一枚，都红。
+    expect(Object.keys(SCAN_REASON_MESSAGES).sort()).toEqual(backendScanReasons())
   })
 
+  it('R355 · 「一个文件都没读出来」不许借用「后端没有说明扫描范围」那张脸', () => {
+    const view = checkOutcomeView({
+      triggered: [],
+      scan_scope: { reason: 'all_data_files_unreadable', evaluated_files: [], unreadable_files: ['a.pdf', 'b.xls'] },
+    })
+    expect(view.kind).toBe('no-target')
+    expect(view.detail).toBe(SCAN_REASON_MESSAGES.all_data_files_unreadable)
+    // 后端把两张脸分开了，界面就不许再说成同一句话。
+    expect(view.detail).not.toBe(SCAN_REASON_MESSAGES.no_data_files)
+    expect(view.detail).not.toBe(SCAN_REASON_MESSAGES.no_permitted_datasets)
+    // 真·没说明那张保守脸必须还在，且与这一张不同：摘掉字典里那一条，这一枚会先红。
+    const unknown = checkOutcomeView({ triggered: [], scan_scope: {} })
+    expect(unknown.kind).toBe('unknown')
+    expect(unknown.detail).not.toBe(view.detail)
+    expect(view.title + view.detail).not.toMatch(ZERO_CLAIM)
+  })
   it('emptyRuleForm / validateRuleForm：四格全空起步，阈值留空不许静默变成 0', () => {
     expect(emptyRuleForm()).toEqual({ name: '', metric: '', op: 'lt', threshold: '' })
     const blank = validateRuleForm(emptyRuleForm())

@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { api } from '../lib/api'
 import { errorDetail, isPermissionDenied } from '../lib/http'
-import { UiEmptyState, UiErrorState } from './ui'
+import { UiButton, UiEmptyState, UiErrorState } from './ui'
 
 // 表单不再预填示例关系：写死的「差旅费 / 属于 / 费用科目 / 差旅费报销制度.pdf」
 // 会和真数据混在同一屏里，老板分不出哪条是库里来的。
@@ -73,7 +73,6 @@ onMounted(loadRelations)
   <div class="panel-shell" data-testid="graph-panel">
     <header class="panel-head">
       <div>
-        <div class="eyebrow">Knowledge Graph</div>
         <h3>知识图谱</h3>
         <p>把制度、指标、部门和责任关系串联起来。</p>
       </div>
@@ -83,15 +82,13 @@ onMounted(loadRelations)
       <section class="panel-card">
         <div class="section-head"><h4>新增关系</h4></div>
         <div class="form-grid">
-          <label><span>主体</span><input v-model="form.source_entity" /></label>
+          <label><span>起点名称</span><input v-model="form.source_entity" /></label>
           <label><span>关系</span><input v-model="form.relation" /></label>
-          <label><span>客体</span><input v-model="form.target" /></label>
-          <label><span>来源</span><input v-model="form.source" /></label>
+          <label><span>关联名称</span><input v-model="form.target" /></label>
+          <label><span>来源文档</span><input v-model="form.source" /></label>
         </div>
         <div class="actions">
-          <button class="primary-btn" data-testid="save-relation" :disabled="saving" @click="saveRelation">
-            {{ saving ? '保存中' : '保存关系' }}
-          </button>
+          <UiButton class="primary-btn" variant="primary" :loading="saving" :label="saving ? '保存中' : '保存关系'" data-testid="save-relation" @click="saveRelation" />
         </div>
         <!-- 写路径的失败也只经 UiErrorState 出口：这个面板不再留第二套错误呈现。 -->
         <UiErrorState
@@ -109,9 +106,7 @@ onMounted(loadRelations)
       <section class="panel-card">
         <div class="section-head">
           <h4>关系列表</h4>
-          <button class="ghost-btn" type="button" :disabled="loading" @click="loadRelations">
-            {{ loading ? '加载中' : '刷新' }}
-          </button>
+          <UiButton class="ghost-btn" type="button" variant="ghost" :loading="loading" :label="loading ? '加载中' : '刷新'" data-testid="reload-relations" @click="loadRelations" />
         </div>
         <UiErrorState
           v-if="loadError"
@@ -125,7 +120,7 @@ onMounted(loadRelations)
         <UiEmptyState
           v-else-if="!relations.length"
           title="知识库里还没有已登记的关系"
-          description="关系是从已登记的制度与指标里长出来的，先有一条就能看到连线。"
+          description="这一格列的是已登记的关系；要添一条，用上面「新增关系」。"
         />
         <div v-else class="relation-list">
           <article v-for="item in relations" :key="item.relation_id" class="relation-item">

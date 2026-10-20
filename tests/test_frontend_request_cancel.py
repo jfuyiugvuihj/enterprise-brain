@@ -8,8 +8,8 @@ def test_chat_panel_exposes_cancel_action_and_abort_controller():
     # 重指向（2026-09-15 集成后）：AbortController 收进了 SSE 读流层，面板只调 abortStream()。
     #   ChatPanel.vue:5 / :29   import { abortStream, ... } from '../lib/sessions'
     #   ChatPanel.vue:236       abortStream()
-    #   lib/sessions.js:191     controller = new AbortController()
-    #   lib/sessions.js:201     export function abortStream()
+    #   lib/sessions.js:209     controller = new AbortController()
+    #   lib/sessions.js:219     export function abortStream()
     assert "abortStream," in source
     assert "} from '../lib/sessions'" in source
     assert "abortStream()" in source

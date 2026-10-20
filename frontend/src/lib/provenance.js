@@ -26,7 +26,7 @@ export const SCOPE_REASON_TEXT = {
 
 /**
  * 版本行的时间列只有一个真源：document_versions.created_at（app/documents/catalog.py:36 的
- * _SELECT_COLUMNS、:469 的建表语句、:521 的写入点）。上传/发布之类别的列名今天不存在，
+ * _SELECT_COLUMNS、app/documents/catalog.py:469 的建表语句、app/documents/catalog.py:521 的写入点）。上传/发布之类别的列名今天不存在，
  * 不替后端提前发明键名——读不到时间就明说「无从核对」，比拿一个猜来的键装作量到了强。
  */
 const VERSION_TIME_KEYS = ['created_at']
@@ -116,7 +116,7 @@ export function sourcesFace(sources) {
       kind: 'none',
       tone: 'muted',
       headline: '本轮没有检索到可用文档',
-      reason: '下面的回答不来自知识库。要按制度或既有资料回答，请先确认文档已上传并解析完成，再重新提问。',
+      reason: '下面这句回答没有配上一处可点开的资料出处。要按制度或既有资料回答，请先确认文档已上传并解析完成，再重新提问。',
       hiddenLine: '',
       searchable: false,
     }
@@ -208,7 +208,7 @@ export function cacheFace(cache, staleness) {
     return {
       kind: 'live',
       headline: '本轮实时生成',
-      detail: '这一轮的回答帧当场看着生成，没有带回缓存读数。',
+      detail: '根据本次提问生成回答。',
       tone: 'muted',
     }
   }
@@ -244,14 +244,108 @@ export function cacheFace(cache, staleness) {
 // ==================== 排队那张脸 ====================
 
 /**
- * 排队帧 + /queue/status 读数 → 三态，且失败态各说各的话。
+ * 排队帧 + /queue/status 读数 → 一张脸，且各态各说各的话。
  *
- * 真机读数范围（app/api/v1/chat.py:2930-3003 与 app/common/reliable_queue.py）：状态只有
- * queued / processing / done / cancelled / failed，键过期时接口另给 expired；位次 position
- * 是 1 起的队内序号，取不到时为 null。今天的后端【没有任何「队列长度上限」读数】，
- * 所以「排不下」这一态只能来自入队请求本身被拒（HTTP 503 的 queue_unavailable），
- * 界面不许自己按排队人数编一个「已满」。
+ * 状态词表的事实源是契约 docs/api/contract-v1.md 的 Long Task Status 一节，不在这里抄第二份
+ * （今天在里面的是 queued / processing / cancel_requested / done / cancelled / failed / dead /
+ * awaiting_approval / expired；位次 position 是 1 起的队内序号，取不到时为 null）。
+ * 今天的后端【没有任何「队列长度上限」读数】，所以「排不下」这一态只能来自入队请求本身被拒
+ * （HTTP 503 的 queue_unavailable），界面不许自己按排队人数编一个「已满」。
  */
+
+/**
+ * 挂起台账那一格（approval.ledger_status）→ 「这一步还开不开着」。
+ *
+ * 词表不在这里发明：六枚取自 app/storage/pending_approvals.py 的 ALL_STATUSES
+ * （awaiting / resumed / refused / abandoned / stale / failed），四枚取自契约 approval 那一格
+ * 补的出口（absent / unavailable / owner_mismatch / no_session）。
+ *   open    这一笔还挂在账上，「审批与待办」那一屏列得出它，入口点得动；
+ *   closed  账已经闭合，那一屏不会再列出它 —— 按钮照摆就是本仓明令禁的假控件。
+ * 后端没给这一格（结构化终态之前发布的行）按 open 处理：那是「没有读数」，不是「已经闭合」，
+ * 拿缺席当证据正是这一族缺陷的母形状。
+ */
+const LEDGER_STATE = {
+  awaiting: 'open',
+  unavailable: 'open',
+  resumed: 'closed',
+  refused: 'closed',
+  abandoned: 'closed',
+  stale: 'closed',
+  failed: 'closed',
+  absent: 'closed',
+  no_session: 'closed',
+  owner_mismatch: 'closed',
+}
+
+/** 每一枚各说各的一句话，一格都不许并（顺序与上面那份词表同一）。 */
+const LEDGER_VOICE = {
+  awaiting: '',
+  unavailable: '挂起台账这一格今天读不出来，界面不能肯定这一步还开着。',
+  resumed: '已批准，系统已继续处理本轮任务。',
+  refused: '账本说这一步已经被驳回，它不会执行。',
+  abandoned: '账本说这一轮被按了停止：停止不等于驳回，这一步既没执行也没被确认否决。',
+  stale: '账本说这次挂起已经不作数了（同一个会话后来另开过新的一笔确认）。',
+  failed: '账本说你批过板，而那一轮没能跑完。这里不猜它后来怎么样了，也不算你驳回。',
+  absent: '挂起账本里没有这一条会话的记录。',
+  no_session: '这一轮的读数没带会话号，界面无从在账本里对上这一笔。',
+  owner_mismatch: '账本里这一笔不属于当前账号，界面不能替你点。',
+}
+
+/** 词表之外的第十枚读数：不猜它什么意思，也不静默并回上面任何一格。 */
+const LEDGER_UNKNOWN = '挂起台账回了一格界面还不认识的读数，这一屏不猜它是什么意思。'
+
+/** 等的是哪一步：后端给的标签优先，缺了才按步骤名说；两格都没有就明说没说清。 */
+function parkedStepNames(approval) {
+  const given = Array.isArray(approval.labels) ? approval.labels.filter(Boolean).map(String) : []
+  if (given.length) return given.join(' / ')
+  const steps = Array.isArray(approval.pending_steps) ? approval.pending_steps.filter(Boolean).map(String) : []
+  return steps.join(' / ')
+}
+
+/**
+ * 挂起在等人批准的那一轮（R260；契约 Long Task Status 的 awaiting_approval 一条）。
+ *
+ * 三件事必须分开，一句都不许并：
+ *   ① 它对【轮询】是终态、对【这一轮】不是终态 —— 表要停，但批准还能把它推动。于是既不许借
+ *      ChatPanel 那张「已转后台，稍后可查回」的到点脸（不点它不会自己好），也不许落到本函数
+ *      最后那格 failed 兜底（后端没失败，是人还没拍板）。
+ *   ② result 在这一格恒为 null：R254 起挂起文案改走 approval.notice，不再当正文发。这句说明
+ *      住在脸里；界面向这条回答写正文的那一步仍然只认 done，本函数不写它。
+ *   ③ 给不给「去批准」的入口由台账读数说了算（见 LEDGER_STATE）：账已闭合的那几枚不给按钮。
+ * 措辞仍旧只有这一个文件一份，面板不另立第三套判断（ChatPanel 里 dead 那一格同此规矩）。
+ */
+function awaitingApprovalFace(approval) {
+  const handle = approval && typeof approval === 'object' ? approval : null
+  const raw = handle ? textOf(handle.ledger_status).trim().toLowerCase() : ''
+  const known = Object.prototype.hasOwnProperty.call(LEDGER_STATE, raw)
+  const state = known ? LEDGER_STATE[raw] : (raw ? 'unknown' : 'open')
+  const open = state !== 'closed'
+  const voice = known ? LEDGER_VOICE[raw] : (raw ? LEDGER_UNKNOWN : '')
+  const parked = handle ? parkedStepNames(handle) : ''
+  const what = !handle
+    ? '后端这一格的读数里没带可批准的把手，界面说不出等的是哪一步。'
+    : (parked
+      ? `${open ? '待确认的操作' : '本次操作'}：${parked}。`
+      : '后端没在这一格里写清等的是哪一步。')
+  const tail = open
+    ? '批准或驳回都在「审批与待办」那一屏做：那里点的还是后端原来那扇门，不必重发这一轮的问题；不去点它，这一轮就停在这里不动。'
+    : '请回到对话查看本轮的处理情况。'
+  return {
+    // kind 里刻意不写 awaiting：到点收表那一态在本仓是按名字认领的——屏上那张脸的 `face.kind` 与 `data-kind` 上写着 `/wait|background/`。
+    // （r221 乙3 :299 / 乙5 :330 / 乙7 :351 三枚拿它认 `kind`，乙6 :343 另钉 `data-kind="[\w-]*(wait|background)"`），而 awaiting 恰好含 wait，两名并排迟早看错。
+    // 这一格的名字跟着后端自己的说法走：parked（approval.pending_steps 那一份）。
+    kind: open ? 'parked-approval' : 'approval-closed',
+    headline: open
+      ? '这一轮停在等你确认的那一步，不确认它就不会再动'
+      : (raw === 'resumed' ? '本轮审批已通过' : (raw === 'refused' ? '本轮审批已驳回' : '这次审批已无法继续')),
+    detail: `${what}${voice}${tail}`,
+    tone: open ? 'warn' : 'muted',
+    retryable: false,
+    ahead: null,
+    action: open ? { kind: 'hitl-pending', label: '去批准或驳回这一步' } : null,
+  }
+}
+
 export function queueFace(queue) {
   if (!queue || typeof queue !== 'object') {
     return { kind: 'idle', headline: '', detail: '', tone: 'muted', ahead: null }
@@ -275,6 +369,29 @@ export function queueFace(queue) {
   }
   if (status === 'processing') {
     return { kind: 'processing', headline: '轮到你了，正在后台生成', detail: '跑完之后界面会从状态读数里把答案补回这条回答。', tone: 'info', ahead: 0 }
+  }
+  // R282 - cancel_requested: 取消已经登记，但握着任务的那一稿还没落定。
+  // 契约 Long Task Status 那一节写着：这一枚是【非终态】，cancel() 是在任务离开 pending 列表
+  // 之后按下去的，标记写进台账、由 worker 下一次检查时落成 cancelled；从这里起它只会落
+  // cancelled，永远不会变成 done。两条谎各站一头，这一格哪头都不许站：
+  //   落到本函数最后那格 failed 兜底 => 员工自己按了「中断」，界面反过来说「系统执行失败」；
+  //   并到上面 cancelled 那一格 => 回执还没落，界面替后端宣布「已取消」。
+  // 它必须排在那格兜底【之前】，同 R260 给 awaiting_approval 立的顺序规矩。
+  // tone=info / ahead=null 照 queued 与 processing 那两格的惯例：非终态就是 info；位次读数
+  // 只有 status === 'queued' 那一支才给（app/api/v1/chat.py:4373），任务已经离开待发队列，
+  // 没有 position 可说就填 null，不补 0 也不编人数（r150 E 组同一条规矩）。
+  // retryable:false 且不带动作按钮：重发同一轮不是「继续中断」，这一轮也不必重发。
+  // 措辞与 ChatPanel.vue:1247 queueCancelPendingFace 逐字同一 —— 一件事全站一种说法，
+  // 由 r282-cancel-requested-face.test.js 从面板源码里抠出那两枚字面量钉住不漂。
+  if (status === 'cancel_requested') {
+    return {
+      kind: 'cancel-requested',
+      headline: '取消已登记：这一轮不会再产出答案',
+      detail: '取消标记已经写进队列，后台正在收尾，落定之前它不会再回答任何东西。界面还在读这一轮的状态，落定之后这一格会跟着改口。',
+      tone: 'info',
+      retryable: false,
+      ahead: null,
+    }
   }
   if (status === 'done') {
     // 「跑完了」与「结果取回来了」是两件事：done 分支的 result 出自 chat.py:2948-2954，
@@ -307,6 +424,11 @@ export function queueFace(queue) {
       tone: 'warn',
       ahead: null,
     }
+  }
+  // R260 · 挂起在等人批准的那一轮。它必须排在这份函数最后那格 failed 兜底【之前】：
+  // 落进兜底就是把「人还没拍板」说成「系统执行失败」，那正是 R254 在前端剩下的后半条谎。
+  if (status === 'awaiting_approval') {
+    return awaitingApprovalFace(queue.approval)
   }
   // failed 与后端给的其它状态：一句「出错了」不算交代，必须带上第几次尝试与归类后的原因。
   const failure = queue.failure && typeof queue.failure === 'object' ? queue.failure : null
@@ -365,10 +487,10 @@ export function queuePollFailedFace(error) {
   return {
     kind: 'unreadable',
     headline: '这一轮已经排上队，但排队状态这次没读到',
-    detail: `${result.message}界面每 3 秒再读一次状态，读数回来之前不猜你前面有几个人。`,
+    detail: '页面每 3 秒自动重试读取进度，恢复后继续跟踪原任务，结果仍会回到此会话。',
     codeLabel: errorCodeLabel(result),
     tone: 'warn',
-    retryable: result.retryable,
+    retryable: false,
     ahead: null,
   }
 }

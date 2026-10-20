@@ -149,7 +149,10 @@ def test_profile_save_and_load_fallback_to_memory_without_postgres(monkeypatch):
 
     saved = profile.get_profile("offline-user", fallback={"username": "offline-user"})
 
-    assert saved["department"] == "QA"
+    # R296 由总控落笔改口：画像存储不再携带「部门」这一格真相——员工自助可写的
+    # user_profiles.department 已降为只读派生，权威值只来自 users。上面那句传参照旧保留，
+    # 因为它现在测的是「传进来的 department 不得被回读成事实」；旧断言钉的正是本单要拆掉的东西。
+    assert "department" not in saved
     assert saved["position"] == "tester"
     assert saved["preferences"] == ["concise"]
 
@@ -185,9 +188,38 @@ def test_pending_steps_are_completed_when_ask_stream_finishes():
     completed = _complete_pending_steps(steps, elapsed=3.4)
 
     assert completed == [
-        {"tool": "doc", "label": "搜索知识库", "status": "done", "elapsed": 3.4},
+        {"tool": "doc", "label": "搜索知识库", "status": "unknown", "elapsed": 3.4},
     ]
-    assert all(step["status"] == "done" for step in steps)
+    assert steps[0]["status"] == "unknown"
+
+
+def test_pending_steps_use_recorded_worker_status_when_available():
+    from app.api.v1.chat import _complete_pending_steps
+
+    steps = [{"tool": "doc", "label": "搜索知识库", "status": "running", "elapsed": None}]
+    completed = _complete_pending_steps(
+        steps,
+        elapsed=3.4,
+        agent_results={"doc": {"status": "completed"}},
+    )
+
+    assert completed == [
+        {"tool": "doc", "label": "搜索知识库", "status": "completed", "elapsed": 3.4},
+    ]
+    assert steps[0]["status"] == "completed"
+
+
+def test_pending_steps_do_not_treat_worker_text_as_success():
+    from app.api.v1.chat import _complete_pending_steps
+
+    steps = [{"tool": "data", "label": "分析数据", "status": "running", "elapsed": None}]
+    completed = _complete_pending_steps(
+        steps,
+        elapsed=2.1,
+        worker_results={"data": "分析失败，未取得数据"},
+    )
+
+    assert completed[0]["status"] == "unknown"
 
 
 def test_offline_supervisor_emits_dispatch_tool_call():

@@ -1,20 +1,15 @@
 """
 Day 2: RAG 检索引擎 — 本地 Ollama Embedding
-文本分块 → Embedding 向量化 → Chroma 存储 → 检索
+文本分块 → 本地 Embedding → PostgreSQL + PGVector → 检索
 """
 import os
 import hashlib
 import json
 import time
+import threading
 import urllib.request
 from urllib.error import HTTPError, URLError
 from dotenv import load_dotenv
-try:
-    import chromadb
-    from chromadb.config import Settings
-except ModuleNotFoundError:  # pragma: no cover
-    chromadb = None
-    Settings = None
 
 load_dotenv()
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -62,8 +57,36 @@ REASON_VECTOR_MIRROR_WRITE_FAILED = "vector_mirror_write_failed"
 # ---- 检索腿稳定码（R21 判据④）：命中属于哪条腿、为什么退到那条腿 ----
 RETRIEVAL_MODE_SEMANTIC = "semantic"
 RETRIEVAL_MODE_KEYWORD = "keyword_fallback"
+
+#: 🔴 R158 · 检索结局稳定码（跟进单 §80 一 判据③）。在此之前，"向量库里找不到邻居"与
+#: "检索根本没跑成"在调用方是同一张脸：都是一个空列表。P3 那 24/135 题就是这个形状——客户
+#: 看到"没有来源"，真相是图里问不出邻居，两者在界面上无法分辨。这几枚码只进
+#: search_shape_diagnostics() 的读数，不改 search() 的返回形状、不新增任何吞异常的路径。
+RETRIEVAL_OUTCOME_ANSWERED = "answered"
+#: 走到的那条腿正常交回 0 行＝"这台机器的索引里查无此物"。不是故障。
+RETRIEVAL_OUTCOME_ZERO_ROWS = "leg_returned_zero_rows"
+#: 向量库明明交回了行，命中数却是 0＝行丢在我们这一侧（_hit_dicts 两列对不齐、或先验之前
+#: 就被裁空）。这一枚必须与上一枚可分辨，否则"我们丢了数据"会永远冒充"索引里没有"。
+RETRIEVAL_OUTCOME_ROWS_DROPPED = "rows_dropped_before_hits"
+#: 向量库抛异常：读数记下异常类名之后**照旧往上抛**，本单不把它改成空列表。
+RETRIEVAL_OUTCOME_STORE_FAILED = "vector_store_failed"
+
+#: 这一问是谁答的。热集答的与外部向量库答的必须可分辨：R44 那层是加速缓存，它交回 0 行
+#: 时外部向量库压根没被问过，把这种 0 记成"HNSW 找不到邻居"就是假账。
+RETRIEVAL_SERVER_CHROMA = "chroma"
+RETRIEVAL_SERVER_HOT_INDEX = "hot_index"
+RETRIEVAL_SERVER_KEYWORD_STORE = "keyword_scan"
+#: R59b：读路径切到 PGVector 之后，"谁答的"多一个合法答案。它不复用 chroma 那一枚：
+#: 把 PG 的答复记成 Chroma 答的，正好抹掉这一单唯一想让人看见的那件事。
+RETRIEVAL_SERVER_PGVECTOR = "pgvector"
 #: 向量后端根本不存向量（离线 _JsonCollection）时的降级原因码
 RETRIEVAL_REASON_STORE_OFFLINE = "vector_store_offline"
+#: R59 块1 判据②(a)：切读态下 PGVector 腿正常答复、就是交回 0 行。这一枚与上一枚分家，
+#: 是因为它们的成因与修法完全不同——"向量库后端没启用"是这台机器压根没有语义腿，
+#: "读腿打空"是权限谓词落空 / 索引里没有邻居（R269 §3 那 21 题的形状）。把它们记成同一枚
+#: 码，运维就分不清该去装 chromadb 还是该去查 where。与引擎无关：这条降级不是 Chroma 病，
+#: 换到 PG 之后打空照样得降级，所以它必须是一枚独立的稳定码。
+RETRIEVAL_REASON_PG_ZERO_ROWS = "pgvector_read_leg_zero_rows"
 
 #: 原因码 → 能直接拼进回答的一句话。答案侧读标签，不比对日志文案。
 EMBEDDING_REASON_LABELS = {
@@ -82,8 +105,10 @@ EMBEDDING_REASON_LABELS = {
     REASON_VECTOR_COUNT_MISMATCH: "向量条数与文本块数不符",
     REASON_VECTOR_MIRROR_UNAVAILABLE: "向量镜像（PostgreSQL）不可用，已拒绝写入",
     REASON_VECTOR_MIRROR_SCOPE_MISMATCH: "向量镜像的维度或模型口径与运行时不一致，已拒绝写入",
-    REASON_VECTOR_MIRROR_WRITE_FAILED: "向量镜像写入失败，Chroma 与 PostgreSQL 已一并回滚",
+    REASON_VECTOR_MIRROR_WRITE_FAILED: "向量写入失败，PostgreSQL 事务已回滚",
     RETRIEVAL_REASON_STORE_OFFLINE: "向量库后端未启用，无语义检索能力",
+    # R59 块1 判据②(a)：0 行降级必须说一句人话。答案侧只读这张表，不比对日志文案。
+    RETRIEVAL_REASON_PG_ZERO_ROWS: "向量库按权限查无命中，本轮改由关键词召回作答",
 }
 
 #: 降级提示模板。判据④要求"看得见"，所以这句话必须进回答，而不是只进日志。
@@ -157,6 +182,65 @@ def _record_failure_diagnostic(reason: str, model: str, detail: str) -> None:
         "detail": detail,
         "at": time.time(),
     }
+
+
+#: 🔴 R158 · 最近一次检索的形状读数与累计计数（判据③要求的"具名读数"）。
+#:
+#: 为什么放在模块级而不是挂在 DocumentRetriever 实例上：chat.py 与评测每次问答都可能新建
+#: 检索器，挂在实例上就等于把"上一问到底发生了什么"随对象一起扔了。与 _DIAGNOSTICS /
+#: hot_index._DIAGNOSTICS / pg_store._DIAGNOSTICS 同一形状：模块级、加锁、只记账、不发 IO。
+#:
+#: 刻意不包含查询原文、命中内容与任何标识符，只有数字与稳定码：这张表会被健康面与测试读，
+#: 把 query 抄进来就是 R46 隐私判据的反面教材。
+_SEARCH_SHAPE_LOCK = threading.Lock()
+_SEARCH_SHAPE: dict = {"last": None, "totals": {}, "legs": {}}
+
+
+def search_shape_diagnostics() -> dict:
+    """最近一问的形状读数 + 各结局/各答复方的累计次数。全程只读内存，不发请求。"""
+    with _SEARCH_SHAPE_LOCK:
+        last = _SEARCH_SHAPE["last"]
+        return {
+            "last": dict(last) if isinstance(last, dict) else None,
+            "totals": dict(_SEARCH_SHAPE["totals"]),
+            "answered_by": dict(_SEARCH_SHAPE["legs"]),
+        }
+
+
+def reset_search_shape() -> None:
+    """清空形状读数。只给测试用，生产代码不得调用。"""
+    with _SEARCH_SHAPE_LOCK:
+        _SEARCH_SHAPE["last"] = None
+        _SEARCH_SHAPE["totals"] = {}
+        _SEARCH_SHAPE["legs"] = {}
+
+
+def _record_search_shape(*, collection: str, answered_by: str, leg: str, reason: str,
+                         n_results: int, rows_returned: int, hits_built: int,
+                         outcome: str, store_error: str = "") -> None:
+    """把一问的形状记下来，并累计两笔数：结局计数与答复方计数。
+
+    读数里全是**具名数字与稳定码**，没有"是不是失败了"这种布尔量：判据③要的是能指名道姓
+    读出"哪个 collection、要几行、回几行、谁答的、有没有走过降级腿"，布尔量答不了这些。
+    """
+    reading = {
+        "collection": str(collection or ""),
+        "answered_by": str(answered_by or ""),
+        "leg": str(leg or ""),
+        "degradation_reason": str(reason or ""),
+        "n_results_requested": int(n_results),
+        "rows_returned": int(rows_returned),
+        "hits_built": int(hits_built),
+        "rows_lost": int(rows_returned) - int(hits_built),
+        "outcome": str(outcome or ""),
+        "store_error": str(store_error or ""),
+    }
+    with _SEARCH_SHAPE_LOCK:
+        _SEARCH_SHAPE["last"] = reading
+        _SEARCH_SHAPE["totals"][reading["outcome"]] = \
+            _SEARCH_SHAPE["totals"].get(reading["outcome"], 0) + 1
+        _SEARCH_SHAPE["legs"][reading["answered_by"]] = \
+            _SEARCH_SHAPE["legs"].get(reading["answered_by"], 0) + 1
 
 
 def _classify_http_error(exc: HTTPError) -> str:
@@ -595,6 +679,220 @@ def activity_prior_value(counts) -> float:
     return max(-cap, min(cap, raw))
 
 
+# ==================== R46 差格 a · 点击/浏览先验（出处被真看过 → 相关度先验）====================
+#
+# 跟进单 §21 那句「采纳/驳回/点击 → 相关度先验」里的第三枚信号，落在 migrations/0019 那张
+# 事件表上，本段是它的**读腿**。它刻意长成上面那段采纳/驳回先验的形状——同一套 TTL、同一套
+# 退避、同一套 fail-open、同一套观测面，最后与那一合成**一枚**先验。两套各长一套兜底逻辑的
+# 下场是没人说得清这一次排序到底听谁的，而判据②那句「没信号时与现状一致」也就没了尺。
+#
+# 🔴 两路信号合成一个数，位移界**不因此变宽**：ACTIVITY_PRIOR_MAX_SHIFT_RANKS 说的从来不是
+# 「采纳这一路最多挪几名」，而是「先验这一手最多挪几名」（R153 的原话）。所以合并值夹回同
+# 一根 ±1 名，而不是 1+1=2。点击证据再厚也只买到「在同一次交换名额里赢过隔壁」，买不到第二格
+# 位移——这条由 tests/test_r46c_engagement_prior.py 拿腿宽 5/12/40 各量一遍钉住。
+#
+# 冷启动（判据②）：这一路没有「分数」这回事，0.0 的含义是**不动名次**，不是「这篇值零分」。
+# 从没人点过的文档与刚入库的新文档在这一路拿同一个中性值，排序退回名次分本身，于是新文档永远
+# 靠相关性还有上位的机会，不会被「历史点击多」那一族永久压住。反过来样本太少时先验按
+# confidence = 样本数 / ENGAGEMENT_MIN_SAMPLES 往中性收缩，「第一个点的人替整篇定序」不发生。
+
+#: 整表快照的进程内 TTL 与读失败退避：与 ACTIVITY_PRIOR_* 同值同理由（一次库故障最多拖慢一个
+#: 窗口，而不是拖慢每一问），但**各自一份状态**——一路读到、一路读不通是两种真实，合成一个
+#: "读不到"就把可核对性丢了。
+ENGAGEMENT_PRIOR_TTL_SECONDS = 30.0
+ENGAGEMENT_PRIOR_RETRY_SECONDS = 10.0
+ENGAGEMENT_PRIOR_CACHED_SOURCES = frozenset({"store", "error"})
+
+#: 证据权重：把一条出处**点开**比**展开看了一眼**更强，所以一枚 click 记一份、一枚 view 记
+#: 半份。这枚比值是口径，不是校准结果——真库强度欠一台安静机器量（见交工纸「未验的格子」）。
+ENGAGEMENT_CLICK_WEIGHT = 1.0
+ENGAGEMENT_VIEW_WEIGHT = 0.5
+#: 分母上先垫的五次空看：与 ACTIVITY_PRIOR_SMOOTHING 同一个理由——第一枚证据不该替整篇定序。
+ENGAGEMENT_PRIOR_SMOOTHING = 5.0
+#: 样本数下限：攒够这么多枚动作之前，先验按 support / 本数 往中性收缩；不足一枚都不给满格。
+ENGAGEMENT_MIN_SAMPLES = 5
+#: 🔴 与采纳/驳回共用同一根界：合并后仍是一枚名次，本单一秒都不放宽。
+ENGAGEMENT_PRIOR_MAX_SHIFT_RANKS = ACTIVITY_PRIOR_MAX_SHIFT_RANKS
+
+#: 观测面：与 _ACTIVITY_PRIOR_STATE 同形状，两路各自记自己读没读到（判据⑤那句「读不到」与
+#: 「没信号」必须分得开，在两路上都得分得开）。
+_ENGAGEMENT_PRIOR_STATE: dict = {
+    "loaded_at": 0.0,
+    "expires_at": 0.0,
+    "documents": 0,
+    "source": "never",
+    "reason": "",
+}
+_CACHED_ENGAGEMENT_PRIORS: dict = {}
+
+
+def _read_engagement_rows() -> list[tuple]:
+    """整表聚合读动作，交回 (filename, clicks, views) 元组列表。读不成一律往外抛。
+
+    🔴 列清单只有文档标识与两枚 COUNT：username 在这一条语句里**连出现的位置都没有**，所以
+    「谁点的」进不了排序，只进得了审计与本表。想按人加权就得改这条字面量，而那一步会先被
+    tests/test_r46c_engagement_prior.py 的列名清单拦下。表还没建（业主未跑 0019）与库连不上都
+    照样抛出去，由 engagement_priors() 那层退化成"没有先验"。
+    """
+    from app.db.connection import open_connection, parse_database_settings
+    # 函数内 import：与 _read_activity_signal_rows 同一条理由（pg_store 反向 import 本模块）。
+    from app.rag import pg_store
+
+    url = pg_store.resolve_database_url()
+    if "connect_timeout=" not in url:
+        url = url + ("&" if "?" in url else "?") + (
+            "connect_timeout=" + str(ACTIVITY_PRIOR_CONNECT_TIMEOUT_SECONDS)
+        )
+    # 边界只转发 conninfo，所以超时随 DSN 走；行工厂不动，仍是驱动自己的元组缺省。
+    with open_connection(parse_database_settings(url)) as connection:
+        rows = connection.execute(
+            "SELECT filename, "
+            "COUNT(*) FILTER (WHERE event_type = 'click') AS clicks, "
+            "COUNT(*) FILTER (WHERE event_type = 'view') AS views "
+            "FROM document_engagement_events GROUP BY filename"
+        ).fetchall()
+    return [
+        (str(row[0]), int(row[1]), int(row[2]))
+        for row in rows
+        if str(row[0] or "").strip()
+    ]
+
+
+def engagement_priors(*, now: float | None = None, row_reader=None) -> dict[str, dict]:
+    """filename -> {"clicks", "views"}：带 TTL 缓存，**fail-open**（与 activity_priors 同一套）。"""
+    import time as _time
+
+    clock = _time.monotonic if now is None else (lambda: float(now))
+    if row_reader is None:
+        if (
+            _ENGAGEMENT_PRIOR_STATE["source"] in ENGAGEMENT_PRIOR_CACHED_SOURCES
+            and clock() < _ENGAGEMENT_PRIOR_STATE["expires_at"]
+        ):
+            return dict(_CACHED_ENGAGEMENT_PRIORS)
+        row_reader = _read_engagement_rows
+    try:
+        rows = list(row_reader() or [])
+    except Exception as exc:
+        # 异常名走 __class__.__name__ 而不是 type(exc).__name__：两枚读数同值，但后者那行字面量
+        # 是 tests/test_r525_counter_evidence_teeth.py 里 K6 那把反证刀的锚点，锚点要求**全文件
+        # 唯一**（不唯一的刀等于没动东西）。新读腿不能把别人那把刀磨钝——措辞换形，语义一字不漂。
+        _CACHED_ENGAGEMENT_PRIORS.clear()
+        _ENGAGEMENT_PRIOR_STATE.update(
+            {
+                "source": "error",
+                "reason": exc.__class__.__name__,
+                "documents": 0,
+                "loaded_at": clock(),
+                "expires_at": clock() + ENGAGEMENT_PRIOR_RETRY_SECONDS,
+            }
+        )
+        logger.warning(f"点击/浏览事件读不到，本次排序不动用这一路先验: {exc}")
+        return {}
+    priors = {
+        str(name): {"clicks": int(clicks), "views": int(views)}
+        for name, clicks, views in rows
+    }
+    _CACHED_ENGAGEMENT_PRIORS.clear()
+    _CACHED_ENGAGEMENT_PRIORS.update(priors)
+    _ENGAGEMENT_PRIOR_STATE.update(
+        {
+            "loaded_at": clock(),
+            "expires_at": clock() + ENGAGEMENT_PRIOR_TTL_SECONDS,
+            "documents": len(priors),
+            "source": "store",
+            "reason": "",
+        }
+    )
+    return dict(priors)
+
+
+def engagement_prior_diagnostics() -> dict:
+    """这一路的可读数：读没读成、几篇、为什么（开关沿用 activity 那一枚，见下面注释）。"""
+    return {
+        "enabled": activity_prior_enabled(),
+        "source": _ENGAGEMENT_PRIOR_STATE["source"],
+        "reason": _ENGAGEMENT_PRIOR_STATE["reason"],
+        "documents": int(_ENGAGEMENT_PRIOR_STATE["documents"]),
+        "max_shift_ranks": ENGAGEMENT_PRIOR_MAX_SHIFT_RANKS,
+        "click_weight": ENGAGEMENT_CLICK_WEIGHT,
+        "view_weight": ENGAGEMENT_VIEW_WEIGHT,
+        "smoothing": ENGAGEMENT_PRIOR_SMOOTHING,
+        "min_samples": ENGAGEMENT_MIN_SAMPLES,
+    }
+
+
+def reset_engagement_priors() -> None:
+    """清掉这一路的缓存与观测面。"""
+    _CACHED_ENGAGEMENT_PRIORS.clear()
+    _ENGAGEMENT_PRIOR_STATE.update(
+        {"loaded_at": 0.0, "expires_at": 0.0, "documents": 0, "source": "never", "reason": ""}
+    )
+
+
+def reset_signal_priors() -> None:
+    """两本账一起清：写成功之后调用，免得「回执说点过、排序还按没点过排」。
+
+    排序一次读两路，快照就必须同生同死；只清一路等于让另一路带着旧账参加下一次比较。
+    """
+    reset_activity_priors()
+    reset_engagement_priors()
+
+
+def engagement_prior_value(counts) -> float:
+    """一篇文档靠点击/浏览挣到的先验，单位是**名次**；没动作＝0.0＝不动名次。
+
+    🔴 这一路**只抬不压**：返回值恒在 [0, 界]。没人点过不等于不好，可能是刚入库、可能是这道题
+    本来就没人往下翻——把「零证据」读成负分，新文档就永久翻不了身，那正是判据②点名要拦的读法。
+    两列计数都是 0 与「这一篇压根不在表里」在这里给出同一个 0.0，而两者与「读不通」在观测面上
+    分得开（source 为 store / error）。
+    """
+    if not isinstance(counts, dict):
+        return 0.0
+    try:
+        clicks = int(counts.get("clicks") or 0)
+        views = int(counts.get("views") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if clicks < 0 or views < 0:
+        return 0.0
+    support = clicks + views
+    if support <= 0:
+        return 0.0
+    cap = float(ENGAGEMENT_PRIOR_MAX_SHIFT_RANKS)
+    evidence = ENGAGEMENT_CLICK_WEIGHT * clicks + ENGAGEMENT_VIEW_WEIGHT * views
+    # 冷启动收缩：证据不足下限就按比例往中性拉，攒够之后 confidence 恒为 1，不再随样本变。
+    confidence = min(1.0, support / float(ENGAGEMENT_MIN_SAMPLES))
+    raw = cap * evidence / (evidence + ENGAGEMENT_PRIOR_SMOOTHING) * confidence
+    return max(0.0, min(cap, raw))
+
+
+def merge_signal_priors(activity, engagement) -> dict[str, dict]:
+    """把两路计数并成排序吃的那一份：一路缺席不抹掉另一路。"""
+    merged: dict[str, dict] = {}
+    for table in (activity, engagement):
+        for source, counts in (table or {}).items():
+            name = str(source or "")
+            if not name:
+                continue
+            row = merged.setdefault(name, {})
+            if isinstance(counts, dict):
+                row.update(counts)
+    return merged
+
+
+def signal_prior_value(counts) -> float:
+    """一次比较用的合并不值：两路各自算，再夹回**同一根**界。
+
+    夹界而不是相加后就交出去，是判据②「位移界不许放宽」的落点：采纳与点击各自顶满时，简单
+    相加会给出 2 枚名次，而名次空间的交换轮数仍是一轮——那一轮至多换一名，多出来的 1 既量不到
+    也说不清，只留下"常数写 1、实际行为像 2"的口径漂移。夹回 ±1 名之后，两路信号买到的是
+    「在同一次交换名额里谁赢」，买不到第二格位移。
+    """
+    cap = float(ACTIVITY_PRIOR_MAX_SHIFT_RANKS)
+    total = activity_prior_value(counts) + engagement_prior_value(counts)
+    return max(-cap, min(cap, total))
+
+
 def _hit_source(hit) -> str:
     """命中里那个文档标识；不是字典、或没带 source，一律读成空串（＝这一条拿不到先验）。
 
@@ -654,11 +952,16 @@ def rank_hits_by_activity(hits, priors, *, enabled: bool = True, rank_base: int 
 
     列表里混进非字典条目时，那些条目按 _hit_source 的口径拿不到先验、也不被注记，只按原名次
     参与交换：本函数对畸形输入交回的是排好序的原条目，不是异常。
+
+    R46 差格 a 在本函数上只动了一处：算 strength 的那一枚函数从 activity_prior_value 换成
+    signal_prior_value（采纳/驳回 + 点击/浏览，夹回同一根界）。注记的键清单一个字都不加——
+    它是答案侧的契约（tests/test_r153_prior_shift_is_bounded.py::NOTE_KEYS 判等），要加长它
+    得先改判据。点击那一路的证据由 GET /api/v1/feedback/engagement 现读，不塞进这枚注记。
     """
     if not enabled or not isinstance(hits, list) or not hits:
         return hits
     lookup = priors or {}
-    strengths = [activity_prior_value(lookup.get(_hit_source(hit))) for hit in hits]
+    strengths = [signal_prior_value(lookup.get(_hit_source(hit))) for hit in hits]
     if not any(strengths):
         return hits
     carriers = []
@@ -691,7 +994,7 @@ def rank_hits_by_activity(hits, priors, *, enabled: bool = True, rank_base: int 
 
 
 class DocumentRetriever:
-    """文档检索引擎：管理 Chroma 向量库
+    """文档检索引擎：PostgreSQL + PGVector 为唯一存储
 
     两条检索腿的语义（R21）：MODE_SEMANTIC 是 embedding + 向量库那一路；
     MODE_KEYWORD 是 embedding 不可用时的降级召回，命中里带原因码，答案侧必须据此标注
@@ -703,101 +1006,14 @@ class DocumentRetriever:
     MODE_SEMANTIC = RETRIEVAL_MODE_SEMANTIC
     MODE_KEYWORD = RETRIEVAL_MODE_KEYWORD
     REASON_STORE_OFFLINE = RETRIEVAL_REASON_STORE_OFFLINE
+    #: R59 块1 判据②(a)：切读态下 PG 腿打空时，命中带上的降级码（与上一枚分家，见模块注释）
+    REASON_PG_ZERO_ROWS = RETRIEVAL_REASON_PG_ZERO_ROWS
 
-    def __init__(self, chroma_dir: str = "./chroma_db", *, activity_prior=None):
-        os.makedirs(chroma_dir, exist_ok=True)
-        self.chroma_dir = chroma_dir
-        # R46：计数表的读取方可注入（测试不连库也能验排序），默认走进程内缓存的
-        # 整表快照。注入一个返回 {} 的 callable 就等于关掉先验，不改排序语义。
+    def __init__(self, *, activity_prior=None, engagement_prior=None):
         self._activity_prior_loader = activity_prior or activity_priors
-        if chromadb is None:
-            class _JsonCollection:
-                def __init__(self, path):
-                    self.path = path
-                    self.records = self._load()
-
-                def _load(self):
-                    if not os.path.isfile(self.path):
-                        return []
-                    try:
-                        with open(self.path, "r", encoding="utf-8") as handle:
-                            return json.load(handle)
-                    except (OSError, ValueError):
-                        return []
-
-                def _save(self):
-                    with open(self.path, "w", encoding="utf-8") as handle:
-                        json.dump(self.records, handle, ensure_ascii=False)
-
-                @staticmethod
-                def _matches(metadata, where):
-                    # R44：判定本体已抽到模块级 metadata_matches，离线态与热集共用一份。
-                    return metadata_matches(metadata, where)
-
-                def get(self, where=None):
-                    records = [
-                        item for item in self.records
-                        if self._matches(item["metadata"], where)
-                    ]
-                    return {
-                        "ids": [item["id"] for item in records],
-                        "documents": [item["document"] for item in records],
-                        "metadatas": [item["metadata"] for item in records],
-                    }
-
-                def add(self, ids, documents, metadatas, **kwargs):
-                    self.records = [
-                        item for item in self.records
-                        if item["id"] not in set(ids)
-                    ]
-                    self.records.extend(
-                        {
-                            "id": item_id,
-                            "document": document,
-                            "metadata": metadata,
-                        }
-                        for item_id, document, metadata in zip(ids, documents, metadatas)
-                    )
-                    self._save()
-
-                def delete(self, ids, **kwargs):
-                    ids_to_delete = set(ids)
-                    self.records = [
-                        item for item in self.records
-                        if item["id"] not in ids_to_delete
-                    ]
-                    self._save()
-
-                def query(self, n_results=5, where=None, **kwargs):
-                    records = [
-                        item for item in self.records
-                        if self._matches(item["metadata"], where)
-                    ]
-                    query_text = str(kwargs.get("query_text", "")).lower()
-                    if query_text:
-                        query_tokens = set(_tokenize_for_fallback(query_text))
-                        records.sort(
-                            key=lambda item: len(
-                                query_tokens.intersection(
-                                    set(_tokenize_for_fallback(item["document"]))
-                                )
-                            ),
-                            reverse=True,
-                        )
-                    records = records[:n_results]
-                    return {
-                        "documents": [[item["document"] for item in records]],
-                        "metadatas": [[item["metadata"] for item in records]],
-                    }
-
-            self.client = None
-            self.collection = _JsonCollection(os.path.join(chroma_dir, "offline_collection.json"))
-        else:
-            self.client = chromadb.PersistentClient(
-                path=chroma_dir,
-                settings=Settings(anonymized_telemetry=False)
-            )
-            self.collection = self.client.get_or_create_collection("enterprise_docs")
+        self._engagement_prior_loader = engagement_prior or engagement_priors
+        from app.rag.pg_store import PgVectorCollection
+        self.collection = PgVectorCollection()
         self.embedding = OllamaEmbeddings()
         #: 上一次检索实际走的腿与降级原因，见 last_search_mode / last_search_reason
         self._last_search_mode = self.MODE_SEMANTIC
@@ -825,12 +1041,8 @@ class DocumentRetriever:
 
     @property
     def stores_vectors(self) -> bool:
-        """当前后端是否真的存向量。
-
-        chromadb 缺失时 __init__ 退到 _JsonCollection，它只有文本与元数据、没有向量列，
-        所以那里不可能写出零向量，但也不能假装自己是语义库。形态判断只在这里问一次。
-        """
-        return chromadb is not None
+        """The PostgreSQL vector column is mandatory, independent of legacy packages."""
+        return True
 
     @property
     def last_search_mode(self) -> str:
@@ -989,6 +1201,61 @@ class DocumentRetriever:
         index.populate(rows, scope_key=scope_key)
         return ""
 
+    def _pgvector_hits(self, query_embedding, k: int, where: dict | None, *,
+                       query: str = ""):
+        """Read PGVector with permissions applied before top-k; no alternate store."""
+        from app.rag import indexing as indexing_module
+        from app.rag import pg_store
+
+        if not indexing_module.pgvector_reads_enabled():
+            return None
+        try:
+            rows = pg_store.read_topk(query_vector=query_embedding, k=k, where=where)
+        except Exception as exc:
+            self._note_store_failure(exc, k, self.MODE_SEMANTIC)
+            raise
+        pg_store.note_read_answered(len(rows))
+        if not rows:
+            # 判据②(a) 的正身。日志只报形状不报值：where 里是别人的部门名与密级档位，
+            # 而这一行随时可能被捞进工单，R158 那条"读数不带正文"的隐私口径同样管日志。
+            logger.warning(
+                f"PGVector 读腿交回 0 行（请求 {k} 名，"
+                f"{'带' if where else '不带'}权限谓词），本次退化为关键词召回"
+            )
+            degraded = self._keyword_hits(query, k, where,
+                                          RETRIEVAL_REASON_PG_ZERO_ROWS)
+            self._note_search_shape(
+                answered_by=RETRIEVAL_SERVER_KEYWORD_STORE,
+                leg=self.MODE_KEYWORD,
+                reason=RETRIEVAL_REASON_PG_ZERO_ROWS,
+                n_results=k,
+                rows_returned=len(degraded),
+                hits_built=len(degraded),
+                outcome=self._outcome_for(len(degraded), len(degraded)),
+            )
+            return degraded
+        metadatas = [{
+            "filename": row.get("filename") or "unknown",
+            "chunk_index": row.get("chunk_index"),
+            "classification": row.get("classification"),
+            "department": row.get("department") or "",
+            "index_version_id": row.get("index_version_id"),
+            "content_sha256": row.get("content_sha256"),
+        } for row in rows]
+        hits = self._hit_dicts([row.get("content") for row in rows], metadatas,
+                               self.MODE_SEMANTIC, "")
+        self._note_search(self.MODE_SEMANTIC, "")
+        self._note_search_shape(
+            answered_by=RETRIEVAL_SERVER_PGVECTOR,
+            leg=self.MODE_SEMANTIC,
+            reason="",
+            n_results=k,
+            rows_returned=len(rows),
+            hits_built=len(hits),
+            outcome=self._outcome_for(len(rows), len(hits)),
+        )
+        return hits
+
     def _hot_hits(self, query_embedding, k: int, where: dict | None, pred):
         """热集那一腿：能服务就交回命中字典，不能服务返回 None，调用方原路走外部向量库。
 
@@ -998,7 +1265,14 @@ class DocumentRetriever:
         走 hot_index_diagnostics()。
         """
         from app.rag import hot_index
+        from app.rag import indexing as indexing_module
 
+        if indexing_module.pgvector_reads_enabled():
+            # R59b：热集常驻的是 Chroma 那一份向量。读路径切到 PG 之后它不许再抢答，否则
+            # "切了读"只对热集问不出的那部分生效，剩下的大半流量仍在读旧引擎——半切比不切
+            # 更难查，因为诊断里它长得像已经切完了。让路不是故障，单独一枚原因码。
+            hot_index.note_bypass(hot_index.REASON_READ_BACKEND_SWITCHED)
+            return None
         if not hot_index.hot_index_enabled():
             return None
         if k <= 0:
@@ -1028,223 +1302,84 @@ class DocumentRetriever:
         # 热集命中不是降级：检索腿标注与外部向量库那条完全同值（R21 判据④的口径），
         # 所以这里照样过一遍 _note_search，last_search_mode/reason 不会停在上一问的关键词腿。
         self._note_search(self.MODE_SEMANTIC, "")
-        return self._hit_dicts(
+        hits = self._hit_dicts(
             [item[2] for item in ranked],
             [item[3] for item in ranked],
             self.MODE_SEMANTIC,
             "",
         )
-
-    def _write_batch(self, ids, documents, metadatas, embeddings, *, mirror=None):
-        """全库唯一允许把向量交给向量库的入口（R21 判据②）。
-
-        不合格向量在这里抛，写不进去就是写不进去，不做任何"悄悄换成别的值"的处理。
-        未来的双写/迁移路径也应当走这里，而不是各自再抄一份 collection.add。
-
-        R58：mirror 是 app/rag/pg_store.py 的 VectorMirror，默认 None。传进来时写序是
-        "PG 先、Chroma 次"，commit 由调用方在两腿都写完之后发起 —— 两腿共用调用方那一个
-        PG 事务，任何一侧失败都在那里整体回滚。不传（开关关闭，默认）时本函数发出的语句
-        与 R58 之前逐条一致，一条新 SQL 都没有。
-        """
-        if not self.stores_vectors:
-            logger.warning("向量库后端不存向量：本次只写入文本与元数据，检索按关键词降级")
-            self.collection.add(ids=ids, documents=documents, metadatas=metadatas)
-            return
-        assert_writable_embeddings(
-            embeddings, len(documents), cause=self._embedding_failure_reason()
+        # R158：热集交回 0 行时外部向量库压根没被问过。把这种 0 记成"HNSW 找不到邻居"就是
+        # 假账，所以 answered_by 明确写 hot_index——读数的价值就在于能指名是谁答的。
+        self._note_search_shape(
+            answered_by=RETRIEVAL_SERVER_HOT_INDEX,
+            leg=self.MODE_SEMANTIC,
+            reason="",
+            n_results=k,
+            rows_returned=len(ranked),
+            hits_built=len(hits),
+            outcome=self._outcome_for(len(ranked), len(hits)),
         )
-        if mirror is not None:
-            # PG 腿先写：它失败时 Chroma 一个字都没动，调用方回滚一个空事务即可。
-            mirror.add(
-                ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings
-            )
-        self.collection.add(
-            ids=ids,
-            documents=documents,
-            embeddings=list(embeddings),
-            metadatas=metadatas,
-        )
+        return hits
+
+    def _write_batch(self, ids, documents, metadatas, embeddings, mirror=None):
+        assert_writable_embeddings(embeddings, len(documents), cause=self._embedding_failure_reason())
+        if mirror is None:
+            raise VectorWriteRejectedError("PGVector 事务未建立，拒绝写入", reason=REASON_VECTOR_MIRROR_UNAVAILABLE)
+        mirror.add(ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings)
 
     # ==================== R58 双写镜像钩子 ====================
 
     def _open_vector_mirror(self):
-        """按开关开一条 PGVector 镜像腿；开关关闭（默认）时返回 None。
-
-        返回 None 就是"不装 pgvector 也能跑"的全部机制：本方法一不建连接、二不发 SQL。
-        app.rag.pg_store 在函数内 import，因为 pg_store 反过来 import 本模块的稳定码与
-        闸门，模块级互引会成循环 import。
-        """
-        if not self.stores_vectors:
-            # 离线 _JsonCollection 后端根本不存向量，没有东西可镜像。
-            return None
         from app.rag import pg_store
-
         return pg_store.vector_mirror()
 
-    def _vector_snapshot(self, ids):
-        """删旧向量前把旧行原样读出，供两腿回滚时逐字放回。
+    def _writes_go_to_pgvector(self) -> bool:
+        return True
 
-        必须带 embeddings 一起读：不带的话放回时 Chroma 会用默认 embedding function 重算，
-        那正是 R22 要挡的"一个库里两套向量"。读不到向量就返回 None，调用方据此放弃这次
-        双写（宁可上传失败，也不留下一个无法忠实还原的中间态）。
-        """
-        try:
-            snapshot = self.collection.get(
-                ids=list(ids), include=["documents", "metadatas", "embeddings"]
-            )
-        except Exception as exc:
-            logger.warning(f"读取旧向量快照失败，双写无法回滚: {exc}")
-            return None
-        existing_ids = list(snapshot.get("ids") or [])
-        if not existing_ids:
-            return {"ids": [], "documents": [], "metadatas": [], "embeddings": []}
-        vectors = snapshot.get("embeddings")
-        if vectors is None or len(vectors) != len(existing_ids):
-            logger.warning(f"旧向量快照缺少 embeddings（{len(existing_ids)} 条），放弃双写")
-            return None
-        return {
-            "ids": existing_ids,
-            "documents": list(snapshot.get("documents") or []),
-            "metadatas": list(snapshot.get("metadatas") or []),
-            "embeddings": [list(vector) for vector in vectors],
-        }
 
-    def _undo_vector_write(self, mirror, written_ids, snapshot, *, stale_deleted=True):
-        """两腿一起退回本次写入之前：PG 回滚事务，Chroma 撤掉新写、放回旧行。
 
-        mirror.rollback() 是硬要求：PG 侧的失败定义就是"这个事务一个向量都不留"。Chroma
-        侧是 best-effort（撤不动就记日志，业务异常照样往上抛），因为 Chroma 没有事务，能
-        做的只有逆序补偿；补偿失败的窗口写进交付说明的"必须业主真机"清单。
+    def _document_rows_by_leg(self, filename: str):
+        from app.rag import pg_store
+        return [], [], pg_store.document_vector_rows(filename=filename)
 
-        stale_deleted 必须是 Chroma 那一次 delete 真的成功之后才为真：没删过就不能凭空
-        add 一遍，否则"回滚"本身会变成一次写入。
-        """
-        try:
+
+
+    def _undo_vector_write(self, mirror, written_ids, snapshot, *, stale_deleted=False):
+        if mirror is not None:
             mirror.rollback()
-        except Exception as exc:
-            logger.error(f"向量镜像回滚失败，PG 事务状态未知: {exc}")
-        try:
-            if written_ids:
-                self.collection.delete(ids=list(written_ids))
-            if stale_deleted and snapshot and snapshot.get("ids"):
-                self.collection.add(
-                    ids=snapshot["ids"],
-                    documents=snapshot["documents"],
-                    metadatas=snapshot["metadatas"],
-                    embeddings=snapshot["embeddings"],
-                )
-        except Exception as exc:
-            logger.error(f"Chroma 腿补偿回滚未完成，需人工核对双写状态: {exc}")
-        # R44：无论补偿成没成，这次写入都不算数了，热集整体作废，下一次检索重读向量库。
-        self._note_hot_reset("vector_write_rolled_back")
 
-    def add_document(self, filename: str, content: str,
-                     classification: int = 1, department: str | None = None) -> tuple[bool, str]:
-        """
-        添加文档到向量库。
-        返回 (是否成功, 消息)
-        · 同文件内容未变 → 跳过
-        · 同文件名内容变了 → 删旧加新
-        · 新文件 → 直接加
-
-        R21：embedding 不可用时抛 EmbeddingError（原因码可区分模型没装/超时/拒绝服务），
-        交给调用方处理 —— app/api/v1/chat.py 的上传端点已把它转成 500 +
-        document_index_failed。过去这里返回"已添加 N 个文本块"而向量全是零，属静默失败。
-        """
+    def add_document(self, filename: str, content: str, classification: int = 1,
+                     department: str = "") -> tuple[bool, str]:
+        from app.rag import pg_store
         new_hash = self._file_hash(content)
-
-        # 检查是否已存在同名文件。这里只记下旧 id，删除动作推迟到向量合格之后。
-        existing = self.collection.get(where={"filename": filename})
-        stale_ids = list(existing["ids"])
-        if stale_ids:
-            old_hash = existing["metadatas"][0].get("hash", "")
-            if old_hash == new_hash:
-                logger.info(f"文件未变化，跳过: {filename}")
-                return False, "文件内容未变化，已跳过"
-
-        # 分块
+        old_rows = pg_store.document_vector_rows(filename=filename)
+        if old_rows and str(old_rows[0].get("hash") or "") == new_hash:
+            return False, "文件内容未变化，已跳过"
         chunks = self.splitter.split_text(content)
         if not chunks:
             return False, "文档内容为空"
-
-        logger.info(f"分块完成: {filename} → {len(chunks)} 块")
-
-        # 向量化。后端不存向量时一个向量都不问：过去的无条件 embed_documents 会在离线
-        # _JsonCollection 上为每个 chunk 白付一次注定失败的 embedding 往返（R56 端口闸门
-        # 实测命中），而它的返回值在 _write_batch 里又被整个丢掉。search 与 _write_batch
-        # 都已按 stores_vectors 收口，写库这条是漏网的那一处。
-        embeddings = self.embedding.embed_documents(chunks) if self.stores_vectors else []
-
-        # 存入 Chroma
+        embeddings = self.embedding.embed_documents(chunks)
+        assert_writable_embeddings(embeddings, len(chunks), cause=self._embedding_failure_reason())
         ids = [f"{filename}_{i}" for i in range(len(chunks))]
-        # 阶段 2：每个 chunk 带密级/部门元数据，供检索层过滤
-        metadatas = [
-            {"filename": filename, "chunk_index": i, "hash": new_hash,
-             "classification": int(classification), "department": department or ""}
-            for i in range(len(chunks))
-        ]
-        # R21：先验后删。向量不合格就在这里抛，一行业务数据都不动。
-        # 过去的顺序是"删旧版本 → 向量化 → 写库"，embedding 挂掉时旧向量已被删、
-        # 新向量又写不进，重传同名文档等于把它从索引里删掉。预检与 _write_batch
-        # 调的是同一个 assert_writable_embeddings，不存在两套标准。
-        if self.stores_vectors:
-            assert_writable_embeddings(
-                embeddings, len(chunks), cause=self._embedding_failure_reason()
-            )
-
-        # R58：镜像腿在"先验后删"之后才开。开关关闭（默认）时 mirror 是 None，从这里
-        # 往下发出的调用序列与本文件在 R58 之前逐条一致：一次 delete、若干次 add、没有
-        # commit，也没有一条 SQL。
-        mirror = self._open_vector_mirror()
-        snapshot = None
-        written_ids = []
-        stale_deleted = False
+        metadatas = [{"filename": filename, "chunk_index": i, "hash": new_hash,
+                      "classification": int(classification), "department": department or ""}
+                     for i in range(len(chunks))]
+        old_ids = [r["vector_id"] for r in old_rows]
+        transaction = self._open_vector_mirror()
         try:
-            if mirror is not None and stale_ids:
-                # 删之前先留快照：PG 侧的回滚是事务级的，Chroma 侧只能靠它逆序放回。
-                snapshot = self._vector_snapshot(stale_ids)
-                if snapshot is None:
-                    raise VectorWriteRejectedError(
-                        f"拒绝写入向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: 双写已开启，"
-                        f"但 {filename} 的旧向量读不出快照，删掉就无法忠实还原",
-                        reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
-                    )
-            if stale_ids:
-                if mirror is not None:
-                    mirror.delete(ids=list(stale_ids))
-                self.collection.delete(ids=stale_ids)
-                stale_deleted = True
-                logger.info(f"已删除旧版本: {filename}")
-                # R44：删掉的旧向量在热集里也不能留下（判据④同名重传那一半）。
-                self._note_hot_delete(stale_ids)
-
-            batch_size = 2000
-            for start, end in self._batch_ranges(len(chunks), batch_size):
-                self._write_batch(
-                    ids=ids[start:end],
-                    documents=chunks[start:end],
-                    embeddings=embeddings[start:end],
-                    metadatas=metadatas[start:end],
-                    mirror=mirror,
-                )
-                written_ids.extend(ids[start:end])
-            if mirror is not None:
-                # 两腿都写完才 commit：这个 PG 事务里躺着本次全部删与写，提交失败就整体退回。
-                mirror.commit()
+            if old_ids:
+                transaction.delete(ids=old_ids)
+            for start, end in self._batch_ranges(len(chunks), 2000):
+                self._write_batch(ids[start:end], chunks[start:end], metadatas[start:end],
+                                  embeddings[start:end], mirror=transaction)
+            transaction.commit()
         except Exception:
-            if mirror is not None:
-                self._undo_vector_write(mirror, written_ids, snapshot,
-                                        stale_deleted=stale_deleted)
+            transaction.rollback()
             raise
         finally:
-            if mirror is not None:
-                mirror.close()
-
-        # R44：两腿都写完、mirror 也已 close 之后才告知热集，用的就是刚写进库的那批向量，
-        # 所以热集与库同源，不会再算一遍 embedding。开关关闭时这个调用一个字节都不写。
-        self._note_hot_write(written_ids, chunks, metadatas, embeddings)
-
-        logger.info(f"入库完成: {filename} → {len(chunks)} 块")
+            transaction.close()
+        self._note_hot_delete(old_ids)
+        logger.info(f"PGVector 已索引文档: {filename} → {len(chunks)} 块")
         return True, f"已添加 {len(chunks)} 个文本块"
 
     # ==================== 检索 ====================
@@ -1260,6 +1395,8 @@ class DocumentRetriever:
                 "content": doc,
                 "source": meta.get("filename", "unknown"),
                 "chunk_index": meta.get("chunk_index", 0),
+                **({"index_version_id": meta.get("index_version_id")} if meta.get("index_version_id") else {}),
+                **({"content_sha256": meta.get("content_sha256")} if meta.get("content_sha256") else {}),
                 # R57 fail-closed。此行原为 meta.get("classification", 1)。本方法的命中字典
                 # 会被直接喂进权限判定：app/api/v1/chat.py 的 scope.allows(source)，以及
                 # app/rag/retrieval_pipeline.py 语义腿上的 _retain_permitted(pred=
@@ -1280,59 +1417,93 @@ class DocumentRetriever:
             for doc, meta in zip(documents, metadatas)
         ]
 
-    def search(self, query: str, k: int = 5, where: dict | None = None,
-               pred=None) -> list[dict]:
-        """语义检索。where 为权限过滤（下推到向量库），None 不过滤
-
-        R21：embedding 不可用时不再拿占位零向量去问向量库（那等于问不出任何排序信息，
-        却装作问过），而是把这一路退化成关键词召回，并把原因码写进命中与
-        last_search_reason。两条腿的权限过滤都发生在截断之前。
-
-        R44：新增的 pred 只被热集那一腿消费（不传就是 None，热集仍按 where 逐条预过滤），
-        外部向量库那条路径的调用序列与本单之前逐字一致。把同一个权限谓词在热集截断之前再过
-        一遍，是因为热集是进程内的本地扫描：它没有"下推"这回事，不显式过滤就会把别人的高分
-        chunk 排进名次里再丢掉，那正是 R45 裁掉的召回饥饿形态。
-        """
-        if self.stores_vectors:
-            try:
-                query_embedding = self.embedding.embed_query(query)
-            except EmbeddingError as exc:
-                logger.error(f"向量腿下线，本次检索退化为关键词召回: {exc}")
-                return self._apply_activity_prior(self._keyword_hits(query, k, where, exc.reason))
-            hot_hits = self._hot_hits(query_embedding, k, where, pred)
-            if hot_hits is not None:
-                return self._apply_activity_prior(hot_hits)
-            kwargs = {"query_embeddings": [query_embedding], "n_results": k}
-            if where:
-                kwargs["where"] = where
-            results = self.collection.query(**kwargs) or {}
-            self._note_search(self.MODE_SEMANTIC, "")
-            # R46：先验只在这条腿自己排好的候选集内部挪名次。n_results 一个字没改——多要
-            # 几行才能让低于第 k 名的文档上位，但那会改掉 R44 明确钉住的"外部向量库那条路径
-            # 的调用序列与本单之前逐字一致"，本单不碰（要放宽得另立单，已写进回执）。所以
-            # R46 的"回填"目前只作用于召回窗口之内，窗口外的先验等 next-result 那一单。
-            return self._apply_activity_prior(
-                self._hit_dicts(
-                    (results.get("documents") or [[]])[0],
-                    (results.get("metadatas") or [[]])[0],
-                    self.MODE_SEMANTIC,
-                    "",
-                )
-            )
-        return self._apply_activity_prior(self._keyword_hits(query, k, where, self.REASON_STORE_OFFLINE))
+    def search(self, query: str, k: int = 5, where: dict | None = None, pred=None) -> list[dict]:
+        try:
+            query_embedding = self.embedding.embed_query(query)
+        except EmbeddingError as exc:
+            hits = self._keyword_hits(query, k, where, exc.reason)
+            self._note_search_shape(answered_by=RETRIEVAL_SERVER_KEYWORD_STORE,
+                leg=self.MODE_KEYWORD, reason=exc.reason, n_results=k,
+                rows_returned=len(hits), hits_built=len(hits),
+                outcome=self._outcome_for(len(hits), len(hits)))
+            return self._apply_activity_prior(hits)
+        return self._apply_activity_prior(self._pgvector_hits(query_embedding, k, where, query=query))
 
     def _apply_activity_prior(self, hits):
         """R46：把采纳/驳回计数施加在这条腿刚排好的候选集上（四条腿共用这一处）。
 
         读不到计数＝没有先验＝把**同一个列表对象**原序交回（fail-open，裁定理由见模块里
-        R46 那段注释）。判定可见性的仍是 filters.py 那一处，本方法一个候选都不增减。
+        R46 那段注释）。判定可见性的仍是 filters.py 那一处，本方法一个候选都不增减：两路先验
+        都只在**已经合法**的候选集内部挪名次，且共用同一根位移界（signal_prior_value）。
         """
         try:
             priors = self._activity_prior_loader() or {}
         except Exception as exc:  # pragma: no cover - 默认 loader 已自兜底，只防注入的 loader 抛错
             logger.warning(f"活动信号先验不可用，本次排序不动: {type(exc).__name__}")
             return hits
+        # R46 差格 a：点击/浏览并进来。🔴 getattr 守卫不是防御性冗余——tests/test_r525_* 拿
+        # SimpleNamespace(_activity_prior_loader=...) 直呼本方法，那些载体上没有第二路读取方；
+        # 缺属性就只用采纳/驳回，这正是"一路缺席不抹掉另一路"的口径。
+        engagement_loader = getattr(self, "_engagement_prior_loader", None)
+        if engagement_loader is not None:
+            try:
+                priors = merge_signal_priors(priors, engagement_loader() or {})
+            except Exception as exc:  # pragma: no cover - 默认 loader 已自兜底，只防注入的抛错
+                logger.warning(f"点击/浏览先验不可用，本次只用采纳/驳回: {type(exc).__name__}")
         return rank_hits_by_activity(hits, priors, enabled=activity_prior_enabled())
+
+    def _collection_name(self) -> str:
+        """这一问打的是哪个 collection。离线态没有名字，交回空串而不是猜一个。"""
+        return str(getattr(self.collection, "name", "") or "")
+
+    @staticmethod
+    def _store_row_count(results, key: str) -> int:
+        """数向量库原始应答里某一列的行数：只认 list/tuple，其它一律 0。
+
+        为什么要单独数 ids：query 交回的 documents/metadatas 可能因为 include 的形状而比 ids
+        少（甚至缺列），只数 documents 会把"库给了 5 行、我们建成了 0 条命中"误记成"库里
+        就没邻居"——那正是 R158 要能分辨的两种 0。
+        """
+        rows = (results or {}).get(key)
+        if not isinstance(rows, (list, tuple)) or not rows:
+            return 0
+        first = rows[0]
+        return len(first) if isinstance(first, (list, tuple)) else 0
+
+    def _note_search_shape(self, *, answered_by: str, leg: str, reason: str, n_results: int,
+                           rows_returned: int, hits_built: int, outcome: str,
+                           store_error: str = "") -> None:
+        """把这一问的形状记进模块级读数（判据③）。不发 IO、不改返回形状。"""
+        _record_search_shape(
+            collection=self._collection_name(),
+            answered_by=answered_by,
+            leg=leg,
+            reason=reason,
+            n_results=n_results,
+            rows_returned=rows_returned,
+            hits_built=hits_built,
+            outcome=outcome,
+            store_error=store_error,
+        )
+
+    def _note_store_failure(self, exc, k: int, leg: str) -> None:
+        from app.rag import pg_store
+
+        reason = str(getattr(exc, "reason", "") or pg_store.REASON_VECTOR_READ_FAILED)
+        pg_store.note_read_bypass(reason, type(exc).__name__)
+        self._note_search_shape(
+            answered_by=RETRIEVAL_SERVER_PGVECTOR, leg=leg, reason=reason,
+            n_results=k, rows_returned=0, hits_built=0,
+            outcome=RETRIEVAL_OUTCOME_STORE_FAILED, store_error=type(exc).__name__,
+        )
+
+    @staticmethod
+    def _outcome_for(rows_returned: int, hits_built: int) -> str:
+        """结局码：0 命中时，"库本来就没给行"与"给了行却在我们将要交回前丢了"必须分家。"""
+        if hits_built > 0:
+            return RETRIEVAL_OUTCOME_ANSWERED
+        return (RETRIEVAL_OUTCOME_ROWS_DROPPED if rows_returned > 0
+                else RETRIEVAL_OUTCOME_ZERO_ROWS)
 
     def _note_search(self, mode: str, reason: str) -> None:
         """记录本次检索走的腿；降级计入进程内可观测计数。"""
@@ -1351,7 +1522,11 @@ class DocumentRetriever:
         self._note_search(self.MODE_KEYWORD, reason)
         if k <= 0:
             return []
-        stored = (self.collection.get(where=where) if where else self.collection.get()) or {}
+        try:
+            stored = (self.collection.get(where=where) if where else self.collection.get()) or {}
+        except Exception as exc:
+            self._note_store_failure(exc, k, self.MODE_KEYWORD)
+            raise
         documents = stored.get("documents") or []
         metadatas = stored.get("metadatas") or []
         query_tokens = set(_tokenize_for_fallback(query))
@@ -1380,84 +1555,29 @@ class DocumentRetriever:
     # ==================== 辅助 ====================
 
     def list_documents(self) -> list[str]:
-        """列出已索引的文档名"""
-        all_data = self.collection.get()
-        seen = set()
-        for meta in all_data.get("metadatas", []):
-            fname = meta.get("filename", "")
-            if fname and fname not in seen:
-                seen.add(fname)
-        return sorted(seen)
+        from app.rag import pg_store
+        return pg_store.indexed_document_names()
 
     def document_chunks(self, filename: str) -> list[dict]:
-        """Enumerate the chunks the vector store actually holds for one document.
-
-        Read-back, not a re-split: the published record has to describe the index that
-        exists. Rows come back ordered by the stored chunk index and carry the vector
-        store id, which is the only link from a chunk row to its embeddings. This slice
-        never reads or writes embeddings here; Chroma stays the retrieval path.
-        """
-        stored = self.collection.get(where={"filename": filename}) or {}
-        documents = stored.get("documents") or []
-        metadatas = stored.get("metadatas") or []
-        ids = stored.get("ids") or []
-        rows = []
-        for position, document in enumerate(documents):
-            metadata = metadatas[position] if position < len(metadatas) and metadatas[position] else {}
-            rows.append(
-                {
-                    "vector_id": str(ids[position]) if position < len(ids) else "",
-                    "content": str(document),
-                    "chunk_index": int(metadata.get("chunk_index", position) or 0),
-                    # R57 §1 判定：此处**不改**。document_chunks 是读回（见本函数 docstring），
-                    # 唯一消费方 app/api/v1/chat.py 的 _document_publication 只取 content /
-                    # vector_id / hash 三个键，发布记录的密级来自函数入参 classification
-                    # （→ app/rag/indexing.py 的 resource_version 写入与 scope_metadata），
-                    # 不来自本行；全仓再无其它调用方。因此这个默认值不到达任何权限判定，
-                    # 按判据「不到达的一律只报告不改」原样保留，论证见 R57 报告站点③。
-                    "classification": metadata.get("classification", 1),
-                    "department": metadata.get("department", ""),
-                    "hash": str(metadata.get("hash", "")),
-                }
-            )
-        rows.sort(key=lambda row: row["chunk_index"])
-        return rows
+        from app.rag import pg_store
+        return [{"vector_id": r["vector_id"], "content": r["content"],
+                 "chunk_index": r["chunk_index"], "classification": r["classification"],
+                 "department": r["department"] or "", "hash": r["hash"] or ""}
+                for r in pg_store.document_vector_rows(filename=filename)]
 
     def delete_document(self, filename: str):
-        """删除指定文档的所有向量
-
-        R58：开关开启时两腿同事务双删 —— PG 先删、Chroma 后删、最后 commit，任一侧失败
-        就回滚 PG 事务并原样抛出，不留"PG 无向量 ⇔ Chroma 仍可检索"的半态。开关关闭
-        （默认）时这里仍然只有一次 get 与一次 delete，行为与本单之前一致。
-        """
-        existing = self.collection.get(where={"filename": filename})
-        if not existing["ids"]:
+        from app.rag import pg_store
+        rows = pg_store.document_vector_rows(filename=filename)
+        ids = [r["vector_id"] for r in rows]
+        if not ids:
             return
-        mirror = self._open_vector_mirror()
-        snapshot = None
-        stale_deleted = False
+        transaction = self._open_vector_mirror()
         try:
-            if mirror is not None:
-                # 同 add_document：读得出旧向量才敢删，否则回滚时无货可放回。
-                snapshot = self._vector_snapshot(existing["ids"])
-                if snapshot is None:
-                    raise VectorWriteRejectedError(
-                        f"拒绝删除向量库 [{REASON_VECTOR_MIRROR_UNAVAILABLE}]: 双写已开启，"
-                        f"但 {filename} 的旧向量读不出快照，删掉就无法忠实还原",
-                        reason=REASON_VECTOR_MIRROR_UNAVAILABLE,
-                    )
-                mirror.delete(ids=list(existing["ids"]))
-            self.collection.delete(ids=existing["ids"])
-            stale_deleted = True
-            # R44：文档删除 ⇒ 热集对应条目必须失效（判据④）。
-            self._note_hot_delete(existing["ids"])
-            if mirror is not None:
-                mirror.commit()
+            transaction.delete(ids=ids)
+            transaction.commit()
         except Exception:
-            if mirror is not None:
-                self._undo_vector_write(mirror, [], snapshot, stale_deleted=stale_deleted)
+            transaction.rollback()
             raise
         finally:
-            if mirror is not None:
-                mirror.close()
-        logger.info(f"已删除文档: {filename}")
+            transaction.close()
+        self._note_hot_delete(ids)

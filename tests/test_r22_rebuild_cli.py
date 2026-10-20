@@ -9,6 +9,7 @@ the version it replaced.
 from __future__ import annotations
 
 import json
+import ast
 import importlib
 from pathlib import Path
 
@@ -136,6 +137,67 @@ def _targets(tmp_path, *names):
         )
     return rows
 
+#: Shapes that would let the application start a rebuild on its own. The text list is
+#: R22's original set and stays verbatim; the AST pass next to it is R242, added because
+#: R235 showed a subprocess assembled from an argv list matches none of these strings --
+#: the pin stayed green against exactly the invocation its own docstring claims to cover.
+_IMPORT_PATTERNS = (
+    "import rebuild_index",
+    "from scripts.rebuild_index",
+    "from scripts import rebuild_index",
+    "importlib.import_module(\"scripts.rebuild_index\"",
+    "rebuild_index.main(",
+    "rebuild_index.run_rebuild(",
+    "run_rebuild(",
+)
+
+
+def automatic_path_hits(root):
+    """Every way ``app/`` could reach the rebuild command, prose excluded.
+
+    Docstrings and comments are allowed to name the command -- app/rag/indexing.py has to
+    explain where a new profile comes from -- so the second rule runs on parsed syntax and
+    drops every string sitting in a docstring position. Known limit, stated rather than
+    papered over: assembling the file name from fragments ("rebuild_" + "index.py") slips
+    past both rules, so this pins the honest shapes, not every theoretical one.
+    """
+    root = Path(root)
+    hits = []
+    for path in sorted((root / "app").rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for pattern in _IMPORT_PATTERNS:
+            if pattern in text:
+                hits.append("{}: {}".format(rel, pattern))
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            hits.append("{}: unparsable, cannot be cleared".format(rel))
+            continue
+        documented = _docstring_nodes(tree)
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    and id(node) not in documented and "rebuild_index" in node.value):
+                hits.append("{}: names the rebuild command outside a docstring "
+                            "(line {})".format(rel, node.lineno))
+    return hits
+
+
+def _docstring_nodes(tree):
+    """The first bare string of a module, class or function is documentation, not a call."""
+    holders = [tree]
+    holders += [n for n in ast.walk(tree) if isinstance(
+        n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))]
+    found = set()
+    for holder in holders:
+        body = getattr(holder, "body", [])
+        if (body and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+                and isinstance(body[0].value.value, str)):
+            found.add(id(body[0].value))
+    return found
+
+
 # --------------------------------------------- never an automatic path (criterion 3, hard)
 def test_nothing_in_the_application_can_reach_the_rebuild_command():
     """No startup hook, no upload hook, no scheduler job may import or call the rebuild.
@@ -145,23 +207,71 @@ def test_nothing_in_the_application_can_reach_the_rebuild_command():
     comes from -- but an import, an attribute call or a subprocess that starts it is the
     automatic path the requirement forbids, and that is what this looks for.
     """
-    patterns = (
-        "import rebuild_index",
-        "from scripts.rebuild_index",
-        "from scripts import rebuild_index",
-        "importlib.import_module(\"scripts.rebuild_index\"",
-        "rebuild_index.main(",
-        "rebuild_index.run_rebuild(",
-        "run_rebuild(",
-    )
-    hits = []
-    for path in (REPO_ROOT / "app").rglob("*.py"):
-        text = path.read_text(encoding="utf-8", errors="replace")
-        for pattern in patterns:
-            if pattern in text:
-                hits.append(f"{path.relative_to(REPO_ROOT)}: {pattern}")
+    hits = automatic_path_hits(REPO_ROOT)
     assert hits == []
 
+
+def test_counter_evidence_an_argv_list_subprocess_is_not_a_clear_path(tmp_path):
+    """The reason R242 exists: the shape R22 text list let through must now go red.
+
+    R235 caught this file green against subprocess.run([sys.executable,
+    "scripts/rebuild_index.py"]) -- an argv list matches none of the seven strings, so the
+    promise in the docstring above was decoration. If the AST pass stops looking at string
+    constants, this is the cell that knows it.
+    """
+    fake = _fake_tree(tmp_path, "app/scheduler.py",
+                      "import subprocess\n"
+                      "import sys\n"
+                      "\n"
+                      "\n"
+                      "def wake_nightly():\n"
+                      "    subprocess.run([sys.executable, \"scripts/rebuild_index.py\"])\n")
+    hits = automatic_path_hits(fake)
+    assert len(hits) == 1, hits
+    assert hits[0].startswith("app/scheduler.py:"), hits
+    # It has to be the AST pass that bites: none of R22 seven text patterns matches an argv list.
+    assert "outside a docstring" in hits[0], hits
+
+
+def test_counter_evidence_documentation_still_clears_the_pin(tmp_path):
+    """The other direction: naming the command in prose must not be reported as a path.
+
+    Without this cell the next person "fixes" a red pin by deleting the explanation of where
+    a profile comes from, which is exactly what app/rag/indexing.py does in its module
+    docstring. A module docstring and a function docstring both have to stay clear.
+    """
+    fake = _fake_tree(tmp_path, "app/indexing.py",
+                      "\"\"\"New profiles arrive by running scripts/rebuild_index.py by hand.\"\"\"\n"
+                      "\n"
+                      "\n"
+                      "def profile_note():\n"
+                      "    \"\"\"See scripts/rebuild_index.py for the invocation.\"\"\"\n"
+                      "    return 1\n")
+    assert automatic_path_hits(fake) == []
+
+
+def test_counter_evidence_a_file_that_will_not_parse_cannot_be_cleared(tmp_path):
+    """Fail closed: an unparsable file is a hit, not a skip.
+
+    Dropping it would hand anyone who wants in a one-line key -- a syntax error anywhere in a
+    file blinds the AST pass for that whole file, so the only honest reading is that the file
+    cannot be proven clear.
+    """
+    fake = _fake_tree(tmp_path, "app/broken.py",
+                      "def oops(:\n"
+                      "    return 1\n")
+    hits = automatic_path_hits(fake)
+    assert len(hits) == 1, hits
+    assert "unparsable" in hits[0], hits
+
+
+def _fake_tree(tmp_path, relative, source):
+    """A throwaway repo holding one file under app/, so the pin has something to bite."""
+    root = tmp_path / relative.split("/")[1].replace(".py", "")
+    holder = root / relative
+    holder.parent.mkdir(parents=True, exist_ok=True)
+    holder.write_text(source, encoding="utf-8")
+    return root
 
 def test_importing_the_command_does_not_run_anything(tmp_path, monkeypatch):
     module = _command()

@@ -1,12 +1,12 @@
 {
   "total": 105,
-  "answer_correctness": 0.4762,
-  "evidence_coverage": 0.6857,
+  "answer_correctness": 0.5619,
+  "evidence_coverage": 0.7905,
   "unsupported_claim_rate": 0.0,
   "category_metrics": {
     "文档问答": {
-      "correctness": 0.6842,
-      "evidence_coverage": 1.0,
+      "correctness": 0.5789,
+      "evidence_coverage": 0.9474,
       "total": 19
     },
     "多轮对话": {
@@ -15,18 +15,18 @@
       "total": 12
     },
     "口径冲突": {
-      "correctness": 0.4211,
-      "evidence_coverage": 0.3684,
+      "correctness": 0.5789,
+      "evidence_coverage": 0.8947,
       "total": 19
     },
     "Excel计算": {
-      "correctness": 0.5,
+      "correctness": 0.6667,
       "evidence_coverage": 0.4167,
       "total": 12
     },
     "主动洞察": {
       "correctness": 0.5714,
-      "evidence_coverage": 0.2857,
+      "evidence_coverage": 0.4286,
       "total": 7
     },
     "图表生成": {
@@ -35,34 +35,40 @@
       "total": 4
     },
     "审批判断": {
-      "correctness": 0.6667,
-      "evidence_coverage": 1.0,
+      "correctness": 0.8333,
+      "evidence_coverage": 0.8333,
       "total": 6
     },
     "跨部门权限": {
-      "correctness": 0.0,
-      "evidence_coverage": 0.3333,
+      "correctness": 0.1667,
+      "evidence_coverage": 0.1667,
       "total": 6
     },
     "无证据问题": {
-      "correctness": 0.0,
-      "evidence_coverage": 0.75,
+      "correctness": 0.25,
+      "evidence_coverage": 1.0,
       "total": 4
     },
     "工具调用": {
       "correctness": 0.75,
-      "evidence_coverage": 0.0,
+      "evidence_coverage": 0.25,
       "total": 4
     },
     "报告生成": {
-      "correctness": 0.3333,
-      "evidence_coverage": 0.6667,
+      "correctness": 0.5833,
+      "evidence_coverage": 0.9167,
       "total": 12
     }
   },
   "latency_ms": {
     "count": 105,
-    "average": 41700.27,
-    "p95": 107901.121
+    "average": 64013.64,
+    "p95": 154510.722,
+    "max": 300110.131,
+    "frame_ledger_rows": 0,
+    "one_attempt_envelope_ms": 960000.0,
+    "suspect_n": 0,
+    "suspect": [],
+    "basis": "latency_ms 只由每发尝试自己的真实跨度构成：与帧账 wall_ms 相符者按实测进聚合，越界者按帧账逐发跨度替换，无实测而帧账可用者按帧账顶上，拿不出诚实跨度的题排除并逐题列在 suspect"
   }
 }

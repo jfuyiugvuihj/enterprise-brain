@@ -22,9 +22,19 @@ class UploadInspection:
 
 
 # Knowledge-base upload whitelist: every extension here must be handled by
-# app.rag.loader.load_document(), otherwise a stored file is deleted and the
-# upload route fails with a 500 parse error. Spreadsheets are datasets, not
-# knowledge-base documents, and belong to POST /api/v1/upload-excel.
+# app.rag.loader.load_document(), otherwise the stored file and its catalog row
+# survive as a failed version and the upload route answers 500 document_parse_failed.
+# R306 put `.xlsx` and `.csv` in: they are read by app/rag/spreadsheets.py, so they
+# are knowledge-base documents as well as datasets. R700 retired the second half of that
+# sentence: POST /api/v1/upload-excel now reads this dict too, through
+# `sanitize_upload_filename` (filename), `inspect_dataset_upload` (accepted types and
+# magic bytes) and `guard_dataset_name_conflict` (same-name conflict), so one file table
+# no longer answers the same three questions twice. What stays outside this dict is the
+# read-engine gate in `app/tools/excel.py` -- "is this a knowledge-base type" and "can
+# this machine open the format" are different questions with different refusals.
+# `.xls` is deliberately absent: openpyxl cannot read the legacy binary format and xlrd
+# is not a direct dependency of this repository.
+
 _ALLOWED_TYPES = {
     ".pdf": ("application/pdf", (b"%PDF-",)),
     ".txt": ("text/plain", ()),
@@ -33,6 +43,15 @@ _ALLOWED_TYPES = {
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         (b"PK\x03\x04",),
     ),
+    ".xlsx": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        (b"PK\x03\x04",),
+    ),
+    # A CSV has no magic bytes to verify, so it joins the tier `.txt`/`.md` already
+    # occupy: an empty signature tuple. `inspect_upload_header()` skips verification
+    # only when there is nothing to verify -- every extension that DOES declare a
+    # signature still has to match one, and that includes `.xlsx` right above.
+    ".csv": ("text/csv", ()),
 }
 _RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$")
 
@@ -58,16 +77,17 @@ _RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$")
 # lists and a re-download reuses, and that is exactly where "looks like a
 # document, is an executable" misleads a person. So this check is narrowed to a
 # closed, explainable set: a middle segment that is itself a known document /
-# executable / script / web / archive suffix, the four whitelisted document types
+# executable / script / web / archive suffix, every whitelisted knowledge-base type
 # included. Anything else between two dots —
 # `V2.1`, `1_更新日志`, `Q3.预算` — is a naming habit, not a file type, and passes.
 _DOUBLE_EXTENSION_BLOCKLIST = frozenset(
     {
-        # the four knowledge-base types themselves: `policy.md.exe` and
-        # `notes.txt.exe` are precisely the costumes this rule exists to catch
-        ".txt", ".md", ".pdf", ".docx",
+        # every knowledge-base type itself -- R306 grew this line from four to six:
+        # `policy.md.exe` and `notes.txt.exe` are precisely the costumes this rule
+        # exists to catch, and so is `ledger.csv.exe`
+        ".txt", ".md", ".pdf", ".docx", ".csv", ".xlsx",
         # other documents and office containers
-        ".doc", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".doc", ".xls", ".ppt", ".pptx",
         # windows executables, libraries and installers
         ".exe", ".dll", ".com", ".scr", ".msi", ".lnk", ".jar",
         # scripts
@@ -116,6 +136,51 @@ def inspect_upload_header(filename: str, header: bytes | bytearray | memoryview)
         extension=extension,
         media_type=media_type,
     )
+
+
+#: Leading bytes of an upload that a signature in the dict above can be matched against.
+#: The dataset route already holds the whole body in memory, so it hands the sample here
+#: instead of opening the stored file a second time.
+DATASET_SIGNATURE_SAMPLE_BYTES = 8192
+
+
+class DatasetFilenameConflictError(ValueError):
+    """One active dataset already owns the logical filename a caller is asking for.
+
+    R700 moved the *rule* next to the whitelist both upload routes read. The registry
+    lookup stays with the dataset route, because only that route knows its own
+    catalogue: it passes what the registry answered and gets the refusal back. The route
+    then answers its documented ``409 dataset_filename_conflict`` -- this module raises
+    no HTTP shape and defines no new error code.
+    """
+
+    def __init__(self, filename: str) -> None:
+        super().__init__(f"an active dataset is already named {filename}")
+        self.filename = filename
+
+
+def inspect_dataset_upload(filename: str, payload: bytes | bytearray | memoryview) -> UploadInspection:
+    """Boundary check for POST /api/v1/upload-excel, answered from the dict above.
+
+    One file, two lives: the same workbook the knowledge-base route indexes is the one
+    the dataset route registers, so both must agree, before a byte is written, about
+    which suffixes this deployment has a reader for and whether the header matches the
+    suffix it claims.
+    """
+    sample = payload[:DATASET_SIGNATURE_SAMPLE_BYTES] if payload else b""
+    return inspect_upload_header(filename, sample)
+
+
+def guard_dataset_name_conflict(display_filename: str, existing_active: object | None) -> None:
+    """Refuse a dataset name that an active dataset already holds.
+
+    `existing_active` is whatever the caller's registry returned for the name, `None`
+    when nobody holds it. The decision -- a taken name is a refusal rather than a new
+    version -- is stated here so the dataset route cannot quietly grow the knowledge
+    route's versioning, and the knowledge route cannot quietly grow this one's conflict.
+    """
+    if existing_active is not None:
+        raise DatasetFilenameConflictError(display_filename)
 
 
 def build_storage_path(root: str | Path, resource_id: str, extension: str) -> Path:

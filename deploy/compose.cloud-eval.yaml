@@ -1,0 +1,50 @@
+# R453 · 云端「形状窗」的 compose override —— 换的是 env，不是架构（跟进单 §128 第一节）。
+#
+# 🔴 这是一枚显式 opt-in 的覆盖件：只有命令行点名它才生效。
+#
+#   docker compose --env-file deploy/.env.server -f docker-compose.yml -f deploy/compose.cloud-eval.yaml up -d --force-recreate backend
+#
+# 不带上面那个 -f 时，这台机器读到的 backend env 集合与今天逐格相同 —— 默认路径里没有任何一行
+# 提到本文件（由 tests/test_r453_default_env_baseline.py 的 sha 基线钉与零引用钉两头盯着）。
+# AGENTS.md：远程模型回退必须显式开启，默认关闭。
+#
+# 为什么只换 env 就能上云（底座现读，行号会漂、符号不会）：模型腿本来就是 OpenAI 兼容的 ——
+# `app/agents/nodes.py` 引 ChatOpenAI，provider 由 base_url 里有没有 `:11434` 定（ollama /
+# local-openai-compatible）；配置面只有三枚 env，都住在 `app/common/model_config.py` 的
+# get_local_model_settings()：LOCAL_MODEL_BASE_URL（回落 OLLAMA_BASE_URL，再回落本机 11434）·
+# LOCAL_MODEL_NAME（回落 OLLAMA_MODEL）· LOCAL_MODEL_API_KEY（缺省 local）。原生腿打到没有
+# /api/chat 的服务端会抛 _NativeChatUnsupported，本进程后续非流式调用退回兼容腿
+# （`app/common/model_handler.py`）⇒ 云端可用，代价＝每进程一次废探针，不改正确性。
+#
+# 🔴 密钥：一律以 ${LOCAL_MODEL_API_KEY} 形式从**进程环境**注入。本文件里出现任何密钥形状的
+#    字面量（密钥前缀打头的一串、或长随机串）＝没收工，由
+#    tests/test_r453_cloud_eval_override.py 当场钉红。
+#    四枚 env 都写成 ${VAR:?...}：没给值就停，本文件不替操作员发明默认值。
+#    本机 2026-09-28 实测（docker compose v5.5.1，config 渲染，只读不建容器）：
+#    ① 进程环境设了值 ⇒ 进程环境赢过 --env-file deploy/.env.server；
+#    ② 进程环境没设 ⇒ **静默回落**到 --env-file 里那三枚本机值（密钥会退回 local，
+#       拿它打云端就是一次 401）⇒ 开窗前必须逐枚设进进程环境，
+#       `python scripts/eval_cloud_window_readout.py --preflight` 按枚报 present/absent
+#       （只看在场与否，一个字节都不回显值）；
+#    ③ 进程环境设成空串 ⇒ ${VAR:?} 当场硬停，回落不发生。
+#
+# 🔴 口径：这一档只出**形状类**读数，交回的每一格必须带 `caliber=cloud-shape`。
+#    时延（p50／p95／端到端／首字）与分数（correctness／逐类分数／evidence／
+#    unsupported_claim_rate）只能在关掉本文件、本机全量那扇窗里出 —— 哪些格能云端读、
+#    哪些必须本机，是 `python scripts/eval_cloud_window_readout.py` 那张机器表说了算；
+#    把两者混写进同一段，读数器当场报错退出，不等判读的人讲道理。
+#
+# 禁域（判据④）：本文件只碰 backend 这四枚 env。worker / scheduler / ollama / migrate /
+# frontend 一律不动；MODEL_MIN_ANSWER_TOKENS 那个 1536 不动；deploy/.env.server 一个字节不碰。
+#
+# 🔴 这四枚**不进** `deploy/.env.server.example`（总控 09-28 裁定 (a)，本席照写不再议）：
+#    它们只在显式 `-f deploy/compose.cloud-eval.yaml` 这一条云端道上才需要。写进 server 样例＝
+#    诱导运维把云端默认装进生产 env，直接违反 AGENTS.md 那句「远程模型回退必须显式开启，默认关闭」。
+#    入口只有一枚：命令行的 -f。样例文件里那一身 LOCAL_MODEL_* 说的始终是本机那一条腿。
+services:
+  backend:
+    environment:
+      LOCAL_MODEL_BASE_URL: ${LOCAL_MODEL_BASE_URL:?export the OpenAI-compatible base url for the cloud-shape window}
+      LOCAL_MODEL_NAME: ${LOCAL_MODEL_NAME:?export the cloud model name for the cloud-shape window}
+      LOCAL_MODEL_API_KEY: ${LOCAL_MODEL_API_KEY:?inject the key from the operator process environment}
+      MODEL_CONTEXT_TOKENS: ${MODEL_CONTEXT_TOKENS:?export the context window; the cloud leg is not bound by local VRAM}

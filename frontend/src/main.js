@@ -3,6 +3,7 @@ import { createAppRouter } from './router'
 
 import App from './App.vue'
 import './assets/theme.css'
+import './assets/light-theme.css'
 
 const router = createAppRouter()
 const app = createApp(App)

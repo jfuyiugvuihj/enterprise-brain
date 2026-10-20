@@ -13,9 +13,9 @@ def detect_insights(rows: list[dict]) -> list[dict]:
         if over_threshold:
             reasons.append(f"超过阈值 {threshold}")
         if growth > 0.2:
-            reasons.append(f"环比增长 {growth:.1%}")
+            reasons.append(f"输入值较比较值增加 {growth:.1%}；未核验可比期间")
         insights.append({
-            "title": f"{row.get('department', '')}{row.get('metric', '')}异常",
+            "title": f"{row.get('department', '')}{row.get('metric', '')}输入试算提醒",
             "department": row.get("department", ""),
             "metric": row.get("metric", ""),
             "severity": severity,
@@ -23,5 +23,6 @@ def detect_insights(rows: list[dict]) -> list[dict]:
             "previous": previous,
             "reasons": reasons,
             "evidence": row.get("evidence", []),
+            'evidence_status': 'caller_supplied_unverified',
         })
     return insights

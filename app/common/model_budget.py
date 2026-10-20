@@ -18,6 +18,18 @@ is the one outcome ``app/agents/nodes.py`` already refuses to produce for a cont
 ``max_tokens_verdict`` performs that arithmetic, ``authorize`` applies it to one call, and
 every number behind the decision is logged next to the final value, so a clamp can never be
 mistaken for a choice an operator made.
+
+``authorize_or_refuse`` is the same arithmetic with the missing half-sentence attached: a
+boundary that is about to put a request on the wire can decline to send an answer this clock
+cannot pay for, and report the ratified timeout code instead of spending the whole ceiling
+finding out.
+
+The third ceiling is the window itself, and R255 moved its arithmetic out of three separate
+readers into one: :func:`window_plan` derives ``MODEL_CONTEXT_TOKENS`` together with the two
+rates, the request ceiling, the queue a second caller tolerates and the slots that queue is
+divided between, and reports when an operator has moved only one of them. That is the only
+place in this file allowed to say what raising a window costs; the refusal raises the same
+numbers it used to raise, with the distance and the paired fix attached.
 """
 from __future__ import annotations
 
@@ -36,6 +48,7 @@ from app.agents.contracts import (
     OUTPUT_TRUNCATED_CODE,
     ModelBudget,
     ModelTier,
+    prompt_room,
 )
 
 from app.common.logger import logger
@@ -67,21 +80,57 @@ class ModelContextLimitExceeded(RuntimeError):
     behind: the server refused the request and the caller saw a bare provider error, or
     the server answered with a completion cut off mid-sentence. Both are refused here,
     in favour of not sending a request the window demonstrably cannot hold.
+
+    R255 changed the sentence and left the verdict alone. The refusal still happens before
+    anything goes on the wire, and :mod:`app.agents.nodes` still refuses to launder it
+    through the offline reply -- a canned greeting with the real reason buried in a log line
+    is the outcome that made this code necessary. What changed is that the wall has now been
+    hit on a real machine, and not only proven by arithmetic: on 2026-09-25 the report lane
+    refused ``prompt_tokens=2691`` and ``prompt_tokens=2778`` against ``n_ctx=4096``, twice on
+    one request, and the sentence an operator read named three numbers and no distance
+    between them. So it now carries the shortfall, the window that would hold the call, and
+    the budget that has to be moved with it -- the reading is meant to be "these parameters
+    are small", never "this model is weak".
     """
 
     code = CONTEXT_LIMIT_CODE
 
+    #: Class-level shape, so ``ModelClockUnaffordable`` -- a *clock* finding that inherits
+    #: this class for its slot plumbing and computes none of these numbers -- can be caught
+    #: as a window refusal without the handler tripping over a missing attribute.
+    over_by_tokens = 0
+    required_context_tokens = 0
+    prompt_room_tokens = 0
+    plan = None
+
     def __init__(self, budget, prompt_tokens: int):
-        super().__init__(
-            "Local model context window cannot hold this request "
-            f"(error_code={self.code}): prompt_tokens={prompt_tokens} and "
-            f"max_tokens={budget.max_tokens} do not fit n_ctx={budget.context_limit_tokens}; "
-            "no business conclusion was generated."
-        )
         self.prompt_tokens = int(prompt_tokens)
-        self.max_tokens = int(budget.max_tokens)
+        #: What the tier asked to write. The window check runs against the *declared* cap, so
+        #: this is not "what the answer would have been"; a clamp has already been ruled out.
+        self.declared_max_tokens = int(budget.max_tokens)
         self.context_limit_tokens = int(budget.context_limit_tokens)
         self.tier = budget.tier
+        #: The ratified short spelling; read by ``tests/test_r204_budget_refusal.py``.
+        self.max_tokens = int(budget.max_tokens)
+        self.required_context_tokens = self.prompt_tokens + self.declared_max_tokens
+        #: 差额: the distance the window is short, in tokens.
+        self.over_by_tokens = max(0, self.required_context_tokens - self.context_limit_tokens)
+        #: R463: the same subtraction the guard and the packing path use, read through
+        #: ``contracts.prompt_room`` -- this object explains a refusal, so it must quote the very
+        #: number that produced it, not a re-derivation that can drift from it.
+        self.prompt_room_tokens = max(1, prompt_room(self.context_limit_tokens, self.declared_max_tokens))
+        #: The same numbers the guard used, read together with the budget around them.
+        self.plan = window_plan(budget)
+        super().__init__(
+            "Local model context window cannot hold this request "
+            f"(error_code={self.code}): prompt_tokens={self.prompt_tokens} plus this tier's "
+            f"declared max_tokens={self.declared_max_tokens} needs "
+            f"n_ctx={self.required_context_tokens}, which is {self.over_by_tokens} tokens "
+            f"more than the configured MODEL_CONTEXT_TOKENS={self.context_limit_tokens} -- "
+            f"that window leaves {self.prompt_room_tokens} tokens for the prompt. "
+            f"{self.plan.remediation(self.prompt_tokens)} "
+            "No request was sent and no business conclusion was generated."
+        )
 
 
 @dataclass
@@ -299,6 +348,16 @@ TIMEOUT_ERROR_FRAGMENTS = (
 )
 
 #: Fragments a local server uses when it refuses a request for being too long.
+#:
+#: The last two are R255's, and they come from a recorded body rather than from a guess:
+#: ``docs/perf/raw/rate_prefill.jsonl`` holds what Ollama answers when the prompt is over the
+#: window the server was loaded with -- ``request (4402 tokens) exceeds the available context
+#: size (4096 tokens), try increasing it``, ``type: exceed_context_size_error``. Before this,
+#: that text was recognised only because the JSON body happens to carry a field literally
+#: named ``n_ctx``: the message alone -- which is all a wrapping client keeps -- resolved to
+#: None and was filed as ``internal_error``. That is the exact failure an over-declared
+#: ``MODEL_CONTEXT_TOKENS`` produces (the guard lets the request out, the server says no), so
+#: recognising it is part of refusing honestly.
 CONTEXT_ERROR_FRAGMENTS = (
     "context length",
     "context_length",
@@ -306,7 +365,50 @@ CONTEXT_ERROR_FRAGMENTS = (
     "n_ctx",
     "too many tokens",
     "prompt is too long",
+    "available context size",
+    "exceed_context_size_error",
 )
+
+#:
+#: The refusal for "this clock cannot pay for this answer, and no clamp exists that could".
+#:
+#: It is a subclass of :class:`ModelContextLimitExceeded` for one reason, and the reason is a
+#: semaphore, not a taxonomy: ``app/agents/nodes.py`` hands the single local-model slot back on
+#: exactly that class at its pre-send boundary (non-streaming ``:666``, streaming ``:813``), and
+#: ``MODEL_MAX_CONCURRENCY=1`` means a refusal that leaked its slot would turn one unaffordable
+#: question into a machine that answers nothing ever again. So the plumbing -- give the slot
+#: back, finish the span with an error code, re-raise typed -- is shared with the window
+#: refusal on purpose. The verdict is not: ``code`` says ``task_timeout``, and the message names
+#: the clock and never ``n_ctx``.
+class ModelClockUnaffordable(ModelContextLimitExceeded):
+    """The clock is too short for this tier's answer, said before the request is sent.
+
+    This is R99's ``budget_unaffordable`` finding with the half-sentence it was missing: the
+    finding used to be written to the log and then walked past, so a request the machine had
+    already measured at about twice its own ceiling still went on the wire and still held the
+    only service window for the whole of it.
+    """
+
+    code = TIMEOUT_ERROR_CODE
+
+    def __init__(self, budget: ModelBudget, prompt_tokens: int | None, verdict=None):
+        self.prompt_tokens = int(prompt_tokens or 0)
+        self.max_tokens = int(budget.max_tokens)
+        self.context_limit_tokens = int(budget.context_limit_tokens)
+        self.tier = budget.tier
+        self.verdict = verdict
+        self.affordable_max_tokens = int(getattr(verdict, "affordable_max_tokens", 0) or 0)
+        self.min_answer_tokens = int(getattr(verdict, "min_answer_tokens", 0) or 0)
+        super(ModelContextLimitExceeded, self).__init__(
+            "Local model clock cannot write this tier's answer inside its own ceiling "
+            f"(error_code={self.code}): prompt_tokens={self.prompt_tokens} and "
+            f"max_tokens={self.max_tokens} need more than the "
+            f"{budget.timeout_ceiling_seconds:g}s ceiling at "
+            f"{budget.decode_tokens_per_second:g}tok/s, where the most this clock can pay for "
+            f"is affordable_max_tokens={self.affordable_max_tokens} -- below the "
+            f"min_answer_tokens={self.min_answer_tokens} this model answers at. No request was "
+            "sent and no business conclusion was generated."
+        )
 
 
 def _env_set(name: str) -> bool:
@@ -342,6 +444,294 @@ def min_answer_tokens() -> int:
     return _env_positive_int("MODEL_MIN_ANSWER_TOKENS", DEFAULT_MIN_ANSWER_TOKENS)
 
 
+# ============ the context window and the budget that has to move with it (R255) ============
+
+#: One machine-readable token per way a configured window can contradict the budget beside it.
+#: These words appear in ``[ModelBudget]`` lines (``incoherent_budget=clock_binds|queue_binds``)
+#: and in :attr:`WindowPlan.red_reasons`, so an operator greps one and lands on the variable
+#: the sentence next to it names. "incoherent" and not "stale" on purpose: a stock install that
+#: nobody has touched can read red here, and the reading is still true about its numbers.
+WINDOW_RED_CLOCK = "clock_binds"
+WINDOW_RED_QUEUE = "queue_binds"
+WINDOW_RED_FLOOR = "floor_below_measurement"
+
+
+def queue_gates() -> tuple[int, float]:
+    """``(slots, queue seconds)`` exactly as the class that enforces them resolves them.
+
+    Read off a fresh :class:`LocalModelBudget` instead of parsing the two variables again:
+    60.0 is ``_configured_wait``'s number and "floor the slots at 1" is ``acquire``'s rule,
+    and a window plan that re-implemented either would be a second copy free to drift. The
+    instance takes a semaphore and opens nothing -- ``app/api/v1/observability.py`` already
+    reads these two numbers the same way for the same reason.
+    """
+    gate = LocalModelBudget()
+    return int(gate.max_concurrency), float(gate.default_wait_seconds)
+
+
+@dataclass(frozen=True)
+class WindowPlan:
+    """One context window, plus every other budget number that has to move with it.
+
+    R255 判据① is a demand about *where a number is computed*. The window, the request
+    ceiling and the queue used to be read in three places that never spoke to each other, so
+    an operator who raised ``MODEL_CONTEXT_TOKENS`` had changed one of three and got a machine
+    that still could not answer. This is the one object that reads them together and can
+    therefore say out loud when only one head moved.
+
+    The arithmetic, in the order the physics happens:
+
+        prompt_room             = n_ctx - max_tokens        # what the window leaves for material
+        seconds_at_full_window  = margin * ( prompt_room / prefill_rate      # reading it
+                                              + max_tokens / decode_rate )   # writing the answer
+        queue_seconds_per_caller = MODEL_CONCURRENCY_WAIT_SECONDS / MODEL_MAX_CONCURRENCY
+        coherent                = seconds_at_full_window <= MODEL_REQUEST_TIMEOUT
+                                  and seconds_at_full_window <= queue_seconds_per_caller
+
+    Two measured facts are why those are one object rather than three comments:
+
+    * The window is the model *server*'s, and it is not a function of how much memory the
+      card holds: 4096 is exactly what this Ollama answers with, and an A100 80G loaded at the
+      server default answers inside the same 4096 (业主口径, 2026-09-25). This product sends no
+      ``num_ctx`` in any request payload -- R135 read that off ``app/**`` and published it as a
+      caveat on ``/api/v1/model-budget/facts``. So raising only the declared number widens
+      nothing: it admits prompts the server will reject, replacing a refusal that cost nothing
+      with a round trip that costs the whole queue. The recorded shape of that answer is in
+      ``docs/perf/raw/rate_prefill.jsonl``.
+      Widening the window for real is a server-side change, and the measured cost of one is a
+      model reload: the same 2154-token prompt at ``num_ctx`` 4096 vs 8192 came out
+      66.683 s vs 68.849 s of prefill (+3.3%) with ``load_s`` 0.001 vs 5.811 s, and nothing at
+      16384 has ever been measured here, so "memory blows up at 16k" is a warning, not a number.
+    * A wider window is a longer *worst-case request*, and the second person in line does not
+      wait longer -- the queue gives up after ``MODEL_CONCURRENCY_WAIT_SECONDS`` and that
+      caller is answered with the offline sentence (跟进单 §6.2: 160.6 / 116.8 / 75.2 / 70.2 s
+      all exceed 60 s, so from the second caller on nobody gets an answer). At one slot the queue
+      binds the window long before the request ceiling does: on the rates measured on
+      2026-09-25 (prefill 1200, decode 40 tok/s) the ceiling would pay for an 80k window while
+      a 60 s queue at one slot pays for about 18k.
+
+    Nothing here is a knob. It reads the configuration, does the multiplication once, and
+    reports which variable is the one that has gone stale.
+    """
+
+    tier: ModelTier
+    #: The window this process computes against, and whether anybody wrote it down.
+    context_limit_tokens: int
+    context_limit_source: str
+    #: This tier's declared output cap -- the half of the window an answer reserves.
+    declared_max_tokens: int
+    min_answer_tokens: int
+    #: The floor as *measured*, which is what makes :attr:`floor_below_measurement` a finding
+    #: about a configuration rather than about a preference.
+    measured_min_answer_tokens: int
+    prefill_tokens_per_second: float
+    decode_tokens_per_second: float
+    timeout_margin: float
+    timeout_ceiling_seconds: float
+    max_concurrency: int
+    queue_wait_seconds: float
+
+    @property
+    def prompt_room_tokens(self) -> int:
+        """What this window leaves for the prompt once this tier's answer is reserved.
+
+        R463: read through ``contracts.prompt_room`` rather than restating the subtraction.
+        The docstring of this class spells the arithmetic ``prompt_room = n_ctx - max_tokens``;
+        that line now has one referent in code instead of three.
+        """
+        return max(0, prompt_room(self.context_limit_tokens, self.declared_max_tokens))
+
+    @property
+    def decode_seconds(self) -> float:
+        return self.declared_max_tokens / max(0.1, self.decode_tokens_per_second)
+
+    @property
+    def prefill_seconds_at_full_window(self) -> float:
+        return self.prompt_room_tokens / max(0.1, self.prefill_tokens_per_second)
+
+    def seconds_for_prompt(self, prompt_tokens: int) -> float:
+        """Wall clock one request of this size costs at the rates configured beside it."""
+        reading = max(0, int(prompt_tokens)) / max(0.1, self.prefill_tokens_per_second)
+        return (reading + self.decode_seconds) * max(1.0, self.timeout_margin)
+
+    @property
+    def seconds_at_full_window(self) -> float:
+        """The worst case this window is *configured* to allow, in seconds."""
+        return self.seconds_for_prompt(self.prompt_room_tokens)
+
+    @property
+    def required_timeout_seconds(self) -> float:
+        """``MODEL_REQUEST_TIMEOUT`` this window demands: the same number, named for its knob."""
+        return self.seconds_at_full_window
+
+    @property
+    def queue_seconds_per_caller(self) -> float:
+        """How long the person behind you tolerates before the answer they get is the canned one."""
+        return self.queue_wait_seconds / max(1, self.max_concurrency)
+
+    @property
+    def clock_binds(self) -> bool:
+        return self.seconds_at_full_window > self.timeout_ceiling_seconds + 1e-9
+
+    @property
+    def queue_binds(self) -> bool:
+        return self.seconds_at_full_window > self.queue_seconds_per_caller + 1e-9
+
+    @property
+    def floor_below_measurement(self) -> bool:
+        """True when somebody lowered ``MODEL_MIN_ANSWER_TOKENS`` under what was measured.
+
+        It is reported here because this is where a window refusal gets explained, and the
+        tempting wrong answer to a window refusal is a smaller floor. That is R255 判据④: the
+        floor is a measurement of when this model starts answering with nothing, and it does
+        not appear in the refusal arithmetic at all -- ``context_window_code`` subtracts the
+        tier's *output cap*, not this number -- so lowering it cannot fit one more token.
+        """
+        return self.min_answer_tokens < self.measured_min_answer_tokens
+
+    @property
+    def maximum_coherent_context_tokens(self) -> int:
+        """The largest window the configured clock and queue can still pay a full request for.
+
+        Zero means *none*: on rates slow enough that this tier's own answer outlasts the
+        queue, no value of ``MODEL_CONTEXT_TOKENS`` is coherent, and the head that has to move
+        is a calibrated rate or the ceiling -- not the window. That is the shipped default
+        pair (35/8 tok/s) against a 60 s queue, and it is R99's finding restated as geometry.
+        """
+        payable = min(self.timeout_ceiling_seconds, self.queue_seconds_per_caller)
+        room_seconds = payable / max(1.0, self.timeout_margin) - self.decode_seconds
+        return max(0, self.declared_max_tokens + int(room_seconds * max(0.1, self.prefill_tokens_per_second)))
+
+    @property
+    def red_reasons(self) -> tuple[str, ...]:
+        reasons: list[str] = []
+        if self.clock_binds:
+            reasons.append(WINDOW_RED_CLOCK)
+        if self.queue_binds:
+            reasons.append(WINDOW_RED_QUEUE)
+        if self.floor_below_measurement:
+            reasons.append(WINDOW_RED_FLOOR)
+        return tuple(reasons)
+
+    @property
+    def coherent(self) -> bool:
+        """False the moment one of these numbers has been moved on its own."""
+        return not self.red_reasons
+
+    def minimum_window_for(self, prompt_tokens: int) -> int:
+        """The smallest ``n_ctx`` that would hold a prompt of this size plus this tier's answer."""
+        return max(0, int(prompt_tokens or 0)) + self.declared_max_tokens
+
+    def admits(self, prompt_tokens: int) -> bool:
+        """Would a request this size go out *and* be paid for, at the budget set beside it?"""
+        prompt = max(0, int(prompt_tokens or 0))
+        if self.minimum_window_for(prompt) > self.context_limit_tokens:
+            return False
+        seconds = self.seconds_for_prompt(prompt)
+        ceiling = 1e-9 + min(self.timeout_ceiling_seconds, self.queue_seconds_per_caller)
+        return seconds <= ceiling
+
+    def remediation(self, prompt_tokens: int | None = None) -> str:
+        """Which variables move together, and to what numbers, in one greppable sentence.
+
+        Three clauses, in the order an operator can act on them: the window and the server
+        that has to agree with it, the clock and queue that have to pay for a full window, and
+        the one knob that must not be touched to make the refusal disappear.
+        """
+        prompt = max(0, int(prompt_tokens or 0))
+        needed = self.minimum_window_for(prompt)
+        seconds = self.seconds_for_prompt(prompt)
+        fix = (
+            f"raise MODEL_CONTEXT_TOKENS to >= {needed} *and* the model server's own n_ctx to "
+            "match, then recreate the container -- a running process keeps the environment it "
+            "was created with, so neither an edit alone nor a restart alone takes effect"
+        )
+        if seconds > min(self.timeout_ceiling_seconds, self.queue_seconds_per_caller):
+            fix += (
+                f"; a request this size costs {seconds:.1f}s at "
+                f"{self.prefill_tokens_per_second:g}/{self.decode_tokens_per_second:g} tok/s "
+                f"while this configuration allows {self.timeout_ceiling_seconds:g}s of clock and "
+                f"{self.queue_seconds_per_caller:.1f}s per caller "
+                f"({self.queue_wait_seconds:g}s queue / {self.max_concurrency} slot), so raise "
+                "MODEL_REQUEST_TIMEOUT and re-measure the two rates with "
+                "scripts/bench_model_throughput.py first"
+            )
+        return (
+            "This is the size of a configured window, not a limit of the model. The paired "
+            f"change is: {fix}. "
+            "MODEL_MIN_ANSWER_TOKENS is not a window knob: no request was refused because of "
+            "it, and this guard subtracts the tier cap, not the floor."
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        """A JSON-shaped reading for a health surface: no I/O, no model call, no second copy."""
+        return {
+            "tier": self.tier.value,
+            "n_ctx": self.context_limit_tokens,
+            "n_ctx_source": self.context_limit_source,
+            "declared_max_tokens": self.declared_max_tokens,
+            "prompt_room_tokens": self.prompt_room_tokens,
+            "min_answer_tokens": self.min_answer_tokens,
+            "measured_min_answer_tokens": self.measured_min_answer_tokens,
+            "prefill_tokens_per_second": self.prefill_tokens_per_second,
+            "decode_tokens_per_second": self.decode_tokens_per_second,
+            "timeout_margin": self.timeout_margin,
+            "timeout_ceiling_seconds": self.timeout_ceiling_seconds,
+            "max_concurrency": self.max_concurrency,
+            "queue_wait_seconds": self.queue_wait_seconds,
+            "queue_seconds_per_caller": round(self.queue_seconds_per_caller, 2),
+            "prefill_seconds_at_full_window": round(self.prefill_seconds_at_full_window, 2),
+            "decode_seconds": round(self.decode_seconds, 2),
+            "full_window_seconds": round(self.seconds_at_full_window, 2),
+            "required_timeout_seconds": round(self.required_timeout_seconds, 2),
+            "max_coherent_n_ctx": self.maximum_coherent_context_tokens,
+            "coherent": self.coherent,
+            "red_reasons": list(self.red_reasons),
+        }
+
+
+def window_plan(tier_or_budget=None, *, context_limit_tokens: int | None = None) -> WindowPlan:
+    """Derive the window together with the clock and queue that have to move with it.
+
+    The single place that answers "what does this window cost", which is the property R255
+    判据① asked for: one function, so "operator raised only the window" is a state this file
+    can detect rather than a mistake it has to wait for a real request to make.
+
+    ``tier_or_budget`` accepts a :class:`~app.agents.contracts.ModelBudget` -- a boundary that
+    is about to refuse a call passes the very object it judged, so the advice is computed from
+    the numbers that produced the refusal and not from a second read of the environment -- or a
+    ``ModelTier`` to resolve from configuration. It defaults to ``ANALYSIS``, the tier whose
+    cap reserves the most window and therefore the tier that binds first.
+
+    ``context_limit_tokens`` overrides the window *only*. That is not a convenience: it is how
+    you ask "what happens if I raise just this line", and on the rates this file still defaults
+    to the answer is a plan that reads ``clock_binds`` and ``queue_binds`` both red.
+    """
+    from app.agents.contracts import ModelBudget
+
+    if isinstance(tier_or_budget, ModelBudget):
+        budget = tier_or_budget
+    else:
+        budget = model_tier_budget(tier_or_budget or ModelTier.ANALYSIS)
+    slots, queue_seconds = queue_gates()
+    return WindowPlan(
+        tier=ModelTier(budget.tier),
+        context_limit_tokens=int(
+            budget.context_limit_tokens if context_limit_tokens is None else int(context_limit_tokens)
+        ),
+        context_limit_source="env" if _env_set("MODEL_CONTEXT_TOKENS") else "code-default",
+        declared_max_tokens=int(budget.max_tokens),
+        min_answer_tokens=min_answer_tokens(),
+        measured_min_answer_tokens=DEFAULT_MIN_ANSWER_TOKENS,
+        prefill_tokens_per_second=float(budget.prefill_tokens_per_second),
+        decode_tokens_per_second=float(budget.decode_tokens_per_second),
+        timeout_margin=float(budget.timeout_margin),
+        timeout_ceiling_seconds=float(budget.timeout_ceiling_seconds),
+        max_concurrency=slots,
+        queue_wait_seconds=queue_seconds,
+    )
+
+
 # ==================== the thinking switch (R100) ====================
 
 #: ``MODEL_THINKING``: does this deployment ask the local server to spend its output budget on
@@ -355,8 +745,9 @@ def min_answer_tokens() -> int:
 #: The near-miss spellings return nothing too -- top-level ``think:false`` on the compat body
 #: (row #7) and ``options.thinking_disabled`` on the native body (row #3) are both measured at
 #: 0 characters -- so an operator who copies one of those concludes the model cannot be
-#: switched off. It can, in exactly one spelling per leg: native takes ``think`` at the request
-#: top level, compat takes ``thinking`` in the body.
+#: switched off. It said it can, in exactly one spelling per leg: native takes ``think`` at the
+#: request top level, compat takes ``thinking`` in the body. **R591 refuted the compat half of
+#: that sentence on 2026-10-03** (table below); only the native half still stands.
 #:
 #: RE-MEASURED ON THE SHIPPING HOST BY R29 (2026-09-21, qwen3:4b, host Ollama, streaming -- which
 #: is the shape the answer leg actually uses), and the sentence above needs its second half
@@ -378,10 +769,37 @@ def min_answer_tokens() -> int:
 #: from a stream -- which is also why ``model_calls.input_tokens``/``output_tokens`` stay NULL for
 #: streamed rounds whatever this switch says.
 #:
-#: This boundary owns the compatible leg (``app/agents/nodes.py:_make_model``), so it sends
-#: that one spelling and no other. ``disabled`` is the default because the measured
-#: alternative answers with nothing: R99 made an empty body an honest failure, and an honest
-#: failure is better than a fake answer, but it is still not an answer.
+#: RE-MEASURED ON THE SHIPPING HOST BY R591 (2026-10-03, qwen3.5:9b, the container's own Ollama
+#: 0.34.0, one prompt, six arms, credentials ``%TEMP%\r591-probe.txt`` and
+#: ``%TEMP%\evalrun\r591-compat-lever.txt``), and this is a refutation, not a refinement:
+#:
+#:   compat  thinking:{"type":"disabled"}    content    0  reasoning 5554  finish=length  73.49 s
+#:   compat  no thinking field at all        content    0  reasoning 6041  finish=length  53.36 s
+#:   compat  thinking + reasoning_effort=none content 572  reasoning    0  finish=stop     8.48 s
+#:   compat  reasoning_effort=none, cap 96   content   14  reasoning    0  finish=stop     7.91 s
+#:   compat  nothing at all, cap 96          content    0  reasoning  329  finish=length    2.65 s
+#:   native  think:false                     content  804  reasoning    0  finish=stop    12.35 s
+#:
+#: Rows 1 and 2 are the disease, named: run16 ``report-04`` and run17 ``report-04`` both ended
+#: ``budget_verdict=fits max_tokens=1536 error_code=model_output_truncated`` on one line and
+#: ``error_code=no_answer_produced`` on the next, 0 characters delivered, while the server's own
+#: line for the same round read ``eval time=38469ms / 1536 tokens`` with ``truncated=0`` -- the
+#: cap spent to the last token inside the reasoning channel. The field R100 landed is inert on
+#: this endpoint: with it and without it the round is the same empty round, which is also why
+#: §42 row #6 (93 characters, ``finish_reason=stop``) stopped reproducing.
+#: ``reasoning_effort`` is the field ``/v1/chat/completions`` does read, so a
+#: ``disabled`` body now carries both spellings under the one mode word: ``thinking`` stays
+#: because R100 ratified that byte and dropping it is its own unmeasured change, and
+#: ``reasoning_effort`` is the half that makes the request mean what it says.
+#:
+#: What this does *not* buy, so nobody pays for it twice: the native leg is still 4-6x faster
+#: and ~3x cheaper in tokens on a thinking model (last row), and the answer legs stay off it for
+#: R29's reason two blocks above -- ``/api/chat`` would stream the model's monologue into the
+#: customer's chat window, and it is the non-streaming rewrite leg that already uses it.
+#: This boundary owns the compatible leg (``app/agents/nodes.py:_make_model``), so it fixes the
+#: body of the leg it owns. ``disabled`` remains the default because the measured alternative
+#: answers with nothing: R99 made an empty body an honest failure, and an honest failure is
+#: better than a fake answer, but it is still not an answer.
 MODEL_THINKING_ENV = "MODEL_THINKING"
 #: The only two values that mean something. Anything else is a misconfiguration, not a mode.
 THINKING_DISABLED = "disabled"
@@ -393,6 +811,18 @@ DEFAULT_MODEL_THINKING = THINKING_DISABLED
 #: shape that was measured; the field is not offered as a knob to tune.
 THINKING_REQUEST_FIELD = "thinking"
 THINKING_REQUEST_VALUE = {"type": "disabled"}
+#: The other spelling of the same request, and the one this endpoint actually honours (R591's
+#: six-arm table above). A plain string because that is the wire shape measured -- top level,
+#: ``"none"``, not nested, not a boolean. Not a knob to tune either: ``low``/``medium``/``high``
+#: ask a thinking model to think *less*, and at a 1536-token cap that is the same zero-character
+#: answer arriving by a different road (rows 1 and 2).
+REASONING_EFFORT_REQUEST_FIELD = "reasoning_effort"
+REASONING_EFFORT_DISABLED_VALUE = "none"
+#: The names that ride on a ``disabled`` body, in the order they are written. A line that says
+#: ``thinking=disabled`` without these cannot answer the question an empty answer really poses:
+#: not "did we ask for no thinking" -- the mode word already says that -- but "what did we put
+#: on the wire to get it", which is now two fields and used to be one that did nothing.
+NO_THINK_REQUEST_FIELDS = (THINKING_REQUEST_FIELD, REASONING_EFFORT_REQUEST_FIELD)
 
 
 @dataclass(frozen=True)
@@ -405,10 +835,12 @@ class ThinkingPolicy:
     """
 
     mode: str
-    #: The request-body fragment this boundary adds: ``{"thinking": {...}}``, or empty when
+    #: The request-body fragment this boundary adds: the two no-thinking spellings the
+    #: compatible endpoint is given (``thinking`` and ``reasoning_effort``, R591), or empty when
     #: thinking is left alone. An ``enabled`` call has to be the exact body this product sent
     #: before R100, so switching thinking back on is a no-op on the wire rather than a second
-    #: spelling nobody measured.
+    #: spelling nobody measured -- and it is also the operator's lever if a server ever refuses
+    #: one of the two fields, which is why the fragment is one switch and not two.
     wire: dict[str, Any]
     note: str
 
@@ -470,7 +902,10 @@ def resolve_model_thinking(raw: str | None = None) -> ThinkingPolicy:
                 f"thinking={mode}."
             )
     wire = (
-        {THINKING_REQUEST_FIELD: dict(THINKING_REQUEST_VALUE)}
+        {
+            THINKING_REQUEST_FIELD: dict(THINKING_REQUEST_VALUE),
+            REASONING_EFFORT_REQUEST_FIELD: REASONING_EFFORT_DISABLED_VALUE,
+        }
         if mode == THINKING_DISABLED
         else {}
     )
@@ -480,6 +915,16 @@ def resolve_model_thinking(raw: str | None = None) -> ThinkingPolicy:
 def thinking_extra_body(raw: str | None = None) -> dict[str, Any]:
     """The body fragment one call adds for its thinking mode, or ``{}`` when it adds none."""
     return {key: dict(value) if isinstance(value, dict) else value for key, value in resolve_model_thinking(raw).wire.items()}
+
+
+def no_think_request_fields(raw: str | None = None) -> tuple[str, ...]:
+    """Which field names this call's body will carry to ask for no thinking chain.
+
+    ``()`` for an ``enabled`` process. This is what a log line greps for after an empty answer:
+    ``thinking=disabled`` alone no longer distinguishes "the field we sent is the inert one"
+    from "we sent the field the endpoint reads", and that distinction is the whole of R591.
+    """
+    return tuple(name for name in NO_THINK_REQUEST_FIELDS if name in resolve_model_thinking(raw).wire)
 
 
 def model_thinking_mode(raw: str | None = None) -> str:
@@ -609,6 +1054,25 @@ def estimate_prompt_tokens(prompt: Any) -> int | None:
     return total
 
 
+def request_shell_tokens(tools: Any) -> int:
+    """What the request body carries that no message list can see: the tool fields.
+
+    10-08 实测的账：装箱与发请求前那道守卫都按 ``estimate_prompt_tokens(messages)`` 量
+    prompt，而这个数不含 ``bind_tools`` 挂进请求体的一串 JSON，也不含服务端模板围着它
+    拼的那段固定说明。真机 prompt 因此恒比估算大；窗口按 messages 算满，多出来的一截由服务端
+    自己裁——它裁的是最前面几条，其中一条就是本轮问题，于是模板当场 500（No user query found
+    in messages），客户看见的是兜底吐出来的原始材料，不是一张图。把这半截壳量回来，判拒才完整。
+    """
+    if not tools:
+        return 0
+    import json
+    try:
+        payload = json.dumps(tools, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return 0
+    return estimate_text_tokens(payload)
+
+
 def _finish_reason(response: Any) -> str:
     metadata = getattr(response, "response_metadata", None)
     if isinstance(metadata, dict):
@@ -642,6 +1106,39 @@ def context_error_code(exc: BaseException) -> str | None:
     return CONTEXT_LIMIT_CODE if any(fragment in text for fragment in CONTEXT_ERROR_FRAGMENTS) else None
 
 
+#: R591: the code for "the server refused this body because of the fields that ask for no
+#: thinking chain". It is deliberately not a member of ``ErrorEnvelope`` and not
+#: ``model_unavailable`` -- the two read as "the machine is down", and a server that dislikes
+#: one request field is a payload finding, exactly the difference R147 split the native 400 out
+#: to make. Nothing downstream changes verdict on it: the round still fails the way a provider
+#: failure fails, and all this adds is that it fails with its own name.
+LEVER_REJECTED_CODE = "thinking_lever_rejected"
+#: Text a server writes when the lever, not the prompt, is the problem. Both spellings are
+#: listed because the two families answer differently: an OpenAI-shaped validator names the
+#: field (``reasoning_effort``, ``Extra inputs are not permitted``), Ollama names the ability
+#: (``does not support thinking``). Deliberately nothing vaguer than that -- "400" alone would
+#: catch the context-limit family, which has its own code and is checked first.
+LEVER_REJECTION_FRAGMENTS = (
+    "reasoning_effort",
+    "does not support thinking",
+    "thinking is not supported",
+    "unsupported thinking",
+)
+
+
+def lever_rejection_code(exc: BaseException) -> str | None:
+    """Stable code when the provider refused the request for its no-thinking fields, or None.
+
+    Read from the provider's own sentence, the same way :func:`context_error_code` reads the
+    length refusal, and for the same reason: this is the one failure the *fix* can introduce,
+    so the boundary that adds the field has to be the boundary that says so out loud rather
+    than letting a deployment on a non-thinking server or a stricter OpenAI clone lose every
+    answer to what would otherwise log as ``provider unavailable``.
+    """
+    text = str(exc).lower()
+    return LEVER_REJECTED_CODE if any(fragment in text for fragment in LEVER_REJECTION_FRAGMENTS) else None
+
+
 def budget_signal(
     tier: ModelTier | str,
     *,
@@ -656,6 +1153,11 @@ def budget_signal(
     min_answer_tokens: int | None = None,
     clamp_basis: str = "",
     verdict: str = "",
+    window: "WindowPlan | None" = None,
+    over_by_tokens: int | None = None,
+    required_n_ctx: int | None = None,
+    transport: str = "",
+    no_think_fields: tuple[str, ...] | None = None,
 ) -> str:
     """The one line format every budget verdict is logged as, marker included.
 
@@ -680,6 +1182,16 @@ def budget_signal(
     ``empty_answer_rejected`` therefore has to be able to tell "we asked it to think and it
     starved" from "we asked it not to and it still starved" without opening an env file, and
     the two must not be able to share a count without saying which one is being counted.
+
+    ``transport=`` and ``no_think_fields=`` are R591 and are emitted **only when a caller
+    supplies them**, because a line every call already writes is a line a dozen pins already
+    match. They exist for one specific question, which run16 and run17 could not be answered
+    from any log in the box: an empty round says ``no_answer_produced`` and stops there, while
+    the two facts that explain it are (a) which leg made the request and (b) which field names
+    that leg put on the wire to ask for no thinking. Before this, the only leg that named
+    itself was the native one, in its own应答 line, so "compat by construction" was invisible
+    and the 400-downgrade that R147 worries about was indistinguishable from a call that never
+    asked for the native leg at all.
     """
     parts = [
         MODEL_BUDGET_MARKER,
@@ -690,6 +1202,10 @@ def budget_signal(
     ]
     if stream is not None:
         parts.append(f"stream={'yes' if stream else 'no'}")
+    if transport:
+        parts.append(f"transport={transport}")
+    if no_think_fields is not None:
+        parts.append("no_think_fields=" + ("|".join(no_think_fields) if no_think_fields else "none"))
     if clamped is not None:
         parts.append(f"clamped={'yes' if clamped else 'no'}")
     if verdict:
@@ -704,6 +1220,20 @@ def budget_signal(
         parts.append(f"min_answer_tokens={min_answer_tokens}")
     if clamp_basis:
         parts.append(f"clamp_basis={clamp_basis}")
+    # R255 判据②: a window refusal says how far over it is, and whether the budget beside the
+    # window moved with it. These ride on the refusal line only -- a call that fits the window
+    # gains no fields, so the shape every existing [ModelBudget] grep depends on is unchanged.
+    if over_by_tokens is not None:
+        parts.append(f"over_by_tokens={over_by_tokens}")
+    if required_n_ctx is not None:
+        parts.append(f"required_n_ctx={required_n_ctx}")
+    if window is not None:
+        parts.append(f"n_ctx={window.context_limit_tokens}")
+        parts.append(f"full_window_seconds={window.seconds_at_full_window:.1f}")
+        parts.append(f"max_coherent_n_ctx={window.maximum_coherent_context_tokens}")
+        parts.append(f"window_coherent={'yes' if window.coherent else 'no'}")
+        if not window.coherent:
+            parts.append("incoherent_budget=" + "|".join(window.red_reasons))
     if code:
         parts.append(f"error_code={code}")
     return " ".join(parts)
@@ -854,7 +1384,11 @@ class AuthorizedCall:
 
 
 def authorize(
-    budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False
+    budget: ModelBudget,
+    prompt_tokens: int | None,
+    *,
+    stream: bool = False,
+    refuse_unaffordable: bool = False,
 ) -> AuthorizedCall:
     """Size one call: refuse what ``n_ctx`` cannot hold, then shorten what the clock cannot.
 
@@ -862,6 +1396,14 @@ def authorize(
     cap, exactly as it always has, so clamping can never rescue a prompt that used to be
     refused -- the existing limit is not relaxed by one token. Only after that does the
     clock get its say, and it gets it about the answer, not about the deadline.
+
+    ``refuse_unaffordable`` is the second half of the sentence a boundary that is about to
+    put this request on the wire needs: when the clock cannot pay for even the shortest answer
+    this model will give at all, and the floor leaves no clamp available to make it pay (R99),
+    the honest ending is to not send it. Raise :class:`ModelClockUnaffordable`, which reports
+    the ratified timeout code at the moment the machine already knows, instead of spending the
+    whole ceiling to find out. Default off: sizing a call and deciding to send it are two
+    different judgements, and every existing caller asked for the first one only.
     """
     code = budget.context_window_code(prompt_tokens)
     if code:
@@ -873,6 +1415,18 @@ def authorize(
     effective = verdict.apply_to(budget)
     if verdict.clamped or verdict.unaffordable:
         record_budget_event("max_tokens_clamped" if verdict.clamped else "budget_unaffordable")
+    if refuse_unaffordable and verdict.unaffordable:
+        # Counted and reported before being raised, in that order: a refused call has to leave
+        # the same counter and the same one line as the call it replaces, or the budget stops
+        # being a measure of how many answers this machine cannot pay for.
+        report_budget(
+            effective,
+            prompt_tokens,
+            stream=stream,
+            verdict=verdict,
+            code=TIMEOUT_ERROR_CODE,
+        )
+        raise ModelClockUnaffordable(effective, prompt_tokens, verdict)
     report_budget(effective, prompt_tokens, stream=stream, verdict=verdict)
     return AuthorizedCall(budget=effective, verdict=verdict)
 
@@ -882,6 +1436,19 @@ def authorize_budget(
 ) -> ModelBudget:
     """``authorize`` for a caller that only needs the sized budget."""
     return authorize(budget, prompt_tokens, stream=stream).budget
+
+
+def authorize_or_refuse(
+    budget: ModelBudget, prompt_tokens: int | None, *, stream: bool = False
+) -> AuthorizedCall:
+    """``authorize`` for the boundary that is about to send: refuse what the clock cannot pay for.
+
+    Nothing is shortened on this path. ``max_tokens`` keeps the tier's own number, so an
+    answer that fits its clock is delivered with the bytes it would have had anyway, and the
+    only behaviour change is on the leg the clock had already priced out of the ceiling --
+    which now costs no request, no queue and no wall clock.
+    """
+    return authorize(budget, prompt_tokens, stream=stream, refuse_unaffordable=True)
 
 
 def http_timeout(
@@ -908,6 +1475,7 @@ def report_budget(
     *,
     stream: bool = False,
     verdict: MaxTokensVerdict | None = None,
+    code: str = "",
 ) -> str | None:
     """Log one verdict line when this call is already outside its own budget, else stay quiet.
 
@@ -921,8 +1489,17 @@ def report_budget(
     third is a configuration that contradicts itself: analysis on a CPU-calibrated budget is
     exactly that case, and it announced itself as a clamp on every single call while sending
     the uncut cap anyway.
+
+    A call site that refuses an unaffordable request passes its own ``code``, and gets one
+    line that says both what the clock found and what the boundary did about it.
     """
-    code = budget.context_window_code(prompt_tokens)
+    window_code = budget.context_window_code(prompt_tokens)
+    # A boundary that refuses a call for being unaffordable injects its own code here, so the
+    # refusal is readable on the same one line the verdict was always logged on. What binds
+    # ``clamped=`` stays the window code alone: ``clamped=`` means "this call writes less than
+    # its tier asked", and a call that was refused without ever being shortened must not
+    # borrow that word -- that is the exact pollution R99 removed.
+    code = (str(code) if code else "") or window_code
     # ``prompt_tokens is None`` means nobody measured it, which is a fact about the call
     # site, not about the machine: the clock for an unknown prompt is deliberately the
     # tier's worst case, so declaring it clamped on every construction would warn five
@@ -933,7 +1510,7 @@ def report_budget(
     )
     clamped = bool(verdict.clamped) if verdict is not None else ceiling_binds
     verdict_word = ""
-    if code:
+    if window_code:
         # A refusal on the window is its own finding and carries no clamp verdict: the
         # request never got as far as being sized, and this line keeps the exact shape it had
         # before the output cap was ever negotiated.
@@ -947,6 +1524,10 @@ def report_budget(
             verdict_word = "ceiling_binds"
     if not (code or clamped or verdict_word):
         return code
+    # A window refusal is the one verdict that gets the paired-budget reading, and it gets it on
+    # this line: a second [ModelBudget] line for one call would break the "one grep, one finding"
+    # property tests/test_r30_context_limit_guard.py pins.
+    paired_window = window_plan(budget) if window_code else None
     logger.warning(
         budget_signal(
             budget.tier,
@@ -961,6 +1542,9 @@ def report_budget(
             min_answer_tokens=verdict.min_answer_tokens if verdict else None,
             clamp_basis=verdict.basis if verdict else "",
             verdict=verdict_word,
+            window=paired_window,
+            over_by_tokens=budget.context_overage_tokens(prompt_tokens) if window_code else None,
+            required_n_ctx=budget.required_context_tokens(prompt_tokens) if window_code else None,
         )
     )
     return code
@@ -1067,6 +1651,16 @@ BUDGET_EVENT_NAMES = (
     "budget_unaffordable",
     "timeout_offline_reply",
     "empty_answer_rejected",
+    #: R591. A native leg that refused one of our bodies and moved the call to the compatible
+    #: leg: R147 made that verdict *sayable* and counted it on the handler instance, and this
+    #: makes it *countable* from the published health readout next to the answers it cost. One
+    #: is a fact about one request; the pair is how an operator notices it is a fact about every
+    #: request, which is what a payload bug looks like from outside the process.
+    "native_body_rejected",
+    #: R591. A compatible-leg server that refused the body over the no-thinking fields
+    #: (``reasoning_effort`` / ``thinking``). The one count that tells a deployment its model
+    #: cannot be asked to stop thinking, instead of a wall of ``provider unavailable``.
+    "lever_rejected",
 )
 
 _budget_events: dict[str, int] = {name: 0 for name in BUDGET_EVENT_NAMES}
@@ -1120,6 +1714,7 @@ def model_budget_readout() -> dict[str, Any]:
 """
     profile = tier_profile(ModelTier.ANALYSIS)
     thinking = resolve_model_thinking()
+    plan = window_plan(ModelTier.ANALYSIS)
     return {
         "events": budget_event_counts(),
         "thinking": {
@@ -1129,6 +1724,18 @@ def model_budget_readout() -> dict[str, Any]:
             #: separately from the mode word.
             "request_field_sent": bool(thinking.wire),
             "request_field": THINKING_REQUEST_FIELD if thinking.wire else "",
+            #: R591: every field name the ``disabled`` body actually carries. ``request_field``
+            #: above stayed on purpose -- pins and greps already read it, and it is still true --
+            #: but on its own it now names the field that measured 0 characters with and without
+            #: it, so a reader who stops there is reading half the body.
+            "request_fields": list(no_think_request_fields()),
+            #: Which of the two the compatible endpoint honours, as the measurement says it:
+            #: this pair is the one arm that came back with ``finish_reason=stop`` and non-empty
+            #: content on a thinking model. Nothing here claims it is *why* the other is inert.
+            "compat_lever": {
+                "field": REASONING_EFFORT_REQUEST_FIELD,
+                "value": REASONING_EFFORT_DISABLED_VALUE,
+            },
             "accepted_values": list(MODEL_THINKING_MODES),
             "provenance": "env"
             if os.environ.get(MODEL_THINKING_ENV) is not None
@@ -1153,6 +1760,12 @@ def model_budget_readout() -> dict[str, Any]:
         "request_timeout_ceiling_seconds": profile["timeout_ceiling_seconds"],
         "context_limit_tokens": profile["context_limit_tokens"],
         "min_answer_tokens": min_answer_tokens(),
+        #: R255: the window is not a lone number, so it is not published as one. Everything a
+        #: refusal says about the budget beside it can be read here before anything fails --
+        #: including ``coherent``, the field that goes red when only the window was raised.
+        #: Window provenance stays out of ``throughput_provenance``: that key is R135's and its
+        #: rates-only shape is pinned by tests/test_r135_s1_model_budget_facts.py.
+        "window_plan": plan.as_dict(),
         "tiers": {
             tier.value: {
                 "declared_max_tokens": int(budget.max_tokens),

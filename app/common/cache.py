@@ -136,6 +136,7 @@ class _MemoryRedis:
 
 
 # ==================== 缓存 ====================
+AUTHORIZATION_DATA_REVISION = "rows-v4"
 
 def _hash(question: str) -> str:
     return hashlib.md5(question.strip().encode()).hexdigest()[:12]
@@ -188,11 +189,13 @@ def _scope_part(scope: str) -> str:
     """作用域为空时沿用历史键，未升级的调用方不会落到另一份键空间。"""
     if not scope:
         return ""
-    return f"{hashlib.md5(scope.encode()).hexdigest()[:12]}:"
+    # Older cached answers may include unrestricted spreadsheet rows.
+    return f"{AUTHORIZATION_DATA_REVISION}:{hashlib.md5(scope.encode()).hexdigest()[:12]}:"
 
 
 def _answer_key(question: str, scope: str) -> str:
-    return f"answer:{_scope_part(scope)}{_hash(question)}"
+    revision = "conditions-v1:" if scope else ""
+    return f"answer:{revision}{_scope_part(scope)}{_hash(question)}"
 
 
 def cache_answer(question: str, answer: str, scope: str = "", ttl: int | None = None) -> None:

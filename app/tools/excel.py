@@ -5,10 +5,144 @@ Day 7-8: Excel 数据处理
 import ast
 import os
 import io
+import re
+import importlib.util
 import pandas as pd
 import openpyxl
 from typing import Any
+from app.agents.contracts import ErrorEnvelope
 from app.common.logger import logger
+
+# ==================== 收口名单 <-> 读引擎 (R336) ====================
+#: 单一事实源: 一枚扩展名 -> 本机读它所用的引擎模块名; None = pandas 内置通道, 不需要额外的包。
+#: 「平台收哪个后缀」与「用什么读它」必须写在同一行。下一位往这张表里塞 .ods / .numbers 而忘了带
+#: 引擎, `unavailable_read_engines()` 现读 `importlib.util.find_spec` 就会当场咬人
+#: (尺子与两把反证见 tests/test_r336_read_engine_backs_the_whitelist.py)。结论不许写成常量。
+DATA_READ_ENGINES: dict[str, str | None] = {
+    ".csv": None,
+    ".xlsx": "openpyxl",
+}
+
+#: 客户仍然会递上来、但本系统明确不读的后缀: 具名拒绝 + 员工照着做得下去的下一步。
+#: `.xls` (Excel 97-2003) 要 xlrd 才读得动, 而 xlrd 不在依赖里 (`pyproject.toml` 只有 openpyxl):
+#: 旧实现那句 `engine = "openpyxl" if ext == ".xlsx" else "xlrd"` 是一条必然失败的 import,
+#: 而更早一步的 `_fill_merged_cells` 会让 openpyxl 先抛 InvalidFileException, 一路穿到路由变成 500。
+#: R336 裁定走「诚实拒绝」这一支, 不新增依赖; 「要不要真支持 2003 老格式」已进业主待裁清单。
+#: 将来要翻案, 只需把 .xls 从这张表搬进 `DATA_READ_ENGINES` (值写 xlrd) 并装上依赖, 别处一个字不用改。
+REFUSED_DATA_FILE_READS: dict[str, str] = {
+    ".xls": (
+        "请在 Excel 或 WPS 里打开它，选「另存为」，把保存类型改成「Excel 工作表 (*.xlsx)」"
+        "或「CSV (逗号分隔) (*.csv)」，再上传另存出来的那一份。文件名和表格里的内容都不用改。"
+    ),
+}
+
+
+class UnsupportedDataFile(ValueError):
+    """这一枚后缀在本机没有可用的读引擎: 一句具名拒绝, 不是一条运行时崩溃。
+
+    `code` 复用 app/agents/contracts.py::ErrorEnvelope.code 里已有的 `unsupported_file`
+    (app/api/v1/chat.py 的文档上传闸今天吐的就是这一枚), R336 零新增错误码。
+    `str(exc)` 是给员工看的那句话: 先告诉他下一步做什么, 再说不支持的是哪个格式。
+    """
+
+    code = "unsupported_file"
+
+    def __init__(self, filename: str, extension: str, message: str) -> None:
+        super().__init__(message)
+        self.filename = filename
+        self.extension = extension
+
+
+def extension_of(name_or_path: str) -> str:
+    """小写后缀; 没有后缀回空串。收口名单与读引擎问的都是这一个值。"""
+    return os.path.splitext(str(name_or_path))[-1].lower()
+
+
+def engine_for(extension: str) -> str | None:
+    """这张后缀声明用哪个引擎读; 不在名单里回 None (不是「换个默认引擎试试」)。"""
+    return DATA_READ_ENGINES.get(extension)
+
+
+def engine_is_importable(engine: str | None) -> bool:
+    """None = pandas 内置通道 (CSV), 恒可用; 其余一律现读 find_spec, 不缓存、不写死。"""
+    if engine is None:
+        return True
+    try:
+        return importlib.util.find_spec(engine) is not None
+    except (ImportError, ValueError, AttributeError):
+        return False
+
+
+def unavailable_read_engines(table: dict[str, str | None] | None = None) -> dict[str, str]:
+    """通用尺子: 名单里每一枚扩展名, 它的引擎在本机 import 得到吗。回量坏的那些。
+
+    空 dict = 白名单每一格脚下都有引擎。非空 = 有人在名单里挂了一枚读不动的格式:
+    要么补依赖, 要么把这一格搬去 `REFUSED_DATA_FILE_READS`, 不许留在收口名单里。
+    """
+    declared = DATA_READ_ENGINES if table is None else table
+    return {
+        ext: engine
+        for ext, engine in declared.items()
+        if engine is not None and not engine_is_importable(engine)
+    }
+
+
+def accepted_data_file_extensions() -> frozenset[str]:
+    """对外收口名单 = 引擎声明表的键, 现算。第二份手抄的扩展名清单正是本单的病灶。"""
+    return frozenset(DATA_READ_ENGINES)
+
+
+def refuse_data_file(name_or_path: str) -> UnsupportedDataFile | None:
+    """这一份能不能读: 能读回 None, 不能读回一枚话已经说好的拒绝 (调用方决定 raise 还是转 400)。
+
+    三种「不能读」各有各的实话, 不许糊成一句 unsupported file type:
+      1) 明确不做的格式 (.xls) -> 另存为什么、在哪一步点;
+      2) 名单里根本没有的后缀 -> 把名单现算给他看;
+      3) 名单里有、引擎却装不上 -> 这是服务器的锅, 说清楚, 并给一条今天就走得通的退路。
+    """
+    filename = os.path.basename(str(name_or_path))
+    ext = extension_of(name_or_path)
+
+    if ext in REFUSED_DATA_FILE_READS:
+        return UnsupportedDataFile(
+            filename,
+            ext,
+            "「{0}」是 {1} 老格式，本系统不读它。{2}".format(filename, ext, REFUSED_DATA_FILE_READS[ext]),
+        )
+
+    if ext not in DATA_READ_ENGINES:
+        return UnsupportedDataFile(
+            filename,
+            ext,
+            "「{0}」不是本系统能读的数据文件{1}。数据分析只收 {2}，请在 Excel 或 WPS 里把表格"
+            "「另存为 *.xlsx」或 CSV 之后再上传。".format(
+                filename,
+                "" if ext else " (没有文件后缀)",
+                " / ".join(
+                    "「{0}」".format(item) for item in sorted(accepted_data_file_extensions())
+                ),
+            ),
+        )
+
+    engine = DATA_READ_ENGINES[ext]
+    if not engine_is_importable(engine):
+        return UnsupportedDataFile(
+            filename,
+            ext,
+            "「{0}」这一份文件本身没问题，但这台服务器上缺读 {1} 所需的组件 ({2})，所以本系统读不了它。"
+            "请先在 Excel 或 WPS 里把它「另存为 *.csv」再上传，并把这一句转给管理员补组件。".format(
+                filename, ext, engine
+            ),
+        )
+
+    return None
+
+
+def ensure_data_file_readable(name_or_path: str) -> None:
+    """收口名单之外的文件在这里点名拒绝, 早于任何一次磁盘读。"""
+    refusal = refuse_data_file(name_or_path)
+    if refusal is not None:
+        raise refusal
 
 # ==================== 编码检测 (#4) ====================
 
@@ -35,13 +169,13 @@ def read_csv(file_path: str) -> pd.DataFrame:
 
 # ==================== 合并单元格填充 (#6) ====================
 
-def _fill_merged_cells(file_path: str) -> pd.DataFrame:
+def _fill_merged_cells(file_path: str, sheet_name: str | None = None) -> pd.DataFrame:
     """
     检测并填充合并单元格。
     openpyxl 读取 → 原地展开合并区域的值 → 转为 DataFrame
     """
     wb = openpyxl.load_workbook(file_path, data_only=True)
-    ws = wb.active
+    ws = wb[sheet_name] if sheet_name else wb.worksheets[0]
 
     merged_ranges = list(ws.merged_cells.ranges)
     if not merged_ranges:
@@ -73,27 +207,165 @@ def _fill_merged_cells(file_path: str) -> pd.DataFrame:
 
 # ==================== 文件加载 ====================
 
-def load_excel(file_path: str) -> pd.DataFrame:
-    """统一入口：自动识别 xlsx/xls/csv，处理合并单元格"""
-    ext = os.path.splitext(file_path)[-1].lower()
+def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: pd.DataFrame | None = None) -> pd.DataFrame:
+    """在计算、样本和图表之前执行用户明确引用的分类筛选。"""
+    selected = df
+    domain = df if category_frame is None else category_frame
+    notes = []
+    # A requested period is a filter, not the min/max date of the eventual result.
+    date_token = r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
+    periods = re.findall(rf"({date_token})\s*(?:至|到|~|～)\s*({date_token})", query)
+    if periods:
+        if len(set(periods)) != 1:
+            raise ValueError("日期范围不唯一，请明确一个统计期间。")
+        start, end = (pd.to_datetime(v, errors="coerce") for v in periods[0])
+        date_columns = [c for c in df.columns if "日期" in str(c) or pd.api.types.is_datetime64_any_dtype(df[c])]
+        named_dates = [c for c in date_columns if str(c) in query]
+        chosen_dates = named_dates or date_columns
+        if len(chosen_dates) != 1 or pd.isna(start) or pd.isna(end) or start > end:
+            raise ValueError("日期字段或日期范围无法确定，请明确字段和有效起止日期。")
+        column = chosen_dates[0]
+        values = pd.to_datetime(df[column], errors="coerce")
+        if values.isna().any():
+            raise ValueError(f"日期字段「{column}」有缺失或无法识别的日期，未静默忽略。")
+        selected = df.loc[values.between(start, end + pd.Timedelta(days=1), inclusive="left")].copy()
+        selected.attrs["requested_period"] = f"{start:%Y-%m-%d} 至 {end:%Y-%m-%d}（{column}）"
+        notes.append(selected.attrs["requested_period"])
+    # Resolve common 已经X wording only against values that really exist in the table.
+    columns = select_text_columns(df)
+    known_values = {str(v) for c in columns for v in domain[c].dropna().unique()}
+    for value in sorted(known_values, key=len, reverse=True):
+        if value.startswith("已") and len(value) > 1:
+            query = query.replace("已经" + value[1:], value)
+    for exclude, pattern in (
+        (False, r"(?<![不非])(?:仅|只)(?:统计|计算|包含|保留|分析|汇总)([^，。；;\n]+)"),
+        (True, r"(?:排除|不含|不计入|不统计)([^，。；;\n]+)"),
+        (True, r"([^，。；;\n]+?)(?:不计入|不统计)(?=[，。；;\n]|$)"),
+        (False, r"(?:统计|合计|汇总|计算)([^，。；;\n]+?)的(?:金额|费用|记录|数据|总额)(?!数|量)"),
+    ):
+        for clause in re.findall(pattern, query):
+            values = re.findall(r'[「“"]([^」”"]+)[」”"]', clause)
+            columns = select_text_columns(df)
+            # Prefer the longest explicit column name (复核状态 must not also name 状态).
+            named = [c for c in columns if str(c) in clause]
+            named = [c for c in named if not any(str(c) in str(other) for other in named if other != c)]
+            if not values:
+                raw = clause.strip()
+                for column in named:
+                    raw = raw.replace(str(column), "", 1)
+                raw = re.sub(r"^(?:为|是|等于|中|的|[:：=])+", "", raw).strip()
+                raw = re.sub(r"(?:的)?(?:记录|数据|费用|订单|金额)$", "", raw).strip()
+                known = {str(v) for c in (named or columns) for v in domain[c].dropna().unique()}
+                values = [raw] if raw in known else [v.strip() for v in re.split(r"或者|以及|或|和|与|、", raw)]
+                # “仅统计金额” is an operation, not a categorical condition.
+                if not named and not any(v in known for v in values):
+                    operations = {str(c) for c in df.select_dtypes(include=["number"]).columns} | {"合计", "总金额", "金额合计", "总额", "行数", "总行数", "记录数", "总记录数", "数量", "总数"}
+                    operation = re.sub(r"^(?:这份|这张|该|本|全部|所有)(?:数据|表格|文件|表)?的?", "", raw)
+                    if not raw or raw in operations or operation in operations:
+                        continue
+                    raise ValueError("无法确定分类筛选条件，请写明列名及表中实际取值。")
+            candidates = named or [
+                c for c in columns
+                if set(values).issubset(set(domain[c].dropna().astype(str)))
+            ]
+            if len(candidates) != 1:
+                raise ValueError("无法确定筛选字段，请写明列名及表中实际取值。")
+            column = candidates[0]
+            unknown = set(values) - set(domain[column].dropna().astype(str))
+            if unknown:
+                raise ValueError(f"字段「{column}」没有取值：{'、'.join(sorted(unknown))}")
+            mask = selected[column].astype(str).isin(values)
+            selected = selected.loc[~mask if exclude else mask].copy()
+            notes.append(f"{column}{'排除' if exclude else '仅包含'}{'、'.join(values)}")
+    if notes:
+        # Multiple parser patterns can recognize the same natural-language
+        # condition. Keep the provenance readable and deterministic instead of
+        # repeating an identical filter in the answer and exported report.
+        notes = list(dict.fromkeys(notes))
+        selected.attrs["filter_note"] = (
+            f"实际筛选：{'；'.join(notes)}；筛选前 {len(df)} 行，筛选后 {len(selected)} 行。"
+        )
+    return selected
 
-    if ext == ".csv":
+
+def load_excel(file_path: str, *, query: str = "") -> pd.DataFrame:
+    """统一入口：自动识别收口名单里的格式，处理合并单元格。
+
+    R336：进门先问「这一枚后缀在本机真有读引擎吗」，拒绝发生在任何一次磁盘读之前。
+    旧实现把答案押在 `engine = "openpyxl" if ext == ".xlsx" else "xlrd"` 上，而 xlrd 从来
+    不在依赖里：客户传一份真 .xls 上来，收到的是一条运行时 import 失败（更早一步还会先在
+    openpyxl 的 InvalidFileException 上炸开），不是一句「请另存为 .xlsx」。
+    """
+    ensure_data_file_readable(file_path)
+    ext = extension_of(file_path)
+
+    # 走哪条腿由那张声明表决定，不由读腿里再抄一份后缀判断决定：
+    # 引擎写着 None = pandas 内置通道（今天只有 .csv），其余一律 engine_for(ext) 交给 pandas。
+    # 上一版这里写的是 `if ext == ".csv"` 加一句 `else "xlrd"`，两处手抄各错一半。
+    if engine_for(ext) is None:
         return read_csv(file_path)
 
-    # .xlsx / .xls
-    df = _fill_merged_cells(file_path)
+    # 收口名单里剩下的表格格式（今天只有 .xlsx），引擎名从 DATA_READ_ENGINES 现取
+    book = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+    try:
+        sheet_names = book.sheetnames
+    finally:
+        book.close()
+    positive = re.sub(r"(?:不要|别|无需|不)(?:读取|读|分析|使用|查看)[^，。；;\n]*", "", query)
+    requested = [a or b for a, b in re.findall(
+        r'[「“"]([^」”"]+)[」”"]\s*工作表|工作表\s*[「“"]([^」”"]+)[」”"]', positive
+    )]
+    unknown = [name for name in requested if name not in sheet_names]
+    if unknown:
+        raise ValueError(f"工作表「{unknown[0]}」不存在；可选：{'、'.join(sheet_names)}")
+    matches = list(dict.fromkeys(requested)) or [name for name in sheet_names if name in positive]
+    if len(matches) > 1:
+        raise ValueError(f"本次分析请选择一张工作表；题目包含：{'、'.join(matches)}")
+    sheet_name = matches[0] if matches else sheet_names[0]
+    df = _fill_merged_cells(file_path, sheet_name)
     if df is None:
-        engine = "openpyxl" if ext == ".xlsx" else "xlrd"
-        df = pd.read_excel(file_path, engine=engine)
+        df = pd.read_excel(file_path, engine=engine_for(ext), sheet_name=sheet_name)
 
     # 清理：删全空行/列
     df.dropna(how="all", inplace=True)
     df.dropna(axis=1, how="all", inplace=True)
     df.reset_index(drop=True, inplace=True)
+    df.attrs.update(sheet_name=sheet_name, sheet_names=sheet_names)
 
     return df
 
 # ==================== Excel 数据画像 (#1) ====================
+
+def _is_text_series(series: pd.Series) -> bool:
+    """文本列的语义判定：只问 pandas.api.types 这一族谓词，不和字面 dtype 串比较。
+
+    R182：pandas 3 起字符串列的 dtype 是 `str`，旧实现那一支比的是字面「object」，
+    真机数据上基本进不去 —— text_columns 常年为空、每列「多少个不同取值」永远不发，
+    数据面板等于对客户说「这台机器上没有文本列」。判类别要判语义，不判 dtype 的写法：
+    - is_string_dtype 收 str / string，也收装着字符串的 object 列与 category 列；
+    - is_object_dtype 再兜住混装列（字符串与数字同列）与全空的 object 列 —— 旧实现
+      把它们算作文本列，不收进来就等于让这批列从两份名单里一起消失（假干净）；
+    - 数值（含 bool）先出局：一列同时进 numeric 与 text 两份名单，等于对同一列说两次谎。
+    日期与时间差不归这两份名单里的任何一份，维持原样。
+    """
+    if pd.api.types.is_numeric_dtype(series):
+        return False
+    return bool(pd.api.types.is_string_dtype(series) or pd.api.types.is_object_dtype(series))
+
+
+def select_text_columns(frame: pd.DataFrame) -> list:
+    """一帧里文本列的名单 —— 判定复用 `_is_text_series`，本函数不另立第二份谓词。
+
+    R185 把这格口径公开成出口：`app/agents/tools.py` 的 analyze_data 那条腿原先自己写了一份
+    `select_dtypes`，只按字面 dtype 串「object」判定；它今天全凭 pandas 3 那条声明要移除的兼容通道
+    才勉强捞到 `str` 列（每调一次发一枚 Pandas4Warning），而 `string` / `category` 两族当场漏掉。
+    兼容通道一撤，这份名单就从「勉强对」滑成「恒空」，「哪个/谁最XX」那一支随之饿死。
+
+    返回原始列标签而不是 `str(col)`：画像里的 `text_columns` 是给人看的显示名，这一份是要拿去
+    `frame[col]` 取数的键，两者同源于同一个谓词，但不能互相顶替。
+    """
+    return [column for column in frame.columns if _is_text_series(frame[column])]
+
 
 def profile_dataframe(df: pd.DataFrame) -> dict[str, Any]:
     """
@@ -101,21 +373,47 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, Any]:
     - 行列数、列名、类型
     - 数值列统计（均值/最大/最小/缺失）
     - 文本列唯一值数量
+
+    「有列无行」是一张合法的空表画像，不是一条错误。只交了表头的 CSV/Excel 在 pandas 里
+    恰好 df.empty 为真，旧实现把它和「真的什么都没解析出来」一起塞进 `{"error": ...}`，
+    前端 `v-if="profile"` 判真之后去读 profile.columns.length，上传空表就当场抛。
+    现在：空表交回形状完整的画像并带 empty 标记；只有零列才走错误形状，
+    错误走既有信封 ErrorEnvelope 与既有稳定码（app/agents/contracts.py）。
+    契约与空列口径钉在 tests/test_r170_header_only_dataframe_profile.py。
     """
-    if df.empty:
-        return {"error": "数据为空"}
+    row_count = int(len(df))
+    column_names = list(df.columns)
+    if not column_names:
+        return _profile_failure(
+            "parse_failed",
+            "这份文件没有解析出任何列，无法生成数据画像；请确认文件里有表头行。",
+        )
 
     profile = {
-        "rows": len(df),
-        "columns": len(df.columns),
-        "column_count": len(df.columns),
+        "rows": row_count,
+        "columns": len(column_names),
+        "column_count": len(column_names),
+        # 0 行不等于统计失败：这是一张开张空表，标记让读的人和界面分得清这两种「空」。
+        "empty": row_count == 0,
     }
 
     cols_info = []
-    for col in df.columns:
-        dtype = str(df[col].dtype)
-        missing = int(df[col].isna().sum())
-        missing_pct = round(missing / max(len(df), 1) * 100, 1)
+    numeric_names: list[str] = []
+    text_names: list[str] = []
+    for col in column_names:
+        series = df[col]
+        dtype = str(series.dtype)
+        missing = int(series.isna().sum())
+        missing_pct = round(missing / max(row_count, 1) * 100, 1)
+        is_numeric = bool(pd.api.types.is_numeric_dtype(series))
+        # 一次判定两处共用：汇总名单与逐列统计键必须由同一个布尔派生，否则两份名单各说各话。
+        is_text = _is_text_series(series)
+
+        # 分类按语义谓词走，不按「统计键在不在」走：空表不发统计量，后者会把 float 列说成文本列。
+        if is_numeric:
+            numeric_names.append(str(col))
+        elif is_text:
+            text_names.append(str(col))
 
         info = {
             "name": str(col),
@@ -124,33 +422,48 @@ def profile_dataframe(df: pd.DataFrame) -> dict[str, Any]:
             "missing_pct": missing_pct,
         }
 
+        if row_count == 0:
+            # 空列的口径，定死不许留白：一个单元格都没有 => missing 0 / missing_pct 0.0；
+            # 一个取值都没有 => 唯一值 0 个。数值列不发 min/max/mean/sum —— 0 行的均值不是
+            # 一个数，写 0 会把「没有数据」说成「数据是 0」，写 None 会让界面印出「最小 null」。
+            info["unique_values"] = 0
+
         # 数值列
-        if pd.api.types.is_numeric_dtype(df[col]):
-            info["min"] = _safe_float(df[col].min())
-            info["max"] = _safe_float(df[col].max())
-            info["mean"] = _safe_float(df[col].mean())
-            info["sum"] = _safe_float(df[col].sum())
+        elif is_numeric:
+            info["min"] = _safe_float(series.min())
+            info["max"] = _safe_float(series.max())
+            info["mean"] = _safe_float(series.mean())
+            info["sum"] = _safe_float(series.sum())
 
         # 文本列
-        elif dtype == "object":
-            info["unique_values"] = int(df[col].nunique())
+        elif is_text:
+            info["unique_values"] = int(series.nunique())
 
         cols_info.append(info)
 
     profile["columns"] = cols_info
 
     # 摘要
-    num_cols = [c["name"] for c in cols_info if "mean" in c]
-    text_cols = [c["name"] for c in cols_info if "unique_values" in c]
-    profile["numeric_columns"] = num_cols
-    profile["text_columns"] = text_cols
+    profile["numeric_columns"] = numeric_names
+    profile["text_columns"] = text_names
     profile["total_missing"] = int(df.isna().sum().sum())
 
     # 行数抽样提示 (#5)
-    if len(df) > 10000:
-        profile["warning"] = f"文件较大 ({len(df)} 行)，建议抽样分析。统计信息基于全量数据。"
+    if row_count > 10000:
+        profile["warning"] = f"文件较大 ({row_count} 行)，建议抽样分析。统计信息基于全量数据。"
 
     return profile
+
+
+def _profile_failure(code: str, message: str) -> dict[str, Any]:
+    """画像层的错误形状：只有既有信封，不新造字段与裸码。
+
+    键名 error 是这里本来就在用的那一个，换掉的只是它的值：从「人读得懂、机器读不懂」的裸中文
+    换成 app/agents/contracts.py::ErrorEnvelope，码名走封闭枚举，前端 lib/errcodes.js 才有归一的地方。
+    除它以外一个键都不给，免得错误形状长得像画像。
+    """
+    envelope = ErrorEnvelope(code=code, message=message, retryable=False)
+    return {"error": envelope.model_dump()}
 
 
 def _safe_float(val) -> float | None:

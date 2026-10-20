@@ -66,6 +66,10 @@ docker compose --env-file deploy/.env.server -f docker-compose.yml -f docker-com
 - 客户上传与生成文件只存在于命名卷与数据库里，重建镜像不会丢失或外泄
 - 新环境部署从“手工装依赖”降为“拉镜像 + 启动服务”
 
+## 操作手册
+
+[企业智脑操作手册](docs/user-guide/README.md) 按“总目录 → 业务模块 → 功能页面”组织，包含各功能用途、操作步骤、权限和问题排查。
+
 ## 不使用 Docker 时
 
 本地直跑读仓库根的 `.env`（`cp .env.example .env`），python-dotenv 按字面解析，
@@ -73,10 +77,18 @@ docker compose --env-file deploy/.env.server -f docker-compose.yml -f docker-com
 
 ```bash
 uv sync
+uv run python scripts/migrate.py     # 一次性建表：运行时不建表，服务在迁移成功后才该起
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8001
 uv run python deploy/queue_worker.py
 uv run python deploy/scheduler.py     # 生产 APP_ENV 下 API 不再内嵌调度器，需要单独起一个
 ```
+
+`scripts/migrate.py` 没有子命令，它读 `DATABASE_URL`（也收 `--database-url`）。**这一跑停在
+哪一格是明说的**：迁移 0010 拒猜向量宽度，所以那份 profile —— `EMBEDDING_MODEL` 与
+`EMBEDDING_DIMENSION` 两行，成对写、成对走（`.env.example` 里有）—— 必须先声明在 `.env`
+里；缺了它，这一跑回滚并在 stderr 里点这两枚变量的名字，不会替你选一个宽度。控制面状态
+（工件登记、追溯台账、数据集登记）落 PostgreSQL 还是落进程内过渡表，由
+`PERSISTENCE_BACKEND` 决定，取值与代价写在 `.env.example` 那一段注释里。
 
 ## GPU 与算力诚实
 

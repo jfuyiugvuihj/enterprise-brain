@@ -1,4 +1,4 @@
-"""R100：兼容腿必须真的把思考关掉，而且只有一种拼法。
+"""R100：兼容腿必须真的把思考关掉，而且（R591 之后）不止一种拼法。
 
 跟进单 §42 在同一台交付机、同一个容器、同一条 prompt 上跑了八个变体，两条事实把这一单钉住：
 兼容腿不带 thinking 字段时，max_tokens=1536 全部花在隐藏思考链上，正文 0 字、
@@ -10,6 +10,17 @@ finish_reason=stop（表 #6）。而两个"看起来也该行"的拼法——兼
 本文件是那些实机数字的离线镜像：它钉"请求里到底带没带那个字段、带的是不是唯一那种写法、
 每条能走到真机的腿是不是都带上、值被写坏时会不会谎报"，一条真 socket 都不开。
 判据出处：跟进单 §42.1。原生腿不归本单（R101 裁定本窗口留在兼容腿）。
+
+🔴 R591（2026-10-03，同一台交付机、同一个容器、Ollama 0.34.0、qwen3.5:9b）把上面第一段的
+**因果**那一半证伪了：`thinking:{"type":"disabled"}` 与完全不带该字段的两臂实测**同为**
+正文 0 字 / `finish_reason=length` / 1536 token 全花在 reasoning 通道（凭据
+`%TEMP%\r591-probe.txt`、`%TEMP%\evalrun\r591-compat-lever.txt`）。§42 表 #6 那 93 字因此
+不可复现，而 `/v1` 真正读取的拼法是顶层 `reasoning_effort:"none"`——带上它同一发答出
+572 字、`finish=stop`、reasoning 0 字、8.48 s。本文件里"唯一拼法"的措辞按此改判：
+`disabled` 现在一枚体里带**两**个字段名，旧的那枚保留（R100 钉过那字节，删它是另一笔未测改动），
+新的那枚才是把答案从思考链嘴里拿回来的。"两种看着也该行的写法仍然不许"（顶层 `think:false`
+与 `options.thinking_disabled`）这一半原样成立，`test_only_the_measured_spellings...` 仍钉它。
+改判不是放宽：摘掉新字段，本文件那枚逐字段点名的钉当场红（反证 K1，交工纸）。
 """
 
 import logging
@@ -26,6 +37,8 @@ from app.common.model_budget import (
     DEFAULT_MODEL_THINKING,
     MODEL_THINKING_ENV,
     MODEL_THINKING_MODES,
+    REASONING_EFFORT_DISABLED_VALUE,
+    REASONING_EFFORT_REQUEST_FIELD,
     THINKING_REQUEST_FIELD,
     THINKING_REQUEST_VALUE,
     budget_signal,
@@ -38,7 +51,13 @@ from app.common.model_budget import (
 )
 
 GREETING = [HumanMessage(content="你好")]
-DISABLED_BODY = {THINKING_REQUEST_FIELD: {"type": "disabled"}}
+#: R591: two names, one mode word. ``thinking`` is the field R100 ratified and re-measured as
+#: inert on this endpoint; ``reasoning_effort`` is the field ``/v1`` honours. The pair is what a
+#: ``disabled`` body carries, and an ``enabled`` body still carries neither.
+DISABLED_BODY = {
+    THINKING_REQUEST_FIELD: {"type": "disabled"},
+    REASONING_EFFORT_REQUEST_FIELD: REASONING_EFFORT_DISABLED_VALUE,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -161,12 +180,20 @@ def test_the_environment_variable_is_read_on_every_call_not_once_at_import(monke
     assert thinking_extra_body() == DISABLED_BODY
 
 
-def test_only_the_measured_spelling_goes_on_the_wire():
-    """§42 rows #3 and #7: the two near-miss spellings answer with nothing, so they never appear."""
+def test_only_the_measured_spellings_go_on_the_wire():
+    """§42 rows #3/#7 stay refused; R591 adds the compat field this endpoint actually reads.
+
+    The two near-miss spellings -- top-level ``think:false`` on the compat body,
+    ``options.thinking_disabled`` on the native body -- measured 0 characters and are still not
+    in this body. What changed is the count of the names that are: ``thinking`` alone measured
+    the same 0 characters as nothing at all, so a pin that demanded exactly one key was pinning
+    the bug shut. Dropping ``reasoning_effort`` from the resolver turns this test red.
+    """
     body = thinking_extra_body()
 
-    assert list(body) == ["thinking"]
+    assert list(body) == [THINKING_REQUEST_FIELD, REASONING_EFFORT_REQUEST_FIELD]
     assert body["thinking"] == {"type": "disabled"}
+    assert body["reasoning_effort"] == "none"
     assert "think" not in body
     assert "thinking_disabled" not in body
     assert body is not model_budget.THINKING_REQUEST_VALUE, "the wire fragment must be a copy"

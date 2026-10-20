@@ -42,13 +42,17 @@ from app.common.logger import logger
 from app.common.model_budget import (
     ModelContextLimitExceeded,
     OUTPUT_TRUNCATED_CODE,
-    authorize_call,
+    authorize_or_refuse,
     budget_signal,
     context_error_code,
     estimate_prompt_tokens,
     http_timeout,
     model_tier_budget,
+    lever_rejection_code,
+    no_think_request_fields,
+    record_budget_event,
     request_timeout_ceiling_seconds,
+    thinking_extra_body,
 )
 from app.common.model_config import KeepAlivePolicy, get_local_model_settings, resolve_keep_alive
 
@@ -124,6 +128,100 @@ def keep_alive_log(policy) -> str:
 RESPONSE_EMPTY_CODE = "model_response_empty"
 MODEL_UNAVAILABLE_CODE = "model_unavailable"
 RATE_LIMITED_CODE = "rate_limited"
+
+
+#: How long a query rewrite will queue for a free slot before the retrieval leg degrades to
+#: the raw question. Until R228 this was 0.0, and 0.0 means "refuse on the spot".
+#:
+#: Who it refuses against is its own turn. ``route_main`` fans worker legs out with ``Send``
+#: (app/agents/orchestrator.py:614), so a report-tier turn runs the doc leg and the data leg
+#: concurrently in one process. The data leg's ANALYSIS round holds the only slot
+#: (``DEFAULT_MAX_CONCURRENCY = 1`` at app/common/model_budget.py:52, which is what both shipped
+#: env samples ship and what compose substitutes), and the doc leg's rewrite -- the non-streaming
+#: half of this boundary -- asked for that slot with zero patience and therefore lost on every
+#: collision. The retrieval pipeline logged one warning, fell back to the raw question, and
+#: correctness went on scoring the answer as if recall had been wide. That is the whole of R228.
+#:
+#: 15.0 is bounded by two measured numbers rather than by a wish. This process already treats 60 s
+#: as "how long a model call may wait before it is allowed to start paying" (the code default of
+#: ``MODEL_CONCURRENCY_WAIT_SECONDS``, the 60.0 literal in ``LocalModelBudget._configured_wait``),
+#: and a rewrite's own sized clock is 43.4 s at a rewrite-shaped prompt (``http_timeout`` on the
+#: rewrite tier for 200 prompt tokens, off the CPU baseline of prefill 35.2 / decode 8.18 tok/s).
+#: 43.4 + 15 < 60, so this leg cannot become the reason a turn is slower than a turn that was
+#: refused outright -- and the number is a patience bound, not a capacity decision: raising
+#: ``MODEL_MAX_CONCURRENCY`` is the owner's call and would turn "one leg fails" into "every leg is
+#: slower", which is why this file does not touch it.
+#:
+#: The cost, in full. (1) A rewrite that cannot get a slot now blocks the retrieval leg for up to
+#: 15 s before it degrades, where before it degraded in 0 s. (2) A queue deeper than 15 s still
+#: degrades: a full ANALYSIS round on the CPU baseline runs to minutes, so this bound recovers the
+#: collisions that clear quickly and not the ones that do not. (3) The streaming half is left at
+#: zero patience on purpose -- that refusal is a live SSE response the user is watching, and
+#: trading an instant ``rate_limited`` sentence for 15 s of silence before the same sentence is a
+#: worse product, not a better one. What item (2) buys is the third leg of the fix: every refusal
+#: past the bound is now counted and logged as an error, because a degradation that enters no
+#: number is indistinguishable from a system that never degrades.
+REWRITE_SLOT_WAIT_SECONDS = 15.0
+
+#: The rewrite leg's contention ledger. Deliberately not a ``BUDGET_EVENT_NAMES`` member:
+#: ``record_budget_event`` refuses undeclared names, and declaring one means editing
+#: ``app/common/model_budget.py``, which R228's write domain excludes -- so this file owns the
+#: counter for the refusal this file causes. ``tests/test_r228_rewrite_slot_wait.py`` pins it, and
+#: the numbers are not published on an HTTP surface yet (``monitoring.py`` embeds
+#: ``model_budget_readout`` and ``observability.py`` embeds that snapshot; either one needs a
+#: line from a file this ticket may not write -- filed as a follow-up rather than worked around
+#: by editing a stranger's file).
+_rewrite_slot_lock = Lock()
+_rewrite_slot_ledger: dict[str, int] = {
+    #: Rewrites that queued and got a slot, so the retrieval ran with model-written wording.
+    "grants_after_wait": 0,
+    #: Rewrites that queued, hit the bound, and degraded to the raw question. Every one of these
+    #: is a report whose recall was silently lowered before R228 and is loud now.
+    "refusals": 0,
+    #: Queue time actually paid, on the granted side. ``refusal_wait_ms_max`` is the same on the
+    #: refused side, which is what tells an operator whether the bound is being spent or skipped.
+    "queue_ms_total": 0,
+    "queue_ms_max": 0,
+    "refusal_wait_ms_max": 0,
+}
+
+
+def record_rewrite_slot_grant(wait_ms: int) -> None:
+    """Book one rewrite that got its slot after waiting for it."""
+    with _rewrite_slot_lock:
+        if wait_ms > 0:
+            _rewrite_slot_ledger["grants_after_wait"] += 1
+            _rewrite_slot_ledger["queue_ms_total"] += int(wait_ms)
+            _rewrite_slot_ledger["queue_ms_max"] = max(
+                _rewrite_slot_ledger["queue_ms_max"], int(wait_ms)
+            )
+
+
+def record_rewrite_slot_refusal(wait_ms: int) -> None:
+    """Book one rewrite that degraded because the bound expired. This is the silent-recall count."""
+    with _rewrite_slot_lock:
+        _rewrite_slot_ledger["refusals"] += 1
+        _rewrite_slot_ledger["refusal_wait_ms_max"] = max(
+            _rewrite_slot_ledger["refusal_wait_ms_max"], int(wait_ms)
+        )
+
+
+def rewrite_slot_readout() -> dict[str, int]:
+    """The rewrite leg's contention ledger as a copy, so a reader cannot mutate it.
+
+    Shaped like ``native_leg_readout``: in-memory, no socket, one grep. ``refusals`` is the
+    number that answers "how many of this process's retrievals ran on the raw question alone
+    because the model was busy", which is the question no score used to be able to ask.
+    """
+    with _rewrite_slot_lock:
+        return dict(_rewrite_slot_ledger)
+
+
+def reset_rewrite_slot_counts() -> None:
+    """Zero the ledger. Test seam, the same reason ``reset_budget_events`` exists."""
+    with _rewrite_slot_lock:
+        for name in _rewrite_slot_ledger:
+            _rewrite_slot_ledger[name] = 0
 
 
 class ModelSource(str, Enum):
@@ -474,10 +572,20 @@ class ModelHandler:
             if refused:
                 self._log_budget_verdict(budget, prompt_tokens, refused)
                 raise ModelContextLimitExceeded(budget, prompt_tokens or 0) from exc
+            #: R591 判据③ 的第二把: the move to the compatible leg is now counted in the
+            #: process-wide ledger a health surface publishes, not only on this instance. R147
+            #: made the verdict nameable, and its own comment says "once" and "every call" are
+            #: different incidents -- until this line the published numbers could not tell them
+            #: apart, which is why run16/run17 had to be reconstructed by joining a SQL table to
+            #: 8 MB of server log. `no_think_fields=` names what the leg being moved *to* asks
+            #: with, so a downgrade and an empty answer can be read in the same breath.
+            record_budget_event("native_body_rejected")
             logger.warning(
                 f"[Model] 原生 {NATIVE_CHAT_SUFFIX} 拒收本次报文形状（{exc}）："
                 f"本次退回 {TRANSPORT_COMPAT} 腿，原生腿不退役"
-                f"（verdict={exc.verdict} request_rejections={self._native_request_rejections}）"
+                f"（verdict={exc.verdict} request_rejections={self._native_request_rejections}"
+                f" budget_event=native_body_rejected"
+                f" no_think_fields={'|'.join(no_think_request_fields()) or 'none'}）"
             )
             return None
         except _NativeChatUnsupported as exc:
@@ -565,6 +673,28 @@ class ModelHandler:
             # gets the same verdict: one collision, one code, whoever detected it.
             self._log_budget_verdict(budget, prompt_tokens, provider_code, stream=stream)
             raise ModelContextLimitExceeded(budget, prompt_tokens or 0) from exc
+        #: R591 判据③: the one failure this product's own fix can cause, named instead of
+        #: buried. A server that has no idea what ``reasoning_effort`` means answers 400, and
+        #: every line below it says "provider unavailable" -- which is true of the model and a
+        #: lie about the cause. The offline sentence is still what the caller gets (this
+        #: boundary has never invented a nicer answer, and 判据③ forbids it from starting now);
+        #: what changes is that the round carries a code, a count, and the field names it was
+        #: refused for. Checked after the length refusal, which has its own code and re-raises.
+        lever_code = lever_rejection_code(exc)
+        if lever_code:
+            record_budget_event("lever_rejected")
+            logger.error(
+                budget_signal(
+                    budget.tier,
+                    prompt_tokens=prompt_tokens,
+                    read_seconds=budget.timeout_seconds,
+                    code=lever_code,
+                    stream=stream,
+                    transport=transport,
+                    no_think_fields=no_think_request_fields(),
+                )
+                + f" [Model] 服务端拒收了关闭思考的请求字段，本次不发兜底文案冒充答案: {exc}"
+            )
         logger.warning(f"[Model] provider unavailable: {exc}")
         if stream:
             return iter([_OfflineStreamChunk(MODEL_UNAVAILABLE_REPLY)])
@@ -574,24 +704,60 @@ class ModelHandler:
             error_code=MODEL_UNAVAILABLE_CODE,
         )
 
-    def chat(self, messages: list[dict], source: ModelSource = ModelSource.LOCAL, stream: bool = True):
-        """Call the local model; failures remain explicit and non-business results."""
+    def chat(
+        self,
+        messages: list[dict],
+        source: ModelSource = ModelSource.LOCAL,
+        stream: bool = True,
+        *,
+        stream_options: dict | None = None,
+    ):
+        """Call the local model; failures remain explicit and non-business results.
+
+        ``stream_options`` is metering, not tuning: on the compatible leg a stream reports
+        no counters at all unless the body asks for them (R31 现读), so every streamed round
+        this boundary sent landed in ``model_calls`` with ``input_tokens`` and
+        ``output_tokens`` left NULL. The caller may pass its own ``stream_options`` and then
+        its values are the ones that go out.
+        """
         client = self.ollama_client
         model = self.local_model
         from app.common.model_budget import ModelBudgetExhausted
 
         budget = self._call_budget(stream)
         prompt_tokens = estimate_prompt_tokens(messages)
-        # Sized and, if it cannot fit, refused before a slot is taken. A request this
-        # window will never hold must not queue behind real work, and must not come back
-        # as an answer the server stopped halfway through.
-        authorize_call(budget, prompt_tokens, stream=stream)
+        # Sized and refused before a slot is taken, twice over: a request this window will
+        # never hold must not queue behind real work and must not come back as an answer the
+        # server stopped halfway through, and a request this clock cannot pay for must not be
+        # sent at all -- that one is the 20-minute hole R204 was opened for.
+        authorize_or_refuse(budget, prompt_tokens, stream=stream)
 
+        # Zero patience on the streaming half, bounded patience on the rewrite half, and the
+        # difference is what a refusal costs the caller. On the streaming leg a refusal is the
+        # answer sentence itself, so waiting only makes the user watch a spinner for 15 s before
+        # reading the same sentence. On this leg the refusal is *not* visible to the caller at
+        # all: the rewrite falls back to the raw question, retrieval narrows by the whole width of
+        # one question's rewordings, and correctness keeps scoring the answer. R228 gave that
+        # caller a bound and gave the degradation a count; the bound is ``REWRITE_SLOT_WAIT_SECONDS``
+        # and the reasons both ways are written there.
+        slot_wait = 0.0 if stream else REWRITE_SLOT_WAIT_SECONDS
         try:
-            slot = self._budget.acquire(wait_seconds=0)
-        except ModelBudgetExhausted:
-            logger.warning("[Model] local model concurrency budget exhausted")
+            slot = self._budget.acquire(wait_seconds=slot_wait)
+        except ModelBudgetExhausted as exc:
+            if not stream:
+                record_rewrite_slot_refusal(exc.wait_ms)
+                logger.error(
+                    "[Model] local model concurrency budget exhausted"
+                    f" leg=rewrite slot_wait_seconds={slot_wait:g}"
+                    f" waited_ms={exc.wait_ms}"
+                    f" refusals={rewrite_slot_readout()['refusals']}"
+                    " —— 本次检索只用原始问题：召回被容量压低，不是模型坏了"
+                )
+            else:
+                logger.warning("[Model] local model concurrency budget exhausted")
             return self._rate_limited_response(stream)
+        if not stream:
+            record_rewrite_slot_grant(slot.wait_ms)
         keep_alive = self._keep_alive()
         logger.info(f"使用内部本地模型: {model} keep_alive={keep_alive_log(keep_alive)}")
 
@@ -610,6 +776,18 @@ class ModelHandler:
                 slot.release()
                 return native
 
+        #: 流式那一发的 usage opt-in（R690）。形状逐字照另一条边界上那处在册写法
+        #: ``app/agents/nodes.py::_answer_leg_tap``，本处不另造规则：只在真走流式时进请求，
+        #: 调用方自己写过 ``stream_options`` 就原样放行（与 R30 那条 "caller's cap wins" 同一个
+        #: 裁定）。非流式的 body 一个字不变。缺这一格的代价不在这儿而在账上：
+        #: ``app/trace/spans.py::stream_usage_counts`` 只能搬服务端报过的数，没报就留 NULL，
+        #: 于是 ``/chat`` 那两枚计数列永远读不出数（R670 交回单 §9 点名的就是这一格）。
+        request_kwargs: dict = {}
+        if stream:
+            request_kwargs["stream_options"] = (
+                {"include_usage": True} if stream_options is None else stream_options
+            )
+
         try:
             response = client.chat.completions.create(
                 model=model,
@@ -617,13 +795,22 @@ class ModelHandler:
                 stream=stream,
                 max_tokens=budget.max_tokens,
                 timeout=http_timeout(budget, prompt_tokens, stream=stream),
-                # The compatible leg gets the same request it would make without this line,
-                # plus residency. Whether the server honours keep_alive is a server fact, and on
-                # this one it does not: /v1 on Ollama 0.34.2 ignores the field outright (measured
-                # 2026-09-21 from /api/ps -- 1200 s survived a compat call asking for 20m, one
-                # asking for nothing, and one asking for 1800s). Asking anyway costs nothing and
-                # keeps both legs stating the same window in the same request.
-                extra_body={KEEP_ALIVE_FIELD: keep_alive.wire},
+                # Residency, and since R591 the same no-thinking fragment the answer legs carry.
+                # Whether the server honours keep_alive is a server fact, and on this one it does
+                # not: /v1 on Ollama 0.34.2 ignores the field outright (measured 2026-09-21 from
+                # /api/ps -- 1200 s survived a compat call asking for 20m, one asking for nothing,
+                # and one asking for 1800s). Asking anyway costs nothing and keeps both legs
+                # stating the same window in the same request.
+                # Asking for residency *alone*, on the other hand, is what cost the answer: this
+                # mouth sent no thinking field at all, so every call that landed here -- a server
+                # with no /api/chat, or one that refused a body with the 400 above, or the legacy
+                # streaming half -- handed the tier's whole output budget to a thinking model's
+                # hidden chain and came back with an empty body (R591 判据①: the compat leg was
+                # never missing a native fallback, it was missing the request). One resolver,
+                # ``thinking_extra_body``, both boundaries, and an ``enabled`` process still
+                # sends the body it sent before R100, residency aside.
+                extra_body={**thinking_extra_body(), KEEP_ALIVE_FIELD: keep_alive.wire},
+                **request_kwargs,
             )
         except Exception as exc:
             slot.release()

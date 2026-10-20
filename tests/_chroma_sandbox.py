@@ -177,8 +177,9 @@ def _discard_chroma_sandbox() -> str | None:
 # 所以「它只是读一下」不是豁免理由：Chroma 一开目录就往 sqlite 落 WAL 并回写，
 # 被跟踪的二进制立刻脏掉，而任何人顺手一次 git add -A 就是上百 MB 入库。
 # 修法沿用 R53 那一招：在 conftest 导入期动手，app/** 与 scripts/** 一个字都不改，钉在唯一的
-# 收口上。全仓四处 PersistentClient 调用（app/rag/retriever.py:481、scripts/rebuild_index.py:302、
-# scripts/compare_vector_recall.py:185、tests/test_r125_status_vector_census.py:384）写的都是
+# 收口上。全仓五处 PersistentClient 调用（app/rag/retriever.py:875、scripts/rebuild_index.py:302、
+# scripts/compare_vector_recall.py:186、scripts/diag_r162_chroma_zero_rows.py:498（只开仓外副本）、
+# tests/test_r125_status_vector_census.py:384）写的都是
 # chromadb.PersistentClient(...) —— 属性查找发生在调用期，所以包这一层同时盖住上面四条路。
 # 工作树之外的目录（tmp_path 等）原样放行：本单只关心仓库里那批被跟踪的文件。
 
@@ -384,6 +385,21 @@ def install_chroma_sandbox_pins(
     global PINS_INSTALLED
     global CHROMA_DIR_DEFAULT_INDEX, CHROMA_DIR_SHIPPED_DEFAULT
     global CHROMA_CLIENT_PARAMETER, CHROMA_CLIENT_SHIPPED, CHROMA_WRITEBACK_BASELINE
+
+    from pathlib import Path
+    import ast
+    runtime = Path(__file__).resolve().parents[1] / "app/rag/retriever.py"
+    tree = ast.parse(runtime.read_text(encoding="utf-8"))
+    constructor = next(n for c in tree.body if isinstance(c, ast.ClassDef)
+                       and c.name == "DocumentRetriever" for n in c.body
+                       if isinstance(n, ast.FunctionDef) and n.name == "__init__")
+    if "chroma_dir" not in {arg.arg for arg in constructor.args.args}:
+        assert not any(isinstance(n, ast.Import) and any(a.name == "chromadb" for a in n.names)
+                       or isinstance(n, ast.ImportFrom) and (n.module or "").startswith("chromadb")
+                       for n in ast.walk(tree)), "retired runtime must not import Chroma"
+        os.environ["ENTERPRISE_BRAIN_PYTEST_CHROMA_DIR"] = CHROMA_SANDBOX
+        CHROMA_WRITEBACK_BASELINE = _chroma_store_snapshot()
+        return
 
     #: 幂等重入也要把这两条交叉检查走完：第二枚装载点（tests/conftest.py）传进来的
     #: persistence_sandbox 是仓库根那一侧拿不到的信息，不许因为「已经钉过了」就吞掉。

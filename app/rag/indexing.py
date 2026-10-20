@@ -4,7 +4,7 @@ The local JSON metadata file is the authority for what this process believes is
 published. ``PostgresIndexStore`` mirrors one publication into ``index_registry``,
 ``index_versions`` and ``chunks`` inside a single database transaction, so a publication
 that fails halfway leaves neither a published version nor a stranded chunk row behind.
-Chroma stays the only retrieval path: this module records chunks, it never embeds them,
+PGVector is the sole retrieval store; this module records version metadata,
 and every row it writes leaves ``chunks.embedding`` NULL.
 
 R22 binds every index version to the embedding profile that produced it: ``embedding_model``
@@ -37,7 +37,25 @@ from uuid import uuid4
 from app.common.logger import logger
 
 RESOURCE_TYPE_DOCUMENT = "document"
-INDEX_BACKEND = "chroma"
+#: The two backend spellings this build knows. R59b: ``INDEX_BACKEND`` below is no longer
+#: only a label written into the version ledger -- it is the switch that decides which
+#: engine a semantic search asks. R231 gave that switch a second spelling, the
+#: deployment's ``INDEX_BACKEND_ENV``, so moving the read path no longer needs a code
+#: change. Neither spelling is resolved anywhere but in :func:`read_backend`, and the
+#: search leg, the version ledger, and a publication record all call that one function:
+#: the ledger naming one engine while reads answer from another is the half-switched
+#: state R59b exists to avoid, and two readers that each pick their own source is how it
+#: comes back.
+INDEX_BACKENDS = frozenset({"pgvector"})
+INDEX_BACKEND_DEFAULT = "pgvector"
+PGVECTOR_BACKEND = "pgvector"
+#: The operator's spelling of the same switch, read when it is asked. It is *not* set
+#: here: the shipped answer stays ``INDEX_BACKEND_DEFAULT`` until a deployment says
+#: otherwise, so building this knob did not close it. Blank counts as nothing said, which
+#: is how ``VECTOR_DUAL_WRITE`` reads an empty line, and leaves the constant below in
+#: charge -- a test that moves only that constant keeps moving the read path.
+INDEX_BACKEND_ENV = "INDEX_BACKEND"
+INDEX_BACKEND = INDEX_BACKEND_DEFAULT
 INDEX_METADATA_ENV = "INDEX_METADATA_PATH"
 DEFAULT_INDEX_METADATA_PATH = "./data/index-versions.json"
 
@@ -279,7 +297,7 @@ class EmbeddingScope:
 def _shipped_embedding_model() -> str:
     """The model this build embeds with, read from the module that actually calls it.
 
-    Imported lazily and guarded: app/rag/retriever pulls in chromadb and langchain, and an
+    Imported lazily and guarded: app/rag/retriever pulls in langchain, and an
     index registry must still open when those are missing. If the retriever cannot be read
     the shipped constant answers, never "unknown".
     """
@@ -515,7 +533,7 @@ class IndexRegistry:
     ) -> IndexVersion:
         if not index_id.strip() or not source_version_id.strip():
             raise ValueError("index_id and source_version_id are required")
-        if backend not in {"chroma", "pgvector"}:
+        if backend not in INDEX_BACKENDS:
             raise ValueError("unsupported index backend")
         if not re.fullmatch(r"[0-9a-f]{64}", checksum):
             raise ValueError("index checksum must be a SHA-256 hex digest")
@@ -1066,7 +1084,11 @@ class PublicationOutcome:
             "index_id": self.index_id,
             "index_version_id": self.index_version_id,
             "source_version_id": self.source_version_id,
-            "backend": INDEX_BACKEND,
+            # Resolved, never read raw: the record a caller sees has to name the engine the
+            # search leg is actually asking. Reading the constant here would let a
+            # deployment that set the environment keep publishing versions attributed to an
+            # engine that is not serving reads.
+            "backend": read_backend(),
             "chunk_count": self.chunk_count,
             "checksum": self.checksum,
             "mirrored": self.mirrored,
@@ -1582,7 +1604,9 @@ class IndexPublisher:
             lambda: self.registry.create_version(
                 index_id=index_id,
                 source_version_id=publication.resource_version_id,
-                backend=INDEX_BACKEND,
+                # The same resolution as the read path and as as_dict(), so a version
+                # record can never be stamped with an engine other than the live one.
+                backend=read_backend(),
                 chunk_count=publication.chunk_count,
                 checksum=publication_checksum(publication),
                 retirement=publication.retirement,
@@ -2008,3 +2032,22 @@ def plan_index_refresh(
 def _table_is_present(present: set[tuple[str, str]], table: str) -> bool:
     required = _MIRROR_COLUMNS.get(table, ())
     return all((table, column) in present for column in required)
+
+
+# ------------------------------------------------------------------ read-path switch
+
+
+def read_backend() -> str:
+    """PGVector is the only supported engine; stale deployment values fail explicitly."""
+    value = str(os.getenv(INDEX_BACKEND_ENV, INDEX_BACKEND_DEFAULT) or INDEX_BACKEND_DEFAULT).strip().lower()
+    if value != PGVECTOR_BACKEND:
+        raise ValueError(f"INDEX_BACKEND={value!r} 不再支持，请配置 pgvector")
+    return PGVECTOR_BACKEND
+
+
+def pgvector_reads_enabled() -> bool:
+    return read_backend() == PGVECTOR_BACKEND
+
+
+def pgvector_writes_are_primary() -> bool:
+    return read_backend() == PGVECTOR_BACKEND

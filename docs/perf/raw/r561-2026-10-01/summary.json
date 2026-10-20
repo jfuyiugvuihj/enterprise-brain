@@ -1,0 +1,267 @@
+{
+  "asked_at": "2026-10-01 23:38:33",
+  "out_dir": "C:\\Users\\fengx\\PycharmProjects\\企业智脑\\docs\\perf\\raw\\r561-2026-10-01",
+  "head": {
+    "asked_at": "2026-10-01 23:38:33",
+    "base_url": "http://127.0.0.1:8001",
+    "id": "report-01",
+    "tier": "报告",
+    "lane": "report",
+    "fixture_rel": "tests/fixtures/business_evaluation_100.jsonl",
+    "question_sha256": "f9e605945778992e5d2511af28a9d2daa69ec017dedb3056ca0e4ca7b63d1277",
+    "poll_interval_seconds": 3.0,
+    "deadline_seconds": 900.0,
+    "stall_seconds": 300.0,
+    "http_timeout_seconds": 60.0,
+    "provenance": {
+      "verdict": "PASS",
+      "value": {
+        "host_head": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+        "host_resolved": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+        "containers": {
+          "enterprise-brain-backend-1": {
+            "container": "enterprise-brain-backend-1",
+            "route": "BUILD_INFO",
+            "raw_rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+            "routes_tried": [
+              {
+                "route": "git rev-parse HEAD",
+                "ok": false,
+                "rc": 128,
+                "text": "fatal: not a git repository (or any of the parent directories): .git"
+              },
+              {
+                "route": "/app/BUILD_INFO",
+                "ok": true,
+                "rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a"
+              }
+            ],
+            "resolved_rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+            "state": "PASS",
+            "equal_chars": 40
+          },
+          "enterprise-brain-worker-1": {
+            "container": "enterprise-brain-worker-1",
+            "route": "BUILD_INFO",
+            "raw_rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+            "routes_tried": [
+              {
+                "route": "git rev-parse HEAD",
+                "ok": false,
+                "rc": 128,
+                "text": "fatal: not a git repository (or any of the parent directories): .git"
+              },
+              {
+                "route": "/app/BUILD_INFO",
+                "ok": true,
+                "rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a"
+              }
+            ],
+            "resolved_rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+            "state": "PASS",
+            "equal_chars": 40
+          }
+        }
+      },
+      "note": "两枚容器的 rev 与主树 HEAD 逐字符相等（全 40 位）"
+    },
+    "blips": 0,
+    "relogins": 0,
+    "approval_rounds": 0,
+    "approval_http": [],
+    "final_kind": "queued_polled",
+    "request_id": "1c946fe99d024358a5f961f98f82fe2e",
+    "ask_events": [
+      "queued",
+      "done"
+    ],
+    "username": "evalbot",
+    "question_chars": 12,
+    "queue_reason": "report_lane",
+    "queue_lane_echo": "report",
+    "wait_ms": 230802.9,
+    "polls": 76
+  },
+  "order": [
+    "provenance",
+    "growing",
+    "caps_zero",
+    "terminal_no_pieces",
+    "zero_bypass_unreadable_retry",
+    "poll_bookkeeping"
+  ],
+  "cells": {
+    "provenance": {
+      "cell": "provenance",
+      "verdict": "PASS",
+      "value": {
+        "host_head": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+        "host_resolved": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+        "containers": {
+          "enterprise-brain-backend-1": {
+            "container": "enterprise-brain-backend-1",
+            "route": "BUILD_INFO",
+            "raw_rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+            "routes_tried": [
+              {
+                "route": "git rev-parse HEAD",
+                "ok": false,
+                "rc": 128,
+                "text": "fatal: not a git repository (or any of the parent directories): .git"
+              },
+              {
+                "route": "/app/BUILD_INFO",
+                "ok": true,
+                "rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a"
+              }
+            ],
+            "resolved_rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+            "state": "PASS",
+            "equal_chars": 40
+          },
+          "enterprise-brain-worker-1": {
+            "container": "enterprise-brain-worker-1",
+            "route": "BUILD_INFO",
+            "raw_rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+            "routes_tried": [
+              {
+                "route": "git rev-parse HEAD",
+                "ok": false,
+                "rc": 128,
+                "text": "fatal: not a git repository (or any of the parent directories): .git"
+              },
+              {
+                "route": "/app/BUILD_INFO",
+                "ok": true,
+                "rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a"
+              }
+            ],
+            "resolved_rev": "fe166c8dd4b0f203e0e83a1c15fb10d97261799a",
+            "state": "PASS",
+            "equal_chars": 40
+          }
+        }
+      },
+      "note": "两枚容器的 rev 与主树 HEAD 逐字符相等"
+    },
+    "growing": {
+      "cell": "growing",
+      "verdict": "PASS",
+      "value": {
+        "processing_ok_polls": 20,
+        "chars": [
+          21,
+          111,
+          178,
+          268,
+          344,
+          416,
+          483,
+          622,
+          689,
+          759,
+          826,
+          886,
+          941,
+          1099,
+          1171,
+          1232,
+          1295,
+          1363,
+          1490,
+          1490
+        ],
+        "cursors": [
+          1,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          17,
+          18,
+          19,
+          20,
+          21,
+          23,
+          23
+        ],
+        "distinct_chars": 19
+      },
+      "note": "递增成立：chars [21, 111, 178, 268, 344, 416, 483, 622, 689, 759, 826, 886, 941, 1099, 1171, 1232, 1295, 1363, 1490, 1490] / cursor [1, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 23, 23]"
+    },
+    "caps_zero": {
+      "cell": "caps_zero",
+      "verdict": "PASS",
+      "value": {
+        "polls_with_pieces": 75,
+        "max_discarded": 0,
+        "max_truncated": 0,
+        "nonzero_polls": []
+      },
+      "note": "两枚上限逐发都为 0"
+    },
+    "terminal_no_pieces": {
+      "cell": "terminal_no_pieces",
+      "verdict": "PASS",
+      "value": {
+        "terminal_poll": 76,
+        "terminal_status": "done",
+        "keys_in_terminal_body": [
+          "answer_is_park_notice",
+          "answer_present",
+          "approval",
+          "failure",
+          "request_id",
+          "result",
+          "scope_reason_code",
+          "sources",
+          "sources_error",
+          "sources_present",
+          "status",
+          "terminal_note",
+          "terminal_schema",
+          "terminal_state",
+          "usage",
+          "worker_status"
+        ],
+        "wrong_carriers": []
+      },
+      "note": "终态那一发没有片段键，非 processing 的每一发也没有"
+    },
+    "zero_bypass_unreadable_retry": {
+      "cell": "zero_bypass_unreadable_retry",
+      "verdict": "PASS",
+      "value": {
+        "bypass": false,
+        "unreadable_polls": [],
+        "invented_reasons": [],
+        "retried_polls": [],
+        "retry_measurable": true
+      },
+      "note": "三枚计数逐枚为 0，且三枚都是量到了的 0"
+    },
+    "poll_bookkeeping": {
+      "cell": "poll_bookkeeping",
+      "verdict": "PASS",
+      "value": {
+        "polls": 76,
+        "blips": 0,
+        "relogins": 0,
+        "approval_rounds": 0,
+        "final_kind": "queued_polled",
+        "wait_ms": 230802.9,
+        "interval_ms": null
+      },
+      "note": "终账 queued_polled：这一窗是有正文的那一型"
+    }
+  },
+  "rc": 0
+}

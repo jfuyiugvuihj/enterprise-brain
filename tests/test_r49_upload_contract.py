@@ -97,7 +97,7 @@ def _wire(monkeypatch, tmp_path, content, retriever, version=1):
     monkeypatch.setattr(chat, "catalog_database_available", lambda: False)
     monkeypatch.setattr(chat, "retriever", retriever)
     monkeypatch.setattr(chat, "peek_next_document_version", lambda filename: version)
-    monkeypatch.setattr(chat, "load_document", lambda path: content)
+    monkeypatch.setattr(chat, "load_document", lambda path, display_name=None: content)
     return chat, catalog
 
 

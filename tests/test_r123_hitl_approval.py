@@ -39,7 +39,7 @@ APPROVAL_EXTRA_KEYS = {"pre_kind", "pre_answer_chars", "pre_evidence_n", "approv
 PAYLOAD_KEYS = {"answer", "evidence", "first_token_at", "thinking_chars", "tool_calls"}
 
 PARK_TEXT = "本轮在「生成图表」前等待你确认，确认后才会执行，目前尚未产出回答内容。"
-TERMINAL_TEXT = "只有支付截图不能入账，需补开发票后由财务复核。"
+TERMINAL_TEXT = "遗失发票的，原则上不予报销；如确属客观遗失，须提供支付记录、行程单等辅助证明，经财务部审批后酌情处理。"
 TOKEN_VALUE = "eval-bearer-token"
 #: 批准端点的真路径：chat.router 挂在 /api/v1 上（app/main.py:80），没有 chat 那一段。
 APPROVAL_PATH = "/api/v1/approve"

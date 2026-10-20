@@ -1,5 +1,15 @@
 # 企业智脑当前功能文档
 
+2026-10-14 当前限定验证：已连续实施本对话四批改进，具体五方向、用户任务与链路／数据／内容／呈现判定见[主控提示词执行结果](enterprise-brain-controller-prompt.md)。具名合成任务覆盖联合制度核查、阈值依据与去重/恢复/处置、同版本进入分析、确认终态与权限续跑、成果及实际执行审计、销量柱图/PDF与重新生成血缘，以及390px导航。操作文档按[多级手册](user-guide/README.md)共19页组织。只证明这些任务与边界；原有其他场景、真人业务、新机器、真实手机和长期运行未由本轮替代验收，V1/V2整体质量分母未更新。下方日期更早的缺陷与数字保留为历史。
+
+修复更新（2026-10-12）：会话「核对 V2 与 V3 版本差距」已在本机隔离合成环境部署费用报告修复版，按新标准复验管理员/财务账号的费用 CSV/XLSX，共8份PDF、16页，独立核算管理员7行合计1310、财务2行合计200；报告内容、图表布局、逐页呈现及成果中心/聊天下载通过。原表未标注金额单位，不能假定人民币。范围仅限具名费用样例，不代表其他行业报告、所有图型或V1/V2整体质量通过。拒绝后的绿色步骤徽标、内部错误码呈现仍不通过；其他下载权限、知识问答和告警缺陷未在本轮修复。此次上传前仅复跑针对性回归及构建，并核对源码与已验部署版本一致，不冒充重跑完整现场验收。
+
+质量口径订正（2026-10-12）：按业主要求新增链路/数据/内容/呈现四项验收，见 `docs/engineering/dev-mode-2026-10-06.md`。下述10-11计数是旧判据历史结果，不能当新质量通过数。已复核PDF金额与嵌图正确，但报告正文/版式、财务单分类图不合格；其他生成质量尚未逐项复验。本次只改标准，不改产品代码或冒烟脚本，不宣称修复完成。
+
+验收更新（2026-10-11，后端 `2d475a5`／前端 `2ad37a1`）：真容器、真模型、真浏览器完整冒烟 **V1 9/9、V2 12/12 能演示**，两套退出码0且新鲜度通过。V2独立计算记录与完整队列边界专项已收尾：运行详情读回输入版本、筛选口径、结果与关联成果；10条计算记录重建后内容哈希不变，异部门读取均拒绝。真实Redis并发幂等、租约过期旧执行围栏、三次重试死信、不可重试首发终止、取消与领取中断恢复均通过；真实页面取消/3次失败终态、批准后PDF下载及同请求不重复报告均能演示。修复跨用户幂等键碰撞；报告登记后租约过期重试仍仅一份PDF，旧执行不能登记。两笔改动实际撤下重建复现旧问题，再装回通过，临时队列开关已恢复off。前轮14项合成业务、行权限/记忆隔离、20项重启恢复及13笔修复回滚证据保留。证据 `%TEMP%\evalrun\v2-completion-1011`；可读资料在 `C:\Users\fengx\Documents\企业智脑-费用报销内部试用\合成验收-2026-10-10`。
+
+版本边界：按业主授权使用合成材料与自动账号，本轮可执行的V2技术验收已完成，独立CalculationRun与完整队列专项不再挂未验。客户真实密级、库尺寸和真实材料仍留交付核验；真人0人/0工作日，不能把合成技术验收称为真人业务验收，V3真实员工持续使用未验；新机器部署与72小时运行属于V4。历史Chroma回归尚未适配PG，不宣称全量夜间回归通过。 本文其余旧代次读数仅供历史追溯。
+
 版本：2026-09-10-r3  
 文档性质：当前实现盘点，不是目标设计，不代表所有功能已经达到生产可用  
 盘点方式：基于当前工作区源代码、已有文档、测试文件和前端页面做静态盘点  
@@ -7,6 +17,8 @@
 本次未做：修改业务代码、运行测试、启动服务、修改前端页面
 本次修订重点：在上一版基础上补充生产级静态审计发现，重新区分当前事实、已有基础、历史验证和设计目标，补充资源所有权、上传安全、Prompt Injection、队列可靠性、迁移、健康检查、备份恢复和 API/SSE 契约边界
 权威口径：本文档中的“当前已实现”只表示源码中存在可调用基础，不表示已经通过生产验收；“已规划”不表示代码已实现；测试文件和历史进度记录不能替代本轮验证
+
+向量库现状（2026-10-09）：PGVector 已全面接管上传、检索与删除，Chroma 运行依赖、卷挂载和工作目录均已退出；旧数据保留在仓库外备份区。当前事实以 `docs/handoff/2026-09-17-pgvector-adoption-plan.md` 顶部为准；本文下方迁移期间的描述保留为历史，不能当作当前部署状态。
 
 ## 1. 文档目的
 
@@ -237,6 +249,7 @@
   -> 文本切块
   -> Embedding
   -> 写入 Chroma
+  -> 同一事务双写 PGVector 镜像 chunk_vectors（开关 VECTOR_DUAL_WRITE；PG 腿先写、Chroma 接受后一起提交，任一失败整体回滚）
   -> 写入文档目录/版本记录
   -> 异步重建 BM25
 ```
@@ -497,7 +510,7 @@ classify_intent
 10. `search_docs()`、`analyze_data()` 和 `query_data()` 当前存在缺少身份时默认使用 `admin` 的路径，不能视为安全的权限隔离；
 11. 检索片段、表格内容和工具结果没有统一的“不可信内容”隔离协议，Prompt Injection 防护尚未闭环；
 12. 语义、BM25、RRF 和重排分数没有稳定分字段保存，重排可能覆盖通用 `_score`，调试时无法完整解释各阶段量纲；
-13. 当前仍以 Chroma 为主要向量检索实现，PGVector 只是生产目标，不能把目标架构写成当前能力；
+13. 生产向量库已定为 PostgreSQL + PGVector（业主 2026-09-24 定案，进度唯一事实源 `docs/handoff/2026-09-17-pgvector-adoption-plan.md`）；今天语义检索的答复仍由 Chroma 这条遗留读路径给出（`app/rag/indexing.py:50` 出厂 `INDEX_BACKEND_DEFAULT = "chroma"`，解析入口 `read_backend()` `app/rag/indexing.py:2040`，开关调用点 `app/rag/retriever.py:1088` 与热集让路判定 `:1129`），切读单 R59 在途、停写退役 R60 未开工；
 14. 查询取消主要是线程事件，不能保证停止模型调用、文件生成、数据库写入或其他后台副作用；
 15. 查询缓存没有统一绑定用户权限、知识库版本、数据集版本、Prompt、模型和查询模式；
 16. `ThreadPoolExecutor(max_workers=50)` 与本地 14B 模型能力没有形成统一预算，线程数不等于模型并发能力；
@@ -1035,7 +1048,7 @@ ratio = excess / standard
 | 数据 | 当前存储 |
 |---|---|
 | 用户、部分会话、文档目录、告警 | PostgreSQL 可用时写数据库 |
-| 向量和文档片段 | Chroma，缺失依赖时有 JSON 回退 |
+| 向量和文档片段 | 定案的生产向量库是 PostgreSQL + PGVector；今天给读答复的仍是 Chroma（遗留件），写侧同一事务把逐枚向量镜像进 PG `chunk_vectors`（INSERT `app/rag/pg_store.py:88`，提交在 Chroma 接受之后 `:460`），Chroma 依赖缺失时另有 JSON 回退 |
 | 原始文档 | 本地 `documents` 目录 |
 | Excel/CSV | 本地 `data` 目录 |
 | 图表 | 本地 `static/charts` |
@@ -1050,6 +1063,7 @@ ratio = excess / standard
 ```text
 PostgreSQL
   -> 用户、部分会话、文档目录、告警、长期记忆、部分业务记录
+  -> chunk_vectors：定案的生产向量库，双写镜像在这里（开关 VECTOR_DUAL_WRITE）
 
 Chroma PersistentClient
   -> 文档片段和向量
@@ -1068,22 +1082,23 @@ Redis
 
 - MySQL 驱动或 MySQL 业务库；
 - Tortoise ORM；
-- 将 Chroma 中现有向量自动同步到 PostgreSQL 的机制；
+- 把存量 Chroma 向量一次性迁进 PostgreSQL 并退役旧库的迁移、校验与回滚流程（今天已有的机制是同事务双写镜像 `app/rag/pg_store.py:532 vector_mirror()`，不是离线全量迁移）；
 - PGVector 的 LangChain 集成，以及任何走向量数据库的检索调用。
 
 PGVector 的准确口径（2026-09-14 订正：上一版把“PGVector 扩展”和“PGVector 向量表”一并列为未发现，与仓库内的迁移文件矛盾）：
 
 - `migrations/0001_core_resource_versions.sql:4` 已包含 `CREATE EXTENSION IF NOT EXISTS vector;`；
-- `migrations/0002_execution_data_lineage.sql:235` 已建立 `chunks` 表，其中 `embedding vector`（第 243 行）是未指定维度的裸列；
-- `docker-compose.yml:48` 使用 `pgvector/pgvector:pg16` 镜像，`app/common/monitoring.py:56` 会探测 `pg_extension` 中是否存在 `vector`，这只说明扩展可用；
-- 运行时没有任何 `INSERT INTO chunks`，全仓也没有 HNSW 或 IVFFlat 向量索引；
-- 因此准确表述是：schema 骨架已入库，无维度、无向量索引、无写入方；向量读写 100% 走 Chroma（`app/rag/retriever.py:190` 构造 `chromadb.PersistentClient`，依赖缺失时退化为 JSON 兜底）。PGVector 仍是生产目标，不是当前能力。
+- `migrations/0002_execution_data_lineage.sql:235` 建立的 `chunks` 表里，`embedding vector`（第 243 行）原本是未指定维度的裸列；`migrations/0010_pgvector_chunks.sql:292-305` 已把 `chunks.embedding` 与 `chunk_vectors.embedding` 一并定标到 `vector(<dimension>)`，混维度写不进来；
+- `docker-compose.yml:48` 使用 `pgvector/pgvector:pg16` 镜像，`app/common/monitoring.py:381-384` 会探测 `pg_extension` 中是否存在 `vector`，这只说明扩展可用；
+- 向量有两条 PG 落点：`chunk_vectors` 由双写填充（`app/rag/pg_store.py:88`），而 `chunks.embedding` 这条向量列今天仍没有运行时写入方（`app/rag/indexing.py:161-163` 的 `INSERT INTO chunks` 列清单里没有 embedding）；
+- HNSW 向量索引已由 `migrations/0010_pgvector_chunks.sql:342-352` 建在 `chunks` 与 `chunk_vectors` 两表上，算符与 `vector_scope.distance_function` 同口径；
+- 因此今天的准确表述是：定案的生产向量库是 PostgreSQL + PGVector，镜像已在被写入；语义向量这条腿的答复仍出自 Chroma（`app/rag/retriever.py:878` 构造 `chromadb.PersistentClient`，依赖缺失时退化为 JSON 兜底），PGVector 的读腿已接线但开关未合（`app/rag/retriever.py:1074` `_pgvector_hits()`，闸门 `:1088`）。
 
 `PostgresSaver` 只表示 LangGraph 检查点可以使用 PostgreSQL 持久化，不表示系统已经使用 PGVector。Chroma 和 PGVector 都可以保存向量，但它们是两种不同的向量存储实现。
 
 ### 19.1 推荐的生产目标存储架构
 
-当前项目的长期目标不应继续停留在“PostgreSQL + Chroma + 文件目录”的过渡组合。结合私有化部署、权限过滤、文档版本、审计和后续多用户运行，推荐目标架构为：
+当前项目的长期目标不应继续停留在“PostgreSQL + Chroma + 文件目录”的过渡组合。结合私有化部署、权限过滤、文档版本、审计和后续多用户运行，已由业主 2026-09-24 定案的目标架构为：
 
 ```text
 PostgreSQL + PGVector
@@ -1103,7 +1118,7 @@ Redis
 |---|---|---|
 | PostgreSQL | 已使用 | 继续作为业务主库，统一资源元数据、权限、版本、任务和审计 |
 | Chroma | 已使用 | 作为当前过渡向量库；迁移完成后不再作为生产主向量库 |
-| PGVector | 仅有 schema 骨架，运行时未接线 | 作为 PostgreSQL 内的生产向量存储，与文档权限和版本在同一数据边界内 |
+| PGVector | 定案的生产向量库；`0010` 已给它定标向量列与 HNSW 索引，双写在填 `chunk_vectors`，读腿已接线而开关未合 | 作为 PostgreSQL 内的生产向量存储，与文档权限和版本在同一数据边界内 |
 | 本地文件存储 | 已使用 | 保存原始文件和大体积产物，不把原始文件直接塞入数据库 |
 | Redis | 已使用或按部署启用 | 承担异步任务、队列、缓存和任务协调，不作为业务事实数据库 |
 | MySQL | 当前未实现 | 不是单企业私有化部署的必需组件；只有接入客户既有 MySQL 业务系统时才单独引入 |
@@ -1215,7 +1230,7 @@ PGVector 迁移必须和模型版本绑定设计。不同 Embedding 模型的向
 | 开放平台 | 部分实现 | 有外部调用接口 | 密钥、数据范围、审计和限流需继续完善 |
 | 私有化部署 | 基础能力 | 支持本地模型和客户本机存储 | 远程回退、备份、监控和多实例边界需明确 |
 | 数据库与向量存储 | 过渡架构 | PostgreSQL、Chroma、Redis 和本地文件能够支撑当前开发 | 尚未形成统一的 PostgreSQL + PGVector 生产存储方案，也没有 MySQL 实现 |
-| Redis 任务队列 | 已实现，待真实环境验收 | `app/common/reliable_queue.py` 提供 reserve/ack、租约、重试、死信、幂等、取消与显式状态；`deploy/queue_worker.py` 走该实现，旧 `BLPOP` 适配器已删除 | 真实 Redis 故障恢复、多 Worker 竞争与租约令牌围栏尚未验证；取消不中断在途模型调用 |
+| Redis 任务队列 | 能演示（真实Redis专项） | `app/common/reliable_queue.py::ReliableQueue` 与实际worker验证并发幂等、重试/死信、租约围栏、取消、领取中断及登记成果后恢复；用户页面失败3/3可读、报告能取回且重发不重复 | 取消不终止已发出的模型调用，旧执行结果/成果登记被拒绝；当前队列开关已还原off |
 | 审计日志 | 基础实现 | 有内存事件记录接口 | 未持久化，缺少 request_id、资源范围、变更前后摘要、保留期和完整脱敏 |
 | 健康检查 | 已实现，待真实环境验收 | `app/common/monitoring.py:build_health_snapshot()` 逐依赖探测，并按子系统上报 `storage_mode`（`postgres|json|redis|memory|unavailable`）、`durable`、`shared_across_processes`、`protection`；生产缺持久用户表时 `enforce_production_storage_guard()` 拒绝启动 | 生产环境可能如实返回 `degraded`，需要监控面板按 `problems` 而非 `status==ok` 判读；容器与真实依赖探针尚未跑过 |
 | 数据库迁移 | 不完整 | 多个模块可在运行时尝试建表或加列 | 没有统一版本、迁移锁、失败阻断和回滚 |
@@ -1351,7 +1366,7 @@ PGVector 迁移必须和模型版本绑定设计。不同 Embedding 模型的向
 | 主动告警 | 文章重点不在主动经营监控 | 已有定时检查、告警和通知 | 洞察与告警统一成事件模型，支持处理闭环 |
 | 审批 | 文章主要是知识问答和评测 | 当前有审批助手方向 | 不能使用固定标准，必须建立制度证据、申请实体和审批路径 |
 | 私有化 | 使用阿里云百炼，依赖云端模型 | 支持 Ollama、本地 Embedding 和本地重排 | 明确远程回退开关，第一版模型管理只做 Ollama |
-| 数据库 | MySQL + PostgreSQL + PGVector，职责更明确但组件更多 | PostgreSQL + Chroma + Redis + 文件系统，当前迁移成本较低 | 不应把当前项目描述为 MySQL + PostgreSQL + PGVector；根据部署规模决定是否迁移 PGVector |
+| 数据库 | MySQL + PostgreSQL + PGVector，职责更明确但组件更多 | PostgreSQL + Chroma + Redis + 文件系统，当前迁移成本较低 | 不应把当前项目描述为 MySQL + PostgreSQL + PGVector；迁 PGVector 已由业主 2026-09-24 定案，不再由部署规模决定，未完成的只有切换本身（切读 R59、停写退役 R60，见 §39） |
 | 后台管理 | 管理端配置细，适合调试人员 | 当前有多个分散入口，且更贴近企业经营功能 | 建立资源与权限、AI 配置、知识库运营、质量评测、Agent 运行五个管理中心，并支持草稿、校验、发布、回滚 |
 
 近似项目可以借鉴的核心不是“再增加几个 Agent”，而是：
@@ -2190,7 +2205,7 @@ PDF / DOCX / DOC / TXT 基础文本处理
 XLSX / XLS / CSV 读取和分析
 
 存储：
-PostgreSQL + Chroma + Redis + 本地文件系统
+PostgreSQL（含定案的生产向量库 PGVector，双写镜像在 chunk_vectors）+ Chroma（仍在给读答复的遗留件）+ Redis + 本地文件系统
 ```
 
 ### 必须补齐的能力
@@ -2216,7 +2231,7 @@ PostgreSQL + PGVector
 
 其中：
 
-- PostgreSQL + PGVector 是统一业务数据和向量检索的目标；
+- PostgreSQL + PGVector 是统一业务数据和向量检索的目标，并已于 2026-09-24 定案为生产向量库（切换未完成，见 §39）；
 - 本地文件存储负责原始文件和大体积产物；
 - Redis 负责异步任务、队列和缓存；
 - MySQL 不是默认必选项；
@@ -2460,3 +2475,16 @@ PostgreSQL、PGVector 和认证 Redis 上取证，并把部署拓扑改写到与
 - 37.8 表“存储、部署和恢复”行：由“有 Docker 和基础备份，不能承诺生产恢复”更新为“Dockerfile、两份 Compose、Nginx、调度器与备份脚本已与代码拓扑一致，数据库级恢复演练在隔离环境通过；容器运行与浏览器端到端仍待 Docker 门”。
 - 37.8 表“Agent Trace、评测和后台”行：Trace 与 `AgentResult`、模型调用 span 已真实落 PostgreSQL；评测实验模型与配置发布回滚仍未完成，不能整行判定为已达标。
 - 第 34 章禁止项：本轮删除了代码中的固定模型名默认值，并取消了 Nginx 直出 `/static` 与假健康检查；`data/pgdata` 已加入 `.dockerignore`，客户数据不会再进镜像。
+
+## 39. 订正（2026-09-25，第九班第一格，主树 `866c2f3`／文档链 `c7353ed`）：向量库口径——双写已在跑、切读未完成，本文三句旧话已过期
+
+本文正文盘点时点是 2026-09-10，向量库那几条从今天起会读出假话。按「既不许把 Chroma 写成最终架构，也不许写成已下线」的铁规，钉住今天的事实：
+
+| 本文原句 | 今天的实测（主树 `c7353ed` 上逐条读代码取到） | 判定 |
+|---|---|---|
+| §「已知问题」第 13 条（`:500`）：「当前仍以 Chroma 为主要向量检索实现，PGVector 只是生产目标，不能把目标架构写成当前能力」 | 方向已于 09-24 定案：生产向量库 = PostgreSQL + PGVector（唯一事实源 `docs/handoff/2026-09-17-pgvector-adoption-plan.md`，业主原话「chroma 不在用改成 pgvector 你把文档也改了」）。**读路径今天确实还在 Chroma**：`app/rag/indexing.py:45` `INDEX_BACKEND_DEFAULT = "chroma"`，切读开关 `pgvector_reads_enabled()` 定义在 `app/rag/indexing.py:2048`、调用点只有 `app/rag/retriever.py:1088` 与 `:1129`，切读腿 R59b 已并树 `8ab60cc` 但开关**未合**（计划书 §9.3 六格未消，补数单 R59c 在途） | **半过期**：读侧那句仍成立，"只是生产目标"要读作"已定案、切换未完成" |
+| §「未实现清单」（`:1071`）：「将 Chroma 中现有向量自动同步到 PostgreSQL 的机制」 | 机制已存在且已在跑：`app/rag/pg_store.py:63` `DUAL_WRITE_ENV = "VECTOR_DUAL_WRITE"`、`:175 dual_write_enabled()`、`:544` 写侧闸门、`:88` `INSERT INTO chunk_vectors`。运行侧 `deploy/.env.server` 现挂 `VECTOR_DUAL_WRITE=on`，全库 **1008 枚向量**在位；PDF 抽取带 NUL 字符那枚 P1（曾使镜像 `executemany` 被 psycopg 拒）已由 **R130** 落树 `cdc5ead` 修掉 | **已过期**（但它仍是"双写镜像"，不是"一次性全量迁移"，后者仍未做 = §9.3 ④） |
+| §「PGVector 现状」（`:1080`）：「schema 骨架已入库，无维度、无向量索引、无写入方；向量读写 100% 走 Chroma（`app/rag/retriever.py:190` 构造 `chromadb.PersistentClient`）」 | 写侧不再是"无写入方"：双写已把逐枚向量写进 `chunk_vectors`。读侧仍在 Chroma，这句成立 | **写侧过期、读侧成立** |
+| §「选型对照」（`:1354`）：「不应把当前项目描述为 MySQL + PostgreSQL + PGVector；根据部署规模决定是否迁移 PGVector」 | 迁移与否**不再由部署规模决定**，09-24 已定案迁移；`MySQL` 那半句仍然成立（本项目无 MySQL 实现） | **半过期**：定案已下，MySQL 部分不变 |
+
+补一句给读者的口径：**V1 现在不能宣布完工**。阶段 A 四条判据只有 ①③ 绿（② 字面成立、④ 红且逐题重算证明 6 枚退化里 5 枚是逐字锚词判错而非语义退化），B/C/D/E 四门未绿；D 门在 09-25 第一次被真量到就抓到 P1（报告档走队列道时结果被 worker 丢弃、终态还谎报 `done`，立单 R227）。进度唯一事实源是 `docs/handoff/2026-09-15-orchestration-board.md` §0 名册与最新一节，不是本文。

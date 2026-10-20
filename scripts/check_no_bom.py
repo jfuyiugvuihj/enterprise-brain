@@ -18,6 +18,18 @@ Whitelisted (BOM kept on purpose -- do not "clean" these):
   scripts/run_backend_tests.ps1
       Windows PowerShell 5.1 decodes BOM-less .ps1 as ANSI. The script holds
       Chinese text, so removing the BOM garbles it on the customer machine.
+
+Excluded by DIRECTORY PREFIX (R567), never file by file:
+  docs/perf/raw/
+      Raw measurement evidence: what a gauge printed at the moment a window
+      closed. Re-encoding one of those bytes is editing the evidence, so the
+      answer to "a captured file happens to start with a BOM" is to move it
+      out of the scan domain, not to scrub it. Prefix rather than a name list,
+      because the next captured batch must not be able to turn this tripwire
+      red merely by existing. Pinned by
+      tests/test_r567_raw_evidence_is_out_of_the_bom_scan.py, which also
+      checks the captured BOM is still on disk byte-for-byte and that no
+      unrelated path may join the exemptions.
 """
 
 import subprocess
@@ -32,6 +44,12 @@ WHITELIST = frozenset(
         "scripts/run_backend_tests.ps1",
     }
 )
+
+#: R567: raw capture evidence lives below this prefix and is out of the scan
+#: domain. Exemptions are exactly WHITELIST (two named files, BOM is
+#: load-bearing there) plus this one prefix. Anything else needs its own
+#: ticket -- the pin above fails the moment the surface widens.
+RAW_EVIDENCE_PREFIX = "docs/perf/raw/"
 
 TEXT_SUFFIXES = frozenset(
     {
@@ -57,6 +75,8 @@ def tracked_files(repo_root):
 def in_scope(rel_path):
     """Tracked .py / markdown / text files, plus everything under scripts/."""
     if rel_path in WHITELIST:
+        return False
+    if rel_path.startswith(RAW_EVIDENCE_PREFIX):
         return False
     path = PurePosixPath(rel_path)
     if path.parts and path.parts[0] == "scripts":
@@ -87,8 +107,9 @@ def main(argv=None):
             offenders.append(rel_path)
 
     print(
-        "check_no_bom: scanned %d tracked text file(s); %d whitelisted: %s"
-        % (checked, len(WHITELIST), ", ".join(sorted(WHITELIST)))
+        "check_no_bom: scanned %d tracked text file(s); %d whitelisted: %s; "
+        "excluded prefix: %s"
+        % (checked, len(WHITELIST), ", ".join(sorted(WHITELIST)), RAW_EVIDENCE_PREFIX)
     )
     for rel_path in offenders:
         print("BOM %s" % rel_path)

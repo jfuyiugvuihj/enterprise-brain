@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { fetchArtifactBlob, isArtifactRequest } from '../lib/artifacts'
-import { UiLoadingState } from './ui'
+import { UiButton, UiLoadingState } from './ui'
 
 const props = defineProps({
   src: String,
@@ -82,11 +82,20 @@ onUnmounted(() => {
     <div class="chart-header">
       <span class="chart-caption">{{ caption || '图表' }}</span>
       <div class="chart-actions">
-        <button class="chart-btn" title="放大查看" :disabled="loadState !== 'ready'" @click="previewOpen = true">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6M8 11h6"/>
-          </svg>
-        </button>
+        <UiButton
+          class="chart-btn"
+          variant="ghost"
+          title="放大查看"
+          :disabled="loadState !== 'ready'"
+          data-testid="chart-zoom"
+          @click="previewOpen = true"
+        >
+          <template #icon>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><path d="M11 8v6M8 11h6"/>
+            </svg>
+          </template>
+        </UiButton>
         <a v-if="loadState === 'ready'" class="chart-btn" title="下载" :href="downloadUrl" :download="downloadName || 'chart.png'">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
@@ -108,7 +117,7 @@ onUnmounted(() => {
         <strong class="chart-state-title">图表未能显示</strong>
         <span class="chart-state-text">{{ errorText }}</span>
       </div>
-      <button class="chart-retry" type="button" @click="load">重新取图</button>
+      <UiButton class="chart-retry" type="button" variant="secondary" label="重新取图" data-testid="chart-retry" @click="load" />
     </div>
 
     <div v-else class="chart-state">
@@ -121,13 +130,28 @@ onUnmounted(() => {
         <div v-if="previewOpen && loadState === 'ready'" class="preview-overlay" @click.self="closePreview">
           <div class="preview-container">
             <div class="preview-toolbar">
-              <button class="tb-btn" @click="rotate" title="旋转 90°">
-                🔄 {{ previewRotate }}°
-              </button>
+              <UiButton
+                class="tb-btn"
+                variant="ghost"
+                size="sm"
+                title="旋转 90°"
+                :label="`🔄 ${previewRotate}°`"
+                data-testid="preview-rotate"
+                @click="rotate"
+              />
               <a class="tb-btn" :href="downloadUrl" :download="downloadName || 'chart.png'" title="下载">
                 ⬇ 下载
               </a>
-              <button class="tb-btn tb-close" @click="closePreview" title="关闭">✕</button>
+              <UiButton
+                class="tb-btn tb-close"
+                variant="ghost"
+                size="sm"
+                title="关闭"
+                aria-label="关闭预览"
+                label="✕"
+                data-testid="preview-close"
+                @click="closePreview"
+              />
             </div>
             <img :src="displayUrl" :alt="caption || '图表'" class="preview-img"
                  :style="{ transform: `rotate(${previewRotate}deg)` }" />

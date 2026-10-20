@@ -43,6 +43,7 @@ import ArtifactList, {
   formatArtifactTime,
   isOpenableImage,
   isPendingDelete,
+  LINEAGE_UNRECORDED_TEXT,
   listErrorView,
   listFace,
   mapArtifactRow,
@@ -225,6 +226,9 @@ describe('ArtifactList · 后端行 -> 视图模型（snake_case 只在这一处
       downloadUrl: '/api/v1/artifacts/a1/download',
       createdAt: '2026-09-16 03:12',
       expiryText: '有效期至 2026-09-30',
+      sessionId: '',
+      requestId: '',
+      lineage: { face: 'unrecorded', text: LINEAGE_UNRECORDED_TEXT, title: LINEAGE_UNRECORDED_TEXT },
     })
   })
 

@@ -192,17 +192,44 @@ def test_chunk_count_is_left_to_the_index_publication_slice():
 
 
 # ----------------------------------------------------------------------- policy
-@pytest.mark.parametrize(
-    "action",
-    [ACTION_VIEW, ACTION_DOWNLOAD, ACTION_DELETE],
-)
-def test_owner_is_authorized_for_every_ownership_action(action):
+@pytest.mark.parametrize("action", [ACTION_VIEW, ACTION_DOWNLOAD])
+def test_owner_does_not_bypass_a_documents_department_scope(action):
+    """Owning a document is provenance, not a role.
+
+    An uploader who moved to another department (or whose document was classified
+    above their clearance) must not keep reading it through ``owner_match``.
+    """
     alice = _principal("alice", "hr", role="staff")
 
-    decision = authorization_decision(alice, _document(owner_id="alice", department="finance"), action)
+    decision = authorization_decision(
+        alice, _document(owner_id="alice", department="finance"), action
+    )
+
+    assert decision.allowed is False
+    assert decision.reason_code == "department_scope_denied"
+    assert "owner_match" not in decision.matched_rules
+
+
+def test_owner_still_reaches_their_document_inside_the_scope():
+    alice = _principal("alice", "finance", role="staff")
+
+    decision = authorization_decision(
+        alice, _document(owner_id="alice", department="finance"), ACTION_DOWNLOAD
+    )
 
     assert decision.allowed is True
-    assert decision.reason_code == "owner_match"
+    assert decision.reason_code == "department_scope_match"
+
+
+def test_owner_cannot_delete_a_document_without_the_delete_grant():
+    alice = _principal("alice", "finance", role="staff")
+
+    decision = authorization_decision(
+        alice, _document(owner_id="alice", department="finance"), ACTION_DELETE
+    )
+
+    assert decision.allowed is False
+    assert decision.reason_code == "permission_denied"
 
 
 def test_ownership_does_not_confer_a_functional_or_administrative_action():
@@ -351,6 +378,86 @@ def test_successful_upload_records_ready_and_the_uploader(monkeypatch, tmp_path)
     assert rows[0]["ownership"] == "owned"
 
 
+def test_upload_rejects_levels_outside_the_uploaders_clearance(monkeypatch, tmp_path):
+    client, _retriever = _upload_client(
+        monkeypatch, tmp_path, _principal("alice", "finance", role="staff")
+    )
+
+    for level in ("0", "4", "-1"):
+        response = client.post(
+            "/api/v1/upload",
+            files={"file": (f"level-{level}.md", b"# note\n", "text/markdown")},
+            data={"classification": level, "department": "finance"},
+        )
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == "invalid_classification"
+
+
+def test_manager_may_upload_level_two_but_not_level_three(monkeypatch, tmp_path):
+    client, _retriever = _upload_client(
+        monkeypatch, tmp_path, _principal("mia", "finance", role="manager")
+    )
+
+    allowed = client.post(
+        "/api/v1/upload",
+        files={"file": ("restricted.md", b"# restricted\n", "text/markdown")},
+        data={"classification": "2", "department": "finance"},
+    )
+    refused = client.post(
+        "/api/v1/upload",
+        files={"file": ("secret.md", b"# secret\n", "text/markdown")},
+        data={"classification": "3", "department": "finance"},
+    )
+
+    assert allowed.status_code == 200, allowed.text
+    assert refused.status_code == 400
+    assert refused.json()["detail"] == "invalid_classification"
+
+
+def test_upload_rejects_a_department_claim_that_is_not_the_account_department(monkeypatch, tmp_path):
+    client, _retriever = _upload_client(
+        monkeypatch, tmp_path, _principal("alice", "finance", role="staff")
+    )
+
+    response = client.post(
+        "/api/v1/upload",
+        files={"file": ("sales.md", b"# sales\n", "text/markdown")},
+        data={"classification": "1", "department": "sales"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "department_override_denied"
+
+
+def test_staff_cannot_overwrite_a_colleagues_same_name_document(monkeypatch, tmp_path):
+    from app.api.v1 import chat
+
+    client, _retriever = _upload_client(
+        monkeypatch, tmp_path, _principal("alice", "finance", role="staff")
+    )
+    monkeypatch.setattr(
+        chat,
+        "latest_document_version",
+        lambda name: {
+            "filename": name,
+            "version": 1,
+            "classification": 1,
+            "department": "finance",
+            "owner_id": "bob",
+            "storage_path": str(tmp_path / "shared.md"),
+        },
+    )
+
+    response = client.post(
+        "/api/v1/upload",
+        files={"file": ("shared.md", b"# replacement\n", "text/markdown")},
+        data={"classification": "1", "department": "finance"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "owner_mismatch"
+
+
 def test_failed_upload_keeps_a_failed_row_that_can_still_be_retired(monkeypatch, tmp_path):
     from app.agents import tools
     from app.api.v1 import chat
@@ -358,7 +465,7 @@ def test_failed_upload_keeps_a_failed_row_that_can_still_be_retired(monkeypatch,
     from app.documents import catalog
 
     client, _retriever = _upload_client(monkeypatch, tmp_path, _principal("alice", "finance"))
-    monkeypatch.setattr(chat, "load_document", lambda path: (_ for _ in ()).throw(ValueError("boom")))
+    monkeypatch.setattr(chat, "load_document", lambda path, display_name=None: (_ for _ in ()).throw(ValueError("boom")))
 
     upload = client.post(
         "/api/v1/upload",

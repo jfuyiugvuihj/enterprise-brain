@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { PERMISSION_DENIED, errorDetail, isPermissionDenied } from './http.js'
+import { ERROR_CODES, normalizeError } from './errcodes.js'
 
 /** 造一个 axios 风格的错误对象，只填判据真正会读的字段 */
 const httpError = (detail, status = 403) => ({
@@ -92,9 +93,12 @@ describe('errorDetail：句子一律出自字典，本函数只管退回场景�
     expect(text).toContain('权限')
   })
 
-  it('后端 message 优先原样（信息量不降级）', () => {
-    expect(errorDetail(httpError({ error_code: 'unsupported_file', message: '这个文件类型不支持' }, 400), '文档列表加载失败'))
-      .toBe('这个文件类型不支持')
+  // R281 判据①改口（全局改判，不是放宽）：unsupported_file 是字典在册的码 ⇒ 人话位归字典那句，
+  // 后端 message 不再顶上屏。信息量没降级 —— 原文一个字符不丢，改由 rawMessage 报告，这里一并钉。
+  it('在册码：人话位归字典，后端原句改走 rawMessage（线索不丢）', () => {
+    const env = httpError({ error_code: 'unsupported_file', message: '这个文件类型不支持' }, 400)
+    expect(errorDetail(env, '文档列表加载失败')).toBe(ERROR_CODES.unsupported_file.message)
+    expect(normalizeError(env).rawMessage).toBe('这个文件类型不支持')
   })
 
   it('字典只剩通用兜底句时，退回调用方那句更具体的场景文案', () => {

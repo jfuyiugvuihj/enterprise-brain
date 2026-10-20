@@ -63,13 +63,44 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         uv sync --frozen --no-dev; \
     fi
 
+# R596: the backup and restore CLIs have to reach PostgreSQL through the client tools, and
+# this image shipped none of them. psql / pg_dump / pg_restore / pg_dumpall were each asked for
+# in the running backend container and every one came back MISSING, which makes any
+# subprocess-based backup or restore path structurally unable to run here -- not merely
+# mis-configured. It matters because a custom-format archive cannot carry database-level
+# settings (pg_db_role_setting: app.embedding_dimension / app.embedding_model), so those have
+# to be captured from the source and re-applied through psql on the way back in.
+#
+# The invariant is one-directional: pg_dump aborts when the *server* is newer than the client,
+# so the client only has to be at least as new as PostgreSQL 16 -- docker-compose.yml runs the
+# server from pgvector/pgvector:pg16. The client major is a named build arg, and
+# tests/test_r596_image_carries_the_pg16_tools.py keeps arg >= the server the stack runs, so
+# bumping one without the other goes red. Never substitute the unversioned postgresql-client
+# metapackage: it resolves to whatever the base distribution happens to ship, and that number
+# would not be written in this file.
+#
+# R608 (10-03): this layer used to add the PGDG repository. It cannot build here -- the signing
+# key is served by www.postgresql.org and the suites by apt.postgresql.org, both unreachable
+# from the build machine (TLS connect fails) and not mirrored domestically, so every image
+# rebuild after R596 died in this layer. Debian's own archive ships a client newer than the
+# server, and it arrives through the APT_MIRROR arg already registered in
+# scripts/check_airgap_readiness.py: this layer now opens no egress of its own and carries no
+# downloader. Measured on this machine in the same hour as the change: pg_dump 17.11 against
+# server 16.15 wrote a 79,899,932 B custom archive, and pg_dumpall --globals-only returned rc=0.
+ARG PG_CLIENT_MAJOR=17
+RUN set -eux; \
+    opts="-o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o Acquire::ForceIPv4=true"; \
+    apt-get update $opts; \
+    apt-get install -y --no-install-recommends $opts ca-certificates postgresql-client-${PG_CLIENT_MAJOR} \
+        libxcb1 libgl1 libglib2.0-0t64; \
+    rm -rf /var/lib/apt/lists/*
 # The service account exists before the sources are copied so the COPYs below can carry
 # ownership directly (see the note at the top). Recursing over /app afterwards would
 # duplicate the venv into a fresh layer.
 RUN groupadd --system --gid 10001 brain \
     && useradd --system --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin brain \
-    && mkdir -p /app/data /app/logs /app/chroma_db /app/documents /app/static/charts /app/static/exports /app/.cache \
-    && chown -R 10001:10001 /app/data /app/logs /app/chroma_db /app/documents /app/static /app/.cache
+    && mkdir -p /app/data /app/logs /app/documents /app/static/charts /app/static/exports /app/.cache \
+    && chown -R 10001:10001 /app/data /app/logs /app/documents /app/static /app/.cache
 
 # Customer uploads and generated files are never baked into the image: they live on
 # mounted volumes so a rebuild cannot lose or leak them.
@@ -96,7 +127,7 @@ RUN printf 'revision=%s\nbuilt_at=%s\n' "$GIT_SHA" "$BUILT_AT" > /app/BUILD_INFO
 
 USER 10001:10001
 
-VOLUME ["/app/documents", "/app/data", "/app/static", "/app/logs", "/app/chroma_db"]
+VOLUME ["/app/documents", "/app/data", "/app/static", "/app/logs"]
 
 EXPOSE 8001
 

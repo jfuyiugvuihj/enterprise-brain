@@ -59,14 +59,12 @@
 - **触发条件（可叫人）**：`git worktree list | Measure-Object -Line` 只剩 1 行，且 `git status` 里 `chroma_db/**` 仍为 `M`。
 - **不做的代价**：每次 `git status` 长期脏 ⇒ 真实未提交改动被埋在里面，误提交 191 MB 二进制只是一次手滑。
 
-## H6 一次都没 push 过（**这条最容易被"等忙完再说"拖死**） —— 仅用户本人
-- **当前**：`codex/data-file-catalog` **无 upstream**（`git rev-parse --abbrev-ref '@{u}'` → fatal），
-  而远端**两个都在**：`origin` = github、`gitee`。**全部历史只在这一块盘上。**
-- **为什么不能我推**：需要凭据，且 push 是对外动作。
-- **触发条件**：**没有"等阶段完成"这回事**——任何一次提交了成体系的工作（例如今天 `3f10b26` 的 1390 行文档）
-  即为触发点。心跳若发现 `HEAD` 比上次记录新且仍无 upstream，应当叫人。
-- **核对命令**：`git rev-parse --abbrev-ref --symbolic-full-name '@{u}'`（fatal ⇒ 未配 upstream）。
-- **不做的代价**：磁盘或机器故障 ⇒ 代码、全部文档、两周协作记录**一起没了**。这一项的风险高于其它所有项。
+## H6 备份半边——✅ 09-28 本班关闸（gitee 已推平），🔴 github 半边仍只等业主
+- **09-28 现读（第十八格续，主树 `4d04f89`）**：本分支**有 upstream**＝`gitee/codex/data-file-catalog`，本席按 :365 那条 standing 授权（「push 你现在就可以提交」）连推三发全成：`0cc8c00..8c39166`、`870fb67..4d04f89` 等；`git ls-remote gitee refs/heads/codex/data-file-catalog` 现读＝`4d04f89…`、`git rev-list --count @{u}..HEAD`＝**0**、`git status -sb` 首行不再显示 ahead ⇒ 原句那句 **「全部历史只在这一块盘上」从今天起是假话**，本清单风险最高那一格按 gitee 口径**关闸**。
+- 🔴 **仍欠的一半＝github 那一头，只有业主能修**：`git push origin HEAD:refs/heads/codex/data-file-catalog` 现报 `TLS connect error: error:0A000126:SSL routines::unexpected eof`。取证：`http.proxy=http://127.0.0.1:7897` 端口**在听**（PID 4684）⇒ 掐断的是**代理上游**，不是 git；且 `C:\Windows\System32\drivers\etc\hosts` 里还留着整排 `127.0.0.1 github.com / api.github.com / githubusercontent.com …`（这条排曾经是把 github 指向本机）。**修代理与清 hosts 本席一个字节没动**（改 `hosts` 属改环境，业主侧）。
+- **为什么这半边还值得留**：gitee 那份是同一分支的镜像，但它不是业主原本约定的对外仓；两仓都在（`git remote -v` 现读 `origin`＝github、`gitee`＝gitee）⇒ 只要其中一头落后 0 枚，「机器没了就全没了」就不成立；要恢复的是**第二份异地副本**，不是第一份。
+- **接班纪律（今天第三次救回这条，别再靠定时任务）**：每格开工第一件事现读 `git status -sb` 首行与 `git rev-parse --short @{u}`，落后就当场推；收班前再推一次并现读 `rev-list --count @{u}..HEAD`＝0。心跳 `automation-2` **保持永久 PAUSED**（业主 09-28 原话「别开这个人工提醒会影响对话，之前有好几个这么死了」），H6 由上面这条纪律承担。
+- **原句存档（09-15 写下时的真态，留作反证）**：「`codex/data-file-catalog` **无 upstream**（`git rev-parse --abbrev-ref '@{u}'` → fatal），而远端**两个都在**……**全部历史只在这一块盘上**」；当时的顾虑是「需要凭据、且 push 是对外动作」⇒ 09-21 :365 已改成 standing 授权 + 接班自查，本班据该授权执行并留痕。
 
 ## H7 三件套已过期，但 AGENTS.md 仍要求据其判断完成度 —— 需你定口径
 - **当前**：`task_plan.md` / `progress.md` / `findings.md` 最后修改 **2026-09-16 10:01**
@@ -319,10 +317,11 @@ index reached = 0
 | **D7** | `R85` R80 修复前**已被静默覆盖**的那批开放平台应用，其 secret 应视为已泄露 | 甲 = 重发 + 对外通告／乙 = 只重发不通告／丙 = 不动 | 客户机上可能仍有一个能用的旧 secret | **甲**。只有你能做（运维动作 + 对外沟通） |
 | **D8** | `R88` 审计跨进程同 tick 顺序要**发号**（`audit_events` 增 `seq`/BIGSERIAL） ⇒ 动 `migrations/**` | 放行／按住到跑分窗口之后 | 真闭环缺一半（R83 只修了单进程内）；但客户机迁移风险在业主侧 | **按住**，跑分窗口关掉后一次做完 |
 | **D9** | `R90b` pgvector 迁移 0010 在干净环境**首次安装必停**，且补救指引指错库 ⇒ 动 `migrations/**` | 放行／按住 | 全新客户机装不上（这是交付能力级缺陷，不是性能） | **放行**，但排在跑分窗口之后、D8 同批做（两单同文件族，省一次迁移演练） |
-| **D10** | 评测集 105 题里 **29 条无出处，其中 25 条补料救不回**（🔴 09-20 总控订正分解：25 = 8 条措辞漂移 + 15 条「出处」概念不适用 + 1 条要补条款 + 1 条口径与数据两头都缺；另 **4 条** data-07 / data-08 / data-12 / insight-05 可由补料或在位数据闭环。原括号里那句「B 8 + C 5 + D 15」相加 = 28，与 25 不自洽；正确分解见 `docs/handoff/2026-09-19-eval-evidence-audit.md` §0） | 甲 = 改题（要动的文件**实名**是 `tests/fixtures/business_evaluation_100.jsonl`（名叫 100、实为 105 行）与逐字节等长的三片 `docs/testing/fixtures/r97-shard-{1,2,3}.jsonl`；🔴 09-20 订正：原文写的 `evaluation_105.jsonl` **在仓库里不存在**，按那个名字去找会一无所获），而它被 `tests/test_evaluation_report.py` 钉住 ⇒ 需你先批准改钉／乙 = 接受为噪声底，报告注明这 29 条的分布（🔴 09-20 订正：原写「上限 104/105」不成立，那是 `--dry-run` 桩的分数，详见 runbook §11.2 订正） | 不改就永远解释不清「检索差」还是「模型没吐出那个字面词」 | **先乙后甲**：这一轮按乙拿基线，拿到分再按桶改，避免一次动两个变量 |
+| **D10** | 评测集 105 题里 **29 条无出处，其中 25 条补料救不回**（🔴 09-20 总控订正分解：25 = 8 条措辞漂移 + 15 条「出处」概念不适用 + 1 条要补条款 + 1 条口径与数据两头都缺；另 **4 条** data-07 / data-08 / data-12 / insight-05 可由补料或在位数据闭环。原括号里那句「B 8 + C 5 + D 15」相加 = 28，与 25 不自洽；正确分解见 `docs/handoff/2026-09-19-eval-evidence-audit.md` §0） | 甲 = 改题（要动的文件**实名**是 `tests/fixtures/business_evaluation_100.jsonl`（名叫 100、实为 105 行）与逐字节等长的三片 `docs/testing/fixtures/r97-shard-{1,2,3}.jsonl`（🔴 R621 分代订正：这句「逐字节等长」要按代读——入仓那代（`78b8507`）三片拼接＝主件＝24,346 B／前缀 `2230b2b45be18bfb`，当时为真；R401（`baef92e`，09-28）改了主件而三片没跟着动的那一代**不成立**（拼接 24,346 B 比主件 41,941 B 短 17,595 B）；自 R598（`d3786fa`，10-03）三片由主件逐字节重派生之后成立，现值 41,941 B／前缀 `686c564ff2985744`，凭据 `python scripts/r598_shard_sync.py --check` rc=0。本格只订正这一句事实描述，各格裁定（甲／乙／丙／放行／按住／授权）一字未动）；🔴 09-20 订正：原文写的 `evaluation_105.jsonl` **在仓库里不存在**，按那个名字去找会一无所获），而它被 `tests/test_evaluation_report.py` 钉住 ⇒ 需你先批准改钉／乙 = 接受为噪声底，报告注明这 29 条的分布（🔴 09-20 订正：原写「上限 104/105」不成立，那是 `--dry-run` 桩的分数，详见 runbook §11.2 订正） | 不改就永远解释不清「检索差」还是「模型没吐出那个字面词」 | **先乙后甲**：这一轮按乙拿基线，拿到分再按桶改，避免一次动两个变量 |
 | **D11** | `refactor_guide.pdf` 被 git 跟踪、却从未进知识库（本班新发现；seed 名单与 KB 名单差集） | 甲 = 立案补齐（若被 `must_contain` 引用就是必错题）／乙 = 从库里摘掉 | 语料口径留一个不明不白的洞 | **甲**（先查有没有题引用它，半小时内可定，不需窗口） |
 | **D12** | 仓库卫生（H4/H5/H8）：`chroma_db/**` 反跟踪、根目录 `_*.py` 等一次性脚本、游离卷、临时 token 文件、`be-r20\probe.txt`、`be-r53\*.r57bak` | 按预演清单删（清单已在 09-18 预演完毕，`Remove-Item` 被本机策略硬拒）／继续挂账 | 主树 `git status` 长期脏 ⇒ 跑分要求「CLEAN 树」时只能另开 worktree（今天就是这么绕的） | 你手工执行 `eb_cleanup_r17.ps1`，或点头让总控用被允许的通道执行 |
 | **D13** | 前端 V 线三件：撤图谱一级入口 / `vue-router` 真路由 / 三屏 SLO 契约 | 授权动 `frontend/**`（可由总控或前端线做）／继续禁改 | 计划书 §6.1 那三行「未做」一直挂着，交付演示的观感问题不解决 | 授权，**但要等前端线空闲**，别和 R89 那族的错误码表打架 |
+| **D15** | `R425` 把「低峰重建」排上了日历，但**执行腿被既有硬钉封死**：`tests/test_r22_rebuild_cli.py:202` 钉「no startup hook, no upload hook, **no scheduler job** may import or call the rebuild」，`:214-231` 两枚反证钉的存在理由就是 R235 那版 `subprocess.run([... rebuild_index.py])`（R242 正文自述「R50 的排程语义之争另案」）⇒ **R425 是 R235 的同型第二撞**，不是新病 | 甲 = 改 R22 判据 3（连那两枚反证钉一起放宽：动的正是「没有任何自动路径会重算向量」这条对客户可承诺的性质）／乙 = 书面接受「窗口排程＋到点报 `status=refused`＋人工执行」这个形状 | 阶段 A 之后「低峰自动重建」这条能力。甲的代价是重算窗口失控变成生产事故，乙的代价是每个低峰一次人工动作 | **总控建议乙**（R425 已把时点与预算做成配置面、出厂 `enabled=false`；甲要动的不是一枚数字而是那条安全承诺） |
 | **D14** | 真机 105 题跑分窗口 | 甲 = 现在就开（≥73 min GPU 独占，本线程派不出子 Agent ⇒ 由总控亲自跑）／乙 = 等 D10/D11 裁完再开 | 阶段 A 四判据、R29 放行、R69 校准、R77 复测、R58 真机三件（含 pgvector 链后半）全卡在这一次开窗 | **甲**，前置件本班已备齐（镜像同源已证） |
 ## H12 结案（09-19 23:0x，总控第二十三班；业主本轮明确改令「后端镜像重建你能做的话就你来」）
 - **现状（本班亲验）**：`enterprise-brain:local` 自称 `revision=ce9630f`，`created=2026-09-19T12:27:10Z`（北京 20:27:10）；
@@ -352,6 +351,35 @@ index reached = 0
 | **D11**| **甲的前提不成立 ⇒ 落乙**（总控按业主「按建议」授权自裁，证据如下）| 实测：`documents/refactor_guide.pdf` 被 git 跟踪、盘上 859,650 B、`deploy/workspace-seed.json` **没有它**（所以从未进 KB 是清单的有意排除，不是链路故障）；105 题 fixture 里 `Select-String refactor` **命中 0 行** ⇒ 不存在必错题。原判据「若被 `must_contain` 引用就是必错题」的前提为假 ⇒ 不补齐，**declare 为非语料**。顺带挖出为什么长期没人发现：**P-11 的仓库侧只 `glob('*.txt')`**，`documents/` 里两个 PDF（`AI-Agent学习路线图.pdf` 在 KB、`refactor_guide.pdf` 不在）天然在它视野外 ⇒ 已把 P-11 改成「按 git 跟踪的**全部后缀**比，配一份显式豁免名单」，见 runbook §15|
 | **D12**| **总控执行**（被允许的通道 + 先模拟）| 见 §D12 执行记录|
 | **D13**| **授权动 `frontend/**`**，但排在 R98/R99 与错误码那族收口之后 | 三件：撤图谱一级入口 / `vue-router` 真路由 / 三屏 SLO 契约；与 D6 同批最省|
+| **D15**| **待裁**（09-28 本班立案，基线 `eae26e5` 并树 R425 之后）| 业主回一个字母即可：甲 = 改 R22 判据 3／乙 = 接受「排程＋人工执行」。总控建议**乙** |
 | **D14**| 业主已批**甲** | 本班**自按**：前置 17 条全过，但冒烟题证明产品在拿离线模板冒充答案（runbook §14），**R98 / R99 并树后立即开**|
 
 ### D12 执行记录（业主授权总控执行；先模拟，再动手；**只搬不删**）
+
+## H10 结案并**永久关闸**（09-28 第十五格·总控线 `01a0af5c`，业主 11:0x 原话：「别开这个人工提醒，会影响对话，之前有好几个这么死了」）
+- 🔴 **本节把 :96-105 那一段 H10 的旧账作废**（那段还写着 `automation-2 status=ACTIVE`、`targetThreadId=01a0acfb…`，两处都已过期）：今天的真值是 **`status = "PAUSED"`、`rrule = FREQ=HOURLY;INTERVAL=1`、`notification_policy = failed_runs_only`、`target_thread_id = 01a0af5c-e4ce-7830-a9b9-5e83d27bc4ff`（本席 11:0x 用 `automation_update` 只改了归属，**没有启用**）**——磁盘现读为凭**。
+- **为什么永久不许再开**：`01a09dda`、`01a0acfb` 两条总控线都死于同一类故障——心跳把新的一轮消息打进一条**已经混进别家 provider 消息 id** 的历史里，此后每一次请求都被服务端当场拒（`Invalid 'id': message id must be a string starting with 'msg_', got 'at_...'`／`Invalid 'call_id': call_id is required for function_call_output.`），1 秒内失败、换模型也修不好，只能开新线程接手。09-28 18:50／19:50／20:04／20:30 四次空撞就是活证。**心跳不是便利，是拿线程的命换的。**
+- **替代机制（从现在起按这个走）**：需要"叫人"的时刻由**业主自己发一句"继续"**唤醒本线；总控把待办写进本节下方那张表与看板 §0，靠**磁盘上的账**交接，不靠定时投递。任何一格都**不许**以"提醒不方便"为理由把 `automation-2` 改回 ACTIVE，也不许另建第二条心跳；真要撤销，由业主本人在应用里删。
+- **H6 那格从此谁来盯**：`git rev-parse --abbrev-ref --symbolic-full-name '@{u}'` 的心跳盯梢取消 ⇒ 改为**每格接班第一件事**：现读 `git status -sb` 首行与 `git rev-parse --short @{u}`，落后就当场 push（standing 授权：「push 你现在就可以提交」）。这一格由接班纪律承担，不再由定时任务承担。
+
+## H13 结案 ＋ A1/A3 裁定（09-28 第二十三格·总控线；授权来源＝业主 09-28 原话「这个你自己决定然后你自主推进路线」；**本裁定可推翻**）
+
+- **H13 裁定＝甲**：未标注密级的上传按 1 级（最低公开）入库，**写进契约**，不再当缺陷报。
+- **依据是今天现读，不是 D4 那行的旧转述**：`app/rag/indexing.py:995` 的 `scope_metadata()` 里 `"classification": _scope_int(self.classification, 1)` ⇒ 走正式入库道的每条 chunk 必带具体密级，缺省落 1 级。而 `app/rag/retrieval_pipeline.py:440`（R57 的 fail-closed）已经把 `meta.get("classification", 1)` 改成 `meta.get("classification")` ⇒ **缺键行不再被凭空补成 1 级**；`app/rag/filters.py:50-52` 的 `allows()` 对 `int(None)` 落进 `except TypeError` 返回 False ⇒ 绕过入库道直写的行永远不可见。
+- 🔴 **D4 那行「依据：密级维度已有 `app/rag/filters.py:42` 兜底」就地作废**：`:42` 是 `DocumentRetrievalScope` 的 `filters: dict` 字段（NamedTuple 的成员声明），不是兜底逻辑，真正的兜底在 `:47-52` 的 `allows()`。行号会漂、符号不会 ⇒ 本条按符号记账。
+- **为什么不选乙**：乙（未标注即不可见）要先做一次存量密级回填，否则当场效果是全库集体从检索结果里消失——今天实测存量形状是 `chunk_vectors` 1008/1008 `department=''`、`classification` 全为整数 `1`，`documents` 105 枚里 102 枚部门为空。那比"密级偏低"更坏，且回填属改数据。
+- **代价与交付物绑死（＝新立 R467）**：带真实密级的客户文档若未标注就全员可见。三件一起做：① `docs/api/contract-v1.md` 明写「缺省密级 = 1 级 = 本客户全员可检索」；② 上传界面上那句人话（V 线判据本来就不许屏上出现 `classification=1` 这类技术串）；③ 交付前检查项：客户首灌前逐库确认密级标注策略。
+- **连带解锁 R413（auditor 开不出账号）**：H13 未裁前不许投（`app/common/permissions.py:32-39` 那段自述就是为「不许把未决问题偷换成静默默认值」写的，硬派＝逼执行层造一档假密级）。今天一并裁：**`auditor` 的密级档位 = 3，与 `admin` 同档**。人话理由：审计员读不到机密件就是假审计，而"读得到但改不动"靠的是权限集不是密级档。`ROLE_CLEARANCE` 现读 `{staff:1, manager:2, admin:3}`，加 `"auditor": 3` 是最小改动，`permissions.py:36-38` 那两枚差集钉（`ROLE_PERMISSIONS - CREATABLE_ROLES` 与 `- ROLE_CLEARANCE` 恰好 `{auditor}`）仍然成立。人日按 **1** 计（不是 0.3，因为裁的是同 admin 档而非同 staff 档）。
+- **A1（`users.department` 回填）裁定＝不在真库做，改沙盒**：给跑分账号 `evalbot` 设部门会让 105 题里的跨部门题集体崩掉，A④「逐类不退化」就此失去可比性；`admin` 那格按 `filters.py:36-39` 的现读语义本来就该是 `departments=None`（不受部门限制），补一个部门字符串反而是把它降级。⇒ 由新立 **R469** 用在册的 `scripts/r59c_sandbox_corpus.py` 跑五档 principal × 部门/密级矩阵（J-2 判据现成），把检索侧那格从空集变成有牙读数，**演示库一行不动**。
+- **A3（生产密级标签回填）裁定＝交付阶段按客户真实密级做，不进 V1/V2 代码路径**：合成标签只证行为、不证客户隔离（沙盒那 252 枚已经钉过这条口径），拿它翻绿格③ 是假话。
+- **`MODEL_CONTEXT_TOKENS` 裁定＝今天不动**：两头实测恰好一致（容器内现读 `context_limit 4096 / source code-default`；Ollama 侧 `OLLAMA_CONTEXT_LENGTH` 与 `OLLAMA_NUM_CTX` 均未设 ⇒ 走运行时默认，模型原生 262 144）。抬它必须与 Ollama 运行时窗口同批动并按客户显存量（算术地板：`window_plan(8192)=coherent`、`(16384)=coherent`、`(32768)=not coherent`，`maximum_coherent_context_tokens=18064`）。盲抬＝R255 那句「改一头就把断言变成假话」的陷阱。⇒ 降级为**交付前配置项**，写进部署清单。
+- **仍然只有业主本人能做（本席一件没代做）**：github 代理与 hosts · 删 `%TEMP%\r414_stash\`、`?? %SystemDrive%/`、`?? -` 这些垃圾 · 第二验证机 `ssh vm` 的 sshd（192.168.254.128:22 仍 `Connection closed` ⇒ run6／浏览器九环／E1–E6 全挤本机串行）· 心跳两枚是否启用（现读仍 `PAUSED`，业主「别开人工提醒」那道令有效）。
+## 第十二班第九格：业主 10-03 裁定到货（H1–H19 与 D1–D14 之外只追加，上面一字不改）
+
+业主原话：「**1 2 都按你的建议来 3 批准、R487 与合成扫描件你办、默认不翻**」。逐格结案：
+
+- **R440／A① 整表口径＝批准（按问答档定死）**；**A② 三口径＝批准（甲＋乙 两读并列）**；**评测集改题＝批准**（单号 R598，判据全文跟进单 §160）。三格从此**不再向业主讨**。
+- **R487 三十枚演示账号＝总控代办**（业主 10-03 授权往演示库建号；🔴 只建演示库账号，不动 `evalbot` 的部门口径，A1 那条「不给跑分账号设部门」的既有裁定继续生效）。**V2 #13 那张真扫描件＝总控以合成件代办**（业主令「那些信息本来就是假的在网上找的」一脉相承：合成标签只证行为、不证客户隔离，不许拿它翻 C 门或格③ 的绿）。
+- **`INDEX_BACKEND` 出厂默认＝不翻**（转交付阶段项，计划书 §6 勘误那节记理由与落点 `app/rag/indexing.py:50`）。
+- 🔴 **仍然只有业主本人能做/能给的**（本席一件不代做）：第二验证机 `192.168.254.128`（13:0x 现取 ping 都不通）；仓外与 `?? %SystemDrive%/`、`?? -` 那批垃圾的删除；心跳两枚 automation 是否启用（现读仍 `PAUSED`，业主「别开人工提醒影响对话」那道令继续有效）；断网续订与机器不睡眠（keep-awake pid 14828/32844 在位，业主令「别设为永眠」）。
+- 一句话：**这张表上「等业主」的格子，从今天的四格收缩到一格半（第二验证机＋垃圾删除），其余全部有了裁定或已转总控执行。**

@@ -5,14 +5,50 @@ the 105-question set could not be scored. This is that missing producer: it driv
 fixture through an injected transport and emits the JSONL the runner reads.
 
 Output contract, verbatim against the reader:
-  * app/quality/runner.py:7-13 parses each line and indexes it by str(item["id"]),
+  * app/quality/runner.py:22-28 parses each line and indexes it by str(item["id"]),
     so id/answer/evidence/latency_ms must be top-level keys;
-  * app/quality/runner.py:23-27 answers any id it never saw with
+  * app/quality/runner.py:44-48 answers any id it never saw with
     {"answer": "", "evidence": [], "latency_ms": None}. That turns "we never collected
     this" into "the model answered badly", so it must never fire for a real gap: the
     coverage gate below fails loudly instead of leaving holes to be filled in silently.
   * first_token_at / thinking_chars / tool_calls ride along for the R29 thinking tax and
     the R38 usage audit. Unknown is recorded as null; nothing is ever estimated.
+
+R181 (2026-09-23) - where acceptance 2 (`text` frames) is persisted, and where it is not.
+  The real-run transport measures every `event: text` frame it receives: a per-question frame
+  count, the count of adjacent-frame prefix monotonicity breaks (cumulative semantics), and the
+  missing/extra character counts between the last frame and the terminal answer. Consistency is
+  judged with **covering** semantics (last frame startswith the answer), never strict equality.
+  Readings ride one row per question into `<sidecar stem>-frames.jsonl` (`EVAL_FRAME_LEDGER`,
+  scripts/eval_transport_ask_v2.py), joined by `id`, written in the same per-question step that
+  writes the sidecar. They deliberately do NOT extend the answers lines below, nor the sidecar
+  row: the payload key set is pinned by tests/test_r123_hitl_approval.py:205 and the sidecar
+  extras by :243 - both outside R181's write domain - and run2..run5 answers files must stay
+  question-for-question comparable. Observation only: `answer`, `APPROVAL_FAILED_SENTINEL`,
+  `cached`, `first_token_at` and `steps` keep the exact values they had before R181.
+  Criteria, the cache-hit single-frame reading and the two standing counter-proofs:
+  docs/testing/r181-text-frame-readings.md.
+
+R215 (2026-09-24) - the frame ledger grows two more cells, still observation only.
+  `criterion_two_holds` stops reading `prefix_breaks == 0` and starts reading
+  `uncorrected_breaks == 0`, so the controlled end-of-stream correction R210 added no longer
+  reads as a truncated stream. `prefix_breaks` itself is unchanged, byte for byte, and is still
+  written out. The two new cells - `corrective_replacements` / `uncorrected_breaks` - ride the
+  same `<sidecar stem>-frames.jsonl` rows and nothing else: they do not reach the answers lines
+  below, nor the sidecar row. `_latency_ms` (R205a) is untouched by this ticket. All four
+  conditions must hold before a break is exempted; see
+  scripts/eval_transport_ask_v2.py::_corrective_readings and
+  tests/test_r215_recognizing_a_controlled_correction.py.
+
+R205a (2026-09-24) - what this collector must NOT write into latency_ms.
+  The real transport deliberately self-reports nothing (scripts/eval_transport_ask_v2.py:515), so the
+  line used to carry the collector's own perf_counter span, which is the WHOLE CALL: retried attempts,
+  their retry sleeps, the queue-poll observation window - and on 09-23 23:34 -> 09-24 07:40 also the
+  host's 8 h 6 m suspend (incident #40). run6 therefore printed latency_ms.average = 351 121 ms,
+  larger than any honest per-question span. A span that cannot be one attempt is no longer laundered
+  into latency_ms: the line records null and names the raw observation in "latency_suspect". The
+  honest per-attempt span is the frame ledger's wall_ms, which app/quality/eval.py now aggregates.
+  The magnitude ceiling is read from that one place (latency_envelope_ms), not copied here.
 
 Offline by construction: there is no built-in network transport. A real run must name one
 with --transport module:callable; --dry-run supplies a fake transport instead. That fake
@@ -39,6 +75,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# R205a：「一发尝试能有多长」这把尺由评分端定义（app/quality/eval.py），这里只读不另存，
+# 免得采集与评分各拿一把尺、假账在中间对不上。脚本常被按文件路径 import，先补 sys.path。
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from app.quality.eval import latency_envelope_ms  # noqa: E402
+
 DEFAULT_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "business_evaluation_100.jsonl"
 # Outside the repo on purpose: artifacts/ is not gitignored, .gitignore is frozen until H5
 # closes, and a tracked answers blob would dirty every worktree and invite a stray git add.
@@ -53,6 +96,17 @@ TRACE_KEYS = ("first_token_at", "thinking_chars", "tool_calls")
 
 class CollectionError(RuntimeError):
     """A transport result that cannot be trusted as a measured answer."""
+
+
+class LandingSpotError(RuntimeError):
+    """A product path that resolves inside the repo: refuse before a single byte is written.
+
+    R601 (2026-10-03). The window that leaked `scripts/collect-sidecar.jsonl` and
+    `scripts/collect-sidecar-frames.jsonl` into the repo ran the collector with neither
+    `EVAL_SIDECAR` nor `EVAL_FRAME_LEDGER` set, so the transport module answered with its
+    own factory default, which is repo-internal by construction. This is the same handle
+    as `scripts/eval_window_shard_driver.py::refuse_inside_repo`, same name, same semantics.
+    """
 
 
 class CoverageError(CollectionError):
@@ -110,15 +164,38 @@ def _counter(payload: dict, key: str, row_id: str) -> int | None:
     return value
 
 
-def _latency_ms(payload: dict, measured_ms: float, row_id: str) -> float:
+def _latency_ms(payload: dict, measured_ms: float, row_id: str) -> tuple[float | None, dict | None]:
+    """这一发的时延：载荷自报就用它；没自报，就得先证明「整调用跨度确实像一发」才配顶上。
+
+    🔴 R205a（跟进单 §93.9）：真实适配器故意不自报（scripts/eval_transport_ask_v2.py:515），所以这一格
+    以前恒等于采集器 perf_counter 的**整调用**跨度——被打回的重试、重试 sleep、排队轮询观测窗全在里面，
+    09-23 23:34 → 09-24 07:40 那段 8 h 6 min 整机待机也在里面，run6 因此印出 average 351 121 ms 大于
+    逐题最大值。越出一发量级上限的跨度不可能是一发尝试 ⇒ latency_ms 记 null（不猜、不补、不外推），
+    那个原始观测按它自己的名字留在 latency_suspect 里；这一发的诚实跨度在帧账 sidecar 的 wall_ms，
+    由评分端 app/quality/eval.py 拿去记账。返回 (latency_ms, latency_suspect)，后者为 None
+    表示这一发无可疑——干净轮的 answers 行字节因此与从前逐字一致。
+    """
     value = payload.get("latency_ms")
-    if value is None:
-        return round(measured_ms, 3)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise CollectionError(f"{row_id}: latency_ms must be a number or null, got {value!r}")
-    if value < 0:
-        raise CollectionError(f"{row_id}: latency_ms must not be negative, got {value}")
-    return float(value)
+    if value is not None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise CollectionError(f"{row_id}: latency_ms must be a number or null, got {value!r}")
+        if value < 0:
+            raise CollectionError(f"{row_id}: latency_ms must not be negative, got {value}")
+        return float(value), None
+    envelope = latency_envelope_ms()
+    span = round(measured_ms, 3)
+    if span <= envelope:
+        # 整调用跨度还能被「一发」解释（没重试、没被冻），它才是实测时延。
+        return span, None
+    return None, {
+        "id": row_id,
+        "collection_span_ms": span,
+        "one_attempt_envelope_ms": envelope,
+        "reason": (
+            f"载荷未自报 latency_ms，而采集器实测的整调用跨度 {span} ms 越出一发尝试的量级上限 "
+            f"{envelope} ms ⇒ 里面必有被打回的重试或整机待机，它不是一发的时延；"
+            "这一发的诚实跨度看帧账 sidecar 的 wall_ms"),
+    }
 
 
 def _first_token_at(payload: dict, row_id: str) -> float | str | None:
@@ -139,11 +216,13 @@ def build_answer(row: dict, payload: Any, *, measured_ms: float, answer_source: 
         raise CollectionError(
             f"{row_id}: transport returned {type(payload).__name__}, expected a dict or a string"
         )
+    evidence = _evidence(payload, row_id)
+    latency_ms, latency_suspect = _latency_ms(payload, measured_ms, row_id)
     answer: dict = {
         "id": row_id,
         "answer": str(payload.get("answer", "")),
-        "evidence": _evidence(payload, row_id),
-        "latency_ms": _latency_ms(payload, measured_ms, row_id),
+        "evidence": evidence,
+        "latency_ms": latency_ms,
         "first_token_at": _first_token_at(payload, row_id),
         "thinking_chars": _counter(payload, "thinking_chars", row_id),
         "tool_calls": _counter(payload, "tool_calls", row_id),
@@ -151,9 +230,12 @@ def build_answer(row: dict, payload: Any, *, measured_ms: float, answer_source: 
         # a baseline, and app/quality/runner.py ignores keys it does not read.
         "answer_source": answer_source,
     }
-    for optional in ("claims", "confidence", "confidence_label"):
+    for optional in ("claims", "claims_error", "confidence", "confidence_label"):
         if optional in payload:
             answer[optional] = payload[optional]
+    if latency_suspect is not None:
+        # 只有被拒的那一发多这一格（可选键，读侧 app/quality/runner.py 不认的键一律忽略）。
+        answer["latency_suspect"] = latency_suspect
     assert_line_contract(answer)
     return answer
 
@@ -189,6 +271,8 @@ def collect_answers(
         except Exception as exc:  # a lost question is a gap to report, not a reason to stop
             failures.append({"id": row_id, "error": f"{type(exc).__name__}: {exc}"})
             continue
+        # 整调用跨度：含 transport 内部被打回的重试与重试 sleep，也可能含整机待机。
+        # 🔴 它不天然等于「一发的时延」，配不配顶那一格由 _latency_ms 判（R205a）。
         measured_ms = max(0.0, (clock() - started) * 1000.0)
         try:
             answer = build_answer(row, payload, measured_ms=measured_ms, answer_source=answer_source)
@@ -222,6 +306,80 @@ def write_answers(path: str | Path, answers: list[dict]) -> Path:
     body = "".join(json.dumps(answer, ensure_ascii=False) + "\n" for answer in answers)
     target.write_text(body, encoding="utf-8")
     return target
+
+
+#: R601 判据②：仓外纪律的一句话正解（与 driver 那条 REFUSE 文案同族）。
+LANDING_REMEDY = ("产物必须落仓外：EVAL_SIDECAR / EVAL_FRAME_LEDGER 指到 %TEMP%/evalrun，" 
+                  "或用 --output 给一枚仓外路径；仓内产物会脏每一棵 worktree 并招来误加 git add")
+#: The in-repo eval transport is the leg that owns the two evidence files. Its name is
+#: spelled here because "cannot read its landing spot" must refuse, not pass.
+EVAL_TRANSPORT_MODULE = "eval_transport_ask_v2"
+
+
+def refuse_inside_repo(path: str | Path, what: str, root: str | Path | None = None) -> None:
+    """Refuse a product path that lands inside ``root`` (default: this repo).
+
+    Same handle as `scripts/eval_window_shard_driver.py:153`: resolve first (so a `..`
+    detour cannot smuggle a path back into the tree), then relative_to; an unreadable
+    path is not a verdict, so it is left to the writer to fail on its own.
+    """
+    base = REPO_ROOT if root is None else Path(root)
+    try:
+        resolved = Path(path).resolve()
+        inside = base.resolve()
+    except OSError:
+        return
+    try:
+        resolved.relative_to(inside)
+    except ValueError:
+        return
+    raise LandingSpotError(what + " 落在仓内：" + str(resolved))
+
+
+def transport_evidence_module(transport: Callable[..., Any] | None):
+    """The module behind a loaded transport callable, or None when it is not importable here."""
+    if transport is None:
+        return None
+    return sys.modules.get(str(getattr(transport, "__module__", "")))
+
+
+def window_landing_spots(output: str | Path,
+                         transport: Callable[..., Any] | None = None) -> list[tuple[str, Path]]:
+    """Every file this run will write: the answers line plus the transport owns two evidence files.
+
+    The sidecar / frame ledger spots are **asked from the loaded module** (`SIDECAR`,
+    `frame_ledger_path()`), never guessed from a name we remember here: a guessed name is
+    how a guard ends up watching a file nobody writes.
+    """
+    spots: list[tuple[str, Path]] = [("答案件", Path(output))]
+    module = transport_evidence_module(transport)
+    sidecar = getattr(module, "SIDECAR", None) if module is not None else None
+    if sidecar is not None:
+        spots.append(("侧车", Path(sidecar)))
+    ledger = getattr(module, "frame_ledger_path", None) if module is not None else None
+    if callable(ledger):
+        spots.append(("帧账", Path(ledger())))
+    return spots
+
+
+def refuse_landing_spots(output: str | Path, transport: Callable[..., Any] | None = None,
+                         root: str | Path | None = None) -> list[tuple[str, Path]]:
+    """Preflight gate: refuse before bytes when any landing spot resolves inside the repo.
+
+    Fail-closed on "cannot ask": when the transport is the in-repo eval adapter, the two
+    evidence files are exactly the ones that leaked today, so an unreadable leg is a refusal,
+    not a pass (same rule the driver applies to a missing --env-file).
+    """
+    spots = window_landing_spots(output, transport)
+    module = transport_evidence_module(transport)
+    if module is not None and str(module.__name__).rsplit(".", 1)[-1] == EVAL_TRANSPORT_MODULE:
+        asked = [what for what, _ in spots]
+        if "侧车" not in asked or "帧账" not in asked:
+            raise LandingSpotError("侧车/帧账的落点问不着（" + EVAL_TRANSPORT_MODULE
+                                   + " 上没有 SIDECAR/frame_ledger_path）⇒ 按「问不到」处理，不许当通过")
+    for what, spot in spots:
+        refuse_inside_repo(spot, what, root=root)
+    return spots
 
 
 def build_dry_run_transport() -> Callable[[dict], Any]:
@@ -322,6 +480,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             transport = load_transport(args.transport)
             answer_source = args.transport
+        try:
+            refuse_landing_spots(output, transport)
+        except LandingSpotError as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            print(LANDING_REMEDY, file=sys.stderr)
+            return 2
         answers, failures = collect_answers(rows, transport, answer_source=answer_source)
         assert_coverage(rows, answers)
     except CoverageError as exc:

@@ -39,15 +39,16 @@ def _authorized_artifact(request: Request, artifact_id: str, action: str):
         action=action,
         require_resource_scope=True,
     )
+    source_allowed = decision.allowed and artifact_storage.artifact_sources_allowed(artifact, principal)
     record_audit(
         principal,
         action,
-        "allowed" if decision.allowed else "denied",
+        "allowed" if source_allowed else "denied",
         artifact.artifact_id,
-        decision.reason_code,
+        decision.reason_code if source_allowed else "source_scope_denied",
     )
-    if not decision.allowed:
-        raise HTTPException(status_code=403, detail=decision.reason_code)
+    if not source_allowed:
+        raise HTTPException(status_code=403, detail=decision.reason_code if not decision.allowed else "source_scope_denied")
     return artifact
 
 
@@ -149,7 +150,14 @@ MAX_LIST_LIMIT = 100
 
 
 def _artifact_row(record) -> dict:
-    """One artifact as the list reports it: delivery URLs plus the scope it belongs to."""
+    """One artifact as the list reports it: delivery URLs, its scope, and its generation lineage.
+
+    The two lineage keys come from ``record.lineage_payload()``, i.e. from the artifact row's
+    own ``session_id`` / ``request_id`` columns (R509 / migration 0017) - never off the reading
+    Principal, which would make the same row claim a different source for every visitor. A
+    column that is NULL publishes no key at all, so "this deployment never recorded which turn
+    produced it" stays visibly different from "it was produced by the empty string".
+    """
     row = record.public_payload()
     row.update(
         {
@@ -162,6 +170,29 @@ def _artifact_row(record) -> dict:
             "source_version_id": record.source_version_id,
         }
     )
+    row.update(record.lineage_payload())
+    if record.metadata.get('source_alert_id'):
+        row['source_alert_id'] = record.metadata['source_alert_id']
+    if record.metadata.get('source_artifact_ids'):
+        row['source_artifact_ids'] = record.metadata['source_artifact_ids']
+    # Generation-time versions remain visible after updates; never imply they are current.
+    sources = record.metadata.get("source_documents", [])
+    versions = []
+    historical = False
+    if record.source_version_id:
+        from app.storage.datasets import dataset_registry
+        source = dataset_registry.dataset_for_version(record.source_version_id)
+        if source:
+            historical = source.current_version_id != record.source_version_id
+        versions.append(record.source_version_id)
+    if sources:
+        from app.rag.indexing import read_index_metadata, document_index_id
+        _versions, current = read_index_metadata()
+        for source in sources:
+            versions.append(f"{source['source_name']} · 版本 {source.get('version_id') or '未记录'}")
+            historical = historical or current.get(document_index_id(source['source_name'])) != source.get('index_version_id')
+    if versions:
+        row["source_version_label"] = ("历史成果，依据生成时版本：" if historical else "生成时版本：") + "；".join(versions)
     return row
 
 
@@ -194,7 +225,7 @@ async def list_artifacts(
             record.resource_scope,
             action=ACTION_VIEW,
             require_resource_scope=True,
-        ).allowed
+        ).allowed and artifact_storage.artifact_sources_allowed(record, principal)
     ]
     page = visible[applied_offset : applied_offset + applied_limit]
     return {

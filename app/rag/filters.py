@@ -6,6 +6,12 @@ administrator: the data chain hands an admin the whole frame, the resource chain
 ``docs/handoff/2026-09-15-backend-followup-requests.md`` 6.2 settled that as e2 -- the
 retrieval chain now asks the same question the resource chain asks, through
 ``app.common.policy.is_administrator``, rather than carrying a fourth copy of the test.
+
+Both outcomes leave the same journal: ``record_retrieval_scope`` writes the one scope that
+widens access, and ``resolve_document_retrieval_scope`` writes every refusal it raises, so
+"the account with no department was turned away" is attributable to an account instead of
+vanishing into an exception. R163's matrix cell
+``retrieval.nodept_account_is_refused`` is what pinned the missing half.
 """
 
 from typing import NamedTuple
@@ -50,19 +56,46 @@ class DocumentRetrievalScope(NamedTuple):
             return True
         return str(hit.get("department") or "") in self.departments
 
+    def refusal_code(self, hit: dict) -> str:
+        """Say why ``allows`` turned one recalled chunk away. It never decides access.
 
-def resolve_document_retrieval_scope(principal: Principal | None) -> DocumentRetrievalScope:
-    """Build the scope for one retrieval before any query runs.
+        判序照抄 allows：先问它，它说能看就回空串；剩下的才按同一条顺序归因——
+        元数据读不出来那一只记 resource_scope_missing（fail-closed 的那一支不许
+        对某一维下结论），密级越档记 clearance_insufficient，其余记
+        department_scope_denied。放行与拒绝出自同一个类，
+        「能不能看」与「为什么不能看」就不会长成两套口径。
+        """
+        if self.allows(hit):
+            return ""
+        try:
+            level = int(hit.get("classification"))
+        except (TypeError, ValueError):
+            return "resource_scope_missing"
+        if level not in self.classification_levels:
+            return "clearance_insufficient"
+        return "department_scope_denied"
 
-    The classification clause is kept for an administrator even though it restricts
-    nothing today, so that the filter states the rule instead of the accident:
-    ``Principal.clearance`` comes from ``clearance_for(role)`` and
-    ``ROLE_CLEARANCE["admin"] = 3`` is the highest level the model defines, so "respect
-    the classification ceiling" currently imposes no limit on an administrator. The real
-    effect of e2 is therefore cross-department *and* cross-classification read access
-    across the whole library. If a customer later asks for "the owner may not read
-    confidential documents", the knob is ``ROLE_CLEARANCE`` (or a separate clearance for
-    that account) -- not the department rule. Do not re-derive that from the code.
+
+#: 检索面在审计台账里的资源标识：写的是「哪一道闸门拒的」，不是「哪一份文档」。
+AUDIT_SURFACE = "document_retrieval"
+
+
+def _record_refusal(principal: Principal | None, code: str) -> None:
+    """把「谁在检索闸门前被拒了」记进既有审计通路。
+
+    这一条只写三样东西：主体（record_audit 自己从 principal 投影 username/role/user_id）、
+    资源标识（固定写检索面名）、判定结果（denied + 稳定码）。文档正文、别人的部门实际值、
+    密级实际值一个字都不许进 —— 此刻手里只有主体，还没碰到任何资源，写了就是凭空造账。
+    也不自造第二套事件表：用的就是 record_retrieval_scope 同一条 record_audit。
+    """
+    record_audit(principal, ACTION_VIEW, "denied", AUDIT_SURFACE, code)
+
+
+def _resolve_document_retrieval_scope(principal: Principal | None) -> DocumentRetrievalScope:
+    """判定本体：四条 raise 出处、谓词形状与放行条件一字未改。
+
+    对外的承诺（含管理员那一档为什么保留）写在入口 ``resolve_document_retrieval_scope``
+    的 docstring 里——留账也在入口那一层，本层只负责判定。
     """
     if principal is None:
         raise RetrievalScopeError(
@@ -112,6 +145,31 @@ def resolve_document_retrieval_scope(principal: Principal | None) -> DocumentRet
     )
 
 
+def resolve_document_retrieval_scope(principal: Principal | None) -> DocumentRetrievalScope:
+    """Build the scope for one retrieval before any query runs.
+
+    The classification clause is kept for an administrator even though it restricts
+    nothing today, so that the filter states the rule instead of the accident:
+    ``Principal.clearance`` comes from ``clearance_for(role)`` and
+    ``ROLE_CLEARANCE["admin"] = 3`` is the highest level the model defines, so "respect
+    the classification ceiling" currently imposes no limit on an administrator. The real
+    effect of e2 is therefore cross-department *and* cross-classification read access
+    across the whole library. If a customer later asks for "the owner may not read
+    confidential documents", the knob is ``ROLE_CLEARANCE`` (or a separate clearance for
+    that account) -- not the department rule. Do not re-derive that from the code.
+
+    留账是这一层加进来的：判定本体在 ``_resolve_document_retrieval_scope``，而四条 raise
+    出处（无主体、账号停用、无正密级、无部门）今天都先从入口这里落一行 ``_record_refusal``
+    再原样抛出去。放在入口而不是分支里，是因为分支会长——明天再加一条判定，只要它还是从
+    这里 raise，账就还在。判定逻辑、谓词形状与放行条件一律不改。
+    """
+    try:
+        return _resolve_document_retrieval_scope(principal)
+    except RetrievalScopeError as exc:
+        _record_refusal(principal, exc.code)
+        raise
+
+
 def build_document_retrieval_filter(principal: Principal | None) -> dict:
     """The Chroma ``where`` clause alone, for callers that do not need the reason."""
     return resolve_document_retrieval_scope(principal).filters
@@ -131,7 +189,7 @@ def record_retrieval_scope(
         principal,
         ACTION_VIEW,
         "allowed",
-        "document_retrieval",
+        AUDIT_SURFACE,
         scope.reason_code,
         request_id=request_id,
         after_summary={"hit_count": hit_count},

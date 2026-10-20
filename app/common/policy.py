@@ -28,12 +28,18 @@ _CLASSIFICATION_LEVELS = {
 # An unowned document row is a legacy row, never a public document.
 _DOCUMENT_RESOURCE_TYPE = "document"
 
-# Actions a subject always holds over a resource that belongs to them: they can open
-# it, take it back down and remove it. Functional capabilities are not ownership
-# rights -- analyzing, exporting or approving content is granted by a role, and
-# owning one document must never confer an administrative capability, so the
-# manage/audit actions are absent from this set as well.
-_OWNER_CONTROLLED_ACTIONS = frozenset({ACTION_VIEW, ACTION_DOWNLOAD, ACTION_DELETE})
+# Actions a subject always holds over a private resource that belongs to them.
+# Ownership is not a role and must not widen a document's department or clearance
+# scope: a document the uploader can no longer read stays unreadable. Private
+# artifacts and calculation records are different -- they are the caller's own
+# working output -- so the override is limited to non-document resources.
+_OWNER_CONTROLLED_ACTIONS = frozenset({ACTION_VIEW, ACTION_DOWNLOAD})
+
+# Enterprise-wide sharing is an explicit publication of level-1 material. It never
+# applies to level 2 or 3 and never substitutes for a department scope on those.
+_ENTERPRISE_VISIBILITIES = frozenset(
+    {"enterprise", "enterprise_shared", "enterprise-shared", "tenant", "company"}
+)
 
 # Actions that change a resource or move it out of the platform. A department
 # mismatch on one of these is not a scope question: the caller has no authority
@@ -124,6 +130,11 @@ def _is_unowned(value: Any) -> bool:
     return value is None or str(value).strip() == ""
 
 
+def _is_enterprise_shared(resource: dict[str, Any]) -> bool:
+    visibility = str(resource.get("visibility") or "").strip().lower()
+    return visibility in _ENTERPRISE_VISIBILITIES
+
+
 def authorization_decision(
     principal: Principal | None,
     resource: dict[str, Any] | ResourceScope | None,
@@ -151,6 +162,7 @@ def authorization_decision(
         not _is_unowned(owner_id)
         and str(owner_id) == str(principal.user_id)
         and action in _OWNER_CONTROLLED_ACTIONS
+        and str(resource_attributes.get("resource_type") or "") != _DOCUMENT_RESOURCE_TYPE
     ):
         return _decision(True, "owner_match", ("owner_match",))
 
@@ -203,6 +215,20 @@ def authorization_decision(
 
     principal_departments = {str(principal.department), *(str(value) for value in principal.department_ids)}
     principal_departments.discard("")
+
+    if _is_enterprise_shared(resource) and classification == 1:
+        if principal_departments:
+            return _decision(
+                True,
+                "enterprise_shared",
+                ("classification", "enterprise_shared"),
+            )
+        return _decision(
+            False,
+            "authorization_unavailable",
+            ("enterprise_shared",),
+        )
+
     if not resource_departments:
         return _decision(False, "resource_scope_missing")
     if not resource_departments.intersection(principal_departments):

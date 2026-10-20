@@ -1,0 +1,7 @@
+ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS options JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS finding_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS evidence JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS observations JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS recovered_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS last_observed_at TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS alerts_finding_key_idx ON alerts (finding_key, id DESC) WHERE finding_key <> '';

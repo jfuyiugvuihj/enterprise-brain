@@ -317,7 +317,7 @@ def check_storage_write_access(gate: Gate) -> None:
     """
     probe = "\n".join([
         "import os, tempfile",
-        "paths = ['/app/documents', '/app/data', '/app/static', '/app/logs', '/app/chroma_db']",
+        "paths = ['/app/documents', '/app/data', '/app/static', '/app/logs']",
         "refused = []",
         "for path in paths:",
         "    try:",

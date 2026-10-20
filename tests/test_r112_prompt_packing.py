@@ -584,7 +584,7 @@ def _patch_data_leg_boundaries(monkeypatch, frame, stub_dataset_evidence=True):
     from app.storage import datasets as dataset_storage
 
     monkeypatch.setattr(tools, "_authorized_dataset_files", lambda config: ([("费用明细.xlsx", "p")], None))
-    monkeypatch.setattr(dataset_storage.dataset_registry, "get_active_by_filename", lambda filename: None)
+    monkeypatch.setattr(dataset_storage.DatasetRegistry, "get_active_by_filename", lambda self, filename: None)
     if stub_dataset_evidence:
         monkeypatch.setattr(tools, "_record_dataset_evidence", lambda config, filename, df: None)
     monkeypatch.setattr(excel, "load_excel", lambda path: frame)
@@ -1102,7 +1102,7 @@ def test_analyze_data_only_records_the_dataset_that_reached_the_prompt(monkeypat
     monkeypatch.setattr(
         tools, "_authorized_dataset_files", lambda config: ([(name, name) for name in frames], None)
     )
-    monkeypatch.setattr(dataset_storage.dataset_registry, "get_active_by_filename", lambda filename: None)
+    monkeypatch.setattr(dataset_storage.DatasetRegistry, "get_active_by_filename", lambda self, filename: None)
     monkeypatch.setattr(excel, "load_excel", lambda path: frames[path])
     monkeypatch.setattr(
         rbac,

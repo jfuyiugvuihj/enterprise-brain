@@ -1,6 +1,9 @@
 from pathlib import Path
+import re
 
 from fastapi.testclient import TestClient
+
+from test_r349_catalog_tail_ledger import CATALOG_TAIL_VERSION
 
 
 def test_doc_panel_uses_catalog_endpoint():
@@ -56,10 +59,43 @@ def _migration(version: str):
     return next(migration for migration in MIGRATIONS if migration.version == version)
 
 
+_COMMENT_LINE = re.compile(r"^[ \t]*--.*$", re.MULTILINE)
+
+
+def split_statements(sql: str) -> list[str]:
+    """Cut SQL into statements the way PostgreSQL reads it: a ``;`` inside a quoted literal is
+    not a statement terminator, so prose in a ``COMMENT ON ... IS '...'`` must not split one
+    migration in two. R251 hit exactly this on 0014 and answered it by deleting the semicolon
+    from its own literal (T-9 of tests/test_r251_alert_disposal_migration.py); R256 fixed the
+    cutter instead, because the next migration should not have to be written around a tool.
+    """
+    parts: list[str] = []
+    current: list[str] = []
+    in_string = False
+    index = 0
+    while index < len(sql):
+        char = sql[index]
+        if char == "'":
+            if in_string and sql[index + 1 : index + 2] == "'":
+                current.append("''")
+                index += 2
+                continue
+            in_string = not in_string
+        if char == ";" and not in_string:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    parts.append("".join(current))
+    assert not in_string, "an unclosed string literal: this cut is not defined on it"
+    return [part for part in parts if part.strip()]
+
+
 def _statements(version: str) -> list[str]:
     """Executable statements only: the commentary explains intent, it is not SQL."""
-    lines = [line for line in _migration(version).sql.splitlines() if not line.strip().startswith("--")]
-    return [" ".join(statement.split()).lower() for statement in "\n".join(lines).split(";") if statement.strip()]
+    body = _COMMENT_LINE.sub("", _migration(version).sql)
+    return [" ".join(statement.split()).lower() for statement in split_statements(body)]
 
 
 def test_0007_adds_a_nullable_chunk_count_to_both_catalog_tables():
@@ -120,18 +156,30 @@ def test_0007_lets_the_owner_be_absent_in_every_mirrored_table():
     )
 
 
-def test_the_offline_migration_plan_loads_every_version_through_0011():
+def test_the_offline_migration_plan_loads_every_version_through_0016():
     """被 C-R13 更新过一轮，R15-b 又更新了一次：钉的是"最新一版是谁"。
 
     那个字面量必然随每一版过期，所以断言换成一串仍然成立的性质，并且**继续显式钉住
-    目录尾号**：将来谁加下一版，必须像 0010（R58 pgvector 双写）与 0011（R46 活动信号
-    计数）这两次一样主动改这条，而不是让它静默失去意义。
+    目录尾号**：将来谁加下一版，必须像 0010（R58 pgvector 双写）、0011（R46 活动信号
+    计数）、0012（R183/R184 两本台账的归属列）、0013（R190 放开挂起台账 status 的取值域）、
+    0014（R251 告警台账的处置列）、0015（R256 给 dataset_versions 补上的 scope 两列）、0016（R299
+    通知中心的读者生命周期表 notification_states）与 0017（R509 给 artifacts 落下的两枚生成血缘列
+    artifact_generation_lineage）这八次一样主动改这条，而不是让它静默失去意义。
+    0012 那一枚由总控落笔（R58 先例：该写域在施工方之外），0013、0014、0015、
+    0016 与 0017 这五枚由施工方本人改口——尾号引信留在哪一版手里，下一版就归谁动。
+    R349 起尾号数字不在本件手抄：它只在 tests/test_r349_catalog_tail_ledger.py 写死一枚，同族件一律 import；
+    那一枚文件里另有一枚自校验引信，专抓「新排了一版却没在任何地方登记过」，所以改口只改那一处。
     """
     from app.db.migrations import MIGRATIONS, discover_migrations, migration_plan
 
     versions = [migration.version for migration in MIGRATIONS]
     assert versions == sorted(versions) and len(set(versions)) == len(versions)
-    assert versions[-1] == "0011"
+    assert versions == [
+        f"{number:04d}" for number in range(1, int(CATALOG_TAIL_VERSION) + 1)
+    ], versions
+    assert versions[-1] == CATALOG_TAIL_VERSION, (
+        "尾号账本过期：去改 tests/test_r349_catalog_tail_ledger.py 那两枚字面量，别改本件"
+    )
     assert [migration.version for migration in migration_plan({})] == [
         migration.version for migration in MIGRATIONS
     ]

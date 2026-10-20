@@ -19,6 +19,7 @@ export { default as UiLoadingState } from './UiLoadingState.vue'
 
 export { useToasts, pushToast, notifyError, notifySuccess, dismissToast, clearToasts } from './toasts.js'
 export { normalizeError, formatError, errorCodeLabel, errorCodeOf, errorText, blobErrorText, readBlobError, isRetryable, ERROR_CODES } from '../../lib/errcodes.js'
+export { rawDetailOf } from './error-detail.js'
 export { moveActiveIndex, findIndexByPrefix } from './list-nav.js'
 export { nextSortState, sortRows, ariaSortFor } from './table-sort.js'
 export { validateFiles, formatBytes } from './upload-rules.js'
