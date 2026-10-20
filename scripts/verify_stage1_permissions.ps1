@@ -151,6 +151,7 @@ finally {
 }
 
 $script:results | Format-Table -AutoSize
+"test_accounts: $staffFin / $staffSales / $managerFin / $auditorFin (password: $testPass)"
 $failed = @($script:results | Where-Object { -not $_.Pass })
 "passed=$($script:results.Count - $failed.Count) failed=$($failed.Count) total=$($script:results.Count)"
 if ($failed.Count -gt 0) { exit 1 }
