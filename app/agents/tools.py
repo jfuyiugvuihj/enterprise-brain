@@ -435,7 +435,9 @@ def _authorized_dataset_files(
             )
             return [], f"暂无可访问的数据文件（error_code={decision.reason_code}）"
         task = conf.get("task_context") or conf.get('data_context') or {}
-        if task:
+        # A report-only context may carry just report_body. It is not a bound data task
+        # and must not be treated as one with a missing version.
+        if task and (task.get("version_id") or task.get("sha256")):
             bound_scope = (conf.get('data_context') or {}).get('scope')
             if bound_scope and (bound_scope.get('role') != principal.role
                     or bound_scope.get('department') != (principal.department or '')
@@ -2728,6 +2730,17 @@ def _analysis_body_sections(body: str) -> list[dict]:
     return sections
 
 
+def _report_sections(facts: list[dict], analysis: str, original_body: str) -> list[dict]:
+    """The answer the user saw comes first; verified fact tables remain underneath."""
+    if original_body:
+        return _analysis_body_sections(original_body)
+    sections = _verified_report_sections(facts, analysis)
+    narrative = _analysis_body_sections(analysis)
+    if narrative:
+        sections = [{"type": "heading", "content": "分析结论原文"}] + narrative + sections
+    return sections
+
+
 def _verified_report_sections(facts: list[dict], analysis: str) -> list[dict]:
     """Business narrative whose numerical assertions share the actual calculation input."""
     sections = []
@@ -2871,7 +2884,7 @@ def _export_report(report_title: str, sections_json: str,
             return _denial_text(config, tool="export_report", code="validation_error", head=_EXPORT_BAD_SECTIONS_HEAD)
         conf = (config or {}).get("configurable", {}) or {}
         filename = str(conf.get("data_filename") or "").strip()
-        original_body = str((conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
+        original_body = str(conf.get('report_body') or (conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
         from app.agents.task_review import requested_documents_valid
         if not requested_documents_valid(conf.get('task_context') or {}, principal):
             return _denial_text(config, tool='export_report', code='validation_error',
@@ -2888,9 +2901,8 @@ def _export_report(report_title: str, sections_json: str,
                 return _denial_text(config, tool="export_report", code="validation_error",
                                     head="选中数据未能完成授权核验，未生成报告。")
             facts = verified_bag.get("report_facts") or []
-            original_body = str((conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
-            sections = (_analysis_body_sections(original_body) if original_body
-                        else _verified_report_sections(facts, analysis))
+            original_body = str(conf.get('report_body') or (conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
+            sections = _report_sections(facts, analysis, original_body)
             if conf.get("task_context"):
                 from app.agents.task_review import policy_review_text, policy_identity, _applicable_policy_documents
                 search_docs.invoke({"query": question}, config=verified_config)

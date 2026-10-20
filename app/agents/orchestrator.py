@@ -978,6 +978,7 @@ def _make_worker_wrapper(graph, name: str):
             "document_filenames",
             "task_context",
             "data_context",
+            "report_body",
             "principal",
             # R294 把签名长在 configurable 上而不是 Principal 字段里，它与 `principal` 是一对：
             # 只搬身份不搬出处，交进子图的那份 config 就自相矛盾（一枚没人作证的 dict）。今天
@@ -1615,6 +1616,23 @@ def _stream_state(event):
     return event if isinstance(event, dict) else None
 
 
+_REPORT_BODY_PATTERN = re.compile(
+    r"分析原文开始：\s*(.*?)\s*分析原文结束。",
+    re.S,
+)
+
+
+def report_body_from_export_prompt(question: str) -> str:
+    """Return the answer text carried by the report-export prompt.
+
+    The report button already sends the settled answer verbatim between these two
+    markers. Reading it here keeps the PDF tied to what the user actually saw even
+    when the previous turn had no ``task_context`` to inherit.
+    """
+    match = _REPORT_BODY_PATTERN.search(str(question or ""))
+    return match.group(1).strip() if match else ""
+
+
 def run_with_stream(
     user_message: str,
     thread_id: str = "default",
@@ -1728,6 +1746,16 @@ def run_with_stream(
     initial_state['data_context'] = data_context
     if initial_state.get('data_context') and same_owner and raw_question.startswith('请将以下已完成的分析原文排版导出'):
         initial_state['data_context'] = {**initial_state['data_context'], 'report_body': str((previous.get('data_context') or {}).get('report_body') or previous.get('final_answer') or '')}
+    exported_body = report_body_from_export_prompt(raw_question)
+    if exported_body:
+        # The export prompt carries the settled answer itself. Keep it on a dedicated
+        # config key: putting report_body into an otherwise empty task_context made the
+        # dataset gate read it as a task with no version and refuse the export.
+        config["configurable"]["report_body"] = exported_body
+        if initial_state.get("task_context"):
+            initial_state["task_context"]["report_body"] = exported_body
+        if initial_state.get("data_context"):
+            initial_state["data_context"]["report_body"] = exported_body
     # 本轮档位读数：与图内 plan()/route_main 读的是同一份规则本体（resolve_turn_lane 不打
     # [R42] 锚点，频次一字不动），user_message 就是 plan() 拿到的那枚文本 ⇒ 读数与生效路径同源。
     turn = resolve_turn_lane(user_message, declared)

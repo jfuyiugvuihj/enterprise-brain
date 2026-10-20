@@ -4692,9 +4692,12 @@ async def get_session(session_id: str, request: FastAPIRequest):
                 references = task.get('requested_documents') or []
                 if all(scope.allows(latest_document_version(item['filename']) or {}) for item in references):
                     msgs[-1] = {**msgs[-1], 'task_selection': {
-                        'dataFilename': task['filename'],
+                        # A report-only task_context carries report_body and may have no
+                        # filename; reading it as a required key turned the session
+                        # detail into a 500 after an export attempt.
+                        'dataFilename': task.get('filename') or '',
                         'documentFilenames': [item['filename'] for item in references],
-                        **({'origin': {'kind': 'alert', 'id': task['alert_id'], 'versionId': task['version_id']}}
+                        **({'origin': {'kind': 'alert', 'id': task.get('alert_id'), 'versionId': task.get('version_id') or ''}}
                            if task.get('alert_id') else {})}}
         if not _session_database_available():
             return {
