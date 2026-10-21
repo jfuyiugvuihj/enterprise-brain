@@ -52,8 +52,10 @@ if not errorlevel 1 (
     echo [INFO] Port 18083 is already listening.
     echo The latest frontend is already running:
     echo     http://127.0.0.1:18083/
-    echo Close the other window first if you want to restart it.
-    pause
+    echo Opening it in your browser...
+    echo To restart it, stop the process on port 18083 first, then run this file again.
+    start "" "http://127.0.0.1:18083/"
+    ping -n 4 127.0.0.1 >nul
     exit /b 0
 )
 
