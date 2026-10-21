@@ -87,6 +87,8 @@ const server = http.createServer(async (request, response) => {
 })
 
 server.listen(port, host, () => {
-  console.log(`latest frontend: http://${host}:${port}/`)
+  const localHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host
+  console.log(`latest frontend: http://${localHost}:${port}/`)
+  console.log(`bind address:   ${host}:${port}`)
   console.log(`api target:     ${apiTarget.href}`)
 })
