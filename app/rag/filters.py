@@ -54,6 +54,8 @@ class DocumentRetrievalScope(NamedTuple):
             return False
         if self.departments is None:
             return True
+        if level == 1 and str(hit.get("visibility") or "") == "enterprise_shared":
+            return True
         return str(hit.get("department") or "") in self.departments
 
     def refusal_code(self, hit: dict) -> str:
@@ -138,7 +140,22 @@ def _resolve_document_retrieval_scope(principal: Principal | None) -> DocumentRe
             "Document retrieval requires a department scope.",
         )
     return DocumentRetrievalScope(
-        filters={"$and": [classifications, {"department": {"$in": sorted(departments)}}]},
+        filters={
+            "$and": [
+                classifications,
+                {
+                    "$or": [
+                        {"department": {"$in": sorted(departments)}},
+                        {
+                            "$and": [
+                                {"classification": {"$in": [1]}},
+                                {"visibility": {"$in": ["enterprise_shared"]}},
+                            ]
+                        },
+                    ]
+                },
+            ]
+        },
         reason_code="department_scope",
         classification_levels=levels,
         departments=departments,

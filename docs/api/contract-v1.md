@@ -1189,9 +1189,39 @@ decision somebody made.
 | `owner_id` | string / null | always | the owning account, or `null` for a row that predates document ownership |
 | `size_bytes` | int | always | the stored size the catalogue resolved for that version |
 | `parse_status` | string | always | how the parse of that version ended |
+| `visibility` | string | always | whether the newest version is private or shared with the whole enterprise: `private` or `enterprise_shared` |
 | `ownership` | string | always | which of the two visibility groups this row belongs to: `owned` or `legacy` |
 | `index_status` | string | only when recorded | whether the assistant can find this version: `indexed`, `excluded` or `unknown`; the pair is absent when no decision was ever recorded |
 | `index_reason` | string | only when recorded | the stable reason an `excluded` row gives; the empty string for every other state |
+
+### `PUT /api/v1/documents/{filename}/visibility` -> body
+
+Publishes or unpublishes one level-1 document for every active account that has a department.
+Only an administrator may call it; the decision is audited. The change is applied to the newest
+version in a single transaction across the catalogue, the version ledger and the vector rows, so
+a document cannot be listable while still unsearchable.
+
+```json
+{"visibility": "enterprise_shared"}
+```
+
+```json
+{"status": "ok", "filename": "handbook-v3.txt", "version": 2, "visibility": "enterprise_shared"}
+```
+
+`visibility` accepts `private` (the default for every stored version) or `enterprise_shared`.
+Enterprise sharing is refused unless the newest version is classification 1 and has at least
+one indexed chunk. Publishing the newest version never changes an earlier version: historical
+versions keep their own `visibility`, and their vector rows are not rewritten.
+
+| result | status | `detail` |
+| --- | --- | --- |
+| changed | 200 | response body above |
+| caller is not an administrator | 403 | `permission_denied` |
+| unknown value in the body | 400 | `invalid_visibility` |
+| newest version is not level 1 | 400 | `enterprise_shared_requires_level_1` |
+| document does not exist | 404 | `resource_not_found` |
+| no indexed chunks, so publishing would be a false promise | 409 | `document_not_indexed` |
 
 ## Frontend Collaboration Boundary
 
@@ -1296,6 +1326,10 @@ log (`[Docs] parse failed: ...`).
 | `GET /api/v1/documents/{filename}/preview` | 415 | `unsupported_preview` |
 | `GET /api/v1/documents/{filename}/preview` | 500 | `document_preview_failed` |
 | `GET /api/v1/documents/{filename}/versions` | 404 | `resource_not_found` |
+| `PUT /api/v1/documents/{filename}/visibility` | 400 | `invalid_visibility`, `enterprise_shared_requires_level_1` |
+| `PUT /api/v1/documents/{filename}/visibility` | 403 | `permission_denied` |
+| `PUT /api/v1/documents/{filename}/visibility` | 404 | `resource_not_found` |
+| `PUT /api/v1/documents/{filename}/visibility` | 409 | `document_not_indexed` |
 | `POST /api/v1/ask` | 400 | `idempotency_key_required` |
 | queue routes | 503 | `{"code": "queue_unavailable", "message": ...}` |
 

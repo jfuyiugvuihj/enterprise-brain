@@ -12,7 +12,7 @@ r"""R349 · 「目录尾号」的唯一账本：一枚字面量 + N 处 import�
 0017 会**静默通过**，那是比今天这种手抄更危险的假绿。所以本文件同时是形状钉 ——
 派生式、以及别处再抄一份字面量，两件事都由下面的用例抓红。
 
-现号：0020，主题 alert_observation_evidence（告警观测把证据与观察序列落在 alerts 行上，供恢复、再触发与成果回链读取）。
+现号：0021，主题 document_visibility（文档、版本与向量片段增加 private/enterprise_shared，企业内共享只允许管理员对 1 级资料显式发布）。
 
 改口流程（新排一枚迁移时照着走）：
   1. 只改本文件的 CATALOG_TAIL_VERSION 与 CATALOG_TAIL_NAME 这两枚字面量，再把上面"现号"那一行
@@ -39,8 +39,8 @@ LEDGER_MODULE = Path(__file__).name
 TESTS_DIR = Path(__file__).resolve().parent
 
 #: 🔴 目录尾号。整个测试套件只许在这里写死一次，其余件一律 import。
-CATALOG_TAIL_VERSION = "0020"
-CATALOG_TAIL_NAME = "alert_observation_evidence"
+CATALOG_TAIL_VERSION = "0021"
+CATALOG_TAIL_NAME = "document_visibility"
 
 #: 上面那段 docstring 是"这一版的主题"的落点，判据②的失败消息把人送回这里。
 _LEDGER_DOC = __doc__ or ""

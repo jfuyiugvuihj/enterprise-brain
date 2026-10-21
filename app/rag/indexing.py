@@ -994,6 +994,7 @@ class DocumentIndexPublication:
             "version": _scope_int(self.version, 1),
             "classification": _scope_int(self.classification, 1),
             "department": _scope_text(self.department),
+            "visibility": _scope_text(self.visibility) or "private",
             "ownership": self.ownership,
             "retirement": self.retirement,
         }

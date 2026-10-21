@@ -36,7 +36,7 @@ OWNERSHIP_OWNED = "owned"
 OWNERSHIP_LEGACY = "legacy"
 _SELECT_COLUMNS = (
     "filename, version, classification, department, storage_path, created_at, "
-    "owner_id, size_bytes, parse_status"
+    "owner_id, size_bytes, parse_status, visibility"
 )
 
 
@@ -174,6 +174,7 @@ _SIDECAR_FIELDS = (
     "version",
     "classification",
     "department",
+    "visibility",
     "owner_id",
     "size_bytes",
     "parse_status",
@@ -450,6 +451,7 @@ def _local_row(filename: str, version: int, storage_path, stored: dict) -> dict:
         # （拟号 R58）交总控，本单不实现。论证见 R57 报告站点④。
         "classification": stored.get("classification", 1),
         "department": stored.get("department") or "",
+        "visibility": str(stored.get("visibility") or "private"),
         "owner_id": stored.get("owner_id"),
         "size_bytes": stored.get("size_bytes"),
         "parse_status": stored.get("parse_status"),
@@ -597,6 +599,7 @@ def _ensure():
                 version INT NOT NULL,
                 classification INT NOT NULL DEFAULT 1,
                 department TEXT,
+                visibility TEXT NOT NULL DEFAULT 'private',
                 storage_path TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 owner_id TEXT,
@@ -641,6 +644,7 @@ def _version_metadata(
     owner_id: str | None,
     size_bytes: int | None,
     parse_status: str,
+    visibility: str = "private",
     index_status: str = INDEX_STATUS_UNKNOWN,
     index_reason: str = "",
 ) -> dict:
@@ -653,6 +657,7 @@ def _version_metadata(
         "version": version,
         "classification": int(classification),
         "department": department or "",
+        "visibility": str(visibility or "private"),
         "storage_path": storage_path,
         "created_at": datetime.now(_tz).isoformat(),
         "owner_id": owner,
@@ -674,6 +679,7 @@ def record_local_document_version(
     owner_id: str | None = None,
     size_bytes: int | None = None,
     parse_status: str = "pending",
+    visibility: str = "private",
     index_status: str = INDEX_STATUS_UNKNOWN,
     index_reason: str = "",
 ) -> dict:
@@ -693,6 +699,7 @@ def record_local_document_version(
         owner_id,
         size_bytes,
         parse_status,
+        visibility=visibility,
         index_status=index_status,
         index_reason=index_reason,
     )
@@ -711,6 +718,7 @@ def record_document_version(
     owner_id: str | None = None,
     size_bytes: int | None = None,
     parse_status: str = "pending",
+    visibility: str = "private",
     index_status: str = INDEX_STATUS_UNKNOWN,
     index_reason: str = "",
 ) -> dict:
@@ -736,6 +744,7 @@ def record_document_version(
         owner_id,
         size_bytes,
         parse_status,
+        visibility=visibility,
         index_status=index_status,
         index_reason=index_reason,
     )
@@ -752,12 +761,13 @@ def record_document_version(
             conn.execute(
                 """
                 INSERT INTO document_versions
-                (filename, version, classification, department, storage_path, created_at,
-                 owner_id, size_bytes, parse_status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (filename, version, classification, department, visibility, storage_path,
+                 created_at, owner_id, size_bytes, parse_status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (filename, version) DO UPDATE SET
                     classification = EXCLUDED.classification,
                     department = EXCLUDED.department,
+                    visibility = EXCLUDED.visibility,
                     storage_path = EXCLUDED.storage_path,
                     owner_id = COALESCE(document_versions.owner_id, EXCLUDED.owner_id),
                     size_bytes = COALESCE(EXCLUDED.size_bytes, document_versions.size_bytes),
@@ -768,6 +778,7 @@ def record_document_version(
                     metadata["version"],
                     metadata["classification"],
                     metadata["department"] or None,
+                    metadata["visibility"],
                     metadata["storage_path"],
                     metadata["created_at"],
                     metadata["owner_id"],
@@ -867,6 +878,140 @@ def latest_document_version(filename: str) -> dict | None:
     """
     rows = list_document_versions(filename, limit=1)
     return rows[0] if rows else None
+
+
+DOCUMENT_VISIBILITY_PRIVATE = "private"
+DOCUMENT_VISIBILITY_ENTERPRISE = "enterprise_shared"
+DOCUMENT_VISIBILITIES = (DOCUMENT_VISIBILITY_PRIVATE, DOCUMENT_VISIBILITY_ENTERPRISE)
+
+
+class DocumentVisibilityError(ValueError):
+    """A visibility change the catalog refuses, carrying a stable code for the API."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def _table_exists(conn, table: str) -> bool:
+    try:
+        row = conn.execute("SELECT to_regclass(%s) AS table_name", (f"public.{table}",)).fetchone()
+        return bool(row and (row.get("table_name") if isinstance(row, dict) else row[0]))
+    except Exception:
+        return False
+
+
+def set_document_visibility(filename: str, visibility: str) -> dict:
+    """Publish or unpublish the latest version of one level-1 document.
+
+    This is the only writer of ``enterprise_shared``. It updates the catalog, the vector
+    rows and the version ledger in one database transaction, so a half-published document
+    cannot appear in the list while remaining unsearchable. A document with no vector rows
+    cannot be published: visibility without retrieval is a false promise.
+    """
+    visibility = str(visibility or "").strip()
+    if visibility not in DOCUMENT_VISIBILITIES:
+        raise DocumentVisibilityError("invalid_visibility", "visibility must be private or enterprise_shared")
+
+    latest = latest_document_version(filename)
+    if latest is None:
+        raise DocumentVisibilityError("resource_not_found", "document not found")
+    version = int(latest.get("version") or 0)
+    classification = int(latest.get("classification") or 0)
+    if visibility == DOCUMENT_VISIBILITY_ENTERPRISE and classification != 1:
+        raise DocumentVisibilityError(
+            "enterprise_shared_requires_level_1",
+            "only level-1 documents may be shared with the whole enterprise",
+        )
+
+    if not _database_available():
+        # The offline catalog can still record the decision; the next online read will
+        # see the sidecar value only if the same file is still present.
+        sidecar = Path(DOCUMENTS_DIR) / LOCAL_CATALOG_FILENAME
+        records = _read_sidecar(sidecar)
+        key = _sidecar_key(filename, version)
+        if key not in records:
+            raise DocumentVisibilityError("resource_not_found", "document version not found")
+        records[key]["visibility"] = visibility
+        _write_sidecar(sidecar, records)
+        recorded_path = records[key].get("recorded_path")
+        local = _sidecar_path(recorded_path) if recorded_path else None
+        if local is not None and local.resolve() != sidecar.resolve():
+            local_records = _read_sidecar(local)
+            if key in local_records:
+                local_records[key]["visibility"] = visibility
+                _write_sidecar(local, local_records)
+        return {"filename": filename, "version": version, "visibility": visibility}
+
+    _require_ready_store("document visibility")
+    from app.rag.indexing import document_resource_version_id
+
+    resource_version_id = document_resource_version_id(filename, version)
+    with _conn() as conn:
+        changed = conn.execute(
+            "UPDATE document_versions SET visibility = %s WHERE filename = %s AND version = %s",
+            (visibility, filename, version),
+        )
+        if not getattr(changed, "rowcount", 0):
+            raise DocumentVisibilityError("resource_not_found", "document version not found")
+        if _table_exists(conn, "documents"):
+            conn.execute(
+                "UPDATE documents SET visibility = %s WHERE filename = %s",
+                (visibility, filename),
+            )
+        vector_ids: list[str] = []
+        chunks_available = _table_exists(conn, "chunks")
+        if chunks_available:
+            rows = conn.execute(
+                "SELECT COALESCE(metadata->>'vector_id', chunk_id) AS vector_id "
+                "FROM chunks WHERE resource_type = 'document' "
+                "AND resource_id = %s AND resource_version_id = %s",
+                (filename, resource_version_id),
+            ).fetchall()
+            vector_ids = [
+                str(row["vector_id"] if isinstance(row, dict) else row[0])
+                for row in rows
+                if (row["vector_id"] if isinstance(row, dict) else row[0])
+            ]
+        if _table_exists(conn, "chunk_vectors"):
+            if chunks_available:
+                if vector_ids:
+                    vectors = conn.execute(
+                        "UPDATE chunk_vectors SET visibility = %s "
+                        "WHERE vector_id = ANY(%s::text[])",
+                        (visibility, vector_ids),
+                    )
+                else:
+                    vectors = None
+            elif visibility == DOCUMENT_VISIBILITY_PRIVATE:
+                # Without the chunk ledger the version boundary is unknowable. Making every
+                # vector more restrictive is the only safe direction; publishing stays refused.
+                vectors = conn.execute(
+                    "UPDATE chunk_vectors SET visibility = %s WHERE filename = %s",
+                    (visibility, filename),
+                )
+            else:
+                vectors = None
+            if visibility == DOCUMENT_VISIBILITY_ENTERPRISE and not getattr(vectors, "rowcount", 0):
+                conn.rollback()
+                raise DocumentVisibilityError("document_not_indexed", "document has no indexed chunks")
+        elif visibility == DOCUMENT_VISIBILITY_ENTERPRISE:
+            conn.rollback()
+            raise DocumentVisibilityError("document_not_indexed", "vector table is unavailable")
+        if _table_exists(conn, "chunks"):
+            conn.execute(
+                "UPDATE chunks SET metadata = jsonb_set(metadata, '{visibility}', to_jsonb(%s::text), true) "
+                "WHERE resource_type = 'document' AND resource_id = %s AND resource_version_id = %s",
+                (visibility, filename, resource_version_id),
+            )
+        if _table_exists(conn, "resource_versions"):
+            conn.execute(
+                "UPDATE resource_versions SET visibility = %s "
+                "WHERE resource_type = 'document' AND resource_id = %s AND version_id = %s",
+                (visibility, filename, resource_version_id),
+            )
+        conn.commit()
+    return {"filename": filename, "version": version, "visibility": visibility}
 
 
 def _logical_documents_table_exists(conn) -> bool:

@@ -101,6 +101,7 @@ def record_document_hits(bag: dict[str, Any] | None, *, query: str, hits: list[d
                     "query": str(query or "")[:200],
                     "classification": hit.get("classification"),
                     "department": hit.get("department"),
+                    "visibility": hit.get("visibility") or "private",
                     "content_sha256": hashlib.sha256(str(hit.get("content") or "").encode("utf-8")).hexdigest(),
                 },
             }

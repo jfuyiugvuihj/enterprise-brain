@@ -22,6 +22,8 @@ describe('文件列表密级筛选与授权范围说明', () => {
     expect(fileAccessLabel(rows[0])).toContain('部门范围：财务')
     expect(fileAccessLabel(rows[0])).not.toContain('全公司')
     expect(fileAccessLabel({classification:2, department:'研发'})).toContain('部门范围：研发')
+    expect(fileAccessLabel({classification:1, department:'财务', visibility:'enterprise_shared'})).toBe('密级 1 级 · 企业内共享')
+    expect(fileAccessLabel({classification:1, department:'财务', visibility:'private'})).toContain('部门范围：财务')
   })
   it('缺失授权标注明确说未登记，不猜部门或密级', () => {
     expect(fileAccessLabel({})).toBe('密级未登记 · 部门范围未登记')

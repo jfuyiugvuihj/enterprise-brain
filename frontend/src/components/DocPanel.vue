@@ -344,7 +344,7 @@ import { advanceDelete, deleteButtonLabel, isPendingDelete } from './ArtifactLis
 // 密级这一格不自造措辞：整数级怎么说成人话，全站只有 lib/provenance.js 那一份口径
 // （classificationLabel：整数级就说「密级 N 级」，不替客户发明档位名字）。
 import { classificationLabel } from '../lib/provenance'
-import { fileAccessLabel, filterFileClassification } from '../lib/file-access'
+import { fileAccessLabel, fileClassificationLevel, filterFileClassification } from '../lib/file-access'
 
 // 列表存的是【行】而不是裸文件名：GET /documents/catalog 每一行都带着
 // index_status / index_reason（app/documents/catalog.py 的 public_document_row），
@@ -377,6 +377,7 @@ function dismissNotice() {
 }
 const uploads = ref([])
 const dragOver = ref(false)
+const visibilityBusy = ref('')
 const props = defineProps({
   userRole: {
     type: String,
@@ -654,6 +655,34 @@ async function downloadDocument(filename) {
     setTimeout(() => URL.revokeObjectURL(url), 60000)
   } catch (err) {
     raiseNotice('文件没能下载', errorDetail(err, '文件下载失败'), false)
+  }
+}
+
+function isEnterpriseShared(row) {
+  return typeof row?.visibility === 'string' && row.visibility.trim() === 'enterprise_shared'
+}
+
+function canEnterpriseShare(row) {
+  return isAdmin.value && fileClassificationLevel(row) === 1 && indexStatus(row) === 'indexed'
+}
+
+async function setDocumentVisibility(filename, visibility) {
+  if (!isAdmin.value) return
+  visibilityBusy.value = filename
+  dismissNotice()
+  try {
+    await http.put(`/documents/${encodeURIComponent(filename)}/visibility`, { visibility })
+    await loadDocs()
+  } catch (err) {
+    const code = err?.response?.data?.detail
+    const detail = code === 'enterprise_shared_requires_level_1'
+      ? '只有 1 级资料可以发布到企业内共享。'
+      : code === 'document_not_indexed'
+        ? '这份文件还没有可检索的索引，暂时不能发布。'
+        : errorDetail(err, '共享范围没有更新')
+    raiseNotice('共享范围没有更新', detail, false)
+  } finally {
+    visibilityBusy.value = ''
   }
 }
 
@@ -1282,6 +1311,24 @@ onDeactivated(stopUploadPoll)
               data-testid="document-download"
               @click.stop="downloadDocument(row.filename)"
             />
+            <UiButton
+              v-if="isAdmin && isEnterpriseShared(row)"
+              variant="secondary"
+              size="sm"
+              label="取消企业内共享"
+              data-testid="document-unpublish"
+              :loading="visibilityBusy === row.filename"
+              @click.stop="setDocumentVisibility(row.filename, 'private')"
+            />
+            <UiButton
+              v-else-if="canEnterpriseShare(row)"
+              variant="secondary"
+              size="sm"
+              label="发布到企业内共享"
+              data-testid="document-publish"
+              :loading="visibilityBusy === row.filename"
+              @click.stop="setDocumentVisibility(row.filename, 'enterprise_shared')"
+            />
 
           <!-- 删除按钮（管理员）：第一次点击只把这一行改成确认文案，第二次才发请求 -->
             <UiButton
@@ -1520,6 +1567,12 @@ onDeactivated(stopUploadPoll)
 }
 .doc-row:hover .del-btn { opacity: 1; }
 .del-btn:hover { color: var(--legacy-ep-danger); background: color-mix(in srgb, var(--legacy-ep-danger) 8%, transparent); }
+
+@media (max-width: 480px) {
+  .doc-row { flex-wrap: wrap; align-items: flex-start; }
+  .doc-main { flex: 1 1 calc(100% - 52px); }
+  .doc-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; padding-left: 28px; }
+}
 
 /* ===== 底栏 ===== */
 .panel-footer {

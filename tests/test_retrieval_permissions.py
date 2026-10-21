@@ -39,7 +39,17 @@ def test_document_retrieval_filter_limits_classification_and_department_before_q
     assert where == {
         "$and": [
             {"classification": {"$in": [1, 2]}},
-            {"department": {"$in": ["finance", "shared-services"]}},
+            {
+                "$or": [
+                    {"department": {"$in": ["finance", "shared-services"]}},
+                    {
+                        "$and": [
+                            {"classification": {"$in": [1]}},
+                            {"visibility": {"$in": ["enterprise_shared"]}},
+                        ]
+                    },
+                ]
+            },
         ]
     }
 
@@ -165,7 +175,17 @@ def test_principal_aware_pipeline_scopes_semantic_and_bm25_recall():
     assert pipeline.semantic.where == {
         "$and": [
             {"classification": {"$in": [1, 2]}},
-            {"department": {"$in": ["finance"]}},
+            {
+                "$or": [
+                    {"department": {"$in": ["finance"]}},
+                    {
+                        "$and": [
+                            {"classification": {"$in": [1]}},
+                            {"visibility": {"$in": ["enterprise_shared"]}},
+                        ]
+                    },
+                ]
+            },
         ]
     }
     assert pipeline.bm25.pred is not None

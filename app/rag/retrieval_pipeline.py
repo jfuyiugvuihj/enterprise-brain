@@ -460,6 +460,7 @@ class BM25Searcher:
                     # 写入具体密级，所以本缺陷只影响遗留/外部直写的行，属纵深防御，不是现行漏权。
                     "classification": meta.get("classification"),
                     "department": meta.get("department", ""),
+                    "visibility": meta.get("visibility", "private"),
                 })
 
             self.corpus = corpus

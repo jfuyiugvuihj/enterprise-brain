@@ -56,12 +56,13 @@ _CLAIM_SCOPE_SQL = (
 )
 _UPSERT_VECTOR_SQL = (
     "INSERT INTO chunk_vectors "
-    "(vector_id, filename, chunk_index, content, classification, department, content_sha256, "
+    "(vector_id, filename, chunk_index, content, classification, department, visibility, content_sha256, "
     "index_version_id, embedding, embedding_model, embedding_dimension, distance_function) "
-    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, %s, %s) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, %s, %s) "
     "ON CONFLICT (vector_id) DO UPDATE SET "
     "filename = EXCLUDED.filename, chunk_index = EXCLUDED.chunk_index, content = EXCLUDED.content, "
     "classification = EXCLUDED.classification, department = EXCLUDED.department, "
+    "visibility = EXCLUDED.visibility, "
     "content_sha256 = EXCLUDED.content_sha256, index_version_id = EXCLUDED.index_version_id, "
     "embedding = EXCLUDED.embedding, embedding_model = EXCLUDED.embedding_model, "
     "embedding_dimension = EXCLUDED.embedding_dimension, "
@@ -80,6 +81,7 @@ _UPSERT_COLUMNS = (
     "content",
     "classification",
     "department",
+    "visibility",
     "content_sha256",
     "index_version_id",
     "embedding",
@@ -327,6 +329,7 @@ class VectorMirror:
                 document,
                 classification,
                 str(values.get("department") or ""),
+                str(values.get("visibility") or "private"),
                 str(values.get("hash") or "") or None,
                 # index_version_id, NULL by design: the retriever does not know the
                 # index version, the publication that follows it does. Inventing one
@@ -567,7 +570,7 @@ DISTANCE_OPERATORS = {"l2": "<->", "cosine": "<=>", "ip": "<#>"}
 #: not SELECT *: that dict is R44's contract, and a column that stops existing has to fail
 #: here by name rather than turn into a silently missing metadata key.
 _READ_COLUMNS = ("vector_id", "content", "filename", "chunk_index", "classification",
-                 "department", "index_version_id", "content_sha256")
+                 "department", "visibility", "index_version_id", "content_sha256")
 
 #: R59 block 1 criterion (1): once reads are switched, the *lexical* leg's corpus comes from
 #: here too, so the whole read path stops asking the retiring engine. No embedding column:
@@ -580,7 +583,7 @@ _READ_CORPUS_SQL = ("SELECT " + ", ".join(_READ_COLUMNS)
                     + " FROM " + DEFAULT_VECTOR_TABLE + " ORDER BY vector_id")
 
 #: The only scope columns the retrieval gate speaks, and the SQL type each needs.
-_SCOPE_COLUMNS = {"classification": "integer", "department": "text"}
+_SCOPE_COLUMNS = {"classification": "integer", "department": "text", "visibility": "text"}
 
 # ===================================================== HNSW candidate width (R386)
 #:
@@ -692,11 +695,12 @@ def sql_scope_filter(where):
     """Translate the retrieval scope's Chroma-shaped ``where`` into a SQL predicate.
 
     What is accepted is what app/rag/filters.py actually builds -- a bare
-    ``{"classification": {"$in": [...]}}``, a bare ``{"department": {"$in": [...]}}``, and
-    ``{"$and": [that, that]}`` -- plus "no filter at all" (``None`` / ``{}``), the shape
-    the hot set and scripts/compare_vector_recall.py use. Everything else raises
-    ScopeFilterUntranslatable: an ``$or``, a second top-level key, a bare equality, any
-    operator other than ``$in``, a value that is not a collection of the right type.
+    ``{"classification": {"$in": [...]}}``, a bare ``{"department": {"$in": [...]}}``,
+    ``{"$and": [that, that]}`` and the enterprise-sharing ``{"$or": [...]}`` branch --
+    plus "no filter at all" (``None`` / ``{}``), the shape the hot set and
+    scripts/compare_vector_recall.py use. Everything else raises
+    ScopeFilterUntranslatable: a second top-level key, a bare equality, any operator other
+    than ``$in``, a value that is not a collection of the right type.
 
     Returns ``(clause, params)``, and ``clause`` is "" only when there is genuinely no
     predicate to add. A row whose classification is NULL drops out of ``= ANY`` exactly as
@@ -726,9 +730,22 @@ def sql_scope_filter(where):
         if not clauses:
             return "", []
         return "(" + " AND ".join(clauses) + ")", params
+    if key == "$or":
+        if not isinstance(value, (list, tuple)) or not value:
+            raise ScopeFilterUntranslatable("$or 需要非空列表")
+        clauses: list = []
+        params: list = []
+        for item in value:
+            clause, part = sql_scope_filter(item)
+            if clause:
+                clauses.append(clause)
+                params.extend(part)
+        if not clauses:
+            return "", []
+        return "(" + " OR ".join(clauses) + ")", params
     if key not in _SCOPE_COLUMNS:
         raise ScopeFilterUntranslatable(
-            f"不认识的作用域列 {key!r}：检索闸门只发 classification / department 两维")
+            f"不认识的作用域列 {key!r}：检索闸门只发 classification / department / visibility 三维")
     if not isinstance(value, dict) or set(value) != {"$in"}:
         raise ScopeFilterUntranslatable(
             f"{key} 只接受 $in 这一种算符，拿到 {sorted(value) if isinstance(value, dict) else type(value).__name__}")
