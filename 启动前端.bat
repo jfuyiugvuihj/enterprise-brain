@@ -47,6 +47,16 @@ if not exist "scripts\serve_latest_frontend.mjs" (
     exit /b 1
 )
 
+netstat -ano | findstr ":18083" | findstr "LISTENING" >nul 2>nul
+if not errorlevel 1 (
+    echo [INFO] Port 18083 is already listening.
+    echo The latest frontend is already running:
+    echo     http://127.0.0.1:18083/
+    echo Close the other window first if you want to restart it.
+    pause
+    exit /b 0
+)
+
 if not exist "C:\Program Files\Docker\Docker\Docker Desktop.exe" (
     echo [ERROR] Docker Desktop was not found.
     echo Install Docker Desktop, then run this file again.
@@ -104,16 +114,6 @@ if errorlevel 1 (
 )
 echo Backend is healthy.
 echo.
-
-netstat -ano | findstr ":18083" | findstr "LISTENING" >nul 2>nul
-if not errorlevel 1 (
-    echo [INFO] Port 18083 is already listening.
-    echo The latest frontend is already running:
-    echo     http://127.0.0.1:18083/
-    echo Close the other window first if you want to restart it.
-    pause
-    exit /b 0
-)
 
 echo [4/4] Building and starting the latest frontend...
 call npm --prefix frontend run build
