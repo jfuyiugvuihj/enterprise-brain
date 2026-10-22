@@ -71,7 +71,7 @@ def test_overloaded_ask_uses_reliable_queue_with_idempotency_key(monkeypatch):
     response = _ask_over_limit(monkeypatch, lambda: FakeQueue())
     body = _response_body(response)
 
-    assert captured["idempotency_key"] == "retry-key"
+    assert json.loads(captured["idempotency_key"]) == ["queue-user", "retry-key"]
     assert captured["payload"]["message"] == "queue this"
     assert captured["payload"]["session_id"] == "queue-session"
     assert captured["payload"]["username"] == "queue-user"

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+from contextlib import contextmanager
+
 import pytest
 
 from app.common.reliable_queue import QueueConnectionError, ReliableQueue, connect_reliable_queue
@@ -11,6 +14,15 @@ class FakeRedis:
     def __init__(self):
         self.values: dict[str, str] = {}
         self.lists: dict[str, list[str]] = {}
+        self._lock = threading.RLock()
+
+    @contextmanager
+    def lock(self, name: str, timeout=None, blocking_timeout=None):
+        with self._lock:
+            yield True
+
+    def pipeline(self, transaction=True):
+        return _FakePipeline(self)
 
     def get(self, key: str):
         return self.values.get(key)
@@ -59,6 +71,56 @@ class FakeRedis:
         if end == -1:
             return items[start:]
         return items[start : end + 1]
+
+    def llen(self, key: str):
+        return len(self.lists.get(key, []))
+
+    def lpos(self, key: str, value: str):
+        items = self.lists.get(key, [])
+        try:
+            return items.index(value)
+        except ValueError:
+            return None
+
+    def expire(self, key: str, seconds: int):
+        return int(key in self.values or key in self.lists)
+
+
+class _FakePipeline:
+    """Collect the commands ReliableQueue batches, then apply them on ``execute``."""
+
+    def __init__(self, redis: FakeRedis):
+        self.redis = redis
+        self.calls: list[tuple[str, tuple, dict]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.calls.clear()
+        return False
+
+    def _queue(self, name, *args, **kwargs):
+        self.calls.append((name, args, kwargs))
+        return self
+
+    def set(self, *args, **kwargs):
+        return self._queue("set", *args, **kwargs)
+
+    def rpush(self, *args, **kwargs):
+        return self._queue("rpush", *args, **kwargs)
+
+    def lrem(self, *args, **kwargs):
+        return self._queue("lrem", *args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        return self._queue("delete", *args, **kwargs)
+
+    def execute(self):
+        results = [getattr(self.redis, name)(*args, **kwargs)
+                   for name, args, kwargs in self.calls]
+        self.calls.clear()
+        return results
 
 
 def test_reliable_queue_is_idempotent_and_acknowledgeable():

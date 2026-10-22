@@ -809,8 +809,8 @@ def test_a_terminal_key_that_will_not_parse_is_reported_as_corruption(monkeypatc
     assert queue.terminal(message.request_id)["state"] == "unreadable"
 
 
-def test_a_discarded_turn_takes_the_terminal_payload_with_it(monkeypatch, tmp_path):
-    """正文与读数同生同死：丢弃的一轮不许留下「正文没了、读数还在」。"""
+def test_a_completed_turn_is_not_withdrawn_by_a_later_cancel(monkeypatch, tmp_path):
+    """已完成的一轮不因随后取消而伪装被撤回：正文与读数都留在原位。"""
     queue = ReliableQueue(FakeRedis(), name="r254-discard", lease_seconds=30)
     message = queue.enqueue(
         {"message": "要丢弃的一轮", "principal": {"user_id": USER_ID, "username": USERNAME}},
@@ -824,8 +824,9 @@ def test_a_discarded_turn_takes_the_terminal_payload_with_it(monkeypatch, tmp_pa
     queue.cancel(message.request_id)
     assert queue.complete(message.request_id, "正文", terminal=terminal) is False
 
-    assert queue.result(message.request_id) is None
-    assert queue.terminal(message.request_id) == {"state": "absent", "payload": None}
+    assert queue.status(message.request_id) == "done"
+    assert queue.result(message.request_id) == "正文"
+    assert queue.terminal(message.request_id)["state"] == "ok"
 
 
 def _terminal(*, answered: bool):
