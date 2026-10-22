@@ -65,7 +65,7 @@
 
 三格要说清的细节：
 
-- **`department` 与 `classification` 不同命。** `classification` 一路是"真值搬运"（第 5 跳），`department` 一路是"服务端替主体作答"（第 2 跳）。密级今天全 = 1 不是通路坏了 —— `R313` 起前端真的把它发出去（`DocPanel.vue:649-650`）—— 而是**这 1008 枚早于 R313，或出自不带这一格的通路**（`upload_all.py` / `scripts/seed_workspace.py`）。通路是通的，从没被真值喂过。
+- **`department` 与 `classification` 不同命。** `classification` 一路是"真值搬运"（第 5 跳），`department` 一路是"服务端替主体作答"（第 2 跳）。密级今天全 = 1 不是通路坏了 —— `R313` 起前端真的把它发出去（`DocPanel.vue:649-650`）—— 而是**这 1008 枚早于 R313，或出自不带这一格的通路**（`scripts/legacy/upload_all.py` / `scripts/seed_workspace.py`）。通路是通的，从没被真值喂过。
 - **空值在同一趟里换了两种写法**：`chat.py:1273` 落 `None`、`catalog.py:647` 落 `""`、`catalog.py:762` 又落 `None`、`retriever.py:1703` 落 `""`、`pg_store.py:373` 落 `""`。第 11 跳因此只能"跟着空"，不能"救回来"。
 - **第 12 跳决定了这件事的严重性**：`filters.py:135-139` 对没有部门的非管理员主体直接 raise；`filters.py:119-128` 对管理员**根本不发部门谓词**（`departments=None`）；`pg_store.py:738-740` 对 `$in` 里出现空串**拒答不猜**。⇒ 生产上部门这条腿今天有三种形态：对管理员无约束、对无部门账号是拒答、对有部门账号是恒空集 —— 三种都**不是**"部门隔离生效"。
 
