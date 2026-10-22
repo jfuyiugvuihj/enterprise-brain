@@ -1,0 +1,15 @@
+# probe_start 2026-09-16 23:14:32 suites=['serial2', 'serial5', 'ghost']
+JSONL {"wall_s": 28.516, "prompt_eval_count": 28, "eval_count": 200, "load_s": 0.001, "prefill_s": 0.974, "decode_s": 27.344, "case": "serial_client_0_of_2", "started_after_t0_s": 0.0, "finished_after_t0_s": 28.517}
+JSONL {"wall_s": 57.966, "prompt_eval_count": 28, "eval_count": 200, "load_s": 0.002, "prefill_s": 1.052, "decode_s": 28.341, "case": "serial_client_1_of_2", "started_after_t0_s": 0.001, "finished_after_t0_s": 57.967}
+JSONL {"wall_s": 49.137, "prompt_eval_count": 28, "eval_count": 200, "load_s": 0.003, "prefill_s": 0.947, "decode_s": 23.189, "case": "serial_client_0_of_5", "started_after_t0_s": 0.0, "finished_after_t0_s": 49.137}
+JSONL {"wall_s": 100.788, "prompt_eval_count": 28, "eval_count": 200, "load_s": 0.004, "prefill_s": 0.942, "decode_s": 26.535, "case": "serial_client_1_of_5", "started_after_t0_s": 0.001, "finished_after_t0_s": 100.789}
+JSONL {"wall_s": 24.937, "prompt_eval_count": 28, "eval_count": 200, "load_s": 0.002, "prefill_s": 1.003, "decode_s": 23.868, "case": "serial_client_2_of_5", "started_after_t0_s": 0.001, "finished_after_t0_s": 24.938}
+JSONL {"wall_s": 127.849, "prompt_eval_count": 28, "eval_count": 200, "load_s": 0.004, "prefill_s": 1.037, "decode_s": 26.021, "case": "serial_client_3_of_5", "started_after_t0_s": 0.001, "finished_after_t0_s": 127.85}
+JSONL {"wall_s": 73.254, "prompt_eval_count": 28, "eval_count": 200, "load_s": 0.003, "prefill_s": 0.947, "decode_s": 23.168, "case": "serial_client_4_of_5", "started_after_t0_s": 0.002, "finished_after_t0_s": 73.256}
+JSONL {"case": "ghost_baseline_small", "note": "模型刚跑完大请求，立刻量一个小请求"}
+JSONL {"case": "ghost_warm_small", "wall_s": 0.9, "prompt_eval_count": 22, "eval_count": 1, "load_s": 0.001, "prefill_s": 0.84, "decode_s": 0.0}
+JSONL {"case": "ghost_abort_sent", "abort_after_s": 8, "observed_held_s": 8.005}
+JSONL {"case": "ghost_probe_0_after_abort", "wall_s": 1.228, "prompt_eval_count": 25, "eval_count": 1, "load_s": 0.001, "prefill_s": 0.981, "decode_s": 0.0}
+JSONL {"case": "ghost_probe_1_after_abort", "wall_s": 0.95, "prompt_eval_count": 25, "eval_count": 1, "load_s": 0.001, "prefill_s": 0.946, "decode_s": 0.0}
+JSONL {"case": "ghost_probe_2_after_abort", "wall_s": 0.915, "prompt_eval_count": 25, "eval_count": 1, "load_s": 0.001, "prefill_s": 0.91, "decode_s": 0.0}
+# probe_end 2026-09-16 23:17:53

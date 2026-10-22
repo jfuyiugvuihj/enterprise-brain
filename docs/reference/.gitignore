@@ -1,0 +1,12 @@
+# Generated art and screenshots stay on disk but out of git.
+# Everything excluded here is reproducible:
+#   python make_plate.py ../../frontend/src/assets/login-background.png art/login-plate.png
+#   python make_element.py art/login-plate.png art/login-earth
+#   python fetch_fonts.py
+#   node capture.cjs --base . --entry /login-v2.html --tag v2
+# The .webp outputs are kept: login-v2.html needs them to render standalone.
+shots/
+art/login-plate.png
+art/login-earth.png
+art/login-plate-mask.png
+__pycache__/

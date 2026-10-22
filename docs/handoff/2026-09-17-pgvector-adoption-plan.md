@@ -1,0 +1,587 @@
+# PGVector 添加计划（可执行版 · 2026-09-17 22:2x · 总控第七班）
+
+> 2026-10-09 当前状态：`7c1d1b5` 已统一 PGVector 读写，移除 Chroma 客户端、降级库、依赖与卷挂载；`e97de21` 撤去六枚旧库跟踪文件、归档工作目录并删除旧卷。下文的双写、切读与退役待办均为历史记录。旧库 1008 个 ID 全在 PG；备份解包与 SQLite 完整性检查通过。备份在 `C:\Users\fengx\Documents\企业智脑备份\2026-10-09-pgvector-retire-7c1d1b5`。
+> 真浏览器恢复演示：重启全栈及重建应用容器后，3 段会话、2 份文档、2 份数据文件、4 个图表／报告内容一致，其他账号访问私有会话仍为 404；产物在 `%TEMP%\evalrun\pgvector-retire-1009\restart`。客户真实密级和客户尺寸评测仍由交付阶段落实，不能用本轮沙盒代替。
+
+> **三份文档的分工**（不一致时以本文件为准）：跟进单 §22 只写「立案与验收判据」，计划书 §5.2 只写「单号索引」，
+> **本文件写「怎么加」**。业主两问（为什么还是 Chroma / 怎样不留风险地完成）在第 0 节直答。
+> 本文件全部内容基于只读实测，出处一律 `文件:行`；未经复跑的数字不写。
+
+## 0. 两问直答
+
+- **为什么今天还是 Chroma 而不是 PostgreSQL+pgvector？**
+  一句话：**PG 侧只有表骨架，向量这条腿三样都不存在——没有可写的定标向量列、没有任何向量索引、运行时没有一个写入方。**
+  扩展镜像倒是早拉好了（`docker-compose.yml:48` = `pgvector/pgvector:pg16`），属于「插座装好了，线没接」。
+  而切换的**前置两单 R21 / R22 至今零代码提交** `[实测 git log --all --grep]`：向量本身还不可信（失败静默换全零），
+  索引版本也没有和 `embedding_model + dimension` 绑定。这两件事不结，迁过去＝**给脏数据换个更贵的存放点**。
+- **怎样不留风险地完成？**
+  一句话：**先打地基（P0），再走「加列建索引 → 同事务双写 → 影子对比 → 显式切读 → 停写退役」，每一步一个独立回滚点，
+  任何一步不过就停在原地**。硬约束是：**任何时候都不允许出现「元数据在 PG、向量在 Chroma」或「向量在 PG、权限过滤还在内存里」这两种中间态过夜**——
+  那是唯一会让私有化交付不可回滚的东西。
+
+## 1. 现状事实基线（本班实测，只读）
+
+| 事实 | 出处 |
+|---|---|
+| PG 扩展镜像在位，但运行时没人用它做向量 | `docker-compose.yml:48` |
+| 迁移体系是真的、且 fail-closed：`NNNN_name.sql` + `manifest.json` SHA-256 + advisory lock，缺登记/改内容即拒 | `migrations/README.md:1-27`、`migrations/manifest.json`(9 条)、`app/db/migrations.py`、`scripts/migrate.py` |
+| `chunks.embedding` 声明**无维度** ⇒ 既不能建索引，也拦不住混维度 | `migrations/0002_execution_data_lineage.sql:235-243` |
+| 旧运行时表存的是 `embedding JSONB`，不是向量类型 | `migrations/0003_legacy_runtime_tables.sql:77` |
+| 全仓迁移里 `hnsw` / `ivfflat` **零命中** ⇒ 没有任何向量索引 | `grep migrations/*.sql` |
+| 索引层自己承认不写向量：「every row it writes leaves `chunks.embedding` NULL」，chunk 行模型也故意不含 embedding | `app/rag/indexing.py:8`、`app/rag/indexing.py:302` |
+| `pgvector` 在 `app/**` 只有两处**元数据级**用法：取值校验 + 存在性探测，都不开 PG 连接做向量读写 | `app/rag/indexing.py:203`、`app/common/monitoring.py:272` |
+| 向量读写 100% 走 Chroma，且依赖缺失时静默退化 JSON 文件库 | `app/rag/retriever.py:190`(PersistentClient)、`:246`/`:261`(写)、`:272-273`(读)、`:93-116`(`_JsonCollection`) |
+| 维度是**隐式常量**：全仓唯一的维度声明藏在失败兜底里 `[0.0] * 768`，且没有任何地方校验 API 真实返回长度 | `app/rag/retriever.py:46`（模型名 `:23` = `nomic-embed-text`） |
+| 失败静默降级为全零向量并照常入库（这就是 R21） | `app/rag/retriever.py:63-65`、`:76` |
+| PG 驱动依赖**已经在** pyproject 里，不需要新增包 | `psycopg[binary]>=3.2.0`、`psycopg-pool>=3.2.0` |
+| R21 / R22 零代码 | `[实测] git log --all --grep` 仅命中两条 docs 提交 `6c5ccd9`/`497b500` |
+
+## 2. 终态口径与「不得误写生产架构」的解绑条件
+
+- 终态：chunk 元数据 + 向量 + 权限过滤**同引擎**（PostgreSQL + PGVector），Chroma 退役；本地文件存储与 Redis 不变。
+- AGENTS.md 明令「当前 Chroma 是过渡向量库，不能在文档或新设计中误写成最终生产架构」。**解绑条件只有一个**：
+  P5（R60）结案 **且** 备份恢复演练覆盖 PG 向量列。在那之前，本文件与一切新增文档一律写「过渡中」，
+  `docs/current-functionality-2026-09-10.md:1217` 那句「过渡架构」**不许提前改掉**。
+
+## 3. 六个阶段（顺序不可交换，不可并行）
+
+### P0 地基 —— R21 + R22（前置，缺一律不开工）
+- **R21**：embedding 失败**不得**静默换全零。落点 `app/rag/retriever.py:51-77`：`_call_api` 失败即抛并留可观测原因；
+  写入侧（`:246` 前）拒收全零与长度 ≠ 声明维度的向量。**反证要求**：把 `raise` 改回 `pass`，测试必须红。
+- **R22**：索引版本绑定 `embedding_model + dimension`。落点 `app/rag/indexing.py:191-216` 的 `create_version`——
+  今天它连 dimension 参数都没有（§1 已证「全仓无 dimension 配置」），所以 R22 的**第一动作是把这个概念引进代码**，
+  不是改索引。要求：模型或维度变 ⇒ 产生新 `index_version`；同库禁混维度（跨维度查询 0 命中）；
+  给全量重建 CLI，**只许人工触发**。
+- **回滚点**：本阶段不改存储，代码级回滚即可。
+
+### P1 定标与建索引 —— R58 之一（真机）
+- 新增 `migrations/0010_pgvector_chunks.sql`，并在 `migrations/manifest.json` 登记 SHA-256（**漏登记 = loader 直接拒**，README 明写）。
+- 三件事：① `chunks.embedding` 定标为 `vector(<dim>)`；② 加 `CHECK (embedding IS NULL OR vector_dims(embedding) = <dim>)`，
+  把 §1 那个隐式 768 变成显式约束；③ 建向量索引。
+- **索引选型（已决，写死免得执行层再猜）**：`hnsw`。理由：语料量级小（96 篇）、插入即可用、无需训练样本；
+  `ivfflat` 在 `lists` 未训练时召回不稳。若真机 P95 不达标，回来走 §5 的 U2 重评。
+- **距离算符（未决 U1）**：必须先实测 Chroma collection 的 distance function，再决定 `<=>`(cosine)/`<->`(L2)/`<#>`(ip)；
+  **算符与 Chroma 不一致 = 后面所有召回对比全部作废**，禁止拍脑袋选。
+- 存量行 `embedding IS NULL` 对建列与建索引都安全（HNSW 不索引 NULL），但**P1 之前必须先做全零向量普查**（P3 前置动作①，提前跑）。
+
+### P2 同事务双写 —— R58 之二
+- 新增 `app/rag/pg_store.py`（用已在树的 psycopg 3）；`DocumentRetriever` 写入路径改为 **Chroma 与 PG 同事务双写**，
+  任一失败整体回滚（fail-closed）⇒ 从机制上杜绝 §0 说的第一种危险中间态。
+- **禁改**：`app/rag/retrieval_pipeline.py`（R57 已结案文件）、BM25 腿、`_JsonCollection` 之外的降级路径。
+  借双写之名顺手改检索编排的单，一律退回。
+- 写域与本线在途单**零交叠**（R56=`tests/**`、R62=`app/common/rbac.py`）。
+
+### P3 影子读对比 —— R58 之三（不切流量的唯一验证手段）
+- 逐题对比脚本：同一 105 题、同一 query，分别走 Chroma 与 PG，产出 rank/命中差异表。
+- **前置动作① 全零向量普查**（Chroma 侧与 PG 侧各一份清单）；**前置动作② 55 条 `must_contain` 无出处清零**
+  （本线**未独立复跑**该结论，故第一步是复跑确认，不是照抄）。
+- 评测集被 `tests/test_evaluation_report.py` 钉着，**迁移期间禁止为凑绿改 `must_contain`**。
+
+### P4 切读 —— R59（唯一改用户可见行为的一步）
+- 开关：默认仍 Chroma，切读必须显式赋值；配置项新增走代码默认值，**Agent 不改 `.env`**。
+- 权限过滤下推 PG `WHERE`（`owner_id` / `department` / `classification`）。
+  ⚠ **语义等价性硬要求**：R45/R57 已定的口径是「**先按权限过滤，后去重**」（`app/rag/retrieval_pipeline.py`），
+  下推后过滤必须发生在**去重之前**的同一位置；R45/R57 全套越权用例逐条平移且全绿，**禁改断言迁就实现**。
+- 🔴 **排期冲突（09-28 再订正本格，09-26 第九班那句「今天真实的堵点是 R294」也过期了）**：R59 的写域含 `app/api/v1/chat.py`。原文曾写「在途 **R35** 正在改 `chat.py` 缓存段 ⇒ 必须等 R35 结案」，**R35 早在 09-17 就并树结案**（子提交 `63651f1`）；第九班把堵点换成 **R294**，而 R294 也已并树 `70fef378`（09-26 17:33）。两枚 `merge-base --is-ancestor` 于 09-28 现取均 rc=0 ⇒ 同一文件那枚写域冲突**已经消失，这一行不再有任何前置在等人**。⇒ 见 §4 表 P4 那格：R59 的码已全部在树上，欠的只剩 §13 的未验格与业主那一步翻开关。
+- 召回不退化以 R36 的 105 题基线为证。
+
+### P5 停写与退役 —— R60
+- 停 Chroma 写；`chroma_db` 归档/下线路径写进部署文档与升级手册；一键回滚到上一 `index_version` 演练一次并留证。
+- **备份恢复必须覆盖 PG 向量列**（`docs/current-functionality-2026-09-10.md:1217` 至今把这套存储组合定为「过渡架构」，就是因为它没被纳入备份）。
+- `chroma_db/**` **至今仍被 git 跟踪** `[实测]`：反跟踪、删除、`.gitignore` 改动**一律业主本人**（H4/H5/H8），Agent 不碰、不 add、不 restore。
+
+## 4. 阶段 ↔ 单号 ↔ 谁执行 ↔ 回滚点
+
+| 阶段 | 单号 | 主要写域 | 执行人 | 过判据（详 §22.2） | 回滚点 |
+|---|---|---|---|---|---|
+| P0 | R21 | `app/rag/retriever.py` | 执行层可写，总控代提交 | ①②③ | 代码级 revert |
+| P0 | R22 | `app/rag/indexing.py` | 同上 | ①②③ | 代码级 revert |
+| P1 | R58① | 新 `migrations/0010_*.sql` + `manifest.json` | **业主真机**（H12） | ① | 迁移向前不破坏数据；快照回滚靠 H4 备份 |
+| P2 | R58② | 新 `app/rag/pg_store.py`、`retriever.py` | 执行层 | ② | 关双写开关＝回到 P1 前 |
+| P3 | R58③ | 只读脚本 + 评测 | 执行层跑只读，跑分需真机 | ③④ | 无（不改流量） |
+| P4 | R59 | `retrieval_pipeline.py`、`chat.py` | **无前置在等人**（09-28 订正：原句「等 R294 并树」和它的前身「等 R35 结案」都是过期账——R294 已并树 `70fef378`（09-26 17:33），R59 两块切读码更早就全在树上：块1 `bee9d01`（09-26 17:50）＋块2 `dbc2047`（09-26 19:25）＋旋钮 R231 `ed9f8b0`，四枚 `merge-base --is-ancestor` 现取均 rc=0）。**翻默认不需要再改代码**，欠的只有两件：§13 那几格仍未验，以及业主把 `INDEX_BACKEND=pgvector` 写进 `deploy/.env.server` 后 `--force-recreate` 容器（H12 同源；那是 `env_file:`，走的是 recreate 不是 build） | ①②③ | 开关拨回 Chroma＝秒级回退 |
+| P5 | R60 | `retriever.py`、`docker-compose.yml`、`deploy/**`、`docs/**` | 执行层改文档，业主执行下线 | ①②③ | 上一 `index_version` 全量恢复 |
+
+## 5. 未决项（先定后动，不许边写边猜）
+
+- **U1 距离算符**：未实测 Chroma distance function 前，P1 的索引 SQL 不许落笔。
+- **U2 索引类型**：暂定 `hnsw`；真机 P95 不达标才回来评估 `ivfflat`。
+- **U3 存量脏向量**：全零向量普查结果决定 P3 是否要求一次全量重建（大概率要）。
+- **U4 dimension 注册落点**：R22 引入的新配置放在哪（`app/rag/indexing.py` 还是配置层）未定，影响 P0/P1 两单写域是否交叠。
+- **U5 🔴 密级口径（H13）**：`classification` 缺省到底算公开还是算不可见**业主未裁**，
+  ⇒ **P4 的下推 SQL 里 classification 分支今天写不出来**。这是一条**硬阻塞**，不解决就只能切「非密级维度」的半个读路径，
+  那属于 §0 禁止的第二种中间态，**不允许**。
+
+## 6. 红线摘要（越界即退回）
+
+- 这三单一律**不占腿①/腿③串行位**，不进性能队列；开工需业主另行点头。
+- 迁移期间**禁止**以「换 embedding 模型 / 上 reranker 来提速」为名夹带（计划书 §7 已列入明确不做）。
+- 总控与执行层一律不跑改数据 / 起服务 / 建库 / 重建镜像 / push 的命令。
+- 真机闸门：H12（`docker compose build migrate`，镜像落后主树 21h）、H11（容器重启才真拿到 GPU）、H4/H5/H8（备份与垃圾清理）、H13（密级口径）。
+
+## 7. 关联
+
+- 判据原文：跟进单 §22（`docs/handoff/2026-09-15-backend-followup-requests.md` L738-773）
+- 单号索引：计划书 §5.2 / §7 / §8（`docs/handoff/2026-09-17-perf-architecture-plan.md`）
+- 派工事实源：看板 §0 名册 + §4AI.9 + 本轮 §4AK
+
+## 8. P3 执行手册（R120 · 2026-09-20 落笔 · **本班一行真库都没跑**）
+
+> 执行人＝业主（真机）；判读人＝总控；执行层只写这一节，不代跑。
+> P3 到今天一次都没跑过的原因不是脚本缺，而是**开关根本没有受支持的开法**：`VECTOR_DUAL_WRITE`
+> 既不在 `deploy/.env.server`，`docker-compose.yml` 也从不透传它。R120 把透传补齐，出厂默认仍写
+> `off` ⇒ 从没提过这个变量的安装，行为一字不变。
+
+### 8.0 全文只用一条命令前缀
+
+    docker compose --env-file deploy/.env.server -f docker-compose.yml
+
+下面每处 `$DC` 都把它整条展开再敲。`--env-file` **不是可选装饰**：compose 的 `${VAR}` 插值只认
+这一个文件（`docker-compose.yml:7-12` 顶部注释同口径），漏了它 `POSTGRES_USER:?` 会当场拦住整套栈，
+`VECTOR_DUAL_WRITE` 同样不生效。开工前 `$DC ps`：postgres / redis / ollama 三个在跑即可。
+
+### 8.1 先取证，不改动（一个只读 psql 会话）
+
+    $DC exec -it postgres sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+
+进去以后逐条贴，只贴 SELECT：
+
+    SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version;
+    SELECT embedding_model, dimension, distance_function FROM vector_scope WHERE schema_version = 1;
+
+- 列名取自 `app/db/migrations.py:37-42`，抄错的 SQL 只会得到一个"没跑过"的假结论。
+- 第一条里**必须有 `0010` 这一行**（64 位 checksum 一并抄走交回）。没有 ⇒ 先 `$DC run --rm migrate`
+  （它自带 `env_file: deploy/.env.server`，并且会在应用 0010 前自己 `ALTER DATABASE` 下发那对
+  GUC —— R90a），再回这条重查。
+- 第二条的三个值就是本库唯一口径（R22）：后面 `--confirm-scope`、U1、U3 全部以它为准，不许用配置文件
+  里的数代替。取不到这一行＝0010 没成，P3 到此为止。
+
+### 8.2 停写：目录锁决定了 P3 只能串行
+
+`chromadb.PersistentClient` 对同一目录是**单写者锁**。脚本自己列的 4 条前置
+（`scripts/compare_vector_recall.py:14-21`）第 1 条就是它：应用侧不停写，要么报锁错误、要么读到
+半写状态，读出来的差集不作数。
+
+    $DC stop backend worker scheduler
+
+之后每一步都是 `$DC run --rm backend python ...` 起一个一次性进程：**等它退出再做下一步**，两个
+`run` 同时在跑就是自己跟自己抢锁。`run` 会先满足 `depends_on: migrate`，所以那对 `EMBEDDING_*`
+没声明时每条 `run` 都停在 migrate 上 —— 那是设计好的 fail-closed，不是新故障。
+
+### 8.3 打开双写（**业主动作；本班不碰 `deploy/.env.server`，也不写任何真值**）
+
+- 在 `deploy/.env.server` 写一行 `VECTOR_DUAL_WRITE=on`。别处没有第二条受支持的通路：compose 只在
+  backend / worker / scheduler 三处透传 `VECTOR_DUAL_WRITE: ${VECTOR_DUAL_WRITE:-off}`（能写向量的
+  就这三个进程；migrate 只跑 DDL，不嵌向量，所以不给它）。
+- 取值口径只在 `app/rag/pg_store.py:146-162` 一处：`1/true/yes/on` 开；`0/false/no/off` **与从没写过**
+  都是关；拼错的名字只打一条 `[VectorMirror] ... is not recognised` 告警然后当关，不自造第二套判定。
+- 环境变量在容器启动时固化 ⇒ 改完要 `$DC up -d backend worker scheduler` 重建，再验一眼真传进去了：
+
+      $DC exec backend printenv VECTOR_DUAL_WRITE
+      $DC exec worker printenv VECTOR_DUAL_WRITE
+      $DC exec scheduler printenv VECTOR_DUAL_WRITE
+
+  三行都该是 `on`。有一条不是就是 `--env-file` 用错了文件，停下别往下跑。
+
+### 8.4 人工触发一次全量重建
+
+开关打开之前写进去的向量只存在于 Chroma，不重建就永远是"两边数量天然不等"（脚本前置第 3 条）。
+
+    $DC run --rm backend python scripts/rebuild_index.py --status --json
+    $DC run --rm backend python scripts/rebuild_index.py --apply --confirm-scope "<8.1 的 model>/<8.1 的 dimension>"
+
+- `--confirm-scope` 要的是原样 `<model>/<dimension>` 字符串，必须等于 8.1 第二行；对不上脚本自己拒
+  （`scripts/rebuild_index.py:775`）。
+- 先把 `--status` 报告里的 `zero_vectors_before` / `cross_dimension_vectors_before` 抄下来（省掉
+  `--json` 时这两项印作 `cross_dimension_vectors before=…` 与 `zero_vectors_before=…`）：那是 U3 的
+  Chroma 半边（8.6），也是"要不要再来一次重建"的判据。
+
+### 8.5 U1 距离算符：两侧都只读实测，不许猜
+
+- PG 侧＝8.1 第二行的 `distance_function`，取值只可能是 `l2|cosine|ip`（`0010:154` 的 CHECK）。
+- Chroma 侧＝collection 自己记的 metadata，键名 `hnsw:space`：
+
+      $DC run --rm backend python -c "import chromadb;print(chromadb.PersistentClient(path='/app/chroma_db').get_collection('enterprise_docs').metadata)"
+
+- 两侧对同一件事有两种拼法（库里记 `ip`，Chroma 与脚本用 `inner_product`），脚本在 8.7 里用
+  `canonical_distance()`（`scripts/compare_vector_recall.py:200-206`）统一拼法**之后**再比，
+  人读原始输出时别拿字面相等当结论。
+- 依据与实测记录在 `migrations/0010_pgvector_chunks.sql:36-56`：本 build 的 chromadb 默认 `space=l2`
+  ⇒ pgvector `<->` + `vector_l2_ops`；索引参数 m=16 / ef_construction=100 是照抄实测的
+  `max_neighbors` / `ef_construction`，不是拍的。可覆盖入口是 GUC `app.vector_distance_function`
+  （`0010:170/194/248`）。
+- 两侧不一致 ⇒ 8.7 直接退出码 2。**这种时候不许"先出一份差异表看看"**：两边排序算术都不同，
+  表上每一行都是噪声。
+
+### 8.6 U3 全零向量普查：两侧各一份
+
+- **Chroma 侧**（R125 之后才有这两枚；在那之前 `--status` 压根不普查，字段不存在，照本节执行 U3
+  会取到空）：8.4 第一条 `--status --json` 交出 `zero_vectors_before`（全零）与
+  `cross_dimension_vectors_before`（跨维），普查是 `scripts/rebuild_index.py` 里的
+  `library_vector_census()`：整库分页扫（`collection.get` 带 `limit`/`offset`，窗口由
+  `--census-page-size` 定，默认 200 枚），只发读、不叫 embedder、不写向量；全量清单另落在
+  `census_report_path` 指的仓外临时文件（默认系统临时目录，`--census-report` 可改）。逐文档那枚
+  `vector_census()` 仍在原位、仍由重建路径用，两侧共用同一条 `_is_zero_vector()` 判据。
+- 🔴 **先读 `census_measurable`，再读那两个数**：只有它是 `true` 时两枚计数才算测过。`false` 时两枚
+  都是 `null`（不是 0），原因写在 `census_reason`——服务还在写（Chroma 一个目录一个写者）、目录不
+  存在、`chromadb` 取不到、扫描没覆盖 `collection.count` 的总数，全算"看不了"，都不等于"没有全零
+  向量"。所以这一步要在 8.2 停写之后跑；省掉 `--json` 时同一份报告印 `zero_vectors_before=unmeasurable`。
+- 🔴 「只读」说的是这条路径不发写调用：没有 `add`/`upsert`/`delete`，不调 embedder，也不碰 `--apply` 那条通路；
+  跑完之后 1008 枚向量的逐枚摘要与总数一字不变。但它不等于目录字节不动——Chroma 只要被一个新进程打开就会自己把索引和 sqlite 重写一遍（尺寸相同；
+  实测连不带普查的裸 `collection.get` 也一样重写），在服务还持着这个目录时抢开属于未知状态。所以这一步只在 8.2 停写之后跑；
+  真被写者占着，`census_measurable` 直接给 `false` 并把原因写进 `census_reason`，那一次就没有数，别当成 0。
+- 具名清单各给前 10 条（`--census-list-limit` 可改）：`zero_vector_documents` 与
+  `cross_dimension_vector_documents`（带 `widths`）；目录在册而库里一枚向量都没有的文档进
+  `unmeasurable_documents`，那是"没东西可看"，不是"干净"。
+- **PG 侧**：8.7 输出的 `drift.all_zero_rows`。零字面量由脚本按 `vector_scope.dimension` 现拼
+  （`scripts/compare_vector_recall.py:118`），手抄 768 个数一定会数错。要逐行清单就在 8.1 那个会话里贴：
+
+      WITH z AS (
+        SELECT '[' || string_agg('0.0', ',') || ']' AS zero
+        FROM generate_series(1, (SELECT dimension FROM vector_scope WHERE schema_version = 1))
+      )
+      SELECT vector_id, filename, chunk_index, index_version_id
+      FROM chunk_vectors, z
+      WHERE embedding = z.zero::vector
+      ORDER BY vector_id LIMIT 200;
+
+  （`chunk_vectors` 没有 `chunk_id` 列，主键口径是 `vector_id` + `UNIQUE (filename, chunk_index)`。）
+- 判读：任一侧非零 ⇒ 按 §3 P3 的口径，P3 结论作废，先全量重建再重跑 8.4 起的全部内容。
+
+### 8.7 第一轮：逐集合差（不算向量，不需要模型在场）
+
+    $DC run --rm backend python scripts/compare_vector_recall.py --skip-questions \
+      --collection enterprise_docs --chroma-dir /app/chroma_db --k 5 \
+      --out /app/data/r58_drift.json
+
+- `--collection` 默认值已由 R120 修成 `enterprise_docs`（原先抄的是 Postgres 库名 `enterprise_brain`，
+  而写入侧的名字在 `app/rag/retriever.py:484`）：默认写错时第一步就会死在"取不到 collection"。
+  手册仍显式写出来，是为了让日志里能看见当时用的是哪一个。
+- `--out` 落在 `/app/data/`（`appdata` 卷）而不是 `/tmp`：`run --rm` 的容器一退出，`/tmp` 就没了。
+- 脚本连上即 `connection.read_only = True`，一条写都不发；Chroma 侧只 `get` / `query`。
+- 判读只看三个数：`pg_vectors` 与 `chroma_vectors` 是否相等、`only_in_pg` / `only_in_chroma` 是否为空、
+  `wrong_width` 是否为空。`index_version_id_null` **不是故障**：retriever 不知道索引版本，双写时留
+  NULL 等发布回填（R22 口径，脚本 docstring 也写了），它是待回填计数。
+- ⚠ R76 把这半句里的「等发布回填」变成了事实，读法跟着变（仍不是故障）：回填落在
+  `app/rag/indexing.py` 的 `IndexMirrorSession.tag_vector_index_version` —— 一条
+  `UPDATE chunk_vectors SET index_version_id = <本次发布的版本 id>`，与 `mark_published` 同一个事务、
+  同一次 commit。所以双写开着、0010 已跑、且这枚文档此后**发布过一次**（上传，或
+  `scripts/rebuild_index.py:749` 的逐文档重建，两者走同一个 publisher）⇒ 该行就带上版本 id；
+  还留 NULL 的只剩「写进镜像之后没再发布过」的存量，它掉不回 0 也不代表坏，别按新故障判读。
+- R76 在发布侧另给了两枚读数：上传回执（`PublicationOutcome.as_dict()`）里的 `vector_rows_tagged`
+  与 `vector_rows_missing`，用来指名这次回填走没走到、有多少 id 在镜像里没有行。它们不在本脚本的
+  `--out` JSON 里，两边对不上先查 `VECTOR_DUAL_WRITE` 与 0010 有没有跑。
+- 换 embedding 模型的那道闸也落在同一步：镜像里存着的行如果 `embedding_model` / `embedding_dimension`
+  与本次发布的口径不符，发布**整笔拒绝**（R22 的 `embedding_model_drift` / `embedding_dimension_drift`，
+  失败阶段名 `vector_index_version`），不留「主索引新模型、镜像旧模型」的半张脸。重建窗口里看到这一条
+  报错是预期行为，正确处置是把这一枚文档的向量腿补重做，不是改发布代码。
+
+### 8.8 第二轮：带题对比（前置第 4 条：Ollama 在位、模型与 `EMBEDDING_MODEL` 同一个）
+
+    $DC run --rm backend python scripts/compare_vector_recall.py \
+      --collection enterprise_docs --chroma-dir /app/chroma_db --k 5 \
+      --fixture tests/fixtures/business_evaluation_100.jsonl \
+      --out /app/data/r58_recall_diff.json
+
+- 不带 `--fixture` 时默认吃**两份**题集（`business_evaluation_30.jsonl` 30 题 + `_100.jsonl` 105 题
+  ＝135 题）。§3 P3 说的"同一 105 题"是后一份，所以这里显式指定；两件事别混着读。
+- 题向量由生产侧同一个 embedder 产出（`OllamaEmbeddings`），脚本不改模型、不改维度、不加重排。
+- 判读：`summary.differing / summary.questions`，以及每条 DIFF 的 `first_diff_rank`。
+- **交回前必做的一件事**：先在真机上复跑
+  `$DC run --rm backend python scripts/check_eval_evidence_coverage.py`。
+  §3 P3 的"前置动作②"写的是 55 条 `must_contain` 查无出处，而 R94 常驻件在本工作树 09-20 实测是
+  **29 行 / 29 词**（主口径 `documents/*.txt` 95 篇）⇒ 那个 55 是旧数。这 29 行的正确答案按设计是
+  "语料无据 ⇒ 该拒答"，它们的 top-k 差异**不能**记在镜像账上；带题那轮的差异必须按这份清单切一刀再判读。
+- ⚠ 只要复算仍给非零，这一轮就还是**影子读的技术差集**，不是跟进单 §22.2 R58 判据③ 要的验收证据
+  （那条明写"无出处清零在先"，并自述"本班未独立复跑"）。要拿它当切换门禁的证据，得先走清零那一单。
+
+### 8.9 跑完交什么给总控
+
+- 两份 `--out` JSON 原文件（`scope{embedding_model,dimension,distance_function,column_type}`、
+  `k`、`drift{pg_vectors,chroma_vectors,only_in_pg,only_in_chroma,wrong_width,all_zero_rows,
+  index_version_id_null,chunks_rows,chunks_with_backfilled_embedding}`、带题那轮的
+  `questions[]` 与 `summary{questions,differing,corpus_gap}`）。
+- 两次运行的 **stdout 全文**（`_print_drift` 那 9 行是给人看的摘要，JSON 是给机器算的，两份都要）与**退出码**。
+- 8.1 两条 SELECT 的结果（含 0010 的 checksum）、8.5 两侧距离算符原文、8.6 两侧全零计数、
+  8.8 的 `check_eval_evidence_coverage.py` 输出。
+- 每一步实际敲的命令（尤其 `--confirm-scope` 那串、有没有带 `--env-file`）。
+- 退出码含义：`0`＝逐题 top-k 全一致且两侧无集合差；`1`＝有差异（**这是正常结论**，交人判读）；
+  `2`＝前置不满足，此时脚本一个召回结论都不产出，不许把它的输出当差异表交上来。
+
+### 8.10 收尾：结论交回之后，把开关拨回 `off`（除非总控裁定直接进 R59）
+
+双写是 fail-closed 同事务：PG 那侧挂掉，上传/重建整笔回滚（§3 P2）。挂在生产上不开对比＝白担一份
+可用性风险。镜像停更期间积累的差异，靠"重新 `on` + 再来一次 8.4 全量重建"补，不靠猜。
+
+### 8.11 常见失败长这样（都不是召回差异，别混进判读）
+
+- `[前置不满足] vector_scope 里没有 schema_version=1 这一行` ⇒ 0010 没跑成，回 8.1。
+- `[前置不满足] chunk_vectors.embedding 实际类型 …/不存在` ⇒ 列宽与声明不符，或表没建。
+- `[前置不满足] 库里口径 … 与运行时不一致` ⇒ R22 口径漂移，先按 §3 P0 重建，再谈对比。
+- `[前置不满足] collection 距离=…，vector_scope 声明=…` ⇒ U1 未定，回 8.5。
+- `[前置不满足] 取不到 collection 'enterprise_docs'` ⇒ 目录/集合名不对（换机器跑时最常见）。
+- `[前置不满足] Chroma 目录不存在` ⇒ `--chroma-dir` 指错了；**不要新建目录**，新建出来的是空库。
+- 锁报错 / 读到半写状态 ⇒ 8.2 没做干净，或有第二个 `run` 还活着。
+
+### 8.12 红线（越界即退回）
+
+- 本手册**只读**：一条 UPDATE / INSERT / ALTER 都不许顺手加。
+- **不切读**：Chroma 仍是唯一读路径。切读是 R59（§3 P4），前置就是 8.7/8.8 这两轮的结果。
+- 不动 `app/rag/retrieval_pipeline.py`，不借对比之名改检索编排；"先按权限过滤，后去重"的口径不许漂。
+- 评测集与 `must_contain` 不许为凑绿改动（`tests/test_evaluation_report.py` 钉着）；8.8 的复跑只是
+  取数，不是清理。
+- 跑分窗口在跑时不排这一串（它要独占 Ollama 与 Chroma 目录）。
+
+> **🔴 09-24 定案补记（第四十四班，业主原话「chroma 不在用改成 pgvector 你把文档也改了，上次我就说要换了」）**：本文件的**方向**从「目标态设计 / 待评估」升格为**已定案**——生产向量库 = PostgreSQL + PGVector，Chroma 进入退役轨道。三份治理文档已同步改口（`AGENTS.md` 技术栈与核心原则、`docs/system-architecture-2026-09-17.md` §存储条、`docs/system-design-2026-09-16.md` 同条、`docs/version-roadmap-and-next-week-plan-2026-09-22.md` 两条）。
+>
+> **但定案不等于已切换，本节把今天的事实钉住**（免得改口改出一句假话）：① **双写在跑**——`VECTOR_DUAL_WRITE=on` 在 `deploy/.env.server` 里就是 on，PDF 抽取带 NUL 那枚 P1 已由 **R130**（落树 `cdc5ead`）修掉，全库 **1008 枚向量**在位；② **读路径今天仍在 Chroma**——`app/rag/retriever.py` / `retrieval_pipeline.py` / `app/documents/catalog.py` 尚未切；③ **P3 召回对比从未跑过一次** ⇒ 切过去会不会悄悄变差，这一格目前零读数，**R59（切读）已于 09-24 提到第一批派工**（`be-r59`），它的第一判据就是把那份读数做出来，在做出来之前**不许把任何生产路径的默认读后端翻成 PGVector**；④ **H20（距离下限口径）业主未裁**，本班按「不新增人为下限、top-k 与阈值沿用现值」代裁推进，**可推翻**。
+>
+> 三枚用例钉着本文件（`tests/test_r120_dual_write_passthrough.py:43`、`tests/test_r120_p3_collection_default.py:31`、`tests/test_r125_status_vector_census.py:25`）⇒ 本节是**追加**，未改动任何既有行；改这份文件的人必须复跑那三件。
+---
+
+## 9. R59b 切读复测收口（2026-09-24 落笔 · **默认值未翻，读路径仍在 Chroma**）
+
+本节只追加，不改上面任何一行。落笔人：R59b（执行层）。判据由总控复跑，不在此自宣达成。
+
+### 9.1 今天真实位置
+
+- 双写在开，镜像逐枚齐：`chunk_vectors` 1008 行 vs collection `enterprise_docs` count 1008，
+  **id 集合逐枚相等**（`only_in_pg=0`、`only_in_chroma=0`）；两侧向量本体最大逐位差
+  `2.1679687467468511e-07`（float32 重嵌入噪声底），两库各自精确算的 top-5 **135/135 全等**。
+- 读路径**仍在 Chroma**（遗留件，今天仍在提供读服务）。`INDEX_BACKEND` 的字面量一字未动，仍是 `chroma`。
+- 已落地的是一副**接好但没合闸**的读腿：`app/rag/indexing.py` 认 `chroma`/`pgvector` 两个值并交出
+  `read_backend()` / `pgvector_reads_enabled()`；`app/rag/pg_store.py` 交出
+  `sql_scope_filter` / `search_vectors` / `read_topk`（谓词翻不出来就拒答，绝不退化成「没有 WHERE」）；
+  `app/rag/retriever.py` 在遗留腿之前挂 `_pgvector_hits()`，开关关着时**一个 SQL 都不发**。
+- 用例：`tests/test_r59b_pg_read_switch.py`（24 枚）。11 枚变异逐条复验全部能让点名用例变红。
+
+### 9.2 读数结论（k=5，135 题，PG 腿＝真库读，无估算腿）
+
+众数遍次：**68/135 题两侧 top-5 集合一致，67 题不一致**。分歧归因是单向的：
+
+- PG 腿 `pg_index_vs_exact_same_set` = **135/135**：索引腿＝全表精确腿，HNSW 近似性在本库这个规模上
+  不产生成员差也不产生名次差（当时会话 `hnsw.ef_search=40`，未扫参）。**没有一题是 PG 答得比精确解差。**
+- `exact_sides_same_set` = **135/135**：两库精确算逐题全等 ⇒ 分歧不来自向量本体。
+- 67 题不一致 = Chroma 索引腿 ≠ **Chroma 自己在同一批向量上的精确解**：43 题成员对称换入换出，
+  24 题 Chroma 整条交回 0 行（PG 侧全部交 5 行）。`mean_kendall_tau` 恒 1.0 ⇒ 分歧全在「谁进 top-5」。
+- 机制（本轮结掉的部分）：Chroma 的元数据段 1008 行、集合水位 seq 78696，而 HNSW 向量段水位只到
+  seq 77968 —— 中间 729 条日志（657 put / 72 delete）从未回放进索引，段里只剩 422 枚活标签；
+  `sync_threshold=1000` 大于未消费数，所以它不会自己追平。一次要回全库只捞得出 878 枚，
+  **约 130 枚向量在生产库里有、在它的 ANN 里不可达**。
+- 未结：Chroma 对 24 题交 0 行的字节层成因（与谓词/`ids` 白名单/`n_results` 大小/远近都无关，只量到形状）。
+- 跨进程稳定性：同一份输入、同一枚脚本，`same_set` 在 68–92 之间摆，**会摆的只有 Chroma 那条腿**
+  （`query_sha`、`pg_ids`、`pg_exact_ids`、`chroma_exact_ids` 全程 0 变化）。
+
+⇒ **方向支持切读**；本轮**不翻默认**。
+
+### 9.3 翻默认之前还差的格子
+
+1. 服务内端到端没在真库上跑过（今天只在 fake connection 用例下绿过）。
+2. 热集让路的代价没量：切读态下 `_hot_hits` 整层让路（`app/rag/hot_index.py` 新原因码
+   `hot_index_read_backend_switched`），延迟与命中分布两侧对比无数据。
+3. 选择性权限过滤没量：本库 `classification` 全=1、`department` 全=`''`，谓词只能全命中或全不命中。
+   全命中谓词两侧答案不变、零命中谓词两侧一致地空（**PG 侧没有漏放行**），但「选择性强过滤下的
+   召回差」这一格**没量到**，要量得先在沙盒库里造一份跨部门/跨密级语料。
+   ⇒ 🔴 **本格的判据今天改写为四件可失败判据（见 §13），在此之前所有"越权 0 条"的读数一律按「未验」读，不得记通过。**
+   🔴 **09-30 改口（R547，判据本体见 §13 本节一）**：本格欠的**不是**"业主没裁"——A1 已裁「不在真库做，改沙盒」、A3 已裁「交付阶段按客户真实密级做」、H13 已有结案节；四枚坐标由 `scripts/r547_scope_verdict_gauge.py` 的 `owner_rulings()` 现读派生，原文与行号见 `docs/testing/r547-scope-verdict-2026-09-30.md`。沙盒那一份跨部门/跨密级语料**已经在册并跑过**（`scripts/r469_sandbox_scope_readout.py` 那一路，252 枚合成标签），它证的是谓词按标签的行为，**不证客户隔离**；生产侧两维标签按在册最新读数仍全空，本单今天没取到生产读数 ⇒ 四件里的 (a)(b)(c) 照旧记「未验」，本格不因"已裁"前进一格，也不因"沙盒有牙"翻绿。
+4. 双写开满一轮全量重建未确认（§3 P3 的语义前置）。
+5. 遗留库仍在被写要拍板：🔴 **本句今日降「待证」**（R434，主树 `897ac56`）——原文把机制写成「只读打开会落 WAL」，而现读 `chroma.sqlite3` header byte18/19 = 1/1 ＝ legacy rollback journal，该库根本不产生 `-wal`/`-shm` ⇒ 「只读进程推进 mtime」**没有已证机制**，只剩当年那一次读数（静置 128 s 不动、每开一遍读动一次）。取证已由 **R405** 立成可失败钉（`tests/test_r405_readonly_sqlite_open_has_a_file_footprint.py`，`Zeno` 在途）：钉落地之前这格**既不许记「已证只读会写」，也不许记「已证只读不写」**，拍板仍欠（业主删除清单口径）。
+6. 那 24/135 题空答复要不要作为切读前的基线缺陷单独追（它同时是今天生产的读路径症状）。
+
+### 9.4 一条取证纪律（这次的坑，写给下一个跑对比的人）
+
+**别在宿主机上跑这组对比。** 5432 上可能挂着另一台野 PostgreSQL（没有 `vector_scope`），连上去
+`vector_scope` 不存在，脚本就会把 PG 腿降级成估算腿（numpy 代替真库）——产物看着一应俱全，其实只有一条腿。
+同理别用 `%TEMP%` 下的临时 Chroma 目录当样本：那一遍读数是 401 枚的沙盒，与生产 1008 枚不是一批东西。
+要么在 backend 容器里跑（`/app/chroma_db` 是生产卷、`postgres` 是内网 DNS），要么别跑。
+真 DSN 的原文不入文档，只走环境变量。
+
+复现与逐题明细：`docs/testing/r59b-recall-reading-2026-09-24.md`、
+`docs/testing/r59b-recall-comparison-2026-09-24.json`、`docs/testing/r59b-stability-2026-09-24.json`。
+量具：`scripts/r59_recall_compare.py`。上一遍作废说明：`docs/testing/r59-recall-reading-2026-09-24.md`。
+
+## 10. 总控独立复算 R59b 那份对照（2026-09-24 14:0x，主树 `fe5b180`）：Chroma 向量腿的缺陷面第一次有了题号清单
+
+复算对象是已并树的只读原件 `docs/testing/r59b-recall-comparison-2026-09-24.json`（135 题、k=5、两侧各 1008 枚、无估算腿），**没有重跑容器、没有采信任何自述**，只是把那份 JSON 重新数了一遍：
+
+| 读数 | 值 |
+|---|---|
+| `chroma_rows == 0` 的题 | **24**（族分布：口径冲突 7／跨部门权限 5／主动洞察 3／工具调用 3／文档问答 2／图表 1／Excel 1／审批 1／报告 1） |
+| 这 24 题里 `chroma_exact_ids` 有货的 | **24/24** ⇒ **数据在 Chroma 自己的集合里，是它的 ANN 不交**，不是没入库 |
+| PG 侧同题 `pg_rows` | 全部 5；`pg_index_vs_exact_same_set` **135/135** |
+| `pg_rows == 0` 的题 | **0** |
+| 两侧结果集不一致的题 | 67，其中 `exact_sides_same_set` 为真 **67/67** ⇒ 分歧**全部**落在索引腿，两侧精确解完全一致 |
+
+- 题号清单（按 `id` 去重后 21 枚）：`metric-04` `metric-05` `metric-10` `metric-11` `metric-13` `metric-18` `metric-19` ／ `scope-01` `scope-03` `scope-05` `scope-06` ／ `insight-02` `insight-06` ／ `tool-01` `tool-04` ／ `doc-09` `doc-13` ／ `chart-04` ／ `data-08` ／ `approval-06` ／ `report-12`。
+- 🔴 **一条必须写小的边界**：这 24 题不等于"客户今天答不出这 24 题"。生产读路径除向量腿外还有 BM25／改写／多路召回，run6 里 `metric-05`／`metric-10`／`metric-18`／`metric-19` 都拿到了引证。诚实说法是：**"向量腿单腿交 0 行 24 题，其中 11 题在 run6 同时读成零引证"**（交集：`chart-04` `insight-02` `insight-06` `metric-04` `metric-11` `metric-13` `scope-01` `scope-03` `scope-05` `tool-01` `tool-04`）。
+- 本节对 §9.3 那六格的作用：**不消任何一格**，但给第 ⑥ 格（24 题空答复要不要当基线缺陷）一份定量答案——**它是 Chroma 的缺陷、不是我们数据的缺陷、更不是 PG 的缺陷**（PG 侧 135/135 索引=精确、零空答复）。⇒ **R211 裁定"不修 Chroma、由切读吸收"至此有题号级凭据**；反过来，若切读 on 之后这 21 枚里有谁仍交空集，R211 的裁定当场作废、另立新单。
+
+## 2026-09-26 第四格·总控落笔：R59 块2 的结案口径，以及三条从这里生效的硬口
+
+### 一、块2 按「接线凭据到位」结案，不按「切读完成」结案
+
+`Planck`（`01a0dd54-a8c6-7890-8c6b-6a9b62b8d1e2`@`be-r592`，基点 `d194d99`）交回时对块2 的既定前提作了证伪，并附实证：`chat.py` 的检索入口**今天已经**跟着块1 那条腿走——只设 `INDEX_BACKEND=pgvector`（出厂常量仍为 `chroma`）就能在端点上打出「一条排名 SQL、旧句柄 `query()`/`get()` 双零、`answered_by==pgvector`」；`/ask` 那条链（`app/agents/tools.py:968` → `search_for_principal` → `app/rag/retrieval_pipeline.py:370` → `app/rag/retriever.py:1501`）同一枚开关跟着走。判据②明令「不许自造第二把开关」，而要在 `chat.py` 里再接一次，正是那第二把 ⇒ 本单**零生产码改动**，交回 3 枚端点层凭据件（16 用例）＋ 5 把反证。
+
+总控在主树 `dbc2047` 亲跑（不采信自述）：`test_r592_*` 三件 + `test_r59b_pg_read_switch.py` = **40 passed**；权限四件（`test_prefiltering.py`／`test_classification_fail_closed.py`／`test_r159_cross_scope_matrix.py`／`test_legacy_chat_retrieval_scope.py`）= **97 passed**，原有断言一字未放宽；`app/rag/indexing.py:50` 现取 `INDEX_BACKEND_DEFAULT = "chroma"`——默认没翻。**结案口径 = 接线实现与端点凭据到位、默认未翻、不宣布切读完成。** `R60`（停写退役）仍受两格阻塞：`R305` 那枚「真库恢复」读数未跑绿（§4CR 已锁），加上下面第 3 条那格量不到的选择性权限过滤。
+
+### 二、🔴 新硬口：动检索装箱顺序，必须点名跑那枚顺序钉
+
+施工反证 K4 报回来一条改变既有句法强度的事实：**既有的 21 枚 R45 参数化件挡不住「先去重、后过滤」**——把顺序换反之后 `test_prefiltering.py` 全绿，红的只有 `tests/test_r592_permission_order_on_the_pg_leg.py::test_the_permission_filter_still_runs_before_deduplication`（1 failed / 47 passed）。⇒ 从今天起「R45 全套已钉死装箱顺序」这句话**不再成立**，唯一守这一格的是 r592 那枚顺序钉（它 spy `_deduplicate`，断言收到的每条都已过 `scope.allows`，位置在 `app/rag/retrieval_pipeline.py:928`）。凡改动检索结果装箱／去重／过滤顺序的单，派工词里必须把这一枚点名进去。
+
+### 三、跑分与召回对比的题数不是同一个数（引用之前先看这条）
+
+`scripts/r59_recall_compare.py:51 DEFAULT_FIXTURES = (business_evaluation_30.jsonl, business_evaluation_100.jsonl)` ⇒ 默认并集是 **135 题**（`:620` 的 `args.fixture or list(DEFAULT_FIXTURES)` 允许单指），而计划书 §P4 与 run4/run5 那几份基线说的是 **105 题**（`business_evaluation_100.jsonl` 实测 105 行，文件名是历史名；跑分侧 `run_quality_evaluation.py` 必须显式 `--fixture`，见跑分手册 §P-3）。**两本账不许混着引用**：召回对比若拿默认跑，报告里必须写 135；要与 run 基线逐题对齐，就显式 `--fixture tests/fixtures/business_evaluation_100.jsonl` 锁到 105。
+
+### 四、新立 R330（待投）：PG 那本账要在出口读得到
+
+`vector_read_diagnostics()`／`vector_corpus_diagnostics()` 今天在 `app/**` **零消费者**（只有测试读），而 `search_shape` 早在 R165 就接上了 `/health/details`（`app/common/monitoring.py:254`）。回滚是个要人操作的动作——运维看不见「这一问是谁答的、切读命中了几条、上一次旁路是什么」，回滚点就没有可操作性。写域锁 `app/common/monitoring.py` + 新 `tests/test_r330_*.py`（与 R165 同一条出口，不许另开一屏）；判据含「不许新增第二本账，只投影既有 diagnostics」。排在 R59 块2 之后、R60 之前。
+
+## 11. 09-27 第四格·总控落笔：live-PG 第一次有当天读数 + 两格文档改口 + 🔴 一条被推翻的怀疑（登记防重复）
+
+### 一、当天现取的 live-PG 读数（本机容器，只读 SELECT，零写入）
+
+本节此前那份 1008 是 09-21 双写窗留下的账，今天容器起来了才有资格说"现在"。读数（`docker exec enterprise-brain-postgres-1 psql -U enterprise_brain -d enterprise_brain`）：
+
+| 项 | 今天 | 出处 |
+|---|---|---|
+| `chunk_vectors` 行数 | **1008** | `select count(*) from chunk_vectors` |
+| `chunks` 行数 | **1008**（两本账等枚，无双写缺口） | `select count(*) from chunks` |
+| `embedding is null` | **0** | 同上第二枚查询 |
+| `vector_scope` | **恰一行**：`schema_version=1` / `embedding_model=nomic-embed-text` / `dimension=768` / `distance_function=l2` | `select ... from vector_scope` |
+| pgvector 扩展 | `0.8.6` | `pg_extension` |
+| 向量索引 | `chunk_vectors_embedding_idx` USING **hnsw** (`vector_l2_ops`) WITH m=16 / ef_construction=100 | `pg_indexes` |
+| 其余索引 | pkey、`unique(filename, chunk_index)`、以及 `filename`/`department`/`classification`/`index_version_id` 四枚 btree | 同上 |
+
+容器侧：七枚容器 `Up 14 hours`，backend/worker/scheduler/redis/postgres/ollama 全 healthy。两枚镜像仍是 **47 小时**未重建（🔴 等本轮六枚在途落地后再建）。
+
+### 二、🔴 一条本班自己提出又自己推翻的怀疑（写下来是为了别第三遍）
+
+本班看到 `app/rag/retriever.py:892` 是 `get_or_create_collection("enterprise_docs")`——**没有**显式传 `hnsw:space`，于是怀疑：Chroma 走集合默认（该版本默认多为 cosine），而 PG 侧 scope 写的是 `l2` ⇒ 两边不同序 ⇒ 切读会悄悄换掉 top-k 排序。
+
+这条**不成立**，已被前班实测堵死，证据在 `migrations/0010_pgvector_chunks.sql:36-56`：本 build（chromadb 1.5.9 / python 3.11）用与 `retriever.py` 完全相同的调用形状实测，返回 `{'hnsw': {'space': 'l2', 'ef_construction': 100, 'max_neighbors': 16, ...}}`——🔴 默认就是 **l2**，与 pgvector 的 `<->` + `vector_l2_ops` 同侧；且 `scripts/compare_vector_recall.py` 在比任何排序之前会**重新断言**这个值（因为它是一个代码仍可改掉的 per-collection 默认）。索引参数 m/ef_construction 也不是拍的，是照抄实测的 `max_neighbors=16`/`ef_construction=100`，两台引擎配成一样。⇒ **不立单**。这条踩到的仍是本仓那条老规矩：报"某物不一致"之前先查它有没有被后续实测处理过。
+
+顺带量到一件从没记过的数（它不是缺陷，是**读数口径**）：库里向量**非单位化**——`vector_norm(embedding)` min **17.10** / max **23.40** / avg **20.07**（768 维）。所以：① l2 的绝对数值只在 l2 这一侧有意义，🔴 任何人将来把 PG 换成 `<=>`(cosine) 或直接把 Chroma 的距离数值当阈值用，都会跨口径；② H20（距离下限口径）业主仍未裁，那一格今天不因本读数而关闭，反而更该由业主定——因为 17–23 这个带宽说明"小于某个绝对距离就算不相关"这类阈值在我们的数据上根本站不住。
+
+### 三、两格文档改口（本节原样抄回去就是把话说过期）
+
+1. 上面 §四 那行"🆕 **新立 R330（待投）**"已过期：**R330 已并树** `eec7ced`（09-26 21:01）。今天复核落在 `app/common/monitoring.py:265`、`:280`、`:283`——`vector_mirror_diagnostics`／`vector_corpus_diagnostics`／`vector_read_diagnostics` 三本账现在真的投影到 `/health/details` 那一条出口，没有另开第二本。回滚可操作性那一格从此有读处。
+2. §8「今天真实位置」那行写"读路径仍在 Chroma"——今天**仍然成立**（`app/rag/indexing.py:50` 现取 `INDEX_BACKEND_DEFAULT = "chroma"`），但同一段里那句"读路径 R59 在途"要说细：R59 块1（`bee9d01`）与块2（`dbc2047`）都已并树、结案口径是"接线实现与端点凭据到位、🔴 默认未翻、不宣布切读完成"。真正没跑的仍是 **P3 那份 135 题召回对照**（要模型，属业主窗口），所以 §9/§10 那两节的结论一个字不改：**不许把任何生产路径的默认读后端翻成 PGVector**。
+## 12. 09-27 第八格·总控落笔：§9.3 六格第一次被真库读数推动（R382 并树 `b498c88`）+ 本班两处说过头的话就地更正
+
+### 一、§9.3 那六格，今天各走到哪（逐格给凭据，别整段抄上一班的话）
+| 格 | §9.3 原句 | 今天 | 凭据 |
+|---|---|---|---|
+| ① 服务内端到端没在真库跑过 | 只在 fake connection 用例下绿过 | ✅ **变绿**：12 题 × 7 腿 `attempts=84 / answered=84 / rows=576 / bypasses={}`，语料腿 `source=pgvector rows=1008`（非半切）；对照态（开关留 chroma）PG 腿 `attempts=0` ⇒ 没有第二本账 | `docs/perf/r382-readpath-2026-09-27.md` L74-76；名次重合 48 格 0.7894、剔遗留空腿 12 格后 0.9378，腿级 0.6964（剔空腿 0.9286） |
+| ② 热集让路代价没量 | 两侧延迟无数据 | 🟡 **方向可信、数值未结**：切读后 12/12 交回 `None`、`misses=13 / resident_chunks=0 / last_bypass_reason=hot_index_read_backend_switched`；但两次同口径中位 `0.873 ms` vs `3.322 ms` 差 4 倍 ⇒ 施工自标"本轮不可信" | 同上 §④。**要一台没人在跑测试的机器**，属总控排窗，不许拿这两个数当结论 |
+| ③ 选择性权限过滤没量 | 本库 `classification` 全=1、`department` 全=`''` | 🟡 **仍没量到，但今天多了一份真库读数**：四臂各 60/60、越权 0/0、`hr-c1` 两侧 12/12 裁空 ⇒ 密级轴独立绑得住；🔴 **验收 C 那句"越权 0 条"在生产上是空集意义上成立**（谓词恒空） | 同上 T8 + `chunk_vectors` 现读；治它的是 **R387**（取证 + 定修法，在途），不是又量一遍 |
+| ④ 双写开满一轮全量重建未确认 | — | ⬜ 未动（写入腿本单一律未碰） | — |
+| ⑤ 遗留库仍在被写要拍板 | `chroma.sqlite3` mtime 随只读进程前进 | 🔴 **降「待证」**（机制作废、读数未推翻）：WAL 那一半按 R434 现读不成立；拍板仍欠 | 主树今天 `git status` 仍见 `M chroma_db/chroma.sqlite3`；机制更正 =`897ac56`；取证在 **R405**（`tests/test_r405_readonly_sqlite_open_has_a_file_footprint.py`，在途）手里，未落钉前不得记通过 |
+| ⑥ 24/135 题空答复要不要单独追 | — | ✅ **已被切读吸收**（R211 裁定 + §10 那节定量答案），本格不复发 | 计划书 :412 |
+
+### 二、🔴 本班两处说过头的话，写下来防第三遍（都是同一族病：报"没人名下"之前先查在册账）
+1. **"没人名下的雷"这句说过头了。** `hnsw.ef_search` 的**数值本身早就在册**——本文件 `:360` 写着"当时会话 `hnsw.ef_search=40`，未扫参"（09-24 r59b 那批读数）。今天真的新增只有两点：(a) 现读确认**读路径从来没设过它**（`rg -n ef_search app/ migrations/` ⇒ `app/**` 除注释外零命中）；(b) 把 PG 的 40 与遗留引擎实测的 100（`:45` 那句字典）并排读 ⇒ **翻开关那一刻候选宽度缩 2.5 倍**，1008 枚上没咬人、客户尺寸上是第一颗召回雷。⇒ 立单 **R386**（在途）治它，判据是"接线 + 缺省即与遗留同宽 + 四把刀"，不是"发现"它。
+2. **"验收 C 那块假绿是 R382 找出来的"也不准确。** §9.3 第③格（本文件 :379-381）09-26 就写着"本库 `classification` 全=1、`department` 全=`''`，谓词只能全命中或全不命中……这一格没量到"。R382 的贡献是**把这条文档账变成一次真库上的读数**，并顺手量出密级轴独立绑得住（T8）。⇒ 记法从今天起统一：**"已登记、未治"**，不是"新发现"。
+3. 施工回执里那句"要等 R377 把真标签写进 chunks 后重量一遍"是**过期账**：R377（并树 `96179ff`）判四枚模块全部不可达、**零生产码改动**（`git show --numstat 96179ff` 只有 `tests/test_r377_*.py 569/0` 一行），它没写任何标签。今天真实的落点是 **R387**（在途）。
+
+### 三、翻默认到底还差什么（一句话版，给业主 also 给下一班）
+**码不缺、旋钮不缺、格①不缺。** 剩下四件按依赖排序（09-28 现读：① 已并树，实欠三件）：① R386 把查询期候选宽度接成"不依赖出厂默认"（**已并树 `1b4406a`**，09-27——这一件今天不再是欠账，缺省即与遗留引擎同宽，`INDEX_BACKEND` 默认照旧未翻）；② R387 定出部门/密级真标签的最小修法（在途，含"要不要回填那 1008 枚"这一项——回填=写生产数据，属业主动作）；③ 一台安静机器上把格②的延迟重跑一遍；④ 业主把 `INDEX_BACKEND=pgvector` 写进 `deploy/.env.server` 并重建镜像（§P4 明令 Agent 不改 `.env`）。①②③绿了，④就是**有数**的配置动作；④之前任何一句"已切到 PGVector"都是假话，④之后任何一句"Chroma 已下线"同样是假话（它今天仍在提供读服务）。
+
+
+## 13. 09-27 第九格·总控落笔：验收 C 改记「未验」· 候选宽度那格今天有码了 · 又挖出两枚站错档的量具
+
+### 一、验收 C 的判据改写（R387 取证单交回，总控落笔；出处 `docs/perf/r387-label-lineage-2026-09-27.md`）
+
+原句「四臂各 60/60、越权 0/0」在**生产**上不构成通过证据，因为分子分母都是空集：`chunk_vectors.department` 非空 **0/1008**、`classification` 只有 **1 档**，部门谓词恒空集。⇒ 从今天起按这四件判，**任一不满足即记「未验」，不得记通过**：
+
+| 件 | 判据 | 2026-09-27 生产现读 |
+|---|---|---|
+| (a) | 主体侧真带部门（管理员 `departments=None` 那一档**不算**） | ❌ `users.department` 有值 1/3 行，`admin`/`evalbot` 是 SQL NULL |
+| (b) | 语料非空 `department` > 0，且不同部门 ≥2、不同密级 ≥2 | ❌ 0/1008 非空；密级 1 档 |
+| (c) | **该臂召回 > 0** | ❌ 有部门的那条臂恒空集，召回必为 0 |
+| (d) | 越权 = 0 | ✅ 但只在空集意义上成立 |
+
+🔴 记账口径：**只有 (d) 单独成立不记通过；只有真出现 breaches > 0 才记「不通过」，且「不通过」优先于「未验」**（别让"还没验"淹掉"已经漏了"）。⇒ 阶段表 P4 与 §11 live-PG 那两格从今天起写「未验」，沙盒 `eb_r59_sandbox`（4×4×252 合成标签）只证行为、**不证客户隔离**，不许拿它替 C 翻绿。
+
+标签为什么全空（断点不在传播链）：第 2 跳 `chat.py` 服务端用 `principal.department` **覆盖**接口形参，第 4 跳 `app/common/auth.py` 从 `users.department` 取到 SQL NULL ⇒ 分桶实测 ①源头就没有 100 文档/1008 chunk、②源头有但没传下来 **0**、③传下来写错列 **0**。修法 A1+A2+A3（业主补部门 → 空部门拒收 → 规则回填）**零新迁移**（列/COMMENT/索引在 `migrations/0010_pgvector_chunks.sql` 全现成）；🔴 **只回填部门，C 依然未验**（密级那一格文件名给不出线索，仍未量）。
+
+**R547 09-30 取证与改口（只改「欠什么」这一栏：四件判据一件没动，一格绿没翻）**
+
+| 现取 | 命令原文 | 读数 |
+|---|---|---|
+| 业主那三件其实早就裁完了 | 坐标由 `scripts/r547_scope_verdict_gauge.py` 的 `owner_rulings()` 按锚现读派生（逐枚行号＋原文见 `docs/testing/r547-scope-verdict-2026-09-30.md`，派生钉 `tests/test_r547_coordinates_and_arms_are_derived.py`） | **H13 有结案节**（裁定＝甲：未标注密级按 1 级入库、写进契约、不再当缺陷报）·**auditor 密级档＝3，与 admin 同档**·**A1 裁「不在真库做，改沙盒」**（理由：给跑分账号 `evalbot` 设部门，105 题里的跨部门题会集体崩掉）·**A3 裁「交付阶段按客户真实密级做，不进 V1/V2 代码路径」**（原话：合成标签只证行为、不证客户隔离） |
+| 生产臂这一趟一枚读数都没取到 | `python scripts/r547_scope_verdict_gauge.py --mode live --arm both` | 两臂各 rc=2、点名 `ENV_DSN_UNSET`：容器 `postgres` 的 5432 未发布宿主端口，而宿主 5432 上是 §9.4 那台野 PG，执行层铁规禁 docker ⇒ 今天 (a)(b)(c)(d) 一律按「未验／量不到」交回。**量不到不等于"库里没有数据"，更不等于"干净"** |
+| 沙盒臂那批合成标签重跑了一遍在册尺 | `python scripts/r547_scope_verdict_gauge.py --mode reread`（＝ `scripts/r469_readout_lib.py` 的 validate＋judge 现判） | 状态 `SANDBOX_MEASURED_PRODUCTION_UNVERIFIED`；有牙格 5 枚／越权 0 条／无谓词对照本可越界 200 条／无部门谓词那档池外 252 枚——与裁定原文那句「沙盒那 252 枚」同数，但两本账不同源：252＝那一档的池外材料，72＝本单写入枚数 |
+
+⇒ 从这里生效的三句改口，🔴 没有一句读作"因此通过"：
+
+1. **(a)(b)(c) 继续记「未验」**；但从今天起"欠什么"不写作"等业主裁 A1/A3/H13"——那三件在 `human-gates` 上早裁完了。这一格今天唯一的真变化是：**账面把"已裁"写成了"未裁"**，本单把这处对齐，不改判据。
+2. 生产臂那两件（主体侧部门、密级标签）按已裁口径属**交付阶段项**：A1 不进真库、A3 随客户真实密级在交付时做，**V1/V2 不为其写代码路径**；`PUT /users/department` 那条通道仍在册，但它服务的是交付阶段，不是 V1 闸门。
+3. V1 侧今天**可判的只有两样**：沙盒臂的行为读数（有牙、不关门）＋生产臂的**空集声明**（两维标签全空 ⇒ 谓词没有可选性 ⇒ 越权 0 条无从判）。两样都不构成通过证据，本节上面那句记账口径原样继续生效。
+
+### 二、候选宽度那一格：今天从"口径待定"变成"有码了"
+
+`hnsw.ef_search` 的账本仓里记了三次（09-24 读数注在 `:360`；09-26 §9.3 登记；09-27 上格 R382 把它钉成静态钉）。今天 **R386 并树 `1b4406a`** 把它接上了线：PG 读腿在排名语句之前、**同一笔事务内** `set_config(..., TRUE)`（= `SET LOCAL` 函数式），真源一枚常量 `HNSW_EF_SEARCH_DEFAULT = 100`（与遗留引擎实测同宽），缺省即同宽、运维可用 `PGVECTOR_EF_SEARCH` 改、写坏了只丢"这次没配成"不丢宽度。**默认读后端 `INDEX_BACKEND` 仍未翻**，计划书 :334 那条硬闸继续生效。
+沙盒 1008 枚两档实测：`ef=100` 与暴力精确解 **180/180 槽位名次全等**；`ef=40` 集合仍 180/180、12 槽位并列噪声（距离逐位相等）。🔴 **两句不许外推**：① 这一档抬宽后索引扫描代价已与**全库暴力扫同量级**（1.874 vs 1.780 ms），只是相对端到端 0.242 s 占比 ≈0.6% 看不见；② 自探针/中点只量索引算术，**量不到近重复吃预算那一族**（R269 症状）⇒ 客户尺寸两档差仍是硬格，切读前要么量掉、要么显式接受。
+
+### 三、🔴 新挖出一格：两枚在册量具的窄档口径（09-27 立格时无人认领 → **09-28 现读：本格已并树收掉，R393 `f509f36`**）
+
+R386 顺手挖出、并明确写"不是本班写域"（下面这一段是 **09-27 立格时的形状**，逐字保留，今天已变，见本节末 R408 取证）：`scripts/r59c_sandbox_corpus.py` 的探针批以 `SET hnsw.ef_search = 40` 开头、CLI `--ef-search` 缺省 **40**；`scripts/r59_recall_compare.py` 的 `--pg-ef-search` 缺省 `0`（help 原文"用库里的默认"＝出厂窄档），且真给值时用**会话级** `SET`。⇒ 双重失真：**(1) 档不一致**（生产读腿 100、量具 40，经它们取过的召回对比量的是另一个系统）；**(2) 数被抄了第二份**（R386 已在 `pg_store` 里钉死"这个数只能活在一处"）。要治：缺省走真源导入、`SET` 改事务内 local、探针批头部把实际档号写进产物，并出一张「哪些历史读数需要重跑」的清单。
+
+
+**R408 09-28 现读取证（本格改口，只改事实陈述，判据一件没动）**
+
+| 现取 | 命令原文 | 读数 |
+|---|---|---|
+| 治它的单并没并树 | `git cat-file -t f509f36` / `git merge-base --is-ancestor f509f36 HEAD` | `commit` / rc=0（成立）⇒ **R393 已在树上**，标题「并树 R393（施工 Anscombe/`01a0e29a-…` @be-r393，基点 `a331d54`）：两枚在册量具不再自带候选宽度——缺省改为现场跟随生产真源，取证格不许再静默」 |
+| 那一笔改没改这两枚 | `git show --name-only --format= f509f36` | 六枚文件里含 `scripts/r59c_sandbox_corpus.py`、`scripts/r59_recall_compare.py`、`docs/perf/r393-tool-width-drift-2026-09-27.md` 与三枚 `tests/test_r393_*.py` ⇒ **两枚量具都点名改过** |
+| 量具今天踩在哪一档 | 现场调用 `r59c_sandbox_corpus.resolve_probe_ef_search()` 与 `r59_recall_compare.resolve_ef_search()`，与 `app.rag.pg_store.configured_hnsw_ef_search()` 同场比 | 三个数同为 **100**（＝`HNSW_EF_SEARCH_DEFAULT`，`pg_store.py` 里那枚唯一真源）⇒ 两枚量具与生产读腿**同宽** |
+| 还自带不自带数字 | AST 扫两枚脚本：`ef_search` 这个名字上有没有绑着一枚整数字面量（函数默认值与 `default=` 关键字都算） | **零枚**；CLI `--ef-search`（`r59c_sandbox_corpus.py:1130`）与 `--pg-ef-search`（`r59_recall_compare.py:163`）缺省都是 `None`＝现场跟随真源 |
+
+⇒ 本节三列的三件（缺省走真源、`SET` 改事务内 local、探针批头写明实际档号）与那句「并出一张哪些历史读数需要重跑的清单」今天**都在树上了**：清单就是同件 §3（六件逐条判定，含「站在 40」与「档不可知」两色）＋ §引用限定语。
+🔴 本格收了**不等于任何一格翻绿**：本节末第 ⑦ 格从欠账清单里划掉之后，翻 `INDEX_BACKEND` 默认前面还立着的仍是 §9.3 的 ②（一台安静机器）、③（四件可失败判据，今天记「未验」）与客户尺寸两档差那一格（R393 §5.1 自己就登记为未做未证），外加 §13.二 那句外推禁令原文照抄。R393 §5 另外登记了三格本单没收的：同族的第三枚件 `scripts/r59c_recall_compare.py` 全文零 `ef_search`（走服务层，R386 之后由读腿自己钉档，但其历史读数的档**不可知**，不在 R393 写域）；`docs/testing/r59c-selfcheck-2026-09-25.md:61` 还写着探针批的旧形状；翻默认本身属业主动作。
+
+### 四、本格对 §9.3 那六格的净影响
+
+- 第 **③** 格：判据升级为四件（本节一），状态由"没量到"改记 **「未验」**，且**这是翻 `INDEX_BACKEND` 前唯一还立着的实质性闸**。🔴 **09-30 改口（R547，本节一末）**：闸还是那道闸、字还是那两个「未验」，只是"欠什么"从今天起**不再写作"等业主裁"**——A1 已裁「不在真库做，改沙盒」，A3 已裁「交付阶段按客户真实密级做、不进 V1/V2 代码路径」，H13 已有结案节（`auditor` 密级档随之裁为 3）。⇒ 生产臂那两件属**交付阶段项**；V1 侧可判的只剩沙盒臂行为读数（有牙、不关门）与生产臂空集声明两样，所以这一格**既不因"业主已裁"前进一格，也不因"沙盒有牙"翻绿**。
+- 第 **②** 格（热集让路延迟）：仍欠**一台没人在跑测试的安静机器**（`0.873` vs `3.322` 差 4 倍那笔未结）。
+- 新增第 **⑦** 格：两枚量具的窄档口径（本节三）——**09-28 现读：这一格已由 R393 并树 `f509f36` 收掉，它不在「翻默认前还欠的格」里了**。🔴 收这一格不收任何别的格：②（安静机器）、③（四件判据，记「未验」）与客户尺寸两档差照旧立着，`INDEX_BACKEND` 默认照旧未翻。
+- 其余 ①④⑤⑥ 与上一班一致，未动。
+## 14. 10-03 第十二班第九格·业主裁定「默认不翻」：翻默认从 V1 门槛移入**交付阶段项**
+
+> 授权来源：业主 10-03 原话「……默认不翻」。本节只追加，§9.3／§12／§13 原文一字不改。
+
+- **出厂默认保持遗留件**：`app/rag/indexing.py:50 INDEX_BACKEND_DEFAULT` 继续等于 `"chroma"`，本 V1 期内不翻。理由写死在这儿给下一班看：R60（停 Chroma 写）还在飞，默认早于退役完成翻掉＝把一个还没拆完的遗留件写成「客户不用配」，下一位装机的人就会拿假默认去解释为什么 PG 里没有召回。
+- **本机那格不动**：`deploy/.env.server:77` 已显式 `INDEX_BACKEND=pgvector`（业主侧动作，10-03 现读在位），容器三枚已 `--force-recreate`、镜像 `revision=245315b`、`migrate` 交回 `applied=1 database=enterprise_brain`（迁移 0019 在真库第一次落地）。
+- **从这里起，装机检查项这四条属交付阶段（逐条可执行，不许写成"注意一下"）**：
+  1. 客户机 `deploy/.env.server` 写 `INDEX_BACKEND=pgvector`，然后 **`docker compose up -d --force-recreate backend worker scheduler`**。🔴 要的是**容器 recreate，不是镜像 rebuild**：`env_file:` 在容器创建那一刻才解析，`docker restart` 不重读，`docker compose build backend` 当场报 No services to build（带 `build:` 的只有 `migrate` 与 `frontend` 两格）。同口径已由 `tests/test_r255_env_documents_the_conversion.py` 钉着。
+  2. 翻默认之前 R60 必须已并树：写点还留在遗留件时翻默认，读端指纹与实际写端会各说一套。
+  3. 密级标注策略逐库确认（H13 甲的代价，`2026-09-17-human-gates.md` H13 结案节）：未标注的上传按 1 级＝本客户全员可检索，客户首灌前必须由客户自己确认，不许我们替他标。
+  4. `users.department` 回填＋密级标签回填在**客户真实数据**上做（A1/A3 已裁在交付阶段做，09-28 结案）。🔴 沙盒那 252 枚合成标签只证行为、**不证客户隔离**，不许拿它把 §13 的格③ 翻绿。
+- **一格口径账（已结清·防重复立案）**：三枚冻结分片 `docs/testing/fixtures/r97-shard-1.jsonl`、`docs/testing/fixtures/r97-shard-2.jsonl`、`docs/testing/fixtures/r97-shard-3.jsonl` 曾与题源**不同代**（29 行内容差，主件 sha16 `686c564ff2985744` vs 三片拼接 `2230b2b45be18bfb`）。跑分窗吃的始终是**主件**；🔴 本行旧版那句「run13/14/16/17 的 `fixture_sha256` 逐枚现读一致」**不成立**——10-03 20:40 现取盘上现存的全部七枚窗件 `%TEMP%\evalrun\run13.window.json` 到 `run19.window.json`：`686c564ff2985744`（＝105 行主件）＝ run13／run14／run17／run18／run19，`a9af15ea81c2bcec`＝ run15／run16，而 run15/run16 吃的是**仓外 12 题子集件**（报告档专窗，现读 4,019 B／12 行／sha16 与那两格窗件一致），它不是主件的上一代，所以拿这两窗去比 105 题分数本来就不成立。另 run13 那格 `index_backend` 是**空串**，它记不到读后端，别拿它当 pgvector 窗用。⇒ 向量召回与 105 题读数不受分片陈旧影响这一句仍然成立；欠的那件事已由 **R598 并树 `d3786fa`** 结清：`scripts/r598_shard_sync.py --check` rc=0（20:37 复核，三片与拼接逐字节相等，41,941 B／`686c564ff2985744`），常驻钉 `tests/test_r598_r97_shards_are_derived.py`（现读 14 枚测试函数，含「只改主词不动分片必红」那枚反向刀）。取证与修法见跟进单 §160.3、§164、§165、判据 R598⑦。
+
+## 15. 10-03 第十二班第十一格·总控落笔：S0 停写已完成（R60 并树 `9f43a31`）·本机读腿有窗指纹为凭·剩余阶段只剩 S1-S5
+
+> 本节只追加，§9.3／§12／§13／§14 原文一字不改。凭据要么是本席现取，要么是已并树件的交工纸，未复跑的数字不写。
+
+- **§14 那句「R60 还在飞」已过期**：R60 于 10-03 并树 `9f43a31`（施工 Aquinas @`be-r60b`，基点 `245315b`）。验收＝两态亲跑同一份 15 枚清单 **277 passed → 277 passed**（apply 未 commit 一遍、commit 后干净树再一遍）；另在没有 R60 的控制树基点 `8adb57d` 上跑那 12 枚坐标件＝**32 failed / 177 passed / 1 xfailed**，与 apply 态逐枚同名同数 ⇒ **零新增红**。
+- **停写不是纸面上的（一手凭据）**：`docs/testing/r60-chroma-writeoff-ledger-2026-10-03.json` 的 `writeoff-probe` 格——同一份码、同一枚套件，`INDEX_BACKEND=pgvector` 写一发 ⇒ `chunk_vectors` 1009→1010、遗留腿 1→**1**、`legacy_ids_added=[]`；把旋钮拨回 `chroma` ⇒ 遗留腿 0→1 重新接行、PG 那腿照旧写 ⇒ §3 那两把回滚的第一把**靠开关不靠改码**，且是容器内真跑的。收尾账：生产向量 1008 前后逐字节相等、`r60_rows_left_in_production=0`、生产账本 `index-versions.json` 原件前后 sha256 逐字相同、`/app/chroma_db` 与工作树 `chroma_db` 零写入（`git status --porcelain -- chroma_db` 空）。
+- **本机读腿走 PG，今天有跑分窗的指纹作凭**：`%TEMP%\evalrun\run18.window.json` 现读 `"index_backend": "pgvector"`·`"revision": "a2bbf133bd80…"（＝当时 HEAD）·`"fixture_sha256": "686c564ff2985744…"`（＝主件）。🔴 出厂默认照旧未翻：`app/rag/indexing.py:50 INDEX_BACKEND_DEFAULT = "chroma"`，§14 那条业主裁定原样有效——**本机走 PG 与客户装机走 PG 是两件事**，后者仍要装机人自己写 env 再 `--force-recreate`。
+- **口径钉死（两句假话都不许说）**：Chroma **既不是最终架构，也没有下线**。它今天仍住在仓库里（`git ls-files chroma_db`＝6 枚在册，最后入库 `1c345b1`）、仍住在命名卷 `vectordb`（`docker-compose.yml:44`）、仍在备份范围里。准确的话只有一句：**写已停、本机读已切、退役未完**。
+- **剩余阶段只剩五格**（逐条执行清单的唯一出处＝`docs/deployment/chroma-retirement-path.md` §4，本节只记今天走到哪）：
+  - **S1 观察窗**（运维）：从 `9f43a31` 起算，现网三枚容器 `printenv INDEX_BACKEND` 全 pgvector 且无人拨回；`scripts/rebuild_index.py --status` 两腿差只增不减。**未做**。
+  - **S2 最后一次带遗留库的全量归档**（运维）：趁 `chroma_db` 还在备份范围内做一次全量并校验 sha256 离线保存。R608 之后镜像里 `pg_dump` 17.11 已在位（交回 79,899,932 B 归档的凭据在看板 §4EP 二），但**这一步针对 chroma 目录的归档没做**。
+  - **S3 把 `chroma_db` 摘出备份范围**（代码单）：`app/common/backup.py:12 DEFAULT_BACKUP_DIRS` 改一行＋同步 `tests/test_postgres_backup_recovery.py` 的落点名册，🔴 **尚未立案**（建议号 R612，写域＝`app/common/backup.py`＋那一枚测试，摘之前 S2 必须先有归档件）。
+  - **S4 目录与卷离场**：🔴 业主本人（H4／H5／H8，`docs/handoff/2026-09-17-human-gates.md:43`·`:55`·`:76`），要的是删除＋`.gitignore`＋容器下线三样，本席一枚没碰。
+  - **S5 代码退役**：必须晚于 S4，且同批**必须重排 `stores_vectors` 的判定**——今天只有 chromadb 不可导入才落到离线 `_JsonCollection`（`app/rag/retriever.py:1027`），遗留客户端一旦不装，这条判定会把「该走 PostgreSQL」误读成关键词降级。
+- **本席没证的两格**（诚实清单，别被本节读成「切换完成」）：§9.3 的 ②（热集让路延迟，欠一台安静机器）与 ③（四件可失败判据，仍记「未验」）都没因 S0 完成而动一格；R143 recall 对账与 pgvector 格② 排在 run18→run19 之后，客户尺寸两档差仍未量。
+
+## 16. 10-04 第十三班·总控落笔：§15 标题那句判**当前状态不成立**（R633 取证并树 `3346c89`）·停双写的物理前提还差两格·本档从此不写「停写已完成」
+
+- 触发：执行层 Kant（树 be-r633）交回「停双写 S1 前置量具＋牙＋取证纸」（`scripts/r633_dual_write_off_precondition.py` 886 行／`tests/test_r633_dual_write_off_precondition_teeth.py` 612 行／`docs/testing/r633-dual-write-off-precondition-2026-10-04.md` 298 行），并顶回本席名册里那句「计划书 §15 与跟进单 §165.3 互相矛盾、待裁」。
+- 🔴 **裁定：§15 标题「S0 停写已完成（R60 并树 9f43a31）」作为当前 HEAD 的状态＝不成立；作为 245315b 那一时点那一枚盘面的读数＝成立**。两边原文都由 R633 逐字取回（其纸 §3.1/§3.2），本席复现的关键三条：
+  1. 账本 `docs/testing/r60-chroma-writeoff-ledger-2026-10-03.json` 的 `base_commit` 是 `245315b`，距今天 HEAD 差 51 笔 ⇒ 跟进单 §165.3 那句「④现读取数必须在当前 HEAD 重取」**今天仍然成立**；
+  2. 同一账本的 `sandbox_db = eb_r575_drill`、`chroma_sandbox_dir = 容器内 /tmp/r60stage/chroma` ⇒ **从头到尾没在生产库 enterprise_brain 上跑过判据④**；
+  3. 生产容器现取 `VECTOR_DUAL_WRITE=on`、`INDEX_BACKEND=pgvector`（本席 `docker exec ... printenv` 亲取）⇒ **双写此刻仍然开着**，「停写已完成」在盘面上就是假话。
+- 🔴 同批推翻一句旧账：跟进单 §165.3 那半句「⑤一键回滚演练还挂着 R587」**已被账本自己推翻**——`reused_suites` 逐字点名 r575＋r587，`rollback-knob`／`index-rollback`／`postflight`／`cleanup` 四步 `ok: true`，判据⑤ 交出的那一次 rc=0。⇒ 「演练一次都没跑」这句**也是错的**，本席不采。同节那句「谁都不许据此声称停写已完成」**方向仍然对**，它拦的是「拿代码半张当全部判据」这一形。
+- **停双写（S1）还欠的两格（R633 现取，执行层读数·总控未复核）**：① 补偿任务那一腿没有真写点；② 孤儿清理未实装。⇒ 「停双写」的**物理前提**未成立；生产那一遍读数由总控在开窗时取，不在执行层。
+- **纪律重申**：本档与看板、跟进单一律写「Chroma＝双写仍开着、停写未做」，不写「已完成」，也不写「演练没跑过」——两句都是假话。R625 那格「collection.add 字面 4 处／真调用 3 枚」的取证与 R633 的写点普查口径不同（一枚是 AST 可达、一枚是运行时可达），并列保留，不互相覆盖。

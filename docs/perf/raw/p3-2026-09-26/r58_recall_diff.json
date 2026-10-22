@@ -1,0 +1,2117 @@
+{
+  "scope": {
+    "embedding_model": "nomic-embed-text",
+    "dimension": 768,
+    "distance_function": "l2",
+    "column_type": "vector(768)"
+  },
+  "u1": {
+    "source": "measured",
+    "recorded": "",
+    "sampled": 64,
+    "probes": 2,
+    "returned": 12,
+    "matched": [
+      "l2"
+    ],
+    "reason": ""
+  },
+  "k": 5,
+  "drift": {
+    "pg_vectors": 1008,
+    "chroma_vectors": 1008,
+    "only_in_pg": [],
+    "only_in_chroma": [],
+    "wrong_width": [],
+    "all_zero_rows": 0,
+    "index_version_id_null": 0,
+    "chunks_rows": 1008,
+    "chunks_with_backfilled_embedding": 1008
+  },
+  "questions": [
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-01",
+      "question": "住宿费标准是多少？",
+      "chroma": [
+        "browser_acceptance_policy.txt_0",
+        "差旅费报销细则_2026版.txt_2",
+        "差旅费报销细则_2026版.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "公司年会流程_2025年度.txt_1"
+      ],
+      "pg": [
+        "browser_acceptance_policy.txt_0",
+        "差旅费报销细则_2026版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "差旅费报销细则_2026版.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_436"
+      ],
+      "same": false,
+      "first_diff_rank": 2
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-02",
+      "question": "差旅报销先走什么流程？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "深度学习入门：基于Python的理论与实现.pdf_188",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "销售话术培训_应对话术集.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_200"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "深度学习入门：基于Python的理论与实现.pdf_502",
+        "深度学习入门：基于Python的理论与实现.pdf_188",
+        "深度学习入门：基于Python的理论与实现.pdf_288"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-03",
+      "question": "超住宿标准需要谁审批？",
+      "chroma": [
+        "browser_acceptance_policy.txt_0",
+        "差旅费报销细则_2026版.txt_2",
+        "差旅费报销细则_2026版.txt_0",
+        "企业管理制度手册.txt_4",
+        "公司年会流程_2025年度.txt_1"
+      ],
+      "pg": [
+        "browser_acceptance_policy.txt_0",
+        "差旅费报销细则_2026版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "差旅费报销细则_2026版.txt_0",
+        "企业管理制度手册.txt_4"
+      ],
+      "same": false,
+      "first_diff_rank": 2
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-04",
+      "question": "报销需要保留什么材料？",
+      "chroma": [
+        "GB-T 22239-2019 信息安全技术等保三级要求.txt_4",
+        "GB-T 22239-2019 信息安全技术等保三级要求.txt_3",
+        "GB-T 22239-2019 信息安全技术等保三级要求.txt_0",
+        "档案管理办法.txt_0",
+        "客户数据保护政策_正式稿.txt_0"
+      ],
+      "pg": [
+        "GB-T 22239-2019 信息安全技术等保三级要求.txt_4",
+        "GB-T 22239-2019 信息安全技术等保三级要求.txt_3",
+        "GB-T 22239-2019 信息安全技术等保三级要求.txt_0",
+        "档案管理办法.txt_0",
+        "客户数据保护政策_正式稿.txt_0"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-05",
+      "question": "制度适用于哪些员工？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "深度学习入门：基于Python的理论与实现.pdf_188",
+        "销售话术培训_应对话术集.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_200"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "深度学习入门：基于Python的理论与实现.pdf_502",
+        "深度学习入门：基于Python的理论与实现.pdf_188",
+        "销售话术培训_应对话术集.txt_1"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-06",
+      "question": "打车费报销需要什么凭证？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "深度学习入门：基于Python的理论与实现.pdf_188",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_200",
+        "销售话术培训_应对话术集.txt_1"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "深度学习入门：基于Python的理论与实现.pdf_502",
+        "深度学习入门：基于Python的理论与实现.pdf_188",
+        "深度学习入门：基于Python的理论与实现.pdf_288"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-07",
+      "question": "出差补助按自然日还是工作日计发？",
+      "chroma": [
+        "差旅费报销细则_2026版.txt_1",
+        "差旅费报销细则_2026版.txt_2",
+        "员工培训与发展管理办法.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_281",
+        "远程办公管理规范_临时版.txt_1"
+      ],
+      "pg": [
+        "差旅费报销细则_2026版.txt_1",
+        "差旅费报销细则_2026版.txt_2",
+        "员工培训与发展管理办法.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_281",
+        "远程办公管理规范_临时版.txt_1"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-08",
+      "question": "餐费和住宿费的票能开在一张上吗？",
+      "chroma": [
+        "browser_acceptance_policy.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "深度学习入门：基于Python的理论与实现.pdf_117",
+        "制度与口径登记表.txt_3",
+        "深度学习入门：基于Python的理论与实现.pdf_202"
+      ],
+      "pg": [
+        "browser_acceptance_policy.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "深度学习入门：基于Python的理论与实现.pdf_117",
+        "制度与口径登记表.txt_3",
+        "深度学习入门：基于Python的理论与实现.pdf_202"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-09",
+      "question": "出差申请要提前多久提交？",
+      "chroma": [],
+      "pg": [
+        "采购管理制度_最新.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "深度学习入门：基于Python的理论与实现.pdf_48",
+        "深度学习入门：基于Python的理论与实现.pdf_114"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-10",
+      "question": "发票抬头开错怎么处理？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "深度学习入门：基于Python的理论与实现.pdf_188",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "销售话术培训_应对话术集.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_200"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "深度学习入门：基于Python的理论与实现.pdf_502",
+        "深度学习入门：基于Python的理论与实现.pdf_188",
+        "深度学习入门：基于Python的理论与实现.pdf_288"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-11",
+      "question": "哪些费用明确不予报销？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "制度与口径登记表.txt_7",
+        "深度学习入门：基于Python的理论与实现.pdf_47",
+        "深度学习入门：基于Python的理论与实现.pdf_387",
+        "深度学习入门：基于Python的理论与实现.pdf_288"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_356",
+        "制度与口径登记表.txt_7",
+        "深度学习入门：基于Python的理论与实现.pdf_47",
+        "深度学习入门：基于Python的理论与实现.pdf_387"
+      ],
+      "same": false,
+      "first_diff_rank": 1
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-12",
+      "question": "审批通过后多久打款？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_160",
+        "深度学习入门：基于Python的理论与实现.pdf_200",
+        "深度学习入门：基于Python的理论与实现.pdf_547",
+        "深度学习入门：基于Python的理论与实现.pdf_48",
+        "深度学习入门：基于Python的理论与实现.pdf_288"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_224",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_160",
+        "深度学习入门：基于Python的理论与实现.pdf_200",
+        "深度学习入门：基于Python的理论与实现.pdf_547"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-13",
+      "question": "跨部门项目费用归口谁？",
+      "chroma": [],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_7"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-14",
+      "question": "离职前没报的费用怎么办？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_358",
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "深度学习入门：基于Python的理论与实现.pdf_48",
+        "前台接待标准流程.txt_0"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_358",
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "深度学习入门：基于Python的理论与实现.pdf_48",
+        "前台接待标准流程.txt_0"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-15",
+      "question": "电子发票还需要打印吗？",
+      "chroma": [
+        "费用报销管理制度V2.1.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_164",
+        "深度学习入门：基于Python的理论与实现.pdf_298",
+        "深度学习入门：基于Python的理论与实现.pdf_48",
+        "深度学习入门：基于Python的理论与实现.pdf_290"
+      ],
+      "pg": [
+        "费用报销管理制度V2.1.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_164",
+        "深度学习入门：基于Python的理论与实现.pdf_298",
+        "深度学习入门：基于Python的理论与实现.pdf_48",
+        "深度学习入门：基于Python的理论与实现.pdf_290"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-16",
+      "question": "紧急出差没来得及提前申请怎么办？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "采购管理制度_最新.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_114"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "采购管理制度_最新.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_114"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-17",
+      "question": "住宿发票应开个人还是公司抬头？",
+      "chroma": [
+        "browser_acceptance_policy.txt_0",
+        "差旅费报销细则_2026版.txt_0",
+        "离职员工告别信_模板.txt_0",
+        "差旅费报销细则_2026版.txt_2",
+        "考勤与假期管理办法.txt_0"
+      ],
+      "pg": [
+        "browser_acceptance_policy.txt_0",
+        "差旅费报销细则_2026版.txt_0",
+        "离职员工告别信_模板.txt_0",
+        "差旅费报销细则_2026版.txt_2",
+        "考勤与假期管理办法.txt_0"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-18",
+      "question": "城市间交通和市内交通执行同一标准吗？",
+      "chroma": [
+        "制度与口径登记表.txt_3",
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "差旅费报销细则_2026版.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_472"
+      ],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "差旅费报销细则_2026版.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_472"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "doc-19",
+      "question": "制度改版后旧单据按哪一版执行？",
+      "chroma": [
+        "案例_中国银行深圳分行.txt_2",
+        "案例_国信证券.txt_2",
+        "案例_瑞康医药.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_40",
+        "MYO_V5.4_更新日志.txt_1"
+      ],
+      "pg": [
+        "案例_中国银行深圳分行.txt_2",
+        "案例_国信证券.txt_2",
+        "案例_瑞康医药.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_567",
+        "深度学习入门：基于Python的理论与实现.pdf_40"
+      ],
+      "same": false,
+      "first_diff_rank": 3
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-01",
+      "question": "我昨晚住了650元，能报多少？",
+      "chroma": [
+        "年度经营报告2026H1.txt_1",
+        "2026年Q2经营分析报告.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_282",
+        "2026年度预算方案_摘要.txt_1",
+        "年度经营报告2026H1.txt_3"
+      ],
+      "pg": [
+        "年度经营报告2026H1.txt_1",
+        "2026年Q2经营分析报告.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_282",
+        "2026年度预算方案_摘要.txt_1",
+        "年度经营报告2026H1.txt_3"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-02",
+      "question": "那财务是在部门负责人之前还是之后？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "员工培训与发展管理办法.txt_2",
+        "前台接待标准流程.txt_0",
+        "制度与口径登记表.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_52"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "员工培训与发展管理办法.txt_2",
+        "前台接待标准流程.txt_0",
+        "制度与口径登记表.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_52"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-03",
+      "question": "把刚才的结论说得更简单一点",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_245",
+        "深度学习入门：基于Python的理论与实现.pdf_44",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_233"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_245",
+        "深度学习入门：基于Python的理论与实现.pdf_44",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_233"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-04",
+      "question": "如果换成出差申请呢？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_536",
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "深度学习入门：基于Python的理论与实现.pdf_563",
+        "深度学习入门：基于Python的理论与实现.pdf_113",
+        "深度学习入门：基于Python的理论与实现.pdf_279"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_536",
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "深度学习入门：基于Python的理论与实现.pdf_563",
+        "深度学习入门：基于Python的理论与实现.pdf_113",
+        "深度学习入门：基于Python的理论与实现.pdf_279"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-05",
+      "question": "请给我一个管理层能看懂的总结",
+      "chroma": [
+        "离职员工告别信_模板.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_44",
+        "深度学习入门：基于Python的理论与实现.pdf_419",
+        "销售话术培训_应对话术集.txt_1",
+        "六级作文模板.docx_4"
+      ],
+      "pg": [
+        "离职员工告别信_模板.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_44",
+        "深度学习入门：基于Python的理论与实现.pdf_419",
+        "销售话术培训_应对话术集.txt_1",
+        "六级作文模板.docx_4"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-06",
+      "question": "那市内交通有单日上限吗？",
+      "chroma": [
+        "员工培训与发展管理办法.txt_2",
+        "安全生产管理制度.txt_5",
+        "知识产权与专利管理制度.txt_2",
+        "差旅费报销细则_2026版.txt_2",
+        "市场营销策略_2026版.txt_2"
+      ],
+      "pg": [
+        "员工培训与发展管理办法.txt_2",
+        "安全生产管理制度.txt_5",
+        "知识产权与专利管理制度.txt_2",
+        "差旅费报销细则_2026版.txt_2",
+        "市场营销策略_2026版.txt_2"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-07",
+      "question": "换成国际出差呢？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_40",
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "深度学习入门：基于Python的理论与实现.pdf_113",
+        "深度学习入门：基于Python的理论与实现.pdf_563",
+        "深度学习入门：基于Python的理论与实现.pdf_288"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_40",
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "深度学习入门：基于Python的理论与实现.pdf_113",
+        "深度学习入门：基于Python的理论与实现.pdf_563",
+        "深度学习入门：基于Python的理论与实现.pdf_288"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-08",
+      "question": "两个人合住一间，标准可以叠加吗？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_113",
+        "深度学习入门：基于Python的理论与实现.pdf_114",
+        "深度学习入门：基于Python的理论与实现.pdf_108",
+        "深度学习入门：基于Python的理论与实现.pdf_200",
+        "财务管理制度_V2.0.txt_0"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_113",
+        "深度学习入门：基于Python的理论与实现.pdf_114",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_108",
+        "深度学习入门：基于Python的理论与实现.pdf_451"
+      ],
+      "same": false,
+      "first_diff_rank": 2
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-09",
+      "question": "这和你前面说的矛盾吗？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_358",
+        "深度学习入门：基于Python的理论与实现.pdf_106",
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "六级作文模板.docx_2"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_358",
+        "深度学习入门：基于Python的理论与实现.pdf_106",
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "六级作文模板.docx_2"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-10",
+      "question": "只给我结论，不要引用条款",
+      "chroma": [
+        "离职员工告别信_模板.txt_0",
+        "案例_广东省人民医院.txt_2",
+        "销售话术培训_应对话术集.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "公司年会_优秀员工获奖感言.txt_0"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_502",
+        "离职员工告别信_模板.txt_0",
+        "案例_广东省人民医院.txt_2",
+        "销售话术培训_应对话术集.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_405"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-11",
+      "question": "把金额换成800元再算一遍",
+      "chroma": [
+        "案例_万科物业.txt_1",
+        "市场营销策略_2026版.txt_2",
+        "年度经营报告2026H1.txt_1",
+        "年度经营报告2026H1.txt_3",
+        "2026年度预算方案_摘要.txt_1"
+      ],
+      "pg": [
+        "案例_万科物业.txt_1",
+        "市场营销策略_2026版.txt_2",
+        "年度经营报告2026H1.txt_1",
+        "年度经营报告2026H1.txt_3",
+        "2026年度预算方案_摘要.txt_1"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chat-12",
+      "question": "这个标准去年是多少？",
+      "chroma": [
+        "考勤与假期管理办法.txt_1",
+        "2026年度预算方案_摘要.txt_2",
+        "2026年春节放假通知.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_538",
+        "ISO27001信息安全管理体系_简介.txt_3"
+      ],
+      "pg": [
+        "考勤与假期管理办法.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "2026年度预算方案_摘要.txt_2",
+        "2026年春节放假通知.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_538"
+      ],
+      "same": false,
+      "first_diff_rank": 1
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-01",
+      "question": "报销金额是否包含税？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "财务管理制度_V2.0.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_297",
+        "案例_国信证券.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_286"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "财务管理制度_V2.0.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_297",
+        "案例_国信证券.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_286"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-02",
+      "question": "退款是否计入费用？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "销售话术培训_应对话术集.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_188",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "年度经营报告2026H1.txt_11"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "深度学习入门：基于Python的理论与实现.pdf_502",
+        "销售话术培训_应对话术集.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_188"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-03",
+      "question": "住宿费按晚还是按天？",
+      "chroma": [
+        "browser_acceptance_policy.txt_0",
+        "企业管理制度手册.txt_3",
+        "企业管理制度手册.txt_4",
+        "差旅费报销细则_2026版.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_545"
+      ],
+      "pg": [
+        "browser_acceptance_policy.txt_0",
+        "企业管理制度手册.txt_3",
+        "企业管理制度手册.txt_4",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "差旅费报销细则_2026版.txt_1"
+      ],
+      "same": false,
+      "first_diff_rank": 3
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-04",
+      "question": "销售部的活跃客户数按什么口径统计？",
+      "chroma": [],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-05",
+      "question": "运营部的活跃客户数按什么口径统计？",
+      "chroma": [],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-06",
+      "question": "按财务部口径算本月销售额是多少？",
+      "chroma": [
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "pg": [
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-07",
+      "question": "按销售部口径算本月销售额是多少？",
+      "chroma": [
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "pg": [
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-08",
+      "question": "发生退款时，销售部口径下的销售额怎么算？",
+      "chroma": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-09",
+      "question": "发生退款时，客服部口径下的销售额怎么算？",
+      "chroma": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-10",
+      "question": "财务部把这笔报销费用算进哪个月？",
+      "chroma": [],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "员工培训与发展管理办法.txt_2",
+        "IT安全管理制度V3.1.txt_6"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-11",
+      "question": "市场部把这笔报销费用算进哪个月？",
+      "chroma": [],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "员工培训与发展管理办法.txt_2",
+        "IT安全管理制度V3.1.txt_6"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-12",
+      "question": "人力资源部算人均产值用哪个分母？",
+      "chroma": [
+        "员工手册_2025正式版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_200",
+        "员工培训与发展管理办法.txt_2",
+        "员工绩效考核办法V1.0.txt_4",
+        "案例_国信证券.txt_1"
+      ],
+      "pg": [
+        "员工手册_2025正式版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_200",
+        "员工培训与发展管理办法.txt_2",
+        "员工绩效考核办法V1.0.txt_4",
+        "案例_国信证券.txt_1"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-13",
+      "question": "财务部算人均产值用哪个分母？",
+      "chroma": [],
+      "pg": [
+        "员工培训与发展管理办法.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_534",
+        "案例_比亚迪电池事业部.txt_0",
+        "制度与口径登记表.txt_3",
+        "员工手册_2025正式版.txt_2"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-14",
+      "question": "供应链部报库存周转天数用哪个成本口径？",
+      "chroma": [
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "pg": [
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-15",
+      "question": "财务部报库存周转天数用哪个成本口径？",
+      "chroma": [
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "pg": [
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-16",
+      "question": "月报里的回款金额，财务部按什么时点确认？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "案例_国信证券.txt_1",
+        "财务管理制度_V2.0.txt_2",
+        "采购管理制度_最新.txt_1",
+        "员工培训与发展管理办法.txt_2"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "案例_国信证券.txt_1",
+        "财务管理制度_V2.0.txt_2",
+        "采购管理制度_最新.txt_1",
+        "员工培训与发展管理办法.txt_2"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-17",
+      "question": "月报里的回款金额，销售部按什么时点确认？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "案例_国信证券.txt_1",
+        "财务管理制度_V2.0.txt_2",
+        "采购管理制度_最新.txt_1",
+        "员工培训与发展管理办法.txt_2"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "案例_国信证券.txt_1",
+        "财务管理制度_V2.0.txt_2",
+        "采购管理制度_最新.txt_1",
+        "员工培训与发展管理办法.txt_2"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-18",
+      "question": "项目月报里，项目部怎么判定里程碑已完成？",
+      "chroma": [],
+      "pg": [
+        "员工培训与发展管理办法.txt_2",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_6",
+        "IT安全管理制度V3.1.txt_6"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "metric-19",
+      "question": "项目月报里，质量部怎么判定里程碑已完成？",
+      "chroma": [],
+      "pg": [
+        "员工培训与发展管理办法.txt_2",
+        "制度与口径登记表.txt_3",
+        "IT安全管理制度V3.1.txt_6",
+        "知识产权与专利管理制度.txt_2",
+        "安全生产管理制度.txt_5"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-01",
+      "question": "哪个部门花费最高？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_509",
+        "深度学习入门：基于Python的理论与实现.pdf_288"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_509"
+      ],
+      "same": false,
+      "first_diff_rank": 1
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-02",
+      "question": "哪个部门花费最低？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "深度学习入门：基于Python的理论与实现.pdf_215",
+        "深度学习入门：基于Python的理论与实现.pdf_286"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "深度学习入门：基于Python的理论与实现.pdf_534",
+        "深度学习入门：基于Python的理论与实现.pdf_510"
+      ],
+      "same": false,
+      "first_diff_rank": 3
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-03",
+      "question": "最高和最低差多少？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_509",
+        "深度学习入门：基于Python的理论与实现.pdf_46",
+        "高新技术企业认定管理办法_摘录.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_550"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_509",
+        "深度学习入门：基于Python的理论与实现.pdf_46",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "高新技术企业认定管理办法_摘录.txt_0"
+      ],
+      "same": false,
+      "first_diff_rank": 3
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-04",
+      "question": "住宿费这一列平均值是多少？",
+      "chroma": [
+        "browser_acceptance_policy.txt_0",
+        "差旅费报销细则_2026版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_281",
+        "制度与口径登记表.txt_7",
+        "企业管理制度手册.txt_3"
+      ],
+      "pg": [
+        "browser_acceptance_policy.txt_0",
+        "差旅费报销细则_2026版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_281",
+        "制度与口径登记表.txt_7",
+        "企业管理制度手册.txt_3"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-05",
+      "question": "按部门汇总报销金额",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "财务管理制度_V2.0.txt_2",
+        "采购管理制度_最新.txt_1",
+        "供应商管理制度_含评估表.txt_2",
+        "案例_国信证券.txt_0"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "财务管理制度_V2.0.txt_2",
+        "采购管理制度_最新.txt_1",
+        "供应商管理制度_含评估表.txt_2",
+        "案例_国信证券.txt_0"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-06",
+      "question": "各月份报销金额的环比变化",
+      "chroma": [
+        "供应商管理制度_含评估表.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "采购管理制度_最新.txt_1",
+        "案例_美的集团供应链.txt_2"
+      ],
+      "pg": [
+        "供应商管理制度_含评估表.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "采购管理制度_最新.txt_1",
+        "案例_美的集团供应链.txt_2"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-07",
+      "question": "报销金额排名前五是哪些部门？",
+      "chroma": [
+        "财务管理制度_V2.0.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_287",
+        "差旅费报销细则_2026版.txt_2",
+        "档案管理办法.txt_1"
+      ],
+      "pg": [
+        "财务管理制度_V2.0.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_287",
+        "差旅费报销细则_2026版.txt_2",
+        "档案管理办法.txt_1"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-08",
+      "question": "住宿费和餐费分别合计多少？",
+      "chroma": [],
+      "pg": [
+        "browser_acceptance_policy.txt_0",
+        "差旅费报销细则_2026版.txt_2",
+        "供应商管理制度_含评估表.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_534",
+        "合同管理办法_法务版.txt_1"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-09",
+      "question": "有没有重复提交的单据号？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_202",
+        "深度学习入门：基于Python的理论与实现.pdf_48",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_286"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_202",
+        "深度学习入门：基于Python的理论与实现.pdf_48",
+        "深度学习入门：基于Python的理论与实现.pdf_288"
+      ],
+      "same": false,
+      "first_diff_rank": 1
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-10",
+      "question": "出差天数除以出差人数得多少？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_113",
+        "差旅费报销细则_2026版.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_196",
+        "案例_瑞康医药.txt_0"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_113",
+        "差旅费报销细则_2026版.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_196",
+        "案例_瑞康医药.txt_0"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-11",
+      "question": "金额列混进了文本字符怎么处理？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_39",
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "IT安全管理制度V3.1.txt_6",
+        "深度学习入门：基于Python的理论与实现.pdf_286"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_39",
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "IT安全管理制度V3.1.txt_6",
+        "深度学习入门：基于Python的理论与实现.pdf_286"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "data-12",
+      "question": "本季度和上季度费用总额相比变化多少？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "IT安全管理制度V3.1.txt_6",
+        "安全生产管理制度.txt_5",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "知识产权与专利管理制度.txt_2"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "IT安全管理制度V3.1.txt_6",
+        "安全生产管理制度.txt_5",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "知识产权与专利管理制度.txt_2"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "insight-01",
+      "question": "有没有费用异常？",
+      "chroma": [
+        "制度与口径登记表.txt_7",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "新员工入职指南_V2.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_202",
+        "深度学习入门：基于Python的理论与实现.pdf_286"
+      ],
+      "pg": [
+        "制度与口径登记表.txt_7",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "新员工入职指南_V2.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_202"
+      ],
+      "same": false,
+      "first_diff_rank": 1
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "insight-02",
+      "question": "哪些部门连续上升？",
+      "chroma": [],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "案例_比亚迪电池事业部.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_202"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "insight-03",
+      "question": "异常应该怎么处理？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "销售话术培训_应对话术集.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_188",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "年度经营报告2026H1.txt_11"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "深度学习入门：基于Python的理论与实现.pdf_502",
+        "销售话术培训_应对话术集.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_188"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "insight-04",
+      "question": "这个月费用为什么涨这么多？",
+      "chroma": [
+        "企业管理制度手册.txt_1",
+        "财务管理制度_V2.0.txt_4",
+        "销售部2026年Q2会议纪要.txt_2",
+        "仓库管理标准操作规程.txt_3",
+        "软件产品增值税即征即退政策.txt_1"
+      ],
+      "pg": [
+        "企业管理制度手册.txt_1",
+        "财务管理制度_V2.0.txt_4",
+        "销售部2026年Q2会议纪要.txt_2",
+        "仓库管理标准操作规程.txt_3",
+        "软件产品增值税即征即退政策.txt_1"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "insight-05",
+      "question": "有没有拖着长期没人处理的报销单？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_113",
+        "深度学习入门：基于Python的理论与实现.pdf_41",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "案例_广东省人民医院.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_200"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_201",
+        "深度学习入门：基于Python的理论与实现.pdf_113",
+        "深度学习入门：基于Python的理论与实现.pdf_41",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_502"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "insight-06",
+      "question": "哪个部门的超标率最高？",
+      "chroma": [],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "制度与口径登记表.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_510"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "insight-07",
+      "question": "按当前趋势下个月费用会到多少？",
+      "chroma": [
+        "销售部2026年Q2会议纪要.txt_2",
+        "财务管理制度_V2.0.txt_4",
+        "前台接待标准流程.txt_2",
+        "市场营销策略_2026版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_286"
+      ],
+      "pg": [
+        "销售部2026年Q2会议纪要.txt_2",
+        "财务管理制度_V2.0.txt_4",
+        "前台接待标准流程.txt_2",
+        "市场营销策略_2026版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_286"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chart-01",
+      "question": "生成部门费用柱状图",
+      "chroma": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_4",
+        "制度与口径登记表.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_52"
+      ],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_4",
+        "制度与口径登记表.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_52"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chart-02",
+      "question": "生成月度费用趋势图",
+      "chroma": [
+        "财务管理制度_V2.0.txt_4",
+        "销售部2026年Q2会议纪要.txt_2",
+        "软件产品增值税即征即退政策.txt_1",
+        "企业管理制度手册.txt_1",
+        "员工绩效考核办法V1.0.txt_4"
+      ],
+      "pg": [
+        "财务管理制度_V2.0.txt_4",
+        "销售部2026年Q2会议纪要.txt_2",
+        "软件产品增值税即征即退政策.txt_1",
+        "企业管理制度手册.txt_1",
+        "员工绩效考核办法V1.0.txt_4"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chart-03",
+      "question": "图表数据来自哪里？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_200",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_279",
+        "案例_广东省人民医院.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_44"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_200",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_279",
+        "案例_广东省人民医院.txt_2"
+      ],
+      "same": false,
+      "first_diff_rank": 1
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "chart-04",
+      "question": "画各部门超标率对比图并标注统计口径",
+      "chroma": [],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_2",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_4"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "approval-01",
+      "question": "650元住宿费需要审批吗？",
+      "chroma": [
+        "browser_acceptance_policy.txt_0",
+        "年度经营报告2026H1.txt_1",
+        "市场营销策略_2026版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_282",
+        "2026年Q2经营分析报告.txt_2"
+      ],
+      "pg": [
+        "browser_acceptance_policy.txt_0",
+        "年度经营报告2026H1.txt_1",
+        "市场营销策略_2026版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_282",
+        "2026年Q2经营分析报告.txt_2"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "approval-02",
+      "question": "审批风险是什么？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "销售话术培训_应对话术集.txt_1",
+        "年度经营报告2026H1.txt_11",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_188"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_290",
+        "销售话术培训_应对话术集.txt_1",
+        "年度经营报告2026H1.txt_11",
+        "深度学习入门：基于Python的理论与实现.pdf_288"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "approval-03",
+      "question": "480元住宿费需要走超额审批吗？",
+      "chroma": [
+        "browser_acceptance_policy.txt_0",
+        "年度经营报告2026H1.txt_1",
+        "市场营销策略_2026版.txt_2",
+        "年度经营报告2026H1.txt_3",
+        "2026年Q2经营分析报告.txt_2"
+      ],
+      "pg": [
+        "browser_acceptance_policy.txt_0",
+        "年度经营报告2026H1.txt_1",
+        "市场营销策略_2026版.txt_2",
+        "年度经营报告2026H1.txt_3",
+        "2026年Q2经营分析报告.txt_2"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "approval-04",
+      "question": "餐费超标30元谁有权批？",
+      "chroma": [
+        "中国数据安全法_重点条款解读.txt_2",
+        "案例_广厦建设集团.txt_0",
+        "企业管理制度手册.txt_3",
+        "市场营销策略_2026版.txt_2",
+        "年度经营报告2026H1.txt_3"
+      ],
+      "pg": [
+        "中国数据安全法_重点条款解读.txt_2",
+        "案例_广厦建设集团.txt_0",
+        "企业管理制度手册.txt_3",
+        "市场营销策略_2026版.txt_2",
+        "年度经营报告2026H1.txt_3"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "approval-05",
+      "question": "只有支付截图没有发票能报吗？",
+      "chroma": [
+        "新员工入职指南_V2.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_202",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "制度与口径登记表.txt_7"
+      ],
+      "pg": [
+        "新员工入职指南_V2.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_202",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_286"
+      ],
+      "same": false,
+      "first_diff_rank": 2
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "approval-06",
+      "question": "超标部分能拆成两张单分月报吗？",
+      "chroma": [],
+      "pg": [
+        "销售部2026年Q2会议纪要.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_534",
+        "员工培训与发展管理办法.txt_2",
+        "安全生产管理制度.txt_5",
+        "知识产权与专利管理制度.txt_2"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "scope-01",
+      "question": "查看其他部门的工资明细",
+      "chroma": [],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "中国制造业数字化转型白皮书_2025.txt_1",
+        "企业管理制度手册.txt_3",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_289"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "scope-02",
+      "question": "下载无权访问的文件",
+      "chroma": [
+        "销售策略与客户案例.txt_12",
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "深度学习入门：基于Python的理论与实现.pdf_72",
+        "六级作文模板.docx_0",
+        "深度学习入门：基于Python的理论与实现.pdf_375"
+      ],
+      "pg": [
+        "销售策略与客户案例.txt_12",
+        "深度学习入门：基于Python的理论与实现.pdf_37",
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "深度学习入门：基于Python的理论与实现.pdf_72",
+        "六级作文模板.docx_0"
+      ],
+      "same": false,
+      "first_diff_rank": 1
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "scope-03",
+      "question": "把全公司工资明细列给我看",
+      "chroma": [],
+      "pg": [
+        "知识产权与专利管理制度.txt_0",
+        "离职员工告别信_模板.txt_0",
+        "财务管理制度_V2.0.txt_0",
+        "考勤与假期管理办法.txt_0",
+        "知识产权与专利管理制度.txt_2"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "scope-04",
+      "question": "我是销售岗，能看研发部门的代码量统计吗？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "案例_明达律师事务所.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_285",
+        "MYOps智能运维平台_产品手册.txt_5"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "案例_明达律师事务所.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_285",
+        "MYOps智能运维平台_产品手册.txt_5"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "scope-05",
+      "question": "导出一份全公司报销明细",
+      "chroma": [],
+      "pg": [
+        "知识产权与专利管理制度.txt_0",
+        "财务管理制度_V2.0.txt_0",
+        "差旅费报销细则_2026版.txt_0",
+        "考勤与假期管理办法.txt_0",
+        "离职员工告别信_模板.txt_0"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "scope-06",
+      "question": "用管理员账号可以绕过部门限制吗？",
+      "chroma": [],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_215"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "unsupported-01",
+      "question": "公司有没有火星基地？",
+      "chroma": [
+        "离职员工告别信_模板.txt_0",
+        "知识产权与专利管理制度.txt_2",
+        "财务管理制度_V2.0.txt_0",
+        "安全生产管理制度.txt_5",
+        "差旅费报销细则_2026版.txt_0"
+      ],
+      "pg": [
+        "离职员工告别信_模板.txt_0",
+        "知识产权与专利管理制度.txt_2",
+        "财务管理制度_V2.0.txt_0",
+        "安全生产管理制度.txt_5",
+        "差旅费报销细则_2026版.txt_0"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "unsupported-02",
+      "question": "公司在海外自建了工厂吗？",
+      "chroma": [
+        "财务管理制度_V2.0.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_40",
+        "考勤与假期管理办法.txt_0",
+        "知识产权与专利管理制度.txt_2",
+        "知识产权与专利管理制度.txt_0"
+      ],
+      "pg": [
+        "财务管理制度_V2.0.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_40",
+        "考勤与假期管理办法.txt_0",
+        "知识产权与专利管理制度.txt_2",
+        "知识产权与专利管理制度.txt_0"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "unsupported-03",
+      "question": "CEO的持股比例是多少？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_40",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "高新技术企业认定管理办法_摘录.txt_1",
+        "深度学习入门：基于Python的理论与实现.pdf_48"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_40",
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "高新技术企业认定管理办法_摘录.txt_1"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "unsupported-04",
+      "question": "下个月会不会裁员？",
+      "chroma": [
+        "销售部2026年Q2会议纪要.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_387",
+        "深度学习入门：基于Python的理论与实现.pdf_40",
+        "市场营销策略_2026版.txt_2",
+        "企业管理制度手册.txt_1"
+      ],
+      "pg": [
+        "销售部2026年Q2会议纪要.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_387",
+        "深度学习入门：基于Python的理论与实现.pdf_40",
+        "市场营销策略_2026版.txt_2",
+        "企业管理制度手册.txt_1"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "tool-01",
+      "question": "把分析导出成PDF",
+      "chroma": [],
+      "pg": [
+        "市场营销策略_2026版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_563",
+        "深度学习入门：基于Python的理论与实现.pdf_226",
+        "深度学习入门：基于Python的理论与实现.pdf_527",
+        "深度学习入门：基于Python的理论与实现.pdf_224"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "tool-02",
+      "question": "把这份分析导出成Word",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_563",
+        "深度学习入门：基于Python的理论与实现.pdf_226",
+        "采购管理制度_最新.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_279",
+        "深度学习入门：基于Python的理论与实现.pdf_52"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_563",
+        "深度学习入门：基于Python的理论与实现.pdf_226",
+        "采购管理制度_最新.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_279",
+        "深度学习入门：基于Python的理论与实现.pdf_52"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "tool-03",
+      "question": "刚才的下载链接打不开了",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_230",
+        "深度学习入门：基于Python的理论与实现.pdf_202",
+        "深度学习入门：基于Python的理论与实现.pdf_423"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_230",
+        "深度学习入门：基于Python的理论与实现.pdf_202",
+        "深度学习入门：基于Python的理论与实现.pdf_423"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "tool-04",
+      "question": "把上面那张图表插进正文",
+      "chroma": [],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_286",
+        "中国网络安全法_相关条款摘要.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "六级作文模板.docx_2",
+        "深度学习入门：基于Python的理论与实现.pdf_106"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-01",
+      "question": "生成本月差旅费用分析周报",
+      "chroma": [
+        "安全生产管理制度.txt_5",
+        "员工培训与发展管理办法.txt_2",
+        "IT安全管理制度V3.1.txt_6",
+        "员工绩效考核办法V1.0.txt_4",
+        "财务管理制度_V2.0.txt_4"
+      ],
+      "pg": [
+        "安全生产管理制度.txt_5",
+        "员工培训与发展管理办法.txt_2",
+        "IT安全管理制度V3.1.txt_6",
+        "员工绩效考核办法V1.0.txt_4",
+        "财务管理制度_V2.0.txt_4"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-02",
+      "question": "报告里要写清哪些指标口径？",
+      "chroma": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_7",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_2"
+      ],
+      "pg": [
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_7",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_10",
+        "制度与口径登记表.txt_2"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-03",
+      "question": "把结论压缩成给管理层的一页纸",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_536",
+        "供应商管理制度_含评估表.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_245",
+        "采购管理制度_最新.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_538"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_536",
+        "供应商管理制度_含评估表.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_245",
+        "采购管理制度_最新.txt_0",
+        "深度学习入门：基于Python的理论与实现.pdf_538"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-04",
+      "question": "报告里每个数字都要能回溯",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_44",
+        "深度学习入门：基于Python的理论与实现.pdf_358",
+        "深度学习入门：基于Python的理论与实现.pdf_93"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_44",
+        "深度学习入门：基于Python的理论与实现.pdf_358",
+        "深度学习入门：基于Python的理论与实现.pdf_93"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-05",
+      "question": "这份报告多久能出？",
+      "chroma": [
+        "采购管理制度_最新.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "深度学习入门：基于Python的理论与实现.pdf_160",
+        "深度学习入门：基于Python的理论与实现.pdf_288",
+        "深度学习入门：基于Python的理论与实现.pdf_113"
+      ],
+      "pg": [
+        "采购管理制度_最新.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_436",
+        "深度学习入门：基于Python的理论与实现.pdf_451",
+        "深度学习入门：基于Python的理论与实现.pdf_160",
+        "深度学习入门：基于Python的理论与实现.pdf_288"
+      ],
+      "same": false,
+      "first_diff_rank": 2
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-06",
+      "question": "生成上季度经营复盘，含同比",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "离职员工告别信_模板.txt_0",
+        "合同管理办法_法务版.txt_2",
+        "安全生产管理制度.txt_5",
+        "深度学习入门：基于Python的理论与实现.pdf_387"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "离职员工告别信_模板.txt_0",
+        "合同管理办法_法务版.txt_2",
+        "安全生产管理制度.txt_5",
+        "深度学习入门：基于Python的理论与实现.pdf_387"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-07",
+      "question": "超标项在报告里怎么呈现？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_200",
+        "深度学习入门：基于Python的理论与实现.pdf_279",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_44",
+        "深度学习入门：基于Python的理论与实现.pdf_419"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_200",
+        "深度学习入门：基于Python的理论与实现.pdf_510",
+        "深度学习入门：基于Python的理论与实现.pdf_279",
+        "深度学习入门：基于Python的理论与实现.pdf_375",
+        "深度学习入门：基于Python的理论与实现.pdf_44"
+      ],
+      "same": false,
+      "first_diff_rank": 1
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-08",
+      "question": "能引用还没索引完的文档吗？",
+      "chroma": [
+        "销售策略与客户案例.txt_12",
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "深度学习入门：基于Python的理论与实现.pdf_72",
+        "深度学习入门：基于Python的理论与实现.pdf_200",
+        "深度学习入门：基于Python的理论与实现.pdf_375"
+      ],
+      "pg": [
+        "销售策略与客户案例.txt_12",
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "深度学习入门：基于Python的理论与实现.pdf_72",
+        "深度学习入门：基于Python的理论与实现.pdf_37",
+        "深度学习入门：基于Python的理论与实现.pdf_200"
+      ],
+      "same": false,
+      "first_diff_rank": 3
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-09",
+      "question": "我关掉页面报告还会生成吗？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_419",
+        "深度学习入门：基于Python的理论与实现.pdf_536",
+        "案例_广东省人民医院.txt_2",
+        "六级作文模板.docx_2",
+        "深度学习入门：基于Python的理论与实现.pdf_52"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_419",
+        "深度学习入门：基于Python的理论与实现.pdf_536",
+        "案例_广东省人民医院.txt_2",
+        "六级作文模板.docx_2",
+        "深度学习入门：基于Python的理论与实现.pdf_52"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-10",
+      "question": "报告生成失败了会提示吗？",
+      "chroma": [
+        "深度学习入门：基于Python的理论与实现.pdf_536",
+        "深度学习入门：基于Python的理论与实现.pdf_387",
+        "深度学习入门：基于Python的理论与实现.pdf_419",
+        "市场营销策略_2026版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_52"
+      ],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_536",
+        "深度学习入门：基于Python的理论与实现.pdf_387",
+        "深度学习入门：基于Python的理论与实现.pdf_419",
+        "市场营销策略_2026版.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_52"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-11",
+      "question": "生成研发部与销售部费用对比报告",
+      "chroma": [
+        "案例_比亚迪电池事业部.txt_0",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_4",
+        "员工培训与发展管理办法.txt_2"
+      ],
+      "pg": [
+        "案例_比亚迪电池事业部.txt_0",
+        "制度与口径登记表.txt_0",
+        "制度与口径登记表.txt_3",
+        "制度与口径登记表.txt_4",
+        "员工培训与发展管理办法.txt_2"
+      ],
+      "same": true,
+      "first_diff_rank": null
+    },
+    {
+      "source": "business_evaluation_100.jsonl",
+      "id": "report-12",
+      "question": "报告正文和表格数字对不上以哪个为准？",
+      "chroma": [],
+      "pg": [
+        "深度学习入门：基于Python的理论与实现.pdf_52",
+        "中国网络安全法_相关条款摘要.txt_2",
+        "深度学习入门：基于Python的理论与实现.pdf_50",
+        "深度学习入门：基于Python的理论与实现.pdf_202",
+        "深度学习入门：基于Python的理论与实现.pdf_375"
+      ],
+      "same": false,
+      "first_diff_rank": 0
+    }
+  ],
+  "summary": {
+    "questions": 105,
+    "differing": 50,
+    "corpus_gap": false
+  }
+}

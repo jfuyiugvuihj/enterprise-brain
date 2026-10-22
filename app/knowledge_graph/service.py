@@ -1,0 +1,649 @@
+"""Owner-scoped business entity relations: a candidate-assertion ledger, not an engine.
+
+A relation is a claim about real sources, so every record keeps the Principal that
+submitted it, the scope that may read it, and the source locator that justifies it.
+
+Two questions get two predicates, and the gap between them is the design of this ledger
+rather than an oversight: ``can_read`` asks whether a principal may act on a record whose
+id it already holds - a reviewer has to open somebody else's claim to check it - and
+``can_browse`` asks whether the record may turn up in front of them at all, which is the
+question the record's own ``visibility`` answers.
+
+What this subsystem is allowed to be, stated so that no reader has to infer it from the
+absence of a consumer:
+
+* It collects assertions that a human has to check. Nothing here reasons over a graph,
+  and no Agent reads it when answering a question - that is a decided positioning
+  (docs/design/knowledge-graph-positioning.md), not a missing feature.
+* Its only productive exit is promotion: a relation that somebody with approval
+  permission has verified against an uploaded document becomes a formal metric
+  definition (app/knowledge_graph/promotion.py, migrations/0009_metric_definition_semantics.sql).
+  Verification is what the ledger is for, so an author may never certify their own claim:
+  a self-declared flag is not evidence.
+* Without ``KNOWLEDGE_GRAPH_STORE_PATH`` a production process has no durable store, and
+  every write - relation or verification - is refused rather than kept in a dictionary
+  that dies with the worker.
+"""
+import os
+from dataclasses import asdict, dataclass, field, fields
+from datetime import datetime, timezone
+from pathlib import Path
+from threading import RLock
+from uuid import uuid4
+
+from app.agents.contracts import Principal, ResourceScope
+from app.common.monitoring import ProductionReadOnlyProtection
+
+# A durable store makes relations visible to every worker on this host and survives a
+# restart. Without it the graph is a process-local dictionary, so production refuses
+# to accept writes instead of pretending the graph is healthy.
+_STORE_PATH_ENV = "KNOWLEDGE_GRAPH_STORE_PATH"
+_STORE_COLLECTION = "knowledge_graph_relations"
+_STORE_ERRORS: dict[str, str] = {}
+_PRODUCTION_ENVIRONMENTS = {"production", "prod"}
+
+# Why a write is refused, named once and shared by three surfaces: the HTTP status and
+# detail this subsystem's route reports (app/api/v1/intelligence.py), the audit reason
+# recorded next to it, and the "reason" field the state below feeds into
+# /api/v1/health/details. A client that read the response and an operator who reads
+# health must not be handed two names for one fact. The field is present only on a state
+# that refuses writes: a durable store has nothing to explain, and the development
+# dictionary accepts writes, so reporting "unconfigured" there would be a false alarm.
+REASON_UNCONFIGURED = "knowledge_graph_unconfigured"
+# The store was configured and then could not be opened or written: that really is a
+# storage outage, so it keeps the 503 and keeps the name it has always had.
+REASON_STORE_FAILURE = "storage_read_only"
+
+# Where a relation got to. ``status`` is the record's own life; ``verification_state`` is
+# the separate answer to "has a human checked the source", and only that second answer
+# gates promotion, so confirming a record (a scope/typo decision by its author) can never
+# masquerade as a reconciliation.
+STATUS_CANDIDATE = "candidate"
+STATUS_CONFIRMED = "confirmed"
+STATUS_PROMOTED = "promoted"
+STATUS_REJECTED = "rejected"
+RELATION_STATUSES = (STATUS_CANDIDATE, STATUS_CONFIRMED, STATUS_PROMOTED, STATUS_REJECTED)
+
+UNVERIFIED = "unverified"
+VERIFIED = "verified"
+REJECTED = "rejected"
+VERIFICATION_OUTCOMES = (VERIFIED, REJECTED)
+
+#: Visibility labels that keep a record out of a listing. ``private`` is the value this
+#: ledger writes for every relation - ``Relation.visibility``, and the dataclass default
+#: that also fills a record loaded from a store written before the field existed - so
+#: today the set covers everything the graph holds. An unlabelled record lands here too:
+#: a missing label is read as the strictest answer, not as permission to browse.
+#: Anything else is a label somebody set on purpose, and it leaves the decision to the
+#: department-and-clearance test in app/common/policy.py, which is where every other
+#: resource on this host already stops.
+WITHHELD_VISIBILITIES = frozenset({"", "private"})
+
+
+def discloses_to(visibility: str, owner_id: str, principal: "Principal | None") -> bool:
+    """Does this record's own visibility label let this principal be *shown* it?
+
+    The one place the label is read. ``authorization_decision`` never consults it: it
+    weighs owner, action, legacy ownership, clearance and department, in that order, and
+    copies ``visibility`` into its attribute dict without a branch. So a value this
+    ledger has written onto every record - and handed to the client on top of that - had
+    no reader at all until here, which is the gap that made a colleague in the author's
+    department a permitted reader of somebody else's claim.
+    """
+    from app.common.policy import is_administrator
+
+    if principal is None:
+        return False
+    if str(visibility or "").strip().lower() not in WITHHELD_VISIBILITIES:
+        return True
+    owner = str(owner_id or "").strip()
+    if owner and owner == str(principal.user_id):
+        return True
+    return is_administrator(principal)
+
+
+def _is_production_environment() -> bool:
+    return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
+
+
+def _resolve_store_path(store_path: "str | Path | None" = None) -> "str | None":
+    resolved = str(store_path or os.getenv(_STORE_PATH_ENV, "") or "").strip()
+    return resolved or None
+
+
+#: The code points ECMAScript ``\s`` matches: ``WhiteSpace`` plus ``LineTerminator``,
+#: transcribed from the spec rather than borrowed from Python, because the two sets are not
+#: the same set. Python's ``re.\s`` and ``str.isspace()`` both add ``U+001C``-``U+001F`` and
+#: ``U+0085``, and both leave out ``U+FEFF``. Reading a document name through Python's set
+#: would delete characters the client keeps and keep one the client deletes: a second
+#: identity standard, which is exactly the failure where the server answers "same 篇" for
+#: two names the browser counts apart, and stays silent on a name the browser would match.
+#: ``tests/test_r344_document_identity_normalization.py`` pins those divergences against
+#: readings taken from a real JS engine.
+_JS_WHITESPACE_CODE_POINTS = frozenset(
+    {
+        0x0009, 0x000A, 0x000B, 0x000C, 0x000D, 0x0020, 0x00A0, 0x1680,
+        0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF,
+        *range(0x2000, 0x200B),  # U+2000-U+200A; U+200B is Cf, not whitespace, in either end
+    }
+)
+
+#: ``str.translate`` table: delete exactly the code points above, keep every other character.
+_DELETE_JS_WHITESPACE = {code_point: None for code_point in _JS_WHITESPACE_CODE_POINTS}
+
+
+def document_identity_key(value: "object | None") -> str:
+    """One entity name, in the only shape this host compares document names in.
+
+    Byte for byte the client's ``documentIdentityKey``
+    (frontend/src/components/DocumentPreviewModal.vue:58): drop every ECMAScript ``\\s``
+    character, then lowercase. Whitespace carries no identity in a document name here --
+    the same row registered with a full-width space inside it, or exported with a BOM in
+    front of it, is still the same 篇 -- and neither does ASCII case, which is why
+    ``差旅管理办法.PDF`` and ``差旅管理办法.pdf`` have to answer as one document.
+
+    ``.lower()`` and not ``.casefold()``: JS ``toLowerCase()`` leaves ``ß`` alone while
+    casefold expands it to ``ss``, so a casefolded server would recognise pairs the browser
+    refuses, and the two ends would stop agreeing about which 篇 a row belongs to.
+
+    This is the comparison shape only. It is never written onto a record: what a caller
+    stored in ``source_entity`` / ``target`` goes back out exactly as it was registered.
+    """
+    if value is None:
+        return ""
+    text = value if isinstance(value, str) else str(value)
+    return text.translate(_DELETE_JS_WHITESPACE).lower()
+
+
+@dataclass
+class Relation:
+    relation_id: str
+    source_entity: str
+    relation: str
+    target: str
+    source: str
+    owner_id: str
+    department_ids: list[str] = field(default_factory=list)
+    classification: str = "internal"
+    visibility: str = "private"
+    status: str = STATUS_CANDIDATE
+    version: int = 1
+    created_at: str = ""
+    # Review bookkeeping. Every default is the untouched state, so records written before
+    # this existed load unchanged out of a JSON store that has no such keys.
+    verification_state: str = UNVERIFIED
+    verified_document: str = ""
+    verified_section: str = ""
+    verified_by: str = ""
+    verified_at: str = ""
+    verification_note: str = ""
+    promoted_definition_id: str = ""
+
+    @property
+    def verified(self) -> bool:
+        """True only for a relation whose certification names a document and a section."""
+        return self.verification_state == VERIFIED and bool(
+            self.verified_document and self.verified_section and self.verified_by
+        )
+
+    @property
+    def resource_scope(self) -> ResourceScope:
+        return ResourceScope(
+            resource_type="relation",
+            resource_id=self.relation_id,
+            owner_id=self.owner_id,
+            department_ids=list(self.department_ids),
+            classification=self.classification,
+            visibility=self.visibility,
+            version_id=f"v{self.version}",
+            status=self.status,
+        )
+
+    def to_dict(self) -> dict:
+        payload = asdict(self)
+        payload["version_id"] = f"v{self.version}"
+        return payload
+
+
+class KnowledgeGraph:
+    def __init__(self, store_path: "str | Path | None" = None) -> None:
+        self._relations: dict[str, Relation] = {}
+        self._lock = RLock()
+        self._store_path = _resolve_store_path(store_path)
+        self._store_error = ""
+        self._store = None
+        if self._store_path:
+            try:
+                from app.storage.persistence import JsonPersistenceAdapter
+
+                self._store = JsonPersistenceAdapter(self._store_path)
+            except Exception as exc:  # pragma: no cover - unwritable or missing directory
+                self._store_error = f"cannot open relation store: {type(exc).__name__}"
+                _STORE_ERRORS[self._store_path] = self._store_error
+
+    # ------------------------------------------------------------------ storage state
+    @staticmethod
+    def state_for_store(store_path: "str | None", error: str = "") -> dict:
+        """Describe the store an instance built on ``store_path`` actually offers."""
+        if store_path and not error:
+            return {
+                "storage_mode": "json",
+                "durable": True,
+                "shared_across_processes": True,
+                "protection": "none",
+                "detail": f"relations persisted to collection {_STORE_COLLECTION}",
+            }
+        if store_path and error:
+            return {
+                "storage_mode": "unavailable",
+                "durable": False,
+                "shared_across_processes": False,
+                "protection": "read_only",
+                "reason": REASON_STORE_FAILURE,
+                "detail": error,
+            }
+        if _is_production_environment():
+            return {
+                "storage_mode": "unavailable",
+                "durable": False,
+                "shared_across_processes": False,
+                "protection": "read_only",
+                # The deployment never enabled the feature. "read_only" above says what
+                # happens to a write; this says why, which is the part an operator can
+                # act on and the part the HTTP exit is allowed to answer with.
+                "reason": REASON_UNCONFIGURED,
+                "detail": f"{_STORE_PATH_ENV} is not configured; relation writes are refused",
+            }
+        return {
+            "storage_mode": "memory",
+            "durable": False,
+            "shared_across_processes": False,
+            "protection": "none",
+            "detail": "development in-process dictionary",
+        }
+
+    def storage_state(self) -> dict:
+        return self.state_for_store(self._store_path, self._store_error)
+
+    # ------------------------------------------------------------------- store access
+    def _record_failure(self, detail: str) -> None:
+        self._store_error = detail
+        _STORE_ERRORS[str(self._store_path or "memory")] = detail
+
+    def _persist(self, record: Relation) -> None:
+        if self._store is None:
+            return
+        from app.storage.persistence import PersistenceWriteError
+
+        try:
+            self._store.upsert(_STORE_COLLECTION, record.relation_id, asdict(record))
+        except (PersistenceWriteError, OSError, ValueError) as exc:
+            self._record_failure(f"relation store write failed: {type(exc).__name__}")
+            raise ProductionReadOnlyProtection("knowledge_graph_store_write_failed") from exc
+        # A successful write clears an earlier failure so health recovers on its own.
+        self._store_error = ""
+        _STORE_ERRORS.pop(str(self._store_path), None)
+
+    def _sync_from_store(self) -> None:
+        """Adopt relations written by another worker or by an earlier run."""
+        if self._store is None:
+            return
+        from app.storage.persistence import PersistenceWriteError
+
+        try:
+            records = self._store.list(_STORE_COLLECTION)
+        except (PersistenceWriteError, OSError, ValueError) as exc:
+            self._record_failure(f"relation store read failed: {type(exc).__name__}")
+            return
+        known = {item.name for item in fields(Relation)}
+        for payload in records:
+            if not isinstance(payload, dict):
+                continue
+            attributes = {key: value for key, value in payload.items() if key in known}
+            try:
+                record = Relation(**attributes)
+            except TypeError:  # pragma: no cover - a corrupted store must not crash reads
+                continue
+            if not record.relation_id:
+                continue
+            current = self._relations.get(record.relation_id)
+            if current is None or current.version <= record.version:
+                self._relations[record.relation_id] = record
+
+    def _reject_in_memory_write(self) -> None:
+        """Production only accepts a relation once a durable store can hold it."""
+        if self._store is None and _is_production_environment():
+            raise ProductionReadOnlyProtection(
+                f"knowledge_graph_read_only: {_STORE_PATH_ENV} is required in production"
+            )
+
+    def add_relation(
+        self,
+        source_entity: str,
+        relation: str,
+        target: str,
+        source: str,
+        *,
+        principal: Principal,
+        department_ids: list[str] | None = None,
+        classification: str | None = None,
+    ) -> Relation:
+        """Store one candidate relation owned by the authenticated Principal."""
+        owner_id = str(getattr(principal, "user_id", "") or "").strip()
+        if not owner_id:
+            raise PermissionError("authentication_required")
+        if not str(source or "").strip():
+            raise ValueError("relation_source_required")
+
+        # A candidate relation may never be marked above its author clearance.
+        clearance_level = int(getattr(principal, "clearance", 1) or 1)
+        try:
+            relation_classification = int(str(classification or clearance_level))
+        except ValueError:
+            relation_classification = clearance_level
+        relation_classification = max(1, min(relation_classification, clearance_level))
+
+        departments = [str(value) for value in (department_ids or []) if str(value)]
+        if not departments and str(getattr(principal, "department", "") or ""):
+            departments = [str(principal.department)]
+
+        relation_id = uuid4().hex
+        record = Relation(
+            relation_id=relation_id,
+            source_entity=str(source_entity or "").strip(),
+            relation=str(relation or "").strip(),
+            target=str(target or "").strip(),
+            source=str(source or "").strip(),
+            owner_id=owner_id,
+            department_ids=departments,
+            classification=str(relation_classification),
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        with self._lock:
+            self._sync_from_store()
+            self._reject_in_memory_write()
+            self._relations[relation_id] = record
+            self._persist(record)
+        return record
+
+    def get(self, relation_id: str, *, principal: Principal | None = None) -> Relation | None:
+        """One readable relation, or None. An unreadable id and an unknown id look alike."""
+        with self._lock:
+            self._sync_from_store()
+            record = self._relations.get(str(relation_id or ""))
+            if record is None or not self.can_read(record, principal):
+                return None
+            return record
+
+    def confirm(self, relation_id: str, *, principal: Principal) -> bool:
+        """Author-side tidying of a record: it says the claim is well-formed, not checked."""
+        with self._lock:
+            self._sync_from_store()
+            record = self._relations.get(str(relation_id or ""))
+            if record is None:
+                return False
+            if not self.can_read(record, principal):
+                return False
+            self._reject_in_memory_write()
+            record.status = STATUS_CONFIRMED
+            record.version += 1
+            self._persist(record)
+            return True
+
+    # --------------------------------------------------------------- review and promotion
+    @staticmethod
+    def _require_approval(principal: Principal | None) -> str:
+        """The reviewer identity behind an approval action, or the refusal that says why."""
+        from app.common.permissions import ACTION_APPROVE
+
+        verifier = str(getattr(principal, "user_id", "") or "").strip()
+        if not verifier:
+            raise PermissionError("authentication_required")
+        if ACTION_APPROVE not in set(getattr(principal, "permissions", None) or ()):
+            raise PermissionError("approval_permission_required")
+        return verifier
+
+    def _look_up(self, relation_id: str) -> Relation:
+        self._sync_from_store()
+        record = self._relations.get(str(relation_id or ""))
+        if record is None:
+            raise LookupError("relation_not_found")
+        return record
+
+    def reviewable(self, relation_id: str, *, principal: Principal) -> Relation:
+        """One verified relation this principal is allowed to act on.
+
+        Promotion has to write the definition row before it can close the ledger, so the
+        three questions (does it exist, may you read it, may you approve) must be answered
+        before any write happens. record_verification and record_promotion ask them again
+        rather than trusting this answer, because the lock is not held between calls.
+        """
+        with self._lock:
+            record = self._look_up(relation_id)
+            self._require_approval(principal)
+            if not self.can_read(record, principal):
+                raise PermissionError("permission_denied")
+            if not record.verified:
+                raise ValueError("relation_not_verified")
+            return record
+
+    def record_verification(
+        self,
+        relation_id: str,
+        *,
+        principal: Principal,
+        outcome: str = VERIFIED,
+        document: str = "",
+        section: str = "",
+        note: str = "",
+    ) -> Relation:
+        """Record what a reviewer concluded about one relation's source.
+
+        The reviewer needs ``resource:approve`` and must be able to read the relation, so
+        a cross-department certification is refused by the same rule that hides it. The
+        author may not review their own record: the point of this ledger is that a claim
+        gets checked by somebody else, and a self-declared flag is not evidence.
+
+        A verification names the document and the section it was checked against, because
+        "verified" without a locator is what the semantic layer already had and could not
+        remove. A rejection records who said no and when, and deliberately keeps the
+        verified_document/verified_section pair empty: nothing was certified.
+
+        Stable codes: relation_not_found, authentication_required,
+        approval_permission_required, permission_denied, self_verification_refused,
+        relation_verification_evidence_required, relation_verification_outcome.
+        """
+        if outcome not in VERIFICATION_OUTCOMES:
+            raise ValueError("relation_verification_outcome")
+        with self._lock:
+            record = self._look_up(relation_id)
+            # Authenticate and authorise the action first, then the data scope: an
+            # anonymous or unauthorised caller learns about the permission they lack, and
+            # only a legitimate reviewer learns whether this record is out of scope.
+            verifier = self._require_approval(principal)
+            if not self.can_read(record, principal):
+                raise PermissionError("permission_denied")
+            if record.owner_id and record.owner_id == verifier:
+                raise PermissionError("self_verification_refused")
+            checked_document = str(document or "").strip()
+            checked_section = str(section or "").strip()
+            if outcome == VERIFIED and not (checked_document and checked_section):
+                raise ValueError("relation_verification_evidence_required")
+            self._reject_in_memory_write()
+            record.verification_state = outcome
+            record.verified_by = verifier
+            record.verified_at = datetime.now(timezone.utc).isoformat()
+            record.verified_document = checked_document if outcome == VERIFIED else ""
+            record.verified_section = checked_section if outcome == VERIFIED else ""
+            record.verification_note = str(note or "").strip()
+            if outcome == REJECTED:
+                record.status = STATUS_REJECTED
+            elif record.status != STATUS_PROMOTED:
+                # Already-promoted records keep their status: the definition they became is
+                # the fact, and a later re-check does not undo the lineage link.
+                record.status = STATUS_CONFIRMED
+            record.version += 1
+            self._persist(record)
+            return record
+
+    def record_promotion(
+        self,
+        relation_id: str,
+        *,
+        principal: Principal,
+        definition_id: str,
+    ) -> Relation:
+        """Close the loop: this relation is now a formal definition with this key.
+
+        Promotion is only ever recorded after the definition row exists, and only for a
+        relation a reviewer verified, so the ledger and the catalog cannot disagree about
+        what became what.
+        """
+        definition = str(definition_id or "").strip()
+        if not definition:
+            raise ValueError("relation_definition_id_required")
+        with self._lock:
+            record = self._look_up(relation_id)
+            self._require_approval(principal)
+            if not self.can_read(record, principal):
+                raise PermissionError("permission_denied")
+            if not record.verified:
+                raise ValueError("relation_not_verified")
+            # Re-promotion is allowed and keeps the latest key: a definition revised under a
+            # new definition_version is a new row, and metric_definitions carries
+            # source_relation_id on every one of them, so the table - not this single
+            # pointer - is the authority on "which definitions came from this relation".
+            self._reject_in_memory_write()
+            record.status = STATUS_PROMOTED
+            record.promoted_definition_id = definition
+            record.version += 1
+            self._persist(record)
+            return record
+
+    @staticmethod
+    def can_read(record: Relation, principal: Principal | None) -> bool:
+        from app.common.policy import authorization_decision
+
+        if principal is None:
+            return False
+        decision = authorization_decision(
+            principal,
+            record.resource_scope,
+            action="resource:view",
+            require_resource_scope=True,
+        )
+        return decision.allowed
+
+    @staticmethod
+    def can_browse(record: Relation, principal: Principal | None) -> bool:
+        """May this principal meet this record without already holding its id?
+
+        This is ``can_read`` minus one widening plus one label. The minus is deliberate:
+        the review exit is built on the assumption that a reviewer who is *not* the author
+        opens the claim (an author certifying their own assertion is refused, and
+        ``docs/system-architecture-2026-09-17.md`` states the promotion gate as
+        ``resource:approve`` plus scope-readable plus never self-certified), so a
+        department colleague has to reach a record it was pointed at. The plus is the
+        record's own ``visibility`` (see ``discloses_to``): a private candidate assertion
+        is one person's claim, so browsing it takes its author or an account acting for
+        the whole tenant. Same department is not enough, and neither is the
+        ``resource:view`` that both of them hold.
+
+        An unowned record is refused to everyone but an administrator, the same way policy
+        treats a document row that predates the owner column: no owner is a legacy record,
+        never a public one.
+        """
+        if not KnowledgeGraph.can_read(record, principal):
+            return False
+        return discloses_to(record.visibility, record.owner_id, principal)
+
+    def query(
+        self,
+        source_entity: str | None = None,
+        relation: str | None = None,
+        *,
+        principal: Principal | None = None,
+    ) -> list[dict]:
+        """Every relation this principal may read; no owner means nothing.
+
+        This is the scope answer, and it is deliberately not what goes on the wire: a
+        colleague in the same department passes it for a record they do not own, which is
+        what the review exit needs and what tests/test_knowledge_graph.py pins. A caller
+        that is about to *show* the list calls ``browse`` instead.
+
+        No ``document`` leg here, on purpose (R344): the either-end filter exists to let a
+        client ask "what is registered about this 篇", which is a question about what may be
+        *shown*. Answering it from the scope leg would hand records that ``can_browse``
+        withholds to whoever renders the answer.
+        """
+        return self._listing(source_entity, relation, principal=principal, may_see=self.can_read)
+
+    def browse(
+        self,
+        source_entity: str | None = None,
+        relation: str | None = None,
+        *,
+        document: str | None = None,
+        principal: Principal | None = None,
+    ) -> list[dict]:
+        """The relations this principal may be shown, honouring each record's visibility.
+
+        The only enumeration exit with a production caller, and the one whose answer is
+        allowed to reach a client; see ``can_browse`` for what it narrows and why.
+
+        ``document`` (R344) narrows the listing to the rows that name this document on
+        *either* end -- ``source_entity`` or ``target`` -- compared through
+        ``document_identity_key``. It exists because a policy that a document only ever
+        appears as the object of a relation (《差旅管理办法》 --依据--> 《员工手册》: the
+        handbook sits in ``target``) is invisible to a subject-only filter, so the client
+        had to pull every relation the tenant may browse and filter it in the browser.
+        Passing ``source_entity`` alongside ``document`` intersects them (AND), it does not
+        replace either; a row that names the document on both ends is listed once.
+        A ``document`` that normalises to the empty string matches nothing, which is what
+        the client's own reader does with a blank name.
+        """
+        return self._listing(
+            source_entity, relation, principal=principal, document=document, may_see=self.can_browse
+        )
+
+    def _listing(
+        self, source_entity, relation, *, principal, may_see, document: str | None = None
+    ) -> list[dict]:
+        """Shared scan behind the two legs; ``may_see`` is asked about every candidate row.
+
+        The entity filters narrow *which* rows are candidates. They never decide whether the
+        principal may see one: ``may_see`` runs on every row that survives them, so a filter
+        can only ever remove records, never release one -- the reason a document filter is
+        safe to put in front of the wire at all.
+        """
+        if principal is None:
+            return []
+        document_key = None if document is None else document_identity_key(document)
+
+        def _names_document(item: Relation) -> bool:
+            if document_key is None:
+                return True
+            if not document_key:
+                return False
+            return (
+                document_identity_key(item.source_entity) == document_key
+                or document_identity_key(item.target) == document_key
+            )
+
+        with self._lock:
+            self._sync_from_store()
+            return [
+                item.to_dict()
+                for item in self._relations.values()
+                if (source_entity is None or item.source_entity == source_entity)
+                and (relation is None or item.relation == relation)
+                and _names_document(item)
+                and may_see(item, principal)
+            ]
+
+
+def knowledge_graph_storage_state() -> dict:
+    """State of the default graph store, i.e. what the API process mounts."""
+    store_path = _resolve_store_path()
+    error = _STORE_ERRORS.get(str(store_path or "memory"), "")
+    return KnowledgeGraph.state_for_store(store_path, error)

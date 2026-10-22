@@ -1,0 +1,636 @@
+"""R94 常驻钉：评测证据覆盖度复算器必须永远给出"账上缺出处的那批题"，一枚不许藏、一枚不许混。
+
+背景（数字本身见 docs/handoff/2026-09-19-eval-evidence-audit.md）：
+  * §2.1 记「至少缺一个出处的行 = 29」，§3.2 记四桶分解 A 1 / B 8 / C 5 / D 15 = 29，
+    附录 A 记每行缺的那个词条。此前这条数只活在一次性脚本里（be-r93/_audit/，未跟踪），
+    而跟进单 §25.3 引用的 be-r34/r36q/verify_r66.py 根本不存在（§2.4 第 4 条）。
+    本用例把「复算 == 文档」钉成仓库里的常驻断言。
+  * 下面所有 golden 常量都是那份文档的**抄本**，不是独立结论。抄本与文档不一致时，
+    test_golden_constants_still_match_the_audit_doc_text 会拿文档当场对质。
+
+R401（09-27）之后本文件的含义变了，就地写清（**这不是为了让门绿**，逐格理由见各用例 docstring）：
+  * 审计文档 §2.1 那 29 条从此是**历史抄本**（常量 MISSING_IDS_29 一字未动，仍然拿它跟文档
+    原文当场对质），但它不再等于"现在还缺的集合"。
+  * "现在还缺的集合"改成**从题源现算**：题源里每枚被 R401 判为丙（今天不可考）的行都带着
+    ``r401.disposition == "丙"`` 的点名记录，复算钉比的是那个派生集合（见 unscorable_ids()）。
+  * 过关要同时满足两问：① 复算 == 丙案点名集合；② 丙案 ∪ 已处置 == 文档那 29 枚，且两批不重叠。
+    于是"漏处置一枚"红、"把 29 之外的题也顺手换了锚词"红、"把丙案的锚词偷偷换掉"也红。
+  * 丙案那 19 枚的 must_contain 一个字节没动 —— 它们今天仍缺的仍然是附录 A 记的那同一个词，
+    这条由 test_each_missing_row_is_missing_exactly_the_term_in_appendix_a 逐枚验。
+
+全程离线：只读仓内文本文件，零模型、零网络、零容器、零连库。
+"""
+import importlib.util
+import json
+import re
+import shutil
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_PATH = REPO_ROOT / "scripts" / "check_eval_evidence_coverage.py"
+AUDIT_DOC = REPO_ROOT / "docs" / "handoff" / "2026-09-19-eval-evidence-audit.md"
+FIXTURE_105 = REPO_ROOT / "tests" / "fixtures" / "business_evaluation_100.jsonl"
+
+#: R401 写在题源每一枚上的处置标记字段名（计划与派生在 scripts/r401_anchor_provenance.py）。
+MARKER_FIELD = "r401"
+DISPOSITION_UNSCORABLE = "丙"
+DISPOSITION_RESOLVED = ("甲", "乙")
+
+#: 口径漂移时失败信息里必须出现的句子（教学义务：不许只说 expected != got）。
+TEACHING = "两处一起更新"
+
+# --- golden：审计文档 §2.1 的 29 个题号（原样顺序） -------------------------------
+#: R401 起这份抄本的角色变成**历史对账基准**：它等于"丙案点名 ∪ 已处置"，不再等于今天的复算
+#: 结果。为什么留着它而不是删掉：删掉之后没人能证明 R401 那 10 枚处置正好落在当年那 29 枚里。
+MISSING_IDS_29 = (
+    "doc-07 doc-14 doc-15 doc-17 chat-02 chat-08 chat-09 chat-11 chat-12 "
+    "data-07 data-08 data-12 insight-05 insight-06 insight-07 approval-03 "
+    "approval-05 scope-03 scope-04 scope-06 unsupported-01 unsupported-02 "
+    "unsupported-03 unsupported-04 tool-03 report-03 report-07 report-08 report-09"
+).split()
+
+# --- golden：审计文档 §3.2 的四桶归桶 --------------------------------------------
+BUCKET_IDS = {
+    "A": "approval-05".split(),
+    "B": "doc-07 doc-14 doc-15 doc-17 chat-02 chat-08 approval-03 report-07".split(),
+    "C": "data-07 data-08 data-12 insight-05 insight-06".split(),
+    "D": (
+        "chat-09 chat-11 chat-12 insight-07 scope-03 scope-04 scope-06 "
+        "unsupported-01 unsupported-02 unsupported-03 unsupported-04 tool-03 "
+        "report-03 report-08 report-09"
+    ).split(),
+}
+BUCKET_COUNTS = {"A": 1, "B": 8, "C": 5, "D": 15}
+
+# --- golden：审计文档附录 A 的 题号 -> 缺的那个词条（29 行 / 25 个不同词条） ------
+TERM_BY_ID = {
+    "approval-05": "需补开发票",
+    "approval-03": "无需超额审批",
+    "chat-02": "之后",
+    "chat-08": "不叠加",
+    "doc-07": "计发",
+    "doc-14": "离职结算",
+    "doc-15": "不需要打印",
+    "doc-17": "公司抬头",
+    "report-07": "审批路径",
+    "data-07": "前五",
+    "data-08": "小计",
+    "data-12": "变化率",
+    "insight-05": "长期未处理",
+    "insight-06": "超标率",
+    "chat-09": "不矛盾",
+    "chat-11": "800元",
+    "chat-12": "无法确认",
+    "insight-07": "不确定性",
+    "report-03": "一页纸",
+    "report-08": "未索引",
+    "report-09": "继续生成",
+    "scope-03": "超出可见范围",
+    "scope-04": "需单独授权",
+    "scope-06": "不可以",
+    "tool-03": "重新生成",
+    "unsupported-01": "无法确认",
+    "unsupported-02": "无法确认",
+    "unsupported-03": "无法确认",
+    "unsupported-04": "无法确认",
+}
+
+#: 审计文档 §2.3 / §3.10 记的两个备选口径数（R401 之后随主口径一起位移，**delta 才是那两枚**）。
+#:   §2.3：data/报销明细表.csv 一个词也救不回来 ⇒ 加不加 CSV 恒为同一个数（今天 = 19）。
+#:   §3.10：两篇与经营无关的 PDF 只救回 chat-02 / insight-07 ⇒ 老的 29→27 现在是 19→17。
+#: 🔴 这两个数不是"新基线"，是同一把尺在处置后的读数；"被救回集合不变"这一条单独钉在下面。
+CSV_CALIBER_ROWS = 19
+PDF_CALIBER_ROWS = 17
+#: §3.10 记的"只有这两枚能被 PDF 救回"。R401 那 10 枚新锚词若有一枚不是从 documents/*.txt
+#: 派生而是蹭了 PDF，这个 delta 当场就会变 —— 这条钉就是拿来堵这个的。
+PDF_ONLY_RESCUED = {"chat-02", "insight-07"}
+
+
+@pytest.fixture(scope="module")
+def checker():
+    spec = importlib.util.spec_from_file_location("check_eval_evidence_coverage", SCRIPT_PATH)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture()
+def no_network(monkeypatch):
+    """离线是一句主张，所以得有机闸：任何 socket 动作都算失败。"""
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("本用例禁止任何网络动作")
+
+    monkeypatch.setattr(socket.socket, "__init__", _boom)
+    monkeypatch.setattr(socket, "create_connection", _boom)
+
+
+def _run(checker, argv):
+    return checker.main([str(arg) for arg in argv])
+
+
+def _missing(checker, root=REPO_ROOT, **flags):
+    rows = checker.load_rows(root / checker.FIXTURE_REL)
+    corpus = checker.load_corpus(root, **flags)
+    return checker.find_missing_terms(rows, corpus)
+
+
+def _marked_rows():
+    """从题源现读带 R401 处置标记的行：[(题号, 标记)]，按题号排序。
+
+    本文件从"抄本"转向"派生"的唯一入口：丙案集合与已处置集合都从这里长出来，所以改题源里
+    任何一枚的 disposition 当场反映到钉上，不必有人再来改这份测试，也没法靠改这份测试蒙过去。
+    """
+    rows = [
+        json.loads(line)
+        for line in FIXTURE_105.read_text(encoding="utf-8-sig").splitlines()
+        if line.strip()
+    ]
+    return sorted(
+        (str(row["id"]), row[MARKER_FIELD])
+        for row in rows
+        if isinstance(row.get(MARKER_FIELD), dict)
+    )
+
+
+def unscorable_ids():
+    """现在还缺的那些枚 = 题源里被点名判丙的集合（派生，不是抄来的数）。"""
+    return sorted(
+        row_id for row_id, marker in _marked_rows()
+        if marker.get("disposition") == DISPOSITION_UNSCORABLE
+    )
+
+
+def disposed_ids():
+    """R401 已处置的那些枚 = 甲（换锚词）∪ 乙（换题面）。"""
+    return sorted(
+        row_id for row_id, marker in _marked_rows()
+        if marker.get("disposition") in DISPOSITION_RESOLVED
+    )
+
+
+def _report_ids(rendered):
+    """从脚本打印的「缺出处的题号」清单里抠出题号集合，用来对质两个备选口径的 delta。"""
+    body = rendered.split("缺出处的题号")[1]
+    return set(re.findall(r"[a-z]+-[\d]+", body))
+
+
+def _teaching(expected_ids, got_ids):
+    return (
+        "复算结果与审计文档 §2.1 / §3 记录的集合不一致。\n"
+        "  文档记 {0} 条，本次复算得到 {1} 条。\n"
+        "  文档有而复算没有: {2}\n  复算有而文档没记:   {3}\n"
+        "{4}\n"
+        "    (1) docs/handoff/2026-09-19-eval-evidence-audit.md 的 §2.1 题号清单、§3 四桶归桶、"
+        "附录 A；\n"
+        "    (2) tests/test_r94_eval_evidence_coverage.py 的 MISSING_IDS_29 / BUCKET_IDS / "
+        "BUCKET_COUNTS / TERM_BY_ID，以及 scripts/check_eval_evidence_coverage.py 的口径常量。\n"
+        "  只改一处 = 把口径漂移藏起来，这条断言存在的意义就是不让人这么干。"
+    ).format(
+        len(expected_ids),
+        len(got_ids),
+        " ".join(sorted(set(expected_ids) - set(got_ids))) or "(无)",
+        " ".join(sorted(set(got_ids) - set(expected_ids))) or "(无)",
+        TEACHING,
+    )
+
+
+def _assert_matches_pinned_29(got_ids):
+    """那条"钉"本身。主用例走它，反证用例也用 pytest.raises 走它 —— 必须是同一条判定路径。
+
+    R401 之后它一次钉两问：① 复算结果 == 题源点名的丙案集合；② 丙案 ∪ 已处置 == 文档那 29 枚
+    且两批互不重叠。第二问是**新增**的约束而不是放宽：它让"少报一枚缺口"和"多处置一枚题"
+    都过不去，而这在只钉一个 29 的年代是钉不住的。
+    """
+    expected = unscorable_ids()
+    resolved = disposed_ids()
+    assert sorted(got_ids) == sorted(expected), _teaching(expected, got_ids)
+    assert not set(expected) & set(resolved), (
+        "同一枚不能既判丙（今天不可考）又算已处置："
+        + " ".join(sorted(set(expected) & set(resolved)))
+    )
+    covered = sorted(set(expected) | set(resolved))
+    assert covered == sorted(MISSING_IDS_29), (
+        "R401 的处置账对不上审计文档 §2.1 记的那 29 枚：丙案 {0} 枚 + 已处置 {1} 枚 = {2} 枚，"
+        "应有 29 枚；对称差：{3}。".format(
+            len(expected), len(resolved), len(covered),
+            "、".join(sorted(set(covered) ^ set(MISSING_IDS_29))) or "(无)",
+        )
+        + TEACHING
+    )
+
+
+def _shadow_root(tmp_path, overrides):
+    """造一棵影子仓库：题源原样复制，语料按 overrides 换掉若干篇的**正文**（篇数不变）。
+
+    篇数不变是故意的 —— 只有规模闸不响，才能证明"覆盖度变了"是**钉**在管，
+    而不是 fail-closed 顺手挡掉的。所有写入都落在 tmp_path 里，绝不碰真语料。
+    """
+    root = tmp_path / "shadow"
+    (root / "tests" / "fixtures").mkdir(parents=True)
+    shutil.copyfile(FIXTURE_105, root / "tests" / "fixtures" / "business_evaluation_100.jsonl")
+    docs = root / "documents"
+    docs.mkdir()
+    for source in sorted((REPO_ROOT / "documents").glob("*.txt")):
+        text = overrides.get(source.name)
+        if text is None:
+            shutil.copyfile(source, docs / source.name)
+        else:
+            (docs / source.name).write_text(text, encoding="utf-8")
+    return root
+
+
+def _audit_doc_missing_ids():
+    """从审计文档 §2.1 那行原文里抠出题号，用来和上面的 golden 常量当场对质。"""
+    doc = AUDIT_DOC.read_text(encoding="utf-8")
+    line = next((l for l in doc.splitlines() if l.startswith("**29 个题号")), "")
+    return re.findall(r"[a-z]+-\d+", line)
+
+
+def _audit_doc_buckets():
+    """从审计文档 §3.2 表格里抠出四桶，形如 {"A": (1, ["approval-05"]), ...}。"""
+    doc = AUDIT_DOC.read_text(encoding="utf-8")
+    rows = re.findall(
+        r"^\| \*\*([ABCD]) [^|]*\*\* \| \*\*(\d+)\*\* \| ([^|]*)\|$", doc, re.MULTILINE
+    )
+    return {name: (int(count), ids.strip().split()) for name, count, ids in rows}
+
+
+# ---------------------------------------------------------------------------
+# ① 可重跑 + ④ golden 口径
+# ---------------------------------------------------------------------------
+
+def test_recomputed_missing_ids_equal_the_named_unscorable_set(checker, no_network):
+    """复算 == 题源点名的丙案集合；丙案 + 已处置 == 文档记的那 29 枚（两问都在钉里）。
+
+    用例名从 "...equal_the_29_recorded_in_the_audit_doc" 改到这里：R401 之后它比的已经不是
+    文档抄本那个 29，改名是为了不让人读到一个会说谎的名字。29 那笔账仍然由这条钉的第二问
+    和 test_golden_constants_still_match_the_audit_doc_text 一起守着（后者本单一个字没动）。
+    """
+    got = sorted(_missing(checker))
+    _assert_matches_pinned_29(got)
+    assert len(got) == len(unscorable_ids()) == 19
+    assert len(disposed_ids()) == 10
+
+
+def test_row_count_equals_term_count_fingerprint(checker, no_network):
+    """§2.2 的结构指纹：29 行各缺 1 词，行数 == 词条数。这条比 29 更难撞对。"""
+    missing = _missing(checker)
+    assert len(missing) == sum(len(terms) for terms in missing.values()), (
+        "行数 != 词条数，口径指纹已破（§2.2）。若你确实补了语料或改了题，" + TEACHING
+    )
+
+
+def test_each_missing_row_is_missing_exactly_the_term_in_appendix_a(checker, no_network):
+    """丙案那 19 枚今天仍缺**附录 A 记的那同一个词**；甲/乙那 10 枚换掉的也正是那一个词。
+
+    这条是"判据②丙案不许偷偷换锚词"的闸：附录 A 是审计文档的抄本（本单不动 docs/handoff/**），
+    丙案的 must_contain 只要被动过一次手，这里立刻对不上。甲/乙那 10 枚则拿题源里的
+    ``r401.replaced_term`` 对质附录 A —— 那个值是 --apply 当场从复算里测出来的，不是手抄的，
+    所以它证明"被换掉的那个词就是文档记的那个缺口"，而不是从一行里随手挑的顺眼词。
+    """
+    missing = _missing(checker)
+    expected = {row_id: [TERM_BY_ID[row_id]] for row_id in unscorable_ids()}
+    assert missing == expected, _teaching(sorted(expected), sorted(missing))
+    assert len(expected) == 19
+    markers = dict(_marked_rows())
+    replaced = {row_id: str(markers[row_id].get("replaced_term")) for row_id in disposed_ids()}
+    assert replaced == {row_id: TERM_BY_ID[row_id] for row_id in disposed_ids()}, (
+        "甲/乙换掉的词条与附录 A 记的缺口不是同一个词，" + TEACHING
+    )
+    assert len({value for value in TERM_BY_ID.values()}) == 25
+
+
+def test_four_bucket_counts_are_pinned_and_partition_the_29(checker, no_network):
+    """四桶计数（A1 / B8 / C5 / D15）是钉住的常量，且必须无重叠地铺满『缺口 ∪ 已处置』。
+
+    四桶本身仍是审计文档 §3.2 的抄本，R401 **不重归桶**：那四桶记的是"缺口属于哪一类性质"
+    （真缺 / 词形 / 数据侧 / 产品侧），不是"本单怎么处置它"。处置换了、性质没换，所以桶照抄
+    不动；只在最后一问把"复算结果"换成"复算结果 ∪ 已处置" —— 那 10 枚并没有从历史上消失。
+    """
+    assert {bucket: len(ids) for bucket, ids in BUCKET_IDS.items()} == BUCKET_COUNTS
+    union = [item for ids in BUCKET_IDS.values() for item in ids]
+    assert len(union) == len(set(union)) == 29, "四桶之间有重叠或总数不是 29，" + TEACHING
+    assert sorted(union) == sorted(MISSING_IDS_29), "四桶并集与 §2.1 的 29 条不等，" + TEACHING
+    got = set(_missing(checker))
+    resolved = set(disposed_ids())
+    assert got & resolved == set(), (
+        "已处置的枚不该再出现在缺口里：" + " ".join(sorted(got & resolved)) + "。" + TEACHING
+    )
+    assert sorted(got | resolved) == sorted(union), _teaching(union, sorted(got | resolved))
+
+
+# ---------------------------------------------------------------------------
+# 常量与文档双向对质：常量抄错、文档被重排，都得当场红
+# ---------------------------------------------------------------------------
+
+def test_golden_constants_still_match_the_audit_doc_text():
+    doc_ids = _audit_doc_missing_ids()
+    assert len(doc_ids) == 29, (
+        "在审计文档 §2.1 里抠出的题号不是 29 个（看到 "
+        + str(len(doc_ids))
+        + "）。若你重排了那份文档，"
+        + TEACHING
+    )
+    assert sorted(doc_ids) == sorted(MISSING_IDS_29), "本文件常量与审计文档 §2.1 不等，" + TEACHING
+
+    buckets = _audit_doc_buckets()
+    assert "".join(sorted(buckets)) == "ABCD", "§3.2 表格形状变了，四桶解析不出来，" + TEACHING
+    assert {name: count for name, (count, _) in buckets.items()} == BUCKET_COUNTS, (
+        "文档 §3.2 的四桶计数与本文件 BUCKET_COUNTS 不等，" + TEACHING
+    )
+    for name, (_, ids) in buckets.items():
+        assert sorted(ids) == sorted(BUCKET_IDS[name]), (
+            "桶 " + name + " 的题号与本文件常量不等，" + TEACHING
+        )
+
+
+# ---------------------------------------------------------------------------
+# ② 口径写死在代码里（显式常量而非散在逻辑里），备选口径用开关表达
+# ---------------------------------------------------------------------------
+
+def test_caliber_is_expressed_as_explicit_constants(checker):
+    assert checker.NORMALIZATION_STEPS == ("NFKC", "strip_all_whitespace", "casefold")
+    assert checker.MATCH_MODE == "substring_within_single_document"
+    assert checker.ROW_RULE == "row_counts_as_missing_if_any_term_missing"
+    assert checker.CORPUS_DIR_REL == Path("documents")
+    assert checker.CORPUS_TXT_GLOB == "*.txt"
+    assert checker.CORPUS_DECODINGS == ("utf-8", "utf-8-sig", "gb18030")
+    assert checker.FIXTURE_ENCODING == "utf-8-sig"
+    # 三步都真的在函数里生效：全角转半角、去**所有**空白、大小写折叠。
+    assert checker.normalize(" Ａ Ｂ c ") == "abc"
+    assert checker.normalize("Word") == checker.normalize("word")
+
+
+def test_expected_scale_constants_are_pinned_in_the_script(checker):
+    assert (checker.EXPECTED_FIXTURE_ROWS, checker.EXPECTED_TERM_TOTAL) == (105, 121)
+    assert checker.EXPECTED_CORPUS_TXT_COUNT == 95
+
+
+def test_include_pdf_flag_reads_the_other_caliber_and_help_says_so(checker, capsys, no_network):
+    assert _run(checker, ["--repo-root", REPO_ROOT]) == checker.EXIT_OK
+    main_out = capsys.readouterr().out
+    assert "查无出处的行 = {0}".format(len(unscorable_ids())) in main_out, (
+        "主口径出数与题源点名的丙案枚数不一致，" + TEACHING
+    )
+
+    assert _run(checker, ["--repo-root", REPO_ROOT, "--include-pdf"]) == checker.EXIT_OK
+    pdf_out = capsys.readouterr().out
+    assert "查无出处的行 = {0}".format(PDF_CALIBER_ROWS) in pdf_out, (
+        "§3.10 记着：把 2 篇 PDF 算出处会比主口径少两枚，R401 之后是 "
+        + str(PDF_CALIBER_ROWS) + "。对不上说明语料侧变了，" + TEACHING
+    )
+    listed = pdf_out.split("缺出处的题号")[1]
+    for row_id in ("chat-02", "insight-07"):
+        assert row_id not in listed, (
+            "PDF 口径下 " + row_id + " 应被救回（§3.10），" + TEACHING
+        )
+    # 🔴 R401 加的这问：换口径**只准**救回 §3.10 点名的那两枚。十枚新锚词全部声明为
+    # documents/*.txt 派生，其中任何一枚如果其实是蹭 PDF 才有出处，被救回的集合就会变大，
+    # 这里当场红 —— 所以它同时是"派生没派生"的反证，不是复述旧数。
+    assert _report_ids(main_out) - _report_ids(pdf_out) == PDF_ONLY_RESCUED, (
+        "PDF 口径比主口径多救回来的不是 §3.10 记的那两枚，" + TEACHING
+    )
+
+    help_text = checker.build_parser().format_help()
+    assert "另一种口径" in help_text and "主口径排除" in help_text, (
+        "--help 必须写明 PDF 是另一种口径、主口径排除，否则下一个人会把 27 当成本件的失败"
+    )
+
+
+def test_include_csv_flag_leaves_the_number_alone(checker, capsys, no_network):
+    """§2.3：把报销明细表.csv 当出处，0 行被救回 ⇒ 与主口径恒等于同一个数（今天 19）。"""
+    assert _run(checker, ["--repo-root", REPO_ROOT, "--include-csv"]) == checker.EXIT_OK
+    assert "查无出处的行 = {0}".format(CSV_CALIBER_ROWS) in capsys.readouterr().out, (
+        "§2.3 记着加不加 CSV 都是 " + str(CSV_CALIBER_ROWS) + "，" + TEACHING
+    )
+    assert CSV_CALIBER_ROWS == len(unscorable_ids()), (
+        "CSV 口径该等于主口径（CSV 不算出处也救不回东西）；两个数一旦分叉，"
+        "说明有丙案条目开始蹭 data/ 当出处，" + TEACHING
+    )
+
+
+# ---------------------------------------------------------------------------
+# ③ fail-closed：规模变了必须当场红，且不许把数字吐出来
+# ---------------------------------------------------------------------------
+
+def test_normal_run_exits_zero_and_prints_the_id_list(checker, capsys, no_network):
+    assert _run(checker, ["--repo-root", REPO_ROOT]) == checker.EXIT_OK
+    out = capsys.readouterr().out
+    assert "查无出处的行 = {0}".format(len(unscorable_ids())) in out
+    for row_id in ("chat-02", "unsupported-04", "report-09"):
+        assert row_id in out, "题号清单里没有丙案的 " + row_id
+    # approval-05 从 R401 起不在这份清单里了（判乙、已处置）。点名换成它的依据不是删掉那条
+    # 断言，而是改由 _assert_matches_pinned_29 的第二问（丙 ∪ 已处置 == 29）与反证用例兜住。
+    tail = out.split("逐条：")[1]
+    for row_id in disposed_ids():
+        assert row_id not in tail, "已处置的 " + row_id + " 不该再出现在缺口清单里"
+
+
+def test_fail_closed_when_fixture_row_count_drifts(checker, capsys, monkeypatch):
+    monkeypatch.setattr(checker, "EXPECTED_FIXTURE_ROWS", 104)  # 真实是 105
+    assert _run(checker, ["--repo-root", REPO_ROOT]) == checker.EXIT_STRUCTURE
+    captured = capsys.readouterr()
+    assert "看到 105 行，期望 104 行" in captured.err, "报错必须说出它实际看到了什么"
+    assert TEACHING in captured.err
+    assert "查无出处的行" not in captured.out, "结构漂移时不许静默给出一个新数"
+
+
+def test_fail_closed_when_term_total_drifts(checker, capsys, monkeypatch):
+    monkeypatch.setattr(checker, "EXPECTED_TERM_TOTAL", 120)  # 真实是 121
+    assert _run(checker, ["--repo-root", REPO_ROOT]) == checker.EXIT_STRUCTURE
+    captured = capsys.readouterr()
+    assert "看到 121 个，期望 120 个" in captured.err
+    assert "查无出处的行" not in captured.out
+
+
+def test_fail_closed_when_corpus_txt_count_drifts(checker, capsys, monkeypatch):
+    monkeypatch.setattr(checker, "EXPECTED_CORPUS_TXT_COUNT", 94)  # 真实是 95
+    assert _run(checker, ["--repo-root", REPO_ROOT]) == checker.EXIT_STRUCTURE
+    captured = capsys.readouterr()
+    assert "看到 95 篇，期望 94 篇" in captured.err
+    assert TEACHING in captured.err
+    assert "查无出处的行" not in captured.out, "补了语料也不许沿用旧口径闷声出数"
+
+
+def test_fail_closed_when_corpus_directory_is_missing(checker, capsys, tmp_path):
+    fake_root = tmp_path / "no-corpus"
+    (fake_root / "tests" / "fixtures").mkdir(parents=True)
+    (fake_root / "tests" / "fixtures" / "business_evaluation_100.jsonl").write_text(
+        FIXTURE_105.read_text(encoding="utf-8-sig"), encoding="utf-8"
+    )
+    assert _run(checker, ["--repo-root", fake_root]) == checker.EXIT_STRUCTURE
+    captured = capsys.readouterr()
+    assert "语料目录不存在" in captured.err
+    assert "chroma_db" in captured.err, "必须提示不许拿快照冒充语料（§3.9 / runbook P-9）"
+    assert "查无出处的行" not in captured.out
+
+
+def test_fail_closed_when_fixture_is_missing(checker, capsys, tmp_path):
+    assert _run(checker, ["--repo-root", tmp_path]) == checker.EXIT_STRUCTURE
+    assert "题源不存在" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# 产物与零副作用
+# ---------------------------------------------------------------------------
+
+def test_json_output_matches_the_console_report(checker, capsys, tmp_path, no_network):
+    target = tmp_path / "nested" / "no_provenance_r0.json"
+    assert _run(checker, ["--repo-root", REPO_ROOT, "--json", target]) == checker.EXIT_OK
+    assert "已写出" in capsys.readouterr().out
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    # 与上面 test_each_missing_row_... 同一条期望（丙案逐枚缺附录 A 那个词），两处必须一起对；
+    # 抄本 TERM_BY_ID 原样留着，是因为它还要跟审计文档当场对质，不是为了当今天的期望值。
+    assert payload == {row_id: [TERM_BY_ID[row_id]] for row_id in unscorable_ids()}
+
+
+def test_script_is_a_reader_not_a_business_dependency(checker):
+    """本件是取证件：不许 import app.*、不许碰网络、不许把向量库当语料源。
+
+    子进程只开一个有边界的例外，就是 corpus_scope 里那一次 git ls-files：human-gates 在
+    09-18 立了测试卫生铁规「任何依赖语料/文件清单的用例必须钉版本化清单，禁止吃 ambient
+    目录」，R49 也是同一读法；而 09-19 主树 115 个 .txt 对 95 篇口径当场让本文件红了 11
+    条，吃的正是 ambient 目录。除这一处之外，本件仍然不得起任何子进程。
+    """
+    source = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert not re.search(r"^(from|import)\s+app\b", source, re.MULTILINE), "取证件不许依赖 app/"
+    for banned in ("requests", "urllib", "httpx", "socket.", "chromadb", "subprocess.Popen",
+                    "subprocess.check_output", "os.system", "Popen("):
+        assert banned not in source, "取证件不该出现 " + banned
+    assert source.count("subprocess.run(") == 1, "子进程只许 corpus_scope 那一处，多一处就不是只读取证了"
+    assert '["git", "-C"' in source and "ls-files" in source, "唯一那处 subprocess 必须是 git ls-files 清单"
+    assert "def main" in source and '__name__ == "__main__"' in source
+
+# ---------------------------------------------------------------------------
+# 反证用例（常驻）：故意破坏覆盖度，钉必须红
+#    两个方向都做 —— 把 29 条缺口人为填平、把已有出处人为抽走。
+#    两棵影子树的 txt 篇数都还是 95，所以 fail-closed **不该**出手（用例里当场断言退出码 0）；
+#    红只能由钉来给。少了这两条，本文件只是在复述文件内容，守不住 29 这条账。
+# ---------------------------------------------------------------------------
+
+
+def test_counter_evidence_saturated_corpus_turns_the_pin_red(checker, capsys, tmp_path, no_network):
+    """反证一：拿一篇把**全部 121 个词条**都写进去的假语料顶掉一篇真语料 ⇒ 缺口变 0，钉必须红。
+
+    这就是「补料补到覆盖度做满」的形状：题没动、篇数没动（仍 95，fail-closed 不该响），只有覆盖度动了。
+    补的是全部词条而不只那 29 个，是为了不管被顶掉的那篇是不是别的词的唯一出处，缺口都必然归 0
+    —— 否则这条反证会随语料形状偶然失效。
+    """
+    rows = checker.load_rows(REPO_ROOT / checker.FIXTURE_REL)
+    all_terms = sorted({str(term) for row in rows for term in row[checker.MUST_CONTAIN_FIELD]})
+    occurrences = sum(len(row[checker.MUST_CONTAIN_FIELD]) for row in rows)
+    assert (occurrences, len(all_terms)) == (checker.EXPECTED_TERM_TOTAL, 105), "词条总数/去重数与本件口径不符，" + TEACHING
+    victim = sorted(p.name for p in (REPO_ROOT / "documents").glob("*.txt"))[-1]
+    shadow = _shadow_root(tmp_path, {victim: "伪造语料（反证用例） " + " ".join(all_terms)})
+
+    assert _run(checker, ["--repo-root", shadow]) == checker.EXIT_OK, "规模没变，fail-closed 不该拦"
+    out = capsys.readouterr().out
+    assert "查无出处的行 = 0" in out, "伪造语料没能把 29 条缺口填平，反证本身失效"
+    assert sorted(_missing(checker, root=shadow)) == []
+    with pytest.raises(AssertionError, match=TEACHING):
+        _assert_matches_pinned_29([])
+
+
+def test_counter_evidence_removed_evidence_turns_the_pin_red(checker, capsys, tmp_path, no_network):
+    """反证二：把某个已覆盖词条的**唯一出处**那一篇清空 ⇒ 缺口只会变多，钉同样必须红。"""
+    corpus = checker.load_corpus(REPO_ROOT)
+    rows = checker.load_rows(REPO_ROOT / checker.FIXTURE_REL)
+    already_missing = _missing(checker)
+    target = None
+    for row in rows:
+        row_id = str(row["id"])
+        if row_id in already_missing:
+            continue
+        for term in row[checker.MUST_CONTAIN_FIELD]:
+            sources = [name for name, text in corpus.items() if checker.normalize(str(term)) in text]
+            if len(sources) == 1:
+                target = (row_id, str(term), sources[0])
+                break
+        if target:
+            break
+    assert target is not None, (
+        "语料里找不到任何「唯一出处」词条，这条反证需随语料形状一起改写，" + TEACHING
+    )
+    row_id, term, source = target
+
+    shadow = _shadow_root(tmp_path, {source: "本篇正文已清空（反证用例）"})
+    assert _run(checker, ["--repo-root", shadow]) == checker.EXIT_OK, "规模没变，fail-closed 不该拦"
+    printed = [
+        line for line in capsys.readouterr().out.splitlines() if "查无出处的行 = " in line
+    ]
+    assert len(printed) == 1, "脚本没按约定格式出数，反证本身失效"
+    rows_now = int(printed[0].split("= ")[1])
+    # 一篇文档可能是若干词条共同的唯一出处，所以只断言"严格变多"，不钉死成 20。
+    assert rows_now > len(unscorable_ids()), "清空 " + source + " 之后缺口没有变多"
+
+    got = sorted(_missing(checker, root=shadow))
+    assert row_id in got, "被清空的 " + row_id + " 没有变成缺口"
+    assert set(already_missing) < set(got), "新缺口应当严格包住旧的 29 条"
+    with pytest.raises(AssertionError, match=TEACHING):
+        _assert_matches_pinned_29(got)
+
+
+# ---------------------------------------------------------------------------
+# 语料范围（09-19 并主干后补）—— 审计读的是版本化清单，不是 ambient 目录
+# ---------------------------------------------------------------------------
+
+def _git_available():
+    try:
+        return subprocess.run(["git", "--version"], capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+@pytest.mark.skipif(not _git_available(), reason="本机没有 git，验不了跟踪集作用域")
+def test_untracked_litter_cannot_move_the_audit_number(checker, tmp_path):
+    """在临时 git 库里重演 09-19 主树的形状：跟踪 1 篇、残片 1 篇，审计只许看见那 1 篇。
+
+    那天并主干当场红 11 条，就是因为口径钉 95 篇而 documents/ 里躺着 115 个 .txt（多出的
+    20 个是上传落地区留下的 __vN 副本）。工作树的脏东西不该有权改变这个数：它既不许替某个
+    词条救出出处，也不许把篇数闸顶到 refuse 出数。
+    """
+    docs = tmp_path / "documents"
+    docs.mkdir()
+    (docs / "kept.txt").write_text("跟踪中的语料", encoding="utf-8")
+    (docs / "litter.txt").write_text("没跟踪的上传残片", encoding="utf-8")
+    steps = (
+        ["init", "-q"],
+        ["add", "documents/kept.txt"],
+        ["-c", "user.email=seed@invalid", "-c", "user.name=seed", "commit", "-q", "-m", "seed"],
+    )
+    for step in steps:
+        run = subprocess.run(["git", "-C", str(tmp_path)] + step, capture_output=True, timeout=60)
+        assert run.returncode == 0, run.stderr.decode("utf-8", "replace")[:200]
+
+    picked = checker.corpus_scope(docs, "*.txt")
+
+    assert [path.name for path in picked] == ["kept.txt"], "跟踪集之外的文件混进了审计范围"
+
+
+def test_corpus_scope_falls_back_to_the_disk_glob_without_git(checker, tmp_path):
+    """git 答不上来的树（导出目录、本文件自己造的影子仓库）退回磁盘 glob。
+
+    这条退路是影子树用例能跑的前提：它们造的 tmp 树不在任何仓库里。
+    """
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("y", encoding="utf-8")
+
+    picked = checker.corpus_scope(tmp_path, "*.txt")
+
+    assert [path.name for path in picked] == ["a.txt", "b.txt"]
+
+
+def test_the_repo_corpus_still_measures_the_pinned_ninety_five(checker):
+    """真仓库这一头：读进来的篇数必须正好是钉死的主口径篇数。"""
+    corpus = checker.load_corpus(REPO_ROOT)
+
+    assert len(corpus) == checker.EXPECTED_CORPUS_TXT_COUNT, (
+        "装进来的语料篇数不等于主口径钉死的 " + str(checker.EXPECTED_CORPUS_TXT_COUNT) + " 篇"
+    )

@@ -71,16 +71,21 @@ def gantt_chart(tasks: list[dict], title: str = "项目甘特图") -> str:
 
     df_data = []
     for i, t in enumerate(tasks):
+        start = t.get("start") or t.get("Start")
+        finish = t.get("end") or t.get("Finish")
+        if not start or not finish:
+            raise KeyError("start")
+        resource = t.get("name") or t.get("Resource") or f"任务{i}"
         df_data.append(dict(
-            Task=t.get("label", f"任务{i}"),
-            Start=t["start"],
-            Finish=t["end"],
-            Resource=t.get("name", f"任务{i}"),
+            Task=t.get("label") or t.get("Task") or resource,
+            Start=start,
+            Finish=finish,
+            Resource=resource,
         ))
 
     colors = {
-        t["name"]: px.colors.qualitative.Plotly[i % len(px.colors.qualitative.Plotly)]
-        for i, t in enumerate(tasks)
+        item["Resource"]: px.colors.qualitative.Plotly[i % len(px.colors.qualitative.Plotly)]
+        for i, item in enumerate(df_data)
     }
 
     fig = ff.create_gantt(

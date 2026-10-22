@@ -1,0 +1,867 @@
+/**
+ * 错误码字典（V5 / F7 叶子线产出）
+ *
+ * 后端错误体三种形状并存（工单 D-2），本模块统一成 { code, message, retryable, rawCode }：
+ *   形状 1 字符串稳定码   err.response.data.detail === "unsupported_file"
+ *   形状 2 ErrorEnvelope  err.response.data.detail === { code, message, retryable, details }
+ *                         来源 app/api/v1/observability.py 全部、chat.py::_document_index_error
+ *   形状 3 FastAPI 422    err.response.data.detail === [{ loc, msg, type }, ...]
+ *
+ * 码名蓝本：app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举。本字典的键与它一一对应，
+ * 不多不少（errcodes.test.js 双向对账钉死，见下面的「码表对账」）。线上出现的其它历史码名走
+ * LEGACY_ALIASES 归一。
+ * 鉴权中间件今天吐的是**枚举码本尊**（app/main.py 的 401 authentication_required 与
+ * 403 account_unavailable 那几枚 JSONResponse 出口）；按 detail 原文索引中文散文的那张
+ * PROSE_ALIASES 只剩野外兜底，换代理由与复核出处写在下面那张表的注释里。
+ *
+ * 硬不变量：normalizeError() 的 .code 一定 ∈ Object.keys(ERROR_CODES) ∪ {''}。
+ * 后端原样回来的码名/散文一律放进 .rawCode，只供排查与「错误码：xxx」小字使用；
+ * 后端信封 message 那一格原样回来的话一律放进 .rawMessage（R281 判据①，见下面「人话位归属」）。
+ *
+ * 文案政策（B-5 ②）：给人看的句子只说人话 + 下一步，不内嵌裸 snake_case 码名。
+ * 码名走独立通道 errorCodeOf()，由界面放进 data-code / 「详情」折叠区；未知码才由
+ * formatError() 在句尾附「错误码：xxx」小字。后端直出的句子若夹带码名，由 extractEmbeddedCode()
+ * 在归类前摘掉，摘不干净的宁可走兜底句也不把码名留在正文里。
+ *
+ * 人话位归属（R281 判据①，2026-09-26 全局改判）：形状 2 的 {code, message} 信封过去把后端
+ * 那句 message 顶在字典句之前，后端回英文原句时屏上画的就是那句英文 —— 现场是
+ * app/common/authorization.py:94-99 回的 403 信封，客户读到的是 "department must match the
+ * authenticated principal"，那是缺陷不是信息。改判之后给人看的句子一律出自本字典，
+ * 分流只认 dictionaryClaims() 这一条谓词（判据③）：码被字典收编 ⇒ 用字典句；
+ * 字典收不下这枚 code ⇒ 后端那句 message 仍是唯一线索，继续占人话位，未知码那一档一分未退。
+ * 后端原文一个字符都不丢：它一律进 normalizeError() 的 rawMessage，通道只这一条
+ * （为什么不去扩「错误码：xxx」那条小字，理由写在 clampResult 的注释里）。
+ *
+ * R380 判据①③（2026-09-27）把同一条原则铺到**第二个形状**：形状 1 的裸串 detail 既不是码名、
+ * 也不在任何一张表里时，过去一律原样当人话（下面那两道 return），于是未捕获 500 的
+ * "Internal Server Error" 这类框架英文直接印上屏。现在那两道 return 只读 proseIsForHumans()
+ * 一个答案：含中日韩文字 ⇒ 照旧直出（app/api/v1/auth.py:81 那句一分未退）；不含 ⇒ 走 STATUS_CODES[status]
+ * 的字典句，没有状态码可归类才回兜底句，原文进 rawMessage。
+ * 防英文的地方由此仍然只有一处，且全在字典侧：分流「字典认不认得这枚码」= dictionaryClaims()，
+ * 分流「后端这句话能不能给人看」= proseIsForHumans()。消费侧（lib/http.js::errorDetail 与一切
+ * .vue）一道防线都不设，判据②钉在 __tests__/r380-detail-voice.test.js。
+ *
+ * 码表对账（A-6 ③ 起读真源；B-5 ④ 那三列手抄账整体作废，缘由见看板 §4L.5）：
+ *   列 A  真源 = app/agents/contracts.py::ErrorEnvelope.code 的封闭枚举。errcodes.test.js 用
+ *         execFileSync("git", ["show", "<ref>:<path>"]) 读 git 对象，绝不 readFileSync 工作树：
+ *         fe-trunk 的 app/** 停在分支点，那里 contracts.py 只有 16 码，读它就是「永远绿」的假绿。
+ *         三个 worktree 共享同一 object DB，git show 与工作树新鲜度无关。
+ *   列 C  前端 ERROR_CODES。
+ *   不变量两条，单测双向钉死并逐条指名：A − C = 空 且 C − A = 空。
+ *         A − C 非空 ⇒ 后端发得出、界面只能说兜底句；C − A 非空 ⇒ 前端自扩了契约没有的码。
+ *         旧版只钉 A − C 且拿手抄的 17 码去钉，所以后端 26 vs 前端 25 的漂移无人报警。
+ *   列 B 不再单列：app/agents/evidence.py 的 _ERROR_CODES 现由 _enum_error_codes() 从
+ *         ErrorEnvelope.code 派生（app/api/v1/auth.py:21-34）。第二份手抄码表本身就是当年那个把线上真码洗成
+ *         internal_error 的缺陷，后端已删掉它，所以 A − B 恒为空，没有可钉的账。
+ *   UNRATIFIED_CODES 概念随 6606f59 追认而作废：data.py 7 码与 no_answer_produced 现在都在
+ *         列 A 里，「前端有话、契约没登记」恒为空，由 C − A 一条直接钉住，不留永远该是空的名单。
+ *   还有一类账不在上面两列里：LEGACY_ALIASES 的 18 个后端实发码名与 PROSE_ALIASES 的 2 条中文散文
+ *   仍是「后端确实发得出、封闭枚举里没有」的输入，前端已归一，契约侧仍欠登记（派单给后端时带上）。
+ *   R270 判据②新增的 department_override_denied 欠的正是这一笔登记：R277 判据③已在
+ *   tests/test_error_code_vocabulary.py::BARE_CODES_OUTSIDE_THE_ENUM 补上那一条（该表今天 18 枚），
+ *   两头相平等式恢复成立 —— 凭据 pytest tests/test_r142_error_code_table_sync.py
+ *   tests/test_error_code_vocabulary.py -q = 41 passed（补之前 1 failed / 40 passed）。
+ */
+
+/** 与后端封闭枚举一一对应的键（R89 实量 29 个）：它们就是 normalizeError().code 的全部合法取值。 */
+export const ERROR_CODES = {
+  authentication_required: { message: '登录状态已失效，请重新登录后再试。', retryable: false },
+  permission_denied: { message: '当前账号没有这项权限，请联系管理员开通。', retryable: false },
+  // 部门授权范围取不到。原 lib/sessions.js:379 那句把「换带部门的账号或联系管理员」说清了，
+  // 这里收下这层语义，只把裸码名摘掉（文案政策：句子说人话，码名走 errorCodeOf 独立通道）。
+  //
+  // R208 判据①：这一句原本还写着「请稍后重试」，而这一枚码恰好在排队轮询的停表名单里
+  //（ChatPanel.vue::QUEUE_POLL_STOPPERS 的 403 那一格），于是停表那张脸并排画出两句真话——
+  // 「请稍后重试」与尾句「界面已停止继续查询」：各自都不假，并排读就是自相矛盾。
+  // 「等一会儿它自己会变好」这一层在这一格是假的：表已经停了，不会再有读数回来，
+  // 要变得由人重新发起一次。所以句子只留「哪件事没做成」+「谁能修」，重试那一层交给下面
+  // 这枚 retryable（它才是 QueueFace「按原文再问一次」那颗按钮的唯一生产者），
+  // 不在散文里另许一遍。retryable 保持 true：R202 甲6 钉着「判这一族可恢复就要给出出口」。
+  // 钉子：r208-dictionary-voice.test.js —— 停表名单里每一格的字典句都不许承诺「稍后再试」，
+  // 且屏上那句归属话必须仍出自本字典（组件里不许硬写第二句）。
+  authorization_unavailable: {
+    message: '暂时确认不了你的数据权限范围，这次没能判定你能看哪些数据；请联系管理员补齐授权，或改用带部门授权的账号。',
+    retryable: true,
+  },
+  // 账号被停用：既不是 permission_denied（不是权限不够，重新登录也没用），也不该退化成兜底句。
+  account_unavailable: { message: '这个账号已被停用，请联系管理员恢复后再使用。', retryable: false },
+  resource_not_found: { message: '要找的内容不存在或已被移除。', retryable: false },
+  validation_error: { message: '提交的内容有不合规之处，请检查后重试。', retryable: false },
+  conflict: { message: '这条记录已被他人更新，请刷新后重试。', retryable: false },
+  rate_limited: { message: '操作太频繁了，请稍等一会儿再试。', retryable: true },
+  queue_unavailable: { message: '后台任务暂时排不上队，请稍后重试。', retryable: true },
+  model_unavailable: { message: '分析模型当前不可用，请稍后重试或联系管理员。', retryable: true },
+  // R30：本机 n_ctx 装不下「这一轮的提示词 + 对话历史」。后端注释把话说死了 —— 它不是可重试的
+  // 错，「同一个提示词永远装不下」（app/agents/contracts.py:221-226），而且
+  // tests/test_r30_context_limit_guard.py::test_the_code_reaches_the_client_without_being_downgraded
+  // 当场断言 result.error.retryable is False。前端跟着判 false：点「重试」发出去的是同一个
+  // 超长请求，必然被同一道窗口拦下；真要它变，先变的是问题长度，不是再按一次按钮。
+  context_limit_exceeded: {
+    message: '这一轮的问题连同对话历史太长了，模型的上下文窗口装不下，请缩短问题或另起一轮会话再问。',
+    retryable: false,
+  },
+  retrieval_unavailable: { message: '知识库检索暂不可用，回答可能缺少资料依据。', retryable: true },
+  // 唯一出处 app/api/v1/chat.py:1303：/hitl/pending 取待确认列表时抛 PendingApprovalStoreMissing，
+  // 也就是那张表还不存在（迁移没跑），503 的 detail 原样就是这个码。刻意不与下面 LEGACY_ALIASES 里
+  // storage_read_only → internal_error 那句共用：「表不存在」要有人去跑迁移，「存储被切成只读」是
+  // 另一回事，运维修的不是同一个故障，合并成一句就会把两条排查路都指错。
+  // retryable 判 false，三条理由：
+  //   ① 它是部署缺陷，前端重试同一个请求必然同样失败，直到有人把迁移跑完；
+  //   ② 后端自己也没把它当可重试错 —— app/agents/evidence.py:18 的 _RETRIABLE_CODES 收了
+  //      model_unavailable / retrieval_unavailable / task_timeout / rate_limited / queue_unavailable
+  //      五档，刻意没有这一档；
+  //   ③ isRetryable 决定界面挂不挂「重试」按钮，给一个必须运维介入的故障挂重试只会让人反复点。
+  storage_unavailable: {
+    message: '服务需要的数据表还没有就绪，这项内容暂时取不到，请联系管理员确认数据库迁移是否已经执行。',
+    retryable: false,
+  },
+  task_timeout: { message: '这次分析耗时过长已中断，请缩小范围后重试。', retryable: true },
+  task_cancelled: { message: '已按你的要求中止本次操作。', retryable: false },
+  unsupported_file: { message: '这个文件类型系统暂不支持，请换一种格式再传。', retryable: false },
+  parse_failed: { message: '文件内容没能解析成功，请检查文件是否损坏或受保护。', retryable: false },
+  index_publish_failed: { message: '文件已收到，但没能进入知识库，请稍后重试。', retryable: true },
+  // R368 判据③（裁定：改文案，flag 一分不动）：这一格原句写着「请稍后重试」而 flag 是 false，两句互相打脸。
+  // 改哪一半按「哪一半更接近事实」定，三条一手取证（一律 git show HEAD 现读，不采信注释）：
+  //   ① 后端对这一枚码明确说了不可重试：app/agents/evidence.py:18 的 _RETRIABLE_CODES 五档里没有
+  //      internal_error，而 app/agents/evidence.py:317 与 :425 两枚信封出口写的是 retryable=error_code in _RETRIABLE_CODES
+  //      ⇒ 后端自己发出来的信封里这一枚就是 False，字典那句 false 才是与后端同源的那一半；
+  //   ② 上面 row_scope_denied 那段的理由②已经把「字典写 true、信封写 false ⇒ 同一个码两种说法」列为
+  //      缺陷，把这一枚 flag 翻成 true 造的就是那一处分裂 —— 所以动的只能是句子；
+  //   ③ 翻 flag 还会顺手改掉全站每一屏 500 的按钮归属（isRetryable 是那颗「重试」的唯一生产者），
+  //      那是跨屏的 UX 改判，不在本单范围里。
+  // 句子按文案政策只说「哪件事没做成 + 谁能修」，不再口头邀请「等一会儿再试」；句子里也不指界面控件：
+  // 已知码不走「错误码：xxx」小字（errorCodeLabel 对它一律回空串），写「把这枚错误码报给管理员」
+  // 就是在指一格不存在的东西 —— 那正是 R270 判据① G19 踩过的那条缝。
+  // 全称律钉子：r368-retryable-source.test.js 拿 r208 那一族正则扫遍三张表 —— 凡字典判
+  // retryable:false 的码，句子都不许再承诺「稍后重试」那一族字样（R208 对停表名单裁过的同一条律，只是不限那一族码）。
+  internal_error: { message: '系统内部出现异常，这一发请求没能完成；这一类故障要由服务端排查，请联系管理员。', retryable: false },
+
+  invalid_filename: { message: '文件名不合法，请重命名后再试。', retryable: false },
+  unsupported_chart_type: { message: '这种图表类型暂不支持，请换一种图表。', retryable: false },
+  unsupported_export_format: { message: '这种导出格式暂不支持，请换一种格式。', retryable: false },
+  // R270 判据①（缺口 G19）：原句让用户「先挑一枚部门范围再生成结果」，叫的是**界面上不存在**的控件
+  // ——全站没有部门选择器（rg 部门 src/components 只剩报销自查那一格输入框），客户把这一格读成 bug，
+  // 新句按后端真正在说的话写：data.py:45 的 OWNER_SCOPE_REQUIRED 只有两条出口（app/api/v1/data.py:271 与 :459 的
+  // _require_artifact_scope），两条说的都是**这个账号自己没登记部门归属**，于是服务端定不出这份数据记在
+  // 哪个部门名下。缺的那一格在人身上不在界面上，所以下一步只能是找人补登记；retryable 仍为 false ——
+  // 同一发请求原样重发不会变，「补好之后重新发起一次」说的是改完之后再发起，不是等一会儿再试。
+  department_scope_required: {
+    message: '这次没能生成结果：你的账号还没有登记所属部门，系统定不出这份数据该记在哪个部门名下。请联系管理员补上你的部门归属，或改用已登记部门的账号，然后重新发起一次。',
+    retryable: false,
+  },
+  dataset_filename_conflict: { message: '已存在同名数据文件，请重命名或先删除旧的。', retryable: false },
+  dataset_preview_failed: { message: '数据文件预览没能打开，请稍后重试。', retryable: true },
+  chart_generation_failed: { message: '图表没能生成，请稍后重试。', retryable: true },
+
+  // 流式回答跑完既没正文也没待确认步骤。出处 app/api/v1/chat.py:997-1013（SSE request.failed 的 data.error_code）。
+  // 原先只活在 lib/sessions.js:376 的私有字典里，句子内嵌了裸码名，这里按文案政策重写成纯人话 + 下一步。
+  no_answer_produced: { message: '本轮未产出任何结论，请重试，或把数据范围缩小一点再问。', retryable: true },
+
+  // R64 的两枚行级终态码。语义逐字跟着后端注释走（app/agents/contracts.py:247-256），两枚说的是
+  // 两件不同的事，不许合并成一句模糊话（那是 R62 判据④钉过的老坑）：
+  //   row_scope_denied  行**存在**，只是在当前账号的行级可见范围之外 —— 既不能说成「没有数据」，
+  //                     也不能说成「这个数据集你看不了」（那两句话分别归 resource_not_found 与
+  //                     permission_denied / department_scope_denied，见下面 LEGACY_ALIASES）。
+  //   no_visible_rows   本轮一行可分析的都没有，而**为什么**后端刻意不下结论。
+  // emit 点在 app/agents/tools.py:87-88 与它旁边的行级文案层；配套人话见同文件 _QUERY_DENIED_HEAD
+  // 与 _QUERY_DENIED_HINT —— 下一步同样是「核对部门归属与文件的部门标注」，这里收下这层语义。
+  //
+  // 两枚的 retryable 都判 false，三条依据：
+  //   ① 行级可见范围是 app/common/rbac.py 按账号算出来的确定结果，账号和数据没变时重发同一个请求，
+  //      筛出来的还是同一批行 —— 重试不会变（与上面 storage_unavailable 那条「必须有人介入才变得了
+  //      的故障就别挂重试按钮」同一个判据）；
+  //   ② 后端自己也没把它们当可重试错：两枚都不在 app/agents/evidence.py:18 的 _RETRIABLE_CODES
+  //      （只收 model_unavailable / retrieval_unavailable / task_timeout / rate_limited /
+  //      queue_unavailable 五档）里，走 evidence 出来的 envelope 本身就是 retryable=False。
+  //      字典若写 true，就会分裂成「同一个码，裸码名进来时能重试、envelope 进来时不能」；
+  //   ③ 与本文件既有口径一致：LEGACY_ALIASES 里授权类终态那一族（principal_inactive /
+  //      department_scope_denied / clearance_insufficient / resource_scope_missing /
+  //      resource_scope_invalid）无一例外写死 retryable: false。
+  row_scope_denied: {
+    message: '这些数据行确实存在，只是不在当前账号的可见范围内，本轮没有取出一行来；如果这些数据本该对你可见，请联系管理员核对你的部门归属和文件的部门标注。',
+    retryable: false,
+  },
+  // no_visible_rows 的句子要绕开两个坑，两处都不是前端可以替后端下的结论：
+  //   ① 不许暗示「表是空的」—— 这一枚也用于「行被别的维度清空」的场合，表里本来可能有行；
+  //   ② 不许暗示「你没权限」—— 因由可能压根不在部门维度上。
+  // tests/test_tools_row_scope_messaging.py::TestNoGuessing 把「属于其他部门 / 未标注部门 /
+  // 没有部门归属 / 可见范围 / 权限」逐字列为无依据字样，同文件判据①的边界用例还钉了「表本来是
+  // 空的、文件读不出来，都不许算成权限」。所以这句只说事实 + 换输入再试，一个字都不猜因由，
+  // 形状照后端同码的中性原句（「本次可用的数据文件里没有可分析的数据行」）。
+  // 注意别与上面的 row_scope_denied 串味：「可见范围」那一枚才说，这一枚一个字都不提。
+  no_visible_rows: {
+    message: '本轮没有取到任何可分析的数据行，这次没能给出结果；请换一个数据范围、换一份文件，或换个问法再试一次。',
+    retryable: false,
+  },
+}
+
+/**
+ * 前端自己加、后端契约里还没有的码 —— 必须是空数组。
+ * 这是一条绊线：谁往 ERROR_CODES 里塞未追认的码名，就得在这里登记，单测随即转红，
+ * 直到后端把它并入 contracts.py 的封闭枚举。account_unavailable 走过这条路
+ * （前端先登记 → 主树 fa35a04 追认 → 摘掉标记），别再开新的。
+ */
+export const FRONTEND_ONLY_CODES = []
+
+/**
+ * 后端实际会返回、但不在封闭枚举里的**码名**
+ * 每条都有 app/api/v1 下的实测出处，不发明码名；message 可按语境覆盖。
+ */
+export const LEGACY_ALIASES = {
+  upload_too_large: { code: 'unsupported_file', message: '文件太大，上传没有成功，请压缩或拆分后再传。' },
+  document_parse_failed: { code: 'parse_failed' },
+  document_index_failed: { code: 'index_publish_failed', retryable: true },
+  document_preview_failed: { code: 'internal_error', message: '文件预览没能生成，请稍后重试。', retryable: true },
+  unsupported_preview: { code: 'unsupported_file', message: '这种文件类型不支持在线预览，可下载后在本地打开。' },
+  idempotency_key_required: { code: 'validation_error', message: '这次请求缺少重复提交标识，请重新提交。' },
+  export_failed: { code: 'internal_error', message: '文件导出没能完成，请稍后重试。', retryable: true },
+  storage_read_only: { code: 'internal_error', message: '当前存储处于只读状态，写入没有生效，请联系管理员。', retryable: true },
+  // R103 之后图谱的拒答分成两件事，前端必须跟着分：上面那条 storage_read_only 说的是
+  // 「存储配好了、这次写不进去」，这一条说的是「这台服务器压根没开图谱」。共用一句就会把
+  // 排查方向整个指错 —— 前者要修存储，后者要管理员去开启关系存储，而且对着没开的功能点
+  // 「重试」永远不会把它开出来，所以 retryable:false（后端同一条理由把状态从 503 改成了 409，
+  // 见 app/api/v1/intelligence.py:222）。出处：app/knowledge_graph/service.py 的 REASON_UNCONFIGURED，
+  // 同一枚词也会出现在 /api/v1/health/details 的 knowledge_graph 那节里。
+  // 归档到 storage_unavailable 这一族而不是 internal_error：它与「数据表还没就绪」同属部署缺口，
+  // 不是运行时故障；但句子只说图谱这一件事，不套用那一族的「跑迁移」指引。
+  knowledge_graph_unconfigured: {
+    code: 'storage_unavailable',
+    message: '这台服务器还没有开启知识图谱的关系存储，所以这条关系没能记下来。请先联系管理员开启该功能，反复提交同一份内容不会让它生效。',
+    retryable: false,
+  },
+  // R106 把图谱那处分家搬到了开放平台的应用注册上：上面 storage_read_only 说的是「存储配好了、这次
+  // 写不进去」，这一条说的是「这台服务器没配 OPEN_PLATFORM_APP_STORE_PATH，注册永远不会生效」。混用会
+  // 把管理员支去查磁盘，而真正欠的是一个还没人做的开关决定；对着没开的功能重试也开不出来，所以
+  // retryable:false（后端同一条理由把状态从 503 改成了 409，见 app/api/v1/open_platform.py:395）。
+  // 出处：app/common/open_platform.py 的 STORAGE_REFUSAL_UNCONFIGURED，同一枚词也会出现在
+  // /api/v1/health/details 的 open_platform_apps 那节的 reason 字段里。
+  // 归档与上面同族：它属部署缺口，不是运行时故障；但句子只说应用登记这一件事。
+  open_platform_unconfigured: {
+    code: 'storage_unavailable',
+    message: '这台服务器还没有为开放平台配置应用登记要用的持久存储，所以这次登记没有生效。请联系管理员配置好存储后再提交，反复提交同一份内容不会让它生效。',
+    retryable: false,
+  },
+  relation_source_required: { code: 'validation_error', message: '请先选择关系的起始对象。' },
+  invalid_agent_result: { code: 'internal_error', message: '分析结果格式异常，本次未采信，请重试。', retryable: true },
+
+  // 下面五条是 app/common/policy.py 的拒绝原因码，经 HTTPException(detail=decision.reason_code) 原样落到 403 body：
+  // alerts.py:106 / app/api/v1/artifacts.py:50 / chat.py:278,318,766,1708 / data.py:90,328,354 / intelligence.py:69。
+  // 下载与预览走 responseType:blob，这些码读不出来就会被误判成「坏了」，所以必须有人话 + 下一步。
+  principal_inactive: { code: 'account_unavailable', message: '这个账号已被停用，请联系管理员恢复后再使用。', retryable: false }, // policy.py:136
+  department_scope_denied: { code: 'permission_denied', message: '这份资料属于其他部门的数据范围，当前账号看不到，请联系管理员授权。', retryable: false }, // policy.py:210
+  clearance_insufficient: { code: 'permission_denied', message: '这份资料的安全等级高于你的可见级别，不能打开，请联系管理员。', retryable: false }, // policy.py:189
+  resource_scope_missing: { code: 'authorization_unavailable', message: '这份资料没有登记所属部门或密级，系统判断不了你能不能看，请联系管理员补齐登记。', retryable: false }, // policy.py:181,207
+  resource_scope_invalid: { code: 'authorization_unavailable', message: '这份资料登记的部门或密级格式有误，系统判断不了你能不能看，请联系管理员。', retryable: false }, // policy.py:187
+  // R270 判据②（缺口 G09 的字典出口）：app/common/authorization.py:62 的 DEPARTMENT_SELF_REPORT_DENIED
+  // 由 verify_department_self_report 以 403 吐出，说的是「请求里写的部门不是这个账号所属的部门」。
+  // 今天它在字典与别名表里 0 命中 ⇒ 被 STATUS_CODES[403] 兜成 permission_denied，每一屏一律画成「没有权限」
+  // （ApprovalPanel.vue:134 走的就是 lib/http.js:160 isPermissionDenied）。那不是这件事的因由：同一个账号
+  // 对自己的部门本来就能办，被拒的只是**替别人报部门**这一格。
+  // 折到 validation_error 而不是 permission_denied，两条理由：
+  //   ① 后端注释原话是 "a refused request, not a scope to compute with"（authorization.py:59-61）——
+  //      请求里有一格不能用，改那一格就能继续办，不是缺一项权限；
+  //   ② 折进 permission_denied 就仍然被 isPermissionDenied 判成没权限，②要拆的正是这一律画法；
+  //      r208-alias-coverage.test.js 甲丙两组还钉着 permission_denied 那一格的别名交叉集「多一枚即红」，
+  //      那本账的对面是后端登记册 BARE_CODES_OUTSIDE_THE_ENUM，前端单方面改不得。
+  // 下一步两条经后端复核可做：verify_department_self_report 接受「留空」或「重复自己的部门」
+  // （authorization.py:88-90），剩下的才该由管理员核对部门归属。
+  // 🔴 只到字典这一层；ApprovalPanel.vue 那一屏（含钉「没有权限做审批预审」的 r237 用例）由块 B 复用本出口。
+  department_override_denied: { code: 'validation_error', message: '请求里写的部门不是你这个账号所属的部门，这次没有执行。请把部门那一格留空，或改成你自己的部门再提交一次；如果这些数据确实归在别的部门名下，请联系管理员核对部门归属。', retryable: false },
+}
+
+/**
+ * 鉴权中间件早年的**中文散文** → 枚举码（按 detail 原文索引，与 LEGACY_ALIASES 分开）。
+ * 出处已随 R199 换代（2026-09-24 R208 复核调用点，读 git 对象不读注释）：
+ *   app/main.py 那几枚 JSONResponse 出口回的是枚举码本尊 —— 401 authentication_required
+ *   两枚（一枚管缺 token 与 token 验不过，一枚管 token 指向的用户已不存在）、
+ *   403 account_unavailable 一枚（principal.status !== 'active'）；白名单也搬在中间件
+ *   dispatch 里那份字面量上。tests/test_auth_stable_codes.py::
+ *   test_no_prose_is_left_in_the_authentication_surface 从后端钉着鉴权面不许回散文，
+ *   r208-alias-coverage.test.js 乙组从前端这一侧再钉一次。
+ * 这张表因此只剩野外兜底：旧网关、旧副本、以及任何把中文直出成 detail 的角落仍然会命中它，
+ * 删表就等于把那一发降级成兜底句 —— 所以留表留语义，只是别再把它当成鉴权门的现行出口。
+ * 匹配规则刻意保守：**规范化后全等**才认，宁可漏判走兜底句。
+ * 误判成 authentication_required 的代价是把正在干活的员工踢回登录页，比漏判重得多。
+ */
+export const PROSE_ALIASES = {
+  请先登录: { code: 'authentication_required' },
+  账号不可用: { code: 'account_unavailable' },
+}
+
+/** 拿不到 detail 时按 HTTP 状态兜底，取值全部落在封闭枚举内 */
+export const STATUS_CODES = {
+  400: 'validation_error',
+  401: 'authentication_required',
+  403: 'permission_denied',
+  404: 'resource_not_found',
+  409: 'conflict',
+  413: 'unsupported_file',
+  415: 'unsupported_file',
+  422: 'validation_error',
+  429: 'rate_limited',
+  500: 'internal_error',
+  502: 'model_unavailable',
+  503: 'model_unavailable',
+  504: 'task_timeout',
+}
+
+/** 完全无法归类时的兜底句；未知码由 formatError 在句尾附上「错误码：xxx」小字 */
+export const FALLBACK_MESSAGE = '操作没有完成，请稍后重试。'
+
+const CODE_PATTERN = /^[a-z][a-z0-9_]*$/
+
+/** 夹带码名的三种野外形状：error_code=X（app/api/v1/chat.py:998）与括号里的 X（lib/sessions.js:376-380 那批） */
+const EMBED_CODE = /error_code=([a-z][a-z0-9_]+)|（([a-z][a-z0-9_]+)）|[(]([a-z][a-z0-9_]+)[)]/g
+
+/**
+ * 中文人话的形状：串里出现任一中日韩文字或全角标点即算。刻意不带 g ——
+ * 带 g 的正则与 .test() 共用 lastIndex 会串状态（上面 EMBED_CODE 那条每次都得手动复位）。
+ */
+const CJK_VOICE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\u3000-\u303f\uff00-\uffef\uf900-\ufaff\uac00-\ud7af]/
+
+/** 稳定码的形状：小写字母开头的 snake_case。中文散文一律不算码 */
+function isCodeShape(value) {
+  return typeof value === 'string' && CODE_PATTERN.test(value.trim())
+}
+
+/**
+ * 人话位的最后一道闸（R380 判据③）：后端给的这枚裸串像不像一句写给**人**看的话。
+ * 只问一件事 —— 有没有中日韩文字。不问语种清单、不量句子长度、不养英文黑名单：那三样都会
+ * 把闸口变成第二本需要人维护的账，防英文的地方也就跟着多出账本来。
+ *   有 ⇒ 这就是后端写给人看的句子，原样占人话位。逐枚出处（现测表在 r380-shape-table.test.js）：
+ *        app/api/v1/auth.py:81「用户名或密码错误」、app/api/v1/auth.py:130 / app/api/v1/auth.py:179「用户不存在」、app/api/v1/auth.py:222「SSO 未启用或请求未通过
+ *        验证」、app/api/v1/auth.py:225「缺少 SSO 身份头」、app/api/v1/auth.py:281「画像保存失败」；alerts.py:1020「非法操作符: …」；
+ *        app/common/auth.py:603 起那一批「用户名和密码不能为空」「原密码错误」；
+ *        common/authorization.py:23「权限不足: …」。中英混排同样含中文，误杀不到它。
+ *   没有 ⇒ 这枚裸串不可能是后端为这一发备下的话。取证：app/** 118 个 py 文件里 73 枚 ASCII-only
+ *        的 detail 字面量逐枚数过，全部是 snake_case 码名（走上面 frontend/src/lib/errcodes.js:309 那一档：兜底句 +
+ *        「错误码：xxx」小字），压根到不了这一行；真落到这一行的 ASCII 散文只有框架与代理生成
+ *        的 HTTP 原话 —— app 里没有 @exception_handler，未捕获异常由 Starlette 回
+ *        "Internal Server Error"，另有 "Not Found" / "Method Not Allowed" / "Too Many Requests" /
+ *        "Bad Gateway" 与 nginx 502 正文。这些句子说的就是本发状态码本身，STATUS_CODES[status]
+ *        那句中文是同一层信息：换过去只把语种摆正，不降信息量，原文照旧进 rawMessage。
+ */
+function proseIsForHumans(text) {
+  return CJK_VOICE.test(String(text ?? ''))
+}
+
+function cleanText(value) {
+  if (typeof value === 'string') {
+    const text = value.trim()
+    if (!text || text === '[object Object]' || text === '[object Array]') return ''
+    // 网关/静态页会把整段 HTML 塞进 detail，不能当成人话抛给界面
+    if (text.startsWith('<') || /<!doctype\s+html|<html/i.test(text)) return ''
+    if (/^request failed with status code \d+$/i.test(text)) return ''
+    return text.slice(0, 300)
+  }
+  if (typeof value === 'number') return String(value)
+  return ''
+}
+
+/** 散文规范化：去首尾空白 + 去尾部句读，仅此而已（不做包含式模糊匹配） */
+function normalizeProseKey(value) {
+  return cleanText(value).replace(/[\s。．.！!？?；;：,，、]+$/g, '').trim()
+}
+
+/**
+ * 后端有句子把码名直接夹在正文里，例如 app/api/v1/chat.py:998 写的
+ * 「本轮未产出任何结论（error_code=no_answer_produced），请重试或补充数据范围。」
+ * 这类串既不是码、也不在散文表里，必须先做保守摘除再归类：只动 error_code=X、（X）、(X)
+ * 三种形状，且 X 必须含下划线并符合码名形态；纯小写单词（id、api 之类）一概不动 ——
+ * 宁可漏判走兜底句，也不许把正常词吃掉。
+ * @returns {{ code: string, text: string } | null} text 是摘掉码名、收拾完残标点之后的句子
+ */
+function extractEmbeddedCode(text) {
+  if (!text) return null
+  EMBED_CODE.lastIndex = 0
+  let match = EMBED_CODE.exec(text)
+  let code = ''
+  while (match) {
+    const token = match[1] || match[2] || match[3] || ''
+    if (!code && token.includes('_') && isCodeShape(token)) code = token
+    match = EMBED_CODE.exec(text)
+  }
+  if (!code) return null
+  return { code, text: tidyProse(text.replace(EMBED_CODE, '')) }
+}
+
+/** 摘掉码名之后收拾残标点：先清空括号，再并重复标点，最后压多余空格，顺序不能反 */
+function tidyProse(text) {
+  return text
+    .replace(/（[ ]*）|[(][ ]*[)]/g, '')
+    .replace(/([，、；：])[，、；：]+/g, '$1')
+    .replace(/。[，、；：]+/g, '。')
+    .replace(/^[，、；：。.]+/, '')
+    .replace(/[ ]{2,}/g, ' ')
+    .trim()
+}
+
+function isEnumCode(code) {
+  return Object.prototype.hasOwnProperty.call(ERROR_CODES, code)
+}
+
+/** 按原文查散文表 */
+function resolveProse(token) {
+  const key = normalizeProseKey(token)
+  if (!key) return null
+  const entry = PROSE_ALIASES[key]
+  return entry ? { ...entry, matched: key } : null
+}
+
+/**
+ * 唯一的收口处：任何分支产出的 code 都过这里，非枚举值一律降级为 ''。
+ *
+ * rawMessage（R281 判据①给后端原文指定的那条出口）：后端在信封 message 那一格里原样回了
+ * 什么，与屏幕上画了什么无关。三条设计决定，逐条写清为什么：
+ *   ① 为什么新开这一格，而不是扩既有的「错误码：xxx」小字（errorCodeLabel/formatError）：
+ *      那条小字刻意只在「后端回了一枚字典收不下的码」时才出 —— errorCodeLabel 对已登记的 rawCode
+ *      一律回空串，errcodes.test.js 拿「散文命中的已知码不追加「错误码：」小字」与「formatError
+ *      对已知码不加噪声小字」两枚用例逐字钉着。而这次要留下的后端原文恰恰多半挂在**已登记**的码上
+ *      （department_override_denied 就在 LEGACY_ALIASES 在册，后端那句英文正是这一发的信封 message）。
+ *      走小字那条通道就得先把「未知码专属」改判成常开，再把自由散文塞进一枚短标签通道：
+ *      UiErrorState / UiToast / UiField 的 codeLabel 属性会开始随原始句长短抖动，而那正是判据①
+ *      明令不许的第二条并列通道。数据侧多一枚字段是加法语义，渲染侧改那条小字是改判语义。
+ *   ② 为什么照记不误、即便它与 message 同字（未知码那一档两格都会是同一句英文）：
+ *      这一格回答的是「后端回了什么」，让消费方无条件读得到，不必先自己复算这一发走了哪条分支。
+ *   ③ 形状 1 的裸串为什么今天也有了它（R380 改口）：这一条原来写的是「只有信封形状有它，形状 1
+ *      的裸串那句人话本来就在人话位上，再抄一份只会造出第二个说法」。那半句只在裸串真是给人看的
+ *      句子时成立；裸串是 HTTP 英文原话时它被 proseIsForHumans() 拦在人话位之外，而它仍然是后端
+ *      回来的原文 —— 不开这一格它就凭空消失，与「后端原文一个字符都不丢」相抵。
+ *      形状 3 的 422 数组与传输层错误照旧没有这一格：那两族压根没有 message 那一格可言。
+ * @returns {{ code: string, rawCode: string, message: string, rawMessage: string, retryable: boolean }}
+ */
+function clampResult({ code = '', rawCode = '', message = '', rawMessage = '', retryable = false }) {
+  const known = isEnumCode(code)
+  return {
+    code: known ? code : '',
+    rawCode: cleanText(rawCode) || (known ? '' : cleanText(code)),
+    message: cleanText(message) || FALLBACK_MESSAGE,
+    rawMessage: cleanText(rawMessage),
+    retryable: Boolean(retryable),
+  }
+}
+
+/**
+ * 码名/散文 → { code, rawCode, message, rawMessage, retryable }。
+ * 查不到即兜底句；枚举外的原样串只进 rawCode，绝不进 code。
+ * rawMessage 在这一条通道上只有一个写点：散文尾那一道闸（proseIsForHumans 拦下来的那句框架
+ * 英文）。这里原来写的是「这条通道不碰 rawMessage：它拿到的本来就是单个码名/散文串，没有
+ * 「信封 message」这一格」—— 那半句在裸串是中文时仍然成立，在裸串是 HTTP 英文原话时不成立：
+ * 它同样是一句后端原文，被闸下来之后总得有出口。按事实改口，理由见 clampResult 注释第③条。
+ */
+function resolveCode(raw, status) {
+  const token = cleanText(raw)
+
+  if (isEnumCode(token)) {
+    return clampResult({ code: token, message: ERROR_CODES[token].message, retryable: ERROR_CODES[token].retryable })
+  }
+
+  const alias = token && isCodeShape(token) ? LEGACY_ALIASES[token] : null
+  if (alias) {
+    const target = ERROR_CODES[alias.code] || {}
+    return clampResult({
+      code: alias.code,
+      rawCode: token,
+      message: cleanText(alias.message) || target.message,
+      retryable: typeof alias.retryable === 'boolean' ? alias.retryable : target.retryable,
+    })
+  }
+
+  const prose = token && !isCodeShape(token) ? resolveProse(token) : null
+  if (prose) {
+    const target = ERROR_CODES[prose.code] || {}
+    return clampResult({
+      code: prose.code,
+      rawCode: token,
+      message: cleanText(prose.message) || target.message,
+      retryable: typeof prose.retryable === 'boolean' ? prose.retryable : target.retryable,
+    })
+  }
+
+  // 后端把码名夹在正文里直出的句子：先摘码名再归类，摘完认得就用字典句（唯一真相源）；
+  // 认不下不再自己直出人话，而是把摘干净的句子连同码名交给下面那一道散文闸统一裁决
+  //（R380 判据②：裸串这一形状的人话位只有一个判定点，闸只有一道）。
+  const embedded = token && !isCodeShape(token) ? extractEmbeddedCode(token) : null
+  if (embedded && isEnumCode(embedded.code)) {
+    const known = ERROR_CODES[embedded.code]
+    return clampResult({ code: embedded.code, rawCode: embedded.code, message: known.message, retryable: known.retryable })
+  }
+  // 人话候选与可报告的码名提示：没有内嵌码时就是原串本身，取值与改判前逐字相同。
+  const voice = embedded ? embedded.text : token
+  const codeHint = embedded ? embedded.code : token
+
+  const statusKey = STATUS_CODES[status]
+  if (token && isCodeShape(token)) {
+    // 未知稳定码：走兜底句，码名留在 rawCode（界面小字仍可按「错误码：xxx」报出来）
+    return clampResult({
+      code: statusKey || '',
+      rawCode: token,
+      message: FALLBACK_MESSAGE,
+      retryable: Boolean(statusKey && ERROR_CODES[statusKey].retryable),
+    })
+  }
+  // 散文位：人话位的最后一个入口。防英文只在这一处发生（R380 判据②③），上面那道内嵌码没摘
+  // 明白的句子也走这同一道闸；两道 return 只读同一个答案，不各判各的；被拦下的原文走 rawMessage。
+  const humanVoice = proseIsForHumans(voice)
+  const rejectedProse = humanVoice ? '' : voice
+  if (statusKey) {
+    // 中文人话直出（app/api/v1/auth.py:81 那类）；HTTP 英文原话退给字典的状态句
+    return clampResult({
+      code: statusKey,
+      rawCode: codeHint,
+      message: humanVoice ? voice : ERROR_CODES[statusKey].message,
+      rawMessage: rejectedProse,
+      retryable: Boolean(ERROR_CODES[statusKey].retryable),
+    })
+  }
+  // 没有状态码可归类：认得下的中文照旧直出（只是没有码可报），认不下的英文只剩兜底句 + rawMessage
+  return clampResult({
+    code: '',
+    rawCode: codeHint,
+    message: humanVoice ? voice : FALLBACK_MESSAGE,
+    rawMessage: rejectedProse,
+    retryable: false,
+  })
+}
+
+/**
+ * R281 判据①③的唯一分流处：字典有没有为**这一枚 code 本身**备好句子。
+ *   true  ⇒ 码被字典收编（枚举本尊 / LEGACY_ALIASES 归一 / PROSE_ALIASES 散文 / 正文里内嵌
+ *           且摘出来认得是枚举码），字典对这一发的因由有话说；
+ *   false ⇒ 字典收不下（未登记的码名、压根没有 code、code 是句读不懂的散文），
+ *           字典关于这一发只有兜底句。
+ * 查表顺序与 resolveCode 逐条对齐，用的是同一批 lookup（isEnumCode / LEGACY_ALIASES /
+ * resolveProse / extractEmbeddedCode），没有第二张表可漂；r281-dictionary-voice.test.js 拿
+ * 三张表的每一个键正向钉这条谓词，谁在 resolveCode 里新加一条命中路径而这里没跟上就红。
+ */
+function dictionaryClaims(raw) {
+  const token = cleanText(raw)
+  if (!token) return false
+  if (isEnumCode(token)) return true
+  if (isCodeShape(token)) return Boolean(LEGACY_ALIASES[token])
+  if (resolveProse(token)) return true
+  const embedded = extractEmbeddedCode(token)
+  return Boolean(embedded && isEnumCode(embedded.code))
+}
+
+/**
+ * 形状 2：ErrorEnvelope / 任意 { code, message, retryable } 对象。
+ *
+ * R281 判据①（全局改判）：人话位归字典。分流只认 dictionaryClaims() 这一条谓词，
+ * 不认「有没有 message」—— 码被字典收编时，信封里那句 message **不参与竞争**，
+ * 它顶在字典那句中文前面的日子到此为止（现场：app/common/authorization.py:94-99 的
+ * { code: department_override_denied, message: 英文原句 }，屏上原来画的就是那句英文）。
+ *
+ * R281 判据③（未知码不退化）：字典收不下的那一档，字典关于这一发只有兜底句，
+ * 后端那句 message 仍是唯一线索，继续占人话位，与改判前逐字相同 —— 未知码排查路一分未堵。
+ * 两档都不丢后端原文：一律进 rawMessage（出口选择与理由见 clampResult 的注释）。
+ *
+ * 为什么不选「一律丢弃 message」：那会把未知码那一档唯一的信息源删掉，屏幕上只剩
+ * 「操作没有完成，请稍后重试。」，而字典对这一发本来就没话说。
+ * 为什么不选「有 message 就用 message」（改判前的写法）：那等于把判据①的洞原样留着 ——
+ * 后端 message 占不占人话位，取决于它有没有回话，而不是取决于字典认不认得这枚码。
+ *
+ * retryable 仍由信封覆盖字典默认值：那是机器读的开关，不是给人看的句子，不在这次改判范围内。
+ */
+/**
+ * 信封那一格里码名的唯一读法：SSE 与下载错误体用的是 error_code，不是 code
+ * （app/api/v1/chat.py 的 request.failed 与 artifacts 的 blob 体），两个都要认。
+ * fromEnvelope 与 dictionaryAdjudicatesRetry 共用这一条，取码的地方不许有第二份。
+ */
+function envelopeCode(envelope) {
+  return envelope.code ?? envelope.error_code
+}
+
+function fromEnvelope(envelope, status) {
+  // 后端在 SSE 与下载错误体里用的是 error_code，不是 code（chat.py:1013、artifacts 的 blob 体），两个都要认
+  const wireCode = envelopeCode(envelope)
+  const resolved = resolveCode(wireCode, status)
+  const backendMessage = cleanText(envelope.message)
+  const claimed = dictionaryClaims(wireCode)
+  return clampResult({
+    code: resolved.code,
+    rawCode: cleanText(wireCode) || resolved.rawCode,
+    // claimed = true 时 resolved.message 必是字典句（enum / alias / prose / 内嵌码四条分支之一）
+    message: claimed ? resolved.message : backendMessage || resolved.message,
+    rawMessage: backendMessage,
+    retryable: typeof envelope.retryable === 'boolean' ? envelope.retryable : resolved.retryable,
+  })
+}
+
+/** 形状 3：FastAPI 422 数组，取第一个问题字段说人话 */
+function fromValidation(items, status) {
+  const first = items.find((item) => item && typeof item === 'object')
+  if (!first) return clampResult({ code: 'validation_error', message: ERROR_CODES.validation_error.message })
+  const trail = Array.isArray(first.loc) ? first.loc.filter((part) => part !== 'body' && part !== 'query' && part !== 'path') : []
+  const field = cleanText(String(trail[trail.length - 1] ?? ''))
+  const problem = cleanText(first.msg)
+  const type = cleanText(first.type)
+  let message = ERROR_CODES.validation_error.message
+  if (field && type === 'missing') message = `「${field}」为必填项，请补充后再提交。`
+  else if (field && problem) message = `「${field}」填写有误：${problem}`
+  else if (field) message = `「${field}」填写有误，请检查后重试。`
+  else if (problem) message = problem
+  // 校验错误的人话里已经点名了字段，不再另塞 rawCode
+  return clampResult({ code: STATUS_CODES[status] || 'validation_error', message })
+}
+
+/** 把任意入参收敛成 { detail } 形状；payload 为 null 表示什么都没有 */
+function pickPayload(err) {
+  if (err == null) return null
+  if (typeof err === 'string' || typeof err === 'number') return { detail: err }
+  if (typeof err !== 'object') return null
+  if ('detail' in err && !err.response) return err
+  // 裸 ErrorEnvelope 对象：小写稳定码 + message，且不带 axios 的 request/response 痕迹
+  if (
+    !err.response &&
+    !err.request &&
+    !err.isAxiosError &&
+    isCodeShape(err.code) &&
+    typeof err.message === 'string'
+  ) {
+    return { detail: err }
+  }
+  const data = err.response?.data ?? err.data ?? null
+  if (data == null) return { detail: undefined }
+  if (typeof data === 'string' || Array.isArray(data)) return { detail: data }
+  if (typeof data === 'object') {
+    if ('detail' in data) return data
+    if ('error_code' in data && !('detail' in data)) return { detail: data }
+    if ('code' in data || 'message' in data) return { detail: data }
+    const topMessage = cleanText(data.message) || cleanText(data.error)
+    if (topMessage) return { detail: topMessage }
+  }
+  return { detail: undefined }
+}
+
+function isNormalized(value) {
+  return Boolean(
+    value && typeof value === 'object' && !Array.isArray(value) &&
+      typeof value.code === 'string' && typeof value.message === 'string' &&
+      typeof value.retryable === 'boolean' && typeof value.rawCode === 'string',
+  )
+}
+
+/** 传输层能确定的两类：超时与断网，用枚举码表达 */
+function resolveTransport(err, status) {
+  const transport = cleanText(err?.code)
+  if (transport === 'ECONNABORTED' || transport === 'ETIMEDOUT') {
+    return clampResult({ code: 'task_timeout', message: ERROR_CODES.task_timeout.message, retryable: true })
+  }
+  if (transport === 'ERR_NETWORK' || (err && err.request && !err.response)) {
+    return clampResult({ code: '', rawCode: transport, message: '连不上服务，请确认网络或稍后重试。', retryable: true })
+  }
+  const message = cleanText(err?.message)
+  if (message && !isCodeShape(message)) {
+    // 人话直出 + 状态码归类，绝不把中文塞进 code
+    const statusKey = STATUS_CODES[status]
+    return clampResult({
+      code: statusKey || '',
+      rawCode: transport,
+      message,
+      retryable: Boolean(statusKey && ERROR_CODES[statusKey].retryable),
+    })
+  }
+  if (message) return resolveCode(message, status)
+  return resolveCode('', status)
+}
+
+/**
+ * 统一入口：axios 错误、Error、裸字符串、ErrorEnvelope、中文散文都能喂。
+ * @param {unknown} err
+ * @returns {{ code: string, message: string, retryable: boolean, rawCode: string, rawMessage: string }}
+ *   code 一定在 ERROR_CODES 里或为空串；后端原样回来的串放 rawCode；
+ *   信封 message 那一格原样回来的话放 rawMessage（R281 判据①，只供排查，不上人话位）。
+ */
+export function normalizeError(err) {
+  const status = Number(err?.response?.status ?? err?.status ?? 0) || 0
+  const payload = pickPayload(err)
+  const detail = payload?.detail
+
+  if (Array.isArray(detail)) {
+    // 空数组：等于没有错误体，退到状态码归类，不把 axios 的英文原句抛给界面
+    return detail.length ? fromValidation(detail, status) : resolveCode('', status)
+  }
+  if (detail && typeof detail === 'object') {
+    return fromEnvelope(detail, status)
+  }
+
+  const text = cleanText(detail)
+  if (text) return resolveCode(text, status)
+  return resolveTransport(err, status)
+}
+
+/**
+ * 可报告小字：只有「后端给了一个我们不认识的码」时才出现。
+ * 已知码、别名码、中文散文都不加，免得把界面搞脏；未知码走兜底句 + 这条小字，
+ * 保证还能贴给后端排查。
+ */
+function toResult(input) {
+  return isNormalized(input) ? input : normalizeError(input)
+}
+
+/**
+ * 独立通道：界面要展示/埋点码名时只准用它，拿到的一定是封闭枚举内的码名或空串。
+ * 用法是塞进 data-code / 「详情」折叠区，或 console.debug；不许拼进给人看的句子。
+ * 未知码与中文散文在这里都回空串（那些走 errorCodeLabel 的「错误码：xxx」小字）。
+ */
+export function errorCodeOf(errOrResult) {
+  return toResult(errOrResult).code
+}
+
+/**
+ * 这一发的 code 是不是「前端替后端换的词」——只认 LEGACY_ALIASES 那一道折痕。
+ *
+ * 为什么要单独问这一句（R208 判据①）：停表名单逐格登记的是 (status, code)，而 code 走
+ * errorCodeOf 归一 ⇒ 别名表把谁折进名单某一格，谁就顺带拿到叫停这一轮轮询的权力。
+ * 出处调用点（2026-09-24 逐枚查，不采信「今天发不出」）：
+ *   本尊 rawCode === code —— app/api/v1/chat.py::_authorize_queue_task 五枚拒绝出口
+ *     :750 401 authentication_required / :753 404 resource_not_found /
+ *     :759 与 :763 两枚 403 authorization_unavailable / :765 403 permission_denied；
+ *   别名折入 rawCode !== code —— app/common/policy.py::authorization_decision 的原因码族，
+ *     七枚 raise 处逐枚回 detail=decision.reason_code：chat.py:703 与 app/api/v1/chat.py:3486、app/api/v1/artifacts.py:50、
+ *     intelligence.py:109、alerts.py:262、data.py:103 与 app/api/v1/data.py:437（feedback.py:202/234 那两枚走的是
+ *     RetrievalScopeError 那一族，不是 policy 的原因码；observability.py::_deny 把原因码放进
+ *     details，裸码不出门 —— 两处都不在这笔账里）。其中四枚被本表折进名单里已有的格：
+ *     resource_scope_missing / resource_scope_invalid → authorization_unavailable，
+ *     department_scope_denied / clearance_insufficient → permission_denied。
+ *     逐枚位锚的真源是 tests/test_error_code_vocabulary.py::BARE_CODES_OUTSIDE_THE_ENUM，
+ *     r208-alias-coverage.test.js 丙组拿那本登记册与本表双向对平，对不上就红。
+ * 名单那一格说的是「后端明确判定这一轮再也读不回来」，这句话只能由后端自己说；
+ * 被折进来的那族是「按什么维度拒的」那套独立词汇（tests/test_error_code_vocabulary.py::
+ * BARE_CODES_OUTSIDE_THE_ENUM 逐枚在册），不该顺带获得停表权。
+ *
+ * 刻意只认 LEGACY 一道折痕，不按「是不是本尊」取反：名单那一格今天还能被另外两种非本尊
+ * 来源打中，两种都不该被这一枚谓词顺手改判——
+ *   PROSE_ALIASES（中文散文「请先登录」/「账号不可用」）：鉴权门今天吐的已经是枚举码本尊，
+ *     这张表只剩野外兜底（复核见上面那张表的注释）；散文折进来的那一发算不算终止性判定，
+ *     今天没有人裁过，也不该由这枚谓词代裁。
+ *   STATUS_CODES 兜底（403 且码没登记时归 permission_denied）：这一族今天照样叫停，
+ *     但它不是别名，R208 只把它记进交回，不在这里改判。
+ * 把 errorCodeOf 换成「rawCode === code 才算」会把上面两种一起放走 —— 那是两笔没裁的改判。
+ * 所以这枚谓词回答的是「别名折不折得进来」：名单要收窄，就把它当第三个条件用。
+ */
+export function isAliasFoldedCode(errOrResult) {
+  const result = toResult(errOrResult)
+  const raw = cleanText(result.rawCode)
+  if (!raw || !result.code || raw === result.code) return false
+  return LEGACY_ALIASES[raw]?.code === result.code
+}
+
+export function errorCodeLabel(errOrResult) {
+  const result = toResult(errOrResult)
+  const raw = cleanText(result.rawCode)
+  if (!raw || isMappedRaw(raw)) return ''
+  return isCodeShape(raw) ? `错误码：${raw}` : ''
+}
+
+/** 这个原始串是否已经被某张表收编过 */
+function isMappedRaw(raw) {
+  if (isEnumCode(raw) || LEGACY_ALIASES[raw]) return true
+  const prose = resolveProse(raw)
+  return Boolean(prose)
+}
+/** 单条 `{{ error }}` 插值位的成品句：未知码在句尾保留码名 */
+export function formatError(err) {
+  const result = toResult(err)
+  const label = errorCodeLabel(result)
+  return label ? `${result.message}（${label}）` : result.message
+}
+
+/** 展示层据此决定是否挂「重试」按钮 */
+export function isRetryable(err) {
+  return Boolean(toResult(err).retryable)
+}
+
+/**
+ * 后端自己点名的那一格原码。三种形状（裸串 / 信封 / 422 数组）一律先过 pickPayload() 收敛，
+ * 这里只读它收敛好的 detail，不复制第二遍 normalizeError 的分流；信封那一格走 envelopeCode()，
+ * 与 fromEnvelope 同一条 lookup。422 数组与「压根没有错误体」都回空串：那一发后端没点名，
+ * 字典也就没为它判过 retryable（判据②那一族因此整族留在「界面自己说可以再点一次」这一侧）。
+ */
+function backendNamedToken(err) {
+  const payload = pickPayload(err)
+  if (!payload) return ''
+  const detail = payload.detail
+  if (Array.isArray(detail)) return ''
+  if (detail && typeof detail === 'object') return cleanText(envelopeCode(detail))
+  return cleanText(detail)
+}
+
+/**
+ * 字典有没有对「这一发失败」给过自己的 retryable 判定 —— 屏上那颗「重试」按钮的唯一上游问句（R368 判据①）。
+ *
+ * true  ⇒ 这一发的码在字典在册（枚举本尊 / LEGACY_ALIASES 归一 / PROSE_ALIASES 散文 / 正文内嵌且认得出
+ *         枚举码），字典为它备好了 retryable 取值 ⇒ 界面那一格跟着它走（storage_unavailable 那类必须有人
+ *         跑迁移才变得了的故障，从此不再挂重试）；
+ * false ⇒ 字典没为这一枚码说话：压根没有码、后端回了收不下的码名、只靠 STATUS_CODES[状态] 兜底归类、
+ *         传输层断网。「再点一次有没有意义」在这一族里是界面层的判断，不是码表的属性 —— 连不上服务时
+ *         再点一次就是有意义的（R368 判据②）。
+ *
+ * 分流只认两条 lookup，都不新造账：backendNamedToken() 借的是 pickPayload() 那三种形状的收敛处，
+ * dictionaryClaims() 是 fromEnvelope 抢人话位时用的同一条谓词（查表顺序一致，三张表之外不许有第二本账）。
+ * 后端没点名 ⇒ 这一发的 code 只可能来自 STATUS_CODES[状态] 兜底、传输层归类或 422 数组，字典对它没有判定。
+ */
+export function dictionaryAdjudicatesRetry(errOrResult) {
+  const result = toResult(errOrResult)
+  if (isNormalized(errOrResult)) {
+    return result.rawCode ? dictionaryClaims(result.rawCode) : isEnumCode(result.code)
+  }
+  const token = backendNamedToken(errOrResult)
+  if (token) return dictionaryClaims(token)
+  return false
+}
+
+/** 码表查询：已知码返回原文案，未知返回兜底句 */
+export function errorText(code) {
+  return resolveCode(cleanText(code), 0).message
+}
+/**
+ * 下载与预览走 responseType:'blob'，服务端 4xx/5xx 的 JSON 错误体也会以 Blob 形态回到手里。
+ * 读不出来就被降级成「文件下载失败」，把「没权限」误报成「坏了」—— 与 R1 同族的一条缝。
+ * 这里是纯函数：不做 IO、不依赖 axios 与 DOM，body 接受 文本 / 已解析对象 / 标量。
+ *
+ * 刻意**不采信非 JSON 正文**：健康链路上 blob 错误体一定是 JSON，HTML 与纯文本都是网关或
+ * 静态层塞进来的（nginx 的 Forbidden、502 页面），把它们当人话抛给界面比不抛更坏。
+ * 非 JSON 或空 body 时只按 HTTP 状态归类，句子仍出自 ERROR_CODES 字典。
+ *
+ * @returns {{ code: string, rawCode: string, message: string, rawMessage: string, retryable: boolean }} 与 normalizeError 同形状
+ */
+export function blobErrorText(body, status = 0) {
+  const effStatus = Number(status) || 0
+  let payload = null
+  if (typeof body === 'string') {
+    const text = body.trim()
+    if (text) {
+      try {
+        payload = JSON.parse(text)
+      } catch (_) {
+        payload = null
+      }
+    }
+  } else if (body && typeof body === 'object' && typeof body.text !== 'function') {
+    payload = body
+  }
+  if (payload === null || payload === undefined) {
+    return normalizeError({ response: { status: effStatus, data: {} } })
+  }
+  const data = typeof payload === 'object' ? payload : { detail: payload }
+  const codeStatus = effStatus || Number(data.status) || 0
+  return normalizeError({ response: { status: codeStatus, data } })
+}
+
+/**
+ * blobErrorText 的异步外壳：调用方手里是 Blob 时用这个，形状不变。
+ * 读不出文本（Blob 已失效 / 对象不对）一律降级为「只按状态归类」，不抛错，因为这条路径
+ * 本来就跑在 catch 里，二次抛错会把提示吞掉。
+ */
+export async function readBlobError(blob, status = 0) {
+  let text = ''
+  try {
+    if (typeof blob === 'string') text = blob
+    else if (blob && typeof blob.text === 'function') text = await blob.text()
+  } catch (_) {
+    text = ''
+  }
+  return blobErrorText(text, status)
+}

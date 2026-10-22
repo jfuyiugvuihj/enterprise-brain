@@ -1,0 +1,133 @@
+/* UiTabs —— 选中态用 1px 强调下划线，不做发光（视觉文档 §5.3） */
+
+.ui-tabs {
+  display: flex;
+  min-width: 0;
+  gap: var(--s-4, 16px);
+  font-family: var(--font-body);
+}
+
+.ui-tabs--horizontal {
+  flex-direction: column;
+}
+
+.ui-tabs--vertical {
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.ui-tabs__list {
+  display: flex;
+  flex: none;
+  gap: var(--s-1, 4px);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.ui-tabs--vertical .ui-tabs__list {
+  flex-direction: column;
+  border-bottom: 0;
+  border-right: 1px solid var(--border-1);
+}
+
+.ui-tabs__tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2, 8px);
+  padding: var(--s-3, 12px) var(--s-4, 16px);
+  border: 0;
+  border-radius: var(--r-sm, 8px) var(--r-sm, 8px) 0 0;
+  background: none;
+  color: var(--text-2);
+  font-size: var(--t-md, 14px);
+  font-weight: 500;
+  letter-spacing: 0;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--motion-fast), background-color var(--motion-fast);
+}
+
+.ui-tabs--vertical .ui-tabs__tab {
+  border-radius: var(--r-sm, 8px) 0 0 var(--r-sm, 8px);
+  text-align: left;
+}
+
+.ui-tabs__tab:hover:not(:disabled) {
+  color: var(--text-1);
+}
+
+.ui-tabs__tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ui-tabs__tab--active {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.ui-tabs__tab--active::after {
+  position: absolute;
+  right: var(--s-4, 16px);
+  bottom: -1px;
+  left: var(--s-4, 16px);
+  height: 2px;
+  background: var(--accent);
+  content: "";
+}
+
+.ui-tabs--vertical .ui-tabs__tab--active::after {
+  top: var(--s-3, 12px);
+  right: -1px;
+  bottom: var(--s-3, 12px);
+  left: auto;
+  width: 2px;
+  height: auto;
+}
+
+.ui-tabs__tab--disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.ui-tabs__badge {
+  min-width: var(--s-5, 24px);
+  padding: 0 var(--s-2, 8px);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-pill, 999px);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs, 12px);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.ui-tabs__panels {
+  flex: 1;
+  min-width: 0;
+}
+
+.ui-tabs__panel {
+  color: var(--text-1);
+  font-size: var(--t-md, 14px);
+  line-height: 1.65;
+}
+
+.ui-tabs__panel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ui-tabs__empty {
+  margin: 0;
+  padding: var(--s-3, 12px) 0;
+  color: var(--text-3);
+  font-size: var(--t-sm, 13px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-tabs__tab {
+    transition: none;
+  }
+}

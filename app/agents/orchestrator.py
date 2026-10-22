@@ -10,8 +10,11 @@ clear_session / check_interrupt / multi_agent_graph / queue_graph /
 run_orchestrator_queue / dispatch / _merge_dicts
 """
 import os
+import re
 import time
+import json
 from typing import Annotated
+from uuid import uuid4
 from pydantic import BaseModel
 
 from dotenv import load_dotenv
@@ -20,6 +23,7 @@ load_dotenv()
 from langgraph.graph import StateGraph, START, END
 from langgraph.prebuilt import create_react_agent, ToolNode
 from langgraph.types import Send, Command
+from langgraph.errors import GraphRecursionError
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
 try:
@@ -29,51 +33,318 @@ except ModuleNotFoundError:  # pragma: no cover
     psycopg = None
     psycopg_pool = None
 
+from app.agents.contracts import ModelTier
 from app.agents.state import AgentState, _merge_dicts
-from app.agents.tools import search_docs, analyze_data, query_data, generate_chart, export_report
+from app.approval.assistant import build_precheck
+from app.agents.tools import (
+    PACK_MATERIAL_CALIBRATION,
+    PROMPT_MATERIAL_CALIBRATION_KEY,
+    PROMPT_SHELL_EXTRA_TOKENS_KEY,
+    PRINCIPAL_PROVENANCE_KEY,
+    search_docs,
+    analyze_data,
+    query_data,
+    generate_chart,
+    export_report,
+)
+from app.agents.planner import build_task_plan
 from app.agents.nodes import (
-    _make_model, classify_intent, respond, load_memory, plan,
-    reflect_node, route_reflect, synthesize,
+    DECLARED_LANE_KEY,
+    KB_CALIBER_MARKERS,
+    LANE_QA,
+    STREAM_PIECE_SINK_KEY,
+    _AnswerPieceTap, _config_with_tap,
+    _make_model, classify_intent, classify_route, decide_workers, declared_lane_from_config,
+    is_offline_reply_text, normalize_declared_lane, respond, load_memory, plan, reflect_node,
+    resolve_turn_lane, route_reflect, synthesize,
+)
+from app.agents.evidence import (
+    aggregate_agent_result,
+    bag_from_config,
+    build_agent_result,
+    new_evidence_bag,
+    record_tool_status,
+    summarize_agent_result,
 )
 from app.memory import compress_messages
 from app.common.logger import logger
+from app.common.monitoring import is_production_environment
+from app.trace.store import TraceStore, default_trace_store
 
 # ==================== 持久化 ====================
 
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
 
 
+#: 判据 2（跟进单 §41.1）要求"当前 checkpointer 后端"机器可查，所以每次决策都留一份状态，
+#: 由 app/common/monitoring.py 挂到 /api/v1/health/details。形状照 monitoring.queue_storage_state()：
+#: 五个子系统键 + backend。"uninitialised" 是一个真值而不是占位 —— orchestrator 是懒导入的
+#: （app/api/v1/chat.py:1201），第一发请求之前根本没有"决定"可报。
+_CHECKPOINT_STATE_SHAPES = {
+    "postgres": {
+        "storage_mode": "postgres",
+        "durable": True,
+        "shared_across_processes": True,
+        "protection": "none",
+        "backend": "postgres",
+    },
+    "memory": {
+        "storage_mode": "memory",
+        "durable": False,
+        "shared_across_processes": False,
+        "protection": "none",
+        "backend": "memory",
+    },
+    "refused": {
+        # 生产环境拒降级：没有可用的 checkpointer 可报，只能如实写"不可用 + 开机即拒"。
+        "storage_mode": "unavailable",
+        "durable": False,
+        "shared_across_processes": False,
+        "protection": "refuse_start",
+        "backend": "none",
+    },
+    "uninitialised": {
+        "storage_mode": "unavailable",
+        "durable": False,
+        "shared_across_processes": False,
+        "protection": "disabled",
+        "backend": "none",
+    },
+}
+
+#: 图状态到底落在哪。进程刚起来时是 uninitialised，之后由 _make_checkpointer() 整体改写。
+_CHECKPOINT_STATE = {
+    **_CHECKPOINT_STATE_SHAPES["uninitialised"],
+    "detail": "the orchestrator has not built a checkpointer yet",
+}
+
+#: 与 app/api/v1/alerts.py:62、app/api/v1/chat.py:520 同一口径的那句话。生产环境缺持久化
+#: checkpointer 不是"降级一次就好"，是不通过。
+CHECKPOINT_REQUIRED_IN_PRODUCTION = (
+    "PostgresSaver checkpointer is required in production; run migrations first"
+)
+
+
+def checkpointer_storage_state() -> dict:
+    """编译进图的那份状态实际存在哪里。只读内存，不连接、不建池、不开线程。"""
+    return dict(_CHECKPOINT_STATE)
+
+
+def _record_checkpointer(kind: str, detail: str) -> None:
+    global _CHECKPOINT_STATE
+
+    _CHECKPOINT_STATE = {**_CHECKPOINT_STATE_SHAPES[kind], "detail": detail}
+
+
+def _fail_checkpointer_loudly(reason: str, *, database_reachable: bool):
+    """把降级说明白，再按环境决定"退"还是"拒"。
+
+    旧实现把 psycopg 的事务块报错谎报成「Postgres 不可用」（跟进单 §41.1 实证那行 WARNING，
+    同刻 postgres 容器 healthy），所以这里唯一的撒谎豁免是探活真失败：只有它才有资格说数据库
+    不可达。开发态退 MemorySaver；生产态不退，因为 backend / worker / scheduler 是三个进程，
+    各持一份进程内 MemorySaver 等于 HITL 挂起之后没人接得住。
+    """
+    reachable = "数据库可达" if database_reachable else "数据库不可达"
+    logger.error(f"[Orchestrator] checkpointer 未能用上 PostgresSaver（{reachable}）: {reason}")
+    if is_production_environment():
+        logger.error(
+            "[Orchestrator] 生产环境不接受 MemorySaver 降级："
+            f"{CHECKPOINT_REQUIRED_IN_PRODUCTION}（原因见上一行）"
+        )
+        _record_checkpointer(
+            "refused", f"{reason} ({reachable}); {CHECKPOINT_REQUIRED_IN_PRODUCTION}"
+        )
+        raise RuntimeError(f"{CHECKPOINT_REQUIRED_IN_PRODUCTION} ({reason})")
+    logger.error("[Orchestrator] 已降级 MemorySaver：图状态只活在本进程，重启即丢")
+    _record_checkpointer("memory", f"{reason} ({reachable})")
+    from langgraph.checkpoint.memory import MemorySaver
+
+    return MemorySaver()
+
+
 def _make_checkpointer():
-    """Postgres 可用 → PostgresSaver 持久化；不可用 → 降级 MemorySaver。
-    导入时不硬依赖数据库（快速探活 2s），保证无库也能导入/跑逻辑测试。"""
+    """Postgres 可用 → PostgresSaver 持久化；否则开发态降级 MemorySaver、生产态拒绝启动。
+    导入时不硬依赖数据库（快速探活 2s），保证无库也能导入/跑逻辑测试。
+
+    判据 1（跟进单 §41.1）：连接池必须 autocommit。PostgresSaver.setup() 跑的是它自带的
+    MIGRATIONS，其中 checkpoint_*_thread_id_idx 三枚是 CREATE INDEX CONCURRENTLY（实测 .venv 的
+    langgraph/checkpoint/postgres/__init__.py MIGRATIONS[6]/[7]/[8]），而 psycopg 默认把每条语句
+    包进事务块 ⇒ 非 autocommit 的池每次启动都必抛，与数据库在不在线无关。这条不改 migrations/**、
+    也不新增建表 SQL —— 那三枚 CONCURRENTLY 是 langgraph 自己的账。
+    """
+    if psycopg is None or psycopg_pool is None:
+        return _fail_checkpointer_loudly(
+            "psycopg / psycopg_pool 未安装，无法使用 PostgresSaver",
+            database_reachable=False,
+        )
     try:
         psycopg.connect(_PG_URL, connect_timeout=2).close()
-        pool = psycopg_pool.ConnectionPool(_PG_URL, max_size=50, min_size=5, open=True)
+    except Exception as e:  # noqa: BLE001 - 探活失败是唯一可以说"数据库不可达"的分支
+        return _fail_checkpointer_loudly(
+            f"Postgres 探活失败: {type(e).__name__}: {e}", database_reachable=False
+        )
+    pool = None
+    try:
+        pool = psycopg_pool.ConnectionPool(
+            _PG_URL,
+            max_size=50,
+            min_size=5,
+            open=True,
+            # autocommit 是给 setup() 的 CREATE INDEX CONCURRENTLY 让路；prepare_threshold=0
+            # 是 langgraph 对 PostgresSaver + 连接池的既定配置（预编译语句在池里会串味）。
+            kwargs={"autocommit": True, "prepare_threshold": 0},
+        )
         from langgraph.checkpoint.postgres import PostgresSaver as _PostgresSaver
+
         cp = _PostgresSaver(pool)
         cp.setup()
-        logger.info("[Orchestrator] 使用 PostgresSaver 持久化")
-        return cp
-    except Exception as e:
-        logger.warning(f"[Orchestrator] Postgres 不可用，降级 MemorySaver: {e}")
-        from langgraph.checkpoint.memory import MemorySaver
-        return MemorySaver()
+    except Exception as e:  # noqa: BLE001 - 这里绝不能再写成"Postgres 不可用"
+        if pool is not None:
+            try:
+                pool.close()
+            except Exception:  # noqa: BLE001 - 收尾失败不该盖住真正的原因
+                pass
+        return _fail_checkpointer_loudly(
+            "Postgres 可连，但 PostgresSaver.setup() 失败（这不是数据库不可用）: "
+            f"{type(e).__name__}: {e}",
+            database_reachable=True,
+        )
+    _record_checkpointer("postgres", "PostgresSaver 正在持久化图状态（跨进程共享，重启不丢）")
+    logger.info("[Orchestrator] 使用 PostgresSaver 持久化")
+    return cp
 
 
 _checkpointer = _make_checkpointer()
+_trace_store = default_trace_store()
 
-# ==================== Worker 子图（带 checkpointer，可持久化） ====================
+# ============ Worker 子图（带 checkpointer，仅本轮内可持久化；跨轮不回读：checkpoint_ns 每轮换 uuid · R118/R127） ============
 
-DOC_PROMPT = """你是文档搜索专家。搜公司知识库回答问题。一次想好几个搜索方向，同时搜多个关键词，避免来回。返回完整准确结果并引用来源文件名。"""
+DOC_PROMPT = """你是文档搜索专家。搜公司知识库回答问题。一次想好几个搜索方向，同时搜多个关键词，避免来回。返回完整准确结果并引用来源文件名。
+用户要求判断是否超标或超预算时，必须同时知道适用标准和实际发生金额；缺少条件就明确补问，不能只列标准便承诺判断。
+住宿是否超标至少核对城市、人员类别、人数、天数和实际住宿总金额；影响判断的缺项必须逐一询问。"""
 DATA_PROMPT = """你是数据分析专家。分析经营数据回答问题。一次想好几个分析角度，同时查多个维度。返回详细结论和关键数字。
-简单排名/统计用 analyze_data；组合条件/复杂计算用 query_data（LLM生成pandas+沙箱执行）。"""
-CHART_PROMPT = """你是图表生成专家。用户要画图时，如果数据不明确，先用 analyze_data 取真实数据，再调用 generate_chart。labels 和 values 必须来自实际数据。"""
+简单排名/统计用 analyze_data；组合条件/复杂计算用 query_data（LLM生成pandas+沙箱执行）。
+画图不归你：图由 generate_chart 那条腿生成并直接上屏。你不要在回答里贴绘图代码、颜色参数，
+也不要写「可视化建议」「需要我帮您生成实际图表吗」这一类话——那是把已经交付的东西再卖一遍。"""
+CHART_PROMPT = """你是图表生成专家。用户要画图时，如果数据不明确，先用 analyze_data 取真实数据，再调用 generate_chart。labels 和 values 必须来自实际数据。generate_chart 交回拒绝时不要用同一枚参数重试：把那句原因原样交回客户就够了。"""
 EXPORT_PROMPT = """你是报告导出专家。确认内容后直接调用 export_report。"""
 
-doc_graph = create_react_agent(_make_model(), [search_docs], prompt=DOC_PROMPT, checkpointer=_checkpointer)
-data_graph = create_react_agent(_make_model(), [analyze_data, query_data], prompt=DATA_PROMPT, checkpointer=_checkpointer)
-chart_graph = create_react_agent(_make_model(), [analyze_data, generate_chart], prompt=CHART_PROMPT, checkpointer=_checkpointer)
-export_graph = create_react_agent(_make_model(), [export_report], prompt=EXPORT_PROMPT, checkpointer=_checkpointer)
+# The four worker graphs write prose answers, so they are the analysis tier: the largest
+# output cap and the longest clock. Named explicitly, because a bare _make_model() reads
+# as "the default" and the whole point of the tier is that it is a decision.
+doc_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [search_docs], prompt=DOC_PROMPT, checkpointer=_checkpointer)
+data_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [analyze_data, query_data], prompt=DATA_PROMPT, checkpointer=_checkpointer)
+chart_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [analyze_data, generate_chart], prompt=CHART_PROMPT, checkpointer=_checkpointer)
+export_graph = create_react_agent(_make_model(ModelTier.ANALYSIS), [export_report], prompt=EXPORT_PROMPT, checkpointer=_checkpointer)
+
+#: 10-08：装箱那一层量 prompt 的尺（estimate_prompt_tokens）看不见 bind_tools 挂进请求体的
+#: 工具字段。缺的那一截在 8192 的窗口上不是「少塞一片料」而是整轮作废：服务端超窗时自己把最前面
+#: 几条挤出去重渲染模板，被挤掉的正是本轮问题，模板当场 raise，兼容腿回 500「No user query found
+#: in messages」，屏上剩下的是兜底吐出来的原始材料。这两格在建图时按真源量一次，随子图 config
+#: 交给装箱（app/agents/tools.py），装箱与发请求前那道守卫读同一本账。
+_LEG_WORKER_TOOLS: dict[str, list] = {
+    "doc": [search_docs],
+    "data": [analyze_data, query_data],
+    "chart": [analyze_data, generate_chart],
+    "export": [export_report],
+}
+#: 带表格料的腿：这两条把 CSV/Excel 的概览与样本 JSON 装进 prompt，料价按实测倍率折算。
+_TABULAR_LEGS = ("data", "chart")
+
+
+def _tool_fields_tokens(tools) -> int:
+    """这一腿真带进请求体的工具字段值多少枚，尺与守卫同一枚（estimate_text_tokens）。"""
+    from langchain_core.utils.function_calling import convert_to_openai_tool
+
+    from app.common.model_budget import estimate_text_tokens
+
+    try:
+        payload = json.dumps(
+            [convert_to_openai_tool(item) for item in tools], ensure_ascii=False, default=str
+        )
+    except Exception:
+        return 0
+    return estimate_text_tokens(payload)
+
+
+#: 456 那枚壳是 run5 在 doc 腿上量的，里面已经含着 search_docs 自己的工具字段，所以登记的是各腿
+#: 相对它的差额——doc 因此是 0，不给自己已有的东西记两遍功。
+_DOC_TOOL_FIELDS_BASELINE = _tool_fields_tokens(_LEG_WORKER_TOOLS["doc"])
+_LEG_SHELL_EXTRA_TOKENS = {
+    name: max(0, _tool_fields_tokens(tools) - _DOC_TOOL_FIELDS_BASELINE)
+    for name, tools in _LEG_WORKER_TOOLS.items()
+}
+
+
+#: 本轮台账里"报告字节已经落过盘"这一件型的名字（``app/agents/tools.py::_register_artifact``
+#: 交进证据袋的就是它，与 ``app/storage/artifacts.py::ArtifactRecord.artifact_type`` 同源）。
+_REPORT_ARTIFACT_TYPE = "report"
+
+
+def _registered_report_rows(config) -> list[dict]:
+    """本轮真登记进产物台账的报告件行；读不出件型的老形状一律当没这回事。
+
+    R713 的判据源就这一枚函数：它读的是物证（工具腿登记成功那一刻写进证据袋的行，与台账行
+    同源），不是答复文字。把它的读数摘掉，兜底腿就退回改前形状 ——
+    ``tests/test_r713_one_question_one_report_file.py`` 的反证牙钉的正是这一格。
+    """
+    bag = bag_from_config(config)
+    if not bag:
+        return []
+    return [
+        row
+        for row in (bag.get("artifacts") or [])
+        if isinstance(row, dict)
+        and str(row.get("artifact_type") or "") == _REPORT_ARTIFACT_TYPE
+    ]
+
+
+def _fallback_export_result(user_message: str, model_result: str, config=None) -> str:
+    """同一轮只交一枚报告文件：已经有物证就交付那一枚，绝不为了补一句链接再落一次盘。
+
+    改前的形状：只拿答复文字里有没有受控产物口当作"这一轮已经落过盘"的判据。文字不是证据
+    —— 模型把链接改写成别的形状（在册历史形状是 ``/static/exports/`` 那一条落盘路径，见
+    ``tests/test_approval_stream.py``），或只说一句"文件已导出"，字符串守卫就认不出已经落过
+    的那一枚，于是再调一次 ``export_report``：一枚问话写两枚 PDF，第二枚没人登记（R710 交回
+    件①，凭据纸 ``docs/testing/r710-2026-10-06.md`` 第二节第 2 条）。
+
+    改后读两枚物证，顺序不可倒：① 答复里已经点着受控产物口 —— 那是交付腿本来就写对了，
+    一个字都不必再动；② 证据袋里已经登记过 report 件 —— 那是工具腿真落过盘，第二次导出当场
+    取消，正文缺的那句下载链接从在册行里补上（只追加、不改写，句子形状照
+    ``app/agents/tools.py::_export_report`` 的完成态）。两条都不成立，才落第一次盘 ——
+    本单砍的是第二次，不是兜底腿存在的理由。
+    """
+    registered = _registered_report_rows(config)
+    if registered:
+        url = str(registered[-1].get("download_url") or "").strip()
+        logger.info(
+            f"[R713] export 兜底腿取消第二次导出：本轮已登记 {len(registered)} 枚报告件 "
+            f"url={url or '(在册行没有下载口)'}"
+        )
+        if not url:
+            return model_result
+        if url in str(model_result or ""):
+            return model_result
+        body = str(model_result or "")
+        line = f"报告已生成: [📋 下载报告]({url})"
+        return f"{body}\n\n{line}" if body.strip() else line
+    title = "企业经营分析报告"
+    sections = json.dumps(
+        [
+            {"type": "heading", "content": title},
+            {"type": "text", "content": f"用户导出要求：{user_message}"},
+            {"type": "text", "content": model_result or "已完成当前会话分析。"},
+        ],
+        ensure_ascii=False,
+    )
+    payload = {
+        "report_title": title,
+        "sections_json": sections,
+        "include_charts": "",
+    }
+    if hasattr(export_report, "invoke"):
+        return export_report.invoke(payload, config=config)
+    return export_report(**payload, config=config)
 
 # ==================== dispatch 工具 ====================
 
@@ -94,7 +365,7 @@ def dispatch(workers: list[str]) -> str:
     """
     return f"已派发 {len(workers)} 个子Agent: {', '.join(workers)}"
 
-main_model = _make_model().bind_tools([dispatch])
+main_model = _make_model(ModelTier.ANALYSIS).bind_tools([dispatch])
 
 # ==================== supervisor 节点 ====================
 
@@ -116,11 +387,130 @@ MAIN_SYSTEM = HumanMessage(content="""你是企业智脑调度中心。你只有
 - 不重复对话历史中的旧回答""")
 
 
-def main_agent_node(state: AgentState) -> dict:
+# ==================== R27 · 确定性计划命中不再发第二发 ====================
+#
+# 判据①：第二发是图结构必然结果，不是模型选择。route_main 在 :332 返回
+# ["main_tools", Send(worker)...]，而 _builder 上 main_tools 与每个 worker 都挂着无条件
+# 回到 supervisor 的硬边（:688-:693），所以本轮只要派发过就必然再进一次
+# main_agent_node；:201 那一发的 prompt 只有 [sys_msg, current_user_msg]，worker 结果
+# 一个字都不进上下文，temperature=0 之下第 2 发只能把第 1 发的决策原样复读一遍，
+# route_main 再按 worker_results 把它判成 remaining=[] → reflect。实测 15.931 s 买了
+# 一个被代码丢掉的决策（docs/perf/latency-budget-2026-09-16.md §3.3）。
+#
+# 短路三条件缺一不可：① 本轮 plan 逐 worker 等于确定性计划器的输出；② 本轮已经有
+# dispatch 决策可复读；③ reflect 没有判 redo（复审回炉是模型唯一的二次纠正面）。
+# 未命中时一行都不多走，路径与今天逐字一致；route_main 的关键词/计划兜底
+# （:285-305）原样保留，仍是命中轮次的实际决策者。
+
+
+def _current_turn(state: AgentState) -> tuple[str, list]:
+    """本轮的用户问题，以及这条问题之后新增的消息（第 1 发进 supervisor 时为空）。"""
+    msgs = state.get("messages") or []
+    for i in range(len(msgs) - 1, -1, -1):
+        if type(msgs[i]).__name__ == "HumanMessage":
+            return str(msgs[i].content or ""), msgs[i + 1:]
+    return "", list(msgs)
+
+
+def _deterministic_plan_hit(state: AgentState, question: str) -> bool:
+    """state["plan"] 是否就是 planner.build_task_plan 的确定性输出。"""
+    planned = [
+        task.get("worker")
+        for task in (state.get("plan") or [])
+        if isinstance(task, dict)
+    ]
+    if not planned:
+        return False
+    try:
+        expected = [task["worker"] for task in build_task_plan(question)]
+    except Exception as exc:  # pragma: no cover - 纯规则函数，异常一律按未命中处理
+        logger.warning(f"[Supervisor] 确定性计划比对失败，按未命中处理: {exc}")
+        return False
+    return planned == expected
+
+
+def _prior_dispatch_decision(turn_messages: list):
+    """本轮 supervisor 已经做出的那次 dispatch 决策，没有则 None。"""
+    for msg in reversed(turn_messages):
+        if type(msg).__name__ != "AIMessage":
+            continue
+        for call in getattr(msg, "tool_calls", None) or []:
+            if call.get("name") == "dispatch":
+                return msg
+    return None
+
+
+#: 主 Agent 直答那一发在本轮片段出口上的腿名。它刻意不叫任何 worker 的名字：收端
+#: (``app/api/v1/chat.py::_AnswerPieceStream.frame_for``) 拿 ``worker`` 与 ``worker_results``
+#: 比对来判断"这条腿的字落定了没有"，而 supervisor 永远不是 ``worker_results`` 的键 ⇒ 这一发
+#: 之后若还有一条腿开口，收端走的就是它那三条规则里"少发"的那一侧。
+SUPERVISOR_ANSWER_LEG = "supervisor"
+
+
+def _supervisor_answer_tap(state: AgentState, config):
+    """直答那一发要不要接上 R31 的片段出口：接就交回 ``(tap, 这一发要用的 config)``。
+
+    不接一律交回 ``(None, None)``，那一发退回单参数 ``invoke``——请求体与今天逐字节相同。
+    三格同时成立才接：
+
+    ① 本轮注册了 ``stream_piece_sink``。注册它的有两枚跑道：``chat._ask_stream``（R149）与``chat._approve_stream``
+      （R524 差格 a，批准之后的续跑道）。队列道与离线直调仍旧没有它，于是那些道上的字节与今天逐字相同。
+
+    ② 本轮还没派过活（本轮消息里没有 ``dispatch`` 决策）。派完之后回到 supervisor 的那一发
+      写的是**汇总**，而终答由 ``synthesize`` 从 ``worker_results`` 折出来 ⇒ 那一发的正文不是
+      终答的前缀，接进来只会在 ``prefix_breaks`` 上露馅；run9 的 ``data-09`` 卡的正是那一发
+      （``docs/perf/a2-single-frame-attribution-2026-09-28.md`` §7.1 明写那一格本单分不开）。
+    ③ ``worker_results`` 为空。与②是同一条事实的两半：一枚看消息、一枚看账本，``redo`` 那一圈
+      里两者不同步，两道都得守着。
+
+    接的是 R203 生产者那套现成的东西，不是第二套实现：同一枚 ``_AnswerPieceTap``——尺寸闸与
+    空档闸用的还是 R31 那枚 ``StreamPieceMerger``（20 字／100 ms／4 字地板，一格没动），T1
+    工具轮、T2 滚动留一、T3 半截字不充末片全在类里；本函数只多做一件事，就是把这枚 tap 挂进
+    **这一发**的 ``callbacks``。为什么不在 ``configurable`` 里补一枚 ``worker`` 让
+    ``nodes.answer_leg_stream_target`` 自己放行：那枚名单是 ``doc``／``data``／``chart`` 三条
+    **工作腿**的归因名，主 Agent 直答不是其中任何一条；借名进名单＝往日志的 ``leg=`` 与
+    ``StreamPiece.worker`` 里塞一枚假腿名，那是归因造假，不是接线。
+    """
+    configurable = (config or {}).get("configurable") or {}
+    sink = configurable.get(STREAM_PIECE_SINK_KEY)
+    if not callable(sink):
+        return None, None
+    if state.get("worker_results"):
+        return None, None
+    _question, turn_messages = _current_turn(state)
+    if _prior_dispatch_decision(turn_messages) is not None:
+        return None, None
+    tap = _AnswerPieceTap(
+        config, sink, worker=SUPERVISOR_ANSWER_LEG, call_id=uuid4().hex[:12]
+    )
+    return tap, _config_with_tap(config, tap)
+
+
+def _answer_leg_publishes_tail(resp) -> bool:
+    """交回来的这一发还是不是刚才那串字的延伸：是才许把收尾的尾巴放出去（T3 的结清判据）。
+
+    两种交回都不是延伸：工具轮（provider 死在半路时 ``_OfflineModel`` 顶上的正是那一发——
+    content 为空、带 dispatch，``is_offline_reply_text`` 对空串认不出来，所以两半都得查）；
+    以及离线话术那一句预制的话。半截字冒充答案的最后一块，收端就会把死掉的流当成终答的
+    前缀——与 nodes.py 里那枚 tap 自己 ``abandon`` 的裁定同一条。
+    """
+    return not getattr(resp, "tool_calls", None) and not is_offline_reply_text(
+        getattr(resp, "content", "")
+    )
+
+
+def main_agent_node(state: AgentState, config=None) -> dict:
     all_msgs = state.get("messages", [])
 
-    # 短期记忆：超阈值自动压缩
-    all_msgs = compress_messages(all_msgs, _make_model(timeout=30))
+    # 短期记忆：R33 起确定性裁剪，零模型。旧写法在这里多发一发 COMPRESS 往返，让本机模型
+    # 把旧历史写成一句摘要，而这条线上唯一消费 all_msgs 的地方是下面“取本轮最后一条
+    # HumanMessage”那一圈：supervisor 真正发出的 prompt 只有 [sys_msg, current_user_msg]
+    # （tests/test_supervisor_roundtrip.py:7-9 早就把这一点当既成事实钉着），摘要串与 worker
+    # 结果一个字都不进上下文 —— 那一发买回来的东西当场被丢掉，是纯开销。
+    # 预算也不再由裁剪自己猜：交给真正吃这份历史的 supervisor 那一档（:259 main_model 用的
+    # ModelTier.ANALYSIS）的 input_budget_tokens。ModelTier.COMPRESS 这一档**保留**，档位预算
+    # 校准用例 tests/test_r30_timeout_budget.py 仍按它量表；生产路径自 R33 起不再调用它。
+    all_msgs = compress_messages(all_msgs, tier=ModelTier.ANALYSIS)
 
     # 长期记忆注入
     mem = state.get("memory") or {}
@@ -131,6 +521,14 @@ def main_agent_node(state: AgentState) -> dict:
         mem_ctx = "\n\n【用户历史记忆】\n" + "\n".join(f"- {m}" for m in long_mem)
     if profile_ctx:
         mem_ctx += "\n\n【用户画像】\n" + profile_ctx
+
+    current_user_msg = None
+    for m in reversed(all_msgs):
+        if type(m).__name__ == "HumanMessage":
+            current_user_msg = m
+            break
+    if current_user_msg is None:
+        current_user_msg = HumanMessage(content="请完成你的专业工作。")
 
     last_user_idx = -1
     for i in range(len(all_msgs) - 1, -1, -1):
@@ -155,7 +553,37 @@ def main_agent_node(state: AgentState) -> dict:
     if mem_ctx:
         sys_msg = HumanMessage(content=MAIN_SYSTEM.content + mem_ctx)
 
-    resp = main_model.invoke([sys_msg, *filtered])
+    # R27：确定性计划命中时把第 1 发的决策原样补回消息尾部（换一个新 id，让
+    # add_messages 是追加而不是就地覆盖），交给同一条 route_main 收敛：分层派发、
+    # HITL 挂起、已完成 worker 的过滤全部不变，与"模型再复读一遍决策"逐字同形，
+    # 只是不再花一次模型往返。
+    if not state.get("redo"):
+        turn_question, turn_messages = _current_turn(state)
+        prior = _prior_dispatch_decision(turn_messages)
+        if prior is not None and _deterministic_plan_hit(state, turn_question):
+            replay = prior.model_copy(update={"id": f"supervisor-replay-{uuid4().hex}"})
+            logger.info("[Supervisor] 确定性计划命中 → 复读第 1 发 dispatch，跳过第二发模型往返")
+            return {"messages": [replay]}
+
+    tap, answer_leg_config = _supervisor_answer_tap(state, config)
+    resp = main_model.invoke(
+        [sys_msg, current_user_msg],
+        **(
+            {"config": answer_leg_config, "stream_options": {"include_usage": True}}
+            if tap is not None
+            else {}
+        ),
+    )
+    if tap is not None:
+        # T3 的结清点落在调用方，因为"交回来的这一发还是不是模型刚才那串字"只有这里看得见：
+        # invoke 正常返回才 close()（把手里那片与收尾残余放出去），否则 abandon（残余整片丢弃，
+        # 与 nodes.py 里那枚 tap 自己在 provider 报错时的处置同一条裁定）。invoke 当场抛
+        # （预算拒发那一形）时两枚都不调，pending 永不落地 ⇒ 与 metric-02／scope-02 那两枚
+        # 空读同形，一片都不许多发。
+        if _answer_leg_publishes_tail(resp):
+            tap.close()
+        else:
+            tap.abandon("provider_fallback")
 
     tools = getattr(resp, "tool_calls", None) or []
     if tools:
@@ -166,24 +594,92 @@ def main_agent_node(state: AgentState) -> dict:
 
     return {"messages": [resp]}
 
+# 图在编译时带 interrupt_before=["chart", "export"]，并行派发含这两个节点的
+# 超步骤会在执行前整体中断，同批 doc/data 的结果一起丢失。图表和导出又必须读取
+# 分析结果才能产出真实来源，所以每轮只放行依赖已就绪的一层。
+_UPSTREAM = {
+    "chart": ("doc", "data"),
+    "export": ("doc", "data", "chart"),
+    "approval": ("doc", "data"),
+}
+
+# 这些节点在编译时带 interrupt_before，因此只能单独占一个 superstep；编译、路由和
+# check_interrupt 共用同一个常量，避免三处定义各自漂移。
+_HITL_PARKED = ("chart", "export")
+
+_HITL_LABELS = {"chart": "📈 生成图表", "export": "📋 导出报告"}
+
+# 用户问题里的《xxx.pdf》、report.xlsx 描述的是被提问的对象，不是“导出 PDF”这个
+# 动作。旧版本正是被文件名里的 .pdf 触发了 export 关键词分支。
+_DOC_REFERENCE = re.compile(
+    r"《[^》]*》|\S+\.(?:pdf|docx?|xlsx?|csv|md|pptx?|txt)\b",
+    re.IGNORECASE,
+)
+
+
+def _intent_text(user_message: str) -> str:
+    """剥离文档引用后的意图文本，供关键词兜底使用。"""
+    return _DOC_REFERENCE.sub(" ", user_message or "")
+
+
 # ==================== 路由 ====================
 
-def route_main(state: AgentState):
+#: 副作用一轮：编译期带 interrupt_before，只能单独占一个 superstep
+#: （出处是上面的 _HITL_PARKED，本单只借用"这两条腿不该被重新分层"这一条事实）。
+_SIDE_EFFECT_LEGS: tuple[str, ...] = ("chart", "export")
+
+#: 10-07 现读（走查环 7，12:43:14→12:45:07）：图腿在同一发失败调用上连打 21 发、每发约 5.3 s，
+#: 本地服务端 ollama 把消息历史挤到只剩 system 与工具轮，模板当场 500「No user query found in
+#: messages」，整轮白等 114 s，屏上零张图。一次正经作业是「取数一发 + 画图一发 + 收口一发」，
+#: 十个超步已经容得下三发失败调用；再多就是模型自己在绕圈，绕圈不会绕出图，只会绕崩服务。
+_LEG_RECURSION_LIMIT = 10
+#: 收口那一句是腿自己的正文，客户看得见：说清这一腿没产出文件，不替客户决定要不要重跑。
+_LEG_LOOP_STOP_TEXT = "这一腿没能在往返上限内完成：模型在同一发调用上反复绕圈，本轮因此没有产出图表或报告文件。"
+
+
+def kb_leg_for_caliber(text: str, workers) -> list[str]:
+    """R206a：口径题的知识库腿没出门就补一条，**只加不减**。
+
+    病根（run6 逐题凭据，跟进单 §93.14）：下面 route_main 的关键词兜底里，
+    "制度类只派 doc"那一条要求**一条 `data_kw` 都不命中**，而口径题的题面里恰好
+    带裸"统计"（metric-04/05）或裸"哪个"（metric-11/12/13/14/15）——一票否决之后
+    落到"追加 data"那一支；metric-07/17 两条兜底都不命中，supervisor 派什么就是什么。
+    结果 9 道题 `evidence_n = 0`，答案是数据分析腿从上传的报销明细表里"文件里没有这个
+    字段"拼出来的通用说法，知识库一个字都没读。
+
+    三条边界，每条都有用例钉着（判据②③④）：
+    ① 只加不减——数据分析腿不许为了省一次检索撤掉，题面带着上传文件时它是真需要的；
+    ② 词集是闭集——裸"多少"/裸"统计"不收，纯算数的题不许被拖进知识库多花一发检索；
+    ③ 副作用一轮不改派——chart/export 补一条读腿要多烧整个 superstep 的钟，另账。
+    """
+    if not workers:
+        # 弃权轮仍归 R42 那条"问答档补派 doc"管：两条规则同时开口就变成两个锚点，
+        # 摘掉任一条都有用例不红。判据⑤的反证钉靠的就是这一条边界可指名道姓。
+        return []
+    if "doc" in workers:
+        return list(workers)
+    if any(leg in workers for leg in _SIDE_EFFECT_LEGS):
+        return list(workers)
+    if not any(marker in text for marker in KB_CALIBER_MARKERS):
+        return list(workers)
+    return list(workers) + ["doc"]
+
+
+def route_main(state: AgentState, config=None):
+    """决定这一轮派谁出门。
+
+    ``config`` 只为一件事存在：读出调用方声明的档位（R141）。不传时（全部既有单参数
+    直调，含 tests/test_r42_zero_model_calls.py 的 105 题全量）本函数与改动前逐字节相同。
+    """
     last = state["messages"][-1]
     tools = getattr(last, "tool_calls", None) or []
-
-    if not tools:
-        return "reflect"   # 产出最终回答 → 反思
 
     dispatches = []
     for tc in tools:
         if tc["name"] == "dispatch":
             dispatches.extend(tc["args"].get("workers", []))
 
-    if not dispatches:
-        return "reflect"
-
-    valid = {"doc", "data", "chart", "export"}
+    valid = {"doc", "data", "chart", "export", "approval"}
     workers = []
     seen = set()
     for w in dispatches:
@@ -197,38 +693,318 @@ def route_main(state: AgentState):
             user_msg = getattr(m, "content", "") or ""
             break
 
+    planned_workers = []
+    for task in state.get("plan") or []:
+        worker = task.get("worker") if isinstance(task, dict) else None
+        if worker in valid and worker not in planned_workers:
+            planned_workers.append(worker)
+
     # 保留关键词兜底纠正（与 LLM 决策互为保险）
     chart_kw = ["画", "图", "图表", "柱状图", "折线图", "饼图", "可视化", "图形"]
     data_kw = ["排名", "最高", "最低", "统计", "分析数据", "对比", "比较", "哪个"]
     export_kw = ["导出", "PDF", "pdf", "报告", "下载"]
-    if any(kw in user_msg for kw in chart_kw):
-        if workers != ["chart"]:
-            workers = ["chart"]
-    elif any(kw in user_msg for kw in export_kw) and not any(kw in user_msg for kw in chart_kw):
-        if workers != ["export"]:
-            workers = ["export"]
-    elif any(kw in user_msg for kw in data_kw) and "chart" not in workers:
-        if "data" not in workers:
-            workers = ["data"]
+    doc_kw = [
+        "制度", "流程", "报销", "审批", "住宿费", "差旅", "员工手册",
+        "入职", "安全", "规定", "标准", "谁审批", "审批人",
+    ]
+    # Rewriting may expand a follow-up, but cannot grant actions the user prohibited.
+    execution_question = (state.get("task_context") or {}).get("execution_question") or user_msg
+    preserving_report = bool((state.get('task_context') or state.get('data_context') or {}).get('report_body'))
+    if preserving_report:
+        execution_question = '导出PDF报告'
+    intent_text = _intent_text(execution_question)
+    ai_answer_text = str(getattr(last, "content", "") or "").strip()
+    # supervisor 既没派发也没给出正文时，确定性计划就是本轮契约。旧版本只在
+    # len(planned_workers) > 1 时才尊重计划，单步计划被关键词规则整组覆盖。
+    abstained = not workers and not ai_answer_text
 
+    if planned_workers and (len(planned_workers) > 1 or abstained):
+        workers = list(planned_workers)
+        # planner 从不排 export，图表/导出这类副作用步骤只能追加，
+        # 顺序交由下面的分层派发决定，不再取代检索与分析。
+        if "chart" not in workers and any(kw in intent_text for kw in chart_kw):
+            workers.append("chart")
+        elif "export" not in workers and any(kw in intent_text for kw in export_kw):
+            workers.append("export")
+    else:
+        # 保留关键词兜底纠正（与 LLM 决策互为保险），但只作用在剥离文档引用后的文本上
+        if any(kw in intent_text for kw in chart_kw):
+            if workers != ["chart"]:
+                workers = ["chart"]
+        elif any(kw in intent_text for kw in export_kw) and not any(kw in intent_text for kw in chart_kw):
+            if workers != ["export"]:
+                workers = ["export"]
+        elif any(kw in intent_text for kw in doc_kw) and not any(kw in intent_text for kw in data_kw):
+            # 制度、报销、差旅等事实性问题必须优先检索知识库，
+            # 避免 supervisor 将政策问题误派给数据分析 Agent。
+            if workers != ["doc"]:
+                workers = ["doc"]
+        elif any(kw in intent_text for kw in data_kw) and "chart" not in workers:
+            if "data" not in workers:
+                workers = ["data"]
+        if workers and all(worker in ("chart", "export") for worker in workers):
+            # 图表和报告不能凭空产生：把计划里尚未完成的分析型 worker 补在前面。
+            for worker in planned_workers:
+                if worker not in workers and worker not in ("chart", "export"):
+                    workers.insert(0, worker)
+
+    # R206a：口径题的派工里若没有知识库腿，补一条。放在计划分支与关键词兜底**之后**、
+    # R42 弃权补派**之前**——前面两条定的是"这一轮干什么"，本条只往里加一条读腿；
+    # 排在 R42 之前是为了让弃权轮的既有形状一个字不动（workers 仍为空时本条不开口）。
+    caliber_filled = kb_leg_for_caliber(intent_text, workers)
+    if caliber_filled != workers:
+        logger.info(f"[R206a] 口径题知识库腿缺席 → 补派 doc：{workers} → {caliber_filled}")
+        workers = caliber_filled
+
+    # R42 判别器只接管一种局面：supervisor 弃权、计划为空、关键词一条不命中，
+    # 也就是 route_main 收尾那句 `if not workers: return "reflect"`——派发列表为空
+    # 却已经进了 reflect 的死轮。
+    # 今天这一轮以空答案收尾 ⇒ reflect 判 redo ⇒ 再花一发 supervisor 往返。
+    # 判别器在这里只允许**补一次读操作**（doc 检索）：分析/报告道的弃权轮原样交给
+    # reflect，因为 chart/export 是 HITL 挂起的副作用节点，不该由便宜规则代发。
+    # 反过来，命中 chart_kw/export_kw/data_kw 的题早在上面就被兜底升档了，
+    # 这条永远抢不过它——判据②"兜底仍能升档"正是靠这个先后顺序成立。
+    if not workers and abstained and classify_route(intent_text).lane == LANE_QA:
+        workers = ["doc"]
+        logger.info("[R42] 弃权轮判为问答档 → 补派 doc，不再空转一轮")
+
+    # R141 判据①：显式声明的档位在这一格落地成"腿的有无"。上面那句 R42 补派一个字不动
+    # —— 它管的是"系统判出来的问答档不许空转"，本节管的是"人明确点了问答档不许跑重活"。
+    # 只在真有了声明时才多算一次规则判别（resolve_turn_lane 不打 [R42] 日志，锚点频次不变）。
+    if state.get("task_context"):
+        workers = ["doc", "data"]
+        if any(kw in intent_text for kw in chart_kw):
+            workers.append("chart")
+        if any(kw in intent_text for kw in export_kw):
+            workers.append("export")
+    declared = declared_lane_from_config(config)
+    if declared:
+        turn = resolve_turn_lane(intent_text, declared)
+        kept, cut, added = decide_workers(
+            turn,
+            workers,
+            has_data=bool(state.get("data_filename", ((config or {}).get("configurable") or {}).get("data_filename"))),
+            abstained=abstained,
+        )
+        if cut or added:
+            workers = list(kept)
+            logger.info(
+                f"[R141] 声明档 {turn.lane}（系统判 {turn.rules_lane}）"
+                f" → 派 {workers or '-'} | 砍 {','.join(cut) or '-'}"
+                f" | 补 {','.join(added) or '-'}"
+            )
+
+    # Comparing policy documents is a read task, not a request to precheck an
+    # expense. The real chart/export HITL interrupts remain in their tool path.
+    if declared == LANE_QA and re.search(r"比较|对比|差异|区别|分别说明", intent_text):
+        from app.rag.retrieval_pipeline import requested_document_names
+        if requested_document_names(user_msg) and not re.search(r"预审|自查|是否超标|帮我审批|申请报销", intent_text):
+            workers = [worker for worker in workers if worker != "approval"]
+
+    # Explicit refusal in the user's request takes precedence over planner/model dispatch.
+    prohibited = set()
+    dataset_evidence = [item for item in ((state.get("agent_results") or {}).get("data") or {}).get("evidence", [])
+                        if item.get("source_type") == "dataset"]
+    conditional_empty = bool(re.search(r"(?:如|如果|若|当|为空时).*?(?:为空|0行|没有记录|无数据|不画)", intent_text))
+    empty_data = bool(dataset_evidence) and all(item.get("metadata", {}).get("row_count") == 0 for item in dataset_evidence)
+    enforce_prohibition = not conditional_empty or empty_data
+    if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:画|绘制|生成)(?:柱状|折线|饼)?图|不(?:要|需)?(?:生成)?图表", intent_text):
+        prohibited.add("chart")
+    if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:(?:导出|下载)(?:PDF|pdf)?(?:报告)?|生成(?:PDF|pdf|报告))", intent_text):
+        prohibited.add("export")
+    workers = [worker for worker in workers if worker not in prohibited]
+    if preserving_report:
+        workers = ['export']
+    completed_workers = set((state.get("worker_results") or {}).keys())
+    remaining = [worker for worker in workers if worker not in completed_workers]
+    ready = [
+        worker
+        for worker in remaining
+        if not any(upstream in remaining for upstream in _UPSTREAM.get(worker, ()))
+    ]
+    # 待确认节点只能自己一轮：它会把整个 superstep 停在执行之前，同批真实工作会一起消失。
+    work = [worker for worker in ready if worker not in _HITL_PARKED]
+    if work and any(worker in _HITL_PARKED for worker in ready):
+        ready = work
+    # ready 为空但 remaining 非空只能是循环依赖，此时照旧派发，不允许静默丢任务。
+    workers = ready or remaining
     if not workers:
         return "reflect"
 
     logger.info(f"[Route] dispatch → {workers}")
     return ["main_tools"] + [Send(w, state) for w in workers]
 
+# ==================== 内部交接标记（R439） ====================
+
+#: 子 Agent 的正文交回 supervisor 时披的是**内部**记号，格式在册（``app/api/v1/chat.py``
+#: 的两处候选拾取与多枚既有测试凭它识别"这是编排层的中转文字"）：
+#: ``【<worker> Agent 返回】\n<正文>``。
+#: 🔴 它永远不许成为交回客户的那一句话。run9 真机窗实测：chart-01 的终答 16 个字、data-09
+#: 的终答 15 个字，逐字等于这枚标记本身（正文丢了），客户屏上只剩一句没用的包装标签。
+AGENT_RETURN_MARKER_TAIL = "Agent 返回】"
+
+
+def agent_return_marker(worker: str) -> str:
+    """内部交接标记本身：``【<worker> Agent 返回】``。"""
+    return f"【{worker} {AGENT_RETURN_MARKER_TAIL}"
+
+
+def agent_answer_body(text) -> str:
+    """把内部交接标记从一段文字上摘掉，只交回正文。
+
+    认法与 ``app/api/v1/chat.py`` 既有的两处候选拾取同一把尺：整段以 ``【`` 开头、且前 50 字
+    里出现 ``Agent 返回】``。不带这枚标记的文字按既有口径 ``strip()`` 原样交回；只剩标记的
+    那一发交回**空串**——那一发没有正文，标签不是答案。
+    """
+    value = str(text or "").strip()
+    if not value.startswith("【") or AGENT_RETURN_MARKER_TAIL not in value[:50]:
+        return value
+    cut = value.index(AGENT_RETURN_MARKER_TAIL) + len(AGENT_RETURN_MARKER_TAIL)
+    return value[cut:].strip()
+
+
+def agent_return_message(worker: str, answer: str):
+    """正文非空才包装成交接消息；正文为空（或只剩空白）交回 ``None``。
+
+    交回 ``None`` 时这一发**不往 ``messages`` 里追加任何东西**，也不在那里留一句客套话：
+    ``worker_results`` 与 ``agent_results`` 照旧落账，``status`` 与结局码一个字不改——
+    空正文在 ``app/agents/evidence.py`` 的 ``_terminal_status`` 里本来就是
+    ``("failed", "internal_error")``，那是装配层的事实，不该被包装标签盖掉。客户侧由
+    ``app/api/v1/chat.py`` 的具名结局接手。
+    """
+    body = str(answer or "")
+    if not body.strip():
+        return None
+    return AIMessage(content=f"{agent_return_marker(worker)}\n{body}")
+
+
+def _agent_result_error_code(agent_result) -> str:
+    """日志归因用：读 ``AgentResult.error.code``，没有错误信封时交回空串。"""
+    return str(getattr(getattr(agent_result, "error", None), "code", "") or "")
+
+
 # ==================== Worker Wrapper（传 thread_id） ====================
+
+#: B17（业主 2026-10-07 批准治）：文档腿不许「没检索就说话」。
+#: 病（10-07 19:36 现取 trace）：doc_graph 是一枚 ReAct，检索与否过去由模型自己裁——那一轮
+#: 只有一次模型往返、零枚工具调用，它照样答了，还答出库里根本不存在的文件名《走查标记记录表》。
+#: 屏幕上的现象是「答案看着像、出处是编的」。
+#: 改法：这一腿收口前先看它查没查过。查过＝一枚都不多打（R117 的每轮一发装箱账不动）；
+#: 没查过＝拿调用者的真身份补一发 search_docs，把检索原文连同作答规矩交回同一腿再答一次。
+#: 补的那一发走的还是工具本身（同一道密级/部门闸、同一枚证据袋、同一条 trace 工具跨度），
+#: 所以「这一轮到底查没查」在运行留痕里读得回，不是另起第二条检索路。
+#: 段序按 R167 的前缀复用纪律排：固定块在最前，可变内容一律落在它后面。
+_DOC_EVIDENCE_RULE = (
+    "作答规矩：只根据下面这份知识库检索结果回答，引用的文件名必须是这份结果里出现过的来源；"
+    "这份结果里没有的就说不知道，不许猜文件名、不许编制度条款。"
+    "这一轮已经按当前问题检索过，除非这份结果明显不足以回答，不必拿同一批关键词再搜一遍。"
+    "以下是检索结果："
+)
+#: 分隔块写成具名字面量：它是固定字，但按 R167 那把尺子的口径，可变内容之后不许再挂固定串。
+_DOC_EVIDENCE_SEP = "\n\n以上为检索结果，本轮问题是：\n"
+
+
+#: 边界自己报过的终态里，这几枚算「好好跑完了」，其余一律是坏了或空手。
+_DOC_CLEAN_STATUSES = frozenset({"", "ok", "success", "completed"})
+
+
+def _doc_leg_spoke_without_reading(result: dict, bag: dict | None) -> bool:
+    """这一腿是不是「没读知识库就把话说完了」——B17 要治的那一种。
+
+    三枚口子合起来认：证据袋里有检索原文＝读过；ReAct 走过工具串＝读过（哪怕那一发空手回
+    「未找到」，模型也确实见到过它）；边界报过坏（模型不可用、检索不可用、越权拒答）＝这一轮的
+    输出是错误脸而不是一句主张，不去拿补查盖它。三条都不中而屏上又确实出了一段话，才补。
+    """
+    if bag and bag.get("documents"):
+        return False
+    if any(str(row.get("status") or "").strip().lower() not in _DOC_CLEAN_STATUSES
+           for row in list((bag or {}).get("model_statuses") or []) + list((bag or {}).get("tool_statuses") or [])):
+        return False
+    messages = result.get("messages") or []
+    if any(type(message).__name__ == "ToolMessage" for message in messages):
+        return False
+    return any(
+        type(message).__name__ == "AIMessage"
+        and str(getattr(message, "content", "") or "").strip()
+        and not getattr(message, "tool_calls", None)
+        for message in messages
+    )
+
+
+def _doc_question_with_evidence(user_msg: HumanMessage, child_cfg: dict) -> HumanMessage:
+    """把「光板问题」换成「固定规矩＋这一发的检索原文＋问题」，供补查那一趟用。"""
+    question = str(user_msg.content or "")
+    try:
+        evidence = search_docs.invoke({"query": question}, config=child_cfg)
+    except Exception as exc:  # noqa: BLE001 - 检索打不出去不许掀翻整轮，改明说读不到
+        logger.warning("[doc] 补查那一发没打出去，本轮按「读不到知识库」作答：%s", exc)
+        evidence = "（起手检索没打出去，本轮读不到知识库）"
+    text = str(evidence or "").strip() or "（这一发检索没有返回任何内容）"
+    body = _DOC_EVIDENCE_RULE + text + _DOC_EVIDENCE_SEP + question
+    return HumanMessage(content=body)
+
 
 def _make_worker_wrapper(graph, name: str):
     def node(state: AgentState, config) -> dict:
-        parent_conf = (config or {}).get("configurable", {})
+        parent_conf = (config or {}).get("configurable", {}) or {}
+        # B26: resume rebuilds the caller's config, but the table selection belongs
+        # to the parked turn. Keep current identity; restore only its data scope.
+        if "data_filename" in state:
+            parent_conf = {**parent_conf, "data_filename": state["data_filename"]}
+        parent_conf = {**parent_conf, "task_context": state.get("task_context") or {}}
+        parent_conf = {**parent_conf, 'data_context': state.get('data_context') or {}}
+        # 取消检查点 2（即将开工）：并行 worker 可能共享同一次流边界，边界检查只
+        # 拦得住第一个，故逐节点再查一遍。放在 trace 与 invoke 之前，取消时不会留下
+        # 半截 step.started。
+        _raise_if_cancelled(parent_conf.get("cancel_event"))
         parent = parent_conf.get("thread_id", "default")
+        request_id = str(parent_conf.get("request_id") or "")
+        trace_id = str(parent_conf.get("trace_id") or "")
+        task_id = str(parent_conf.get("task_id") or "")
+        step_id = f"{trace_id}:worker:{name}" if trace_id else ""
+        evidence_bag = new_evidence_bag()
+        # R127（= R118 乙案·乙-1）：下面这枚子线程号本身是稳定的（同一会话内跨轮恒定），
+        # 但线程号恒定不等于子图能回读上一轮——langgraph 给父节点内的嵌套 invoke 注入的
+        # checkpoint_ns 每轮换一枚新 uuid，于是这四张子图是每轮都写、永不回读：子图每轮进
+        # 模型的 prompt 恒等于 [system, 本轮那条 HumanMessage]。别把建图那几行的 checkpointer=
+        # 当跨轮记忆用；撤不撤它是 R128 的决策，形状钉在 tests/test_r118_subgraph_memory.py。
         child_conf = {"thread_id": f"{parent}:{name}"}
         # 阶段 2：把调用者身份传给子图，工具可据此做权限过滤
-        for k in ("username", "role", "department"):
+        for k in (
+            "username",
+            "role",
+            "department",
+            "data_filename",
+            "document_filenames",
+            "task_context",
+            "data_context",
+            "report_body",
+            "principal",
+            # R294 把签名长在 configurable 上而不是 Principal 字段里，它与 `principal` 是一对：
+            # 只搬身份不搬出处，交进子图的那份 config 就自相矛盾（一枚没人作证的 dict）。今天
+            # 这一发靠 langchain 的父 config 合并兜住，兜不住的是显式搬运本身，故成对搬。
+            PRINCIPAL_PROVENANCE_KEY,
+            "request_id",
+            "trace_id",
+            "task_id",
+            # 取消标记必须一路传到子图：工具（chart/export）在子图里执行，只改父层的
+            # 话子图看不到标记，检查点 2/3 就等于恒不触发。
+            "cancel_event",
+            "queue_execution_guard",
+        ):
             if k in parent_conf:
                 child_conf[k] = parent_conf[k]
+        child_conf["worker"] = name
+        #: 10-08：这一腿真实的壳与料价倍率随 config 交给装箱（上面 _LEG_SHELL_EXTRA_TOKENS）。
+        child_conf[PROMPT_SHELL_EXTRA_TOKENS_KEY] = _LEG_SHELL_EXTRA_TOKENS.get(name, 0)
+        if name in _TABULAR_LEGS:
+            child_conf[PROMPT_MATERIAL_CALIBRATION_KEY] = PACK_MATERIAL_CALIBRATION
+        child_conf["evidence_bag"] = evidence_bag
+        if step_id:
+            child_conf["step_id"] = step_id
         child_cfg = {"configurable": child_conf}
+        if name in _SIDE_EFFECT_LEGS:
+            child_cfg["recursion_limit"] = _LEG_RECURSION_LIMIT
 
         msgs = state.get("messages", [])
         user_msg = None
@@ -238,21 +1014,369 @@ def _make_worker_wrapper(graph, name: str):
                 break
         if user_msg is None:
             user_msg = HumanMessage(content="请完成你的专业工作。")
+        child_conf["data_question"] = str(child_conf.get("task_context", {}).get("analysis_question")
+            or child_conf.get('data_context', {}).get('query') or user_msg.content or "")
+        child_conf["execution_question"] = str(child_conf.get("task_context", {}).get("execution_question") or user_msg.content or "")
+        if name == "export":
+            chart_result = (state.get("agent_results") or {}).get("chart") or {}
+            child_conf["report_chart_ids"] = [str(item["artifact_id"])
+                for item in chart_result.get("artifacts", []) if isinstance(item, dict) and item.get("artifact_id")]
 
+        owner_id = _owner_id_from(parent_conf)
+        started = time.monotonic()
+        _record_trace(
+            _trace_store,
+            trace_id=trace_id,
+            request_id=request_id,
+            task_id=task_id,
+            event_type="step.started",
+            status="running",
+            payload={
+                "step_id": step_id,
+                "worker": name,
+                "sequence": _step_sequence(state, name),
+                "input_summary": {"question_length": len(str(user_msg.content or ""))},
+            },
+            owner_id=owner_id,
+        )
         logger.info(f"[{name}] 开始执行...")
-        result = graph.invoke({"messages": [user_msg]}, config=child_cfg)
+        try:
+            filter_failure = ""
+            table_answer = None
+            if name in ("data", "chart") and child_conf.get("data_filename"):
+                # Invalid original filters cannot be repaired by repeatedly rephrasing
+                # a tool call. Check through the same authorized data tool first.
+                probe_bag = new_evidence_bag()
+                probe_cfg = {**child_cfg, "configurable": {**child_conf, "evidence_bag": probe_bag}}
+                probe = analyze_data.invoke({"query": child_conf["data_question"]}, config=probe_cfg)
+                if any(row.get("error_code") == "validation_error" for row in probe_bag["tool_statuses"]):
+                    filter_failure = str(probe)
+                    evidence_bag["tool_statuses"].extend(probe_bag["tool_statuses"])
+                elif ((child_conf.get("task_context") or child_conf.get('data_context', {}).get('alert_id')
+                       or re.search(r"按.+?(?:汇总|合计|统计)", str(user_msg.content or "")))
+                      and not re.search(r"同比|环比|预算|预测|SQL|相关性", str(user_msg.content or ""), re.I)
+                      and probe_bag.get("report_facts")):
+                    # Numeric briefs and their charts use the authorized, filtered frame.
+                    # A model must not invent units or claim a tool ran before approval.
+                    from app.agents.tools import _verified_data_answer
+                    for key, rows in probe_bag.items():
+                        if isinstance(rows, list):
+                            evidence_bag.setdefault(key, []).extend(rows)
+                    if name == "data":
+                        table_answer = _verified_data_answer(probe_bag["report_facts"])
+                        if child_conf.get('data_context', {}).get('alert_id'):
+                            from app.insights.alert_evidence import explain_finding
+                            table_answer += '\n\n### 阈值提醒与核查限制\n\n' + explain_finding(child_conf['data_context'])
+                    elif name == "chart" and re.search(r"柱状图|柱图", str(user_msg.content or "")):
+                        table_answer = generate_chart.invoke({"chart_type": "bar"}, config=child_cfg)
+            if name == "export" and child_conf.get("data_filename"):
+                table_answer = export_report.invoke({"report_title": "制度核查简报" if child_conf.get("task_context") else "经营分析简报", "sections_json": "[]"}, config=child_cfg)
+            if name == "doc" and child_conf.get("task_context"):
+                from app.agents.tools import search_docs
+                from app.agents.task_review import policy_review_text, policy_identity, _applicable_policy_documents
+                search_docs.invoke({"query": child_conf["data_question"]}, config=child_cfg)
+                evidence_bag["documents"] = _applicable_policy_documents(evidence_bag.get("documents", []), child_conf["data_question"])
+                table_answer = policy_review_text(evidence_bag.get("documents", []), period=child_conf["data_question"])
+                actual_policy = policy_identity(evidence_bag.get("documents", []), period=child_conf["data_question"])
+                pinned_policy = child_conf["task_context"].get("policy_sources")
+                if pinned_policy is not None and actual_policy != pinned_policy:
+                    table_answer = "制度依据版本已变化或当前无权访问，未沿用旧依据作核查结论。请重新发起核查并确认制度版本。"
+                    record_tool_status(evidence_bag, tool="search_docs", status="rejected", error_code="validation_error")
+                else:
+                    child_conf["task_context"] = {**child_conf["task_context"], "policy_sources": actual_policy}
+            result = ({"messages": [AIMessage(content=filter_failure)]} if filter_failure else
+                      {"messages": [AIMessage(content=table_answer)]} if table_answer is not None else
+                      graph.invoke({"messages": [user_msg]}, config=child_cfg))
+            if name == "doc" and _doc_leg_spoke_without_reading(result, evidence_bag):
+                # B17：模型一枚工具都没调就把话说了——补一发真检索，带着原文在同一腿重答一次。
+                logger.warning("[doc] 这一腿没检索就作答，按 B17 补查后重答一次")
+                result = graph.invoke({"messages": [_doc_question_with_evidence(user_msg, child_cfg)]}, config=child_cfg)
+        except GraphRecursionError:
+            #: 绕圈停在腿内，不许它把模型的历史挤空——挤空的后果是整轮 500，不是少一张图。
+            logger.warning(f"[{name}] 往返上限 {_LEG_RECURSION_LIMIT} 用尽，本腿就地收口")
+            result = {"messages": [AIMessage(content=_LEG_LOOP_STOP_TEXT)]}
         out_msgs = result.get("messages", [])
         final = ""
         for m in reversed(out_msgs):
             if isinstance(m, AIMessage) and m.content and not getattr(m, "tool_calls", None):
                 final = m.content
                 break
-        logger.info(f"[{name}] 完成, 结果 {len(final)} 字")
+        if name == "export":
+            # 取消检查点 3（即将落盘）：_fallback_export_result 自己会生成 PDF，所以
+            # 即使图已经跑到这里，仍然拦得住最后一个副作用。
+            _raise_if_cancelled(parent_conf.get("cancel_event"))
+            final = _fallback_export_result(user_msg.content, final, config=child_cfg)
+        if child_conf.get("task_context"):
+            # Stable error codes belong to AgentResult.error and the SSE envelope.
+            # Persist only the actionable message in the business conversation.
+            final = re.sub(r"[（(]error_code=[a-z_]+[）)]", "", final)
+
+        duration_ms = int((time.monotonic() - started) * 1000)
+        agent_result = build_agent_result(
+            worker=name,
+            answer=final,
+            bag=evidence_bag,
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+            session_id=str(parent_conf.get("thread_id") or ""),
+            duration_ms=duration_ms,
+        )
+        summary = summarize_agent_result(agent_result)
+        logger.info(f"[{name}] 完成 status={agent_result.status} 结果 {len(agent_result.answer)} 字")
+        _record_trace(
+            _trace_store,
+            trace_id=trace_id,
+            request_id=request_id,
+            task_id=task_id,
+            event_type="step.finished",
+            status="completed" if agent_result.status in {"success", "partial"} else agent_result.status,
+            payload={"step_id": step_id, "worker": name, "summary": summary},
+            owner_id=owner_id,
+        )
         return {
-            "worker_results": {**state.get("worker_results", {}), name: final},
-            "messages": [AIMessage(content=f"【{name} Agent 返回】\n{final}")],
+            **({"task_context": child_conf["task_context"]} if name == "doc" and child_conf.get("task_context") else {}),
+            "worker_results": {**state.get("worker_results", {}), name: agent_result.answer},
+            "agent_results": {**state.get("agent_results", {}), name: agent_result.model_dump(mode="json")},
+            "messages": _worker_handoff_messages(name, agent_result),
         }
     return node
+
+
+def _worker_handoff_messages(name: str, agent_result) -> list:
+    """worker 腿交回父图的那条收尾消息；正文为空时一条都不给（R439）。
+
+    单独成一枚函数是为了让"摘掉这层守卫"成为一件显眼的事：直挂点在 ``messages`` 那一格，
+    换成空列表就是本单要杀的病灶，``tests/test_r439_*`` 当场红。
+    """
+    wrapper = agent_return_message(name, agent_result.answer)
+    if wrapper is None:
+        logger.warning(
+            f"[R439] {name} 子 Agent 交回空正文 → 不包装内部交接标记 "
+            f"status={agent_result.status} error_code={_agent_result_error_code(agent_result)}"
+        )
+        return []
+    return [wrapper]
+
+
+# ==================== 取消协同退出（R12） ====================
+
+
+class RequestCancelled(RuntimeError):
+    """调用方已不再接收本轮结果——注意它**不是**拒绝。
+
+    用户按「停止」只表示"这一轮我不看了"。它既不该把挂起的 HITL 动作判成 refused
+    （那是 ``approved=False`` 分支的语义，r8 修过"拒绝必须真的拒绝"，不许回退），
+    也不该让被停掉的动作继续跑完并落盘。所以本异常只在三个"即将产生新副作用"的
+    检查点抛出：
+
+    1. 每次准备向 langgraph 拉下一个 superstep 之前（``_cancellable_stream``）；
+    2. 每个 worker 节点准备开工之前（``_make_worker_wrapper.node``）；
+    3. export 兜底准备写 PDF 之前。
+
+    抛出时不写 ``worker_results``、不调 ``update_state``，checkpoint 里的 ``next``
+    原样留着：会话仍是挂起态，等 R13 的待办端点把它列出来。
+    """
+
+
+def _is_cancelled(cancel_event) -> bool:
+    """把 ``cancel_event`` 当"可选取消标记"读：None / 无 is_set 一律算未取消。
+
+    标记走 ``config["configurable"]``，和 ``principal`` 同一条通道，不引入进程级可变
+    全局——线程池里并发跑多个请求时，全局标记会互相误伤。R18 之后调用方给的是
+    ``chat.CancelGeneration``（``Event`` 的子类，自带 ``(session_id, epoch)`` 身份），
+    所以这里每个检查点读到的对象就是"本次运行那一代"本身：标记不可共享、不可复用，
+    跨代泄漏在传参这一步就已经堵死，比按会话名回查登记表更强。
+    """
+    checker = getattr(cancel_event, "is_set", None)
+    return bool(checker()) if callable(checker) else False
+
+
+def _raise_if_cancelled(cancel_event) -> None:
+    if _is_cancelled(cancel_event):
+        raise RequestCancelled("request cancelled by the caller")
+
+
+def _cancellable_stream(graph, payload, config, *, cancel_event=None):
+    """``graph.stream(...)`` 的协同退出包装：每次 pull 之前复查取消标记。
+
+    langgraph 的 generator 是惰性的——下一个 superstep 只在 ``next()`` 被调用时才
+    执行，所以"pull 之前检查"能保证未开工的节点永不开工，包括即将写盘的
+    chart/export。已经在执行的那一个节点不能被中断（Python 线程无法安全强杀），
+    这条限制写进了未验证清单。
+
+    ``finally`` 关的是内层 generator：调用方提前 break 时也要把图关掉，不能等 GC。
+    """
+    stream = graph.stream(payload, config, stream_mode="values", subgraphs=True)
+    try:
+        while True:
+            _raise_if_cancelled(cancel_event)
+            try:
+                event = next(stream)
+            except StopIteration:
+                return
+            yield event
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
+
+
+def _owner_id_from(configurable: dict) -> str:
+    principal = (configurable or {}).get("principal")
+    if principal is None:
+        return ""
+    user_id = getattr(principal, "user_id", None)
+    if user_id is None and isinstance(principal, dict):
+        user_id = principal.get("user_id")
+    return str(user_id or "")
+
+
+def _step_sequence(state: AgentState, name: str) -> int:
+    completed = len(state.get("agent_results") or {}) or len(state.get("worker_results") or {})
+    return max(1, completed + 1)
+
+
+def _approval_worker_node(state: AgentState, config) -> dict:
+    """审批预审：金额来自申请人，标准来自可检索的制度证据。
+
+    缺少任一输入时返回明确的失败记录，不用任何默认金额冒充业务结论。
+    """
+    configurable = (config or {}).get("configurable", {}) or {}
+    request_id = str(configurable.get("request_id") or "")
+    trace_id = str(configurable.get("trace_id") or "")
+    task_id = str(configurable.get("task_id") or "")
+    step_id = f"{trace_id}:worker:approval" if trace_id else ""
+    evidence_bag = new_evidence_bag()
+    child_conf = {**configurable, "worker": "approval", "evidence_bag": evidence_bag}
+    if step_id:
+        child_conf["step_id"] = step_id
+    child_cfg = {"configurable": child_conf}
+    owner_id = _owner_id_from(configurable)
+
+    question = ""
+    for message in reversed(state.get("messages", [])):
+        if isinstance(message, HumanMessage):
+            question = str(getattr(message, "content", "") or "")
+            break
+
+    started = time.monotonic()
+    _record_trace(
+        _trace_store,
+        trace_id=trace_id,
+        request_id=request_id,
+        task_id=task_id,
+        event_type="step.started",
+        status="running",
+        payload={"step_id": step_id, "worker": "approval", "sequence": 1},
+        owner_id=owner_id,
+    )
+
+    from app.approval.assistant import build_precheck, extract_standard, parse_expense_request
+    from app.agents import tools as agent_tools
+    from app.agents.evidence import record_document_hits, record_metric, record_tool_status
+    from app.semantics.registry import match_metric_context
+    from app.trace.spans import start_tool_call
+
+    parsed = parse_expense_request(question)
+    amount = parsed["amount"]
+    expense_type = parsed["expense_type"]
+    metric = match_metric_context(question)
+    if metric is not None:
+        record_metric(evidence_bag, metric)
+
+    hits: list[dict] = []
+    try:
+        principal = agent_tools._tool_principal(child_cfg)
+    except PermissionError:
+        record_tool_status(
+            evidence_bag, tool="approval_precheck", status="rejected", error_code="authorization_required"
+        )
+    else:
+        with start_tool_call(
+            child_cfg,
+            tool_name="approval_precheck",
+            arguments={"expense_type": expense_type, "has_amount": amount is not None},
+        ) as span:
+            try:
+                hits, _ = agent_tools._get_pipeline().search_for_principal(
+                    f"{expense_type or '费用'} 标准 上限 限额",
+                    principal,
+                    top_k=3,
+                )
+            except Exception as exc:
+                code = getattr(exc, "code", "retrieval_unavailable")
+                logger.warning(f"[Approval] 制度检索不可用: {exc}")
+                span.finish("retrieval_unavailable", error_code=code)
+            else:
+                record_document_hits(evidence_bag, query=expense_type or "费用标准", hits=hits)
+                span.finish("completed", summary={"hit_count": len(hits)})
+
+    standard = extract_standard([str(hit.get("content") or "") for hit in hits])
+    evidence_sources = [
+        f"{hit.get('source', 'unknown')} chunk={hit.get('chunk_index', '')}".strip()
+        for hit in hits
+    ]
+
+    missing = []
+    if amount is None:
+        missing.append("申请金额")
+    if standard is None:
+        missing.append("可核对的制度标准")
+    if missing:
+        record_tool_status(
+            evidence_bag, tool="approval_precheck", status="failed", error_code="validation_error"
+        )
+        answer = (
+            f"无法给出审批预审结论：缺少{'、'.join(missing)}"
+            "（error_code=validation_error），本轮未生成业务结论。"
+        )
+    else:
+        department = str(state.get("department") or getattr(principal, "department", "") or "")
+        precheck = build_precheck(
+            amount,
+            standard,
+            department,
+            expense_type or "费用",
+            evidence_sources,
+            currency=metric.currency if metric is not None else None,
+        )
+        answer = (
+            f"审批预审结论：{precheck['status']}。"
+            f"申请金额 {precheck['amount']} {precheck['currency']}，"
+            f"制度标准 {precheck['standard']} {precheck['currency']}，"
+            f"超出 {precheck['excess_amount']} {precheck['currency']}，"
+            f"风险等级 {precheck['risk_level']}。建议：{precheck['recommendation']}。"
+            f"来源：{'、'.join(evidence_sources)}"
+        )
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    agent_result = build_agent_result(
+        worker="approval",
+        answer=answer,
+        bag=evidence_bag,
+        request_id=request_id,
+        trace_id=trace_id,
+        task_id=task_id,
+        session_id=str(configurable.get("thread_id") or ""),
+        duration_ms=duration_ms,
+    )
+    _record_trace(
+        _trace_store,
+        trace_id=trace_id,
+        request_id=request_id,
+        task_id=task_id,
+        event_type="step.finished",
+        status="completed" if agent_result.status in {"success", "partial"} else agent_result.status,
+        payload={"step_id": step_id, "worker": "approval", "summary": summarize_agent_result(agent_result)},
+        owner_id=owner_id,
+    )
+    return {
+        "worker_results": {**state.get("worker_results", {}), "approval": agent_result.answer},
+        "agent_results": {**state.get("agent_results", {}), "approval": agent_result.model_dump(mode="json")},
+        "messages": _worker_handoff_messages("approval", agent_result),
+    }
+
 
 # ==================== 图构建 ====================
 
@@ -270,6 +1394,7 @@ _builder.add_node("doc", _make_worker_wrapper(doc_graph, "doc"))
 _builder.add_node("data", _make_worker_wrapper(data_graph, "data"))
 _builder.add_node("chart", _make_worker_wrapper(chart_graph, "chart"))
 _builder.add_node("export", _make_worker_wrapper(export_graph, "export"))
+_builder.add_node("approval", _approval_worker_node)
 _builder.add_node("reflect", reflect_node)
 _builder.add_node("synthesize", synthesize)
 
@@ -284,12 +1409,13 @@ _builder.add_edge("doc", "supervisor")
 _builder.add_edge("data", "supervisor")
 _builder.add_edge("chart", "supervisor")
 _builder.add_edge("export", "supervisor")
+_builder.add_edge("approval", "supervisor")
 _builder.add_conditional_edges("reflect", route_reflect, ["supervisor", "synthesize"])
 _builder.add_edge("synthesize", END)
 
 multi_agent_graph = _builder.compile(
     checkpointer=_checkpointer,
-    interrupt_before=["chart", "export"],
+    interrupt_before=list(_HITL_PARKED),
 )
 
 # 队列专用图：无人工确认
@@ -300,43 +1426,438 @@ queue_graph = _builder.compile(checkpointer=_checkpointer)
 def run_orchestrator(user_message: str, thread_id: str = "default") -> str:
     config = {"configurable": {"thread_id": thread_id}}
     result = multi_agent_graph.invoke(
-        {"messages": [HumanMessage(content=user_message)]},
+        {
+            "messages": [HumanMessage(content=user_message)],
+            "worker_results": {"__reset__": {}},
+            "agent_results": {"__reset__": {}},
+            "final_answer": "",
+            "reflect_count": 0,
+            "redo": False,
+            "retry_count": 0,
+            "trace_events": [],
+        },
         config,
     )
     return _final_of(result)
 
 
-def run_orchestrator_queue(user_message: str, thread_id: str = "default") -> str:
-    config = {"configurable": {"thread_id": thread_id}}
-    result = queue_graph.invoke(
-        {"messages": [HumanMessage(content=user_message)]},
-        config,
+def run_orchestrator_queue(user_message: str, thread_id: str = "default", *, user: dict | None = None, request_id: str | None = None):
+    """Queue entry point returning one canonical ``AgentResult`` record."""
+    request_id, trace_id, task_id = _execution_ids(request_id)
+    configurable = {
+        "thread_id": thread_id,
+        "request_id": request_id,
+        "trace_id": trace_id,
+        "task_id": task_id,
+        **(user or {}),
+    }
+    initial_state = _initial_execution_state(
+        user_message,
+        thread_id=thread_id,
+        user=user,
+        request_id=request_id,
+        trace_id=trace_id,
+        task_id=task_id,
     )
-    return _final_of(result)
+    owner_id = _owner_id_from(configurable)
+    started = time.monotonic()
+    _record_trace(
+        _trace_store,
+        trace_id=trace_id,
+        request_id=request_id,
+        task_id=task_id,
+        event_type="request.started",
+        status="running",
+        payload={"session_id": thread_id, "entry_point": "queue"},
+        owner_id=owner_id,
+    )
+    try:
+        result = queue_graph.invoke(initial_state, {"configurable": configurable})
+    except Exception as exc:
+        _record_trace(
+            _trace_store,
+            trace_id=trace_id,
+            request_id=request_id,
+            task_id=task_id,
+            event_type="request.failed",
+            status="failed",
+            payload={"error": str(exc), "entry_point": "queue"},
+            owner_id=owner_id,
+        )
+        raise
+    duration_ms = int((time.monotonic() - started) * 1000)
+    record = aggregate_agent_result(
+        result.get("agent_results") or {},
+        answer=_final_of(result),
+        request_id=request_id,
+        trace_id=trace_id,
+        task_id=task_id,
+        session_id=thread_id,
+        duration_ms=duration_ms,
+    )
+    terminal = "completed" if record.status in {"success", "partial"} else record.status
+    _record_trace(
+        _trace_store,
+        trace_id=trace_id,
+        request_id=request_id,
+        task_id=task_id,
+        event_type="request.completed",
+        status=terminal,
+        payload={
+            "worker_count": len(result.get("worker_results") or {}),
+            "has_final_answer": bool(record.answer),
+            "entry_point": "queue",
+            "agent_result": summarize_agent_result(record),
+        },
+        owner_id=owner_id,
+    )
+    return record
+
+
+def run_orchestrator_result(user_message: str, thread_id: str = "default", *, user: dict | None = None, request_id: str | None = None):
+    """Alias kept for the queue worker: the canonical record is the return value."""
+    return run_orchestrator_queue(user_message, thread_id=thread_id, user=user, request_id=request_id)
 
 
 def _final_of(result) -> str:
+    # R439：这一格是队列道与旧公共 API 的终答拾取口，读的是 ``synthesize`` 写进
+    # ``final_answer`` 的那一段，而 ``synthesize`` 在没有正文时会退回收尾消息本身
+    # （``app/agents/nodes.py`` 的 ``if not final`` 那一圈）——那里披的就是内部交接标记。
+    # 所以两条出口都必须先摘标记再取正文：摘完为空说明这一发没有正文。
+    final_answer = agent_answer_body(result.get("final_answer"))
+    if final_answer:
+        return final_answer
     msgs = result.get("messages", [])
     if msgs:
         last = msgs[-1]
-        return last.content if hasattr(last, "content") else str(last)
+        body = agent_answer_body(last.content if hasattr(last, "content") else str(last))
+        if body:
+            return body
+    # 下面这句默认文案是本函数改前就有的既有取值，不是本单新造的客套话：这里只许把
+    # "拾到一句内部标记"改判成"什么都没拾到"，不许顺手换一句更好听的人话。
+    logger.warning("[R439] 终答拾取口没拾到正文（只剩内部交接标记或本轮无产出）→ 沿用既有默认取值")
     return "处理失败"
 
 
-def run_with_stream(user_message: str, thread_id: str = "default", user: dict | None = None):
-    config = {"configurable": {"thread_id": thread_id, **(user or {})}}
+def _execution_ids(
+    request_id: str | None = None,
+    trace_id: str | None = None,
+    task_id: str | None = None,
+) -> tuple[str, str, str]:
+    request_id = str(request_id or "").strip() or f"req-{uuid4().hex}"
+    trace_id = str(trace_id or "").strip() or f"trace-{uuid4().hex}"
+    task_id = str(task_id or "").strip() or f"task-{uuid4().hex}"
+    return request_id, trace_id, task_id
+
+
+def _initial_execution_state(
+    user_message: str,
+    *,
+    thread_id: str,
+    user: dict | None,
+    request_id: str,
+    trace_id: str,
+    task_id: str,
+) -> dict:
+    user = user or {}
+    state = {
+        "messages": [HumanMessage(content=user_message)],
+        "worker_results": {"__reset__": {}},
+        "agent_results": {"__reset__": {}},
+        "final_answer": "",
+        "reflect_count": 0,
+        "redo": False,
+        "retry_count": 0,
+        "trace_events": [],
+        "session_id": thread_id,
+        # Always reset, including when the next turn does not select a table.
+        "data_filename": str(user.get("data_filename") or "").strip(),
+        "task_context": {},
+        'data_context': user.get('data_context') or {},
+        "request_id": request_id,
+        "trace_id": trace_id,
+        "task_id": task_id,
+    }
+    if user.get("principal") is not None:
+        state["principal"] = user["principal"]
+    return state
+
+
+def _record_trace(
+    store: TraceStore,
+    *,
+    trace_id: str,
+    request_id: str,
+    task_id: str,
+    event_type: str,
+    status: str,
+    payload: dict | None = None,
+    owner_id: str | None = None,
+) -> None:
+    try:
+        trace_payload = dict(payload or {})
+        if owner_id and not trace_payload.get("owner_id"):
+            trace_payload["owner_id"] = owner_id
+        store.record_event(
+            trace_id=trace_id,
+            request_id=request_id,
+            task_id=task_id,
+            event_type=event_type,
+            status=status,
+            payload=trace_payload,
+        )
+    except Exception as exc:
+        logger.warning("[Trace] event persistence failed: %s", exc)
+
+
+def _stream_state(event):
+    if isinstance(event, tuple):
+        event = event[-1] if event else None
+    return event if isinstance(event, dict) else None
+
+
+_REPORT_BODY_PATTERN = re.compile(
+    r"分析原文开始：\s*(.*?)\s*分析原文结束。",
+    re.S,
+)
+
+
+def report_body_from_export_prompt(question: str) -> str:
+    """Return the answer text carried by the report-export prompt.
+
+    The report button already sends the settled answer verbatim between these two
+    markers. Reading it here keeps the PDF tied to what the user actually saw even
+    when the previous turn had no ``task_context`` to inherit.
+    """
+    match = _REPORT_BODY_PATTERN.search(str(question or ""))
+    return match.group(1).strip() if match else ""
+
+
+def run_with_stream(
+    user_message: str,
+    thread_id: str = "default",
+    user: dict | None = None,
+    *,
+    request_id: str | None = None,
+    trace_id: str | None = None,
+    task_id: str | None = None,
+    trace_store: TraceStore | None = None,
+    cancel_event=None,
+    stream_piece_sink=None,
+    declared_lane: str = "",
+):
+    """流式跑一轮编排。
+
+    ``declared_lane``（R141）是调用方**显式声明**的档位，三值之一或空串。空串＝没声明，
+    本轮的道由 R42 判别器按题面判：configurable 里连键都不加，图的形状与 R141 之前逐字节
+    相同。非空时它进 ``configurable[DECLARED_LANE_KEY]``，由 route_main 落地成腿的有无、由
+    plan() 落地成拆题那一发付不付。未知值在 ``normalize_declared_lane`` 里当场炸：这一层
+    是图内守门，不替调用方把拼错的档位猜成"没声明"。
+
+    ``cancel_event`` 是调用方（SSE 生成器）持有的 ``threading.Event``，语义上只表示
+    "我不再接收本轮回答"，**不等于拒绝**（详见 ``RequestCancelled``）。不传时为 None，
+    排队任务与全部既有调用点行为逐字节不变。
+
+    ``stream_piece_sink`` 是 R31 的片段出口：一个可调用对象，收到模型的每一片
+    :class:`app.agents.nodes.StreamPiece`（已按判据③ 合并、按判据② 时间戳不重叠）。
+    默认 None 时本函数**不产生任何新事件**——图仍只按 ``stream_mode="values"`` 吐整份
+    state 快照，legacy 全量重发一条不改（判据④）。出口之所以挂在这里而不是直接 yield
+    进事件流：SSE 的 ``text`` 由 ``app/api/v1/chat.py`` 的 ``_ask_stream`` 在 done 分支
+    单发，那枚文件本单禁碰（详见交付说明的符号锚与受阻条目）。
+    """
+    request_id, trace_id, task_id = _execution_ids(request_id, trace_id, task_id)
+    trace_store = trace_store or _trace_store
+    # The live chat path puts a Principal model into ``user`` while a queued task puts a
+    # serialized dict there, so the owner has to be resolved through the same helper the
+    # worker wrappers use. Calling ``.get`` on a Principal aborted every authenticated
+    # stream before the graph was reached.
+    context = user if isinstance(user, dict) else {}
+    owner_id = str(
+        context.get("owner_id")
+        or _owner_id_from({"principal": context.get("principal")})
+        or context.get("user_id")
+        or context.get("username")
+        or ""
+    ).strip()
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            **(user or {}),
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "task_id": task_id,
+        }
+    }
+    if cancel_event is not None:
+        # 取消标记的写入点。它进 configurable 而不是 state：state 要被 checkpointer
+        # 序列化（PG 路径下 threading.Event 不可 JSON 化），configurable 才是本次运行
+        # 的只读上下文——principal 走的就是同一条通道。
+        config["configurable"]["cancel_event"] = cancel_event
+    if stream_piece_sink is not None:
+        # R31 的入口，和 cancel_event 走同一条通道，理由是同一个：回调不可序列化，
+        # 进 state 就会在 PG checkpointer 路径上炸。不注册时这里一个键都不多加，
+        # 图的形状与之前逐字节相同（判据④）。
+        config["configurable"][STREAM_PIECE_SINK_KEY] = stream_piece_sink
+    declared = normalize_declared_lane(declared_lane)
+    if declared:
+        # 与上面两枚同一个理由：能进 state 的东西才进 state，声明只是一个字符串，但它要影响
+        # 的是**图内**派发，跨不过节点的只有 config，所以走同一条 configurable 通道。
+        config["configurable"][DECLARED_LANE_KEY] = declared
+    from app.agents.task_review import is_review_question, review_context
+    raw_question = str(context.get("task_question") or user_message)
+    raw_question = re.sub(r'^仅依据以下文件(?:《[^》\r\n]+》)+回答：\n', '', raw_question)
+    filename = str(context.get("data_filename") or "").strip()
+    previous = multi_agent_graph.get_state(config).values or {} if filename else {}
+    previous_context = previous.get("task_context") or {}
+    same_owner = _owner_id_from({"principal": previous.get("principal")}) == owner_id
+    task_context = {}
+    data_context = context.get('data_context') or {}
+    if filename and (is_review_question(raw_question) or (previous_context and same_owner)):
+        from app.storage.datasets import dataset_registry
+        from app.documents.catalog import latest_document_version
+        dataset = dataset_registry.get_active_by_filename(filename)
+        requested = context.get('document_filenames')
+        documents = None if requested is None else []
+        for name in requested or []:
+            version = latest_document_version(name) or {}
+            documents.append({'filename': name, 'version_id': str(version.get('version') or '')})
+        task_context = review_context(raw_question, filename, previous_context if same_owner else {},
+            {"version_id": getattr(dataset, "version_id", ""), "sha256": getattr(dataset, "content_sha256", "")},
+            documents=documents)
+        task_context.pop('report_body', None)
+        if raw_question.startswith('请将以下已完成的分析原文排版导出') and same_owner:
+            task_context['report_body'] = str(previous_context.get('report_body') or previous.get('final_answer') or '')
+    if filename and not task_context and not data_context:
+        from app.storage.datasets import dataset_registry
+        dataset = dataset_registry.get_active_by_filename(filename)
+        prior_data = previous.get('data_context') or {}
+        data_context = review_context(raw_question, filename, prior_data if same_owner else {},
+            {'version_id': getattr(dataset, 'version_id', ''), 'sha256': getattr(dataset, 'content_sha256', '')})
+        data_context['query'] = data_context['analysis_question']
+    initial_state = _initial_execution_state(
+        user_message,
+        thread_id=thread_id,
+        user=user,
+        request_id=request_id,
+        trace_id=trace_id,
+        task_id=task_id,
+    )
+    initial_state["task_context"] = task_context
+    initial_state['data_context'] = data_context
+    if initial_state.get('data_context') and same_owner and raw_question.startswith('请将以下已完成的分析原文排版导出'):
+        initial_state['data_context'] = {**initial_state['data_context'], 'report_body': str((previous.get('data_context') or {}).get('report_body') or previous.get('final_answer') or '')}
+    exported_body = report_body_from_export_prompt(raw_question)
+    if exported_body:
+        # The export prompt carries the settled answer itself. Keep it on a dedicated
+        # config key: putting report_body into an otherwise empty task_context made the
+        # dataset gate read it as a task with no version and refuse the export.
+        config["configurable"]["report_body"] = exported_body
+        if initial_state.get("task_context"):
+            initial_state["task_context"]["report_body"] = exported_body
+        if initial_state.get("data_context"):
+            initial_state["data_context"]["report_body"] = exported_body
+    # 本轮档位读数：与图内 plan()/route_main 读的是同一份规则本体（resolve_turn_lane 不打
+    # [R42] 锚点，频次一字不动），user_message 就是 plan() 拿到的那枚文本 ⇒ 读数与生效路径同源。
+    turn = resolve_turn_lane(user_message, declared)
+    # Keep the resolved lane beside the execution context so every live span sample carries
+    # the same attribution that the request.started trace event already publishes.
+    config["configurable"].update(turn.as_dict())
     max_attempts = 3
+    last_worker_results: dict = {}
+    last_state: dict = {}
+    _record_trace(
+        trace_store,
+        trace_id=trace_id,
+        request_id=request_id,
+        task_id=task_id,
+        event_type="request.started",
+        status="running",
+        # R141 判据① 的第二处出口：不看日志、不猜请求体也能读到"这轮按哪条道走的、
+        # 是谁定的"。GET /api/v1/traces/{trace_id} 直接把这一格吐出来。
+        payload={"session_id": thread_id, **turn.as_dict()},
+        owner_id=owner_id,
+    )
     for attempt in range(1, max_attempts + 1):
         try:
-            for event in multi_agent_graph.stream(
-                {"messages": [HumanMessage(content=user_message)]},
+            for event in _cancellable_stream(
+                multi_agent_graph,
+                initial_state,
                 config,
-                stream_mode="values",
-                subgraphs=True,
+                cancel_event=cancel_event,
             ):
+                state = _stream_state(event)
+                if state is not None:
+                    last_state = state
+                    worker_results = state.get("worker_results") or {}
+                    _record_trace(
+                        trace_store,
+                        trace_id=trace_id,
+                        request_id=request_id,
+                        task_id=task_id,
+                        event_type="step.progress",
+                        status="running",
+                        payload={
+                            "worker_count": len(worker_results),
+                            "has_final_answer": bool(state.get("final_answer")),
+                        },
+                        owner_id=owner_id,
+                    )
+                    # Workers and real tool spans already record their actual verdict.
+                    # Their answer text is not a second successful tool execution.
+                    last_worker_results = dict(worker_results)
                 yield event
+            record = aggregate_agent_result(last_state.get("agent_results") or {},
+                answer=_final_of(last_state), request_id=request_id, trace_id=trace_id,
+                task_id=task_id, session_id=thread_id)
+            terminal = "completed" if record.status in {"success", "partial"} else record.status
+            _record_trace(
+                trace_store,
+                trace_id=trace_id,
+                request_id=request_id,
+                task_id=task_id,
+                event_type="request.completed" if terminal in {"completed", "rejected"} else "request.failed",
+                status=terminal,
+                payload={
+                    "worker_count": len(last_worker_results),
+                    "has_final_answer": bool(last_state.get("final_answer")),
+                    "agent_result": summarize_agent_result(record),
+                },
+                owner_id=owner_id,
+            )
+            return
+        except RequestCancelled:
+            # 「停止」是业务动作，既不是 failed 也不是 refused，所以走 request.cancelled
+            # 而不是 request.failed。app/trace/store.py:96 早就把它列为终态事件，但全仓
+            # 从来没有人 emit 过——补上的正是这个空位。不写 worker_results、不
+            # update_state，checkpoint 里的 next 原样保留，parked 会话仍是挂起态。
+            _record_trace(
+                trace_store,
+                trace_id=trace_id,
+                request_id=request_id,
+                task_id=task_id,
+                event_type="request.cancelled",
+                status="cancelled",
+                payload={"session_id": thread_id, "stage": "step_boundary"},
+                owner_id=owner_id,
+            )
+            logger.info(f"[Orchestrator] 本轮按调用方要求停止 session={thread_id}")
             return
         except Exception as e:
+            if _is_cancelled(cancel_event):
+                # langgraph 可能把节点抛出的 RequestCancelled 再包一层，marker 才是真相。
+                # 不先判它，一次「停止」会被下面的关键词分支当成模型故障去重试。
+                _record_trace(
+                    trace_store,
+                    trace_id=trace_id,
+                    request_id=request_id,
+                    task_id=task_id,
+                    event_type="request.cancelled",
+                    status="cancelled",
+                    payload={"session_id": thread_id, "stage": "worker_node"},
+                    owner_id=owner_id,
+                )
+                logger.info(f"[Orchestrator] 本轮已停止（节点内取消）session={thread_id}")
+                return
             err = str(e).lower()
             if attempt < max_attempts and any(kw in err for kw in (
                 "timeout", "connection", "rate limit", "server error"
@@ -346,32 +1867,124 @@ def run_with_stream(user_message: str, thread_id: str = "default", user: dict | 
                 time.sleep(delay)
                 continue
             logger.error(f"执行失败: {e}")
+            _record_trace(
+                trace_store,
+                trace_id=trace_id,
+                request_id=request_id,
+                task_id=task_id,
+                event_type="request.failed",
+                status="failed",
+                payload={"error": str(e), "attempt": attempt},
+                owner_id=owner_id,
+            )
             yield {"error": str(e)}
             return
 
 
-def run_interrupt_stream(thread_id: str, approved: bool):
-    config = {"configurable": {"thread_id": thread_id}}
+def run_interrupt_stream(
+    thread_id: str,
+    approved: bool,
+    user: dict | None = None,
+    *,
+    request_id: str | None = None,
+    trace_id: str | None = None,
+    task_id: str | None = None,
+    cancel_event=None,
+    stream_piece_sink=None,
+):
+    """Resume a parked thread as the caller who owns it.
+
+    A resumed turn executes the same tools as the original one, and those tools take
+    their scope from ``configurable``. Resuming with only a thread id made every
+    approved action fail closed with ``authorization_required``, so the graph kept
+    running with no subject at all.
+
+    ``stream_piece_sink``（R31 差格 a）与 :func:`run_with_stream` 收的那一枚同名同形：一个可调用
+    对象，收到本轮真流出去的那些 :class:`app.agents.nodes.StreamPiece`。挂起**之前**那一轮里审批
+    腿没有字可流（正文由 ``build_precheck()`` / ``extract_standard()`` 确定性拼出，总控 09-29 已
+    记 ``not_applicable``），但批准之后**续跑**的这一轮会真去跑被挂起的那条腿：``_HITL_PARKED``
+    现读是 ``chart`` / ``export``，其中 ``chart`` 就坐在 ``nodes.ANSWER_LEG_STREAM_WORKERS`` 名单
+    里，那一发的字确实进得来出口。所以这一格不是装饰——不注册它，续跑轮里那些字今天一个字都到
+    不了收端。
+    """
+    request_id, trace_id, task_id = _execution_ids(request_id, trace_id, task_id)
+    config = {
+        "configurable": {
+            "thread_id": thread_id,
+            **(user or {}),
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "task_id": task_id,
+        }
+    }
+    if cancel_event is not None:
+        # 同上：标记只进本次运行的 configurable，不进要被 checkpoint 序列化的 state。
+        config["configurable"]["cancel_event"] = cancel_event
+    if stream_piece_sink is not None:
+        # R31 差格 a 的注册腿。理由与 run_with_stream 那一处逐字相同：回调不可序列化，进 state
+        # 就会在 PG checkpointer 路径上炸，configurable 才是本次运行的只读上下文。不传时一个键
+        # 都不多加，这一本 config 与改前逐字节相同（判据④）。两条跑道共用同一枚键名，节点侧那
+        # 两枚准入条件（``answer_leg_stream_target`` / ``_supervisor_answer_tap``）一字不改就认
+        # 得出它——本单不放宽任何准入，也不给 ``ANSWER_LEG_STREAM_WORKERS`` 添名字。
+        config["configurable"][STREAM_PIECE_SINK_KEY] = stream_piece_sink
     if approved:
-        for event in multi_agent_graph.stream(
-            Command(resume={"approved": True}),
-            config,
-            stream_mode="values",
-            subgraphs=True,
-        ):
-            yield event
+        if _is_cancelled(cancel_event):
+            # 连 resume 都不发起：被批准的节点从未获得开工授权，checkpoint 里的 next
+            # 原样保留，会话仍是挂起态。停止 ≠ 拒绝，所以这里绝不能落到下面的 else
+            # 分支去把动作记成 refused。
+            logger.info(f"[Orchestrator] 已停止，未发起 resume session={thread_id}")
+            return
+        try:
+            for event in _cancellable_stream(
+                multi_agent_graph,
+                Command(resume={"approved": True}),
+                config,
+                cancel_event=cancel_event,
+            ):
+                yield event
+        except RequestCancelled:
+            logger.info(f"[Orchestrator] resume 中途按调用方要求停止 session={thread_id}")
+            return
     else:
-        multi_agent_graph.update_state(
-            config,
-            {"messages": [AIMessage(content="用户取消了此操作。")]},
+        # A refusal has to be recorded as that worker's result. Skipping the node alone
+        # left it in the plan, so supervisor dispatched it again: the action the user
+        # just declined ran anyway, and the turn parked a second time.
+        declined = [node for node in (check_interrupt(thread_id) or {}).get("pending") or []]
+        note = (
+            "已拒绝，未执行：" + "、".join(_HITL_LABELS.get(node, node) for node in declined)
+            if declined
+            else "用户取消了此操作。"
         )
-        for event in multi_agent_graph.stream(
-            Command(goto="supervisor"),
-            config,
-            stream_mode="values",
-            subgraphs=True,
-        ):
-            yield event
+        update: dict = {"messages": [AIMessage(content=note)]}
+        if declined:
+            update["worker_results"] = {node: note for node in declined}
+            update["agent_results"] = {node: {"worker": node, "status": "rejected", "answer": note,
+                "request_id": request_id, "trace_id": trace_id, "task_id": task_id} for node in declined}
+        # Mark the parked node complete and replace its scheduled task. Command(goto)
+        # adds a supervisor task while retaining the parked task; its resume marker
+        # then skips the next static interrupt, executing export before approval.
+        resumed_config = multi_agent_graph.update_state(
+            config, update, as_node=declined[0] if declined else "supervisor"
+        )
+        if declined:
+            from app.storage import pending_approvals
+            pending_approvals.mark_status(thread_id, pending_approvals.REFUSED)
+        # 顺序不能反：refused 必须先落账（84af113 "拒绝必须真的拒绝"），此后的收尾流才
+        # 允许被停止打断。把 update_state 挪到流后面，一次取消就会把 refused 变成
+        # "什么都没发生"，supervisor 会把刚被拒绝的动作再派一次。
+        try:
+            for event in _cancellable_stream(
+                multi_agent_graph,
+                None,
+                {**config, "configurable": {**config["configurable"],
+                    **{key: value for key, value in resumed_config.get("configurable", {}).items()
+                       if key in ("checkpoint_id", "checkpoint_ns")}}},
+                cancel_event=cancel_event,
+            ):
+                yield event
+        except RequestCancelled:
+            logger.info(f"[Orchestrator] 拒绝收尾流已停止 session={thread_id}")
+            return
 
 
 def clear_session(thread_id: str):
@@ -389,11 +2002,10 @@ def check_interrupt(thread_id: str) -> dict | None:
     config = {"configurable": {"thread_id": thread_id}}
     state = multi_agent_graph.get_state(config)
     if state.next:
-        pending = [n for n in state.next if n in ("chart", "export")]
+        pending = [n for n in state.next if n in _HITL_PARKED]
         if pending:
-            labels = {"chart": "📈 生成图表", "export": "📋 导出报告"}
             return {
                 "pending": pending,
-                "labels": [labels.get(p, p) for p in pending],
+                "labels": [_HITL_LABELS.get(p, p) for p in pending],
             }
     return None

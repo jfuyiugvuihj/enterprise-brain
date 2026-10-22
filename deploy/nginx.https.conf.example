@@ -1,0 +1,87 @@
+# R52 -- internal HTTPS drop-in for the edge proxy.
+#
+# Copy to a path of your choice (the TLS overlay reads it through TLS_NGINX_CONF, default
+# deploy/nginx.https.conf) and keep the certificate paths as they are: the overlay mounts
+# them there read-only. This file is an .example so nginx can never load it by accident,
+# and every directive that carries a security decision is copied from deploy/nginx.conf --
+# tests/test_r52_airgap_readiness.py fails if the two files drift apart.
+#
+# conf.d fragment: no worker_processes / events / http block, or nginx -t fails.
+
+limit_conn_zone $binary_remote_addr zone=conn_limit_api:10m;
+
+# Same re-resolution rule as deploy/nginx.conf: the backend address changes on every
+# recreate, and a frozen upstream turns the whole site into 502s.
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+# Plain HTTP exists only to move clients onto the HTTPS origin.
+server {
+    listen 80;
+    server_name _;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name _;
+
+    ssl_certificate     /etc/ssl/brain/fullchain.pem;
+    ssl_certificate_key /etc/ssl/brain/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:brain_tls:10m;
+    ssl_session_timeout 1h;
+
+    # Mutual TLS is deliberately left commented out: it needs the customer CA chain on
+    # disk, and an unverifiable path is exactly where "just disable it" starts.
+    # ssl_client_certificate /etc/ssl/brain/ca.pem;
+    # ssl_verify_client on;
+
+    # Intranet-only: keep HSTS out of it unless the operator asks, or a mistake on a
+    # spare HTTP hostname pins clients to HTTPS for months.
+    # add_header Strict-Transport-Security "max-age=31536000" always;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    set $enterprise_brain_api http://backend:8001;
+    client_max_body_size 30m;
+
+    gzip on;
+    gzip_min_length 512;
+    gzip_types text/plain application/json text/css application/javascript;
+
+    location /api/ {
+        limit_conn conn_limit_api 200;
+
+        proxy_pass $enterprise_brain_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 900s;
+        proxy_send_timeout 900s;
+    }
+
+    location = /api/v1/health {
+        proxy_pass $enterprise_brain_api;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        access_log off;
+    }
+
+    location ~* ^/(documents|data|logs|chroma_db|static|uploads|exports)/ {
+        deny all;
+        return 404;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

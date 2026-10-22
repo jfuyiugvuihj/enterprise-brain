@@ -2,33 +2,112 @@
 Chat API — Multi-Agent SSE 流式 / 文档上传 / 会话管理 (PostgreSQL 持久化)
 """
 import os
+import mimetypes
 import re
 import json
+import hashlib
 import time
 import uuid
 import queue as qmod
 import asyncio
+import sys
+import threading
+import itertools
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import aclosing
+from pathlib import Path
+from typing import Any, get_args
 
 # 显式线程池 — 支持 1000+ 并发（每个 uvicorn 实例）
 _executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="ezn_")
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, UploadFile, File, Form, Request as FastAPIRequest
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, UploadFile, File, Form, Request as FastAPIRequest, Response as FastAPIResponse, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
+from app.common.no_store import NO_STORE_HEADERS
+from pydantic import BaseModel, PrivateAttr
 
-from app.rag.loader import load_document
+from app.agents.contracts import AuthorizationDecision, ErrorEnvelope, Principal
+from app.agents.evidence import (
+    ClaimsDenominatorError,
+    coerce_agent_result,
+    eval_payload_for_answer,
+)
+from app.common import auth
+from app.common import reliable_queue
+from app.common.audit import record_audit
+from app.storage import pending_approvals
+from app.common.authorization import authorize_request, principal_from_request
+from app.rag import ocr as ocr_channel
+from app.rag.loader import (
+    DEGRADATION_NOTE_PREFIX,
+    PAGE_SOURCE_OCR_DEGRADED,
+    DocumentExtraction,
+    PdfExtractionReport,
+    extract_document_with_reports,
+    load_document,
+)
+from app.documents.preview import build_document_preview
 from app.rag.retriever import DocumentRetriever
+from app.rag.filters import (
+    RetrievalScopeError,
+    record_retrieval_scope,
+    resolve_document_retrieval_scope,
+)
+from app.rag.indexing import (
+    DocumentIndexPublication,
+    IndexPublicationError,
+    IndexPublisher,
+    IndexRegistry,
+    PostgresIndexStore,
+    default_metadata_path,
+    document_index_id,
+    document_resource_version_id,
+    read_index_metadata,
+)
 from app.common.model_handler import ModelHandler, ModelSource
 from app.common.logger import logger
+from app.common.performance import PerformanceStats, RequestBudget
+from app.common.permissions import (
+    ACTION_APPROVE,
+    ACTION_DELETE,
+    ACTION_DOWNLOAD,
+    ACTION_MANAGE_USERS,
+    ACTION_UPLOAD,
+    ACTION_VIEW,
+)
+from app.common.policy import authorization_decision, is_administrator
 from app.documents.catalog import (
     build_storage_name,
     current_documents,
+    DocumentVisibilityError,
+    public_document_row,
+    _database_available as catalog_database_available,
+    delete_document_versions,
+    latest_document_version,
     list_document_versions,
     peek_next_document_version,
     record_document_version,
+    record_local_document_version,
+    set_document_visibility,
 )
+from app.documents.file_security import (
+    UploadSecurityError,
+    build_storage_path,
+    inspect_upload_header,
+)
+from app.api.v1.restricted import DOCUMENT_TEMPLATE, restricted_summary
+from app.documents.index_policy import (
+    INDEX_STATUS_EXCLUDED,
+    INDEX_STATUS_INDEXED,
+    INDEX_STATUS_UNKNOWN,
+    REASON_NO_TEXT,
+    classify_index_refusal,
+    droppable_upload,
+    evaluate_index_eligibility,
+    index_notice,
+)
+from app.storage.sessions import session_registry
 
 router = APIRouter()
 retriever = DocumentRetriever()
@@ -36,28 +115,1010 @@ model_handler = ModelHandler()
 
 DOCUMENTS_DIR = os.getenv("DOCUMENTS_DIR", "./documents")
 os.makedirs(DOCUMENTS_DIR, exist_ok=True)
+MAX_DOCUMENT_UPLOAD_BYTES = int(
+    os.getenv("DOCUMENT_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024))
+)
 
 _tz = timezone(timedelta(hours=8))
 
+
+class CancelGeneration(threading.Event):
+    """一次运行的取消标记，它本身就是"这一代"的标识。
+
+    标记按 ``(session_id, epoch)`` 登记，``epoch`` 取自进程内单调计数器，所以同一个会话
+    的两代永不复用同一个标识：读的人能指名要哪一代，不会借到别人的取消状态。继承
+    ``Event`` 是有意的——它要原样穿过 ``config["configurable"]`` 交给编排与工作线程，
+    那边每步 ``is_set()`` 读的天然就是"我这一代有没有被停掉"，不必回头查任何登记表。
+    """
+
+    def __init__(self, session_id: str, epoch: int) -> None:
+        super().__init__()
+        self.session_id = session_id
+        self.epoch = epoch
+
+
+# 只反映在飞的运行：register 放入本代，运行收尾（正常/异常/取消/客户端断连）在 finally 里弹出。
+_REQUESTS: dict[tuple[str, int], CancelGeneration] = {}
+# 取消落在"没有在飞运行"上时的一次性标记，由下一代 register_request 消费掉。
+_PENDING_CANCELLATIONS: set[str] = set()
+_REQUESTS_LOCK = threading.Lock()
+_GENERATION_SEQUENCE = itertools.count(1)
+_ASK_STATS = PerformanceStats()
+
+
+def _newest_generation(session_id: str) -> CancelGeneration | None:
+    """该会话最新的一代（调用方必须已持有 ``_REQUESTS_LOCK``）。"""
+    epochs = [epoch for (owner, epoch) in _REQUESTS if owner == session_id]
+    if not epochs:
+        return None
+    return _REQUESTS[(session_id, max(epochs))]
+
+
+def register_request(session_id: str, *, inherit_pending: bool = True) -> CancelGeneration:
+    """开一代：按 (session_id, epoch) 登记并返回本代的取消标记。
+
+    先到的取消在这里一次性消费掉。老实现无条件换上一个干净的 Event，于是
+    ``ask()`` 返回之后、本行执行之前到达的停止会被抹掉；现在它归这一代读。
+    """
+    with _REQUESTS_LOCK:
+        generation = CancelGeneration(session_id, next(_GENERATION_SEQUENCE))
+        _REQUESTS[(session_id, generation.epoch)] = generation
+        if session_id in _PENDING_CANCELLATIONS:
+            _PENDING_CANCELLATIONS.discard(session_id)
+            if inherit_pending:
+                generation.set()
+        return generation
+
+
+def release_request(generation: CancelGeneration | None) -> None:
+    """一次运行结束时弹出本代条目；只弹自己那一代，不带走并存的新一代。"""
+    if generation is None:
+        return
+    with _REQUESTS_LOCK:
+        key = (generation.session_id, generation.epoch)
+        if _REQUESTS.get(key) is generation:
+            _REQUESTS.pop(key, None)
+
+
+def current_marker(session_id: str) -> CancelGeneration | None:
+    """该会话当前在飞那一代的标记；没有在飞运行时返回 ``None``。"""
+    with _REQUESTS_LOCK:
+        return _newest_generation(session_id)
+
+
+def cancel_request(session_id: str) -> bool:
+    """取消该会话**当前这一代**，并报告这里是否真有在飞的运行。
+
+    没有在飞运行时不假装成功，但标记必须留下，并且是留给**下一代一次性消费**：
+    否则"归属校验之后、``register_request`` 之前"到达的停止，以及"会话停在 HITL 挂起时
+    按停止、随后点批准"这两条都会静默丢失。已经结束的代不再受任何取消影响，标记也
+    就无处跨代泄漏。返回值只在真的有在飞运行时为 ``True``——为空操作报成功会让 API
+    宣称一个它没有造成的业务结果。
+    """
+    with _REQUESTS_LOCK:
+        generation = _newest_generation(session_id)
+        if generation is None:
+            _PENDING_CANCELLATIONS.add(session_id)
+            return False
+        generation.set()
+        return True
+
+
+def is_request_cancelled(session_id: str, epoch: int | None = None) -> bool:
+    """按**代**读取消状态。
+
+    带 ``epoch`` 时只认那一代：已结束或从未存在即视为未取消，绝不把别人的取消算到它头上。
+    不带 ``epoch`` 时读当前在飞那一代；没有在飞运行时，报告"取消正武装给下一代"，
+    与 ``cancel_request`` 的口径一致。
+    """
+    with _REQUESTS_LOCK:
+        if epoch is not None:
+            generation = _REQUESTS.get((session_id, epoch))
+            return bool(generation and generation.is_set())
+        generation = _newest_generation(session_id)
+        if generation is not None:
+            return generation.is_set()
+        return session_id in _PENDING_CANCELLATIONS
+
+
+def _reap_agent_worker(future, *, session_id: str, stage: str) -> None:
+    """给 executor 里的工作线程装上可见的收尾。
+
+    两处 ``loop.run_in_executor(_executor, _run)`` 原先把返回的 future 直接丢掉：没有
+    人持有它，CPython 只在 GC 时嘟囔一句，而工作线程里逃出的异常（``_run`` 的 try 覆盖
+    不到的那部分，例如 put 本身失败、生成器 finally 里再抛）就此无声消失。线上表现是
+    "流断了，日志里什么都没有"。回调只记日志，不改变任何流的语义。
+    """
+
+    def _done(fut) -> None:
+        try:
+            exc = fut.exception()
+        except BaseException:
+            # asyncio Future 在被取消后 exception() 会抛 CancelledError；回调本身
+            # 跑在事件循环里，绝不能把异常再抛回循环。
+            return
+        if exc is not None:
+            logger.error(
+                f"[{stage}] agent worker raised for session={session_id}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    future.add_done_callback(_done)
+
+
+def sse_event(event_name: str, payload: dict) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def canonical_sse_event(
+    event_name: str,
+    *,
+    request_id: str,
+    trace_id: str,
+    task_id: str,
+    sequence: int,
+    status: str,
+    data: dict | None = None,
+) -> str:
+    return sse_event(
+        event_name,
+        {
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "task_id": task_id,
+            "sequence": sequence,
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "status": status,
+            "data": data or {},
+        },
+    )
+
+
+def text_sse_frame(content: str, cache_fields: dict | None = None) -> str:
+    """一枚 ``event: text`` 的字面：命中道、逐片道、done 收尾道共用这一处构造。
+
+    R149 判据② —— ``content`` 是**截至这一片的累计全文**，不是增量，所以老前端一字
+    不改也能逐字显示（``frontend/src/lib/sessions.js`` 的 covering 分支把新片整段替换
+    进 ``msg.content``）。判据③ —— done 那枚帧的键序固定 ``type`` -> ``content`` ->
+    缓存字段，与 R35 之后线上跑出去的字面逐字节相同，改的只是构造地点。判据④ —— 缓存
+    三枚字段由调用方在同一轮里给同一份 ``cache_fields``，帧与帧之间不会一半有一半没有。
+    """
+    payload: dict = {"type": "text", "content": content}
+    if cache_fields:
+        payload.update(cache_fields)
+    return sse_event("text", payload)
+
+
+# ==================== R649 · 首屏那一格：把 wire 上第一枚**可见** text 帧落进 trace 账 ====================
+#
+# 计划书 §3.1 的「首屏」量的是客户端看见第一行字的时刻。本单不提速、不填数，只把那一枚时刻落进
+# **已在册的那本账**：``app/trace/store.py::TraceStore.record_event``。事件名由观测面那一侧署名
+# （``app/api/v1/observability.py::WIRE_FIRST_TEXT_EVENT_TYPE``，迟 import——抄第二份就是平行实现），
+# 而 ``sequence`` 与 ``timestamp`` 两枚都由那本账自己盖：本单不带第二枚时钟，也不新造第三本账。
+# 读数怎么从那两枚已在册的戳算出来，见 ``app/api/v1/observability.py::wire_first_text_from_events``。
+#
+# 🔴 记的是**帧**，不是 token。两形在流式里不等价，混了就是一枚假读数：
+#   · 逐片道里一枚 token 未必构成一帧 —— ``app/api/v1/chat.py::_AnswerPieceStream.frame_for`` 只在
+#     屏上那一份真变长时才交回帧，交不回帧而 ``continue`` 的那一枚压根没上屏；
+#   · 批准道里还有一枚与屏上逐字相同的正文被闸门拦下 —— ``app/api/v1/chat.py::_ApprovedAnswerStream.decide``
+#     的 ``skip`` 那一支不发帧，本单也就不记账；
+#   · 模型侧第一个 token 有它自己的账 —— ``app/trace/spans.py::ExecutionSpan.mark_first_token`` 落的
+#     是 ``model_calls.first_token_at`` 那一列，与本单这一格是两件事，谁也不许顶谁；
+#     blocker ``first_token_not_a_stage_sample`` 说的正是那一族。
+#
+# 🔴 命中道不记：``app/api/v1/chat.py::ask`` 里 ``cached_response`` 那一腿一条 canonical 事件都没有、
+# 一个 run 行都不该有。为它补一枚 wire 事件会给一轮压根没跑过的编排造出 ``agent_runs`` 行
+# （每一枚 trace 事件都刷新那一行），那是造证据，不是量首屏。这一格的缺席继续由
+# blocker ``cache_hits_are_not_traced`` 说着，本单不替它翻绿。
+
+
+def _record_wire_first_text(
+    *,
+    request_id: str,
+    trace_id: str,
+    task_id: str,
+    session_id: str,
+    leg: str,
+    visible_chars: int,
+    owner_id: str = "",
+) -> None:
+    r"""把本轮第一枚可见 text 帧落进 trace 那本账：走既有出口，不新开一本。
+
+    🔴 载荷里只有归因用的两格 —— 这一枚帧是从哪一条道交出去的、它带着多少个看得见的字。
+    本单**不带**时长：时长由观测面从同一本账里那两枚已在册的戳派生
+    （``app/api/v1/observability.py::wire_first_text_from_events``）。把 ``elapsed_ms`` 抄进载荷
+    就是给同一件事开第二个真源，两形哪天分叉没人报错。
+
+    也**不带**档位与题面：blocker ``lane_attribution_absent`` 要的是「stage 样本与 request 事件
+    都说不出这一轮被判进了哪一档」，本单既不裁这件事，也不许用一枚旁路事件把它糊过去 ——
+    那正是「为了看起来绿把 blocker 摸掉」那一族病。
+
+    记账坏了不许打断用户已经等到的流（与 ``app/api/v1/chat.py::_record_pending_approval`` 同一裁定），
+    但留痕迹：量具哑掉与量具在场是两件不同的事。
+    """
+    from app.api.v1.observability import WIRE_FIRST_TEXT_EVENT_TYPE
+    from app.trace.store import default_trace_store
+
+    try:
+        default_trace_store().record_event(
+            trace_id=trace_id,
+            request_id=request_id,
+            task_id=task_id,
+            event_type=WIRE_FIRST_TEXT_EVENT_TYPE,
+            status="running",
+            payload={
+                "session_id": session_id,
+                "leg": leg,
+                "visible_chars": int(visible_chars),
+                # 没有 owner 的那一行到不了六张表（REASON_OWNER_MISSING）：有就带，没有就不发这一格，
+                # 也不补一枚假 owner（与 app/api/v1/chat.py::_record_resumed_lane_trace 同一打法）。
+                **({"owner_id": owner_id} if owner_id else {}),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - 量具哑掉不是这一轮失败
+        logger.warning(
+            f"[R649][Trace] 首屏那一枚可见 text 帧没落进 trace session={session_id[:8]}...：{exc}"
+        )
+
+
+class _FirstVisibleTextMark:
+    """本轮第一枚**屏上看得见**的 text 帧的闸门：一轮至多落一枚账。
+
+    :meth:`note` 只判「这是不是本轮第一枚交了屏的正文」，一个字都不改帧形：帧仍旧由
+    ``app/api/v1/chat.py::text_sse_frame`` 构造、由调用方原样 ``yield``。闸门的状态住在这枚
+    per-round 对象里，不落盘、也不进帧账 —— R642 那半格刚把 A② 甲案落在内存态，
+    本单一行一列都不给它添。
+    """
+
+    def __init__(
+        self,
+        *,
+        request_id: str,
+        trace_id: str,
+        task_id: str,
+        session_id: str,
+        owner_id: str = "",
+    ) -> None:
+        self._identity = {
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "task_id": task_id,
+            "session_id": session_id,
+            "owner_id": owner_id,
+        }
+        #: 已落账那一枚的腿名。没落过账就是 ``None``，读回不许折成空串或 ``0``。
+        self.leg: str | None = None
+
+    @property
+    def recorded(self) -> bool:
+        return self.leg is not None
+
+    def note(self, body: str, *, leg: str) -> None:
+        """在把这一枚帧交给 SSE 出口之前调用：只有本轮第一枚看得见的正文会落账。
+
+        空正文不算「看得见的一行」：它不落账，也不吃掉闸门 —— 后面真长了字的那一枚仍算第一枚。
+        """
+        if self.recorded or not body.strip():
+            return
+        self.leg = leg
+        _record_wire_first_text(**self._identity, leg=leg, visible_chars=len(body))
+
+
+def _document_source_row(worker: str, evidence: dict) -> dict | None:
+    """还原一条文档 Evidence 成 ``DocumentRetrievalScope.allows`` 认得的命中形状。
+
+    旧 ``/chat`` 端点把 ``retriever.search`` 的返回字典直接喂给 ``scope.allows``；Agent 路径里
+    同一份命中先被 ``app/agents/evidence.py::record_document_hits`` 记进证据袋，密级与部门
+    落在 ``metadata`` 下。这里只做搬运，**不新增任何放行分支**：判据还是那个 ``scope.allows``，
+    缺可用元数据的命中一律不可见。
+    """
+    if not isinstance(evidence, dict) or evidence.get("source_type") != "document":
+        return None
+    source = str(evidence.get("source_name") or "").strip()
+    if not source:
+        return None
+    metadata = evidence.get("metadata") if isinstance(evidence.get("metadata"), dict) else {}
+    locator = evidence.get("locator") if isinstance(evidence.get("locator"), dict) else {}
+    return {
+        "worker": worker,
+        "source": source,
+        "source_id": str(evidence.get("source_id") or source),
+        "chunk_index": locator.get("chunk_index"),
+        "score": evidence.get("score"),
+        "score_type": evidence.get("score_type"),
+        # R154 判据①：命中句从证据袋原样搬过来。它是 ``app/agents/evidence.py
+        # ::record_document_hits`` 在工具边界上记下的那一段正文（400 字以内），不是从回答
+        # 文本里反推的。这一格骑在行本身的放行结论上：行过了 ``scope.allows`` 才谈得上看它
+        # 的摘录，这里不新增任何放行分支。
+        "excerpt": str(evidence.get("excerpt") or ""),
+        "document_version_id": evidence.get("document_version_id"),
+        "index_version_id": evidence.get("index_version_id"),
+        "content_sha256": metadata.get("content_sha256"),
+        # 这两项就是 ``scope.allows`` 的判据，留在事件里是为了"这条为什么能看"可复核。
+        "classification": metadata.get("classification"),
+        "department": metadata.get("department"),
+        "visibility": metadata.get("visibility") or "private",
+        "permission_checked": bool(evidence.get("permission_checked")),
+        "provenance_status": evidence.get("provenance_status"),
+    }
+
+
+def _collect_document_sources(agent_results: dict, sink: dict) -> None:
+    """把一次流式回报里所有 worker 的文档证据汇进 sink，按 ``source_id`` 去重。
+
+    取证自工具边界实际检到的东西，不从正文里反推——那是 ``app/agents/evidence.py`` 开篇
+    已经写死的纪律：本轮没有检索过的文档不允许凭着答案文本出现在来源里。
+    """
+    for worker, record in (agent_results or {}).items():
+        if not isinstance(record, dict):
+            continue
+        for evidence in record.get("evidence") or []:
+            row = _document_source_row(str(worker), evidence)
+            if row is not None:
+                sink.setdefault(row["source_id"], row)
+
+
+def _dataset_evidence_filename(evidence: dict) -> str:
+    """一条 dataset 证据上"这份数是从哪个文件算的"那一格。
+
+    两枚来源，顺序写死：``locator.filename`` 是 ``app/agents/evidence.py::record_dataset``
+    落下的结构化那一格，``source_name`` 是同一枚函数旁边那份人读的名字。两者都出自工具
+    边界，不从正文反推。取 basename 与 ``app/agents/tools.py`` 选中那一份时的口径一致。
+    """
+    locator = evidence.get("locator")
+    filename = ""
+    if isinstance(locator, dict):
+        filename = str(locator.get("filename") or "")
+    filename = filename or str(evidence.get("source_name") or "")
+    return os.path.basename(filename.strip())
+
+
+def _collect_dataset_filenames(agent_results: dict, sink: list[str]) -> None:
+    """把一次流式回报里所有 worker 实际拿去算的数据集文件名汇进 sink，逐枚去重。
+
+    ``_collect_document_sources`` 第一句就把自己写成"文档证据"收集器，dataset 那一批一个字
+    都不往上传，于是"这一轮的数字是从哪份文件算的"在 HTTP 出口问不出来。本件只补那一格的
+    读数：只搬运、不判定、不碰可见性，也不新增第二道放行分支。
+    """
+    for record in (agent_results or {}).values():
+        if not isinstance(record, dict):
+            continue
+        for evidence in record.get("evidence") or []:
+            if not isinstance(evidence, dict) or evidence.get("source_type") != "dataset":
+                continue
+            filename = _dataset_evidence_filename(evidence)
+            if filename and filename not in sink:
+                sink.append(filename)
+
+
+def terminal_data_filename(dataset_files: list[str]) -> str:
+    """终态那一帧的 ``data_filename``：正好一枚才说得出"用的哪份文件"。
+
+    零枚（这一轮根本没跑数据）与多枚（调用方没点名，于是可见的数据集全算了）都不许被一枚
+    标量冒充成"就是这一份"，两种情况一律交空串。空串说的是"这一格说不清"，不是"用的是
+    一份空文件"。
+    """
+    return dataset_files[0] if len(dataset_files) == 1 else ""
+
+
+def attach_terminal_data_filename(payload: dict, dataset_files: list[str] | None) -> dict:
+    """把「这一轮真算过哪份数据文件」按在册口径挂进终态载荷，说不清就整格不发（R504）。
+
+    取值只有 `terminal_data_filename` 一枚来源：本件不拼第二份名字，也不拿
+    `AskRequest.data_filename`（请求方向：调用方点了哪份）顶它（响应方向：服务端真算了哪份），
+    契约 R414 节已写死两枚不许互相冒充。零枚与多枚时 `terminal_data_filename` 交空串，本件
+    于是**整格缺席**——legacy `done` 与队列终态的键集被在册件
+    `tests/test_r254_sync_lane_terminal.py` 按名以**相等**钉住，往里补一枚空串就是改宽那道钉；
+    而在册那两发 canonical `request.completed` 是「键在位、值可为空串」。「这一帧压根没这一格」
+    与「这一帧说了：说不清」是两句话，本单不并脸、不补造。
+    """
+    data_filename = terminal_data_filename(list(dataset_files or []))
+    if data_filename:
+        payload["data_filename"] = data_filename
+    return payload
+
+
+def _authorized_source_rows(rows: dict, principal) -> tuple[list[dict], str]:
+    """用与旧 ``/chat`` 同一个 ``scope.allows`` 复核每条来源，返回可见行与理由码。
+
+    ``search_for_principal`` 已经把 ``scope.allows`` 当作 pred 过滤过一次，这里是新出口上
+    的第二道防线：来源事件是本单新开的泄露面，不能默认上游永远没漏。
+    """
+    try:
+        scope = resolve_document_retrieval_scope(principal)
+    except RetrievalScopeError as scope_error:
+        logger.warning(f"[ASK] 来源事件缺少可用检索范围: code={scope_error.code}")
+        return [], scope_error.code
+    return [row for row in rows.values() if scope.allows(row)], scope.reason_code
+
+
+# ==================== R48 路线甲：首屏线索卡 ====================
+# 判据全文在跟进单 §93「R48 定案（路线甲）」。这一节只做一件事：把**发卡这一刻已经在场的
+# 事实**装进一枚带 sequence 与 timestamp 的 canonical 事件，让首屏先出现一张「本轮命中了哪些
+# 资料」的卡，正文照旧在后面补齐。
+#
+# 🔴 三条硬边界，逐条对着判据写：
+#   · 它不是结论：本卡一个字都不从模型那里来——多发一发模型、从 msg.content 截一段、
+#     拼一句「看起来像答案」的话，三种都不许（§93 判据④：机测地板「只吐 1 枚 token 也要
+#     11.0 s」，1 s 之内不存在任何已生成的结论，所以这里能说的只有来源清单）。
+#   · 它绝不骑 text 道：卡片帧一旦成为 event: text，「卡片作首帧 + 终答以它为前缀」
+#     会让 text_frames / max_stream_frames / prefix_breaks / extra_chars 四格同时变绿——
+#     那是把判据② 从诚实的红洗成假绿。行为钉在
+#     tests/test_r48_headline_never_enters_the_text_ledger.py。
+#   · 无来源 / 无权限那一支不发卡：宁缺毋造。两分支在屏上的区别由收尾那枚 sources 事件的
+#     三张脸承担（见 _authorized_source_rows 与 lib/provenance.js::sourcesFace），本卡不替
+#     它们说话。
+#
+# 事件名的三处同源（改一处必红另一处）：本文件的发射点、docs/api/contract-v1.md 的 canonical
+# 名单、frontend/src/lib/sessions.js 的 EVENT_CLAIMS。前两处由
+# tests/test_r156_sse_event_surface_sync.py 钉，第三处由
+# frontend/src/lib/r150-event-claims.test.js 钉。
+
+#: 卡片最多画几条来源，超出就在屏上折算成「另有 N 条」。这是**显示**上限，不是权限上限：
+#: hit_count 那一格始终是本轮真命中的可见条数。
+HEADLINE_SOURCE_LIMIT = 3
+
+
+def _headline_card_data(rows: list[dict], *, withheld: int, elapsed_ms: float) -> dict:
+    """线索卡的载荷：每一格都指得回一次读数，没有一格是手填的示例值。
+
+    ``rows`` 必须是**已经过** ``_authorized_source_rows`` 的可见行（同一枚 ``scope.allows``），
+    所以这里不新增任何放行分支：被拒的文件名连字符串都不许出现在这一份载荷里。行数超过
+    ``HEADLINE_SOURCE_LIMIT`` 时只带前若干条，但 ``hit_count`` 仍报真总数——「画了几条」与
+    「命中几条」是两件事，合并成一格就把截断说成了全部。
+    """
+    shown = rows[:HEADLINE_SOURCE_LIMIT]
+    return {
+        # 这张卡不承载答案：界面上那句「这不是结论」以这格为准，不靠措辞自觉。
+        "carries_answer": False,
+        "sources": [dict(row) for row in shown],
+        "shown_count": len(shown),
+        "hit_count": len(rows),
+        "unauthorized_count": max(0, int(withheld)),
+        # 发卡这一刻距本轮开始多久：首屏那一格的机测读数。判据④ 不许宣布达成，但必须量得出。
+        "elapsed_ms": max(0, int(elapsed_ms)),
+    }
+
+
+def _answer_headline_frame(
+    rows: list[dict],
+    *,
+    withheld: int,
+    started_at: float,
+    session_id: str,
+    request_id: str,
+    trace_id: str,
+    task_id: str,
+    sequence: int,
+) -> str:
+    r"""把线索卡压成一枚 canonical 帧。
+
+    🔴 事件名必须以字面量待在 ``canonical_sse_event("answer.headline", ...)`` 这一枚 sink-call
+    里，不许改回手拼字面帧（形如 ``"event: " + name + "\ndata: " + payload``）：前端
+    认领门 ``frontend/src/lib/r150-event-claims.test.js::collectWireNames`` 的三条正则中，
+    直写帧那条是 ``event:\s*([a-z][a-z0-9_]*)\ndata:``——字符类里没有点，
+    带点的名字抠不出来，于是 ``EVENT_CLAIMS`` 里的这枚名字会被它自己的僵尸名用例判成
+    「后端已不再发出」。那一枚红不随并树消失，是永久红。走 sink-call 同时让信封回到唯一
+    构造器，不复制平行形状。
+    """
+    data = {"session_id": session_id,
+            **_headline_card_data(rows, withheld=withheld,
+                                  elapsed_ms=(time.time() - started_at) * 1000)}
+    return canonical_sse_event(
+        "answer.headline",
+        request_id=request_id,
+        trace_id=trace_id,
+        task_id=task_id,
+        sequence=sequence,
+        status="running",
+        data=data,
+    )
+
+
+# ==================== 出处面三格：命中句 / 生效日期 / 缓存轮清单（R154）====================
+# 判据全文在跟进单 §79 第三条。三格各自独立，谁也不替谁作证：``excerpt`` 是搬运（见
+# ``_document_source_row``），``published_at`` 是索引侧的账（下面四枚读数函数），缓存腿交
+# 清单是另一次下发（``_cache_source_manifest`` / ``_cached_source_manifest``）。
+
+
+def _index_registry_snapshot() -> tuple[list, dict[str, str]]:
+    """读一次索引注册表，拿到 ``(每一个索引版本的记录, index_id -> 当前版本 id)``。
+
+    读的是 ``IndexRegistry`` 自己写下的那份记录，而不是 PG 的 ``index_versions`` 表：一次
+    发布里这两笔时间是同一个 ``IndexPublisher.publish`` 先后取的（注册表在
+    ``IndexRegistry.publish`` 里 ``datetime.now``，PG 镜像在 ``mark_published`` 里
+    ``COALESCE(published_at, NOW())``），相差以微秒计；而单机没起 PG 时注册表是唯一还在的
+    读数。把一次 HTTP 挂到 DB 往返上，换来的只是一个更贵的小数点。
+
+    读不出（文件在写到一半、JSON 坏掉、记录形状不认识）一律回答"没有可说的"，两把表都会
+    空：``GET /documents/{f}/versions`` 不能因为一本读不出来的账而 500，出处行也不能因此
+    少发——生效日期这一格宁可不带。
+    """
+    try:
+        return read_index_metadata(default_metadata_path())
+    except Exception as exc:
+        logger.warning(f"[DOCS] 索引注册表读不出发布时间: {type(exc).__name__}: {exc}")
+        return [], {}
+
+
+def _index_publication_moments() -> tuple[dict[str, str], dict[str, str]]:
+    """两把"发布时间"表：``index_id -> 正在服务的那一版`` 与 ``source_version_id -> 该版``。
+
+    只收 ``published_at`` 真有值的记录，墓碑（``retirement``）一枚都不收——它记的是"这一版
+    索引什么时候被撤下"，把撤下时间当生效日期报出去是一句假话。同一个源版本被重建过多次时
+    取最晚那次发布：出处回答的是"现在这份内容什么时候生效"，不是"它第一次生效于何时"。
+    """
+    versions, current = _index_registry_snapshot()
+    by_id = {version.index_version_id: version for version in versions}
+    current_moments: dict[str, str] = {}
+    for index_id, version_id in current.items():
+        version = by_id.get(version_id)
+        if version is None or version.retirement:
+            continue
+        moment = str(version.published_at or "").strip()
+        if moment:
+            current_moments[str(index_id)] = moment
+    version_moments: dict[str, str] = {}
+    for version in sorted(versions, key=lambda item: str(item.created_at or "")):
+        if version.retirement:
+            continue
+        moment = str(version.published_at or "").strip()
+        coordinate = str(version.source_version_id or "").strip()
+        if moment and coordinate:
+            version_moments[coordinate] = moment
+    return current_moments, version_moments
+
+
+def _stamp_source_publications(source_rows: dict[str, dict]) -> None:
+    """判据②（sources 出口）：给每一行出处补上"当前生效的那一版索引何时发布"。
+
+    就地补，不动可见性判定——放行/拒绝在这一步之前由 ``_authorized_source_rows`` 已经判完，
+    这里只往已经判给这个调用方的行上加字段。证据袋只记到文件名（``record_document_hits``
+    不带版本号），所以坐标是 ``document_index_id(filename)`` 而不是某一版文档。查不到就不带
+    这一格：「说不出来」与「没有日期」不是一回事，拿 ``created_at`` 或今天凑一个数，界面上
+    那行"生效日期"就成了谎。
+    """
+    if not source_rows:
+        return
+    current_moments, _ = _index_publication_moments()
+    if not current_moments:
+        return
+    for row in source_rows.values():
+        moment = current_moments.get(document_index_id(str(row.get("source") or "")))
+        if moment:
+            row["published_at"] = moment
+
+
+def _stamp_version_publications(rows: list[dict]) -> list[dict]:
+    """判据②（versions 出口）：``published_at`` 按 (filename, version) 精确配对补进版本行。
+
+    ``catalog.py`` 的公开投影只搬 ``document_versions`` 自己的列，那张表里没有发布时间这一
+    列；生效日期是索引侧的账，所以在出口这一侧补。配不上（这份文档从没发布过索引、注册表
+    读不出）就不带键，与 sources 出口同一口径。
+    """
+    if not rows:
+        return rows
+    _, version_moments = _index_publication_moments()
+    if not version_moments:
+        return rows
+    for row in rows:
+        filename = str(row.get("filename") or "")
+        version = row.get("version")
+        if not filename or version is None:
+            continue
+        try:
+            coordinate = document_resource_version_id(filename, int(version))
+        except (TypeError, ValueError):
+            continue
+        moment = version_moments.get(coordinate)
+        if moment:
+            row["published_at"] = moment
+    return rows
+
+
+# 清单键的标记前缀。它出现在 ``answer:`` 命名空间里，所以读它的路径与答案缓存共用同一把
+# 作用域尺子（``answer_cache_scope`` 一枚维度都不落）：换个部门/密级/角色既读不到答案，
+# 也读不到那份答案的证据快照。
+EVIDENCE_MANIFEST_PREFIX = "__evidence_manifest__:"
+
+
+def _evidence_manifest_key(question: str) -> str:
+    """来源清单的键材料：前缀 + 问题文本的 sha256，不是一段能被问出来的话。
+
+    存法走 ``cache_answer`` 这个公开入口本身，而不是自己去摸 Redis，也不给 ``cache.py``
+    添新 API（那枚文件不在本单写域里）。代价是每问一题多占一条缓存位，收益是 TTL、作用域
+    前缀、坏记录不回读这三件事全部沿用答案的既有实现，不在这儿抄第二份。标记里放摘要而不是
+    原文：任何人的提问文本都不可能拼出别人那道题的清单键。
+    """
+    digest = hashlib.sha256(str(question or "").encode("utf-8")).hexdigest()
+    return f"{EVIDENCE_MANIFEST_PREFIX}{digest}"
+
+
+def _cache_source_manifest(question: str, scope: str, source_rows: dict[str, dict]) -> bool:
+    """判据③（写侧）：本轮答案进了缓存，就把它的证据快照跟着存进同一条作用域键空间。
+
+    存的是**过滤前**的行。命中的那一轮要报得出 ``hit_count``/``unauthorized_count`` 两个数，
+    就得知道"检到了几条、其中几条不给看"；只存可见行会把第二个数永远写成 0，那是把
+    R41 已经交出去的读数在缓存这条腿上偷偷丢掉了。放行结论不落盘，落盘的是证据——
+    读出来还要再过一次 ``_authorized_source_rows``。
+    """
+    rows = list((source_rows or {}).values())
+    if not rows:
+        # 本轮压根没有文档来源，也就没有可交的清单：不存空表。空表与缺表在界面上画的是同
+        # 一张脸（``ChatPanel.vue::checkCacheStaleness`` 拿不到文件名 -> cached-unknown），
+        # 存空表只是让每条无源答案多占一枚缓存位。
+        return False
+    try:
+        from app.common.cache import cache_answer
+
+        cache_answer(
+            _evidence_manifest_key(question),
+            json.dumps(rows, ensure_ascii=False),
+            scope=scope,
+        )
+    except Exception as exc:
+        logger.warning(f"[ASK] 来源清单没能写进缓存: {type(exc).__name__}: {exc}")
+        return False
+    return True
+
+
+def _cached_source_manifest(question: str, scope: str) -> dict[str, dict] | None:
+    """判据③（读侧）：读回那一轮的证据快照；读不出来返回 ``None``，由命中腿什么都不发。
+
+    ``None`` 是这一单最要紧的一枚返回值。R154 之前写下的条目、被逐出淘汰的条目、JSON 坏掉
+    的条目，统统读不出一份清单。这时候命中腿**不许**发一枚空的 ``sources`` 事件充数：那是把
+    "没查到"说成"查过了，没有"。不发，前端 ``ChatPanel.vue::checkCacheStaleness`` 就凑不出
+    文件名清单，``provenance.js::cacheFace`` 画的是第四态 ``cached-unknown``——屏幕上那句
+    "这一轮的回答没有再交出来源清单，是否改版无从核对"，与第三态 ``cached``（真核对过，
+    确实没改版）在界面上是两回事。
+    """
+    try:
+        from app.common.cache import get_cached_answer_record
+
+        record = get_cached_answer_record(_evidence_manifest_key(question), scope=scope)
+    except Exception as exc:
+        # 清单这一格读崩了不该把命中的一整轮拖下水：降级成"没有清单可交"，界面走
+        # cached-unknown，正文与缓存三字段照发。
+        logger.warning(f"[ASK] 来源清单读不出来: {type(exc).__name__}: {exc}")
+        return None
+    if not record:
+        return None
+    try:
+        payload = json.loads(record["answer"])
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, list):
+        return None
+    rows = {
+        str(row.get("source_id")): row
+        for row in payload
+        if isinstance(row, dict) and str(row.get("source_id") or "").strip()
+    }
+    return rows or None
+
+
+def _latest_document_version(filename: str) -> dict | None:
+    for item in list_document_versions(filename):
+        storage_path = item.get("storage_path")
+        if storage_path and os.path.exists(storage_path):
+            return dict(item)
+
+    stem, ext = os.path.splitext(filename)
+    directory = Path(DOCUMENTS_DIR)
+    if directory.is_dir():
+        matches = sorted(directory.glob(f"{stem}__v*{ext}"), reverse=True)
+        for path in matches:
+            if path.is_file():
+                return {"filename": filename, "storage_path": str(path)}
+
+    direct = directory / filename
+    if direct.exists():
+        return {"filename": filename, "storage_path": str(direct)}
+    return None
+
+
+def _document_resource_scope(filename: str, version: dict) -> dict:
+    """Build the authorization attributes one stored document version carries.
+
+    ``owner_id`` used to be read out of a catalog row that never had the column, so
+    every decision fell through to the department intersection. The catalog now
+    records the uploader, and this projection is the single place where a document
+    row becomes a resource scope, which also puts the same attributes into the audit
+    journal as the decision itself.
+    """
+    return {
+        "resource_type": "document",
+        "resource_id": version.get("resource_id") or version.get("id") or filename,
+        "owner_id": version.get("owner_id"),
+        "department": version.get("department"),
+        "department_ids": version.get("department_ids"),
+        "classification": version.get("classification"),
+        "visibility": version.get("visibility", "private"),
+        "version_id": version.get("version_id") or str(version.get("version", "")),
+        "status": version.get("status", "active"),
+    }
+
+
+def _document_storage_path(version: dict) -> str:
+    return str(version.get("storage_path") or "")
+
+
+def _document_authorization_decision(principal, filename: str, version: dict, action: str):
+    return authorization_decision(
+        principal,
+        _document_resource_scope(filename, version),
+        action=action,
+        require_resource_scope=True,
+    )
+
+
+def _document_principal_or_error(request: FastAPIRequest):
+    principal = principal_from_request(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="authentication_required")
+    return principal
+
+
+def _session_principal_or_error(request: FastAPIRequest):
+    principal = principal_from_request(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="authentication_required")
+    return principal
+
+
+def _authorize_session_request(
+    request: FastAPIRequest,
+    session_id: str,
+    action: str = ACTION_VIEW,
+):
+    """Authorize a session-scoped call, and leave a trace when it is refused.
+
+    防资源枚举那半条一字未动：不是你的会话仍然像不存在一样（404
+    resource_not_found），拦人的谓词仍然是 app/storage/sessions.py:85 的
+    is_owned_by，它不认角色，所以 administrator 在这条口子上不豁免。
+    补的是留账那半条：「有人拿这个会话 id 来探过」以前在审计台账里查不到一笔
+    （R163 矩阵 session_route 两格的红）。
+
+    台账只写主体 / 会话 id / 判定结果三样：用的就是 alerts.py 与 rag/filters.py
+    那一条 record_audit 通路，不在这里另起一套形状。会话 id 是被探测的资源标识；
+    别人的会话正文一个字都不进。
+    """
+    principal = _session_principal_or_error(request)
+    if not session_registry.is_owned_by(session_id, principal):
+        # permission_denied 是同文件队列腿早就在用的码，不新造。
+        record_audit(principal, action, "denied", session_id, "permission_denied")
+        raise HTTPException(status_code=404, detail="resource_not_found")
+    return principal
+
+
+def _agent_user_context(principal) -> dict | None:
+    """Build the Agent runtime context that grants a request its authorization scope."""
+    if principal is None:
+        return None
+    return {
+        "username": principal.username,
+        "role": principal.role,
+        "department": principal.department or "",
+        "principal": principal,
+    }
+
+
+def _classify_document_rows(
+    request: FastAPIRequest,
+    rows: list[dict],
+    action: str = ACTION_VIEW,
+) -> tuple[list[dict], list[tuple[str, str]]]:
+    """Split stored rows into 「看得见」 and 「有，但你不能看」.
+
+    旧实现只交给调用方一个过滤后的列表，于是「目录里没有这份文档」和「文档在，
+    只是你没权看」长成同一张脸（R163 矩阵 document_route 那格 B 类红的根因）。
+    这里把两个结论分开返回，并给每一条被拒的行在既有 record_audit 通路上留一笔：
+    主体 / 文件名（文档腿的资源标识，与 _authorize_document_request 同一个口径）/
+    判定结果。文档正文一个字都不进台账。
+
+    The row is shaped after it has been filtered: an authorization decision must
+    read what the store recorded, and a response must carry the ownership and parse
+    state of that same row rather than whatever shape the caller handed over.
+    """
+    principal = _document_principal_or_error(request)
+    visible: list[dict] = []
+    withheld: list[tuple[str, str]] = []
+    for row in rows:
+        filename = str(row.get("filename") or "")
+        decision = _document_authorization_decision(principal, filename, row, action)
+        if decision.allowed:
+            visible.append(public_document_row(row))
+            continue
+        withheld.append((filename, decision.reason_code))
+        record_audit(principal, action, "denied", filename, decision.reason_code)
+    return visible, withheld
+
+
+def _visible_document_rows(request: FastAPIRequest, rows: list[dict]) -> list[dict]:
+    visible, _withheld = _classify_document_rows(request, rows)
+    return visible
+
+
+def _authorize_document_request(
+    request: FastAPIRequest,
+    filename: str,
+    action: str,
+) -> tuple[dict, AuthorizationDecision]:
+    """Authorize a document operation and put the whole judgment in the audit journal.
+
+    The decision travels back with the stored version because the caller has to
+    record which rule allowed the change it is about to perform, and a denial has to
+    stay traceable after the response is gone.
+    """
+    principal = _document_principal_or_error(request)
+    version = _latest_document_version(filename)
+    if not version:
+        raise HTTPException(status_code=404, detail="resource_not_found")
+
+    decision = _document_authorization_decision(principal, filename, version, action)
+    record_audit(
+        principal,
+        action,
+        "allowed" if decision.allowed else "denied",
+        filename,
+        decision.reason_code,
+        request_id=principal.request_id or None,
+        resource_scope=_document_resource_scope(filename, version),
+        policy_version=decision.policy_version,
+    )
+    if not decision.allowed:
+        status_code = 401 if decision.reason_code == "authentication_required" else 403
+        raise HTTPException(status_code=status_code, detail=decision.reason_code)
+    return version, decision
+
+
+def _resolve_document_path(filename: str) -> str | None:
+    """Resolve the latest stored file path for a logical document name."""
+    version = _latest_document_version(filename)
+    if version:
+        return str(version["storage_path"])
+    return None
+
+
+def _get_reliable_queue():
+    from app.common.reliable_queue import connect_reliable_queue
+
+    return connect_reliable_queue()
+
+
+def _authorize_queue_task(
+    request: FastAPIRequest,
+    queue,
+    request_id: str,
+    action: str = ACTION_VIEW,
+) -> dict:
+    """Authorize a queue-task call, and leave a trace when it is refused.
+
+    这条腿的五枚拒绝出口（401 / 404 / 403 authorization_unavailable 两枚 / 403
+    permission_denied）以前在审计台账里一行痕迹都没有：别人排在队列里的任务 id 探
+    一下，屏上给了拒绝、机器上查不到这笔探测。补的仍是 R179 那一条通路 —— 本文件
+    第 31 行导入的 record_audit，_authorize_session_request（603 行落账）与
+    _classify_document_rows（647 行落账）用的就是它，不在这里另起一套形状：
+    主体 / 被探的任务 id / 动词 / 判定结果四样，排着队的任务载荷一个字都不进台账。
+
+    动词按门分：读状态那扇门记 resource:view，取消那扇门记 resource:delete。后者沿用
+    本文件 /ask/{session_id}/cancel 早就在用的那枚码——取消一条排队任务与取消一次会话
+    生成是同一种动作——不新造第三枚。
+
+    怎么说那一半一字未动：五枚出口的 status_code 与 detail 逐字保持原样。
+    """
+    principal = principal_from_request(request)
+
+    def _refused(status_code: int, reason: str) -> HTTPException:
+        # 一扇门一笔账：走的还是那条通路，码就是出口自己那句 detail。
+        record_audit(principal, action, "denied", request_id, reason)
+        return HTTPException(status_code=status_code, detail=reason)
+
+    if principal is None:
+        raise _refused(401, "authentication_required")
+    raw = queue.redis.get(queue._message_key(request_id))
+    if raw is None:
+        raise _refused(404, "resource_not_found")
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    try:
+        payload = json.loads(raw).get("payload") or {}
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise _refused(403, "authorization_unavailable") from exc
+    # R295 判据④：归属不再读载荷快照，与 R294 同源现取；比对不出权威就判失效，不放宽。
+    owner_id, owner_refusal = queue_task_owner_user_id(payload)
+    if owner_refusal:
+        raise _refused(403, "authorization_unavailable")
+    if owner_id != str(principal.user_id):
+        raise _refused(403, "permission_denied")
+    return payload
+
+
 # ==================== PostgreSQL 会话存储 ====================
 
-import psycopg
-from psycopg.rows import dict_row
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ModuleNotFoundError:  # pragma: no cover
+    psycopg = None
+    dict_row = None
 
 _PG_URL = os.getenv("DATABASE_URL", "postgresql://postgres@localhost:5432/enterprise_brain")
+_MEM_SESSIONS: dict[str, dict] = {}
+_MEM_SESSION_MESSAGES: dict[str, list[dict]] = {}
+_PRODUCTION_ENVIRONMENTS = {"production", "prod"}
 
 
 def _sess_conn():
+    if psycopg is None:
+        raise RuntimeError("PostgreSQL driver is unavailable")
     return psycopg.connect(_PG_URL, row_factory=dict_row)
 
 
-def _ensure_session(session_id: str) -> dict:
+def _session_database_available() -> bool:
+    auth_module = sys.modules.get("app.common.auth")
+    return bool(auth_module and getattr(auth_module, "_db_ready", False))
+
+
+def _is_production_environment() -> bool:
+    return os.getenv("APP_ENV", "development").strip().lower() in _PRODUCTION_ENVIRONMENTS
+
+
+class ChatSchemaNotMigratedError(RuntimeError):
+    """生产库里该由 migrations 建的那枚表不在——本模块那句 "run migrations first" 的唯一类型。
+
+    故意做成 ``RuntimeError`` 的子类而不是替换它，与 ``app/api/v1/alerts.py`` 里同族那枚具名错同一把
+    形状：两处 ``_require_migrated_tables`` 调用点今天都落在既有的宽捕获里（模块导入期那一枚
+    ``except Exception: pass``，与上传记 metadata 那一枚 ``except Exception as exc``），换掉基类就会
+    连带改那两格的既有回话，而它们不在本单判据内。具名化只许加一层。
+
+    存在的意义是让 **HTTP 出口** 能只接这一种错：把任何 ``RuntimeError`` 都翻成 503，等于替真正的
+    bug 打掩护 —— ``_sess_conn`` 那句「驱动缺失」与 ``_ensure_session`` 那句「缺 user_id」都是同
+    基类而不同罪的邻居。三格的排查路也靠这一层名字分开：只有「该由迁移建的表不在」才叫这一个。
+
+    消息文本一个字节都不改，改的只有「谁能接住它」。
+    """
+
+
+def _require_migrated_tables(conn, *table_names: str) -> None:
+    for table_name in table_names:
+        row = conn.execute(f"SELECT to_regclass('public.{table_name}') AS table_name").fetchone()
+        if not row or row["table_name"] is None:
+            raise ChatSchemaNotMigratedError(
+                f"{table_name} table is required in production; run migrations first"
+            )
+
+
+def _require_sessions_read_schema(conn, *table_names: str) -> None:
+    """读腿的现查闸：只有「生产 + 该由迁移建的表不在」这一格开口，别的一律不发。
+
+    R397。`_list_sessions` / `_get_session_messages` / `get_session` 的 session 腿从前直接把
+    `psycopg.errors.UndefinedTable` 原样抛出，两张读腿的出口都是裸 500 纯文本。这一枚让读腿在发
+    语句之前先过一次 `_require_migrated_tables` 那同一句现查，抛出来的还是族里唯一那枚具名错
+    （抛出方仍然只有它一个），出口因此只需接一种。
+
+    非生产一格都不许变：开发与裸机照旧由 `_ensure_sessions_table()` 就地补 DDL 自愈，离线那两支
+    连连接都不发；缺表以外的故障（驱动缺失）走的是另一条腿，本闸不认、也不替它打掩护。
+    """
+    if _is_production_environment():
+        _require_migrated_tables(conn, *table_names)
+
+
+def _ensure_session(session_id: str, user_id: str = "") -> dict:
     now = datetime.now(_tz).isoformat()
+    if not _session_database_available():
+        return _MEM_SESSIONS.setdefault(
+            session_id,
+            {"id": session_id, "title": "", "created_at": now, "updated_at": now},
+        )
+    owner_id = str(user_id or "").strip()
+    if not owner_id:
+        raise RuntimeError("an authenticated user_id is required to persist a session")
     with _sess_conn() as conn:
         conn.execute(
-            "INSERT INTO sessions (id, title, created_at, updated_at) VALUES (%s, '', %s, %s) "
+            "INSERT INTO sessions (id, user_id, title, created_at, updated_at) VALUES (%s, %s, '', %s, %s) "
             "ON CONFLICT (id) DO NOTHING",
-            (session_id, now, now),
+            (session_id, owner_id, now, now),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM sessions WHERE id = %s", (session_id,)).fetchone()
@@ -66,6 +1127,15 @@ def _ensure_session(session_id: str) -> dict:
 
 def _save_message(session_id: str, role: str, content: str, steps: list | None = None):
     now = datetime.now(_tz).isoformat()
+    if not _session_database_available():
+        session = _ensure_session(session_id)
+        _MEM_SESSION_MESSAGES.setdefault(session_id, []).append(
+            {"role": role, "content": content, "steps": steps or [], "created_at": now}
+        )
+        if role == "user" and not session["title"]:
+            session["title"] = content[:30]
+        session["updated_at"] = now
+        return
     with _sess_conn() as conn:
         conn.execute(
             "INSERT INTO session_messages (session_id, role, content, steps, created_at) VALUES (%s, %s, %s, %s, %s)",
@@ -81,18 +1151,92 @@ def _save_message(session_id: str, role: str, content: str, steps: list | None =
         conn.commit()
 
 
-def _list_sessions() -> list[dict]:
+def _save_approval_answer(session_id: str, content: str, steps: list | None = None):
+    """Refresh this user turn's answer instead of appending its full body again."""
+    now = datetime.now(_tz).isoformat()
+    if not _session_database_available():
+        rows = _MEM_SESSION_MESSAGES.get(session_id, [])
+        for row in reversed(rows):
+            if row["role"] == "user":
+                break
+            if row["role"] == "assistant":
+                row["content"] = content
+                if steps is not None:
+                    row["steps"] = steps
+                _MEM_SESSIONS[session_id]["updated_at"] = now
+                return
+        _save_message(session_id, "assistant", content, steps)
+        return
     with _sess_conn() as conn:
+        # Lock the session so two approval completions cannot append competing answers.
+        conn.execute("SELECT id FROM sessions WHERE id = %s FOR UPDATE", (session_id,))
+        row = conn.execute(
+            "SELECT id, role FROM session_messages WHERE session_id = %s ORDER BY id DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if row and row["role"] == "assistant":
+            if steps is None:
+                conn.execute("UPDATE session_messages SET content = %s WHERE id = %s", (content, row["id"]))
+            else:
+                conn.execute("UPDATE session_messages SET content = %s, steps = %s WHERE id = %s",
+                    (content, json.dumps(steps, ensure_ascii=False), row["id"]))
+        else:
+            conn.execute(
+                "INSERT INTO session_messages (session_id, role, content, steps, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (session_id, "assistant", content, json.dumps(steps or [], ensure_ascii=False), now),
+            )
+        conn.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (now, session_id))
+        conn.commit()
+
+
+def _list_sessions() -> list[dict]:
+    """整表捞会话行，每行带一枚 ``msg_count``（该会话的用户消息数）。
+
+    R497：从前这一句写成 ``SELECT s.*, (SELECT COUNT(*) FROM session_messages WHERE ...) as
+    msg_count FROM sessions s``——外层零谓词整表进 Python，选中列里那枚相关子查询按行求值，
+    库里 1020 行就是 1020 枚 ``COUNT``。现在换成**一枚** ``GROUP BY`` 预聚合再 ``LEFT JOIN``，
+    没命中的行由 ``COALESCE`` 补 0，读到的数与从前逐枚相等（凭据见
+    ``docs/testing/r497-session-list-read-leg-2026-09-29.md``）。
+
+    🔴 归属一个字都没有前推：外层仍然零 owner/部门谓词，拦人的仍是 ``GET /sessions`` 里那枚
+    台账终审 ``session_registry.is_owned_by``。库里那枚 owner 列与台账 ``owner_id``
+    今天逐枚一致只是数据态（无 FK、无解绑口，R484 已把「偶然承重」记成在册风险），前推出去的
+    筛子只会把「台账说这人所有」的行吃掉。在册牙
+    ``tests/test_r484_session_read_leg_owner_filter.py::test_the_read_leg_has_no_owner_predicate_in_sql``
+    同时把这格钉成静态形状，本单不许动它。
+    """
+    if not _session_database_available():
+        result = []
+        for session in _MEM_SESSIONS.values():
+            item = dict(session)
+            item["msg_count"] = sum(
+                1 for message in _MEM_SESSION_MESSAGES.get(session["id"], [])
+                if message["role"] == "user"
+            )
+            result.append(item)
+        return sorted(result, key=lambda item: item["updated_at"], reverse=True)
+    with _sess_conn() as conn:
+        _require_sessions_read_schema(conn, "sessions", "session_messages")
         rows = conn.execute(
-            """SELECT s.*,
-               (SELECT COUNT(*) FROM session_messages WHERE session_id = s.id AND role = 'user') as msg_count
-               FROM sessions s ORDER BY s.updated_at DESC"""
+            """WITH user_turn_counts AS (
+                   SELECT session_id, COUNT(*) AS msg_count
+                   FROM session_messages
+                   WHERE role = 'user'
+                   GROUP BY session_id
+               )
+               SELECT s.*, COALESCE(m.msg_count, 0) AS msg_count
+               FROM sessions s
+               LEFT JOIN user_turn_counts m ON m.session_id = s.id
+               ORDER BY s.updated_at DESC"""
         ).fetchall()
         return [dict(r) for r in rows]
 
 
 def _get_session_messages(session_id: str) -> list[dict]:
+    if not _session_database_available():
+        return [dict(message) for message in _MEM_SESSION_MESSAGES.get(session_id, [])]
     with _sess_conn() as conn:
+        _require_sessions_read_schema(conn, "session_messages")
         rows = conn.execute(
             "SELECT role, content, steps, created_at FROM session_messages WHERE session_id = %s ORDER BY id",
             (session_id,),
@@ -109,6 +1253,10 @@ def _get_session_messages(session_id: str) -> list[dict]:
 
 
 def _delete_session(session_id: str):
+    if not _session_database_available():
+        _MEM_SESSIONS.pop(session_id, None)
+        _MEM_SESSION_MESSAGES.pop(session_id, None)
+        return
     with _sess_conn() as conn:
         conn.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
         conn.commit()
@@ -118,90 +1266,724 @@ def _delete_session(session_id: str):
 
 def _ensure_documents_table():
     with _sess_conn() as conn:
+        if _is_production_environment():
+            _require_migrated_tables(conn, "documents")
+            return
         conn.execute("""
             CREATE TABLE IF NOT EXISTS documents (
                 id SERIAL PRIMARY KEY,
                 filename TEXT UNIQUE NOT NULL,
                 classification INT NOT NULL DEFAULT 1,
-                department TEXT
+                department TEXT,
+                visibility TEXT NOT NULL DEFAULT 'private',
+                owner_id TEXT,
+                size_bytes BIGINT,
+                parse_status TEXT NOT NULL DEFAULT 'pending'
             )
         """)
         conn.commit()
 
 
-try:
-    _ensure_documents_table()
-except Exception:
-    pass  # 导入不硬依赖库；上传时再懒建表
+if catalog_database_available():
+    try:
+        _ensure_documents_table()
+    except Exception:
+        pass  # 导入不硬依赖库；上传时再懒建表
 
 
-def _upsert_document(filename: str, classification: int, department: str):
+def _upsert_document(
+    filename: str,
+    classification: int,
+    department: str,
+    owner_id: str | None = None,
+    *,
+    size_bytes: int | None = None,
+    parse_status: str = "pending",
+    visibility: str = "private",
+):
+    """Keep the logical document row aligned with the version just stored.
+
+    Ownership is written here too: the documents row is what an operator inspects when
+    a version has to be reassigned, and an owner that only ever reached the version
+    table would leave the logical row permanently unattributed.
+    """
     _ensure_documents_table()
     with _sess_conn() as conn:
         conn.execute(
-            "INSERT INTO documents (filename, classification, department) VALUES (%s, %s, %s) "
-            "ON CONFLICT (filename) DO UPDATE SET classification = EXCLUDED.classification, department = EXCLUDED.department",
-            (filename, int(classification), department or None),
+            "INSERT INTO documents (filename, classification, department, visibility, owner_id, size_bytes, parse_status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (filename) DO UPDATE SET "
+            "classification = EXCLUDED.classification, "
+            "department = EXCLUDED.department, "
+            "visibility = EXCLUDED.visibility, "
+            "owner_id = COALESCE(documents.owner_id, EXCLUDED.owner_id), "
+            "size_bytes = COALESCE(EXCLUDED.size_bytes, documents.size_bytes), "
+            "parse_status = EXCLUDED.parse_status",
+            (
+                filename,
+                int(classification),
+                department or None,
+                str(visibility or "private"),
+                owner_id or None,
+                size_bytes,
+                parse_status,
+            ),
         )
         conn.commit()
 
 
 # ==================== 追问改写 ====================
 
-def _rewrite_followup(session_id: str, user_msg: str) -> str:
-    triggers = ["那", "它", "这个", "那个", "他们", "换", "改成"]
-    if not any(user_msg.startswith(t) for t in triggers):
+#: 追问的文本信号，按家族分列。判定只问一件事：这一句自己能不能立住 —— 要拿上一轮才能
+#: 补全主语、对象或比较基准的才算追问。R126 之前这里是一张七个前缀的白名单，
+#: tests/fixtures/business_evaluation_100.jsonl 里 12 枚「多轮对话」题只命中 4 枚。
+#: 词表按家族组织，一枚标记服务的是一类说法而不是一道题；扩表请连带写明它服务哪种说法。
+_DEICTIC_PREFIXES = ("这", "那")
+#: 单字"他/她"是所有格（"他的报销"），只有加"们"才是这里要的指代
+_PLURAL_PRONOUN_PREFIXES = ("他", "她")
+#: 指代后面紧跟量词＋实物名词（"这份报告""那张图表"）时对象已经说死，不靠上文
+_MEASURE_WORDS = "份张篇页条笔位名种"
+#: "这个月""那周"是时间状语；"这个标准"才是指代 —— 哪个标准得由上文指出
+_TEMPORAL_NOUNS = "月年周日次号期季"
+_FOLLOWUP_PREFIXES = (
+    "那", "它", "他", "她", "这", "换", "改成", "如果", "要是", "请给", "只给",
+)
+#: 要求改判／重算：换掉上一轮里的某个成分再走一遍
+_REWRITE_MARKERS = ("换成", "改成", "改为", "调成", "再算", "重新算", "换个", "换种")
+#: 指令下在"上一答怎么说"上，而不是下在新事实上
+_FORM_MARKERS = ("更简单", "简单点", "说得更", "一点", "通俗", "大白话", "总结", "不要引用")
+#: 拿上一答当对照对象
+_PREVIOUS_ANSWER_MARKERS = ("矛盾", "前面说", "刚才说", "刚说", "之前说", "上面说", "你提到")
+#: 只补出情形，规则本身来自上文（"两个人合住一间……""我昨晚住了650元……"）
+_SITUATION_MARKERS = ("叠加", "合住", "昨晚", "昨天", "报多少")
+_FOLLOWUP_MARKERS = (
+    _REWRITE_MARKERS + _FORM_MARKERS + _PREVIOUS_ANSWER_MARKERS + _SITUATION_MARKERS
+)
+
+
+def _starts_with_deictic(text: str) -> bool:
+    """句首指代，且不是"这份报告""这个月"那种把对象与时间说全了的假指代。"""
+    for prefix in _FOLLOWUP_PREFIXES:
+        if not text.startswith(prefix):
+            continue
+        rest = text[len(prefix):]
+        if prefix in _DEICTIC_PREFIXES and rest[:1] in _MEASURE_WORDS:
+            continue
+        tail = rest[1:] if rest[:1] == "个" else rest
+        if prefix in _DEICTIC_PREFIXES and tail[:1] in _TEMPORAL_NOUNS:
+            continue
+        if prefix in _PLURAL_PRONOUN_PREFIXES and not rest.startswith("们"):
+            continue
+        return True
+    return False
+
+
+def _is_followup(message: str) -> bool:
+    """这一句要不要结合上一轮才读得懂：纯文本判定，不调模型、不查库。"""
+    text = (message or "").strip()
+    if not text:
+        return False
+    return _starts_with_deictic(text) or any(marker in text for marker in _FOLLOWUP_MARKERS)
+
+
+def _rewrite_followup(session_id: str, user_msg: str, config: Any = None) -> str:
+    """Rewrite a follow-up into a standalone question, and bill the round trip to ``rewrite``.
+
+    R695 judgement 1: the round identity arrives either as ``config`` or from the context the
+    endpoint armed for this turn (``app/trace/spans.py::arm_turn_identity``), because the
+    regression doubles that replace this function take exactly ``(session_id, user_msg)``.
+    No identity means no bytes: the rule in ``app/trace/spans.py`` that an ownerless span
+    records nothing stays the only gate, so an un-armed call leaves the segment honestly
+    missing instead of inventing a duration for it.
+    """
+    if not _is_followup(user_msg):
         return user_msg
 
-    msgs = _get_session_messages(session_id)
-    prev_user = [m["content"] for m in msgs if m["role"] == "user"]
-    if not prev_user:
-        return user_msg
+    from app.trace.spans import current_turn_identity, stage_account
 
-    try:
-        prompt = f"""把追问改写为完整独立问题。结合上文语境。
+    identity = config if config is not None else current_turn_identity()
+    with stage_account(identity, stage="rewrite", tier="rewrite"):
+        msgs = _get_session_messages(session_id)
+        prev_user = [m["content"] for m in msgs if m["role"] == "user"]
+        # R126：「上一问」不许等于本轮自己。ask 路由已改成"先改写、后落库"，这里再钉第二道闸：
+        # 只要历史末尾就是本轮这句（老调用点、或任何先落库的调用方），就把它剔掉 —— 否则
+        # prompt 会变成"上一问: X ／ 当前: X"，模型没有上文可用，只能凭空编一段。
+        if prev_user and prev_user[-1] == user_msg:
+            prev_user = prev_user[:-1]
+        if not prev_user:
+            return user_msg
 
-上一问: {prev_user[-1]}
+        previous_user_msg = prev_user[-1]
+        try:
+            prompt = f"""把追问改写为完整独立问题。结合上文语境。
+
+上一问: {previous_user_msg}
 当前: {user_msg}
 
 只输出改写后的问题:"""
-        result = model_handler.chat(
-            messages=[{"role": "user", "content": prompt}],
-            source=ModelSource.DEEPSEEK,
-            stream=False,
-        )
-        rewritten = result.strip() if isinstance(result, str) else result.choices[0].message.content.strip()
-        if rewritten and len(rewritten) > 3:
-            logger.info(f"[REWRITE] '{user_msg}' → '{rewritten[:60]}'")
-            return rewritten
-    except Exception as e:
-        logger.warning(f"[REWRITE] 失败: {e}")
+            result = model_handler.chat(
+                messages=[{"role": "user", "content": prompt}],
+                source=ModelSource.LOCAL,
+                stream=False,
+            )
+            from app.common.model_handler import MODEL_UNAVAILABLE_CODE, RATE_LIMITED_CODE
 
-    return user_msg
+            # 改写腿原先认不出"这一趟没真改写"：chat() 失败时不抛异常，只把一枚类型化 error_code
+            # 挂在返回体上。本守卫的集合只收"这句话由 model_handler 自己造、不是模型说的"这两枚 ——
+            #   MODEL_UNAVAILABLE_CODE  provider 挂/超时，正文是"离线模式：模型不可用…"四十字
+            #   RATE_LIMITED_CODE       容量闸住改写预算，正文是 103 字的英文 "Local model capacity
+            #                           is exhausted…"（app/common/model_handler.py 的 _call_budget）
+            # 两枚的正文都非空且远超下面 len(rewritten) > 3 那道尺寸检查，会原样取代用户真正的问题
+            # 送进图、送进检索、参与缓存键，而 except 分支在这两条路上都不触发。反过来
+            # RESPONSE_EMPTY_CODE / OUTPUT_TRUNCATED_CODE 是真答案身上带的诊断码 —— 尤其
+            # output_truncated 是一条被长度切短的**真改写** —— 所以这里是一张枚举表，不是
+            # "error_code 非空即失败"的总线判；判别也不看句子文本，不另立第二份词表。
+            canned_reply_reasons = {
+                MODEL_UNAVAILABLE_CODE: "模型不可用，provider 未生成业务结论",
+                RATE_LIMITED_CODE: "改写预算闸住，本机模型容量已满",
+            }
+            result_error_code = getattr(result, "error_code", "")
+            canned_reason = canned_reply_reasons.get(result_error_code)
+            if canned_reason:
+                # 两条回落共用判据 1 那句 stem，把差别写在原因与改写码上：运维 grep
+                # "改写码 rate_limited" 还是 "改写码 model_unavailable"，就分得清"预算太小"和
+                # "模型坏了"。这里刻意不带那串等号前缀 —— 跟进单 §12.1 把"码名只许出现在结构化赋值
+                # 处、不许塞进可读文本"钉成了机器判据（tests/test_error_code_vocabulary.py 的
+                # test_no_bare_error_code_lives_inside_a_string_literal_in_chat_py 扫
+                # 整份 chat.py），本行是日志而不是异常载荷，所以用中文键名挂裸码值。
+                logger.warning(
+                    f"[REWRITE] 改写腿拿到离线罐头句，已回退原问题：{canned_reason}"
+                f"（改写码 {result_error_code}）｜{user_msg[:60]}"
+                )
+                return user_msg
+            rewritten = result.strip() if isinstance(result, str) else result.choices[0].message.content.strip()
+            if rewritten and len(rewritten) > 3:
+                logger.info(f"[REWRITE] '{user_msg}' → '{rewritten[:60]}'")
+                return rewritten
+        except Exception as e:
+            logger.warning(f"[REWRITE] 失败: {e}")
+
+        return user_msg
 
 
 # ==================== Pydantic ====================
 
 class ChatRequest(BaseModel):
     message: str
-    model_source: str = "deepseek"
+    # R141 判据②：这一格今天就被 _require_no_lane_on_chat 硬拒（任何值都拒）。加它不是
+    # 为了支持，而是为了**把静默忽略变成当场报错**：pydantic 默认丢弃未知字段，于是给
+    # /chat 发 lane=report 的客户端会拿到一条"看起来成功了"的纯文本回答，而路径一个字没变
+    # —— 那正是 R32 拒交前端选择器的那张脸。声明只在 /ask 上有腿可分。
+    lane: str = ""
 
 
 class AskRequest(BaseModel):
     message: str
     session_id: str = ""
+    data_filename: str = ""
+    document_filenames: list[str] | None = None
+    alert_id: int | None = None
+    alert_version_id: str | None = None
+    _alert_context: dict = PrivateAttr(default_factory=dict)
+    idempotency_key: str = ""
+    lane: str = ""
+
+
+# R37：档位名的第二处落地。真相在 app/agents/nodes.py 的 LANE_REPORT，但那是
+# 并发同事的写域，本单不 import 它的私有名，也不为了判别新增一次模型往返
+# （判据二）。后端只认调用方显式写进请求里的字符串，markers 由调用方自己判。
+LANE_REPORT = "report"
+REPORT_LANE_QUEUE_ENV = "REPORT_LANE_VIA_QUEUE"
+REPORT_LANE_ON_VALUES = {"1", "true", "yes", "on"}
+REPORT_LANE_REASON = "report_lane"
+
+
+def _report_lane_via_queue_enabled() -> bool:
+    """默认关：没配环境变量的现网，不会因为本单多走一条道。"""
+    return os.getenv(REPORT_LANE_QUEUE_ENV, "").strip().lower() in REPORT_LANE_ON_VALUES
+
+
+def _queue_lane(request) -> str:
+    """档位判别：只读请求字段，纯规则，零模型往返。
+
+    故意不做大小写模糊匹配——REPORT 不是任何人声明过的档位，认它等于把判别
+    变成猜心思。空档位一律回空串，交给调用方走原来的同步路径。
+    """
+    lane = getattr(request, "lane", "")
+    if not isinstance(lane, str):
+        return ""
+    lane = lane.strip()
+    return lane if lane == LANE_REPORT else ""
+
+
+# R32：``AskRequest.lane`` 的取值闭集，以及"写错了就当场拒"那道闸。
+#
+# 为什么新增函数而不是改 _queue_lane：那枚谓词回答的是"这一轮进不进可靠队列"，
+# tests/test_r37_report_lane_enqueue.py 的
+# test_the_lane_predicate_only_reads_the_request 逐字钉着它对 qa/analysis 一律回空串——
+# 档位标签不许改变入队判定是 R37 的判据②。本闸管的是另一件事：调用方写了一个服务端
+# 认不得的档位，从前被静默忽略（等于替调用方猜心思），现在当场 400 并给稳定码。
+#
+# LANE_QA / LANE_ANALYSIS 是 app/agents/nodes.py 那两个名字的第二次落地，理由与上面
+# LANE_REPORT 那段注释一样：不抓并发同事的私有名。两份的一致性由
+# tests/test_r32_lane_contract.py 钉住，改任何一边都会红。
+LANE_QA = "qa"
+LANE_ANALYSIS = "analysis"
+#: 空串＝调用方不声明档位，服务端按 R42 判别器以问题文本自选（nodes.classify_route）。
+ASK_LANE_VALUES: tuple[str, ...] = (LANE_QA, LANE_ANALYSIS, LANE_REPORT, "")
+#: 非法档位的稳定码：复用 ErrorEnvelope.code 里**已有**的 validation_error，本单不新造码名。
+#: 同一路由的 503（_enqueue_ask_turn）与 observability / intelligence / open_platform 的
+#: 400 都是这一个码、这一个形状；追认登记见 tests/test_error_code_vocabulary.py::RATIFIED。
+LANE_ERROR_CODE = "validation_error"
+
+
+def _require_valid_lane(request) -> None:
+    """档位取值闸：三档加空串放行，其余 400，且必须跑在任何副作用之前。
+
+    只管取值不管类型：lane 不是字符串时 pydantic 在函数体之前就拒了（与仓内其它 str
+    字段同一个 422 口径）。这里兜的是"字符串存在，但不是任何一个已声明档位"。
+    """
+    lane = getattr(request, "lane", "")
+    if isinstance(lane, str) and lane.strip() in ASK_LANE_VALUES:
+        return
+    allowed = ", ".join(f"'{value}'" for value in ASK_LANE_VALUES)
+    raise HTTPException(
+        status_code=400,
+        detail=ErrorEnvelope(
+            code=LANE_ERROR_CODE,
+            message=f"lane must be one of {allowed}; '' lets the server pick the tier",
+            details={
+                "field": "lane",
+                "allowed": list(ASK_LANE_VALUES),
+                "given": lane if isinstance(lane, str) else None,
+            },
+        ).model_dump(),
+    )
+
+
+# ==================== R141 · 档位读数的三处出口（响应头 / SSE 帧 / trace） ====================
+#
+# 三处读的都是 app.agents.nodes.TurnLane.as_dict() 那一份，不各写一套口径：
+#  - 响应头：不看 SSE 的客户端（curl、网关日志、运维抽查）也能读到生效档位与它的来源；
+#  - request.started 帧 data：在场的浏览器（前端选择器要靠它自证"我发出去的这一格真生效了"）；
+#  - request.started trace 载荷：事后取证，GET /api/v1/traces/{trace_id} 直接可查。
+#
+# 头名一律小写常量、值一律 ASCII：档位名是 qa/analysis/report，来源名是四个英文标签，
+# 没有任何一格需要百分号编码。取不到的读数**整个头不发**，不发空值也不发 "-"：
+# 一枚存在的头必须永远可信，否则它就是在制造第三态。
+EFFECTIVE_LANE_HEADER = "x-effective-lane"
+LANE_SOURCE_HEADER = "x-lane-source"
+DECLARED_LANE_HEADER = "x-declared-lane"
+
+#: /chat 没有工作腿可分：它是一发检索加一发模型，压根不进多 Agent 图。所以这里拒收
+#: 的取值闭集是**全体**（含 qa）——把 qa 放行的代价是一条不改变任何路径的标签，
+#: 与判据② 严禁的那张脸逐字同形。想按档位分流就发 /ask，这一句写在错误体里。
+CHAT_LANE_SUPPORTED: tuple[str, ...] = ()
+
+
+#: R141：全 chat.py 里读请求档位标签的函数**只有四枚**，逐枚点名钉在
+#: tests/test_r32_lane_contract.py::test_nothing_outside_the_two_lane_functions_reads_the_request_label
+#: 与 tests/test_r141_lane_behavior.py。这枚是"图路径"那一个读口：它只做归一，
+#: 不做判别、不改问题文本、也不许在别处被拿来当检索参数用（判据② 的结构证据）。
+def _declared_lane(request) -> str:
+    """把调用方声明的档位归一成交给图的那一枚字符串（未声明＝空串）。
+
+    取值合法性由 _require_valid_lane 在前面 400 过；这里再 strip 一次是纯粹归一，
+    两者不是两道闸：闸会拒，这枚只会把 " qa " 变成 "qa"。
+    """
+    lane = getattr(request, "lane", "")
+    return lane.strip() if isinstance(lane, str) else ""
+
+
+def _chip_legs_within_lane(leg_names, readout: dict) -> list[str]:
+    """步子牌只许报本轮那一档真允许的腿（B19）——牌子跟档位，不跟关键词的第二套猜测。
+
+    上面那一串关键词纠偏读的是 supervisor **改派之前**的那一发 dispatch（R141 的天花板
+    在图里砍腿，砍完的结果并不回写到那一发 tool_call 上），所以「选了问答档、data 腿
+    已被砍掉」那一轮，屏上的牌子照样写「📊 分析数据」，而同屏那句承诺是「只用文字回答，
+    不算数、不出图、不产文件」。这一格不重算派工、不另发明第二套判别，只拿本轮已经算好
+    的档位读数（``TurnLane.as_dict()`` 那一份，与响应头／request.started 帧／trace 同源）
+    当尺子把牌子筛一遍。
+
+    筛光不等于没腿：``route_main`` 把腿砍到零时交回的是这一档最小可兑现的那条读腿
+    （``nodes.LANE_PRIMARY_LEG``），牌子跟着说同一句话，不许出现「一句承诺一条腿都没有」。
+    没声明（``lane_source`` 不是 explicit）时天花板给满，本函数一字不改地原样交回。
+    """
+    from app.agents import nodes
+
+    given = [str(name) for name in (leg_names or [])]
+    allowed = [str(name) for name in (readout.get("allowed_workers") or [])]
+    if readout.get("lane_source") != nodes.LANE_SOURCE_EXPLICIT or not allowed:
+        return given
+    kept = [name for name in given if name in allowed]
+    if given and not kept:
+        kept = [nodes.LANE_PRIMARY_LEG]
+    return kept
+
+
+def _turn_lane_readout(question: str, declared: str, *, routed: bool = True) -> dict:
+    """本轮的档位读数。三处出口（响应头 / request.started 帧 / trace 载荷）都取自这里。
+
+    ``routed=False`` 给的是"这一轮没走图"那一族读数（入队、答案缓存命中、/chat）。它不是
+    装饰性字段：调用方选了报告档而这一轮被限流入队时，把 lane 读成 report 等于把"承诺"与
+    "证据"混成一句话 —— 判据② 严禁的正是这种合并。
+
+    迟 import app.agents.nodes：本文件顶部不碰图与模型装配（沿用 _ask_stream 里对
+    orchestrator 的同一打法），且只取公开名 ——
+    tests/test_r37_report_lane_enqueue.py::test_chat_py_never_grabs_a_private_name_from_the_lane_owner
+    用 ast 扫本文件，从 app.agents* 抓下划线开头的名字会当场红。
+    """
+    from app.agents import nodes
+
+    if not routed:
+        return nodes.not_routed_lane(declared).as_dict()
+    return nodes.resolve_turn_lane(question, declared).as_dict()
+
+
+def _parked_declaration(session_id: str) -> str:
+    """读回挂起那一轮声明的档位（R172）：它随 pending 账本的行跨过 HITL 那道门。
+
+    回空串的四种情形都是实话，不是漏读：那一轮压根没声明、行写在 R172 之前（TTL 未到
+    但账上没有这一格）、PG 后端的 0008 尚无此列（补它要一枚 migrations 脚本，本单写域外）、
+    账本压根读不到（缺表或后端抛错 —— 与 _decide_pending_approval 同一裁定：记账坏了不许
+    打断用户已经等到的流，但留 exception 级痕迹）。
+    🔴 无论哪一种都不许补成一档 —— 补成 explicit 就是说"本轮现声明"，而本轮压根没收到
+    声明；取值不在闭集里的脏行同样退成空串，退向只能是"没有记录"，不能是"有人定过"。
+    """
+    try:
+        row = pending_approvals.get_row(session_id)
+    except Exception:
+        logger.exception(f"[R172][HITL] 续跑轮读不到挂起账本 session={session_id}，按无声明读数")
+        return ""
+
+    declared = str(getattr(row, "declared_lane", "") or "").strip()
+    if declared and declared not in ASK_LANE_VALUES:
+        logger.warning(
+            f"[R172][HITL] 挂起账本里的档位不是闭集成员 session={session_id}，按无声明读数"
+        )
+        return ""
+    return declared
+
+
+def _resumed_lane_readout(session_id: str) -> dict:
+    """批准后从挂起点续跑那一轮的读数：图在跑，档位是挂起前那一轮定的（R172 才读得回来）。
+
+    读成 r42 会把"没人声明"与"声明丢了"混成一格，读成 not_routed 会把"图在跑"说成没跑，
+    读成 explicit 会把"沿用别人早先定的档"说成"这一轮现声明"。三态都不对，所以还是第四态
+    resumed，只是从 R172 起它的 declared_lane 那一格真装着东西：谁定的读得回来，而生效那格
+    仍旧空 —— 续跑这条腿没有按这一档重新派发过（那要跨 checkpointer 与 orchestrator）。
+    """
+    from app.agents.nodes import resumed_lane
+
+    return resumed_lane(_parked_declaration(session_id)).as_dict()
+
+
+def _record_resumed_lane_trace(
+    readout: dict,
+    *,
+    session_id: str,
+    owner_id: str,
+    request_id: str,
+    trace_id: str,
+    task_id: str,
+) -> None:
+    """续跑轮的第三处出口：trace 的 request.started 载荷（R172）。
+
+    /ask 那一轮的这一处出口住在 app.agents.orchestrator.run_with_stream 里（本单禁碰），
+    而 run_interrupt_stream 从不记 request.started ⇒ 续跑轮此前只有响应头与 SSE 帧两处，
+    "三处出口同一份读数"在这一轮是半句空话。这里补上第三处：事件名、status、payload 形状
+    与 orchestrator 那一处同构，发的就是调用方交进来的同一份 readout 对象，不第二套口径。
+
+    记账失败不许打断用户已经等到的流（与 _record_pending_approval 同一裁定），但留
+    exception 级痕迹：一处出口哑掉与三处出口都在，是两件不同的事。
+    """
+    from app.trace.store import default_trace_store
+
+    payload = {"session_id": session_id, **readout}
+    if owner_id:
+        payload["owner_id"] = owner_id
+    try:
+        default_trace_store().record_event(
+            trace_id=trace_id,
+            request_id=request_id,
+            task_id=task_id,
+            event_type="request.started",
+            status="running",
+            payload=payload,
+        )
+    except Exception as exc:
+        logger.warning(f"[R172][Trace] 续跑轮读数没能落进 trace：{exc}")
+
+
+def _lane_readout_headers(readout: dict) -> dict:
+    """把本轮档位读数压成响应头。读数缺格就少发一枚头，不发假值。"""
+    headers = {}
+    lane = str((readout or {}).get("lane") or "")
+    declared = str((readout or {}).get("declared_lane") or "")
+    source = str((readout or {}).get("lane_source") or "")
+    if lane:
+        headers[EFFECTIVE_LANE_HEADER] = lane
+    if declared:
+        headers[DECLARED_LANE_HEADER] = declared
+    if source:
+        headers[LANE_SOURCE_HEADER] = source
+    return headers
+
+
+def _require_no_lane_on_chat(request) -> None:
+    """/chat 收到任何档位声明都当场 400，跑在检索与模型之前，零副作用。"""
+    lane = str(getattr(request, "lane", "") or "").strip()
+    if not lane:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=ErrorEnvelope(
+            code=LANE_ERROR_CODE,
+            message=(
+                "lane is accepted only on /api/v1/ask; /chat has no worker legs to "
+                "route, so declaring a tier there would change nothing"
+            ),
+            details={
+                "field": "lane",
+                "endpoint": "/chat",
+                "allowed": list(CHAT_LANE_SUPPORTED),
+                "given": lane,
+                "use_instead": "/api/v1/ask",
+            },
+        ).model_dump(),
+    )
+
+
+def _should_use_data_context(message: str, filename: str) -> bool:
+    """本轮问句是否「只要数据分析工具」（R709 收窄后的职责边界）。
+
+    它判的是**要不要额外检索文档**：命中 document_terms 就不把问句改写成
+    「请仅使用数据分析工具」，文档腿因此留在场。
+
+    🔴 它不判「本轮用不用点名的数据集」——那一格归
+    app/api/v1/chat.py::_named_dataset_must_travel。把它当否决用会把调用方点了名的
+    data_filename 挡在 configurable 之外：route_main 的 has_data 因此读成假，
+    _authorized_dataset_files 因此退化成全量可见集（凭据纸
+    docs/testing/r709-2026-10-06.md 第一节：「报销」那枚词命中即否决）。
+    """
+    if not filename:
+        return False
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+
+    document_terms = (
+        "制度",
+        "流程",
+        "报销",
+        "标准",
+        "审批",
+        "规定",
+        "政策",
+        "凭证",
+        "发票",
+        "复核",
+        "材料",
+        "依据",
+        "谁承担",
+    )
+    data_terms = (
+        "数据",
+        "csv",
+        "excel",
+        "xlsx",
+        "表格",
+        "记录",
+        "列",
+        "行",
+        "最高",
+        "最低",
+        "平均",
+        "差距",
+        "合计",
+        "总额",
+        "排名",
+        "统计",
+        "分析",
+        "对比",
+        "比较",
+        "趋势",
+    )
+    has_document_intent = any(term in text for term in document_terms)
+    has_data_intent = any(term in text for term in data_terms)
+    return has_data_intent and not has_document_intent
+
+
+def _named_dataset_must_travel(filename: str) -> bool:
+    """调用方点名了数据集，这一轮就必须带着它（R709 判据 2 的路由改口）。
+
+    判别只看「点没点名」一枚条件，问句里有什么词都不许把它否决掉。被否决的代价写在
+    两处退化上：app/agents/orchestrator.py::route_main 的 has_data 读成假，Data 腿
+    当场不派；app/agents/tools.py::_authorized_dataset_files 走不到选中支，交回逐条
+    放行后的全量可见集——C 门「越权 0 条」那一格的风险就在第二处。
+    """
+    return bool(str(filename or "").strip())
+
+
+def _ensure_sessions_table():
+    """Create chat session tables for a fresh PostgreSQL database."""
+    if not _session_database_available():
+        return
+    with _sess_conn() as conn:
+        if _is_production_environment():
+            _require_migrated_tables(conn, "sessions", "session_messages")
+            return
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT,
+                title TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id TEXT")
+        conn.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS updated_at TEXT")
+        conn.execute("UPDATE sessions SET updated_at = created_at WHERE updated_at IS NULL")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS session_messages (
+                id SERIAL PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                steps TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("ALTER TABLE session_messages ADD COLUMN IF NOT EXISTS steps TEXT NOT NULL DEFAULT '[]'")
+        conn.commit()
+
+
+# ==================== 旧版 Chat 的两张脸 ====================
+
+def _withheld_retrieval_context(scope, recalled: list[dict]) -> str:
+    """旧版 /chat 的第二张脸：检索命中了资料，但当前账号一份都无权查阅。
+
+    这句话只进模型上下文，判据有两头：
+    - 说得出权限因由（部门 / 密级 / 可见范围 + 稳定码），模型才转述得准；
+    - 一个字都不点名被裁掉的文档——文件名与正文都是别人的，写出来就是二次泄漏。
+    判定权仍在 scope.allows：本函数只对已经被裁掉的块解释为什么，原因码取自
+    DocumentRetrievalScope.refusal_code，与判定同出一个类，不会长成第二套口径。
+    """
+    codes = [
+        code for code in dict.fromkeys(scope.refusal_code(hit) for hit in recalled) if code
+    ]
+    return (
+        f"本轮检索在知识库中命中 {len(recalled)} 份文档，它们全部落在当前账号的可见范围之外，"
+        "因此本次问答不开放其中任何一份。这是权限判定：资料存在，只是当前账号无权查阅。"
+        "请如实向用户说明这一点，并建议联系管理员核对本人部门归属与文档的部门、密级标注；"
+        "不要把本轮当作检索无结果。权限码：" + "、".join(codes)
+    )
 
 
 # ==================== 旧版 Chat（保留兼容） ====================
 
+def _record_chat_round_verdict(
+    *,
+    trace_id: str,
+    request_id: str,
+    task_id: str,
+    owner_id: str,
+    event_type: str,
+    status: str,
+    error_code: str = "",
+) -> None:
+    """把 ``/chat`` 这一轮的终态落进 trace 那本账：只发一枚既有名字的 canonical 事件。
+
+    为什么这一枚必须有，而不是「本单只欠一行 ``model_calls``」就算完：本单为这条道开的 span
+    经 ``app/trace/projections.py::project_run`` 会造出 ``model_calls`` 的 FK 父行
+    ``agent_runs``（每一枚 trace 事件都刷新那一行）。父行若永远停在 ``running``，本单就是在一边
+    补 R38 的账、一边新造一笔「这一轮还没结束」的假账 —— 而 ``app/trace/lifecycle.py`` 把
+    「终态不可回退」钉得很死，那一行今天没有别人能替它收口。
+
+    🔴 事件名与状态词都取自已在册的闭集
+    ``app/common/stage_timing.py::REQUEST_TERMINAL_EVENTS``，本单一码不新造、一帧不发：
+    ``/chat`` 的出口仍是纯 ``text/plain``，canonical 帧一个字都不上那条道（判据③：不改契约口径）。
+    没有 ``request.started`` 是有意的：那一枚要给「这轮跑了多久」当天花板用，而本单不替这条
+    legacy 道新造时长读数，只替它把已经发生的事收口。
+    """
+    from app.trace.store import default_trace_store
+
+    try:
+        default_trace_store().record_event(
+            trace_id=trace_id,
+            request_id=request_id,
+            task_id=task_id,
+            event_type=event_type,
+            status=status,
+            payload={
+                "owner_id": owner_id,
+                **({"error_code": error_code} if error_code else {}),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - 量具哑掉不许改本轮已经交出去的正文
+        logger.warning(f"[R670][Trace] 这一轮的终态没落进 trace：{exc}")
+
+
 @router.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, http_request: FastAPIRequest):
+    """旧版纯文本问答：检索同样必须落在 Principal 的权限范围内。"""
+    principal = _document_principal_or_error(http_request)
+    try:
+        scope = resolve_document_retrieval_scope(principal)
+    except RetrievalScopeError as scope_error:
+        status_code = 401 if scope_error.code == "authentication_required" else 403
+        logger.warning(f"[CHAT] 拒绝无范围检索: user={principal.username} code={scope_error.code}")
+        raise HTTPException(status_code=status_code, detail=scope_error.code)
+    # R141 判据②：与 /ask 同一条次序裁定（tests/test_r32_lane_contract.py 的
+    # test_the_gate_answers_401_before_it_answers_400）——先验身份，再验档位，最后才碰检索。
+    _require_no_lane_on_chat(request)
+    retrieval_filter = scope.filters
+
+    # R670：这一腿以前打完模型不落一行 ``model_calls`` —— 端点从不打开 span，也没有任何 trace
+    # 身份给它寻址，于是计划书 R38 判据③「抽查一问 input_tokens/output_tokens 非零」在这条生产
+    # 主路径上连一个可查的落点都没有。三枚 id 在这里铸，打法与 ``app/api/v1/chat.py::ask`` 同源：
+    # 账要归给正在答的这一轮，不是归给某个后来读到它的时刻。观测不改正文 —— SSE 帧、档位读数、
+    # 失败文案一个字节都不动，本单只在那本账上多一行它本来就欠着的行。
+    trace_id = f"trace-{uuid.uuid4().hex}"
+    request_id = f"req-{uuid.uuid4().hex}"
+    task_id = f"task-{uuid.uuid4().hex}"
+    span_config = {
+        "configurable": {
+            "principal": principal,
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "task_id": task_id,
+        }
+    }
+
     async def generate():
+        from app.trace.spans import error_code_for, start_model_call, stream_usage_counts
+
+        # 只有真的打到模型才有一发可记：检索就失败的那轮一行 model_calls 都不该有。
+        span = None
+        reported_usage = None
+        #: 本轮的终态：（事件名, 状态词, 错误码）。没打过模型的那轮保持全空 ⇒ 一笔账都不造。
+        verdict = ("", "", "")
         try:
-            sources = retriever.search(request.message, k=5)
-            context = "\n\n".join(
-                f"[来源: {s['source']}]\n{s['content']}" for s in sources
-            ) if sources else "暂无相关文档"
+            recalled = list(retriever.search(request.message, k=5, where=retrieval_filter))
+            sources = [source for source in recalled if scope.allows(source)]
+            record_retrieval_scope(principal, scope, hit_count=len(sources))
+            if sources:
+                context = "\n\n".join(
+                    f"[来源: {s['source']}]\n{s['content']}" for s in sources
+                )
+            elif recalled:
+                # 两张脸之二：命中了资料，但一份都不给看——不能改口说成检索没结果。
+                context = _withheld_retrieval_context(scope, recalled)
+            else:
+                # 两张脸之一：检索真的没命中。
+                context = "暂无相关文档"
 
             prompt = f"""你是一个企业智能助手。参考以下文档内容回答用户问题。
 
@@ -215,36 +1997,1070 @@ async def chat(request: ChatRequest):
 - 如果文档包含相关信息，明确引用来源
 - 如果文档不包含相关信息，如实告知并给出建议"""
 
-            source_enum = ModelSource.DEEPSEEK if request.model_source == "deepseek" else ModelSource.OLLAMA
+            span = start_model_call(
+                span_config,
+                provider="local",
+                model_name=str(getattr(model_handler, "local_model", "") or ""),
+            )
             stream = model_handler.chat(
                 messages=[{"role": "user", "content": prompt}],
-                source=source_enum,
+                source=ModelSource.LOCAL,
                 stream=True,
             )
             for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
-        except Exception as e:
-            logger.error(f"Chat error: {e}")
-            yield f"\n[错误] {str(e)}"
+                # 计量的落点是末片，不是应答片：兼容腿只在服务端被要求报数时才带这一格
+                # （``stream_options.include_usage``，R31 现读），今天这条道没开那一格，所以
+                # 这一枚 ``getattr`` 每次都是 ``None`` —— 那是帧形状说的话，本单不替它编数。
+                reported = getattr(chunk, "usage", None)
+                if reported is not None:
+                    reported_usage = reported
+                choices = getattr(chunk, "choices", None) or []
+                if not choices:
+                    # 只带计量、不带 delta 的末片不是正文，不许被当正文去索引 choices[0]。
+                    continue
+                content = choices[0].delta.content
+                if content:
+                    span.mark_first_token()
+                    yield content
+            span.finish("completed", summary=stream_usage_counts(reported_usage))
+            verdict = ("request.completed", "completed", "")
+        except Exception as exc:  # noqa: BLE001 - 旧端点同样不得把内部异常发给客户端
+            code = error_code_for(exc)
+            if span is not None:
+                span.finish("failed", error_code=code, summary=stream_usage_counts(reported_usage))
+            verdict = ("request.failed", "failed", code)
+            logger.error(f"Chat error: {exc}")
+            yield "\n[错误] 本轮检索或模型调用失败，请重试或改用 /api/v1/ask。"
+        finally:
+            if span is not None and not span.finished:
+                # 客户端半路收手：这一发结束了，只是它没写完。收 span 的裁定照
+                # ``app/trace/spans.py::ExecutionSpan.finish`` 的 ``record_evidence`` 那一格 ——
+                # 一枚调用方自己丢掉的调用不该进证据袋去改本轮的判词。
+                span.finish("cancelled", record_evidence=False)
+                verdict = ("request.cancelled", "cancelled", "")
+            if span is not None and verdict[0]:
+                _record_chat_round_verdict(
+                    trace_id=trace_id,
+                    request_id=request_id,
+                    task_id=task_id,
+                    owner_id=str(getattr(principal, "user_id", "") or ""),
+                    event_type=verdict[0],
+                    status=verdict[1],
+                    error_code=verdict[2],
+                )
 
-    return StreamingResponse(generate(), media_type="text/plain")
+    # /chat 的读数永远是"这一轮没按任何档位走图"：端点结构决定，与调用方声明无关。
+    # 有声明在上一条就 400 了，所以这里 declared 必为空串，只发 x-lane-source 一枚。
+    return StreamingResponse(
+        generate(),
+        media_type="text/plain",
+        headers=_lane_readout_headers(_turn_lane_readout("", "", routed=False)),
+    )
 
 
 # ==================== Multi-Agent Ask (SSE) ====================
 
+def _complete_pending_steps(
+    steps: list[dict], elapsed: float, agent_results: dict | None = None,
+    worker_results: dict | None = None,
+) -> list[dict]:
+    """收口仍在运行的步骤，并优先采用已落账的 worker 终态。
+
+    流尾没有 step 回执时才保留 ``unknown``；不能因为传输层先结束就把已经由
+    worker 记录的成功、拒绝或失败抹成同一个问号。
+    """
+    completed = []
+    results = agent_results if isinstance(agent_results, dict) else {}
+    workers = worker_results if isinstance(worker_results, dict) else {}
+    for step in steps:
+        if step.get("status") != "running":
+            continue
+        record = results.get(step.get("tool"))
+        status = record.get("status") if isinstance(record, dict) else None
+        if status in {"timeout", "model_unavailable", "retrieval_unavailable"}:
+            status = "failed"
+        step["status"] = str(status) if status in {
+            "completed", "success", "failed", "rejected", "refused", "cancelled", "partial"
+        } else "unknown"
+        step["elapsed"] = round(record["duration_ms"] / 1000, 1) if isinstance(record, dict) and isinstance(record.get("duration_ms"), (int, float)) else elapsed
+        completed.append(dict(step))
+    return completed
+
+
+def _request_verdict(agent_results: dict, answer: str, awaiting: bool = False) -> tuple[str, str, str]:
+    from app.agents.evidence import aggregate_agent_result
+    actual = aggregate_agent_result(agent_results, answer=answer)
+    status = ("completed" if actual.status in {"success", "partial"}
+        or (awaiting and not answer and not agent_results) else actual.status)
+    event = "request.completed" if status in {"completed", "rejected"} else "request.failed"
+    return event, status, actual.error.code if actual.error and status != "completed" else ""
+
+
+def _settled_answer_text(worker_results: dict) -> str:
+    """终答里**已经落定**的那一段，规范化与 :func:`_select_final_answer` 逐字同一条。
+
+    实时帧要报"截至这一片已经能确定的正文"，而那段正文将来必然出现在终答开头——这件事
+    只有按同一套规则折才成立：逐值 ``strip()``、空值剔除、``\n\n`` 连接。两枚函数若各有
+    一套说法，第一条追问就会在 ``prefix_breaks`` 上露馅，所以这里不重新发明，只把
+    ``_select_final_answer`` 里 worker 那一段原样取出来（``tests/test_r203_*`` 钉着这个
+    同形）。
+    """
+    answers = [
+        str(value).strip()
+        for value in (worker_results or {}).values()
+        if str(value).strip()
+    ]
+    return "\n\n".join(answers)
+
+
+class _AnswerPieceStream:
+    """把出口交来的片折成"终答的单调前缀"帧；一轮之内只认一条正在写的生成腿。
+
+    R203 收端半边。上游（``app/agents/nodes.py::_AnswerPieceTap``）交来的每一片都带着
+    ``call_id`` 与 ``worker``——R149 把这两格写成本单的硬前置，就是因为没有它们，一轮里
+    两次调用的字会混进同一条累计串，收端连"该不该接着发"都无从判断。
+
+    三条规则，每条都只朝"少发"那一侧偏：
+
+    1. **同一发调用**才累计。``call_id`` 换了腿，必须等前一发那条腿已经落进
+       ``worker_results``（它的字已经算进 ``base``）才允许开新的一发；否则就是两发同时在
+       写，本轮到此为止不再多发帧——已经发出去的那些仍是终答的前缀，而再发下去谁也不
+       知道会以哪一段收尾。**少发帧的代价是"这一题今天没逐字"，多发错帧的代价是坏形。**
+    2. **帧正文 = 已落定的答案 + 本发已经写出的字**，两侧都按 ``_settled_answer_text``
+       那一条规范化。多工作腿时终答就是 ``"\n\n".join(worker_results)``，这样折出来的
+       每一枚帧天然还是终答的前缀——不折这一格，第二条腿的第一片就会把分隔符挤掉。
+    3. **只在新帧真的比上一枚长时才发**。一片纯空白（模型吐出的换行攒够尺寸闸）不该多出
+       一枚同文帧。
+    """
+
+    def __init__(self) -> None:
+        self.call_id: str | None = None
+        self.worker = ""
+        self.base = ""
+        self.text = ""
+        self.last_frame = ""
+        self.closed = False
+        self.dropped = 0
+
+    def frame_for(self, piece, worker_results: dict) -> str | None:
+        """这一枚片该发的帧正文；``None`` 表示这一片不发帧。"""
+        if self.closed:
+            self.dropped += 1
+            return None
+        call_id = str(getattr(piece, "call_id", "") or "")
+        worker = str(getattr(piece, "worker", "") or "")
+        if self.call_id is None:
+            self._open(call_id, worker, worker_results)
+        elif call_id != self.call_id:
+            if self.worker and self.worker not in (worker_results or {}):
+                self.closed = True
+                self.dropped += 1
+                return None
+            self._open(call_id, worker, worker_results)
+        self.text += str(getattr(piece, "text", "") or "")
+        body = self.text.strip()
+        if not body:
+            return None
+        frame = f"{self.base}\n\n{body}" if self.base else body
+        if frame == self.last_frame:
+            return None
+        self.last_frame = frame
+        return frame
+
+    def _open(self, call_id: str, worker: str, worker_results: dict) -> None:
+        self.call_id = call_id
+        self.worker = worker
+        self.text = ""
+        self.base = _settled_answer_text(worker_results)
+
+
+class _ApprovedAnswerStream:
+    """R464：批准续跑这一路的终答流闸门——同一轮跨批准闸只认一枚终答流。
+
+    病历（跟进单 §133 五，09-28 云端窗六枚 ``approved_ok`` 带 ``uncorrected_breaks``、
+    六枚 ``text_frames > max_stream_frames``；本机 run9 十八枚 ``approved_ok`` 全中后一格）：
+    挂起轮已经把本轮的终答交上屏——``/ask`` 收尾那一枚帧与 ``_save_message`` 落进会话历史
+    的那一行逐字相同——批准后图把同一条生成腿**重跑一遍**，``/approve`` 于是又交出一枚整段
+    正文，收尾再交一枚 ``full_text``。屏上此刻站着的是挂起轮那一份，而
+    ``frontend/src/lib/sessions.js`` 每次 ``consumeSseStream`` 都从空 ``segments`` 起步
+    （:442），既不同文也不覆盖的那一枚走的是**追加**分支（:529）：客户把同一轮的答案读两遍。
+    帧账上读出来正是那两格——一枚正文在一轮里出现两遍（``text_frames > max_stream_frames``
+    且逐帧指纹重合），以及批准腿自己那条流里的原始 ``prefix_breaks``（run9 ``tool-04``
+    239→232、``report-02`` 整段→收尾，两枚都 ``corrective_replacements == 0``）。
+
+    三条规则，与 :class:`_AnswerPieceStream` 同源：帧只走 :func:`text_sse_frame`，
+    换源只走 R210 那对 ``CORRECTION_STEP_*``（``scripts/eval_transport_ask_v2.py::
+    _is_correction_arm`` 认的就是这一枚脸），本类不另造第二套片账、不自记帧序号。
+
+    1. **先比字**（刀 A 摘这一格）：与屏上那一份**逐字**相同 ⇒ 不发帧、不武装，也**不消耗**
+       :attr:`arm_pending`。这一格是"第二枚流不再被发出"：屏上此刻站的就已经是交付的那份字，
+       少发这一枚不丢任何一个字；而同屏那份字还站在屏上，所以本腿后面若交出一枚**不同**的
+       正文，仍旧必须整段替换而不是追加 —— 比字命中时不许把武装用掉（这一格的牙：
+       ``test_r464_...::test_d5_knife_c_spending_the_arming_on_a_replay_goes_red``，正向读数 B7）。
+    2. **中间整段只在接得上时才发**：非收尾的正文必须以屏上那一份为前缀，否则它是另一条流
+       的脑袋——拦下来记进 :attr:`held` 并由调用方大声告警，不静默。收尾那一枚是本轮**交付**
+       的那份字，它有权换源。
+    3. **比过字、确实不同，才换源**（刀 B 摘这一格）：``frontend/src/components/ChatPanel.vue:1076``
+       批准时接着写的是挂起轮那条消息，而 ``sessions.js:442`` 每发 ``consumeSseStream`` 都把
+       ``segments`` 从空表起步 —— 挂起轮的正文不在这条流的记账里。所以本腿里与屏上**不同**的
+       那一枚帧一旦走普通帧出口，就落进 :529 的追加分支，客户于是把两份不同的字读成一段拼接。
+       它必须带 R210 那对 step 出门，屏上整段替换。
+       🔴 武装的资格只来自本类比过字这一格：挂起轮那次 HTTP 里的 ``prefix_breaks`` 只说明
+       "这条流断过"，**不**说明"下一枚正文与屏上不同"，拿它当理由就是不比字就武装。
+       🔴 这一格不是"把 verdict 放宽"：豁免住在量具那一侧，本类改的是线上到底发过什么。
+
+    🔴 本类只决定"这一枚正文发不发、以什么形状发"。它不参与 :func:`_select_final_answer`、
+    ``_save_message``、``sources``、``done`` 任何一格的取值：交回客户的正文一个字都不变。
+    """
+
+    def __init__(self, on_screen: str = "") -> None:
+        #: 屏上此刻站着的那一份正文：初值＝挂起轮交回的那一行，此后随放行帧单调前移。
+        self.on_screen = on_screen
+        #: 屏上已经有正文 ⇒ 本腿第一枚**与屏上不同**的帧不许走追加分支，必须整段替换（规则 3）。
+        self.arm_pending = bool(on_screen)
+        #: 拦下来的"第二枚流"正文，只记账不发帧；调用方在收尾时把它报进日志。
+        self.held: list[str] = []
+        #: 因为逐字同屏而没有发出去的枚数。
+        self.suppressed = 0
+        #: 本轮真换源的枚数：只在比过字、确实不同那一格 +1（规则 3）。同屏轮恒 0。
+        self.replacements = 0
+        #: 真发出去的帧枚数，与 :func:`text_sse_frame` 一一对应。
+        self.emitted = 0
+
+    def _same_as_screen(self, body: str) -> bool:
+        """比字：这一枚正文与屏上此刻那一份逐字相同吗。本类唯一的判据，不看别的。"""
+        return body == self.on_screen
+
+    def decide(self, body: str, *, terminal: bool, opening: bool = False) -> str:
+        """先比字，再决定：``skip`` 不发 / ``emit`` 顺着屏上那一份继续发 / ``replace`` 换源整段替换。
+
+        ``opening``（R662 判据①）只说一件事：这一枚是**本腿自己那一发的头一枚逐片帧**，而屏上
+        此刻挂着的只是那句挂起说明。那一刻本轮还没有任何终答上过屏，这一发就不是 R464 要拦的
+        「第二枚终答流」，它是第一枚 —— 拦下它等于把本轮的答复压成一坨（在册病形：run22
+        ``chart-01``／``tool-04`` 两条流各只发 1 帧，``max_stream_frames == 1``）。
+        其余三条规则（比字同屏不发、非延续整段拦下并大声记账、一轮至多换源一次）一字不改。
+        """
+        if not body:
+            return "skip"
+        # 规则 1（刀 A 摘这一格）：先比字。逐字同屏 ⇒ 不发、不武装、不吃 arm_pending。
+        if self._same_as_screen(body):
+            self.suppressed += 1  # 本轮已经有这一份字在屏上，不发第二枚流
+            return "skip"
+        continuing = body.startswith(self.on_screen) and not self.arm_pending
+        if continuing:
+            self.on_screen = body  # 同一条流的延续：帧与帧首尾相接，原始账不会长坏形
+            self.emitted += 1
+            return "emit"
+        if not terminal:
+            if opening and not self.emitted:
+                # R662：屏上只有那句挂起说明 ⇒ 本轮第一枚终答流就是本腿这一发。它的头一枚逐片帧
+                # 不许当「另一条流的脑袋」拦下，而要带 R210 那对 step 出门整段替换 —— 与规则 3
+                # 同一格，只是走在头一枚片上。一轮至多换源一次：``emitted`` 非零就走不到这里。
+                # 🔴 行序与规则 3 那一格刻意不同：``tests/test_r464_...`` 的刀 B 锚点必须仍唯一命中。
+                self.arm_pending = False
+                self.on_screen = body
+                self.replacements += 1
+                self.emitted += 1
+                return "replace"
+            self.held.append(body)  # 规则 2：另一条流的脑袋——拦下并记账，不静默
+            return "skip"
+        # 规则 3（刀 B 摘这一格）：走到这里已经比过字 —— 这一枚与屏上**不同**，本轮终答换了
+        # 源，只能带 R210 那对 step 整段替换；同屏那一枚在上面就被拦下了，不配武装。
+        self.arm_pending = False
+        self.replacements += 1
+        self.on_screen = body
+        self.emitted += 1
+        return "replace"
+
+
+def _round_screen_answer(session_id: str) -> str:
+    """本轮屏上此刻站着的那一份正文＝会话历史里最后一条 ``assistant`` 行。
+
+    为什么只读这一行：挂起轮的收尾帧与它同源（``/ask`` 的 done 分支先 ``_save_message``
+    再发同一份 ``full_text``），而 ``frontend/src/components/ChatPanel.vue:1076`` 批准时
+    接着写的就是这条消息（``messages[messages.length - 1]``）。"客户端真见过什么"只有这一
+    处事实源；图状态里没有这件事，从 ``worker_results`` 反推等于造第二套口径。
+
+    读不到就当屏上没有正文：闸门退化成"本腿照旧发帧"，交付的正文一个字节都不许少交。
+    🔴 代价写在 ``tests/test_r464_one_terminal_answer_stream_per_round.py::
+    test_b5_the_unreadable_history_degrades_to_sending_the_body_anyway``：那一枚同文帧会落进
+    ``sessions.js:529`` 的追加分支，重复正文随之**回到屏上**。两害相权宁可让屏上重读一遍，
+    也不许把本轮交付的正文扣下来不发 —— 这一格由会话历史可读性兜着，不由守卫兜着。
+    """
+    try:
+        rows = _get_session_messages(session_id)
+    except Exception:  # 会话库不可用/表没迁：这是读侧降级，不是失败
+        logger.warning(f"[R464] 会话历史读不到，批准腿按屏上无正文处理 session={session_id}")
+        return ""
+    for row in reversed(rows):
+        if str(row.get("role") or "") != "assistant":
+            continue
+        content = str(row.get("content") or "")
+        if content:
+            return content
+    return ""
+
+
+def _select_final_answer(
+    final_answer: str = "",
+    worker_results: dict | None = None,
+    candidates: list[str] | None = None,
+) -> str:
+    """Choose the authoritative answer after the graph has finished.
+
+    R439：三条来源都先过 :func:`_answer_body` 摘内部交接标记。``【<worker> Agent 返回】``
+    是编排层交给 supervisor 的中转记号，不是答案：只剩标记的那一发摘完就是空，一律不许成为
+    交回客户的终答（run9 真机窗 ``kind=ok`` 的 data-09 交回 15 个字、``kind=approved_ok`` 的
+    chart-01 批准续跑之后交回 16 个字，逐字等于标记本身，正文丢了）。
+
+    三条来源都为空时交回空串——本函数不填任何句子。空串由调用方的具名结局
+    （``no_answer_produced``）接手，那里既有 ``request.failed`` 也有 ``terminal_state=no_answer``，
+    不是一句静默的空话，也不许在这里洗成"看起来答过了"。
+    """
+    worker_results = worker_results or {}
+    worker_answers = [
+        body
+        for body in (_answer_body(value) for value in worker_results.values())
+        if body
+    ]
+    if worker_answers:
+        paragraphs = []
+        for answer in worker_answers:
+            for paragraph in answer.split("\n\n"):
+                if paragraph.strip() and paragraph not in paragraphs:
+                    paragraphs.append(paragraph)
+        return "\n\n".join(paragraphs)
+    body = _answer_body(final_answer)
+    if body:
+        return body
+    for candidate in reversed(candidates or []):
+        body = _answer_body(candidate)
+        if body:
+            return body
+    return ""
+
+
+def _answer_body(text) -> str:
+    """摘掉内部交接标记之后剩下的正文；本文件三条出口共用这一枚口径（R439）。
+
+    尺子住在 ``app/agents/orchestrator.py`` 的 ``agent_answer_body`` 里——标记是那一层造
+    的，拆法也只该有一套；这里再枚举一遍字面就是第二套平行实现。走函数内导入与本文件既有的
+    ``from app.agents.orchestrator import check_interrupt`` 同一条路子，不给导入期添新边。
+    """
+    from app.agents.orchestrator import agent_answer_body
+
+    return agent_answer_body(text)
+
+
+def _recorded_final_answer(current: str, incoming) -> str:
+    """把图这一发交来的 ``final_answer`` 收进本轮读数。
+
+    与改前逐字同义的两格：交来空值就留着上一发（原来是 ``if data.get("final_answer")``
+    那一句门槛），交来正文收下（规范化与收尾的 :func:`_select_final_answer` 同一条）。
+    R439 多守的一格：只剩内部交接标记的那一发**不收**。``synthesize`` 在没有正文时会退回
+    收尾消息本身，而那条消息披的就是这枚标记——收进来就等于把「【data Agent 返回】」当
+    本轮终答的候选。``/ask`` 与 ``/approve`` 两条腿各自都从这里过，少一处就是给标签开门。
+    """
+    return _answer_body(incoming) or current
+
+
+select_final_answer = _select_final_answer
+
+
+#: R210：断流轮「纠正替换」那两枚 step 帧的身份。走的是既有 step 词汇表里 ``tool``/
+#: ``label``/``status``/``elapsed`` 那四枚键，不新增帧键，也不碰 ``text`` 帧的键集合。
+#: 这个名字不出现在 ``steps_log`` 里：它是传输层的换源信号，不是一枚真跑过的工作步骤，
+#: 落进会话历史就等于给后人说「这一轮跑过一个叫这个名字的步骤」。
+CORRECTION_STEP_TOOL = "answer_correction"
+CORRECTION_STEP_LABEL = "🔁 换源重发本轮回答"
+
+
+def hitl_park_text(intr: dict) -> str:
+    """挂起时给用户的那句话：同步路径与后台 worker 必须逐字同一份。
+
+    两处各写一遍迟早漂移。队列路径下用户在会话历史里读到的措辞，必须和在场流
+    里看到的完全一致，否则关页面不丢就只剩不丢但换了个说法。
+    """
+    return (
+        "本轮在「" + "、".join(intr["labels"]) + "」前等待你确认，"
+        "确认后才会执行，目前尚未产出回答内容。"
+    )
+
+
+def save_session_turn(session_id: str, content, *, role: str = "assistant") -> bool:
+    """把后台跑完的一轮补写进会话历史（判据三：历史里不许留空洞）。
+
+    只在会话库真在的时候写。内存会话是每个进程私有的：worker 往自己的内存里补
+    一行，用户在 API 进程的历史中一个字也看不见。写与不写效果相同，但假装写了
+    会让人以为空洞已经堵上，所以这里明着返回 False 并留一条 warning。
+    """
+    if not _session_database_available():
+        logger.warning(
+            f"[R37] 会话库不可用，后台轮次没能写回 session={session_id}"
+        )
+        return False
+    _save_message(session_id, role, str(content))
+    return True
+
+
+def record_hitl_awaiting(
+    session_id: str,
+    owner_user_id: str,
+    intr: dict | None,
+    *,
+    request_id: str = "",
+    trace_id: str = "",
+    task_id: str = "",
+    declared_lane: str = "",
+) -> bool:
+    """队列 worker 用的挂起记账，语义与同步路径的 _record_pending_approval 同源。
+
+    差别只有两处：归属人已由 worker 解析成 user_id 传进来；成败要回给调用方——
+    后台没有打断用户流这回事，但待办没开成必须能被终态看见。
+
+    ``declared_lane``（R172）默认空串：调用它是 deploy/queue_worker.py，而那枚文件在本单
+    写域之外，所以后台那一轮的声明今天仍然落不进账本 —— 那一轮续跑读数照旧是无声明的
+    resumed（第四态本来就说这句话），不是 explicit。工单转出项写在交付说明里。
+    """
+    if not owner_user_id or not intr:
+        return False
+    try:
+        pending_approvals.record_awaiting(
+            session_id,
+            owner_user_id,
+            list(intr.get("pending") or []),
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+            declared_lane=declared_lane,
+        )
+    except Exception:
+        logger.exception(
+            f"[R37][HITL] 后台挂起待办没能写入 session={session_id}，审批面板可能少一条待办"
+        )
+        return False
+    return True
+
+
+# ==================== R254：两道共用的「诚实终态」读数 ====================
+# 判据全文在跟进单 §100.4，09-25 那扇真机窗（docs/testing/run8-phase2-readout-2026-09-25.md）
+# 把三格量红：挂起的轮次把一句 37 字文案当正文交回还报 done、出处回不到客户端、token
+# 读数在客户可读面上根本不存在。这一节只干这三件事，外加一条：不新增任何一道权限判定，
+# 也不放宽任何一道既有的。
+
+#: `done` 载荷与队列终态共用的终态语义。除 `answered` 之外全都不是「跑完了」。
+#: 队列真会落的两枚直接取自 `app/common/reliable_queue.py`，第二份词表不在这里出现。
+TERMINAL_STATE_ANSWERED = reliable_queue.TERMINAL_STATE_ANSWERED
+TERMINAL_STATE_AWAITING_APPROVAL = reliable_queue.TERMINAL_STATE_AWAITING_APPROVAL
+#: 图跑完、既没正文也没挂起：同步道早就用稳定码 `no_answer_produced` 说这件事，今天它同时
+#: 上到 legacy `done` 那一帧，客户不必解 canonical 事件也读得懂。
+TERMINAL_STATE_NO_ANSWER = "no_answer"
+#: 回执那一帧（本轮只是被收进队列，一步都没跑）、本单之前发布而说不出自己有没有出处的旧
+#: 队列行、终态键在位但载荷解不开（那是损坏，不是兼容）。三枚都不许冒充 `answered`。
+TERMINAL_STATE_QUEUED = "queued"
+TERMINAL_STATE_LEGACY = "legacy_row"
+TERMINAL_STATE_UNREADABLE = "unreadable_terminal"
+
+#: token 读数读自哪一本账。生产只有 PostgreSQL 六表这一本算 authoritative；JSON 侧账只有一台
+#: 机器看得见（口径抄自 `app/trace/durability.py` 自己那句话），所以它一律带着
+#: `authoritative: false` 出现——「读到了 0」与「没读成」是两件事，不许洗成同一张脸。
+USAGE_LEDGER_POSTGRES = "postgres_model_calls"
+USAGE_LEDGER_PERSISTENCE = "persistence_model_calls"
+USAGE_LEDGER_UNAVAILABLE = "ledger_unavailable"
+
+#: 批准这一轮走的是既有那扇门，本单不新建第二套批准路径。
+APPROVE_ROUTE_PATH = "/api/v1/approve"
+
+#: 答案缓存条目发布于「出处清单」之前，或那份清单读不出来 ⇒ 这一轮的出处**无从核对**。
+#: 它不许退化成空清单：判据②说「查到 0 条」与「压根没查成」是两件事，R154 的第四态
+#: `provenance.js::cacheFace = cached-unknown` 量的就是这一格（发空清单＝把「没查到」说成
+#: 「查过了，没有」）。同步道的 done 帧从前没有地方放这句话，今天有了同一枚键名。
+SOURCES_ERROR_NO_MANIFEST = "answer_cache_without_manifest"
+
+
+def model_call_rows(request_id: str) -> tuple[list[dict] | None, str]:
+    """按 request_id 读回 `model_calls` 的行，并说清读自哪一本账。
+
+    `rows=None` 只有一种意思：**读不到**（账本没配、连不上、解不开）。那一格绝不能退化成
+    空列表——否则「一台连不上真库的机器」与「这一轮一次模型都没打」在客户端长同一张脸，
+    而这两件事的处置完全相反。
+    """
+    if not request_id:
+        return None, USAGE_LEDGER_UNAVAILABLE
+    try:
+        from app.trace.store import default_trace_store
+
+        store = default_trace_store()
+        database = getattr(store, "database", None)
+        if database is not None:
+            rows = database.fetch_table("model_calls", "request_id = %s", request_id)
+            return list(rows), USAGE_LEDGER_POSTGRES
+        persistence = getattr(store, "persistence", None)
+        listing = getattr(persistence, "list", None)
+        if not callable(listing):
+            return None, USAGE_LEDGER_UNAVAILABLE
+        rows = [
+            row
+            for row in listing("model_calls")
+            if isinstance(row, dict) and str(row.get("request_id") or "") == request_id
+        ]
+        return rows, USAGE_LEDGER_PERSISTENCE
+    except Exception as exc:
+        # 只落异常类名：连接失败的文案里可能带主机与账号，凭据不进日志是铁规。
+        logger.warning(f"[R254] 读不到 model_calls 台账: {type(exc).__name__}")
+        return None, USAGE_LEDGER_UNAVAILABLE
+
+
+def _token_count(value) -> int | None:
+    """只认真读到的非负整数；NULL、布尔、字符串一律 None（不折算成 0）。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value >= 0 else None
+
+
+def read_model_call_usage(request_id: str) -> dict:
+    """把 `model_calls` 的行数成客户该看到的 token 读数（判据③：值取自真库同源）。
+
+    只加真读到的那几行，一枚都不许多估——`estimate_prompt_tokens` 是给预算尺装表用的，不是
+    给台账用的（`app/trace/spans.py` 里已经把这句话写过一遍）。有 NULL 就不假装齐：
+    `calls_missing_token_readout` 明写几枚没报数，`token_readout_complete` 因此为 False。
+    `total_tokens` 是 prompt + completion 这一枚算式的结果，不是模型报回来的第三个数。
+    """
+    rows, ledger = model_call_rows(request_id)
+    if rows is None:
+        return {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "total_tokens": None,
+            "model_calls": None,
+            "calls_with_token_readout": None,
+            "calls_missing_token_readout": None,
+            "token_readout_complete": False,
+            "authoritative": False,
+            "ledger": ledger,
+        }
+    prompt = 0
+    completion = 0
+    reported = 0
+    for row in rows:
+        tokens_in = _token_count(row.get("input_tokens"))
+        tokens_out = _token_count(row.get("output_tokens"))
+        if tokens_in is not None:
+            prompt += tokens_in
+        if tokens_out is not None:
+            completion += tokens_out
+        if tokens_in is not None and tokens_out is not None:
+            reported += 1
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+        "model_calls": len(rows),
+        "calls_with_token_readout": reported,
+        "calls_missing_token_readout": len(rows) - reported,
+        "token_readout_complete": bool(rows) and reported == len(rows),
+        "authoritative": ledger == USAGE_LEDGER_POSTGRES,
+        "ledger": ledger,
+    }
+
+
+def usage_proves_zero_model_calls(usage: dict | None) -> bool:
+    """真库能证明「一次模型都没打」吗？只有 authoritative 台账里那枚 0 才算证明。
+
+    台账读不到（`model_calls is None`）或只有一本 JSON 侧账（`authoritative: false`）时一律
+    False：那时能说的只有「无从证明」。把「没读到」升级成「没跑过」是另一种谎报。
+    """
+    if not isinstance(usage, dict):
+        return False
+    return bool(usage.get("authoritative")) and usage.get("model_calls") == 0
+
+
+def queue_turn_sources(agent_results: dict, principal_payload) -> tuple[list[dict], str, str]:
+    """把后台那一轮的证据袋折成客户端可读的出处清单（判据②）。
+
+    取证与放行用的就是同步道那两只现成的件（`_collect_document_sources` 从证据袋搬运、
+    `_authorized_source_rows` 走 `scope.allows` 复核），**不新增放行分支，也不放宽一道**；
+    主体是从队列载荷里还原出来的那一枚 Principal，与 worker 交给图的是同一份。返回
+    `(可见行, 理由码, 失败因)`：第三枚非空说的是「压根没查成」，那一格与「查到 0 条」必须
+    分开。`_stamp_source_publications` 与同步道同一处调用，生效日期一枚都不许少。
+    """
+    if not isinstance(principal_payload, dict) or not principal_payload:
+        return [], "", "principal_unavailable"
+    try:
+        principal = Principal.model_validate(principal_payload)
+    except Exception:
+        return [], "", "principal_unavailable"
+    try:
+        rows: dict[str, dict] = {}
+        _collect_document_sources(agent_results or {}, rows)
+        visible, reason = _authorized_source_rows(rows, principal)
+        _stamp_source_publications(rows)
+    except Exception as exc:
+        logger.warning(f"[R254] 队列这一轮的出处折不出来: {type(exc).__name__}")
+        return [], "", "sources_unavailable"
+    return visible, str(reason or ""), ""
+
+
+def hitl_approval_handle(*, session_id: str, parked: dict | None) -> dict:
+    """把「这一轮在等你确认」折成一件可寻址、可执行的东西（判据①）。
+
+    `decide_*` 三格说的是既有那扇门 `POST /api/v1/approve`：客户端照着敲就行，不必重发本轮
+    问题，也不必自己猜 session。挂起文案仍旧带着，但换了名字（`notice`）——它是一句说明，
+    不是正文，从今往后不再出现在 `result` 那一格里。批准之后归属判定照旧由
+    `_authorize_session_request` 重新走一遍，本函数不替它决定。
+    """
+    parked = parked or {}
+    pending = [str(step) for step in (parked.get("pending") or [])]
+    labels = [str(label) for label in (parked.get("labels") or [])]
+    return {
+        "session_id": str(session_id or ""),
+        "pending_steps": pending,
+        "labels": labels,
+        "notice": hitl_park_text({"labels": labels}),
+        "decide_method": "POST",
+        "decide_path": APPROVE_ROUTE_PATH,
+        "decide_body": {"session_id": str(session_id or ""), "approved": True},
+        "decide_note": "批准这一轮：把 decide_body POST 到 decide_path。无需重发本轮问题，"
+                       "续跑出来的正文由那条流交回。",
+    }
+
+
+def approval_ledger_state(session_id: str, owner_user_id: str) -> str:
+    """问一次待办台账：这一轮还开着吗。读不到就明说读不到，不许猜。
+
+    取值就是契约 `HITL Pending Listing` 已有的那套词（awaiting / resumed / refused /
+    abandoned / stale / failed），外加四枚出口：`absent`（没有这一行）、`unavailable`
+    （台账读不出）、`owner_mismatch`（有这一行而不属于这个调用方）、`no_session`。
+    本单不新增第二套词汇，也不因为这个查询放宽任何东西。
+    """
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return "no_session"
+    try:
+        row = pending_approvals.get_row(session_id)
+    except Exception:
+        return "unavailable"
+    if row is None:
+        return "absent"
+    if owner_user_id and str(row.owner_user_id or "") != str(owner_user_id):
+        return "owner_mismatch"
+    return str(row.status)
+
+
+#: R702 判据 2：正文非空而一枚断言都交不出时，出口改交原因码，不许退化成「不带 claims 键」。
+#: 三枚码各说一件事：本轮压根没算出断言 / 记录还原不出 ``AgentResult`` / 正文出自缓存那一轮。
+#: 口径与 ``sources_error`` 同一本账：非空说的是「这一格压根交不出」，不是「交出来是空表」。
+CLAIMS_ERROR_ZERO_DENOMINATOR = "claims_denominator_zero"
+CLAIMS_ERROR_NO_RECORD = "claims_record_unavailable"
+CLAIMS_ERROR_CACHE_ROW = "answer_cache_without_claims"
+
+
+def claims_for_egress(agent_results: dict, delivered_text: str) -> tuple[list[dict], str]:
+    """把本轮**已经算好的**断言搬到终态出口：只搬运、零 IO（R702 判据 1・4）。
+
+    判定住在 ``app/agents/evidence.py::build_agent_result``：每一条 worker 记录出厂时 ``claims``
+    就在那一枚工具边界上算完了，本件一件都不重算——逐枚 ``coerce_agent_result`` 还原成
+    ``AgentResult``，再走 ``eval_payload_for_answer`` 那唯一投影取出 claims。投影里那句零分母
+    拒绝因此在**出货之前**生效，不是事后翻账。
+
+    两形分开交回，谁也不许冒充谁（判据 2）：
+      * 正文非空而一枚断言都交不出 ⇒ ``CLAIMS_ERROR_ZERO_DENOMINATOR``；
+      * 记录在而还原不出 ``AgentResult`` ⇒ ``CLAIMS_ERROR_NO_RECORD``。
+    空正文回 ``( [], "")``：没有正文就没有「分母」这件事可说，不许顺手发一枚空 claims 键——
+    判分器 ``app/quality/eval.py::evaluate_provenance`` 会把空清单读成「没有一条不被支撑」。
+    """
+    if not str(delivered_text or "").strip():
+        return [], ""
+    claims: list[dict] = []
+    reason = ""
+    for worker, raw in (agent_results or {}).items():
+        if raw is None or (isinstance(raw, dict) and not raw):
+            continue
+        record = coerce_agent_result(str(worker), raw)
+        if record is None:
+            reason = CLAIMS_ERROR_NO_RECORD
+            continue
+        if not str(record.answer or "").strip():
+            continue
+        try:
+            projected = eval_payload_for_answer(record)
+        except ClaimsDenominatorError:
+            return [], CLAIMS_ERROR_ZERO_DENOMINATOR
+        claims.extend(projected["claims"])
+    if not claims:
+        return [], reason or CLAIMS_ERROR_ZERO_DENOMINATOR
+    return claims, reason
+
+
+def build_queue_terminal(
+    *,
+    terminal_state: str,
+    answer_present: bool,
+    worker_status: str = "",
+    sources: list[dict] | None = None,
+    scope_reason_code: str = "",
+    sources_error: str = "",
+    usage: dict | None = None,
+    approval: dict | None = None,
+    dataset_files: list[str] | None = None,
+    claims: list[dict] | None = None,
+    claims_error: str = "",
+) -> dict:
+    """队列终态载荷的唯一构造点（判据①②③共用同一份形状）。
+
+    `terminal_state` 只认两枚能进队列的形状，别的一律 raise：队列的状态键由它推导，构造点
+    与落库点之间不存在第二份口径。
+
+    `dataset_files` 是 R504 加的第八格：只在真读得出那一份时出现（同一枚 `terminal_data_filename`），
+    读不出就整格缺席；既有键名与语义一字未动。
+
+    `claims` / `claims_error` 是 R702 加的第九格：与 legacy `done` 帧同一枚构造口径、同一格位置，
+    断言交得出才发键；交不出就只发原因码——「这一行没有分母」与「这一行没有幻觉」不许混成一格。
+    """
+    if terminal_state not in (TERMINAL_STATE_ANSWERED, TERMINAL_STATE_AWAITING_APPROVAL):
+        raise ValueError(f"queue terminal cannot carry terminal_state={terminal_state!r}")
+    rows = list(sources or [])
+    carried_claims = [row for row in (claims or []) if isinstance(row, dict)]
+    carried_claims_error = str(claims_error or "")
+    payload = {
+        "schema": reliable_queue.TERMINAL_SCHEMA,
+        "terminal_state": terminal_state,
+        "answer_present": bool(answer_present),
+        "worker_status": str(worker_status or ""),
+        "sources": rows,
+        "sources_present": bool(rows),
+        "scope_reason_code": str(scope_reason_code or ""),
+        # 「查到 0 条」与「压根没查成」是两件事：前者是结论，后者是这一格没读出来。
+        # 混成一格，客户就会拿着一个空清单去查检索，而真正坏的是主体还原或台账连接。
+        "sources_error": str(sources_error or ""),
+        "usage": usage,
+        **({"claims": carried_claims} if carried_claims else {}),
+        **({"claims_error": carried_claims_error} if carried_claims_error else {}),
+        "approval": approval,
+    }
+    return attach_terminal_data_filename(payload, dataset_files)
+
+
+def is_hitl_park_notice(text: str) -> bool:
+    """这句是不是那句挂起文案。按 `hitl_park_text` 现构造再逐字比，不抄字面。
+
+    只为本单那条兼容路径服务：redis 里在位的旧行没有终态载荷，读的人必须能问一句「这一格
+    的 result 到底是正文还是一句挂起说明」。
+    """
+    prefix = "本轮在「"
+    suffix = "」前等待你确认，确认后才会执行，目前尚未产出回答内容。"
+    if not text or not text.startswith(prefix) or not text.endswith(suffix):
+        return False
+    labels = text[len(prefix): len(text) - len(suffix)]
+    return text == hitl_park_text({"labels": labels.split("、")})
+
+
+def done_sse_frame(
+    *,
+    terminal_state: str,
+    answer_present: bool,
+    sources_present: bool,
+    sources: list[dict] | None = None,
+    sources_error: str = "",
+    usage: dict | None = None,
+    approval: dict | None = None,
+    dataset_files: list[str] | None = None,
+    claims: list[dict] | None = None,
+    claims_error: str = "",
+) -> str:
+    """legacy `event: done` 那一帧的唯一构造点（判据②③⑤）。
+
+    帧名、`type` 键、以及「done 仍是流结束的唯一信号」这句话都不动（契约冻结规则 1）；加的
+    是六格读数，让「这一帧说流结束了」不再等于「这一轮跑完了」。两道的键集合逐字相同，
+    客户端不必为队列道与同步道写两套解析：`sources` 与队列终态里那一格同源同形，
+    `sources_present` 留在旁边，是为了让「本轮没有出处」与「出处没读出来」两种形状在只带
+    这一帧的旧客户端上也各说各的话；`sources_error` 与队列终态里同名那一格同一本账——
+    非空说的是「这一格压根没读出来」，它和「读出来是空表」不是同一句话。
+    `data_filename` 是 R504 加的第八格，与队列终态同一枚构造口径：只在真读得出那一份时出现，
+    `terminal_data_filename` 交空串就整格缺席。
+    `claims` 是 R702 加的第九格，取值只走 ``claims_for_egress``（搬运本轮已算好的断言），
+    与队列终态同名同形同格位；`claims_error` 非空说的是「这一轮的断言交不出」，
+    与「交出来的断言里一枚不被支撑的都没有」不是同一句话——后者才有分母。
+    """
+    carried_claims = [row for row in (claims or []) if isinstance(row, dict)]
+    carried_claims_error = str(claims_error or "")
+    payload = {
+        "type": "done",
+        "terminal_state": terminal_state,
+        "answer_present": bool(answer_present),
+        "sources_present": bool(sources_present),
+        "sources": [row for row in (sources or []) if isinstance(row, dict)],
+        "sources_error": str(sources_error or ""),
+        "usage": usage,
+        **({"claims": carried_claims} if carried_claims else {}),
+        **({"claims_error": carried_claims_error} if carried_claims_error else {}),
+        "approval": approval,
+    }
+    return sse_event("done", attach_terminal_data_filename(payload, dataset_files))
+
+
+def done_frame_for_turn(
+    *,
+    request_id: str,
+    session_id: str,
+    full_text: str,
+    intr: dict | None,
+    visible_rows: list[dict] | None,
+    sources_error: str = "",
+    dataset_files: list[str] | None = None,
+    agent_results: dict | None = None,
+    claims_error: str = "",
+) -> str:
+    """跑完一轮的三条出口（/ask 正文、/approve 续跑、答案缓存命中）共用的 done 帧。
+
+    `sources_error` 只有缓存命中那一支会非空：那一轮的正文来自另一轮的账，出处清单可能
+    根本没记下（条目早于清单），这时能说的是「无从核对」，不是「没有出处」。
+
+    `dataset_files` 是 R504 多收的一枚读数：谁把这一轮的 dataset 证据交给它，那一轮的 done
+    才说得出用的哪份文件。缓存命中那一支今天**不交**（命中轮的用表读数当年没有落账，本单
+    未治，见 docs/testing/ 的 R504 读数件），于是那一帧那一格整枚缺席。
+
+    `agent_results` 是 R702 交进来的本轮 worker 记录：断言早在工具边界算完了，这里只把它们搬到
+    终态那一帧（``claims_for_egress``）。`claims_error` 由调用方明说「这一轮压根交不出断言」那
+    一形（缓存命中那一支），与搬运的结论无关。挂起那一轮交回的是那句挂起说明而不是答案，
+    没有正文可判 ⇒ 两格都不发。
+    """
+    if intr:
+        state = TERMINAL_STATE_AWAITING_APPROVAL
+        approval = hitl_approval_handle(session_id=session_id, parked=intr)
+    else:
+        state = TERMINAL_STATE_ANSWERED if full_text else TERMINAL_STATE_NO_ANSWER
+        approval = None
+    if intr:
+        carried, reason = [], ""
+    elif claims_error:
+        carried, reason = [], claims_error
+    else:
+        carried, reason = claims_for_egress(agent_results or {}, full_text)
+    return done_sse_frame(
+        terminal_state=state,
+        answer_present=bool(full_text),
+        sources_present=bool(visible_rows),
+        sources=visible_rows,
+        sources_error=sources_error,
+        usage=read_model_call_usage(request_id),
+        approval=approval,
+        dataset_files=dataset_files,
+        claims=carried or None,
+        claims_error=reason,
+    )
+
+
+def _enqueue_ask_turn(
+    *,
+    request,
+    http_request,
+    thread_id: str,
+    rewritten_msg: str,
+    username: str,
+    principal,
+    lane: str,
+    # R141：入队这一支的读数只上**响应头**。载荷与 queued 事件的字段一格不加 ——
+    # tests/test_r37_report_lane_enqueue.py 与 test_r32_lane_contract.py 逐字段钉着它们。
+    # R724 改口：载荷从此多一格 data_filename（被点名的表），两枚契约件已随账改口；
+    # 响应头那一格一字未动。
+    lane_readout: dict | None = None,
+) -> StreamingResponse:
+    """把一轮问答收进可靠队列，回一条只含回执的 SSE。
+
+    两条道（超限、报告档）共用一个出口，是为了让该不该后台跑只有一份解释。
+    lane 为空串时，载荷与 queued 事件的字段和 R37 之前逐字节相同。
+    """
+    idempotency_key = request.idempotency_key.strip()
+    if not idempotency_key and http_request is not None:
+        idempotency_key = str(http_request.headers.get("Idempotency-Key", "")).strip()
+    if not idempotency_key:
+        raise HTTPException(status_code=400, detail="idempotency_key_required")
+
+    from app.common.reliable_queue import QueueConnectionError, connect_reliable_queue
+
+    # R294：下面这一枚 `principal` 是**入队那一刻**的身份快照，冻在这里就再没人回来更新。
+    # 它从此只作两件事用：替 worker 定位用户库那一行的引用，以及作为漂移比对的证据——
+    # 权威身份出自消费时刻的现取（`deploy/queue_worker.py::resolve_consumption_principal`）。
+    # R290 之后部门是会变的：排队期间被挪了部门还按这一枚跑完，就是拿旧作用域的成果记在
+    # 新身份账上，所以 worker 一发现它对不上现取结果就判失效，不猜、不补、不改用新部门。
+    # 键的形状一字未动：载荷字段集与 queued 事件由 tests/test_r37_report_lane_enqueue.py
+    # 与 tests/test_r32_lane_contract.py 逐字段钉着，本单一格都不新增、一格都不删。
+    payload = {
+        "task_type": "ask",
+        "message": rewritten_msg,
+        "session_id": thread_id,
+        "username": username,
+        "principal": principal.model_dump(mode="json") if principal is not None else None,
+    }
+    if lane:
+        # worker 靠这两个字段决定走能挂起的图，以及跑完要不要补写会话历史。
+        payload["lane"] = lane
+        payload["write_back_session"] = True
+    #: R724：客户点名的那张表要跟着这一轮进后台。同步路径早就把它写进 user_ctx
+    #: （上面 `_named_dataset_must_travel` 那一格），队列道不带 ⇒ worker 那一轮
+    #: route_main 的 has_data 读成假、Data 腿当场不派，点了表却答非所问。
+    named = str(getattr(request, "data_filename", "") or "").strip()
+    if named and _named_dataset_must_travel(named):
+        payload["data_filename"] = named
+    if request.document_filenames is not None:
+        payload['document_filenames'] = request.document_filenames
+        payload['task_question'] = request.message
+    if request._alert_context:
+        payload['data_context'] = request._alert_context
+    try:
+        queue = connect_reliable_queue()
+        scoped_key = json.dumps([str(principal.user_id) if principal is not None else username,
+                                 idempotency_key], separators=(",", ":"))
+        message = queue.enqueue(payload, scoped_key)
+    except QueueConnectionError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    queued = {
+        "type": "queued",
+        "request_id": message.request_id,
+        "status": "queued",
+    }
+    if lane:
+        # 事件要能自证这一轮因报告档而后台化：不是限流，也不是缓存命中。
+        queued["lane"] = lane
+        queued["reason"] = REPORT_LANE_REASON
+    async def queued_response():
+        yield f"event: queued\ndata: {json.dumps(queued, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0)
+        # 这一帧说的是"这条流结束了"，不是"这一轮跑完了"：本轮此刻只被收进队列，一个模型
+        # 都没打，所以 usage 交 null 而不是 0/0/0——把"还没开始"与"跑完而零调用"洗成同一枚
+        # 读数，正是判据④要消灭的那种形状。真正的 token 读数在 /queue/status 那一面。
+        yield done_sse_frame(
+            terminal_state=TERMINAL_STATE_QUEUED,
+            answer_present=False,
+            sources_present=False,
+        )
+        await asyncio.sleep(0)
+    return StreamingResponse(
+        queued_response(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            **_lane_readout_headers(lane_readout or {}),
+        },
+    )
+
+
+@router.post("/ask/{session_id}/cancel")
+async def cancel_ask(session_id: str, http_request: FastAPIRequest):
+    # 取消是对他人会话的破坏性动作，先证明归属再动手。
+    # 权限词表里没有 cancel，破坏性动作按 ACTION_DELETE 记账，不新造码。
+    _authorize_session_request(http_request, session_id, ACTION_DELETE)
+    return {"cancelled": cancel_request(session_id), "session_id": session_id}
+
+
+@router.get("/ask/metrics")
+async def ask_metrics():
+    return _ASK_STATS.report()
+
+
 @router.post("/ask")
 async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     thread_id = request.session_id or uuid.uuid4().hex
-    _ensure_session(thread_id)
+    request_id = f"req-{uuid.uuid4().hex}"
+    trace_id = f"trace-{uuid.uuid4().hex}"
+    task_id = f"task-{uuid.uuid4().hex}"
+    request_principal = principal_from_request(http_request) if http_request else None
+    if request_principal is None:
+        raise HTTPException(status_code=401, detail="authentication_required")
+    # R32：先验取值再动手。这一行必须在建表、绑会话、落库、入队、模型之前，
+    # 非法档位留下的是零副作用，而不是"跑了一半再告诉调用方字段写错了"。
+    _require_valid_lane(request)
+    try:
+        _ensure_sessions_table()
+    except ChatSchemaNotMigratedError as exc:
+        # 生产库没跑 migrations 时这一格今天交出去的是裸 500 纯文本（实测：app/** 零 exception_handler），
+        # 屏上没有可重试的码，日志里也没有「缺哪枚表」。折成本模块已有的那一码拒答，原句写进日志；
+        # 其余 RuntimeError（驱动缺失、缺 user_id）一律不接，不许把它们洗成 503。
+        logger.warning(
+            "[Ask] 生产库缺该由迁移建的会话表，出口按存储拒答而不是裸 500: "
+            f"route=ask code=storage_unavailable reason={exc}"
+        )
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
+    try:
+        session_registry.bind(thread_id, request_principal)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail="permission_denied") from exc
+    _ensure_session(thread_id, str(request_principal.user_id))
+
+    alert_context = {}
+    if request.alert_id is not None:
+        from app.api.v1.alerts import get_alert
+        payload = await get_alert(request.alert_id, http_request)
+        evidence = payload['alert'].get('evidence') or {}
+        if not evidence or not evidence.get('version_id'):
+            raise HTTPException(status_code=400, detail='validation_error')
+        from app.storage.datasets import dataset_registry
+        dataset = dataset_registry.get_active_by_filename(evidence['filename'])
+        if (not dataset or dataset.version_id != evidence['version_id']
+                or request.alert_version_id != evidence['version_id']):
+            raise HTTPException(status_code=409, detail='validation_error')
+        if request.data_filename and request.data_filename != evidence['filename']:
+            raise HTTPException(status_code=400, detail='validation_error')
+        request.data_filename = evidence['filename']
+        alert_context = {**evidence, 'alert_id': request.alert_id,
+            'query': (evidence.get('query') or '') + f"，按{evidence.get('dimension') or '部门'}汇总{evidence['metric']}与记录数"}
+        request._alert_context = alert_context
+    original_msg = request.message
+    if request.document_filenames:
+        names = list(dict.fromkeys(name.strip() for name in request.document_filenames if name.strip()))
+        for name in names:
+            _authorize_document_request(http_request, name, ACTION_VIEW)
+        original_msg = re.sub(r'^仅依据以下文件(?:《[^》\r\n]+》)+回答：\n', '', original_msg)
+        original_msg = '仅依据以下文件' + ''.join('《' + name + '》' for name in names) + '回答：\n' + original_msg
+        request.document_filenames = names
+    orchestration_msg = original_msg
+    if not request.document_filenames and _should_use_data_context(original_msg, request.data_filename):
+        # R709：这一处只管「要不要额外检索文档」。问句含制度词时不改写，文档腿留下；
+        # 点名的数据集照旧跟着这一轮走（下面 user_ctx 那一格），本枚判断否决不到它。
+        orchestration_msg = (
+            f"请仅使用数据分析工具分析数据文件《{request.data_filename}》。"
+            f"用户问题：{original_msg}"
+        )
+    # R126：读历史必须排在写本轮之前。这句的下一句原先就是 _save_message(..., "user", ...)，
+    # 于是 _rewrite_followup 取到的「上一问」永远是本轮自己。落库挪到改写之后，会话里
+    # 仍是"用户问在前、助手答在后"（答复那枚 _save_message 在几百行之后），历史不缺行。
+    # R695 判据①：这一行把本轮的身份交给改写腿。形参那条路走不通——config 若改必交，调用点
+    # 就得交第三枚实位，全档 31 枚按 `(session_id, message)` 两枚元数替身的件当场 TypeError
+    # （席外实测 17 枚红，凭据纸 §6e；红的正包括判据④ 点名不许红的 test_r149），
+    # 所以走 R536 已经在册的正例（arm_retrieval_trace 同一形状）：把本轮 config 挂进执行上下文，
+    # 由 app/api/v1/chat.py::_rewrite_followup 自己去读。摘掉这一枚挂载 ⇒ rewrite 段当场没主，
+    # 一个字节都不落（app/trace/spans.py::arm_turn_identity 拒挂匿名轮次），牙在
+    # tests/test_r695_counter_evidence_teeth.py。
+    from app.trace.spans import arm_turn_identity, reset_turn_identity
+
+    turn_identity_token = arm_turn_identity({
+        "configurable": {
+            "principal": request_principal,
+            "thread_id": thread_id,
+            "request_id": request_id,
+            "trace_id": trace_id,
+            "task_id": task_id,
+        }
+    })
+    try:
+        rewritten_msg = _rewrite_followup(thread_id, orchestration_msg)
+    finally:
+        reset_turn_identity(turn_identity_token)
     _save_message(thread_id, "user", request.message)
 
-    original_msg = request.message
-    rewritten_msg = _rewrite_followup(thread_id, original_msg)
+    # R141 判据①：本轮声明的档位与它的读数。取 rewritten_msg 而不是原始 message —— 图里的
+    # plan()/route_main 读的就是这一枚文本，读数与生效路径必须同源，否则在追问改写过的轮次上
+    # "读到的档位"与"跑出来的档位"会分叉成两张脸。
+    declared = _declared_lane(request)
+    lane_readout = _turn_lane_readout(rewritten_msg, declared)
 
     # ——— 限流检查 (Layer 5: 超限入队而非拒绝) ———
     from app.common.cache import check_rate_limit
-    from app.common.queue import enqueue_request, is_overloaded
     username = getattr(http_request.state if http_request else None, "username", None) or "anonymous"
     allowed, remaining = check_rate_limit(username, max_per_minute=10)
 
@@ -256,96 +3072,578 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         if u:
             user_ctx = {"username": username, "role": u.get("role") or "staff",
                         "department": u.get("department") or ""}
+        if request_principal is not None:
+            user_ctx = user_ctx or {"username": username}
+            user_ctx["principal"] = request_principal
+        # R709 判据 2／3：点名就必带，问句里的制度词不再拥有否决权。这一格进了
+        # configurable，route_main 的 has_data 才读得出真，_authorized_dataset_files
+        # 才走得到「只算点名的那一份」那一支，可见集不退化成全量。
+        if _named_dataset_must_travel(request.data_filename):
+            user_ctx = user_ctx or {"username": username}
+            user_ctx["data_filename"] = request.data_filename
+            user_ctx["task_question"] = request.message
+        if request.document_filenames is not None:
+            user_ctx = user_ctx or {"username": username}
+            user_ctx["document_filenames"] = request.document_filenames
+            user_ctx["task_question"] = original_msg
+        if alert_context:
+            user_ctx = user_ctx or {'username': username}
+            user_ctx['data_context'] = alert_context
     except Exception:
         user_ctx = None
     if not allowed:
-        # 系统过载时入队等待
-        queued = enqueue_request(rewritten_msg, thread_id, username)
-        async def queued_response():
-            yield f"event: queued\ndata: {json.dumps(queued, ensure_ascii=False)}\n\n"
-            await asyncio.sleep(0)
-            yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
-            await asyncio.sleep(0)
-        return StreamingResponse(queued_response(), media_type="text/event-stream")
+        # R37：超限这条道和报告档共用同一个入队出口。对没声明档位的调用方，
+        # 载荷与 queued 事件的字段一个不多一个不少，见用例里的逐字段断言。
+        return _enqueue_ask_turn(
+            request=request,
+            http_request=http_request,
+            thread_id=thread_id,
+            rewritten_msg=rewritten_msg,
+            username=username,
+            principal=request_principal,
+            lane="",
+            lane_readout=_turn_lane_readout(rewritten_msg, declared, routed=False),
+        )
+
+
+    lane = _queue_lane(request)
+    if lane == LANE_REPORT and _report_lane_via_queue_enabled():
+        # R37：报告档显式后台化。判别只看请求字段加一道默认关的开关，不碰模型、
+        # 不碰图，也就不许被答案缓存就地短路成在场回答——用户点名要后台跑，
+        # 缓存当场给一个答复就是把交代丢了。
+        return _enqueue_ask_turn(
+            request=request,
+            http_request=http_request,
+            thread_id=thread_id,
+            rewritten_msg=rewritten_msg,
+            username=username,
+            principal=request_principal,
+            lane=lane,
+            lane_readout=_turn_lane_readout(rewritten_msg, declared, routed=False),
+        )
 
     # ——— 答案缓存 ———
-    from app.common.cache import get_cached_answer
-    cached = get_cached_answer(rewritten_msg)
+    from app.common.cache import answer_cache_origin, answer_cache_scope, get_cached_answer
+    # R35：缓存门槛只看作用域，不看有没有会话。重复提问恰恰集中在多轮对话里，之前
+    # "带 session_id 就不查缓存"等于把缓存钉死在最用不上它的那一半流量上。现在能不能命中
+    # 只取决于作用域相等：键里带了用户/部门/密级/角色/权限/账号状态（cache.answer_cache_scope），
+    # 同一个问题换个部门、换个密级、administrator 与 staff 之间都不会互相命中。会话语境也不会
+    # 串味：查缓存用的是 _rewrite_followup 把指代补全之后的问题文本，追问会改写成另一个键。
+    # 这道门槛今天恒为真，是留给未来调用方的闸：principal 为 None 在更早就 401 了，而
+    # answer_cache_scope 任何分支都返回非空（最差是 user:anonymous），所以这里不会出现空作用域。
+    # 真正要盯的是 cache._scope_part：谁要是漏传 scope，条目会落进历史全局键 answer:<hash>，那条键不属于
+    # 任何授权输入；由 tests/test_answer_cache_scope.py 钉住「全局键谁都不许回读，带作用域的也不许被空 scope 读到」。
+    answer_scope = answer_cache_scope(request_principal, username=username)
+    use_answer_cache = bool(answer_scope) and not bool(request.data_filename) and not request.document_filenames
+    cached = get_cached_answer(rewritten_msg, scope=answer_scope) if use_answer_cache else None
+    if cached and not _answer_body(cached):
+        # R439：缓存里躺着一句只剩内部交接标记的条目——改前的树真产过（run9 的 data-09 交回
+        # 15 个字，收尾把那句当终答写进了 ``cache_answer``），后来说不出这句话从哪来。
+        # 一律按未命中处理：宁肯重算一遍再走具名结局，也不许把编排层的中转文字顶着
+        # 「📋 缓存命中」那张脸交给客户，也不许让它落进会话历史（下面的 ``_save_message``
+        # 在命中腿里）。这一格只判"还能不能读"，不替缓存做清理决定。
+        logger.error(
+            f"[ASK] session={thread_id[:8]}... 缓存条目只剩内部交接标记，按未命中处理 "
+            f"cached_chars={len(cached)}"
+        )
+        cached = None
     if cached:
+        # 命中的答案同样落进会话历史，这一步与未命中路径的存档动作保持一致。
         _save_message(thread_id, "assistant", cached)
+        # 命中不是这一轮算出来的：响应体要带得下这个事实，还要说得出它是几点生成的，
+        # 不许伪装成实时答案。UI 用下面三个字段画"缓存结果"那张脸，后端只出字段不做样式。
+        # 出处单独再读一次：get_cached_answer 这个函数名是既有测试的桩位，签名不动。
+        origin = answer_cache_origin(rewritten_msg, scope=answer_scope) or {}
+        cache_fields = {
+            "cached": True,
+            "cache_generated_at": origin.get("generated_at_iso") or "",
+            "cache_note": origin.get("generated_at_text") or "缓存结果 · 生成时间未知",
+        }
+        # R154 判据③：命中的一轮也要交来源清单。读不出来（R154 之前的旧条目、被逐出的、
+        # 形状不认得的）就是 None，那一轮**什么都不发**——宁缺毋造，界面上落第四态
+        # cached-unknown（"没有再交出来源清单，是否改版无从核对"），绝不许画成
+        # cached（已核对过，确实没改版）。清单是那一轮的证据快照，里面的 published_at
+        # 是当年的读数，不刷新：今天这一版索引何时生效由 versions 端点说，两者各司其职。
+        manifest = _cached_source_manifest(rewritten_msg, answer_scope) if use_answer_cache else None
+
         async def cached_response():
             yield f"event: status\ndata: {json.dumps({'type': 'status', 'content': '📋 缓存命中，直接返回'}, ensure_ascii=False)}\n\n"
             await asyncio.sleep(0)
-            yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': cached}, ensure_ascii=False)}\n\n"
+            yield text_sse_frame(cached, cache_fields)
             await asyncio.sleep(0)
-            yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+            if manifest:
+                # 放行结论不落盘：清单里存的是**过滤前**的证据行，命中这一轮重新过一遍
+                # ``_authorized_source_rows``（同一个 ``scope.allows``），与实时那一腿同
+                # 一道防线，不复用当年的判定结果。
+                cached_visible, cached_scope_reason = _authorized_source_rows(manifest, request_principal)
+                # 顺序沿用 /ask：正文之后、done 之前。这一腿一条 canonical 事件都没有过，
+                # sequence 从 1 起（前端 ``lib/sessions.js`` 的 canonical 闸门要求严格大于
+                # 上一枚，收端 lastSequence 初值 0 -> 1 过闸）。legacy 三枚帧的次序与字面
+                # 一字不动：那枚 ``test_hit_frames_keep_the_pre_r35_shape`` 还钉着它们。
+                yield canonical_sse_event(
+                    "sources",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=1,
+                    status="completed",
+                    data={
+                        "session_id": thread_id,
+                        "sources": cached_visible,
+                        "hit_count": len(cached_visible),
+                        "unauthorized_count": len(manifest) - len(cached_visible),
+                        "scope_reason_code": cached_scope_reason,
+                    },
+                )
+                await asyncio.sleep(0)
+            yield done_frame_for_turn(
+                request_id=request_id,
+                session_id=thread_id,
+                full_text=cached,
+                intr=None,
+                visible_rows=cached_visible if manifest else None,
+                sources_error="" if manifest else SOURCES_ERROR_NO_MANIFEST,
+                claims_error=CLAIMS_ERROR_CACHE_ROW if cached else "",
+            )
             await asyncio.sleep(0)
-        return StreamingResponse(cached_response(), media_type="text/event-stream")
+        return StreamingResponse(
+            cached_response(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                **_lane_readout_headers(
+                    _turn_lane_readout(rewritten_msg, declared, routed=False)
+                ),
+            },
+        )
 
     async def generate():
+        # 注册与 finally 弹出必须在同一个帧里：generate() 一行都没跑就被 aclose() 时
+        # 根本不会注册，注册过则无论正常收尾、抛异常、被取消还是客户端走人都走得到
+        # 这个 finally，登记表才真的只反映在飞的运行。
+        cancel_event = register_request(thread_id)
+        try:
+            async with aclosing(_ask_stream(cancel_event)) as stream:
+                async for chunk in stream:
+                    yield chunk
+        finally:
+            release_request(cancel_event)
+
+    async def _ask_stream(cancel_event: CancelGeneration):
         from app.agents.orchestrator import run_with_stream
 
+        budget = RequestBudget(float(os.getenv("CHAT_REQUEST_TIMEOUT", "300")))
+        heartbeat_interval = float(os.getenv("SSE_HEARTBEAT_INTERVAL", "15"))
         result_queue: qmod.Queue = qmod.Queue()
 
+        def _piece_sink(piece) -> None:
+            """R149 的片段入口：模型侧的片从工作线程进**同一条**队列。
+
+            与图事件共用一枚 ``result_queue`` 是有意的：FIFO 让"片早于终答"这个顺序
+            天然等于真实到达顺序，收端不必再开第二条同步通道，也不必排序或补时间戳。
+            """
+            if cancel_event.is_set():
+                # 停止之后不再往没人读的流里塞东西，与下面 ("event", ...) 同一裁定。
+                return
+            result_queue.put(("piece", piece))
+
         def _run():
+            # R536：检索留痕的身份必须在**这一枚工作线程的执行上下文**里挂：
+            # chat.py 把图跑在 loop.run_in_executor(_executor, ...) 那枚普通线程池上，它不
+            # 复制调用方的 contextvar ⇒ 在端点函数体里挂等于没挂。理由与整套口径写在
+            # app/rag/retrieval_pipeline.py 末节（本单唯一的产品道发射实现）。
+            from app.rag.retrieval_pipeline import arm_retrieval_trace, reset_retrieval_trace
+
+            trace_token = arm_retrieval_trace(
+                trace_id=trace_id, request_id=request_id, task_id=task_id
+            )
             try:
-                for event in run_with_stream(rewritten_msg, thread_id=thread_id, user=user_ctx):
+                for event in run_with_stream(
+                    rewritten_msg,
+                    thread_id=thread_id,
+                    user=user_ctx,
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    # 这一行是 R12 的正题：标记不传下去，编排里的取消检查点就恒等于
+                    # _raise_if_cancelled(None)，用户按了停止图照样跑完。
+                    cancel_event=cancel_event,
+                    # R149 注册这枚出口时，它在生产路径上一次都不会响——那时代码里的理由是
+                    # "生成腿只被 invoke，改了就会双重下发"。**R203 正面处理这枚注释**：
+                    # 前提已经翻面（``app/agents/nodes.py`` 的生成腿在满足准入条件的那一发
+                    # 改走流式，片真从这里进来），而"双重下发"当年之所以成立、今天之所以
+                    # 不成立，都是同一件事——**片带的是增量、帧带的是累计全文**：
+                    #   · 屏上：``frontend/src/lib/sessions.js:524-531`` 三条分支——同文帧走
+                    #     ``segments.includes(chunk)`` 直接 ignored，覆盖帧走 covering 整段替换
+                    #     ``msg.content``，只有"既不同文也不覆盖"才追加。累计语义天然落在前两
+                    #     条上：一条腿流完再落终答，屏上始终只有一份正文，末片帧与收尾帧同文
+                    #     也只丢弃不追加。三条分支各有一枚漂移钉，摘掉任一条前端断言本单即红。
+                    #   · 账上：``_save_message`` 与 ``cache_answer`` 只在正常收尾那一支各走一次
+                    #     （:2209 与 :2221；失败那一支 :2188 是另一条互斥的路），片道一个字节
+                    #     都不落库，会话历史里不会有第二条 assistant 行，缓存也不会被写两遍。
+                    #     钉在 ``tests/test_r203_no_double_delivery.py``。
+                    #   · 尺上：R181 那把尺读的是"末帧相对终答不缺字"（``extra_chars``），
+                    #     末帧就是 ``full_text`` 本身，多枚累计帧既不多字也不缺字。
+                    stream_piece_sink=_piece_sink,
+                    # R141：只有真声明了才加这一格。不声明时连键都不传 ——
+                    # tests/test_r149_sse_text_pieces.py 逐字段钉着的那份注册参数集（RUN_KWARGS）
+                    # 一格未变；声明轮次多出来的那一格由图里的 route_main/plan 消费。
+                    **({"declared_lane": declared} if declared else {}),
+                ):
+                    if cancel_event.is_set():
+                        # 停止之后不再往没人读的流里塞事件；已经落盘的不回滚，那不是
+                        # 本轮语义。
+                        return
                     result_queue.put(("event", event))
                 result_queue.put(("done", None))
             except Exception as e:
+                logger.exception(f"[ask] agent worker raised for session={thread_id}")
                 result_queue.put(("error", str(e)))
+            finally:
+                # 取消分支上面那枚 return 也走得到这里：executor 的线程会被复用，token 不交回
+                # 就是把本轮身份漏给下一个跑在同一枚线程上的请求。
+                reset_retrieval_trace(trace_token)
 
         loop = asyncio.get_running_loop()
-        loop.run_in_executor(_executor, _run)
+        agent_future = loop.run_in_executor(_executor, _run)
+        _reap_agent_worker(agent_future, session_id=thread_id, stage="ask")
 
         yield f"event: status\ndata: {json.dumps({'type': 'status', 'content': '🔍 正在分析您的问题...'}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
 
         start_time = time.time()
+        last_emit = time.monotonic()
         steps_log: list[dict] = []
         ai_full_reply: list[str] = []
         saved = False
         last_workers: list[str] = []
         last_completed: set[str] = set()
         emitted_running: set[str] = set()
+        # R210：这一轮的终答与已发出去的累计帧不同源时置真，收尾那一枚 text 帧改发成
+        # 「纠正替换」（见下面 done 分支里那道守卫）。默认假 ⇒ 正常轮一帧都不多发。
+        answer_needs_correction = False
         emitted_done: set[str] = set()
         initial_msg_count = -1
         initial_worker_results: dict = {}
+        latest_worker_results: dict = {}
+        latest_agent_results: dict = {}
+        latest_final_answer = ""
+        answer_candidates: list[str] = []
+        # R149 判据②：累计全文与片数。片带的是增量、帧带的是累计，换算只发生在这两枚
+        # 对象上——收端一个字都不切，也不自己合并（判据③ 的两把尺在上游的 merger 里）。
+        # R203 起 ``cumulative_text`` 记的是**屏上已经发出的那一枚帧正文**（不再只是
+        # "片文字的直加"）：下面那枚前缀守卫要比的、判据④ 要保证的，都是客户端真见过的
+        # 那份字，多一条腿换发或少一条腿没接上都只对它有影响。
+        cumulative_text = ""
+        piece_count = 0
+        piece_stream = _AnswerPieceStream()
+        # 判据④：一轮之内所有 text 帧共用同一份缓存字段。R35 的既有裁定是"未命中的那一
+        # 轮不许带缓存标记"（旧钉 test_answer_cache_scope 断言 "cached" not in），而收尾
+        # 那枚帧的形状不许改（判据③），所以"每一枚片上语义一致"在实时这一轮里等于
+        # "每一枚片都不带"。要改就改这一枚变量，帧与帧不可能再分叉。
+        live_cache_fields: dict | None = None
+        source_rows: dict[str, dict] = {}
+        # R414(b)：这一轮实际拿去算的数据集文件名。与 source_rows 同一批证据、同一个生命
+        # 周期——kind=="event" 的 chunk 汇进来，kind=="done" 的收尾读它。
+        dataset_files: list[str] = []
+        # R48：首屏线索卡一轮只发一枚。置真的唯一条件是「这一刻已经有看得见的一行」。
+        headline_emitted = False
+        # R154 判据③：本轮答案有没有真的落进缓存，落清单时只认这一枚标记（判据的门槛与
+        # ``cache_answer`` 那一道完全同一条：未命中不算、挂起轮不算、预制话术不算）。
+        answer_cached = False
+        sequence = 1
+
+        # R649：本轮首屏那一枚可见 text 帧的闸门，与 ``sequence`` 同一处出生，一轮一枚。
+        first_text_mark = _FirstVisibleTextMark(
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+            session_id=thread_id,
+            owner_id=str(getattr(request_principal, "user_id", "") or ""),
+        )
+
+        yield canonical_sse_event(
+            "request.started",
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+            sequence=sequence,
+            status="running",
+            # R141 判据① 的第二处出口。往 data 里加键是安全的：已并树的用例钉的是**帧名序列**
+            # （test_approve_canonical_events / test_sse_sources / test_r149_sse_text_pieces），
+            # 不是 data 的键集；第三处出口（trace 载荷）在 orchestrator 里同源发出。
+            data={"session_id": thread_id, **lane_readout},
+        )
+        sequence += 1
 
         while True:
+            # 每步按**本代**比对，而不是"这个会话有没有被停过"：同会话并存的另一代
+            # 被停，不该让这一轮误判已取消。
+            if is_request_cancelled(thread_id, epoch=cancel_event.epoch):
+                # 还没开工的 _run 直接取消；已经在跑的 cancel() 返回 False，由编排里的
+                # 检查点协同退出——线程不能强杀，这里不假装能。
+                agent_future.cancel()
+                _ASK_STATS.observe((time.time() - start_time) * 1000)
+                yield canonical_sse_event(
+                    "request.cancelled",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="cancelled",
+                    data={"session_id": thread_id},
+                )
+                sequence += 1
+                yield sse_event("cancelled", {"type": "cancelled", "session_id": thread_id})
+                break
+            if budget.expired():
+                _ASK_STATS.observe((time.time() - start_time) * 1000, error=True)
+                yield canonical_sse_event(
+                    "request.failed",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="failed",
+                    data={"error_code": "task_timeout"},
+                )
+                sequence += 1
+                yield sse_event("error", {"type": "error", "content": "请求超过系统处理时限"})
+                break
             try:
                 kind, data = result_queue.get_nowait()
             except qmod.Empty:
+                if time.monotonic() - last_emit >= heartbeat_interval:
+                    yield sse_event("heartbeat", {"type": "heartbeat"})
+                    last_emit = time.monotonic()
                 await asyncio.sleep(0.05)
+                continue
+
+            if kind == "piece":
+                # 判据①②：片一到就发一帧，不攒、不切、不等下一枚。这里唯一的 await 是
+                # sleep(0)（把控制权交回事件循环，零延时），判据⑤ 由 AST 面闸钉住这一支
+                # 不许长出节流或定时器。折帧的三条规则（同一条腿、已落定的底座、只发变长
+                # 的那一枚）全在 ``_AnswerPieceStream.frame_for`` 里，这一支一行都不裁。
+                piece_count += 1
+                frame_text = piece_stream.frame_for(data, latest_worker_results)
+                if frame_text is None:
+                    continue
+                cumulative_text = frame_text
+                # R649：``frame_for`` 交回帧才算「屏上多了一行」；上面那枚 ``continue`` 那一支
+                # 一个像素都没变，本单一个字都不记。
+                first_text_mark.note(cumulative_text, leg="piece")
+                yield text_sse_frame(cumulative_text, live_cache_fields)
+                await asyncio.sleep(0)
                 continue
 
             if kind == "done":
                 elapsed_total = round(time.time() - start_time, 1)
-                full_text = "".join(ai_full_reply)
+                _ASK_STATS.observe(elapsed_total * 1000)
+                for step in _complete_pending_steps(
+                    steps_log,
+                    elapsed_total,
+                    latest_agent_results,
+                    latest_worker_results,
+                ):
+                    yield f"event: step\ndata: {json.dumps({'type': 'step', **step}, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0)
+                full_text = _select_final_answer(
+                    final_answer=latest_final_answer,
+                    worker_results=latest_worker_results,
+                    candidates=answer_candidates,
+                )
+                # 图停在 interrupt_before 节点之前时本轮确实没有产出任何结论。
+                # 此时空正文 + request.completed 会让前端把“等待确认”画成“已回答”，
+                # 所以先查真实的挂起节点，再据此生成一句可核验的状态说明。
+                try:
+                    from app.agents.orchestrator import check_interrupt
+                    intr = check_interrupt(thread_id)
+                except Exception:
+                    intr = None
+                if not full_text and intr:
+                    full_text = hitl_park_text(intr)
+                if cumulative_text and not full_text.startswith(cumulative_text):
+                    # 累计片必须是终答的前缀，否则"片"与"终答"不同源。R149 当年写的成因
+                    # （片不带调用身份，planner 的字混进同一条串）已被 R203 关掉：片现在
+                    # 带 ``call_id``/``worker``，未落定就换发的那一发由收端直接关门。剩下
+                    # 唯一的结构性成因是 **provider 死在半路**：tap 按 T3 之后一片不发，而
+                    # 离线回复不是刚才那半截字的延伸 —— 注意这一格上 sessions.js 的 covering
+                    # **不成立**（终答并不包含末帧），前端会落到追加分支。本单不藏它：这里
+                    # 只大声记账（附 leg/call/dropped 三格归因）、不改帧形，量化与请裁定见
+                    # R203 交回单；行为钉在 test_a_provider_that_dies_mid_stream_stops_...。
+                    logger.error(
+                        f"[R149] session={thread_id[:8]}... 流式片段与终答不同源："
+                        f"pieces={piece_count} cumulative={len(cumulative_text)}"
+                        f" final={len(full_text)}"
+                        # R203 归因用的三格：是哪条腿、哪一发、还有收端一共丢过几片。
+                        # 病因与解法都在上游那枚 tap 的准入条件里，这里只负责不静默。
+                        f" leg={piece_stream.worker or '-'} call={piece_stream.call_id or '-'}"
+                        f" dropped={piece_stream.dropped}"
+                    )
+                    # R210：屏上此刻站着的是半截真话，而终答不是它的延伸。旧形状下收尾那枚
+                    # 帧会落进 sessions.js 的追加分支（:491），用户读到「半截真话 + 离线话术」
+                    # 拼成的一句 —— 那是 R203 把生成腿接上流式之后才存在的残损面（pieces 恒 0
+                    # 的改前结构上到不了这里）。这里把它改发成一次**纠正替换**：借既有 step
+                    # 语义（running 那一枚在 msg.content 非空时置 ``_correcting``，:513），
+                    # 紧跟着的收尾帧就整段替换屏上正文（:482）；收尾再补一发同 tool 的 done，
+                    # 不给界面留一枚永远转圈的步骤。帧名、帧键、legacy 词汇表一个都没动，
+                    # ``text_sse_frame`` 的字面也一个字没动 —— 多的只是它前面那两枚 step。
+                    answer_needs_correction = True
+                if not full_text:
+                    # 图跑完了，既没有正文也没有等待确认的步骤：这是内部失败。
+                    # 把它报成 request.completed 就是把“什么都没产出”伪装成“已回答”。
+                    # 码只走下面 canonical 的 data.error_code 字段：这句要经
+                    # _save_message 落进会话历史，散文里再夹一遍码名就永久洗不掉了
+                    # （R16；前端渲染期的清洗救得了新消息，救不了历史行）。
+                    failure_text = "本轮未产出任何结论，请重试或补充数据范围。"
+                    _save_message(thread_id, "assistant", failure_text, steps_log)
+                    saved = True
+                    yield sse_event("error", {"type": "error", "content": failure_text})
+                    yield canonical_sse_event(
+                        "request.failed",
+                        request_id=request_id,
+                        trace_id=trace_id,
+                        task_id=task_id,
+                        sequence=sequence,
+                        status="failed",
+                        data={
+                            "session_id": thread_id,
+                            "error_code": "no_answer_produced",
+                            "worker_count": len(latest_worker_results),
+                        },
+                    )
+                    sequence += 1
+                    yield done_sse_frame(
+                        terminal_state=TERMINAL_STATE_NO_ANSWER,
+                        answer_present=False,
+                        sources_present=False,
+                        usage=read_model_call_usage(request_id),
+                        dataset_files=dataset_files,
+                    )
+                    await asyncio.sleep(0)
+                    break
+
                 _save_message(thread_id, "assistant", full_text, steps_log)
                 saved = True
                 if full_text:
                     from app.common.cache import cache_answer
-                    cache_answer(rewritten_msg, full_text)
+                    from app.agents.nodes import is_offline_reply_text
+
+                    # 等待确认的状态说明不是一个问题的答案，不允许进全局答案缓存。
+                    # R99 判据 4 的另一半（跟进单 §42.3）：超时或失败时模型腿交回的是一句预制的话，
+                    # 它同样不是这个客户问题的答案。落进缓存就等于让后来者在几毫秒内拿到一句假答案，
+                    # 还带 [cached] 标注——比空正文更难查。识别函数由 app/agents/nodes.py 自己提供，
+                    # 与日志和拒交付用的是同一个，不在这再枚举一遍句子。
+                    if use_answer_cache and not intr and not is_offline_reply_text(full_text):
+                        cache_answer(rewritten_msg, full_text, scope=answer_scope)
+                        # 证据快照的写入排在下面发 sources 事件那一处：生效日期要先盖到行上，
+                        # 存下的与发出去的必须是同一批对象。这里只记"答案确实进缓存了"。
+                        answer_cached = True
+                    correction = {"type": "step", "tool": CORRECTION_STEP_TOOL,
+                                  "label": CORRECTION_STEP_LABEL}
+                    if answer_needs_correction:
+                        yield sse_event("step", {**correction, "status": "running"})
+                        await asyncio.sleep(0)
+                    # R649：没有逐片的一轮，收尾这一枚就是屏上第一行；有逐片时闸门早已落过账，
+                    # 再调一次也不改写第一枚的读数。
+                    first_text_mark.note(full_text, leg="terminal")
+                    yield text_sse_frame(full_text, live_cache_fields)
+                    if answer_needs_correction:
+                        yield sse_event("step", {**correction, "status": "done",
+                                                 "elapsed": elapsed_total})
+                    await asyncio.sleep(0)
                 logger.info(f"[ASK] session={thread_id[:8]}... {elapsed_total}s | steps={len(steps_log)}")
 
-                try:
-                    from app.agents.orchestrator import check_interrupt
-                    intr = check_interrupt(thread_id)
-                    if intr:
-                        yield f"event: hitl\ndata: {json.dumps({'type': 'hitl', 'pending': intr['pending'], 'labels': intr['labels']}, ensure_ascii=False)}\n\n"
-                        await asyncio.sleep(0)
-                except Exception:
-                    pass
+                if intr:
+                    # 与 SSE event: hitl 同一个地方写库：分了两处就会出现"事件发了、
+                    # 表里没写"或反之，面板与流各说一套。
+                    _record_pending_approval(
+                        thread_id,
+                        request_principal,
+                        intr,
+                        request_id=request_id,
+                        trace_id=trace_id,
+                        task_id=task_id,
+                        declared_lane=declared,
+                    )
+                    yield f"event: hitl\ndata: {json.dumps({'type': 'hitl', 'pending': intr['pending'], 'labels': intr['labels']}, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0)
 
-                yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                terminal_event, terminal_status, terminal_error = _request_verdict(latest_agent_results, full_text, bool(intr))
+                yield canonical_sse_event(
+                    terminal_event,
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status=terminal_status,
+                    data={
+                        "session_id": thread_id,
+                        # R414(b)：这一轮的数字是从哪份数据文件算的，终态必须说得出。
+                        "data_filename": terminal_data_filename(dataset_files),
+                        "worker_count": len(latest_worker_results),
+                        "elapsed": elapsed_total,
+                        "answer_length": len(full_text),
+                        "awaiting_hitl": bool(intr),
+                        "awaiting_steps": list(intr["pending"]) if intr else [],
+                        **({"error_code": terminal_error} if terminal_error else {}),
+                    },
+                )
+                sequence += 1
+                # R41：sources 提升为 canonical 事件。位置在 request.completed 之后、legacy
+                # done 之前：done 仍是"流结束"的唯一信号，旧客户端遇到认不得的事件名也
+                # 不会丢正文；request.started/completed 的 sequence 也不因本单漂移。
+                visible_rows, scope_reason_code = _authorized_source_rows(source_rows, request_principal)
+                # R154 判据②：出处行带生效日期；判据③：本轮答案进了缓存就把这份证据快照
+                # 一起存下，命中的那一轮才交得出来源清单。盖章先于存表，也先于发事件。
+                _stamp_source_publications(source_rows)
+                if answer_cached:
+                    _cache_source_manifest(rewritten_msg, answer_scope, source_rows)
+                yield canonical_sse_event(
+                    "sources",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="completed",
+                    data={
+                        "session_id": thread_id,
+                        "sources": visible_rows,
+                        "hit_count": len(visible_rows),
+                        # 缺了这个数字，"0 条来源"就分不清"没检索到"与"检索到了但不给你看"。
+                        "unauthorized_count": len(source_rows) - len(visible_rows),
+                        "scope_reason_code": scope_reason_code,
+                    },
+                )
+                sequence += 1
+                yield done_frame_for_turn(
+                    request_id=request_id,
+                    session_id=thread_id,
+                    full_text=full_text,
+                    intr=intr,
+                    visible_rows=visible_rows,
+                    dataset_files=dataset_files,
+                    agent_results=latest_agent_results,
+                )
                 await asyncio.sleep(0)
                 break
 
             if kind == "error":
+                _ASK_STATS.observe((time.time() - start_time) * 1000, error=True)
                 logger.error(f"[ASK] session={thread_id[:8]}... ERROR: {data}")
                 if not saved:
                     _save_message(thread_id, "assistant", f"[错误] {data}")
+                yield canonical_sse_event(
+                    "request.failed",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="failed",
+                    data={"error_code": "internal_error"},
+                )
+                sequence += 1
                 yield f"event: error\ndata: {json.dumps({'type': 'error', 'content': data}, ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0)
                 break
@@ -361,6 +3659,40 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
 
             msgs = data.get("messages", [])
             worker_results = data.get("worker_results", {})
+            if worker_results:
+                latest_worker_results = dict(worker_results)
+            latest_final_answer = _recorded_final_answer(
+                latest_final_answer, data.get("final_answer")
+            )
+            # R41：边跑边收证据，不在收尾时反推。取消/失败分支不会读到这个字典，
+            # 所以"没有产出可见答案的一轮"也绝不会发出来源事件。
+            agent_results = data.get("agent_results")
+            if isinstance(agent_results, dict):
+                _collect_document_sources(agent_results, source_rows)
+                _collect_dataset_filenames(agent_results, dataset_files)
+                latest_agent_results = dict(agent_results)
+                # R48 路线甲：本轮第一批**看得见**的来源一到手就发首屏线索卡，一轮只发一枚。
+                # 三条硬边界都收在这十几行里：走 canonical 信封（绝不骑 text 道）、正文一格
+                # 都不写（载荷只有来源行与两枚计数）、没有可见行就一枚都不发（宁缺毋造——
+                # 「没检索到」与「检索到了但不给你看」这两张脸归收尾的那枚 sources 事件，
+                # 本卡不替它们说话，也不拿一张假卡去填首屏）。
+                if not headline_emitted and source_rows:
+                    headline_rows, _headline_reason = _authorized_source_rows(
+                        source_rows, request_principal
+                    )
+                    if headline_rows:
+                        headline_emitted = True
+                        yield _answer_headline_frame(
+                            headline_rows,
+                            withheld=len(source_rows) - len(headline_rows),
+                            started_at=start_time,
+                            session_id=thread_id,
+                            request_id=request_id,
+                            trace_id=trace_id,
+                            task_id=task_id,
+                            sequence=sequence,
+                        )
+                        sequence += 1
 
             dispatched: list[str] = []
             for msg in msgs:
@@ -373,21 +3705,12 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     break
 
             if dispatched:
-                user_msg = ""
-                for m in reversed(msgs):
-                    if type(m).__name__ == "HumanMessage":
-                        user_msg = getattr(m, "content", "") or ""
-                        break
-                chart_kw = ["画", "图", "图表", "柱状图", "折线图", "饼图", "可视化", "图形"]
-                export_kw = ["导出", "PDF", "pdf", "报告", "下载"]
-                data_kw = ["排名", "最高", "最低", "统计", "分析数据", "对比", "比较", "哪个"]
-                if any(kw in user_msg for kw in chart_kw):
-                    dispatched = ["chart"]
-                elif any(kw in user_msg for kw in export_kw) and not any(kw in user_msg for kw in chart_kw):
-                    dispatched = ["export"]
-                elif any(kw in user_msg for kw in data_kw) and "chart" not in dispatched:
-                    if "data" not in dispatched:
-                        dispatched = ["data"]
+                # Display the same authorized/prohibited/dependency-filtered dispatch
+                # that the graph uses, rather than guessing from words such as “不画图”.
+                from app.agents.orchestrator import route_main
+                routed = route_main(data, {"configurable": {"declared_lane": declared,
+                    "data_filename": request.data_filename}})
+                dispatched = [item.node for item in routed if hasattr(item, "node")] if isinstance(routed, list) else []
 
             if dispatched and dispatched != last_workers:
                 for w in dispatched:
@@ -410,9 +3733,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     elapsed = round(time.time() - start_time, 1)
                     for s in steps_log:
                         if s["tool"] == w and s["status"] == "running":
-                            s["status"] = "done"
+                            s["status"] = (data.get("agent_results", {}).get(w) or {}).get("status", "unknown")
                             s["elapsed"] = elapsed
-                            yield f"event: step\ndata: {json.dumps({'type': 'step', 'tool': w, 'label': s['label'], 'status': 'done', 'elapsed': elapsed}, ensure_ascii=False)}\n\n"
+                            yield f"event: step\ndata: {json.dumps({'type': 'step', 'tool': w, 'label': s['label'], 'status': s['status'], 'elapsed': elapsed}, ensure_ascii=False)}\n\n"
                             await asyncio.sleep(0)
 
             last_workers = dispatched
@@ -429,13 +3752,19 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     if msg_type == "AIMessage" and content and not has_tools:
                         if content.startswith("【") and "Agent 返回】" in content[:50]:
                             continue
-                        if content not in ai_full_reply:
-                            ai_full_reply.append(content)
-                            yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': content}, ensure_ascii=False)}\n\n"
-                            await asyncio.sleep(0)
+                        if content not in answer_candidates:
+                            answer_candidates.append(content)
                         break
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            **_lane_readout_headers(lane_readout),
+        },
+    )
 
 
 class ApproveRequest(BaseModel):
@@ -443,42 +3772,719 @@ class ApproveRequest(BaseModel):
     approved: bool = True
 
 
+class DocumentVisibilityRequest(BaseModel):
+    visibility: str
+
+
+def _record_pending_approval(
+    session_id: str,
+    principal,
+    intr: dict | None,
+    *,
+    request_id: str = "",
+    trace_id: str = "",
+    task_id: str = "",
+    declared_lane: str = "",
+) -> None:
+    """把一次挂起写成一行 awaiting。
+
+    记账失败不许打断用户已经等到的回答流，所以这里吞异常；但也不许静默——面板少一条
+    待办和面板说"没有待办"是两件不同的事，因此留 exception 级痕迹。
+
+    ``declared_lane``（R172）是本轮声明的档位，必须跟着这一行进账本：批准之后续跑的那一轮
+    既拿不到请求体也拿不到上一轮的 config，"这一轮的档是谁定的"只剩这一格能回答。
+    """
+    owner_user_id = str(getattr(principal, "user_id", "") or "")
+    if not owner_user_id or not intr:
+        return
+    try:
+        pending_approvals.record_awaiting(
+            session_id,
+            owner_user_id,
+            list(intr.get("pending") or []),
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+            declared_lane=declared_lane,
+        )
+    except Exception:
+        logger.exception(
+            f"[HITL] 挂起待办没能写入 session={session_id}，审批面板可能少一条待办"
+        )
+
+
+def _decide_pending_approval(session_id: str, status: str) -> None:
+    """把挂起行改成终态；同上，不许因为记账坏了而打断回答。"""
+    try:
+        pending_approvals.mark_status(session_id, status)
+    except Exception:
+        logger.exception(
+            f"[HITL] 挂起待办没能改成 {status} session={session_id}，面板可能仍显示待批"
+        )
+
+
+DEFAULT_PENDING_LIMIT = 50
+MAX_PENDING_LIMIT = 200
+
+#: 挂起账本在审计台账里的资源标识：写的是「哪一本账」，不是「哪一轮说了什么」。
+#: 与 app/rag/filters.py 的 AUDIT_SURFACE 同一口径 —— 面名固定，具体哪一轮走 request_id。
+HITL_LEDGER_SURFACE = "hitl_pending_approval"
+
+
+def _fail_pending_approval_turn(
+    session_id: str,
+    principal,
+    *,
+    error_code: str,
+    request_id: str = "",
+) -> None:
+    """把「员工批过板、而这一轮被系统跑挂了」记成一格 ``failed``，并沿既有通路落一笔审计。
+
+    两条漏闭的出口共用这一处（``internal_error`` 与 ``task_timeout``）：同一件事在两条出口
+    必须是同一个判定，一处补一处漏就是第三句互相打架的话。
+
+    为什么新造一格而不复用 ``REFUSED``：那是把故障写成拒批。审批人点的确实是「同意」，账上
+    却留一行 refused，等于事后替他说了一句他没说的话 —— 与本文件取消腿那句「停止 != 拒绝，
+    账面写 abandoned，绝不写 refused」（:2517-2519）是同一条裁定，不许开倒车。也不许写
+    ``STALE``：stale 说的是「图不再确认这次挂起」，而跑挂了图很可能**还**挂在同一个中断上。
+
+    审计写的是这一轮的结局（谁、哪个面、failure、哪个稳定码 + request_id 定位哪一轮），
+    不是「账面已闭合」的收据 —— 后者在 PG 腿上今天做不到（见 pending_approvals 模块常量段），
+    写成收据就是把半条腿伪装成完整的。零正文：这一刻手里只有一个人读的错误串，把它灌进
+    台账就是往审计里塞内容。
+    """
+    _decide_pending_approval(session_id, pending_approvals.FAILED)
+    record_audit(
+        principal,
+        ACTION_APPROVE,
+        "failure",
+        HITL_LEDGER_SURFACE,
+        error_code,
+        request_id=request_id or None,
+    )
+
+
+@router.get("/hitl/pending")
+async def hitl_pending(
+    http_request: FastAPIRequest,
+    session_id: str = "",
+    limit: int = DEFAULT_PENDING_LIMIT,
+    offset: int = 0,
+):
+    """列出调用方自己的 HITL 挂起待办，并对每一行向图复核。
+
+    这张表是"事件记录"，图才是"当前状态"的权威，所以列表前逐行问一次
+    check_interrupt(session_id)：对不上就地标 stale 并排除。少了这一步，面板列出的就是
+    已经跑完或已经被放弃的假待办（设计件 §3.2 点名的陷阱）。
+
+    复核本身抛错时**不列**该行，但也**不改判**：一次图的临时故障不该把真待办判死。
+
+    权限不新增语义：归属沿用 _authorize_session_request 的同一个谓词，别人的会话像
+    不存在一样（404 resource_not_found），不是 403。
+
+    分页：``limit`` 默认 50、硬上限 200，按 ``created_at DESC`` 截断，``offset`` 翻页。
+    代价来自复核而不是取行，所以上限既要下推进 SQL（``open_items``），也要限定复核循环
+    ——多取的那一行只用来回答 ``has_more``，绝不进复核循环，否则截断掉的待办会被误判
+    stale（那是把"没看过"写成"已作废"）。
+    """
+    principal = _session_principal_or_error(http_request)
+    if session_id:
+        _authorize_session_request(http_request, session_id)
+
+    from app.agents.orchestrator import check_interrupt
+
+    applied_limit = max(1, min(int(limit), MAX_PENDING_LIMIT))
+    applied_offset = max(0, int(offset))
+    try:
+        # 多问一行只为知道还有没有：这一行不参与下面的复核。
+        rows = pending_approvals.open_items(
+            owner_user_id=str(principal.user_id or ""),
+            session_id=session_id or None,
+            limit=applied_limit + 1,
+            offset=applied_offset,
+        )
+        # R175 判据②：同一本账上「已闭合为失败」的那几行也跟着回。它们是**已经办完的事**，
+        # 不是待办，所以只多取一行问 has_more、一条都不进上面的复核循环 —— 复核问的是
+        # 「图还挂着吗」，答案必然是「没挂着」，走那条腿就会被 :2363-2365 就地判成 stale，
+        # 于是「你批过、那一轮失败了」在屏上变成「已作废」。同一张表、同一次连接，
+        # 缺表照旧翻 503：把这一格读不到洗成"没有失败的那一轮"又是一句假话。
+        failed_rows = pending_approvals.failed_items(
+            owner_user_id=str(principal.user_id or ""),
+            session_id=session_id or None,
+            limit=applied_limit + 1,
+            offset=0,
+        )
+    except pending_approvals.PendingApprovalStoreMissing as exc:
+        # 只接这一种错。吞成 200 空列表是造假（R13 整单就是为了消灭它），翻成
+        # internal_error 又等于把"跑迁移"这条运维可执行的诊断洗成通用故障。
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
+    has_more = len(rows) > applied_limit
+    page = rows[:applied_limit]
+    failed_has_more = len(failed_rows) > applied_limit
+    failed_page = failed_rows[:applied_limit]
+
+    items: list[dict] = []
+    for row in page:
+        if not row.parked_steps:
+            continue
+        try:
+            confirmed = check_interrupt(row.session_id)
+        except Exception:
+            logger.exception(f"[HITL] 复核挂起态失败，本次不列出 session={row.session_id}")
+            continue
+        pending = [str(step) for step in ((confirmed or {}).get("pending") or [])]
+        if not pending or not set(row.parked_steps) <= set(pending):
+            _decide_pending_approval(row.session_id, pending_approvals.STALE)
+            continue
+        graph_labels = [str(label) for label in ((confirmed or {}).get("labels") or [])]
+        if len(graph_labels) == len(pending):
+            wanted = set(row.parked_steps)
+            labels = [label for step, label in zip(pending, graph_labels) if step in wanted]
+        else:
+            labels = graph_labels
+        items.append(
+            {
+                "session_id": row.session_id,
+                "owner_user_id": row.owner_user_id,
+                "parked_steps": list(row.parked_steps),
+                "labels": labels,
+                "status": row.status,
+                "created_at": row.created_at,
+                "expires_at": row.expires_at,
+                "request_id": row.request_id,
+                "trace_id": row.trace_id,
+                "task_id": row.task_id,
+            }
+        )
+    # count 仍是"过滤后长度"（契约已明写它不得当总数用）；has_more 说的是账本还有行，
+    # 不是"还有多少条能看"。
+    return {
+        "items": items,
+        "count": len(items),
+        "limit": applied_limit,
+        "offset": applied_offset,
+        "has_more": has_more,
+        # 两格互不顶替：``items`` 空只说明确实没有等着批的事，``failed_turns`` 说的
+        # 是「批过了而那一轮失败了」。没有 ``labels`` 这一格 —— 标签来自向图复核，
+        # 而这一行不许去问图（见上），前端按 ``parked_steps`` 里既有的步骤名说中文。
+        "failed_turns": [
+            {
+                "session_id": row.session_id,
+                "owner_user_id": row.owner_user_id,
+                "parked_steps": list(row.parked_steps),
+                "status": row.status,
+                "created_at": row.created_at,
+                "expires_at": row.expires_at,
+                "request_id": row.request_id,
+                "trace_id": row.trace_id,
+                "task_id": row.task_id,
+            }
+            for row in failed_page
+        ],
+        "failed_turns_has_more": failed_has_more,
+    }
+
+
 @router.post("/approve")
-async def approve(request: ApproveRequest):
+async def approve(request: ApproveRequest, http_request: FastAPIRequest):
+    # /approve 会接管该会话的挂起轮次并把会话内容流式回传给调用方，
+    # 因此它和读取会话必须是同一套归属判定，不能只校验"已登录"。
+    principal = _authorize_session_request(http_request, request.session_id, ACTION_APPROVE)
+    user_ctx = _agent_user_context(principal)
+    # canonical 事件必须带 request_id/trace_id/task_id，而 /approve 此前整条流只有
+    # legacy 事件、从来没有过这三个 id。生成方式与 /ask 里生成 request_id/trace_id/task_id
+    # 那三行逐字相同，客户端
+    # 不必为两个端点写两套解析。
+    request_id = f"req-{uuid.uuid4().hex}"
+    trace_id = f"trace-{uuid.uuid4().hex}"
+    task_id = f"task-{uuid.uuid4().hex}"
+
+    # R172：续跑轮的档位读数在这里算**一次**，下面三处出口（响应头 / request.started 帧 /
+    # trace 载荷）发出去的是同一份对象。算两次就是留一道口子：哪天其中一处换了口径，
+    # 同一轮的三处读数会各说一句话而没人报错 —— 判据② 要的是同一份数字，不是三个同形的数字。
+    # 此刻挂起那行还是 awaiting（闭合在下面那条流的 done 分支里），声明读得回来。
+    lane_readout = _resumed_lane_readout(request.session_id)
+    record_audit(principal, ACTION_APPROVE, "confirmed" if request.approved else "rejected",
+        request.session_id, "operation_confirmed" if request.approved else "operation_rejected",
+        request_id=request_id, after_summary={"trace_id": trace_id, "task_id": task_id})
+
+    audited_terminal = False
+    execution_audit_lock = threading.Lock()
+    approve_worker_started = threading.Event()
+    def finish_trace(event_type: str, status: str, error_code: str = ""):
+        nonlocal audited_terminal
+        with execution_audit_lock:
+            if audited_terminal:
+                return
+            _record_chat_round_verdict(trace_id=trace_id, request_id=request_id, task_id=task_id,
+                owner_id=str(getattr(principal, "user_id", "") or ""),
+                event_type=event_type, status=status, error_code=error_code)
+            audited_terminal = True
+            ledger = approval_ledger_state(request.session_id, principal.user_id)
+            outcome = ('rejected' if ledger == 'refused' else 'awaiting' if ledger == 'awaiting'
+                       else status)
+            record_audit(principal, ACTION_APPROVE, outcome, request.session_id,
+                'operation_execution_result', request_id=request_id,
+                after_summary={'trace_id': trace_id, 'task_id': task_id,
+                    'decision': 'confirmed' if request.approved else 'rejected',
+                    'execution_status': status, 'ledger_status': ledger, 'error_code': error_code})
+
     async def generate():
+        # 同 /ask：注册与本代弹出留在同一个帧里。resume 起来的那一代才是取消唯一能打击
+        # 的对象，所以停在 HITL 的会话被按过停止之后，随后的批准会拿到一个生来就置位的
+        # 标记，编排的第一个检查点连 resume 都不发起（甲裁定的落地判据）。
+        # A prior display interruption must still block execution, but cannot swallow
+        # the user's subsequent explicit refusal of the pending action.
+        cancel_event = register_request(request.session_id, inherit_pending=request.approved)
+        try:
+            async with aclosing(_approve_stream(cancel_event)) as stream:
+                async for chunk in stream:
+                    yield chunk
+        finally:
+            if not approve_worker_started.is_set():
+                release_request(cancel_event)
+
+    async def _approve_stream(cancel_event: CancelGeneration):
         from app.agents.orchestrator import run_interrupt_stream
 
+        budget = RequestBudget(float(os.getenv("CHAT_REQUEST_TIMEOUT", "300")))
+        heartbeat_interval = float(os.getenv("SSE_HEARTBEAT_INTERVAL", "15"))
         result_queue: qmod.Queue = qmod.Queue()
 
+        def _piece_sink(piece) -> None:
+            """R31 差格 a：批准续跑腿的片入口，与 /ask 里的 ``_piece_sink`` 同一条形状。
+
+            与图事件共用一枚 ``result_queue`` 是有意的（同一条裁定）：FIFO 让"片早于终答"这个
+            顺序天然等于真实到达顺序，收端不必再开第二条同步通道，也不必排序或补时间戳。
+            """
+            if cancel_event.is_set():
+                # 停止之后不再往没人读的流里塞东西，与下面 ("event", ...) 同一裁定。
+                return
+            result_queue.put(("piece", piece))
+
         def _run():
+            # R536：检索留痕的身份必须在**这一枚工作线程的执行上下文**里挂：
+            # chat.py 把图跑在 loop.run_in_executor(_executor, ...) 那枚普通线程池上，它不
+            # 复制调用方的 contextvar ⇒ 在端点函数体里挂等于没挂。理由与整套口径写在
+            # app/rag/retrieval_pipeline.py 末节（本单唯一的产品道发射实现）。
+            from app.rag.retrieval_pipeline import arm_retrieval_trace, reset_retrieval_trace
+
+            execution_state, worker_error = {}, ''
+            trace_token = arm_retrieval_trace(
+                trace_id=trace_id, request_id=request_id, task_id=task_id
+            )
             try:
-                for event in run_interrupt_stream(request.session_id, approved=request.approved):
+                for event in run_interrupt_stream(
+                    request.session_id,
+                    approved=request.approved,
+                    user=user_ctx,
+                    request_id=request_id, trace_id=trace_id, task_id=task_id,
+                    cancel_event=cancel_event,
+                    # R31 差格 a 的注册点。摘掉这一行，续跑轮里那些字一个字都到不了收端
+                    # （判据① 的凭据；判据④ 的"无人注册"那一支在 nodes 里，不在这条腿上）。
+                    stream_piece_sink=_piece_sink,
+                ):
+                    snapshot = event[1] if isinstance(event, tuple) and len(event) > 1 else event
+                    if isinstance(snapshot, dict):
+                        execution_state.update(snapshot)
+                    if cancel_event.is_set():
+                        return
                     result_queue.put(("event", event))
                 result_queue.put(("done", None))
             except Exception as e:
+                worker_error = 'internal_error'
+                logger.exception(
+                    f"[approve] agent worker raised for session={request.session_id}"
+                )
                 result_queue.put(("error", str(e)))
+            finally:
+                try:
+                    if cancel_event.is_set():
+                        _decide_pending_approval(request.session_id, pending_approvals.ABANDONED)
+                        prior = _round_screen_answer(request.session_id)
+                        notice = '本次操作已取消，未执行后续动作；已完成的动作不会撤销。'
+                        _save_approval_answer(request.session_id, notice if is_hitl_park_notice(prior)
+                            else '\n\n'.join(filter(None, [prior, notice])))
+                        finish_trace('request.cancelled', 'cancelled')
+                    elif worker_error or execution_state.get('error'):
+                        _fail_pending_approval_turn(request.session_id, principal, error_code='internal_error', request_id=request_id)
+                        finish_trace('request.failed', 'failed', 'internal_error')
+                    else:
+                        from app.agents.orchestrator import check_interrupt
+                        intr = check_interrupt(request.session_id)
+                        answer = _select_final_answer(final_answer=execution_state.get('final_answer', ''),
+                            worker_results=execution_state.get('worker_results', {}), candidates=[])
+                        settled = [{'tool': worker, 'label': worker, 'status': 'running'}
+                                   for worker in execution_state.get('agent_results', {})]
+                        _complete_pending_steps(settled, 0, execution_state.get('agent_results', {}))
+                        if answer:
+                            _save_approval_answer(request.session_id, answer, settled)
+                        _decide_pending_approval(request.session_id,
+                            pending_approvals.RESUMED if request.approved else pending_approvals.REFUSED)
+                        finish_trace(*_request_verdict(execution_state.get('agent_results', {}), answer, bool(intr)))
+                finally:
+                    reset_retrieval_trace(trace_token)
+                    release_request(cancel_event)
 
+        # R551 顺序不变量：trace 的第三处出口（``request.started``）必须排在**把 _run 交给
+        # executor 之前**。``loop.run_in_executor`` 一交出去，工作线程立刻就动，它不等事件循环；
+        # 先建立 running 父记录，之后 finish_trace 按实际执行结果收口；
+        # 续跑工具、检索与 SSE 共用同一组 request/trace/task 标识。
+        # 凭据：tests/test_r551_resumed_lane_seeds_before_executor.py（判据① 两形＋判据② 失败轮）。
+        _record_resumed_lane_trace(
+            lane_readout,
+            session_id=request.session_id,
+            owner_id=str(getattr(principal, "user_id", "") or ""),
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+        )
         loop = asyncio.get_running_loop()
-        loop.run_in_executor(_executor, _run)
+        approve_worker_started.set()
+        agent_future = loop.run_in_executor(_executor, _run)
+        _reap_agent_worker(agent_future, session_id=request.session_id, stage="approve")
 
+        start_time = time.time()
+        last_emit = time.monotonic()
+        sequence = 1
+        # R649：批准续跑这一腿的首屏闸门，与 /ask 那一腿同一枚类、同一条纪律。
+        first_text_mark = _FirstVisibleTextMark(
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+            session_id=request.session_id,
+            owner_id=str(getattr(principal, "user_id", "") or ""),
+        )
         ai_reply: list[str] = []
+        latest_worker_results: dict = {}
+        latest_agent_results: dict = {}
+        latest_final_answer = ""
+        answer_candidates: list[str] = []
         initial_count = -1
+        # R31 差格 a 的收端账。折帧复用与 /ask 同一枚 _AnswerPieceStream（判据②③ 的三把尺住在
+        # 上游那枚 merger 里，这一支一个字都不裁），出门复用 R464 那道闸门，本单不另造第二套片账。
+        piece_count = 0
+        piece_frames = 0
+        piece_suppressed = 0
+        piece_stream = _AnswerPieceStream()
+        # R464：批准续跑这一路只许交一枚终答流。屏上此刻站着的那一份正文来自挂起轮
+        # （会话历史最后一条 assistant 行，与挂起轮收尾帧同源），本腿不再发它第二遍；
+        # 真要换源就带 R210 那对 step 显式记账，而不是让客户把同一轮的答案读两遍。
+        # 读账排在 _save_message 之前：这一轮自己那一行还不能当"屏上已有的正文"。
+        screen_at_open = _round_screen_answer(request.session_id)
+        answer_stream = _ApprovedAnswerStream(screen_at_open)
+        # R662：屏上此刻挂着的如果**只是**那句挂起说明（``hitl_park_text`` 现构造那一枚），本轮
+        # 就还没有一份答复上过屏，批准续跑那一发是本轮第一枚终答流 —— 逐片帧一帧一帧上屏。
+        # 判定只认现构造逐字比，不抄字面，也不拿"屏上有字"当成"屏上有答复"。
+        screen_holds_notice = is_hitl_park_notice(screen_at_open)
+
+        async def _emit_answer(body: str, *, terminal: bool, opening: bool = False):
+            """闸门放行才发帧：``emit`` 顺着屏上那份继续发，``replace`` 武装整段替换。
+
+            帧只走 :func:`text_sse_frame`（与挂起轮、命中道、逐片道同一枚构造器，字面
+            与本单改前那两行 f-string 逐字节相同）；武装只走 :data:`CORRECTION_STEP_TOOL`
+            那对既有 step，与 ``/ask`` 的断流守卫同一张脸 —— 本单不造第二套片账。
+            """
+            verdict = answer_stream.decide(body, terminal=terminal, opening=opening)
+            if verdict == "skip":
+                return
+            correction = {"type": "step", "tool": CORRECTION_STEP_TOOL,
+                          "label": CORRECTION_STEP_LABEL}
+            if verdict == "replace":
+                yield sse_event("step", {**correction, "status": "running"})
+                await asyncio.sleep(0)
+            # R649：闸门判 ``skip`` 那一支在上面就 return 了；走到这里这一枚正文真发了屏。
+            first_text_mark.note(body, leg="approved")
+            yield text_sse_frame(body)
+            if verdict == "replace":
+                yield sse_event("step", {**correction, "status": "done",
+                                         "elapsed": round(time.time() - start_time, 1)})
+            await asyncio.sleep(0)
+        # R55：来源取证复用 /ask 那一个收集器与同一种 sink，收尾时只读不反推。
+        source_rows: dict[str, dict] = {}
+        # R414(b)：与 /ask 同一个收集器、同一个 sink，这里也只读不反推。
+        dataset_files: list[str] = []
+
+        # canonical 信封事件从这一条起与 /ask 的第一条
+        # canonical_sse_event("request.started") 同构：同一个构造器、同一套
+        # 三个 id、sequence 从 1 连续。legacy 事件全部照旧保留，canonical 是加在旁边。
+        # trace 那一处出口已按 R551 上移到把 _run 交给 executor 之前（见上面那段注释）。
+        yield canonical_sse_event(
+            "request.started",
+            request_id=request_id,
+            trace_id=trace_id,
+            task_id=task_id,
+            sequence=sequence,
+            status="running",
+            # R141 判据②：续跑轮读 resumed，而不是把"声明没跨过 HITL 那道门"糊成 r42。
+            # R172 把那一格补上了：resumed 说的从"没人定过"改成"沿用挂起前那一轮定的档"，
+            # 声明住在 declared_lane，lane 那格仍旧空 —— 这一轮的腿没按它重新派发过。
+            data={"session_id": request.session_id, **lane_readout},
+        )
+        sequence += 1
 
         while True:
+            # 与 /ask 同口径：按本代比对。上一代留下的取消判不到这一轮头上。
+            if cancel_event.is_set():
+                agent_future.cancel()
+                # 停止 != 拒绝（裁定 ④甲）：账面写 abandoned，绝不写 refused。
+                # 这一行在 R12（826d318）之前是不敢写的——那时"停止"的会话其实跑完了。
+                _decide_pending_approval(request.session_id, pending_approvals.ABANDONED)
+                finish_trace("request.cancelled", "cancelled")
+                # 先发 canonical、再发 legacy，与 /ask 的取消形状（request.cancelled 之后紧跟 legacy cancelled）一致：
+                # 事件名、status="cancelled"、data.session_id 全同。legacy 保留是给
+                # 还没接 canonical 的旧客户端的，不是过渡期垃圾。
+                yield canonical_sse_event(
+                    "request.cancelled",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="cancelled",
+                    data={"session_id": request.session_id},
+                )
+                sequence += 1
+                yield sse_event(
+                    "cancelled",
+                    {"type": "cancelled", "session_id": request.session_id},
+                )
+                break
+            if budget.expired():
+                # error_code 与 /ask 的超时形状（request.failed 携 task_timeout）同名同形状：同一个"超过处理时限"在两条
+                # 流里必须是同一个码，客户端不必按端点分支。legacy error 原文照发。
+                # R175：超时这一样得先把员工已经拍过板的那一行账闭合，再发失败帧。此前
+                # 这一条 break 一次都没闭合过账，那一行于是留在 awaiting：下次开屏它要么被
+                # 当成新待办原样列回来（图还挂在同一个中断上，等于让同一轮 resume 第二遍），
+                # 要么被复核腿（:2363-2365）就地判成 stale。写账排在发帧之前，与取消腿
+                # （:2519）、收尾腿（:2582-2585）同一个次序 —— 客户端在半路断线也不该留一格开着的账。
+                _fail_pending_approval_turn(
+                    request.session_id,
+                    principal,
+                    error_code="task_timeout",
+                    request_id=request_id,
+                )
+                finish_trace("request.failed", "failed", "task_timeout")
+                yield canonical_sse_event(
+                    "request.failed",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="failed",
+                    data={"error_code": "task_timeout"},
+                )
+                sequence += 1
+                yield sse_event("error", {"type": "error", "content": "请求超过系统处理时限"})
+                break
             try:
                 kind, data = result_queue.get_nowait()
             except qmod.Empty:
+                if time.monotonic() - last_emit >= heartbeat_interval:
+                    yield sse_event("heartbeat", {"type": "heartbeat"})
+                    last_emit = time.monotonic()
                 await asyncio.sleep(0.05)
                 continue
 
+            if kind == "piece":
+                # R31 差格 a 的收端那一支：片一到就折帧，不攒、不切、不等下一枚（与 /ask
+                # 同一条纪律）。折帧用同一枚 ``_AnswerPieceStream``，出门用同一道 R464 闸门，
+                # 判据③ 那三把尺住在上游 merger 里，这一支一个字都不裁。
+                piece_count += 1
+                frame_text = piece_stream.frame_for(data, latest_worker_results)
+                if frame_text is None:
+                    continue
+                if frame_text and answer_stream.on_screen.startswith(frame_text):
+                    # 屏上此刻站着的正文已经含着这一帧的全部字（run9 病历的常态：批准后续跑的
+                    # 就是挂起轮那条腿，同一个答案再流一遍）。再发一枚 = R464 要消灭的「客户把
+                    # 同一轮的答案读两遍」⇒ 一枚都不许上屏，只记账。
+                    piece_suppressed += 1
+                    continue
+                piece_frames += 1
+                async for chunk in _emit_answer(frame_text, terminal=False,
+                                                opening=screen_holds_notice):
+                    yield chunk
+                continue
+
             if kind == "done":
-                full_text = "".join(ai_reply)
-                _save_message(request.session_id, "assistant", full_text)
-                yield f"event: done\ndata: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+                full_text = _select_final_answer(
+                    final_answer=latest_final_answer,
+                    worker_results=latest_worker_results,
+                    candidates=answer_candidates + ai_reply,
+                )
+                labels = {"doc": "📄 搜索知识库", "data": "📊 分析数据", "chart": "📈 生成图表", "export": "📋 导出报告"}
+                settled_steps = [{"tool": worker, "label": labels.get(worker, worker), "status": "running"}
+                    for worker in latest_agent_results]
+                _complete_pending_steps(settled_steps, round(time.time() - start_time, 1), latest_agent_results)
+                for step in settled_steps:
+                    yield sse_event("step", {"type": "step", **step})
+                _save_approval_answer(request.session_id, full_text, settled_steps)
+                # 批准与拒绝都要闭合账面，否则面板会一直显示一条其实已经处理过的待办。
+                # refused 这一支对应 84af113「拒绝必须真的拒绝」的账面部分。
+                _decide_pending_approval(
+                    request.session_id,
+                    pending_approvals.RESUMED if request.approved else pending_approvals.REFUSED,
+                )
+                # R464：拦下来的"第二枚流"必须说得出拦了谁、为什么，静默拦等于没拦。
+                if answer_stream.held:
+                    logger.error(
+                        f"[R464] session={request.session_id[:8]}... 批准腿拦下 "
+                        f"{len(answer_stream.held)} 枚非延续整段（第二枚流）："
+                        f"屏上正文 {len(answer_stream.on_screen)} 字，"
+                        f"拦下的字数={[len(body) for body in answer_stream.held]}"
+                    )
+                if piece_count:
+                    # R31 差格 a 的窗内凭据（判据⑥）：续跑轮真收到片才打这一行。五枚键名
+                    # ``pieces=`` / ``cumulative=`` / ``leg=`` / ``call=`` / ``dropped=`` 与 /ask
+                    # 那行在册读数（:2900-2908）逐字同名，本单不新造没人消费的键——R506/R518
+                    # 交回的「腿名只能读后端日志」那一格，认的就是这一族键。
+                    logger.info(
+                        f"[R149] session={request.session_id[:8]}... 批准续跑轮收到流式片段："
+                        f"pieces={piece_count} cumulative={len(piece_stream.last_frame)}"
+                        f" leg={piece_stream.worker or '-'} call={piece_stream.call_id or '-'}"
+                        f" dropped={piece_stream.dropped}"
+                        f"（逐片帧上屏 {piece_frames} 枚 / 屏上已含其字而只记账 {piece_suppressed} 枚）"
+                    )
+                # R464 判据②：收尾这一枚才是本轮**交付**的那份字。逐字同屏 ⇒ 不发第二枚
+                # 流；换源 ⇒ 带 R210 那对 step 出门。改的是线上真发过什么，不是 verdict 口径。
+                if full_text and full_text not in ai_reply:
+                    async for chunk in _emit_answer(full_text, terminal=True):
+                        yield chunk
+                # R55 判据④：批准后图可能又停在下一个 HITL 节点。先问真实的挂起状态，再
+                # 决定这一轮算"完成（含新挂起）"还是"什么都没产出"——与 /ask 里读 check_interrupt 的那一支
+                # 用同一个 check_interrupt，不凭正文猜。
+                try:
+                    from app.agents.orchestrator import check_interrupt
+                    intr = check_interrupt(request.session_id)
+                except Exception:
+                    intr = None
+                if not full_text and not intr:
+                    # 图跑完了，既没有正文也没有新的等待确认：这是内部失败。报成
+                    # request.completed 就是把"什么都没产出"伪装成"已回答"
+                    # （/ask 的 no_answer_produced 那一支同一裁定）。legacy 这一支只发 done，不新增 error：
+                    # 本单对 legacy 只加不减，旧客户端收到 done 才是既有契约。
+                    finish_trace("request.failed", "failed", "no_answer_produced")
+                    yield canonical_sse_event(
+                        "request.failed",
+                        request_id=request_id,
+                        trace_id=trace_id,
+                        task_id=task_id,
+                        sequence=sequence,
+                        status="failed",
+                        data={
+                            "session_id": request.session_id,
+                            "error_code": "no_answer_produced",
+                            "worker_count": len(latest_worker_results),
+                        },
+                    )
+                    sequence += 1
+                    yield done_sse_frame(
+                        terminal_state=TERMINAL_STATE_NO_ANSWER,
+                        answer_present=False,
+                        sources_present=False,
+                        usage=read_model_call_usage(request_id),
+                        dataset_files=dataset_files,
+                    )
+
+                    await asyncio.sleep(0)
+                    break
+                if intr:
+                    # 原注释登记的那条长期缺口在本单补上：新挂起既当场发给客户端（legacy
+                    # hitl 与 /ask 那条 hitl 事件同一个 payload 形状），也记成新的 awaiting 行。写账
+                    # 必须排在上面的 _decide_pending_approval 之后，否则 mark_status 会去
+                    # 闭合刚写入的新行、把旧行留在待批里。
+                    # 图第二次挂起：本轮沿用的那份声明必须跟着续下一行账，否则第三次
+                    # 批准时就又只剩"没人定过"。抄的是同一份 lane_readout，不再问一次账本。
+                    _record_pending_approval(
+                        request.session_id,
+                        principal,
+                        intr,
+                        request_id=request_id,
+                        trace_id=trace_id,
+                        task_id=task_id,
+                        declared_lane=str(lane_readout.get("declared_lane") or ""),
+                    )
+                    yield f"event: hitl\ndata: {json.dumps({'type': 'hitl', 'pending': intr['pending'], 'labels': intr['labels']}, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0)
+                terminal_event, terminal_status, terminal_error = _request_verdict(latest_agent_results, full_text, bool(intr))
+                finish_trace(terminal_event, terminal_status, terminal_error)
+                yield canonical_sse_event(
+                    terminal_event,
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status=terminal_status,
+                    data={
+                        "session_id": request.session_id,
+                        # R414(b)：批准续跑的那一轮与 /ask 同一格读数。
+                        "data_filename": terminal_data_filename(dataset_files),
+                        "worker_count": len(latest_worker_results),
+                        "elapsed": round(time.time() - start_time, 1),
+                        "answer_length": len(full_text),
+                        "awaiting_hitl": bool(intr),
+                        "awaiting_steps": list(intr["pending"]) if intr else [],
+                        **({"error_code": terminal_error} if terminal_error else {}),
+                    },
+                )
+                sequence += 1
+                # R41 新立的 sources 事件在 /approve 这个出口上此前是缺失的。判定入口逐字
+                # 复用 /ask 里那次 _authorized_source_rows(...) 调用 -> app/rag/filters.py 的
+                # scope.allows，不另写一套过滤；本轮没检索过就是 0 条，不伪造。
+                visible_rows, scope_reason_code = _authorized_source_rows(source_rows, principal)
+                # R154 判据②：审批续出来的这一轮与 /ask 同一份行形状，生效日期一枚都不许少。
+                # 这一腿不落答案缓存（整轮是从挂起点续上的，不是一题的完整答案），所以
+                # 只盖章、不存清单。
+                _stamp_source_publications(source_rows)
+                yield canonical_sse_event(
+                    "sources",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="completed",
+                    data={
+                        "session_id": request.session_id,
+                        "sources": visible_rows,
+                        "hit_count": len(visible_rows),
+                        # 缺了这个数字，"0 条来源"就分不清"没检索到"与"检索到了但不给你看"。
+                        "unauthorized_count": len(source_rows) - len(visible_rows),
+                        "scope_reason_code": scope_reason_code,
+                    },
+                )
+                sequence += 1
+                yield done_frame_for_turn(
+                    request_id=request_id,
+                    session_id=request.session_id,
+                    full_text=full_text,
+                    intr=intr,
+                    visible_rows=visible_rows,
+                    dataset_files=dataset_files,
+                    agent_results=latest_agent_results,
+                )
                 await asyncio.sleep(0)
                 break
 
             if kind == "error":
+                # 编排线程抛错 = 这一轮失败。legacy error 只带人读的文字，机器读的码走
+                # canonical（/ask 那批 request.* 信封同一口径），legacy 原文照发不吞。
+                # R175：同上，跑挂了也要闭合那一行账。这一条 break 此前同样一次都没闭合过。
+                _fail_pending_approval_turn(
+                    request.session_id,
+                    principal,
+                    error_code="internal_error",
+                    request_id=request_id,
+                )
+                finish_trace("request.failed", "failed", "internal_error")
+                yield canonical_sse_event(
+                    "request.failed",
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    sequence=sequence,
+                    status="failed",
+                    data={"error_code": "internal_error"},
+                )
+                sequence += 1
                 yield f"event: error\ndata: {json.dumps({'type': 'error', 'content': data}, ensure_ascii=False)}\n\n"
                 await asyncio.sleep(0)
                 break
@@ -493,6 +4499,19 @@ async def approve(request: ApproveRequest):
                 continue
 
             msgs = data.get("messages", [])
+            worker_results = data.get("worker_results", {})
+            if worker_results:
+                latest_worker_results = dict(worker_results)
+            latest_final_answer = _recorded_final_answer(
+                latest_final_answer, data.get("final_answer")
+            )
+            # R41/R55：边跑边收证据，不在收尾时反推。取消/超时/抛错三条分支都走不到发
+            # sources 的那一段，所以"没有产出可见答案的一轮"绝不会发出来源事件。
+            agent_results = data.get("agent_results")
+            if isinstance(agent_results, dict):
+                _collect_document_sources(agent_results, source_rows)
+                _collect_dataset_filenames(agent_results, dataset_files)
+                latest_agent_results = dict(agent_results)
             if initial_count < 0:
                 initial_count = len(msgs)
 
@@ -506,33 +4525,224 @@ async def approve(request: ApproveRequest):
                         continue
                     if content not in ai_reply:
                         ai_reply.append(content)
-                        yield f"event: text\ndata: {json.dumps({'type': 'text', 'content': content}, ensure_ascii=False)}\n\n"
-                        await asyncio.sleep(0)
+                        answer_candidates.append(content)
+                        # R464：整段回放帧同样过闸门。落在中途而不接得上屏上正文的那一枚，
+                        # 是另一条流的脑袋 —— 发出去就是屏上拼接，不发则收尾那一枚替它说话。
+                        # ``ai_reply``/``answer_candidates`` 照旧收下这一份字：交回的正文、
+                        # ``_select_final_answer`` 与会话历史都不因闸门改一个字节。
+                        async for chunk in _emit_answer(content, terminal=False):
+                            yield chunk
                     break
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            # R172：与上面那两处出口同一份对象，不看 SSE 的客户端读到的是同一句话。
+            **_lane_readout_headers(lane_readout),
+        },
+    )
 
 
 # ==================== 会话管理 API ====================
 
+@router.get('/hitl/decision/{session_id}')
+async def read_confirmation_decision(session_id: str, request: FastAPIRequest):
+    principal = _authorize_session_request(request, session_id)
+    return FastAPIResponse(content=json.dumps({'ledger_status': approval_ledger_state(session_id, principal.user_id)}),
+                           media_type='application/json', headers=dict(NO_STORE_HEADERS))
+
+# ==================== R295：会话历史回读时重过作用域闸门 ====================
+
+#: 病灶（contract-v1.md「Registered, not fixed」第 2 条登记的那一格）：`GET /sessions/{id}`
+#: 过去只过 `is_owned_by` 一枚归属谓词，于是员工在旧部门期间那一轮的答案正文——里面就写着
+#: 旧部门文档的引用——在被挪走部门、或者那份文档改完归属之后，仍然能整段读回来。归属答的
+#: 是「这是你的会话」，它答不了「这一轮的旧引用今天还在不在你范围内」，所以回读要补的是
+#: 第二道问句，不是把第一道换掉。
+#: 判据①要的两件事同时成立：旧作用域那一轮的正文与引用读不回来；屏上给的是「这一轮不在
+#: 你当前可见范围」这一张脸，而不是把整条会话变成空列表冒充「没有历史」。
+#: 这句话里不带码名（R16：落进历史行的散文洗不掉），稳定码走 withheld_reason 那一格。
+HISTORY_TURN_WITHHELD_TEXT = (
+    "这一轮的回答与出处已不在你当前的可见范围内，因此不再展示；"
+    "本轮仍然在你的会话历史里，需要核对请找管理员确认本人部门归属与文档标注。"
+)
+
+
+def _history_catalog_rows() -> list[dict]:
+    """回读复核用的那一份文档目录：当前版本行，部门与密级两格取的是**现值**。
+
+    现值是关键。这一格问的不是「那一轮当时看见了什么」，而是「此刻这一份文档还在不在调用
+    方的可见范围内」，所以读数必须来自目录里当前那一行——挪部门与改版重标都当场生效，这也
+    正是「不给 SessionRecord 加部门维」这条裁定能成立的原因：作用域不在会话上，在文档上。
+    读不出来交空表并留一行成因：目录读不出不该把历史端点拖成 500，也不许顺手抹掉整段历史。
+    """
+    try:
+        return [row for row in current_documents() if isinstance(row, dict)]
+    except Exception as exc:  # noqa: BLE001 - 读不出目录只说明无从复核
+        logger.warning(f"[R295] 会话历史回读取不到文档目录: {type(exc).__name__}")
+        return []
+
+
+def _cited_document_rows(content: str, catalog: list[dict]) -> list[dict]:
+    """那一轮正文点名过的文档：唯一形状是「当前目录里的文件名原样出现在正文里」。
+
+    引用本来就写在正文里：编排那一腿把命中的文件名连 chunk 号一起拼进答案（见
+    `app/agents/orchestrator.py` 的「来源：」那一行与 DOC_PROMPT 的「引用来源文件名」），
+    所以回读认得出、也只认得出这一种引用。不做模糊匹配、不靠语义猜：猜出来的引用会把没
+    有引用过的那一轮一起抹掉，那正是判据①禁的那张「冒充没有历史」的脸。
+    """
+    text = str(content or "")
+    if not text:
+        return []
+    cited: list[dict] = []
+    for row in catalog:
+        filename = str(row.get("filename") or "")
+        if filename and filename in text:
+            cited.append(row)
+    return cited
+
+
+def _history_scope_face(messages, principal, session_id: str) -> tuple[list[dict], int]:
+    """回读时把每一轮重新过一遍检索闸门（app/rag/filters.py 的 ``scope.allows``）。
+
+    判定不另起一套：用的就是出口那枚 sources 事件背后的同一个
+    `resolve_document_retrieval_scope(principal).allows`，与 `_authorized_source_rows` 和旧
+    `/chat` 里那句 `scope.allows(source)` 同出一个类，既不新增放行分支，也不放宽一道。被裁
+    的那一轮换成 `HISTORY_TURN_WITHHELD_TEXT`，它的 role / created_at / steps 照旧在位：列表
+    不缩短、历史不缺行，屏上说的是「这一轮不给你看」，不是「没有这一轮」。
+
+    没有可判引用的那一轮原样交回。这不是放水：闸门裁的是文档的部门与密级，本轮既然没点名
+    任何一份文档，就没有「旧作用域的引用」这一格可泄；把这种轮次也一起抹掉才是造假历史。
+
+    留账走既有那条 `record_audit` 通路，只写主体 / 会话 id / 动词 / 判定结果，外加闸门自己
+    那枚稳定码（`refusal_code` 与 `allows` 同出一个类，专为「为什么裁它」而写）：被裁掉的
+    文档名、它的部门实值与密级实值一个字都不进台账，也不进返回值——纪律照
+    `app/rag/filters.py::_record_refusal`。
+    """
+    from app.storage.calculations import calculation_storage
+    try:
+        data_denied = calculation_storage.session_access_denied(principal, session_id)
+    except Exception:
+        data_denied = True
+    catalog = _history_catalog_rows()
+    scope = None
+    scope_code = ""
+    try:
+        scope = resolve_document_retrieval_scope(principal)
+    except RetrievalScopeError as scope_error:
+        # 闸门连作用域都给不出：任何一条引用都判不可见（fail-closed），成因就是它自己那枚码。
+        scope_code = scope_error.code
+    readout: list[dict] = []
+    withheld = 0
+    for message in messages:
+        row = dict(message)
+        cited = (
+            _cited_document_rows(row.get("content"), catalog)
+            if row.get("role") == "assistant"
+            else []
+        )
+        blocked = [item for item in cited if scope is None or not scope.allows(item)]
+        # A deleted source or unreadable catalog must not erase the permission check.
+        named = re.findall(r'《([^》]+\.(?:pdf|docx?|xlsx?|csv|txt|md))》', str(row.get("content") or ""), re.I)
+        missing_source = row.get("role") == "assistant" and any(
+            not any(item.get("filename") == name for item in catalog) for name in named)
+        if not blocked and not missing_source and not (data_denied and row.get("role") == "assistant"):
+            readout.append(row)
+            continue
+        reason = "source_scope_denied" if data_denied or missing_source else scope_code or str(scope.refusal_code(blocked[0]) or "permission_denied")
+        withheld += 1
+        record_audit(principal, ACTION_VIEW, "denied", session_id, reason)
+        readout.append(
+            {
+                "role": row.get("role"),
+                "created_at": row.get("created_at"),
+                "steps": [] if data_denied else row.get("steps") or [],
+                "content": HISTORY_TURN_WITHHELD_TEXT,
+                "answer_withheld": True,
+                "withheld_reason": reason,
+            }
+        )
+    return readout, withheld
+
+
 @router.get("/sessions")
-async def list_sessions():
-    return {"sessions": _list_sessions()}
+async def list_sessions(request: FastAPIRequest):
+    principal = _session_principal_or_error(request)
+    try:
+        sessions = _list_sessions()
+    except ChatSchemaNotMigratedError as exc:
+        # R397：与写腿 ask 同一枚具名错、同一个码（行号会漂，故这里只点名字不点行号）。
+        # 只接这一种：驱动缺失那类 RuntimeError 照旧往上抛，不许顺手洗成 503。
+        logger.warning(
+            "[Sessions] 生产库缺该由迁移建的会话表，出口按存储拒答而不是裸 500: "
+            f"route=list_sessions code=storage_unavailable reason={exc}"
+        )
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
+    return {
+        "sessions": [
+            session
+            for session in sessions
+            if session_registry.is_owned_by(session.get("id", ""), principal)
+        ]
+    }
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str):
-    msgs = _get_session_messages(session_id)
-    with _sess_conn() as conn:
-        row = conn.execute("SELECT * FROM sessions WHERE id = %s", (session_id,)).fetchone()
+async def get_session(session_id: str, request: FastAPIRequest):
+    principal = _authorize_session_request(request, session_id)
+    # R295 判据①：归属之外再重过一遍作用域闸门。换的是不在范围内的**那一轮**的脸，
+    # 会话不清空——读的人仍然看得见这一轮存在过，只是它今天不给看。
+    # R397：两条读腿各自过闸，缺哪枚表由哪枚腿指名。现读取证的次序：messages 腿在 session 腿
+    # 之前跑，所以它先拒时 session 腿一条语句都不发；只有 `session_messages` 在、`sessions` 不在
+    # 这一格，才是 messages 腿读完了、session 腿自己拒。两格都不许留下半张屏。
+    try:
+        msgs, withheld = _history_scope_face(
+            _get_session_messages(session_id), principal, session_id
+        )
+        if msgs and not withheld:
+            from app.agents.orchestrator import multi_agent_graph, _owner_id_from
+            saved = multi_agent_graph.get_state({'configurable': {'thread_id': session_id}}).values or {}
+            task = saved.get('task_context') or saved.get('data_context') or {}
+            if task and _owner_id_from({'principal': saved.get('principal')}) == principal.user_id:
+                scope = resolve_document_retrieval_scope(principal)
+                references = task.get('requested_documents') or []
+                if all(scope.allows(latest_document_version(item['filename']) or {}) for item in references):
+                    msgs[-1] = {**msgs[-1], 'task_selection': {
+                        # A report-only task_context carries report_body and may have no
+                        # filename; reading it as a required key turned the session
+                        # detail into a 500 after an export attempt.
+                        'dataFilename': task.get('filename') or '',
+                        'documentFilenames': [item['filename'] for item in references],
+                        **({'origin': {'kind': 'alert', 'id': task.get('alert_id'), 'versionId': task.get('version_id') or ''}}
+                           if task.get('alert_id') else {})}}
+        if not _session_database_available():
+            return {
+                "session": _MEM_SESSIONS.get(session_id),
+                "messages": msgs,
+                "withheld_turns": withheld,
+            }
+        with _sess_conn() as conn:
+            _require_sessions_read_schema(conn, "sessions")
+            row = conn.execute("SELECT * FROM sessions WHERE id = %s", (session_id,)).fetchone()
+    except ChatSchemaNotMigratedError as exc:
+        # 同一枚形状、同一个码；接的是闸的具名错，不是 `UndefinedTable`，也不是别的 RuntimeError。
+        logger.warning(
+            "[Sessions] 生产库缺该由迁移建的会话表，出口按存储拒答而不是裸 500: "
+            f"route=get_session code=storage_unavailable reason={exc}"
+        )
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
     return {
         "session": dict(row) if row else None,
         "messages": msgs,
+        "withheld_turns": withheld,
     }
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, request: FastAPIRequest):
+    _authorize_session_request(request, session_id, ACTION_DELETE)
     _delete_session(session_id)
     try:
         from app.agents.orchestrator import clear_session
@@ -544,86 +4754,1381 @@ async def delete_session(session_id: str):
 
 # ==================== 文档管理 ====================
 
+def _record_uploaded_version(
+    *,
+    principal,
+    owner_id: str | None,
+    filename: str,
+    classification: int,
+    department: str,
+    storage_path: str,
+    version: int,
+    size_bytes: int | None,
+    parse_status: str,
+    visibility: str = "private",
+    index_status: str = INDEX_STATUS_UNKNOWN,
+    index_reason: str = "",
+) -> dict:
+    """Persist a stored version on whichever catalog path this deployment has.
+
+    Both persistence paths get the owner. A failure here stays a warning: the file is
+    already on disk and indexed, and dropping an upload because a metadata table is
+    unreachable would lose a document the caller can no longer address. What is lost
+    instead is attribution, and an unattributed row is treated as legacy -- visible to
+    the management level only -- rather than as public.
+
+    R391: that defence belongs to the metadata leg alone. When the version ledger itself
+    refuses by name -- the store gate in ``app/documents/catalog.py`` answers production plus
+    a store that is not there with its own 503 -- there is no row at all, in the table or in
+    the local mirror, so nothing is left to be legacy. Swallowing that refusal would answer a
+    receipt claiming a registration which never happened, so it is re-raised, not translated.
+    """
+    metadata = {
+        "version": version,
+        "size_bytes": size_bytes,
+        "parse_status": parse_status,
+        "visibility": str(visibility or "private"),
+        "index_status": index_status,
+        "index_reason": index_reason,
+    }
+    if catalog_database_available():
+        try:
+            _upsert_document(
+                filename,
+                classification,
+                department,
+                owner_id,
+                size_bytes=size_bytes,
+                parse_status=parse_status,
+                visibility=visibility,
+            )
+        except Exception as exc:
+            logger.warning(f"[Docs] metadata sync failed: {exc}")
+        try:
+            return record_document_version(
+                filename,
+                classification=classification,
+                department=department,
+                storage_path=storage_path,
+                version=version,
+                principal=principal,
+                owner_id=owner_id,
+                size_bytes=size_bytes,
+                parse_status=parse_status,
+                visibility=visibility,
+                index_status=index_status,
+                index_reason=index_reason,
+            )
+        except HTTPException:
+            # 存储自己已经报过脸了（R383 那道闸：生产 + 目录存储没起 = 具名 503）。吃掉它就是把
+            # 「这一版没落账」翻译成 200，所以原样上抛，由出口作答；本模块不新增第二枚 503。
+            raise
+        except Exception as exc:
+            logger.warning(f"[Docs] version record failed: {exc}")
+            return metadata
+    try:
+        return record_local_document_version(
+            filename,
+            classification=classification,
+            department=department,
+            storage_path=storage_path,
+            version=version,
+            principal=principal,
+            owner_id=owner_id,
+            size_bytes=size_bytes,
+            parse_status=parse_status,
+            visibility=visibility,
+            index_status=index_status,
+            index_reason=index_reason,
+        )
+    except Exception as exc:
+        logger.warning(f"[Docs] local version record failed: {exc}")
+        return metadata
+
+
+# ==================== Index publication (S4) ====================
+
+_INDEX_PUBLISHER: IndexPublisher | None = None
+_INDEX_MIRROR: PostgresIndexStore | None = None
+_INDEX_LOCK = threading.Lock()
+
+
+def index_mirror_store() -> PostgresIndexStore:
+    """The PostgreSQL mirror follows the catalog's own database health signal."""
+    global _INDEX_MIRROR
+    if _INDEX_MIRROR is None:
+        _INDEX_MIRROR = PostgresIndexStore(available=lambda: catalog_database_available())
+    return _INDEX_MIRROR
+
+
+def index_publisher() -> IndexPublisher:
+    """One versioned index registry per process, stored at INDEX_METADATA_PATH."""
+    global _INDEX_PUBLISHER
+    with _INDEX_LOCK:
+        if _INDEX_PUBLISHER is None:
+            _INDEX_PUBLISHER = IndexPublisher(
+                IndexRegistry(default_metadata_path()),
+                store=index_mirror_store(),
+            )
+        return _INDEX_PUBLISHER
+
+
+def _document_chunk_rows(filename: str) -> list[dict]:
+    """Read back what the vector store really holds for one document.
+
+    The published count comes from the store rather than from a fresh split: a record of
+    chunks that were never written is exactly the kind of claim this slice removes.
+    """
+    reader = getattr(retriever, "document_chunks", None)
+    if reader is None:
+        return []
+    try:
+        return list(reader(filename))
+    except Exception as exc:
+        raise IndexPublicationError(
+            "chunks", f"the vector chunks of {filename} could not be read", exc
+        ) from exc
+
+
+def _document_publication(
+    *,
+    filename: str,
+    version: int,
+    owner_id: str | None,
+    classification: int,
+    department: str,
+    scope: dict | None = None,
+    retirement: bool = False,
+) -> DocumentIndexPublication:
+    """Describe one document version's index state in catalog coordinates.
+
+    ``scope`` is the same projection an authorization decision reads, so the resource
+    version row the mirror writes can never disagree with the attributes the request was
+    actually decided on. It defaults to the catalog coordinates already passed in rather
+    than to an open scope: a publication built without a scope stays private.
+    """
+    declared = scope or {}
+    shared = {
+        "visibility": str(declared.get("visibility") or "private"),
+        "department_ids": tuple(
+            str(value).strip()
+            for value in (declared.get("department_ids") or ())
+            if str(value).strip()
+        ),
+        "resource_status": str(declared.get("status") or "active"),
+    }
+    if retirement:
+        return DocumentIndexPublication(
+            filename=filename,
+            version=int(version),
+            owner_id=owner_id,
+            classification=classification,
+            department=department,
+            retirement=True,
+            **shared,
+        )
+    rows = _document_chunk_rows(filename)
+    return DocumentIndexPublication(
+        filename=filename,
+        version=int(version),
+        owner_id=owner_id,
+        classification=classification,
+        department=department,
+        chunks=tuple(str(row.get("content") or "") for row in rows),
+        vector_ids=tuple(str(row.get("vector_id") or "") for row in rows),
+        content_hash=str((rows[0] if rows else {}).get("hash") or ""),
+        **shared,
+    )
+
+
+def _publish_document_index(publication: DocumentIndexPublication) -> dict:
+    """Publish one index version, or report that there was nothing to publish.
+
+    A version with no chunks has no index, and a retirement has none by definition; both
+    answer with what actually happened instead of dressing it up as a publication. The
+    registry and the mirror raise ``IndexPublicationError`` with the stage that failed,
+    and the caller turns that into a 500 that does not claim success.
+    """
+    outcome = index_publisher().apply(publication)
+    if outcome is None:
+        reason = "no_published_index" if publication.retirement else "no_indexed_chunks"
+        logger.warning(
+            f"[Index] {publication.resource_version_id}: {reason}; no index version was published"
+        )
+        return {
+            "status": "skipped",
+            "reason": reason,
+            "index_id": publication.index_id,
+            "source_version_id": publication.resource_version_id,
+            "chunk_count": 0,
+            "mirrored": False,
+            "warnings": [],
+        }
+    return outcome.as_dict()
+
+
+def _document_index_error(
+    filename: str, stage: str, message: str, *, code: str = "index_publish_failed"
+):
+    """One honest error body for an index publication that did not finish."""
+    return HTTPException(
+        status_code=500,
+        detail=ErrorEnvelope(
+            code=code,
+            message=message,
+            retryable=True,
+            details={"filename": filename, "stage": stage},
+        ).model_dump(),
+    )
+
+
+def _unpublished_index_outcome(filename: str, version: int, reason: str) -> dict:
+    """The skip envelope of a version that never reached the publisher at all.
+
+    Same shape as the ``{"status": "skipped", "reason": ...}`` a publication returns when
+    there is nothing to publish, so a client reads one field set for every outcome of an
+    upload. Building it names the index stream only: no vector store read, no publisher
+    write, no embedding call -- an excluded document must cost nothing.
+    """
+    publication = DocumentIndexPublication(filename=filename, version=int(version))
+    return {
+        "status": "skipped",
+        "reason": reason,
+        "index_id": publication.index_id,
+        "source_version_id": publication.resource_version_id,
+        "chunk_count": 0,
+        "mirrored": False,
+        "warnings": [],
+    }
+
+
+#: 回执层里，同一枚降级原因最多枚举几枚页码（R347 判据①）。
+#:
+#: 为什么是 10：这一格是一句给人扫读的散文，不是能点开的页码列表。前端
+#: ``DocPanel.vue`` 那枚 ``PDF_PAGE_LIST_CAP = 12`` 钉的是 chips 的排布宽度，且那一格
+#: 下面还有整页账可以展开；回执这一格没有展开态，越长越读不下去，所以刻意比它紧一档。
+#: 10 枚三位数页码（含顿号）约 38 字符，加句头与一枚 reason 后整句稳在 100 字符以内。
+PDF_DEGRADATION_PAGE_LIST_CAP = 10
+
+
+#: 回执层里，降级说明最多逐条列出几枚 **不同的** 降级原因（R353 判据①）。
+#:
+#: 为什么还要第二枚上限：R347 治的是「同一句复述 300 遍」，它把同因的页折成一句；而 400 枚
+#: **各不相同**的 reason 每堆只有一枚页，走的正是下面那条恒等路径 —— 尺子句原样搬，复述没了，
+#: 长度仍然跟着原因类数线性涨，等于把旧问题从「同一句复述」换成「300 句各说一遍」。这一格是给人
+#: 扫读的散文，不是能点开的列表：页级明细在 ``app/rag/loader.py`` 的逐页真源账里（R298 / R301
+#: 钉着），多列几类原因不增加任何可点开的信息，所以按 R347 同一口径收口 —— 逐条列前
+#: ``PDF_DEGRADATION_REASON_GROUP_CAP`` 类，其余只报枚数，并如实说「另有 N 类原因未逐条列出」。
+#: 收口之后整句长度与类数无关，只剩「另有 N 类」里 N 的位数随 N 取对数涨。
+PDF_DEGRADATION_REASON_GROUP_CAP = 10
+
+
+def _degradation_reason_groups(report: PdfExtractionReport) -> list[tuple[str, list[int]]]:
+    """把降级页按 **reason 原文逐字相同** 归堆（R347 判据①④）。
+
+    键就是 ``page.note`` 本身：不归一化、不截断、不比相似词 —— 合并按字面相等，所以
+    「这一页没跑成」与「另一页因为别的原因没跑成」永远各说各的句。堆序 = 各 reason 首次
+    出现的页序，堆内页码升序（与 ``report.pages`` 同序），客户读到的还是「从前往后」。
+    """
+    pages_by_reason: dict[str, list[int]] = {}
+    for page in report.pages:
+        if page.source != PAGE_SOURCE_OCR_DEGRADED:
+            continue
+        pages_by_reason.setdefault(page.note, []).append(page.page_number)
+    return list(pages_by_reason.items())
+
+
+def _degradation_segment(reason: str, page_numbers: list[int]) -> str:
+    """一堆页码产出一句；超限收口，「另有 N 页未列出」的 N 是真剩余数（判据①）。
+
+    ``len(page_numbers)`` 是这一堆的真枚数，``shown`` 只是画下来的那几枚：N 一律由
+    真枚数减去画下来的枚数，绝不拿 ``shown`` 的长度冒充总数。
+    """
+    shown = page_numbers[:PDF_DEGRADATION_PAGE_LIST_CAP]
+    omitted = len(page_numbers) - len(shown)
+    label = "、".join(str(number) for number in shown)
+    tail = f"，另有 {omitted} 页未列出" if omitted else ""
+    return f"第{label}页{tail}：{reason}"
+
+
+def _degradation_groups_tail(omitted_groups: int) -> str:
+    """原因类数超限时补那一句话（R353 判据②）。
+
+    ``omitted_groups`` 是**没逐条列出的**类数（``len(groups) - len(shown_groups)``），不是画下来的
+    类数；一枚都没省略就是空串，不许造「另有 0 类」。省略号不许冒充说完了：这里只有真剩余数，
+    没有修辞，也不许把「这一档有退化」这件事跟着一起省略掉。
+    """
+    return f"；另有 {omitted_groups} 类原因未逐条列出" if omitted_groups else ""
+
+
+def _receipt_degradation_note(report: PdfExtractionReport) -> str:
+    """上传回执的降级说明：同一枚 reason 只说一遍，页码与原因类数各有上限（R347 / R353）。
+
+    五条边界：
+
+    ① 合并发生在这一层，不在 loader：``degradation_notes`` / ``degradation_sentence``
+       是逐页真源账（R298 / R301 钉着），这里只读不改，也不许它替本格说话。
+    ② 没有同因复述 ⇒ 尺子那句原样搬（``report.degradation_sentence``），本格一个字不加工，
+       R301 那条「尺改口，回执跟着改口」的等式继续成立 —— 但只在类数没超上限时成立：恒等那一支
+       本身就是「把所有原因各说一遍」，400 枚不同的原因走它就是 400 句，所以 R353 把它一起封顶
+       （见⑤），超限那一档改由本格用同一套句子模板重画，不另造措辞。
+    ③ 合的是页，不是档：``ocr_available`` 为假走 ``ocr.ENGINE_UNAVAILABLE_NOTE``，为真走
+       ``loader.DEGRADATION_NOTE_PREFIX``，两档句头各自留着（R298 那一族）。
+    ④ reason 原文只抄不改：句子里那一段就是 ``page.note``，不翻译、不润色、不剥标点。
+    ⑤ 原因类数也有上限（R353）：超过 ``PDF_DEGRADATION_REASON_GROUP_CAP`` 类只逐条列前若干类，
+       其余以「另有 N 类原因未逐条列出」收口，N 是真剩余数。封顶截的是**这一句话**：逐页真源账与
+       ``ocr_degraded_page_numbers`` 一枚不少，「哪几页坏了」照样问得出来，不许有人顺手把「这一档
+       有退化」整个省略掉。
+    """
+    groups = _degradation_reason_groups(report)
+    if not groups:
+        return ""
+    shown_groups = groups[:PDF_DEGRADATION_REASON_GROUP_CAP]
+    omitted_groups = len(groups) - len(shown_groups)
+    if not omitted_groups and all(len(numbers) == 1 for _reason, numbers in groups):
+        return report.degradation_sentence
+    head = DEGRADATION_NOTE_PREFIX if report.ocr_available else ocr_channel.ENGINE_UNAVAILABLE_NOTE
+    body = "；".join(_degradation_segment(reason, numbers) for reason, numbers in shown_groups)
+    return f"{head}：{body}{_degradation_groups_tail(omitted_groups)}"
+
+
+def _pdf_extraction_cell(extraction: DocumentExtraction | None) -> dict | None:
+    """这一次上传的 PDF 提取读数（R301 判据①②③⑤）。
+
+    三个「只」：只搬 :class:`PdfExtractionReport` 已经有的读数，逐页来源用现成的
+    ``source_counts``，不新造第二套词表；降级说明用的料只出自 ``degradation_sentence``
+    那一把尺（R298 已经把「引擎不可用」与「引擎在、只是这一页没跑成」分成两档，句头照
+    ``ocr_available`` 各走各的，reason 原文一个字不改口）；R347 在这一层只把「同一枚
+    reason 被逐页复述」折成一句，页码枚举有上限，见 :func:`_receipt_degradation_note`；
+    只报读数 —— 「这一页 OCR 没跑成」与「这一页没有内容」是两件事，本格只说前者，后者由
+    ``source_counts`` 里的 ``blank`` 与 ``ocr-empty`` 各自说话，不合并、不引申。
+
+    没有逐页账 ⇒ 整格 ``None``：非 PDF（``.txt`` / ``.md`` / ``.doc``）与 ``.docx`` 都走
+    这一支。不返回 ``{}`` —— 一个空对象读起来像「查过了，什么都没查到」，而那恰恰是判据③
+    点名要禁的形状：没读过的东西不许长得像读过。
+
+    格里没有绝对路径：``extraction.file_path`` 与 ``report.file_path`` 都是服务器落盘位置，
+    客户看得见的是自己上传时那个文件名（响应里已有的 ``filename``）。这一格也不落库 ——
+    它是「这一次上传的读数」，写进目录行就要迁移，那是另一枚单。
+    """
+    report = extraction.pdf if extraction is not None else None
+    if report is None:
+        return None
+    return {
+        "page_count": report.page_count,
+        "scanned_pages": report.scanned_pages,
+        "scanned_page_numbers": list(report.scanned_page_numbers),
+        "ocr_attempted": report.ocr_attempted,
+        "ocr_available": report.ocr_available,
+        "ocr_engine": report.ocr_engine,
+        "ocr_dpi": report.ocr_dpi,
+        "source_counts": dict(report.source_counts),
+        "ocr_degraded_page_numbers": [
+            page.page_number for page in report.pages if page.source == PAGE_SOURCE_OCR_DEGRADED
+        ],
+        "degradation_note": _receipt_degradation_note(report),
+    }
+
+
+def _document_upload_result(
+    *,
+    filename: str,
+    stored_name: str | None,
+    resource_id: str,
+    version_meta: dict,
+    owner_id: str | None,
+    department: str,
+    index_status: str,
+    index_reason: str,
+    index_message: str,
+    index_publication: dict,
+    status: str,
+    message: str,
+    pdf_extraction: dict | None,
+    chunk_count: int | None = None,
+    index_metrics: dict | None = None,
+) -> dict:
+    """One response shape for every outcome of ``POST /upload``, indexed or not.
+
+    R49 gives a skipped upload the same fields as an indexed one on purpose: the caller
+    must be able to tell "searchable" from "deliberately not indexed" by reading
+    ``index_status``, and must never have to infer it from a field that went missing.
+
+    R301 adds ``pdf_extraction`` to that same shape: the page-source reading of this one
+    upload, ``None`` (never ``{}``) whenever the format has no page book to report. It is a
+    reading, not a ledger -- nothing here persists it, because a column for one would need a
+    migration and that is a separate ticket awaiting the owner.
+    """
+    receipt = {
+        "filename": filename,
+        "stored_name": stored_name,
+        "resource_id": resource_id,
+        "version": version_meta.get("version"),
+        "size_bytes": version_meta.get("size_bytes"),
+        "parse_status": version_meta.get("parse_status"),
+        "pdf_extraction": pdf_extraction,
+        "owner_id": owner_id,
+        "department": department,
+        "chunk_count": (
+            index_publication.get("chunk_count", 0) if chunk_count is None else int(chunk_count)
+        ),
+        "index_status": index_status,
+        "index_reason": index_reason,
+        "index_message": index_message,
+        "index_publication": index_publication,
+        "status": status,
+        "message": message,
+    }
+    if index_metrics is not None:
+        receipt["index_metrics"] = index_metrics
+    return receipt
+
+
 @router.post("/upload")
 async def upload_document(file: UploadFile = File(...),
                           classification: int = Form(1),
-                          department: str = Form("")):
-    next_version = peek_next_document_version(file.filename)
-    stored_name = build_storage_name(file.filename, next_version)
-    file_path = os.path.join(DOCUMENTS_DIR, stored_name)
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
-    content = load_document(file_path)
-    ok, msg = retriever.add_document(file.filename, content,
-                                     classification=classification,
-                                     department=department or None)
-    if ok:
-        _upsert_document(file.filename, classification, department)
-        version_meta = record_document_version(
-            file.filename,
+                          department: str = Form(""),
+                          request: FastAPIRequest = None):
+    """Ingest one knowledge-base document and record who uploaded it.
+
+    ``request`` stays optional so the in-process callers that predate the principal
+    remain valid. Without a request there is no subject, and the version is recorded
+    as an unowned (legacy) row rather than owned by a guessed user.
+
+    The document scope is decided here rather than accepted from the form: retrieval
+    matches a document against the departments of the caller asking, so a document that
+    lands without one can never be found by anyone, and a department chosen by the
+    client would let a caller publish into somebody else's results. The uploader's own
+    department is what the datasets and artifacts registries already use.
+    """
+    principal = principal_from_request(request) if request is not None else None
+    if request is not None:
+        authorize_request(request, ACTION_UPLOAD, resource_name=file.filename or "document")
+        accepted_departments = {
+            str(principal.department or ""),
+            *(str(value) for value in principal.department_ids),
+        }
+        accepted_departments.discard("")
+        claimed_department = str(department or "").strip()
+        if claimed_department and claimed_department not in accepted_departments:
+            raise HTTPException(status_code=403, detail="department_override_denied")
+        if not accepted_departments:
+            raise HTTPException(status_code=403, detail="authorization_unavailable")
+        # The upload dropdown is a convenience, never the enforcement point: a
+        # caller may choose any level its role can read, and nothing above it.
+        if classification < 1 or classification > principal.clearance:
+            raise HTTPException(status_code=400, detail="invalid_classification")
+    owner_id = str(getattr(principal, "user_id", "") or "") or None
+    department = str(getattr(principal, "department", "") or "")
+    header = await file.read(8192)
+    try:
+        inspection = inspect_upload_header(file.filename, header)
+    except UploadSecurityError as exc:
+        raise HTTPException(
+            status_code=400, detail=getattr(exc, "code", None) or "unsupported_file"
+        ) from exc
+
+    if request is not None:
+        existing = latest_document_version(inspection.display_filename)
+        if existing is not None:
+            authorize_request(
+                request,
+                ACTION_UPLOAD,
+                resource=_document_resource_scope(inspection.display_filename, existing),
+                resource_name=inspection.display_filename,
+            )
+            if (
+                principal.role == "staff"
+                and str(existing.get("owner_id") or "") != str(principal.user_id)
+            ):
+                raise HTTPException(status_code=403, detail="owner_mismatch")
+    next_version = peek_next_document_version(inspection.display_filename)
+    resource_id = uuid.uuid4().hex
+    storage_path = build_storage_path(DOCUMENTS_DIR, resource_id, inspection.extension)
+    temp_path = storage_path.with_name(f".upload-{resource_id}.tmp")
+    written = 0
+    try:
+        with temp_path.open("xb") as output:
+            written += len(header)
+            if written > MAX_DOCUMENT_UPLOAD_BYTES:
+                raise UploadSecurityError("upload exceeds the configured size limit")
+            output.write(header)
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_DOCUMENT_UPLOAD_BYTES:
+                    raise UploadSecurityError("upload exceeds the configured size limit")
+                output.write(chunk)
+            output.flush()
+        os.replace(temp_path, storage_path)
+    except UploadSecurityError as exc:
+        if temp_path.exists():
+            temp_path.unlink()
+        if storage_path.exists():
+            storage_path.unlink()
+        raise HTTPException(status_code=413, detail="upload_too_large") from exc
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink()
+        if storage_path.exists():
+            storage_path.unlink()
+        raise
+
+    stored_name = storage_path.name
+    file_path = str(storage_path)
+    logger.info(f"[Docs] upload received: {inspection.display_filename} -> {stored_name}")
+    # R301 判据①：PDF 走带账的那一枚出口，一次解析同时拿回正文与逐页来源账。
+    # 不先 load_document 再补一遍账 —— 那等于把 R298 的 OCR 在客户机上重跑一次。
+    # 其余格式照旧只取正文：那一格对它们没有账可报（判据③，整格 None）。
+    extraction: DocumentExtraction | None = None
+    try:
+        if inspection.extension == ".pdf":
+            extraction = await asyncio.to_thread(extract_document_with_reports, file_path)
+            content = extraction.text
+        else:
+            content = await asyncio.to_thread(load_document, file_path, display_name=inspection.display_filename)
+    except Exception as exc:
+        logger.exception(f"[Docs] parse failed: {file.filename}")
+        # The stored file and its catalog row are kept on purpose. A version that
+        # cannot be parsed has to stay visible as failed so its owner or an
+        # administrator can remove it; deleting the file and answering 500 made a
+        # failed upload indistinguishable from one that never happened.
+        _record_uploaded_version(
+            principal=principal,
+            owner_id=owner_id,
+            filename=inspection.display_filename,
             classification=classification,
             department=department,
             storage_path=file_path,
             version=next_version,
+            size_bytes=written,
+            parse_status="failed",
         )
+        raise HTTPException(status_code=500, detail="document_parse_failed") from exc
+
+    # R301：读数在这一刻定稿。后面四条返回路径（indexed / excluded / 重复未收 / 索引拒收但保留文件）
+    # 带同一格、同一形状 —— 少一条就变成"客户端靠键不见了去猜"，那是 R49 已经否掉的写法。
+    pdf_extraction = _pdf_extraction_cell(extraction)
+
+    # R49 索引瘦身：值不值得入索引，在这里判、在花钱之前判。判定只看正文特征，不看文件名
+    # （理由与阈值见 app/documents/index_policy.py）。被排除的版本一律保留文件、保留目录行、
+    # 把稳定码同时回给调用方并写进日志——一份没进索引的上传必须能回答"为什么没进"。
+    eligibility = evaluate_index_eligibility(content, size_bytes=written)
+    if not eligibility.eligible:
+        logger.warning(
+            f"[Docs] index excluded: {inspection.display_filename} v{next_version} "
+            f"reason={eligibility.reason} metrics={eligibility.metrics}"
+        )
+        version_meta = _record_uploaded_version(
+            principal=principal,
+            owner_id=owner_id,
+            filename=inspection.display_filename,
+            classification=classification,
+            department=department,
+            storage_path=file_path,
+            version=next_version,
+            size_bytes=written,
+            # 解析一步的结论照实写：一个字符都没解析出来的，parse_status 就是 failed；
+            # 解析出内容但按策略不入索引的，它仍然是 ready —— "不入索引"由 index_status 说。
+            parse_status="failed" if eligibility.reason == REASON_NO_TEXT else "ready",
+            index_status=INDEX_STATUS_EXCLUDED,
+            index_reason=eligibility.reason,
+        )
+        return _document_upload_result(
+            pdf_extraction=pdf_extraction,
+            filename=inspection.display_filename,
+            stored_name=stored_name,
+            resource_id=resource_id,
+            version_meta=version_meta,
+            owner_id=owner_id,
+            department=department,
+            index_status=INDEX_STATUS_EXCLUDED,
+            index_reason=eligibility.reason,
+            index_message=eligibility.message,
+            index_publication=_unpublished_index_outcome(
+                inspection.display_filename, version_meta["version"], eligibility.reason
+            ),
+            status="skipped",
+            message=eligibility.message,
+            chunk_count=0,
+            index_metrics=eligibility.metrics,
+        )
+
+    try:
+        ok, msg = await asyncio.to_thread(
+            retriever.add_document,
+            inspection.display_filename,
+            content,
+            classification,
+            department or None,
+        )
+    except Exception as exc:
+        logger.exception(f"[Docs] index failed: {file.filename}")
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        raise HTTPException(status_code=500, detail="document_index_failed") from exc
+
+    if ok:
+        version_meta = _record_uploaded_version(
+            principal=principal,
+            owner_id=owner_id,
+            filename=inspection.display_filename,
+            classification=classification,
+            department=department,
+            storage_path=file_path,
+            version=next_version,
+            size_bytes=written,
+            parse_status="ready",
+            index_status=INDEX_STATUS_INDEXED,
+        )
+        def _publish_upload_index():
+            return _publish_document_index(
+                _document_publication(
+                    filename=inspection.display_filename,
+                    version=version_meta["version"],
+                    owner_id=owner_id,
+                    classification=classification,
+                    department=department,
+                    scope=_document_resource_scope(inspection.display_filename, version_meta),
+                )
+            )
+
+        try:
+            index_publication = await asyncio.to_thread(_publish_upload_index)
+        except IndexPublicationError as exc:
+            logger.exception(f"[Docs] index publication failed: {inspection.display_filename}")
+            raise _document_index_error(
+                inspection.display_filename,
+                exc.stage,
+                "index publication failed; the stored file and its catalog row remain",
+            ) from exc
         from app.agents.tools import rebuild_bm25
-        rebuild_bm25()  # C1: 新文档立即进入关键词检索
-        return {
-            "filename": file.filename,
-            "stored_name": stored_name,
-            "version": version_meta["version"],
-            "status": "ok",
-            "message": msg,
-        }
-    if os.path.exists(file_path):
-        os.remove(file_path)
-    return {"filename": file.filename, "status": "skipped", "message": msg}
+        rebuild_future = _executor.submit(rebuild_bm25)
+        rebuild_future.add_done_callback(
+            lambda future: logger.error(f"[BM25] 索引重建失败: {future.exception()}")
+            if future.exception()
+            else None
+        )
+        return _document_upload_result(
+            pdf_extraction=pdf_extraction,
+            filename=inspection.display_filename,
+            stored_name=stored_name,
+            resource_id=resource_id,
+            version_meta=version_meta,
+            owner_id=owner_id,
+            department=department,
+            index_status=version_meta.get("index_status") or INDEX_STATUS_INDEXED,
+            index_reason="",
+            index_message="",
+            index_publication=index_publication,
+            status="ok",
+            message=msg,
+            chunk_count=index_publication.get("chunk_count", 0),
+        )
+
+    # 索引层自己没收下这份正文。归成稳定码，再决定留不留文件：只有"内容一字未改的重复上传"
+    # 可以不复制第二份物理文件，其余一律保留文件与目录行。过去的写法是先 os.remove 再回一句
+    # skipped —— 用户上传的东西就此消失，既不在索引里也不在列表里，只有日志记得它。
+    refusal = classify_index_refusal(msg)
+    notice = index_notice(refusal)
+    logger.warning(
+        f"[Docs] index refused: {inspection.display_filename} v{next_version} "
+        f"reason={refusal} detail={msg}"
+    )
+    if droppable_upload(refusal):
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        # 这份正文已经在索引里（同名的上一个版本），所以状态是 indexed 而不是 excluded；
+        # 没有新增可检索内容这件事由 index_publication.reason 说清楚。
+        return _document_upload_result(
+            pdf_extraction=pdf_extraction,
+            filename=inspection.display_filename,
+            stored_name=None,
+            resource_id=resource_id,
+            version_meta={"version": next_version, "size_bytes": written, "parse_status": "ready"},
+            owner_id=owner_id,
+            department=department,
+            index_status=INDEX_STATUS_INDEXED,
+            index_reason="",
+            index_message=notice,
+            index_publication=_unpublished_index_outcome(
+                inspection.display_filename, next_version, refusal
+            ),
+            status="skipped",
+            message=notice,
+            chunk_count=0,
+        )
+    version_meta = _record_uploaded_version(
+        principal=principal,
+        owner_id=owner_id,
+        filename=inspection.display_filename,
+        classification=classification,
+        department=department,
+        storage_path=file_path,
+        version=next_version,
+        size_bytes=written,
+        parse_status="ready",
+        index_status=INDEX_STATUS_EXCLUDED,
+        index_reason=refusal,
+    )
+    return _document_upload_result(
+        pdf_extraction=pdf_extraction,
+        filename=inspection.display_filename,
+        stored_name=stored_name,
+        resource_id=resource_id,
+        version_meta=version_meta,
+        owner_id=owner_id,
+        department=department,
+        index_status=INDEX_STATUS_EXCLUDED,
+        index_reason=refusal,
+        index_message=notice,
+        index_publication=_unpublished_index_outcome(
+            inspection.display_filename, version_meta["version"], refusal
+        ),
+        status="skipped",
+        message=notice,
+        chunk_count=0,
+    )
+
+
+def _indexed_document_names() -> set[str]:
+    try:
+        return set(retriever.list_documents())
+    except Exception as exc:
+        logger.warning(f"[Docs] list unavailable: {type(exc).__name__}")
+        raise HTTPException(status_code=503, detail="storage_unavailable") from exc
 
 
 @router.get("/documents")
-async def list_documents():
-    docs = retriever.list_documents()
-    return {"documents": docs}
+async def list_documents(request: FastAPIRequest):
+    indexed_names = _indexed_document_names()
+    # 判定与计数只走 _classify_document_rows 那一份（R179 的通路），这里不数第二遍权限；
+    # 形状只走 app/api/v1/restricted.py 那一份（R200），这里也不拼第二遍。
+    visible_rows, withheld = _classify_document_rows(request, current_documents())
+    result: dict = {
+        "documents": [
+            row["filename"]
+            for row in visible_rows
+            if row.get("filename") in indexed_names
+        ]
+    }
+    if withheld:
+        # 数组里的「没有」只管已索引；被权限挡掉的另说一笔，两张脸不许长成一张。
+        result["restricted"] = restricted_summary(withheld, DOCUMENT_TEMPLATE)
+    return result
 
 
 @router.get("/documents/catalog")
-async def list_document_catalog():
-    return {"documents": current_documents()}
+async def list_document_catalog(request: FastAPIRequest):
+    _indexed_document_names()
+    visible, withheld = _classify_document_rows(request, current_documents())
+    result: dict = {"documents": visible}
+    if withheld:
+        # 判据②（两张脸）：形状与 GET /documents 共用 restricted_summary 那一份。
+        result["restricted"] = restricted_summary(withheld, DOCUMENT_TEMPLATE)
+    return result
 
 
 @router.get("/documents/{filename}/versions")
-async def document_version_history(filename: str):
-    return {"filename": filename, "versions": list_document_versions(filename)}
+async def document_version_history(filename: str, request: FastAPIRequest):
+    principal = _document_principal_or_error(request)
+    # R404（乙）：判定只读台账最新那一行（catalog 单行读），一次都不取全量；全量读排在
+    # 判定之后，只喂响应正文。两张脸按现读认下来：台账有行而盘上文件已没 ⇒ 判定仍读那一行；
+    # 无台账行 ⇒ 判定之前先 404。
+    latest = latest_document_version(filename)
+    if not latest:
+        raise HTTPException(status_code=404, detail="resource_not_found")
+    decision = _document_authorization_decision(principal, filename, latest, ACTION_VIEW)
+    # 判定过程落审计台账：走的还是 record_audit 那一条唯一通路（本文件不许有第二枚日志器），
+    # 动词按门分——这一扇门读版本历史，记它自己判定用的 resource:view，与下载／删除那两扇门
+    # 各自的动词并列，不新造码；文档正文一个字都不进台账。
+    record_audit(
+        principal,
+        ACTION_VIEW,
+        "allowed" if decision.allowed else "denied",
+        filename,
+        decision.reason_code,
+        request_id=principal.request_id or None,
+        resource_scope=_document_resource_scope(filename, latest),
+        policy_version=decision.policy_version,
+    )
+    if not decision.allowed:
+        raise HTTPException(status_code=403, detail=decision.reason_code)
+    versions = list_document_versions(filename)
+    return {
+        "filename": filename,
+        # R154 判据②：``index_versions.published_at`` 到这里才有出口。版本行的公开投影
+        # 由 catalog 负责（那张表本身没有发布时间列），生效日期是索引侧的账，所以在出口
+        # 这一侧按 (filename, version) 配对补上；配不上就不带键。
+        "versions": _stamp_version_publications(_visible_document_rows(request, versions)),
+    }
+
+
+@router.get("/documents/{filename}/file")
+async def get_document_file(
+    filename: str,
+    request: FastAPIRequest,
+    inline: bool = False,
+):
+    version, _decision = _authorize_document_request(request, filename, ACTION_DOWNLOAD)
+    file_path = _document_storage_path(version)
+    # A spreadsheet also registered as a document must not bypass the data route's
+    # row scope by downloading its complete bytes through this alternate URL.
+    from app.api.v1.data import DATA_FILE_EXTENSIONS, authorize_raw_table_download
+
+    if Path(file_path).suffix.lower() in DATA_FILE_EXTENSIONS:
+        await asyncio.to_thread(authorize_raw_table_download, request, Path(file_path), filename)
+
+    media_type, _ = mimetypes.guess_type(file_path)
+    media_type = media_type or "application/octet-stream"
+    disposition = "inline" if inline else "attachment"
+    return FileResponse(
+        file_path,
+        filename=os.path.basename(file_path),
+        media_type=media_type,
+        content_disposition_type=disposition,
+        headers=dict(NO_STORE_HEADERS),
+    )
+
+
+@router.get("/documents/{filename}/preview")
+async def get_document_preview(
+    filename: str,
+    request: FastAPIRequest,
+    response: FastAPIResponse,
+):
+    version, _decision = _authorize_document_request(request, filename, ACTION_VIEW)
+    file_path = _document_storage_path(version)
+    try:
+        payload = await asyncio.to_thread(build_document_preview, file_path, filename,
+            principal=_document_principal_or_error(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=415, detail="unsupported_preview") from exc
+    except Exception as exc:
+        logger.exception(f"[Docs] preview failed: {filename}")
+        raise HTTPException(status_code=500, detail="document_preview_failed") from exc
+    response.headers.update(NO_STORE_HEADERS)
+    return payload
+
+
+@router.put("/documents/{filename}/visibility")
+async def update_document_visibility(
+    filename: str,
+    data: DocumentVisibilityRequest,
+    request: FastAPIRequest,
+):
+    """Publish or unpublish one level-1 document for the whole enterprise.
+
+    Only an administrator may change the sharing range. The change is one transaction
+    across the catalog, the vector rows and the version ledger, so a document cannot be
+    listable while the retriever still refuses it.
+    """
+    principal = _document_principal_or_error(request)
+    if not is_administrator(principal):
+        record_audit(principal, ACTION_MANAGE_USERS, "denied", filename, "permission_denied")
+        raise HTTPException(status_code=403, detail="permission_denied")
+    latest = latest_document_version(filename)
+    if latest is None:
+        raise HTTPException(status_code=404, detail="resource_not_found")
+    before = str(latest.get("visibility") or "private")
+    try:
+        result = await asyncio.to_thread(set_document_visibility, filename, data.visibility)
+    except DocumentVisibilityError as exc:
+        status_code = 404 if exc.code == "resource_not_found" else 409 if exc.code == "document_not_indexed" else 400
+        record_audit(principal, ACTION_MANAGE_USERS, "denied", filename, exc.code)
+        raise HTTPException(status_code=status_code, detail=exc.code) from exc
+    record_audit(
+        principal,
+        ACTION_MANAGE_USERS,
+        "allowed",
+        filename,
+        "document_visibility_updated",
+        before_summary={"visibility": before},
+        after_summary={"visibility": result["visibility"]},
+    )
+    return {"status": "ok", **result}
+
+
+def _document_delete_before(stored_versions: list[dict]) -> dict:
+    """Summarize what a document holds before anything is removed."""
+    newest = stored_versions[0] if stored_versions else {}
+    return {
+        "versions": len(stored_versions),
+        "classification": newest.get("classification"),
+        "department": newest.get("department"),
+        "owner_id": newest.get("owner_id"),
+        "parse_status": newest.get("parse_status"),
+    }
+
+
+def _document_delete_error(filename: str, stage: str, message: str, *, code: str = "index_publish_failed"):
+    """One honest error body for a delete that did not finish."""
+    return _document_index_error(filename, stage, message, code=code)
 
 
 @router.delete("/documents/{filename}")
-async def delete_document(filename: str):
-    retriever.delete_document(filename)
+async def delete_document(filename: str, request: FastAPIRequest):
+    """Retire a document: authorize, roll the index back, clean the disk, audit.
+
+    Each stage reports what it actually did. An index that could not be rolled back
+    leaves the document stored and answers ``index_publish_failed``: saying ok while
+    the knowledge base still retrieves the file would claim a result this process did
+    not produce. Catalog rows go last, so a document that was only partly cleaned
+    stays visible and retryable instead of becoming an orphan file.
+    """
+    version, decision = _authorize_document_request(request, filename, ACTION_DELETE)
+    principal = _document_principal_or_error(request)
+    scope = _document_resource_scope(filename, version)
+    request_id = principal.request_id or None
+    stored_versions = list_document_versions(filename)
+    before = _document_delete_before(stored_versions)
+
+    def _audit(outcome: str, reason: str, after: dict) -> None:
+        record_audit(
+            principal,
+            ACTION_DELETE,
+            outcome,
+            filename,
+            reason,
+            request_id=request_id,
+            resource_scope=scope,
+            policy_version=decision.policy_version,
+            before_summary=before,
+            after_summary=after,
+        )
+
+    try:
+        retriever.delete_document(filename)
+    except Exception as exc:
+        logger.exception(f"[Docs] vector index rollback failed: {filename}")
+        _audit(
+            "failed",
+            "index_rollback_failed",
+            {"deleted": False, "stage": "index_rollback", "error": type(exc).__name__},
+        )
+        raise _document_delete_error(
+            filename, "index_rollback", "document index rollback failed; the document is still stored"
+        ) from exc
+
     from app.agents.tools import rebuild_bm25
-    rebuild_bm25()  # C1: 删除后同步更新索引
-    file_path = os.path.join(DOCUMENTS_DIR, filename)
-    if os.path.exists(file_path):
-        os.remove(file_path)
-    return {"status": "ok", "filename": filename}
+
+    try:
+        rebuild_bm25()
+    except Exception as exc:
+        logger.exception(f"[Docs] keyword index rollback failed: {filename}")
+        _audit(
+            "failed",
+            "index_rollback_failed",
+            {"deleted": False, "stage": "keyword_index", "error": type(exc).__name__},
+        )
+        raise _document_delete_error(
+            filename, "keyword_index", "keyword index rollback failed; the document is still stored"
+        ) from exc
+
+    newest = stored_versions[0] if stored_versions else (version or {})
+    retirement = _document_publication(
+        filename=filename,
+        version=int(newest.get("version") or 1),
+        owner_id=newest.get("owner_id"),
+        classification=int(newest.get("classification") or 1),
+        department=str(newest.get("department") or ""),
+        scope=_document_resource_scope(filename, newest),
+        retirement=True,
+    )
+    try:
+        index_retirement = await asyncio.to_thread(_publish_document_index, retirement)
+    except IndexPublicationError as exc:
+        logger.exception(f"[Docs] index retirement failed: {filename}")
+        _audit(
+            "failed",
+            "index_retire_failed",
+            {"deleted": False, "stage": exc.stage, "error": exc.cause_name},
+        )
+        raise _document_delete_error(
+            filename,
+            exc.stage,
+            "index retirement failed; the document is still catalogued",
+        ) from exc
+
+    removed: list[str] = []
+    unremoved: list[str] = []
+    retained: list[str] = []
+    from app.storage.datasets import dataset_registry
+    linked_dataset = dataset_registry.get_active_by_filename(filename)
+    for item in [*stored_versions, version]:
+        storage_path = str(item.get("storage_path") or "")
+        if linked_dataset and Path(storage_path).resolve() == Path(linked_dataset.storage_path).resolve():
+            retained.append(storage_path)
+            continue
+        if not storage_path or not os.path.exists(storage_path):
+            continue
+        if storage_path in removed or storage_path in unremoved:
+            continue
+        try:
+            os.remove(storage_path)
+            removed.append(storage_path)
+        except OSError:
+            logger.exception(f"[Docs] stored file could not be removed: {storage_path}")
+            unremoved.append(storage_path)
+
+    if unremoved:
+        _audit(
+            "failed",
+            "document_cleanup_incomplete",
+            {"deleted": False, "stage": "physical_cleanup", "removed": len(removed), "unremoved": len(unremoved)},
+        )
+        raise _document_delete_error(
+            filename,
+            "physical_cleanup",
+            "stored files could not be removed; the document is still catalogued",
+            code="internal_error",
+        )
+
+    delete_document_versions(filename, storage_paths=tuple(removed + retained))
+    remaining = list_document_versions(filename)
+    after = {
+        "deleted": not remaining,
+        "stage": "completed",
+        "files_removed": len(removed),
+        "versions_before": len(stored_versions),
+        "catalog_rows_remaining": len(remaining),
+        "index_retirement": index_retirement["status"],
+    }
+    _audit("allowed" if not remaining else "partial", decision.reason_code, after)
+    return {
+        "status": "ok" if not remaining else "partial",
+        "filename": filename,
+        "files_removed": len(removed),
+        "catalog_rows_remaining": len(remaining),
+        "index_retirement": index_retirement,
+    }
 
 
 # ==================== Layer 5: 队列削峰 API ====================
 
+
+def queue_terminal_readout(
+    queue,
+    request_id: str,
+    payload: dict,
+    status: str,
+    *,
+    owner_user_id: str = "",
+) -> dict:
+    """把一支队列任务的「客户端可见终态」拼齐（判据①②③⑤）。
+
+    三条读路各有各的诚实，谁都不许冒充谁：
+
+    * 终态载荷在位（本单之后发布的行）——照载荷说，一格都不添。`result` 与载荷里的
+      `answer_present` 必须同源，所以这里再逐字问一次 `is_hitl_park_notice`：新行要是
+      把挂起文案当正文发了出来，这一格当场把它认出来，不必等人翻日志。
+    * 载荷 `absent`（本单之前发布的行）——只说读得到的东西：正文在不在、像不像那句挂起
+      文案；出处那一格明写「这一行说不出自己有没有出处」，绝不拿空清单冒充「没有出处」。
+      这是兼容路径，不是失效路径：旧行照样读得回来，只是它交不出本单新加的三格读数。
+    * 载荷 `unreadable`——键在位而解不开是损坏，另给一枚终态语义，不与兼容混为一谈。
+    """
+    answer = queue.result(request_id)
+    text = str(answer) if answer is not None else ""
+    terminal = queue.terminal(request_id)
+    state = str(terminal.get("state") or "")
+    data = terminal.get("payload") or {}
+    readout: dict = {"result": answer}
+    # R295 判据④：这一格问的是「这张单子是谁的」，不再从载荷快照抄——调用方交回的是读取
+    # 时刻现取并比对过的那一份。缺这一格只说「归属读不出」，绝不退回快照（宁缺毋造）。
+    owner_id = str(owner_user_id or "")
+    if state != reliable_queue.TERMINAL_OK:
+        legacy = state == reliable_queue.TERMINAL_ABSENT
+        readout.update(
+            {
+                "terminal_schema": "legacy" if legacy else "unreadable",
+                "terminal_state": TERMINAL_STATE_LEGACY if legacy else TERMINAL_STATE_UNREADABLE,
+                "answer_present": bool(text),
+                "answer_is_park_notice": is_hitl_park_notice(text),
+                "worker_status": "",
+                "sources_present": False,
+                "sources": [],
+                "scope_reason_code": "",
+                "sources_error": "",
+                "usage": None,
+                "approval": None,
+                # 这一枚说的是「读不到」，不是「没有」：旧行的出处、token、批准把手三格
+                # 从来就没有落进过 redis，拿空值填它们会把「没记账」洗成「记成零」。
+                "terminal_note": legacy
+                and "这一行发布于结构化终态之前：出处、token 与批准把手三格当年没有落账。"
+                or "终态键在位而载荷解不开，那一格宁缺毋造。",
+            }
+        )
+        return readout
+    approval = data.get("approval") if isinstance(data.get("approval"), dict) else None
+    if approval is not None:
+        approval = dict(approval)
+        approval["ledger_status"] = approval_ledger_state(
+            str(approval.get("session_id") or ""), owner_id
+        )
+    readout.update(
+        {
+            "terminal_schema": str(data.get("schema") or ""),
+            "terminal_state": str(data.get("terminal_state") or ""),
+            "answer_present": bool(data.get("answer_present")) and not is_hitl_park_notice(text),
+            "answer_is_park_notice": is_hitl_park_notice(text),
+            "worker_status": str(data.get("worker_status") or ""),
+            "sources_present": bool(data.get("sources_present")),
+            "sources": [row for row in (data.get("sources") or []) if isinstance(row, dict)],
+            "scope_reason_code": str(data.get("scope_reason_code") or ""),
+            "sources_error": str(data.get("sources_error") or ""),
+            "usage": data.get("usage") if isinstance(data.get("usage"), dict) else None,
+            "approval": approval,
+            "terminal_note": "",
+        }
+    )
+    # R504：载荷里有这一格才照说，没有就整格缺席——「这一行发布于 R504 之前」与「那一轮
+    # 真没跑数据」在这扇读面上都不许补一枚空串洗成「说了空话」，更不许拿请求方向的声明值
+    # 顶它。取值原样搬运，不重新判定。
+    data_filename = data.get("data_filename")
+    if isinstance(data_filename, str) and data_filename:
+        readout["data_filename"] = data_filename
+    # R702：断言那一格照旧「载荷里有才说，没有就整格缺席」——搬运不判定，
+    # 更不许拿一枚空清单把「这一行没有分母」洗成「这一行没有幻觉」。
+    carried_claims = data.get("claims")
+    if isinstance(carried_claims, list) and carried_claims:
+        readout["claims"] = [row for row in carried_claims if isinstance(row, dict)]
+    carried_claims_error = data.get("claims_error")
+    if isinstance(carried_claims_error, str) and carried_claims_error:
+        readout["claims_error"] = carried_claims_error
+    return readout
+
+
+# ==================== R585：死终态也要在可读面上说话 ====================
+
+#: 错误码词表的运行时投影。唯一真源 = `app/agents/contracts.py::ErrorEnvelope.code`，这里派生集合而不是抄第二份手抄码表（抄两份的代价写在 `app/agents/evidence.py::_enum_error_codes` 的 docstring 里）。R585 判据①那句「在册稳定码」指的就是这一枚集合：可读面**只许消费它，不许给它添成员**。
+STABLE_ERROR_CODES = frozenset(get_args(ErrorEnvelope.model_fields["code"].annotation))
+#: 死终态成因认不出枚举时的兜底码。取值必须是上面那枚集合的成员——把它换成现编字符串，
+#: 由 `tests/test_r585_dead_terminal_reason.py` 的字面量钉与成员钉两头当场判红（判据④ 第二把）。
+DEAD_REASON_FALLBACK = "internal_error"
+
+
+def queue_dead_readout(queue, request_id: str, status: str) -> dict:
+    """死终态在 `/queue/status` 上的那一格读数（R585 判据①③）。
+
+    缺陷本体（真机单子 `a55ef916eb43486789a9a68f81cb9f7c`）：worker 早就把成因算出来了——`报告档终态不可重试，不再重投 -> dead: context_limit_exceeded`——可这一扇门面在 `dead` 状态下**一个键都不交**，量具只读得到 `terminal.shape="no_keys"`，客户屏上只剩一枚 `<no-bytes-emitted>` 哨兵。本函数不新造一套原因码，只把那枚**已经算出来的码**接到面上。
+
+    三条口径：
+    * `reason` 只交在册稳定码。账本里那枚原始文本认不出枚举就兜到 `DEAD_REASON_FALLBACK`，同时原文照旧留在同一格响应的 `failure.last_error` 里——收窄成枚举不等于把信息丢掉。
+    * `retryable` 沿用 R448 的口径：它是调用方当年交给队列的那一枚终局判定，不是从 `attempts` 反推的。`None` 说的是「这一行落在本单之前，队列没记这一笔」，绝不拿 False 冒充「不可重试」——那正是 R448 判据要分开的两种 dead 被洗成一枚的写法。
+    * 出处／token／批准把手三格这里**不交**：这一轮压根没跑完，交一枚空表就是把「没说」洗成「说了零」，R254 刚治过的那枚谎不许在这一格复发。
+    """
+    verdict = queue.dead_verdict(request_id) or {}
+    ledger = queue.failure(request_id)
+    raw = str(verdict.get("reason") or ledger.get("last_error") or "").strip()
+    retryable = verdict.get("retryable")
+    if retryable is False:
+        note = "队列判定这一枚失败重试也不会变，首发即落 dead，没有占用重试名额。"
+    elif retryable is True:
+        note = "重试名额已用完，这一轮落 dead；每一轮的原始文本仍在 failure.last_error。"
+    else:
+        note = "这一行落在 R585 之前：队列当年没记终局判定，重试名额那一笔账读不出来。"
+    return {
+        "terminal_schema": reliable_queue.DEAD_TERMINAL_SCHEMA,
+        # 逐字回显状态键上那枚词，不在这里第二次拼写它（R232 的词表只有一处写法）。
+        "terminal_state": status,
+        "reason": raw if raw in STABLE_ERROR_CODES else DEAD_REASON_FALLBACK,
+        "retryable": retryable,
+        "answer_present": bool(queue.result(request_id)),
+        "terminal_note": note,
+    }
+
+
+# ==================== R295：队列单的归属在读取时刻现取 ====================
+
+#: 归属成因码。字面值与 `deploy/queue_worker.py` 里 R294 那一族逐字相等（本文件不 import
+#: 那枚文件：它模块级挂着 signal 处理器，API 进程一 import 就抢走 uvicorn 的收尾）。两侧
+#: 不许漂成两套词，由 tests/test_r295_queue_owner_readback.py 拿两份源码的模块级常量现比对
+#: 钉住。这几枚说的是「归属没能确立」的成因，只进日志与本函数的返回值，不进 HTTP detail：
+#: 这条腿对外说的仍然是它原来那两枚码（authorization_unavailable / permission_denied）。
+QUEUE_OWNER_SUBJECT_MISSING = "principal_subject_missing"
+QUEUE_OWNER_SUBJECT_MISMATCH = "principal_subject_mismatch"
+QUEUE_OWNER_STALE = "principal_stale"
+QUEUE_OWNER_ACCOUNT_INACTIVE = "principal_account_inactive"
+QUEUE_OWNER_STORE_UNAVAILABLE = "identity_store_unavailable"
+QUEUE_OWNER_STORE_NOT_SHARED = "identity_store_not_shared"
+
+
+def queue_task_owner_user_id(payload: dict) -> tuple[str, str]:
+    """一张队列载荷在**读取时刻**的归属人，交回 ``(user_id, 失效因)``。
+
+    病灶：`/queue/status` 与 cancel 这扇门过去拿载荷快照里的 ``user_id`` 当单子归属人，而
+    那是入队那一刻冻下的身份，之后没有任何一格回来更新它。R294 已经把「消费时刻现取身份」
+    立成权威（`deploy/queue_worker.py::resolve_consumption_principal`），载荷=权威这最后一
+    个还活着的读点就在本文件，所以一起收掉。方向只有两条，与 R294 同一套：现取，或比对后
+    判失效。第二枚非空就是归属没确立，调用方一律判失效，绝不把「读不出」放宽成「放行」。
+
+    用户库的三种形状逐字照 R294 的口径，不在这儿立第二套：``postgres`` 现取现比，取不到人、
+    账号不是 active、快照与现取的归属人对不上，都判失效；``unavailable`` 判失效（R230 早就
+    把它定成 default-deny，队列读侧不放宽）；``memory`` 是进程内表，跨进程本来就不同步，
+    这一侧无从现取，按快照交回并明写「未经现取校验」——那是既有的限制，不是本单开的例外。
+
+    旧载荷那两只形状都不崩：``principal`` 里只有 user_id/username/roles，以及压根没有
+    `principal` 只有顶层 user_id/username/roles。读不出归属人的那一格判失效，不猜默认值、
+    不补字段；提权更没有：调用方是谁由认证中间件那份现取身份说了算，载荷只决定「这张单子
+    该是谁的」，它说不出「来问的人是谁」。部门与密级实值一律不进返回值与日志。
+    """
+    snapshot = payload.get("principal") if isinstance(payload, dict) else None
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    claimed_subject = str(snapshot.get("username") or "").strip()
+    top_subject = str(payload.get("username") or "").strip() if isinstance(payload, dict) else ""
+    if claimed_subject and top_subject and claimed_subject != top_subject:
+        # 快照与顶层说的是两个人：这张单子是谁的，队列没资格替它挑一个。
+        return "", QUEUE_OWNER_SUBJECT_MISMATCH
+    subject = claimed_subject or top_subject
+    claimed_id = str(snapshot.get("user_id") or payload.get("user_id") or "").strip()
+    if not subject:
+        return "", QUEUE_OWNER_SUBJECT_MISSING
+
+    mode = str((auth.user_storage_state() or {}).get("storage_mode") or "").strip()
+    if mode == "memory":
+        if not claimed_id:
+            return "", QUEUE_OWNER_SUBJECT_MISSING
+        # 只记成因，不记主体：这是一次读别人的单子也会走到的分支，用户名不进这一行日志。
+        logger.warning(
+            "[R295] 用户库是进程内表（storage_mode=memory），队列归属无从现取、未经现取"
+            "校验，按载荷快照交回 reason=" + QUEUE_OWNER_STORE_NOT_SHARED
+        )
+        return claimed_id, ""
+    if mode != "postgres":
+        return "", QUEUE_OWNER_STORE_UNAVAILABLE
+
+    row = auth.get_user(subject)
+    if not row:
+        # 这个人此刻已经不在这张表里：按快照交回就是把旧身份记在一个无权存在的人账上。
+        return "", QUEUE_OWNER_STALE
+    try:
+        live = Principal.from_user(row)
+    except Exception:  # noqa: BLE001 - 这一行读不成身份就是无从确立归属，不猜
+        return "", QUEUE_OWNER_STALE
+    if live.status != "active":
+        return "", QUEUE_OWNER_ACCOUNT_INACTIVE
+    if not claimed_id or str(claimed_id) != str(live.user_id):
+        # 载荷说的不是这个人，或者旧载荷压根没说归属是谁：判失效，不退回快照、不补默认值。
+        return "", QUEUE_OWNER_STALE
+    return str(live.user_id), ""
+
+
+def _queue_piece_since(request: FastAPIRequest) -> int:
+    """把 `since` 读成一枚非负整数：读不懂就当 0（整段重来），不为此新造错误码。
+
+    R558 判据②要求这一扇门零新稳定码。坏 `since` 的后果只是客户端多拿一遍字，不是拒答，
+    所以它走「宽容取值＋契约里把缺席与越界都说清」这一条，而不走 4xx。
+    """
+    raw = (request.query_params.get("since") or "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return value if value > 0 else 0
+
+
 @router.get("/queue/status/{request_id}")
-async def queue_status(request_id: str):
-    """轮询队列请求的处理状态。前端每 3s 调用一次，直到 status=done"""
-    from app.common.queue import get_queue_status
-    status = get_queue_status(request_id)
+async def queue_status(request_id: str, request: FastAPIRequest):
+    """轮询队列请求的处理状态。前端每 3s 调用一次，直到终态。
+
+    R254 之前这一支只会说四格（status / request_id / result / failure）。今天它还要说清三件
+    事：这一轮到底有没有正文、出处在不在、打了多少 token（判据①②③）。
+    `awaiting_approval` 是新增的那枚状态：挂起在等人批准的那一轮不再报 `done`，也不再交回
+    一句 37 字挂起文案；它交回一件可批准的东西（`approval`，见契约 `Long Task Status`）。
+    """
+    from app.common.reliable_queue import QueueConnectionError
+
+    try:
+        queue = _get_reliable_queue()
+    except QueueConnectionError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+
+    # 读状态这扇门：动词记 resource:view（默认值也写出来，一扇门一眼看得见记的是哪本账）。
+    # 门的次序一个字没改：先过这道门，才谈得上读下面任何一格。R295 改的是门里的归属读数——
+    # 不再信载荷快照，与 R294 同源现取（见 queue_task_owner_user_id）。
+    payload = _authorize_queue_task(request, queue, request_id, ACTION_VIEW)
+    # 门已经证明「调用方 == 现取出来的归属人」，下面批准台账那一格就用这份现取读数，
+    # 不回头抄载荷里冻着的那一枚（抄回去，快照就又成权威了）。
+    caller = principal_from_request(request)
+    task_owner_user_id = str(caller.user_id) if caller is not None else ""
+    status = queue.status(request_id)
     if status is None:
         return {"status": "expired", "message": "请求已过期，请重新提交"}
-    return status
+    readout: dict = {
+        "status": status,
+        "request_id": request_id,
+        "failure": queue.failure(request_id),
+    }
+    if status in (reliable_queue.AWAITING_APPROVAL, "done"):
+        # 两枚都是「这一轮已经交出去了」的那一格，区别只在交没交正文。出处、token、批准
+        # 把手只对这两枚有意义，别的状态下不凭空造键。
+        readout.update(
+            queue_terminal_readout(
+                queue, request_id, payload, status, owner_user_id=task_owner_user_id
+            )
+        )
+    elif status == "queued":
+        pending = queue.redis.lrange(queue.pending_key, 0, -1)
+        ids = [item.decode() if isinstance(item, bytes) else str(item) for item in pending]
+        readout["position"] = ids.index(request_id) + 1 if request_id in ids else None
+    elif status == reliable_queue.DEAD_STATUS:
+        # R585 判据①：死终态过去在这一扇门上**一个键都不交**（量具读出 `terminal.shape="no_keys"`、`schema`／`state`／`sources_present` 全 null），客户屏上只剩哨兵 `<no-bytes-emitted>`。成因早在 worker 那一头算完了，本格只负责把它接到面上。
+        readout.update(queue_dead_readout(queue, request_id, status))
+    if status == "processing":
+        # R558 判据①：正在跑的这一轮，逐字片段从**既有轮询面**增量读出（客户端把上一发的
+        # `cursor` 原样填回 `since`，读回的 `text` 就是新长出来的那一截字）。
+        # 🔴 只在 `processing` 这一枚状态下发：终态那份正文由 `result` / 终态读数负责，
+        # 增量面只是「长出来」那一截表演——不进终态帧、不进 usage、不进 sources、不参与评分。
+        readout["stream_pieces"] = queue.piece_readout(
+            request_id, since=_queue_piece_since(request)
+        )
+    return readout
+
+
+@router.post("/queue/{request_id}/cancel")
+async def cancel_queued_request(request_id: str, request: FastAPIRequest):
+    from app.common.reliable_queue import QueueConnectionError
+
+    try:
+        queue = _get_reliable_queue()
+    except QueueConnectionError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    # 取消这扇门：词表里没有 cancel，破坏性动作按 ACTION_DELETE 记账，不新造码。
+    _authorize_queue_task(request, queue, request_id, ACTION_DELETE)
+    if not queue.cancel(request_id):
+        raise HTTPException(status_code=404, detail="resource_not_found")
+    return {
+        "cancelled": True,
+        "request_id": request_id,
+        "status": queue.status(request_id),
+    }
 
 
 @router.get("/queue/stats")
 async def queue_stats():
-    """队列监控：当前排队数、处理中数"""
-    from app.common.queue import queue_length, processing_count
-    return {
-        "queue_length": queue_length(),
-        "processing": processing_count(),
-    }
+    """队列监控：排队数、处理中数，另加 R155 的容量读数（声明上限/剩余位/是否已满）。
+
+    两枚旧键同名同值：接表只是把算法来源从 len(LRANGE 0 -1) 换成服务端 LLEN，
+    不改口径、不新增执法——「满了怎么办」仍属业主裁定。
+    """
+    from app.common.reliable_queue import QueueConnectionError
+
+    try:
+        queue = _get_reliable_queue()
+    except QueueConnectionError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    return queue.stats()

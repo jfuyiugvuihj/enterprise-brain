@@ -1,0 +1,2692 @@
+/* 字体一律本地化（R148）：客户内网连不上 fonts.googleapis.com 会卡首屏。
+   包在 package.json:16-17 已装；🔴 这两个包声明的 family 名带 " Variable" 后缀，
+   所以下面 :root 的 --font-body/--font-mono 必须同名改，否则 @import 等于白写
+   （肉眼看不出来）。中文继续走 PingFang SC / Microsoft YaHei：Manrope 不含中文字形。 */
+@import "@fontsource-variable/manrope/wght.css";
+@import "@fontsource-variable/jetbrains-mono/wght.css";
+
+:root {
+  --bg: #040812;
+  --bg-raised: #081224;
+  --bg-panel: #0b1730;
+  --bg-panel-2: #102041;
+  --ink: #f0f4fb;
+  --text: #f0f4fb;
+  --ink-soft: #b7c6df;
+  --muted: #8292b2;
+  --ink-faint: #627390;
+  --line: rgba(129, 164, 219, .18);
+  --line-strong: rgba(129, 164, 219, .34);
+  --cyan: #59e4e5;
+  --cyan-dark: #1bb8c9;
+  --blue: #6a96ff;
+  --violet: #8e7dff;
+  --amber: #e4a24a;
+  --red: #ee6d78;
+  --green: #65d49a;
+  --shadow-sm: 0 12px 34px rgba(0, 0, 0, .24);
+  --shadow-md: 0 30px 110px rgba(0, 0, 0, .44);
+  --radius-xl: 28px;
+  --radius-lg: 18px;
+  --radius-md: 13px;
+  --radius-sm: 9px;
+  --font-body: "Manrope Variable", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "Cascadia Code", Consolas, monospace;
+
+  /* =====================================================================
+     语义 token 层（视觉文档 §5.1 原名 · 落地顺序表 V1/V2 的地基）
+     名称是契约：components/ui/** 的 9 个原语按这些名字取色，一个都不许改。
+     上面 31 个旧名先留着——3394 行历史样式还在引用它们，收敛属于 V4 删死代码那一步。
+     ===================================================================== */
+
+  /* 表面：只用这 4 档，靠色差分层，不靠边框线（§5.1） */
+  --surface-0: #05080f;   /* 页面底 */
+  --surface-1: #0a1119;   /* 面板 */
+  --surface-2: #111b26;   /* 卡片：正文区一律纯色，不许渐变（§5.3） */
+  --surface-3: #18242f;   /* 悬浮 / 下拉 */
+
+  /* 文本：3 档正文 + 1 档反白。text-3 已按 §5.2 从 旧名 ink-faint 提到 #7c8896 以过 AA */
+  --text-1: #e8eef6;
+  --text-2: #a9b6c6;
+  --text-3: #7c8896;
+  --text-invert: #05080f;
+
+  /* 描边：2 档，弱到几乎看不见，只用于分隔不用于装饰（§5.1） */
+  --border-1: rgba(232, 238, 246, .07);
+  --border-2: rgba(232, 238, 246, .14);
+
+  /*
+     单一强调色。这里与 §5.1 的示例值不同，是有意为之：
+     §5.1 写的是 #2f9bff，但硬裁定（2026-09-15 开工提示 §1）、工单 V1 完成定义 L165、
+     以及计划 §4.1 色板三处都钉死 #2ea8e6，且参考实现 docs/reference/login-v2.html:34 也是它。
+     取"更新的、且被点名为准出"的那组，强调色 = #2ea8e6。
+     accent-hover 用计划 §4.1 已批的提亮档（旧名 accent-hi）；
+     accent-press 不新造色相，直接由强调色与 surface-0 混合派生（等效 #278bbf）。
+  */
+  --accent: #2ea8e6;
+  --accent-hover: #57c4f5;
+  --accent-press: color-mix(in srgb, var(--accent) 82%, var(--surface-0));
+
+  /* 语义色：只表达状态，禁止当装饰描边（§5.3） */
+  --success: #35b47f;
+  --warning: #cf9a35;
+  --danger: #e0596b;
+
+  /* 尺度：8pt 栅格（§5.1；计划 §4.2 的 96 档暂不引入，等真有用到再加） */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+  --t-xs: 12px;
+  --t-sm: 13px;
+  --t-md: 14px;
+  --t-lg: 16px;
+  --t-xl: 20px;
+  --t-2xl: 28px;
+
+  /* 阴影：3 档（卡片 / 浮层 / 弹层） */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, .45);
+  --shadow-3: 0 20px 50px rgba(0, 0, 0, .5);
+
+  /* 动效：只用于状态反馈（§4.5 禁用清单）；曲线取 §5.1 */
+  --motion-fast: 120ms cubic-bezier(.2, .8, .28, 1);
+  --motion-slow: 200ms cubic-bezier(.2, .8, .28, 1);
+
+  /* 骨架屏的循环周期。刻意与 --motion-* 分家：那是过渡时长（120/200ms），
+     拿去当循环周期就是频闪。只放时长，ease-in-out infinite 留在组件里。 */
+  --skeleton-loop: 1.4s;
+
+  /* 控件尺寸：值等于 ui 原语里各自 fallback 的字面值，落地后 fallback 永不生效 */
+  --control-h: 40px;
+  --control-h-sm: 32px;
+  --dialog-w: 560px;
+  --toast-w: 380px;
+  --upload-h: 104px;
+  --select-max-h: 264px;
+
+  /* 层级：收掉 ui 里现在裸写的 30 / 60 / 70（UiSelect / UiDialog / UiToastHost） */
+  --z-dropdown: 30;
+  --z-dialog: 60;
+  --z-toast: 70;
+
+  /* V2 登录页专用：只有"会被重复引用的标量"才进 token，
+     渐变的多个色标属于一次性构图参数，留在 .login-bg__* 规则里（同 --shadow-* 的处理）。 */
+  --t-display: clamp(30px, 2.6vw, 44px);
+  --control-h-lg: 48px;   /* §8.6 的 40px 统一适用于工作台，登录卡是独立版面 */
+  --login-card-w: 384px;
+  --login-glass: rgba(13, 30, 54, .60);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  min-width: 320px;
+  min-height: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow-x: hidden;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 8% -4%, rgba(55, 179, 255, .18), transparent 30rem),
+    radial-gradient(circle at 92% 8%, rgba(96, 101, 255, .15), transparent 34rem),
+    linear-gradient(135deg, rgba(21, 76, 135, .08), transparent 40%),
+    var(--bg);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+}
+
+.app-root {
+  min-height: 100dvh;
+}
+
+.eyebrow,
+.panel-kicker {
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .18em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.auth-grid {
+  position: absolute;
+  inset: 0;
+  opacity: .52;
+  background-image:
+    linear-gradient(rgba(91, 220, 255, .08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(91, 220, 255, .08) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(135deg, black 12%, transparent 78%);
+}
+
+.brand-lockup,
+.auth-hero-copy,
+.auth-hero-footer {
+  position: relative;
+  z-index: 1;
+}
+
+.brand-symbol {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  color: var(--cyan);
+  background: rgba(53, 211, 200, .08);
+  border: 1px solid rgba(53, 211, 200, .35);
+  border-radius: 11px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: .05em;
+}
+
+.auth-hero-copy {
+  margin-top: clamp(80px, 11vh, 132px);
+}
+
+.auth-hero-copy .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-hero-copy .eyebrow::before {
+  width: 24px;
+  height: 1px;
+  content: "";
+  background: currentColor;
+  opacity: .7;
+}
+
+.auth-hero-copy .eyebrow {
+  color: #7791b6;
+}
+
+.auth-benefits {
+  display: grid;
+  gap: 11px;
+  max-width: 460px;
+  margin-top: 42px;
+}
+
+.auth-benefit {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 15px;
+  color: var(--ink-soft);
+  background: rgba(7, 17, 36, .34);
+  border: 1px solid rgba(129, 164, 219, .16);
+  border-radius: 13px;
+}
+
+.auth-benefit > span:last-child {
+  display: grid;
+  gap: 3px;
+}
+
+.auth-benefit strong {
+  color: #eaf2ff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auth-benefit small {
+  color: #8195b5;
+  font-size: 11px;
+}
+
+.benefit-icon {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  flex: 0 0 29px;
+  color: var(--cyan);
+  background: rgba(89, 228, 229, .08);
+  border: 1px solid rgba(89, 228, 229, .25);
+  border-radius: 9px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.auth-hero-footer {
+  position: absolute;
+  right: clamp(42px, 7vw, 96px);
+  bottom: 34px;
+  left: clamp(42px, 7vw, 96px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #7487a4;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  background: var(--cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(53, 211, 200, .12);
+}
+
+.auth-panel-top,
+.auth-panel-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.auth-panel-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #83dcb4;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.auth-panel-footer {
+  margin-top: 22px;
+  color: var(--ink-faint);
+  font-size: 10px;
+}
+
+.panel-shell input,
+.panel-shell textarea,
+.dashboard-panel input,
+.data-panel input {
+  width: 100%;
+  min-height: 50px;
+  padding: 0 14px;
+  color: var(--text);
+  background: rgba(255, 255, 255, .045);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  outline: none;
+  transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
+}
+
+.panel-shell input::placeholder,
+.dashboard-panel input::placeholder,
+.data-panel input::placeholder {
+  color: #64738a;
+}
+
+.panel-shell input:focus,
+.dashboard-panel input:focus,
+.data-panel input:focus {
+  background: rgba(255, 255, 255, .07);
+  border-color: rgba(53, 211, 200, .62);
+  box-shadow: 0 0 0 4px rgba(53, 211, 200, .09);
+}
+
+.primary-btn,
+.ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform .2s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease;
+}
+
+.primary-btn {
+  min-height: 50px;
+  color: #06131b;
+  background: linear-gradient(135deg, var(--cyan), #7df0d4);
+  box-shadow: 0 12px 28px rgba(53, 211, 200, .18);
+  font-weight: 800;
+}
+
+.primary-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 17px 34px rgba(53, 211, 200, .28);
+}
+
+.primary-btn:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+.ghost-btn {
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ghost-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, .08);
+  border-color: var(--line-strong);
+  transform: translateY(-1px);
+}
+
+.inline-error {
+  color: #ffadb4;
+}
+
+.workbench-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding: 12px 16px 16px;
+  background:
+    radial-gradient(circle at 68% -12%, rgba(68, 116, 255, .13), transparent 28rem),
+    radial-gradient(circle at -8% 42%, rgba(42, 210, 213, .08), transparent 24rem);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 68px;
+  padding: 0 20px;
+  background: linear-gradient(100deg, rgba(10, 25, 52, .9), rgba(8, 16, 34, .82));
+  border: 1px solid rgba(126, 171, 255, .22);
+  border-radius: 16px;
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(18px);
+}
+
+.topbar-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-right: auto;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.context-mark {
+  width: 6px;
+  height: 6px;
+  background: var(--cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(89, 228, 229, .10);
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.topbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.live-status,
+.identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 12px;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, .045);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.identity strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.identity span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.logout-btn {
+  min-height: 34px;
+  padding: 0 13px;
+}
+
+.live-status {
+  color: #8be8c0;
+}
+
+.workbench-body {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+  flex: 1;
+  margin-top: 16px;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 18px 12px;
+  background: rgba(13, 20, 34, .74);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.sidebar.collapsed {
+  width: 72px;
+}
+
+.sidebar.collapsed .sidebar-heading {
+  justify-content: center;
+  padding-right: 8px;
+  padding-left: 8px;
+}
+
+.sidebar.collapsed .sidebar-heading > span:first-child,
+.sidebar.collapsed .nav-label,
+.sidebar.collapsed .sidebar-footer span:last-child {
+  display: none;
+}
+
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+
+.workspace-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+}
+
+.workspace-kicker .status-dot {
+  width: 5px;
+  height: 5px;
+  flex-basis: 5px;
+}
+
+.workspace-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.workspace-date {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.sidebar-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px 18px;
+  color: #d7e0ef;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sidebar-line {
+  height: 1px;
+  flex: 1;
+  background: var(--line);
+}
+
+.nav-list {
+  display: grid;
+  gap: 5px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 12px;
+  min-height: 52px;
+  padding: 0 12px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  cursor: pointer;
+  text-align: left;
+  transition: color .2s ease, background .2s ease, border-color .2s ease, transform .2s ease;
+}
+
+.nav-item:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, .05);
+  border-color: var(--line);
+  transform: translateX(2px);
+}
+
+.nav-item.active {
+  color: var(--cyan);
+  background: linear-gradient(90deg, rgba(53, 211, 200, .14), rgba(106, 140, 255, .08));
+  border-color: rgba(53, 211, 200, .24);
+}
+
+.nav-icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+}
+
+.nav-label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding: 18px 12px 3px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 16px;
+}
+
+.workspace-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  min-height: 86px;
+  padding: 8px 6px 0;
+}
+
+.workspace-head .eyebrow {
+  display: none;
+}
+
+.workspace-head h1 {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(28px, 3vw, 42px);
+  letter-spacing: -.065em;
+}
+
+.workspace-rule {
+  width: 36%;
+  height: 1px;
+  margin-bottom: 10px;
+  background: linear-gradient(90deg, transparent, rgba(53, 211, 200, .55));
+}
+
+.panel-slot {
+  min-height: 0;
+  flex: 1;
+  padding: 22px;
+  overflow: auto;
+  background:
+    linear-gradient(145deg, rgba(12, 29, 61, .94), rgba(7, 14, 29, .97)),
+    var(--bg-panel);
+  border: 1px solid rgba(124, 169, 255, .22);
+  border-radius: 20px;
+  box-shadow: var(--shadow-md);
+}
+
+.panel-shell,
+.dashboard-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.panel-head h3,
+.dashboard-panel h3 {
+  margin: 10px 0 0;
+  color: var(--text);
+  font-size: 28px;
+  letter-spacing: -.055em;
+}
+
+.panel-head p,
+.dashboard-panel p {
+  max-width: 680px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.panel-card,
+.hero-card,
+.mini-stat,
+.row-card,
+.insight-item,
+.result-card,
+.relation-item,
+.metric-card,
+.module-card {
+  background: rgba(255, 255, 255, .045);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.panel-card,
+.hero-card {
+  padding: 18px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.section-head h4 {
+  margin: 0;
+  color: #dce6f5;
+  font-size: 14px;
+}
+
+/*
+   演示数据徽标（V7-3）。三块假数据面板必须挂上它，且不许借用下面的告警配色：
+   红色三角 + 琥珀条是"已经出事了"的语言，而数据来自 src/devFixtures，
+   部门主管扫一眼就会当成真事故。真实端点（R13/R14）落地后，等级配色要按 §5.2 的
+   对比度要求重做，不要回来把下面删掉的几条改回去。
+*/
+.demo-flag-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  background: rgba(129, 164, 219, .07);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+}
+
+.demo-flag {
+  padding: 3px 8px;
+  color: var(--ink-soft);
+  background: rgba(129, 164, 219, .16);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.demo-note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.chip,
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
+}
+
+.chip.accent {
+  color: var(--cyan);
+  background: rgba(53, 211, 200, .08);
+  border-color: rgba(53, 211, 200, .20);
+}
+
+.hero-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 22px;
+  background:
+    radial-gradient(circle at 85% 30%, rgba(53, 211, 200, .11), transparent 12rem),
+    rgba(255, 255, 255, .045);
+}
+
+.hero-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(90px, 1fr));
+  gap: 8px;
+  min-width: 230px;
+}
+
+.mini-stat {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.mini-stat span,
+.metric-card small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.mini-stat strong,
+.metric-card strong {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 21px;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.dashboard-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.module-card {
+  display: grid;
+  gap: 11px;
+  min-height: 100px;
+  padding: 15px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: transform .2s ease, border-color .2s ease, background .2s ease;
+}
+
+.module-card:hover {
+  background: rgba(53, 211, 200, .08);
+  border-color: rgba(53, 211, 200, .28);
+  transform: translateY(-2px);
+}
+
+.module-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.module-head strong {
+  font-size: 14px;
+}
+
+.module-head span {
+  color: var(--cyan);
+  font-size: 10px;
+}
+
+.module-card p {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.metric-list,
+.insight-list,
+.relation-list {
+  display: grid;
+  gap: 9px;
+}
+
+.metric-card,
+.insight-item,
+.relation-item {
+  padding: 13px;
+}
+
+.metric-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px 12px;
+}
+
+.metric-card span {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.metric-card strong {
+  grid-row: span 2;
+  align-self: center;
+  color: var(--cyan);
+}
+
+.metric-card small {
+  grid-column: 1;
+}
+
+.bars {
+  display: grid;
+  gap: 14px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 12px;
+}
+
+.bar-label,
+.bar-value {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-value {
+  color: var(--text);
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.bar-track {
+  height: 7px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, .08);
+  border-radius: 999px;
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--cyan), var(--blue));
+  border-radius: inherit;
+}
+
+.insight-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.insight-item strong,
+.relation-main strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.insight-item p,
+.insight-item small,
+.relation-meta {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.severity {
+  padding: 5px 8px;
+  color: var(--muted);
+  background: rgba(129, 164, 219, .10);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
+}
+
+.error,
+.inline-error {
+  color: #ffadb4;
+}
+
+@media (max-width: 980px) {
+
+  .workbench-body {
+    grid-template-columns: 178px minmax(0, 1fr);
+  }
+
+  .topbar-context {
+    display: none;
+  }
+
+  .nav-label {
+    font-size: 12px;
+  }
+
+  .module-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .workbench-shell {
+    padding: 8px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 14px;
+  }
+
+  .topbar-meta {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .identity {
+    margin-right: auto;
+  }
+
+  .workbench-body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sidebar {
+    flex: 0 0 auto;
+    overflow-x: auto;
+    padding: 8px;
+  }
+
+  .sidebar-heading,
+  .sidebar-footer {
+    display: none;
+  }
+
+  .nav-list {
+    display: flex;
+    gap: 6px;
+    width: max-content;
+  }
+
+  .nav-item {
+    width: auto;
+    min-width: 74px;
+    min-height: 46px;
+    justify-content: center;
+    padding: 0 11px;
+  }
+
+  .nav-label {
+    font-size: 11px;
+  }
+
+  .workspace-head {
+    min-height: 70px;
+  }
+
+  .workspace-head h1 {
+    font-size: 30px;
+  }
+
+  .workspace-rule {
+    width: 22%;
+  }
+
+  .panel-slot {
+    padding: 14px;
+  }
+
+  .auth-hero-copy {
+    margin-top: 72px;
+  }
+
+  .auth-benefits {
+    margin-top: 28px;
+  }
+
+  .auth-hero-footer {
+    right: 24px;
+    bottom: 24px;
+    left: 24px;
+  }
+
+  .panel-head,
+  .hero-card {
+    display: grid;
+  }
+
+  .hero-mini-grid {
+    min-width: 0;
+  }
+
+  .dashboard-grid,
+  .module-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-grid .wide {
+    grid-column: auto;
+  }
+
+  .bar-row {
+    grid-template-columns: 72px minmax(0, 1fr) 58px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* =====================================================================
+   V2 登录页 —— 四层背景 + 100% 来自 DOM 的文字
+   结构照搬已批参考稿 docs/reference/login-v2.html，token 一律换成上面 §5.1 的原名。
+   旧登录层（.auth-shell / .reference-login 那一整片，含两张把假数字烤进像素的
+   login-background / login-mobile-atmosphere 位图）已在 V2-b 整片删除。
+   这里不追加第四轮覆盖层（视觉文档 §11）。
+   ===================================================================== */
+.login-v2 {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 100dvh;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-body);
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+.login-v2 ::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* L0 基底 / L1 美术 / L2 网格+噪点 / L3 遮罩：只有 L3 负责可读性 */
+.login-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  isolation: isolate;
+  pointer-events: none;
+}
+.login-bg > * { position: absolute; inset: 0; }
+
+.login-bg__base {
+  background:
+    radial-gradient(64% 78% at 66% 44%, rgba(30, 96, 152, .40) 0%, rgba(16, 52, 92, .18) 42%, transparent 68%),
+    radial-gradient(48% 60% at 12% 108%, rgba(14, 46, 82, .30) 0%, transparent 62%),
+    linear-gradient(178deg, #070d18 0%, var(--surface-0) 52%, #02040a 100%);
+}
+
+/*
+  L1 美术层（R148 接线）：src/assets/login-bg.webp，1254x1254 / 108 900 B / webp q78。
+  业主定盘用的就是他原来那张地球，图生图只抹掉了烤在像素里的三张假数字卡
+  （数据 1.2M+ / 知识 300K+ / 洞察 +42%），点阵、连线、轨道环、光点原样保留，
+  复查无矩形残影 ⇒ 满足 V2「位图不含任何文字，文案 100% 来自 DOM」。
+  旧图 login-earth.webp(1020x941) 与 login-plate.webp(1680x945) 都带假卡，已弃用。
+  底色近黑（实测均值 RGB 2,19,36），正好吃 mix-blend-mode: screen——screen 把暗部当透明，只画发光部分。
+  新图是正方形、旧图是 1.08:1，所以下面两个断点的尺寸/锚点重验过（见 @media 960 / 640 两处）。
+*/
+.login-bg__art {
+  background-image: url("./login-bg.webp");
+  background-size: auto 104%;
+  background-repeat: no-repeat;
+  background-position: 63% 50%;
+  mix-blend-mode: screen;
+}
+@supports not (mix-blend-mode: screen) {
+  /* screen 不可用就整层不画，回退成 L0 纯色底，不做半透叠加 */
+  .login-bg__art { display: none; }
+}
+
+.login-bg__grid {
+  background-image:
+    linear-gradient(90deg, var(--border-2) 1px, transparent 1px),
+    linear-gradient(0deg, var(--border-2) 1px, transparent 1px);
+  background-size: 88px 88px;
+  opacity: .5;
+  -webkit-mask-image: radial-gradient(112% 96% at 8% 50%, #000 0%, rgba(0, 0, 0, .35) 42%, transparent 66%);
+  mask-image: radial-gradient(112% 96% at 8% 50%, #000 0%, rgba(0, 0, 0, .35) 42%, transparent 66%);
+}
+
+.login-bg__noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: .05;
+  mix-blend-mode: overlay;
+}
+
+.login-bg__scrim {
+  background:
+    linear-gradient(90deg, rgba(4, 7, 13, .92) 0%, rgba(4, 7, 13, .66) 24%, rgba(4, 7, 13, .16) 44%, transparent 58%),
+    radial-gradient(126% 108% at 64% 46%, transparent 46%, rgba(3, 5, 11, .62) 100%);
+}
+
+/* =====================================================================
+   R148 · 工作台背景层：与 .login-bg 同一套参数，只有 L1/L3 按正文密度重压。
+   可读性仍然只由 L3 遮罩负责（不给文字加 text-shadow）；换图只动 __art 的 opacity。
+   这层不放 __noise：正文密度高，噪点会糊小字号（登录页那层保留不动）。
+   ===================================================================== */
+.app-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  isolation: isolate;
+  pointer-events: none;
+}
+.app-bg > * { position: absolute; inset: 0; }
+
+/* L0 基底：.reference-workbench 原来的两个渐变挪进这里，色相换成定盘的深空靛蓝 */
+.app-bg__base {
+  background:
+    radial-gradient(64% 78% at 66% 44%, rgba(30, 96, 152, .28) 0%, rgba(16, 52, 92, .14) 42%, transparent 68%),
+    linear-gradient(178deg, #070d18 0%, var(--surface-0) 52%, #02040a 100%);
+}
+
+/* L1 美术：src/assets/workbench-bg.webp（1536x1024，由 _peer-starter/art/E-workspace.png 导 q78） */
+.app-bg__art {
+  background-image: url("./workbench-bg.webp");
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: 72% 68%;
+  opacity: .5;
+  mix-blend-mode: screen;
+}
+@supports not (mix-blend-mode: screen) {
+  /* screen 不可用就整层不画，回退成 L0 纯色底，不做半透叠加 */
+  .app-bg__art { display: none; }
+}
+
+/* L2 网格：复用登录页的 88px 与 mask，opacity 再降一档 */
+.app-bg__grid {
+  background-image:
+    linear-gradient(90deg, var(--border-1) 1px, transparent 1px),
+    linear-gradient(0deg, var(--border-1) 1px, transparent 1px);
+  background-size: 88px 88px;
+  opacity: .4;
+  -webkit-mask-image: radial-gradient(112% 96% at 8% 50%, #000 0%, rgba(0, 0, 0, .35) 42%, transparent 66%);
+  mask-image: radial-gradient(112% 96% at 8% 50%, #000 0%, rgba(0, 0, 0, .35) 42%, transparent 66%);
+}
+
+/* L3 遮罩：只保侧栏与顶栏，正文区不压——正文面板本来就是实心 var(--surface-2) */
+.app-bg__scrim {
+  background:
+    linear-gradient(90deg, rgba(4, 7, 13, .86) 0%, rgba(4, 7, 13, .58) 24%, rgba(4, 7, 13, .18) 46%, transparent 62%),
+    linear-gradient(0deg, rgba(3, 5, 11, .55) 0%, transparent 34%);
+}
+
+/* 内容抬到层之上：grid item 不显式定位吃不到 z-index */
+.reference-workbench > .sidebar,
+.reference-workbench > .workspace { position: relative; z-index: 1; }
+
+.login-brand,
+.login-stage,
+.login-foot { position: relative; z-index: 1; }
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-6) var(--s-8);
+}
+.login-brand__mark { width: 30px; height: 30px; flex: none; color: var(--accent-hover); }
+.login-brand__name { color: var(--text-1); font-size: var(--t-lg); font-weight: 700; letter-spacing: .01em; }
+.login-brand__rule { width: 1px; height: 18px; background: var(--border-2); }
+.login-brand__latin {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+
+.login-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-8);
+  width: 100%;
+  max-width: 1560px;
+  margin: 0 auto;
+  padding: var(--s-6) var(--s-8) var(--s-8);
+}
+
+/* 行长用 px 而不是参考稿的 30ch：ch 以"0"的宽度计，中文标题下会把
+   「私有化企业智能分析平台」断成"企业智/能分析平台"（实测截图）。 */
+.login-pitch { max-width: 620px; }
+.login-pitch__rule {
+  display: block;
+  width: 44px;
+  height: 2px;
+  margin-bottom: var(--s-5);
+  background: var(--accent);
+  opacity: .8;
+}
+.login-pitch h1 {
+  margin: 0 0 var(--s-4);
+  color: var(--text-1);
+  font-size: var(--t-display);
+  font-weight: 700;
+  letter-spacing: -.018em;
+  line-height: 1.16;
+  text-wrap: balance;
+}
+.login-pitch__lead { margin: 0; color: var(--text-2); font-size: var(--t-lg); letter-spacing: .01em; }
+
+.login-capabilities {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-5);
+  margin-top: var(--s-6);
+}
+.login-capabilities > div { display: flex; align-items: center; gap: var(--s-2); color: var(--text-2); font-size: var(--t-sm); }
+.login-capabilities svg { width: 17px; height: 17px; color: var(--accent); }
+
+.login-card {
+  width: var(--login-card-w);
+  padding: var(--s-7) var(--s-6);
+  background: var(--login-glass);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3), inset 0 0 20px color-mix(in srgb, var(--accent) 5%, transparent);
+  backdrop-filter: blur(20px) saturate(120%);
+  -webkit-backdrop-filter: blur(20px) saturate(120%);
+}
+.login-card h2 { margin: 0; color: var(--text-1); font-size: var(--t-xl); font-weight: 700; letter-spacing: -.01em; }
+.login-card__lead { margin: var(--s-2) 0 var(--s-6); color: var(--text-3); font-size: var(--t-sm); }
+
+.login-field { display: block; margin-bottom: var(--s-4); }
+.login-field__label { display: block; margin-bottom: var(--s-2); color: var(--text-2); font-size: var(--t-sm); font-weight: 500; }
+.login-control {
+  display: flex;
+  align-items: center;
+  height: var(--control-h-lg);
+  background: rgba(255, 255, 255, .035);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  transition: border-color var(--motion-fast), background-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+.login-control:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border-2)); }
+.login-control:focus-within {
+  background: rgba(255, 255, 255, .055);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.login-control__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 100%;
+  flex: none;
+  color: var(--text-3);
+}
+.login-control__icon svg { width: 17px; height: 17px; }
+.login-control input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  color: var(--text-1);
+  background: none;
+  border: 0;
+  font-family: inherit;
+  font-size: var(--t-md);
+}
+.login-control input::placeholder { color: var(--text-3); opacity: .8; }
+.login-control input:focus-visible { outline: none; }
+.login-control__ghost {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 100%;
+  flex: none;
+  color: var(--text-3);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: color var(--motion-fast);
+}
+.login-control__ghost:hover { color: var(--text-1); }
+.login-control__ghost svg { width: 17px; height: 17px; }
+
+.login-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin: var(--s-2) 0 var(--s-6);
+  font-size: var(--t-sm);
+}
+.login-check {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.login-check input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.login-check__box {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid var(--border-2);
+  border-radius: 4px;
+  transition: border-color var(--motion-fast), background-color var(--motion-fast);
+}
+.login-check__box svg { width: 11px; height: 11px; color: var(--text-invert); opacity: 0; }
+.login-check input:checked + .login-check__box { background: var(--accent); border-color: var(--accent); }
+.login-check input:checked + .login-check__box svg { opacity: 1; }
+.login-check input:focus-visible + .login-check__box { outline: 2px solid var(--accent-hover); outline-offset: 2px; }
+.login-link {
+  color: var(--text-3);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--t-sm);
+  cursor: pointer;
+  text-decoration: none;
+  transition: color var(--motion-fast);
+}
+.login-link:hover { color: var(--accent-hover); }
+
+.login-submit {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  width: 100%;
+  height: var(--control-h-lg);
+  color: var(--text-invert);
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--r-sm);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: .01em;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), var(--shadow-2);
+  transition: background-color var(--motion-fast), transform var(--motion-fast), box-shadow var(--motion-fast);
+}
+.login-submit:hover:not(:disabled) { background: var(--accent-hover); }
+.login-submit:active:not(:disabled) { transform: translateY(1px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .18), var(--shadow-1); }
+.login-submit svg { width: 16px; height: 16px; }
+
+.login-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  margin-bottom: var(--s-4);
+  padding: 10px var(--s-3);
+  color: #ffd9e0;
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 34%, transparent);
+  border-left: 2px solid var(--danger);
+  border-radius: 6px;
+  font-size: var(--t-sm);
+}
+.login-alert svg { width: 15px; height: 15px; flex: none; margin-top: 2px; color: var(--danger); }
+.login-card__foot {
+  margin: var(--s-5) 0 0;
+  padding-top: var(--s-4);
+  color: var(--text-3);
+  border-top: 1px solid var(--border-1);
+  font-size: var(--t-xs);
+}
+
+.login-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-5) var(--s-8);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+.login-foot__meta { display: flex; align-items: center; gap: var(--s-3); }
+.login-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 3px 9px;
+  color: var(--text-2);
+  background: var(--surface-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--r-pill);
+  font-size: var(--t-xs);
+}
+.login-badge svg { width: 13px; height: 13px; color: var(--success); }
+.login-foot__dot { width: 3px; height: 3px; border-radius: var(--r-pill); background: var(--border-2); }
+
+/* 忘记密码弹层 */
+.login-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: var(--s-5);
+  background: rgba(3, 5, 11, .72);
+  backdrop-filter: blur(3px);
+}
+.login-dialog {
+  width: min(420px, 100%);
+  padding: var(--s-6);
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3);
+}
+.login-dialog h2 { margin: 0 0 var(--s-2); color: var(--text-1); font-size: var(--t-xl); }
+.login-dialog p { margin: 0 0 var(--s-4); color: var(--text-2); font-size: var(--t-sm); }
+.login-dialog__close {
+  float: right;
+  width: 28px;
+  height: 28px;
+  color: var(--text-3);
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  font-size: var(--t-lg);
+  line-height: 1;
+  cursor: pointer;
+}
+.login-dialog__close:hover { color: var(--text-1); background: var(--surface-3); }
+.login-dialog__account { display: grid; gap: var(--s-2); margin-bottom: var(--s-4); color: var(--text-2); font-size: var(--t-sm); }
+.login-dialog__account input {
+  height: var(--control-h);
+  padding: 0 var(--s-3);
+  color: var(--text-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  font-family: inherit;
+  font-size: var(--t-md);
+}
+.login-dialog__account input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.login-dialog__note { color: var(--text-3); font-size: var(--t-sm); }
+.login-dialog__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 120px;
+  height: var(--control-h);
+  margin-top: var(--s-2);
+  padding: 0 var(--s-5);
+  color: var(--text-invert);
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--r-sm);
+  font-family: inherit;
+  font-size: var(--t-md);
+  font-weight: 700;
+  cursor: pointer;
+}
+.login-dialog__action:hover { background: var(--accent-hover); }
+
+@media (max-width: 1180px) {
+  .login-brand, .login-foot, .login-stage { padding-left: var(--s-6); padding-right: var(--s-6); }
+}
+@media (max-width: 960px) {
+  .login-stage { grid-template-columns: minmax(0, 1fr); gap: var(--s-7); }
+  .login-pitch { max-width: none; }
+  .login-card { width: 100%; max-width: 420px; }
+  .login-bg__art { background-size: auto 92%; background-position: 50% 6%; }
+}
+@media (max-width: 640px) {
+  .login-bg__art { background-size: 172% auto; background-position: 50% 2%; }
+  .login-bg__scrim {
+    background:
+      linear-gradient(180deg, rgba(4, 7, 13, .30) 0%, rgba(4, 7, 13, .86) 42%, var(--surface-0) 100%),
+      radial-gradient(120% 70% at 50% 18%, transparent 26%, rgba(3, 5, 11, .72) 100%);
+  }
+  .login-brand { padding: var(--s-5) var(--s-5) 0; }
+  .login-brand__rule, .login-brand__latin { display: none; }
+  .login-stage { padding: var(--s-6) var(--s-5) var(--s-7); }
+  .login-card { padding: var(--s-6) var(--s-5); }
+  .login-foot { flex-direction: column; align-items: flex-start; padding: var(--s-4) var(--s-5) var(--s-5); }
+}
+@media (max-height: 720px) {
+  .login-stage { padding-top: var(--s-4); padding-bottom: var(--s-5); }
+  .login-card { padding: var(--s-5); }
+  .login-field { margin-bottom: var(--s-3); }
+  .login-row { margin-bottom: var(--s-4); }
+}
+
+.brand-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  overflow: hidden;
+  color: #6cf5ff;
+  background: linear-gradient(145deg, rgba(25, 158, 217, .42), rgba(3, 68, 127, .22));
+  border: 1px solid rgba(83, 215, 255, .82);
+  border-radius: 9px 14px 9px 14px;
+  box-shadow: 0 0 22px rgba(25, 183, 240, .24), inset 0 0 18px rgba(83, 215, 255, .15);
+}
+
+.brand-mark::before,
+.brand-mark::after,
+.brand-mark span::before,
+.brand-mark span::after {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  content: "";
+  border: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.brand-mark::before {
+  top: 6px;
+  left: 12px;
+}
+
+.brand-mark::after {
+  right: 12px;
+  bottom: 6px;
+  opacity: .55;
+}
+
+.brand-mark span::before {
+  top: 11px;
+  left: 11px;
+  width: 5px;
+  height: 5px;
+  background: currentColor;
+  border: 0;
+}
+
+.brand-mark span::after {
+  top: 16px;
+  left: 16px;
+  width: 18px;
+  height: 1px;
+  border: 0;
+  background: currentColor;
+  transform: rotate(-45deg);
+  transform-origin: left center;
+}
+
+.reference-workbench {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  min-height: 100dvh;
+  padding: 0;
+  gap: 0;
+  /* R148：底色由 .app-bg__base 负责，原来这两个渐变（含会偏回 #071b2e 的那条）已挪走，
+             两层底叠在一起色相就不对了。position 是给绝对定位的背景层当 containing block 的。 */
+  position: relative;
+}
+
+.reference-workbench .sidebar {
+  min-height: 100dvh;
+  padding: 24px 12px 18px;
+  background: linear-gradient(180deg, rgba(5, 23, 40, .96), rgba(4, 15, 29, .92));
+  border: 0;
+  border-right: 1px solid rgba(91, 166, 222, .20);
+  border-radius: 0;
+  box-shadow: 12px 0 34px rgba(0, 0, 0, .14);
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 9px 24px;
+  color: #f1f8ff;
+}
+
+.sidebar-brand .brand-mark {
+  width: 34px;
+  height: 34px;
+  flex-basis: 34px;
+}
+
+.sidebar-brand > span:last-child {
+  display: grid;
+  gap: 3px;
+}
+
+.sidebar-brand strong {
+  font-size: 14px;
+}
+
+.sidebar-brand small {
+  color: #6ba3c2;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: .16em;
+}
+
+.reference-workbench .nav-list {
+  gap: 8px;
+}
+
+.reference-workbench .nav-item {
+  min-height: 45px;
+  padding: 0 14px;
+  color: #88a9c2;
+  border-radius: 8px;
+}
+
+.reference-workbench .nav-item:hover {
+  background: rgba(34, 144, 211, .12);
+  border-color: rgba(64, 191, 242, .20);
+}
+
+.reference-workbench .nav-item.active {
+  color: #5beaff;
+  background: linear-gradient(90deg, rgba(19, 153, 219, .28), rgba(23, 93, 180, .24));
+  border-color: rgba(63, 202, 250, .34);
+  box-shadow: inset 3px 0 #37e3ff, 0 8px 24px rgba(10, 100, 173, .15);
+}
+
+.reference-workbench .nav-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.reference-workbench .workspace {
+  gap: 0;
+  min-height: 100dvh;
+}
+
+.reference-workbench .workspace-head {
+  min-height: 76px;
+  padding: 0 30px;
+  align-items: center;
+  border-bottom: 1px solid rgba(90, 163, 213, .16);
+  background: rgba(4, 17, 31, .60);
+}
+
+.reference-workbench .workspace-head h1 {
+  color: #f5fbff;
+  font-size: 22px;
+  letter-spacing: -.045em;
+}
+
+.workspace-tools {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.workspace-tools > button {
+  width: 28px;
+  height: 28px;
+  color: #9eb9cc;
+  background: transparent;
+  cursor: pointer;
+  font-size: 20px;
+}
+
+/* R307 第二棒残留：顶栏退出按钮原语化后，本枚选择器 (0,2,1) 被 .ui-button--ghost:hover:not(:disabled) (0,3,0) 压掉，hover 文字色从 #5beaff 掉成 --text-2。正解在此处补一枚 .ui-button 限定把特异性抬到 (0,3,1)，零新色值；旧 selector 保留，非原语按钮不受影响。全站没有任何一枚 token 等于 #5beaff，故不许改用 token。 */
+.workspace-tools > button:hover,
+.workspace-tools > button.ui-button:hover {
+  color: #5beaff;
+}
+
+/* R278：这条管的是顶栏那两枚图标按钮（搜索、通知）里的 svg。两枚控件已经摘掉，工具行里
+   今天没有一枚按钮画图，规则留着就是死代码——删。 */
+
+.user-avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: #eafaff;
+  background: linear-gradient(145deg, #1b91cf, #18467b);
+  border: 1px solid rgba(94, 221, 255, .54);
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.workspace-tools .identity {
+  display: grid;
+  gap: 2px;
+  min-height: auto;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.workspace-tools .identity strong {
+  color: #eef8ff;
+  font-size: 12px;
+}
+
+.workspace-tools .identity span {
+  color: #78a1bb;
+  font-size: 10px;
+}
+
+.workspace-tools .logout-link {
+  width: auto;
+  color: #90aec3;
+  font-size: 15px;
+}
+
+.reference-workbench .panel-slot {
+  padding: 24px 28px 32px;
+  overflow: auto;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.reference-dashboard {
+  gap: 18px;
+  max-width: 1480px;
+  margin: 0 auto;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.reference-kpi {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 104px;
+  padding: 18px;
+  overflow: hidden;
+  color: #e9f7ff;
+  background: linear-gradient(145deg, rgba(16, 52, 81, .90), rgba(7, 28, 50, .84));
+  border: 1px solid rgba(85, 171, 226, .24);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+
+.reference-kpi::after {
+  position: absolute;
+  right: -15px;
+  bottom: -25px;
+  width: 100px;
+  height: 80px;
+  content: "";
+  background: radial-gradient(circle, rgba(35, 205, 238, .18), transparent 70%);
+}
+
+.reference-kpi:hover {
+  border-color: rgba(85, 222, 255, .55);
+  box-shadow: 0 14px 30px rgba(1, 56, 102, .20);
+  transform: translateY(-2px);
+}
+
+.kpi-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  color: #4ce6ff;
+  background: rgba(22, 171, 224, .15);
+  border: 1px solid rgba(64, 212, 249, .28);
+  border-radius: 9px;
+  font-size: 20px;
+}
+
+.kpi-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.kpi-copy small {
+  color: #99b5c9;
+  font-size: 11px;
+}
+
+.kpi-copy strong {
+  color: #f2fbff;
+  font-family: var(--font-mono);
+  font-size: 25px;
+  line-height: 1;
+}
+
+.kpi-copy em {
+  color: #3fe1a4;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.tone-violet .kpi-icon {
+  color: #a8a3ff;
+  background: rgba(122, 105, 248, .18);
+  border-color: rgba(153, 142, 255, .30);
+}
+
+.tone-green .kpi-icon {
+  color: #58e9c2;
+  background: rgba(25, 191, 160, .18);
+  border-color: rgba(62, 233, 195, .30);
+}
+
+.kpi-spark {
+  width: 88px;
+  height: 36px;
+  margin-left: auto;
+  overflow: visible;
+}
+
+.kpi-spark path {
+  fill: none;
+  stroke: #1ee0dd;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+
+.kpi-bars {
+  display: flex;
+  align-items: end;
+  gap: 5px;
+  height: 35px;
+  margin-left: auto;
+}
+
+.kpi-bars i {
+  display: block;
+  width: 5px;
+  background: linear-gradient(180deg, #13d9d6, #196ba9);
+  border-radius: 3px 3px 0 0;
+}
+
+.kpi-bars i:nth-child(1) { height: 12px; }
+.kpi-bars i:nth-child(2) { height: 22px; }
+.kpi-bars i:nth-child(3) { height: 30px; }
+.kpi-bars i:nth-child(4) { height: 18px; }
+.kpi-bars i:nth-child(5) { height: 35px; }
+
+.dashboard-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(320px, .9fr);
+  gap: 14px;
+}
+
+.dashboard-bottom-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.15fr) minmax(245px, .78fr);
+  gap: 14px;
+}
+
+.reference-card {
+  min-width: 0;
+  padding: 17px 18px;
+  background: linear-gradient(145deg, rgba(10, 38, 64, .89), rgba(5, 23, 43, .91));
+  border: 1px solid rgba(83, 164, 218, .23);
+  border-radius: 8px;
+  box-shadow: inset 0 1px rgba(135, 211, 249, .04);
+}
+
+.reference-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 15px;
+}
+
+.reference-card-head h2 {
+  margin: 0;
+  color: #eaf7ff;
+  font-size: 15px;
+  letter-spacing: -.02em;
+}
+
+.reference-card-head p {
+  margin: 5px 0 0;
+  color: #7697ae;
+  font-size: 10px;
+}
+
+.reference-card-head button {
+  padding: 0;
+  color: #52d8ff;
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.trend-tools {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  color: #88a9be;
+  font-size: 10px;
+}
+
+.trend-tools span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.trend-tools i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.trend-tools button {
+  padding: 7px 9px;
+  color: #a8c3d6;
+  background: rgba(66, 134, 179, .14);
+  border: 1px solid rgba(89, 172, 221, .22);
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.trend-chart {
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-rows: minmax(175px, 1fr) 18px;
+  min-height: 210px;
+}
+
+.chart-y-axis,
+.chart-x-axis {
+  display: flex;
+  justify-content: space-between;
+  color: #7693aa;
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.chart-y-axis {
+  grid-row: 1;
+  flex-direction: column;
+  padding: 4px 5px 4px 0;
+  text-align: right;
+}
+
+.trend-chart svg {
+  width: 100%;
+  height: 100%;
+  min-height: 175px;
+  overflow: visible;
+}
+
+.trend-chart svg line {
+  stroke: rgba(92, 167, 213, .18);
+  stroke-width: 1;
+}
+
+.trend-chart svg .vertical-grid {
+  stroke: rgba(92, 167, 213, .10);
+}
+
+.trend-chart svg polyline {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 5px rgba(40, 210, 255, .26));
+}
+
+.chart-x-axis {
+  grid-column: 2;
+  padding-top: 2px;
+}
+
+.risk-card {
+  min-width: 0;
+}
+
+.risk-list {
+  display: grid;
+  gap: 7px;
+}
+
+.risk-item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 10px 9px;
+  color: #d9edf8;
+  background: rgba(16, 51, 79, .44);
+  border: 1px solid rgba(88, 159, 207, .18);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.risk-item:hover,
+.reference-list-row:hover {
+  background: rgba(32, 109, 160, .30);
+  border-color: rgba(75, 205, 246, .35);
+}
+
+.risk-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--muted);
+  background: rgba(129, 164, 219, .14);
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.risk-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.risk-copy strong {
+  overflow: hidden;
+  color: #e4f4fd;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.risk-copy small,
+.risk-time {
+  color: #7c9db4;
+  font-size: 9px;
+}
+
+.risk-time {
+  white-space: nowrap;
+}
+
+.reference-list {
+  display: grid;
+  gap: 6px;
+}
+
+.reference-list-row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 5px;
+  color: #ddecf6;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.row-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: #b9d9eb;
+  background: rgba(100, 148, 190, .22);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.reference-list-row > span:nth-child(2),
+.evidence-main > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.reference-list-row strong,
+.evidence-main strong {
+  overflow: hidden;
+  color: #e9f7ff;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference-list-row small,
+.evidence-main small {
+  overflow: hidden;
+  color: #7898af;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference-list-row em {
+  padding: 5px 8px;
+  color: #54e6b9;
+  background: rgba(30, 186, 147, .13);
+  border-radius: 999px;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.evidence-main {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 76px;
+}
+
+.evidence-main > b {
+  padding: 5px 8px;
+  color: #54e6b9;
+  background: rgba(30, 186, 147, .13);
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.evidence-query {
+  display: flex;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.reference-dashboard .evidence-query input {
+  min-height: 32px;
+  padding: 0 10px;
+  background: rgba(1, 16, 31, .52);
+  border-color: rgba(91, 169, 215, .22);
+  border-radius: 5px;
+  font-size: 10px;
+}
+
+.evidence-query button {
+  padding: 0 11px;
+  color: #062032;
+  background: #5be4d2;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.quick-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quick-grid button {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  min-height: 66px;
+  padding: 11px;
+  color: #d9effa;
+  background: rgba(18, 65, 99, .52);
+  border: 1px solid rgba(74, 168, 220, .24);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 10px;
+  text-align: left;
+}
+
+.quick-grid button:hover {
+  background: rgba(28, 126, 183, .34);
+  border-color: rgba(83, 215, 250, .48);
+}
+
+.quick-grid button span {
+  color: #3fe5ee;
+  font-size: 18px;
+}
+
+.reference-dashboard .empty-state {
+  padding: 22px 8px;
+  color: #7898af;
+  font-size: 11px;
+}
+
+@media (max-width: 1120px) {
+
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-bottom-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .quick-card {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+
+  .reference-workbench {
+    display: block;
+    min-height: 100dvh;
+  }
+
+  .reference-workbench .sidebar {
+    min-height: auto;
+    padding: 12px 8px 8px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(91, 166, 222, .20);
+  }
+
+  .reference-workbench .sidebar-brand {
+    padding: 0 8px 11px;
+  }
+
+  .reference-workbench .nav-list {
+    /* 390px 下六枚入口必须一屏可见：横向滚动的条会把异常、待办与成果藏在屏外，
+       员工看不到入口就等于没有。两行三列，触控目标仍按 44px 走。 */
+    display: block;
+    width: 100%;
+    overflow-x: visible;
+    gap: 5px;
+    scrollbar-width: none;
+  }
+
+  .reference-workbench .nav-item {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    justify-content: center;
+    padding: 0 6px;
+  }
+
+  .reference-workbench .nav-icon {
+    width: 16px;
+    height: 16px;
+  }
+
+  .reference-workbench .nav-label {
+    font-size: 10px;
+  }
+
+  .reference-workbench .workspace-head {
+    min-height: 68px;
+    padding: 0 16px;
+  }
+
+  .reference-workbench .workspace-head h1 {
+    font-size: 21px;
+  }
+
+  .workspace-tools {
+    gap: 7px;
+  }
+
+  /* R278：这里原先有两条 display:none，按位置洗掉的是顶栏前两枚按钮——正是那两枚「按了
+     没反应」的搜索与通知。控件已摘，规则再留着就会把唯一剩下的那枚退出按钮当成第一枚隐掉，
+     窄屏上人就退不出登录了。所以随控件一起删。 */
+
+  .workspace-tools .identity {
+    display: none;
+  }
+
+  .reference-workbench .panel-slot {
+    padding: 15px 12px 24px;
+  }
+
+  .kpi-grid,
+  .dashboard-main-grid,
+  .dashboard-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-card {
+    grid-column: auto;
+  }
+
+  .reference-kpi {
+    min-height: 86px;
+  }
+
+  .trend-tools span {
+    display: none;
+  }
+
+  .trend-tools {
+    gap: 5px;
+  }
+
+  .reference-card {
+    padding: 14px;
+  }
+}
+
+.reference-workbench {
+  grid-template-columns: 180px minmax(0, 1fr);
+}
+
+.reference-workbench .sidebar {
+  width: 180px;
+}
+
+.reference-workbench .workspace-head {
+  min-height: 60px;
+  padding: 0 26px;
+}
+
+.reference-workbench .panel-slot {
+  padding: 18px 20px 26px;
+}
+
+.reference-workbench .reference-dashboard {
+  gap: 14px;
+}
+
+.reference-workbench .reference-kpi {
+  min-height: 78px;
+  padding: 12px 14px;
+}
+
+.reference-workbench .kpi-icon {
+  width: 40px;
+  height: 40px;
+  flex-basis: 40px;
+}
+
+.reference-workbench .kpi-copy strong {
+  font-size: 22px;
+}
+
+.reference-workbench .reference-card {
+  padding: 14px 16px;
+}
+
+.reference-workbench .dashboard-main-grid,
+.reference-workbench .dashboard-bottom-grid {
+  gap: 12px;
+}
+
+@media (max-width: 1120px) {
+}
+
+@media (max-width: 760px) {
+
+  .reference-workbench {
+    display: block;
+  }
+
+  .reference-workbench .sidebar {
+    width: 100%;
+  }
+
+  .reference-workbench .workspace-head {
+    min-height: 62px;
+  }
+}
+
+@media (max-width: 900px) {
+
+}
+
+@media (max-width: 720px) {
+
+}
+
+@media (max-width: 900px) {
+
+}
+
+@media (max-width: 720px) {
+
+}
+
+/* ----------------------------------------------------------------------------
+ * R151 还债追加段（2026-09-21）：DocPanel / DataPanel / DocumentPreviewModal / ChartViewer
+ * 四块面板里的裸色值，逐字搬进来，一枚 token 对一枚原字面量，值一字未改。
+ * 这一段的作用是「让债有名字」，不是「让债变漂亮」：这些值仍然属于浅色 Element 时代的调色板，
+ * 坐在暗色壳里就是脏卡片。重上色（把它们逐个指向 --surface-* / --text-*）属于视觉工单，
+ * 不属于还债工单 —— R151 判据④要求逐像素不变，所以本轮只改名不改色。
+ * 反证在 src/components/__tests__/r151-legacy-colors.test.js：改任一枚 token 的值，或
+ * 把面板里任一处 var() 换回字面量，那枚用例当场红。
+ * -------------------------------------------------------------------------- */
+:root {
+  /* 浅色时代的中性文本（Element-Plus 遗留色板，面板里那批浅色卡片在用） */
+  --legacy-ink-faint: #c0c4cc;
+  --legacy-ink-graphite: #374151;
+  --legacy-ink-graphite-deep: #4b5563;
+  --legacy-ink-mid: #606266;
+  --legacy-ink-mute: #9ca3af;
+  --legacy-ink-soft: #909399;
+  --legacy-ink-steel: #9eacc1;
+  --legacy-ink-strong: #303133;
+  /* 浅色时代的分隔线与浅底（同上，删除会改视觉，只能先命名） */
+  --legacy-fill: #f0f2f5;
+  --legacy-fill-cool: #edf0f2;
+  --legacy-fill-mist: #edf2f7;
+  --legacy-fill-plain: #f5f5f5;
+  --legacy-line: #d0d5dd;
+  --legacy-line-hair: #e4e7ed;
+  --legacy-line-mute: #d1d5db;
+  --legacy-line-pale: #ebeef5;
+  --legacy-steel: #9db2cf;
+  --legacy-tint-azure: #dbe5f3;
+  --legacy-tint-azure-soft: #e7eef9;
+  /* Element-Plus 语义色（主色/成功/警告/危险与其浅化描边） */
+  --legacy-ep-danger: #f56c6c;
+  --legacy-ep-danger-line: #fab6b6;
+  --legacy-ep-orange: #e6a23c;
+  --legacy-ep-primary: #409eff;
+  --legacy-ep-success: #67c23a;
+  --legacy-ep-success-line: #b3e19d;
+  /* 绿-青族（深色时代与浅色时代混用） */
+  --legacy-aqua: #1a9f9a;
+  --legacy-aqua-bright: #35d3c8;
+  --legacy-aqua-night: #172a36;
+  --legacy-emerald: #10b981;
+  --legacy-emerald-100: #dcfce7;
+  --legacy-emerald-300: #6ee7b7;
+  --legacy-emerald-deeper: #047857;
+  --legacy-emerald-mist: #ecfdf5;
+  --legacy-emerald-pale: #f0fdf4;
+  --legacy-mint: #8ce2bf;
+  /* 蓝-红族强调色（深色时代的 periwinkle / coral） */
+  --legacy-coral: #ff9da5;
+  --legacy-coral-soft: #ffabb2;
+  --legacy-periwinkle: #8ea8ff;
+  --legacy-periwinkle-mid: #aabdff;
+  --legacy-periwinkle-pale: #b5c4ff;
+  --legacy-periwinkle-strong: #6a8cff;
+  /* 近黑底与中性深灰（图表/遮罩/滚动条） */
+  --legacy-night: #061016;
+  --legacy-night-1: #0b1220;
+  --legacy-night-2: #111b2c;
+  --legacy-night-3: #0d1728;
+  --legacy-night-4: #142035;
+  --legacy-slate-dark: #525659;
+  --legacy-veil: #030710;
+  /* 纯白与纯黑（alpha 变体一律由 color-mix 派生，不再写 rgba 字面量） */
+  --legacy-paper: #ffffff;
+  --legacy-void: #000000;
+}
+/* ==========================================================================
+ * R341 · 「数据趋势」这一格接上服务端期间序列之后的版式
+ *
+ * 这一块不新增任何一枚裸色值：只引用上面既有的 token（视觉文档 §5.1 / V6 锁色值）。
+ * 条形只是那一格数字的等比影子，长度由 DashboardPanel 按服务端回传的数算出来；
+ * 全窗口零新增时每根都收成零长，画不出一根「看起来像有」的条。
+ * ========================================================================== */
+
+.trend-window-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 0 0 13px;
+}
+
+.trend-window-tools .ui-select {
+  flex: 0 0 auto;
+  min-width: 132px;
+}
+
+.trend-window-tools .ui-button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--bg-panel-2);
+  color: var(--ink);
+}
+
+.trend-body {
+  min-width: 0;
+}
+
+.trend-scroll {
+  max-height: 268px;
+  overflow-y: auto;
+}
+
+.trend-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-xs);
+}
+
+.trend-caption {
+  padding: 0 0 6px;
+  color: var(--text-3);
+  text-align: left;
+  font-size: var(--t-xs);
+}
+
+.trend-table th,
+.trend-table td {
+  padding: 5px 7px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-1);
+}
+
+.trend-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-dropdown);
+  color: var(--text-3);
+  font-weight: 600;
+  background: var(--surface-1);
+}
+
+.trend-table th[scope='row'] {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-weight: 500;
+  text-align: left;
+}
+
+.trend-cell-count {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+}
+
+.trend-bar {
+  display: inline-block;
+  width: 52px;
+  height: 6px;
+  margin-right: 7px;
+  overflow: hidden;
+  vertical-align: middle;
+  background: var(--surface-3);
+  border-radius: var(--r-sm);
+}
+
+.trend-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.trend-alerts-note {
+  margin: 9px 0 0;
+}
+
+.trend-notes {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.6;
+}
